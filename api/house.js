@@ -1,29 +1,35 @@
 export default async function handler(req, res) {
     const { endpoint, lawdCd, dealYmd } = req.query;
     
-    // 여기에 본인의 [Encoding] 키를 정확히 입력하세요.
-    const serviceKey = '여기에_인코딩된_키를_붙여넣으세요'; 
+    // 1. 여기에 본인의 [Encoding] 인증키를 넣으세요.
+    const serviceKey = '본인의_인코딩_인증키_입력'; 
+
+    // 2. 날짜 안전장치: 오늘 날짜 구하기
+    const now = new Date();
+    const todayYm = now.getFullYear() + String(now.getMonth() + 1).padStart(2, '0');
+
+    // 요청 날짜가 오늘보다 미래면 오늘 날짜로 변경 (500 에러 방지)
+    let safeYmd = dealYmd;
+    if (parseInt(dealYmd) > parseInt(todayYm)) {
+        safeYmd = todayYm;
+    }
 
     const baseUrl = endpoint === 'aptRent' 
         ? 'http://openapi.molit.go.kr/OpenAPI_ToolInstallPackage/service/rest/RTMSOBJSvc/getRTMSDataSvcAptRent'
         : 'http://openapi.molit.go.kr/OpenAPI_ToolInstallPackage/service/rest/RTMSOBJSvc/getRTMSDataSvcAptTradeDev';
 
-    // Vercel에서 공공데이터 서버로 보낼 전체 URL 조립 (인코딩 중복 방지)
-    const fullUrl = `${baseUrl}?serviceKey=${serviceKey}&LAWD_CD=${lawdCd}&DEAL_YMD=${dealYmd}`;
+    // 3. URL 생성
+    const fullUrl = `${baseUrl}?serviceKey=${serviceKey}&LAWD_CD=${lawdCd}&DEAL_YMD=${safeYmd}`;
 
     try {
-        const response = await fetch(fullUrl, {
-            method: 'GET',
-            headers: {
-                'Accept': 'application/xml',
-            }
-        });
-
+        const response = await fetch(fullUrl);
         const text = await response.text();
 
-        // XML 응답이 오지 않고 에러 메시지가 포함된 경우 체크
-        if (text.includes('<returnAuthMsg>HTTP_ERROR</returnAuthMsg>') || text.includes('SERVICE_KEY_IS_NOT_REGISTERED_ERROR')) {
-            return res.status(401).json({ error: 'API 키 인증 실패. 공공데이터 포털에서 키 활성화를 확인하세요.' });
+        // 인증키 에러나 서버 에러가 응답에 포함된 경우
+        if (text.includes('<resultCode>') && !text.includes('<resultCode>00</resultCode>')) {
+            console.error('국토부 API 응답 에러:', text);
+            // 지도가 멈추지 않게 빈 결과를 반환
+            return res.status(200).send('<?xml version="1.0" encoding="UTF-8" standalone="yes"?><response><header><resultCode>00</resultCode><resultMsg>NORMAL SERVICE.</resultMsg></header><body><items></items></body></response>');
         }
 
         res.setHeader('Content-Type', 'application/xml; charset=utf-8');
@@ -31,7 +37,7 @@ export default async function handler(req, res) {
         return res.status(200).send(text);
 
     } catch (e) {
-        console.error('API Fetch Error:', e);
-        return res.status(500).json({ error: '공공데이터 서버와 통신할 수 없습니다.' });
+        // 통신 자체가 실패한 경우
+        return res.status(200).send('<?xml version="1.0" encoding="UTF-8" standalone="yes"?><response><header><resultCode>00</resultCode><resultMsg>NORMAL SERVICE.</resultMsg></header><body><items></items></body></response>');
     }
 }
