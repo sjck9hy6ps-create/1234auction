@@ -1,27 +1,33 @@
-export default async function handler(req, res) {
-  // CORS 허용 (보안 설정)
-  res.setHeader('Access-Control-Allow-Origin', '*');
-  if (req.method === 'OPTIONS') return res.status(200).end();
+// utils/fetch-auction.js
+export async function fetchAuctionData(url) {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 8000); // 8초 타임아웃
 
-  const { url } = req.query;
-  if (!url) return res.status(400).json({ error: 'URL이 없습니다' });
+    try {
+        const response = await fetch(url, {
+            method: 'GET',
+            headers: {
+                'Accept': 'application/xml',
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                'Cache-Control': 'no-cache'
+            },
+            signal: controller.signal,
+            // Vercel 환경에서 DNS 캐시를 무시하도록 유도
+            next: { revalidate: 0 } 
+        });
 
-  try {
-    // 탱크옥션 페이지 가져오기
-    const response = await fetch(url, {
-      headers: { 
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36' 
-      }
-    });
-    const html = await response.text();
+        clearTimeout(timeoutId);
 
-    // 필요한 데이터만 추출 (제목, 가격, 주소)
-    const title = html.match(/<title>(.*?)<\/title>/i)?.[1] || '제목 없음';
-    const address = html.match(/소재지[^가-힣]*([가-힣].{5,50}?[0-9-]{1,10})/)?.[1] || '주소를 찾을 수 없음';
-    const price = html.match(/감정가[^0-9]*([0-9,]+)/)?.[1] || '0';
+        if (!response.ok) {
+            throw new Error(`HTTP error! status: \${response.status}`);
+        }
 
-    return res.status(200).json({ title, address, price });
-  } catch (e) {
-    return res.status(500).json({ error: '데이터를 가져오는데 실패했습니다.' });
-  }
+        return await response.text();
+    } catch (error) {
+        clearTimeout(timeoutId);
+        if (error.name === 'AbortError') {
+            throw new Error('국토부 API 응답 시간 초과');
+        }
+        throw error;
+    }
 }
