@@ -4,11 +4,9 @@ export default function handler(req, res) {
     const { endpoint, lawdCd, dealYmd } = req.query;
     const serviceKey = 'ca4e98f4254eccbbabfbb3f9f972e17eba48507e804a9ac2bc97260423a090d6';
 
-    // 날짜 보정
     let safeYmd = dealYmd;
     if (parseInt(dealYmd) > 202412) safeYmd = '202412';
 
-    // 국토부 API는 http와 https 둘 다 지원하지만, 보안 연결(https)로 시도합니다.
     const baseUrl = endpoint === 'aptRent' 
         ? '/OpenAPI_ToolInstallPackage/service/rest/RTMSOBJSvc/getRTMSDataSvcAptRent'
         : '/OpenAPI_ToolInstallPackage/service/rest/RTMSOBJSvc/getRTMSDataSvcAptTradeDev';
@@ -20,9 +18,8 @@ export default function handler(req, res) {
         port: 443,
         path: fullPath,
         method: 'GET',
-        headers: {
-            'User-Agent': 'Mozilla/5.0'
-        }
+        timeout: 10000, // 10초 대기
+        headers: { 'User-Agent': 'Mozilla/5.0' }
     };
 
     const request = https.get(options, (response) => {
@@ -36,8 +33,8 @@ export default function handler(req, res) {
     });
 
     request.on('error', (e) => {
-        console.error('Final Attempt Error:', e.message);
-        // 에러 시 빈 XML 반환
+        // 로그 문구를 바꿔서 새 코드가 도는지 확인용
+        console.error('API_CONNECTION_ERROR:', e.message);
         res.status(200).send('<?xml version="1.0" encoding="UTF-8"?><response><body><items></items></body></response>');
     });
 
