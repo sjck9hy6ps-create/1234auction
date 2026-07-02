@@ -1105,12 +1105,29 @@ function redrawMarkers(){
     renderAuctionMarkers();
 }
 
-function placeMarkers(aptList,centerLat,centerLon){
-    aptList.forEach(function(apt){
-        var l=apt.latest;
-        geocoder.addressSearch(l.searchAddr,function(result,status){
-            if(status===kakao.maps.services.Status.OK) createMarker(result[0].y,result[0].x,apt);
-        });
+function placeMarkers(aptList, centerLat, centerLon) {
+    if (!aptList || aptList.length === 0) return;
+
+    // 너무 많은 요청을 한꺼번에 보내지 않도록 10개씩 끊어서 처리
+    aptList.forEach(function(apt, index) {
+        setTimeout(function() {
+            var l = apt.latest;
+            // 지번 주소가 없으면 아파트명으로라도 검색
+            var searchAddr = l.umdNm + " " + l.jibun;
+            
+            geocoder.addressSearch(searchAddr, function(result, status) {
+                if (status === kakao.maps.services.Status.OK) {
+                    createMarker(result[0].y, result[0].x, apt);
+                } else {
+                    // 지번으로 실패 시 아파트 이름으로 재시도
+                    places.keywordSearch(l.umdNm + " " + l.name, function(res, st) {
+                        if (st === kakao.maps.services.Status.OK) {
+                            createMarker(res[0].y, res[0].x, apt);
+                        }
+                    });
+                }
+            });
+        }, index * 50); // 0.05초 간격으로 순차적 실행 (차단 방지)
     });
 }
 
