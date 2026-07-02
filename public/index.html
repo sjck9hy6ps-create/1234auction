@@ -1,0 +1,1587 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>부동산 실거래가 지도</title>
+    <link rel="icon" href="data:,">
+<style>
+* { margin:0; padding:0; box-sizing:border-box; }
+body { font-family:'Malgun Gothic',sans-serif; }
+#search-box {
+    position:absolute; top:10px; left:50%; transform:translateX(-50%);
+    z-index:10; display:flex; gap:6px;
+}
+#search-box input {
+    width:240px; padding:8px 12px; border:2px solid #f9e000;
+    border-radius:6px; font-size:14px; outline:none;
+}
+#search-box button {
+    padding:8px 16px; background:#f9e000; border:none;
+    border-radius:6px; font-size:14px; font-weight:bold; cursor:pointer;
+}
+#search-box button:hover { background:#e6d000; }
+#type-filter {
+    position:absolute; top:10px; right:14px; z-index:10; display:flex; gap:5px;
+}
+.type-btn {
+    padding:7px 14px; font-size:13px; font-weight:bold;
+    border:2px solid #ccc; border-radius:20px; background:white; cursor:pointer; color:#666;
+}
+.type-btn.active-apt   { background:#e53935; color:white; border-color:#e53935; }
+.type-btn.active-house { background:#212121; color:white; border-color:#212121; }
+.type-btn.active-all   { background:#555;    color:white; border-color:#555; }
+#autocomplete {
+    position:absolute; top:48px; left:50%; transform:translateX(-50%);
+    z-index:11; width:340px; background:white; border-radius:0 0 8px 8px;
+    box-shadow:0 4px 12px rgba(0,0,0,0.15); display:none; max-height:300px; overflow-y:auto;
+}
+#map { width:100%; height:100vh; }
+#status-box {
+    position:absolute; top:112px; left:50%; transform:translateX(-50%);
+    z-index:10; background:rgba(0,0,0,0.75); color:white;
+    padding:7px 18px; border-radius:20px; font-size:13px; display:none; white-space:nowrap;
+}
+#filter-panel {
+    position:absolute; top:52px; left:50%; transform:translateX(-50%);
+    z-index:10; background:rgba(255,255,255,0.97);
+    border-radius:12px; padding:6px 12px;
+    box-shadow:0 2px 10px rgba(0,0,0,0.13);
+    display:flex; flex-direction:column; gap:5px;
+}
+.filter-row { display:flex; align-items:center; gap:4px; flex-wrap:nowrap; }
+.filter-row-label {
+    font-size:10px; font-weight:bold; color:#888;
+    min-width:46px; text-align:right; padding-right:4px; flex-shrink:0;
+}
+.filter-tab {
+    padding:4px 10px; font-size:11px; font-weight:bold;
+    border:1.5px solid #ddd; border-radius:20px; background:white;
+    cursor:pointer; color:#666; white-space:nowrap; transition:all 0.15s;
+    flex-shrink:0; user-select:none;
+}
+.filter-tab:hover { opacity:0.8; }
+.ft-g[data-g="1"].active   { background:#b71c1c; border-color:#b71c1c; color:white; }
+.ft-g[data-g="2"].active   { background:#e53935; border-color:#e53935; color:white; }
+.ft-g[data-g="3"].active   { background:#ff7043; border-color:#ff7043; color:white; }
+.ft-g[data-g="4"].active   { background:#ffa726; border-color:#ffa726; color:white; }
+.ft-g[data-g="5"].active   { background:#66bb6a; border-color:#66bb6a; color:white; }
+.ft-g[data-g="6"].active   { background:#42a5f5; border-color:#42a5f5; color:white; }
+.ft-g[data-g="7"].active   { background:#9e9e9e; border-color:#9e9e9e; color:white; }
+.ft-g[data-g="all"].active { background:#333;    border-color:#333;    color:white; }
+.ft-s[data-s="S"].active   { background:#b71c1c; border-color:#b71c1c; color:white; }
+.ft-s[data-s="A"].active   { background:#e53935; border-color:#e53935; color:white; }
+.ft-s[data-s="B"].active   { background:#ff7043; border-color:#ff7043; color:white; }
+.ft-s[data-s="C"].active   { background:#9e9e9e; border-color:#9e9e9e; color:white; }
+.ft-s[data-s="D"].active   { background:#bdbdbd; border-color:#bdbdbd; color:white; }
+.ft-s[data-s="X"].active   { background:#607d8b; border-color:#607d8b; color:white; }
+.ft-s[data-s="all"].active { background:#333;    border-color:#333;    color:white; }
+#legend {
+    position:absolute; bottom:20px; left:14px; z-index:10;
+    background:rgba(255,255,255,0.95); border-radius:10px; padding:10px 14px;
+    font-size:12px; box-shadow:0 2px 8px rgba(0,0,0,0.15); line-height:2; max-width:220px;
+}
+.legend-dot { display:inline-block; width:12px; height:12px; border-radius:50%; margin-right:5px; vertical-align:middle; }
+#panel {
+    position:absolute; top:0; right:0; width:380px; height:100vh;
+    background:white; z-index:20; box-shadow:-3px 0 10px rgba(0,0,0,0.2);
+    display:none; flex-direction:column;
+}
+#panel-header {
+    padding:14px 16px; font-weight:bold; font-size:15px;
+    display:flex; justify-content:space-between; align-items:center; flex-shrink:0;
+}
+#panel-close { cursor:pointer; font-size:20px; }
+#sort-bar {
+    display:flex; gap:6px; padding:10px 12px; border-bottom:1px solid #eee;
+    flex-shrink:0; flex-wrap:wrap; align-items:center;
+}
+#sort-bar span { font-size:12px; color:#666; margin-right:2px; }
+.sort-btn {
+    padding:4px 10px; font-size:12px; border:1px solid #ddd;
+    border-radius:20px; background:white; cursor:pointer; color:#555;
+}
+.sort-btn.active { background:#333; color:white; border-color:#333; }
+#pyung-bar {
+    display:flex; gap:5px; padding:8px 12px; border-bottom:1px solid #eee;
+    flex-shrink:0; flex-wrap:wrap; align-items:center;
+}
+#pyung-bar span { font-size:12px; color:#666; margin-right:2px; }
+.pyung-btn {
+    padding:3px 9px; font-size:12px; border:1px solid #ddd;
+    border-radius:20px; background:white; cursor:pointer; color:#555;
+}
+.pyung-btn.active { background:#e53935; color:white; border-color:#e53935; }
+#panel-body { overflow-y:auto; padding:12px; flex:1; }
+.year-label {
+    font-size:12px; font-weight:bold; color:#fff; background:#aaa;
+    padding:3px 10px; border-radius:20px; margin:12px 0 6px; display:inline-block;
+}
+.year-label.recent { background:#e53935; }
+table { width:100%; border-collapse:collapse; font-size:12px; margin-bottom:4px; }
+th { background:#fafafa; padding:6px 4px; border-bottom:2px solid #ddd; text-align:center; font-size:11px; }
+td { padding:6px 4px; border-bottom:1px solid #eee; text-align:center; }
+tr:hover td { background:#fffde7; }
+.indicator-box { background:#f9f9f9; border-radius:10px; padding:10px 12px; margin-bottom:12px; border:1px solid #eee; }
+.indicator-title { font-size:12px; font-weight:bold; color:#555; margin-bottom:6px; }
+.indicator-grid { display:grid; grid-template-columns:1fr 1fr; gap:6px; }
+.indicator-item { background:white; border-radius:7px; padding:7px 10px; border:1px solid #eee; text-align:center; }
+.indicator-label { font-size:10px; color:#999; margin-bottom:2px; }
+.indicator-value { font-size:14px; font-weight:bold; }
+.indicator-sub { font-size:10px; color:#aaa; margin-top:1px; }
+.score-bar-wrap { margin-top:8px; }
+.score-bar-bg { background:#eee; border-radius:10px; height:8px; width:100%; overflow:hidden; }
+.score-bar-fill { height:8px; border-radius:10px; transition:width 0.4s; }
+.disqualified-box {
+    background:#fff3f3; border:1px solid #ffcdd2; border-radius:8px;
+    padding:8px 12px; margin-bottom:10px; font-size:11px; color:#c62828;
+}
+.new-high-badge {
+    position:absolute; bottom:-10px; left:50%; transform:translateX(-50%);
+    background:#ff6f00; color:white; font-size:9px; font-weight:900;
+    padding:1px 6px; border-radius:10px; white-space:nowrap;
+    box-shadow:0 1px 3px rgba(0,0,0,0.35); border:1.5px solid white; z-index:2;
+}
+.value-badge {
+    position:absolute; bottom:-28px; left:50%; transform:translateX(-50%);
+    font-size:9px; font-weight:bold; padding:1px 6px; border-radius:4px;
+    white-space:nowrap; color:white; box-shadow:0 1px 3px rgba(0,0,0,0.2);
+}
+/* ─── 경매 배지 ─── */
+.auction-badge {
+    position:absolute; top:-10px; left:50%; transform:translateX(-50%);
+    background:#6a1b9a; color:white; font-size:9px; font-weight:900;
+    padding:1px 7px; border-radius:10px; white-space:nowrap;
+    box-shadow:0 1px 4px rgba(0,0,0,0.4); border:1.5px solid white; z-index:3;
+}
+/* ─── 경매 모달 ─── */
+#auction-modal-bg {
+    position:fixed; inset:0; background:rgba(0,0,0,0.45);
+    z-index:100; display:none; align-items:center; justify-content:center;
+}
+#auction-modal {
+    background:white; border-radius:14px; width:420px; max-height:90vh;
+    overflow-y:auto; box-shadow:0 8px 32px rgba(0,0,0,0.25); padding:0;
+}
+.modal-header {
+    padding:16px 20px; font-size:16px; font-weight:bold;
+    border-bottom:1px solid #eee; display:flex; justify-content:space-between; align-items:center;
+    position:sticky; top:0; background:white; z-index:1;
+}
+.modal-close { cursor:pointer; font-size:22px; color:#888; }
+.modal-body { padding:16px 20px; }
+.modal-section { margin-bottom:18px; }
+.modal-section-title {
+    font-size:11px; font-weight:bold; color:#888; letter-spacing:0.5px;
+    margin-bottom:8px; padding-bottom:4px; border-bottom:1px solid #f0f0f0;
+}
+.modal-row { display:flex; gap:8px; margin-bottom:8px; align-items:center; }
+.modal-label { font-size:12px; color:#555; min-width:72px; flex-shrink:0; }
+.modal-input {
+    flex:1; padding:7px 10px; border:1.5px solid #ddd; border-radius:7px;
+    font-size:13px; outline:none; font-family:inherit;
+}
+.modal-input:focus { border-color:#6a1b9a; }
+.modal-input.addr-input { border-color:#6a1b9a; background:#faf5ff; }
+.modal-select {
+    flex:1; padding:7px 10px; border:1.5px solid #ddd; border-radius:7px;
+    font-size:13px; outline:none; font-family:inherit; background:white;
+}
+.modal-btn {
+    padding:7px 14px; border:none; border-radius:7px;
+    font-size:12px; font-weight:bold; cursor:pointer;
+}
+.btn-purple { background:#6a1b9a; color:white; }
+.btn-purple:hover { background:#4a148c; }
+.btn-gray { background:#eee; color:#555; }
+.btn-gray:hover { background:#ddd; }
+.btn-red { background:#e53935; color:white; }
+.btn-red:hover { background:#b71c1c; }
+.modal-footer {
+    padding:12px 20px; border-top:1px solid #eee; display:flex;
+    gap:8px; justify-content:flex-end; position:sticky; bottom:0; background:white;
+}
+/* 마진 결과박스 */
+.margin-result {
+    background:#f3e5f5; border-radius:10px; padding:12px 14px; margin-top:12px;
+    border:1.5px solid #ce93d8;
+}
+.margin-result-title { font-size:11px; color:#6a1b9a; font-weight:bold; margin-bottom:8px; }
+.margin-grid { display:grid; grid-template-columns:1fr 1fr; gap:6px; }
+.margin-item { background:white; border-radius:7px; padding:7px 10px; text-align:center; border:1px solid #e1bee7; }
+.margin-label { font-size:10px; color:#999; margin-bottom:2px; }
+.margin-value { font-size:14px; font-weight:bold; }
+/* 경매 패널 섹션 */
+.auction-panel-box {
+    background:#f3e5f5; border:1.5px solid #ce93d8; border-radius:10px;
+    padding:12px 14px; margin-bottom:14px;
+}
+.auction-panel-title {
+    font-size:12px; font-weight:bold; color:#6a1b9a; margin-bottom:10px;
+    display:flex; justify-content:space-between; align-items:center;
+}
+.auction-edit-btn {
+    font-size:11px; padding:2px 10px; border:1.5px solid #6a1b9a;
+    border-radius:10px; background:white; color:#6a1b9a; cursor:pointer; font-weight:bold;
+}
+.auction-edit-btn:hover { background:#6a1b9a; color:white; }
+.auction-info-grid { display:grid; grid-template-columns:1fr 1fr; gap:6px; }
+.auction-info-item { background:white; border-radius:7px; padding:6px 10px; border:1px solid #e1bee7; }
+.auction-info-label { font-size:10px; color:#999; margin-bottom:1px; }
+.auction-info-value { font-size:13px; font-weight:bold; }
+/* 경매 등록 버튼 (지도 우하단) */
+#auction-add-btn {
+    position:absolute; bottom:20px; right:14px; z-index:10;
+    background:#6a1b9a; color:white; border:none; border-radius:50px;
+    padding:10px 18px; font-size:13px; font-weight:bold; cursor:pointer;
+    box-shadow:0 3px 10px rgba(106,27,154,0.4); display:flex; align-items:center; gap:6px;
+}
+#auction-add-btn:hover { background:#4a148c; }
+/* 경매 목록 패널 */
+#auction-list-panel {
+    position:absolute; bottom:70px; right:14px; z-index:10;
+    background:white; border-radius:12px; width:280px; max-height:400px;
+    overflow-y:auto; box-shadow:0 4px 16px rgba(0,0,0,0.18); display:none;
+}
+.auction-list-header {
+    padding:10px 14px; font-size:12px; font-weight:bold; color:#6a1b9a;
+    border-bottom:1px solid #eee; position:sticky; top:0; background:white;
+}
+.auction-list-item {
+    padding:10px 14px; border-bottom:1px solid #f0f0f0; cursor:pointer;
+    transition:background 0.1s;
+}
+.auction-list-item:hover { background:#f3e5f5; }
+.auction-list-name { font-size:13px; font-weight:bold; color:#333; }
+.auction-list-sub { font-size:11px; color:#888; margin-top:2px; }
+.auction-status-badge {
+    display:inline-block; font-size:10px; font-weight:bold; padding:1px 7px;
+    border-radius:10px; margin-left:6px; vertical-align:middle;
+}
+</style>
+</head>
+<body>
+
+<div id="search-box">
+    <input type="text" id="addr-input" placeholder="아파트명&#xB7;도로명&#xB7;지번 검색" />
+    <button onclick="searchAddress()">검색</button>
+</div>
+<div id="type-filter">
+    <button class="type-btn active-apt" onclick="setTypeFilter('apt',this)">아파트</button>
+    <button class="type-btn" onclick="setTypeFilter('house',this)">주택</button>
+    <button class="type-btn" onclick="setTypeFilter('all',this)">전체</button>
+</div>
+
+<div id="filter-panel">
+    <div class="filter-row">
+        <div class="filter-row-label">평단가</div>
+        <button class="filter-tab ft-g active" data-g="1"   onclick="toggleGrade('1',this)">1등급</button>
+        <button class="filter-tab ft-g"        data-g="2"   onclick="toggleGrade('2',this)">2등급</button>
+        <button class="filter-tab ft-g"        data-g="3"   onclick="toggleGrade('3',this)">3등급</button>
+        <button class="filter-tab ft-g"        data-g="4"   onclick="toggleGrade('4',this)">4등급</button>
+        <button class="filter-tab ft-g"        data-g="5"   onclick="toggleGrade('5',this)">5등급</button>
+        <button class="filter-tab ft-g"        data-g="6"   onclick="toggleGrade('6',this)">6등급</button>
+        <button class="filter-tab ft-g"        data-g="7"   onclick="toggleGrade('7',this)">7등급</button>
+        <button class="filter-tab ft-g"        data-g="all" onclick="toggleGrade('all',this)">전체</button>
+    </div>
+    <div class="filter-row">
+        <div class="filter-row-label">투자점수</div>
+        <button class="filter-tab ft-s active" data-s="S"   onclick="toggleScore('S',this)">S등급</button>
+        <button class="filter-tab ft-s"        data-s="A"   onclick="toggleScore('A',this)">A등급</button>
+        <button class="filter-tab ft-s"        data-s="B"   onclick="toggleScore('B',this)">B등급</button>
+        <button class="filter-tab ft-s"        data-s="C"   onclick="toggleScore('C',this)">C등급</button>
+        <button class="filter-tab ft-s"        data-s="D"   onclick="toggleScore('D',this)">D등급</button>
+        <button class="filter-tab ft-s"        data-s="X"   onclick="toggleScore('X',this)">제외</button>
+        <button class="filter-tab ft-s"        data-s="all" onclick="toggleScore('all',this)">전체</button>
+    </div>
+</div>
+
+<div id="autocomplete"></div>
+<div id="status-box"></div>
+<div id="map"></div>
+
+<div id="legend">
+    <div><span class="legend-dot" style="background:#e53935;"></span> 아파트 · 최근 3개월</div>
+    <div><span class="legend-dot" style="background:#1565c0;"></span> 아파트 · 3개월~1년</div>
+    <div><span class="legend-dot" style="background:#212121;"></span> 주택 · 최근 1년</div>
+    <div><span class="legend-dot" style="background:#2e7d32;"></span> 주택 · 1년~3년</div>
+    <div style="border-top:1px solid #eee;margin-top:4px;padding-top:4px;">
+        <div style="font-size:11px;color:#555;font-weight:bold;margin-bottom:3px;">평단가 등급 (구 내 상대순위)</div>
+        <div style="display:flex;gap:3px;flex-wrap:wrap;align-items:center;font-size:11px;">
+            <span style="background:#b71c1c;color:white;font-size:10px;font-weight:bold;padding:1px 5px;border-radius:3px;">1</span>최고
+            <span style="background:#e53935;color:white;font-size:10px;font-weight:bold;padding:1px 5px;border-radius:3px;">2</span>
+            <span style="background:#ff7043;color:white;font-size:10px;font-weight:bold;padding:1px 5px;border-radius:3px;">3</span>
+            <span style="background:#ffa726;color:white;font-size:10px;font-weight:bold;padding:1px 5px;border-radius:3px;">4</span>
+            <span style="background:#66bb6a;color:white;font-size:10px;font-weight:bold;padding:1px 5px;border-radius:3px;">5</span>
+            <span style="background:#42a5f5;color:white;font-size:10px;font-weight:bold;padding:1px 5px;border-radius:3px;">6</span>
+            <span style="background:#9e9e9e;color:white;font-size:10px;font-weight:bold;padding:1px 5px;border-radius:3px;">7</span>최저
+        </div>
+    </div>
+    <div style="border-top:1px solid #eee;margin-top:4px;padding-top:4px;">
+        <div style="font-size:11px;color:#555;font-weight:bold;margin-bottom:3px;">투자점수 등급 (100점)</div>
+        <div style="font-size:11px;line-height:1.8;">
+            <span style="color:#b71c1c;font-weight:bold;">S</span> 85점↑ 즉시검토<br>
+            <span style="color:#e53935;font-weight:bold;">A</span> 70~84점 유망<br>
+            <span style="color:#ff7043;font-weight:bold;">B</span> 55~69점 조건부<br>
+            <span style="color:#9e9e9e;font-weight:bold;">C</span> 40~54점 관망<br>
+            <span style="color:#bdbdbd;font-weight:bold;">D</span> 40점 미만 제외
+        </div>
+    </div>
+    <div style="border-top:1px solid #eee;margin-top:4px;padding-top:4px;">
+        <div style="font-size:11px;color:#555;font-weight:bold;margin-bottom:3px;">장기 가치 (5년 평균 대비)</div>
+        <div style="font-size:10px;line-height:1.6;">
+            <span style="background:#b71c1c;color:white;padding:0 4px;border-radius:2px;">과열</span> 20%↑<br>
+            <span style="background:#ff7043;color:white;padding:0 4px;border-radius:2px;">우상향</span> 5~20%<br>
+            <span style="background:#9e9e9e;color:white;padding:0 4px;border-radius:2px;">정체</span> ±5%<br>
+            <span style="background:#1565c0;color:white;padding:0 4px;border-radius:2px;">역전</span> 평균 이하
+        </div>
+    </div>
+    <div style="border-top:1px solid #eee;margin-top:4px;padding-top:4px;font-size:11px;">
+        <span style="background:#ff6f00;color:white;font-size:10px;font-weight:bold;padding:1px 6px;border-radius:10px;">★ 신고가</span>
+        6개월 전 대비 동일평수 최고가 경신
+    </div>
+    <div style="border-top:1px solid #eee;margin-top:4px;padding-top:4px;font-size:11px;">
+        <span style="background:#6a1b9a;color:white;font-size:10px;font-weight:bold;padding:1px 6px;border-radius:10px;">🔨 경매</span>
+        등록된 경매 물건
+    </div>
+    <div style="font-size:11px;color:#888;margin-top:4px;">핀 숫자 = 기간 내 거래건수</div>
+</div>
+
+<!-- 경매 등록 버튼 -->
+<button id="auction-add-btn" onclick="openAuctionList()">🔨 경매 관리</button>
+
+<!-- 경매 목록 패널 -->
+<div id="auction-list-panel">
+    <div class="auction-list-header">
+        🔨 경매 물건 목록
+        <button onclick="openAuctionModal(null)" style="float:right;background:#6a1b9a;color:white;border:none;border-radius:20px;padding:3px 10px;font-size:11px;cursor:pointer;">+ 등록</button>
+    </div>
+    <div id="auction-list-body"></div>
+</div>
+
+<!-- 경매 등록/수정 모달 -->
+<div id="auction-modal-bg" onclick="closeAuctionModal(event)">
+<div id="auction-modal">
+    <div class="modal-header">
+        <span id="modal-title">🔨 경매 물건 등록</span>
+        <span class="modal-close" onclick="closeAuctionModal()">✕</span>
+    </div>
+    <div class="modal-body">
+        <input type="hidden" id="auction-id">
+
+        <!-- 기본 정보 -->
+        <div class="modal-section">
+            <div class="modal-section-title">📍 물건 정보</div>
+            <div class="modal-row">
+                <span class="modal-label">주소</span>
+                <input type="text" class="modal-input addr-input" id="a-addr" placeholder="도로명 또는 지번 주소 입력">
+                <button class="modal-btn btn-purple" onclick="searchAuctionAddr()">검색</button>
+            </div>
+            <div id="a-addr-result" style="font-size:11px;color:#6a1b9a;padding:2px 0 4px 76px;display:none;"></div>
+            <div class="modal-row">
+                <span class="modal-label">아파트명</span>
+                <input type="text" class="modal-input" id="a-name" placeholder="단지명">
+            </div>
+            <div class="modal-row">
+                <span class="modal-label">사건번호</span>
+                <input type="text" class="modal-input" id="a-case" placeholder="예) 2024타경12345">
+            </div>
+            <div class="modal-row">
+                <span class="modal-label">평형</span>
+                <input type="number" class="modal-input" id="a-pyung" placeholder="예) 24">
+                <span style="font-size:12px;color:#888;margin-left:4px;">평</span>
+            </div>
+            <div class="modal-row">
+                <span class="modal-label">입찰일</span>
+                <input type="date" class="modal-input" id="a-date">
+            </div>
+            <div class="modal-row">
+                <span class="modal-label">진행상태</span>
+                <select class="modal-select" id="a-status" onchange="updateStatusUI()">
+                    <option value="검토중">검토중</option>
+                    <option value="입찰예정">입찰예정</option>
+                    <option value="낙찰">낙찰</option>
+                    <option value="유찰">유찰</option>
+                    <option value="포기">포기</option>
+                    <option value="매도완료">매도완료</option>
+                </select>
+            </div>
+        </div>
+
+        <!-- 가격 정보 -->
+        <div class="modal-section">
+            <div class="modal-section-title">💰 가격 정보 (만원 단위)</div>
+            <div class="modal-row">
+                <span class="modal-label">감정가</span>
+                <input type="number" class="modal-input" id="a-appraisal" placeholder="0" oninput="calcMargin()">
+            </div>
+            <div class="modal-row">
+                <span class="modal-label">최저입찰가</span>
+                <input type="number" class="modal-input" id="a-min-bid" placeholder="0" oninput="calcMargin()">
+            </div>
+            <div class="modal-row">
+                <span class="modal-label">내 입찰가</span>
+                <input type="number" class="modal-input" id="a-my-bid" placeholder="0" oninput="calcMargin()">
+            </div>
+            <div class="modal-row" id="actual-bid-row" style="display:none;">
+                <span class="modal-label">실제 낙찰가</span>
+                <input type="number" class="modal-input" id="a-actual-bid" placeholder="0" oninput="calcMargin()">
+            </div>
+        </div>
+
+        <!-- 비용 -->
+        <div class="modal-section">
+            <div class="modal-section-title">🧾 비용 (만원 단위)</div>
+            <div class="modal-row">
+                <span class="modal-label">취득세</span>
+                <input type="number" class="modal-input" id="a-tax" placeholder="0" oninput="calcMargin()">
+                <button class="modal-btn btn-gray" onclick="autoCalcTax()" style="font-size:11px;">자동계산</button>
+            </div>
+            <div class="modal-row">
+                <span class="modal-label">수리비</span>
+                <input type="number" class="modal-input" id="a-repair" placeholder="0" oninput="calcMargin()">
+            </div>
+            <div class="modal-row">
+                <span class="modal-label">중개수수료</span>
+                <input type="number" class="modal-input" id="a-agent" placeholder="0" oninput="calcMargin()">
+            </div>
+            <div class="modal-row">
+                <span class="modal-label">기타비용</span>
+                <input type="number" class="modal-input" id="a-etc" placeholder="0" oninput="calcMargin()">
+            </div>
+        </div>
+
+        <!-- 매도 계획 -->
+        <div class="modal-section">
+            <div class="modal-section-title">📈 매도 계획 (만원 단위)</div>
+            <div class="modal-row">
+                <span class="modal-label">목표 매도가</span>
+                <input type="number" class="modal-input" id="a-target" placeholder="0" oninput="calcMargin()">
+            </div>
+            <div class="modal-row" id="actual-sell-row" style="display:none;">
+                <span class="modal-label">실제 매도가</span>
+                <input type="number" class="modal-input" id="a-actual-sell" placeholder="0" oninput="calcMargin()">
+            </div>
+        </div>
+
+        <!-- 메모 -->
+        <div class="modal-section">
+            <div class="modal-section-title">📝 메모</div>
+            <textarea class="modal-input" id="a-memo" rows="3" placeholder="특이사항, 권리분석 등 자유롭게 입력" style="resize:vertical;width:100%;"></textarea>
+        </div>
+
+        <!-- 마진 계산 결과 -->
+        <div class="margin-result" id="margin-result-box">
+            <div class="margin-result-title">💡 예상 마진 분석</div>
+            <div class="margin-grid" id="margin-grid"></div>
+        </div>
+    </div>
+    <div class="modal-footer">
+        <button class="modal-btn btn-red" id="modal-delete-btn" onclick="deleteAuction()" style="display:none;margin-right:auto;">삭제</button>
+        <button class="modal-btn btn-gray" onclick="closeAuctionModal()">취소</button>
+        <button class="modal-btn btn-purple" onclick="saveAuction()">저장</button>
+    </div>
+</div>
+</div>
+
+<div id="panel">
+    <div id="panel-header">
+        <span id="panel-title">거래 목록</span>
+        <span id="panel-close" onclick="closePanel()">✕</span>
+    </div>
+    <div id="sort-bar">
+        <span>정렬:</span>
+        <button class="sort-btn active" onclick="setSort('date',this)">최신순</button>
+        <button class="sort-btn" onclick="setSort('amount_desc',this)">금액↓</button>
+        <button class="sort-btn" onclick="setSort('amount_asc',this)">금액↑</button>
+        <button class="sort-btn" onclick="setSort('area_desc',this)">면적↓</button>
+        <button class="sort-btn" onclick="setSort('area_asc',this)">면적↑</button>
+    </div>
+    <div id="pyung-bar">
+        <span>평형:</span>
+        <button class="pyung-btn active" onclick="setPyung('all',this)">전체</button>
+    </div>
+    <div id="panel-body"></div>
+</div>
+
+<script>
+var map, geocoder, places;
+var markers=[], radiusCircle=null;
+var moveTimer=null, coordCache={}, dataCache={};
+
+var today        = new Date();
+var threeMonAgo  = new Date(today); threeMonAgo.setMonth(today.getMonth()-3);
+var sixMonAgo    = new Date(today); sixMonAgo.setMonth(today.getMonth()-6);
+var oneYearAgo   = new Date(today); oneYearAgo.setFullYear(today.getFullYear()-1);
+var twoYearAgo   = new Date(today); twoYearAgo.setFullYear(today.getFullYear()-2);
+var threeYearAgo = new Date(today); threeYearAgo.setFullYear(today.getFullYear()-3);
+var fiveYearAgo  = new Date(today); fiveYearAgo.setFullYear(today.getFullYear()-5);
+
+var currentTrades=[], currentSort='date', currentPyung='all';
+var currentTypeFilter='apt';
+var allAptList=[], allHouseList=[];
+var isLoading=false, lastLawdCd=null, houseLoadedLawd={}, lastSigungu='';
+var rentByAptName={}, rentHistoryByApt={};
+var currentRentTrades=[], currentIndicators=null;
+var activeGrades=new Set(['1']), activeScores=new Set(['S']);
+var GRADE_COLORS={1:'#b71c1c',2:'#e53935',3:'#ff7043',4:'#ffa726',5:'#66bb6a',6:'#42a5f5',7:'#9e9e9e'};
+
+// ─── 경매 전역 변수 ───
+var auctionList=[];          // 전체 경매 목록
+var auctionCoordCache={};    // 경매 주소→좌표 캐시
+var auctionMarkers=[];       // 경매 오버레이 목록
+var currentAuctionId=null;   // 모달에서 수정 중인 id
+
+// ─── 상태별 색상 ───
+var STATUS_COLOR={
+    '검토중':'#9e9e9e','입찰예정':'#1565c0','낙찰':'#2e7d32',
+    '유찰':'#e53935','포기':'#757575','매도완료':'#6a1b9a'
+};
+
+/* ════════════════════════════════════════
+   경매 API
+════════════════════════════════════════ */
+async function fetchAuctions(){
+    try{
+        var r=await fetch('/api/auction');
+        auctionList=await r.json();
+        if(!Array.isArray(auctionList)) auctionList=[];
+    }catch(e){ auctionList=[]; }
+}
+async function saveAuctionAPI(data){
+    var r=await fetch('/api/auction',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)});
+    return r.json();
+}
+async function deleteAuctionAPI(id){
+    await fetch('/api/auction?id='+id,{method:'DELETE'});
+}
+
+/* ════════════════════════════════════════
+   경매 목록 패널
+════════════════════════════════════════ */
+function openAuctionList(){
+    var p=document.getElementById('auction-list-panel');
+    if(p.style.display==='block'){ p.style.display='none'; return; }
+    renderAuctionList();
+    p.style.display='block';
+}
+function renderAuctionList(){
+    var body=document.getElementById('auction-list-body');
+    if(auctionList.length===0){
+        body.innerHTML='<div style="padding:20px;text-align:center;color:#aaa;font-size:12px;">등록된 경매 물건이 없습니다</div>';
+        return;
+    }
+    var html='';
+    auctionList.slice().reverse().forEach(function(a){
+        var sc=STATUS_COLOR[a.status]||'#9e9e9e';
+        html+='<div class="auction-list-item" onclick="openAuctionModal(\''+a.id+'\')">'
+            +'<div class="auction-list-name">'+a.name
+            +'<span class="auction-status-badge" style="background:'+sc+';color:white;">'+a.status+'</span></div>'
+            +'<div class="auction-list-sub">'+(a.addr||'주소 미입력')+'</div>'
+            +'<div class="auction-list-sub" style="color:#6a1b9a;">입찰가 '+(a.myBid?toEok(String(parseInt(a.myBid)*100)):'-')+'</div>'
+            +'</div>';
+    });
+    document.getElementById('auction-list-body').innerHTML=html;
+}
+
+/* ════════════════════════════════════════
+   경매 모달
+════════════════════════════════════════ */
+function openAuctionModal(id){
+    document.getElementById('auction-list-panel').style.display='none';
+    currentAuctionId=id;
+    var isEdit=!!id;
+    document.getElementById('modal-title').innerText=isEdit?'🔨 경매 물건 수정':'🔨 경매 물건 등록';
+    document.getElementById('modal-delete-btn').style.display=isEdit?'':'none';
+
+    // 초기화
+    ['auction-id','a-addr','a-name','a-case','a-pyung','a-date',
+     'a-appraisal','a-min-bid','a-my-bid','a-actual-bid',
+     'a-tax','a-repair','a-agent','a-etc','a-target','a-actual-sell','a-memo']
+        .forEach(function(id){ document.getElementById(id).value=''; });
+    document.getElementById('a-status').value='검토중';
+    document.getElementById('a-addr-result').style.display='none';
+
+    if(isEdit){
+        var a=auctionList.find(function(x){ return x.id===id; });
+        if(a){
+            document.getElementById('auction-id').value=a.id||'';
+            document.getElementById('a-addr').value=a.addr||'';
+            document.getElementById('a-name').value=a.name||'';
+            document.getElementById('a-case').value=a.caseNo||'';
+            document.getElementById('a-pyung').value=a.pyung||'';
+            document.getElementById('a-date').value=a.bidDate||'';
+            document.getElementById('a-status').value=a.status||'검토중';
+            document.getElementById('a-appraisal').value=a.appraisal||'';
+            document.getElementById('a-min-bid').value=a.minBid||'';
+            document.getElementById('a-my-bid').value=a.myBid||'';
+            document.getElementById('a-actual-bid').value=a.actualBid||'';
+            document.getElementById('a-tax').value=a.tax||'';
+            document.getElementById('a-repair').value=a.repair||'';
+            document.getElementById('a-agent').value=a.agent||'';
+            document.getElementById('a-etc').value=a.etc||'';
+            document.getElementById('a-target').value=a.target||'';
+            document.getElementById('a-actual-sell').value=a.actualSell||'';
+            document.getElementById('a-memo').value=a.memo||'';
+            if(a.addrLabel) document.getElementById('a-addr-result').innerText='📍 '+a.addrLabel;
+            if(a.addrLabel) document.getElementById('a-addr-result').style.display='block';
+        }
+    }
+    updateStatusUI();
+    calcMargin();
+    document.getElementById('auction-modal-bg').style.display='flex';
+}
+
+function closeAuctionModal(e){
+    if(e && e.target!==document.getElementById('auction-modal-bg')) return;
+    document.getElementById('auction-modal-bg').style.display='none';
+}
+
+function updateStatusUI(){
+    var s=document.getElementById('a-status').value;
+    var showActual=(s==='낙찰'||s==='매도완료');
+    document.getElementById('actual-bid-row').style.display=showActual?'':'none';
+    document.getElementById('actual-sell-row').style.display=(s==='매도완료')?'':'none';
+}
+
+/* ── 주소 검색 ── */
+function searchAuctionAddr(){
+    var q=document.getElementById('a-addr').value.trim();
+    if(!q){ alert('주소를 입력해 주세요.'); return; }
+    geocoder.addressSearch(q, function(result,status){
+        if(status===kakao.maps.services.Status.OK){
+            var r=result[0];
+            var label=r.road_address?r.road_address.address_name:r.address_name;
+            document.getElementById('a-addr').value=r.address_name;
+            document.getElementById('a-addr-result').innerText='📍 '+label+' (좌표 저장됨)';
+            document.getElementById('a-addr-result').style.display='block';
+            auctionCoordCache[r.address_name]={lat:parseFloat(r.y),lon:parseFloat(r.x),label:label};
+        } else {
+            // 주소 검색 실패 시 키워드 검색 시도
+            places.keywordSearch(q, function(res,st){
+                if(st===kakao.maps.services.Status.OK){
+                    var r=res[0];
+                    document.getElementById('a-addr').value=r.address_name;
+                    document.getElementById('a-addr-result').innerText='📍 '+r.place_name+' ('+r.road_address_name+')';
+                    document.getElementById('a-addr-result').style.display='block';
+                    auctionCoordCache[r.address_name]={lat:parseFloat(r.y),lon:parseFloat(r.x),label:r.place_name};
+                } else {
+                    alert('주소를 찾을 수 없습니다. 더 상세히 입력해 주세요.');
+                }
+            });
+        }
+    });
+}
+
+/* ── 취득세 자동계산 ── */
+function autoCalcTax(){
+    var bid=parseInt(document.getElementById('a-actual-bid').value)||parseInt(document.getElementById('a-my-bid').value)||0;
+    if(!bid){ alert('입찰가를 먼저 입력해 주세요.'); return; }
+    // 낙찰가(만원) → 억원 환산하여 세율 적용
+    var bidWon=bid*10000;
+    var rate=bidWon<=600000000?0.01:bidWon<=900000000?0.02:0.03;
+    var tax=Math.round(bid*rate);
+    document.getElementById('a-tax').value=tax;
+    calcMargin();
+}
+
+/* ── 마진 계산 ── */
+function calcMargin(){
+    var myBid   = parseInt(document.getElementById('a-my-bid').value)||0;
+    var actBid  = parseInt(document.getElementById('a-actual-bid').value)||0;
+    var useBid  = actBid||myBid; // 실제 낙찰가 우선
+    var tax     = parseInt(document.getElementById('a-tax').value)||0;
+    var repair  = parseInt(document.getElementById('a-repair').value)||0;
+    var agent   = parseInt(document.getElementById('a-agent').value)||0;
+    var etc     = parseInt(document.getElementById('a-etc').value)||0;
+    var target  = parseInt(document.getElementById('a-target').value)||0;
+    var actSell = parseInt(document.getElementById('a-actual-sell').value)||0;
+    var useSell = actSell||target;
+    var appraisal=parseInt(document.getElementById('a-appraisal').value)||0;
+
+    var totalCost = useBid+tax+repair+agent+etc;
+    var margin    = useSell>0 ? useSell-totalCost : 0;
+    var roi       = (totalCost>0&&useSell>0) ? Math.round(margin/totalCost*1000)/10 : 0;
+    var apprRate  = (appraisal>0&&useBid>0) ? Math.round(useBid/appraisal*1000)/10 : 0;
+
+    var grid=document.getElementById('margin-grid');
+    grid.innerHTML=
+        item('총 투자비용', totalCost>0?toEok(String(totalCost*100)):'—', '#555')
+       +item('총 비용(세금+수리 등)', (tax+repair+agent+etc)>0?toEok(String((tax+repair+agent+etc)*100)):'—', '#888')
+       +item(actSell?'실제 수익':'예상 수익', useSell>0?toEok(String(margin*100)):'—', margin>0?'#2e7d32':margin<0?'#e53935':'#555')
+       +item('수익률', useSell>0?roi+'%':'—', roi>10?'#2e7d32':roi>0?'#ff7043':'#e53935')
+       +item('감정가 대비 낙찰률', apprRate>0?apprRate+'%':'—', apprRate<80?'#2e7d32':apprRate<90?'#ff7043':'#e53935')
+       +item('손익분기 매도가', totalCost>0?toEok(String(totalCost*100)):'—', '#1565c0');
+
+    function item(label,value,color){
+        return '<div class="margin-item"><div class="margin-label">'+label+'</div>'
+              +'<div class="margin-value" style="color:'+color+';">'+value+'</div></div>';
+    }
+}
+
+/* ── 저장 ── */
+async function saveAuction(){
+    var addr=document.getElementById('a-addr').value.trim();
+    var name=document.getElementById('a-name').value.trim();
+    if(!addr){ alert('주소를 입력해 주세요.'); return; }
+    if(!name){ alert('아파트명을 입력해 주세요.'); return; }
+
+    var coordInfo=auctionCoordCache[addr];
+    var data={
+        id: document.getElementById('auction-id').value||Date.now().toString(),
+        addr: addr,
+        addrLabel: coordInfo?coordInfo.label:addr,
+        lat: coordInfo?coordInfo.lat:null,
+        lon: coordInfo?coordInfo.lon:null,
+        name: name,
+        caseNo: document.getElementById('a-case').value,
+        pyung: document.getElementById('a-pyung').value,
+        bidDate: document.getElementById('a-date').value,
+        status: document.getElementById('a-status').value,
+        appraisal: document.getElementById('a-appraisal').value,
+        minBid: document.getElementById('a-min-bid').value,
+        myBid: document.getElementById('a-my-bid').value,
+        actualBid: document.getElementById('a-actual-bid').value,
+        tax: document.getElementById('a-tax').value,
+        repair: document.getElementById('a-repair').value,
+        agent: document.getElementById('a-agent').value,
+        etc: document.getElementById('a-etc').value,
+        target: document.getElementById('a-target').value,
+        actualSell: document.getElementById('a-actual-sell').value,
+        memo: document.getElementById('a-memo').value,
+    };
+
+    // 좌표가 없으면 주소 검색으로 획득
+    if(!data.lat||!data.lon){
+        await new Promise(function(resolve){
+            geocoder.addressSearch(addr, function(result,status){
+                if(status===kakao.maps.services.Status.OK){
+                    data.lat=parseFloat(result[0].y);
+                    data.lon=parseFloat(result[0].x);
+                    data.addrLabel=result[0].road_address?result[0].road_address.address_name:result[0].address_name;
+                }
+                resolve();
+            });
+        });
+    }
+
+    setStatus('저장 중...');
+    var saved=await saveAuctionAPI(data);
+    var idx=auctionList.findIndex(function(a){ return a.id===saved.id; });
+    if(idx>=0) auctionList[idx]=saved; else auctionList.push(saved);
+    setStatus('');
+    closeAuctionModal();
+    redrawMarkers();
+    alert('저장되었습니다.');
+}
+
+/* ── 삭제 ── */
+async function deleteAuction(){
+    var id=document.getElementById('auction-id').value;
+    if(!id) return;
+    if(!confirm('이 경매 물건을 삭제하시겠습니까?')) return;
+    setStatus('삭제 중...');
+    await deleteAuctionAPI(id);
+    auctionList=auctionList.filter(function(a){ return a.id!==id; });
+    setStatus('');
+    closeAuctionModal();
+    redrawMarkers();
+}
+
+/* ════════════════════════════════════════
+   경매 마커 렌더링
+════════════════════════════════════════ */
+function clearAuctionMarkers(){
+    auctionMarkers.forEach(function(m){ m.setMap(null); });
+    auctionMarkers=[];
+}
+
+function renderAuctionMarkers(){
+    clearAuctionMarkers();
+    if(!auctionList||auctionList.length===0) return;
+    auctionList.forEach(function(a){
+        if(a.lat&&a.lon){
+            placeAuctionMarker(a);
+        } else if(a.addr){
+            geocoder.addressSearch(a.addr, function(result,status){
+                if(status===kakao.maps.services.Status.OK){
+                    a.lat=parseFloat(result[0].y);
+                    a.lon=parseFloat(result[0].x);
+                    saveAuctionAPI(a); // 좌표 업데이트 저장
+                    placeAuctionMarker(a);
+                }
+            });
+        }
+    });
+}
+
+function placeAuctionMarker(a){
+    var sc=STATUS_COLOR[a.status]||'#9e9e9e';
+    var bidStr=a.myBid?toEok(String(parseInt(a.myBid)*100)):'입찰가 미입력';
+
+    // 마진 계산
+    var myBid   = parseInt(a.myBid)||0;
+    var actBid  = parseInt(a.actualBid)||0;
+    var useBid  = actBid||myBid;
+    var tax     = parseInt(a.tax)||0;
+    var repair  = parseInt(a.repair)||0;
+    var agent   = parseInt(a.agent)||0;
+    var etc     = parseInt(a.etc)||0;
+    var target  = parseInt(a.target)||0;
+    var actSell = parseInt(a.actualSell)||0;
+    var useSell = actSell||target;
+    var totalCost=useBid+tax+repair+agent+etc;
+    var margin  = useSell>0?useSell-totalCost:null;
+    var roi     = (totalCost>0&&margin!==null)?Math.round(margin/totalCost*1000)/10:null;
+
+    var marginHtml='';
+    if(margin!==null){
+        var mc=margin>0?'#2e7d32':'#e53935';
+        marginHtml='<div style="font-size:10px;font-weight:bold;color:'+mc+';border-top:1px dashed #ddd;margin-top:2px;padding-top:2px;">'
+            +(margin>0?'+':'')+toEok(String(margin*100))
+            +(roi!==null?' ('+roi+'%)':'')
+            +'</div>';
+    }
+
+    var div=document.createElement('div');
+    div.style.cssText='position:relative;background:white;border:2.5px solid '+sc+';border-radius:7px;'
+        +'padding:3px 7px;margin:4px;margin-top:14px;margin-bottom:14px;white-space:nowrap;cursor:pointer;'
+        +'box-shadow:0 0 0 2px rgba(106,27,154,0.15),0 2px 8px rgba(0,0,0,0.18);text-align:center;line-height:1.5;max-width:160px;';
+
+    div.innerHTML=
+        // 경매 배지 (상단)
+        '<div class="auction-badge" style="background:'+sc+';">🔨 '+a.status+'</div>'
+        // 단지명
+        +'<div style="color:#333;font-size:10px;font-weight:bold;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:150px;margin-top:4px;">'+a.name+'</div>'
+        // 입찰가
+        +'<div style="color:'+sc+';font-size:11px;font-weight:bold;">'+bidStr+'</div>'
+        // 평형
+        +(a.pyung?'<div style="color:#888;font-size:10px;">'+a.pyung+'평</div>':'')
+        // 마진
+        +marginHtml;
+
+    div.onclick=function(){ openAuctionModal(a.id); };
+
+    var overlay=new kakao.maps.CustomOverlay({
+        position:new kakao.maps.LatLng(a.lat,a.lon),
+        content:div,
+        yAnchor:1.2,
+        zIndex:10  // 항상 최상위 레이어
+    });
+    overlay.setMap(map);
+    auctionMarkers.push(overlay);
+}
+
+/* ════════════════════════════════════════
+   패널에서 경매 정보 표시
+════════════════════════════════════════ */
+function buildAuctionPanelHtml(aptName){
+    var matched=auctionList.filter(function(a){
+        return a.name&&a.name.trim()===aptName.trim();
+    });
+    if(matched.length===0) return '';
+
+    var html='';
+    matched.forEach(function(a){
+        var sc=STATUS_COLOR[a.status]||'#9e9e9e';
+        var myBid   = parseInt(a.myBid)||0;
+        var actBid  = parseInt(a.actualBid)||0;
+        var useBid  = actBid||myBid;
+        var tax     = parseInt(a.tax)||0;
+        var repair  = parseInt(a.repair)||0;
+        var agent   = parseInt(a.agent)||0;
+        var etc     = parseInt(a.etc)||0;
+        var target  = parseInt(a.target)||0;
+        var actSell = parseInt(a.actualSell)||0;
+        var useSell = actSell||target;
+        var totalCost=useBid+tax+repair+agent+etc;
+        var margin  = useSell>0?useSell-totalCost:null;
+        var roi     = (totalCost>0&&margin!==null)?Math.round(margin/totalCost*1000)/10:null;
+        var apprRate= (parseInt(a.appraisal)>0&&useBid>0)?Math.round(useBid/parseInt(a.appraisal)*1000)/10:null;
+
+        html+='<div class="auction-panel-box">';
+        html+='<div class="auction-panel-title">'
+            +'🔨 경매 물건'
+            +'<span class="auction-status-badge" style="background:'+sc+';color:white;">'+a.status+'</span>'
+            +'<button class="auction-edit-btn" onclick="openAuctionModal(\''+a.id+'\')">수정</button>'
+            +'</div>';
+
+        html+='<div class="auction-info-grid">';
+        if(a.caseNo)      html+=aItem('사건번호',a.caseNo,'#555');
+        if(a.bidDate)     html+=aItem('입찰일',a.bidDate,'#555');
+        if(a.pyung)       html+=aItem('평형',a.pyung+'평','#555');
+        if(a.appraisal)   html+=aItem('감정가',toEok(String(parseInt(a.appraisal)*100)),'#555');
+        if(a.minBid)      html+=aItem('최저입찰가',toEok(String(parseInt(a.minBid)*100)),'#1565c0');
+        if(a.myBid)       html+=aItem('내 입찰가',toEok(String(parseInt(a.myBid)*100)),'#6a1b9a');
+        if(a.actualBid)   html+=aItem('실제 낙찰가',toEok(String(parseInt(a.actualBid)*100)),'#2e7d32');
+        if(apprRate!==null) html+=aItem('낙찰률',apprRate+'%',apprRate<80?'#2e7d32':apprRate<90?'#ff7043':'#e53935');
+        if(totalCost>0)   html+=aItem('총 투자비용',toEok(String(totalCost*100)),'#555');
+        if(useSell>0)     html+=aItem(actSell?'실제 매도가':'목표 매도가',toEok(String(useSell*100)),'#555');
+        if(margin!==null) html+=aItem(actSell?'실제 수익':'예상 수익',
+            (margin>0?'+':'')+toEok(String(margin*100)),margin>0?'#2e7d32':'#e53935');
+        if(roi!==null)    html+=aItem('수익률',roi+'%',roi>10?'#2e7d32':roi>0?'#ff7043':'#e53935');
+        html+='</div>';
+
+        if(a.memo){
+            html+='<div style="margin-top:8px;font-size:11px;color:#666;background:white;border-radius:6px;padding:6px 8px;border:1px solid #e1bee7;">'
+                +'<span style="color:#9e9e9e;font-size:10px;">메모</span><br>'+a.memo.replace(/\n/g,'<br>')+'</div>';
+        }
+        html+='</div>';
+    });
+
+    function aItem(label,value,color){
+        return '<div class="auction-info-item"><div class="auction-info-label">'+label+'</div>'
+              +'<div class="auction-info-value" style="color:'+color+';">'+value+'</div></div>';
+    }
+    return html;
+}
+
+/* ════════════════════════════════════════
+   기존 함수들 (변경 없음)
+════════════════════════════════════════ */
+function getInvestGrade(score,disqualified){
+    if(disqualified) return {label:'X',color:'#607d8b',bg:'#eceff1'};
+    if(score===null) return null;
+    if(score>=85) return {label:'S',color:'#b71c1c',bg:'#ffebee'};
+    if(score>=70) return {label:'A',color:'#e53935',bg:'#fff3e0'};
+    if(score>=55) return {label:'B',color:'#ff7043',bg:'#fff8e1'};
+    if(score>=40) return {label:'C',color:'#9e9e9e',bg:'#f5f5f5'};
+    return              {label:'D',color:'#bdbdbd',bg:'#f5f5f5'};
+}
+function calcInvestScore(ind){
+    if(!ind) return {score:null,disqualified:false,reason:'',breakdown:{}};
+    var reason=[],disqualified=false;
+    if(ind.recentCount!==null&&ind.recentCount<3){disqualified=true;reason.push('최근12개월 거래 '+ind.recentCount+'건(3건 미만)');}
+    if(ind.momentum!==null&&ind.momentum<0){disqualified=true;reason.push('가격상승률 마이너스('+ind.momentum+'%)');}
+    if(ind.volatility!==null&&ind.volatility>10){disqualified=true;reason.push('변동계수 '+ind.volatility+'%(10% 초과)');}
+    if(ind.rentRatio!==null&&ind.rentRatio>85){disqualified=true;reason.push('전세가율 '+ind.rentRatio+'%(85% 초과)');}
+    var s1=0;
+    if(ind.momentum!==null){if(ind.momentum>=15)s1=40;else if(ind.momentum>=10)s1=32;else if(ind.momentum>=5)s1=24;else if(ind.momentum>=0)s1=12;}
+    var s2=0;
+    if(ind.volatility!==null){if(ind.volatility<3)s2=20;else if(ind.volatility<5)s2=15;else if(ind.volatility<8)s2=8;}
+    var s3=0;
+    if(ind.turnover!==null){if(ind.turnover>=15)s3=20;else if(ind.turnover>=10)s3=16;else if(ind.turnover>=5)s3=10;else s3=3;}
+    var s4=0;
+    if(ind.rentRatio!==null){if(ind.rentRatio>=60&&ind.rentRatio<70)s4=20;else if(ind.rentRatio>=70&&ind.rentRatio<80)s4=14;else if(ind.rentRatio>=50&&ind.rentRatio<60)s4=10;else if(ind.rentRatio>=80)s4=5;else s4=3;}
+    return {score:s1+s2+s3+s4,disqualified:disqualified,reason:reason.join(' / '),breakdown:{momentum:s1,volatility:s2,turnover:s3,rentRatio:s4}};
+}
+function calcNewHigh(trades){
+    var pyungMap={};
+    trades.forEach(function(t){
+        if(t.area<=0||parseInt(t.amount)<=0) return;
+        var py=Math.round(toPyung(t.area));
+        if(!pyungMap[py]) pyungMap[py]=[];
+        pyungMap[py].push(t);
+    });
+    var hasNewHigh=false,newHighPyungs=[];
+    Object.keys(pyungMap).forEach(function(py){
+        var list=pyungMap[py],recent=[],before=[];
+        list.forEach(function(t){
+            var dt=new Date(t.year,t.month-1,t.day);
+            if(dt>=sixMonAgo) recent.push(parseInt(t.amount));
+            else before.push(parseInt(t.amount));
+        });
+        if(recent.length===0||before.length===0) return;
+        var rMax=Math.max.apply(null,recent),bMax=Math.max.apply(null,before);
+        if(rMax>bMax){hasNewHigh=true;newHighPyungs.push({py:py,recentMax:rMax,beforeMax:bMax});}
+    });
+    return {hasNewHigh:hasNewHigh,newHighPyungs:newHighPyungs};
+}
+function toggleGrade(val,btn){
+    if(val==='all'){activeGrades.clear();activeGrades.add('all');document.querySelectorAll('.ft-g').forEach(function(b){b.classList.toggle('active',b.dataset.g==='all');});}
+    else{activeGrades.delete('all');document.querySelector('.ft-g[data-g="all"]').classList.remove('active');if(activeGrades.has(val)){activeGrades.delete(val);btn.classList.remove('active');}else{activeGrades.add(val);btn.classList.add('active');}if(activeGrades.size===0){activeGrades.add('all');document.querySelector('.ft-g[data-g="all"]').classList.add('active');}}
+    redrawMarkers();
+}
+function toggleScore(val,btn){
+    if(val==='all'){activeScores.clear();activeScores.add('all');document.querySelectorAll('.ft-s').forEach(function(b){b.classList.toggle('active',b.dataset.s==='all');});}
+    else{activeScores.delete('all');document.querySelector('.ft-s[data-s="all"]').classList.remove('active');if(activeScores.has(val)){activeScores.delete(val);btn.classList.remove('active');}else{activeScores.add(val);btn.classList.add('active');}if(activeScores.size===0){activeScores.add('all');document.querySelector('.ft-s[data-s="all"]').classList.add('active');}}
+    redrawMarkers();
+}
+function passesFilter(apt){
+    if(apt.buildingType!=='apt') return true;
+    if(!activeGrades.has('all')){if(!apt.grade)return false;if(!activeGrades.has(String(apt.grade)))return false;}
+    if(!activeScores.has('all')){var ig=getInvestGrade(apt.investScore,apt.disqualified);if(!ig)return false;if(!activeScores.has(ig.label))return false;}
+    return true;
+}
+function cleanJibun(j){if(!j)return '';return j.split('-').map(function(p){return parseInt(p,10);}).filter(function(v){return !isNaN(v);}).join('-');}
+function getMonthList(y){var m=[];for(var i=0;i<y*12;i++){var d=new Date();d.setDate(1);d.setMonth(d.getMonth()-i);m.push(d.getFullYear()+String(d.getMonth()+1).padStart(2,'0'));}return m;}
+function ymToDate(ym){return new Date(parseInt(ym.slice(0,4)),parseInt(ym.slice(4,6))-1,1);}
+function getText(item,tag){var el=item.querySelector(tag);return el?el.textContent.trim():'';}
+function getDistance(lat1,lon1,lat2,lon2){var R=6371000,dLat=(lat2-lat1)*Math.PI/180,dLon=(lon2-lon1)*Math.PI/180;var a=Math.sin(dLat/2)**2+Math.cos(lat1*Math.PI/180)*Math.cos(lat2*Math.PI/180)*Math.sin(dLon/2)**2;return R*2*Math.atan2(Math.sqrt(a),Math.sqrt(1-a));}
+function toEok(manwon){var val=parseInt(manwon);if(isNaN(val))return '-';var eok=Math.floor(val/10000),rem=val%10000;if(eok>0&&rem>0)return eok+'억 '+rem.toLocaleString()+'만';if(eok>0)return eok+'억';return val.toLocaleString()+'만';}
+function toPyung(area){return Math.round(area/3.305785*10)/10;}
+function setStatus(msg){var box=document.getElementById('status-box');if(!box)return;if(!msg){box.style.display='none';return;}box.innerText=msg;box.style.display='block';}
+function clearMarkers(){markers.forEach(function(m){m.setMap(null);});markers=[];}
+function closePanel(){document.getElementById('panel').style.display='none';if(radiusCircle){radiusCircle.setMap(null);radiusCircle=null;}}
+
+function fetchHouseAPI_P(ep,lawdCd,ym){return fetch('/api/house?endpoint='+ep+'&lawdCd='+lawdCd+'&dealYmd='+ym).then(function(r){return r.text();}).then(function(t){try{return Array.from(new DOMParser().parseFromString(t,'text/xml').querySelectorAll('item'));}catch(e){return [];}}).catch(function(){return [];});}
+function fetchAptAPI_P(lawdCd,ym){return fetch('/api/house?endpoint=apt&lawdCd='+lawdCd+'&dealYmd='+ym).then(function(r){return r.text();}).then(function(t){try{return Array.from(new DOMParser().parseFromString(t,'text/xml').querySelectorAll('item'));}catch(e){return [];}}).catch(function(){return [];});}
+function fetchAptRentAPI_P(lawdCd,ym){return fetch('/api/house?endpoint=aptRent&lawdCd='+lawdCd+'&dealYmd='+ym).then(function(r){return r.text();}).then(function(t){try{return Array.from(new DOMParser().parseFromString(t,'text/xml').querySelectorAll('item'));}catch(e){return [];}}).catch(function(){return [];});}
+
+function loadKakaoSDK(){
+    var s=document.createElement('script');
+    s.src='https://dapi.kakao.com/v2/maps/sdk.js?appkey=2348fc777815a26856e77b16b1a3d0b7&autoload=false&libraries=services';
+    s.onload=function(){kakao.maps.load(initKakao);};
+    s.onerror=function(){alert('카카오 지도 SDK 로드 실패');};
+    document.head.appendChild(s);
+}
+window.addEventListener('load',loadKakaoSDK);
+
+function initKakao(){
+    geocoder=new kakao.maps.services.Geocoder();
+    places=new kakao.maps.services.Places();
+    if(navigator.geolocation){
+        navigator.geolocation.getCurrentPosition(
+            function(p){initMap(p.coords.latitude,p.coords.longitude);},
+            function(){initMap(37.5665,126.9780);}
+        );
+    } else {initMap(37.5665,126.9780);}
+    document.getElementById('addr-input').addEventListener('keydown',function(e){if(e.key==='Enter')searchAddress();});
+    document.addEventListener('click',function(e){
+        var ac=document.getElementById('autocomplete'),box=document.getElementById('search-box');
+        var lp=document.getElementById('auction-list-panel'),btn=document.getElementById('auction-add-btn');
+        if(!ac.contains(e.target)&&!box.contains(e.target)) ac.style.display='none';
+        if(!lp.contains(e.target)&&!btn.contains(e.target)) lp.style.display='none';
+    });
+}
+
+function initMap(lat,lon){
+    map=new kakao.maps.Map(document.getElementById('map'),{center:new kakao.maps.LatLng(lat,lon),level:7});
+    map.setMinLevel(1); map.setMaxLevel(14);
+    new kakao.maps.Marker({map:map,position:new kakao.maps.LatLng(lat,lon),title:'내 위치'});
+
+    // ─── 로딩 순서: 1)실거래 2)경매(마지막, 항상 최상위) ───
+    loadAllData(lat,lon).then(function(){
+        fetchAuctions().then(function(){
+            renderAuctionMarkers();
+        });
+    });
+
+    kakao.maps.event.addListener(map,'idle',function(){
+        var c=map.getCenter(); clearTimeout(moveTimer);
+        moveTimer=setTimeout(function(){
+            loadAllData(c.getLat(),c.getLng()).then(function(){
+                renderAuctionMarkers(); // 지도 이동 후에도 경매 마커 재렌더
+            });
+        },1200);
+    });
+}
+
+function setTypeFilter(type,btn){
+    currentTypeFilter=type;
+    document.querySelectorAll('.type-btn').forEach(function(b){b.classList.remove('active-all','active-apt','active-house');});
+    btn.classList.add(type==='all'?'active-all':type==='apt'?'active-apt':'active-house');
+    if((type==='house'||type==='all')&&lastLawdCd&&!houseLoadedLawd[lastLawdCd]){
+        ensureHouseLoaded(lastLawdCd,lastSigungu).then(redrawMarkers);
+    } else {redrawMarkers();}
+}
+
+function searchAddress(){
+    var query=document.getElementById('addr-input').value.trim();
+    if(!query){alert('검색어를 입력해 주세요.');return;}
+    var addrResults=[],aptResults=[],done=0;
+    function onDone(){
+        if(++done<2) return;
+        var seen={},merged=[];
+        addrResults.concat(aptResults).forEach(function(r){var key=r.lat.toFixed(4)+'_'+r.lon.toFixed(4);if(!seen[key]){seen[key]=true;merged.push(r);}});
+        if(merged.length===0){alert('검색 결과가 없습니다.');return;}
+        showDropdown(merged);
+    }
+    geocoder.addressSearch(query,function(result,status){if(status===kakao.maps.services.Status.OK)result.slice(0,5).forEach(function(r){addrResults.push({label:r.address_name,sub:r.road_address?r.road_address.address_name:'',lat:parseFloat(r.y),lon:parseFloat(r.x),type:'주소'});});onDone();});
+    places.keywordSearch(query,function(result,status){if(status===kakao.maps.services.Status.OK)result.slice(0,10).forEach(function(r){aptResults.push({label:r.place_name,sub:r.road_address_name||r.address_name,lat:parseFloat(r.y),lon:parseFloat(r.x),type:'아파트'});});onDone();},{category_group_code:'AT4'});
+}
+
+function showDropdown(results){
+    var ac=document.getElementById('autocomplete');ac.innerHTML='';
+    var hdr=document.createElement('div');hdr.style.cssText='padding:8px 16px;font-size:11px;color:#999;border-bottom:1px solid #eee;background:#fafafa;';hdr.innerText='검색결과 '+results.length+'건 · 선택하세요';ac.appendChild(hdr);
+    results.forEach(function(r){
+        var div=document.createElement('div');div.style.cssText='padding:10px 16px;cursor:pointer;border-bottom:1px solid #f0f0f0;display:flex;justify-content:space-between;align-items:center;gap:8px;';
+        var bc=r.type==='아파트'?'#e53935':'#1565c0';
+        div.innerHTML='<div style="flex:1;min-width:0;"><div style="font-size:13px;font-weight:bold;color:#333;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">'+r.label+'</div>'+(r.sub?'<div style="font-size:11px;color:#999;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">'+r.sub+'</div>':'')+'</div><span style="background:'+bc+';color:white;font-size:10px;padding:2px 7px;border-radius:10px;flex-shrink:0;">'+r.type+'</span>';
+        div.onmouseover=function(){this.style.background='#fffde7';};div.onmouseout=function(){this.style.background='white';};
+        div.onclick=function(){moveToResult(r);};ac.appendChild(div);
+    });
+    ac.style.display='block';
+}
+
+function moveToResult(r){
+    document.getElementById('autocomplete').style.display='none';
+    document.getElementById('addr-input').value=r.label;
+    map.setCenter(new kakao.maps.LatLng(r.lat,r.lon));
+    map.setLevel(4);lastLawdCd=null;loadAllData(r.lat,r.lon);
+}
+
+async function loadAllData(centerLat,centerLon){
+    return new Promise(function(resolve){
+        if(isLoading){resolve();return;}
+        geocoder.coord2RegionCode(centerLon,centerLat,async function(result,status){
+            if(status!==kakao.maps.services.Status.OK){resolve();return;}
+            var regionCode=null,sigungu='';
+            for(var i=0;i<result.length;i++){if(result[i].region_type==='B'){regionCode=result[i].code;sigungu=result[i].region_1depth_name+' '+result[i].region_2depth_name;break;}}
+            if(!regionCode){resolve();return;}
+            var lawdCd=regionCode.substring(0,5);lastSigungu=sigungu;
+            if(lawdCd===lastLawdCd&&dataCache[lawdCd]){
+                allAptList=dataCache[lawdCd].apt;allHouseList=dataCache[lawdCd].house||[];
+                rentByAptName=dataCache[lawdCd].rent||{};rentHistoryByApt=dataCache[lawdCd].rentHistory||{};
+                redrawMarkers();resolve();return;
+            }
+            lastLawdCd=lawdCd;isLoading=true;setStatus('데이터 고속 조회 중...');
+            var aptMonths=getMonthList(2);
+            var aptResults=await Promise.all(aptMonths.map(function(ym){return fetchAptAPI_P(lawdCd,ym);}));
+            var rentResults=await Promise.all(aptMonths.map(function(ym){return fetchAptRentAPI_P(lawdCd,ym);}));
+            var aptRaw=[].concat.apply([],aptResults);
+            var rentRaw=[].concat.apply([],rentResults);
+            allAptList=groupItems(aptRaw,sigungu,lawdCd,'apt');
+            allHouseList=[];
+            rentByAptName=buildRentIndex(rentRaw);
+            rentHistoryByApt=buildRentHistory(rentRaw);
+            calcPriceGrades(allAptList);
+            calcInvestIndicators(allAptList,rentRaw);
+            allAptList.forEach(function(apt){
+                var r=calcInvestScore(apt.indicators);
+                apt.investScore=r.score;apt.disqualified=r.disqualified;apt.dqReason=r.reason;apt.scoreBreakdown=r.breakdown;
+                var nh=calcNewHigh(apt.trades);apt.hasNewHigh=nh.hasNewHigh;apt.newHighPyungs=nh.newHighPyungs;
+            });
+            dataCache[lawdCd]={apt:allAptList,house:[],rent:rentByAptName,rentHistory:rentHistoryByApt};
+            isLoading=false;setStatus('');redrawMarkers();resolve();
+        });
+    });
+}
+
+function calcPriceGrades(aptList){
+    var scored=aptList.map(function(apt){
+        var valid=apt.trades.filter(function(t){var dt=new Date(t.year,t.month-1,t.day);return dt>=oneYearAgo&&t.area>0&&parseInt(t.amount)>0;});
+        if(!valid.length) return {apt:apt,ppp:0};
+        var sum=valid.reduce(function(a,t){return a+parseInt(t.amount)/toPyung(t.area);},0);
+        return {apt:apt,ppp:sum/valid.length};
+    }).filter(function(x){return x.ppp>0;});
+    scored.sort(function(a,b){return b.ppp-a.ppp;});
+    var total=scored.length;
+    scored.forEach(function(x,i){x.apt.grade=Math.min(7,Math.floor(i/total*7)+1);x.apt.ppp=Math.round(x.ppp);});
+    aptList.forEach(function(apt){if(!apt.grade){apt.grade=null;apt.ppp=0;}});
+}
+
+function calcInvestIndicators(aptList,rentRaw){
+    var rentMonthly={};
+    rentRaw.forEach(function(item){
+        var name=getText(item,'aptNm')||getText(item,'mhouseNm')||'';if(!name)return;
+        var deposit=parseInt((getText(item,'deposit')||'0').replace(/,/g,''))||0;
+        var monthly=parseInt(getText(item,'monthlyRent')||'0')||0;
+        var converted=deposit+monthly*100;
+        var area=parseFloat(getText(item,'excluUseAr')||'0');if(area<=0||converted<=0)return;
+        var ym=getText(item,'dealYear')+String(parseInt(getText(item,'dealMonth'))).padStart(2,'0');
+        var key=name+'_'+ym;if(!rentMonthly[key])rentMonthly[key]=[];
+        rentMonthly[key].push(converted/toPyung(area));
+    });
+    aptList.forEach(function(apt){
+        var trades=apt.trades;if(!trades||trades.length===0){apt.indicators=null;return;}
+        var name=trades[0].name,monthMap={};
+        trades.forEach(function(t){if(t.area<=0||parseInt(t.amount)<=0)return;var ym=String(t.year)+String(t.month).padStart(2,'0');if(!monthMap[ym])monthMap[ym]=[];monthMap[ym].push(parseInt(t.amount)/toPyung(t.area));});
+        var ymKeys=Object.keys(monthMap).sort();if(ymKeys.length<2){apt.indicators=null;return;}
+        function median(arr){var s=arr.slice().sort(function(a,b){return a-b;});var m=Math.floor(s.length/2);return s.length%2?s[m]:(s[m-1]+s[m])/2;}
+        var now12={},prev12={};
+        ymKeys.forEach(function(ym){var dt=ymToDate(ym);if(dt>=oneYearAgo)now12[ym]=monthMap[ym];else if(dt>=twoYearAgo)prev12[ym]=monthMap[ym];});
+        var n12=[].concat.apply([],Object.values(now12)),p12=[].concat.apply([],Object.values(prev12));
+        var momentum=null;
+        if(n12.length>0&&p12.length>0){var mN=median(n12),mP=median(p12);momentum=Math.round((mN-mP)/mP*1000)/10;}
+        var recentYms=ymKeys.filter(function(ym){return ymToDate(ym)>=oneYearAgo;});
+        var volatility=null;
+        if(recentYms.length>=3){var meds=recentYms.map(function(ym){return median(monthMap[ym]);});var mean=meds.reduce(function(a,b){return a+b;},0)/meds.length;var std=Math.sqrt(meds.reduce(function(a,b){return a+(b-mean)*(b-mean);},0)/meds.length);volatility=Math.round(std/mean*1000)/10;}
+        var recentTrades=trades.filter(function(t){return new Date(t.year,t.month-1,t.day)>=oneYearAgo;});
+        var recentCount=recentTrades.length;
+        var uniqueUnits=new Set(trades.map(function(t){return t.floor+'_'+Math.round(t.area);})).size;
+        var estUnits=Math.max(uniqueUnits*3,recentTrades.length);
+        var turnover=estUnits>0?Math.round(recentTrades.length/estUnits*1000)/10:null;
+        var rentVals=[],saleVals=[];
+        recentYms.forEach(function(ym){var rKey=name+'_'+ym;if(rentMonthly[rKey])rentVals=rentVals.concat(rentMonthly[rKey]);if(monthMap[ym])saleVals=saleVals.concat(monthMap[ym]);});
+        var rentRatio=null;
+        if(rentVals.length>0&&saleVals.length>0)rentRatio=Math.round(median(rentVals)/median(saleVals)*1000)/10;
+        apt.indicators={momentum:momentum,volatility:volatility,turnover:turnover,rentRatio:rentRatio,recentCount:recentCount};
+    });
+}
+
+function buildRentIndex(rentRaw){
+    var idx={};
+    rentRaw.forEach(function(item){
+        var name=getText(item,'aptNm')||getText(item,'mhouseNm')||'';if(!name)return;
+        var area=parseFloat(getText(item,'excluUseAr')||'0');var pyung=toPyung(area);
+        var monthly=parseInt(getText(item,'monthlyRent')||'0',10);if(monthly>0)return;
+        var deposit=(getText(item,'deposit')||getText(item,'보증금액')||'').replace(/,/g,'').trim();if(!deposit||deposit==='0')return;
+        var year=parseInt(getText(item,'dealYear')),month=parseInt(getText(item,'dealMonth')),day=parseInt(getText(item,'dealDay'));
+        var dateNum=year*10000+month*100+day;var key=name+'_'+pyung;
+        if(!idx[key]||dateNum>idx[key].dateNum)idx[key]={deposit:deposit,year:year,month:month,day:day,dateNum:dateNum};
+    });
+    return idx;
+}
+
+function buildRentHistory(rentRaw){
+    var idx={};
+    rentRaw.forEach(function(item){
+        var name=getText(item,'aptNm')||getText(item,'mhouseNm')||'';if(!name)return;
+        var monthly=parseInt(getText(item,'monthlyRent')||'0',10);
+        var deposit=(getText(item,'deposit')||getText(item,'보증금액')||'').replace(/,/g,'').trim();if(!deposit||deposit==='0')return;
+        var area=parseFloat(getText(item,'excluUseAr')||'0');
+        var record={year:parseInt(getText(item,'dealYear')),month:parseInt(getText(item,'dealMonth')),day:parseInt(getText(item,'dealDay')),deposit:deposit,monthlyRent:monthly,rentType:monthly>0?'monthly':'jeonse',area:area,floor:getText(item,'floor')||'-',buildingType:'rent'};
+        if(!idx[name])idx[name]=[];idx[name].push(record);
+    });
+    Object.keys(idx).forEach(function(k){idx[k].sort(function(a,b){return (b.year*10000+b.month*100+b.day)-(a.year*10000+a.month*100+a.day);});});
+    return idx;
+}
+
+function getLatestJeonse(aptName,pyung){return rentByAptName[aptName+'_'+pyung]||null;}
+
+async function ensureHouseLoaded(lawdCd,sigungu){
+    if(houseLoadedLawd[lawdCd])return;setStatus('주택 데이터 불러오는 중...');
+    var months=getMonthList(5);
+    var rhs=await Promise.all(months.map(function(ym){return fetchHouseAPI_P('rhs',lawdCd,ym);}));
+    var sht=await Promise.all(months.map(function(ym){return fetchHouseAPI_P('sht',lawdCd,ym);}));
+    allHouseList=groupItems([].concat.apply([],rhs).concat([].concat.apply([],sht)),sigungu,lawdCd,'house');
+    dataCache[lawdCd].house=allHouseList;houseLoadedLawd[lawdCd]=true;setStatus('');
+}
+
+function groupItems(items,sigungu,lawdCd,buildingType){
+    var aptMap={};
+    items.forEach(function(item){
+        var name=getText(item,'mhouseNm')||getText(item,'aptNm')||getText(item,'houseNm')||getText(item,'buildNm');
+        var umdNm=getText(item,'umdNm'),jibun=cleanJibun(getText(item,'jibun'));
+        var roadNm=getText(item,'roadNm');
+        var roadBon=parseInt(getText(item,'roadNmBonbun'),10)||'';
+        var roadBub=parseInt(getText(item,'roadNmBubun'),10)||'';
+        if(!name||name.trim()==='')name=umdNm+' '+(jibun||'주택');
+        var candidates=[];
+        if(roadNm)candidates.push(sigungu+' '+roadNm+' '+roadBon+(roadBub?'-'+roadBub:''));
+        if(umdNm&&jibun)candidates.push(sigungu+' '+umdNm+' '+jibun);
+        if(roadNm)candidates.push(sigungu+' '+roadNm);
+        if(umdNm)candidates.push(sigungu+' '+umdNm);
+        var key=buildingType+'_'+name+'_'+umdNm+'_'+jibun;
+        var areaVal=parseFloat(getText(item,'excluUseAr')||getText(item,'totalFloorAr')||getText(item,'useAr')||'0');
+        var record={year:parseInt(getText(item,'dealYear')),month:parseInt(getText(item,'dealMonth')),day:parseInt(getText(item,'dealDay')),amount:getText(item,'dealAmount').replace(/,/g,'').trim(),area:areaVal,floor:getText(item,'floor')||'-',name:name,umdNm:umdNm,jibun:jibun,candidates:candidates,searchAddr:sigungu+' '+umdNm+' '+jibun,sigungu:sigungu,houseType:getText(item,'houseType')||buildingType,buildingType:buildingType,buildYear:getText(item,'buildYear')||''};
+        if(!aptMap[key])aptMap[key]=[];aptMap[key].push(record);
+    });
+    var list=[];
+    Object.keys(aptMap).forEach(function(key){
+        var trades=aptMap[key];
+        trades.sort(function(a,b){return (b.year*10000+b.month*100+b.day)-(a.year*10000+a.month*100+a.day);});
+        var c3M=0,c3Y=0,c1Y=0,c1Y3Y=0;
+        trades.forEach(function(t){var dt=new Date(t.year,t.month-1,t.day);if(buildingType==='apt'){if(dt>=threeMonAgo)c3M++;else if(dt>=oneYearAgo)c3Y++;}else{if(dt>=oneYearAgo)c1Y++;else if(dt>=threeYearAgo)c1Y3Y++;}});
+        list.push({latest:trades[0],trades:trades,lawdCd:lawdCd,buildingType:buildingType,count3M:c3M,count3MTo1Y:c3Y,count1Y:c1Y,count1YTo3Y:c1Y3Y,grade:null,ppp:0,indicators:null,investScore:null,disqualified:false,dqReason:'',scoreBreakdown:{},hasNewHigh:false,newHighPyungs:[]});
+    });
+    return list;
+}
+
+function redrawMarkers(){
+    clearMarkers();
+    var list=currentTypeFilter==='all'?allAptList.concat(allHouseList):currentTypeFilter==='apt'?allAptList:allHouseList;
+    var c=map.getCenter();placeMarkers(list,c.getLat(),c.getLng());
+    // 실거래 마커 후 경매 마커 렌더 (항상 최상위)
+    setTimeout(function(){ renderAuctionMarkers(); },100);
+}
+
+function getPinConfig(apt){
+    if(apt.buildingType==='apt'){if(apt.count3M>0)return {color:'#e53935',count:apt.count3M};if(apt.count3MTo1Y>0)return {color:'#1565c0',count:apt.count3MTo1Y};return null;}
+    else{if(apt.count1Y>0)return {color:'#212121',count:apt.count1Y};if(apt.count1YTo3Y>0)return {color:'#2e7d32',count:apt.count1YTo3Y};return null;}
+}
+
+function placeMarkers(aptList,centerLat,centerLon){
+    if(!centerLat||!centerLon||aptList.length===0)return;
+    var filtered=aptList.filter(function(apt){return passesFilter(apt);});
+    var cached=[],needGeocode=[];
+    filtered.forEach(function(apt){var cacheKey=apt.latest.searchAddr;if(coordCache[cacheKey])cached.push({coord:coordCache[cacheKey],apt:apt});else needGeocode.push({cacheKey:cacheKey,apt:apt});});
+    cached.forEach(function(item){if(getDistance(centerLat,centerLon,item.coord.lat,item.coord.lon)<=10000)createMarker(item.coord.lat,item.coord.lon,item.apt);});
+    var idx=0;
+    function runBatch(){
+        if(idx>=needGeocode.length)return;
+        var item=needGeocode[idx++];
+        tryGeocode(item.apt.latest.candidates,0,function(mLat,mLon){
+            if(mLat&&mLon){coordCache[item.cacheKey]={lat:mLat,lon:mLon};if(getDistance(centerLat,centerLon,mLat,mLon)<=10000)createMarker(mLat,mLon,item.apt);}
+            setTimeout(runBatch,100);
+        });
+    }
+    runBatch();
+}
+
+function tryGeocode(candidates,idx,callback){
+    if(idx>=candidates.length){callback(null,null);return;}
+    geocoder.addressSearch(candidates[idx],function(result,status){
+        if(status===kakao.maps.services.Status.OK)callback(parseFloat(result[0].y),parseFloat(result[0].x));
+        else tryGeocode(candidates,idx+1,callback);
+    });
+}
+
+function createMarker(lat,lon,apt){
+    var config=getPinConfig(apt);if(!config)return;
+    var l=apt.latest,color=config.color;
+
+    // 장기 가치 배지
+    var trades=apt.trades,valueBadge='';
+    var recent1Y=trades.filter(t=>new Date(t.year,t.month-1,t.day)>=oneYearAgo&&t.area>0);
+    var hist5Y=trades.filter(t=>new Date(t.year,t.month-1,t.day)>=fiveYearAgo&&t.area>0);
+    if(recent1Y.length>0&&hist5Y.length>=3){
+        var avg1Y=recent1Y.reduce((a,b)=>a+(parseInt(b.amount)/toPyung(b.area)),0)/recent1Y.length;
+        var avg5Y=hist5Y.reduce((a,b)=>a+(parseInt(b.amount)/toPyung(b.area)),0)/hist5Y.length;
+        var ratio=(avg1Y/avg5Y)-1;
+        if(ratio>=0.20)      valueBadge='<div class="value-badge" style="background:#b71c1c;">과열</div>';
+        else if(ratio>=0.05) valueBadge='<div class="value-badge" style="background:#ff7043;">우상향</div>';
+        else if(ratio>=-0.05)valueBadge='<div class="value-badge" style="background:#9e9e9e;">정체</div>';
+        else                 valueBadge='<div class="value-badge" style="background:#1565c0;">역전</div>';
+    }
+
+    // 경매 배지 (해당 단지에 경매 등록 여부)
+    var hasAuction=auctionList.some(function(a){return a.name&&a.name.trim()===l.name.trim();});
+
+    var amountStr=toEok(l.amount);
+    var pyungStr=l.area>0?toPyung(l.area)+'평':'';
+    var floorStr=(l.floor&&l.floor!=='-')?l.floor+'층':'';
+    var buildYearStr=(apt.buildingType==='house'&&l.buildYear)?l.buildYear+'년식':'';
+    var displayName=apt.buildingType==='house'?l.umdNm+' '+l.jibun:l.name;
+    var typeLabel='';
+    if(apt.buildingType==='house'){var ht=(l.houseType&&l.houseType!=='house')?l.houseType:'주택';typeLabel='<div style="font-size:9px;color:white;background:'+color+';border-radius:3px;padding:1px 4px;margin-bottom:2px;display:inline-block;">'+ht+'</div>';}
+    var subInfo=[pyungStr,floorStr,buildYearStr].filter(Boolean).join(' · ');
+    var jeonseStr='';
+    if(apt.buildingType==='apt'&&l.area>0){var ji=getLatestJeonse(l.name,toPyung(l.area));if(ji){var jDate=ji.year+'.'+String(ji.month).padStart(2,'0')+'.'+String(ji.day).padStart(2,'0');jeonseStr='<div style="color:#6a1b9a;font-size:10px;font-weight:bold;border-top:1px dashed #ddd;margin-top:2px;padding-top:2px;">전세 '+toEok(ji.deposit)+'<span style="color:#aaa;font-size:9px;font-weight:normal;margin-left:3px;">('+jDate+')</span></div>';}}
+    var gradeBadge='';
+    if(apt.buildingType==='apt'&&apt.grade){var gc=GRADE_COLORS[apt.grade];gradeBadge='<div style="position:absolute;top:-8px;left:-8px;background:'+gc+';color:white;font-size:11px;font-weight:900;width:20px;height:20px;border-radius:50%;display:flex;align-items:center;justify-content:center;box-shadow:0 1px 3px rgba(0,0,0,0.4);border:1.5px solid white;">'+apt.grade+'</div>';}
+    var scoreBadge='';
+    if(apt.buildingType==='apt'){var ig=getInvestGrade(apt.investScore,apt.disqualified);if(ig){var scoreText=apt.disqualified?'제외':(apt.investScore!==null?apt.investScore+'점':'-');scoreBadge='<div style="position:absolute;top:-8px;right:-8px;background:'+ig.color+';color:white;font-size:9px;font-weight:900;min-width:28px;height:20px;border-radius:10px;display:flex;align-items:center;justify-content:center;padding:0 4px;box-shadow:0 1px 3px rgba(0,0,0,0.4);border:1.5px solid white;white-space:nowrap;">'+scoreText+'</div>';}}
+    var newHighBadge='';
+    if(apt.buildingType==='apt'&&apt.hasNewHigh){newHighBadge='<div class="new-high-badge">&#x2605; 신고가</div>';}
+
+    // 경매 등록 단지 강조 테두리
+    var borderStyle=apt.buildingType==='apt'&&apt.hasNewHigh
+        ?'2.5px solid #ff6f00'
+        :(hasAuction?'2.5px solid #6a1b9a':'2px solid '+color);
+    var shadowStyle=hasAuction
+        ?'0 0 0 2px rgba(106,27,154,0.25),0 2px 8px rgba(0,0,0,0.2)'
+        :(apt.buildingType==='apt'&&apt.hasNewHigh?'0 0 0 2px #ffe082,0 2px 8px rgba(255,111,0,0.3)':'0 2px 5px rgba(0,0,0,0.2)');
+
+    // 경매 인라인 배지 (마커 내부)
+    var auctionInlineBadge=hasAuction
+        ?'<div style="font-size:9px;font-weight:bold;color:#6a1b9a;background:#f3e5f5;border:1px solid #ce93d8;border-radius:4px;padding:1px 5px;margin-top:1px;display:inline-block;">🔨 경매등록</div>'
+        :'';
+
+    var div=document.createElement('div');
+    div.style.cssText='position:relative;background:white;border:'+borderStyle+';border-radius:7px;padding:3px 7px;margin:4px;margin-bottom:14px;white-space:nowrap;cursor:pointer;box-shadow:'+shadowStyle+';text-align:center;line-height:1.5;max-width:150px;';
+
+    div.innerHTML=gradeBadge+scoreBadge+typeLabel
+        +'<div style="font-size:18px;font-weight:900;color:'+color+';line-height:1.1;">'+config.count+'건</div>'
+        +'<div style="color:#333;font-size:10px;font-weight:bold;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:140px;">'+displayName+'</div>'
+        +'<div style="color:'+color+';font-size:11px;font-weight:bold;">'+amountStr+'</div>'
+        +(subInfo?'<div style="color:#888;font-size:10px;">'+subInfo+'</div>':'')
+        +auctionInlineBadge
+        +jeonseStr
+        +newHighBadge
+        +valueBadge;
+
+    div.onclick=function(){showRadiusCircle(lat,lon);openPanel(l.name,apt.trades,apt.lawdCd,apt.buildingType,lat,lon,apt.grade,apt.ppp,apt.indicators,apt.investScore,apt.disqualified,apt.dqReason,apt.scoreBreakdown,apt.newHighPyungs);};
+    var overlay=new kakao.maps.CustomOverlay({position:new kakao.maps.LatLng(lat,lon),content:div,yAnchor:1.2});
+    overlay.setMap(map);markers.push(overlay);
+}
+
+function showRadiusCircle(lat,lon){
+    if(radiusCircle)radiusCircle.setMap(null);
+    radiusCircle=new kakao.maps.Circle({center:new kakao.maps.LatLng(lat,lon),radius:5000,strokeWeight:2,strokeColor:'#e53935',strokeOpacity:0.7,strokeStyle:'dashed',fillColor:'#e53935',fillOpacity:0.04});
+    radiusCircle.setMap(map);
+}
+
+function openPanel(aptName,currentTradesData,lawdCd,buildingType,lat,lon,grade,ppp,indicators,investScore,disqualified,dqReason,scoreBreakdown,newHighPyungs){
+    currentTrades=currentTradesData;currentSort='date';currentPyung='all';currentIndicators=indicators||null;
+    document.getElementById('panel-header').style.background=buildingType==='apt'?'#f9e000':'#c8e6c9';
+    var gradeHtml='';
+    if(grade){var gc=GRADE_COLORS[grade];var pppLabel=ppp>0?' · 평단가 '+(Math.round(ppp/100)/10)+'천만원/평':'';gradeHtml+=' <span style="background:'+gc+';color:white;font-size:11px;font-weight:bold;padding:2px 7px;border-radius:10px;vertical-align:middle;">'+grade+'등급'+pppLabel+'</span>';}
+    if(buildingType==='apt'){var ig=getInvestGrade(investScore,disqualified);if(ig){var scoreLabel=disqualified?'제외':(investScore!==null?investScore+'점':'-');gradeHtml+=' <span style="background:'+ig.color+';color:white;font-size:11px;font-weight:bold;padding:2px 7px;border-radius:10px;vertical-align:middle;">'+ig.label+' '+scoreLabel+'</span>';}}
+    if(newHighPyungs&&newHighPyungs.length>0){gradeHtml+=' <span style="background:#ff6f00;color:white;font-size:11px;font-weight:bold;padding:2px 7px;border-radius:10px;vertical-align:middle;">&#x2605; 신고가</span>';}
+    // 경매 등록 여부 배지
+    var hasAuction=auctionList.some(function(a){return a.name&&a.name.trim()===aptName.trim();});
+    if(hasAuction){gradeHtml+=' <span style="background:#6a1b9a;color:white;font-size:11px;font-weight:bold;padding:2px 7px;border-radius:10px;vertical-align:middle;">🔨 경매</span>';}
+    document.getElementById('panel-title').innerHTML=aptName+gradeHtml;
+    document.getElementById('panel-body').innerHTML='<div style="padding:20px;text-align:center;color:#aaa;">히스토리 불러오는 중...</div>';
+    document.getElementById('panel').style.display='flex';
+    document.querySelectorAll('.sort-btn').forEach(function(b){b.classList.remove('active');});
+    document.querySelector('.sort-btn').classList.add('active');
+    if(currentIndicators){
+        currentIndicators._scoreBreakdown=scoreBreakdown;
+        currentIndicators._investScore=investScore;
+        currentIndicators._disqualified=disqualified;
+        currentIndicators._dqReason=dqReason;
+        currentIndicators._newHighPyungs=newHighPyungs||[];
+        currentIndicators._aptName=aptName;
+    }
+    if(!lawdCd){buildPanel(currentTradesData,[]);return;}
+    fetchHistoryNearby(aptName,lat,lon,lawdCd,buildingType,currentTradesData);
+}
+
+function fetchHistoryNearby(aptName,lat,lon,lawdCd,buildingType,currentTradesData){
+    var R=5000,dLat=(R/6371000)*(180/Math.PI),dLon=dLat/Math.cos(lat*Math.PI/180);
+    var checkPoints=[{lat:lat,lon:lon},{lat:lat+dLat,lon:lon},{lat:lat-dLat,lon:lon},{lat:lat,lon:lon+dLon},{lat:lat,lon:lon-dLon}];
+    var lawdSet={},done=0;
+    checkPoints.forEach(function(pt){
+        geocoder.coord2RegionCode(pt.lon,pt.lat,function(result,status){
+            if(status===kakao.maps.services.Status.OK)result.forEach(function(r){if(r.region_type==='B')lawdSet[r.code.substring(0,5)]=true;});
+            if(++done===checkPoints.length){var lawdCds=Object.keys(lawdSet);if(lawdCds.length===0)lawdCds=[lawdCd];fetchHistoryMultiLawd(aptName,lawdCds,buildingType,currentTradesData);}
+        });
+    });
+}
+
+async function fetchHistoryMultiLawd(aptName,lawdCds,buildingType,currentTradesData){
+    var prevYear=today.getFullYear()-1,months=[];
+    for(var m=1;m<=12;m++)months.push(prevYear+String(m).padStart(2,'0'));
+    var allReqs=[];
+    lawdCds.forEach(function(lcd){months.forEach(function(ym){if(buildingType==='apt')allReqs.push(fetchAptAPI_P(lcd,ym));else{allReqs.push(fetchHouseAPI_P('rhs',lcd,ym));allReqs.push(fetchHouseAPI_P('sht',lcd,ym));}});});
+    var results=await Promise.all(allReqs),historyItems=[];
+    results.forEach(function(items){items.forEach(function(item){var nm=getText(item,'aptNm')||getText(item,'mhouseNm')||getText(item,'houseNm')||'';if(nm!==aptName)return;historyItems.push({year:parseInt(getText(item,'dealYear')),month:parseInt(getText(item,'dealMonth')),day:parseInt(getText(item,'dealDay')),amount:getText(item,'dealAmount').replace(/,/g,'').trim(),area:parseFloat(getText(item,'excluUseAr')||getText(item,'totalFloorAr')||'0'),floor:getText(item,'floor')||'-',houseType:getText(item,'houseType')||'',buildYear:getText(item,'buildYear')||'',buildingType:buildingType});});});
+    var merged=currentTradesData.concat(historyItems),seen={},deduped=[];
+    merged.forEach(function(t){var k=t.year+'_'+t.month+'_'+t.day+'_'+t.amount+'_'+t.area;if(!seen[k]){seen[k]=true;deduped.push(t);}});
+    deduped.sort(function(a,b){return (b.year*10000+b.month*100+b.day)-(a.year*10000+a.month*100+a.day);});
+    currentTrades=deduped;
+    var rentTrades=rentHistoryByApt[aptName]||[];
+    if(buildingType==='apt'){
+        var rentReqs=[];
+        lawdCds.forEach(function(lcd){months.forEach(function(ym){rentReqs.push(fetchAptRentAPI_P(lcd,ym));});});
+        var rentResults=await Promise.all(rentReqs),extraRent=[];
+        rentResults.forEach(function(items){items.forEach(function(item){var nm=getText(item,'aptNm')||getText(item,'mhouseNm')||'';if(nm!==aptName)return;var deposit=(getText(item,'deposit')||getText(item,'보증금액')||'').replace(/,/g,'').trim();if(!deposit||deposit==='0')return;var monthly=parseInt(getText(item,'monthlyRent')||'0',10);extraRent.push({year:parseInt(getText(item,'dealYear')),month:parseInt(getText(item,'dealMonth')),day:parseInt(getText(item,'dealDay')),deposit:deposit,monthlyRent:monthly,rentType:monthly>0?'monthly':'jeonse',area:parseFloat(getText(item,'excluUseAr')||'0'),floor:getText(item,'floor')||'-',buildingType:'rent'});});});
+        var rm=rentTrades.concat(extraRent),rs={},rd=[];
+        rm.forEach(function(t){var k=t.year+'_'+t.month+'_'+t.day+'_'+t.deposit+'_'+t.area+'_'+t.monthlyRent;if(!rs[k]){rs[k]=true;rd.push(t);}});
+        rd.sort(function(a,b){return (b.year*10000+b.month*100+b.day)-(a.year*10000+a.month*100+a.day);});
+        rentTrades=rd;
+    }
+    buildPanel(currentTrades,rentTrades);
+}
+
+function setSort(type,btn){currentSort=type;document.querySelectorAll('.sort-btn').forEach(function(b){b.classList.remove('active');});btn.classList.add('active');renderTable();}
+function setPyung(pyung,btn){currentPyung=pyung;document.querySelectorAll('.pyung-btn').forEach(function(b){b.classList.remove('active');});btn.classList.add('active');renderTable();}
+
+function buildPanel(trades,rentTrades){
+    currentRentTrades=rentTrades||[];
+    var pyungSet={};
+    trades.forEach(function(t){if(t.area>0)pyungSet[toPyung(t.area)]=true;});
+    var pyungList=Object.keys(pyungSet).map(Number).sort(function(a,b){return a-b;});
+    var bar=document.getElementById('pyung-bar');bar.innerHTML='<span>평형:</span>';
+    var ab=document.createElement('button');ab.className='pyung-btn active';ab.innerText='전체';ab.onclick=function(){setPyung('all',this);};bar.appendChild(ab);
+    pyungList.forEach(function(p){var btn=document.createElement('button');btn.className='pyung-btn';btn.innerText=p+'평';btn.onclick=function(){setPyung(String(p),this);};bar.appendChild(btn);});
+    renderTable();
+}
+
+function renderTable(){
+    var trades=currentTrades.slice();
+    if(currentPyung!=='all')trades=trades.filter(function(t){return String(toPyung(t.area))===currentPyung;});
+    if(currentSort==='date')trades.sort(function(a,b){return (b.year*10000+b.month*100+b.day)-(a.year*10000+a.month*100+a.day);});
+    else if(currentSort==='amount_desc')trades.sort(function(a,b){return parseInt(b.amount)-parseInt(a.amount);});
+    else if(currentSort==='amount_asc') trades.sort(function(a,b){return parseInt(a.amount)-parseInt(b.amount);});
+    else if(currentSort==='area_desc')  trades.sort(function(a,b){return b.area-a.area;});
+    else if(currentSort==='area_asc')   trades.sort(function(a,b){return a.area-b.area;});
+
+    var thisYear=today.getFullYear(),html='',ind=currentIndicators;
+
+    // ─── 경매 정보 패널 (최상단) ───
+    if(ind&&ind._aptName){
+        html+=buildAuctionPanelHtml(ind._aptName);
+    }
+
+    if(ind&&ind._newHighPyungs&&ind._newHighPyungs.length>0){
+        html+='<div style="background:#fff8e1;border:1.5px solid #ff6f00;border-radius:10px;padding:10px 12px;margin-bottom:12px;">';
+        html+='<div style="font-size:12px;font-weight:bold;color:#ff6f00;margin-bottom:6px;">&#x2605; 신고가 경신 (6개월 전 대비)</div>';
+        ind._newHighPyungs.forEach(function(item){html+='<div style="font-size:11px;color:#555;margin-bottom:3px;"><b>'+item.py+'평</b> &nbsp;이전최고 '+toEok(String(item.beforeMax))+' &rarr; <span style="color:#e53935;font-weight:bold;">신고가 '+toEok(String(item.recentMax))+'</span></div>';});
+        html+='</div>';
+    }
+
+    if(ind&&ind._investScore!==null&&ind._investScore!==undefined){
+        var ig=getInvestGrade(ind._investScore,ind._disqualified);
+        var bd=ind._scoreBreakdown||{};
+        var scoreNum=ind._disqualified?0:ind._investScore;
+        var barColor=ig?ig.color:'#9e9e9e';
+        html+='<div class="indicator-box" style="border-color:'+(ig?ig.color:'#eee')+';background:'+(ig?ig.bg:'#f9f9f9')+'">';
+        html+='<div class="indicator-title">투자점수 종합</div>';
+        if(ind._disqualified)html+='<div class="disqualified-box">자동 탈락: '+ind._dqReason+'</div>';
+        html+='<div style="display:flex;align-items:center;gap:10px;margin-bottom:8px;"><div style="font-size:36px;font-weight:900;color:'+(ig?ig.color:'#9e9e9e')+';">'+(ind._disqualified?'제외':scoreNum+'점')+'</div>';
+        if(ig)html+='<div><div style="font-size:16px;font-weight:bold;color:'+ig.color+';">'+ig.label+'등급</div></div>';
+        html+='</div>';
+        if(!ind._disqualified){
+            html+='<div class="score-bar-wrap"><div class="score-bar-bg"><div class="score-bar-fill" style="width:'+scoreNum+'%;background:'+barColor+';"></div></div></div>';
+            html+='<div style="display:grid;grid-template-columns:1fr 1fr;gap:4px;margin-top:8px;font-size:11px;">';
+            html+='<div style="color:#555;">모멘텀 <b style="color:#e53935;">'+(bd.momentum!==undefined?bd.momentum:'-')+'점</b>/40</div>';
+            html+='<div style="color:#555;">변동성 <b style="color:#1565c0;">'+(bd.volatility!==undefined?bd.volatility:'-')+'점</b>/20</div>';
+            html+='<div style="color:#555;">회전율 <b style="color:#2e7d32;">'+(bd.turnover!==undefined?bd.turnover:'-')+'점</b>/20</div>';
+            html+='<div style="color:#555;">전세가율 <b style="color:#6a1b9a;">'+(bd.rentRatio!==undefined?bd.rentRatio:'-')+'점</b>/20</div>';
+            html+='</div>';
+        }
+        html+='</div>';
+    }
+
+    if(ind){
+        html+='<div class="indicator-box"><div class="indicator-title">투자지표 상세</div><div class="indicator-grid">';
+        var mVal=ind.momentum;
+        var mColor=mVal===null?'#aaa':mVal>=5?'#b71c1c':mVal>=0?'#e53935':mVal>=-5?'#1565c0':'#0d47a1';
+        var mSub=mVal===null?'데이터 부족':mVal>=15?'강한 상승':mVal>=10?'상승세':mVal>=5?'완만한 상승':mVal>=0?'소폭 상승':'하락';
+        var mTxt=mVal===null?'-':(mVal>=0?'+':'')+mVal+'%';
+        html+='<div class="indicator-item"><div class="indicator-label">가격 모멘텀</div><div class="indicator-value" style="color:'+mColor+';">'+mTxt+'</div><div class="indicator-sub">'+mSub+'</div></div>';
+        var vVal=ind.volatility;
+        var vColor=vVal===null?'#aaa':vVal<3?'#2e7d32':vVal<5?'#66bb6a':vVal<8?'#ffa726':'#e53935';
+        var vSub=vVal===null?'데이터 부족':vVal<3?'매우 안정':vVal<5?'안정적':vVal<8?'보통':'변동 큼';
+        html+='<div class="indicator-item"><div class="indicator-label">가격 변동성</div><div class="indicator-value" style="color:'+vColor+';">'+(vVal===null?'-':vVal+'%')+'</div><div class="indicator-sub">'+vSub+'</div></div>';
+        var tVal=ind.turnover;
+        var tColor=tVal===null?'#aaa':tVal>=15?'#2e7d32':tVal>=10?'#66bb6a':tVal>=5?'#ffa726':'#9e9e9e';
+        var tSub=tVal===null?'데이터 부족':tVal>=15?'거래 활발':tVal>=10?'유동성 양호':tVal>=5?'보통':'거래 적음';
+        html+='<div class="indicator-item"><div class="indicator-label">거래 회전율</div><div class="indicator-value" style="color:'+tColor+';">'+(tVal===null?'-':tVal+'%')+'</div><div class="indicator-sub">'+tSub+'</div></div>';
+        var rVal=ind.rentRatio;
+        var rColor=rVal===null?'#aaa':rVal>=80?'#e53935':rVal>=60?'#ff7043':rVal>=40?'#66bb6a':'#1565c0';
+        var rSub=rVal===null?'데이터 부족':rVal>=80?'하락위험':rVal>=70?'레버리지↑':rVal>=60?'최적구간':rVal>=50?'안전':rVal>=40?'적정':'실투자금 과다';
+        html+='<div class="indicator-item"><div class="indicator-label">전세가율</div><div class="indicator-value" style="color:'+rColor+';">'+(rVal===null?'-':rVal+'%')+'</div><div class="indicator-sub">'+rSub+'</div></div>';
+        html+='</div></div>';
+    }
+
+    var newHighAmountByPy={};
+    if(ind&&ind._newHighPyungs){ind._newHighPyungs.forEach(function(item){newHighAmountByPy[item.py]=item.recentMax;});}
+
+    var byYear={};
+    trades.forEach(function(t){if(!byYear[t.year])byYear[t.year]=[];byYear[t.year].push(t);});
+    Object.keys(byYear).sort(function(a,b){return b-a;}).forEach(function(yr){
+        html+='<div style="margin-bottom:14px;">';
+        html+='<div class="year-label'+(parseInt(yr)===thisYear?' recent':'')+'">'+yr+'년 ('+byYear[yr].length+'건)</div>';
+        html+='<table><thead><tr><th>날짜</th><th>평형</th><th>층</th><th>구분</th><th>거래금액</th></tr></thead><tbody>';
+        byYear[yr].forEach(function(t){
+            var dateStr=yr+'.'+String(t.month).padStart(2,'0')+'.'+String(t.day).padStart(2,'0');
+            var typeStr=(t.houseType&&t.houseType!=='apt'&&t.houseType!=='house')?t.houseType:(t.buildingType==='apt'?'아파트':'주택');
+            var yearStr=t.buildYear?'<br><span style="color:#aaa;font-size:10px;">'+t.buildYear+'년식</span>':'';
+            var pppStr=(t.area>0&&parseInt(t.amount)>0)?'<br><span style="color:#795548;font-size:10px;">'+Math.round(parseInt(t.amount)/toPyung(t.area)/100)/10+'천만/평</span>':'';
+            var py=Math.round(toPyung(t.area));
+            var isNewHighRow=(newHighAmountByPy[py]!==undefined&&parseInt(t.amount)===newHighAmountByPy[py]);
+            var rowStyle=isNewHighRow?'background:#fff3e0;':'';
+            var newHighMark=isNewHighRow?'<span style="color:#ff6f00;font-size:10px;font-weight:bold;margin-left:3px;">&#x2605;</span>':'';
+            html+='<tr style="'+rowStyle+'"><td>'+dateStr+'</td><td>'+(t.area>0?toPyung(t.area)+'평':'-')+'</td><td>'+t.floor+'층</td><td style="font-size:10px;color:#888;">'+typeStr+yearStr+'</td><td style="color:#e53935;font-weight:bold;">'+toEok(t.amount)+newHighMark+pppStr+'</td></tr>';
+        });
+        html+='</tbody></table></div>';
+    });
+
+    var rentTrades=currentRentTrades.slice();
+    if(currentPyung!=='all')rentTrades=rentTrades.filter(function(t){return String(toPyung(t.area))===currentPyung;});
+    if(rentTrades.length>0){
+        html+='<div style="margin-top:16px;margin-bottom:4px;">';
+        html+='<div style="font-size:12px;font-weight:bold;color:#fff;background:#6a1b9a;padding:3px 10px;border-radius:20px;display:inline-block;margin-bottom:6px;">전세 · 월세 히스토리</div>';
+        html+='</div>';
+        var rentByYear={};
+        rentTrades.forEach(function(t){if(!rentByYear[t.year])rentByYear[t.year]=[];rentByYear[t.year].push(t);});
+        Object.keys(rentByYear).sort(function(a,b){return b-a;}).forEach(function(yr){
+            var yrInt=parseInt(yr);
+            var lblBg=yrInt===thisYear?'#6a1b9a':'#aaa';
+            html+='<div style="margin-bottom:14px;">';
+            html+='<div class="year-label'+(yrInt===thisYear?' recent':'')+'" style="background:'+lblBg+';">'+yr+'년 ('+rentByYear[yr].length+'건)</div>';
+            html+='<table><thead><tr><th>날짜</th><th>평형</th><th>층</th><th>구분</th><th>보증금/월세</th></tr></thead><tbody>';
+            rentByYear[yr].forEach(function(t){
+                var dateStr=yr+'.'+String(t.month).padStart(2,'0')+'.'+String(t.day).padStart(2,'0');
+                var isMonthly=(t.rentType==='monthly');
+                var typeStr=isMonthly
+                    ?'<span style="color:#e65100;font-weight:bold;">월세</span>'
+                    :'<span style="color:#6a1b9a;font-weight:bold;">전세</span>';
+                var amountCell=isMonthly
+                    ?'<span style="color:#e65100;font-weight:bold;">'+toEok(t.deposit)+'/<br>'+t.monthlyRent.toLocaleString()+'만</span>'
+                    :'<span style="color:#6a1b9a;font-weight:bold;">'+toEok(t.deposit)+'</span>';
+                html+='<tr><td>'+dateStr+'</td><td>'+(t.area>0?toPyung(t.area)+'평':'-')+'</td><td>'+t.floor+'층</td><td style="font-size:10px;">'+typeStr+'</td><td>'+amountCell+'</td></tr>';
+            });
+            html+='</tbody></table></div>';
+        });
+    }
+    document.getElementById('panel-body').innerHTML=html||'<div style="padding:20px;text-align:center;color:#aaa;">거래 내역 없음</div>';
+}
+</script>
+</body>
+</html>
+
