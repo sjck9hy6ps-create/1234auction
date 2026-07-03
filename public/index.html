@@ -526,10 +526,10 @@ var activeGrades=new Set(['1']), activeScores=new Set(['S']);
 var GRADE_COLORS={1:'#b71c1c',2:'#e53935',3:'#ff7043',4:'#ffa726',5:'#66bb6a',6:'#42a5f5',7:'#9e9e9e'};
 
 // ─── 경매 전역 변수 ───
-var auctionList=[];          // 전체 경매 목록
-var auctionCoordCache={};    // 경매 주소→좌표 캐시
-var auctionMarkers=[];       // 경매 오버레이 목록
-var currentAuctionId=null;   // 모달에서 수정 중인 id
+var auctionList=[];
+var auctionCoordCache={};
+var auctionMarkers=[];
+var currentAuctionId=null;
 
 // ─── 상태별 색상 ───
 var STATUS_COLOR={
@@ -593,7 +593,6 @@ function openAuctionModal(id){
     document.getElementById('modal-title').innerText=isEdit?'🔨 경매 물건 수정':'🔨 경매 물건 등록';
     document.getElementById('modal-delete-btn').style.display=isEdit?'':'none';
 
-    // 초기화
     ['auction-id','a-addr','a-name','a-case','a-pyung','a-date',
      'a-appraisal','a-min-bid','a-my-bid','a-actual-bid',
      'a-tax','a-repair','a-agent','a-etc','a-target','a-actual-sell','a-memo']
@@ -656,7 +655,6 @@ function searchAuctionAddr(){
             document.getElementById('a-addr-result').style.display='block';
             auctionCoordCache[r.address_name]={lat:parseFloat(r.y),lon:parseFloat(r.x),label:label};
         } else {
-            // 주소 검색 실패 시 키워드 검색 시도
             places.keywordSearch(q, function(res,st){
                 if(st===kakao.maps.services.Status.OK){
                     var r=res[0];
@@ -676,7 +674,6 @@ function searchAuctionAddr(){
 function autoCalcTax(){
     var bid=parseInt(document.getElementById('a-actual-bid').value)||parseInt(document.getElementById('a-my-bid').value)||0;
     if(!bid){ alert('입찰가를 먼저 입력해 주세요.'); return; }
-    // 낙찰가(만원) → 억원 환산하여 세율 적용
     var bidWon=bid*10000;
     var rate=bidWon<=600000000?0.01:bidWon<=900000000?0.02:0.03;
     var tax=Math.round(bid*rate);
@@ -688,7 +685,7 @@ function autoCalcTax(){
 function calcMargin(){
     var myBid   = parseInt(document.getElementById('a-my-bid').value)||0;
     var actBid  = parseInt(document.getElementById('a-actual-bid').value)||0;
-    var useBid  = actBid||myBid; // 실제 낙찰가 우선
+    var useBid  = actBid||myBid;
     var tax     = parseInt(document.getElementById('a-tax').value)||0;
     var repair  = parseInt(document.getElementById('a-repair').value)||0;
     var agent   = parseInt(document.getElementById('a-agent').value)||0;
@@ -750,7 +747,6 @@ async function saveAuction(){
         memo: document.getElementById('a-memo').value,
     };
 
-    // 좌표가 없으면 주소 검색으로 획득
     if(!data.lat||!data.lon){
         await new Promise(function(resolve){
             geocoder.addressSearch(addr, function(result,status){
@@ -806,7 +802,7 @@ function renderAuctionMarkers(){
                 if(status===kakao.maps.services.Status.OK){
                     a.lat=parseFloat(result[0].y);
                     a.lon=parseFloat(result[0].x);
-                    saveAuctionAPI(a); // 좌표 업데이트 저장
+                    saveAuctionAPI(a);
                     placeAuctionMarker(a);
                 }
             });
@@ -818,7 +814,6 @@ function placeAuctionMarker(a){
     var sc=STATUS_COLOR[a.status]||'#9e9e9e';
     var bidStr=a.myBid?toEok(String(parseInt(a.myBid)*100)):'입찰가 미입력';
 
-    // 마진 계산
     var myBid   = parseInt(a.myBid)||0;
     var actBid  = parseInt(a.actualBid)||0;
     var useBid  = actBid||myBid;
@@ -848,15 +843,10 @@ function placeAuctionMarker(a){
         +'box-shadow:0 0 0 2px rgba(106,27,154,0.15),0 2px 8px rgba(0,0,0,0.18);text-align:center;line-height:1.5;max-width:160px;';
 
     div.innerHTML=
-        // 경매 배지 (상단)
         '<div class="auction-badge" style="background:'+sc+';">🔨 '+a.status+'</div>'
-        // 단지명
         +'<div style="color:#333;font-size:10px;font-weight:bold;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:150px;margin-top:4px;">'+a.name+'</div>'
-        // 입찰가
         +'<div style="color:'+sc+';font-size:11px;font-weight:bold;">'+bidStr+'</div>'
-        // 평형
         +(a.pyung?'<div style="color:#888;font-size:10px;">'+a.pyung+'평</div>':'')
-        // 마진
         +marginHtml;
 
     div.onclick=function(){ openAuctionModal(a.id); };
@@ -865,7 +855,7 @@ function placeAuctionMarker(a){
         position:new kakao.maps.LatLng(a.lat,a.lon),
         content:div,
         yAnchor:1.2,
-        zIndex:10  // 항상 최상위 레이어
+        zIndex:10
     });
     overlay.setMap(map);
     auctionMarkers.push(overlay);
@@ -936,7 +926,7 @@ function buildAuctionPanelHtml(aptName){
 }
 
 /* ════════════════════════════════════════
-   기존 함수들 (변경 없음)
+   기존 함수들
 ════════════════════════════════════════ */
 function getInvestGrade(score,disqualified){
     if(disqualified) return {label:'X',color:'#607d8b',bg:'#eceff1'};
@@ -996,12 +986,36 @@ function toggleScore(val,btn){
     else{activeScores.delete('all');document.querySelector('.ft-s[data-s="all"]').classList.remove('active');if(activeScores.has(val)){activeScores.delete(val);btn.classList.remove('active');}else{activeScores.add(val);btn.classList.add('active');}if(activeScores.size===0){activeScores.add('all');document.querySelector('.ft-s[data-s="all"]').classList.add('active');}}
     redrawMarkers();
 }
+
+/* ════════════════════════════════════════
+   ★ 수정된 함수: passesFilter
+   - 투자점수 null(지표 미산출) 아파트를
+     특정 등급 선택 시 올바르게 제외
+   - X(제외) 등급 선택 시 disqualified 아파트만 표시
+════════════════════════════════════════ */
 function passesFilter(apt){
     if(apt.buildingType!=='apt') return true;
-    if(!activeGrades.has('all')){if(!apt.grade)return false;if(!activeGrades.has(String(apt.grade)))return false;}
-    if(!activeScores.has('all')){var ig=getInvestGrade(apt.investScore,apt.disqualified);if(!ig)return false;if(!activeScores.has(ig.label))return false;}
+
+    // 평단가 등급 필터
+    if(!activeGrades.has('all')){
+        if(!apt.grade) return false;
+        if(!activeGrades.has(String(apt.grade))) return false;
+    }
+
+    // 투자점수 필터
+    if(!activeScores.has('all')){
+        var ig=getInvestGrade(apt.investScore,apt.disqualified);
+        // 점수 미산출(null) 아파트는 특정 등급 선택 시 항상 제외
+        if(!ig) return false;
+        // X(제외) 등급: disqualified 아파트만
+        if(activeScores.has('X')&&ig.label==='X') return true;
+        // 일반 등급 매칭
+        if(!activeScores.has(ig.label)) return false;
+    }
+
     return true;
 }
+
 function cleanJibun(j){if(!j)return '';return j.split('-').map(function(p){return parseInt(p,10);}).filter(function(v){return !isNaN(v);}).join('-');}
 function getMonthList(y){var m=[];for(var i=0;i<y*12;i++){var d=new Date();d.setDate(1);d.setMonth(d.getMonth()-i);m.push(d.getFullYear()+String(d.getMonth()+1).padStart(2,'0'));}return m;}
 function ymToDate(ym){return new Date(parseInt(ym.slice(0,4)),parseInt(ym.slice(4,6))-1,1);}
@@ -1049,7 +1063,6 @@ function initMap(lat,lon){
     map.setMinLevel(1); map.setMaxLevel(14);
     new kakao.maps.Marker({map:map,position:new kakao.maps.LatLng(lat,lon),title:'내 위치'});
 
-    // ─── 로딩 순서: 1)실거래 2)경매(마지막, 항상 최상위) ───
     loadAllData(lat,lon).then(function(){
         fetchAuctions().then(function(){
             renderAuctionMarkers();
@@ -1060,7 +1073,7 @@ function initMap(lat,lon){
         var c=map.getCenter(); clearTimeout(moveTimer);
         moveTimer=setTimeout(function(){
             loadAllData(c.getLat(),c.getLng()).then(function(){
-                renderAuctionMarkers(); // 지도 이동 후에도 경매 마커 재렌더
+                renderAuctionMarkers();
             });
         },1200);
     });
@@ -1272,7 +1285,6 @@ function redrawMarkers(){
     clearMarkers();
     var list=currentTypeFilter==='all'?allAptList.concat(allHouseList):currentTypeFilter==='apt'?allAptList:allHouseList;
     var c=map.getCenter();placeMarkers(list,c.getLat(),c.getLng());
-    // 실거래 마커 후 경매 마커 렌더 (항상 최상위)
     setTimeout(function(){ renderAuctionMarkers(); },100);
 }
 
@@ -1311,7 +1323,6 @@ function createMarker(lat,lon,apt){
     var config=getPinConfig(apt);if(!config)return;
     var l=apt.latest,color=config.color;
 
-    // 장기 가치 배지
     var trades=apt.trades,valueBadge='';
     var recent1Y=trades.filter(t=>new Date(t.year,t.month-1,t.day)>=oneYearAgo&&t.area>0);
     var hist5Y=trades.filter(t=>new Date(t.year,t.month-1,t.day)>=fiveYearAgo&&t.area>0);
@@ -1325,7 +1336,6 @@ function createMarker(lat,lon,apt){
         else                 valueBadge='<div class="value-badge" style="background:#1565c0;">역전</div>';
     }
 
-    // 경매 배지 (해당 단지에 경매 등록 여부)
     var hasAuction=auctionList.some(function(a){return a.name&&a.name.trim()===l.name.trim();});
 
     var amountStr=toEok(l.amount);
@@ -1345,7 +1355,6 @@ function createMarker(lat,lon,apt){
     var newHighBadge='';
     if(apt.buildingType==='apt'&&apt.hasNewHigh){newHighBadge='<div class="new-high-badge">&#x2605; 신고가</div>';}
 
-    // 경매 등록 단지 강조 테두리
     var borderStyle=apt.buildingType==='apt'&&apt.hasNewHigh
         ?'2.5px solid #ff6f00'
         :(hasAuction?'2.5px solid #6a1b9a':'2px solid '+color);
@@ -1353,7 +1362,6 @@ function createMarker(lat,lon,apt){
         ?'0 0 0 2px rgba(106,27,154,0.25),0 2px 8px rgba(0,0,0,0.2)'
         :(apt.buildingType==='apt'&&apt.hasNewHigh?'0 0 0 2px #ffe082,0 2px 8px rgba(255,111,0,0.3)':'0 2px 5px rgba(0,0,0,0.2)');
 
-    // 경매 인라인 배지 (마커 내부)
     var auctionInlineBadge=hasAuction
         ?'<div style="font-size:9px;font-weight:bold;color:#6a1b9a;background:#f3e5f5;border:1px solid #ce93d8;border-radius:4px;padding:1px 5px;margin-top:1px;display:inline-block;">🔨 경매등록</div>'
         :'';
@@ -1389,7 +1397,6 @@ function openPanel(aptName,currentTradesData,lawdCd,buildingType,lat,lon,grade,p
     if(grade){var gc=GRADE_COLORS[grade];var pppLabel=ppp>0?' · 평단가 '+(Math.round(ppp/100)/10)+'천만원/평':'';gradeHtml+=' <span style="background:'+gc+';color:white;font-size:11px;font-weight:bold;padding:2px 7px;border-radius:10px;vertical-align:middle;">'+grade+'등급'+pppLabel+'</span>';}
     if(buildingType==='apt'){var ig=getInvestGrade(investScore,disqualified);if(ig){var scoreLabel=disqualified?'제외':(investScore!==null?investScore+'점':'-');gradeHtml+=' <span style="background:'+ig.color+';color:white;font-size:11px;font-weight:bold;padding:2px 7px;border-radius:10px;vertical-align:middle;">'+ig.label+' '+scoreLabel+'</span>';}}
     if(newHighPyungs&&newHighPyungs.length>0){gradeHtml+=' <span style="background:#ff6f00;color:white;font-size:11px;font-weight:bold;padding:2px 7px;border-radius:10px;vertical-align:middle;">&#x2605; 신고가</span>';}
-    // 경매 등록 여부 배지
     var hasAuction=auctionList.some(function(a){return a.name&&a.name.trim()===aptName.trim();});
     if(hasAuction){gradeHtml+=' <span style="background:#6a1b9a;color:white;font-size:11px;font-weight:bold;padding:2px 7px;border-radius:10px;vertical-align:middle;">🔨 경매</span>';}
     document.getElementById('panel-title').innerHTML=aptName+gradeHtml;
@@ -1471,7 +1478,6 @@ function renderTable(){
 
     var thisYear=today.getFullYear(),html='',ind=currentIndicators;
 
-    // ─── 경매 정보 패널 (최상단) ───
     if(ind&&ind._aptName){
         html+=buildAuctionPanelHtml(ind._aptName);
     }
@@ -1558,6 +1564,7 @@ function renderTable(){
         html+='<div style="font-size:12px;font-weight:bold;color:#fff;background:#6a1b9a;padding:3px 10px;border-radius:20px;display:inline-block;margin-bottom:6px;">전세 · 월세 히스토리</div>';
         html+='</div>';
         var rentByYear={};
+        rentTrades.forEach(function(t){if(!rentByYear[t.year])rentByYear[t.year]=[];rentByYear[t.year].push(t
         rentTrades.forEach(function(t){if(!rentByYear[t.year])rentByYear[t.year]=[];rentByYear[t.year].push(t);});
         Object.keys(rentByYear).sort(function(a,b){return b-a;}).forEach(function(yr){
             var yrInt=parseInt(yr);
@@ -1584,4 +1591,3 @@ function renderTable(){
 </script>
 </body>
 </html>
-
