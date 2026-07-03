@@ -1557,15 +1557,17 @@ function renderTable(){
         html+='</tbody></table></div>';
     });
 
-    var rentTrades=currentRentTrades.slice();
+       var rentTrades=currentRentTrades.slice();
     if(currentPyung!=='all')rentTrades=rentTrades.filter(function(t){return String(toPyung(t.area))===currentPyung;});
     if(rentTrades.length>0){
         html+='<div style="margin-top:16px;margin-bottom:4px;">';
         html+='<div style="font-size:12px;font-weight:bold;color:#fff;background:#6a1b9a;padding:3px 10px;border-radius:20px;display:inline-block;margin-bottom:6px;">전세 · 월세 히스토리</div>';
         html+='</div>';
         var rentByYear={};
-        rentTrades.forEach(function(t){if(!rentByYear[t.year])rentByYear[t.year]=[];rentByYear[t.year].push(t
-        rentTrades.forEach(function(t){if(!rentByYear[t.year])rentByYear[t.year]=[];rentByYear[t.year].push(t);});
+        rentTrades.forEach(function(t){
+            if(!rentByYear[t.year])rentByYear[t.year]=[];
+            rentByYear[t.year].push(t);
+        });
         Object.keys(rentByYear).sort(function(a,b){return b-a;}).forEach(function(yr){
             var yrInt=parseInt(yr);
             var lblBg=yrInt===thisYear?'#6a1b9a':'#aaa';
@@ -1586,6 +1588,9 @@ function renderTable(){
             html+='</tbody></table></div>';
         });
     }
+    document.getElementById('panel-body').innerHTML=html||'<div style="padding:20px;text-align:center;color:#aaa;">거래 내역 없음</div>';
+}
+
     document.getElementById('panel-body').innerHTML=html||'<div style="padding:20px;text-align:center;color:#aaa;">거래 내역 없음</div>';
 }
 </script>
