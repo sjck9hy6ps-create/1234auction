@@ -1557,7 +1557,7 @@ function renderTable(){
         html+='</tbody></table></div>';
     });
 
-       var rentTrades=currentRentTrades.slice();
+    var rentTrades=currentRentTrades.slice();
     if(currentPyung!=='all')rentTrades=rentTrades.filter(function(t){return String(toPyung(t.area))===currentPyung;});
     if(rentTrades.length>0){
         html+='<div style="margin-top:16px;margin-bottom:4px;">';
@@ -1591,8 +1591,6 @@ function renderTable(){
     document.getElementById('panel-body').innerHTML=html||'<div style="padding:20px;text-align:center;color:#aaa;">거래 내역 없음</div>';
 }
 
-    document.getElementById('panel-body').innerHTML=html||'<div style="padding:20px;text-align:center;color:#aaa;">거래 내역 없음</div>';
-}
 </script>
 </body>
 </html>
