@@ -1138,11 +1138,42 @@ async function loadAllData(centerLat,centerLon){
                 redrawMarkers();resolve();return;
             }
             lastLawdCd=lawdCd;isLoading=true;setStatus('데이터 고속 조회 중...');
-            var aptMonths=getMonthList(2);
-            var aptResults=await Promise.all(aptMonths.map(function(ym){return fetchAptAPI_P(lawdCd,ym);}));
-            var rentResults=await Promise.all(aptMonths.map(function(ym){return fetchAptRentAPI_P(lawdCd,ym);}));
-            var aptRaw=[].concat.apply([],aptResults);
-            var rentRaw=[].concat.apply([],rentResults);
+            
+            var aptMonths = getMonthList(2);
+            var aptRaw = [];
+            var rentRaw = [];
+
+            // 순차적 전체 페이지 수집 로직 (태영아파트 등 누락 방지)
+            for(var m=0; m<aptMonths.length; m++) {
+                var ym = aptMonths[m];
+                
+                // 아파트 매매 데이터 수집
+                var page = 1;
+                var totalCount = 0;
+                do {
+                    var res = await fetch('/api/house?endpoint=apt&lawdCd='+lawdCd+'&dealYmd='+ym+'&pageNo='+page+'&numOfRows=100');
+                    var text = await res.text();
+                    var xml = new DOMParser().parseFromString(text, 'text/xml');
+                    if(page === 1) totalCount = parseInt(xml.querySelector('totalCount')?.textContent || '0');
+                    var items = Array.from(xml.querySelectorAll('item'));
+                    aptRaw = aptRaw.concat(items);
+                    page++;
+                } while ((page-1)*10 < totalCount && totalCount > 0);
+
+                // 아파트 전월세 데이터 수집
+                page = 1;
+                totalCount = 0;
+                do {
+                    var res = await fetch('/api/house?endpoint=aptRent&lawdCd='+lawdCd+'&dealYmd='+ym+'&pageNo='+page+'&numOfRows=100');
+                    var text = await res.text();
+                    var xml = new DOMParser().parseFromString(text, 'text/xml');
+                    if(page === 1) totalCount = parseInt(xml.querySelector('totalCount')?.textContent || '0');
+                    var items = Array.from(xml.querySelectorAll('item'));
+                    rentRaw = rentRaw.concat(items);
+                    page++;
+                } while ((page-1)*10 < totalCount && totalCount > 0);
+            }
+
             allAptList=groupItems(aptRaw,sigungu,lawdCd,'apt');
             allHouseList=[];
             rentByAptName=buildRentIndex(rentRaw);
