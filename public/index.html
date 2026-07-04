@@ -1123,73 +1123,83 @@ function moveToResult(r){
     map.setLevel(4);lastLawdCd=null;loadAllData(r.lat,r.lon);
 }
 
-async function loadAllData(centerLat,centerLon){
-    return new Promise(function(resolve){
-        if(isLoading){resolve();return;}
-        geocoder.coord2RegionCode(centerLon,centerLat,async function(result,status){
-            if(status!==kakao.maps.services.Status.OK){resolve();return;}
-            var regionCode=null,sigungu='';
-            for(var i=0;i<result.length;i++){if(result[i].region_type==='B'){regionCode=result[i].code;sigungu=result[i].region_1depth_name+' '+result[i].region_2depth_name;break;}}
-            if(!regionCode){resolve();return;}
-            var lawdCd=regionCode.substring(0,5);lastSigungu=sigungu;
-            if(lawdCd===lastLawdCd&&dataCache[lawdCd]){
-                allAptList=dataCache[lawdCd].apt;allHouseList=dataCache[lawdCd].house||[];
-                rentByAptName=dataCache[lawdCd].rent||{};rentHistoryByApt=dataCache[lawdCd].rentHistory||{};
-                redrawMarkers();resolve();return;
-            }
-            lastLawdCd=lawdCd;isLoading=true;setStatus('데이터 고속 조회 중...');
+async function loadAllData(centerLat, centerLon) {
+    return new Promise(function(resolve) {
+        if (isLoading) { resolve(); return; }
+        
+        geocoder.coord2RegionCode(centerLon, centerLat, async function(result, status) {
+            if (status !== kakao.maps.services.Status.OK) { resolve(); return; }
             
-            var aptMonths = getMonthList(2);
-            var aptRaw = [];
-            var rentRaw = [];
-
-            // 고속 병렬 수집 로직 (태영아파트 누락 방지 + 속도 최적화)
-            async function fetchAllPages(endpoint, ym) {
-                let p1 = await fetch(`/api/house?endpoint=${endpoint}&lawdCd=${lawdCd}&dealYmd=${ym}&pageNo=1&numOfRows=100`).then(r => r.text());
-                let xml = new DOMParser().parseFromString(p1, 'text/xml');
-                let total = parseInt(xml.querySelector('totalCount')?.textContent || '0');
-                let items = Array.from(xml.querySelectorAll('item'));
-                
-                if (total > 100) {
-                    let extraReqs = [];
-                    for (let p = 2; (p - 1) * 100 < total; p++) {
-                        extraReqs.push(fetch(`/api/house?endpoint=${endpoint}&lawdCd=${lawdCd}&dealYmd=${ym}&pageNo=${p}&numOfRows=100`).then(r => r.text()));
-                    }
-                    let extraTexts = await Promise.all(extraReqs);
-                    extraTexts.forEach(t => {
-                        let x = new DOMParser().parseFromString(t, 'text/xml');
-                        items = items.concat(Array.from(x.querySelectorAll('item')));
-                    });
+            var regionCode = null, sigungu = '';
+            for (var i = 0; i < result.length; i++) {
+                if (result[i].region_type === 'B') {
+                    regionCode = result[i].code;
+                    sigungu = result[i].region_1depth_name + ' ' + result[i].region_2depth_name;
+                    break;
                 }
-                return items;
+            }
+            if (!regionCode) { resolve(); return; }
+            
+            var lawdCd = regionCode.substring(0, 5);
+            lastSigungu = sigungu;
+
+            // 1. 이미 메모리에 로드된 지역이면 다시 부르지 않음
+            if (lawdCd === lastLawdCd && dataCache[lawdCd]) {
+                redrawMarkers(); resolve(); return;
             }
 
-            // 모든 월의 데이터를 병렬로 요청 시작
-            let allTasks = [];
-            aptMonths.forEach(ym => {
-                allTasks.push(fetchAllPages('apt', ym));
-                allTasks.push(fetchAllPages('aptRent', ym));
-            });
+            lastLawdCd = lawdCd;
+            isLoading = true;
+            setStatus('서버 DB에서 8년치 데이터 초고속 로딩 중...');
 
-            let results = await Promise.all(allTasks);
-            results.forEach((items, idx) => {
-                if (idx % 2 === 0) aptRaw = aptRaw.concat(items); // 짝수는 매매
-                else rentRaw = rentRaw.concat(items);            // 홀수는 전세
-            });
+            try {
+                // 2. ★ 핵심: 국토부 API 대신 내가 만든 서버 API(/api/get-house) 호출
+                const res = await fetch(`/api/get-house?lawdCd=${lawdCd}`);
+                const dbData = await res.json();
 
-            allAptList=groupItems(aptRaw,sigungu,lawdCd,'apt');
-            allHouseList=[];
-            rentByAptName=buildRentIndex(rentRaw);
-            rentHistoryByApt=buildRentHistory(rentRaw);
-            calcPriceGrades(allAptList);
-            calcInvestIndicators(allAptList,rentRaw);
-            allAptList.forEach(function(apt){
-                var r=calcInvestScore(apt.indicators);
-                apt.investScore=r.score;apt.disqualified=r.disqualified;apt.dqReason=r.reason;apt.scoreBreakdown=r.breakdown;
-                var nh=calcNewHigh(apt.trades);apt.hasNewHigh=nh.hasNewHigh;apt.newHighPyungs=nh.newHighPyungs;
-            });
-            dataCache[lawdCd]={apt:allAptList,house:[],rent:rentByAptName,rentHistory:rentHistoryByApt};
-            isLoading=false;setStatus('');redrawMarkers();resolve();
+                if (!dbData || dbData.error) {
+                    throw new Error("해당 지역 데이터가 DB에 없습니다.");
+                }
+
+                // 3. 서버에서 받은 통 데이터를 기존 변수들에 나눠 담기
+                // (dbData.apt와 dbData.rent는 서버가 이미 다 긁어모아둔 8년치 데이터입니다)
+                allAptList = groupItems(dbData.apt, sigungu, lawdCd, 'apt');
+                rentByAptName = buildRentIndex(dbData.rent);
+                rentHistoryByApt = buildRentHistory(dbData.rent);
+
+                // 4. 투자 지표 및 점수 계산 (기존 로직 활용)
+                calcPriceGrades(allAptList);
+                calcInvestIndicators(allAptList, dbData.rent);
+                
+                allAptList.forEach(function(apt) {
+                    var r = calcInvestScore(apt.indicators);
+                    apt.investScore = r.score; 
+                    apt.disqualified = r.disqualified; 
+                    apt.dqReason = r.reason; 
+                    apt.scoreBreakdown = r.breakdown;
+                    
+                    var nh = calcNewHigh(apt.trades); 
+                    apt.hasNewHigh = nh.hasNewHigh; 
+                    apt.newHighPyungs = nh.newHighPyungs;
+                });
+
+                // 5. 캐시에 저장하여 중복 로딩 방지
+                dataCache[lawdCd] = { 
+                    apt: allAptList, 
+                    rent: rentByAptName, 
+                    rentHistory: rentHistoryByApt 
+                };
+                
+                setStatus('');
+                redrawMarkers();
+
+            } catch (err) {
+                console.error("로딩 실패:", err);
+                setStatus('데이터 로드 실패: 수집 로봇을 먼저 실행해 주세요.');
+            } finally {
+                isLoading = false;
+                resolve();
+            }
         });
     });
 }
