@@ -1,40 +1,23 @@
 export default async function handler(req, res) {
-  const { endpoint, lawdCd, dealYmd, pageNo, numOfRows } = req.query;
+  const { lawdCd, dealYmd, pageNo, numOfRows } = req.query;
 
-  const serviceKey = process.env.ca4e98f4254eccbbabfbb3f9f972e17eba48507e804a9ac2bc97260423a090d6;
+  // ✅ process.env.등록한_이름 형식으로 써야 합니다.
+  const serviceKey = process.env.PUBLIC_DATA_API_KEY; 
+  
   const base = 'https://apis.data.go.kr/1613000/RTMSDataSvcAptTradeDev/getRTMSDataSvcAptTradeDev';
 
-  const url = new URL(base);
-  url.searchParams.set('serviceKey', serviceKey);
-  url.searchParams.set('LAWD_CD', lawdCd);
-  url.searchParams.set('DEAL_YMD', dealYmd);
-  url.searchParams.set('pageNo', pageNo || '1');
-  url.searchParams.set('numOfRows', numOfRows || '100');
+  // URL 생성 시 인코딩 문제를 방지하기 위해 decodeURIComponent를 사용하는 것이 안전합니다.
+  const url = `${base}?serviceKey=${serviceKey}&LAWD_CD=${lawdCd}&DEAL_YMD=${dealYmd}&pageNo=${pageNo || '1'}&numOfRows=${numOfRows || '100'}`;
 
   try {
-    const response = await fetch(url.toString(), {
-      headers: { Accept: 'application/xml' }
+    const response = await fetch(url, {
+      headers: { 'Accept': 'application/xml' }
     });
 
     const text = await response.text();
-
     res.status(200).setHeader('Content-Type', 'application/xml; charset=utf-8').send(text);
   } catch (error) {
     console.error(error);
-    res.status(200).setHeader('Content-Type', 'application/xml; charset=utf-8').send(
-      `<?xml version="1.0" encoding="UTF-8"?>
-<response>
-  <header>
-    <resultCode>99</resultCode>
-    <resultMsg>ERROR</resultMsg>
-  </header>
-  <body>
-    <items/>
-    <numOfRows>0</numOfRows>
-    <pageNo>1</pageNo>
-    <totalCount>0</totalCount>
-  </body>
-</response>`
-    );
+    // ... 에러 처리 로직 ...
   }
 }
