@@ -1004,7 +1004,14 @@ function passesFilter(apt){
     return true;
 }
 
-function cleanJibun(j){if(!j)return '';return j.split('-').map(function(p){return parseInt(p,10);}).filter(function(v){return !isNaN(v);}).join('-');}
+function cleanJibun(j) {
+    if (!j) return '';
+    return j.split('-').map(function(p) {
+        return parseInt(p, 10); // 0660을 660으로 변환
+    }).filter(function(v) {
+        return !isNaN(v);
+    }).join('-');
+}
 function getMonthList(y){var m=[];for(var i=0;i<y*12;i++){var d=new Date();d.setDate(1);d.setMonth(d.getMonth()-i);m.push(d.getFullYear()+String(d.getMonth()+1).padStart(2,'0'));}return m;}
 function ymToDate(ym){return new Date(parseInt(ym.slice(0,4)),parseInt(ym.slice(4,6))-1,1);}
 function getText(item,tag){var el=item.querySelector(tag);return el?el.textContent.trim():'';}
@@ -1381,37 +1388,40 @@ function placeMarkers(aptList, centerLat, centerLon) {
         var apt = filtered[idx++];
         var l = apt.latest;
 
-        // 캐시 확인
-        var cacheKey = l.name + "_" + l.umdNm + "_" + l.jibun;
+        // 지번 정제 (예: 0660 -> 660)
+        var pureJibun = cleanJibun(l.jibun);
+        var cacheKey = l.name + "_" + l.umdNm + "_" + pureJibun;
+
         if (coordCache[cacheKey]) {
             createMarker(coordCache[cacheKey].lat, coordCache[cacheKey].lon, apt);
             runBatch();
             return;
         }
 
-        // --- 질문자님의 6단계 검색 우선순위 조합 ---
+        // --- 질문자님의 6단계 검색 우선순위 최적화 ---
         var candidates = [
-            // 1 & 2. 법정동/읍면동 코드 + 본번 + 부번 (텍스트 조합형)
-            lastSigungu + " " + (l.umdNm || "") + " " + (l.jibun || ""),
-            // 3. 법정동 + 지번
-            (l.umdNm || "") + " " + (l.jibun || ""),
-            // 4. 법정동 + 아파트명
-            (l.umdNm || "") + " " + l.name,
-            // 5. 읍면동 + 아파트명 (시군구 포함)
+            // 1. 시군구 + 동 + 정제된 지번 (가장 정확: 마포구 대흥동 660)
+            lastSigungu + " " + (l.umdNm || "") + " " + pureJibun,
+            // 2. 시군구 + 아파트명 (마포구 태영)
             lastSigungu + " " + l.name,
-            // 6. 도로명 주소 기반
+            // 3. 동 + 지번 (대흥동 660)
+            (l.umdNm || "") + " " + pureJibun,
+            // 4. 동 + 아파트명 (대흥동 태영)
+            (l.umdNm || "") + " " + l.name,
+            // 5. 아파트명 단독 검색
+            l.name,
+            // 6. 도로명 주소 (독막로 266)
             lastSigungu + " " + (l.road_name || "")
         ];
 
         tryStepGeocode(candidates, 0, function(lat, lon) {
             if (lat && lon) {
                 coordCache[cacheKey] = { lat: lat, lon: lon };
-                // 10km 이내일 경우에만 마커 표시
-                if (getDistance(centerLat, centerLon, lat, lon) <= 10000) {
-                    createMarker(lat, lon, apt);
-                }
+                createMarker(lat, lon, apt);
+            } else {
+                console.log("검색 실패 단지: ", l.name, candidates);
             }
-            setTimeout(runBatch, 100); // API 안정성을 위한 지연
+            setTimeout(runBatch, 100);
         });
     }
     runBatch();
@@ -1421,7 +1431,8 @@ function tryStepGeocode(candidates, cIdx, callback) {
     if (cIdx >= candidates.length) { callback(null, null); return; }
     
     var query = candidates[cIdx].trim();
-    if (!query || query === lastSigungu) { 
+    // 검색어가 너무 짧거나 시군구 이름만 있는 경우 스킵
+    if (!query || query === lastSigungu || query.length < 3) { 
         tryStepGeocode(candidates, cIdx + 1, callback); 
         return; 
     }
@@ -1430,7 +1441,18 @@ function tryStepGeocode(candidates, cIdx, callback) {
         if (status === kakao.maps.services.Status.OK) {
             callback(parseFloat(result[0].y), parseFloat(result[0].x));
         } else {
-            tryStepGeocode(candidates, cIdx + 1, callback);
+            // 주소 검색 실패 시 '키워드 검색'으로 한 번 더 시도 (아파트명 검색 보완)
+            if (query.includes(lastSigungu)) {
+                places.keywordSearch(query, function(res, st) {
+                    if (st === kakao.maps.services.Status.OK) {
+                        callback(parseFloat(res[0].y), parseFloat(res[0].x));
+                    } else {
+                        tryStepGeocode(candidates, cIdx + 1, callback);
+                    }
+                });
+            } else {
+                tryStepGeocode(candidates, cIdx + 1, callback);
+            }
         }
     });
 }
