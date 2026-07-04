@@ -1,7 +1,7 @@
 export default async function handler(req, res) {
   const { endpoint, lawdCd, dealYmd, pageNo, numOfRows } = req.query;
 
-  const serviceKey = process.env.PUBLIC_DATA_API_KEY;
+  const serviceKey = process.env.ca4e98f4254eccbbabfbb3f9f972e17eba48507e804a9ac2bc97260423a090d6;
   const base = 'https://apis.data.go.kr/1613000/RTMSDataSvcAptTradeDev/getRTMSDataSvcAptTradeDev';
 
   const url = new URL(base);
