@@ -1,4 +1,4 @@
-import { createClient } from '@supabase/supabase-client';
+import { createClient } from '@supabase/supabase-js';
 
 // Supabase 연결
 const supabase = createClient(process.env.https://qfrhodasxmkciyrxskja.supabase.co, process.env.sb_publishable_t4vxrPNUxo2HeMLV_Y7PDw_CDsuL2Ll);
