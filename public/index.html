@@ -1143,36 +1143,39 @@ async function loadAllData(centerLat,centerLon){
             var aptRaw = [];
             var rentRaw = [];
 
-            // 순차적 전체 페이지 수집 로직 (태영아파트 등 누락 방지)
-            for(var m=0; m<aptMonths.length; m++) {
-                var ym = aptMonths[m];
+            // 고속 병렬 수집 로직 (태영아파트 누락 방지 + 속도 최적화)
+            async function fetchAllPages(endpoint, ym) {
+                let p1 = await fetch(`/api/house?endpoint=${endpoint}&lawdCd=${lawdCd}&dealYmd=${ym}&pageNo=1&numOfRows=100`).then(r => r.text());
+                let xml = new DOMParser().parseFromString(p1, 'text/xml');
+                let total = parseInt(xml.querySelector('totalCount')?.textContent || '0');
+                let items = Array.from(xml.querySelectorAll('item'));
                 
-                // 아파트 매매 데이터 수집
-                var page = 1;
-                var totalCount = 0;
-                do {
-                    var res = await fetch('/api/house?endpoint=apt&lawdCd='+lawdCd+'&dealYmd='+ym+'&pageNo='+page+'&numOfRows=100');
-                    var text = await res.text();
-                    var xml = new DOMParser().parseFromString(text, 'text/xml');
-                    if(page === 1) totalCount = parseInt(xml.querySelector('totalCount')?.textContent || '0');
-                    var items = Array.from(xml.querySelectorAll('item'));
-                    aptRaw = aptRaw.concat(items);
-                    page++;
-                } while ((page-1)*10 < totalCount && totalCount > 0);
-
-                // 아파트 전월세 데이터 수집
-                page = 1;
-                totalCount = 0;
-                do {
-                    var res = await fetch('/api/house?endpoint=aptRent&lawdCd='+lawdCd+'&dealYmd='+ym+'&pageNo='+page+'&numOfRows=100');
-                    var text = await res.text();
-                    var xml = new DOMParser().parseFromString(text, 'text/xml');
-                    if(page === 1) totalCount = parseInt(xml.querySelector('totalCount')?.textContent || '0');
-                    var items = Array.from(xml.querySelectorAll('item'));
-                    rentRaw = rentRaw.concat(items);
-                    page++;
-                } while ((page-1)*10 < totalCount && totalCount > 0);
+                if (total > 100) {
+                    let extraReqs = [];
+                    for (let p = 2; (p - 1) * 100 < total; p++) {
+                        extraReqs.push(fetch(`/api/house?endpoint=${endpoint}&lawdCd=${lawdCd}&dealYmd=${ym}&pageNo=${p}&numOfRows=100`).then(r => r.text()));
+                    }
+                    let extraTexts = await Promise.all(extraReqs);
+                    extraTexts.forEach(t => {
+                        let x = new DOMParser().parseFromString(t, 'text/xml');
+                        items = items.concat(Array.from(x.querySelectorAll('item')));
+                    });
+                }
+                return items;
             }
+
+            // 모든 월의 데이터를 병렬로 요청 시작
+            let allTasks = [];
+            aptMonths.forEach(ym => {
+                allTasks.push(fetchAllPages('apt', ym));
+                allTasks.push(fetchAllPages('aptRent', ym));
+            });
+
+            let results = await Promise.all(allTasks);
+            results.forEach((items, idx) => {
+                if (idx % 2 === 0) aptRaw = aptRaw.concat(items); // 짝수는 매매
+                else rentRaw = rentRaw.concat(items);            // 홀수는 전세
+            });
 
             allAptList=groupItems(aptRaw,sigungu,lawdCd,'apt');
             allHouseList=[];
