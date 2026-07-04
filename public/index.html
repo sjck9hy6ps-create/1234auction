@@ -1528,6 +1528,54 @@ function createMarker(lat, lon, apt) {
     overlay.setMap(map);
     markers.push(overlay);
 }
+function placeMarkers(aptList, centerLat, centerLon) {
+    if (!centerLat || !centerLon || !aptList) return;
+
+    var filtered = aptList.filter(function(apt) { return passesFilter(apt); });
+    var idx = 0;
+
+    function runBatch() {
+        if (idx >= filtered.length) return;
+        var apt = filtered[idx++];
+        var l = apt.latest || {};
+
+        // 정제 및 키
+        var pureJibun = cleanJibun(l.jibun || '');
+        var umd = (l.umdNm || l.searchAddr || '').trim();
+        var name = (l.name || '').trim();
+        var road = (l.road_name || '').trim();
+        var cacheKey = (name + '|' + umd + '|' + pureJibun).toLowerCase();
+
+        if (coordCache[cacheKey]) {
+            createMarker(coordCache[cacheKey].lat, coordCache[cacheKey].lon, apt);
+            setTimeout(runBatch, 30);
+            return;
+        }
+
+        var candidates = [];
+        if (lastSigungu && umd && pureJibun) candidates.push(lastSigungu + ' ' + umd + ' ' + pureJibun);
+        if (lastSigungu && name) candidates.push(lastSigungu + ' ' + name);
+        if (umd && pureJibun) candidates.push(umd + ' ' + pureJibun);
+        if (umd && name) candidates.push(umd + ' ' + name);
+        if (name) candidates.push(name);
+        if (lastSigungu && road) candidates.push(lastSigungu + ' ' + road);
+        candidates = Array.from(new Set(candidates)); // 중복 제거
+
+        tryStepGeocode(candidates, function(lat, lon) {
+            if (lat && lon) {
+                coordCache[cacheKey] = { lat: lat, lon: lon };
+                if (getDistance(centerLat, centerLon, lat, lon) <= 10000) {
+                    createMarker(lat, lon, apt);
+                }
+            } else {
+                console.warn('검색 실패 단지:', name, candidates);
+            }
+            setTimeout(runBatch, 100);
+        });
+    }
+
+    runBatch();
+}
 
 function showRadiusCircle(lat,lon){
     if(radiusCircle)radiusCircle.setMap(null);
