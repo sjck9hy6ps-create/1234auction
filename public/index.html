@@ -1371,51 +1371,70 @@ function getPinConfig(apt){
 }
 
 function placeMarkers(aptList, centerLat, centerLon) {
-    if (!centerLat || !centerLon || !aptList || aptList.length === 0) return;
-    
+    if (!centerLat || !centerLon || !aptList) return;
+
     var filtered = aptList.filter(function(apt) { return passesFilter(apt); });
     var idx = 0;
 
     function runBatch() {
         if (idx >= filtered.length) return;
         var apt = filtered[idx++];
-        
-        // 1. 캐시 확인 (이미 검색된 단지인지)
-        var cacheKey = apt.latest.name + "_" + apt.latest.road_name + "_" + apt.latest.jibun;
+        var l = apt.latest;
+
+        // 캐시 확인
+        var cacheKey = l.name + "_" + l.umdNm + "_" + l.jibun;
         if (coordCache[cacheKey]) {
             createMarker(coordCache[cacheKey].lat, coordCache[cacheKey].lon, apt);
             runBatch();
             return;
         }
 
-        // 2. 검색 후보군 생성 (질문자님의 우선순위 반영)
-        // 서버 데이터 구조에 따라 필드명은 일부 조정될 수 있습니다 (item.road_name_bonbun 등)
-        var l = apt.latest;
+        // --- 질문자님의 6단계 검색 우선순위 조합 ---
         var candidates = [
-            // 1 & 2. 법정동 주소 기반 (시군구 + 읍면동 + 본번-부번)
-            lastSigungu + " " + l.name, // 아파트명 우선
-            lastSigungu + " " + (l.umdNm || "") + " " + (l.jibun || ""), 
-            // 3 & 4. 동 + 지번 / 동 + 아파트명
+            // 1 & 2. 법정동/읍면동 코드 + 본번 + 부번 (텍스트 조합형)
+            lastSigungu + " " + (l.umdNm || "") + " " + (l.jibun || ""),
+            // 3. 법정동 + 지번
             (l.umdNm || "") + " " + (l.jibun || ""),
+            // 4. 법정동 + 아파트명
             (l.umdNm || "") + " " + l.name,
-            // 6. 도로명 기반 (도로명 + 본번-부번)
+            // 5. 읍면동 + 아파트명 (시군구 포함)
+            lastSigungu + " " + l.name,
+            // 6. 도로명 주소 기반
             lastSigungu + " " + (l.road_name || "")
         ];
 
-        // 3. 후보군을 순차적으로 검색하는 재귀 함수 호출
         tryStepGeocode(candidates, 0, function(lat, lon) {
             if (lat && lon) {
                 coordCache[cacheKey] = { lat: lat, lon: lon };
+                // 10km 이내일 경우에만 마커 표시
                 if (getDistance(centerLat, centerLon, lat, lon) <= 10000) {
                     createMarker(lat, lon, apt);
                 }
             }
-            // API 과부하 방지 및 순차 처리를 위한 지연
-            setTimeout(runBatch, 120);
+            setTimeout(runBatch, 100); // API 안정성을 위한 지연
         });
     }
     runBatch();
 }
+
+function tryStepGeocode(candidates, cIdx, callback) {
+    if (cIdx >= candidates.length) { callback(null, null); return; }
+    
+    var query = candidates[cIdx].trim();
+    if (!query || query === lastSigungu) { 
+        tryStepGeocode(candidates, cIdx + 1, callback); 
+        return; 
+    }
+
+    geocoder.addressSearch(query, function(result, status) {
+        if (status === kakao.maps.services.Status.OK) {
+            callback(parseFloat(result[0].y), parseFloat(result[0].x));
+        } else {
+            tryStepGeocode(candidates, cIdx + 1, callback);
+        }
+    });
+}
+
 
 // 여러 후보 주소를 순서대로 검색하여 하나라도 걸리면 중단하고 리턴하는 함수
 function tryStepGeocode(candidates, cIdx, callback) {
@@ -1441,69 +1460,53 @@ function tryStepGeocode(candidates, cIdx, callback) {
     });
 }
 
-function createMarker(lat,lon,apt){
-    var config=getPinConfig(apt);if(!config)return;
-    var l=apt.latest,color=config.color;
+function createMarker(lat, lon, apt) {
+    var config = getPinConfig(apt); // 최근 거래 건수에 따른 색상/숫자 설정
+    if (!config) return;
 
-    var trades=apt.trades,valueBadge='';
-    var recent1Y=trades.filter(t=>new Date(t.year,t.month-1,t.day)>=oneYearAgo&&t.area>0);
-    var hist5Y=trades.filter(t=>new Date(t.year,t.month-1,t.day)>=fiveYearAgo&&t.area>0);
-    if(recent1Y.length>0&&hist5Y.length>=3){
-        var avg1Y=recent1Y.reduce((a,b)=>a+(parseInt(b.amount)/toPyung(b.area)),0)/recent1Y.length;
-        var avg5Y=hist5Y.reduce((a,b)=>a+(parseInt(b.amount)/toPyung(b.area)),0)/hist5Y.length;
-        var ratio=(avg1Y/avg5Y)-1;
-        if(ratio>=0.20)      valueBadge='<div class="value-badge" style="background:#b71c1c;">과열</div>';
-        else if(ratio>=0.05) valueBadge='<div class="value-badge" style="background:#ff7043;">우상향</div>';
-        else if(ratio>=-0.05)valueBadge='<div class="value-badge" style="background:#9e9e9e;">정체</div>';
-        else                 valueBadge='<div class="value-badge" style="background:#1565c0;">역전</div>';
-    }
+    var l = apt.latest;
+    var color = config.color;
+    
+    // 지번 주소 정보 (동 + 지번)
+    var jibunAddr = (l.umdNm || "") + " " + (l.jibun || "");
+    
+    var div = document.createElement('div');
+    // 배지 스타일 설정
+    div.style.cssText = `
+        position: relative;
+        background: white;
+        border: 2px solid \${color};
+        border-radius: 8px;
+        padding: 5px 8px;
+        white-space: nowrap;
+        cursor: pointer;
+        box-shadow: 0 2px 6px rgba(0,0,0,0.2);
+        text-align: center;
+        line-height: 1.2;
+    `;
 
-    var hasAuction=auctionList.some(function(a){return a.name&&a.name.trim()===l.name.trim();});
+    // 배지 내부 콘텐츠 (건수, 아파트명, 금액, 지번)
+    div.innerHTML = `
+        <div style="font-size: 16px; font-weight: 900; color: \${color};">${config.count}건</div>
+        <div style="font-size: 11px; font-weight: bold; color: #333;">${l.name}</div>
+        <div style="font-size: 12px; font-weight: bold; color: \${color};">${toEok(l.amount)}</div>
+        <div style="font-size: 9px; color: #888; margin-top: 2px;">${jibunAddr}</div>
+    `;
 
-    var amountStr=toEok(l.amount);
-    var pyungStr=l.area>0?toPyung(l.area)+'평':'';
-    var floorStr=(l.floor&&l.floor!=='-')?l.floor+'층':'';
-    var buildYearStr=(apt.buildingType==='house'&&l.buildYear)?l.buildYear+'년식':'';
-    var displayName=apt.buildingType==='house'?l.umdNm+' '+l.jibun:l.name;
-    var typeLabel='';
-    if(apt.buildingType==='house'){var ht=(l.houseType&&l.houseType!=='house')?l.houseType:'주택';typeLabel='<div style="font-size:9px;color:white;background:'+color+';border-radius:3px;padding:1px 4px;margin-bottom:2px;display:inline-block;">'+ht+'</div>';}
-    var subInfo=[pyungStr,floorStr,buildYearStr].filter(Boolean).join(' · ');
-    var jeonseStr='';
-    if(apt.buildingType==='apt'&&l.area>0){var ji=getLatestJeonse(l.name,toPyung(l.area));if(ji){var jDate=ji.year+'.'+String(ji.month).padStart(2,'0')+'.'+String(ji.day).padStart(2,'0');jeonseStr='<div style="color:#6a1b9a;font-size:10px;font-weight:bold;border-top:1px dashed #ddd;margin-top:2px;padding-top:2px;">전세 '+toEok(ji.deposit)+'<span style="color:#aaa;font-size:9px;font-weight:normal;margin-left:3px;">('+jDate+')</span></div>';}}
-    var gradeBadge='';
-    if(apt.buildingType==='apt'&&apt.grade){var gc=GRADE_COLORS[apt.grade];gradeBadge='<div style="position:absolute;top:-8px;left:-8px;background:'+gc+';color:white;font-size:11px;font-weight:900;width:20px;height:20px;border-radius:50%;display:flex;align-items:center;justify-content:center;box-shadow:0 1px 3px rgba(0,0,0,0.4);border:1.5px solid white;">'+apt.grade+'</div>';}
-    var scoreBadge='';
-    if(apt.buildingType==='apt'){var ig=getInvestGrade(apt.investScore,apt.disqualified);if(ig){var scoreText=apt.disqualified?'제외':(apt.investScore!==null?apt.investScore+'점':'-');scoreBadge='<div style="position:absolute;top:-8px;right:-8px;background:'+ig.color+';color:white;font-size:9px;font-weight:900;min-width:28px;height:20px;border-radius:10px;display:flex;align-items:center;justify-content:center;padding:0 4px;box-shadow:0 1px 3px rgba(0,0,0,0.4);border:1.5px solid white;white-space:nowrap;">'+scoreText+'</div>';}}
-    var newHighBadge='';
-    if(apt.buildingType==='apt'&&apt.hasNewHigh){newHighBadge='<div class="new-high-badge">&#x2605; 신고가</div>';}
+    // 클릭 시 상세 패널 열기
+    div.onclick = function() {
+        showRadiusCircle(lat, lon);
+        openPanel(l.name, apt.trades, apt.lawdCd, apt.buildingType, lat, lon, apt.grade, apt.ppp, apt.indicators, apt.investScore, apt.disqualified);
+    };
 
-    var borderStyle=apt.buildingType==='apt'&&apt.hasNewHigh
-        ?'2.5px solid #ff6f00'
-        :(hasAuction?'2.5px solid #6a1b9a':'2px solid '+color);
-    var shadowStyle=hasAuction
-        ?'0 0 0 2px rgba(106,27,154,0.25),0 2px 8px rgba(0,0,0,0.2)'
-        :(apt.buildingType==='apt'&&apt.hasNewHigh?'0 0 0 2px #ffe082,0 2px 8px rgba(255,111,0,0.3)':'0 2px 5px rgba(0,0,0,0.2)');
+    var overlay = new kakao.maps.CustomOverlay({
+        position: new kakao.maps.LatLng(lat, lon),
+        content: div,
+        yAnchor: 1.2
+    });
 
-    var auctionInlineBadge=hasAuction
-        ?'<div style="font-size:9px;font-weight:bold;color:#6a1b9a;background:#f3e5f5;border:1px solid #ce93d8;border-radius:4px;padding:1px 5px;margin-top:1px;display:inline-block;">🔨 경매등록</div>'
-        :'';
-
-    var div=document.createElement('div');
-    div.style.cssText='position:relative;background:white;border:'+borderStyle+';border-radius:7px;padding:3px 7px;margin:4px;margin-bottom:14px;white-space:nowrap;cursor:pointer;box-shadow:'+shadowStyle+';text-align:center;line-height:1.5;max-width:150px;';
-
-    div.innerHTML=gradeBadge+scoreBadge+typeLabel
-        +'<div style="font-size:18px;font-weight:900;color:'+color+';line-height:1.1;">'+config.count+'건</div>'
-        +'<div style="color:#333;font-size:10px;font-weight:bold;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:140px;">'+displayName+'</div>'
-        +'<div style="color:'+color+';font-size:11px;font-weight:bold;">'+amountStr+'</div>'
-        +(subInfo?'<div style="color:#888;font-size:10px;">'+subInfo+'</div>':'')
-        +auctionInlineBadge
-        +jeonseStr
-        +newHighBadge
-        +valueBadge;
-
-    div.onclick=function(){showRadiusCircle(lat,lon);openPanel(l.name,apt.trades,apt.lawdCd,apt.buildingType,lat,lon,apt.grade,apt.ppp,apt.indicators,apt.investScore,apt.disqualified,apt.dqReason,apt.scoreBreakdown,apt.newHighPyungs);};
-    var overlay=new kakao.maps.CustomOverlay({position:new kakao.maps.LatLng(lat,lon),content:div,yAnchor:1.2});
-    overlay.setMap(map);markers.push(overlay);
+    overlay.setMap(map);
+    markers.push(overlay);
 }
 
 function showRadiusCircle(lat,lon){
