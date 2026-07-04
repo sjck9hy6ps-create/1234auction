@@ -1,7 +1,7 @@
 import { createClient } from '@supabase/supabase-client';
 
 // Supabase 연결
-const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
+const supabase = createClient(process.env.https://qfrhodasxmkciyrxskja.supabase.co, process.env.sb_publishable_t4vxrPNUxo2HeMLV_Y7PDw_CDsuL2Ll);
 const GOV_KEY = process.env.GOV_API_KEY;
 
 export default async function handler(req, res) {
