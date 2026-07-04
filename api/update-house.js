@@ -6,7 +6,7 @@ const GOV_KEY = process.env.ca4e98f4254eccbbabfbb3f9f972e17eba48507e804a9ac2bc97
 
 export default async function handler(req, res) {
     // 보안: Vercel Cron 요청인지 확인
-    if (req.headers.authorization !== `Bearer \${process.env.CRON_SECRET}`) {
+    if (req.headers.authorization !== `Bearer \${process.env.1234auction}`) {
         return res.status(401).json({ error: 'Unauthorized' });
     }
 
