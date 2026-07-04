@@ -1,5 +1,5 @@
 export default async function handler(req, res) {
-  const { endpoint, lawdCd, dealYmd } = req.query;
+  const { endpoint, lawdCd, dealYmd, pageNo, numOfRows } = req.query;
 
   const serviceKey = process.env.PUBLIC_DATA_API_KEY;
   const base = 'https://apis.data.go.kr/1613000/RTMSDataSvcAptTradeDev/getRTMSDataSvcAptTradeDev';
@@ -8,8 +8,8 @@ export default async function handler(req, res) {
   url.searchParams.set('serviceKey', serviceKey);
   url.searchParams.set('LAWD_CD', lawdCd);
   url.searchParams.set('DEAL_YMD', dealYmd);
-  url.searchParams.set('pageNo', '1');
-  url.searchParams.set('numOfRows', '10');
+  url.searchParams.set('pageNo', pageNo || '1');
+  url.searchParams.set('numOfRows', numOfRows || '100');
 
   try {
     const response = await fetch(url.toString(), {
