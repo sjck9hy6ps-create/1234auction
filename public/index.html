@@ -508,14 +508,31 @@ var map, geocoder, places;
 var markers=[], radiusCircle=null;
 var moveTimer=null, coordCache={}, dataCache={};
 
-var today        = new Date();
-// 2024년 5월 데이터가 보이도록 날짜 조건 일시 조정
-var threeMonAgo  = new Date("2024-03-01"); 
-var sixMonAgo    = new Date("2023-12-01"); 
-var oneYearAgo   = new Date("2023-01-01"); 
-var twoYearAgo   = new Date("2022-01-01");
-var threeYearAgo = new Date("2021-01-01");
-var fiveYearAgo  = new Date("2019-01-01");
+vvar today = new Date();
+
+// helper: 시분초를 00:00:00으로 설정하여 비교 일관성 확보
+function startOfDay(d){ var x=new Date(d); x.setHours(0,0,0,0); return x; }
+
+// 상대 기간 계산
+function monthsAgo(date, months){
+    var d = new Date(date);
+    d.setDate(1); // 월 단위 비교시 일 문제 회피
+    d.setMonth(d.getMonth() - months);
+    return startOfDay(d);
+}
+function yearsAgo(date, years){
+    var d = new Date(date);
+    d.setFullYear(d.getFullYear() - years);
+    d.setMonth(0,1); // 1월 1일로 고정
+    return startOfDay(d);
+}
+
+threeMonAgo  = monthsAgo(today, 3);   // 최근 3개월 시작일
+sixMonAgo    = monthsAgo(today, 6);   // 최근 6개월 시작일
+oneYearAgo   = monthsAgo(today, 12);  // 최근 1년 시작일
+twoYearAgo   = monthsAgo(today, 24);  // 최근 2년 시작일
+threeYearAgo = monthsAgo(today, 36);  // 최근 3년 시작일
+fiveYearAgo  = monthsAgo(today, 60);  // 최근 5년 시작일
 
 var currentTrades=[], currentSort='date', currentPyung='all';
 var currentTypeFilter='apt';
