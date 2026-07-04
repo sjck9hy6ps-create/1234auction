@@ -1543,6 +1543,86 @@ function buildCandidates(name, umd, pureJibun, road, sigungu){
     if(pureJibun) cands.push(pureJibun);
     return Array.from(new Set(cands.map(s=> (s||'').trim()))).filter(Boolean);
 }
+// 아파트명 표준화 함수
+function normalizeAptName(name){
+  if(!name) return '';
+  // 1. 기본 정리
+  name = String(name).trim();
+
+  // 2. 괄호/동 범위/빌딩표현 제거: "(102동~112동)" 같은 부분 제거
+  name = name.replace(/$[^)]*$|$$.*?$$|【.*?】/g, '');
+
+  // 3. "동", "호" 등 불필요한 동·호 표기 제거 (숫자와 연결된 동 표기는 유지하지 않음)
+  name = name.replace(/(\d+)\s*동/g, ''); // 동수 제거
+  name = name.replace(/[-~–—]\s*\d+/g, ''); // 범위 표기 뒤 숫자 제거
+
+  // 4. 줄임표현/특수문자 제거 및 공백 정리
+  name = name.replace(/[.,··•·'"]/g, '');
+  name = name.replace(/\s+/g, ' ').trim();
+
+  // 5. 통일된 한글 표기: 1) 차수 표기 통일 (1차, 2차 등) 2) 공백 제거 규칙(기준에 따라)
+  // 예: "마포자이 1차" -> "마포자이1차", "자이 1" -> "자이1차" 같은 변형도 처리
+  // 우선 '1차' 표기 보강
+  name = name.replace(/\b(\d+)\s*차\b/g, '$1차'); // "1 차" -> "1차"
+  name = name.replace(/\b(\d+)\s*차\b/gi, '$1차');
+
+  // 6. 흔한 브랜드 축약/동일표기 매핑
+  const map = [
+    // [정규화된표현, 정규형]
+    [/자이\s*더\s*센트리지/i, '자이더센트리지'],
+    [/더센트리지/i, '자이더센트리지'],
+    [/자이\s*2차|자이2차/i, '자이2차'],
+    [/자이\s*1차|자이1차/i, '자이1차'],
+    [/(\b)자이(\b)/i, '자이'],
+    [/래미안|래미안1차/i, '래미안'],
+    [/현대\s*힐스테이트/i, '힐스테이트'],
+    [/한라비발디/i, '비발디'],
+    [/푸르지오/i, '푸르지오']
+  ];
+  map.forEach(([re, rep]) => { name = name.replace(re, rep); });
+
+  // 7. 구분자(구/로 등) 포함된 전체주소형에서 단지명 추출 시 시도
+  // 예: "서울특별시 마포구 독막로42길 마포자이" -> 우선 단지명(마포자이)으로 끝나는지 확인
+  const parts = name.split(/\s+/).reverse();
+  for(let i=0;i<Math.min(4,parts.length);i++){
+    const p = parts[i];
+    // 단지명 후보: 한글+영단어 포함, 숫자 포함 허용
+    if(/[가-힣]/.test(p) && p.length >= 2){
+      // 반환 전 불필요 공백 제거
+      return p.replace(/\s+/g,'').replace(/^[\-\u2011]+|[\-\u2011]+$/g,'');
+    }
+  }
+
+  // 8. 최종 정리: 공백 제거, 소문자/대문자 등 통일(한글 위주라면 공백만 제거)
+  return name.replace(/\s+/g,'').trim();
+}
+
+// 예: 데이터에 적용하는 유틸
+function applyNormalizeToDataList(list){
+  if(!Array.isArray(list)) return;
+  list.forEach(item=>{
+    const raw = (item.latest && (item.latest.name || item.latest.aptName)) || item.name || '';
+    item.normalizedName = normalizeAptName(raw);
+    // 필요시 canonicalName(브랜드+차수 등)도 생성
+    // e.g., item.canonicalName = canonicalize(item.normalizedName);
+  });
+}
+
+// 활용 예: 로드 직후
+applyNormalizeToDataList(allAptList);
+applyNormalizeToDataList(allHouseList);
+
+// 매칭 예: coordCache 키와 비교할 때
+function findCoordForItem(item){
+  const n = item.normalizedName || normalizeAptName((item.latest&&item.latest.name)||'');
+  // coordCache 키들을 정규화해서 매칭 시도
+  const keys = Object.keys(coordCache);
+  const hit = keys.find(k=>{
+    const kn = normalizeAptName(k);
+    return kn && (kn === n || kn.includes(n) || n.includes(kn));
+  });
+  return hit ? coordCache[hit] : null;
+}
 
     function placeMarkers(aptList, centerLat, centerLon) {
     if (!centerLat || !centerLon || !aptList) return;
