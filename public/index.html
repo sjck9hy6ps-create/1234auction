@@ -1370,44 +1370,74 @@ function getPinConfig(apt){
     else{if(apt.count1Y>0)return {color:'#212121',count:apt.count1Y};if(apt.count1YTo3Y>0)return {color:'#2e7d32',count:apt.count1YTo3Y};return null;}
 }
 
-// ─── 지오코딩 에러를 해결한 마커 배치 함수 (수정됨) ───
-function placeMarkers(aptList,centerLat,centerLon){
-    if(!centerLat||!centerLon||aptList.length===0)return;
-    var filtered = aptList.filter(function(apt){return passesFilter(apt);});
-    var needGeocode = [];
+function placeMarkers(aptList, centerLat, centerLon) {
+    if (!centerLat || !centerLon || !aptList || aptList.length === 0) return;
+    
+    var filtered = aptList.filter(function(apt) { return passesFilter(apt); });
+    var idx = 0;
 
-    filtered.forEach(function(apt){
-        var cacheKey = apt.latest.name + "_" + (apt.latest.road_name || apt.latest.umdNm);
-        if(coordCache[cacheKey]){
-            if(getDistance(centerLat,centerLon,coordCache[cacheKey].lat,coordCache[cacheKey].lon)<=10000)
-                createMarker(coordCache[cacheKey].lat,coordCache[cacheKey].lon,apt);
-        } else {
-            var addr = apt.latest.searchAddr || (lastSigungu + " " + (apt.latest.road_name || apt.latest.umdNm));
-            needGeocode.push({cacheKey:cacheKey, addr:addr, apt:apt});
+    function runBatch() {
+        if (idx >= filtered.length) return;
+        var apt = filtered[idx++];
+        
+        // 1. 캐시 확인 (이미 검색된 단지인지)
+        var cacheKey = apt.latest.name + "_" + apt.latest.road_name + "_" + apt.latest.jibun;
+        if (coordCache[cacheKey]) {
+            createMarker(coordCache[cacheKey].lat, coordCache[cacheKey].lon, apt);
+            runBatch();
+            return;
         }
-    });
 
-    var idx=0;
-    function runBatch(){
-        if(idx>=needGeocode.length)return;
-        var item=needGeocode[idx++];
-        geocoder.addressSearch(item.addr, function(result, status) {
-            if (status === kakao.maps.services.Status.OK) {
-                var mLat = parseFloat(result[0].y), mLon = parseFloat(result[0].x);
-                coordCache[item.cacheKey] = {lat:mLat, lon:mLon};
-                if(getDistance(centerLat,centerLon,mLat,mLon)<=10000) createMarker(mLat,mLon,item.apt);
+        // 2. 검색 후보군 생성 (질문자님의 우선순위 반영)
+        // 서버 데이터 구조에 따라 필드명은 일부 조정될 수 있습니다 (item.road_name_bonbun 등)
+        var l = apt.latest;
+        var candidates = [
+            // 1 & 2. 법정동 주소 기반 (시군구 + 읍면동 + 본번-부번)
+            lastSigungu + " " + l.name, // 아파트명 우선
+            lastSigungu + " " + (l.umdNm || "") + " " + (l.jibun || ""), 
+            // 3 & 4. 동 + 지번 / 동 + 아파트명
+            (l.umdNm || "") + " " + (l.jibun || ""),
+            (l.umdNm || "") + " " + l.name,
+            // 6. 도로명 기반 (도로명 + 본번-부번)
+            lastSigungu + " " + (l.road_name || "")
+        ];
+
+        // 3. 후보군을 순차적으로 검색하는 재귀 함수 호출
+        tryStepGeocode(candidates, 0, function(lat, lon) {
+            if (lat && lon) {
+                coordCache[cacheKey] = { lat: lat, lon: lon };
+                if (getDistance(centerLat, centerLon, lat, lon) <= 10000) {
+                    createMarker(lat, lon, apt);
+                }
             }
-            setTimeout(runBatch, 150);
+            // API 과부하 방지 및 순차 처리를 위한 지연
+            setTimeout(runBatch, 120);
         });
     }
     runBatch();
 }
 
-function tryGeocode(candidates,idx,callback){
-    if(!candidates || idx>=candidates.length){callback(null,null);return;}
-    geocoder.addressSearch(candidates[idx],function(result,status){
-        if(status===kakao.maps.services.Status.OK)callback(parseFloat(result[0].y),parseFloat(result[0].x));
-        else tryGeocode(candidates,idx+1,callback);
+// 여러 후보 주소를 순서대로 검색하여 하나라도 걸리면 중단하고 리턴하는 함수
+function tryStepGeocode(candidates, cIdx, callback) {
+    if (cIdx >= candidates.length) {
+        callback(null, null);
+        return;
+    }
+
+    var query = candidates[cIdx].trim();
+    if (!query || query === lastSigungu) { // 유효하지 않은 쿼리 스킵
+        tryStepGeocode(candidates, cIdx + 1, callback);
+        return;
+    }
+
+    geocoder.addressSearch(query, function(result, status) {
+        if (status === kakao.maps.services.Status.OK) {
+            // 검색 결과가 있으면 즉시 좌표 리턴
+            callback(parseFloat(result[0].y), parseFloat(result[0].x));
+        } else {
+            // 결과가 없으면 다음 우선순위 후보로 재귀 호출
+            tryStepGeocode(candidates, cIdx + 1, callback);
+        }
     });
 }
 
