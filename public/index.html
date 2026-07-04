@@ -1528,7 +1528,23 @@ function createMarker(lat, lon, apt) {
     overlay.setMap(map);
     markers.push(overlay);
 }
-function placeMarkers(aptList, centerLat, centerLon) {
+function buildCandidates(name, umd, pureJibun, road, sigungu){
+    var cleanName = (name||'').replace(/$.+?$/g,'').trim();
+    var shortUmd = (umd||'').replace(/$.+?$/g,'').trim();
+    var cands = [];
+    if(sigungu && shortUmd && pureJibun) cands.push(sigungu + ' ' + shortUmd + ' ' + pureJibun);
+    if(sigungu && cleanName) cands.push(sigungu + ' ' + cleanName);
+    if(cleanName) cands.push(cleanName);
+    if(cleanName && !/아파트|APT/i.test(cleanName)) cands.push(cleanName + ' 아파트');
+    if(shortUmd && pureJibun) cands.push(shortUmd + ' ' + pureJibun);
+    if(shortUmd && cleanName) cands.push(shortUmd + ' ' + cleanName);
+    if(road && sigungu) cands.push(sigungu + ' ' + road + (pureJibun?(' '+pureJibun):''));
+    if(road) cands.push(road);
+    if(pureJibun) cands.push(pureJibun);
+    return Array.from(new Set(cands.map(s=> (s||'').trim()))).filter(Boolean);
+}
+
+    function placeMarkers(aptList, centerLat, centerLon) {
     if (!centerLat || !centerLon || !aptList) return;
 
     var filtered = aptList.filter(function(apt) { return passesFilter(apt); });
@@ -1552,14 +1568,13 @@ function placeMarkers(aptList, centerLat, centerLon) {
             return;
         }
 
-        var candidates = [];
+        var candidates = buildCandidates(name, umd, pureJibun, road, lastSigungu);
         if (lastSigungu && umd && pureJibun) candidates.push(lastSigungu + ' ' + umd + ' ' + pureJibun);
         if (lastSigungu && name) candidates.push(lastSigungu + ' ' + name);
         if (umd && pureJibun) candidates.push(umd + ' ' + pureJibun);
         if (umd && name) candidates.push(umd + ' ' + name);
         if (name) candidates.push(name);
         if (lastSigungu && road) candidates.push(lastSigungu + ' ' + road);
-        candidates = Array.from(new Set(candidates)); // 중복 제거
 
         tryStepGeocode(candidates, function(lat, lon) {
             if (lat && lon) {
