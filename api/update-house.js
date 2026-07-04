@@ -2,7 +2,7 @@ import { createClient } from '@supabase/supabase-client';
 
 // Supabase 연결
 const supabase = createClient(process.env.https://qfrhodasxmkciyrxskja.supabase.co, process.env.sb_publishable_t4vxrPNUxo2HeMLV_Y7PDw_CDsuL2Ll);
-const GOV_KEY = process.env.GOV_API_KEY;
+const GOV_KEY = process.env.ca4e98f4254eccbbabfbb3f9f972e17eba48507e804a9ac2bc97260423a090d6;
 
 export default async function handler(req, res) {
     // 보안: Vercel Cron 요청인지 확인
