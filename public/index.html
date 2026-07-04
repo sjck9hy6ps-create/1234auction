@@ -509,12 +509,13 @@ var markers=[], radiusCircle=null;
 var moveTimer=null, coordCache={}, dataCache={};
 
 var today        = new Date();
-var threeMonAgo  = new Date(today); threeMonAgo.setMonth(today.getMonth()-3);
-var sixMonAgo    = new Date(today); sixMonAgo.setMonth(today.getMonth()-6);
-var oneYearAgo   = new Date(today); oneYearAgo.setFullYear(today.getFullYear()-1);
-var twoYearAgo   = new Date(today); twoYearAgo.setFullYear(today.getFullYear()-2);
-var threeYearAgo = new Date(today); threeYearAgo.setFullYear(today.getFullYear()-3);
-var fiveYearAgo  = new Date(today); fiveYearAgo.setFullYear(today.getFullYear()-5);
+// 2024년 5월 데이터가 보이도록 날짜 조건 일시 조정
+var threeMonAgo  = new Date("2024-03-01"); 
+var sixMonAgo    = new Date("2023-12-01"); 
+var oneYearAgo   = new Date("2023-01-01"); 
+var twoYearAgo   = new Date("2022-01-01");
+var threeYearAgo = new Date("2021-01-01");
+var fiveYearAgo  = new Date("2019-01-01");
 
 var currentTrades=[], currentSort='date', currentPyung='all';
 var currentTypeFilter='apt';
@@ -522,7 +523,8 @@ var allAptList=[], allHouseList=[];
 var isLoading=false, lastLawdCd=null, houseLoadedLawd={}, lastSigungu='';
 var rentByAptName={}, rentHistoryByApt={};
 var currentRentTrades=[], currentIndicators=null;
-var activeGrades=new Set(['1']), activeScores=new Set(['S']);
+var activeGrades=new Set(['all']); 
+var activeScores=new Set(['all']);
 var GRADE_COLORS={1:'#b71c1c',2:'#e53935',3:'#ff7043',4:'#ffa726',5:'#66bb6a',6:'#42a5f5',7:'#9e9e9e'};
 
 // ─── 경매 전역 변수 ───
@@ -987,32 +989,18 @@ function toggleScore(val,btn){
     redrawMarkers();
 }
 
-/* ════════════════════════════════════════
-   ★ 수정된 함수: passesFilter
-   - 투자점수 null(지표 미산출) 아파트를
-     특정 등급 선택 시 올바르게 제외
-   - X(제외) 등급 선택 시 disqualified 아파트만 표시
-════════════════════════════════════════ */
 function passesFilter(apt){
     if(apt.buildingType!=='apt') return true;
-
-    // 평단가 등급 필터
     if(!activeGrades.has('all')){
         if(!apt.grade) return false;
         if(!activeGrades.has(String(apt.grade))) return false;
     }
-
-    // 투자점수 필터
     if(!activeScores.has('all')){
         var ig=getInvestGrade(apt.investScore,apt.disqualified);
-        // 점수 미산출(null) 아파트는 특정 등급 선택 시 항상 제외
         if(!ig) return false;
-        // X(제외) 등급: disqualified 아파트만
         if(activeScores.has('X')&&ig.label==='X') return true;
-        // 일반 등급 매칭
         if(!activeScores.has(ig.label)) return false;
     }
-
     return true;
 }
 
@@ -1123,6 +1111,7 @@ function moveToResult(r){
     map.setLevel(4);lastLawdCd=null;loadAllData(r.lat,r.lon);
 }
 
+// ─── 서버 DB 데이터를 불러와서 그룹화하는 핵심 함수 (수정됨) ───
 async function loadAllData(centerLat, centerLon) {
     return new Promise(function(resolve) {
         if (isLoading) { resolve(); return; }
@@ -1152,27 +1141,21 @@ async function loadAllData(centerLat, centerLon) {
             setStatus('데이터 로딩 중...');
 
             try {
-                // 서버 API 호출
                 const res = await fetch(`/api/get-house?lawdCd=${lawdCd}`);
                 const dbData = await res.json();
 
-                // 데이터가 없거나 에러인 경우 처리
                 if (!dbData || dbData.error || !dbData.apt) {
                     console.warn("데이터가 없습니다.");
                     setStatus('데이터가 없습니다. 로봇을 먼저 실행해 주세요.');
                     resolve(); return;
                 }
 
-                // 1. 아파트 목록 그룹화 및 변환
-                // 서버에서 온 데이터(dbData.apt)를 기존 groupItems가 인식할 수 있는 형태로 전달
                 allAptList = groupItemsFromDB(dbData.apt, sigungu, lawdCd, 'apt');
                 
-                // 2. 전세 데이터 인덱싱
                 const rentRaw = dbData.rent || [];
                 rentByAptName = buildRentIndexFromDB(rentRaw);
                 rentHistoryByApt = buildRentHistoryFromDB(rentRaw);
 
-                // 3. 투자 지표 계산
                 calcPriceGrades(allAptList);
                 calcInvestIndicatorsFromDB(allAptList, rentRaw);
                 
@@ -1208,11 +1191,15 @@ async function loadAllData(centerLat, centerLon) {
     });
 }
 
-// 서버 DB 데이터를 위한 보조 함수들 추가
 function groupItemsFromDB(items, sigungu, lawdCd, type) {
     const aptMap = {};
+    if (!items || !Array.isArray(items)) return [];
+
     items.forEach(item => {
-        const key = type + '_' + item.apartment_name + '_' + item.road_name;
+        const name = item.apartment_name;
+        const road = item.road_name || "";
+        const key = type + '_' + name + '_' + road;
+        
         if (!aptMap[key]) aptMap[key] = [];
         aptMap[key].push({
             year: item.deal_year,
@@ -1221,14 +1208,16 @@ function groupItemsFromDB(items, sigungu, lawdCd, type) {
             amount: String(item.deal_amount),
             area: item.exclusive_area,
             floor: String(item.floor),
-            name: item.apartment_name,
-            searchAddr: sigungu + ' ' + item.road_name,
+            name: name,
+            searchAddr: sigungu + ' ' + road,
+            road_name: road,
             buildingType: type
         });
     });
     
     return Object.keys(aptMap).map(key => {
         const trades = aptMap[key];
+        trades.sort((a,b) => (b.year*10000+b.month*100+b.day) - (a.year*10000+a.month*100+a.day));
         return {
             latest: trades[0],
             trades: trades,
@@ -1243,9 +1232,9 @@ function groupItemsFromDB(items, sigungu, lawdCd, type) {
     });
 }
 
-function buildRentIndexFromDB(rentRaw) { return {}; } // 필요시 구현
-function buildRentHistoryFromDB(rentRaw) { return {}; } // 필요시 구현
-function calcInvestIndicatorsFromDB(aptList, rentRaw) { /* 지표 계산 로직 */ }
+function buildRentIndexFromDB(rentRaw) { return {}; } 
+function buildRentHistoryFromDB(rentRaw) { return {}; } 
+function calcInvestIndicatorsFromDB(aptList, rentRaw) { }
 
 
 function calcPriceGrades(aptList){
@@ -1381,26 +1370,41 @@ function getPinConfig(apt){
     else{if(apt.count1Y>0)return {color:'#212121',count:apt.count1Y};if(apt.count1YTo3Y>0)return {color:'#2e7d32',count:apt.count1YTo3Y};return null;}
 }
 
+// ─── 지오코딩 에러를 해결한 마커 배치 함수 (수정됨) ───
 function placeMarkers(aptList,centerLat,centerLon){
     if(!centerLat||!centerLon||aptList.length===0)return;
-    var filtered=aptList.filter(function(apt){return passesFilter(apt);});
-    var cached=[],needGeocode=[];
-    filtered.forEach(function(apt){var cacheKey=apt.latest.searchAddr;if(coordCache[cacheKey])cached.push({coord:coordCache[cacheKey],apt:apt});else needGeocode.push({cacheKey:cacheKey,apt:apt});});
-    cached.forEach(function(item){if(getDistance(centerLat,centerLon,item.coord.lat,item.coord.lon)<=10000)createMarker(item.coord.lat,item.coord.lon,item.apt);});
+    var filtered = aptList.filter(function(apt){return passesFilter(apt);});
+    var needGeocode = [];
+
+    filtered.forEach(function(apt){
+        var cacheKey = apt.latest.name + "_" + (apt.latest.road_name || apt.latest.umdNm);
+        if(coordCache[cacheKey]){
+            if(getDistance(centerLat,centerLon,coordCache[cacheKey].lat,coordCache[cacheKey].lon)<=10000)
+                createMarker(coordCache[cacheKey].lat,coordCache[cacheKey].lon,apt);
+        } else {
+            var addr = apt.latest.searchAddr || (lastSigungu + " " + (apt.latest.road_name || apt.latest.umdNm));
+            needGeocode.push({cacheKey:cacheKey, addr:addr, apt:apt});
+        }
+    });
+
     var idx=0;
     function runBatch(){
         if(idx>=needGeocode.length)return;
         var item=needGeocode[idx++];
-        tryGeocode(item.apt.latest.candidates,0,function(mLat,mLon){
-            if(mLat&&mLon){coordCache[item.cacheKey]={lat:mLat,lon:mLon};if(getDistance(centerLat,centerLon,mLat,mLon)<=10000)createMarker(mLat,mLon,item.apt);}
-            setTimeout(runBatch,100);
+        geocoder.addressSearch(item.addr, function(result, status) {
+            if (status === kakao.maps.services.Status.OK) {
+                var mLat = parseFloat(result[0].y), mLon = parseFloat(result[0].x);
+                coordCache[item.cacheKey] = {lat:mLat, lon:mLon};
+                if(getDistance(centerLat,centerLon,mLat,mLon)<=10000) createMarker(mLat,mLon,item.apt);
+            }
+            setTimeout(runBatch, 150);
         });
     }
     runBatch();
 }
 
 function tryGeocode(candidates,idx,callback){
-    if(idx>=candidates.length){callback(null,null);return;}
+    if(!candidates || idx>=candidates.length){callback(null,null);return;}
     geocoder.addressSearch(candidates[idx],function(result,status){
         if(status===kakao.maps.services.Status.OK)callback(parseFloat(result[0].y),parseFloat(result[0].x));
         else tryGeocode(candidates,idx+1,callback);
@@ -1532,7 +1536,7 @@ async function fetchHistoryMultiLawd(aptName,lawdCds,buildingType,currentTradesD
         var rentReqs=[];
         lawdCds.forEach(function(lcd){months.forEach(function(ym){rentReqs.push(fetchAptRentAPI_P(lcd,ym));});});
         var rentResults=await Promise.all(rentReqs),extraRent=[];
-        rentResults.forEach(function(items){items.forEach(function(item){var nm=getText(item,'aptNm')||getText(item,'mhouseNm')||'';if(nm!==aptName)return;var deposit=(getText(item,'deposit')||getText(item,'보증금액')||'').replace(/,/g,'').trim();if(!deposit||deposit==='0')return;var monthly=parseInt(getText(item,'monthlyRent')||'0',10);extraRent.push({year:parseInt(getText(item,'dealYear')),month:parseInt(getText(item,'dealMonth')),day:parseInt(getText(item,'dealDay')),deposit:deposit,monthlyRent:monthly,rentType:monthly>0?'monthly':'jeonse',area:parseFloat(getText(item,'excluUseAr')||'0'),floor:getText(item,'floor')||'-',buildingType:'rent'});});});
+        rentResults.forEach(function(items){items.forEach(function(item){var nm=getText(item,'aptNm')||getText(item,'mhouseNm')||getText(item,'houseNm')||'';if(nm!==aptName)return;var deposit=(getText(item,'deposit')||getText(item,'보증금액')||'').replace(/,/g,'').trim();if(!deposit||deposit==='0')return;var monthly=parseInt(getText(item,'monthlyRent')||'0',10);extraRent.push({year:parseInt(getText(item,'dealYear')),month:parseInt(getText(item,'dealMonth')),day:parseInt(getText(item,'dealDay')),deposit:deposit,monthlyRent:monthly,rentType:monthly>0?'monthly':'jeonse',area:parseFloat(getText(item,'excluUseAr')||'0'),floor:getText(item,'floor')||'-',buildingType:'rent'});});});
         var rm=rentTrades.concat(extraRent),rs={},rd=[];
         rm.forEach(function(t){var k=t.year+'_'+t.month+'_'+t.day+'_'+t.deposit+'_'+t.area+'_'+t.monthlyRent;if(!rs[k]){rs[k]=true;rd.push(t);}});
         rd.sort(function(a,b){return (b.year*10000+b.month*100+b.day)-(a.year*10000+a.month*100+a.day);});
@@ -1678,7 +1682,6 @@ function renderTable(){
     }
     document.getElementById('panel-body').innerHTML=html||'<div style="padding:20px;text-align:center;color:#aaa;">거래 내역 없음</div>';
 }
-
 </script>
 </body>
 </html>
