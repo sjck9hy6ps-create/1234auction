@@ -2,7 +2,7 @@ import { createClient } from '@supabase/supabase-js';
 
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_ANON_KEY);
 
-// 간단하지만 따옴표로 감싼 필드와 쉼표를 처리하는 파서
+// 간단하지만 따옴표로 감싼 필드와 쉼표를 처리하는 파서 (쉼표 구분자 기준)
 function parseCSV(text) {
   const rows = [];
   let cur = '';
@@ -67,7 +67,7 @@ export default async function handler(req, res) {
 
   try {
     const { data, error: downloadError } = await supabase.storage
-      .from('uploads') // 보드에서 요청하신 대로 'uploads' 사용
+      .from('uploads')
       .download(filePath);
 
     if (downloadError) throw downloadError;
@@ -76,15 +76,23 @@ export default async function handler(req, res) {
     let csvText = (await data.text()) || '';
     // BOM 제거
     if (csvText.charCodeAt(0) === 0xFEFF) csvText = csvText.slice(1);
-    // 탭으로 구분된 파일 처리: 탭을 쉼표로 변환
+
+    // 숫자 천단위 콤마 제거 (예: 61,000 -> 61000). 따옴표로 감싼 필드가 올바르지 않을 경우를 대비해 반복 적용
+    let prev;
+    do {
+      prev = csvText;
+      csvText = csvText.replace(/(\d+),(\d{3}\b)/g, '$1$2');
+    } while (csvText !== prev);
+
+    // 탭으로 구분된 파일이 섞여 있을 경우 탭을 쉼표로 변환 (대부분 CSV가 쉼표이면 필요 없음)
     csvText = csvText.replace(/\t/g, ',');
 
     // 파싱
     const parsed = parseCSV(csvText); // 배열의 배열
     if (!parsed || parsed.length === 0) return res.status(400).json({ error: 'Empty CSV' });
 
-    // 1) 헤더 행 자동 탐지: '시군구'와 '번지'를 포함하는 행을 헤더로 사용
-    let headerIndex = parsed.findIndex(r => r.join('').includes('시군구') && r.join('').includes('번지'));
+    // 헤더 행 자동 탐지: '시군구'와 '번지'를 포함하는 행을 헤더로 사용
+    let headerIndex = parsed.findIndex(r => r.join('').includes('시군구') && (r.join('').includes('번지') || r.join('').includes('지번')));
     if (headerIndex === -1) headerIndex = 0;
     const headerRow = parsed[headerIndex].map(h => (h || '').replace(/"/g, '').trim());
     const linesArr = parsed.slice(headerIndex + 1).filter(r => r.join('').trim() !== '');
@@ -102,15 +110,14 @@ export default async function handler(req, res) {
         if (header === '전용면적(㎡)') row['전용면적'] = row['전용면적'] || val;
         if (header === '전용면적') row['전용면적(㎡)'] = row['전용면적(㎡)'] || val;
 
-        if (header === '거래금액(만원)') {
-          row['거래금액'] = row['거래금액'] || val;
-        }
-        if (header === '거래금액') {
-          row['거래금액(만원)'] = row['거래금액(만원)'] || val;
-        }
+        if (header === '거래금액(만원)') row['거래금액'] = row['거래금액'] || val;
+        if (header === '거래금액') row['거래금액(만원)'] = row['거래금액(만원)'] || val;
       });
 
-      const toInt = (val) => parseInt(String(val || '').replace(/[^0-9]/g, '')) || 0;
+      const toInt = (val) => {
+        const cleaned = String(val || '').replace(/[^0-9]/g, '');
+        return cleaned ? parseInt(cleaned, 10) : 0;
+      };
 
       const subNumValue = toInt(getField(row, '부번'));
 
