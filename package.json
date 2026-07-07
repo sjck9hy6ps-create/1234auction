@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "type": "module",
   "dependencies": {
-    "@supabase/supabase-js": "^2.39.0"
-  "papaparse": "^5.4.1"
+    "@supabase/supabase-js": "^2.39.0",
+    "papaparse": "^5.4.1"
   }
 }
