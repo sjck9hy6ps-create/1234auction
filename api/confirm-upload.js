@@ -4,84 +4,61 @@ import Papa from 'papaparse';
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_ANON_KEY);
 
 export default async function handler(req, res) {
-  if (req.method !== 'POST') {
-    return res.status(405).json({ error: 'Method not allowed' });
-  }
+  if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
 
   const { filePath } = req.body;
-  if (!filePath) {
-    return res.status(400).json({ error: 'filePath가 누락되었습니다.' });
-  }
 
   try {
-    // [검수 수정] download 결과의 키값은 'data'입니다. 이를 fileBlob으로 별칭 지정합니다.
-    const { fileBlob, error: downloadError } = await supabase.storage
+    // 1. [수정] 불확실한 변수명 대신 Supabase 표준인 'data'를 사용
+    const { data, error: downloadError } = await supabase.storage
       .from('csv-uploads')
       .download(filePath);
 
-    if (downloadError) {
-      return res.status(500).json({ error: '파일 다운로드 실패: ' + downloadError.message });
-    }
+    if (downloadError) throw downloadError;
 
-    // fileBlob이 존재하는지 한 번 더 체크
-    if (!fileBlob) {
-      return res.status(500).json({ error: '파일 데이터를 찾을 수 없습니다.' });
-    }
-
-    const csvText = await fileBlob.text();
-
-    const parsed = Papa.parse(csvText, {
-      header: true,
-      skipEmptyLines: true
-    });
+    // 2. [수정] data가 확실히 있을 때만 text() 호출
+    const csvText = await data.text();
+    const parsed = Papa.parse(csvText, { header: true, skipEmptyLines: true });
 
     const rowsToInsert = parsed.data.map(row => {
-      const getV = (name) => {
-        const key = Object.keys(row).find(k => k.trim() === name);
-        return key ? String(row[key]).trim() : '';
+      // 안전하게 값을 가져오는 최소한의 기능
+      const getRaw = (key) => {
+        const actualKey = Object.keys(row).find(k => k.trim() === key);
+        return actualKey ? String(row[actualKey]).trim() : '';
       };
 
-      const toInt = (val) => {
-        // [검수 보완] 숫자가 아닌 문자가 들어올 경우를 대비해 더 안전하게 처리
-        const cleaned = val.replace(/[^0-9]/g, '');
-        return cleaned ? parseInt(cleaned) : 0;
+      // 숫자로 변환하는 최소한의 기능
+      const getNum = (key) => {
+        const val = getRaw(key).replace(/[^0-9]/g, '');
+        return val ? parseInt(val) : 0;
       };
 
-      const sNum = toInt(getV('부번'));
-      const ym = getV('계약년월');
-      const d = getV('계약일').padStart(2, '0');
+      // [부번 로직] 변수 선언 없이 바로 처리하여 충돌 방지
+      const subNum = getNum('부번');
 
       return {
-        region: getV('시군구'),
-        bunji: getV('지번'),
-        road_name: getV('도로명'),
-        main_num: toInt(getV('본번')),
-        sub_num: sNum === 0 ? null : sNum, // 부번 0 무시 처리
-        danji: getV('단지명'),
-        floor: toInt(getV('층')),
-        // 전용면적 정수화 처리 (84.95 -> 84)
-        size: Math.floor(parseFloat(getV('전용면적')) || 0),
-        deal_date: (ym && d) ? ym + d : null,
-        price: toInt(getV('거래금액(만원)')),
-        build_year: toInt(getV('건축년도'))
+        region: getRaw('시군구'),
+        bunji: getRaw('지번'),
+        road_name: getRaw('도로명'),
+        main_num: getNum('본번'),
+        // 부번이 0이면 null, 아니면 숫자 저장
+        sub_num: subNum === 0 ? null : subNum, 
+        danji: getRaw('단지명'),
+        floor: getNum('층'),
+        size: Math.floor(parseFloat(getRaw('전용면적')) || 0),
+        deal_date: getRaw('계약년월') + getRaw('계약일').padStart(2, '0'),
+        price: getNum('거래금액(만원)'),
+        build_year: getNum('건축년도')
       };
     });
 
-    const { error: insertError } = await supabase
-      .from('real_estate_trades')
-      .insert(rowsToInsert);
-
-    if (insertError) {
-      return res.status(500).json({ error: 'DB 저장 실패: ' + insertError.message });
-    }
+    const { error: insertError } = await supabase.from('real_estate_trades').insert(rowsToInsert);
+    if (insertError) throw insertError;
 
     return res.status(200).json({ success: true, count: rowsToInsert.length });
 
   } catch (error) {
-    console.error('Final Catch Error:', error);
-    return res.status(500).json({ 
-      error: '서버 내부 오류 발생', 
-      details: error.message 
-    });
+    // 서버가 죽지 않도록 모든 에러를 JSON으로 포착
+    return res.status(500).json({ error: error.message });
   }
 }
