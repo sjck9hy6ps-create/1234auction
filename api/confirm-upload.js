@@ -29,15 +29,27 @@ export default async function handler(req, res) {
       skipEmptyLines: true
     });
 
-    // 3. 데이터 가공
-    const rowsToInsert = parsed.data.map(row => ({
-      city: row['시군구'] || row['﻿시군구'], 
-      danji: row['단지명'],
-      size: parseFloat(row['전용면적(㎡)']) || 0,
-      price: row['거래금액(만원)'] ? parseInt(String(row['거래금액(만원)']).replace(/,/g, '')) : 0,
-      deal_date: row['계약년월일'] || (row['계약년월'] && row['계약일'] ? row['계약년월'] + row['계약일'] : null),
-      raw_row: row // 변수명 수정: raw_row -> row
-    }));
+    // 3. 데이터 가공 (유연하게 헤더 찾기)
+    const rowsToInsert = parsed.data.map(row => {
+      // 키 이름에서 공백이나 특수문자를 제거하는 함수
+      const getVal = (possibleNames) => {
+        for (const name of possibleNames) {
+          // 실제 row의 키들 중 name을 포함하는 것이 있는지 확인
+          const actualKey = Object.keys(row).find(k => k.trim().includes(name));
+          if (actualKey && row[actualKey]) return row[actualKey];
+        }
+        return null;
+      };
+
+      return {
+        city: getVal(['시군구']),
+        danji: getVal(['단지명', '아파트명']),
+        size: parseFloat(String(getVal(['전용면적', '면적'])).replace(/,/g, '')) || 0,
+        price: parseInt(String(getVal(['거래금액', '가격'])).replace(/,/g, '')) || 0,
+        deal_date: getVal(['계약년월일']) || (getVal(['계약년월']) + getVal(['계약일'])),
+        raw_row: row 
+      };
+    });
 
     // 4. DB 삽입 (변수명 수정: insertData -> error만 확인해도 됨)
     const { error: insertError } = await supabase
