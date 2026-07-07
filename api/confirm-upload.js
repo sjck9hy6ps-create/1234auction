@@ -46,21 +46,33 @@ export default async function handler(req, res) {
   const day = String(getV('계약일') || '').padStart(2, '0');
   const fullDate = yearMonth && day ? yearMonth + day : null;
 
+  // ... 기존 함수들 생략 ...
+
+    // 숫자로 변환하는 함수
+  const toInt = (val) => {
+    const num = parseInt(String(val || '0').replace(/[^0-9]/g, ''));
+    return isNaN(num) ? 0 : num;
+  };
+
+  // 부번 전용: 0이면 null을 반환, 아니면 숫자 반환
+  const subNumValue = toInt(getV('부번'));
+
   return {
-    city: getV('시군구'),
+    region: getV('시군구'),
     bunji: getV('지번'),
     road_name: getV('도로명'),
     main_num: toInt(getV('본번')),
-    sub_num: toInt(getV('부번')),
+    // 부번이 0이면 null로 저장, 0이 아니면 그 숫자 저장
+    sub_num: subNumValue === 0 ? null : subNumValue, 
     danji: getV('단지명'),
     floor: toInt(getV('층')),
-    size: toFloat(getV('전용면적')),
+    size: toInt(getV('전용면적')), 
     deal_date: fullDate,
-    price: toInt(getV('거래금액(만원)')), // 고정 명칭 그대로 사용
+    price: toInt(getV('거래금액(만원)')),
     build_year: toInt(getV('건축년도')),
     raw_row: row 
   };
-});
+
 
     // 4. DB 삽입 (변수명 수정: insertData -> error만 확인해도 됨)
     const { error: insertError } = await supabase
