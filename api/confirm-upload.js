@@ -14,18 +14,22 @@ export default async function handler(req, res) {
 
     if (downloadError) throw downloadError;
 
-    const csvText = await data.text();
-    const lines = csvText.split('\n');
-    const headers = lines[0].split(',').map(h => h.trim());
+    const csvText = await data.text() || ''; // csvText가 빈값이면 빈 문자열로 초기화
+const lines = csvText.split('\n');
+const headers = lines[0].split(',').map(h => (h || '').replace(/"/g, '').trim());
 
-    const rowsToInsert = lines.slice(1).filter(line => line.trim()).map(line => {
-      const values = line.split(',').map(v => v.trim());
-      const row = {};
-      headers.forEach((header, i) => {
-        row[header] = values[i] || '';
-      });
+const rowsToInsert = lines.slice(1).filter(line => line.trim()).map(line => {
+  const values = line.split(',').map(v => (v || '').replace(/"/g, '').trim());
+  const row = {};
+  headers.forEach((header, i) => {
+    row[header] = values[i] || ''; // values[i]가 없을 경우 빈 문자열로 처리
+  });
 
-      const toInt = (val) => parseInt(String(val).replace(/[^0-9]/g, '')) || 0;
+  const toInt = (val) => parseInt(String(val || '').replace(/[^0-9]/g, '')) || 0; // val이 빈값이면 빈 문자열로 처리
+
+  // 나머지 코드 ...
+});
+
 
       // 1. 부번 처리: 0이면 null (요청 사항)
       const subNumValue = toInt(row['부번']);
