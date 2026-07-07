@@ -5,7 +5,7 @@ const supabase = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY
 );
 
-const BUCKET = 'your-bucket-name'; // 실제 버킷 이름으로 변경
+const BUCKET = 'uploads'; // 실제 버킷 이름으로 변경
 
 export default async function handler(req, res) {
   if (req.method !== 'POST') {
