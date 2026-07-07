@@ -31,25 +31,36 @@ export default async function handler(req, res) {
 
     // 3. 데이터 가공 (유연하게 헤더 찾기)
     const rowsToInsert = parsed.data.map(row => {
-      // 키 이름에서 공백이나 특수문자를 제거하는 함수
-      const getVal = (possibleNames) => {
-        for (const name of possibleNames) {
-          // 실제 row의 키들 중 name을 포함하는 것이 있는지 확인
-          const actualKey = Object.keys(row).find(k => k.trim().includes(name));
-          if (actualKey && row[actualKey]) return row[actualKey];
-        }
-        return null;
-      };
+  // 고정 명칭에서 값을 가져오는 함수 (공백 제거 후 비교)
+  const getV = (fixedName) => {
+    const key = Object.keys(row).find(k => k.trim() === fixedName);
+    return key ? row[key] : null;
+  };
 
-      return {
-        city: getVal(['시군구']),
-        danji: getVal(['단지명', '아파트명']),
-        size: parseFloat(String(getVal(['전용면적', '면적'])).replace(/,/g, '')) || 0,
-        price: parseInt(String(getVal(['거래금액', '가격'])).replace(/,/g, '')) || 0,
-        deal_date: getVal(['계약년월일']) || (getVal(['계약년월']) + getVal(['계약일'])),
-        raw_row: row 
-      };
-    });
+  // 숫자 변환 함수
+  const toInt = (val) => parseInt(String(val || '0').replace(/[^0-9]/g, '')) || 0;
+  const toFloat = (val) => parseFloat(String(val || '0').replace(/,/g, '')) || 0;
+
+  // 계약년월(202405) + 계약일(01) 조합하여 날짜 생성
+  const yearMonth = String(getV('계약년월') || '');
+  const day = String(getV('계약일') || '').padStart(2, '0');
+  const fullDate = yearMonth && day ? yearMonth + day : null;
+
+  return {
+    city: getV('시군구'),
+    bunji: getV('지번'),
+    road_name: getV('도로명'),
+    main_num: toInt(getV('본번')),
+    sub_num: toInt(getV('부번')),
+    danji: getV('단지명'),
+    floor: toInt(getV('층')),
+    size: toFloat(getV('전용면적')),
+    deal_date: fullDate,
+    price: toInt(getV('거래금액(만원)')), // 고정 명칭 그대로 사용
+    build_year: toInt(getV('건축년도')),
+    raw_row: row 
+  };
+});
 
     // 4. DB 삽입 (변수명 수정: insertData -> error만 확인해도 됨)
     const { error: insertError } = await supabase
