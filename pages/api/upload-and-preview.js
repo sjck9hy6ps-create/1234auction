@@ -6,10 +6,10 @@ import { parse } from 'csv-parse';
 export const config = { api: { bodyParser: false } };
 
 const SUPABASE_URL = process.env.SUPABASE_URL;
-const SUPABASE_KEY = process.env.SUPABASE_KEY;
+const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY;
 const PREVIEW_ROWS = parseInt(process.env.UPLOAD_PREVIEW_ROWS || '100', 10);
 
-const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
+const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
 function parseFirstN(filePath, n){
   return new Promise((resolve, reject) => {
