@@ -10,7 +10,7 @@ export default async function handler(req, res) {
 
   try {
     const { data, error: downloadError } = await supabase.storage
-      .from('csv-uploads')
+      .from('uploads')
       .download(filePath);
 
     if (downloadError) throw downloadError;
