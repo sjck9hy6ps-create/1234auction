@@ -76,6 +76,8 @@ export default async function handler(req, res) {
     let csvText = (await data.text()) || '';
     // BOM 제거
     if (csvText.charCodeAt(0) === 0xFEFF) csvText = csvText.slice(1);
+    // 탭으로 구분된 파일 처리: 탭을 쉼표로 변환
+    csvText = csvText.replace(/\t/g, ',');
 
     // 파싱
     const parsed = parseCSV(csvText); // 배열의 배열
