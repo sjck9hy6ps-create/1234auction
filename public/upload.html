@@ -1,28 +1,65 @@
 <!doctype html>
 <html>
-<head><meta charset="utf-8"><title>Upload CSV (Preview)</title></head>
+<head>
+    <meta charset="utf-8">
+    <title>Upload CSV (Direct to Storage)</title>
+</head>
 <body>
-  <h3>CSV 업로드 (원본 보관 + 첫 100행 DB 삽입)</h3>
+  <h3>CSV 업로드 (Supabase Storage 직접 업로드)</h3>
   <input id="file" type="file" accept=".csv,.txt" />
   <button id="send">업로드</button>
   <pre id="result"></pre>
-<script>
-document.getElementById('send').onclick = async () => {
-  const f = document.getElementById('file').files[0];
-  if(!f){ alert('파일 선택'); return; }
-  const fd = new FormData();
-  fd.append('file', f);
-  const resEl = document.getElementById('result');
-  resEl.textContent = '업로드 중...';
-  try{
-    const r = await fetch('/api/upload-and-preview', { method:'POST', body: fd });
-    const j = await r.json();
-    if(!r.ok) throw j;
-    resEl.textContent = JSON.stringify(j, null, 2);
-  }catch(e){
-    resEl.textContent = '오류: ' + (e?.error || e?.message || JSON.stringify(e));
-  }
-};
-</script>
+
+  <!-- Supabase 라이브러리 불러오기 -->
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  
+  <script>
+    // ⚠️ 아래 두 값은 본인의 Supabase 설정에서 복사해서 붙여넣으세요!
+    const SUPABASE_URL = 'https://qfrhodasxmkciyrxskja.supabase.co';
+    const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InFmcmhvZGFzeG1rY2l5cnhza2phIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODMxNTY0ODEsImV4cCI6MjA5ODczMjQ4MX0.GxTVwZBe6_ri47mkpPsyWqMFDva1XRngF1f8XAPgFvk';
+
+    const supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+    document.getElementById('send').onclick = async () => {
+      const f = document.getElementById('file').files[0];
+      if(!f){ alert('파일을 먼저 선택해주세요!'); return; }
+
+      const resEl = document.getElementById('result');
+      resEl.textContent = '1. Supabase Storage로 직접 업로드 중...';
+
+      try {
+        // 1. Supabase Storage에 파일 업로드 (버킷 이름: uploads)
+        // 파일명이 겹치지 않게 타임스탬프를 붙입니다.
+        const fileKey = `${Date.now()}_${f.name}`;
+        
+        const { data, error: uploadError } = await supabaseClient.storage
+          .from('uploads') 
+          .upload(fileKey, f);
+
+        if (uploadError) throw uploadError;
+
+        resEl.textContent = '2. 업로드 성공! 서버에서 확인 중...';
+
+        // 2. 우리가 만든 API(/api/confirm-upload)에 완료 보고
+        const r = await fetch('/api/confirm-upload', { 
+          method:'POST', 
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ 
+            key: fileKey, 
+            filename: f.name, 
+            size: f.size 
+          }) 
+        });
+        
+        const j = await r.json();
+        if(!r.ok) throw j;
+        
+        resEl.textContent = '✅ 최종 성공!\n' + JSON.stringify(j, null, 2);
+      } catch(e) {
+        console.error(e);
+        resEl.textContent = '오류 발생: ' + (e.message || JSON.stringify(e));
+      }
+    };
+  </script>
 </body>
 </html>
