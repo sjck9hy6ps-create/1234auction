@@ -1,5 +1,4 @@
 import { createClient } from '@supabase/supabase-client';
-import Papa from 'papaparse';
 
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_ANON_KEY);
 
@@ -9,46 +8,42 @@ export default async function handler(req, res) {
   const { filePath } = req.body;
 
   try {
-    // 1. [수정] 불확실한 변수명 대신 Supabase 표준인 'data'를 사용
     const { data, error: downloadError } = await supabase.storage
       .from('csv-uploads')
       .download(filePath);
 
     if (downloadError) throw downloadError;
 
-    // 2. [수정] data가 확실히 있을 때만 text() 호출
     const csvText = await data.text();
-    const parsed = Papa.parse(csvText, { header: true, skipEmptyLines: true });
+    
+    // 라이브러리 없이 CSV 줄 단위로 쪼개기
+    const lines = csvText.split('\n');
+    const headers = lines[0].split(',').map(h => h.replace(/"/g, '').trim());
+    
+    const rowsToInsert = lines.slice(1).filter(line => line.trim()).map(line => {
+      const values = line.split(',').map(v => v.replace(/"/g, '').trim());
+      const row = {};
+      headers.forEach((header, i) => { row[header] = values[i] || ''; });
 
-    const rowsToInsert = parsed.data.map(row => {
-      // 안전하게 값을 가져오는 최소한의 기능
-      const getRaw = (key) => {
-        const actualKey = Object.keys(row).find(k => k.trim() === key);
-        return actualKey ? String(row[actualKey]).trim() : '';
-      };
+      // 숫자 변환 헬퍼
+      const toInt = (val) => parseInt(String(val || '0').replace(/[^0-9]/g, '')) || 0;
 
-      // 숫자로 변환하는 최소한의 기능
-      const getNum = (key) => {
-        const val = getRaw(key).replace(/[^0-9]/g, '');
-        return val ? parseInt(val) : 0;
-      };
-
-      // [부번 로직] 변수 선언 없이 바로 처리하여 충돌 방지
-      const subNum = getNum('부번');
+      // 부번 로직: 0이면 null
+      const sNum = toInt(row['부번']);
 
       return {
-        region: getRaw('시군구'),
-        bunji: getRaw('지번'),
-        road_name: getRaw('도로명'),
-        main_num: getNum('본번'),
-        // 부번이 0이면 null, 아니면 숫자 저장
-        sub_num: subNum === 0 ? null : subNum, 
-        danji: getRaw('단지명'),
-        floor: getNum('층'),
-        size: Math.floor(parseFloat(getRaw('전용면적')) || 0),
-        deal_date: getRaw('계약년월') + getRaw('계약일').padStart(2, '0'),
-        price: getNum('거래금액(만원)'),
-        build_year: getNum('건축년도')
+        region: row['시군구'],
+        bunji: row['지번'],
+        road_name: row['도로명'],
+        main_num: toInt(row['본번']),
+        sub_num: sNum === 0 ? null : sNum,
+        danji: row['단지명'],
+        floor: toInt(row['층']),
+        // 면적 로직: 소수점 버리고 정수로
+        size: Math.floor(parseFloat(row['전용면적']) || 0),
+        deal_date: (row['계약년월'] && row['계약일']) ? (row['계약년월'] + row['계약일'].padStart(2, '0')) : null,
+        price: toInt(row['거래금액(만원)']),
+        build_year: toInt(row['건축년도'])
       };
     });
 
@@ -58,7 +53,6 @@ export default async function handler(req, res) {
     return res.status(200).json({ success: true, count: rowsToInsert.length });
 
   } catch (error) {
-    // 서버가 죽지 않도록 모든 에러를 JSON으로 포착
     return res.status(500).json({ error: error.message });
   }
 }
