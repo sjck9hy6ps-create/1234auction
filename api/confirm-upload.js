@@ -92,7 +92,22 @@ export default async function handler(req, res) {
     const rowsToInsert = linesArr.map(values => {
       const row = {};
       headerRow.forEach((header, i) => {
-        row[header] = (values[i] || '').replace(/"/g, '').trim();
+        const val = (values[i] || '').replace(/"/g, '').trim();
+        row[header] = val;
+
+        // 동의어/alias 자동 설정
+        if (header === '번지') row['지번'] = row['지번'] || val;
+        if (header === '지번') row['번지'] = row['번지'] || val;
+
+        if (header === '전용면적(㎡)') row['전용면적'] = row['전용면적'] || val;
+        if (header === '전용면적') row['전용면적(㎡)'] = row['전용면적(㎡)'] || val;
+
+        if (header === '거래금액(만원)') {
+          row['거래금액'] = row['거래금액'] || val;
+        }
+        if (header === '거래금액') {
+          row['거래금액(만원)'] = row['거래금액(만원)'] || val;
+        }
       });
 
       const toInt = (val) => parseInt(String(val || '').replace(/[^0-9]/g, '')) || 0;
