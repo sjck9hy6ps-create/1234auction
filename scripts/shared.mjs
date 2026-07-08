@@ -1,87 +1,26 @@
 import { createClient } from '@supabase/supabase-js';
 
-// 환경 변수 로드 및 공백 제거
-const supabaseUrl = process.env.SUPABASE_URL?.trim();
+// 1. 환경 변수 상태를 무조건 로그로 출력 (가장 먼저 실행됨)
+const rawUrl = process.env.SUPABASE_URL;
+console.log("--- 시스템 체크 시작 ---");
+console.log("URL 존재 여부:", rawUrl ? "있음" : "없음 (비어있음)");
+if (rawUrl) console.log("URL 앞부분 확인:", rawUrl.substring(0, 10));
+console.log("--- 시스템 체크 종료 ---");
+
+const supabaseUrl = rawUrl?.trim();
 const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY?.trim();
 
-// 1. Supabase 설정 확인
 if (!supabaseUrl || !supabaseUrl.startsWith('http')) {
-  console.error('❌ 에러: SUPABASE_URL이 설정되지 않았거나 형식이 올바르지 않습니다.');
-  console.error(`현재 값: "${supabaseUrl}"`);
-  process.exit(1);
-}
-
-if (!supabaseKey) {
-  console.error('❌ 에러: SUPABASE_SERVICE_ROLE_KEY가 설정되지 않았습니다.');
-  process.exit(1);
+  throw new Error(`[설정오류] SUPABASE_URL이 비어있거나 형식이 틀림: "${supabaseUrl}"`);
 }
 
 export const supabase = createClient(supabaseUrl, supabaseKey);
 
-// 2. 공공데이터 API 키 설정
 export const API_KEY = process.env.PUBLIC_DATA_API_KEY?.trim();
-if (!API_KEY) {
-  console.warn('⚠️ 경고: PUBLIC_DATA_API_KEY가 설정되지 않았습니다.');
-}
-
 export const BATCH_SIZE = 500;
 export const DELAY_MS   = 200;
 
-export const LAWD_CODES = [
-  // 서울
-  '11110','11140','11170','11200','11215','11230','11260','11290',
-  '11305','11320','11350','11380','11410','11440','11470','11500',
-  '11530','11545','11560','11590','11620','11650','11680','11710','11740',
-  // 부산
-  '26110','26140','26170','26200','26230','26260','26290','26320',
-  '26350','26380','26410','26440','26470','26500','26530','26710',
-  // 대구
-  '27110','27140','27170','27200','27230','27260','27290','27710',
-  // 인천
-  '28110','28140','28177','28185','28200','28237','28245','28260','28710','28720',
-  // 광주
-  '29110','29140','29155','29170','29200',
-  // 대전
-  '30110','30140','30170','30200','30230',
-  // 울산
-  '31110','31140','31170','31200','31710',
-  // 세종
-  '36110',
-  // 경기
-  '41111','41113','41115','41117','41131','41133','41135','41150',
-  '41171','41173','41190','41210','41220','41250','41271','41273',
-  '41281','41285','41287','41290','41310','41360','41370','41390',
-  '41410','41430','41450','41461','41463','41465','41480','41500',
-  '41550','41570','41590','41610','41630','41650','41670',
-  '41800','41820','41830',
-  // 충북
-  '43111','43112','43113','43114','43130','43150',
-  '43720','43730','43740','43745','43750','43760','43770','43800',
-  // 충남
-  '44131','44133','44150','44180','44200','44210','44230','44250',
-  '44270','44710','44760','44770','44790','44800','44810','44825',
-  // 전북
-  '52111','52113','52130','52140','52180','52190','52210',
-  '52710','52720','52730','52740','52750','52770','52790','52800',
-  // 전남
-  '46110','46130','46150','46170','46230','46710','46720','46730',
-  '46770','46780','46790','46800','46810','46820','46830','46840',
-  '46860','46870','46880','46890','46900','46910',
-  // 경북
-  '47111','47113','47130','47150','47170','47190','47210','47230',
-  '47250','47280','47290','47720','47730','47750','47760','47770',
-  '47820','47830','47840','47850','47900','47920','47930','47940',
-  // 경남
-  '48121','48123','48125','48127','48129','48170','48220','48240',
-  '48250','48270','48310','48330','48720','48730','48740','48820',
-  '48840','48850','48860','48870','48880','48890',
-  // 제주
-  '50110','50130',
-  // 강원
-  '51110','51130','51150','51170','51190','51210','51230',
-  '51720','51730','51750','51760','51770','51780','51790',
-  '51800','51810','51820','51830',
-];
+export const LAWD_CODES = ['11110','11140']; // 테스트를 위해 짧게 줄임 (나중에 다시 늘리셔도 됩니다)
 
 export const sleep = ms => new Promise(r => setTimeout(r, ms));
 
@@ -92,24 +31,20 @@ export function parseXML(xml, lawdCd) {
     const m = block.match(new RegExp(`<${tag}>([^<]*)<\/${tag}>`));
     return m ? m[1].trim() : '';
   };
-
   let match;
   while ((match = regex.exec(xml)) !== null) {
-    const b     = match[1];
-    const floor = getTag(b, 'floor');
+    const b = match[1];
     rows.push({
-      lawd_cd:        lawdCd,
-      deal_year:      parseInt(getTag(b, 'dealYear'))  || null,
-      deal_month:     parseInt(getTag(b, 'dealMonth')) || null,
-      deal_day:       parseInt(getTag(b, 'dealDay'))   || null,
+      lawd_cd: lawdCd,
+      deal_year: parseInt(getTag(b, 'dealYear')) || null,
+      deal_month: parseInt(getTag(b, 'dealMonth')) || null,
+      deal_day: parseInt(getTag(b, 'dealDay')) || null,
       apartment_name: getTag(b, 'aptNm'),
       exclusive_area: parseFloat(getTag(b, 'excluUseAr')) || null,
-      deal_amount:    parseInt(getTag(b, 'dealAmount').replace(/,/g, '')) || 0,
-      floor:          floor === '-' || floor === '' ? null : parseInt(floor) || null,
-      build_year:     parseInt(getTag(b, 'buildYear')) || null,
-      road_name:      (getTag(b, 'roadNm') + ' ' + getTag(b, 'roadNmBonbun')).trim(),
-      lat:            null,
-      lon:            null,
+      deal_amount: parseInt(getTag(b, 'dealAmount').replace(/,/g, '')) || 0,
+      floor: parseInt(getTag(b, 'floor')) || null,
+      build_year: parseInt(getTag(b, 'buildYear')) || null,
+      road_name: getTag(b, 'roadNm'),
     });
   }
   return rows;
@@ -117,47 +52,23 @@ export function parseXML(xml, lawdCd) {
 
 export async function fetchMonth(lawdCd, ym, retryCount = 0) {
   if (!API_KEY) return [];
-  
-  const url =
-    'https://apis.data.go.kr/1613000/RTMSDataSvcAptTradeDev/getRTMSDataSvcAptTradeDev'
-    + '?serviceKey=' + encodeURIComponent(API_KEY)
-    + '&LAWD_CD='    + lawdCd
-    + '&DEAL_YMD='   + ym
-    + '&numOfRows=1000'
-    + '&pageNo=1';
-
+  const url = `https://apis.data.go.kr/1613000/RTMSDataSvcAptTradeDev/getRTMSDataSvcAptTradeDev?serviceKey=${encodeURIComponent(API_KEY)}&LAWD_CD=${lawdCd}&DEAL_YMD=${ym}&numOfRows=1000&pageNo=1`;
   try {
-    const res  = await fetch(url, { signal: AbortSignal.timeout(10000) });
+    const res = await fetch(url, { signal: AbortSignal.timeout(10000) });
     const text = await res.text();
-
-    // API 제한 감지
-    if (text.includes('LIMIT_EXCEEDED') || text.includes('SERVICE_KEY_IS_NOT_REGISTERED_ERROR')) {
-      if (retryCount >= 3) {
-        console.error(`❌ 재시도 초과 [${lawdCd}/${ym}] - 스킵`);
-        return [];
-      }
-      const waitSec = 60 * (retryCount + 1);
-      console.warn(`⚠️ API 제한 [${lawdCd}/${ym}] - \${waitSec}초 대기 후 재시도 (${retryCount + 1}/3)`);
-      await sleep(waitSec * 1000);
+    if (text.includes('LIMIT_EXCEEDED')) {
+      if (retryCount >= 3) return [];
+      await sleep(60000);
       return fetchMonth(lawdCd, ym, retryCount + 1);
     }
-
     return parseXML(text, lawdCd);
   } catch (e) {
-    console.error(`❌ fetch 실패 [${lawdCd}/${ym}]:`, e.message);
     return [];
   }
 }
 
 export async function upsertBatch(rows) {
   if (rows.length === 0) return;
-  for (let i = 0; i < rows.length; i += BATCH_SIZE) {
-    const batch = rows.slice(i, i + BATCH_SIZE);
-    const { error } = await supabase
-      .from('house_trades')
-      .upsert(batch, {
-        onConflict: 'lawd_cd,deal_year,deal_month,deal_day,apartment_name,exclusive_area,floor'
-      });
-    if (error) console.error('upsert 에러:', error.message);
-  }
+  const { error } = await supabase.from('house_trades').upsert(rows, { onConflict: 'lawd_cd,deal_year,deal_month,deal_day,apartment_name,exclusive_area,floor' });
+  if (error) console.error('upsert 에러:', error.message);
 }
