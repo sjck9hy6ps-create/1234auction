@@ -30,25 +30,35 @@ jobs:
             echo "✅ SUPABASE_URL 시크릿이 존재합니다."
           fi
 
-      - name: Create Script
+            - name: Create Script
         run: |
           mkdir -p scripts
           cat <<'EOF' > scripts/collect-history.mjs
           import { createClient } from '@supabase/supabase-js';
           
-          const url = process.env.SUPABASE_URL;
-          const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
+          // 앞뒤 공백, 따옴표, 줄바꿈을 완전히 제거하는 로직 추가
+          const rawUrl = process.env.SUPABASE_URL || "";
+          const url = rawUrl.replace(/["']/g, "").trim(); 
           
-          console.log("--- 실제 실행 로그 시작 ---");
-          console.log("URL 길이:", url ? url.length : "없음");
+          const rawKey = process.env.SUPABASE_SERVICE_ROLE_KEY || "";
+          const key = rawKey.replace(/["']/g, "").trim();
+
+          console.log("--- 강제 보정 실행 로그 ---");
+          console.log("보정 전 길이:", rawUrl.length);
+          console.log("보정 후 길이:", url.length);
           
-          if (!url || !url.startsWith('http')) {
-            console.error("URL 값이 유효하지 않습니다:", url);
+          if (!url.startsWith('http')) {
+            console.error("❌ 여전히 URL 형식이 잘못되었습니다. 현재 값:", url);
             process.exit(1);
           }
           
-          const supabase = createClient(url, key);
-          console.log("수파베이스 클라이언트 생성 성공!");
+          try {
+            const supabase = createClient(url, key);
+            console.log("✅ 수파베이스 클라이언트 생성 성공!");
+          } catch (err) {
+            console.error("❌ 생성 중 에러 발생:", err.message);
+            process.exit(1);
+          }
           console.log("--- 실행 종료 ---");
           EOF
 
