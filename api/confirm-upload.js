@@ -2,7 +2,6 @@ import { createClient } from '@supabase/supabase-js';
 
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_ANON_KEY);
 
-// 간단하지만 따옴표로 감싼 필드와 쉼표를 처리하는 파서 (쉼표 구분자 기준)
 function parseCSV(text) {
   const rows = [];
   let cur = '';
@@ -13,26 +12,16 @@ function parseCSV(text) {
     const next = text[i + 1];
 
     if (ch === '"') {
-      if (inQuotes && next === '"') { // double quote escape -> add one quote
+      if (inQuotes && next === '"') {
         cur += '"';
-        i++; // skip next
+        i++;
       } else {
         inQuotes = !inQuotes;
       }
       continue;
     }
-
-    if (!inQuotes && ch === ',') {
-      row.push(cur);
-      cur = '';
-      continue;
-    }
-
-    if (!inQuotes && ch === '\r') {
-      // ignore, handled on \n
-      continue;
-    }
-
+    if (!inQuotes && ch === ',') { row.push(cur); cur = ''; continue; }
+    if (!inQuotes && ch === '\r') continue;
     if (!inQuotes && ch === '\n') {
       row.push(cur);
       rows.push(row);
@@ -40,18 +29,12 @@ function parseCSV(text) {
       cur = '';
       continue;
     }
-
     cur += ch;
   }
-  // 마지막 필드/행 처리
-  if (cur !== '' || row.length > 0) {
-    row.push(cur);
-    rows.push(row);
-  }
+  if (cur !== '' || row.length > 0) { row.push(cur); rows.push(row); }
   return rows;
 }
 
-// 헤더 동의어 조회 유틸
 function getField(rowObj, ...names) {
   for (const n of names) {
     if (rowObj[n] !== undefined && rowObj[n] !== '') return rowObj[n];
@@ -73,29 +56,61 @@ export default async function handler(req, res) {
     if (downloadError) throw downloadError;
     if (!data) throw new Error('No file data returned from storage.');
 
-    let csvText = (await data.text()) || '';
+    // ✅ 핵심 수정 1: EUC-KR 대응 (국토부 CSV는 대부분 EUC-KR)
+    const buffer = await data.arrayBuffer();
+    let csvText = '';
+    try {
+      csvText = new TextDecoder('utf-8').decode(buffer);
+      // 깨진 문자 감지 시 EUC-KR로 재시도
+      if (
+        csvText.includes('ï¿½') ||
+        csvText.includes('�') ||
+        (csvText.charCodeAt(0) > 0x7F && csvText.charCodeAt(0) !== 0xFEFF)
+      ) {
+        throw new Error('not utf-8');
+      }
+    } catch {
+      csvText = new TextDecoder('euc-kr').decode(buffer);
+    }
+
     // BOM 제거
     if (csvText.charCodeAt(0) === 0xFEFF) csvText = csvText.slice(1);
 
-    // 숫자 천단위 콤마 제거 (예: 61,000 -> 61000). 따옴표로 감싼 필드가 올바르지 않을 경우를 대비해 반복 적용
+    // ✅ 핵심 수정 2: 탭→쉼표 먼저, 그 다음 천단위 콤마 제거 (순서 중요)
+    csvText = csvText.replace(/\t/g, ',');
+
     let prev;
     do {
       prev = csvText;
       csvText = csvText.replace(/(\d+),(\d{3}\b)/g, '$1$2');
     } while (csvText !== prev);
 
-    // 탭으로 구분된 파일이 섞여 있을 경우 탭을 쉼표로 변환 (대부분 CSV가 쉼표이면 필요 없음)
-    csvText = csvText.replace(/\t/g, ',');
-
     // 파싱
-    const parsed = parseCSV(csvText); // 배열의 배열
+    const parsed = parseCSV(csvText);
     if (!parsed || parsed.length === 0) return res.status(400).json({ error: 'Empty CSV' });
 
-    // 헤더 행 자동 탐지: '시군구'와 '번지'를 포함하는 행을 헤더로 사용
-    let headerIndex = parsed.findIndex(r => r.join('').includes('시군구') && (r.join('').includes('번지') || r.join('').includes('지번')));
+    // ✅ 핵심 수정 3: 헤더 탐지 조건 강화 (3개 이상 핵심 컬럼 동시 포함)
+    const HEADER_KEYWORDS = ['시군구', '단지명', '계약년월', '거래금액'];
+    let headerIndex = parsed.findIndex(r => {
+      const joined = r.join('');
+      const matchCount = HEADER_KEYWORDS.filter(k => joined.includes(k)).length;
+      return matchCount >= 3;
+    });
     if (headerIndex === -1) headerIndex = 0;
+
     const headerRow = parsed[headerIndex].map(h => (h || '').replace(/"/g, '').trim());
-    const linesArr = parsed.slice(headerIndex + 1).filter(r => r.join('').trim() !== '');
+
+    // ✅ 핵심 수정 4: 데이터 행 필터 강화 (헤더 컬럼 수와 맞지 않는 행 제거)
+    const headerLen = headerRow.length;
+    const linesArr = parsed
+      .slice(headerIndex + 1)
+      .filter(r => r.length >= headerLen - 2 && r.join('').trim() !== '');
+
+    // 디버그 로그 (확인 후 제거 가능)
+    console.log('=== headerIndex:', headerIndex);
+    console.log('=== headerRow:', headerRow);
+    console.log('=== 데이터 행 수:', linesArr.length);
+    console.log('=== 첫 번째 데이터 행:', linesArr[0]);
 
     const rowsToInsert = linesArr.map(values => {
       const row = {};
@@ -103,13 +118,10 @@ export default async function handler(req, res) {
         const val = (values[i] || '').replace(/"/g, '').trim();
         row[header] = val;
 
-        // 동의어/alias 자동 설정
         if (header === '번지') row['지번'] = row['지번'] || val;
         if (header === '지번') row['번지'] = row['번지'] || val;
-
         if (header === '전용면적(㎡)') row['전용면적'] = row['전용면적'] || val;
         if (header === '전용면적') row['전용면적(㎡)'] = row['전용면적(㎡)'] || val;
-
         if (header === '거래금액(만원)') row['거래금액'] = row['거래금액'] || val;
         if (header === '거래금액') row['거래금액(만원)'] = row['거래금액(만원)'] || val;
       });
@@ -122,16 +134,16 @@ export default async function handler(req, res) {
       const subNumValue = toInt(getField(row, '부번'));
 
       return {
-        region: getField(row, '시군구'),
-        bunji: getField(row, '번지', '지번'),
-        road_name: getField(row, '도로명'),
-        main_num: toInt(getField(row, '본번')),
-        sub_num: subNumValue === 0 ? null : subNumValue,
-        danji: getField(row, '단지명'),
-        floor: toInt(getField(row, '층')),
-        size: Math.floor(parseFloat(getField(row, '전용면적(㎡)', '전용면적') || '') || 0),
-        deal_date: (getField(row, '계약년월') || '') + (String(getField(row, '계약일') || '').padStart(2, '0')),
-        price: toInt(getField(row, '거래금액(만원)', '거래금액')),
+        region:     getField(row, '시군구'),
+        bunji:      getField(row, '번지', '지번'),
+        road_name:  getField(row, '도로명'),
+        main_num:   toInt(getField(row, '본번')),
+        sub_num:    subNumValue === 0 ? null : subNumValue,
+        danji:      getField(row, '단지명'),
+        floor:      toInt(getField(row, '층')),
+        size:       Math.floor(parseFloat(getField(row, '전용면적(㎡)', '전용면적') || '') || 0),
+        deal_date:  (getField(row, '계약년월') || '') + (String(getField(row, '계약일') || '').padStart(2, '0')),
+        price:      toInt(getField(row, '거래금액(만원)', '거래금액')),
         build_year: toInt(getField(row, '건축년도'))
       };
     });
