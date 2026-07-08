@@ -63,14 +63,14 @@ export function parseXML(xml, lawdCd) {
       })(),
       price: (() => {                                       // price (int)
         const v = getTag(b, 'dealAmount').replace(/,/g,'').trim();
-        if (!v) return 0;
+        if (v === '') return 0;
         const n = parseInt(v, 10);
         return Number.isNaN(n) ? 0 : n;
       })(),
       deal_date: Number.isFinite(dealDateInt) ? dealDateInt : null, // deal_date (int8)
       floor: (() => {
         const v = getTag(b, 'floor').trim();
-        if (!v) return null;
+        if (v === '') return null;
         const n = parseInt(v, 10);
         return Number.isNaN(n) ? null : n;
       })(),
