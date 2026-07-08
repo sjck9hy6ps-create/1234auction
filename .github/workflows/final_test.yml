@@ -21,16 +21,7 @@ jobs:
       - name: Install dependencies
         run: npm install
 
-      - name: Check Secrets
-        run: |
-          echo "URL 설정 여부 확인 시작"
-          if [ -z "${{ secrets.SUPABASE_URL }}" ]; then
-            echo "❌ 에러: SUPABASE_URL 시크릿이 없습니다."
-            exit 1
-          fi
-          echo "✅ SUPABASE_URL 시크릿이 존재합니다."
-
-            - name: Create Script
+      - name: Create Script
         run: |
           mkdir -p scripts
           cat <<'EOF' > scripts/collect-history.mjs
@@ -42,10 +33,9 @@ jobs:
           console.log("--- 실행 로그 ---");
           
           try {
-            // 실시간(Realtime) 기능을 끄고 생성하여 WebSocket 에러 방지
             const supabase = createClient(url, key, {
               auth: { persistSession: false },
-              realtime: { enabled: false }
+              realtime: { config: { broadcast: { self: false } } } 
             });
             console.log("✅ 수파베이스 클라이언트 생성 성공!");
           } catch (err) {
@@ -54,7 +44,6 @@ jobs:
           }
           console.log("--- 실행 종료 ---");
           EOF
-
 
       - name: Run Script
         env:
