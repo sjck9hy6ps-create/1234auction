@@ -1,0 +1,59 @@
+name: Final Test Collect
+
+on:
+  workflow_dispatch:
+    inputs:
+      year:
+        description: '연도'
+        required: true
+        default: '2026'
+
+jobs:
+  collect:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Check Secrets
+        run: |
+          echo "URL 설정 여부 확인 시작"
+          if [ -z "${{ secrets.SUPABASE_URL }}" ]; then
+            echo "❌ 에러: SUPABASE_URL 시크릿을 찾을 수 없습니다."
+            exit 1
+          else
+            echo "✅ SUPABASE_URL 시크릿이 존재합니다."
+          fi
+
+      - name: Create Script
+        run: |
+          mkdir -p scripts
+          cat <<'EOF' > scripts/collect-history.mjs
+          import { createClient } from '@supabase/supabase-js';
+          
+          const url = process.env.SUPABASE_URL;
+          const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
+          
+          console.log("--- 실제 실행 로그 시작 ---");
+          console.log("URL 길이:", url ? url.length : "없음");
+          
+          if (!url || !url.startsWith('http')) {
+            console.error("URL 값이 유효하지 않습니다:", url);
+            process.exit(1);
+          }
+          
+          const supabase = createClient(url, key);
+          console.log("수파베이스 클라이언트 생성 성공!");
+          console.log("--- 실행 종료 ---");
+          EOF
+
+      - name: Run Script
+        env:
+          SUPABASE_URL: \${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: \${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: node scripts/collect-history.mjs
