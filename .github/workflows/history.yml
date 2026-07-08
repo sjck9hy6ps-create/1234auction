@@ -19,7 +19,7 @@ jobs:
         with:
           node-version: '20'
 
-      - run: npm install @supabase/supabase-js
+      - run: npm install
 
       - name: Collect history
         env:
@@ -27,4 +27,4 @@ jobs:
           SUPABASE_SERVICE_ROLE_KEY: \${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
           PUBLIC_DATA_API_KEY: \${{ secrets.PUBLIC_DATA_API_KEY }}
           TARGET_YEAR: \${{ github.event.inputs.year }}
-        run: node --experimental-vm-modules scripts/collect-history.mjs
+        run: node scripts/collect-history.mjs
