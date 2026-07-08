@@ -35,13 +35,6 @@ function parseCSV(text) {
   return rows;
 }
 
-function getField(rowObj, ...names) {
-  for (const n of names) {
-    if (rowObj[n] !== undefined && rowObj[n] !== '') return rowObj[n];
-  }
-  return '';
-}
-
 export default async function handler(req, res) {
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
 
@@ -78,9 +71,6 @@ export default async function handler(req, res) {
     // 탭 → 쉼표 변환
     csvText = csvText.replace(/\t/g, ',');
 
-    // ✅ 천단위 콤마 전처리 제거 (번지/본번/부번 파괴 방지)
-    // 천단위 콤마는 toInt 내부에서만 처리
-
     // 파싱
     const parsed = parseCSV(csvText);
     if (!parsed || parsed.length === 0) return res.status(400).json({ error: 'Empty CSV' });
@@ -101,69 +91,83 @@ export default async function handler(req, res) {
     while (colOffset < headerRow.length && headerRow[colOffset] === '') colOffset++;
     if (colOffset > 0) headerRow = headerRow.slice(colOffset);
 
-    // 부번 컬럼 인덱스
-    const subNumIdx = headerRow.indexOf('부번');
+    // ✅ 각 컬럼 절대 인덱스 확보
+    const IDX = {
+      region:    headerRow.indexOf('시군구'),
+      bunji:     headerRow.indexOf('번지') !== -1 ? headerRow.indexOf('번지') : headerRow.indexOf('지번'),
+      mainNum:   headerRow.indexOf('본번'),
+      subNum:    headerRow.indexOf('부번'),
+      danji:     headerRow.indexOf('단지명'),
+      size:      headerRow.indexOf('전용면적(㎡)') !== -1 ? headerRow.indexOf('전용면적(㎡)') : headerRow.indexOf('전용면적'),
+      yearMonth: headerRow.indexOf('계약년월'),
+      day:       headerRow.indexOf('계약일'),
+      price:     headerRow.indexOf('거래금액(만원)') !== -1 ? headerRow.indexOf('거래금액(만원)') : headerRow.indexOf('거래금액'),
+      floor:     headerRow.indexOf('층'),
+      buildYear: headerRow.indexOf('건축년도'),
+      roadName:  headerRow.indexOf('도로명'),
+    };
 
     console.log('=== headerIndex:', headerIndex);
     console.log('=== colOffset:', colOffset);
     console.log('=== headerRow:', headerRow);
-    console.log('=== subNumIdx:', subNumIdx);
+    console.log('=== IDX:', IDX);
 
-    // 데이터 행 필터
-    const headerLen = headerRow.length;
+    // 데이터 행 필터: 완전히 빈 행만 제거 (컬럼 수 조건 제거)
     const linesArr = parsed
       .slice(headerIndex + 1)
-      .filter(r => r.length >= headerLen - 2 && r.join('').trim() !== '');
+      .filter(r => r.join('').trim() !== '');
 
     console.log('=== 데이터 행 수:', linesArr.length);
     console.log('=== 첫 번째 데이터 행:', linesArr[0]);
 
-    const rowsToInsert = linesArr.map(values => {
-      const offsetValues = colOffset > 0 ? [...values.slice(colOffset)] : [...values];
+    const toInt = (val) => {
+      const cleaned = String(val || '').replace(/,/g, '').replace(/[^0-9]/g, '');
+      return cleaned ? parseInt(cleaned, 10) : 0;
+    };
 
-      // 부번 필드 누락 보정
-      if (
-        subNumIdx !== -1 &&
-        offsetValues.length < headerLen &&
-        isNaN(Number((offsetValues[subNumIdx] || '').trim()))
-      ) {
-        offsetValues.splice(subNumIdx, 0, '');
+    const rowsToInsert = linesArr.map(values => {
+      // 앞쪽 빈 컬럼 오프셋 적용
+      const v = colOffset > 0 ? [...values.slice(colOffset)] : [...values];
+
+      // ✅ 절대 인덱스로 값 꺼내기
+      const get = (idx) => idx !== -1 ? (v[idx] || '').replace(/"/g, '').trim() : '';
+
+      // ✅ 단지명: danji ~ size 사이 값을 전부 합침 (쉼표 포함 단지명 대응)
+      let danjiVal = '';
+      if (IDX.danji !== -1 && IDX.size !== -1 && IDX.size > IDX.danji + 1) {
+        danjiVal = v.slice(IDX.danji, IDX.size).join(',').replace(/"/g, '').trim();
+      } else {
+        danjiVal = get(IDX.danji);
       }
 
-      const row = {};
-      headerRow.forEach((header, i) => {
-        const val = (offsetValues[i] || '').replace(/"/g, '').trim();
-        row[header] = val;
+      // ✅ 뒤쪽 컬럼들은 단지명 길이 보정 없이 절대 인덱스 기준으로 뒤에서부터 역산
+      // (단지명이 N칸 늘어났으면 뒤 컬럼도 N칸 밀림 → 뒤에서부터 고정 오프셋으로 꺼냄)
+      const totalCols = v.length;
+      const tailOffset = totalCols - (headerRow.length - IDX.size);
 
-        // 동의어 자동 설정
-        if (header === '번지') row['지번'] = row['지번'] || val;
-        if (header === '지번') row['번지'] = row['번지'] || val;
-        if (header === '전용면적(㎡)') row['전용면적'] = row['전용면적'] || val;
-        if (header === '전용면적') row['전용면적(㎡)'] = row['전용면적(㎡)'] || val;
-        if (header === '거래금액(만원)') row['거래금액'] = row['거래금액'] || val;
-        if (header === '거래금액') row['거래금액(만원)'] = row['거래금액(만원)'] || val;
-      });
-
-      // ✅ toInt 내부에서 천단위 콤마 제거 (숫자+콤마 패턴만 제거)
-      const toInt = (val) => {
-        const cleaned = String(val || '').replace(/,/g, '').replace(/[^0-9]/g, '');
-        return cleaned ? parseInt(cleaned, 10) : 0;
+      const getTail = (idx) => {
+        if (idx === -1) return '';
+        const tailIdx = tailOffset + (idx - IDX.size);
+        return tailIdx >= 0 && tailIdx < totalCols
+          ? (v[tailIdx] || '').replace(/"/g, '').trim()
+          : '';
       };
 
-      const subNumValue = toInt(getField(row, '부번'));
+      const subNumValue = toInt(getTail(IDX.subNum) || get(IDX.subNum));
 
+      // 단지명 이전 컬럼은 절대 인덱스 그대로, 이후는 getTail 사용
       return {
-        region:     getField(row, '시군구'),
-        bunji:      getField(row, '번지', '지번'),
-        road_name:  getField(row, '도로명'),
-        main_num:   toInt(getField(row, '본번')),
-        sub_num:    subNumValue === 0 ? null : subNumValue,
-        danji:      getField(row, '단지명'),
-        floor:      toInt(getField(row, '층')),
-        size:       Math.floor(parseFloat(getField(row, '전용면적(㎡)', '전용면적') || '') || 0),
-        deal_date:  (getField(row, '계약년월') || '') + (String(getField(row, '계약일') || '').padStart(2, '0')),
-        price:      toInt(getField(row, '거래금액(만원)', '거래금액')),
-        build_year: toInt(getField(row, '건축년도'))
+        region:     get(IDX.region),
+        bunji:      get(IDX.bunji),
+        road_name:  getTail(IDX.roadName),
+        main_num:   toInt(get(IDX.mainNum)),
+        sub_num:    toInt(get(IDX.subNum)) === 0 ? null : toInt(get(IDX.subNum)),
+        danji:      danjiVal,
+        floor:      toInt(getTail(IDX.floor)),
+        size:       Math.floor(parseFloat(getTail(IDX.size)) || 0),
+        deal_date:  getTail(IDX.yearMonth) + String(getTail(IDX.day)).padStart(2, '0'),
+        price:      toInt(getTail(IDX.price)),
+        build_year: toInt(getTail(IDX.buildYear)),
       };
     });
 
