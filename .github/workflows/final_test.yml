@@ -1,4 +1,4 @@
-name: Real Estate Data Collect & Save
+name: Real Estate Data Collect (Final)
 
 on:
   workflow_dispatch:
@@ -13,93 +13,66 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      
       - uses: actions/setup-node@v4
         with:
           node-version: '24'
 
       - name: Install dependencies
-        run: npm install @supabase/supabase-js ws fast-xml-parser
+        run: npm install @supabase/supabase-js ws
 
-      - name: Create and Run Script
+      - name: Run Collector
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
           PUBLIC_DATA_API_KEY: ${{ secrets.PUBLIC_DATA_API_KEY }}
           TARGET_YEAR: ${{ github.event.inputs.year }}
         run: |
-          cat <<'EOF' > scripts/final-collect.mjs
-          import { createClient } from '@supabase/supabase-js';
+          # 1. 실행용 메인 스크립트 생성 (shared.mjs의 함수를 직접 활용)
+          cat <<'EOF' > scripts/main-run.mjs
           import ws from 'ws';
-          import { XMLParser } from 'fast-xml-parser';
+          global.WebSocket = ws; // Node 환경 WebSocket 호환성 설정
 
-          const url = (process.env.SUPABASE_URL || "").trim().replace(/["']/g, "");
-          const key = (process.env.SUPABASE_SERVICE_ROLE_KEY || "").trim().replace(/["']/g, "");
-          const apiKey = (process.env.PUBLIC_DATA_API_KEY || "").trim();
+          import { 
+            LAWD_CODES, 
+            fetchMonth, 
+            upsertBatch, 
+            sleep 
+          } from './shared.mjs';
+
           const targetYear = process.env.TARGET_YEAR || "2026";
 
-          const supabase = createClient(url, key, {
-            auth: { persistSession: false },
-            realtime: { transport: ws }
-          });
-
-          const parser = new XMLParser();
-
-          // 테스트용 지역 코드 (필요시 shared.mjs 목록으로 교체 가능)
-          const LAWD_CODES = ['11110', '11680', '41111', '41131']; 
-
-          async function collectAndSave() {
-            console.log(`🚀 \${targetYear}년 데이터 수집 및 DB 저장 시작...`);
-
+          async function main() {
+            console.log(`🚀 \${targetYear}년 전국 데이터 수집 시작...`);
+            
             for (const lawd of LAWD_CODES) {
+              console.log(`📍 지역 [${lawd}] 작업 중...`);
+              
               for (let month = 1; month <= 12; month++) {
                 const ym = `${targetYear}${month.toString().padStart(2, '0')}`;
-                const apiUrl = `https://apis.data.go.kr/1613000/RTMSDataSvcAptTradeDev/getRTMSDataSvcAptTradeDev?serviceKey=${encodeURIComponent(apiKey)}&LAWD_CD=${lawd}&DEAL_YMD=${ym}&numOfRows=1000&pageNo=1`;
                 
                 try {
-                  const res = await fetch(apiUrl);
-                  const xmlData = await res.text();
-                  const jsonObj = parser.parse(xmlData);
-                  
-                  const items = jsonObj?.response?.body?.items?.item;
-                  if (!items) {
-                    console.log(`- \${lawd} / \${ym}: 데이터 없음`);
-                    continue;
+                  const rows = await fetchMonth(lawd, ym);
+                  if (rows && rows.length > 0) {
+                    // shared.mjs에 정의된 컬럼명 규칙대로 저장됨
+                    await upsertBatch(rows);
+                    console.log(`  ✅ \${ym}: \${rows.length}건 저장 완료`);
                   }
-
-                  // 배열 형태 보장
-                  const itemList = Array.isArray(items) ? items : [items];
-                  
-                  // DB 형식으로 변환
-                  const rows = itemList.map(item => ({
-                    lawd_cd: lawd,
-                    deal_ymd: ym,
-                    apartment_name: item.aptNm,
-                    amount: parseInt(item.dealAmount.replace(/,/g, '')),
-                    area: parseFloat(item.excluArea),
-                    floor: parseInt(item.floor),
-                    build_year: parseInt(item.buildYear),
-                    deal_day: parseInt(item.dealDay),
-                    // 중복 방지를 위한 고유 키 생성 (필요시)
-                    unique_id: `${lawd}-${ym}-${item.dealDay}-${item.aptNm}-${item.excluArea}-${item.floor}`
-                  }));
-
-                  // Supabase 저장 (upsert: 중복시 업데이트)
-                  const { error } = await supabase
-                    .from('real_estate_trades')
-                    .upsert(rows, { onConflict: 'unique_id' });
-
-                  if (error) throw error;
-                  console.log(`✅ \${lawd} / \${ym}: \${rows.length}건 저장 완료`);
-
-                } catch (e) {
-                  console.error(`❌ \${ym} 에러:`, e.message);
+                } catch (err) {
+                  console.error(`  ❌ \${ym} 에러:`, err.message);
                 }
-                await new Promise(r => setTimeout(r, 300)); // API 부하 방지
+                
+                await sleep(300); // API 부하 방지
               }
             }
+            console.log("✨ 전국 데이터 수집 및 저장 완료!");
           }
 
-          collectAndSave().then(() => console.log("✨ 모든 작업이 완료되었습니다."));
+          main().catch(err => {
+            console.error("❌ 치명적 에러:", err);
+            process.exit(1);
+          });
           EOF
-          
-          node scripts/final-collect.mjs
+
+          # 2. 실행
+          node scripts/main-run.mjs
