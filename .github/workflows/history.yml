@@ -1,14 +1,17 @@
-name: Weekly APT Data Collect
+name: Collect History Data
 
 on:
-  schedule:
-    - cron: '0 1 * * 1'  # 매주 월요일 오전 10시 KST
   workflow_dispatch:
+    inputs:
+      year:
+        description: '수집할 연도 (최신부터: 2026 → 2025 → 2024 ...)'
+        required: true
+        default: '2026'
 
 jobs:
   collect:
     runs-on: ubuntu-latest
-    timeout-minutes: 120
+    timeout-minutes: 350
 
     steps:
       - uses: actions/checkout@v4
@@ -18,9 +21,10 @@ jobs:
 
       - run: npm install @supabase/supabase-js
 
-      - name: Collect weekly data
+      - name: Collect history
         env:
           SUPABASE_URL: \${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: \${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
           PUBLIC_DATA_API_KEY: \${{ secrets.PUBLIC_DATA_API_KEY }}
-        run: node --experimental-vm-modules scripts/collect-weekly.mjs
+          TARGET_YEAR: \${{ github.event.inputs.year }}
+        run: node --experimental-vm-modules scripts/collect-history.mjs
