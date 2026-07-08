@@ -1,31 +1,62 @@
 import { createClient } from '@supabase/supabase-js';
 
-// 1. 환경 변수 상태를 무조건 로그로 출력 (가장 먼저 실행됨)
+// --- 시스템 체크 및 클라이언트 설정 ---
 const rawUrl = process.env.SUPABASE_URL;
-console.log("--- 시스템 체크 시작 ---");
-console.log("URL 존재 여부:", rawUrl ? "있음" : "없음 (비어있음)");
-if (rawUrl) console.log("URL 앞부분 확인:", rawUrl.substring(0, 10));
-console.log("--- 시스템 체크 종료 ---");
-
 const supabaseUrl = rawUrl?.trim();
 const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY?.trim();
 
 if (!supabaseUrl || !supabaseUrl.startsWith('http')) {
-  throw new Error(`[설정오류] SUPABASE_URL이 비어있거나 형식이 틀림: "${supabaseUrl}"`);
+  console.error("❌ SUPABASE_URL 설정 오류");
 }
 
-export const supabase = createClient(supabaseUrl, supabaseKey);
+export const supabase = createClient(supabaseUrl, supabaseKey, {
+  auth: { persistSession: false }
+});
 
 export const API_KEY = process.env.PUBLIC_DATA_API_KEY?.trim();
-export const BATCH_SIZE = 500;
-export const DELAY_MS   = 200;
 
-export const LAWD_CODES = ['11110','11140']; // 테스트를 위해 짧게 줄임 (나중에 다시 늘리셔도 됩니다)
+// --- 전국 법정동 시군구 코드 (주요 지역 250개) ---
+export const LAWD_CODES = [
+  // 서울 (11)
+  '11110','11140','11170','11200','11215','11230','11260','11290','11305','11320','11350','11380','11410','11440','11470','11500','11530','11545','11560','11590','11620','11650','11680','11710','11740',
+  // 부산 (26)
+  '26110','26140','26170','26200','26230','26260','26290','26320','26350','26380','26410','26440','26470','26500','26530','26710',
+  // 대구 (27)
+  '27110','27140','27170','27200','27230','27260','27290','27710','27720',
+  // 인천 (28)
+  '28110','28140','28170','28185','28200','28237','28245','28260','28710','28720',
+  // 광주 (29)
+  '29110','29140','29155','29170','29200',
+  // 대전 (30)
+  '30110','30140','30170','30200','30230',
+  // 울산 (31)
+  '31110','31140','31170','31200','31710',
+  // 세종 (36)
+  '36110',
+  // 경기 (41)
+  '41111','41113','41115','41117','41131','41133','41135','41150','41171','41173','41190','41210','41220','41250','41271','41273','41281','41285','41287','41290','41310','41360','41370','41390','41410','41430','41450','41461','41463','41465','41480','41500','41550','41570','41590','41610','41630','41650','41670','41800','41820','41830',
+  // 강원 (42)
+  '42110','42130','42150','42170','42190','42210','42230','42720','42730','42750','42760','42770','42780','42790','42800','42810','42820','42830',
+  // 충북 (43)
+  '43111','43112','43113','43114','43130','43150','43720','43730','43740','43745','43750','43760','43770','43800',
+  // 충남 (44)
+  '44131','44133','44150','44180','44200','44210','44230','44250','44270','44710','44760','44770','44790','44800','44810','44825',
+  // 전북 (45)
+  '45111','45113','45130','45140','45180','45190','45210','45710','45720','45730','45740','45750','45770','45790','45800',
+  // 전남 (46)
+  '46110','46130','46150','46170','46230','46710','46720','46730','46770','46780','46790','46800','46810','46820','46830','46840','46860','46870','46880','46890','46900','46910',
+  // 경북 (47)
+  '47111','47113','47130','47150','47170','47190','47210','47230','47250','47280','47290','47720','47730','47750','47760','47770','47820','47830','47840','47850','47900','47920','47930','47940',
+  // 경남 (48)
+  '48121','48123','48125','48127','48129','48170','48220','48240','48250','48270','48310','48330','48720','48730','48740','48750','48780','48790','48820','48840','48850','48860','48870','48880','48890',
+  // 제주 (50)
+  '50110','50130'
+];
 
 export const sleep = ms => new Promise(r => setTimeout(r, ms));
 
 export function parseXML(xml, lawdCd) {
-  const rows  = [];
+  const rows = [];
   const regex = /<item>([\s\S]*?)<\/item>/g;
   const getTag = (block, tag) => {
     const m = block.match(new RegExp(`<${tag}>([^<]*)<\/${tag}>`));
@@ -54,21 +85,23 @@ export async function fetchMonth(lawdCd, ym, retryCount = 0) {
   if (!API_KEY) return [];
   const url = `https://apis.data.go.kr/1613000/RTMSDataSvcAptTradeDev/getRTMSDataSvcAptTradeDev?serviceKey=${encodeURIComponent(API_KEY)}&LAWD_CD=${lawdCd}&DEAL_YMD=${ym}&numOfRows=1000&pageNo=1`;
   try {
-    const res = await fetch(url, { signal: AbortSignal.timeout(10000) });
+    const res = await fetch(url, { signal: AbortSignal.timeout(15000) });
     const text = await res.text();
-    if (text.includes('LIMIT_EXCEEDED')) {
-      if (retryCount >= 3) return [];
-      await sleep(60000);
-      return fetchMonth(lawdCd, ym, retryCount + 1);
+    if (text.includes('SERVICE_KEY_IS_NOT_REGISTERED_ERROR')) {
+        console.error("❌ API 키 오류");
+        return [];
     }
     return parseXML(text, lawdCd);
   } catch (e) {
+    console.error(`❌ \${lawdCd} / \${ym} 호출 실패:`, e.message);
     return [];
   }
 }
 
 export async function upsertBatch(rows) {
   if (rows.length === 0) return;
-  const { error } = await supabase.from('house_trades').upsert(rows, { onConflict: 'lawd_cd,deal_year,deal_month,deal_day,apartment_name,exclusive_area,floor' });
+  const { error } = await supabase.from('house_trades').upsert(rows, { 
+    onConflict: 'lawd_cd,deal_year,deal_month,deal_day,apartment_name,exclusive_area,floor' 
+  });
   if (error) console.error('upsert 에러:', error.message);
 }
