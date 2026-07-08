@@ -56,12 +56,11 @@ export default async function handler(req, res) {
     if (downloadError) throw downloadError;
     if (!data) throw new Error('No file data returned from storage.');
 
-    // ✅ 핵심 수정 1: EUC-KR 대응 (국토부 CSV는 대부분 EUC-KR)
+    // EUC-KR 자동 감지 및 디코딩
     const buffer = await data.arrayBuffer();
     let csvText = '';
     try {
       csvText = new TextDecoder('utf-8').decode(buffer);
-      // 깨진 문자 감지 시 EUC-KR로 재시도
       if (
         csvText.includes('ï¿½') ||
         csvText.includes('�') ||
@@ -76,9 +75,10 @@ export default async function handler(req, res) {
     // BOM 제거
     if (csvText.charCodeAt(0) === 0xFEFF) csvText = csvText.slice(1);
 
-    // ✅ 핵심 수정 2: 탭→쉼표 먼저, 그 다음 천단위 콤마 제거 (순서 중요)
+    // 탭 → 쉼표 변환 (순서 중요: 천단위 콤마 제거보다 먼저)
     csvText = csvText.replace(/\t/g, ',');
 
+    // 천단위 콤마 제거 (예: 61,000 → 61000)
     let prev;
     do {
       prev = csvText;
@@ -89,7 +89,7 @@ export default async function handler(req, res) {
     const parsed = parseCSV(csvText);
     if (!parsed || parsed.length === 0) return res.status(400).json({ error: 'Empty CSV' });
 
-    // ✅ 핵심 수정 3: 헤더 탐지 조건 강화 (3개 이상 핵심 컬럼 동시 포함)
+    // 헤더 탐지: 핵심 컬럼 3개 이상 포함하는 행
     const HEADER_KEYWORDS = ['시군구', '단지명', '계약년월', '거래금액'];
     let headerIndex = parsed.findIndex(r => {
       const joined = r.join('');
@@ -98,26 +98,36 @@ export default async function handler(req, res) {
     });
     if (headerIndex === -1) headerIndex = 0;
 
-    const headerRow = parsed[headerIndex].map(h => (h || '').replace(/"/g, '').trim());
+    // 헤더 파싱 + 앞쪽 빈 컬럼 오프셋 계산
+    let headerRow = parsed[headerIndex].map(h => (h || '').replace(/"/g, '').trim());
 
-    // ✅ 핵심 수정 4: 데이터 행 필터 강화 (헤더 컬럼 수와 맞지 않는 행 제거)
+    let colOffset = 0;
+    while (colOffset < headerRow.length && headerRow[colOffset] === '') colOffset++;
+    if (colOffset > 0) headerRow = headerRow.slice(colOffset);
+
+    console.log('=== headerIndex:', headerIndex);
+    console.log('=== colOffset:', colOffset);
+    console.log('=== headerRow:', headerRow);
+
+    // 데이터 행 필터: 헤더 컬럼 수 기준
     const headerLen = headerRow.length;
     const linesArr = parsed
       .slice(headerIndex + 1)
       .filter(r => r.length >= headerLen - 2 && r.join('').trim() !== '');
 
-    // 디버그 로그 (확인 후 제거 가능)
-    console.log('=== headerIndex:', headerIndex);
-    console.log('=== headerRow:', headerRow);
     console.log('=== 데이터 행 수:', linesArr.length);
     console.log('=== 첫 번째 데이터 행:', linesArr[0]);
 
     const rowsToInsert = linesArr.map(values => {
+      // 앞쪽 빈 컬럼 오프셋 적용
+      const offsetValues = colOffset > 0 ? values.slice(colOffset) : values;
+
       const row = {};
       headerRow.forEach((header, i) => {
-        const val = (values[i] || '').replace(/"/g, '').trim();
+        const val = (offsetValues[i] || '').replace(/"/g, '').trim();
         row[header] = val;
 
+        // 동의어 자동 설정
         if (header === '번지') row['지번'] = row['지번'] || val;
         if (header === '지번') row['번지'] = row['번지'] || val;
         if (header === '전용면적(㎡)') row['전용면적'] = row['전용면적'] || val;
