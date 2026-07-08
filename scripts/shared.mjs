@@ -56,8 +56,8 @@ export function parseXML(xml, lawdCd) {
       bunji: getTag(b, 'jibun'),                          // bunji
       load_name: getTag(b, 'roadNm'),                     // load_name
       main_num: getTag(b, 'bonbun'),                      // main_num
-      "sub-num": getTag(b, 'bubun'),                      // sub-num
-      danji: getTag(b, 'aptNm'),                          // danji
+      sub_num: getTag(b, 'bubun'),                      // sub-num
+      bunji: getTag(b, 'aptNm'),                          // danji
       floor: parseInt(getTag(b, 'floor')) || null,        // floor
       size: parseFloat(getTag(b, 'excluUseAr')) || null,  // size
       deal_date: dealDate,                                // deal_date
