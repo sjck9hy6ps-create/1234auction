@@ -47,22 +47,50 @@ export function parseXML(xml, lawdCd) {
     
     // deal_date 생성 (이미지의 int8 타입에 맞춰 20260630 형식의 숫자로 변환)
     const y = getTag(b, 'dealYear');
-    const m = getTag(b, 'dealMonth').padStart(2, '0');
-    const d = getTag(b, 'dealDay').padStart(2, '0');
-    const dealDateInt = parseInt(`${y}${m}${d}`);
+    const mm = getTag(b, 'dealMonth').padStart(2, '0');
+    const dd = getTag(b, 'dealDay').padStart(2, '0');
+    const dealDateInt = parseInt(`${y}${mm}${dd}`);
 
+    // 컬럼명 매칭: 파이프라인이 기대하는 필드명에 정확히 맞춤
     rows.push({
-      region: lawdCd,                                     // varchar
-      bunji: getTag(b, 'jibun'),                          // varchar
-      road_name: getTag(b, 'roadNm'),                     // road_name (이미지 확인 결과)
-      main_num: parseInt(getTag(b, 'bonbun')) || null,    // int8
-      sub_num: parseInt(getTag(b, 'bubun')) || null,      // sub_num (이미지 확인 결과)
-      danji: getTag(b, 'aptNm'),                          // danji (기존 중복오타 수정)
-      floor: parseInt(getTag(b, 'floor')) || null,        // int8
-      size: Math.floor(parseFloat(getTag(b, 'excluUseAr'))) || null, // int8 (소수점 제거)
-      deal_date: dealDateInt,                             // int8
-      price: parseInt(getTag(b, 'dealAmount').replace(/,/g, '')) || 0, // int8
-      build_year: parseInt(getTag(b, 'buildYear')) || null // int8
+      region: String(lawdCd),                               // region (varchar)
+      danji: getTag(b, 'aptNm') || '',                      // danji (단지명)
+      size: (() => {                                        // size (int)
+        const v = getTag(b, 'excluUseAr');
+        if (!v) return null;
+        const n = parseFloat(v.replace(/,/g, ''));
+        return Number.isFinite(n) ? Math.floor(n) : null;
+      })(),
+      price: (() => {                                       // price (int)
+        const v = getTag(b, 'dealAmount').replace(/,/g,'').trim();
+        if (!v) return 0;
+        const n = parseInt(v, 10);
+        return Number.isNaN(n) ? 0 : n;
+      })(),
+      deal_date: Number.isFinite(dealDateInt) ? dealDateInt : null, // deal_date (int8)
+      floor: (() => {
+        const v = getTag(b, 'floor').trim();
+        if (!v) return null;
+        const n = parseInt(v, 10);
+        return Number.isNaN(n) ? null : n;
+      })(),
+      bunji: getTag(b, 'jibun') || '',                      // bunji (번지)
+      main_num: (() => {                                    // main_num (int)
+        const v = getTag(b, 'bonbun').trim();
+        const n = parseInt(v, 10);
+        return v === '' || Number.isNaN(n) ? null : n;
+      })(),
+      sub_num: (() => {                                     // sub_num (int)
+        const v = getTag(b, 'bubun').trim();
+        const n = parseInt(v, 10);
+        return v === '' || Number.isNaN(n) ? null : n;
+      })(),
+      build_year: (() => {
+        const v = getTag(b, 'buildYear').trim();
+        const n = parseInt(v, 10);
+        return v === '' || Number.isNaN(n) ? null : n;
+      })(),
+      road_name: getTag(b, 'roadNm') || ''                  // road_name
     });
   }
   return rows;
