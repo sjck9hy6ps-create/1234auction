@@ -1,12 +1,11 @@
 import { createClient } from '@supabase/supabase-js';
 
-// ← 등록된 환경변수명으로 정확히 맞춤
 const supabase = createClient(
   process.env.SUPABASE_URL,
-  process.env.SUPABASE_SERVICE_ROLE_KEY  // anon_key → service_role_key
+  process.env.SUPABASE_SERVICE_ROLE_KEY
 );
 
-const APT_API_KEY = process.env.PUBLIC_DATA_API_KEY;  // ← 이름 맞춤
+const APT_API_KEY = process.env.PUBLIC_DATA_API_KEY;
 
 export default async function handler(req, res) {
   res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
@@ -15,35 +14,53 @@ export default async function handler(req, res) {
   const lawdCd = req.query.lawdCd;
   if (!lawdCd) return res.status(400).json({ error: 'lawdCd required' });
 
+  // ── 환경변수 체크 ──
+  console.log('SUPABASE_URL:', process.env.SUPABASE_URL ? '✅ 있음' : '❌ 없음');
+  console.log('SUPABASE_SERVICE_ROLE_KEY:', process.env.SUPABASE_SERVICE_ROLE_KEY ? '✅ 있음' : '❌ 없음');
+  console.log('lawdCd:', lawdCd);
+
   try {
-    // ── 1. DB: 지난달까지 ──
-    const { dbRows, error } = await supabase  // ← data로 구조분해
+    // ── 1. DB 조회 ──
+    console.log('DB 조회 시작...');
+    const { data, error } = await supabase   // ← data로 정확히 받기
       .from('house_trades')
       .select('*')
       .eq('lawd_cd', lawdCd)
       .order('deal_year',  { ascending: false })
       .order('deal_month', { ascending: false });
 
-    if (error) throw error;
+    // 에러 상세 출력
+    if (error) {
+      console.error('Supabase 에러 코드:', error.code);
+      console.error('Supabase 에러 메시지:', error.message);
+      console.error('Supabase 에러 상세:', error.details);
+      throw error;
+    }
 
-    // ── 2. 실시간: 이번달 ──
+    console.log('DB 조회 완료. 건수:', data ? data.length : 0);
+    if (data && data.length > 0) {
+      console.log('첫번째 row 샘플:', JSON.stringify(data[0]));
+    }
+
+    // ── 2. 실시간 ──
     const now    = new Date();
     const thisYm = String(now.getFullYear()) + String(now.getMonth() + 1).padStart(2, '0');
     const realtimeItems = await fetchRealtimeApt(lawdCd, thisYm);
 
     // ── 3. 정규화 ──
-    const dbNormalized       = (dbRows || []).map(normalizeDBRow);
+    const dbNormalized       = (data || []).map(normalizeDBRow);
     const realtimeNormalized = realtimeItems.map(normalizeXMLItem);
 
     // ── 4. 합치기 + 중복 제거 ──
     const merged = dedup([...realtimeNormalized, ...dbNormalized]);
 
-    console.log(`lawdCd=${lawdCd} DB=${dbNormalized.length}건 실시간=${realtimeNormalized.length}건 합계=${merged.length}건`);
+    console.log(`최종: DB=${dbNormalized.length}건 실시간=${realtimeNormalized.length}건 합계=${merged.length}건`);
 
     return res.status(200).json({ apt: merged, rent: [] });
 
   } catch (err) {
-    console.error('get-house error:', err);
+    console.error('핸들러 에러:', err.message);
+    console.error('스택:', err.stack);
     return res.status(500).json({ error: err.message });
   }
 }
