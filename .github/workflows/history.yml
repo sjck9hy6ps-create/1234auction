@@ -23,8 +23,13 @@ jobs:
 
       - name: Collect history
         env:
-          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
-          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
-          PUBLIC_DATA_API_KEY: ${{ secrets.PUBLIC_DATA_API_KEY }}
-          TARGET_YEAR: ${{ github.event.inputs.year }}
-        run: node scripts/collect-history.mjs
+          SUPABASE_URL: \${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: \${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          PUBLIC_DATA_API_KEY: \${{ secrets.PUBLIC_DATA_API_KEY }}
+          TARGET_YEAR: \${{ github.event.inputs.year }}
+        run: |
+          if [ -z "$SUPABASE_URL" ]; then
+            echo "에러: SUPABASE_URL 시크릿을 읽지 못했습니다!"
+            exit 1
+          fi
+          node scripts/collect-history.mjs
