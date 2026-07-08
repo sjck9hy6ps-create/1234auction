@@ -1,11 +1,29 @@
 import { createClient } from '@supabase/supabase-js';
 
-export const supabase = createClient(
-  process.env.SUPABASE_URL,
-  process.env.SUPABASE_SERVICE_ROLE_KEY
-);
+// 환경 변수 로드 및 공백 제거
+const supabaseUrl = process.env.SUPABASE_URL?.trim();
+const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY?.trim();
 
-export const API_KEY   = process.env.PUBLIC_DATA_API_KEY;
+// 1. Supabase 설정 확인
+if (!supabaseUrl || !supabaseUrl.startsWith('http')) {
+  console.error('❌ 에러: SUPABASE_URL이 설정되지 않았거나 형식이 올바르지 않습니다.');
+  console.error(`현재 값: "${supabaseUrl}"`);
+  process.exit(1);
+}
+
+if (!supabaseKey) {
+  console.error('❌ 에러: SUPABASE_SERVICE_ROLE_KEY가 설정되지 않았습니다.');
+  process.exit(1);
+}
+
+export const supabase = createClient(supabaseUrl, supabaseKey);
+
+// 2. 공공데이터 API 키 설정
+export const API_KEY = process.env.PUBLIC_DATA_API_KEY?.trim();
+if (!API_KEY) {
+  console.warn('⚠️ 경고: PUBLIC_DATA_API_KEY가 설정되지 않았습니다.');
+}
+
 export const BATCH_SIZE = 500;
 export const DELAY_MS   = 200;
 
@@ -98,6 +116,8 @@ export function parseXML(xml, lawdCd) {
 }
 
 export async function fetchMonth(lawdCd, ym, retryCount = 0) {
+  if (!API_KEY) return [];
+  
   const url =
     'https://apis.data.go.kr/1613000/RTMSDataSvcAptTradeDev/getRTMSDataSvcAptTradeDev'
     + '?serviceKey=' + encodeURIComponent(API_KEY)
@@ -116,7 +136,7 @@ export async function fetchMonth(lawdCd, ym, retryCount = 0) {
         console.error(`❌ 재시도 초과 [${lawdCd}/${ym}] - 스킵`);
         return [];
       }
-      const waitSec = 60 * (retryCount + 1); // 60초, 120초, 180초
+      const waitSec = 60 * (retryCount + 1);
       console.warn(`⚠️ API 제한 [${lawdCd}/${ym}] - \${waitSec}초 대기 후 재시도 (${retryCount + 1}/3)`);
       await sleep(waitSec * 1000);
       return fetchMonth(lawdCd, ym, retryCount + 1);
