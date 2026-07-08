@@ -1,4 +1,4 @@
-name: Collect History Data
+name: Real Estate Data Collect & Save
 
 on:
   workflow_dispatch:
@@ -15,10 +15,10 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: '24' # 최신 노드 버전으로 설정
+          node-version: '24'
 
       - name: Install dependencies
-        run: npm install @supabase/supabase-js ws
+        run: npm install @supabase/supabase-js ws fast-xml-parser
 
       - name: Create and Run Script
         env:
@@ -30,6 +30,7 @@ jobs:
           cat <<'EOF' > scripts/final-collect.mjs
           import { createClient } from '@supabase/supabase-js';
           import ws from 'ws';
+          import { XMLParser } from 'fast-xml-parser';
 
           const url = (process.env.SUPABASE_URL || "").trim().replace(/["']/g, "");
           const key = (process.env.SUPABASE_SERVICE_ROLE_KEY || "").trim().replace(/["']/g, "");
@@ -41,37 +42,64 @@ jobs:
             realtime: { transport: ws }
           });
 
-          console.log(`🚀 \${targetYear}년 데이터 수집을 시작합니다...`);
+          const parser = new XMLParser();
 
-          const LAWD_CODES = ['11110', '11680']; // 테스트용 코드 (나중에 shared.mjs의 전체 목록으로 확장 가능)
-          
-          async function fetchData() {
+          // 테스트용 지역 코드 (필요시 shared.mjs 목록으로 교체 가능)
+          const LAWD_CODES = ['11110', '11680', '41111', '41131']; 
+
+          async function collectAndSave() {
+            console.log(`🚀 \${targetYear}년 데이터 수집 및 DB 저장 시작...`);
+
             for (const lawd of LAWD_CODES) {
               for (let month = 1; month <= 12; month++) {
                 const ym = `${targetYear}${month.toString().padStart(2, '0')}`;
-                console.log(`- 수집 중: 법정동 \${lawd}, 월 \${ym}`);
-                
-                const apiUrl = `https://apis.data.go.kr/1613000/RTMSDataSvcAptTradeDev/getRTMSDataSvcAptTradeDev?serviceKey=${encodeURIComponent(apiKey)}&LAWD_CD=${lawd}&DEAL_YMD=${ym}&numOfRows=100&pageNo=1`;
+                const apiUrl = `https://apis.data.go.kr/1613000/RTMSDataSvcAptTradeDev/getRTMSDataSvcAptTradeDev?serviceKey=${encodeURIComponent(apiKey)}&LAWD_CD=${lawd}&DEAL_YMD=${ym}&numOfRows=1000&pageNo=1`;
                 
                 try {
                   const res = await fetch(apiUrl);
-                  const text = await res.text();
+                  const xmlData = await res.text();
+                  const jsonObj = parser.parse(xmlData);
                   
-                  if (text.includes('SERVICE_KEY_IS_NOT_REGISTERED_ERROR')) {
-                    console.error("❌ 공공데이터 API 키가 잘못되었습니다.");
-                    return;
+                  const items = jsonObj?.response?.body?.items?.item;
+                  if (!items) {
+                    console.log(`- \${lawd} / \${ym}: 데이터 없음`);
+                    continue;
                   }
+
+                  // 배열 형태 보장
+                  const itemList = Array.isArray(items) ? items : [items];
                   
-                  console.log(`✅ \${ym} 수집 완료 (데이터 분석 및 저장 로직 실행 가능)`);
+                  // DB 형식으로 변환
+                  const rows = itemList.map(item => ({
+                    lawd_cd: lawd,
+                    deal_ymd: ym,
+                    apartment_name: item.aptNm,
+                    amount: parseInt(item.dealAmount.replace(/,/g, '')),
+                    area: parseFloat(item.excluArea),
+                    floor: parseInt(item.floor),
+                    build_year: parseInt(item.buildYear),
+                    deal_day: parseInt(item.dealDay),
+                    // 중복 방지를 위한 고유 키 생성 (필요시)
+                    unique_id: `${lawd}-${ym}-${item.dealDay}-${item.aptNm}-${item.excluArea}-${item.floor}`
+                  }));
+
+                  // Supabase 저장 (upsert: 중복시 업데이트)
+                  const { error } = await supabase
+                    .from('real_estate_trades')
+                    .upsert(rows, { onConflict: 'unique_id' });
+
+                  if (error) throw error;
+                  console.log(`✅ \${lawd} / \${ym}: \${rows.length}건 저장 완료`);
+
                 } catch (e) {
-                  console.error(`❌ \${ym} 수집 실패:`, e.message);
+                  console.error(`❌ \${ym} 에러:`, e.message);
                 }
-                await new Promise(r => setTimeout(r, 500)); // 0.5초 대기
+                await new Promise(r => setTimeout(r, 300)); // API 부하 방지
               }
             }
           }
 
-          fetchData().then(() => console.log("✨ 모든 작업이 완료되었습니다."));
+          collectAndSave().then(() => console.log("✨ 모든 작업이 완료되었습니다."));
           EOF
           
           node scripts/final-collect.mjs
