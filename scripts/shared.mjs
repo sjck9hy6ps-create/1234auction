@@ -45,24 +45,24 @@ export function parseXML(xml, lawdCd) {
   while ((match = regex.exec(xml)) !== null) {
     const b = match[1];
     
-    // deal_date (YYYY-MM-DD)
+    // deal_date 생성 (이미지의 int8 타입에 맞춰 20260630 형식의 숫자로 변환)
     const y = getTag(b, 'dealYear');
     const m = getTag(b, 'dealMonth').padStart(2, '0');
     const d = getTag(b, 'dealDay').padStart(2, '0');
-    const dealDate = `${y}-${m}-${d}`;
+    const dealDateInt = parseInt(`${y}${m}${d}`);
 
     rows.push({
-      region: lawdCd,                                     // region
-      bunji: getTag(b, 'jibun'),                          // bunji
-      load_name: getTag(b, 'roadNm'),                     // load_name
-      main_num: getTag(b, 'bonbun'),                      // main_num
-      sub_num: getTag(b, 'bubun'),                      // sub-num
-      bunji: getTag(b, 'aptNm'),                          // danji
-      floor: parseInt(getTag(b, 'floor')) || null,        // floor
-      size: parseFloat(getTag(b, 'excluUseAr')) || null,  // size
-      deal_date: dealDate,                                // deal_date
-      price: parseInt(getTag(b, 'dealAmount').replace(/,/g, '')) || 0, // price
-      build_year: parseInt(getTag(b, 'buildYear')) || null // build_year
+      region: lawdCd,                                     // varchar
+      bunji: getTag(b, 'jibun'),                          // varchar
+      road_name: getTag(b, 'roadNm'),                     // road_name (이미지 확인 결과)
+      main_num: parseInt(getTag(b, 'bonbun')) || null,    // int8
+      sub_num: parseInt(getTag(b, 'bubun')) || null,      // sub_num (이미지 확인 결과)
+      danji: getTag(b, 'aptNm'),                          // danji (기존 중복오타 수정)
+      floor: parseInt(getTag(b, 'floor')) || null,        // int8
+      size: Math.floor(parseFloat(getTag(b, 'excluUseAr'))) || null, // int8 (소수점 제거)
+      deal_date: dealDateInt,                             // int8
+      price: parseInt(getTag(b, 'dealAmount').replace(/,/g, '')) || 0, // int8
+      build_year: parseInt(getTag(b, 'buildYear')) || null // int8
     });
   }
   return rows;
@@ -85,5 +85,5 @@ export async function upsertBatch(rows) {
   const { error } = await supabase.from('house_trades').upsert(rows, { 
     onConflict: 'region,danji,size,floor,deal_date' 
   });
-  if (error) console.error('upsert 에러:', error.message);
+  if (error) console.error('❌ upsert 에러:', error.message);
 }
