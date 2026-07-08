@@ -75,7 +75,7 @@ export default async function handler(req, res) {
     // BOM 제거
     if (csvText.charCodeAt(0) === 0xFEFF) csvText = csvText.slice(1);
 
-    // 탭 → 쉼표 변환 (순서 중요: 천단위 콤마 제거보다 먼저)
+    // 탭 → 쉼표 변환 (천단위 콤마 제거보다 먼저)
     csvText = csvText.replace(/\t/g, ',');
 
     // 천단위 콤마 제거 (예: 61,000 → 61000)
@@ -105,11 +105,15 @@ export default async function handler(req, res) {
     while (colOffset < headerRow.length && headerRow[colOffset] === '') colOffset++;
     if (colOffset > 0) headerRow = headerRow.slice(colOffset);
 
+    // 부번 컬럼 인덱스 미리 확보
+    const subNumIdx = headerRow.indexOf('부번');
+
     console.log('=== headerIndex:', headerIndex);
     console.log('=== colOffset:', colOffset);
     console.log('=== headerRow:', headerRow);
+    console.log('=== subNumIdx:', subNumIdx);
 
-    // 데이터 행 필터: 헤더 컬럼 수 기준
+    // 데이터 행 필터
     const headerLen = headerRow.length;
     const linesArr = parsed
       .slice(headerIndex + 1)
@@ -120,7 +124,17 @@ export default async function handler(req, res) {
 
     const rowsToInsert = linesArr.map(values => {
       // 앞쪽 빈 컬럼 오프셋 적용
-      const offsetValues = colOffset > 0 ? values.slice(colOffset) : values;
+      const offsetValues = colOffset > 0 ? [...values.slice(colOffset)] : [...values];
+
+      // ✅ 부번 필드 누락 보정:
+      // 부번 자리 값이 숫자가 아니고 전체 필드 수가 헤더보다 적으면 빈 값 삽입
+      if (
+        subNumIdx !== -1 &&
+        offsetValues.length < headerLen &&
+        isNaN(Number((offsetValues[subNumIdx] || '').trim()))
+      ) {
+        offsetValues.splice(subNumIdx, 0, '');
+      }
 
       const row = {};
       headerRow.forEach((header, i) => {
