@@ -75,15 +75,11 @@ export default async function handler(req, res) {
     // BOM 제거
     if (csvText.charCodeAt(0) === 0xFEFF) csvText = csvText.slice(1);
 
-    // 탭 → 쉼표 변환 (천단위 콤마 제거보다 먼저)
+    // 탭 → 쉼표 변환
     csvText = csvText.replace(/\t/g, ',');
 
-    // 천단위 콤마 제거 (예: 61,000 → 61000)
-    let prev;
-    do {
-      prev = csvText;
-      csvText = csvText.replace(/(\d+),(\d{3}\b)/g, '$1$2');
-    } while (csvText !== prev);
+    // ✅ 천단위 콤마 전처리 제거 (번지/본번/부번 파괴 방지)
+    // 천단위 콤마는 toInt 내부에서만 처리
 
     // 파싱
     const parsed = parseCSV(csvText);
@@ -105,7 +101,7 @@ export default async function handler(req, res) {
     while (colOffset < headerRow.length && headerRow[colOffset] === '') colOffset++;
     if (colOffset > 0) headerRow = headerRow.slice(colOffset);
 
-    // 부번 컬럼 인덱스 미리 확보
+    // 부번 컬럼 인덱스
     const subNumIdx = headerRow.indexOf('부번');
 
     console.log('=== headerIndex:', headerIndex);
@@ -123,11 +119,9 @@ export default async function handler(req, res) {
     console.log('=== 첫 번째 데이터 행:', linesArr[0]);
 
     const rowsToInsert = linesArr.map(values => {
-      // 앞쪽 빈 컬럼 오프셋 적용
       const offsetValues = colOffset > 0 ? [...values.slice(colOffset)] : [...values];
 
-      // ✅ 부번 필드 누락 보정:
-      // 부번 자리 값이 숫자가 아니고 전체 필드 수가 헤더보다 적으면 빈 값 삽입
+      // 부번 필드 누락 보정
       if (
         subNumIdx !== -1 &&
         offsetValues.length < headerLen &&
@@ -150,8 +144,9 @@ export default async function handler(req, res) {
         if (header === '거래금액') row['거래금액(만원)'] = row['거래금액(만원)'] || val;
       });
 
+      // ✅ toInt 내부에서 천단위 콤마 제거 (숫자+콤마 패턴만 제거)
       const toInt = (val) => {
-        const cleaned = String(val || '').replace(/[^0-9]/g, '');
+        const cleaned = String(val || '').replace(/,/g, '').replace(/[^0-9]/g, '');
         return cleaned ? parseInt(cleaned, 10) : 0;
       };
 
