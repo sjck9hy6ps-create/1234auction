@@ -16,11 +16,11 @@ jobs:
         with:
           node-version: '20'
 
-      - run: npm install @supabase/supabase-js
+      - run: npm install
 
       - name: Collect weekly data
         env:
           SUPABASE_URL: \${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: \${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
           PUBLIC_DATA_API_KEY: \${{ secrets.PUBLIC_DATA_API_KEY }}
-        run: node --experimental-vm-modules scripts/collect-weekly.mjs
+        run: node scripts/collect-weekly.mjs
