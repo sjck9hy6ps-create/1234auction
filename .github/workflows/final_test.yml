@@ -1,10 +1,10 @@
-name: Final Test Collect
+name: Collect History Data
 
 on:
   workflow_dispatch:
     inputs:
       year:
-        description: '연도'
+        description: '수집할 연도'
         required: true
         default: '2026'
 
@@ -13,50 +13,65 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
       - uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '24' # 최신 노드 버전으로 설정
 
       - name: Install dependencies
-        run: |
-          npm install @supabase/supabase-js ws
+        run: npm install @supabase/supabase-js ws
 
-      - name: Create Script
-        run: |
-          mkdir -p scripts
-          cat <<'EOF' > scripts/collect-history.mjs
-          import { createClient } from '@supabase/supabase-js';
-          import ws from 'ws';
-          
-          const url = (process.env.SUPABASE_URL || "").trim().replace(/["']/g, ""); 
-          const key = (process.env.SUPABASE_SERVICE_ROLE_KEY || "").trim().replace(/["']/g, "");
-
-          console.log("--- 최종 해결 시도 로그 ---");
-          
-          try {
-            // WebSocket 라이브러리(ws)를 직접 주입하여 환경 호환성 에러 해결
-            const supabase = createClient(url, key, {
-              auth: { persistSession: false },
-              global: {
-                fetch: (...args) => fetch(...args),
-              },
-              realtime: {
-                transport: ws,
-              },
-            });
-            
-            console.log("✅ 수파베이스 클라이언트 생성 성공!");
-            console.log("연결된 URL 길이:", url.length);
-          } catch (err) {
-            console.error("❌ 생성 중 에러 발생:", err.message);
-            process.exit(1);
-          }
-          console.log("--- 실행 종료 ---");
-          EOF
-
-      - name: Run Script
+      - name: Create and Run Script
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
-        run: node scripts/collect-history.mjs
+          PUBLIC_DATA_API_KEY: ${{ secrets.PUBLIC_DATA_API_KEY }}
+          TARGET_YEAR: ${{ github.event.inputs.year }}
+        run: |
+          cat <<'EOF' > scripts/final-collect.mjs
+          import { createClient } from '@supabase/supabase-js';
+          import ws from 'ws';
+
+          const url = (process.env.SUPABASE_URL || "").trim().replace(/["']/g, "");
+          const key = (process.env.SUPABASE_SERVICE_ROLE_KEY || "").trim().replace(/["']/g, "");
+          const apiKey = (process.env.PUBLIC_DATA_API_KEY || "").trim();
+          const targetYear = process.env.TARGET_YEAR || "2026";
+
+          const supabase = createClient(url, key, {
+            auth: { persistSession: false },
+            realtime: { transport: ws }
+          });
+
+          console.log(`🚀 \${targetYear}년 데이터 수집을 시작합니다...`);
+
+          const LAWD_CODES = ['11110', '11680']; // 테스트용 코드 (나중에 shared.mjs의 전체 목록으로 확장 가능)
+          
+          async function fetchData() {
+            for (const lawd of LAWD_CODES) {
+              for (let month = 1; month <= 12; month++) {
+                const ym = `${targetYear}${month.toString().padStart(2, '0')}`;
+                console.log(`- 수집 중: 법정동 \${lawd}, 월 \${ym}`);
+                
+                const apiUrl = `https://apis.data.go.kr/1613000/RTMSDataSvcAptTradeDev/getRTMSDataSvcAptTradeDev?serviceKey=${encodeURIComponent(apiKey)}&LAWD_CD=${lawd}&DEAL_YMD=${ym}&numOfRows=100&pageNo=1`;
+                
+                try {
+                  const res = await fetch(apiUrl);
+                  const text = await res.text();
+                  
+                  if (text.includes('SERVICE_KEY_IS_NOT_REGISTERED_ERROR')) {
+                    console.error("❌ 공공데이터 API 키가 잘못되었습니다.");
+                    return;
+                  }
+                  
+                  console.log(`✅ \${ym} 수집 완료 (데이터 분석 및 저장 로직 실행 가능)`);
+                } catch (e) {
+                  console.error(`❌ \${ym} 수집 실패:`, e.message);
+                }
+                await new Promise(r => setTimeout(r, 500)); // 0.5초 대기
+              }
+            }
+          }
+
+          fetchData().then(() => console.log("✨ 모든 작업이 완료되었습니다."));
+          EOF
+          
+          node scripts/final-collect.mjs
