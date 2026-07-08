@@ -13,6 +13,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
@@ -24,31 +25,30 @@ jobs:
         run: |
           echo "URL 설정 여부 확인 시작"
           if [ -z "${{ secrets.SUPABASE_URL }}" ]; then
-            echo "❌ 에러: SUPABASE_URL 시크릿을 찾을 수 없습니다."
+            echo "❌ 에러: SUPABASE_URL 시크릿이 없습니다."
             exit 1
-          else
-            echo "✅ SUPABASE_URL 시크릿이 존재합니다."
           fi
+          echo "✅ SUPABASE_URL 시크릿이 존재합니다."
 
-            - name: Create Script
+      - name: Create Script
         run: |
           mkdir -p scripts
           cat <<'EOF' > scripts/collect-history.mjs
           import { createClient } from '@supabase/supabase-js';
           
-          // 앞뒤 공백, 따옴표, 줄바꿈을 완전히 제거하는 로직 추가
-          const rawUrl = process.env.SUPABASE_URL || "";
-          const url = rawUrl.replace(/["']/g, "").trim(); 
+          // 앞뒤 공백, 따옴표, 줄바꿈을 완전히 제거
+          const rawUrl = (process.env.SUPABASE_URL || "").trim();
+          const url = rawUrl.replace(/["']/g, ""); 
           
-          const rawKey = process.env.SUPABASE_SERVICE_ROLE_KEY || "";
-          const key = rawKey.replace(/["']/g, "").trim();
+          const rawKey = (process.env.SUPABASE_SERVICE_ROLE_KEY || "").trim();
+          const key = rawKey.replace(/["']/g, "");
 
           console.log("--- 강제 보정 실행 로그 ---");
           console.log("보정 전 길이:", rawUrl.length);
           console.log("보정 후 길이:", url.length);
           
           if (!url.startsWith('http')) {
-            console.error("❌ 여전히 URL 형식이 잘못되었습니다. 현재 값:", url);
+            console.error("❌ 에러: URL이 http로 시작하지 않습니다. 현재 주소 상태를 확인하세요.");
             process.exit(1);
           }
           
