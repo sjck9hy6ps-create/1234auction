@@ -7,6 +7,8 @@ const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY?.trim();
 export const supabase = createClient(supabaseUrl, supabaseKey, {
   auth: { persistSession: false }
 });
+// DELAY_MS 추가 — 이게 없어서 전부 터졌음
+export const DELAY_MS = 300;
 
 export const API_KEY = process.env.PUBLIC_DATA_API_KEY?.trim();
 
