@@ -105,15 +105,26 @@ export async function fetchMonth(lawdCd, ym) {
     const text = await res.text();
     return parseXML(text, lawdCd);
   } catch (e) {
-    console.error(`❌ \${lawdCd}/${ym} 실패:`, e.message);
+    console.error(`❌ ${lawdCd}/${ym} 실패:`, e.message);
     return [];
   }
 }
 
 export async function upsertBatch(rows) {
   if (rows.length === 0) return;
-  const { error } = await supabase.from('house_trades').upsert(rows, { 
-    onConflict: 'region,danji,size,floor,deal_date' 
+
+  // 중복 제거 (region, danji, size, floor, deal_date 기준)
+  const uniqueRows = Array.from(
+    new Map(
+      rows.map(row => [
+        `${row.region}_${row.danji}_${row.size}_${row.floor}_${row.deal_date}`,
+        row
+      ])
+    ).values()
+  );
+
+  const { error } = await supabase.from('house_trades').upsert(uniqueRows, {
+    onConflict: 'region,danji,size,floor,deal_date'
   });
   if (error) console.error('❌ upsert 에러:', error.message);
 }
