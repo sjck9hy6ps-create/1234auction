@@ -112,7 +112,7 @@ export async function fetchMonth(lawdCd, ym) {
 
 export async function upsertBatch(rows) {
   if (rows.length === 0) return;
-  const { error } = await supabase.from('real_estate_trades').upsert(rows, { 
+  const { error } = await supabase.from('house_trades').upsert(rows, { 
     onConflict: 'region,danji,size,floor,deal_date' 
   });
   if (error) console.error('❌ upsert 에러:', error.message);
