@@ -17,7 +17,7 @@ const targetMonths = TARGET_YEAR < currentYear
   ? ALL_MONTHS
   : ALL_MONTHS.filter(m => m <= currentMonth);
 
-console.log(`\n📅 \${TARGET_YEAR}년 수집 시작`);
+console.log(`n📅 \${TARGET_YEAR}년 수집 시작`);
 console.log(`총 \${LAWD_CODES.length}개 지역 × \${targetMonths.length}개월 = \${LAWD_CODES.length * targetMonths.length}회 호출\n`);
 
 let totalInserted = 0;
