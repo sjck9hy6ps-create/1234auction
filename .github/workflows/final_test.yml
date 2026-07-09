@@ -1,78 +1,32 @@
-name: Real Estate Data Collect (Final)
+name: 연간 부동산 데이터 수집
 
 on:
   workflow_dispatch:
     inputs:
       year:
-        description: '수집할 연도'
+        description: '수집할 연도 (예: 2026)'
         required: true
         default: '2026'
 
 jobs:
   collect:
     runs-on: ubuntu-latest
+    timeout-minutes: 350  # 최대 6시간 (무료 플랜 제한 고려)
+
     steps:
       - uses: actions/checkout@v4
-      
+
       - uses: actions/setup-node@v4
         with:
-          node-version: '24'
+          node-version: '20'
 
-      - name: Install dependencies
-        run: npm install @supabase/supabase-js ws
+      - name: 의존성 설치
+        run: npm install @supabase/supabase-js
 
-      - name: Run Collector
+      - name: 연간 데이터 수집 실행
         env:
-          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
-          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
-          PUBLIC_DATA_API_KEY: ${{ secrets.PUBLIC_DATA_API_KEY }}
-          TARGET_YEAR: ${{ github.event.inputs.year }}
-        run: |
-          # 1. 실행용 메인 스크립트 생성 (shared.mjs의 함수를 직접 활용)
-          cat <<'EOF' > scripts/main-run.mjs
-          import ws from 'ws';
-          global.WebSocket = ws; // Node 환경 WebSocket 호환성 설정
-
-          import { 
-            LAWD_CODES, 
-            fetchMonth, 
-            upsertBatch, 
-            sleep 
-          } from './shared.mjs';
-
-          const targetYear = process.env.TARGET_YEAR || "2026";
-
-          async function main() {
-            console.log(`🚀 \${targetYear}년 전국 데이터 수집 시작...`);
-            
-            for (const lawd of LAWD_CODES) {
-              console.log(`📍 지역 [${lawd}] 작업 중...`);
-              
-              for (let month = 1; month <= 12; month++) {
-                const ym = `${targetYear}${month.toString().padStart(2, '0')}`;
-                
-                try {
-                  const rows = await fetchMonth(lawd, ym);
-                  if (rows && rows.length > 0) {
-                    // shared.mjs에 정의된 컬럼명 규칙대로 저장됨
-                    await upsertBatch(rows);
-                    console.log(`  ✅ \${ym}: \${rows.length}건 저장 완료`);
-                  }
-                } catch (err) {
-                  console.error(`  ❌ \${ym} 에러:`, err.message);
-                }
-                
-                await sleep(300); // API 부하 방지
-              }
-            }
-            console.log("✨ 전국 데이터 수집 및 저장 완료!");
-          }
-
-          main().catch(err => {
-            console.error("❌ 치명적 에러:", err);
-            process.exit(1);
-          });
-          EOF
-
-          # 2. 실행
-          node scripts/main-run.mjs
+          SUPABASE_URL: \${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: \${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          PUBLIC_DATA_API_KEY: \${{ secrets.PUBLIC_DATA_API_KEY }}
+          TARGET_YEAR: \${{ github.event.inputs.year }}
+        run: node scripts/collect-history.mjs
