@@ -57,11 +57,17 @@ for (const month of targetMonths) {
     });
 
   if (error) {
-    console.error(`❌ upsert 에러: \${error.message}`);
+    console.error(`❌ upsert 에러: ${error.message}`);
   }
 
   totalInserted += uniqueRows.length;
   console.log(`✅ ${ym} 완료: ${uniqueRows.length}건 (누적 ${totalInserted}건)`);
 }
 
-console.log(`n🎉 \${TARGET_YEAR}년 완료! 총 \${totalInserted}건`);
+console.log(`n🎉 ${TARGET_YEAR}년 완료! 총 ${totalInserted}건`);
+
+
+
+
+
+
