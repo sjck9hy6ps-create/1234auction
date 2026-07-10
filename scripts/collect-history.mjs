@@ -17,8 +17,8 @@ const targetMonths = TARGET_YEAR < currentYear
   ? ALL_MONTHS
   : ALL_MONTHS.filter(m => m <= currentMonth);
 
-console.log(`n📅 \${TARGET_YEAR}년 수집 시작`);
-console.log(`총 \${LAWD_CODES.length}개 지역 × \${targetMonths.length}개월 = \${LAWD_CODES.length * targetMonths.length}회 호출\n`);
+console.log(`n📅 ${TARGET_YEAR}년 수집 시작`);
+console.log(`총 ${LAWD_CODES.length}개 지역 × ${targetMonths.length}개월 = ${LAWD_CODES.length * targetMonths.length}회 호출n`);
 
 let totalInserted = 0;
 let callCount     = 0;
@@ -36,7 +36,7 @@ for (const month of targetMonths) {
 
     if (callCount % 100 === 0) {
       const pct = ((callCount / totalCalls) * 100).toFixed(1);
-      console.log(`진행: \${callCount}/${totalCalls} (${pct}%) | \${ym}`);
+      console.log(`진행: ${callCount}/${totalCalls} (${pct}%) | ${ym}`);
     }
   }
 
@@ -61,7 +61,7 @@ for (const month of targetMonths) {
   }
 
   totalInserted += uniqueRows.length;
-  console.log(`✅ ${ym} 완료: \${uniqueRows.length}건 (누적 \${totalInserted}건)`);
+  console.log(`✅ ${ym} 완료: ${uniqueRows.length}건 (누적 ${totalInserted}건)`);
 }
 
 console.log(`n🎉 \${TARGET_YEAR}년 완료! 총 \${totalInserted}건`);
