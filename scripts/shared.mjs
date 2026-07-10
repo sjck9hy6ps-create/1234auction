@@ -332,14 +332,14 @@ export function parseXML(xml, regionName) {
   return rows;
 }
 
-export async function fetchMonth(lawdCd, ym) {
+export async function fetchMonth(code, name, ym) {
   const url = `https://apis.data.go.kr/1613000/RTMSDataSvcAptTradeDev/getRTMSDataSvcAptTradeDev?serviceKey=${encodeURIComponent(API_KEY)}&LAWD_CD=${lawdCd}&DEAL_YMD=${ym}&numOfRows=1000&pageNo=1`;
   try {
     const res = await fetch(url, { signal: AbortSignal.timeout(15000) });
     const text = await res.text();
-    return parseXML(text, lawdCd);
+    return parseXML(text, name);
   } catch (e) {
-    console.error(`❌ ${lawdCd}/${ym} 실패:`, e.message);
+    console.error(`❌ ${code}/${ym} 실패:`, e.message);
     return [];
   }
 }
