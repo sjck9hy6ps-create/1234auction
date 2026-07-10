@@ -28,7 +28,7 @@ for (const month of targetMonths) {
   const ym        = String(TARGET_YEAR) + String(month).padStart(2, '0');
   const monthRows = [];
 
-  for (const lawdCd of LAWD_CODES) {
+  for (const { code, name } of LAWD_CODES) {
     const rows = await fetchMonth(code, name, ym);
     monthRows.push(...rows);
     callCount++;
