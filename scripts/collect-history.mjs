@@ -29,7 +29,7 @@ for (const month of targetMonths) {
   const monthRows = [];
 
   for (const lawdCd of LAWD_CODES) {
-    const rows = await fetchMonth(lawdCd, ym);
+    const rows = await fetchMonth(code, name, ym);
     monthRows.push(...rows);
     callCount++;
     await sleep(DELAY_MS);
