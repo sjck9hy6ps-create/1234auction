@@ -113,7 +113,6 @@ export async function fetchMonth(lawdCd, ym) {
 export async function upsertBatch(rows) {
   if (rows.length === 0) return;
 
-  // 중복 제거 (region, danji, size, floor, deal_date 기준)
   const uniqueRows = Array.from(
     new Map(
       rows.map(row => [
@@ -122,6 +121,13 @@ export async function upsertBatch(rows) {
       ])
     ).values()
   );
+
+  const { error } = await supabase.from('house_trades').upsert(uniqueRows, {
+    onConflict: 'region,danji,size,floor,deal_date'
+  });
+  if (error) console.error('❌ upsert 에러:', error.message);
+}
+
 
   const { error } = await supabase.from('house_trades').upsert(uniqueRows, {
     onConflict: 'region,danji,size,floor,deal_date'
