@@ -9,22 +9,22 @@ for (let i = 0; i <= 1; i++) {
   months.push(String(d.getFullYear()) + String(d.getMonth() + 1).padStart(2, '0'));
 }
 
-console.log(`\n📅 주간 수집: \${months.join(', ')}`);
+console.log(`\n📅 주간 수집: ${months.join(', ')}`);
 
 let totalInserted = 0;
 
 for (const ym of months) {
   const monthRows = [];
 
-  for (const lawdCd of LAWD_CODES) {
-    const rows = await fetchMonth(lawdCd, ym);
+  for (const { code, name } of LAWD_CODES) {
+    const rows = await fetchMonth(code, name, ym);
     monthRows.push(...rows);
     await sleep(DELAY_MS);
   }
 
   await upsertBatch(monthRows);
   totalInserted += monthRows.length;
-  console.log(`✅ \${ym}: \${monthRows.length}건`);
+  console.log(`✅ ${ym}: ${monthRows.length}건`);
 }
 
-console.log(`\n🎉 주간 완료! 총 \${totalInserted}건`);
+console.log(`\n🎉 주간 완료! 총 ${totalInserted}건`);
