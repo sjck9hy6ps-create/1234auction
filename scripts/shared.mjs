@@ -129,8 +129,6 @@ export async function upsertBatch(rows) {
 }
 
 
-  const { error } = await supabase.from('house_trades').upsert(uniqueRows, {
-    onConflict: 'region,danji,size,floor,deal_date'
-  });
-  if (error) console.error('❌ upsert 에러:', error.message);
-}
+
+
+
