@@ -290,6 +290,7 @@ export function parseXML(xml, regionName) {
     // 컬럼명 매칭: 파이프라인이 기대하는 필드명에 정확히 맞춤
     rows.push({
       region: regionName,                               // region (varchar)
+      dong: getTag(b, 'umdNm') || '',
       danji: getTag(b, 'aptNm') || '',                      // danji (단지명)
       size: (() => {                                        // size (int)
         const v = getTag(b, 'excluUseAr');
@@ -350,14 +351,14 @@ export async function upsertBatch(rows) {
   const uniqueRows = Array.from(
     new Map(
       rows.map(row => [
-        `${row.region}_${row.danji}_${row.size}_${row.floor}_${row.deal_date}`,
+        `${row.region}_${row.dong}_${row.danji}_${row.size}_${row.floor}_${row.deal_date}`,
         row
       ])
     ).values()
   );
 
   const { error } = await supabase.from('house_trades').upsert(uniqueRows, {
-    onConflict: 'region,danji,size,floor,deal_date'
+    onConflict: 'region,dong,danji,size,floor,deal_date'
   });
   if (error) console.error('❌ upsert 에러:', error.message);
 }
