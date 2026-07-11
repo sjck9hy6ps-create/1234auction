@@ -878,70 +878,58 @@ async function loadAllData(centerLat, centerLon) {
 /* ── DB rows → apt 그룹 ── */
 function groupDBRows(rows, sigungu, lawdCd) {
     var aptMap = {};
-
     rows.forEach(function(row) {
-        // ── 필드 정규화 ──
-        var name   = (row.danji || '').trim();
-        if (!name) return;
-
+        var name = (row.danji || '').trim();
         var dateStr = String(row.deal_date || '');
-        var year    = parseInt(dateStr.slice(0, 4)) || 0;
-        var month   = parseInt(dateStr.slice(4, 6)) || 0;
-        var day     = parseInt(dateStr.slice(6, 8)) || 0;
-
-        var road    = (row.road_name || '').trim();
-        var region  = (row.region   || sigungu).trim();
-        var key     = name + '||' + road;
-
+        var year  = parseInt(dateStr.slice(0, 4)) || 0;
+        var month = parseInt(dateStr.slice(4, 6)) || 0;
+        var day   = parseInt(dateStr.slice(6, 8)) || 0;
+        var road   = (row.road_name || '').trim();
+        var region = (row.region    || sigungu).trim();
+        var dong   = (row.dong      || '').trim();
+        var buildingType = row.buildingType || 'apt';
+ 
+        // 단독/다가구는 그룹 키를 danji 대신 dong+bunji로 (단지명이 없으므로)
+        var key = (name || (dong + '_' + (row.bunji || ''))) + '||' + road;
         if (!aptMap[key]) aptMap[key] = [];
         aptMap[key].push({
-            year:       year,
-            month:      month,
-            day:        day,
-            amount:     String(row.price || 0),
-            area:       Number(row.size)  || 0,
-            floor:      String(row.floor  || '-'),
-            name:       name,
-            road_name:  road,
-            region:     region,
-            bunji:      row.bunji     || '',
-            main_num:   row.main_num  || 0,
-            sub_num:    row.sub_num   || null,
+            year: year, month: month, day: day,
+            amount: String(row.price || 0),
+            area:   Number(row.size)  || 0,
+            floor:  String(row.floor  || '-'),
+            name:   name,
+            dong:   dong,
+            road_name: road,
+            region: region,
+            bunji:     row.bunji     || '',
+            main_num:  row.main_num  || 0,
+            sub_num:   row.sub_num   || null,
             build_year: String(row.build_year || ''),
-            buildingType: 'apt',
-            houseType:  'apt',
-            // geocoding 후보용
-            searchAddr: region + ' ' + road,
+            buildingType: buildingType,
+            houseType: buildingType,
         });
     });
-
     return Object.keys(aptMap).map(function(key) {
         var trades = aptMap[key];
         trades.sort(function(a, b) {
             return (b.year*10000 + b.month*100 + b.day) - (a.year*10000 + a.month*100 + a.day);
         });
-        var now = new Date();
         return {
-            latest:       trades[0],
-            trades:       trades,
-            lawdCd:       lawdCd,
-            buildingType: 'apt',
-            grade:        null,
-            ppp:          0,
-            indicators:   null,
-            investScore:  null,
-            disqualified: false,
-            dqReason:     '',
-            scoreBreakdown: {},
-            hasNewHigh:   false,
-            newHighPyungs: [],
-            count3M:    trades.filter(function(t) { return tradeDate(t) >= threeMonAgo; }).length,
+            latest: trades[0],
+            trades: trades,
+            lawdCd: lawdCd,
+            buildingType: trades[0].buildingType,
+            grade: null, ppp: 0, indicators: null, investScore: null,
+            disqualified: false, dqReason: '', scoreBreakdown: {},
+            hasNewHigh: false, newHighPyungs: [],
+            count3M: trades.filter(function(t) { return tradeDate(t) >= threeMonAgo; }).length,
             count3MTo1Y: trades.filter(function(t) {
                 var d = tradeDate(t); return d < threeMonAgo && d >= oneYearAgo;
             }).length,
         };
     });
 }
+ 
 
 /* ════════════════════════════════════
    마커 렌더링
@@ -964,29 +952,29 @@ function placeMarkers(aptList) {
     var centerLat = map.getCenter().getLat();
     var centerLon = map.getCenter().getLng();
     var idx = 0;
-
     function runBatch() {
         if (idx >= aptList.length) return;
         var apt = aptList[idx++];
-        var l   = apt.latest || {};
-        var name = (l.name || '').trim();
-        var road = (l.road_name || '').trim();
-        var region = (l.region || lastSigungu).trim();
-        var cacheKey = (name + '|' + road).toLowerCase();
-
+        var l = apt.latest || {};
+ 
+        // 단독/다가구는 지오코딩 자체를 시도하지 않음 (API 호출 절약)
+        if (apt.buildingType === 'single') {
+            setTimeout(runBatch, 0);
+            return;
+        }
+ 
+        var cacheKey = [l.dong, l.name, l.bunji, l.road_name, l.main_num, l.sub_num]
+            .join('|').toLowerCase();
+ 
         if (coordCache[cacheKey]) {
             createMarker(coordCache[cacheKey].lat, coordCache[cacheKey].lon, apt);
             setTimeout(runBatch, 20);
             return;
         }
-
-        // geocoding 후보 순서
-        var candidates = [];
-        if (region && name) candidates.push(region + ' ' + name);
-        if (region && road) candidates.push(region + ' ' + road);
-        if (name) candidates.push(name);
-        if (road) candidates.push(road);
-
+ 
+        var candidates = buildGeocodeCandidates(l);
+        if (!candidates.length) { setTimeout(runBatch, 0); return; }
+ 
         tryStepGeocode(candidates, function(lat, lon) {
             if (lat && lon) {
                 coordCache[cacheKey] = { lat: lat, lon: lon };
@@ -999,9 +987,11 @@ function placeMarkers(aptList) {
     }
     runBatch();
 }
-
+ 
 function tryStepGeocode(candidates, callback) {
     var idx = 0;
+    var centerLat = map.getCenter().getLat();
+    var centerLon = map.getCenter().getLng();
     function next() {
         if (idx >= candidates.length) { callback(null, null); return; }
         var q = (candidates[idx++] || '').trim();
@@ -1012,6 +1002,7 @@ function tryStepGeocode(candidates, callback) {
         pendingQueries.add(qKey);
         runGeocode(function() {
             return new Promise(function(resolve) {
+                // 1순위: 정식 주소 검색 (동+지번, 도로명+본번-부번)
                 geocoder.addressSearch(q, function(result, status) {
                     if (status === kakao.maps.services.Status.OK && result && result.length > 0) {
                         var lat = parseFloat(result[0].y), lon = parseFloat(result[0].x);
@@ -1020,6 +1011,7 @@ function tryStepGeocode(candidates, callback) {
                         callback(lat, lon);
                         resolve({ found: true });
                     } else {
+                        // 2순위: 키워드(단지명) 검색 - 지도 중심 기준 20km 이내로 위치 바이어스
                         places.keywordSearch(q, function(res, st) {
                             if (st === kakao.maps.services.Status.OK && res && res.length > 0) {
                                 var lat = parseFloat(res[0].y), lon = parseFloat(res[0].x);
@@ -1031,6 +1023,10 @@ function tryStepGeocode(candidates, callback) {
                                 pendingQueries.delete(qKey);
                                 resolve({ found: false });
                             }
+                        }, {
+                            location: new kakao.maps.LatLng(centerLat, centerLon),
+                            radius: 20000,
+                            sort: kakao.maps.services.SortBy.DISTANCE
                         });
                     }
                 });
@@ -1043,6 +1039,36 @@ function tryStepGeocode(candidates, callback) {
         });
     }
     next();
+}
+ 
+
+function buildGeocodeCandidates(l) {
+    if (l.buildingType === 'single') return [];
+ 
+    var region = (l.region || lastSigungu || '').trim();
+    var dong   = (l.dong   || '').trim();
+    var danji  = (l.name   || '').trim();
+    var bunji  = (l.bunji  || '').trim();
+    var road   = (l.road_name || '').trim();
+    var main   = l.main_num;
+    var sub    = l.sub_num;
+ 
+    var candidates = [];
+ 
+    // 1) 동 + 지번
+    if (dong && bunji) candidates.push((region + ' ' + dong + ' ' + bunji).trim());
+    // 2) 동 + 단지명
+    if (dong && danji) candidates.push((region + ' ' + dong + ' ' + danji).trim());
+ 
+    if (l.buildingType === 'apt') {
+        // 3) 도로명 + 본번(-부번). 부번이 0/null이면 본번만 사용.
+        if (road && main) {
+            var roadAddr = road + ' ' + main;
+            if (sub && sub !== 0) roadAddr += '-' + sub;
+            candidates.push((region + ' ' + roadAddr).trim());
+        }
+    }
+    return candidates;
 }
 
 function createMarker(lat, lon, apt) {
