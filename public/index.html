@@ -67,13 +67,6 @@ body { font-family:'Malgun Gothic',sans-serif; }
 .ft-g[data-g="6"].active   { background:#42a5f5; border-color:#42a5f5; color:white; }
 .ft-g[data-g="7"].active   { background:#9e9e9e; border-color:#9e9e9e; color:white; }
 .ft-g[data-g="all"].active { background:#333;    border-color:#333;    color:white; }
-.ft-s[data-s="S"].active   { background:#b71c1c; border-color:#b71c1c; color:white; }
-.ft-s[data-s="A"].active   { background:#e53935; border-color:#e53935; color:white; }
-.ft-s[data-s="B"].active   { background:#ff7043; border-color:#ff7043; color:white; }
-.ft-s[data-s="C"].active   { background:#9e9e9e; border-color:#9e9e9e; color:white; }
-.ft-s[data-s="D"].active   { background:#bdbdbd; border-color:#bdbdbd; color:white; }
-.ft-s[data-s="X"].active   { background:#607d8b; border-color:#607d8b; color:white; }
-.ft-s[data-s="all"].active { background:#333;    border-color:#333;    color:white; }
 #legend {
     position:absolute; bottom:20px; left:14px; z-index:10;
     background:rgba(255,255,255,0.95); border-radius:10px; padding:10px 14px;
@@ -271,16 +264,6 @@ tr:hover td { background:#fffde7; }
         <button class="filter-tab ft-g"        data-g="7"   onclick="toggleGrade('7',this)">7등급</button>
         <button class="filter-tab ft-g"        data-g="all" onclick="toggleGrade('all',this)">전체</button>
     </div>
-    <div class="filter-row">
-        <div class="filter-row-label">투자점수</div>
-        <button class="filter-tab ft-s active" data-s="S"   onclick="toggleScore('S',this)">S등급</button>
-        <button class="filter-tab ft-s"        data-s="A"   onclick="toggleScore('A',this)">A등급</button>
-        <button class="filter-tab ft-s"        data-s="B"   onclick="toggleScore('B',this)">B등급</button>
-        <button class="filter-tab ft-s"        data-s="C"   onclick="toggleScore('C',this)">C등급</button>
-        <button class="filter-tab ft-s"        data-s="D"   onclick="toggleScore('D',this)">D등급</button>
-        <button class="filter-tab ft-s"        data-s="X"   onclick="toggleScore('X',this)">제외</button>
-        <button class="filter-tab ft-s"        data-s="all" onclick="toggleScore('all',this)">전체</button>
-    </div>
 </div>
 
 <div id="autocomplete"></div>
@@ -301,16 +284,6 @@ tr:hover td { background:#fffde7; }
             <span style="background:#66bb6a;color:white;font-size:10px;font-weight:bold;padding:1px 5px;border-radius:3px;">5</span>
             <span style="background:#42a5f5;color:white;font-size:10px;font-weight:bold;padding:1px 5px;border-radius:3px;">6</span>
             <span style="background:#9e9e9e;color:white;font-size:10px;font-weight:bold;padding:1px 5px;border-radius:3px;">7</span>최저
-        </div>
-    </div>
-    <div style="border-top:1px solid #eee;margin-top:4px;padding-top:4px;">
-        <div style="font-size:11px;color:#555;font-weight:bold;margin-bottom:3px;">투자점수 등급</div>
-        <div style="font-size:11px;line-height:1.8;">
-            <span style="color:#b71c1c;font-weight:bold;">S</span> 85점↑&nbsp;
-            <span style="color:#e53935;font-weight:bold;">A</span> 70~84점&nbsp;
-            <span style="color:#ff7043;font-weight:bold;">B</span> 55~69점<br>
-            <span style="color:#9e9e9e;font-weight:bold;">C</span> 40~54점&nbsp;
-            <span style="color:#bdbdbd;font-weight:bold;">D</span> 40점 미만
         </div>
     </div>
     <div style="border-top:1px solid #eee;margin-top:4px;padding-top:4px;font-size:11px;">
@@ -481,7 +454,11 @@ var sixMonAgo    = daysAgo(180);
 var oneYearAgo   = daysAgo(365);
 var twoYearAgo   = daysAgo(730);
 var threeYearAgo = daysAgo(1095);
-
+var fourMonAgo  = (function() { var d = new Date(); d.setMonth(d.getMonth() - 4); d.setHours(0,0,0,0); return d; })();
+var fiveYearAgo = (function() { var d = new Date(); d.setFullYear(d.getFullYear() - 5); d.setHours(0,0,0,0); return d; })();
+var eightYearAgo = (function() { var d = new Date(); d.setFullYear(d.getFullYear() - 8); d.setHours(0,0,0,0); return d; })();
+ 
+    
 function daysAgo(n) { var d = new Date(); d.setDate(d.getDate() - n); d.setHours(0,0,0,0); return d; }
 function tradeDate(t) { return new Date(t.year, t.month - 1, t.day); }
 
@@ -494,7 +471,6 @@ var currentTrades = [], currentSort = 'date', currentPyung = 'all';
 var currentTypeFilter = 'apt';
 var currentIndicators = null;
 var activeGrades = new Set(['all']);
-var activeScores = new Set(['all']);
 
 var GRADE_COLORS = {1:'#b71c1c',2:'#e53935',3:'#ff7043',4:'#ffa726',5:'#66bb6a',6:'#42a5f5',7:'#9e9e9e'};
 
@@ -730,32 +706,12 @@ function toggleGrade(val, btn) {
     redrawMarkers();
 }
 
-function toggleScore(val, btn) {
-    if (val === 'all') {
-        activeScores.clear(); activeScores.add('all');
-        document.querySelectorAll('.ft-s').forEach(function(b) { b.classList.toggle('active', b.dataset.s === 'all'); });
-    } else {
-        activeScores.delete('all');
-        document.querySelector('.ft-s[data-s="all"]').classList.remove('active');
-        if (activeScores.has(val)) { activeScores.delete(val); btn.classList.remove('active'); }
-        else { activeScores.add(val); btn.classList.add('active'); }
-        if (activeScores.size === 0) { activeScores.add('all'); document.querySelector('.ft-s[data-s="all"]').classList.add('active'); }
-    }
-    redrawMarkers();
-}
-
 function passesFilter(apt) {
     if (currentTypeFilter === 'apt'   && apt.buildingType !== 'apt')   return false;
     if (currentTypeFilter === 'villa' && apt.buildingType !== 'villa') return false;
  
     if (!activeGrades.has('all')) {
         if (!apt.grade || !activeGrades.has(String(apt.grade))) return false;
-    }
-    if (!activeScores.has('all')) {
-        var ig = getInvestGrade(apt.investScore, apt.disqualified);
-        if (!ig) return false;
-        if (activeScores.has('X') && ig.label === 'X') return true;
-        if (!activeScores.has(ig.label)) return false;
     }
     return true;
 }
@@ -858,17 +814,10 @@ async function loadAllData(centerLat, centerLon) {
                 }
 
                 // ── DB rows → trade 객체 변환 ──
-                allAptList = groupDBRows(dbData.apt, sigungu, lawdCd);
-
-                // ── 지표 계산 ──
+                 allAptList = groupDBRows(dbData.apt, sigungu, lawdCd);
+                // ── 지표 계산 (평단가 등급만 유지, 투자점수는 삭제) ──
                 calcPriceGrades(allAptList);
-                calcInvestIndicators(allAptList);
                 allAptList.forEach(function(apt) {
-                    var r  = calcInvestScore(apt.indicators);
-                    apt.investScore  = r.score;
-                    apt.disqualified = r.disqualified;
-                    apt.dqReason     = r.reason;
-                    apt.scoreBreakdown = r.breakdown;
                     var nh = calcNewHigh(apt.trades);
                     apt.hasNewHigh   = nh.hasNewHigh;
                     apt.newHighPyungs = nh.newHighPyungs;
@@ -1221,8 +1170,9 @@ function openPanel(apt) {
     currentTrades  = apt.trades || [];
     currentSort    = 'date';
     currentPyung   = 'all';
-    currentIndicators = apt.indicators || null;
-
+    currentIndicators   = apt.indicators || null;
+    currentPppTimeline  = calcPppTimeline(apt);
+    
     // 헤더
     var gradeHtml = '';
     if (apt.grade) {
@@ -1230,11 +1180,7 @@ function openPanel(apt) {
         var pppLabel = apt.ppp > 0 ? ' · ' + (Math.round(apt.ppp / 100) / 10) + '천만/평' : '';
         gradeHtml += ' <span style="background:' + gc + ';color:white;font-size:11px;font-weight:bold;padding:2px 7px;border-radius:10px;">' + apt.grade + '등급' + pppLabel + '</span>';
     }
-    var ig = getInvestGrade(apt.investScore, apt.disqualified);
-    if (ig) {
-        var scoreLabel = apt.disqualified ? '제외' : (apt.investScore !== null ? apt.investScore + '점' : '-');
-        gradeHtml += ' <span style="background:' + ig.color + ';color:white;font-size:11px;font-weight:bold;padding:2px 7px;border-radius:10px;">' + ig.label + ' ' + scoreLabel + '</span>';
-    }
+    
     if (apt.hasNewHigh) {
         gradeHtml += ' <span style="background:#ff6f00;color:white;font-size:11px;font-weight:bold;padding:2px 7px;border-radius:10px;">★ 신고가</span>';
     }
@@ -1267,13 +1213,14 @@ function openPanel(apt) {
     });
 
     // 지표 저장
-    if (currentIndicators) {
-        currentIndicators._scoreBreakdown = apt.scoreBreakdown;
-        currentIndicators._investScore    = apt.investScore;
-        currentIndicators._disqualified   = apt.disqualified;
-        currentIndicators._dqReason       = apt.dqReason;
+     if (currentIndicators) {
         currentIndicators._newHighPyungs  = apt.newHighPyungs || [];
         currentIndicators._aptName        = apt.latest && apt.latest.name || '';
+    } else {
+        currentIndicators = {
+            _newHighPyungs: apt.newHighPyungs || [],
+            _aptName: apt.latest && apt.latest.name || ''
+        };
     }
 
     renderTable();
@@ -1306,7 +1253,8 @@ function renderTable() {
     var thisYear = today.getFullYear();
     var html = '';
     var ind  = currentIndicators;
-
+    var currentPppTimeline = null;
+    
     // 경매 패널
     if (ind && ind._aptName) html += buildAuctionPanelHtml(ind._aptName);
 
@@ -1322,55 +1270,8 @@ function renderTable() {
     }
 
     // 투자점수
-    if (ind && ind._investScore !== null && ind._investScore !== undefined) {
-        var ig  = getInvestGrade(ind._investScore, ind._disqualified);
-        var bd  = ind._scoreBreakdown || {};
-        var sn  = ind._disqualified ? 0 : ind._investScore;
-        var bc  = ig ? ig.color : '#9e9e9e';
-        html += '<div class="indicator-box" style="border-color:' + (ig?ig.color:'#eee') + ';background:' + (ig?ig.bg:'#f9f9f9') + '">';
-        html += '<div class="indicator-title">투자점수 종합</div>';
-        if (ind._disqualified) html += '<div class="disqualified-box">자동 탈락: ' + ind._dqReason + '</div>';
-        html += '<div style="display:flex;align-items:center;gap:10px;margin-bottom:8px;">'
-            + '<div style="font-size:36px;font-weight:900;color:' + bc + ';">' + (ind._disqualified ? '제외' : sn + '점') + '</div>'
-            + (ig ? '<div style="font-size:16px;font-weight:bold;color:' + ig.color + ';">' + ig.label + '등급</div>' : '')
-            + '</div>';
-        if (!ind._disqualified) {
-            html += '<div class="score-bar-wrap"><div class="score-bar-bg"><div class="score-bar-fill" style="width:' + sn + '%;background:' + bc + ';"></div></div></div>';
-            html += '<div style="display:grid;grid-template-columns:1fr 1fr;gap:4px;margin-top:8px;font-size:11px;">'
-                + '<div>모멘텀 <b style="color:#e53935;">' + (bd.momentum !== undefined ? bd.momentum : '-') + '점</b>/40</div>'
-                + '<div>변동성 <b style="color:#1565c0;">' + (bd.volatility !== undefined ? bd.volatility : '-') + '점</b>/20</div>'
-                + '<div>회전율 <b style="color:#2e7d32;">' + (bd.turnover !== undefined ? bd.turnover : '-') + '점</b>/20</div>'
-                + '</div>';
-        }
-        html += '</div>';
-    }
-
-    // 투자지표
-    if (ind) {
-        html += '<div class="indicator-box"><div class="indicator-title">투자지표 상세</div><div class="indicator-grid">';
-        var mVal = ind.momentum;
-        var mColor = mVal === null ? '#aaa' : mVal >= 5 ? '#b71c1c' : mVal >= 0 ? '#e53935' : '#1565c0';
-        var mSub   = mVal === null ? '데이터 부족' : mVal >= 15 ? '강한 상승' : mVal >= 10 ? '상승세' : mVal >= 5 ? '완만한 상승' : mVal >= 0 ? '소폭 상승' : '하락';
-        html += '<div class="indicator-item"><div class="indicator-label">가격 모멘텀</div>'
-            + '<div class="indicator-value" style="color:' + mColor + ';">' + (mVal === null ? '-' : (mVal >= 0 ? '+' : '') + mVal + '%') + '</div>'
-            + '<div class="indicator-sub">' + mSub + '</div></div>';
-
-        var vVal   = ind.volatility;
-        var vColor = vVal === null ? '#aaa' : vVal < 3 ? '#2e7d32' : vVal < 5 ? '#66bb6a' : vVal < 8 ? '#ffa726' : '#e53935';
-        var vSub   = vVal === null ? '데이터 부족' : vVal < 3 ? '매우 안정' : vVal < 5 ? '안정적' : vVal < 8 ? '보통' : '변동 큼';
-        html += '<div class="indicator-item"><div class="indicator-label">가격 변동성</div>'
-            + '<div class="indicator-value" style="color:' + vColor + ';">' + (vVal === null ? '-' : vVal + '%') + '</div>'
-            + '<div class="indicator-sub">' + vSub + '</div></div>';
-
-        var tVal   = ind.turnover;
-        var tColor = tVal === null ? '#aaa' : tVal >= 15 ? '#2e7d32' : tVal >= 10 ? '#66bb6a' : tVal >= 5 ? '#ffa726' : '#9e9e9e';
-        var tSub   = tVal === null ? '데이터 부족' : tVal >= 15 ? '거래 활발' : tVal >= 10 ? '유동성 양호' : tVal >= 5 ? '보통' : '거래 적음';
-        html += '<div class="indicator-item"><div class="indicator-label">거래 회전율</div>'
-            + '<div class="indicator-value" style="color:' + tColor + ';">' + (tVal === null ? '-' : tVal + '%') + '</div>'
-            + '<div class="indicator-sub">' + tSub + '</div></div>';
-
-        html += '</div></div>';
-    }
+     if (currentPppTimeline) html += buildPppAnalysisHtml(currentPppTimeline);
+ 
 
     // 거래 테이블
     var newHighAmountByPy = {};
@@ -1657,6 +1558,202 @@ function buildAuctionPanelHtml(aptName) {
         } else { html += '</div>'; }
         html += '</div>';
     });
+    return html;
+}
+    
+/* ════════════════════════════════════
+   평단가 타임라인 분석 (8년/5년/1년/4개월/최근거래)
+════════════════════════════════════ */
+function avgPppInRange(trades, fromDate) {
+    var valid = trades.filter(function(t) {
+        return tradeDate(t) >= fromDate && t.area > 0 && parseInt(t.amount) > 0;
+    });
+    if (!valid.length) return { avg: null, count: 0 };
+    var sum = valid.reduce(function(a, t) { return a + parseInt(t.amount) / toPyung(t.area); }, 0);
+    return { avg: Math.round(sum / valid.length), count: valid.length };
+}
+ 
+function latestPppInfo(trades) {
+    var valid = trades.filter(function(t) { return t.area > 0 && parseInt(t.amount) > 0; });
+    if (!valid.length) return null;
+    // trades는 groupDBRows에서 이미 최신순 정렬됨
+    var t = valid[0];
+    return {
+        ppp: Math.round(parseInt(t.amount) / toPyung(t.area)),
+        date: tradeDate(t),
+        amount: t.amount,
+        area: t.area
+    };
+}
+ 
+function calcPppTimeline(apt) {
+    var trades = apt.trades || [];
+    return {
+        y8:   avgPppInRange(trades, eightYearAgo),
+        y5:   avgPppInRange(trades, fiveYearAgo),
+        y1:   avgPppInRange(trades, oneYearAgo),
+        m4:   avgPppInRange(trades, fourMonAgo),
+        last: latestPppInfo(trades)
+    };
+}
+ 
+function calcEvalIndex(y1, y5) {
+    if (!y1.avg || !y5.avg) return null;
+    return Math.round(y1.avg / y5.avg * 1000) / 10;
+}
+ 
+function getEvalGrade(idx) {
+    if (idx === null) return null;
+    if (idx < 90)  return { label: '과매도 상태', color: '#1565c0', bg: '#e3f2fd', desc: '5년 평균보다 10% 이상 싼 상태. 적극적 매수 검토.' };
+    if (idx < 110) return { label: '적정가 상태', color: '#2e7d32', bg: '#e8f5e9', desc: '과거 흐름과 일치. 실거주라면 매수 적기.' };
+    if (idx < 120) return { label: '과열 시작',   color: '#ff7043', bg: '#fff3e0', desc: '단기 차익을 노린다면 진입 부담.' };
+    return             { label: '위험 구간',   color: '#e53935', bg: '#ffebee', desc: '5년 평균보다 20% 이상 높음. 언제든 조정이 와도 이상하지 않음.' };
+}
+ 
+function getSellPeriodNote(idx) {
+    if (idx === null) return '';
+    if (idx >= 110) return '매물을 내놓으면 아주 빨리 팔리는 시기입니다.';
+    if (idx <= 90)  return '아무리 싸게 내놔도 시장 자체가 죽어 있어 매도 기간이 길어질 수 있습니다.';
+    return '';
+}
+ 
+/* 4개월 vs 1년: 모멘텀 + 거래량 결합 판독 */
+function calcMomentum(m4, y1) {
+    if (!m4.avg || !y1.avg) return null;
+    var diffPct = Math.round((m4.avg - y1.avg) / y1.avg * 1000) / 10;
+    var monthlyRate4 = m4.count / 4;
+    var monthlyRate1 = y1.count / 12;
+    var volumeUp   = monthlyRate1 > 0 && monthlyRate4 > monthlyRate1 * 1.1;
+    var volumeDown = monthlyRate1 > 0 && monthlyRate4 < monthlyRate1 * 0.9;
+    return { diffPct: diffPct, volumeUp: volumeUp, volumeDown: volumeDown };
+}
+ 
+function getMomentumText(mo) {
+    if (!mo) return { title: '데이터 부족', desc: '4개월/1년 데이터가 모두 있어야 판독할 수 있어요.', color: '#aaa' };
+    if (mo.diffPct > 1 && mo.volumeDown) {
+        return { title: '가짜 상승 주의', color: '#e53935',
+            desc: '가격은 올랐지만(4개월 > 1년) 거래량은 줄었습니다. 소수 거래로 가격만 찍힌 상태일 수 있어 조만간 꺾일 위험이 있습니다.' };
+    }
+    if (Math.abs(mo.diffPct) <= 1 && mo.volumeUp) {
+        return { title: '바닥 다지기', color: '#2e7d32',
+            desc: '가격은 보합인데 거래량이 늘었습니다. 매도 물량을 매수세가 받아내는 중으로, 상승 전환 에너지를 축적하는 좋은 매수 타이밍일 수 있습니다.' };
+    }
+    if (mo.diffPct > 1) {
+        return { title: '상승 가속', color: '#e53935',
+            desc: '최근 4개월 평단가가 1년 평균보다 높습니다. 매수세가 강하게 유입 중이라 매도자는 호가를 높여도 되고, 매수자는 추격매수 리스크를 감안해야 합니다.' };
+    }
+    if (mo.diffPct < -1) {
+        return { title: '하락 전환', color: '#1565c0',
+            desc: '최근 4개월 사이 시장 분위기가 식었습니다. 하락 초입일 가능성이 높아, 매도 계획이 있다면 가격을 더 낮추기 전에 서두르는 게 좋습니다.' };
+    }
+    return { title: '보합', color: '#9e9e9e', desc: '4개월 평단가와 1년 평균이 비슷한 수준으로, 뚜렷한 방향성은 없습니다.' };
+}
+ 
+function getExitPricingText(mo) {
+    if (!mo) return '';
+    if (mo.diffPct >= 5)  return '시장이 뜨겁습니다. 1년 평균가가 아닌 최근 4개월 평단가에 맞춰 내놔도 1~2개월 내 매도 가능성이 높습니다.';
+    if (mo.diffPct < 0)   return '시장이 냉각 중입니다. 1년 평균가에 미련을 두면 안 팔립니다. 최근 4개월 평단가보다 1~2% 더 낮춰야 매도 기간을 단축할 수 있습니다.';
+    return '완만한 흐름입니다. 최근 4개월 평단가 부근에서 가격을 조율하시면 됩니다.';
+}
+ 
+/* 최근 거래 1건 vs 4개월 평균: 실전 호가 신호 */
+function calcLatestSignal(last, m4) {
+    if (!last || !m4.avg) return null;
+    var diffPct = Math.round((last.ppp - m4.avg) / m4.avg * 1000) / 10;
+    return { diffPct: diffPct };
+}
+ 
+function getLatestSignalText(sig) {
+    if (!sig) return { title: '데이터 부족', desc: '최근 거래 또는 4개월 평균 데이터가 부족합니다.', color: '#aaa' };
+    var d = sig.diffPct;
+    if (d <= -5)  return { title: '투매/급락', color: '#1565c0', desc: '최근 거래가 4개월 평균보다 5% 이상 낮습니다. 8년·5년 평균과 비교해 바닥권이라면 공포에 매수하는 전략도 고려할 수 있습니다.' };
+    if (d < -2)   return { title: '급매 체결 시작', color: '#1565c0', desc: '매도자들이 조급해지고 있다는 신호입니다. 다음 거래는 더 낮아질 가능성이 있어 리스크 관리가 필요합니다.' };
+    if (d <= 2)   return { title: '안정 · 가격 합의', color: '#2e7d32', desc: '최근 거래가 4개월 평균에 가깝습니다. 시장이 안정적이라 매도 기간 예측이 비교적 쉽습니다.' };
+    if (d < 5)    return { title: '신고가 갱신 흐름', color: '#e53935', desc: '최근 거래가 4개월 평균보다 높습니다. 지금 부르는 호가가 곧 실거래가가 될 가능성이 있어 호가를 유지·소폭 상향할 수 있습니다.' };
+    return { title: '추격매수/과열', color: '#e53935', desc: '최근 거래가 4개월 평균보다 5% 이상 높습니다. 단기 차익을 노린다면 추격매수를 고려할 수 있지만 과열 리스크도 함께 커집니다.' };
+}
+ 
+function buildSellStrategyTableHtml(sig) {
+    var rows = [
+        { key: 'high', label: '최근 거래가 높음', psych: '"더 오를 것 같아"', action: '최근 거래가와 비슷하거나 1% 높게' },
+        { key: 'mid',  label: '최근 거래가 비슷', psych: '"이게 적정가야"',   action: '최근 거래가보다 500만 원만 낮게 (우선순위 선점)' },
+        { key: 'low',  label: '최근 거래가 낮음', psych: '"빨리 팔고 싶어"',  action: '최근 거래가에 맞추거나 더 낮게 (빠른 탈출)' }
+    ];
+    var activeKey = null;
+    if (sig) {
+        if (sig.diffPct > 2) activeKey = 'high';
+        else if (sig.diffPct < -2) activeKey = 'low';
+        else activeKey = 'mid';
+    }
+    var html = '<table style="margin-top:6px;"><thead><tr><th>비교 결과</th><th>시장 심리</th><th>매도가 설정</th></tr></thead><tbody>';
+    rows.forEach(function(r) {
+        var hi = r.key === activeKey;
+        html += '<tr style="' + (hi ? 'background:#fff3e0;font-weight:bold;' : '') + '">'
+            + '<td>' + r.label + '</td><td>' + r.psych + '</td><td style="font-size:11px;">' + r.action + '</td></tr>';
+    });
+    html += '</tbody></table>';
+    return html;
+}
+ 
+function buildPppAnalysisHtml(t) {
+    var bars = [
+        { label: '8년',      sub: '바닥선',       v: t.y8.avg,   count: t.y8.count,   color: '#9e9e9e' },
+        { label: '5년',      sub: t.y5.count + '건', v: t.y5.avg,   count: t.y5.count,   color: '#9e9e9e' },
+        { label: '1년',      sub: t.y1.count + '건', v: t.y1.avg,   count: t.y1.count,   color: '#42a5f5' },
+        { label: '4개월',    sub: t.m4.count + '건', v: t.m4.avg,   count: t.m4.count,   color: '#e53935' },
+        { label: '최근거래', sub: t.last ? (t.last.date.getMonth()+1) + '/' + t.last.date.getDate() : '-', v: t.last ? t.last.ppp : null, color: '#6a1b9a' }
+    ];
+    var maxV = Math.max.apply(null, bars.map(function(b) { return b.v || 0; }));
+ 
+    var barsHtml = bars.map(function(b) {
+        var h = (maxV > 0 && b.v) ? Math.max(4, Math.round(b.v / maxV * 100)) : 2;
+        var valText = b.v ? (Math.round(b.v / 100) / 10) + '천만' : '-';
+        return '<div style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;height:110px;">'
+            + '<div style="font-size:10px;font-weight:bold;color:#333;margin-bottom:2px;white-space:nowrap;">' + valText + '</div>'
+            + '<div style="width:70%;background:' + b.color + ';border-radius:4px 4px 0 0;height:' + h + '%;min-height:3px;"></div>'
+            + '<div style="font-size:10px;color:#666;font-weight:bold;margin-top:4px;">' + b.label + '</div>'
+            + '<div style="font-size:9px;color:#aaa;">' + b.sub + '</div>'
+            + '</div>';
+    }).join('');
+ 
+    var idx      = calcEvalIndex(t.y1, t.y5);
+    var evalG    = getEvalGrade(idx);
+    var sellNote = getSellPeriodNote(idx);
+    var mo       = calcMomentum(t.m4, t.y1);
+    var moText   = getMomentumText(mo);
+    var exitText = getExitPricingText(mo);
+    var sig      = calcLatestSignal(t.last, t.m4);
+    var sigText  = getLatestSignalText(sig);
+ 
+    var html = '<div class="indicator-box"><div class="indicator-title">평단가 타임라인 (8년 · 5년 · 1년 · 4개월 · 최근거래)</div>';
+    html += '<div style="display:flex;align-items:flex-end;gap:4px;padding:6px 2px 2px;">' + barsHtml + '</div>';
+    html += '</div>';
+ 
+    if (evalG) {
+        html += '<div class="indicator-box" style="border-color:' + evalG.color + ';background:' + evalG.bg + ';">';
+        html += '<div class="indicator-title">평가 지수 (최근 1년 ÷ 과거 5년 × 100)</div>';
+        html += '<div style="display:flex;align-items:center;gap:10px;margin-bottom:6px;">'
+            + '<div style="font-size:30px;font-weight:900;color:' + evalG.color + ';">' + idx + '</div>'
+            + '<div style="font-size:14px;font-weight:bold;color:' + evalG.color + ';">' + evalG.label + '</div></div>';
+        html += '<div style="font-size:11px;color:#555;">' + evalG.desc + '</div>';
+        if (sellNote) html += '<div style="font-size:11px;color:' + evalG.color + ';margin-top:6px;font-weight:bold;">▸ ' + sellNote + '</div>';
+        html += '</div>';
+    }
+ 
+    html += '<div class="indicator-box">';
+    html += '<div class="indicator-title">추세 판독 (4개월 vs 1년)</div>';
+    html += '<div style="font-size:13px;font-weight:bold;color:' + moText.color + ';margin-bottom:4px;">' + moText.title + '</div>';
+    html += '<div style="font-size:11px;color:#555;">' + moText.desc + '</div>';
+    if (exitText) html += '<div style="font-size:11px;color:#333;margin-top:6px;padding-top:6px;border-top:1px dashed #ddd;">💡 매도 적정가: ' + exitText + '</div>';
+    html += '</div>';
+ 
+    html += '<div class="indicator-box">';
+    html += '<div class="indicator-title">실시간 호가 신호 (최근 거래 vs 4개월 평균)</div>';
+    html += '<div style="font-size:13px;font-weight:bold;color:' + sigText.color + ';margin-bottom:4px;">' + sigText.title + '</div>';
+    html += '<div style="font-size:11px;color:#555;">' + sigText.desc + '</div>';
+    html += buildSellStrategyTableHtml(sig);
+    html += '</div>';
+ 
     return html;
 }
 </script>
