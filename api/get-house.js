@@ -1,5 +1,5 @@
 import { createClient } from '@supabase/supabase-js';
-import { LAWD_CODES } from '../scripts/shared-villa.mjs';
+import { LAWD_CODES } from '../scripts/lawd-codes.mjs';
 
 const supabase = createClient(
   process.env.SUPABASE_URL,
