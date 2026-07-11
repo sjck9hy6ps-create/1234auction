@@ -44,7 +44,7 @@ for (const month of targetMonths) {
   const uniqueRows = Array.from(
     new Map(
       monthRows.map(row => [
-        `${row.region}_${row.danji}_${row.size}_${row.floor}_${row.deal_date}`,
+        `${row.region}_${row.dong}_${row.danji}_${row.size}_${row.floor}_${row.deal_date}`,
         row
       ])
     ).values()
@@ -53,7 +53,7 @@ for (const month of targetMonths) {
   const { error } = await supabase
     .from('house_trades')
     .upsert(uniqueRows, {
-      onConflict: 'region,danji,size,floor,deal_date'
+      onConflict: 'region,dong,danji,size,floor,deal_date'
     });
 
   if (error) {
