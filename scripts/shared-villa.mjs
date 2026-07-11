@@ -262,7 +262,6 @@ export const supabase = createClient(supabaseUrl, supabaseKey, {
 
 export const DELAY_MS = 300;
 export const API_KEY  = process.env.PUBLIC_DATA_API_KEY?.trim();
-
 export const sleep = ms => new Promise(r => setTimeout(r, ms));
 
 // ── 파서 (연립다세대 단지명: mhouseNm) ──
@@ -273,16 +272,13 @@ export function parseXMLVilla(xml, regionName) {
     const m = block.match(new RegExp(`<${tag}>([^<]*)<\/${tag}>`));
     return m ? m[1].trim() : '';
   };
-
   let match;
   while ((match = regex.exec(xml)) !== null) {
     const b = match[1];
-
     const y  = getTag(b, 'dealYear');
     const mm = getTag(b, 'dealMonth').padStart(2, '0');
     const dd = getTag(b, 'dealDay').padStart(2, '0');
     const dealDateInt = parseInt(`${y}${mm}${dd}`);
-
     rows.push({
       region:     regionName,
       dong:       getTag(b, 'umdNm')     || '',
@@ -307,22 +303,21 @@ export function parseXMLVilla(xml, regionName) {
         return Number.isNaN(n) ? null : n;
       })(),
       bunji: (() => {
-  const v = getTag(b, 'jibun').trim();
-  return (v === '' || v === '0') ? null : v;
-})(),
-main_num: (() => {
-  const v = getTag(b, 'bonbun').trim();
-  const n = parseInt(v, 10);
-  if (v === '' || Number.isNaN(n) || n === 0) return null;
-  return n;
-})(),
-sub_num: (() => {
-  const v = getTag(b, 'bubun').trim();
-  const n = parseInt(v, 10);
-  if (v === '' || Number.isNaN(n) || n === 0) return null;
-  return n;
-})(),
-
+        const v = getTag(b, 'jibun').trim();
+        return (v === '' || v === '0') ? null : v;
+      })(),
+      main_num: (() => {
+        const v = getTag(b, 'bonbun').trim();
+        const n = parseInt(v, 10);
+        if (v === '' || Number.isNaN(n) || n === 0) return null;
+        return n;
+      })(),
+      sub_num: (() => {
+        const v = getTag(b, 'bubun').trim();
+        const n = parseInt(v, 10);
+        if (v === '' || Number.isNaN(n) || n === 0) return null;
+        return n;
+      })(),
       build_year: (() => {
         const v = getTag(b, 'buildYear').trim();
         const n = parseInt(v, 10);
@@ -342,21 +337,17 @@ export function parseXMLSingle(xml, regionName) {
     const m = block.match(new RegExp(`<${tag}>([^<]*)<\/${tag}>`));
     return m ? m[1].trim() : '';
   };
-
   let match;
   while ((match = regex.exec(xml)) !== null) {
     const b = match[1];
-
     const y  = getTag(b, 'dealYear');
     const mm = getTag(b, 'dealMonth').padStart(2, '0');
     const dd = getTag(b, 'dealDay').padStart(2, '0');
     const dealDateInt = parseInt(`${y}${mm}${dd}`);
-
     // 단독/다가구는 단지명이 없으므로 dong+jibun 조합으로 식별
     const dong  = getTag(b, 'umdNm') || '';
     const jibun = getTag(b, 'jibun') || '';
-    const danji = dong && jibun ? `${dong} \${jibun}` : (dong || jibun || '');
-
+    const danji = dong && jibun ? `${dong} ${jibun}` : (dong || jibun || '');
     rows.push({
       region:     regionName,
       dong:       dong,
@@ -377,22 +368,21 @@ export function parseXMLSingle(xml, regionName) {
       deal_date:  Number.isFinite(dealDateInt) ? dealDateInt : null,
       floor:      null,   // 단독/다가구는 층 개념 없음
       bunji: (() => {
-  const v = getTag(b, 'jibun').trim();
-  return (v === '' || v === '0') ? null : v;
-})(),
-main_num: (() => {
-  const v = getTag(b, 'bonbun').trim();
-  const n = parseInt(v, 10);
-  if (v === '' || Number.isNaN(n) || n === 0) return null;
-  return n;
-})(),
-sub_num: (() => {
-  const v = getTag(b, 'bubun').trim();
-  const n = parseInt(v, 10);
-  if (v === '' || Number.isNaN(n) || n === 0) return null;
-  return n;
-})(),
-
+        const v = getTag(b, 'jibun').trim();
+        return (v === '' || v === '0') ? null : v;
+      })(),
+      main_num: (() => {
+        const v = getTag(b, 'bonbun').trim();
+        const n = parseInt(v, 10);
+        if (v === '' || Number.isNaN(n) || n === 0) return null;
+        return n;
+      })(),
+      sub_num: (() => {
+        const v = getTag(b, 'bubun').trim();
+        const n = parseInt(v, 10);
+        if (v === '' || Number.isNaN(n) || n === 0) return null;
+        return n;
+      })(),
       build_year: (() => {
         const v = getTag(b, 'buildYear').trim();
         const n = parseInt(v, 10);
@@ -426,7 +416,7 @@ export async function fetchMonthSingle(code, name, ym) {
     const text = await res.text();
     return parseXMLSingle(text, name);
   } catch (e) {
-    console.error(`❌ \${code}/${ym} 단독/다가구 실패:`, e.message);
+    console.error(`❌ ${code}/${ym} 단독/다가구 실패:`, e.message);
     return [];
   }
 }
