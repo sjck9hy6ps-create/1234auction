@@ -1,17 +1,18 @@
 import { createClient } from '@supabase/supabase-js';
+import ws from 'ws';
 
 const rawUrl = process.env.SUPABASE_URL;
 const supabaseUrl = rawUrl?.trim();
 const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY?.trim();
-
 export const supabase = createClient(supabaseUrl, supabaseKey, {
-  auth: { persistSession: false }
+  auth: { persistSession: false },
+  // Node 20은 네이티브 WebSocket이 없어 최신 supabase-js의 Realtime 클라이언트
+  // 초기화가 실패함 → ws 패키지를 명시적으로 transport로 지정해 우회
+  realtime: { transport: ws }
 });
 // DELAY_MS 추가 — 이게 없어서 전부 터졌음
 export const DELAY_MS = 300;
-
 export const API_KEY = process.env.PUBLIC_DATA_API_KEY?.trim();
-
 // --- 전국 시군구 코드 (250여 개) ---
 export const LAWD_CODES = [
   { code: '11110', name: '서울 종로구' },
@@ -265,10 +266,7 @@ export const LAWD_CODES = [
   { code: '50110', name: '제주 제주시' },
   { code: '50130', name: '제주 서귀포시' },
 ];
-
-
 export const sleep = ms => new Promise(r => setTimeout(r, ms));
-
 export function parseXML(xml, regionName) {
   const rows = [];
   const regex = /<item>([\s\S]*?)<\/item>/g;
@@ -276,17 +274,15 @@ export function parseXML(xml, regionName) {
     const m = block.match(new RegExp(`<${tag}>([^<]*)<\/${tag}>`));
     return m ? m[1].trim() : '';
   };
-
   let match;
   while ((match = regex.exec(xml)) !== null) {
     const b = match[1];
-    
+
     // deal_date 생성 (이미지의 int8 타입에 맞춰 20260630 형식의 숫자로 변환)
     const y = getTag(b, 'dealYear');
     const mm = getTag(b, 'dealMonth').padStart(2, '0');
     const dd = getTag(b, 'dealDay').padStart(2, '0');
     const dealDateInt = parseInt(`${y}${mm}${dd}`);
-
     // 컬럼명 매칭: 파이프라인이 기대하는 필드명에 정확히 맞춤
     rows.push({
       region: regionName,                               // region (varchar)
@@ -332,7 +328,6 @@ export function parseXML(xml, regionName) {
   }
   return rows;
 }
-
 export async function fetchMonth(code, name, ym) {
   const url = `https://apis.data.go.kr/1613000/RTMSDataSvcAptTradeDev/getRTMSDataSvcAptTradeDev?serviceKey=${encodeURIComponent(API_KEY)}&LAWD_CD=${code}&DEAL_YMD=${ym}&numOfRows=1000&pageNo=1`;
   try {
@@ -344,10 +339,8 @@ export async function fetchMonth(code, name, ym) {
     return [];
   }
 }
-
 export async function upsertBatch(rows) {
   if (rows.length === 0) return;
-
   const uniqueRows = Array.from(
     new Map(
       rows.map(row => [
@@ -356,14 +349,8 @@ export async function upsertBatch(rows) {
       ])
     ).values()
   );
-
   const { error } = await supabase.from('house_trades').upsert(uniqueRows, {
     onConflict: 'region,dong,danji,size,floor,deal_date'
   });
   if (error) console.error('❌ upsert 에러:', error.message);
 }
-
-
-
-
-
