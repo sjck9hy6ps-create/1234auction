@@ -8,8 +8,6 @@ const supabaseUrl = process.env.SUPABASE_URL?.trim();
 const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY?.trim();
 export const supabase = createClient(supabaseUrl, supabaseKey, {
   auth: { persistSession: false },
-  // Node 20은 네이티브 WebSocket이 없어 최신 supabase-js의 Realtime 클라이언트
-  // 초기화가 실패함 → ws 패키지를 명시적으로 transport로 지정해 우회
   realtime: { transport: ws }
 });
 
