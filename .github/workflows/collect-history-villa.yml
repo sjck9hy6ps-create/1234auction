@@ -27,8 +27,8 @@ jobs:
 
       - name: 연립다세대 + 단독/다가구 수집 실행
         env:
-          SUPABASE_URL: \${{ secrets.SUPABASE_URL }}
-          SUPABASE_SERVICE_ROLE_KEY: \${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
-          PUBLIC_DATA_API_KEY: \${{ secrets.PUBLIC_DATA_API_KEY }}
-          TARGET_YEAR: \${{ github.event.inputs.year }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          PUBLIC_DATA_API_KEY: ${{ secrets.PUBLIC_DATA_API_KEY }}
+          TARGET_YEAR: ${{ github.event.inputs.year }}
         run: node scripts/collect-history-villa-single.mjs
