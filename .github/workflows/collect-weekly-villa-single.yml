@@ -1,0 +1,24 @@
+name: 주간 연립다세대·단독다가구 데이터 수집
+
+on:
+  schedule:
+    - cron: '30 1 * * 1'  # 매주 월요일 오전 10시 30분 (KST) - 아파트 수집(weekly.yml)과 시간차
+  workflow_dispatch:      # 수동 실행도 가능
+
+jobs:
+  collect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: 의존성 설치
+        run: npm install @supabase/supabase-js
+      - name: 주간 연립다세대·단독다가구 수집 실행
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          PUBLIC_DATA_API_KEY: ${{ secrets.PUBLIC_DATA_API_KEY }}
+        run: node scripts/collect-weekly-villa-single.mjs
