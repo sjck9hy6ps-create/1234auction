@@ -17,8 +17,8 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
-      - name: 의존성 설치
-        run: npm install @supabase/supabase-js
+     - name: 의존성 설치
+  run: npm install @supabase/supabase-js ws
       - name: 과거 전월세 데이터 수집 실행
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
