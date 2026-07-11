@@ -28,7 +28,7 @@ body { font-family:'Malgun Gothic',sans-serif; }
     border:2px solid #ccc; border-radius:20px; background:white; cursor:pointer; color:#666;
 }
 .type-btn.active-apt   { background:#e53935; color:white; border-color:#e53935; }
-.type-btn.active-all   { background:#555;    color:white; border-color:#555; }
+.type-btn.active-villa { background:#1565c0; color:white; border-color:#1565c0; }
 #autocomplete {
     position:absolute; top:48px; left:50%; transform:translateX(-50%);
     z-index:11; width:340px; background:white; border-radius:0 0 8px 8px;
@@ -256,7 +256,7 @@ tr:hover td { background:#fffde7; }
 </div>
 <div id="type-filter">
     <button class="type-btn active-apt" onclick="setTypeFilter('apt',this)">아파트</button>
-    <button class="type-btn" onclick="setTypeFilter('all',this)">전체</button>
+    <button class="type-btn" onclick="setTypeFilter('villa',this)">연립다세대</button>
 </div>
 
 <div id="filter-panel">
@@ -745,7 +745,8 @@ function toggleScore(val, btn) {
 }
 
 function passesFilter(apt) {
-    if (currentTypeFilter === 'apt' && apt.buildingType !== 'apt') return false;
+    if (currentTypeFilter === 'apt'   && apt.buildingType !== 'apt')   return false;
+    if (currentTypeFilter === 'villa' && apt.buildingType !== 'villa') return false;
  
     if (!activeGrades.has('all')) {
         if (!apt.grade || !activeGrades.has(String(apt.grade))) return false;
@@ -758,6 +759,7 @@ function passesFilter(apt) {
     }
     return true;
 }
+
 
 
 /* ════════════════════════════════════
@@ -1144,9 +1146,9 @@ function showRadiusCircle(lat, lon) {
 function setTypeFilter(type, btn) {
     currentTypeFilter = type;
     document.querySelectorAll('.type-btn').forEach(function(b) {
-        b.classList.remove('active-all', 'active-apt');
+        b.classList.remove('active-all', 'active-apt', 'active-villa');
     });
-    btn.classList.add(type === 'all' ? 'active-all' : 'active-apt');
+    btn.classList.add(type === 'villa' ? 'active-villa' : 'active-apt');
     redrawMarkers();
 }
 
