@@ -716,7 +716,6 @@ function calcPriceGrades(aptList) {
  
     aptList.forEach(function(apt) { if (!apt.grade) { apt.grade = null; apt.ppp = 0; } });
 }
-
 function toggleGrade(val, btn) {
     if (val === 'all') {
         activeGrades.clear(); activeGrades.add('all');
@@ -759,6 +758,7 @@ function passesFilter(apt) {
     }
     return true;
 }
+
 
 /* ════════════════════════════════════
    카카오 지도 초기화
