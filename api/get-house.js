@@ -1,10 +1,10 @@
 import { createClient } from '@supabase/supabase-js';
+import { LAWD_CODES } from '../scripts/shared-villa.mjs';
 
 const supabase = createClient(
   process.env.SUPABASE_URL,
   process.env.SUPABASE_SERVICE_ROLE_KEY
 );
-
 const APT_API_KEY = process.env.PUBLIC_DATA_API_KEY;
 
 export default async function handler(req, res) {
@@ -14,50 +14,70 @@ export default async function handler(req, res) {
   const lawdCd = req.query.lawdCd;
   if (!lawdCd) return res.status(400).json({ error: 'lawdCd required' });
 
-  // ── 환경변수 체크 ──
-  console.log('SUPABASE_URL:', process.env.SUPABASE_URL ? '✅ 있음' : '❌ 없음');
-  console.log('SUPABASE_SERVICE_ROLE_KEY:', process.env.SUPABASE_SERVICE_ROLE_KEY ? '✅ 있음' : '❌ 없음');
-  console.log('lawdCd:', lawdCd);
+  // house_trades / villa_trades 모두 lawd_cd 컬럼이 없고 region 텍스트로 저장되어 있어
+  // LAWD_CODES로 lawdCd → 지역명 변환이 필요합니다.
+  const regionInfo = LAWD_CODES.find(r => r.code === lawdCd);
+  const regionName = regionInfo ? regionInfo.name : '';
+
+  console.log('lawdCd:', lawdCd, '/ regionName:', regionName || '(매칭 실패)');
 
   try {
-    // ── 1. DB 조회 ──
-    console.log('DB 조회 시작...');
-    const { data, error } = await supabase   // ← data로 정확히 받기
-      .from('house_trades')
-      .select('*')
-      .eq('lawd_cd', lawdCd)
-      .order('deal_year',  { ascending: false })
-      .order('deal_month', { ascending: false });
+    let aptData = [];
+    let villaData = [];
 
-    // 에러 상세 출력
-    if (error) {
-      console.error('Supabase 에러 코드:', error.code);
-      console.error('Supabase 에러 메시지:', error.message);
-      console.error('Supabase 에러 상세:', error.details);
-      throw error;
+    if (regionName) {
+      // ── 1. 아파트 DB 조회 ──
+      console.log('아파트(house_trades) 조회 시작...');
+      const { data: hData, error: hError } = await supabase
+        .from('house_trades')
+        .select('*')
+        .eq('region', regionName)
+        .order('deal_date', { ascending: false });
+
+      if (hError) {
+        console.error('house_trades 조회 에러:', hError.message);
+        throw hError;
+      }
+      aptData = hData || [];
+      console.log('아파트 조회 완료. 건수:', aptData.length);
+
+      // ── 2. 연립다세대 DB 조회 ──
+      console.log('연립다세대(villa_trades) 조회 시작...');
+      const { data: vData, error: vError } = await supabase
+        .from('villa_trades')
+        .select('*')
+        .eq('region', regionName)
+        .order('deal_date', { ascending: false });
+
+      if (vError) {
+        console.error('villa_trades 조회 에러:', vError.message);
+      } else {
+        villaData = vData || [];
+        console.log('연립다세대 조회 완료. 건수:', villaData.length);
+      }
+      // 단독/다가구(single_trades)는 지도에 표시하지 않기로 했으므로 조회하지 않음
+    } else {
+      console.warn('LAWD_CODES에서 lawdCd(' + lawdCd + ')에 매칭되는 지역명을 찾지 못해 DB 조회를 건너뜁니다.');
     }
 
-    console.log('DB 조회 완료. 건수:', data ? data.length : 0);
-    if (data && data.length > 0) {
-      console.log('첫번째 row 샘플:', JSON.stringify(data[0]));
-    }
-
-    // ── 2. 실시간 ──
+    // ── 3. 실시간 아파트 (당월, 국토부 API) ──
     const now    = new Date();
     const thisYm = String(now.getFullYear()) + String(now.getMonth() + 1).padStart(2, '0');
     const realtimeItems = await fetchRealtimeApt(lawdCd, thisYm);
 
-    // ── 3. 정규화 ──
-    const dbNormalized       = (data || []).map(normalizeDBRow);
-    const realtimeNormalized = realtimeItems.map(normalizeXMLItem);
+    // ── 4. 정규화 ──
+    const aptNormalized      = aptData.map(row => normalizeRow(row, 'apt'));
+    const villaNormalized    = villaData.map(row => normalizeRow(row, 'villa'));
+    const realtimeNormalized = realtimeItems.map(item => normalizeXMLItem(item, regionName));
 
-    // ── 4. 합치기 + 중복 제거 ──
-    const merged = dedup([...realtimeNormalized, ...dbNormalized]);
-
-    console.log(`최종: DB=${dbNormalized.length}건 실시간=${realtimeNormalized.length}건 합계=${merged.length}건`);
+    // ── 5. 합치기 + 중복 제거 (실시간 데이터를 우선 배치해서 DB보다 먼저 dedup 살아남게 함) ──
+    const merged = dedup([...realtimeNormalized, ...aptNormalized, ...villaNormalized]);
+    console.log(
+      `최종: 아파트=${aptNormalized.length}건 연립다세대=${villaNormalized.length}건 ` +
+      `실시간=${realtimeNormalized.length}건 합계=${merged.length}건`
+    );
 
     return res.status(200).json({ apt: merged, rent: [] });
-
   } catch (err) {
     console.error('핸들러 에러:', err.message);
     console.error('스택:', err.stack);
@@ -66,7 +86,7 @@ export default async function handler(req, res) {
 }
 
 /* ════════════════════════════════════
-   국토부 실시간 API
+   국토부 실시간 API (아파트만 - 연립다세대/단독다가구는 배치 수집으로 커버)
 ════════════════════════════════════ */
 async function fetchRealtimeApt(lawdCd, ym) {
   if (!APT_API_KEY) {
@@ -80,19 +100,15 @@ async function fetchRealtimeApt(lawdCd, ym) {
       + '&DEAL_YMD=' + ym
       + '&numOfRows=1000'
       + '&pageNo=1';
-
     const response = await fetch(url, { signal: AbortSignal.timeout(8000) });
     const text     = await response.text();
-
     if (text.includes('<errMsg>') || text.includes('SERVICE_KEY_IS_NOT_REGISTERED_ERROR')) {
       console.warn('국토부 API 에러:', text.slice(0, 200));
       return [];
     }
-
     const items = parseXMLItems(text);
-    console.log(`실시간 \${ym} \${lawdCd}: \${items.length}건`);
+    console.log(`실시간 ${ym} ${lawdCd}: ${items.length}건`);
     return items;
-
   } catch (e) {
     console.error('실시간 API 실패:', e.message);
     return [];
@@ -117,54 +133,51 @@ function parseXMLItems(xmlText) {
   return items;
 }
 
-/* ── XML → 정규화 ── */
-function normalizeXMLItem(item) {
+/* ── XML(실시간 아파트) → 정규화
+   villa 파서(shared-villa.mjs)와 동일하게 bonbun/bubun을 지번 본번/부번으로 매핑해서
+   DB에 쌓인 house_trades의 main_num/sub_num과 의미가 일치하도록 맞췄습니다. ── */
+function normalizeXMLItem(item, regionName) {
   const year  = parseInt(item._get('dealYear'))  || 0;
   const month = parseInt(item._get('dealMonth')) || 0;
   const day   = parseInt(item._get('dealDay'))   || 0;
-
+  const bunjiRaw = item._get('jibun');
+  const bonbun   = item._get('bonbun');
+  const bubun    = item._get('bubun');
   return {
     danji:      item._get('aptNm'),
+    dong:       item._get('umdNm') || '',
     deal_date:  String(year) + String(month).padStart(2,'0') + String(day).padStart(2,'0'),
     price:      parseInt((item._get('dealAmount') || '0').replace(/,/g, '')) || 0,
     size:       parseFloat(item._get('excluUseAr')) || 0,
     floor:      parseInt(item._get('floor')) || 0,
     build_year: parseInt(item._get('buildYear')) || null,
-    road_name:  (item._get('roadNm') + ' ' + item._get('roadNmBonbun')).trim(),
-    region:     '',
-    bunji:      item._get('jibun'),
-    main_num:   parseInt(item._get('jibun')) || 0,
-    sub_num:    null,
-    lat:        null,
-    lon:        null,
+    road_name:  item._get('roadNm') || '',
+    region:     regionName || '',
+    bunji:      (bunjiRaw === '' || bunjiRaw === '0') ? '' : bunjiRaw,
+    main_num:   parseInt(bonbun, 10) || 0,
+    sub_num:    (bubun === '' || parseInt(bubun, 10) === 0) ? null : parseInt(bubun, 10),
     source:     'realtime',
+    buildingType: 'apt',
   };
 }
 
-/* ── DB row → 정규화 ── */
-function normalizeDBRow(row) {
-  const year  = row.deal_year  || 0;
-  const month = row.deal_month || 0;
-  const day   = row.deal_day   || 0;
-  const dateStr = String(year)
-    + String(month).padStart(2, '0')
-    + String(day).padStart(2, '0');
-
+/* ── house_trades / villa_trades 공통 정규화 (스키마 동일) ── */
+function normalizeRow(row, buildingType) {
   return {
-    danji:      row.apartment_name || '',
-    deal_date:  dateStr,
-    price:      row.deal_amount    || 0,
-    size:       row.exclusive_area || 0,
-    floor:      row.floor          || 0,
-    build_year: row.build_year     || null,
-    road_name:  row.road_name      || '',
-    region:     '',
-    bunji:      '',
-    main_num:   0,
-    sub_num:    null,
-    lat:        row.lat            || null,
-    lon:        row.lon            || null,
+    danji:      row.danji || '',
+    dong:       row.dong  || '',
+    deal_date:  String(row.deal_date || ''),
+    price:      row.price || 0,
+    size:       row.size  || 0,
+    floor:      row.floor || 0,
+    build_year: row.build_year || null,
+    road_name:  row.road_name  || '',
+    region:     row.region || '',
+    bunji:      row.bunji     || '',
+    main_num:   row.main_num  || 0,
+    sub_num:    row.sub_num   || null,
     source:     'db',
+    buildingType,
   };
 }
 
@@ -172,7 +185,7 @@ function normalizeDBRow(row) {
 function dedup(rows) {
   const seen = new Set();
   return rows.filter(row => {
-    const key = `${row.danji}|${row.deal_date}|${row.price}|${row.size}`;
+    const key = `${row.buildingType}|${row.danji}|${row.deal_date}|${row.price}|${row.size}`;
     if (seen.has(key)) return false;
     seen.add(key);
     return true;
