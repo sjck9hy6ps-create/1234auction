@@ -1,0 +1,34 @@
+name: 연간 빌라·단독다가구 데이터 수집
+
+on:
+  workflow_dispatch:
+    inputs:
+      year:
+        description: '수집할 연도 (예: 2026)'
+        required: true
+        default: '2026'
+
+concurrency:
+  group: collect-history-villa
+  cancel-in-progress: true
+
+jobs:
+  collect:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: 의존성 설치
+        run: npm install @supabase/supabase-js
+
+      - name: 연립다세대 + 단독/다가구 수집 실행
+        env:
+          SUPABASE_URL: \${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: \${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          PUBLIC_DATA_API_KEY: \${{ secrets.PUBLIC_DATA_API_KEY }}
+          TARGET_YEAR: \${{ github.event.inputs.year }}
+        run: node scripts/collect-history-villa-single.mjs
