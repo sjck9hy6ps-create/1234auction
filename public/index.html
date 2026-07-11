@@ -675,7 +675,7 @@ function calcPriceGrades(aptList) {
     Object.keys(groups).forEach(function(type) {
         var scored = groups[type].map(function(apt) {
             var valid = apt.trades.filter(function(t) {
-                return tradeDate(t) >= oneYearAgo && t.area > 0 && parseInt(t.amount) > 0;
+                return tradeDate(t) >= oneYearAgo && t.area > 0 && parseInt(t.amount) > 0 && parseInt(t.floor) !== 1;
             });
             if (!valid.length) return { apt: apt, ppp: 0 };
             var sum = valid.reduce(function(a, t) { return a + parseInt(t.amount) / toPyung(t.area); }, 0);
@@ -1565,7 +1565,7 @@ function buildAuctionPanelHtml(aptName) {
 ════════════════════════════════════ */
 function avgPppInRange(trades, fromDate) {
     var valid = trades.filter(function(t) {
-        return tradeDate(t) >= fromDate && t.area > 0 && parseInt(t.amount) > 0;
+        return tradeDate(t) >= fromDate && t.area > 0 && parseInt(t.amount) > 0 && parseInt(t.floor) !== 1;
     });
     if (!valid.length) return { avg: null, count: 0 };
     var sum = valid.reduce(function(a, t) { return a + parseInt(t.amount) / toPyung(t.area); }, 0);
@@ -1573,7 +1573,7 @@ function avgPppInRange(trades, fromDate) {
 }
  
 function latestPppInfo(trades) {
-    var valid = trades.filter(function(t) { return t.area > 0 && parseInt(t.amount) > 0; });
+    var valid = trades.filter(function(t) { return t.area > 0 && parseInt(t.amount) > 0 && parseInt(t.floor) !== 1; });
     if (!valid.length) return null;
     // trades는 groupDBRows에서 이미 최신순 정렬됨
     var t = valid[0];
