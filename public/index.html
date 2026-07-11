@@ -502,6 +502,7 @@ function createSemaphore(n) {
 }
 var runGeocode = createSemaphore(4);
 var pendingQueries = new Set();
+var searchDebounceTimer = null;
 
 /* ════════════════════════════════════
    유틸
@@ -781,16 +782,17 @@ function initKakao() {
         );
     } else { initMap(37.5665, 126.9780); }
 
-    document.getElementById('addr-input').addEventListener('keydown', function(e) {
-        if (e.key === 'Enter') searchAddress();
-    });
-    document.addEventListener('click', function(e) {
-        var ac = document.getElementById('autocomplete');
-        var box = document.getElementById('search-box');
-        var lp  = document.getElementById('auction-list-panel');
-        var btn = document.getElementById('auction-add-btn');
-        if (!ac.contains(e.target) && !box.contains(e.target)) ac.style.display = 'none';
-        if (!lp.contains(e.target) && !btn.contains(e.target)) lp.style.display = 'none';
+   document.getElementById('addr-input').addEventListener('input', function() {
+        var q = this.value.trim();
+        if (!q) { document.getElementById('autocomplete').style.display = 'none'; return; }
+        var localResults = searchLocalComplexes(q);
+        if (localResults.length) {
+            showLocalDropdown(localResults);
+        } else {
+            document.getElementById('autocomplete').style.display = 'none';
+        }
+        clearTimeout(searchDebounceTimer);
+        searchDebounceTimer = setTimeout(function() { searchNationwide(q); }, 300);
     });
 }
 
@@ -1176,7 +1178,7 @@ function searchAddress() {
     }, { category_group_code: 'AT4' });
 }
 
-function showDropdown(results) {
+function showLocalDropdown(results) {
     var ac = document.getElementById('autocomplete');
     ac.innerHTML = '';
     var hdr = document.createElement('div');
@@ -1196,16 +1198,13 @@ function showDropdown(results) {
         div.onclick = function() {
             document.getElementById('autocomplete').style.display = 'none';
             document.getElementById('addr-input').value = r.label;
-            map.setCenter(new kakao.maps.LatLng(r.lat, r.lon));
-            map.setLevel(4);
-            lastLawdCd = null;
-            loadAllData(r.lat, r.lon);
+            if (r.apt) selectLocalComplex(r.apt);
+            else if (r.remote) selectRemoteComplex(r.remote);
         };
         ac.appendChild(div);
     });
     ac.style.display = 'block';
 }
-
 /* ════════════════════════════════════
    사이드 패널
 ════════════════════════════════════ */
@@ -1942,7 +1941,62 @@ function buildVolumeAnalysisHtml(vi) {
 
     return html;
 }
-
+async function searchNationwide(q) {
+    try {
+        var res = await fetch('/api/search-complex?q=' + encodeURIComponent(q));
+        var data = await res.json();
+        var localLabelSet = {};
+        searchLocalComplexes(q).forEach(function(r) { localLabelSet[normalizeSearchStr(r.label)] = true; });
+ 
+        var nationalResults = (data.results || [])
+            .filter(function(row) { return !localLabelSet[normalizeSearchStr(row.danji || (row.dong + row.bunji))]; })
+            .map(function(row) {
+                return {
+                    label: row.danji || (row.dong + ' ' + row.bunji),
+                    sub: (row.region || '') + (row.dong ? ' ' + row.dong : '') + (row.road_name ? ' · ' + row.road_name : ''),
+                    type: row.buildingType === 'villa' ? '연립다세대' : '아파트',
+                    remote: row
+                };
+            });
+ 
+        // 이미 로컬 결과가 화면에 떠있는 상태에 이어붙임
+        var combined = searchLocalComplexes(q).concat(nationalResults);
+        if (combined.length) showLocalDropdown(combined);
+    } catch (e) {
+        console.error('전국 검색 실패:', e);
+    }
+}
+ 
+function selectRemoteComplex(row) {
+    var l = {
+        region: row.region, dong: row.dong, name: row.danji, bunji: row.bunji,
+        road_name: row.road_name, main_num: row.main_num, sub_num: row.sub_num,
+        buildingType: row.buildingType
+    };
+    var candidates = buildGeocodeCandidates(l);
+    if (!candidates.length) { alert('이 단지의 위치를 찾을 수 없습니다.'); return; }
+ 
+    setStatus('위치 찾는 중...');
+    tryStepGeocode(candidates, function(lat, lon) {
+        if (!lat || !lon) { setStatus(''); alert('이 단지의 위치를 찾을 수 없습니다.'); return; }
+        map.setCenter(new kakao.maps.LatLng(lat, lon));
+        map.setLevel(4);
+        lastLawdCd = null; // 새 지역 데이터 강제 로드
+        loadAllData(lat, lon).then(function() {
+            setStatus('');
+            var target = allAptList.find(function(apt) {
+                var al = apt.latest || {};
+                return (al.name || '') === (row.danji || '') &&
+                       (al.dong  || '') === (row.dong  || '') &&
+                       (al.road_name || '') === (row.road_name || '');
+            });
+            if (target) {
+                showRadiusCircle(lat, lon);
+                openPanel(target);
+            }
+        });
+    });
+}
 </script>
 </body>
 </html>
