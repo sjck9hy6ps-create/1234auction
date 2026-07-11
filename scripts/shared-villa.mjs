@@ -123,17 +123,23 @@ export function parseXMLSingle(xml, regionName) {
       })(),
       deal_date:  Number.isFinite(dealDateInt) ? dealDateInt : null,
       floor:      null,   // 단독/다가구는 층 개념 없음
-      bunji:      jibun,
-      main_num: (() => {
-        const v = getTag(b, 'bonbun').trim();
-        const n = parseInt(v, 10);
-        return v === '' || Number.isNaN(n) ? null : n;
-      })(),
-      sub_num: (() => {
-        const v = getTag(b, 'bubun').trim();
-        const n = parseInt(v, 10);
-        return v === '' || Number.isNaN(n) ? null : n;
-      })(),
+      bunji: (() => {
+  const v = getTag(b, 'jibun').trim();
+  return (v === '' || v === '0') ? null : v;
+})(),
+main_num: (() => {
+  const v = getTag(b, 'bonbun').trim();
+  const n = parseInt(v, 10);
+  if (v === '' || Number.isNaN(n) || n === 0) return null;
+  return n;
+})(),
+sub_num: (() => {
+  const v = getTag(b, 'bubun').trim();
+  const n = parseInt(v, 10);
+  if (v === '' || Number.isNaN(n) || n === 0) return null;
+  return n;
+})(),
+
       build_year: (() => {
         const v = getTag(b, 'buildYear').trim();
         const n = parseInt(v, 10);
@@ -154,7 +160,7 @@ export async function fetchMonthVilla(code, name, ym) {
     const text = await res.text();
     return parseXMLVilla(text, name);
   } catch (e) {
-    console.error(`❌ \${code}/${ym} 연립다세대 실패:`, e.message);
+    console.error(`❌ ${code}${ym} 연립다세대 실패:`, e.message);
     return [];
   }
 }
