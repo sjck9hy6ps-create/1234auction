@@ -689,21 +689,31 @@ function calcInvestIndicators(aptList) {
 }
 
 function calcPriceGrades(aptList) {
-    var scored = aptList.map(function(apt) {
-        var valid = apt.trades.filter(function(t) {
-            return tradeDate(t) >= oneYearAgo && t.area > 0 && parseInt(t.amount) > 0;
-        });
-        if (!valid.length) return { apt: apt, ppp: 0 };
-        var sum = valid.reduce(function(a, t) { return a + parseInt(t.amount) / toPyung(t.area); }, 0);
-        return { apt: apt, ppp: sum / valid.length };
-    }).filter(function(x) { return x.ppp > 0; });
-
-    scored.sort(function(a, b) { return b.ppp - a.ppp; });
-    var total = scored.length;
-    scored.forEach(function(x, i) {
-        x.apt.grade = Math.min(7, Math.floor(i / total * 7) + 1);
-        x.apt.ppp   = Math.round(x.ppp);
+    var groups = {};
+    aptList.forEach(function(apt) {
+        var type = apt.buildingType || 'apt';
+        if (!groups[type]) groups[type] = [];
+        groups[type].push(apt);
     });
+ 
+    Object.keys(groups).forEach(function(type) {
+        var scored = groups[type].map(function(apt) {
+            var valid = apt.trades.filter(function(t) {
+                return tradeDate(t) >= oneYearAgo && t.area > 0 && parseInt(t.amount) > 0;
+            });
+            if (!valid.length) return { apt: apt, ppp: 0 };
+            var sum = valid.reduce(function(a, t) { return a + parseInt(t.amount) / toPyung(t.area); }, 0);
+            return { apt: apt, ppp: sum / valid.length };
+        }).filter(function(x) { return x.ppp > 0; });
+ 
+        scored.sort(function(a, b) { return b.ppp - a.ppp; });
+        var total = scored.length;
+        scored.forEach(function(x, i) {
+            x.apt.grade = Math.min(7, Math.floor(i / total * 7) + 1);
+            x.apt.ppp   = Math.round(x.ppp);
+        });
+    });
+ 
     aptList.forEach(function(apt) { if (!apt.grade) { apt.grade = null; apt.ppp = 0; } });
 }
 
@@ -736,6 +746,8 @@ function toggleScore(val, btn) {
 }
 
 function passesFilter(apt) {
+    if (currentTypeFilter === 'apt' && apt.buildingType !== 'apt') return false;
+ 
     if (!activeGrades.has('all')) {
         if (!apt.grade || !activeGrades.has(String(apt.grade))) return false;
     }
