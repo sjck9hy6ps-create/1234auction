@@ -1178,6 +1178,97 @@ function searchAddress() {
     }, { category_group_code: 'AT4' });
 }
 
+function showDropdown(results) {
+    var ac = document.getElementById('autocomplete');
+    ac.innerHTML = '';
+    var hdr = document.createElement('div');
+    hdr.style.cssText = 'padding:8px 16px;font-size:11px;color:#999;border-bottom:1px solid #eee;background:#fafafa;';
+    hdr.innerText = '검색결과 ' + results.length + '건';
+    ac.appendChild(hdr);
+    results.forEach(function(r) {
+        var div = document.createElement('div');
+        div.style.cssText = 'padding:10px 16px;cursor:pointer;border-bottom:1px solid #f0f0f0;display:flex;justify-content:space-between;align-items:center;gap:8px;';
+        var bc = r.type === '아파트' ? '#e53935' : '#1565c0';
+        div.innerHTML = '<div style="flex:1;min-width:0;">'
+            + '<div style="font-size:13px;font-weight:bold;color:#333;">' + r.label + '</div>'
+            + (r.sub ? '<div style="font-size:11px;color:#999;">' + r.sub + '</div>' : '')
+            + '</div><span style="background:' + bc + ';color:white;font-size:10px;padding:2px 7px;border-radius:10px;">' + r.type + '</span>';
+        div.onmouseover = function() { this.style.background = '#fffde7'; };
+        div.onmouseout  = function() { this.style.background = 'white'; };
+        div.onclick = function() {
+            document.getElementById('autocomplete').style.display = 'none';
+            document.getElementById('addr-input').value = r.label;
+            map.setCenter(new kakao.maps.LatLng(r.lat, r.lon));
+            map.setLevel(4);
+            lastLawdCd = null;
+            loadAllData(r.lat, r.lon);
+        };
+        ac.appendChild(div);
+    });
+    ac.style.display = 'block';
+}
+
+function normalizeSearchStr(s) {
+    return (s || '').replace(/\s/g, '').toLowerCase();
+}
+
+function searchLocalComplexes(query) {
+    var q = normalizeSearchStr(query);
+    if (!q) return [];
+    var results = [];
+    allAptList.forEach(function(apt) {
+        var l = apt.latest || {};
+        var danji = (l.name || '').trim();
+        var dong  = (l.dong || '').trim();
+        var bunji = (l.bunji || '').trim();
+        var dongBunji = normalizeSearchStr(dong + bunji);
+
+        var matched = false;
+        if (danji && normalizeSearchStr(danji).indexOf(q) !== -1) matched = true;
+        if (!matched && dong && bunji && dongBunji.indexOf(q) !== -1) matched = true;
+
+        if (matched) {
+            results.push({
+                label: danji || (dong + ' ' + bunji),
+                sub: (l.region || '') + (dong ? ' ' + dong : '') + (l.road_name ? ' · ' + l.road_name : ''),
+                apt: apt,
+                type: apt.buildingType === 'villa' ? '연립다세대' : '아파트'
+            });
+        }
+    });
+    results.sort(function(a, b) { return a.label.length - b.label.length; });
+    return results.slice(0, 15);
+}
+
+function selectLocalComplex(apt) {
+    var l = apt.latest || {};
+    var cacheKey = [l.dong, l.name, l.bunji, l.road_name, l.main_num, l.sub_num].join('|').toLowerCase();
+
+    function moveTo(lat, lon) {
+        map.setCenter(new kakao.maps.LatLng(lat, lon));
+        map.setLevel(4);
+        showRadiusCircle(lat, lon);
+        openPanel(apt);
+    }
+
+    if (coordCache[cacheKey]) {
+        moveTo(coordCache[cacheKey].lat, coordCache[cacheKey].lon);
+        return;
+    }
+    var candidates = buildGeocodeCandidates(l);
+    if (!candidates.length) { alert('이 단지의 위치를 찾을 수 없습니다.'); return; }
+    setStatus('위치 찾는 중...');
+    tryStepGeocode(candidates, function(lat, lon) {
+        setStatus('');
+        if (lat && lon) {
+            coordCache[cacheKey] = { lat: lat, lon: lon };
+            moveTo(lat, lon);
+        } else {
+            alert('이 단지의 위치를 찾을 수 없습니다.');
+        }
+    });
+}
+    
 function showLocalDropdown(results) {
     var ac = document.getElementById('autocomplete');
     ac.innerHTML = '';
