@@ -22,50 +22,54 @@ export default async function handler(req, res) {
   console.log('lawdCd:', lawdCd, '/ regionName:', regionName || '(매칭 실패)');
 
   try {
-    let aptData = [];
-    let villaData = [];
+    // ── 아파트 DB / 연립다세대 DB / 실시간 아파트, 세 요청을 동시에 실행 ──
+    // (기존엔 순차 await라 셋의 소요시간이 그대로 합산됐음. Promise.all로 묶어서
+    //  전체 대기시간을 "셋의 합"이 아니라 "가장 느린 것 하나" 수준으로 줄입니다.)
+    const now    = new Date();
+    const thisYm = String(now.getFullYear()) + String(now.getMonth() + 1).padStart(2, '0');
+
+    let aptQuery   = Promise.resolve({ data: [], error: null });
+    let villaQuery = Promise.resolve({ data: [], error: null });
 
     if (regionName) {
-      // ── 1. 아파트 DB 조회 ──
-      console.log('아파트(house_trades) 조회 시작...');
-      const { data: hData, error: hError } = await supabase
+      aptQuery = supabase
         .from('house_trades')
         .select('*')
         .eq('region', regionName)
         .order('deal_date', { ascending: false });
 
-      if (hError) {
-        console.error('house_trades 조회 에러:', hError.message);
-        throw hError;
-      }
-      aptData = hData || [];
-      console.log('아파트 조회 완료. 건수:', aptData.length);
-
-      // ── 2. 연립다세대 DB 조회 ──
-      console.log('연립다세대(villa_trades) 조회 시작...');
-      const { data: vData, error: vError } = await supabase
+      villaQuery = supabase
         .from('villa_trades')
         .select('*')
         .eq('region', regionName)
         .order('deal_date', { ascending: false });
-
-      if (vError) {
-        console.error('villa_trades 조회 에러:', vError.message);
-      } else {
-        villaData = vData || [];
-        console.log('연립다세대 조회 완료. 건수:', villaData.length);
-      }
       // 단독/다가구(single_trades)는 지도에 표시하지 않기로 했으므로 조회하지 않음
     } else {
       console.warn('LAWD_CODES에서 lawdCd(' + lawdCd + ')에 매칭되는 지역명을 찾지 못해 DB 조회를 건너뜁니다.');
     }
 
-    // ── 3. 실시간 아파트 (당월, 국토부 API) ──
-    const now    = new Date();
-    const thisYm = String(now.getFullYear()) + String(now.getMonth() + 1).padStart(2, '0');
-    const realtimeItems = await fetchRealtimeApt(lawdCd, thisYm);
+    const [aptResult, villaResult, realtimeItems] = await Promise.all([
+      aptQuery,
+      villaQuery,
+      fetchRealtimeApt(lawdCd, thisYm),
+    ]);
 
-    // ── 4. 정규화 ──
+    if (aptResult.error) {
+      console.error('house_trades 조회 에러:', aptResult.error.message);
+      throw aptResult.error;
+    }
+    const aptData = aptResult.data || [];
+    console.log('아파트 조회 완료. 건수:', aptData.length);
+
+    let villaData = [];
+    if (villaResult.error) {
+      console.error('villa_trades 조회 에러:', villaResult.error.message);
+    } else {
+      villaData = villaResult.data || [];
+      console.log('연립다세대 조회 완료. 건수:', villaData.length);
+    }
+
+    // ── 정규화 ──
     const aptNormalized      = aptData.map(row => normalizeRow(row, 'apt'));
     const villaNormalized    = villaData.map(row => normalizeRow(row, 'villa'));
     const realtimeNormalized = realtimeItems.map(item => normalizeXMLItem(item, regionName));
