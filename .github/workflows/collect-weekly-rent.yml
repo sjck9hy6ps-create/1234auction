@@ -1,0 +1,24 @@
+name: 주간 아파트 전월세 데이터 수집
+
+on:
+  schedule:
+    - cron: '0 2 * * 1'  # 매주 월요일 오전 11시 (KST) - 기존 아파트/연립다세대 수집과 시간차
+  workflow_dispatch:
+
+jobs:
+  collect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: 의존성 설치
+        run: npm install @supabase/supabase-js
+      - name: 주간 전월세 수집 실행
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          PUBLIC_DATA_API_KEY: ${{ secrets.PUBLIC_DATA_API_KEY }}
+        run: node scripts/collect-weekly-rent.mjs
