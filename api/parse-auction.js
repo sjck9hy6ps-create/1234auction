@@ -5,7 +5,7 @@
    - 텍스트에 없는 값은 null로 두도록 프롬프트에 명시 (추측 금지)
 ════════════════════════════════════ */
 
-const GEMINI_MODEL = 'gemini-2.5-flash';
+const GEMINI_MODEL = 'gemini-3.5-flash';
 
 // Gemini structured output용 응답 스키마 (OpenAPI 서브셋, type은 대문자)
 const RESPONSE_SCHEMA = {
