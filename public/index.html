@@ -953,10 +953,9 @@ function initMap(lat, lon) {
     });
     map.setMinLevel(1); map.setMaxLevel(14);
     new kakao.maps.Marker({ map: map, position: new kakao.maps.LatLng(lat, lon), title: '내 위치' });
-
-    loadAllData(lat, lon).then(function() {
-        fetchAuctions().then(function() { renderAuctionMarkers(); });
-    });
+    // 경매 등록 물건은 지역 데이터를 기다리지 않고 가장 먼저 불러와서 표시
+    fetchAuctions().then(function() { renderAuctionMarkers(); });
+    loadAllData(lat, lon);
 
     kakao.maps.event.addListener(map, 'idle', function() {
         var c = map.getCenter();
@@ -1700,6 +1699,7 @@ function openAuctionModal(id) {
         var a = auctionList.find(function(x) { return x.id === id; });
         if (a) {
             pendingAuctionDetail = a.detail || null;
+            document.getElementById('a-paste-text').value = a.rawText || '';
             document.getElementById('auction-id').value    = a.id || '';
             document.getElementById('a-addr').value        = a.addr || '';
             document.getElementById('a-name').value        = a.name || '';
@@ -1821,6 +1821,7 @@ async function saveAuction() {
         etc: document.getElementById('a-etc').value, target: document.getElementById('a-target').value,
         actualSell: document.getElementById('a-actual-sell').value, memo: document.getElementById('a-memo').value,
         detail: pendingAuctionDetail || null,
+        rawText: document.getElementById('a-paste-text').value.trim() || null,
     };
     if (!data.lat || !data.lon) {
         await new Promise(function(resolve) {
@@ -1877,14 +1878,40 @@ function renderAuctionMarkers() {
 }
 function placeAuctionMarker(a) {
     var sc = STATUS_COLOR[a.status] || '#9e9e9e';
+ 
+    // 같은 단지의 일반 거래 데이터가 이미 로딩되어 있으면 등급/인기평형 정보를 가져와 함께 표시
+    var matchedApt = allAptList.find(function(apt) {
+        return matchesAuctionKey(a, apt.latest && apt.latest.name, apt.latest && apt.latest.dong, apt.latest && apt.latest.bunji);
+    });
+ 
+    var gradeBadge = '', popBadge = '', roadLine = '';
+    if (matchedApt) {
+        if (matchedApt.grade) {
+            var gc = GRADE_COLORS[matchedApt.grade];
+            gradeBadge = '<span style="background:' + gc + ';color:white;font-size:9px;font-weight:bold;padding:1px 5px;border-radius:3px;margin-left:3px;">' + matchedApt.grade + '등급</span>';
+        }
+        popBadge = buildPopularPyeongBadge(matchedApt);
+        if (matchedApt.latest && matchedApt.latest.road_name) {
+            roadLine = '<div style="color:#aaa;font-size:9px;">' + matchedApt.latest.road_name + '</div>';
+        }
+    }
+ 
+    var priceLine = a.myBid
+        ? toEok(String(parseInt(a.myBid) * 100)) + ' (내 입찰가)'
+        : (a.appraisal ? toEok(String(parseInt(a.appraisal) * 100)) + ' (감정가)' : '가격 미입력');
+ 
     var div = document.createElement('div');
     div.style.cssText = 'position:relative;background:white;border:2.5px solid ' + sc + ';border-radius:7px;'
         + 'padding:3px 7px;margin:4px;margin-top:14px;white-space:nowrap;cursor:pointer;'
-        + 'box-shadow:0 2px 8px rgba(0,0,0,0.18);text-align:center;line-height:1.5;max-width:160px;';
+        + 'box-shadow:0 2px 8px rgba(0,0,0,0.18);text-align:center;line-height:1.5;max-width:190px;';
     div.innerHTML = '<div class="auction-badge" style="background:' + sc + ';">🔨 ' + a.status + '</div>'
-        + '<div style="color:#333;font-size:10px;font-weight:bold;overflow:hidden;text-overflow:ellipsis;max-width:150px;margin-top:4px;">' + ((a.name && a.name.trim()) || a.addrLabel || a.addr || '(이름없음)') + '</div>'
-        + '<div style="color:' + sc + ';font-size:11px;font-weight:bold;">' + (a.myBid ? toEok(String(parseInt(a.myBid)*100)) : '입찰가 미입력') + '</div>'
-        + (a.pyung ? '<div style="color:#888;font-size:10px;">' + a.pyung + '평</div>' : '');
+        + '<div style="color:#333;font-size:10px;font-weight:bold;overflow:hidden;text-overflow:ellipsis;max-width:170px;margin-top:4px;">'
+        +   ((a.name && a.name.trim()) || a.addrLabel || a.addr || '(이름없음)') + gradeBadge
+        + '</div>'
+        + (popBadge ? '<div style="margin-top:2px;">' + popBadge + '</div>' : '')
+        + '<div style="color:' + sc + ';font-size:11px;font-weight:bold;">' + priceLine + '</div>'
+        + (a.pyung ? '<div style="color:#888;font-size:10px;">' + a.pyung + '평</div>' : '')
+        + roadLine;
     div.onclick = function() { openAuctionModal(a.id); };
     var overlay = new kakao.maps.CustomOverlay({
         position: new kakao.maps.LatLng(a.lat, a.lon),
