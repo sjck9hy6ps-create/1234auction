@@ -15,7 +15,7 @@ jobs:
         with:
           node-version: '20'
       - name: 의존성 설치
-        run: npm install @supabase/supabase-js
+        run: npm install @supabase/supabase-js ws
       - name: 주간 연립다세대·단독다가구 수집 실행
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
