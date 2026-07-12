@@ -1153,7 +1153,7 @@ function createMarker(lat, lon, apt) {
         + (l.road_name ? '<div style="font-size:11px;color:#aaa;">' + l.road_name + '</div>' : '');
     div.onclick = function() {
         showRadiusCircle(lat, lon);
-        openPanel(apt);
+        openPanel(apt, lat, lon);
     };
 
     var overlay = new kakao.maps.CustomOverlay({
@@ -1340,7 +1340,7 @@ function showLocalDropdown(results) {
 /* ════════════════════════════════════
    사이드 패널
 ════════════════════════════════════ */
-function openPanel(apt) {
+function openPanel(apt, lat, lon) {
     currentTrades  = apt.trades || [];
     currentSort    = 'date';
     currentPyung   = 'all';
@@ -1388,6 +1388,7 @@ function openPanel(apt) {
     });
 
     // 지표 저장
+    // 지표 저장
      if (currentIndicators) {
         currentIndicators._newHighPyungs  = apt.newHighPyungs || [];
         currentIndicators._aptName        = apt.latest && apt.latest.name || '';
@@ -1397,6 +1398,15 @@ function openPanel(apt) {
             _aptName: apt.latest && apt.latest.name || ''
         };
     }
+    currentBuildingInfo = null;
+    currentBuildingLoading = true;
+    renderTable();
+    loadBuildingInfo(apt, lat, lon).then(function(info) {
+        currentBuildingInfo = info;
+        currentBuildingLoading = false;
+        renderTable();
+    });
+}
 
     renderTable();
 }
@@ -1428,7 +1438,14 @@ function renderTable() {
     var thisYear = today.getFullYear();
     var html = '';
     var ind  = currentIndicators;
-    
+
+    // 건축물대장 정보
+    if (currentBuildingLoading) {
+        html += '<div class="indicator-box"><div class="indicator-title">🏢 건축물대장 정보</div><div style="font-size:11px;color:#999;">불러오는 중...</div></div>';
+    } else if (currentBuildingInfo) {
+        html += buildBuildingInfoHtml(currentBuildingInfo);
+    }
+
     // 경매 패널
     if (ind && ind._aptName) html += buildAuctionPanelHtml(ind._aptName);
 
@@ -2129,6 +2146,83 @@ function selectRemoteComplex(row) {
         });
     });
 }
+async function loadBuildingInfo(apt, lat, lon) {
+    try {
+        if (!lat || !lon) return null;
+        var regionCode = await new Promise(function(resolve) {
+            geocoder.coord2RegionCode(lon, lat, function(result, status) {
+                if (status !== kakao.maps.services.Status.OK) { resolve(null); return; }
+                var b = result.find(function(r) { return r.region_type === 'B'; });
+                resolve(b ? b.code : null);
+            });
+        });
+        if (!regionCode || regionCode.length < 10) return null;
+
+        var sigunguCd = regionCode.slice(0, 5);
+        var bjdongCd  = regionCode.slice(5, 10);
+        var l = apt.latest || {};
+        var main = l.main_num;
+        var sub  = l.sub_num;
+        if (!main) return null;
+        var bun = String(main).padStart(4, '0');
+        var ji  = String(sub || 0).padStart(4, '0');
+
+        var url = '/api/get-building?sigunguCd=' + sigunguCd + '&bjdongCd=' + bjdongCd
+            + '&bun=' + bun + '&ji=' + ji + '&bldNm=' + encodeURIComponent(l.name || '');
+        var res  = await fetch(url);
+        var data = await res.json();
+        if (!data || (!data.title && !data.price)) return null;
+        return data;
+    } catch (e) {
+        console.error('건축물대장 조회 실패:', e.message);
+        return null;
+    }
+}
+
+function formatDate8(s) {
+    if (!s || s.length !== 8) return s || '';
+    return s.slice(0,4) + '.' + s.slice(4,6) + '.' + s.slice(6,8);
+}
+
+function buildBuildingInfoHtml(info) {
+    if (!info) return '';
+    var t = info.title, p = info.price;
+    var html = '<div class="indicator-box">';
+    html += '<div class="indicator-title">🏢 건축물대장 정보</div>';
+
+    if (t) {
+        var parkTotal = (t.indrAutoUtcnt||0) + (t.oudrAutoUtcnt||0) + (t.indrMechUtcnt||0) + (t.oudrMechUtcnt||0);
+        var elvtTotal = (t.rideElvtCnt||0) + (t.emgenElvtCnt||0);
+        html += '<div class="indicator-grid">';
+        function item(label, value) {
+            if (value === null || value === undefined || value === '') return '';
+            return '<div class="indicator-item"><div class="indicator-label">' + label + '</div>'
+                + '<div class="indicator-value" style="font-size:12px;">' + value + '</div></div>';
+        }
+        html += item('주용도', t.mainPurps);
+        html += item('주구조', t.strct);
+        html += item('총 층수', (t.grndFlrCnt || '-') + '층' + (t.ugrndFlrCnt ? ' (지하' + t.ugrndFlrCnt + ')' : ''));
+        html += item('세대수', t.hhldCnt ? t.hhldCnt + '세대' : '');
+        html += item('연면적', t.totArea ? Math.round(t.totArea).toLocaleString() + '㎡' : '');
+        html += item('건폐율/용적률', (t.bcRat !== null && t.vlRat !== null) ? t.bcRat + '% / ' + t.vlRat + '%' : '');
+        html += item('승강기', elvtTotal ? elvtTotal + '대' : '');
+        html += item('주차대수', parkTotal ? parkTotal + '대' : '');
+        html += item('사용승인일', formatDate8(t.useAprDay));
+        if (t.engrGrade) html += item('에너지효율등급', t.engrGrade);
+        html += '</div>';
+    }
+
+    if (p && p.price) {
+        html += '<div style="margin-top:8px;font-size:11px;color:#555;border-top:1px dashed #ddd;padding-top:6px;">'
+            + '공동주택가격(공시가격, ' + p.year + '년 ' + p.month + '월 기준): '
+            + '<b style="color:#333;">' + toEok(String(Math.round(p.price / 10000))) + '</b></div>';
+    }
+
+    if (!t && !p) html += '<div style="font-size:11px;color:#999;">조회된 건축물대장 정보가 없습니다.</div>';
+    html += '</div>';
+    return html;
+}
+    
 /* ════════════════════════════════════
    건축물대장 백그라운드 예열
    - 마커 배치 때 이미 지오코딩된(coordCache에 있는) 단지만 대상으로 함
