@@ -3,11 +3,10 @@
    지역을 로딩할 때, 화면에 뜰 단지들의 캐시 키를 전부 모아서 이 API로
    한 번에 물어봅니다. 이미 지오코딩된 적 있는 단지는 카카오 API를
    다시 호출하지 않고 여기서 즉시 좌표를 받아옵니다.
-   - keys가 너무 많으면(새 지역 첫 로딩, 웜업 직후 등) Supabase .in() 쿼리가
-     한 번에 너무 커져 400(Bad Request)이 나므로, 200개씩 나눠서 조회합니다.
-   - 단지명에 괄호/쉼표 같은 특수문자가 들어간 cache_key가 있으면 .in()이
-     값을 제대로 못 읽어 매번 Bad Request가 나므로, 각 값을 큰따옴표로
-     감싸서 PostgREST의 in.() 문법에 맞게 직접 만들어 보냅니다.
+   - .in()/필터 방식은 URL 쿼리스트링에 값을 실어 보내다 보니 단지명에 괄호/쉼표가
+     있거나 키 개수가 많으면 계속 Bad Request가 나서, Supabase RPC 함수
+     get_complex_coords(keys text[])를 만들어 POST 본문으로 통째로 넘기는
+     방식으로 바꿨습니다. (get_complex_coords_function.sql을 Supabase에 먼저 실행)
 ════════════════════════════════════ */
 import { createClient } from '@supabase/supabase-js';
 
@@ -15,12 +14,6 @@ const supabase = createClient(
   process.env.SUPABASE_URL,
   process.env.SUPABASE_SERVICE_ROLE_KEY
 );
-
-const CHUNK_SIZE = 200;
-
-function buildInList(values) {
-  return '(' + values.map(v => `"${String(v).replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`).join(',') + ')';
-}
 
 export default async function handler(req, res) {
   res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
@@ -33,26 +26,18 @@ export default async function handler(req, res) {
   if (!keys.length) return res.status(200).json({ coords: {} });
 
   try {
+    const { data, error } = await supabase.rpc('get_complex_coords', { keys });
+    if (error) throw error;
+
     const coords = {};
-
-    for (let i = 0; i < keys.length; i += CHUNK_SIZE) {
-      const chunk = keys.slice(i, i + CHUNK_SIZE);
-      const { data, error } = await supabase
-        .from('complex_coords')
-        .select('cache_key, lat, lon, sigungu_cd, bjdong_cd')
-        .filter('cache_key', 'in', buildInList(chunk));
-
-      if (error) throw error;
-
-      (data || []).forEach(row => {
-        coords[row.cache_key] = {
-          lat: row.lat,
-          lon: row.lon,
-          sigunguCd: row.sigungu_cd || null,
-          bjdongCd: row.bjdong_cd || null,
-        };
-      });
-    }
+    (data || []).forEach(row => {
+      coords[row.cache_key] = {
+        lat: row.lat,
+        lon: row.lon,
+        sigunguCd: row.sigungu_cd || null,
+        bjdongCd: row.bjdong_cd || null,
+      };
+    });
 
     return res.status(200).json({ coords });
   } catch (err) {
