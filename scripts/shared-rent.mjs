@@ -105,7 +105,9 @@ export async function fetchMonthRent(code, name, ym) {
   }
 }
 
-// ── upsert ──
+// ── upsert (500건씩 나눠서 저장 - 한 번에 다 넣으면 statement timeout 발생) ──
+const UPSERT_BATCH_SIZE = 500;
+
 export async function upsertRent(rows) {
   if (!rows.length) return;
   const uniqueRows = Array.from(
@@ -113,8 +115,18 @@ export async function upsertRent(rows) {
       `${r.region}_${r.dong}_${r.danji}_${r.size}_${r.floor}_${r.deal_date}`, r
     ])).values()
   );
-  const { error } = await supabase.from('house_rent').upsert(uniqueRows, {
-    onConflict: 'region,dong,danji,size,floor,deal_date'
-  });
-  if (error) console.error('❌ house_rent upsert 에러:', error.message);
+
+  let successCount = 0;
+  for (let i = 0; i < uniqueRows.length; i += UPSERT_BATCH_SIZE) {
+    const chunk = uniqueRows.slice(i, i + UPSERT_BATCH_SIZE);
+    const { error } = await supabase.from('house_rent').upsert(chunk, {
+      onConflict: 'region,dong,danji,size,floor,deal_date'
+    });
+    if (error) {
+      console.error(`❌ house_rent upsert 에러 (${i + 1}~${i + chunk.length}행):`, error.message);
+    } else {
+      successCount += chunk.length;
+    }
+  }
+  console.log(`   → house_rent 저장 완료: ${successCount}/${uniqueRows.length}건`);
 }
