@@ -280,6 +280,9 @@ tr:hover td { background:#fffde7; }
 @media (min-width: 641px) and (max-width: 900px) {
     #panel { width: 340px; }
 }
+@keyframes blink {
+    50% { opacity: 0.4; }
+}
 </style>
 </head>
 <body>
@@ -2825,9 +2828,6 @@ function saveCoordToDB(cacheKey, lat, lon, sigunguCd, bjdongCd) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ cacheKey: cacheKey, lat: lat, lon: lon, sigunguCd: sigunguCd, bjdongCd: bjdongCd })
     }).catch(function() { /* 저장 실패해도 무시 - 다음에 다시 지오코딩하면 됨 */ });
-}
-@keyframes blink {
-    50% { opacity: 0.4; }
 }
 </script>
 </body>
