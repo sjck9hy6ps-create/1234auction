@@ -1484,7 +1484,9 @@ function openPanel(apt, lat, lon) {
     if (apt.hasNewHigh) {
         gradeHtml += ' <span style="background:#ff6f00;color:white;font-size:11px;font-weight:bold;padding:2px 7px;border-radius:10px;">★ 신고가</span>';
     }
-    var hasAuction = auctionList.some(function(a) { return a.name && a.name.trim() === (apt.latest && apt.latest.name || '').trim(); });
+    var hasAuction = auctionList.some(function(a) {
+        return matchesAuctionKey(a, apt.latest && apt.latest.name, apt.latest && apt.latest.dong, apt.latest && apt.latest.bunji);
+    });
     if (hasAuction) {
         gradeHtml += ' <span style="background:#6a1b9a;color:white;font-size:11px;font-weight:bold;padding:2px 7px;border-radius:10px;">🔨 경매</span>';
     }
@@ -1513,14 +1515,17 @@ function openPanel(apt, lat, lon) {
     });
 
     // 지표 저장
-    // 지표 저장
      if (currentIndicators) {
         currentIndicators._newHighPyungs  = apt.newHighPyungs || [];
         currentIndicators._aptName        = apt.latest && apt.latest.name || '';
+        currentIndicators._aptDong        = apt.latest && apt.latest.dong || '';
+        currentIndicators._aptBunji       = apt.latest && apt.latest.bunji || '';
     } else {
         currentIndicators = {
             _newHighPyungs: apt.newHighPyungs || [],
-            _aptName: apt.latest && apt.latest.name || ''
+            _aptName: apt.latest && apt.latest.name || '',
+            _aptDong: apt.latest && apt.latest.dong || '',
+            _aptBunji: apt.latest && apt.latest.bunji || ''
         };
     }
     currentBuildingInfo = null;
@@ -1573,7 +1578,9 @@ function renderTable() {
     }
 
     // 경매 패널
-    if (ind && ind._aptName) html += buildAuctionPanelHtml(ind._aptName);
+    if (ind && (ind._aptName || (ind._aptDong && ind._aptBunji))) {
+        html += buildAuctionPanelHtml(ind._aptName, ind._aptDong, ind._aptBunji);
+    }
 
     // 신고가
     if (ind && ind._newHighPyungs && ind._newHighPyungs.length > 0) {
@@ -1657,7 +1664,7 @@ function renderAuctionList() {
     auctionList.slice().reverse().forEach(function(a) {
         var sc = STATUS_COLOR[a.status] || '#9e9e9e';
         html += '<div class="auction-list-item" onclick="openAuctionModal(\'' + a.id + '\')">'
-            + '<div class="auction-list-name">' + a.name
+            + '<div class="auction-list-name">' + ((a.name && a.name.trim()) || a.addrLabel || a.addr || '(이름없음)')
             + '<span class="auction-status-badge" style="background:' + sc + ';color:white;">' + a.status + '</span></div>'
             + '<div class="auction-list-sub">' + (a.addr || '주소 미입력') + '</div>'
             + '<div class="auction-list-sub" style="color:#6a1b9a;">입찰가 ' + (a.myBid ? toEok(String(parseInt(a.myBid)*100)) : '-') + '</div>'
@@ -1724,7 +1731,11 @@ function searchAuctionAddr() {
             document.getElementById('a-addr').value = r.address_name;
             document.getElementById('a-addr-result').innerText = '📍 ' + label;
             document.getElementById('a-addr-result').style.display = 'block';
-            auctionCoordCache[r.address_name] = { lat: parseFloat(r.y), lon: parseFloat(r.x), label: label };
+            var dong = r.address ? (r.address.region_3depth_name || '') : '';
+            var bunji = r.address
+                ? ((r.address.main_address_no || '') + (r.address.sub_address_no ? '-' + r.address.sub_address_no : ''))
+                : '';
+            auctionCoordCache[r.address_name] = { lat: parseFloat(r.y), lon: parseFloat(r.x), label: label, dong: dong, bunji: bunji };
         } else {
             alert('주소를 찾을 수 없습니다.');
         }
@@ -1766,16 +1777,28 @@ function calcMargin() {
       + mItem('낙찰률',         apprRate > 0 ? apprRate + '%' : '—', apprRate < 80 ? '#2e7d32' : apprRate < 90 ? '#ff7043' : '#e53935')
       + mItem('손익분기 매도가', totalCost > 0 ? toEok(String(totalCost*100)) : '—', '#1565c0');
 }
+function matchesAuctionKey(a, name, dong, bunji) {
+    var aName = (a.name || '').trim();
+    var n = (name || '').trim();
+    if (n && aName && aName === n) return true;
+    var aDong = (a.dong || '').trim();
+    var aBunji = (a.bunji || '').trim();
+    var d = (dong || '').trim();
+    var b = (bunji || '').trim();
+    if (d && b && aDong && aBunji && aDong === d && aBunji === b) return true;
+    return false;
+}   
 async function saveAuction() {
     var addr = document.getElementById('a-addr').value.trim();
     var name = document.getElementById('a-name').value.trim();
     if (!addr) { alert('주소를 입력해 주세요.'); return; }
-    if (!name) { alert('아파트명을 입력해 주세요.'); return; }
     var coordInfo = auctionCoordCache[addr];
     var data = {
         id: document.getElementById('auction-id').value || Date.now().toString(),
         addr: addr, addrLabel: coordInfo ? coordInfo.label : addr,
         lat: coordInfo ? coordInfo.lat : null, lon: coordInfo ? coordInfo.lon : null,
+        dong: coordInfo ? (coordInfo.dong || '') : '',
+        bunji: coordInfo ? (coordInfo.bunji || '') : '',
         name: name, caseNo: document.getElementById('a-case').value,
         pyung: document.getElementById('a-pyung').value, bidDate: document.getElementById('a-date').value,
         status: document.getElementById('a-status').value,
@@ -1792,10 +1815,18 @@ async function saveAuction() {
                 if (status === kakao.maps.services.Status.OK) {
                     data.lat = parseFloat(result[0].y); data.lon = parseFloat(result[0].x);
                     data.addrLabel = result[0].road_address ? result[0].road_address.address_name : result[0].address_name;
+                    data.dong = result[0].address ? (result[0].address.region_3depth_name || '') : '';
+                    data.bunji = result[0].address
+                        ? ((result[0].address.main_address_no || '') + (result[0].address.sub_address_no ? '-' + result[0].address.sub_address_no : ''))
+                        : '';
                 }
                 resolve();
             });
         });
+    }
+    if (!data.name && !(data.dong && data.bunji)) {
+        alert('아파트명을 입력하거나, 주소 검색으로 동/번지를 확인해 주세요.');
+        return;
     }
     setStatus('저장 중...');
     var saved = await saveAuctionAPI(data);
@@ -1838,7 +1869,7 @@ function placeAuctionMarker(a) {
         + 'padding:3px 7px;margin:4px;margin-top:14px;white-space:nowrap;cursor:pointer;'
         + 'box-shadow:0 2px 8px rgba(0,0,0,0.18);text-align:center;line-height:1.5;max-width:160px;';
     div.innerHTML = '<div class="auction-badge" style="background:' + sc + ';">🔨 ' + a.status + '</div>'
-        + '<div style="color:#333;font-size:10px;font-weight:bold;overflow:hidden;text-overflow:ellipsis;max-width:150px;margin-top:4px;">' + a.name + '</div>'
+        + '<div style="color:#333;font-size:10px;font-weight:bold;overflow:hidden;text-overflow:ellipsis;max-width:150px;margin-top:4px;">' + ((a.name && a.name.trim()) || a.addrLabel || a.addr || '(이름없음)') + '</div>'
         + '<div style="color:' + sc + ';font-size:11px;font-weight:bold;">' + (a.myBid ? toEok(String(parseInt(a.myBid)*100)) : '입찰가 미입력') + '</div>'
         + (a.pyung ? '<div style="color:#888;font-size:10px;">' + a.pyung + '평</div>' : '');
     div.onclick = function() { openAuctionModal(a.id); };
@@ -1850,8 +1881,8 @@ function placeAuctionMarker(a) {
     auctionMarkers.push(overlay);
 }
 
-function buildAuctionPanelHtml(aptName) {
-    var matched = auctionList.filter(function(a) { return a.name && a.name.trim() === aptName.trim(); });
+function buildAuctionPanelHtml(aptName, aptDong, aptBunji) {
+    var matched = auctionList.filter(function(a) { return matchesAuctionKey(a, aptName, aptDong, aptBunji); });
     if (!matched.length) return '';
     var html = '';
     matched.forEach(function(a) {
