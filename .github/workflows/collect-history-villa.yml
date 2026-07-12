@@ -23,7 +23,7 @@ jobs:
           node-version: '22'
 
       - name: 의존성 설치
-        run: npm install @supabase/supabase-js
+        run: npm install @supabase/supabase-js ws
 
       - name: 연립다세대 + 단독/다가구 수집 실행
         env:
