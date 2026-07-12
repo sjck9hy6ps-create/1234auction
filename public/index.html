@@ -1404,6 +1404,10 @@ function openPanel(apt, lat, lon) {
     loadBuildingInfo(apt, lat, lon).then(function(info) {
         currentBuildingInfo = info;
         currentBuildingLoading = false;
+        var realUnits = info && info.title && info.title.hhldCnt ? info.title.hhldCnt : null;
+        if (realUnits) {
+            currentVolumeIndicators = calcVolumeIndicators(apt, realUnits);
+        }
         renderTable();
     });
 }
@@ -1955,7 +1959,7 @@ function countInRange(trades, fromDate, toDate) {
     }).length;
 }
 
-function calcVolumeIndicators(apt) {
+function calcVolumeIndicators(apt, realUnits) {
     var trades = (apt.trades || []).filter(function(t) { return t.year > 0; });
     if (!trades.length) return null;
 
@@ -1991,13 +1995,14 @@ function calcVolumeIndicators(apt) {
         volumeDir = volDiffPct > 10 ? 'up' : volDiffPct < -10 ? 'down' : 'flat';
     }
 
-    /* 3) 회전율 - 실제 세대수 정보가 DB에 없어, 층+면적 조합의 고유 개수로 세대수를 추정합니다.
-          (같은 층·같은 면적이 여러 번 거래된 걸 하나의 세대로 간주, 최소 여유배수 3배 적용)
-          → 어디까지나 근사치이며, 실제 세대수를 알고 계시면 그 값으로 교체하는 게 정확합니다. */
+    /* 3) 회전율 - 건축물대장에 실제 세대수(hhldCnt)가 있으면 그 값을 쓰고,
+          없으면 층+면적 조합의 고유 개수로 세대수를 추정합니다(근사치, 최소 여유배수 3배). */
     var recentYearTrades = countInRange(trades, oneYearAgo, null);
     var uniqueUnits = new Set(trades.map(function(t) { return t.floor + '_' + Math.round(t.area); })).size;
     var estUnits = Math.max(uniqueUnits * 3, recentYearTrades, 1);
-    var turnoverRate = Math.round(recentYearTrades / estUnits * 1000) / 10;
+    var isEstimated = !(realUnits && realUnits > 0);
+    var finalUnits = isEstimated ? estUnits : realUnits;
+    var turnoverRate = Math.round(recentYearTrades / finalUnits * 1000) / 10;
 
     /* 골든크로스 - 최근 3개월 월평균이 최근 3년 월평균을 상향 돌파했는지 */
     var recent3moMonthly = countInRange(trades, threeMonAgo, null) / 3;
@@ -2009,7 +2014,8 @@ function calcVolumeIndicators(apt) {
         priceDir: priceDir,
         volumeDir: volumeDir,
         turnoverRate: turnoverRate,
-        estUnits: estUnits,
+        estUnits: finalUnits,
+        isEstimated: isEstimated,
         recentYearTrades: recentYearTrades,
         recent3moMonthly: Math.round(recent3moMonthly * 10) / 10,
         threeYearMonthly: Math.round(threeYearMonthly * 10) / 10,
@@ -2065,12 +2071,14 @@ function buildVolumeAnalysisHtml(vi) {
     /* 3) 회전율 */
     var tg = getTurnoverGrade(vi.turnoverRate);
     html += '<div class="indicator-box">';
-    html += '<div class="indicator-title">회전율 (최근 1년 계약건수 ÷ 추정 세대수, 근사치)</div>';
+    html += '<div class="indicator-title">회전율 (최근 1년 계약건수 ÷ ' + (vi.isEstimated ? '추정 세대수' : '실제 세대수') + ')</div>';
     html += '<div style="display:flex;align-items:center;gap:10px;margin-bottom:6px;">'
         + '<div style="font-size:26px;font-weight:900;color:' + tg.color + ';">' + vi.turnoverRate + '%</div>'
-        + '<div style="font-size:13px;font-weight:bold;color:' + tg.color + ';">' + tg.title + '</div></div>';
+        + '<div style="font-size:13px;font-weight:bold;color:' + tg.color + ';">' + tg.title + '</div>'
+        + (vi.isEstimated ? '' : '<span style="font-size:10px;background:#2e7d32;color:white;padding:1px 6px;border-radius:8px;font-weight:bold;">건축물대장 확인</span>')
+        + '</div>';
     if (tg.desc) html += '<div style="font-size:11px;color:#555;">' + tg.desc + '</div>';
-    html += '<div style="font-size:10px;color:#bbb;margin-top:6px;">추정 세대수 ' + vi.estUnits + '세대 · 최근1년 ' + vi.recentYearTrades + '건 (실제 세대수 아님, 층+면적 조합 기반 근사치)</div>';
+    html += '<div style="font-size:10px;color:#bbb;margin-top:6px;">' + (vi.isEstimated ? '추정 세대수 ' + vi.estUnits + '세대 (층+면적 조합 기반 근사치)' : '실제 세대수 ' + vi.estUnits + '세대') + ' · 최근1년 ' + vi.recentYearTrades + '건</div>';
     html += '</div>';
 
     /* 골든크로스 */
