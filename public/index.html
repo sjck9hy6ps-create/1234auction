@@ -1919,7 +1919,7 @@ function buildAuctionPanelHtml(aptName, aptDong, aptBunji) {
                 + '<span style="color:#9e9e9e;font-size:10px;">메모</span><br>' + a.memo.replace(/\n/g,'<br>') + '</div>';
         } else { html += '</div>'; }
         html += '</div>';
-        html += buildAuctionDetailHtml(a.detail);
+        html +=(a.detail);
     });
     return html;
 }
@@ -2105,7 +2105,6 @@ function buildAuctionDetailHtml(detail) {
     html += '</div>';
     return html;
 }
-════════════════════════════════════════════════════════════    
 /* ════════════════════════════════════
    평단가 타임라인 분석 (8년/5년/1년/4개월/최근거래)
 ════════════════════════════════════ */
