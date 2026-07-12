@@ -48,7 +48,7 @@ body { font-family:'Malgun Gothic',sans-serif; }
     box-shadow:0 2px 10px rgba(0,0,0,0.13);
     display:flex; flex-direction:column; gap:5px;
 }
-.filter-row { display:flex; align-items:center; gap:4px; flex-wrap:nowrap; }
+.filter-row { display:flex; align-items:center; gap:4px; flex-wrap:wrap; }
 .filter-row-label {
     font-size:10px; font-weight:bold; color:#888;
     min-width:46px; text-align:right; padding-right:4px; flex-shrink:0;
@@ -67,7 +67,10 @@ body { font-family:'Malgun Gothic',sans-serif; }
 .ft-g[data-g="5"].active   { background:#66bb6a; border-color:#66bb6a; color:white; }
 .ft-g[data-g="6"].active   { background:#42a5f5; border-color:#42a5f5; color:white; }
 .ft-g[data-g="7"].active   { background:#9e9e9e; border-color:#9e9e9e; color:white; }
-.ft-g[data-g="all"].active { background:#333;    border-color:#333;    color:white; }
+.ft-v.active { background:#00897b; border-color:#00897b; color:white; }
+.ft-reset { background:#f5f5f5; color:#888; }
+#filter-panel { max-width: 680px; }
+ 
 #legend {
     position:absolute; bottom:20px; left:14px; z-index:10;
     background:rgba(255,255,255,0.95); border-radius:10px; padding:10px 14px;
@@ -292,15 +295,27 @@ tr:hover td { background:#fffde7; }
 
 <div id="filter-panel">
     <div class="filter-row">
-        <div class="filter-row-label">평단가</div>
-        <button class="filter-tab ft-g active" data-g="1"   onclick="toggleGrade('1',this)">1등급</button>
-        <button class="filter-tab ft-g"        data-g="2"   onclick="toggleGrade('2',this)">2등급</button>
-        <button class="filter-tab ft-g"        data-g="3"   onclick="toggleGrade('3',this)">3등급</button>
-        <button class="filter-tab ft-g"        data-g="4"   onclick="toggleGrade('4',this)">4등급</button>
-        <button class="filter-tab ft-g"        data-g="5"   onclick="toggleGrade('5',this)">5등급</button>
-        <button class="filter-tab ft-g"        data-g="6"   onclick="toggleGrade('6',this)">6등급</button>
-        <button class="filter-tab ft-g"        data-g="7"   onclick="toggleGrade('7',this)">7등급</button>
-        <button class="filter-tab ft-g"        data-g="all" onclick="toggleGrade('all',this)">전체</button>
+        <div class="filter-row-label">아파트</div>
+        <button class="filter-tab ft-g" data-g="1" onclick="toggleGrade('1',this)">1등급</button>
+        <button class="filter-tab ft-g" data-g="2" onclick="toggleGrade('2',this)">2등급</button>
+        <button class="filter-tab ft-g" data-g="3" onclick="toggleGrade('3',this)">3등급</button>
+        <button class="filter-tab ft-g" data-g="4" onclick="toggleGrade('4',this)">4등급</button>
+        <button class="filter-tab ft-g" data-g="5" onclick="toggleGrade('5',this)">5등급</button>
+        <button class="filter-tab ft-g" data-g="6" onclick="toggleGrade('6',this)">6등급</button>
+        <button class="filter-tab ft-g" data-g="7" onclick="toggleGrade('7',this)">7등급</button>
+        <button class="filter-tab ft-reset" onclick="resetGradeFilter()">초기화</button>
+    </div>
+    <div class="filter-row">
+        <div class="filter-row-label">연립다세대</div>
+        <button class="filter-tab ft-v" data-v="elev_y" onclick="toggleVillaFilter('elev_y',this)">승강기O</button>
+        <button class="filter-tab ft-v" data-v="elev_n" onclick="toggleVillaFilter('elev_n',this)">승강기X</button>
+        <button class="filter-tab ft-v" data-v="park_y" onclick="toggleVillaFilter('park_y',this)">주차O</button>
+        <button class="filter-tab ft-v" data-v="park_n" onclick="toggleVillaFilter('park_n',this)">주차X</button>
+        <span id="villa-year-btns"></span>
+        <button class="filter-tab ft-v" data-v="age_11_15" onclick="toggleVillaFilter('age_11_15',this)">11~15년</button>
+        <button class="filter-tab ft-v" data-v="age_16_20" onclick="toggleVillaFilter('age_16_20',this)">16~20년</button>
+        <button class="filter-tab ft-v" data-v="age_20plus" onclick="toggleVillaFilter('age_20plus',this)">20년이상</button>
+        <button class="filter-tab ft-reset" onclick="resetVillaFilter()">초기화</button>
     </div>
 </div>
 
@@ -512,7 +527,9 @@ var currentPppTimeline = null;
 var currentVolumeIndicators = null;
 var currentBuildingInfo = null;
 var currentBuildingLoading = false;
-var activeGrades = new Set(['all']);
+var activeGrades = new Set();
+var activeVillaFilters = new Set();
+var villaInfoLoading = false;
 
 var GRADE_COLORS = {1:'#b71c1c',2:'#e53935',3:'#ff7043',4:'#ffa726',5:'#66bb6a',6:'#42a5f5',7:'#9e9e9e'};
 
@@ -775,17 +792,100 @@ function calcPriceGrades(aptList) {
     aptList.forEach(function(apt) { if (!apt.grade) { apt.grade = null; apt.ppp = 0; } });
 }
 function toggleGrade(val, btn) {
-    if (val === 'all') {
-        activeGrades.clear(); activeGrades.add('all');
-        document.querySelectorAll('.ft-g').forEach(function(b) { b.classList.toggle('active', b.dataset.g === 'all'); });
-    } else {
-        activeGrades.delete('all');
-        document.querySelector('.ft-g[data-g="all"]').classList.remove('active');
-        if (activeGrades.has(val)) { activeGrades.delete(val); btn.classList.remove('active'); }
-        else { activeGrades.add(val); btn.classList.add('active'); }
-        if (activeGrades.size === 0) { activeGrades.add('all'); document.querySelector('.ft-g[data-g="all"]').classList.add('active'); }
-    }
+    if (activeGrades.has(val)) { activeGrades.delete(val); btn.classList.remove('active'); }
+    else { activeGrades.add(val); btn.classList.add('active'); }
     redrawMarkers();
+}
+function resetGradeFilter() {
+    activeGrades.clear();
+    document.querySelectorAll('.ft-g').forEach(function(b) { b.classList.remove('active'); });
+    redrawMarkers();
+}
+function toggleVillaFilter(val, btn) {
+    if (activeVillaFilters.has(val)) { activeVillaFilters.delete(val); btn.classList.remove('active'); }
+    else { activeVillaFilters.add(val); btn.classList.add('active'); }
+    redrawMarkers();
+}
+function resetVillaFilter() {
+    activeVillaFilters.clear();
+    document.querySelectorAll('.ft-v').forEach(function(b) { b.classList.remove('active'); });
+    redrawMarkers();
+}
+function passesVillaFilter(apt) {
+    var l = apt.latest || {};
+    var buildYear = parseInt(l.build_year, 10) || null;
+    var curYear = today.getFullYear();
+    var ageYears = buildYear ? (curYear - buildYear) : null;
+ 
+    var yearFilters = [], ageFilters = [], elevFilters = [], parkFilters = [];
+    activeVillaFilters.forEach(function(f) {
+        if (f.indexOf('yr_') === 0) yearFilters.push(parseInt(f.slice(3), 10));
+        else if (f === 'age_11_15' || f === 'age_16_20' || f === 'age_20plus') ageFilters.push(f);
+        else if (f === 'elev_y' || f === 'elev_n') elevFilters.push(f);
+        else if (f === 'park_y' || f === 'park_n') parkFilters.push(f);
+    });
+ 
+    var matchesAge = true;
+    if (yearFilters.length || ageFilters.length) {
+        matchesAge = false;
+        if (buildYear !== null) {
+            if (yearFilters.indexOf(buildYear) !== -1) matchesAge = true;
+            if (!matchesAge && ageFilters.indexOf('age_11_15') !== -1 && ageYears >= 11 && ageYears <= 15) matchesAge = true;
+            if (!matchesAge && ageFilters.indexOf('age_16_20') !== -1 && ageYears >= 16 && ageYears <= 20) matchesAge = true;
+            if (!matchesAge && ageFilters.indexOf('age_20plus') !== -1 && ageYears >= 21) matchesAge = true;
+        }
+    }
+ 
+    var info = apt.buildingInfo;
+ 
+    var matchesElev = true;
+    if (elevFilters.length) {
+        matchesElev = false;
+        var hasElev = !!(info && info.title && ((info.title.rideElvtCnt || 0) + (info.title.emgenElvtCnt || 0)) > 0);
+        if (elevFilters.indexOf('elev_y') !== -1 && info && hasElev) matchesElev = true;
+        if (elevFilters.indexOf('elev_n') !== -1 && info && !hasElev) matchesElev = true;
+    }
+ 
+    var matchesPark = true;
+    if (parkFilters.length) {
+        matchesPark = false;
+        var parkTotal = info && info.title
+            ? (info.title.indrAutoUtcnt||0) + (info.title.oudrAutoUtcnt||0) + (info.title.indrMechUtcnt||0) + (info.title.oudrMechUtcnt||0)
+            : 0;
+        var hasPark = !!(info && info.title) && parkTotal > 0;
+        if (parkFilters.indexOf('park_y') !== -1 && info && hasPark) matchesPark = true;
+        if (parkFilters.indexOf('park_n') !== -1 && info && !hasPark) matchesPark = true;
+    }
+ 
+    return matchesAge && matchesElev && matchesPark;
+}
+function pickLatestOne(list) {
+    if (!list.length) return [];
+    var best = list[0];
+    list.forEach(function(a) {
+        var al = a.latest, bl = best.latest;
+        var av = al.year*10000 + al.month*100 + al.day;
+        var bv = bl.year*10000 + bl.month*100 + bl.day;
+        if (av > bv) best = a;
+    });
+    return [best];
+}
+function pickLatestNewHigh(list) {
+    var candidates = [];
+    list.forEach(function(apt) {
+        if (!apt.hasNewHigh) return;
+        var amounts = (apt.newHighPyungs || []).map(function(x) { return x.recentMax; });
+        var matchTrade = null;
+        (apt.trades || []).forEach(function(t) {
+            if (amounts.indexOf(parseInt(t.amount)) !== -1) {
+                if (!matchTrade || tradeDate(t) > tradeDate(matchTrade)) matchTrade = t;
+            }
+        });
+        if (matchTrade) candidates.push({ apt: apt, date: tradeDate(matchTrade) });
+    });
+    if (!candidates.length) return pickLatestOne(list);
+    candidates.sort(function(a, b) { return b.date - a.date; });
+    return [candidates[0].apt];
 }
 
 function passesFilter(apt) {
@@ -812,6 +912,7 @@ function loadKakaoSDK() {
 window.addEventListener('load', loadKakaoSDK);
 
 function initKakao() {
+    buildVillaYearButtons();
     geocoder = new kakao.maps.services.Geocoder();
     places   = new kakao.maps.services.Places();
 
@@ -911,6 +1012,11 @@ async function loadAllData(centerLat, centerLon) {
                 setStatus('');
                 redrawMarkers();
                 setTimeout(function() { warmBuildingCache(allAptList); }, 3000);
+                villaInfoLoading = true;
+                prefetchVillaBuildingInfo(allAptList).then(function() {
+                    villaInfoLoading = false;
+                    redrawMarkers();
+                });
 
             } catch (err) {
                 console.error(err);
@@ -985,10 +1091,26 @@ function groupDBRows(rows, sigungu, lawdCd) {
 ════════════════════════════════════ */
 function redrawMarkers() {
     clearMarkers();
-    var list = allAptList.filter(function(apt) { return passesFilter(apt); });
+    var list;
+    if (currentTypeFilter === 'apt') {
+        var aptAll = allAptList.filter(function(a) { return a.buildingType === 'apt'; });
+        if (activeGrades.size === 0) {
+            list = pickLatestNewHigh(aptAll);
+        } else {
+            list = aptAll.filter(function(a) { return a.grade && activeGrades.has(String(a.grade)); });
+        }
+    } else {
+        var villaAll = allAptList.filter(function(a) { return a.buildingType === 'villa'; });
+        if (activeVillaFilters.size === 0) {
+            list = pickLatestOne(villaAll);
+        } else {
+            list = villaAll.filter(passesVillaFilter);
+        }
+    }
     placeMarkers(list);
     setTimeout(function() { renderAuctionMarkers(); }, 100);
 }
+ 
 
 function getPinConfig(apt) {
     if (apt.count3M > 0)    return { color: '#e53935', count: apt.count3M };
@@ -2276,6 +2398,69 @@ async function warmOne(apt) {
         // 백그라운드 예열이라 실패해도 조용히 무시
     }
 }
+function buildVillaYearButtons() {
+    var container = document.getElementById('villa-year-btns');
+    if (!container) return;
+    var curYear = today.getFullYear();
+    var html = '';
+    for (var y = curYear; y >= curYear - 9; y--) {
+        html += '<button class="filter-tab ft-v" data-v="yr_' + y + '" onclick="toggleVillaFilter(\'yr_' + y + '\',this)">' + y + '년</button>';
+    }
+    container.innerHTML = html;
+}
+ 
+/* ════════════════════════════════════
+   연립다세대 건축물정보 일괄 조회 (승강기/주차 필터용)
+   - 지역 로딩 시 연립다세대 전체를 geocoding + 건축HUB 조회
+   - 완료되면 apt.buildingInfo에 저장되고 필터가 다시 반영됨
+════════════════════════════════════ */
+async function prefetchVillaBuildingInfo(aptList) {
+    var villas = aptList.filter(function(a) { return a.buildingType === 'villa'; });
+    if (!villas.length) return;
+    var idx = 0, done = 0, total = villas.length;
+    var CONCURRENCY = 3;
+    setStatus('연립다세대 정보 불러오는 중... (0/' + total + ')');
+    return new Promise(function(resolveAll) {
+        function next() {
+            if (idx >= villas.length) return;
+            var apt = villas[idx++];
+            fetchOneVillaInfo(apt).finally(function() {
+                done++;
+                setStatus(done < total ? ('연립다세대 정보 불러오는 중... (' + done + '/' + total + ')') : '');
+                if (done >= total) { resolveAll(); return; }
+                next();
+            });
+        }
+        for (var i = 0; i < CONCURRENCY && i < villas.length; i++) next();
+    });
+}
+ 
+async function fetchOneVillaInfo(apt) {
+    try {
+        var l = apt.latest || {};
+        var cacheKey = [l.dong, l.name, l.bunji, l.road_name, l.main_num, l.sub_num].join('|').toLowerCase();
+        var coord = coordCache[cacheKey];
+        if (!coord) {
+            var candidates = buildGeocodeCandidates(l);
+            if (!candidates.length) { apt.buildingInfo = null; return; }
+            coord = await new Promise(function(resolve) {
+                tryStepGeocode(candidates, function(lat, lon) {
+                    if (lat && lon) {
+                        coordCache[cacheKey] = { lat: lat, lon: lon };
+                        resolve({ lat: lat, lon: lon });
+                    } else {
+                        resolve(null);
+                    }
+                });
+            });
+        }
+        if (!coord) { apt.buildingInfo = null; return; }
+        apt.buildingInfo = await loadBuildingInfo(apt, coord.lat, coord.lon);
+    } catch (e) {
+        apt.buildingInfo = null;
+    }
+}
+ 
 </script>
 </body>
 </html>
