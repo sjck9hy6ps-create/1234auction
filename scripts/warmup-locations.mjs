@@ -29,6 +29,63 @@ const PAGE_SIZE = 1000;    // Supabase 페이지네이션 단위
 
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
+/* ── 호출 제한(429) 대응 ──
+   카카오 로컬 API 제한은 대부분 "일일 할당량" 성격이라, 한 번 걸리면
+   같은 실행 안에서 재시도해도 똑같이 막힙니다. 그래서 429가 연속으로
+   몇 번 발생하면 "오늘 할당량 소진"으로 보고 스크립트를 안전하게 멈춥니다.
+   이미 처리된 단지는 complex_coords에 저장돼 있으니, 나중에(예: 다음날)
+   workflow를 다시 실행하면 남은 단지부터 이어서 처리됩니다. */
+let consecutive429 = 0;
+const MAX_CONSECUTIVE_429 = 5;
+let quotaExhausted = false;
+
+async function kakaoFetch(url) {
+  if (quotaExhausted) return null;
+  let res;
+  try {
+    res = await fetch(url, { headers: { Authorization: `KakaoAK ${KAKAO_REST_KEY}` } });
+  } catch (e) {
+    console.error('❌ 카카오 API 네트워크 오류:', e.message);
+    return null;
+  }
+  if (res.status === 429) {
+    consecutive429++;
+    console.error(`⚠️  카카오 API 호출 제한(429) 감지 (연속 ${consecutive429}회)`);
+    if (consecutive429 >= MAX_CONSECUTIVE_429 && !quotaExhausted) {
+      stopForQuota('호출 제한(429)이 계속 걸림');
+    }
+    return null;
+  }
+  // 카카오는 "일일 할당량 초과"를 429가 아니라 HTTP 400 + code:-10 으로 내려줌.
+  // 이 경우는 초당 제한이 아니라 오늘 할당량이 완전히 소진된 것이므로,
+  // 재시도해도 절대 풀리지 않음 → 즉시 감지해서 바로 중단해야 함
+  // (그렇지 않으면 남은 대상 전부에 대해 헛되이 계속 호출하며 "못 찾음"으로 오판하게 됨).
+  if (res.status === 400) {
+    let body = null;
+    try { body = await res.json(); } catch (e) { /* ignore */ }
+    if (body && (body.code === -10 || /API limit has been exceeded/i.test(body.message || ''))) {
+      stopForQuota('일일 호출 할당량 초과 (code -10)');
+      return null;
+    }
+    return null;
+  }
+  consecutive429 = 0;
+  if (!res.ok) return null;
+  try {
+    return await res.json();
+  } catch (e) {
+    return null;
+  }
+}
+
+function stopForQuota(reason) {
+  if (quotaExhausted) return;
+  quotaExhausted = true;
+  console.error(`\n🛑 ${reason} → 여기서 중단합니다.`);
+  console.error(`   ⚠️  이 할당량은 앱(App) 단위라서, 실제 서비스 화면(브라우저)의 카카오맵 주소 검색도 같이 막혀 있을 수 있습니다.`);
+  console.error(`   이미 처리된 단지는 저장되어 있으니, 할당량이 초기화된 뒤(보통 자정 기준) workflow를 다시 실행하면 남은 단지부터 이어서 처리됩니다.\n`);
+}
+
 function buildCacheKey(dong, danji, bunji, roadName, mainNum, subNum) {
   return [dong, danji, bunji, roadName, mainNum, subNum].join('|').toLowerCase();
 }
@@ -75,10 +132,8 @@ async function fetchExistingCoordKeys() {
 /* ── 카카오 REST 주소 검색 ── */
 async function kakaoAddressSearch(query) {
   const url = `https://dapi.kakao.com/v2/local/search/address.json?query=${encodeURIComponent(query)}`;
-  const res = await fetch(url, { headers: { Authorization: `KakaoAK ${KAKAO_REST_KEY}` } });
-  if (!res.ok) return null;
-  const json = await res.json();
-  const doc = json.documents?.[0];
+  const json = await kakaoFetch(url);
+  const doc = json?.documents?.[0];
   if (!doc) return null;
   return { lat: parseFloat(doc.y), lon: parseFloat(doc.x) };
 }
@@ -86,10 +141,8 @@ async function kakaoAddressSearch(query) {
 /* ── 카카오 REST 키워드(장소) 검색 - 주소 검색 실패 시 fallback ── */
 async function kakaoKeywordSearch(query) {
   const url = `https://dapi.kakao.com/v2/local/search/keyword.json?query=${encodeURIComponent(query)}`;
-  const res = await fetch(url, { headers: { Authorization: `KakaoAK ${KAKAO_REST_KEY}` } });
-  if (!res.ok) return null;
-  const json = await res.json();
-  const doc = json.documents?.[0];
+  const json = await kakaoFetch(url);
+  const doc = json?.documents?.[0];
   if (!doc) return null;
   return { lat: parseFloat(doc.y), lon: parseFloat(doc.x) };
 }
@@ -97,10 +150,8 @@ async function kakaoKeywordSearch(query) {
 /* ── 카카오 REST 좌표 → 법정동코드 ── */
 async function kakaoCoordToRegionCode(lat, lon) {
   const url = `https://dapi.kakao.com/v2/local/geo/coord2regioncode.json?x=${lon}&y=${lat}`;
-  const res = await fetch(url, { headers: { Authorization: `KakaoAK ${KAKAO_REST_KEY}` } });
-  if (!res.ok) return null;
-  const json = await res.json();
-  const b = (json.documents || []).find(d => d.region_type === 'B');
+  const json = await kakaoFetch(url);
+  const b = (json?.documents || []).find(d => d.region_type === 'B');
   if (!b || !b.code || b.code.length < 10) return null;
   return { sigunguCd: b.code.slice(0, 5), bjdongCd: b.code.slice(5, 10) };
 }
@@ -181,6 +232,7 @@ async function processQueue(items, worker, concurrency) {
   const total = items.length;
   async function runOne() {
     while (idx < items.length) {
+      if (quotaExhausted) return; // 할당량 소진 시 남은 큐 처리 중단 (Actions 시간 낭비 방지)
       const item = items[idx++];
       await worker(item);
       done++;
@@ -236,9 +288,14 @@ async function main() {
     }
   }, CONCURRENCY);
 
-  console.log(`\n🎉 웜업 완료! 성공 ${success}건 / 실패 ${fail}건`);
-  if (fail > 0) {
-    console.log(`   (실패한 단지는 주소 정보가 부실하거나 카카오에서 찾지 못한 경우입니다. 다시 실행하면 재시도됩니다.)`);
+  if (quotaExhausted) {
+    console.log(`\n⏸️  일일 호출 제한으로 중간에 중단됨. 성공 ${success}건 / 실패 ${fail}건 / 미처리 ${targets.length - success - fail}건`);
+    console.log(`   나중에(예: 다음날) 이 workflow를 다시 실행하면 미처리 단지부터 이어서 진행됩니다.`);
+  } else {
+    console.log(`\n🎉 웜업 완료! 성공 ${success}건 / 실패 ${fail}건`);
+    if (fail > 0) {
+      console.log(`   (실패한 단지는 주소 정보가 부실하거나 카카오에서 찾지 못한 경우입니다. 다시 실행하면 재시도됩니다.)`);
+    }
   }
 }
 
