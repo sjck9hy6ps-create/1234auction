@@ -2165,10 +2165,24 @@ async function loadBuildingInfo(apt, lat, lon) {
 
         var sigunguCd = regionCode.slice(0, 5);
         var bjdongCd  = regionCode.slice(5, 10);
-        var l = apt.latest || {};
-        var main = l.main_num;
-        var sub  = l.sub_num;
+      var l = apt.latest || {};
+        var main = null, sub = null;
+
+        // 1순위: dong + bunji (원본 지번 문자열, 예: "254-3")를 직접 분리
+        if (l.bunji) {
+            var parts = String(l.bunji).split('-');
+            var m1 = parseInt(parts[0], 10);
+            var m2 = parts[1] !== undefined ? parseInt(parts[1], 10) : null;
+            main = Number.isNaN(m1) ? null : m1;
+            sub  = (m2 === null || Number.isNaN(m2) || m2 === 0) ? null : m2;
+        }
+        // 2순위: bunji가 없을 때만 road_name + main_num + sub_num 사용
+        if (!main && l.road_name && l.main_num) {
+            main = l.main_num;
+            sub  = l.sub_num;
+        }
         if (!main) return null;
+
         var bun = String(main).padStart(4, '0');
         var ji  = String(sub || 0).padStart(4, '0');
 
