@@ -999,6 +999,8 @@ async function loadAllData(centerLat, centerLon) {
 
                 // ── DB rows → trade 객체 변환 ──
                  allAptList = groupDBRows(dbData.apt, sigungu, lawdCd);
+                // ── 좌표 캐시 미리 불러오기 (이미 지오코딩된 단지는 카카오 API 스킵) ──
+                await prefetchCoordsFromDB(allAptList);
                 // ── 지표 계산 (평단가 등급만 유지, 투자점수는 삭제) ──
                 calcPriceGrades(allAptList);
                  allAptList.forEach(function(apt) {
@@ -1146,9 +1148,10 @@ function placeMarkers(aptList) {
         var candidates = buildGeocodeCandidates(l);
         if (!candidates.length) { setTimeout(runBatch, 0); return; }
  
-        tryStepGeocode(candidates, function(lat, lon) {
+       tryStepGeocode(candidates, function(lat, lon) {
             if (lat && lon) {
                 coordCache[cacheKey] = { lat: lat, lon: lon };
+                saveCoordToDB(cacheKey, lat, lon);
                 if (getDistance(centerLat, centerLon, lat, lon) <= 15000) {
                     createMarker(lat, lon, apt);
                 }
@@ -2276,20 +2279,30 @@ function selectRemoteComplex(row) {
 async function loadBuildingInfo(apt, lat, lon) {
     try {
         if (!lat || !lon) return null;
-        var regionCode = await new Promise(function(resolve) {
-            geocoder.coord2RegionCode(lon, lat, function(result, status) {
-                if (status !== kakao.maps.services.Status.OK) { resolve(null); return; }
-                var b = result.find(function(r) { return r.region_type === 'B'; });
-                resolve(b ? b.code : null);
+        var l = apt.latest || {};
+        var cacheKey = [l.dong, l.name, l.bunji, l.road_name, l.main_num, l.sub_num].join('|').toLowerCase();
+        var cached = coordCache[cacheKey];
+ 
+        var sigunguCd, bjdongCd;
+        if (cached && cached.sigunguCd && cached.bjdongCd) {
+            sigunguCd = cached.sigunguCd;
+            bjdongCd  = cached.bjdongCd;
+        } else {
+            var regionCode = await new Promise(function(resolve) {
+                geocoder.coord2RegionCode(lon, lat, function(result, status) {
+                    if (status !== kakao.maps.services.Status.OK) { resolve(null); return; }
+                    var b = result.find(function(r) { return r.region_type === 'B'; });
+                    resolve(b ? b.code : null);
+                });
             });
-        });
-        if (!regionCode || regionCode.length < 10) return null;
-
-        var sigunguCd = regionCode.slice(0, 5);
-        var bjdongCd  = regionCode.slice(5, 10);
-      var l = apt.latest || {};
+            if (!regionCode || regionCode.length < 10) return null;
+            sigunguCd = regionCode.slice(0, 5);
+            bjdongCd  = regionCode.slice(5, 10);
+            saveCoordToDB(cacheKey, lat, lon, sigunguCd, bjdongCd);
+        }
+ 
         var main = null, sub = null;
-
+ 
         // 1순위: dong + bunji (원본 지번 문자열, 예: "254-3")를 직접 분리
         if (l.bunji) {
             var parts = String(l.bunji).split('-');
@@ -2304,10 +2317,9 @@ async function loadBuildingInfo(apt, lat, lon) {
             sub  = l.sub_num;
         }
         if (!main) return null;
-
+ 
         var bun = String(main).padStart(4, '0');
         var ji  = String(sub || 0).padStart(4, '0');
-
         var url = '/api/get-building?sigunguCd=' + sigunguCd + '&bjdongCd=' + bjdongCd
             + '&bun=' + bun + '&ji=' + ji + '&bldNm=' + encodeURIComponent(l.name || '');
         var res  = await fetch(url);
@@ -2447,6 +2459,7 @@ async function fetchOneVillaInfo(apt) {
                 tryStepGeocode(candidates, function(lat, lon) {
                     if (lat && lon) {
                         coordCache[cacheKey] = { lat: lat, lon: lon };
+                        saveCoordToDB(cacheKey, lat, lon);
                         resolve({ lat: lat, lon: lon });
                     } else {
                         resolve(null);
@@ -2460,7 +2473,39 @@ async function fetchOneVillaInfo(apt) {
         apt.buildingInfo = null;
     }
 }
+/* ════════════════════════════════════
+   좌표/법정동코드 영구 캐시 (Supabase)
+════════════════════════════════════ */
+async function prefetchCoordsFromDB(aptList) {
+    var keys = [];
+    aptList.forEach(function(apt) {
+        var l = apt.latest || {};
+        var key = [l.dong, l.name, l.bunji, l.road_name, l.main_num, l.sub_num].join('|').toLowerCase();
+        if (!coordCache[key]) keys.push(key);
+    });
+    if (!keys.length) return;
+    try {
+        var res = await fetch('/api/get-coords', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ keys: keys })
+        });
+        var data = await res.json();
+        Object.keys(data.coords || {}).forEach(function(key) {
+            coordCache[key] = data.coords[key];
+        });
+    } catch (e) {
+        console.error('좌표 캐시 조회 실패:', e.message);
+    }
+}
  
+function saveCoordToDB(cacheKey, lat, lon, sigunguCd, bjdongCd) {
+    fetch('/api/save-coord', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ cacheKey: cacheKey, lat: lat, lon: lon, sigunguCd: sigunguCd, bjdongCd: bjdongCd })
+    }).catch(function() { /* 저장 실패해도 무시 - 다음에 다시 지오코딩하면 됨 */ });
+}
 </script>
 </body>
 </html>
