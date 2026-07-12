@@ -1946,10 +1946,18 @@ async function parseAuctionPaste() {
         pendingAuctionDetail = d;
  
         if (d.caseNo) document.getElementById('a-case').value = d.caseNo;
-        if (d.addrRoad || d.addrJibun) document.getElementById('a-addr').value = d.addrRoad || d.addrJibun;
+ 
+        // 주소 입력칸에는 지번주소(동+번지 기준)를 넣어야 기존 dong+bunji 매칭 방식이 그대로 유지됨
+        var addrForInput = d.addrJibun || d.addrRoad || '';
+        if (addrForInput) document.getElementById('a-addr').value = addrForInput;
+ 
+        // 건물명이 있으면 그대로, 없으면(빌라/다세대 등) 동+번지를 이름으로 대신 사용
         if (d.buildingDongName && d.buildingDongName !== '이름없음') {
             document.getElementById('a-name').value = d.buildingDongName;
+        } else if (d.dong && d.bunji) {
+            document.getElementById('a-name').value = d.dong + ' ' + d.bunji;
         }
+ 
         var normDate = normalizeDateForInput(d.saleDate);
         if (normDate) document.getElementById('a-date').value = normDate;
         if (d.appraisalPrice) document.getElementById('a-appraisal').value = Math.round(d.appraisalPrice / 10000);
@@ -1959,7 +1967,10 @@ async function parseAuctionPaste() {
             if (m) document.getElementById('a-pyung').value = Math.round(parseFloat(m[1]));
         }
  
-        var addrToSearch = document.getElementById('a-addr').value.trim();
+        // AI가 이미 뽑아준 dong/bunji가 있으면 그걸 우선 사용해서 지오코딩 검색어를 만듦
+        // (지번주소 문자열에 층/호수가 섞여 있으면 카카오 검색이 실패하거나 다른 곳을 찾을 수 있어서)
+        var geoQuery = (d.dong && d.bunji) ? (d.dong + ' ' + d.bunji) : addrForInput;
+        var addrToSearch = geoQuery.trim();
         if (addrToSearch) {
             await new Promise(function(resolve) {
                 geocoder.addressSearch(addrToSearch, function(result, status) {
@@ -1968,11 +1979,14 @@ async function parseAuctionPaste() {
                         var label = r.road_address ? r.road_address.address_name : r.address_name;
                         document.getElementById('a-addr-result').innerText = '📍 ' + label;
                         document.getElementById('a-addr-result').style.display = 'block';
-                        var dong = r.address ? (r.address.region_3depth_name || '') : '';
-                        var bunji = r.address
+                        // 카카오가 돌려준 dong/bunji보다 AI가 지번주소에서 직접 뽑은 값을 우선 신뢰
+                        var dong = d.dong || (r.address ? (r.address.region_3depth_name || '') : '');
+                        var bunji = d.bunji || (r.address
                             ? ((r.address.main_address_no || '') + (r.address.sub_address_no ? '-' + r.address.sub_address_no : ''))
-                            : '';
-                        auctionCoordCache[addrToSearch] = { lat: parseFloat(r.y), lon: parseFloat(r.x), label: label, dong: dong, bunji: bunji };
+                            : '');
+                        // a-addr 입력칸의 주소 키로 캐시해야 saveAuction()에서 찾아 쓸 수 있음
+                        var addrKey = document.getElementById('a-addr').value.trim();
+                        auctionCoordCache[addrKey] = { lat: parseFloat(r.y), lon: parseFloat(r.x), label: label, dong: dong, bunji: bunji };
                     }
                     resolve();
                 });
