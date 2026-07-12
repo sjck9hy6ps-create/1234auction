@@ -5,6 +5,9 @@
    다시 호출하지 않고 여기서 즉시 좌표를 받아옵니다.
    - keys가 너무 많으면(새 지역 첫 로딩, 웜업 직후 등) Supabase .in() 쿼리가
      한 번에 너무 커져 400(Bad Request)이 나므로, 200개씩 나눠서 조회합니다.
+   - 단지명에 괄호/쉼표 같은 특수문자가 들어간 cache_key가 있으면 .in()이
+     값을 제대로 못 읽어 매번 Bad Request가 나므로, 각 값을 큰따옴표로
+     감싸서 PostgREST의 in.() 문법에 맞게 직접 만들어 보냅니다.
 ════════════════════════════════════ */
 import { createClient } from '@supabase/supabase-js';
 
@@ -14,6 +17,10 @@ const supabase = createClient(
 );
 
 const CHUNK_SIZE = 200;
+
+function buildInList(values) {
+  return '(' + values.map(v => `"${String(v).replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`).join(',') + ')';
+}
 
 export default async function handler(req, res) {
   res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
@@ -33,7 +40,7 @@ export default async function handler(req, res) {
       const { data, error } = await supabase
         .from('complex_coords')
         .select('cache_key, lat, lon, sigungu_cd, bjdong_cd')
-        .in('cache_key', chunk);
+        .filter('cache_key', 'in', buildInList(chunk));
 
       if (error) throw error;
 
