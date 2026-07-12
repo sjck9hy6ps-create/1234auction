@@ -7,6 +7,10 @@
 
 const GEMINI_MODEL = 'gemini-3.5-flash';
 
+// Vercel 함수 자체의 실행 제한 시간을 늘림 (기본값은 너무 짧아서, 스키마가 큰 요청은
+// Gemini 응답이 오기 전에 함수가 먼저 죽어버릴 수 있음). Hobby 플랜에서도 60초까지 가능.
+export const maxDuration = 60;
+
 // Gemini structured output용 응답 스키마 (OpenAPI 서브셋, type은 대문자)
 const RESPONSE_SCHEMA = {
   type: 'OBJECT',
@@ -185,7 +189,7 @@ ${text}
           responseSchema: RESPONSE_SCHEMA,
         },
       }),
-      signal: AbortSignal.timeout(30000),
+      signal: AbortSignal.timeout(55000),
     });
     const data = await geminiRes.json();
     if (!geminiRes.ok) {
