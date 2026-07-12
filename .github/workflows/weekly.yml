@@ -18,7 +18,7 @@ jobs:
           node-version: '20'
 
       - name: 의존성 설치
-        run: npm install @supabase/supabase-js
+        run: npm install @supabase/supabase-js ws
 
       - name: 주간 데이터 수집 실행
         env:
