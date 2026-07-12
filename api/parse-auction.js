@@ -28,6 +28,21 @@ const RESPONSE_SCHEMA = {
     addrRoad: { type: 'STRING' },
     dong: { type: 'STRING' },
     bunji: { type: 'STRING' },
+    // 도로명주소를 house_trades/villa_trades 테이블과 동일한 방식으로 분해
+    // (도로명 + 본번 + 부번). 정보가 없으면 각 필드는 null.
+    roadName: { type: 'STRING' },
+    roadMainNum: { type: 'INTEGER' },
+    roadSubNum: { type: 'INTEGER' },
+    // 소재지 문자열의 "3층302호" 같은 부분에서 층과 호수를 따로 분리
+    unitFloor: { type: 'INTEGER' },
+    unitNo: { type: 'STRING' },
+    // 처분방식 (예: "토지·건물 일괄매각") / 특수조건 (예: "임차권등기,대항력 있는 임차인,공시가 1억이하")
+    disposalMethod: { type: 'STRING' },
+    specialConditions: { type: 'STRING' },
+    // 대지권 면적 - 전체 토지가 아니라 이 물건에 배정된 지분만 (예: "34.19㎡(10.34평)")
+    siteRightsArea: { type: 'STRING' },
+    // 가장 최근 연도의 공동주택(개별)공시가격 (예: "83,700,000원 (2025.01 기준)")
+    officialPriceCurrent: { type: 'STRING' },
     saleDate: { type: 'STRING' },
     rounds: {
       type: 'ARRAY',
@@ -66,7 +81,23 @@ const RESPONSE_SCHEMA = {
     locationDesc: { type: 'STRING' },
     tenantTerminationDate: { type: 'STRING' },
     tenantDistributionDeadline: { type: 'STRING' },
-    tenantOccupants: { type: 'ARRAY', items: { type: 'STRING' } },
+    tenantOccupants: {
+      type: 'ARRAY',
+      items: {
+        type: 'OBJECT',
+        properties: {
+          name: { type: 'STRING' },
+          occupancyPart: { type: 'STRING' },   // 점유부분 (예: "주거용 302호 전부")
+          deposit: { type: 'NUMBER' },          // 보증금
+          rent: { type: 'NUMBER' },             // 월세(차임), 없으면 null
+          hasStanding: { type: 'BOOLEAN' },     // 대항력 있음 여부
+          moveInDate: { type: 'STRING' },       // 전입일
+          fixedDate: { type: 'STRING' },        // 확정일
+          distributionDate: { type: 'STRING' }, // 배당요구일
+          note: { type: 'STRING' },             // 임차권등기자/경매신청인 등 기타 표시
+        },
+      },
+    },
     tenantNote: { type: 'STRING' },
     registryTotalClaim: { type: 'NUMBER' },
     registryItems: {
@@ -83,6 +114,9 @@ const RESPONSE_SCHEMA = {
         },
       },
     },
+    // registryItems를 바탕으로, 이 건물의 소유권 변화·거래금액·대출·상환·말소 흐름을
+    // 사람이 읽기 편한 스토리텔링 문단으로 요약 (아래 프롬프트 규칙 참고)
+    registryStory: { type: 'STRING' },
     riskSummary: { type: 'STRING' },
     salesStats: {
       type: 'OBJECT',
@@ -172,6 +206,24 @@ export default async function handler(req, res) {
 - officialTrades(국토부 실거래가)는 표에 나온 개별 거래를 모두 담으세요.
 - salesStats는 "최근1개월/3개월/6개월/12개월" 각 구간의 평균감정가/평균매각가/평균매각가율/평균입찰인수/예상매각가를 한 문장으로 요약해서 m1/m3/m6/m12에 넣으세요.
 - officialPriceByYear는 연도별 공시가격을 "2021년 8,790만 / 2022년 8,930만 / ..." 같은 한 줄 텍스트로 요약하세요.
+- officialPriceCurrent는 그 중 가장 최근 연도/월 기준 공시가격 한 건만 "83,700,000원 (2025.01 기준)" 형식으로 뽑으세요.
+- 소재지 문자열(예: "경기도 안산시 상록구 본오동 830-16 3층302호")에서 "3층302호" 부분을 찾아
+  unitFloor(숫자만, 예: 3)와 unitNo(호수 문자열 그대로, 예: "302호")로 분리하세요. 이런 표시가 없으면 둘 다 null.
+- roadName/roadMainNum/roadSubNum은 도로명주소(예: "경기 안산시 상록구 본원로 115")에서
+  도로명("본원로")과 건물번호의 본번(115)·부번을 분리하세요. 부번이 없으면 roadSubNum은 null.
+  도로명주소 자체가 없으면 세 필드 모두 null로 두고 절대 지어내지 마세요.
+- disposalMethod(처분방식, 예: "토지·건물 일괄매각")와 specialConditions(특수조건, 예: "임차권등기,대항력 있는 임차인,공시가 1억이하")는
+  본문에 명시된 문구를 그대로 담으세요.
+- siteRightsArea(대지권 면적)는 "대지권" 항목의 면적(㎡·평 둘 다 있으면 그대로, 예: "34.19㎡(10.34평)")을 담되,
+  전체 토지면적이 아니라 이 물건에 배정된 지분(대지권) 면적만 담으세요. 전체 토지면적과 헷갈리지 마세요.
+- tenantOccupants(임차인 현황)는 표/목록에 나온 임차인을 한 명씩 객체로 나눠서 모두 담으세요.
+  대항력 "있음"이면 hasStanding: true, "없음"이면 false, 언급이 없으면 null.
+  전입/확정/배당요구 날짜는 각각 moveInDate/fixedDate/distributionDate에, "임차권등기자", "경매신청인" 같은
+  표시는 note에 담으세요.
+- registryStory: registryItems에 담긴 등기 이력(소유권이전, 근저당, 임차권, 경매개시 등)을 바탕으로,
+  이 부동산이 언제 지어지고 소유자가 어떻게 바뀌었는지, 그때마다 어떤 금액이 오갔는지(매매가/채권금액/대출),
+  그리고 어떤 권리가 왜 소멸되었는지를 시간 순서대로 3~6문장 정도의 자연스러운 한국어 이야기 문단으로 정리하세요.
+  등기부에 없는 내용은 추측하지 말고, 알 수 있는 사실만 서술하세요. 등기 정보가 전혀 없으면 null.
 
 --- 텍스트 시작 ---
 ${text}
