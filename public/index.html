@@ -626,6 +626,7 @@ function tradeDate(t) { return new Date(t.year, t.month - 1, t.day); }
 // 상태
 var allAptList = [];
 var isLoading = false;
+var renderGen = 0;
 var lastLawdCd = null;
 var lastSigungu = '';
 var currentTrades = [], currentSort = 'date', currentPyung = 'all';
@@ -1221,6 +1222,8 @@ function groupDBRows(rows, sigungu, lawdCd) {
 ════════════════════════════════════ */
 function redrawMarkers() {
     clearMarkers();
+    renderGen++;
+    var myGen = renderGen;
     surgeRankMap = computeSurgeRankMap(currentTypeFilter);
     var list;
     if (currentTypeFilter === 'apt') {
@@ -1245,7 +1248,7 @@ function redrawMarkers() {
         }
     }
     if (activeSurgeRanks.size > 0) list = list.filter(passesSurgeFilter);
-    placeMarkers(list);
+    placeMarkers(list, myGen);
     setTimeout(function() { renderAuctionMarkers(); }, 100);
 }
  
@@ -1257,11 +1260,12 @@ function getPinConfig(apt) {
     return { color: '#9e9e9e', count: 0 };
 }
 
-function placeMarkers(aptList) {
+function placeMarkers(aptList, gen) {
     var centerLat = map.getCenter().getLat();
     var centerLon = map.getCenter().getLng();
     var idx = 0;
     function runBatch() {
+        if (gen !== renderGen) return; // 그 사이 다른 redrawMarkers()가 실행됨 - 이 배치는 폐기
         if (idx >= aptList.length) return;
         var apt = aptList[idx++];
         var l = apt.latest || {};
@@ -1285,6 +1289,7 @@ function placeMarkers(aptList) {
         if (!candidates.length) { setTimeout(runBatch, 0); return; }
  
        tryStepGeocode(candidates, function(lat, lon) {
+            if (gen !== renderGen) return; // 지오코딩 응답이 늦게 와서 그 사이 세대가 바뀜 - 무시
             if (lat && lon) {
                 coordCache[cacheKey] = { lat: lat, lon: lon };
                 saveCoordToDB(cacheKey, lat, lon);
