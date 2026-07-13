@@ -146,6 +146,13 @@ tr:hover td { background:#fffde7; }
     padding:1px 6px; border-radius:10px; white-space:nowrap;
     box-shadow:0 1px 3px rgba(0,0,0,0.35); border:1.5px solid white; z-index:2;
 }
+.comp-add-badge {
+    position:absolute; top:-10px; right:-8px;
+    background:#00897b; color:white; font-size:9px; font-weight:900;
+    padding:1px 6px; border-radius:10px; white-space:nowrap; cursor:pointer;
+    box-shadow:0 1px 3px rgba(0,0,0,0.35); border:1.5px solid white; z-index:4;
+}
+.comp-add-badge:hover { background:#00695c; }
 /* 경매 배지 */
 .auction-badge {
     position:absolute; top:-10px; left:50%; transform:translateX(-50%);
@@ -161,6 +168,14 @@ tr:hover td { background:#fffde7; }
 #auction-modal {
     background:white; border-radius:14px; width:420px; max-height:90vh;
     overflow-y:auto; box-shadow:0 8px 32px rgba(0,0,0,0.25); padding:0;
+}
+#comp-pick-modal-bg {
+    position:fixed; inset:0; background:rgba(0,0,0,0.45);
+    z-index:110; display:none; align-items:center; justify-content:center;
+}
+#comp-pick-modal {
+    background:white; border-radius:14px; width:300px; max-height:70vh;
+    overflow-y:auto; box-shadow:0 8px 32px rgba(0,0,0,0.25);
 }
 .modal-header {
     padding:16px 20px; font-size:16px; font-weight:bold;
@@ -209,6 +224,12 @@ tr:hover td { background:#fffde7; }
 .margin-item { background:white; border-radius:7px; padding:7px 10px; text-align:center; border:1px solid #e1bee7; }
 .margin-label { font-size:10px; color:#999; margin-bottom:2px; }
 .margin-value { font-size:14px; font-weight:bold; }
+.comp-item {
+    display:flex; justify-content:space-between; align-items:center;
+    background:#f5f5f5; border-radius:7px; padding:5px 8px; margin-bottom:4px;
+    font-size:11px; color:#555; gap:6px;
+}
+.comp-item-remove { color:#e53935; cursor:pointer; font-weight:bold; flex-shrink:0; }
 .auction-panel-box {
     background:#f3e5f5; border:1.5px solid #ce93d8; border-radius:10px;
     padding:12px 14px; margin-bottom:14px;
@@ -455,7 +476,7 @@ tr:hover td { background:#fffde7; }
             </div>
             <div class="modal-row">
                 <span class="modal-label">평형</span>
-                <input type="number" class="modal-input" id="a-pyung" placeholder="예) 24">
+                <input type="number" class="modal-input" id="a-pyung" placeholder="예) 24" oninput="calcCompValuation()">
                 <span style="font-size:12px;color:#888;margin-left:4px;">평</span>
             </div>
             <div class="modal-row">
@@ -473,6 +494,16 @@ tr:hover td { background:#fffde7; }
                     <option value="매도완료">매도완료</option>
                 </select>
             </div>
+        </div>
+        <div class="modal-section">
+            <div class="modal-section-title">📊 비교물건 시세분석 (최대 10개)</div>
+            <div id="comp-list-box" style="margin-bottom:8px;"></div>
+            <div class="modal-row">
+                <span class="modal-label">목표마진</span>
+                <input type="number" class="modal-input" id="a-comp-target-margin" placeholder="0" oninput="calcCompValuation()">
+                <span style="font-size:12px;color:#888;margin-left:4px;">만원</span>
+            </div>
+            <div id="comp-valuation-result" style="margin-top:8px;"></div>
         </div>
         <div class="modal-section">
             <div class="modal-section-title">💰 가격 정보 (만원 단위)</div>
@@ -540,7 +571,16 @@ tr:hover td { background:#fffde7; }
     </div>
 </div>
 </div>
-
+<div id="comp-pick-modal-bg" onclick="closeCompPickModal(event)">
+<div id="comp-pick-modal">
+    <div class="modal-header">
+        <span>📊 비교물건으로 등록</span>
+        <span class="modal-close" onclick="closeCompPickModal()">✕</span>
+    </div>
+    <div id="comp-pick-body" style="padding:6px 0;"></div>
+</div>
+</div>
+<div id="panel">
 <div id="panel">
     <div id="panel-header">
         <span id="panel-title">거래 목록</span>
@@ -609,6 +649,8 @@ var GRADE_COLORS = {1:'#b71c1c',2:'#e53935',3:'#ff7043',4:'#ffa726',5:'#66bb6a',
 var auctionList = [], auctionCoordCache = {}, auctionMarkers = [];
 var currentAuctionId = null;
 var pendingAuctionDetail = null;
+var pendingAuctionComparables = [];
+var pendingCompMarkerData = null;
 var STATUS_COLOR = {
     '검토중':'#9e9e9e','입찰예정':'#1565c0','낙찰':'#2e7d32',
     '유찰':'#e53935','포기':'#757575','매도완료':'#6a1b9a'
@@ -1380,7 +1422,14 @@ function createMarker(lat, lon, apt) {
         showRadiusCircle(lat, lon);
         openPanel(apt, lat, lon);
     };
-
+    var compBtn = document.createElement('div');
+    compBtn.className = 'comp-add-badge';
+    compBtn.innerText = '+비교';
+    compBtn.onclick = function(e) {
+        e.stopPropagation();
+        openComparablePicker(apt, lat, lon);
+    };
+    div.appendChild(compBtn);
     var overlay = new kakao.maps.CustomOverlay({
         position: new kakao.maps.LatLng(lat, lon),
         content: div,
@@ -1785,15 +1834,17 @@ function openAuctionModal(id) {
     document.getElementById('modal-delete-btn').style.display = isEdit ? '' : 'none';
     ['auction-id','a-addr','a-name','a-case','a-pyung','a-date',
      'a-appraisal','a-min-bid','a-my-bid','a-actual-bid',
-     'a-tax','a-repair','a-agent','a-etc','a-target','a-actual-sell','a-memo','a-paste-text']
+     'a-tax','a-repair','a-agent','a-etc','a-target','a-actual-sell','a-memo','a-paste-text','a-comp-target-margin']
         .forEach(function(fid) { document.getElementById(fid).value = ''; });
     document.getElementById('a-status').value = '검토중';
     document.getElementById('a-addr-result').style.display = 'none';
     pendingAuctionDetail = null;
+    pendingAuctionComparables = [];
     if (isEdit) {
         var a = auctionList.find(function(x) { return x.id === id; });
         if (a) {
             pendingAuctionDetail = a.detail || null;
+            pendingAuctionComparables = a.comparables ? a.comparables.slice() : [];
             document.getElementById('a-paste-text').value = a.rawText || '';
             document.getElementById('auction-id').value    = a.id || '';
             document.getElementById('a-addr').value        = a.addr || '';
@@ -1813,12 +1864,13 @@ function openAuctionModal(id) {
             document.getElementById('a-target').value      = a.target || '';
             document.getElementById('a-actual-sell').value = a.actualSell || '';
             document.getElementById('a-memo').value        = a.memo || '';
+            document.getElementById('a-comp-target-margin').value = a.compTargetMargin || '';
             if (a.addrLabel) { document.getElementById('a-addr-result').innerText = '📍 ' + a.addrLabel; document.getElementById('a-addr-result').style.display = 'block'; }
         }
     }
+   renderCompListBox();
     updateStatusUI(); calcMargin();
     document.getElementById('auction-modal-bg').style.display = 'flex';
-}
 function closeAuctionModal(e) {
     if (e && e.target !== document.getElementById('auction-modal-bg')) return;
     document.getElementById('auction-modal-bg').style.display = 'none';
@@ -1883,6 +1935,7 @@ function calcMargin() {
       + mItem('수익률',         useSell > 0 ? roi + '%' : '—', roi > 10 ? '#2e7d32' : roi > 0 ? '#ff7043' : '#e53935')
       + mItem('낙찰률',         apprRate > 0 ? apprRate + '%' : '—', apprRate < 80 ? '#2e7d32' : apprRate < 90 ? '#ff7043' : '#e53935')
       + mItem('손익분기 매도가', totalCost > 0 ? toEok(String(totalCost*100)) : '—', '#1565c0');
+    calcCompValuation();
 }
 function matchesAuctionKey(a, name, dong, bunji) {
     var aName = (a.name || '').trim();
@@ -1917,6 +1970,8 @@ async function saveAuction() {
         actualSell: document.getElementById('a-actual-sell').value, memo: document.getElementById('a-memo').value,
         detail: pendingAuctionDetail || null,
         rawText: document.getElementById('a-paste-text').value.trim() || null,
+        comparables: pendingAuctionComparables || [],
+        compTargetMargin: document.getElementById('a-comp-target-margin').value,
     };
     if (!data.lat || !data.lon) {
         await new Promise(function(resolve) {
@@ -2058,9 +2113,167 @@ function buildAuctionPanelHtml(aptName, aptDong, aptBunji) {
                 + '<span style="color:#9e9e9e;font-size:10px;">메모</span><br>' + a.memo.replace(/\n/g,'<br>') + '</div>';
         } else { html += '</div>'; }
         html += '</div>';
-        html +=(a.detail);
+      html +=(a.detail);
     });
     return html;
+}
+/* ════════════════════════════════════
+   경매 비교물건 시세분석
+════════════════════════════════════ */
+function openComparablePicker(apt, lat, lon) {
+    if (!auctionList.length) { alert('등록된 경매물건이 없습니다. 먼저 경매물건을 등록해 주세요.'); return; }
+    var l = apt.latest || {};
+    pendingCompMarkerData = {
+        apt: apt, lat: lat, lon: lon,
+        name: (l.name || '').trim() || ((l.dong || '') + ' ' + (l.bunji || '')).trim(),
+        dong: l.dong || '',
+        date: (l.year && l.month && l.day) ? (l.year + '-' + String(l.month).padStart(2,'0') + '-' + String(l.day).padStart(2,'0')) : '',
+        amount: parseInt(l.amount) || 0,
+        area: l.area || 0,
+        floor: l.floor || '-',
+        buildYear: l.build_year || ''
+    };
+    renderCompPickList();
+    document.getElementById('comp-pick-modal-bg').style.display = 'flex';
+}
+function closeCompPickModal(e) {
+    if (e && e.target !== document.getElementById('comp-pick-modal-bg')) return;
+    document.getElementById('comp-pick-modal-bg').style.display = 'none';
+    pendingCompMarkerData = null;
+}
+function renderCompPickList() {
+    var body = document.getElementById('comp-pick-body');
+    var html = '';
+    auctionList.slice().reverse().forEach(function(a) {
+        var cnt = (a.comparables || []).length;
+        html += '<div class="auction-list-item" onclick="confirmAddComparable(\'' + a.id + '\')">'
+            + '<div class="auction-list-name">' + ((a.name && a.name.trim()) || a.addrLabel || a.addr || '(이름없음)') + '</div>'
+            + '<div class="auction-list-sub">비교물건 ' + cnt + '/10</div>'
+            + '</div>';
+    });
+    body.innerHTML = html || '<div style="padding:20px;text-align:center;color:#aaa;font-size:12px;">등록된 경매물건이 없습니다</div>';
+}
+async function confirmAddComparable(auctionId) {
+    if (!pendingCompMarkerData) return;
+    var a = auctionList.find(function(x) { return x.id === auctionId; });
+    if (!a) return;
+    if (!a.comparables) a.comparables = [];
+    if (a.comparables.length >= 10) { alert('비교물건은 최대 10개까지 등록할 수 있습니다.'); return; }
+    var pm = pendingCompMarkerData;
+    var dup = a.comparables.some(function(c) { return c.name === pm.name && c.date === pm.date && c.amount === pm.amount; });
+    if (dup) { alert('이미 등록된 비교물건입니다.'); closeCompPickModal(); return; }
+ 
+    setStatus('승강기 정보 확인 중...');
+    var hasElevator = null;
+    try {
+        var info = await loadBuildingInfo(pm.apt, pm.lat, pm.lon);
+        if (info && info.title) {
+            hasElevator = ((info.title.rideElvtCnt || 0) + (info.title.emgenElvtCnt || 0)) > 0;
+        }
+    } catch (e) { /* 조회 실패해도 나머지 정보로 등록 진행 */ }
+    setStatus('');
+ 
+    a.comparables.push({
+        name: pm.name, dong: pm.dong, date: pm.date, amount: pm.amount,
+        area: pm.area, pyung: pm.area > 0 ? toPyung(pm.area) : null,
+        floor: pm.floor, buildYear: pm.buildYear, hasElevator: hasElevator
+    });
+    var saved = await saveAuctionAPI(a);
+    var idx = auctionList.findIndex(function(x) { return x.id === saved.id; });
+    if (idx >= 0) auctionList[idx] = saved;
+    closeCompPickModal();
+    if (currentAuctionId === auctionId) {
+        pendingAuctionComparables = saved.comparables || [];
+        renderCompListBox();
+        calcCompValuation();
+    }
+    alert('비교물건으로 등록되었습니다. (' + (saved.comparables || []).length + '/10)');
+}
+function renderCompListBox() {
+    var box = document.getElementById('comp-list-box');
+    if (!box) return;
+    var list = pendingAuctionComparables || [];
+    if (!list.length) {
+        box.innerHTML = '<div style="font-size:11px;color:#999;">지도 마커의 "+비교" 배지를 눌러 비슷한 거래를 추가해 주세요. (최대 10개)</div>';
+        return;
+    }
+    var html = '';
+    list.forEach(function(c, i) {
+        var elevText = c.hasElevator === true ? '승강기O' : (c.hasElevator === false ? '승강기X' : '승강기 미확인');
+        html += '<div class="comp-item"><span>' + c.name + ' · ' + (c.date || '-') + ' · ' + toEok(String(c.amount))
+            + ' · ' + (c.pyung ? c.pyung + '평' : '-') + ' · ' + c.floor + '층 · ' + (c.buildYear || '-') + '년 · ' + elevText + '</span>'
+            + '<span class="comp-item-remove" onclick="removeComparable(' + i + ')">✕</span></div>';
+    });
+    box.innerHTML = html;
+}
+function removeComparable(idx) {
+    pendingAuctionComparables.splice(idx, 1);
+    renderCompListBox();
+    calcCompValuation();
+}
+function calcCompValuation() {
+    var box = document.getElementById('comp-valuation-result');
+    if (!box) return;
+    var list = pendingAuctionComparables || [];
+    if (!list.length) { box.innerHTML = ''; return; }
+    var pyungPrices = list.map(function(c) {
+        var py = c.pyung || (c.area > 0 ? toPyung(c.area) : null);
+        return (py && c.amount) ? c.amount / py : null;
+    }).filter(function(v) { return v && v > 0; });
+    if (!pyungPrices.length) { box.innerHTML = '<div style="font-size:11px;color:#e53935;">비교물건의 평단가를 계산할 수 없습니다.</div>'; return; }
+    function median(arr) {
+        var s = arr.slice().sort(function(a,b){return a-b;});
+        var m = Math.floor(s.length/2);
+        return s.length % 2 ? s[m] : (s[m-1]+s[m])/2;
+    }
+    var medPpp = median(pyungPrices); // 만원/평
+    var targetPyung = parseFloat(document.getElementById('a-pyung').value) || null;
+    if (!targetPyung) {
+        box.innerHTML = '<div style="font-size:11px;color:#e53935;">평형을 먼저 입력해야 예상매각가를 계산할 수 있습니다.</div>';
+        return;
+    }
+    var estValue = Math.round(medPpp * targetPyung);
+    var tax    = parseInt(document.getElementById('a-tax').value)    || 0;
+    var repair = parseInt(document.getElementById('a-repair').value) || 0;
+    var agent  = parseInt(document.getElementById('a-agent').value)  || 0;
+    var etc    = parseInt(document.getElementById('a-etc').value)    || 0;
+    var targetMargin = parseInt(document.getElementById('a-comp-target-margin').value) || 0;
+    var suggestedBid = estValue - tax - repair - agent - etc - targetMargin;
+    function vItem(label, value, color) {
+        return '<div class="margin-item"><div class="margin-label">' + label + '</div>'
+            + '<div class="margin-value" style="color:' + color + ';">' + value + '</div></div>';
+    }
+    box.innerHTML = '<div class="margin-result">'
+        + '<div class="margin-result-title">💡 비교물건 ' + list.length + '개 기반 시세분석</div>'
+        + '<div class="margin-grid">'
+        + vItem('비교 평단가(중간값)', Math.round(medPpp/100)/10 + '천만/평', '#555')
+        + vItem('예상매각가', toEok(String(estValue)), '#2e7d32')
+        + vItem('부대비용 합계', (tax+repair+agent+etc) > 0 ? toEok(String(tax+repair+agent+etc)) : '—', '#888')
+        + vItem('적정 입찰가', suggestedBid > 0 ? toEok(String(suggestedBid)) : '—', '#6a1b9a')
+        + '</div>'
+        + '<div style="margin-top:6px;text-align:right;"><button type="button" class="modal-btn btn-purple" style="font-size:11px;" onclick="applyCompBid()">이 값으로 입찰가 채우기</button></div>'
+        + '</div>';
+}
+function applyCompBid() {
+    if (!pendingAuctionComparables || !pendingAuctionComparables.length) return;
+    var pyungPrices = pendingAuctionComparables.map(function(c) {
+        var py = c.pyung || (c.area > 0 ? toPyung(c.area) : null);
+        return (py && c.amount) ? c.amount / py : null;
+    }).filter(function(v) { return v && v > 0; });
+    if (!pyungPrices.length) return;
+    function median(arr) { var s=arr.slice().sort(function(a,b){return a-b;}); var m=Math.floor(s.length/2); return s.length%2?s[m]:(s[m-1]+s[m])/2; }
+    var medPpp = median(pyungPrices);
+    var targetPyung = parseFloat(document.getElementById('a-pyung').value) || null;
+    if (!targetPyung) return;
+    var estValue = Math.round(medPpp * targetPyung);
+    var tax    = parseInt(document.getElementById('a-tax').value)    || 0;
+    var repair = parseInt(document.getElementById('a-repair').value) || 0;
+    var agent  = parseInt(document.getElementById('a-agent').value)  || 0;
+    var etc    = parseInt(document.getElementById('a-etc').value)    || 0;
+    var targetMargin = parseInt(document.getElementById('a-comp-target-margin').value) || 0;
+    var bid = estValue - tax - repair - agent - etc - targetMargin;
+    document.getElementById('a-my-bid').value = bid > 0 ? bid : 0;
+    calcMargin();
 }
 /* ════════════════════════════════════
    경매정보지 AI 자동 추출 - 텍스트 붙여넣기 → /api/parse-auction 호출
