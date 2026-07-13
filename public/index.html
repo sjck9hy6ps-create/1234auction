@@ -41,12 +41,18 @@ body { font-family:'Malgun Gothic',sans-serif; }
     z-index:10; background:rgba(0,0,0,0.75); color:white;
     padding:7px 18px; border-radius:20px; font-size:13px; display:none; white-space:nowrap;
 }
-#filter-panel {
+#filter-toggle-btn {
     position:absolute; top:52px; left:50%; transform:translateX(-50%);
+    z-index:10; padding:7px 16px; font-size:13px; font-weight:bold;
+    border:2px solid #37474f; border-radius:20px; background:white; color:#37474f; cursor:pointer;
+}
+#filter-toggle-btn.active { background:#37474f; color:white; }
+#filter-panel {
+    position:absolute; top:90px; left:50%; transform:translateX(-50%);
     z-index:10; background:rgba(255,255,255,0.97);
     border-radius:12px; padding:6px 12px;
     box-shadow:0 2px 10px rgba(0,0,0,0.13);
-    display:flex; flex-direction:column; gap:5px;
+    display:none; flex-direction:column; gap:5px;
 }
 .filter-row { display:flex; align-items:center; gap:4px; flex-wrap:wrap; }
 .filter-row-label {
@@ -72,7 +78,8 @@ body { font-family:'Malgun Gothic',sans-serif; }
 .ft-surge.active { background:#e53935; border-color:#e53935; color:white; }
 .ft-reset { background:#f5f5f5; color:#888; }
 #filter-panel { max-width: 680px; }
- 
+#filter-toggle-btn { max-width: 680px; }
+    
 #legend {
     position:absolute; bottom:20px; left:14px; z-index:10;
     background:rgba(255,255,255,0.95); border-radius:10px; padding:10px 14px;
@@ -277,8 +284,12 @@ tr:hover td { background:#fffde7; }
         top: 54px; left: 8px; right: 8px;
         justify-content: flex-end;
     }
-    #filter-panel {
+   #filter-toggle-btn {
         top: 94px; left: 8px; right: 8px;
+        transform: none; width: auto; max-width: none; text-align:center;
+    }
+    #filter-panel {
+        top: 130px; left: 8px; right: 8px;
         transform: none; width: auto; max-width: none;
     }
     .filter-row {
@@ -322,6 +333,7 @@ tr:hover td { background:#fffde7; }
 </div>
 
 <div id="filter-panel">
+    <button id="filter-toggle-btn" onclick="toggleFilterPanel()">필터 ▾</button>
     <div class="filter-row">
         <div class="filter-row-label">아파트</div>
         <button class="filter-tab ft-g" data-g="1" onclick="toggleGrade('1',this)">1등급</button>
@@ -966,7 +978,14 @@ function passesFilter(apt) {
     }
     return true;
 }
-
+function toggleFilterPanel() {
+    var p = document.getElementById('filter-panel');
+    var btn = document.getElementById('filter-toggle-btn');
+    var isOpen = p.style.display === 'flex';
+    p.style.display = isOpen ? 'none' : 'flex';
+    btn.classList.toggle('active', !isOpen);
+    btn.innerText = isOpen ? '필터 ▾' : '필터 ▴';
+}
 
 
 /* ════════════════════════════════════
