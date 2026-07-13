@@ -1161,7 +1161,7 @@ function groupDBRows(rows, sigungu, lawdCd) {
 ════════════════════════════════════ */
 function redrawMarkers() {
     clearMarkers();
-    surgeRankMap = computeSurgeRankMap();
+    surgeRankMap = computeSurgeRankMap(currentTypeFilter);
     var list;
     if (currentTypeFilter === 'apt') {
         var aptAll = allAptList.filter(function(a) { return a.buildingType === 'apt'; });
@@ -1623,11 +1623,15 @@ function openPanel(apt, lat, lon) {
     });
 }
 
-function setSort(type, btn) {
-    currentSort = type;
-    document.querySelectorAll('.sort-btn').forEach(function(b) { b.classList.remove('active'); });
-    btn.classList.add('active');
-    renderTable();
+function setTypeFilter(type, btn) {
+    currentTypeFilter = type;
+    document.querySelectorAll('.type-btn').forEach(function(b) {
+        b.classList.remove('active-all', 'active-apt', 'active-villa');
+    });
+    btn.classList.add(type === 'villa' ? 'active-villa' : 'active-apt');
+    redrawMarkers();
+    var sp = document.getElementById('surge-panel');
+    if (sp && sp.style.display === 'block') renderSurgePanel();
 }
 function setPyung(pyung, btn) {
     currentPyung = pyung;
@@ -2904,9 +2908,10 @@ function saveCoordToDB(cacheKey, lat, lon, sigunguCd, bjdongCd) {
 /* ════════════════════════════════════
    동(읍면동/법정동) 단위 단기 거래량 급등 순위
 ════════════════════════════════════ */
-function buildDongSurgeRanking() {
+function buildDongSurgeRanking(type) {
     var map = {}; // "region|dong" -> { region, dong, c3m, c1y, c3y }
     allAptList.forEach(function(apt) {
+        if (type && apt.buildingType !== type) return;
         (apt.trades || []).forEach(function(t) {
             var dong = (t.dong || '').trim();
             if (!dong) return;
@@ -2936,8 +2941,8 @@ function buildDongSurgeRanking() {
     });
     return list;
 }
-function computeSurgeRankMap() {
-    var list = buildDongSurgeRanking(); // 이미 shortRatio(단기지수) 내림차순 정렬됨
+function computeSurgeRankMap(type) {
+    var list = buildDongSurgeRanking(type); // 이미 shortRatio(단기지수) 내림차순 정렬됨
     var map = {};
     list.slice(0, 5).forEach(function(item, i) {
         map[item.dong] = i + 1; // 1~5위
@@ -2971,9 +2976,10 @@ function closeSurgePanel() {
     document.getElementById('surge-panel').style.display = 'none';
 }
 function renderSurgePanel() {
-    document.getElementById('surge-panel-region').innerText = lastSigungu || '지역 미확인';
+    var typeLabel = currentTypeFilter === 'villa' ? '연립다세대·단독다가구' : '아파트';
+    document.getElementById('surge-panel-region').innerText = typeLabel + ' · ' + (lastSigungu || '지역 미확인');
     var body = document.getElementById('surge-panel-body');
-    var list = buildDongSurgeRanking();
+    var list = buildDongSurgeRanking(currentTypeFilter);
     if (!list.length) {
         body.innerHTML = '<div style="padding:20px;text-align:center;color:#aaa;font-size:12px;">데이터가 부족합니다.<br>지도를 이동해 지역을 먼저 불러와 주세요.</div>';
         return;
