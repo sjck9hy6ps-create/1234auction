@@ -1115,10 +1115,14 @@ function redrawMarkers() {
         }
     } else {
         var villaAll = allAptList.filter(function(a) { return a.buildingType === 'villa'; });
-        if (activeVillaFilters.size === 0) {
+        if (activeVillaFilters.size === 0 && activeGrades.size === 0) {
             list = pickLatestOne(villaAll);
         } else {
-            list = villaAll.filter(passesVillaFilter);
+            list = villaAll.filter(function(a) {
+                var gradeOk = activeGrades.size === 0 || (a.grade && activeGrades.has(String(a.grade)));
+                var villaOk = activeVillaFilters.size === 0 || passesVillaFilter(a);
+                return gradeOk && villaOk;
+            });
         }
     }
     placeMarkers(list);
