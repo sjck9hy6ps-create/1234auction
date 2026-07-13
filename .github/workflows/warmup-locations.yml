@@ -1,10 +1,14 @@
-name: 전체 지역 좌표·건축물대장 웜업 (수동)
+name: 전체 지역 좌표·건축물대장 웜업
 on:
-  workflow_dispatch:      # 수동 실행 전용 - 자동 스케줄 없음
+  workflow_dispatch:
+  schedule:
+    # 매일 UTC 18:00(KST 03:00, 새벽 한산한 시간)에 자동 실행되어 이어서 처리.
+    # 이미 처리된 단지는 스킵하니 전국 웜업이 끝난 뒤에도 매번 몇 초 만에 종료되어 부담 없음.
+    - cron: '0 18 * * *'
 jobs:
   warmup:
     runs-on: ubuntu-latest
-    timeout-minutes: 350
+    timeout-minutes: 360   # GitHub Actions 호스팅 러너의 절대 상한 (더 늘릴 수 없음)
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
