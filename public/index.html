@@ -2947,6 +2947,25 @@ function renderSurgePanel() {
 }
 function moveToDong(region, dong) {
     closeSurgePanel();
+ 
+    // 1순위: 이미 지오코딩되어 coordCache에 좌표가 있는 이 동의 건물을 찾아 즉시 이동
+    // (API 호출 없이 동작하므로 카카오 할당량 문제와 무관하게 항상 작동함)
+    var match = allAptList.find(function(apt) {
+        var l = apt.latest || {};
+        if ((l.dong || '').trim() !== dong) return false;
+        var key = [l.dong, l.name, l.bunji, l.road_name, l.main_num, l.sub_num].join('|').toLowerCase();
+        return !!coordCache[key];
+    });
+    if (match) {
+        var l = match.latest;
+        var key = [l.dong, l.name, l.bunji, l.road_name, l.main_num, l.sub_num].join('|').toLowerCase();
+        var c = coordCache[key];
+        map.setCenter(new kakao.maps.LatLng(c.lat, c.lon));
+        map.setLevel(5);
+        return;
+    }
+ 
+    // 2순위: 캐시된 좌표가 하나도 없으면(아직 지오코딩 전인 동) 카카오 API로 직접 조회
     setStatus('위치 찾는 중...');
     tryStepGeocode([(region + ' ' + dong).trim()], function(lat, lon) {
         setStatus('');
@@ -2954,7 +2973,7 @@ function moveToDong(region, dong) {
             map.setCenter(new kakao.maps.LatLng(lat, lon));
             map.setLevel(5);
         } else {
-            alert('이 동의 위치를 찾을 수 없습니다.');
+            alert('이 동의 위치를 찾을 수 없습니다. (카카오 API 일일 호출 제한 중일 수 있어요)');
         }
     });
 }
