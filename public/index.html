@@ -353,7 +353,7 @@ tr:hover td { background:#fffde7; }
 <div id="autocomplete"></div>
 <div id="surge-panel">
     <div class="surge-panel-header">
-        🔥 최근 거래량 급등 동 (현재 화면 시군구 기준)
+        🔥 거래량 급등 동 · <span id="surge-panel-region">-</span>
         <span onclick="closeSurgePanel()" style="float:right;cursor:pointer;">✕</span>
     </div>
     <div id="surge-panel-body"></div>
@@ -2924,6 +2924,7 @@ function closeSurgePanel() {
     document.getElementById('surge-panel').style.display = 'none';
 }
 function renderSurgePanel() {
+    document.getElementById('surge-panel-region').innerText = lastSigungu || '지역 미확인';
     var body = document.getElementById('surge-panel-body');
     var list = buildDongSurgeRanking();
     if (!list.length) {
