@@ -574,8 +574,8 @@ var currentPppTimeline = null;
 var currentVolumeIndicators = null;
 var currentBuildingInfo = null;
 var currentBuildingLoading = false;
-var activeGrades = new Set();
 var activeVillaFilters = new Set();
+var surgeRankMap = {};
 var recentYearOnly = false;
 var villaInfoLoading = false;
 
@@ -1149,6 +1149,7 @@ function groupDBRows(rows, sigungu, lawdCd) {
 ════════════════════════════════════ */
 function redrawMarkers() {
     clearMarkers();
+    surgeRankMap = computeSurgeRankMap();
     var list;
     if (currentTypeFilter === 'apt') {
         var aptAll = allAptList.filter(function(a) { return a.buildingType === 'apt'; });
@@ -1324,6 +1325,11 @@ function createMarker(lat, lon, apt) {
    var nhBadge = apt.hasNewHigh
         ? '<span style="background:#ff6f00;color:white;font-size:10px;font-weight:bold;padding:2px 6px;border-radius:10px;margin-left:3px;">★신고가</span>'
         : '';
+    // 급등 순위 배지 (급등지역 순위 1~5위 안에 들 때만 표시)
+    var surgeRank = surgeRankMap[l.dong];
+    var surgeBadge = surgeRank
+        ? '<span style="background:#e53935;color:white;font-size:10px;font-weight:bold;padding:2px 6px;border-radius:10px;margin-left:3px;">🔥급등 ' + surgeRank + '위</span>'
+        : '';
     // 인기 평형 배지
     var popBadge = buildPopularPyeongBadge(apt);
     var div = document.createElement('div');
@@ -1333,7 +1339,7 @@ function createMarker(lat, lon, apt) {
     div.innerHTML = ''
         + (count > 0 ? '<div style="font-size:15px;font-weight:900;color:' + color + ';">' + count + '건</div>' : '')
         + '<div style="font-size:13px;font-weight:bold;color:#333;overflow:hidden;text-overflow:ellipsis;">'
-        +   (l.name || '') + gradeBadge + nhBadge
+         +   (l.name || '') + gradeBadge + nhBadge + surgeBadge
         + '</div>'
         + (popBadge ? '<div style="margin-top:2px;">' + popBadge + '</div>' : '')
         + (amount ? '<div style="font-size:13px;font-weight:bold;color:' + color + ';">' + toEok(amount) + '</div>' : '')
@@ -1936,7 +1942,12 @@ function placeAuctionMarker(a) {
     var matchedApt = allAptList.find(function(apt) {
         return matchesAuctionKey(a, apt.latest && apt.latest.name, apt.latest && apt.latest.dong, apt.latest && apt.latest.bunji);
     });
- 
+    var surgeRank = a.dong ? surgeRankMap[a.dong] : null;
+    var surgeBadge = surgeRank
+        ? '<span style="background:#e53935;color:white;font-size:9px;font-weight:bold;padding:1px 5px;border-radius:3px;margin-left:3px;">🔥' + surgeRank + '위</span>'
+        : '';
+    var gradeBadge = '', popBadge = '', roadLine = '';
+    if (matchedApt) {
     var gradeBadge = '', popBadge = '', roadLine = '';
     if (matchedApt) {
         if (matchedApt.grade) {
@@ -1973,7 +1984,7 @@ function placeAuctionMarker(a) {
         + 'box-shadow:0 2px 8px rgba(0,0,0,0.18);text-align:center;line-height:1.5;max-width:190px;';
     div.innerHTML = '<div class="auction-badge" style="background:' + sc + ';">🔨 ' + a.status + alarmBadge + '</div>'
         + '<div style="color:#333;font-size:10px;font-weight:bold;overflow:hidden;text-overflow:ellipsis;max-width:170px;margin-top:4px;">'
-        +   ((a.name && a.name.trim()) || a.addrLabel || a.addr || '(이름없음)') + gradeBadge
+        +   ((a.name && a.name.trim()) || a.addrLabel || a.addr || '(이름없음)') + gradeBadge + surgeBadge
         + '</div>'
         + (popBadge ? '<div style="margin-top:2px;">' + popBadge + '</div>' : '')
         + '<div style="color:' + sc + ';font-size:11px;font-weight:bold;">' + priceLine + '</div>'
@@ -2914,6 +2925,15 @@ function buildDongSurgeRanking() {
     });
     return list;
 }
+function computeSurgeRankMap() {
+    var list = buildDongSurgeRanking(); // 이미 shortRatio(단기지수) 내림차순 정렬됨
+    var map = {};
+    list.slice(0, 5).forEach(function(item, i) {
+        map[item.dong] = i + 1; // 1~5위
+    });
+    return map;
+}
+
 function openSurgePanel() {
     var p = document.getElementById('surge-panel');
     if (p.style.display === 'block') { p.style.display = 'none'; return; }
