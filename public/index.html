@@ -234,6 +234,28 @@ tr:hover td { background:#fffde7; }
     padding:10px 14px; font-size:12px; font-weight:bold; color:#6a1b9a;
     border-bottom:1px solid #eee; position:sticky; top:0; background:white;
 }
+#surge-btn {
+    background:#e53935; color:white; border-color:#e53935;
+}
+#surge-panel {
+    position:absolute; top:56px; right:14px; z-index:10;
+    background:white; border-radius:12px; width:300px; max-height:70vh;
+    overflow-y:auto; box-shadow:0 4px 16px rgba(0,0,0,0.18); display:none;
+}
+.surge-panel-header {
+    padding:10px 14px; font-size:12px; font-weight:bold; color:#e53935;
+    border-bottom:1px solid #eee; position:sticky; top:0; background:white;
+}
+.surge-item {
+    padding:10px 14px; border-bottom:1px solid #f0f0f0; cursor:pointer; transition:background 0.1s;
+}
+.surge-item:hover { background:#fff3f3; }
+.surge-rank { font-size:11px; color:#999; font-weight:bold; }
+.surge-dong { font-size:13px; font-weight:bold; color:#333; }
+.surge-metric { font-size:11px; color:#555; margin-top:2px; }
+@media (max-width: 640px) {
+    #surge-panel { top: 94px; right: 8px; width: calc(100vw - 16px); max-width: 320px; }
+}
 .auction-list-item {
     padding:10px 14px; border-bottom:1px solid #f0f0f0; cursor:pointer; transition:background 0.1s;
 }
@@ -295,6 +317,7 @@ tr:hover td { background:#fffde7; }
 <div id="type-filter">
     <button class="type-btn active-apt" onclick="setTypeFilter('apt',this)">아파트</button>
     <button class="type-btn" onclick="setTypeFilter('villa',this)">연립다세대</button>
+    <button class="type-btn" id="surge-btn" onclick="openSurgePanel()">🔥 급등지역</button>
 </div>
 
 <div id="filter-panel">
@@ -328,6 +351,13 @@ tr:hover td { background:#fffde7; }
 </div>
 
 <div id="autocomplete"></div>
+<div id="surge-panel">
+    <div class="surge-panel-header">
+        🔥 최근 거래량 급등 동 (현재 화면 시군구 기준)
+        <span onclick="closeSurgePanel()" style="float:right;cursor:pointer;">✕</span>
+    </div>
+    <div id="surge-panel-body"></div>
+</div>
 <div id="status-box"></div>
 <div id="map"></div>
 
@@ -2848,6 +2878,84 @@ function saveCoordToDB(cacheKey, lat, lon, sigunguCd, bjdongCd) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ cacheKey: cacheKey, lat: lat, lon: lon, sigunguCd: sigunguCd, bjdongCd: bjdongCd })
     }).catch(function() { /* 저장 실패해도 무시 - 다음에 다시 지오코딩하면 됨 */ });
+}
+/* ════════════════════════════════════
+   동(읍면동/법정동) 단위 단기 거래량 급등 순위
+════════════════════════════════════ */
+function buildDongSurgeRanking() {
+    var map = {}; // "region|dong" -> { region, dong, c3m, c1y, c3y }
+    allAptList.forEach(function(apt) {
+        (apt.trades || []).forEach(function(t) {
+            var dong = (t.dong || '').trim();
+            if (!dong) return;
+            var region = (t.region || lastSigungu || '').trim();
+            var key = region + '|' + dong;
+            if (!map[key]) map[key] = { region: region, dong: dong, c3m: 0, c1y: 0, c3y: 0 };
+            var d = tradeDate(t);
+            if (d >= threeYearAgo) map[key].c3y++;
+            if (d >= oneYearAgo)  map[key].c1y++;
+            if (d >= threeMonAgo) map[key].c3m++;
+        });
+    });
+    var list = Object.keys(map).map(function(k) { return map[k]; });
+    // 노이즈 방지: 최근 3년 누적 거래가 5건 미만인 동은 제외
+    list = list.filter(function(item) { return item.c3y >= 5; });
+    list.forEach(function(item) {
+        var m3  = item.c3m / 3;
+        var m1y = item.c1y / 12;
+        var m3y = item.c3y / 36;
+        item.shortRatio = m1y > 0 ? Math.round(m3  / m1y * 1000) / 10 : null; // 단기: 3개월 vs 1년
+        item.longRatio  = m3y > 0 ? Math.round(m1y / m3y * 1000) / 10 : null; // 중장기: 1년 vs 3년
+    });
+    list.sort(function(a, b) {
+        var av = a.shortRatio === null ? -1 : a.shortRatio;
+        var bv = b.shortRatio === null ? -1 : b.shortRatio;
+        return bv - av;
+    });
+    return list;
+}
+function openSurgePanel() {
+    var p = document.getElementById('surge-panel');
+    if (p.style.display === 'block') { p.style.display = 'none'; return; }
+    renderSurgePanel();
+    p.style.display = 'block';
+}
+function closeSurgePanel() {
+    document.getElementById('surge-panel').style.display = 'none';
+}
+function renderSurgePanel() {
+    var body = document.getElementById('surge-panel-body');
+    var list = buildDongSurgeRanking();
+    if (!list.length) {
+        body.innerHTML = '<div style="padding:20px;text-align:center;color:#aaa;font-size:12px;">데이터가 부족합니다.<br>지도를 이동해 지역을 먼저 불러와 주세요.</div>';
+        return;
+    }
+    var top = list.slice(0, 20);
+    var html = '';
+    top.forEach(function(item, i) {
+        var shortText = item.shortRatio === null ? '-' : item.shortRatio + '%';
+        var longText  = item.longRatio  === null ? '-' : item.longRatio + '%';
+        var shortColor = item.shortRatio !== null && item.shortRatio >= 150 ? '#e53935' : '#555';
+        html += '<div class="surge-item" onclick="moveToDong(\'' + item.region.replace(/'/g, "\\'") + '\',\'' + item.dong.replace(/'/g, "\\'") + '\')">'
+            + '<span class="surge-rank">' + (i + 1) + '위</span> <span class="surge-dong">' + item.dong + '</span>'
+            + '<div class="surge-metric" style="color:' + shortColor + ';">단기(3개월÷1년) ' + shortText + ' · 최근3개월 ' + item.c3m + '건</div>'
+            + '<div class="surge-metric">중장기(1년÷3년) ' + longText + '</div>'
+            + '</div>';
+    });
+    body.innerHTML = html;
+}
+function moveToDong(region, dong) {
+    closeSurgePanel();
+    setStatus('위치 찾는 중...');
+    tryStepGeocode([(region + ' ' + dong).trim()], function(lat, lon) {
+        setStatus('');
+        if (lat && lon) {
+            map.setCenter(new kakao.maps.LatLng(lat, lon));
+            map.setLevel(5);
+        } else {
+            alert('이 동의 위치를 찾을 수 없습니다.');
+        }
+    });
 }
 </script>
 </body>
