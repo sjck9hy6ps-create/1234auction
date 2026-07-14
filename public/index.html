@@ -3238,15 +3238,16 @@ function saveCoordToDB(cacheKey, lat, lon, sigunguCd, bjdongCd) {
    동(읍면동/법정동) 단위 단기 거래량 급등 순위
 ════════════════════════════════════ */
 function buildDongSurgeRanking(type) {
-    var map = {}; // "region|dong" -> { region, dong, c3m, c1y, c3y }
+    var map = {}; // dong -> { region, dong, c3m, c1y, c3y }
     allAptList.forEach(function(apt) {
         if (type && apt.buildingType !== type) return;
         (apt.trades || []).forEach(function(t) {
             var dong = (t.dong || '').trim();
             if (!dong) return;
             var region = (t.region || lastSigungu || '').trim();
-            var key = region + '|' + dong;
+            var key = dong;
             if (!map[key]) map[key] = { region: region, dong: dong, c3m: 0, c1y: 0, c3y: 0 };
+            else if (!map[key].region && region) map[key].region = region;
             var d = tradeDate(t);
             if (d >= threeYearAgo) map[key].c3y++;
             if (d >= oneYearAgo)  map[key].c1y++;
