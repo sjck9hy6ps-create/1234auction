@@ -1779,11 +1779,14 @@ function renderTable() {
     if (currentPanelApt && currentPanelApt.buildingType === 'villa' && currentPanelApt.ageTier) {
         html += buildTierTrendChartHtml(currentPanelApt.ageTier);
     }
-    // 건축물대장 정보
+   
+   // 건축물대장 정보
     if (currentBuildingLoading) {
         html += '<div class="indicator-box"><div class="indicator-title">🏢 건축물대장 정보</div><div style="font-size:11px;color:#999;">불러오는 중...</div></div>';
     } else if (currentBuildingInfo) {
         html += buildBuildingInfoHtml(currentBuildingInfo);
+    } else {
+        html += '<div class="indicator-box"><div class="indicator-title">🏢 건축물대장 정보</div><div style="font-size:11px;color:#e53935;">정보를 불러오지 못했습니다. (카카오 API 오류이거나, 건축HUB에 등록된 정보가 없을 수 있어요)</div></div>';
     }
 
     // 경매 패널
