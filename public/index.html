@@ -628,6 +628,7 @@ var allAptList = [];
 var isLoading = false;
 var renderGen = 0;
 var lastLawdCd = null;
+var lastResolvedLat = null, lastResolvedLon = null;
 var lastSigungu = '';
 var currentTrades = [], currentSort = 'date', currentPyung = 'all';
 var currentTypeFilter = 'apt';
@@ -1092,10 +1093,20 @@ function initMap(lat, lon) {
 async function loadAllData(centerLat, centerLon) {
     return new Promise(function(resolve) {
         if (isLoading) { resolve(); return; }
-
+ 
+        // 최근에 지역을 확인했던 지점에서 2km 이내로만 움직였으면
+        // 카카오 API 호출 없이 캐시된 지역 데이터로 바로 처리
+        // (지역 확인용 API 호출 자체가 오늘처럼 불안정할 때 캐시 히트까지
+        //  막아버리는 걸 방지 + 불필요한 API 호출로 할당량 소모하는 것도 방지)
+        if (lastResolvedLat !== null && lastLawdCd && dataCache[lastLawdCd]
+            && getDistance(centerLat, centerLon, lastResolvedLat, lastResolvedLon) <= 2000) {
+            redrawMarkers();
+            resolve();
+            return;
+        }
+ 
         geocoder.coord2RegionCode(centerLon, centerLat, async function(result, status) {
             if (status !== kakao.maps.services.Status.OK) { resolve(); return; }
-
             var regionCode = null, sigungu = '';
             for (var i = 0; i < result.length; i++) {
                 if (result[i].region_type === 'B') {
@@ -1105,14 +1116,13 @@ async function loadAllData(centerLat, centerLon) {
                 }
             }
             if (!regionCode) { resolve(); return; }
-
             var lawdCd = regionCode.substring(0, 5);
             lastSigungu = sigungu;
-
+            lastResolvedLat = centerLat;
+            lastResolvedLon = centerLon;
             if (lawdCd === lastLawdCd && dataCache[lawdCd]) {
                 redrawMarkers(); resolve(); return;
             }
-
             lastLawdCd = lawdCd;
             isLoading = true;
             setStatus('데이터 로딩 중...');
