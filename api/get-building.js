@@ -81,18 +81,22 @@ export default async function handler(req, res) {
     } : undefined;
 
     // ── 3. 캐시에 저장 (write-through) ──
-    const { error: upsertErr } = await supabase.from('building_info').upsert({
-      sigungu_cd: sigunguCd,
-      bjdong_cd:  bjdongCd,
-      bun,
-      ji:         jiParam,
-      bld_nm:     bldNmKey,
-      title_json: title,
-      price_json: price,
-      fetched_at: new Date().toISOString(),
-    }, { onConflict: 'sigungu_cd,bjdong_cd,bun,ji,bld_nm' });
-    if (upsertErr) console.error('building_info 캐시 저장 에러:', upsertErr.message);
-
+    // title/price가 둘 다 없으면(예: 429 할당량 초과 등 일시적 실패) 캐시에 저장하지 않음
+    // → 다음 요청 때 다시 실시간 조회를 시도할 수 있게 함
+    if (title || price) {
+      const { error: upsertErr } = await supabase.from('building_info').upsert({
+        sigungu_cd: sigunguCd,
+        bjdong_cd:  bjdongCd,
+        bun,
+        ji:         jiParam,
+        bld_nm:     bldNmKey,
+        title_json: title,
+        price_json: price,
+        fetched_at: new Date().toISOString(),
+      }, { onConflict: 'sigungu_cd,bjdong_cd,bun,ji,bld_nm' });
+      if (upsertErr) console.error('building_info 캐시 저장 에러:', upsertErr.message);
+    }
+ 
     return res.status(200).json({ title, price, cached: false, debug });
   } catch (err) {
     console.error('건축물대장 조회 에러:', err.message);
