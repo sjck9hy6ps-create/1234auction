@@ -74,6 +74,7 @@ body { font-family:'Malgun Gothic',sans-serif; }
 .ft-g[data-g="6"].active   { background:#42a5f5; border-color:#42a5f5; color:white; }
 .ft-g[data-g="7"].active   { background:#9e9e9e; border-color:#9e9e9e; color:white; }
 .ft-v.active { background:#00897b; border-color:#00897b; color:white; }
+.ft-tier.active { background:#8d6e63; border-color:#8d6e63; color:white; }
 .ft-common.active { background:#37474f; border-color:#37474f; color:white; }
 .ft-surge.active { background:#e53935; border-color:#e53935; color:white; }
 .ft-reset { background:#f5f5f5; color:#888; }
@@ -355,8 +356,8 @@ tr:hover td { background:#fffde7; }
 
 <button id="filter-toggle-btn" onclick="toggleFilterPanel()">필터 ▾</button>
 <div id="filter-panel">
-    <div class="filter-row">
-        <div class="filter-row-label">아파트</div>
+     <div class="filter-row">
+        <div class="filter-row-label">등급</div>
         <button class="filter-tab ft-g" data-g="1" onclick="toggleGrade('1',this)">1등급</button>
         <button class="filter-tab ft-g" data-g="2" onclick="toggleGrade('2',this)">2등급</button>
         <button class="filter-tab ft-g" data-g="3" onclick="toggleGrade('3',this)">3등급</button>
@@ -375,17 +376,22 @@ tr:hover td { background:#fffde7; }
         <button class="filter-tab ft-surge" data-s="5" onclick="toggleSurgeRank('5',this)">5위</button>
         <button class="filter-tab ft-reset" onclick="resetSurgeRankFilter()">초기화</button>
     </div>
-    <div class="filter-row">
+<div class="filter-row">
         <div class="filter-row-label">연립다세대</div>
         <button class="filter-tab ft-v" data-v="elev_y" onclick="toggleVillaFilter('elev_y',this)">승강기O</button>
         <button class="filter-tab ft-v" data-v="elev_n" onclick="toggleVillaFilter('elev_n',this)">승강기X</button>
         <button class="filter-tab ft-v" data-v="park_y" onclick="toggleVillaFilter('park_y',this)">주차O</button>
         <button class="filter-tab ft-v" data-v="park_n" onclick="toggleVillaFilter('park_n',this)">주차X</button>
-        <span id="villa-year-btns"></span>
-        <button class="filter-tab ft-v" data-v="age_11_15" onclick="toggleVillaFilter('age_11_15',this)">11~15년</button>
-        <button class="filter-tab ft-v" data-v="age_16_20" onclick="toggleVillaFilter('age_16_20',this)">16~20년</button>
-        <button class="filter-tab ft-v" data-v="age_20plus" onclick="toggleVillaFilter('age_20plus',this)">20년이상</button>
         <button class="filter-tab ft-reset" onclick="resetVillaFilter()">초기화</button>
+    </div>
+    <div class="filter-row">
+        <div class="filter-row-label">연식단계</div>
+        <button class="filter-tab ft-tier" data-tier="premium" onclick="toggleVillaTier('premium',this)">프리미엄신축(0~3년)</button>
+        <button class="filter-tab ft-tier" data-tier="new" onclick="toggleVillaTier('new',this)">신축(4~8년)</button>
+        <button class="filter-tab ft-tier" data-tier="semi" onclick="toggleVillaTier('semi',this)">준신축(9~15년)</button>
+        <button class="filter-tab ft-tier" data-tier="old" onclick="toggleVillaTier('old',this)">구축(16~25년)</button>
+        <button class="filter-tab ft-tier" data-tier="aged" onclick="toggleVillaTier('aged',this)">노후(26년~)</button>
+        <button class="filter-tab ft-reset" onclick="resetVillaTierFilter()">초기화</button>
     </div>
      <div class="filter-row">
         <div class="filter-row-label">공통</div>
@@ -639,6 +645,14 @@ var currentBuildingInfo = null;
 var currentBuildingLoading = false;
 var activeGrades = new Set();
 var activeVillaFilters = new Set();
+var activeVillaTiers = new Set();
+var VILLA_AGE_TIERS = [
+    { key:'premium', label:'프리미엄신축', min:0,  max:3 },
+    { key:'new',     label:'신축',         min:4,  max:8 },
+    { key:'semi',    label:'준신축',       min:9,  max:15 },
+    { key:'old',     label:'구축',         min:16, max:25 },
+    { key:'aged',    label:'노후',         min:26, max:Infinity }
+];
 var surgeRankMap = {};
 var activeSurgeRanks = new Set();
 var recentYearOnly = false;
@@ -879,16 +893,36 @@ function calcInvestIndicators(aptList) {
     });
 }
 
+function getVillaAgeTier(apt) {
+    var l = apt.latest || {};
+    var buildYear = parseInt(l.build_year, 10);
+    if (!buildYear) return null;
+    var age = today.getFullYear() - buildYear;
+    for (var i = 0; i < VILLA_AGE_TIERS.length; i++) {
+        var t = VILLA_AGE_TIERS[i];
+        if (age >= t.min && age <= t.max) return t.key;
+    }
+    return null;
+}
+function getVillaTierLabel(tierKey) {
+    var t = VILLA_AGE_TIERS.find(function(x) { return x.key === tierKey; });
+    return t ? t.label : null;
+}
 function calcPriceGrades(aptList) {
     var groups = {};
     aptList.forEach(function(apt) {
         var type = apt.buildingType || 'apt';
-        if (!groups[type]) groups[type] = [];
-        groups[type].push(apt);
+        var groupKey = type;
+        if (type === 'villa') {
+            apt.ageTier = getVillaAgeTier(apt);
+            groupKey = apt.ageTier ? ('villa_' + apt.ageTier) : 'villa_unknown';
+        }
+        if (!groups[groupKey]) groups[groupKey] = [];
+        groups[groupKey].push(apt);
     });
  
-    Object.keys(groups).forEach(function(type) {
-        var scored = groups[type].map(function(apt) {
+    Object.keys(groups).forEach(function(groupKey) {
+        var scored = groups[groupKey].map(function(apt) {
             var valid = apt.trades.filter(function(t) {
                 return tradeDate(t) >= oneYearAgo && t.area > 0 && parseInt(t.amount) > 0 && parseInt(t.floor) !== 1;
             });
@@ -904,6 +938,9 @@ function calcPriceGrades(aptList) {
             x.apt.ppp   = Math.round(x.ppp);
         });
     });
+ 
+    aptList.forEach(function(apt) { if (!apt.grade) { apt.grade = null; apt.ppp = 0; } });
+}
  
     aptList.forEach(function(apt) { if (!apt.grade) { apt.grade = null; apt.ppp = 0; } });
 }
@@ -935,30 +972,22 @@ function resetVillaFilter() {
     document.querySelectorAll('.ft-v').forEach(function(b) { b.classList.remove('active'); });
     redrawMarkers();
 }
+function toggleVillaTier(val, btn) {
+    if (activeVillaTiers.has(val)) { activeVillaTiers.delete(val); btn.classList.remove('active'); }
+    else { activeVillaTiers.add(val); btn.classList.add('active'); }
+    redrawMarkers();
+}
+function resetVillaTierFilter() {
+    activeVillaTiers.clear();
+    document.querySelectorAll('.ft-tier').forEach(function(b) { b.classList.remove('active'); });
+    redrawMarkers();
+}
 function passesVillaFilter(apt) {
-    var l = apt.latest || {};
-    var buildYear = parseInt(l.build_year, 10) || null;
-    var curYear = today.getFullYear();
-    var ageYears = buildYear ? (curYear - buildYear) : null;
- 
-    var yearFilters = [], ageFilters = [], elevFilters = [], parkFilters = [];
+    var elevFilters = [], parkFilters = [];
     activeVillaFilters.forEach(function(f) {
-        if (f.indexOf('yr_') === 0) yearFilters.push(parseInt(f.slice(3), 10));
-        else if (f === 'age_11_15' || f === 'age_16_20' || f === 'age_20plus') ageFilters.push(f);
-        else if (f === 'elev_y' || f === 'elev_n') elevFilters.push(f);
+        if (f === 'elev_y' || f === 'elev_n') elevFilters.push(f);
         else if (f === 'park_y' || f === 'park_n') parkFilters.push(f);
     });
- 
-    var matchesAge = true;
-    if (yearFilters.length || ageFilters.length) {
-        matchesAge = false;
-        if (buildYear !== null) {
-            if (yearFilters.indexOf(buildYear) !== -1) matchesAge = true;
-            if (!matchesAge && ageFilters.indexOf('age_11_15') !== -1 && ageYears >= 11 && ageYears <= 15) matchesAge = true;
-            if (!matchesAge && ageFilters.indexOf('age_16_20') !== -1 && ageYears >= 16 && ageYears <= 20) matchesAge = true;
-            if (!matchesAge && ageFilters.indexOf('age_20plus') !== -1 && ageYears >= 21) matchesAge = true;
-        }
-    }
  
     var info = apt.buildingInfo;
  
@@ -981,7 +1010,7 @@ function passesVillaFilter(apt) {
         if (parkFilters.indexOf('park_n') !== -1 && info && !hasPark) matchesPark = true;
     }
  
-    return matchesAge && matchesElev && matchesPark;
+    return matchesElev && matchesPark;
 }
 function pickLatestOne(list) {
     if (!list.length) return [];
@@ -1043,7 +1072,6 @@ function loadKakaoSDK() {
 window.addEventListener('load', loadKakaoSDK);
 
 function initKakao() {
-    buildVillaYearButtons();
     geocoder = new kakao.maps.services.Geocoder();
     places   = new kakao.maps.services.Places();
 
@@ -1244,16 +1272,17 @@ function redrawMarkers() {
         } else {
             list = aptAll.filter(function(a) { return a.grade && activeGrades.has(String(a.grade)); });
         }
-    } else {
+   } else {
         var villaAll = allAptList.filter(function(a) { return a.buildingType === 'villa'; });
         if (recentYearOnly) villaAll = villaAll.filter(hasRecentYearTrade);
-        if (activeVillaFilters.size === 0 && activeGrades.size === 0) {
+        if (activeVillaFilters.size === 0 && activeGrades.size === 0 && activeVillaTiers.size === 0) {
             list = recentYearOnly ? villaAll : pickLatestOne(villaAll);
         } else {
             list = villaAll.filter(function(a) {
                 var gradeOk = activeGrades.size === 0 || (a.grade && activeGrades.has(String(a.grade)));
                 var villaOk = activeVillaFilters.size === 0 || passesVillaFilter(a);
-                return gradeOk && villaOk;
+                var tierOk  = activeVillaTiers.size === 0 || (a.ageTier && activeVillaTiers.has(a.ageTier));
+                return gradeOk && villaOk && tierOk;
             });
         }
     }
@@ -1410,11 +1439,12 @@ function createMarker(lat, lon, apt) {
     var count  = cfg.count;
     var amount = l.amount || '';
 
-    // 등급 배지
+    // 등급 배지 (빌라는 같은 연식단계 내 상대등급이므로 연식단계 라벨도 함께 표시)
     var gradeBadge = '';
     if (apt.grade) {
         var gc = GRADE_COLORS[apt.grade];
-        gradeBadge = '<span style="background:' + gc + ';color:white;font-size:10px;font-weight:bold;padding:2px 6px;border-radius:3px;margin-left:3px;">' + apt.grade + '등급</span>';
+        var tierPrefix = (apt.buildingType === 'villa' && apt.ageTier) ? (getVillaTierLabel(apt.ageTier) + ' ') : '';
+        gradeBadge = '<span style="background:' + gc + ';color:white;font-size:10px;font-weight:bold;padding:2px 6px;border-radius:3px;margin-left:3px;">' + tierPrefix + apt.grade + '등급</span>';
     }
     // 신고가 배지
    var nhBadge = apt.hasNewHigh
@@ -1643,12 +1673,13 @@ function openPanel(apt, lat, lon) {
     currentPppTimeline       = calcPppTimeline(apt);
     currentVolumeIndicators  = calcVolumeIndicators(apt);
     
-    // 헤더
+    // 헤더 (빌라는 연식단계 라벨도 함께 표시)
     var gradeHtml = '';
     if (apt.grade) {
         var gc = GRADE_COLORS[apt.grade];
         var pppLabel = apt.ppp > 0 ? ' · ' + (Math.round(apt.ppp / 100) / 10) + '천만/평' : '';
-        gradeHtml += ' <span style="background:' + gc + ';color:white;font-size:11px;font-weight:bold;padding:2px 7px;border-radius:10px;">' + apt.grade + '등급' + pppLabel + '</span>';
+        var tierPrefix = (apt.buildingType === 'villa' && apt.ageTier) ? (getVillaTierLabel(apt.ageTier) + ' ') : '';
+        gradeHtml += ' <span style="background:' + gc + ';color:white;font-size:11px;font-weight:bold;padding:2px 7px;border-radius:10px;">' + tierPrefix + apt.grade + '등급' + pppLabel + '</span>';
     }
     
     if (apt.hasNewHigh) {
@@ -1744,6 +1775,10 @@ function renderTable() {
     var html = '';
     var ind  = currentIndicators;
 
+    // 빌라 연식단계별 평단가 추이 그래프
+    if (currentPanelApt && currentPanelApt.buildingType === 'villa' && currentPanelApt.ageTier) {
+        html += buildTierTrendChartHtml(currentPanelApt.ageTier);
+    }
     // 건축물대장 정보
     if (currentBuildingLoading) {
         html += '<div class="indicator-box"><div class="indicator-title">🏢 건축물대장 정보</div><div style="font-size:11px;color:#999;">불러오는 중...</div></div>';
@@ -3030,6 +3065,58 @@ function buildBuildingInfoHtml(info) {
 }
     
 /* ════════════════════════════════════
+   빌라 연식단계별 평단가 추이 (연도별 시장평균)
+════════════════════════════════════ */
+function calcTierYearlyTrend(tier) {
+    var yearMap = {};
+    allAptList.forEach(function(apt) {
+        if (apt.buildingType !== 'villa' || apt.ageTier !== tier) return;
+        (apt.trades || []).forEach(function(t) {
+            if (t.area <= 0 || parseInt(t.amount) <= 0 || parseInt(t.floor) === 1) return;
+            var yr = t.year;
+            if (!yr) return;
+            if (!yearMap[yr]) yearMap[yr] = [];
+            yearMap[yr].push(parseInt(t.amount) / toPyung(t.area));
+        });
+    });
+    var years = Object.keys(yearMap).map(Number).sort(function(a, b) { return a - b; });
+    return years.map(function(yr) {
+        var arr = yearMap[yr];
+        var sum = arr.reduce(function(a, b) { return a + b; }, 0);
+        return { year: yr, avgPpp: Math.round(sum / arr.length), count: arr.length };
+    });
+}
+function buildTierTrendChartHtml(tier) {
+    var label = getVillaTierLabel(tier) || '연식단계 미상';
+    var data = calcTierYearlyTrend(tier);
+    if (data.length < 2) {
+        return '<div class="indicator-box"><div class="indicator-title">📈 ' + label + ' 평단가 추이 (연도별 시장평균)</div>'
+            + '<div style="font-size:11px;color:#999;">추이를 그리기에 데이터가 부족합니다.</div></div>';
+    }
+    var W = 300, H = 130, padL = 8, padR = 8, padT = 18, padB = 22;
+    var innerW = W - padL - padR, innerH = H - padT - padB;
+    var maxV = Math.max.apply(null, data.map(function(d) { return d.avgPpp; }));
+    var minV = Math.min.apply(null, data.map(function(d) { return d.avgPpp; }));
+    if (maxV === minV) { maxV += 1; minV -= 1; }
+    var pts = data.map(function(d, i) {
+        var x = padL + (data.length === 1 ? innerW / 2 : (i / (data.length - 1)) * innerW);
+        var y = padT + innerH - ((d.avgPpp - minV) / (maxV - minV)) * innerH;
+        return { x: x, y: y, d: d };
+    });
+    var polyline = pts.map(function(p) { return p.x.toFixed(1) + ',' + p.y.toFixed(1); }).join(' ');
+    var dots = pts.map(function(p) {
+        return '<circle cx="' + p.x.toFixed(1) + '" cy="' + p.y.toFixed(1) + '" r="3" fill="#8d6e63"></circle>'
+            + '<text x="' + p.x.toFixed(1) + '" y="' + (p.y - 6).toFixed(1) + '" font-size="9" fill="#555" text-anchor="middle">' + (Math.round(p.d.avgPpp / 100) / 10) + '</text>';
+    }).join('');
+    var labels = pts.map(function(p) {
+        return '<text x="' + p.x.toFixed(1) + '" y="' + (H - 6) + '" font-size="9" fill="#999" text-anchor="middle">' + p.d.year + '</text>';
+    }).join('');
+    var svg = '<svg viewBox="0 0 ' + W + ' ' + H + '" style="width:100%;height:' + H + 'px;">'
+        + '<polyline points="' + polyline + '" fill="none" stroke="#8d6e63" stroke-width="2"></polyline>'
+        + dots + labels + '</svg>';
+    return '<div class="indicator-box"><div class="indicator-title">📈 ' + label + ' 평단가 추이 (연도별 시장평균, 단위 천만/평)</div>' + svg + '</div>';
+}
+/* ════════════════════════════════════
    건축물대장 백그라운드 예열
    - 마커 배치 때 이미 지오코딩된(coordCache에 있는) 단지만 대상으로 함
    - 동시 2개씩, 사이사이 살짝 쉬어가며 조용히 채움 (사용자 조작 방해 없음)
@@ -3063,17 +3150,7 @@ async function warmOne(apt) {
         // 백그라운드 예열이라 실패해도 조용히 무시
     }
 }
-function buildVillaYearButtons() {
-    var container = document.getElementById('villa-year-btns');
-    if (!container) return;
-    var curYear = today.getFullYear();
-    var html = '';
-    for (var y = curYear; y >= curYear - 9; y--) {
-        html += '<button class="filter-tab ft-v" data-v="yr_' + y + '" onclick="toggleVillaFilter(\'yr_' + y + '\',this)">' + y + '년</button>';
-    }
-    container.innerHTML = html;
-}
- 
+
 /* ════════════════════════════════════
    연립다세대 건축물정보 일괄 조회 (승강기/주차 필터용)
    - 지역 로딩 시 연립다세대 전체를 geocoding + 건축HUB 조회
