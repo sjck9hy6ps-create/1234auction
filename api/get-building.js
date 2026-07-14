@@ -54,12 +54,12 @@ async function fetchBld(op, params) {
     const text = await r.text();
     if (text.includes('SERVICE_KEY_IS_NOT_REGISTERED_ERROR') || text.includes('<errMsg>') || text.includes('<returnAuthMsg>')) {
       console.warn(op, '건축HUB 에러:', text.slice(0, 300));
-      return [];
+      return { items: [], raw: text.slice(0, 500), httpStatus: r.status };
     }
-    return parseItems(text);
+    return { items: parseItems(text), raw: text.slice(0, 500), httpStatus: r.status };
   } catch (e) {
     console.error(op, '호출 실패:', e.message);
-    return [];
+    return { items: [], raw: '(fetch 예외: ' + e.message + ')', httpStatus: null };
   }
 }
 
