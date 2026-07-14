@@ -941,9 +941,7 @@ function calcPriceGrades(aptList) {
  
     aptList.forEach(function(apt) { if (!apt.grade) { apt.grade = null; apt.ppp = 0; } });
 }
- 
-    aptList.forEach(function(apt) { if (!apt.grade) { apt.grade = null; apt.ppp = 0; } });
-}
+
 function toggleGrade(val, btn) {
     if (activeGrades.has(val)) { activeGrades.delete(val); btn.classList.remove('active'); }
     else { activeGrades.add(val); btn.classList.add('active'); }
