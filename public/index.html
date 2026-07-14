@@ -1264,41 +1264,48 @@ function placeMarkers(aptList, gen) {
     var centerLat = map.getCenter().getLat();
     var centerLon = map.getCenter().getLng();
     var idx = 0;
+    var sinceYield = 0;
     function runBatch() {
         if (gen !== renderGen) return; // 그 사이 다른 redrawMarkers()가 실행됨 - 이 배치는 폐기
-        if (idx >= aptList.length) return;
-        var apt = aptList[idx++];
-        var l = apt.latest || {};
+        while (idx < aptList.length) {
+            var apt = aptList[idx++];
+            var l = apt.latest || {};
  
-        // 단독/다가구는 지오코딩 자체를 시도하지 않음 (API 호출 절약)
-        if (apt.buildingType === 'single') {
-            setTimeout(runBatch, 0);
-            return;
-        }
+            // 단독/다가구는 지오코딩 자체를 시도하지 않음 (API 호출 절약)
+            if (apt.buildingType === 'single') { continue; }
  
-        var cacheKey = [l.dong, l.name, l.bunji, l.road_name, l.main_num, l.sub_num]
-            .join('|').toLowerCase();
+            var cacheKey = [l.dong, l.name, l.bunji, l.road_name, l.main_num, l.sub_num]
+                .join('|').toLowerCase();
  
-        if (coordCache[cacheKey]) {
-            createMarker(coordCache[cacheKey].lat, coordCache[cacheKey].lon, apt);
-            setTimeout(runBatch, 20);
-            return;
-        }
- 
-        var candidates = buildGeocodeCandidates(l);
-        if (!candidates.length) { setTimeout(runBatch, 0); return; }
- 
-       tryStepGeocode(candidates, function(lat, lon) {
-            if (gen !== renderGen) return; // 지오코딩 응답이 늦게 와서 그 사이 세대가 바뀜 - 무시
-            if (lat && lon) {
-                coordCache[cacheKey] = { lat: lat, lon: lon };
-                saveCoordToDB(cacheKey, lat, lon);
-                if (getDistance(centerLat, centerLon, lat, lon) <= 15000) {
-                    createMarker(lat, lon, apt);
+            if (coordCache[cacheKey]) {
+                // 이미 좌표를 아는 마커는 API 호출이 필요 없으므로 딜레이 없이 바로 그림
+                createMarker(coordCache[cacheKey].lat, coordCache[cacheKey].lon, apt);
+                sinceYield++;
+                if (sinceYield >= 40) {
+                    sinceYield = 0;
+                    setTimeout(runBatch, 0); // 너무 많은 마커를 한 번에 그려서 브라우저가 멈추지 않도록 살짝 양보
+                    return;
                 }
+                continue;
             }
-            setTimeout(runBatch, 80);
-        });
+ 
+            // 좌표를 모르는 단지만 실제 카카오 API 호출이 필요하므로 여기서만 딜레이를 둠
+            var candidates = buildGeocodeCandidates(l);
+            if (!candidates.length) { continue; }
+ 
+            tryStepGeocode(candidates, function(lat, lon) {
+                if (gen !== renderGen) return; // 지오코딩 응답이 늦게 와서 그 사이 세대가 바뀜 - 무시
+                if (lat && lon) {
+                    coordCache[cacheKey] = { lat: lat, lon: lon };
+                    saveCoordToDB(cacheKey, lat, lon);
+                    if (getDistance(centerLat, centerLon, lat, lon) <= 15000) {
+                        createMarker(lat, lon, apt);
+                    }
+                }
+                setTimeout(runBatch, 80);
+            });
+            return;
+        }
     }
     runBatch();
 }
