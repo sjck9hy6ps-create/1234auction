@@ -1,12 +1,30 @@
 /* ════════════════════════════════════
-   국토교통부 건축HUB - 건축물대장 조회
+   국토교통부 건축HUB - 건축물대장 조회 (Supabase 캐시 우선)
    getBrTitleInfo(표제부) + getBrHsprcInfo(공동주택가격) 조합
    같은 PUBLIC_DATA_API_KEY를 재사용합니다.
    (data.go.kr에서 "국토교통부_건축HUB_건축물대장정보 서비스" 활용신청이
     이 키로 별도 승인되어 있어야 합니다)
+
+   ── 캐싱 ──
+   building_info 테이블에 결과를 저장해두고, 180일 이내에 저장된 캐시가
+   있으면 외부 API를 다시 호출하지 않고 캐시를 바로 반환합니다.
+   (구조/층수/세대수 등은 거의 안 바뀌고, 공시가격도 연 1회만 갱신되므로)
+
+   ── 디버그 ──
+   title/price가 둘 다 null로 나오면 응답에 debug 필드를 추가로 포함시켜서
+   건축HUB가 실제로 뭐라고 응답했는지(에러코드/빈결과 등) 바로 확인 가능.
+   원인 파악 끝나면 debug 관련 코드는 제거해도 됩니다.
 ════════════════════════════════════ */
+import { createClient } from '@supabase/supabase-js';
+
+const supabase = createClient(
+  process.env.SUPABASE_URL,
+  process.env.SUPABASE_SERVICE_ROLE_KEY
+);
+
 const API_KEY = process.env.PUBLIC_DATA_API_KEY;
 const BASE = 'https://apis.data.go.kr/1613000/BldRgstHubService';
+const FRESH_MS = 1000 * 60 * 60 * 24 * 180; // 180일
 
 export default async function handler(req, res) {
   res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
@@ -15,26 +33,67 @@ export default async function handler(req, res) {
   if (!sigunguCd || !bjdongCd || !bun) {
     return res.status(400).json({ error: 'sigunguCd, bjdongCd, bun 파라미터가 필요합니다.' });
   }
-  if (!API_KEY) {
-    return res.status(500).json({ error: 'PUBLIC_DATA_API_KEY 없음' });
-  }
 
-  const jiParam = ji || '0000';
-  const gbCd = platGbCd || '0';
+  const jiParam   = ji || '0000';
+  const gbCd      = platGbCd || '0';
+  const bldNmKey  = (bldNm || '').trim();
 
   try {
-    const [titleItems, priceItems] = await Promise.all([
+    // ── 1. 캐시 조회 ──
+    const { data: cached, error: cacheErr } = await supabase
+      .from('building_info')
+      .select('*')
+      .eq('sigungu_cd', sigunguCd)
+      .eq('bjdong_cd', bjdongCd)
+      .eq('bun', bun)
+      .eq('ji', jiParam)
+      .eq('bld_nm', bldNmKey)
+      .maybeSingle();
+
+    if (cacheErr) console.error('building_info 캐시 조회 에러:', cacheErr.message);
+
+    if (cached && (Date.now() - new Date(cached.fetched_at).getTime()) < FRESH_MS) {
+      return res.status(200).json({ title: cached.title_json, price: cached.price_json, cached: true });
+    }
+
+    // ── 2. 캐시 없거나 오래됨 → 실시간 조회 ──
+    if (!API_KEY) return res.status(500).json({ error: 'PUBLIC_DATA_API_KEY 없음' });
+
+    const [titleResult, priceResult] = await Promise.all([
       fetchBld('getBrTitleInfo', { sigunguCd, bjdongCd, platGbCd: gbCd, bun, ji: jiParam }),
       fetchBld('getBrHsprcInfo', { sigunguCd, bjdongCd, platGbCd: gbCd, bun, ji: jiParam }),
     ]);
+    const titleItems = titleResult.items;
+    const priceItems = priceResult.items;
 
-    const titleItem = pickBestItem(titleItems, bldNm);
+    const titleItem = pickBestItem(titleItems, bldNmKey);
     const priceItem = pickLatestPrice(priceItems);
 
-    return res.status(200).json({
-      title: titleItem ? normalizeTitle(titleItem) : null,
-      price: priceItem ? normalizePrice(priceItem) : null,
-    });
+    const title = titleItem ? normalizeTitle(titleItem) : null;
+    const price = priceItem ? normalizePrice(priceItem) : null;
+
+    // title/price가 둘 다 없을 때만 디버그 정보 포함 (원인 파악용, 확인 후 제거 권장)
+    const debug = (!title && !price) ? {
+      titleHttpStatus: titleResult.httpStatus,
+      priceHttpStatus: priceResult.httpStatus,
+      titleRaw: titleResult.raw,
+      priceRaw: priceResult.raw,
+    } : undefined;
+
+    // ── 3. 캐시에 저장 (write-through) ──
+    const { error: upsertErr } = await supabase.from('building_info').upsert({
+      sigungu_cd: sigunguCd,
+      bjdong_cd:  bjdongCd,
+      bun,
+      ji:         jiParam,
+      bld_nm:     bldNmKey,
+      title_json: title,
+      price_json: price,
+      fetched_at: new Date().toISOString(),
+    }, { onConflict: 'sigungu_cd,bjdong_cd,bun,ji,bld_nm' });
+    if (upsertErr) console.error('building_info 캐시 저장 에러:', upsertErr.message);
+
+    return res.status(200).json({ title, price, cached: false, debug });
   } catch (err) {
     console.error('건축물대장 조회 에러:', err.message);
     return res.status(500).json({ error: err.message });
