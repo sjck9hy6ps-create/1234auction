@@ -643,6 +643,7 @@ var currentPppTimeline = null;
 var currentVolumeIndicators = null;
 var currentBuildingInfo = null;
 var currentBuildingLoading = false;
+var currentPanelApt = null;
 var activeGrades = new Set();
 var activeVillaFilters = new Set();
 var activeVillaTiers = new Set();
@@ -1664,6 +1665,7 @@ function showLocalDropdown(results) {
    사이드 패널
 ════════════════════════════════════ */
 function openPanel(apt, lat, lon) {
+    currentPanelApt = apt;
     currentTrades  = apt.trades || [];
     currentSort    = 'date';
     currentPyung   = 'all';
