@@ -10,7 +10,8 @@ export default async function handler(req, res) {
                 headers: { Authorization: `Bearer ${REDIS_TOKEN}` }
             });
             const data = await response.json();
-            const auctions = data.result ? JSON.parse(data.result) : [];
+            let auctions = data.result ? JSON.parse(data.result) : [];
+            if (!Array.isArray(auctions)) auctions = [];
             return res.status(200).json(auctions);
         }
         if (req.method === 'POST') {
@@ -20,7 +21,7 @@ export default async function handler(req, res) {
             });
             const dataGet = await responseGet.json();
             let auctions = dataGet.result ? JSON.parse(dataGet.result) : [];
-
+            if (!Array.isArray(auctions)) auctions = [];
             const newAuction = req.body;
             const index = auctions.findIndex(a => a.id === newAuction.id);
             if (index > -1) auctions[index] = newAuction;
@@ -41,6 +42,7 @@ export default async function handler(req, res) {
             });
             const dataGet = await responseGet.json();
             let auctions = dataGet.result ? JSON.parse(dataGet.result) : [];
+            if (!Array.isArray(auctions)) auctions = [];
             auctions = auctions.filter(a => a.id !== id);
 
             await fetch(`${REDIS_URL}/set/auctions`, {
