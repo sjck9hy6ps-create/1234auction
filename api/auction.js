@@ -1,6 +1,9 @@
 export default async function handler(req, res) {
-    const REDIS_URL = 'https://golden-giraffe-110032.upstash.io';
-    const REDIS_TOKEN = 'gQAAAAAAAa3QAAIgcDE4OWY3NTZlNTlmNzQ0ZTdhODgwNmEyOGMwMGEyMGNlMQ'; // Upstash에서 복사한 Token
+    const REDIS_URL = process.env.UPSTASH_REDIS_URL;
+    const REDIS_TOKEN = process.env.UPSTASH_REDIS_TOKEN;
+    if (!REDIS_URL || !REDIS_TOKEN) {
+        return res.status(500).json({ error: 'UPSTASH_REDIS_URL / UPSTASH_REDIS_TOKEN 환경변수가 없습니다. Vercel 프로젝트 설정에 추가해 주세요.' });
+    }
     try {
         if (req.method === 'GET') {
             const response = await fetch(`${REDIS_URL}/get/auctions`, {
