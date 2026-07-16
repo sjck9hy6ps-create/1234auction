@@ -518,6 +518,13 @@ tr:hover td { background:#fffde7; }
         <div class="modal-section">
             <div class="modal-section-title">📊 비교물건 시세분석 (최대 10개)</div>
             <div id="comp-list-box" style="margin-bottom:8px;"></div>
+            <div class="modal-section">
+            <div class="modal-section-title">📊 비교물건 시세분석 (최대 10개)</div>
+            <div style="margin-bottom:8px;">
+                <button type="button" class="modal-btn btn-purple" style="font-size:11px;" onclick="openAiCompFinder()">🤖 유사물건 자동추천</button>
+                <span style="font-size:10px;color:#999;margin-left:4px;">주소·평형·층 입력 후 눌러주세요</span>
+            </div>
+            <div id="comp-list-box" style="margin-bottom:8px;"></div>
             <div class="modal-row">
                 <span class="modal-label">목표마진</span>
                 <input type="number" class="modal-input" id="a-comp-target-margin" placeholder="0" oninput="calcCompValuation()">
@@ -598,6 +605,19 @@ tr:hover td { background:#fffde7; }
         <span class="modal-close" onclick="closeCompPickModal()">✕</span>
     </div>
     <div id="comp-pick-body" style="padding:6px 0;"></div>
+</div>
+</div>
+<div id="ai-comp-modal-bg" onclick="closeAiCompModal(event)" style="position:fixed;inset:0;background:rgba(0,0,0,0.45);z-index:120;display:none;align-items:center;justify-content:center;">
+<div id="ai-comp-modal" style="background:white;border-radius:14px;width:360px;max-height:75vh;overflow-y:auto;box-shadow:0 8px 32px rgba(0,0,0,0.25);">
+    <div class="modal-header">
+        <span>🤖 유사물건 자동추천</span>
+        <span class="modal-close" onclick="closeAiCompModal()">✕</span>
+    </div>
+    <div id="ai-comp-body" style="padding:6px 16px;"></div>
+    <div class="modal-footer">
+        <button class="modal-btn btn-gray" onclick="closeAiCompModal()">취소</button>
+        <button class="modal-btn btn-purple" onclick="addSelectedAiComps()">선택 항목 추가</button>
+    </div>
 </div>
 </div>
 <div id="panel">
@@ -681,6 +701,7 @@ var currentAuctionId = null;
 var pendingAuctionDetail = null;
 var pendingAuctionComparables = [];
 var pendingCompMarkerData = null;
+var aiCompCandidates = [];
 var STATUS_COLOR = {
     '검토중':'#9e9e9e','입찰예정':'#1565c0','낙찰':'#2e7d32',
     '유찰':'#e53935','포기':'#757575','매도완료':'#6a1b9a'
@@ -2270,6 +2291,118 @@ function closeCompPickModal(e) {
     if (e && e.target !== document.getElementById('comp-pick-modal-bg')) return;
     document.getElementById('comp-pick-modal-bg').style.display = 'none';
     pendingCompMarkerData = null;
+}
+/* ── 유사물건(연식·입지·층) 자동 추천 ── */
+function openAiCompFinder() {
+    var addr = document.getElementById('a-addr').value.trim();
+    var coordInfo = auctionCoordCache[addr];
+    var lat = coordInfo ? coordInfo.lat : null;
+    var lon = coordInfo ? coordInfo.lon : null;
+    if (!lat || !lon) { alert('먼저 주소를 "검색"해서 위치를 확인해 주세요.'); return; }
+ 
+    var targetFloor = parseInt(document.getElementById('a-floor').value) || null;
+    var targetPyung = parseFloat(document.getElementById('a-pyung').value) || null;
+    var targetYear = null;
+    if (pendingAuctionDetail && pendingAuctionDetail.approvalDate) {
+        var m = String(pendingAuctionDetail.approvalDate).match(/(\d{4})/);
+        if (m) targetYear = parseInt(m[1]);
+    }
+ 
+    aiCompCandidates = findSimilarComps(lat, lon, targetYear, targetFloor, targetPyung);
+    renderAiCompList();
+    document.getElementById('ai-comp-modal-bg').style.display = 'flex';
+}
+ 
+function findSimilarComps(lat, lon, targetYear, targetFloor, targetPyung) {
+    var candidates = [];
+    allAptList.forEach(function(apt) {
+        if (apt.buildingType === 'single') return;
+        var l = apt.latest || {};
+        var cacheKey = [l.dong, l.name, l.bunji, l.road_name, l.main_num, l.sub_num].join('|').toLowerCase();
+        var coord = coordCache[cacheKey];
+        if (!coord) return;
+        var dist = getDistance(lat, lon, coord.lat, coord.lon);
+        if (dist > 2000) return; // 반경 2km 이내만
+        (apt.trades || []).forEach(function(t) {
+            if (t.area <= 0 || parseInt(t.amount) <= 0) return;
+            if (tradeDate(t) < oneYearAgo) return; // 최근 1년 거래만
+            var py = toPyung(t.area);
+            if (targetPyung && Math.abs(py - targetPyung) > 4) return; // 평형 ±4평 이내
+            var by = parseInt(t.build_year) || null;
+            var ageDiff = (targetYear && by) ? Math.abs(targetYear - by) : null;
+            var floorNum = (t.floor && t.floor !== '-') ? parseInt(t.floor) : null;
+            var floorDiff = (targetFloor && floorNum !== null) ? Math.abs(targetFloor - floorNum) : null;
+            var score = (ageDiff !== null ? ageDiff : 10) * 2
+                + (floorDiff !== null ? floorDiff : 5) * 1.5
+                + dist / 200;
+            candidates.push({ trade: t, dist: Math.round(dist), ageDiff: ageDiff, floorDiff: floorDiff, score: score });
+        });
+    });
+    // 같은 단지는 가장 점수 좋은 거래 1건만 남겨서 다양성 확보
+    candidates.sort(function(a, b) { return a.score - b.score; });
+    var seen = {}, deduped = [];
+    candidates.forEach(function(c) {
+        var key = (c.trade.name || '') + '_' + (c.trade.dong || '');
+        if (seen[key]) return;
+        seen[key] = true;
+        deduped.push(c);
+    });
+    return deduped.slice(0, 8);
+}
+ 
+function renderAiCompList() {
+    var body = document.getElementById('ai-comp-body');
+    if (!aiCompCandidates.length) {
+        body.innerHTML = '<div style="padding:20px;text-align:center;color:#aaa;font-size:12px;">주변 2km 이내 최근 1년 거래 중 조건에 맞는 유사물건을 찾지 못했습니다.<br>주소·평형·층 정보를 확인해 주세요.</div>';
+        return;
+    }
+    var html = '';
+    aiCompCandidates.forEach(function(c, i) {
+        var t = c.trade;
+        var dateStr = t.year + '.' + String(t.month).padStart(2,'0') + '.' + String(t.day).padStart(2,'0');
+        html += '<label style="display:flex;align-items:flex-start;gap:8px;padding:8px 0;border-bottom:1px solid #f0f0f0;cursor:pointer;">'
+            + '<input type="checkbox" class="ai-comp-check" data-idx="' + i + '" checked style="margin-top:3px;">'
+            + '<div style="flex:1;font-size:12px;">'
+            + '<div style="font-weight:bold;color:#333;">' + (t.name || t.dong) + ' · ' + dateStr + '</div>'
+            + '<div style="color:#555;margin-top:2px;">' + toEok(t.amount) + ' · ' + toPyung(t.area) + '평 · ' + t.floor + '층 · ' + (t.build_year || '-') + '년</div>'
+            + '<div style="color:#999;font-size:10px;margin-top:2px;">거리 ' + c.dist + 'm'
+            + (c.ageDiff !== null ? ' · 연식차 ' + c.ageDiff + '년' : '')
+            + (c.floorDiff !== null ? ' · 층차 ' + c.floorDiff + '층' : '') + '</div>'
+            + '</div></label>';
+    });
+    body.innerHTML = html;
+}
+ 
+function closeAiCompModal(e) {
+    if (e && e.target !== document.getElementById('ai-comp-modal-bg')) return;
+    document.getElementById('ai-comp-modal-bg').style.display = 'none';
+}
+ 
+function addSelectedAiComps() {
+    var checks = document.querySelectorAll('.ai-comp-check:checked');
+    if (!checks.length) { alert('추가할 항목을 선택해 주세요.'); return; }
+    if (!pendingAuctionComparables) pendingAuctionComparables = [];
+    var added = 0;
+    for (var i = 0; i < checks.length; i++) {
+        if (pendingAuctionComparables.length >= 10) { alert('비교물건은 최대 10개까지 등록할 수 있습니다.'); break; }
+        var idx = parseInt(checks[i].getAttribute('data-idx'));
+        var t = aiCompCandidates[idx].trade;
+        var dateStr = t.year + '-' + String(t.month).padStart(2,'0') + '-' + String(t.day).padStart(2,'0');
+        var dup = pendingAuctionComparables.some(function(x) {
+            return x.name === (t.name || t.dong) && x.date === dateStr && x.amount === parseInt(t.amount);
+        });
+        if (dup) continue;
+        pendingAuctionComparables.push({
+            name: t.name || t.dong, dong: t.dong, date: dateStr,
+            amount: parseInt(t.amount), area: t.area, pyung: toPyung(t.area),
+            floor: t.floor, buildYear: t.build_year, hasElevator: null
+        });
+        added++;
+    }
+    renderCompListBox();
+    calcCompValuation();
+    closeAiCompModal();
+    if (added > 0) alert(added + '개 비교물건이 추가되었습니다. (저장을 눌러야 최종 반영됩니다)');
 }
 function renderCompPickList() {
     var body = document.getElementById('comp-pick-body');
