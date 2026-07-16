@@ -477,6 +477,12 @@ tr:hover td { background:#fffde7; }
                 <input type="text" class="modal-input" id="a-name" placeholder="단지명">
             </div>
             <div class="modal-row">
+                <span class="modal-label">동/층/호수</span>
+                <input type="text" class="modal-input" id="a-dong" placeholder="예) 101동" style="flex:1;">
+                <input type="number" class="modal-input" id="a-floor" placeholder="층" style="flex:0.6;">
+                <input type="text" class="modal-input" id="a-unit" placeholder="호수 예) 302호" style="flex:1;">
+            </div>
+            <div class="modal-row">
                 <span class="modal-label">사건번호</span>
                 <input type="text" class="modal-input" id="a-case" placeholder="예) 2024타경12345">
             </div>
@@ -523,11 +529,11 @@ tr:hover td { background:#fffde7; }
             </div>
             <div class="modal-row">
                 <span class="modal-label">내 입찰가</span>
-                <input type="number" class="modal-input" id="a-my-bid" placeholder="0" oninput="calcMargin()">
+                <input type="number" class="modal-input" id="a-my-bid" placeholder="0" oninput="autoCalcTaxSilent();calcMargin()">
             </div>
             <div class="modal-row" id="actual-bid-row" style="display:none;">
                 <span class="modal-label">실제 낙찰가</span>
-                <input type="number" class="modal-input" id="a-actual-bid" placeholder="0" oninput="calcMargin()">
+                <input type="number" class="modal-input" id="a-actual-bid" placeholder="0" oninput="autoCalcTaxSilent();calcMargin()">
             </div>
         </div>
         <div class="modal-section">
@@ -554,11 +560,11 @@ tr:hover td { background:#fffde7; }
             <div class="modal-section-title">📈 매도 계획 (만원 단위)</div>
             <div class="modal-row">
                 <span class="modal-label">목표 매도가</span>
-                <input type="number" class="modal-input" id="a-target" placeholder="0" oninput="calcMargin()">
+                <input type="number" class="modal-input" id="a-target" placeholder="0" oninput="autoCalcAgentSilent();calcMargin()">
             </div>
             <div class="modal-row" id="actual-sell-row" style="display:none;">
                 <span class="modal-label">실제 매도가</span>
-                <input type="number" class="modal-input" id="a-actual-sell" placeholder="0" oninput="calcMargin()">
+                <input type="number" class="modal-input" id="a-actual-sell" placeholder="0" oninput="autoCalcAgentSilent();calcMargin()">
             </div>
         </div>
         <div class="modal-section">
@@ -1891,7 +1897,7 @@ function openAuctionModal(id) {
     var isEdit = !!id;
     document.getElementById('modal-title').innerText = isEdit ? '🔨 경매 물건 수정' : '🔨 경매 물건 등록';
     document.getElementById('modal-delete-btn').style.display = isEdit ? '' : 'none';
-    ['auction-id','a-addr','a-name','a-case','a-pyung','a-date',
+     ['auction-id','a-addr','a-name','a-dong','a-floor','a-unit','a-case','a-pyung','a-date',
      'a-appraisal','a-min-bid','a-my-bid','a-actual-bid',
      'a-tax','a-repair','a-agent','a-etc','a-target','a-actual-sell','a-memo','a-paste-text','a-comp-target-margin']
         .forEach(function(fid) { document.getElementById(fid).value = ''; });
@@ -1908,6 +1914,9 @@ function openAuctionModal(id) {
             document.getElementById('auction-id').value    = a.id || '';
             document.getElementById('a-addr').value        = a.addr || '';
             document.getElementById('a-name').value        = a.name || '';
+            document.getElementById('a-dong').value        = a.aptDong || '';
+            document.getElementById('a-floor').value       = a.floor || '';
+            document.getElementById('a-unit').value        = a.unitNo || '';
             document.getElementById('a-case').value        = a.caseNo || '';
             document.getElementById('a-pyung').value       = a.pyung || '';
             document.getElementById('a-date').value        = a.bidDate || '';
@@ -1968,6 +1977,37 @@ function autoCalcTax() {
     document.getElementById('a-tax').value = Math.round(bid * rate);
     calcMargin();
 }
+/* 입찰가 입력 시 알림창 없이 조용히 취득세 자동계산 (버튼 없이도 항상 최신값 유지) */
+function autoCalcTaxSilent() {
+    var bid = parseInt(document.getElementById('a-actual-bid').value) || parseInt(document.getElementById('a-my-bid').value) || 0;
+    if (!bid) return;
+    var bidWon = bid * 10000;
+    var rate = bidWon <= 600000000 ? 0.01 : bidWon <= 900000000 ? 0.02 : 0.03;
+    document.getElementById('a-tax').value = Math.round(bid * rate);
+}
+ 
+/* 서울시 주택 매매 중개보수 요율표 기준 상한요율로 중개수수료 계산 (만원 단위 입력/반환) */
+function calcAgentFee(saleManwon) {
+    if (!saleManwon || saleManwon <= 0) return 0;
+    var saleWon = saleManwon * 10000;
+    var rate, cap;
+    if (saleWon < 50000000)        { rate = 0.006; cap = 250000; }
+    else if (saleWon < 200000000)  { rate = 0.005; cap = 800000; }
+    else if (saleWon < 900000000)  { rate = 0.004; cap = null; }
+    else if (saleWon < 1200000000) { rate = 0.005; cap = null; }
+    else if (saleWon < 1500000000) { rate = 0.006; cap = null; }
+    else                            { rate = 0.007; cap = null; }
+    var fee = saleWon * rate;
+    if (cap !== null) fee = Math.min(fee, cap);
+    return Math.round(fee / 10000);
+}
+ 
+/* 목표/실제 매도가 입력 시 조용히 중개수수료 자동계산 (매도 시 1회 지급이므로 매도가 기준) */
+function autoCalcAgentSilent() {
+    var sell = parseInt(document.getElementById('a-actual-sell').value) || parseInt(document.getElementById('a-target').value) || 0;
+    if (!sell) return;
+    document.getElementById('a-agent').value = calcAgentFee(sell);
+}
 function calcMargin() {
     var myBid    = parseInt(document.getElementById('a-my-bid').value)    || 0;
     var actBid   = parseInt(document.getElementById('a-actual-bid').value) || 0;
@@ -2019,7 +2059,11 @@ async function saveAuction() {
         lat: coordInfo ? coordInfo.lat : null, lon: coordInfo ? coordInfo.lon : null,
         dong: coordInfo ? (coordInfo.dong || '') : '',
         bunji: coordInfo ? (coordInfo.bunji || '') : '',
-        name: name, caseNo: document.getElementById('a-case').value,
+        name: name,
+        aptDong: document.getElementById('a-dong').value.trim(),
+        floor: document.getElementById('a-floor').value,
+        unitNo: document.getElementById('a-unit').value.trim(),
+        caseNo: document.getElementById('a-case').value,
         pyung: document.getElementById('a-pyung').value, bidDate: document.getElementById('a-date').value,
         status: document.getElementById('a-status').value,
         appraisal: document.getElementById('a-appraisal').value,
@@ -2369,6 +2413,10 @@ async function parseAuctionPaste() {
         } else if (d.dong && d.bunji) {
             document.getElementById('a-name').value = d.dong + ' ' + d.bunji;
         }
+        // 아파트 동(건물번호)/층/호수는 아파트명과 별도 필드에 채움
+        if (d.aptDong) document.getElementById('a-dong').value = d.aptDong;
+        if (d.unitFloor !== null && d.unitFloor !== undefined) document.getElementById('a-floor').value = d.unitFloor;
+        if (d.unitNo) document.getElementById('a-unit').value = d.unitNo;
  
         var normDate = normalizeDateForInput(d.saleDate);
         if (normDate) document.getElementById('a-date').value = normDate;
