@@ -1,375 +1,279 @@
 /* ════════════════════════════════════
-   전체 지역 좌표/법정동코드/건축물대장 웜업 스크립트
-   - house_trades(아파트), villa_trades(연립다세대) 테이블에서 고유 단지를 뽑아
-     아직 complex_coords에 없는 것만 카카오 REST API로 지오코딩 + 법정동코드 조회 → 저장
-   - 좌표를 구한 단지는 이어서 배포된 /api/get-building 을 호출해 건축물대장도 함께 캐시
-     (단독/다가구는 원래 앱에서도 지오코딩·건축물대장 대상이 아니라 웜업에서도 제외)
-   - 이미 처리된 단지(complex_coords에 이미 있는 cache_key)는 좌표 조회를 건너뛰므로
-     시간이 부족해 중간에 멈춰도 다시 실행하면 이어서 처리됩니다.
+   국토교통부 건축HUB - 건축물대장 조회 (Supabase 캐시 우선)
+   getBrTitleInfo(표제부) + getBrHsprcInfo(공동주택가격)
+   + getBrFlrOulnInfo(층별개요) + getBrExposPubuseAreaInfo(전유공용면적)
+   같은 PUBLIC_DATA_API_KEY를 재사용합니다.
+   (data.go.kr에서 "국토교통부_건축HUB_건축물대장정보 서비스" 활용신청이
+    이 키로 별도 승인되어 있어야 합니다)
 
-   ── 건축물대장 재시도 로직 (2026-07 수정) ──
-   좌표는 이미 있지만 건축물대장 조회가 실패했던 단지(예: 건축HUB API
-   할당량/계정 문제 등)는, 좌표 캐시 여부만으로는 "완료"로 분류되어 예전 로직에서는
-   영원히 재시도되지 않는 문제가 있었습니다. 이제는 building_info에 실제로
-   저장된 조합(sigungu_cd/bjdong_cd/bun/ji/bld_nm)까지 별도로 확인해서,
-   좌표는 있지만 건축물대장이 아직 없는 단지는 계속 재시도 대상에 포함시킵니다.
+   ── 캐싱 ──
+   building_info 테이블에 결과를 저장해두고, 180일 이내에 저장된 캐시가
+   있으면 외부 API를 다시 호출하지 않고 캐시를 바로 반환합니다.
+   (구조/층수/세대수 등은 거의 안 바뀌고, 공시가격도 연 1회만 갱신되므로)
+
+   ⚠️ 아래 SQL을 Supabase에 먼저 실행해서 컬럼을 추가해야 합니다:
+     ALTER TABLE building_info ADD COLUMN IF NOT EXISTS floor_json jsonb;
+     ALTER TABLE building_info ADD COLUMN IF NOT EXISTS expos_json jsonb;
+
+   ── 디버그 ──
+   title이 없거나, price/floor/expos가 비어있을 때 응답에 debug 필드를
+   추가로 포함시켜서 건축HUB가 실제로 뭐라고 응답했는지 바로 확인 가능.
+   층별개요/전유공용면적의 필드명(tag)은 공식 문서 기준 추정치라, 실제
+   응답에서 비어있는 값이 보이면 debug.floorRaw/exposRaw로 실제 태그명을
+   확인해서 normalizeFloor/normalizeExposArea를 수정해야 할 수 있습니다.
 ════════════════════════════════════ */
 import { createClient } from '@supabase/supabase-js';
-import ws from 'ws';
 
 const supabase = createClient(
-  process.env.SUPABASE_URL?.trim(),
-  process.env.SUPABASE_SERVICE_ROLE_KEY?.trim(),
-  {
-    auth: { persistSession: false },
-    // Node 20은 네이티브 WebSocket이 없어 Realtime 클라이언트 초기화가 실패함 → ws로 우회
-    realtime: { transport: ws },
-  }
+  process.env.SUPABASE_URL,
+  process.env.SUPABASE_SERVICE_ROLE_KEY
 );
 
-const KAKAO_REST_KEY = process.env.KAKAO_REST_API_KEY?.trim();
-const SITE_URL = (process.env.SITE_URL?.trim()) || 'https://1234auction.vercel.app';
+const API_KEY = process.env.PUBLIC_DATA_API_KEY;
+const BASE = 'https://apis.data.go.kr/1613000/BldRgstHubService';
+const FRESH_MS = 1000 * 60 * 60 * 24 * 180; // 180일
 
-const DELAY_MS = 250;          // 카카오 REST API 호출 사이 간격 (레이트리밋 안전 마진)
-const BUILDING_DELAY_MS = 300; // 건축HUB(데이터포털) 호출 사이 간격 (버스트로 인한 차단 방지)
-const CONCURRENCY = 3;         // 동시 처리 단지 수
-const PAGE_SIZE = 1000;        // Supabase 페이지네이션 단위
+export default async function handler(req, res) {
+  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
 
-const sleep = ms => new Promise(r => setTimeout(r, ms));
+  const { sigunguCd, bjdongCd, bun, ji, platGbCd, bldNm } = req.query;
+  if (!sigunguCd || !bjdongCd || !bun) {
+    return res.status(400).json({ error: 'sigunguCd, bjdongCd, bun 파라미터가 필요합니다.' });
+  }
 
-/* ── 호출 제한(429) 대응 ──
-   카카오 로컬 API 제한은 대부분 "일일 할당량" 성격이라, 한 번 걸리면
-   같은 실행 안에서 재시도해도 똑같이 막힙니다. 그래서 429가 연속으로
-   몇 번 발생하면 "오늘 할당량 소진"으로 보고 스크립트를 안전하게 멈춥니다.
-   이미 처리된 단지는 complex_coords에 저장돼 있으니, 나중에(예: 다음날)
-   workflow를 다시 실행하면 남은 단지부터 이어서 처리됩니다. */
-let consecutive429 = 0;
-const MAX_CONSECUTIVE_429 = 5;
-let quotaExhausted = false;
+  const jiParam   = ji || '0000';
+  const gbCd      = platGbCd || '0';
+  const bldNmKey  = (bldNm || '').trim();
 
-async function kakaoFetch(url) {
-  if (quotaExhausted) return null;
-  let res;
   try {
-    res = await fetch(url, { headers: { Authorization: `KakaoAK ${KAKAO_REST_KEY}` } });
-  } catch (e) {
-    console.error('❌ 카카오 API 네트워크 오류:', e.message);
-    return null;
-  }
-  if (res.status === 429) {
-    consecutive429++;
-    console.error(`⚠️  카카오 API 호출 제한(429) 감지 (연속 ${consecutive429}회)`);
-    if (consecutive429 >= MAX_CONSECUTIVE_429 && !quotaExhausted) {
-      stopForQuota('호출 제한(429)이 계속 걸림');
+    // ── 1. 캐시 조회 ──
+    const { data: cached, error: cacheErr } = await supabase
+      .from('building_info')
+      .select('*')
+      .eq('sigungu_cd', sigunguCd)
+      .eq('bjdong_cd', bjdongCd)
+      .eq('bun', bun)
+      .eq('ji', jiParam)
+      .eq('bld_nm', bldNmKey)
+      .maybeSingle();
+
+    if (cacheErr) console.error('building_info 캐시 조회 에러:', cacheErr.message);
+
+    if (cached && (Date.now() - new Date(cached.fetched_at).getTime()) < FRESH_MS) {
+      return res.status(200).json({
+        title: cached.title_json,
+        price: cached.price_json,
+        floors: cached.floor_json || null,
+        exposAreas: cached.expos_json || null,
+        cached: true,
+      });
     }
-    return null;
+
+    // ── 2. 캐시 없거나 오래됨 → 실시간 조회 ──
+    if (!API_KEY) return res.status(500).json({ error: 'PUBLIC_DATA_API_KEY 없음' });
+
+    const commonParams = { sigunguCd, bjdongCd, platGbCd: gbCd, bun, ji: jiParam };
+    const [titleResult, priceResult, floorResult, exposResult] = await Promise.all([
+      fetchBld('getBrTitleInfo', commonParams),
+      fetchBld('getBrHsprcInfo', commonParams),
+      fetchBld('getBrFlrOulnInfo', { ...commonParams, numOfRows: '100' }),
+      fetchBld('getBrExposPubuseAreaInfo', { ...commonParams, numOfRows: '200' }),
+    ]);
+    const titleItems = titleResult.items;
+    const priceItems = priceResult.items;
+
+    const titleItem = pickBestItem(titleItems, bldNmKey);
+    const priceItem = pickLatestPrice(priceItems);
+
+    const title = titleItem ? normalizeTitle(titleItem) : null;
+    const price = priceItem ? normalizePrice(priceItem) : null;
+    const floors = floorResult.items.length
+      ? floorResult.items.map(normalizeFloor).sort((a, b) => floorSortKey(a) - floorSortKey(b))
+      : null;
+    const exposAreas = exposResult.items.length
+      ? exposResult.items.map(normalizeExposArea)
+      : null;
+
+    // title이 없거나, price가 "빈 껍데기"(year/month/price 전부 비어있음)이거나,
+    // 층별개요/전유공용면적이 비어있을 때도 디버그 정보 포함 (원인 파악용, 확인 후 제거 권장)
+    const priceEmpty = !price || (!price.year && !price.month && (price.price === null || price.price === undefined));
+    const debug = (!title || priceEmpty || !floors || !exposAreas) ? {
+      titleHttpStatus: titleResult.httpStatus,
+      priceHttpStatus: priceResult.httpStatus,
+      floorHttpStatus: floorResult.httpStatus,
+      exposHttpStatus: exposResult.httpStatus,
+      titleRaw: titleResult.raw,
+      priceRaw: priceResult.raw,
+      floorRaw: floorResult.raw,
+      exposRaw: exposResult.raw,
+    } : undefined;
+
+    // ── 3. 캐시에 저장 (write-through) ──
+    const { error: upsertErr } = await supabase.from('building_info').upsert({
+      sigungu_cd: sigunguCd,
+      bjdong_cd:  bjdongCd,
+      bun,
+      ji:         jiParam,
+      bld_nm:     bldNmKey,
+      title_json: title,
+      price_json: price,
+      floor_json: floors,
+      expos_json: exposAreas,
+      fetched_at: new Date().toISOString(),
+    }, { onConflict: 'sigungu_cd,bjdong_cd,bun,ji,bld_nm' });
+    if (upsertErr) console.error('building_info 캐시 저장 에러:', upsertErr.message);
+
+    return res.status(200).json({ title, price, floors, exposAreas, cached: false, debug });
+  } catch (err) {
+    console.error('건축물대장 조회 에러:', err.message);
+    return res.status(500).json({ error: err.message });
   }
-  // 카카오는 "일일 할당량 초과"를 429가 아니라 HTTP 400 + code:-10 으로 내려줌.
-  // 이 경우는 초당 제한이 아니라 오늘 할당량이 완전히 소진된 것이므로,
-  // 재시도해도 절대 풀리지 않음 → 즉시 감지해서 바로 중단해야 함
-  // (그렇지 않으면 남은 대상 전부에 대해 헛되이 계속 호출하며 "못 찾음"으로 오판하게 됨).
-  if (res.status === 400) {
-    let body = null;
-    try { body = await res.json(); } catch (e) { /* ignore */ }
-    if (body && (body.code === -10 || /API limit has been exceeded/i.test(body.message || ''))) {
-      stopForQuota('일일 호출 할당량 초과 (code -10)');
-      return null;
-    }
-    return null;
-  }
-  consecutive429 = 0;
-  if (!res.ok) return null;
+}
+
+async function fetchBld(op, params) {
+  const qs = new URLSearchParams({
+    serviceKey: API_KEY,
+    numOfRows: '20',
+    pageNo: '1',
+    ...params,
+  });
+  const url = `${BASE}/${op}?${qs.toString()}`;
   try {
-    return await res.json();
+    const r = await fetch(url, { signal: AbortSignal.timeout(8000) });
+    const text = await r.text();
+    if (text.includes('SERVICE_KEY_IS_NOT_REGISTERED_ERROR') || text.includes('<errMsg>') || text.includes('<returnAuthMsg>')) {
+      console.warn(op, '건축HUB 에러:', text.slice(0, 300));
+      return { items: [], raw: text.slice(0, 500), httpStatus: r.status };
+    }
+    return { items: parseItems(text), raw: text.slice(0, 500), httpStatus: r.status };
   } catch (e) {
-    return null;
+    console.error(op, '호출 실패:', e.message);
+    return { items: [], raw: '(fetch 예외: ' + e.message + ')', httpStatus: null };
   }
 }
 
-function stopForQuota(reason) {
-  if (quotaExhausted) return;
-  quotaExhausted = true;
-  console.error(`\n🛑 ${reason} → 여기서 중단합니다.`);
-  console.error(`   ⚠️  이 할당량은 앱(App) 단위라서, 실제 서비스 화면(브라우저)의 카카오맵 주소 검색도 같이 막혀 있을 수 있습니다.`);
-  console.error(`   이미 처리된 단지는 저장되어 있으니, 할당량이 초기화된 뒤(보통 자정 기준) workflow를 다시 실행하면 남은 단지부터 이어서 처리됩니다.\n`);
-}
-
-function buildCacheKey(dong, danji, bunji, roadName, mainNum, subNum) {
-  return [dong, danji, bunji, roadName, mainNum, subNum].join('|').toLowerCase();
-}
-
-/* building_info 캐시 조합 키 (get-building.js의 onConflict 컬럼과 동일한 순서/구성) */
-function buildBuildingKey(sigunguCd, bjdongCd, bun, ji, bldNm) {
-  return [sigunguCd, bjdongCd, bun, ji, (bldNm || '').trim()].join('|');
-}
-
-/* get-building.js와 동일한 bun/ji 계산 로직 (경로 분기 재사용을 위해 분리) */
-function computeBunJi(row) {
-  const { bunji, road_name, main_num, sub_num } = row;
-  let main = null, sub = null;
-  if (bunji) {
-    const parts = String(bunji).split('-');
-    const m1 = parseInt(parts[0], 10);
-    const m2 = parts[1] !== undefined ? parseInt(parts[1], 10) : null;
-    main = Number.isNaN(m1) ? null : m1;
-    sub = (m2 === null || Number.isNaN(m2) || m2 === 0) ? null : m2;
+function parseItems(xmlText) {
+  const items = [];
+  const re = /<item>([\s\S]*?)<\/item>/g;
+  let m;
+  while ((m = re.exec(xmlText)) !== null) {
+    const block = m[1];
+    items.push({
+      get: function(tag) {
+        const r = new RegExp('<' + tag + '>([^<]*)<\\/' + tag + '>');
+        const mm = block.match(r);
+        return mm ? mm[1].trim() : '';
+      }
+    });
   }
-  if (!main && road_name && main_num) { main = main_num; sub = sub_num; }
-  if (!main) return null;
+  return items;
+}
+
+/* 여러 후보 태그명 중 값이 있는 첫 번째를 반환 (필드명이 확실치 않은 신규 API용 안전장치) */
+function getAny(it, tags) {
+  for (const t of tags) {
+    const v = it.get(t);
+    if (v) return v;
+  }
+  return '';
+}
+
+/* 단지 내 여러 동이 조회될 수 있어, 단지명(danji)과 가장 비슷한 동을 우선 선택 */
+function pickBestItem(items, bldNm) {
+  if (!items.length) return null;
+  if (bldNm) {
+    const norm = s => (s || '').replace(/\s/g, '');
+    const target = norm(bldNm);
+    if (target) {
+      const matched = items.find(it => {
+        const n = norm(it.get('bldNm'));
+        return n && (n.includes(target) || target.includes(n));
+      });
+      if (matched) return matched;
+    }
+  }
+  return items[0];
+}
+
+/* 공시가격은 여러 연도가 나올 수 있어 가장 최근 기준연월 선택 */
+function pickLatestPrice(items) {
+  if (!items.length) return null;
+  return items.slice().sort((a, b) => {
+    const ay = parseInt(a.get('stdrYear') + a.get('stdrMt')) || 0;
+    const by = parseInt(b.get('stdrYear') + b.get('stdrMt')) || 0;
+    return by - ay;
+  })[0];
+}
+
+/* 층 정렬 기준: 지하는 깊은 순(지하3→지하1), 지상은 낮은 순(1→2→3) */
+function floorSortKey(f) {
+  const n = parseInt(String(f.flrNo).replace(/[^0-9]/g, ''), 10) || 0;
+  return (f.flrGbNm && f.flrGbNm.includes('지하')) ? -n : n;
+}
+
+function toInt(v) { const n = parseInt(v, 10); return Number.isNaN(n) ? null : n; }
+function toFloat(v) { const n = parseFloat(v); return Number.isNaN(n) ? null : n; }
+
+function normalizeTitle(it) {
   return {
-    bun: String(main).padStart(4, '0'),
-    ji: String(sub || 0).padStart(4, '0'),
+    bldNm: it.get('bldNm'),
+    platPlc: getAny(it, ['platPlc']),         // 지번주소
+    newPlatPlc: getAny(it, ['newPlatPlc']),   // 도로명주소
+    mainPurps: it.get('mainPurpsCdNm'),
+    strct: it.get('strctCdNm'),
+    roofCd: it.get('roofCdNm'),
+    platArea: toFloat(it.get('platArea')),
+    archArea: toFloat(it.get('archArea')),
+    totArea: toFloat(it.get('totArea')),
+    bcRat: toFloat(it.get('bcRat')),
+    vlRat: toFloat(it.get('vlRat')),
+    hhldCnt: toInt(it.get('hhldCnt')),
+    fmlyCnt: toInt(it.get('fmlyCnt')),
+    heit: toFloat(it.get('heit')),
+    grndFlrCnt: toInt(it.get('grndFlrCnt')),
+    ugrndFlrCnt: toInt(it.get('ugrndFlrCnt')),
+    rideElvtCnt: toInt(it.get('rideUseElvtCnt')),
+    emgenElvtCnt: toInt(it.get('emgenUseElvtCnt')),
+    indrAutoUtcnt: toInt(it.get('indrAutoUtcnt')),
+    oudrAutoUtcnt: toInt(it.get('oudrAutoUtcnt')),
+    indrMechUtcnt: toInt(it.get('indrMechUtcnt')),
+    oudrMechUtcnt: toInt(it.get('oudrMechUtcnt')),
+    useAprDay: it.get('useAprDay'),
+    pmsDay: it.get('pmsDay'),
+    engrGrade: it.get('engrGrade'),
   };
 }
 
-/* ── 테이블에서 고유 단지 목록(주소 관련 컬럼만) 페이지네이션으로 전부 뽑아 dedupe ── */
-async function fetchDistinctComplexes(table) {
-  const map = new Map();
-  let from = 0;
-  while (true) {
-    const { data, error } = await supabase
-      .from(table)
-      .select('region,dong,danji,bunji,road_name,main_num,sub_num')
-      .range(from, from + PAGE_SIZE - 1);
-    if (error) { console.error(`❌ ${table} 조회 에러:`, error.message); break; }
-    if (!data || data.length === 0) break;
-    for (const row of data) {
-      const key = buildCacheKey(row.dong, row.danji, row.bunji, row.road_name, row.main_num, row.sub_num);
-      if (!map.has(key)) map.set(key, row);
-    }
-    if (data.length < PAGE_SIZE) break;
-    from += PAGE_SIZE;
-  }
-  return map;
+function normalizePrice(it) {
+  return {
+    year: it.get('stdrYear'),
+    month: it.get('stdrMt'),
+    price: toInt(it.get('housePrice')),
+  };
 }
 
-/* ── 이미 캐시된 좌표 전부 가져오기 (cache_key → {sigunguCd, bjdongCd}) ── */
-async function fetchExistingCoords() {
-  const map = new Map();
-  let from = 0;
-  while (true) {
-    const { data, error } = await supabase
-      .from('complex_coords')
-      .select('cache_key,sigungu_cd,bjdong_cd')
-      .range(from, from + PAGE_SIZE - 1);
-    if (error) { console.error('❌ complex_coords 조회 에러:', error.message); break; }
-    if (!data || data.length === 0) break;
-    data.forEach(r => map.set(r.cache_key, { sigunguCd: r.sigungu_cd, bjdongCd: r.bjdong_cd }));
-    if (data.length < PAGE_SIZE) break;
-    from += PAGE_SIZE;
-  }
-  return map;
+/* 층별개요(getBrFlrOulnInfo) - 태그명은 공식 문서 기준 추정치 */
+function normalizeFloor(it) {
+  return {
+    flrGbNm: getAny(it, ['flrGbCdNm']),                 // 층구분 (지상/지하)
+    flrNo: getAny(it, ['flrNoNm', 'flrNo']),             // 층번호
+    mainAtchGbNm: getAny(it, ['mainAtchGbCdNm']),        // 주/부속 구분
+    strct: getAny(it, ['strctCdNm']),                    // 구조
+    mainPurps: getAny(it, ['mainPurpsCdNm']),             // 주용도
+    etcPurps: getAny(it, ['etcPurps']),                   // 기타용도
+    area: toFloat(getAny(it, ['area'])),                  // 면적(㎡)
+  };
 }
 
-/* ── 이미 건축물대장이 캐시된 조합 전부 가져오기 ── */
-async function fetchExistingBuildingKeys() {
-  const set = new Set();
-  let from = 0;
-  while (true) {
-    const { data, error } = await supabase
-      .from('building_info')
-      .select('sigungu_cd,bjdong_cd,bun,ji,bld_nm')
-      .range(from, from + PAGE_SIZE - 1);
-    if (error) { console.error('❌ building_info 조회 에러:', error.message); break; }
-    if (!data || data.length === 0) break;
-    data.forEach(r => set.add(buildBuildingKey(r.sigungu_cd, r.bjdong_cd, r.bun, r.ji, r.bld_nm)));
-    if (data.length < PAGE_SIZE) break;
-    from += PAGE_SIZE;
-  }
-  return set;
+/* 전유공용면적(getBrExposPubuseAreaInfo) - 태그명은 공식 문서 기준 추정치 */
+function normalizeExposArea(it) {
+  return {
+    hoNm: getAny(it, ['hoNm']),                                              // 호명칭
+    flrGbNm: getAny(it, ['flrGbCdNm']),                                      // 층구분
+    flrNo: getAny(it, ['flrNoNm', 'flrNo']),                                  // 층번호
+    esUseNm: getAny(it, ['exposPubuseGbCdNm', 'esUseStatusCdNm', 'esUseCdNm']), // 전유/공용 구분
+    strct: getAny(it, ['strctCdNm']),                                        // 구조
+    mainPurps: getAny(it, ['mainPurpsCdNm']),                                 // 용도
+    area: toFloat(getAny(it, ['area'])),                                      // 면적(㎡)
+  };
 }
-
-/* ── 카카오 REST 주소 검색 ── */
-async function kakaoAddressSearch(query) {
-  const url = `https://dapi.kakao.com/v2/local/search/address.json?query=${encodeURIComponent(query)}`;
-  const json = await kakaoFetch(url);
-  const doc = json?.documents?.[0];
-  if (!doc) return null;
-  return { lat: parseFloat(doc.y), lon: parseFloat(doc.x) };
-}
-
-/* ── 카카오 REST 키워드(장소) 검색 - 주소 검색 실패 시 fallback ── */
-async function kakaoKeywordSearch(query) {
-  const url = `https://dapi.kakao.com/v2/local/search/keyword.json?query=${encodeURIComponent(query)}`;
-  const json = await kakaoFetch(url);
-  const doc = json?.documents?.[0];
-  if (!doc) return null;
-  return { lat: parseFloat(doc.y), lon: parseFloat(doc.x) };
-}
-
-/* ── 카카오 REST 좌표 → 법정동코드 ── */
-async function kakaoCoordToRegionCode(lat, lon) {
-  const url = `https://dapi.kakao.com/v2/local/geo/coord2regioncode.json?x=${lon}&y=${lat}`;
-  const json = await kakaoFetch(url);
-  const b = (json?.documents || []).find(d => d.region_type === 'B');
-  if (!b || !b.code || b.code.length < 10) return null;
-  return { sigunguCd: b.code.slice(0, 5), bjdongCd: b.code.slice(5, 10) };
-}
-
-/* ── 클라이언트의 buildGeocodeCandidates()와 동일한 우선순위 ──
-   1) 동 + 지번   2) 동 + 단지명   3) (아파트만) 도로명 + 본번(-부번) */
-function buildCandidates(row, buildingType) {
-  const region = (row.region || '').trim();
-  const dong = (row.dong || '').trim();
-  const danji = (row.danji || '').trim();
-  const bunji = (row.bunji || '').trim();
-  const road = (row.road_name || '').trim();
-  const main = row.main_num;
-  const sub = row.sub_num;
-
-  const candidates = [];
-  if (dong && bunji) candidates.push(`${region} ${dong} ${bunji}`.trim());
-  if (dong && danji) candidates.push(`${region} ${dong} ${danji}`.trim());
-  if (buildingType === 'apt' && road && main) {
-    let addr = `${road} ${main}`;
-    if (sub && sub !== 0) addr += `-${sub}`;
-    candidates.push(`${region} ${addr}`.trim());
-  }
-  return candidates;
-}
-
-async function geocodeComplex(row, buildingType) {
-  const candidates = buildCandidates(row, buildingType);
-  for (const q of candidates) {
-    if (!q || q.length < 2) continue;
-    let coord = await kakaoAddressSearch(q);
-    await sleep(DELAY_MS);
-    if (!coord) {
-      coord = await kakaoKeywordSearch(q);
-      await sleep(DELAY_MS);
-    }
-    if (coord) return coord;
-  }
-  return null;
-}
-
-async function saveCoord(cacheKey, lat, lon, sigunguCd, bjdongCd) {
-  const { error } = await supabase.from('complex_coords').upsert({
-    cache_key: cacheKey, lat, lon,
-    sigungu_cd: sigunguCd || null, bjdong_cd: bjdongCd || null,
-  }, { onConflict: 'cache_key' });
-  if (error) console.error('❌ complex_coords 저장 에러:', error.message);
-}
-
-/* ── 건축물대장 웜업: 이미 배포된 /api/get-building을 그대로 호출 →
-      그 안에서 알아서 building_info 테이블에 캐시해줌 (로직 중복 없이 재사용) ── */
-async function warmBuildingInfo(row, sigunguCd, bjdongCd) {
-  const bunJi = computeBunJi(row);
-  if (!bunJi) return;
-  const { bun, ji } = bunJi;
-  const url = `${SITE_URL}/api/get-building?sigunguCd=${sigunguCd}&bjdongCd=${bjdongCd}`
-    + `&bun=${bun}&ji=${ji}&bldNm=${encodeURIComponent(row.danji || '')}`;
-  try {
-    await fetch(url, { signal: AbortSignal.timeout(15000) });
-  } catch (e) {
-    console.error('❌ 건축물대장 웜업 실패:', e.message);
-  }
-}
-
-async function processQueue(items, worker, concurrency) {
-  let idx = 0, done = 0;
-  const total = items.length;
-  async function runOne() {
-    while (idx < items.length) {
-      if (quotaExhausted) return; // 카카오 할당량 소진 시 남은 큐 처리 중단 (Actions 시간 낭비 방지)
-      const item = items[idx++];
-      await worker(item);
-      done++;
-      if (done % 50 === 0 || done === total) console.log(`   진행: ${done}/${total}`);
-    }
-  }
-  await Promise.all(Array.from({ length: concurrency }, runOne));
-}
-
-async function main() {
-  if (!KAKAO_REST_KEY) {
-    console.error('❌ KAKAO_REST_API_KEY 환경변수가 없습니다. GitHub 저장소 Secrets에 추가해 주세요.');
-    process.exit(1);
-  }
-
-  console.log('📦 기존 캐시된 좌표 목록 불러오는 중...');
-  const existingCoords = await fetchExistingCoords();
-  console.log(`   → 이미 캐시된 단지 ${existingCoords.size}개`);
-
-  console.log('📦 기존 캐시된 건축물대장 목록 불러오는 중...');
-  const existingBuildingKeys = await fetchExistingBuildingKeys();
-  console.log(`   → 이미 건축물대장 캐시된 조합 ${existingBuildingKeys.size}개`);
-
-  // 단독/다가구(single_trades)는 원래 앱에서도 지오코딩·건축물대장 대상이 아니므로 웜업에서도 제외
-  const tableTypes = [
-    { table: 'house_trades', type: 'apt' },
-    { table: 'villa_trades', type: 'villa' },
-  ];
-
-  const allEntries = []; // [cacheKey, row, type]
-  const seen = new Set();
-  for (const { table, type } of tableTypes) {
-    console.log(`\n📦 ${table} 고유 단지 목록 추출 중...`);
-    const map = await fetchDistinctComplexes(table);
-    console.log(`   → ${table}: 고유 단지 ${map.size}개`);
-    for (const [key, row] of map) {
-      if (seen.has(key)) continue;
-      seen.add(key);
-      allEntries.push([key, row, type]);
-    }
-  }
-  console.log(`\n📦 전체 고유 단지: ${allEntries.length}개`);
-
-  // 1) 좌표가 아직 없는 신규 단지 → 지오코딩 + 좌표저장 + (성공 시) 건축물대장까지 시도
-  const coordTargets = allEntries.filter(([key]) => !existingCoords.has(key));
-  console.log(`📦 신규 좌표 웜업 대상: ${coordTargets.length}개`);
-
-  // 2) 좌표는 이미 있지만 건축물대장이 아직 캐시되지 않은 단지 → 지오코딩 없이 건축물대장만 재시도
-  //    (예: 건축HUB API 할당량/계정 문제 등으로 지난 실행에서 실패했던 단지들)
-  const buildingOnlyTargets = allEntries.filter(([key, row]) => {
-    if (!existingCoords.has(key)) return false; // coordTargets에서 이미 처리됨
-    const coord = existingCoords.get(key);
-    if (!coord.sigunguCd || !coord.bjdongCd) return false; // 법정동코드 없으면 건축물대장 조회 불가
-    const bunJi = computeBunJi(row);
-    if (!bunJi) return false;
-    const bKey = buildBuildingKey(coord.sigunguCd, coord.bjdongCd, bunJi.bun, bunJi.ji, row.danji);
-    return !existingBuildingKeys.has(bKey);
-  });
-  console.log(`📦 건축물대장만 재시도 대상: ${buildingOnlyTargets.length}개\n`);
-
-  let success = 0, fail = 0;
-  await processQueue(coordTargets, async ([cacheKey, row, type]) => {
-    const coord = await geocodeComplex(row, type);
-    if (!coord) { fail++; return; }
-    const region = await kakaoCoordToRegionCode(coord.lat, coord.lon);
-    await sleep(DELAY_MS);
-    await saveCoord(cacheKey, coord.lat, coord.lon, region?.sigunguCd, region?.bjdongCd);
-    success++;
-    if (region) {
-      await warmBuildingInfo(row, region.sigunguCd, region.bjdongCd);
-      await sleep(BUILDING_DELAY_MS);
-    }
-  }, CONCURRENCY);
-
-  if (quotaExhausted) {
-    console.log(`\n⏸️  카카오 일일 호출 제한으로 좌표 웜업이 중간에 중단됨. 성공 ${success}건 / 실패 ${fail}건 / 미처리 ${coordTargets.length - success - fail}건`);
-    console.log(`   나중에(예: 다음날) 이 workflow를 다시 실행하면 미처리 단지부터 이어서 진행됩니다.`);
-    console.log(`   (카카오 할당량 문제이므로 건축물대장 재시도 단계는 생략합니다.)`);
-    return;
-  }
-
-  console.log(`\n🎉 좌표 웜업 완료! 성공 ${success}건 / 실패 ${fail}건`);
-  if (fail > 0) {
-    console.log(`   (실패한 단지는 주소 정보가 부실하거나 카카오에서 찾지 못한 경우입니다. 다시 실행하면 재시도됩니다.)`);
-  }
-
-  console.log(`\n📦 건축물대장 재시도 시작 (좌표는 있지만 아직 건축물대장이 없는 단지)...`);
-  let buildingTried = 0;
-  await processQueue(buildingOnlyTargets, async ([cacheKey, row]) => {
-    const coord = existingCoords.get(cacheKey);
-    if (coord?.sigunguCd && coord?.bjdongCd) {
-      await warmBuildingInfo(row, coord.sigunguCd, coord.bjdongCd);
-      buildingTried++;
-      await sleep(BUILDING_DELAY_MS);
-    }
-  }, CONCURRENCY);
-  console.log(`   → 건축물대장 재시도 완료: ${buildingTried}건 시도`);
-  console.log(`   (실제 저장 성공/실패는 building_info 테이블에서 확인하세요. 실패 건은 다음 실행에서 다시 재시도됩니다.)`);
-}
-
-main().catch(e => { console.error('❌ 치명적 오류:', e); process.exit(1); });
