@@ -3246,10 +3246,9 @@ function formatDate8(s) {
 
 function buildBuildingInfoHtml(info) {
     if (!info) return '';
-    var t = info.title, p = info.price;
+    var t = info.title, p = info.price, floors = info.floors, exposAreas = info.exposAreas;
     var html = '<div class="indicator-box">';
     html += '<div class="indicator-title">🏢 건축물대장 정보</div>';
-
     if (t) {
         var parkTotal = (t.indrAutoUtcnt||0) + (t.oudrAutoUtcnt||0) + (t.indrMechUtcnt||0) + (t.oudrMechUtcnt||0);
         var elvtTotal = (t.rideElvtCnt||0) + (t.emgenElvtCnt||0);
@@ -3259,6 +3258,8 @@ function buildBuildingInfoHtml(info) {
             return '<div class="indicator-item"><div class="indicator-label">' + label + '</div>'
                 + '<div class="indicator-value" style="font-size:12px;">' + value + '</div></div>';
         }
+        html += item('지번주소', t.platPlc);
+        html += item('도로명주소', t.newPlatPlc);
         html += item('주용도', t.mainPurps);
         html += item('주구조', t.strct);
         html += item('총 층수', (t.grndFlrCnt || '-') + '층' + (t.ugrndFlrCnt ? ' (지하' + t.ugrndFlrCnt + ')' : ''));
@@ -3271,15 +3272,46 @@ function buildBuildingInfoHtml(info) {
         if (t.engrGrade) html += item('에너지효율등급', t.engrGrade);
         html += '</div>';
     }
-
     if (p && p.price) {
         html += '<div style="margin-top:8px;font-size:11px;color:#555;border-top:1px dashed #ddd;padding-top:6px;">'
             + '공동주택가격(공시가격, ' + p.year + '년 ' + p.month + '월 기준): '
             + '<b style="color:#333;">' + toEok(String(Math.round(p.price / 10000))) + '</b></div>';
     }
-
     if (!t && !p) html += '<div style="font-size:11px;color:#999;">조회된 건축물대장 정보가 없습니다.</div>';
     html += '</div>';
+ 
+    if (floors && floors.length) {
+        html += '<div class="indicator-box">';
+        html += '<div class="indicator-title">📐 층별 현황 (' + floors.length + '개 층)</div>';
+        html += '<table><thead><tr><th>층</th><th>구조</th><th>용도</th><th>면적</th></tr></thead><tbody>';
+        floors.forEach(function(f) {
+            html += '<tr>'
+                + '<td>' + (f.flrNoNm || '-') + (f.dongNm ? '<br><span style="font-size:9px;color:#aaa;">' + f.dongNm + '</span>' : '') + '</td>'
+                + '<td style="font-size:11px;">' + (f.strct || '-') + '</td>'
+                + '<td style="font-size:11px;">' + (f.mainPurps || '-') + '</td>'
+                + '<td>' + (f.area !== null ? Math.round(f.area * 10) / 10 + '㎡' : '-') + '</td>'
+                + '</tr>';
+        });
+        html += '</tbody></table></div>';
+    }
+ 
+    if (exposAreas && exposAreas.length) {
+        html += '<div class="indicator-box">';
+        html += '<div class="indicator-title">🏠 전유/공용면적 (' + exposAreas.length + '건)</div>';
+        html += '<table><thead><tr><th>호실</th><th>구분</th><th>구조</th><th>용도</th><th>면적</th></tr></thead><tbody>';
+        exposAreas.forEach(function(e) {
+            var gbColor = e.gbNm && e.gbNm.indexOf('전유') !== -1 ? '#1565c0' : '#888';
+            html += '<tr>'
+                + '<td>' + (e.hoNm || e.flrNoNm || '-') + '</td>'
+                + '<td style="color:' + gbColor + ';font-weight:bold;font-size:11px;">' + (e.gbNm || '-') + '</td>'
+                + '<td style="font-size:11px;">' + (e.strct || '-') + '</td>'
+                + '<td style="font-size:11px;">' + (e.mainPurps || '-') + '</td>'
+                + '<td>' + (e.area !== null ? Math.round(e.area * 10) / 10 + '㎡' : '-') + '</td>'
+                + '</tr>';
+        });
+        html += '</tbody></table></div>';
+    }
+ 
     return html;
 }
     
