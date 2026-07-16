@@ -1,0 +1,305 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>투자비용 분석 대시보드</title>
+<style>
+* { margin:0; padding:0; box-sizing:border-box; }
+body { font-family:'Malgun Gothic',sans-serif; background:#f7f5fa; color:#333; padding-bottom:60px; }
+#topbar {
+    background:#6a1b9a; color:white; padding:14px 20px;
+    display:flex; justify-content:space-between; align-items:center;
+    position:sticky; top:0; z-index:10; box-shadow:0 2px 8px rgba(0,0,0,0.15);
+}
+#topbar h1 { font-size:16px; }
+#topbar a { color:white; text-decoration:none; font-size:12px; background:rgba(255,255,255,0.2); padding:6px 12px; border-radius:20px; }
+#topbar a:hover { background:rgba(255,255,255,0.32); }
+.wrap { max-width:1000px; margin:0 auto; padding:18px 14px; }
+.section { background:white; border-radius:12px; padding:16px 18px; margin-bottom:16px; box-shadow:0 1px 4px rgba(0,0,0,0.06); }
+.section-title { font-size:13px; font-weight:bold; color:#555; margin-bottom:12px; }
+#summary-grid { display:grid; grid-template-columns:repeat(4,1fr); gap:10px; }
+@media (max-width:700px) { #summary-grid { grid-template-columns:repeat(2,1fr); } }
+.summary-item { background:#faf5ff; border:1px solid #e1bee7; border-radius:10px; padding:12px; text-align:center; }
+.summary-label { font-size:11px; color:#999; margin-bottom:4px; }
+.summary-value { font-size:20px; font-weight:900; color:#6a1b9a; }
+table { width:100%; border-collapse:collapse; font-size:12px; }
+th { background:#faf5ff; padding:8px 6px; border-bottom:2px solid #e1bee7; text-align:center; font-size:11px; color:#6a1b9a; }
+td { padding:8px 6px; border-bottom:1px solid #f0f0f0; text-align:center; }
+tr.clickable { cursor:pointer; }
+tr.clickable:hover td { background:#faf5ff; }
+.pos { color:#2e7d32; font-weight:bold; }
+.neg { color:#e53935; font-weight:bold; }
+.cost-bar-row { display:flex; align-items:center; gap:10px; margin-bottom:8px; }
+.cost-bar-label { width:90px; font-size:12px; color:#555; flex-shrink:0; }
+.cost-bar-bg { flex:1; background:#f0f0f0; border-radius:8px; height:16px; overflow:hidden; }
+.cost-bar-fill { height:16px; background:#6a1b9a; border-radius:8px; }
+.cost-bar-pct { width:50px; text-align:right; font-size:12px; font-weight:bold; color:#333; flex-shrink:0; }
+.empty-msg { text-align:center; color:#aaa; font-size:13px; padding:40px 0; }
+.detail-row { display:none; background:#faf5ff; }
+.detail-row td { text-align:left; font-size:11px; color:#555; padding:10px 16px; }
+.detail-grid { display:grid; grid-template-columns:repeat(4,1fr); gap:8px; margin-top:6px; }
+@media (max-width:700px) { .detail-grid { grid-template-columns:repeat(2,1fr); } }
+.detail-item { background:white; border:1px solid #e1bee7; border-radius:7px; padding:6px 10px; text-align:center; }
+.detail-item .l { font-size:10px; color:#999; }
+.detail-item .v { font-size:13px; font-weight:bold; color:#333; }
+</style>
+</head>
+<body>
+<div id="topbar">
+    <h1>📊 투자비용 분석 대시보드</h1>
+    <a href="/">← 지도로 돌아가기</a>
+</div>
+<div class="wrap">
+
+<div class="section">
+    <div class="section-title">전체 요약 (매도완료 거래 기준)</div>
+    <div id="summary-grid"></div>
+</div>
+
+<div class="section">
+    <div class="section-title">지역별 · 물건유형별 평균 수익률</div>
+    <div id="region-table"></div>
+</div>
+
+<div class="section">
+    <div class="section-title">비용 항목별 평균 비율 (총 투자금액 대비)</div>
+    <div id="cost-ratio"></div>
+</div>
+
+<div class="section">
+    <div class="section-title">수익률 추이 (입찰일 순)</div>
+    <div id="trend-chart"></div>
+</div>
+
+<div class="section">
+    <div class="section-title">개별 물건 목록 (클릭하면 상세 내역이 펼쳐집니다)</div>
+    <div id="deal-list"></div>
+</div>
+
+</div>
+<script>
+function toEok(manwon) {
+    var val = Math.round(Number(manwon) || 0);
+    var neg = val < 0; val = Math.abs(val);
+    var eok = Math.floor(val / 10000), rem = val % 10000;
+    var s = eok > 0 && rem > 0 ? eok + '억 ' + rem.toLocaleString() + '만' : eok > 0 ? eok + '억' : val.toLocaleString() + '만';
+    return (neg ? '-' : '') + s;
+}
+var PROP_LABEL = { house:'주택', officetel:'오피스텔', other:'그외' };
+
+function extractRegion(addr) {
+    addr = String(addr || '').trim();
+    if (!addr) return '주소미상';
+    var m = addr.match(/^(\S*?(?:특별시|광역시|특별자치시|특별자치도|도))\s+(\S+?(?:시|군|구))/);
+    if (m) {
+        var sido = m[1].replace(/(특별시|광역시|특별자치시|특별자치도|도)$/, '');
+        return (sido || m[1]) + ' ' + m[2];
+    }
+    var parts = addr.split(/\s+/);
+    return parts.slice(0, 2).join(' ') || '주소미상';
+}
+
+function computeDeal(a) {
+    var bid    = parseInt(a.actualBid) || parseInt(a.myBid) || 0;
+    var tax    = parseInt(a.tax) || 0;
+    var repair = parseInt(a.repair) || 0;
+    var agent  = parseInt(a.agent) || 0;
+    var etc    = parseInt(a.etc) || 0;
+    var totalCost = bid + tax + repair + agent + etc;
+    var sell = parseInt(a.actualSell) || parseInt(a.target) || 0;
+    var profit = sell - totalCost;
+    var roi = totalCost > 0 ? Math.round(profit / totalCost * 1000) / 10 : 0;
+    return {
+        raw: a,
+        name: (a.name && a.name.trim()) || a.addrLabel || a.addr || '(이름없음)',
+        region: extractRegion(a.addr || a.addrLabel || ''),
+        propType: a.propType || 'house',
+        bid: bid, tax: tax, repair: repair, agent: agent, etc: etc,
+        totalCost: totalCost, sell: sell, profit: profit, roi: roi,
+        bidDate: a.bidDate || ''
+    };
+}
+
+async function main() {
+    var res, list = [];
+    try {
+        res = await fetch('/api/auction');
+        var raw = await res.json();
+        if (Array.isArray(raw)) list = raw;
+    } catch (e) { /* 아래서 빈 상태로 처리 */ }
+
+    var completed = list.filter(function(a) { return a.status === '매도완료'; }).map(computeDeal);
+
+    if (!completed.length) {
+        document.getElementById('summary-grid').innerHTML = '<div class="empty-msg" style="grid-column:1/-1;">아직 "매도완료" 상태로 등록된 거래가 없습니다.<br>경매 관리에서 물건 상태를 매도완료로 바꾸고 실제 낙찰가/매도가를 입력하면 여기 집계됩니다.</div>';
+        document.getElementById('region-table').innerHTML = '<div class="empty-msg">데이터 없음</div>';
+        document.getElementById('cost-ratio').innerHTML = '<div class="empty-msg">데이터 없음</div>';
+        document.getElementById('trend-chart').innerHTML = '<div class="empty-msg">데이터 없음</div>';
+        document.getElementById('deal-list').innerHTML = '<div class="empty-msg">데이터 없음</div>';
+        return;
+    }
+
+    renderSummary(completed);
+    renderRegionTable(completed);
+    renderCostRatio(completed);
+    renderTrendChart(completed);
+    renderDealList(completed);
+}
+
+function renderSummary(deals) {
+    var totalInvest = deals.reduce(function(s, d) { return s + d.totalCost; }, 0);
+    var totalProfit = deals.reduce(function(s, d) { return s + d.profit; }, 0);
+    var avgRoi = Math.round(deals.reduce(function(s, d) { return s + d.roi; }, 0) / deals.length * 10) / 10;
+    var winCount = deals.filter(function(d) { return d.profit > 0; }).length;
+    function box(label, value, cls) {
+        return '<div class="summary-item"><div class="summary-label">' + label + '</div><div class="summary-value ' + (cls||'') + '">' + value + '</div></div>';
+    }
+    document.getElementById('summary-grid').innerHTML =
+        box('총 거래건수', deals.length + '건')
+      + box('총 투자금액', toEok(totalInvest))
+      + box('총 수익', toEok(totalProfit), totalProfit >= 0 ? 'pos' : 'neg')
+      + box('평균 수익률', avgRoi + '% (' + winCount + '/' + deals.length + '건 이익)', avgRoi >= 0 ? 'pos' : 'neg');
+}
+
+function renderRegionTable(deals) {
+    var groups = {};
+    deals.forEach(function(d) {
+        var key = d.region + '||' + d.propType;
+        if (!groups[key]) groups[key] = { region: d.region, propType: d.propType, deals: [] };
+        groups[key].deals.push(d);
+    });
+    var rows = Object.keys(groups).map(function(k) { return groups[k]; });
+    rows.sort(function(a, b) { return b.deals.length - a.deals.length; });
+    var html = '<table><thead><tr><th>지역</th><th>물건유형</th><th>건수</th><th>평균 수익률</th><th>평균 수익</th></tr></thead><tbody>';
+    rows.forEach(function(g) {
+        var avgRoi = Math.round(g.deals.reduce(function(s,d){return s+d.roi;},0) / g.deals.length * 10) / 10;
+        var avgProfit = g.deals.reduce(function(s,d){return s+d.profit;},0) / g.deals.length;
+        html += '<tr>'
+            + '<td>' + g.region + '</td>'
+            + '<td>' + (PROP_LABEL[g.propType] || g.propType) + '</td>'
+            + '<td>' + g.deals.length + '</td>'
+            + '<td class="' + (avgRoi >= 0 ? 'pos' : 'neg') + '">' + avgRoi + '%</td>'
+            + '<td class="' + (avgProfit >= 0 ? 'pos' : 'neg') + '">' + toEok(avgProfit) + '</td>'
+            + '</tr>';
+    });
+    html += '</tbody></table>';
+    document.getElementById('region-table').innerHTML = html;
+}
+
+function renderCostRatio(deals) {
+    var sumBid = deals.reduce(function(s,d){return s+d.bid;},0);
+    var sumTax = deals.reduce(function(s,d){return s+d.tax;},0);
+    var sumRepair = deals.reduce(function(s,d){return s+d.repair;},0);
+    var sumAgent = deals.reduce(function(s,d){return s+d.agent;},0);
+    var sumEtc = deals.reduce(function(s,d){return s+d.etc;},0);
+    var total = sumBid + sumTax + sumRepair + sumAgent + sumEtc;
+    if (!total) { document.getElementById('cost-ratio').innerHTML = '<div class="empty-msg">데이터 없음</div>'; return; }
+    var items = [
+        { label:'낙찰가', v:sumBid, color:'#6a1b9a' },
+        { label:'취득세', v:sumTax, color:'#e53935' },
+        { label:'수리비', v:sumRepair, color:'#ff7043' },
+        { label:'중개수수료', v:sumAgent, color:'#1565c0' },
+        { label:'기타비용', v:sumEtc, color:'#9e9e9e' }
+    ];
+    var html = '';
+    items.forEach(function(it) {
+        var pct = Math.round(it.v / total * 1000) / 10;
+        html += '<div class="cost-bar-row">'
+            + '<div class="cost-bar-label">' + it.label + '</div>'
+            + '<div class="cost-bar-bg"><div class="cost-bar-fill" style="width:' + pct + '%;background:' + it.color + ';"></div></div>'
+            + '<div class="cost-bar-pct">' + pct + '%</div>'
+            + '</div>';
+    });
+    document.getElementById('cost-ratio').innerHTML = html;
+}
+
+function parseDateLoose(s) {
+    if (!s) return null;
+    var d = new Date(s);
+    return isNaN(d.getTime()) ? null : d;
+}
+
+function renderTrendChart(deals) {
+    var withDate = deals.filter(function(d) { return parseDateLoose(d.bidDate); })
+        .slice().sort(function(a,b) { return parseDateLoose(a.bidDate) - parseDateLoose(b.bidDate); });
+    if (withDate.length < 2) {
+        document.getElementById('trend-chart').innerHTML = '<div class="empty-msg">입찰일이 입력된 매도완료 거래가 2건 이상이어야 추이 그래프를 그릴 수 있습니다.</div>';
+        return;
+    }
+    var W = 900, H = 220, padL = 40, padR = 20, padT = 20, padB = 40;
+    var innerW = W - padL - padR, innerH = H - padT - padB;
+    var rois = withDate.map(function(d) { return d.roi; });
+    var maxV = Math.max.apply(null, rois.concat([0]));
+    var minV = Math.min.apply(null, rois.concat([0]));
+    if (maxV === minV) { maxV += 1; minV -= 1; }
+    var pts = withDate.map(function(d, i) {
+        var x = padL + (withDate.length === 1 ? innerW/2 : (i/(withDate.length-1)) * innerW);
+        var y = padT + innerH - ((d.roi - minV) / (maxV - minV)) * innerH;
+        return { x:x, y:y, d:d };
+    });
+    var zeroY = padT + innerH - ((0 - minV) / (maxV - minV)) * innerH;
+    var polyline = pts.map(function(p){ return p.x.toFixed(1)+','+p.y.toFixed(1); }).join(' ');
+    var dots = pts.map(function(p) {
+        var color = p.d.roi >= 0 ? '#2e7d32' : '#e53935';
+        return '<circle cx="'+p.x.toFixed(1)+'" cy="'+p.y.toFixed(1)+'" r="4" fill="'+color+'"><title>'+p.d.name+' · '+p.d.bidDate+' · '+p.d.roi+'%</title></circle>'
+            + '<text x="'+p.x.toFixed(1)+'" y="'+(p.y-8).toFixed(1)+'" font-size="10" fill="#555" text-anchor="middle">'+p.d.roi+'%</text>';
+    }).join('');
+    var labels = pts.map(function(p, i) {
+        if (withDate.length > 10 && i % Math.ceil(withDate.length/10) !== 0) return '';
+        return '<text x="'+p.x.toFixed(1)+'" y="'+(H-10)+'" font-size="9" fill="#999" text-anchor="middle">'+p.d.bidDate+'</text>';
+    }).join('');
+    var svg = '<svg viewBox="0 0 '+W+' '+H+'" style="width:100%;height:'+H+'px;">'
+        + '<line x1="'+padL+'" y1="'+zeroY.toFixed(1)+'" x2="'+(W-padR)+'" y2="'+zeroY.toFixed(1)+'" stroke="#ddd" stroke-dasharray="4,3"></line>'
+        + '<polyline points="'+polyline+'" fill="none" stroke="#6a1b9a" stroke-width="2"></polyline>'
+        + dots + labels + '</svg>';
+    document.getElementById('trend-chart').innerHTML = svg;
+}
+
+function renderDealList(deals) {
+    var sorted = deals.slice().sort(function(a,b) {
+        var ad = parseDateLoose(a.bidDate), bd = parseDateLoose(b.bidDate);
+        return (bd ? bd.getTime() : 0) - (ad ? ad.getTime() : 0);
+    });
+    var html = '<table><thead><tr><th>물건명</th><th>지역</th><th>유형</th><th>낙찰가</th><th>매도가</th><th>총비용</th><th>수익</th><th>수익률</th></tr></thead><tbody>';
+    sorted.forEach(function(d, i) {
+        html += '<tr class="clickable" onclick="toggleDetail('+i+')">'
+            + '<td>' + d.name + '</td>'
+            + '<td>' + d.region + '</td>'
+            + '<td>' + (PROP_LABEL[d.propType] || d.propType) + '</td>'
+            + '<td>' + toEok(d.bid) + '</td>'
+            + '<td>' + toEok(d.sell) + '</td>'
+            + '<td>' + toEok(d.totalCost) + '</td>'
+            + '<td class="' + (d.profit >= 0 ? 'pos' : 'neg') + '">' + toEok(d.profit) + '</td>'
+            + '<td class="' + (d.roi >= 0 ? 'pos' : 'neg') + '">' + d.roi + '%</td>'
+            + '</tr>';
+        html += '<tr class="detail-row" id="detail-' + i + '"><td colspan="8">'
+            + (d.raw.addr || d.raw.addrLabel || '') + (d.raw.caseNo ? ' · ' + d.raw.caseNo : '')
+            + '<div class="detail-grid">'
+            + detailItem('낙찰가', toEok(d.bid))
+            + detailItem('취득세', toEok(d.tax))
+            + detailItem('수리비', toEok(d.repair))
+            + detailItem('중개수수료', toEok(d.agent))
+            + detailItem('기타비용', toEok(d.etc))
+            + detailItem('총 투자비용', toEok(d.totalCost))
+            + detailItem('실제 매도가', toEok(d.sell))
+            + detailItem('입찰일', d.bidDate || '-')
+            + '</div>'
+            + (d.raw.memo ? '<div style="margin-top:8px;color:#888;">메모: ' + d.raw.memo.replace(/\n/g,'<br>') + '</div>' : '')
+            + '</td></tr>';
+    });
+    html += '</tbody></table>';
+    document.getElementById('deal-list').innerHTML = html;
+}
+function detailItem(label, value) {
+    return '<div class="detail-item"><div class="l">' + label + '</div><div class="v">' + value + '</div></div>';
+}
+function toggleDetail(i) {
+    var row = document.getElementById('detail-' + i);
+    row.style.display = row.style.display === 'table-row' ? 'none' : 'table-row';
+}
+
+main();
+</script>
+</body>
+</html>
