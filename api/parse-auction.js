@@ -234,14 +234,15 @@ ${text}
     const geminiRes = await fetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
+     body: JSON.stringify({
         contents: [{ parts: [{ text: prompt }] }],
         generationConfig: {
           responseMimeType: 'application/json',
           responseSchema: RESPONSE_SCHEMA,
+          thinkingConfig: { thinkingLevel: 'minimal' },
         },
       }),
-      signal: AbortSignal.timeout(55000),
+      signal: AbortSignal.timeout(58000),
     });
     const data = await geminiRes.json();
     if (!geminiRes.ok) {
