@@ -1518,7 +1518,8 @@ function createMarker(lat, lon, apt) {
     var overlay = new kakao.maps.CustomOverlay({
         position: new kakao.maps.LatLng(lat, lon),
         content: div,
-        yAnchor: 1.2
+        yAnchor: 1.2,
+        clickable: true
     });
     overlay.setMap(map);
     markers.push(overlay);
@@ -2233,7 +2234,8 @@ function placeAuctionMarker(a) {
     div.onclick = function() { openAuctionModal(a.id); };
     var overlay = new kakao.maps.CustomOverlay({
         position: new kakao.maps.LatLng(a.lat, a.lon),
-        content: div, yAnchor: 1.2, zIndex: 10
+        content: div, yAnchor: 1.2, zIndex: 10,
+        clickable: true
     });
     overlay.setMap(map);
     auctionMarkers.push(overlay);
