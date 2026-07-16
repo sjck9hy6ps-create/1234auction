@@ -4,8 +4,15 @@
      아직 complex_coords에 없는 것만 카카오 REST API로 지오코딩 + 법정동코드 조회 → 저장
    - 좌표를 구한 단지는 이어서 배포된 /api/get-building 을 호출해 건축물대장도 함께 캐시
      (단독/다가구는 원래 앱에서도 지오코딩·건축물대장 대상이 아니라 웜업에서도 제외)
-   - 이미 처리된 단지(complex_coords에 이미 있는 cache_key)는 건너뛰므로
+   - 이미 처리된 단지(complex_coords에 이미 있는 cache_key)는 좌표 조회를 건너뛰므로
      시간이 부족해 중간에 멈춰도 다시 실행하면 이어서 처리됩니다.
+
+   ── 건축물대장 재시도 로직 (2026-07 수정) ──
+   좌표는 이미 있지만 건축물대장 조회가 실패했던 단지(예: 건축HUB API
+   할당량/계정 문제 등)는, 좌표 캐시 여부만으로는 "완료"로 분류되어 예전 로직에서는
+   영원히 재시도되지 않는 문제가 있었습니다. 이제는 building_info에 실제로
+   저장된 조합(sigungu_cd/bjdong_cd/bun/ji/bld_nm)까지 별도로 확인해서,
+   좌표는 있지만 건축물대장이 아직 없는 단지는 계속 재시도 대상에 포함시킵니다.
 ════════════════════════════════════ */
 import { createClient } from '@supabase/supabase-js';
 import ws from 'ws';
@@ -23,9 +30,10 @@ const supabase = createClient(
 const KAKAO_REST_KEY = process.env.KAKAO_REST_API_KEY?.trim();
 const SITE_URL = (process.env.SITE_URL?.trim()) || 'https://1234auction.vercel.app';
 
-const DELAY_MS = 250;      // 카카오 REST API 호출 사이 간격 (레이트리밋 안전 마진)
-const CONCURRENCY = 3;     // 동시 처리 단지 수
-const PAGE_SIZE = 1000;    // Supabase 페이지네이션 단위
+const DELAY_MS = 250;          // 카카오 REST API 호출 사이 간격 (레이트리밋 안전 마진)
+const BUILDING_DELAY_MS = 300; // 건축HUB(데이터포털) 호출 사이 간격 (버스트로 인한 차단 방지)
+const CONCURRENCY = 3;         // 동시 처리 단지 수
+const PAGE_SIZE = 1000;        // Supabase 페이지네이션 단위
 
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
@@ -90,6 +98,30 @@ function buildCacheKey(dong, danji, bunji, roadName, mainNum, subNum) {
   return [dong, danji, bunji, roadName, mainNum, subNum].join('|').toLowerCase();
 }
 
+/* building_info 캐시 조합 키 (get-building.js의 onConflict 컬럼과 동일한 순서/구성) */
+function buildBuildingKey(sigunguCd, bjdongCd, bun, ji, bldNm) {
+  return [sigunguCd, bjdongCd, bun, ji, (bldNm || '').trim()].join('|');
+}
+
+/* get-building.js와 동일한 bun/ji 계산 로직 (경로 분기 재사용을 위해 분리) */
+function computeBunJi(row) {
+  const { bunji, road_name, main_num, sub_num } = row;
+  let main = null, sub = null;
+  if (bunji) {
+    const parts = String(bunji).split('-');
+    const m1 = parseInt(parts[0], 10);
+    const m2 = parts[1] !== undefined ? parseInt(parts[1], 10) : null;
+    main = Number.isNaN(m1) ? null : m1;
+    sub = (m2 === null || Number.isNaN(m2) || m2 === 0) ? null : m2;
+  }
+  if (!main && road_name && main_num) { main = main_num; sub = sub_num; }
+  if (!main) return null;
+  return {
+    bun: String(main).padStart(4, '0'),
+    ji: String(sub || 0).padStart(4, '0'),
+  };
+}
+
 /* ── 테이블에서 고유 단지 목록(주소 관련 컬럼만) 페이지네이션으로 전부 뽑아 dedupe ── */
 async function fetchDistinctComplexes(table) {
   const map = new Map();
@@ -111,18 +143,36 @@ async function fetchDistinctComplexes(table) {
   return map;
 }
 
-/* ── 이미 캐시된 cache_key 전부 가져오기 ── */
-async function fetchExistingCoordKeys() {
-  const set = new Set();
+/* ── 이미 캐시된 좌표 전부 가져오기 (cache_key → {sigunguCd, bjdongCd}) ── */
+async function fetchExistingCoords() {
+  const map = new Map();
   let from = 0;
   while (true) {
     const { data, error } = await supabase
       .from('complex_coords')
-      .select('cache_key')
+      .select('cache_key,sigungu_cd,bjdong_cd')
       .range(from, from + PAGE_SIZE - 1);
     if (error) { console.error('❌ complex_coords 조회 에러:', error.message); break; }
     if (!data || data.length === 0) break;
-    data.forEach(r => set.add(r.cache_key));
+    data.forEach(r => map.set(r.cache_key, { sigunguCd: r.sigungu_cd, bjdongCd: r.bjdong_cd }));
+    if (data.length < PAGE_SIZE) break;
+    from += PAGE_SIZE;
+  }
+  return map;
+}
+
+/* ── 이미 건축물대장이 캐시된 조합 전부 가져오기 ── */
+async function fetchExistingBuildingKeys() {
+  const set = new Set();
+  let from = 0;
+  while (true) {
+    const { data, error } = await supabase
+      .from('building_info')
+      .select('sigungu_cd,bjdong_cd,bun,ji,bld_nm')
+      .range(from, from + PAGE_SIZE - 1);
+    if (error) { console.error('❌ building_info 조회 에러:', error.message); break; }
+    if (!data || data.length === 0) break;
+    data.forEach(r => set.add(buildBuildingKey(r.sigungu_cd, r.bjdong_cd, r.bun, r.ji, r.bld_nm)));
     if (data.length < PAGE_SIZE) break;
     from += PAGE_SIZE;
   }
@@ -204,22 +254,11 @@ async function saveCoord(cacheKey, lat, lon, sigunguCd, bjdongCd) {
 /* ── 건축물대장 웜업: 이미 배포된 /api/get-building을 그대로 호출 →
       그 안에서 알아서 building_info 테이블에 캐시해줌 (로직 중복 없이 재사용) ── */
 async function warmBuildingInfo(row, sigunguCd, bjdongCd) {
-  const { bunji, road_name, main_num, sub_num, danji } = row;
-  let main = null, sub = null;
-  if (bunji) {
-    const parts = String(bunji).split('-');
-    const m1 = parseInt(parts[0], 10);
-    const m2 = parts[1] !== undefined ? parseInt(parts[1], 10) : null;
-    main = Number.isNaN(m1) ? null : m1;
-    sub = (m2 === null || Number.isNaN(m2) || m2 === 0) ? null : m2;
-  }
-  if (!main && road_name && main_num) { main = main_num; sub = sub_num; }
-  if (!main) return;
-
-  const bun = String(main).padStart(4, '0');
-  const ji = String(sub || 0).padStart(4, '0');
+  const bunJi = computeBunJi(row);
+  if (!bunJi) return;
+  const { bun, ji } = bunJi;
   const url = `${SITE_URL}/api/get-building?sigunguCd=${sigunguCd}&bjdongCd=${bjdongCd}`
-    + `&bun=${bun}&ji=${ji}&bldNm=${encodeURIComponent(danji || '')}`;
+    + `&bun=${bun}&ji=${ji}&bldNm=${encodeURIComponent(row.danji || '')}`;
   try {
     await fetch(url, { signal: AbortSignal.timeout(15000) });
   } catch (e) {
@@ -232,7 +271,7 @@ async function processQueue(items, worker, concurrency) {
   const total = items.length;
   async function runOne() {
     while (idx < items.length) {
-      if (quotaExhausted) return; // 할당량 소진 시 남은 큐 처리 중단 (Actions 시간 낭비 방지)
+      if (quotaExhausted) return; // 카카오 할당량 소진 시 남은 큐 처리 중단 (Actions 시간 낭비 방지)
       const item = items[idx++];
       await worker(item);
       done++;
@@ -249,8 +288,12 @@ async function main() {
   }
 
   console.log('📦 기존 캐시된 좌표 목록 불러오는 중...');
-  const existingKeys = await fetchExistingCoordKeys();
-  console.log(`   → 이미 캐시된 단지 ${existingKeys.size}개`);
+  const existingCoords = await fetchExistingCoords();
+  console.log(`   → 이미 캐시된 단지 ${existingCoords.size}개`);
+
+  console.log('📦 기존 캐시된 건축물대장 목록 불러오는 중...');
+  const existingBuildingKeys = await fetchExistingBuildingKeys();
+  console.log(`   → 이미 건축물대장 캐시된 조합 ${existingBuildingKeys.size}개`);
 
   // 단독/다가구(single_trades)는 원래 앱에서도 지오코딩·건축물대장 대상이 아니므로 웜업에서도 제외
   const tableTypes = [
@@ -272,11 +315,25 @@ async function main() {
   }
   console.log(`\n📦 전체 고유 단지: ${allEntries.length}개`);
 
-  const targets = allEntries.filter(([key]) => !existingKeys.has(key));
-  console.log(`📦 신규 웜업 대상: ${targets.length}개\n`);
+  // 1) 좌표가 아직 없는 신규 단지 → 지오코딩 + 좌표저장 + (성공 시) 건축물대장까지 시도
+  const coordTargets = allEntries.filter(([key]) => !existingCoords.has(key));
+  console.log(`📦 신규 좌표 웜업 대상: ${coordTargets.length}개`);
+
+  // 2) 좌표는 이미 있지만 건축물대장이 아직 캐시되지 않은 단지 → 지오코딩 없이 건축물대장만 재시도
+  //    (예: 건축HUB API 할당량/계정 문제 등으로 지난 실행에서 실패했던 단지들)
+  const buildingOnlyTargets = allEntries.filter(([key, row]) => {
+    if (!existingCoords.has(key)) return false; // coordTargets에서 이미 처리됨
+    const coord = existingCoords.get(key);
+    if (!coord.sigunguCd || !coord.bjdongCd) return false; // 법정동코드 없으면 건축물대장 조회 불가
+    const bunJi = computeBunJi(row);
+    if (!bunJi) return false;
+    const bKey = buildBuildingKey(coord.sigunguCd, coord.bjdongCd, bunJi.bun, bunJi.ji, row.danji);
+    return !existingBuildingKeys.has(bKey);
+  });
+  console.log(`📦 건축물대장만 재시도 대상: ${buildingOnlyTargets.length}개\n`);
 
   let success = 0, fail = 0;
-  await processQueue(targets, async ([cacheKey, row, type]) => {
+  await processQueue(coordTargets, async ([cacheKey, row, type]) => {
     const coord = await geocodeComplex(row, type);
     if (!coord) { fail++; return; }
     const region = await kakaoCoordToRegionCode(coord.lat, coord.lon);
@@ -285,18 +342,34 @@ async function main() {
     success++;
     if (region) {
       await warmBuildingInfo(row, region.sigunguCd, region.bjdongCd);
+      await sleep(BUILDING_DELAY_MS);
     }
   }, CONCURRENCY);
 
   if (quotaExhausted) {
-    console.log(`\n⏸️  일일 호출 제한으로 중간에 중단됨. 성공 ${success}건 / 실패 ${fail}건 / 미처리 ${targets.length - success - fail}건`);
+    console.log(`\n⏸️  카카오 일일 호출 제한으로 좌표 웜업이 중간에 중단됨. 성공 ${success}건 / 실패 ${fail}건 / 미처리 ${coordTargets.length - success - fail}건`);
     console.log(`   나중에(예: 다음날) 이 workflow를 다시 실행하면 미처리 단지부터 이어서 진행됩니다.`);
-  } else {
-    console.log(`\n🎉 웜업 완료! 성공 ${success}건 / 실패 ${fail}건`);
-    if (fail > 0) {
-      console.log(`   (실패한 단지는 주소 정보가 부실하거나 카카오에서 찾지 못한 경우입니다. 다시 실행하면 재시도됩니다.)`);
-    }
+    console.log(`   (카카오 할당량 문제이므로 건축물대장 재시도 단계는 생략합니다.)`);
+    return;
   }
+
+  console.log(`\n🎉 좌표 웜업 완료! 성공 ${success}건 / 실패 ${fail}건`);
+  if (fail > 0) {
+    console.log(`   (실패한 단지는 주소 정보가 부실하거나 카카오에서 찾지 못한 경우입니다. 다시 실행하면 재시도됩니다.)`);
+  }
+
+  console.log(`\n📦 건축물대장 재시도 시작 (좌표는 있지만 아직 건축물대장이 없는 단지)...`);
+  let buildingTried = 0;
+  await processQueue(buildingOnlyTargets, async ([cacheKey, row]) => {
+    const coord = existingCoords.get(cacheKey);
+    if (coord?.sigunguCd && coord?.bjdongCd) {
+      await warmBuildingInfo(row, coord.sigunguCd, coord.bjdongCd);
+      buildingTried++;
+      await sleep(BUILDING_DELAY_MS);
+    }
+  }, CONCURRENCY);
+  console.log(`   → 건축물대장 재시도 완료: ${buildingTried}건 시도`);
+  console.log(`   (실제 저장 성공/실패는 building_info 테이블에서 확인하세요. 실패 건은 다음 실행에서 다시 재시도됩니다.)`);
 }
 
 main().catch(e => { console.error('❌ 치명적 오류:', e); process.exit(1); });
