@@ -646,6 +646,8 @@ tr:hover td { background:#fffde7; }
 ════════════════════════════════════ */
 var map, geocoder, places;
 var markers = [], radiusCircle = null;
+var markerDataRegistry = {};
+var markerDataSeq = 0;
 var moveTimer = null, coordCache = {}, dataCache = {};
 var today = new Date();
 
@@ -744,7 +746,11 @@ function setStatus(msg) {
     if (!msg) { box.style.display = 'none'; return; }
     box.innerText = msg; box.style.display = 'block';
 }
-function clearMarkers() { markers.forEach(function(m) { m.setMap(null); }); markers = []; }
+function clearMarkers() {
+    markers.forEach(function(m) { m.setMap(null); });
+    markers = [];
+    markerDataRegistry = {};
+}
 function closePanel() {
     document.getElementById('panel').style.display = 'none';
     if (radiusCircle) { radiusCircle.setMap(null); radiusCircle = null; }
@@ -1491,10 +1497,13 @@ function createMarker(lat, lon, apt) {
         : '';
     // 인기 평형 배지
     var popBadge = buildPopularPyeongBadge(apt);
+    var mKey = 'mk' + (markerDataSeq++);
+    markerDataRegistry[mKey] = { apt: apt, lat: lat, lon: lon };
     var div = document.createElement('div');
     div.style.cssText = 'position:relative;background:white;border:2px solid ' + color + ';border-radius:8px;'
         + 'padding:6px 10px;white-space:nowrap;cursor:pointer;'
         + 'box-shadow:0 2px 6px rgba(0,0,0,0.13);text-align:center;line-height:1.35;max-width:220px;';
+    div.setAttribute('onclick', 'handleAptMarkerClick(\'' + mKey + '\')');
     div.innerHTML = ''
         + (count > 0 ? '<div style="font-size:15px;font-weight:900;color:' + color + ';">' + count + '건</div>' : '')
         + '<div style="font-size:13px;font-weight:bold;color:#333;overflow:hidden;text-overflow:ellipsis;">'
@@ -1502,19 +1511,8 @@ function createMarker(lat, lon, apt) {
         + '</div>'
         + (popBadge ? '<div style="margin-top:2px;">' + popBadge + '</div>' : '')
         + (amount ? '<div style="font-size:13px;font-weight:bold;color:' + color + ';">' + toEok(amount) + '</div>' : '')
-        + (l.road_name ? '<div style="font-size:11px;color:#aaa;">' + l.road_name + '</div>' : '');
-    div.onclick = function() {
-        showRadiusCircle(lat, lon);
-        openPanel(apt, lat, lon);
-    };
-    var compBtn = document.createElement('div');
-    compBtn.className = 'comp-add-badge';
-    compBtn.innerText = '+비교';
-    compBtn.onclick = function(e) {
-        e.stopPropagation();
-        openComparablePicker(apt, lat, lon);
-    };
-    div.appendChild(compBtn);
+        + (l.road_name ? '<div style="font-size:11px;color:#aaa;">' + l.road_name + '</div>' : '')
+        + '<div class="comp-add-badge" onclick="event.stopPropagation();handleCompBtnClick(\'' + mKey + '\')">+비교</div>';
     var overlay = new kakao.maps.CustomOverlay({
         position: new kakao.maps.LatLng(lat, lon),
         content: div,
@@ -1523,6 +1521,18 @@ function createMarker(lat, lon, apt) {
     });
     overlay.setMap(map);
     markers.push(overlay);
+}
+ 
+function handleAptMarkerClick(key) {
+    var d = markerDataRegistry[key];
+    if (!d) return;
+    showRadiusCircle(d.lat, d.lon);
+    openPanel(d.apt, d.lat, d.lon);
+}
+function handleCompBtnClick(key) {
+    var d = markerDataRegistry[key];
+    if (!d) return;
+    openComparablePicker(d.apt, d.lat, d.lon);
 }
 
 function showRadiusCircle(lat, lon) {
@@ -2231,7 +2241,7 @@ function placeAuctionMarker(a) {
         + '<div style="color:' + sc + ';font-size:11px;font-weight:bold;">' + priceLine + '</div>'
         + (a.pyung ? '<div style="color:#888;font-size:10px;">' + a.pyung + '평</div>' : '')
         + roadLine;
-    div.onclick = function() { openAuctionModal(a.id); };
+    div.setAttribute('onclick', 'openAuctionModal(\'' + String(a.id).replace(/'/g, "\\'") + '\')');
     var overlay = new kakao.maps.CustomOverlay({
         position: new kakao.maps.LatLng(a.lat, a.lon),
         content: div, yAnchor: 1.2, zIndex: 10,
