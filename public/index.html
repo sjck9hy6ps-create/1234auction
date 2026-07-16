@@ -1298,11 +1298,11 @@ function redrawMarkers() {
     var myGen = renderGen;
     surgeRankMap = computeSurgeRankMap(currentTypeFilter);
     var list;
-    if (currentTypeFilter === 'apt') {
+  if (currentTypeFilter === 'apt') {
         var aptAll = allAptList.filter(function(a) { return a.buildingType === 'apt'; });
         if (recentYearOnly) aptAll = aptAll.filter(hasRecentYearTrade);
         if (activeGrades.size === 0) {
-            list = recentYearOnly ? aptAll : pickLatestNewHigh(aptAll);
+            list = aptAll;
         } else {
             list = aptAll.filter(function(a) { return a.grade && activeGrades.has(String(a.grade)); });
         }
@@ -1310,7 +1310,7 @@ function redrawMarkers() {
         var villaAll = allAptList.filter(function(a) { return a.buildingType === 'villa'; });
         if (recentYearOnly) villaAll = villaAll.filter(hasRecentYearTrade);
         if (activeVillaFilters.size === 0 && activeGrades.size === 0 && activeVillaTiers.size === 0) {
-            list = recentYearOnly ? villaAll : pickLatestOne(villaAll);
+            list = villaAll;
         } else {
             list = villaAll.filter(function(a) {
                 var gradeOk = activeGrades.size === 0 || (a.grade && activeGrades.has(String(a.grade)));
