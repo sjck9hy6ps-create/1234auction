@@ -473,6 +473,14 @@ tr:hover td { background:#fffde7; }
             </div>
             <div id="a-addr-result" style="font-size:11px;color:#6a1b9a;padding:2px 0 4px 76px;display:none;"></div>
             <div class="modal-row">
+                <span class="modal-label">물건유형</span>
+                <select class="modal-select" id="a-prop-type" onchange="autoCalcAgentSilent();calcMargin();">
+                    <option value="house">주택(아파트·연립다세대·단독)</option>
+                    <option value="officetel">오피스텔</option>
+                    <option value="other">그외(상가·토지 등)</option>
+                </select>
+            </div>
+            <div class="modal-row">
                 <span class="modal-label">아파트명</span>
                 <input type="text" class="modal-input" id="a-name" placeholder="단지명">
             </div>
@@ -1902,6 +1910,7 @@ function openAuctionModal(id) {
      'a-tax','a-repair','a-agent','a-etc','a-target','a-actual-sell','a-memo','a-paste-text','a-comp-target-margin']
         .forEach(function(fid) { document.getElementById(fid).value = ''; });
     document.getElementById('a-status').value = '검토중';
+    document.getElementById('a-prop-type').value = 'house';
     document.getElementById('a-addr-result').style.display = 'none';
     pendingAuctionDetail = null;
     pendingAuctionComparables = [];
@@ -1913,6 +1922,7 @@ function openAuctionModal(id) {
             document.getElementById('a-paste-text').value = a.rawText || '';
             document.getElementById('auction-id').value    = a.id || '';
             document.getElementById('a-addr').value        = a.addr || '';
+            document.getElementById('a-prop-type').value   = a.propType || 'house';
             document.getElementById('a-name').value        = a.name || '';
             document.getElementById('a-dong').value        = a.aptDong || '';
             document.getElementById('a-floor').value       = a.floor || '';
@@ -1987,18 +1997,32 @@ function autoCalcTaxSilent() {
 }
  
 /* 서울시 주택 매매 중개보수 요율표 기준 상한요율로 중개수수료 계산 (만원 단위 입력/반환) */
-function calcAgentFee(saleManwon) {
+function calcAgentFee(saleManwon, propType) {
     if (!saleManwon || saleManwon <= 0) return 0;
     var saleWon = saleManwon * 10000;
-    var rate, cap;
-    if (saleWon < 50000000)        { rate = 0.006; cap = 250000; }
-    else if (saleWon < 200000000)  { rate = 0.005; cap = 800000; }
-    else if (saleWon < 900000000)  { rate = 0.004; cap = null; }
-    else if (saleWon < 1200000000) { rate = 0.005; cap = null; }
-    else if (saleWon < 1500000000) { rate = 0.006; cap = null; }
-    else                            { rate = 0.007; cap = null; }
-    var fee = saleWon * rate;
-    if (cap !== null) fee = Math.min(fee, cap);
+    var fee;
+    if (propType === 'officetel') {
+        // 오피스텔: 전용 85㎡ 이하 + 일정설비 갖춘 경우 매매 0.5%, 그 외 0.9%
+        // (설비 요건 충족 여부는 앱에서 확인 불가 - 전용면적만으로 근사 판단)
+        var pyung = parseFloat(document.getElementById('a-pyung').value) || 0;
+        var m2 = pyung * 3.305785;
+        var rate = (m2 > 0 && m2 <= 85) ? 0.005 : 0.009;
+        fee = saleWon * rate;
+    } else if (propType === 'other') {
+        // 상가·토지 등: 0.9% 정액 (한도 없음)
+        fee = saleWon * 0.009;
+    } else {
+        // 주택(아파트/연립다세대/단독) - 전국 시도 공통 상한요율표 (2021.12 개편 이후)
+        var rate2, cap;
+        if (saleWon < 50000000)        { rate2 = 0.006; cap = 250000; }
+        else if (saleWon < 200000000)  { rate2 = 0.005; cap = 800000; }
+        else if (saleWon < 900000000)  { rate2 = 0.004; cap = null; }
+        else if (saleWon < 1200000000) { rate2 = 0.005; cap = null; }
+        else if (saleWon < 1500000000) { rate2 = 0.006; cap = null; }
+        else                            { rate2 = 0.007; cap = null; }
+        fee = saleWon * rate2;
+        if (cap !== null) fee = Math.min(fee, cap);
+    }
     return Math.round(fee / 10000);
 }
  
@@ -2006,7 +2030,8 @@ function calcAgentFee(saleManwon) {
 function autoCalcAgentSilent() {
     var sell = parseInt(document.getElementById('a-actual-sell').value) || parseInt(document.getElementById('a-target').value) || 0;
     if (!sell) return;
-    document.getElementById('a-agent').value = calcAgentFee(sell);
+    var propType = document.getElementById('a-prop-type').value;
+    document.getElementById('a-agent').value = calcAgentFee(sell, propType);
 }
 function calcMargin() {
     var myBid    = parseInt(document.getElementById('a-my-bid').value)    || 0;
@@ -2060,6 +2085,7 @@ async function saveAuction() {
         dong: coordInfo ? (coordInfo.dong || '') : '',
         bunji: coordInfo ? (coordInfo.bunji || '') : '',
         name: name,
+        propType: document.getElementById('a-prop-type').value,
         aptDong: document.getElementById('a-dong').value.trim(),
         floor: document.getElementById('a-floor').value,
         unitNo: document.getElementById('a-unit').value.trim(),
