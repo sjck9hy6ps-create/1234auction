@@ -26,7 +26,7 @@ const supabase = createClient(
   }
 );
 
-const KAKAO_REST_KEY = process.env.KAKAO_REST_API_KEY?.trim();
+const KAKAO_REST_KEY = process.env.KAKAO_REST_KEY_WARMUP?.trim();
 const SITE_URL = (process.env.SITE_URL?.trim()) || 'https://1234auction.vercel.app';
 
 const DELAY_MS = 250;          // 카카오 REST API 호출 사이 간격 (레이트리밋 안전 마진)
@@ -282,7 +282,7 @@ async function processQueue(items, worker, concurrency) {
 
 async function main() {
   if (!KAKAO_REST_KEY) {
-    console.error('❌ KAKAO_REST_API_KEY 환경변수가 없습니다. GitHub 저장소 Secrets에 추가해 주세요.');
+    console.error('❌ KAKAO_REST_KEY_WARMUP 환경변수가 없습니다. GitHub 저장소 Secrets에 추가해 주세요.');
     process.exit(1);
   }
 
