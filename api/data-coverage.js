@@ -1,0 +1,68 @@
+/* ════════════════════════════════════
+   데이터 수집 범위 조회 API
+   - 아파트 매매/전월세, 연립다세대·단독다가구 매매/전월세 4개 카테고리의
+     최소~최대 deal_date(수집된 데이터 범위)와 건수를 반환합니다.
+   - 프론트엔드 지도 화면에 "데이터 수집 범위" 표시 + 과거 데이터 추가 시
+     알림 기능에 사용됩니다.
+════════════════════════════════════ */
+import { createClient } from '@supabase/supabase-js';
+const supabase = createClient(
+  process.env.SUPABASE_URL,
+  process.env.SUPABASE_SERVICE_ROLE_KEY
+);
+
+// 테이블이 아직 없거나(예: villa_rent/single_rent 생성 전) 비어있어도 에러 없이 null로 처리
+async function getRange(table) {
+  try {
+    const [{ data: minRow, error: e1 }, { data: maxRow, error: e2 }, { count, error: e3 }] = await Promise.all([
+      supabase.from(table).select('deal_date').not('deal_date', 'is', null).order('deal_date', { ascending: true }).limit(1),
+      supabase.from(table).select('deal_date').not('deal_date', 'is', null).order('deal_date', { ascending: false }).limit(1),
+      supabase.from(table).select('*', { count: 'exact', head: true }),
+    ]);
+    if (e1 || e2 || e3) {
+      console.warn(`data-coverage: ${table} 조회 실패 -`, (e1 || e2 || e3).message);
+      return { min: null, max: null, count: 0 };
+    }
+    return {
+      min: minRow && minRow[0] ? minRow[0].deal_date : null,
+      max: maxRow && maxRow[0] ? maxRow[0].deal_date : null,
+      count: count || 0,
+    };
+  } catch (e) {
+    console.warn(`data-coverage: ${table} 조회 예외 -`, e.message);
+    return { min: null, max: null, count: 0 };
+  }
+}
+
+function mergeRanges(a, b) {
+  const mins = [a.min, b.min].filter(v => v !== null);
+  const maxs = [a.max, b.max].filter(v => v !== null);
+  return {
+    min: mins.length ? Math.min(...mins) : null,
+    max: maxs.length ? Math.max(...maxs) : null,
+    count: (a.count || 0) + (b.count || 0),
+  };
+}
+
+export default async function handler(req, res) {
+  res.setHeader('Cache-Control', 's-maxage=1800, stale-while-revalidate=3600'); // 30분 캐시 (자주 안 바뀌는 정보라 캐싱)
+  try {
+    const [aptSale, aptRent, villaSale, singleSale, villaRent, singleRent] = await Promise.all([
+      getRange('house_trades'),
+      getRange('house_rent'),
+      getRange('villa_trades'),
+      getRange('single_trades'),
+      getRange('villa_rent'),
+      getRange('single_rent'),
+    ]);
+    return res.status(200).json({
+      aptSale,
+      aptRent,
+      nonAptSale: mergeRanges(villaSale, singleSale),
+      nonAptRent: mergeRanges(villaRent, singleRent),
+      updatedAt: new Date().toISOString(),
+    });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+}
