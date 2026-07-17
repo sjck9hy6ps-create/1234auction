@@ -1,9 +1,13 @@
 /* ════════════════════════════════════════════════════════════
    api/get-official-price.js
-   경매 물건 상세패널용 - 국토교통부 공시가격 실시간 조회 (VWorld API)
+   지도의 모든 매물 패널(일반 아파트/연립다세대/단독다가구 + 경매 물건)에서 쓰는
+   국토교통부 공시가격 실시간 조회 (VWorld API)
    - 아파트/연립다세대(공동주택) → 공동주택가격속성조회
    - 단독다가구/토지 → 개별공시지가속성조회
    흐름: 주소 → (VWorld 검색API) PNU(고유번호) → (VWorld 국가중점데이터API) 공시가격
+   - 경매 패널: AI가 뽑은 정확한 지번주소(addrJibun)+동/층/호수를 그대로 사용
+   - 일반 매물 패널: DB의 region+dong+bunji로 주소를 조립하고, 호수 정보가 없으므로
+     층(floor)+전용면적(sizeM2)이 가장 가까운 동일 필지의 유닛을 찾아서 대표값으로 사용
    ⚠️ VWORLD_API_KEY 환경변수 필요 (https://www.vworld.kr 가입 → 오픈API → 인증키 발급)
    ⚠️ 인증키 발급시 등록한 도메인과 VWORLD_DOMAIN이 일치해야 함
 ════════════════════════════════════════════════════════════ */
@@ -73,10 +77,11 @@ async function findPnu(address, key, domain) {
   return items[0].id || null; // PARCEL 검색결과의 id = PNU(19자리)
 }
 
-async function getApartPrice(pnu, dongNm, hoNm, key, domain) {
-  const params = new URLSearchParams({ pnu, format: 'json', numOfRows: '50', pageNo: '1', key });
+async function getApartPrice(pnu, dongNm, floorNm, hoNm, key, domain) {
+  const params = new URLSearchParams({ pnu, format: 'json', numOfRows: '100', pageNo: '1', key });
   if (domain) params.set('domain', domain);
   if (dongNm) params.set('dongNm', dongNm);
+  if (floorNm) params.set('floorNm', floorNm);
   if (hoNm) params.set('hoNm', hoNm);
   const { data } = await vworldFetch(`${VWORLD_APT_PRICE_URL}?${params.toString()}`);
   return extractFieldList(data);
@@ -99,6 +104,27 @@ function pickLatest(rows, yearKey = 'stdrYear', monthKey = 'stdrMt') {
   })[0];
 }
 
+// 호수(ho)를 모르는 일반 매물 패널용: 동/층이 같은 유닛들 중 "가장 최신 연도" 1건씩만 남기고,
+// 그 중 전용면적(sizeM2)이 가장 가까운 유닛을 골라 대표값으로 반환
+function pickBestApartRow(rows, sizeM2) {
+  if (!rows.length) return null;
+  const latestPerUnit = {};
+  rows.forEach((r) => {
+    const unitKey = `${r.dongNm || ''}_${r.floorNm || ''}_${r.hoNm || ''}`;
+    const yv = `${r.stdrYear || ''}${r.stdrMt || ''}`;
+    if (!latestPerUnit[unitKey] || yv > latestPerUnit[unitKey]._yv) {
+      latestPerUnit[unitKey] = { ...r, _yv: yv };
+    }
+  });
+  const candidates = Object.values(latestPerUnit);
+  if (sizeM2) {
+    candidates.sort((a, b) => Math.abs((parseFloat(a.prvuseAr) || 0) - sizeM2) - Math.abs((parseFloat(b.prvuseAr) || 0) - sizeM2));
+  } else {
+    candidates.sort((a, b) => (b._yv || '').localeCompare(a._yv || ''));
+  }
+  return candidates[0];
+}
+
 export default async function handler(req, res) {
   res.setHeader('Cache-Control', 's-maxage=3600, stale-while-revalidate=86400');
   if (req.method !== 'POST') return res.status(405).json({ error: 'POST만 지원함' });
@@ -109,25 +135,31 @@ export default async function handler(req, res) {
   }
   const VWORLD_DOMAIN = process.env.VWORLD_DOMAIN || '1234auction.vercel.app';
 
-  const { addrJibun, dong, unitFloor, unitNo, propertyType } = req.body || {};
-  if (!addrJibun) {
-    return res.status(400).json({ error: 'addrJibun(지번주소)이 필요합니다.' });
+  // addrJibun(경매 패널, AI 추출 정확 주소) 또는 address(일반 매물 패널, region+dong+bunji 조립 주소) 둘 다 지원
+  const body = req.body || {};
+  const address = body.addrJibun || body.address;
+  const { dong, unitFloor, unitNo, floor, sizeM2, propertyType } = body;
+  if (!address) {
+    return res.status(400).json({ error: 'address(또는 addrJibun) 주소값이 필요합니다.' });
   }
 
   try {
-    const pnu = await findPnu(addrJibun, VWORLD_API_KEY, VWORLD_DOMAIN);
+    const pnu = await findPnu(address, VWORLD_API_KEY, VWORLD_DOMAIN);
     if (!pnu) {
-      return res.status(200).json({ success: false, error: '해당 주소의 필지(PNU)를 찾지 못했습니다. 주소 표기를 확인해 주세요.', addrJibunUsed: stripUnitSuffix(addrJibun) });
+      return res.status(200).json({ success: false, error: '해당 주소의 필지(PNU)를 찾지 못했습니다. 주소 표기를 확인해 주세요.', addressUsed: stripUnitSuffix(address) });
     }
 
     const hoNm = digitsOnly(unitNo);
+    const floorNm = digitsOnly(unitFloor || floor);
     // 단독다가구로 명시된 경우가 아니면 공동주택(아파트/연립) 조회를 먼저 시도
     const isLikelyLand = propertyType && /단독|다가구|토지/.test(propertyType);
 
     if (!isLikelyLand) {
-      const aptRows = await getApartPrice(pnu, dong || '', hoNm, VWORLD_API_KEY, VWORLD_DOMAIN);
+      const aptRows = await getApartPrice(pnu, dong || '', floorNm, hoNm, VWORLD_API_KEY, VWORLD_DOMAIN);
       if (aptRows.length) {
-        const latest = pickLatest(aptRows);
+        // 호수(hoNm)를 정확히 아는 경우(경매 패널)는 최신값을, 모르는 경우(일반 패널)는
+        // 층+면적이 가장 가까운 유닛을 대표값으로 고름
+        const latest = hoNm ? pickLatest(aptRows) : (pickBestApartRow(aptRows, sizeM2 ? Number(sizeM2) : null) || pickLatest(aptRows));
         return res.status(200).json({
           success: true,
           source: 'apartment',
@@ -142,6 +174,7 @@ export default async function handler(req, res) {
           stdrMt: latest.stdrMt || null,
           lastUpdated: latest.lastUpdtDt || null,
           matchedCount: aptRows.length,
+          approximate: !hoNm, // 호수 특정 없이 층/면적으로 추정한 값이면 true
           history: aptRows.map(r => ({ year: r.stdrYear, month: r.stdrMt, priceWon: r.pblntfPc ? Number(r.pblntfPc) : null, dong: r.dongNm, ho: r.hoNm })),
         });
       }
