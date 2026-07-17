@@ -1,0 +1,174 @@
+/* ════════════════════════════════════════════════════════════
+   api/get-official-price.js
+   경매 물건 상세패널용 - 국토교통부 공시가격 실시간 조회 (VWorld API)
+   - 아파트/연립다세대(공동주택) → 공동주택가격속성조회
+   - 단독다가구/토지 → 개별공시지가속성조회
+   흐름: 주소 → (VWorld 검색API) PNU(고유번호) → (VWorld 국가중점데이터API) 공시가격
+   ⚠️ VWORLD_API_KEY 환경변수 필요 (https://www.vworld.kr 가입 → 오픈API → 인증키 발급)
+   ⚠️ 인증키 발급시 등록한 도메인과 VWORLD_DOMAIN이 일치해야 함
+════════════════════════════════════════════════════════════ */
+
+const VWORLD_SEARCH_URL = 'https://api.vworld.kr/req/search';
+const VWORLD_APT_PRICE_URL = 'https://api.vworld.kr/ned/data/getApartHousingPriceAttr';
+const VWORLD_LAND_PRICE_URL = 'https://api.vworld.kr/ned/data/getIndvdLandPriceAttr';
+
+// "3층302호", "302호" 등 건물 동/호수 표시를 지번주소에서 떼어내고, 순수 지번주소만 남김
+// (필지 단위 PNU 조회는 층/호수를 모르는 상태여야 정확히 매칭됨)
+function stripUnitSuffix(addr) {
+  if (!addr) return '';
+  return String(addr)
+    .replace(/제?\d+동\s*/g, ' ')
+    .replace(/제?\d+층\s*/g, ' ')
+    .replace(/제?\d+호\s*/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+// "302호" → "302" 처럼 숫자만 추출 (VWorld hoNm 파라미터는 숫자만 받음)
+function digitsOnly(v) {
+  if (!v) return '';
+  const m = String(v).match(/\d+/);
+  return m ? m[0] : '';
+}
+
+async function vworldFetch(url) {
+  const res = await fetch(url, { signal: AbortSignal.timeout(15000) });
+  const text = await res.text();
+  let data;
+  try { data = JSON.parse(text); } catch { data = null; }
+  return { ok: res.ok, status: res.status, data, raw: text };
+}
+
+// VWorld 응답은 XML→JSON 변환 방식에 따라 fields가 배열/단일객체/래핑객체 등으로
+// 들쭉날쭉할 수 있어, 어떤 모양이 와도 배열로 통일해서 반환
+function extractFieldList(data) {
+  const resp = data?.response ?? data;
+  let fields = resp?.fields ?? resp?.result?.fields ?? null;
+  if (fields && fields.field !== undefined) fields = fields.field;
+  if (!fields) return [];
+  return Array.isArray(fields) ? fields : [fields];
+}
+
+async function findPnu(address, key, domain) {
+  const clean = stripUnitSuffix(address);
+  if (!clean) return null;
+  const params = new URLSearchParams({
+    service: 'search',
+    request: 'search',
+    version: '2.0',
+    crs: 'EPSG:4326',
+    query: clean,
+    type: 'address',
+    category: 'PARCEL',
+    format: 'json',
+    errorformat: 'json',
+    size: '1',
+    page: '1',
+    key,
+  });
+  if (domain) params.set('domain', domain);
+  const { data } = await vworldFetch(`${VWORLD_SEARCH_URL}?${params.toString()}`);
+  const items = data?.response?.result?.items;
+  if (!items || !items.length) return null;
+  return items[0].id || null; // PARCEL 검색결과의 id = PNU(19자리)
+}
+
+async function getApartPrice(pnu, dongNm, hoNm, key, domain) {
+  const params = new URLSearchParams({ pnu, format: 'json', numOfRows: '50', pageNo: '1', key });
+  if (domain) params.set('domain', domain);
+  if (dongNm) params.set('dongNm', dongNm);
+  if (hoNm) params.set('hoNm', hoNm);
+  const { data } = await vworldFetch(`${VWORLD_APT_PRICE_URL}?${params.toString()}`);
+  return extractFieldList(data);
+}
+
+async function getLandPrice(pnu, key, domain) {
+  const params = new URLSearchParams({ pnu, format: 'json', key });
+  if (domain) params.set('domain', domain);
+  const { data } = await vworldFetch(`${VWORLD_LAND_PRICE_URL}?${params.toString()}`);
+  return extractFieldList(data);
+}
+
+// 여러 연도 row가 올 수 있어 stdrYear+stdrMt 기준 최신 것 하나를 대표값으로 고름
+function pickLatest(rows, yearKey = 'stdrYear', monthKey = 'stdrMt') {
+  if (!rows.length) return null;
+  return rows.slice().sort((a, b) => {
+    const av = `${a[yearKey] || ''}${a[monthKey] || ''}`;
+    const bv = `${b[yearKey] || ''}${b[monthKey] || ''}`;
+    return bv.localeCompare(av);
+  })[0];
+}
+
+export default async function handler(req, res) {
+  res.setHeader('Cache-Control', 's-maxage=3600, stale-while-revalidate=86400');
+  if (req.method !== 'POST') return res.status(405).json({ error: 'POST만 지원함' });
+
+  const VWORLD_API_KEY = process.env.VWORLD_API_KEY;
+  if (!VWORLD_API_KEY) {
+    return res.status(500).json({ error: 'VWORLD_API_KEY 환경변수가 없습니다. vworld.kr에서 인증키를 발급받아 Vercel/GitHub Secrets에 추가해 주세요.' });
+  }
+  const VWORLD_DOMAIN = process.env.VWORLD_DOMAIN || '1234auction.vercel.app';
+
+  const { addrJibun, dong, unitFloor, unitNo, propertyType } = req.body || {};
+  if (!addrJibun) {
+    return res.status(400).json({ error: 'addrJibun(지번주소)이 필요합니다.' });
+  }
+
+  try {
+    const pnu = await findPnu(addrJibun, VWORLD_API_KEY, VWORLD_DOMAIN);
+    if (!pnu) {
+      return res.status(200).json({ success: false, error: '해당 주소의 필지(PNU)를 찾지 못했습니다. 주소 표기를 확인해 주세요.', addrJibunUsed: stripUnitSuffix(addrJibun) });
+    }
+
+    const hoNm = digitsOnly(unitNo);
+    // 단독다가구로 명시된 경우가 아니면 공동주택(아파트/연립) 조회를 먼저 시도
+    const isLikelyLand = propertyType && /단독|다가구|토지/.test(propertyType);
+
+    if (!isLikelyLand) {
+      const aptRows = await getApartPrice(pnu, dong || '', hoNm, VWORLD_API_KEY, VWORLD_DOMAIN);
+      if (aptRows.length) {
+        const latest = pickLatest(aptRows);
+        return res.status(200).json({
+          success: true,
+          source: 'apartment',
+          pnu,
+          complexName: latest.aphusNm || null,
+          dong: latest.dongNm || null,
+          floor: latest.floorNm || null,
+          ho: latest.hoNm || null,
+          areaM2: latest.prvuseAr ? Number(latest.prvuseAr) : null,
+          priceWon: latest.pblntfPc ? Number(latest.pblntfPc) : null,
+          stdrYear: latest.stdrYear || null,
+          stdrMt: latest.stdrMt || null,
+          lastUpdated: latest.lastUpdtDt || null,
+          matchedCount: aptRows.length,
+          history: aptRows.map(r => ({ year: r.stdrYear, month: r.stdrMt, priceWon: r.pblntfPc ? Number(r.pblntfPc) : null, dong: r.dongNm, ho: r.hoNm })),
+        });
+      }
+    }
+
+    // 공동주택 결과가 없으면(단독다가구/토지 등) 개별공시지가로 폴백
+    const landRows = await getLandPrice(pnu, VWORLD_API_KEY, VWORLD_DOMAIN);
+    if (landRows.length) {
+      const latest = pickLatest(landRows);
+      return res.status(200).json({
+        success: true,
+        source: 'land',
+        pnu,
+        regionName: latest.ldCodeNm || null,
+        priceWonPerM2: latest.pblntfPclnd ? Number(latest.pblntfPclnd) : null,
+        pblntfDe: latest.pblntfDe || null,
+        stdrYear: latest.stdrYear || null,
+        stdrMt: latest.stdrMt || null,
+        lastUpdated: latest.lastUpdtDt || null,
+        matchedCount: landRows.length,
+        history: landRows.map(r => ({ year: r.stdrYear, month: r.stdrMt, priceWonPerM2: r.pblntfPclnd ? Number(r.pblntfPclnd) : null })),
+      });
+    }
+
+    return res.status(200).json({ success: false, error: '해당 필지의 공시가격 데이터를 찾지 못했습니다.', pnu });
+  } catch (err) {
+    console.error('get-official-price 에러:', err);
+    return res.status(500).json({ error: err.message });
+  }
+}
