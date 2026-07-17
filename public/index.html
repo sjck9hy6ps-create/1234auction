@@ -730,6 +730,8 @@ var currentPppTimeline = null;
 var currentVolumeIndicators = null;
 var currentBuildingInfo = null;
 var currentBuildingLoading = false;
+var currentOfficialPrice = null;
+var currentOfficialPriceLoading = false;
 var currentPanelApt = null;
 var activeGrades = new Set();
 var activeVillaFilters = new Set();
@@ -1831,6 +1833,8 @@ function openPanel(apt, lat, lon) {
     }
     currentBuildingInfo = null;
     currentBuildingLoading = true;
+    currentOfficialPrice = null;
+    currentOfficialPriceLoading = true;
     renderTable();
     loadBuildingInfo(apt, lat, lon).then(function(info) {
         currentBuildingInfo = info;
@@ -1841,6 +1845,62 @@ function openPanel(apt, lat, lon) {
         }
         renderTable();
     });
+    loadOfficialPrice(apt).then(function(priceInfo) {
+        currentOfficialPrice = priceInfo;
+        currentOfficialPriceLoading = false;
+        renderTable();
+    });
+}
+ 
+/* ════════════════════════════════════
+   국토부 공시가격 실시간 조회 (VWorld API) - 지도의 모든 매물 패널 공통
+   - 아파트/연립다세대는 동/층/면적으로 유닛을 추정, 단독다가구는 토지 공시지가로 조회
+════════════════════════════════════ */
+async function loadOfficialPrice(apt) {
+    var l = apt.latest || {};
+    if (!l.bunji) return { success: false, error: '번지 정보가 없어 조회할 수 없습니다.' };
+    var address = [l.region, l.dong, l.bunji].filter(Boolean).join(' ');
+    try {
+        var res = await fetch('/api/get-official-price', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                address: address,
+                floor: l.floor || '',
+                sizeM2: l.area || '',
+                propertyType: apt.buildingType === 'single' ? '단독다가구' : '',
+            }),
+        });
+        var data = await res.json();
+        if (!res.ok) return { success: false, error: data.error || '조회 실패' };
+        return data;
+    } catch (e) {
+        return { success: false, error: e.message };
+    }
+}
+ 
+function buildOfficialPriceHtml(data) {
+    if (!data) return '';
+    if (!data.success) {
+        return '<div class="indicator-box"><div class="indicator-title">🏛️ 국토부 공시가격</div>'
+            + '<div style="font-size:11px;color:#999;">' + (data.error || '데이터 없음') + '</div></div>';
+    }
+    var html = '<div class="indicator-box" style="border-color:#4caf50;background:#f1f8f4;">';
+    html += '<div class="indicator-title" style="color:#2e7d32;">🏛️ 국토부 공시가격</div>';
+    if (data.source === 'apartment') {
+        html += '<div style="font-size:15px;font-weight:bold;color:#2e7d32;">'
+            + (data.priceWon ? toEok(String(Math.round(data.priceWon / 10000))) : '정보없음') + '</div>';
+        html += '<div style="font-size:10px;color:#999;">'
+            + (data.stdrYear || '') + '년 ' + (data.stdrMt || '') + '월 기준'
+            + (data.floor ? ' · ' + data.floor + '층' : '')
+            + (data.approximate ? ' · 층·면적 기준 추정값(정확한 호수 아님)' : '') + '</div>';
+    } else {
+        html += '<div style="font-size:15px;font-weight:bold;color:#2e7d32;">'
+            + (data.priceWonPerM2 ? Number(data.priceWonPerM2).toLocaleString() + '원/㎡' : '정보없음') + '</div>';
+        html += '<div style="font-size:10px;color:#999;">' + (data.stdrYear || '') + '년 기준 · 개별공시지가(토지)</div>';
+    }
+    html += '</div>';
+    return html;
 }
 
 function setTypeFilter(type, btn) {
@@ -1885,6 +1945,12 @@ function renderTable() {
         html += '<div class="indicator-box"><div class="indicator-title">🏢 건축물대장 정보</div><div style="font-size:11px;color:#999;">불러오는 중...</div></div>';
     } else if (currentBuildingInfo) {
         html += buildBuildingInfoHtml(currentBuildingInfo);
+    }
+    // 국토부 공시가격 (실시간 조회)
+    if (currentOfficialPriceLoading) {
+        html += '<div class="indicator-box"><div class="indicator-title">🏛️ 국토부 공시가격</div><div style="font-size:11px;color:#999;">조회 중...</div></div>';
+    } else if (currentOfficialPrice) {
+        html += buildOfficialPriceHtml(currentOfficialPrice);
     } else {
         html += '<div class="indicator-box"><div class="indicator-title">🏢 건축물대장 정보</div><div style="font-size:11px;color:#e53935;">정보를 불러오지 못했습니다. (카카오 API 오류이거나, 건축HUB에 등록된 정보가 없을 수 있어요)</div></div>';
     }
