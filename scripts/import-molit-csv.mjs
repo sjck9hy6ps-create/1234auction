@@ -115,7 +115,7 @@ function parseCsvLine(line) {
 function loadRows(path) {
   const buf = fs.readFileSync(path);
   const text = iconv.decode(buf, 'cp949');
-  const lines = text.split(/\r?\n/).filter(l => l.trim() !== '');
+  const lines = text.split(/\r\n|\r|\n/).filter(l => l.trim() !== '');
   const headerIdx = lines.findIndex(l => l.startsWith('"NO","시군구"'));
   if (headerIdx === -1) throw new Error('헤더 행("NO","시군구",...)을 못 찾음 - rt.molit.go.kr CSV 형식이 맞는지 확인해줘');
   const headerCols = parseCsvLine(lines[headerIdx]);

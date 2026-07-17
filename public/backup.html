@@ -1,0 +1,226 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>데이터 백업 / CSV 업로드</title>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+<style>
+  body { font-family: -apple-system, BlinkMacSystemFont, "Malgun Gothic", sans-serif; max-width: 720px; margin: 30px auto; padding: 0 16px; color: #222; }
+  h1 { font-size: 20px; }
+  h2 { font-size: 16px; margin-top: 36px; border-bottom: 1px solid #ddd; padding-bottom: 6px; }
+  .box { background: #f7f7f8; border-radius: 10px; padding: 16px; margin-top: 12px; }
+  input[type=file] { margin: 8px 0; }
+  select, button { font-size: 14px; padding: 8px 12px; border-radius: 6px; border: 1px solid #ccc; margin-right: 8px; }
+  button { background: #222; color: white; border: none; cursor: pointer; }
+  button:disabled { background: #999; cursor: not-allowed; }
+  progress { width: 100%; height: 10px; margin: 10px 0; }
+  pre#log, pre#exportLog { background: #111; color: #0f0; font-size: 12px; padding: 10px; border-radius: 8px; height: 220px; overflow-y: auto; white-space: pre-wrap; }
+  a.back { display: inline-block; margin-bottom: 12px; color: #555; text-decoration: none; font-size: 13px; }
+</style>
+</head>
+<body>
+
+<a class="back" href="/">← 지도로 돌아가기</a>
+<h1>📦 데이터 백업 / CSV 업로드</h1>
+
+<h2>1. 국토부 실거래가 CSV 업로드</h2>
+<div class="box">
+  <div>rt.molit.go.kr에서 받은 CSV 파일을 선택하면 종류가 자동 인식돼. 파일명이 원래 형식(예: "아파트(매매)_실거래가_....csv")이 아니면 아래 드롭다운에서 직접 골라줘.</div>
+  <div><input type="file" id="csvFile" accept=".csv,.txt"></div>
+  <div>
+    <select id="tableSelect">
+      <option value="">-- 테이블 자동감지 실패, 직접 선택 --</option>
+      <option value="house_trades">아파트 매매</option>
+      <option value="house_rent">아파트 전월세</option>
+      <option value="villa_trades">연립다세대 매매</option>
+      <option value="villa_rent">연립다세대 전월세</option>
+      <option value="single_trades">단독다가구 매매</option>
+      <option value="single_rent">단독다가구 전월세</option>
+    </select>
+    <button id="uploadBtn">가져오기 시작</button>
+  </div>
+  <progress id="progressBar" value="0" max="100"></progress>
+  <pre id="log">대기 중...</pre>
+</div>
+
+<h2>2. 전체 데이터 백업 다운로드</h2>
+<div class="box">
+  <div>업로드된 CSV + 매일 자동수집된 데이터를 전부 합쳐서 테이블별 CSV 6개를 zip으로 다운로드해. 서버 문제/이전 대비용 백업으로 쓰면 돼.</div>
+  <div><button id="downloadAllBtn">전체 데이터 ZIP 다운로드</button></div>
+  <pre id="exportLog">대기 중...</pre>
+</div>
+
+<script>
+// ⚠️ 이 두 값은 Supabase 대시보드 Settings → API에서 확인 가능 (Project URL, Publishable/anon key)
+// anon/publishable 키는 브라우저에 노출돼도 안전한 키라 그대로 써도 됨
+const SUPABASE_URL = 'https://qfrhodasxmkciyrxskja.supabase.co';
+const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InFmcmhvZGFzeG1rY2l5cnhza2phIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODMxNTY0ODEsImV4cCI6MjA5ODczMjQ4MX0.GxTVwZBe6_ri47mkpPsyWqMFDva1XRngF1f8XAPgFvk';
+const supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+const TABLES = ['house_trades', 'house_rent', 'villa_trades', 'villa_rent', 'single_trades', 'single_rent'];
+
+function detectTable(filename) {
+  const isApt = filename.includes('아파트');
+  const isVilla = filename.includes('연립다세대');
+  const isSingle = filename.includes('단독다가구');
+  const isSale = filename.includes('매매');
+  const isRent = filename.includes('전월세');
+  if (isApt && isSale) return 'house_trades';
+  if (isApt && isRent) return 'house_rent';
+  if (isVilla && isSale) return 'villa_trades';
+  if (isVilla && isRent) return 'villa_rent';
+  if (isSingle && isSale) return 'single_trades';
+  if (isSingle && isRent) return 'single_rent';
+  return '';
+}
+
+function parseCsvLine(line) {
+  let s = line.trim();
+  if (s.startsWith('"')) s = s.slice(1);
+  if (s.endsWith('"')) s = s.slice(0, -1);
+  return s.split('","');
+}
+
+function loadRows(text) {
+  const lines = text.split(/\r\n|\r|\n/).filter(l => l.trim() !== '');
+  const headerIdx = lines.findIndex(l => l.startsWith('"NO","시군구"'));
+  if (headerIdx === -1) throw new Error('헤더 행("NO","시군구",...)을 못 찾음 - rt.molit.go.kr CSV 형식이 맞는지 확인해줘');
+  const headerCols = parseCsvLine(lines[headerIdx]);
+  return lines.slice(headerIdx + 1).map(line => {
+    const cols = parseCsvLine(line);
+    const row = {};
+    headerCols.forEach((h, i) => { row[h] = cols[i] !== undefined ? cols[i] : ''; });
+    return row;
+  });
+}
+
+async function backupRawFile(file, table) {
+  const key = `${Date.now()}_${table}_${file.name}`;
+  const { error } = await supabaseClient.storage.from('csv-backups').upload(key, file);
+  if (error) throw error;
+}
+
+document.getElementById('csvFile').addEventListener('change', (e) => {
+  const f = e.target.files[0];
+  if (!f) return;
+  const detected = detectTable(f.name);
+  if (detected) document.getElementById('tableSelect').value = detected;
+});
+
+document.getElementById('uploadBtn').addEventListener('click', async () => {
+  const fileInput = document.getElementById('csvFile');
+  const f = fileInput.files[0];
+  const table = document.getElementById('tableSelect').value;
+  const logEl = document.getElementById('log');
+  const progressEl = document.getElementById('progressBar');
+  const btn = document.getElementById('uploadBtn');
+
+  if (!f) { alert('파일을 먼저 선택해줘'); return; }
+  if (!table) { alert('테이블 종류를 선택해줘 (자동 인식 안 됐으면 드롭다운에서 직접 골라줘)'); return; }
+
+  btn.disabled = true;
+  progressEl.value = 0;
+  logEl.textContent = '파일 읽는 중...\n';
+
+  try {
+    const buffer = await f.arrayBuffer();
+    const text = new TextDecoder('euc-kr').decode(buffer);
+    const rows = loadRows(text);
+    logEl.textContent += `총 ${rows.length}행 파싱 완료. 대상 테이블: ${table}\n`;
+
+    backupRawFile(f, table).then(
+      () => { logEl.textContent += '💾 원본 파일 백업 완료.\n'; logEl.scrollTop = logEl.scrollHeight; },
+      (e) => { logEl.textContent += '⚠️ 원본 파일 백업 실패(임포트는 계속 진행): ' + e.message + '\n'; logEl.scrollTop = logEl.scrollHeight; }
+    );
+
+    const CHUNK = 1500;
+    let totalSaved = 0, totalMatched = 0, totalUnmatched = 0;
+    const unmatchedSample = new Map();
+    const totalChunks = Math.ceil(rows.length / CHUNK);
+
+    for (let i = 0; i < rows.length; i += CHUNK) {
+      const chunk = rows.slice(i, i + CHUNK);
+      const chunkNum = Math.floor(i / CHUNK) + 1;
+      progressEl.value = Math.round((chunkNum / totalChunks) * 100);
+      logEl.textContent += `배치 ${chunkNum}/${totalChunks} 처리 중... (${chunk.length}행)\n`;
+      logEl.scrollTop = logEl.scrollHeight;
+
+      try {
+        const res = await fetch('/api/import-csv-batch', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ table, rows: chunk }),
+        });
+        const j = await res.json();
+        if (!res.ok) throw new Error(j.error || '알 수 없는 오류');
+        totalSaved += j.saved || 0;
+        totalMatched += j.matched || 0;
+        totalUnmatched += j.unmatchedCount || 0;
+        (j.unmatchedRegions || []).forEach(([r, c]) => {
+          unmatchedSample.set(r, (unmatchedSample.get(r) || 0) + c);
+        });
+      } catch (e) {
+        logEl.textContent += `❌ 배치 ${chunkNum} 실패: ${e.message}\n`;
+        logEl.scrollTop = logEl.scrollHeight;
+      }
+    }
+
+    logEl.textContent += `\n🎉 완료! ${totalSaved}건 저장 (매칭 ${totalMatched}건 / 매칭 실패 ${totalUnmatched}건)\n`;
+    if (unmatchedSample.size > 0) {
+      logEl.textContent += '매칭 실패 지역 샘플:\n';
+      [...unmatchedSample.entries()].slice(0, 10).forEach(([r, c]) => {
+        logEl.textContent += `  "${r}" - ${c}건\n`;
+      });
+    }
+  } catch (e) {
+    logEl.textContent += `💥 실패: ${e.message}\n`;
+  } finally {
+    logEl.scrollTop = logEl.scrollHeight;
+    btn.disabled = false;
+  }
+});
+
+document.getElementById('downloadAllBtn').addEventListener('click', async () => {
+  const logEl = document.getElementById('exportLog');
+  const btn = document.getElementById('downloadAllBtn');
+  btn.disabled = true;
+  logEl.textContent = 'ZIP 준비 중...\n';
+  try {
+    const zip = new JSZip();
+    for (const t of TABLES) {
+      logEl.textContent += `${t} 다운로드 중...\n`;
+      logEl.scrollTop = logEl.scrollHeight;
+      const res = await fetch(`/api/export-table?table=${t}`);
+      if (!res.ok) {
+        const j = await res.json().catch(() => ({}));
+        logEl.textContent += `❌ ${t} 실패: ${j.error || res.status}\n`;
+        continue;
+      }
+      const csv = await res.text();
+      zip.file(`${t}.csv`, csv);
+    }
+    logEl.textContent += '압축 중...\n';
+    logEl.scrollTop = logEl.scrollHeight;
+    const blob = await zip.generateAsync({ type: 'blob' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    const dateStr = new Date().toISOString().slice(0, 10);
+    a.href = url;
+    a.download = `1234auction_backup_${dateStr}.zip`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+    logEl.textContent += '✅ 다운로드 완료!\n';
+  } catch (e) {
+    logEl.textContent += `💥 실패: ${e.message}\n`;
+  } finally {
+    logEl.scrollTop = logEl.scrollHeight;
+    btn.disabled = false;
+  }
+});
+</script>
+</body>
+</html>
