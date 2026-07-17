@@ -8,12 +8,17 @@ const APT_API_KEY = process.env.PUBLIC_DATA_API_KEY;
 
 // ════════════════════════════════════
 // 지역(lawdCd) 단위 응답 캐시 (Upstash Redis)
-// - 기기/세션에 상관없이 같은 지역을 조회하면 DB를 다시 긁지 않고 캐시된 결과를 줌
-// - 실거래가는 웜업/야간 배치로만 갱신되므로 6시간 정도는 캐시해도 안전함
+// - 캐시에는 "국토부 DB 배치 수집분(house_trades/villa_trades/전세)"만 저장합니다.
+//   이번달 실시간 신고건(국토부 실시간 API)은 캐시에 절대 포함하지 않고,
+//   실제 사용자가 화면을 조회할 때마다 매번 새로 불러와서 캐시된 DB분과 합쳐서 응답합니다.
+//   → 새벽 웜업이 이 캐시를 미리 채워둬도, 실제 방문 시엔 항상 최신 실시간 신고건이 반영됩니다.
+// - ?skipRealtime=1 로 호출하면(새벽 웜업 전용) 실시간 API 호출 자체를 생략하고
+//   DB분만 조회해서 캐시에 채워 넣습니다. 실시간 API가 건축HUB 웜업과 같은 일일 할당량을
+//   쓰는 키라서, 웜업 때는 이 할당량을 쓰지 않기 위함입니다.
 // ════════════════════════════════════
 const REDIS_URL = process.env.UPSTASH_REDIS_URL;
 const REDIS_TOKEN = process.env.UPSTASH_REDIS_TOKEN;
-const CACHE_TTL_SECONDS = 6 * 60 * 60; // 6시간
+const CACHE_TTL_SECONDS = 10 * 60 * 60; // 10시간
 
 async function getCachedHouseData(lawdCd) {
   if (!REDIS_URL || !REDIS_TOKEN) return null;
@@ -59,120 +64,131 @@ export default async function handler(req, res) {
   const lawdCd = req.query.lawdCd;
   if (!lawdCd) return res.status(400).json({ error: 'lawdCd required' });
 
-  // ── 캐시 확인: 같은 지역이면 어느 기기에서 조회하든 DB를 다시 긁지 않음 ──
-  const cached = await getCachedHouseData(lawdCd);
-  if (cached) {
-    console.log('get-house 캐시 히트:', lawdCd);
-    return res.status(200).json(cached);
-  }
+  // 새벽 자동 예열 요청만 이 플래그를 붙여서 호출합니다 (실시간 API 할당량 절약용)
+  const skipRealtime = req.query.skipRealtime === '1' || req.query.skipRealtime === 'true';
 
   // house_trades / villa_trades 모두 lawd_cd 컬럼이 없고 region 텍스트로 저장되어 있어
   // LAWD_CODES로 lawdCd → 지역명 변환이 필요합니다.
   const regionInfo = LAWD_CODES.find(r => r.code === lawdCd);
   const regionName = regionInfo ? regionInfo.name : '';
 
-  console.log('lawdCd:', lawdCd, '/ regionName:', regionName || '(매칭 실패)');
+  console.log('lawdCd:', lawdCd, '/ regionName:', regionName || '(매칭 실패)', '/ skipRealtime:', skipRealtime);
 
   try {
-    // ── 아파트 DB / 연립다세대 DB / 실시간 아파트, 세 요청을 동시에 실행 ──
-    // (기존엔 순차 await라 셋의 소요시간이 그대로 합산됐음. Promise.all로 묶어서
-    //  전체 대기시간을 "셋의 합"이 아니라 "가장 느린 것 하나" 수준으로 줄입니다.)
+    // ── 1. DB 배치 수집분(apt/villa/전세)은 캐시가 있으면 그대로 재사용 ──
+    let dbPayload = null;
+    if (!skipRealtime) {
+      dbPayload = await getCachedHouseData(lawdCd);
+      if (dbPayload) console.log('get-house DB캐시 히트:', lawdCd);
+    }
+
+    if (!dbPayload) {
+      // ── 아파트 DB / 연립다세대 DB / 전세 DB, 세 요청을 동시에 실행 ──
+      let aptQuery       = Promise.resolve({ data: [], error: null });
+      let villaQuery     = Promise.resolve({ data: [], error: null });
+      let aptRentQuery   = Promise.resolve({ data: [], error: null });
+      let villaRentQuery = Promise.resolve({ data: [], error: null });
+
+      if (regionName) {
+        aptQuery = supabase
+          .from('house_trades')
+          .select('*')
+          .eq('region', regionName)
+          .order('deal_date', { ascending: false });
+
+        villaQuery = supabase
+          .from('villa_trades')
+          .select('*')
+          .eq('region', regionName)
+          .order('deal_date', { ascending: false });
+        // 단독/다가구(single_trades)는 지도에 표시하지 않기로 했으므로 조회하지 않음
+
+        // 전세가(house_rent/villa_rent) - 전세가 기반 시세추정(연립다세대) 등에 사용
+        aptRentQuery = supabase
+          .from('house_rent')
+          .select('*')
+          .eq('region', regionName)
+          .order('deal_date', { ascending: false });
+
+        villaRentQuery = supabase
+          .from('villa_rent')
+          .select('*')
+          .eq('region', regionName)
+          .order('deal_date', { ascending: false });
+      } else {
+        console.warn('LAWD_CODES에서 lawdCd(' + lawdCd + ')에 매칭되는 지역명을 찾지 못해 DB 조회를 건너뜁니다.');
+      }
+
+      const [aptResult, villaResult, aptRentResult, villaRentResult] = await Promise.all([
+        aptQuery,
+        villaQuery,
+        aptRentQuery,
+        villaRentQuery,
+      ]);
+
+      if (aptResult.error) {
+        console.error('house_trades 조회 에러:', aptResult.error.message);
+        throw aptResult.error;
+      }
+      const aptData = aptResult.data || [];
+      console.log('아파트 조회 완료. 건수:', aptData.length);
+
+      let villaData = [];
+      if (villaResult.error) {
+        console.error('villa_trades 조회 에러:', villaResult.error.message);
+      } else {
+        villaData = villaResult.data || [];
+        console.log('연립다세대 조회 완료. 건수:', villaData.length);
+      }
+
+      let aptRentData = [];
+      if (aptRentResult.error) {
+        console.error('house_rent 조회 에러:', aptRentResult.error.message);
+      } else {
+        aptRentData = aptRentResult.data || [];
+      }
+
+      let villaRentData = [];
+      if (villaRentResult.error) {
+        console.error('villa_rent 조회 에러:', villaRentResult.error.message);
+      } else {
+        villaRentData = villaRentResult.data || [];
+      }
+      console.log('전세가 조회 완료. 아파트=' + aptRentData.length + '건 연립다세대=' + villaRentData.length + '건');
+
+      // ── 정규화 ──
+      const aptNormalized      = aptData.map(row => normalizeRow(row, 'apt'));
+      const villaNormalized    = villaData.map(row => normalizeRow(row, 'villa'));
+      const aptRentNormalized   = aptRentData.map(row => normalizeRentRow(row, 'apt'));
+      const villaRentNormalized = villaRentData.map(row => normalizeRentRow(row, 'villa'));
+
+      // ── 합치기 + 중복 제거 (DB 배치 수집분만, 실시간은 여기 포함하지 않음) ──
+      const merged = dedup([...aptNormalized, ...villaNormalized]);
+      const rentMerged = [...aptRentNormalized, ...villaRentNormalized];
+      console.log(
+        `DB분 최종: 아파트=${aptNormalized.length}건 연립다세대=${villaNormalized.length}건 ` +
+        `합계=${merged.length}건 / 전세=${rentMerged.length}건`
+      );
+
+      dbPayload = { apt: merged, rent: rentMerged };
+      // 다음 조회(다른 기기 포함)를 위해 DB분만 캐시에 저장 (실시간은 절대 캐시하지 않음)
+      await setCachedHouseData(lawdCd, dbPayload);
+    }
+
+    // 새벽 웜업 요청은 캐시만 채우면 끝 - 실시간 API는 호출하지 않고 바로 응답
+    if (skipRealtime) {
+      return res.status(200).json(dbPayload);
+    }
+
+    // ── 실시간(이번달 신규 신고건)은 캐시 여부와 무관하게 방문할 때마다 항상 새로 불러와서 합침 ──
     const now    = new Date();
     const thisYm = String(now.getFullYear()) + String(now.getMonth() + 1).padStart(2, '0');
-
-    let aptQuery       = Promise.resolve({ data: [], error: null });
-    let villaQuery     = Promise.resolve({ data: [], error: null });
-    let aptRentQuery   = Promise.resolve({ data: [], error: null });
-    let villaRentQuery = Promise.resolve({ data: [], error: null });
-
-    if (regionName) {
-      aptQuery = supabase
-        .from('house_trades')
-        .select('*')
-        .eq('region', regionName)
-        .order('deal_date', { ascending: false });
-
-      villaQuery = supabase
-        .from('villa_trades')
-        .select('*')
-        .eq('region', regionName)
-        .order('deal_date', { ascending: false });
-      // 단독/다가구(single_trades)는 지도에 표시하지 않기로 했으므로 조회하지 않음
-
-      // 전세가(house_rent/villa_rent) - 전세가 기반 시세추정(연립다세대) 등에 사용
-      aptRentQuery = supabase
-        .from('house_rent')
-        .select('*')
-        .eq('region', regionName)
-        .order('deal_date', { ascending: false });
-
-      villaRentQuery = supabase
-        .from('villa_rent')
-        .select('*')
-        .eq('region', regionName)
-        .order('deal_date', { ascending: false });
-    } else {
-      console.warn('LAWD_CODES에서 lawdCd(' + lawdCd + ')에 매칭되는 지역명을 찾지 못해 DB 조회를 건너뜁니다.');
-    }
-
-    const [aptResult, villaResult, aptRentResult, villaRentResult, realtimeItems] = await Promise.all([
-      aptQuery,
-      villaQuery,
-      aptRentQuery,
-      villaRentQuery,
-      fetchRealtimeApt(lawdCd, thisYm),
-    ]);
-
-    if (aptResult.error) {
-      console.error('house_trades 조회 에러:', aptResult.error.message);
-      throw aptResult.error;
-    }
-    const aptData = aptResult.data || [];
-    console.log('아파트 조회 완료. 건수:', aptData.length);
-
-    let villaData = [];
-    if (villaResult.error) {
-      console.error('villa_trades 조회 에러:', villaResult.error.message);
-    } else {
-      villaData = villaResult.data || [];
-      console.log('연립다세대 조회 완료. 건수:', villaData.length);
-    }
-
-    let aptRentData = [];
-    if (aptRentResult.error) {
-      console.error('house_rent 조회 에러:', aptRentResult.error.message);
-    } else {
-      aptRentData = aptRentResult.data || [];
-    }
-
-    let villaRentData = [];
-    if (villaRentResult.error) {
-      console.error('villa_rent 조회 에러:', villaRentResult.error.message);
-    } else {
-      villaRentData = villaRentResult.data || [];
-    }
-    console.log('전세가 조회 완료. 아파트=' + aptRentData.length + '건 연립다세대=' + villaRentData.length + '건');
-
-    // ── 정규화 ──
-    const aptNormalized      = aptData.map(row => normalizeRow(row, 'apt'));
-    const villaNormalized    = villaData.map(row => normalizeRow(row, 'villa'));
+    const realtimeItems = await fetchRealtimeApt(lawdCd, thisYm);
     const realtimeNormalized = realtimeItems.map(item => normalizeXMLItem(item, regionName));
-    const aptRentNormalized   = aptRentData.map(row => normalizeRentRow(row, 'apt'));
-    const villaRentNormalized = villaRentData.map(row => normalizeRentRow(row, 'villa'));
+    const finalApt = dedup([...realtimeNormalized, ...dbPayload.apt]);
+    console.log(`실시간 반영: +${realtimeNormalized.length}건 (최종 ${finalApt.length}건)`);
 
-    // ── 5. 합치기 + 중복 제거 (실시간 데이터를 우선 배치해서 DB보다 먼저 dedup 살아남게 함) ──
-    const merged = dedup([...realtimeNormalized, ...aptNormalized, ...villaNormalized]);
-    const rentMerged = [...aptRentNormalized, ...villaRentNormalized];
-    console.log(
-      `최종: 아파트=${aptNormalized.length}건 연립다세대=${villaNormalized.length}건 ` +
-      `실시간=${realtimeNormalized.length}건 합계=${merged.length}건 / 전세=${rentMerged.length}건`
-    );
-
-    const payload = { apt: merged, rent: rentMerged };
-    // 다음 조회(다른 기기 포함)를 위해 캐시에 저장 (실패해도 응답에는 영향 없음)
-    await setCachedHouseData(lawdCd, payload);
-
-    return res.status(200).json(payload);
+    return res.status(200).json({ apt: finalApt, rent: dbPayload.rent });
   } catch (err) {
     console.error('핸들러 에러:', err.message);
     console.error('스택:', err.stack);
