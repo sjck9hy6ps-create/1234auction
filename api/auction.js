@@ -26,13 +26,22 @@ export default async function handler(req, res) {
             const index = auctions.findIndex(a => a.id === newAuction.id);
             if (index > -1) auctions[index] = newAuction;
             else auctions.push(newAuction);
-
             // 저장
-            await fetch(`${REDIS_URL}/set/auctions`, {
+            // ⚠️ Upstash REST API의 SET은 body를 "저장할 값 그 자체"로 취급하므로,
+            //    배열을 JSON 문자열로 만든 값(JSON.stringify(auctions))을 그대로 body로 보내야 함.
+            //    이걸 한 번 더 JSON.stringify하면 Redis에 "[...]" 형태의 문자열이 그대로
+            //    저장되어(따옴표까지 포함), 읽어올 때 JSON.parse 한 번으로는 배열이 아니라
+            //    문자열이 나와서 Array.isArray 체크에 걸려 매번 빈 배열로 리셋되는 버그가 있었음.
+            const setRes = await fetch(`${REDIS_URL}/set/auctions`, {
                 method: 'POST',
                 headers: { Authorization: `Bearer ${REDIS_TOKEN}` },
-                body: JSON.stringify(JSON.stringify(auctions))
+                body: JSON.stringify(auctions)
             });
+            if (!setRes.ok) {
+                const errText = await setRes.text();
+                console.error('Redis 저장 실패:', setRes.status, errText);
+                return res.status(500).json({ error: 'Redis 저장 실패: ' + errText });
+            }
             return res.status(200).json(newAuction);
         }
         if (req.method === 'DELETE') {
@@ -44,12 +53,16 @@ export default async function handler(req, res) {
             let auctions = dataGet.result ? JSON.parse(dataGet.result) : [];
             if (!Array.isArray(auctions)) auctions = [];
             auctions = auctions.filter(a => a.id !== id);
-
-            await fetch(`${REDIS_URL}/set/auctions`, {
+            const setRes = await fetch(`${REDIS_URL}/set/auctions`, {
                 method: 'POST',
                 headers: { Authorization: `Bearer ${REDIS_TOKEN}` },
-                body: JSON.stringify(JSON.stringify(auctions))
+                body: JSON.stringify(auctions)
             });
+            if (!setRes.ok) {
+                const errText = await setRes.text();
+                console.error('Redis 삭제(저장) 실패:', setRes.status, errText);
+                return res.status(500).json({ error: 'Redis 저장 실패: ' + errText });
+            }
             return res.status(200).json({ ok: true });
         }
         return res.status(405).json({ error: 'Method not allowed' });
