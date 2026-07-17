@@ -28,8 +28,10 @@ export default async function handler(req, res) {
     const now    = new Date();
     const thisYm = String(now.getFullYear()) + String(now.getMonth() + 1).padStart(2, '0');
 
-    let aptQuery   = Promise.resolve({ data: [], error: null });
-    let villaQuery = Promise.resolve({ data: [], error: null });
+    let aptQuery       = Promise.resolve({ data: [], error: null });
+    let villaQuery     = Promise.resolve({ data: [], error: null });
+    let aptRentQuery   = Promise.resolve({ data: [], error: null });
+    let villaRentQuery = Promise.resolve({ data: [], error: null });
 
     if (regionName) {
       aptQuery = supabase
@@ -44,13 +46,28 @@ export default async function handler(req, res) {
         .eq('region', regionName)
         .order('deal_date', { ascending: false });
       // 단독/다가구(single_trades)는 지도에 표시하지 않기로 했으므로 조회하지 않음
+
+      // 전세가(house_rent/villa_rent) - 전세가 기반 시세추정(연립다세대) 등에 사용
+      aptRentQuery = supabase
+        .from('house_rent')
+        .select('*')
+        .eq('region', regionName)
+        .order('deal_date', { ascending: false });
+
+      villaRentQuery = supabase
+        .from('villa_rent')
+        .select('*')
+        .eq('region', regionName)
+        .order('deal_date', { ascending: false });
     } else {
       console.warn('LAWD_CODES에서 lawdCd(' + lawdCd + ')에 매칭되는 지역명을 찾지 못해 DB 조회를 건너뜁니다.');
     }
 
-    const [aptResult, villaResult, realtimeItems] = await Promise.all([
+    const [aptResult, villaResult, aptRentResult, villaRentResult, realtimeItems] = await Promise.all([
       aptQuery,
       villaQuery,
+      aptRentQuery,
+      villaRentQuery,
       fetchRealtimeApt(lawdCd, thisYm),
     ]);
 
@@ -69,19 +86,37 @@ export default async function handler(req, res) {
       console.log('연립다세대 조회 완료. 건수:', villaData.length);
     }
 
+    let aptRentData = [];
+    if (aptRentResult.error) {
+      console.error('house_rent 조회 에러:', aptRentResult.error.message);
+    } else {
+      aptRentData = aptRentResult.data || [];
+    }
+
+    let villaRentData = [];
+    if (villaRentResult.error) {
+      console.error('villa_rent 조회 에러:', villaRentResult.error.message);
+    } else {
+      villaRentData = villaRentResult.data || [];
+    }
+    console.log('전세가 조회 완료. 아파트=' + aptRentData.length + '건 연립다세대=' + villaRentData.length + '건');
+
     // ── 정규화 ──
     const aptNormalized      = aptData.map(row => normalizeRow(row, 'apt'));
     const villaNormalized    = villaData.map(row => normalizeRow(row, 'villa'));
     const realtimeNormalized = realtimeItems.map(item => normalizeXMLItem(item, regionName));
+    const aptRentNormalized   = aptRentData.map(row => normalizeRentRow(row, 'apt'));
+    const villaRentNormalized = villaRentData.map(row => normalizeRentRow(row, 'villa'));
 
     // ── 5. 합치기 + 중복 제거 (실시간 데이터를 우선 배치해서 DB보다 먼저 dedup 살아남게 함) ──
     const merged = dedup([...realtimeNormalized, ...aptNormalized, ...villaNormalized]);
+    const rentMerged = [...aptRentNormalized, ...villaRentNormalized];
     console.log(
       `최종: 아파트=${aptNormalized.length}건 연립다세대=${villaNormalized.length}건 ` +
-      `실시간=${realtimeNormalized.length}건 합계=${merged.length}건`
+      `실시간=${realtimeNormalized.length}건 합계=${merged.length}건 / 전세=${rentMerged.length}건`
     );
 
-    return res.status(200).json({ apt: merged, rent: [] });
+    return res.status(200).json({ apt: merged, rent: rentMerged });
   } catch (err) {
     console.error('핸들러 에러:', err.message);
     console.error('스택:', err.stack);
@@ -181,6 +216,26 @@ function normalizeRow(row, buildingType) {
     main_num:   row.main_num  || 0,
     sub_num:    row.sub_num   || null,
     source:     'db',
+    buildingType,
+  };
+}
+
+/* ── house_rent / villa_rent 공통 정규화 (스키마 동일, price 대신 deposit/monthly_rent) ── */
+function normalizeRentRow(row, buildingType) {
+  return {
+    danji:        row.danji || '',
+    dong:         row.dong  || '',
+    deal_date:    String(row.deal_date || ''),
+    deposit:      row.deposit || 0,
+    monthly_rent: row.monthly_rent || 0,
+    size:         row.size  || 0,
+    floor:        row.floor || 0,
+    build_year:   row.build_year || null,
+    road_name:    row.road_name  || '',
+    region:       row.region || '',
+    bunji:        row.bunji     || '',
+    main_num:     row.main_num  || 0,
+    sub_num:      row.sub_num   || null,
     buildingType,
   };
 }
