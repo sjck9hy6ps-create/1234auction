@@ -411,6 +411,7 @@ tr:hover td { background:#fffde7; }
 <div id="map"></div>
 
 <div id="legend">
+    <div id="data-coverage-box" style="border-bottom:1px solid #eee;margin-bottom:6px;padding-bottom:6px;"></div>
     <div><span class="legend-dot" style="background:#e53935;"></span> 최근 3개월 거래</div>
     <div><span class="legend-dot" style="background:#1565c0;"></span> 3개월~1년 거래</div>
     <div><span class="legend-dot" style="background:#9e9e9e;"></span> 1년 이상</div>
@@ -669,6 +670,50 @@ var eightYearAgo = (function() { var d = new Date(); d.setFullYear(d.getFullYear
  
     
 function daysAgo(n) { var d = new Date(); d.setDate(d.getDate() - n); d.setHours(0,0,0,0); return d; }
+function fmtYm(deal_date) {
+    if (!deal_date) return null;
+    var s = String(deal_date);
+    if (s.length < 6) return null;
+    return s.slice(0,4) + '.' + s.slice(4,6);
+}
+function renderDataCoverage(data) {
+    var box = document.getElementById('data-coverage-box');
+    if (!box) return;
+    var STORAGE_KEY = 'dataCoverageSnapshot';
+    var prev = {};
+    try { prev = JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}'); } catch (e) { prev = {}; }
+    var cats = [
+        { key: 'aptSale',    label: '아파트 매매' },
+        { key: 'aptRent',    label: '아파트 전월세' },
+        { key: 'nonAptSale', label: '연립·단독 매매' },
+        { key: 'nonAptRent', label: '연립·단독 전월세' }
+    ];
+    var html = '<div style="font-size:11px;font-weight:bold;color:#555;margin-bottom:3px;">📊 데이터 수집 범위</div>';
+    cats.forEach(function(c) {
+        var d = data[c.key] || { min: null, max: null, count: 0 };
+        var isNew = (d.min !== null && prev[c.key] !== undefined && prev[c.key] !== null && d.min < prev[c.key]);
+        var rangeText = d.min
+            ? (fmtYm(d.min) + ' ~ ' + fmtYm(d.max) + ' (' + (d.count || 0).toLocaleString() + '건)')
+            : '수집 안 됨';
+        html += '<div style="font-size:10px;color:#888;margin-bottom:1px;">'
+            + c.label + ': ' + rangeText
+            + (isNew ? ' <span style="background:#e53935;color:white;font-size:9px;font-weight:bold;padding:1px 5px;border-radius:8px;margin-left:3px;">🆕 확장됨</span>' : '')
+            + '</div>';
+    });
+    box.innerHTML = html;
+    var snapshot = {};
+    cats.forEach(function(c) { snapshot[c.key] = (data[c.key] && data[c.key].min !== undefined) ? data[c.key].min : null; });
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(snapshot));
+}
+async function loadDataCoverage() {
+    try {
+        var res = await fetch('/api/data-coverage');
+        var data = await res.json();
+        renderDataCoverage(data);
+    } catch (e) {
+        console.error('데이터 수집 범위 조회 실패:', e.message);
+    }
+}
 function tradeDate(t) { return new Date(t.year, t.month - 1, t.day); }
 
 // 상태
@@ -1122,6 +1167,7 @@ window.addEventListener('load', loadKakaoSDK);
 function initKakao() {
     geocoder = new kakao.maps.services.Geocoder();
     places   = new kakao.maps.services.Places();
+    loadDataCoverage();
 
     if (navigator.geolocation) {
         navigator.geolocation.getCurrentPosition(
