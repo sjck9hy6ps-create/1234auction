@@ -46,6 +46,7 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
 let consecutive429 = 0;
 const MAX_CONSECUTIVE_429 = 5;
 let quotaExhausted = false;
+let debugLogCount = 0;
 
 async function kakaoFetch(url) {
   if (quotaExhausted) return null;
@@ -74,7 +75,16 @@ async function kakaoFetch(url) {
     return null;
   }
   consecutive429 = 0;
-  if (!res.ok) return null;
+  if (!res.ok) {
+    if (debugLogCount < 3) {
+      debugLogCount++;
+      let bodyText = '';
+      try { bodyText = await res.text(); } catch (e) { bodyText = '(본문 읽기 실패)'; }
+      console.error(`❌ 카카오 API 실패 (원인불명) - status:${res.status}, url:${url}`);
+      console.error(`   응답 본문: ${bodyText.slice(0, 300)}`);
+    }
+    return null;
+  }
   try {
     return await res.json();
   } catch (e) {
