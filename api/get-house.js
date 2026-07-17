@@ -1,11 +1,56 @@
 import { createClient } from '@supabase/supabase-js';
 import { LAWD_CODES } from '../scripts/lawd-codes.mjs';
-
 const supabase = createClient(
   process.env.SUPABASE_URL,
   process.env.SUPABASE_SERVICE_ROLE_KEY
 );
 const APT_API_KEY = process.env.PUBLIC_DATA_API_KEY;
+
+// ════════════════════════════════════
+// 지역(lawdCd) 단위 응답 캐시 (Upstash Redis)
+// - 기기/세션에 상관없이 같은 지역을 조회하면 DB를 다시 긁지 않고 캐시된 결과를 줌
+// - 실거래가는 웜업/야간 배치로만 갱신되므로 6시간 정도는 캐시해도 안전함
+// ════════════════════════════════════
+const REDIS_URL = process.env.UPSTASH_REDIS_URL;
+const REDIS_TOKEN = process.env.UPSTASH_REDIS_TOKEN;
+const CACHE_TTL_SECONDS = 6 * 60 * 60; // 6시간
+
+async function getCachedHouseData(lawdCd) {
+  if (!REDIS_URL || !REDIS_TOKEN) return null;
+  try {
+    const r = await fetch(`${REDIS_URL}/get/house_${lawdCd}`, {
+      headers: { Authorization: `Bearer ${REDIS_TOKEN}` },
+      signal: AbortSignal.timeout(3000),
+    });
+    if (!r.ok) return null;
+    const data = await r.json();
+    if (!data || !data.result) return null;
+    const parsed = JSON.parse(data.result);
+    if (!parsed || !Array.isArray(parsed.apt)) return null;
+    return parsed;
+  } catch (e) {
+    console.error('get-house Redis 캐시 조회 실패:', e.message);
+    return null;
+  }
+}
+
+async function setCachedHouseData(lawdCd, payload) {
+  if (!REDIS_URL || !REDIS_TOKEN) return;
+  try {
+    const r = await fetch(`${REDIS_URL}/set/house_${lawdCd}?EX=${CACHE_TTL_SECONDS}`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${REDIS_TOKEN}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+      signal: AbortSignal.timeout(3000),
+    });
+    if (!r.ok) {
+      const errText = await r.text();
+      console.error('get-house Redis 캐시 저장 실패:', errText);
+    }
+  } catch (e) {
+    console.error('get-house Redis 캐시 저장 실패:', e.message);
+  }
+}
 
 export default async function handler(req, res) {
   res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
@@ -13,6 +58,13 @@ export default async function handler(req, res) {
 
   const lawdCd = req.query.lawdCd;
   if (!lawdCd) return res.status(400).json({ error: 'lawdCd required' });
+
+  // ── 캐시 확인: 같은 지역이면 어느 기기에서 조회하든 DB를 다시 긁지 않음 ──
+  const cached = await getCachedHouseData(lawdCd);
+  if (cached) {
+    console.log('get-house 캐시 히트:', lawdCd);
+    return res.status(200).json(cached);
+  }
 
   // house_trades / villa_trades 모두 lawd_cd 컬럼이 없고 region 텍스트로 저장되어 있어
   // LAWD_CODES로 lawdCd → 지역명 변환이 필요합니다.
@@ -116,7 +168,11 @@ export default async function handler(req, res) {
       `실시간=${realtimeNormalized.length}건 합계=${merged.length}건 / 전세=${rentMerged.length}건`
     );
 
-    return res.status(200).json({ apt: merged, rent: rentMerged });
+    const payload = { apt: merged, rent: rentMerged };
+    // 다음 조회(다른 기기 포함)를 위해 캐시에 저장 (실패해도 응답에는 영향 없음)
+    await setCachedHouseData(lawdCd, payload);
+
+    return res.status(200).json(payload);
   } catch (err) {
     console.error('핸들러 에러:', err.message);
     console.error('스택:', err.stack);
