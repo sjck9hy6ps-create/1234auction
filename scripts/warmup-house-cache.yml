@@ -1,0 +1,26 @@
+name: 지역별 실거래 캐시 웜업
+
+on:
+  workflow_dispatch:
+  schedule:
+    # 매일 UTC 18:30(KST 03:30) - 좌표/건축물대장 웜업(03:00) 직후에 실행되도록 30분 뒤로 배치.
+    # 국토부 실시간 API는 호출하지 않고(skipRealtime=1) DB분만 캐싱하므로 할당량과 무관.
+    - cron: '30 18 * * *'
+
+jobs:
+  warmup-house-cache:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: 의존성 설치
+        run: npm install @supabase/supabase-js ws
+      - name: get-house 캐시 웜업 실행
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          SITE_URL: https://1234auction.vercel.app
+        run: node scripts/warmup-house-cache.mjs
