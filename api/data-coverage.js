@@ -12,26 +12,36 @@ const supabase = createClient(
 );
 
 // 테이블이 아직 없거나(예: villa_rent/single_rent 생성 전) 비어있어도 에러 없이 null로 처리
+// min/max/count를 서로 독립적으로 조회함 - 행이 많은 테이블(house_trades 등)에서
+// count 쿼리 하나가 느리거나 실패해도 min/max까지 같이 null이 되지 않도록 함
 async function getRange(table) {
+  const result = { min: null, max: null, count: 0 };
+
   try {
-    const [{ data: minRow, error: e1 }, { data: maxRow, error: e2 }, { count, error: e3 }] = await Promise.all([
-      supabase.from(table).select('deal_date').not('deal_date', 'is', null).order('deal_date', { ascending: true }).limit(1),
-      supabase.from(table).select('deal_date').not('deal_date', 'is', null).order('deal_date', { ascending: false }).limit(1),
-      supabase.from(table).select('*', { count: 'exact', head: true }),
-    ]);
-    if (e1 || e2 || e3) {
-      console.warn(`data-coverage: ${table} 조회 실패 -`, (e1 || e2 || e3).message);
-      return { min: null, max: null, count: 0 };
-    }
-    return {
-      min: minRow && minRow[0] ? minRow[0].deal_date : null,
-      max: maxRow && maxRow[0] ? maxRow[0].deal_date : null,
-      count: count || 0,
-    };
-  } catch (e) {
-    console.warn(`data-coverage: ${table} 조회 예외 -`, e.message);
-    return { min: null, max: null, count: 0 };
-  }
+    const { data: minRow, error: e1 } = await supabase
+      .from(table).select('deal_date').not('deal_date', 'is', null)
+      .order('deal_date', { ascending: true }).limit(1);
+    if (e1) console.warn(`data-coverage: ${table} min 조회 실패 -`, e1.message);
+    else if (minRow && minRow[0]) result.min = minRow[0].deal_date;
+  } catch (e) { console.warn(`data-coverage: ${table} min 조회 예외 -`, e.message); }
+
+  try {
+    const { data: maxRow, error: e2 } = await supabase
+      .from(table).select('deal_date').not('deal_date', 'is', null)
+      .order('deal_date', { ascending: false }).limit(1);
+    if (e2) console.warn(`data-coverage: ${table} max 조회 실패 -`, e2.message);
+    else if (maxRow && maxRow[0]) result.max = maxRow[0].deal_date;
+  } catch (e) { console.warn(`data-coverage: ${table} max 조회 예외 -`, e.message); }
+
+  try {
+    // 'exact'는 큰 테이블에서 느려서 타임아웃 위험이 있어 'estimated'(추정치, 빠름)로 변경
+    const { count, error: e3 } = await supabase
+      .from(table).select('*', { count: 'estimated', head: true });
+    if (e3) console.warn(`data-coverage: ${table} count 조회 실패 -`, e3.message);
+    else result.count = count || 0;
+  } catch (e) { console.warn(`data-coverage: ${table} count 조회 예외 -`, e.message); }
+
+  return result;
 }
 
 function mergeRanges(a, b) {
