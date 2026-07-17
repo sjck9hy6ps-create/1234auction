@@ -732,6 +732,8 @@ var currentBuildingInfo = null;
 var currentBuildingLoading = false;
 var currentOfficialPrice = null;
 var currentOfficialPriceLoading = false;
+var currentPanelLat = null;
+var currentPanelLon = null;
 var currentPanelApt = null;
 var activeGrades = new Set();
 var activeVillaFilters = new Set();
@@ -1767,8 +1769,10 @@ function showLocalDropdown(results) {
    사이드 패널
 ════════════════════════════════════ */
 function openPanel(apt, lat, lon) {
-    currentPanelApt = apt;
+    currentPanelLat = (typeof lat === 'number') ? lat : null;
+    currentPanelLon = (typeof lon === 'number') ? lon : null;
     currentTrades  = apt.trades || [];
+    currentPanelApt = apt;
     currentSort    = 'date';
     currentPyung   = 'all';
     currentIndicators   = apt.indicators || null;
@@ -1934,6 +1938,7 @@ function renderTable() {
     var thisYear = today.getFullYear();
     var html = '';
     var ind  = currentIndicators;
+    html += buildNaverLinkHtml(currentPanelLat, currentPanelLon, ind && ind._aptName, ind && ind._aptDong);
 
     // 빌라 연식단계별 평단가 추이 그래프
     if (currentPanelApt && currentPanelApt.buildingType === 'villa' && currentPanelApt.ageTier) {
@@ -2407,6 +2412,7 @@ function buildAuctionPanelHtml(aptName, aptDong, aptBunji) {
         html += '</div>';
         html += buildAuctionDetailHtml(a.detail);
         html += buildOfficialPriceLookupHtml(a);
+        html += buildNaverLinkHtml(a.lat, a.lon, a.detail && a.detail.addrJibun, '');
     });
     return html;
 }
@@ -2746,6 +2752,36 @@ function renderRegistryAnalysis() {
     html += '</div>';
     box.innerHTML = html;
 }
+html += '<div style="font-size:10px;color:#999;">' + (data.stdrYear || '') + '년 기준 · 개별공시지가(토지)</div>';
+    }
+    html += '</div>';
+    return html;
+}
+ 
+/* ════════════════════════════════════
+   네이버부동산 연결 링크
+   - lat/lon이 있으면 해당 좌표로 네이버부동산 지도를 바로 열어줌
+   - 없으면 단지명(+동)으로 네이버 검색 결과를 열어주는 폴백
+   ⚠️ 정확한 매물/단지 ID로 딥링크하는 것이 아니라 "그 위치를 지도에서 보기"입니다
+     (이 앱은 네이버부동산 내부 단지번호 데이터를 갖고 있지 않음)
+════════════════════════════════════ */
+function buildNaverLinkHtml(lat, lon, name, dong) {
+    var url;
+    if (lat && lon) {
+        url = 'https://new.land.naver.com/complexes?ms=' + lat + ',' + lon + ',17';
+    } else {
+        var q = [name, dong].filter(Boolean).join(' ').trim();
+        if (!q) return '';
+        url = 'https://search.naver.com/search.naver?query=' + encodeURIComponent(q + ' 네이버부동산');
+    }
+    return '<div style="margin-bottom:10px;">'
+        + '<a href="' + url + '" target="_blank" rel="noopener" '
+        + 'style="display:inline-flex;align-items:center;gap:5px;font-size:12px;font-weight:bold;color:#03c75a;'
+        + 'border:1.5px solid #03c75a;border-radius:20px;padding:6px 14px;text-decoration:none;background:#e8f9ef;">'
+        + '🟢 네이버부동산에서 보기</a></div>';
+}
+ 
+(주의: 위 신규 함수 블록만 붙여넣으세요. 원래 있던 buildOfficialPriceHtml 함수의 "}" 는 그대로 남겨두고, 그 바로 아래에 이 블록을 추가하는 것입니다.)
 async function parseAuctionPaste() {
     var text = document.getElementById('a-paste-text').value.trim();
     if (!text) { alert('경매정보지 텍스트를 붙여넣어 주세요.'); return; }
