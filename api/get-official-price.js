@@ -10,6 +10,8 @@
      층(floor)+전용면적(sizeM2)이 가장 가까운 동일 필지의 유닛을 찾아서 대표값으로 사용
    ⚠️ VWORLD_API_KEY 환경변수 필요 (https://www.vworld.kr 가입 → 오픈API → 인증키 발급)
    ⚠️ 인증키 발급시 등록한 도메인과 VWORLD_DOMAIN이 일치해야 함
+   ⚠️ VWorld 서버가 간헐적으로 연결을 끊는 경우(SocketError 등)가 있어, 네트워크 오류는
+      500으로 죽지 않고 1회 재시도 후 "조회 실패"로 깔끔하게 응답하도록 처리함
 ════════════════════════════════════════════════════════════ */
 
 const VWORLD_SEARCH_URL = 'https://api.vworld.kr/req/search';
@@ -35,12 +37,29 @@ function digitsOnly(v) {
   return m ? m[0] : '';
 }
 
-async function vworldFetch(url) {
-  const res = await fetch(url, { signal: AbortSignal.timeout(15000) });
-  const text = await res.text();
-  let data;
-  try { data = JSON.parse(text); } catch { data = null; }
-  return { ok: res.ok, status: res.status, data, raw: text };
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+// VWorld 서버가 간헐적으로 TLS 연결을 끊는 경우(SocketError: other side closed 등)가 있어,
+// fetch() 자체가 throw하는 네트워크 오류는 여기서 잡아서 0.5초 후 1회만 재시도하고,
+// 그래도 실패하면 예외를 던지는 대신 "실패했다"는 표시를 담은 값을 정상 반환한다
+// (호출부가 500으로 죽지 않고 "조회 실패" 메시지로 깔끔하게 응답할 수 있도록)
+async function vworldFetch(url, isRetry) {
+  try {
+    const res = await fetch(url, { signal: AbortSignal.timeout(15000) });
+    const text = await res.text();
+    let data;
+    try { data = JSON.parse(text); } catch { data = null; }
+    return { ok: res.ok, status: res.status, data, raw: text, networkError: false };
+  } catch (err) {
+    if (!isRetry) {
+      await sleep(500);
+      return vworldFetch(url, true);
+    }
+    console.warn('VWorld 연결 실패(재시도 후에도 실패):', err.message);
+    return { ok: false, status: 0, data: null, raw: '', networkError: true };
+  }
 }
 
 // VWorld 응답은 XML→JSON 변환 방식에 따라 fields가 배열/단일객체/래핑객체 등으로
@@ -55,7 +74,7 @@ function extractFieldList(data) {
 
 async function findPnu(address, key, domain) {
   const clean = stripUnitSuffix(address);
-  if (!clean) return null;
+  if (!clean) return { pnu: null, networkError: false };
   const params = new URLSearchParams({
     service: 'search',
     request: 'search',
@@ -71,10 +90,10 @@ async function findPnu(address, key, domain) {
     key,
   });
   if (domain) params.set('domain', domain);
-  const { data } = await vworldFetch(`${VWORLD_SEARCH_URL}?${params.toString()}`);
+  const { data, networkError } = await vworldFetch(`${VWORLD_SEARCH_URL}?${params.toString()}`);
   const items = data?.response?.result?.items;
-  if (!items || !items.length) return null;
-  return items[0].id || null; // PARCEL 검색결과의 id = PNU(19자리)
+  if (!items || !items.length) return { pnu: null, networkError };
+  return { pnu: items[0].id || null, networkError: false }; // PARCEL 검색결과의 id = PNU(19자리)
 }
 
 async function getApartPrice(pnu, dongNm, floorNm, hoNm, key, domain) {
@@ -144,8 +163,11 @@ export default async function handler(req, res) {
   }
 
   try {
-    const pnu = await findPnu(address, VWORLD_API_KEY, VWORLD_DOMAIN);
+    const { pnu, networkError } = await findPnu(address, VWORLD_API_KEY, VWORLD_DOMAIN);
     if (!pnu) {
+      if (networkError) {
+        return res.status(200).json({ success: false, error: 'VWorld 서버 연결에 일시적으로 실패했습니다. 잠시 후 다시 시도해 주세요.' });
+      }
       return res.status(200).json({ success: false, error: '해당 주소의 필지(PNU)를 찾지 못했습니다. 주소 표기를 확인해 주세요.', addressUsed: stripUnitSuffix(address) });
     }
 
