@@ -3,16 +3,20 @@
    - 클라이언트가 경매 상세페이지에서 복사한 텍스트를 그대로 넘기면
      Gemini API로 필수 항목들을 뽑아서 JSON으로 돌려줍니다.
    - 텍스트에 없는 값은 null로 두도록 프롬프트에 명시 (추측 금지)
+   ⚠️ 예전엔 스키마 전체(60개+ 필드)를 한 번의 Gemini 호출로 처리했는데,
+      Hobby 플랜의 maxDuration 상한(60초)보다 응답이 오래 걸려 타임아웃이 잦았음
+      (같은 물건도 매번 성공/실패가 갈릴 정도로 시간이 아슬아슬했음).
+      그래서 스키마를 "물건·가격·임차인" / "건축물·등기" 두 그룹으로 나눠
+      Promise.all로 동시에 호출 → 전체 소요시간이 "둘의 합"이 아니라
+      "더 오래 걸리는 쪽 하나" 수준으로 줄어들도록 함.
 ════════════════════════════════════ */
-
 const GEMINI_MODEL = 'gemini-3.5-flash';
-
 // Vercel 함수 자체의 실행 제한 시간을 늘림 (기본값은 너무 짧아서, 스키마가 큰 요청은
 // Gemini 응답이 오기 전에 함수가 먼저 죽어버릴 수 있음). Hobby 플랜에서도 60초까지 가능.
 export const maxDuration = 60;
 
-// Gemini structured output용 응답 스키마 (OpenAPI 서브셋, type은 대문자)
-const RESPONSE_SCHEMA = {
+// ── 스키마 A: 물건 기본정보 / 가격 / 임차인 / 매각통계 ──
+const SCHEMA_A = {
   type: 'OBJECT',
   properties: {
     caseNo: { type: 'STRING' },
@@ -26,25 +30,18 @@ const RESPONSE_SCHEMA = {
     isFirstProceeding: { type: 'BOOLEAN' },
     addrJibun: { type: 'STRING' },
     addrRoad: { type: 'STRING' },
- dong: { type: 'STRING' },
+    dong: { type: 'STRING' },
     bunji: { type: 'STRING' },
-    // 아파트 단지 내 건물 동번호 (예: "101동"). 단지명(buildingDongName)과는
-    // 별도 필드. 연립다세대처럼 동 구분이 없으면 null.
+    // 아파트 단지 내 건물 동번호 (예: "101동"). 단지명(buildingDongName)과는 별도 필드.
     aptDong: { type: 'STRING' },
-    // 도로명주소를 house_trades/villa_trades 테이블과 동일한 방식으로 분해
-    // (도로명 + 본번 + 부번). 정보가 없으면 각 필드는 null.
     roadName: { type: 'STRING' },
     roadMainNum: { type: 'INTEGER' },
     roadSubNum: { type: 'INTEGER' },
-    // 소재지 문자열의 "3층302호" 같은 부분에서 층과 호수를 따로 분리
     unitFloor: { type: 'INTEGER' },
     unitNo: { type: 'STRING' },
-    // 처분방식 (예: "토지·건물 일괄매각") / 특수조건 (예: "임차권등기,대항력 있는 임차인,공시가 1억이하")
     disposalMethod: { type: 'STRING' },
     specialConditions: { type: 'STRING' },
-    // 대지권 면적 - 전체 토지가 아니라 이 물건에 배정된 지분만 (예: "34.19㎡(10.34평)")
     siteRightsArea: { type: 'STRING' },
-    // 가장 최근 연도의 공동주택(개별)공시가격 (예: "83,700,000원 (2025.01 기준)")
     officialPriceCurrent: { type: 'STRING' },
     saleDate: { type: 'STRING' },
     rounds: {
@@ -90,37 +87,18 @@ const RESPONSE_SCHEMA = {
         type: 'OBJECT',
         properties: {
           name: { type: 'STRING' },
-          occupancyPart: { type: 'STRING' },   // 점유부분 (예: "주거용 302호 전부")
-          deposit: { type: 'NUMBER' },          // 보증금
-          rent: { type: 'NUMBER' },             // 월세(차임), 없으면 null
-          hasStanding: { type: 'BOOLEAN' },     // 대항력 있음 여부
-          moveInDate: { type: 'STRING' },       // 전입일
-          fixedDate: { type: 'STRING' },        // 확정일
-          distributionDate: { type: 'STRING' }, // 배당요구일
-          note: { type: 'STRING' },             // 임차권등기자/경매신청인 등 기타 표시
+          occupancyPart: { type: 'STRING' },
+          deposit: { type: 'NUMBER' },
+          rent: { type: 'NUMBER' },
+          hasStanding: { type: 'BOOLEAN' },
+          moveInDate: { type: 'STRING' },
+          fixedDate: { type: 'STRING' },
+          distributionDate: { type: 'STRING' },
+          note: { type: 'STRING' },
         },
       },
     },
     tenantNote: { type: 'STRING' },
-    registryTotalClaim: { type: 'NUMBER' },
-    registryItems: {
-      type: 'ARRAY',
-      items: {
-        type: 'OBJECT',
-        properties: {
-          date: { type: 'STRING' },
-          type: { type: 'STRING' },
-          holder: { type: 'STRING' },
-          amount: { type: 'STRING' },
-          note: { type: 'STRING' },
-          extinguished: { type: 'BOOLEAN' },
-        },
-      },
-    },
-    // registryItems를 바탕으로, 이 건물의 소유권 변화·거래금액·대출·상환·말소 흐름을
-    // 사람이 읽기 편한 스토리텔링 문단으로 요약 (아래 프롬프트 규칙 참고)
-    registryStory: { type: 'STRING' },
-    riskSummary: { type: 'STRING' },
     salesStats: {
       type: 'OBJECT',
       properties: {
@@ -143,6 +121,30 @@ const RESPONSE_SCHEMA = {
       },
     },
     officialPriceByYear: { type: 'STRING' },
+  },
+};
+
+// ── 스키마 B: 건축물정보 / 등기 이력 ──
+const SCHEMA_B = {
+  type: 'OBJECT',
+  properties: {
+    registryTotalClaim: { type: 'NUMBER' },
+    registryItems: {
+      type: 'ARRAY',
+      items: {
+        type: 'OBJECT',
+        properties: {
+          date: { type: 'STRING' },
+          type: { type: 'STRING' },
+          holder: { type: 'STRING' },
+          amount: { type: 'STRING' },
+          note: { type: 'STRING' },
+          extinguished: { type: 'BOOLEAN' },
+        },
+      },
+    },
+    registryStory: { type: 'STRING' },
+    riskSummary: { type: 'STRING' },
     buildingDongName: { type: 'STRING' },
     buildingAddr: { type: 'STRING' },
     households: { type: 'INTEGER' },
@@ -174,32 +176,22 @@ const RESPONSE_SCHEMA = {
   },
 };
 
-export default async function handler(req, res) {
-  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
-  if (req.method !== 'POST') return res.status(405).json({ error: 'POST only' });
-
-  const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
-  if (!GEMINI_API_KEY) {
-    return res.status(500).json({ error: 'GEMINI_API_KEY 환경변수가 없습니다. Vercel 프로젝트 설정에 추가해 주세요.' });
-  }
-
-  const { text } = req.body || {};
-  if (!text || !String(text).trim()) {
-    return res.status(400).json({ error: '분석할 텍스트가 없습니다.' });
-  }
-
-  const prompt = `다음은 경매정보 사이트(탱크옥션 등)에서 복사한 물건 "상세페이지" 텍스트입니다.
+const COMMON_INTRO = (text) => `다음은 경매정보 사이트(탱크옥션 등)에서 복사한 물건 "상세페이지" 텍스트입니다.
 이 페이지에는 본문(이 물건 자체의 정보) 외에도 하단에 "인근물건자료", "인근진행정보", "인근매각사례",
 "동일지번매각", "인근반경검색", "인근공매진행", "경매최근열람" 같은 섹션이 있는데, 여기 나열된 사건번호나
 주소는 전부 이 물건과 무관한 "다른" 물건들입니다. 반드시 페이지 맨 위 제목 줄
 (예: "경매 2025타경52046" 처럼 "경매"라는 단어 바로 뒤에 나오는 사건번호 하나)에 있는 정보만
 이 물건의 정보로 사용하고, 하단 목록/사이드바에 나오는 다른 사건번호·주소는 절대 사용하지 마세요.
-
-규칙:
+공통 규칙:
 - 텍스트에 명시되지 않은 값은 null(배열은 빈 배열)로 두세요. 절대 추측하거나 지어내지 마세요.
-- caseNo는 페이지 맨 위 제목에 있는 사건번호 단 하나만 쓰세요 (예: "2025타경52046"). 하단 관련물건 목록의 번호는 무시하세요.
 - 금액은 원 단위 숫자로 변환하세요 (예: "1억 3,300만" → 133000000, "9,310,000" → 9310000).
 - 날짜는 가능하면 YYYY-MM-DD 형식으로 변환하세요.
+--- 텍스트 시작 ---
+${text}
+--- 텍스트 끝 ---`;
+
+const PROMPT_A_RULES = `
+- caseNo는 페이지 맨 위 제목에 있는 사건번호 단 하나만 쓰세요 (예: "2025타경52046"). 하단 관련물건 목록의 번호는 무시하세요.
 - addrJibun은 이 물건의 지번주소만 담으세요. 반드시 "시/도 시/군/구 동 번지"까지만 담고,
   층수·호수·건물동번호는 절대 addrJibun에 포함하지 마세요.
   예: 소재지가 "경기도 안산시 상록구 본오동 718-12 2층202호"라면
@@ -210,64 +202,85 @@ export default async function handler(req, res) {
   예: "경기도 안산시 상록구 본오동 718-12" → dong: "본오동", bunji: "718-12"
   (시/도/구 이름이나 층수·호수·건물동번호는 dong·bunji에 포함하지 마세요. 번지에 "-"로 이어진 본번-부번은 그대로 유지하세요.)
 - aptDong(아파트 동/건물번호)은 소재지에서 "101동", "가동" 같은 건물 구분 표시만 뽑으세요.
-  연립다세대나 단독주택처럼 동 구분이 없으면 null로 두세요. 절대 buildingDongName에
-  섞어 넣지 마세요.
+  연립다세대나 단독주택처럼 동 구분이 없으면 null로 두세요.
+- roadName/roadMainNum/roadSubNum은 도로명주소(예: "경기 안산시 상록구 본원로 115")에서
+  도로명("본원로")과 건물번호의 본번(115)·부번을 분리하세요. 부번이 없으면 roadSubNum은 null.
+  도로명주소 자체가 없으면 세 필드 모두 null로 두고 절대 지어내지 마세요.
+- 소재지 문자열(예: "경기도 안산시 상록구 본오동 830-16 3층302호")에서 "3층302호" 부분을 찾아
+  unitFloor(숫자만, 예: 3)와 unitNo(호수 문자열 그대로, 예: "302호")로 분리하세요. 이런 표시가 없으면 둘 다 null.
+- disposalMethod(처분방식, 예: "토지·건물 일괄매각")와 specialConditions(특수조건, 예: "임차권등기,대항력 있는 임차인,공시가 1억이하")는
+  본문에 명시된 문구를 그대로 담으세요.
+- siteRightsArea(대지권 면적)는 "대지권" 항목의 면적(㎡·평 둘 다 있으면 그대로, 예: "34.19㎡(10.34평)")을 담되,
+  전체 토지면적이 아니라 이 물건에 배정된 지분(대지권) 면적만 담으세요.
 - rounds(입찰 회차 이력)는 표에 나온 순서대로 모두 담으세요.
-- registryItems(건물등기)는 접수일 순서대로 모두 담으세요.
 - officialTrades(국토부 실거래가)는 표에 나온 개별 거래를 모두 담으세요.
 - salesStats는 "최근1개월/3개월/6개월/12개월" 각 구간의 평균감정가/평균매각가/평균매각가율/평균입찰인수/예상매각가를 한 문장으로 요약해서 m1/m3/m6/m12에 넣으세요.
 - officialPriceByYear는 연도별 공시가격을 "2021년 8,790만 / 2022년 8,930만 / ..." 같은 한 줄 텍스트로 요약하세요.
 - officialPriceCurrent는 그 중 가장 최근 연도/월 기준 공시가격 한 건만 "83,700,000원 (2025.01 기준)" 형식으로 뽑으세요.
-- 소재지 문자열(예: "경기도 안산시 상록구 본오동 830-16 3층302호")에서 "3층302호" 부분을 찾아
-  unitFloor(숫자만, 예: 3)와 unitNo(호수 문자열 그대로, 예: "302호")로 분리하세요. 이런 표시가 없으면 둘 다 null.
-- buildingDongName(아파트/건물 단지명)은 순수 단지명만 담으세요 (예: "래미안", "개포자이").
-  "101동", "가동" 같은 건물 동번호는 절대 buildingDongName에 포함하지 말고, 반드시 aptDong에
-  별도로 담으세요. 단지명 자체가 확인되지 않으면 "이름없음"으로 두세요.
-- roadName/roadMainNum/roadSubNum은 도로명주소(예: "경기 안산시 상록구 본원로 115")에서
-  도로명("본원로")과 건물번호의 본번(115)·부번을 분리하세요. 부번이 없으면 roadSubNum은 null.
-  도로명주소 자체가 없으면 세 필드 모두 null로 두고 절대 지어내지 마세요.
-- disposalMethod(처분방식, 예: "토지·건물 일괄매각")와 specialConditions(특수조건, 예: "임차권등기,대항력 있는 임차인,공시가 1억이하")는
-  본문에 명시된 문구를 그대로 담으세요.
-- siteRightsArea(대지권 면적)는 "대지권" 항목의 면적(㎡·평 둘 다 있으면 그대로, 예: "34.19㎡(10.34평)")을 담되,
-  전체 토지면적이 아니라 이 물건에 배정된 지분(대지권) 면적만 담으세요. 전체 토지면적과 헷갈리지 마세요.
 - tenantOccupants(임차인 현황)는 표/목록에 나온 임차인을 한 명씩 객체로 나눠서 모두 담으세요.
   대항력 "있음"이면 hasStanding: true, "없음"이면 false, 언급이 없으면 null.
   전입/확정/배당요구 날짜는 각각 moveInDate/fixedDate/distributionDate에, "임차권등기자", "경매신청인" 같은
-  표시는 note에 담으세요.
+  표시는 note에 담으세요.`;
+
+const PROMPT_B_RULES = `
+- registryItems(건물등기)는 접수일 순서대로 모두 담으세요.
 - registryStory: registryItems에 담긴 등기 이력(소유권이전, 근저당, 임차권, 경매개시 등)을 바탕으로,
   이 부동산이 언제 지어지고 소유자가 어떻게 바뀌었는지, 그때마다 어떤 금액이 오갔는지(매매가/채권금액/대출),
   그리고 어떤 권리가 왜 소멸되었는지를 시간 순서대로 3~6문장 정도의 자연스러운 한국어 이야기 문단으로 정리하세요.
   등기부에 없는 내용은 추측하지 말고, 알 수 있는 사실만 서술하세요. 등기 정보가 전혀 없으면 null.
+- buildingDongName(아파트/건물 단지명)은 순수 단지명만 담으세요 (예: "래미안", "개포자이").
+  "101동", "가동" 같은 건물 동번호는 절대 buildingDongName에 포함하지 마세요. 단지명 자체가 확인되지 않으면 "이름없음"으로 두세요.`;
 
---- 텍스트 시작 ---
-${text}
---- 텍스트 끝 ---`;
+async function callGemini(apiKey, prompt, schema) {
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${apiKey}`;
+  const geminiRes = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      contents: [{ parts: [{ text: prompt }] }],
+      generationConfig: {
+        responseMimeType: 'application/json',
+        responseSchema: schema,
+        thinkingConfig: { thinkingLevel: 'minimal' },
+      },
+    }),
+    signal: AbortSignal.timeout(50000),
+  });
+  const data = await geminiRes.json();
+  if (!geminiRes.ok) {
+    throw new Error(data.error?.message || 'Gemini API 호출 실패');
+  }
+  const jsonText = data.candidates?.[0]?.content?.parts?.[0]?.text;
+  if (!jsonText) {
+    throw new Error('Gemini 응답에서 결과를 찾을 수 없습니다.');
+  }
+  return JSON.parse(jsonText);
+}
+
+export default async function handler(req, res) {
+  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
+  if (req.method !== 'POST') return res.status(405).json({ error: 'POST only' });
+  const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
+  if (!GEMINI_API_KEY) {
+    return res.status(500).json({ error: 'GEMINI_API_KEY 환경변수가 없습니다. Vercel 프로젝트 설정에 추가해 주세요.' });
+  }
+  const { text } = req.body || {};
+  if (!text || !String(text).trim()) {
+    return res.status(400).json({ error: '분석할 텍스트가 없습니다.' });
+  }
+
+  const promptA = COMMON_INTRO(text) + '\n\n추가 규칙:' + PROMPT_A_RULES;
+  const promptB = COMMON_INTRO(text) + '\n\n추가 규칙:' + PROMPT_B_RULES;
 
   try {
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${GEMINI_API_KEY}`;
-    const geminiRes = await fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-     body: JSON.stringify({
-        contents: [{ parts: [{ text: prompt }] }],
-        generationConfig: {
-          responseMimeType: 'application/json',
-          responseSchema: RESPONSE_SCHEMA,
-          thinkingConfig: { thinkingLevel: 'minimal' },
-        },
-      }),
-      signal: AbortSignal.timeout(58000),
-    });
-    const data = await geminiRes.json();
-    if (!geminiRes.ok) {
-      return res.status(502).json({ error: data.error?.message || 'Gemini API 호출 실패' });
-    }
-    const jsonText = data.candidates?.[0]?.content?.parts?.[0]?.text;
-    if (!jsonText) {
-      return res.status(502).json({ error: 'Gemini 응답에서 결과를 찾을 수 없습니다.' });
-    }
-    const parsed = JSON.parse(jsonText);
-    return res.status(200).json({ detail: parsed });
+    // 스키마를 둘로 나눠 동시에 호출 - 전체 소요시간이 "둘의 합"이 아니라
+    // "더 오래 걸리는 쪽 하나" 수준으로 줄어듦 (Hobby 플랜 60초 제한 안에 들어오도록)
+    const [resultA, resultB] = await Promise.all([
+      callGemini(GEMINI_API_KEY, promptA, SCHEMA_A),
+      callGemini(GEMINI_API_KEY, promptB, SCHEMA_B),
+    ]);
+    const merged = { ...resultA, ...resultB };
+    return res.status(200).json({ detail: merged });
   } catch (err) {
     return res.status(500).json({ error: err.message });
   }
