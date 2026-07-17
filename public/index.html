@@ -2063,7 +2063,7 @@ function renderAuctionList() {
             + '<div class="auction-list-name">' + ((a.name && a.name.trim()) || a.addrLabel || a.addr || '(이름없음)')
             + '<span class="auction-status-badge" style="background:' + sc + ';color:white;">' + a.status + '</span></div>'
             + '<div class="auction-list-sub">' + (a.addr || '주소 미입력') + '</div>'
-            + '<div class="auction-list-sub" style="color:#6a1b9a;">입찰가 ' + (a.myBid ? toEok(String(parseInt(a.myBid)*100)) : '-') + '</div>'
+            + '<div class="auction-list-sub" style="color:#6a1b9a;">입찰가 ' + (a.myBid ? toEok(String(parseInt(a.myBid))) : '-') + '</div>'
             + '</div>';
     });
     body.innerHTML = html;
@@ -2231,13 +2231,12 @@ function calcMargin() {
             + '<div class="margin-value" style="color:' + color + ';">' + value + '</div></div>';
     }
     document.getElementById('margin-grid').innerHTML =
-        mItem('총 투자비용',    totalCost > 0 ? toEok(String(totalCost*100)) : '—', '#555')
-      + mItem('총 부대비용',    (tax+repair+agent+etc) > 0 ? toEok(String((tax+repair+agent+etc)*100)) : '—', '#888')
-      + mItem(actSell ? '실제 수익' : '예상 수익', useSell > 0 ? toEok(String(margin*100)) : '—', margin > 0 ? '#2e7d32' : margin < 0 ? '#e53935' : '#555')
+        mItem('총 투자비용',    totalCost > 0 ? toEok(String(totalCost)) : '—', '#555')
+      + mItem('총 부대비용',    (tax+repair+agent+etc) > 0 ? toEok(String(tax+repair+agent+etc)) : '—', '#888')
+      + mItem(actSell ? '실제 수익' : '예상 수익', useSell > 0 ? toEok(String(margin)) : '—', margin > 0 ? '#2e7d32' : margin < 0 ? '#e53935' : '#555')
       + mItem('수익률',         useSell > 0 ? roi + '%' : '—', roi > 10 ? '#2e7d32' : roi > 0 ? '#ff7043' : '#e53935')
       + mItem('낙찰률',         apprRate > 0 ? apprRate + '%' : '—', apprRate < 80 ? '#2e7d32' : apprRate < 90 ? '#ff7043' : '#e53935')
-      + mItem('손익분기 매도가', totalCost > 0 ? toEok(String(totalCost*100)) : '—', '#1565c0');
-    calcCompValuation();
+      + mItem('손익분기 매도가', totalCost > 0 ? toEok(String(totalCost)) : '—', '#1565c0');
 }
 function matchesAuctionKey(a, name, dong, bunji) {
     var aName = (a.name || '').trim();
@@ -2359,8 +2358,8 @@ function placeAuctionMarker(a) {
     }
  
     var priceLine = a.myBid
-        ? toEok(String(parseInt(a.myBid) * 100)) + ' (내 입찰가)'
-        : (a.appraisal ? toEok(String(parseInt(a.appraisal) * 100)) + ' (감정가)' : '가격 미입력');
+        ? toEok(String(parseInt(a.myBid))) + ' (내 입찰가)'
+        : (a.appraisal ? toEok(String(parseInt(a.appraisal))) + ' (감정가)' : '가격 미입력');
  
     // 입찰일 전일 0시 ~ 입찰일 24시 사이면 알람 배지 표시
     var alarmBadge = '';
@@ -2416,8 +2415,8 @@ function buildAuctionPanelHtml(aptName, aptDong, aptBunji) {
         if (a.caseNo)    html += aItem('사건번호', a.caseNo, '#555');
         if (a.bidDate)   html += aItem('입찰일', a.bidDate, '#555');
         if (a.pyung)     html += aItem('평형', a.pyung + '평', '#555');
-        if (a.appraisal) html += aItem('감정가', toEok(String(parseInt(a.appraisal)*100)), '#555');
-        if (a.myBid)     html += aItem('내 입찰가', toEok(String(parseInt(a.myBid)*100)), '#6a1b9a');
+        if (a.appraisal) html += aItem('감정가', toEok(String(parseInt(a.appraisal))), '#555');
+        if (a.myBid)     html += aItem('내 입찰가', toEok(String(parseInt(a.myBid))), '#6a1b9a');
         if (a.memo) {
             html += '</div><div style="margin-top:8px;font-size:11px;color:#666;background:white;border-radius:6px;padding:6px 8px;border:1px solid #e1bee7;">'
                 + '<span style="color:#9e9e9e;font-size:10px;">메모</span><br>' + a.memo.replace(/\n/g,'<br>') + '</div>';
