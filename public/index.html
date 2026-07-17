@@ -1209,7 +1209,13 @@ async function loadAllData(centerLat, centerLon) {
             lastSigungu = sigungu;
             lastResolvedLat = centerLat;
             lastResolvedLon = centerLon;
-            if (lawdCd === lastLawdCd && dataCache[lawdCd]) {
+            // 예전엔 "바로 직전에 봤던 지역"일 때만 캐시를 재사용했는데(lawdCd === lastLawdCd),
+            // 다른 지역으로 이동했다가 되돌아오면 lastLawdCd가 그 사이 바뀌어 있어서
+            // dataCache에 데이터가 남아있는데도 재사용하지 못하고 매번 새로 불러왔음.
+            // 세션 중 한 번이라도 불러온 지역이면(dataCache[lawdCd] 존재) 바로 재사용하도록 완화.
+            if (dataCache[lawdCd]) {
+                allAptList = dataCache[lawdCd];
+                lastLawdCd = lawdCd;
                 redrawMarkers(); resolve(); return;
             }
             lastLawdCd = lawdCd;
