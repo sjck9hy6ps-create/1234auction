@@ -4,6 +4,8 @@
   "type": "module",
   "dependencies": {
     "@supabase/supabase-js": "^2.39.0",
-    "papaparse": "^5.4.1"
+    "iconv-lite": "^0.7.3",
+    "papaparse": "^5.4.1",
+    "ws": "^8.21.1"
   }
 }
