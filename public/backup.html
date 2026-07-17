@@ -97,7 +97,8 @@ function loadRows(text) {
 }
 
 async function backupRawFile(file, table) {
-  const key = `${Date.now()}_${table}_${file.name}`;
+  const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, '_');
+  const key = `${Date.now()}_${table}_${safeName}`;
   const { error } = await supabaseClient.storage.from('csv-backups').upload(key, file);
   if (error) throw error;
 }
