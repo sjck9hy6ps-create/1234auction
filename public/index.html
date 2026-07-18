@@ -394,6 +394,7 @@ tr:hover td { background:#fffde7; }
      <div class="filter-row">
         <div class="filter-row-label">공통</div>
         <button class="filter-tab ft-common" onclick="toggleRecentYearOnly(this)">최근1년 거래만</button>
+        <button class="filter-tab ft-common" onclick="toggleCompOnlyFilter(this)">📌 비교대상만</button>
     </div>
 </div>
 <div id="autocomplete"></div>
@@ -784,6 +785,49 @@ var VILLA_AGE_TIERS = [
 var surgeRankMap = {};
 var activeSurgeRanks = new Set();
 var recentYearOnly = false;
+var comparableIndex = {};
+var compOnlyFilter = false;
+/* 경매물건 비교물건으로 등록된 거래를 역인덱싱 (키: 이름|날짜|금액 → 등록된 경매 목록)
+   비교물건 저장 시 name/date/amount로 dedup 체크하던 것과 동일한 키 형식을 사용함 */
+function computeComparableIndex() {
+    var idx = {};
+    auctionList.forEach(function(a) {
+        (a.comparables || []).forEach(function(c) {
+            var key = (c.name || '') + '|' + (c.date || '') + '|' + (c.amount || '');
+            if (!idx[key]) idx[key] = [];
+            if (!idx[key].some(function(r) { return r.auctionId === a.id; })) {
+                idx[key].push({
+                    auctionId: a.id,
+                    caseNo: a.caseNo || '',
+                    auctionName: (a.name && a.name.trim()) || a.addrLabel || a.addr || '(이름없음)'
+                });
+            }
+        });
+    });
+    return idx;
+}
+/* apt(마커 단위)의 거래들 중 하나라도 어떤 경매물건의 비교물건으로 등록돼 있으면
+   그 경매 목록(사건번호 포함)을 반환 */
+function getAptComparableRefs(apt) {
+    if (!apt || !apt.trades) return [];
+    var refs = [], seen = {};
+    apt.trades.forEach(function(t) {
+        if (!t.year || !t.month || !t.day) return;
+        var name = (t.name || t.dong || '');
+        var date = t.year + '-' + String(t.month).padStart(2, '0') + '-' + String(t.day).padStart(2, '0');
+        var amount = parseInt(t.amount) || 0;
+        var key = name + '|' + date + '|' + amount;
+        (comparableIndex[key] || []).forEach(function(r) {
+            if (!seen[r.auctionId]) { seen[r.auctionId] = true; refs.push(r); }
+        });
+    });
+    return refs;
+}
+function toggleCompOnlyFilter(btn) {
+    compOnlyFilter = !compOnlyFilter;
+    btn.classList.toggle('active');
+    redrawMarkers();
+}
 var villaInfoLoading = false;
 var GRADE_COLORS = {1:'#b71c1c',2:'#e53935',3:'#ff7043',4:'#ffa726',5:'#66bb6a',6:'#42a5f5',7:'#9e9e9e'};
 // 경매
@@ -958,7 +1002,17 @@ function buildPopularPyeongBadge(apt) {
     }
     return '<span style="background:#00897b;color:white;font-size:10px;font-weight:bold;padding:2px 6px;border-radius:3px;white-space:nowrap;">' + text + '</span>';
 }
-    
+/* 이 마커의 거래가 경매물건의 비교물건으로 등록돼 있으면, 해당 경매 사건번호(없으면 물건명)를 배지로 표시 */
+function buildComparableBadgeHtml(apt) {
+    var refs = getAptComparableRefs(apt);
+    if (!refs.length) return '';
+    var labels = refs.map(function(r) { return r.caseNo || r.auctionName; });
+    var text = labels.length > 2
+        ? labels.slice(0, 2).join(', ') + ' 외 ' + (labels.length - 2) + '건'
+        : labels.join(', ');
+    return '<span style="background:#3f51b5;color:white;font-size:10px;font-weight:bold;padding:2px 6px;border-radius:3px;white-space:nowrap;">📌 비교대상: ' + text + '</span>';
+}
+
 function calcInvestIndicators(aptList) {
     aptList.forEach(function(apt) {
         var trades = apt.trades;
@@ -1214,7 +1268,8 @@ function initMap(lat, lon) {
     map.setMinLevel(1); map.setMaxLevel(14);
     new kakao.maps.Marker({ map: map, position: new kakao.maps.LatLng(lat, lon), title: '내 위치' });
     // 경매 등록 물건은 지역 데이터를 기다리지 않고 가장 먼저 불러와서 표시
-    fetchAuctions().then(function() { renderAuctionMarkers(); });
+    // (비교물건 배지 반영을 위해 아파트/빌라 마커도 함께 다시 그림)
+    fetchAuctions().then(function() { renderAuctionMarkers(); redrawMarkers(); });
     loadAllData(lat, lon);
     kakao.maps.event.addListener(map, 'idle', function() {
         var c = map.getCenter();
@@ -1374,6 +1429,7 @@ function redrawMarkers() {
     renderGen++;
     var myGen = renderGen;
     surgeRankMap = computeSurgeRankMap(currentTypeFilter);
+    comparableIndex = computeComparableIndex();
     var list;
   if (currentTypeFilter === 'apt') {
         var aptAll = allAptList.filter(function(a) { return a.buildingType === 'apt'; });
@@ -1398,6 +1454,7 @@ function redrawMarkers() {
         }
     }
     if (activeSurgeRanks.size > 0) list = list.filter(passesSurgeFilter);
+    if (compOnlyFilter) list = list.filter(function(a) { return getAptComparableRefs(a).length > 0; });
     placeMarkers(list, myGen);
     setTimeout(function() { renderAuctionMarkers(); }, 100);
 }
@@ -1588,6 +1645,8 @@ function createMarker(cacheKey, lat, lon, apt) {
         : '';
     // 인기 평형 배지
     var popBadge = buildPopularPyeongBadge(apt);
+    // 경매 비교물건 배지 (이 마커의 거래가 어떤 경매물건의 비교물건으로 등록돼 있으면 사건번호 표시)
+    var compBadge = buildComparableBadgeHtml(apt);
     var mKey = 'mk' + (markerDataSeq++);
     markerDataRegistry[mKey] = { apt: apt, lat: lat, lon: lon };
     var div = document.createElement('div');
@@ -1601,6 +1660,7 @@ function createMarker(cacheKey, lat, lon, apt) {
          +   (l.name || '') + gradeBadge + nhBadge + surgeBadge
         + '</div>'
         + (popBadge ? '<div style="margin-top:2px;">' + popBadge + '</div>' : '')
+        + (compBadge ? '<div style="margin-top:2px;">' + compBadge + '</div>' : '')
         + (amount ? '<div style="font-size:13px;font-weight:bold;color:' + color + ';">' + toEok(amount) + '</div>' : '')
         + (l.road_name ? '<div style="font-size:11px;color:#aaa;">' + l.road_name + '</div>' : '')
         + '<div class="comp-add-badge" onclick="event.stopPropagation();handleCompBtnClick(\'' + mKey + '\')">+비교</div>';
@@ -2848,6 +2908,7 @@ async function confirmAddComparable(auctionId) {
         renderCompListBox();
         calcCompValuation();
     }
+    redrawMarkers(); // 비교대상 배지를 바로 반영
     alert('비교물건으로 등록되었습니다. (' + (saved.comparables || []).length + '/10)');
 }
 function renderCompListBox() {
