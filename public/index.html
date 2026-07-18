@@ -1895,6 +1895,30 @@ function buildNaverLinkHtml(lat, lon, name, dong) {
         + 'border:1.5px solid #03c75a;border-radius:20px;padding:6px 14px;text-decoration:none;background:#e8f9ef;">'
         + '🟢 네이버부동산에서 보기</a></div>';
 }
+/* 대한민국 법원경매정보(courtauction.go.kr)는 사건번호를 URL 파라미터로 넘겨
+   상세결과 페이지로 바로 이동시키는 공식 딥링크를 제공하지 않음(세션 기반
+   화면전환 방식). 그래서 "사건번호로 검색" 화면을 새 탭으로 열면서 동시에
+   사건번호를 클립보드로 복사해, 검색창에 붙여넣기만 하면 되도록 함. */
+function copyAuctionCaseNo(caseNo) {
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(caseNo).then(function() {
+            alert('사건번호(' + caseNo + ')가 복사되었습니다.\n새로 열린 법원경매정보 탭의 "사건번호로 검색" 창에 붙여넣기(Ctrl+V) 해주세요.');
+        }).catch(function() {
+            alert('사건번호: ' + caseNo + '\n(자동 복사 실패 - 직접 입력해주세요)');
+        });
+    } else {
+        alert('사건번호: ' + caseNo + '\n(자동 복사 실패 - 직접 입력해주세요)');
+    }
+}
+function buildCourtAuctionLinkHtml(caseNo) {
+    if (!caseNo) return '';
+    var url = 'https://www.courtauction.go.kr/pgj/index.on?w2xPath=/pgj/ui/pgj100/PGJ100F01.xml';
+    return '<div style="margin-bottom:10px;">'
+        + '<a href="' + url + '" target="_blank" rel="noopener" onclick="copyAuctionCaseNo(\'' + caseNo.replace(/'/g, "\\'") + '\')" '
+        + 'style="display:inline-flex;align-items:center;gap:5px;font-size:12px;font-weight:bold;color:#1a237e;'
+        + 'border:1.5px solid #1a237e;border-radius:20px;padding:6px 14px;text-decoration:none;background:#e8eaf6;">'
+        + '🏛️ 법원경매정보에서 조회 (사건번호 자동복사)</a></div>';
+}
 function setTypeFilter(type, btn) {
     currentTypeFilter = type;
     document.querySelectorAll('.type-btn').forEach(function(b) {
@@ -2419,6 +2443,7 @@ function buildAuctionPanelHtml(aptName, aptDong, aptBunji) {
         html += '</div>';
         html += buildAuctionDetailHtml(a.detail);
         html += buildOfficialPriceLookupHtml(a);
+        html += buildCourtAuctionLinkHtml(a.caseNo);
         html += buildNaverLinkHtml(a.lat, a.lon, a.detail && a.detail.addrJibun, '');
     });
     return html;
