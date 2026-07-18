@@ -124,7 +124,7 @@ const SCHEMA_A = {
   },
 };
 
-// ── 스키마 B: 건축물정보 / 등기 이력 ──
+// ── 스키마 B: 건축물정보 / 등기 이력 / 권리분석(경매 교육자료 기반) ──
 const SCHEMA_B = {
   type: 'OBJECT',
   properties: {
@@ -140,9 +140,34 @@ const SCHEMA_B = {
           amount: { type: 'STRING' },
           note: { type: 'STRING' },
           extinguished: { type: 'BOOLEAN' },
+          // ── 권리분석용 추가 필드 ──
+          isBaseRight: { type: 'BOOLEAN' }, // 이 항목이 말소기준권리 그 자체인지
+          willBeAssumed: { type: 'BOOLEAN' }, // 인수(true)/소멸(false), 본문에 명시된 경우만 채움
         },
       },
     },
+    // ── 말소기준권리 (경매 권리분석의 출발점) ──
+    baseRightType: { type: 'STRING' }, // 예: "근저당권", "가압류", "담보가등기", "임의경매개시결정"
+    baseRightDate: { type: 'STRING' }, // YYYY-MM-DD
+    baseRightHolder: { type: 'STRING' },
+    // ── 특수권리(순위와 무관하게 매수인에게 인수될 수 있는 위험 권리) ──
+    specialRights: {
+      type: 'OBJECT',
+      properties: {
+        hasLien: { type: 'BOOLEAN' }, // 유치권 신고 여부
+        lienNote: { type: 'STRING' },
+        hasLegalSuperficies: { type: 'BOOLEAN' }, // 법정지상권 성립 여지
+        legalSuperficiesNote: { type: 'STRING' },
+        hasGraveRights: { type: 'BOOLEAN' }, // 분묘기지권
+        graveRightsNote: { type: 'STRING' },
+        isIllegalBuilding: { type: 'BOOLEAN' }, // 위반건축물 여부
+        illegalBuildingNote: { type: 'STRING' },
+      },
+    },
+    // ── 용도지역 / 농지취득자격증명 판단용 ──
+    landCategory: { type: 'STRING' }, // 지목 (전/답/과수원/대/임야 등)
+    zoningType: { type: 'STRING' }, // 용도지역 (제2종일반주거지역, 계획관리지역, 농림지역 등)
+    farmlandCertRequired: { type: 'BOOLEAN' }, // 농지취득자격증명원 필요 여부
     registryStory: { type: 'STRING' },
     riskSummary: { type: 'STRING' },
     buildingDongName: { type: 'STRING' },
@@ -229,9 +254,44 @@ const PROMPT_B_RULES = `
   그리고 어떤 권리가 왜 소멸되었는지를 시간 순서대로 3~6문장 정도의 자연스러운 한국어 이야기 문단으로 정리하세요.
   등기부에 없는 내용은 추측하지 말고, 알 수 있는 사실만 서술하세요. 등기 정보가 전혀 없으면 null.
 - buildingDongName(아파트/건물 단지명)은 순수 단지명만 담으세요 (예: "래미안", "개포자이").
-  "101동", "가동" 같은 건물 동번호는 절대 buildingDongName에 포함하지 마세요. 단지명 자체가 확인되지 않으면 "이름없음"으로 두세요.`;
+  "101동", "가동" 같은 건물 동번호는 절대 buildingDongName에 포함하지 마세요. 단지명 자체가 확인되지 않으면 "이름없음"으로 두세요.
 
-async function callGemini(apiKey, prompt, schema) {
+── 권리분석 (경매 권리분석 교육자료 기준, 반드시 아래 규칙대로 판단) ──
+- "말소기준권리"란 (근)저당권, (가)압류, 담보가등기, 강제경매개시결정등기, 임의경매개시결정등기,
+  전세권(배당요구 또는 임의경매신청을 한 경우) 중 등기부에 접수일이 가장 빠른 권리 하나를 말합니다.
+  본문에 "말소기준권리" 또는 "말소기준등기"라는 문구와 함께 특정 권리가 명시되어 있으면 그 값을 그대로
+  baseRightType/baseRightDate/baseRightHolder에 채우세요. 그런 명시가 없다면 registryItems을 접수일 순으로
+  살펴 위 6가지 유형 중 가장 빠른 것을 찾아 채우세요. 판단 근거가 전혀 없으면 세 필드 모두 null로 두세요.
+- registryItems 각 항목의 isBaseRight는 그 항목이 위에서 정한 말소기준권리와 동일한 등기이면 true,
+  아니면 false로 표시하세요.
+- registryItems 각 항목의 willBeAssumed(매수인 인수 여부)는, 본문(등기부현황 표, 매각물건명세서, 주의사항 등)에
+  "인수" 또는 "소멸"이라고 명시적으로 표기되어 있는 경우에만 그대로 true(인수)/false(소멸)로 옮기세요.
+  본문에 명시적 표기가 없다면 절대로 스스로 인수/소멸을 판단하지 말고 null로 두세요
+  (법률적 최종 판단은 사람이 직접 등기부를 보고 내려야 합니다).
+- specialRights: 본문의 "주의사항", "특수조건", "매각물건명세서 비고" 등에 아래 단어가 언급되어 있는지 확인하세요.
+  · 유치권 → hasLien, 관련 문구를 lienNote에 원문 그대로.
+  · 법정지상권(또는 "관습법상 법정지상권", "토지 건물 소유자 상이") → hasLegalSuperficies, legalSuperficiesNote.
+  · 분묘(분묘기지권) → hasGraveRights, graveRightsNote.
+  · 위반건축물(또는 "무허가 증축", "불법 확장") → isIllegalBuilding, illegalBuildingNote.
+  각 항목은 본문에 해당 단어가 나오면 true, "해당사항 없음"처럼 명시적으로 부인하면 false, 아예 언급이 없으면 null로 두세요.
+  절대로 본문에 없는 내용을 추측해서 true/false로 채우지 마세요.
+- landCategory(지목)는 표제부·토지대장에 나온 지목(전, 답, 과수원, 대, 임야, 잡종지 등)을 그대로 담으세요.
+- zoningType(용도지역)은 본문의 "토지이용계획", "국토이용정보" 등에 표기된 용도지역명
+  (예: "제2종일반주거지역", "계획관리지역", "농림지역", "자연녹지지역")을 그대로 담으세요. 언급이 없으면 null.
+- farmlandCertRequired(농지취득자격증명원 필요 여부)는 landCategory가 농지(전/답/과수원 등)에 해당하면서
+  zoningType이 녹지지역·관리지역·농림지역·자연환경보전지역 중 하나이면 true로, landCategory가 농지가 아니거나
+  zoningType이 도시지역의 주거·상업·공업지역이면 false로 판단하세요. 지목이나 용도지역 정보가 부족해 판단할 수
+  없으면 반드시 null로 두세요 (섣불리 추측 금지).`;
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+// Gemini가 "high demand"/"overloaded"(구글 서버 혼잡, 503 UNAVAILABLE)로 거절하는 경우가
+// 있는데, 대부분 몇 초 안에 풀리는 일시적 현상이라 1초 후 최대 2회까지 자동 재시도한다.
+// (API 키 오류·잘못된 요청 같은 재시도해도 안 풀리는 오류는 즉시 그대로 던짐)
+async function callGemini(apiKey, prompt, schema, attempt) {
+  attempt = attempt || 1;
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${apiKey}`;
   const geminiRes = await fetch(url, {
     method: 'POST',
@@ -244,11 +304,19 @@ async function callGemini(apiKey, prompt, schema) {
         thinkingConfig: { thinkingLevel: 'minimal' },
       },
     }),
-    signal: AbortSignal.timeout(50000),
+    signal: AbortSignal.timeout(45000),
   });
   const data = await geminiRes.json();
   if (!geminiRes.ok) {
-    throw new Error(data.error?.message || 'Gemini API 호출 실패');
+    const status = data.error?.status || '';
+    const msg = data.error?.message || 'Gemini API 호출 실패';
+    const isOverloaded = geminiRes.status === 503 || status === 'UNAVAILABLE'
+      || /overloaded|high demand/i.test(msg);
+    if (isOverloaded && attempt < 3) {
+      await sleep(1000 * attempt);
+      return callGemini(apiKey, prompt, schema, attempt + 1);
+    }
+    throw new Error(msg);
   }
   const jsonText = data.candidates?.[0]?.content?.parts?.[0]?.text;
   if (!jsonText) {
