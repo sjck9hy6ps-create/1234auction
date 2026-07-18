@@ -1,8 +1,10 @@
 /* ════════════════════════════════════
-   경매정보지(탱크옥션 등) 텍스트 → 구조화된 JSON 추출
-   - 클라이언트가 경매 상세페이지에서 복사한 텍스트를 그대로 넘기면
-     Gemini API로 필수 항목들을 뽑아서 JSON으로 돌려줍니다.
-   - 텍스트에 없는 값은 null로 두도록 프롬프트에 명시 (추측 금지)
+   경매정보지(탱크옥션 등) 텍스트/캡처 이미지 → 구조화된 JSON 추출
+   - 클라이언트가 경매 상세페이지에서 복사한 텍스트를 그대로 넘기거나,
+     복사가 막혀 있는 페이지는 화면 캡처 이미지(여러 장 가능)를 넘기면
+     Gemini API로 필수 항목들을 뽑아서 JSON으로 돌려줍니다. 텍스트와 이미지를
+     동시에 보낼 수도 있습니다(둘 다 참고해서 추출).
+   - 텍스트/이미지에 없는 값은 null로 두도록 프롬프트에 명시 (추측 금지)
    ⚠️ 예전엔 스키마 전체(60개+ 필드)를 한 번의 Gemini 호출로 처리했는데,
       Hobby 플랜의 maxDuration 상한(60초)보다 응답이 오래 걸려 타임아웃이 잦았음
       (같은 물건도 매번 성공/실패가 갈릴 정도로 시간이 아슬아슬했음).
@@ -14,6 +16,11 @@ const GEMINI_MODEL = 'gemini-3.5-flash';
 // Vercel 함수 자체의 실행 제한 시간을 늘림 (기본값은 너무 짧아서, 스키마가 큰 요청은
 // Gemini 응답이 오기 전에 함수가 먼저 죽어버릴 수 있음). Hobby 플랜에서도 60초까지 가능.
 export const maxDuration = 60;
+// 캡처 이미지(여러 장)를 첨부하면 base64 페이로드가 커질 수 있어 기본 바디 제한을 올려둠
+// (parse-registry.js의 PDF 업로드와 동일한 패턴).
+export const config = {
+  api: { bodyParser: { sizeLimit: '12mb' } },
+};
 
 // ── 스키마 A: 물건 기본정보 / 가격 / 임차인 / 매각통계 ──
 const SCHEMA_A = {
@@ -201,19 +208,30 @@ const SCHEMA_B = {
   },
 };
 
-const COMMON_INTRO = (text) => `다음은 경매정보 사이트(탱크옥션 등)에서 복사한 물건 "상세페이지" 텍스트입니다.
+// 텍스트 붙여넣기와 캡처 이미지 첨부 양쪽에 공통으로 적용되는 안내문.
+// 이미지가 여러 장이면 스크롤을 나눠서 캡처한 같은 페이지라는 점, 그리고 하단 "다른 물건" 목록을
+// 무시해야 한다는 점은 텍스트든 이미지든 동일하게 중요해서 하나로 통일함.
+const HEADER = `다음은 경매정보 사이트(탱크옥션 등)에서 가져온 물건 "상세페이지" 정보입니다.
+아래에 텍스트가 붙어 있거나, 상세페이지를 캡처한 스크린샷 이미지가 첨부되어 있거나, 혹은 둘 다일 수 있습니다.
+이미지가 여러 장이면 위에서 아래로 스크롤하며 나눠 캡처한 것으로, 이어붙이면 하나의 페이지입니다.
 이 페이지에는 본문(이 물건 자체의 정보) 외에도 하단에 "인근물건자료", "인근진행정보", "인근매각사례",
 "동일지번매각", "인근반경검색", "인근공매진행", "경매최근열람" 같은 섹션이 있는데, 여기 나열된 사건번호나
 주소는 전부 이 물건과 무관한 "다른" 물건들입니다. 반드시 페이지 맨 위 제목 줄
 (예: "경매 2025타경52046" 처럼 "경매"라는 단어 바로 뒤에 나오는 사건번호 하나)에 있는 정보만
 이 물건의 정보로 사용하고, 하단 목록/사이드바에 나오는 다른 사건번호·주소는 절대 사용하지 마세요.
 공통 규칙:
-- 텍스트에 명시되지 않은 값은 null(배열은 빈 배열)로 두세요. 절대 추측하거나 지어내지 마세요.
+- 텍스트/이미지에 명시되지 않은 값은 null(배열은 빈 배열)로 두세요. 절대 추측하거나 지어내지 마세요.
 - 금액은 원 단위 숫자로 변환하세요 (예: "1억 3,300만" → 133000000, "9,310,000" → 9310000).
 - 날짜는 가능하면 YYYY-MM-DD 형식으로 변환하세요.
---- 텍스트 시작 ---
-${text}
---- 텍스트 끝 ---`;
+- 이미지가 첨부된 경우, 글자가 흐리거나 잘려서 정확히 읽기 어려운 값은 절대 추측하지 말고 null로 두세요.`;
+
+function buildPrompt(rules, text) {
+  let p = HEADER + '\n\n추가 규칙:' + rules;
+  if (text && String(text).trim()) {
+    p += `\n\n--- 붙여넣은 텍스트 시작 ---\n${text}\n--- 붙여넣은 텍스트 끝 ---`;
+  }
+  return p;
+}
 
 const PROMPT_A_RULES = `
 - caseNo는 페이지 맨 위 제목에 있는 사건번호 단 하나만 쓰세요 (예: "2025타경52046"). 하단 관련물건 목록의 번호는 무시하세요.
@@ -290,14 +308,16 @@ function sleep(ms) {
 // Gemini가 "high demand"/"overloaded"(구글 서버 혼잡, 503 UNAVAILABLE)로 거절하는 경우가
 // 있는데, 대부분 몇 초 안에 풀리는 일시적 현상이라 1초 후 최대 2회까지 자동 재시도한다.
 // (API 키 오류·잘못된 요청 같은 재시도해도 안 풀리는 오류는 즉시 그대로 던짐)
-async function callGemini(apiKey, prompt, schema, attempt) {
+// imageParts: [{ inline_data: { mime_type, data } }, ...] - 캡처 이미지가 없으면 빈 배열.
+async function callGemini(apiKey, promptText, schema, imageParts, attempt) {
   attempt = attempt || 1;
+  imageParts = imageParts || [];
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${apiKey}`;
   const geminiRes = await fetch(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
-      contents: [{ parts: [{ text: prompt }] }],
+      contents: [{ parts: [{ text: promptText }, ...imageParts] }],
       generationConfig: {
         responseMimeType: 'application/json',
         responseSchema: schema,
@@ -314,7 +334,7 @@ async function callGemini(apiKey, prompt, schema, attempt) {
       || /overloaded|high demand/i.test(msg);
     if (isOverloaded && attempt < 3) {
       await sleep(1000 * attempt);
-      return callGemini(apiKey, prompt, schema, attempt + 1);
+      return callGemini(apiKey, promptText, schema, imageParts, attempt + 1);
     }
     throw new Error(msg);
   }
@@ -332,20 +352,28 @@ export default async function handler(req, res) {
   if (!GEMINI_API_KEY) {
     return res.status(500).json({ error: 'GEMINI_API_KEY 환경변수가 없습니다. Vercel 프로젝트 설정에 추가해 주세요.' });
   }
-  const { text } = req.body || {};
-  if (!text || !String(text).trim()) {
-    return res.status(400).json({ error: '분석할 텍스트가 없습니다.' });
+  const { text, images } = req.body || {};
+  const hasText = text && String(text).trim();
+  const hasImages = Array.isArray(images) && images.length > 0;
+  if (!hasText && !hasImages) {
+    return res.status(400).json({ error: '분석할 텍스트 또는 이미지가 없습니다.' });
   }
 
-  const promptA = COMMON_INTRO(text) + '\n\n추가 규칙:' + PROMPT_A_RULES;
-  const promptB = COMMON_INTRO(text) + '\n\n추가 규칙:' + PROMPT_B_RULES;
+  const imageParts = hasImages
+    ? images
+        .filter((img) => img && img.data)
+        .map((img) => ({ inline_data: { mime_type: img.mimeType || 'image/jpeg', data: img.data } }))
+    : [];
+
+  const promptA = buildPrompt(PROMPT_A_RULES, text);
+  const promptB = buildPrompt(PROMPT_B_RULES, text);
 
   try {
     // 스키마를 둘로 나눠 동시에 호출 - 전체 소요시간이 "둘의 합"이 아니라
     // "더 오래 걸리는 쪽 하나" 수준으로 줄어듦 (Hobby 플랜 60초 제한 안에 들어오도록)
     const [resultA, resultB] = await Promise.all([
-      callGemini(GEMINI_API_KEY, promptA, SCHEMA_A),
-      callGemini(GEMINI_API_KEY, promptB, SCHEMA_B),
+      callGemini(GEMINI_API_KEY, promptA, SCHEMA_A, imageParts),
+      callGemini(GEMINI_API_KEY, promptB, SCHEMA_B, imageParts),
     ]);
     const merged = { ...resultA, ...resultB };
     return res.status(200).json({ detail: merged });
