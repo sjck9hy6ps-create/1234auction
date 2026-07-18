@@ -511,6 +511,7 @@ tr:hover td { background:#fffde7; }
                 <button class="modal-btn btn-purple" onclick="searchAuctionAddr()">검색</button>
             </div>
             <div id="a-addr-result" style="font-size:11px;color:#6a1b9a;padding:2px 0 4px 76px;display:none;"></div>
+            <div id="a-building-info-box" style="margin-top:4px;"></div>
             <div class="modal-row">
                 <span class="modal-label">물건유형</span>
                 <select class="modal-select" id="a-prop-type" onchange="autoCalcAgentSilent();autoCalcRepairSilent();calcCompValuation();calcMargin();">
@@ -925,6 +926,7 @@ var pendingCompMarkerData = null;
 var aiCompCandidates = [];
 var pendingRegistryDoc = null;
 var pendingRegistryAnalysis = null;
+var pendingAuctionBuildingInfo = null;
 var currentChecklist = {};
 var checklistSaveTimer = null;
 // ── 임장(현장조사) 메모 - 경매 사건과 무관하게 건물 단위로 영구 보관 ──
@@ -2387,9 +2389,11 @@ function openAuctionModal(id) {
     pendingAuctionComparables = [];
     pendingRegistryDoc = null;
     pendingRegistryAnalysis = null;
+    pendingAuctionBuildingInfo = null;
     currentChecklist = {};
     document.getElementById('a-registry-file').value = '';
     document.getElementById('registry-result-box').innerHTML = '';
+    document.getElementById('a-building-info-box').innerHTML = '';
     if (isEdit) {
         var a = auctionList.find(function(x) { return x.id === id; });
         if (a) {
@@ -2435,7 +2439,7 @@ function openAuctionModal(id) {
    renderCompListBox();
     // 저장된 수리비 값이 없는(비어있는) 경우에만 자동계산 — 이미 직접 입력/수정해 둔 값은 덮어쓰지 않음
     if (!document.getElementById('a-repair').value) autoCalcRepairSilent();
-    updateStatusUI(); calcMargin(); calcCompValuation(); renderChecklistSection();
+    updateStatusUI(); calcMargin(); calcCompValuation(); renderChecklistSection(); loadAuctionBuildingInfo();
     document.getElementById('auction-modal-bg').style.display = 'flex';
 }
 function closeAuctionModal(e) {
@@ -2463,10 +2467,36 @@ function searchAuctionAddr() {
                 : '';
             auctionCoordCache[r.address_name] = { lat: parseFloat(r.y), lon: parseFloat(r.x), label: label, dong: dong, bunji: bunji };
             calcCompValuation();
+            loadAuctionBuildingInfo();
         } else {
             alert('주소를 찾을 수 없습니다.');
         }
     });
+}
+/* 경매물건의 국토부 건축HUB 건축물대장 조회 - 일반 매물 패널에서 쓰는 loadBuildingInfo()/
+   buildBuildingInfoHtml()를 그대로 재사용함(승강기·주차·세대수·사용승인일 등을 표제부에서 확인).
+   주소(dong/bunji)는 AI 자동추출 결과(pendingAuctionDetail)를 최우선으로 쓰고, 없으면 주소검색으로
+   채워진 auctionCoordCache를, 그마저 없으면(기존 저장된 물건을 다시 열었을 때는 이 두 캐시가
+   비어있으므로) 저장된 레코드 자체의 값으로 대체함 */
+async function loadAuctionBuildingInfo() {
+    var box = document.getElementById('a-building-info-box');
+    if (!box) return;
+    var addr = document.getElementById('a-addr').value.trim();
+    var coordInfo = addr ? auctionCoordCache[addr] : null;
+    var savedRecord = currentAuctionId ? auctionList.find(function(x) { return x.id === currentAuctionId; }) : null;
+    var lat = coordInfo ? coordInfo.lat : (savedRecord ? savedRecord.lat : null);
+    var lon = coordInfo ? coordInfo.lon : (savedRecord ? savedRecord.lon : null);
+    var dong = (pendingAuctionDetail && pendingAuctionDetail.dong) || (coordInfo && coordInfo.dong) || (savedRecord && savedRecord.dong) || '';
+    var bunji = (pendingAuctionDetail && pendingAuctionDetail.bunji) || (coordInfo && coordInfo.bunji) || (savedRecord && savedRecord.bunji) || '';
+    var name = document.getElementById('a-name').value.trim();
+    if (!lat || !lon || !bunji) { box.innerHTML = ''; return; }
+    box.innerHTML = '<div style="font-size:11px;color:#999;">건축물대장 조회 중...</div>';
+    var fakeApt = { latest: { dong: dong, name: name, bunji: bunji } };
+    var info = await loadBuildingInfo(fakeApt, lat, lon);
+    pendingAuctionBuildingInfo = info;
+    box.innerHTML = info
+        ? buildBuildingInfoHtml(info)
+        : '<div style="font-size:11px;color:#999;">건축HUB에 등록된 건축물대장 정보를 찾지 못했습니다.</div>';
 }
 /* ════════════════════════════════════
    다주택자 취득세 정밀(근사) 계산 - 2026-07 기준
@@ -3478,7 +3508,7 @@ async function parseAuctionPaste() {
                 });
             });
         }
-        autoCalcRepairSilent(); calcCompValuation(); calcMargin();
+        autoCalcRepairSilent(); calcCompValuation(); calcMargin(); loadAuctionBuildingInfo();
         alert('자동 추출 완료! 내용을 확인하고 저장해 주세요.');
     } catch (e) {
         alert('자동 추출 중 오류: ' + e.message);
