@@ -86,6 +86,14 @@ body { font-family:'Malgun Gothic',sans-serif; }
     background:rgba(255,255,255,0.95); border-radius:10px; padding:10px 14px;
     font-size:12px; box-shadow:0 2px 8px rgba(0,0,0,0.15); line-height:2; max-width:220px;
 }
+#legend-header {
+    display:flex; justify-content:space-between; align-items:center;
+    cursor:pointer; user-select:none; line-height:1.4;
+}
+#legend-header-title { font-weight:bold; font-size:11px; color:#555; }
+#legend-toggle-icon { font-size:10px; color:#888; font-weight:bold; white-space:nowrap; margin-left:8px; }
+#legend.collapsed { padding:7px 12px; }
+#legend.collapsed #legend-body { display:none; }
 .legend-dot { display:inline-block; width:12px; height:12px; border-radius:50%; margin-right:5px; vertical-align:middle; }
 #panel {
     position:absolute; top:0; right:0; width:380px; height:100vh;
@@ -336,6 +344,35 @@ tr:hover td { background:#fffde7; }
  
 @media (min-width: 641px) and (max-width: 900px) {
     #panel { width: 340px; }
+    /* 아이패드 미니 등 641~900px 폭에서 상단 검색창(중앙)과 우측 타입탭(아파트/연립다세대/급등지역)이
+       한 줄에 다 안 들어가 겹치는 문제 - 검색창을 위쪽에 꽉 채우고 타입탭을 그 아래 줄로 내려서
+       겹치지 않게 함(휴대폰용 스택 레이아웃과 동일한 패턴을 이 폭 구간에도 적용) */
+    #search-box {
+        left: 10px; right: 10px; top: 10px;
+        transform: none; width: auto;
+    }
+    #search-box input { flex: 1; min-width: 0; width: auto; }
+    #type-filter {
+        top: 56px; left: 10px; right: 10px;
+        justify-content: flex-end;
+    }
+    #filter-toggle-btn {
+        top: 96px; left: 10px; right: 10px;
+        transform: none; width: auto; max-width: none; text-align:center;
+    }
+    #filter-panel {
+        top: 132px; left: 10px; right: 10px;
+        transform: none; width: auto; max-width: none;
+    }
+    .filter-row {
+        overflow-x: auto; -webkit-overflow-scrolling: touch;
+        flex-wrap: nowrap; padding-bottom: 2px;
+    }
+    #autocomplete {
+        top: 52px; left: 10px; right: 10px;
+        transform: none; width: auto;
+    }
+    #status-box { top: 140px; }
 }
 @keyframes blink {
     50% { opacity: 0.4; }
@@ -408,6 +445,11 @@ tr:hover td { background:#fffde7; }
 <div id="status-box"></div>
 <div id="map"></div>
 <div id="legend">
+    <div id="legend-header" onclick="toggleLegend()">
+        <span id="legend-header-title">📍 범례</span>
+        <span id="legend-toggle-icon">숨기기 ▾</span>
+    </div>
+    <div id="legend-body">
     <div id="data-coverage-box" style="border-bottom:1px solid #eee;margin-bottom:6px;padding-bottom:6px;"></div>
     <div><span class="legend-dot" style="background:#e53935;"></span> 최근 3개월 거래</div>
     <div><span class="legend-dot" style="background:#1565c0;"></span> 3개월~1년 거래</div>
@@ -434,6 +476,7 @@ tr:hover td { background:#fffde7; }
     </div>
     <div style="font-size:11px;color:#888;margin-top:4px;">핀 숫자 = 기간 내 거래건수</div>
     <div style="margin-top:4px;"><a href="/backup.html" style="font-size:11px;color:#6a1b9a;font-weight:bold;">📦 데이터 백업</a></div>
+    </div>
 </div>
 <button id="auction-add-btn" onclick="openAuctionList()">🔨 경매 관리</button>
 <div id="auction-list-panel">
@@ -672,6 +715,16 @@ tr:hover td { background:#fffde7; }
         <button class="modal-btn btn-gray" onclick="closeAiCompModal()">취소</button>
         <button class="modal-btn btn-purple" onclick="addSelectedAiComps()">선택 항목 추가</button>
     </div>
+</div>
+</div>
+<div id="marker-stack-modal-bg" onclick="closeMarkerStackModal(event)" style="position:fixed;inset:0;background:rgba(0,0,0,0.45);z-index:125;display:none;align-items:center;justify-content:center;">
+<div style="background:white;border-radius:14px;width:320px;max-height:70vh;overflow-y:auto;box-shadow:0 8px 32px rgba(0,0,0,0.25);">
+    <div class="modal-header">
+        <span id="marker-stack-title">📍 겹쳐있는 매물</span>
+        <span class="modal-close" onclick="closeMarkerStackModal()">✕</span>
+    </div>
+    <div style="font-size:10.5px;color:#999;padding:0 16px 6px;">화면상 이 위치에 배지가 겹쳐 있습니다. 확인할 매물을 눌러 주세요.</div>
+    <div id="marker-stack-body" style="padding:0 12px 12px;"></div>
 </div>
 </div>
 <div id="site-note-modal-bg" onclick="closeSiteNoteModal(event)" style="position:fixed;inset:0;background:rgba(0,0,0,0.45);z-index:130;display:none;align-items:center;justify-content:center;">
@@ -1300,6 +1353,21 @@ function initKakao() {
         searchDebounceTimer = setTimeout(function() { searchNationwide(q); }, 300);
     });
 }
+/* 범례 접기/펼치기 - 상태를 기억해서 다음 방문 때도 유지(특히 화면이 좁은 아이패드/모바일에서 유용) */
+function toggleLegend() {
+    var el = document.getElementById('legend');
+    var collapsed = el.classList.toggle('collapsed');
+    document.getElementById('legend-toggle-icon').innerText = collapsed ? '보이기 ▸' : '숨기기 ▾';
+    try { localStorage.setItem('legendCollapsed', collapsed ? '1' : '0'); } catch (e) { /* 저장 실패해도 무시 */ }
+}
+(function applyInitialLegendState() {
+    var saved;
+    try { saved = localStorage.getItem('legendCollapsed'); } catch (e) { saved = null; }
+    if (saved === '1') {
+        document.getElementById('legend').classList.add('collapsed');
+        document.getElementById('legend-toggle-icon').innerText = '보이기 ▸';
+    }
+})();
 function initMap(lat, lon) {
     map = new kakao.maps.Map(document.getElementById('map'), {
         center: new kakao.maps.LatLng(lat, lon), level: 7
@@ -1688,7 +1756,7 @@ function createMarker(cacheKey, lat, lon, apt) {
     // 경매 비교물건 배지 (이 마커의 거래가 어떤 경매물건의 비교물건으로 등록돼 있으면 사건번호 표시)
     var compBadge = buildComparableBadgeHtml(apt);
     var mKey = 'mk' + (markerDataSeq++);
-    markerDataRegistry[mKey] = { apt: apt, lat: lat, lon: lon };
+    markerDataRegistry[mKey] = { apt: apt, lat: lat, lon: lon, div: div };
     var div = document.createElement('div');
     div.style.cssText = 'position:relative;background:white;border:2px solid ' + color + ';border-radius:8px;'
         + 'padding:6px 10px;white-space:nowrap;cursor:pointer;'
@@ -1714,7 +1782,58 @@ function createMarker(cacheKey, lat, lon, apt) {
     markers[cacheKey] = { overlay: overlay, mKey: mKey };
 }
  
+/* 마커 배지끼리 화면상 겹쳐서 아래쪽 배지를 클릭할 방법이 없는 문제 대응:
+   클릭된 마커의 실제 렌더링 사각형(getBoundingClientRect)과 겹치는 다른 마커가
+   있으면 바로 패널을 열지 않고, 겹친 후보들을 목록으로 보여주는 선택 팝업을 띄움.
+   겹치는 게 하나도 없으면(대부분의 경우) 기존과 동일하게 바로 패널이 열림 */
+function rectsOverlap(r1, r2) {
+    return !(r2.left > r1.right || r2.right < r1.left || r2.top > r1.bottom || r2.bottom < r1.top);
+}
+function findOverlappingMarkers(key) {
+    var target = markerDataRegistry[key];
+    if (!target || !target.div) return [{ key: key, data: target }];
+    var tRect = target.div.getBoundingClientRect();
+    var result = [];
+    Object.keys(markerDataRegistry).forEach(function(k) {
+        var d = markerDataRegistry[k];
+        if (!d || !d.div) return;
+        var r = d.div.getBoundingClientRect();
+        if (r.width === 0 && r.height === 0) return; // 화면 밖(지도 범위 밖)으로 밀려난 마커는 제외
+        if (rectsOverlap(tRect, r)) result.push({ key: k, data: d });
+    });
+    return result;
+}
 function handleAptMarkerClick(key) {
+    var d = markerDataRegistry[key];
+    if (!d) return;
+    var overlapping = findOverlappingMarkers(key);
+    if (overlapping.length > 1) {
+        openMarkerStackPicker(overlapping);
+        return;
+    }
+    showRadiusCircle(d.lat, d.lon);
+    openPanel(d.apt, d.lat, d.lon);
+}
+function openMarkerStackPicker(list) {
+    var titleEl = document.getElementById('marker-stack-title');
+    if (titleEl) titleEl.innerText = '📍 겹쳐있는 매물 (' + list.length + '건)';
+    var body = document.getElementById('marker-stack-body');
+    body.innerHTML = list.map(function(item) {
+        var l = (item.data.apt && item.data.apt.latest) || {};
+        var amountStr = l.amount ? toEok(String(l.amount)) : '';
+        return '<div class="comp-item" style="cursor:pointer;flex-direction:column;align-items:flex-start;justify-content:flex-start;gap:2px;" onclick="pickMarkerFromStack(\'' + item.key + '\')">'
+            + '<span style="font-weight:bold;">' + (l.name || '(이름없음)') + '</span>'
+            + '<span style="font-size:11px;color:#888;">' + [l.road_name, amountStr].filter(Boolean).join(' · ') + '</span>'
+            + '</div>';
+    }).join('');
+    document.getElementById('marker-stack-modal-bg').style.display = 'flex';
+}
+function closeMarkerStackModal(e) {
+    if (e && e.target !== document.getElementById('marker-stack-modal-bg')) return;
+    document.getElementById('marker-stack-modal-bg').style.display = 'none';
+}
+function pickMarkerFromStack(key) {
+    closeMarkerStackModal();
     var d = markerDataRegistry[key];
     if (!d) return;
     showRadiusCircle(d.lat, d.lon);
