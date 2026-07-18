@@ -470,7 +470,7 @@ tr:hover td { background:#fffde7; }
             <div id="a-addr-result" style="font-size:11px;color:#6a1b9a;padding:2px 0 4px 76px;display:none;"></div>
             <div class="modal-row">
                 <span class="modal-label">물건유형</span>
-                <select class="modal-select" id="a-prop-type" onchange="autoCalcAgentSilent();calcMargin();">
+                <select class="modal-select" id="a-prop-type" onchange="autoCalcAgentSilent();autoCalcRepairSilent();calcCompValuation();calcMargin();">
                     <option value="apt">아파트</option>
                     <option value="villa">연립다세대·단독</option>
                     <option value="officetel">오피스텔</option>
@@ -493,7 +493,7 @@ tr:hover td { background:#fffde7; }
             </div>
             <div class="modal-row">
                 <span class="modal-label">평형</span>
-                <input type="number" class="modal-input" id="a-pyung" placeholder="예) 24" oninput="calcCompValuation()">
+                <input type="number" class="modal-input" id="a-pyung" placeholder="예) 24" oninput="autoCalcRepairSilent();calcCompValuation();calcMargin();">
                 <span style="font-size:12px;color:#888;margin-left:4px;">평</span>
             </div>
             <div class="modal-row">
@@ -600,6 +600,7 @@ tr:hover td { background:#fffde7; }
             <div class="modal-row">
                 <span class="modal-label">수리비</span>
                 <input type="number" class="modal-input" id="a-repair" placeholder="0" oninput="calcMargin()">
+                <span style="font-size:10px;color:#aaa;margin-left:4px;">연립다세대는 연식단계별 평당단가로 자동계산(직접 수정 가능)</span>
             </div>
             <div class="modal-row">
                 <span class="modal-label">중개수수료</span>
@@ -2244,6 +2245,8 @@ function openAuctionModal(id) {
         }
     }
    renderCompListBox();
+    // 저장된 수리비 값이 없는(비어있는) 경우에만 자동계산 — 이미 직접 입력/수정해 둔 값은 덮어쓰지 않음
+    if (!document.getElementById('a-repair').value) autoCalcRepairSilent();
     updateStatusUI(); calcMargin(); calcCompValuation(); renderChecklistSection();
     document.getElementById('auction-modal-bg').style.display = 'flex';
 }
@@ -2410,6 +2413,40 @@ function autoCalcEvictionFee() {
     if (!pyung) { alert('평형을 먼저 입력해 주세요.'); return; }
     document.getElementById('a-eviction-fee').value = calcEvictionFee(pyung);
     calcMargin();
+}
+/* 연립다세대 수리비 자동계산 - 연식단계(VILLA_AGE_TIERS)별 평당 단가.
+   가장 최신 단계(프리미엄신축)는 평당 100만원에서 시작해서, 연식단계가 한 단계씩
+   내려갈 때마다(오래될수록) 10만원씩 낮아짐: 100→90→80→70→60만원/평.
+   사용승인일(연식)은 AI 자동추출 결과(pendingAuctionDetail.approvalDate)에서 가져옴. */
+var VILLA_REPAIR_PER_PYUNG = { premium: 100, new: 90, semi: 80, old: 70, aged: 60 }; // 만원/평
+function getAuctionBuildYear() {
+    if (!pendingAuctionDetail || !pendingAuctionDetail.approvalDate) return null;
+    var m = String(pendingAuctionDetail.approvalDate).match(/(\d{4})/);
+    return m ? parseInt(m[1], 10) : null;
+}
+function getAgeTierByYear(buildYear) {
+    if (!buildYear) return null;
+    var age = today.getFullYear() - buildYear;
+    for (var i = 0; i < VILLA_AGE_TIERS.length; i++) {
+        var t = VILLA_AGE_TIERS[i];
+        if (age >= t.min && age <= t.max) return t.key;
+    }
+    return null;
+}
+function calcRepairFee(pyung, buildYear) {
+    if (!pyung || pyung <= 0) return null;
+    var tier = getAgeTierByYear(buildYear);
+    if (!tier) return null;
+    return Math.round(pyung * VILLA_REPAIR_PER_PYUNG[tier]);
+}
+/* 물건유형이 연립다세대·단독일 때만 평형×연식단계로 수리비를 조용히 자동계산해서 채움
+   (평형 또는 사용승인일(연식)을 아직 모르면 계산하지 않고 기존 값을 그대로 둠) */
+function autoCalcRepairSilent() {
+    if (document.getElementById('a-prop-type').value !== 'villa') return;
+    var pyung = parseFloat(document.getElementById('a-pyung').value) || 0;
+    var fee = calcRepairFee(pyung, getAuctionBuildYear());
+    if (fee === null) return;
+    document.getElementById('a-repair').value = fee;
 }
 /* 서울시 주택 매매 중개보수 요율표 기준 상한요율로 중개수수료 계산 (만원 단위 입력/반환) */
 function calcAgentFee(saleManwon, propType) {
@@ -3250,7 +3287,7 @@ async function parseAuctionPaste() {
                 });
             });
         }
-        calcMargin();
+        autoCalcRepairSilent(); calcCompValuation(); calcMargin();
         alert('자동 추출 완료! 내용을 확인하고 저장해 주세요.');
     } catch (e) {
         alert('자동 추출 중 오류: ' + e.message);
