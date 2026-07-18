@@ -471,7 +471,8 @@ tr:hover td { background:#fffde7; }
             <div class="modal-row">
                 <span class="modal-label">물건유형</span>
                 <select class="modal-select" id="a-prop-type" onchange="autoCalcAgentSilent();calcMargin();">
-                    <option value="house">주택(아파트·연립다세대·단독)</option>
+                    <option value="apt">아파트</option>
+                    <option value="villa">연립다세대·단독</option>
                     <option value="officetel">오피스텔</option>
                     <option value="other">그외(상가·토지 등)</option>
                 </select>
@@ -2180,7 +2181,7 @@ function openAuctionModal(id) {
      'a-official-price','a-memo','a-paste-text']
         .forEach(function(fid) { document.getElementById(fid).value = ''; });
     document.getElementById('a-status').value = '검토중';
-    document.getElementById('a-prop-type').value = 'house';
+    document.getElementById('a-prop-type').value = 'apt';
     document.getElementById('a-house-rank').value = '1';
     document.getElementById('a-is-adjusted').checked = false;
     document.getElementById('a-is-local-cheap').checked = false;
@@ -2203,7 +2204,7 @@ function openAuctionModal(id) {
             document.getElementById('a-paste-text').value = a.rawText || '';
             document.getElementById('auction-id').value    = a.id || '';
             document.getElementById('a-addr').value        = a.addr || '';
-            document.getElementById('a-prop-type').value   = a.propType || 'house';
+            document.getElementById('a-prop-type').value   = a.propType || 'apt';
             document.getElementById('a-name').value        = a.name || '';
             document.getElementById('a-dong').value        = a.aptDong || '';
             document.getElementById('a-floor').value       = a.floor || '';
@@ -2766,8 +2767,11 @@ async function openAiCompFinder() {
         var m = String(pendingAuctionDetail.approvalDate).match(/(\d{4})/);
         if (m) targetYear = parseInt(m[1]);
     }
- 
-    aiCompCandidates = findSimilarComps(lat, lon, targetYear, targetFloor, targetPyung);
+    // 물건유형이 아파트/연립다세대·단독이면 같은 유형 거래만 비교 (건물유형이 다르면 시세가 안 맞음)
+    var propType = document.getElementById('a-prop-type').value;
+    var targetBuildingType = (propType === 'apt' || propType === 'villa') ? propType : null;
+
+    aiCompCandidates = findSimilarComps(lat, lon, targetYear, targetFloor, targetPyung, targetBuildingType);
     renderAiCompList();
     document.getElementById('ai-comp-modal-bg').style.display = 'flex';
 }
@@ -2780,10 +2784,11 @@ function getMaxFloorForApt(apt) {
         .filter(function(f) { return Number.isFinite(f) && f > 0; });
     return floors.length ? Math.max.apply(null, floors) : null;
 }
-function findSimilarComps(lat, lon, targetYear, targetFloor, targetPyung) {
+function findSimilarComps(lat, lon, targetYear, targetFloor, targetPyung, targetBuildingType) {
     var candidates = [];
     allAptList.forEach(function(apt) {
         if (apt.buildingType === 'single') return;
+        if (targetBuildingType && apt.buildingType !== targetBuildingType) return; // 아파트/연립다세대 유형 일치만
         var l = apt.latest || {};
         var cacheKey = [l.dong, l.name, l.bunji, l.road_name, l.main_num, l.sub_num].join('|').toLowerCase();
         var coord = coordCache[cacheKey];
