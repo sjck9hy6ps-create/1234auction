@@ -3257,6 +3257,57 @@ function normalizeDateForInput(s) {
 }
  
 /* ── AI로 추출한 경매정보지 상세를 읽기전용 박스로 렌더링 ── */
+// 경매 권리분석 교육자료 기반: 말소기준권리 / 특수권리(유치권·법정지상권·분묘기지권·위반건축물) /
+// 용도지역·농지취득자격증명 필요여부를 상세패널에 별도 박스로 보여줌.
+// ⚠️ AI가 원문 텍스트에서 명시적으로 읽어낸 값만 표시하며, 최종 인수·말소 판단은 반드시
+//    입찰 전 사람이 등기부등본을 직접 재열람해서 확인해야 함(경매물건_등록후_체크리스트 참고).
+function buildRightsAnalysisHtml(detail, sectionLabel, row) {
+    if (!detail) return '';
+    var hasBaseRight = detail.baseRightType || detail.baseRightDate || detail.baseRightHolder;
+    var sr = detail.specialRights || {};
+    var specialFlags = [
+        { key: 'hasLien', label: '유치권', note: sr.lienNote },
+        { key: 'hasLegalSuperficies', label: '법정지상권', note: sr.legalSuperficiesNote },
+        { key: 'hasGraveRights', label: '분묘기지권', note: sr.graveRightsNote },
+        { key: 'isIllegalBuilding', label: '위반건축물', note: sr.illegalBuildingNote },
+    ].filter(function(f) { return sr[f.key] === true; });
+    var hasZoning = detail.landCategory || detail.zoningType || detail.farmlandCertRequired !== undefined && detail.farmlandCertRequired !== null;
+    if (!hasBaseRight && !specialFlags.length && !hasZoning) return '';
+
+    var html = '<div style="margin-top:10px;border:1px solid #ffcdd2;border-radius:8px;padding:8px 10px;background:#fff8f8;">';
+    html += '<div style="font-size:11px;font-weight:bold;color:#c62828;">⚖️ 권리분석 체크 (AI 추출 · 입찰 전 등기부 재열람 필수)</div>';
+
+    if (hasBaseRight) {
+        html += '<div style="font-size:11px;color:#555;margin-top:4px;"><b>말소기준권리:</b> '
+            + [detail.baseRightType, detail.baseRightDate, detail.baseRightHolder].filter(Boolean).join(' · ') + '</div>';
+    }
+
+    if (specialFlags.length) {
+        html += '<div style="margin-top:4px;">';
+        specialFlags.forEach(function(f) {
+            html += '<span style="display:inline-block;background:#e53935;color:white;font-size:10px;font-weight:bold;padding:2px 6px;border-radius:3px;margin:2px 4px 2px 0;">⚠ ' + f.label + '</span>';
+        });
+        html += '</div>';
+        specialFlags.forEach(function(f) {
+            if (f.note) html += '<div style="font-size:10.5px;color:#777;margin-top:2px;">· ' + f.label + ': ' + f.note + '</div>';
+        });
+        html += '<div style="font-size:10px;color:#999;margin-top:2px;">위 권리는 등기 순위와 무관하게 매수인에게 인수될 수 있습니다. 현장조사(임장)로 실제 성립 여부를 반드시 확인하세요.</div>';
+    }
+
+    if (hasZoning) {
+        html += '<div style="font-size:11px;color:#555;margin-top:6px;">'
+            + [detail.landCategory ? '지목 ' + detail.landCategory : '', detail.zoningType].filter(Boolean).join(' · ') + '</div>';
+        if (detail.farmlandCertRequired === true) {
+            html += '<div style="font-size:11px;color:#c62828;font-weight:bold;margin-top:2px;">🌾 농지취득자격증명원 필요 가능성 — 경매는 미제출 시 입찰보증금이 몰수됩니다. 입찰 전 관할 시·구·읍·면에 발급 가능 여부를 확인하세요.</div>';
+        } else if (detail.farmlandCertRequired === false) {
+            html += '<div style="font-size:10.5px;color:#999;margin-top:2px;">농지취득자격증명원 불필요 추정 (도시지역 주거·상업·공업지역 등)</div>';
+        }
+    }
+
+    html += '</div>';
+    return html;
+}
+
 function buildAuctionDetailHtml(detail) {
     if (!detail) return '';
     function row(label, value) {
@@ -3353,7 +3404,11 @@ function buildAuctionDetailHtml(detail) {
     if (detail.registryItems && detail.registryItems.length) {
         html += sectionLabel('건물등기 (채권합계 ' + won(detail.registryTotalClaim) + ')');
         detail.registryItems.forEach(function(r) {
-            html += row((r.date || '') + ' ' + (r.type || ''), [r.holder, r.amount, (r.extinguished ? '소멸' : '')].filter(Boolean).join(' · '));
+            var badges = '';
+            if (r.isBaseRight) badges += ' <span style="background:#e53935;color:white;font-size:9px;font-weight:bold;padding:1px 5px;border-radius:3px;">말소기준</span>';
+            if (r.willBeAssumed === true) badges += ' <span style="background:#e53935;color:white;font-size:9px;font-weight:bold;padding:1px 5px;border-radius:3px;">인수</span>';
+            else if (r.willBeAssumed === false) badges += ' <span style="background:#9e9e9e;color:white;font-size:9px;padding:1px 5px;border-radius:3px;">소멸</span>';
+            html += row((r.date || '') + ' ' + (r.type || ''), [r.holder, r.amount, (r.extinguished ? '소멸' : '')].filter(Boolean).join(' · ') + badges);
         });
     }
     if (detail.registryStory) {
@@ -3361,12 +3416,14 @@ function buildAuctionDetailHtml(detail) {
         html += '<div style="font-size:11px;color:#555;line-height:1.6;background:white;border-radius:6px;padding:6px 8px;margin-top:4px;border:1px solid #e1bee7;">'
             + detail.registryStory + '</div>';
     }
- 
+
     if (detail.riskSummary) {
         html += sectionLabel('권리분석 요약');
         html += '<div style="font-size:11px;color:#555;">' + detail.riskSummary + '</div>';
     }
- 
+
+    html += buildRightsAnalysisHtml(detail, sectionLabel, row);
+
     if (detail.salesStats) {
         html += sectionLabel('매각사례 통계');
         html += row('최근1개월', detail.salesStats.m1);
