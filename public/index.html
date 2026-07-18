@@ -634,6 +634,11 @@ tr:hover td { background:#fffde7; }
             <div class="modal-section-title">📝 메모</div>
             <textarea class="modal-input" id="a-memo" rows="3" placeholder="특이사항, 권리분석 등" style="resize:vertical;width:100%;"></textarea>
         </div>
+        <div class="modal-section">
+            <div class="modal-section-title">✅ 경매물건 체크리스트 <span id="checklist-progress" style="font-weight:normal;color:#888;font-size:11px;margin-left:6px;"></span></div>
+            <div style="font-size:10.5px;color:#999;margin-bottom:6px;">교육자료(권리분석·임차인·용도지역·농취증) 기반 체크리스트입니다. 카테고리를 눌러 펼치고 항목을 체크하세요. 저장된 물건은 체크 즉시 자동저장됩니다.</div>
+            <div id="checklist-section-body"></div>
+        </div>
         <div class="margin-result" id="margin-result-box">
             <div class="margin-result-title">💡 예상 마진 분석</div>
             <div class="margin-grid" id="margin-grid"></div>
@@ -840,6 +845,8 @@ var pendingCompMarkerData = null;
 var aiCompCandidates = [];
 var pendingRegistryDoc = null;
 var pendingRegistryAnalysis = null;
+var currentChecklist = {};
+var checklistSaveTimer = null;
 var STATUS_COLOR = {
     '검토중':'#9e9e9e','입찰예정':'#1565c0','낙찰':'#2e7d32',
     '유찰':'#e53935','포기':'#757575','매도완료':'#6a1b9a'
@@ -2191,6 +2198,7 @@ function openAuctionModal(id) {
     pendingAuctionComparables = [];
     pendingRegistryDoc = null;
     pendingRegistryAnalysis = null;
+    currentChecklist = {};
     document.getElementById('a-registry-file').value = '';
     document.getElementById('registry-result-box').innerHTML = '';
     if (isEdit) {
@@ -2200,6 +2208,7 @@ function openAuctionModal(id) {
             pendingAuctionComparables = a.comparables ? a.comparables.slice() : [];
             pendingRegistryDoc = a.registryDoc || null;
             pendingRegistryAnalysis = a.registryAnalysis || null;
+            currentChecklist = a.checklist ? Object.assign({}, a.checklist) : {};
             renderRegistryAnalysis();
             document.getElementById('a-paste-text').value = a.rawText || '';
             document.getElementById('auction-id').value    = a.id || '';
@@ -2235,7 +2244,7 @@ function openAuctionModal(id) {
         }
     }
    renderCompListBox();
-    updateStatusUI(); calcMargin(); calcCompValuation();
+    updateStatusUI(); calcMargin(); calcCompValuation(); renderChecklistSection();
     document.getElementById('auction-modal-bg').style.display = 'flex';
 }
 function closeAuctionModal(e) {
@@ -2519,6 +2528,7 @@ async function saveAuction() {
         officialPriceWon: document.getElementById('a-official-price').value || null,
         registryDoc: pendingRegistryDoc || null,
         registryAnalysis: pendingRegistryAnalysis || null,
+        checklist: currentChecklist || {},
     };
     if (!data.lat || !data.lon) {
         await new Promise(function(resolve) {
@@ -3308,6 +3318,208 @@ function buildRightsAnalysisHtml(detail, sectionLabel, row) {
     return html;
 }
 
+/* ════════════════════════════════════
+   경매물건 등록 후 체크리스트 (경매물건_등록후_체크리스트.docx와 동일한 순서/문구)
+   물건마다 체크 상태를 a.checklist = { itemId: true/false } 로 저장함
+════════════════════════════════════ */
+var CHECKLIST_DEF = [
+    { title: '1. 등기부등본 재확인 (입찰 직전 필수)', items: [
+        '대법원 인터넷등기소에서 등기부등본을 새로 열람·발급했다 (경매정보지 등기부는 신뢰하지 않는다).',
+        '표제부 — 소재지·면적·건물내역이 물건정보와 일치하는지 확인했다.',
+        '갑구 — 소유권, 압류·가압류·가등기·가처분·경매개시결정을 접수일 순서대로 나열했다.',
+        '을구 — (근)저당권, 임차권등기 등을 접수일 순서대로 나열했다.',
+        "갑구·을구를 합쳐 등기 순서대로 정렬한 '권리분석표'를 만들었다.",
+    ]},
+    { title: '2. 말소기준권리 확정',
+      note: '말소기준권리 = (근)저당권 · (가)압류 · 담보가등기 · 강제/임의경매개시결정등기 · 전세권(배당요구 또는 임의경매신청) 중 가장 먼저 등기된 것',
+      items: [
+        '위 6가지 권리 중 등기일자가 가장 빠른 것을 말소기준권리로 확정했다.',
+        '말소기준권리의 종류·접수일·권리자를 기록했다.',
+        '말소기준권리보다 먼저 등기된 권리(선순위) 목록을 별도로 뽑았다 — 원칙적으로 매수인 인수.',
+        '말소기준권리보다 나중에 등기된 권리(후순위) 목록을 별도로 뽑았다 — 원칙적으로 말소.',
+    ]},
+    { title: '3. 권리별 인수 · 말소 판단', groups: [
+        { sub: '(근)저당권 · (가)압류', items: [
+            '말소기준권리 자체이거나 후순위이면 매각으로 말소됨을 확인했다.',
+        ]},
+        { sub: '지상권 · 지역권', items: [
+            '말소기준권리보다 선순위인 지상권·지역권은 인수 대상임을 확인했다.',
+            '법정지상권 성립 여지가 있는지 확인했다 — 성립 시 순위와 무관하게 무조건 인수.',
+        ]},
+        { sub: '전세권', items: [
+            '전세권자가 배당요구를 했는지 확인했다 — 배당요구 시 말소기준권리가 되어 소멸.',
+            '배당요구를 하지 않은 선순위 전세권은 인수 대상임을 확인했다.',
+            '선순위 전세권자가 배당요구를 했지만 전액 배당받지 못한 경우, 잔액이 대항력 있는 임차인 지위로 인수될 수 있음을 확인했다.',
+        ]},
+        { sub: '임차권 (등기 여부 무관)', items: [
+            '임차인의 전입일(사업자등록일)이 말소기준권리보다 빠른지(대항력 유무) 확인했다.',
+            '확정일자 유무 및 취득 시점을 확인했다(우선변제권).',
+            '배당요구종기일까지 배당요구를 했는지 확인했다 — 대항력 있어도 미배당요구 시 보증금 전액 인수.',
+            '배당요구를 했더라도 보증금을 전액 배당받는지 확인했다 — 일부만 배당되면 잔액은 인수.',
+            '소액임차인 최우선변제 대상인지 확인했다(담보권 설정일 기준 그 해 공고금액 기준표 대조).',
+            '상가 물건은 환산보증금(보증금 + 월세×100) 기준 「상가임대차보호법」 적용 범위를 확인했다.',
+        ]},
+        { sub: '가등기', items: [
+            '담보가등기인지 순위보전가등기인지 구분했다(배당요구 여부로 유추).',
+            '담보가등기가 배당요구를 했다면 말소기준권리가 됨을 확인했다.',
+            '순위보전가등기가 말소기준권리보다 선순위면 인수됨을 확인했다.',
+        ]},
+        { sub: '가처분', items: [
+            '말소기준권리보다 선순위 가처분은 인수 대상임을 확인했다.',
+            '토지소유자가 지상건물 소유자를 상대로 한 건물철거·토지인도 가처분인지 확인했다 — 무조건 인수.',
+        ]},
+        { sub: '유치권', items: [
+            '유치권 신고 여부와 신고 금액을 확인했다 — 성립 시 순위 무관 전액 인수.',
+            '현장조사로 실제 점유·공사 흔적 등 성립 요건을 확인했다 — 허위 신고 사례가 많으므로 과도하게 겁먹지 않는다.',
+        ]},
+        { sub: '법정지상권 · 분묘기지권', items: [
+            '토지와 건물 소유자가 다른지, 신축 시점이 저당권 설정 전인지 확인했다.',
+            '분묘 존재 여부를 현장조사로 확인했다 — 성립 시 지료청구가 가능하므로 무조건 손해는 아니다.',
+        ]},
+    ]},
+    { title: '4. 임차인 권리분석 — 대항력 있는 선순위 임차인만 집중 검토',
+      note: '대항력 없는 임차인이거나 후순위라면 배당 분석 자체가 불필요합니다.',
+      items: [
+        '임차인의 전입신고일(익일 0시 효력)과 말소기준권리일을 비교해 대항력 유무를 판정했다.',
+        '대항력 있는 임차인이 배당요구를 했는지, 배당요구종기일을 지켰는지 확인했다.',
+        '배당요구를 했다면 예상 배당액과 보증금 차액(인수 예상액)을 계산했다.',
+        '임차인이 여러 명인 경우 순위별로 각각 대항력·배당액을 분리 계산했다.',
+        '상가는 계약갱신요구권·권리금 회수기회 이슈가 남아있는지 확인했다.',
+    ]},
+    { title: '5. 가짜(허위) 임차인 의심 신호 체크',
+      items: [
+        '등기부상 대출비율이 시세 대비 70% 이상 + 1금융권 대출이면 선순위 임차인 존재 여부를 의심했다.',
+        '임차인이 전 소유자인지 확인했다(매매 후 임대차 전환 사례).',
+        '임차인과 소유자가 가족관계인지 확인했다 — 이혼한 배우자는 대항력이 인정되지 않는다.',
+        '국토교통부 실거래가 공개시스템에서 과거 전월세 신고 이력을 대조했다.',
+        '외국인 임차인 여부를 확인했다 — 전입세대열람에 나타나지 않으므로 반드시 임장으로 확인한다.',
+        '최우선변제를 노린 위조 계약 정황(근저당 설정 직후 계약인데 대항력 주장 등)이 있는지 확인했다.',
+    ], warn: { title: '상가는 특히 주의', lines: [
+        '경매정보지가 제공하는 상가 보증금·월세를 그대로 믿지 말 것 — 시세 대비 차이가 크면 통정허위계약 가능성.',
+        '분양상가는 선임대를 맞춘 뒤 분양하는 경우가 있다 — 신도시 분양상가는 가급적 피할 것.',
+        '현재 임차인의 재계약 의사 여부를 확인할 것.',
+    ]}},
+    { title: '6. 명도 및 인수 실무', items: [
+        "임차인에게 배당금이 있는지 확인했다 — 배당금 수령에는 낙찰자의 '명도확인서'가 필요하다.",
+        '임차보증금 반환과 명도는 동시이행 관계가 아님을 인지했다 — 반드시 배당을 받은 뒤 임차권등기를 해제하도록 안내한다.',
+        '부합물(증축부분 등)과 종물(보일러·화장실 시설 등)은 낙찰자 소유임을 확인했다.',
+    ]},
+    { title: '7. 현장조사(임장) 체크', items: [
+        '전입세대열람 결과와 현장 점유 상태가 일치하는지 확인했다.',
+        '건물의 입지·보존상태·하자 여부를 육안으로 확인했다.',
+        '공인중개사 3곳 이상에서 실제 시세를 확인했다(감정가는 현재 시세와 다를 수 있음).',
+        '유치권 행사 현수막·게시물이 있는지 확인했다.',
+        '(토지의 경우) 분묘 유무를 확인했다.',
+        '관리비 체납 여부를 관리사무소에 확인했다(공용부분 체납관리비는 인수 가능).',
+    ]},
+    { title: '8. 용도지역 · 건축 규제 확인', items: [
+        '토지이음(eum.go.kr)에서 용도지역(도시/관리/농림/자연환경보전 등)을 확인했다.',
+        '건폐율·용적률 한도를 확인했다.',
+        '대상 토지가 도로에 접하는지 확인했다(건축허가 요건, 시골은 배수로도 확인).',
+        '건축물대장을 열람해 위반건축물 여부를 확인했다.',
+        "재개발·재건축 대상 여부와 진행 단계(조합설립 여부='뚜껑', 사업시행인가 등)를 확인했다.",
+        '재개발 물건은 강제경매/임의경매 취득 시점에 따라 현금청산 여부가 달라질 수 있어 조합사무실에 문의했다.',
+    ]},
+    { title: '9. 농지 물건 전용 체크 — 농지취득자격증명원(농취증)',
+      warn: { title: '경매 vs 공매 차이 — 반드시 기억', lines: [
+        '경매: 농취증을 기한 내 제출하지 못하면 매각이 불허가되고 입찰보증금이 몰수된다.',
+        '공매: 보증금은 몰수되지 않지만, 농취증이 없으면 소유권이전등기 자체가 불가능하다.',
+    ]},
+      items: [
+        '지목이 전·답·과수원 등 농지에 해당하는지, 실제 경작지로 이용 중인지 확인했다.',
+        '용도지역을 확인했다 — 도시지역 주거·상업·공업지역은 농취증 불필요, 녹지·관리·농림·자연환경보전지역은 필요.',
+        "해당 토지가 실제로 경작 가능한 상태인지 확인했다 — 불가능하면 '농지 복구계획서'를 첨부해야 한다.",
+        '농업진흥구역 여부를 확인했다 — 농업진흥구역은 주말·체험영농 목적취득이 불가하다.',
+        '농업진흥지역이면서 면적이 1,000㎡ 미만인 경우 농지대장 등록 여부를 확인했다.',
+        '정부24 또는 관할 시·구·읍·면에 농취증 발급 가능 여부를 입찰 전 사전 문의했다.',
+        '농업경영계획서(또는 주말·체험영농계획서) 작성에 필요한 서류를 미리 확인했다.',
+    ]},
+    { title: '10. 입찰 직전 최종 점검', items: [
+        '최신 매각물건명세서를 법원경매정보 사이트에서 다시 확인했다(courtauction.go.kr).',
+        '배당요구종기일까지 배당요구한 임차인·채권자 목록에 변동이 없는지 확인했다.',
+        '감정가 대비 최저매각가율과 유찰 횟수를 확인하고, 유찰 사유를 점검했다.',
+        '특별매각조건(재매각, 농지취득자격증명 제출조건 등)을 확인했다.',
+        '등록한 취득세·등기비용·명도비용 등 비용 항목이 실제 물건 조건과 일치하는지 다시 확인했다.',
+    ]},
+];
+function checklistFlatItems() {
+    var flat = [];
+    CHECKLIST_DEF.forEach(function(cat, ci) {
+        if (cat.items) {
+            cat.items.forEach(function(text, ii) { flat.push({ id: 'c' + ci + '_' + ii, text: text }); });
+        }
+        if (cat.groups) {
+            cat.groups.forEach(function(g, gi) {
+                g.items.forEach(function(text, ii) { flat.push({ id: 'c' + ci + '_g' + gi + '_' + ii, text: text }); });
+            });
+        }
+    });
+    return flat;
+}
+function updateChecklistProgress() {
+    var flat = checklistFlatItems();
+    var done = flat.filter(function(it) { return !!currentChecklist[it.id]; }).length;
+    var pct = flat.length ? Math.round(done / flat.length * 100) : 0;
+    var el = document.getElementById('checklist-progress');
+    if (el) el.innerText = '(' + done + ' / ' + flat.length + ' 완료 · ' + pct + '%)';
+}
+// 저장된(기존) 경매물건은 체크 즉시 0.6초 디바운스 후 자동저장, 신규 등록 중이면 메모리에만 보관했다가
+// 하단 '저장' 버튼을 눌러야 서버에 반영됨(saveAuction()의 data.checklist 로 함께 전송됨)
+function toggleChecklistItem(id, checked) {
+    currentChecklist[id] = checked;
+    updateChecklistProgress();
+    var existingId = document.getElementById('auction-id').value;
+    if (!existingId) return;
+    clearTimeout(checklistSaveTimer);
+    checklistSaveTimer = setTimeout(function() {
+        var idx = auctionList.findIndex(function(a) { return a.id === existingId; });
+        if (idx < 0) return;
+        var updated = Object.assign({}, auctionList[idx], { checklist: currentChecklist });
+        saveAuctionAPI(updated).then(function(saved) { if (saved) auctionList[idx] = saved; });
+    }, 600);
+}
+function checklistItemHtml(item) {
+    var checked = currentChecklist[item.id] ? ' checked' : '';
+    return '<label style="display:flex;align-items:flex-start;gap:7px;padding:4px 0;font-size:12px;color:#444;cursor:pointer;line-height:1.5;">'
+        + '<input type="checkbox" style="margin-top:2px;flex-shrink:0;"' + checked
+        + ' onchange="toggleChecklistItem(\'' + item.id + '\', this.checked)">'
+        + '<span>' + item.text + '</span></label>';
+}
+function checklistWarnHtml(w) {
+    if (!w) return '';
+    var html = '<div style="background:#fbeaea;border:1px solid #e53935;border-radius:6px;padding:6px 8px;margin:4px 0 6px;">';
+    html += '<div style="font-size:11px;font-weight:bold;color:#c62828;">' + w.title + '</div>';
+    w.lines.forEach(function(l) { html += '<div style="font-size:10.5px;color:#777;margin-top:2px;">· ' + l + '</div>'; });
+    html += '</div>';
+    return html;
+}
+function buildChecklistSectionHtml() {
+    var html = '';
+    CHECKLIST_DEF.forEach(function(cat, ci) {
+        var bodyHtml = '';
+        if (cat.note) bodyHtml += '<div style="font-size:10.5px;color:#888;font-style:italic;margin-bottom:6px;">' + cat.note + '</div>';
+        bodyHtml += checklistWarnHtml(cat.warn);
+        if (cat.items) {
+            cat.items.forEach(function(text, ii) { bodyHtml += checklistItemHtml({ id: 'c' + ci + '_' + ii, text: text }); });
+        }
+        if (cat.groups) {
+            cat.groups.forEach(function(g, gi) {
+                bodyHtml += '<div style="font-size:11px;font-weight:bold;color:#6a1b9a;margin:8px 0 2px;">' + g.sub + '</div>';
+                g.items.forEach(function(text, ii) { bodyHtml += checklistItemHtml({ id: 'c' + ci + '_g' + gi + '_' + ii, text: text }); });
+            });
+        }
+        html += '<details style="border:1px solid #eee;border-radius:8px;padding:6px 10px;margin-bottom:6px;background:#fafafa;">'
+            + '<summary style="cursor:pointer;font-size:12px;font-weight:bold;color:#333;padding:2px 0;">' + cat.title + '</summary>'
+            + '<div style="margin-top:6px;">' + bodyHtml + '</div></details>';
+    });
+    return html;
+}
+function renderChecklistSection() {
+    var box = document.getElementById('checklist-section-body');
+    if (!box) return;
+    box.innerHTML = buildChecklistSectionHtml();
+    updateChecklistProgress();
+}
 function buildAuctionDetailHtml(detail) {
     if (!detail) return '';
     function row(label, value) {
