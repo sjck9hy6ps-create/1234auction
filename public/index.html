@@ -2234,7 +2234,7 @@ function openAuctionModal(id) {
         }
     }
    renderCompListBox();
-    updateStatusUI(); calcMargin();
+    updateStatusUI(); calcMargin(); calcCompValuation();
     document.getElementById('auction-modal-bg').style.display = 'flex';
 }
 function closeAuctionModal(e) {
