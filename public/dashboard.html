@@ -103,10 +103,12 @@ function extractRegion(addr) {
 function computeDeal(a) {
     var bid    = parseInt(a.actualBid) || parseInt(a.myBid) || 0;
     var tax    = parseInt(a.tax) || 0;
+    var registryFee = parseInt(a.registryFee) || 0;
+    var evictionFee  = parseInt(a.evictionFee) || 0;
     var repair = parseInt(a.repair) || 0;
     var agent  = parseInt(a.agent) || 0;
     var etc    = parseInt(a.etc) || 0;
-    var totalCost = bid + tax + repair + agent + etc;
+    var totalCost = bid + tax + registryFee + evictionFee + repair + agent + etc;
     var sell = parseInt(a.actualSell) || parseInt(a.target) || 0;
     var profit = sell - totalCost;
     var roi = totalCost > 0 ? Math.round(profit / totalCost * 1000) / 10 : 0;
@@ -115,7 +117,7 @@ function computeDeal(a) {
         name: (a.name && a.name.trim()) || a.addrLabel || a.addr || '(이름없음)',
         region: extractRegion(a.addr || a.addrLabel || ''),
         propType: a.propType || 'house',
-        bid: bid, tax: tax, repair: repair, agent: agent, etc: etc,
+        bid: bid, tax: tax, registryFee: registryFee, evictionFee: evictionFee, repair: repair, agent: agent, etc: etc,
         totalCost: totalCost, sell: sell, profit: profit, roi: roi,
         bidDate: a.bidDate || ''
     };
@@ -190,14 +192,18 @@ function renderRegionTable(deals) {
 function renderCostRatio(deals) {
     var sumBid = deals.reduce(function(s,d){return s+d.bid;},0);
     var sumTax = deals.reduce(function(s,d){return s+d.tax;},0);
+    var sumRegistry = deals.reduce(function(s,d){return s+d.registryFee;},0);
+    var sumEviction = deals.reduce(function(s,d){return s+d.evictionFee;},0);
     var sumRepair = deals.reduce(function(s,d){return s+d.repair;},0);
     var sumAgent = deals.reduce(function(s,d){return s+d.agent;},0);
     var sumEtc = deals.reduce(function(s,d){return s+d.etc;},0);
-    var total = sumBid + sumTax + sumRepair + sumAgent + sumEtc;
+    var total = sumBid + sumTax + sumRegistry + sumEviction + sumRepair + sumAgent + sumEtc;
     if (!total) { document.getElementById('cost-ratio').innerHTML = '<div class="empty-msg">데이터 없음</div>'; return; }
     var items = [
         { label:'낙찰가', v:sumBid, color:'#6a1b9a' },
         { label:'취득세', v:sumTax, color:'#e53935' },
+        { label:'등기비용', v:sumRegistry, color:'#8e24aa' },
+        { label:'명도비용', v:sumEviction, color:'#00897b' },
         { label:'수리비', v:sumRepair, color:'#ff7043' },
         { label:'중개수수료', v:sumAgent, color:'#1565c0' },
         { label:'기타비용', v:sumEtc, color:'#9e9e9e' }
@@ -278,6 +284,8 @@ function renderDealList(deals) {
             + '<div class="detail-grid">'
             + detailItem('낙찰가', toEok(d.bid))
             + detailItem('취득세', toEok(d.tax))
+            + detailItem('등기비용', toEok(d.registryFee))
+            + detailItem('명도비용', toEok(d.evictionFee))
             + detailItem('수리비', toEok(d.repair))
             + detailItem('중개수수료', toEok(d.agent))
             + detailItem('기타비용', toEok(d.etc))
