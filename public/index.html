@@ -2772,6 +2772,14 @@ async function openAiCompFinder() {
     document.getElementById('ai-comp-modal-bg').style.display = 'flex';
 }
  
+/* 단지 내 관측된 거래들 중 최고층을 그 단지의 "탑층"으로 근사 (건축HUB 총층수 정보가
+   없는 물건도 많아, 실거래 데이터 자체에서 관측된 최고층을 대리 지표로 사용) */
+function getMaxFloorForApt(apt) {
+    var floors = (apt.trades || [])
+        .map(function(t) { return parseInt(t.floor); })
+        .filter(function(f) { return Number.isFinite(f) && f > 0; });
+    return floors.length ? Math.max.apply(null, floors) : null;
+}
 function findSimilarComps(lat, lon, targetYear, targetFloor, targetPyung) {
     var candidates = [];
     allAptList.forEach(function(apt) {
@@ -2782,15 +2790,26 @@ function findSimilarComps(lat, lon, targetYear, targetFloor, targetPyung) {
         if (!coord) return;
         var dist = getDistance(lat, lon, coord.lat, coord.lon);
         if (dist > 2000) return; // 반경 2km 이내만
+        var maxFloor = getMaxFloorForApt(apt);
         (apt.trades || []).forEach(function(t) {
             if (t.area <= 0 || parseInt(t.amount) <= 0) return;
             if (tradeDate(t) < oneYearAgo) return; // 최근 1년 거래만
             var py = toPyung(t.area);
             if (targetPyung && Math.abs(py - targetPyung) > 4) return; // 평형 ±4평 이내
-            var by = parseInt(t.build_year) || null;
-            var ageDiff = (targetYear && by) ? Math.abs(targetYear - by) : null;
-            var floorNum = (t.floor && t.floor !== '-') ? parseInt(t.floor) : null;
-            var floorDiff = (targetFloor && floorNum !== null) ? Math.abs(targetFloor - floorNum) : null;
+
+            var floorNum = parseInt(t.floor);
+            if (!Number.isFinite(floorNum) || floorNum <= 0) return; // 지층/반지층·층수 미상 제외
+            if (maxFloor !== null && floorNum === maxFloor) return; // 탑층 제외
+            if (targetFloor && Math.abs(targetFloor - floorNum) > 1) return; // 목표층 ±1층 이내만
+
+            var by = parseInt(t.build_year);
+            if (targetYear) {
+                if (!Number.isFinite(by)) return; // 연식 미상 제외
+                if (Math.abs(targetYear - by) > 3) return; // 연식 ±3년(총 6년 갭) 이내만
+            }
+
+            var ageDiff = (targetYear && Number.isFinite(by)) ? Math.abs(targetYear - by) : null;
+            var floorDiff = targetFloor ? Math.abs(targetFloor - floorNum) : null;
             var score = (ageDiff !== null ? ageDiff : 10) * 2
                 + (floorDiff !== null ? floorDiff : 5) * 1.5
                 + dist / 200;
