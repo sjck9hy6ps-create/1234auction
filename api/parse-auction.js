@@ -305,8 +305,25 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+// 429(RESOURCE_EXHAUSTED, 무료 티어 분당 요청수 초과) 응답에는 대개
+// error.details[]에 google.rpc.RetryInfo 타입 항목이 있고, retryDelay가
+// "12.589028474s" 같은 문자열로 들어있다. 있으면 그 시간만큼, 없으면 기본값을 기다린다.
+function parseRetryDelayMs(errData) {
+  const details = errData?.error?.details;
+  if (!Array.isArray(details)) return null;
+  const retryInfo = details.find((d) => typeof d['@type'] === 'string' && d['@type'].includes('RetryInfo'));
+  const raw = retryInfo?.retryDelay;
+  if (!raw) return null;
+  const sec = parseFloat(String(raw).replace('s', ''));
+  if (!isFinite(sec) || sec <= 0) return null;
+  return Math.ceil(sec * 1000) + 500; // 약간의 여유를 더함
+}
+
 // Gemini가 "high demand"/"overloaded"(구글 서버 혼잡, 503 UNAVAILABLE)로 거절하는 경우가
 // 있는데, 대부분 몇 초 안에 풀리는 일시적 현상이라 1초 후 최대 2회까지 자동 재시도한다.
+// 무료 티어의 "분당 요청수(RPM)" 한도(429 RESOURCE_EXHAUSTED)에 걸린 경우도 대부분
+// 짧게는 십수 초 안에 풀리는 일시적 현상이라, Gemini가 알려주는 재시도 대기시간만큼
+// 기다렸다가 한 번 더 시도한다(과도한 대기로 Vercel 60초 제한을 넘지 않도록 1회만).
 // (API 키 오류·잘못된 요청 같은 재시도해도 안 풀리는 오류는 즉시 그대로 던짐)
 // imageParts: [{ inline_data: { mime_type, data } }, ...] - 캡처 이미지가 없으면 빈 배열.
 async function callGemini(apiKey, promptText, schema, imageParts, attempt) {
@@ -332,9 +349,18 @@ async function callGemini(apiKey, promptText, schema, imageParts, attempt) {
     const msg = data.error?.message || 'Gemini API 호출 실패';
     const isOverloaded = geminiRes.status === 503 || status === 'UNAVAILABLE'
       || /overloaded|high demand/i.test(msg);
+    const isQuotaExceeded = geminiRes.status === 429 || status === 'RESOURCE_EXHAUSTED';
     if (isOverloaded && attempt < 3) {
       await sleep(1000 * attempt);
       return callGemini(apiKey, promptText, schema, imageParts, attempt + 1);
+    }
+    if (isQuotaExceeded && attempt < 2) {
+      const waitMs = parseRetryDelayMs(data) ?? 15000;
+      await sleep(waitMs);
+      return callGemini(apiKey, promptText, schema, imageParts, attempt + 1);
+    }
+    if (isQuotaExceeded) {
+      throw new Error('AI 판독기 요청이 무료 사용량 한도(분당 요청수)에 잠시 걸렸습니다. 15~20초 후 다시 시도해 주세요.');
     }
     throw new Error(msg);
   }
