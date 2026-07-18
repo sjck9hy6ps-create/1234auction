@@ -1060,23 +1060,25 @@ function passesVillaFilter(apt) {
  
     var info = apt.buildingInfo;
  
+    var hasTitle = !!(info && info.title);
+
     var matchesElev = true;
     if (elevFilters.length) {
         matchesElev = false;
-        var hasElev = !!(info && info.title && ((info.title.rideElvtCnt || 0) + (info.title.emgenElvtCnt || 0)) > 0);
-        if (elevFilters.indexOf('elev_y') !== -1 && info && hasElev) matchesElev = true;
-        if (elevFilters.indexOf('elev_n') !== -1 && info && !hasElev) matchesElev = true;
+        var hasElev = !!(hasTitle && ((info.title.rideElvtCnt || 0) + (info.title.emgenElvtCnt || 0)) > 0);
+        if (elevFilters.indexOf('elev_y') !== -1 && hasTitle && hasElev) matchesElev = true;
+        if (elevFilters.indexOf('elev_n') !== -1 && hasTitle && !hasElev) matchesElev = true;
     }
- 
+
     var matchesPark = true;
     if (parkFilters.length) {
         matchesPark = false;
-        var parkTotal = info && info.title
+        var parkTotal = hasTitle
             ? (info.title.indrAutoUtcnt||0) + (info.title.oudrAutoUtcnt||0) + (info.title.indrMechUtcnt||0) + (info.title.oudrMechUtcnt||0)
             : 0;
-        var hasPark = !!(info && info.title) && parkTotal > 0;
-        if (parkFilters.indexOf('park_y') !== -1 && info && hasPark) matchesPark = true;
-        if (parkFilters.indexOf('park_n') !== -1 && info && !hasPark) matchesPark = true;
+        var hasPark = hasTitle && parkTotal > 0;
+        if (parkFilters.indexOf('park_y') !== -1 && hasTitle && hasPark) matchesPark = true;
+        if (parkFilters.indexOf('park_n') !== -1 && hasTitle && !hasPark) matchesPark = true;
     }
  
     return matchesElev && matchesPark;
