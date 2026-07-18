@@ -528,22 +528,22 @@ tr:hover td { background:#fffde7; }
                 <button type="button" class="modal-btn btn-gray" style="font-size:11px;" onclick="autoDetectAdjustedArea()">주소로 자동판정</button>
             </div>
             <div class="modal-row">
-                <span class="modal-label">공시가격</span>
-                <button type="button" class="modal-btn btn-gray" style="font-size:11px;" onclick="fetchOfficialPriceForTax()">공시가격 조회 (지방 저가주택 자동판정)</button>
+                <span class="modal-label">공시가격 조회</span>
+                <button type="button" class="modal-btn btn-gray" style="font-size:11px;" onclick="window.open('https://www.realtyprice.kr','_blank')">🏛️ 부동산공시가격 알리미 열기</button>
+                <span style="font-size:10px;color:#999;margin-left:4px;">주소 조회 후 아래에 직접 입력</span>
             </div>
-            <div id="a-official-price-box" style="font-size:11px;color:#555;padding:2px 0 6px 76px;"></div>
             <div class="modal-row">
-                <span class="modal-label">대지면적</span>
-                <input type="number" class="modal-input" id="a-land-area" placeholder="단독·다가구·토지만 입력(선택)" oninput="fetchOfficialPriceForTax()">
-                <span style="font-size:12px;color:#888;margin-left:4px;">㎡</span>
+                <span class="modal-label">공시가격</span>
+                <input type="number" class="modal-input" id="a-official-price" placeholder="0" oninput="applyOfficialPriceInput();">
+                <span style="font-size:12px;color:#888;margin-left:4px;">원</span>
             </div>
             <div class="modal-row">
                 <span class="modal-label">지방 저가주택</span>
                 <label style="display:flex;align-items:center;gap:4px;font-size:12px;">
-                    <input type="checkbox" id="a-is-local-cheap" onchange="autoCalcTaxSilent();calcCompValuation();calcMargin();"> 비수도권 + 공시가격 2억 이하 (위 조회로 자동 체크됨, 필요시 직접 수정 가능)
+                    <input type="checkbox" id="a-is-local-cheap" onchange="autoCalcTaxSilent();calcCompValuation();calcMargin();"> 비수도권 + 공시가격 2억 이하 (공시가격 입력 시 자동 판정, 필요시 직접 수정 가능)
                 </label>
             </div>
-            <div style="font-size:10px;color:#aaa;margin-top:4px;">⚠️ 조정대상지역 목록은 수시로 바뀝니다. 공시가격 자동조회는 아파트·연립다세대는 정확하지만, 단독·다가구는 대지면적을 입력해야 개별공시지가×면적으로 근사 계산됩니다(개별주택가격과 정확히 일치하지 않을 수 있음). 실제 입찰 전 취득세는 위택스 등에서 한 번 더 확인하는 것을 권장합니다.</div>
+            <div style="font-size:10px;color:#aaa;margin-top:4px;">⚠️ 조정대상지역 목록은 수시로 바뀝니다. 실제 입찰 전 취득세는 위택스 등에서 한 번 더 확인하는 것을 권장합니다.</div>
         </div>
         <div class="modal-section">
             <div class="modal-section-title">📊 비교물건 시세분석 (최대 10개)</div>
@@ -795,7 +795,6 @@ var pendingCompMarkerData = null;
 var aiCompCandidates = [];
 var pendingRegistryDoc = null;
 var pendingRegistryAnalysis = null;
-var pendingOfficialPriceWon = null; // 취득세 지방저가주택 특례 판정용 공시가격 조회 결과(원 단위)
 var STATUS_COLOR = {
     '검토중':'#9e9e9e','입찰예정':'#1565c0','낙찰':'#2e7d32',
     '유찰':'#e53935','포기':'#757575','매도완료':'#6a1b9a'
@@ -2118,10 +2117,8 @@ function openAuctionModal(id) {
      ['auction-id','a-addr','a-name','a-dong','a-floor','a-unit','a-case','a-pyung','a-date',
      'a-appraisal','a-min-bid','a-my-bid','a-actual-bid',
      'a-tax','a-registry-fee','a-eviction-fee','a-repair','a-agent','a-etc','a-target','a-actual-sell',
-     'a-land-area','a-memo','a-paste-text']
+     'a-official-price','a-memo','a-paste-text']
         .forEach(function(fid) { document.getElementById(fid).value = ''; });
-    document.getElementById('a-official-price-box').innerHTML = '';
-    pendingOfficialPriceWon = null;
     document.getElementById('a-status').value = '검토중';
     document.getElementById('a-prop-type').value = 'house';
     document.getElementById('a-house-rank').value = '1';
@@ -2172,10 +2169,7 @@ function openAuctionModal(id) {
             document.getElementById('a-house-rank').value  = a.houseRank || '1';
             document.getElementById('a-is-adjusted').checked   = !!a.isAdjusted;
             document.getElementById('a-is-local-cheap').checked = !!a.isLocalCheap;
-            document.getElementById('a-land-area').value   = a.landAreaM2 || '';
-            pendingOfficialPriceWon = a.officialPriceWon || null;
-            document.getElementById('a-official-price-box').innerHTML = a.officialPriceWon
-                ? '저장된 공시가격: ' + Number(a.officialPriceWon).toLocaleString() + '원 (다시 조회하려면 위 버튼을 눌러주세요)' : '';
+            document.getElementById('a-official-price').value = a.officialPriceWon || '';
             if (a.addrLabel) { document.getElementById('a-addr-result').innerText = '📍 ' + a.addrLabel; document.getElementById('a-addr-result').style.display = 'block'; }
         }
     }
@@ -2299,55 +2293,16 @@ function readTaxConditionInputs() {
         isLocalCheap: document.getElementById('a-is-local-cheap').checked
     };
 }
-/* 공시가격 실시간 조회(VWorld) → 지방 저가주택(비수도권+공시가격 2억↓) 취득세 특례 자동판정
-   - 아파트/연립다세대: priceWon(공시가격 총액)을 그대로 사용
-   - 단독·다가구·토지: priceWonPerM2(개별공시지가, ㎡당)만 제공되므로 대지면적을 입력해야
-     총액을 근사할 수 있음(개별주택가격과 정확히 일치하지 않을 수 있음) */
-async function fetchOfficialPriceForTax() {
+/* 부동산공시가격 알리미(realtyprice.kr)에서 직접 조회한 값을 사용자가 입력하면,
+   지방 저가주택(비수도권+공시가격 2억↓) 취득세 특례를 자동 판정 */
+function applyOfficialPriceInput() {
+    var priceWon = parseInt(document.getElementById('a-official-price').value) || 0;
+    if (!priceWon) return;
     var addr = document.getElementById('a-addr').value.trim();
-    if (!addr) { alert('주소를 먼저 입력해 주세요.'); return; }
-    var box = document.getElementById('a-official-price-box');
-    box.innerHTML = '조회 중...';
-    try {
-        var res = await fetch('/api/get-official-price', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                address: addr,
-                dong: document.getElementById('a-dong').value.trim(),
-                unitFloor: document.getElementById('a-floor').value,
-                unitNo: document.getElementById('a-unit').value.trim(),
-                sizeM2: (parseFloat(document.getElementById('a-pyung').value) || 0) * 3.305785,
-                propertyType: document.getElementById('a-prop-type').value === 'house' ? '' : document.getElementById('a-prop-type').value,
-            }),
-        });
-        var data = await res.json();
-        if (!res.ok || !data.success) {
-            box.innerHTML = '<span style="color:#e53935;">조회 실패: ' + (data.error || '알 수 없는 오류') + ' (수동으로 아래 체크박스를 설정해 주세요)</span>';
-            return;
-        }
-        var totalWon = null, label = '';
-        if (data.source === 'apartment') {
-            totalWon = data.priceWon || null;
-            label = totalWon ? (data.stdrYear || '') + '년 ' + (data.stdrMt || '') + '월 기준 공동주택가격: ' + Number(totalWon).toLocaleString() + '원' : '공시가격 정보를 찾지 못했습니다.';
-        } else if (data.source === 'land') {
-            var landArea = parseFloat(document.getElementById('a-land-area').value) || 0;
-            if (data.priceWonPerM2 && landArea > 0) {
-                totalWon = Math.round(data.priceWonPerM2 * landArea);
-                label = (data.stdrYear || '') + '년 기준 개별공시지가 ' + Number(data.priceWonPerM2).toLocaleString() + '원/㎡ × ' + landArea + '㎡ ≈ ' + totalWon.toLocaleString() + '원 (근사치, 건물가액 미포함)';
-            } else {
-                label = '개별공시지가 ' + (data.priceWonPerM2 ? Number(data.priceWonPerM2).toLocaleString() + '원/㎡' : '정보없음') + ' — 대지면적을 입력하면 총액을 근사 계산합니다.';
-            }
-        }
-        var metro = isMetroArea(addr);
-        var isLocalCheap = !metro && totalWon !== null && totalWon <= 200000000;
-        pendingOfficialPriceWon = totalWon;
-        document.getElementById('a-is-local-cheap').checked = isLocalCheap;
-        box.innerHTML = label + (totalWon !== null ? '<br>' + (metro ? '수도권' : '비수도권') + ' · ' + (isLocalCheap ? '<b style="color:#2e7d32;">지방 저가주택 특례 적용됨(취득세 중과 배제)</b>' : '지방 저가주택 특례 미해당') : '');
-        autoCalcTaxSilent(); calcCompValuation(); calcMargin();
-    } catch (e) {
-        box.innerHTML = '<span style="color:#e53935;">조회 중 오류: ' + e.message + '</span>';
-    }
+    var metro = isMetroArea(addr);
+    var isLocalCheap = !metro && priceWon <= 200000000;
+    document.getElementById('a-is-local-cheap').checked = isLocalCheap;
+    autoCalcTaxSilent(); calcCompValuation(); calcMargin();
 }
 function autoCalcTax() {
     var bid = parseInt(document.getElementById('a-actual-bid').value) || parseInt(document.getElementById('a-my-bid').value) || 0;
@@ -2499,8 +2454,7 @@ async function saveAuction() {
         houseRank: document.getElementById('a-house-rank').value,
         isAdjusted: document.getElementById('a-is-adjusted').checked,
         isLocalCheap: document.getElementById('a-is-local-cheap').checked,
-        landAreaM2: document.getElementById('a-land-area').value,
-        officialPriceWon: pendingOfficialPriceWon || null,
+        officialPriceWon: document.getElementById('a-official-price').value || null,
         registryDoc: pendingRegistryDoc || null,
         registryAnalysis: pendingRegistryAnalysis || null,
     };
