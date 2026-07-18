@@ -1902,7 +1902,7 @@ function buildNaverLinkHtml(lat, lon, name, dong) {
 function copyAuctionCaseNo(caseNo) {
     if (navigator.clipboard && navigator.clipboard.writeText) {
         navigator.clipboard.writeText(caseNo).then(function() {
-            alert('사건번호(' + caseNo + ')가 복사되었습니다.\n새로 열린 법원경매정보 탭의 "사건번호로 검색" 창에 붙여넣기(Ctrl+V) 해주세요.');
+            alert('사건번호(' + caseNo + ')가 복사되었습니다.\n새로 열린 법원경매정보 사이트에서 "사건번호로 검색" 메뉴를 찾아 붙여넣기(Ctrl+V) 해주세요.');
         }).catch(function() {
             alert('사건번호: ' + caseNo + '\n(자동 복사 실패 - 직접 입력해주세요)');
         });
@@ -1912,7 +1912,7 @@ function copyAuctionCaseNo(caseNo) {
 }
 function buildCourtAuctionLinkHtml(caseNo) {
     if (!caseNo) return '';
-    var url = 'https://www.courtauction.go.kr/pgj/index.on?w2xPath=/pgj/ui/pgj100/PGJ100F01.xml';
+    var url = 'https://www.courtauction.go.kr/';
     return '<div style="margin-bottom:10px;">'
         + '<a href="' + url + '" target="_blank" rel="noopener" onclick="copyAuctionCaseNo(\'' + caseNo.replace(/'/g, "\\'") + '\')" '
         + 'style="display:inline-flex;align-items:center;gap:5px;font-size:12px;font-weight:bold;color:#1a237e;'
@@ -2052,7 +2052,7 @@ function renderAuctionList() {
             + '<div class="auction-list-sub" style="color:#6a1b9a;">입찰가 ' + (a.myBid ? toEok(String(parseInt(a.myBid))) : '-') + '</div>'
             + (a.caseNo
                 ? '<div style="margin-top:5px;">'
-                    + '<a href="https://www.courtauction.go.kr/pgj/index.on?w2xPath=/pgj/ui/pgj100/PGJ100F01.xml" target="_blank" rel="noopener" '
+                    + '<a href="https://www.courtauction.go.kr/" target="_blank" rel="noopener" '
                     + 'onclick="event.stopPropagation(); copyAuctionCaseNo(\'' + a.caseNo.replace(/'/g, "\\'") + '\')" '
                     + 'style="display:inline-flex;align-items:center;gap:4px;font-size:10px;font-weight:bold;color:#1a237e;'
                     + 'border:1px solid #1a237e;border-radius:14px;padding:3px 9px;text-decoration:none;background:#e8eaf6;">'
