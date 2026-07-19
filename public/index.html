@@ -1198,8 +1198,36 @@ function getVillaTierLabel(tierKey) {
     var t = VILLA_AGE_TIERS.find(function(x) { return x.key === tierKey; });
     return t ? t.label : null;
 }
+// 평단가(또는 실거래 없을 때 전세가 기반 추정 평단가)를 구하는 공용 헬퍼.
+// calcPriceGrades()의 두 등급 계산(연식단계별/지역 전체)이 이 로직을 공유함.
+function calcPppForGrade(apt) {
+    var valid = apt.trades.filter(function(t) {
+        return tradeDate(t) >= oneYearAgo && t.area > 0 && parseInt(t.amount) > 0 && parseInt(t.floor) !== 1;
+    });
+    if (valid.length) {
+        var sum = valid.reduce(function(a, t) { return a + parseInt(t.amount) / toPyung(t.area); }, 0);
+        return { ppp: sum / valid.length, estimated: false };
+    }
+    // 매매 실거래가 없는 연립다세대는 전세가 기반 예상 거래가(calcVillaJeonseEstimate)로
+    // 대신 평단가를 추정해서라도 등급 배지를 만들어줌 - 지도에서 아예 안 보이던 물건도
+    // "추정" 표시를 달고 나타나게 하려는 목적. gradeEstimated 플래그로 실거래 등급과 구분함.
+    if (apt.buildingType === 'villa') {
+        var est = calcVillaJeonseEstimate(apt);
+        if (est && est.size > 0 && est.estimate > 0) {
+            return { ppp: est.estimate / toPyung(est.size), estimated: true };
+        }
+    }
+    return { ppp: 0, estimated: false };
+}
+/* 등급은 두 가지를 따로 계산함.
+   - apt.grade (연식단계별 등급, 배지 표기용): 연립다세대는 같은 연식단계(VILLA_AGE_TIERS) 안에서만
+     평단가 순위를 매김. 준신축끼리, 구축끼리 비교해야 "이 연식대에서 비싼 편인지"를 알 수 있어서
+     마커·패널 배지는 이 값을 그대로 씀.
+   - apt.overallGrade (지역 전체 등급, 필터칸용): 연립다세대도 연식단계 구분 없이 해당 지역 전체
+     거래 평단가 순으로 1~7등급을 매김(아파트와 동일한 방식). 상단 필터칸의 "등급" 버튼은 이 값으로
+     걸러서, 연식이 다른 건물들의 "그 연식대 안에서의 1등급"이 전부 섞여 나오는 일이 없도록 함. */
 function calcPriceGrades(aptList) {
-    var groups = {};
+    var ageTierGroups = {};
     aptList.forEach(function(apt) {
         var type = apt.buildingType || 'apt';
         var groupKey = type;
@@ -1207,29 +1235,14 @@ function calcPriceGrades(aptList) {
             apt.ageTier = getVillaAgeTier(apt);
             groupKey = apt.ageTier ? ('villa_' + apt.ageTier) : 'villa_unknown';
         }
-        if (!groups[groupKey]) groups[groupKey] = [];
-        groups[groupKey].push(apt);
+        if (!ageTierGroups[groupKey]) ageTierGroups[groupKey] = [];
+        ageTierGroups[groupKey].push(apt);
     });
- 
-    Object.keys(groups).forEach(function(groupKey) {
-        var scored = groups[groupKey].map(function(apt) {
-            var valid = apt.trades.filter(function(t) {
-                return tradeDate(t) >= oneYearAgo && t.area > 0 && parseInt(t.amount) > 0 && parseInt(t.floor) !== 1;
-            });
-            if (valid.length) {
-                var sum = valid.reduce(function(a, t) { return a + parseInt(t.amount) / toPyung(t.area); }, 0);
-                return { apt: apt, ppp: sum / valid.length, estimated: false };
-            }
-            // 매매 실거래가 없는 연립다세대는 전세가 기반 예상 거래가(calcVillaJeonseEstimate)로
-            // 대신 평단가를 추정해서라도 등급 배지를 만들어줌 - 지도에서 아예 안 보이던 물건도
-            // "추정" 표시를 달고 나타나게 하려는 목적. gradeEstimated 플래그로 실거래 등급과 구분함.
-            if (apt.buildingType === 'villa') {
-                var est = calcVillaJeonseEstimate(apt);
-                if (est && est.size > 0 && est.estimate > 0) {
-                    return { apt: apt, ppp: est.estimate / toPyung(est.size), estimated: true };
-                }
-            }
-            return { apt: apt, ppp: 0, estimated: false };
+
+    Object.keys(ageTierGroups).forEach(function(groupKey) {
+        var scored = ageTierGroups[groupKey].map(function(apt) {
+            var r = calcPppForGrade(apt);
+            return { apt: apt, ppp: r.ppp, estimated: r.estimated };
         }).filter(function(x) { return x.ppp > 0; });
 
         scored.sort(function(a, b) { return b.ppp - a.ppp; });
@@ -1240,8 +1253,28 @@ function calcPriceGrades(aptList) {
             x.apt.gradeEstimated = !!x.estimated;
         });
     });
-
     aptList.forEach(function(apt) { if (!apt.grade) { apt.grade = null; apt.ppp = 0; apt.gradeEstimated = false; } });
+
+    // 지역 전체 등급(연식단계 무시) - 아파트는 groupKey가 원래도 단일 그룹('apt')이라 위와 결과가
+    // 같고, 연립다세대만 연식단계를 무시하고 다시 순위를 매김.
+    var overallGroups = {};
+    aptList.forEach(function(apt) {
+        var type = apt.buildingType || 'apt';
+        if (!overallGroups[type]) overallGroups[type] = [];
+        overallGroups[type].push(apt);
+    });
+    Object.keys(overallGroups).forEach(function(type) {
+        var scored = overallGroups[type].map(function(apt) {
+            return { apt: apt, ppp: calcPppForGrade(apt).ppp };
+        }).filter(function(x) { return x.ppp > 0; });
+
+        scored.sort(function(a, b) { return b.ppp - a.ppp; });
+        var total = scored.length;
+        scored.forEach(function(x, i) {
+            x.apt.overallGrade = Math.min(7, Math.floor(i / total * 7) + 1);
+        });
+    });
+    aptList.forEach(function(apt) { if (!apt.overallGrade) apt.overallGrade = null; });
 }
 function toggleGrade(val, btn) {
     if (activeGrades.has(val)) { activeGrades.delete(val); btn.classList.remove('active'); }
@@ -1346,7 +1379,9 @@ function passesFilter(apt) {
     if (currentTypeFilter === 'villa' && apt.buildingType !== 'villa') return false;
  
     if (!activeGrades.has('all')) {
-        if (!apt.grade || !activeGrades.has(String(apt.grade))) return false;
+        // 필터칸의 "등급"은 연식단계 구분 없는 지역 전체 등급(overallGrade) 기준.
+        // 마커·패널의 배지 표기(연식단계별 grade)와는 별개 값임.
+        if (!apt.overallGrade || !activeGrades.has(String(apt.overallGrade))) return false;
     }
     return true;
 }
