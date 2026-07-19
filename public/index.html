@@ -924,6 +924,8 @@ var VILLA_AGE_TIERS = [
     { key:'old',     label:'구축',         min:16, max:25 },
     { key:'aged',    label:'노후',         min:26, max:Infinity }
 ];
+// 경매물건 배지의 연식단계 표시용 색상(가격등급과 무관하게 연식단계 자체를 나타냄)
+var AGE_TIER_COLORS = { premium:'#2e7d32', new:'#66bb6a', semi:'#ff9800', old:'#8d6e63', aged:'#757575' };
 var surgeRankMap = {};
 var activeSurgeRanks = new Set();
 var recentYearOnly = false;
@@ -3674,8 +3676,16 @@ async function saveAuction() {
     var name = document.getElementById('a-name').value.trim();
     if (!addr) { alert('주소를 입력해 주세요.'); return; }
     var coordInfo = auctionCoordCache[addr];
+    // 지도 배지에 다른 마커처럼 연식단계를 표시하기 위해, 저장 시점에 사용승인일(연식)을
+    // 확정해서 함께 저장해둠. getAuctionBuildYear()는 건축HUB 건축물대장 조회 결과
+    // (사용승인일)를 최우선으로 쓰고, 없으면 AI 자동추출/비교물건 순으로 대체함.
+    // 이번 저장에서 새로 확인이 안 되면(예: 가격만 수정하는 경우) 기존에 저장돼 있던
+    // 값을 그대로 유지해서 애써 확인해둔 연식 정보가 지워지지 않게 함.
+    var existingAuctionForYear = auctionList.find(function(x) { return x.id === document.getElementById('auction-id').value; });
+    var resolvedBuildYear = getAuctionBuildYear() || (existingAuctionForYear ? existingAuctionForYear.buildYear : null) || null;
     var data = {
         id: document.getElementById('auction-id').value || Date.now().toString(),
+        buildYear: resolvedBuildYear,
         addr: addr, addrLabel: coordInfo ? coordInfo.label : addr,
         lat: coordInfo ? coordInfo.lat : null, lon: coordInfo ? coordInfo.lon : null,
         dong: coordInfo ? (coordInfo.dong || '') : '',
@@ -3871,6 +3881,13 @@ function placeAuctionMarker(a) {
     var surgeBadge = surgeRank
         ? '<span style="background:#e53935;color:white;font-size:9px;font-weight:bold;padding:1px 5px;border-radius:3px;margin-left:3px;">🔥' + surgeRank + '위</span>'
         : '';
+    // 연식 배지 - 저장 시점에 확정해둔 buildYear(건축HUB 사용승인일 우선)를 기준으로
+    // 다른 마커(연립다세대 등)와 동일한 연식단계 라벨을 보여줌
+    var ageTier = a.buildYear ? getAgeTierByYear(a.buildYear) : null;
+    var ageBadgeText = ageTier ? (getVillaTierLabel(ageTier) + ' · ' + (today.getFullYear() - a.buildYear) + '년차') : '';
+    var ageBadge = ageTier
+        ? '<span style="background:' + (AGE_TIER_COLORS[ageTier] || '#607d8b') + ';color:white;font-size:9px;font-weight:bold;padding:1px 6px;border-radius:3px;margin-left:3px;">' + ageBadgeText + '</span>'
+        : '';
     // 일반 거래 마커가 없는(단독) 경매물건이므로, 수만 건의 일반 거래 배지 사이에서도
     // 눈에 띄도록 굵은 주황 테두리 + 은은한 발광 애니메이션으로 강조 표시함
     var priceLine = a.myBid
@@ -3897,10 +3914,10 @@ function placeAuctionMarker(a) {
         + 'text-align:center;line-height:1.5;max-width:210px;transform:scale(1.12);'
         + 'animation:auctionGlow 1.8s ease-in-out infinite;';
     // 터치 기기 길게 누르기 미리보기용 (setupBadgeLongPressPeek 참고)
-    div.title = [((a.name && a.name.trim()) || a.addrLabel || a.addr || '(이름없음)'), '🔨 ' + a.status, priceLine, a.pyung ? a.pyung + '평' : ''].filter(Boolean).join(' · ');
+    div.title = [((a.name && a.name.trim()) || a.addrLabel || a.addr || '(이름없음)'), '🔨 ' + a.status, priceLine, a.pyung ? a.pyung + '평' : '', ageBadgeText].filter(Boolean).join(' · ');
     div.innerHTML = '<div class="auction-badge" style="background:' + sc + ';">🔨 ' + a.status + alarmBadge + '</div>'
         + '<div style="color:#333;font-size:11px;font-weight:bold;overflow:hidden;text-overflow:ellipsis;max-width:185px;margin-top:5px;">'
-        +   ((a.name && a.name.trim()) || a.addrLabel || a.addr || '(이름없음)') + surgeBadge
+        +   ((a.name && a.name.trim()) || a.addrLabel || a.addr || '(이름없음)') + surgeBadge + ageBadge
         + '</div>'
         + '<div style="color:' + sc + ';font-size:12px;font-weight:bold;">' + priceLine + '</div>'
         + (a.pyung ? '<div style="color:#888;font-size:10px;">' + a.pyung + '평</div>' : '')
