@@ -63,7 +63,7 @@ export const LAWD_CODES = [
   { code: '27720', name: '대구 군위군' },
   { code: '28125', name: '인천 제물포구' },
   { code: '28155', name: '인천 영종구' },
-  { code: '28170', name: '인천 미추홀구' },
+  { code: '28177', name: '인천 미추홀구' },
   { code: '28185', name: '인천 연수구' },
   { code: '28200', name: '인천 남동구' },
   { code: '28237', name: '인천 부평구' },
