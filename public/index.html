@@ -126,6 +126,17 @@ body { font-family:'Malgun Gothic',sans-serif; }
 }
 .pyung-btn.active { background:#e53935; color:white; border-color:#e53935; }
 #panel-body { overflow-y:auto; padding:12px; flex:1; }
+.panel-tabs { display:flex; gap:6px; margin-bottom:12px; border-bottom:2px solid #eee; }
+.panel-tab-btn {
+    flex:1; padding:8px 6px; font-size:12.5px; font-weight:bold; border:none;
+    background:transparent; color:#999; cursor:pointer; border-bottom:2.5px solid transparent;
+    margin-bottom:-2px; position:relative;
+}
+.panel-tab-btn.active { color:#6a1b9a; border-bottom-color:#6a1b9a; }
+.panel-tab-dot {
+    display:inline-block; width:6px; height:6px; border-radius:50%;
+    background:#e53935; margin-left:4px; vertical-align:middle;
+}
 .year-label {
     font-size:12px; font-weight:bold; color:#fff; background:#aaa;
     padding:3px 10px; border-radius:20px; margin:12px 0 6px; display:inline-block;
@@ -376,6 +387,10 @@ tr:hover td { background:#fffde7; }
 }
 @keyframes blink {
     50% { opacity: 0.4; }
+}
+@keyframes auctionGlow {
+    0%, 100% { box-shadow: 0 3px 14px rgba(230,81,0,0.55), 0 0 0 0 rgba(230,81,0,0.5); }
+    50% { box-shadow: 0 3px 14px rgba(230,81,0,0.85), 0 0 0 6px rgba(230,81,0,0); }
 }
 </style>
 </head>
@@ -881,6 +896,7 @@ var currentOfficialPriceLoading = false;
 var currentPanelLat = null;
 var currentPanelLon = null;
 var currentPanelApt = null;
+var currentPanelTab = 'price';
 var activeGrades = new Set();
 var activeVillaFilters = new Set();
 var activeVillaTiers = new Set();
@@ -2178,6 +2194,8 @@ function openPanel(apt, lat, lon) {
     if (hasAuction) {
         gradeHtml += ' <span style="background:#6a1b9a;color:white;font-size:11px;font-weight:bold;padding:2px 7px;border-radius:10px;">🔨 경매</span>';
     }
+    // 이 건물에 경매물건이 있으면 패널을 열자마자 경매탭을 먼저 보여줌 (일반 거래탭은 옆에서 바로 전환 가능)
+    currentPanelTab = hasAuction ? 'auction' : 'price';
     document.getElementById('panel-title').innerHTML = (apt.latest && apt.latest.name || '') + gradeHtml;
     document.getElementById('panel-header').style.background = '#f9e000';
     document.getElementById('panel').style.display = 'flex';
@@ -2519,9 +2537,11 @@ function renderTable() {
     } else {
         html += '<div class="indicator-box"><div class="indicator-title">🏢 건축물대장 정보</div><div style="font-size:11px;color:#e53935;">정보를 불러오지 못했습니다. (카카오 API 오류이거나, 건축HUB에 등록된 정보가 없을 수 있어요)</div></div>';
     }
-    // 경매 패널
+    // 경매 패널 - 같은 건물의 일반 거래탭과 뒤섞이지 않도록 별도로 뽑아뒀다가
+    // 아래에서 탭으로 분리해서 붙임 (동일 주소에 마커가 두 개 겹치는 문제 방지)
+    var auctionHtml = '';
     if (ind && (ind._aptName || (ind._aptDong && ind._aptBunji))) {
-        html += buildAuctionPanelHtml(ind._aptName, ind._aptDong, ind._aptBunji);
+        auctionHtml = buildAuctionPanelHtml(ind._aptName, ind._aptDong, ind._aptBunji);
     }
     // 신고가
     if (ind && ind._newHighPyungs && ind._newHighPyungs.length > 0) {
@@ -2570,7 +2590,33 @@ function renderTable() {
         });
         html += '</tbody></table></div>';
     });
-    document.getElementById('panel-body').innerHTML = html || '<div style="padding:20px;text-align:center;color:#aaa;">거래 내역 없음</div>';
+    var priceHtml = html || '<div style="padding:20px;text-align:center;color:#aaa;">거래 내역 없음</div>';
+    if (auctionHtml) {
+        if (currentPanelTab !== 'price' && currentPanelTab !== 'auction') currentPanelTab = 'auction';
+        var priceOn = currentPanelTab === 'price';
+        var bodyHtml = '<div class="panel-tabs">'
+            + '<button type="button" class="panel-tab-btn' + (!priceOn ? ' active' : '') + '" onclick="switchPanelTab(\'auction\')">🔨 경매정보<span class="panel-tab-dot"></span></button>'
+            + '<button type="button" class="panel-tab-btn' + (priceOn ? ' active' : '') + '" onclick="switchPanelTab(\'price\')">📈 시세정보</button>'
+            + '</div>'
+            + '<div id="panel-tab-auction" style="display:' + (priceOn ? 'none' : 'block') + ';">' + auctionHtml + '</div>'
+            + '<div id="panel-tab-price" style="display:' + (priceOn ? 'block' : 'none') + ';">' + priceHtml + '</div>';
+        document.getElementById('panel-body').innerHTML = bodyHtml;
+    } else {
+        currentPanelTab = 'price';
+        document.getElementById('panel-body').innerHTML = priceHtml;
+    }
+}
+function switchPanelTab(tab) {
+    currentPanelTab = tab;
+    var priceEl = document.getElementById('panel-tab-price');
+    var auctionEl = document.getElementById('panel-tab-auction');
+    if (!priceEl || !auctionEl) return;
+    priceEl.style.display = (tab === 'price') ? 'block' : 'none';
+    auctionEl.style.display = (tab === 'auction') ? 'block' : 'none';
+    var btns = document.querySelectorAll('.panel-tab-btn');
+    btns.forEach(function(b) { b.classList.remove('active'); });
+    if (btns[0]) btns[0].classList.toggle('active', tab === 'auction');
+    if (btns[1]) btns[1].classList.toggle('active', tab === 'price');
 }
 /* ════════════════════════════════════
    경매 기능
@@ -2641,14 +2687,6 @@ function renderAuctionList() {
             + '<span class="auction-status-badge" style="background:' + sc + ';color:white;">' + a.status + '</span></div>'
             + '<div class="auction-list-sub">' + (a.addr || '주소 미입력') + '</div>'
             + '<div class="auction-list-sub" style="color:#6a1b9a;">입찰가 ' + (a.myBid ? toEok(String(parseInt(a.myBid))) : '-') + '</div>'
-            + (a.caseNo
-                ? '<div style="margin-top:5px;">'
-                    + '<a href="https://www.courtauction.go.kr/" target="_blank" rel="noopener" '
-                    + 'onclick="event.stopPropagation(); copyAuctionCaseNo(\'' + a.caseNo.replace(/'/g, "\\'") + '\')" '
-                    + 'style="display:inline-flex;align-items:center;gap:4px;font-size:10px;font-weight:bold;color:#1a237e;'
-                    + 'border:1px solid #1a237e;border-radius:14px;padding:3px 9px;text-decoration:none;background:#e8eaf6;">'
-                    + '🏛️ 법원경매정보 조회</a></div>'
-                : '')
             + '</div>';
     });
     body.innerHTML = html;
@@ -3366,7 +3404,7 @@ async function deleteAuction() {
    (내용이 바뀌지 않았으면 시그니처가 같아서 다시 그리지 않음)
 ──────────────────────────────────── */
 function clearAuctionMarkers() {
-    Object.keys(auctionMarkers).forEach(function(id) { auctionMarkers[id].overlay.setMap(null); });
+    Object.keys(auctionMarkers).forEach(function(id) { if (auctionMarkers[id].overlay) auctionMarkers[id].overlay.setMap(null); });
     auctionMarkers = {};
     auctionMarkerSigs = {};
 }
@@ -3389,7 +3427,7 @@ function auctionMarkerSignature(a) {
 function upsertAuctionMarker(a) {
     var sig = auctionMarkerSignature(a);
     if (auctionMarkers[a.id] && auctionMarkerSigs[a.id] === sig) return; // 변경 없음 - 그대로 유지 (깜빡임 방지)
-    if (auctionMarkers[a.id]) { auctionMarkers[a.id].overlay.setMap(null); delete auctionMarkers[a.id]; }
+    if (auctionMarkers[a.id]) { if (auctionMarkers[a.id].overlay) auctionMarkers[a.id].overlay.setMap(null); delete auctionMarkers[a.id]; }
     placeAuctionMarker(a);
     auctionMarkerSigs[a.id] = sig;
 }
@@ -3411,7 +3449,7 @@ function renderAuctionMarkers() {
     // 목록에서 삭제된 경매물건의 마커만 제거 (나머지는 그대로 유지)
     Object.keys(auctionMarkers).forEach(function(id) {
         if (!neededIds[id]) {
-            auctionMarkers[id].overlay.setMap(null);
+            if (auctionMarkers[id].overlay) auctionMarkers[id].overlay.setMap(null);
             delete auctionMarkers[id];
             delete auctionMarkerSigs[id];
         }
@@ -3419,25 +3457,21 @@ function renderAuctionMarkers() {
 }
 function placeAuctionMarker(a) {
     var sc = STATUS_COLOR[a.status] || '#9e9e9e';
- 
+
     // 같은 단지의 일반 거래 데이터가 이미 로딩되어 있으면 등급/인기평형 정보를 가져와 함께 표시
     var matchedApt = findMatchedApt(a);
+    // 이미 같은 주소의 일반 거래 마커가 있으면 경매 마커를 따로 만들지 않음 (배지 완전중복 방지) -
+    // 경매 정보는 대신 그 건물의 상세패널에 "🔨 경매정보" 탭으로 표시됨 (renderTable/openPanel 참고)
+    if (matchedApt) {
+        auctionMarkers[a.id] = { overlay: null, suppressed: true };
+        return;
+    }
     var surgeRank = a.dong ? surgeRankMap[a.dong] : null;
     var surgeBadge = surgeRank
         ? '<span style="background:#e53935;color:white;font-size:9px;font-weight:bold;padding:1px 5px;border-radius:3px;margin-left:3px;">🔥' + surgeRank + '위</span>'
         : '';
-    var gradeBadge = '', popBadge = '', roadLine = '';
-    if (matchedApt) {
-        if (matchedApt.grade) {
-            var gc = GRADE_COLORS[matchedApt.grade];
-            gradeBadge = '<span style="background:' + gc + ';color:white;font-size:9px;font-weight:bold;padding:1px 5px;border-radius:3px;margin-left:3px;">' + matchedApt.grade + '등급</span>';
-        }
-        popBadge = buildPopularPyeongBadge(matchedApt);
-        if (matchedApt.latest && matchedApt.latest.road_name) {
-            roadLine = '<div style="color:#aaa;font-size:9px;">' + matchedApt.latest.road_name + '</div>';
-        }
-    }
- 
+    // 일반 거래 마커가 없는(단독) 경매물건이므로, 수만 건의 일반 거래 배지 사이에서도
+    // 눈에 띄도록 굵은 주황 테두리 + 은은한 발광 애니메이션으로 강조 표시함
     var priceLine = a.myBid
         ? toEok(String(parseInt(a.myBid))) + ' (내 입찰가)'
         : (a.appraisal ? toEok(String(parseInt(a.appraisal))) + ' (감정가)' : '가격 미입력');
@@ -3457,21 +3491,20 @@ function placeAuctionMarker(a) {
     }
  
     var div = document.createElement('div');
-    div.style.cssText = 'position:relative;background:white;border:2.5px solid ' + sc + ';border-radius:7px;'
-        + 'padding:3px 7px;margin:4px;margin-top:14px;white-space:nowrap;cursor:pointer;'
-        + 'box-shadow:0 2px 8px rgba(0,0,0,0.18);text-align:center;line-height:1.5;max-width:190px;';
+    div.style.cssText = 'position:relative;background:linear-gradient(180deg,#fff,#fff7ec);border:3px solid #e65100;border-radius:9px;'
+        + 'padding:4px 9px;margin:4px;margin-top:16px;white-space:nowrap;cursor:pointer;'
+        + 'text-align:center;line-height:1.5;max-width:210px;transform:scale(1.12);'
+        + 'animation:auctionGlow 1.8s ease-in-out infinite;';
     div.innerHTML = '<div class="auction-badge" style="background:' + sc + ';">🔨 ' + a.status + alarmBadge + '</div>'
-        + '<div style="color:#333;font-size:10px;font-weight:bold;overflow:hidden;text-overflow:ellipsis;max-width:170px;margin-top:4px;">'
-        +   ((a.name && a.name.trim()) || a.addrLabel || a.addr || '(이름없음)') + gradeBadge + surgeBadge
+        + '<div style="color:#333;font-size:11px;font-weight:bold;overflow:hidden;text-overflow:ellipsis;max-width:185px;margin-top:5px;">'
+        +   ((a.name && a.name.trim()) || a.addrLabel || a.addr || '(이름없음)') + surgeBadge
         + '</div>'
-        + (popBadge ? '<div style="margin-top:2px;">' + popBadge + '</div>' : '')
-        + '<div style="color:' + sc + ';font-size:11px;font-weight:bold;">' + priceLine + '</div>'
-        + (a.pyung ? '<div style="color:#888;font-size:10px;">' + a.pyung + '평</div>' : '')
-        + roadLine;
+        + '<div style="color:' + sc + ';font-size:12px;font-weight:bold;">' + priceLine + '</div>'
+        + (a.pyung ? '<div style="color:#888;font-size:10px;">' + a.pyung + '평</div>' : '');
     div.setAttribute('onclick', 'openAuctionModal(\'' + String(a.id).replace(/'/g, "\\'") + '\')');
     var overlay = new kakao.maps.CustomOverlay({
         position: new kakao.maps.LatLng(a.lat, a.lon),
-        content: div, yAnchor: 1.2, zIndex: 10,
+        content: div, yAnchor: 1.2, zIndex: 9999,
         clickable: true
     });
     overlay.setMap(map);
