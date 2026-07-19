@@ -57,9 +57,53 @@ async function setCachedHouseData(lawdCd, payload) {
   }
 }
 
+// ── 캐시 전체 비우기 (CSV 대량 업로드 후 backup.html의 "지도 캐시 전체 삭제" 버튼용) ──
+// Upstash REST는 GET/SET처럼 자주 쓰는 명령은 /get/{key}, /set/{key} 같은 단축 경로를 제공하지만,
+// KEYS처럼 흔치 않은 명령은 기본 URL에 명령 배열을 그대로 POST하는 범용 방식으로 호출해야 함.
+async function redisCommand(cmdArray) {
+  const r = await fetch(REDIS_URL, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${REDIS_TOKEN}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify(cmdArray),
+    signal: AbortSignal.timeout(8000),
+  });
+  const data = await r.json();
+  if (!r.ok) throw new Error(data.error || 'Redis 명령 실패');
+  return data.result;
+}
+async function clearHouseCache() {
+  if (!REDIS_URL || !REDIS_TOKEN) throw new Error('UPSTASH_REDIS_URL / UPSTASH_REDIS_TOKEN 환경변수가 없습니다.');
+  const keys = await redisCommand(['KEYS', 'house_*']);
+  if (!Array.isArray(keys) || !keys.length) return { cleared: 0 };
+  // 여러 키를 한 번에 지우기 - pipeline 엔드포인트로 DEL 명령을 묶어서 보냄
+  const pipelineBody = keys.map((k) => ['DEL', k]);
+  const r = await fetch(`${REDIS_URL}/pipeline`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${REDIS_TOKEN}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify(pipelineBody),
+    signal: AbortSignal.timeout(8000),
+  });
+  if (!r.ok) {
+    const errText = await r.text();
+    throw new Error('캐시 삭제 실패: ' + errText);
+  }
+  return { cleared: keys.length };
+}
+
 export default async function handler(req, res) {
   res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
   res.setHeader('Pragma', 'no-cache');
+
+  // CSV 대량 업로드 후 backup.html에서 이 액션으로 지역별 캐시를 통째로 비움
+  // (평소 지도 조회 흐름과 무관한 관리용 액션이라 lawdCd 없이도 처리)
+  if (req.query.action === 'clearCache') {
+    try {
+      const result = await clearHouseCache();
+      return res.status(200).json(result);
+    } catch (e) {
+      return res.status(500).json({ error: e.message });
+    }
+  }
 
   const lawdCd = req.query.lawdCd;
   if (!lawdCd) return res.status(400).json({ error: 'lawdCd required' });
