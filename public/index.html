@@ -3679,8 +3679,16 @@ function placeAuctionMarker(a) {
         +   ((a.name && a.name.trim()) || a.addrLabel || a.addr || '(이름없음)') + surgeBadge
         + '</div>'
         + '<div style="color:' + sc + ';font-size:12px;font-weight:bold;">' + priceLine + '</div>'
-        + (a.pyung ? '<div style="color:#888;font-size:10px;">' + a.pyung + '평</div>' : '');
-    div.setAttribute('onclick', 'openAuctionModal(\'' + String(a.id).replace(/'/g, "\\'") + '\')');
+        + (a.pyung ? '<div style="color:#888;font-size:10px;">' + a.pyung + '평</div>' : '')
+        // 매칭된 일반 거래가 있는데(타입탭/등급 등 필터 때문에) 지금 이 독자 마커로 대신
+        // 표시되는 중이라면, 클릭하면 매매기록까지 함께 있는 전체 상세패널이 열린다는 걸 알려줌
+        + (matchedApt ? '<div style="color:#e65100;font-size:9px;margin-top:2px;">📊 클릭하면 매매기록도 함께 보여요</div>' : '');
+    // 매칭된 일반 거래가 있으면(지금 화면엔 필터 때문에 그 마커가 안 보이는 상태라도) 클릭 시
+    // 경매 수정 모달이 아니라 매매기록+경매탭이 모두 있는 전체 상세패널이 열리도록 함 -
+    // 그래야 "경매정보만 보이고 매매기록은 사라졌다"는 상황이 재발하지 않음
+    div.setAttribute('onclick', matchedApt
+        ? 'openMatchedApt(\'' + String(a.id).replace(/'/g, "\\'") + '\')'
+        : 'openAuctionModal(\'' + String(a.id).replace(/'/g, "\\'") + '\')');
     var overlay = new kakao.maps.CustomOverlay({
         position: new kakao.maps.LatLng(a.lat, a.lon),
         content: div, yAnchor: 1.2, zIndex: 9999,
@@ -3688,6 +3696,18 @@ function placeAuctionMarker(a) {
     });
     overlay.setMap(map);
     auctionMarkers[a.id] = { overlay: overlay };
+}
+/* 경매물건에 매칭된 일반 거래 건물이 있으면(현재 타입탭/필터 때문에 그 건물의 일반 마커
+   자체는 화면에 없더라도) 매매기록+경매정보 탭이 모두 있는 전체 상세패널을 열어줌.
+   openAuctionModal(경매 수정 전용 모달)만 여는 것과 달리 매매기록이 함께 보이도록 하는 게
+   핵심 - 안 그러면 사용자 입장에서 "매매기록은 사라지고 경매정보만 남았다"처럼 보임. */
+function openMatchedApt(auctionId) {
+    var a = auctionList.find(function(x) { return x.id === auctionId; });
+    if (!a) return;
+    var matched = findMatchedApt(a);
+    if (!matched) { openAuctionModal(auctionId); return; }
+    if (a.lat && a.lon) showRadiusCircle(a.lat, a.lon);
+    openPanel(matched, a.lat, a.lon);
 }
 function buildAuctionPanelHtml(aptName, aptDong, aptBunji) {
     var matched = auctionList.filter(function(a) { return matchesAuctionKey(a, aptName, aptDong, aptBunji); });
