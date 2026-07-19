@@ -523,7 +523,7 @@ tr:hover td { background:#fffde7; }
             <div id="a-building-info-box" style="margin-top:4px;"></div>
             <div class="modal-row">
                 <span class="modal-label">물건유형</span>
-                <select class="modal-select" id="a-prop-type" onchange="autoCalcAgentSilent();autoCalcRepairSilent();calcCompValuation();calcMargin();">
+                <select class="modal-select" id="a-prop-type" onchange="autoCalcAgentSilent();autoCalcRepairSilent();calcCompValuation();calcMargin();autoCalcAuctionJeonseAnalysis();">
                     <option value="apt">아파트</option>
                     <option value="villa">연립다세대·단독</option>
                     <option value="officetel">오피스텔</option>
@@ -546,7 +546,7 @@ tr:hover td { background:#fffde7; }
             </div>
             <div class="modal-row">
                 <span class="modal-label">평형</span>
-                <input type="number" class="modal-input" id="a-pyung" placeholder="예) 24" oninput="autoCalcRepairSilent();calcCompValuation();calcMargin();">
+                <input type="number" class="modal-input" id="a-pyung" placeholder="예) 24" oninput="autoCalcRepairSilent();calcCompValuation();calcMargin();autoCalcAuctionJeonseAnalysis();">
                 <span style="font-size:12px;color:#888;margin-left:4px;">평</span>
             </div>
             <div class="modal-row">
@@ -613,6 +613,11 @@ tr:hover td { background:#fffde7; }
                 <span style="font-size:12px;color:#888;margin-left:4px;">만원</span>
             </div>
             <div id="comp-valuation-result" style="margin-top:8px;"></div>
+            <div style="margin-top:10px;border-top:1px dashed #e0d0f0;padding-top:8px;">
+                <button type="button" class="modal-btn btn-purple" style="font-size:11px;" onclick="calcAuctionJeonseAnalysis()">🏠 전세가 기반 분석 다시 계산</button>
+                <span style="font-size:10px;color:#999;margin-left:4px;">연립다세대·단독이고 주소·평형이 있으면 자동으로 계산됩니다 (수동 새로고침용 버튼)</span>
+            </div>
+            <div id="jeonse-analysis-box" style="margin-top:8px;"></div>
         </div>
         <div class="modal-section">
             <div class="modal-section-title">💰 가격 정보 (만원 단위)</div>
@@ -851,6 +856,10 @@ async function loadDataCoverage() {
 function tradeDate(t) { return new Date(t.year, t.month - 1, t.day); }
 // 상태
 var allAptList = [];
+// 전세가(house_rent/villa_rent) - 전세가 기반 예상 거래가·전세가 히스토리·매매기록 없는
+// 물건의 등급 추정에 사용. get-house.js 응답의 rent 배열을 그대로 담아둠.
+var allRentList = [];
+var rentCacheByLawd = {};
 var isLoading = false;
 var renderGen = 0;
 var lastLawdCd = null;
@@ -861,6 +870,7 @@ var currentTypeFilter = 'apt';
 var currentIndicators = null;
 var currentPppTimeline = null;
 var currentVolumeIndicators = null;
+var currentJeonseEstimate = null;
 var currentBuildingInfo = null;
 var currentBuildingLoading = false;
 var currentOfficialPrice = null;
@@ -940,6 +950,9 @@ var currentChecklist = {};
 var checklistSaveTimer = null;
 // 캡처 이미지에서 AI 자동추출 - 텍스트 복사가 막힌 페이지용. { data(base64, 헤더 제외), mimeType, previewUrl } 배열
 var pendingAuctionImages = [];
+// 경매물건 전세가 기반 분석 결과 (calcAuctionJeonseAnalysis) - calcCompValuation()이 "예상매도가(전세가율 기반)" 줄을 추가할 때 참조
+var auctionJeonseEstimate = null;
+var auctionJeonseTimer = null;
 // ── 임장(현장조사) 메모 - 경매 사건과 무관하게 건물 단위로 영구 보관 ──
 var siteNoteList = [];
 var currentSiteNoteChecklist = {};
@@ -1203,20 +1216,32 @@ function calcPriceGrades(aptList) {
             var valid = apt.trades.filter(function(t) {
                 return tradeDate(t) >= oneYearAgo && t.area > 0 && parseInt(t.amount) > 0 && parseInt(t.floor) !== 1;
             });
-            if (!valid.length) return { apt: apt, ppp: 0 };
-            var sum = valid.reduce(function(a, t) { return a + parseInt(t.amount) / toPyung(t.area); }, 0);
-            return { apt: apt, ppp: sum / valid.length };
+            if (valid.length) {
+                var sum = valid.reduce(function(a, t) { return a + parseInt(t.amount) / toPyung(t.area); }, 0);
+                return { apt: apt, ppp: sum / valid.length, estimated: false };
+            }
+            // 매매 실거래가 없는 연립다세대는 전세가 기반 예상 거래가(calcVillaJeonseEstimate)로
+            // 대신 평단가를 추정해서라도 등급 배지를 만들어줌 - 지도에서 아예 안 보이던 물건도
+            // "추정" 표시를 달고 나타나게 하려는 목적. gradeEstimated 플래그로 실거래 등급과 구분함.
+            if (apt.buildingType === 'villa') {
+                var est = calcVillaJeonseEstimate(apt);
+                if (est && est.size > 0 && est.estimate > 0) {
+                    return { apt: apt, ppp: est.estimate / toPyung(est.size), estimated: true };
+                }
+            }
+            return { apt: apt, ppp: 0, estimated: false };
         }).filter(function(x) { return x.ppp > 0; });
- 
+
         scored.sort(function(a, b) { return b.ppp - a.ppp; });
         var total = scored.length;
         scored.forEach(function(x, i) {
             x.apt.grade = Math.min(7, Math.floor(i / total * 7) + 1);
             x.apt.ppp   = Math.round(x.ppp);
+            x.apt.gradeEstimated = !!x.estimated;
         });
     });
- 
-    aptList.forEach(function(apt) { if (!apt.grade) { apt.grade = null; apt.ppp = 0; } });
+
+    aptList.forEach(function(apt) { if (!apt.grade) { apt.grade = null; apt.ppp = 0; apt.gradeEstimated = false; } });
 }
 function toggleGrade(val, btn) {
     if (activeGrades.has(val)) { activeGrades.delete(val); btn.classList.remove('active'); }
@@ -1439,6 +1464,7 @@ async function loadAllData(centerLat, centerLon) {
             // 세션 중 한 번이라도 불러온 지역이면(dataCache[lawdCd] 존재) 바로 재사용하도록 완화.
             if (dataCache[lawdCd]) {
                 allAptList = dataCache[lawdCd];
+                allRentList = rentCacheByLawd[lawdCd] || [];
                 lastLawdCd = lawdCd;
                 redrawMarkers(); resolve(); return;
             }
@@ -1454,6 +1480,8 @@ async function loadAllData(centerLat, centerLon) {
                 }
                 // ── DB rows → trade 객체 변환 ──
                  allAptList = groupDBRows(dbData.apt, sigungu, lawdCd);
+                allRentList = Array.isArray(dbData.rent) ? dbData.rent : [];
+                rentCacheByLawd[lawdCd] = allRentList;
                 // ── 좌표 캐시 미리 불러오기 (이미 지오코딩된 단지는 카카오 API 스킵) ──
                 await prefetchCoordsFromDB(allAptList);
                 // ── 지표 계산 (평단가 등급만 유지, 투자점수는 삭제) ──
@@ -1753,7 +1781,10 @@ function createMarker(cacheKey, lat, lon, apt) {
     if (apt.grade) {
         var gc = GRADE_COLORS[apt.grade];
         var tierPrefix = (apt.buildingType === 'villa' && apt.ageTier) ? (getVillaTierLabel(apt.ageTier) + ' ') : '';
-        gradeBadge = '<span style="background:' + gc + ';color:white;font-size:10px;font-weight:bold;padding:2px 6px;border-radius:3px;margin-left:3px;">' + tierPrefix + apt.grade + '등급</span>';
+        // 매매 실거래가 없어 전세가 기반으로 추정한 등급은 점선 테두리 + "(추정)" 표시로 구분
+        var estStyle = apt.gradeEstimated ? 'border:1px dashed rgba(255,255,255,0.85);' : '';
+        var estSuffix = apt.gradeEstimated ? '(추정)' : '';
+        gradeBadge = '<span style="background:' + gc + ';color:white;font-size:10px;font-weight:bold;padding:2px 6px;border-radius:3px;margin-left:3px;' + estStyle + '">' + tierPrefix + apt.grade + '등급' + estSuffix + '</span>';
     }
     // 신고가 배지
    var nhBadge = apt.hasNewHigh
@@ -1771,7 +1802,9 @@ function createMarker(cacheKey, lat, lon, apt) {
     var mKey = 'mk' + (markerDataSeq++);
     markerDataRegistry[mKey] = { apt: apt, lat: lat, lon: lon, div: div };
     var div = document.createElement('div');
-    div.style.cssText = 'position:relative;background:white;border:2px solid ' + color + ';border-radius:8px;'
+    // 매매 실거래가 없어 전세가 기반으로 추정한 등급 마커는 테두리를 점선으로 구분
+    var borderStyle = apt.gradeEstimated ? 'dashed' : 'solid';
+    div.style.cssText = 'position:relative;background:white;border:2px ' + borderStyle + ' ' + color + ';border-radius:8px;'
         + 'padding:6px 10px;white-space:nowrap;cursor:pointer;'
         + 'box-shadow:0 2px 6px rgba(0,0,0,0.13);text-align:center;line-height:1.35;max-width:220px;';
     div.setAttribute('onclick', 'handleAptMarkerClick(\'' + mKey + '\')');
@@ -2032,14 +2065,17 @@ function openPanel(apt, lat, lon) {
     currentIndicators   = apt.indicators || null;
     currentPppTimeline       = calcPppTimeline(apt);
     currentVolumeIndicators  = calcVolumeIndicators(apt);
-    
+    currentJeonseEstimate    = apt.buildingType === 'villa' ? calcVillaJeonseEstimate(apt) : null;
+
     // 헤더 (빌라는 연식단계 라벨도 함께 표시)
     var gradeHtml = '';
     if (apt.grade) {
         var gc = GRADE_COLORS[apt.grade];
         var pppLabel = apt.ppp > 0 ? ' · ' + (Math.round(apt.ppp / 100) / 10) + '천만/평' : '';
         var tierPrefix = (apt.buildingType === 'villa' && apt.ageTier) ? (getVillaTierLabel(apt.ageTier) + ' ') : '';
-        gradeHtml += ' <span style="background:' + gc + ';color:white;font-size:11px;font-weight:bold;padding:2px 7px;border-radius:10px;">' + tierPrefix + apt.grade + '등급' + pppLabel + '</span>';
+        var estStyle = apt.gradeEstimated ? 'border:1px dashed rgba(255,255,255,0.85);' : '';
+        var estSuffix = apt.gradeEstimated ? ' (전세가 기반 추정)' : '';
+        gradeHtml += ' <span style="background:' + gc + ';color:white;font-size:11px;font-weight:bold;padding:2px 7px;border-radius:10px;' + estStyle + '">' + tierPrefix + apt.grade + '등급' + pppLabel + estSuffix + '</span>';
     }
     
     if (apt.hasNewHigh) {
@@ -2266,7 +2302,8 @@ function renderTable() {
     // 투자점수
     if (currentPppTimeline) html += buildPppAnalysisHtml(currentPppTimeline);
     if (currentVolumeIndicators) html += buildVolumeAnalysisHtml(currentVolumeIndicators);
- 
+    if (currentJeonseEstimate) html += buildJeonseEstimateHtml(currentJeonseEstimate);
+
     // 거래 테이블
     var newHighAmountByPy = {};
     if (ind && ind._newHighPyungs) {
@@ -2403,9 +2440,11 @@ function openAuctionModal(id) {
     pendingAuctionBuildingInfo = null;
     currentChecklist = {};
     clearAuctionImages();
+    auctionJeonseEstimate = null;
     document.getElementById('a-registry-file').value = '';
     document.getElementById('registry-result-box').innerHTML = '';
     document.getElementById('a-building-info-box').innerHTML = '';
+    document.getElementById('jeonse-analysis-box').innerHTML = '';
     if (isEdit) {
         var a = auctionList.find(function(x) { return x.id === id; });
         if (a) {
@@ -2451,7 +2490,7 @@ function openAuctionModal(id) {
    renderCompListBox();
     // 저장된 수리비 값이 없는(비어있는) 경우에만 자동계산 — 이미 직접 입력/수정해 둔 값은 덮어쓰지 않음
     if (!document.getElementById('a-repair').value) autoCalcRepairSilent();
-    updateStatusUI(); calcMargin(); calcCompValuation(); renderChecklistSection(); loadAuctionBuildingInfo();
+    updateStatusUI(); calcMargin(); calcCompValuation(); renderChecklistSection(); loadAuctionBuildingInfo(); autoCalcAuctionJeonseAnalysis();
     document.getElementById('auction-modal-bg').style.display = 'flex';
 }
 function closeAuctionModal(e) {
@@ -2480,6 +2519,7 @@ function searchAuctionAddr() {
             auctionCoordCache[r.address_name] = { lat: parseFloat(r.y), lon: parseFloat(r.x), label: label, dong: dong, bunji: bunji };
             calcCompValuation();
             loadAuctionBuildingInfo();
+            autoCalcAuctionJeonseAnalysis();
         } else {
             alert('주소를 찾을 수 없습니다.');
         }
@@ -2614,7 +2654,7 @@ function applyOfficialPriceInput() {
     var metro = isMetroArea(addr);
     var isLocalCheap = !metro && priceWon <= 200000000;
     document.getElementById('a-is-local-cheap').checked = isLocalCheap;
-    autoCalcTaxSilent(); calcCompValuation(); calcMargin();
+    autoCalcTaxSilent(); calcCompValuation(); calcMargin(); refreshAuctionJeonse126Warning();
 }
 function autoCalcTax() {
     var bid = parseInt(document.getElementById('a-actual-bid').value) || parseInt(document.getElementById('a-my-bid').value) || 0;
@@ -2676,6 +2716,168 @@ function calcRepairFee(pyung, buildYear) {
     var tier = getAgeTierByYear(buildYear);
     if (!tier) return null;
     return Math.round(pyung * VILLA_REPAIR_PER_PYUNG[tier]);
+}
+/* ════════════════════════════════════
+   경매물건(연립다세대) 전세가 기반 분석
+   - "유사물건 추천"(aiCompCandidates)으로 이미 찾아둔 단지들의 전세 거래(Pool A, 이미
+     로드된 지역이면 allRentList에서 바로 찾음) + 반경 1km·평형±4평·연식±4년(준공연도
+     있을 때만)의 전세 거래(Pool B, /api/search-complex?mode=radius 신규 백엔드)를
+     합쳐서 평단가 median → 예상전세가를 추정.
+   - 예상전세가÷126%가 공시가격보다 크면 "깡통전세 위험"(HUG 전세보증금반환보증
+     기준상 연립다세대 등의 주택가격을 공시가격×126%로 인정했던 규정에서 착안) 경고.
+   - 이 건물 자체의 실제 전세 이력이 있으면 예상치와 나란히 비교해서 보여줌.
+   - calcCompValuation()이 이 결과(auctionJeonseEstimate)를 참조해서 "예상매도가
+     (전세가율 기반)" 줄을 추가로 렌더링함.
+════════════════════════════════════ */
+// 물건유형/평형/주소/공시가격/유사물건 추천 결과가 바뀔 때마다 자동으로 재계산.
+// 매번 값이 바뀔 때 바로 백엔드 반경검색을 쏘면 타이핑 중에도 계속 호출되니, 700ms
+// 디바운스해서 입력이 잠잠해진 뒤 한 번만 실행함. 연립다세대·단독이 아니거나 주소/평형이
+// 아직 없으면 조용히 넘어감(경고 alert 없이).
+function autoCalcAuctionJeonseAnalysis() {
+    clearTimeout(auctionJeonseTimer);
+    auctionJeonseTimer = setTimeout(function() {
+        var propType = document.getElementById('a-prop-type').value;
+        var ctx = getAuctionAddressContext();
+        var pyung = parseFloat(document.getElementById('a-pyung').value) || null;
+        if (propType !== 'villa' || !ctx.lat || !ctx.lon || !pyung) return;
+        calcAuctionJeonseAnalysis();
+    }, 700);
+}
+async function calcAuctionJeonseAnalysis() {
+    var box = document.getElementById('jeonse-analysis-box');
+    if (!box) return;
+    var propType = document.getElementById('a-prop-type').value;
+    if (propType !== 'villa') {
+        box.innerHTML = '<div style="font-size:11px;color:#999;">연립다세대·단독 물건에만 적용되는 분석입니다.</div>';
+        auctionJeonseEstimate = null;
+        calcCompValuation();
+        return;
+    }
+    var ctx = getAuctionAddressContext();
+    var targetPyung = parseFloat(document.getElementById('a-pyung').value) || null;
+    if (!ctx.lat || !ctx.lon) { box.innerHTML = '<div style="font-size:11px;color:#e53935;">주소를 먼저 검색해 주세요.</div>'; return; }
+    if (!targetPyung) { box.innerHTML = '<div style="font-size:11px;color:#e53935;">평형을 먼저 입력해 주세요.</div>'; return; }
+    box.innerHTML = '<div style="font-size:11px;color:#999;">전세가 분석 중...</div>';
+    var targetBuildYear = getAuctionBuildYear();
+
+    // ── Pool A: 유사물건 추천에 뽑힌 단지들의 전세 거래 (클라이언트에 이미 로드된 allRentList에서 찾음) ──
+    var poolAKeys = {};
+    (aiCompCandidates || []).forEach(function(c) {
+        var t = c.trade;
+        if (t && t.name) poolAKeys[(t.dong || '') + '|' + t.name] = true;
+    });
+    var poolA = allRentList.filter(function(r) {
+        return r.buildingType === 'villa' && !(r.monthly_rent > 0)
+            && poolAKeys[(r.dong || '') + '|' + (r.danji || '')];
+    }).map(function(r) {
+        return { dong: r.dong, danji: r.danji, bunji: r.bunji, size: r.size, deposit: r.deposit,
+            floor: r.floor, build_year: r.build_year, deal_date: r.deal_date };
+    });
+
+    // ── Pool B: 반경 1km + 평형±4평 + 연식±4년(있을 때만) - 백엔드 반경 검색 ──
+    var poolB = [];
+    try {
+        var qs = 'lat=' + ctx.lat + '&lon=' + ctx.lon + '&radius=1000&pyung=' + targetPyung
+            + (targetBuildYear ? '&buildYear=' + targetBuildYear : '');
+        var res = await fetch('/api/search-complex?mode=radius&' + qs);
+        var data = await res.json();
+        poolB = data.results || [];
+    } catch (e) {
+        console.error('반경 전세 검색 실패:', e.message);
+    }
+
+    // ── 합치기 + 중복 제거 ──
+    var seen = {}, combined = [];
+    poolA.concat(poolB).forEach(function(r) {
+        if (!(r.size > 0) || !(r.deposit > 0)) return;
+        var key = (r.dong||'') + '_' + (r.danji||'') + '_' + (r.bunji||'') + '_' + r.deal_date + '_' + r.deposit;
+        if (seen[key]) return;
+        seen[key] = true;
+        combined.push(r);
+    });
+
+    if (!combined.length) {
+        auctionJeonseEstimate = null;
+        box.innerHTML = '<div style="font-size:11px;color:#999;">주변에서 참고할 전세 거래를 찾지 못했습니다.</div>';
+        calcCompValuation();
+        return;
+    }
+
+    function median(arr) { var s = arr.slice().sort(function(a,b){return a-b;}); var m = Math.floor(s.length/2); return s.length%2 ? s[m] : (s[m-1]+s[m])/2; }
+    var ppps = combined.map(function(r) { return r.deposit / toPyung(r.size); });
+    var avgPpp = median(ppps); // 만원/평
+    var estJeonse = Math.round(avgPpp * targetPyung); // 만원
+
+    // ── HUG 126% 경고: 예상전세가÷126% > 공시가격이면 깡통전세 위험 ──
+    var officialPriceWon = parseInt(document.getElementById('a-official-price').value) || 0;
+    var impliedFloorWon = Math.round(estJeonse * 10000 / 1.26);
+    var warn126 = officialPriceWon > 0 && impliedFloorWon > officialPriceWon;
+
+    // ── 이 건물 자체의 실제 전세 이력 (예상치와 비교용) ──
+    var ownRents = allRentList.filter(function(r) {
+        if (r.buildingType !== 'villa' || (r.monthly_rent > 0)) return false;
+        if ((r.dong || '') !== (ctx.dong || '')) return false;
+        if (ctx.name) return (r.danji || '') === ctx.name;
+        return ctx.bunji && (r.bunji || '') === ctx.bunji;
+    });
+
+    // ── 전세가율 기반 예상매도가 (지역 전체 연립다세대 매매/전세 쌍으로 구한 보정비율 재사용) ──
+    var allVillaSales = [], allVillaRentsAll = [];
+    allAptList.forEach(function(a) { if (a.buildingType === 'villa') allVillaSales = allVillaSales.concat(a.trades); });
+    allRentList.forEach(function(r) { if (r.buildingType === 'villa') allVillaRentsAll.push(r); });
+    var saleRatio = findSaleRentRatio(allVillaRentsAll, allVillaSales);
+    var estSaleValue = saleRatio ? Math.round(estJeonse * 1.26 * saleRatio) : null;
+
+    auctionJeonseEstimate = {
+        estValue: estJeonse, avgPpp: avgPpp, targetPyung: targetPyung, count: combined.length,
+        poolACount: poolA.length, poolBCount: poolB.length, ownRents: ownRents,
+        warn126: warn126, officialPriceWon: officialPriceWon, impliedFloorWon: impliedFloorWon,
+        saleRatio: saleRatio, estSaleValue: estSaleValue,
+    };
+    box.innerHTML = buildAuctionJeonseAnalysisHtml(auctionJeonseEstimate);
+    calcCompValuation();
+}
+function buildAuctionJeonseAnalysisHtml(est) {
+    var html = '<div style="background:#fff8e1;border:1.5px solid #ffb300;border-radius:10px;padding:10px 12px;">';
+    html += '<div style="font-size:12px;font-weight:bold;color:#e65100;">💰 예상전세가: ' + toEok(String(est.estValue)) + '</div>';
+    html += '<div style="font-size:10px;color:#888;margin-top:2px;">비교 전세 ' + est.count + '건(유사물건추천 ' + est.poolACount
+        + ' + 반경1km ' + est.poolBCount + ') 평단가 중간값 ' + (Math.round(est.avgPpp / 100) / 10) + '천만/평 × ' + est.targetPyung + '평</div>';
+    if (est.warn126) {
+        html += '<div style="margin-top:6px;background:#ffebee;border:1px solid #ef9a9a;border-radius:6px;padding:6px 8px;font-size:11px;color:#c62828;font-weight:bold;">'
+            + '⚠️ 깡통전세 위험 — 예상전세가 ÷ 126% = ' + toEok(String(Math.round(est.impliedFloorWon / 10000)))
+            + ' &gt; 공시가격 ' + toEok(String(Math.round(est.officialPriceWon / 10000)))
+            + '. HUG 전세보증금반환보증 등에서 연립다세대 주택가격을 공시가격×126%로 인정해온 기준을 초과해, 보증 가입이 어렵거나 세입자 보증금 반환에 위험이 있을 수 있습니다.</div>';
+    } else if (est.officialPriceWon > 0) {
+        html += '<div style="font-size:10px;color:#2e7d32;margin-top:4px;">✓ 예상전세가가 공시가격 126% 기준 이내입니다.</div>';
+    } else {
+        html += '<div style="font-size:10px;color:#aaa;margin-top:4px;">공시가격(📍 물건 정보 섹션)을 입력하면 126% 기준 깡통전세 위험도 확인해 드립니다.</div>';
+    }
+    if (est.ownRents && est.ownRents.length) {
+        var sorted = est.ownRents.slice().sort(function(a, b) { return String(b.deal_date).localeCompare(String(a.deal_date)); });
+        html += '<div style="margin-top:8px;border-top:1px dashed #ffcc80;padding-top:6px;">';
+        html += '<div style="font-size:10.5px;font-weight:bold;color:#e65100;">이 건물의 실제 전세 이력 (' + sorted.length + '건) — 위 예상전세가와 비교해 보세요</div>';
+        sorted.slice(0, 8).forEach(function(r) {
+            var ds = String(r.deal_date || ''); var dateStr = ds.length === 8 ? (ds.slice(0,4) + '.' + ds.slice(4,6) + '.' + ds.slice(6,8)) : ds;
+            html += '<div style="font-size:10.5px;color:#666;padding:2px 0;">' + dateStr + ' · ' + toEok(String(r.deposit || 0)) + (r.size > 0 ? ' · ' + toPyung(r.size) + '평' : '') + '</div>';
+        });
+        html += '</div>';
+    } else {
+        html += '<div style="font-size:10px;color:#aaa;margin-top:6px;">이 건물의 실제 전세 거래 이력은 찾지 못했습니다.</div>';
+    }
+    html += '</div>';
+    return html;
+}
+// 공시가격만 바뀌었을 때는 전세/반경 검색을 다시 쏘지 않고, 이미 계산된 예상전세가는
+// 그대로 두고 126% 경고 판정만 다시 계산해서 화면을 갱신함 (불필요한 네트워크 호출 방지)
+function refreshAuctionJeonse126Warning() {
+    if (!auctionJeonseEstimate) { autoCalcAuctionJeonseAnalysis(); return; }
+    var officialPriceWon = parseInt(document.getElementById('a-official-price').value) || 0;
+    var impliedFloorWon = Math.round(auctionJeonseEstimate.estValue * 10000 / 1.26);
+    auctionJeonseEstimate.officialPriceWon = officialPriceWon;
+    auctionJeonseEstimate.impliedFloorWon = impliedFloorWon;
+    auctionJeonseEstimate.warn126 = officialPriceWon > 0 && impliedFloorWon > officialPriceWon;
+    var box = document.getElementById('jeonse-analysis-box');
+    if (box) box.innerHTML = buildAuctionJeonseAnalysisHtml(auctionJeonseEstimate);
 }
 /* 물건유형이 연립다세대·단독일 때만 평형×연식단계로 수리비를 조용히 자동계산해서 채움
    (평형 또는 사용승인일(연식)을 아직 모르면 계산하지 않고 기존 값을 그대로 둠) */
@@ -3059,6 +3261,7 @@ async function openAiCompFinder() {
     aiCompCandidates = findSimilarComps(lat, lon, targetYear, targetFloor, targetPyung, targetBuildingType);
     renderAiCompList();
     document.getElementById('ai-comp-modal-bg').style.display = 'flex';
+    autoCalcAuctionJeonseAnalysis(); // 유사물건 추천 결과(Pool A)가 바뀌었으니 예상전세가도 다시 계산
 }
  
 /* 단지 내 관측된 거래들 중 최고층을 그 단지의 "탑층"으로 근사 (건축HUB 총층수 정보가
@@ -3307,6 +3510,9 @@ function calcCompValuation() {
             + '<div class="margin-grid">'
             + vItem('비교 평단가(중간값)', Math.round(est.medPpp / 100) / 10 + '천만/평', '#555')
             + vItem('예상매각가', toEok(String(est.estValue)), '#2e7d32')
+            + (auctionJeonseEstimate && auctionJeonseEstimate.estSaleValue
+                ? vItem('예상매도가(전세가율 기반)', toEok(String(auctionJeonseEstimate.estSaleValue)), '#00897b')
+                : '')
             + vItem('추정 취득세', toEok(String(r.acqTax)), '#888')
             + vItem('추정 등기비용', toEok(String(r.registryFee)), '#888')
             + vItem('추정 명도비용', toEok(String(r.evictionFee)), '#888')
@@ -3595,7 +3801,7 @@ async function parseAuctionPaste() {
                 });
             });
         }
-        autoCalcRepairSilent(); calcCompValuation(); calcMargin(); loadAuctionBuildingInfo();
+        autoCalcRepairSilent(); calcCompValuation(); calcMargin(); loadAuctionBuildingInfo(); autoCalcAuctionJeonseAnalysis();
         clearAuctionImages();
         alert('자동 추출 완료! 내용을 확인하고 저장해 주세요.');
     } catch (e) {
@@ -4269,6 +4475,155 @@ function latestPppInfo(trades) {
     };
 }
  
+/* ════════════════════════════════════
+   연립다세대: 전세가 기반 예상 거래가 + 전세 거래 히스토리
+   - 전세보증보험 최대금액(전세가×126%) 대비 실제 매매가 비율을
+     "같은 건물"의 매매/전세 쌍으로 구하고(없으면 지역 전체 연립다세대 평균으로 대체),
+     그 비율을 최근 전세가에 곱해 추정매매가를 만든 뒤
+   - 같은 건물의 매매 평단가 6개월 단위(반기) 추이로 기준 전세거래 시점→현재 변동을 보정
+════════════════════════════════════ */
+function findSaleRentRatio(rentList, saleTrades) {
+    var ratios = [];
+    rentList.forEach(function(r) {
+        if (r.monthly_rent > 0) return; // 월세 제외, 순수 전세만
+        var guarantee = (r.deposit || 0) * 1.26;
+        if (guarantee <= 0) return;
+        saleTrades.forEach(function(s) {
+            if (String(s.floor) !== String(r.floor)) return;
+            if (Math.abs((s.area || 0) - (r.size || 0)) >= 1) return;
+            var amt = parseInt(s.amount);
+            if (amt > 0) ratios.push(amt / guarantee);
+        });
+    });
+    if (!ratios.length) return null;
+    return ratios.reduce(function(a, b) { return a + b; }, 0) / ratios.length;
+}
+function bucketKeyOf(d) {
+    return d.getFullYear() + '_' + (d.getMonth() < 6 ? 'H1' : 'H2');
+}
+function bucketSortValue(k) {
+    var parts = k.split('_');
+    return parseInt(parts[0]) * 2 + (parts[1] === 'H1' ? 0 : 1);
+}
+// 같은 건물 매매 평단가의 6개월(반기) 버킷 추이로, fromDate 시점 → 현재 시세변동 배율을 구함
+function calcVillaPppMomentum(trades, fromDate) {
+    var valid = trades.filter(function(t) { return t.area > 0 && parseInt(t.amount) > 0 && parseInt(t.floor) !== 1; });
+    if (valid.length < 2) return { factor: 1, note: '같은 건물 매매 데이터가 부족해 시세변동 보정 없음' };
+
+    var buckets = {};
+    valid.forEach(function(t) {
+        var k = bucketKeyOf(tradeDate(t));
+        if (!buckets[k]) buckets[k] = [];
+        buckets[k].push(parseInt(t.amount) / toPyung(t.area));
+    });
+    var bucketKeys = Object.keys(buckets);
+    if (bucketKeys.length < 2) return { factor: 1, note: '같은 건물 매매 데이터가 부족해 시세변동 보정 없음' };
+
+    var bucketAvg = {};
+    bucketKeys.forEach(function(k) {
+        var arr = buckets[k];
+        bucketAvg[k] = arr.reduce(function(a, b) { return a + b; }, 0) / arr.length;
+    });
+
+    function nearestBucket(targetKey) {
+        if (bucketAvg[targetKey] !== undefined) return targetKey;
+        var closest = bucketKeys[0], minDiff = Infinity;
+        bucketKeys.forEach(function(k) {
+            var diff = Math.abs(bucketSortValue(k) - bucketSortValue(targetKey));
+            if (diff < minDiff) { minDiff = diff; closest = k; }
+        });
+        return closest;
+    }
+
+    var fromKey = nearestBucket(bucketKeyOf(fromDate));
+    var nowKey  = nearestBucket(bucketKeyOf(new Date()));
+    if (fromKey === nowKey) return { factor: 1, note: '기준 전세거래와 같은 시기라 시세변동 보정 없음' };
+
+    var factor = bucketAvg[nowKey] / bucketAvg[fromKey];
+    factor = Math.max(0.7, Math.min(1.5, factor)); // 데이터 부족으로 인한 극단적 왜곡 방지
+    var pct = Math.round((factor - 1) * 1000) / 10;
+    return { factor: factor, note: fromKey.replace('_', ' ') + ' → ' + nowKey.replace('_', ' ') + ' 평단가 변동 반영 (' + (pct >= 0 ? '+' : '') + pct + '%)' };
+}
+// 이 건물(단지명+동+도로명 기준)의 순수 전세 거래 목록만 뽑아냄. 여러 곳에서 재사용
+// (매매기록 없는 물건 등급 추정, 전세가 기반 예상거래가, 경매 예상전세가 계산 등).
+function getVillaOwnRents(name, dong, roadName) {
+    return allRentList.filter(function(r) {
+        return r.buildingType === 'villa'
+            && (r.danji || '') === (name || '')
+            && (r.dong || '') === (dong || '')
+            && (roadName === undefined || (r.road_name || '') === (roadName || ''))
+            && !(r.monthly_rent > 0);
+    });
+}
+function calcVillaJeonseEstimate(apt) {
+    if (apt.buildingType !== 'villa') return null;
+    var l = apt.latest || {};
+
+    var myRents = getVillaOwnRents(l.name, l.dong, l.road_name);
+    if (!myRents.length) return null;
+
+    var ratio = findSaleRentRatio(myRents, apt.trades);
+    var ratioSource = '이 건물의 매매·전세 쌍 기준';
+    if (!ratio) {
+        var allVillaSales = [], allVillaRents = [];
+        allAptList.forEach(function(a) { if (a.buildingType === 'villa') allVillaSales = allVillaSales.concat(a.trades); });
+        allRentList.forEach(function(r) { if (r.buildingType === 'villa') allVillaRents.push(r); });
+        ratio = findSaleRentRatio(allVillaRents, allVillaSales);
+        ratioSource = '지역 전체 연립다세대 평균 비율';
+    }
+    if (!ratio) return null;
+
+    myRents.sort(function(a, b) { return String(b.deal_date).localeCompare(String(a.deal_date)); });
+    var baseRent = myRents[0];
+    var baseEstimate = (baseRent.deposit || 0) * 1.26 * ratio;
+
+    var ds = String(baseRent.deal_date || '');
+    var rentDate = new Date(parseInt(ds.slice(0, 4)) || today.getFullYear(), (parseInt(ds.slice(4, 6)) || 1) - 1, parseInt(ds.slice(6, 8)) || 1);
+    var momentum = calcVillaPppMomentum(apt.trades, rentDate);
+
+    return {
+        estimate: Math.round(baseEstimate * momentum.factor),
+        baseRentDeposit: baseRent.deposit,
+        baseRentDate: ds,
+        size: baseRent.size || 0, // 기준으로 삼은 전세 건의 전용면적(㎡) - 평단가 환산에 사용
+        ratio: ratio,
+        ratioSource: ratioSource,
+        momentumNote: momentum.note,
+        rents: myRents, // 이 건물의 전세 거래 히스토리 전체 (아래 buildVillaRentHistoryHtml에서 목록으로 표시)
+    };
+}
+
+function buildJeonseEstimateHtml(est) {
+    var html = '<div class="indicator-box" style="border-color:#ff9800;background:#fff8e1;">';
+    html += '<div class="indicator-title" style="color:#e65100;">💰 전세가 기반 예상 거래가</div>';
+    html += '<div style="font-size:16px;font-weight:bold;color:#e65100;">' + toEok(String(est.estimate)) + '</div>';
+    html += '<div style="font-size:10px;color:#999;margin-top:2px;">기준 전세 ' + toEok(String(est.baseRentDeposit)) + ' ('
+        + est.baseRentDate + ') × 126% × 보정비율 ' + (Math.round(est.ratio * 100) / 100) + '</div>';
+    html += '<div style="font-size:10px;color:#999;">' + est.ratioSource + ' · ' + est.momentumNote + '</div>';
+    html += buildVillaRentHistoryHtml(est.rents);
+    html += '</div>';
+    return html;
+}
+// 전세 거래 히스토리 목록 (최근순, 최대 12건 표시 - 나머지는 "외 N건"으로 요약)
+function buildVillaRentHistoryHtml(rents) {
+    if (!rents || !rents.length) return '';
+    var sorted = rents.slice().sort(function(a, b) { return String(b.deal_date).localeCompare(String(a.deal_date)); });
+    var shown = sorted.slice(0, 12);
+    var html = '<div style="margin-top:8px;border-top:1px dashed #ffcc80;padding-top:6px;">';
+    html += '<div style="font-size:10.5px;font-weight:bold;color:#e65100;margin-bottom:4px;">전세 거래 히스토리 (' + rents.length + '건)</div>';
+    shown.forEach(function(r) {
+        var ds = String(r.deal_date || '');
+        var dateStr = ds.length === 8 ? (ds.slice(0,4) + '.' + ds.slice(4,6) + '.' + ds.slice(6,8)) : ds;
+        html += '<div style="font-size:10.5px;color:#666;padding:2px 0;">' + dateStr + ' · ' + toEok(String(r.deposit || 0))
+            + (r.size > 0 ? ' · ' + toPyung(r.size) + '평' : '') + (r.floor ? ' · ' + r.floor + '층' : '') + '</div>';
+    });
+    if (rents.length > shown.length) {
+        html += '<div style="font-size:10px;color:#bbb;margin-top:2px;">외 ' + (rents.length - shown.length) + '건</div>';
+    }
+    html += '</div>';
+    return html;
+}
+
 function calcPppTimeline(apt) {
     var trades = apt.trades || [];
     return {
