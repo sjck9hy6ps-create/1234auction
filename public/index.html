@@ -447,8 +447,10 @@ tr:hover td { background:#fffde7; }
         <div class="filter-row-label">공통</div>
         <button class="filter-tab ft-common" onclick="toggleRecentYearOnly(this)">최근1년 거래만</button>
         <button class="filter-tab ft-common" onclick="toggleCompOnlyFilter(this)">📌 비교대상만</button>
+        <button class="filter-tab ft-common" id="boundary-toggle-btn" onclick="toggleDongBoundaryMode(this)">🗺️ 법정동 경계선</button>
     </div>
 </div>
+<div id="dong-boundary-info" style="display:none;position:absolute;top:60px;left:50%;transform:translateX(-50%);z-index:50;background:rgba(0,0,0,0.75);color:white;font-size:12px;font-weight:bold;padding:5px 12px;border-radius:14px;pointer-events:none;"></div>
 <div id="autocomplete"></div>
 <div id="surge-panel">
     <div class="surge-panel-header">
@@ -1114,6 +1116,126 @@ function getDistance(lat1, lon1, lat2, lon2) {
     var R = 6371000, dLat = (lat2-lat1)*Math.PI/180, dLon = (lon2-lon1)*Math.PI/180;
     var a = Math.sin(dLat/2)**2 + Math.cos(lat1*Math.PI/180)*Math.cos(lat2*Math.PI/180)*Math.sin(dLon/2)**2;
     return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+}
+/* ════════════════════════════════════
+   커서 위치에 따라 법정동(읍면동) 경계선 표시
+   - "필터" 패널의 "🗺️ 법정동 경계선" 버튼으로 켜고 끔 (기본 꺼짐 - 카카오
+     coord2RegionCode 호출량을 아낌 위해 실제로 켰을 때만 동작)
+   - 마우스가 멈춘 지점의 좌표를 coord2RegionCode로 역지오코딩해서 법정동코드(B타입,
+     10자리)를 얻고, 앞 5자리(시군구코드)로 /api/get-boundary를 호출해 그 시군구
+     전체 법정동 경계 목록을 받아옴(시군구 단위로 캐싱해서 같은 시군구 안에서는
+     API를 다시 부르지 않음). 그중 커서가 속한 법정동코드와 일치하는 폴리곤만 그림.
+════════════════════════════════════ */
+var dongBoundaryMode = false;
+var dongBoundaryMapListener = null;
+var dongBoundaryPolygon = null;
+var dongBoundaryCacheBySgg = {};
+var dongBoundaryCurrentEmdCd = null;
+var dongBoundaryDebounceTimer = null;
+var dongBoundaryLastLat = null, dongBoundaryLastLon = null;
+function toggleDongBoundaryMode(btn) {
+    dongBoundaryMode = !dongBoundaryMode;
+    if (btn) btn.classList.toggle('active', dongBoundaryMode);
+    if (dongBoundaryMode) {
+        dongBoundaryMapListener = kakao.maps.event.addListener(map, 'mousemove', onDongBoundaryMouseMove);
+    } else {
+        if (dongBoundaryMapListener) {
+            kakao.maps.event.removeListener(map, 'mousemove', dongBoundaryMapListener);
+            dongBoundaryMapListener = null;
+        }
+        clearTimeout(dongBoundaryDebounceTimer);
+        dongBoundaryCurrentEmdCd = null;
+        dongBoundaryLastLat = null; dongBoundaryLastLon = null;
+        clearDongBoundaryOverlay();
+    }
+}
+function onDongBoundaryMouseMove(mouseEvent) {
+    var latlng = mouseEvent.latLng;
+    clearTimeout(dongBoundaryDebounceTimer);
+    dongBoundaryDebounceTimer = setTimeout(function() {
+        checkDongBoundaryAt(latlng.getLat(), latlng.getLng());
+    }, 220);
+}
+function checkDongBoundaryAt(lat, lon) {
+    if (!dongBoundaryMode || !geocoder) return;
+    // 커서가 25m 이내로만 움직였으면 굳이 다시 역지오코딩하지 않음
+    if (dongBoundaryLastLat !== null
+        && getDistance(lat, lon, dongBoundaryLastLat, dongBoundaryLastLon) < 25) return;
+    dongBoundaryLastLat = lat; dongBoundaryLastLon = lon;
+    geocoder.coord2RegionCode(lon, lat, function(result, status) {
+        if (!dongBoundaryMode) return; // 응답 오는 사이 꺼졌으면 무시
+        if (status !== kakao.maps.services.Status.OK) return;
+        var emdCd = null, sigungu = '', emdNm = '';
+        for (var i = 0; i < result.length; i++) {
+            if (result[i].region_type === 'B') {
+                emdCd = result[i].code;
+                sigungu = result[i].region_1depth_name + ' ' + result[i].region_2depth_name;
+                emdNm = result[i].region_3depth_name;
+                break;
+            }
+        }
+        if (!emdCd || emdCd === dongBoundaryCurrentEmdCd) return;
+        var sggCd = emdCd.substring(0, 5);
+        if (dongBoundaryCacheBySgg[sggCd]) {
+            applyDongBoundary(emdCd, sigungu, emdNm, dongBoundaryCacheBySgg[sggCd]);
+            return;
+        }
+        fetch('/api/get-boundary?sggCd=' + sggCd)
+            .then(function(r) { return r.json(); })
+            .then(function(d) {
+                var list = (d && d.boundaries) || [];
+                dongBoundaryCacheBySgg[sggCd] = list;
+                applyDongBoundary(emdCd, sigungu, emdNm, list);
+            })
+            .catch(function() { /* 경계 조회 실패해도 지도 사용에는 지장 없으므로 조용히 무시 */ });
+    });
+}
+function applyDongBoundary(emdCd, sigungu, emdNm, list) {
+    if (!dongBoundaryMode) return;
+    var match = list.find(function(b) { return b.emdCd === emdCd; });
+    if (!match || !match.geometry) {
+        dongBoundaryCurrentEmdCd = null;
+        clearDongBoundaryOverlay();
+        return;
+    }
+    dongBoundaryCurrentEmdCd = emdCd;
+    drawDongBoundary(sigungu, emdNm, match.geometry);
+}
+function geoJsonToKakaoPaths(geometry) {
+    if (!geometry) return [];
+    var rings = [];
+    if (geometry.type === 'Polygon') {
+        rings = geometry.coordinates || [];
+    } else if (geometry.type === 'MultiPolygon') {
+        (geometry.coordinates || []).forEach(function(poly) {
+            (poly || []).forEach(function(ring) { rings.push(ring); });
+        });
+    }
+    return rings.map(function(ring) {
+        return ring.map(function(pt) { return new kakao.maps.LatLng(pt[1], pt[0]); });
+    });
+}
+function drawDongBoundary(sigungu, emdNm, geometry) {
+    if (dongBoundaryPolygon) { dongBoundaryPolygon.setMap(null); dongBoundaryPolygon = null; }
+    var paths = geoJsonToKakaoPaths(geometry);
+    if (!paths.length) return;
+    dongBoundaryPolygon = new kakao.maps.Polygon({
+        path: paths,
+        strokeWeight: 3,
+        strokeColor: '#ff5722',
+        strokeOpacity: 0.85,
+        strokeStyle: 'solid',
+        fillColor: '#ff5722',
+        fillOpacity: 0.08
+    });
+    dongBoundaryPolygon.setMap(map);
+    var box = document.getElementById('dong-boundary-info');
+    if (box) { box.style.display = 'block'; box.textContent = '📍 ' + sigungu + ' ' + emdNm; }
+}
+function clearDongBoundaryOverlay() {
+    if (dongBoundaryPolygon) { dongBoundaryPolygon.setMap(null); dongBoundaryPolygon = null; }
+    var box = document.getElementById('dong-boundary-info');
+    if (box) { box.style.display = 'none'; box.textContent = ''; }
 }
 /* ── DB 날짜 파싱: "20260630" → {year,month,day} ── */
 function parseDealDate(dateStr) {
