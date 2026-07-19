@@ -1025,6 +1025,14 @@ function toEok(manwon) {
     return val.toLocaleString() + '만';
 }
 function toPyung(area) { return Math.round(area / 3.305785 * 10) / 10; }
+// apt.ppp는 "만원/평" 단위로 저장돼 있음(calcPriceGrades 참고). 등급은 색상으로 이미
+// 구분되니, 배지 텍스트로는 등급 숫자 대신 실제 평단가를 10만원 단위로 반올림해서 보여줌
+// (예: 1110 → "1,110만원/평"). 같은 등급끼리도 실제 가격 차이를 바로 비교할 수 있게 함.
+function formatPpp10man(ppp) {
+    if (!ppp) return '';
+    var rounded = Math.round(ppp / 10) * 10;
+    return rounded.toLocaleString() + '만원/평';
+}
 function setStatus(msg) {
     var box = document.getElementById('status-box');
     if (!msg) { box.style.display = 'none'; return; }
@@ -1219,10 +1227,19 @@ function calcInvestIndicators(aptList) {
 function getVillaAgeTier(apt) {
     var l = apt.latest || {};
     var buildYear = parseInt(l.build_year, 10);
+    // 최신 거래 1건에는 건축연도가 비어있어도, 같은 건물의 다른 거래 기록에는 채워져 있는
+    // 경우가 있어서(실거래가 신고 항목이 건마다 누락될 수 있음) 폴백으로 훑어봄 -
+    // 이게 없으면 최신 거래만 우연히 값이 비어도 연식구분/연식별 평단가 배지가 통째로 사라짐
+    if (!buildYear && apt.trades && apt.trades.length) {
+        for (var i = 0; i < apt.trades.length; i++) {
+            var y = parseInt(apt.trades[i].build_year, 10);
+            if (y) { buildYear = y; break; }
+        }
+    }
     if (!buildYear) return null;
     var age = today.getFullYear() - buildYear;
-    for (var i = 0; i < VILLA_AGE_TIERS.length; i++) {
-        var t = VILLA_AGE_TIERS[i];
+    for (var i2 = 0; i2 < VILLA_AGE_TIERS.length; i2++) {
+        var t = VILLA_AGE_TIERS[i2];
         if (age >= t.min && age <= t.max) return t.key;
     }
     return null;
@@ -1903,15 +1920,20 @@ function createMarker(cacheKey, lat, lon, apt) {
     var color  = cfg.color;
     var count  = cfg.count;
     var amount = l.amount || '';
-    // 등급 배지 (빌라는 같은 연식단계 내 상대등급이므로 연식단계 라벨도 함께 표시)
+    // 등급 배지 (빌라는 같은 연식단계 내 상대등급이므로 연식단계 라벨도 함께 표시).
+    // 등급은 이미 배경색으로 구분되므로, 텍스트는 "N등급" 대신 실제 평단가(10만원 단위)를 보여줌
     var gradeBadge = '';
     if (apt.grade) {
         var gc = GRADE_COLORS[apt.grade];
-        var tierPrefix = (apt.buildingType === 'villa' && apt.ageTier) ? (getVillaTierLabel(apt.ageTier) + ' ') : '';
+        var tierPrefix = '';
+        if (apt.buildingType === 'villa') {
+            tierPrefix = apt.ageTier ? (getVillaTierLabel(apt.ageTier) + ' ') : '연식미상 ';
+        }
+        var pppText = formatPpp10man(apt.ppp) || (apt.grade + '등급'); // 평단가를 못 구했을 때만 등급 숫자로 대체
         // 매매 실거래가 없어 전세가 기반으로 추정한 등급은 점선 테두리 + "(추정)" 표시로 구분
         var estStyle = apt.gradeEstimated ? 'border:1px dashed rgba(255,255,255,0.85);' : '';
         var estSuffix = apt.gradeEstimated ? '(추정)' : '';
-        gradeBadge = '<span style="background:' + gc + ';color:white;font-size:10px;font-weight:bold;padding:2px 6px;border-radius:3px;margin-left:3px;' + estStyle + '">' + tierPrefix + apt.grade + '등급' + estSuffix + '</span>';
+        gradeBadge = '<span style="background:' + gc + ';color:white;font-size:10px;font-weight:bold;padding:2px 6px;border-radius:3px;margin-left:3px;' + estStyle + '">' + tierPrefix + pppText + estSuffix + '</span>';
     }
     // 신고가 배지
    var nhBadge = apt.hasNewHigh
