@@ -682,7 +682,27 @@ tr:hover td { background:#fffde7; }
             </div>
         </div>
         <div class="modal-section">
+            <div class="modal-section-title">🏛️ 법원경매정보 원본자료 바로가기</div>
+            <div style="font-size:11px;color:#888;margin-bottom:8px;line-height:1.5;">
+                법원 사이트는 세션 기반이라 사건번호를 직접 조회로 자동 채워주는 공식 딥링크가 없고,
+                프로그램이 직접 조회하면 보안정책상 차단됩니다. 아래 버튼으로 사이트를 열면 사건번호가
+                자동 복사되니, 검색창에 붙여넣기만 하면 사건내역·기일내역·문건/송달내역·물건상세조회·
+                현황조사서·감정평가서(PDF)·현장사진까지 전부 원본으로 확인할 수 있습니다.
+            </div>
+            <div style="display:flex;gap:6px;flex-wrap:wrap;">
+                <button type="button" onclick="copyAuctionCaseNo(document.getElementById('a-case').value)"
+                    style="display:inline-flex;align-items:center;gap:5px;font-size:12px;font-weight:bold;color:#1a237e;
+                    border:1.5px solid #1a237e;border-radius:20px;padding:6px 14px;background:#e8eaf6;cursor:pointer;">
+                    🏛️ 법원경매정보 원본자료 조회 (사건번호 자동복사)</button>
+                <button type="button" onclick="openIrosRegistry()"
+                    style="display:inline-flex;align-items:center;gap:5px;font-size:12px;font-weight:bold;color:#6a1b9a;
+                    border:1.5px solid #6a1b9a;border-radius:20px;padding:6px 14px;background:#f3e5f5;cursor:pointer;">
+                    🔏 인터넷등기소 등기기록 열람 (유료)</button>
+            </div>
+        </div>
+        <div class="modal-section">
             <div class="modal-section-title">📄 등기부등본 (PDF 업로드 시 AI가 이력을 요약하고 위험요소를 짚어줍니다)</div>
+            <div style="font-size:11px;color:#888;margin-bottom:6px;">위 인터넷등기소에서 열람·발급한 최신 등기부등본 PDF를 올려주세요.</div>
             <input type="file" id="a-registry-file" accept="application/pdf" class="modal-input" style="padding:6px;">
             <div style="margin-top:6px;text-align:right;">
                 <button type="button" class="modal-btn btn-purple" id="a-registry-btn" onclick="uploadAndAnalyzeRegistry()">업로드 및 분석</button>
@@ -2299,27 +2319,52 @@ function buildNaverLinkHtml(lat, lon, name, dong) {
 }
 /* 대한민국 법원경매정보(courtauction.go.kr)는 사건번호를 URL 파라미터로 넘겨
    상세결과 페이지로 바로 이동시키는 공식 딥링크를 제공하지 않음(세션 기반
-   화면전환 방식). 그래서 "사건번호로 검색" 화면을 새 탭으로 열면서 동시에
-   사건번호를 클립보드로 복사해, 검색창에 붙여넣기만 하면 되도록 함. */
+   화면전환 방식이며, 프로그램적 직접조회는 보안정책상 IP 차단 대상이 되는 것도
+   확인됨). 그래서 "경매사건검색" 화면을 새 탭으로 열면서 동시에 사건번호를
+   클립보드로 복사해, 검색창에 붙여넣기만 하면 되도록 함. 이 한 화면(및 물건
+   상세조회 결과 내 버튼들)에서 사건내역·기일내역·문건/송달내역·물건상세조회·
+   현황조사서·감정평가서(PDF)·사건상세조회까지 전부 확인 가능함이 실사용으로
+   확인됨. */
 function copyAuctionCaseNo(caseNo) {
+    var url = 'https://www.courtauction.go.kr/pgj/index.on?w2xPath=%2Fpgj%2Fui%2Fpgj100%2FPGJ159M00.xml';
+    window.open(url, '_blank', 'noopener');
+    if (!caseNo) {
+        alert('등록된 사건번호가 없습니다.\n새로 열린 "경매사건검색" 화면에서 법원과 사건번호를 직접 입력해 조회해주세요.');
+        return;
+    }
+    var guide = '사건번호(' + caseNo + ')가 복사되었습니다.\n\n새로 열린 "경매사건검색" 화면에서:\n'
+        + '1) 법원을 선택하고 사건번호 칸에 붙여넣기(Ctrl+V) 후 검색\n'
+        + '2) 상단 탭 [사건내역] [기일내역] [문건/송달내역] 확인\n'
+        + '3) [물건상세검색]에서 해당 물건번호를 열면 [물건상세조회]와 함께\n'
+        + '   [현황조사서 보기] [감정평가서 보기](PDF) 버튼이 있습니다.\n'
+        + '4) 현장사진도 물건상세조회 화면 하단에서 바로 볼 수 있습니다.';
     if (navigator.clipboard && navigator.clipboard.writeText) {
         navigator.clipboard.writeText(caseNo).then(function() {
-            alert('사건번호(' + caseNo + ')가 복사되었습니다.\n새로 열린 법원경매정보 사이트에서 "사건번호로 검색" 메뉴를 찾아 붙여넣기(Ctrl+V) 해주세요.');
+            alert(guide);
         }).catch(function() {
-            alert('사건번호: ' + caseNo + '\n(자동 복사 실패 - 직접 입력해주세요)');
+            alert('사건번호: ' + caseNo + ' (자동 복사 실패 - 직접 입력해주세요)\n\n' + guide);
         });
     } else {
-        alert('사건번호: ' + caseNo + '\n(자동 복사 실패 - 직접 입력해주세요)');
+        alert('사건번호: ' + caseNo + ' (자동 복사 실패 - 직접 입력해주세요)\n\n' + guide);
     }
+}
+/* 등기기록은 대법원 법원경매정보가 아닌 별도의 유료 서비스(대법원 인터넷등기소)에서
+   열람/발급함. 자동화하지 않고 바로가기만 제공 - 사용자가 직접 로그인/결제 후
+   열람한 뒤, 아래 "등기부등본 업로드" 기능으로 PDF를 올리면 AI가 요약해줌. */
+function openIrosRegistry() {
+    window.open('https://www.iros.go.kr/', '_blank', 'noopener');
 }
 function buildCourtAuctionLinkHtml(caseNo) {
     if (!caseNo) return '';
-    var url = 'https://www.courtauction.go.kr/';
-    return '<div style="margin-bottom:10px;">'
-        + '<a href="' + url + '" target="_blank" rel="noopener" onclick="copyAuctionCaseNo(\'' + caseNo.replace(/'/g, "\\'") + '\')" '
+    return '<div style="margin-bottom:10px;display:flex;gap:6px;flex-wrap:wrap;">'
+        + '<a href="javascript:void(0)" onclick="copyAuctionCaseNo(\'' + caseNo.replace(/'/g, "\\'") + '\')" '
         + 'style="display:inline-flex;align-items:center;gap:5px;font-size:12px;font-weight:bold;color:#1a237e;'
-        + 'border:1.5px solid #1a237e;border-radius:20px;padding:6px 14px;text-decoration:none;background:#e8eaf6;">'
-        + '🏛️ 법원경매정보에서 조회 (사건번호 자동복사)</a></div>';
+        + 'border:1.5px solid #1a237e;border-radius:20px;padding:6px 14px;text-decoration:none;background:#e8eaf6;cursor:pointer;">'
+        + '🏛️ 법원경매정보 원본자료 조회 (사건번호 자동복사)</a>'
+        + '<a href="javascript:void(0)" onclick="openIrosRegistry()" '
+        + 'style="display:inline-flex;align-items:center;gap:5px;font-size:12px;font-weight:bold;color:#6a1b9a;'
+        + 'border:1.5px solid #6a1b9a;border-radius:20px;padding:6px 14px;text-decoration:none;background:#f3e5f5;cursor:pointer;">'
+        + '🔏 인터넷등기소 등기기록 열람</a></div>';
 }
 function setTypeFilter(type, btn) {
     currentTypeFilter = type;
