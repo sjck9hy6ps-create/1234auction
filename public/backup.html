@@ -45,7 +45,14 @@
   <pre id="log">대기 중...</pre>
 </div>
 
-<h2>2. 전체 데이터 백업 다운로드</h2>
+<h2>2. 지도 캐시 새로고침</h2>
+<div class="box">
+  <div>CSV를 올려도 최근에 봤던 지역은 최대 10시간 동안 예전 데이터가 그대로 보일 수 있어(지역별 캐시 때문). CSV 업로드를 다 끝낸 뒤 아래 버튼을 한 번 누르면 캐시를 전부 지워서, 지도에서 바로 최신 데이터가 뜨게 해줘.</div>
+  <div><button id="clearCacheBtn">🔄 지도 캐시 전체 삭제</button></div>
+  <pre id="cacheLog">대기 중...</pre>
+</div>
+
+<h2>3. 전체 데이터 백업 다운로드</h2>
 <div class="box">
   <div>업로드된 CSV + 매일 자동수집된 데이터를 전부 합쳐서 테이블별 CSV 6개를 zip으로 다운로드해. 서버 문제/이전 대비용 백업으로 쓰면 돼.</div>
   <div><button id="downloadAllBtn">전체 데이터 ZIP 다운로드</button></div>
@@ -97,8 +104,7 @@ function loadRows(text) {
 }
 
 async function backupRawFile(file, table) {
-  const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, '_');
-  const key = `${Date.now()}_${table}_${safeName}`;
+  const key = `${Date.now()}_${table}_${file.name}`;
   const { error } = await supabaseClient.storage.from('csv-backups').upload(key, file);
   if (error) throw error;
 }
@@ -179,6 +185,23 @@ document.getElementById('uploadBtn').addEventListener('click', async () => {
     logEl.textContent += `💥 실패: ${e.message}\n`;
   } finally {
     logEl.scrollTop = logEl.scrollHeight;
+    btn.disabled = false;
+  }
+});
+
+document.getElementById('clearCacheBtn').addEventListener('click', async () => {
+  const logEl = document.getElementById('cacheLog');
+  const btn = document.getElementById('clearCacheBtn');
+  btn.disabled = true;
+  logEl.textContent = '캐시 삭제 중...\n';
+  try {
+    const res = await fetch('/api/get-house?action=clearCache');
+    const j = await res.json();
+    if (!res.ok) throw new Error(j.error || '알 수 없는 오류');
+    logEl.textContent += `✅ 완료! 캐시 ${j.cleared}개 삭제됨. 이제 지도에서 다시 열어보면 최신 데이터가 바로 떠.\n`;
+  } catch (e) {
+    logEl.textContent += `💥 실패: ${e.message}\n`;
+  } finally {
     btn.disabled = false;
   }
 });
