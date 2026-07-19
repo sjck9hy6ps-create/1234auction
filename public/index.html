@@ -699,11 +699,22 @@ tr:hover td { background:#fffde7; }
             <div id="target-bid-suggest-box"></div>
         </div>
         <div class="modal-section">
-            <div class="modal-section-title">📄 등기부등본 (PDF 업로드 시 AI가 이력을 요약하고 위험요소를 짚어줍니다)</div>
-            <div style="font-size:11px;color:#888;margin-bottom:6px;">인터넷등기소(iros.go.kr)에서 열람·발급한 최신 등기부등본 PDF를 올려주세요.</div>
-            <input type="file" id="a-registry-file" accept="application/pdf" class="modal-input" style="padding:6px;">
+            <div class="modal-section-title">📚 경매서류 교차분석 (등기부등본 · 매각물건명세서 · 전입세대확인서)</div>
+            <div style="font-size:11px;color:#888;margin-bottom:8px;">세 서류를 함께 올리면 AI가 서로 대조해서 건물 이력·채권관계·경매개시 경위·인수/말소되는 등기를 스토리텔링으로 요약합니다. 등기부등본만 올려도 분석되지만, 나머지 두 서류를 함께 올리면 임차인 대항력 판단 등이 훨씬 정확해집니다.</div>
+            <div style="margin-bottom:7px;">
+                <label style="font-size:11px;color:#555;display:block;margin-bottom:3px;">① 등기부등본 (인터넷등기소 iros.go.kr)</label>
+                <input type="file" id="a-registry-file" accept="application/pdf" class="modal-input" style="padding:6px;">
+            </div>
+            <div style="margin-bottom:7px;">
+                <label style="font-size:11px;color:#555;display:block;margin-bottom:3px;">② 매각물건명세서 (법원경매정보 courtauction.go.kr)</label>
+                <input type="file" id="a-salestatement-file" accept="application/pdf" class="modal-input" style="padding:6px;">
+            </div>
+            <div style="margin-bottom:7px;">
+                <label style="font-size:11px;color:#555;display:block;margin-bottom:3px;">③ 전입세대확인서 (전입세대열람내역, 주민센터 발급)</label>
+                <input type="file" id="a-residentcert-file" accept="application/pdf" class="modal-input" style="padding:6px;">
+            </div>
             <div style="margin-top:6px;text-align:right;">
-                <button type="button" class="modal-btn btn-purple" id="a-registry-btn" onclick="uploadAndAnalyzeRegistry()">업로드 및 분석</button>
+                <button type="button" class="modal-btn btn-purple" id="a-registry-btn" onclick="analyzeAuctionDocs()">업로드 및 교차분석</button>
             </div>
             <div id="registry-result-box"></div>
         </div>
@@ -1690,36 +1701,36 @@ function buildRentOnlyEntries(existingList, rentList, sigungu, lawdCd) {
      "현재 떠 있는 마커 목록"을 비교해 사라진 것만 지우고 새로 필요한
      것만 추가하는 증분(incremental) 방식으로 동작함
 ════════════════════════════════════ */
+/* 일반 마커가 지금 활성화된 모든 필터(타입탭/등급/빌라조건/연식/급등순위/비교대상만보기)를
+   통과하는지 판정하는 단일 기준 함수. redrawMarkers()의 필터링 로직을 그대로 옮겨온 것으로,
+   경매 마커 쪽(placeAuctionMarker)에서도 "매칭된 건물이 지금 화면에 실제로 그려질지"를
+   똑같은 기준으로 판단해야 해서 공용 함수로 분리함 - 이게 없으면 필터 로직이 두 곳에
+   따로 존재하게 되어 나중에 한쪽만 고치는 실수가 생기기 쉬움 */
+function isAptVisibleUnderCurrentFilters(apt) {
+    if (!apt) return false;
+    // 단독/다가구는 placeMarkers가 지오코딩 자체를 시도하지 않아 지도에 마커가 만들어지지 않음
+    if (apt.buildingType === 'single') return false;
+    if (currentTypeFilter === 'apt') {
+        if (apt.buildingType !== 'apt') return false;
+        if (recentYearOnly && !hasRecentYearTrade(apt)) return false;
+        if (activeGrades.size > 0 && !(apt.grade && activeGrades.has(String(apt.grade)))) return false;
+    } else {
+        if (apt.buildingType !== 'villa') return false;
+        if (recentYearOnly && !hasRecentYearTrade(apt)) return false;
+        if (activeGrades.size > 0 && !(apt.grade && activeGrades.has(String(apt.grade)))) return false;
+        if (activeVillaFilters.size > 0 && !passesVillaFilter(apt)) return false;
+        if (activeVillaTiers.size > 0 && !(apt.ageTier && activeVillaTiers.has(apt.ageTier))) return false;
+    }
+    if (activeSurgeRanks.size > 0 && !passesSurgeFilter(apt)) return false;
+    if (compOnlyFilter && !(getAptComparableRefs(apt).length > 0)) return false;
+    return true;
+}
 function redrawMarkers() {
     renderGen++;
     var myGen = renderGen;
     surgeRankMap = computeSurgeRankMap(currentTypeFilter);
     comparableIndex = computeComparableIndex();
-    var list;
-  if (currentTypeFilter === 'apt') {
-        var aptAll = allAptList.filter(function(a) { return a.buildingType === 'apt'; });
-        if (recentYearOnly) aptAll = aptAll.filter(hasRecentYearTrade);
-        if (activeGrades.size === 0) {
-            list = aptAll;
-        } else {
-            list = aptAll.filter(function(a) { return a.grade && activeGrades.has(String(a.grade)); });
-        }
-   } else {
-        var villaAll = allAptList.filter(function(a) { return a.buildingType === 'villa'; });
-        if (recentYearOnly) villaAll = villaAll.filter(hasRecentYearTrade);
-        if (activeVillaFilters.size === 0 && activeGrades.size === 0 && activeVillaTiers.size === 0) {
-            list = villaAll;
-        } else {
-            list = villaAll.filter(function(a) {
-                var gradeOk = activeGrades.size === 0 || (a.grade && activeGrades.has(String(a.grade)));
-                var villaOk = activeVillaFilters.size === 0 || passesVillaFilter(a);
-                var tierOk  = activeVillaTiers.size === 0 || (a.ageTier && activeVillaTiers.has(a.ageTier));
-                return gradeOk && villaOk && tierOk;
-            });
-        }
-    }
-    if (activeSurgeRanks.size > 0) list = list.filter(passesSurgeFilter);
-    if (compOnlyFilter) list = list.filter(function(a) { return getAptComparableRefs(a).length > 0; });
+    var list = allAptList.filter(isAptVisibleUnderCurrentFilters);
     placeMarkers(list, myGen);
     setTimeout(function() { renderAuctionMarkers(); }, 100);
 }
@@ -2739,7 +2750,9 @@ function renderAuctionList() {
         var noPin = (!a.lat || !a.lon)
             ? '<div class="auction-list-sub" style="color:#e53935;font-weight:bold;">⚠️ 주소를 지도 좌표로 찾지 못해 지도에 배지가 표시되지 않습니다 - 주소를 확인해 주세요.</div>'
             : '';
-        html += '<div class="auction-list-item" onclick="openAuctionModal(\'' + a.id + '\')">'
+        html += '<div class="auction-list-item" style="position:relative;" onclick="panToAuction(\'' + a.id + '\')">'
+            + '<span onclick="event.stopPropagation();openAuctionModal(\'' + a.id + '\')" '
+            + 'style="position:absolute;top:8px;right:8px;font-size:10px;color:#1976d2;font-weight:bold;cursor:pointer;">✏️ 수정</span>'
             + '<div class="auction-list-name">' + ((a.name && a.name.trim()) || a.addrLabel || a.addr || '(이름없음)')
             + '<span class="auction-status-badge" style="background:' + sc + ';color:white;">' + a.status + '</span></div>'
             + '<div class="auction-list-sub">' + (a.addr || '주소 미입력') + '</div>'
@@ -2748,6 +2761,33 @@ function renderAuctionList() {
             + '</div>';
     });
     body.innerHTML = html;
+}
+/* 경매목록에서 항목을 클릭하면(수정 버튼 제외) 편집 모달을 바로 띄우지 않고 지도를 그
+   주소로 이동시킴 - 여러 물건을 훑어보며 주변 시세(일반 거래 배지)를 같이 보고 싶을 때
+   모달이 지도를 가리지 않도록 함. 수정하려면 우측 상단 "✏️ 수정"을 누르거나, 이동 후
+   드러난 지도 위의 마커를 클릭하면 됨(마커 클릭은 기존과 동일하게 모달을 엶). */
+function panToAuction(id) {
+    var a = auctionList.find(function(x) { return x.id === id; });
+    if (!a) return;
+    document.getElementById('auction-list-panel').style.display = 'none';
+    if (a.lat && a.lon) {
+        map.setCenter(new kakao.maps.LatLng(a.lat, a.lon));
+        map.setLevel(4);
+        return;
+    }
+    if (!a.addr) { alert('등록된 주소가 없어 이동할 수 없습니다. "✏️ 수정"을 눌러 주소를 입력해 주세요.'); return; }
+    setStatus('위치 찾는 중...');
+    tryStepGeocode([a.addr], function(lat, lon) {
+        setStatus('');
+        if (lat && lon) {
+            a.lat = lat; a.lon = lon;
+            saveAuctionAPI(a); renderAuctionMarkers();
+            map.setCenter(new kakao.maps.LatLng(lat, lon));
+            map.setLevel(4);
+        } else {
+            alert('이 주소의 위치를 찾을 수 없습니다. "✏️ 수정"을 눌러 주소를 확인해 주세요.');
+        }
+    });
 }
 function openAuctionModal(id) {
     document.getElementById('auction-list-panel').style.display = 'none';
@@ -2776,6 +2816,8 @@ function openAuctionModal(id) {
     clearAuctionImages();
     auctionJeonseEstimate = null;
     document.getElementById('a-registry-file').value = '';
+    document.getElementById('a-salestatement-file').value = '';
+    document.getElementById('a-residentcert-file').value = '';
     document.getElementById('registry-result-box').innerHTML = '';
     document.getElementById('a-building-info-box').innerHTML = '';
     document.getElementById('jeonse-analysis-box').innerHTML = '';
@@ -3479,7 +3521,11 @@ function auctionMarkerSignature(a) {
         lat: a.lat, lon: a.lon,
         grade: matched ? matched.grade : null,
         pop: matched ? matched.popularPyeong : null,
-        surgeRank: a.dong ? surgeRankMap[a.dong] : null
+        surgeRank: a.dong ? surgeRankMap[a.dong] : null,
+        // 매칭된 건물이 지금 화면에 실제로 그려지는지(=필터 통과 여부)가 바뀌면 경매 마커도
+        // 독자표시↔억제 상태를 다시 판단해야 하므로 시그니처에 포함시킴 - 이게 없으면 필터를
+        // 바꿔도(타입탭 전환, 등급/비교대상 필터 등) 경매 마커가 갱신되지 않아 사라진 채로 남음
+        matchedVisible: matched ? isAptVisibleUnderCurrentFilters(matched) : null
     });
 }
 function upsertAuctionMarker(a) {
@@ -3568,9 +3614,12 @@ function placeAuctionMarker(a) {
 
     // 같은 단지의 일반 거래 데이터가 이미 로딩되어 있으면 등급/인기평형 정보를 가져와 함께 표시
     var matchedApt = findMatchedApt(a);
-    // 이미 같은 주소의 일반 거래 마커가 있으면 경매 마커를 따로 만들지 않음 (배지 완전중복 방지) -
-    // 경매 정보는 대신 그 건물의 상세패널에 "🔨 경매정보" 탭으로 표시됨 (renderTable/openPanel 참고)
-    if (matchedApt) {
+    // 매칭된 일반 거래 마커가 "지금 이 순간 실제로 화면에 그려질 때만" 경매 마커를 따로 만들지
+    // 않음(배지 완전중복 방지, 경매 정보는 그 건물의 상세패널에 "🔨 경매정보" 탭으로 표시됨).
+    // 반대로 매칭은 됐지만 타입탭/등급/빌라조건/비교대상필터 등으로 그 일반 마커가 화면에서
+    // 걸러진 상태라면, 경매물건까지 같이 안 보이면 안 되므로 여기서 독자 마커로 대체 표시함
+    // (예: 등록된 경매물건은 어떤 필터를 걸어도 항상 최소 하나의 마커로는 보여야 함)
+    if (matchedApt && isAptVisibleUnderCurrentFilters(matchedApt)) {
         auctionMarkers[a.id] = { overlay: null, suppressed: true };
         return;
     }
@@ -4091,36 +4140,71 @@ function fileToBase64(file) {
     });
 }
  
-async function uploadAndAnalyzeRegistry() {
-    var fileInput = document.getElementById('a-registry-file');
-    var file = fileInput.files[0];
-    if (!file) { alert('PDF 파일을 선택해 주세요.'); return; }
-    if (file.type !== 'application/pdf') { alert('PDF 파일만 업로드할 수 있습니다.'); return; }
-    if (file.size > 10 * 1024 * 1024) { alert('파일이 너무 큽니다. 10MB 이하로 업로드해 주세요.'); return; }
+/* 등기부등본·매각물건명세서·전입세대확인서 최대 3종을 함께 올려서 서로 대조 분석함.
+   셋 다 필수는 아니고(등기부등본만 올려도 동작), 올린 문서가 많을수록 AI가 교차검증할
+   근거가 많아져서 특히 임차인 대항력 판단(전입세대확인서 vs 등기부 vs 매각물건명세서상
+   임차인현황)의 정확도가 올라감. */
+async function analyzeAuctionDocs() {
+    var fileMap = {
+        registry: document.getElementById('a-registry-file').files[0] || null,
+        saleStatement: document.getElementById('a-salestatement-file').files[0] || null,
+        residentCert: document.getElementById('a-residentcert-file').files[0] || null,
+    };
+    var selected = Object.keys(fileMap).map(function(k) { return fileMap[k]; }).filter(Boolean);
+    if (!selected.length) { alert('최소 1개 이상의 PDF 파일을 선택해 주세요 (등기부등본을 우선 권장합니다).'); return; }
+    var totalSize = 0;
+    for (var k in fileMap) {
+        var f = fileMap[k];
+        if (!f) continue;
+        if (f.type !== 'application/pdf') { alert('PDF 파일만 업로드할 수 있습니다.'); return; }
+        if (f.size > 10 * 1024 * 1024) { alert('파일이 너무 큽니다. 각 파일 10MB 이하로 업로드해 주세요.'); return; }
+        totalSize += f.size;
+    }
+    // 서버(Vercel 서버리스 함수)는 요청 전체 용량에도 제한이 있어서, 여러 서류를 한 번에
+    // 올릴 때는 합쳐서 15MB 이내로 제한함 - 넘으면 서버에서 실패하기 전에 미리 안내
+    if (selected.length > 1 && totalSize > 15 * 1024 * 1024) {
+        alert('여러 서류를 한 번에 올릴 때는 합쳐서 15MB 이내로 부탁드립니다.\n(스캔 해상도를 낮추면 파일 용량이 줄어듭니다. 필요하면 서류를 나눠서 순서대로 업로드해도 됩니다.)');
+        return;
+    }
     var btn = document.getElementById('a-registry-btn');
-    btn.disabled = true; btn.innerText = '업로드 및 분석 중... (최대 1분 소요)';
+    btn.disabled = true; btn.innerText = '업로드 및 교차분석 중... (최대 1분 소요)';
     try {
-        var base64 = await fileToBase64(file);
         var auctionId = document.getElementById('auction-id').value || Date.now().toString();
         if (!document.getElementById('auction-id').value) document.getElementById('auction-id').value = auctionId;
+        var docs = {};
+        for (var k2 in fileMap) {
+            if (!fileMap[k2]) continue;
+            docs[k2] = { fileBase64: await fileToBase64(fileMap[k2]), fileName: fileMap[k2].name };
+        }
+        // 사용승인일은 이미 AI 자동추출(pendingAuctionDetail.approvalDate)이나 건축HUB 건축물대장
+        // 조회(pendingAuctionBuildingInfo)로 신뢰도 높게 확보돼 있으면 그 값을 그대로 넘겨서
+        // AI가 PDF에서 다시 추측하다 틀리지 않도록 함(스토리에 그대로 사용하게 함)
+        var knownApprovalDate = (pendingAuctionDetail && pendingAuctionDetail.approvalDate)
+            || (pendingAuctionBuildingInfo && pendingAuctionBuildingInfo.title && pendingAuctionBuildingInfo.title.useAprDay)
+            || null;
         var res = await fetch('/api/parse-registry', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ fileBase64: base64, fileName: file.name, auctionId: auctionId })
+            body: JSON.stringify({ docs: docs, auctionId: auctionId, knownApprovalDate: knownApprovalDate })
         });
         var data = await res.json();
         if (!res.ok) { alert('분석 실패: ' + (data.error || '알 수 없는 오류')); return; }
-        pendingRegistryDoc = { url: data.fileUrl, fileName: data.fileName || file.name };
-        pendingRegistryAnalysis = { summary: data.summary, story: data.story, risks: data.risks, malsoGijunRight: data.malsoGijunRight };
+        pendingRegistryDoc = data.docs || null;
+        pendingRegistryAnalysis = {
+            summary: data.summary, story: data.story, risks: data.risks,
+            malsoGijunRight: data.malsoGijunRight, approvalDate: data.approvalDate,
+            auctionReason: data.auctionReason,
+            survivingRights: data.survivingRights, extinguishedRights: data.extinguishedRights,
+        };
         renderRegistryAnalysis();
         alert('분석이 완료됐습니다. 저장을 눌러야 최종 반영됩니다.');
     } catch (e) {
         alert('업로드/분석 중 오류: ' + e.message);
     } finally {
-        btn.disabled = false; btn.innerText = '업로드 및 분석';
+        btn.disabled = false; btn.innerText = '업로드 및 교차분석';
     }
 }
- 
+
 function renderRegistryAnalysis() {
     var box = document.getElementById('registry-result-box');
     if (!box) return;
@@ -4128,12 +4212,39 @@ function renderRegistryAnalysis() {
     var a = pendingRegistryAnalysis;
     var riskColor = { '높음': '#e53935', '중간': '#ff7043', '낮음': '#9e9e9e' };
     var html = '<div style="background:#faf5ff;border:1.5px solid #ce93d8;border-radius:10px;padding:12px;margin-top:10px;">';
-    if (pendingRegistryDoc && pendingRegistryDoc.url) {
-        html += '<div style="font-size:11px;margin-bottom:8px;"><a href="' + pendingRegistryDoc.url + '" target="_blank" style="color:#6a1b9a;">📄 ' + pendingRegistryDoc.fileName + ' 원본 보기</a></div>';
+    // 원본 문서 링크 - 구버전 저장분(단일 등기부등본 {url,fileName})과도 호환되게 처리
+    var docs = pendingRegistryDoc || {};
+    var docLabels = { registry: '📄 등기부등본', saleStatement: '📄 매각물건명세서', residentCert: '📄 전입세대확인서' };
+    var docLinks = '';
+    if (docs.url) {
+        docLinks += '<a href="' + docs.url + '" target="_blank" style="color:#6a1b9a;margin-right:10px;">📄 ' + docs.fileName + ' 원본 보기</a>';
+    } else {
+        Object.keys(docLabels).forEach(function(k) {
+            if (docs[k] && docs[k].url) {
+                docLinks += '<a href="' + docs[k].url + '" target="_blank" style="color:#6a1b9a;margin-right:10px;">' + docLabels[k] + ' 원본 보기</a>';
+            }
+        });
     }
+    if (docLinks) html += '<div style="font-size:11px;margin-bottom:8px;">' + docLinks + '</div>';
     if (a.summary) html += '<div style="font-size:12px;font-weight:bold;color:#6a1b9a;margin-bottom:6px;">' + a.summary + '</div>';
-    if (a.malsoGijunRight) html += '<div style="font-size:11px;color:#555;margin-bottom:8px;"><b>추정 말소기준권리:</b> ' + a.malsoGijunRight + '</div>';
+    if (a.approvalDate) html += '<div style="font-size:11px;color:#555;margin-bottom:4px;"><b>건물 사용승인일:</b> ' + a.approvalDate + '</div>';
+    if (a.auctionReason) html += '<div style="font-size:11px;color:#555;margin-bottom:4px;"><b>경매개시 경위:</b> ' + a.auctionReason + '</div>';
+    if (a.malsoGijunRight) html += '<div style="font-size:11px;color:#555;margin-bottom:8px;"><b>추정 말소기준등기:</b> ' + a.malsoGijunRight + '</div>';
     if (a.story) html += '<div style="font-size:11px;color:#555;line-height:1.7;margin-bottom:10px;white-space:pre-line;">' + a.story + '</div>';
+    function rightsListHtml(title, color, list) {
+        if (!list || !list.length) return '';
+        var h = '<div style="font-size:11px;font-weight:bold;color:' + color + ';margin:8px 0 4px;">' + title + '</div>';
+        list.forEach(function(r) {
+            h += '<div style="background:white;border-radius:6px;padding:6px 8px;margin-bottom:4px;border-left:3px solid ' + color + ';font-size:11px;">'
+                + '<b>' + (r.right || '') + '</b>'
+                + (r.date ? ' · ' + r.date : '') + (r.holder ? ' · ' + r.holder : '')
+                + (r.note ? '<div style="color:#777;margin-top:2px;">' + r.note + '</div>' : '')
+                + '</div>';
+        });
+        return h;
+    }
+    html += rightsListHtml('🔴 낙찰 후 인수되는 등기 (매수인 부담)', '#e53935', a.survivingRights);
+    html += rightsListHtml('⚪ 말소기준등기로 소멸되는 등기', '#9e9e9e', a.extinguishedRights);
     (a.risks || []).forEach(function(r) {
         var c = riskColor[r.level] || '#9e9e9e';
         html += '<div style="background:white;border-radius:7px;padding:8px 10px;margin-bottom:6px;border-left:3px solid ' + c + ';">'
@@ -5573,7 +5684,8 @@ function formatDate8(s) {
     return s.slice(0,4) + '.' + s.slice(4,6) + '.' + s.slice(6,8);
 }
 /* 층별현황/전유공용면적 표를 접기/펼치기 (범례 접기와 같은 패턴). 표 자체는 매번 새로
-   렌더링되므로 상태를 localStorage에 저장하지 않고, 펼침이 기본값(정보를 놓치지 않도록). */
+   렌더링되므로 상태를 localStorage에 저장하지 않고, 숨김이 기본값(표가 길어서 상세페이지
+   스크롤을 많이 차지하므로 필요할 때만 펼쳐서 보도록 함). */
 function toggleBuildingTable(bodyId, btnId) {
     var el = document.getElementById(bodyId);
     if (!el) return;
@@ -5630,8 +5742,8 @@ function buildBuildingInfoHtml(info, opts) {
         html += '<div class="indicator-title" style="display:flex;justify-content:space-between;align-items:center;">'
             + '<span>📐 층별 현황 (' + floors.length + '개 층)</span>'
             + '<span id="' + floorsBtnId + '" onclick="toggleBuildingTable(\'' + floorsBodyId + '\',\'' + floorsBtnId + '\')" '
-            + 'style="font-size:10px;color:#888;font-weight:bold;cursor:pointer;white-space:nowrap;margin-left:8px;">숨기기 ▾</span></div>';
-        html += '<div id="' + floorsBodyId + '">';
+            + 'style="font-size:10px;color:#888;font-weight:bold;cursor:pointer;white-space:nowrap;margin-left:8px;">보이기 ▸</span></div>';
+        html += '<div id="' + floorsBodyId + '" style="display:none;">';
         html += '<table><thead><tr><th>층</th><th>구조</th><th>용도</th><th>면적</th></tr></thead><tbody>';
         floors.forEach(function(f) {
             html += '<tr>'
@@ -5650,11 +5762,11 @@ function buildBuildingInfoHtml(info, opts) {
         html += '<div class="indicator-title" style="display:flex;justify-content:space-between;align-items:center;">'
             + '<span>🏠 전유/공용면적 (' + exposAreas.length + '건)</span>'
             + '<span id="' + exposBtnId + '" onclick="toggleBuildingTable(\'' + exposBodyId + '\',\'' + exposBtnId + '\')" '
-            + 'style="font-size:10px;color:#888;font-weight:bold;cursor:pointer;white-space:nowrap;margin-left:8px;">숨기기 ▾</span></div>';
+            + 'style="font-size:10px;color:#888;font-weight:bold;cursor:pointer;white-space:nowrap;margin-left:8px;">보이기 ▸</span></div>';
         if (highlightDigits) {
             html += '<div style="font-size:10px;color:#e53935;margin:2px 0;">🔸 표시된 행이 등록하신 호수(' + opts.highlightUnit + ')와 일치하는 항목입니다.</div>';
         }
-        html += '<div id="' + exposBodyId + '">';
+        html += '<div id="' + exposBodyId + '" style="display:none;">';
         html += '<table><thead><tr><th>호실</th><th>구분</th><th>구조</th><th>용도</th><th>면적</th></tr></thead><tbody>';
         exposAreas.forEach(function(e) {
             var gbColor = e.gbNm && e.gbNm.indexOf('전유') !== -1 ? '#1565c0' : '#888';
