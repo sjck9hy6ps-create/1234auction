@@ -694,6 +694,10 @@ tr:hover td { background:#fffde7; }
                     style="display:inline-flex;align-items:center;gap:5px;font-size:12px;font-weight:bold;color:#1a237e;
                     border:1.5px solid #1a237e;border-radius:20px;padding:6px 14px;background:#e8eaf6;cursor:pointer;">
                     🏛️ 법원경매정보 원본자료 조회 (사건번호 자동복사)</button>
+                <button type="button" onclick="openTankAuctionSearch(document.getElementById('a-case').value)"
+                    style="display:inline-flex;align-items:center;gap:5px;font-size:12px;font-weight:bold;color:#00695c;
+                    border:1.5px solid #00695c;border-radius:20px;padding:6px 14px;background:#e0f2f1;cursor:pointer;">
+                    🟦 탱크옥션 사건상세내역 조회 (사건번호 자동복사)</button>
                 <button type="button" onclick="openIrosRegistry(document.getElementById('a-addr').value)"
                     style="display:inline-flex;align-items:center;gap:5px;font-size:12px;font-weight:bold;color:#6a1b9a;
                     border:1.5px solid #6a1b9a;border-radius:20px;padding:6px 14px;background:#f3e5f5;cursor:pointer;">
@@ -2381,15 +2385,52 @@ function openIrosRegistry(addrArg) {
 function buildCourtAuctionLinkHtml(caseNo, addr) {
     if (!caseNo) return '';
     var addrJs = (addr || '').replace(/'/g, "\\'");
+    var caseNoJs = caseNo.replace(/'/g, "\\'");
     return '<div style="margin-bottom:10px;display:flex;gap:6px;flex-wrap:wrap;">'
-        + '<a href="javascript:void(0)" onclick="copyAuctionCaseNo(\'' + caseNo.replace(/'/g, "\\'") + '\')" '
+        + '<a href="javascript:void(0)" onclick="copyAuctionCaseNo(\'' + caseNoJs + '\')" '
         + 'style="display:inline-flex;align-items:center;gap:5px;font-size:12px;font-weight:bold;color:#1a237e;'
         + 'border:1.5px solid #1a237e;border-radius:20px;padding:6px 14px;text-decoration:none;background:#e8eaf6;cursor:pointer;">'
         + '🏛️ 법원경매정보 원본자료 조회 (사건번호 자동복사)</a>'
+        + '<a href="javascript:void(0)" onclick="openTankAuctionSearch(\'' + caseNoJs + '\')" '
+        + 'style="display:inline-flex;align-items:center;gap:5px;font-size:12px;font-weight:bold;color:#00695c;'
+        + 'border:1.5px solid #00695c;border-radius:20px;padding:6px 14px;text-decoration:none;background:#e0f2f1;cursor:pointer;">'
+        + '🟦 탱크옥션 사건상세내역 조회 (사건번호 자동복사)</a>'
         + '<a href="javascript:void(0)" onclick="openIrosRegistry(\'' + addrJs + '\')" '
         + 'style="display:inline-flex;align-items:center;gap:5px;font-size:12px;font-weight:bold;color:#6a1b9a;'
         + 'border:1.5px solid #6a1b9a;border-radius:20px;padding:6px 14px;text-decoration:none;background:#f3e5f5;cursor:pointer;">'
         + '🔏 인터넷등기소 등기기록 열람 (주소 자동복사)</a></div>';
+}
+/* 탱크옥션(유료 경매정보지)도 법원경매정보와 마찬가지로 세션 기반 화면전환 방식이라,
+   URL만으로 특정 사건 상세화면에 바로 딥링크할 수 있는 공식 방법이 없음(실제로 브라우저에서
+   확인해보니 상세보기는 팝업창을 tid+세션토큰(chkNo) 조합으로 여는 방식이라, 이 값들은
+   검색을 거쳐야만 얻어짐 - 사건번호만으로 미리 구성할 수 없음). 그래서 마찬가지로
+   "종합검색 화면을 새 탭으로 열기 + 사건번호 자동복사" 패턴을 사용함.
+   ⚠️ 탱크옥션 로그인(아이디/비밀번호)은 절대 자동 입력하지 않음 - 로그인이 필요한 사이트에
+   비밀번호를 대신 입력하는 것은 이 앱에서 다루지 않는 영역이라, 사용자가 이미 로그인된 브라우저를
+   그대로 사용하거나 직접 로그인해야 함. */
+function openTankAuctionSearch(caseNo) {
+    var url = 'https://www.tankauction.com/ca/caList.php';
+    window.open(url, '_blank', 'noopener');
+    if (!caseNo) {
+        alert('등록된 사건번호가 없습니다. 탱크옥션에서 직접 검색해주세요.');
+        return;
+    }
+    var m = String(caseNo).match(/(\d{4})\D+(\d+)/);
+    var year = m ? m[1] : '';
+    var num = m ? m[2] : caseNo;
+    var guide = '사건번호(' + num + ')가 복사되었습니다.\n\n새로 열린 탱크옥션 화면 우측 상단에서:\n'
+        + (year ? '1) 연도 드롭다운을 ' + year + '년으로 선택\n' : '')
+        + '2) "타경" 검색창에 붙여넣기(Ctrl+V) 후 검색 버튼을 누르면 사건상세내역으로 이동합니다.\n'
+        + '(로그인이 안 되어 있다면 먼저 로그인해 주세요 - 로그인은 이 앱이 대신 해줄 수 없습니다.)';
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(num).then(function() {
+            alert(guide);
+        }).catch(function() {
+            alert('사건번호: ' + num + ' (자동 복사 실패)\n\n' + guide);
+        });
+    } else {
+        alert('사건번호: ' + num + ' (자동 복사 실패)\n\n' + guide);
+    }
 }
 /* 경매물건 AI 추출 상세(detail)에서 "누군가에게 전달하거나 전화 문의할 때 필요한 핵심 정보"만
    골라 텍스트 한 덩어리로 묶어 클립보드에 복사하는 기능.
