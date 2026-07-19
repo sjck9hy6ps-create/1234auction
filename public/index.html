@@ -2871,12 +2871,7 @@ async function calcAuctionJeonseAnalysis() {
     var warn126 = officialPriceWon > 0 && impliedFloorWon > officialPriceWon;
 
     // ── 이 건물 자체의 실제 전세 이력 (예상치와 비교용) ──
-    var ownRents = allRentList.filter(function(r) {
-        if (r.buildingType !== 'villa' || (r.monthly_rent > 0)) return false;
-        if ((r.dong || '') !== (ctx.dong || '')) return false;
-        if (ctx.name) return (r.danji || '') === ctx.name;
-        return ctx.bunji && (r.bunji || '') === ctx.bunji;
-    });
+    var ownRents = getVillaOwnRents(ctx.name, ctx.dong, ctx.bunji);
 
     // ── 전세가율 기반 예상매도가 (지역 전체 연립다세대 매매/전세 쌍으로 구한 보정비율 재사용) ──
     var allVillaSales = [], allVillaRentsAll = [];
@@ -4601,23 +4596,30 @@ function calcVillaPppMomentum(trades, fromDate) {
     var pct = Math.round((factor - 1) * 1000) / 10;
     return { factor: factor, note: fromKey.replace('_', ' ') + ' → ' + nowKey.replace('_', ' ') + ' 평단가 변동 반영 (' + (pct >= 0 ? '+' : '') + pct + '%)' };
 }
-// 이 건물(단지명+동+도로명 기준)의 순수 전세 거래 목록만 뽑아냄. 여러 곳에서 재사용
+// 이 건물의 순수 전세 거래 목록만 뽑아냄. 여러 곳에서 재사용
 // (매매기록 없는 물건 등급 추정, 전세가 기반 예상거래가, 경매 예상전세가 계산 등).
-function getVillaOwnRents(name, dong, roadName) {
+// 도로명은 매매 테이블과 전세 테이블의 수집 출처가 달라 표기가 어긋나는 경우가 흔해서(공백/약칭 차이 등)
+// 매칭 기준에서 뺐습니다. 동이 같고, 단지명이 일치하거나(우선) 지번이 일치하면 같은 건물로 봅니다.
+function getVillaOwnRents(name, dong, bunji) {
     return allRentList.filter(function(r) {
-        return r.buildingType === 'villa'
-            && (r.danji || '') === (name || '')
-            && (r.dong || '') === (dong || '')
-            && (roadName === undefined || (r.road_name || '') === (roadName || ''))
-            && !(r.monthly_rent > 0);
+        if (r.buildingType !== 'villa' || (r.monthly_rent > 0)) return false;
+        if ((r.dong || '') !== (dong || '')) return false;
+        if (name && (r.danji || '') === name) return true;
+        if (bunji && (r.bunji || '') === bunji) return true;
+        return false;
     });
 }
+// villa 패널의 "전세가 기반 예상 거래가" 계산.
+// 항상 { rents, estimate, ... } 형태의 객체를 돌려주고(연립다세대가 아니면 null), estimate가 없을 때도
+// noDataReason으로 이유를 알려줘서, 화면에서 "데이터가 없는 것"과 "코드가 안 뜨는 것"을 구분할 수 있게 함.
 function calcVillaJeonseEstimate(apt) {
     if (apt.buildingType !== 'villa') return null;
     var l = apt.latest || {};
 
-    var myRents = getVillaOwnRents(l.name, l.dong, l.road_name);
-    if (!myRents.length) return null;
+    var myRents = getVillaOwnRents(l.name, l.dong, l.bunji);
+    if (!myRents.length) {
+        return { estimate: null, rents: [], noDataReason: '이 건물의 전세 거래 이력을 데이터베이스에서 찾지 못했습니다.' };
+    }
 
     var ratio = findSaleRentRatio(myRents, apt.trades);
     var ratioSource = '이 건물의 매매·전세 쌍 기준';
@@ -4628,10 +4630,17 @@ function calcVillaJeonseEstimate(apt) {
         ratio = findSaleRentRatio(allVillaRents, allVillaSales);
         ratioSource = '지역 전체 연립다세대 평균 비율';
     }
-    if (!ratio) return null;
 
     myRents.sort(function(a, b) { return String(b.deal_date).localeCompare(String(a.deal_date)); });
     var baseRent = myRents[0];
+
+    if (!ratio) {
+        return {
+            estimate: null, rents: myRents,
+            noDataReason: '매매·전세 짝을 찾지 못해 예상 거래가는 계산하지 못했지만, 이 건물의 전세 거래 이력은 아래와 같습니다.',
+        };
+    }
+
     var baseEstimate = (baseRent.deposit || 0) * 1.26 * ratio;
 
     var ds = String(baseRent.deal_date || '');
@@ -4653,10 +4662,14 @@ function calcVillaJeonseEstimate(apt) {
 function buildJeonseEstimateHtml(est) {
     var html = '<div class="indicator-box" style="border-color:#ff9800;background:#fff8e1;">';
     html += '<div class="indicator-title" style="color:#e65100;">💰 전세가 기반 예상 거래가</div>';
-    html += '<div style="font-size:16px;font-weight:bold;color:#e65100;">' + toEok(String(est.estimate)) + '</div>';
-    html += '<div style="font-size:10px;color:#999;margin-top:2px;">기준 전세 ' + toEok(String(est.baseRentDeposit)) + ' ('
-        + est.baseRentDate + ') × 126% × 보정비율 ' + (Math.round(est.ratio * 100) / 100) + '</div>';
-    html += '<div style="font-size:10px;color:#999;">' + est.ratioSource + ' · ' + est.momentumNote + '</div>';
+    if (est.estimate) {
+        html += '<div style="font-size:16px;font-weight:bold;color:#e65100;">' + toEok(String(est.estimate)) + '</div>';
+        html += '<div style="font-size:10px;color:#999;margin-top:2px;">기준 전세 ' + toEok(String(est.baseRentDeposit)) + ' ('
+            + est.baseRentDate + ') × 126% × 보정비율 ' + (Math.round(est.ratio * 100) / 100) + '</div>';
+        html += '<div style="font-size:10px;color:#999;">' + est.ratioSource + ' · ' + est.momentumNote + '</div>';
+    } else {
+        html += '<div style="font-size:11px;color:#999;">' + (est.noDataReason || '전세 데이터가 부족해 예상 거래가를 계산하지 못했습니다.') + '</div>';
+    }
     html += buildVillaRentHistoryHtml(est.rents);
     html += '</div>';
     return html;
