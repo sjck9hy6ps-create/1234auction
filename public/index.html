@@ -2391,6 +2391,62 @@ function buildCourtAuctionLinkHtml(caseNo, addr) {
         + 'border:1.5px solid #6a1b9a;border-radius:20px;padding:6px 14px;text-decoration:none;background:#f3e5f5;cursor:pointer;">'
         + '🔏 인터넷등기소 등기기록 열람 (주소 자동복사)</a></div>';
 }
+/* 경매물건 AI 추출 상세(detail)에서 "누군가에게 전달하거나 전화 문의할 때 필요한 핵심 정보"만
+   골라 텍스트 한 덩어리로 묶어 클립보드에 복사하는 기능.
+   포함 항목: 법원 연락처, 사건번호, 처분방식, 특수조건, 주의사항, 말소기준등기, 임차인현황, 권리분석요약. */
+function buildCourtInfoSummaryText(detail) {
+    if (!detail) return '';
+    function won(v) {
+        if (v === null || v === undefined || v === '') return '';
+        return toEok(String(Math.round(v / 10000)));
+    }
+    var lines = [];
+    var courtLine = [detail.court, detail.courtTel].filter(Boolean).join(' · ');
+    if (courtLine) lines.push('【법원】 ' + courtLine);
+    if (detail.caseNo) lines.push('【사건번호】 ' + detail.caseNo);
+    if (detail.disposalMethod) lines.push('【처분방식】 ' + detail.disposalMethod);
+    if (detail.specialConditions) lines.push('【특수조건】 ' + detail.specialConditions);
+    if (detail.caseCautions) lines.push('【주의사항】 ' + detail.caseCautions);
+    var baseRight = [detail.baseRightType, detail.baseRightDate, detail.baseRightHolder].filter(Boolean).join(' · ');
+    if (baseRight) lines.push('【말소기준등기】 ' + baseRight);
+    if (detail.tenantOccupants && detail.tenantOccupants.length) {
+        lines.push('【임차인현황】');
+        detail.tenantOccupants.forEach(function(t) {
+            if (typeof t === 'string') { lines.push('- ' + t); return; }
+            var parts = [t.name || '임차인'];
+            if (t.occupancyPart) parts.push(t.occupancyPart);
+            if (t.hasStanding === true) parts.push('대항력 있음');
+            else if (t.hasStanding === false) parts.push('대항력 없음');
+            if (t.deposit) parts.push('보증금 ' + won(t.deposit));
+            if (t.rent) parts.push('차임 ' + won(t.rent) + '/월');
+            if (t.note) parts.push(t.note);
+            lines.push('- ' + parts.join(' / '));
+        });
+    } else if (detail.tenantNote) {
+        lines.push('【임차인현황】 ' + detail.tenantNote);
+    }
+    if (detail.riskSummary) lines.push('【권리분석요약】 ' + detail.riskSummary);
+    return lines.join('\n');
+}
+function copyCourtInfoSummary(b64) {
+    var text;
+    try {
+        text = decodeURIComponent(escape(atob(b64)));
+    } catch (e) {
+        alert('복사할 법원정보가 없습니다.');
+        return;
+    }
+    if (!text) { alert('복사할 법원정보가 없습니다.'); return; }
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(text).then(function() {
+            alert('법원정보가 복사되었습니다.');
+        }).catch(function() {
+            alert('자동 복사에 실패했습니다. 아래 내용을 직접 복사해 주세요:\n\n' + text);
+        });
+    } else {
+        alert('자동 복사에 실패했습니다. 아래 내용을 직접 복사해 주세요:\n\n' + text);
+    }
+}
 function setTypeFilter(type, btn) {
     currentTypeFilter = type;
     document.querySelectorAll('.type-btn').forEach(function(b) {
@@ -3971,6 +4027,8 @@ async function parseAuctionPaste() {
         // (지번주소 문자열에 층/호수가 섞여 있으면 카카오 검색이 실패하거나 다른 곳을 찾을 수 있어서)
         var geoQuery = (d.dong && d.bunji) ? (d.dong + ' ' + d.bunji) : addrForInput;
         var addrToSearch = geoQuery.trim();
+        // 서버가 준 정합성/교차검증 경고에, 클라이언트에서만 확인 가능한 "주소 인식 실패" 경고를 더함
+        var warnings = (d.warnings || []).slice();
         if (addrToSearch) {
             await new Promise(function(resolve) {
                 geocoder.addressSearch(addrToSearch, function(result, status) {
@@ -3987,6 +4045,8 @@ async function parseAuctionPaste() {
                         // a-addr 입력칸의 주소 키로 캐시해야 saveAuction()에서 찾아 쓸 수 있음
                         var addrKey = document.getElementById('a-addr').value.trim();
                         auctionCoordCache[addrKey] = { lat: parseFloat(r.y), lon: parseFloat(r.x), label: label, dong: dong, bunji: bunji };
+                    } else {
+                        warnings.push('주소("' + addrToSearch + '") 좌표를 찾지 못했습니다. 주소 표기를 직접 확인해 주세요.');
                     }
                     resolve();
                 });
@@ -3994,7 +4054,13 @@ async function parseAuctionPaste() {
         }
         autoCalcRepairSilent(); calcCompValuation(); calcMargin(); loadAuctionBuildingInfo(); autoCalcAuctionJeonseAnalysis();
         clearAuctionImages();
-        alert('자동 추출 완료! 내용을 확인하고 저장해 주세요.');
+        if (warnings.length) {
+            alert('자동 추출 완료 (확인이 필요한 항목이 있어요):\n\n'
+                + warnings.map(function(w) { return '⚠️ ' + w; }).join('\n')
+                + '\n\n내용을 확인하고 저장해 주세요.');
+        } else {
+            alert('자동 추출 완료! 내용을 확인하고 저장해 주세요.');
+        }
     } catch (e) {
         alert('자동 추출 중 오류: ' + e.message);
     } finally {
@@ -4457,8 +4523,26 @@ function buildAuctionDetailHtml(detail) {
     if (detail.specialConditions) {
         html += row('특수조건', '<span style="color:#e53935;font-weight:bold;">' + detail.specialConditions + '</span>');
     }
- 
+    if (detail.caseCautions) {
+        html += row('주의사항', '<span style="color:#e53935;font-weight:bold;">' + detail.caseCautions + '</span>');
+    }
+
     html += row('법원', [detail.court, detail.courtTel].filter(Boolean).join(' · '));
+    var courtInfoText = buildCourtInfoSummaryText(detail);
+    if (courtInfoText) {
+        var courtInfoB64 = btoa(unescape(encodeURIComponent(courtInfoText)));
+        html += '<div style="text-align:right;margin:2px 0 6px;">'
+            + '<button type="button" class="modal-btn btn-gray" style="font-size:10.5px;padding:4px 10px;" '
+            + 'onclick="copyCourtInfoSummary(\'' + courtInfoB64 + '\')">📋 법원정보 복사</button></div>';
+    }
+    if (detail.warnings && detail.warnings.length) {
+        html += '<div style="background:#fff8e1;border:1px solid #ffca28;border-radius:6px;padding:6px 8px;margin:4px 0 8px;">'
+            + '<div style="font-size:10.5px;font-weight:bold;color:#f57f17;margin-bottom:3px;">⚠️ AI 추출값 확인 필요</div>'
+            + detail.warnings.map(function(w) {
+                return '<div style="font-size:10.5px;color:#795548;padding:1px 0;">· ' + w + '</div>';
+            }).join('')
+            + '</div>';
+    }
     html += row('물건종류/경매종류', [detail.propertyType, detail.auctionType].filter(Boolean).join(' · '));
     html += row('개시결정일', detail.decisionDate);
     html += row('배당요구종기일', detail.distributionDeadline);
