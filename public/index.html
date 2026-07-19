@@ -526,6 +526,7 @@ tr:hover td { background:#fffde7; }
             <div style="margin-top:6px;text-align:right;">
                 <button class="modal-btn btn-purple" id="a-parse-btn" onclick="parseAuctionPaste()">텍스트/이미지에서 자동 추출</button>
             </div>
+            <div id="a-ai-summary-box"></div>
         </div>
         <div class="modal-section">
             <div class="modal-section-title">📍 물건 정보</div>
@@ -2916,6 +2917,7 @@ function openAuctionModal(id) {
     document.getElementById('registry-result-box').innerHTML = '';
     document.getElementById('a-building-info-box').innerHTML = '';
     document.getElementById('jeonse-analysis-box').innerHTML = '';
+    document.getElementById('a-ai-summary-box').innerHTML = '';
     if (isEdit) {
         var a = auctionList.find(function(x) { return x.id === id; });
         if (a) {
@@ -2925,6 +2927,7 @@ function openAuctionModal(id) {
             pendingRegistryAnalysis = a.registryAnalysis || null;
             currentChecklist = a.checklist ? Object.assign({}, a.checklist) : {};
             renderRegistryAnalysis();
+            renderAiSummaryBox();
             document.getElementById('a-paste-text').value = a.rawText || '';
             document.getElementById('auction-id').value    = a.id || '';
             document.getElementById('a-addr').value        = a.addr || '';
@@ -3833,10 +3836,55 @@ function buildAuctionPanelHtml(aptName, aptDong, aptBunji) {
                 + '<span style="color:#9e9e9e;font-size:10px;">메모</span><br>' + a.memo.replace(/\n/g,'<br>') + '</div>';
         } else { html += '</div>'; }
         html += '</div>';
+        // 경매정보 탭(=이 함수)은 매칭된 건물의 패널 안에서 읽기전용으로 보여주는 화면이라,
+        // 입력칸(a-my-bid 등)이 있는 편집모달 전용인 calcMargin()을 그대로 쓸 수 없었음 -
+        // 그래서 저장된 값(a.myBid 등)만으로 계산하는 정적 버전을 따로 만들어 붙임
+        // (매매기록 없는 단독 경매물건은 편집모달을 직접 여니 원래도 마진분석이 보였음)
+        html += buildMarginSummaryHtml(a);
         html += buildAuctionDetailHtml(a.detail);
         html += buildOfficialPriceLookupHtml(a);
         html += buildNaverLinkHtml(a.lat, a.lon, a.detail && a.detail.addrJibun, '');
     });
+    return html;
+}
+/* buildAuctionPanelHtml(읽기전용 탭)에서 쓰는 정적 예상마진 요약 - calcMargin()과 계산식은
+   동일하지만 DOM 입력칸이 아니라 저장된 경매물건 객체(a)의 값을 그대로 사용함. */
+function buildMarginSummaryHtml(a) {
+    var myBid = parseInt(a.myBid) || 0;
+    var actBid = parseInt(a.actualBid) || 0;
+    var useBid = actBid || myBid;
+    var target = parseInt(a.target) || 0;
+    var actSell = parseInt(a.actualSell) || 0;
+    var useSell = actSell || target;
+    if (!useBid && !useSell) return ''; // 입찰가/목표매도가를 아직 하나도 안 정했으면 보여줄 게 없음
+    var tax = parseInt(a.tax) || 0;
+    var registryFee = parseInt(a.registryFee) || 0;
+    var evictionFee = parseInt(a.evictionFee) || 0;
+    var repair = parseInt(a.repair) || 0;
+    var agent = parseInt(a.agent) || 0;
+    var etc = parseInt(a.etc) || 0;
+    var appraisal = parseInt(a.appraisal) || 0;
+    var feesSum = tax + registryFee + evictionFee + repair + agent + etc;
+    var totalCost = useBid + feesSum;
+    var margin = useSell > 0 ? useSell - totalCost : 0;
+    var roi = (totalCost > 0 && useSell > 0) ? Math.round(margin / totalCost * 1000) / 10 : 0;
+    var apprRate = (appraisal > 0 && useBid > 0) ? Math.round(useBid / appraisal * 1000) / 10 : 0;
+    function mItem(label, value, color) {
+        return '<div class="margin-item"><div class="margin-label">' + label + '</div>'
+            + '<div class="margin-value" style="color:' + color + ';">' + value + '</div></div>';
+    }
+    var html = '<div class="indicator-box"><div class="indicator-title">💰 예상마진 분석 (저장된 값 기준)</div>';
+    html += '<div class="margin-grid">'
+        + mItem(actBid ? '실제 낙찰가' : '내 입찰가', useBid > 0 ? toEok(String(useBid)) : '—', '#1a237e')
+        + mItem('총 투자비용', totalCost > 0 ? toEok(String(totalCost)) : '—', '#555')
+        + mItem('총 부대비용', feesSum > 0 ? toEok(String(feesSum)) : '—', '#888')
+        + mItem(actSell ? '실제 수익' : '예상 수익', useSell > 0 ? toEok(String(margin)) : '—', margin > 0 ? '#2e7d32' : margin < 0 ? '#e53935' : '#555')
+        + mItem('수익률', useSell > 0 ? roi + '%' : '—', roi > 10 ? '#2e7d32' : roi > 0 ? '#ff7043' : '#e53935')
+        + mItem('낙찰률', apprRate > 0 ? apprRate + '%' : '—', apprRate < 80 ? '#2e7d32' : apprRate < 90 ? '#ff7043' : '#e53935')
+        + mItem('손익분기 매도가', totalCost > 0 ? toEok(String(totalCost)) : '—', '#1565c0')
+        + '</div>';
+    html += '<div style="font-size:10px;color:#aaa;margin-top:6px;">저장된 값을 기준으로 한 요약이며, 값을 바꾸려면 위 "수정" 버튼을 눌러주세요.</div>';
+    html += '</div>';
     return html;
 }
 /* ════════════════════════════════════
@@ -4407,6 +4455,13 @@ function renderRegistryAnalysis() {
     html += '</div>';
     box.innerHTML = html;
 }
+// AI 자동추출된 경매정보 스토리텔링 요약을 모달 내부에도 표시 (매매기록 유무와 무관하게 항상 보이도록)
+function renderAiSummaryBox() {
+    var box = document.getElementById('a-ai-summary-box');
+    if (!box) return;
+    if (!pendingAuctionDetail) { box.innerHTML = ''; return; }
+    box.innerHTML = '<div style="margin-top:10px;">' + buildAuctionDetailHtml(pendingAuctionDetail) + '</div>';
+}
 // ── 캡처 이미지에서 자동추출 (복사 방지 페이지 대응) ──
 // 원본을 그대로 올리면 Vercel 요청 크기 제한에 걸리기 쉬워서, 캔버스로 리사이즈(최대 가로 1400px) +
 // JPEG 재압축(품질 0.82) 후 base64로 변환한다. 여러 장(5페이지 분량 등)을 첨부해도 되고,
@@ -4549,6 +4604,7 @@ async function parseAuctionPaste() {
             });
         }
         autoCalcRepairSilent(); calcCompValuation(); calcMargin(); loadAuctionBuildingInfo(); autoCalcAuctionJeonseAnalysis();
+        renderAiSummaryBox();
         clearAuctionImages();
         if (warnings.length) {
             alert('자동 추출 완료 (확인이 필요한 항목이 있어요):\n\n'
