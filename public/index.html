@@ -448,6 +448,7 @@ tr:hover td { background:#fffde7; }
         <button class="filter-tab ft-common" onclick="toggleRecentYearOnly(this)">최근1년 거래만</button>
         <button class="filter-tab ft-common" onclick="toggleCompOnlyFilter(this)">📌 비교대상만</button>
         <button class="filter-tab ft-common" id="boundary-toggle-btn" onclick="toggleDongBoundaryMode(this)">🗺️ 법정동 경계선</button>
+        <button class="filter-tab ft-common" id="rentonly-toggle-btn" onclick="toggleShowRentOnly(this)">🏠 전세거래만 있는 주소</button>
     </div>
 </div>
 <div id="dong-boundary-info" style="display:none;position:absolute;top:60px;left:50%;transform:translateX(-50%);z-index:50;background:rgba(0,0,0,0.75);color:white;font-size:12px;font-weight:bold;padding:5px 12px;border-radius:14px;pointer-events:none;"></div>
@@ -931,6 +932,9 @@ var activeSurgeRanks = new Set();
 var recentYearOnly = false;
 var comparableIndex = {};
 var compOnlyFilter = false;
+// 매매기록 없이 전세거래만 있던 주소지(rentOnly 건물)는 평소엔 지도에서 숨겨두고,
+// 이 필터를 켰을 때만 보이게 함 (기본값 false = 숨김 = "필요할 때만" 보기)
+var showRentOnlyFilter = false;
 /* 경매물건 비교물건으로 등록된 거래를 역인덱싱 (키: 이름|날짜|금액 → 등록된 경매 목록)
    비교물건 저장 시 name/date/amount로 dedup 체크하던 것과 동일한 키 형식을 사용함 */
 function computeComparableIndex() {
@@ -969,6 +973,11 @@ function getAptComparableRefs(apt) {
 }
 function toggleCompOnlyFilter(btn) {
     compOnlyFilter = !compOnlyFilter;
+    btn.classList.toggle('active');
+    redrawMarkers();
+}
+function toggleShowRentOnly(btn) {
+    showRentOnlyFilter = !showRentOnlyFilter;
     btn.classList.toggle('active');
     redrawMarkers();
 }
@@ -1914,6 +1923,8 @@ function isAptVisibleUnderCurrentFilters(apt) {
     if (!apt) return false;
     // 단독/다가구는 placeMarkers가 지오코딩 자체를 시도하지 않아 지도에 마커가 만들어지지 않음
     if (apt.buildingType === 'single') return false;
+    // 매매기록 없이 전세거래만 있던 주소지는 "전세거래만 있는 주소" 필터를 켰을 때만 보여줌
+    if (apt.rentOnly && !showRentOnlyFilter) return false;
     if (currentTypeFilter === 'apt') {
         if (apt.buildingType !== 'apt') return false;
         if (recentYearOnly && !hasRecentYearTrade(apt)) return false;
