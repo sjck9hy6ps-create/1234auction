@@ -466,9 +466,9 @@ tr:hover td { background:#fffde7; }
     </div>
     <div id="legend-body">
     <div id="data-coverage-box" style="border-bottom:1px solid #eee;margin-bottom:6px;padding-bottom:6px;"></div>
-    <div><span class="legend-dot" style="background:#e53935;"></span> 최근 3개월 거래</div>
-    <div><span class="legend-dot" style="background:#1565c0;"></span> 3개월~1년 거래</div>
-    <div><span class="legend-dot" style="background:#9e9e9e;"></span> 1년 이상</div>
+    <div><span class="legend-dot" style="background:#e53935;"></span> <span id="legend-recent-label">최근 3개월 거래</span></div>
+    <div><span class="legend-dot" style="background:#1565c0;"></span> <span id="legend-past-label">3개월~1년 거래</span></div>
+    <div><span class="legend-dot" style="background:#9e9e9e;"></span> 그 이전</div>
     <div style="border-top:1px solid #eee;margin-top:4px;padding-top:4px;">
         <div style="font-size:11px;color:#555;font-weight:bold;margin-bottom:3px;">평단가 등급 (구 내 상대순위)</div>
         <div style="display:flex;gap:3px;flex-wrap:wrap;align-items:center;font-size:11px;">
@@ -821,6 +821,9 @@ var sixMonAgo    = daysAgo(180);
 var oneYearAgo   = daysAgo(365);
 var twoYearAgo   = daysAgo(730);
 var threeYearAgo = daysAgo(1095);
+// 연립다세대·단독다가구의 "과거 거래" 구간은 1년 롤링이 아니라 전년도(작년) 1/1까지로 고정
+// (예: 오늘이 2026-07-19면 과거거래 = 2025-01-01 ~ 2026-01-19(6개월 전), 2024년 이전은 표시 안 함)
+var prevYearStart = new Date(today.getFullYear() - 1, 0, 1);
 var fourMonAgo  = (function() { var d = new Date(); d.setMonth(d.getMonth() - 4); d.setHours(0,0,0,0); return d; })();
 var fiveYearAgo = (function() { var d = new Date(); d.setFullYear(d.getFullYear() - 5); d.setHours(0,0,0,0); return d; })();
 var eightYearAgo = (function() { var d = new Date(); d.setFullYear(d.getFullYear() - 8); d.setHours(0,0,0,0); return d; })();
@@ -1610,17 +1613,23 @@ function groupDBRows(rows, sigungu, lawdCd) {
         trades.sort(function(a, b) {
             return (b.year*10000 + b.month*100 + b.day) - (a.year*10000 + a.month*100 + a.day);
         });
+        var bt = trades[0].buildingType;
+        // 아파트는 최근 3개월/과거 3개월~1년(롤링) 기준을 그대로 유지하고,
+        // 연립다세대·단독다가구는 최근 6개월/과거 6개월~전년도(달력기준) 기준을 사용함
+        var isVilla = bt !== 'apt';
+        var recentCut = isVilla ? sixMonAgo : threeMonAgo;
+        var pastFloor = isVilla ? prevYearStart : oneYearAgo;
         return {
             latest: trades[0],
             trades: trades,
             lawdCd: lawdCd,
-            buildingType: trades[0].buildingType,
+            buildingType: bt,
             grade: null, ppp: 0, indicators: null, investScore: null,
             disqualified: false, dqReason: '', scoreBreakdown: {},
             hasNewHigh: false, newHighPyungs: [],
-            count3M: trades.filter(function(t) { return tradeDate(t) >= threeMonAgo; }).length,
+            count3M: trades.filter(function(t) { return tradeDate(t) >= recentCut; }).length,
             count3MTo1Y: trades.filter(function(t) {
-                var d = tradeDate(t); return d < threeMonAgo && d >= oneYearAgo;
+                var d = tradeDate(t); return d < recentCut && d >= pastFloor;
             }).length,
         };
     });
@@ -1906,16 +1915,27 @@ function createMarker(cacheKey, lat, lon, apt) {
     var popBadge = buildPopularPyeongBadge(apt);
     // 경매 비교물건 배지 (이 마커의 거래가 어떤 경매물건의 비교물건으로 등록돼 있으면 사건번호 표시)
     var compBadge = buildComparableBadgeHtml(apt);
+    // 이 주소에 등록된 경매물건이 있으면(=이미 이 자리에 일반 거래 마커가 있어서 별도 경매 마커를
+    // 만들지 않은 경우) 지도에서도 바로 알아볼 수 있도록 이 마커 자체를 강조 표시함
+    var matchedAuction = auctionList.find(function(a) { return matchesAuctionKey(a, l.name, l.dong, l.bunji); });
+    var auctionRibbon = matchedAuction
+        ? '<div class="auction-badge" style="background:' + (STATUS_COLOR[matchedAuction.status] || '#6a1b9a') + ';">🔨 경매 · ' + matchedAuction.status + '</div>'
+        : '';
     var mKey = 'mk' + (markerDataSeq++);
-    markerDataRegistry[mKey] = { apt: apt, lat: lat, lon: lon, div: div };
     var div = document.createElement('div');
+    markerDataRegistry[mKey] = { apt: apt, lat: lat, lon: lon, div: div };
     // 매매 실거래가 없어 전세가 기반으로 추정한 등급 마커는 테두리를 점선으로 구분
     var borderStyle = apt.gradeEstimated ? 'dashed' : 'solid';
-    div.style.cssText = 'position:relative;background:white;border:2px ' + borderStyle + ' ' + color + ';border-radius:8px;'
-        + 'padding:6px 10px;white-space:nowrap;cursor:pointer;'
-        + 'box-shadow:0 2px 6px rgba(0,0,0,0.13);text-align:center;line-height:1.35;max-width:220px;';
+    div.style.cssText = matchedAuction
+        ? 'position:relative;background:linear-gradient(180deg,#fff,#fff7ec);border:3px solid #e65100;border-radius:9px;'
+            + 'padding:6px 10px;margin-top:10px;white-space:nowrap;cursor:pointer;transform:scale(1.1);'
+            + 'text-align:center;line-height:1.35;max-width:230px;animation:auctionGlow 1.8s ease-in-out infinite;'
+        : 'position:relative;background:white;border:2px ' + borderStyle + ' ' + color + ';border-radius:8px;'
+            + 'padding:6px 10px;white-space:nowrap;cursor:pointer;'
+            + 'box-shadow:0 2px 6px rgba(0,0,0,0.13);text-align:center;line-height:1.35;max-width:220px;';
     div.setAttribute('onclick', 'handleAptMarkerClick(\'' + mKey + '\')');
     div.innerHTML = ''
+        + auctionRibbon
         + (count > 0 ? '<div style="font-size:15px;font-weight:900;color:' + color + ';">' + count + '건</div>' : '')
         + '<div style="font-size:13px;font-weight:bold;color:#333;overflow:hidden;text-overflow:ellipsis;">'
          +   (l.name || '') + gradeBadge + nhBadge + surgeBadge
@@ -1929,10 +1949,11 @@ function createMarker(cacheKey, lat, lon, apt) {
         position: new kakao.maps.LatLng(lat, lon),
         content: div,
         yAnchor: 1.2,
+        zIndex: matchedAuction ? 9999 : 1,
         clickable: true
     });
     overlay.setMap(map);
-    markers[cacheKey] = { overlay: overlay, mKey: mKey };
+    markers[cacheKey] = { overlay: overlay, mKey: mKey, hasAuctionRibbon: !!matchedAuction };
 }
  
 /* 마커 배지끼리 화면상 겹쳐서 아래쪽 배지를 클릭할 방법이 없는 문제 대응:
@@ -2015,7 +2036,17 @@ function setTypeFilter(type, btn) {
         b.classList.remove('active-all', 'active-apt', 'active-villa');
     });
     btn.classList.add(type === 'villa' ? 'active-villa' : 'active-apt');
+    updateLegendLabels();
     redrawMarkers();
+}
+// 연립다세대·단독다가구는 최근/과거 거래 기준(6개월/전년도)이 아파트(3개월/1년)와 달라서
+// 범례 문구도 현재 선택된 타입에 맞춰 바꿔줌
+function updateLegendLabels() {
+    var isVilla = currentTypeFilter === 'villa';
+    var recentEl = document.getElementById('legend-recent-label');
+    var pastEl = document.getElementById('legend-past-label');
+    if (recentEl) recentEl.innerText = isVilla ? '최근 6개월 거래' : '최근 3개월 거래';
+    if (pastEl) pastEl.innerText = isVilla ? '6개월~전년도 거래' : '3개월~1년 거래';
 }
 function searchAddress() {
     var query = document.getElementById('addr-input').value.trim();
@@ -2379,6 +2410,18 @@ function openIrosRegistry(addrArg) {
         alert('주소: ' + addr + ' (자동 복사 실패 - 직접 입력해주세요)\n\n' + guide);
     }
 }
+/* 외국인 임차인이 있으면 전입세대열람에는 나타나지 않고, 대신 출입국·외국인정책본부의
+   하이코리아(HiKorea)에서 "외국인등록사실증명"을 발급받아 대항력 판단 기준일(외국인등록일)을
+   확인해야 함. 임차인 본인 정보가 필요해 딥링크는 불가능하므로 홈으로 안내만 함. */
+function openHikoreaLookup() {
+    var url = 'https://www.hikorea.go.kr/';
+    window.open(url, '_blank', 'noopener');
+    alert('새로 열린 하이코리아(HiKorea)에서:\n\n'
+        + '1) 상단 메뉴 [민원서비스] → [사실증명 발급] → [외국인등록사실증명]\n'
+        + '2) 임차인의 외국인등록번호로 조회 (임차인 본인 인증 필요)\n'
+        + '3) 외국인등록일이 대항력 판단 기준일이 됨(내국인의 전입신고일에 대응)\n\n'
+        + '※ 임차인 본인이 아니면 발급이 제한될 수 있어, 현장에서 임차인에게 직접 제시를 요청하는 편이 실무상 더 빠릅니다.');
+}
 function buildCourtAuctionLinkHtml(caseNo, addr) {
     if (!caseNo) return '';
     var addrJs = (addr || '').replace(/'/g, "\\'");
@@ -2491,7 +2534,17 @@ function setTypeFilter(type, btn) {
         b.classList.remove('active-all', 'active-apt', 'active-villa');
     });
     btn.classList.add(type === 'villa' ? 'active-villa' : 'active-apt');
+    updateLegendLabels();
     redrawMarkers();
+}
+// 연립다세대·단독다가구는 최근/과거 거래 기준(6개월/전년도)이 아파트(3개월/1년)와 달라서
+// 범례 문구도 현재 선택된 타입에 맞춰 바꿔줌
+function updateLegendLabels() {
+    var isVilla = currentTypeFilter === 'villa';
+    var recentEl = document.getElementById('legend-recent-label');
+    var pastEl = document.getElementById('legend-past-label');
+    if (recentEl) recentEl.innerText = isVilla ? '최근 6개월 거래' : '최근 3개월 거래';
+    if (pastEl) pastEl.innerText = isVilla ? '6개월~전년도 거래' : '3개월~1년 거래';
 }
 function setPyung(pyung, btn) {
     currentPyung = pyung;
@@ -2682,11 +2735,16 @@ function renderAuctionList() {
     var html = '';
     auctionList.slice().reverse().forEach(function(a) {
         var sc = STATUS_COLOR[a.status] || '#9e9e9e';
+        // 지오코딩(주소→좌표 변환)에 실패해 지도에 배지가 아예 안 뜨는 경우를 여기서 바로 알 수 있도록 표시
+        var noPin = (!a.lat || !a.lon)
+            ? '<div class="auction-list-sub" style="color:#e53935;font-weight:bold;">⚠️ 주소를 지도 좌표로 찾지 못해 지도에 배지가 표시되지 않습니다 - 주소를 확인해 주세요.</div>'
+            : '';
         html += '<div class="auction-list-item" onclick="openAuctionModal(\'' + a.id + '\')">'
             + '<div class="auction-list-name">' + ((a.name && a.name.trim()) || a.addrLabel || a.addr || '(이름없음)')
             + '<span class="auction-status-badge" style="background:' + sc + ';color:white;">' + a.status + '</span></div>'
             + '<div class="auction-list-sub">' + (a.addr || '주소 미입력') + '</div>'
             + '<div class="auction-list-sub" style="color:#6a1b9a;">입찰가 ' + (a.myBid ? toEok(String(parseInt(a.myBid))) : '-') + '</div>'
+            + noPin
             + '</div>';
     });
     body.innerHTML = html;
@@ -3438,10 +3496,22 @@ function renderAuctionMarkers() {
         neededIds[a.id] = true;
         if (a.lat && a.lon) { upsertAuctionMarker(a); }
         else if (a.addr) {
+            // 1순위: 정식 주소 검색. 지번/도로명 형식이 조금이라도 다르면 실패할 수 있어서
+            // 일반 매물 지오코딩과 동일하게 2순위로 키워드(단지명 등) 검색까지 시도함 -
+            // 이게 없으면 주소 형식이 안 맞는 경매물건은 지도에 배지가 영영 안 뜨고 원인도 알 수 없었음
             geocoder.addressSearch(a.addr, function(result, status) {
-                if (status === kakao.maps.services.Status.OK) {
+                if (status === kakao.maps.services.Status.OK && result && result.length > 0) {
                     a.lat = parseFloat(result[0].y); a.lon = parseFloat(result[0].x);
-                    saveAuctionAPI(a); upsertAuctionMarker(a);
+                    saveAuctionAPI(a); upsertAuctionMarker(a); renderAuctionList();
+                } else if (places) {
+                    places.keywordSearch(a.addr, function(res, st) {
+                        if (st === kakao.maps.services.Status.OK && res && res.length > 0) {
+                            a.lat = parseFloat(res[0].y); a.lon = parseFloat(res[0].x);
+                            saveAuctionAPI(a); upsertAuctionMarker(a); renderAuctionList();
+                        }
+                        // 두 방식 모두 실패하면 a.lat/a.lon이 계속 비어있고,
+                        // 경매목록 패널(renderAuctionList)에 "⚠️ 지도에 표시되지 않음" 경고로 드러남
+                    });
                 }
             });
         }
@@ -3453,6 +3523,44 @@ function renderAuctionMarkers() {
             delete auctionMarkers[id];
             delete auctionMarkerSigs[id];
         }
+    });
+    // 일반 거래 마커가 경매 등록 "이전"에 이미 지도에 그려져 캐시된 상태였다면
+    // (markers는 한번 생성되면 pan/zoom으로 화면을 벗어났다 돌아오기 전까진 재사용되므로)
+    // 경매 강조 리본이 안 붙은 채로 남아있을 수 있음 - 매칭된 건물의 마커만 골라 새로 그려서 갱신함
+    refreshMatchedAuctionMarkers();
+}
+/* 경매물건과 매칭된 일반 거래 마커를 강제로 다시 그려서(캐시 무효화) 🔨 강조 리본이
+   항상 최신 상태로 보이도록 함 - 등록/수정/삭제 직후에도 지도를 다시 움직이지 않고 바로 반영됨 */
+function refreshMatchedAuctionMarkers() {
+    // 1) 경매와 매칭됐는데 아직 강조 리본이 없는 마커 → 다시 그려서 리본을 붙임
+    auctionList.forEach(function(a) {
+        var matched = findMatchedApt(a);
+        if (!matched) return;
+        var l = matched.latest || {};
+        var cacheKey = [l.dong, l.name, l.bunji, l.road_name, l.main_num, l.sub_num].join('|').toLowerCase();
+        var existing = markers[cacheKey];
+        if (!existing) return; // 아직 화면에 없는 건물이면 다음 redrawMarkers 때 자연히 반영됨
+        if (existing.hasAuctionRibbon) return; // 이미 붙어있으면 다시 그릴 필요 없음(깜빡임 방지)
+        var coord = coordCache[cacheKey];
+        if (!coord) return;
+        existing.overlay.setMap(null);
+        delete markerDataRegistry[existing.mKey];
+        delete markers[cacheKey];
+        createMarker(cacheKey, coord.lat, coord.lon, matched);
+    });
+    // 2) 리본이 붙어있었는데 경매물건 삭제/수정으로 더 이상 매칭되지 않는 마커 → 리본을 떼고 다시 그림
+    Object.keys(markers).forEach(function(cacheKey) {
+        var existing = markers[cacheKey];
+        if (!existing.hasAuctionRibbon) return;
+        var data = markerDataRegistry[existing.mKey];
+        if (!data || !data.apt) return;
+        var l = data.apt.latest || {};
+        var stillMatched = auctionList.some(function(a) { return matchesAuctionKey(a, l.name, l.dong, l.bunji); });
+        if (stillMatched) return;
+        existing.overlay.setMap(null);
+        delete markerDataRegistry[existing.mKey];
+        delete markers[cacheKey];
+        createMarker(cacheKey, data.lat, data.lon, data.apt);
     });
 }
 function placeAuctionMarker(a) {
@@ -4259,7 +4367,9 @@ function buildRightsAnalysisHtml(detail, sectionLabel, row) {
 ════════════════════════════════════ */
 var CHECKLIST_DEF = [
     { title: '1. 등기부등본 재확인 (입찰 직전 필수)', items: [
-        '대법원 인터넷등기소에서 등기부등본을 새로 열람·발급했다 (경매정보지 등기부는 신뢰하지 않는다).',
+        '대법원 인터넷등기소에서 등기부등본을 새로 열람·발급했다 (경매정보지 등기부는 신뢰하지 않는다). '
+            + '<a href="javascript:void(0)" onclick="event.preventDefault();event.stopPropagation();openIrosRegistry();" '
+            + 'style="color:#1a237e;font-weight:bold;text-decoration:underline;white-space:nowrap;">🔗 인터넷등기소 바로가기</a>',
         '표제부 — 소재지·면적·건물내역이 물건정보와 일치하는지 확인했다.',
         '갑구 — 소유권, 압류·가압류·가등기·가처분·경매개시결정을 접수일 순서대로 나열했다.',
         '을구 — (근)저당권, 임차권등기 등을 접수일 순서대로 나열했다.',
@@ -4327,7 +4437,9 @@ var CHECKLIST_DEF = [
         '임차인이 전 소유자인지 확인했다(매매 후 임대차 전환 사례).',
         '임차인과 소유자가 가족관계인지 확인했다 — 이혼한 배우자는 대항력이 인정되지 않는다.',
         '국토교통부 실거래가 공개시스템에서 과거 전월세 신고 이력을 대조했다.',
-        '외국인 임차인 여부를 확인했다 — 전입세대열람에 나타나지 않으므로 반드시 임장으로 확인한다.',
+        '외국인 임차인 여부를 확인했다 — 전입세대열람에 나타나지 않으므로 반드시 임장으로 확인한다. '
+            + '<a href="javascript:void(0)" onclick="event.preventDefault();event.stopPropagation();openHikoreaLookup();" '
+            + 'style="color:#00695c;font-weight:bold;text-decoration:underline;white-space:nowrap;">🔗 외국인체류확인서 발급 바로가기</a>',
         '최우선변제를 노린 위조 계약 정황(근저당 설정 직후 계약인데 대항력 주장 등)이 있는지 확인했다.',
     ], warn: { title: '상가는 특히 주의', lines: [
         '경매정보지가 제공하는 상가 보증금·월세를 그대로 믿지 말 것 — 시세 대비 차이가 크면 통정허위계약 가능성.',
@@ -4467,7 +4579,9 @@ var SITE_VISIT_CHECKLIST = [
     { title: '✅ 반드시 임장을 가야 확인되는 항목', items: [
         '유치권 신고가 있다면 현장에서 실제 점유·공사 흔적 등 성립 요건을 확인했다.',
         '(토지의 경우) 분묘 존재 여부를 현장에서 확인했다.',
-        '외국인 임차인 여부를 확인했다 — 전입세대열람에 나타나지 않으므로 반드시 임장으로 확인한다.',
+        '외국인 임차인 여부를 확인했다 — 전입세대열람에 나타나지 않으므로 반드시 임장으로 확인한다. '
+            + '<a href="javascript:void(0)" onclick="event.preventDefault();event.stopPropagation();openHikoreaLookup();" '
+            + 'style="color:#00695c;font-weight:bold;text-decoration:underline;white-space:nowrap;">🔗 외국인체류확인서 발급 바로가기</a>',
         '전입세대열람 결과와 현장 점유 상태(실제 거주 여부)가 일치하는지 확인했다.',
         '건물의 입지·보존상태·하자 여부를 육안으로 확인했다.',
         '공인중개사 3곳 이상에서 실제 시세를 확인했다.',
@@ -5735,7 +5849,10 @@ function saveCoordToDB(cacheKey, lat, lon, sigunguCd, bjdongCd) {
    동(읍면동/법정동) 단위 단기 거래량 급등 순위
 ════════════════════════════════════ */
 function buildDongSurgeRanking(type) {
-    var map = {}; // dong -> { region, dong, c3m, c1y, c3y }
+    // 연립다세대·단독다가구(villa)는 아파트보다 거래가 뜸해서 단기 구간을 6개월로 넓혀서 봄
+    // (일반 거래배지/과거거래 기준 변경과 동일한 맥락)
+    var isVilla = type === 'villa';
+    var map = {}; // dong -> { region, dong, c3m, c6m, c1y, c3y }
     allAptList.forEach(function(apt) {
         if (type && apt.buildingType !== type) return;
         (apt.trades || []).forEach(function(t) {
@@ -5743,11 +5860,12 @@ function buildDongSurgeRanking(type) {
             if (!dong) return;
             var region = (t.region || lastSigungu || '').trim();
             var key = dong;
-            if (!map[key]) map[key] = { region: region, dong: dong, c3m: 0, c1y: 0, c3y: 0 };
+            if (!map[key]) map[key] = { region: region, dong: dong, c3m: 0, c6m: 0, c1y: 0, c3y: 0 };
             else if (!map[key].region && region) map[key].region = region;
             var d = tradeDate(t);
             if (d >= threeYearAgo) map[key].c3y++;
             if (d >= oneYearAgo)  map[key].c1y++;
+            if (d >= sixMonAgo)   map[key].c6m++;
             if (d >= threeMonAgo) map[key].c3m++;
         });
     });
@@ -5755,10 +5873,10 @@ function buildDongSurgeRanking(type) {
     // 노이즈 방지: 최근 3년 누적 거래가 5건 미만인 동은 제외
     list = list.filter(function(item) { return item.c3y >= 5; });
     list.forEach(function(item) {
-        var m3  = item.c3m / 3;
+        var mShort = isVilla ? (item.c6m / 6) : (item.c3m / 3);
         var m1y = item.c1y / 12;
         var m3y = item.c3y / 36;
-        item.shortRatio = m1y > 0 ? Math.round(m3  / m1y * 1000) / 10 : null; // 단기: 3개월 vs 1년
+        item.shortRatio = m1y > 0 ? Math.round(mShort / m1y * 1000) / 10 : null; // 단기: (아파트)3개월 / (연립다세대·단독다가구)6개월 vs 1년
         item.longRatio  = m3y > 0 ? Math.round(m1y / m3y * 1000) / 10 : null; // 중장기: 1년 vs 3년
     });
     list.sort(function(a, b) {
@@ -5811,15 +5929,19 @@ function renderSurgePanel() {
         body.innerHTML = '<div style="padding:20px;text-align:center;color:#aaa;font-size:12px;">데이터가 부족합니다.<br>지도를 이동해 지역을 먼저 불러와 주세요.</div>';
         return;
     }
+    var isVilla = currentTypeFilter === 'villa';
+    var shortLabel = isVilla ? '6개월÷1년' : '3개월÷1년';
     var top = list.slice(0, 20);
     var html = '';
     top.forEach(function(item, i) {
         var shortText = item.shortRatio === null ? '-' : item.shortRatio + '%';
         var longText  = item.longRatio  === null ? '-' : item.longRatio + '%';
         var shortColor = item.shortRatio !== null && item.shortRatio >= 150 ? '#e53935' : '#555';
+        var recentCount = isVilla ? item.c6m : item.c3m;
+        var recentLabel = isVilla ? '최근6개월' : '최근3개월';
         html += '<div class="surge-item" onclick="moveToDong(\'' + item.region.replace(/'/g, "\\'") + '\',\'' + item.dong.replace(/'/g, "\\'") + '\')">'
             + '<span class="surge-rank">' + (i + 1) + '위</span> <span class="surge-dong">' + item.dong + '</span>'
-            + '<div class="surge-metric" style="color:' + shortColor + ';">단기(3개월÷1년) ' + shortText + ' · 최근3개월 ' + item.c3m + '건</div>'
+            + '<div class="surge-metric" style="color:' + shortColor + ';">단기(' + shortLabel + ') ' + shortText + ' · ' + recentLabel + ' ' + recentCount + '건</div>'
             + '<div class="surge-metric">중장기(1년÷3년) ' + longText + '</div>'
             + '</div>';
     });
