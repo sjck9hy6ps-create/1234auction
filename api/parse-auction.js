@@ -233,6 +233,24 @@ function buildPrompt(rules, text) {
   return p;
 }
 
+// 탱크옥션 등 경매정보지 상세페이지 하단에는 추출에 전혀 필요 없는 순수 UI/내비게이션성
+// 문구(학교 목록 "교육환경", 등기소·세무서·주민센터 연락처 "행정기관", 지도/거리뷰 링크
+// 모음, 면책 문구, 우측 메뉴 등)가 붙어 있는데, 물건에 따라 이 부분만 수천 자에 달해서
+// Gemini가 응답을 만드는 데 걸리는 시간이 길어지고 45초 제한에 자꾸 걸리는 원인이 됨.
+// 이런 문구가 시작되는 지점부터는 통째로 잘라내고, 그 앞의 실제로 필요한 내용(사건정보·
+// 가격·임차인·등기·매각사례·건축물정보 등)만 Gemini에 보냄.
+const TRAILING_NOISE_MARKERS = ['행정기관', '교육환경', '본 정보는 대법원 경매정보', '☰'];
+function trimAuctionText(text) {
+  if (!text) return text;
+  let cutAt = -1;
+  for (const marker of TRAILING_NOISE_MARKERS) {
+    const idx = text.indexOf(marker);
+    if (idx !== -1 && (cutAt === -1 || idx < cutAt)) cutAt = idx;
+  }
+  if (cutAt === -1) return text;
+  return text.slice(0, cutAt).trim();
+}
+
 const PROMPT_A_RULES = `
 - caseNo는 페이지 맨 위 제목에 있는 사건번호 단 하나만 쓰세요 (예: "2025타경52046"). 하단 관련물건 목록의 번호는 무시하세요.
 - addrJibun은 이 물건의 지번주소만 담으세요. 반드시 "시/도 시/군/구 동 번지"까지만 담고,
@@ -330,19 +348,29 @@ async function callGemini(apiKey, promptText, schema, imageParts, attempt) {
   attempt = attempt || 1;
   imageParts = imageParts || [];
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${apiKey}`;
-  const geminiRes = await fetch(url, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      contents: [{ parts: [{ text: promptText }, ...imageParts] }],
-      generationConfig: {
-        responseMimeType: 'application/json',
-        responseSchema: schema,
-        thinkingConfig: { thinkingLevel: 'minimal' },
-      },
-    }),
-    signal: AbortSignal.timeout(45000),
-  });
+  let geminiRes;
+  try {
+    // Vercel Hobby maxDuration이 60초라, 여유(파싱·응답조립)를 좀 남기고 52초까지 기다림
+    // (예전엔 45초였는데, 텍스트가 긴 물건은 그 안에 못 끝나 타임아웃이 잦았음)
+    geminiRes = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        contents: [{ parts: [{ text: promptText }, ...imageParts] }],
+        generationConfig: {
+          responseMimeType: 'application/json',
+          responseSchema: schema,
+          thinkingConfig: { thinkingLevel: 'minimal' },
+        },
+      }),
+      signal: AbortSignal.timeout(52000),
+    });
+  } catch (e) {
+    if (e.name === 'TimeoutError' || e.name === 'AbortError') {
+      throw new Error('AI 분석이 시간 내에 끝나지 못했습니다. 페이지 내용이 너무 길 수 있으니(특히 하단 학교·행정기관·지도 링크 등은 빼고) 필요한 부분만 남겨서 다시 시도해 주세요.');
+    }
+    throw e;
+  }
   const data = await geminiRes.json();
   if (!geminiRes.ok) {
     const status = data.error?.status || '';
@@ -391,8 +419,14 @@ export default async function handler(req, res) {
         .map((img) => ({ inline_data: { mime_type: img.mimeType || 'image/jpeg', data: img.data } }))
     : [];
 
-  const promptA = buildPrompt(PROMPT_A_RULES, text);
-  const promptB = buildPrompt(PROMPT_B_RULES, text);
+  const rawText = hasText ? String(text) : '';
+  const trimmedText = trimAuctionText(rawText);
+  if (trimmedText.length < rawText.length) {
+    console.log(`parse-auction: 하단 불필요 문구 제거 (${rawText.length}자 → ${trimmedText.length}자)`);
+  }
+
+  const promptA = buildPrompt(PROMPT_A_RULES, trimmedText);
+  const promptB = buildPrompt(PROMPT_B_RULES, trimmedText);
 
   try {
     // 스키마를 둘로 나눠 동시에 호출 - 전체 소요시간이 "둘의 합"이 아니라
