@@ -1482,6 +1482,11 @@ async function loadAllData(centerLat, centerLon) {
                  allAptList = groupDBRows(dbData.apt, sigungu, lawdCd);
                 allRentList = Array.isArray(dbData.rent) ? dbData.rent : [];
                 rentCacheByLawd[lawdCd] = allRentList;
+                // 매매 실거래가 단 한 건도 없어서 allAptList에 아예 항목 자체가 없던 연립다세대를,
+                // 전세 거래만으로 "매매기록 없음" 상태의 항목으로 만들어 끼워넣음 - 이래야 마커/패널이
+                // 생기고, 그 안에서 전세가 기반 추정 등급/예상거래가/히스토리를 볼 수 있게 됨.
+                // (매매 기록이 있는 건물은 이미 groupDBRows가 만든 항목이 있으므로 건너뜀)
+                allAptList = allAptList.concat(buildRentOnlyEntries(allAptList, allRentList, sigungu, lawdCd));
                 // ── 좌표 캐시 미리 불러오기 (이미 지오코딩된 단지는 카카오 API 스킵) ──
                 await prefetchCoordsFromDB(allAptList);
                 // ── 지표 계산 (평단가 등급만 유지, 투자점수는 삭제) ──
@@ -1563,6 +1568,54 @@ function groupDBRows(rows, sigungu, lawdCd) {
             count3MTo1Y: trades.filter(function(t) {
                 var d = tradeDate(t); return d < threeMonAgo && d >= oneYearAgo;
             }).length,
+        };
+    });
+}
+/* ── 매매기록이 아예 없는 연립다세대: 전세 거래만으로 "매매기록 없음" 항목을 만들어줌 ──
+   groupDBRows()는 house_trades/villa_trades(매매)만 보고 apt 목록을 만들기 때문에,
+   전세 거래는 있지만 매매 거래가 단 한 건도 없는 건물은 애초에 목록에 들어가지 못해서
+   마커/패널 자체가 생기지 않았음. 여기서 allRentList를 훑어서 이미 매매기록으로
+   등록된 건물(existingList)과 겹치지 않는 건물만 골라 trades:[] 상태의 항목으로 추가함.
+   grade는 calcPriceGrades()가 전세가 기반 추정치로 나중에 채워줌. */
+function buildRentOnlyEntries(existingList, rentList, sigungu, lawdCd) {
+    var existingKeys = {};
+    existingList.forEach(function(a) {
+        if (a.buildingType !== 'villa') return;
+        var l = a.latest || {};
+        var key = (l.name || (l.dong + '_' + (l.bunji || ''))) + '||' + (l.road_name || '');
+        existingKeys[key] = true;
+    });
+    var groups = {};
+    rentList.forEach(function(r) {
+        if (r.buildingType !== 'villa') return;
+        var name = (r.danji || '').trim();
+        var dong = (r.dong || '').trim();
+        var road = (r.road_name || '').trim();
+        var key = (name || (dong + '_' + (r.bunji || ''))) + '||' + road;
+        if (existingKeys[key]) return; // 매매기록이 이미 있는 건물은 groupDBRows가 만든 항목을 그대로 씀
+        if (!groups[key]) groups[key] = [];
+        groups[key].push(r);
+    });
+    return Object.keys(groups).map(function(key) {
+        var rents = groups[key].slice().sort(function(a, b) { return String(b.deal_date).localeCompare(String(a.deal_date)); });
+        var r0 = rents[0];
+        var ds = String(r0.deal_date || '');
+        return {
+            latest: {
+                year: parseInt(ds.slice(0, 4)) || 0, month: parseInt(ds.slice(4, 6)) || 0, day: parseInt(ds.slice(6, 8)) || 0,
+                amount: '', area: Number(r0.size) || 0, floor: String(r0.floor || '-'),
+                name: r0.danji || '', dong: r0.dong || '', road_name: r0.road_name || '',
+                region: r0.region || sigungu, bunji: r0.bunji || '',
+                main_num: r0.main_num || 0, sub_num: r0.sub_num || null,
+                build_year: String(r0.build_year || ''), buildingType: 'villa', houseType: 'villa',
+            },
+            trades: [], // 매매 거래 없음 - 등급/예상거래가는 calcVillaJeonseEstimate가 전세가로 대신 추정
+            lawdCd: lawdCd, buildingType: 'villa',
+            grade: null, ppp: 0, indicators: null, investScore: null,
+            disqualified: false, dqReason: '', scoreBreakdown: {},
+            hasNewHigh: false, newHighPyungs: [],
+            count3M: 0, count3MTo1Y: 0,
+            rentOnly: true, // 매매기록이 아예 없는 건물 표시(패널 안내문구 등에서 참고)
         };
     });
 }
@@ -2300,6 +2353,10 @@ function renderTable() {
         html += '</div>';
     }
     // 투자점수
+    if (currentPanelApt && currentPanelApt.rentOnly) {
+        html += '<div style="background:#fff3e0;border:1px solid #ffcc80;border-radius:8px;padding:8px 10px;margin-bottom:12px;font-size:11px;color:#e65100;">'
+            + 'ℹ️ 이 건물은 매매 거래 기록이 없습니다. 아래 등급·예상 거래가는 전세 거래를 바탕으로 추정한 값입니다.</div>';
+    }
     if (currentPppTimeline) html += buildPppAnalysisHtml(currentPppTimeline);
     if (currentVolumeIndicators) html += buildVolumeAnalysisHtml(currentVolumeIndicators);
     if (currentJeonseEstimate) html += buildJeonseEstimateHtml(currentJeonseEstimate);
