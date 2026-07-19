@@ -2609,11 +2609,19 @@ async function loadAuctionBuildingInfo() {
     if (!ctx.lat || !ctx.lon || !ctx.bunji) { box.innerHTML = ''; return; }
     box.innerHTML = '<div style="font-size:11px;color:#999;">건축물대장 조회 중...</div>';
     var fakeApt = { latest: { dong: ctx.dong, name: ctx.name, bunji: ctx.bunji } };
+    var hadApprovalDate = !!(pendingAuctionDetail && pendingAuctionDetail.approvalDate);
     var info = await loadBuildingInfo(fakeApt, ctx.lat, ctx.lon);
     pendingAuctionBuildingInfo = info;
     box.innerHTML = info
         ? buildBuildingInfoHtml(info)
         : '<div style="font-size:11px;color:#999;">건축HUB에 등록된 건축물대장 정보를 찾지 못했습니다.</div>';
+    // AI 추출에는 사용승인일이 없었는데 건축물대장 조회로 새로 확보됐다면(또는 애초에 AI 추출을
+    // 안 거치고 주소만 검색한 "수기 입력" 경로라면), 연식을 몰라 계산이 빠졌을 수리비·전세가 분석을
+    // 사용승인일 반영해서 한 번 더 자동 재계산함.
+    if (!hadApprovalDate && info && info.title && info.title.useAprDay) {
+        if (!document.getElementById('a-repair').value) { autoCalcRepairSilent(); calcMargin(); }
+        autoCalcAuctionJeonseAnalysis();
+    }
 }
 /* ════════════════════════════════════
    다주택자 취득세 정밀(근사) 계산 - 2026-07 기준
@@ -2755,9 +2763,25 @@ function autoCalcEvictionFee() {
    사용승인일(연식)은 AI 자동추출 결과(pendingAuctionDetail.approvalDate)에서 가져옴. */
 var VILLA_REPAIR_PER_PYUNG = { premium: 100, new: 90, semi: 80, old: 70, aged: 60 }; // 만원/평
 function getAuctionBuildYear() {
-    if (!pendingAuctionDetail || !pendingAuctionDetail.approvalDate) return null;
-    var m = String(pendingAuctionDetail.approvalDate).match(/(\d{4})/);
-    return m ? parseInt(m[1], 10) : null;
+    if (pendingAuctionDetail && pendingAuctionDetail.approvalDate) {
+        var m = String(pendingAuctionDetail.approvalDate).match(/(\d{4})/);
+        if (m) return parseInt(m[1], 10);
+    }
+    // AI 추출 결과에 사용승인일이 없으면, 건축HUB 건축물대장 조회 결과(사용승인일)로 대체 시도.
+    // (loadAuctionBuildingInfo()가 비동기로 조회해서 pendingAuctionBuildingInfo에 채워둠)
+    if (pendingAuctionBuildingInfo && pendingAuctionBuildingInfo.title && pendingAuctionBuildingInfo.title.useAprDay) {
+        var m2 = String(pendingAuctionBuildingInfo.title.useAprDay).match(/(\d{4})/);
+        if (m2) return parseInt(m2[1], 10);
+    }
+    // 마지막 대체: 등록된 유사물건(비교물건)들의 준공연도 중앙값.
+    // 유사물건은 이미 연식±3년으로 골라진 것들이라(findSimilarComps), AI 추출과
+    // 건축HUB 조회가 모두 실패했을 때 참고할 만한 근사치가 됨.
+    var compYears = (pendingAuctionComparables || [])
+        .map(function(c) { return parseInt(c.buildYear); })
+        .filter(function(y) { return Number.isFinite(y) && y > 1900; })
+        .sort(function(a, b) { return a - b; });
+    if (compYears.length) return compYears[Math.floor(compYears.length / 2)];
+    return null;
 }
 function getAgeTierByYear(buildYear) {
     if (!buildYear) return null;
@@ -2818,17 +2842,20 @@ async function calcAuctionJeonseAnalysis() {
     var targetBuildYear = getAuctionBuildYear();
 
     // ── Pool A: 유사물건 추천에 뽑힌 단지들의 전세 거래 (클라이언트에 이미 로드된 allRentList에서 찾음) ──
-    var poolAKeys = {};
+    // getVillaOwnRents(단지명 우선, 없으면 지번)로 건물별 전세를 모음 - 매매 테이블과 전세 테이블의
+    // 수집 출처가 달라 단지명 표기가 살짝 어긋나도(공백/약칭 등) 지번으로 매칭되도록 함
+    // (전세 히스토리 매칭에 쓰는 것과 동일한 로직).
+    var poolASeen = {}, poolA = [];
     (aiCompCandidates || []).forEach(function(c) {
         var t = c.trade;
-        if (t && t.name) poolAKeys[(t.dong || '') + '|' + t.name] = true;
-    });
-    var poolA = allRentList.filter(function(r) {
-        return r.buildingType === 'villa' && !(r.monthly_rent > 0)
-            && poolAKeys[(r.dong || '') + '|' + (r.danji || '')];
-    }).map(function(r) {
-        return { dong: r.dong, danji: r.danji, bunji: r.bunji, size: r.size, deposit: r.deposit,
-            floor: r.floor, build_year: r.build_year, deal_date: r.deal_date };
+        if (!t) return;
+        var dedupeKey = (t.dong || '') + '|' + (t.name || t.bunji || '');
+        if (poolASeen[dedupeKey]) return;
+        poolASeen[dedupeKey] = true;
+        getVillaOwnRents(t.name, t.dong, t.bunji).forEach(function(r) {
+            poolA.push({ dong: r.dong, danji: r.danji, bunji: r.bunji, size: r.size, deposit: r.deposit,
+                floor: r.floor, build_year: r.build_year, deal_date: r.deal_date });
+        });
     });
 
     // ── Pool B: 반경 1km + 평형±4평 + 연식±4년(있을 때만) - 백엔드 반경 검색 ──
@@ -2884,7 +2911,7 @@ async function calcAuctionJeonseAnalysis() {
         estValue: estJeonse, avgPpp: avgPpp, targetPyung: targetPyung, count: combined.length,
         poolACount: poolA.length, poolBCount: poolB.length, ownRents: ownRents,
         warn126: warn126, officialPriceWon: officialPriceWon, impliedFloorWon: impliedFloorWon,
-        saleRatio: saleRatio, estSaleValue: estSaleValue,
+        saleRatio: saleRatio, estSaleValue: estSaleValue, targetBuildYear: targetBuildYear,
     };
     box.innerHTML = buildAuctionJeonseAnalysisHtml(auctionJeonseEstimate);
     calcCompValuation();
@@ -2894,6 +2921,12 @@ function buildAuctionJeonseAnalysisHtml(est) {
     html += '<div style="font-size:12px;font-weight:bold;color:#e65100;">💰 예상전세가: ' + toEok(String(est.estValue)) + '</div>';
     html += '<div style="font-size:10px;color:#888;margin-top:2px;">비교 전세 ' + est.count + '건(유사물건추천 ' + est.poolACount
         + ' + 반경1km ' + est.poolBCount + ') 평단가 중간값 ' + (Math.round(est.avgPpp / 100) / 10) + '천만/평 × ' + est.targetPyung + '평</div>';
+    if (!est.targetBuildYear) {
+        html += '<div style="margin-top:6px;background:#fff3e0;border:1px solid #ffcc80;border-radius:6px;padding:5px 8px;font-size:10.5px;color:#e65100;">'
+            + '⚠️ 이 물건의 사용승인일(연식)을 확인하지 못해, 반경 1km 비교군에 연식 필터를 적용하지 못했습니다. '
+            + '오래된 건물과 신축 건물의 전세가 섞여 평단가가 실제보다 높거나 낮게 계산될 수 있습니다. '
+            + 'AI 자동채우기 결과나 건축물대장 조회에서 사용승인일이 확인되면 자동으로 반영됩니다.</div>';
+    }
     if (est.warn126) {
         html += '<div style="margin-top:6px;background:#ffebee;border:1px solid #ef9a9a;border-radius:6px;padding:6px 8px;font-size:11px;color:#c62828;font-weight:bold;">'
             + '⚠️ 깡통전세 위험 — 예상전세가 ÷ 126% = ' + toEok(String(Math.round(est.impliedFloorWon / 10000)))
@@ -3301,11 +3334,7 @@ async function openAiCompFinder() {
  
     var targetFloor = parseInt(document.getElementById('a-floor').value) || null;
     var targetPyung = parseFloat(document.getElementById('a-pyung').value) || null;
-    var targetYear = null;
-    if (pendingAuctionDetail && pendingAuctionDetail.approvalDate) {
-        var m = String(pendingAuctionDetail.approvalDate).match(/(\d{4})/);
-        if (m) targetYear = parseInt(m[1]);
-    }
+    var targetYear = getAuctionBuildYear();
     // 물건유형이 아파트/연립다세대·단독이면 같은 유형 거래만 비교 (건물유형이 다르면 시세가 안 맞음)
     var propType = document.getElementById('a-prop-type').value;
     var targetBuildingType = (propType === 'apt' || propType === 'villa') ? propType : null;
@@ -3424,6 +3453,11 @@ function addSelectedAiComps() {
     }
     renderCompListBox();
     calcCompValuation();
+    // 비교물건의 준공연도가 getAuctionBuildYear()의 마지막 대체 수단이라, 목록이 바뀌면
+    // 수리비·전세가 분석도 함께 다시 계산해 줌(그동안 연식을 몰라 비어 있었을 수 있음).
+    // 이미 수리비를 직접 입력해 둔 값은 덮어쓰지 않음.
+    if (!document.getElementById('a-repair').value) { autoCalcRepairSilent(); calcMargin(); }
+    autoCalcAuctionJeonseAnalysis();
     closeAiCompModal();
     if (added > 0) alert(added + '개 비교물건이 추가되었습니다. (저장을 눌러야 최종 반영됩니다)');
 }
@@ -3472,6 +3506,8 @@ async function confirmAddComparable(auctionId) {
         pendingAuctionComparables = saved.comparables || [];
         renderCompListBox();
         calcCompValuation();
+        if (!document.getElementById('a-repair').value) { autoCalcRepairSilent(); calcMargin(); }
+        autoCalcAuctionJeonseAnalysis();
     }
     redrawMarkers(); // 비교대상 배지를 바로 반영
     alert('비교물건으로 등록되었습니다. (' + (saved.comparables || []).length + '/10)');
@@ -3500,6 +3536,8 @@ function removeComparable(idx) {
     pendingAuctionComparables.splice(idx, 1);
     renderCompListBox();
     calcCompValuation();
+    if (!document.getElementById('a-repair').value) { autoCalcRepairSilent(); calcMargin(); }
+    autoCalcAuctionJeonseAnalysis();
 }
 function getCompEstValue() {
     var list = pendingAuctionComparables || [];
@@ -3589,11 +3627,7 @@ function buildElevatorComparisonHtml() {
     }
     if (!dong) return '';
     var targetPyung = parseFloat(document.getElementById('a-pyung').value) || null;
-    var targetYear = null;
-    if (pendingAuctionDetail && pendingAuctionDetail.approvalDate) {
-        var m = String(pendingAuctionDetail.approvalDate).match(/(\d{4})/);
-        if (m) targetYear = parseInt(m[1]);
-    }
+    var targetYear = getAuctionBuildYear();
     var withElev = [], withoutElev = [];
     allAptList.forEach(function(apt) {
         if (apt.buildingType !== 'villa') return;
