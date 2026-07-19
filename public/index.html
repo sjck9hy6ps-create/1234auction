@@ -1033,6 +1033,68 @@ function formatPpp10man(ppp) {
     var rounded = Math.round(ppp / 10) * 10;
     return rounded.toLocaleString() + '만원/평';
 }
+/* 아이패드 등 터치 기기는 마우스 hover가 없어서, 배지 이름이 ...으로 잘려도(overflow-ellipsis)
+   클릭(=패널 열기)하지 않고서는 전체 글자를 볼 방법이 없었음. title 속성이 붙은 요소를
+   길게 누르면(약 0.38초, 손가락을 거의 움직이지 않은 채로) 그 자리에 전체 텍스트를 담은
+   말풍선을 잠깐 띄워줌. 짧게 탭하면 지금까지와 동일하게 클릭(패널 열기 등)이 그대로 동작하고,
+   길게 눌러서 말풍선이 떴던 경우에만 뗄 때의 클릭을 막아서(preventDefault) "살짝 눌러서
+   미리보기만 하고 뗀" 느낌이 나도록 함. 지도 드래그(팬)와 헷갈리지 않도록 손가락이 일정
+   거리 이상 움직이면 즉시 취소함. */
+(function setupBadgeLongPressPeek() {
+    var pressTimer = null;
+    var startX = 0, startY = 0;
+    var MOVE_THRESHOLD = 10; // px - 이보다 많이 움직이면 지도 드래그로 간주하고 취소
+    var HOLD_MS = 380;
+    var peekEl = null;
+
+    function showPeek(text, x, y) {
+        hidePeek();
+        peekEl = document.createElement('div');
+        peekEl.style.cssText = 'position:fixed;z-index:9999;background:rgba(30,30,30,0.92);color:white;'
+            + 'font-size:12px;padding:6px 10px;border-radius:8px;max-width:240px;pointer-events:none;'
+            + 'box-shadow:0 3px 10px rgba(0,0,0,0.3);white-space:normal;word-break:break-word;';
+        peekEl.innerText = text;
+        document.body.appendChild(peekEl);
+        var rect = peekEl.getBoundingClientRect();
+        var left = Math.min(Math.max(8, x - rect.width / 2), window.innerWidth - rect.width - 8);
+        var top = y - rect.height - 14;
+        if (top < 8) top = y + 18;
+        peekEl.style.left = left + 'px';
+        peekEl.style.top = top + 'px';
+    }
+    function hidePeek() {
+        if (peekEl) { peekEl.remove(); peekEl = null; }
+    }
+    document.addEventListener('touchstart', function(e) {
+        var target = e.target.closest && e.target.closest('[title]');
+        if (!target || !target.title) return;
+        var t = e.touches[0];
+        startX = t.clientX; startY = t.clientY;
+        clearTimeout(pressTimer);
+        pressTimer = setTimeout(function() {
+            showPeek(target.title, startX, startY);
+        }, HOLD_MS);
+    }, { passive: true });
+    document.addEventListener('touchmove', function(e) {
+        if (!e.touches || !e.touches[0]) return;
+        var t = e.touches[0];
+        if (Math.abs(t.clientX - startX) > MOVE_THRESHOLD || Math.abs(t.clientY - startY) > MOVE_THRESHOLD) {
+            clearTimeout(pressTimer);
+            hidePeek();
+        }
+    }, { passive: true });
+    document.addEventListener('touchend', function(e) {
+        clearTimeout(pressTimer);
+        if (peekEl) {
+            e.preventDefault(); // 롱프레스로 미리보기가 떴을 때만 이어지는 클릭을 막음
+            hidePeek();
+        }
+    }, { passive: false });
+    document.addEventListener('touchcancel', function() {
+        clearTimeout(pressTimer);
+        hidePeek();
+    }, { passive: true });
+})();
 function setStatus(msg) {
     var box = document.getElementById('status-box');
     if (!msg) { box.style.display = 'none'; return; }
@@ -1967,6 +2029,17 @@ function createMarker(cacheKey, lat, lon, apt) {
             + 'padding:6px 10px;white-space:nowrap;cursor:pointer;'
             + 'box-shadow:0 2px 6px rgba(0,0,0,0.13);text-align:center;line-height:1.35;max-width:220px;';
     div.setAttribute('onclick', 'handleAptMarkerClick(\'' + mKey + '\')');
+    // 아이패드 등 터치 기기는 마우스 hover가 없어서 ...으로 잘린 글자를 볼 방법이 없었음.
+    // title 속성을 달아두면 PC에서는 그냥 마우스만 올려도 브라우저 기본 툴팁이 뜨고,
+    // 터치 기기에서는 아래 setupBadgeLongPressPeek()가 길게 누르기로 같은 내용을 보여줌.
+    var peekParts = [];
+    if (l.name) peekParts.push(l.name);
+    if (apt.buildingType === 'villa' && apt.ageTier) peekParts.push(getVillaTierLabel(apt.ageTier));
+    if (apt.grade) peekParts.push(formatPpp10man(apt.ppp) || (apt.grade + '등급'));
+    if (amount) peekParts.push(toEok(amount));
+    if (l.road_name) peekParts.push(l.road_name);
+    if (matchedAuction) peekParts.push('🔨 경매 ' + matchedAuction.status);
+    div.title = peekParts.join(' · ');
     div.innerHTML = ''
         + auctionRibbon
         + (count > 0 ? '<div style="font-size:15px;font-weight:900;color:' + color + ';">' + count + '건</div>' : '')
@@ -3674,6 +3747,8 @@ function placeAuctionMarker(a) {
         + 'padding:4px 9px;margin:4px;margin-top:16px;white-space:nowrap;cursor:pointer;'
         + 'text-align:center;line-height:1.5;max-width:210px;transform:scale(1.12);'
         + 'animation:auctionGlow 1.8s ease-in-out infinite;';
+    // 터치 기기 길게 누르기 미리보기용 (setupBadgeLongPressPeek 참고)
+    div.title = [((a.name && a.name.trim()) || a.addrLabel || a.addr || '(이름없음)'), '🔨 ' + a.status, priceLine, a.pyung ? a.pyung + '평' : ''].filter(Boolean).join(' · ');
     div.innerHTML = '<div class="auction-badge" style="background:' + sc + ';">🔨 ' + a.status + alarmBadge + '</div>'
         + '<div style="color:#333;font-size:11px;font-weight:bold;overflow:hidden;text-overflow:ellipsis;max-width:185px;margin-top:5px;">'
         +   ((a.name && a.name.trim()) || a.addrLabel || a.addr || '(이름없음)') + surgeBadge
