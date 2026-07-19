@@ -11,7 +11,19 @@
       그래서 스키마를 "물건·가격·임차인" / "건축물·등기" 두 그룹으로 나눠
       Promise.all로 동시에 호출 → 전체 소요시간이 "둘의 합"이 아니라
       "더 오래 걸리는 쪽 하나" 수준으로 줄어들도록 함.
+   ⚠️ 정확도/속도 개선 (2차):
+      - temperature: 0 고정 → 같은 입력이면 항상 같은 결과가 나오도록 재현성을 높임.
+      - Redis 캐싱 → 동일한 텍스트/이미지(해시 동일)를 다시 보내면 Gemini를 재호출하지
+        않고 즉시 반환. 오타 수정 후 재시도하거나 같은 물건을 다시 붙여넣을 때 빠름.
+      - 숫자 정합성 자동검증 → 최저가율/보증금율/㎡당단가처럼 다른 필드로부터 재계산 가능한
+        값들을 서버에서 직접 계산해 AI가 준 값과 크게 다르면 warnings에 담아 화면에 경고.
+      - 경량 스키마C 교차검증 → 핵심 필드(사건번호/주소/감정가/최저가/최저가율/층호수)만
+        다른 temperature로 한 번 더 독립 추출해서, A/B와 동시에 Promise.all로 호출하므로
+        (C가 훨씬 가벼워 A/B보다 먼저 끝남) 전체 대기시간은 거의 그대로 유지하면서 두 결과가
+        다르면 warnings로 알려줌. C 호출 자체가 실패해도 A/B 결과에는 영향 주지 않음(부가기능).
 ════════════════════════════════════ */
+import crypto from 'crypto';
+
 const GEMINI_MODEL = 'gemini-3.5-flash';
 // Vercel 함수 자체의 실행 제한 시간을 늘림 (기본값은 너무 짧아서, 스키마가 큰 요청은
 // Gemini 응답이 오기 전에 함수가 먼저 죽어버릴 수 있음). Hobby 플랜에서도 60초까지 가능.
@@ -48,6 +60,7 @@ const SCHEMA_A = {
     unitNo: { type: 'STRING' },
     disposalMethod: { type: 'STRING' },
     specialConditions: { type: 'STRING' },
+    caseCautions: { type: 'STRING' },
     siteRightsArea: { type: 'STRING' },
     officialPriceCurrent: { type: 'STRING' },
     saleDate: { type: 'STRING' },
@@ -208,6 +221,22 @@ const SCHEMA_B = {
   },
 };
 
+// ── 스키마 C: 핵심 필드 경량 교차검증용 (A와 별도·독립적으로 한 번 더 추출) ──
+// A/B보다 필드 수가 훨씬 적어 항상 먼저 끝나므로, Promise.all로 A/B와 동시에 호출해도
+// 전체 응답시간에는 거의 영향이 없음. A와 값이 다르면 사람이 원문을 다시 봐야 할 신호.
+const SCHEMA_C = {
+  type: 'OBJECT',
+  properties: {
+    caseNo: { type: 'STRING' },
+    addrJibun: { type: 'STRING' },
+    appraisalPrice: { type: 'NUMBER' },
+    minBidPrice: { type: 'NUMBER' },
+    minBidRate: { type: 'NUMBER' },
+    unitFloor: { type: 'INTEGER' },
+    unitNo: { type: 'STRING' },
+  },
+};
+
 // 텍스트 붙여넣기와 캡처 이미지 첨부 양쪽에 공통으로 적용되는 안내문.
 // 이미지가 여러 장이면 스크롤을 나눠서 캡처한 같은 페이지라는 점, 그리고 하단 "다른 물건" 목록을
 // 무시해야 한다는 점은 텍스트든 이미지든 동일하게 중요해서 하나로 통일함.
@@ -271,6 +300,11 @@ const PROMPT_A_RULES = `
   unitFloor(숫자만, 예: 3)와 unitNo(호수 문자열 그대로, 예: "302호")로 분리하세요. 이런 표시가 없으면 둘 다 null.
 - disposalMethod(처분방식, 예: "토지·건물 일괄매각")와 specialConditions(특수조건, 예: "임차권등기,대항력 있는 임차인,공시가 1억이하")는
   본문에 명시된 문구를 그대로 담으세요.
+- caseCautions(사건의 주의사항)는 사이트가 "주의사항"이라는 제목이나 별도 강조 박스/배지로 표시한 경고성
+  문구(예: "본 물건은 재매각 물건입니다", "농지취득자격증명원 미제출시 보증금 미반환", "대항력 있는 임차인 있음",
+  "최선순위 설정일자보다 대항요건을 먼저 갖춘 임차인 있음" 등)를 원문 그대로 담으세요.
+  specialConditions와 내용이 겹칠 수 있지만, 페이지에 "주의사항"이라는 이름의 별도 섹션이 있으면 그 내용을 우선하세요.
+  그런 별도 섹션이 없으면 null로 두세요.
 - siteRightsArea(대지권 면적)는 "대지권" 항목의 면적(㎡·평 둘 다 있으면 그대로, 예: "34.19㎡(10.34평)")을 담되,
   전체 토지면적이 아니라 이 물건에 배정된 지분(대지권) 면적만 담으세요.
 - rounds(입찰 회차 이력)는 표에 나온 순서대로 모두 담으세요.
@@ -319,6 +353,14 @@ const PROMPT_B_RULES = `
   zoningType이 도시지역의 주거·상업·공업지역이면 false로 판단하세요. 지목이나 용도지역 정보가 부족해 판단할 수
   없으면 반드시 null로 두세요 (섣불리 추측 금지).`;
 
+const PROMPT_C_RULES = `
+- 이 요청은 다른 요청과 별도로, 핵심 값만 독립적으로 다시 한 번 추출해 교차검증하기 위한 것입니다.
+- caseNo는 페이지 맨 위 제목에 있는 사건번호 단 하나만 쓰세요 (하단 관련물건 목록의 번호는 무시하세요).
+- addrJibun은 이 물건의 지번주소만 담으세요 (시/도 시/군/구 동 번지까지만, 층수·호수·건물동번호는 제외).
+- appraisalPrice, minBidPrice는 원 단위 숫자로, minBidRate는 %(숫자만)로 담으세요.
+- unitFloor(숫자만)와 unitNo(호수 문자열)는 소재지의 "N층M호" 표시에서 뽑으세요. 그런 표시가 없으면 둘 다 null.
+- 명시되지 않은 값은 절대 추측하지 말고 null로 두세요.`;
+
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -344,9 +386,12 @@ function parseRetryDelayMs(errData) {
 // 기다렸다가 한 번 더 시도한다(과도한 대기로 Vercel 60초 제한을 넘지 않도록 1회만).
 // (API 키 오류·잘못된 요청 같은 재시도해도 안 풀리는 오류는 즉시 그대로 던짐)
 // imageParts: [{ inline_data: { mime_type, data } }, ...] - 캡처 이미지가 없으면 빈 배열.
-async function callGemini(apiKey, promptText, schema, imageParts, attempt) {
+// temperature: 기본 0(재현성 우선). 스키마C 교차검증 호출만 일부러 다른 값을 줘서
+//   "완전히 같은 조건"이 아닌 "독립적인 두 번째 시도"에 가깝게 만듦.
+async function callGemini(apiKey, promptText, schema, imageParts, attempt, temperature) {
   attempt = attempt || 1;
   imageParts = imageParts || [];
+  temperature = temperature === undefined || temperature === null ? 0 : temperature;
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${apiKey}`;
   let geminiRes;
   try {
@@ -361,6 +406,7 @@ async function callGemini(apiKey, promptText, schema, imageParts, attempt) {
           responseMimeType: 'application/json',
           responseSchema: schema,
           thinkingConfig: { thinkingLevel: 'minimal' },
+          temperature,
         },
       }),
       signal: AbortSignal.timeout(52000),
@@ -380,12 +426,12 @@ async function callGemini(apiKey, promptText, schema, imageParts, attempt) {
     const isQuotaExceeded = geminiRes.status === 429 || status === 'RESOURCE_EXHAUSTED';
     if (isOverloaded && attempt < 3) {
       await sleep(1000 * attempt);
-      return callGemini(apiKey, promptText, schema, imageParts, attempt + 1);
+      return callGemini(apiKey, promptText, schema, imageParts, attempt + 1, temperature);
     }
     if (isQuotaExceeded && attempt < 2) {
       const waitMs = parseRetryDelayMs(data) ?? 15000;
       await sleep(waitMs);
-      return callGemini(apiKey, promptText, schema, imageParts, attempt + 1);
+      return callGemini(apiKey, promptText, schema, imageParts, attempt + 1, temperature);
     }
     if (isQuotaExceeded) {
       throw new Error('AI 판독기 요청이 무료 사용량 한도(분당 요청수)에 잠시 걸렸습니다. 15~20초 후 다시 시도해 주세요.');
@@ -397,6 +443,132 @@ async function callGemini(apiKey, promptText, schema, imageParts, attempt) {
     throw new Error('Gemini 응답에서 결과를 찾을 수 없습니다.');
   }
   return JSON.parse(jsonText);
+}
+
+// ════════════════════════════════════
+// Redis 캐싱 (Upstash) - get-house.js와 동일한 REST 호출 패턴
+// 같은 텍스트/이미지(해시 동일)를 다시 보내면 Gemini를 다시 호출하지 않고 즉시 반환.
+// TTL 24시간: 같은 물건 텍스트가 하루 안에 바뀔 일은 거의 없고, 사용자가 내용을
+// 수정해서 다시 붙여넣으면 해시가 달라져 자연히 캐시가 무효화됨.
+// ════════════════════════════════════
+const REDIS_URL = process.env.UPSTASH_REDIS_URL;
+const REDIS_TOKEN = process.env.UPSTASH_REDIS_TOKEN;
+const CACHE_TTL_SECONDS = 24 * 60 * 60;
+
+function computeCacheKey(trimmedText, imageParts) {
+  const h = crypto.createHash('sha256');
+  h.update(trimmedText || '');
+  (imageParts || []).forEach((p) => {
+    if (p?.inline_data?.data) h.update(p.inline_data.data);
+  });
+  return `auctionparse_${h.digest('hex')}`;
+}
+
+async function getCachedParseResult(key) {
+  if (!REDIS_URL || !REDIS_TOKEN) return null;
+  try {
+    const r = await fetch(`${REDIS_URL}/get/${key}`, {
+      headers: { Authorization: `Bearer ${REDIS_TOKEN}` },
+      signal: AbortSignal.timeout(3000),
+    });
+    if (!r.ok) return null;
+    const data = await r.json();
+    if (!data || !data.result) return null;
+    return JSON.parse(data.result);
+  } catch (e) {
+    console.error('parse-auction Redis 캐시 조회 실패:', e.message);
+    return null;
+  }
+}
+
+async function setCachedParseResult(key, payload) {
+  if (!REDIS_URL || !REDIS_TOKEN) return;
+  try {
+    const r = await fetch(`${REDIS_URL}/set/${key}?EX=${CACHE_TTL_SECONDS}`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${REDIS_TOKEN}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+      signal: AbortSignal.timeout(3000),
+    });
+    if (!r.ok) {
+      const errText = await r.text();
+      console.error('parse-auction Redis 캐시 저장 실패:', errText);
+    }
+  } catch (e) {
+    console.error('parse-auction Redis 캐시 저장 실패:', e.message);
+  }
+}
+
+// ════════════════════════════════════
+// 정확도 검증: (1) 숫자 정합성(다른 필드로부터 재계산), (2) 스키마C 교차검증
+// 둘 다 "틀렸다"가 아니라 "확인이 필요하다"는 신호라서, 값을 고치지 않고 detail.warnings에
+// 문자열로 담아 프론트에서 경고로만 보여줌 (최종 판단은 사람이 원문을 보고 함).
+// ════════════════════════════════════
+function extractLeadingNum(v) {
+  if (v === null || v === undefined) return null;
+  const m = String(v).replace(/,/g, '').match(/[\d.]+/);
+  return m ? parseFloat(m[0]) : null;
+}
+
+function buildNumericWarnings(m) {
+  const warnings = [];
+  function pct(a, b) {
+    return b ? (a / b) * 100 : null;
+  }
+  if (m.appraisalPrice && m.minBidPrice && m.minBidRate) {
+    const computed = pct(m.minBidPrice, m.appraisalPrice);
+    if (computed !== null && Math.abs(computed - m.minBidRate) > 3) {
+      warnings.push(`최저가율(AI: ${m.minBidRate}%)이 감정가 대비 실제 계산값(${computed.toFixed(1)}%)과 차이가 큽니다. 감정가·최저가 금액을 확인해 주세요.`);
+    }
+  }
+  if (m.minBidPrice && m.deposit && m.depositRate) {
+    const computed = pct(m.deposit, m.minBidPrice);
+    if (computed !== null && Math.abs(computed - m.depositRate) > 3) {
+      warnings.push(`보증금율(AI: ${m.depositRate}%)이 최저가 대비 실제 계산값(${computed.toFixed(1)}%)과 차이가 큽니다. 보증금 금액을 확인해 주세요.`);
+    }
+  }
+  const areaMatch = m.buildingArea ? String(m.buildingArea).match(/([\d.]+)\s*㎡/) : null;
+  const buildingAreaNum = areaMatch ? extractLeadingNum(areaMatch[1]) : null;
+  if (buildingAreaNum && m.buildingPrice && m.unitPricePerM2) {
+    const computed = m.buildingPrice / buildingAreaNum;
+    if (computed > 0 && Math.abs(computed - m.unitPricePerM2) / m.unitPricePerM2 > 0.25) {
+      warnings.push('㎡당 단가가 "건물가격÷건물면적" 계산값과 25% 이상 차이납니다. 면적·가격 단위를 확인해 주세요.');
+    }
+  }
+  return warnings;
+}
+
+function buildCrossCheckWarnings(m, c) {
+  const warnings = [];
+  if (!c) return warnings;
+  function normStr(s) {
+    return s ? String(s).replace(/\s+/g, '') : '';
+  }
+  function numDiff(a, b, tolRatio) {
+    if (a === null || a === undefined || b === null || b === undefined) return false;
+    if (a === 0 && b === 0) return false;
+    const base = Math.max(Math.abs(a), Math.abs(b), 1);
+    return Math.abs(a - b) / base > tolRatio;
+  }
+  if (m.caseNo && c.caseNo && normStr(m.caseNo) !== normStr(c.caseNo)) {
+    warnings.push(`사건번호를 두 번 독립 추출한 결과가 다릅니다: "${m.caseNo}" vs "${c.caseNo}". 원문을 확인해 주세요.`);
+  }
+  if (m.addrJibun && c.addrJibun && normStr(m.addrJibun) !== normStr(c.addrJibun)) {
+    warnings.push(`지번주소를 두 번 독립 추출한 결과가 다릅니다: "${m.addrJibun}" vs "${c.addrJibun}". 원문을 확인해 주세요.`);
+  }
+  if (numDiff(m.appraisalPrice, c.appraisalPrice, 0.01)) {
+    warnings.push(`감정가를 두 번 독립 추출한 결과가 다릅니다: ${m.appraisalPrice} vs ${c.appraisalPrice}. 원문을 확인해 주세요.`);
+  }
+  if (numDiff(m.minBidPrice, c.minBidPrice, 0.01)) {
+    warnings.push(`최저가를 두 번 독립 추출한 결과가 다릅니다: ${m.minBidPrice} vs ${c.minBidPrice}. 원문을 확인해 주세요.`);
+  }
+  if (m.unitFloor !== null && m.unitFloor !== undefined && c.unitFloor !== null && c.unitFloor !== undefined && m.unitFloor !== c.unitFloor) {
+    warnings.push(`층수를 두 번 독립 추출한 결과가 다릅니다: ${m.unitFloor}층 vs ${c.unitFloor}층. 원문을 확인해 주세요.`);
+  }
+  if (m.unitNo && c.unitNo && normStr(m.unitNo) !== normStr(c.unitNo)) {
+    warnings.push(`호수를 두 번 독립 추출한 결과가 다릅니다: "${m.unitNo}" vs "${c.unitNo}". 원문을 확인해 주세요.`);
+  }
+  return warnings;
 }
 
 export default async function handler(req, res) {
@@ -425,17 +597,36 @@ export default async function handler(req, res) {
     console.log(`parse-auction: 하단 불필요 문구 제거 (${rawText.length}자 → ${trimmedText.length}자)`);
   }
 
+  const cacheKey = computeCacheKey(trimmedText, imageParts);
+  const cached = await getCachedParseResult(cacheKey);
+  if (cached) {
+    return res.status(200).json({ detail: cached, cached: true });
+  }
+
   const promptA = buildPrompt(PROMPT_A_RULES, trimmedText);
   const promptB = buildPrompt(PROMPT_B_RULES, trimmedText);
+  const promptC = buildPrompt(PROMPT_C_RULES, trimmedText);
 
   try {
     // 스키마를 둘로 나눠 동시에 호출 - 전체 소요시간이 "둘의 합"이 아니라
-    // "더 오래 걸리는 쪽 하나" 수준으로 줄어듦 (Hobby 플랜 60초 제한 안에 들어오도록)
-    const [resultA, resultB] = await Promise.all([
-      callGemini(GEMINI_API_KEY, promptA, SCHEMA_A, imageParts),
-      callGemini(GEMINI_API_KEY, promptB, SCHEMA_B, imageParts),
+    // "더 오래 걸리는 쪽 하나" 수준으로 줄어듦 (Hobby 플랜 60초 제한 안에 들어오도록).
+    // 스키마C(교차검증)는 필드가 훨씬 적어 먼저 끝나므로 같이 병렬로 호출해도 전체 시간에
+    // 영향이 거의 없고, 실패해도(.catch) A/B 결과에는 지장이 없도록 별도 처리.
+    const [resultA, resultB, resultC] = await Promise.all([
+      callGemini(GEMINI_API_KEY, promptA, SCHEMA_A, imageParts, 1, 0),
+      callGemini(GEMINI_API_KEY, promptB, SCHEMA_B, imageParts, 1, 0),
+      callGemini(GEMINI_API_KEY, promptC, SCHEMA_C, imageParts, 1, 0.4).catch((e) => {
+        console.error('parse-auction: 교차검증(스키마C) 호출 실패, 건너뜀:', e.message);
+        return null;
+      }),
     ]);
     const merged = { ...resultA, ...resultB };
+    merged.warnings = [
+      ...buildNumericWarnings(merged),
+      ...buildCrossCheckWarnings(merged, resultC),
+    ];
+    // 캐시에는 경고까지 포함한 최종 결과를 그대로 저장 - 캐시 히트 시 재계산 없이 즉시 반환.
+    setCachedParseResult(cacheKey, merged); // 응답을 늦추지 않도록 await 없이 fire-and-forget
     return res.status(200).json({ detail: merged });
   } catch (err) {
     return res.status(500).json({ error: err.message });
