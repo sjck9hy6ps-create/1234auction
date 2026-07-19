@@ -3829,8 +3829,9 @@ function buildAuctionPanelHtml(aptName, aptDong, aptBunji) {
         if (a.caseNo)    html += aItem('사건번호', a.caseNo, '#555');
         if (a.bidDate)   html += aItem('입찰일', a.bidDate, '#555');
         if (a.pyung)     html += aItem('평형', a.pyung + '평', '#555');
-        if (a.appraisal) html += aItem('감정가', toEok(String(parseInt(a.appraisal))), '#555');
+        if (a.minBid)    html += aItem('현재 최저입찰가', toEok(String(parseInt(a.minBid))), '#e65100');
         if (a.myBid)     html += aItem('내 입찰가', toEok(String(parseInt(a.myBid))), '#6a1b9a');
+        if (a.target)    html += aItem('목표 판매가', toEok(String(parseInt(a.target))), '#2e7d32');
         if (a.memo) {
             html += '</div><div style="margin-top:8px;font-size:11px;color:#666;background:white;border-radius:6px;padding:6px 8px;border:1px solid #e1bee7;">'
                 + '<span style="color:#9e9e9e;font-size:10px;">메모</span><br>' + a.memo.replace(/\n/g,'<br>') + '</div>';
