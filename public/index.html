@@ -694,10 +694,10 @@ tr:hover td { background:#fffde7; }
                     style="display:inline-flex;align-items:center;gap:5px;font-size:12px;font-weight:bold;color:#1a237e;
                     border:1.5px solid #1a237e;border-radius:20px;padding:6px 14px;background:#e8eaf6;cursor:pointer;">
                     🏛️ 법원경매정보 원본자료 조회 (사건번호 자동복사)</button>
-                <button type="button" onclick="openIrosRegistry()"
+                <button type="button" onclick="openIrosRegistry(document.getElementById('a-addr').value)"
                     style="display:inline-flex;align-items:center;gap:5px;font-size:12px;font-weight:bold;color:#6a1b9a;
                     border:1.5px solid #6a1b9a;border-radius:20px;padding:6px 14px;background:#f3e5f5;cursor:pointer;">
-                    🔏 인터넷등기소 등기기록 열람 (유료)</button>
+                    🔏 인터넷등기소 등기기록 열람 (주소 자동복사·유료)</button>
             </div>
         </div>
         <div class="modal-section">
@@ -2349,22 +2349,47 @@ function copyAuctionCaseNo(caseNo) {
     }
 }
 /* 등기기록은 대법원 법원경매정보가 아닌 별도의 유료 서비스(대법원 인터넷등기소)에서
-   열람/발급함. 자동화하지 않고 바로가기만 제공 - 사용자가 직접 로그인/결제 후
-   열람한 뒤, 아래 "등기부등본 업로드" 기능으로 PDF를 올리면 AI가 요약해줌. */
-function openIrosRegistry() {
-    window.open('https://www.iros.go.kr/', '_blank', 'noopener');
+   열람/발급함. 실사용 테스트 결과 주소 검색 → 목적물(호수) 선택 → 열람/발급 종류
+   선택까지는 로그인 없이 진행되지만, 그 다음 단계(본인인증/전자서명)부터는
+   TouchEn nx 보안모듈 설치+공동인증서/간편인증이 필요해 여기서부터는 자동화나
+   딥링크가 불가능함(사용자 PC의 보안 프로그램이 직접 개입하는 구간). 그래서
+   그 앞 단계까지만 최대한 빠르게 가도록 주소를 자동 복사해줌. */
+function openIrosRegistry(addrArg) {
+    var addr = (addrArg || (document.getElementById('a-addr') && document.getElementById('a-addr').value) || '').trim();
+    var url = 'https://www.iros.go.kr/';
+    window.open(url, '_blank', 'noopener');
+    if (!addr) {
+        alert('등록된 주소가 없습니다.\n새로 열린 인터넷등기소에서 주소를 직접 입력해 검색해주세요.');
+        return;
+    }
+    var guide = '주소(' + addr + ')가 복사되었습니다.\n\n새로 열린 인터넷등기소 홈 화면 검색창에:\n'
+        + '1) 붙여넣기(Ctrl+V) 후 Enter\n'
+        + '2) 목록에서 해당 호수 체크 후 [다음]\n'
+        + '3) 열람/발급 종류 선택 후 [다음] → 등기기록유형 선택 후 [다음]\n'
+        + '(여기까지는 로그인 없이 진행됩니다)\n'
+        + '4) 이후 단계부터 본인인증/공동인증서 결제가 필요합니다(자동화 불가 구간).';
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(addr).then(function() {
+            alert(guide);
+        }).catch(function() {
+            alert('주소: ' + addr + ' (자동 복사 실패 - 직접 입력해주세요)\n\n' + guide);
+        });
+    } else {
+        alert('주소: ' + addr + ' (자동 복사 실패 - 직접 입력해주세요)\n\n' + guide);
+    }
 }
-function buildCourtAuctionLinkHtml(caseNo) {
+function buildCourtAuctionLinkHtml(caseNo, addr) {
     if (!caseNo) return '';
+    var addrJs = (addr || '').replace(/'/g, "\\'");
     return '<div style="margin-bottom:10px;display:flex;gap:6px;flex-wrap:wrap;">'
         + '<a href="javascript:void(0)" onclick="copyAuctionCaseNo(\'' + caseNo.replace(/'/g, "\\'") + '\')" '
         + 'style="display:inline-flex;align-items:center;gap:5px;font-size:12px;font-weight:bold;color:#1a237e;'
         + 'border:1.5px solid #1a237e;border-radius:20px;padding:6px 14px;text-decoration:none;background:#e8eaf6;cursor:pointer;">'
         + '🏛️ 법원경매정보 원본자료 조회 (사건번호 자동복사)</a>'
-        + '<a href="javascript:void(0)" onclick="openIrosRegistry()" '
+        + '<a href="javascript:void(0)" onclick="openIrosRegistry(\'' + addrJs + '\')" '
         + 'style="display:inline-flex;align-items:center;gap:5px;font-size:12px;font-weight:bold;color:#6a1b9a;'
         + 'border:1.5px solid #6a1b9a;border-radius:20px;padding:6px 14px;text-decoration:none;background:#f3e5f5;cursor:pointer;">'
-        + '🔏 인터넷등기소 등기기록 열람</a></div>';
+        + '🔏 인터넷등기소 등기기록 열람 (주소 자동복사)</a></div>';
 }
 function setTypeFilter(type, btn) {
     currentTypeFilter = type;
@@ -3349,7 +3374,7 @@ function buildAuctionPanelHtml(aptName, aptDong, aptBunji) {
         html += '</div>';
         html += buildAuctionDetailHtml(a.detail);
         html += buildOfficialPriceLookupHtml(a);
-        html += buildCourtAuctionLinkHtml(a.caseNo);
+        html += buildCourtAuctionLinkHtml(a.caseNo, a.addr || (a.detail && a.detail.addrJibun) || '');
         html += buildNaverLinkHtml(a.lat, a.lon, a.detail && a.detail.addrJibun, '');
     });
     return html;
