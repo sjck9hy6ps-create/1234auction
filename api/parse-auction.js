@@ -30,7 +30,13 @@
 ════════════════════════════════════ */
 import crypto from 'crypto';
 
-const GEMINI_MODEL = 'gemini-3.5-flash';
+// ⚠️ 원래 최상위 플래그십 모델(gemini-3.5-flash)을 썼는데, 무료 티어 분당 요청수(RPM) 한도가
+//    유독 박해서 스키마를 4개로 나눠 동시에 호출하는 것만으로도 "15~20초 후 다시 시도" 오류가
+//    자주 났음. 이 작업은 스키마(정해진 JSON 형식)로 출력이 고정되고 판단 규칙도 프롬프트에
+//    아주 구체적으로 적어놨기 때문에 최상위 모델의 추론력이 꼭 필요하지 않다고 보고,
+//    무료 RPM이 훨씬 넉넉한 gemini-2.5-flash(라이트가 아닌 정식 하이브리드 추론 모델)로 교체함.
+//    등기부/권리분석처럼 복잡한 서술형 필드의 정확도가 체감상 떨어지면 이 상수만 되돌리면 됨.
+const GEMINI_MODEL = 'gemini-2.5-flash';
 // Vercel 함수 자체의 실행 제한 시간을 늘림 (기본값은 너무 짧아서, 스키마가 큰 요청은
 // Gemini 응답이 오기 전에 함수가 먼저 죽어버릴 수 있음). Hobby 플랜에서도 60초까지 가능.
 export const maxDuration = 60;
@@ -406,7 +412,11 @@ async function callGemini(apiKey, promptText, schema, imageParts, attempt, tempe
         generationConfig: {
           responseMimeType: 'application/json',
           responseSchema: schema,
-          thinkingConfig: { thinkingLevel: 'minimal' },
+          // ⚠️ gemini-2.5-flash 계열은 thinkingLevel이 아니라 thinkingBudget(토큰 수)으로
+          //    사고 정도를 조절함(3.x 계열의 thinkingLevel과 파라미터 자체가 다름 - 섞어 쓰면
+          //    무시되거나 오류가 남). 0으로 두면 사고를 끄고 최대한 빠르게 응답함 - 스키마가
+          //    출력 형식을 강제하고 판단 규칙도 프롬프트에 구체적으로 적혀 있어 충분함.
+          thinkingConfig: { thinkingBudget: 0 },
           temperature,
         },
       }),
