@@ -1,6579 +1,788 @@
-<!DOCTYPE html>
-<html>
-<head>
-    <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
-    <title>부동산 실거래가 지도</title>
-    <link rel="icon" href="data:,">
-<style>
-* { margin:0; padding:0; box-sizing:border-box; }
-body { font-family:'Malgun Gothic',sans-serif; }
-#search-box {
-    position:absolute; top:10px; left:50%; transform:translateX(-50%);
-    z-index:10; display:flex; gap:6px;
-}
-#search-box input {
-    width:240px; padding:8px 12px; border:2px solid #f9e000;
-    border-radius:6px; font-size:14px; outline:none;
-}
-#search-box button {
-    padding:8px 16px; background:#f9e000; border:none;
-    border-radius:6px; font-size:14px; font-weight:bold; cursor:pointer;
-}
-#search-box button:hover { background:#e6d000; }
-#type-filter {
-    position:absolute; top:10px; right:14px; z-index:10; display:flex; gap:5px;
-}
-.type-btn {
-    padding:7px 14px; font-size:13px; font-weight:bold;
-    border:2px solid #ccc; border-radius:20px; background:white; cursor:pointer; color:#666;
-}
-.type-btn.active-apt   { background:#e53935; color:white; border-color:#e53935; }
-.type-btn.active-villa { background:#1565c0; color:white; border-color:#1565c0; }
-#autocomplete {
-    position:absolute; top:48px; left:50%; transform:translateX(-50%);
-    z-index:11; width:340px; background:white; border-radius:0 0 8px 8px;
-    box-shadow:0 4px 12px rgba(0,0,0,0.15); display:none; max-height:300px; overflow-y:auto;
-}
-#map { width:100%; height:100vh; }
-#status-box {
-    position:absolute; top:112px; left:50%; transform:translateX(-50%);
-    z-index:10; background:rgba(0,0,0,0.75); color:white;
-    padding:7px 18px; border-radius:20px; font-size:13px; display:none; white-space:nowrap;
-}
-#filter-toggle-btn {
-    position:absolute; top:52px; left:50%; transform:translateX(-50%);
-    z-index:10; padding:7px 16px; font-size:13px; font-weight:bold;
-    border:2px solid #37474f; border-radius:20px; background:white; color:#37474f; cursor:pointer;
-}
-#filter-toggle-btn.active { background:#37474f; color:white; }
-#filter-panel {
-    position:absolute; top:90px; left:50%; transform:translateX(-50%);
-    z-index:10; background:rgba(255,255,255,0.97);
-    border-radius:12px; padding:6px 12px;
-    box-shadow:0 2px 10px rgba(0,0,0,0.13);
-    display:none; flex-direction:column; gap:5px;
-}
-.filter-row { display:flex; align-items:center; gap:4px; flex-wrap:wrap; }
-.filter-row-label {
-    font-size:10px; font-weight:bold; color:#888;
-    min-width:46px; text-align:right; padding-right:4px; flex-shrink:0;
-}
-.filter-tab {
-    padding:4px 10px; font-size:11px; font-weight:bold;
-    border:1.5px solid #ddd; border-radius:20px; background:white;
-    cursor:pointer; color:#666; white-space:nowrap; transition:all 0.15s;
-    flex-shrink:0; user-select:none;
-}
-.filter-tab:hover { opacity:0.8; }
-.ft-g[data-g="1"].active   { background:#b71c1c; border-color:#b71c1c; color:white; }
-.ft-g[data-g="2"].active   { background:#e53935; border-color:#e53935; color:white; }
-.ft-g[data-g="3"].active   { background:#ff7043; border-color:#ff7043; color:white; }
-.ft-g[data-g="4"].active   { background:#ffa726; border-color:#ffa726; color:white; }
-.ft-g[data-g="5"].active   { background:#66bb6a; border-color:#66bb6a; color:white; }
-.ft-g[data-g="6"].active   { background:#42a5f5; border-color:#42a5f5; color:white; }
-.ft-g[data-g="7"].active   { background:#9e9e9e; border-color:#9e9e9e; color:white; }
-.ft-v.active { background:#00897b; border-color:#00897b; color:white; }
-.ft-tier.active { background:#8d6e63; border-color:#8d6e63; color:white; }
-.ft-common.active { background:#37474f; border-color:#37474f; color:white; }
-.ft-surge.active { background:#e53935; border-color:#e53935; color:white; }
-.ft-reset { background:#f5f5f5; color:#888; }
-#filter-panel { max-width: 680px; }
-#filter-toggle-btn { max-width: 680px; }
-    
-#legend {
-    position:absolute; bottom:20px; left:14px; z-index:10;
-    background:rgba(255,255,255,0.95); border-radius:10px; padding:10px 14px;
-    font-size:12px; box-shadow:0 2px 8px rgba(0,0,0,0.15); line-height:2; max-width:220px;
-}
-#legend-header {
-    display:flex; justify-content:space-between; align-items:center;
-    cursor:pointer; user-select:none; line-height:1.4;
-}
-#legend-header-title { font-weight:bold; font-size:11px; color:#555; }
-#legend-toggle-icon { font-size:10px; color:#888; font-weight:bold; white-space:nowrap; margin-left:8px; }
-#legend.collapsed { padding:7px 12px; }
-#legend.collapsed #legend-body { display:none; }
-.legend-dot { display:inline-block; width:12px; height:12px; border-radius:50%; margin-right:5px; vertical-align:middle; }
-#panel {
-    position:absolute; top:0; right:0; width:380px; height:100vh;
-    background:white; z-index:20; box-shadow:-3px 0 10px rgba(0,0,0,0.2);
-    display:none; flex-direction:column;
-}
-#panel-header {
-    padding:14px 16px; font-weight:bold; font-size:15px;
-    display:flex; justify-content:space-between; align-items:center; flex-shrink:0;
-}
-#panel-close { cursor:pointer; font-size:20px; }
-#sort-bar {
-    display:flex; gap:6px; padding:10px 12px; border-bottom:1px solid #eee;
-    flex-shrink:0; flex-wrap:wrap; align-items:center;
-}
-#sort-bar span { font-size:12px; color:#666; margin-right:2px; }
-.sort-btn {
-    padding:4px 10px; font-size:12px; border:1px solid #ddd;
-    border-radius:20px; background:white; cursor:pointer; color:#555;
-}
-.sort-btn.active { background:#333; color:white; border-color:#333; }
-#pyung-bar {
-    display:flex; gap:5px; padding:8px 12px; border-bottom:1px solid #eee;
-    flex-shrink:0; flex-wrap:wrap; align-items:center;
-}
-#pyung-bar span { font-size:12px; color:#666; margin-right:2px; }
-.pyung-btn {
-    padding:3px 9px; font-size:12px; border:1px solid #ddd;
-    border-radius:20px; background:white; cursor:pointer; color:#555;
-}
-.pyung-btn.active { background:#e53935; color:white; border-color:#e53935; }
-#panel-body { overflow-y:auto; padding:12px; flex:1; }
-.panel-tabs { display:flex; gap:6px; margin-bottom:12px; border-bottom:2px solid #eee; }
-.panel-tab-btn {
-    flex:1; padding:8px 6px; font-size:12.5px; font-weight:bold; border:none;
-    background:transparent; color:#999; cursor:pointer; border-bottom:2.5px solid transparent;
-    margin-bottom:-2px; position:relative;
-}
-.panel-tab-btn.active { color:#6a1b9a; border-bottom-color:#6a1b9a; }
-.panel-tab-dot {
-    display:inline-block; width:6px; height:6px; border-radius:50%;
-    background:#e53935; margin-left:4px; vertical-align:middle;
-}
-.year-label {
-    font-size:12px; font-weight:bold; color:#fff; background:#aaa;
-    padding:3px 10px; border-radius:20px; margin:12px 0 6px; display:inline-block;
-}
-.year-label.recent { background:#e53935; }
-table { width:100%; border-collapse:collapse; font-size:12px; margin-bottom:4px; }
-th { background:#fafafa; padding:6px 4px; border-bottom:2px solid #ddd; text-align:center; font-size:11px; }
-td { padding:6px 4px; border-bottom:1px solid #eee; text-align:center; }
-tr:hover td { background:#fffde7; }
-.indicator-box { background:#f9f9f9; border-radius:10px; padding:10px 12px; margin-bottom:12px; border:1px solid #eee; }
-.indicator-title { font-size:12px; font-weight:bold; color:#555; margin-bottom:6px; }
-.indicator-grid { display:grid; grid-template-columns:1fr 1fr; gap:6px; }
-.indicator-item { background:white; border-radius:7px; padding:7px 10px; border:1px solid #eee; text-align:center; }
-.indicator-label { font-size:10px; color:#999; margin-bottom:2px; }
-.indicator-value { font-size:14px; font-weight:bold; }
-.indicator-sub { font-size:10px; color:#aaa; margin-top:1px; }
-.score-bar-wrap { margin-top:8px; }
-.score-bar-bg { background:#eee; border-radius:10px; height:8px; width:100%; overflow:hidden; }
-.score-bar-fill { height:8px; border-radius:10px; transition:width 0.4s; }
-.disqualified-box {
-    background:#fff3f3; border:1px solid #ffcdd2; border-radius:8px;
-    padding:8px 12px; margin-bottom:10px; font-size:11px; color:#c62828;
-}
-.new-high-badge {
-    position:absolute; bottom:-10px; left:50%; transform:translateX(-50%);
-    background:#ff6f00; color:white; font-size:9px; font-weight:900;
-    padding:1px 6px; border-radius:10px; white-space:nowrap;
-    box-shadow:0 1px 3px rgba(0,0,0,0.35); border:1.5px solid white; z-index:2;
-}
-.comp-add-badge {
-    position:absolute; top:-10px; right:-8px;
-    background:#00897b; color:white; font-size:9px; font-weight:900;
-    padding:1px 6px; border-radius:10px; white-space:nowrap; cursor:pointer;
-    box-shadow:0 1px 3px rgba(0,0,0,0.35); border:1.5px solid white; z-index:4;
-}
-.comp-add-badge:hover { background:#00695c; }
-/* 경매 배지 */
-.auction-badge {
-    position:absolute; top:-10px; left:50%; transform:translateX(-50%);
-    background:#6a1b9a; color:white; font-size:9px; font-weight:900;
-    padding:1px 7px; border-radius:10px; white-space:nowrap;
-    box-shadow:0 1px 4px rgba(0,0,0,0.4); border:1.5px solid white; z-index:3;
-}
-/* 경매 모달 */
-#auction-modal-bg {
-    position:fixed; inset:0; background:rgba(0,0,0,0.45);
-    z-index:100; display:none; align-items:center; justify-content:center;
-}
-#auction-modal {
-    background:white; border-radius:14px; width:420px; max-height:90vh;
-    overflow-y:auto; box-shadow:0 8px 32px rgba(0,0,0,0.25); padding:0;
-}
-#comp-pick-modal-bg {
-    position:fixed; inset:0; background:rgba(0,0,0,0.45);
-    z-index:110; display:none; align-items:center; justify-content:center;
-}
-#comp-pick-modal {
-    background:white; border-radius:14px; width:300px; max-height:70vh;
-    overflow-y:auto; box-shadow:0 8px 32px rgba(0,0,0,0.25);
-}
-.modal-header {
-    padding:16px 20px; font-size:16px; font-weight:bold;
-    border-bottom:1px solid #eee; display:flex; justify-content:space-between; align-items:center;
-    position:sticky; top:0; background:white; z-index:1;
-}
-.modal-close { cursor:pointer; font-size:22px; color:#888; }
-.modal-body { padding:16px 20px; }
-.modal-section { margin-bottom:18px; }
-.modal-section-title {
-    font-size:11px; font-weight:bold; color:#888; letter-spacing:0.5px;
-    margin-bottom:8px; padding-bottom:4px; border-bottom:1px solid #f0f0f0;
-}
-.modal-row { display:flex; gap:8px; margin-bottom:8px; align-items:center; }
-.modal-label { font-size:12px; color:#555; min-width:72px; flex-shrink:0; }
-.modal-input {
-    flex:1; padding:7px 10px; border:1.5px solid #ddd; border-radius:7px;
-    font-size:13px; outline:none; font-family:inherit;
-}
-.modal-input:focus { border-color:#6a1b9a; }
-.modal-input.addr-input { border-color:#6a1b9a; background:#faf5ff; }
-.modal-select {
-    flex:1; padding:7px 10px; border:1.5px solid #ddd; border-radius:7px;
-    font-size:13px; outline:none; font-family:inherit; background:white;
-}
-.modal-btn {
-    padding:7px 14px; border:none; border-radius:7px;
-    font-size:12px; font-weight:bold; cursor:pointer;
-}
-.btn-purple { background:#6a1b9a; color:white; }
-.btn-purple:hover { background:#4a148c; }
-.btn-gray { background:#eee; color:#555; }
-.btn-gray:hover { background:#ddd; }
-.btn-red { background:#e53935; color:white; }
-.btn-red:hover { background:#b71c1c; }
-.modal-footer {
-    padding:12px 20px; border-top:1px solid #eee; display:flex;
-    gap:8px; justify-content:flex-end; position:sticky; bottom:0; background:white;
-}
-.margin-result {
-    background:#f3e5f5; border-radius:10px; padding:12px 14px; margin-top:12px;
-    border:1.5px solid #ce93d8;
-}
-.margin-result-title { font-size:11px; color:#6a1b9a; font-weight:bold; margin-bottom:8px; }
-.margin-grid { display:grid; grid-template-columns:1fr 1fr; gap:6px; }
-.margin-item { background:white; border-radius:7px; padding:7px 10px; text-align:center; border:1px solid #e1bee7; }
-.margin-label { font-size:10px; color:#999; margin-bottom:2px; }
-.margin-value { font-size:14px; font-weight:bold; }
-.comp-item {
-    display:flex; justify-content:space-between; align-items:center;
-    background:#f5f5f5; border-radius:7px; padding:5px 8px; margin-bottom:4px;
-    font-size:11px; color:#555; gap:6px;
-}
-.comp-item-remove { color:#e53935; cursor:pointer; font-weight:bold; flex-shrink:0; }
-.auction-panel-box {
-    background:#f3e5f5; border:1.5px solid #ce93d8; border-radius:10px;
-    padding:12px 14px; margin-bottom:14px;
-}
-.auction-panel-title {
-    font-size:12px; font-weight:bold; color:#6a1b9a; margin-bottom:10px;
-    display:flex; justify-content:space-between; align-items:center;
-}
-.auction-edit-btn {
-    font-size:11px; padding:2px 10px; border:1.5px solid #6a1b9a;
-    border-radius:10px; background:white; color:#6a1b9a; cursor:pointer; font-weight:bold;
-}
-.auction-edit-btn:hover { background:#6a1b9a; color:white; }
-.auction-info-grid { display:grid; grid-template-columns:1fr 1fr; gap:6px; }
-.auction-info-item { background:white; border-radius:7px; padding:6px 10px; border:1px solid #e1bee7; }
-.auction-info-label { font-size:10px; color:#999; margin-bottom:1px; }
-.auction-info-value { font-size:13px; font-weight:bold; }
-#auction-add-btn {
-    position:absolute; bottom:20px; right:14px; z-index:10;
-    background:#6a1b9a; color:white; border:none; border-radius:50px;
-    padding:10px 18px; font-size:13px; font-weight:bold; cursor:pointer;
-    box-shadow:0 3px 10px rgba(106,27,154,0.4); display:flex; align-items:center; gap:6px;
-}
-#auction-add-btn:hover { background:#4a148c; }
-#auction-list-panel {
-    position:absolute; bottom:70px; right:14px; z-index:10;
-    background:white; border-radius:12px; width:280px; max-height:400px;
-    overflow-y:auto; box-shadow:0 4px 16px rgba(0,0,0,0.18); display:none;
-}
-.auction-list-header {
-    padding:10px 14px; font-size:12px; font-weight:bold; color:#6a1b9a;
-    border-bottom:1px solid #eee; position:sticky; top:0; background:white;
-}
-#surge-btn {
-    background:#e53935; color:white; border-color:#e53935;
-}
-#surge-panel {
-    position:absolute; top:56px; right:14px; z-index:10;
-    background:white; border-radius:12px; width:300px; max-height:70vh;
-    overflow-y:auto; box-shadow:0 4px 16px rgba(0,0,0,0.18); display:none;
-}
-.surge-panel-header {
-    padding:10px 14px; font-size:12px; font-weight:bold; color:#e53935;
-    border-bottom:1px solid #eee; position:sticky; top:0; background:white;
-}
-.surge-item {
-    padding:10px 14px; border-bottom:1px solid #f0f0f0; cursor:pointer; transition:background 0.1s;
-}
-.surge-item:hover { background:#fff3f3; }
-.surge-rank { font-size:11px; color:#999; font-weight:bold; }
-.surge-dong { font-size:13px; font-weight:bold; color:#333; }
-.surge-metric { font-size:11px; color:#555; margin-top:2px; }
-@media (max-width: 640px) {
-    #surge-panel { top: 94px; right: 8px; width: calc(100vw - 16px); max-width: 320px; }
-}
-.auction-list-item {
-    padding:10px 14px; border-bottom:1px solid #f0f0f0; cursor:pointer; transition:background 0.1s;
-}
-.auction-list-item:hover { background:#f3e5f5; }
-.auction-list-name { font-size:13px; font-weight:bold; color:#333; }
-.auction-list-sub { font-size:11px; color:#888; margin-top:2px; }
-.auction-status-badge {
-    display:inline-block; font-size:10px; font-weight:bold; padding:1px 7px;
-    border-radius:10px; margin-left:6px; vertical-align:middle;
-}
-@media (max-width: 640px) {
-    #search-box {
-        left: 8px; right: 8px; top: 8px;
-        transform: none; width: auto;
-    }
-    #search-box input { flex: 1; min-width: 0; width: auto; }
-    #type-filter {
-        top: 54px; left: 8px; right: 8px;
-        justify-content: flex-end;
-    }
-   #filter-toggle-btn {
-        top: 94px; left: 8px; right: 8px;
-        transform: none; width: auto; max-width: none; text-align:center;
-    }
-    #filter-panel {
-        top: 130px; left: 8px; right: 8px;
-        transform: none; width: auto; max-width: none;
-    }
-    .filter-row {
-        overflow-x: auto; -webkit-overflow-scrolling: touch;
-        flex-wrap: nowrap; padding-bottom: 2px;
-    }
-    .filter-row-label { min-width: 40px; }
-    #autocomplete {
-        top: 50px; left: 8px; right: 8px;
-        transform: none; width: auto;
-    }
-    #status-box { top: 138px; }
-    #legend {
-        max-width: 150px; font-size: 10px; padding: 8px 10px; line-height: 1.7;
-        bottom: 8px; left: 8px;
-    }
-    #panel { width: 100%; }
-    #auction-add-btn { padding: 8px 14px; font-size: 12px; bottom: 8px; right: 8px; }
-    #auction-list-panel { width: calc(100vw - 16px); right: 8px; bottom: 60px; }
-    #auction-modal { width: 92vw; }
-}
- 
-@media (min-width: 641px) and (max-width: 900px) {
-    #panel { width: 340px; }
-    /* 아이패드 미니 등 641~900px 폭에서 상단 검색창(중앙)과 우측 타입탭(아파트/연립다세대/급등지역)이
-       한 줄에 다 안 들어가 겹치는 문제 - 검색창을 위쪽에 꽉 채우고 타입탭을 그 아래 줄로 내려서
-       겹치지 않게 함(휴대폰용 스택 레이아웃과 동일한 패턴을 이 폭 구간에도 적용) */
-    #search-box {
-        left: 10px; right: 10px; top: 10px;
-        transform: none; width: auto;
-    }
-    #search-box input { flex: 1; min-width: 0; width: auto; }
-    #type-filter {
-        top: 56px; left: 10px; right: 10px;
-        justify-content: flex-end;
-    }
-    #filter-toggle-btn {
-        top: 96px; left: 10px; right: 10px;
-        transform: none; width: auto; max-width: none; text-align:center;
-    }
-    #filter-panel {
-        top: 132px; left: 10px; right: 10px;
-        transform: none; width: auto; max-width: none;
-    }
-    .filter-row {
-        overflow-x: auto; -webkit-overflow-scrolling: touch;
-        flex-wrap: nowrap; padding-bottom: 2px;
-    }
-    #autocomplete {
-        top: 52px; left: 10px; right: 10px;
-        transform: none; width: auto;
-    }
-    #status-box { top: 140px; }
-}
-@keyframes blink {
-    50% { opacity: 0.4; }
-}
-@keyframes auctionGlow {
-    0%, 100% { box-shadow: 0 3px 14px rgba(230,81,0,0.55), 0 0 0 0 rgba(230,81,0,0.5); }
-    50% { box-shadow: 0 3px 14px rgba(230,81,0,0.85), 0 0 0 6px rgba(230,81,0,0); }
-}
-</style>
-</head>
-<body>
-<div id="search-box">
-    <input type="text" id="addr-input" placeholder="아파트명·도로명·지번 검색" />
-    <button onclick="searchAddress()">검색</button>
-</div>
-<div id="type-filter">
-    <button class="type-btn active-apt" onclick="setTypeFilter('apt',this)">아파트</button>
-    <button class="type-btn" onclick="setTypeFilter('villa',this)">연립다세대</button>
-    <button class="type-btn" id="surge-btn" onclick="openSurgePanel()">🔥 급등지역</button>
-</div>
-<button id="filter-toggle-btn" onclick="toggleFilterPanel()">필터 ▾</button>
-<div id="filter-panel">
-     <div class="filter-row">
-        <div class="filter-row-label">등급</div>
-        <button class="filter-tab ft-g" data-g="1" onclick="toggleGrade('1',this)">1등급</button>
-        <button class="filter-tab ft-g" data-g="2" onclick="toggleGrade('2',this)">2등급</button>
-        <button class="filter-tab ft-g" data-g="3" onclick="toggleGrade('3',this)">3등급</button>
-        <button class="filter-tab ft-g" data-g="4" onclick="toggleGrade('4',this)">4등급</button>
-        <button class="filter-tab ft-g" data-g="5" onclick="toggleGrade('5',this)">5등급</button>
-        <button class="filter-tab ft-g" data-g="6" onclick="toggleGrade('6',this)">6등급</button>
-        <button class="filter-tab ft-g" data-g="7" onclick="toggleGrade('7',this)">7등급</button>
-        <button class="filter-tab ft-reset" onclick="resetGradeFilter()">초기화</button>
-    </div>
-    <div class="filter-row">
-        <div class="filter-row-label">급등순위</div>
-        <button class="filter-tab ft-surge" data-s="1" onclick="toggleSurgeRank('1',this)">1위</button>
-        <button class="filter-tab ft-surge" data-s="2" onclick="toggleSurgeRank('2',this)">2위</button>
-        <button class="filter-tab ft-surge" data-s="3" onclick="toggleSurgeRank('3',this)">3위</button>
-        <button class="filter-tab ft-surge" data-s="4" onclick="toggleSurgeRank('4',this)">4위</button>
-        <button class="filter-tab ft-surge" data-s="5" onclick="toggleSurgeRank('5',this)">5위</button>
-        <button class="filter-tab ft-reset" onclick="resetSurgeRankFilter()">초기화</button>
-    </div>
-<div class="filter-row">
-        <div class="filter-row-label">연립다세대</div>
-        <button class="filter-tab ft-v" data-v="elev_y" onclick="toggleVillaFilter('elev_y',this)">승강기O</button>
-        <button class="filter-tab ft-v" data-v="elev_n" onclick="toggleVillaFilter('elev_n',this)">승강기X</button>
-        <button class="filter-tab ft-v" data-v="park_y" onclick="toggleVillaFilter('park_y',this)">주차O</button>
-        <button class="filter-tab ft-v" data-v="park_n" onclick="toggleVillaFilter('park_n',this)">주차X</button>
-        <button class="filter-tab ft-reset" onclick="resetVillaFilter()">초기화</button>
-    </div>
-    <div class="filter-row">
-        <div class="filter-row-label">연식단계</div>
-        <button class="filter-tab ft-tier" data-tier="premium" onclick="toggleVillaTier('premium',this)">프리미엄신축(0~3년)</button>
-        <button class="filter-tab ft-tier" data-tier="new" onclick="toggleVillaTier('new',this)">신축(4~8년)</button>
-        <button class="filter-tab ft-tier" data-tier="semi" onclick="toggleVillaTier('semi',this)">준신축(9~15년)</button>
-        <button class="filter-tab ft-tier" data-tier="old" onclick="toggleVillaTier('old',this)">구축(16~25년)</button>
-        <button class="filter-tab ft-tier" data-tier="aged" onclick="toggleVillaTier('aged',this)">노후(26년~)</button>
-        <button class="filter-tab ft-reset" onclick="resetVillaTierFilter()">초기화</button>
-    </div>
-     <div class="filter-row">
-        <div class="filter-row-label">공통</div>
-        <button class="filter-tab ft-common" onclick="toggleRecentYearOnly(this)">최근1년 거래만</button>
-        <button class="filter-tab ft-common" onclick="toggleCompOnlyFilter(this)">📌 비교대상만</button>
-        <button class="filter-tab ft-common" id="boundary-toggle-btn" onclick="toggleDongBoundaryMode(this)">🗺️ 법정동 경계선</button>
-        <button class="filter-tab ft-common" id="rentonly-toggle-btn" onclick="toggleShowRentOnly(this)">🏠 전세거래만 있는 주소</button>
-    </div>
-</div>
-<div id="dong-boundary-info" style="display:none;position:absolute;top:60px;left:50%;transform:translateX(-50%);z-index:50;background:rgba(0,0,0,0.75);color:white;font-size:12px;font-weight:bold;padding:5px 12px;border-radius:14px;pointer-events:none;"></div>
-<div id="autocomplete"></div>
-<div id="surge-panel">
-    <div class="surge-panel-header">
-        🔥 거래량 급등 동 · <span id="surge-panel-region">-</span>
-        <span onclick="closeSurgePanel()" style="float:right;cursor:pointer;">✕</span>
-    </div>
-    <div id="surge-panel-body"></div>
-</div>
-<div id="status-box"></div>
-<div id="map"></div>
-<div id="legend">
-    <div id="legend-header" onclick="toggleLegend()">
-        <span id="legend-header-title">📍 범례</span>
-        <span id="legend-toggle-icon">숨기기 ▾</span>
-    </div>
-    <div id="legend-body">
-    <div id="data-coverage-box" style="border-bottom:1px solid #eee;margin-bottom:6px;padding-bottom:6px;"></div>
-    <div><span class="legend-dot" style="background:#e53935;"></span> <span id="legend-recent-label">최근 3개월 거래</span></div>
-    <div><span class="legend-dot" style="background:#1565c0;"></span> <span id="legend-past-label">3개월~1년 거래</span></div>
-    <div><span class="legend-dot" style="background:#9e9e9e;"></span> 그 이전</div>
-    <div style="border-top:1px solid #eee;margin-top:4px;padding-top:4px;">
-        <div style="font-size:11px;color:#555;font-weight:bold;margin-bottom:3px;">평단가 등급 (구 내 상대순위)</div>
-        <div style="display:flex;gap:3px;flex-wrap:wrap;align-items:center;font-size:11px;">
-            <span style="background:#b71c1c;color:white;font-size:10px;font-weight:bold;padding:1px 5px;border-radius:3px;">1</span>최고
-            <span style="background:#e53935;color:white;font-size:10px;font-weight:bold;padding:1px 5px;border-radius:3px;">2</span>
-            <span style="background:#ff7043;color:white;font-size:10px;font-weight:bold;padding:1px 5px;border-radius:3px;">3</span>
-            <span style="background:#ffa726;color:white;font-size:10px;font-weight:bold;padding:1px 5px;border-radius:3px;">4</span>
-            <span style="background:#66bb6a;color:white;font-size:10px;font-weight:bold;padding:1px 5px;border-radius:3px;">5</span>
-            <span style="background:#42a5f5;color:white;font-size:10px;font-weight:bold;padding:1px 5px;border-radius:3px;">6</span>
-            <span style="background:#9e9e9e;color:white;font-size:10px;font-weight:bold;padding:1px 5px;border-radius:3px;">7</span>최저
-        </div>
-    </div>
-    <div style="border-top:1px solid #eee;margin-top:4px;padding-top:4px;font-size:11px;">
-        <span style="background:#ff6f00;color:white;font-size:10px;font-weight:bold;padding:1px 6px;border-radius:10px;">★ 신고가</span>
-        6개월 전 대비 최고가 경신
-    </div>
-    <div style="border-top:1px solid #eee;margin-top:4px;padding-top:4px;font-size:11px;">
-        <span style="background:#6a1b9a;color:white;font-size:10px;font-weight:bold;padding:1px 6px;border-radius:10px;">🔨 경매</span>
-        등록된 경매 물건
-    </div>
-    <div style="font-size:11px;color:#888;margin-top:4px;">핀 숫자 = 기간 내 거래건수</div>
-    <div style="margin-top:4px;"><a href="/backup.html" style="font-size:11px;color:#6a1b9a;font-weight:bold;">📦 데이터 백업</a></div>
-    </div>
-</div>
-<button id="auction-add-btn" onclick="openAuctionList()">🔨 경매 관리</button>
-<div id="auction-list-panel">
-    <div class="auction-list-header">
-        🔨 경매 물건 목록
-        <button onclick="openAuctionModal(null)" style="float:right;background:#6a1b9a;color:white;border:none;border-radius:20px;padding:3px 10px;font-size:11px;cursor:pointer;">+ 등록</button>
-    </div>
-    <div id="auction-list-body"></div>
-</div>
-<div id="auction-modal-bg" onclick="closeAuctionModal(event)">
-<div id="auction-modal">
-    <div class="modal-header">
-        <span id="modal-title">🔨 경매 물건 등록</span>
-        <span class="modal-close" onclick="closeAuctionModal()">✕</span>
-    </div>
-    <div class="modal-body">
-        <input type="hidden" id="auction-id">
-        <div class="modal-section">
-            <div class="modal-section-title">🤖 AI 자동 채우기</div>
-            <textarea class="modal-input" id="a-paste-text" rows="4"
-                placeholder="탱크옥션 등 경매정보지 상세페이지 내용을 그대로 복사해서 여기 붙여넣으세요"
-                style="resize:vertical;width:100%;"></textarea>
-            <div style="margin-top:8px;">
-                <label class="modal-btn btn-purple" style="display:inline-block;cursor:pointer;">
-                    📷 캡처 이미지 첨부
-                    <input type="file" id="a-parse-images" accept="image/*" multiple style="display:none;" onchange="handleAuctionImageSelect(event)">
-                </label>
-                <span id="a-parse-images-count" style="font-size:11px;color:#777;margin-left:8px;"></span>
-            </div>
-            <div id="a-parse-images-preview" style="display:flex;gap:6px;flex-wrap:wrap;margin-top:6px;"></div>
-            <div style="font-size:10.5px;color:#999;margin-top:4px;">복사가 안 되는 페이지는 화면을 캡처해서(여러 장이면 위→아래 순서대로) 올리세요. AI가 이미지에서 직접 읽어냅니다. 텍스트와 이미지를 같이 넣어도 됩니다.</div>
-            <div style="margin-top:6px;text-align:right;">
-                <button class="modal-btn btn-purple" id="a-parse-btn" onclick="parseAuctionPaste()">텍스트/이미지에서 자동 추출</button>
-            </div>
-            <div id="a-ai-summary-box"></div>
-        </div>
-        <div class="modal-section">
-            <div class="modal-section-title">📍 물건 정보</div>
-            <div class="modal-row">
-                <span class="modal-label">주소</span>
-                <input type="text" class="modal-input addr-input" id="a-addr" placeholder="도로명 또는 지번 주소 입력">
-                <button class="modal-btn btn-purple" onclick="searchAuctionAddr()">검색</button>
-            </div>
-            <div id="a-addr-result" style="font-size:11px;color:#6a1b9a;padding:2px 0 4px 76px;display:none;"></div>
-            <div id="a-building-info-box" style="margin-top:4px;"></div>
-            <div style="margin-top:6px;">
-                <button type="button" class="modal-btn btn-purple" id="dev-news-btn" style="font-size:11px;" onclick="searchDevelopmentNews()">🏗️ 주변 개발호재 검색</button>
-                <span style="font-size:10px;color:#999;margin-left:4px;">주소 입력 후 눌러주세요 (재개발·재건축·신속통합기획 등 AI 웹검색)</span>
-            </div>
-            <div id="dev-news-box" style="margin-top:4px;"></div>
-            <div class="modal-row">
-                <span class="modal-label">물건유형</span>
-                <select class="modal-select" id="a-prop-type" onchange="autoCalcAgentSilent();autoCalcRepairSilent();calcCompValuation();calcMargin();autoCalcAuctionJeonseAnalysis();">
-                    <option value="apt">아파트</option>
-                    <option value="villa">연립다세대·단독</option>
-                    <option value="officetel">오피스텔</option>
-                    <option value="other">그외(상가·토지 등)</option>
-                </select>
-            </div>
-            <div class="modal-row">
-                <span class="modal-label">아파트명</span>
-                <input type="text" class="modal-input" id="a-name" placeholder="단지명">
-            </div>
-            <div class="modal-row">
-                <span class="modal-label">동/층/호수</span>
-                <input type="text" class="modal-input" id="a-dong" placeholder="예) 101동" style="flex:1;">
-                <input type="number" class="modal-input" id="a-floor" placeholder="층" style="flex:0.6;">
-                <input type="text" class="modal-input" id="a-unit" placeholder="호수 예) 302호" style="flex:1;">
-            </div>
-            <div class="modal-row">
-                <span class="modal-label">사건번호</span>
-                <input type="text" class="modal-input" id="a-case" placeholder="예) 2024타경12345">
-            </div>
-            <div class="modal-row">
-                <span class="modal-label">평형</span>
-                <input type="number" class="modal-input" id="a-pyung" placeholder="예) 24" oninput="autoCalcRepairSilent();calcCompValuation();calcMargin();autoCalcAuctionJeonseAnalysis();">
-                <span style="font-size:12px;color:#888;margin-left:4px;">평</span>
-            </div>
-            <div class="modal-row">
-                <span class="modal-label">입찰일</span>
-                <input type="date" class="modal-input" id="a-date">
-            </div>
-            <div class="modal-row">
-                <span class="modal-label">진행상태</span>
-                <select class="modal-select" id="a-status" onchange="updateStatusUI()">
-                    <option value="검토중">검토중</option>
-                    <option value="입찰예정">입찰예정</option>
-                    <option value="낙찰">낙찰</option>
-                    <option value="유찰">유찰</option>
-                    <option value="포기">포기</option>
-                    <option value="매도완료">매도완료</option>
-                </select>
-            </div>
-        </div>
-        <div class="modal-section">
-            <div class="modal-section-title">🏠 다주택/공시가격 조건 (취득세 계산용 · 매매사업자 모드: 양도소득세 없음)</div>
-            <div class="modal-row">
-                <span class="modal-label">보유주택수</span>
-                <select class="modal-select" id="a-house-rank" onchange="autoCalcTaxSilent();calcCompValuation();calcMargin();">
-                    <option value="1">1주택 (무주택자의 첫 주택)</option>
-                    <option value="2">2주택 (기존 1주택 보유중)</option>
-                    <option value="3">3주택 이상</option>
-                </select>
-            </div>
-            <div class="modal-row">
-                <span class="modal-label">조정대상지역</span>
-                <label style="display:flex;align-items:center;gap:4px;font-size:12px;">
-                    <input type="checkbox" id="a-is-adjusted" onchange="autoCalcTaxSilent();calcCompValuation();calcMargin();"> 해당됨
-                </label>
-                <button type="button" class="modal-btn btn-gray" style="font-size:11px;" onclick="autoDetectAdjustedArea()">주소로 자동판정</button>
-            </div>
-            <div class="modal-row">
-                <span class="modal-label">공시가격 조회</span>
-                <button type="button" class="modal-btn btn-gray" style="font-size:11px;" onclick="window.open('https://www.realtyprice.kr','_blank')">🏛️ 부동산공시가격 알리미 열기</button>
-                <span style="font-size:10px;color:#999;margin-left:4px;">주소 조회 후 아래에 직접 입력</span>
-            </div>
-            <div class="modal-row">
-                <span class="modal-label">공시가격</span>
-                <input type="number" class="modal-input" id="a-official-price" placeholder="0" oninput="applyOfficialPriceInput();">
-                <span style="font-size:12px;color:#888;margin-left:4px;">원</span>
-            </div>
-            <div class="modal-row">
-                <span class="modal-label">지방 저가주택</span>
-                <label style="display:flex;align-items:center;gap:4px;font-size:12px;">
-                    <input type="checkbox" id="a-is-local-cheap" onchange="autoCalcTaxSilent();calcCompValuation();calcMargin();"> 비수도권 + 공시가격 2억 이하 (공시가격 입력 시 자동 판정, 필요시 직접 수정 가능)
-                </label>
-            </div>
-            <div style="font-size:10px;color:#aaa;margin-top:4px;">⚠️ 조정대상지역 목록은 수시로 바뀝니다. 실제 입찰 전 취득세는 위택스 등에서 한 번 더 확인하는 것을 권장합니다.</div>
-        </div>
-        <div class="modal-section">
-            <div class="modal-section-title">📊 비교물건 시세분석 (최대 10개)</div>
-            <div style="margin-bottom:8px;">
-                <button type="button" class="modal-btn btn-purple" style="font-size:11px;" onclick="openAiCompFinder()">🤖 유사물건 자동추천</button>
-                <span style="font-size:10px;color:#999;margin-left:4px;">주소·평형·층 입력 후 눌러주세요</span>
-            </div>
-            <div id="comp-list-box" style="margin-bottom:8px;"></div>
-            <div class="modal-row">
-                <span class="modal-label">목표마진</span>
-                <input type="number" class="modal-input" id="a-comp-target-margin" placeholder="0" oninput="calcCompValuation();suggestBidFromTarget();">
-                <span style="font-size:12px;color:#888;margin-left:4px;">만원</span>
-            </div>
-            <div id="comp-valuation-result" style="margin-top:8px;"></div>
-            <div style="margin-top:10px;border-top:1px dashed #e0d0f0;padding-top:8px;">
-                <button type="button" class="modal-btn btn-purple" style="font-size:11px;" onclick="calcAuctionJeonseAnalysis()">🏠 전세가 기반 분석 다시 계산</button>
-                <span style="font-size:10px;color:#999;margin-left:4px;">연립다세대·단독이고 주소·평형이 있으면 자동으로 계산됩니다 (수동 새로고침용 버튼)</span>
-            </div>
-            <div id="jeonse-analysis-box" style="margin-top:8px;"></div>
-        </div>
-        <div class="modal-section">
-            <div class="modal-section-title">💰 가격 정보 (만원 단위)</div>
-            <div class="modal-row">
-                <span class="modal-label">감정가</span>
-                <input type="number" class="modal-input" id="a-appraisal" placeholder="0" oninput="calcMargin()">
-            </div>
-            <div class="modal-row">
-                <span class="modal-label">최저입찰가</span>
-                <input type="number" class="modal-input" id="a-min-bid" placeholder="0" oninput="calcMargin()">
-            </div>
-            <div class="modal-row">
-                <span class="modal-label">내 입찰가</span>
-                <input type="number" class="modal-input" id="a-my-bid" placeholder="0" oninput="autoCalcTaxSilent();calcMargin()">
-            </div>
-            <div class="modal-row" id="actual-bid-row" style="display:none;">
-                <span class="modal-label">실제 낙찰가</span>
-                <input type="number" class="modal-input" id="a-actual-bid" placeholder="0" oninput="autoCalcTaxSilent();calcMargin()">
-            </div>
-        </div>
-        <div class="modal-section">
-            <div class="modal-section-title">🧾 비용 (만원 단위)</div>
-            <div class="modal-row">
-                <span class="modal-label">취득세 <span onclick="showCalcInfo('tax')" title="계산기준 보기" style="cursor:pointer;color:#1976d2;">ⓘ</span></span>
-                <input type="number" class="modal-input" id="a-tax" placeholder="0" oninput="calcMargin()">
-                <button class="modal-btn btn-gray" onclick="autoCalcTax()" style="font-size:11px;">자동계산</button>
-            </div>
-            <div class="modal-row">
-                <span class="modal-label">등기비용 <span onclick="showCalcInfo('registryFee')" title="계산기준 보기" style="cursor:pointer;color:#1976d2;">ⓘ</span></span>
-                <input type="number" class="modal-input" id="a-registry-fee" placeholder="0" oninput="calcMargin()">
-                <button class="modal-btn btn-gray" onclick="autoCalcRegistryFee()" style="font-size:11px;">자동계산</button>
-            </div>
-            <div class="modal-row">
-                <span class="modal-label">명도비용 <span onclick="showCalcInfo('evictionFee')" title="계산기준 보기" style="cursor:pointer;color:#1976d2;">ⓘ</span></span>
-                <input type="number" class="modal-input" id="a-eviction-fee" placeholder="0" oninput="calcMargin()">
-                <button class="modal-btn btn-gray" onclick="autoCalcEvictionFee()" style="font-size:11px;">자동계산</button>
-            </div>
-            <div class="modal-row">
-                <span class="modal-label">수리비 <span onclick="showCalcInfo('repair')" title="계산기준 보기" style="cursor:pointer;color:#1976d2;">ⓘ</span></span>
-                <input type="number" class="modal-input" id="a-repair" placeholder="0" oninput="calcMargin()">
-                <span style="font-size:10px;color:#aaa;margin-left:4px;">연립다세대는 연식단계별 평당단가로 자동계산(직접 수정 가능)</span>
-            </div>
-            <div class="modal-row">
-                <span class="modal-label">중개수수료 <span onclick="showCalcInfo('agent')" title="계산기준 보기" style="cursor:pointer;color:#1976d2;">ⓘ</span></span>
-                <input type="number" class="modal-input" id="a-agent" placeholder="0" oninput="calcMargin()">
-            </div>
-            <div class="modal-row">
-                <span class="modal-label">기타비용</span>
-                <input type="number" class="modal-input" id="a-etc" placeholder="0" oninput="calcMargin()">
-                <span style="font-size:10px;color:#aaa;margin-left:4px;">미납관리비 등</span>
-            </div>
-        </div>
-        <div class="modal-section">
-            <div class="modal-section-title">📈 매도 계획 (만원 단위)</div>
-            <div id="target-suggest-box"></div>
-            <div class="modal-row">
-                <span class="modal-label">목표 매도가</span>
-                <input type="number" class="modal-input" id="a-target" placeholder="0" oninput="autoCalcAgentSilent();calcMargin();suggestBidFromTarget();">
-            </div>
-            <div class="modal-row" id="actual-sell-row" style="display:none;">
-                <span class="modal-label">실제 매도가</span>
-                <input type="number" class="modal-input" id="a-actual-sell" placeholder="0" oninput="autoCalcAgentSilent();calcMargin();suggestBidFromTarget();">
-            </div>
-            <div id="target-bid-suggest-box"></div>
-        </div>
-        <div class="modal-section">
-            <div class="modal-section-title">📚 경매서류 교차분석 (등기부등본 · 매각물건명세서 · 전입세대확인서)</div>
-            <div style="font-size:11px;color:#888;margin-bottom:8px;">세 서류를 함께 올리면 AI가 서로 대조해서 건물 이력·채권관계·경매개시 경위·인수/말소되는 등기를 스토리텔링으로 요약합니다. 등기부등본만 올려도 분석되지만, 나머지 두 서류를 함께 올리면 임차인 대항력 판단 등이 훨씬 정확해집니다.</div>
-            <div style="margin-bottom:7px;">
-                <label style="font-size:11px;color:#555;display:block;margin-bottom:3px;">① 등기부등본 (인터넷등기소 iros.go.kr)</label>
-                <input type="file" id="a-registry-file" accept="application/pdf" class="modal-input" style="padding:6px;">
-            </div>
-            <div style="margin-bottom:7px;">
-                <label style="font-size:11px;color:#555;display:block;margin-bottom:3px;">② 매각물건명세서 (법원경매정보 courtauction.go.kr)</label>
-                <input type="file" id="a-salestatement-file" accept="application/pdf" class="modal-input" style="padding:6px;">
-            </div>
-            <div style="margin-bottom:7px;">
-                <label style="font-size:11px;color:#555;display:block;margin-bottom:3px;">③ 전입세대확인서 (전입세대열람내역, 주민센터 발급)</label>
-                <input type="file" id="a-residentcert-file" accept="application/pdf" class="modal-input" style="padding:6px;">
-            </div>
-            <div style="margin-top:6px;text-align:right;">
-                <button type="button" class="modal-btn btn-purple" id="a-registry-btn" onclick="analyzeAuctionDocs()">업로드 및 교차분석</button>
-            </div>
-            <div id="registry-result-box"></div>
-        </div>
-        <div class="modal-section">
-            <div class="modal-section-title">📝 메모</div>
-            <textarea class="modal-input" id="a-memo" rows="3" placeholder="특이사항, 권리분석 등" style="resize:vertical;width:100%;"></textarea>
-        </div>
-        <div class="modal-section">
-            <div class="modal-section-title">✅ 경매물건 체크리스트 <span id="checklist-progress" style="font-weight:normal;color:#888;font-size:11px;margin-left:6px;"></span></div>
-            <div style="font-size:10.5px;color:#999;margin-bottom:6px;">교육자료(권리분석·임차인·용도지역·농취증) 기반 체크리스트입니다. 카테고리를 눌러 펼치고 항목을 체크하세요. 저장된 물건은 체크 즉시 자동저장됩니다.</div>
-            <div id="checklist-section-body"></div>
-        </div>
-        <div class="margin-result" id="margin-result-box">
-            <div class="margin-result-title">💡 예상 마진 분석</div>
-            <div class="margin-grid" id="margin-grid"></div>
-        </div>
-    </div>
-    <div class="modal-footer">
-        <button class="modal-btn btn-red" id="modal-delete-btn" onclick="deleteAuction()" style="display:none;margin-right:auto;">삭제</button>
-        <button class="modal-btn btn-gray" onclick="closeAuctionModal()">취소</button>
-        <button class="modal-btn btn-purple" onclick="saveAuction()">저장</button>
-    </div>
-</div>
-</div>
-<div id="comp-pick-modal-bg" onclick="closeCompPickModal(event)">
-<div id="comp-pick-modal">
-    <div class="modal-header">
-        <span>📊 비교물건으로 등록</span>
-        <span class="modal-close" onclick="closeCompPickModal()">✕</span>
-    </div>
-    <div id="comp-pick-body" style="padding:6px 0;"></div>
-</div>
-</div>
-<div id="ai-comp-modal-bg" onclick="closeAiCompModal(event)" style="position:fixed;inset:0;background:rgba(0,0,0,0.45);z-index:120;display:none;align-items:center;justify-content:center;">
-<div id="ai-comp-modal" style="background:white;border-radius:14px;width:360px;max-height:75vh;overflow-y:auto;box-shadow:0 8px 32px rgba(0,0,0,0.25);">
-    <div class="modal-header">
-        <span>🤖 유사물건 자동추천</span>
-        <span class="modal-close" onclick="closeAiCompModal()">✕</span>
-    </div>
-    <div id="ai-comp-body" style="padding:6px 16px;"></div>
-    <div class="modal-footer">
-        <button class="modal-btn btn-gray" onclick="closeAiCompModal()">취소</button>
-        <button class="modal-btn btn-purple" onclick="addSelectedAiComps()">선택 항목 추가</button>
-    </div>
-</div>
-</div>
-<div id="marker-stack-modal-bg" onclick="closeMarkerStackModal(event)" style="position:fixed;inset:0;background:rgba(0,0,0,0.45);z-index:125;display:none;align-items:center;justify-content:center;">
-<div style="background:white;border-radius:14px;width:320px;max-height:70vh;overflow-y:auto;box-shadow:0 8px 32px rgba(0,0,0,0.25);">
-    <div class="modal-header">
-        <span id="marker-stack-title">📍 겹쳐있는 매물</span>
-        <span class="modal-close" onclick="closeMarkerStackModal()">✕</span>
-    </div>
-    <div style="font-size:10.5px;color:#999;padding:0 16px 6px;">화면상 이 위치에 배지가 겹쳐 있습니다. 확인할 매물을 눌러 주세요.</div>
-    <div id="marker-stack-body" style="padding:0 12px 12px;"></div>
-</div>
-</div>
-<div id="site-note-modal-bg" onclick="closeSiteNoteModal(event)" style="position:fixed;inset:0;background:rgba(0,0,0,0.45);z-index:130;display:none;align-items:center;justify-content:center;">
-<div style="background:white;border-radius:14px;width:400px;max-height:85vh;overflow-y:auto;box-shadow:0 8px 32px rgba(0,0,0,0.25);">
-    <div class="modal-header">
-        <span id="sn-title">📝 임장메모</span>
-        <span class="modal-close" onclick="closeSiteNoteModal()">✕</span>
-    </div>
-    <div style="padding:6px 16px 16px;">
-        <div style="font-size:10.5px;color:#999;margin-bottom:10px;">경매 사건과 무관하게 이 건물 단위로 저장됩니다. 같은 건물을 나중에 다시 볼 때(다른 물건 검토 시에도) 여기서 계속 확인할 수 있어요.</div>
-        <div class="modal-row">
-            <span class="modal-label">방문일</span>
-            <input type="date" class="modal-input" id="sn-visit-date">
-        </div>
-        <div class="modal-row" style="align-items:flex-start;">
-            <span class="modal-label">메모</span>
-            <textarea class="modal-input" id="sn-memo" rows="4" placeholder="현장에서 확인한 내용, 특이사항 등을 자유롭게 적어주세요." style="resize:vertical;width:100%;"></textarea>
-        </div>
-        <div style="font-size:11px;font-weight:bold;color:#e65100;margin:10px 0 4px;">임장 체크리스트</div>
-        <div id="sn-checklist-body"></div>
-        <div style="text-align:right;margin-top:8px;">
-            <button class="modal-btn btn-purple" onclick="saveSiteNote()">이 방문 기록 저장</button>
-        </div>
-        <div style="font-size:11px;font-weight:bold;color:#e65100;margin:16px 0 6px;border-top:1px solid #eee;padding-top:12px;">지난 임장메모</div>
-        <div id="sn-history-list"></div>
-    </div>
-</div>
-</div>
-<div id="panel">
-    <div id="panel-header">
-        <span id="panel-title">거래 목록</span>
-        <span id="panel-close" onclick="closePanel()">✕</span>
-    </div>
-    <div id="sort-bar">
-        <span>정렬:</span>
-        <button class="sort-btn active" onclick="setSort('date',this)">최신순</button>
-        <button class="sort-btn" onclick="setSort('amount_desc',this)">금액↓</button>
-        <button class="sort-btn" onclick="setSort('amount_asc',this)">금액↑</button>
-        <button class="sort-btn" onclick="setSort('area_desc',this)">면적↓</button>
-        <button class="sort-btn" onclick="setSort('area_asc',this)">면적↑</button>
-    </div>
-    <div id="pyung-bar">
-        <span>평형:</span>
-        <button class="pyung-btn active" onclick="setPyung('all',this)">전체</button>
-    </div>
-    <div id="panel-body"></div>
-</div>
-<script>
 /* ════════════════════════════════════
-   전역 변수
+   경매정보지(탱크옥션 등) 텍스트/캡처 이미지 → 구조화된 JSON 추출
+   - 클라이언트가 경매 상세페이지에서 복사한 텍스트를 그대로 넘기거나,
+     복사가 막혀 있는 페이지는 화면 캡처 이미지(여러 장 가능)를 넘기면
+     Gemini API로 필수 항목들을 뽑아서 JSON으로 돌려줍니다. 텍스트와 이미지를
+     동시에 보낼 수도 있습니다(둘 다 참고해서 추출).
+   - 텍스트/이미지에 없는 값은 null로 두도록 프롬프트에 명시 (추측 금지)
+   ⚠️ 예전엔 스키마 전체(60개+ 필드)를 한 번의 Gemini 호출로 처리했는데,
+      Hobby 플랜의 maxDuration 상한(60초)보다 응답이 오래 걸려 타임아웃이 잦았음
+      (같은 물건도 매번 성공/실패가 갈릴 정도로 시간이 아슬아슬했음).
+      그래서 스키마를 "물건·가격·임차인" / "건축물·등기" 두 그룹으로 나눠
+      Promise.all로 동시에 호출 → 전체 소요시간이 "둘의 합"이 아니라
+      "더 오래 걸리는 쪽 하나" 수준으로 줄어들도록 함.
+   ⚠️ 정확도/속도 개선 (2차):
+      - temperature: 0 고정 → 같은 입력이면 항상 같은 결과가 나오도록 재현성을 높임.
+      - Redis 캐싱 → 동일한 텍스트/이미지(해시 동일)를 다시 보내면 Gemini를 재호출하지
+        않고 즉시 반환. 오타 수정 후 재시도하거나 같은 물건을 다시 붙여넣을 때 빠름.
+      - 숫자 정합성 자동검증 → 최저가율/보증금율/㎡당단가처럼 다른 필드로부터 재계산 가능한
+        값들을 서버에서 직접 계산해 AI가 준 값과 크게 다르면 warnings에 담아 화면에 경고.
+   ⚠️ 타임아웃 재발 대응 (3차, 텍스트 1만자 내외에서도 "시간 내에 끝나지 못했습니다" 경고가
+      자꾸 뜬다는 신고로 조사): 스키마 A(물건정보+가격+임차인+매각통계)와 B(건축물+등기+권리분석)
+      두 덩어리로만 나눴을 때도, 각 덩어리 안에 배열형 필드(tenantOccupants, officialTrades,
+      registryItems 등)가 많으면 응답 생성(출력 토큰)이 오래 걸려 52초를 넘기는 경우가 있었음.
+      그래서 A를 다시 A1(물건 기본정보·가격, 배열은 짧은 rounds만)/A2(임차인·매각통계·실거래,
+      가장 무거운 배열들)로, B를 B1(건축물정보)/B2(등기이력·권리분석, registryStory 서술형 포함)로
+      나눠 4개 호출을 동시에 보냄 - 개별 호출당 만들어야 하는 출력이 줄어 지연이 짧아짐.
+      동시에, 부가기능이던 "경량 스키마C 교차검증"(핵심필드 재추출 비교)은 호출 수를 4개에서
+      5개로 늘리면 무료 티어의 분당 요청수(RPM) 한도에 더 빨리 걸릴 수 있어 제거함 - 매번
+      성공하는 게 이중 검증보다 우선이라고 판단.
 ════════════════════════════════════ */
-var map, geocoder, places;
-var markers = {}, radiusCircle = null;
-var markerDataRegistry = {};
-var markerDataSeq = 0;
-var moveTimer = null, coordCache = {}, dataCache = {};
-var today = new Date();
-// 날짜 기준
-var threeMonAgo  = daysAgo(90);
-var sixMonAgo    = daysAgo(180);
-var oneYearAgo   = daysAgo(365);
-var twoYearAgo   = daysAgo(730);
-var threeYearAgo = daysAgo(1095);
-// 연립다세대·단독다가구의 "과거 거래" 구간은 1년 롤링이 아니라 전년도(작년) 1/1까지로 고정
-// (예: 오늘이 2026-07-19면 과거거래 = 2025-01-01 ~ 2026-01-19(6개월 전), 2024년 이전은 표시 안 함)
-var prevYearStart = new Date(today.getFullYear() - 1, 0, 1);
-var fourMonAgo  = (function() { var d = new Date(); d.setMonth(d.getMonth() - 4); d.setHours(0,0,0,0); return d; })();
-var fiveYearAgo = (function() { var d = new Date(); d.setFullYear(d.getFullYear() - 5); d.setHours(0,0,0,0); return d; })();
-var eightYearAgo = (function() { var d = new Date(); d.setFullYear(d.getFullYear() - 8); d.setHours(0,0,0,0); return d; })();
- 
-    
-function daysAgo(n) { var d = new Date(); d.setDate(d.getDate() - n); d.setHours(0,0,0,0); return d; }
-function fmtYm(deal_date) {
-    if (!deal_date) return null;
-    var s = String(deal_date);
-    if (s.length < 6) return null;
-    return s.slice(0,4) + '.' + s.slice(4,6);
-}
-function renderDataCoverage(data) {
-    var box = document.getElementById('data-coverage-box');
-    if (!box) return;
-    var STORAGE_KEY = 'dataCoverageSnapshot';
-    var prev = {};
-    try { prev = JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}'); } catch (e) { prev = {}; }
-    var cats = [
-        { key: 'aptSale',    label: '아파트 매매' },
-        { key: 'aptRent',    label: '아파트 전월세' },
-        { key: 'nonAptSale', label: '연립·단독 매매' },
-        { key: 'nonAptRent', label: '연립·단독 전월세' }
-    ];
-    var html = '<div style="font-size:11px;font-weight:bold;color:#555;margin-bottom:3px;">📊 데이터 수집 범위</div>';
-    cats.forEach(function(c) {
-        var d = data[c.key] || { min: null, max: null, count: 0 };
-        var isNew = (d.min !== null && prev[c.key] !== undefined && prev[c.key] !== null && d.min < prev[c.key]);
-        var rangeText = d.min
-            ? (fmtYm(d.min) + ' ~ ' + fmtYm(d.max) + ' (' + (d.count || 0).toLocaleString() + '건)')
-            : '수집 안 됨';
-        html += '<div style="font-size:10px;color:#888;margin-bottom:1px;">'
-            + c.label + ': ' + rangeText
-            + (isNew ? ' <span style="background:#e53935;color:white;font-size:9px;font-weight:bold;padding:1px 5px;border-radius:8px;margin-left:3px;">🆕 확장됨</span>' : '')
-            + '</div>';
-    });
-    box.innerHTML = html;
-    var snapshot = {};
-    cats.forEach(function(c) { snapshot[c.key] = (data[c.key] && data[c.key].min !== undefined) ? data[c.key].min : null; });
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(snapshot));
-}
-async function loadDataCoverage() {
-    try {
-        var res = await fetch('/api/data-coverage');
-        var data = await res.json();
-        renderDataCoverage(data);
-    } catch (e) {
-        console.error('데이터 수집 범위 조회 실패:', e.message);
-    }
-}
-function tradeDate(t) { return new Date(t.year, t.month - 1, t.day); }
-// 상태
-var allAptList = [];
-// 전세가(house_rent/villa_rent) - 전세가 기반 예상 거래가·전세가 히스토리·매매기록 없는
-// 물건의 등급 추정에 사용. get-house.js 응답의 rent 배열을 그대로 담아둠.
-var allRentList = [];
-var rentCacheByLawd = {};
-var isLoading = false;
-var renderGen = 0;
-var lastLawdCd = null;
-var lastResolvedLat = null, lastResolvedLon = null;
-var lastSigungu = '';
-var currentTrades = [], currentSort = 'date', currentPyung = 'all';
-var currentTypeFilter = 'apt';
-var currentIndicators = null;
-var currentPppTimeline = null;
-var currentVolumeIndicators = null;
-var currentJeonseEstimate = null;
-var currentBuildingInfo = null;
-var currentBuildingLoading = false;
-var currentOfficialPrice = null;
-var currentOfficialPriceLoading = false;
-var currentPanelLat = null;
-var currentPanelLon = null;
-var currentPanelApt = null;
-var currentPanelTab = 'price';
-var activeGrades = new Set();
-var activeVillaFilters = new Set();
-var activeVillaTiers = new Set();
-var VILLA_AGE_TIERS = [
-    { key:'premium', label:'프리미엄신축', min:0,  max:3 },
-    { key:'new',     label:'신축',         min:4,  max:8 },
-    { key:'semi',    label:'준신축',       min:9,  max:15 },
-    { key:'old',     label:'구축',         min:16, max:25 },
-    { key:'aged',    label:'노후',         min:26, max:Infinity }
-];
-// 경매물건 배지의 연식단계 표시용 색상(가격등급과 무관하게 연식단계 자체를 나타냄)
-var AGE_TIER_COLORS = { premium:'#2e7d32', new:'#66bb6a', semi:'#ff9800', old:'#8d6e63', aged:'#757575' };
-var surgeRankMap = {};
-var activeSurgeRanks = new Set();
-var recentYearOnly = false;
-var comparableIndex = {};
-var compOnlyFilter = false;
-// 매매기록 없이 전세거래만 있던 주소지(rentOnly 건물)는 평소엔 지도에서 숨겨두고,
-// 이 필터를 켰을 때만 보이게 함 (기본값 false = 숨김 = "필요할 때만" 보기)
-var showRentOnlyFilter = false;
-/* 경매물건 비교물건으로 등록된 거래를 역인덱싱 (키: 이름|날짜|금액 → 등록된 경매 목록)
-   비교물건 저장 시 name/date/amount로 dedup 체크하던 것과 동일한 키 형식을 사용함 */
-function computeComparableIndex() {
-    var idx = {};
-    auctionList.forEach(function(a) {
-        (a.comparables || []).forEach(function(c) {
-            var key = (c.name || '') + '|' + (c.date || '') + '|' + (c.amount || '');
-            if (!idx[key]) idx[key] = [];
-            if (!idx[key].some(function(r) { return r.auctionId === a.id; })) {
-                idx[key].push({
-                    auctionId: a.id,
-                    caseNo: a.caseNo || '',
-                    auctionName: (a.name && a.name.trim()) || a.addrLabel || a.addr || '(이름없음)'
-                });
-            }
-        });
-    });
-    return idx;
-}
-/* apt(마커 단위)의 거래들 중 하나라도 어떤 경매물건의 비교물건으로 등록돼 있으면
-   그 경매 목록(사건번호 포함)을 반환 */
-function getAptComparableRefs(apt) {
-    if (!apt || !apt.trades) return [];
-    var refs = [], seen = {};
-    apt.trades.forEach(function(t) {
-        if (!t.year || !t.month || !t.day) return;
-        var name = (t.name || t.dong || '');
-        var date = t.year + '-' + String(t.month).padStart(2, '0') + '-' + String(t.day).padStart(2, '0');
-        var amount = parseInt(t.amount) || 0;
-        var key = name + '|' + date + '|' + amount;
-        (comparableIndex[key] || []).forEach(function(r) {
-            if (!seen[r.auctionId]) { seen[r.auctionId] = true; refs.push(r); }
-        });
-    });
-    return refs;
-}
-function toggleCompOnlyFilter(btn) {
-    compOnlyFilter = !compOnlyFilter;
-    btn.classList.toggle('active');
-    redrawMarkers();
-}
-function toggleShowRentOnly(btn) {
-    showRentOnlyFilter = !showRentOnlyFilter;
-    btn.classList.toggle('active');
-    redrawMarkers();
-}
-var villaInfoLoading = false;
-var GRADE_COLORS = {1:'#b71c1c',2:'#e53935',3:'#ff7043',4:'#ffa726',5:'#66bb6a',6:'#42a5f5',7:'#9e9e9e'};
-// 경매
-var auctionList = [], auctionCoordCache = {}, auctionMarkers = {}, auctionMarkerSigs = {};
-var currentAuctionId = null;
-var pendingAuctionDetail = null;
-var pendingAuctionComparables = [];
-var pendingCompMarkerData = null;
-var aiCompCandidates = [];
-var pendingRegistryDoc = null;
-var pendingRegistryAnalysis = null;
-var pendingAuctionBuildingInfo = null;
-var pendingDevNews = null; // 개발호재 검색 결과 { summary, sources, fetchedAt, address } - 저장을 눌러야 최종 반영됨
-var currentChecklist = {};
-var checklistSaveTimer = null;
-// 캡처 이미지에서 AI 자동추출 - 텍스트 복사가 막힌 페이지용. { data(base64, 헤더 제외), mimeType, previewUrl } 배열
-var pendingAuctionImages = [];
-// 경매물건 전세가 기반 분석 결과 (calcAuctionJeonseAnalysis) - calcCompValuation()이 "예상매도가(전세가율 기반)" 줄을 추가할 때 참조
-var auctionJeonseEstimate = null;
-var auctionJeonseTimer = null;
-// ── 임장(현장조사) 메모 - 경매 사건과 무관하게 건물 단위로 영구 보관 ──
-var siteNoteList = [];
-var currentSiteNoteChecklist = {};
-var siteNoteTargetName = '', siteNoteTargetDong = '', siteNoteTargetAddr = '', siteNoteTargetLat = null, siteNoteTargetLon = null;
-var STATUS_COLOR = {
-    '검토중':'#9e9e9e','입찰예정':'#1565c0','낙찰':'#2e7d32',
-    '유찰':'#e53935','포기':'#757575','매도완료':'#6a1b9a'
+import crypto from 'crypto';
+
+// ⚠️ 무료 티어 RPM 한도 때문에 gemini-2.5-flash(신규 사용자 접근 불가) → gemini-3.1-flash-lite
+//    순으로 임시로 바꿔봤었는데, 완성도 우선 + 결제(빌링) 활성화로 방향을 정해서 원래의
+//    최상위 플래그십 모델로 되돌림. 결제를 켜면 무료 티어의 RPM 제약 자체가 유료 티어 한도로
+//    바뀌어서(사용량 기반 과금, Billing info 참고) 지금 겪은 "15~20초 후 재시도" 오류가 사실상
+//    해소됨.
+const GEMINI_MODEL = 'gemini-3.5-flash';
+// Vercel 함수 자체의 실행 제한 시간을 늘림 (기본값은 너무 짧아서, 스키마가 큰 요청은
+// Gemini 응답이 오기 전에 함수가 먼저 죽어버릴 수 있음). Hobby 플랜에서도 60초까지 가능.
+export const maxDuration = 60;
+// 캡처 이미지(여러 장)를 첨부하면 base64 페이로드가 커질 수 있어 기본 바디 제한을 올려둠
+// (parse-registry.js의 PDF 업로드와 동일한 패턴).
+export const config = {
+  api: { bodyParser: { sizeLimit: '12mb' } },
 };
-// Geocode 세마포어
-function createSemaphore(n) {
-    var running = 0, queue = [];
-    return function(task) {
-        return new Promise(function(resolve, reject) {
-            var start = function() {
-                running++;
-                task().then(resolve, reject).finally(function() {
-                    running--;
-                    if (queue.length) queue.shift()();
-                });
-            };
-            if (running < n) start(); else queue.push(start);
-        });
-    };
-}
-var runGeocode = createSemaphore(4);
-var pendingQueries = new Set();
-var searchDebounceTimer = null;
-/* ════════════════════════════════════
-   유틸
-════════════════════════════════════ */
-function toEok(manwon) {
-    var val = parseInt(manwon);
-    if (isNaN(val)) return '-';
-    var eok = Math.floor(val / 10000), rem = val % 10000;
-    if (eok > 0 && rem > 0) return eok + '억 ' + rem.toLocaleString() + '만';
-    if (eok > 0) return eok + '억';
-    return val.toLocaleString() + '만';
-}
-function toPyung(area) { return Math.round(area / 3.305785 * 10) / 10; }
-// apt.ppp는 "만원/평" 단위로 저장돼 있음(calcPriceGrades 참고). 등급은 색상으로 이미
-// 구분되니, 배지 텍스트로는 등급 숫자 대신 실제 평단가를 10만원 단위로 반올림해서 보여줌
-// (예: 1110 → "1,110만원/평"). 같은 등급끼리도 실제 가격 차이를 바로 비교할 수 있게 함.
-function formatPpp10man(ppp) {
-    if (!ppp) return '';
-    var rounded = Math.round(ppp / 10) * 10;
-    return rounded.toLocaleString() + '만원/평';
-}
-/* 아이패드 등 터치 기기는 마우스 hover가 없어서, 배지 이름이 ...으로 잘려도(overflow-ellipsis)
-   클릭(=패널 열기)하지 않고서는 전체 글자를 볼 방법이 없었음. title 속성이 붙은 요소를
-   길게 누르면(약 0.38초, 손가락을 거의 움직이지 않은 채로) 그 자리에 전체 텍스트를 담은
-   말풍선을 잠깐 띄워줌. 짧게 탭하면 지금까지와 동일하게 클릭(패널 열기 등)이 그대로 동작하고,
-   길게 눌러서 말풍선이 떴던 경우에만 뗄 때의 클릭을 막아서(preventDefault) "살짝 눌러서
-   미리보기만 하고 뗀" 느낌이 나도록 함. 지도 드래그(팬)와 헷갈리지 않도록 손가락이 일정
-   거리 이상 움직이면 즉시 취소함. */
-(function setupBadgeLongPressPeek() {
-    var pressTimer = null;
-    var startX = 0, startY = 0;
-    var MOVE_THRESHOLD = 10; // px - 이보다 많이 움직이면 지도 드래그로 간주하고 취소
-    var HOLD_MS = 380;
-    var peekEl = null;
 
-    function showPeek(text, x, y) {
-        hidePeek();
-        peekEl = document.createElement('div');
-        peekEl.style.cssText = 'position:fixed;z-index:9999;background:rgba(30,30,30,0.92);color:white;'
-            + 'font-size:12px;padding:6px 10px;border-radius:8px;max-width:240px;pointer-events:none;'
-            + 'box-shadow:0 3px 10px rgba(0,0,0,0.3);white-space:normal;word-break:break-word;';
-        peekEl.innerText = text;
-        document.body.appendChild(peekEl);
-        var rect = peekEl.getBoundingClientRect();
-        var left = Math.min(Math.max(8, x - rect.width / 2), window.innerWidth - rect.width - 8);
-        var top = y - rect.height - 14;
-        if (top < 8) top = y + 18;
-        peekEl.style.left = left + 'px';
-        peekEl.style.top = top + 'px';
-    }
-    function hidePeek() {
-        if (peekEl) { peekEl.remove(); peekEl = null; }
-    }
-    document.addEventListener('touchstart', function(e) {
-        var target = e.target.closest && e.target.closest('[title]');
-        if (!target || !target.title) return;
-        var t = e.touches[0];
-        startX = t.clientX; startY = t.clientY;
-        clearTimeout(pressTimer);
-        pressTimer = setTimeout(function() {
-            showPeek(target.title, startX, startY);
-        }, HOLD_MS);
-    }, { passive: true });
-    document.addEventListener('touchmove', function(e) {
-        if (!e.touches || !e.touches[0]) return;
-        var t = e.touches[0];
-        if (Math.abs(t.clientX - startX) > MOVE_THRESHOLD || Math.abs(t.clientY - startY) > MOVE_THRESHOLD) {
-            clearTimeout(pressTimer);
-            hidePeek();
-        }
-    }, { passive: true });
-    document.addEventListener('touchend', function(e) {
-        clearTimeout(pressTimer);
-        if (peekEl) {
-            e.preventDefault(); // 롱프레스로 미리보기가 떴을 때만 이어지는 클릭을 막음
-            hidePeek();
-        }
-    }, { passive: false });
-    document.addEventListener('touchcancel', function() {
-        clearTimeout(pressTimer);
-        hidePeek();
-    }, { passive: true });
-})();
-function setStatus(msg) {
-    var box = document.getElementById('status-box');
-    if (!msg) { box.style.display = 'none'; return; }
-    box.innerText = msg; box.style.display = 'block';
-}
-function clearMarkers() {
-    Object.keys(markers).forEach(function(key) { markers[key].overlay.setMap(null); });
-    markers = {};
-    markerDataRegistry = {};
-}
-function closePanel() {
-    document.getElementById('panel').style.display = 'none';
-    if (radiusCircle) { radiusCircle.setMap(null); radiusCircle = null; }
-}
-function getDistance(lat1, lon1, lat2, lon2) {
-    var R = 6371000, dLat = (lat2-lat1)*Math.PI/180, dLon = (lon2-lon1)*Math.PI/180;
-    var a = Math.sin(dLat/2)**2 + Math.cos(lat1*Math.PI/180)*Math.cos(lat2*Math.PI/180)*Math.sin(dLon/2)**2;
-    return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
-}
-/* ════════════════════════════════════
-   커서 위치에 따라 법정동(읍면동) 경계선 표시
-   - "필터" 패널의 "🗺️ 법정동 경계선" 버튼으로 켜고 끔 (기본 꺼짐 - 카카오
-     coord2RegionCode 호출량을 아낌 위해 실제로 켰을 때만 동작)
-   - 마우스가 멈춘 지점의 좌표를 coord2RegionCode로 역지오코딩해서 법정동코드(B타입,
-     10자리)를 얻고, 앞 5자리(시군구코드)로 /api/get-boundary를 호출해 그 시군구
-     전체 법정동 경계 목록을 받아옴(시군구 단위로 캐싱해서 같은 시군구 안에서는
-     API를 다시 부르지 않음). 그중 커서가 속한 법정동코드와 일치하는 폴리곤만 그림.
-════════════════════════════════════ */
-var dongBoundaryMode = false;
-var dongBoundaryMapListener = null;
-var dongBoundaryPolygon = null;
-var dongBoundaryCacheBySgg = {};
-var dongBoundaryCurrentEmdCd = null;
-var dongBoundaryDebounceTimer = null;
-var dongBoundaryLastLat = null, dongBoundaryLastLon = null;
-function toggleDongBoundaryMode(btn) {
-    dongBoundaryMode = !dongBoundaryMode;
-    if (btn) btn.classList.toggle('active', dongBoundaryMode);
-    if (dongBoundaryMode) {
-        dongBoundaryMapListener = kakao.maps.event.addListener(map, 'mousemove', onDongBoundaryMouseMove);
-    } else {
-        if (dongBoundaryMapListener) {
-            kakao.maps.event.removeListener(map, 'mousemove', dongBoundaryMapListener);
-            dongBoundaryMapListener = null;
-        }
-        clearTimeout(dongBoundaryDebounceTimer);
-        dongBoundaryCurrentEmdCd = null;
-        dongBoundaryLastLat = null; dongBoundaryLastLon = null;
-        clearDongBoundaryOverlay();
-    }
-}
-function onDongBoundaryMouseMove(mouseEvent) {
-    var latlng = mouseEvent.latLng;
-    clearTimeout(dongBoundaryDebounceTimer);
-    dongBoundaryDebounceTimer = setTimeout(function() {
-        checkDongBoundaryAt(latlng.getLat(), latlng.getLng());
-    }, 220);
-}
-function checkDongBoundaryAt(lat, lon) {
-    if (!dongBoundaryMode || !geocoder) return;
-    // 커서가 25m 이내로만 움직였으면 굳이 다시 역지오코딩하지 않음
-    if (dongBoundaryLastLat !== null
-        && getDistance(lat, lon, dongBoundaryLastLat, dongBoundaryLastLon) < 25) return;
-    dongBoundaryLastLat = lat; dongBoundaryLastLon = lon;
-    geocoder.coord2RegionCode(lon, lat, function(result, status) {
-        if (!dongBoundaryMode) return; // 응답 오는 사이 꺼졌으면 무시
-        if (status !== kakao.maps.services.Status.OK) return;
-        var emdCd = null, sigungu = '', emdNm = '';
-        for (var i = 0; i < result.length; i++) {
-            if (result[i].region_type === 'B') {
-                emdCd = result[i].code;
-                sigungu = result[i].region_1depth_name + ' ' + result[i].region_2depth_name;
-                emdNm = result[i].region_3depth_name;
-                break;
-            }
-        }
-        if (!emdCd || emdCd === dongBoundaryCurrentEmdCd) return;
-        var sggCd = emdCd.substring(0, 5);
-        if (dongBoundaryCacheBySgg[sggCd]) {
-            applyDongBoundary(emdCd, sigungu, emdNm, dongBoundaryCacheBySgg[sggCd]);
-            return;
-        }
-        fetch('/api/get-boundary?sggCd=' + sggCd)
-            .then(function(r) { return r.json(); })
-            .then(function(d) {
-                var list = (d && d.boundaries) || [];
-                dongBoundaryCacheBySgg[sggCd] = list;
-                applyDongBoundary(emdCd, sigungu, emdNm, list);
-            })
-            .catch(function() { /* 경계 조회 실패해도 지도 사용에는 지장 없으므로 조용히 무시 */ });
-    });
-}
-function applyDongBoundary(emdCd, sigungu, emdNm, list) {
-    if (!dongBoundaryMode) return;
-    var match = list.find(function(b) { return b.emdCd === emdCd; });
-    if (!match || !match.geometry) {
-        dongBoundaryCurrentEmdCd = null;
-        clearDongBoundaryOverlay();
-        return;
-    }
-    dongBoundaryCurrentEmdCd = emdCd;
-    drawDongBoundary(sigungu, emdNm, match.geometry);
-}
-function geoJsonToKakaoPaths(geometry) {
-    if (!geometry) return [];
-    var rings = [];
-    if (geometry.type === 'Polygon') {
-        rings = geometry.coordinates || [];
-    } else if (geometry.type === 'MultiPolygon') {
-        (geometry.coordinates || []).forEach(function(poly) {
-            (poly || []).forEach(function(ring) { rings.push(ring); });
-        });
-    }
-    return rings.map(function(ring) {
-        return ring.map(function(pt) { return new kakao.maps.LatLng(pt[1], pt[0]); });
-    });
-}
-function drawDongBoundary(sigungu, emdNm, geometry) {
-    if (dongBoundaryPolygon) { dongBoundaryPolygon.setMap(null); dongBoundaryPolygon = null; }
-    var paths = geoJsonToKakaoPaths(geometry);
-    if (!paths.length) return;
-    dongBoundaryPolygon = new kakao.maps.Polygon({
-        path: paths,
-        strokeWeight: 3,
-        strokeColor: '#ff5722',
-        strokeOpacity: 0.85,
-        strokeStyle: 'solid',
-        fillColor: '#ff5722',
-        fillOpacity: 0.08
-    });
-    dongBoundaryPolygon.setMap(map);
-    var box = document.getElementById('dong-boundary-info');
-    if (box) { box.style.display = 'block'; box.textContent = '📍 ' + sigungu + ' ' + emdNm; }
-}
-function clearDongBoundaryOverlay() {
-    if (dongBoundaryPolygon) { dongBoundaryPolygon.setMap(null); dongBoundaryPolygon = null; }
-    var box = document.getElementById('dong-boundary-info');
-    if (box) { box.style.display = 'none'; box.textContent = ''; }
-}
-/* ── DB 날짜 파싱: "20260630" → {year,month,day} ── */
-function parseDealDate(dateStr) {
-    var s = String(dateStr || '');
-    if (s.length !== 8) return { year: 0, month: 0, day: 0 };
-    return {
-        year:  parseInt(s.slice(0, 4)),
-        month: parseInt(s.slice(4, 6)),
-        day:   parseInt(s.slice(6, 8))
-    };
-}
-/* ════════════════════════════════════
-   필터
-════════════════════════════════════ */
-function getInvestGrade(score, disqualified) {
-    if (disqualified) return { label:'X', color:'#607d8b', bg:'#eceff1' };
-    if (score === null) return null;
-    if (score >= 85) return { label:'S', color:'#b71c1c', bg:'#ffebee' };
-    if (score >= 70) return { label:'A', color:'#e53935', bg:'#fff3e0' };
-    if (score >= 55) return { label:'B', color:'#ff7043', bg:'#fff8e1' };
-    if (score >= 40) return { label:'C', color:'#9e9e9e', bg:'#f5f5f5' };
-    return               { label:'D', color:'#bdbdbd', bg:'#f5f5f5' };
-}
-function calcInvestScore(ind) {
-    if (!ind) return { score: null, disqualified: false, reason: '', breakdown: {} };
-    var reason = [], disqualified = false;
-    if (ind.recentCount !== null && ind.recentCount < 3)  { disqualified = true; reason.push('최근12개월 거래 ' + ind.recentCount + '건'); }
-    if (ind.momentum   !== null && ind.momentum   < 0)   { disqualified = true; reason.push('가격상승률 마이너스(' + ind.momentum + '%)'); }
-    if (ind.volatility !== null && ind.volatility > 10)   { disqualified = true; reason.push('변동계수 ' + ind.volatility + '%'); }
-    var s1 = 0;
-    if (ind.momentum !== null) {
-        if (ind.momentum >= 15) s1 = 40;
-        else if (ind.momentum >= 10) s1 = 32;
-        else if (ind.momentum >= 5)  s1 = 24;
-        else if (ind.momentum >= 0)  s1 = 12;
-    }
-    var s2 = 0;
-    if (ind.volatility !== null) {
-        if (ind.volatility < 3) s2 = 20;
-        else if (ind.volatility < 5) s2 = 15;
-        else if (ind.volatility < 8) s2 = 8;
-    }
-    var s3 = 0;
-    if (ind.turnover !== null) {
-        if (ind.turnover >= 15) s3 = 20;
-        else if (ind.turnover >= 10) s3 = 16;
-        else if (ind.turnover >= 5)  s3 = 10;
-        else s3 = 3;
-    }
-    return { score: s1+s2+s3, disqualified: disqualified, reason: reason.join(' / '), breakdown: { momentum:s1, volatility:s2, turnover:s3 } };
-}
-function calcNewHigh(trades) {
-    var pyungMap = {};
-    trades.forEach(function(t) {
-        if (t.area <= 0 || parseInt(t.amount) <= 0) return;
-        var py = Math.round(toPyung(t.area));
-        if (!pyungMap[py]) pyungMap[py] = [];
-        pyungMap[py].push(t);
-    });
-    var hasNewHigh = false, newHighPyungs = [];
-    Object.keys(pyungMap).forEach(function(py) {
-        var list = pyungMap[py], recent = [], before = [];
-        list.forEach(function(t) {
-            if (tradeDate(t) >= sixMonAgo) recent.push(parseInt(t.amount));
-            else before.push(parseInt(t.amount));
-        });
-        if (!recent.length || !before.length) return;
-        var rMax = Math.max.apply(null, recent), bMax = Math.max.apply(null, before);
-        if (rMax > bMax) { hasNewHigh = true; newHighPyungs.push({ py: py, recentMax: rMax, beforeMax: bMax }); }
-    });
-    return { hasNewHigh: hasNewHigh, newHighPyungs: newHighPyungs };
-}
-function calcPopularPyeong(apt) {
-    var trades = (apt.trades || []).filter(function(t) {
-        return tradeDate(t) >= eightYearAgo && t.area > 0;
-    });
-    if (!trades.length) return null;
- 
-    var countMap = {};
-    trades.forEach(function(t) {
-        var py = Math.round(toPyung(t.area));
-        countMap[py] = (countMap[py] || 0) + 1;
-    });
- 
-    var total = trades.length;
-    var list = Object.keys(countMap).map(function(py) {
-        return { py: parseInt(py, 10), count: countMap[py] };
-    }).sort(function(a, b) { return b.count - a.count; });
- 
-    var top1 = list[0];
-    var top2 = list[1];
-    var result = {
-        top1: { py: top1.py, count: top1.count, pct: Math.round(top1.count / total * 1000) / 10 }
-    };
-    // 2순위가 1순위의 90% 이상(=10% 이내 차이)이면 둘 다 표시
-    if (top2 && top2.count >= top1.count * 0.9) {
-        result.top2 = { py: top2.py, count: top2.count, pct: Math.round(top2.count / total * 1000) / 10 };
-    }
-    return result;
-}
- 
-function buildPopularPyeongBadge(apt) {
-    var pop = apt.popularPyeong;
-    if (!pop) return '';
-    var text = pop.top1.py + '평 ' + pop.top1.pct + '%';
-    if (pop.top2) {
-        text += ' · ' + pop.top2.py + '평 ' + pop.top2.pct + '%';
-    }
-    return '<span style="background:#00897b;color:white;font-size:10px;font-weight:bold;padding:2px 6px;border-radius:3px;white-space:nowrap;">' + text + '</span>';
-}
-/* 이 마커의 거래가 경매물건의 비교물건으로 등록돼 있으면, 해당 경매 사건번호(없으면 물건명)를 배지로 표시 */
-function buildComparableBadgeHtml(apt) {
-    var refs = getAptComparableRefs(apt);
-    if (!refs.length) return '';
-    var labels = refs.map(function(r) { return r.caseNo || r.auctionName; });
-    var text = labels.length > 2
-        ? labels.slice(0, 2).join(', ') + ' 외 ' + (labels.length - 2) + '건'
-        : labels.join(', ');
-    return '<span style="background:#3f51b5;color:white;font-size:10px;font-weight:bold;padding:2px 6px;border-radius:3px;white-space:nowrap;">📌 비교대상: ' + text + '</span>';
-}
-
-function calcInvestIndicators(aptList) {
-    aptList.forEach(function(apt) {
-        var trades = apt.trades;
-        if (!trades || trades.length === 0) { apt.indicators = null; return; }
-        // 월별 평단가 맵
-        var monthMap = {};
-        trades.forEach(function(t) {
-            if (t.area <= 0 || parseInt(t.amount) <= 0) return;
-            var ym = String(t.year) + String(t.month).padStart(2, '0');
-            if (!monthMap[ym]) monthMap[ym] = [];
-            monthMap[ym].push(parseInt(t.amount) / toPyung(t.area));
-        });
-        var ymKeys = Object.keys(monthMap).sort();
-        if (ymKeys.length < 2) { apt.indicators = null; return; }
-        function median(arr) {
-            var s = arr.slice().sort(function(a, b) { return a - b; });
-            var m = Math.floor(s.length / 2);
-            return s.length % 2 ? s[m] : (s[m-1] + s[m]) / 2;
-        }
-        // 모멘텀: 최근 12개월 vs 이전 12개월
-        var now12 = [], prev12 = [];
-        ymKeys.forEach(function(ym) {
-            var yr = parseInt(ym.slice(0,4)), mo = parseInt(ym.slice(4,6));
-            var dt = new Date(yr, mo-1, 1);
-            if (dt >= oneYearAgo) now12 = now12.concat(monthMap[ym]);
-            else if (dt >= twoYearAgo) prev12 = prev12.concat(monthMap[ym]);
-        });
-        var momentum = null;
-        if (now12.length > 0 && prev12.length > 0) {
-            momentum = Math.round((median(now12) - median(prev12)) / median(prev12) * 1000) / 10;
-        }
-        // 변동성
-        var recentYms = ymKeys.filter(function(ym) {
-            var yr = parseInt(ym.slice(0,4)), mo = parseInt(ym.slice(4,6));
-            return new Date(yr, mo-1, 1) >= oneYearAgo;
-        });
-        var volatility = null;
-        if (recentYms.length >= 3) {
-            var meds = recentYms.map(function(ym) { return median(monthMap[ym]); });
-            var mean = meds.reduce(function(a,b) { return a+b; }, 0) / meds.length;
-            var std  = Math.sqrt(meds.reduce(function(a,b) { return a+(b-mean)*(b-mean); }, 0) / meds.length);
-            volatility = Math.round(std / mean * 1000) / 10;
-        }
-        // 회전율
-        var recentTrades = trades.filter(function(t) { return tradeDate(t) >= oneYearAgo; });
-        var recentCount  = recentTrades.length;
-        var uniqueUnits  = new Set(trades.map(function(t) { return t.floor + '_' + Math.round(t.area); })).size;
-        var estUnits     = Math.max(uniqueUnits * 3, recentTrades.length);
-        var turnover     = estUnits > 0 ? Math.round(recentTrades.length / estUnits * 1000) / 10 : null;
-        apt.indicators = { momentum: momentum, volatility: volatility, turnover: turnover, recentCount: recentCount };
-    });
-}
-function getVillaAgeTier(apt) {
-    var l = apt.latest || {};
-    var buildYear = parseInt(l.build_year, 10);
-    // 최신 거래 1건에는 건축연도가 비어있어도, 같은 건물의 다른 거래 기록에는 채워져 있는
-    // 경우가 있어서(실거래가 신고 항목이 건마다 누락될 수 있음) 폴백으로 훑어봄 -
-    // 이게 없으면 최신 거래만 우연히 값이 비어도 연식구분/연식별 평단가 배지가 통째로 사라짐
-    if (!buildYear && apt.trades && apt.trades.length) {
-        for (var i = 0; i < apt.trades.length; i++) {
-            var y = parseInt(apt.trades[i].build_year, 10);
-            if (y) { buildYear = y; break; }
-        }
-    }
-    if (!buildYear) return null;
-    var age = today.getFullYear() - buildYear;
-    for (var i2 = 0; i2 < VILLA_AGE_TIERS.length; i2++) {
-        var t = VILLA_AGE_TIERS[i2];
-        if (age >= t.min && age <= t.max) return t.key;
-    }
-    return null;
-}
-function getVillaTierLabel(tierKey) {
-    var t = VILLA_AGE_TIERS.find(function(x) { return x.key === tierKey; });
-    return t ? t.label : null;
-}
-// 평단가(또는 실거래 없을 때 전세가 기반 추정 평단가)를 구하는 공용 헬퍼.
-// calcPriceGrades()의 두 등급 계산(연식단계별/지역 전체)이 이 로직을 공유함.
-function calcPppForGrade(apt) {
-    var recentNonGround = apt.trades.filter(function(t) {
-        return tradeDate(t) >= oneYearAgo && t.area > 0 && parseInt(t.amount) > 0 && parseInt(t.floor) !== 1;
-    });
-    if (recentNonGround.length) {
-        var sum = recentNonGround.reduce(function(a, t) { return a + parseInt(t.amount) / toPyung(t.area); }, 0);
-        return { ppp: sum / recentNonGround.length, estimated: false };
-    }
-    // ⚠️ 1층 거래를 제외하는 기준(위)만 쓰면, 매매가 드문 연립다세대 중 "최근 1년 내 거래가
-    // 딱 1건뿐인데 하필 1층"인 경우 평단가/배지가 통째로 안 나오는 문제가 있었음
-    // (인천 계양구 계산동 982-15 현대파크빌라(C동) 등 다수 사례로 확인됨 - 최근 거래가
-    // 1건뿐이고 그게 1층이라 걸러지면서 등급 계산 대상에서 아예 빠짐). 1층 제외 없이 같은
-    // 1년 기준으로 한 번 더 시도해서, 데이터가 희박한 건물도 최소한 "1층 거래 포함" 평단가로
-    // 배지가 나오게 함(전세가 추정으로 넘어가기 전 단계).
-    var recentAny = apt.trades.filter(function(t) {
-        return tradeDate(t) >= oneYearAgo && t.area > 0 && parseInt(t.amount) > 0;
-    });
-    if (recentAny.length) {
-        var sum2 = recentAny.reduce(function(a, t) { return a + parseInt(t.amount) / toPyung(t.area); }, 0);
-        return { ppp: sum2 / recentAny.length, estimated: false };
-    }
-    // 매매 실거래가 없는 연립다세대는 전세가 기반 예상 거래가(calcVillaJeonseEstimate)로
-    // 대신 평단가를 추정해서라도 등급 배지를 만들어줌 - 지도에서 아예 안 보이던 물건도
-    // "추정" 표시를 달고 나타나게 하려는 목적. gradeEstimated 플래그로 실거래 등급과 구분함.
-    if (apt.buildingType === 'villa') {
-        var est = calcVillaJeonseEstimate(apt);
-        if (est && est.size > 0 && est.estimate > 0) {
-            return { ppp: est.estimate / toPyung(est.size), estimated: true };
-        }
-    }
-    return { ppp: 0, estimated: false };
-}
-/* 등급은 두 가지를 따로 계산함.
-   - apt.grade (연식단계별 등급, 배지 표기용): 연립다세대는 같은 연식단계(VILLA_AGE_TIERS) 안에서만
-     평단가 순위를 매김. 준신축끼리, 구축끼리 비교해야 "이 연식대에서 비싼 편인지"를 알 수 있어서
-     마커·패널 배지는 이 값을 그대로 씀.
-   - apt.overallGrade (지역 전체 등급, 필터칸용): 연립다세대도 연식단계 구분 없이 해당 지역 전체
-     거래 평단가 순으로 1~7등급을 매김(아파트와 동일한 방식). 상단 필터칸의 "등급" 버튼은 이 값으로
-     걸러서, 연식이 다른 건물들의 "그 연식대 안에서의 1등급"이 전부 섞여 나오는 일이 없도록 함. */
-function calcPriceGrades(aptList) {
-    var ageTierGroups = {};
-    aptList.forEach(function(apt) {
-        var type = apt.buildingType || 'apt';
-        var groupKey = type;
-        if (type === 'villa') {
-            apt.ageTier = getVillaAgeTier(apt);
-            groupKey = apt.ageTier ? ('villa_' + apt.ageTier) : 'villa_unknown';
-        }
-        if (!ageTierGroups[groupKey]) ageTierGroups[groupKey] = [];
-        ageTierGroups[groupKey].push(apt);
-    });
-
-    Object.keys(ageTierGroups).forEach(function(groupKey) {
-        var scored = ageTierGroups[groupKey].map(function(apt) {
-            var r = calcPppForGrade(apt);
-            return { apt: apt, ppp: r.ppp, estimated: r.estimated };
-        }).filter(function(x) { return x.ppp > 0; });
-
-        scored.sort(function(a, b) { return b.ppp - a.ppp; });
-        var total = scored.length;
-        scored.forEach(function(x, i) {
-            x.apt.grade = Math.min(7, Math.floor(i / total * 7) + 1);
-            x.apt.ppp   = Math.round(x.ppp);
-            x.apt.gradeEstimated = !!x.estimated;
-        });
-    });
-    aptList.forEach(function(apt) { if (!apt.grade) { apt.grade = null; apt.ppp = 0; apt.gradeEstimated = false; } });
-
-    // 지역 전체 등급(연식단계 무시) - 아파트는 groupKey가 원래도 단일 그룹('apt')이라 위와 결과가
-    // 같고, 연립다세대만 연식단계를 무시하고 다시 순위를 매김.
-    var overallGroups = {};
-    aptList.forEach(function(apt) {
-        var type = apt.buildingType || 'apt';
-        if (!overallGroups[type]) overallGroups[type] = [];
-        overallGroups[type].push(apt);
-    });
-    Object.keys(overallGroups).forEach(function(type) {
-        var scored = overallGroups[type].map(function(apt) {
-            return { apt: apt, ppp: calcPppForGrade(apt).ppp };
-        }).filter(function(x) { return x.ppp > 0; });
-
-        scored.sort(function(a, b) { return b.ppp - a.ppp; });
-        var total = scored.length;
-        scored.forEach(function(x, i) {
-            x.apt.overallGrade = Math.min(7, Math.floor(i / total * 7) + 1);
-        });
-    });
-    aptList.forEach(function(apt) { if (!apt.overallGrade) apt.overallGrade = null; });
-}
-function toggleGrade(val, btn) {
-    if (activeGrades.has(val)) { activeGrades.delete(val); btn.classList.remove('active'); }
-    else { activeGrades.add(val); btn.classList.add('active'); }
-    redrawMarkers();
-}
-function resetGradeFilter() {
-    activeGrades.clear();
-    document.querySelectorAll('.ft-g').forEach(function(b) { b.classList.remove('active'); });
-    redrawMarkers();
-}
-function toggleVillaFilter(val, btn) {
-    if (activeVillaFilters.has(val)) { activeVillaFilters.delete(val); btn.classList.remove('active'); }
-    else { activeVillaFilters.add(val); btn.classList.add('active'); }
-    redrawMarkers();
-}
-function toggleRecentYearOnly(btn) {
-    recentYearOnly = !recentYearOnly;
-    btn.classList.toggle('active');
-    redrawMarkers();
-}
-function hasRecentYearTrade(apt) {
-    return (apt.count3M + apt.count3MTo1Y) > 0;
-} 
-function resetVillaFilter() {
-    activeVillaFilters.clear();
-    document.querySelectorAll('.ft-v').forEach(function(b) { b.classList.remove('active'); });
-    redrawMarkers();
-}
-function toggleVillaTier(val, btn) {
-    if (activeVillaTiers.has(val)) { activeVillaTiers.delete(val); btn.classList.remove('active'); }
-    else { activeVillaTiers.add(val); btn.classList.add('active'); }
-    redrawMarkers();
-}
-function resetVillaTierFilter() {
-    activeVillaTiers.clear();
-    document.querySelectorAll('.ft-tier').forEach(function(b) { b.classList.remove('active'); });
-    redrawMarkers();
-}
-function passesVillaFilter(apt) {
-    var elevFilters = [], parkFilters = [];
-    activeVillaFilters.forEach(function(f) {
-        if (f === 'elev_y' || f === 'elev_n') elevFilters.push(f);
-        else if (f === 'park_y' || f === 'park_n') parkFilters.push(f);
-    });
- 
-    var info = apt.buildingInfo;
- 
-    var hasTitle = !!(info && info.title);
-
-    var matchesElev = true;
-    if (elevFilters.length) {
-        matchesElev = false;
-        var hasElev = !!(hasTitle && ((info.title.rideElvtCnt || 0) + (info.title.emgenElvtCnt || 0)) > 0);
-        if (elevFilters.indexOf('elev_y') !== -1 && hasTitle && hasElev) matchesElev = true;
-        if (elevFilters.indexOf('elev_n') !== -1 && hasTitle && !hasElev) matchesElev = true;
-    }
-
-    var matchesPark = true;
-    if (parkFilters.length) {
-        matchesPark = false;
-        var parkTotal = hasTitle
-            ? (info.title.indrAutoUtcnt||0) + (info.title.oudrAutoUtcnt||0) + (info.title.indrMechUtcnt||0) + (info.title.oudrMechUtcnt||0)
-            : 0;
-        var hasPark = hasTitle && parkTotal > 0;
-        if (parkFilters.indexOf('park_y') !== -1 && hasTitle && hasPark) matchesPark = true;
-        if (parkFilters.indexOf('park_n') !== -1 && hasTitle && !hasPark) matchesPark = true;
-    }
- 
-    return matchesElev && matchesPark;
-}
-function pickLatestOne(list) {
-    if (!list.length) return [];
-    var best = list[0];
-    list.forEach(function(a) {
-        var al = a.latest, bl = best.latest;
-        var av = al.year*10000 + al.month*100 + al.day;
-        var bv = bl.year*10000 + bl.month*100 + bl.day;
-        if (av > bv) best = a;
-    });
-    return [best];
-}
-function pickLatestNewHigh(list) {
-    var candidates = [];
-    list.forEach(function(apt) {
-        if (!apt.hasNewHigh) return;
-        var amounts = (apt.newHighPyungs || []).map(function(x) { return x.recentMax; });
-        var matchTrade = null;
-        (apt.trades || []).forEach(function(t) {
-            if (amounts.indexOf(parseInt(t.amount)) !== -1) {
-                if (!matchTrade || tradeDate(t) > tradeDate(matchTrade)) matchTrade = t;
-            }
-        });
-        if (matchTrade) candidates.push({ apt: apt, date: tradeDate(matchTrade) });
-    });
-    if (!candidates.length) return pickLatestOne(list);
-    candidates.sort(function(a, b) { return b.date - a.date; });
-    return [candidates[0].apt];
-}
-function passesFilter(apt) {
-    if (currentTypeFilter === 'apt'   && apt.buildingType !== 'apt')   return false;
-    if (currentTypeFilter === 'villa' && apt.buildingType !== 'villa') return false;
- 
-    if (!activeGrades.has('all')) {
-        // 필터칸의 "등급"은 연식단계 구분 없는 지역 전체 등급(overallGrade) 기준.
-        // 마커·패널의 배지 표기(연식단계별 grade)와는 별개 값임.
-        if (!apt.overallGrade || !activeGrades.has(String(apt.overallGrade))) return false;
-    }
-    return true;
-}
-function toggleFilterPanel() {
-    var p = document.getElementById('filter-panel');
-    var btn = document.getElementById('filter-toggle-btn');
-    var isOpen = p.style.display === 'flex';
-    p.style.display = isOpen ? 'none' : 'flex';
-    btn.classList.toggle('active', !isOpen);
-    btn.innerText = isOpen ? '필터 ▾' : '필터 ▴';
-}
-/* ════════════════════════════════════
-   카카오 지도 초기화
-════════════════════════════════════ */
-function loadKakaoSDK() {
-    var s = document.createElement('script');
-    s.src = 'https://dapi.kakao.com/v2/maps/sdk.js?appkey=2348fc777815a26856e77b16b1a3d0b7&autoload=false&libraries=services';
-    s.onload = function() { kakao.maps.load(initKakao); };
-    document.head.appendChild(s);
-}
-window.addEventListener('load', loadKakaoSDK);
-function initKakao() {
-    geocoder = new kakao.maps.services.Geocoder();
-    places   = new kakao.maps.services.Places();
-    loadDataCoverage();
-    if (navigator.geolocation) {
-        navigator.geolocation.getCurrentPosition(
-            function(p) { initMap(p.coords.latitude, p.coords.longitude); },
-            function()  { initMap(37.5665, 126.9780); }
-        );
-    } else { initMap(37.5665, 126.9780); }
-   document.getElementById('addr-input').addEventListener('input', function() {
-        var q = this.value.trim();
-        if (!q) { document.getElementById('autocomplete').style.display = 'none'; return; }
-        var localResults = searchLocalComplexes(q);
-        if (localResults.length) {
-            showLocalDropdown(localResults);
-        } else {
-            document.getElementById('autocomplete').style.display = 'none';
-        }
-        clearTimeout(searchDebounceTimer);
-        searchDebounceTimer = setTimeout(function() { searchNationwide(q); }, 300);
-    });
-}
-/* 범례 접기/펼치기 - 상태를 기억해서 다음 방문 때도 유지(특히 화면이 좁은 아이패드/모바일에서 유용) */
-function toggleLegend() {
-    var el = document.getElementById('legend');
-    var collapsed = el.classList.toggle('collapsed');
-    document.getElementById('legend-toggle-icon').innerText = collapsed ? '보이기 ▸' : '숨기기 ▾';
-    try { localStorage.setItem('legendCollapsed', collapsed ? '1' : '0'); } catch (e) { /* 저장 실패해도 무시 */ }
-}
-(function applyInitialLegendState() {
-    var saved;
-    try { saved = localStorage.getItem('legendCollapsed'); } catch (e) { saved = null; }
-    if (saved === '1') {
-        document.getElementById('legend').classList.add('collapsed');
-        document.getElementById('legend-toggle-icon').innerText = '보이기 ▸';
-    }
-})();
-function initMap(lat, lon) {
-    map = new kakao.maps.Map(document.getElementById('map'), {
-        center: new kakao.maps.LatLng(lat, lon), level: 7
-    });
-    map.setMinLevel(1); map.setMaxLevel(14);
-    new kakao.maps.Marker({ map: map, position: new kakao.maps.LatLng(lat, lon), title: '내 위치' });
-    // 경매 등록 물건은 지역 데이터를 기다리지 않고 가장 먼저 불러와서 표시
-    // (비교물건 배지 반영을 위해 아파트/빌라 마커도 함께 다시 그림)
-    fetchAuctions().then(function() { renderAuctionMarkers(); redrawMarkers(); });
-    fetchSiteNotes(); // 임장메모 - 마커 클릭 시 즉시 보여줄 수 있도록 초기에 함께 로딩
-    loadAllData(lat, lon);
-    kakao.maps.event.addListener(map, 'idle', function() {
-        var c = map.getCenter();
-        clearTimeout(moveTimer);
-        moveTimer = setTimeout(function() {
-            loadAllData(c.getLat(), c.getLng()).then(function() { renderAuctionMarkers(); });
-        }, 1200);
-    });
-}
-/* ════════════════════════════════════
-   DB 데이터 로드 (핵심)
-════════════════════════════════════ */
-async function loadAllData(centerLat, centerLon) {
-    return new Promise(function(resolve) {
-        if (isLoading) { resolve(); return; }
- 
-        // 최근에 지역을 확인했던 지점에서 2km 이내로만 움직였으면
-        // 카카오 API 호출 없이 캐시된 지역 데이터로 바로 처리
-        // (지역 확인용 API 호출 자체가 오늘처럼 불안정할 때 캐시 히트까지
-        //  막아버리는 걸 방지 + 불필요한 API 호출로 할당량 소모하는 것도 방지)
-        if (lastResolvedLat !== null && lastLawdCd && dataCache[lastLawdCd]
-            && getDistance(centerLat, centerLon, lastResolvedLat, lastResolvedLon) <= 2000) {
-            redrawMarkers();
-            resolve();
-            return;
-        }
- 
-        geocoder.coord2RegionCode(centerLon, centerLat, async function(result, status) {
-            if (status !== kakao.maps.services.Status.OK) { resolve(); return; }
-            var regionCode = null, sigungu = '';
-            for (var i = 0; i < result.length; i++) {
-                if (result[i].region_type === 'B') {
-                    regionCode = result[i].code;
-                    sigungu = result[i].region_1depth_name + ' ' + result[i].region_2depth_name;
-                    break;
-                }
-            }
-            if (!regionCode) { resolve(); return; }
-            var lawdCd = regionCode.substring(0, 5);
-            lastSigungu = sigungu;
-            lastResolvedLat = centerLat;
-            lastResolvedLon = centerLon;
-            // 예전엔 "바로 직전에 봤던 지역"일 때만 캐시를 재사용했는데(lawdCd === lastLawdCd),
-            // 다른 지역으로 이동했다가 되돌아오면 lastLawdCd가 그 사이 바뀌어 있어서
-            // dataCache에 데이터가 남아있는데도 재사용하지 못하고 매번 새로 불러왔음.
-            // 세션 중 한 번이라도 불러온 지역이면(dataCache[lawdCd] 존재) 바로 재사용하도록 완화.
-            if (dataCache[lawdCd]) {
-                allAptList = dataCache[lawdCd];
-                allRentList = rentCacheByLawd[lawdCd] || [];
-                lastLawdCd = lawdCd;
-                redrawMarkers(); resolve(); return;
-            }
-            lastLawdCd = lawdCd;
-            isLoading = true;
-            setStatus('데이터 로딩 중...');
-            try {
-                var res = await fetch('/api/get-house?lawdCd=' + lawdCd);
-                var dbData = await res.json();
-                if (!dbData || dbData.error || !Array.isArray(dbData.apt)) {
-                    setStatus('데이터가 없습니다.');
-                    isLoading = false; resolve(); return;
-                }
-                // ── DB rows → trade 객체 변환 ──
-                 allAptList = groupDBRows(dbData.apt, sigungu, lawdCd);
-                allRentList = Array.isArray(dbData.rent) ? dbData.rent : [];
-                rentCacheByLawd[lawdCd] = allRentList;
-                // 매매 실거래가 단 한 건도 없어서 allAptList에 아예 항목 자체가 없던 연립다세대를,
-                // 전세 거래만으로 "매매기록 없음" 상태의 항목으로 만들어 끼워넣음 - 이래야 마커/패널이
-                // 생기고, 그 안에서 전세가 기반 추정 등급/예상거래가/히스토리를 볼 수 있게 됨.
-                // (매매 기록이 있는 건물은 이미 groupDBRows가 만든 항목이 있으므로 건너뜀)
-                allAptList = allAptList.concat(buildRentOnlyEntries(allAptList, allRentList, sigungu, lawdCd));
-                // ── 좌표 캐시 미리 불러오기 (이미 지오코딩된 단지는 카카오 API 스킵) ──
-                await prefetchCoordsFromDB(allAptList);
-                // ── 지표 계산 (평단가 등급만 유지, 투자점수는 삭제) ──
-                calcPriceGrades(allAptList);
-                 allAptList.forEach(function(apt) {
-                    var nh = calcNewHigh(apt.trades);
-                    apt.hasNewHigh   = nh.hasNewHigh;
-                    apt.newHighPyungs = nh.newHighPyungs;
-                    apt.popularPyeong = calcPopularPyeong(apt);
-                });
-                dataCache[lawdCd] = allAptList;
-                setStatus('');
-                redrawMarkers();
-                setTimeout(function() { warmBuildingCache(allAptList); }, 3000);
-                villaInfoLoading = true;
-                prefetchVillaBuildingInfo(allAptList).then(function() {
-                    villaInfoLoading = false;
-                    redrawMarkers();
-                });
-            } catch (err) {
-                console.error(err);
-                setStatus('로딩 실패: ' + err.message);
-            } finally {
-                isLoading = false;
-                resolve();
-            }
-        });
-    });
-}
-    
-/* ── DB rows → apt 그룹 ── */
-function groupDBRows(rows, sigungu, lawdCd) {
-    var aptMap = {};
-    rows.forEach(function(row) {
-        var name = (row.danji || '').trim();
-        var dateStr = String(row.deal_date || '');
-        var year  = parseInt(dateStr.slice(0, 4)) || 0;
-        var month = parseInt(dateStr.slice(4, 6)) || 0;
-        var day   = parseInt(dateStr.slice(6, 8)) || 0;
-        var road   = (row.road_name || '').trim();
-        var region = (row.region    || sigungu).trim();
-        var dong   = (row.dong      || '').trim();
-        var buildingType = row.buildingType || 'apt';
- 
-        // 단독/다가구는 그룹 키를 danji 대신 dong+bunji로 (단지명이 없으므로)
-        var key = (name || (dong + '_' + (row.bunji || ''))) + '||' + road;
-        if (!aptMap[key]) aptMap[key] = [];
-        aptMap[key].push({
-            year: year, month: month, day: day,
-            amount: String(row.price || 0),
-            area:   Number(row.size)  || 0,
-            floor:  String(row.floor  || '-'),
-            name:   name,
-            dong:   dong,
-            road_name: road,
-            region: region,
-            bunji:     row.bunji     || '',
-            main_num:  row.main_num  || 0,
-            sub_num:   row.sub_num   || null,
-            build_year: String(row.build_year || ''),
-            buildingType: buildingType,
-            houseType: buildingType,
-        });
-    });
-    return Object.keys(aptMap).map(function(key) {
-        var trades = aptMap[key];
-        trades.sort(function(a, b) {
-            return (b.year*10000 + b.month*100 + b.day) - (a.year*10000 + a.month*100 + a.day);
-        });
-        var bt = trades[0].buildingType;
-        // 아파트는 최근 3개월/과거 3개월~1년(롤링) 기준을 그대로 유지하고,
-        // 연립다세대·단독다가구는 최근 6개월/과거 6개월~전년도(달력기준) 기준을 사용함
-        var isVilla = bt !== 'apt';
-        var recentCut = isVilla ? sixMonAgo : threeMonAgo;
-        var pastFloor = isVilla ? prevYearStart : oneYearAgo;
-        return {
-            latest: trades[0],
-            trades: trades,
-            lawdCd: lawdCd,
-            buildingType: bt,
-            grade: null, ppp: 0, indicators: null, investScore: null,
-            disqualified: false, dqReason: '', scoreBreakdown: {},
-            hasNewHigh: false, newHighPyungs: [],
-            count3M: trades.filter(function(t) { return tradeDate(t) >= recentCut; }).length,
-            count3MTo1Y: trades.filter(function(t) {
-                var d = tradeDate(t); return d < recentCut && d >= pastFloor;
-            }).length,
-        };
-    });
-}
-/* ── 매매기록이 아예 없는 연립다세대: 전세 거래만으로 "매매기록 없음" 항목을 만들어줌 ──
-   groupDBRows()는 house_trades/villa_trades(매매)만 보고 apt 목록을 만들기 때문에,
-   전세 거래는 있지만 매매 거래가 단 한 건도 없는 건물은 애초에 목록에 들어가지 못해서
-   마커/패널 자체가 생기지 않았음. 여기서 allRentList를 훑어서 이미 매매기록으로
-   등록된 건물(existingList)과 겹치지 않는 건물만 골라 trades:[] 상태의 항목으로 추가함.
-   grade는 calcPriceGrades()가 전세가 기반 추정치로 나중에 채워줌. */
-function buildRentOnlyEntries(existingList, rentList, sigungu, lawdCd) {
-    var existingKeys = {};
-    existingList.forEach(function(a) {
-        if (a.buildingType !== 'villa') return;
-        var l = a.latest || {};
-        var key = (l.name || (l.dong + '_' + (l.bunji || ''))) + '||' + (l.road_name || '');
-        existingKeys[key] = true;
-    });
-    var groups = {};
-    rentList.forEach(function(r) {
-        if (r.buildingType !== 'villa') return;
-        var name = (r.danji || '').trim();
-        var dong = (r.dong || '').trim();
-        var road = (r.road_name || '').trim();
-        var key = (name || (dong + '_' + (r.bunji || ''))) + '||' + road;
-        if (existingKeys[key]) return; // 매매기록이 이미 있는 건물은 groupDBRows가 만든 항목을 그대로 씀
-        if (!groups[key]) groups[key] = [];
-        groups[key].push(r);
-    });
-    return Object.keys(groups).map(function(key) {
-        var rents = groups[key].slice().sort(function(a, b) { return String(b.deal_date).localeCompare(String(a.deal_date)); });
-        var r0 = rents[0];
-        var ds = String(r0.deal_date || '');
-        return {
-            latest: {
-                year: parseInt(ds.slice(0, 4)) || 0, month: parseInt(ds.slice(4, 6)) || 0, day: parseInt(ds.slice(6, 8)) || 0,
-                amount: '', area: Number(r0.size) || 0, floor: String(r0.floor || '-'),
-                name: r0.danji || '', dong: r0.dong || '', road_name: r0.road_name || '',
-                region: r0.region || sigungu, bunji: r0.bunji || '',
-                main_num: r0.main_num || 0, sub_num: r0.sub_num || null,
-                build_year: String(r0.build_year || ''), buildingType: 'villa', houseType: 'villa',
-            },
-            trades: [], // 매매 거래 없음 - 등급/예상거래가는 calcVillaJeonseEstimate가 전세가로 대신 추정
-            lawdCd: lawdCd, buildingType: 'villa',
-            grade: null, ppp: 0, indicators: null, investScore: null,
-            disqualified: false, dqReason: '', scoreBreakdown: {},
-            hasNewHigh: false, newHighPyungs: [],
-            count3M: 0, count3MTo1Y: 0,
-            rentOnly: true, // 매매기록이 아예 없는 건물 표시(패널 안내문구 등에서 참고)
-        };
-    });
-}
- 
-/* ════════════════════════════════════
-   마커 렌더링
-   - 팬/줌(idle) 때마다 마커를 전부 지우고 다시 그리면 화면이 깜빡이는
-     문제가 있어, 좌표 캐시키(cacheKey)를 기준으로 "필요한 마커 목록"과
-     "현재 떠 있는 마커 목록"을 비교해 사라진 것만 지우고 새로 필요한
-     것만 추가하는 증분(incremental) 방식으로 동작함
-════════════════════════════════════ */
-/* 일반 마커가 지금 활성화된 모든 필터(타입탭/등급/빌라조건/연식/급등순위/비교대상만보기)를
-   통과하는지 판정하는 단일 기준 함수. redrawMarkers()의 필터링 로직을 그대로 옮겨온 것으로,
-   경매 마커 쪽(placeAuctionMarker)에서도 "매칭된 건물이 지금 화면에 실제로 그려질지"를
-   똑같은 기준으로 판단해야 해서 공용 함수로 분리함 - 이게 없으면 필터 로직이 두 곳에
-   따로 존재하게 되어 나중에 한쪽만 고치는 실수가 생기기 쉬움 */
-function isAptVisibleUnderCurrentFilters(apt) {
-    if (!apt) return false;
-    // 단독/다가구는 placeMarkers가 지오코딩 자체를 시도하지 않아 지도에 마커가 만들어지지 않음
-    if (apt.buildingType === 'single') return false;
-    // 매매기록 없이 전세거래만 있던 주소지는 "전세거래만 있는 주소" 필터를 켰을 때만 보여줌
-    if (apt.rentOnly && !showRentOnlyFilter) return false;
-    if (currentTypeFilter === 'apt') {
-        if (apt.buildingType !== 'apt') return false;
-        if (recentYearOnly && !hasRecentYearTrade(apt)) return false;
-        if (activeGrades.size > 0 && !(apt.grade && activeGrades.has(String(apt.grade)))) return false;
-    } else {
-        if (apt.buildingType !== 'villa') return false;
-        if (recentYearOnly && !hasRecentYearTrade(apt)) return false;
-        if (activeGrades.size > 0 && !(apt.grade && activeGrades.has(String(apt.grade)))) return false;
-        if (activeVillaFilters.size > 0 && !passesVillaFilter(apt)) return false;
-        if (activeVillaTiers.size > 0 && !(apt.ageTier && activeVillaTiers.has(apt.ageTier))) return false;
-    }
-    if (activeSurgeRanks.size > 0 && !passesSurgeFilter(apt)) return false;
-    if (compOnlyFilter && !(getAptComparableRefs(apt).length > 0)) return false;
-    return true;
-}
-function redrawMarkers() {
-    renderGen++;
-    var myGen = renderGen;
-    surgeRankMap = computeSurgeRankMap(currentTypeFilter);
-    comparableIndex = computeComparableIndex();
-    var list = allAptList.filter(isAptVisibleUnderCurrentFilters);
-    placeMarkers(list, myGen);
-    setTimeout(function() { renderAuctionMarkers(); }, 100);
-}
- 
-function getPinConfig(apt) {
-    if (apt.count3M > 0)    return { color: '#e53935', count: apt.count3M };
-    if (apt.count3MTo1Y > 0) return { color: '#1565c0', count: apt.count3MTo1Y };
-    if (apt.grade)           return { color: GRADE_COLORS[apt.grade] || '#9e9e9e', count: 0 };
-    return { color: '#9e9e9e', count: 0 };
-}
-function placeMarkers(aptList, gen) {
-    var centerLat = map.getCenter().getLat();
-    var centerLon = map.getCenter().getLng();
-    var idx = 0;
-    var sinceYield = 0;
-    var neededKeys = {}; // 이번 렌더링에서 화면에 있어야 하는 마커의 cacheKey 모음
-    function runBatch() {
-        if (gen !== renderGen) return; // 그 사이 다른 redrawMarkers()가 실행됨 - 이 배치는 폐기
-        while (idx < aptList.length) {
-            var apt = aptList[idx++];
-            var l = apt.latest || {};
- 
-            // 단독/다가구는 지오코딩 자체를 시도하지 않음 (API 호출 절약)
-            if (apt.buildingType === 'single') { continue; }
- 
-            var cacheKey = [l.dong, l.name, l.bunji, l.road_name, l.main_num, l.sub_num]
-                .join('|').toLowerCase();
- 
-            if (coordCache[cacheKey]) {
-                // 이미 좌표를 아는 마커는 API 호출이 필요 없으므로 딜레이 없이 바로 그림
-                neededKeys[cacheKey] = true;
-                upsertMarker(cacheKey, coordCache[cacheKey].lat, coordCache[cacheKey].lon, apt);
-                sinceYield++;
-                if (sinceYield >= 40) {
-                    sinceYield = 0;
-                    setTimeout(runBatch, 0); // 너무 많은 마커를 한 번에 그려서 브라우저가 멈추지 않도록 살짝 양보
-                    return;
-                }
-                continue;
-            }
- 
-            // 좌표를 모르는 단지만 실제 카카오 API 호출이 필요하므로 여기서만 딜레이를 둠
-            var candidates = buildGeocodeCandidates(l);
-            if (!candidates.length) { continue; }
- 
-            tryStepGeocode(candidates, function(lat, lon) {
-                if (gen !== renderGen) return; // 지오코딩 응답이 늦게 와서 그 사이 세대가 바뀜 - 무시
-                if (lat && lon) {
-                    coordCache[cacheKey] = { lat: lat, lon: lon };
-                    saveCoordToDB(cacheKey, lat, lon);
-                    if (getDistance(centerLat, centerLon, lat, lon) <= 15000) {
-                        neededKeys[cacheKey] = true;
-                        upsertMarker(cacheKey, lat, lon, apt);
-                    }
-                }
-                setTimeout(runBatch, 80);
-            });
-            return;
-        }
-        // 이 배치의 모든 항목 처리 완료 - 더 이상 필요없는 마커만 지도에서 제거
-        // (변경 없는 마커는 지우지 않고 그대로 유지하므로 팬/줌 시 깜빡이지 않음)
-        pruneMarkers(neededKeys, gen);
-    }
-    runBatch();
-}
- 
-/* 이미 같은 cacheKey로 마커가 떠 있으면 다시 그리지 않고 그대로 둠(깜빡임 방지),
-   없을 때만 새로 생성함 */
-function upsertMarker(cacheKey, lat, lon, apt) {
-    if (markers[cacheKey]) return;
-    createMarker(cacheKey, lat, lon, apt);
-}
- 
-/* 이번 렌더링에서 필요하다고 표시되지 않은(neededKeys에 없는) 기존 마커만 제거 */
-function pruneMarkers(neededKeys, gen) {
-    if (gen !== renderGen) return; // 그 사이 다른 렌더링이 시작됐으면 그쪽이 정리하므로 여기선 건너뜀
-    Object.keys(markers).forEach(function(key) {
-        if (!neededKeys[key]) {
-            markers[key].overlay.setMap(null);
-            delete markerDataRegistry[markers[key].mKey];
-            delete markers[key];
-        }
-    });
-}
- 
-function tryStepGeocode(candidates, callback) {
-    var idx = 0;
-    var centerLat = map.getCenter().getLat();
-    var centerLon = map.getCenter().getLng();
-    function next() {
-        if (idx >= candidates.length) { callback(null, null); return; }
-        var q = (candidates[idx++] || '').trim();
-        if (!q || q.length < 2) { next(); return; }
-        var qKey = q.toLowerCase();
-        if (coordCache[qKey]) { callback(coordCache[qKey].lat, coordCache[qKey].lon); return; }
-        if (pendingQueries.has(qKey)) { setTimeout(next, 80); return; }
-        pendingQueries.add(qKey);
-        runGeocode(function() {
-            return new Promise(function(resolve) {
-                // 1순위: 정식 주소 검색 (동+지번, 도로명+본번-부번)
-                geocoder.addressSearch(q, function(result, status) {
-                    if (status === kakao.maps.services.Status.OK && result && result.length > 0) {
-                        var lat = parseFloat(result[0].y), lon = parseFloat(result[0].x);
-                        coordCache[qKey] = { lat: lat, lon: lon };
-                        pendingQueries.delete(qKey);
-                        callback(lat, lon);
-                        resolve({ found: true });
-                    } else {
-                        // 2순위: 키워드(단지명) 검색 - 지도 중심 기준 20km 이내로 위치 바이어스
-                        places.keywordSearch(q, function(res, st) {
-                            if (st === kakao.maps.services.Status.OK && res && res.length > 0) {
-                                var lat = parseFloat(res[0].y), lon = parseFloat(res[0].x);
-                                coordCache[qKey] = { lat: lat, lon: lon };
-                                pendingQueries.delete(qKey);
-                                callback(lat, lon);
-                                resolve({ found: true });
-                            } else {
-                                pendingQueries.delete(qKey);
-                                resolve({ found: false });
-                            }
-                        }, {
-                            location: new kakao.maps.LatLng(centerLat, centerLon),
-                            radius: 20000,
-                            sort: kakao.maps.services.SortBy.DISTANCE
-                        });
-                    }
-                });
-            });
-        }).then(function(ret) {
-            if (!ret || !ret.found) setTimeout(next, 60);
-        }).catch(function() {
-            pendingQueries.delete(qKey);
-            setTimeout(next, 120);
-        });
-    }
-    next();
-}
- 
-function buildGeocodeCandidates(l) {
-    if (l.buildingType === 'single') return [];
- 
-    var region = (l.region || lastSigungu || '').trim();
-    var dong   = (l.dong   || '').trim();
-    var danji  = (l.name   || '').trim();
-    var bunji  = (l.bunji  || '').trim();
-    var road   = (l.road_name || '').trim();
-    var main   = l.main_num;
-    var sub    = l.sub_num;
- 
-    var candidates = [];
- 
-    // 1) 동 + 지번
-    if (dong && bunji) candidates.push((region + ' ' + dong + ' ' + bunji).trim());
-    // 2) 동 + 단지명
-    if (dong && danji) candidates.push((region + ' ' + dong + ' ' + danji).trim());
- 
-    if (l.buildingType === 'apt') {
-        // 3) 도로명 + 본번(-부번). 부번이 0/null이면 본번만 사용.
-        if (road && main) {
-            var roadAddr = road + ' ' + main;
-            if (sub && sub !== 0) roadAddr += '-' + sub;
-            candidates.push((region + ' ' + roadAddr).trim());
-        }
-    }
-    return candidates;
-}
-function createMarker(cacheKey, lat, lon, apt) {
-    var cfg    = getPinConfig(apt);
-    var l      = apt.latest || {};
-    var color  = cfg.color;
-    var count  = cfg.count;
-    var amount = l.amount || '';
-    // 등급 배지 (빌라는 같은 연식단계 내 상대등급이므로 연식단계 라벨도 함께 표시).
-    // 등급은 이미 배경색으로 구분되므로, 텍스트는 "N등급" 대신 실제 평단가(10만원 단위)를 보여줌
-    var gradeBadge = '';
-    if (apt.grade) {
-        var gc = GRADE_COLORS[apt.grade];
-        var tierPrefix = '';
-        if (apt.buildingType === 'villa') {
-            tierPrefix = apt.ageTier ? (getVillaTierLabel(apt.ageTier) + ' ') : '연식미상 ';
-        }
-        var pppText = formatPpp10man(apt.ppp) || (apt.grade + '등급'); // 평단가를 못 구했을 때만 등급 숫자로 대체
-        // 매매 실거래가 없어 전세가 기반으로 추정한 등급은 점선 테두리 + "(추정)" 표시로 구분
-        var estStyle = apt.gradeEstimated ? 'border:1px dashed rgba(255,255,255,0.85);' : '';
-        var estSuffix = apt.gradeEstimated ? '(추정)' : '';
-        gradeBadge = '<span style="background:' + gc + ';color:white;font-size:10px;font-weight:bold;padding:2px 6px;border-radius:3px;margin-left:3px;' + estStyle + '">' + tierPrefix + pppText + estSuffix + '</span>';
-    }
-    // 신고가 배지
-   var nhBadge = apt.hasNewHigh
-        ? '<span style="background:#ff6f00;color:white;font-size:10px;font-weight:bold;padding:2px 6px;border-radius:10px;margin-left:3px;">★신고가</span>'
-        : '';
-    // 급등 순위 배지 (급등지역 순위 1~5위 안에 들 때만 표시)
-    var surgeRank = surgeRankMap[l.dong];
-    var surgeBadge = surgeRank
-        ? '<span style="background:#e53935;color:white;font-size:10px;font-weight:bold;padding:2px 6px;border-radius:10px;margin-left:3px;">🔥급등 ' + surgeRank + '위</span>'
-        : '';
-    // 인기 평형 배지
-    var popBadge = buildPopularPyeongBadge(apt);
-    // 경매 비교물건 배지 (이 마커의 거래가 어떤 경매물건의 비교물건으로 등록돼 있으면 사건번호 표시)
-    var compBadge = buildComparableBadgeHtml(apt);
-    // 이 주소에 등록된 경매물건이 있으면(=이미 이 자리에 일반 거래 마커가 있어서 별도 경매 마커를
-    // 만들지 않은 경우) 지도에서도 바로 알아볼 수 있도록 이 마커 자체를 강조 표시함
-    var matchedAuction = auctionList.find(function(a) { return matchesAuctionKey(a, l.name, l.dong, l.bunji); });
-    var auctionRibbon = matchedAuction
-        ? '<div class="auction-badge" style="background:' + (STATUS_COLOR[matchedAuction.status] || '#6a1b9a') + ';">🔨 경매 · ' + matchedAuction.status + '</div>'
-        : '';
-    var mKey = 'mk' + (markerDataSeq++);
-    var div = document.createElement('div');
-    markerDataRegistry[mKey] = { apt: apt, lat: lat, lon: lon, div: div };
-    // 매매 실거래가 없어 전세가 기반으로 추정한 등급 마커는 테두리를 점선으로 구분
-    var borderStyle = apt.gradeEstimated ? 'dashed' : 'solid';
-    div.style.cssText = matchedAuction
-        ? 'position:relative;background:linear-gradient(180deg,#fff,#fff7ec);border:3px solid #e65100;border-radius:9px;'
-            + 'padding:6px 10px;margin-top:10px;white-space:nowrap;cursor:pointer;transform:scale(1.1);'
-            + 'text-align:center;line-height:1.35;max-width:230px;animation:auctionGlow 1.8s ease-in-out infinite;'
-        : 'position:relative;background:white;border:2px ' + borderStyle + ' ' + color + ';border-radius:8px;'
-            + 'padding:6px 10px;white-space:nowrap;cursor:pointer;'
-            + 'box-shadow:0 2px 6px rgba(0,0,0,0.13);text-align:center;line-height:1.35;max-width:220px;';
-    div.setAttribute('onclick', 'handleAptMarkerClick(\'' + mKey + '\')');
-    // 아이패드 등 터치 기기는 마우스 hover가 없어서 ...으로 잘린 글자를 볼 방법이 없었음.
-    // title 속성을 달아두면 PC에서는 그냥 마우스만 올려도 브라우저 기본 툴팁이 뜨고,
-    // 터치 기기에서는 아래 setupBadgeLongPressPeek()가 길게 누르기로 같은 내용을 보여줌.
-    var peekParts = [];
-    if (l.name) peekParts.push(l.name);
-    if (apt.buildingType === 'villa' && apt.ageTier) peekParts.push(getVillaTierLabel(apt.ageTier));
-    if (apt.grade) peekParts.push(formatPpp10man(apt.ppp) || (apt.grade + '등급'));
-    if (amount) peekParts.push(toEok(amount));
-    if (l.road_name) peekParts.push(l.road_name);
-    if (matchedAuction) peekParts.push('🔨 경매 ' + matchedAuction.status);
-    div.title = peekParts.join(' · ');
-    div.innerHTML = ''
-        + auctionRibbon
-        + (count > 0 ? '<div style="font-size:15px;font-weight:900;color:' + color + ';">' + count + '건</div>' : '')
-        + '<div style="font-size:13px;font-weight:bold;color:#333;overflow:hidden;text-overflow:ellipsis;">'
-         +   (l.name || '') + gradeBadge + nhBadge + surgeBadge
-        + '</div>'
-        + (popBadge ? '<div style="margin-top:2px;">' + popBadge + '</div>' : '')
-        + (compBadge ? '<div style="margin-top:2px;">' + compBadge + '</div>' : '')
-        + (amount ? '<div style="font-size:13px;font-weight:bold;color:' + color + ';">' + toEok(amount) + '</div>' : '')
-        + (l.road_name ? '<div style="font-size:11px;color:#aaa;">' + l.road_name + '</div>' : '')
-        + '<div class="comp-add-badge" onclick="event.stopPropagation();handleCompBtnClick(\'' + mKey + '\')">+비교</div>';
-    var overlay = new kakao.maps.CustomOverlay({
-        position: new kakao.maps.LatLng(lat, lon),
-        content: div,
-        yAnchor: 1.2,
-        zIndex: matchedAuction ? 9999 : 1,
-        clickable: true
-    });
-    overlay.setMap(map);
-    markers[cacheKey] = { overlay: overlay, mKey: mKey, hasAuctionRibbon: !!matchedAuction };
-}
- 
-/* 마커 배지끼리 화면상 겹쳐서 아래쪽 배지를 클릭할 방법이 없는 문제 대응:
-   클릭된 마커의 실제 렌더링 사각형(getBoundingClientRect)과 겹치는 다른 마커가
-   있으면 바로 패널을 열지 않고, 겹친 후보들을 목록으로 보여주는 선택 팝업을 띄움.
-   겹치는 게 하나도 없으면(대부분의 경우) 기존과 동일하게 바로 패널이 열림 */
-function rectsOverlap(r1, r2) {
-    return !(r2.left > r1.right || r2.right < r1.left || r2.top > r1.bottom || r2.bottom < r1.top);
-}
-function findOverlappingMarkers(key) {
-    var target = markerDataRegistry[key];
-    if (!target || !target.div) return [{ key: key, data: target }];
-    var tRect = target.div.getBoundingClientRect();
-    var result = [];
-    Object.keys(markerDataRegistry).forEach(function(k) {
-        var d = markerDataRegistry[k];
-        if (!d || !d.div) return;
-        var r = d.div.getBoundingClientRect();
-        if (r.width === 0 && r.height === 0) return; // 화면 밖(지도 범위 밖)으로 밀려난 마커는 제외
-        if (rectsOverlap(tRect, r)) result.push({ key: k, data: d });
-    });
-    return result;
-}
-function handleAptMarkerClick(key) {
-    var d = markerDataRegistry[key];
-    if (!d) return;
-    var overlapping = findOverlappingMarkers(key);
-    if (overlapping.length > 1) {
-        openMarkerStackPicker(overlapping);
-        return;
-    }
-    showRadiusCircle(d.lat, d.lon);
-    openPanel(d.apt, d.lat, d.lon);
-}
-function openMarkerStackPicker(list) {
-    var titleEl = document.getElementById('marker-stack-title');
-    if (titleEl) titleEl.innerText = '📍 겹쳐있는 매물 (' + list.length + '건)';
-    var body = document.getElementById('marker-stack-body');
-    body.innerHTML = list.map(function(item) {
-        var l = (item.data.apt && item.data.apt.latest) || {};
-        var amountStr = l.amount ? toEok(String(l.amount)) : '';
-        return '<div class="comp-item" style="cursor:pointer;flex-direction:column;align-items:flex-start;justify-content:flex-start;gap:2px;" onclick="pickMarkerFromStack(\'' + item.key + '\')">'
-            + '<span style="font-weight:bold;">' + (l.name || '(이름없음)') + '</span>'
-            + '<span style="font-size:11px;color:#888;">' + [l.road_name, amountStr].filter(Boolean).join(' · ') + '</span>'
-            + '</div>';
-    }).join('');
-    document.getElementById('marker-stack-modal-bg').style.display = 'flex';
-}
-function closeMarkerStackModal(e) {
-    if (e && e.target !== document.getElementById('marker-stack-modal-bg')) return;
-    document.getElementById('marker-stack-modal-bg').style.display = 'none';
-}
-function pickMarkerFromStack(key) {
-    closeMarkerStackModal();
-    var d = markerDataRegistry[key];
-    if (!d) return;
-    showRadiusCircle(d.lat, d.lon);
-    openPanel(d.apt, d.lat, d.lon);
-}
-function handleCompBtnClick(key) {
-    var d = markerDataRegistry[key];
-    if (!d) return;
-    openComparablePicker(d.apt, d.lat, d.lon);
-}
-function showRadiusCircle(lat, lon) {
-    if (radiusCircle) radiusCircle.setMap(null);
-    radiusCircle = new kakao.maps.Circle({
-        center: new kakao.maps.LatLng(lat, lon), radius: 5000,
-        strokeWeight: 2, strokeColor: '#e53935', strokeOpacity: 0.7, strokeStyle: 'dashed',
-        fillColor: '#e53935', fillOpacity: 0.04
-    });
-    radiusCircle.setMap(map);
-}
-/* ════════════════════════════════════
-   검색
-════════════════════════════════════ */
-function setTypeFilter(type, btn) {
-    currentTypeFilter = type;
-    document.querySelectorAll('.type-btn').forEach(function(b) {
-        b.classList.remove('active-all', 'active-apt', 'active-villa');
-    });
-    btn.classList.add(type === 'villa' ? 'active-villa' : 'active-apt');
-    updateLegendLabels();
-    redrawMarkers();
-}
-// 연립다세대·단독다가구는 최근/과거 거래 기준(6개월/전년도)이 아파트(3개월/1년)와 달라서
-// 범례 문구도 현재 선택된 타입에 맞춰 바꿔줌
-function updateLegendLabels() {
-    var isVilla = currentTypeFilter === 'villa';
-    var recentEl = document.getElementById('legend-recent-label');
-    var pastEl = document.getElementById('legend-past-label');
-    if (recentEl) recentEl.innerText = isVilla ? '최근 6개월 거래' : '최근 3개월 거래';
-    if (pastEl) pastEl.innerText = isVilla ? '6개월~전년도 거래' : '3개월~1년 거래';
-}
-function searchAddress() {
-    var query = document.getElementById('addr-input').value.trim();
-    if (!query) { alert('검색어를 입력해 주세요.'); return; }
-    var addrResults = [], aptResults = [], done = 0;
-    function onDone() {
-        if (++done < 2) return;
-        var seen = {}, merged = [];
-        addrResults.concat(aptResults).forEach(function(r) {
-            var key = r.lat.toFixed(4) + '_' + r.lon.toFixed(4);
-            if (!seen[key]) { seen[key] = true; merged.push(r); }
-        });
-        if (!merged.length) { alert('검색 결과가 없습니다.'); return; }
-        showDropdown(merged);
-    }
-    geocoder.addressSearch(query, function(result, status) {
-        if (status === kakao.maps.services.Status.OK) {
-            result.slice(0, 5).forEach(function(r) {
-                addrResults.push({ label: r.address_name, sub: r.road_address ? r.road_address.address_name : '', lat: parseFloat(r.y), lon: parseFloat(r.x), type: '주소' });
-            });
-        }
-        onDone();
-    });
-    places.keywordSearch(query, function(result, status) {
-        if (status === kakao.maps.services.Status.OK) {
-            result.slice(0, 10).forEach(function(r) {
-                aptResults.push({ label: r.place_name, sub: r.road_address_name || r.address_name, lat: parseFloat(r.y), lon: parseFloat(r.x), type: '아파트' });
-            });
-        }
-        onDone();
-    }, { category_group_code: 'AT4' });
-}
-function showDropdown(results) {
-    var ac = document.getElementById('autocomplete');
-    ac.innerHTML = '';
-    var hdr = document.createElement('div');
-    hdr.style.cssText = 'padding:8px 16px;font-size:11px;color:#999;border-bottom:1px solid #eee;background:#fafafa;';
-    hdr.innerText = '검색결과 ' + results.length + '건';
-    ac.appendChild(hdr);
-    results.forEach(function(r) {
-        var div = document.createElement('div');
-        div.style.cssText = 'padding:10px 16px;cursor:pointer;border-bottom:1px solid #f0f0f0;display:flex;justify-content:space-between;align-items:center;gap:8px;';
-        var bc = r.type === '아파트' ? '#e53935' : '#1565c0';
-        div.innerHTML = '<div style="flex:1;min-width:0;">'
-            + '<div style="font-size:13px;font-weight:bold;color:#333;">' + r.label + '</div>'
-            + (r.sub ? '<div style="font-size:11px;color:#999;">' + r.sub + '</div>' : '')
-            + '</div><span style="background:' + bc + ';color:white;font-size:10px;padding:2px 7px;border-radius:10px;">' + r.type + '</span>';
-        div.onmouseover = function() { this.style.background = '#fffde7'; };
-        div.onmouseout  = function() { this.style.background = 'white'; };
-        div.onclick = function() {
-            document.getElementById('autocomplete').style.display = 'none';
-            document.getElementById('addr-input').value = r.label;
-            map.setCenter(new kakao.maps.LatLng(r.lat, r.lon));
-            map.setLevel(4);
-            lastLawdCd = null;
-            loadAllData(r.lat, r.lon);
-        };
-        ac.appendChild(div);
-    });
-    ac.style.display = 'block';
-}
-function normalizeSearchStr(s) {
-    return (s || '').replace(/\s/g, '').toLowerCase();
-}
-function searchLocalComplexes(query) {
-    var q = normalizeSearchStr(query);
-    if (!q) return [];
-    var results = [];
-    allAptList.forEach(function(apt) {
-        var l = apt.latest || {};
-        var danji = (l.name || '').trim();
-        var dong  = (l.dong || '').trim();
-        var bunji = (l.bunji || '').trim();
-        var dongBunji = normalizeSearchStr(dong + bunji);
-        var matched = false;
-        if (danji && normalizeSearchStr(danji).indexOf(q) !== -1) matched = true;
-        if (!matched && dong && bunji && dongBunji.indexOf(q) !== -1) matched = true;
-        if (matched) {
-            results.push({
-                label: danji || (dong + ' ' + bunji),
-                sub: (l.region || '') + (dong ? ' ' + dong : '') + (l.road_name ? ' · ' + l.road_name : ''),
-                apt: apt,
-                type: apt.buildingType === 'villa' ? '연립다세대' : '아파트'
-            });
-        }
-    });
-    results.sort(function(a, b) { return a.label.length - b.label.length; });
-    return results.slice(0, 15);
-}
-function selectLocalComplex(apt) {
-    var l = apt.latest || {};
-    var cacheKey = [l.dong, l.name, l.bunji, l.road_name, l.main_num, l.sub_num].join('|').toLowerCase();
-    function moveTo(lat, lon) {
-        map.setCenter(new kakao.maps.LatLng(lat, lon));
-        map.setLevel(4);
-        showRadiusCircle(lat, lon);
-        openPanel(apt);
-    }
-    if (coordCache[cacheKey]) {
-        moveTo(coordCache[cacheKey].lat, coordCache[cacheKey].lon);
-        return;
-    }
-    var candidates = buildGeocodeCandidates(l);
-    if (!candidates.length) { alert('이 단지의 위치를 찾을 수 없습니다.'); return; }
-    setStatus('위치 찾는 중...');
-    tryStepGeocode(candidates, function(lat, lon) {
-        setStatus('');
-        if (lat && lon) {
-            coordCache[cacheKey] = { lat: lat, lon: lon };
-            moveTo(lat, lon);
-        } else {
-            alert('이 단지의 위치를 찾을 수 없습니다.');
-        }
-    });
-}
-    
-function showLocalDropdown(results) {
-    var ac = document.getElementById('autocomplete');
-    ac.innerHTML = '';
-    var hdr = document.createElement('div');
-    hdr.style.cssText = 'padding:8px 16px;font-size:11px;color:#999;border-bottom:1px solid #eee;background:#fafafa;';
-    hdr.innerText = '검색결과 ' + results.length + '건';
-    ac.appendChild(hdr);
-    results.forEach(function(r) {
-        var div = document.createElement('div');
-        div.style.cssText = 'padding:10px 16px;cursor:pointer;border-bottom:1px solid #f0f0f0;display:flex;justify-content:space-between;align-items:center;gap:8px;';
-        var bc = r.type === '아파트' ? '#e53935' : '#1565c0';
-        div.innerHTML = '<div style="flex:1;min-width:0;">'
-            + '<div style="font-size:13px;font-weight:bold;color:#333;">' + r.label + '</div>'
-            + (r.sub ? '<div style="font-size:11px;color:#999;">' + r.sub + '</div>' : '')
-            + '</div><span style="background:' + bc + ';color:white;font-size:10px;padding:2px 7px;border-radius:10px;">' + r.type + '</span>';
-        div.onmouseover = function() { this.style.background = '#fffde7'; };
-        div.onmouseout  = function() { this.style.background = 'white'; };
-        div.onclick = function() {
-            document.getElementById('autocomplete').style.display = 'none';
-            document.getElementById('addr-input').value = r.label;
-            if (r.apt) selectLocalComplex(r.apt);
-            else if (r.remote) selectRemoteComplex(r.remote);
-        };
-        ac.appendChild(div);
-    });
-    ac.style.display = 'block';
-}
-/* ════════════════════════════════════
-   사이드 패널
-════════════════════════════════════ */
-function openPanel(apt, lat, lon) {
-    currentPanelLat = (typeof lat === 'number') ? lat : null;
-    currentPanelLon = (typeof lon === 'number') ? lon : null;
-    currentTrades  = apt.trades || [];
-    currentPanelApt = apt;
-    currentSort    = 'date';
-    currentPyung   = 'all';
-    currentIndicators   = apt.indicators || null;
-    currentPppTimeline       = calcPppTimeline(apt);
-    currentVolumeIndicators  = calcVolumeIndicators(apt);
-    currentJeonseEstimate    = apt.buildingType === 'villa' ? calcVillaJeonseEstimate(apt) : null;
-
-    // 헤더 (빌라는 연식단계 라벨도 함께 표시)
-    var gradeHtml = '';
-    if (apt.grade) {
-        var gc = GRADE_COLORS[apt.grade];
-        var pppLabel = apt.ppp > 0 ? ' · ' + (Math.round(apt.ppp / 100) / 10) + '천만/평' : '';
-        var tierPrefix = (apt.buildingType === 'villa' && apt.ageTier) ? (getVillaTierLabel(apt.ageTier) + ' ') : '';
-        var estStyle = apt.gradeEstimated ? 'border:1px dashed rgba(255,255,255,0.85);' : '';
-        var estSuffix = apt.gradeEstimated ? ' (전세가 기반 추정)' : '';
-        gradeHtml += ' <span style="background:' + gc + ';color:white;font-size:11px;font-weight:bold;padding:2px 7px;border-radius:10px;' + estStyle + '">' + tierPrefix + apt.grade + '등급' + pppLabel + estSuffix + '</span>';
-    }
-    
-    if (apt.hasNewHigh) {
-        gradeHtml += ' <span style="background:#ff6f00;color:white;font-size:11px;font-weight:bold;padding:2px 7px;border-radius:10px;">★ 신고가</span>';
-    }
-    var hasAuction = auctionList.some(function(a) {
-        return matchesAuctionKey(a, apt.latest && apt.latest.name, apt.latest && apt.latest.dong, apt.latest && apt.latest.bunji);
-    });
-    if (hasAuction) {
-        gradeHtml += ' <span style="background:#6a1b9a;color:white;font-size:11px;font-weight:bold;padding:2px 7px;border-radius:10px;">🔨 경매</span>';
-    }
-    // 이 건물에 경매물건이 있으면 패널을 열자마자 경매탭을 먼저 보여줌 (일반 거래탭은 옆에서 바로 전환 가능)
-    currentPanelTab = hasAuction ? 'auction' : 'price';
-    document.getElementById('panel-title').innerHTML = (apt.latest && apt.latest.name || '') + gradeHtml;
-    document.getElementById('panel-header').style.background = '#f9e000';
-    document.getElementById('panel').style.display = 'flex';
-    document.querySelectorAll('.sort-btn').forEach(function(b) { b.classList.remove('active'); });
-    document.querySelector('.sort-btn').classList.add('active');
-    // 평형 버튼
-    var pyungSet = {};
-    currentTrades.forEach(function(t) { if (t.area > 0) pyungSet[toPyung(t.area)] = true; });
-    var pyungList = Object.keys(pyungSet).map(Number).sort(function(a,b) { return a-b; });
-    var bar = document.getElementById('pyung-bar');
-    bar.innerHTML = '<span>평형:</span>';
-    var ab = document.createElement('button');
-    ab.className = 'pyung-btn active'; ab.innerText = '전체';
-    ab.onclick = function() { setPyung('all', this); };
-    bar.appendChild(ab);
-    pyungList.forEach(function(p) {
-        var btn = document.createElement('button');
-        btn.className = 'pyung-btn'; btn.innerText = p + '평';
-        btn.onclick = function() { setPyung(String(p), this); };
-        bar.appendChild(btn);
-    });
-    // 지표 저장
-     if (currentIndicators) {
-        currentIndicators._newHighPyungs  = apt.newHighPyungs || [];
-        currentIndicators._aptName        = apt.latest && apt.latest.name || '';
-        currentIndicators._aptDong        = apt.latest && apt.latest.dong || '';
-        currentIndicators._aptBunji       = apt.latest && apt.latest.bunji || '';
-    } else {
-        currentIndicators = {
-            _newHighPyungs: apt.newHighPyungs || [],
-            _aptName: apt.latest && apt.latest.name || '',
-            _aptDong: apt.latest && apt.latest.dong || '',
-            _aptBunji: apt.latest && apt.latest.bunji || ''
-        };
-    }
-    currentBuildingInfo = null;
-    currentBuildingLoading = true;
-    currentOfficialPrice = null;
-    currentOfficialPriceLoading = true;
-    renderTable();
-    loadBuildingInfo(apt, lat, lon).then(function(info) {
-        currentBuildingInfo = info;
-        currentBuildingLoading = false;
-        var realUnits = info && info.title && info.title.hhldCnt ? info.title.hhldCnt : null;
-        if (realUnits) {
-            currentVolumeIndicators = calcVolumeIndicators(apt, realUnits);
-        }
-        renderTable();
-    });
-    loadOfficialPrice(apt).then(function(priceInfo) {
-        currentOfficialPrice = priceInfo;
-        currentOfficialPriceLoading = false;
-        renderTable();
-    });
-}
- 
-/* ════════════════════════════════════
-   국토부 공시가격 실시간 조회 (VWorld API) - 지도의 모든 매물 패널 공통
-   - 아파트/연립다세대는 동/층/면적으로 유닛을 추정, 단독다가구는 토지 공시지가로 조회
-════════════════════════════════════ */
-async function loadOfficialPrice(apt) {
-    var l = apt.latest || {};
-    if (!l.bunji) return { success: false, error: '번지 정보가 없어 조회할 수 없습니다.' };
-    var address = [l.region, l.dong, l.bunji].filter(Boolean).join(' ');
-    try {
-        var res = await fetch('/api/get-official-price', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                address: address,
-                floor: l.floor || '',
-                sizeM2: l.area || '',
-                propertyType: apt.buildingType === 'single' ? '단독다가구' : '',
-            }),
-        });
-        var data = await res.json();
-        if (!res.ok) return { success: false, error: data.error || '조회 실패' };
-        return data;
-    } catch (e) {
-        return { success: false, error: e.message };
-    }
-}
- 
-function buildOfficialPriceHtml(data) {
-    if (!data) return '';
-    if (!data.success) {
-        return '<div class="indicator-box"><div class="indicator-title">🏛️ 국토부 공시가격</div>'
-            + '<div style="font-size:11px;color:#999;">' + (data.error || '데이터 없음') + '</div></div>';
-    }
-    var html = '<div class="indicator-box" style="border-color:#4caf50;background:#f1f8f4;">';
-    html += '<div class="indicator-title" style="color:#2e7d32;">🏛️ 국토부 공시가격</div>';
-    if (data.source === 'apartment') {
-        html += '<div style="font-size:15px;font-weight:bold;color:#2e7d32;">'
-            + (data.priceWon ? toEok(String(Math.round(data.priceWon / 10000))) : '정보없음') + '</div>';
-        html += '<div style="font-size:10px;color:#999;">'
-            + (data.stdrYear || '') + '년 ' + (data.stdrMt || '') + '월 기준'
-            + (data.floor ? ' · ' + data.floor + '층' : '')
-            + (data.approximate ? ' · 층·면적 기준 추정값(정확한 호수 아님)' : '') + '</div>';
-    } else {
-        html += '<div style="font-size:15px;font-weight:bold;color:#2e7d32;">'
-            + (data.priceWonPerM2 ? Number(data.priceWonPerM2).toLocaleString() + '원/㎡' : '정보없음') + '</div>';
-        html += '<div style="font-size:10px;color:#999;">' + (data.stdrYear || '') + '년 기준 · 개별공시지가(토지)</div>';
-    }
-    html += '</div>';
-    return html;
-}
- 
-function buildNaverLinkHtml(lat, lon, name, dong) {
-    var url;
-    if (lat && lon) {
-        url = 'https://new.land.naver.com/complexes?ms=' + lat + ',' + lon + ',17';
-    } else {
-        var q = [name, dong].filter(Boolean).join(' ').trim();
-        if (!q) return '';
-        url = 'https://search.naver.com/search.naver?query=' + encodeURIComponent(q + ' 네이버부동산');
-    }
-    return '<div style="margin-bottom:10px;">'
-        + '<a href="' + url + '" target="_blank" rel="noopener" '
-        + 'style="display:inline-flex;align-items:center;gap:5px;font-size:12px;font-weight:bold;color:#03c75a;'
-        + 'border:1.5px solid #03c75a;border-radius:20px;padding:6px 14px;text-decoration:none;background:#e8f9ef;">'
-        + '🟢 네이버부동산에서 보기</a></div>';
-}
-/* 대한민국 법원경매정보(courtauction.go.kr)는 사건번호를 URL 파라미터로 넘겨
-   상세결과 페이지로 바로 이동시키는 공식 딥링크를 제공하지 않음(세션 기반
-   화면전환 방식이며, 프로그램적 직접조회는 보안정책상 IP 차단 대상이 되는 것도
-   확인됨). 그래서 "경매사건검색" 화면을 새 탭으로 열면서 동시에 사건번호를
-   클립보드로 복사해, 검색창에 붙여넣기만 하면 되도록 함. 이 한 화면(및 물건
-   상세조회 결과 내 버튼들)에서 사건내역·기일내역·문건/송달내역·물건상세조회·
-   현황조사서·감정평가서(PDF)·사건상세조회까지 전부 확인 가능함이 실사용으로
-   확인됨. */
-function copyAuctionCaseNo(caseNo) {
-    var url = 'https://www.courtauction.go.kr/pgj/index.on?w2xPath=%2Fpgj%2Fui%2Fpgj100%2FPGJ159M00.xml';
-    window.open(url, '_blank', 'noopener');
-    if (!caseNo) {
-        alert('등록된 사건번호가 없습니다.\n새로 열린 "경매사건검색" 화면에서 법원과 사건번호를 직접 입력해 조회해주세요.');
-        return;
-    }
-    var guide = '사건번호(' + caseNo + ')가 복사되었습니다.\n\n새로 열린 "경매사건검색" 화면에서:\n'
-        + '1) 법원을 선택하고 사건번호 칸에 붙여넣기(Ctrl+V) 후 검색\n'
-        + '2) 상단 탭 [사건내역] [기일내역] [문건/송달내역] 확인\n'
-        + '3) [물건상세검색]에서 해당 물건번호를 열면 [물건상세조회]와 함께\n'
-        + '   [현황조사서 보기] [감정평가서 보기](PDF) 버튼이 있습니다.\n'
-        + '4) 현장사진도 물건상세조회 화면 하단에서 바로 볼 수 있습니다.';
-    if (navigator.clipboard && navigator.clipboard.writeText) {
-        navigator.clipboard.writeText(caseNo).then(function() {
-            alert(guide);
-        }).catch(function() {
-            alert('사건번호: ' + caseNo + ' (자동 복사 실패 - 직접 입력해주세요)\n\n' + guide);
-        });
-    } else {
-        alert('사건번호: ' + caseNo + ' (자동 복사 실패 - 직접 입력해주세요)\n\n' + guide);
-    }
-}
-/* 등기기록은 대법원 법원경매정보가 아닌 별도의 유료 서비스(대법원 인터넷등기소)에서
-   열람/발급함. 실사용 테스트 결과 주소 검색 → 목적물(호수) 선택 → 열람/발급 종류
-   선택까지는 로그인 없이 진행되지만, 그 다음 단계(본인인증/전자서명)부터는
-   TouchEn nx 보안모듈 설치+공동인증서/간편인증이 필요해 여기서부터는 자동화나
-   딥링크가 불가능함(사용자 PC의 보안 프로그램이 직접 개입하는 구간). 그래서
-   그 앞 단계까지만 최대한 빠르게 가도록 주소를 자동 복사해줌. */
-function openIrosRegistry(addrArg) {
-    var addr = (addrArg || (document.getElementById('a-addr') && document.getElementById('a-addr').value) || '').trim();
-    var url = 'https://www.iros.go.kr/';
-    window.open(url, '_blank', 'noopener');
-    if (!addr) {
-        alert('등록된 주소가 없습니다.\n새로 열린 인터넷등기소에서 주소를 직접 입력해 검색해주세요.');
-        return;
-    }
-    var guide = '주소(' + addr + ')가 복사되었습니다.\n\n새로 열린 인터넷등기소 홈 화면 검색창에:\n'
-        + '1) 붙여넣기(Ctrl+V) 후 Enter\n'
-        + '2) 목록에서 해당 호수 체크 후 [다음]\n'
-        + '3) 열람/발급 종류 선택 후 [다음] → 등기기록유형 선택 후 [다음]\n'
-        + '(여기까지는 로그인 없이 진행됩니다)\n'
-        + '4) 이후 단계부터 본인인증/공동인증서 결제가 필요합니다(자동화 불가 구간).';
-    if (navigator.clipboard && navigator.clipboard.writeText) {
-        navigator.clipboard.writeText(addr).then(function() {
-            alert(guide);
-        }).catch(function() {
-            alert('주소: ' + addr + ' (자동 복사 실패 - 직접 입력해주세요)\n\n' + guide);
-        });
-    } else {
-        alert('주소: ' + addr + ' (자동 복사 실패 - 직접 입력해주세요)\n\n' + guide);
-    }
-}
-/* 외국인 임차인이 있으면 전입세대열람에는 나타나지 않고, 대신 출입국·외국인정책본부의
-   하이코리아(HiKorea)에서 "외국인등록사실증명"을 발급받아 대항력 판단 기준일(외국인등록일)을
-   확인해야 함. 임차인 본인 정보가 필요해 딥링크는 불가능하므로 홈으로 안내만 함. */
-function openHikoreaLookup() {
-    var url = 'https://www.hikorea.go.kr/';
-    window.open(url, '_blank', 'noopener');
-    alert('새로 열린 하이코리아(HiKorea)에서:\n\n'
-        + '1) 상단 메뉴 [민원서비스] → [사실증명 발급] → [외국인등록사실증명]\n'
-        + '2) 임차인의 외국인등록번호로 조회 (임차인 본인 인증 필요)\n'
-        + '3) 외국인등록일이 대항력 판단 기준일이 됨(내국인의 전입신고일에 대응)\n\n'
-        + '※ 임차인 본인이 아니면 발급이 제한될 수 있어, 현장에서 임차인에게 직접 제시를 요청하는 편이 실무상 더 빠릅니다.');
-}
-function buildCourtAuctionLinkHtml(caseNo, addr) {
-    if (!caseNo) return '';
-    var addrJs = (addr || '').replace(/'/g, "\\'");
-    var caseNoJs = caseNo.replace(/'/g, "\\'");
-    return '<div style="margin-bottom:10px;display:flex;gap:6px;flex-wrap:wrap;">'
-        + '<a href="javascript:void(0)" onclick="copyAuctionCaseNo(\'' + caseNoJs + '\')" '
-        + 'style="display:inline-flex;align-items:center;gap:5px;font-size:12px;font-weight:bold;color:#1a237e;'
-        + 'border:1.5px solid #1a237e;border-radius:20px;padding:6px 14px;text-decoration:none;background:#e8eaf6;cursor:pointer;">'
-        + '🏛️ 법원경매정보 원본자료 조회 (사건번호 자동복사)</a>'
-        + '<a href="javascript:void(0)" onclick="openTankAuctionSearch(\'' + caseNoJs + '\')" '
-        + 'style="display:inline-flex;align-items:center;gap:5px;font-size:12px;font-weight:bold;color:#00695c;'
-        + 'border:1.5px solid #00695c;border-radius:20px;padding:6px 14px;text-decoration:none;background:#e0f2f1;cursor:pointer;">'
-        + '🟦 탱크옥션 사건상세내역 조회 (사건번호 자동복사)</a>'
-        + '<a href="javascript:void(0)" onclick="openIrosRegistry(\'' + addrJs + '\')" '
-        + 'style="display:inline-flex;align-items:center;gap:5px;font-size:12px;font-weight:bold;color:#6a1b9a;'
-        + 'border:1.5px solid #6a1b9a;border-radius:20px;padding:6px 14px;text-decoration:none;background:#f3e5f5;cursor:pointer;">'
-        + '🔏 인터넷등기소 등기기록 열람 (주소 자동복사)</a></div>';
-}
-/* 탱크옥션(유료 경매정보지)도 법원경매정보와 마찬가지로 세션 기반 화면전환 방식이라,
-   URL만으로 특정 사건 상세화면에 바로 딥링크할 수 있는 공식 방법이 없음(실제로 브라우저에서
-   확인해보니 상세보기는 팝업창을 tid+세션토큰(chkNo) 조합으로 여는 방식이라, 이 값들은
-   검색을 거쳐야만 얻어짐 - 사건번호만으로 미리 구성할 수 없음). 그래서 마찬가지로
-   "종합검색 화면을 새 탭으로 열기 + 사건번호 자동복사" 패턴을 사용함.
-   ⚠️ 탱크옥션 로그인(아이디/비밀번호)은 절대 자동 입력하지 않음 - 로그인이 필요한 사이트에
-   비밀번호를 대신 입력하는 것은 이 앱에서 다루지 않는 영역이라, 사용자가 이미 로그인된 브라우저를
-   그대로 사용하거나 직접 로그인해야 함. */
-function openTankAuctionSearch(caseNo) {
-    var url = 'https://www.tankauction.com/ca/caList.php';
-    window.open(url, '_blank', 'noopener');
-    if (!caseNo) {
-        alert('등록된 사건번호가 없습니다. 탱크옥션에서 직접 검색해주세요.');
-        return;
-    }
-    var m = String(caseNo).match(/(\d{4})\D+(\d+)/);
-    var year = m ? m[1] : '';
-    var num = m ? m[2] : caseNo;
-    var guide = '사건번호(' + num + ')가 복사되었습니다.\n\n새로 열린 탱크옥션 화면 우측 상단에서:\n'
-        + (year ? '1) 연도 드롭다운을 ' + year + '년으로 선택\n' : '')
-        + '2) "타경" 검색창에 붙여넣기(Ctrl+V) 후 검색 버튼을 누르면 사건상세내역으로 이동합니다.\n'
-        + '(로그인이 안 되어 있다면 먼저 로그인해 주세요 - 로그인은 이 앱이 대신 해줄 수 없습니다.)';
-    if (navigator.clipboard && navigator.clipboard.writeText) {
-        navigator.clipboard.writeText(num).then(function() {
-            alert(guide);
-        }).catch(function() {
-            alert('사건번호: ' + num + ' (자동 복사 실패)\n\n' + guide);
-        });
-    } else {
-        alert('사건번호: ' + num + ' (자동 복사 실패)\n\n' + guide);
-    }
-}
-/* 경매물건 AI 추출 상세(detail)에서 "누군가에게 전달하거나 전화 문의할 때 필요한 핵심 정보"만
-   골라 텍스트 한 덩어리로 묶어 클립보드에 복사하는 기능.
-   포함 항목: 법원 연락처, 사건번호, 처분방식, 특수조건, 주의사항, 말소기준등기, 임차인현황, 권리분석요약. */
-function buildCourtInfoSummaryText(detail) {
-    if (!detail) return '';
-    function won(v) {
-        if (v === null || v === undefined || v === '') return '';
-        return toEok(String(Math.round(v / 10000)));
-    }
-    var lines = [];
-    var courtLine = [detail.court, detail.courtTel].filter(Boolean).join(' · ');
-    if (courtLine) lines.push('【법원】 ' + courtLine);
-    if (detail.caseNo) lines.push('【사건번호】 ' + detail.caseNo);
-    if (detail.disposalMethod) lines.push('【처분방식】 ' + detail.disposalMethod);
-    if (detail.specialConditions) lines.push('【특수조건】 ' + detail.specialConditions);
-    if (detail.caseCautions) lines.push('【주의사항】 ' + detail.caseCautions);
-    var baseRight = [detail.baseRightType, detail.baseRightDate, detail.baseRightHolder].filter(Boolean).join(' · ');
-    if (baseRight) lines.push('【말소기준등기】 ' + baseRight);
-    if (detail.tenantOccupants && detail.tenantOccupants.length) {
-        lines.push('【임차인현황】');
-        detail.tenantOccupants.forEach(function(t) {
-            if (typeof t === 'string') { lines.push('- ' + t); return; }
-            var parts = [t.name || '임차인'];
-            if (t.occupancyPart) parts.push(t.occupancyPart);
-            if (t.hasStanding === true) parts.push('대항력 있음');
-            else if (t.hasStanding === false) parts.push('대항력 없음');
-            if (t.deposit) parts.push('보증금 ' + won(t.deposit));
-            if (t.rent) parts.push('차임 ' + won(t.rent) + '/월');
-            if (t.note) parts.push(t.note);
-            lines.push('- ' + parts.join(' / '));
-        });
-    } else if (detail.tenantNote) {
-        lines.push('【임차인현황】 ' + detail.tenantNote);
-    }
-    if (detail.riskSummary) lines.push('【권리분석요약】 ' + detail.riskSummary);
-    return lines.join('\n');
-}
-function copyCourtInfoSummary(b64) {
-    var text;
-    try {
-        text = decodeURIComponent(escape(atob(b64)));
-    } catch (e) {
-        alert('복사할 법원정보가 없습니다.');
-        return;
-    }
-    if (!text) { alert('복사할 법원정보가 없습니다.'); return; }
-    if (navigator.clipboard && navigator.clipboard.writeText) {
-        navigator.clipboard.writeText(text).then(function() {
-            alert('법원정보가 복사되었습니다.');
-        }).catch(function() {
-            alert('자동 복사에 실패했습니다. 아래 내용을 직접 복사해 주세요:\n\n' + text);
-        });
-    } else {
-        alert('자동 복사에 실패했습니다. 아래 내용을 직접 복사해 주세요:\n\n' + text);
-    }
-}
-function setTypeFilter(type, btn) {
-    currentTypeFilter = type;
-    document.querySelectorAll('.type-btn').forEach(function(b) {
-        b.classList.remove('active-all', 'active-apt', 'active-villa');
-    });
-    btn.classList.add(type === 'villa' ? 'active-villa' : 'active-apt');
-    updateLegendLabels();
-    redrawMarkers();
-}
-// 연립다세대·단독다가구는 최근/과거 거래 기준(6개월/전년도)이 아파트(3개월/1년)와 달라서
-// 범례 문구도 현재 선택된 타입에 맞춰 바꿔줌
-function updateLegendLabels() {
-    var isVilla = currentTypeFilter === 'villa';
-    var recentEl = document.getElementById('legend-recent-label');
-    var pastEl = document.getElementById('legend-past-label');
-    if (recentEl) recentEl.innerText = isVilla ? '최근 6개월 거래' : '최근 3개월 거래';
-    if (pastEl) pastEl.innerText = isVilla ? '6개월~전년도 거래' : '3개월~1년 거래';
-}
-function setPyung(pyung, btn) {
-    currentPyung = pyung;
-    document.querySelectorAll('.pyung-btn').forEach(function(b) { b.classList.remove('active'); });
-    btn.classList.add('active');
-    renderTable();
-}
-function renderTable() {
-    var trades = currentTrades.slice();
-    if (currentPyung !== 'all') {
-        trades = trades.filter(function(t) { return String(toPyung(t.area)) === currentPyung; });
-    }
-    if (currentSort === 'date')         trades.sort(function(a,b) { return (b.year*10000+b.month*100+b.day)-(a.year*10000+a.month*100+a.day); });
-    else if (currentSort === 'amount_desc') trades.sort(function(a,b) { return parseInt(b.amount)-parseInt(a.amount); });
-    else if (currentSort === 'amount_asc')  trades.sort(function(a,b) { return parseInt(a.amount)-parseInt(b.amount); });
-    else if (currentSort === 'area_desc')   trades.sort(function(a,b) { return b.area-a.area; });
-    else if (currentSort === 'area_asc')    trades.sort(function(a,b) { return a.area-b.area; });
-    var thisYear = today.getFullYear();
-    var html = '';
-    var ind  = currentIndicators;
-    html += buildNaverLinkHtml(currentPanelLat, currentPanelLon, ind && ind._aptName, ind && ind._aptDong);
-    // 임장메모 - 경매 사건과 무관하게 건물 단위로 영구 보관되어, 이 건물을 나중에
-    // 다시 볼 때(다른 경매 건이든 그냥 시세 확인이든) 항상 이 자리에서 확인할 수 있음
-    if (ind && (ind._aptName || ind._aptDong)) {
-        html += buildSiteNoteSectionHtml(ind._aptName, ind._aptDong, '', currentPanelLat, currentPanelLon);
-    }
-    // 빌라 연식단계별 평단가 추이 그래프
-    if (currentPanelApt && currentPanelApt.buildingType === 'villa' && currentPanelApt.ageTier) {
-        html += buildTierTrendChartHtml(currentPanelApt.ageTier);
-    }
-   
-   // 건축물대장 정보
-    if (currentBuildingLoading) {
-        html += '<div class="indicator-box"><div class="indicator-title">🏢 건축물대장 정보</div><div style="font-size:11px;color:#999;">불러오는 중...</div></div>';
-    } else if (currentBuildingInfo) {
-        html += buildBuildingInfoHtml(currentBuildingInfo);
-    }
-    // 국토부 공시가격 (실시간 조회)
-    if (currentOfficialPriceLoading) {
-        html += '<div class="indicator-box"><div class="indicator-title">🏛️ 국토부 공시가격</div><div style="font-size:11px;color:#999;">조회 중...</div></div>';
-    } else if (currentOfficialPrice) {
-        html += buildOfficialPriceHtml(currentOfficialPrice);
-    } else {
-        html += '<div class="indicator-box"><div class="indicator-title">🏢 건축물대장 정보</div><div style="font-size:11px;color:#e53935;">정보를 불러오지 못했습니다. (카카오 API 오류이거나, 건축HUB에 등록된 정보가 없을 수 있어요)</div></div>';
-    }
-    // 경매 패널 - 같은 건물의 일반 거래탭과 뒤섞이지 않도록 별도로 뽑아뒀다가
-    // 아래에서 탭으로 분리해서 붙임 (동일 주소에 마커가 두 개 겹치는 문제 방지)
-    var auctionHtml = '';
-    if (ind && (ind._aptName || (ind._aptDong && ind._aptBunji))) {
-        auctionHtml = buildAuctionPanelHtml(ind._aptName, ind._aptDong, ind._aptBunji);
-    }
-    // 신고가
-    if (ind && ind._newHighPyungs && ind._newHighPyungs.length > 0) {
-        html += '<div style="background:#fff8e1;border:1.5px solid #ff6f00;border-radius:10px;padding:10px 12px;margin-bottom:12px;">';
-        html += '<div style="font-size:12px;font-weight:bold;color:#ff6f00;margin-bottom:6px;">★ 신고가 경신 (6개월 전 대비)</div>';
-        ind._newHighPyungs.forEach(function(item) {
-            html += '<div style="font-size:11px;color:#555;margin-bottom:3px;"><b>' + item.py + '평</b> 이전최고 '
-                + toEok(String(item.beforeMax)) + ' → <span style="color:#e53935;font-weight:bold;">신고가 ' + toEok(String(item.recentMax)) + '</span></div>';
-        });
-        html += '</div>';
-    }
-    // 투자점수
-    if (currentPanelApt && currentPanelApt.rentOnly) {
-        html += '<div style="background:#fff3e0;border:1px solid #ffcc80;border-radius:8px;padding:8px 10px;margin-bottom:12px;font-size:11px;color:#e65100;">'
-            + 'ℹ️ 이 건물은 매매 거래 기록이 없습니다. 아래 등급·예상 거래가는 전세 거래를 바탕으로 추정한 값입니다.</div>';
-    }
-    if (currentPppTimeline) html += buildPppAnalysisHtml(currentPppTimeline);
-    if (currentVolumeIndicators) html += buildVolumeAnalysisHtml(currentVolumeIndicators);
-    if (currentJeonseEstimate) html += buildJeonseEstimateHtml(currentJeonseEstimate);
-
-    // 거래 테이블
-    var newHighAmountByPy = {};
-    if (ind && ind._newHighPyungs) {
-        ind._newHighPyungs.forEach(function(item) { newHighAmountByPy[item.py] = item.recentMax; });
-    }
-    var byYear = {};
-    trades.forEach(function(t) { if (!byYear[t.year]) byYear[t.year] = []; byYear[t.year].push(t); });
-    Object.keys(byYear).sort(function(a,b) { return b-a; }).forEach(function(yr) {
-        html += '<div style="margin-bottom:14px;">';
-        html += '<div class="year-label' + (parseInt(yr) === thisYear ? ' recent' : '') + '">' + yr + '년 (' + byYear[yr].length + '건)</div>';
-        html += '<table><thead><tr><th>날짜</th><th>평형</th><th>층</th><th>건축</th><th>거래금액</th></tr></thead><tbody>';
-        byYear[yr].forEach(function(t) {
-            var dateStr = yr + '.' + String(t.month).padStart(2,'0') + '.' + String(t.day).padStart(2,'0');
-            var py = Math.round(toPyung(t.area));
-            var isNH = newHighAmountByPy[py] !== undefined && parseInt(t.amount) === newHighAmountByPy[py];
-            var pppStr = (t.area > 0 && parseInt(t.amount) > 0)
-                ? '<br><span style="color:#795548;font-size:10px;">' + Math.round(parseInt(t.amount) / toPyung(t.area) / 100) / 10 + '천만/평</span>'
-                : '';
-            html += '<tr style="' + (isNH ? 'background:#fff3e0;' : '') + '">'
-                + '<td>' + dateStr + '</td>'
-                + '<td>' + (t.area > 0 ? toPyung(t.area) + '평' : '-') + '</td>'
-                + '<td>' + t.floor + '층</td>'
-                + '<td style="font-size:10px;color:#888;">' + (t.build_year || '-') + '년</td>'
-                + '<td style="color:#e53935;font-weight:bold;">' + toEok(t.amount) + (isNH ? ' ★' : '') + pppStr + '</td>'
-                + '</tr>';
-        });
-        html += '</tbody></table></div>';
-    });
-    var priceHtml = html || '<div style="padding:20px;text-align:center;color:#aaa;">거래 내역 없음</div>';
-    if (auctionHtml) {
-        if (currentPanelTab !== 'price' && currentPanelTab !== 'auction') currentPanelTab = 'auction';
-        var priceOn = currentPanelTab === 'price';
-        var bodyHtml = '<div class="panel-tabs">'
-            + '<button type="button" class="panel-tab-btn' + (!priceOn ? ' active' : '') + '" onclick="switchPanelTab(\'auction\')">🔨 경매정보<span class="panel-tab-dot"></span></button>'
-            + '<button type="button" class="panel-tab-btn' + (priceOn ? ' active' : '') + '" onclick="switchPanelTab(\'price\')">📈 시세정보</button>'
-            + '</div>'
-            + '<div id="panel-tab-auction" style="display:' + (priceOn ? 'none' : 'block') + ';">' + auctionHtml + '</div>'
-            + '<div id="panel-tab-price" style="display:' + (priceOn ? 'block' : 'none') + ';">' + priceHtml + '</div>';
-        document.getElementById('panel-body').innerHTML = bodyHtml;
-    } else {
-        currentPanelTab = 'price';
-        document.getElementById('panel-body').innerHTML = priceHtml;
-    }
-}
-function switchPanelTab(tab) {
-    currentPanelTab = tab;
-    var priceEl = document.getElementById('panel-tab-price');
-    var auctionEl = document.getElementById('panel-tab-auction');
-    if (!priceEl || !auctionEl) return;
-    priceEl.style.display = (tab === 'price') ? 'block' : 'none';
-    auctionEl.style.display = (tab === 'auction') ? 'block' : 'none';
-    var btns = document.querySelectorAll('.panel-tab-btn');
-    btns.forEach(function(b) { b.classList.remove('active'); });
-    if (btns[0]) btns[0].classList.toggle('active', tab === 'auction');
-    if (btns[1]) btns[1].classList.toggle('active', tab === 'price');
-}
-/* ════════════════════════════════════
-   경매 기능
-════════════════════════════════════ */
-async function fetchAuctions() {
-    try {
-        var r = await fetch('/api/auction');
-        auctionList = await r.json();
-        if (!Array.isArray(auctionList)) auctionList = [];
-    } catch(e) { auctionList = []; }
-}
-async function saveAuctionAPI(data) {
-    var r = await fetch('/api/auction', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(data) });
-    return r.json();
-}
-async function deleteAuctionAPI(id) {
-    await fetch('/api/auction?id=' + id, { method:'DELETE' });
-}
-/* ════════════════════════════════════
-   임장(현장조사) 메모 - 경매 사건과는 독립된 저장소(Redis 키 'siteNotes').
-   ⚠️ Vercel Hobby 플랜 서버리스 함수 12개 한도가 이미 꽉 차 있어서 별도 api 파일을
-      새로 만들지 않고, api/auction.js 하나를 ?kind=siteNotes 로 구분해서 함께 씀
-      (api/auction.js가 auctions/siteNotes 두 Redis 키를 모두 처리하도록 확장됨).
-   경매 건이 종료·삭제돼도 메모는 남아 같은 건물/지역을 나중에 다시 검토할 때 재사용됨
-════════════════════════════════════ */
-async function fetchSiteNotes() {
-    try {
-        var r = await fetch('/api/auction?kind=siteNotes');
-        siteNoteList = await r.json();
-        if (!Array.isArray(siteNoteList)) siteNoteList = [];
-    } catch (e) { siteNoteList = []; }
-}
-async function saveSiteNoteAPI(data) {
-    var r = await fetch('/api/auction?kind=siteNotes', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(data) });
-    return r.json();
-}
-async function deleteSiteNoteAPI(id) {
-    await fetch('/api/auction?kind=siteNotes&id=' + id, { method:'DELETE' });
-}
-// name(단지명, 없으면 이미 "동 번지" 조합 문자열)을 우선으로, name이 둘 다 없을 때만 dong으로 느슨하게 매칭
-// (matchesAuctionKey와 동일한 매칭 철학 - 건물 식별에 쓸 수 있는 유일한 공통 필드가 name/dong뿐이라서)
-function getSiteNotesForBuilding(name, dong) {
-    var n = (name || '').trim(), d = (dong || '').trim();
-    if (!n && !d) return [];
-    return siteNoteList.filter(function(s) {
-        var sn = (s.name || '').trim(), sd = (s.dong || '').trim();
-        if (n && sn && sn === n) return true;
-        if (!n && d && sd && sd === d) return true;
-        return false;
-    }).sort(function(a, b) { return (b.visitDate || '').localeCompare(a.visitDate || ''); });
-}
-function openAuctionList() {
-    var p = document.getElementById('auction-list-panel');
-    if (p.style.display === 'block') { p.style.display = 'none'; return; }
-    renderAuctionList(); p.style.display = 'block';
-}
-function renderAuctionList() {
-    var body = document.getElementById('auction-list-body');
-    if (!auctionList.length) {
-        body.innerHTML = '<div style="padding:20px;text-align:center;color:#aaa;font-size:12px;">등록된 경매 물건이 없습니다</div>';
-        return;
-    }
-    var html = '';
-    auctionList.slice().reverse().forEach(function(a) {
-        var sc = STATUS_COLOR[a.status] || '#9e9e9e';
-        // 지오코딩(주소→좌표 변환)에 실패해 지도에 배지가 아예 안 뜨는 경우를 여기서 바로 알 수 있도록 표시
-        var noPin = (!a.lat || !a.lon)
-            ? '<div class="auction-list-sub" style="color:#e53935;font-weight:bold;">⚠️ 주소를 지도 좌표로 찾지 못해 지도에 배지가 표시되지 않습니다 - 주소를 확인해 주세요.</div>'
-            : '';
-        html += '<div class="auction-list-item" style="position:relative;" onclick="panToAuction(\'' + a.id + '\')">'
-            + '<span onclick="event.stopPropagation();openAuctionModal(\'' + a.id + '\')" '
-            + 'style="position:absolute;top:8px;right:8px;font-size:10px;color:#1976d2;font-weight:bold;cursor:pointer;">✏️ 수정</span>'
-            + '<div class="auction-list-name">' + ((a.name && a.name.trim()) || a.addrLabel || a.addr || '(이름없음)')
-            + '<span class="auction-status-badge" style="background:' + sc + ';color:white;">' + a.status + '</span></div>'
-            + '<div class="auction-list-sub">' + (a.addr || '주소 미입력') + '</div>'
-            + '<div class="auction-list-sub" style="color:#6a1b9a;">입찰가 ' + (a.myBid ? toEok(String(parseInt(a.myBid))) : '-') + '</div>'
-            + noPin
-            + '</div>';
-    });
-    body.innerHTML = html;
-}
-/* 경매목록에서 항목을 클릭하면(수정 버튼 제외) 편집 모달을 바로 띄우지 않고 지도를 그
-   주소로 이동시킴 - 여러 물건을 훑어보며 주변 시세(일반 거래 배지)를 같이 보고 싶을 때
-   모달이 지도를 가리지 않도록 함. 수정하려면 우측 상단 "✏️ 수정"을 누르거나, 이동 후
-   드러난 지도 위의 마커를 클릭하면 됨(마커 클릭은 기존과 동일하게 모달을 엶). */
-function panToAuction(id) {
-    var a = auctionList.find(function(x) { return x.id === id; });
-    if (!a) return;
-    document.getElementById('auction-list-panel').style.display = 'none';
-    if (a.lat && a.lon) {
-        map.setCenter(new kakao.maps.LatLng(a.lat, a.lon));
-        map.setLevel(4);
-        return;
-    }
-    if (!a.addr) { alert('등록된 주소가 없어 이동할 수 없습니다. "✏️ 수정"을 눌러 주소를 입력해 주세요.'); return; }
-    setStatus('위치 찾는 중...');
-    tryStepGeocode([a.addr], function(lat, lon) {
-        setStatus('');
-        if (lat && lon) {
-            a.lat = lat; a.lon = lon;
-            saveAuctionAPI(a); renderAuctionMarkers();
-            map.setCenter(new kakao.maps.LatLng(lat, lon));
-            map.setLevel(4);
-        } else {
-            alert('이 주소의 위치를 찾을 수 없습니다. "✏️ 수정"을 눌러 주소를 확인해 주세요.');
-        }
-    });
-}
-function openAuctionModal(id) {
-    document.getElementById('auction-list-panel').style.display = 'none';
-    currentAuctionId = id;
-    var isEdit = !!id;
-    document.getElementById('modal-title').innerText = isEdit ? '🔨 경매 물건 수정' : '🔨 경매 물건 등록';
-    document.getElementById('modal-delete-btn').style.display = isEdit ? '' : 'none';
-     ['auction-id','a-addr','a-name','a-dong','a-floor','a-unit','a-case','a-pyung','a-date',
-     'a-appraisal','a-min-bid','a-my-bid','a-actual-bid',
-     'a-tax','a-registry-fee','a-eviction-fee','a-repair','a-agent','a-etc','a-target','a-actual-sell',
-     'a-official-price','a-memo','a-paste-text']
-        .forEach(function(fid) { document.getElementById(fid).value = ''; });
-    document.getElementById('a-status').value = '검토중';
-    document.getElementById('a-prop-type').value = 'apt';
-    document.getElementById('a-house-rank').value = '1';
-    document.getElementById('a-is-adjusted').checked = false;
-    document.getElementById('a-is-local-cheap').checked = false;
-    document.getElementById('a-comp-target-margin').value = '2000';
-    document.getElementById('a-addr-result').style.display = 'none';
-    pendingAuctionDetail = null;
-    pendingAuctionComparables = [];
-    pendingRegistryDoc = null;
-    pendingRegistryAnalysis = null;
-    pendingAuctionBuildingInfo = null;
-    pendingDevNews = null;
-    currentChecklist = {};
-    clearAuctionImages();
-    auctionJeonseEstimate = null;
-    document.getElementById('a-registry-file').value = '';
-    document.getElementById('a-salestatement-file').value = '';
-    document.getElementById('a-residentcert-file').value = '';
-    document.getElementById('registry-result-box').innerHTML = '';
-    document.getElementById('a-building-info-box').innerHTML = '';
-    document.getElementById('jeonse-analysis-box').innerHTML = '';
-    document.getElementById('a-ai-summary-box').innerHTML = '';
-    document.getElementById('dev-news-box').innerHTML = '';
-    if (isEdit) {
-        var a = auctionList.find(function(x) { return x.id === id; });
-        if (a) {
-            pendingAuctionDetail = a.detail || null;
-            pendingAuctionComparables = a.comparables ? a.comparables.slice() : [];
-            pendingRegistryDoc = a.registryDoc || null;
-            pendingRegistryAnalysis = a.registryAnalysis || null;
-            pendingDevNews = a.devNews || null;
-            currentChecklist = a.checklist ? Object.assign({}, a.checklist) : {};
-            renderRegistryAnalysis();
-            renderAiSummaryBox();
-            renderDevNewsBox();
-            document.getElementById('a-paste-text').value = a.rawText || '';
-            document.getElementById('auction-id').value    = a.id || '';
-            document.getElementById('a-addr').value        = a.addr || '';
-            document.getElementById('a-prop-type').value   = a.propType || 'apt';
-            document.getElementById('a-name').value        = a.name || '';
-            document.getElementById('a-dong').value        = a.aptDong || '';
-            document.getElementById('a-floor').value       = a.floor || '';
-            document.getElementById('a-unit').value        = a.unitNo || '';
-            document.getElementById('a-case').value        = a.caseNo || '';
-            document.getElementById('a-pyung').value       = a.pyung || '';
-            document.getElementById('a-date').value        = a.bidDate || '';
-            document.getElementById('a-status').value      = a.status || '검토중';
-            document.getElementById('a-appraisal').value   = a.appraisal || '';
-            document.getElementById('a-min-bid').value     = a.minBid || '';
-            document.getElementById('a-my-bid').value      = a.myBid || '';
-            document.getElementById('a-actual-bid').value  = a.actualBid || '';
-            document.getElementById('a-tax').value         = a.tax || '';
-            document.getElementById('a-registry-fee').value = a.registryFee || '';
-            document.getElementById('a-eviction-fee').value = a.evictionFee || '';
-            document.getElementById('a-repair').value      = a.repair || '';
-            document.getElementById('a-agent').value       = a.agent || '';
-            document.getElementById('a-etc').value         = a.etc || '';
-            document.getElementById('a-target').value      = a.target || '';
-            document.getElementById('a-actual-sell').value = a.actualSell || '';
-            document.getElementById('a-memo').value        = a.memo || '';
-            document.getElementById('a-comp-target-margin').value = a.compTargetMargin || '2000';
-            document.getElementById('a-house-rank').value  = a.houseRank || '1';
-            document.getElementById('a-is-adjusted').checked   = !!a.isAdjusted;
-            document.getElementById('a-is-local-cheap').checked = !!a.isLocalCheap;
-            document.getElementById('a-official-price').value = a.officialPriceWon || '';
-            if (a.addrLabel) { document.getElementById('a-addr-result').innerText = '📍 ' + a.addrLabel; document.getElementById('a-addr-result').style.display = 'block'; }
-        }
-    }
-   renderCompListBox();
-    // 저장된 수리비 값이 없는(비어있는) 경우에만 자동계산 — 이미 직접 입력/수정해 둔 값은 덮어쓰지 않음
-    if (!document.getElementById('a-repair').value) autoCalcRepairSilent();
-    updateStatusUI(); calcMargin(); calcCompValuation(); suggestBidFromTarget(); renderChecklistSection(); loadAuctionBuildingInfo(); autoCalcAuctionJeonseAnalysis();
-    document.getElementById('auction-modal-bg').style.display = 'flex';
-}
-function closeAuctionModal(e) {
-    if (e && e.target !== document.getElementById('auction-modal-bg')) return;
-    document.getElementById('auction-modal-bg').style.display = 'none';
-}
-function updateStatusUI() {
-    var s = document.getElementById('a-status').value;
-    document.getElementById('actual-bid-row').style.display  = (s === '낙찰' || s === '매도완료') ? '' : 'none';
-    document.getElementById('actual-sell-row').style.display = (s === '매도완료') ? '' : 'none';
-}
-function searchAuctionAddr() {
-    var q = document.getElementById('a-addr').value.trim();
-    if (!q) { alert('주소를 입력해 주세요.'); return; }
-    geocoder.addressSearch(q, function(result, status) {
-        if (status === kakao.maps.services.Status.OK) {
-            var r = result[0];
-            var label = r.road_address ? r.road_address.address_name : r.address_name;
-            document.getElementById('a-addr').value = r.address_name;
-            document.getElementById('a-addr-result').innerText = '📍 ' + label;
-            document.getElementById('a-addr-result').style.display = 'block';
-            var dong = r.address ? (r.address.region_3depth_name || '') : '';
-            var bunji = r.address
-                ? ((r.address.main_address_no || '') + (r.address.sub_address_no ? '-' + r.address.sub_address_no : ''))
-                : '';
-            auctionCoordCache[r.address_name] = { lat: parseFloat(r.y), lon: parseFloat(r.x), label: label, dong: dong, bunji: bunji };
-            calcCompValuation();
-            loadAuctionBuildingInfo();
-            autoCalcAuctionJeonseAnalysis();
-        } else {
-            alert('주소를 찾을 수 없습니다.');
-        }
-    });
-}
-/* 경매 모달에서 "지금 이 주소가 뭔지"를 알아야 하는 기능들(건축물대장 조회, 매매 히스토리 조회 등)이
-   공통으로 쓰는 헬퍼. 주소 정보는 우선순위대로 모음:
-   1) AI 자동추출 결과(pendingAuctionDetail.dong/bunji) - 가장 정확
-   2) 방금 주소검색/AI추출로 채워진 auctionCoordCache
-   3) 기존 저장된 레코드 자체 값(위 두 캐시는 신규 검색을 안 하면 비어있으므로, 기존 물건을
-      다시 열었을 때를 위한 대체 경로) */
-function getAuctionAddressContext() {
-    var addr = document.getElementById('a-addr').value.trim();
-    var coordInfo = addr ? auctionCoordCache[addr] : null;
-    var savedRecord = currentAuctionId ? auctionList.find(function(x) { return x.id === currentAuctionId; }) : null;
-    return {
-        lat: coordInfo ? coordInfo.lat : (savedRecord ? savedRecord.lat : null),
-        lon: coordInfo ? coordInfo.lon : (savedRecord ? savedRecord.lon : null),
-        dong: (pendingAuctionDetail && pendingAuctionDetail.dong) || (coordInfo && coordInfo.dong) || (savedRecord && savedRecord.dong) || '',
-        bunji: (pendingAuctionDetail && pendingAuctionDetail.bunji) || (coordInfo && coordInfo.bunji) || (savedRecord && savedRecord.bunji) || '',
-        name: document.getElementById('a-name').value.trim(),
-    };
-}
-/* 경매물건의 국토부 건축HUB 건축물대장 조회 - 일반 매물 패널에서 쓰는 loadBuildingInfo()/
-   buildBuildingInfoHtml()를 그대로 재사용함(승강기·주차·세대수·사용승인일 등을 표제부에서 확인). */
-async function loadAuctionBuildingInfo() {
-    var box = document.getElementById('a-building-info-box');
-    if (!box) return;
-    var ctx = getAuctionAddressContext();
-    if (!ctx.lat || !ctx.lon || !ctx.bunji) { box.innerHTML = ''; return; }
-    box.innerHTML = '<div style="font-size:11px;color:#999;">건축물대장 조회 중...</div>';
-    var fakeApt = { latest: { dong: ctx.dong, name: ctx.name, bunji: ctx.bunji } };
-    var hadApprovalDate = !!(pendingAuctionDetail && pendingAuctionDetail.approvalDate);
-    var info = await loadBuildingInfo(fakeApt, ctx.lat, ctx.lon);
-    pendingAuctionBuildingInfo = info;
-    var highlightUnit = document.getElementById('a-unit').value.trim();
-    box.innerHTML = info
-        ? buildBuildingInfoHtml(info, { idPrefix: 'a', highlightUnit: highlightUnit })
-        : '<div style="font-size:11px;color:#999;">건축HUB에 등록된 건축물대장 정보를 찾지 못했습니다.</div>';
-    // AI 추출에는 사용승인일이 없었는데 건축물대장 조회로 새로 확보됐다면(또는 애초에 AI 추출을
-    // 안 거치고 주소만 검색한 "수기 입력" 경로라면), 연식을 몰라 계산이 빠졌을 수리비·전세가 분석을
-    // 사용승인일 반영해서 한 번 더 자동 재계산함.
-    if (!hadApprovalDate && info && info.title && info.title.useAprDay) {
-        if (!document.getElementById('a-repair').value) { autoCalcRepairSilent(); calcMargin(); }
-        autoCalcAuctionJeonseAnalysis();
-    }
-}
-/* ════════════════════════════════════
-   다주택자 취득세 정밀(근사) 계산 - 2026-07 기준
-   ⚠️ 매매사업자 모드: 양도소득세는 계산하지 않습니다(부동산매매사업자는
-   양도소득세 대신 사업소득으로 종합소득세 신고 대상이며, 조정대상지역
-   다주택 매매 시 "비교과세"가 적용될 수 있으니 그 부분은 세무사와 별도
-   정산하세요). 이 앱은 취득세와 등기비용·명도비용·중개수수료 등 실제
-   지출 비용까지만 계산합니다.
-   ⚠️ 세법·조정대상지역 지정 현황은 수시로 바뀝니다. 아래 계산은 참고용
-   추정치이며, 실제 입찰 전에는 위택스 등에서 취득세를 한 번 더 확인하세요.
-
-   - 조정대상지역 목록: 2026-02 국토부 지정 기준(서울 25개구 전체 +
-     경기 12곳: 과천·광명·성남 분당/수정/중원·수원 영통/장안/팔달·
-     안양 동안·용인 수지·의왕·하남). 이후 지정/해제되면 이 배열을
-     갱신해야 함.
-   - 지방 저가주택 취득세 중과 배제: 비수도권(서울·경기·인천 외) +
-     공시가격 2억원 이하(2025.1.2 이후 유상취득분부터 1억→2억 완화).
-════════════════════════════════════ */
-var ADJUSTED_AREAS = [
-    '서울',
-    '경기 과천', '경기 광명', '경기 성남 분당', '경기 성남 수정', '경기 성남 중원',
-    '경기 수원 영통', '경기 수원 장안', '경기 수원 팔달', '경기 안양 동안',
-    '경기 용인 수지', '경기 의왕', '경기 하남'
-];
-function guessIsAdjustedArea(addr) {
-    if (!addr) return false;
-    var a = addr.replace(/\s+/g, '');
-    return ADJUSTED_AREAS.some(function(k) { return a.indexOf(k.replace(/\s+/g, '')) !== -1; });
-}
-function autoDetectAdjustedArea() {
-    var addr = document.getElementById('a-addr').value.trim();
-    if (!addr) { alert('주소를 먼저 입력해 주세요.'); return; }
-    var guess = guessIsAdjustedArea(addr);
-    document.getElementById('a-is-adjusted').checked = guess;
-    alert((guess ? '조정대상지역으로 추정됩니다.' : '비조정대상지역으로 추정됩니다.')
-        + '\n(2026년 2월 국토부 지정 기준 참고 판정이며, 최신 고시와 다를 수 있으니 국토부 홈페이지에서 다시 확인하세요.)');
-    autoCalcTaxSilent(); calcCompValuation(); calcMargin();
-}
-/* 수도권(서울·경기·인천) 여부 - 지방 저가주택 특례 판정용 */
-function isMetroArea(addr) {
-    if (!addr) return true; // 알 수 없으면 안전하게 수도권으로 간주(중과 배제 오적용 방지)
-    var a = addr.trim();
-    return /^(서울|경기|인천)/.test(a);
-}
-/* 취득세(지방교육세+농어촌특별세 포함 실효세율) - 만원 단위 입력/반환 */
-function calcAcquisitionTaxDetailed(bidManwon, propType, pyung, houseRank, isAdjusted, isLocalCheap) {
-    if (!bidManwon || bidManwon <= 0) return 0;
-    var bidWon = bidManwon * 10000;
-    if (propType === 'officetel' || propType === 'other') {
-        // 오피스텔·상가·토지 등 주택 외 매매: 4.6% 정액(농특세+지방교육세 포함), 주택수 중과 대상 아님
-        return Math.round(bidManwon * 0.046);
-    }
-    var over85 = (pyung || 0) > 25.7; // 전용 85㎡ 초과 근사(1평=3.3058㎡)
-    var rank = houseRank || 1;
-    function baseRatePct() {
-        if (bidWon <= 600000000) return 1;
-        if (bidWon <= 900000000) return (bidWon / 100000000) * (2 / 3) - 3;
-        return 3;
-    }
-    var isHeavy = false, heavyPct = 0;
-    if (!isLocalCheap) {
-        if (isAdjusted) {
-            if (rank === 2) { isHeavy = true; heavyPct = 8; }
-            else if (rank >= 3) { isHeavy = true; heavyPct = 12; }
-        } else {
-            if (rank >= 4) { isHeavy = true; heavyPct = 12; }
-        }
-    }
-    var totalRatePct;
-    if (isHeavy) {
-        var eduAdd = 0.4;
-        var nongAdd = over85 ? (heavyPct === 8 ? 0.6 : 1.0) : 0;
-        totalRatePct = heavyPct + eduAdd + nongAdd; // 8%→8.4/9.0%, 12%→12.4/13.4%
-    } else {
-        var base = baseRatePct();
-        totalRatePct = base + base * 0.1 + (over85 ? 0.2 : 0); // 지방교육세(표준세율의10%)+농특세(85초과0.2%p)
-    }
-    return Math.round(bidManwon * totalRatePct / 100);
-}
-function readTaxConditionInputs() {
-    return {
-        propType: document.getElementById('a-prop-type').value,
-        pyung: parseFloat(document.getElementById('a-pyung').value) || 0,
-        houseRank: parseInt(document.getElementById('a-house-rank').value) || 1,
-        isAdjusted: document.getElementById('a-is-adjusted').checked,
-        isLocalCheap: document.getElementById('a-is-local-cheap').checked
-    };
-}
-/* 부동산공시가격 알리미(realtyprice.kr)에서 직접 조회한 값을 사용자가 입력하면,
-   지방 저가주택(비수도권+공시가격 2억↓) 취득세 특례를 자동 판정 */
-function applyOfficialPriceInput() {
-    var priceWon = parseInt(document.getElementById('a-official-price').value) || 0;
-    if (!priceWon) return;
-    var addr = document.getElementById('a-addr').value.trim();
-    var metro = isMetroArea(addr);
-    var isLocalCheap = !metro && priceWon <= 200000000;
-    document.getElementById('a-is-local-cheap').checked = isLocalCheap;
-    autoCalcTaxSilent(); calcCompValuation(); calcMargin(); refreshAuctionJeonse126Warning();
-}
-function autoCalcTax() {
-    var bid = parseInt(document.getElementById('a-actual-bid').value) || parseInt(document.getElementById('a-my-bid').value) || 0;
-    if (!bid) { alert('입찰가를 먼저 입력해 주세요.'); return; }
-    var c = readTaxConditionInputs();
-    document.getElementById('a-tax').value = calcAcquisitionTaxDetailed(bid, c.propType, c.pyung, c.houseRank, c.isAdjusted, c.isLocalCheap);
-    calcMargin();
-}
-/* 입찰가/조건 입력 시 알림창 없이 조용히 취득세 자동계산 (버튼 없이도 항상 최신값 유지) */
-function autoCalcTaxSilent() {
-    var bid = parseInt(document.getElementById('a-actual-bid').value) || parseInt(document.getElementById('a-my-bid').value) || 0;
-    if (!bid) return;
-    var c = readTaxConditionInputs();
-    document.getElementById('a-tax').value = calcAcquisitionTaxDetailed(bid, c.propType, c.pyung, c.houseRank, c.isAdjusted, c.isLocalCheap);
-}
-/* 등기비용(법무사 보수+제세공과금 근사) - 낙찰가의 약 0.5% */
-function calcRegistryFee(bidManwon) {
-    if (!bidManwon || bidManwon <= 0) return 0;
-    return Math.round(bidManwon * 0.005);
-}
-function autoCalcRegistryFee() {
-    var bid = parseInt(document.getElementById('a-actual-bid').value) || parseInt(document.getElementById('a-my-bid').value) || 0;
-    if (!bid) { alert('입찰가를 먼저 입력해 주세요.'); return; }
-    document.getElementById('a-registry-fee').value = calcRegistryFee(bid);
-    calcMargin();
-}
-/* 명도비용(점유자 이사비 등 근사) - 평당 5만원 */
-function calcEvictionFee(pyung) {
-    if (!pyung || pyung <= 0) return 0;
-    return Math.round(pyung * 5);
-}
-function autoCalcEvictionFee() {
-    var pyung = parseFloat(document.getElementById('a-pyung').value) || 0;
-    if (!pyung) { alert('평형을 먼저 입력해 주세요.'); return; }
-    document.getElementById('a-eviction-fee').value = calcEvictionFee(pyung);
-    calcMargin();
-}
-/* 연립다세대 수리비 자동계산 - 연식단계(VILLA_AGE_TIERS)별 평당 단가.
-   ⚠️ 원래 프리미엄신축(0~3년)이 가장 비싸고 노후(26년+)가 가장 싼 반대 순서로 되어 있었음
-   (수리비가 아니라 "가치"를 나타내는 것처럼 잘못 설계됨) - 새 건물일수록 수리할 게 적어
-   평당 단가가 낮아야 하고, 오래된 건물일수록 전체 리모델링이 필요해 단가가 높아야 하므로
-   방향을 반대로 바로잡음: 가장 오래된 단계(노후)가 평당 100만원, 최신 단계(프리미엄신축)로
-   갈수록 10만원씩 낮아짐: 60→70→80→90→100만원/평.
-   사용승인일(연식)은 AI 자동추출 결과(pendingAuctionDetail.approvalDate)에서 가져옴. */
-var VILLA_REPAIR_PER_PYUNG = { premium: 60, new: 70, semi: 80, old: 90, aged: 100 }; // 만원/평
-function getAuctionBuildYear() {
-    if (pendingAuctionDetail && pendingAuctionDetail.approvalDate) {
-        var m = String(pendingAuctionDetail.approvalDate).match(/(\d{4})/);
-        if (m) return parseInt(m[1], 10);
-    }
-    // AI 추출 결과에 사용승인일이 없으면, 건축HUB 건축물대장 조회 결과(사용승인일)로 대체 시도.
-    // (loadAuctionBuildingInfo()가 비동기로 조회해서 pendingAuctionBuildingInfo에 채워둠)
-    if (pendingAuctionBuildingInfo && pendingAuctionBuildingInfo.title && pendingAuctionBuildingInfo.title.useAprDay) {
-        var m2 = String(pendingAuctionBuildingInfo.title.useAprDay).match(/(\d{4})/);
-        if (m2) return parseInt(m2[1], 10);
-    }
-    // 마지막 대체: 등록된 유사물건(비교물건)들의 준공연도 중앙값.
-    // 유사물건은 이미 연식±3년으로 골라진 것들이라(findSimilarComps), AI 추출과
-    // 건축HUB 조회가 모두 실패했을 때 참고할 만한 근사치가 됨.
-    var compYears = (pendingAuctionComparables || [])
-        .map(function(c) { return parseInt(c.buildYear); })
-        .filter(function(y) { return Number.isFinite(y) && y > 1900; })
-        .sort(function(a, b) { return a - b; });
-    if (compYears.length) return compYears[Math.floor(compYears.length / 2)];
-    return null;
-}
-function getAgeTierByYear(buildYear) {
-    if (!buildYear) return null;
-    var age = today.getFullYear() - buildYear;
-    for (var i = 0; i < VILLA_AGE_TIERS.length; i++) {
-        var t = VILLA_AGE_TIERS[i];
-        if (age >= t.min && age <= t.max) return t.key;
-    }
-    return null;
-}
-function calcRepairFee(pyung, buildYear) {
-    if (!pyung || pyung <= 0) return null;
-    var tier = getAgeTierByYear(buildYear);
-    if (!tier) return null;
-    return Math.round(pyung * VILLA_REPAIR_PER_PYUNG[tier]);
-}
-/* ════════════════════════════════════
-   경매물건(연립다세대) 전세가 기반 분석
-   - "유사물건 추천"(aiCompCandidates)으로 이미 찾아둔 단지들의 전세 거래(Pool A, 이미
-     로드된 지역이면 allRentList에서 바로 찾음) + 반경 1km·평형±4평·연식±4년(준공연도
-     있을 때만)의 전세 거래(Pool B, /api/search-complex?mode=radius 신규 백엔드)를
-     합쳐서 평단가 median → 예상전세가를 추정.
-   - 예상전세가÷126%가 공시가격보다 크면 "깡통전세 위험"(HUG 전세보증금반환보증
-     기준상 연립다세대 등의 주택가격을 공시가격×126%로 인정했던 규정에서 착안) 경고.
-   - 이 건물 자체의 실제 전세 이력이 있으면 예상치와 나란히 비교해서 보여줌.
-   - calcCompValuation()이 이 결과(auctionJeonseEstimate)를 참조해서 "예상매도가
-     (전세가율 기반)" 줄을 추가로 렌더링함.
-════════════════════════════════════ */
-// 물건유형/평형/주소/공시가격/유사물건 추천 결과가 바뀔 때마다 자동으로 재계산.
-// 매번 값이 바뀔 때 바로 백엔드 반경검색을 쏘면 타이핑 중에도 계속 호출되니, 700ms
-// 디바운스해서 입력이 잠잠해진 뒤 한 번만 실행함. 연립다세대·단독이 아니거나 주소/평형이
-// 아직 없으면 조용히 넘어감(경고 alert 없이).
-function autoCalcAuctionJeonseAnalysis() {
-    clearTimeout(auctionJeonseTimer);
-    auctionJeonseTimer = setTimeout(function() {
-        var propType = document.getElementById('a-prop-type').value;
-        var ctx = getAuctionAddressContext();
-        var pyung = parseFloat(document.getElementById('a-pyung').value) || null;
-        if (propType !== 'villa' || !ctx.lat || !ctx.lon || !pyung) return;
-        calcAuctionJeonseAnalysis();
-    }, 700);
-}
-async function calcAuctionJeonseAnalysis() {
-    var box = document.getElementById('jeonse-analysis-box');
-    if (!box) return;
-    var propType = document.getElementById('a-prop-type').value;
-    if (propType !== 'villa') {
-        box.innerHTML = '<div style="font-size:11px;color:#999;">연립다세대·단독 물건에만 적용되는 분석입니다.</div>';
-        auctionJeonseEstimate = null;
-        calcCompValuation();
-        return;
-    }
-    var ctx = getAuctionAddressContext();
-    var targetPyung = parseFloat(document.getElementById('a-pyung').value) || null;
-    if (!ctx.lat || !ctx.lon) { box.innerHTML = '<div style="font-size:11px;color:#e53935;">주소를 먼저 검색해 주세요.</div>'; return; }
-    if (!targetPyung) { box.innerHTML = '<div style="font-size:11px;color:#e53935;">평형을 먼저 입력해 주세요.</div>'; return; }
-    box.innerHTML = '<div style="font-size:11px;color:#999;">전세가 분석 중...</div>';
-    var targetBuildYear = getAuctionBuildYear();
-
-    // ── Pool A: 유사물건 추천에 뽑힌 단지들의 전세 거래 (클라이언트에 이미 로드된 allRentList에서 찾음) ──
-    // getVillaOwnRents(단지명 우선, 없으면 지번)로 건물별 전세를 모음 - 매매 테이블과 전세 테이블의
-    // 수집 출처가 달라 단지명 표기가 살짝 어긋나도(공백/약칭 등) 지번으로 매칭되도록 함
-    // (전세 히스토리 매칭에 쓰는 것과 동일한 로직).
-    var poolASeen = {}, poolA = [];
-    (aiCompCandidates || []).forEach(function(c) {
-        var t = c.trade;
-        if (!t) return;
-        var dedupeKey = (t.dong || '') + '|' + (t.name || t.bunji || '');
-        if (poolASeen[dedupeKey]) return;
-        poolASeen[dedupeKey] = true;
-        getVillaOwnRents(t.name, t.dong, t.bunji).forEach(function(r) {
-            poolA.push({ dong: r.dong, danji: r.danji, bunji: r.bunji, size: r.size, deposit: r.deposit,
-                floor: r.floor, build_year: r.build_year, deal_date: r.deal_date });
-        });
-    });
-
-    // ── Pool B: 반경 1km + 평형±4평 + 연식±4년(있을 때만) - 백엔드 반경 검색 ──
-    var poolB = [];
-    try {
-        var qs = 'lat=' + ctx.lat + '&lon=' + ctx.lon + '&radius=1000&pyung=' + targetPyung
-            + (targetBuildYear ? '&buildYear=' + targetBuildYear : '');
-        var res = await fetch('/api/search-complex?mode=radius&' + qs);
-        var data = await res.json();
-        poolB = data.results || [];
-    } catch (e) {
-        console.error('반경 전세 검색 실패:', e.message);
-    }
-
-    // ── 합치기 + 중복 제거 ──
-    var seen = {}, combined = [];
-    poolA.concat(poolB).forEach(function(r) {
-        if (!(r.size > 0) || !(r.deposit > 0)) return;
-        var key = (r.dong||'') + '_' + (r.danji||'') + '_' + (r.bunji||'') + '_' + r.deal_date + '_' + r.deposit;
-        if (seen[key]) return;
-        seen[key] = true;
-        combined.push(r);
-    });
-
-    if (!combined.length) {
-        auctionJeonseEstimate = null;
-        box.innerHTML = '<div style="font-size:11px;color:#999;">주변에서 참고할 전세 거래를 찾지 못했습니다.</div>';
-        calcCompValuation();
-        return;
-    }
-
-    function median(arr) { var s = arr.slice().sort(function(a,b){return a-b;}); var m = Math.floor(s.length/2); return s.length%2 ? s[m] : (s[m-1]+s[m])/2; }
-    var ppps = combined.map(function(r) { return r.deposit / toPyung(r.size); });
-    var avgPpp = median(ppps); // 만원/평
-    var estJeonse = Math.round(avgPpp * targetPyung); // 만원
-
-    // ── HUG 126% 경고: 예상전세가÷126% > 공시가격이면 깡통전세 위험 ──
-    var officialPriceWon = parseInt(document.getElementById('a-official-price').value) || 0;
-    var impliedFloorWon = Math.round(estJeonse * 10000 / 1.26);
-    var warn126 = officialPriceWon > 0 && impliedFloorWon > officialPriceWon;
-
-    // ── 이 건물 자체의 실제 전세 이력 (예상치와 비교용) ──
-    var ownRents = getVillaOwnRents(ctx.name, ctx.dong, ctx.bunji);
-
-    // ── 전세가율 기반 예상매도가 (지역 전체 연립다세대 매매/전세 쌍으로 구한 보정비율 재사용) ──
-    var allVillaSales = [], allVillaRentsAll = [];
-    allAptList.forEach(function(a) { if (a.buildingType === 'villa') allVillaSales = allVillaSales.concat(a.trades); });
-    allRentList.forEach(function(r) { if (r.buildingType === 'villa') allVillaRentsAll.push(r); });
-    var saleRatio = findSaleRentRatio(allVillaRentsAll, allVillaSales);
-    var estSaleValue = saleRatio ? Math.round(estJeonse * 1.26 * saleRatio) : null;
-
-    auctionJeonseEstimate = {
-        estValue: estJeonse, avgPpp: avgPpp, targetPyung: targetPyung, count: combined.length,
-        poolACount: poolA.length, poolBCount: poolB.length, ownRents: ownRents,
-        warn126: warn126, officialPriceWon: officialPriceWon, impliedFloorWon: impliedFloorWon,
-        saleRatio: saleRatio, estSaleValue: estSaleValue, targetBuildYear: targetBuildYear,
-    };
-    box.innerHTML = buildAuctionJeonseAnalysisHtml(auctionJeonseEstimate);
-    calcCompValuation();
-}
-function buildAuctionJeonseAnalysisHtml(est) {
-    var html = '<div style="background:#fff8e1;border:1.5px solid #ffb300;border-radius:10px;padding:10px 12px;">';
-    html += '<div style="font-size:12px;font-weight:bold;color:#e65100;">💰 예상전세가: ' + toEok(String(est.estValue)) + '</div>';
-    html += '<div style="font-size:10px;color:#888;margin-top:2px;">비교 전세 ' + est.count + '건(유사물건추천 ' + est.poolACount
-        + ' + 반경1km ' + est.poolBCount + ') 평단가 중간값 ' + (Math.round(est.avgPpp / 100) / 10) + '천만/평 × ' + est.targetPyung + '평</div>';
-    if (!est.targetBuildYear) {
-        html += '<div style="margin-top:6px;background:#fff3e0;border:1px solid #ffcc80;border-radius:6px;padding:5px 8px;font-size:10.5px;color:#e65100;">'
-            + '⚠️ 이 물건의 사용승인일(연식)을 확인하지 못해, 반경 1km 비교군에 연식 필터를 적용하지 못했습니다. '
-            + '오래된 건물과 신축 건물의 전세가 섞여 평단가가 실제보다 높거나 낮게 계산될 수 있습니다. '
-            + 'AI 자동채우기 결과나 건축물대장 조회에서 사용승인일이 확인되면 자동으로 반영됩니다.</div>';
-    }
-    if (est.warn126) {
-        html += '<div style="margin-top:6px;background:#ffebee;border:1px solid #ef9a9a;border-radius:6px;padding:6px 8px;font-size:11px;color:#c62828;font-weight:bold;">'
-            + '⚠️ 깡통전세 위험 — 예상전세가 ÷ 126% = ' + toEok(String(Math.round(est.impliedFloorWon / 10000)))
-            + ' &gt; 공시가격 ' + toEok(String(Math.round(est.officialPriceWon / 10000)))
-            + '. HUG 전세보증금반환보증 등에서 연립다세대 주택가격을 공시가격×126%로 인정해온 기준을 초과해, 보증 가입이 어렵거나 세입자 보증금 반환에 위험이 있을 수 있습니다.</div>';
-    } else if (est.officialPriceWon > 0) {
-        html += '<div style="font-size:10px;color:#2e7d32;margin-top:4px;">✓ 예상전세가가 공시가격 126% 기준 이내입니다.</div>';
-    } else {
-        html += '<div style="font-size:10px;color:#aaa;margin-top:4px;">공시가격(📍 물건 정보 섹션)을 입력하면 126% 기준 깡통전세 위험도 확인해 드립니다.</div>';
-    }
-    if (est.ownRents && est.ownRents.length) {
-        var sorted = est.ownRents.slice().sort(function(a, b) { return String(b.deal_date).localeCompare(String(a.deal_date)); });
-        html += '<div style="margin-top:8px;border-top:1px dashed #ffcc80;padding-top:6px;">';
-        html += '<div style="font-size:10.5px;font-weight:bold;color:#e65100;">이 건물의 실제 전세 이력 (' + sorted.length + '건) — 위 예상전세가와 비교해 보세요</div>';
-        sorted.slice(0, 8).forEach(function(r) {
-            var ds = String(r.deal_date || ''); var dateStr = ds.length === 8 ? (ds.slice(0,4) + '.' + ds.slice(4,6) + '.' + ds.slice(6,8)) : ds;
-            html += '<div style="font-size:10.5px;color:#666;padding:2px 0;">' + dateStr + ' · ' + toEok(String(r.deposit || 0)) + (r.size > 0 ? ' · ' + toPyung(r.size) + '평' : '') + '</div>';
-        });
-        html += '</div>';
-    } else {
-        html += '<div style="font-size:10px;color:#aaa;margin-top:6px;">이 건물의 실제 전세 거래 이력은 찾지 못했습니다.</div>';
-    }
-    html += '</div>';
-    return html;
-}
-// 공시가격만 바뀌었을 때는 전세/반경 검색을 다시 쏘지 않고, 이미 계산된 예상전세가는
-// 그대로 두고 126% 경고 판정만 다시 계산해서 화면을 갱신함 (불필요한 네트워크 호출 방지)
-function refreshAuctionJeonse126Warning() {
-    if (!auctionJeonseEstimate) { autoCalcAuctionJeonseAnalysis(); return; }
-    var officialPriceWon = parseInt(document.getElementById('a-official-price').value) || 0;
-    var impliedFloorWon = Math.round(auctionJeonseEstimate.estValue * 10000 / 1.26);
-    auctionJeonseEstimate.officialPriceWon = officialPriceWon;
-    auctionJeonseEstimate.impliedFloorWon = impliedFloorWon;
-    auctionJeonseEstimate.warn126 = officialPriceWon > 0 && impliedFloorWon > officialPriceWon;
-    var box = document.getElementById('jeonse-analysis-box');
-    if (box) box.innerHTML = buildAuctionJeonseAnalysisHtml(auctionJeonseEstimate);
-}
-/* 물건유형이 연립다세대·단독일 때만 평형×연식단계로 수리비를 조용히 자동계산해서 채움
-   (평형 또는 사용승인일(연식)을 아직 모르면 계산하지 않고 기존 값을 그대로 둠) */
-function autoCalcRepairSilent() {
-    if (document.getElementById('a-prop-type').value !== 'villa') return;
-    var pyung = parseFloat(document.getElementById('a-pyung').value) || 0;
-    var fee = calcRepairFee(pyung, getAuctionBuildYear());
-    if (fee === null) return;
-    document.getElementById('a-repair').value = fee;
-}
-/* 서울시 주택 매매 중개보수 요율표 기준 상한요율로 중개수수료 계산 (만원 단위 입력/반환) */
-function calcAgentFee(saleManwon, propType) {
-    if (!saleManwon || saleManwon <= 0) return 0;
-    var saleWon = saleManwon * 10000;
-    var fee;
-    if (propType === 'officetel') {
-        // 오피스텔: 전용 85㎡ 이하 + 일정설비 갖춘 경우 매매 0.5%, 그 외 0.9%
-        // (설비 요건 충족 여부는 앱에서 확인 불가 - 전용면적만으로 근사 판단)
-        var pyung = parseFloat(document.getElementById('a-pyung').value) || 0;
-        var m2 = pyung * 3.305785;
-        var rate = (m2 > 0 && m2 <= 85) ? 0.005 : 0.009;
-        fee = saleWon * rate;
-    } else if (propType === 'other') {
-        // 상가·토지 등: 0.9% 정액 (한도 없음)
-        fee = saleWon * 0.009;
-    } else {
-        // 주택(아파트/연립다세대/단독) - 전국 시도 공통 상한요율표 (2021.12 개편 이후)
-        var rate2, cap;
-        if (saleWon < 50000000)        { rate2 = 0.006; cap = 250000; }
-        else if (saleWon < 200000000)  { rate2 = 0.005; cap = 800000; }
-        else if (saleWon < 900000000)  { rate2 = 0.004; cap = null; }
-        else if (saleWon < 1200000000) { rate2 = 0.005; cap = null; }
-        else if (saleWon < 1500000000) { rate2 = 0.006; cap = null; }
-        else                            { rate2 = 0.007; cap = null; }
-        fee = saleWon * rate2;
-        if (cap !== null) fee = Math.min(fee, cap);
-    }
-    return Math.round(fee / 10000);
-}
- 
-/* 목표/실제 매도가 입력 시 조용히 중개수수료 자동계산 (매도 시 1회 지급이므로 매도가 기준) */
-function autoCalcAgentSilent() {
-    var sell = parseInt(document.getElementById('a-actual-sell').value) || parseInt(document.getElementById('a-target').value) || 0;
-    if (!sell) return;
-    var propType = document.getElementById('a-prop-type').value;
-    document.getElementById('a-agent').value = calcAgentFee(sell, propType);
-}
-/* 비용 항목 타이틀의 ⓘ 아이콘 클릭 시 "어떤 기준으로 자동계산되는지" 설명 (계산식 자체는 각 auto* 함수 참고) */
-var CALC_INFO_TEXT = {
-    tax: '취득세는 "내 입찰가"(또는 실제 낙찰가) 기준으로 계산됩니다.\n'
-        + '- 1주택(무주택자의 첫 주택)이면 6억 이하 1%, 6~9억 구간 누진, 9억 초과 3%\n'
-        + '- 다주택수·조정대상지역 여부에 따라 세율이 크게 달라집니다(다주택+조정지역은 최대 12~13%대).\n'
-        + '- 지방 저가주택(비수도권 + 공시가격 2억 이하)은 특례가 적용될 수 있습니다.\n'
-        + '"자동계산" 버튼을 누르면 위 조건(보유주택수·조정대상지역·지방저가주택 체크)을 반영해 다시 계산합니다.\n'
-        + '실제 입찰 전 위택스 등에서 한 번 더 확인하는 것을 권장합니다.',
-    registryFee: '등기비용은 "내 입찰가"를 기준으로 등록면허세·지방교육세·법무사 보수·증지대 등을 어림잡아\n'
-        + '더한 추정치입니다. 실제 법무사 견적/보수는 사무소마다 차이가 있을 수 있습니다.',
-    evictionFee: '명도비용은 평형(a-pyung)을 기준으로 이사비·명도 협의/소송 대비 비용을 대략적으로\n'
-        + '추정한 값입니다. 임차인 유무와 협의 난이도에 따라 실제 비용은 크게 달라질 수 있으니\n'
-        + '참고용으로만 사용하세요.',
-    repair: '수리비는 연립다세대의 경우, 이 지역 같은 연식단계(신축/준신축/구축 등)의 실거래에서\n'
-        + '뽑은 평균 평당단가에 평형을 곱해 자동계산됩니다(연식은 AI추출 사용승인일 → 건축HUB\n'
-        + '사용승인일 → 등록된 유사물건 준공연도 중앙값 순으로 채워짐). 실제 수리 견적을 받았다면\n'
-        + '그 값으로 직접 수정해서 사용하세요.',
-    agent: '중개수수료는 "목표 매도가"(실제 매도가가 있으면 그 값) 기준, 전국 공통 상한요율표에 따라\n'
-        + '매도 시 1회 지급하는 금액으로 자동계산됩니다.\n'
-        + '- 주택(아파트/연립다세대/단독): 가격 구간별 0.4~0.7%(5천만~2억 구간은 상한액도 적용)\n'
-        + '- 오피스텔: 전용 85㎡ 이하+설비요건 충족 추정 시 0.5%, 아니면 0.9%\n'
-        + '- 상가·토지 등: 0.9%\n'
-        + '"목표 매도가"를 바꾸면 자동으로 다시 계산됩니다.',
-    malsoRule: '말소기준등기(말소기준권리)란?\n'
-        + '(근)저당권·(가)압류·담보가등기·경매개시결정등기·전세권(배당요구 또는 임의경매신청) 중\n'
-        + '등기일자가 가장 빠른 것을 말합니다(민사집행법 제91조, 가등기담보법 제15조).\n'
-        + '이보다 먼저(선순위) 등기된 권리는 원칙적으로 매수인이 인수, 그 이후(후순위)에\n'
-        + '등기된 권리는 원칙적으로 말소됩니다.\n\n'
-        + '⚠️ 등기 순서와 무관하게 "무조건 인수"되는 권리 - 입찰 시 특히 주의\n'
-        + '- 유치권 (민사집행법 제91조제5항)\n'
-        + '- 법정지상권, 분묘기지권\n'
-        + '- 토지소유자가 지상건물 소유자를 상대로 한 처분금지가처분(건물철거·토지인도 청구)\n\n'
-        + '⚠️ 등기부만으로는 판단이 까다로운 것들\n'
-        + '- 가등기는 등기부에 "매매예약"으로만 표기되어, 담보가등기(말소기준권리가 될 수 있음)인지\n'
-        + '  순위보전가등기(선순위면 인수)인지 등기부만으로는 구분되지 않습니다. 배당요구 여부로\n'
-        + '  추정할 뿐이니 확실하지 않으면 초보자는 접근을 피하거나 전문가에게 확인하세요.\n'
-        + '- 전세권은 배당요구를 하면 말소기준권리가 되어 소멸하지만, 배당요구를 했더라도 보증금을\n'
-        + '  전액 배당받지 못하면 그 잔액은 대항력 있는 임차인 지위로 매수인에게 인수될 수 있습니다\n'
-        + '  (전세권자와 임차인이 동일인인 경우의 대법원 판례).\n\n'
-        + '📌 최근 확인해야 할 사항\n'
-        + '- 소액임차인 최우선변제 기준액은 지역별로 다르고, 판단 기준일은 "임차인 전입일"이 아니라\n'
-        + '  "최선순위 담보물권(근저당 등) 설정일"입니다 - 설정 당시 시행되던 공고금액표를 대조하세요.\n'
-        + '- 전세사기피해자 지원 특별법에 따라, 임차인이 전세사기 피해자로 인정되면 LH가 낙찰가와\n'
-        + '  동일한 금액으로 우선매수권을 행사하거나 경·공매 유예·정지를 신청할 수 있습니다.\n'
-        + '  임차인이 있는 물건이면 이 가능성도 염두에 두세요.\n\n'
-        + '⚠️ 이 설명은 참고용 요약이며 법률 자문이 아닙니다. 실제 입찰 전 반드시 법무사·변호사의\n'
-        + '권리분석을 받으세요.',
+// ── 스키마 A1: 물건 기본정보 / 가격 (배열은 짧은 rounds 하나뿐 - 상대적으로 가벼움) ──
+const SCHEMA_A1 = {
+  type: 'OBJECT',
+  properties: {
+    caseNo: { type: 'STRING' },
+    court: { type: 'STRING' },
+    courtTel: { type: 'STRING' },
+    propertyType: { type: 'STRING' },
+    auctionType: { type: 'STRING' },
+    decisionDate: { type: 'STRING' },
+    progressDays: { type: 'INTEGER' },
+    distributionDeadline: { type: 'STRING' },
+    isFirstProceeding: { type: 'BOOLEAN' },
+    addrJibun: { type: 'STRING' },
+    addrRoad: { type: 'STRING' },
+    dong: { type: 'STRING' },
+    bunji: { type: 'STRING' },
+    // 아파트 단지 내 건물 동번호 (예: "101동"). 단지명(buildingDongName)과는 별도 필드.
+    aptDong: { type: 'STRING' },
+    roadName: { type: 'STRING' },
+    roadMainNum: { type: 'INTEGER' },
+    roadSubNum: { type: 'INTEGER' },
+    unitFloor: { type: 'INTEGER' },
+    unitNo: { type: 'STRING' },
+    disposalMethod: { type: 'STRING' },
+    specialConditions: { type: 'STRING' },
+    caseCautions: { type: 'STRING' },
+    siteRightsArea: { type: 'STRING' },
+    saleDate: { type: 'STRING' },
+    rounds: {
+      type: 'ARRAY',
+      items: {
+        type: 'OBJECT',
+        properties: {
+          round: { type: 'INTEGER' },
+          date: { type: 'STRING' },
+          minPrice: { type: 'NUMBER' },
+          result: { type: 'STRING' },
+        },
+      },
+    },
+    viewsToday: { type: 'INTEGER' },
+    viewsTotal: { type: 'INTEGER' },
+    viewsAvg2w: { type: 'INTEGER' },
+    appraisalPrice: { type: 'NUMBER' },
+    minBidPrice: { type: 'NUMBER' },
+    minBidRate: { type: 'NUMBER' },
+    deposit: { type: 'NUMBER' },
+    depositRate: { type: 'NUMBER' },
+    owner: { type: 'STRING' },
+    debtor: { type: 'STRING' },
+    creditor: { type: 'STRING' },
+    claimAmount: { type: 'NUMBER' },
+    appraiser: { type: 'STRING' },
+    priceDate: { type: 'STRING' },
+    registrationDate: { type: 'STRING' },
+    landArea: { type: 'STRING' },
+    landPrice: { type: 'NUMBER' },
+    buildingArea: { type: 'STRING' },
+    buildingPrice: { type: 'NUMBER' },
+    unitPricePerM2: { type: 'NUMBER' },
+    unitPricePerPyung: { type: 'NUMBER' },
+    priceRatioLandBuilding: { type: 'STRING' },
+    locationDesc: { type: 'STRING' },
+  },
 };
-function showCalcInfo(key) {
-    alert(CALC_INFO_TEXT[key] || '설명이 없습니다.');
-}
-function calcMargin() {
-    var myBid    = parseInt(document.getElementById('a-my-bid').value)    || 0;
-    var actBid   = parseInt(document.getElementById('a-actual-bid').value) || 0;
-    var useBid   = actBid || myBid;
-    var tax      = parseInt(document.getElementById('a-tax').value)    || 0;
-    var registryFee = parseInt(document.getElementById('a-registry-fee').value) || 0;
-    var evictionFee  = parseInt(document.getElementById('a-eviction-fee').value) || 0;
-    var repair   = parseInt(document.getElementById('a-repair').value) || 0;
-    var agent    = parseInt(document.getElementById('a-agent').value)  || 0;
-    var etc      = parseInt(document.getElementById('a-etc').value)    || 0;
-    var target   = parseInt(document.getElementById('a-target').value) || 0;
-    var actSell  = parseInt(document.getElementById('a-actual-sell').value) || 0;
-    var useSell  = actSell || target;
-    var appraisal = parseInt(document.getElementById('a-appraisal').value) || 0;
-    var feesSum   = tax + registryFee + evictionFee + repair + agent + etc;
-    var totalCost = useBid + feesSum;
-    var margin    = useSell > 0 ? useSell - totalCost : 0;
-    var roi       = (totalCost > 0 && useSell > 0) ? Math.round(margin / totalCost * 1000) / 10 : 0;
-    var apprRate  = (appraisal > 0 && useBid > 0) ? Math.round(useBid / appraisal * 1000) / 10 : 0;
-    function mItem(label, value, color) {
-        return '<div class="margin-item"><div class="margin-label">' + label + '</div>'
-            + '<div class="margin-value" style="color:' + color + ';">' + value + '</div></div>';
-    }
-    document.getElementById('margin-grid').innerHTML =
-        mItem(actBid ? '실제 낙찰가' : '내 입찰가', useBid > 0 ? toEok(String(useBid)) : '—', '#1a237e')
-      + mItem('총 투자비용',    totalCost > 0 ? toEok(String(totalCost)) : '—', '#555')
-      + mItem('총 부대비용',    feesSum > 0 ? toEok(String(feesSum)) : '—', '#888')
-      + mItem(actSell ? '실제 수익' : '예상 수익', useSell > 0 ? toEok(String(margin)) : '—', margin > 0 ? '#2e7d32' : margin < 0 ? '#e53935' : '#555')
-      + mItem('수익률',         useSell > 0 ? roi + '%' : '—', roi > 10 ? '#2e7d32' : roi > 0 ? '#ff7043' : '#e53935')
-      + mItem('낙찰률',         apprRate > 0 ? apprRate + '%' : '—', apprRate < 80 ? '#2e7d32' : apprRate < 90 ? '#ff7043' : '#e53935')
-      + mItem('손익분기 매도가', totalCost > 0 ? toEok(String(totalCost)) : '—', '#1565c0');
-}
-/* 목표 매도가 - 목표마진 - 부대비용(세금·등기비·명도비·중개수수료 등)을 역산해서
-   "이 가격 이하로 낙찰받아야 목표마진을 지킬 수 있다"는 적정입찰가를 계산.
-   비교물건 시세분석에서 쓰는 solveAuctionBid()를 그대로 재사용(이분탐색으로 목표마진을
-   만족하는 입찰가를 찾음 - 세금이 낙찰가에 따라 달라지므로 단순 뺄셈으로는 정확하지 않음). */
-function suggestBidFromTarget() {
-    var box = document.getElementById('target-bid-suggest-box');
-    if (!box) return;
-    var target = parseInt(document.getElementById('a-actual-sell').value) || parseInt(document.getElementById('a-target').value) || 0;
-    if (!target) { box.innerHTML = ''; return; }
-    var r = solveAuctionBid(target);
-    var targetMargin = parseInt(document.getElementById('a-comp-target-margin').value) || 0;
-    box.innerHTML = '<div style="font-size:11px;background:#f3e5f5;border-radius:6px;padding:6px 8px;'
-        + 'display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;">'
-        + '<span style="color:#6a1b9a;">목표마진 ' + toEok(String(targetMargin)) + ' 기준 적정입찰가: <b>'
-        + (r.bid > 0 ? toEok(String(r.bid)) : '확보 불가') + '</b></span>'
-        + (r.bid > 0
-            ? '<button type="button" class="modal-btn btn-purple" style="font-size:10px;padding:3px 8px;" onclick="applyTargetBid(' + r.bid + ')">내 입찰가에 적용</button>'
-            : '')
-        + '</div>';
-}
-function applyTargetBid(bid) {
-    if (!bid || bid <= 0) return;
-    document.getElementById('a-my-bid').value = bid;
-    autoCalcTaxSilent(); calcMargin();
-}
-function matchesAuctionKey(a, name, dong, bunji) {
-    var aName = (a.name || '').trim();
-    var n = (name || '').trim();
-    if (n && aName && aName === n) return true;
-    var aDong = (a.dong || '').trim();
-    var aBunji = (a.bunji || '').trim();
-    var d = (dong || '').trim();
-    var b = (bunji || '').trim();
-    if (d && b && aDong && aBunji && aDong === d && aBunji === b) return true;
-    return false;
-}   
-async function saveAuction() {
-    var addr = document.getElementById('a-addr').value.trim();
-    var name = document.getElementById('a-name').value.trim();
-    if (!addr) { alert('주소를 입력해 주세요.'); return; }
-    var coordInfo = auctionCoordCache[addr];
-    // 지도 배지에 다른 마커처럼 연식단계를 표시하기 위해, 저장 시점에 사용승인일(연식)을
-    // 확정해서 함께 저장해둠. getAuctionBuildYear()는 건축HUB 건축물대장 조회 결과
-    // (사용승인일)를 최우선으로 쓰고, 없으면 AI 자동추출/비교물건 순으로 대체함.
-    // 이번 저장에서 새로 확인이 안 되면(예: 가격만 수정하는 경우) 기존에 저장돼 있던
-    // 값을 그대로 유지해서 애써 확인해둔 연식 정보가 지워지지 않게 함.
-    var existingAuctionForYear = auctionList.find(function(x) { return x.id === document.getElementById('auction-id').value; });
-    var resolvedBuildYear = getAuctionBuildYear() || (existingAuctionForYear ? existingAuctionForYear.buildYear : null) || null;
-    var data = {
-        id: document.getElementById('auction-id').value || Date.now().toString(),
-        buildYear: resolvedBuildYear,
-        addr: addr, addrLabel: coordInfo ? coordInfo.label : addr,
-        lat: coordInfo ? coordInfo.lat : null, lon: coordInfo ? coordInfo.lon : null,
-        dong: coordInfo ? (coordInfo.dong || '') : '',
-        bunji: coordInfo ? (coordInfo.bunji || '') : '',
-        name: name,
-        propType: document.getElementById('a-prop-type').value,
-        aptDong: document.getElementById('a-dong').value.trim(),
-        floor: document.getElementById('a-floor').value,
-        unitNo: document.getElementById('a-unit').value.trim(),
-        caseNo: document.getElementById('a-case').value,
-        pyung: document.getElementById('a-pyung').value, bidDate: document.getElementById('a-date').value,
-        status: document.getElementById('a-status').value,
-        appraisal: document.getElementById('a-appraisal').value,
-        minBid: document.getElementById('a-min-bid').value, myBid: document.getElementById('a-my-bid').value,
-        actualBid: document.getElementById('a-actual-bid').value, tax: document.getElementById('a-tax').value,
-        registryFee: document.getElementById('a-registry-fee').value,
-        evictionFee: document.getElementById('a-eviction-fee').value,
-        repair: document.getElementById('a-repair').value, agent: document.getElementById('a-agent').value,
-        etc: document.getElementById('a-etc').value, target: document.getElementById('a-target').value,
-        actualSell: document.getElementById('a-actual-sell').value,
-        memo: document.getElementById('a-memo').value,
-        detail: pendingAuctionDetail || null,
-        rawText: document.getElementById('a-paste-text').value.trim() || null,
-        comparables: pendingAuctionComparables || [],
-        compTargetMargin: document.getElementById('a-comp-target-margin').value,
-        houseRank: document.getElementById('a-house-rank').value,
-        isAdjusted: document.getElementById('a-is-adjusted').checked,
-        isLocalCheap: document.getElementById('a-is-local-cheap').checked,
-        officialPriceWon: document.getElementById('a-official-price').value || null,
-        registryDoc: pendingRegistryDoc || null,
-        registryAnalysis: pendingRegistryAnalysis || null,
-        devNews: pendingDevNews || null,
-        checklist: currentChecklist || {},
-    };
-    if (!data.lat || !data.lon) {
-        await new Promise(function(resolve) {
-            geocoder.addressSearch(addr, function(result, status) {
-                if (status === kakao.maps.services.Status.OK) {
-                    data.lat = parseFloat(result[0].y); data.lon = parseFloat(result[0].x);
-                    data.addrLabel = result[0].road_address ? result[0].road_address.address_name : result[0].address_name;
-                    data.dong = result[0].address ? (result[0].address.region_3depth_name || '') : '';
-                    data.bunji = result[0].address
-                        ? ((result[0].address.main_address_no || '') + (result[0].address.sub_address_no ? '-' + result[0].address.sub_address_no : ''))
-                        : '';
-                }
-                resolve();
-            });
-        });
-    }
-    if (!data.name && !(data.dong && data.bunji)) {
-        alert('아파트명을 입력하거나, 주소 검색으로 동/번지를 확인해 주세요.');
-        return;
-    }
-    setStatus('저장 중...');
-    var saved = await saveAuctionAPI(data);
-    var idx = auctionList.findIndex(function(a) { return a.id === saved.id; });
-    if (idx >= 0) auctionList[idx] = saved; else auctionList.push(saved);
-    setStatus(''); closeAuctionModal(); redrawMarkers(); alert('저장되었습니다.');
-}
-async function deleteAuction() {
-    var id = document.getElementById('auction-id').value;
-    if (!id || !confirm('삭제하시겠습니까?')) return;
-    setStatus('삭제 중...');
-    await deleteAuctionAPI(id);
-    auctionList = auctionList.filter(function(a) { return a.id !== id; });
-    setStatus(''); closeAuctionModal(); redrawMarkers();
-}
-/* ────────────────────────────────────
-   경매 마커도 팬/줌마다 전부 지웠다 다시 그리면 깜빡이므로,
-   경매물건 id를 키로 삼아 변경분만 교체하는 방식으로 동작함
-   (내용이 바뀌지 않았으면 시그니처가 같아서 다시 그리지 않음)
-──────────────────────────────────── */
-function clearAuctionMarkers() {
-    Object.keys(auctionMarkers).forEach(function(id) { if (auctionMarkers[id].overlay) auctionMarkers[id].overlay.setMap(null); });
-    auctionMarkers = {};
-    auctionMarkerSigs = {};
-}
-function findMatchedApt(a) {
-    return allAptList.find(function(apt) {
-        return matchesAuctionKey(a, apt.latest && apt.latest.name, apt.latest && apt.latest.dong, apt.latest && apt.latest.bunji);
-    });
-}
-function auctionMarkerSignature(a) {
-    var matched = findMatchedApt(a);
-    return JSON.stringify({
-        status: a.status, name: a.name, addrLabel: a.addrLabel, addr: a.addr,
-        myBid: a.myBid, appraisal: a.appraisal, pyung: a.pyung, bidDate: a.bidDate,
-        lat: a.lat, lon: a.lon,
-        grade: matched ? matched.grade : null,
-        pop: matched ? matched.popularPyeong : null,
-        surgeRank: a.dong ? surgeRankMap[a.dong] : null,
-        // 매칭된 건물이 지금 화면에 실제로 그려지는지(=필터 통과 여부)가 바뀌면 경매 마커도
-        // 독자표시↔억제 상태를 다시 판단해야 하므로 시그니처에 포함시킴 - 이게 없으면 필터를
-        // 바꿔도(타입탭 전환, 등급/비교대상 필터 등) 경매 마커가 갱신되지 않아 사라진 채로 남음
-        matchedVisible: matched ? isAptVisibleUnderCurrentFilters(matched) : null
-    });
-}
-function upsertAuctionMarker(a) {
-    var sig = auctionMarkerSignature(a);
-    if (auctionMarkers[a.id] && auctionMarkerSigs[a.id] === sig) return; // 변경 없음 - 그대로 유지 (깜빡임 방지)
-    if (auctionMarkers[a.id]) { if (auctionMarkers[a.id].overlay) auctionMarkers[a.id].overlay.setMap(null); delete auctionMarkers[a.id]; }
-    placeAuctionMarker(a);
-    auctionMarkerSigs[a.id] = sig;
-}
-function renderAuctionMarkers() {
-    if (!auctionList || !auctionList.length) { clearAuctionMarkers(); return; }
-    var neededIds = {};
-    auctionList.forEach(function(a) {
-        neededIds[a.id] = true;
-        if (a.lat && a.lon) { upsertAuctionMarker(a); }
-        else if (a.addr) {
-            // 1순위: 정식 주소 검색. 지번/도로명 형식이 조금이라도 다르면 실패할 수 있어서
-            // 일반 매물 지오코딩과 동일하게 2순위로 키워드(단지명 등) 검색까지 시도함 -
-            // 이게 없으면 주소 형식이 안 맞는 경매물건은 지도에 배지가 영영 안 뜨고 원인도 알 수 없었음
-            geocoder.addressSearch(a.addr, function(result, status) {
-                if (status === kakao.maps.services.Status.OK && result && result.length > 0) {
-                    a.lat = parseFloat(result[0].y); a.lon = parseFloat(result[0].x);
-                    saveAuctionAPI(a); upsertAuctionMarker(a); renderAuctionList();
-                } else if (places) {
-                    places.keywordSearch(a.addr, function(res, st) {
-                        if (st === kakao.maps.services.Status.OK && res && res.length > 0) {
-                            a.lat = parseFloat(res[0].y); a.lon = parseFloat(res[0].x);
-                            saveAuctionAPI(a); upsertAuctionMarker(a); renderAuctionList();
-                        }
-                        // 두 방식 모두 실패하면 a.lat/a.lon이 계속 비어있고,
-                        // 경매목록 패널(renderAuctionList)에 "⚠️ 지도에 표시되지 않음" 경고로 드러남
-                    });
-                }
-            });
-        }
-    });
-    // 목록에서 삭제된 경매물건의 마커만 제거 (나머지는 그대로 유지)
-    Object.keys(auctionMarkers).forEach(function(id) {
-        if (!neededIds[id]) {
-            if (auctionMarkers[id].overlay) auctionMarkers[id].overlay.setMap(null);
-            delete auctionMarkers[id];
-            delete auctionMarkerSigs[id];
-        }
-    });
-    // 일반 거래 마커가 경매 등록 "이전"에 이미 지도에 그려져 캐시된 상태였다면
-    // (markers는 한번 생성되면 pan/zoom으로 화면을 벗어났다 돌아오기 전까진 재사용되므로)
-    // 경매 강조 리본이 안 붙은 채로 남아있을 수 있음 - 매칭된 건물의 마커만 골라 새로 그려서 갱신함
-    refreshMatchedAuctionMarkers();
-}
-/* 경매물건과 매칭된 일반 거래 마커를 강제로 다시 그려서(캐시 무효화) 🔨 강조 리본이
-   항상 최신 상태로 보이도록 함 - 등록/수정/삭제 직후에도 지도를 다시 움직이지 않고 바로 반영됨 */
-function refreshMatchedAuctionMarkers() {
-    // 1) 경매와 매칭됐는데 아직 강조 리본이 없는 마커 → 다시 그려서 리본을 붙임
-    auctionList.forEach(function(a) {
-        var matched = findMatchedApt(a);
-        if (!matched) return;
-        var l = matched.latest || {};
-        var cacheKey = [l.dong, l.name, l.bunji, l.road_name, l.main_num, l.sub_num].join('|').toLowerCase();
-        var existing = markers[cacheKey];
-        if (!existing) return; // 아직 화면에 없는 건물이면 다음 redrawMarkers 때 자연히 반영됨
-        if (existing.hasAuctionRibbon) return; // 이미 붙어있으면 다시 그릴 필요 없음(깜빡임 방지)
-        var coord = coordCache[cacheKey];
-        if (!coord) return;
-        existing.overlay.setMap(null);
-        delete markerDataRegistry[existing.mKey];
-        delete markers[cacheKey];
-        createMarker(cacheKey, coord.lat, coord.lon, matched);
-    });
-    // 2) 리본이 붙어있었는데 경매물건 삭제/수정으로 더 이상 매칭되지 않는 마커 → 리본을 떼고 다시 그림
-    Object.keys(markers).forEach(function(cacheKey) {
-        var existing = markers[cacheKey];
-        if (!existing.hasAuctionRibbon) return;
-        var data = markerDataRegistry[existing.mKey];
-        if (!data || !data.apt) return;
-        var l = data.apt.latest || {};
-        var stillMatched = auctionList.some(function(a) { return matchesAuctionKey(a, l.name, l.dong, l.bunji); });
-        if (stillMatched) return;
-        existing.overlay.setMap(null);
-        delete markerDataRegistry[existing.mKey];
-        delete markers[cacheKey];
-        createMarker(cacheKey, data.lat, data.lon, data.apt);
-    });
-}
-function placeAuctionMarker(a) {
-    var sc = STATUS_COLOR[a.status] || '#9e9e9e';
 
-    // 같은 단지의 일반 거래 데이터가 이미 로딩되어 있으면 등급/인기평형 정보를 가져와 함께 표시
-    var matchedApt = findMatchedApt(a);
-    // 매칭된 일반 거래 마커가 "지금 이 순간 실제로 화면에 그려질 때만" 경매 마커를 따로 만들지
-    // 않음(배지 완전중복 방지, 경매 정보는 그 건물의 상세패널에 "🔨 경매정보" 탭으로 표시됨).
-    // 반대로 매칭은 됐지만 타입탭/등급/빌라조건/비교대상필터 등으로 그 일반 마커가 화면에서
-    // 걸러진 상태라면, 경매물건까지 같이 안 보이면 안 되므로 여기서 독자 마커로 대체 표시함
-    // (예: 등록된 경매물건은 어떤 필터를 걸어도 항상 최소 하나의 마커로는 보여야 함)
-    if (matchedApt && isAptVisibleUnderCurrentFilters(matchedApt)) {
-        auctionMarkers[a.id] = { overlay: null, suppressed: true };
-        return;
-    }
-    var surgeRank = a.dong ? surgeRankMap[a.dong] : null;
-    var surgeBadge = surgeRank
-        ? '<span style="background:#e53935;color:white;font-size:9px;font-weight:bold;padding:1px 5px;border-radius:3px;margin-left:3px;">🔥' + surgeRank + '위</span>'
-        : '';
-    // 연식 배지 - 저장 시점에 확정해둔 buildYear(건축HUB 사용승인일 우선)를 기준으로
-    // 다른 마커(연립다세대 등)와 동일한 연식단계 라벨을 보여줌
-    var ageTier = a.buildYear ? getAgeTierByYear(a.buildYear) : null;
-    var ageBadgeText = ageTier ? (getVillaTierLabel(ageTier) + ' · ' + (today.getFullYear() - a.buildYear) + '년차') : '';
-    var ageBadge = ageTier
-        ? '<span style="background:' + (AGE_TIER_COLORS[ageTier] || '#607d8b') + ';color:white;font-size:9px;font-weight:bold;padding:1px 6px;border-radius:3px;margin-left:3px;">' + ageBadgeText + '</span>'
-        : '';
-    // 일반 거래 마커가 없는(단독) 경매물건이므로, 수만 건의 일반 거래 배지 사이에서도
-    // 눈에 띄도록 굵은 주황 테두리 + 은은한 발광 애니메이션으로 강조 표시함
-    var priceLine = a.myBid
-        ? toEok(String(parseInt(a.myBid))) + ' (내 입찰가)'
-        : (a.appraisal ? toEok(String(parseInt(a.appraisal))) + ' (감정가)' : '가격 미입력');
- 
-    // 입찰일 전일 0시 ~ 입찰일 24시 사이면 알람 배지 표시
-    var alarmBadge = '';
-    if (a.bidDate) {
-        var bidD = new Date(a.bidDate + 'T00:00:00');
-        if (!isNaN(bidD.getTime())) {
-            var todayStart = new Date(); todayStart.setHours(0, 0, 0, 0);
-            var alarmStart = new Date(bidD); alarmStart.setDate(bidD.getDate() - 1);
-            var alarmEnd = new Date(bidD); alarmEnd.setDate(bidD.getDate() + 1); // 입찰일 다음날 0시(=입찰일 끝) 직전까지
-            if (todayStart >= alarmStart && todayStart < alarmEnd) {
-                alarmBadge = '<span style="background:#ff5252;color:white;font-size:9px;font-weight:bold;padding:1px 5px;border-radius:3px;margin-left:3px;animation:blink 1s step-start infinite;">🔔 입찰임박</span>';
-            }
-        }
-    }
- 
-    var div = document.createElement('div');
-    div.style.cssText = 'position:relative;background:linear-gradient(180deg,#fff,#fff7ec);border:3px solid #e65100;border-radius:9px;'
-        + 'padding:4px 9px;margin:4px;margin-top:16px;white-space:nowrap;cursor:pointer;'
-        + 'text-align:center;line-height:1.5;max-width:210px;transform:scale(1.12);'
-        + 'animation:auctionGlow 1.8s ease-in-out infinite;';
-    // 터치 기기 길게 누르기 미리보기용 (setupBadgeLongPressPeek 참고)
-    div.title = [((a.name && a.name.trim()) || a.addrLabel || a.addr || '(이름없음)'), '🔨 ' + a.status, priceLine, a.pyung ? a.pyung + '평' : '', ageBadgeText].filter(Boolean).join(' · ');
-    div.innerHTML = '<div class="auction-badge" style="background:' + sc + ';">🔨 ' + a.status + alarmBadge + '</div>'
-        + '<div style="color:#333;font-size:11px;font-weight:bold;overflow:hidden;text-overflow:ellipsis;max-width:185px;margin-top:5px;">'
-        +   ((a.name && a.name.trim()) || a.addrLabel || a.addr || '(이름없음)') + surgeBadge + ageBadge
-        + '</div>'
-        + '<div style="color:' + sc + ';font-size:12px;font-weight:bold;">' + priceLine + '</div>'
-        + (a.pyung ? '<div style="color:#888;font-size:10px;">' + a.pyung + '평</div>' : '')
-        // 매칭된 일반 거래가 있는데(타입탭/등급 등 필터 때문에) 지금 이 독자 마커로 대신
-        // 표시되는 중이라면, 클릭하면 매매기록까지 함께 있는 전체 상세패널이 열린다는 걸 알려줌
-        + (matchedApt ? '<div style="color:#e65100;font-size:9px;margin-top:2px;">📊 클릭하면 매매기록도 함께 보여요</div>' : '');
-    // 매칭된 일반 거래가 있으면(지금 화면엔 필터 때문에 그 마커가 안 보이는 상태라도) 클릭 시
-    // 경매 수정 모달이 아니라 매매기록+경매탭이 모두 있는 전체 상세패널이 열리도록 함 -
-    // 그래야 "경매정보만 보이고 매매기록은 사라졌다"는 상황이 재발하지 않음
-    div.setAttribute('onclick', matchedApt
-        ? 'openMatchedApt(\'' + String(a.id).replace(/'/g, "\\'") + '\')'
-        : 'openAuctionModal(\'' + String(a.id).replace(/'/g, "\\'") + '\')');
-    var overlay = new kakao.maps.CustomOverlay({
-        position: new kakao.maps.LatLng(a.lat, a.lon),
-        content: div, yAnchor: 1.2, zIndex: 9999,
-        clickable: true
-    });
-    overlay.setMap(map);
-    auctionMarkers[a.id] = { overlay: overlay };
-}
-/* 경매물건에 매칭된 일반 거래 건물이 있으면(현재 타입탭/필터 때문에 그 건물의 일반 마커
-   자체는 화면에 없더라도) 매매기록+경매정보 탭이 모두 있는 전체 상세패널을 열어줌.
-   openAuctionModal(경매 수정 전용 모달)만 여는 것과 달리 매매기록이 함께 보이도록 하는 게
-   핵심 - 안 그러면 사용자 입장에서 "매매기록은 사라지고 경매정보만 남았다"처럼 보임. */
-function openMatchedApt(auctionId) {
-    var a = auctionList.find(function(x) { return x.id === auctionId; });
-    if (!a) return;
-    var matched = findMatchedApt(a);
-    if (!matched) { openAuctionModal(auctionId); return; }
-    if (a.lat && a.lon) showRadiusCircle(a.lat, a.lon);
-    openPanel(matched, a.lat, a.lon);
-}
-function buildAuctionPanelHtml(aptName, aptDong, aptBunji) {
-    var matched = auctionList.filter(function(a) { return matchesAuctionKey(a, aptName, aptDong, aptBunji); });
-    if (!matched.length) return '';
-    var html = '';
-    matched.forEach(function(a) {
-        var sc = STATUS_COLOR[a.status] || '#9e9e9e';
-        html += '<div class="auction-panel-box">'
-            + '<div class="auction-panel-title">🔨 경매 물건'
-            + '<span class="auction-status-badge" style="background:' + sc + ';color:white;">' + a.status + '</span>'
-            + '<button class="auction-edit-btn" onclick="openAuctionModal(\'' + a.id + '\')">수정</button></div>'
-            + '<div class="auction-info-grid">';
-        function aItem(label, value, color) {
-            return '<div class="auction-info-item"><div class="auction-info-label">' + label + '</div>'
-                + '<div class="auction-info-value" style="color:' + color + ';">' + value + '</div></div>';
-        }
-        if (a.caseNo)    html += aItem('사건번호', a.caseNo, '#555');
-        if (a.bidDate)   html += aItem('입찰일', a.bidDate, '#555');
-        if (a.pyung)     html += aItem('평형', a.pyung + '평', '#555');
-        if (a.minBid)    html += aItem('현재 최저입찰가', toEok(String(parseInt(a.minBid))), '#e65100');
-        if (a.myBid)     html += aItem('내 입찰가', toEok(String(parseInt(a.myBid))), '#6a1b9a');
-        if (a.target)    html += aItem('목표 판매가', toEok(String(parseInt(a.target))), '#2e7d32');
-        if (a.memo) {
-            html += '</div><div style="margin-top:8px;font-size:11px;color:#666;background:white;border-radius:6px;padding:6px 8px;border:1px solid #e1bee7;">'
-                + '<span style="color:#9e9e9e;font-size:10px;">메모</span><br>' + a.memo.replace(/\n/g,'<br>') + '</div>';
-        } else { html += '</div>'; }
-        html += '</div>';
-        // 경매정보 탭(=이 함수)은 매칭된 건물의 패널 안에서 읽기전용으로 보여주는 화면이라,
-        // 입력칸(a-my-bid 등)이 있는 편집모달 전용인 calcMargin()을 그대로 쓸 수 없었음 -
-        // 그래서 저장된 값(a.myBid 등)만으로 계산하는 정적 버전을 따로 만들어 붙임
-        // (매매기록 없는 단독 경매물건은 편집모달을 직접 여니 원래도 마진분석이 보였음)
-        html += buildMarginSummaryHtml(a);
-        html += buildAuctionDetailHtml(a.detail);
-        html += buildDevNewsHtml(a.devNews);
-        html += buildOfficialPriceLookupHtml(a);
-        html += buildNaverLinkHtml(a.lat, a.lon, a.detail && a.detail.addrJibun, '');
-    });
-    return html;
-}
-/* buildAuctionPanelHtml(읽기전용 탭)에서 쓰는 정적 예상마진 요약 - calcMargin()과 계산식은
-   동일하지만 DOM 입력칸이 아니라 저장된 경매물건 객체(a)의 값을 그대로 사용함. */
-function buildMarginSummaryHtml(a) {
-    var myBid = parseInt(a.myBid) || 0;
-    var actBid = parseInt(a.actualBid) || 0;
-    var useBid = actBid || myBid;
-    var target = parseInt(a.target) || 0;
-    var actSell = parseInt(a.actualSell) || 0;
-    var useSell = actSell || target;
-    if (!useBid && !useSell) return ''; // 입찰가/목표매도가를 아직 하나도 안 정했으면 보여줄 게 없음
-    var tax = parseInt(a.tax) || 0;
-    var registryFee = parseInt(a.registryFee) || 0;
-    var evictionFee = parseInt(a.evictionFee) || 0;
-    var repair = parseInt(a.repair) || 0;
-    var agent = parseInt(a.agent) || 0;
-    var etc = parseInt(a.etc) || 0;
-    var appraisal = parseInt(a.appraisal) || 0;
-    var feesSum = tax + registryFee + evictionFee + repair + agent + etc;
-    var totalCost = useBid + feesSum;
-    var margin = useSell > 0 ? useSell - totalCost : 0;
-    var roi = (totalCost > 0 && useSell > 0) ? Math.round(margin / totalCost * 1000) / 10 : 0;
-    var apprRate = (appraisal > 0 && useBid > 0) ? Math.round(useBid / appraisal * 1000) / 10 : 0;
-    function mItem(label, value, color) {
-        return '<div class="margin-item"><div class="margin-label">' + label + '</div>'
-            + '<div class="margin-value" style="color:' + color + ';">' + value + '</div></div>';
-    }
-    var html = '<div class="indicator-box"><div class="indicator-title">💰 예상마진 분석 (저장된 값 기준)</div>';
-    html += '<div class="margin-grid">'
-        + mItem(actBid ? '실제 낙찰가' : '내 입찰가', useBid > 0 ? toEok(String(useBid)) : '—', '#1a237e')
-        + mItem('총 투자비용', totalCost > 0 ? toEok(String(totalCost)) : '—', '#555')
-        + mItem('총 부대비용', feesSum > 0 ? toEok(String(feesSum)) : '—', '#888')
-        + mItem(actSell ? '실제 수익' : '예상 수익', useSell > 0 ? toEok(String(margin)) : '—', margin > 0 ? '#2e7d32' : margin < 0 ? '#e53935' : '#555')
-        + mItem('수익률', useSell > 0 ? roi + '%' : '—', roi > 10 ? '#2e7d32' : roi > 0 ? '#ff7043' : '#e53935')
-        + mItem('낙찰률', apprRate > 0 ? apprRate + '%' : '—', apprRate < 80 ? '#2e7d32' : apprRate < 90 ? '#ff7043' : '#e53935')
-        + mItem('손익분기 매도가', totalCost > 0 ? toEok(String(totalCost)) : '—', '#1565c0')
-        + '</div>';
-    html += '<div style="font-size:10px;color:#aaa;margin-top:6px;">저장된 값을 기준으로 한 요약이며, 값을 바꾸려면 위 "수정" 버튼을 눌러주세요.</div>';
-    html += '</div>';
-    return html;
-}
-/* ════════════════════════════════════
-   경매 비교물건 시세분석
-════════════════════════════════════ */
-function openComparablePicker(apt, lat, lon) {
-    if (!auctionList.length) { alert('등록된 경매물건이 없습니다. 먼저 경매물건을 등록해 주세요.'); return; }
-    var l = apt.latest || {};
-    pendingCompMarkerData = {
-        apt: apt, lat: lat, lon: lon,
-        name: (l.name || '').trim() || ((l.dong || '') + ' ' + (l.bunji || '')).trim(),
-        dong: l.dong || '',
-        date: (l.year && l.month && l.day) ? (l.year + '-' + String(l.month).padStart(2,'0') + '-' + String(l.day).padStart(2,'0')) : '',
-        amount: parseInt(l.amount) || 0,
-        area: l.area || 0,
-        floor: l.floor || '-',
-        buildYear: l.build_year || ''
-    };
-    renderCompPickList();
-    document.getElementById('comp-pick-modal-bg').style.display = 'flex';
-}
-function closeCompPickModal(e) {
-    if (e && e.target !== document.getElementById('comp-pick-modal-bg')) return;
-    document.getElementById('comp-pick-modal-bg').style.display = 'none';
-    pendingCompMarkerData = null;
-}
-/* ── 유사물건(연식·입지·층) 자동 추천 ──
-   주소 좌표가 아직 캐시에 없으면(=주소 "검색" 버튼을 따로 안 눌렀으면) 여기서
-   바로 지오코딩까지 처리하고 이어서 추천을 실행함 - 버튼 한 번으로 끝나도록 */
-async function openAiCompFinder() {
-    var addr = document.getElementById('a-addr').value.trim();
-    if (!addr) { alert('먼저 주소를 입력해 주세요.'); return; }
-    var coordInfo = auctionCoordCache[addr];
-    if (!coordInfo) {
-        setStatus('위치 확인 중...');
-        coordInfo = await new Promise(function(resolve) {
-            geocoder.addressSearch(addr, function(result, status) {
-                if (status === kakao.maps.services.Status.OK) {
-                    var r = result[0];
-                    var label = r.road_address ? r.road_address.address_name : r.address_name;
-                    var dong = r.address ? (r.address.region_3depth_name || '') : '';
-                    var bunji = r.address
-                        ? ((r.address.main_address_no || '') + (r.address.sub_address_no ? '-' + r.address.sub_address_no : ''))
-                        : '';
-                    var info = { lat: parseFloat(r.y), lon: parseFloat(r.x), label: label, dong: dong, bunji: bunji };
-                    document.getElementById('a-addr').value = r.address_name;
-                    document.getElementById('a-addr-result').innerText = '📍 ' + label;
-                    document.getElementById('a-addr-result').style.display = 'block';
-                    auctionCoordCache[r.address_name] = info;
-                    resolve(info);
-                } else {
-                    resolve(null);
-                }
-            });
-        });
-        setStatus('');
-    }
-    if (!coordInfo || !coordInfo.lat || !coordInfo.lon) { alert('주소 위치를 찾을 수 없습니다. 주소를 다시 확인해 주세요.'); return; }
-    var lat = coordInfo.lat, lon = coordInfo.lon;
- 
-    var targetFloor = parseInt(document.getElementById('a-floor').value) || null;
-    var targetPyung = parseFloat(document.getElementById('a-pyung').value) || null;
-    var targetYear = getAuctionBuildYear();
-    // 물건유형이 아파트/연립다세대·단독이면 같은 유형 거래만 비교 (건물유형이 다르면 시세가 안 맞음)
-    var propType = document.getElementById('a-prop-type').value;
-    var targetBuildingType = (propType === 'apt' || propType === 'villa') ? propType : null;
+// ── 스키마 A2: 임차인 현황 / 매각통계 / 국토부 실거래 / 공시가격 (가장 무거운 배열들) ──
+const SCHEMA_A2 = {
+  type: 'OBJECT',
+  properties: {
+    officialPriceCurrent: { type: 'STRING' },
+    tenantTerminationDate: { type: 'STRING' },
+    tenantDistributionDeadline: { type: 'STRING' },
+    tenantOccupants: {
+      type: 'ARRAY',
+      items: {
+        type: 'OBJECT',
+        properties: {
+          name: { type: 'STRING' },
+          occupancyPart: { type: 'STRING' },
+          deposit: { type: 'NUMBER' },
+          rent: { type: 'NUMBER' },
+          hasStanding: { type: 'BOOLEAN' },
+          moveInDate: { type: 'STRING' },
+          fixedDate: { type: 'STRING' },
+          distributionDate: { type: 'STRING' },
+          note: { type: 'STRING' },
+        },
+      },
+    },
+    tenantNote: { type: 'STRING' },
+    salesStats: {
+      type: 'OBJECT',
+      properties: {
+        m1: { type: 'STRING' },
+        m3: { type: 'STRING' },
+        m6: { type: 'STRING' },
+        m12: { type: 'STRING' },
+      },
+    },
+    officialTrades: {
+      type: 'ARRAY',
+      items: {
+        type: 'OBJECT',
+        properties: {
+          date: { type: 'STRING' },
+          amount: { type: 'NUMBER' },
+          area: { type: 'STRING' },
+          floor: { type: 'STRING' },
+        },
+      },
+    },
+    officialPriceByYear: { type: 'STRING' },
+  },
+};
 
-    aiCompCandidates = findSimilarComps(lat, lon, targetYear, targetFloor, targetPyung, targetBuildingType);
-    renderAiCompList();
-    document.getElementById('ai-comp-modal-bg').style.display = 'flex';
-    autoCalcAuctionJeonseAnalysis(); // 유사물건 추천 결과(Pool A)가 바뀌었으니 예상전세가도 다시 계산
-}
- 
-/* 단지 내 관측된 거래들 중 최고층을 그 단지의 "탑층"으로 근사 (건축HUB 총층수 정보가
-   없는 물건도 많아, 실거래 데이터 자체에서 관측된 최고층을 대리 지표로 사용) */
-function getMaxFloorForApt(apt) {
-    var floors = (apt.trades || [])
-        .map(function(t) { return parseInt(t.floor); })
-        .filter(function(f) { return Number.isFinite(f) && f > 0; });
-    return floors.length ? Math.max.apply(null, floors) : null;
-}
-function findSimilarComps(lat, lon, targetYear, targetFloor, targetPyung, targetBuildingType) {
-    var candidates = [];
-    allAptList.forEach(function(apt) {
-        if (apt.buildingType === 'single') return;
-        if (targetBuildingType && apt.buildingType !== targetBuildingType) return; // 아파트/연립다세대 유형 일치만
-        var l = apt.latest || {};
-        var cacheKey = [l.dong, l.name, l.bunji, l.road_name, l.main_num, l.sub_num].join('|').toLowerCase();
-        var coord = coordCache[cacheKey];
-        if (!coord) return;
-        var dist = getDistance(lat, lon, coord.lat, coord.lon);
-        if (dist > 2000) return; // 반경 2km 이내만
-        var maxFloor = getMaxFloorForApt(apt);
-        (apt.trades || []).forEach(function(t) {
-            if (t.area <= 0 || parseInt(t.amount) <= 0) return;
-            if (tradeDate(t) < oneYearAgo) return; // 최근 1년 거래만
-            var py = toPyung(t.area);
-            if (targetPyung && Math.abs(py - targetPyung) > 4) return; // 평형 ±4평 이내
+// ── 스키마 B1: 건축물정보(건축HUB 성격의 표제부/층별개요) ──
+const SCHEMA_B1 = {
+  type: 'OBJECT',
+  properties: {
+    buildingDongName: { type: 'STRING' },
+    buildingAddr: { type: 'STRING' },
+    households: { type: 'INTEGER' },
+    buildingLandArea: { type: 'STRING' },
+    coverageRatio: { type: 'NUMBER' },
+    buildingFootprint: { type: 'STRING' },
+    floorAreaRatio: { type: 'NUMBER' },
+    totalFloorArea: { type: 'STRING' },
+    mainUse: { type: 'STRING' },
+    permitDate: { type: 'STRING' },
+    startDate: { type: 'STRING' },
+    approvalDate: { type: 'STRING' },
+    parking: { type: 'STRING' },
+    floorsAbove: { type: 'INTEGER' },
+    floorsBelow: { type: 'INTEGER' },
+    elevator: { type: 'STRING' },
+    floorDetails: {
+      type: 'ARRAY',
+      items: {
+        type: 'OBJECT',
+        properties: {
+          floor: { type: 'STRING' },
+          area: { type: 'STRING' },
+          structure: { type: 'STRING' },
+          use: { type: 'STRING' },
+        },
+      },
+    },
+    // ── 용도지역 / 농지취득자격증명 판단용 ──
+    landCategory: { type: 'STRING' }, // 지목 (전/답/과수원/대/임야 등)
+    zoningType: { type: 'STRING' }, // 용도지역 (제2종일반주거지역, 계획관리지역, 농림지역 등)
+    farmlandCertRequired: { type: 'BOOLEAN' }, // 농지취득자격증명원 필요 여부
+  },
+};
 
-            var floorNum = parseInt(t.floor);
-            if (!Number.isFinite(floorNum) || floorNum <= 0) return; // 지층/반지층·층수 미상 제외
-            if (maxFloor !== null && floorNum === maxFloor) return; // 탑층 제외
-            if (targetFloor && Math.abs(targetFloor - floorNum) > 1) return; // 목표층 ±1층 이내만
+// ── 스키마 B2: 등기 이력 / 권리분석(경매 교육자료 기반) - registryStory 서술형이 있어 A1만큼 무거움 ──
+const SCHEMA_B2 = {
+  type: 'OBJECT',
+  properties: {
+    registryTotalClaim: { type: 'NUMBER' },
+    registryItems: {
+      type: 'ARRAY',
+      items: {
+        type: 'OBJECT',
+        properties: {
+          date: { type: 'STRING' },
+          type: { type: 'STRING' },
+          holder: { type: 'STRING' },
+          amount: { type: 'STRING' },
+          note: { type: 'STRING' },
+          extinguished: { type: 'BOOLEAN' },
+          // ── 권리분석용 추가 필드 ──
+          isBaseRight: { type: 'BOOLEAN' }, // 이 항목이 말소기준권리 그 자체인지
+          willBeAssumed: { type: 'BOOLEAN' }, // 인수(true)/소멸(false), 본문에 명시된 경우만 채움
+        },
+      },
+    },
+    // ── 말소기준권리 (경매 권리분석의 출발점) ──
+    baseRightType: { type: 'STRING' }, // 예: "근저당권", "가압류", "담보가등기", "임의경매개시결정"
+    baseRightDate: { type: 'STRING' }, // YYYY-MM-DD
+    baseRightHolder: { type: 'STRING' },
+    // ── 특수권리(순위와 무관하게 매수인에게 인수될 수 있는 위험 권리) ──
+    specialRights: {
+      type: 'OBJECT',
+      properties: {
+        hasLien: { type: 'BOOLEAN' }, // 유치권 신고 여부
+        lienNote: { type: 'STRING' },
+        hasLegalSuperficies: { type: 'BOOLEAN' }, // 법정지상권 성립 여지
+        legalSuperficiesNote: { type: 'STRING' },
+        hasGraveRights: { type: 'BOOLEAN' }, // 분묘기지권
+        graveRightsNote: { type: 'STRING' },
+        isIllegalBuilding: { type: 'BOOLEAN' }, // 위반건축물 여부
+        illegalBuildingNote: { type: 'STRING' },
+      },
+    },
+    registryStory: { type: 'STRING' },
+    riskSummary: { type: 'STRING' },
+  },
+};
 
-            var by = parseInt(t.build_year);
-            if (targetYear) {
-                if (!Number.isFinite(by)) return; // 연식 미상 제외
-                if (Math.abs(targetYear - by) > 3) return; // 연식 ±3년(총 6년 갭) 이내만
-            }
+// 텍스트 붙여넣기와 캡처 이미지 첨부 양쪽에 공통으로 적용되는 안내문.
+// 이미지가 여러 장이면 스크롤을 나눠서 캡처한 같은 페이지라는 점, 그리고 하단 "다른 물건" 목록을
+// 무시해야 한다는 점은 텍스트든 이미지든 동일하게 중요해서 하나로 통일함.
+const HEADER = `다음은 경매정보 사이트(탱크옥션 등)에서 가져온 물건 "상세페이지" 정보입니다.
+아래에 텍스트가 붙어 있거나, 상세페이지를 캡처한 스크린샷 이미지가 첨부되어 있거나, 혹은 둘 다일 수 있습니다.
+이미지가 여러 장이면 위에서 아래로 스크롤하며 나눠 캡처한 것으로, 이어붙이면 하나의 페이지입니다.
+이 페이지에는 본문(이 물건 자체의 정보) 외에도 하단에 "인근물건자료", "인근진행정보", "인근매각사례",
+"동일지번매각", "인근반경검색", "인근공매진행", "경매최근열람" 같은 섹션이 있는데, 여기 나열된 사건번호나
+주소는 전부 이 물건과 무관한 "다른" 물건들입니다. 반드시 페이지 맨 위 제목 줄
+(예: "경매 2025타경52046" 처럼 "경매"라는 단어 바로 뒤에 나오는 사건번호 하나)에 있는 정보만
+이 물건의 정보로 사용하고, 하단 목록/사이드바에 나오는 다른 사건번호·주소는 절대 사용하지 마세요.
+공통 규칙:
+- 텍스트/이미지에 명시되지 않은 값은 null(배열은 빈 배열)로 두세요. 절대 추측하거나 지어내지 마세요.
+- 금액은 원 단위 숫자로 변환하세요 (예: "1억 3,300만" → 133000000, "9,310,000" → 9310000).
+- 날짜는 가능하면 YYYY-MM-DD 형식으로 변환하세요.
+- 이미지가 첨부된 경우, 글자가 흐리거나 잘려서 정확히 읽기 어려운 값은 절대 추측하지 말고 null로 두세요.`;
 
-            var ageDiff = (targetYear && Number.isFinite(by)) ? Math.abs(targetYear - by) : null;
-            var floorDiff = targetFloor ? Math.abs(targetFloor - floorNum) : null;
-            var score = (ageDiff !== null ? ageDiff : 10) * 2
-                + (floorDiff !== null ? floorDiff : 5) * 1.5
-                + dist / 200;
-            candidates.push({ trade: t, dist: Math.round(dist), ageDiff: ageDiff, floorDiff: floorDiff, score: score });
-        });
-    });
-    // 같은 단지는 가장 점수 좋은 거래 1건만 남겨서 다양성 확보
-    candidates.sort(function(a, b) { return a.score - b.score; });
-    var seen = {}, deduped = [];
-    candidates.forEach(function(c) {
-        var key = (c.trade.name || '') + '_' + (c.trade.dong || '');
-        if (seen[key]) return;
-        seen[key] = true;
-        deduped.push(c);
-    });
-    return deduped.slice(0, 8);
-}
- 
-function renderAiCompList() {
-    var body = document.getElementById('ai-comp-body');
-    if (!aiCompCandidates.length) {
-        body.innerHTML = '<div style="padding:20px;text-align:center;color:#aaa;font-size:12px;">주변 2km 이내 최근 1년 거래 중 조건에 맞는 유사물건을 찾지 못했습니다.<br>주소·평형·층 정보를 확인해 주세요.</div>';
-        return;
-    }
-    var html = '';
-    aiCompCandidates.forEach(function(c, i) {
-        var t = c.trade;
-        var dateStr = t.year + '.' + String(t.month).padStart(2,'0') + '.' + String(t.day).padStart(2,'0');
-        html += '<label style="display:flex;align-items:flex-start;gap:8px;padding:8px 0;border-bottom:1px solid #f0f0f0;cursor:pointer;">'
-            + '<input type="checkbox" class="ai-comp-check" data-idx="' + i + '" checked style="margin-top:3px;">'
-            + '<div style="flex:1;font-size:12px;">'
-            + '<div style="font-weight:bold;color:#333;">' + (t.name || t.dong) + ' · ' + dateStr + '</div>'
-            + '<div style="color:#555;margin-top:2px;">' + toEok(t.amount) + ' · ' + toPyung(t.area) + '평 · ' + t.floor + '층 · ' + (t.build_year || '-') + '년</div>'
-            + '<div style="color:#999;font-size:10px;margin-top:2px;">거리 ' + c.dist + 'm'
-            + (c.ageDiff !== null ? ' · 연식차 ' + c.ageDiff + '년' : '')
-            + (c.floorDiff !== null ? ' · 층차 ' + c.floorDiff + '층' : '') + '</div>'
-            + '</div></label>';
-    });
-    body.innerHTML = html;
-}
- 
-function closeAiCompModal(e) {
-    if (e && e.target !== document.getElementById('ai-comp-modal-bg')) return;
-    document.getElementById('ai-comp-modal-bg').style.display = 'none';
-}
- 
-function addSelectedAiComps() {
-    var checks = document.querySelectorAll('.ai-comp-check:checked');
-    if (!checks.length) { alert('추가할 항목을 선택해 주세요.'); return; }
-    if (!pendingAuctionComparables) pendingAuctionComparables = [];
-    var added = 0;
-    for (var i = 0; i < checks.length; i++) {
-        if (pendingAuctionComparables.length >= 10) { alert('비교물건은 최대 10개까지 등록할 수 있습니다.'); break; }
-        var idx = parseInt(checks[i].getAttribute('data-idx'));
-        var t = aiCompCandidates[idx].trade;
-        var dateStr = t.year + '-' + String(t.month).padStart(2,'0') + '-' + String(t.day).padStart(2,'0');
-        var dup = pendingAuctionComparables.some(function(x) {
-            return x.name === (t.name || t.dong) && x.date === dateStr && x.amount === parseInt(t.amount);
-        });
-        if (dup) continue;
-        pendingAuctionComparables.push({
-            name: t.name || t.dong, dong: t.dong, date: dateStr,
-            amount: parseInt(t.amount), area: t.area, pyung: toPyung(t.area),
-            floor: t.floor, buildYear: t.build_year, hasElevator: null
-        });
-        added++;
-    }
-    renderCompListBox();
-    calcCompValuation();
-    // 비교물건의 준공연도가 getAuctionBuildYear()의 마지막 대체 수단이라, 목록이 바뀌면
-    // 수리비·전세가 분석도 함께 다시 계산해 줌(그동안 연식을 몰라 비어 있었을 수 있음).
-    // 이미 수리비를 직접 입력해 둔 값은 덮어쓰지 않음.
-    if (!document.getElementById('a-repair').value) { autoCalcRepairSilent(); calcMargin(); }
-    autoCalcAuctionJeonseAnalysis();
-    closeAiCompModal();
-    if (added > 0) alert(added + '개 비교물건이 추가되었습니다. (저장을 눌러야 최종 반영됩니다)');
-}
-function renderCompPickList() {
-    var body = document.getElementById('comp-pick-body');
-    var html = '';
-    auctionList.slice().reverse().forEach(function(a) {
-        var cnt = (a.comparables || []).length;
-        html += '<div class="auction-list-item" onclick="confirmAddComparable(\'' + a.id + '\')">'
-            + '<div class="auction-list-name">' + ((a.name && a.name.trim()) || a.addrLabel || a.addr || '(이름없음)') + '</div>'
-            + '<div class="auction-list-sub">비교물건 ' + cnt + '/10</div>'
-            + '</div>';
-    });
-    body.innerHTML = html || '<div style="padding:20px;text-align:center;color:#aaa;font-size:12px;">등록된 경매물건이 없습니다</div>';
-}
-async function confirmAddComparable(auctionId) {
-    if (!pendingCompMarkerData) return;
-    var a = auctionList.find(function(x) { return x.id === auctionId; });
-    if (!a) return;
-    if (!a.comparables) a.comparables = [];
-    if (a.comparables.length >= 10) { alert('비교물건은 최대 10개까지 등록할 수 있습니다.'); return; }
-    var pm = pendingCompMarkerData;
-    var dup = a.comparables.some(function(c) { return c.name === pm.name && c.date === pm.date && c.amount === pm.amount; });
-    if (dup) { alert('이미 등록된 비교물건입니다.'); closeCompPickModal(); return; }
- 
-    setStatus('승강기 정보 확인 중...');
-    var hasElevator = null;
-    try {
-        var info = await loadBuildingInfo(pm.apt, pm.lat, pm.lon);
-        if (info && info.title) {
-            hasElevator = ((info.title.rideElvtCnt || 0) + (info.title.emgenElvtCnt || 0)) > 0;
-        }
-    } catch (e) { /* 조회 실패해도 나머지 정보로 등록 진행 */ }
-    setStatus('');
- 
-    a.comparables.push({
-        name: pm.name, dong: pm.dong, date: pm.date, amount: pm.amount,
-        area: pm.area, pyung: pm.area > 0 ? toPyung(pm.area) : null,
-        floor: pm.floor, buildYear: pm.buildYear, hasElevator: hasElevator
-    });
-    var saved = await saveAuctionAPI(a);
-    var idx = auctionList.findIndex(function(x) { return x.id === saved.id; });
-    if (idx >= 0) auctionList[idx] = saved;
-    closeCompPickModal();
-    if (currentAuctionId === auctionId) {
-        pendingAuctionComparables = saved.comparables || [];
-        renderCompListBox();
-        calcCompValuation();
-        if (!document.getElementById('a-repair').value) { autoCalcRepairSilent(); calcMargin(); }
-        autoCalcAuctionJeonseAnalysis();
-    }
-    redrawMarkers(); // 비교대상 배지를 바로 반영
-    alert('비교물건으로 등록되었습니다. (' + (saved.comparables || []).length + '/10)');
-}
-function renderCompListBox() {
-    var box = document.getElementById('comp-list-box');
-    if (!box) return;
-    var list = pendingAuctionComparables || [];
-    if (!list.length) {
-        box.innerHTML = '<div style="font-size:11px;color:#999;">지도 마커의 "+비교" 배지를 눌러 비슷한 거래를 추가해 주세요. (최대 10개)</div>';
-        return;
-    }
-    var html = '';
-    list.forEach(function(c, i) {
-        var elevText = c.hasElevator === true ? '승강기O' : (c.hasElevator === false ? '승강기X' : '승강기 미확인');
-        var noteCount = getSiteNotesForBuilding(c.name, c.dong).length;
-        var noteArgs = "'" + String(c.name || '').replace(/'/g, "\\'") + "','" + String(c.dong || '').replace(/'/g, "\\'") + "','',null,null";
-        html += '<div class="comp-item"><span>' + c.name + ' · ' + (c.date || '-') + ' · ' + toEok(String(c.amount))
-            + ' · ' + (c.pyung ? c.pyung + '평' : '-') + ' · ' + c.floor + '층 · ' + (c.buildYear || '-') + '년 · ' + elevText + '</span>'
-            + '<span style="cursor:pointer;color:' + (noteCount ? '#e65100;font-weight:bold;' : '#bbb;') + 'font-size:11px;margin-left:6px;" title="이 건물 임장메모 보기/작성" onclick="openSiteNoteModal(' + noteArgs + ')">📝' + (noteCount ? noteCount : '') + '</span>'
-            + '<span class="comp-item-remove" onclick="removeComparable(' + i + ')">✕</span></div>';
-    });
-    box.innerHTML = html;
-}
-function removeComparable(idx) {
-    pendingAuctionComparables.splice(idx, 1);
-    renderCompListBox();
-    calcCompValuation();
-    if (!document.getElementById('a-repair').value) { autoCalcRepairSilent(); calcMargin(); }
-    autoCalcAuctionJeonseAnalysis();
-}
-function getCompEstValue() {
-    var list = pendingAuctionComparables || [];
-    if (!list.length) return null;
-    var pyungPrices = list.map(function(c) {
-        var py = c.pyung || (c.area > 0 ? toPyung(c.area) : null);
-        return (py && c.amount) ? c.amount / py : null;
-    }).filter(function(v) { return v && v > 0; });
-    if (!pyungPrices.length) return null;
-    function median(arr) { var s = arr.slice().sort(function(a, b) { return a - b; }); var m = Math.floor(s.length / 2); return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2; }
-    var medPpp = median(pyungPrices); // 만원/평
-    var targetPyung = parseFloat(document.getElementById('a-pyung').value) || null;
-    if (!targetPyung) return null;
-    return { medPpp: medPpp, estValue: Math.round(medPpp * targetPyung), count: list.length };
-}
-/* 목표마진(a-comp-target-margin)을 만족하는 적정입찰가를 이분탐색으로 역산.
-   순수익(bid)은 bid가 커질수록 단조 감소하므로 이분탐색으로 안전하게 수렴함.
-   (매매사업자 모드: 양도소득세는 계산하지 않음 - 사업소득으로 별도 정산) */
-function solveAuctionBid(estValue) {
-    var c = readTaxConditionInputs();
-    var repair = parseInt(document.getElementById('a-repair').value) || 0;
-    var etc    = parseInt(document.getElementById('a-etc').value)    || 0;
-    var targetMargin = parseInt(document.getElementById('a-comp-target-margin').value) || 0;
-    var agentFee = calcAgentFee(estValue, c.propType); // 매도시 지급(입찰가와 무관, 매도가 기준 고정)
-    var evictionFee = calcEvictionFee(c.pyung);
-    var lo = 0, hi = estValue, result = null;
-    for (var i = 0; i < 45; i++) {
-        var mid = (lo + hi) / 2;
-        var acqTax = calcAcquisitionTaxDetailed(mid, c.propType, c.pyung, c.houseRank, c.isAdjusted, c.isLocalCheap);
-        var registryFee = calcRegistryFee(mid);
-        var totalCost = mid + acqTax + registryFee + evictionFee + agentFee + repair + etc;
-        var netProfit = estValue - totalCost;
-        result = { bid: mid, acqTax: acqTax, registryFee: registryFee, evictionFee: evictionFee, agentFee: agentFee, netProfit: netProfit };
-        if (netProfit > targetMargin) lo = mid; else hi = mid;
-    }
-    result.bid = Math.round(lo);
-    return result;
-}
-function calcCompValuation() {
-    var box = document.getElementById('comp-valuation-result');
-    if (!box) return;
-    var mainHtml = '';
-    var est = getCompEstValue();
-    if (!est) {
-        var list = pendingAuctionComparables || [];
-        if (list.length) {
-            mainHtml = '<div style="font-size:11px;color:#e53935;">'
-                + (document.getElementById('a-pyung').value ? '비교물건의 평단가를 계산할 수 없습니다.' : '평형을 먼저 입력해야 예상매각가를 계산할 수 있습니다.')
-                + '</div>';
-        }
-    } else {
-        var r = solveAuctionBid(est.estValue);
-        var targetMargin = parseInt(document.getElementById('a-comp-target-margin').value) || 0;
-        function vItem(label, value, color) {
-            return '<div class="margin-item"><div class="margin-label">' + label + '</div>'
-                + '<div class="margin-value" style="color:' + color + ';">' + value + '</div></div>';
-        }
-        mainHtml = '<div class="margin-result">'
-            + '<div class="margin-result-title">💡 비교물건 ' + est.count + '개 기반 시세분석 (목표마진 ' + toEok(String(targetMargin)) + ' 역산)</div>'
-            + '<div class="margin-grid">'
-            + vItem('비교 평단가(중간값)', Math.round(est.medPpp / 100) / 10 + '천만/평', '#555')
-            + vItem('예상매각가', toEok(String(est.estValue)), '#2e7d32')
-            + (auctionJeonseEstimate && auctionJeonseEstimate.estSaleValue
-                ? vItem('예상매도가(전세가율 기반)', toEok(String(auctionJeonseEstimate.estSaleValue)), '#00897b')
-                : '')
-            + vItem('추정 취득세', toEok(String(r.acqTax)), '#888')
-            + vItem('추정 등기비용', toEok(String(r.registryFee)), '#888')
-            + vItem('추정 명도비용', toEok(String(r.evictionFee)), '#888')
-            + vItem('추정 중개수수료(매도시)', toEok(String(r.agentFee)), '#888')
-            + vItem('적정 입찰가', r.bid > 0 ? toEok(String(r.bid)) : '마진 확보 불가', '#6a1b9a')
-            + '</div>'
-            + '<div style="font-size:10px;color:#aaa;margin-top:6px;">⚠️ 수리비·기타비용은 입력해 둔 값 그대로 반영되며, 취득세 계산은 참고용 추정치입니다(사업소득세는 포함 안 함). 실제 입찰 전 위택스 등에서 취득세를 한 번 더 확인하는 것을 권장합니다.</div>'
-            + '<div style="margin-top:6px;text-align:right;"><button type="button" class="modal-btn btn-purple" style="font-size:11px;" onclick="applyCompBid()">이 값으로 입찰가·비용 채우기</button></div>'
-            + '</div>';
-    }
-    box.innerHTML = mainHtml + buildElevatorComparisonHtml();
-    suggestTargetFromComps();
-}
-/* 등록된 비교물건(평형·연식·층·승강기유무 등을 이미 고려해 추천/선별된 목록)의 평단가 중간값을
-   이 물건 평형에 곱해 "비교물건 대비 추천 매도가"를 보여줌 - 목표 매도가를 직접 정하기 전에
-   참고할 수 있도록. getCompEstValue()/calcCompValuation()과 같은 추정치를 재사용함. */
-function suggestTargetFromComps() {
-    var box = document.getElementById('target-suggest-box');
-    if (!box) return;
-    var est = getCompEstValue();
-    if (!est) { box.innerHTML = ''; return; }
-    box.innerHTML = '<div style="font-size:11px;background:#e8f5e9;border-radius:6px;padding:6px 8px;'
-        + 'display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:6px;">'
-        + '<span style="color:#2e7d32;">📊 비교물건 ' + est.count + '개 기반 추천 매도가: <b>' + toEok(String(est.estValue)) + '</b></span>'
-        + '<button type="button" class="modal-btn btn-purple" style="font-size:10px;padding:3px 8px;" onclick="applyTargetSuggestion(' + est.estValue + ')">목표 매도가에 적용</button>'
-        + '</div>';
-}
-function applyTargetSuggestion(value) {
-    if (!value) return;
-    document.getElementById('a-target').value = value;
-    autoCalcAgentSilent(); calcMargin(); suggestBidFromTarget();
-}
-/* 승강기 유무별 매입가(평단가) 비교 - 같은 법정동(dong) + 비슷한 평형(±4평) + 비슷한 연식(±5년)
-   연립다세대 buildingInfo(건축HUB 승강기 정보)가 이미 로드돼 있는 거래만 집계 대상 */
-function buildElevatorComparisonHtml() {
-    var addr = document.getElementById('a-addr').value.trim();
-    var coordInfo = auctionCoordCache[addr];
-    var dong = coordInfo ? coordInfo.dong : '';
-    if (!dong && currentAuctionId) {
-        var savedAuction = auctionList.find(function(x) { return x.id === currentAuctionId; });
-        if (savedAuction) dong = savedAuction.dong || '';
-    }
-    if (!dong) return '';
-    var targetPyung = parseFloat(document.getElementById('a-pyung').value) || null;
-    var targetYear = getAuctionBuildYear();
-    var withElev = [], withoutElev = [];
-    allAptList.forEach(function(apt) {
-        if (apt.buildingType !== 'villa') return;
-        var info = apt.buildingInfo;
-        if (!info || !info.title) return; // 승강기 정보를 모르는 물건은 집계에서 제외
-        var hasElev = ((info.title.rideElvtCnt || 0) + (info.title.emgenElvtCnt || 0)) > 0;
-        (apt.trades || []).forEach(function(t) {
-            if ((t.dong || '') !== dong) return;
-            if (t.area <= 0 || parseInt(t.amount) <= 0) return;
-            if (tradeDate(t) < oneYearAgo) return;
-            var py = toPyung(t.area);
-            if (targetPyung && Math.abs(py - targetPyung) > 4) return;
-            var by = parseInt(t.build_year) || null;
-            if (targetYear && by && Math.abs(targetYear - by) > 5) return;
-            (hasElev ? withElev : withoutElev).push(parseInt(t.amount) / py);
-        });
-    });
-    if (!withElev.length && !withoutElev.length) return '';
-    function median(arr) { var s = arr.slice().sort(function(a, b) { return a - b; }); var m = Math.floor(s.length / 2); return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2; }
-    var medElev = withElev.length ? median(withElev) : null;
-    var medNo = withoutElev.length ? median(withoutElev) : null;
-    var diffHtml = '';
-    if (medElev !== null && medNo !== null) {
-        var diff = medElev - medNo;
-        var pct = medNo > 0 ? Math.round(diff / medNo * 1000) / 10 : 0;
-        diffHtml = '<div style="font-size:11px;color:' + (diff >= 0 ? '#2e7d32' : '#e53935') + ';margin-top:4px;">'
-            + '승강기 있는 쪽이 평단가 ' + (diff >= 0 ? '+' : '') + Math.round(diff).toLocaleString() + '만/평 ('
-            + (pct >= 0 ? '+' : '') + pct + '%) ' + (diff >= 0 ? '높음' : '낮음') + '</div>';
-    }
-    function box(label, med, count, color) {
-        return '<div class="margin-item"><div class="margin-label">' + label + ' (' + count + '건)</div>'
-            + '<div class="margin-value" style="color:' + color + ';">' + (med !== null ? Math.round(med).toLocaleString() + '만/평' : '데이터없음') + '</div></div>';
-    }
-    return '<div class="margin-result" style="margin-top:8px;">'
-        + '<div class="margin-result-title">🛗 승강기 유무별 매입가 비교 (' + dong + ' · 평형±4평'
-        + (targetYear ? '·연식±5년' : '') + ' 이내, 최근1년)</div>'
-        + '<div class="margin-grid">'
-        + box('승강기 있음', medElev, withElev.length, '#2e7d32')
-        + box('승강기 없음', medNo, withoutElev.length, '#888')
-        + '</div>'
-        + diffHtml
-        + '<div style="font-size:10px;color:#aaa;margin-top:4px;">⚠️ 연립다세대 건축물대장 정보가 이미 불러와진 거래만 집계됩니다(지도에서 해당 지역을 한 번 둘러봐야 데이터가 채워짐). 표본이 적으면 참고만 하세요.</div>'
-        + '</div>';
-}
-function applyCompBid() {
-    var est = getCompEstValue();
-    if (!est) return;
-    var r = solveAuctionBid(est.estValue);
-    document.getElementById('a-my-bid').value = r.bid > 0 ? r.bid : 0;
-    document.getElementById('a-tax').value = r.acqTax;
-    document.getElementById('a-registry-fee').value = r.registryFee;
-    document.getElementById('a-eviction-fee').value = r.evictionFee;
-    document.getElementById('a-agent').value = r.agentFee;
-    document.getElementById('a-target').value = est.estValue;
-    calcMargin();
-}
-/* ════════════════════════════════════
-   경매정보지 AI 자동 추출 - 텍스트 붙여넣기 → /api/parse-auction 호출
-════════════════════════════════════ */
-function fileToBase64(file) {
-    return new Promise(function(resolve, reject) {
-        var reader = new FileReader();
-        reader.onload = function() { resolve(reader.result.split(',')[1]); };
-        reader.onerror = reject;
-        reader.readAsDataURL(file);
-    });
-}
- 
-/* 등기부등본·매각물건명세서·전입세대확인서 최대 3종을 함께 올려서 서로 대조 분석함.
-   셋 다 필수는 아니고(등기부등본만 올려도 동작), 올린 문서가 많을수록 AI가 교차검증할
-   근거가 많아져서 특히 임차인 대항력 판단(전입세대확인서 vs 등기부 vs 매각물건명세서상
-   임차인현황)의 정확도가 올라감. */
-async function analyzeAuctionDocs() {
-    var fileMap = {
-        registry: document.getElementById('a-registry-file').files[0] || null,
-        saleStatement: document.getElementById('a-salestatement-file').files[0] || null,
-        residentCert: document.getElementById('a-residentcert-file').files[0] || null,
-    };
-    var selected = Object.keys(fileMap).map(function(k) { return fileMap[k]; }).filter(Boolean);
-    if (!selected.length) { alert('최소 1개 이상의 PDF 파일을 선택해 주세요 (등기부등본을 우선 권장합니다).'); return; }
-    var totalSize = 0;
-    for (var k in fileMap) {
-        var f = fileMap[k];
-        if (!f) continue;
-        if (f.type !== 'application/pdf') { alert('PDF 파일만 업로드할 수 있습니다.'); return; }
-        if (f.size > 10 * 1024 * 1024) { alert('파일이 너무 큽니다. 각 파일 10MB 이하로 업로드해 주세요.'); return; }
-        totalSize += f.size;
-    }
-    // 서버(Vercel 서버리스 함수)는 요청 전체 용량에도 제한이 있어서, 여러 서류를 한 번에
-    // 올릴 때는 합쳐서 15MB 이내로 제한함 - 넘으면 서버에서 실패하기 전에 미리 안내
-    if (selected.length > 1 && totalSize > 15 * 1024 * 1024) {
-        alert('여러 서류를 한 번에 올릴 때는 합쳐서 15MB 이내로 부탁드립니다.\n(스캔 해상도를 낮추면 파일 용량이 줄어듭니다. 필요하면 서류를 나눠서 순서대로 업로드해도 됩니다.)');
-        return;
-    }
-    var btn = document.getElementById('a-registry-btn');
-    btn.disabled = true; btn.innerText = '업로드 및 교차분석 중... (최대 1분 소요)';
-    try {
-        var auctionId = document.getElementById('auction-id').value || Date.now().toString();
-        if (!document.getElementById('auction-id').value) document.getElementById('auction-id').value = auctionId;
-        var docs = {};
-        for (var k2 in fileMap) {
-            if (!fileMap[k2]) continue;
-            docs[k2] = { fileBase64: await fileToBase64(fileMap[k2]), fileName: fileMap[k2].name };
-        }
-        // 사용승인일은 이미 AI 자동추출(pendingAuctionDetail.approvalDate)이나 건축HUB 건축물대장
-        // 조회(pendingAuctionBuildingInfo)로 신뢰도 높게 확보돼 있으면 그 값을 그대로 넘겨서
-        // AI가 PDF에서 다시 추측하다 틀리지 않도록 함(스토리에 그대로 사용하게 함)
-        var knownApprovalDate = (pendingAuctionDetail && pendingAuctionDetail.approvalDate)
-            || (pendingAuctionBuildingInfo && pendingAuctionBuildingInfo.title && pendingAuctionBuildingInfo.title.useAprDay)
-            || null;
-        var res = await fetch('/api/parse-registry', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ docs: docs, auctionId: auctionId, knownApprovalDate: knownApprovalDate })
-        });
-        var data = await res.json();
-        if (!res.ok) { alert('분석 실패: ' + (data.error || '알 수 없는 오류')); return; }
-        pendingRegistryDoc = data.docs || null;
-        pendingRegistryAnalysis = {
-            summary: data.summary, story: data.story, risks: data.risks,
-            malsoGijunRight: data.malsoGijunRight, approvalDate: data.approvalDate,
-            auctionReason: data.auctionReason,
-            survivingRights: data.survivingRights, extinguishedRights: data.extinguishedRights,
-        };
-        renderRegistryAnalysis();
-        alert('분석이 완료됐습니다. 저장을 눌러야 최종 반영됩니다.');
-    } catch (e) {
-        alert('업로드/분석 중 오류: ' + e.message);
-    } finally {
-        btn.disabled = false; btn.innerText = '업로드 및 교차분석';
-    }
+function buildPrompt(rules, text) {
+  let p = HEADER + '\n\n추가 규칙:' + rules;
+  if (text && String(text).trim()) {
+    p += `\n\n--- 붙여넣은 텍스트 시작 ---\n${text}\n--- 붙여넣은 텍스트 끝 ---`;
+  }
+  return p;
 }
 
-function renderRegistryAnalysis() {
-    var box = document.getElementById('registry-result-box');
-    if (!box) return;
-    if (!pendingRegistryAnalysis) { box.innerHTML = ''; return; }
-    var a = pendingRegistryAnalysis;
-    var riskColor = { '높음': '#e53935', '중간': '#ff7043', '낮음': '#9e9e9e' };
-    var html = '<div style="background:#faf5ff;border:1.5px solid #ce93d8;border-radius:10px;padding:12px;margin-top:10px;">';
-    // 원본 문서 링크 - 구버전 저장분(단일 등기부등본 {url,fileName})과도 호환되게 처리
-    var docs = pendingRegistryDoc || {};
-    var docLabels = { registry: '📄 등기부등본', saleStatement: '📄 매각물건명세서', residentCert: '📄 전입세대확인서' };
-    var docLinks = '';
-    if (docs.url) {
-        docLinks += '<a href="' + docs.url + '" target="_blank" style="color:#6a1b9a;margin-right:10px;">📄 ' + docs.fileName + ' 원본 보기</a>';
-    } else {
-        Object.keys(docLabels).forEach(function(k) {
-            if (docs[k] && docs[k].url) {
-                docLinks += '<a href="' + docs[k].url + '" target="_blank" style="color:#6a1b9a;margin-right:10px;">' + docLabels[k] + ' 원본 보기</a>';
-            }
-        });
-    }
-    if (docLinks) html += '<div style="font-size:11px;margin-bottom:8px;">' + docLinks + '</div>';
-    if (a.summary) html += '<div style="font-size:12px;font-weight:bold;color:#6a1b9a;margin-bottom:6px;">' + a.summary + '</div>';
-    if (a.approvalDate) html += '<div style="font-size:11px;color:#555;margin-bottom:4px;"><b>건물 사용승인일:</b> ' + a.approvalDate + '</div>';
-    if (a.auctionReason) html += '<div style="font-size:11px;color:#555;margin-bottom:4px;"><b>경매개시 경위:</b> ' + a.auctionReason + '</div>';
-    if (a.malsoGijunRight) {
-        html += '<div style="font-size:11px;color:#555;margin-bottom:8px;"><b>추정 말소기준등기:</b> ' + a.malsoGijunRight + ' '
-            + '<span onclick="showCalcInfo(\'malsoRule\')" title="어떤 기준으로 판단했는지 보기" '
-            + 'style="cursor:pointer;color:#1976d2;">ⓘ</span></div>';
-    }
-    if (a.story) {
-        html += '<div style="font-size:11px;font-weight:bold;color:#6a1b9a;margin-bottom:3px;display:flex;align-items:center;gap:4px;">'
-            + '📜 등기이력요약'
-            + '<span onclick="showCalcInfo(\'malsoRule\')" title="말소기준등기 판단기준 보기" '
-            + 'style="cursor:pointer;color:#1976d2;font-weight:normal;font-size:12px;">ⓘ</span></div>';
-        html += '<div style="font-size:11px;color:#555;line-height:1.7;margin-bottom:10px;white-space:pre-line;">' + a.story + '</div>';
-    }
-    function rightsListHtml(title, color, list) {
-        if (!list || !list.length) return '';
-        var h = '<div style="font-size:11px;font-weight:bold;color:' + color + ';margin:8px 0 4px;">' + title + '</div>';
-        list.forEach(function(r) {
-            h += '<div style="background:white;border-radius:6px;padding:6px 8px;margin-bottom:4px;border-left:3px solid ' + color + ';font-size:11px;">'
-                + '<b>' + (r.right || '') + '</b>'
-                + (r.date ? ' · ' + r.date : '') + (r.holder ? ' · ' + r.holder : '')
-                + (r.note ? '<div style="color:#777;margin-top:2px;">' + r.note + '</div>' : '')
-                + '</div>';
-        });
-        return h;
-    }
-    html += rightsListHtml('🔴 낙찰 후 인수되는 등기 (매수인 부담)', '#e53935', a.survivingRights);
-    html += rightsListHtml('⚪ 말소기준등기로 소멸되는 등기', '#9e9e9e', a.extinguishedRights);
-    (a.risks || []).forEach(function(r) {
-        var c = riskColor[r.level] || '#9e9e9e';
-        html += '<div style="background:white;border-radius:7px;padding:8px 10px;margin-bottom:6px;border-left:3px solid ' + c + ';">'
-            + '<span style="font-size:10px;font-weight:bold;color:' + c + ';">' + r.level + '</span> '
-            + '<span style="font-size:11px;font-weight:bold;color:#333;">' + r.title + '</span>'
-            + '<div style="font-size:11px;color:#666;margin-top:2px;">' + r.desc + '</div></div>';
+// 탱크옥션 등 경매정보지 상세페이지 하단에는 추출에 전혀 필요 없는 순수 UI/내비게이션성
+// 문구(학교 목록 "교육환경", 등기소·세무서·주민센터 연락처 "행정기관", 지도/거리뷰 링크
+// 모음, 면책 문구, 우측 메뉴 등)가 붙어 있는데, 물건에 따라 이 부분만 수천 자에 달해서
+// Gemini가 응답을 만드는 데 걸리는 시간이 길어지고 45초 제한에 자꾸 걸리는 원인이 됨.
+// 이런 문구가 시작되는 지점부터는 통째로 잘라내고, 그 앞의 실제로 필요한 내용(사건정보·
+// 가격·임차인·등기·매각사례·건축물정보 등)만 Gemini에 보냄.
+const TRAILING_NOISE_MARKERS = ['행정기관', '교육환경', '본 정보는 대법원 경매정보', '☰'];
+function trimAuctionText(text) {
+  if (!text) return text;
+  let cutAt = -1;
+  for (const marker of TRAILING_NOISE_MARKERS) {
+    const idx = text.indexOf(marker);
+    if (idx !== -1 && (cutAt === -1 || idx < cutAt)) cutAt = idx;
+  }
+  if (cutAt === -1) return text;
+  return text.slice(0, cutAt).trim();
+}
+
+const PROMPT_A_RULES = `
+- caseNo는 페이지 맨 위 제목에 있는 사건번호 단 하나만 쓰세요 (예: "2025타경52046"). 하단 관련물건 목록의 번호는 무시하세요.
+- court(관할법원)와 courtTel(법원 전화번호)은 사건정보 영역에 "법원" 또는 "관할법원"이라는 이름으로 표시된 값을
+  그대로 담으세요 (예: "수원지방법원 안산지원"처럼 본원+지원이 함께 표기되어 있으면 그대로 두세요).
+  전화번호는 담당계 전화번호가 별도로 있으면 그것을, 없으면 법원 대표번호를 담으세요. 페이지에 보이지 않으면 null로 두세요.
+- addrJibun은 이 물건의 지번주소만 담으세요. 반드시 "시/도 시/군/구 동 번지"까지만 담고,
+  층수·호수·건물동번호는 절대 addrJibun에 포함하지 마세요.
+  예: 소재지가 "경기도 안산시 상록구 본오동 718-12 2층202호"라면
+  addrJibun은 "경기도 안산시 상록구 본오동 718-12" 까지만 (뒤의 "2층202호"는 제외).
+  소재지가 "서울특별시 강남구 개포동 12 개포자이 101동 3층302호"라면
+  addrJibun은 "서울특별시 강남구 개포동 12" 까지만 (뒤의 "개포자이 101동 3층302호"는 제외).
+- dong(동)과 bunji(번지)는 addrJibun에서 "동"과 "번지" 부분만 따로 뽑으세요.
+  예: "경기도 안산시 상록구 본오동 718-12" → dong: "본오동", bunji: "718-12"
+  (시/도/구 이름이나 층수·호수·건물동번호는 dong·bunji에 포함하지 마세요. 번지에 "-"로 이어진 본번-부번은 그대로 유지하세요.)
+- aptDong(아파트 동/건물번호)은 소재지에서 "101동", "가동"처럼 "동"으로 끝나는 건물 구분 표시만 뽑으세요.
+  연립다세대나 단독주택처럼 동 구분이 없으면 반드시 null로 두세요.
+  ⚠️ 절대로 "OOO호"(호수) 형태의 값을 aptDong에 넣지 마세요 - "동"이 아니라 "호"로 끝나는 값은 무조건
+  unitNo(호수) 필드에만 들어가야 하고, aptDong은 그 경우 null이어야 합니다.
+  예: "본오동 830-16 3층302호"에는 건물 동번호 표시가 없으므로 aptDong은 null, unitNo만 "302호".
+- roadName/roadMainNum/roadSubNum은 도로명주소(예: "경기 안산시 상록구 본원로 115")에서
+  도로명("본원로")과 건물번호의 본번(115)·부번을 분리하세요. 부번이 없으면 roadSubNum은 null.
+  도로명주소 자체가 없으면 세 필드 모두 null로 두고 절대 지어내지 마세요.
+- 소재지 문자열(예: "경기도 안산시 상록구 본오동 830-16 3층302호")에서 "3층302호" 부분을 찾아
+  unitFloor(숫자만, 예: 3)와 unitNo(호수 문자열 그대로, 예: "302호")로 분리하세요. 이런 표시가 없으면 둘 다 null.
+- disposalMethod(처분방식, 예: "토지·건물 일괄매각")와 specialConditions(특수조건, 예: "임차권등기,대항력 있는 임차인,공시가 1억이하")는
+  본문에 명시된 문구를 그대로 담으세요.
+- caseCautions(사건의 주의사항)는 사이트가 "주의사항"이라는 제목이나 별도 강조 박스/배지로 표시한 경고성
+  문구(예: "본 물건은 재매각 물건입니다", "농지취득자격증명원 미제출시 보증금 미반환", "대항력 있는 임차인 있음",
+  "최선순위 설정일자보다 대항요건을 먼저 갖춘 임차인 있음" 등)를 원문 그대로 담으세요.
+  specialConditions와 내용이 겹칠 수 있지만, 페이지에 "주의사항"이라는 이름의 별도 섹션이 있으면 그 내용을 우선하세요.
+  그런 별도 섹션이 없으면 null로 두세요.
+- siteRightsArea(대지권 면적)는 "대지권" 항목의 면적(㎡·평 둘 다 있으면 그대로, 예: "34.19㎡(10.34평)")을 담되,
+  전체 토지면적이 아니라 이 물건에 배정된 지분(대지권) 면적만 담으세요.
+- rounds(입찰 회차 이력)는 표에 나온 순서대로 모두 담으세요.
+- officialTrades(국토부 실거래가)는 표에 나온 개별 거래를 모두 담으세요.
+- salesStats는 "최근1개월/3개월/6개월/12개월" 각 구간의 평균감정가/평균매각가/평균매각가율/평균입찰인수/예상매각가를 한 문장으로 요약해서 m1/m3/m6/m12에 넣으세요.
+- officialPriceByYear는 연도별 공시가격을 "2021년 8,790만 / 2022년 8,930만 / ..." 같은 한 줄 텍스트로 요약하세요.
+- officialPriceCurrent는 그 중 가장 최근 연도/월 기준 공시가격 한 건만 "83,700,000원 (2025.01 기준)" 형식으로 뽑으세요.
+- tenantOccupants(임차인 현황)는 표/목록에 나온 임차인을 한 명씩 객체로 나눠서 모두 담으세요.
+  대항력 "있음"이면 hasStanding: true, "없음"이면 false, 언급이 없으면 null.
+  전입/확정/배당요구 날짜는 각각 moveInDate/fixedDate/distributionDate에, "임차권등기자", "경매신청인" 같은
+  표시는 note에 담으세요.`;
+
+const PROMPT_B_RULES = `
+- registryItems(건물등기)는 접수일 순서대로 모두 담으세요.
+- registryStory: registryItems에 담긴 등기 이력(소유권이전, 근저당, 임차권, 경매개시 등)을 바탕으로,
+  이 부동산이 언제 지어지고 소유자가 어떻게 바뀌었는지, 그때마다 어떤 금액이 오갔는지(매매가/채권금액/대출),
+  그리고 어떤 권리가 왜 소멸되었는지를 시간 순서대로 3~6문장 정도의 자연스러운 한국어 이야기 문단으로 정리하세요.
+  등기부에 없는 내용은 추측하지 말고, 알 수 있는 사실만 서술하세요. 등기 정보가 전혀 없으면 null.
+- buildingDongName(아파트/건물 단지명)은 순수 단지명만 담으세요 (예: "래미안", "개포자이").
+  "101동", "가동" 같은 건물 동번호는 절대 buildingDongName에 포함하지 마세요. 단지명 자체가 확인되지 않으면 "이름없음"으로 두세요.
+
+── 권리분석 (경매 권리분석 교육자료 기준, 반드시 아래 규칙대로 판단) ──
+- "말소기준권리"란 (근)저당권, (가)압류, 담보가등기, 강제경매개시결정등기, 임의경매개시결정등기,
+  전세권(배당요구 또는 임의경매신청을 한 경우) 중 등기부에 접수일이 가장 빠른 권리 하나를 말합니다.
+  본문에 "말소기준권리" 또는 "말소기준등기"라는 문구와 함께 특정 권리가 명시되어 있으면 그 값을 그대로
+  baseRightType/baseRightDate/baseRightHolder에 채우세요. 그런 명시가 없다면 registryItems을 접수일 순으로
+  살펴 위 6가지 유형 중 가장 빠른 것을 찾아 채우세요. 판단 근거가 전혀 없으면 세 필드 모두 null로 두세요.
+- registryItems 각 항목의 isBaseRight는 그 항목이 위에서 정한 말소기준권리와 동일한 등기이면 true,
+  아니면 false로 표시하세요.
+- registryItems 각 항목의 willBeAssumed(매수인 인수 여부)는, 본문(등기부현황 표, 매각물건명세서, 주의사항 등)에
+  "인수" 또는 "소멸"이라고 명시적으로 표기되어 있는 경우에만 그대로 true(인수)/false(소멸)로 옮기세요.
+  본문에 명시적 표기가 없다면 절대로 스스로 인수/소멸을 판단하지 말고 null로 두세요
+  (법률적 최종 판단은 사람이 직접 등기부를 보고 내려야 합니다).
+- specialRights: 본문의 "주의사항", "특수조건", "매각물건명세서 비고" 등에 아래 단어가 언급되어 있는지 확인하세요.
+  · 유치권 → hasLien, 관련 문구를 lienNote에 원문 그대로.
+  · 법정지상권(또는 "관습법상 법정지상권", "토지 건물 소유자 상이") → hasLegalSuperficies, legalSuperficiesNote.
+  · 분묘(분묘기지권) → hasGraveRights, graveRightsNote.
+  · 위반건축물(또는 "무허가 증축", "불법 확장") → isIllegalBuilding, illegalBuildingNote.
+  각 항목은 본문에 해당 단어가 나오면 true, "해당사항 없음"처럼 명시적으로 부인하면 false, 아예 언급이 없으면 null로 두세요.
+  절대로 본문에 없는 내용을 추측해서 true/false로 채우지 마세요.
+- landCategory(지목)는 표제부·토지대장에 나온 지목(전, 답, 과수원, 대, 임야, 잡종지 등)을 그대로 담으세요.
+- zoningType(용도지역)은 본문의 "토지이용계획", "국토이용정보" 등에 표기된 용도지역명
+  (예: "제2종일반주거지역", "계획관리지역", "농림지역", "자연녹지지역")을 그대로 담으세요. 언급이 없으면 null.
+- farmlandCertRequired(농지취득자격증명원 필요 여부)는 landCategory가 농지(전/답/과수원 등)에 해당하면서
+  zoningType이 녹지지역·관리지역·농림지역·자연환경보전지역 중 하나이면 true로, landCategory가 농지가 아니거나
+  zoningType이 도시지역의 주거·상업·공업지역이면 false로 판단하세요. 지목이나 용도지역 정보가 부족해 판단할 수
+  없으면 반드시 null로 두세요 (섣불리 추측 금지).`;
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+// 429(RESOURCE_EXHAUSTED, 무료 티어 분당 요청수 초과) 응답에는 대개
+// error.details[]에 google.rpc.RetryInfo 타입 항목이 있고, retryDelay가
+// "12.589028474s" 같은 문자열로 들어있다. 있으면 그 시간만큼, 없으면 기본값을 기다린다.
+function parseRetryDelayMs(errData) {
+  const details = errData?.error?.details;
+  if (!Array.isArray(details)) return null;
+  const retryInfo = details.find((d) => typeof d['@type'] === 'string' && d['@type'].includes('RetryInfo'));
+  const raw = retryInfo?.retryDelay;
+  if (!raw) return null;
+  const sec = parseFloat(String(raw).replace('s', ''));
+  if (!isFinite(sec) || sec <= 0) return null;
+  return Math.ceil(sec * 1000) + 500; // 약간의 여유를 더함
+}
+
+// Gemini가 "high demand"/"overloaded"(구글 서버 혼잡, 503 UNAVAILABLE)로 거절하는 경우가
+// 있는데, 대부분 몇 초 안에 풀리는 일시적 현상이라 1초 후 최대 2회까지 자동 재시도한다.
+// 무료 티어의 "분당 요청수(RPM)" 한도(429 RESOURCE_EXHAUSTED)에 걸린 경우도 대부분
+// 짧게는 십수 초 안에 풀리는 일시적 현상이라, Gemini가 알려주는 재시도 대기시간만큼
+// 기다렸다가 한 번 더 시도한다(과도한 대기로 Vercel 60초 제한을 넘지 않도록 1회만).
+// (API 키 오류·잘못된 요청 같은 재시도해도 안 풀리는 오류는 즉시 그대로 던짐)
+// imageParts: [{ inline_data: { mime_type, data } }, ...] - 캡처 이미지가 없으면 빈 배열.
+// temperature: 기본 0(재현성 우선).
+async function callGemini(apiKey, promptText, schema, imageParts, attempt, temperature) {
+  attempt = attempt || 1;
+  imageParts = imageParts || [];
+  temperature = temperature === undefined || temperature === null ? 0 : temperature;
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${apiKey}`;
+  let geminiRes;
+  try {
+    // Vercel Hobby maxDuration이 60초라, 여유(파싱·응답조립)를 좀 남기고 55초까지 기다림
+    // (스키마를 4개로 더 쪼갠 이후에도 개별 호출이 예상보다 오래 걸리는 경우를 위한 마지막 여유분)
+    geminiRes = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        contents: [{ parts: [{ text: promptText }, ...imageParts] }],
+        generationConfig: {
+          responseMimeType: 'application/json',
+          responseSchema: schema,
+          // ⚠️ 3.x 계열은 thinkingBudget(토큰 수)이 아니라 thinkingLevel(단계형)로 사고 정도를
+          //    조절함(2.5 계열의 thinkingBudget과 파라미터 자체가 다름 - 섞어 쓰면 무시되거나
+          //    오류가 남). 'minimal'로 최대한 빠르게 응답하게 함 - 스키마가 출력 형식을 강제하고
+          //    판단 규칙도 프롬프트에 구체적으로 적혀 있어 충분함.
+          thinkingConfig: { thinkingLevel: 'minimal' },
+          temperature,
+        },
+      }),
+      signal: AbortSignal.timeout(55000),
     });
-    html += '<div style="font-size:10px;color:#aaa;margin-top:6px;">⚠️ 이 분석은 AI가 자동 생성한 참고용 요약이며 법률 자문이 아닙니다. 실제 입찰 전 반드시 법무사·변호사 등 전문가의 권리분석을 받으세요.</div>';
-    html += '</div>';
-    box.innerHTML = html;
-}
-// AI 자동추출된 경매정보 스토리텔링 요약을 모달 내부에도 표시 (매매기록 유무와 무관하게 항상 보이도록)
-function renderAiSummaryBox() {
-    var box = document.getElementById('a-ai-summary-box');
-    if (!box) return;
-    if (!pendingAuctionDetail) { box.innerHTML = ''; return; }
-    box.innerHTML = '<div style="margin-top:10px;">' + buildAuctionDetailHtml(pendingAuctionDetail) + '</div>';
-}
-// ── 개발호재 검색 (재개발/재건축/신속통합기획 등, Gemini 웹검색) ──
-// AI가 생성한 텍스트를 그대로 innerHTML에 넣지 않도록 이스케이프 후 줄바꿈만 <br>로 치환
-function escapeHtmlText(s) {
-    return String(s || '')
-        .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
-        .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
-}
-function formatDevNewsTime(ts) {
-    if (!ts) return '';
-    var d = new Date(ts);
-    return d.getFullYear() + '.' + String(d.getMonth() + 1).padStart(2, '0') + '.' + String(d.getDate()).padStart(2, '0')
-        + ' ' + String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0') + ' 조회';
-}
-function formatNewsPubDate(pubDate) {
-    if (!pubDate) return '';
-    var d = new Date(pubDate);
-    if (isNaN(d.getTime())) return '';
-    return d.getFullYear() + '.' + String(d.getMonth() + 1).padStart(2, '0') + '.' + String(d.getDate()).padStart(2, '0');
-}
-function buildDevNewsHtml(devNews) {
-    if (!devNews) return '';
-    var html = '<div class="indicator-box" style="border-color:#90caf9;background:#f3f9ff;margin-top:8px;">';
-    html += '<div class="indicator-title" style="color:#1565c0;">🏗️ 주변 개발호재 뉴스 (네이버 뉴스검색' + (devNews.fetchedAt ? ' · ' + formatDevNewsTime(devNews.fetchedAt) : '') + ')</div>';
-    var items = devNews.items || [];
-    if (!items.length) {
-        html += '<div style="font-size:11.5px;color:#777;">관련 뉴스를 찾지 못했습니다.</div>';
-    } else {
-        items.forEach(function(it) {
-            html += '<div style="background:white;border-radius:6px;padding:6px 8px;margin-bottom:5px;border-left:3px solid #90caf9;">'
-                + '<a href="' + escapeHtmlText(it.link) + '" target="_blank" rel="noopener" style="font-size:11.5px;font-weight:bold;color:#1565c0;text-decoration:none;">' + escapeHtmlText(it.title) + '</a>'
-                + '<div style="font-size:10px;color:#999;margin-top:1px;">' + [it.source, formatNewsPubDate(it.pubDate)].filter(Boolean).map(escapeHtmlText).join(' · ') + '</div>'
-                + (it.description ? '<div style="font-size:11px;color:#666;margin-top:3px;">' + escapeHtmlText(it.description) + '</div>' : '')
-                + '</div>';
-        });
+  } catch (e) {
+    if (e.name === 'TimeoutError' || e.name === 'AbortError') {
+      throw new Error('AI 분석이 시간 내에 끝나지 못했습니다. 페이지 내용이 너무 길 수 있으니(특히 하단 학교·행정기관·지도 링크 등은 빼고) 필요한 부분만 남겨서 다시 시도해 주세요. 방금 실패했다면 곧바로 재시도하지 말고 1분 정도 기다렸다가 다시 시도해 주세요(무료 API 분당 요청수 한도에 걸려 있을 수 있습니다).');
     }
-    html += '<div style="font-size:9.5px;color:#aaa;margin-top:4px;">⚠️ 키워드 기반 뉴스검색 결과이니 실제 진행 여부·범위는 해당 지자체·조합 공고 원문으로 다시 확인하세요.</div>';
-    html += '</div>';
-    return html;
-}
-function renderDevNewsBox() {
-    var box = document.getElementById('dev-news-box');
-    if (!box) return;
-    box.innerHTML = pendingDevNews ? buildDevNewsHtml(pendingDevNews) : '';
-}
-async function searchDevelopmentNews() {
-    var addr = document.getElementById('a-addr').value.trim();
-    if (!addr) { alert('먼저 주소를 입력(또는 검색)해 주세요.'); return; }
-    var btn = document.getElementById('dev-news-btn');
-    var origText = btn.innerText;
-    btn.disabled = true; btn.innerText = '검색 중... (최대 1분 소요)';
-    try {
-        var res = await fetch('/api/parse-auction', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ mode: 'devNews', address: addr })
-        });
-        var data = await res.json();
-        if (!res.ok || !data.devNews) {
-            alert('개발호재 검색 실패: ' + (data.error || '알 수 없는 오류'));
-            return;
-        }
-        pendingDevNews = data.devNews;
-        renderDevNewsBox();
-    } catch (e) {
-        alert('개발호재 검색 중 오류: ' + e.message);
-    } finally {
-        btn.disabled = false; btn.innerText = origText;
+    throw e;
+  }
+  const data = await geminiRes.json();
+  if (!geminiRes.ok) {
+    const status = data.error?.status || '';
+    const msg = data.error?.message || 'Gemini API 호출 실패';
+    const isOverloaded = geminiRes.status === 503 || status === 'UNAVAILABLE'
+      || /overloaded|high demand/i.test(msg);
+    const isQuotaExceeded = geminiRes.status === 429 || status === 'RESOURCE_EXHAUSTED';
+    if (isOverloaded && attempt < 3) {
+      await sleep(1000 * attempt);
+      return callGemini(apiKey, promptText, schema, imageParts, attempt + 1, temperature);
     }
+    if (isQuotaExceeded && attempt < 2) {
+      const waitMs = parseRetryDelayMs(data) ?? 15000;
+      await sleep(waitMs);
+      return callGemini(apiKey, promptText, schema, imageParts, attempt + 1, temperature);
+    }
+    if (isQuotaExceeded) {
+      throw new Error('AI 판독기 요청이 무료 사용량 한도(분당 요청수)에 잠시 걸렸습니다. 15~20초 후 다시 시도해 주세요.');
+    }
+    throw new Error(msg);
+  }
+  const jsonText = data.candidates?.[0]?.content?.parts?.[0]?.text;
+  if (!jsonText) {
+    throw new Error('Gemini 응답에서 결과를 찾을 수 없습니다.');
+  }
+  return JSON.parse(jsonText);
 }
-// ── 캡처 이미지에서 자동추출 (복사 방지 페이지 대응) ──
-// 원본을 그대로 올리면 Vercel 요청 크기 제한에 걸리기 쉬워서, 캔버스로 리사이즈(최대 가로 1400px) +
-// JPEG 재압축(품질 0.82) 후 base64로 변환한다. 여러 장(5페이지 분량 등)을 첨부해도 되고,
-// 순서는 위→아래로 캡처한 순서 그대로 유지하는 게 AI가 이해하기 좋다.
-function compressImageToBase64(file) {
-    return new Promise(function(resolve, reject) {
-        var reader = new FileReader();
-        reader.onload = function() {
-            var img = new Image();
-            img.onload = function() {
-                var maxW = 1400;
-                var scale = Math.min(1, maxW / img.width);
-                var canvas = document.createElement('canvas');
-                canvas.width = Math.max(1, Math.round(img.width * scale));
-                canvas.height = Math.max(1, Math.round(img.height * scale));
-                var ctx = canvas.getContext('2d');
-                ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-                var dataUrl = canvas.toDataURL('image/jpeg', 0.82);
-                resolve({ data: dataUrl.split(',')[1], mimeType: 'image/jpeg', previewUrl: dataUrl });
-            };
-            img.onerror = function() { reject(new Error('이미지를 읽을 수 없습니다.')); };
-            img.src = reader.result;
-        };
-        reader.onerror = reject;
-        reader.readAsDataURL(file);
+
+// ════════════════════════════════════
+// Redis 캐싱 (Upstash) - get-house.js와 동일한 REST 호출 패턴
+// 같은 텍스트/이미지(해시 동일)를 다시 보내면 Gemini를 다시 호출하지 않고 즉시 반환.
+// TTL 24시간: 같은 물건 텍스트가 하루 안에 바뀔 일은 거의 없고, 사용자가 내용을
+// 수정해서 다시 붙여넣으면 해시가 달라져 자연히 캐시가 무효화됨.
+// ════════════════════════════════════
+const REDIS_URL = process.env.UPSTASH_REDIS_URL;
+const REDIS_TOKEN = process.env.UPSTASH_REDIS_TOKEN;
+const CACHE_TTL_SECONDS = 24 * 60 * 60;
+
+function computeCacheKey(trimmedText, imageParts) {
+  const h = crypto.createHash('sha256');
+  h.update(trimmedText || '');
+  (imageParts || []).forEach((p) => {
+    if (p?.inline_data?.data) h.update(p.inline_data.data);
+  });
+  return `auctionparse_${h.digest('hex')}`;
+}
+
+async function getCachedParseResult(key) {
+  if (!REDIS_URL || !REDIS_TOKEN) return null;
+  try {
+    const r = await fetch(`${REDIS_URL}/get/${key}`, {
+      headers: { Authorization: `Bearer ${REDIS_TOKEN}` },
+      signal: AbortSignal.timeout(3000),
     });
-}
-async function handleAuctionImageSelect(event) {
-    var files = Array.prototype.slice.call(event.target.files || []);
-    event.target.value = ''; // 같은 파일을 다시 선택할 수 있도록 초기화
-    if (!files.length) return;
-    var countEl = document.getElementById('a-parse-images-count');
-    if (countEl) countEl.innerText = '이미지 처리 중...';
-    for (var i = 0; i < files.length; i++) {
-        try {
-            var compressed = await compressImageToBase64(files[i]);
-            pendingAuctionImages.push(compressed);
-        } catch (e) {
-            console.error('이미지 처리 실패:', e.message);
-        }
-    }
-    renderAuctionImagePreview();
-}
-function renderAuctionImagePreview() {
-    var box = document.getElementById('a-parse-images-preview');
-    var countEl = document.getElementById('a-parse-images-count');
-    if (!box || !countEl) return;
-    countEl.innerText = pendingAuctionImages.length ? (pendingAuctionImages.length + '장 첨부됨') : '';
-    box.innerHTML = pendingAuctionImages.map(function(img, idx) {
-        return '<div style="position:relative;">'
-            + '<img src="' + img.previewUrl + '" style="width:56px;height:56px;object-fit:cover;border-radius:6px;border:1px solid #ddd;">'
-            + '<span onclick="removeAuctionImage(' + idx + ')" style="position:absolute;top:-6px;right:-6px;background:#e53935;color:white;border-radius:50%;width:16px;height:16px;font-size:10px;line-height:16px;text-align:center;cursor:pointer;">✕</span>'
-            + '</div>';
-    }).join('');
-}
-function removeAuctionImage(idx) {
-    pendingAuctionImages.splice(idx, 1);
-    renderAuctionImagePreview();
-}
-function clearAuctionImages() {
-    pendingAuctionImages = [];
-    renderAuctionImagePreview();
-}
-// AI가 추출한 물건종류(propertyType, 자유 텍스트 - 예: "다세대주택", "연립주택", "단독주택",
-// "다가구주택", "아파트", "오피스텔" 등)를 물건유형 드롭다운 값(apt/villa/officetel/other)으로
-// 매핑. 지금까지는 이 매핑이 아예 없어서 물건유형이 항상 기본값("아파트")으로 남아있었고,
-// 그 때문에 villa 전용 로직(연식단계별 수리비 자동계산, 전세가 분석 등)이 조용히 안 돌거나
-// 엉뚱한 기준으로 계산되는 문제가 있었음. 확신할 수 없는 표현이면 null을 반환해서 기존 값을
-// 건드리지 않음(잘못 덮어써서 정확한 값을 지우는 것을 방지).
-function mapAiPropertyTypeToSelect(text) {
-    if (!text) return null;
-    var t = String(text);
-    if (t.indexOf('오피스텔') !== -1) return 'officetel';
-    // 드롭다운 자체가 "연립다세대·단독" 하나의 값(villa)으로 묶여 있으므로
-    // 연립/다세대/다가구/단독을 모두 villa로 매핑함.
-    if (/연립|다세대|다가구|단독/.test(t)) return 'villa';
-    if (t.indexOf('아파트') !== -1) return 'apt';
-    if (/상가|토지|근린|공장|창고|숙박/.test(t)) return 'other';
+    if (!r.ok) return null;
+    const data = await r.json();
+    if (!data || !data.result) return null;
+    return JSON.parse(data.result);
+  } catch (e) {
+    console.error('parse-auction Redis 캐시 조회 실패:', e.message);
     return null;
+  }
 }
-async function parseAuctionPaste() {
-    var text = document.getElementById('a-paste-text').value.trim();
-    var hasImages = pendingAuctionImages.length > 0;
-    if (!text && !hasImages) { alert('경매정보지 텍스트를 붙여넣거나 캡처 이미지를 첨부해 주세요.'); return; }
-    var btn = document.getElementById('a-parse-btn');
-    btn.disabled = true; btn.innerText = hasImages ? '이미지 분석 중... (최대 1분 소요)' : '분석 중...';
-    try {
-        var res = await fetch('/api/parse-auction', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                text: text,
-                images: pendingAuctionImages.map(function(img) { return { data: img.data, mimeType: img.mimeType }; })
-            })
+
+async function setCachedParseResult(key, payload) {
+  if (!REDIS_URL || !REDIS_TOKEN) return;
+  try {
+    const r = await fetch(`${REDIS_URL}/set/${key}?EX=${CACHE_TTL_SECONDS}`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${REDIS_TOKEN}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+      signal: AbortSignal.timeout(3000),
+    });
+    if (!r.ok) {
+      const errText = await r.text();
+      console.error('parse-auction Redis 캐시 저장 실패:', errText);
+    }
+  } catch (e) {
+    console.error('parse-auction Redis 캐시 저장 실패:', e.message);
+  }
+}
+
+// ════════════════════════════════════
+// 개발호재 검색 (재개발/재건축/신속통합기획 등) - mode: 'devNews'
+// ⚠️ Hobby 플랜 12개 함수 한도 때문에 새 api 파일을 만들 수 없어 이 파일에 mode 분기로 얹음.
+// ⚠️ 처음엔 Gemini의 google_search 그라운딩 도구로 구현했었는데, 무료 티어 API 키에서는
+//    그라운딩 자체가 막혀 있어("quota exceeded") 결제 활성화 없이는 동작하지 않았음.
+//    그래서 완전 무료인 네이버 뉴스검색 API(개발자센터에서 Client ID/Secret만 발급받으면
+//    카드 등록 없이 사용 가능)로 교체함. Vercel에 NAVER_CLIENT_ID / NAVER_CLIENT_SECRET
+//    환경변수를 추가해야 동작함(https://developers.naver.com/apps/#/register 에서
+//    "검색" API를 선택해 애플리케이션 등록 후 발급).
+// ════════════════════════════════════
+const DEV_NEWS_CACHE_TTL_SECONDS = 24 * 60 * 60; // 1일 - 뉴스는 감정가/최저가보다 훨씬 자주 갱신될 수 있어 AI추출 캐시보다 짧게
+const NAVER_NEWS_ENDPOINT = 'https://openapi.naver.com/v1/search/news.json';
+
+function computeDevNewsCacheKey(address) {
+  const h = crypto.createHash('sha256');
+  h.update(String(address || '').trim());
+  return `devnews_${h.digest('hex')}`;
+}
+
+// 지번/도로명 주소 문자열에서 "동(읍/면/가/리)"과 "구(시/군)" 단위 지명만 뽑아냄.
+// 번지(숫자로 시작하는 토큰)가 나오기 전까지의 토큰만 지명 후보로 보고, 뒤에서부터
+// 훑으며 "동/읍/면/가/리"로 끝나는 첫 토큰을 dongName, "시/군/구"로 끝나는 첫 토큰을
+// gunguName으로 삼음(단, "인천광역시"처럼 시/도 단위는 제외).
+function parseAddressLocationParts(address) {
+  const tokens = String(address || '').trim().split(/\s+/).filter(Boolean);
+  const locTokens = [];
+  for (let i = 0; i < tokens.length; i++) {
+    if (/^\d/.test(tokens[i])) break; // "424-76" 같은 번지 시작 지점에서 중단
+    locTokens.push(tokens[i]);
+  }
+  if (!locTokens.length) locTokens.push(...tokens.slice(0, 3));
+  const isSido = (t) => /(특별시|광역시|특별자치시|특별자치도)$/.test(t);
+  let dongName = null;
+  let gunguName = null;
+  for (let j = locTokens.length - 1; j >= 0; j--) {
+    const t = locTokens[j];
+    if (!dongName && /(동|읍|면|가|리)$/.test(t) && !isSido(t)) { dongName = t; continue; }
+    if (!gunguName && /(시|군|구)$/.test(t) && !isSido(t)) { gunguName = t; }
+  }
+  return { dongName, gunguName };
+}
+
+function stripNaverHtml(s) {
+  return String(s || '')
+    .replace(/<[^>]+>/g, '')
+    .replace(/&quot;/g, '"').replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&#39;/g, "'");
+}
+
+async function searchNaverNews(query, clientId, clientSecret) {
+  const url = `${NAVER_NEWS_ENDPOINT}?query=${encodeURIComponent(query)}&display=10&sort=date`;
+  const r = await fetch(url, {
+    headers: { 'X-Naver-Client-Id': clientId, 'X-Naver-Client-Secret': clientSecret },
+    signal: AbortSignal.timeout(8000),
+  });
+  if (!r.ok) {
+    const errText = await r.text().catch(() => '');
+    throw new Error(`네이버 뉴스검색 실패(${r.status}): ${errText || query}`);
+  }
+  const data = await r.json();
+  return Array.isArray(data.items) ? data.items : [];
+}
+
+async function getCachedDevNews(key) {
+  if (!REDIS_URL || !REDIS_TOKEN) return null;
+  try {
+    const r = await fetch(`${REDIS_URL}/get/${key}`, {
+      headers: { Authorization: `Bearer ${REDIS_TOKEN}` },
+      signal: AbortSignal.timeout(3000),
+    });
+    if (!r.ok) return null;
+    const data = await r.json();
+    if (!data || !data.result) return null;
+    return JSON.parse(data.result);
+  } catch (e) {
+    console.error('devNews Redis 캐시 조회 실패:', e.message);
+    return null;
+  }
+}
+
+async function setCachedDevNews(key, payload) {
+  if (!REDIS_URL || !REDIS_TOKEN) return;
+  try {
+    const r = await fetch(`${REDIS_URL}/set/${key}?EX=${DEV_NEWS_CACHE_TTL_SECONDS}`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${REDIS_TOKEN}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+      signal: AbortSignal.timeout(3000),
+    });
+    if (!r.ok) {
+      const errText = await r.text();
+      console.error('devNews Redis 캐시 저장 실패:', errText);
+    }
+  } catch (e) {
+    console.error('devNews Redis 캐시 저장 실패:', e.message);
+  }
+}
+
+async function handleDevNewsSearch(req, res) {
+  const NAVER_CLIENT_ID = process.env.NAVER_CLIENT_ID;
+  const NAVER_CLIENT_SECRET = process.env.NAVER_CLIENT_SECRET;
+  if (!NAVER_CLIENT_ID || !NAVER_CLIENT_SECRET) {
+    return res.status(500).json({
+      error: 'NAVER_CLIENT_ID / NAVER_CLIENT_SECRET 환경변수가 없습니다. '
+        + 'https://developers.naver.com/apps/#/register 에서 "검색" API로 애플리케이션을 등록해 '
+        + '발급받은 값을 Vercel 프로젝트 설정에 추가해 주세요.',
+    });
+  }
+  const address = req.body && req.body.address ? String(req.body.address).trim() : '';
+  if (!address) return res.status(400).json({ error: '주소가 필요합니다.' });
+  const force = !!(req.body && req.body.force);
+  const cacheKey = computeDevNewsCacheKey(address);
+  if (!force) {
+    const cached = await getCachedDevNews(cacheKey);
+    if (cached) return res.status(200).json({ devNews: cached, cached: true });
+  }
+  const parts = parseAddressLocationParts(address);
+  if (!parts.dongName && !parts.gunguName) {
+    return res.status(400).json({ error: '주소에서 동/구 이름을 인식하지 못했습니다.' });
+  }
+  const gunguForBroaderQuery = parts.gunguName || parts.dongName;
+  const queries = [];
+  if (parts.dongName) {
+    queries.push(parts.dongName + ' 재개발');
+    queries.push(parts.dongName + ' 재건축');
+  }
+  queries.push(gunguForBroaderQuery + ' 신속통합기획');
+  queries.push(gunguForBroaderQuery + ' 정비구역');
+
+  try {
+    const resultsPerQuery = await Promise.all(
+      queries.map((q) => searchNaverNews(q, NAVER_CLIENT_ID, NAVER_CLIENT_SECRET).catch((e) => {
+        console.error('devNews 네이버 검색 실패:', q, e.message);
+        return [];
+      }))
+    );
+    const seen = new Set();
+    let items = [];
+    resultsPerQuery.forEach((list, idx) => {
+      list.forEach((it) => {
+        const link = it.originallink || it.link;
+        if (!link || seen.has(link)) return;
+        seen.add(link);
+        let source = '';
+        try { source = new URL(link).hostname.replace(/^www\./, ''); } catch (e) { /* ignore */ }
+        items.push({
+          title: stripNaverHtml(it.title),
+          description: stripNaverHtml(it.description),
+          link,
+          pubDate: it.pubDate || null,
+          source,
+          matchedQuery: queries[idx],
         });
-        var data = await res.json();
-        if (!res.ok || !data.detail) {
-            alert('자동 추출 실패: ' + (data.error || '알 수 없는 오류'));
-            return;
-        }
-        var d = data.detail;
-        pendingAuctionDetail = d;
- 
-        if (d.caseNo) document.getElementById('a-case').value = d.caseNo;
- 
-        // 주소 입력칸에는 지번주소(동+번지 기준)를 넣어야 기존 dong+bunji 매칭 방식이 그대로 유지됨
-        var addrForInput = d.addrJibun || d.addrRoad || '';
-        if (addrForInput) document.getElementById('a-addr').value = addrForInput;
- 
-        // 건물명이 있으면 그대로, 없으면(빌라/다세대 등) 동+번지를 이름으로 대신 사용
-        if (d.buildingDongName && d.buildingDongName !== '이름없음') {
-            document.getElementById('a-name').value = d.buildingDongName;
-        } else if (d.dong && d.bunji) {
-            document.getElementById('a-name').value = d.dong + ' ' + d.bunji;
-        }
-        // 아파트 동(건물번호)/층/호수는 아파트명과 별도 필드에 채움
-        if (d.aptDong) document.getElementById('a-dong').value = d.aptDong;
-        if (d.unitFloor !== null && d.unitFloor !== undefined) document.getElementById('a-floor').value = d.unitFloor;
-        if (d.unitNo) document.getElementById('a-unit').value = d.unitNo;
-
-        // 물건유형 자동 선택 - 이후 수리비/중개수수료/전세가분석 등 여러 계산이 이 값을
-        // 기준으로 동작하므로 최대한 반영해둠. select.value를 코드로 바꾸면 onchange가 자동
-        // 발동하지 않아서 관련 자동계산을 아래에서 직접 한 번 더 호출해줌(함수 끝부분의
-        // autoCalcRepairSilent 등 일괄 재계산 호출과는 별개로, 이 값에만 반응하는
-        // autoCalcAgentSilent는 여기서 챙겨줘야 함).
-        var mappedPropType = mapAiPropertyTypeToSelect(d.propertyType);
-        if (mappedPropType) {
-            document.getElementById('a-prop-type').value = mappedPropType;
-            autoCalcAgentSilent();
-        }
-
-        var normDate = normalizeDateForInput(d.saleDate);
-        if (normDate) document.getElementById('a-date').value = normDate;
-        if (d.appraisalPrice) document.getElementById('a-appraisal').value = Math.round(d.appraisalPrice / 10000);
-        if (d.minBidPrice) document.getElementById('a-min-bid').value = Math.round(d.minBidPrice / 10000);
-        if (d.buildingArea) {
-            var m = String(d.buildingArea).match(/([\d.]+)\s*평/);
-            if (m) document.getElementById('a-pyung').value = Math.round(parseFloat(m[1]));
-        }
- 
-        // AI가 이미 뽑아준 dong/bunji가 있으면 그걸 우선 사용해서 지오코딩 검색어를 만듦
-        // (지번주소 문자열에 층/호수가 섞여 있으면 카카오 검색이 실패하거나 다른 곳을 찾을 수 있어서)
-        var geoQuery = (d.dong && d.bunji) ? (d.dong + ' ' + d.bunji) : addrForInput;
-        var addrToSearch = geoQuery.trim();
-        // 서버가 준 정합성/교차검증 경고에, 클라이언트에서만 확인 가능한 "주소 인식 실패" 경고를 더함
-        var warnings = (d.warnings || []).slice();
-        if (addrToSearch) {
-            await new Promise(function(resolve) {
-                geocoder.addressSearch(addrToSearch, function(result, status) {
-                    if (status === kakao.maps.services.Status.OK) {
-                        var r = result[0];
-                        var label = r.road_address ? r.road_address.address_name : r.address_name;
-                        document.getElementById('a-addr-result').innerText = '📍 ' + label;
-                        document.getElementById('a-addr-result').style.display = 'block';
-                        // 카카오가 돌려준 dong/bunji보다 AI가 지번주소에서 직접 뽑은 값을 우선 신뢰
-                        var dong = d.dong || (r.address ? (r.address.region_3depth_name || '') : '');
-                        var bunji = d.bunji || (r.address
-                            ? ((r.address.main_address_no || '') + (r.address.sub_address_no ? '-' + r.address.sub_address_no : ''))
-                            : '');
-                        // a-addr 입력칸의 주소 키로 캐시해야 saveAuction()에서 찾아 쓸 수 있음
-                        var addrKey = document.getElementById('a-addr').value.trim();
-                        auctionCoordCache[addrKey] = { lat: parseFloat(r.y), lon: parseFloat(r.x), label: label, dong: dong, bunji: bunji };
-                    } else {
-                        warnings.push('주소("' + addrToSearch + '") 좌표를 찾지 못했습니다. 주소 표기를 직접 확인해 주세요.');
-                    }
-                    resolve();
-                });
-            });
-        }
-        autoCalcRepairSilent(); calcCompValuation(); calcMargin(); loadAuctionBuildingInfo(); autoCalcAuctionJeonseAnalysis();
-        renderAiSummaryBox();
-        clearAuctionImages();
-        if (warnings.length) {
-            alert('자동 추출 완료 (확인이 필요한 항목이 있어요):\n\n'
-                + warnings.map(function(w) { return '⚠️ ' + w; }).join('\n')
-                + '\n\n내용을 확인하고 저장해 주세요.');
-        } else {
-            alert('자동 추출 완료! 내용을 확인하고 저장해 주세요.');
-        }
-    } catch (e) {
-        alert('자동 추출 중 오류: ' + e.message);
-    } finally {
-        btn.disabled = false; btn.innerText = '텍스트/이미지에서 자동 추출';
-    }
-}
- 
-function normalizeDateForInput(s) {
-    if (!s) return '';
-    var m = String(s).match(/(\d{4})[.\-\/](\d{1,2})[.\-\/](\d{1,2})/);
-    if (!m) return '';
-    return m[1] + '-' + String(m[2]).padStart(2, '0') + '-' + String(m[3]).padStart(2, '0');
-}
- 
-/* ── AI로 추출한 경매정보지 상세를 읽기전용 박스로 렌더링 ── */
-// 경매 권리분석 교육자료 기반: 말소기준권리 / 특수권리(유치권·법정지상권·분묘기지권·위반건축물) /
-// 용도지역·농지취득자격증명 필요여부를 상세패널에 별도 박스로 보여줌.
-// ⚠️ AI가 원문 텍스트에서 명시적으로 읽어낸 값만 표시하며, 최종 인수·말소 판단은 반드시
-//    입찰 전 사람이 등기부등본을 직접 재열람해서 확인해야 함(경매물건_등록후_체크리스트 참고).
-function buildRightsAnalysisHtml(detail, sectionLabel, row) {
-    if (!detail) return '';
-    var hasBaseRight = detail.baseRightType || detail.baseRightDate || detail.baseRightHolder;
-    var sr = detail.specialRights || {};
-    var specialFlags = [
-        { key: 'hasLien', label: '유치권', note: sr.lienNote },
-        { key: 'hasLegalSuperficies', label: '법정지상권', note: sr.legalSuperficiesNote },
-        { key: 'hasGraveRights', label: '분묘기지권', note: sr.graveRightsNote },
-        { key: 'isIllegalBuilding', label: '위반건축물', note: sr.illegalBuildingNote },
-    ].filter(function(f) { return sr[f.key] === true; });
-    var hasZoning = detail.landCategory || detail.zoningType || detail.farmlandCertRequired !== undefined && detail.farmlandCertRequired !== null;
-    if (!hasBaseRight && !specialFlags.length && !hasZoning) return '';
-
-    var html = '<div style="margin-top:10px;border:1px solid #ffcdd2;border-radius:8px;padding:8px 10px;background:#fff8f8;">';
-    html += '<div style="font-size:11px;font-weight:bold;color:#c62828;">⚖️ 권리분석 체크 (AI 추출 · 입찰 전 등기부 재열람 필수)</div>';
-
-    if (hasBaseRight) {
-        html += '<div style="font-size:11px;color:#555;margin-top:4px;"><b>말소기준권리:</b> '
-            + [detail.baseRightType, detail.baseRightDate, detail.baseRightHolder].filter(Boolean).join(' · ') + '</div>';
-    }
-
-    if (specialFlags.length) {
-        html += '<div style="margin-top:4px;">';
-        specialFlags.forEach(function(f) {
-            html += '<span style="display:inline-block;background:#e53935;color:white;font-size:10px;font-weight:bold;padding:2px 6px;border-radius:3px;margin:2px 4px 2px 0;">⚠ ' + f.label + '</span>';
-        });
-        html += '</div>';
-        specialFlags.forEach(function(f) {
-            if (f.note) html += '<div style="font-size:10.5px;color:#777;margin-top:2px;">· ' + f.label + ': ' + f.note + '</div>';
-        });
-        html += '<div style="font-size:10px;color:#999;margin-top:2px;">위 권리는 등기 순위와 무관하게 매수인에게 인수될 수 있습니다. 현장조사(임장)로 실제 성립 여부를 반드시 확인하세요.</div>';
-    }
-
-    if (hasZoning) {
-        html += '<div style="font-size:11px;color:#555;margin-top:6px;">'
-            + [detail.landCategory ? '지목 ' + detail.landCategory : '', detail.zoningType].filter(Boolean).join(' · ') + '</div>';
-        if (detail.farmlandCertRequired === true) {
-            html += '<div style="font-size:11px;color:#c62828;font-weight:bold;margin-top:2px;">🌾 농지취득자격증명원 필요 가능성 — 경매는 미제출 시 입찰보증금이 몰수됩니다. 입찰 전 관할 시·구·읍·면에 발급 가능 여부를 확인하세요.</div>';
-        } else if (detail.farmlandCertRequired === false) {
-            html += '<div style="font-size:10.5px;color:#999;margin-top:2px;">농지취득자격증명원 불필요 추정 (도시지역 주거·상업·공업지역 등)</div>';
-        }
-    }
-
-    html += '</div>';
-    return html;
-}
-
-/* ════════════════════════════════════
-   경매물건 등록 후 체크리스트 (경매물건_등록후_체크리스트.docx와 동일한 순서/문구)
-   물건마다 체크 상태를 a.checklist = { itemId: true/false } 로 저장함
-════════════════════════════════════ */
-var CHECKLIST_DEF = [
-    { title: '1. 등기부등본 재확인 (입찰 직전 필수)', items: [
-        '대법원 인터넷등기소에서 등기부등본을 새로 열람·발급했다 (경매정보지 등기부는 신뢰하지 않는다). '
-            + '<a href="javascript:void(0)" onclick="event.preventDefault();event.stopPropagation();openIrosRegistry();" '
-            + 'style="color:#1a237e;font-weight:bold;text-decoration:underline;white-space:nowrap;">🔗 인터넷등기소 바로가기</a>',
-        '표제부 — 소재지·면적·건물내역이 물건정보와 일치하는지 확인했다.',
-        '갑구 — 소유권, 압류·가압류·가등기·가처분·경매개시결정을 접수일 순서대로 나열했다.',
-        '을구 — (근)저당권, 임차권등기 등을 접수일 순서대로 나열했다.',
-        "갑구·을구를 합쳐 등기 순서대로 정렬한 '권리분석표'를 만들었다.",
-    ]},
-    { title: '2. 말소기준권리 확정',
-      note: '말소기준권리 = (근)저당권 · (가)압류 · 담보가등기 · 강제/임의경매개시결정등기 · 전세권(배당요구 또는 임의경매신청) 중 가장 먼저 등기된 것',
-      items: [
-        '위 6가지 권리 중 등기일자가 가장 빠른 것을 말소기준권리로 확정했다.',
-        '말소기준권리의 종류·접수일·권리자를 기록했다.',
-        '말소기준권리보다 먼저 등기된 권리(선순위) 목록을 별도로 뽑았다 — 원칙적으로 매수인 인수.',
-        '말소기준권리보다 나중에 등기된 권리(후순위) 목록을 별도로 뽑았다 — 원칙적으로 말소.',
-    ]},
-    { title: '3. 권리별 인수 · 말소 판단', groups: [
-        { sub: '(근)저당권 · (가)압류', items: [
-            '말소기준권리 자체이거나 후순위이면 매각으로 말소됨을 확인했다.',
-        ]},
-        { sub: '지상권 · 지역권', items: [
-            '말소기준권리보다 선순위인 지상권·지역권은 인수 대상임을 확인했다.',
-            '법정지상권 성립 여지가 있는지 확인했다 — 성립 시 순위와 무관하게 무조건 인수.',
-        ]},
-        { sub: '전세권', items: [
-            '전세권자가 배당요구를 했는지 확인했다 — 배당요구 시 말소기준권리가 되어 소멸.',
-            '배당요구를 하지 않은 선순위 전세권은 인수 대상임을 확인했다.',
-            '선순위 전세권자가 배당요구를 했지만 전액 배당받지 못한 경우, 잔액이 대항력 있는 임차인 지위로 인수될 수 있음을 확인했다.',
-        ]},
-        { sub: '임차권 (등기 여부 무관)', items: [
-            '임차인의 전입일(사업자등록일)이 말소기준권리보다 빠른지(대항력 유무) 확인했다.',
-            '확정일자 유무 및 취득 시점을 확인했다(우선변제권).',
-            '배당요구종기일까지 배당요구를 했는지 확인했다 — 대항력 있어도 미배당요구 시 보증금 전액 인수.',
-            '배당요구를 했더라도 보증금을 전액 배당받는지 확인했다 — 일부만 배당되면 잔액은 인수.',
-            '소액임차인 최우선변제 대상인지 확인했다(담보권 설정일 기준 그 해 공고금액 기준표 대조).',
-            '상가 물건은 환산보증금(보증금 + 월세×100) 기준 「상가임대차보호법」 적용 범위를 확인했다.',
-        ]},
-        { sub: '가등기', items: [
-            '담보가등기인지 순위보전가등기인지 구분했다(배당요구 여부로 유추).',
-            '담보가등기가 배당요구를 했다면 말소기준권리가 됨을 확인했다.',
-            '순위보전가등기가 말소기준권리보다 선순위면 인수됨을 확인했다.',
-        ]},
-        { sub: '가처분', items: [
-            '말소기준권리보다 선순위 가처분은 인수 대상임을 확인했다.',
-            '토지소유자가 지상건물 소유자를 상대로 한 건물철거·토지인도 가처분인지 확인했다 — 무조건 인수.',
-        ]},
-        { sub: '유치권', items: [
-            '유치권 신고 여부와 신고 금액을 확인했다 — 성립 시 순위 무관 전액 인수.',
-            '현장조사로 실제 점유·공사 흔적 등 성립 요건을 확인했다 — 허위 신고 사례가 많으므로 과도하게 겁먹지 않는다.',
-        ]},
-        { sub: '법정지상권 · 분묘기지권', items: [
-            '토지와 건물 소유자가 다른지, 신축 시점이 저당권 설정 전인지 확인했다.',
-            '분묘 존재 여부를 현장조사로 확인했다 — 성립 시 지료청구가 가능하므로 무조건 손해는 아니다.',
-        ]},
-    ]},
-    { title: '4. 임차인 권리분석 — 대항력 있는 선순위 임차인만 집중 검토',
-      note: '대항력 없는 임차인이거나 후순위라면 배당 분석 자체가 불필요합니다.',
-      items: [
-        '임차인의 전입신고일(익일 0시 효력)과 말소기준권리일을 비교해 대항력 유무를 판정했다.',
-        '대항력 있는 임차인이 배당요구를 했는지, 배당요구종기일을 지켰는지 확인했다.',
-        '배당요구를 했다면 예상 배당액과 보증금 차액(인수 예상액)을 계산했다.',
-        '임차인이 여러 명인 경우 순위별로 각각 대항력·배당액을 분리 계산했다.',
-        '상가는 계약갱신요구권·권리금 회수기회 이슈가 남아있는지 확인했다.',
-    ]},
-    { title: '5. 가짜(허위) 임차인 의심 신호 체크',
-      items: [
-        '등기부상 대출비율이 시세 대비 70% 이상 + 1금융권 대출이면 선순위 임차인 존재 여부를 의심했다.',
-        '임차인이 전 소유자인지 확인했다(매매 후 임대차 전환 사례).',
-        '임차인과 소유자가 가족관계인지 확인했다 — 이혼한 배우자는 대항력이 인정되지 않는다.',
-        '국토교통부 실거래가 공개시스템에서 과거 전월세 신고 이력을 대조했다.',
-        '외국인 임차인 여부를 확인했다 — 전입세대열람에 나타나지 않으므로 반드시 임장으로 확인한다. '
-            + '<a href="javascript:void(0)" onclick="event.preventDefault();event.stopPropagation();openHikoreaLookup();" '
-            + 'style="color:#00695c;font-weight:bold;text-decoration:underline;white-space:nowrap;">🔗 외국인체류확인서 발급 바로가기</a>',
-        '최우선변제를 노린 위조 계약 정황(근저당 설정 직후 계약인데 대항력 주장 등)이 있는지 확인했다.',
-    ], warn: { title: '상가는 특히 주의', lines: [
-        '경매정보지가 제공하는 상가 보증금·월세를 그대로 믿지 말 것 — 시세 대비 차이가 크면 통정허위계약 가능성.',
-        '분양상가는 선임대를 맞춘 뒤 분양하는 경우가 있다 — 신도시 분양상가는 가급적 피할 것.',
-        '현재 임차인의 재계약 의사 여부를 확인할 것.',
-    ]}},
-    { title: '6. 명도 및 인수 실무', items: [
-        "임차인에게 배당금이 있는지 확인했다 — 배당금 수령에는 낙찰자의 '명도확인서'가 필요하다.",
-        '임차보증금 반환과 명도는 동시이행 관계가 아님을 인지했다 — 반드시 배당을 받은 뒤 임차권등기를 해제하도록 안내한다.',
-        '부합물(증축부분 등)과 종물(보일러·화장실 시설 등)은 낙찰자 소유임을 확인했다.',
-    ]},
-    { title: '7. 현장조사(임장) 체크', items: [
-        '전입세대열람 결과와 현장 점유 상태가 일치하는지 확인했다.',
-        '건물의 입지·보존상태·하자 여부를 육안으로 확인했다.',
-        '공인중개사 3곳 이상에서 실제 시세를 확인했다(감정가는 현재 시세와 다를 수 있음).',
-        '유치권 행사 현수막·게시물이 있는지 확인했다.',
-        '(토지의 경우) 분묘 유무를 확인했다.',
-        '관리비 체납 여부를 관리사무소에 확인했다(공용부분 체납관리비는 인수 가능).',
-    ]},
-    { title: '8. 용도지역 · 건축 규제 확인', items: [
-        '토지이음(eum.go.kr)에서 용도지역(도시/관리/농림/자연환경보전 등)을 확인했다.',
-        '건폐율·용적률 한도를 확인했다.',
-        '대상 토지가 도로에 접하는지 확인했다(건축허가 요건, 시골은 배수로도 확인).',
-        '건축물대장을 열람해 위반건축물 여부를 확인했다.',
-        "재개발·재건축 대상 여부와 진행 단계(조합설립 여부='뚜껑', 사업시행인가 등)를 확인했다.",
-        '재개발 물건은 강제경매/임의경매 취득 시점에 따라 현금청산 여부가 달라질 수 있어 조합사무실에 문의했다.',
-    ]},
-    { title: '9. 농지 물건 전용 체크 — 농지취득자격증명원(농취증)',
-      warn: { title: '경매 vs 공매 차이 — 반드시 기억', lines: [
-        '경매: 농취증을 기한 내 제출하지 못하면 매각이 불허가되고 입찰보증금이 몰수된다.',
-        '공매: 보증금은 몰수되지 않지만, 농취증이 없으면 소유권이전등기 자체가 불가능하다.',
-    ]},
-      items: [
-        '지목이 전·답·과수원 등 농지에 해당하는지, 실제 경작지로 이용 중인지 확인했다.',
-        '용도지역을 확인했다 — 도시지역 주거·상업·공업지역은 농취증 불필요, 녹지·관리·농림·자연환경보전지역은 필요.',
-        "해당 토지가 실제로 경작 가능한 상태인지 확인했다 — 불가능하면 '농지 복구계획서'를 첨부해야 한다.",
-        '농업진흥구역 여부를 확인했다 — 농업진흥구역은 주말·체험영농 목적취득이 불가하다.',
-        '농업진흥지역이면서 면적이 1,000㎡ 미만인 경우 농지대장 등록 여부를 확인했다.',
-        '정부24 또는 관할 시·구·읍·면에 농취증 발급 가능 여부를 입찰 전 사전 문의했다.',
-        '농업경영계획서(또는 주말·체험영농계획서) 작성에 필요한 서류를 미리 확인했다.',
-    ]},
-    { title: '10. 입찰 직전 최종 점검', items: [
-        '최신 매각물건명세서를 법원경매정보 사이트에서 다시 확인했다(courtauction.go.kr).',
-        '배당요구종기일까지 배당요구한 임차인·채권자 목록에 변동이 없는지 확인했다.',
-        '감정가 대비 최저매각가율과 유찰 횟수를 확인하고, 유찰 사유를 점검했다.',
-        '특별매각조건(재매각, 농지취득자격증명 제출조건 등)을 확인했다.',
-        '등록한 취득세·등기비용·명도비용 등 비용 항목이 실제 물건 조건과 일치하는지 다시 확인했다.',
-    ]},
-];
-function checklistFlatItems() {
-    var flat = [];
-    CHECKLIST_DEF.forEach(function(cat, ci) {
-        if (cat.items) {
-            cat.items.forEach(function(text, ii) { flat.push({ id: 'c' + ci + '_' + ii, text: text }); });
-        }
-        if (cat.groups) {
-            cat.groups.forEach(function(g, gi) {
-                g.items.forEach(function(text, ii) { flat.push({ id: 'c' + ci + '_g' + gi + '_' + ii, text: text }); });
-            });
-        }
+      });
     });
-    return flat;
-}
-function updateChecklistProgress() {
-    var flat = checklistFlatItems();
-    var done = flat.filter(function(it) { return !!currentChecklist[it.id]; }).length;
-    var pct = flat.length ? Math.round(done / flat.length * 100) : 0;
-    var el = document.getElementById('checklist-progress');
-    if (el) el.innerText = '(' + done + ' / ' + flat.length + ' 완료 · ' + pct + '%)';
-}
-// 저장된(기존) 경매물건은 체크 즉시 0.6초 디바운스 후 자동저장, 신규 등록 중이면 메모리에만 보관했다가
-// 하단 '저장' 버튼을 눌러야 서버에 반영됨(saveAuction()의 data.checklist 로 함께 전송됨)
-function toggleChecklistItem(id, checked) {
-    currentChecklist[id] = checked;
-    updateChecklistProgress();
-    var existingId = document.getElementById('auction-id').value;
-    if (!existingId) return;
-    clearTimeout(checklistSaveTimer);
-    checklistSaveTimer = setTimeout(function() {
-        var idx = auctionList.findIndex(function(a) { return a.id === existingId; });
-        if (idx < 0) return;
-        var updated = Object.assign({}, auctionList[idx], { checklist: currentChecklist });
-        saveAuctionAPI(updated).then(function(saved) { if (saved) auctionList[idx] = saved; });
-    }, 600);
-}
-function checklistItemHtml(item) {
-    var checked = currentChecklist[item.id] ? ' checked' : '';
-    return '<label style="display:flex;align-items:flex-start;gap:7px;padding:4px 0;font-size:12px;color:#444;cursor:pointer;line-height:1.5;">'
-        + '<input type="checkbox" style="margin-top:2px;flex-shrink:0;"' + checked
-        + ' onchange="toggleChecklistItem(\'' + item.id + '\', this.checked)">'
-        + '<span>' + item.text + '</span></label>';
-}
-function checklistWarnHtml(w) {
-    if (!w) return '';
-    var html = '<div style="background:#fbeaea;border:1px solid #e53935;border-radius:6px;padding:6px 8px;margin:4px 0 6px;">';
-    html += '<div style="font-size:11px;font-weight:bold;color:#c62828;">' + w.title + '</div>';
-    w.lines.forEach(function(l) { html += '<div style="font-size:10.5px;color:#777;margin-top:2px;">· ' + l + '</div>'; });
-    html += '</div>';
-    return html;
-}
-function buildChecklistSectionHtml() {
-    var html = '';
-    CHECKLIST_DEF.forEach(function(cat, ci) {
-        var bodyHtml = '';
-        if (cat.note) bodyHtml += '<div style="font-size:10.5px;color:#888;font-style:italic;margin-bottom:6px;">' + cat.note + '</div>';
-        bodyHtml += checklistWarnHtml(cat.warn);
-        if (cat.items) {
-            cat.items.forEach(function(text, ii) { bodyHtml += checklistItemHtml({ id: 'c' + ci + '_' + ii, text: text }); });
-        }
-        if (cat.groups) {
-            cat.groups.forEach(function(g, gi) {
-                bodyHtml += '<div style="font-size:11px;font-weight:bold;color:#6a1b9a;margin:8px 0 2px;">' + g.sub + '</div>';
-                g.items.forEach(function(text, ii) { bodyHtml += checklistItemHtml({ id: 'c' + ci + '_g' + gi + '_' + ii, text: text }); });
-            });
-        }
-        html += '<details style="border:1px solid #eee;border-radius:8px;padding:6px 10px;margin-bottom:6px;background:#fafafa;">'
-            + '<summary style="cursor:pointer;font-size:12px;font-weight:bold;color:#333;padding:2px 0;">' + cat.title + '</summary>'
-            + '<div style="margin-top:6px;">' + bodyHtml + '</div></details>';
+    items.sort((a, b) => {
+      const ta = a.pubDate ? new Date(a.pubDate).getTime() : 0;
+      const tb = b.pubDate ? new Date(b.pubDate).getTime() : 0;
+      return tb - ta;
     });
-    return html;
-}
-function renderChecklistSection() {
-    var box = document.getElementById('checklist-section-body');
-    if (!box) return;
-    box.innerHTML = buildChecklistSectionHtml();
-    updateChecklistProgress();
-}
-/* ════════════════════════════════════
-   임장(현장조사) 메모 - 체크리스트 3종 + 모달 UI
-   1) 반드시 임장을 가야만 확인 가능한 항목(경매물건_등록후_체크리스트.docx에서 발췌)
-   2) 임장으로 확보할 수 있는(체크리스트엔 없지만 유용한) 정보
-   3) 빌라·단독주택 임장 전용 체크리스트
-   ⚠️ 이 메모는 건물(name/dong) 단위로 저장되며 특정 경매 사건과 무관하게 영구 보관됨 —
-      같은 건물·지역을 나중에 다른 사건으로 다시 검토할 때도 그대로 재사용할 수 있음
-════════════════════════════════════ */
-var SITE_VISIT_CHECKLIST = [
-    { title: '✅ 반드시 임장을 가야 확인되는 항목', items: [
-        '유치권 신고가 있다면 현장에서 실제 점유·공사 흔적 등 성립 요건을 확인했다.',
-        '(토지의 경우) 분묘 존재 여부를 현장에서 확인했다.',
-        '외국인 임차인 여부를 확인했다 — 전입세대열람에 나타나지 않으므로 반드시 임장으로 확인한다. '
-            + '<a href="javascript:void(0)" onclick="event.preventDefault();event.stopPropagation();openHikoreaLookup();" '
-            + 'style="color:#00695c;font-weight:bold;text-decoration:underline;white-space:nowrap;">🔗 외국인체류확인서 발급 바로가기</a>',
-        '전입세대열람 결과와 현장 점유 상태(실제 거주 여부)가 일치하는지 확인했다.',
-        '건물의 입지·보존상태·하자 여부를 육안으로 확인했다.',
-        '공인중개사 3곳 이상에서 실제 시세를 확인했다.',
-        '유치권 행사 현수막·게시물이 있는지 확인했다.',
-        '관리비 체납 여부를 관리사무소에 확인했다.',
-        '대상 토지가 도로에 접하는지 확인했다(건축허가 요건, 시골은 배수로도 확인).',
-        '(농지의 경우) 해당 토지가 실제로 경작 가능한 상태인지 확인했다.',
-    ]},
-    { title: '🔍 임장으로 추가로 확보할 수 있는 정보', items: [
-        '세대수 대비 실제 거주(공실) 비율 — 우편함·전기계량기로 확인했다.',
-        '이웃·경비원·관리소장에게서 소유자/임차인 평판, 분쟁 이력을 확인했다.',
-        '관리비 고지서·게시판 공지(체납, 소송, 유치권 안내문 등)를 확인했다.',
-        '채광·소음·냄새·습기 등 실거주 체감을 확인했다.',
-        '주차 여건(실제 주차대수, 방문차량 여부)을 확인했다.',
-        '진입도로·경사·보행 접근성을 확인했다.',
-        '인근 개발호재/악재(재개발, 혐오시설, 소음원)를 확인했다.',
-        '관리사무소·인근 부동산에서 최근 실거래·매물 시세를 문의했다.',
-        '건물 외관·옥상·계단 등 공용부 관리상태로 전반적 관리 수준을 가늠했다.',
-        '우편함 이름과 전입세대열람 명단을 대조했다(허위 임차인 단서).',
-    ]},
-    { title: '🏚️ 빌라·단독주택 임장 전용 체크리스트', items: [
-        '옥상 방수 상태·누수 흔적을 확인했다.',
-        '외벽 균열·백화현상을 확인했다.',
-        '계단·복도 청소상태·조명·소화기 비치를 확인했다.',
-        '주차대수(건축물대장 대비 실제)를 확인했다.',
-        '위반건축물 여부를 육안으로 확인했다(옥탑 증축, 발코니 확장, 불법 가구분할 등).',
-        '정화조·하수 처리 상태를 확인했다.',
-        '경사지·옹벽이 있다면 안전 상태를 확인했다.',
-        '반지하·저층 세대는 침수 흔적·곰팡이를 확인했다.',
-        '창호·새시 상태 및 단열을 확인했다.',
-        '난방 방식(개별/중앙, 도시가스 여부)을 확인했다.',
-        '세대별 우편함으로 공실 여부를 확인했다.',
-        '인근 재개발·재건축 여부 및 진행 단계를 확인했다.',
-        '일조권 — 주변 신축 고층 건물로 인한 채광 저하 여부를 확인했다.',
-    ]},
-];
-function siteVisitItemHtml(item) {
-    var checked = currentSiteNoteChecklist[item.id] ? ' checked' : '';
-    return '<label style="display:flex;align-items:flex-start;gap:7px;padding:4px 0;font-size:12px;color:#444;cursor:pointer;line-height:1.5;">'
-        + '<input type="checkbox" style="margin-top:2px;flex-shrink:0;"' + checked
-        + ' onchange="toggleSiteNoteChecklistItem(\'' + item.id + '\', this.checked)">'
-        + '<span>' + item.text + '</span></label>';
-}
-function toggleSiteNoteChecklistItem(id, checked) {
-    currentSiteNoteChecklist[id] = checked;
-}
-function buildSiteVisitChecklistHtml() {
-    var html = '';
-    SITE_VISIT_CHECKLIST.forEach(function(cat, ci) {
-        var bodyHtml = '';
-        cat.items.forEach(function(text, ii) { bodyHtml += siteVisitItemHtml({ id: 'sv' + ci + '_' + ii, text: text }); });
-        html += '<details' + (ci === 2 ? ' open' : '') + ' style="border:1px solid #ffe0b2;border-radius:8px;padding:6px 10px;margin-bottom:6px;background:#fffaf3;">'
-            + '<summary style="cursor:pointer;font-size:12px;font-weight:bold;color:#e65100;padding:2px 0;">' + cat.title + '</summary>'
-            + '<div style="margin-top:6px;">' + bodyHtml + '</div></details>';
-    });
-    return html;
-}
-function renderSiteNoteHistory() {
-    var box = document.getElementById('sn-history-list');
-    if (!box) return;
-    var notes = getSiteNotesForBuilding(siteNoteTargetName, siteNoteTargetDong);
-    if (!notes.length) { box.innerHTML = '<div style="font-size:11px;color:#999;">이전 임장메모가 없습니다.</div>'; return; }
-    var html = '';
-    notes.forEach(function(n) {
-        var doneCount = n.checklist ? Object.keys(n.checklist).filter(function(k) { return n.checklist[k]; }).length : 0;
-        html += '<div style="background:white;border:1px solid #ffe0b2;border-radius:8px;padding:8px 10px;margin-bottom:6px;">'
-            + '<div style="display:flex;justify-content:space-between;align-items:center;">'
-            + '<b style="font-size:11.5px;color:#e65100;">' + (n.visitDate || '날짜 미상') + ' 방문</b>'
-            + '<span style="font-size:10px;color:#c62828;cursor:pointer;" onclick="deleteSiteNoteRow(\'' + n.id + '\')">삭제</span>'
-            + '</div>'
-            + (n.memo ? '<div style="font-size:11.5px;color:#555;margin-top:4px;line-height:1.5;">' + n.memo.replace(/\n/g, '<br>') + '</div>' : '')
-            + (doneCount ? '<div style="font-size:10px;color:#999;margin-top:3px;">체크리스트 ' + doneCount + '개 확인</div>' : '')
-            + '</div>';
-    });
-    box.innerHTML = html;
-}
-// name/dong이 없으면(마커에서 주소 파악이 안 되는 경우) 열지 않음
-function openSiteNoteModal(name, dong, addr, lat, lon) {
-    if (!name && !dong) { alert('건물 정보를 확인할 수 없어 임장메모를 열 수 없습니다.'); return; }
-    siteNoteTargetName = name || '';
-    siteNoteTargetDong = dong || '';
-    siteNoteTargetAddr = addr || '';
-    siteNoteTargetLat  = (typeof lat === 'number') ? lat : null;
-    siteNoteTargetLon  = (typeof lon === 'number') ? lon : null;
-    currentSiteNoteChecklist = {};
-    document.getElementById('sn-title').innerText = '📝 임장메모 — ' + (siteNoteTargetName || siteNoteTargetDong);
-    document.getElementById('sn-visit-date').value = new Date().toISOString().slice(0, 10);
-    document.getElementById('sn-memo').value = '';
-    document.getElementById('sn-checklist-body').innerHTML = buildSiteVisitChecklistHtml();
-    renderSiteNoteHistory();
-    document.getElementById('site-note-modal-bg').style.display = 'flex';
-}
-function closeSiteNoteModal(e) {
-    if (e && e.target !== document.getElementById('site-note-modal-bg')) return;
-    document.getElementById('site-note-modal-bg').style.display = 'none';
-}
-async function saveSiteNote() {
-    var memo = document.getElementById('sn-memo').value.trim();
-    var visitDate = document.getElementById('sn-visit-date').value;
-    var hasChecked = Object.keys(currentSiteNoteChecklist).some(function(k) { return currentSiteNoteChecklist[k]; });
-    if (!memo && !hasChecked) { alert('메모를 입력하거나 체크리스트를 하나 이상 확인해 주세요.'); return; }
-    var data = {
-        id: Date.now().toString(),
-        name: siteNoteTargetName, dong: siteNoteTargetDong, addr: siteNoteTargetAddr,
-        lat: siteNoteTargetLat, lon: siteNoteTargetLon,
-        visitDate: visitDate, memo: memo,
-        checklist: currentSiteNoteChecklist,
-        createdAt: new Date().toISOString(),
-    };
-    var saved = await saveSiteNoteAPI(data);
-    siteNoteList.push(saved);
-    document.getElementById('sn-memo').value = '';
-    currentSiteNoteChecklist = {};
-    document.getElementById('sn-checklist-body').innerHTML = buildSiteVisitChecklistHtml();
-    renderSiteNoteHistory();
-    // 열려 있는 매물 패널/경매 모달의 임장메모 요약도 함께 최신화
-    if (typeof renderTable === 'function' && currentPanelApt) renderTable();
-    if (typeof renderCompListBox === 'function') renderCompListBox();
-    alert('임장메모가 저장되었습니다.');
-}
-async function deleteSiteNoteRow(id) {
-    if (!confirm('이 임장메모를 삭제하시겠습니까?')) return;
-    await deleteSiteNoteAPI(id);
-    siteNoteList = siteNoteList.filter(function(n) { return n.id !== id; });
-    renderSiteNoteHistory();
-    if (typeof renderTable === 'function' && currentPanelApt) renderTable();
-    if (typeof renderCompListBox === 'function') renderCompListBox();
-}
-// 매물 패널/비교물건 목록 등 어디서나 재사용하는 "임장메모 요약 + 열기" 박스
-function buildSiteNoteSectionHtml(name, dong, addr, lat, lon) {
-    if (!name && !dong) return '';
-    var notes = getSiteNotesForBuilding(name, dong);
-    var openArgs = "'" + String(name || '').replace(/'/g, "\\'") + "','" + String(dong || '').replace(/'/g, "\\'") + "','"
-        + String(addr || '').replace(/'/g, "\\'") + "'," + (typeof lat === 'number' ? lat : 'null') + ',' + (typeof lon === 'number' ? lon : 'null');
-    var html = '<div class="indicator-box" style="border-color:#ffb74d;background:#fff8f0;">';
-    html += '<div class="indicator-title" style="color:#e65100;">📝 임장메모' + (notes.length ? ' (' + notes.length + '건)' : '') + '</div>';
-    if (notes.length) {
-        notes.slice(0, 2).forEach(function(n) {
-            html += '<div style="font-size:11px;color:#555;background:white;border-radius:6px;padding:5px 7px;margin-bottom:4px;border:1px solid #ffe0b2;">'
-                + '<b>' + (n.visitDate || '날짜 미상') + '</b> 방문'
-                + (n.memo ? '<br>' + n.memo.slice(0, 60).replace(/\n/g, ' ') + (n.memo.length > 60 ? '…' : '') : '')
-                + '</div>';
-        });
-        if (notes.length > 2) html += '<div style="font-size:10px;color:#999;">외 ' + (notes.length - 2) + '건 더 있음</div>';
-    } else {
-        html += '<div style="font-size:11px;color:#999;">아직 임장메모가 없습니다. 다녀오신 뒤 남겨두면 다음에 이 건물을 다시 볼 때 바로 참고할 수 있어요.</div>';
-    }
-    html += '<div style="text-align:right;margin-top:4px;"><button class="modal-btn btn-gray" style="font-size:11px;" onclick="openSiteNoteModal(' + openArgs + ')">📝 임장메모 보기/작성</button></div>';
-    html += '</div>';
-    return html;
-}
-function buildAuctionDetailHtml(detail) {
-    if (!detail) return '';
-    function row(label, value) {
-        if (value === null || value === undefined || value === '') return '';
-        return '<div style="display:flex;justify-content:space-between;gap:8px;font-size:11px;color:#555;padding:3px 0;border-bottom:1px dashed #f0f0f0;">'
-            + '<span style="color:#999;flex-shrink:0;">' + label + '</span>'
-            + '<span style="text-align:right;">' + value + '</span></div>';
-    }
-    function sectionLabel(text) {
-        return '<div style="font-size:10px;color:#999;font-weight:bold;margin-top:8px;">' + text + '</div>';
-    }
-    function won(v) {
-        if (v === null || v === undefined || v === '') return '';
-        return toEok(String(Math.round(v / 10000)));
-    }
-    var html = '<div class="indicator-box" style="border-color:#ce93d8;background:#faf5ff;">';
-    html += '<div class="indicator-title" style="color:#6a1b9a;">📋 경매정보지 상세 (AI 자동 추출)</div>';
- 
-    // 유찰횟수는 rounds(입찰 회차 이력)에서 "유찰"이 포함된 회차 수를 세어서 계산
-    var failCount = (detail.rounds || []).filter(function(r) {
-        return r.result && String(r.result).indexOf('유찰') !== -1;
-    }).length;
-    if (failCount > 0) {
-        html += row('유찰횟수', '<span style="color:#e53935;font-weight:bold;">' + failCount + '회</span>');
-    }
- 
-    html += row('처분방식', detail.disposalMethod);
-    if (detail.specialConditions) {
-        html += row('특수조건', '<span style="color:#e53935;font-weight:bold;">' + detail.specialConditions + '</span>');
-    }
-    if (detail.caseCautions) {
-        html += row('주의사항', '<span style="color:#e53935;font-weight:bold;">' + detail.caseCautions + '</span>');
-    }
-
-    html += row('법원', [detail.court, detail.courtTel].filter(Boolean).join(' · '));
-    var courtInfoText = buildCourtInfoSummaryText(detail);
-    if (courtInfoText) {
-        var courtInfoB64 = btoa(unescape(encodeURIComponent(courtInfoText)));
-        html += '<div style="text-align:right;margin:2px 0 6px;">'
-            + '<button type="button" class="modal-btn btn-gray" style="font-size:10.5px;padding:4px 10px;" '
-            + 'onclick="copyCourtInfoSummary(\'' + courtInfoB64 + '\')">📋 법원정보 복사</button></div>';
-    }
-    if (detail.warnings && detail.warnings.length) {
-        html += '<div style="background:#fff8e1;border:1px solid #ffca28;border-radius:6px;padding:6px 8px;margin:4px 0 8px;">'
-            + '<div style="font-size:10.5px;font-weight:bold;color:#f57f17;margin-bottom:3px;">⚠️ AI 추출값 확인 필요</div>'
-            + detail.warnings.map(function(w) {
-                return '<div style="font-size:10.5px;color:#795548;padding:1px 0;">· ' + w + '</div>';
-            }).join('')
-            + '</div>';
-    }
-    html += row('물건종류/경매종류', [detail.propertyType, detail.auctionType].filter(Boolean).join(' · '));
-    html += row('개시결정일', detail.decisionDate);
-    html += row('배당요구종기일', detail.distributionDeadline);
-    html += row('지번주소', detail.addrJibun);
-    if (detail.unitFloor || detail.unitNo) {
-        html += row('층/호수', [detail.unitFloor ? detail.unitFloor + '층' : '', detail.unitNo].filter(Boolean).join(' / '));
-    }
-    var roadDisplay = detail.addrRoad
-        || (detail.roadName ? (detail.roadName + ' ' + (detail.roadMainNum || '') + (detail.roadSubNum ? '-' + detail.roadSubNum : '')).trim() : '');
-    html += row('도로명주소', roadDisplay);
- 
-    if (detail.rounds && detail.rounds.length) {
-        html += sectionLabel('입찰 이력');
-        detail.rounds.forEach(function(r) {
-            html += row((r.round || '') + '차 (' + (r.date || '') + ')', won(r.minPrice) + (r.result ? ' · ' + r.result : ''));
-        });
-    }
- 
-    html += row('감정가', won(detail.appraisalPrice));
-    html += row('최저가', won(detail.minBidPrice) + (detail.minBidRate ? ' (' + detail.minBidRate + '%)' : ''));
-    html += row('보증금', won(detail.deposit) + (detail.depositRate ? ' (' + detail.depositRate + '%)' : ''));
-    html += row('소유자', detail.owner);
-    html += row('채무자', detail.debtor);
-    html += row('채권자', detail.creditor);
-    html += row('청구금액', won(detail.claimAmount));
- 
-    html += sectionLabel('감정평가 상세');
-    html += row('감정원/가격시점', [detail.appraiser, detail.priceDate].filter(Boolean).join(' · '));
-    html += row('보존등기일', detail.registrationDate);
-    html += row('토지면적(전체)/가격', [detail.landArea, won(detail.landPrice)].filter(Boolean).join(' · '));
-    html += row('대지권면적(지분)', detail.siteRightsArea);
-    html += row('건물면적/가격', [detail.buildingArea, won(detail.buildingPrice)].filter(Boolean).join(' · '));
-    html += row('평당단가', detail.unitPricePerPyung ? Math.round(detail.unitPricePerPyung / 10000) + '만원' : '');
-    html += row('토지:건물 가격비율', detail.priceRatioLandBuilding);
- 
-    if (detail.locationDesc) {
-        html += sectionLabel('현황·위치');
-        html += '<div style="font-size:11px;color:#555;">' + detail.locationDesc + '</div>';
-    }
- 
-    html += sectionLabel('임차인 현황');
-    if (detail.tenantOccupants && detail.tenantOccupants.length) {
-        detail.tenantOccupants.forEach(function(t) {
-            if (typeof t === 'string') {
-                // 구버전 데이터(문자열 배열)로 저장된 경우 그대로 표시
-                html += '<div style="font-size:11px;color:#555;">' + t + '</div>';
-                return;
-            }
-            var standBadge = t.hasStanding === true
-                ? '<span style="background:#e53935;color:white;font-size:9px;font-weight:bold;padding:1px 5px;border-radius:3px;margin-left:4px;">대항력 있음</span>'
-                : (t.hasStanding === false ? '<span style="background:#9e9e9e;color:white;font-size:9px;padding:1px 5px;border-radius:3px;margin-left:4px;">대항력 없음</span>' : '');
-            html += '<div style="font-size:11px;color:#555;font-weight:bold;margin-top:4px;">' + (t.name || '임차인') + standBadge + '</div>';
-            html += row('점유부분', t.occupancyPart);
-            html += row('보증금/차임', [won(t.deposit), (t.rent ? won(t.rent) + '/월' : '')].filter(Boolean).join(' · '));
-            html += row('전입/확정/배당', [t.moveInDate, t.fixedDate, t.distributionDate].filter(Boolean).join(' · '));
-            html += row('비고', t.note);
-        });
-    } else {
-        html += '<div style="font-size:11px;color:#555;">' + (detail.tenantNote || '조사된 임차내역 없음') + '</div>';
-    }
- 
-    if (detail.registryItems && detail.registryItems.length) {
-        html += sectionLabel('건물등기 (채권합계 ' + won(detail.registryTotalClaim) + ')');
-        detail.registryItems.forEach(function(r) {
-            var badges = '';
-            if (r.isBaseRight) badges += ' <span style="background:#e53935;color:white;font-size:9px;font-weight:bold;padding:1px 5px;border-radius:3px;">말소기준</span>';
-            if (r.willBeAssumed === true) badges += ' <span style="background:#e53935;color:white;font-size:9px;font-weight:bold;padding:1px 5px;border-radius:3px;">인수</span>';
-            else if (r.willBeAssumed === false) badges += ' <span style="background:#9e9e9e;color:white;font-size:9px;padding:1px 5px;border-radius:3px;">소멸</span>';
-            html += row((r.date || '') + ' ' + (r.type || ''), [r.holder, r.amount, (r.extinguished ? '소멸' : '')].filter(Boolean).join(' · ') + badges);
-        });
-    }
-    if (detail.registryStory) {
-        html += sectionLabel('📖 등기 이력 요약');
-        html += '<div style="font-size:11px;color:#555;line-height:1.6;background:white;border-radius:6px;padding:6px 8px;margin-top:4px;border:1px solid #e1bee7;">'
-            + detail.registryStory + '</div>';
-    }
-
-    if (detail.riskSummary) {
-        html += sectionLabel('권리분석 요약');
-        html += '<div style="font-size:11px;color:#555;">' + detail.riskSummary + '</div>';
-    }
-
-    html += buildRightsAnalysisHtml(detail, sectionLabel, row);
-
-    if (detail.salesStats) {
-        html += sectionLabel('매각사례 통계');
-        html += row('최근1개월', detail.salesStats.m1);
-        html += row('최근3개월', detail.salesStats.m3);
-        html += row('최근6개월', detail.salesStats.m6);
-        html += row('최근12개월', detail.salesStats.m12);
-    }
- 
-    if (detail.officialTrades && detail.officialTrades.length) {
-        html += sectionLabel('경매사이트 표기 국토부 실거래가');
-        detail.officialTrades.forEach(function(t) {
-            html += row(t.date, [won(t.amount), t.area, (t.floor ? t.floor + '층' : '')].filter(Boolean).join(' · '));
-        });
-    }
-    html += row('현재 공시가격', detail.officialPriceCurrent);
-    html += row('공시가격 추이', detail.officialPriceByYear);
- 
-    html += sectionLabel('건축물정보');
-    html += row('건물명', detail.buildingDongName);
-    html += row('세대수', detail.households);
-    html += row('건폐율/용적률', (detail.coverageRatio || detail.floorAreaRatio)
-        ? ((detail.coverageRatio || '-') + '% / ' + (detail.floorAreaRatio || '-') + '%') : '');
-    html += row('연면적', detail.totalFloorArea);
-    html += row('허가일/착공일/사용승인일', [detail.permitDate, detail.startDate, detail.approvalDate].filter(Boolean).join(' / '));
-    html += row('주차', detail.parking);
-    html += row('승강기', detail.elevator);
-    html += row('층수', (detail.floorsAbove || detail.floorsBelow)
-        ? ((detail.floorsAbove || '-') + '층' + (detail.floorsBelow ? ' (지하' + detail.floorsBelow + ')' : '')) : '');
- 
-    if (detail.floorDetails && detail.floorDetails.length) {
-        html += sectionLabel('층별 현황');
-        detail.floorDetails.forEach(function(f) {
-            html += row(f.floor, [f.area, f.structure, f.use].filter(Boolean).join(' · '));
-        });
-    }
- 
-    html += '</div>';
-    return html;
-}
- 
-/* ════════════════════════════════════
-   국토부 공시가격 실시간 조회 (VWorld API)
-   - AI가 PDF/텍스트에서 추출한 공시가격(officialPriceByYear)과는 별개로,
-     주소 기반으로 국토부 데이터를 실시간 조회해서 교차검증용으로 보여줌
-════════════════════════════════════ */
-function buildOfficialPriceLookupHtml(a) {
-    if (!a.detail || !a.detail.addrJibun) return '';
-    return '<div class="indicator-box" style="border-color:#4caf50;background:#f1f8f4;">'
-        + '<div class="indicator-title" style="color:#2e7d32;">🏛️ 국토부 공시가격 실시간 조회</div>'
-        + '<div id="official-price-' + a.id + '">'
-        + '<button onclick="fetchOfficialPrice(\'' + a.id + '\')" '
-        + 'style="font-size:11px;padding:5px 10px;border-radius:6px;border:1px solid #4caf50;background:white;color:#2e7d32;cursor:pointer;">'
-        + '공시가격 조회하기</button></div></div>';
-}
- 
-async function fetchOfficialPrice(auctionId) {
-    var a = auctionList.find(function(x) { return x.id === auctionId; });
-    if (!a || !a.detail || !a.detail.addrJibun) { alert('지번주소 정보가 없어 조회할 수 없습니다.'); return; }
-    var box = document.getElementById('official-price-' + auctionId);
-    if (!box) return;
-    box.innerHTML = '<div style="font-size:11px;color:#999;">조회 중...</div>';
-    try {
-        var res = await fetch('/api/get-official-price', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                addrJibun: a.detail.addrJibun,
-                dong: a.detail.dong || '',
-                unitFloor: a.detail.unitFloor || '',
-                unitNo: a.detail.unitNo || '',
-                propertyType: a.detail.propertyType || '',
-            }),
-        });
-        var data = await res.json();
-        if (!res.ok || !data.success) {
-            box.innerHTML = '<div style="font-size:11px;color:#e53935;">조회 실패: ' + (data.error || '알 수 없는 오류') + '</div>';
-            return;
-        }
-        var html = '';
-        if (data.source === 'apartment') {
-            html += '<div style="font-size:11px;color:#555;">'
-                + (data.complexName ? data.complexName + ' ' : '')
-                + (data.dong ? data.dong + '동 ' : '') + (data.ho ? data.ho + '호' : '') + '</div>';
-            html += '<div style="font-size:15px;font-weight:bold;color:#2e7d32;margin-top:2px;">'
-                + (data.priceWon ? toEok(String(Math.round(data.priceWon / 10000))) : '정보없음')
-                + '</div>';
-            html += '<div style="font-size:10px;color:#999;">' + (data.stdrYear || '') + '년 ' + (data.stdrMt || '') + '월 기준 · 국토교통부 공동주택가격</div>';
-        } else {
-            html += '<div style="font-size:15px;font-weight:bold;color:#2e7d32;">'
-                + (data.priceWonPerM2 ? Number(data.priceWonPerM2).toLocaleString() + '원/㎡' : '정보없음')
-                + '</div>';
-            html += '<div style="font-size:10px;color:#999;">' + (data.stdrYear || '') + '년 기준 · 국토교통부 개별공시지가(토지)</div>';
-        }
-        box.innerHTML = html;
-    } catch (e) {
-        box.innerHTML = '<div style="font-size:11px;color:#e53935;">조회 중 오류: ' + e.message + '</div>';
-    }
-}
-/* ════════════════════════════════════
-   평단가 타임라인 분석 (8년/5년/1년/4개월/최근거래)
-════════════════════════════════════ */
-function avgPppInRange(trades, fromDate) {
-    var valid = trades.filter(function(t) {
-        return tradeDate(t) >= fromDate && t.area > 0 && parseInt(t.amount) > 0 && parseInt(t.floor) !== 1;
-    });
-    if (!valid.length) return { avg: null, count: 0 };
-    var sum = valid.reduce(function(a, t) { return a + parseInt(t.amount) / toPyung(t.area); }, 0);
-    return { avg: Math.round(sum / valid.length), count: valid.length };
-}
- 
-function latestPppInfo(trades) {
-    var valid = trades.filter(function(t) { return t.area > 0 && parseInt(t.amount) > 0 && parseInt(t.floor) !== 1; });
-    if (!valid.length) return null;
-    // trades는 groupDBRows에서 이미 최신순 정렬됨
-    var t = valid[0];
-    return {
-        ppp: Math.round(parseInt(t.amount) / toPyung(t.area)),
-        date: tradeDate(t),
-        amount: t.amount,
-        area: t.area
-    };
-}
- 
-/* ════════════════════════════════════
-   연립다세대: 전세가 기반 예상 거래가 + 전세 거래 히스토리
-   - 전세보증보험 최대금액(전세가×126%) 대비 실제 매매가 비율을
-     "같은 건물"의 매매/전세 쌍으로 구하고(없으면 지역 전체 연립다세대 평균으로 대체),
-     그 비율을 최근 전세가에 곱해 추정매매가를 만든 뒤
-   - 같은 건물의 매매 평단가 6개월 단위(반기) 추이로 기준 전세거래 시점→현재 변동을 보정
-════════════════════════════════════ */
-function findSaleRentRatio(rentList, saleTrades) {
-    var ratios = [];
-    rentList.forEach(function(r) {
-        if (r.monthly_rent > 0) return; // 월세 제외, 순수 전세만
-        var guarantee = (r.deposit || 0) * 1.26;
-        if (guarantee <= 0) return;
-        saleTrades.forEach(function(s) {
-            if (String(s.floor) !== String(r.floor)) return;
-            if (Math.abs((s.area || 0) - (r.size || 0)) >= 1) return;
-            var amt = parseInt(s.amount);
-            if (amt > 0) ratios.push(amt / guarantee);
-        });
-    });
-    if (!ratios.length) return null;
-    return ratios.reduce(function(a, b) { return a + b; }, 0) / ratios.length;
-}
-function bucketKeyOf(d) {
-    return d.getFullYear() + '_' + (d.getMonth() < 6 ? 'H1' : 'H2');
-}
-function bucketSortValue(k) {
-    var parts = k.split('_');
-    return parseInt(parts[0]) * 2 + (parts[1] === 'H1' ? 0 : 1);
-}
-// 같은 건물 매매 평단가의 6개월(반기) 버킷 추이로, fromDate 시점 → 현재 시세변동 배율을 구함
-function calcVillaPppMomentum(trades, fromDate) {
-    var valid = trades.filter(function(t) { return t.area > 0 && parseInt(t.amount) > 0 && parseInt(t.floor) !== 1; });
-    if (valid.length < 2) return { factor: 1, note: '같은 건물 매매 데이터가 부족해 시세변동 보정 없음' };
-
-    var buckets = {};
-    valid.forEach(function(t) {
-        var k = bucketKeyOf(tradeDate(t));
-        if (!buckets[k]) buckets[k] = [];
-        buckets[k].push(parseInt(t.amount) / toPyung(t.area));
-    });
-    var bucketKeys = Object.keys(buckets);
-    if (bucketKeys.length < 2) return { factor: 1, note: '같은 건물 매매 데이터가 부족해 시세변동 보정 없음' };
-
-    var bucketAvg = {};
-    bucketKeys.forEach(function(k) {
-        var arr = buckets[k];
-        bucketAvg[k] = arr.reduce(function(a, b) { return a + b; }, 0) / arr.length;
-    });
-
-    function nearestBucket(targetKey) {
-        if (bucketAvg[targetKey] !== undefined) return targetKey;
-        var closest = bucketKeys[0], minDiff = Infinity;
-        bucketKeys.forEach(function(k) {
-            var diff = Math.abs(bucketSortValue(k) - bucketSortValue(targetKey));
-            if (diff < minDiff) { minDiff = diff; closest = k; }
-        });
-        return closest;
-    }
-
-    var fromKey = nearestBucket(bucketKeyOf(fromDate));
-    var nowKey  = nearestBucket(bucketKeyOf(new Date()));
-    if (fromKey === nowKey) return { factor: 1, note: '기준 전세거래와 같은 시기라 시세변동 보정 없음' };
-
-    var factor = bucketAvg[nowKey] / bucketAvg[fromKey];
-    factor = Math.max(0.7, Math.min(1.5, factor)); // 데이터 부족으로 인한 극단적 왜곡 방지
-    var pct = Math.round((factor - 1) * 1000) / 10;
-    return { factor: factor, note: fromKey.replace('_', ' ') + ' → ' + nowKey.replace('_', ' ') + ' 평단가 변동 반영 (' + (pct >= 0 ? '+' : '') + pct + '%)' };
-}
-// 이 건물의 순수 전세 거래 목록만 뽑아냄. 여러 곳에서 재사용
-// (매매기록 없는 물건 등급 추정, 전세가 기반 예상거래가, 경매 예상전세가 계산 등).
-// 도로명은 매매 테이블과 전세 테이블의 수집 출처가 달라 표기가 어긋나는 경우가 흔해서(공백/약칭 차이 등)
-// 매칭 기준에서 뺐습니다. 동이 같고, 단지명이 일치하거나(우선) 지번이 일치하면 같은 건물로 봅니다.
-function getVillaOwnRents(name, dong, bunji) {
-    return allRentList.filter(function(r) {
-        if (r.buildingType !== 'villa' || (r.monthly_rent > 0)) return false;
-        if ((r.dong || '') !== (dong || '')) return false;
-        if (name && (r.danji || '') === name) return true;
-        if (bunji && (r.bunji || '') === bunji) return true;
-        return false;
-    });
-}
-// villa 패널의 "전세가 기반 예상 거래가" 계산.
-// 항상 { rents, estimate, ... } 형태의 객체를 돌려주고(연립다세대가 아니면 null), estimate가 없을 때도
-// noDataReason으로 이유를 알려줘서, 화면에서 "데이터가 없는 것"과 "코드가 안 뜨는 것"을 구분할 수 있게 함.
-function calcVillaJeonseEstimate(apt) {
-    if (apt.buildingType !== 'villa') return null;
-    var l = apt.latest || {};
-
-    var myRents = getVillaOwnRents(l.name, l.dong, l.bunji);
-    if (!myRents.length) {
-        return { estimate: null, rents: [], noDataReason: '이 건물의 전세 거래 이력을 데이터베이스에서 찾지 못했습니다.' };
-    }
-
-    var ratio = findSaleRentRatio(myRents, apt.trades);
-    var ratioSource = '이 건물의 매매·전세 쌍 기준';
-    if (!ratio) {
-        var allVillaSales = [], allVillaRents = [];
-        allAptList.forEach(function(a) { if (a.buildingType === 'villa') allVillaSales = allVillaSales.concat(a.trades); });
-        allRentList.forEach(function(r) { if (r.buildingType === 'villa') allVillaRents.push(r); });
-        ratio = findSaleRentRatio(allVillaRents, allVillaSales);
-        ratioSource = '지역 전체 연립다세대 평균 비율';
-    }
-
-    myRents.sort(function(a, b) { return String(b.deal_date).localeCompare(String(a.deal_date)); });
-    var baseRent = myRents[0];
-
-    if (!ratio) {
-        return {
-            estimate: null, rents: myRents,
-            noDataReason: '매매·전세 짝을 찾지 못해 예상 거래가는 계산하지 못했지만, 이 건물의 전세 거래 이력은 아래와 같습니다.',
-        };
-    }
-
-    var baseEstimate = (baseRent.deposit || 0) * 1.26 * ratio;
-
-    var ds = String(baseRent.deal_date || '');
-    var rentDate = new Date(parseInt(ds.slice(0, 4)) || today.getFullYear(), (parseInt(ds.slice(4, 6)) || 1) - 1, parseInt(ds.slice(6, 8)) || 1);
-    var momentum = calcVillaPppMomentum(apt.trades, rentDate);
-
-    return {
-        estimate: Math.round(baseEstimate * momentum.factor),
-        baseRentDeposit: baseRent.deposit,
-        baseRentDate: ds,
-        size: baseRent.size || 0, // 기준으로 삼은 전세 건의 전용면적(㎡) - 평단가 환산에 사용
-        ratio: ratio,
-        ratioSource: ratioSource,
-        momentumNote: momentum.note,
-        rents: myRents, // 이 건물의 전세 거래 히스토리 전체 (아래 buildVillaRentHistoryHtml에서 목록으로 표시)
-    };
+    items = items.slice(0, 15);
+    const payload = { items, fetchedAt: Date.now(), address, queries };
+    setCachedDevNews(cacheKey, payload); // 응답을 늦추지 않도록 await 없이 fire-and-forget
+    return res.status(200).json({ devNews: payload });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
 }
 
-function buildJeonseEstimateHtml(est) {
-    var html = '<div class="indicator-box" style="border-color:#ff9800;background:#fff8e1;">';
-    html += '<div class="indicator-title" style="color:#e65100;">💰 전세가 기반 예상 거래가</div>';
-    if (est.estimate) {
-        html += '<div style="font-size:16px;font-weight:bold;color:#e65100;">' + toEok(String(est.estimate)) + '</div>';
-        html += '<div style="font-size:10px;color:#999;margin-top:2px;">기준 전세 ' + toEok(String(est.baseRentDeposit)) + ' ('
-            + est.baseRentDate + ') × 126% × 보정비율 ' + (Math.round(est.ratio * 100) / 100) + '</div>';
-        html += '<div style="font-size:10px;color:#999;">' + est.ratioSource + ' · ' + est.momentumNote + '</div>';
-    } else {
-        html += '<div style="font-size:11px;color:#999;">' + (est.noDataReason || '전세 데이터가 부족해 예상 거래가를 계산하지 못했습니다.') + '</div>';
-    }
-    html += buildVillaRentHistoryHtml(est.rents);
-    html += '</div>';
-    return html;
-}
-// 전세 거래 히스토리 목록 (최근순, 최대 12건 표시 - 나머지는 "외 N건"으로 요약)
-function buildVillaRentHistoryHtml(rents) {
-    if (!rents || !rents.length) return '';
-    var sorted = rents.slice().sort(function(a, b) { return String(b.deal_date).localeCompare(String(a.deal_date)); });
-    var shown = sorted.slice(0, 12);
-    var html = '<div style="margin-top:8px;border-top:1px dashed #ffcc80;padding-top:6px;">';
-    html += '<div style="font-size:10.5px;font-weight:bold;color:#e65100;margin-bottom:4px;">전세 거래 히스토리 (' + rents.length + '건)</div>';
-    shown.forEach(function(r) {
-        var ds = String(r.deal_date || '');
-        var dateStr = ds.length === 8 ? (ds.slice(0,4) + '.' + ds.slice(4,6) + '.' + ds.slice(6,8)) : ds;
-        html += '<div style="font-size:10.5px;color:#666;padding:2px 0;">' + dateStr + ' · ' + toEok(String(r.deposit || 0))
-            + (r.size > 0 ? ' · ' + toPyung(r.size) + '평' : '') + (r.floor ? ' · ' + r.floor + '층' : '') + '</div>';
-    });
-    if (rents.length > shown.length) {
-        html += '<div style="font-size:10px;color:#bbb;margin-top:2px;">외 ' + (rents.length - shown.length) + '건</div>';
-    }
-    html += '</div>';
-    return html;
+// ════════════════════════════════════
+// 정확도 검증: (1) 숫자 정합성(다른 필드로부터 재계산), (2) 스키마C 교차검증
+// 둘 다 "틀렸다"가 아니라 "확인이 필요하다"는 신호라서, 값을 고치지 않고 detail.warnings에
+// 문자열로 담아 프론트에서 경고로만 보여줌 (최종 판단은 사람이 원문을 보고 함).
+// ════════════════════════════════════
+function extractLeadingNum(v) {
+  if (v === null || v === undefined) return null;
+  const m = String(v).replace(/,/g, '').match(/[\d.]+/);
+  return m ? parseFloat(m[0]) : null;
 }
 
-function calcPppTimeline(apt) {
-    var trades = apt.trades || [];
-    return {
-        y8:   avgPppInRange(trades, eightYearAgo),
-        y5:   avgPppInRange(trades, fiveYearAgo),
-        y1:   avgPppInRange(trades, oneYearAgo),
-        m4:   avgPppInRange(trades, fourMonAgo),
-        last: latestPppInfo(trades)
-    };
-}
- 
-function calcEvalIndex(y1, y5) {
-    if (!y1.avg || !y5.avg) return null;
-    return Math.round(y1.avg / y5.avg * 1000) / 10;
-}
- 
-function getEvalGrade(idx) {
-    if (idx === null) return null;
-    if (idx < 90)  return { label: '과매도 상태', color: '#1565c0', bg: '#e3f2fd', desc: '5년 평균보다 10% 이상 싼 상태. 적극적 매수 검토.' };
-    if (idx < 110) return { label: '적정가 상태', color: '#2e7d32', bg: '#e8f5e9', desc: '과거 흐름과 일치. 실거주라면 매수 적기.' };
-    if (idx < 120) return { label: '과열 시작',   color: '#ff7043', bg: '#fff3e0', desc: '단기 차익을 노린다면 진입 부담.' };
-    return             { label: '위험 구간',   color: '#e53935', bg: '#ffebee', desc: '5년 평균보다 20% 이상 높음. 언제든 조정이 와도 이상하지 않음.' };
-}
- 
-function getSellPeriodNote(idx) {
-    if (idx === null) return '';
-    if (idx >= 110) return '매물을 내놓으면 아주 빨리 팔리는 시기입니다.';
-    if (idx <= 90)  return '아무리 싸게 내놔도 시장 자체가 죽어 있어 매도 기간이 길어질 수 있습니다.';
-    return '';
-}
- 
-/* 4개월 vs 1년: 모멘텀 + 거래량 결합 판독 */
-function calcMomentum(m4, y1) {
-    if (!m4.avg || !y1.avg) return null;
-    var diffPct = Math.round((m4.avg - y1.avg) / y1.avg * 1000) / 10;
-    var monthlyRate4 = m4.count / 4;
-    var monthlyRate1 = y1.count / 12;
-    var volumeUp   = monthlyRate1 > 0 && monthlyRate4 > monthlyRate1 * 1.1;
-    var volumeDown = monthlyRate1 > 0 && monthlyRate4 < monthlyRate1 * 0.9;
-    return { diffPct: diffPct, volumeUp: volumeUp, volumeDown: volumeDown };
-}
- 
-function getMomentumText(mo) {
-    if (!mo) return { title: '데이터 부족', desc: '4개월/1년 데이터가 모두 있어야 판독할 수 있어요.', color: '#aaa' };
-    if (mo.diffPct > 1 && mo.volumeDown) {
-        return { title: '가짜 상승 주의', color: '#e53935',
-            desc: '가격은 올랐지만(4개월 > 1년) 거래량은 줄었습니다. 소수 거래로 가격만 찍힌 상태일 수 있어 조만간 꺾일 위험이 있습니다.' };
+function buildNumericWarnings(m) {
+  const warnings = [];
+  function pct(a, b) {
+    return b ? (a / b) * 100 : null;
+  }
+  if (m.appraisalPrice && m.minBidPrice && m.minBidRate) {
+    const computed = pct(m.minBidPrice, m.appraisalPrice);
+    if (computed !== null && Math.abs(computed - m.minBidRate) > 3) {
+      warnings.push(`최저가율(AI: ${m.minBidRate}%)이 감정가 대비 실제 계산값(${computed.toFixed(1)}%)과 차이가 큽니다. 감정가·최저가 금액을 확인해 주세요.`);
     }
-    if (Math.abs(mo.diffPct) <= 1 && mo.volumeUp) {
-        return { title: '바닥 다지기', color: '#2e7d32',
-            desc: '가격은 보합인데 거래량이 늘었습니다. 매도 물량을 매수세가 받아내는 중으로, 상승 전환 에너지를 축적하는 좋은 매수 타이밍일 수 있습니다.' };
+  }
+  if (m.minBidPrice && m.deposit && m.depositRate) {
+    const computed = pct(m.deposit, m.minBidPrice);
+    if (computed !== null && Math.abs(computed - m.depositRate) > 3) {
+      warnings.push(`보증금율(AI: ${m.depositRate}%)이 최저가 대비 실제 계산값(${computed.toFixed(1)}%)과 차이가 큽니다. 보증금 금액을 확인해 주세요.`);
     }
-    if (mo.diffPct > 1) {
-        return { title: '상승 가속', color: '#e53935',
-            desc: '최근 4개월 평단가가 1년 평균보다 높습니다. 매수세가 강하게 유입 중이라 매도자는 호가를 높여도 되고, 매수자는 추격매수 리스크를 감안해야 합니다.' };
+  }
+  const areaMatch = m.buildingArea ? String(m.buildingArea).match(/([\d.]+)\s*㎡/) : null;
+  const buildingAreaNum = areaMatch ? extractLeadingNum(areaMatch[1]) : null;
+  if (buildingAreaNum && m.buildingPrice && m.unitPricePerM2) {
+    const computed = m.buildingPrice / buildingAreaNum;
+    if (computed > 0 && Math.abs(computed - m.unitPricePerM2) / m.unitPricePerM2 > 0.25) {
+      warnings.push('㎡당 단가가 "건물가격÷건물면적" 계산값과 25% 이상 차이납니다. 면적·가격 단위를 확인해 주세요.');
     }
-    if (mo.diffPct < -1) {
-        return { title: '하락 전환', color: '#1565c0',
-            desc: '최근 4개월 사이 시장 분위기가 식었습니다. 하락 초입일 가능성이 높아, 매도 계획이 있다면 가격을 더 낮추기 전에 서두르는 게 좋습니다.' };
-    }
-    return { title: '보합', color: '#9e9e9e', desc: '4개월 평단가와 1년 평균이 비슷한 수준으로, 뚜렷한 방향성은 없습니다.' };
+  }
+  return warnings;
 }
- 
-function getExitPricingText(mo) {
-    if (!mo) return '';
-    if (mo.diffPct >= 5)  return '시장이 뜨겁습니다. 1년 평균가가 아닌 최근 4개월 평단가에 맞춰 내놔도 1~2개월 내 매도 가능성이 높습니다.';
-    if (mo.diffPct < 0)   return '시장이 냉각 중입니다. 1년 평균가에 미련을 두면 안 팔립니다. 최근 4개월 평단가보다 1~2% 더 낮춰야 매도 기간을 단축할 수 있습니다.';
-    return '완만한 흐름입니다. 최근 4개월 평단가 부근에서 가격을 조율하시면 됩니다.';
-}
- 
-/* 최근 거래 1건 vs 4개월 평균: 실전 호가 신호 */
-function calcLatestSignal(last, m4) {
-    if (!last || !m4.avg) return null;
-    var diffPct = Math.round((last.ppp - m4.avg) / m4.avg * 1000) / 10;
-    return { diffPct: diffPct };
-}
- 
-function getLatestSignalText(sig) {
-    if (!sig) return { title: '데이터 부족', desc: '최근 거래 또는 4개월 평균 데이터가 부족합니다.', color: '#aaa' };
-    var d = sig.diffPct;
-    if (d <= -5)  return { title: '투매/급락', color: '#1565c0', desc: '최근 거래가 4개월 평균보다 5% 이상 낮습니다. 8년·5년 평균과 비교해 바닥권이라면 공포에 매수하는 전략도 고려할 수 있습니다.' };
-    if (d < -2)   return { title: '급매 체결 시작', color: '#1565c0', desc: '매도자들이 조급해지고 있다는 신호입니다. 다음 거래는 더 낮아질 가능성이 있어 리스크 관리가 필요합니다.' };
-    if (d <= 2)   return { title: '안정 · 가격 합의', color: '#2e7d32', desc: '최근 거래가 4개월 평균에 가깝습니다. 시장이 안정적이라 매도 기간 예측이 비교적 쉽습니다.' };
-    if (d < 5)    return { title: '신고가 갱신 흐름', color: '#e53935', desc: '최근 거래가 4개월 평균보다 높습니다. 지금 부르는 호가가 곧 실거래가가 될 가능성이 있어 호가를 유지·소폭 상향할 수 있습니다.' };
-    return { title: '추격매수/과열', color: '#e53935', desc: '최근 거래가 4개월 평균보다 5% 이상 높습니다. 단기 차익을 노린다면 추격매수를 고려할 수 있지만 과열 리스크도 함께 커집니다.' };
-}
- 
-function buildSellStrategyTableHtml(sig) {
-    var rows = [
-        { key: 'high', label: '최근 거래가 높음', psych: '"더 오를 것 같아"', action: '최근 거래가와 비슷하거나 1% 높게' },
-        { key: 'mid',  label: '최근 거래가 비슷', psych: '"이게 적정가야"',   action: '최근 거래가보다 500만 원만 낮게 (우선순위 선점)' },
-        { key: 'low',  label: '최근 거래가 낮음', psych: '"빨리 팔고 싶어"',  action: '최근 거래가에 맞추거나 더 낮게 (빠른 탈출)' }
-    ];
-    var activeKey = null;
-    if (sig) {
-        if (sig.diffPct > 2) activeKey = 'high';
-        else if (sig.diffPct < -2) activeKey = 'low';
-        else activeKey = 'mid';
-    }
-    var html = '<table style="margin-top:6px;"><thead><tr><th>비교 결과</th><th>시장 심리</th><th>매도가 설정</th></tr></thead><tbody>';
-    rows.forEach(function(r) {
-        var hi = r.key === activeKey;
-        html += '<tr style="' + (hi ? 'background:#fff3e0;font-weight:bold;' : '') + '">'
-            + '<td>' + r.label + '</td><td>' + r.psych + '</td><td style="font-size:11px;">' + r.action + '</td></tr>';
-    });
-    html += '</tbody></table>';
-    return html;
-}
- 
-function buildPppAnalysisHtml(t) {
-    var bars = [
-        { label: '8년',      sub: '바닥선',       v: t.y8.avg,   count: t.y8.count,   color: '#9e9e9e' },
-        { label: '5년',      sub: t.y5.count + '건', v: t.y5.avg,   count: t.y5.count,   color: '#9e9e9e' },
-        { label: '1년',      sub: t.y1.count + '건', v: t.y1.avg,   count: t.y1.count,   color: '#42a5f5' },
-        { label: '4개월',    sub: t.m4.count + '건', v: t.m4.avg,   count: t.m4.count,   color: '#e53935' },
-        { label: '최근거래', sub: t.last ? (t.last.date.getMonth()+1) + '/' + t.last.date.getDate() : '-', v: t.last ? t.last.ppp : null, color: '#6a1b9a' }
-    ];
-    var maxV = Math.max.apply(null, bars.map(function(b) { return b.v || 0; }));
- 
-    var barsHtml = bars.map(function(b) {
-        var h = (maxV > 0 && b.v) ? Math.max(4, Math.round(b.v / maxV * 100)) : 2;
-        var valText = b.v ? (Math.round(b.v / 100) / 10) + '천만' : '-';
-        return '<div style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;height:110px;">'
-            + '<div style="font-size:10px;font-weight:bold;color:#333;margin-bottom:2px;white-space:nowrap;">' + valText + '</div>'
-            + '<div style="width:70%;background:' + b.color + ';border-radius:4px 4px 0 0;height:' + h + '%;min-height:3px;"></div>'
-            + '<div style="font-size:10px;color:#666;font-weight:bold;margin-top:4px;">' + b.label + '</div>'
-            + '<div style="font-size:9px;color:#aaa;">' + b.sub + '</div>'
-            + '</div>';
-    }).join('');
- 
-    var idx      = calcEvalIndex(t.y1, t.y5);
-    var evalG    = getEvalGrade(idx);
-    var sellNote = getSellPeriodNote(idx);
-    var mo       = calcMomentum(t.m4, t.y1);
-    var moText   = getMomentumText(mo);
-    var exitText = getExitPricingText(mo);
-    var sig      = calcLatestSignal(t.last, t.m4);
-    var sigText  = getLatestSignalText(sig);
- 
-    var html = '<div class="indicator-box"><div class="indicator-title">평단가 타임라인 (8년 · 5년 · 1년 · 4개월 · 최근거래)</div>';
-    html += '<div style="display:flex;align-items:flex-end;gap:4px;padding:6px 2px 2px;">' + barsHtml + '</div>';
-    html += '</div>';
- 
-    if (evalG) {
-        html += '<div class="indicator-box" style="border-color:' + evalG.color + ';background:' + evalG.bg + ';">';
-        html += '<div class="indicator-title">평가 지수 (최근 1년 ÷ 과거 5년 × 100)</div>';
-        html += '<div style="display:flex;align-items:center;gap:10px;margin-bottom:6px;">'
-            + '<div style="font-size:30px;font-weight:900;color:' + evalG.color + ';">' + idx + '</div>'
-            + '<div style="font-size:14px;font-weight:bold;color:' + evalG.color + ';">' + evalG.label + '</div></div>';
-        html += '<div style="font-size:11px;color:#555;">' + evalG.desc + '</div>';
-        if (sellNote) html += '<div style="font-size:11px;color:' + evalG.color + ';margin-top:6px;font-weight:bold;">▸ ' + sellNote + '</div>';
-        html += '</div>';
-    }
- 
-    html += '<div class="indicator-box">';
-    html += '<div class="indicator-title">추세 판독 (4개월 vs 1년)</div>';
-    html += '<div style="font-size:13px;font-weight:bold;color:' + moText.color + ';margin-bottom:4px;">' + moText.title + '</div>';
-    html += '<div style="font-size:11px;color:#555;">' + moText.desc + '</div>';
-    if (exitText) html += '<div style="font-size:11px;color:#333;margin-top:6px;padding-top:6px;border-top:1px dashed #ddd;">💡 매도 적정가: ' + exitText + '</div>';
-    html += '</div>';
- 
-    html += '<div class="indicator-box">';
-    html += '<div class="indicator-title">실시간 호가 신호 (최근 거래 vs 4개월 평균)</div>';
-    html += '<div style="font-size:13px;font-weight:bold;color:' + sigText.color + ';margin-bottom:4px;">' + sigText.title + '</div>';
-    html += '<div style="font-size:11px;color:#555;">' + sigText.desc + '</div>';
-    html += buildSellStrategyTableHtml(sig);
-    html += '</div>';
- 
-    return html;
-}
-    /* ════════════════════════════════════
-   거래량 지표 (8년 데이터, 계약건수 기반)
-════════════════════════════════════ */
-function countInRange(trades, fromDate, toDate) {
-    return trades.filter(function(t) {
-        var d = tradeDate(t);
-        return d >= fromDate && (!toDate || d < toDate);
-    }).length;
-}
-function calcVolumeIndicators(apt, realUnits) {
-    var trades = (apt.trades || []).filter(function(t) { return t.year > 0; });
-    if (!trades.length) return null;
-    /* 1) 거래 활성 지수 = (최근 6개월 월평균) / (8년 전체 월평균) × 100 */
-    var recent6moCount   = countInRange(trades, sixMonAgo, null);
-    var eightYearCount   = countInRange(trades, eightYearAgo, null);
-    var recent6moMonthly = recent6moCount / 6;
-    var eightYearMonthly = eightYearCount / 96;
-    var activityIdx = eightYearMonthly > 0 ? Math.round(recent6moMonthly / eightYearMonthly * 1000) / 10 : null;
-    /* 2) 매수 우위 지수 = 최근 6개월 가격/거래량 vs 직전 6개월(6~12개월 전) */
-    function avgPppRange(fromDate, toDate) {
-        var valid = trades.filter(function(t) {
-            var d = tradeDate(t);
-            return d >= fromDate && (!toDate || d < toDate) && t.area > 0 && parseInt(t.amount) > 0 && parseInt(t.floor) !== 1;
-        });
-        if (!valid.length) return null;
-        var sum = valid.reduce(function(a, t) { return a + parseInt(t.amount) / toPyung(t.area); }, 0);
-        return Math.round(sum / valid.length);
-    }
-    var priceNow  = avgPppRange(sixMonAgo, null);
-    var pricePrev = avgPppRange(oneYearAgo, sixMonAgo);
-    var priorVolume6 = countInRange(trades, oneYearAgo, sixMonAgo);
-    var priceDir = null;
-    if (priceNow && pricePrev) {
-        var priceDiffPct = (priceNow - pricePrev) / pricePrev * 100;
-        priceDir = priceDiffPct > 1 ? 'up' : priceDiffPct < -1 ? 'down' : 'flat';
-    }
-    var volumeDir = null;
-    if (priorVolume6 > 0 || recent6moCount > 0) {
-        var volDiffPct = priorVolume6 > 0 ? (recent6moCount - priorVolume6) / priorVolume6 * 100 : 100;
-        volumeDir = volDiffPct > 10 ? 'up' : volDiffPct < -10 ? 'down' : 'flat';
-    }
-    /* 3) 회전율 - 건축물대장에 실제 세대수(hhldCnt)가 있으면 그 값을 쓰고,
-          없으면 층+면적 조합의 고유 개수로 세대수를 추정합니다(근사치, 최소 여유배수 3배). */
-    var recentYearTrades = countInRange(trades, oneYearAgo, null);
-    var uniqueUnits = new Set(trades.map(function(t) { return t.floor + '_' + Math.round(t.area); })).size;
-    var estUnits = Math.max(uniqueUnits * 3, recentYearTrades, 1);
-    var isEstimated = !(realUnits && realUnits > 0);
-    var finalUnits = isEstimated ? estUnits : realUnits;
-    var turnoverRate = Math.round(recentYearTrades / finalUnits * 1000) / 10;
-    /* 골든크로스 - 최근 3개월 월평균이 최근 3년 월평균을 상향 돌파했는지 */
-    var recent3moMonthly = countInRange(trades, threeMonAgo, null) / 3;
-    var threeYearMonthly = countInRange(trades, threeYearAgo, null) / 36;
-    var goldenCross = threeYearMonthly > 0 && recent3moMonthly > threeYearMonthly;
-    return {
-        activityIdx: activityIdx,
-        priceDir: priceDir,
-        volumeDir: volumeDir,
-        turnoverRate: turnoverRate,
-        estUnits: finalUnits,
-        isEstimated: isEstimated,
-        recentYearTrades: recentYearTrades,
-        recent3moMonthly: Math.round(recent3moMonthly * 10) / 10,
-        threeYearMonthly: Math.round(threeYearMonthly * 10) / 10,
-        goldenCross: goldenCross
-    };
-}
-function getActivityGrade(idx) {
-    if (idx === null) return { title: '데이터 부족', color: '#aaa', desc: '' };
-    if (idx >= 120) return { title: '시장 과열', color: '#e53935', desc: '가격 상승이 뒤따를 가능성이 매우 높습니다.' };
-    if (idx >= 80)  return { title: '정상 손바뀜', color: '#2e7d32', desc: '평소 수준의 거래가 이뤄지고 있습니다.' };
-    if (idx > 50)   return { title: '거래 둔화', color: '#ff7043', desc: '평소보다 거래가 뜸한 편입니다.' };
-    return { title: '거래 절벽', color: '#1565c0', desc: '가격 하락의 전조이거나 심각한 침체기일 수 있습니다. 단기 매매 시 가장 경계해야 할 신호입니다.' };
-}
-function getBuyerEdgeText(priceDir, volumeDir) {
-    if (!priceDir || !volumeDir) return { title: '데이터 부족', color: '#aaa', desc: '가격·거래량 데이터가 부족합니다.' };
-    if (priceDir === 'up'   && volumeDir === 'up')   return { title: '진짜 상승',   color: '#e53935', desc: '가격도 거래량도 늘고 있습니다. 수요가 탄탄해 단기 진입에 가장 좋은 신호입니다.' };
-    if (priceDir === 'up'   && volumeDir === 'down') return { title: '에너지 고갈', color: '#ff7043', desc: '가격은 올랐지만 거래량이 줄었습니다. 추격 매수가 끊겨 곧 하락 전환될 위험이 큽니다.' };
-    if (priceDir === 'down' && volumeDir === 'up')   return { title: '바닥 다지기', color: '#2e7d32', desc: '가격은 내렸지만 거래량이 늘었습니다. 저가 매수세가 유입 중이라 반등이 머지않았을 수 있습니다.' };
-    if (priceDir === 'down' && volumeDir === 'down') return { title: '약세 지속',   color: '#1565c0', desc: '가격도 거래량도 위축되고 있습니다. 추가 하락 가능성에 유의해야 합니다.' };
-    return { title: '보합', color: '#9e9e9e', desc: '가격과 거래량 모두 뚜렷한 방향이 없습니다.' };
-}
-function getTurnoverGrade(rate) {
-    if (rate === null) return { title: '데이터 부족', color: '#aaa', desc: '' };
-    if (rate >= 5) return { title: '환금성 높음', color: '#2e7d32', desc: '언제든 사고팔 수 있는 환금성이 좋은 단지입니다.' };
-    if (rate >= 2) return { title: '보통', color: '#9e9e9e', desc: '' };
-    return { title: '환금성 낮음', color: '#e53935', desc: '한 번 물리면 팔고 나오기 어려울 수 있어 단기 매매엔 부적합할 수 있습니다.' };
-}
-function buildVolumeAnalysisHtml(vi) {
-    var html = '';
-    /* 1) 거래 활성 지수 */
-    var ag = getActivityGrade(vi.activityIdx);
-    html += '<div class="indicator-box">';
-    html += '<div class="indicator-title">거래 활성 지수 (최근 6개월 ÷ 8년 평균 × 100)</div>';
-    html += '<div style="display:flex;align-items:center;gap:10px;margin-bottom:6px;">'
-        + '<div style="font-size:26px;font-weight:900;color:' + ag.color + ';">' + (vi.activityIdx === null ? '-' : vi.activityIdx) + '</div>'
-        + '<div style="font-size:13px;font-weight:bold;color:' + ag.color + ';">' + ag.title + '</div></div>';
-    if (ag.desc) html += '<div style="font-size:11px;color:#555;">' + ag.desc + '</div>';
-    html += '</div>';
-    /* 2) 매수 우위 지수 */
-    var be = getBuyerEdgeText(vi.priceDir, vi.volumeDir);
-    html += '<div class="indicator-box">';
-    html += '<div class="indicator-title">매수 우위 지수 (가격 × 거래량 방향)</div>';
-    html += '<div style="font-size:13px;font-weight:bold;color:' + be.color + ';margin-bottom:4px;">' + be.title + '</div>';
-    html += '<div style="font-size:11px;color:#555;">' + be.desc + '</div>';
-    html += '</div>';
-    /* 3) 회전율 */
-    var tg = getTurnoverGrade(vi.turnoverRate);
-    html += '<div class="indicator-box">';
-    html += '<div class="indicator-title">회전율 (최근 1년 계약건수 ÷ ' + (vi.isEstimated ? '추정 세대수' : '실제 세대수') + ')</div>';
-    html += '<div style="display:flex;align-items:center;gap:10px;margin-bottom:6px;">'
-        + '<div style="font-size:26px;font-weight:900;color:' + tg.color + ';">' + vi.turnoverRate + '%</div>'
-        + '<div style="font-size:13px;font-weight:bold;color:' + tg.color + ';">' + tg.title + '</div>'
-        + (vi.isEstimated ? '' : '<span style="font-size:10px;background:#2e7d32;color:white;padding:1px 6px;border-radius:8px;font-weight:bold;">건축물대장 확인</span>')
-        + '</div>';
-    if (tg.desc) html += '<div style="font-size:11px;color:#555;">' + tg.desc + '</div>';
-    html += '<div style="font-size:10px;color:#bbb;margin-top:6px;">' + (vi.isEstimated ? '추정 세대수 ' + vi.estUnits + '세대 (층+면적 조합 기반 근사치)' : '실제 세대수 ' + vi.estUnits + '세대') + ' · 최근1년 ' + vi.recentYearTrades + '건</div>';
-    html += '</div>';
-    /* 골든크로스 */
-    html += '<div class="indicator-box" style="' + (vi.goldenCross ? 'border-color:#e53935;background:#ffebee;' : '') + '">';
-    html += '<div class="indicator-title">거래량 골든크로스 (최근 3개월 vs 3년 월평균)</div>';
-    if (vi.goldenCross) {
-        html += '<div style="font-size:13px;font-weight:bold;color:#e53935;margin-bottom:4px;">🔥 골든크로스 발생</div>';
-        html += '<div style="font-size:11px;color:#555;">최근 3개월 월평균(' + vi.recent3moMonthly + '건)이 3년 평균(' + vi.threeYearMonthly + '건)을 상향 돌파했습니다. 가격이 오르기 전 거래량이 먼저 붙는 전형적인 신호로, 완벽한 단기 매수 타점일 수 있습니다.</div>';
-    } else {
-        html += '<div style="font-size:13px;font-weight:bold;color:#9e9e9e;margin-bottom:4px;">아직 발생 안 함</div>';
-        html += '<div style="font-size:11px;color:#555;">최근 3개월 월평균 ' + vi.recent3moMonthly + '건 · 3년 평균 ' + vi.threeYearMonthly + '건</div>';
-    }
-    html += '</div>';
-    return html;
-}
-async function searchNationwide(q) {
-    try {
-        var res = await fetch('/api/search-complex?q=' + encodeURIComponent(q));
-        var data = await res.json();
-        var localLabelSet = {};
-        searchLocalComplexes(q).forEach(function(r) { localLabelSet[normalizeSearchStr(r.label)] = true; });
- 
-        var nationalResults = (data.results || [])
-            .filter(function(row) { return !localLabelSet[normalizeSearchStr(row.danji || (row.dong + row.bunji))]; })
-            .map(function(row) {
-                return {
-                    label: row.danji || (row.dong + ' ' + row.bunji),
-                    sub: (row.region || '') + (row.dong ? ' ' + row.dong : '') + (row.road_name ? ' · ' + row.road_name : ''),
-                    type: row.buildingType === 'villa' ? '연립다세대' : '아파트',
-                    remote: row
-                };
-            });
- 
-        // 이미 로컬 결과가 화면에 떠있는 상태에 이어붙임
-        var combined = searchLocalComplexes(q).concat(nationalResults);
-        if (combined.length) showLocalDropdown(combined);
-    } catch (e) {
-        console.error('전국 검색 실패:', e);
-    }
-}
- 
-function selectRemoteComplex(row) {
-    var l = {
-        region: row.region, dong: row.dong, name: row.danji, bunji: row.bunji,
-        road_name: row.road_name, main_num: row.main_num, sub_num: row.sub_num,
-        buildingType: row.buildingType
-    };
-    var candidates = buildGeocodeCandidates(l);
-    if (!candidates.length) { alert('이 단지의 위치를 찾을 수 없습니다.'); return; }
- 
-    setStatus('위치 찾는 중...');
-    tryStepGeocode(candidates, function(lat, lon) {
-        if (!lat || !lon) { setStatus(''); alert('이 단지의 위치를 찾을 수 없습니다.'); return; }
-        map.setCenter(new kakao.maps.LatLng(lat, lon));
-        map.setLevel(4);
-        lastLawdCd = null; // 새 지역 데이터 강제 로드
-        loadAllData(lat, lon).then(function() {
-            setStatus('');
-            var target = allAptList.find(function(apt) {
-                var al = apt.latest || {};
-                return (al.name || '') === (row.danji || '') &&
-                       (al.dong  || '') === (row.dong  || '') &&
-                       (al.road_name || '') === (row.road_name || '');
-            });
-            if (target) {
-                showRadiusCircle(lat, lon);
-                openPanel(target);
-            }
-        });
-    });
-}
-async function loadBuildingInfo(apt, lat, lon) {
-    try {
-        if (!lat || !lon) return null;
-        var l = apt.latest || {};
-        var cacheKey = [l.dong, l.name, l.bunji, l.road_name, l.main_num, l.sub_num].join('|').toLowerCase();
-        var cached = coordCache[cacheKey];
- 
-        var sigunguCd, bjdongCd;
-        if (cached && cached.sigunguCd && cached.bjdongCd) {
-            sigunguCd = cached.sigunguCd;
-            bjdongCd  = cached.bjdongCd;
-        } else {
-            var regionCode = await new Promise(function(resolve) {
-                geocoder.coord2RegionCode(lon, lat, function(result, status) {
-                    if (status !== kakao.maps.services.Status.OK) { resolve(null); return; }
-                    var b = result.find(function(r) { return r.region_type === 'B'; });
-                    resolve(b ? b.code : null);
-                });
-            });
-            if (!regionCode || regionCode.length < 10) return null;
-            sigunguCd = regionCode.slice(0, 5);
-            bjdongCd  = regionCode.slice(5, 10);
-            saveCoordToDB(cacheKey, lat, lon, sigunguCd, bjdongCd);
-        }
- 
-        var main = null, sub = null;
- 
-        // 1순위: dong + bunji (원본 지번 문자열, 예: "254-3")를 직접 분리
-        if (l.bunji) {
-            var parts = String(l.bunji).split('-');
-            var m1 = parseInt(parts[0], 10);
-            var m2 = parts[1] !== undefined ? parseInt(parts[1], 10) : null;
-            main = Number.isNaN(m1) ? null : m1;
-            sub  = (m2 === null || Number.isNaN(m2) || m2 === 0) ? null : m2;
-        }
-        // 2순위: bunji가 없을 때만 road_name + main_num + sub_num 사용
-        if (!main && l.road_name && l.main_num) {
-            main = l.main_num;
-            sub  = l.sub_num;
-        }
-        if (!main) return null;
- 
-        var bun = String(main).padStart(4, '0');
-        var ji  = String(sub || 0).padStart(4, '0');
-        var url = '/api/get-building?sigunguCd=' + sigunguCd + '&bjdongCd=' + bjdongCd
-            + '&bun=' + bun + '&ji=' + ji + '&bldNm=' + encodeURIComponent(l.name || '');
-        var res  = await fetch(url);
-        var data = await res.json();
-        if (!data || (!data.title && !data.price)) return null;
-        return data;
-    } catch (e) {
-        console.error('건축물대장 조회 실패:', e.message);
-        return null;
-    }
-}
-function formatDate8(s) {
-    if (!s || s.length !== 8) return s || '';
-    return s.slice(0,4) + '.' + s.slice(4,6) + '.' + s.slice(6,8);
-}
-/* 층별현황/전유공용면적 표를 접기/펼치기 (범례 접기와 같은 패턴). 표 자체는 매번 새로
-   렌더링되므로 상태를 localStorage에 저장하지 않고, 숨김이 기본값(표가 길어서 상세페이지
-   스크롤을 많이 차지하므로 필요할 때만 펼쳐서 보도록 함). */
-function toggleBuildingTable(bodyId, btnId) {
-    var el = document.getElementById(bodyId);
-    if (!el) return;
-    var nowHidden = el.style.display !== 'none';
-    el.style.display = nowHidden ? 'none' : '';
-    var btn = document.getElementById(btnId);
-    if (btn) btn.innerText = nowHidden ? '보이기 ▸' : '숨기기 ▾';
-}
-/* opts.highlightUnit: AI가 추출한 이 물건의 호수("302호" 등)와 일치하는 행을 강조 표시.
-   opts.idPrefix: 같은 화면에 이 함수가 여러 번 호출될 수 있어(경매 모달 vs 일반 매물 패널)
-   접기/펼치기 버튼 id가 겹치지 않도록 구분하는 접두사. */
-function buildBuildingInfoHtml(info, opts) {
-    if (!info) return '';
-    opts = opts || {};
-    var idPrefix = opts.idPrefix || 'bi';
-    var highlightDigits = opts.highlightUnit ? String(opts.highlightUnit).replace(/\D/g, '') : '';
-    var t = info.title, p = info.price, floors = info.floors, exposAreas = info.exposAreas;
-    var html = '<div class="indicator-box">';
-    html += '<div class="indicator-title">🏢 건축물대장 정보</div>';
-    if (t) {
-        var parkTotal = (t.indrAutoUtcnt||0) + (t.oudrAutoUtcnt||0) + (t.indrMechUtcnt||0) + (t.oudrMechUtcnt||0);
-        var elvtTotal = (t.rideElvtCnt||0) + (t.emgenElvtCnt||0);
-        html += '<div class="indicator-grid">';
-        function item(label, value) {
-            if (value === null || value === undefined || value === '') return '';
-            return '<div class="indicator-item"><div class="indicator-label">' + label + '</div>'
-                + '<div class="indicator-value" style="font-size:12px;">' + value + '</div></div>';
-        }
-        html += item('지번주소', t.platPlc);
-        html += item('도로명주소', t.newPlatPlc);
-        html += item('주용도', t.mainPurps);
-        html += item('주구조', t.strct);
-        html += item('총 층수', (t.grndFlrCnt || '-') + '층' + (t.ugrndFlrCnt ? ' (지하' + t.ugrndFlrCnt + ')' : ''));
-        html += item('세대수', t.hhldCnt ? t.hhldCnt + '세대' : '');
-        html += item('연면적', t.totArea ? Math.round(t.totArea).toLocaleString() + '㎡' : '');
-        html += item('건폐율/용적률', (t.bcRat !== null && t.vlRat !== null) ? t.bcRat + '% / ' + t.vlRat + '%' : '');
-        html += item('승강기', elvtTotal ? elvtTotal + '대' : '');
-        html += item('주차대수', parkTotal ? parkTotal + '대' : '');
-        html += item('사용승인일', formatDate8(t.useAprDay));
-        if (t.engrGrade) html += item('에너지효율등급', t.engrGrade);
-        html += '</div>';
-    }
-    if (p && p.price) {
-        html += '<div style="margin-top:8px;font-size:11px;color:#555;border-top:1px dashed #ddd;padding-top:6px;">'
-            + '공동주택가격(공시가격, ' + p.year + '년 ' + p.month + '월 기준): '
-            + '<b style="color:#333;">' + toEok(String(Math.round(p.price / 10000))) + '</b></div>';
-    }
-    if (!t && !p) html += '<div style="font-size:11px;color:#999;">조회된 건축물대장 정보가 없습니다.</div>';
-    html += '</div>';
- 
-    if (floors && floors.length) {
-        var floorsBodyId = idPrefix + '-floors-body', floorsBtnId = idPrefix + '-floors-btn';
-        html += '<div class="indicator-box">';
-        html += '<div class="indicator-title" style="display:flex;justify-content:space-between;align-items:center;">'
-            + '<span>📐 층별 현황 (' + floors.length + '개 층)</span>'
-            + '<span id="' + floorsBtnId + '" onclick="toggleBuildingTable(\'' + floorsBodyId + '\',\'' + floorsBtnId + '\')" '
-            + 'style="font-size:10px;color:#888;font-weight:bold;cursor:pointer;white-space:nowrap;margin-left:8px;">보이기 ▸</span></div>';
-        html += '<div id="' + floorsBodyId + '" style="display:none;">';
-        html += '<table><thead><tr><th>층</th><th>구조</th><th>용도</th><th>면적</th></tr></thead><tbody>';
-        floors.forEach(function(f) {
-            html += '<tr>'
-                + '<td>' + (f.flrNoNm || '-') + (f.dongNm ? '<br><span style="font-size:9px;color:#aaa;">' + f.dongNm + '</span>' : '') + '</td>'
-                + '<td style="font-size:11px;">' + (f.strct || '-') + '</td>'
-                + '<td style="font-size:11px;">' + (f.mainPurps || '-') + '</td>'
-                + '<td>' + (f.area !== null ? Math.round(f.area * 10) / 10 + '㎡' : '-') + '</td>'
-                + '</tr>';
-        });
-        html += '</tbody></table></div></div>';
-    }
 
-    if (exposAreas && exposAreas.length) {
-        var exposBodyId = idPrefix + '-expos-body', exposBtnId = idPrefix + '-expos-btn';
-        html += '<div class="indicator-box">';
-        html += '<div class="indicator-title" style="display:flex;justify-content:space-between;align-items:center;">'
-            + '<span>🏠 전유/공용면적 (' + exposAreas.length + '건)</span>'
-            + '<span id="' + exposBtnId + '" onclick="toggleBuildingTable(\'' + exposBodyId + '\',\'' + exposBtnId + '\')" '
-            + 'style="font-size:10px;color:#888;font-weight:bold;cursor:pointer;white-space:nowrap;margin-left:8px;">보이기 ▸</span></div>';
-        if (highlightDigits) {
-            html += '<div style="font-size:10px;color:#e53935;margin:2px 0;">🔸 표시된 행이 등록하신 호수(' + opts.highlightUnit + ')와 일치하는 항목입니다.</div>';
-        }
-        html += '<div id="' + exposBodyId + '" style="display:none;">';
-        html += '<table><thead><tr><th>호실</th><th>구분</th><th>구조</th><th>용도</th><th>면적</th></tr></thead><tbody>';
-        exposAreas.forEach(function(e) {
-            var gbColor = e.gbNm && e.gbNm.indexOf('전유') !== -1 ? '#1565c0' : '#888';
-            var rowDigits = (e.hoNm || '').replace(/\D/g, '');
-            var isMatch = highlightDigits && rowDigits && rowDigits === highlightDigits;
-            html += '<tr' + (isMatch ? ' style="background:#fff3cd;font-weight:bold;"' : '') + '>'
-                + '<td>' + (isMatch ? '👉 ' : '') + (e.hoNm || e.flrNoNm || '-') + '</td>'
-                + '<td style="color:' + gbColor + ';font-weight:bold;font-size:11px;">' + (e.gbNm || '-') + '</td>'
-                + '<td style="font-size:11px;">' + (e.strct || '-') + '</td>'
-                + '<td style="font-size:11px;">' + (e.mainPurps || '-') + '</td>'
-                + '<td>' + (e.area !== null ? Math.round(e.area * 10) / 10 + '㎡' : '-') + '</td>'
-                + '</tr>';
-        });
-        html += '</tbody></table></div></div>';
-    }
+export default async function handler(req, res) {
+  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
+  if (req.method !== 'POST') return res.status(405).json({ error: 'POST only' });
+  // 개발호재 검색(mode:'devNews')은 기존 경매정보지 추출(Gemini) 로직과 완전히 별개(네이버 뉴스검색
+  // API 사용)라 GEMINI_API_KEY 확인보다 먼저 분기함
+  if (req.body && req.body.mode === 'devNews') {
+    return handleDevNewsSearch(req, res);
+  }
+  const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
+  if (!GEMINI_API_KEY) {
+    return res.status(500).json({ error: 'GEMINI_API_KEY 환경변수가 없습니다. Vercel 프로젝트 설정에 추가해 주세요.' });
+  }
+  const { text, images } = req.body || {};
+  const hasText = text && String(text).trim();
+  const hasImages = Array.isArray(images) && images.length > 0;
+  if (!hasText && !hasImages) {
+    return res.status(400).json({ error: '분석할 텍스트 또는 이미지가 없습니다.' });
+  }
 
-    return html;
-}
-    
-/* ════════════════════════════════════
-   빌라 연식단계별 평단가 추이 (연도별 시장평균)
-════════════════════════════════════ */
-function calcTierYearlyTrend(tier) {
-    var yearMap = {};
-    allAptList.forEach(function(apt) {
-        if (apt.buildingType !== 'villa' || apt.ageTier !== tier) return;
-        (apt.trades || []).forEach(function(t) {
-            if (t.area <= 0 || parseInt(t.amount) <= 0 || parseInt(t.floor) === 1) return;
-            var yr = t.year;
-            if (!yr) return;
-            if (!yearMap[yr]) yearMap[yr] = [];
-            yearMap[yr].push(parseInt(t.amount) / toPyung(t.area));
-        });
-    });
-    var years = Object.keys(yearMap).map(Number).sort(function(a, b) { return a - b; });
-    return years.map(function(yr) {
-        var arr = yearMap[yr];
-        var sum = arr.reduce(function(a, b) { return a + b; }, 0);
-        return { year: yr, avgPpp: Math.round(sum / arr.length), count: arr.length };
-    });
-}
-function buildTierTrendChartHtml(tier) {
-    var label = getVillaTierLabel(tier) || '연식단계 미상';
-    var data = calcTierYearlyTrend(tier);
-    if (data.length < 2) {
-        return '<div class="indicator-box"><div class="indicator-title">📈 ' + label + ' 평단가 추이 (연도별 시장평균)</div>'
-            + '<div style="font-size:11px;color:#999;">추이를 그리기에 데이터가 부족합니다.</div></div>';
+  const imageParts = hasImages
+    ? images
+        .filter((img) => img && img.data)
+        .map((img) => ({ inline_data: { mime_type: img.mimeType || 'image/jpeg', data: img.data } }))
+    : [];
+
+  const rawText = hasText ? String(text) : '';
+  const trimmedText = trimAuctionText(rawText);
+  if (trimmedText.length < rawText.length) {
+    console.log(`parse-auction: 하단 불필요 문구 제거 (${rawText.length}자 → ${trimmedText.length}자)`);
+  }
+
+  const cacheKey = computeCacheKey(trimmedText, imageParts);
+  const cached = await getCachedParseResult(cacheKey);
+  if (cached) {
+    return res.status(200).json({ detail: cached, cached: true });
+  }
+
+  const promptA1 = buildPrompt(PROMPT_A_RULES, trimmedText);
+  const promptA2 = buildPrompt(PROMPT_A_RULES, trimmedText);
+  const promptB1 = buildPrompt(PROMPT_B_RULES, trimmedText);
+  const promptB2 = buildPrompt(PROMPT_B_RULES, trimmedText);
+
+  try {
+    // 스키마를 4개(A1/A2/B1/B2)로 나눠 동시에 호출 - 전체 소요시간이 "넷의 합"이 아니라
+    // "가장 오래 걸리는 하나" 수준으로 줄어듦 (Hobby 플랜 60초 제한 안에 들어오도록).
+    // 각 호출은 프롬프트 규칙 텍스트를 통째로 재사용하지만(해당 스키마에 없는 필드에 대한
+    // 규칙은 응답 형식이 스키마로 강제되므로 그냥 무시됨), 스키마 자체의 필드/배열 수가
+    // 줄어들어 응답 생성(출력 토큰) 시간이 짧아지는 게 핵심.
+    const [resultA1, resultA2, resultB1, resultB2] = await Promise.all([
+      callGemini(GEMINI_API_KEY, promptA1, SCHEMA_A1, imageParts, 1, 0),
+      callGemini(GEMINI_API_KEY, promptA2, SCHEMA_A2, imageParts, 1, 0),
+      callGemini(GEMINI_API_KEY, promptB1, SCHEMA_B1, imageParts, 1, 0),
+      callGemini(GEMINI_API_KEY, promptB2, SCHEMA_B2, imageParts, 1, 0),
+    ]);
+    const merged = { ...resultA1, ...resultA2, ...resultB1, ...resultB2 };
+    // 방어적 보정: 프롬프트에서 aptDong에 "OOO호" 형태를 넣지 말라고 명시했지만, 간헐적으로
+    // AI가 unitNo와 동일한 "호"로 끝나는 값을 aptDong에 잘못 채우는 경우가 있어(연립다세대에
+    // 동 구분이 없는데도 호수를 동으로 오인) 서버에서 한 번 더 걸러냄.
+    if (merged.aptDong && /호$/.test(String(merged.aptDong).trim())) {
+      console.log(`parse-auction: aptDong이 "호"로 끝나 무효화함 (${merged.aptDong})`);
+      merged.aptDong = null;
     }
-    var W = 300, H = 130, padL = 8, padR = 8, padT = 18, padB = 22;
-    var innerW = W - padL - padR, innerH = H - padT - padB;
-    var maxV = Math.max.apply(null, data.map(function(d) { return d.avgPpp; }));
-    var minV = Math.min.apply(null, data.map(function(d) { return d.avgPpp; }));
-    if (maxV === minV) { maxV += 1; minV -= 1; }
-    var pts = data.map(function(d, i) {
-        var x = padL + (data.length === 1 ? innerW / 2 : (i / (data.length - 1)) * innerW);
-        var y = padT + innerH - ((d.avgPpp - minV) / (maxV - minV)) * innerH;
-        return { x: x, y: y, d: d };
-    });
-    var polyline = pts.map(function(p) { return p.x.toFixed(1) + ',' + p.y.toFixed(1); }).join(' ');
-    var dots = pts.map(function(p) {
-        return '<circle cx="' + p.x.toFixed(1) + '" cy="' + p.y.toFixed(1) + '" r="3" fill="#8d6e63"></circle>'
-            + '<text x="' + p.x.toFixed(1) + '" y="' + (p.y - 6).toFixed(1) + '" font-size="9" fill="#555" text-anchor="middle">' + (Math.round(p.d.avgPpp / 100) / 10) + '</text>';
-    }).join('');
-    var labels = pts.map(function(p) {
-        return '<text x="' + p.x.toFixed(1) + '" y="' + (H - 6) + '" font-size="9" fill="#999" text-anchor="middle">' + p.d.year + '</text>';
-    }).join('');
-    var svg = '<svg viewBox="0 0 ' + W + ' ' + H + '" style="width:100%;height:' + H + 'px;">'
-        + '<polyline points="' + polyline + '" fill="none" stroke="#8d6e63" stroke-width="2"></polyline>'
-        + dots + labels + '</svg>';
-    return '<div class="indicator-box"><div class="indicator-title">📈 ' + label + ' 평단가 추이 (연도별 시장평균, 단위 천만/평)</div>' + svg + '</div>';
+    merged.warnings = buildNumericWarnings(merged);
+    // 캐시에는 경고까지 포함한 최종 결과를 그대로 저장 - 캐시 히트 시 재계산 없이 즉시 반환.
+    setCachedParseResult(cacheKey, merged); // 응답을 늦추지 않도록 await 없이 fire-and-forget
+    return res.status(200).json({ detail: merged });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
 }
-/* ════════════════════════════════════
-   건축물대장 백그라운드 예열
-   - 마커 배치 때 이미 지오코딩된(coordCache에 있는) 단지만 대상으로 함
-   - 동시 2개씩, 사이사이 살짝 쉬어가며 조용히 채움 (사용자 조작 방해 없음)
-════════════════════════════════════ */
-function warmBuildingCache(aptList) {
-    var idx = 0;
-    var CONCURRENCY = 2;
-    var running = 0;
-    function next() {
-        while (running < CONCURRENCY && idx < aptList.length) {
-            var apt = aptList[idx++];
-            running++;
-            warmOne(apt).finally(function() {
-                running--;
-                setTimeout(next, 150);
-            });
-        }
-    }
-    next();
-}
- 
-async function warmOne(apt) {
-    try {
-        var l = apt.latest || {};
-        if (!l.main_num) return;
-        var cacheKey = [l.dong, l.name, l.bunji, l.road_name, l.main_num, l.sub_num].join('|').toLowerCase();
-        var coord = coordCache[cacheKey];
-        if (!coord) return; // 아직 지오코딩 안 된(화면 밖) 단지는 건너뜀
-        await loadBuildingInfo(apt, coord.lat, coord.lon);
-    } catch (e) {
-        // 백그라운드 예열이라 실패해도 조용히 무시
-    }
-}
-/* ════════════════════════════════════
-   연립다세대 건축물정보 일괄 조회 (승강기/주차 필터용)
-   - 지역 로딩 시 연립다세대 전체를 geocoding + 건축HUB 조회
-   - 완료되면 apt.buildingInfo에 저장되고 필터가 다시 반영됨
-════════════════════════════════════ */
-async function prefetchVillaBuildingInfo(aptList) {
-    var villas = aptList.filter(function(a) { return a.buildingType === 'villa'; });
-    if (!villas.length) return;
-    var idx = 0, done = 0, total = villas.length;
-    var CONCURRENCY = 3;
-    setStatus('연립다세대 정보 불러오는 중... (0/' + total + ')');
-    return new Promise(function(resolveAll) {
-        function next() {
-            if (idx >= villas.length) return;
-            var apt = villas[idx++];
-            fetchOneVillaInfo(apt).finally(function() {
-                done++;
-                setStatus(done < total ? ('연립다세대 정보 불러오는 중... (' + done + '/' + total + ')') : '');
-                if (done >= total) { resolveAll(); return; }
-                next();
-            });
-        }
-        for (var i = 0; i < CONCURRENCY && i < villas.length; i++) next();
-    });
-}
- 
-async function fetchOneVillaInfo(apt) {
-    try {
-        var l = apt.latest || {};
-        var cacheKey = [l.dong, l.name, l.bunji, l.road_name, l.main_num, l.sub_num].join('|').toLowerCase();
-        var coord = coordCache[cacheKey];
-        if (!coord) {
-            var candidates = buildGeocodeCandidates(l);
-            if (!candidates.length) { apt.buildingInfo = null; return; }
-            coord = await new Promise(function(resolve) {
-                tryStepGeocode(candidates, function(lat, lon) {
-                    if (lat && lon) {
-                        coordCache[cacheKey] = { lat: lat, lon: lon };
-                        saveCoordToDB(cacheKey, lat, lon);
-                        resolve({ lat: lat, lon: lon });
-                    } else {
-                        resolve(null);
-                    }
-                });
-            });
-        }
-        if (!coord) { apt.buildingInfo = null; return; }
-        apt.buildingInfo = await loadBuildingInfo(apt, coord.lat, coord.lon);
-    } catch (e) {
-        apt.buildingInfo = null;
-    }
-}
-/* ════════════════════════════════════
-   좌표/법정동코드 영구 캐시 (Supabase)
-════════════════════════════════════ */
-async function prefetchCoordsFromDB(aptList) {
-    var keys = [];
-    aptList.forEach(function(apt) {
-        var l = apt.latest || {};
-        var key = [l.dong, l.name, l.bunji, l.road_name, l.main_num, l.sub_num].join('|').toLowerCase();
-        if (!coordCache[key]) keys.push(key);
-    });
-    if (!keys.length) return;
-    try {
-        var res = await fetch('/api/get-coords', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ keys: keys })
-        });
-        var data = await res.json();
-        Object.keys(data.coords || {}).forEach(function(key) {
-            coordCache[key] = data.coords[key];
-        });
-    } catch (e) {
-        console.error('좌표 캐시 조회 실패:', e.message);
-    }
-}
- 
-function saveCoordToDB(cacheKey, lat, lon, sigunguCd, bjdongCd) {
-    fetch('/api/save-coord', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ cacheKey: cacheKey, lat: lat, lon: lon, sigunguCd: sigunguCd, bjdongCd: bjdongCd })
-    }).catch(function() { /* 저장 실패해도 무시 - 다음에 다시 지오코딩하면 됨 */ });
-}
-/* ════════════════════════════════════
-   동(읍면동/법정동) 단위 단기 거래량 급등 순위
-════════════════════════════════════ */
-function buildDongSurgeRanking(type) {
-    // 연립다세대·단독다가구(villa)는 아파트보다 거래가 뜸해서 단기 구간을 6개월로 넓혀서 봄
-    // (일반 거래배지/과거거래 기준 변경과 동일한 맥락)
-    var isVilla = type === 'villa';
-    var map = {}; // dong -> { region, dong, c3m, c6m, c1y, c3y }
-    allAptList.forEach(function(apt) {
-        if (type && apt.buildingType !== type) return;
-        (apt.trades || []).forEach(function(t) {
-            var dong = (t.dong || '').trim();
-            if (!dong) return;
-            var region = (t.region || lastSigungu || '').trim();
-            var key = dong;
-            if (!map[key]) map[key] = { region: region, dong: dong, c3m: 0, c6m: 0, c1y: 0, c3y: 0 };
-            else if (!map[key].region && region) map[key].region = region;
-            var d = tradeDate(t);
-            if (d >= threeYearAgo) map[key].c3y++;
-            if (d >= oneYearAgo)  map[key].c1y++;
-            if (d >= sixMonAgo)   map[key].c6m++;
-            if (d >= threeMonAgo) map[key].c3m++;
-        });
-    });
-    var list = Object.keys(map).map(function(k) { return map[k]; });
-    // 노이즈 방지: 최근 3년 누적 거래가 5건 미만인 동은 제외
-    list = list.filter(function(item) { return item.c3y >= 5; });
-    list.forEach(function(item) {
-        var mShort = isVilla ? (item.c6m / 6) : (item.c3m / 3);
-        var m1y = item.c1y / 12;
-        var m3y = item.c3y / 36;
-        item.shortRatio = m1y > 0 ? Math.round(mShort / m1y * 1000) / 10 : null; // 단기: (아파트)3개월 / (연립다세대·단독다가구)6개월 vs 1년
-        item.longRatio  = m3y > 0 ? Math.round(m1y / m3y * 1000) / 10 : null; // 중장기: 1년 vs 3년
-    });
-    list.sort(function(a, b) {
-        var av = a.shortRatio === null ? -1 : a.shortRatio;
-        var bv = b.shortRatio === null ? -1 : b.shortRatio;
-        return bv - av;
-    });
-    return list;
-}
-function computeSurgeRankMap(type) {
-    var list = buildDongSurgeRanking(type); // 이미 shortRatio(단기지수) 내림차순 정렬됨
-    var map = {};
-    list.slice(0, 5).forEach(function(item, i) {
-        map[item.dong] = i + 1; // 1~5위
-    });
-    return map;
-}
-function toggleSurgeRank(val, btn) {
-    if (activeSurgeRanks.has(val)) { activeSurgeRanks.delete(val); btn.classList.remove('active'); }
-    else { activeSurgeRanks.add(val); btn.classList.add('active'); }
-    redrawMarkers();
-}
-function resetSurgeRankFilter() {
-    activeSurgeRanks.clear();
-    document.querySelectorAll('.ft-surge').forEach(function(b) { b.classList.remove('active'); });
-    redrawMarkers();
-}
-function passesSurgeFilter(apt) {
-    if (activeSurgeRanks.size === 0) return true;
-    var l = apt.latest || {};
-    var rank = surgeRankMap[l.dong];
-    return !!rank && activeSurgeRanks.has(String(rank));
-}
- 
-function openSurgePanel() {
-    var p = document.getElementById('surge-panel');
-    if (p.style.display === 'block') { p.style.display = 'none'; return; }
-    renderSurgePanel();
-    p.style.display = 'block';
-}
-function closeSurgePanel() {
-    document.getElementById('surge-panel').style.display = 'none';
-}
-function renderSurgePanel() {
-    var typeLabel = currentTypeFilter === 'villa' ? '연립다세대·단독다가구' : '아파트';
-    document.getElementById('surge-panel-region').innerText = typeLabel + ' · ' + (lastSigungu || '지역 미확인');
-    var body = document.getElementById('surge-panel-body');
-    var list = buildDongSurgeRanking(currentTypeFilter);
-    if (!list.length) {
-        body.innerHTML = '<div style="padding:20px;text-align:center;color:#aaa;font-size:12px;">데이터가 부족합니다.<br>지도를 이동해 지역을 먼저 불러와 주세요.</div>';
-        return;
-    }
-    var isVilla = currentTypeFilter === 'villa';
-    var shortLabel = isVilla ? '6개월÷1년' : '3개월÷1년';
-    var top = list.slice(0, 20);
-    var html = '';
-    top.forEach(function(item, i) {
-        var shortText = item.shortRatio === null ? '-' : item.shortRatio + '%';
-        var longText  = item.longRatio  === null ? '-' : item.longRatio + '%';
-        var shortColor = item.shortRatio !== null && item.shortRatio >= 150 ? '#e53935' : '#555';
-        var recentCount = isVilla ? item.c6m : item.c3m;
-        var recentLabel = isVilla ? '최근6개월' : '최근3개월';
-        html += '<div class="surge-item" onclick="moveToDong(\'' + item.region.replace(/'/g, "\\'") + '\',\'' + item.dong.replace(/'/g, "\\'") + '\')">'
-            + '<span class="surge-rank">' + (i + 1) + '위</span> <span class="surge-dong">' + item.dong + '</span>'
-            + '<div class="surge-metric" style="color:' + shortColor + ';">단기(' + shortLabel + ') ' + shortText + ' · ' + recentLabel + ' ' + recentCount + '건</div>'
-            + '<div class="surge-metric">중장기(1년÷3년) ' + longText + '</div>'
-            + '</div>';
-    });
-    body.innerHTML = html;
-}
-function moveToDong(region, dong) {
-    closeSurgePanel();
- 
-    // 1순위: 이미 지오코딩되어 coordCache에 좌표가 있는 이 동의 건물을 찾아 즉시 이동
-    // (API 호출 없이 동작하므로 카카오 할당량 문제와 무관하게 항상 작동함)
-    var match = allAptList.find(function(apt) {
-        var l = apt.latest || {};
-        if ((l.dong || '').trim() !== dong) return false;
-        var key = [l.dong, l.name, l.bunji, l.road_name, l.main_num, l.sub_num].join('|').toLowerCase();
-        return !!coordCache[key];
-    });
-    if (match) {
-        var l = match.latest;
-        var key = [l.dong, l.name, l.bunji, l.road_name, l.main_num, l.sub_num].join('|').toLowerCase();
-        var c = coordCache[key];
-        map.setCenter(new kakao.maps.LatLng(c.lat, c.lon));
-        map.setLevel(5);
-        return;
-    }
- 
-    // 2순위: 캐시된 좌표가 하나도 없으면(아직 지오코딩 전인 동) 카카오 API로 직접 조회
-    setStatus('위치 찾는 중...');
-    tryStepGeocode([(region + ' ' + dong).trim()], function(lat, lon) {
-        setStatus('');
-        if (lat && lon) {
-            map.setCenter(new kakao.maps.LatLng(lat, lon));
-            map.setLevel(5);
-        } else {
-            alert('이 동의 위치를 찾을 수 없습니다. (카카오 API 일일 호출 제한 중일 수 있어요)');
-        }
-    });
-}
-</script>
-</body>
-</html>
