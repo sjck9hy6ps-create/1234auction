@@ -17,10 +17,16 @@
         않고 즉시 반환. 오타 수정 후 재시도하거나 같은 물건을 다시 붙여넣을 때 빠름.
       - 숫자 정합성 자동검증 → 최저가율/보증금율/㎡당단가처럼 다른 필드로부터 재계산 가능한
         값들을 서버에서 직접 계산해 AI가 준 값과 크게 다르면 warnings에 담아 화면에 경고.
-      - 경량 스키마C 교차검증 → 핵심 필드(사건번호/주소/감정가/최저가/최저가율/층호수)만
-        다른 temperature로 한 번 더 독립 추출해서, A/B와 동시에 Promise.all로 호출하므로
-        (C가 훨씬 가벼워 A/B보다 먼저 끝남) 전체 대기시간은 거의 그대로 유지하면서 두 결과가
-        다르면 warnings로 알려줌. C 호출 자체가 실패해도 A/B 결과에는 영향 주지 않음(부가기능).
+   ⚠️ 타임아웃 재발 대응 (3차, 텍스트 1만자 내외에서도 "시간 내에 끝나지 못했습니다" 경고가
+      자꾸 뜬다는 신고로 조사): 스키마 A(물건정보+가격+임차인+매각통계)와 B(건축물+등기+권리분석)
+      두 덩어리로만 나눴을 때도, 각 덩어리 안에 배열형 필드(tenantOccupants, officialTrades,
+      registryItems 등)가 많으면 응답 생성(출력 토큰)이 오래 걸려 52초를 넘기는 경우가 있었음.
+      그래서 A를 다시 A1(물건 기본정보·가격, 배열은 짧은 rounds만)/A2(임차인·매각통계·실거래,
+      가장 무거운 배열들)로, B를 B1(건축물정보)/B2(등기이력·권리분석, registryStory 서술형 포함)로
+      나눠 4개 호출을 동시에 보냄 - 개별 호출당 만들어야 하는 출력이 줄어 지연이 짧아짐.
+      동시에, 부가기능이던 "경량 스키마C 교차검증"(핵심필드 재추출 비교)은 호출 수를 4개에서
+      5개로 늘리면 무료 티어의 분당 요청수(RPM) 한도에 더 빨리 걸릴 수 있어 제거함 - 매번
+      성공하는 게 이중 검증보다 우선이라고 판단.
 ════════════════════════════════════ */
 import crypto from 'crypto';
 
@@ -34,8 +40,8 @@ export const config = {
   api: { bodyParser: { sizeLimit: '12mb' } },
 };
 
-// ── 스키마 A: 물건 기본정보 / 가격 / 임차인 / 매각통계 ──
-const SCHEMA_A = {
+// ── 스키마 A1: 물건 기본정보 / 가격 (배열은 짧은 rounds 하나뿐 - 상대적으로 가벼움) ──
+const SCHEMA_A1 = {
   type: 'OBJECT',
   properties: {
     caseNo: { type: 'STRING' },
@@ -62,7 +68,6 @@ const SCHEMA_A = {
     specialConditions: { type: 'STRING' },
     caseCautions: { type: 'STRING' },
     siteRightsArea: { type: 'STRING' },
-    officialPriceCurrent: { type: 'STRING' },
     saleDate: { type: 'STRING' },
     rounds: {
       type: 'ARRAY',
@@ -99,6 +104,14 @@ const SCHEMA_A = {
     unitPricePerPyung: { type: 'NUMBER' },
     priceRatioLandBuilding: { type: 'STRING' },
     locationDesc: { type: 'STRING' },
+  },
+};
+
+// ── 스키마 A2: 임차인 현황 / 매각통계 / 국토부 실거래 / 공시가격 (가장 무거운 배열들) ──
+const SCHEMA_A2 = {
+  type: 'OBJECT',
+  properties: {
+    officialPriceCurrent: { type: 'STRING' },
     tenantTerminationDate: { type: 'STRING' },
     tenantDistributionDeadline: { type: 'STRING' },
     tenantOccupants: {
@@ -144,8 +157,47 @@ const SCHEMA_A = {
   },
 };
 
-// ── 스키마 B: 건축물정보 / 등기 이력 / 권리분석(경매 교육자료 기반) ──
-const SCHEMA_B = {
+// ── 스키마 B1: 건축물정보(건축HUB 성격의 표제부/층별개요) ──
+const SCHEMA_B1 = {
+  type: 'OBJECT',
+  properties: {
+    buildingDongName: { type: 'STRING' },
+    buildingAddr: { type: 'STRING' },
+    households: { type: 'INTEGER' },
+    buildingLandArea: { type: 'STRING' },
+    coverageRatio: { type: 'NUMBER' },
+    buildingFootprint: { type: 'STRING' },
+    floorAreaRatio: { type: 'NUMBER' },
+    totalFloorArea: { type: 'STRING' },
+    mainUse: { type: 'STRING' },
+    permitDate: { type: 'STRING' },
+    startDate: { type: 'STRING' },
+    approvalDate: { type: 'STRING' },
+    parking: { type: 'STRING' },
+    floorsAbove: { type: 'INTEGER' },
+    floorsBelow: { type: 'INTEGER' },
+    elevator: { type: 'STRING' },
+    floorDetails: {
+      type: 'ARRAY',
+      items: {
+        type: 'OBJECT',
+        properties: {
+          floor: { type: 'STRING' },
+          area: { type: 'STRING' },
+          structure: { type: 'STRING' },
+          use: { type: 'STRING' },
+        },
+      },
+    },
+    // ── 용도지역 / 농지취득자격증명 판단용 ──
+    landCategory: { type: 'STRING' }, // 지목 (전/답/과수원/대/임야 등)
+    zoningType: { type: 'STRING' }, // 용도지역 (제2종일반주거지역, 계획관리지역, 농림지역 등)
+    farmlandCertRequired: { type: 'BOOLEAN' }, // 농지취득자격증명원 필요 여부
+  },
+};
+
+// ── 스키마 B2: 등기 이력 / 권리분석(경매 교육자료 기반) - registryStory 서술형이 있어 A1만큼 무거움 ──
+const SCHEMA_B2 = {
   type: 'OBJECT',
   properties: {
     registryTotalClaim: { type: 'NUMBER' },
@@ -184,56 +236,8 @@ const SCHEMA_B = {
         illegalBuildingNote: { type: 'STRING' },
       },
     },
-    // ── 용도지역 / 농지취득자격증명 판단용 ──
-    landCategory: { type: 'STRING' }, // 지목 (전/답/과수원/대/임야 등)
-    zoningType: { type: 'STRING' }, // 용도지역 (제2종일반주거지역, 계획관리지역, 농림지역 등)
-    farmlandCertRequired: { type: 'BOOLEAN' }, // 농지취득자격증명원 필요 여부
     registryStory: { type: 'STRING' },
     riskSummary: { type: 'STRING' },
-    buildingDongName: { type: 'STRING' },
-    buildingAddr: { type: 'STRING' },
-    households: { type: 'INTEGER' },
-    buildingLandArea: { type: 'STRING' },
-    coverageRatio: { type: 'NUMBER' },
-    buildingFootprint: { type: 'STRING' },
-    floorAreaRatio: { type: 'NUMBER' },
-    totalFloorArea: { type: 'STRING' },
-    mainUse: { type: 'STRING' },
-    permitDate: { type: 'STRING' },
-    startDate: { type: 'STRING' },
-    approvalDate: { type: 'STRING' },
-    parking: { type: 'STRING' },
-    floorsAbove: { type: 'INTEGER' },
-    floorsBelow: { type: 'INTEGER' },
-    elevator: { type: 'STRING' },
-    floorDetails: {
-      type: 'ARRAY',
-      items: {
-        type: 'OBJECT',
-        properties: {
-          floor: { type: 'STRING' },
-          area: { type: 'STRING' },
-          structure: { type: 'STRING' },
-          use: { type: 'STRING' },
-        },
-      },
-    },
-  },
-};
-
-// ── 스키마 C: 핵심 필드 경량 교차검증용 (A와 별도·독립적으로 한 번 더 추출) ──
-// A/B보다 필드 수가 훨씬 적어 항상 먼저 끝나므로, Promise.all로 A/B와 동시에 호출해도
-// 전체 응답시간에는 거의 영향이 없음. A와 값이 다르면 사람이 원문을 다시 봐야 할 신호.
-const SCHEMA_C = {
-  type: 'OBJECT',
-  properties: {
-    caseNo: { type: 'STRING' },
-    addrJibun: { type: 'STRING' },
-    appraisalPrice: { type: 'NUMBER' },
-    minBidPrice: { type: 'NUMBER' },
-    minBidRate: { type: 'NUMBER' },
-    unitFloor: { type: 'INTEGER' },
-    unitNo: { type: 'STRING' },
   },
 };
 
@@ -359,14 +363,6 @@ const PROMPT_B_RULES = `
   zoningType이 도시지역의 주거·상업·공업지역이면 false로 판단하세요. 지목이나 용도지역 정보가 부족해 판단할 수
   없으면 반드시 null로 두세요 (섣불리 추측 금지).`;
 
-const PROMPT_C_RULES = `
-- 이 요청은 다른 요청과 별도로, 핵심 값만 독립적으로 다시 한 번 추출해 교차검증하기 위한 것입니다.
-- caseNo는 페이지 맨 위 제목에 있는 사건번호 단 하나만 쓰세요 (하단 관련물건 목록의 번호는 무시하세요).
-- addrJibun은 이 물건의 지번주소만 담으세요 (시/도 시/군/구 동 번지까지만, 층수·호수·건물동번호는 제외).
-- appraisalPrice, minBidPrice는 원 단위 숫자로, minBidRate는 %(숫자만)로 담으세요.
-- unitFloor(숫자만)와 unitNo(호수 문자열)는 소재지의 "N층M호" 표시에서 뽑으세요. 그런 표시가 없으면 둘 다 null.
-- 명시되지 않은 값은 절대 추측하지 말고 null로 두세요.`;
-
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -392,8 +388,7 @@ function parseRetryDelayMs(errData) {
 // 기다렸다가 한 번 더 시도한다(과도한 대기로 Vercel 60초 제한을 넘지 않도록 1회만).
 // (API 키 오류·잘못된 요청 같은 재시도해도 안 풀리는 오류는 즉시 그대로 던짐)
 // imageParts: [{ inline_data: { mime_type, data } }, ...] - 캡처 이미지가 없으면 빈 배열.
-// temperature: 기본 0(재현성 우선). 스키마C 교차검증 호출만 일부러 다른 값을 줘서
-//   "완전히 같은 조건"이 아닌 "독립적인 두 번째 시도"에 가깝게 만듦.
+// temperature: 기본 0(재현성 우선).
 async function callGemini(apiKey, promptText, schema, imageParts, attempt, temperature) {
   attempt = attempt || 1;
   imageParts = imageParts || [];
@@ -401,8 +396,8 @@ async function callGemini(apiKey, promptText, schema, imageParts, attempt, tempe
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${apiKey}`;
   let geminiRes;
   try {
-    // Vercel Hobby maxDuration이 60초라, 여유(파싱·응답조립)를 좀 남기고 52초까지 기다림
-    // (예전엔 45초였는데, 텍스트가 긴 물건은 그 안에 못 끝나 타임아웃이 잦았음)
+    // Vercel Hobby maxDuration이 60초라, 여유(파싱·응답조립)를 좀 남기고 55초까지 기다림
+    // (스키마를 4개로 더 쪼갠 이후에도 개별 호출이 예상보다 오래 걸리는 경우를 위한 마지막 여유분)
     geminiRes = await fetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -415,11 +410,11 @@ async function callGemini(apiKey, promptText, schema, imageParts, attempt, tempe
           temperature,
         },
       }),
-      signal: AbortSignal.timeout(52000),
+      signal: AbortSignal.timeout(55000),
     });
   } catch (e) {
     if (e.name === 'TimeoutError' || e.name === 'AbortError') {
-      throw new Error('AI 분석이 시간 내에 끝나지 못했습니다. 페이지 내용이 너무 길 수 있으니(특히 하단 학교·행정기관·지도 링크 등은 빼고) 필요한 부분만 남겨서 다시 시도해 주세요.');
+      throw new Error('AI 분석이 시간 내에 끝나지 못했습니다. 페이지 내용이 너무 길 수 있으니(특히 하단 학교·행정기관·지도 링크 등은 빼고) 필요한 부분만 남겨서 다시 시도해 주세요. 방금 실패했다면 곧바로 재시도하지 말고 1분 정도 기다렸다가 다시 시도해 주세요(무료 API 분당 요청수 한도에 걸려 있을 수 있습니다).');
     }
     throw e;
   }
@@ -712,39 +707,6 @@ function buildNumericWarnings(m) {
   return warnings;
 }
 
-function buildCrossCheckWarnings(m, c) {
-  const warnings = [];
-  if (!c) return warnings;
-  function normStr(s) {
-    return s ? String(s).replace(/\s+/g, '') : '';
-  }
-  function numDiff(a, b, tolRatio) {
-    if (a === null || a === undefined || b === null || b === undefined) return false;
-    if (a === 0 && b === 0) return false;
-    const base = Math.max(Math.abs(a), Math.abs(b), 1);
-    return Math.abs(a - b) / base > tolRatio;
-  }
-  if (m.caseNo && c.caseNo && normStr(m.caseNo) !== normStr(c.caseNo)) {
-    warnings.push(`사건번호를 두 번 독립 추출한 결과가 다릅니다: "${m.caseNo}" vs "${c.caseNo}". 원문을 확인해 주세요.`);
-  }
-  if (m.addrJibun && c.addrJibun && normStr(m.addrJibun) !== normStr(c.addrJibun)) {
-    warnings.push(`지번주소를 두 번 독립 추출한 결과가 다릅니다: "${m.addrJibun}" vs "${c.addrJibun}". 원문을 확인해 주세요.`);
-  }
-  if (numDiff(m.appraisalPrice, c.appraisalPrice, 0.01)) {
-    warnings.push(`감정가를 두 번 독립 추출한 결과가 다릅니다: ${m.appraisalPrice} vs ${c.appraisalPrice}. 원문을 확인해 주세요.`);
-  }
-  if (numDiff(m.minBidPrice, c.minBidPrice, 0.01)) {
-    warnings.push(`최저가를 두 번 독립 추출한 결과가 다릅니다: ${m.minBidPrice} vs ${c.minBidPrice}. 원문을 확인해 주세요.`);
-  }
-  if (m.unitFloor !== null && m.unitFloor !== undefined && c.unitFloor !== null && c.unitFloor !== undefined && m.unitFloor !== c.unitFloor) {
-    warnings.push(`층수를 두 번 독립 추출한 결과가 다릅니다: ${m.unitFloor}층 vs ${c.unitFloor}층. 원문을 확인해 주세요.`);
-  }
-  if (m.unitNo && c.unitNo && normStr(m.unitNo) !== normStr(c.unitNo)) {
-    warnings.push(`호수를 두 번 독립 추출한 결과가 다릅니다: "${m.unitNo}" vs "${c.unitNo}". 원문을 확인해 주세요.`);
-  }
-  return warnings;
-}
-
 export default async function handler(req, res) {
   res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
   if (req.method !== 'POST') return res.status(405).json({ error: 'POST only' });
@@ -782,24 +744,24 @@ export default async function handler(req, res) {
     return res.status(200).json({ detail: cached, cached: true });
   }
 
-  const promptA = buildPrompt(PROMPT_A_RULES, trimmedText);
-  const promptB = buildPrompt(PROMPT_B_RULES, trimmedText);
-  const promptC = buildPrompt(PROMPT_C_RULES, trimmedText);
+  const promptA1 = buildPrompt(PROMPT_A_RULES, trimmedText);
+  const promptA2 = buildPrompt(PROMPT_A_RULES, trimmedText);
+  const promptB1 = buildPrompt(PROMPT_B_RULES, trimmedText);
+  const promptB2 = buildPrompt(PROMPT_B_RULES, trimmedText);
 
   try {
-    // 스키마를 둘로 나눠 동시에 호출 - 전체 소요시간이 "둘의 합"이 아니라
-    // "더 오래 걸리는 쪽 하나" 수준으로 줄어듦 (Hobby 플랜 60초 제한 안에 들어오도록).
-    // 스키마C(교차검증)는 필드가 훨씬 적어 먼저 끝나므로 같이 병렬로 호출해도 전체 시간에
-    // 영향이 거의 없고, 실패해도(.catch) A/B 결과에는 지장이 없도록 별도 처리.
-    const [resultA, resultB, resultC] = await Promise.all([
-      callGemini(GEMINI_API_KEY, promptA, SCHEMA_A, imageParts, 1, 0),
-      callGemini(GEMINI_API_KEY, promptB, SCHEMA_B, imageParts, 1, 0),
-      callGemini(GEMINI_API_KEY, promptC, SCHEMA_C, imageParts, 1, 0.4).catch((e) => {
-        console.error('parse-auction: 교차검증(스키마C) 호출 실패, 건너뜀:', e.message);
-        return null;
-      }),
+    // 스키마를 4개(A1/A2/B1/B2)로 나눠 동시에 호출 - 전체 소요시간이 "넷의 합"이 아니라
+    // "가장 오래 걸리는 하나" 수준으로 줄어듦 (Hobby 플랜 60초 제한 안에 들어오도록).
+    // 각 호출은 프롬프트 규칙 텍스트를 통째로 재사용하지만(해당 스키마에 없는 필드에 대한
+    // 규칙은 응답 형식이 스키마로 강제되므로 그냥 무시됨), 스키마 자체의 필드/배열 수가
+    // 줄어들어 응답 생성(출력 토큰) 시간이 짧아지는 게 핵심.
+    const [resultA1, resultA2, resultB1, resultB2] = await Promise.all([
+      callGemini(GEMINI_API_KEY, promptA1, SCHEMA_A1, imageParts, 1, 0),
+      callGemini(GEMINI_API_KEY, promptA2, SCHEMA_A2, imageParts, 1, 0),
+      callGemini(GEMINI_API_KEY, promptB1, SCHEMA_B1, imageParts, 1, 0),
+      callGemini(GEMINI_API_KEY, promptB2, SCHEMA_B2, imageParts, 1, 0),
     ]);
-    const merged = { ...resultA, ...resultB };
+    const merged = { ...resultA1, ...resultA2, ...resultB1, ...resultB2 };
     // 방어적 보정: 프롬프트에서 aptDong에 "OOO호" 형태를 넣지 말라고 명시했지만, 간헐적으로
     // AI가 unitNo와 동일한 "호"로 끝나는 값을 aptDong에 잘못 채우는 경우가 있어(연립다세대에
     // 동 구분이 없는데도 호수를 동으로 오인) 서버에서 한 번 더 걸러냄.
@@ -807,10 +769,7 @@ export default async function handler(req, res) {
       console.log(`parse-auction: aptDong이 "호"로 끝나 무효화함 (${merged.aptDong})`);
       merged.aptDong = null;
     }
-    merged.warnings = [
-      ...buildNumericWarnings(merged),
-      ...buildCrossCheckWarnings(merged, resultC),
-    ];
+    merged.warnings = buildNumericWarnings(merged);
     // 캐시에는 경고까지 포함한 최종 결과를 그대로 저장 - 캐시 히트 시 재계산 없이 즉시 반환.
     setCachedParseResult(cacheKey, merged); // 응답을 늦추지 않도록 await 없이 fire-and-forget
     return res.status(200).json({ detail: merged });
