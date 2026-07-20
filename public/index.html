@@ -540,6 +540,11 @@ tr:hover td { background:#fffde7; }
             </div>
             <div id="a-addr-result" style="font-size:11px;color:#6a1b9a;padding:2px 0 4px 76px;display:none;"></div>
             <div id="a-building-info-box" style="margin-top:4px;"></div>
+            <div style="margin-top:6px;">
+                <button type="button" class="modal-btn btn-purple" id="dev-news-btn" style="font-size:11px;" onclick="searchDevelopmentNews()">🏗️ 주변 개발호재 검색</button>
+                <span style="font-size:10px;color:#999;margin-left:4px;">주소 입력 후 눌러주세요 (재개발·재건축·신속통합기획 등 AI 웹검색)</span>
+            </div>
+            <div id="dev-news-box" style="margin-top:4px;"></div>
             <div class="modal-row">
                 <span class="modal-label">물건유형</span>
                 <select class="modal-select" id="a-prop-type" onchange="autoCalcAgentSilent();autoCalcRepairSilent();calcCompValuation();calcMargin();autoCalcAuctionJeonseAnalysis();">
@@ -993,6 +998,7 @@ var aiCompCandidates = [];
 var pendingRegistryDoc = null;
 var pendingRegistryAnalysis = null;
 var pendingAuctionBuildingInfo = null;
+var pendingDevNews = null; // 개발호재 검색 결과 { summary, sources, fetchedAt, address } - 저장을 눌러야 최종 반영됨
 var currentChecklist = {};
 var checklistSaveTimer = null;
 // 캡처 이미지에서 AI 자동추출 - 텍스트 복사가 막힌 페이지용. { data(base64, 헤더 제외), mimeType, previewUrl } 배열
@@ -3043,6 +3049,7 @@ function openAuctionModal(id) {
     pendingRegistryDoc = null;
     pendingRegistryAnalysis = null;
     pendingAuctionBuildingInfo = null;
+    pendingDevNews = null;
     currentChecklist = {};
     clearAuctionImages();
     auctionJeonseEstimate = null;
@@ -3053,6 +3060,7 @@ function openAuctionModal(id) {
     document.getElementById('a-building-info-box').innerHTML = '';
     document.getElementById('jeonse-analysis-box').innerHTML = '';
     document.getElementById('a-ai-summary-box').innerHTML = '';
+    document.getElementById('dev-news-box').innerHTML = '';
     if (isEdit) {
         var a = auctionList.find(function(x) { return x.id === id; });
         if (a) {
@@ -3060,9 +3068,11 @@ function openAuctionModal(id) {
             pendingAuctionComparables = a.comparables ? a.comparables.slice() : [];
             pendingRegistryDoc = a.registryDoc || null;
             pendingRegistryAnalysis = a.registryAnalysis || null;
+            pendingDevNews = a.devNews || null;
             currentChecklist = a.checklist ? Object.assign({}, a.checklist) : {};
             renderRegistryAnalysis();
             renderAiSummaryBox();
+            renderDevNewsBox();
             document.getElementById('a-paste-text').value = a.rawText || '';
             document.getElementById('auction-id').value    = a.id || '';
             document.getElementById('a-addr').value        = a.addr || '';
@@ -3728,6 +3738,7 @@ async function saveAuction() {
         officialPriceWon: document.getElementById('a-official-price').value || null,
         registryDoc: pendingRegistryDoc || null,
         registryAnalysis: pendingRegistryAnalysis || null,
+        devNews: pendingDevNews || null,
         checklist: currentChecklist || {},
     };
     if (!data.lat || !data.lon) {
@@ -3993,6 +4004,7 @@ function buildAuctionPanelHtml(aptName, aptDong, aptBunji) {
         // (매매기록 없는 단독 경매물건은 편집모달을 직접 여니 원래도 마진분석이 보였음)
         html += buildMarginSummaryHtml(a);
         html += buildAuctionDetailHtml(a.detail);
+        html += buildDevNewsHtml(a.devNews);
         html += buildOfficialPriceLookupHtml(a);
         html += buildNaverLinkHtml(a.lat, a.lon, a.detail && a.detail.addrJibun, '');
     });
@@ -4612,6 +4624,63 @@ function renderAiSummaryBox() {
     if (!box) return;
     if (!pendingAuctionDetail) { box.innerHTML = ''; return; }
     box.innerHTML = '<div style="margin-top:10px;">' + buildAuctionDetailHtml(pendingAuctionDetail) + '</div>';
+}
+// ── 개발호재 검색 (재개발/재건축/신속통합기획 등, Gemini 웹검색) ──
+// AI가 생성한 텍스트를 그대로 innerHTML에 넣지 않도록 이스케이프 후 줄바꿈만 <br>로 치환
+function escapeHtmlText(s) {
+    return String(s || '')
+        .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+function formatDevNewsTime(ts) {
+    if (!ts) return '';
+    var d = new Date(ts);
+    return d.getFullYear() + '.' + String(d.getMonth() + 1).padStart(2, '0') + '.' + String(d.getDate()).padStart(2, '0')
+        + ' ' + String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0') + ' 조회';
+}
+function buildDevNewsHtml(devNews) {
+    if (!devNews) return '';
+    var html = '<div class="indicator-box" style="border-color:#90caf9;background:#f3f9ff;margin-top:8px;">';
+    html += '<div class="indicator-title" style="color:#1565c0;">🏗️ 주변 개발호재 (AI 웹검색' + (devNews.fetchedAt ? ' · ' + formatDevNewsTime(devNews.fetchedAt) : '') + ')</div>';
+    html += '<div style="font-size:11.5px;color:#444;line-height:1.7;white-space:pre-line;">' + escapeHtmlText(devNews.summary || '검색 결과가 없습니다.') + '</div>';
+    if (devNews.sources && devNews.sources.length) {
+        html += '<div style="margin-top:6px;font-size:10px;color:#999;">출처: ' + devNews.sources.map(function(s) {
+            return '<a href="' + escapeHtmlText(s.uri) + '" target="_blank" rel="noopener" style="color:#1976d2;">' + escapeHtmlText(s.title || '링크') + '</a>';
+        }).join(' · ') + '</div>';
+    }
+    html += '<div style="font-size:9.5px;color:#aaa;margin-top:4px;">⚠️ AI 웹검색 요약이니 실제 진행 여부는 해당 지자체·조합 공고 원문으로 다시 확인하세요.</div>';
+    html += '</div>';
+    return html;
+}
+function renderDevNewsBox() {
+    var box = document.getElementById('dev-news-box');
+    if (!box) return;
+    box.innerHTML = pendingDevNews ? buildDevNewsHtml(pendingDevNews) : '';
+}
+async function searchDevelopmentNews() {
+    var addr = document.getElementById('a-addr').value.trim();
+    if (!addr) { alert('먼저 주소를 입력(또는 검색)해 주세요.'); return; }
+    var btn = document.getElementById('dev-news-btn');
+    var origText = btn.innerText;
+    btn.disabled = true; btn.innerText = '검색 중... (최대 1분 소요)';
+    try {
+        var res = await fetch('/api/parse-auction', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ mode: 'devNews', address: addr })
+        });
+        var data = await res.json();
+        if (!res.ok || !data.devNews) {
+            alert('개발호재 검색 실패: ' + (data.error || '알 수 없는 오류'));
+            return;
+        }
+        pendingDevNews = data.devNews;
+        renderDevNewsBox();
+    } catch (e) {
+        alert('개발호재 검색 중 오류: ' + e.message);
+    } finally {
+        btn.disabled = false; btn.innerText = origText;
+    }
 }
 // ── 캡처 이미지에서 자동추출 (복사 방지 페이지 대응) ──
 // 원본을 그대로 올리면 Vercel 요청 크기 제한에 걸리기 쉬워서, 캔버스로 리사이즈(최대 가로 1400px) +
