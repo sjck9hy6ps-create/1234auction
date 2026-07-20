@@ -282,6 +282,9 @@ function trimAuctionText(text) {
 
 const PROMPT_A_RULES = `
 - caseNo는 페이지 맨 위 제목에 있는 사건번호 단 하나만 쓰세요 (예: "2025타경52046"). 하단 관련물건 목록의 번호는 무시하세요.
+- court(관할법원)와 courtTel(법원 전화번호)은 사건정보 영역에 "법원" 또는 "관할법원"이라는 이름으로 표시된 값을
+  그대로 담으세요 (예: "수원지방법원 안산지원"처럼 본원+지원이 함께 표기되어 있으면 그대로 두세요).
+  전화번호는 담당계 전화번호가 별도로 있으면 그것을, 없으면 법원 대표번호를 담으세요. 페이지에 보이지 않으면 null로 두세요.
 - addrJibun은 이 물건의 지번주소만 담으세요. 반드시 "시/도 시/군/구 동 번지"까지만 담고,
   층수·호수·건물동번호는 절대 addrJibun에 포함하지 마세요.
   예: 소재지가 "경기도 안산시 상록구 본오동 718-12 2층202호"라면
@@ -291,8 +294,11 @@ const PROMPT_A_RULES = `
 - dong(동)과 bunji(번지)는 addrJibun에서 "동"과 "번지" 부분만 따로 뽑으세요.
   예: "경기도 안산시 상록구 본오동 718-12" → dong: "본오동", bunji: "718-12"
   (시/도/구 이름이나 층수·호수·건물동번호는 dong·bunji에 포함하지 마세요. 번지에 "-"로 이어진 본번-부번은 그대로 유지하세요.)
-- aptDong(아파트 동/건물번호)은 소재지에서 "101동", "가동" 같은 건물 구분 표시만 뽑으세요.
-  연립다세대나 단독주택처럼 동 구분이 없으면 null로 두세요.
+- aptDong(아파트 동/건물번호)은 소재지에서 "101동", "가동"처럼 "동"으로 끝나는 건물 구분 표시만 뽑으세요.
+  연립다세대나 단독주택처럼 동 구분이 없으면 반드시 null로 두세요.
+  ⚠️ 절대로 "OOO호"(호수) 형태의 값을 aptDong에 넣지 마세요 - "동"이 아니라 "호"로 끝나는 값은 무조건
+  unitNo(호수) 필드에만 들어가야 하고, aptDong은 그 경우 null이어야 합니다.
+  예: "본오동 830-16 3층302호"에는 건물 동번호 표시가 없으므로 aptDong은 null, unitNo만 "302호".
 - roadName/roadMainNum/roadSubNum은 도로명주소(예: "경기 안산시 상록구 본원로 115")에서
   도로명("본원로")과 건물번호의 본번(115)·부번을 분리하세요. 부번이 없으면 roadSubNum은 null.
   도로명주소 자체가 없으면 세 필드 모두 null로 두고 절대 지어내지 마세요.
@@ -500,6 +506,139 @@ async function setCachedParseResult(key, payload) {
 }
 
 // ════════════════════════════════════
+// 개발호재 검색 (재개발/재건축/신속통합기획 등) - mode: 'devNews'
+// ⚠️ Hobby 플랜 12개 함수 한도 때문에 새 api 파일을 만들 수 없어, 이미 GEMINI_API_KEY를
+//    쓰고 있는 이 파일에 완전히 다른 기능을 mode 분기로 얹음. 이번엔 responseSchema(JSON
+//    강제모드) 대신 Gemini의 google_search 그라운딩 도구를 켜서 실제 웹검색을 시키고,
+//    검색에 근거한 요약 텍스트 + 출처 링크(groundingChunks)를 그대로 돌려줌.
+// ════════════════════════════════════
+const DEV_NEWS_CACHE_TTL_SECONDS = 3 * 24 * 60 * 60; // 3일 - 개발호재는 하루 단위로 자주 안 바뀌는 정보라 캐시를 길게 둠
+
+function computeDevNewsCacheKey(address) {
+  const h = crypto.createHash('sha256');
+  h.update(String(address || '').trim());
+  return `devnews_${h.digest('hex')}`;
+}
+
+async function getCachedDevNews(key) {
+  if (!REDIS_URL || !REDIS_TOKEN) return null;
+  try {
+    const r = await fetch(`${REDIS_URL}/get/${key}`, {
+      headers: { Authorization: `Bearer ${REDIS_TOKEN}` },
+      signal: AbortSignal.timeout(3000),
+    });
+    if (!r.ok) return null;
+    const data = await r.json();
+    if (!data || !data.result) return null;
+    return JSON.parse(data.result);
+  } catch (e) {
+    console.error('devNews Redis 캐시 조회 실패:', e.message);
+    return null;
+  }
+}
+
+async function setCachedDevNews(key, payload) {
+  if (!REDIS_URL || !REDIS_TOKEN) return;
+  try {
+    const r = await fetch(`${REDIS_URL}/set/${key}?EX=${DEV_NEWS_CACHE_TTL_SECONDS}`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${REDIS_TOKEN}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+      signal: AbortSignal.timeout(3000),
+    });
+    if (!r.ok) {
+      const errText = await r.text();
+      console.error('devNews Redis 캐시 저장 실패:', errText);
+    }
+  } catch (e) {
+    console.error('devNews Redis 캐시 저장 실패:', e.message);
+  }
+}
+
+function buildDevNewsPrompt(address) {
+  return `당신은 한국 부동산 개발 정보를 조사하는 조사원입니다.
+아래 주소 일대의 최신 "개발호재"를 웹검색으로 찾아 한국어로 정리해 주세요.
+
+조사 대상 주소: ${address}
+
+찾아야 할 정보 종류: 재개발, 재건축, 리모델링, 신속통합기획(신통기획), 공공재개발/재건축,
+정비구역 지정·정비계획 수립, 도시개발사업, 지구단위계획, 역세권개발, GTX·지하철 신설/연장,
+도로·교량 신설, 대규모 개발사업(택지지구 등) 등.
+
+지침:
+- 이 주소가 속한 동/읍면/구·시, 또는 도보 생활권으로 볼 수 있는 매우 인접한 지역에 실제로
+  관련된 정보만 정리하세요. 행정구역이 다르거나 거리가 먼 곳의 사업은 제외하세요.
+- 검색으로 실제 확인된 사실만 적고, 추측하거나 지어내지 마세요.
+- 항목이 여러 개면 각 항목을 아래 형식으로 줄바꿈해서 나열하세요:
+  · [사업명/제목] (진행단계: 알 수 있으면 예) 정비구역 지정, 조합설립인가, 시공사선정, 착공 등 / 시기: 알 수 있으면)
+    핵심 내용 1~2문장
+- 검색해도 이 지역과 직접 관련된 개발호재 정보를 전혀 찾지 못했다면, 다른 말 없이
+  "검색된 개발호재 정보가 없습니다." 한 줄만 답하세요.
+- 첫 줄에 전체를 한 문장으로 요약하고, 그 다음 줄부터 항목을 나열하세요.`;
+}
+
+async function callGeminiGroundedSearch(apiKey, promptText) {
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${apiKey}`;
+  let geminiRes;
+  try {
+    geminiRes = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        contents: [{ parts: [{ text: promptText }] }],
+        tools: [{ google_search: {} }],
+        generationConfig: { temperature: 0.2 },
+      }),
+      signal: AbortSignal.timeout(52000),
+    });
+  } catch (e) {
+    if (e.name === 'TimeoutError' || e.name === 'AbortError') {
+      throw new Error('개발호재 검색이 시간 내에 끝나지 못했습니다. 잠시 후 다시 시도해 주세요.');
+    }
+    throw e;
+  }
+  const data = await geminiRes.json();
+  if (!geminiRes.ok) {
+    const msg = data.error?.message || 'Gemini API 호출 실패';
+    throw new Error(msg);
+  }
+  const candidate = data.candidates?.[0];
+  const parts = candidate?.content?.parts || [];
+  const summary = parts.map((p) => p.text || '').join('').trim();
+  const chunks = candidate?.groundingMetadata?.groundingChunks || [];
+  const seen = new Set();
+  const sources = [];
+  chunks.forEach((c) => {
+    const uri = c.web?.uri;
+    const title = c.web?.title;
+    if (uri && !seen.has(uri)) {
+      seen.add(uri);
+      sources.push({ uri, title: title || uri });
+    }
+  });
+  return { summary: summary || '검색된 개발호재 정보가 없습니다.', sources };
+}
+
+async function handleDevNewsSearch(req, res, apiKey) {
+  const address = req.body && req.body.address ? String(req.body.address).trim() : '';
+  if (!address) return res.status(400).json({ error: '주소가 필요합니다.' });
+  const force = !!(req.body && req.body.force);
+  const cacheKey = computeDevNewsCacheKey(address);
+  if (!force) {
+    const cached = await getCachedDevNews(cacheKey);
+    if (cached) return res.status(200).json({ devNews: cached, cached: true });
+  }
+  try {
+    const result = await callGeminiGroundedSearch(apiKey, buildDevNewsPrompt(address));
+    const payload = { summary: result.summary, sources: result.sources, fetchedAt: Date.now(), address };
+    setCachedDevNews(cacheKey, payload); // 응답을 늦추지 않도록 await 없이 fire-and-forget
+    return res.status(200).json({ devNews: payload });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+}
+
+// ════════════════════════════════════
 // 정확도 검증: (1) 숫자 정합성(다른 필드로부터 재계산), (2) 스키마C 교차검증
 // 둘 다 "틀렸다"가 아니라 "확인이 필요하다"는 신호라서, 값을 고치지 않고 detail.warnings에
 // 문자열로 담아 프론트에서 경고로만 보여줌 (최종 판단은 사람이 원문을 보고 함).
@@ -578,6 +717,10 @@ export default async function handler(req, res) {
   if (!GEMINI_API_KEY) {
     return res.status(500).json({ error: 'GEMINI_API_KEY 환경변수가 없습니다. Vercel 프로젝트 설정에 추가해 주세요.' });
   }
+  // 개발호재 검색(mode:'devNews')은 기존 경매정보지 추출 로직과 완전히 별개라 여기서 바로 분기
+  if (req.body && req.body.mode === 'devNews') {
+    return handleDevNewsSearch(req, res, GEMINI_API_KEY);
+  }
   const { text, images } = req.body || {};
   const hasText = text && String(text).trim();
   const hasImages = Array.isArray(images) && images.length > 0;
@@ -621,6 +764,13 @@ export default async function handler(req, res) {
       }),
     ]);
     const merged = { ...resultA, ...resultB };
+    // 방어적 보정: 프롬프트에서 aptDong에 "OOO호" 형태를 넣지 말라고 명시했지만, 간헐적으로
+    // AI가 unitNo와 동일한 "호"로 끝나는 값을 aptDong에 잘못 채우는 경우가 있어(연립다세대에
+    // 동 구분이 없는데도 호수를 동으로 오인) 서버에서 한 번 더 걸러냄.
+    if (merged.aptDong && /호$/.test(String(merged.aptDong).trim())) {
+      console.log(`parse-auction: aptDong이 "호"로 끝나 무효화함 (${merged.aptDong})`);
+      merged.aptDong = null;
+    }
     merged.warnings = [
       ...buildNumericWarnings(merged),
       ...buildCrossCheckWarnings(merged, resultC),
