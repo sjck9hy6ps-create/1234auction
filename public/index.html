@@ -4638,17 +4638,29 @@ function formatDevNewsTime(ts) {
     return d.getFullYear() + '.' + String(d.getMonth() + 1).padStart(2, '0') + '.' + String(d.getDate()).padStart(2, '0')
         + ' ' + String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0') + ' 조회';
 }
+function formatNewsPubDate(pubDate) {
+    if (!pubDate) return '';
+    var d = new Date(pubDate);
+    if (isNaN(d.getTime())) return '';
+    return d.getFullYear() + '.' + String(d.getMonth() + 1).padStart(2, '0') + '.' + String(d.getDate()).padStart(2, '0');
+}
 function buildDevNewsHtml(devNews) {
     if (!devNews) return '';
     var html = '<div class="indicator-box" style="border-color:#90caf9;background:#f3f9ff;margin-top:8px;">';
-    html += '<div class="indicator-title" style="color:#1565c0;">🏗️ 주변 개발호재 (AI 웹검색' + (devNews.fetchedAt ? ' · ' + formatDevNewsTime(devNews.fetchedAt) : '') + ')</div>';
-    html += '<div style="font-size:11.5px;color:#444;line-height:1.7;white-space:pre-line;">' + escapeHtmlText(devNews.summary || '검색 결과가 없습니다.') + '</div>';
-    if (devNews.sources && devNews.sources.length) {
-        html += '<div style="margin-top:6px;font-size:10px;color:#999;">출처: ' + devNews.sources.map(function(s) {
-            return '<a href="' + escapeHtmlText(s.uri) + '" target="_blank" rel="noopener" style="color:#1976d2;">' + escapeHtmlText(s.title || '링크') + '</a>';
-        }).join(' · ') + '</div>';
+    html += '<div class="indicator-title" style="color:#1565c0;">🏗️ 주변 개발호재 뉴스 (네이버 뉴스검색' + (devNews.fetchedAt ? ' · ' + formatDevNewsTime(devNews.fetchedAt) : '') + ')</div>';
+    var items = devNews.items || [];
+    if (!items.length) {
+        html += '<div style="font-size:11.5px;color:#777;">관련 뉴스를 찾지 못했습니다.</div>';
+    } else {
+        items.forEach(function(it) {
+            html += '<div style="background:white;border-radius:6px;padding:6px 8px;margin-bottom:5px;border-left:3px solid #90caf9;">'
+                + '<a href="' + escapeHtmlText(it.link) + '" target="_blank" rel="noopener" style="font-size:11.5px;font-weight:bold;color:#1565c0;text-decoration:none;">' + escapeHtmlText(it.title) + '</a>'
+                + '<div style="font-size:10px;color:#999;margin-top:1px;">' + [it.source, formatNewsPubDate(it.pubDate)].filter(Boolean).map(escapeHtmlText).join(' · ') + '</div>'
+                + (it.description ? '<div style="font-size:11px;color:#666;margin-top:3px;">' + escapeHtmlText(it.description) + '</div>' : '')
+                + '</div>';
+        });
     }
-    html += '<div style="font-size:9.5px;color:#aaa;margin-top:4px;">⚠️ AI 웹검색 요약이니 실제 진행 여부는 해당 지자체·조합 공고 원문으로 다시 확인하세요.</div>';
+    html += '<div style="font-size:9.5px;color:#aaa;margin-top:4px;">⚠️ 키워드 기반 뉴스검색 결과이니 실제 진행 여부·범위는 해당 지자체·조합 공고 원문으로 다시 확인하세요.</div>';
     html += '</div>';
     return html;
 }
