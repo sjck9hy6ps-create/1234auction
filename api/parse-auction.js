@@ -1453,12 +1453,25 @@ function getVillaTierLabel(tierKey) {
 // 평단가(또는 실거래 없을 때 전세가 기반 추정 평단가)를 구하는 공용 헬퍼.
 // calcPriceGrades()의 두 등급 계산(연식단계별/지역 전체)이 이 로직을 공유함.
 function calcPppForGrade(apt) {
-    var valid = apt.trades.filter(function(t) {
+    var recentNonGround = apt.trades.filter(function(t) {
         return tradeDate(t) >= oneYearAgo && t.area > 0 && parseInt(t.amount) > 0 && parseInt(t.floor) !== 1;
     });
-    if (valid.length) {
-        var sum = valid.reduce(function(a, t) { return a + parseInt(t.amount) / toPyung(t.area); }, 0);
-        return { ppp: sum / valid.length, estimated: false };
+    if (recentNonGround.length) {
+        var sum = recentNonGround.reduce(function(a, t) { return a + parseInt(t.amount) / toPyung(t.area); }, 0);
+        return { ppp: sum / recentNonGround.length, estimated: false };
+    }
+    // ⚠️ 1층 거래를 제외하는 기준(위)만 쓰면, 매매가 드문 연립다세대 중 "최근 1년 내 거래가
+    // 딱 1건뿐인데 하필 1층"인 경우 평단가/배지가 통째로 안 나오는 문제가 있었음
+    // (인천 계양구 계산동 982-15 현대파크빌라(C동) 등 다수 사례로 확인됨 - 최근 거래가
+    // 1건뿐이고 그게 1층이라 걸러지면서 등급 계산 대상에서 아예 빠짐). 1층 제외 없이 같은
+    // 1년 기준으로 한 번 더 시도해서, 데이터가 희박한 건물도 최소한 "1층 거래 포함" 평단가로
+    // 배지가 나오게 함(전세가 추정으로 넘어가기 전 단계).
+    var recentAny = apt.trades.filter(function(t) {
+        return tradeDate(t) >= oneYearAgo && t.area > 0 && parseInt(t.amount) > 0;
+    });
+    if (recentAny.length) {
+        var sum2 = recentAny.reduce(function(a, t) { return a + parseInt(t.amount) / toPyung(t.area); }, 0);
+        return { ppp: sum2 / recentAny.length, estimated: false };
     }
     // 매매 실거래가 없는 연립다세대는 전세가 기반 예상 거래가(calcVillaJeonseEstimate)로
     // 대신 평단가를 추정해서라도 등급 배지를 만들어줌 - 지도에서 아예 안 보이던 물건도
