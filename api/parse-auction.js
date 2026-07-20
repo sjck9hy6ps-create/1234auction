@@ -507,17 +507,64 @@ async function setCachedParseResult(key, payload) {
 
 // ════════════════════════════════════
 // 개발호재 검색 (재개발/재건축/신속통합기획 등) - mode: 'devNews'
-// ⚠️ Hobby 플랜 12개 함수 한도 때문에 새 api 파일을 만들 수 없어, 이미 GEMINI_API_KEY를
-//    쓰고 있는 이 파일에 완전히 다른 기능을 mode 분기로 얹음. 이번엔 responseSchema(JSON
-//    강제모드) 대신 Gemini의 google_search 그라운딩 도구를 켜서 실제 웹검색을 시키고,
-//    검색에 근거한 요약 텍스트 + 출처 링크(groundingChunks)를 그대로 돌려줌.
+// ⚠️ Hobby 플랜 12개 함수 한도 때문에 새 api 파일을 만들 수 없어 이 파일에 mode 분기로 얹음.
+// ⚠️ 처음엔 Gemini의 google_search 그라운딩 도구로 구현했었는데, 무료 티어 API 키에서는
+//    그라운딩 자체가 막혀 있어("quota exceeded") 결제 활성화 없이는 동작하지 않았음.
+//    그래서 완전 무료인 네이버 뉴스검색 API(개발자센터에서 Client ID/Secret만 발급받으면
+//    카드 등록 없이 사용 가능)로 교체함. Vercel에 NAVER_CLIENT_ID / NAVER_CLIENT_SECRET
+//    환경변수를 추가해야 동작함(https://developers.naver.com/apps/#/register 에서
+//    "검색" API를 선택해 애플리케이션 등록 후 발급).
 // ════════════════════════════════════
-const DEV_NEWS_CACHE_TTL_SECONDS = 3 * 24 * 60 * 60; // 3일 - 개발호재는 하루 단위로 자주 안 바뀌는 정보라 캐시를 길게 둠
+const DEV_NEWS_CACHE_TTL_SECONDS = 24 * 60 * 60; // 1일 - 뉴스는 감정가/최저가보다 훨씬 자주 갱신될 수 있어 AI추출 캐시보다 짧게
+const NAVER_NEWS_ENDPOINT = 'https://openapi.naver.com/v1/search/news.json';
 
 function computeDevNewsCacheKey(address) {
   const h = crypto.createHash('sha256');
   h.update(String(address || '').trim());
   return `devnews_${h.digest('hex')}`;
+}
+
+// 지번/도로명 주소 문자열에서 "동(읍/면/가/리)"과 "구(시/군)" 단위 지명만 뽑아냄.
+// 번지(숫자로 시작하는 토큰)가 나오기 전까지의 토큰만 지명 후보로 보고, 뒤에서부터
+// 훑으며 "동/읍/면/가/리"로 끝나는 첫 토큰을 dongName, "시/군/구"로 끝나는 첫 토큰을
+// gunguName으로 삼음(단, "인천광역시"처럼 시/도 단위는 제외).
+function parseAddressLocationParts(address) {
+  const tokens = String(address || '').trim().split(/\s+/).filter(Boolean);
+  const locTokens = [];
+  for (let i = 0; i < tokens.length; i++) {
+    if (/^\d/.test(tokens[i])) break; // "424-76" 같은 번지 시작 지점에서 중단
+    locTokens.push(tokens[i]);
+  }
+  if (!locTokens.length) locTokens.push(...tokens.slice(0, 3));
+  const isSido = (t) => /(특별시|광역시|특별자치시|특별자치도)$/.test(t);
+  let dongName = null;
+  let gunguName = null;
+  for (let j = locTokens.length - 1; j >= 0; j--) {
+    const t = locTokens[j];
+    if (!dongName && /(동|읍|면|가|리)$/.test(t) && !isSido(t)) { dongName = t; continue; }
+    if (!gunguName && /(시|군|구)$/.test(t) && !isSido(t)) { gunguName = t; }
+  }
+  return { dongName, gunguName };
+}
+
+function stripNaverHtml(s) {
+  return String(s || '')
+    .replace(/<[^>]+>/g, '')
+    .replace(/&quot;/g, '"').replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&#39;/g, "'");
+}
+
+async function searchNaverNews(query, clientId, clientSecret) {
+  const url = `${NAVER_NEWS_ENDPOINT}?query=${encodeURIComponent(query)}&display=10&sort=date`;
+  const r = await fetch(url, {
+    headers: { 'X-Naver-Client-Id': clientId, 'X-Naver-Client-Secret': clientSecret },
+    signal: AbortSignal.timeout(8000),
+  });
+  if (!r.ok) {
+    const errText = await r.text().catch(() => '');
+    throw new Error(`네이버 뉴스검색 실패(${r.status}): ${errText || query}`);
+  }
+  const data = await r.json();
+  return Array.isArray(data.items) ? data.items : [];
 }
 
 async function getCachedDevNews(key) {
@@ -555,71 +602,16 @@ async function setCachedDevNews(key, payload) {
   }
 }
 
-function buildDevNewsPrompt(address) {
-  return `당신은 한국 부동산 개발 정보를 조사하는 조사원입니다.
-아래 주소 일대의 최신 "개발호재"를 웹검색으로 찾아 한국어로 정리해 주세요.
-
-조사 대상 주소: ${address}
-
-찾아야 할 정보 종류: 재개발, 재건축, 리모델링, 신속통합기획(신통기획), 공공재개발/재건축,
-정비구역 지정·정비계획 수립, 도시개발사업, 지구단위계획, 역세권개발, GTX·지하철 신설/연장,
-도로·교량 신설, 대규모 개발사업(택지지구 등) 등.
-
-지침:
-- 이 주소가 속한 동/읍면/구·시, 또는 도보 생활권으로 볼 수 있는 매우 인접한 지역에 실제로
-  관련된 정보만 정리하세요. 행정구역이 다르거나 거리가 먼 곳의 사업은 제외하세요.
-- 검색으로 실제 확인된 사실만 적고, 추측하거나 지어내지 마세요.
-- 항목이 여러 개면 각 항목을 아래 형식으로 줄바꿈해서 나열하세요:
-  · [사업명/제목] (진행단계: 알 수 있으면 예) 정비구역 지정, 조합설립인가, 시공사선정, 착공 등 / 시기: 알 수 있으면)
-    핵심 내용 1~2문장
-- 검색해도 이 지역과 직접 관련된 개발호재 정보를 전혀 찾지 못했다면, 다른 말 없이
-  "검색된 개발호재 정보가 없습니다." 한 줄만 답하세요.
-- 첫 줄에 전체를 한 문장으로 요약하고, 그 다음 줄부터 항목을 나열하세요.`;
-}
-
-async function callGeminiGroundedSearch(apiKey, promptText) {
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${apiKey}`;
-  let geminiRes;
-  try {
-    geminiRes = await fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        contents: [{ parts: [{ text: promptText }] }],
-        tools: [{ google_search: {} }],
-        generationConfig: { temperature: 0.2 },
-      }),
-      signal: AbortSignal.timeout(52000),
+async function handleDevNewsSearch(req, res) {
+  const NAVER_CLIENT_ID = process.env.NAVER_CLIENT_ID;
+  const NAVER_CLIENT_SECRET = process.env.NAVER_CLIENT_SECRET;
+  if (!NAVER_CLIENT_ID || !NAVER_CLIENT_SECRET) {
+    return res.status(500).json({
+      error: 'NAVER_CLIENT_ID / NAVER_CLIENT_SECRET 환경변수가 없습니다. '
+        + 'https://developers.naver.com/apps/#/register 에서 "검색" API로 애플리케이션을 등록해 '
+        + '발급받은 값을 Vercel 프로젝트 설정에 추가해 주세요.',
     });
-  } catch (e) {
-    if (e.name === 'TimeoutError' || e.name === 'AbortError') {
-      throw new Error('개발호재 검색이 시간 내에 끝나지 못했습니다. 잠시 후 다시 시도해 주세요.');
-    }
-    throw e;
   }
-  const data = await geminiRes.json();
-  if (!geminiRes.ok) {
-    const msg = data.error?.message || 'Gemini API 호출 실패';
-    throw new Error(msg);
-  }
-  const candidate = data.candidates?.[0];
-  const parts = candidate?.content?.parts || [];
-  const summary = parts.map((p) => p.text || '').join('').trim();
-  const chunks = candidate?.groundingMetadata?.groundingChunks || [];
-  const seen = new Set();
-  const sources = [];
-  chunks.forEach((c) => {
-    const uri = c.web?.uri;
-    const title = c.web?.title;
-    if (uri && !seen.has(uri)) {
-      seen.add(uri);
-      sources.push({ uri, title: title || uri });
-    }
-  });
-  return { summary: summary || '검색된 개발호재 정보가 없습니다.', sources };
-}
-
-async function handleDevNewsSearch(req, res, apiKey) {
   const address = req.body && req.body.address ? String(req.body.address).trim() : '';
   if (!address) return res.status(400).json({ error: '주소가 필요합니다.' });
   const force = !!(req.body && req.body.force);
@@ -628,9 +620,52 @@ async function handleDevNewsSearch(req, res, apiKey) {
     const cached = await getCachedDevNews(cacheKey);
     if (cached) return res.status(200).json({ devNews: cached, cached: true });
   }
+  const parts = parseAddressLocationParts(address);
+  if (!parts.dongName && !parts.gunguName) {
+    return res.status(400).json({ error: '주소에서 동/구 이름을 인식하지 못했습니다.' });
+  }
+  const gunguForBroaderQuery = parts.gunguName || parts.dongName;
+  const queries = [];
+  if (parts.dongName) {
+    queries.push(parts.dongName + ' 재개발');
+    queries.push(parts.dongName + ' 재건축');
+  }
+  queries.push(gunguForBroaderQuery + ' 신속통합기획');
+  queries.push(gunguForBroaderQuery + ' 정비구역');
+
   try {
-    const result = await callGeminiGroundedSearch(apiKey, buildDevNewsPrompt(address));
-    const payload = { summary: result.summary, sources: result.sources, fetchedAt: Date.now(), address };
+    const resultsPerQuery = await Promise.all(
+      queries.map((q) => searchNaverNews(q, NAVER_CLIENT_ID, NAVER_CLIENT_SECRET).catch((e) => {
+        console.error('devNews 네이버 검색 실패:', q, e.message);
+        return [];
+      }))
+    );
+    const seen = new Set();
+    let items = [];
+    resultsPerQuery.forEach((list, idx) => {
+      list.forEach((it) => {
+        const link = it.originallink || it.link;
+        if (!link || seen.has(link)) return;
+        seen.add(link);
+        let source = '';
+        try { source = new URL(link).hostname.replace(/^www\./, ''); } catch (e) { /* ignore */ }
+        items.push({
+          title: stripNaverHtml(it.title),
+          description: stripNaverHtml(it.description),
+          link,
+          pubDate: it.pubDate || null,
+          source,
+          matchedQuery: queries[idx],
+        });
+      });
+    });
+    items.sort((a, b) => {
+      const ta = a.pubDate ? new Date(a.pubDate).getTime() : 0;
+      const tb = b.pubDate ? new Date(b.pubDate).getTime() : 0;
+      return tb - ta;
+    });
+    items = items.slice(0, 15);
+    const payload = { items, fetchedAt: Date.now(), address, queries };
     setCachedDevNews(cacheKey, payload); // 응답을 늦추지 않도록 await 없이 fire-and-forget
     return res.status(200).json({ devNews: payload });
   } catch (err) {
@@ -713,13 +748,14 @@ function buildCrossCheckWarnings(m, c) {
 export default async function handler(req, res) {
   res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
   if (req.method !== 'POST') return res.status(405).json({ error: 'POST only' });
+  // 개발호재 검색(mode:'devNews')은 기존 경매정보지 추출(Gemini) 로직과 완전히 별개(네이버 뉴스검색
+  // API 사용)라 GEMINI_API_KEY 확인보다 먼저 분기함
+  if (req.body && req.body.mode === 'devNews') {
+    return handleDevNewsSearch(req, res);
+  }
   const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
   if (!GEMINI_API_KEY) {
     return res.status(500).json({ error: 'GEMINI_API_KEY 환경변수가 없습니다. Vercel 프로젝트 설정에 추가해 주세요.' });
-  }
-  // 개발호재 검색(mode:'devNews')은 기존 경매정보지 추출 로직과 완전히 별개라 여기서 바로 분기
-  if (req.body && req.body.mode === 'devNews') {
-    return handleDevNewsSearch(req, res, GEMINI_API_KEY);
   }
   const { text, images } = req.body || {};
   const hasText = text && String(text).trim();
