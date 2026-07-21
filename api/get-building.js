@@ -5,38 +5,46 @@
    같은 PUBLIC_DATA_API_KEY를 재사용합니다.
    (data.go.kr에서 "국토교통부_건축HUB_건축물대장정보 서비스" 활용신청이
     이 키로 별도 승인되어 있어야 합니다)
+
    ── 캐싱 ──
    building_info 테이블에 결과를 저장해두고, 180일 이내에 저장된 캐시가
    있으면 외부 API를 다시 호출하지 않고 캐시를 바로 반환합니다.
    (구조/층수/세대수 등은 거의 안 바뀌고, 공시가격도 연 1회만 갱신되므로)
-   ※ 이 버전을 쓰려면 Supabase에 아래 컬럼이 먼저 추가되어 있어야 합니다
-     (근수님 - 이미 실행하셨다고 확인함):
+
+   ⚠️ 아래 SQL을 Supabase에 먼저 실행해서 컬럼을 추가해야 합니다:
      ALTER TABLE building_info ADD COLUMN IF NOT EXISTS floor_json jsonb;
      ALTER TABLE building_info ADD COLUMN IF NOT EXISTS expos_json jsonb;
+
    ── 디버그 ──
-   title/price/floors/exposAreas 중 하나라도 비어있으면 응답에 debug
-   필드를 추가로 포함시켜서 건축HUB가 실제로 뭐라고 응답했는지
-   (에러코드/빈결과 등) 바로 확인 가능. 원인 파악 끝나면 debug 관련
-   코드는 제거해도 됩니다.
+   title이 없거나, price/floor/expos가 비어있을 때 응답에 debug 필드를
+   추가로 포함시켜서 건축HUB가 실제로 뭐라고 응답했는지 바로 확인 가능.
+   층별개요/전유공용면적의 필드명(tag)은 공식 문서 기준 추정치라, 실제
+   응답에서 비어있는 값이 보이면 debug.floorRaw/exposRaw로 실제 태그명을
+   확인해서 normalizeFloor/normalizeExposArea를 수정해야 할 수 있습니다.
 ════════════════════════════════════ */
 import { createClient } from '@supabase/supabase-js';
+
 const supabase = createClient(
   process.env.SUPABASE_URL,
   process.env.SUPABASE_SERVICE_ROLE_KEY
 );
+
 const API_KEY = process.env.PUBLIC_DATA_API_KEY;
 const BASE = 'https://apis.data.go.kr/1613000/BldRgstHubService';
 const FRESH_MS = 1000 * 60 * 60 * 24 * 180; // 180일
 
 export default async function handler(req, res) {
   res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
+
   const { sigunguCd, bjdongCd, bun, ji, platGbCd, bldNm } = req.query;
   if (!sigunguCd || !bjdongCd || !bun) {
     return res.status(400).json({ error: 'sigunguCd, bjdongCd, bun 파라미터가 필요합니다.' });
   }
+
   const jiParam   = ji || '0000';
   const gbCd      = platGbCd || '0';
   const bldNmKey  = (bldNm || '').trim();
+
   try {
     // ── 1. 캐시 조회 ──
     const { data: cached, error: cacheErr } = await supabase
@@ -48,7 +56,9 @@ export default async function handler(req, res) {
       .eq('ji', jiParam)
       .eq('bld_nm', bldNmKey)
       .maybeSingle();
+
     if (cacheErr) console.error('building_info 캐시 조회 에러:', cacheErr.message);
+
     if (cached && (Date.now() - new Date(cached.fetched_at).getTime()) < FRESH_MS) {
       return res.status(200).json({
         title: cached.title_json,
@@ -58,59 +68,60 @@ export default async function handler(req, res) {
         cached: true,
       });
     }
+
     // ── 2. 캐시 없거나 오래됨 → 실시간 조회 ──
     if (!API_KEY) return res.status(500).json({ error: 'PUBLIC_DATA_API_KEY 없음' });
-    const [titleResult, priceResult, flrResult, exposResult] = await Promise.all([
-      fetchBld('getBrTitleInfo', { sigunguCd, bjdongCd, platGbCd: gbCd, bun, ji: jiParam }),
-      fetchBld('getBrHsprcInfo', { sigunguCd, bjdongCd, platGbCd: gbCd, bun, ji: jiParam }),
-      fetchBld('getBrFlrOulnInfo', { sigunguCd, bjdongCd, platGbCd: gbCd, bun, ji: jiParam, numOfRows: '100' }),
-      fetchBld('getBrExposPubuseAreaInfo', { sigunguCd, bjdongCd, platGbCd: gbCd, bun, ji: jiParam, numOfRows: '200' }),
+
+    const commonParams = { sigunguCd, bjdongCd, platGbCd: gbCd, bun, ji: jiParam };
+    const [titleResult, priceResult, floorResult, exposResult] = await Promise.all([
+      fetchBld('getBrTitleInfo', commonParams),
+      fetchBld('getBrHsprcInfo', commonParams),
+      fetchBld('getBrFlrOulnInfo', { ...commonParams, numOfRows: '100' }),
+      fetchBld('getBrExposPubuseAreaInfo', { ...commonParams, numOfRows: '200' }),
     ]);
     const titleItems = titleResult.items;
     const priceItems = priceResult.items;
+
     const titleItem = pickBestItem(titleItems, bldNmKey);
     const priceItem = pickLatestPrice(priceItems);
+
     const title = titleItem ? normalizeTitle(titleItem) : null;
     const price = priceItem ? normalizePrice(priceItem) : null;
-
-    const floors = flrResult.items.length
-      ? flrResult.items.map(normalizeFloor).sort(function(a, b) { return floorSortKey(a) - floorSortKey(b); })
+    const floors = floorResult.items.length
+      ? floorResult.items.map(normalizeFloor).sort((a, b) => floorSortKey(a) - floorSortKey(b))
       : null;
     const exposAreas = exposResult.items.length
       ? exposResult.items.map(normalizeExposArea)
       : null;
 
-    // title/price/floors/exposAreas 중 하나라도 없을 때만 디버그 정보 포함 (원인 파악용, 확인 후 제거 권장)
-    const priceEmpty = !price || price.price === null;
+    // title이 없거나, price가 "빈 껍데기"(year/month/price 전부 비어있음)이거나,
+    // 층별개요/전유공용면적이 비어있을 때도 디버그 정보 포함 (원인 파악용, 확인 후 제거 권장)
+    const priceEmpty = !price || (!price.year && !price.month && (price.price === null || price.price === undefined));
     const debug = (!title || priceEmpty || !floors || !exposAreas) ? {
       titleHttpStatus: titleResult.httpStatus,
       priceHttpStatus: priceResult.httpStatus,
-      floorHttpStatus: flrResult.httpStatus,
+      floorHttpStatus: floorResult.httpStatus,
       exposHttpStatus: exposResult.httpStatus,
       titleRaw: titleResult.raw,
       priceRaw: priceResult.raw,
-      floorRaw: flrResult.raw,
+      floorRaw: floorResult.raw,
       exposRaw: exposResult.raw,
     } : undefined;
 
     // ── 3. 캐시에 저장 (write-through) ──
-    // title/price가 둘 다 없으면(예: 429 할당량 초과 등 일시적 실패) 캐시에 저장하지 않음
-    // → 다음 요청 때 다시 실시간 조회를 시도할 수 있게 함
-    if (title || price) {
-      const { error: upsertErr } = await supabase.from('building_info').upsert({
-        sigungu_cd: sigunguCd,
-        bjdong_cd:  bjdongCd,
-        bun,
-        ji:         jiParam,
-        bld_nm:     bldNmKey,
-        title_json: title,
-        price_json: price,
-        floor_json: floors,
-        expos_json: exposAreas,
-        fetched_at: new Date().toISOString(),
-      }, { onConflict: 'sigungu_cd,bjdong_cd,bun,ji,bld_nm' });
-      if (upsertErr) console.error('building_info 캐시 저장 에러:', upsertErr.message);
-    }
+    const { error: upsertErr } = await supabase.from('building_info').upsert({
+      sigungu_cd: sigunguCd,
+      bjdong_cd:  bjdongCd,
+      bun,
+      ji:         jiParam,
+      bld_nm:     bldNmKey,
+      title_json: title,
+      price_json: price,
+      floor_json: floors,
+      expos_json: exposAreas,
+      fetched_at: new Date().toISOString(),
+    }, { onConflict: 'sigungu_cd,bjdong_cd,bun,ji,bld_nm' });
+    if (upsertErr) console.error('building_info 캐시 저장 에러:', upsertErr.message);
 
     return res.status(200).json({ title, price, floors, exposAreas, cached: false, debug });
   } catch (err) {
@@ -158,11 +169,10 @@ function parseItems(xmlText) {
   return items;
 }
 
-/* 태그 이름이 문서마다 다르게 표기되는 경우가 있어, 후보 목록 중 값이 있는
-   첫 번째 태그를 반환하는 방어적 헬퍼 (층별개요/전유공용면적 필드에 사용) */
+/* 여러 후보 태그명 중 값이 있는 첫 번째를 반환 (필드명이 확실치 않은 신규 API용 안전장치) */
 function getAny(it, tags) {
-  for (let i = 0; i < tags.length; i++) {
-    const v = it.get(tags[i]);
+  for (const t of tags) {
+    const v = it.get(t);
     if (v) return v;
   }
   return '';
@@ -195,12 +205,20 @@ function pickLatestPrice(items) {
   })[0];
 }
 
+/* 층 정렬 기준: 지하는 깊은 순(지하3→지하1), 지상은 낮은 순(1→2→3) */
+function floorSortKey(f) {
+  const n = parseInt(String(f.flrNo).replace(/[^0-9]/g, ''), 10) || 0;
+  return (f.flrGbNm && f.flrGbNm.includes('지하')) ? -n : n;
+}
+
 function toInt(v) { const n = parseInt(v, 10); return Number.isNaN(n) ? null : n; }
 function toFloat(v) { const n = parseFloat(v); return Number.isNaN(n) ? null : n; }
 
 function normalizeTitle(it) {
   return {
     bldNm: it.get('bldNm'),
+    platPlc: getAny(it, ['platPlc']),         // 지번주소
+    newPlatPlc: getAny(it, ['newPlatPlc']),   // 도로명주소
     mainPurps: it.get('mainPurpsCdNm'),
     strct: it.get('strctCdNm'),
     roofCd: it.get('roofCdNm'),
@@ -223,9 +241,6 @@ function normalizeTitle(it) {
     useAprDay: it.get('useAprDay'),
     pmsDay: it.get('pmsDay'),
     engrGrade: it.get('engrGrade'),
-    // 지번/도로명주소 (지번주소 표시용으로 추가)
-    platPlc: it.get('platPlc'),
-    newPlatPlc: it.get('newPlatPlc'),
   };
 }
 
@@ -237,39 +252,28 @@ function normalizePrice(it) {
   };
 }
 
-/* 층별개요 (getBrFlrOulnInfo) - 층 하나당 항목 하나 */
+/* 층별개요(getBrFlrOulnInfo) - 태그명은 공식 문서 기준 추정치 */
 function normalizeFloor(it) {
-  const flrGbNm = getAny(it, ['flrGbCdNm']);
-  const flrNoNm = getAny(it, ['flrNoNm']);
-  const flrNo   = toInt(getAny(it, ['flrNo']));
   return {
-    dongNm: getAny(it, ['dongNm']),
-    flrGbNm: flrGbNm,          // 지상/지하 구분
-    flrNoNm: flrNoNm || (flrNo !== null ? flrNo + '층' : ''),
-    flrNo: flrNo,
-    strct: getAny(it, ['strctCdNm']),
-    mainPurps: getAny(it, ['mainPurpsCdNm', 'etcPurps']),
-    area: toFloat(getAny(it, ['area'])),
+    flrGbNm: getAny(it, ['flrGbCdNm']),                 // 층구분 (지상/지하)
+    flrNo: getAny(it, ['flrNoNm', 'flrNo']),             // 층번호
+    mainAtchGbNm: getAny(it, ['mainAtchGbCdNm']),        // 주/부속 구분
+    strct: getAny(it, ['strctCdNm']),                    // 구조
+    mainPurps: getAny(it, ['mainPurpsCdNm']),             // 주용도
+    etcPurps: getAny(it, ['etcPurps']),                   // 기타용도
+    area: toFloat(getAny(it, ['area'])),                  // 면적(㎡)
   };
 }
 
-/* 지하는 깊은 층(지하5 등)부터, 지상은 낮은 층부터 오름차순 정렬용 정렬키 */
-function floorSortKey(f) {
-  const isUgrnd = (f.flrGbNm || '').indexOf('지하') !== -1;
-  const n = f.flrNo || 0;
-  return isUgrnd ? -100000 + (100 - n) : 100000 + n;
-}
-
-/* 전유공용면적 (getBrExposPubuseAreaInfo) - 호실/구획 하나당 항목 하나 */
+/* 전유공용면적(getBrExposPubuseAreaInfo) - 태그명은 공식 문서 기준 추정치 */
 function normalizeExposArea(it) {
   return {
-    dongNm: getAny(it, ['dongNm']),
-    hoNm: getAny(it, ['hoNm']),
-    flrGbNm: getAny(it, ['flrGbCdNm']),
-    flrNoNm: getAny(it, ['flrNoNm']),
-    gbNm: getAny(it, ['exposPubuseGbCdNm']),   // 전유/공용 구분
-    strct: getAny(it, ['strctCdNm']),
-    mainPurps: getAny(it, ['mainPurpsCdNm', 'etcPurps']),
-    area: toFloat(getAny(it, ['area'])),
+    hoNm: getAny(it, ['hoNm']),                                              // 호명칭
+    flrGbNm: getAny(it, ['flrGbCdNm']),                                      // 층구분
+    flrNo: getAny(it, ['flrNoNm', 'flrNo']),                                  // 층번호
+    esUseNm: getAny(it, ['exposPubuseGbCdNm', 'esUseStatusCdNm', 'esUseCdNm']), // 전유/공용 구분
+    strct: getAny(it, ['strctCdNm']),                                        // 구조
+    mainPurps: getAny(it, ['mainPurpsCdNm']),                                 // 용도
+    area: toFloat(getAny(it, ['area'])),                                      // 면적(㎡)
   };
 }
