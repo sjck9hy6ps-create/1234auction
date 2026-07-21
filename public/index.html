@@ -494,6 +494,7 @@ tr:hover td { background:#fffde7; }
     </div>
     <div style="font-size:11px;color:#888;margin-top:4px;">핀 숫자 = 기간 내 거래건수</div>
     <div style="margin-top:4px;"><a href="/backup.html" style="font-size:11px;color:#6a1b9a;font-weight:bold;">📦 데이터 백업</a></div>
+    <div style="margin-top:4px;"><a href="/dashboard.html" style="font-size:11px;color:#2e7d32;font-weight:bold;">📊 누적 투자 리포트</a></div>
     </div>
 </div>
 <button id="auction-add-btn" onclick="openAuctionList()">🔨 경매 관리</button>
@@ -545,6 +546,7 @@ tr:hover td { background:#fffde7; }
                 <span style="font-size:10px;color:#999;margin-left:4px;">주소 입력 후 눌러주세요 (재개발·재건축·신속통합기획 등 AI 웹검색)</span>
             </div>
             <div id="dev-news-box" style="margin-top:4px;"></div>
+            <div id="auction-history-box" style="margin-top:4px;"></div>
             <div class="modal-row">
                 <span class="modal-label">물건유형</span>
                 <select class="modal-select" id="a-prop-type" onchange="autoCalcAgentSilent();autoCalcRepairSilent();calcCompValuation();calcMargin();autoCalcAuctionJeonseAnalysis();">
@@ -642,6 +644,11 @@ tr:hover td { background:#fffde7; }
                 <span style="font-size:10px;color:#999;margin-left:4px;">연립다세대·단독이고 주소·평형이 있으면 자동으로 계산됩니다 (수동 새로고침용 버튼)</span>
             </div>
             <div id="jeonse-analysis-box" style="margin-top:8px;"></div>
+            <div style="margin-top:10px;border-top:1px dashed #e0d0f0;padding-top:8px;">
+                <button type="button" class="modal-btn btn-purple" id="resale-match-btn" style="font-size:11px;" onclick="findApproximateResaleMatches()">🔍 낙찰가·매도가 추정 조회 (근사치)</button>
+                <span style="font-size:10px;color:#999;margin-left:4px;">주소·평형·층 입력 후 눌러주세요. 관심물건인데 입찰 안 하신 경우에도 씁니다 - 남이 얼마에 낙찰받았는지, 그 뒤 얼마에 팔렸는지 근사치로 찾아드려요.</span>
+            </div>
+            <div id="resale-match-box" style="margin-top:8px;"></div>
         </div>
         <div class="modal-section">
             <div class="modal-section-title">💰 가격 정보 (만원 단위)</div>
@@ -992,6 +999,12 @@ var GRADE_COLORS = {1:'#b71c1c',2:'#e53935',3:'#ff7043',4:'#ffa726',5:'#66bb6a',
 var auctionList = [], auctionCoordCache = {}, auctionMarkers = {}, auctionMarkerSigs = {};
 var currentAuctionId = null;
 var pendingAuctionDetail = null;
+// 관심물건 경과 추적: 재추출/수정 시 이전 값과 달라진 점을 시간순으로 기록.
+// { ts, changes:[문자열...] } 배열. 저장을 눌러야 a.history로 최종 반영됨.
+var pendingAuctionHistory = [];
+// 낙찰가·매도가 근사치 매칭 결과: { matches:[{date,amount,area,floor,isAfterBid}], fetchedAt, lawdCd, targetFloor, targetPyung }
+// 공공데이터에 호수가 없어 같은 건물·층·유사평형 거래를 후보로만 보여주는 "근사치" 기능.
+var pendingResaleMatches = null;
 var pendingAuctionComparables = [];
 var pendingCompMarkerData = null;
 var aiCompCandidates = [];
@@ -3063,6 +3076,8 @@ function openAuctionModal(id) {
     pendingRegistryAnalysis = null;
     pendingAuctionBuildingInfo = null;
     pendingDevNews = null;
+    pendingAuctionHistory = [];
+    pendingResaleMatches = null;
     currentChecklist = {};
     clearAuctionImages();
     auctionJeonseEstimate = null;
@@ -3074,6 +3089,8 @@ function openAuctionModal(id) {
     document.getElementById('jeonse-analysis-box').innerHTML = '';
     document.getElementById('a-ai-summary-box').innerHTML = '';
     document.getElementById('dev-news-box').innerHTML = '';
+    document.getElementById('auction-history-box').innerHTML = '';
+    document.getElementById('resale-match-box').innerHTML = '';
     if (isEdit) {
         var a = auctionList.find(function(x) { return x.id === id; });
         if (a) {
@@ -3082,10 +3099,14 @@ function openAuctionModal(id) {
             pendingRegistryDoc = a.registryDoc || null;
             pendingRegistryAnalysis = a.registryAnalysis || null;
             pendingDevNews = a.devNews || null;
+            pendingAuctionHistory = a.history ? a.history.slice() : [];
+            pendingResaleMatches = a.resaleMatches || null;
             currentChecklist = a.checklist ? Object.assign({}, a.checklist) : {};
             renderRegistryAnalysis();
             renderAiSummaryBox();
             renderDevNewsBox();
+            renderHistoryBox();
+            renderResaleMatchesBox();
             document.getElementById('a-paste-text').value = a.rawText || '';
             document.getElementById('auction-id').value    = a.id || '';
             document.getElementById('a-addr').value        = a.addr || '';
@@ -3720,6 +3741,19 @@ async function saveAuction() {
     // 값을 그대로 유지해서 애써 확인해둔 연식 정보가 지워지지 않게 함.
     var existingAuctionForYear = auctionList.find(function(x) { return x.id === document.getElementById('auction-id').value; });
     var resolvedBuildYear = getAuctionBuildYear() || (existingAuctionForYear ? existingAuctionForYear.buildYear : null) || null;
+    // 관심물건 경과 추적: 저장 직전 값(진행상태·입찰일·가격 등)을 기존 저장분과 비교해서
+    // 달라진 점이 있으면 이력에 남김 (유찰 → 다음 입찰일 갱신, 낙찰/포기 전환 등을 나중에
+    // 시간순으로 되짚어볼 수 있게). existingAuctionForYear는 위에서 이미 조회해둔 기존 레코드.
+    pushHistoryEntry(diffAuctionTopFields(existingAuctionForYear, {
+        status: document.getElementById('a-status').value,
+        bidDate: document.getElementById('a-date').value,
+        minBid: document.getElementById('a-min-bid').value,
+        appraisal: document.getElementById('a-appraisal').value,
+        myBid: document.getElementById('a-my-bid').value,
+        actualBid: document.getElementById('a-actual-bid').value,
+        target: document.getElementById('a-target').value,
+        actualSell: document.getElementById('a-actual-sell').value,
+    }));
     var data = {
         id: document.getElementById('auction-id').value || Date.now().toString(),
         buildYear: resolvedBuildYear,
@@ -3756,6 +3790,8 @@ async function saveAuction() {
         registryAnalysis: pendingRegistryAnalysis || null,
         devNews: pendingDevNews || null,
         checklist: currentChecklist || {},
+        history: pendingAuctionHistory || [],
+        resaleMatches: pendingResaleMatches || null,
     };
     if (!data.lat || !data.lon) {
         await new Promise(function(resolve) {
@@ -4020,6 +4056,8 @@ function buildAuctionPanelHtml(aptName, aptDong, aptBunji) {
         // (매매기록 없는 단독 경매물건은 편집모달을 직접 여니 원래도 마진분석이 보였음)
         html += buildMarginSummaryHtml(a);
         html += buildAuctionDetailHtml(a.detail);
+        html += buildHistoryHtml(a.history);
+        html += buildResaleMatchesHtml(a.resaleMatches);
         html += buildDevNewsHtml(a.devNews);
         html += buildOfficialPriceLookupHtml(a);
         html += buildNaverLinkHtml(a.lat, a.lon, a.detail && a.detail.addrJibun, '');
@@ -4815,6 +4853,234 @@ function mapAiPropertyTypeToSelect(text) {
     if (/상가|토지|근린|공장|창고|숙박/.test(t)) return 'other';
     return null;
 }
+/* ════════════════════════════════════
+   관심물건 경과 추적 (변경이력)
+   - 법원경매정보에는 공식 API가 없어서 폴링/크롤링 대신, 사용자가 그 페이지를 다시 열어
+     정보를 재추출하거나(붙여넣기 재실행) 폼을 수정해서 저장할 때마다 "이전 값과 달라진
+     점"만 감지해 시간순으로 쌓는 방식으로 구현함. 저장을 눌러야 auctionList(DB)에 최종
+     반영되고, 그 전까지는 pendingAuctionHistory에만 임시로 들어있음.
+════════════════════════════════════ */
+function pushHistoryEntry(changes) {
+    if (!changes || !changes.length) return;
+    pendingAuctionHistory.unshift({ ts: Date.now(), changes: changes });
+    if (pendingAuctionHistory.length > 30) pendingAuctionHistory.length = 30; // 너무 길어지지 않게 최근 30건만
+}
+// 저장 폼의 핵심 필드(진행상태·일정·가격)를 기존 저장분과 비교. 신규 등록(oldA 없음)이면 빈 배열.
+function diffAuctionTopFields(oldA, newData) {
+    if (!oldA) return [];
+    var FIELDS = [
+        { key: 'status', label: '진행상태' },
+        { key: 'bidDate', label: '입찰일' },
+        { key: 'minBid', label: '최저입찰가(만원)' },
+        { key: 'appraisal', label: '감정가(만원)' },
+        { key: 'myBid', label: '내 입찰가(만원)' },
+        { key: 'actualBid', label: '실제 낙찰가(만원)' },
+        { key: 'target', label: '목표 매도가(만원)' },
+        { key: 'actualSell', label: '실제 매도가(만원)' },
+    ];
+    var changes = [];
+    FIELDS.forEach(function(f) {
+        var oldV = oldA[f.key];
+        var newV = newData[f.key];
+        var oldS = (oldV === null || oldV === undefined) ? '' : String(oldV);
+        var newS = (newV === null || newV === undefined) ? '' : String(newV);
+        if (oldS === newS) return;
+        if (!oldS && !newS) return;
+        changes.push(f.label + ': ' + (oldS || '(없음)') + ' → ' + (newS || '(없음)'));
+    });
+    return changes;
+}
+// AI 재추출 결과(경매정보지 재파싱)를 이전 추출 결과와 비교. 유찰→재경매(rounds 늘어남),
+// 매각기일 변경, 최저가 변경, 처분방식/주의사항 변경 등을 감지해 이력으로 남김.
+function diffAuctionDetailForHistory(oldD, newD) {
+    if (!oldD || !newD) return [];
+    var changes = [];
+    if (oldD.saleDate && newD.saleDate && oldD.saleDate !== newD.saleDate) {
+        changes.push('매각기일: ' + oldD.saleDate + ' → ' + newD.saleDate + ' (유찰 후 재경매로 추정)');
+    }
+    if (oldD.minBidPrice && newD.minBidPrice && oldD.minBidPrice !== newD.minBidPrice) {
+        changes.push('최저입찰가: ' + toEok(String(Math.round(oldD.minBidPrice / 10000))) + ' → ' + toEok(String(Math.round(newD.minBidPrice / 10000))));
+    }
+    if (oldD.disposalMethod && newD.disposalMethod && oldD.disposalMethod !== newD.disposalMethod) {
+        changes.push('처분방식: ' + oldD.disposalMethod + ' → ' + newD.disposalMethod);
+    }
+    if (oldD.caseCautions !== newD.caseCautions && (oldD.caseCautions || newD.caseCautions)) {
+        changes.push('주의사항 변경: ' + (newD.caseCautions || '(해제됨)'));
+    }
+    var oldRounds = (oldD.rounds || []).length;
+    var newRounds = (newD.rounds || []).length;
+    if (newRounds > oldRounds) {
+        var latestOld = (oldD.rounds && oldD.rounds.length) ? oldD.rounds[oldD.rounds.length - 1] : null;
+        var resultText = (latestOld && latestOld.result) ? latestOld.result : '유찰';
+        changes.push('입찰 회차 갱신: ' + oldRounds + '차 → ' + newRounds + '차 (직전 회차 결과: ' + resultText + ')');
+    }
+    return changes;
+}
+function formatHistoryTime(ts) {
+    var d = new Date(ts);
+    return d.getFullYear() + '.' + String(d.getMonth() + 1).padStart(2, '0') + '.' + String(d.getDate()).padStart(2, '0')
+        + ' ' + String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0');
+}
+function buildHistoryHtml(history) {
+    if (!history || !history.length) return '';
+    var html = '<div class="indicator-box" style="border-color:#90a4ae;background:#f5f7f8;margin-top:8px;">';
+    html += '<div class="indicator-title" style="color:#455a64;">🕘 관심물건 경과 이력</div>';
+    history.forEach(function(h) {
+        html += '<div style="background:white;border-radius:6px;padding:6px 8px;margin-bottom:5px;border-left:3px solid #90a4ae;">'
+            + '<div style="font-size:10px;color:#999;margin-bottom:2px;">' + formatHistoryTime(h.ts) + '</div>'
+            + (h.changes || []).map(function(c) { return '<div style="font-size:11px;color:#555;">· ' + escapeHtmlText(c) + '</div>'; }).join('')
+            + '</div>';
+    });
+    html += '<div style="font-size:9.5px;color:#aaa;margin-top:2px;">⚠️ 재추출(붙여넣기) 또는 저장 시 이전 값과 달라진 항목만 자동 기록됩니다.</div>';
+    html += '</div>';
+    return html;
+}
+function renderHistoryBox() {
+    var box = document.getElementById('auction-history-box');
+    if (!box) return;
+    box.innerHTML = buildHistoryHtml(pendingAuctionHistory);
+}
+/* ════════════════════════════════════
+   낙찰가·매도가 근사치 매칭
+   - 법원경매/등기소 자료 모두 "몇 호"까지는 공개 API로 알 수 없어서, 같은 건물(단지명
+     일치 또는 동+번지 일치) + 같은 층 + 평형±4㎡ 조건의 실거래를 후보로 보여주는
+     근사치 기능(공공데이터 자체에 호수가 없어 생기는 한계이며, 정확한 호수 일치가
+     아닐 수 있음을 항상 함께 안내함).
+   - 입찰일(a-date) 기준 이전/이후로 나눠서, 이후 거래는 "누군가 낙찰(또는 매입)받은 뒤
+     되판 가격"의 근사치로, 이전 거래는 참고용 시세로 구분해 표시.
+   - 관심물건인데 입찰에 참여하지 못한 경우에도 그대로 쓸 수 있음(a-date=관심 당시
+     예상 입찰일, a-my-bid=예상 입찰가로 채워두면 비교 가능).
+════════════════════════════════════ */
+function toDateNum(s) {
+    // 'YYYYMMDD' 또는 'YYYY-MM-DD' 등 어떤 형식이 와도 숫자 8자리(YYYYMMDD)로 정규화
+    if (!s) return null;
+    var digits = String(s).replace(/[^0-9]/g, '');
+    if (digits.length < 8) return null;
+    return parseInt(digits.slice(0, 8), 10);
+}
+async function findApproximateResaleMatches() {
+    var box = document.getElementById('resale-match-box');
+    if (!box) return;
+    var ctx = getAuctionAddressContext();
+    var pyung = parseFloat(document.getElementById('a-pyung').value) || null;
+    var floor = parseInt(document.getElementById('a-floor').value) || null;
+    var name = document.getElementById('a-name').value.trim();
+    if (!ctx.lat || !ctx.lon) { alert('먼저 주소를 검색(또는 AI 자동추출)해 주세요.'); return; }
+    if (!pyung) { alert('평형을 먼저 입력해 주세요.'); return; }
+    if (!floor) { alert('층을 먼저 입력해 주세요. (AI 자동추출로 채워지거나 직접 입력)'); return; }
+    var btn = document.getElementById('resale-match-btn');
+    var origText = btn ? btn.innerText : '';
+    if (btn) { btn.disabled = true; btn.innerText = '조회 중...'; }
+    box.innerHTML = '<div style="font-size:11px;color:#999;">주변 실거래 조회 중...</div>';
+    try {
+        var lawdCd = await new Promise(function(resolve) {
+            geocoder.coord2RegionCode(ctx.lon, ctx.lat, function(result, status) {
+                if (status !== kakao.maps.services.Status.OK) { resolve(null); return; }
+                for (var i = 0; i < result.length; i++) {
+                    if (result[i].region_type === 'B') { resolve(result[i].code.substring(0, 5)); return; }
+                }
+                resolve(null);
+            });
+        });
+        if (!lawdCd) { box.innerHTML = '<div style="font-size:11px;color:#e53935;">지역코드를 찾지 못했습니다.</div>'; return; }
+        var res = await fetch('/api/get-house?lawdCd=' + lawdCd);
+        var dbData = await readJsonResponseSafe(res);
+        if (!dbData || dbData.error || !Array.isArray(dbData.apt)) {
+            box.innerHTML = '<div style="font-size:11px;color:#e53935;">실거래 데이터를 불러오지 못했습니다.</div>';
+            return;
+        }
+        var targetAreaM2 = pyung * 3.305785;
+        var bidDateNum = toDateNum(document.getElementById('a-date').value);
+        var matches = dbData.apt.filter(function(row) {
+            var rowName = (row.danji || '').trim();
+            var buildingMatch = (name && rowName && rowName === name)
+                || (ctx.dong && ctx.bunji && row.dong === ctx.dong && String(row.bunji || '') === String(ctx.bunji));
+            if (!buildingMatch) return false;
+            var rowFloor = parseInt(row.floor);
+            if (!Number.isFinite(rowFloor) || rowFloor !== floor) return false;
+            var rowArea = Number(row.size) || 0;
+            if (!rowArea || Math.abs(rowArea - targetAreaM2) > 4) return false;
+            return true;
+        }).map(function(row) {
+            var dateNum = toDateNum(row.deal_date);
+            return {
+                date: row.deal_date,
+                amount: Number(row.price) || 0,
+                area: Number(row.size) || 0,
+                floor: row.floor,
+                isAfterBid: (bidDateNum && dateNum) ? (dateNum >= bidDateNum) : null,
+            };
+        }).sort(function(a, b) { return toDateNum(b.date) - toDateNum(a.date); });
+        pendingResaleMatches = {
+            matches: matches, fetchedAt: Date.now(), lawdCd: lawdCd,
+            targetFloor: floor, targetPyung: pyung,
+        };
+        renderResaleMatchesBox();
+    } catch (e) {
+        box.innerHTML = '<div style="font-size:11px;color:#e53935;">조회 중 오류: ' + escapeHtmlText(e.message) + '</div>';
+    } finally {
+        if (btn) { btn.disabled = false; btn.innerText = origText; }
+    }
+}
+function formatResaleFetchTime(ts) {
+    if (!ts) return '';
+    var d = new Date(ts);
+    return d.getFullYear() + '.' + String(d.getMonth() + 1).padStart(2, '0') + '.' + String(d.getDate()).padStart(2, '0')
+        + ' ' + String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0') + ' 조회';
+}
+function formatResaleDate(s) {
+    var digits = String(s || '').replace(/[^0-9]/g, '');
+    if (digits.length < 8) return s || '';
+    return digits.slice(0, 4) + '.' + digits.slice(4, 6) + '.' + digits.slice(6, 8);
+}
+function buildResaleMatchesHtml(result) {
+    if (!result) return '';
+    var html = '<div class="indicator-box" style="border-color:#ba68c8;background:#faf5ff;margin-top:8px;">';
+    html += '<div class="indicator-title" style="color:#6a1b9a;">🔍 낙찰가·매도가 추정 (근사치' + (result.fetchedAt ? ' · ' + formatResaleFetchTime(result.fetchedAt) : '') + ')</div>';
+    html += '<div style="font-size:9.5px;color:#aaa;margin-bottom:4px;">같은 건물 · ' + result.targetFloor + '층 · ' + result.targetPyung + '평 근처(±4㎡) 실거래만 모은 근사치입니다. 정확한 호수 일치가 아닐 수 있습니다.</div>';
+    var matches = result.matches || [];
+    if (!matches.length) {
+        html += '<div style="font-size:11.5px;color:#777;">조건에 맞는 실거래를 찾지 못했습니다.</div>';
+        html += '</div>';
+        return html;
+    }
+    var myBid = parseInt(document.getElementById('a-my-bid').value) || 0;
+    var target = parseInt(document.getElementById('a-target').value) || 0;
+    var afterBidMatches = matches.filter(function(m) { return m.isAfterBid === true; });
+    if (myBid && afterBidMatches.length) {
+        // 정렬이 최신순(내림차순)이므로 배열의 마지막 원소가 입찰일 이후 가장 이른(가장 가까운) 거래
+        var earliest = afterBidMatches[afterBidMatches.length - 1];
+        var diffBid = earliest.amount - myBid * 10000;
+        html += '<div style="background:#fff8e1;border-radius:6px;padding:6px 8px;margin-bottom:6px;font-size:11px;color:#795548;">'
+            + '💰 내 입찰가(' + myBid.toLocaleString() + '만원) 대비 입찰일 이후 최초 거래(' + formatResaleDate(earliest.date) + '): '
+            + Math.round(earliest.amount / 10000).toLocaleString() + '만원'
+            + ' (차이 ' + (diffBid >= 0 ? '+' : '') + Math.round(diffBid / 10000).toLocaleString() + '만원)</div>';
+    }
+    if (target && afterBidMatches.length) {
+        var latest = afterBidMatches[0]; // 최신순 정렬이므로 첫 원소가 가장 최근 거래
+        var diffTarget = latest.amount - target * 10000;
+        html += '<div style="background:#fff8e1;border-radius:6px;padding:6px 8px;margin-bottom:6px;font-size:11px;color:#795548;">'
+            + '🎯 목표 매도가(' + target.toLocaleString() + '만원) 대비 가장 최근 거래(' + formatResaleDate(latest.date) + '): '
+            + Math.round(latest.amount / 10000).toLocaleString() + '만원'
+            + ' (차이 ' + (diffTarget >= 0 ? '+' : '') + Math.round(diffTarget / 10000).toLocaleString() + '만원)</div>';
+    }
+    matches.forEach(function(m) {
+        var badge = m.isAfterBid === true
+            ? '<span style="background:#e8f5e9;color:#2e7d32;border-radius:4px;padding:1px 5px;font-size:9.5px;margin-left:4px;">입찰일 이후</span>'
+            : (m.isAfterBid === false
+                ? '<span style="background:#eceff1;color:#607d8b;border-radius:4px;padding:1px 5px;font-size:9.5px;margin-left:4px;">입찰일 이전</span>' : '');
+        html += '<div style="background:white;border-radius:6px;padding:5px 8px;margin-bottom:4px;border-left:3px solid #ba68c8;font-size:11.5px;color:#555;display:flex;justify-content:space-between;">'
+            + '<span>' + formatResaleDate(m.date) + ' · ' + m.floor + '층 · ' + (Math.round(m.area * 100 / 3.305785) / 100) + '평' + badge + '</span>'
+            + '<span style="font-weight:bold;">' + Math.round(m.amount / 10000).toLocaleString() + '만원</span></div>';
+    });
+    html += '</div>';
+    return html;
+}
+function renderResaleMatchesBox() {
+    var box = document.getElementById('resale-match-box');
+    if (!box) return;
+    box.innerHTML = buildResaleMatchesHtml(pendingResaleMatches);
+}
 async function parseAuctionPaste() {
     var text = document.getElementById('a-paste-text').value.trim();
     var hasImages = pendingAuctionImages.length > 0;
@@ -4848,8 +5114,17 @@ async function parseAuctionPaste() {
             return;
         }
         var d = data.detail;
+        // 관심물건 경과 추적: 기존에 이미 한 번 추출해둔 물건을 다시 붙여넣어 재추출한
+        // 경우(법원경매정보 페이지를 다시 열어 최신 상태를 확인), 이전 추출값과 비교해서
+        // 유찰/재경매/최저가 변동 등을 감지해 이력에 남김. 덮어쓰기 전에 이전 값을 먼저 잡아둠.
+        var prevDetailForHistory = pendingAuctionDetail;
         pendingAuctionDetail = d;
- 
+        var detailHistoryChanges = diffAuctionDetailForHistory(prevDetailForHistory, d);
+        if (detailHistoryChanges.length) {
+            pushHistoryEntry(detailHistoryChanges);
+            renderHistoryBox();
+        }
+
         if (d.caseNo) document.getElementById('a-case').value = d.caseNo;
  
         // 주소 입력칸에는 지번주소(동+번지 기준)를 넣어야 기존 dong+bunji 매칭 방식이 그대로 유지됨
