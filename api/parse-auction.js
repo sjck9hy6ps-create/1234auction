@@ -386,11 +386,30 @@ function parseRetryDelayMs(errData) {
   return Math.ceil(sec * 1000) + 500; // 약간의 여유를 더함
 }
 
+// ⚠️ 429(RESOURCE_EXHAUSTED)는 셋 중 어느 걸 넘었는지에 따라 대응이 완전히 달라야 함:
+//   - RPM(분당 요청수)/TPM(분당 토큰수): "롤링 윈도우"라 수십 초~1분 안에 다시 풀림 - 재시도 가치 있음.
+//   - RPD(일일 요청수): 태평양시간 자정까지 절대 안 풀림 - 재시도해봐야 Vercel 60초 제한만 낭비하고
+//     100% 실패함. 이 경우엔 즉시 포기하고 정확한 이유를 사용자에게 알려주는 게 낫다.
+// 구글 에러 응답의 error.details[]에 담긴 QuotaFailure.violations[].quotaId 문자열에
+// 보통 "...PerDay..." 또는 "...PerMinute..." 식으로 어떤 한도인지 표시되어 있어서 이걸로 구분함.
+// (형식이 문서화되어 있지 않고 바뀔 수 있어, 못 찾으면 안전하게 '짧은 한도'로 간주해 재시도함)
+function classifyQuotaError(errData) {
+  const details = errData?.error?.details;
+  if (!Array.isArray(details)) return 'unknown';
+  const quotaFailure = details.find((d) => typeof d['@type'] === 'string' && d['@type'].includes('QuotaFailure'));
+  const violations = quotaFailure?.violations;
+  if (!Array.isArray(violations) || !violations.length) return 'unknown';
+  const idText = violations.map((v) => `${v.quotaId || ''} ${v.quotaMetric || ''}`).join(' ');
+  if (/day/i.test(idText)) return 'daily';
+  if (/minute|second/i.test(idText)) return 'short';
+  return 'unknown';
+}
+
 // Gemini가 "high demand"/"overloaded"(구글 서버 혼잡, 503 UNAVAILABLE)로 거절하는 경우가
 // 있는데, 대부분 몇 초 안에 풀리는 일시적 현상이라 1초 후 최대 2회까지 자동 재시도한다.
-// 무료 티어의 "분당 요청수(RPM)" 한도(429 RESOURCE_EXHAUSTED)에 걸린 경우도 대부분
-// 짧게는 십수 초 안에 풀리는 일시적 현상이라, Gemini가 알려주는 재시도 대기시간만큼
-// 기다렸다가 한 번 더 시도한다(과도한 대기로 Vercel 60초 제한을 넘지 않도록 1회만).
+// 무료 티어의 분당 한도(RPM/TPM, 429 RESOURCE_EXHAUSTED)에 걸린 경우도 롤링 윈도우라 곧
+// 풀리므로, Gemini가 알려주는 재시도 대기시간(+지터)만큼 기다렸다가 최대 2회까지 재시도한다
+// (일일 한도(RPD) 초과로 확인되면 재시도해봐야 소용없으므로 즉시 포기 - classifyQuotaError 참고).
 // (API 키 오류·잘못된 요청 같은 재시도해도 안 풀리는 오류는 즉시 그대로 던짐)
 // imageParts: [{ inline_data: { mime_type, data } }, ...] - 캡처 이미지가 없으면 빈 배열.
 // temperature: 기본 0(재현성 우선).
@@ -438,13 +457,25 @@ async function callGemini(apiKey, promptText, schema, imageParts, attempt, tempe
       await sleep(1000 * attempt);
       return callGemini(apiKey, promptText, schema, imageParts, attempt + 1, temperature);
     }
-    if (isQuotaExceeded && attempt < 2) {
-      const waitMs = parseRetryDelayMs(data) ?? 15000;
-      await sleep(waitMs);
-      return callGemini(apiKey, promptText, schema, imageParts, attempt + 1, temperature);
-    }
     if (isQuotaExceeded) {
-      throw new Error('AI 판독기 요청이 무료 사용량 한도(분당 요청수)에 잠시 걸렸습니다. 15~20초 후 다시 시도해 주세요.');
+      const quotaType = classifyQuotaError(data);
+      // 어떤 한도에 걸렸는지 Vercel 로그에 그대로 남겨둠 - 이후에도 반복되면 이 로그로
+      // 정확한 원인(quotaId)을 확인할 수 있음.
+      console.error(`parse-auction 429 (attempt ${attempt}, type=${quotaType}):`, JSON.stringify(data.error?.details || data.error || {}));
+      if (quotaType === 'daily') {
+        // 하루 한도(RPD)는 태평양시간 자정까지 절대 안 풀리므로 재시도 자체가 무의미함 - 바로 포기.
+        throw new Error('오늘 무료 API 일일 사용량 한도를 모두 사용했습니다. 태평양시간 자정(한국시간 오후 4~5시경)에 초기화되니 그 이후 다시 시도해 주세요.');
+      }
+      // 분당 요청수(RPM)/분당 토큰수(TPM)는 롤링 윈도우라 곧 풀림 - 최대 2회(attempt 1→2→3)까지
+      // 재시도. 매번 살짝 다른 지터(jitter)를 더해 동시에 재시도하는 다른 3개 호출과 타이밍이
+      // 겹쳐 다시 한꺼번에 부딪히는 걸 줄임.
+      if (attempt < 3) {
+        const base = parseRetryDelayMs(data) ?? (8000 * attempt);
+        const jitter = Math.floor(Math.random() * 1500);
+        await sleep(base + jitter);
+        return callGemini(apiKey, promptText, schema, imageParts, attempt + 1, temperature);
+      }
+      throw new Error('AI 판독기 요청이 무료 사용량 한도(분당 요청수)에 계속 걸리고 있습니다. 1분 정도 기다렸다가 다시 시도해 주세요.');
     }
     throw new Error(msg);
   }
@@ -506,6 +537,73 @@ async function setCachedParseResult(key, payload) {
     }
   } catch (e) {
     console.error('parse-auction Redis 캐시 저장 실패:', e.message);
+  }
+}
+
+// ════════════════════════════════════
+// 하루 사용량 제한 (텍스트/이미지 AI 추출 전용)
+// - gemini-3.5-flash는 무료 티어라 실제로 돈이 나가진 않지만(결제수단을 연결하지 않는 한),
+//   스스로 하루에 몇 건까지 쓸지 관리하고 싶다는 요청으로 추가함. 값은 10건(DAILY_TEXT_EXTRACT_LIMIT).
+// - mode:'devNews'(개발호재 검색, 네이버 뉴스API라 Gemini와 무관)는 이 제한 대상이 아님.
+// - 캐시로 즉시 반환되는 요청(동일 텍스트/이미지를 다시 보내 해시가 같은 경우)은 실제 Gemini
+//   호출이 없으므로 카운트하지 않음 - 이 체크는 캐시 조회(getCachedParseResult) 이후,
+//   Gemini를 실제로 호출하기 직전에만 수행함.
+// - 날짜 기준은 한국 시간(KST, UTC+9) 자정. Upstash Redis에 "그날 카운트" 키를 두고,
+//   그날 첫 호출일 때만 자정까지 남은 시간(+여유 1시간)으로 만료시간을 걸어 다음날 자동 초기화.
+// - Redis 설정이 없거나 조회 자체가 실패하면 제한 없이 그냥 진행함(가용성 우선 - 이 기능이
+//   고장났다고 AI 추출 자체가 막히면 안 됨).
+// ════════════════════════════════════
+const DAILY_TEXT_EXTRACT_LIMIT = 10;
+
+function todayKstDateStr() {
+  const kst = new Date(Date.now() + 9 * 60 * 60 * 1000);
+  return kst.toISOString().slice(0, 10); // YYYY-MM-DD
+}
+
+function secondsUntilNextKstMidnight() {
+  const now = new Date();
+  const kstNow = new Date(now.getTime() + 9 * 60 * 60 * 1000);
+  const nextMidnightKst = new Date(Date.UTC(kstNow.getUTCFullYear(), kstNow.getUTCMonth(), kstNow.getUTCDate() + 1));
+  const nextMidnightUtcMs = nextMidnightKst.getTime() - 9 * 60 * 60 * 1000;
+  return Math.max(60, Math.ceil((nextMidnightUtcMs - now.getTime()) / 1000)) + 3600; // 여유 1시간
+}
+
+async function getDailyExtractCount(dateKey) {
+  if (!REDIS_URL || !REDIS_TOKEN) return 0;
+  try {
+    const r = await fetch(`${REDIS_URL}/get/${dateKey}`, {
+      headers: { Authorization: `Bearer ${REDIS_TOKEN}` },
+      signal: AbortSignal.timeout(3000),
+    });
+    if (!r.ok) return 0;
+    const data = await r.json();
+    return data && data.result ? parseInt(data.result, 10) || 0 : 0;
+  } catch (e) {
+    console.error('일일 추출 카운트 조회 실패:', e.message);
+    return 0;
+  }
+}
+
+async function incrementDailyExtractCount(dateKey) {
+  if (!REDIS_URL || !REDIS_TOKEN) return;
+  try {
+    const r = await fetch(`${REDIS_URL}/incr/${dateKey}`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${REDIS_TOKEN}` },
+      signal: AbortSignal.timeout(3000),
+    });
+    if (!r.ok) return;
+    const data = await r.json();
+    if (data && data.result === 1) {
+      // 오늘 첫 호출 - 자정 기준 만료시간을 걸어 다음날엔 자동으로 0부터 다시 시작되게 함
+      await fetch(`${REDIS_URL}/expire/${dateKey}/${secondsUntilNextKstMidnight()}`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${REDIS_TOKEN}` },
+        signal: AbortSignal.timeout(3000),
+      }).catch(() => {});
+    }
+  } catch (e) {
+    console.error('일일 추출 카운트 증가 실패:', e.message);
   }
 }
 
@@ -753,6 +851,19 @@ export default async function handler(req, res) {
     return res.status(200).json({ detail: cached, cached: true });
   }
 
+  // 캐시에 없어 실제로 Gemini를 호출해야 하는 경우에만 하루 사용량 제한을 확인함
+  // (캐시 히트는 위에서 이미 반환되어 여기 도달하지 않으므로 카운트에서 자연히 제외됨).
+  const dailyKey = `auctionparse_daily_${todayKstDateStr()}`;
+  const usedToday = await getDailyExtractCount(dailyKey);
+  if (usedToday >= DAILY_TEXT_EXTRACT_LIMIT) {
+    return res.status(429).json({
+      error: `오늘 AI 자동추출을 이미 ${DAILY_TEXT_EXTRACT_LIMIT}건 사용하셨습니다. 무료 API 사용량 관리를 위해 하루 ${DAILY_TEXT_EXTRACT_LIMIT}건으로 제한해 두었어요 (한국시간 자정에 초기화됩니다). 이미 추출했던 물건을 그대로 다시 붙여넣는 건 캐시로 처리돼 제한에 걸리지 않습니다.`,
+      dailyLimitReached: true,
+      usedToday,
+      limit: DAILY_TEXT_EXTRACT_LIMIT,
+    });
+  }
+
   const promptA1 = buildPrompt(PROMPT_A_RULES, trimmedText);
   const promptA2 = buildPrompt(PROMPT_A_RULES, trimmedText);
   const promptB1 = buildPrompt(PROMPT_B_RULES, trimmedText);
@@ -764,11 +875,16 @@ export default async function handler(req, res) {
     // 각 호출은 프롬프트 규칙 텍스트를 통째로 재사용하지만(해당 스키마에 없는 필드에 대한
     // 규칙은 응답 형식이 스키마로 강제되므로 그냥 무시됨), 스키마 자체의 필드/배열 수가
     // 줄어들어 응답 생성(출력 토큰) 시간이 짧아지는 게 핵심.
+    // ⚠️ 4개를 완전히 동시에(0초 간격으로) 쏘면, 무료 티어의 분당 요청수(RPM)/분당 토큰수(TPM)
+    //    한도가 "롤링 윈도우"라도 순간적인 버스트에 특히 취약해서 4개 중 다수가 한꺼번에
+    //    429(RESOURCE_EXHAUSTED)를 맞는 경우가 잦았음(추출을 시도할 때마다 거의 항상 걸린다는
+    //    신고로 확인). 시작 시각을 800ms씩 살짝 어긋나게 둬서 순간 버스트를 줄임 - 전체 소요시간에
+    //    최대 2.4초 정도만 더해지고, 429 발생률은 크게 줄어듦.
     const [resultA1, resultA2, resultB1, resultB2] = await Promise.all([
       callGemini(GEMINI_API_KEY, promptA1, SCHEMA_A1, imageParts, 1, 0),
-      callGemini(GEMINI_API_KEY, promptA2, SCHEMA_A2, imageParts, 1, 0),
-      callGemini(GEMINI_API_KEY, promptB1, SCHEMA_B1, imageParts, 1, 0),
-      callGemini(GEMINI_API_KEY, promptB2, SCHEMA_B2, imageParts, 1, 0),
+      sleep(800).then(() => callGemini(GEMINI_API_KEY, promptA2, SCHEMA_A2, imageParts, 1, 0)),
+      sleep(1600).then(() => callGemini(GEMINI_API_KEY, promptB1, SCHEMA_B1, imageParts, 1, 0)),
+      sleep(2400).then(() => callGemini(GEMINI_API_KEY, promptB2, SCHEMA_B2, imageParts, 1, 0)),
     ]);
     const merged = { ...resultA1, ...resultA2, ...resultB1, ...resultB2 };
     // 방어적 보정: 프롬프트에서 aptDong에 "OOO호" 형태를 넣지 말라고 명시했지만, 간헐적으로
@@ -781,6 +897,7 @@ export default async function handler(req, res) {
     merged.warnings = buildNumericWarnings(merged);
     // 캐시에는 경고까지 포함한 최종 결과를 그대로 저장 - 캐시 히트 시 재계산 없이 즉시 반환.
     setCachedParseResult(cacheKey, merged); // 응답을 늦추지 않도록 await 없이 fire-and-forget
+    incrementDailyExtractCount(dailyKey); // 실제로 Gemini를 새로 호출해 성공한 경우에만 하루 사용량에 반영 (fire-and-forget)
     return res.status(200).json({ detail: merged });
   } catch (err) {
     return res.status(500).json({ error: err.message });
