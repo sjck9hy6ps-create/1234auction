@@ -1453,12 +1453,25 @@ function getVillaTierLabel(tierKey) {
 // 평단가(또는 실거래 없을 때 전세가 기반 추정 평단가)를 구하는 공용 헬퍼.
 // calcPriceGrades()의 두 등급 계산(연식단계별/지역 전체)이 이 로직을 공유함.
 function calcPppForGrade(apt) {
-    var valid = apt.trades.filter(function(t) {
+    var recentNonGround = apt.trades.filter(function(t) {
         return tradeDate(t) >= oneYearAgo && t.area > 0 && parseInt(t.amount) > 0 && parseInt(t.floor) !== 1;
     });
-    if (valid.length) {
-        var sum = valid.reduce(function(a, t) { return a + parseInt(t.amount) / toPyung(t.area); }, 0);
-        return { ppp: sum / valid.length, estimated: false };
+    if (recentNonGround.length) {
+        var sum = recentNonGround.reduce(function(a, t) { return a + parseInt(t.amount) / toPyung(t.area); }, 0);
+        return { ppp: sum / recentNonGround.length, estimated: false };
+    }
+    // ⚠️ 1층 거래를 제외하는 기준(위)만 쓰면, 매매가 드문 연립다세대 중 "최근 1년 내 거래가
+    // 딱 1건뿐인데 하필 1층"인 경우 평단가/배지가 통째로 안 나오는 문제가 있었음
+    // (인천 계양구 계산동 982-15 현대파크빌라(C동) 등 다수 사례로 확인됨 - 최근 거래가
+    // 1건뿐이고 그게 1층이라 걸러지면서 등급 계산 대상에서 아예 빠짐). 1층 제외 없이 같은
+    // 1년 기준으로 한 번 더 시도해서, 데이터가 희박한 건물도 최소한 "1층 거래 포함" 평단가로
+    // 배지가 나오게 함(전세가 추정으로 넘어가기 전 단계).
+    var recentAny = apt.trades.filter(function(t) {
+        return tradeDate(t) >= oneYearAgo && t.area > 0 && parseInt(t.amount) > 0;
+    });
+    if (recentAny.length) {
+        var sum2 = recentAny.reduce(function(a, t) { return a + parseInt(t.amount) / toPyung(t.area); }, 0);
+        return { ppp: sum2 / recentAny.length, estimated: false };
     }
     // 매매 실거래가 없는 연립다세대는 전세가 기반 예상 거래가(calcVillaJeonseEstimate)로
     // 대신 평단가를 추정해서라도 등급 배지를 만들어줌 - 지도에서 아예 안 보이던 물건도
@@ -3321,10 +3334,13 @@ function autoCalcEvictionFee() {
     calcMargin();
 }
 /* 연립다세대 수리비 자동계산 - 연식단계(VILLA_AGE_TIERS)별 평당 단가.
-   가장 최신 단계(프리미엄신축)는 평당 100만원에서 시작해서, 연식단계가 한 단계씩
-   내려갈 때마다(오래될수록) 10만원씩 낮아짐: 100→90→80→70→60만원/평.
+   ⚠️ 원래 프리미엄신축(0~3년)이 가장 비싸고 노후(26년+)가 가장 싼 반대 순서로 되어 있었음
+   (수리비가 아니라 "가치"를 나타내는 것처럼 잘못 설계됨) - 새 건물일수록 수리할 게 적어
+   평당 단가가 낮아야 하고, 오래된 건물일수록 전체 리모델링이 필요해 단가가 높아야 하므로
+   방향을 반대로 바로잡음: 가장 오래된 단계(노후)가 평당 100만원, 최신 단계(프리미엄신축)로
+   갈수록 10만원씩 낮아짐: 60→70→80→90→100만원/평.
    사용승인일(연식)은 AI 자동추출 결과(pendingAuctionDetail.approvalDate)에서 가져옴. */
-var VILLA_REPAIR_PER_PYUNG = { premium: 100, new: 90, semi: 80, old: 70, aged: 60 }; // 만원/평
+var VILLA_REPAIR_PER_PYUNG = { premium: 60, new: 70, semi: 80, old: 90, aged: 100 }; // 만원/평
 function getAuctionBuildYear() {
     if (pendingAuctionDetail && pendingAuctionDetail.approvalDate) {
         var m = String(pendingAuctionDetail.approvalDate).match(/(\d{4})/);
@@ -4491,7 +4507,25 @@ function fileToBase64(file) {
         reader.readAsDataURL(file);
     });
 }
- 
+/* Vercel 서버리스 함수는 요청 전체 용량이 4.5MB를 넘으면 우리 코드(handler)가 실행되기도
+   전에 플랫폼 자체가 요청을 거부함(413 FUNCTION_PAYLOAD_TOO_LARGE). 이때 응답 본문이 JSON이
+   아니라 "A server error has occurred" 같은 일반 에러 페이지 텍스트라서, res.json()을 그대로
+   호출하면 "Unexpected token 'A', "A server e"... is not valid JSON" 같은 알아보기 힘든
+   오류가 그대로 사용자에게 노출됨. 이 함수는 응답이 JSON이 아닐 때 원인을 짐작할 수 있는
+   한국어 안내로 바꿔서 던짐. (parse-auction.js의 config.api.bodyParser.sizeLimit는
+   Next.js 자체 파서의 상한일 뿐, Vercel 플랫폼의 4.5MB 하드 리밋은 그걸로 못 늘림) */
+async function readJsonResponseSafe(res) {
+    var text = await res.text();
+    try {
+        return JSON.parse(text);
+    } catch (e) {
+        var hint = (!res.ok && (res.status === 413 || res.status === 0 || res.status >= 500))
+            ? ' 요청 용량이 너무 크거나(이미지·PDF 여러 장 동시 첨부 시 흔함) 서버가 응답 중 오류가 났을 수 있습니다. 이미지/파일 장수를 줄이거나 나눠서 다시 시도해 주세요.'
+            : '';
+        throw new Error('서버 응답을 해석할 수 없습니다(status ' + res.status + ').' + hint);
+    }
+}
+
 /* 등기부등본·매각물건명세서·전입세대확인서 최대 3종을 함께 올려서 서로 대조 분석함.
    셋 다 필수는 아니고(등기부등본만 올려도 동작), 올린 문서가 많을수록 AI가 교차검증할
    근거가 많아져서 특히 임차인 대항력 판단(전입세대확인서 vs 등기부 vs 매각물건명세서상
@@ -4509,13 +4543,20 @@ async function analyzeAuctionDocs() {
         var f = fileMap[k];
         if (!f) continue;
         if (f.type !== 'application/pdf') { alert('PDF 파일만 업로드할 수 있습니다.'); return; }
-        if (f.size > 10 * 1024 * 1024) { alert('파일이 너무 큽니다. 각 파일 10MB 이하로 업로드해 주세요.'); return; }
         totalSize += f.size;
     }
-    // 서버(Vercel 서버리스 함수)는 요청 전체 용량에도 제한이 있어서, 여러 서류를 한 번에
-    // 올릴 때는 합쳐서 15MB 이내로 제한함 - 넘으면 서버에서 실패하기 전에 미리 안내
-    if (selected.length > 1 && totalSize > 15 * 1024 * 1024) {
-        alert('여러 서류를 한 번에 올릴 때는 합쳐서 15MB 이내로 부탁드립니다.\n(스캔 해상도를 낮추면 파일 용량이 줄어듭니다. 필요하면 서류를 나눠서 순서대로 업로드해도 됩니다.)');
+    // ⚠️ Vercel 서버리스 함수는 요청 "전체" 용량이 4.5MB를 넘으면 우리 코드가 실행되기도
+    // 전에 플랫폼 자체가 요청을 막아버림(413, 응답이 JSON이 아닌 일반 에러 페이지라
+    // "Unexpected token..." 같은 알아보기 힘든 오류로 사용자에게 그대로 노출됨).
+    // base64로 인코딩하면 원본 용량의 약 1.33배가 되므로, 원본 파일 합계가 3MB를 넘지
+    // 않도록 여기서 미리 막아 원천 차단함. (예전엔 파일당 10MB/합계 15MB까지 허용
+    // 표시였는데, 실제로는 원본 합계가 약 3.3MB만 넘어도 무조건 실패했으므로 그 상한
+    // 표시 자체가 틀려 있었음 - config.api.bodyParser.sizeLimit는 Vercel 플랫폼의
+    // 4.5MB 하드 리밋을 못 늘림)
+    if (totalSize > 3 * 1024 * 1024) {
+        alert('PDF 파일 용량이 너무 큽니다(합계 약 ' + (Math.round(totalSize / 1024 / 1024 * 10) / 10) + 'MB).\n'
+            + 'Vercel 서버는 요청 하나당 4.5MB까지만 받을 수 있어, 원본 파일 합계는 3MB 이내로 부탁드립니다.\n'
+            + '(스캔 해상도를 낮추면 파일 용량이 줄어듭니다. 필요하면 서류를 한 번에 1개씩 나눠서 순서대로 업로드해도 됩니다.)');
         return;
     }
     var btn = document.getElementById('a-registry-btn');
@@ -4539,7 +4580,7 @@ async function analyzeAuctionDocs() {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ docs: docs, auctionId: auctionId, knownApprovalDate: knownApprovalDate })
         });
-        var data = await res.json();
+        var data = await readJsonResponseSafe(res);
         if (!res.ok) { alert('분석 실패: ' + (data.error || '알 수 없는 오류')); return; }
         pendingRegistryDoc = data.docs || null;
         pendingRegistryAnalysis = {
@@ -4681,7 +4722,7 @@ async function searchDevelopmentNews() {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ mode: 'devNews', address: addr })
         });
-        var data = await res.json();
+        var data = await readJsonResponseSafe(res);
         if (!res.ok || !data.devNews) {
             alert('개발호재 검색 실패: ' + (data.error || '알 수 없는 오류'));
             return;
@@ -4757,10 +4798,39 @@ function clearAuctionImages() {
     pendingAuctionImages = [];
     renderAuctionImagePreview();
 }
+// AI가 추출한 물건종류(propertyType, 자유 텍스트 - 예: "다세대주택", "연립주택", "단독주택",
+// "다가구주택", "아파트", "오피스텔" 등)를 물건유형 드롭다운 값(apt/villa/officetel/other)으로
+// 매핑. 지금까지는 이 매핑이 아예 없어서 물건유형이 항상 기본값("아파트")으로 남아있었고,
+// 그 때문에 villa 전용 로직(연식단계별 수리비 자동계산, 전세가 분석 등)이 조용히 안 돌거나
+// 엉뚱한 기준으로 계산되는 문제가 있었음. 확신할 수 없는 표현이면 null을 반환해서 기존 값을
+// 건드리지 않음(잘못 덮어써서 정확한 값을 지우는 것을 방지).
+function mapAiPropertyTypeToSelect(text) {
+    if (!text) return null;
+    var t = String(text);
+    if (t.indexOf('오피스텔') !== -1) return 'officetel';
+    // 드롭다운 자체가 "연립다세대·단독" 하나의 값(villa)으로 묶여 있으므로
+    // 연립/다세대/다가구/단독을 모두 villa로 매핑함.
+    if (/연립|다세대|다가구|단독/.test(t)) return 'villa';
+    if (t.indexOf('아파트') !== -1) return 'apt';
+    if (/상가|토지|근린|공장|창고|숙박/.test(t)) return 'other';
+    return null;
+}
 async function parseAuctionPaste() {
     var text = document.getElementById('a-paste-text').value.trim();
     var hasImages = pendingAuctionImages.length > 0;
     if (!text && !hasImages) { alert('경매정보지 텍스트를 붙여넣거나 캡처 이미지를 첨부해 주세요.'); return; }
+    // ⚠️ Vercel 요청 전체 용량 한도(4.5MB)를 넘으면 서버에 닿기도 전에 플랫폼이 요청을
+    // 거부하고, 그 응답이 JSON이 아니라서 "Unexpected token 'A', "A server e"..."처럼
+    // 알아보기 힘든 오류가 그대로 사용자에게 노출됨. 이미지가 압축돼도 여러 장을 한꺼번에
+    // 붙이면 base64 인코딩(원본의 약 1.33배)까지 더해 쉽게 한도를 넘을 수 있어서,
+    // 보내기 전에 미리 크기를 가늠해 안내하고 전송 자체를 막음.
+    var estimatedBytes = (text ? text.length : 0)
+        + pendingAuctionImages.reduce(function(sum, img) { return sum + (img.data ? img.data.length * 0.75 : 0); }, 0);
+    if (estimatedBytes > 3.5 * 1024 * 1024) {
+        alert('첨부한 이미지(또는 텍스트) 용량이 너무 큽니다(약 ' + (Math.round(estimatedBytes / 1024 / 1024 * 10) / 10) + 'MB).\n'
+            + 'Vercel 서버는 요청 하나당 4.5MB까지만 받을 수 있어요. 이미지 장수를 줄이거나(예: 한 번에 3~4장씩 나눠서 여러 번 추출), 캡처 해상도를 낮춰서 다시 시도해 주세요.');
+        return;
+    }
     var btn = document.getElementById('a-parse-btn');
     btn.disabled = true; btn.innerText = hasImages ? '이미지 분석 중... (최대 1분 소요)' : '분석 중...';
     try {
@@ -4772,7 +4842,7 @@ async function parseAuctionPaste() {
                 images: pendingAuctionImages.map(function(img) { return { data: img.data, mimeType: img.mimeType }; })
             })
         });
-        var data = await res.json();
+        var data = await readJsonResponseSafe(res);
         if (!res.ok || !data.detail) {
             alert('자동 추출 실패: ' + (data.error || '알 수 없는 오류'));
             return;
@@ -4796,7 +4866,18 @@ async function parseAuctionPaste() {
         if (d.aptDong) document.getElementById('a-dong').value = d.aptDong;
         if (d.unitFloor !== null && d.unitFloor !== undefined) document.getElementById('a-floor').value = d.unitFloor;
         if (d.unitNo) document.getElementById('a-unit').value = d.unitNo;
- 
+
+        // 물건유형 자동 선택 - 이후 수리비/중개수수료/전세가분석 등 여러 계산이 이 값을
+        // 기준으로 동작하므로 최대한 반영해둠. select.value를 코드로 바꾸면 onchange가 자동
+        // 발동하지 않아서 관련 자동계산을 아래에서 직접 한 번 더 호출해줌(함수 끝부분의
+        // autoCalcRepairSilent 등 일괄 재계산 호출과는 별개로, 이 값에만 반응하는
+        // autoCalcAgentSilent는 여기서 챙겨줘야 함).
+        var mappedPropType = mapAiPropertyTypeToSelect(d.propertyType);
+        if (mappedPropType) {
+            document.getElementById('a-prop-type').value = mappedPropType;
+            autoCalcAgentSilent();
+        }
+
         var normDate = normalizeDateForInput(d.saleDate);
         if (normDate) document.getElementById('a-date').value = normDate;
         if (d.appraisalPrice) document.getElementById('a-appraisal').value = Math.round(d.appraisalPrice / 10000);
