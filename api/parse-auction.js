@@ -21,12 +21,19 @@
       자꾸 뜬다는 신고로 조사): 스키마 A(물건정보+가격+임차인+매각통계)와 B(건축물+등기+권리분석)
       두 덩어리로만 나눴을 때도, 각 덩어리 안에 배열형 필드(tenantOccupants, officialTrades,
       registryItems 등)가 많으면 응답 생성(출력 토큰)이 오래 걸려 52초를 넘기는 경우가 있었음.
-      그래서 A를 다시 A1(물건 기본정보·가격, 배열은 짧은 rounds만)/A2(임차인·매각통계·실거래,
+      그래서 한때 A를 다시 A1(물건 기본정보·가격, 배열은 짧은 rounds만)/A2(임차인·매각통계·실거래,
       가장 무거운 배열들)로, B를 B1(건축물정보)/B2(등기이력·권리분석, registryStory 서술형 포함)로
-      나눠 4개 호출을 동시에 보냄 - 개별 호출당 만들어야 하는 출력이 줄어 지연이 짧아짐.
-      동시에, 부가기능이던 "경량 스키마C 교차검증"(핵심필드 재추출 비교)은 호출 수를 4개에서
-      5개로 늘리면 무료 티어의 분당 요청수(RPM) 한도에 더 빨리 걸릴 수 있어 제거함 - 매번
-      성공하는 게 이중 검증보다 우선이라고 판단.
+      나눠 4개 호출을 동시에 보내는 구조로 바꿨었음.
+   ⚠️ 4→2 재통합 (4차, "하루 10건도 항상 분당/일일 한도에 걸린다" 신고로 재조사): Google AI
+      Studio 사용량 대시보드로 실측한 결과, gemini-3.5-flash 무료 티어의 진짜 한도는 흔히
+      알려진 것과 달리 RPM 5 / TPM 25만 / "RPD 20"으로 매우 낮았음(2025 세대 Flash 모델 대비
+      최신 모델이라 무료 한도 자체가 훨씬 박함 - Gemini 2.5 Flash도 동일하게 RPD 20이라 모델을
+      바꿔도 해결되지 않음을 확인). 추출 1건당 4개 호출을 쓰면 RPD 20 ÷ 4 = 하루 5건이
+      물리적 한계라, 사용자가 원한 "하루 10건"과 애초에 맞을 수 없는 구조였음. 그래서 A1+A2를
+      다시 하나의 스키마 A로, B1+B2를 하나의 스키마 B로 합쳐 호출 수를 4→2로 되돌림
+      (RPD 20 ÷ 2 = 하루 10건 확보, RPM 5 대비로도 여유). 대신 개별 호출이 다시 무거워져
+      52초 근처까지 걸리는 경우가 가끔 있을 수 있음 - callGemini의 55초 타임아웃과 친절한
+      안내 메시지(내용을 줄여 재시도)로 대응함.
 ════════════════════════════════════ */
 import crypto from 'crypto';
 
@@ -45,8 +52,10 @@ export const config = {
   api: { bodyParser: { sizeLimit: '12mb' } },
 };
 
-// ── 스키마 A1: 물건 기본정보 / 가격 (배열은 짧은 rounds 하나뿐 - 상대적으로 가벼움) ──
-const SCHEMA_A1 = {
+// ── 스키마 A: 물건 기본정보 / 가격 / 임차인 현황 / 매각통계 / 국토부 실거래 (예전엔 A1/A2로
+//    쪼갰었는데, 무료 티어 일일 요청수(RPD) 한도가 실측 20건으로 매우 낮아 호출 수 자체를
+//    줄여야 해서 다시 하나로 합침 - 파일 상단 "4→2 재통합" 설명 참고) ──
+const SCHEMA_A = {
   type: 'OBJECT',
   properties: {
     caseNo: { type: 'STRING' },
@@ -109,13 +118,7 @@ const SCHEMA_A1 = {
     unitPricePerPyung: { type: 'NUMBER' },
     priceRatioLandBuilding: { type: 'STRING' },
     locationDesc: { type: 'STRING' },
-  },
-};
-
-// ── 스키마 A2: 임차인 현황 / 매각통계 / 국토부 실거래 / 공시가격 (가장 무거운 배열들) ──
-const SCHEMA_A2 = {
-  type: 'OBJECT',
-  properties: {
+    // ↓↓↓ 예전 SCHEMA_A2(임차인 현황 / 매각통계 / 국토부 실거래 / 공시가격)에 있던 필드들 ↓↓↓
     officialPriceCurrent: { type: 'STRING' },
     tenantTerminationDate: { type: 'STRING' },
     tenantDistributionDeadline: { type: 'STRING' },
@@ -162,8 +165,9 @@ const SCHEMA_A2 = {
   },
 };
 
-// ── 스키마 B1: 건축물정보(건축HUB 성격의 표제부/층별개요) ──
-const SCHEMA_B1 = {
+// ── 스키마 B: 건축물정보(건축HUB 성격의 표제부/층별개요) / 등기 이력 / 권리분석 (예전엔
+//    B1/B2로 쪼갰었는데, SCHEMA_A와 같은 이유로 다시 하나로 합침) ──
+const SCHEMA_B = {
   type: 'OBJECT',
   properties: {
     buildingDongName: { type: 'STRING' },
@@ -198,13 +202,7 @@ const SCHEMA_B1 = {
     landCategory: { type: 'STRING' }, // 지목 (전/답/과수원/대/임야 등)
     zoningType: { type: 'STRING' }, // 용도지역 (제2종일반주거지역, 계획관리지역, 농림지역 등)
     farmlandCertRequired: { type: 'BOOLEAN' }, // 농지취득자격증명원 필요 여부
-  },
-};
-
-// ── 스키마 B2: 등기 이력 / 권리분석(경매 교육자료 기반) - registryStory 서술형이 있어 A1만큼 무거움 ──
-const SCHEMA_B2 = {
-  type: 'OBJECT',
-  properties: {
+    // ↓↓↓ 예전 SCHEMA_B2(등기 이력 / 권리분석)에 있던 필드들 ↓↓↓
     registryTotalClaim: { type: 'NUMBER' },
     registryItems: {
       type: 'ARRAY',
@@ -864,29 +862,21 @@ export default async function handler(req, res) {
     });
   }
 
-  const promptA1 = buildPrompt(PROMPT_A_RULES, trimmedText);
-  const promptA2 = buildPrompt(PROMPT_A_RULES, trimmedText);
-  const promptB1 = buildPrompt(PROMPT_B_RULES, trimmedText);
-  const promptB2 = buildPrompt(PROMPT_B_RULES, trimmedText);
+  const promptA = buildPrompt(PROMPT_A_RULES, trimmedText);
+  const promptB = buildPrompt(PROMPT_B_RULES, trimmedText);
 
   try {
-    // 스키마를 4개(A1/A2/B1/B2)로 나눠 동시에 호출 - 전체 소요시간이 "넷의 합"이 아니라
-    // "가장 오래 걸리는 하나" 수준으로 줄어듦 (Hobby 플랜 60초 제한 안에 들어오도록).
-    // 각 호출은 프롬프트 규칙 텍스트를 통째로 재사용하지만(해당 스키마에 없는 필드에 대한
-    // 규칙은 응답 형식이 스키마로 강제되므로 그냥 무시됨), 스키마 자체의 필드/배열 수가
-    // 줄어들어 응답 생성(출력 토큰) 시간이 짧아지는 게 핵심.
-    // ⚠️ 4개를 완전히 동시에(0초 간격으로) 쏘면, 무료 티어의 분당 요청수(RPM)/분당 토큰수(TPM)
-    //    한도가 "롤링 윈도우"라도 순간적인 버스트에 특히 취약해서 4개 중 다수가 한꺼번에
-    //    429(RESOURCE_EXHAUSTED)를 맞는 경우가 잦았음(추출을 시도할 때마다 거의 항상 걸린다는
-    //    신고로 확인). 시작 시각을 800ms씩 살짝 어긋나게 둬서 순간 버스트를 줄임 - 전체 소요시간에
-    //    최대 2.4초 정도만 더해지고, 429 발생률은 크게 줄어듦.
-    const [resultA1, resultA2, resultB1, resultB2] = await Promise.all([
-      callGemini(GEMINI_API_KEY, promptA1, SCHEMA_A1, imageParts, 1, 0),
-      sleep(800).then(() => callGemini(GEMINI_API_KEY, promptA2, SCHEMA_A2, imageParts, 1, 0)),
-      sleep(1600).then(() => callGemini(GEMINI_API_KEY, promptB1, SCHEMA_B1, imageParts, 1, 0)),
-      sleep(2400).then(() => callGemini(GEMINI_API_KEY, promptB2, SCHEMA_B2, imageParts, 1, 0)),
+    // ⚠️ Google AI Studio 사용량 대시보드로 실측한 결과, gemini-3.5-flash 무료 티어의 진짜
+    //    한도가 RPM 5 / RPD 20으로 매우 낮다는 걸 확인함(파일 상단 "4→2 재통합" 설명 참고).
+    //    호출을 4개(A1/A2/B1/B2) 동시에 쏘면 RPD 20 ÷ 4 = 하루 5건이 물리적 한계라, "하루
+    //    10건" 목표 자체를 만족할 수 없었음. 그래서 스키마를 2개(A/B)로 되돌려 RPD 20 ÷ 2 =
+    //    하루 10건을 확보함. 대신 개별 호출이 다시 무거워져 시간이 좀 더 걸릴 수 있어서,
+    //    두 호출 시작을 700ms 어긋나게 둬 순간 버스트(RPM 5)에 덜 취약하게 함.
+    const [resultA, resultB] = await Promise.all([
+      callGemini(GEMINI_API_KEY, promptA, SCHEMA_A, imageParts, 1, 0),
+      sleep(700).then(() => callGemini(GEMINI_API_KEY, promptB, SCHEMA_B, imageParts, 1, 0)),
     ]);
-    const merged = { ...resultA1, ...resultA2, ...resultB1, ...resultB2 };
+    const merged = { ...resultA, ...resultB };
     // 방어적 보정: 프롬프트에서 aptDong에 "OOO호" 형태를 넣지 말라고 명시했지만, 간헐적으로
     // AI가 unitNo와 동일한 "호"로 끝나는 값을 aptDong에 잘못 채우는 경우가 있어(연립다세대에
     // 동 구분이 없는데도 호수를 동으로 오인) 서버에서 한 번 더 걸러냄.
