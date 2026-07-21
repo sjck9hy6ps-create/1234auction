@@ -4,11 +4,15 @@
    - 프론트엔드(public/backup.html)가 파일 전체를 파싱한 뒤 1500개씩
      끊어서 이 API를 여러 번 호출하는 방식. 큰 파일도 서버리스 함수
      타임아웃/페이로드 제한에 안 걸림.
-   - api/lib/molit-import.mjs 의 공용 로직 재사용.
+   - lib/molit-import.mjs (저장소 최상위 lib 폴더, api/ 폴더 밖)의 공용 로직 재사용.
+     api/ 폴더 밖에 있어야 Vercel이 별도 서버리스 함수로 세지 않음.
+     ⚠️ 예전엔 이 경로가 './lib/molit-import.mjs'로 되어 있었는데, api/ 폴더
+     "기준" 상대경로라 실제로는 존재하지 않는 api/lib/molit-import.mjs를 찾고 있었음
+     (한 단계 더 올라가야 하는데 안 올라감) - FUNCTION_INVOCATION_FAILED로 조사해서 확인.
 ════════════════════════════════════════════════════════════ */
 import { createClient } from '@supabase/supabase-js';
 import ws from 'ws';
-import { importBatch, VALID_TABLES } from './lib/molit-import.mjs';
+import { importBatch, VALID_TABLES } from '../lib/molit-import.mjs';
 
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY, {
   auth: { persistSession: false },
