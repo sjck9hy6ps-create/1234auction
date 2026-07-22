@@ -674,6 +674,12 @@ tr:hover td { background:#fffde7; }
                 <input type="number" class="modal-input" id="a-min-bid" placeholder="0" oninput="calcMargin()">
             </div>
             <div class="modal-row">
+                <span class="modal-label">입찰보증금율</span>
+                <input type="number" class="modal-input" id="a-deposit-rate" placeholder="10" oninput="calcMargin()">
+                <span style="font-size:12px;color:#888;margin-left:4px;">%</span>
+                <span style="font-size:10px;color:#aaa;margin-left:4px;">보통 10%, 재매각 물건은 20~30%인 경우 있음(AI 자동추출 시 채워짐, 비어있으면 10% 가정)</span>
+            </div>
+            <div class="modal-row">
                 <span class="modal-label">내 입찰가</span>
                 <input type="number" class="modal-input" id="a-my-bid" placeholder="0" oninput="autoCalcTaxSilent();calcMargin()">
             </div>
@@ -3116,7 +3122,7 @@ function openAuctionModal(id) {
     document.getElementById('modal-title').innerText = isEdit ? '🔨 경매 물건 수정' : '🔨 경매 물건 등록';
     document.getElementById('modal-delete-btn').style.display = isEdit ? '' : 'none';
      ['auction-id','a-addr','a-name','a-dong','a-floor','a-unit','a-case','a-pyung','a-date',
-     'a-appraisal','a-min-bid','a-my-bid','a-actual-bid',
+     'a-appraisal','a-min-bid','a-deposit-rate','a-my-bid','a-actual-bid',
      'a-tax','a-registry-fee','a-eviction-fee','a-repair','a-agent','a-moving','a-cleaning','a-etc','a-target','a-actual-sell',
      'a-official-price','a-memo','a-paste-text']
         .forEach(function(fid) { document.getElementById(fid).value = ''; });
@@ -3180,6 +3186,7 @@ function openAuctionModal(id) {
             document.getElementById('a-status').value      = a.status || '검토중';
             document.getElementById('a-appraisal').value   = a.appraisal || '';
             document.getElementById('a-min-bid').value     = a.minBid || '';
+            document.getElementById('a-deposit-rate').value = a.depositRate || '';
             document.getElementById('a-my-bid').value      = a.myBid || '';
             document.getElementById('a-actual-bid').value  = a.actualBid || '';
             document.getElementById('a-tax').value         = a.tax || '';
@@ -3520,6 +3527,27 @@ function calcResaleIncomeTax(bidMethod, profitManwon, holdMonths) {
     }
     var localTax = Math.round(incomeTax * 0.1);
     return { incomeTax: incomeTax, localTax: localTax, totalTax: incomeTax + localTax, rateLabel: rateLabel };
+}
+/* 입찰보증금 - 최저입찰가의 10%가 기본(법원경매 통상 기준). AI 추출로 depositRate가
+   확인되면(간혹 재매각 물건 등은 20~30%) 그 값을 우선 사용. minBid, depositRate 단위: 만원/%. */
+function calcDeposit(minBid, depositRate) {
+    if (!minBid || minBid <= 0) return 0;
+    var rate = (depositRate && depositRate > 0) ? depositRate : 10;
+    return Math.round(minBid * rate / 100);
+}
+/* 대출금액 - 입찰방법별로 산정방식이 다름.
+   개인입찰: 낙찰가의 80%와 감정가의 70% 중 낮은 금액(통상적인 낙찰가/감정가 담보대출 한도).
+   사업자대출(매매사업자, 신탁대출): 낙찰가의 90%, 단 계산된 금액이 5,000만원 미만이면
+   상품 자체를 이용할 수 없어 대출 0으로 처리. bid, appraisal 단위: 만원. */
+function calcLoanAmount(bidMethod, bid, appraisal) {
+    if (!bid || bid <= 0) return 0;
+    if (bidMethod === 'dealer') {
+        var trustLoan = Math.round(bid * 0.9);
+        return trustLoan < 5000 ? 0 : trustLoan;
+    }
+    var byBid = bid * 0.8;
+    var byAppraisal = (appraisal && appraisal > 0) ? appraisal * 0.7 : Infinity;
+    return Math.round(Math.min(byBid, byAppraisal));
 }
 /* 수리비 자동계산 - 연식단계(VILLA_AGE_TIERS)별 단가. 물건유형(아파트 vs 연립다세대·단독)에
    따라 계산 방식을 분리함.
@@ -3874,6 +3902,8 @@ function calcMargin() {
     var actSell  = parseInt(document.getElementById('a-actual-sell').value) || 0;
     var useSell  = actSell || target;
     var appraisal = parseInt(document.getElementById('a-appraisal').value) || 0;
+    var minBid    = parseInt(document.getElementById('a-min-bid').value) || 0;
+    var depositRate = parseFloat(document.getElementById('a-deposit-rate').value) || 0;
     var bidMethod = document.getElementById('a-bid-method').value;
     var holdMonths = parseInt(document.getElementById('a-hold-months').value) || 0;
     var feesSum   = tax + registryFee + evictionFee + repair + agent + moving + cleaning + etc;
@@ -3884,6 +3914,9 @@ function calcMargin() {
     var roi       = (totalCost > 0 && useSell > 0) ? Math.round(margin / totalCost * 1000) / 10 : 0;
     var apprRate  = (appraisal > 0 && useBid > 0) ? Math.round(useBid / appraisal * 1000) / 10 : 0;
     var taxLabel = (bidMethod === 'dealer' ? '종합소득세' : '양도소득세') + (taxResult.rateLabel ? '(' + taxResult.rateLabel + ')' : '');
+    var deposit   = calcDeposit(minBid, depositRate);
+    var loanAmount = calcLoanAmount(bidMethod, useBid, appraisal);
+    var cashNeeded = useBid > 0 ? Math.max(useBid - deposit - loanAmount, 0) : 0;
     function mItem(label, value, color) {
         return '<div class="margin-item"><div class="margin-label">' + label + '</div>'
             + '<div class="margin-value" style="color:' + color + ';">' + value + '</div></div>';
@@ -3897,7 +3930,10 @@ function calcMargin() {
       + mItem(actSell ? '세후 실제수익' : '세후 예상수익', useSell > 0 ? toEok(String(margin)) : '—', margin > 0 ? '#2e7d32' : margin < 0 ? '#e53935' : '#555')
       + mItem('세후 수익률',    useSell > 0 ? roi + '%' : '—', roi > 10 ? '#2e7d32' : roi > 0 ? '#ff7043' : '#e53935')
       + mItem('낙찰률',         apprRate > 0 ? apprRate + '%' : '—', apprRate < 80 ? '#2e7d32' : apprRate < 90 ? '#ff7043' : '#e53935')
-      + mItem('손익분기 매도가(세전)', totalCost > 0 ? toEok(String(totalCost)) : '—', '#1565c0');
+      + mItem('손익분기 매도가(세전)', totalCost > 0 ? toEok(String(totalCost)) : '—', '#1565c0')
+      + mItem('보증금(' + (depositRate > 0 ? depositRate : 10) + '%)', deposit > 0 ? toEok(String(deposit)) : '—', '#6a1b9a')
+      + mItem('대출금액(' + (bidMethod === 'dealer' ? '신탁대출90%' : '개인담보대출') + ')', loanAmount > 0 ? toEok(String(loanAmount)) : (useBid > 0 ? '대출불가' : '—'), '#00695c')
+      + mItem('보증금제외 필요현금', useBid > 0 ? toEok(String(cashNeeded)) : '—', '#c62828');
 }
 /* 목표 매도가 - 목표마진 - 부대비용(세금·등기비·명도비·중개수수료 등)을 역산해서
    "이 가격 이하로 낙찰받아야 목표마진을 지킬 수 있다"는 적정입찰가를 계산.
@@ -3977,6 +4013,7 @@ async function saveAuction() {
         status: document.getElementById('a-status').value,
         appraisal: document.getElementById('a-appraisal').value,
         minBid: document.getElementById('a-min-bid').value, myBid: document.getElementById('a-my-bid').value,
+        depositRate: document.getElementById('a-deposit-rate').value,
         actualBid: document.getElementById('a-actual-bid').value, tax: document.getElementById('a-tax').value,
         registryFee: document.getElementById('a-registry-fee').value,
         evictionFee: document.getElementById('a-eviction-fee').value,
@@ -4291,6 +4328,8 @@ function buildMarginSummaryHtml(a) {
     var cleaning = parseInt(a.cleaning) || 0;
     var etc = parseInt(a.etc) || 0;
     var appraisal = parseInt(a.appraisal) || 0;
+    var minBid = parseInt(a.minBid) || 0;
+    var depositRate = parseFloat(a.depositRate) || 0;
     var bidMethod = a.bidMethod || 'dealer';
     var holdMonths = parseInt(a.holdMonths) || 0;
     var feesSum = tax + registryFee + evictionFee + repair + agent + moving + cleaning + etc;
@@ -4301,6 +4340,9 @@ function buildMarginSummaryHtml(a) {
     var roi = (totalCost > 0 && useSell > 0) ? Math.round(margin / totalCost * 1000) / 10 : 0;
     var apprRate = (appraisal > 0 && useBid > 0) ? Math.round(useBid / appraisal * 1000) / 10 : 0;
     var taxLabel = (bidMethod === 'dealer' ? '종합소득세' : '양도소득세') + (taxResult.rateLabel ? '(' + taxResult.rateLabel + ')' : '');
+    var deposit = calcDeposit(minBid, depositRate);
+    var loanAmount = calcLoanAmount(bidMethod, useBid, appraisal);
+    var cashNeeded = useBid > 0 ? Math.max(useBid - deposit - loanAmount, 0) : 0;
     function mItem(label, value, color) {
         return '<div class="margin-item"><div class="margin-label">' + label + '</div>'
             + '<div class="margin-value" style="color:' + color + ';">' + value + '</div></div>';
@@ -4316,6 +4358,9 @@ function buildMarginSummaryHtml(a) {
         + mItem('세후 수익률', useSell > 0 ? roi + '%' : '—', roi > 10 ? '#2e7d32' : roi > 0 ? '#ff7043' : '#e53935')
         + mItem('낙찰률', apprRate > 0 ? apprRate + '%' : '—', apprRate < 80 ? '#2e7d32' : apprRate < 90 ? '#ff7043' : '#e53935')
         + mItem('손익분기 매도가(세전)', totalCost > 0 ? toEok(String(totalCost)) : '—', '#1565c0')
+        + mItem('보증금(' + (depositRate > 0 ? depositRate : 10) + '%)', deposit > 0 ? toEok(String(deposit)) : '—', '#6a1b9a')
+        + mItem('대출금액(' + (bidMethod === 'dealer' ? '신탁대출90%' : '개인담보대출') + ')', loanAmount > 0 ? toEok(String(loanAmount)) : (useBid > 0 ? '대출불가' : '—'), '#00695c')
+        + mItem('보증금제외 필요현금', useBid > 0 ? toEok(String(cashNeeded)) : '—', '#c62828')
         + '</div>';
     html += '<div style="font-size:10px;color:#aaa;margin-top:6px;">저장된 값을 기준으로 한 요약이며, 값을 바꾸려면 위 "수정" 버튼을 눌러주세요.</div>';
     html += '</div>';
@@ -5388,6 +5433,9 @@ async function parseAuctionPaste() {
         if (normDate) document.getElementById('a-date').value = normDate;
         if (d.appraisalPrice) document.getElementById('a-appraisal').value = Math.round(d.appraisalPrice / 10000);
         if (d.minBidPrice) document.getElementById('a-min-bid').value = Math.round(d.minBidPrice / 10000);
+        // 입찰보증금율 - AI가 추출한 depositRate가 있으면 그대로 사용(재매각 등 20%인 경우 대응),
+        // 없으면 입력칸을 비워둬서 calcMargin()의 기본값(10%)이 적용되게 함
+        if (d.depositRate) document.getElementById('a-deposit-rate').value = d.depositRate;
         if (d.buildingArea) {
             var m = String(d.buildingArea).match(/([\d.]+)\s*평/);
             if (m) document.getElementById('a-pyung').value = Math.round(parseFloat(m[1]));
