@@ -6886,13 +6886,34 @@ function selectRemoteComplex(row) {
         });
     });
 }
+/* 지번(l.bunji, 예: "254-3") 또는 도로명+본번/부번에서 건축HUB 조회용 본번/부번(4자리 0패딩)을
+   뽑아냄. loadBuildingInfo(단건 조회)와 batchFetchVillaBuildingInfo(일괄 캐시 조회)가 같은
+   로직을 써야 서로 다른 bun/ji로 조회해서 캐시 키가 어긋나는 일이 없음. */
+function deriveBunJi(l) {
+    var main = null, sub = null;
+    // 1순위: dong + bunji (원본 지번 문자열, 예: "254-3")를 직접 분리
+    if (l.bunji) {
+        var parts = String(l.bunji).split('-');
+        var m1 = parseInt(parts[0], 10);
+        var m2 = parts[1] !== undefined ? parseInt(parts[1], 10) : null;
+        main = Number.isNaN(m1) ? null : m1;
+        sub  = (m2 === null || Number.isNaN(m2) || m2 === 0) ? null : m2;
+    }
+    // 2순위: bunji가 없을 때만 road_name + main_num + sub_num 사용
+    if (!main && l.road_name && l.main_num) {
+        main = l.main_num;
+        sub  = l.sub_num;
+    }
+    if (!main) return null;
+    return { bun: String(main).padStart(4, '0'), ji: String(sub || 0).padStart(4, '0') };
+}
 async function loadBuildingInfo(apt, lat, lon) {
     try {
         if (!lat || !lon) return null;
         var l = apt.latest || {};
         var cacheKey = [l.dong, l.name, l.bunji, l.road_name, l.main_num, l.sub_num].join('|').toLowerCase();
         var cached = coordCache[cacheKey];
- 
+
         var sigunguCd, bjdongCd;
         if (cached && cached.sigunguCd && cached.bjdongCd) {
             sigunguCd = cached.sigunguCd;
@@ -6910,28 +6931,11 @@ async function loadBuildingInfo(apt, lat, lon) {
             bjdongCd  = regionCode.slice(5, 10);
             saveCoordToDB(cacheKey, lat, lon, sigunguCd, bjdongCd);
         }
- 
-        var main = null, sub = null;
- 
-        // 1순위: dong + bunji (원본 지번 문자열, 예: "254-3")를 직접 분리
-        if (l.bunji) {
-            var parts = String(l.bunji).split('-');
-            var m1 = parseInt(parts[0], 10);
-            var m2 = parts[1] !== undefined ? parseInt(parts[1], 10) : null;
-            main = Number.isNaN(m1) ? null : m1;
-            sub  = (m2 === null || Number.isNaN(m2) || m2 === 0) ? null : m2;
-        }
-        // 2순위: bunji가 없을 때만 road_name + main_num + sub_num 사용
-        if (!main && l.road_name && l.main_num) {
-            main = l.main_num;
-            sub  = l.sub_num;
-        }
-        if (!main) return null;
- 
-        var bun = String(main).padStart(4, '0');
-        var ji  = String(sub || 0).padStart(4, '0');
+
+        var bj = deriveBunJi(l);
+        if (!bj) return null;
         var url = '/api/get-building?sigunguCd=' + sigunguCd + '&bjdongCd=' + bjdongCd
-            + '&bun=' + bun + '&ji=' + ji + '&bldNm=' + encodeURIComponent(l.name || '');
+            + '&bun=' + bj.bun + '&ji=' + bj.ji + '&bldNm=' + encodeURIComponent(l.name || '');
         var res  = await fetch(url);
         var data = await res.json();
         if (!data || (!data.title && !data.price)) return null;
@@ -7139,16 +7143,54 @@ async function warmOne(apt) {
    - 지역 로딩 시 연립다세대 전체를 geocoding + 건축HUB 조회
    - 완료되면 apt.buildingInfo에 저장되고 필터가 다시 반영됨
 ════════════════════════════════════ */
+/* 이미 좌표/법정동코드가 확보된(coordCache에 sigunguCd/bjdongCd가 있는) 건물들을 모아
+   /api/get-building에 POST로 한 번에 캐시 확인을 물어봄. (기존에는 건물 하나하나마다
+   개별 GET을 보내서, DB엔 이미 캐시돼 있어도 요청 왕복시간만으로 - concurrency 3 기준
+   수십~백여 건 × 수백ms가 누적돼 "캐시인데도 느림" 문제가 있었음. 이를 한 번의 왕복으로
+   줄이고, 좌표가 없거나 이 배치에서도 캐시가 없던(cache miss) 건물만 기존 방식으로 마저 채움.) */
+async function batchFetchVillaBuildingInfo(villas) {
+    var items = [], itemByKey = {};
+    villas.forEach(function(apt) {
+        var l = apt.latest || {};
+        var cacheKey = [l.dong, l.name, l.bunji, l.road_name, l.main_num, l.sub_num].join('|').toLowerCase();
+        var coord = coordCache[cacheKey];
+        if (!coord || !coord.sigunguCd || !coord.bjdongCd) return; // 좌표/법정동코드 없으면 개별 처리로 넘김
+        var bj = deriveBunJi(l);
+        if (!bj) return;
+        var key = [coord.sigunguCd, coord.bjdongCd, bj.bun, bj.ji, (l.name || '').trim()].join('|');
+        items.push({ key: key, sigunguCd: coord.sigunguCd, bjdongCd: coord.bjdongCd, bun: bj.bun, ji: bj.ji, bldNm: l.name || '' });
+        itemByKey[key] = apt;
+    });
+    if (!items.length) return;
+    try {
+        var res = await fetch('/api/get-building', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ items: items })
+        });
+        var data = await res.json();
+        var results = data.results || {};
+        Object.keys(results).forEach(function(key) {
+            var apt = itemByKey[key];
+            if (apt && results[key]) apt.buildingInfo = results[key];
+        });
+    } catch (e) {
+        console.error('건축물정보 일괄 캐시조회 실패:', e.message);
+    }
+}
 async function prefetchVillaBuildingInfo(aptList) {
     var villas = aptList.filter(function(a) { return a.buildingType === 'villa'; });
     if (!villas.length) return;
-    var idx = 0, done = 0, total = villas.length;
+    await batchFetchVillaBuildingInfo(villas);
+    var remaining = villas.filter(function(a) { return a.buildingInfo === undefined; });
+    if (!remaining.length) return;
+    var idx = 0, done = 0, total = remaining.length;
     var CONCURRENCY = 3;
     setStatus('연립다세대 정보 불러오는 중... (0/' + total + ')');
     return new Promise(function(resolveAll) {
         function next() {
-            if (idx >= villas.length) return;
-            var apt = villas[idx++];
+            if (idx >= remaining.length) return;
+            var apt = remaining[idx++];
             fetchOneVillaInfo(apt).finally(function() {
                 done++;
                 setStatus(done < total ? ('연립다세대 정보 불러오는 중... (' + done + '/' + total + ')') : '');
@@ -7156,7 +7198,7 @@ async function prefetchVillaBuildingInfo(aptList) {
                 next();
             });
         }
-        for (var i = 0; i < CONCURRENCY && i < villas.length; i++) next();
+        for (var i = 0; i < CONCURRENCY && i < remaining.length; i++) next();
     });
 }
  
