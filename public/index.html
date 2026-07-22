@@ -927,6 +927,10 @@ var currentPanelLat = null;
 var currentPanelLon = null;
 var currentPanelApt = null;
 var currentPanelTab = 'price';
+// 저평가 vs 저가치 진단(④ 미래가치·호재)에서 쓰는 개발호재 검색 결과 - 패널을 열 때마다 초기화되고,
+// "개발호재 확인" 버튼을 눌러야 채워짐(자동 조회 안 함 - 지도를 돌아다닐 때마다 API가 불필요하게
+// 호출되는 것을 막기 위함).
+var currentPanelDevNews = null;
 var activeGrades = new Set();
 var activeVillaFilters = new Set();
 var activeVillaTiers = new Set();
@@ -2563,6 +2567,7 @@ function openPanel(apt, lat, lon) {
     currentBuildingLoading = true;
     currentOfficialPrice = null;
     currentOfficialPriceLoading = true;
+    currentPanelDevNews = null;
     renderTable();
     loadBuildingInfo(apt, lat, lon).then(function(info) {
         currentBuildingInfo = info;
@@ -2872,7 +2877,13 @@ function renderTable() {
     if (currentPanelApt && currentPanelApt.buildingType === 'villa' && currentPanelApt.ageTier) {
         html += buildTierTrendChartHtml(currentPanelApt.ageTier);
     }
-   
+    // 저평가 vs 저가치 진단 - 건축물대장/공시가격이 아직 로딩 중이어도 일단 계산해서 보여주고
+    // (해당 데이터가 필요한 ⑤ 환금성만 그만큼 보수적으로 나옴), 두 개가 다 도착하면
+    // loadBuildingInfo()/loadOfficialPrice()의 .then()이 renderTable()을 다시 불러 자동 갱신됨.
+    if (currentPanelApt) {
+        html += buildValueDiagnosisHtml(currentPanelApt, currentVolumeIndicators, currentBuildingInfo, currentOfficialPrice, currentPanelDevNews);
+    }
+
    // 건축물대장 정보
     if (currentBuildingLoading) {
         html += '<div class="indicator-box"><div class="indicator-title">🏢 건축물대장 정보</div><div style="font-size:11px;color:#999;">불러오는 중...</div></div>';
@@ -6385,6 +6396,166 @@ function buildVolumeAnalysisHtml(vi) {
     }
     html += '</div>';
     return html;
+}
+/* ════════════════════════════════════
+   저평가 vs 저가치 진단 - 전문가 칼럼 "저평가/저가치를 가르는 5가지 질문" 프레임을
+   이미 앱에 있는 데이터로 최대한 자동 계산함:
+   ① 생활권 등급 → 지역 전체 실거래 평단가 상대등급(overallGrade)
+   ② 가격 정체 원인(외부변수 vs 근본문제) → 이 단지 모멘텀 vs 같은 지역·유형 단지들의
+      중위 모멘텀 비교(지역 전체와 동행하면 외부변수 가능성, 유독 뒤처지면 확인 필요)
+   ③ 거래량이 적은 이유(구조 vs 수요부족) → 세대수 대비 회전율(이미 있는 지표 재사용)
+   ④ 미래가치·호재 + 이미 반영됐는가 → 개발호재 검색(버튼으로 온디맨드 조회) + 최근 모멘텀
+   ⑤ 환금성(최악의 경우에도 넘길 수 있는가) → 회전율 + 매매기록 유무 + 건물유형 +
+      "5층 이하 무엘리베이터 + 공시가 1억 이하" 같은 전형적 저가치 패턴 감지
+   ⚠️ ①②④는 원래 임장·중개사 확인이 필요한 영역을 실거래가 기반으로 근사한 것뿐이라,
+   점수와 함께 항상 근거·한계를 같이 보여줌. 최종 판단은 사람 몫으로 남겨둠.
+════════════════════════════════════ */
+function getRegionMedianMomentum(apt) {
+    var region = apt.latest && apt.latest.region;
+    var bt = apt.buildingType;
+    if (!region) return null;
+    var vals = (allAptList || [])
+        .filter(function(a) { return a !== apt && a.latest && a.latest.region === region && a.buildingType === bt
+            && a.indicators && a.indicators.momentum !== null && a.indicators.momentum !== undefined; })
+        .map(function(a) { return a.indicators.momentum; });
+    if (vals.length < 3) return null; // 비교할 동일지역 표본이 너무 적으면 비교 자체를 생략
+    vals.sort(function(a, b) { return a - b; });
+    var m = Math.floor(vals.length / 2);
+    return Math.round((vals.length % 2 ? vals[m] : (vals[m-1] + vals[m]) / 2) * 10) / 10;
+}
+function diagQ1Location(apt) {
+    var g = apt.overallGrade;
+    if (!g) return { score: 10, label: '데이터 부족', color: '#aaa', detail: '지역 전체 등급을 계산할 실거래가 부족합니다.' };
+    var score = Math.round((8 - g) / 7 * 20);
+    if (g <= 2) return { score: score, label: '상위권 (' + g + '등급)', color: '#2e7d32', detail: '같은 지역 실거래 평단가 기준 상위권입니다. "가격이 비싸다"는 뜻이지 생활권 자체가 확정되는 건 아니니, 일자리·학군·교통 접근성은 직접 확인하세요.' };
+    if (g <= 5) return { score: score, label: '중위권 (' + g + '등급)', color: '#9e9e9e', detail: '같은 지역 실거래 평단가 기준 중간대입니다.' };
+    return { score: score, label: '하위권 (' + g + '등급) · 저가치 유의', color: '#e53935', detail: '같은 지역 안에서 실거래 평단가가 하위권입니다. 판(생활권) 자체가 약해서 싼 건지, 일시적으로 저평가된 건지 임장으로 꼭 확인하세요.' };
+}
+function diagQ2PriceStall(apt) {
+    var mom = apt.indicators && apt.indicators.momentum;
+    if (mom === null || mom === undefined) return { score: 10, label: '데이터 부족', color: '#aaa', detail: '최근 거래가 부족해 가격 모멘텀을 계산할 수 없습니다.' };
+    var regionMed = getRegionMedianMomentum(apt);
+    if (regionMed === null) {
+        return { score: 12, label: (mom >= 0 ? '최근 1년 상승' : '최근 1년 하락') + ' (' + mom + '%)', color: '#9e9e9e', detail: '비교할 동일 지역·유형 표본이 적어 "지역 평균 대비"는 판단하지 못했습니다.' };
+    }
+    var diff = Math.round((mom - regionMed) * 10) / 10;
+    if (diff >= -3) {
+        return { score: 20, label: '지역 평균과 동행 (본인 ' + mom + '% vs 지역중위 ' + regionMed + '%)', color: '#2e7d32', detail: '가격 흐름이 지역 전체와 비슷합니다. 정체돼 있어도 지역 전체가 그렇다면 외부변수(공급·정책·공사 등) 때문일 가능성이 있습니다.' };
+    }
+    if (diff >= -10) {
+        return { score: 10, label: '지역 평균보다 다소 뒤처짐 (차이 ' + diff + '%p)', color: '#ff7043', detail: '다른 단지들은 더 올랐는데 이 단지만 뒤처지고 있습니다. 외부변수 때문(→저평가 가능성)인지 이 단지만의 근본 문제(→저가치 가능성)인지 중개사·주변 공급 이슈를 직접 확인해 보세요.' };
+    }
+    return { score: 3, label: '지역 평균 대비 크게 뒤처짐 (차이 ' + diff + '%p)', color: '#e53935', detail: '지역 전체 흐름과 격차가 큽니다. 저가치(구조적 문제) 가능성에 무게를 두고, 반드시 이유를 확인한 뒤 접근하세요.' };
+}
+function diagQ3VolumeReason(vi) {
+    if (!vi || vi.turnoverRate === null) return { score: 10, label: '데이터 부족', color: '#aaa', detail: '거래 데이터가 부족합니다.' };
+    var tg = getTurnoverGrade(vi.turnoverRate);
+    var score = vi.turnoverRate >= 5 ? 20 : vi.turnoverRate >= 2 ? 12 : 4;
+    var basis = vi.isEstimated ? '추정 세대수 ' + vi.estUnits + '세대 기준 근사치' : '건축물대장 실제 세대수 ' + vi.estUnits + '세대 기준';
+    var detail = vi.turnoverRate >= 2
+        ? '세대수 대비 거래 빈도(회전율 ' + vi.turnoverRate + '%, ' + basis + ')가 정상 범위입니다. 거래가 적어 보였다면 원래 세대수가 적거나 특수 타입이라 그런 것뿐일 가능성이 높습니다(구조적 이유).'
+        : '세대수 대비로 봐도 거래가 뜸합니다(회전율 ' + vi.turnoverRate + '%, ' + basis + '). 단순히 세대수가 적어서가 아니라 실제 수요 자체가 약할 가능성에 무게를 두세요.';
+    return { score: score, label: tg.title + ' (회전율 ' + vi.turnoverRate + '%)', color: tg.color, detail: detail };
+}
+function diagQ5Liquidity(apt, vi, buildingInfo, officialPrice) {
+    if (!apt.trades || apt.trades.length === 0) {
+        return { score: 0, label: '매매기록 없음 · 환금성 최저 위험', color: '#e53935', detail: '이 건물의 매매 실거래 기록 자체가 없습니다. 되팔 때 매수자를 찾기 가장 어려운 유형이니 각별히 신중하게 접근하세요.' };
+    }
+    var base = (!vi || vi.turnoverRate === null) ? 10 : (vi.turnoverRate >= 5 ? 20 : vi.turnoverRate >= 2 ? 12 : 4);
+    var notes = [];
+    if (apt.buildingType !== 'apt') {
+        base = Math.min(base, 12);
+        notes.push('연립다세대·단독다가구는 아파트보다 구조적으로 환금성이 낮은 편입니다.');
+    }
+    var t = buildingInfo && buildingInfo.title;
+    var hasElev = t ? ((t.rideElvtCnt || 0) + (t.emgenElvtCnt || 0)) > 0 : null;
+    var floors = t ? parseInt(t.grndFlrCnt) : null;
+    var priceWon = (officialPrice && officialPrice.success) ? officialPrice.priceWon : null;
+    if (hasElev === false && floors && floors <= 5 && priceWon && priceWon <= 100000000) {
+        base = Math.min(base, 5);
+        notes.push('5층 이하 무엘리베이터 + 공시가격 1억 이하 조합은 대표적인 "저가치" 경고 패턴입니다(하락장에서 매수자 찾기 특히 어려움).');
+    }
+    var tg = (vi && vi.turnoverRate !== null) ? getTurnoverGrade(vi.turnoverRate) : null;
+    var label = (tg ? tg.title : '판단 보류') + (notes.length ? ' · 주의 요인 있음' : '');
+    return { score: base, label: label, color: base >= 15 ? '#2e7d32' : base >= 8 ? '#9e9e9e' : '#e53935', detail: notes.length ? notes.join(' ') : (tg ? tg.desc : '') };
+}
+function diagQ4FutureValue(apt, devNews, momentum) {
+    if (!devNews) {
+        return { score: 10, label: '미확인', color: '#9e9e9e', detail: '아래 "개발호재 확인" 버튼을 눌러 주변 재개발·재건축·교통 호재 뉴스를 검색해 보세요.', needsCheck: true };
+    }
+    var items = devNews.items || [];
+    if (!items.length) {
+        return { score: 10, label: '검색된 개발호재 없음', color: '#9e9e9e', detail: '호재 없이도 매력적인 곳인지(직주근접·학군·상권만으로) 스스로 점검해 보세요. 호재 없이는 설명이 안 되는 곳일수록 저가치 가능성이 있습니다.' };
+    }
+    var momHigh = momentum !== null && momentum !== undefined && momentum >= 10;
+    if (momHigh) {
+        return { score: 12, label: '호재 있음 · 이미 선반영 가능성', color: '#ff7043', detail: '개발호재가 검색됐지만 최근 1년 가격도 이미 많이 올랐습니다(+' + momentum + '%). 호재가 얼마나 더 남았는지, 이미 다 반영된 건 아닌지 뉴스 원문에서 따져보세요.' };
+    }
+    return { score: 18, label: '호재 있음 · 아직 반영 약함', color: '#2e7d32', detail: '개발호재는 검색되는데 최근 가격 흐름은 아직 크게 움직이지 않았습니다. 저평가 후보로 볼 만한 신호입니다(실현 가능성은 뉴스 원문에서 직접 확인하세요).' };
+}
+function diagOverallLabel(score) {
+    if (score >= 70) return { label: '저평가 후보', color: '#2e7d32', bg: '#e8f5e9' };
+    if (score >= 45) return { label: '판단 보류 · 직접 확인 필요', color: '#f57f17', bg: '#fff8e1' };
+    return { label: '저가치 주의', color: '#e53935', bg: '#ffebee' };
+}
+function buildValueDiagnosisHtml(apt, vi, buildingInfo, officialPrice, devNews) {
+    if (!apt) return '';
+    var q1 = diagQ1Location(apt);
+    var q2 = diagQ2PriceStall(apt);
+    var q3 = diagQ3VolumeReason(vi);
+    var q4 = diagQ4FutureValue(apt, devNews, apt.indicators && apt.indicators.momentum);
+    var q5 = diagQ5Liquidity(apt, vi, buildingInfo, officialPrice);
+    var total = q1.score + q2.score + q3.score + q4.score + q5.score;
+    var overall = diagOverallLabel(total);
+    var html = '<div class="indicator-box" style="border-color:' + overall.color + ';background:' + overall.bg + ';">';
+    html += '<div class="indicator-title" style="color:' + overall.color + ';">🔍 저평가 vs 저가치 진단</div>';
+    html += '<div style="display:flex;align-items:center;gap:10px;margin-bottom:8px;">'
+        + '<div style="font-size:26px;font-weight:900;color:' + overall.color + ';">' + total + '<span style="font-size:13px;font-weight:normal;color:#999;">/100</span></div>'
+        + '<div style="font-size:14px;font-weight:bold;color:' + overall.color + ';">' + overall.label + '</div></div>';
+    html += '<div style="font-size:9.5px;color:#999;margin-bottom:8px;">실거래가·건축물대장·공시가격·개발호재 검색 데이터로 자동 계산한 근사치입니다. 최종 판단은 반드시 임장·중개사 확인을 거치세요.</div>';
+    function qRow(no, title, q) {
+        return '<div style="background:white;border-radius:6px;padding:6px 8px;margin-bottom:5px;border-left:3px solid ' + q.color + ';">'
+            + '<div style="display:flex;justify-content:space-between;align-items:center;gap:6px;"><span style="font-size:11px;font-weight:bold;color:#333;flex-shrink:0;">' + no + ' ' + title + '</span>'
+            + '<span style="font-size:10.5px;font-weight:bold;color:' + q.color + ';text-align:right;">' + q.label + '</span></div>'
+            + (q.detail ? '<div style="font-size:10.5px;color:#777;margin-top:2px;">' + q.detail + '</div>' : '')
+            + '</div>';
+    }
+    html += qRow('①', '생활권 등급', q1);
+    html += qRow('②', '가격 정체 원인', q2);
+    html += qRow('③', '거래량 원인', q3);
+    html += qRow('④', '미래가치·호재', q4);
+    if (q4.needsCheck) {
+        html += '<div style="text-align:center;margin:2px 0 6px;"><button type="button" class="modal-btn btn-purple" style="font-size:10.5px;padding:4px 12px;" onclick="searchPanelDevNews()">🏗️ 개발호재 확인</button></div>';
+    }
+    html += qRow('⑤', '환금성', q5);
+    html += '</div>';
+    return html;
+}
+/* 일반 매물 패널(경매 아닌 지도 마커)에서 쓰는 개발호재 검색 - 경매 모달의
+   searchDevelopmentNews()와 같은 백엔드(mode:'devNews')를 재사용하되, 주소 대신
+   현재 패널의 apt.latest(region/dong/bunji)로 검색어를 만듦. 버튼을 눌러야만
+   호출됨(지도를 돌아다닐 때마다 자동으로 API가 나가는 것을 막기 위함). */
+async function searchPanelDevNews() {
+    if (!currentPanelApt) return;
+    var l = currentPanelApt.latest || {};
+    var address = [l.region, l.dong, l.bunji].filter(Boolean).join(' ');
+    if (!address.trim()) { alert('주소 정보가 부족해 개발호재를 검색할 수 없습니다.'); return; }
+    try {
+        var res = await fetch('/api/parse-auction', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ mode: 'devNews', address: address })
+        });
+        var data = await readJsonResponseSafe(res);
+        if (!res.ok || !data.devNews) {
+            alert('개발호재 검색 실패: ' + (data.error || '알 수 없는 오류'));
+            return;
+        }
+        currentPanelDevNews = data.devNews;
+        renderTable();
+    } catch (e) {
+        alert('개발호재 검색 중 오류: ' + e.message);
+    }
 }
 async function searchNationwide(q) {
     try {
