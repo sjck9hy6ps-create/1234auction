@@ -404,7 +404,13 @@ function classifyQuotaError(errData) {
 }
 
 // Gemini가 "high demand"/"overloaded"(구글 서버 혼잡, 503 UNAVAILABLE)로 거절하는 경우가
-// 있는데, 대부분 몇 초 안에 풀리는 일시적 현상이라 1초 후 최대 2회까지 자동 재시도한다.
+// 있는데, 대부분 몇~십몇 초 안에 풀리는 일시적 현상이라 최대 4회까지 자동 재시도한다.
+// ⚠️ 원래는 1초 후 최대 2회(attempt<3)까지만 재시도했는데, 실제로는 그 정도 짧은 간격으로도
+// 계속 혼잡한 경우가 있어 사용자에게 구글의 영문 원문 메시지("high demand...")가 그대로
+// 노출되는 일이 있었음. 재시도 횟수를 늘리고(attempt<5) 간격도 점점 늘려가며(1.5s→3s→4.5s→6s,
+// 총 15초 추가) 재시도하고, 그래도 안 풀리면 원문 대신 안내 문구로 바꿔서 던짐.
+// A/B 두 스키마가 병렬로 호출되고 Vercel Hobby 전체 제한이 60초이므로, 이 정도 추가 대기는
+// 개별 fetch의 실제 소요시간을 감안해도 전체 예산 안에 들어옴.
 // 무료 티어의 분당 한도(RPM/TPM, 429 RESOURCE_EXHAUSTED)에 걸린 경우도 롤링 윈도우라 곧
 // 풀리므로, Gemini가 알려주는 재시도 대기시간(+지터)만큼 기다렸다가 최대 2회까지 재시도한다
 // (일일 한도(RPD) 초과로 확인되면 재시도해봐야 소용없으므로 즉시 포기 - classifyQuotaError 참고).
@@ -451,9 +457,12 @@ async function callGemini(apiKey, promptText, schema, imageParts, attempt, tempe
     const isOverloaded = geminiRes.status === 503 || status === 'UNAVAILABLE'
       || /overloaded|high demand/i.test(msg);
     const isQuotaExceeded = geminiRes.status === 429 || status === 'RESOURCE_EXHAUSTED';
-    if (isOverloaded && attempt < 3) {
-      await sleep(1000 * attempt);
+    if (isOverloaded && attempt < 5) {
+      await sleep(1500 * attempt);
       return callGemini(apiKey, promptText, schema, imageParts, attempt + 1, temperature);
+    }
+    if (isOverloaded) {
+      throw new Error('AI 서버가 일시적으로 혼잡합니다(구글 측 일시적 과부하). 보통 1분 이내에 풀리니, 잠시 후 다시 시도해 주세요.');
     }
     if (isQuotaExceeded) {
       const quotaType = classifyQuotaError(data);
