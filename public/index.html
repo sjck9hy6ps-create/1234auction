@@ -505,7 +505,7 @@ tr:hover td { background:#fffde7; }
     </div>
     <div id="auction-list-body"></div>
 </div>
-<div id="auction-modal-bg" onclick="closeAuctionModal(event)">
+<div id="auction-modal-bg">
 <div id="auction-modal">
     <div class="modal-header">
         <span id="modal-title">🔨 경매 물건 등록</span>
@@ -549,7 +549,7 @@ tr:hover td { background:#fffde7; }
             <div id="auction-history-box" style="margin-top:4px;"></div>
             <div class="modal-row">
                 <span class="modal-label">물건유형</span>
-                <select class="modal-select" id="a-prop-type" onchange="autoCalcAgentSilent();autoCalcRepairSilent();calcCompValuation();calcMargin();autoCalcAuctionJeonseAnalysis();">
+                <select class="modal-select" id="a-prop-type" onchange="applyDefaultTargetMarginForType();autoCalcAgentSilent();autoCalcRepairSilent();calcCompValuation();calcMargin();autoCalcAuctionJeonseAnalysis();">
                     <option value="apt">아파트</option>
                     <option value="villa">연립다세대·단독</option>
                     <option value="officetel">오피스텔</option>
@@ -3166,7 +3166,7 @@ function openAuctionModal(id) {
             document.getElementById('a-target').value      = a.target || '';
             document.getElementById('a-actual-sell').value = a.actualSell || '';
             document.getElementById('a-memo').value        = a.memo || '';
-            document.getElementById('a-comp-target-margin').value = a.compTargetMargin || '2000';
+            document.getElementById('a-comp-target-margin').value = a.compTargetMargin || TARGET_MARGIN_DEFAULTS[a.propType || 'apt'] || '2000';
             document.getElementById('a-house-rank').value  = a.houseRank || '1';
             document.getElementById('a-is-adjusted').checked   = !!a.isAdjusted;
             document.getElementById('a-is-local-cheap').checked = !!a.isLocalCheap;
@@ -3180,8 +3180,9 @@ function openAuctionModal(id) {
     updateStatusUI(); calcMargin(); calcCompValuation(); suggestBidFromTarget(); renderChecklistSection(); loadAuctionBuildingInfo(); autoCalcAuctionJeonseAnalysis();
     document.getElementById('auction-modal-bg').style.display = 'flex';
 }
-function closeAuctionModal(e) {
-    if (e && e.target !== document.getElementById('auction-modal-bg')) return;
+/* 배경(모달 바깥) 클릭으로 닫히던 동작 제거됨 - 입력 중이던 내용이 실수로 날아가는 문제가 있어
+   ✕ 버튼/취소 버튼으로만 닫히도록 변경. */
+function closeAuctionModal() {
     document.getElementById('auction-modal-bg').style.display = 'none';
 }
 function updateStatusUI() {
@@ -3388,14 +3389,20 @@ function autoCalcEvictionFee() {
     document.getElementById('a-eviction-fee').value = calcEvictionFee(pyung);
     calcMargin();
 }
-/* 연립다세대 수리비 자동계산 - 연식단계(VILLA_AGE_TIERS)별 평당 단가.
+/* 수리비 자동계산 - 연식단계(VILLA_AGE_TIERS)별 단가. 물건유형(아파트 vs 연립다세대·단독)에
+   따라 계산 방식을 분리함.
    ⚠️ 원래 프리미엄신축(0~3년)이 가장 비싸고 노후(26년+)가 가장 싼 반대 순서로 되어 있었음
    (수리비가 아니라 "가치"를 나타내는 것처럼 잘못 설계됨) - 새 건물일수록 수리할 게 적어
-   평당 단가가 낮아야 하고, 오래된 건물일수록 전체 리모델링이 필요해 단가가 높아야 하므로
-   방향을 반대로 바로잡음: 가장 오래된 단계(노후)가 평당 100만원, 최신 단계(프리미엄신축)로
-   갈수록 10만원씩 낮아짐: 60→70→80→90→100만원/평.
+   단가가 낮아야 하고, 오래된 건물일수록 전체 리모델링이 필요해 단가가 높아야 하므로
+   방향을 반대로 바로잡음.
+   둘 다 평당 단가 × 평형으로 계산하되, 단가표는 물건유형별로 다름.
+   - 아파트(apt): 가장 오래된 단계(노후)가 평당 100만원, 최신 단계(프리미엄신축)로
+     갈수록 10만원씩 낮아짐: 60→70→80→90→100만원/평.
+   - 연립다세대·단독(villa): 아파트보다 노후 시 공사비 부담이 커서 노후 단계를 평당
+     150만원으로 잡고, 최신 단계로 갈수록 15만원씩 낮아짐: 90→105→120→135→150만원/평.
    사용승인일(연식)은 AI 자동추출 결과(pendingAuctionDetail.approvalDate)에서 가져옴. */
-var VILLA_REPAIR_PER_PYUNG = { premium: 60, new: 70, semi: 80, old: 90, aged: 100 }; // 만원/평
+var APT_REPAIR_PER_PYUNG = { premium: 60, new: 70, semi: 80, old: 90, aged: 100 }; // 만원/평 (아파트)
+var VILLA_REPAIR_PER_PYUNG = { premium: 90, new: 105, semi: 120, old: 135, aged: 150 }; // 만원/평 (연립다세대·단독)
 function getAuctionBuildYear() {
     if (pendingAuctionDetail && pendingAuctionDetail.approvalDate) {
         var m = String(pendingAuctionDetail.approvalDate).match(/(\d{4})/);
@@ -3426,11 +3433,12 @@ function getAgeTierByYear(buildYear) {
     }
     return null;
 }
-function calcRepairFee(pyung, buildYear) {
-    if (!pyung || pyung <= 0) return null;
+function calcRepairFee(propType, pyung, buildYear) {
     var tier = getAgeTierByYear(buildYear);
     if (!tier) return null;
-    return Math.round(pyung * VILLA_REPAIR_PER_PYUNG[tier]);
+    if (!pyung || pyung <= 0) return null;
+    var table = (propType === 'villa') ? VILLA_REPAIR_PER_PYUNG : APT_REPAIR_PER_PYUNG;
+    return Math.round(pyung * table[tier]);
 }
 /* ════════════════════════════════════
    경매물건(연립다세대) 전세가 기반 분석
@@ -3598,14 +3606,28 @@ function refreshAuctionJeonse126Warning() {
     var box = document.getElementById('jeonse-analysis-box');
     if (box) box.innerHTML = buildAuctionJeonseAnalysisHtml(auctionJeonseEstimate);
 }
-/* 물건유형이 연립다세대·단독일 때만 평형×연식단계로 수리비를 조용히 자동계산해서 채움
-   (평형 또는 사용승인일(연식)을 아직 모르면 계산하지 않고 기존 값을 그대로 둠) */
+/* 물건유형이 아파트 또는 연립다세대·단독일 때만 연식단계로 수리비를 조용히 자동계산해서 채움
+   (오피스텔·그외는 대상 아님. 아파트는 평당단가×평형, 연립다세대·단독은 정액제 - calcRepairFee 참고.
+   평형 또는 사용승인일(연식)을 아직 모르면 계산하지 않고 기존 값을 그대로 둠) */
 function autoCalcRepairSilent() {
-    if (document.getElementById('a-prop-type').value !== 'villa') return;
+    var propType = document.getElementById('a-prop-type').value;
+    if (propType !== 'apt' && propType !== 'villa') return;
     var pyung = parseFloat(document.getElementById('a-pyung').value) || 0;
-    var fee = calcRepairFee(pyung, getAuctionBuildYear());
+    var fee = calcRepairFee(propType, pyung, getAuctionBuildYear());
     if (fee === null) return;
     document.getElementById('a-repair').value = fee;
+}
+/* 물건유형별 목표마진(a-comp-target-margin) 기본값을 적용.
+   연립다세대·단독은 아파트보다 수리·명도 변수가 커서 기본 목표마진을 더 높게(3000만원) 잡음.
+   단, 이미 사용자가 두 기본값(2000/3000) 이외의 값으로 직접 수정해 둔 경우는 건드리지 않음. */
+var TARGET_MARGIN_DEFAULTS = { apt: '2000', villa: '3000', officetel: '2000', other: '2000' };
+function applyDefaultTargetMarginForType() {
+    var propType = document.getElementById('a-prop-type').value;
+    var el = document.getElementById('a-comp-target-margin');
+    var cur = String(el.value || '').trim();
+    if (cur === '' || cur === '2000' || cur === '3000') {
+        el.value = TARGET_MARGIN_DEFAULTS[propType] || '2000';
+    }
 }
 /* 서울시 주택 매매 중개보수 요율표 기준 상한요율로 중개수수료 계산 (만원 단위 입력/반환) */
 function calcAgentFee(saleManwon, propType) {
@@ -3657,10 +3679,12 @@ var CALC_INFO_TEXT = {
     evictionFee: '명도비용은 평형(a-pyung)을 기준으로 이사비·명도 협의/소송 대비 비용을 대략적으로\n'
         + '추정한 값입니다. 임차인 유무와 협의 난이도에 따라 실제 비용은 크게 달라질 수 있으니\n'
         + '참고용으로만 사용하세요.',
-    repair: '수리비는 연립다세대의 경우, 이 지역 같은 연식단계(신축/준신축/구축 등)의 실거래에서\n'
-        + '뽑은 평균 평당단가에 평형을 곱해 자동계산됩니다(연식은 AI추출 사용승인일 → 건축HUB\n'
-        + '사용승인일 → 등록된 유사물건 준공연도 중앙값 순으로 채워짐). 실제 수리 견적을 받았다면\n'
-        + '그 값으로 직접 수정해서 사용하세요.',
+    repair: '수리비는 연식단계(프리미엄신축/신축/준신축/구축/노후)별 평당 단가 × 평형으로 자동계산되며,\n'
+        + '단가표는 물건유형별로 다릅니다(연식은 AI추출 사용승인일 → 건축HUB 사용승인일 →\n'
+        + '등록된 유사물건 준공연도 중앙값 순으로 채워짐).\n'
+        + '- 아파트: 평당 60~100만원 (오래될수록 높음, 10만원 단위 증가)\n'
+        + '- 연립다세대·단독: 평당 90~150만원 (오래될수록 높음, 15만원 단위 증가)\n'
+        + '실제 수리 견적을 받았다면 그 값으로 직접 수정해서 사용하세요.',
     agent: '중개수수료는 "목표 매도가"(실제 매도가가 있으면 그 값) 기준, 전국 공통 상한요율표에 따라\n'
         + '매도 시 1회 지급하는 금액으로 자동계산됩니다.\n'
         + '- 주택(아파트/연립다세대/단독): 가격 구간별 0.4~0.7%(5천만~2억 구간은 상한액도 적용)\n'
