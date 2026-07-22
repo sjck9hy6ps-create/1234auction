@@ -11,6 +11,15 @@
    있으면 외부 API를 다시 호출하지 않고 캐시를 바로 반환합니다.
    (구조/층수/세대수 등은 거의 안 바뀌고, 공시가격도 연 1회만 갱신되므로)
 
+   ── 배치 캐시조회(POST) ──
+   지역을 새로 로딩할 때 연립다세대 건물 수십~수백 개를 하나하나 GET으로
+   물어보면, DB엔 이미 캐시가 있어도 요청 왕복시간(latency)만 계속 누적돼
+   체감 로딩이 느려집니다. POST { items: [{sigunguCd,bjdongCd,bun,ji,bldNm,key}, ...] }
+   로 여러 건물을 한 번에 보내면, sigungu_cd/bjdong_cd 값들로 한 번의 Supabase
+   조회만 하고 나머지는 메모리에서 매칭해서 { results: { key: {...}|null } } 로
+   돌려줍니다. 외부 API 호출은 하지 않는 "캐시 확인 전용" 모드이며, 캐시 미스인
+   건물은 프런트에서 기존 GET(단건, 캐시 없으면 외부 API 호출+저장)으로 마저 채웁니다.
+
    ⚠️ 아래 SQL을 Supabase에 먼저 실행해서 컬럼을 추가해야 합니다:
      ALTER TABLE building_info ADD COLUMN IF NOT EXISTS floor_json jsonb;
      ALTER TABLE building_info ADD COLUMN IF NOT EXISTS expos_json jsonb;
@@ -35,6 +44,10 @@ const FRESH_MS = 1000 * 60 * 60 * 24 * 180; // 180일
 
 export default async function handler(req, res) {
   res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
+
+  if (req.method === 'POST') {
+    return handleBatchCacheCheck(req, res);
+  }
 
   const { sigunguCd, bjdongCd, bun, ji, platGbCd, bldNm } = req.query;
   if (!sigunguCd || !bjdongCd || !bun) {
@@ -127,6 +140,58 @@ export default async function handler(req, res) {
   } catch (err) {
     console.error('건축물대장 조회 에러:', err.message);
     return res.status(500).json({ error: err.message });
+  }
+}
+
+/* 배치 캐시조회 - 외부 API는 호출하지 않고 building_info 캐시에 있는 것만 돌려줌.
+   sigungu_cd/bjdong_cd는 보통 한 지역 로딩 안에서 몇 개 안 되는 값이라(법정동 몇 개),
+   .in()으로 그 범위만 한 번에 긁어온 뒤 bun/ji/bld_nm은 메모리에서 매칭합니다. */
+async function handleBatchCacheCheck(req, res) {
+  const items = Array.isArray(req.body?.items) ? req.body.items : [];
+  if (!items.length) return res.status(200).json({ results: {} });
+
+  const sigunguCds = [...new Set(items.map(i => i.sigunguCd).filter(Boolean))];
+  const bjdongCds  = [...new Set(items.map(i => i.bjdongCd).filter(Boolean))];
+  if (!sigunguCds.length || !bjdongCds.length) return res.status(200).json({ results: {} });
+
+  try {
+    const { data, error } = await supabase
+      .from('building_info')
+      .select('*')
+      .in('sigungu_cd', sigunguCds)
+      .in('bjdong_cd', bjdongCds);
+    if (error) throw error;
+
+    const rowMap = {};
+    (data || []).forEach(row => {
+      const k = [row.sigungu_cd, row.bjdong_cd, row.bun, row.ji, row.bld_nm].join('|');
+      rowMap[k] = row;
+    });
+
+    const results = {};
+    items.forEach(it => {
+      const jiParam = it.ji || '0000';
+      const bldNmKey = (it.bldNm || '').trim();
+      const rowKey = [it.sigunguCd, it.bjdongCd, it.bun, jiParam, bldNmKey].join('|');
+      const key = it.key || rowKey;
+      const row = rowMap[rowKey];
+      if (row && (Date.now() - new Date(row.fetched_at).getTime()) < FRESH_MS) {
+        results[key] = {
+          title: row.title_json,
+          price: row.price_json,
+          floors: row.floor_json || null,
+          exposAreas: row.expos_json || null,
+          cached: true,
+        };
+      } else {
+        results[key] = null;
+      }
+    });
+
+    return res.status(200).json({ results });
+  } catch (err) {
+    console.error('건축물정보 배치 캐시조회 에러:', err.message);
+    return res.status(500).json({ results: {}, error: err.message });
   }
 }
 
