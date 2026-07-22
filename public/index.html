@@ -647,7 +647,7 @@ tr:hover td { background:#fffde7; }
             </div>
             <div id="comp-list-box" style="margin-bottom:8px;"></div>
             <div class="modal-row">
-                <span class="modal-label">목표마진</span>
+                <span class="modal-label">목표마진(세후)</span>
                 <input type="number" class="modal-input" id="a-comp-target-margin" placeholder="0" oninput="calcCompValuation();suggestBidFromTarget();">
                 <span style="font-size:12px;color:#888;margin-left:4px;">만원</span>
             </div>
@@ -3412,10 +3412,10 @@ function autoCalcRegistryFee() {
     document.getElementById('a-registry-fee').value = calcRegistryFee(bid);
     calcMargin();
 }
-/* 명도비용(점유자 이사비 등 근사) - 평당 5만원 */
+/* 명도비용(점유자 이사비 등 근사) - 평당 11만원 일괄 (015. 경매 입찰가 산정표.xlsx 단기매매 시트와 동일 기준) */
 function calcEvictionFee(pyung) {
     if (!pyung || pyung <= 0) return 0;
-    return Math.round(pyung * 5);
+    return Math.round(pyung * 11);
 }
 function autoCalcEvictionFee() {
     var pyung = parseFloat(document.getElementById('a-pyung').value) || 0;
@@ -3424,26 +3424,23 @@ function autoCalcEvictionFee() {
     calcMargin();
 }
 /* ════════════════════════════════════
-   이사비용 / 청소비용 (015. 경매 입찰가 산정표.xlsx와 동일 기준, 2026-07)
-   - 이사비용: 2026년 수도권 포장이사 시세(1톤 40~70만/2.5톤 90~110만/5톤 110~150만원,
-     여운 h-yeoun.com 2026.07 등)를 평형으로 환산한 평당단가표. 평형이 클수록 평당단가는
-     낮아짐(규모의 경제). 물건유형과 무관하게 동일 적용.
+   이사비용 / 청소비용
+   - 이사비용: 평형 구간별 정액(30평 미만 200만/40평 미만 300만/40평 이상 400만원).
+     평형과 무관하게 구간별로 딱 떨어지는 금액을 쓰고 싶다는 요청에 따라 평당단가 방식에서
+     구간별 정액 방식으로 변경함(이전에는 평당단가×평형이었음).
    - 청소비용: 평당 2만원 정액.
 ════════════════════════════════════ */
-var MOVING_FEE_PER_PYUNG = [
-    { minPyung: 0,  unit: 5.5 },
-    { minPyung: 10, unit: 5.0 },
-    { minPyung: 20, unit: 4.0 },
-    { minPyung: 30, unit: 3.7 },
-    { minPyung: 40, unit: 3.5 }
-]; // 만원/평
+var MOVING_FEE_TIERS = [
+    { maxPyung: 30, amount: 200 },  // 30평 미만
+    { maxPyung: 40, amount: 300 },  // 30평 이상 ~ 40평 미만
+    { maxPyung: Infinity, amount: 400 } // 40평 이상
+]; // 만원(정액)
 function calcMovingFee(pyung) {
     if (!pyung || pyung <= 0) return null;
-    var unit = MOVING_FEE_PER_PYUNG[0].unit;
-    for (var i = 0; i < MOVING_FEE_PER_PYUNG.length; i++) {
-        if (pyung >= MOVING_FEE_PER_PYUNG[i].minPyung) unit = MOVING_FEE_PER_PYUNG[i].unit; else break;
+    for (var i = 0; i < MOVING_FEE_TIERS.length; i++) {
+        if (pyung < MOVING_FEE_TIERS[i].maxPyung) return MOVING_FEE_TIERS[i].amount;
     }
-    return Math.round(pyung * unit * 10000 / 10000); // 만원 단위 반올림
+    return MOVING_FEE_TIERS[MOVING_FEE_TIERS.length - 1].amount;
 }
 function calcCleaningFee(pyung) {
     if (!pyung || pyung <= 0) return null;
@@ -3811,8 +3808,8 @@ var CALC_INFO_TEXT = {
         + '실제 입찰 전 위택스 등에서 한 번 더 확인하는 것을 권장합니다.',
     registryFee: '등기비용은 "내 입찰가"를 기준으로 등록면허세·지방교육세·법무사 보수·증지대 등을 어림잡아\n'
         + '더한 추정치입니다. 실제 법무사 견적/보수는 사무소마다 차이가 있을 수 있습니다.',
-    evictionFee: '명도비용은 평형(a-pyung)을 기준으로, 기존 점유자를 내보내기 위한 합의금·소송 대비\n'
-        + '비용을 대략적으로 추정한 값입니다(점유자에게 지급). 낙찰자 본인의 이사비용은 별도의\n'
+    evictionFee: '명도비용은 평형(a-pyung) × 평당 11만원으로 일괄 계산됩니다. 기존 점유자를 내보내기\n'
+        + '위한 합의금·소송 대비 비용(점유자에게 지급)이며, 낙찰자 본인의 이사비용은 별도의\n'
         + '"이사비용" 항목에서 계산합니다. 임차인 유무와 협의 난이도에 따라 실제 비용은 크게\n'
         + '달라질 수 있으니 참고용으로만 사용하세요.',
     repair: '수리비는 연식단계(프리미엄신축/신축/준신축/구축/노후)별 평당 단가 × 평형으로 자동계산되며,\n'
@@ -3828,10 +3825,9 @@ var CALC_INFO_TEXT = {
         + '- 상가·토지 등: 0.9%\n'
         + '"목표 매도가"를 바꾸면 자동으로 다시 계산됩니다.',
     moving: '이사비용은 낙찰자 본인이 입주(또는 인테리어·수리 목적 출입) 시 부담하는 이사비로,\n'
-        + '평형이 클수록 평당단가가 낮아지는 구조로 자동계산됩니다(규모의 경제).\n'
-        + '- 10평 미만 평당 5.5만원 / 10~19평 5.0만원 / 20~29평 4.0만원 / 30~39평 3.7만원 / 40평 이상 3.5만원\n'
-        + '근거: 2026년 서울·경기·인천 포장이사 시세(1톤 40~70만/2.5톤 90~110만/5톤 110~150만원, 여운\n'
-        + 'h-yeoun.com 2026.07 등)를 평형으로 환산한 추정치입니다. 실제 견적과 차이가 있을 수 있습니다.',
+        + '평형 구간별 정액으로 자동계산됩니다.\n'
+        + '- 30평 미만 200만원 / 30평 이상~40평 미만 300만원 / 40평 이상 400만원\n'
+        + '실제 견적을 받았다면 그 값으로 직접 수정해서 사용하세요.',
     cleaning: '청소비용(입주청소)은 평형과 무관하게 평당 2만원으로 일괄 계산됩니다.\n'
         + '실제 청소업체 견적을 받았다면 그 값으로 직접 수정해서 사용하세요.',
     malsoRule: '말소기준등기(말소기준권리)란?\n'
@@ -6138,6 +6134,13 @@ function latestPppInfo(trades) {
      그 비율을 최근 전세가에 곱해 추정매매가를 만든 뒤
    - 같은 건물의 매매 평단가 6개월 단위(반기) 추이로 기준 전세거래 시점→현재 변동을 보정
 ════════════════════════════════════ */
+/* ⚠️ 수정 이력: 원래는 "지역 전체"(같은 법정동인지 무관) 매매/전세를 층+면적(±1㎡)만으로
+   짝짓고 평균(mean)을 냈는데, 이러면 서로 다른 동네의 우연히 층·면적이 비슷한 건물이
+   짝지어질 수 있고, 그중 하나라도 비정상적으로 비싼 거래가 끼면 평균이 통째로 튀는 문제가
+   있었음(인천 계양구 계산동 906-51 사례: 비교물건 기준 예상매각가 1.7억대인데 전세가율
+   기반 예상매도가가 4.5억대로 나옴 - 명백히 다른 지역의 훨씬 비싼 거래와 잘못 짝지어진 것).
+   같은 법정동(dong)끼리만 짝짓고, 평균 대신 중앙값(극단치에 덜 흔들림)을 쓰고, 126%
+   커버리지 대비 매매가 비율이 상식적인 범위(0.5~2.0배)를 벗어나는 이상치는 제외하도록 수정. */
 function findSaleRentRatio(rentList, saleTrades) {
     var ratios = [];
     rentList.forEach(function(r) {
@@ -6145,6 +6148,7 @@ function findSaleRentRatio(rentList, saleTrades) {
         var guarantee = (r.deposit || 0) * 1.26;
         if (guarantee <= 0) return;
         saleTrades.forEach(function(s) {
+            if ((s.dong || '').trim() !== (r.dong || '').trim()) return; // 같은 법정동끼리만 짝지음
             if (String(s.floor) !== String(r.floor)) return;
             if (Math.abs((s.area || 0) - (r.size || 0)) >= 1) return;
             var amt = parseInt(s.amount);
@@ -6152,7 +6156,11 @@ function findSaleRentRatio(rentList, saleTrades) {
         });
     });
     if (!ratios.length) return null;
-    return ratios.reduce(function(a, b) { return a + b; }, 0) / ratios.length;
+    var sane = ratios.filter(function(x) { return x >= 0.5 && x <= 2.0; });
+    var use = sane.length ? sane : ratios;
+    use.sort(function(a, b) { return a - b; });
+    var m = Math.floor(use.length / 2);
+    return use.length % 2 ? use[m] : (use[m - 1] + use[m]) / 2;
 }
 function bucketKeyOf(d) {
     return d.getFullYear() + '_' + (d.getMonth() < 6 ? 'H1' : 'H2');
