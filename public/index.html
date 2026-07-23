@@ -311,6 +311,17 @@ tr:hover td { background:#fffde7; }
 .auction-list-item:hover { background:#f3e5f5; }
 .auction-list-name { font-size:13px; font-weight:bold; color:#333; }
 .auction-list-sub { font-size:11px; color:#888; margin-top:2px; }
+#auction-list-pager {
+    display:flex; align-items:center; justify-content:center; gap:4px;
+    padding:8px 10px; border-top:1px solid #eee; position:sticky; bottom:0; background:white;
+}
+.pager-btn {
+    border:1px solid #ddd; background:white; color:#555; border-radius:6px;
+    font-size:11px; padding:3px 8px; cursor:pointer;
+}
+.pager-btn:hover { background:#f3e5f5; border-color:#ce93d8; }
+.pager-btn.active { background:#6a1b9a; color:white; border-color:#6a1b9a; }
+.pager-btn:disabled { opacity:0.4; cursor:default; }
 .auction-status-badge {
     display:inline-block; font-size:10px; font-weight:bold; padding:1px 7px;
     border-radius:10px; margin-left:6px; vertical-align:middle;
@@ -504,6 +515,7 @@ tr:hover td { background:#fffde7; }
         <button onclick="openAuctionModal(null)" style="float:right;background:#6a1b9a;color:white;border:none;border-radius:20px;padding:3px 10px;font-size:11px;cursor:pointer;">+ 등록</button>
     </div>
     <div id="auction-list-body"></div>
+    <div id="auction-list-pager"></div>
 </div>
 <div id="auction-modal-bg">
 <div id="auction-modal">
@@ -2325,9 +2337,12 @@ function openMarkerStackPicker(list) {
     body.innerHTML = list.map(function(item) {
         var l = (item.data.apt && item.data.apt.latest) || {};
         var amountStr = l.amount ? toEok(String(l.amount)) : '';
-        return '<div class="comp-item" style="cursor:pointer;flex-direction:column;align-items:flex-start;justify-content:flex-start;gap:2px;" onclick="pickMarkerFromStack(\'' + item.key + '\')">'
-            + '<span style="font-weight:bold;">' + (l.name || '(이름없음)') + '</span>'
-            + '<span style="font-size:11px;color:#888;">' + [l.road_name, amountStr].filter(Boolean).join(' · ') + '</span>'
+        return '<div class="comp-item" style="align-items:flex-start;gap:6px;">'
+            + '<div style="cursor:pointer;flex:1;min-width:0;" onclick="pickMarkerFromStack(\'' + item.key + '\')">'
+            + '<div style="font-weight:bold;">' + (l.name || '(이름없음)') + '</div>'
+            + '<div style="font-size:11px;color:#888;">' + [l.road_name, amountStr].filter(Boolean).join(' · ') + '</div>'
+            + '</div>'
+            + '<button type="button" class="modal-btn btn-purple" style="font-size:10px;padding:4px 8px;flex-shrink:0;" onclick="event.stopPropagation();handleCompBtnClick(\'' + item.key + '\')">📊 비교등록</button>'
             + '</div>';
     }).join('');
     document.getElementById('marker-stack-modal-bg').style.display = 'flex';
@@ -2346,6 +2361,10 @@ function pickMarkerFromStack(key) {
 function handleCompBtnClick(key) {
     var d = markerDataRegistry[key];
     if (!d) return;
+    // 겹친 마커 선택 팝업(marker-stack-modal, z-index 125)이 열려 있는 채로 비교물건 등록
+    // 팝업(comp-pick-modal, z-index 110)을 띄우면 아래 깔려서 안 보이므로, 먼저 닫아줌.
+    var stackBg = document.getElementById('marker-stack-modal-bg');
+    if (stackBg && stackBg.style.display !== 'none') stackBg.style.display = 'none';
     openComparablePicker(d.apt, d.lat, d.lon);
 }
 function showRadiusCircle(lat, lon) {
@@ -3058,35 +3077,75 @@ function getSiteNotesForBuilding(name, dong) {
         return false;
     }).sort(function(a, b) { return (b.visitDate || '').localeCompare(a.visitDate || ''); });
 }
+var AUCTION_LIST_PAGE_SIZE = 10;
+var auctionListPage = 0; // 0-based
 function openAuctionList() {
     var p = document.getElementById('auction-list-panel');
     if (p.style.display === 'block') { p.style.display = 'none'; return; }
+    auctionListPage = 0;
     renderAuctionList(); p.style.display = 'block';
 }
+/* 등록물건이 많아지면 스크롤로 원하는 물건을 찾기 어렵다는 피드백에 따라 10개씩 페이지네이션함.
+   목록/페이저 둘 다 여기서 다시 그림 - 페이지 이동(auctionListGoToPage)도 이 함수를 재호출함. */
 function renderAuctionList() {
     var body = document.getElementById('auction-list-body');
+    var pager = document.getElementById('auction-list-pager');
     if (!auctionList.length) {
         body.innerHTML = '<div style="padding:20px;text-align:center;color:#aaa;font-size:12px;">등록된 경매 물건이 없습니다</div>';
+        pager.innerHTML = '';
         return;
     }
+    var reversed = auctionList.slice().reverse();
+    var totalPages = Math.max(1, Math.ceil(reversed.length / AUCTION_LIST_PAGE_SIZE));
+    if (auctionListPage >= totalPages) auctionListPage = totalPages - 1;
+    if (auctionListPage < 0) auctionListPage = 0;
+    var start = auctionListPage * AUCTION_LIST_PAGE_SIZE;
+    var pageItems = reversed.slice(start, start + AUCTION_LIST_PAGE_SIZE);
     var html = '';
-    auctionList.slice().reverse().forEach(function(a) {
+    pageItems.forEach(function(a) {
         var sc = STATUS_COLOR[a.status] || '#9e9e9e';
         // 지오코딩(주소→좌표 변환)에 실패해 지도에 배지가 아예 안 뜨는 경우를 여기서 바로 알 수 있도록 표시
         var noPin = (!a.lat || !a.lon)
             ? '<div class="auction-list-sub" style="color:#e53935;font-weight:bold;">⚠️ 주소를 지도 좌표로 찾지 못해 지도에 배지가 표시되지 않습니다 - 주소를 확인해 주세요.</div>'
             : '';
+        var caseNoLine = a.caseNo ? '<div class="auction-list-sub">📋 ' + a.caseNo + '</div>' : '';
         html += '<div class="auction-list-item" style="position:relative;" onclick="panToAuction(\'' + a.id + '\')">'
             + '<span onclick="event.stopPropagation();openAuctionModal(\'' + a.id + '\')" '
             + 'style="position:absolute;top:8px;right:8px;font-size:10px;color:#1976d2;font-weight:bold;cursor:pointer;">✏️ 수정</span>'
             + '<div class="auction-list-name">' + ((a.name && a.name.trim()) || a.addrLabel || a.addr || '(이름없음)')
             + '<span class="auction-status-badge" style="background:' + sc + ';color:white;">' + a.status + '</span></div>'
             + '<div class="auction-list-sub">' + (a.addr || '주소 미입력') + '</div>'
+            + caseNoLine
             + '<div class="auction-list-sub" style="color:#6a1b9a;">입찰가 ' + (a.myBid ? toEok(String(parseInt(a.myBid))) : '-') + '</div>'
             + noPin
             + '</div>';
     });
     body.innerHTML = html;
+    pager.innerHTML = buildAuctionListPagerHtml(auctionListPage, totalPages, reversed.length);
+}
+/* 페이지 번호가 많아지면(예: 30페이지) 전부 나열하지 않고, 현재 페이지 주변만 보여주고
+   나머지는 "…"으로 생략함(현재±2, 처음, 끝은 항상 표시) */
+function buildAuctionListPagerHtml(page, totalPages, totalCount) {
+    if (totalPages <= 1) return '<span style="font-size:10px;color:#aaa;">총 ' + totalCount + '건</span>';
+    var pages = [];
+    for (var i = 0; i < totalPages; i++) {
+        if (i === 0 || i === totalPages - 1 || Math.abs(i - page) <= 1) pages.push(i);
+    }
+    var html = '<button type="button" class="pager-btn" ' + (page === 0 ? 'disabled' : '') + ' onclick="auctionListGoToPage(' + (page - 1) + ')">‹</button>';
+    var prev = null;
+    pages.forEach(function(i) {
+        if (prev !== null && i - prev > 1) html += '<span style="font-size:10px;color:#bbb;">…</span>';
+        html += '<button type="button" class="pager-btn' + (i === page ? ' active' : '') + '" onclick="auctionListGoToPage(' + i + ')">' + (i + 1) + '</button>';
+        prev = i;
+    });
+    html += '<button type="button" class="pager-btn" ' + (page === totalPages - 1 ? 'disabled' : '') + ' onclick="auctionListGoToPage(' + (page + 1) + ')">›</button>';
+    return html;
+}
+function auctionListGoToPage(page) {
+    auctionListPage = page;
+    renderAuctionList();
+    var body = document.getElementById('auction-list-body');
+    if (body) body.scrollTop = 0;
 }
 /* 경매목록에서 항목을 클릭하면(수정 버튼 제외) 편집 모달을 바로 띄우지 않고 지도를 그
    주소로 이동시킴 - 여러 물건을 훑어보며 주변 시세(일반 거래 배지)를 같이 보고 싶을 때
@@ -5357,6 +5416,16 @@ function renderResaleMatchesBox() {
     if (!box) return;
     box.innerHTML = buildResaleMatchesHtml(pendingResaleMatches);
 }
+// 재시도(런타임 초과 등으로 실패 후 텍스트를 줄여 다시 추출) 시, 느리게 응답하던 "이전"
+// 요청이 나중에(새 요청보다 더 늦게) 도착해서 최신 결과를 덮어써버리는 경쟁 상태(race
+// condition)가 있었음 - 모달을 닫았다 열어도 이전 fetch 자체는 백그라운드에서 계속
+// 살아있다가 뒤늦게 응답이 오면 그 안의 .then/await 코드가 그대로 실행되며 폼을 옛날
+// 값(사용자가 이미 지운/줄인 텍스트 기준)으로 되돌려놓았던 게 "지워지지 않은 내용을
+// 추출하는 느낌"의 정체. 매 호출마다 세대번호(seq)를 새로 발급하고, 이전 요청이 남아있으면
+// abort()로 취소함 + 응답이 와도 자신이 최신 요청이 아니면(seq 불일치) 폼에 아무것도
+// 쓰지 않고 조용히 무시하도록 이중으로 막음.
+var parseAuctionRequestSeq = 0;
+var parseAuctionAbortController = null;
 async function parseAuctionPaste() {
     var text = document.getElementById('a-paste-text').value.trim();
     var hasImages = pendingAuctionImages.length > 0;
@@ -5373,6 +5442,12 @@ async function parseAuctionPaste() {
             + 'Vercel 서버는 요청 하나당 4.5MB까지만 받을 수 있어요. 이미지 장수를 줄이거나(예: 한 번에 3~4장씩 나눠서 여러 번 추출), 캡처 해상도를 낮춰서 다시 시도해 주세요.');
         return;
     }
+    // 이전에 보낸 요청이 아직 응답을 기다리는 중이면(런타임이 길어 아직 안 끝났으면) 취소하고
+    // 이번 요청을 "최신"으로 등록함. 재시도할 때 굳이 모달을 닫았다 열 필요가 없어짐.
+    if (parseAuctionAbortController) parseAuctionAbortController.abort();
+    var myAbort = new AbortController();
+    parseAuctionAbortController = myAbort;
+    var mySeq = ++parseAuctionRequestSeq;
     var btn = document.getElementById('a-parse-btn');
     btn.disabled = true; btn.innerText = hasImages ? '이미지 분석 중... (최대 1분 소요)' : '분석 중...';
     try {
@@ -5382,9 +5457,15 @@ async function parseAuctionPaste() {
             body: JSON.stringify({
                 text: text,
                 images: pendingAuctionImages.map(function(img) { return { data: img.data, mimeType: img.mimeType }; })
-            })
+            }),
+            signal: myAbort.signal
         });
+        // 응답이 도착했을 때 이미 더 최신 요청이 시작돼 있으면(= 내가 취소당한 옛 요청이면)
+        // 폼에 아무것도 반영하지 않고 조용히 종료함 (abort()가 걸려도 극히 드물게 응답이
+        // 이미 도착해있던 경합 상황까지 이중으로 막기 위함).
+        if (mySeq !== parseAuctionRequestSeq) return;
         var data = await readJsonResponseSafe(res);
+        if (mySeq !== parseAuctionRequestSeq) return;
         if (!res.ok || !data.detail) {
             alert('자동 추출 실패: ' + (data.error || '알 수 없는 오류'));
             return;
@@ -5470,6 +5551,8 @@ async function parseAuctionPaste() {
                 });
             });
         }
+        // 지오코딩 대기(await) 중에도 더 최신 요청이 시작될 수 있어 마지막으로 한 번 더 확인
+        if (mySeq !== parseAuctionRequestSeq) return;
         autoCalcRepairSilent(); autoCalcMovingSilent(); autoCalcCleaningSilent(); calcCompValuation(); calcMargin(); loadAuctionBuildingInfo(); autoCalcAuctionJeonseAnalysis();
         renderAiSummaryBox();
         clearAuctionImages();
@@ -5481,12 +5564,21 @@ async function parseAuctionPaste() {
             alert('자동 추출 완료! 내용을 확인하고 저장해 주세요.');
         }
     } catch (e) {
+        // abort()로 스스로 취소한 옛 요청은 조용히 종료 (사용자가 재시도하며 만든 정상 취소라
+        // 에러로 보여줄 필요가 없음). 그 외 진짜 네트워크/서버 오류만 알림으로 표시.
+        if (e.name === 'AbortError') return;
+        if (mySeq !== parseAuctionRequestSeq) return;
         alert('자동 추출 중 오류: ' + e.message);
     } finally {
-        btn.disabled = false; btn.innerText = '텍스트/이미지에서 자동 추출';
+        // 내가 최신 요청일 때만 버튼 상태를 되돌림 - 옛(취소된) 요청의 finally가 나중에
+        // 실행되며 최신 요청이 켜둔 "분석 중..." 상태를 잘못 지워버리는 걸 막음.
+        if (mySeq === parseAuctionRequestSeq) {
+            btn.disabled = false; btn.innerText = '텍스트/이미지에서 자동 추출';
+        }
+        if (parseAuctionAbortController === myAbort) parseAuctionAbortController = null;
     }
 }
- 
+
 function normalizeDateForInput(s) {
     if (!s) return '';
     var m = String(s).match(/(\d{4})[.\-\/](\d{1,2})[.\-\/](\d{1,2})/);
