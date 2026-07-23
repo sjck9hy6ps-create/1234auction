@@ -617,7 +617,12 @@ tr:hover td { background:#fffde7; }
                 <input type="number" class="modal-input" id="a-hold-months" placeholder="예) 3" oninput="calcMargin();suggestBidFromTarget();">
                 <span style="font-size:12px;color:#888;margin-left:4px;">개월</span>
             </div>
-            <div style="font-size:10px;color:#aaa;margin-top:-4px;margin-bottom:6px;">개인명의는 보유기간에 따라 양도소득세(1년미만 70%·2년미만 60%·2년이상 기본세율)가, 매매사업자는 종합소득세(사업소득, 누진세율)가 적용됩니다. 상세 계산기준은 아래 "세금" 항목의 ⓘ를 참고하세요.</div>
+            <div class="modal-row" id="loan-rate-row">
+                <span class="modal-label">대출금리 <span onclick="showCalcInfo('loanInterest')" title="계산기준 보기" style="cursor:pointer;color:#1976d2;">ⓘ</span></span>
+                <input type="number" step="0.1" class="modal-input" id="a-loan-rate" placeholder="5.0" oninput="calcMargin();suggestBidFromTarget();">
+                <span style="font-size:12px;color:#888;margin-left:4px;">% (연)</span>
+            </div>
+            <div style="font-size:10px;color:#aaa;margin-top:-4px;margin-bottom:6px;">보유기간은 낙찰~매도까지 예상 개월수로, 개인명의는 양도소득세(1년미만 70%·2년미만 60%·2년이상 기본세율) 판단에, 매매사업자는 종합소득세(사업소득, 누진세율) 계산과 별개로 두 경우 모두 대출이자(마진분석의 "대출이자" 항목) 계산에 쓰입니다. 대출금리는 비워두면 개인 5.0%/매매사업자(신탁대출) 6.5%가 기본 적용됩니다(2026년 경락잔금대출·신탁대출 시세 참고치, 실제 승인금리는 금융기관마다 다르니 직접 확인 후 수정하세요). 상세 계산기준은 아래 "세금" 항목의 ⓘ를 참고하세요.</div>
             <div class="modal-row">
                 <span class="modal-label">보유주택수</span>
                 <select class="modal-select" id="a-house-rank" onchange="autoCalcTaxSilent();calcCompValuation();calcMargin();">
@@ -3183,7 +3188,7 @@ function openAuctionModal(id) {
      ['auction-id','a-addr','a-name','a-dong','a-floor','a-unit','a-case','a-pyung','a-date',
      'a-appraisal','a-min-bid','a-deposit-rate','a-my-bid','a-actual-bid',
      'a-tax','a-registry-fee','a-eviction-fee','a-repair','a-agent','a-moving','a-cleaning','a-etc','a-target','a-actual-sell',
-     'a-official-price','a-memo','a-paste-text']
+     'a-official-price','a-memo','a-paste-text','a-loan-rate']
         .forEach(function(fid) { document.getElementById(fid).value = ''; });
     document.getElementById('a-status').value = '검토중';
     document.getElementById('a-prop-type').value = 'apt';
@@ -3257,6 +3262,7 @@ function openAuctionModal(id) {
             document.getElementById('a-cleaning').value    = a.cleaning || '';
             document.getElementById('a-bid-method').value  = a.bidMethod || 'dealer';
             document.getElementById('a-hold-months').value = a.holdMonths || '';
+            document.getElementById('a-loan-rate').value   = a.loanRate || '';
             document.getElementById('a-etc').value         = a.etc || '';
             document.getElementById('a-target').value      = a.target || '';
             document.getElementById('a-actual-sell').value = a.actualSell || '';
@@ -3287,10 +3293,16 @@ function updateStatusUI() {
     document.getElementById('actual-bid-row').style.display  = (s === '낙찰' || s === '매도완료') ? '' : 'none';
     document.getElementById('actual-sell-row').style.display = (s === '매도완료') ? '' : 'none';
 }
-/* 보유기간은 개인명의(양도소득세 단기/장기 판정)일 때만 의미가 있어서, 매매사업자 선택 시엔 숨김 */
+/* 보유기간(hold-months)은 원래 개인명의 양도소득세 단기/장기 판정에만 쓰여서 매매사업자
+   선택 시 숨겼었는데, 대출이자 계산(보유기간 × 대출금액 × 금리)에는 입찰방법과 무관하게
+   항상 필요해져서 이제 항상 표시함. 대신 대출금리 기본값만 입찰방법에 따라 다르게 채워줌
+   (개인 담보대출 5.0% vs 매매사업자 신탁대출 6.5% - calcMargin의 DEFAULT_LOAN_RATE 참고). */
 function updateBidMethodUI() {
-    var m = document.getElementById('a-bid-method').value;
-    document.getElementById('hold-months-row').style.display = (m === 'individual') ? '' : 'none';
+    var rateInput = document.getElementById('a-loan-rate');
+    if (rateInput) {
+        var m = document.getElementById('a-bid-method').value;
+        rateInput.placeholder = (m === 'dealer') ? '6.5' : '5.0';
+    }
 }
 function searchAuctionAddr() {
     var q = document.getElementById('a-addr').value.trim();
@@ -3608,6 +3620,18 @@ function calcLoanAmount(bidMethod, bid, appraisal) {
     var byAppraisal = (appraisal && appraisal > 0) ? appraisal * 0.7 : Infinity;
     return Math.round(Math.min(byBid, byAppraisal));
 }
+// 대출금리 기본값(연%) - 비워두면 이 값 적용. 2026년 경락잔금대출(개인)·신탁대출(매매사업자) 시세 참고치.
+var DEFAULT_LOAN_RATE = { individual: 5.0, dealer: 6.5 };
+/* 낙찰~매도까지 보유기간 동안 대출금액에 붙는 이자비용. 목표마진(세후 순수익)에서 빠지는
+   실제 현금비용이라 마진분석 비용 항목에 반영함(그 전까진 대출을 "받았다"는 사실만 있고
+   보유기간 동안 계속 나가는 이자를 아예 계산하지 않고 있었음).
+   loanAmount(만원) × 연이자율(%) × (보유개월/12), 단리 근사. */
+function calcLoanInterest(loanAmount, annualRatePercent, holdMonths) {
+    if (!loanAmount || loanAmount <= 0 || !holdMonths || holdMonths <= 0) return 0;
+    var rate = (annualRatePercent && annualRatePercent > 0) ? annualRatePercent : 0;
+    if (rate <= 0) return 0;
+    return Math.round(loanAmount * (rate / 100) * (holdMonths / 12));
+}
 /* 수리비 자동계산 - 연식단계(VILLA_AGE_TIERS)별 단가. 물건유형(아파트 vs 연립다세대·단독)에
    따라 계산 방식을 분리함.
    ⚠️ 원래 프리미엄신축(0~3년)이 가장 비싸고 노후(26년+)가 가장 싼 반대 순서로 되어 있었음
@@ -3917,6 +3941,13 @@ var CALC_INFO_TEXT = {
         + '실제 견적을 받았다면 그 값으로 직접 수정해서 사용하세요.',
     cleaning: '청소비용(입주청소)은 평형과 무관하게 평당 2만원으로 일괄 계산됩니다.\n'
         + '실제 청소업체 견적을 받았다면 그 값으로 직접 수정해서 사용하세요.',
+    loanInterest: '대출이자 = 대출금액 × 연이자율 × (예상 보유기간 ÷ 12), 단리로 계산됩니다.\n'
+        + '대출금액은 "대출금액" 항목과 동일한 방식(개인: min(낙찰가80%, 감정가70%) / 매매사업자: 낙찰가90%)으로\n'
+        + '먼저 산정한 뒤 이자를 계산합니다.\n'
+        + '대출금리를 입력칸에 직접 채우지 않으면 개인명의 5.0%, 매매사업자(신탁대출) 6.5%가 기본 적용됩니다\n'
+        + '(2026년 경락잔금대출·신탁대출 시세 참고치 - 실제 승인금리는 금융기관·신용도에 따라 다르니\n'
+        + '대출 상담 후 정확한 금리로 직접 수정하는 것을 권장합니다).\n'
+        + '보유기간이 길어질수록, 또는 대출비중이 높을수록 이 비용이 커져 목표마진 확보가 어려워질 수 있습니다.',
     malsoRule: '말소기준등기(말소기준권리)란?\n'
         + '(근)저당권·(가)압류·담보가등기·경매개시결정등기·전세권(배당요구 또는 임의경매신청) 중\n'
         + '등기일자가 가장 빠른 것을 말합니다(민사집행법 제91조, 가등기담보법 제15조).\n'
@@ -3965,7 +3996,13 @@ function calcMargin() {
     var depositRate = parseFloat(document.getElementById('a-deposit-rate').value) || 0;
     var bidMethod = document.getElementById('a-bid-method').value;
     var holdMonths = parseInt(document.getElementById('a-hold-months').value) || 0;
-    var feesSum   = tax + registryFee + evictionFee + repair + agent + moving + cleaning + etc;
+    var deposit   = calcDeposit(minBid, depositRate);
+    var loanAmount = calcLoanAmount(bidMethod, useBid, appraisal);
+    var cashNeeded = useBid > 0 ? Math.max(useBid - deposit - loanAmount, 0) : 0;
+    var loanRateInput = parseFloat(document.getElementById('a-loan-rate').value);
+    var loanRate = (loanRateInput > 0) ? loanRateInput : DEFAULT_LOAN_RATE[bidMethod === 'dealer' ? 'dealer' : 'individual'];
+    var interestCost = calcLoanInterest(loanAmount, loanRate, holdMonths);
+    var feesSum   = tax + registryFee + evictionFee + repair + agent + moving + cleaning + interestCost + etc;
     var totalCost = useBid + feesSum;
     var preTaxMargin = useSell > 0 ? useSell - totalCost : 0;
     var taxResult = (useSell > 0 && preTaxMargin > 0) ? calcResaleIncomeTax(bidMethod, preTaxMargin, holdMonths) : { totalTax: 0, rateLabel: '' };
@@ -3973,9 +4010,6 @@ function calcMargin() {
     var roi       = (totalCost > 0 && useSell > 0) ? Math.round(margin / totalCost * 1000) / 10 : 0;
     var apprRate  = (appraisal > 0 && useBid > 0) ? Math.round(useBid / appraisal * 1000) / 10 : 0;
     var taxLabel = (bidMethod === 'dealer' ? '종합소득세' : '양도소득세') + (taxResult.rateLabel ? '(' + taxResult.rateLabel + ')' : '');
-    var deposit   = calcDeposit(minBid, depositRate);
-    var loanAmount = calcLoanAmount(bidMethod, useBid, appraisal);
-    var cashNeeded = useBid > 0 ? Math.max(useBid - deposit - loanAmount, 0) : 0;
     function mItem(label, value, color) {
         return '<div class="margin-item"><div class="margin-label">' + label + '</div>'
             + '<div class="margin-value" style="color:' + color + ';">' + value + '</div></div>';
@@ -3992,7 +4026,8 @@ function calcMargin() {
       + mItem('손익분기 매도가(세전)', totalCost > 0 ? toEok(String(totalCost)) : '—', '#1565c0')
       + mItem('보증금(' + (depositRate > 0 ? depositRate : 10) + '%)', deposit > 0 ? toEok(String(deposit)) : '—', '#6a1b9a')
       + mItem('대출금액(' + (bidMethod === 'dealer' ? '신탁대출90%' : '개인담보대출') + ')', loanAmount > 0 ? toEok(String(loanAmount)) : (useBid > 0 ? '대출불가' : '—'), '#00695c')
-      + mItem('보증금제외 필요현금', useBid > 0 ? toEok(String(cashNeeded)) : '—', '#c62828');
+      + mItem('보증금제외 필요현금', useBid > 0 ? toEok(String(cashNeeded)) : '—', '#c62828')
+      + mItem('대출이자(연' + loanRate.toFixed(1) + '%·' + holdMonths + '개월)', (loanAmount > 0 && holdMonths > 0) ? toEok(String(interestCost)) : '—', '#bf360c');
 }
 /* 목표 매도가 - 목표마진 - 부대비용(세금·등기비·명도비·중개수수료 등)을 역산해서
    "이 가격 이하로 낙찰받아야 목표마진을 지킬 수 있다"는 적정입찰가를 계산.
@@ -4079,6 +4114,7 @@ async function saveAuction() {
         repair: document.getElementById('a-repair').value, agent: document.getElementById('a-agent').value,
         moving: document.getElementById('a-moving').value, cleaning: document.getElementById('a-cleaning').value,
         bidMethod: document.getElementById('a-bid-method').value, holdMonths: document.getElementById('a-hold-months').value,
+        loanRate: document.getElementById('a-loan-rate').value,
         etc: document.getElementById('a-etc').value, target: document.getElementById('a-target').value,
         actualSell: document.getElementById('a-actual-sell').value,
         memo: document.getElementById('a-memo').value,
@@ -4391,7 +4427,13 @@ function buildMarginSummaryHtml(a) {
     var depositRate = parseFloat(a.depositRate) || 0;
     var bidMethod = a.bidMethod || 'dealer';
     var holdMonths = parseInt(a.holdMonths) || 0;
-    var feesSum = tax + registryFee + evictionFee + repair + agent + moving + cleaning + etc;
+    var deposit = calcDeposit(minBid, depositRate);
+    var loanAmount = calcLoanAmount(bidMethod, useBid, appraisal);
+    var cashNeeded = useBid > 0 ? Math.max(useBid - deposit - loanAmount, 0) : 0;
+    var loanRateSaved = parseFloat(a.loanRate);
+    var loanRate = (loanRateSaved > 0) ? loanRateSaved : DEFAULT_LOAN_RATE[bidMethod === 'dealer' ? 'dealer' : 'individual'];
+    var interestCost = calcLoanInterest(loanAmount, loanRate, holdMonths);
+    var feesSum = tax + registryFee + evictionFee + repair + agent + moving + cleaning + interestCost + etc;
     var totalCost = useBid + feesSum;
     var preTaxMargin = useSell > 0 ? useSell - totalCost : 0;
     var taxResult = (useSell > 0 && preTaxMargin > 0) ? calcResaleIncomeTax(bidMethod, preTaxMargin, holdMonths) : { totalTax: 0, rateLabel: '' };
@@ -4399,9 +4441,6 @@ function buildMarginSummaryHtml(a) {
     var roi = (totalCost > 0 && useSell > 0) ? Math.round(margin / totalCost * 1000) / 10 : 0;
     var apprRate = (appraisal > 0 && useBid > 0) ? Math.round(useBid / appraisal * 1000) / 10 : 0;
     var taxLabel = (bidMethod === 'dealer' ? '종합소득세' : '양도소득세') + (taxResult.rateLabel ? '(' + taxResult.rateLabel + ')' : '');
-    var deposit = calcDeposit(minBid, depositRate);
-    var loanAmount = calcLoanAmount(bidMethod, useBid, appraisal);
-    var cashNeeded = useBid > 0 ? Math.max(useBid - deposit - loanAmount, 0) : 0;
     function mItem(label, value, color) {
         return '<div class="margin-item"><div class="margin-label">' + label + '</div>'
             + '<div class="margin-value" style="color:' + color + ';">' + value + '</div></div>';
@@ -4420,6 +4459,7 @@ function buildMarginSummaryHtml(a) {
         + mItem('보증금(' + (depositRate > 0 ? depositRate : 10) + '%)', deposit > 0 ? toEok(String(deposit)) : '—', '#6a1b9a')
         + mItem('대출금액(' + (bidMethod === 'dealer' ? '신탁대출90%' : '개인담보대출') + ')', loanAmount > 0 ? toEok(String(loanAmount)) : (useBid > 0 ? '대출불가' : '—'), '#00695c')
         + mItem('보증금제외 필요현금', useBid > 0 ? toEok(String(cashNeeded)) : '—', '#c62828')
+        + mItem('대출이자(연' + loanRate.toFixed(1) + '%·' + holdMonths + '개월)', (loanAmount > 0 && holdMonths > 0) ? toEok(String(interestCost)) : '—', '#bf360c')
         + '</div>';
     html += '<div style="font-size:10px;color:#aaa;margin-top:6px;">저장된 값을 기준으로 한 요약이며, 값을 바꾸려면 위 "수정" 버튼을 눌러주세요.</div>';
     html += '</div>';
@@ -4717,6 +4757,9 @@ function solveAuctionBid(estValue) {
     var cleaning = parseInt(document.getElementById('a-cleaning').value) || calcCleaningFee(c.pyung) || 0;
     var bidMethod = document.getElementById('a-bid-method').value;
     var holdMonths = parseInt(document.getElementById('a-hold-months').value) || 0;
+    var appraisal = parseInt(document.getElementById('a-appraisal').value) || 0;
+    var loanRateInput = parseFloat(document.getElementById('a-loan-rate').value);
+    var loanRate = (loanRateInput > 0) ? loanRateInput : DEFAULT_LOAN_RATE[bidMethod === 'dealer' ? 'dealer' : 'individual'];
     var targetMargin = parseInt(document.getElementById('a-comp-target-margin').value) || 0;
     var agentFee = calcAgentFee(estValue, c.propType); // 매도시 지급(입찰가와 무관, 매도가 기준 고정)
     var evictionFee = calcEvictionFee(c.pyung);
@@ -4725,12 +4768,17 @@ function solveAuctionBid(estValue) {
         var mid = (lo + hi) / 2;
         var acqTax = calcAcquisitionTaxDetailed(mid, c.propType, c.pyung, c.houseRank, c.isAdjusted, c.isLocalCheap);
         var registryFee = calcRegistryFee(mid);
-        var preTaxCost = mid + acqTax + registryFee + evictionFee + agentFee + repair + etc + moving + cleaning;
+        // 대출금액·이자는 후보 입찰가(mid)에 따라 매번 달라지므로(신탁대출=낙찰가×90% 등)
+        // 이분탐색 안에서 매 후보마다 다시 계산함 - 세금과 마찬가지로 bid에 종속적임.
+        var loanAmount = calcLoanAmount(bidMethod, mid, appraisal);
+        var interestCost = calcLoanInterest(loanAmount, loanRate, holdMonths);
+        var preTaxCost = mid + acqTax + registryFee + evictionFee + agentFee + repair + etc + moving + cleaning + interestCost;
         var preTaxProfit = estValue - preTaxCost;
         var taxResult = calcResaleIncomeTax(bidMethod, preTaxProfit, holdMonths);
         var netProfit = preTaxProfit - taxResult.totalTax;
         result = { bid: mid, acqTax: acqTax, registryFee: registryFee, evictionFee: evictionFee, agentFee: agentFee,
-            moving: moving, cleaning: cleaning, preTaxProfit: preTaxProfit, resaleTax: taxResult.totalTax, netProfit: netProfit };
+            moving: moving, cleaning: cleaning, interestCost: interestCost, loanRate: loanRate,
+            preTaxProfit: preTaxProfit, resaleTax: taxResult.totalTax, netProfit: netProfit };
         if (netProfit > targetMargin) lo = mid; else hi = mid;
     }
     result.bid = Math.round(lo);
@@ -4769,6 +4817,7 @@ function calcCompValuation() {
             + vItem('추정 이사비용', toEok(String(r.moving)), '#888')
             + vItem('추정 청소비용', toEok(String(r.cleaning)), '#888')
             + vItem('추정 중개수수료(매도시)', toEok(String(r.agentFee)), '#888')
+            + vItem('추정 대출이자(연' + r.loanRate.toFixed(1) + '%)', r.interestCost > 0 ? toEok(String(r.interestCost)) : '—', '#bf360c')
             + vItem((document.getElementById('a-bid-method').value === 'dealer' ? '종합소득세' : '양도소득세') + '(적정입찰가 기준)', r.bid > 0 ? toEok(String(r.resaleTax)) : '—', '#9c27b0')
             + vItem('적정 입찰가(세후 목표마진 기준)', r.bid > 0 ? toEok(String(r.bid)) : '마진 확보 불가', '#6a1b9a')
             + '</div>'
