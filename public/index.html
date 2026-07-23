@@ -4014,6 +4014,12 @@ function calcMargin() {
         return '<div class="margin-item"><div class="margin-label">' + label + '</div>'
             + '<div class="margin-value" style="color:' + color + ';">' + value + '</div></div>';
     }
+    // "비교물건 기준 시세조사" 표(calcCompValuation)의 적정입찰가를 이 마진분석 박스에도
+    // 그대로 가져다 보여줌 - 두 결과가 같은 화면 안에서 스크롤 없이 바로 비교되도록.
+    // 계산방식은 완전히 동일(getCompEstValue + solveAuctionBid, 목표마진 이분탐색 역산).
+    var compEst = getCompEstValue();
+    var compBidResult = compEst ? solveAuctionBid(compEst.estValue) : null;
+    var compTargetMargin = parseInt(document.getElementById('a-comp-target-margin').value) || 0;
     document.getElementById('margin-grid').innerHTML =
         mItem(actBid ? '실제 낙찰가' : '내 입찰가', useBid > 0 ? toEok(String(useBid)) : '—', '#1a237e')
       + mItem('총 투자비용',    totalCost > 0 ? toEok(String(totalCost)) : '—', '#555')
@@ -4027,7 +4033,10 @@ function calcMargin() {
       + mItem('보증금(' + (depositRate > 0 ? depositRate : 10) + '%)', deposit > 0 ? toEok(String(deposit)) : '—', '#6a1b9a')
       + mItem('대출금액(' + (bidMethod === 'dealer' ? '신탁대출90%' : '개인담보대출') + ')', loanAmount > 0 ? toEok(String(loanAmount)) : (useBid > 0 ? '대출불가' : '—'), '#00695c')
       + mItem('보증금제외 필요현금', useBid > 0 ? toEok(String(cashNeeded)) : '—', '#c62828')
-      + mItem('대출이자(연' + loanRate.toFixed(1) + '%·' + holdMonths + '개월)', (loanAmount > 0 && holdMonths > 0) ? toEok(String(interestCost)) : '—', '#bf360c');
+      + mItem('대출이자(연' + loanRate.toFixed(1) + '%·' + holdMonths + '개월)', (loanAmount > 0 && holdMonths > 0) ? toEok(String(interestCost)) : '—', '#bf360c')
+      + (compEst
+          ? mItem('비교물건 기준 적정입찰가(목표 ' + toEok(String(compTargetMargin)) + ')', compBidResult && compBidResult.bid > 0 ? toEok(String(compBidResult.bid)) : '마진 확보 불가', '#6a1b9a')
+          : '');
 }
 /* 목표 매도가 - 목표마진 - 부대비용(세금·등기비·명도비·중개수수료 등)을 역산해서
    "이 가격 이하로 낙찰받아야 목표마진을 지킬 수 있다"는 적정입찰가를 계산.
