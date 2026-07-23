@@ -607,19 +607,19 @@ tr:hover td { background:#fffde7; }
             <div class="modal-section-title">🏠 다주택/공시가격 조건 (취득세 계산용)</div>
             <div class="modal-row">
                 <span class="modal-label">입찰방법</span>
-                <select class="modal-select" id="a-bid-method" onchange="updateBidMethodUI();calcMargin();suggestBidFromTarget();">
+                <select class="modal-select" id="a-bid-method" onchange="updateBidMethodUI();calcCompValuation();calcMargin();suggestBidFromTarget();">
                     <option value="dealer">부동산매매사업자(개인)</option>
                     <option value="individual">개인명의</option>
                 </select>
             </div>
             <div class="modal-row" id="hold-months-row">
                 <span class="modal-label">예상 보유기간</span>
-                <input type="number" class="modal-input" id="a-hold-months" placeholder="예) 3" oninput="calcMargin();suggestBidFromTarget();">
+                <input type="number" class="modal-input" id="a-hold-months" placeholder="예) 3" oninput="calcCompValuation();calcMargin();suggestBidFromTarget();">
                 <span style="font-size:12px;color:#888;margin-left:4px;">개월</span>
             </div>
             <div class="modal-row" id="loan-rate-row">
                 <span class="modal-label">대출금리 <span onclick="showCalcInfo('loanInterest')" title="계산기준 보기" style="cursor:pointer;color:#1976d2;">ⓘ</span></span>
-                <input type="number" step="0.1" class="modal-input" id="a-loan-rate" placeholder="5.0" oninput="calcMargin();suggestBidFromTarget();">
+                <input type="number" step="0.1" class="modal-input" id="a-loan-rate" placeholder="5.0" oninput="calcCompValuation();calcMargin();suggestBidFromTarget();">
                 <span style="font-size:12px;color:#888;margin-left:4px;">% (연)</span>
             </div>
             <div style="font-size:10px;color:#aaa;margin-top:-4px;margin-bottom:6px;">보유기간은 낙찰~매도까지 예상 개월수로, 개인명의는 양도소득세(1년미만 70%·2년미만 60%·2년이상 기본세율) 판단에, 매매사업자는 종합소득세(사업소득, 누진세율) 계산과 별개로 두 경우 모두 대출이자(마진분석의 "대출이자" 항목) 계산에 쓰입니다. 대출금리는 비워두면 개인 5.0%/매매사업자(신탁대출) 6.5%가 기본 적용됩니다(2026년 경락잔금대출·신탁대출 시세 참고치, 실제 승인금리는 금융기관마다 다르니 직접 확인 후 수정하세요). 상세 계산기준은 아래 "세금" 항목의 ⓘ를 참고하세요.</div>
@@ -684,7 +684,7 @@ tr:hover td { background:#fffde7; }
             <div class="modal-section-title">💰 가격 정보 (만원 단위)</div>
             <div class="modal-row">
                 <span class="modal-label">감정가</span>
-                <input type="number" class="modal-input" id="a-appraisal" placeholder="0" oninput="calcMargin()">
+                <input type="number" class="modal-input" id="a-appraisal" placeholder="0" oninput="calcCompValuation();calcMargin();suggestBidFromTarget();">
             </div>
             <div class="modal-row">
                 <span class="modal-label">최저입찰가</span>
