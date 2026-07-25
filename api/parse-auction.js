@@ -244,6 +244,114 @@ const SCHEMA_B = {
   },
 };
 
+// ════════════════════════════════════
+// 낙찰사례 목록 일괄 추출 (mode:'caseList') - 지역별 낙찰가/마진 통계 기능용.
+// 경매정보 사이트(탱크옥션 등) "검색결과 목록" 화면을 통째로 복사해 붙여넣으면, 여러 건을
+// 한 번의 Gemini 호출로 구조화해서 뽑아냄 (물건 1건짜리 상세페이지 추출(SCHEMA_A/B)과는
+// 완전히 다른 스키마·프롬프트 - 목록 화면은 사건마다 필드가 세로로 쌓여 반복되는 형태라
+// 상세페이지 프롬프트를 재사용할 수 없음). RPD(하루 요청수) 한도를 아끼기 위해 호출 1개로
+// 처리하고, 기존 하루 사용량 카운터(DAILY_TEXT_EXTRACT_LIMIT)를 그대로 같이 씀(1건당 소모량은
+// 실제로는 더 적지만, 안전하게 상세페이지 추출과 동일하게 1회로 계산).
+// ════════════════════════════════════
+const SCHEMA_CASELIST = {
+  type: 'OBJECT',
+  properties: {
+    cases: {
+      type: 'ARRAY',
+      items: {
+        type: 'OBJECT',
+        properties: {
+          caseNo: { type: 'STRING' },
+          court: { type: 'STRING' },
+          propertyType: { type: 'STRING' },
+          addrJibun: { type: 'STRING' },
+          dong: { type: 'STRING' },
+          bunji: { type: 'STRING' },
+          buildingName: { type: 'STRING' },
+          areaM2: { type: 'NUMBER' },
+          floor: { type: 'INTEGER' },
+          specialConditions: { type: 'STRING' },
+          appraisalPrice: { type: 'NUMBER' },
+          minBidPrice: { type: 'NUMBER' },
+          finalBidPrice: { type: 'NUMBER' },
+          bidRate: { type: 'NUMBER' },
+          minBidRate: { type: 'NUMBER' },
+          status: { type: 'STRING' },
+          saleDate: { type: 'STRING' },
+        },
+      },
+    },
+  },
+};
+
+const CASELIST_HEADER = `다음은 경매정보 사이트(탱크옥션 등)의 "물건 검색결과 목록" 페이지에서 그대로 복사한 텍스트입니다.
+여러 건의 경매 물건이 각각 아래와 같은 형태로 줄바꿈되어 반복됩니다(실제 사이트 화면 구조상 항목들이
+세로로 쌓여서 나타납니다):
+
+  [물건종류]                예: 다세대주택
+  [사건번호]                 예: 2025-52569(1)  ← 괄호 안 회차번호가 있으면 그대로 포함
+  [지번주소 + 층/호]          예: 경기도 안산시 단원구 와동 110-5 4층401호
+  ([도로명주소])              예: (경기 안산시 단원구 사세충열로4안길 6-1)
+  [면적정보]                 예: 건물 59.9㎡(18.12평), 대지권 31.98㎡(9.674평)
+  [특이사항 한 줄]            예: 토지·건물 일괄매각  임차권등기, 대항력 있는 임차인, 공시가 1억이하  (없을 수도 있음)
+  [금액들 - 순서대로 감정가, 최저입찰가, (매각된 경우만) 낙찰가]
+                            예: 141,000,000 / 33,854,000 / 33,900,000
+                            ⚠️ 금액이 2개만 있으면 [감정가, 최저입찰가] 순서이고 아직 낙찰 전(진행중)입니다.
+                            금액이 3개면 [감정가, 최저입찰가, 낙찰가] 순서입니다.
+  [진행상태]                 예: 매각(허가) / 유찰 / 진행 / 변경 / 취하 등
+  [퍼센트 2개]               예: (24%)(24%) → 순서대로 [최저가율], [낙찰가율]로 보이지만 사이트마다 순서가
+                            다를 수 있으니, 반드시 직접 계산해서(최저가/감정가*100, 낙찰가/감정가*100)
+                            minBidRate/bidRate에 채우세요 (이건 추측이 아니라 검증된 계산입니다).
+  [담당계]                   예: 안산4계
+  [매각기일 (시간)]           예: 26.07.16 (10:30) → saleDate는 "2026-07-16"으로 변환
+  [조회수]                   예: 조회: 231  ← 추출 불필요, 무시
+
+각 물건 블록마다 위 항목들을 읽어 cases 배열에 객체 하나씩 담아주세요.
+공통 규칙:
+- 명시되지 않은 값은 null로 두세요. 위에서 설명한 minBidRate/bidRate 계산 외에는 추측·지어내기 금지입니다.
+- 금액은 원 단위 숫자로 변환하세요 (쉼표 제거, "1억 3,300만" 같은 표기는 133000000으로 변환).
+- addrJibun은 시/도부터 번지까지만 담고 층수·호수는 제외하세요. dong/bunji는 그 안에서 동/번지만 따로 뽑으세요.
+  예: "경기도 안산시 단원구 와동 110-5" → dong: "와동", bunji: "110-5"
+- areaM2는 "건물" 면적의 ㎡ 앞 숫자만 담으세요 (대지권 면적은 무시).
+- floor는 지번주소 뒤의 "N층" 표기에서 숫자만 뽑으세요. 지하층(예: "지1층")은 -1로 담으세요.
+- status는 "매각(허가)"처럼 붙어있으면 "매각"으로 정규화하고, 유찰/진행/변경/취하 등은 그대로 담으세요.
+- 어떤 물건 블록이 파싱하기에 정보가 너무 부족하면(사건번호나 주소를 알 수 없으면) 그 블록은 통째로 건너뛰세요.
+- 목록에 없는 항목(다른 페이지, 광고, 메뉴 등)은 절대 포함하지 마세요.`;
+
+async function handleCaseListExtraction(req, res) {
+  const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
+  if (!GEMINI_API_KEY) {
+    return res.status(500).json({ error: 'GEMINI_API_KEY 환경변수가 없습니다. Vercel 프로젝트 설정에 추가해 주세요.' });
+  }
+  const text = req.body && req.body.text ? String(req.body.text).trim() : '';
+  if (!text) return res.status(400).json({ error: '분석할 목록 텍스트가 없습니다.' });
+  const trimmed = trimAuctionText(text);
+  const cacheKey = 'auctioncaselist_' + crypto.createHash('sha256').update(trimmed).digest('hex');
+  const cached = await getCachedParseResult(cacheKey);
+  if (cached) return res.status(200).json({ cases: cached, cached: true });
+
+  const dailyKey = `auctionparse_daily_${todayKstDateStr()}`;
+  const usedToday = await getDailyExtractCount(dailyKey);
+  if (usedToday >= DAILY_TEXT_EXTRACT_LIMIT) {
+    return res.status(429).json({
+      error: `오늘 AI 자동추출을 이미 ${DAILY_TEXT_EXTRACT_LIMIT}건 사용하셨습니다. 무료 API 사용량 관리를 위해 하루 ${DAILY_TEXT_EXTRACT_LIMIT}건으로 제한해 두었어요 (한국시간 자정에 초기화됩니다).`,
+      dailyLimitReached: true,
+      usedToday,
+      limit: DAILY_TEXT_EXTRACT_LIMIT,
+    });
+  }
+  const promptText = CASELIST_HEADER + '\n\n--- 붙여넣은 목록 텍스트 시작 ---\n' + trimmed + '\n--- 붙여넣은 목록 텍스트 끝 ---';
+  try {
+    const result = await callGemini(GEMINI_API_KEY, promptText, SCHEMA_CASELIST, [], 1, 0);
+    const cases = Array.isArray(result.cases) ? result.cases : [];
+    setCachedParseResult(cacheKey, cases); // fire-and-forget
+    incrementDailyExtractCount(dailyKey); // fire-and-forget
+    return res.status(200).json({ cases });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+}
+
 // 텍스트 붙여넣기와 캡처 이미지 첨부 양쪽에 공통으로 적용되는 안내문.
 // 이미지가 여러 장이면 스크롤을 나눠서 캡처한 같은 페이지라는 점, 그리고 하단 "다른 물건" 목록을
 // 무시해야 한다는 점은 텍스트든 이미지든 동일하게 중요해서 하나로 통일함.
@@ -828,6 +936,11 @@ export default async function handler(req, res) {
   // API 사용)라 GEMINI_API_KEY 확인보다 먼저 분기함
   if (req.body && req.body.mode === 'devNews') {
     return handleDevNewsSearch(req, res);
+  }
+  // 낙찰사례 목록 일괄 추출(지역별 마진 통계용) - 위 devNews와 마찬가지로 기존 상세페이지
+  // 추출(SCHEMA_A/B) 로직과는 별개 경로라 먼저 분기함.
+  if (req.body && req.body.mode === 'caseList') {
+    return handleCaseListExtraction(req, res);
   }
   const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
   if (!GEMINI_API_KEY) {
