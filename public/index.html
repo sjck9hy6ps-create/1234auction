@@ -555,13 +555,14 @@ tr:hover td { background:#fffde7; }
     <div style="padding:10px 14px;border-bottom:1px solid #eee;">
         <div style="font-size:10.5px;color:#888;margin-bottom:6px;">
             경매정보 사이트(탱크옥션 등)의 "검색결과 목록" 화면을 그대로 복사해서 붙여넣으면
-            여러 건을 한 번에 추출합니다. 추출 후 필요한 건만 골라 저장할 수 있어요.
+            여러 건을 한 번에 추출합니다(표준 형식이면 즉시·무료로 처리되고, 인식이 안 되는
+            형식만 AI로 재시도합니다). 추출 후 필요한 건만 골라 저장할 수 있어요.
         </div>
         <textarea class="modal-input" id="bc-paste-text" rows="4"
             placeholder="검색결과 목록 화면을 통째로 복사해서 여기 붙여넣으세요"
             style="resize:vertical;width:100%;"></textarea>
         <div style="margin-top:6px;text-align:right;">
-            <button class="modal-btn btn-purple" id="bc-extract-btn" onclick="extractCaseList()">AI로 일괄 추출</button>
+            <button class="modal-btn btn-purple" id="bc-extract-btn" onclick="extractCaseList()">목록 일괄 추출</button>
         </div>
         <div id="bc-extract-status" style="font-size:11px;color:#999;margin-top:4px;"></div>
     </div>
@@ -3158,14 +3159,147 @@ function openBidCasePanel() {
 function closeBidCasePanel() {
     document.getElementById('bid-case-panel').style.display = 'none';
 }
+/* ════════════════════════════════════
+   낙찰사례 목록 - 로컬(무료·즉시) 파싱
+   탱크옥션 "검색결과 목록" 화면은 사건마다 항목이 항상 같은 순서로 줄바꿈되어 쌓이는
+   정형화된 구조라(사건번호 → 지번주소+층/호 → (도로명주소) → 면적 → 특이사항 → 감정가/최저가/
+   낙찰가 숫자 → 진행상태 → 퍼센트 → 담당계 → 매각기일 → 조회수), AI 호출 없이도 정규식만으로
+   충분히 안정적으로 뽑아낼 수 있음. 하루 AI 사용량 한도와 무관하게 몇 번이든 즉시 실행되고,
+   Gemini 호출 자체가 없어 지연도 없음. 인식 안 되는 형식(다른 사이트, 손상된 붙여넣기 등)만
+   AI 추출(mode:'caseList')로 자동 폴백함.
+════════════════════════════════════ */
+var CL_CASE_NO_RE = /^\d{4}-\d{3,7}(\(\d+\))?$/;
+var CL_NUM_LINE_RE = /^[\d,]+$/;
+var CL_PERCENT_LINE_RE = /^\(\d+(\.\d+)?%\)$/;
+var CL_DATE_LINE_RE = /^\d{2}\.\d{2}\.\d{2}$/;
+var CL_TIME_LINE_RE = /^\(\d{2}:\d{2}\)$/;
+var CL_SUBSTATUS_RE = /^\([가-힣]+\)$/;
+function clExtractAddrJibun(line) {
+    var cut = line.length;
+    var floorMatch = line.match(/\s*(지)?\d+층/);
+    if (floorMatch && floorMatch.index < cut) cut = floorMatch.index;
+    ['(', ','].forEach(function(marker) {
+        var idx = line.indexOf(marker);
+        if (idx !== -1 && idx < cut) cut = idx;
+    });
+    return line.slice(0, cut).trim();
+}
+function clExtractDongBunji(addrJibun) {
+    // 문자열 끝 고정 없이 "OO동/가/리 숫자(-숫자)?" 패턴이 처음 나오는 곳을 씀 - 아파트 주소는
+    // 지번 뒤에 "개포자이 101동"처럼 단지명+동번호가 더 붙어서 끝에 고정하면 못 찾음.
+    var m = addrJibun.match(/([가-힣0-9]+(?:동|가|리))\s+(\d+(?:-\d+)?)/);
+    if (!m) return { dong: null, bunji: null };
+    return { dong: m[1], bunji: m[2] };
+}
+function clExtractFloor(line) {
+    var mBasement = line.match(/지(\d+)층/);
+    if (mBasement) return -parseInt(mBasement[1], 10);
+    var m = line.match(/(\d+)층/);
+    if (m) return parseInt(m[1], 10);
+    return null;
+}
+function clExtractBuildingName(line) {
+    var m = line.match(/\(([^)]*)\)/);
+    if (!m) return null;
+    var parts = m[1].split(',');
+    var last = parts[parts.length - 1].trim();
+    return last || null;
+}
+function parseCaseListTextLocally(text) {
+    var lines = String(text).split('\n').map(function(l) { return l.trim(); }).filter(Boolean);
+    var caseNoIdx = [];
+    lines.forEach(function(l, i) { if (CL_CASE_NO_RE.test(l)) caseNoIdx.push(i); });
+    var cases = [];
+    var unparsedCount = 0;
+    for (var b = 0; b < caseNoIdx.length; b++) {
+        var startIdx = caseNoIdx[b];
+        var endIdx = (b + 1 < caseNoIdx.length) ? caseNoIdx[b + 1] - 1 : lines.length - 1;
+        var propTypeIdx = startIdx - 1;
+        var propertyType = (propTypeIdx >= 0 && !CL_CASE_NO_RE.test(lines[propTypeIdx]) && (b === 0 || propTypeIdx > caseNoIdx[b - 1])) ? lines[propTypeIdx] : null;
+        var caseNo = lines[startIdx];
+        var i = startIdx + 1;
+        var addrLine = null, areaLine = null, extraLines = [];
+        while (i <= endIdx && !CL_NUM_LINE_RE.test(lines[i])) {
+            var l = lines[i];
+            if (addrLine === null) {
+                addrLine = l;
+            } else if (l.charAt(0) === '(' && l.charAt(l.length - 1) === ')' && !CL_PERCENT_LINE_RE.test(l) && !CL_TIME_LINE_RE.test(l)) {
+                // 도로명주소 줄 - 매칭에 안 쓰므로 그냥 건너뜀
+            } else if (l.indexOf('건물') !== -1 && l.indexOf('㎡') !== -1) {
+                areaLine = l;
+            } else {
+                extraLines.push(l);
+            }
+            i++;
+        }
+        if (!addrLine) { unparsedCount++; continue; }
+        var nums = [];
+        while (i <= endIdx && CL_NUM_LINE_RE.test(lines[i]) && nums.length < 3) {
+            nums.push(parseInt(lines[i].replace(/,/g, ''), 10));
+            i++;
+        }
+        var status = (i <= endIdx) ? lines[i] : null;
+        if (status) i++;
+        if (i <= endIdx && CL_SUBSTATUS_RE.test(lines[i])) i++;
+        while (i <= endIdx && CL_PERCENT_LINE_RE.test(lines[i])) i++;
+        var court = null;
+        if (i <= endIdx && !CL_DATE_LINE_RE.test(lines[i]) && !CL_TIME_LINE_RE.test(lines[i])) {
+            court = lines[i]; i++;
+        }
+        var saleDate = null;
+        if (i <= endIdx && CL_DATE_LINE_RE.test(lines[i])) {
+            var d = lines[i];
+            saleDate = '20' + d.slice(0, 2) + '-' + d.slice(3, 5) + '-' + d.slice(6, 8);
+            i++;
+        }
+        var addrJibun = clExtractAddrJibun(addrLine);
+        var dongBunji = clExtractDongBunji(addrJibun);
+        var floor = clExtractFloor(addrLine);
+        var buildingName = clExtractBuildingName(addrLine);
+        var areaM2 = null;
+        if (areaLine) {
+            var am = areaLine.match(/건물\s*([\d.]+)\s*㎡/);
+            if (am) areaM2 = parseFloat(am[1]);
+        }
+        var appraisalPrice = nums.length >= 1 ? nums[0] : null;
+        var minBidPrice = nums.length >= 2 ? nums[1] : null;
+        var finalBidPrice = nums.length >= 3 ? nums[2] : null;
+        var bidRate = (appraisalPrice && finalBidPrice) ? Math.round(finalBidPrice / appraisalPrice * 10000) / 100 : null;
+        var minBidRate = (appraisalPrice && minBidPrice) ? Math.round(minBidPrice / appraisalPrice * 10000) / 100 : null;
+        var normStatus = status ? status.replace(/\(.*\)/, '').trim() : null;
+        cases.push({
+            caseNo: caseNo, court: court, propertyType: propertyType,
+            addrJibun: addrJibun, dong: dongBunji.dong, bunji: dongBunji.bunji,
+            buildingName: buildingName, areaM2: areaM2, floor: floor,
+            specialConditions: extraLines.length ? extraLines.join(' ') : null,
+            appraisalPrice: appraisalPrice, minBidPrice: minBidPrice, finalBidPrice: finalBidPrice,
+            bidRate: bidRate, minBidRate: minBidRate, status: normStatus, saleDate: saleDate,
+        });
+    }
+    return { cases: cases, unparsedCount: unparsedCount };
+}
 async function extractCaseList() {
     var text = document.getElementById('bc-paste-text').value.trim();
     var statusBox = document.getElementById('bc-extract-status');
     if (!text) { alert('검색결과 목록 텍스트를 먼저 붙여넣어 주세요.'); return; }
     var btn = document.getElementById('bc-extract-btn');
     btn.disabled = true; btn.innerText = '추출 중...';
-    statusBox.style.color = '#999'; statusBox.innerText = 'AI가 목록을 읽고 있습니다 (물건 수가 많으면 시간이 좀 걸릴 수 있어요)...';
+    statusBox.style.color = '#999'; statusBox.innerText = '목록을 읽는 중...';
     try {
+        // 1차: 로컬 정규식 파싱 - AI 호출 없이 즉시(무료) 처리. 탱크옥션 표준 목록 형식이면
+        // 대부분 이걸로 충분함.
+        var local = parseCaseListTextLocally(text);
+        if (local.cases.length) {
+            pendingCaseListExtraction = local.cases.map(function(c) { return Object.assign({ _selected: true }, c); });
+            statusBox.style.color = '#2e7d32';
+            statusBox.innerText = '⚡ 즉시 인식됨(AI 미사용) ' + local.cases.length + '건'
+                + (local.unparsedCount ? ' (형식이 다른 ' + local.unparsedCount + '건은 인식 못해 건너뜀 - 필요하면 그 부분만 따로 AI 추출을 시도해 보세요)' : '')
+                + ' - 아래에서 저장할 항목을 확인하세요.';
+            renderCaseListPreview();
+            return;
+        }
+        // 2차 폴백: 로컬 파싱으로 하나도 못 뽑았을 때만 AI 추출 시도(하루 사용량 소모됨)
+        statusBox.innerText = '표준 형식으로 인식되지 않아 AI로 다시 시도합니다 (사용량 소모)...';
         var res = await fetch('/api/parse-auction', {
             method: 'POST', headers: {'Content-Type':'application/json'},
             body: JSON.stringify({ mode: 'caseList', text: text }),
@@ -3180,13 +3314,13 @@ async function extractCaseList() {
         }
         pendingCaseListExtraction = cases.map(function(c) { return Object.assign({ _selected: true }, c); });
         statusBox.style.color = '#2e7d32';
-        statusBox.innerText = (data.cached ? '(캐시됨) ' : '') + cases.length + '건 추출됨 - 아래에서 저장할 항목을 확인하세요.';
+        statusBox.innerText = '🤖 AI 추출됨 ' + (data.cached ? '(캐시됨) ' : '') + cases.length + '건 - 아래에서 저장할 항목을 확인하세요.';
         renderCaseListPreview();
     } catch (e) {
         statusBox.style.color = '#e53935';
         statusBox.innerText = '추출 중 오류: ' + e.message;
     } finally {
-        btn.disabled = false; btn.innerText = 'AI로 일괄 추출';
+        btn.disabled = false; btn.innerText = '목록 일괄 추출';
     }
 }
 function toggleCasePreviewItem(idx) {
