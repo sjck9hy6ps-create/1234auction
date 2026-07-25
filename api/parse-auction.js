@@ -250,8 +250,8 @@ const SCHEMA_B = {
 // 한 번의 Gemini 호출로 구조화해서 뽑아냄 (물건 1건짜리 상세페이지 추출(SCHEMA_A/B)과는
 // 완전히 다른 스키마·프롬프트 - 목록 화면은 사건마다 필드가 세로로 쌓여 반복되는 형태라
 // 상세페이지 프롬프트를 재사용할 수 없음). RPD(하루 요청수) 한도를 아끼기 위해 호출 1개로
-// 처리하고, 기존 하루 사용량 카운터(DAILY_TEXT_EXTRACT_LIMIT)를 그대로 같이 씀(1건당 소모량은
-// 실제로는 더 적지만, 안전하게 상세페이지 추출과 동일하게 1회로 계산).
+// 처리하고, 하루 사용량 예산(DAILY_GEMINI_CALL_BUDGET)에서도 실제 소모량인 1회만 정확히
+// 차감함(상세페이지 추출의 2회와 구분 - 자세한 설명은 DAILY_GEMINI_CALL_BUDGET 선언부 참고).
 // ════════════════════════════════════
 const SCHEMA_CASELIST = {
   type: 'OBJECT',
@@ -270,6 +270,7 @@ const SCHEMA_CASELIST = {
           buildingName: { type: 'STRING' },
           areaM2: { type: 'NUMBER' },
           floor: { type: 'INTEGER' },
+          unitNo: { type: 'STRING' },
           specialConditions: { type: 'STRING' },
           appraisalPrice: { type: 'NUMBER' },
           minBidPrice: { type: 'NUMBER' },
@@ -290,7 +291,7 @@ const CASELIST_HEADER = `다음은 경매정보 사이트(탱크옥션 등)의 "
 
   [물건종류]                예: 다세대주택
   [사건번호]                 예: 2025-52569(1)  ← 괄호 안 회차번호가 있으면 그대로 포함
-  [지번주소 + 층/호]          예: 경기도 안산시 단원구 와동 110-5 4층401호
+  [지번주소 + 층/호]          예: 경기도 안산시 단원구 와동 110-5 4층401호  ← floor:4, unitNo:"401호"
   ([도로명주소])              예: (경기 안산시 단원구 사세충열로4안길 6-1)
   [면적정보]                 예: 건물 59.9㎡(18.12평), 대지권 31.98㎡(9.674평)
   [특이사항 한 줄]            예: 토지·건물 일괄매각  임차권등기, 대항력 있는 임차인, 공시가 1억이하  (없을 수도 있음)
@@ -314,6 +315,7 @@ const CASELIST_HEADER = `다음은 경매정보 사이트(탱크옥션 등)의 "
   예: "경기도 안산시 단원구 와동 110-5" → dong: "와동", bunji: "110-5"
 - areaM2는 "건물" 면적의 ㎡ 앞 숫자만 담으세요 (대지권 면적은 무시).
 - floor는 지번주소 뒤의 "N층" 표기에서 숫자만 뽑으세요. 지하층(예: "지1층")은 -1로 담으세요.
+- unitNo(호수)는 지번주소 뒤의 "N호" 표기를 문자열 그대로 담으세요 (예: "302호", 지하 유닛의 "비03호"도 그대로). 표기가 없으면 null.
 - status는 "매각(허가)"처럼 붙어있으면 "매각"으로 정규화하고, 유찰/진행/변경/취하 등은 그대로 담으세요.
 - 어떤 물건 블록이 파싱하기에 정보가 너무 부족하면(사건번호나 주소를 알 수 없으면) 그 블록은 통째로 건너뛰세요.
 - 목록에 없는 항목(다른 페이지, 광고, 메뉴 등)은 절대 포함하지 마세요.`;
@@ -332,12 +334,12 @@ async function handleCaseListExtraction(req, res) {
 
   const dailyKey = `auctionparse_daily_${todayKstDateStr()}`;
   const usedToday = await getDailyExtractCount(dailyKey);
-  if (usedToday >= DAILY_TEXT_EXTRACT_LIMIT) {
+  if (usedToday + GEMINI_CALLS_PER_CASELIST_EXTRACT > DAILY_GEMINI_CALL_BUDGET) {
     return res.status(429).json({
-      error: `오늘 AI 자동추출을 이미 ${DAILY_TEXT_EXTRACT_LIMIT}건 사용하셨습니다. 무료 API 사용량 관리를 위해 하루 ${DAILY_TEXT_EXTRACT_LIMIT}건으로 제한해 두었어요 (한국시간 자정에 초기화됩니다).`,
+      error: `오늘 AI 자동추출 사용량 한도(무료 API 하루 호출 ${DAILY_GEMINI_CALL_BUDGET}회)에 다 찼습니다. 한국시간 자정에 초기화됩니다. (물건 상세추출은 1건당 2회, 낙찰사례 목록 추출은 1건당 1회를 소모합니다 - 지금까지 ${usedToday}회 사용)`,
       dailyLimitReached: true,
       usedToday,
-      limit: DAILY_TEXT_EXTRACT_LIMIT,
+      limit: DAILY_GEMINI_CALL_BUDGET,
     });
   }
   const promptText = CASELIST_HEADER + '\n\n--- 붙여넣은 목록 텍스트 시작 ---\n' + trimmed + '\n--- 붙여넣은 목록 텍스트 끝 ---';
@@ -345,7 +347,7 @@ async function handleCaseListExtraction(req, res) {
     const result = await callGemini(GEMINI_API_KEY, promptText, SCHEMA_CASELIST, [], 1, 0);
     const cases = Array.isArray(result.cases) ? result.cases : [];
     setCachedParseResult(cacheKey, cases); // fire-and-forget
-    incrementDailyExtractCount(dailyKey); // fire-and-forget
+    incrementDailyExtractCount(dailyKey, GEMINI_CALLS_PER_CASELIST_EXTRACT); // fire-and-forget
     return res.status(200).json({ cases });
   } catch (err) {
     return res.status(500).json({ error: err.message });
@@ -657,18 +659,29 @@ async function setCachedParseResult(key, payload) {
 
 // ════════════════════════════════════
 // 하루 사용량 제한 (텍스트/이미지 AI 추출 전용)
-// - gemini-3.5-flash는 무료 티어라 실제로 돈이 나가진 않지만(결제수단을 연결하지 않는 한),
-//   스스로 하루에 몇 건까지 쓸지 관리하고 싶다는 요청으로 추가함. 값은 10건(DAILY_TEXT_EXTRACT_LIMIT).
-// - mode:'devNews'(개발호재 검색, 네이버 뉴스API라 Gemini와 무관)는 이 제한 대상이 아님.
+// - Google AI Studio 사용량 대시보드로 실측한 gemini-3.5-flash 무료 티어의 진짜 하루 한도는
+//   RPD(하루 요청수) 20건 (파일 상단 "4→2 재통합" 설명 참고). 이 20을 "실제 Gemini 호출 횟수"
+//   기준 예산으로 직접 관리함(DAILY_GEMINI_CALL_BUDGET) - "건수"가 아니라 "호출 횟수"인 이유는
+//   기능마다 1건당 호출 횟수가 달라서임:
+//     - 물건 상세페이지 추출(기본 mode): 1건당 Gemini 호출 2회(스키마 A+B)
+//     - 낙찰사례 목록 일괄추출(mode:'caseList'): 1건당 Gemini 호출 1회
+//   예전엔 두 기능 모두 "1건 = 1카운트"로 똑같이 셌는데, 그러면 실제로는 RPD 20 ÷ 1 = 20건까지
+//   가능한 caseList 추출도 물건 추출과 똑같이 하루 10건에서 막혀버려 예산을 낭비했음(사용자가
+//   낙찰사례를 대량으로 붙여넣기 하려는데 자꾸 한도에 걸린다고 지적). 이제 실제 호출 횟수(2 또는 1)
+//   만큼만 정확히 차감해서, 두 기능을 섞어 써도(예: 물건추출 5건=10회 + caseList 10건=10회 = 20회)
+//   가진 예산을 낭비 없이 다 쓸 수 있게 함.
+// - mode:'devNews'(개발호재 검색, 네이버 뉴스API라 Gemini와 무관)는 이 예산 대상이 아님.
 // - 캐시로 즉시 반환되는 요청(동일 텍스트/이미지를 다시 보내 해시가 같은 경우)은 실제 Gemini
-//   호출이 없으므로 카운트하지 않음 - 이 체크는 캐시 조회(getCachedParseResult) 이후,
+//   호출이 없으므로 차감하지 않음 - 이 체크는 캐시 조회(getCachedParseResult) 이후,
 //   Gemini를 실제로 호출하기 직전에만 수행함.
-// - 날짜 기준은 한국 시간(KST, UTC+9) 자정. Upstash Redis에 "그날 카운트" 키를 두고,
-//   그날 첫 호출일 때만 자정까지 남은 시간(+여유 1시간)으로 만료시간을 걸어 다음날 자동 초기화.
+// - 날짜 기준은 한국 시간(KST, UTC+9) 자정. Upstash Redis에 "그날 사용한 호출 횟수" 키를 두고,
+//   그날 첫 차감일 때만 자정까지 남은 시간(+여유 1시간)으로 만료시간을 걸어 다음날 자동 초기화.
 // - Redis 설정이 없거나 조회 자체가 실패하면 제한 없이 그냥 진행함(가용성 우선 - 이 기능이
 //   고장났다고 AI 추출 자체가 막히면 안 됨).
 // ════════════════════════════════════
-const DAILY_TEXT_EXTRACT_LIMIT = 10;
+const DAILY_GEMINI_CALL_BUDGET = 20;
+const GEMINI_CALLS_PER_PROPERTY_EXTRACT = 2;
+const GEMINI_CALLS_PER_CASELIST_EXTRACT = 1;
 
 function todayKstDateStr() {
   const kst = new Date(Date.now() + 9 * 60 * 60 * 1000);
@@ -699,18 +712,22 @@ async function getDailyExtractCount(dateKey) {
   }
 }
 
-async function incrementDailyExtractCount(dateKey) {
+// by: 이번에 실제로 소모한 Gemini 호출 횟수(물건추출=2, caseList 추출=1). 기본값 1로 두면
+// 예전 호출부(혹시 남아있다면)와도 안전하게 호환됨.
+async function incrementDailyExtractCount(dateKey, by) {
+  by = by || 1;
   if (!REDIS_URL || !REDIS_TOKEN) return;
   try {
-    const r = await fetch(`${REDIS_URL}/incr/${dateKey}`, {
+    const r = await fetch(`${REDIS_URL}/incrby/${dateKey}/${by}`, {
       method: 'POST',
       headers: { Authorization: `Bearer ${REDIS_TOKEN}` },
       signal: AbortSignal.timeout(3000),
     });
     if (!r.ok) return;
     const data = await r.json();
-    if (data && data.result === 1) {
-      // 오늘 첫 호출 - 자정 기준 만료시간을 걸어 다음날엔 자동으로 0부터 다시 시작되게 함
+    if (data && data.result === by) {
+      // 이번 호출로 0 → by가 됐다는 건 오늘 첫 차감이었다는 뜻 - 자정 기준 만료시간을 걸어
+      // 다음날엔 자동으로 0부터 다시 시작되게 함
       await fetch(`${REDIS_URL}/expire/${dateKey}/${secondsUntilNextKstMidnight()}`, {
         method: 'POST',
         headers: { Authorization: `Bearer ${REDIS_TOKEN}` },
@@ -975,12 +992,12 @@ export default async function handler(req, res) {
   // (캐시 히트는 위에서 이미 반환되어 여기 도달하지 않으므로 카운트에서 자연히 제외됨).
   const dailyKey = `auctionparse_daily_${todayKstDateStr()}`;
   const usedToday = await getDailyExtractCount(dailyKey);
-  if (usedToday >= DAILY_TEXT_EXTRACT_LIMIT) {
+  if (usedToday + GEMINI_CALLS_PER_PROPERTY_EXTRACT > DAILY_GEMINI_CALL_BUDGET) {
     return res.status(429).json({
-      error: `오늘 AI 자동추출을 이미 ${DAILY_TEXT_EXTRACT_LIMIT}건 사용하셨습니다. 무료 API 사용량 관리를 위해 하루 ${DAILY_TEXT_EXTRACT_LIMIT}건으로 제한해 두었어요 (한국시간 자정에 초기화됩니다). 이미 추출했던 물건을 그대로 다시 붙여넣는 건 캐시로 처리돼 제한에 걸리지 않습니다.`,
+      error: `오늘 AI 자동추출 사용량 한도(무료 API 하루 호출 ${DAILY_GEMINI_CALL_BUDGET}회)에 다 찼습니다. 한국시간 자정에 초기화됩니다. (물건 상세추출은 1건당 2회, 낙찰사례 목록 추출은 1건당 1회를 소모합니다 - 지금까지 ${usedToday}회 사용) 이미 추출했던 물건을 그대로 다시 붙여넣는 건 캐시로 처리돼 소모되지 않습니다.`,
       dailyLimitReached: true,
       usedToday,
-      limit: DAILY_TEXT_EXTRACT_LIMIT,
+      limit: DAILY_GEMINI_CALL_BUDGET,
     });
   }
 
@@ -1009,7 +1026,7 @@ export default async function handler(req, res) {
     merged.warnings = buildNumericWarnings(merged);
     // 캐시에는 경고까지 포함한 최종 결과를 그대로 저장 - 캐시 히트 시 재계산 없이 즉시 반환.
     setCachedParseResult(cacheKey, merged); // 응답을 늦추지 않도록 await 없이 fire-and-forget
-    incrementDailyExtractCount(dailyKey); // 실제로 Gemini를 새로 호출해 성공한 경우에만 하루 사용량에 반영 (fire-and-forget)
+    incrementDailyExtractCount(dailyKey, GEMINI_CALLS_PER_PROPERTY_EXTRACT); // 실제로 Gemini를 새로 호출해 성공한 경우에만 하루 사용량에 반영 (fire-and-forget)
     return res.status(200).json({ detail: merged });
   } catch (err) {
     return res.status(500).json({ error: err.message });
