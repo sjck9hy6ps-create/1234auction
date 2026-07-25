@@ -1,15 +1,16 @@
 /* ════════════════════════════════════
    api/auction.js
-   경매물건(auctions) + 임장메모(siteNotes) 공용 CRUD 엔드포인트
+   경매물건(auctions) + 임장메모(siteNotes) + 낙찰사례(bidCases) 공용 CRUD 엔드포인트
    ⚠️ Vercel Hobby 플랜은 서버리스 함수(api/*.js 파일)를 12개까지만 허용하는데
       이미 12개(auction, get-building, get-boundary, get-coords, get-house,
       get-official-price, parse-auction, parse-registry, search-complex,
       save-coord, export-table, data-coverage)가 꽉 차 있어서, 새 파일을
       추가하는 대신 이 파일 하나가 쿼리스트링 ?kind= 값으로 저장소를 구분해서
-      두 자원(auctions/siteNotes)을 함께 처리하도록 합침.
+      세 자원(auctions/siteNotes/bidCases)을 함께 처리하도록 합침.
       - /api/auction              (kind 생략 시 기본값)        → Redis 키 'auctions'
       - /api/auction?kind=siteNotes                              → Redis 키 'siteNotes'
-   Redis에 저장하는 방식(키 하나에 JSON 배열 전체)은 두 자원 모두 동일함.
+      - /api/auction?kind=bidCases  (지역별 낙찰사례 통계용)      → Redis 키 'bidCases'
+   Redis에 저장하는 방식(키 하나에 JSON 배열 전체)은 세 자원 모두 동일함.
 ════════════════════════════════════ */
 export default async function handler(req, res) {
     const REDIS_URL = process.env.UPSTASH_REDIS_URL;
@@ -17,8 +18,10 @@ export default async function handler(req, res) {
     if (!REDIS_URL || !REDIS_TOKEN) {
         return res.status(500).json({ error: 'UPSTASH_REDIS_URL / UPSTASH_REDIS_TOKEN 환경변수가 없습니다. Vercel 프로젝트 설정에 추가해 주세요.' });
     }
-    // kind=siteNotes 이면 임장메모 저장소, 그 외(기본값)는 경매물건 저장소를 사용
-    const redisKey = req.query.kind === 'siteNotes' ? 'siteNotes' : 'auctions';
+    // kind에 따라 저장소를 구분 (siteNotes/bidCases 외 값이거나 생략되면 기본값인 경매물건 저장소)
+    const redisKey = req.query.kind === 'siteNotes' ? 'siteNotes'
+        : req.query.kind === 'bidCases' ? 'bidCases'
+        : 'auctions';
     try {
         if (req.method === 'GET') {
             const response = await fetch(`${REDIS_URL}/get/${redisKey}`, {
