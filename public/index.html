@@ -483,6 +483,7 @@ tr:hover td { background:#fffde7; }
         <button class="filter-tab ft-common" onclick="toggleCompOnlyFilter(this)">📌 비교대상만</button>
         <button class="filter-tab ft-common" id="boundary-toggle-btn" onclick="toggleDongBoundaryMode(this)">🗺️ 법정동 경계선</button>
         <button class="filter-tab ft-common" id="rentonly-toggle-btn" onclick="toggleShowRentOnly(this)">🏠 전세거래만 있는 주소</button>
+        <button class="filter-tab ft-common" id="bidcaseonly-toggle-btn" onclick="toggleBidCaseOnlyFilter(this)">⚖️ 낙찰사례만 보기</button>
     </div>
 </div>
 <div id="dong-boundary-info" style="display:none;position:absolute;top:60px;left:50%;transform:translateX(-50%);z-index:50;background:rgba(0,0,0,0.75);color:white;font-size:12px;font-weight:bold;padding:5px 12px;border-radius:14px;pointer-events:none;"></div>
@@ -1055,6 +1056,9 @@ var compOnlyFilter = false;
 // 매매기록 없이 전세거래만 있던 주소지(rentOnly 건물)는 평소엔 지도에서 숨겨두고,
 // 이 필터를 켰을 때만 보이게 함 (기본값 false = 숨김 = "필요할 때만" 보기)
 var showRentOnlyFilter = false;
+// 이 필터를 켜면 일반 거래 마커/경매물건(🔨) 마커는 전부 숨기고 낙찰사례(⚖️) 배지만 지도에 남김 -
+// 붙여넣은 낙찰사례가 많아졌을 때 다른 배지에 묻히지 않고 한눈에 훑어보기 위함
+var bidCaseOnlyFilter = false;
 /* 경매물건 비교물건으로 등록된 거래를 역인덱싱 (키: 이름|날짜|금액 → 등록된 경매 목록)
    비교물건 저장 시 name/date/amount로 dedup 체크하던 것과 동일한 키 형식을 사용함 */
 function computeComparableIndex() {
@@ -1098,6 +1102,11 @@ function toggleCompOnlyFilter(btn) {
 }
 function toggleShowRentOnly(btn) {
     showRentOnlyFilter = !showRentOnlyFilter;
+    btn.classList.toggle('active');
+    redrawMarkers();
+}
+function toggleBidCaseOnlyFilter(btn) {
+    bidCaseOnlyFilter = !bidCaseOnlyFilter;
     btn.classList.toggle('active');
     redrawMarkers();
 }
@@ -2085,6 +2094,8 @@ function buildRentOnlyEntries(existingList, rentList, sigungu, lawdCd) {
    따로 존재하게 되어 나중에 한쪽만 고치는 실수가 생기기 쉬움 */
 function isAptVisibleUnderCurrentFilters(apt) {
     if (!apt) return false;
+    // "낙찰사례만 보기"가 켜져 있으면 일반 거래 마커는 전부 숨김(⚖️ 배지만 남김)
+    if (bidCaseOnlyFilter) return false;
     // 단독/다가구는 placeMarkers가 지오코딩 자체를 시도하지 않아 지도에 마커가 만들어지지 않음
     if (apt.buildingType === 'single') return false;
     // 매매기록 없이 전세거래만 있던 주소지는 "전세거래만 있는 주소" 필터를 켰을 때만 보여줌
@@ -3204,6 +3215,19 @@ function clExtractFloor(line) {
     if (m) return parseInt(m[1], 10);
     return null;
 }
+function clExtractUnit(line) {
+    // "3층302호"처럼 층수 뒤에 붙는 호수 표기. 지하 유닛의 "비03호"같은 한글 접두 한 글자도
+    // 그대로 포함해서 담음(건축물대장 전유부 hoNm과 자릿수 비교 시 숫자만 뽑아 대조하므로
+    // 접두 한글이 있어도 매칭엔 영향 없음 - buildBuildingInfoHtml의 highlightUnit 로직 참고).
+    // ⚠️ "층" 뒤쪽 구간에서만 찾아야 함 - 그러지 않으면 "4층401호"에서 "층"이 선택적 한글
+    // 접두사로 잘못 흡수돼 "층401호"로 오인식되는 버그가 있었음.
+    var floorMatch = line.match(/\d+층/);
+    var searchFrom = floorMatch ? floorMatch.index + floorMatch[0].length : 0;
+    var rest = line.slice(searchFrom);
+    var m = rest.match(/([가-힣]?\d+)호(?!수)/);
+    if (!m) return null;
+    return m[1] + '호';
+}
 function clExtractBuildingName(line) {
     var m = line.match(/\(([^)]*)\)/);
     if (!m) return null;
@@ -3261,6 +3285,7 @@ function parseCaseListTextLocally(text) {
         var addrJibun = clExtractAddrJibun(addrLine);
         var dongBunji = clExtractDongBunji(addrJibun);
         var floor = clExtractFloor(addrLine);
+        var unitNo = clExtractUnit(addrLine);
         var buildingName = clExtractBuildingName(addrLine);
         var areaM2 = null;
         if (areaLine) {
@@ -3276,7 +3301,7 @@ function parseCaseListTextLocally(text) {
         cases.push({
             caseNo: caseNo, court: court, propertyType: propertyType,
             addrJibun: addrJibun, dong: dongBunji.dong, bunji: dongBunji.bunji,
-            buildingName: buildingName, areaM2: areaM2, floor: floor,
+            buildingName: buildingName, areaM2: areaM2, floor: floor, unitNo: unitNo,
             specialConditions: extraLines.length ? extraLines.join(' ') : null,
             appraisalPrice: appraisalPrice, minBidPrice: minBidPrice, finalBidPrice: finalBidPrice,
             bidRate: bidRate, minBidRate: minBidRate, status: normStatus, saleDate: saleDate,
@@ -3370,6 +3395,7 @@ async function saveSelectedCases() {
             caseNo: c.caseNo || null, court: c.court || null, propertyType: c.propertyType || null,
             addrJibun: c.addrJibun || null, dong: c.dong || null, bunji: c.bunji || null,
             buildingName: c.buildingName || null, areaM2: c.areaM2 || null, floor: c.floor || null,
+            unitNo: c.unitNo || null,
             specialConditions: c.specialConditions || null,
             appraisalPrice: c.appraisalPrice || null, minBidPrice: c.minBidPrice || null,
             finalBidPrice: c.finalBidPrice || null, bidRate: c.bidRate || null, minBidRate: c.minBidRate || null,
@@ -3566,6 +3592,8 @@ function buildBidCaseDetailHtml(c) {
     function item(label, value, color) {
         return '<div class="margin-item"><div class="margin-label">' + label + '</div><div class="margin-value" style="color:' + (color || '#333') + ';">' + value + '</div></div>';
     }
+    var floorLabel = (c.floor !== null && c.floor !== undefined) ? (c.floor < 0 ? '지하' + Math.abs(c.floor) + '층' : c.floor + '층') : null;
+    var areaLabel = c.areaM2 ? (Math.round(c.areaM2 * 10) / 10 + '㎡(' + toPyung(c.areaM2) + '평)') : null;
     var html = '<div class="indicator-box" style="border-color:#00695c;background:#f2fbfa;">'
         + '<div class="indicator-title">⚖️ 낙찰사례 정보</div>';
     html += '<div class="margin-grid">'
@@ -3573,6 +3601,8 @@ function buildBidCaseDetailHtml(c) {
         + item('법원/담당계', c.court || '-')
         + item('물건종류', c.propertyType || '-')
         + item('상태', c.status || '-')
+        + (floorLabel || c.unitNo ? item('층/호수', [floorLabel, c.unitNo].filter(Boolean).join(' / ')) : '')
+        + (areaLabel ? item('전용면적', areaLabel) : '')
         + item('감정가', c.appraisalPrice ? toEok(String(Math.round(c.appraisalPrice / 10000))) : '-')
         + item('최저입찰가', c.minBidPrice ? toEok(String(Math.round(c.minBidPrice / 10000))) : '-')
         + item('낙찰가' + (c.bidRate ? '(' + c.bidRate + '%)' : ''), c.finalBidPrice ? toEok(String(Math.round(c.finalBidPrice / 10000))) : '-', '#e65100')
@@ -3632,7 +3662,26 @@ function openBidCaseDetail(id) {
     document.getElementById('panel-header').style.background = '#f9e000';
     document.getElementById('panel').style.display = 'flex';
     document.getElementById('pyung-bar').innerHTML = '';
-    document.getElementById('panel-body').innerHTML = buildBidCaseDetailHtml(c);
+    document.getElementById('panel-body').innerHTML = buildBidCaseDetailHtml(c) + '<div id="bc-building-info-box"></div>';
+    loadBidCaseBuildingInfo(c);
+}
+/* 낙찰사례에 매칭된 매매 히스토리(=findMatchedAptForBidCase)가 없을 때만 openBidCaseDetail에서
+   호출됨 - 매매기록이 없으니 대신 주소를 근거로 건축물대장 정보를 불러와 보여줌.
+   loadAuctionBuildingInfo()와 완전히 동일한 재사용 패턴(loadBuildingInfo/buildBuildingInfoHtml)이며,
+   idPrefix를 낙찰사례 id로 구분해서 층별현황/전유공용면적 접기·펼치기 버튼 id가 겹치지 않게 함. */
+async function loadBidCaseBuildingInfo(c) {
+    var box = document.getElementById('bc-building-info-box');
+    if (!box) return;
+    if (!c.lat || !c.lon) { return; }
+    if (!c.bunji) { box.innerHTML = '<div style="font-size:11px;color:#999;">주소에서 번지를 인식하지 못해 건축물대장을 조회할 수 없습니다.</div>'; return; }
+    box.innerHTML = '<div style="font-size:11px;color:#999;">건축물대장 조회 중...</div>';
+    var fakeApt = { latest: { dong: c.dong, name: c.buildingName || '', bunji: c.bunji } };
+    var info = await loadBuildingInfo(fakeApt, c.lat, c.lon);
+    // 조회하는 사이 사용자가 다른 낙찰사례/패널로 이동했으면 결과를 버림(엉뚱한 곳에 덮어쓰기 방지)
+    if (currentStandaloneBidCaseId !== c.id) return;
+    box.innerHTML = info
+        ? buildBuildingInfoHtml(info, { idPrefix: 'bc' + c.id, highlightUnit: c.unitNo || '' })
+        : '<div style="font-size:11px;color:#999;">건축HUB에 등록된 건축물대장 정보를 찾지 못했습니다.</div>';
 }
 function median(arr) {
     if (!arr.length) return null;
@@ -3708,7 +3757,7 @@ function renderBidCaseList() {
             statsHtml += '<div class="bc-case-item" id="bc-case-' + c.id + '" style="position:relative;transition:background 0.4s;">'
                 + '<span onclick="deleteBidCase(\'' + c.id + '\')" style="position:absolute;top:8px;right:14px;color:#bbb;cursor:pointer;font-size:11px;">✕</span>'
                 + '<div style="font-weight:bold;">' + (c.caseNo || '(사건번호 미상)') + (c.status ? ' <span style="font-weight:normal;color:#888;">· ' + c.status + '</span>' : '') + '</div>'
-                + '<div style="color:#666;">' + (c.addrJibun || '') + (c.floor ? ' ' + c.floor + '층' : '') + '</div>'
+                + '<div style="color:#666;">' + (c.addrJibun || '') + (c.floor ? ' ' + c.floor + '층' : '') + (c.unitNo ? ' ' + c.unitNo : '') + '</div>'
                 + '<div style="color:#999;">'
                 + (c.appraisalPrice ? '감정가 ' + toEok(String(Math.round(c.appraisalPrice / 10000))) : '')
                 + (c.finalBidPrice ? ' · 낙찰가 ' + toEok(String(Math.round(c.finalBidPrice / 10000))) : (c.minBidPrice ? ' · 최저가 ' + toEok(String(Math.round(c.minBidPrice / 10000))) : ''))
@@ -4869,6 +4918,8 @@ function upsertAuctionMarker(a) {
     auctionMarkerSigs[a.id] = sig;
 }
 function renderAuctionMarkers() {
+    // "낙찰사례만 보기"가 켜져 있으면 내가 등록한 경매물건(🔨) 마커도 숨겨서 낙찰사례(⚖️) 배지만 남김
+    if (bidCaseOnlyFilter) { clearAuctionMarkers(); return; }
     if (!auctionList || !auctionList.length) { clearAuctionMarkers(); return; }
     var neededIds = {};
     auctionList.forEach(function(a) {
