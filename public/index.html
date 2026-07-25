@@ -1123,6 +1123,39 @@ function aptHasMatchingBidCase(apt) {
     if (l.dong && l.bunji && bidCaseAptIndex.byDongBunji[l.dong + '|' + l.bunji]) return true;
     return false;
 }
+/* 낙찰추정가(estMargin)가 계산된 낙찰사례들을 법정동+건물유형별로 묶어 평균 추정마진을 냄 -
+   일반 매물 배지(createMarker)에 "이 동네·이 유형은 보통 이 정도 마진에 낙찰됐다"는 참고치를
+   바로 보여주기 위함. guessPropTypeFromCase가 반환하는 유형('apt'/'officetel'/'other'/'villa')을
+   일반 매물의 apt.buildingType 값 체계('apt'/'villa'/'single')에 맞춰 정규화함: 오피스텔은
+   일반 배지 쪽에 별도 분류가 없어 apt로 편입하고, 상가/토지는 매칭 대상 자체가 아니라 제외함. */
+var dongTypeMarginStats = {};
+function normalizeBidCaseTypeForMarker(bt) {
+    if (bt === 'officetel') return 'apt';
+    if (bt === 'other') return null;
+    return bt; // 'apt' 또는 'villa'
+}
+function computeDongTypeMarginStats() {
+    var groups = {};
+    bidCaseList.forEach(function(c) {
+        if (c.estMargin === null || c.estMargin === undefined || !c.dong) return;
+        var bt = normalizeBidCaseTypeForMarker(guessPropTypeFromCase(c));
+        if (!bt) return;
+        var key = c.dong + '|' + bt;
+        if (!groups[key]) groups[key] = [];
+        groups[key].push(c.estMargin);
+    });
+    var result = {};
+    Object.keys(groups).forEach(function(key) {
+        var arr = groups[key];
+        var sum = arr.reduce(function(a, b) { return a + b; }, 0);
+        result[key] = { avg: Math.round(sum / arr.length), count: arr.length };
+    });
+    return result;
+}
+function getDongTypeMarginStat(dong, buildingType) {
+    if (!dong || !buildingType) return null;
+    return dongTypeMarginStats[dong + '|' + buildingType] || null;
+}
 function toggleCompOnlyFilter(btn) {
     compOnlyFilter = !compOnlyFilter;
     btn.classList.toggle('active');
@@ -2160,6 +2193,7 @@ function redrawMarkers() {
     surgeRankMap = computeSurgeRankMap(currentTypeFilter);
     comparableIndex = computeComparableIndex();
     bidCaseAptIndex = computeBidCaseAptIndex();
+    dongTypeMarginStats = computeDongTypeMarginStats();
     var list = allAptList.filter(isAptVisibleUnderCurrentFilters);
     placeMarkers(list, myGen);
     setTimeout(function() { renderAuctionMarkers(); renderBidCaseMarkers(); }, 100);
@@ -2348,6 +2382,12 @@ function createMarker(cacheKey, lat, lon, apt) {
         var estSuffix = apt.gradeEstimated ? '(추정)' : '';
         gradeBadge = '<span style="background:' + gc + ';color:white;font-size:10px;font-weight:bold;padding:2px 6px;border-radius:3px;margin-left:3px;' + estStyle + '">' + tierPrefix + pppText + estSuffix + '</span>';
     }
+    // 낙찰사례 평균 추정마진 배지 - 이 매물의 법정동+건물유형과 같은 낙찰사례들의 추정마진
+    // 평균을 평단가(gradeBadge) 바로 우측에 보여줌. 매칭되는 낙찰사례가 하나도 없으면 표시 안 함
+    var marginStat = getDongTypeMarginStat(l.dong, apt.buildingType);
+    var marginBadge = marginStat
+        ? '<span style="background:#00695c;color:white;font-size:10px;font-weight:bold;padding:2px 6px;border-radius:3px;margin-left:3px;" title="이 동 낙찰사례 ' + marginStat.count + '건 기준 평균 추정마진(세전, 참고치)">📊' + toEok(String(marginStat.avg)) + '</span>'
+        : '';
     // 신고가 배지
    var nhBadge = apt.hasNewHigh
         ? '<span style="background:#ff6f00;color:white;font-size:10px;font-weight:bold;padding:2px 6px;border-radius:10px;margin-left:3px;">★신고가</span>'
@@ -2395,7 +2435,7 @@ function createMarker(cacheKey, lat, lon, apt) {
         + auctionRibbon
         + (count > 0 ? '<div style="font-size:15px;font-weight:900;color:' + color + ';">' + count + '건</div>' : '')
         + '<div style="font-size:13px;font-weight:bold;color:#333;overflow:hidden;text-overflow:ellipsis;">'
-         +   (l.name || '') + gradeBadge + nhBadge + surgeBadge
+         +   (l.name || '') + gradeBadge + marginBadge + nhBadge + surgeBadge
         + '</div>'
         + (popBadge ? '<div style="margin-top:2px;">' + popBadge + '</div>' : '')
         + (compBadge ? '<div style="margin-top:2px;">' + compBadge + '</div>' : '')
