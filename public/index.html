@@ -609,6 +609,7 @@ tr:hover td { background:#fffde7; }
                 <button class="modal-btn btn-purple" onclick="searchAuctionAddr()">검색</button>
             </div>
             <div id="a-addr-result" style="font-size:11px;color:#6a1b9a;padding:2px 0 4px 76px;display:none;"></div>
+            <div id="a-dong-margin-stats"></div>
             <div id="a-building-info-box" style="margin-top:4px;"></div>
             <div style="margin-top:6px;">
                 <button type="button" class="modal-btn btn-purple" id="dev-news-btn" style="font-size:11px;" onclick="searchDevelopmentNews()">🏗️ 주변 개발호재 검색</button>
@@ -1836,13 +1837,13 @@ function initMap(lat, lon) {
     // (비교물건 배지 반영을 위해 아파트/빌라 마커도 함께 다시 그림)
     fetchAuctions().then(function() { renderAuctionMarkers(); redrawMarkers(); });
     fetchSiteNotes(); // 임장메모 - 마커 클릭 시 즉시 보여줄 수 있도록 초기에 함께 로딩
-    fetchBidCases(); // 낙찰사례 통계 - 패널을 열 때 바로 보여줄 수 있도록 초기에 함께 로딩
+    fetchBidCases().then(function() { renderBidCaseMarkers(); }); // 낙찰사례 지도 배지
     loadAllData(lat, lon);
     kakao.maps.event.addListener(map, 'idle', function() {
         var c = map.getCenter();
         clearTimeout(moveTimer);
         moveTimer = setTimeout(function() {
-            loadAllData(c.getLat(), c.getLng()).then(function() { renderAuctionMarkers(); });
+            loadAllData(c.getLat(), c.getLng()).then(function() { renderAuctionMarkers(); renderBidCaseMarkers(); });
         }, 1200);
     });
 }
@@ -2110,7 +2111,7 @@ function redrawMarkers() {
     comparableIndex = computeComparableIndex();
     var list = allAptList.filter(isAptVisibleUnderCurrentFilters);
     placeMarkers(list, myGen);
-    setTimeout(function() { renderAuctionMarkers(); }, 100);
+    setTimeout(function() { renderAuctionMarkers(); renderBidCaseMarkers(); }, 100);
 }
  
 function getPinConfig(apt) {
@@ -2606,6 +2607,7 @@ function showLocalDropdown(results) {
    사이드 패널
 ════════════════════════════════════ */
 function openPanel(apt, lat, lon) {
+    currentStandaloneBidCaseId = null; // 낙찰사례 독자 상세뷰가 열려있던 상태를 벗어남
     currentPanelLat = (typeof lat === 'number') ? lat : null;
     currentPanelLon = (typeof lon === 'number') ? lon : null;
     currentTrades  = apt.trades || [];
@@ -3013,7 +3015,11 @@ function renderTable() {
     // 아래에서 탭으로 분리해서 붙임 (동일 주소에 마커가 두 개 겹치는 문제 방지)
     var auctionHtml = '';
     if (ind && (ind._aptName || (ind._aptDong && ind._aptBunji))) {
-        auctionHtml = buildAuctionPanelHtml(ind._aptName, ind._aptDong, ind._aptBunji);
+        // 내가 등록한 경매물건(auctionList)과 붙여넣기로 가져온 낙찰사례(bidCaseList)를 같은
+        // "🔨 경매정보" 탭에 이어붙임 - 이 건물에 내 경매물건은 없어도 낙찰사례만 매칭될 수 있어서,
+        // auctionHtml이 비어있어도 낙찰사례가 있으면 탭이 뜨도록 함께 판단해야 함(아래 if(auctionHtml)).
+        auctionHtml = buildAuctionPanelHtml(ind._aptName, ind._aptDong, ind._aptBunji)
+            + buildBidCasePanelHtml(ind._aptName, ind._aptDong, ind._aptBunji);
     }
     // 신고가
     if (ind && ind._newHighPyungs && ind._newHighPyungs.length > 0) {
@@ -3153,7 +3159,7 @@ function openBidCasePanel() {
     var p = document.getElementById('bid-case-panel');
     document.getElementById('auction-list-panel').style.display = 'none'; // 같은 자리에 뜨므로 겹치지 않게 서로 닫아줌
     if (p.style.display === 'block') { p.style.display = 'none'; return; }
-    renderBidCaseList();
+    renderBidCaseList(); renderBidCaseMarkers();
     p.style.display = 'block';
 }
 function closeBidCasePanel() {
@@ -3379,13 +3385,13 @@ async function saveSelectedCases() {
     document.getElementById('bc-paste-text').value = '';
     document.getElementById('bc-preview-box').innerHTML = '';
     statusBox.style.color = '#2e7d32'; statusBox.innerText = selected.length + '건 저장 완료.';
-    renderBidCaseList();
+    renderBidCaseList(); renderBidCaseMarkers();
 }
 async function deleteBidCase(id) {
     if (!confirm('이 낙찰사례를 삭제할까요?')) return;
     await deleteBidCaseAPI(id);
     bidCaseList = bidCaseList.filter(function(c) { return c.id !== id; });
-    renderBidCaseList();
+    renderBidCaseList(); renderBidCaseMarkers();
 }
 /* ════════════════════════════════════
    낙찰사례 - 매도사례 자동매칭 + 마진 추정 (Phase 2)
@@ -3469,6 +3475,28 @@ function calcBidCaseMargin(c, match) {
     var roi = totalCost > 0 ? Math.round(preTaxMargin / totalCost * 1000) / 10 : 0;
     return { bid: bid, sell: sell, totalCost: totalCost, preTaxMargin: preTaxMargin, roi: roi };
 }
+/* 법정동(dong) 단위 낙찰사례 추정마진 통계 - 신규 경매물건 등록 모달에서 주소의 동이 확인되면
+   "이 동네는 보통 이 정도 마진에서 낙찰이 이뤄진다"를 바로 참고할 수 있도록 표시함. */
+function calcDongMarginStats(dong) {
+    if (!dong) return null;
+    var items = bidCaseList.filter(function(c) { return c.dong === dong && c.resaleMatch && c.estMargin !== null && c.estMargin !== undefined; });
+    if (!items.length) return null;
+    var margins = items.map(function(c) { return c.estMargin; });
+    return { count: margins.length, median: median(margins), min: Math.min.apply(null, margins), max: Math.max.apply(null, margins) };
+}
+function renderDongMarginStatsInModal() {
+    var box = document.getElementById('a-dong-margin-stats');
+    if (!box) return;
+    var ctx = getAuctionAddressContext();
+    var dong = ctx.dong;
+    var stats = dong ? calcDongMarginStats(dong) : null;
+    if (!stats) { box.innerHTML = ''; return; }
+    box.innerHTML = '<div style="font-size:11px;background:#e0f2f1;border-radius:6px;padding:6px 8px;margin:4px 0;">'
+        + '<b>⚖️ ' + dong + ' 낙찰사례 ' + stats.count + '건 기준 추정마진(세전)</b><br>'
+        + '중간값 <b>' + toEok(String(Math.round(stats.median))) + '</b>'
+        + ' (최소 ' + toEok(String(Math.round(stats.min))) + ' ~ 최대 ' + toEok(String(Math.round(stats.max))) + ')'
+        + '</div>';
+}
 async function matchAndSaveOneCase(c) {
     var result = await matchResaleForBidCase(c);
     c.matchAttempted = true;
@@ -3502,22 +3530,109 @@ async function runResaleMatching() {
             console.error('매도사례 매칭 실패:', c.caseNo, e.message);
             c.matchAttempted = true; c.matchFailReason = e.message;
         }
-        renderBidCaseList(); // 한 건씩 끝날 때마다 갱신 - 여러 건이면 진행상황이 눈에 보이도록
+        renderBidCaseList(); renderBidCaseMarkers(); // 한 건씩 끝날 때마다 갱신 - 여러 건이면 진행상황이 눈에 보이도록
         await new Promise(function(r) { setTimeout(r, 300); }); // 카카오 지오코더 과호출 방지용 텀
     }
     btn.disabled = false;
     statusBox.style.color = '#2e7d32';
     statusBox.innerText = '매칭 완료 (' + targets.length + '건 시도).';
 }
+/* 낙찰 후 매도까지 보통 3~4개월씩 걸리기 때문에, 한 번 매칭에 실패했거나(아직 매도 전) 아직
+   시도조차 안 한 사례도 "상시" 다시 조회할 수 있어야 함 - 목록 패널의 항목별 버튼과, 배지를
+   클릭해서 여는 상세뷰(buildBidCaseDetailHtml)의 버튼이 모두 이 함수 하나를 공유함.
+   매칭 결과가 갱신되면 목록/지도배지는 물론, 지금 열려있는 상세패널(매칭된 건물의 탭이든
+   독자 상세뷰든)까지 함께 새로고침해서 따로 다시 열지 않아도 최신 상태가 바로 보이게 함. */
 async function retryMatchOneCase(id) {
     var c = bidCaseList.find(function(x) { return x.id === id; });
     if (!c) return;
     c.matchAttempted = false; // 강제로 다시 시도하도록 플래그 리셋
-    var statusBox = document.getElementById('bc-extract-status');
-    statusBox.style.color = '#999'; statusBox.innerText = '재매칭 중... ' + (c.caseNo || '');
+    var listStatusBox = document.getElementById('bc-extract-status');
+    var detailBtn = document.getElementById('bc-detail-match-btn-' + id);
+    if (listStatusBox) { listStatusBox.style.color = '#999'; listStatusBox.innerText = '매도사례 조회 중... ' + (c.caseNo || ''); }
+    if (detailBtn) { detailBtn.disabled = true; detailBtn.innerText = '조회 중...'; }
     await matchAndSaveOneCase(c);
-    statusBox.style.color = '#2e7d32'; statusBox.innerText = '재매칭 완료.';
-    renderBidCaseList();
+    if (listStatusBox) { listStatusBox.style.color = '#2e7d32'; listStatusBox.innerText = '조회 완료.'; }
+    renderBidCaseList(); renderBidCaseMarkers();
+    if (currentPanelApt) {
+        renderTable(); // 매칭된 건물의 상세패널(경매정보 탭)이 열려있으면 그 안의 낙찰사례 정보도 새로고침
+    } else if (currentStandaloneBidCaseId === id) {
+        document.getElementById('panel-body').innerHTML = buildBidCaseDetailHtml(c); // 독자 상세뷰가 열려있는 경우
+    }
+}
+/* 낙찰사례 하나의 상세 정보 - 사건정보/가격, 매도사례·비용breakdown·추정마진, 그리고 언제든
+   다시 조회할 수 있는 버튼까지 한 화면에 보여줌. 매칭된 건물의 상세패널 안(buildBidCasePanelHtml)과
+   매칭 건물이 없을 때의 독자 상세뷰(openBidCaseDetail) 양쪽에서 그대로 재사용함. */
+function buildBidCaseDetailHtml(c) {
+    function item(label, value, color) {
+        return '<div class="margin-item"><div class="margin-label">' + label + '</div><div class="margin-value" style="color:' + (color || '#333') + ';">' + value + '</div></div>';
+    }
+    var html = '<div class="indicator-box" style="border-color:#00695c;background:#f2fbfa;">'
+        + '<div class="indicator-title">⚖️ 낙찰사례 정보</div>';
+    html += '<div class="margin-grid">'
+        + item('사건번호', c.caseNo || '-')
+        + item('법원/담당계', c.court || '-')
+        + item('물건종류', c.propertyType || '-')
+        + item('상태', c.status || '-')
+        + item('감정가', c.appraisalPrice ? toEok(String(Math.round(c.appraisalPrice / 10000))) : '-')
+        + item('최저입찰가', c.minBidPrice ? toEok(String(Math.round(c.minBidPrice / 10000))) : '-')
+        + item('낙찰가' + (c.bidRate ? '(' + c.bidRate + '%)' : ''), c.finalBidPrice ? toEok(String(Math.round(c.finalBidPrice / 10000))) : '-', '#e65100')
+        + item('매각기일', c.saleDate || '-')
+        + '</div>';
+    if (c.specialConditions) html += '<div style="font-size:11px;color:#e65100;margin-top:6px;">⚠️ ' + c.specialConditions + '</div>';
+    html += '</div>';
+    html += '<div class="indicator-box" style="border-color:#00695c;background:#f2fbfa;"><div class="indicator-title">💰 매도사례 · 추정마진</div>';
+    if (c.resaleMatch && c.estMargin !== null && c.estMargin !== undefined) {
+        html += '<div class="margin-grid">'
+            + item('매도일', c.resaleMatch.date || '-')
+            + item('매도가', toEok(String(Math.round(c.resaleMatch.amount))), '#2e7d32')
+            + item('총 소요비용(추정)', c.estTotalCost !== null && c.estTotalCost !== undefined ? toEok(String(Math.round(c.estTotalCost))) : '-', '#888')
+            + item('추정 세전마진', toEok(String(Math.round(c.estMargin))), c.estMargin > 0 ? '#2e7d32' : '#e53935')
+            + (c.estRoi !== null && c.estRoi !== undefined ? item('추정 수익률', c.estRoi + '%', c.estRoi > 0 ? '#2e7d32' : '#e53935') : '')
+            + '</div>'
+            + '<div style="font-size:10px;color:#aaa;margin-top:6px;">⚠️ 취득세·등기비·명도비·이사비·청소비·중개수수료만 반영한 참고치입니다. 실제 낙찰자의 대출이자·수리비·양도세(또는 종합소득세)는 알 수 없어 제외되어 있어, 실제 마진은 이보다 낮을 수 있습니다.</div>';
+    } else {
+        html += '<div style="font-size:11px;color:#999;">아직 매도사례가 확인되지 않았습니다. 낙찰 후 매도까지 보통 3~4개월이 걸리니, 시간이 지난 뒤 다시 조회해 보세요.'
+            + (c.matchFailReason ? '<br><span style="color:#bbb;">최근 조회 결과: ' + c.matchFailReason + '</span>' : '') + '</div>';
+    }
+    html += '<div style="margin-top:8px;text-align:right;">'
+        + '<button type="button" class="modal-btn btn-purple" id="bc-detail-match-btn-' + c.id + '" onclick="retryMatchOneCase(\'' + c.id + '\')">🔍 매도사례 조회</button>'
+        + '</div></div>';
+    return html;
+}
+/* 매칭된 건물의 상세패널(🔨 경매정보 탭) 안에 이 건물과 관련된 낙찰사례를 모두 보여줌 -
+   buildAuctionPanelHtml(내가 등록한 경매물건)과 같은 자리에 이어붙여서, "동일한 상세페이지"
+   경험을 그대로 유지하면서 낙찰사례 정보도 함께 보이게 함. */
+function buildBidCasePanelHtml(aptName, aptDong, aptBunji) {
+    var matched = bidCaseList.filter(function(c) {
+        return matchesAuctionKey({ name: c.buildingName, dong: c.dong, bunji: c.bunji }, aptName, aptDong, aptBunji);
+    });
+    if (!matched.length) return '';
+    var html = '';
+    matched.forEach(function(c) { html += buildBidCaseDetailHtml(c); });
+    return html;
+}
+/* 매칭되는 일반 거래 건물이 없을 때(아직 지도에 로딩 안 된 지역 등) 배지를 클릭하면 여는
+   독자 상세뷰 - openPanel()과 같은 #panel 요소를 그대로 재사용해서(제목·배경색·본문 영역)
+   "기존 상세페이지와 동일하게 로딩되는" 느낌을 유지함. */
+var currentStandaloneBidCaseId = null;
+function openBidCaseDetail(id) {
+    var c = bidCaseList.find(function(x) { return x.id === id; });
+    if (!c) return;
+    var matched = findMatchedAptForBidCase(c);
+    if (matched) {
+        currentStandaloneBidCaseId = null;
+        if (c.lat && c.lon) showRadiusCircle(c.lat, c.lon);
+        openPanel(matched, c.lat, c.lon);
+        return;
+    }
+    currentStandaloneBidCaseId = c.id;
+    currentPanelApt = null; currentTrades = [];
+    document.getElementById('panel-title').innerHTML = (c.caseNo || '낙찰사례')
+        + ' <span style="background:#00695c;color:white;font-size:11px;font-weight:bold;padding:2px 7px;border-radius:10px;">⚖️ 낙찰사례</span>';
+    document.getElementById('panel-header').style.background = '#f9e000';
+    document.getElementById('panel').style.display = 'flex';
+    document.getElementById('pyung-bar').innerHTML = '';
+    document.getElementById('panel-body').innerHTML = buildBidCaseDetailHtml(c);
 }
 function median(arr) {
     if (!arr.length) return null;
@@ -3578,17 +3693,19 @@ function renderBidCaseList() {
         }
         items.forEach(function(c) {
             var rate = (c.appraisalPrice && c.finalBidPrice) ? Math.round(c.finalBidPrice / c.appraisalPrice * 1000) / 10 : null;
+            // 낙찰 후 매도까지 보통 3~4개월씩 걸리므로, 매칭에 실패했든(아직 매도 전) 아예 시도를
+            // 안 했든 상관없이 "상시" 다시 조회할 수 있게 버튼을 항상 노출함(한 번 실패했다고
+            // 숨기지 않음) - 매칭에 이미 성공한 건만 재조회 버튼 없이 결과를 그대로 보여줌.
             var matchLine = '';
             if (c.resaleMatch && c.estMargin !== null && c.estMargin !== undefined) {
                 matchLine = '<div style="color:#2e7d32;margin-top:2px;">✅ 매도사례 ' + c.resaleMatch.date + ' · ' + toEok(String(Math.round(c.resaleMatch.amount)))
                     + ' → 추정 세전마진 ' + toEok(String(Math.round(c.estMargin))) + (c.estRoi !== null && c.estRoi !== undefined ? ' (' + c.estRoi + '%)' : '') + '</div>';
-            } else if (c.matchAttempted) {
-                matchLine = '<div style="color:#aaa;margin-top:2px;">매도사례 매칭 실패: ' + (c.matchFailReason || '알 수 없음')
-                    + ' <span onclick="retryMatchOneCase(\'' + c.id + '\')" style="color:#1976d2;cursor:pointer;text-decoration:underline;">🔄 재시도</span></div>';
             } else if (c.status === '매각' && c.finalBidPrice) {
-                matchLine = '<div style="color:#bbb;margin-top:2px;">매도사례 매칭 전 (위 "매도사례 매칭" 버튼으로 실행)</div>';
+                matchLine = '<div style="color:#aaa;margin-top:2px;">'
+                    + (c.matchAttempted ? ('매도사례 아직 없음: ' + (c.matchFailReason || '')) : '매도사례 조회 전')
+                    + ' <span onclick="retryMatchOneCase(\'' + c.id + '\')" style="color:#1976d2;cursor:pointer;text-decoration:underline;">🔍 조회</span></div>';
             }
-            statsHtml += '<div class="bc-case-item" style="position:relative;">'
+            statsHtml += '<div class="bc-case-item" id="bc-case-' + c.id + '" style="position:relative;transition:background 0.4s;">'
                 + '<span onclick="deleteBidCase(\'' + c.id + '\')" style="position:absolute;top:8px;right:14px;color:#bbb;cursor:pointer;font-size:11px;">✕</span>'
                 + '<div style="font-weight:bold;">' + (c.caseNo || '(사건번호 미상)') + (c.status ? ' <span style="font-weight:normal;color:#888;">· ' + c.status + '</span>' : '') + '</div>'
                 + '<div style="color:#666;">' + (c.addrJibun || '') + (c.floor ? ' ' + c.floor + '층' : '') + '</div>'
@@ -3818,7 +3935,7 @@ function openAuctionModal(id) {
     if (!document.getElementById('a-repair').value) autoCalcRepairSilent();
     if (!document.getElementById('a-moving').value) autoCalcMovingSilent();
     if (!document.getElementById('a-cleaning').value) autoCalcCleaningSilent();
-    updateStatusUI(); updateBidMethodUI(); calcMargin(); calcCompValuation(); suggestBidFromTarget(); renderChecklistSection(); loadAuctionBuildingInfo(); autoCalcAuctionJeonseAnalysis();
+    updateStatusUI(); updateBidMethodUI(); calcMargin(); calcCompValuation(); suggestBidFromTarget(); renderChecklistSection(); loadAuctionBuildingInfo(); autoCalcAuctionJeonseAnalysis(); renderDongMarginStatsInModal();
     document.getElementById('auction-modal-bg').style.display = 'flex';
 }
 /* 배경(모달 바깥) 클릭으로 닫히던 동작 제거됨 - 입력 중이던 내용이 실수로 날아가는 문제가 있어
@@ -3860,6 +3977,7 @@ function searchAuctionAddr() {
             calcCompValuation();
             loadAuctionBuildingInfo();
             autoCalcAuctionJeonseAnalysis();
+            renderDongMarginStatsInModal();
         } else {
             alert('주소를 찾을 수 없습니다.');
         }
@@ -4910,6 +5028,94 @@ function openMatchedApt(auctionId) {
     if (!matched) { openAuctionModal(auctionId); return; }
     if (a.lat && a.lon) showRadiusCircle(a.lat, a.lon);
     openPanel(matched, a.lat, a.lon);
+}
+/* ════════════════════════════════════
+   낙찰사례(bidCaseList) 지도 배지 - 내가 등록한 경매물건(auctionList, 🔨)과는 별개로,
+   붙여넣기로 가져온 과거 낙찰사례(⚖️)를 지도에 독자적으로 표시함. "해당 주소지 거래건도
+   같이 호출하는" 기존 경매 배지 클릭 방식(placeAuctionMarker/openMatchedApt)을 그대로
+   재사용 - 같은 건물의 일반 거래기록이 있으면 클릭 시 매매기록까지 있는 전체 상세패널이
+   열리고, 없으면 낙찰사례 패널에서 해당 항목으로 스크롤해서 보여줌.
+   auctionList와 달리 "별도 배지로 보고 싶다"는 요청이라 억제(suppress) 로직은 넣지 않음 -
+   매칭되는 일반 거래 마커가 있어도 항상 독자 배지로 표시함.
+════════════════════════════════════ */
+var bidCaseMarkers = {};
+var bidCaseMarkerSigs = {};
+function clearBidCaseMarkers() {
+    Object.keys(bidCaseMarkers).forEach(function(id) { if (bidCaseMarkers[id].overlay) bidCaseMarkers[id].overlay.setMap(null); });
+    bidCaseMarkers = {};
+    bidCaseMarkerSigs = {};
+}
+function findMatchedAptForBidCase(c) {
+    return allAptList.find(function(apt) {
+        return matchesAuctionKey({ name: c.buildingName, dong: c.dong, bunji: c.bunji }, apt.latest && apt.latest.name, apt.latest && apt.latest.dong, apt.latest && apt.latest.bunji);
+    });
+}
+function bidCaseMarkerSignature(c) {
+    return JSON.stringify({ status: c.status, finalBidPrice: c.finalBidPrice, minBidPrice: c.minBidPrice, estMargin: c.estMargin, lat: c.lat, lon: c.lon });
+}
+function placeBidCaseMarker(c) {
+    var priceLine = c.finalBidPrice
+        ? toEok(String(Math.round(c.finalBidPrice / 10000))) + ' (낙찰가)'
+        : (c.minBidPrice ? toEok(String(Math.round(c.minBidPrice / 10000))) + ' (최저가)' : '가격 미상');
+    var marginLine = (c.resaleMatch && c.estMargin !== null && c.estMargin !== undefined)
+        ? '<div style="color:#2e7d32;font-size:9.5px;">추정마진 ' + toEok(String(Math.round(c.estMargin))) + '</div>' : '';
+    var div = document.createElement('div');
+    div.style.cssText = 'position:relative;background:linear-gradient(180deg,#fff,#eef7fb);border:2.5px solid #00695c;border-radius:9px;'
+        + 'padding:4px 9px;margin:4px;margin-top:16px;white-space:nowrap;cursor:pointer;'
+        + 'text-align:center;line-height:1.5;max-width:200px;';
+    div.title = [(c.caseNo || '낙찰사례'), (c.addrJibun || ''), '⚖️ ' + (c.status || ''), priceLine].filter(Boolean).join(' · ');
+    div.innerHTML = '<div class="auction-badge" style="background:#00695c;">⚖️ ' + (c.status || '낙찰사례') + '</div>'
+        + '<div style="color:#333;font-size:11px;font-weight:bold;overflow:hidden;text-overflow:ellipsis;max-width:180px;margin-top:5px;">' + (c.caseNo || '(사건번호 미상)') + '</div>'
+        + '<div style="color:#00695c;font-size:12px;font-weight:bold;">' + priceLine + '</div>'
+        + marginLine
+        + '<div style="color:#888;font-size:9px;margin-top:2px;">📊 클릭하면 매매기록도 함께 보여요</div>';
+    div.setAttribute('onclick', 'openBidCaseDetail(\'' + String(c.id).replace(/'/g, "\\'") + '\')');
+    var overlay = new kakao.maps.CustomOverlay({
+        position: new kakao.maps.LatLng(c.lat, c.lon),
+        content: div, yAnchor: 1.2, zIndex: 9998,
+        clickable: true
+    });
+    overlay.setMap(map);
+    bidCaseMarkers[c.id] = { overlay: overlay };
+}
+function upsertBidCaseMarker(c) {
+    var sig = bidCaseMarkerSignature(c);
+    if (bidCaseMarkers[c.id] && bidCaseMarkerSigs[c.id] === sig) return;
+    if (bidCaseMarkers[c.id]) { if (bidCaseMarkers[c.id].overlay) bidCaseMarkers[c.id].overlay.setMap(null); delete bidCaseMarkers[c.id]; }
+    placeBidCaseMarker(c);
+    bidCaseMarkerSigs[c.id] = sig;
+}
+/* auctionList의 renderAuctionMarkers()와 동일한 패턴 - 좌표가 없는 사례는 주소 검색(실패 시
+   키워드 검색)으로 지오코딩하고, 결과를 저장해둬서(saveBidCaseAPI) 다음부턴 다시 지오코딩하지
+   않음. 매도사례 매칭(matchResaleForBidCase)에서도 이 좌표를 재사용할 수 있어 중복 호출도 줄어듦. */
+function renderBidCaseMarkers() {
+    if (!bidCaseList || !bidCaseList.length) { clearBidCaseMarkers(); return; }
+    var neededIds = {};
+    bidCaseList.forEach(function(c) {
+        neededIds[c.id] = true;
+        if (c.lat && c.lon) { upsertBidCaseMarker(c); return; }
+        if (!c.addrJibun) return;
+        geocoder.addressSearch(c.addrJibun, function(result, status) {
+            if (status === kakao.maps.services.Status.OK && result && result.length > 0) {
+                c.lat = parseFloat(result[0].y); c.lon = parseFloat(result[0].x);
+                saveBidCaseAPI(c); upsertBidCaseMarker(c);
+            } else if (places) {
+                places.keywordSearch(c.addrJibun, function(res, st) {
+                    if (st === kakao.maps.services.Status.OK && res && res.length > 0) {
+                        c.lat = parseFloat(res[0].y); c.lon = parseFloat(res[0].x);
+                        saveBidCaseAPI(c); upsertBidCaseMarker(c);
+                    }
+                });
+            }
+        });
+    });
+    Object.keys(bidCaseMarkers).forEach(function(id) {
+        if (!neededIds[id]) {
+            if (bidCaseMarkers[id].overlay) bidCaseMarkers[id].overlay.setMap(null);
+            delete bidCaseMarkers[id];
+            delete bidCaseMarkerSigs[id];
+        }
+    });
 }
 function buildAuctionPanelHtml(aptName, aptDong, aptBunji) {
     var matched = auctionList.filter(function(a) { return matchesAuctionKey(a, aptName, aptDong, aptBunji); });
@@ -6149,7 +6355,7 @@ async function parseAuctionPaste() {
         }
         // 지오코딩 대기(await) 중에도 더 최신 요청이 시작될 수 있어 마지막으로 한 번 더 확인
         if (mySeq !== parseAuctionRequestSeq) return;
-        autoCalcRepairSilent(); autoCalcMovingSilent(); autoCalcCleaningSilent(); calcCompValuation(); calcMargin(); loadAuctionBuildingInfo(); autoCalcAuctionJeonseAnalysis();
+        autoCalcRepairSilent(); autoCalcMovingSilent(); autoCalcCleaningSilent(); calcCompValuation(); calcMargin(); loadAuctionBuildingInfo(); autoCalcAuctionJeonseAnalysis(); renderDongMarginStatsInModal();
         renderAiSummaryBox();
         clearAuctionImages();
         if (warnings.length) {
