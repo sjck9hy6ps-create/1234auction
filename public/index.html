@@ -1056,9 +1056,12 @@ var compOnlyFilter = false;
 // 매매기록 없이 전세거래만 있던 주소지(rentOnly 건물)는 평소엔 지도에서 숨겨두고,
 // 이 필터를 켰을 때만 보이게 함 (기본값 false = 숨김 = "필요할 때만" 보기)
 var showRentOnlyFilter = false;
-// 이 필터를 켜면 일반 거래 마커/경매물건(🔨) 마커는 전부 숨기고 낙찰사례(⚖️) 배지만 지도에 남김 -
-// 붙여넣은 낙찰사례가 많아졌을 때 다른 배지에 묻히지 않고 한눈에 훑어보기 위함
+// "비교대상만" 필터와 동일한 방식(다른 필터들과 AND 조건으로 결합)의 켜고 끄는 필터 -
+// 켜면 일반 거래 마커는 이 건물 주소지에 매칭되는 낙찰사례가 하나라도 있는 것만 보여줌.
+// 내가 등록한 경매물건(🔨) 배지와 낙찰사례(⚖️) 배지 자체는 이 필터와 무관하게 항상 그대로 표시됨
+// (경매 배지가 필터 무시하고 항상 뜨는 기존 규칙과 동일하게 유지).
 var bidCaseOnlyFilter = false;
+var bidCaseAptIndex = { byName: {}, byDongBunji: {} };
 /* 경매물건 비교물건으로 등록된 거래를 역인덱싱 (키: 이름|날짜|금액 → 등록된 경매 목록)
    비교물건 저장 시 name/date/amount로 dedup 체크하던 것과 동일한 키 형식을 사용함 */
 function computeComparableIndex() {
@@ -1094,6 +1097,25 @@ function getAptComparableRefs(apt) {
         });
     });
     return refs;
+}
+/* bidCaseList를 역인덱싱(건물명 → true, 동+번지 → true) - matchesAuctionKey가 "이름 일치 OR
+   동+번지 일치"로 판정하므로 두 키 모두 등록해둠. apt마다 bidCaseList 전체를 훑는 대신
+   이 인덱스로 한 번에 조회하기 위함(비교대상만 필터의 comparableIndex와 같은 이유). */
+function computeBidCaseAptIndex() {
+    var idx = { byName: {}, byDongBunji: {} };
+    bidCaseList.forEach(function(c) {
+        if (c.buildingName) idx.byName[c.buildingName] = true;
+        if (c.dong && c.bunji) idx.byDongBunji[c.dong + '|' + c.bunji] = true;
+    });
+    return idx;
+}
+/* 이 apt 주소지에 매칭되는 낙찰사례가 하나라도 있는지 - findMatchedAptForBidCase의 반대 방향
+   조회를 인덱스 기반으로 빠르게 수행함 */
+function aptHasMatchingBidCase(apt) {
+    var l = (apt && apt.latest) || {};
+    if (l.name && bidCaseAptIndex.byName[l.name]) return true;
+    if (l.dong && l.bunji && bidCaseAptIndex.byDongBunji[l.dong + '|' + l.bunji]) return true;
+    return false;
 }
 function toggleCompOnlyFilter(btn) {
     compOnlyFilter = !compOnlyFilter;
@@ -2094,8 +2116,6 @@ function buildRentOnlyEntries(existingList, rentList, sigungu, lawdCd) {
    따로 존재하게 되어 나중에 한쪽만 고치는 실수가 생기기 쉬움 */
 function isAptVisibleUnderCurrentFilters(apt) {
     if (!apt) return false;
-    // "낙찰사례만 보기"가 켜져 있으면 일반 거래 마커는 전부 숨김(⚖️ 배지만 남김)
-    if (bidCaseOnlyFilter) return false;
     // 단독/다가구는 placeMarkers가 지오코딩 자체를 시도하지 않아 지도에 마커가 만들어지지 않음
     if (apt.buildingType === 'single') return false;
     // 매매기록 없이 전세거래만 있던 주소지는 "전세거래만 있는 주소" 필터를 켰을 때만 보여줌
@@ -2113,6 +2133,10 @@ function isAptVisibleUnderCurrentFilters(apt) {
     }
     if (activeSurgeRanks.size > 0 && !passesSurgeFilter(apt)) return false;
     if (compOnlyFilter && !(getAptComparableRefs(apt).length > 0)) return false;
+    // "낙찰사례만 보기"는 다른 필터들과 동일하게 AND 조건으로 결합됨 - 이 apt 주소지에
+    // 매칭되는 낙찰사례가 하나도 없으면 숨김(경매/낙찰사례 배지 자체는 이 필터와 무관하게
+    // 항상 표시되므로 여기서는 일반 거래 마커만 대상으로 함)
+    if (bidCaseOnlyFilter && !aptHasMatchingBidCase(apt)) return false;
     return true;
 }
 function redrawMarkers() {
@@ -2120,6 +2144,7 @@ function redrawMarkers() {
     var myGen = renderGen;
     surgeRankMap = computeSurgeRankMap(currentTypeFilter);
     comparableIndex = computeComparableIndex();
+    bidCaseAptIndex = computeBidCaseAptIndex();
     var list = allAptList.filter(isAptVisibleUnderCurrentFilters);
     placeMarkers(list, myGen);
     setTimeout(function() { renderAuctionMarkers(); renderBidCaseMarkers(); }, 100);
@@ -4918,8 +4943,7 @@ function upsertAuctionMarker(a) {
     auctionMarkerSigs[a.id] = sig;
 }
 function renderAuctionMarkers() {
-    // "낙찰사례만 보기"가 켜져 있으면 내가 등록한 경매물건(🔨) 마커도 숨겨서 낙찰사례(⚖️) 배지만 남김
-    if (bidCaseOnlyFilter) { clearAuctionMarkers(); return; }
+    // 내가 등록한 경매물건(🔨) 배지는 다른 필터(낙찰사례만 보기 포함)와 무관하게 항상 표시됨
     if (!auctionList || !auctionList.length) { clearAuctionMarkers(); return; }
     var neededIds = {};
     auctionList.forEach(function(a) {
