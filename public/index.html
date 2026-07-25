@@ -4965,23 +4965,16 @@ function renderAuctionMarkers() {
         neededIds[a.id] = true;
         if (a.lat && a.lon) { upsertAuctionMarker(a); }
         else if (a.addr) {
-            // 1순위: 정식 주소 검색. 지번/도로명 형식이 조금이라도 다르면 실패할 수 있어서
-            // 일반 매물 지오코딩과 동일하게 2순위로 키워드(단지명 등) 검색까지 시도함 -
-            // 이게 없으면 주소 형식이 안 맞는 경매물건은 지도에 배지가 영영 안 뜨고 원인도 알 수 없었음
-            geocoder.addressSearch(a.addr, function(result, status) {
-                if (status === kakao.maps.services.Status.OK && result && result.length > 0) {
-                    a.lat = parseFloat(result[0].y); a.lon = parseFloat(result[0].x);
+            // tryStepGeocode(전역 runGeocode 세마포어, 동시 4건 제한)를 거쳐 지오코딩함 - 예전엔
+            // geocoder.addressSearch를 forEach 안에서 직접 호출했는데, 경매물건이 늘어나면
+            // 낙찰사례와 똑같은 이유로 순간적으로 요청이 몰려 CORS 에러가 날 수 있었음
+            tryStepGeocode([a.addr], function(lat, lon) {
+                if (lat && lon) {
+                    a.lat = lat; a.lon = lon;
                     saveAuctionAPI(a); upsertAuctionMarker(a); renderAuctionList();
-                } else if (places) {
-                    places.keywordSearch(a.addr, function(res, st) {
-                        if (st === kakao.maps.services.Status.OK && res && res.length > 0) {
-                            a.lat = parseFloat(res[0].y); a.lon = parseFloat(res[0].x);
-                            saveAuctionAPI(a); upsertAuctionMarker(a); renderAuctionList();
-                        }
-                        // 두 방식 모두 실패하면 a.lat/a.lon이 계속 비어있고,
-                        // 경매목록 패널(renderAuctionList)에 "⚠️ 지도에 표시되지 않음" 경고로 드러남
-                    });
                 }
+                // 실패하면 a.lat/a.lon이 계속 비어있고,
+                // 경매목록 패널(renderAuctionList)에 "⚠️ 지도에 표시되지 않음" 경고로 드러남
             });
         }
     });
@@ -5175,9 +5168,21 @@ function upsertBidCaseMarker(c) {
     placeBidCaseMarker(c);
     bidCaseMarkerSigs[c.id] = sig;
 }
-/* auctionList의 renderAuctionMarkers()와 동일한 패턴 - 좌표가 없는 사례는 주소 검색(실패 시
-   키워드 검색)으로 지오코딩하고, 결과를 저장해둬서(saveBidCaseAPI) 다음부턴 다시 지오코딩하지
-   않음. 매도사례 매칭(matchResaleForBidCase)에서도 이 좌표를 재사용할 수 있어 중복 호출도 줄어듦. */
+/* 좌표가 없는 사례는 지오코딩해서 저장해두고(saveBidCaseAPI) 다음부턴 다시 지오코딩하지 않음.
+   매도사례 매칭(matchResaleForBidCase)에서도 이 좌표를 재사용할 수 있어 중복 호출도 줄어듦.
+   ⚠️ 반드시 tryStepGeocode(전역 runGeocode 세마포어로 동시 4건까지만 처리)를 거쳐야 함 -
+   예전엔 geocoder.addressSearch를 forEach 안에서 바로 호출했었는데, 낙찰사례가 수백 건
+   쌓이면 순간적으로 수백 건의 요청이 한꺼번에 카카오 API로 날아가 CORS 에러(사실은 과도한
+   동시요청으로 응답이 막혀 CORS 헤더 자체가 안 붙어서 브라우저가 CORS 에러로 표시하는 것)가
+   났던 버그가 있었음. 일반 매물/경매 마커와 같은 큐를 공유해서 전체 동시 지오코딩 요청 수를
+   앱 전역 기준 4건으로 묶어둠. */
+function buildBidCaseGeocodeCandidates(c) {
+    var candidates = [];
+    if (c.addrJibun) candidates.push(c.addrJibun);
+    if (c.dong && c.bunji) candidates.push((c.dong + ' ' + c.bunji).trim());
+    if (c.buildingName && c.dong) candidates.push((c.dong + ' ' + c.buildingName).trim());
+    return candidates;
+}
 function renderBidCaseMarkers() {
     // "낙찰사례 배지 표시" 마스터 스위치가 꺼져 있으면 배지를 전부 지우고 지오코딩도 돌지 않음
     if (!showBidCaseBadges) { clearBidCaseMarkers(); return; }
@@ -5186,18 +5191,12 @@ function renderBidCaseMarkers() {
     bidCaseList.forEach(function(c) {
         neededIds[c.id] = true;
         if (c.lat && c.lon) { upsertBidCaseMarker(c); return; }
-        if (!c.addrJibun) return;
-        geocoder.addressSearch(c.addrJibun, function(result, status) {
-            if (status === kakao.maps.services.Status.OK && result && result.length > 0) {
-                c.lat = parseFloat(result[0].y); c.lon = parseFloat(result[0].x);
+        var candidates = buildBidCaseGeocodeCandidates(c);
+        if (!candidates.length) return;
+        tryStepGeocode(candidates, function(lat, lon) {
+            if (lat && lon) {
+                c.lat = lat; c.lon = lon;
                 saveBidCaseAPI(c); upsertBidCaseMarker(c);
-            } else if (places) {
-                places.keywordSearch(c.addrJibun, function(res, st) {
-                    if (st === kakao.maps.services.Status.OK && res && res.length > 0) {
-                        c.lat = parseFloat(res[0].y); c.lon = parseFloat(res[0].x);
-                        saveBidCaseAPI(c); upsertBidCaseMarker(c);
-                    }
-                });
             }
         });
     });
