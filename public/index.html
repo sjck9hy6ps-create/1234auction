@@ -3080,6 +3080,16 @@ function renderTable() {
     var html = '';
     var ind  = currentIndicators;
     html += buildNaverLinkHtml(currentPanelLat, currentPanelLon, ind && ind._aptName, ind && ind._aptDong);
+    // 이 물건 주소와 매칭되는 경매물건이 등록돼 있으면(=경매등록을 이미 해둔 물건이면)
+    // 탱크옥션/법원경매정보/인터넷등기소 바로가기도 같이 보여줌 (배지에서 바로 시세조사 →
+    // 경매 원본자료 확인까지 이어지도록)
+    if (currentPanelApt && currentPanelApt.latest) {
+        var pl = currentPanelApt.latest;
+        var panelMatchedAuction = auctionList.find(function(a) { return matchesAuctionKey(a, pl.name, pl.dong, pl.bunji); });
+        if (panelMatchedAuction) {
+            html += buildCourtAuctionLinkHtml(panelMatchedAuction.caseNo, panelMatchedAuction.addr);
+        }
+    }
     // 임장메모 - 경매 사건과 무관하게 건물 단위로 영구 보관되어, 이 건물을 나중에
     // 다시 볼 때(다른 경매 건이든 그냥 시세 확인이든) 항상 이 자리에서 확인할 수 있음
     if (ind && (ind._aptName || ind._aptDong)) {
