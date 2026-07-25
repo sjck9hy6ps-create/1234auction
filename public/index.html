@@ -2380,22 +2380,22 @@ function createMarker(cacheKey, lat, lon, apt) {
         // 매매 실거래가 없어 전세가 기반으로 추정한 등급은 점선 테두리 + "(추정)" 표시로 구분
         var estStyle = apt.gradeEstimated ? 'border:1px dashed rgba(255,255,255,0.85);' : '';
         var estSuffix = apt.gradeEstimated ? '(추정)' : '';
-        gradeBadge = '<span style="background:' + gc + ';color:white;font-size:10px;font-weight:bold;padding:2px 6px;border-radius:3px;margin-left:3px;' + estStyle + '">' + tierPrefix + pppText + estSuffix + '</span>';
+        gradeBadge = '<span style="background:' + gc + ';color:white;font-size:10px;font-weight:bold;padding:2px 6px;border-radius:3px;' + estStyle + '">' + tierPrefix + pppText + estSuffix + '</span>';
     }
     // 낙찰사례 평균 추정마진 배지 - 이 매물의 법정동+건물유형과 같은 낙찰사례들의 추정마진
-    // 평균을 평단가(gradeBadge) 바로 우측에 보여줌. 매칭되는 낙찰사례가 하나도 없으면 표시 안 함
+    // 평균을 평단가(gradeBadge) 배지들과 같은 줄에 보여줌. 매칭되는 낙찰사례가 하나도 없으면 표시 안 함
     var marginStat = getDongTypeMarginStat(l.dong, apt.buildingType);
     var marginBadge = marginStat
-        ? '<span style="background:#00695c;color:white;font-size:10px;font-weight:bold;padding:2px 6px;border-radius:3px;margin-left:3px;" title="이 동 낙찰사례 ' + marginStat.count + '건 기준 평균 추정마진(세전, 참고치)">📊' + toEok(String(marginStat.avg)) + '</span>'
+        ? '<span style="background:#00695c;color:white;font-size:10px;font-weight:bold;padding:2px 6px;border-radius:3px;" title="이 동 낙찰사례 ' + marginStat.count + '건 기준 평균 추정마진(세전, 참고치)">📊' + toEok(String(marginStat.avg)) + '</span>'
         : '';
     // 신고가 배지
    var nhBadge = apt.hasNewHigh
-        ? '<span style="background:#ff6f00;color:white;font-size:10px;font-weight:bold;padding:2px 6px;border-radius:10px;margin-left:3px;">★신고가</span>'
+        ? '<span style="background:#ff6f00;color:white;font-size:10px;font-weight:bold;padding:2px 6px;border-radius:10px;">★신고가</span>'
         : '';
     // 급등 순위 배지 (급등지역 순위 1~5위 안에 들 때만 표시)
     var surgeRank = surgeRankMap[l.dong];
     var surgeBadge = surgeRank
-        ? '<span style="background:#e53935;color:white;font-size:10px;font-weight:bold;padding:2px 6px;border-radius:10px;margin-left:3px;">🔥급등 ' + surgeRank + '위</span>'
+        ? '<span style="background:#e53935;color:white;font-size:10px;font-weight:bold;padding:2px 6px;border-radius:10px;">🔥급등 ' + surgeRank + '위</span>'
         : '';
     // 인기 평형 배지
     var popBadge = buildPopularPyeongBadge(apt);
@@ -2415,10 +2415,10 @@ function createMarker(cacheKey, lat, lon, apt) {
     div.style.cssText = matchedAuction
         ? 'position:relative;background:linear-gradient(180deg,#fff,#fff7ec);border:3px solid #e65100;border-radius:9px;'
             + 'padding:6px 10px;margin-top:10px;white-space:nowrap;cursor:pointer;transform:scale(1.1);'
-            + 'text-align:center;line-height:1.35;max-width:230px;animation:auctionGlow 1.8s ease-in-out infinite;'
+            + 'text-align:center;line-height:1.35;max-width:250px;animation:auctionGlow 1.8s ease-in-out infinite;'
         : 'position:relative;background:white;border:2px ' + borderStyle + ' ' + color + ';border-radius:8px;'
             + 'padding:6px 10px;white-space:nowrap;cursor:pointer;'
-            + 'box-shadow:0 2px 6px rgba(0,0,0,0.13);text-align:center;line-height:1.35;max-width:220px;';
+            + 'box-shadow:0 2px 6px rgba(0,0,0,0.13);text-align:center;line-height:1.35;max-width:240px;';
     div.setAttribute('onclick', 'handleAptMarkerClick(\'' + mKey + '\')');
     // 아이패드 등 터치 기기는 마우스 hover가 없어서 ...으로 잘린 글자를 볼 방법이 없었음.
     // title 속성을 달아두면 PC에서는 그냥 마우스만 올려도 브라우저 기본 툴팁이 뜨고,
@@ -2431,12 +2431,20 @@ function createMarker(cacheKey, lat, lon, apt) {
     if (l.road_name) peekParts.push(l.road_name);
     if (matchedAuction) peekParts.push('🔨 경매 ' + matchedAuction.status);
     div.title = peekParts.join(' · ');
+    // 건물명이 길면 배지들(평단가/추정마진/신고가/급등순위)까지 한 줄에 우겨넣다가 뒤쪽 배지가
+    // 통째로 잘려서 안 보이는 문제가 있었음(특히 평단가가 자주 잘림) - 건물명은 자기 줄에서만
+    // 말줄임(...)되게 하고, 배지들은 별도 줄에서 flex-wrap으로 넘치면 다음 줄로 내려가게 분리해서
+    // 배지 내용이 잘리는 일 없이 항상 전체가 보이도록 함.
+    var badgeRow = (gradeBadge || marginBadge || nhBadge || surgeBadge)
+        ? '<div style="display:flex;flex-wrap:wrap;justify-content:center;gap:3px;margin-top:3px;">' + gradeBadge + marginBadge + nhBadge + surgeBadge + '</div>'
+        : '';
     div.innerHTML = ''
         + auctionRibbon
         + (count > 0 ? '<div style="font-size:15px;font-weight:900;color:' + color + ';">' + count + '건</div>' : '')
         + '<div style="font-size:13px;font-weight:bold;color:#333;overflow:hidden;text-overflow:ellipsis;">'
-         +   (l.name || '') + gradeBadge + marginBadge + nhBadge + surgeBadge
+         +   (l.name || '')
         + '</div>'
+        + badgeRow
         + (popBadge ? '<div style="margin-top:2px;">' + popBadge + '</div>' : '')
         + (compBadge ? '<div style="margin-top:2px;">' + compBadge + '</div>' : '')
         + (amount ? '<div style="font-size:13px;font-weight:bold;color:' + color + ';">' + toEok(amount) + '</div>' : '')
