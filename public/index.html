@@ -173,6 +173,22 @@ tr:hover td { background:#fffde7; }
     box-shadow:0 1px 3px rgba(0,0,0,0.35); border:1.5px solid white; z-index:4;
 }
 .comp-add-badge:hover { background:#00695c; }
+/* 낙찰사례(⚖️) 배지 위 개별 재매칭/삭제 버튼 - +비교 배지와 같은 자리(모서리) 패턴을
+   그대로 따라, 상세페이지를 열지 않고도 지도에서 바로 조작할 수 있게 함 */
+.bc-rematch-badge {
+    position:absolute; top:-10px; left:-8px;
+    background:#00897b; color:white; font-size:9px; font-weight:900;
+    padding:1px 6px; border-radius:10px; white-space:nowrap; cursor:pointer;
+    box-shadow:0 1px 3px rgba(0,0,0,0.35); border:1.5px solid white; z-index:4;
+}
+.bc-rematch-badge:hover { background:#00695c; }
+.bc-delete-badge {
+    position:absolute; top:-10px; right:-8px;
+    background:#c62828; color:white; font-size:9px; font-weight:900;
+    padding:1px 6px; border-radius:10px; white-space:nowrap; cursor:pointer;
+    box-shadow:0 1px 3px rgba(0,0,0,0.35); border:1.5px solid white; z-index:4;
+}
+.bc-delete-badge:hover { background:#8e0000; }
 /* 경매 배지 */
 .auction-badge {
     position:absolute; top:-10px; left:50%; transform:translateX(-50%);
@@ -5205,12 +5221,15 @@ function placeBidCaseMarker(c) {
         + 'padding:4px 9px;margin:4px;margin-top:16px;white-space:nowrap;cursor:pointer;'
         + 'text-align:center;line-height:1.5;max-width:200px;';
     div.title = [(c.caseNo || '낙찰사례'), (c.addrJibun || ''), '⚖️ ' + (c.status || ''), priceLine].filter(Boolean).join(' · ');
+    var cidJs = String(c.id).replace(/'/g, "\\'");
     div.innerHTML = '<div class="auction-badge" style="background:#00695c;">⚖️ ' + (c.status || '낙찰사례') + '</div>'
+        + '<div class="bc-rematch-badge" title="매도사례 재매칭" onclick="event.stopPropagation();retryMatchOneCase(\'' + cidJs + '\')">🔄</div>'
+        + '<div class="bc-delete-badge" title="이 낙찰사례 삭제" onclick="event.stopPropagation();deleteBidCase(\'' + cidJs + '\')">✕</div>'
         + '<div style="color:#333;font-size:11px;font-weight:bold;overflow:hidden;text-overflow:ellipsis;max-width:180px;margin-top:5px;">' + (c.caseNo || '(사건번호 미상)') + '</div>'
         + '<div style="color:#00695c;font-size:12px;font-weight:bold;">' + priceLine + '</div>'
         + marginLine
         + '<div style="color:#888;font-size:9px;margin-top:2px;">📊 클릭하면 매매기록도 함께 보여요</div>';
-    div.setAttribute('onclick', 'openBidCaseDetail(\'' + String(c.id).replace(/'/g, "\\'") + '\')');
+    div.setAttribute('onclick', 'openBidCaseDetail(\'' + cidJs + '\')');
     var overlay = new kakao.maps.CustomOverlay({
         position: new kakao.maps.LatLng(c.lat, c.lon),
         content: div, yAnchor: 1.2, zIndex: 9998,
