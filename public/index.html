@@ -725,6 +725,27 @@ tr:hover td { background:#fffde7; }
                 <span style="font-size:12px;color:#888;margin-left:4px;">원</span>
             </div>
             <div class="modal-row">
+                <span class="modal-label">공시가격·개별공시지가 자동조회 <span onclick="showCalcInfo('vat')" title="계산기준 보기" style="cursor:pointer;color:#1976d2;">ⓘ</span></span>
+                <button type="button" class="modal-btn btn-gray" id="vat-auto-fetch-btn" style="font-size:11px;" onclick="autoFetchOfficialPriceForModal()">🏛️ VWorld 자동조회</button>
+                <span style="font-size:10px;color:#999;margin-left:4px;">주소 입력 후 눌러주세요 (국토부 공동주택가격·개별공시지가)</span>
+            </div>
+            <div class="modal-row">
+                <span class="modal-label">대지권 면적</span>
+                <input type="number" step="0.01" class="modal-input" id="a-site-rights-area" placeholder="0" oninput="calcCompValuation();calcMargin();">
+                <span style="font-size:12px;color:#888;margin-left:4px;">㎡</span>
+            </div>
+            <div class="modal-row">
+                <span class="modal-label">토지 개별공시지가</span>
+                <input type="number" class="modal-input" id="a-land-price-per-m2" placeholder="0" oninput="calcCompValuation();calcMargin();">
+                <span style="font-size:12px;color:#888;margin-left:4px;">원/㎡</span>
+            </div>
+            <div style="font-size:10px;color:#aaa;margin-top:-4px;margin-bottom:6px;">
+                전용 85㎡ 초과(국민주택규모 초과) 주택을 매매사업자로 낙찰받으면 건물분 부가세가 별도로 발생합니다(계산방법은 위 ⓘ 참고).
+                공시가격·개별공시지가는 위 자동조회 버튼으로 채워지고, 대지권 면적은 AI 자동추출(대지권 항목이 있는 텍스트를 붙여넣은 경우)로
+                채워집니다. 자동으로 안 채워지면 대지권 면적은 매각물건명세서(🏛️ 법원경매정보)나 등기부등본(🔏 인터넷등기소, "대지권의 표시" 란)에서,
+                개별공시지가는 위 "🏛️ 부동산공시가격 알리미"에서 직접 확인해 입력하세요.
+            </div>
+            <div class="modal-row">
                 <span class="modal-label">지방 저가주택</span>
                 <label style="display:flex;align-items:center;gap:4px;font-size:12px;">
                     <input type="checkbox" id="a-is-local-cheap" onchange="autoCalcTaxSilent();calcCompValuation();calcMargin();"> 비수도권 + 공시가격 2억 이하 (공시가격 입력 시 자동 판정, 필요시 직접 수정 가능)
@@ -868,6 +889,7 @@ tr:hover td { background:#fffde7; }
         <div class="margin-result" id="margin-result-box">
             <div class="margin-result-title">💡 예상 마진 분석</div>
             <div class="margin-grid" id="margin-grid"></div>
+            <div id="vat-warn-box"></div>
         </div>
     </div>
     <div class="modal-footer">
@@ -4006,7 +4028,7 @@ function openAuctionModal(id) {
      ['auction-id','a-addr','a-name','a-dong','a-floor','a-unit','a-case','a-pyung','a-date',
      'a-appraisal','a-min-bid','a-deposit-rate','a-my-bid','a-actual-bid',
      'a-tax','a-registry-fee','a-eviction-fee','a-repair','a-agent','a-moving','a-cleaning','a-etc','a-target','a-actual-sell',
-     'a-official-price','a-memo','a-paste-text','a-loan-rate']
+     'a-official-price','a-site-rights-area','a-land-price-per-m2','a-memo','a-paste-text','a-loan-rate']
         .forEach(function(fid) { document.getElementById(fid).value = ''; });
     document.getElementById('a-status').value = '검토중';
     document.getElementById('a-prop-type').value = 'apt';
@@ -4090,6 +4112,8 @@ function openAuctionModal(id) {
             document.getElementById('a-is-adjusted').checked   = !!a.isAdjusted;
             document.getElementById('a-is-local-cheap').checked = !!a.isLocalCheap;
             document.getElementById('a-official-price').value = a.officialPriceWon || '';
+            document.getElementById('a-site-rights-area').value = a.siteRightsAreaM2 || '';
+            document.getElementById('a-land-price-per-m2').value = a.landPricePerM2 || '';
             if (a.addrLabel) { document.getElementById('a-addr-result').innerText = '📍 ' + a.addrLabel; document.getElementById('a-addr-result').style.display = 'block'; }
         }
     }
@@ -4098,6 +4122,13 @@ function openAuctionModal(id) {
     if (!document.getElementById('a-repair').value) autoCalcRepairSilent();
     if (!document.getElementById('a-moving').value) autoCalcMovingSilent();
     if (!document.getElementById('a-cleaning').value) autoCalcCleaningSilent();
+    // 대지권 면적이 비어있고 AI가 추출해둔 값(pendingAuctionDetail.siteRightsArea, "34.19㎡(10.34평)" 형식)이
+    // 있으면 자동으로 채워줌 - 부가세 계산에 필요한 세 값(공시가격·대지권면적·개별공시지가) 중
+    // 대지권면적은 VWorld로 조회가 안 되는 값이라 AI 추출이 유일한 자동화 경로임
+    if (!document.getElementById('a-site-rights-area').value && pendingAuctionDetail && pendingAuctionDetail.siteRightsArea) {
+        var extractedSiteArea = parseAreaM2FromText(pendingAuctionDetail.siteRightsArea);
+        if (extractedSiteArea) document.getElementById('a-site-rights-area').value = extractedSiteArea;
+    }
     updateStatusUI(); updateBidMethodUI(); calcMargin(); calcCompValuation(); suggestBidFromTarget(); renderChecklistSection(); loadAuctionBuildingInfo(); autoCalcAuctionJeonseAnalysis(); renderDongMarginStatsInModal();
     document.getElementById('auction-modal-bg').style.display = 'flex';
 }
@@ -4791,6 +4822,18 @@ var CALC_INFO_TEXT = {
         + '  임차인이 있는 물건이면 이 가능성도 염두에 두세요.\n\n'
         + '⚠️ 이 설명은 참고용 요약이며 법률 자문이 아닙니다. 실제 입찰 전 반드시 법무사·변호사의\n'
         + '권리분석을 받으세요.',
+    vat: '부가세(건물분)는 전용면적이 국민주택규모(85㎡)를 초과하는 주택을 "매매사업자" 입찰방법으로\n'
+        + '낙찰받을 때만 대상이 됩니다(개인명의 입찰이거나 85㎡ 이하면 대상 아님).\n\n'
+        + '계산 방법(경락금액 중 건물가액을 구해 그 10%를 부가세로 봄):\n'
+        + '1) 공동주택가격을 전유면적:대지권면적 비율로 건물가액/토지가액으로 나눔\n'
+        + '   (건물·토지 각각의 기준시가가 따로 없어, 면적비율로 안분하는 방식)\n'
+        + '2) 그 비율을 경락금액(입찰가)에 그대로 적용해 "경락금액 중 건물가액"을 구함\n'
+        + '3) 그 금액의 10%가 부가세\n\n'
+        + '예) 경락금액 1억2,600만, 공동주택가격 6,300만, 전유면적 55㎡, 대지권면적 44㎡라면\n'
+        + '건물가액 비율 55/99 → 경락금액 중 건물가액 7,000만 → 부가세 700만\n\n'
+        + '자동계산에는 "공시가격"과 "대지권 면적" 입력이 필요합니다. 대지권 면적은 매각물건명세서나\n'
+        + '등기부등본(대지권의 표시)에서, 개별공시지가는 부동산공시가격 알리미에서 직접 확인할 수 있습니다.\n'
+        + '⚠️ 참고용 추정치입니다. 실제 입찰 전 세무사를 통해 한 번 더 확인하는 것을 권장합니다.',
 };
 function showCalcInfo(key) {
     alert(CALC_INFO_TEXT[key] || '설명이 없습니다.');
@@ -4821,7 +4864,9 @@ function calcMargin() {
     var loanRateInput = parseFloat(document.getElementById('a-loan-rate').value);
     var loanRate = (loanRateInput > 0) ? loanRateInput : DEFAULT_LOAN_RATE[bidMethod === 'dealer' ? 'dealer' : 'individual'];
     var interestCost = calcLoanInterest(loanAmount, loanRate, holdMonths);
-    var feesSum   = tax + registryFee + evictionFee + repair + agent + moving + cleaning + interestCost + etc;
+    var vatInfo = calcAuctionVat(useBid);
+    var vat = vatInfo.computable ? vatInfo.vat : 0;
+    var feesSum   = tax + registryFee + evictionFee + repair + agent + moving + cleaning + interestCost + etc + vat;
     var totalCost = useBid + feesSum;
     var preTaxMargin = useSell > 0 ? useSell - totalCost : 0;
     var taxResult = (useSell > 0 && preTaxMargin > 0) ? calcResaleIncomeTax(bidMethod, preTaxMargin, holdMonths) : { totalTax: 0, rateLabel: '' };
@@ -4853,9 +4898,20 @@ function calcMargin() {
       + mItem('대출금액(' + (bidMethod === 'dealer' ? '신탁대출90%' : '개인담보대출') + ')', loanAmount > 0 ? toEok(String(loanAmount)) : (useBid > 0 ? '대출불가' : '—'), '#00695c')
       + mItem('보증금제외 필요현금', useBid > 0 ? toEok(String(cashNeeded)) : '—', '#c62828')
       + mItem('대출이자(연' + loanRate.toFixed(1) + '%·' + holdMonths + '개월)', (loanAmount > 0 && holdMonths > 0) ? toEok(String(interestCost)) : '—', '#bf360c')
+      + (vatInfo.applicable
+          ? mItem('부가세(건물분,85㎡초과) <span onclick="showCalcInfo(\'vat\')" title="계산기준 보기" style="cursor:pointer;">ⓘ</span>', vatInfo.computable ? toEok(String(vat)) : '확인필요', vatInfo.computable ? '#c62828' : '#e65100')
+          : '')
       + (compEst
           ? mItem('비교물건 기준 적정입찰가(목표 ' + toEok(String(compTargetMargin)) + ')', compBidResult && compBidResult.bid > 0 ? toEok(String(compBidResult.bid)) : '마진 확보 불가', '#6a1b9a')
           : '');
+    // 부가세 대상인데 자동계산에 필요한 데이터(공시가격·대지권면적)가 부족하면, 항목만 보고
+    // 지나치기 쉬우니 마진분석 박스 자체에도 눈에 띄게 안내를 추가함
+    var vatWarnBox = document.getElementById('vat-warn-box');
+    if (vatWarnBox) {
+        vatWarnBox.innerHTML = (vatInfo.applicable && !vatInfo.computable)
+            ? '<div style="font-size:11px;color:#e65100;background:#fff3e0;border-radius:6px;padding:6px 8px;margin-top:6px;">⚠️ ' + vatInfo.reason + '</div>'
+            : '';
+    }
 }
 /* 목표 매도가 - 목표마진 - 부대비용(세금·등기비·명도비·중개수수료 등)을 역산해서
    "이 가격 이하로 낙찰받아야 목표마진을 지킬 수 있다"는 적정입찰가를 계산.
@@ -4954,6 +5010,8 @@ async function saveAuction() {
         isAdjusted: document.getElementById('a-is-adjusted').checked,
         isLocalCheap: document.getElementById('a-is-local-cheap').checked,
         officialPriceWon: document.getElementById('a-official-price').value || null,
+        siteRightsAreaM2: document.getElementById('a-site-rights-area').value || null,
+        landPricePerM2: document.getElementById('a-land-price-per-m2').value || null,
         registryDoc: pendingRegistryDoc || null,
         registryAnalysis: pendingRegistryAnalysis || null,
         devNews: pendingDevNews || null,
@@ -5697,6 +5755,62 @@ function getCompEstValue() {
         anyAdjusted: anyAdjusted,
     };
 }
+// "34.19㎡(10.34평)" 형식의 문자열에서 ㎡ 앞의 숫자만 뽑아냄 (AI가 추출한 대지권 면적 파싱용)
+function parseAreaM2FromText(str) {
+    if (!str) return null;
+    var m = String(str).match(/([\d.]+)\s*㎡/);
+    return m ? parseFloat(m[1]) : null;
+}
+/* 국민주택규모(전용 85㎡) 초과 주택을 매매사업자로 낙찰받으면, 나중에 되팔지 않고 낙찰 자체로도
+   건물분에 대한 부가세가 별도로 발생할 수 있음(부가가치세법상 국민주택규모 이하만 면제) - 그래서
+   "입찰가 역산" 과정 자체에 비용으로 포함시켜야 함(사용자 요청). "경락금액 중 건물가액"을 구하는
+   실무 절차를 그대로 따름:
+   1) 공동주택가격을 전유면적:대지권면적 비율로 건물가액/토지가액으로 나눔
+      (건물·토지 각각의 기준시가가 따로 고시되지 않아, 면적비율로 근사 안분하는 실무 방식)
+   2) 그 비율을 경락금액(거래금액)에 그대로 적용해 "경락금액 중 건물가액"을 구함
+      (공동주택가격은 건물가액+토지가액 그 자체이므로, 이 비율은 결국 전유면적:대지권면적 비율과
+       동일함 - 공동주택가격 값 자체는 상쇄되지만, 실제 세무 절차를 그대로 보여주기 위해 그대로 둠)
+   3) 그 금액의 10%가 부가세
+   개인명의 입찰이거나 전용 85㎡ 이하면 애초에 대상이 아님(applicable=false).
+   대상이지만 공시가격·대지권면적 데이터가 없으면 computable=false로 이유만 알려줌(자동계산 불가). */
+function calcAuctionVat(bidAmount) {
+    var bidMethod = document.getElementById('a-bid-method').value;
+    if (bidMethod !== 'dealer') {
+        return { applicable: false, reason: '개인명의 입찰은 부가세 과세사업자가 아니므로 대상이 아닙니다.' };
+    }
+    var pyung = parseFloat(document.getElementById('a-pyung').value) || 0;
+    var areaM2 = pyung > 0 ? Math.round(pyung * 3.305785 * 100) / 100 : 0;
+    if (!areaM2) {
+        return { applicable: false, reason: '평형을 입력하면 국민주택규모(85㎡) 초과 여부를 판단합니다.' };
+    }
+    if (areaM2 <= 85) {
+        return { applicable: false, areaM2: areaM2, reason: '전용면적 약 ' + areaM2 + '㎡ (국민주택규모 85㎡ 이하 - 부가세 면제 대상)' };
+    }
+    var officialPriceWon = parseInt(document.getElementById('a-official-price').value) || 0;
+    var siteRightsAreaM2 = parseFloat(document.getElementById('a-site-rights-area').value) || 0;
+    if (!officialPriceWon || !siteRightsAreaM2) {
+        var missing = [];
+        if (!officialPriceWon) missing.push('공시가격');
+        if (!siteRightsAreaM2) missing.push('대지권 면적');
+        return {
+            applicable: true, computable: false, areaM2: areaM2,
+            reason: '전용 ' + areaM2 + '㎡로 국민주택규모 초과 - 부가세 대상이지만, ' + missing.join('·') + ' 정보가 없어 자동계산이 안 됩니다.',
+        };
+    }
+    var buildingValueOfOfficialPrice = officialPriceWon * areaM2 / (areaM2 + siteRightsAreaM2);
+    var landValueOfOfficialPrice = officialPriceWon * siteRightsAreaM2 / (areaM2 + siteRightsAreaM2);
+    var buildingRatio = buildingValueOfOfficialPrice / (buildingValueOfOfficialPrice + landValueOfOfficialPrice);
+    var buildingValueOfBid = (bidAmount || 0) * buildingRatio;
+    return {
+        applicable: true, computable: true, areaM2: areaM2, siteRightsAreaM2: siteRightsAreaM2,
+        officialPriceWon: officialPriceWon,
+        buildingValueOfOfficialPrice: Math.round(buildingValueOfOfficialPrice),
+        landValueOfOfficialPrice: Math.round(landValueOfOfficialPrice),
+        buildingRatio: buildingRatio,
+        buildingValueOfBid: Math.round(buildingValueOfBid),
+        vat: Math.round(buildingValueOfBid * 0.1),
+    };
+}
 /* 목표마진(a-comp-target-margin)을 만족하는 적정입찰가를 이분탐색으로 역산.
    순수익(bid)은 bid가 커질수록 단조 감소하므로 이분탐색으로 안전하게 수렴함.
    목표마진은 "세후" 순수익 기준 - 입찰방법(a-bid-method)·보유기간(a-hold-months)에 따라
@@ -5716,6 +5830,8 @@ function solveAuctionBid(estValue) {
     var targetMargin = parseInt(document.getElementById('a-comp-target-margin').value) || 0;
     var agentFee = calcAgentFee(estValue, c.propType); // 매도시 지급(입찰가와 무관, 매도가 기준 고정)
     var evictionFee = calcEvictionFee(c.pyung);
+    // 부가세 대상여부·비율은 입찰가(mid) 후보와 무관하게 고정이므로 이분탐색 밖에서 한 번만 계산
+    var vatInfo = calcAuctionVat(0);
     var lo = 0, hi = estValue, result = null;
     for (var i = 0; i < 45; i++) {
         var mid = (lo + hi) / 2;
@@ -5725,16 +5841,20 @@ function solveAuctionBid(estValue) {
         // 이분탐색 안에서 매 후보마다 다시 계산함 - 세금과 마찬가지로 bid에 종속적임.
         var loanAmount = calcLoanAmount(bidMethod, mid, appraisal);
         var interestCost = calcLoanInterest(loanAmount, loanRate, holdMonths);
-        var preTaxCost = mid + acqTax + registryFee + evictionFee + agentFee + repair + etc + moving + cleaning + interestCost;
+        var vat = vatInfo.computable ? Math.round(mid * vatInfo.buildingRatio * 0.1) : 0;
+        var preTaxCost = mid + acqTax + registryFee + evictionFee + agentFee + repair + etc + moving + cleaning + interestCost + vat;
         var preTaxProfit = estValue - preTaxCost;
         var taxResult = calcResaleIncomeTax(bidMethod, preTaxProfit, holdMonths);
         var netProfit = preTaxProfit - taxResult.totalTax;
         result = { bid: mid, acqTax: acqTax, registryFee: registryFee, evictionFee: evictionFee, agentFee: agentFee,
-            moving: moving, cleaning: cleaning, interestCost: interestCost, loanRate: loanRate,
+            moving: moving, cleaning: cleaning, interestCost: interestCost, loanRate: loanRate, vat: vat, vatInfo: vatInfo,
             preTaxProfit: preTaxProfit, resaleTax: taxResult.totalTax, netProfit: netProfit };
         if (netProfit > targetMargin) lo = mid; else hi = mid;
     }
     result.bid = Math.round(lo);
+    // 이분탐색이 끝난 뒤 최종 확정 입찰가 기준으로 부가세 값도 다시 맞춰서 결과에 반영
+    // (루프 마지막 반복의 mid는 최종 bid와 미세하게 다를 수 있음)
+    result.vat = vatInfo.computable ? Math.round(result.bid * vatInfo.buildingRatio * 0.1) : 0;
     return result;
 }
 function calcCompValuation() {
@@ -5786,9 +5906,15 @@ function calcCompValuation() {
             + vItem('추정 청소비용', toEok(String(r.cleaning)), '#888')
             + vItem('추정 중개수수료(매도시)', toEok(String(r.agentFee)), '#888')
             + vItem('추정 대출이자(연' + r.loanRate.toFixed(1) + '%)', r.interestCost > 0 ? toEok(String(r.interestCost)) : '—', '#bf360c')
+            + (r.vatInfo && r.vatInfo.applicable
+                ? vItem('부가세(건물분,85㎡초과)', r.vatInfo.computable ? toEok(String(r.vat)) : '확인필요', r.vatInfo.computable ? '#c62828' : '#e65100')
+                : '')
             + vItem((document.getElementById('a-bid-method').value === 'dealer' ? '종합소득세' : '양도소득세') + '(적정입찰가 기준)', r.bid > 0 ? toEok(String(r.resaleTax)) : '—', '#9c27b0')
             + vItem('적정 입찰가(세후 목표마진 기준)', r.bid > 0 ? toEok(String(r.bid)) : '마진 확보 불가', '#6a1b9a')
             + '</div>'
+            + (r.vatInfo && r.vatInfo.applicable && !r.vatInfo.computable
+                ? '<div style="font-size:10px;color:#e65100;margin-top:4px;">⚠️ ' + r.vatInfo.reason + '</div>'
+                : '')
             + '<div style="font-size:10px;color:#aaa;margin-top:6px;">⚠️ 수리비·기타비용은 입력해 둔 값 그대로 반영되며, 목표마진은 세금(입찰방법·보유기간 반영)까지 제한 세후 기준입니다. 취득세·소득세 계산 모두 참고용 추정치이니 실제 입찰 전 위택스·세무사를 통해 한 번 더 확인하는 것을 권장합니다.</div>'
             + '<div style="margin-top:6px;text-align:right;"><button type="button" class="modal-btn btn-purple" style="font-size:11px;" onclick="applyCompBid()">이 값으로 입찰가·비용 채우기</button></div>'
             + '</div>';
@@ -6538,7 +6664,14 @@ async function parseAuctionPaste() {
             var m = String(d.buildingArea).match(/([\d.]+)\s*평/);
             if (m) document.getElementById('a-pyung').value = Math.round(parseFloat(m[1]));
         }
- 
+        // 대지권 면적(부가세 계산용) - 이미 직접 입력해 둔 값은 덮어쓰지 않고, 비어있을 때만 채움.
+        // openAuctionModal()의 저장된-물건 불러오기 경로에도 동일한 자동채움이 있지만, 이 함수는
+        // "지금 열려있는 모달에 방금 붙여넣은 텍스트를 즉시 반영"하는 별도 경로라 여기서도 채워야 함.
+        if (!document.getElementById('a-site-rights-area').value && d.siteRightsArea) {
+            var extractedSiteArea = parseAreaM2FromText(d.siteRightsArea);
+            if (extractedSiteArea) document.getElementById('a-site-rights-area').value = extractedSiteArea;
+        }
+
         // AI가 이미 뽑아준 dong/bunji가 있으면 그걸 우선 사용해서 지오코딩 검색어를 만듦
         // (지번주소 문자열에 층/호수가 섞여 있으면 카카오 검색이 실패하거나 다른 곳을 찾을 수 있어서)
         var geoQuery = (d.dong && d.bunji) ? (d.dong + ' ' + d.bunji) : addrForInput;
@@ -7257,6 +7390,54 @@ async function fetchOfficialPrice(auctionId) {
         box.innerHTML = html;
     } catch (e) {
         box.innerHTML = '<div style="font-size:11px;color:#e53935;">조회 중 오류: ' + e.message + '</div>';
+    }
+}
+/* 경매 모달에서 바로 VWorld 공시가격을 조회해 "공시가격"·"토지 개별공시지가" 입력칸을
+   자동으로 채움 - 부가세 계산에 필요한 세 값(공시가격·대지권면적·개별공시지가) 중 두 개를
+   여기서 자동화함. 대지권 면적만은 VWorld로 조회가 안 되는 값이라(등기부등본/매각물건명세서
+   확인이 유일한 원천자료) 자동화 대상에서 제외되고, AI 추출 또는 수동입력에 의존함.
+   저장 전(auctionList에 아직 없는) 새 물건에서도 쓸 수 있도록 fetchOfficialPrice()와 달리
+   auctionList가 아닌 지금 모달에 입력 중인 값(pendingAuctionDetail/주소 입력칸)을 그대로 씀. */
+async function autoFetchOfficialPriceForModal() {
+    var addrJibun = (pendingAuctionDetail && pendingAuctionDetail.addrJibun) || document.getElementById('a-addr').value.trim();
+    if (!addrJibun) { alert('주소가 없어 조회할 수 없습니다. 주소를 먼저 입력해주세요.'); return; }
+    var btn = document.getElementById('vat-auto-fetch-btn');
+    if (btn) { btn.disabled = true; btn.innerText = '조회 중...'; }
+    try {
+        var res = await fetch('/api/get-official-price', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                addrJibun: addrJibun,
+                dong: (pendingAuctionDetail && pendingAuctionDetail.dong) || document.getElementById('a-dong').value || '',
+                unitFloor: (pendingAuctionDetail && pendingAuctionDetail.unitFloor) || document.getElementById('a-floor').value || '',
+                unitNo: (pendingAuctionDetail && pendingAuctionDetail.unitNo) || document.getElementById('a-unit').value || '',
+                propertyType: (pendingAuctionDetail && pendingAuctionDetail.propertyType) || '',
+            }),
+        });
+        var data = await res.json();
+        if (!res.ok || !data.success) {
+            alert('공시가격 자동조회 실패: ' + (data.error || '알 수 없는 오류'));
+            return;
+        }
+        if (data.source === 'apartment') {
+            var filled = [];
+            if (data.priceWon) { document.getElementById('a-official-price').value = data.priceWon; applyOfficialPriceInput(); filled.push('공시가격'); }
+            if (data.landPriceWonPerM2) { document.getElementById('a-land-price-per-m2').value = data.landPriceWonPerM2; filled.push('개별공시지가'); }
+            calcMargin(); calcCompValuation();
+            var msg = filled.length ? (filled.join('·') + '를 채웠습니다.') : '조회는 됐지만 채울 값이 없습니다.';
+            if (data.approximate) msg += '\n(호수 특정 없이 층·면적 기준으로 추정한 값이니 확인해주세요)';
+            if (!data.landPriceWonPerM2) msg += '\n개별공시지가는 조회되지 않아 위 "부동산공시가격 알리미"에서 직접 확인이 필요할 수 있습니다.';
+            alert(msg);
+        } else {
+            if (data.priceWonPerM2) document.getElementById('a-land-price-per-m2').value = data.priceWonPerM2;
+            calcMargin(); calcCompValuation();
+            alert('토지 개별공시지가를 채웠습니다.\n(이 필지는 공동주택가격이 조회되지 않아 단독/토지 개별공시지가로 응답됐습니다 - 공시가격은 직접 확인해 입력하세요)');
+        }
+    } catch (e) {
+        alert('조회 중 오류: ' + e.message);
+    } finally {
+        if (btn) { btn.disabled = false; btn.innerText = '🏛️ VWorld 자동조회'; }
     }
 }
 /* ════════════════════════════════════
