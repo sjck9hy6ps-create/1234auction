@@ -326,6 +326,29 @@ tr:hover td { background:#fffde7; }
     display:inline-block; font-size:10px; font-weight:bold; padding:1px 7px;
     border-radius:10px; margin-left:6px; vertical-align:middle;
 }
+/* 낙찰사례 통계 패널 - 경매물건 목록 패널(auction-list-panel)과 같은 자리에 뜨되(둘 중
+   하나만 열리도록 서로 닫아줌), 법정동별 통계 테이블이 들어가서 좀 더 넓게 잡음 */
+#bid-case-panel {
+    position:absolute; bottom:70px; right:14px; z-index:10;
+    background:white; border-radius:12px; width:360px; max-height:75vh;
+    overflow-y:auto; box-shadow:0 4px 16px rgba(0,0,0,0.18); display:none;
+}
+.bc-case-item {
+    padding:8px 14px; border-bottom:1px solid #f5f5f5; font-size:11.5px;
+}
+.bc-dong-group-title {
+    padding:6px 14px; font-size:11.5px; font-weight:bold; color:#4a148c;
+    background:#f8f2fb; border-top:1px solid #eee; border-bottom:1px solid #eee;
+}
+.bc-stat-grid {
+    display:grid; grid-template-columns:repeat(3,1fr); gap:4px; margin:4px 0;
+}
+.bc-stat-item { background:white; border:1px solid #e1bee7; border-radius:6px; padding:4px 6px; text-align:center; }
+.bc-stat-label { font-size:9.5px; color:#999; }
+.bc-stat-value { font-size:12px; font-weight:bold; color:#4a148c; }
+@media (max-width: 640px) {
+    #bid-case-panel { width: calc(100vw - 16px); right: 8px; bottom: 60px; }
+}
 @media (max-width: 640px) {
     #search-box {
         left: 8px; right: 8px; top: 8px;
@@ -506,6 +529,7 @@ tr:hover td { background:#fffde7; }
     <div style="font-size:11px;color:#888;margin-top:4px;">핀 숫자 = 기간 내 거래건수</div>
     <div style="margin-top:4px;"><a href="/backup.html" style="font-size:11px;color:#6a1b9a;font-weight:bold;">📦 데이터 백업</a></div>
     <div style="margin-top:4px;"><a href="/dashboard.html" style="font-size:11px;color:#2e7d32;font-weight:bold;">📊 누적 투자 리포트</a></div>
+    <div style="margin-top:4px;"><span onclick="openBidCasePanel()" style="font-size:11px;color:#e65100;font-weight:bold;cursor:pointer;">📈 낙찰사례 통계</span></div>
     </div>
 </div>
 <button id="auction-add-btn" onclick="openAuctionList()">🔨 경매 관리</button>
@@ -516,6 +540,34 @@ tr:hover td { background:#fffde7; }
     </div>
     <div id="auction-list-body"></div>
     <div id="auction-list-pager"></div>
+</div>
+<!-- ════════════════════════════════════
+     낙찰사례 통계 패널 - 경매정보 사이트 "검색결과 목록" 텍스트를 붙여넣으면 AI가 여러 건을
+     한 번에 구조화해서 뽑아내고, 법정동별로 낙찰가율(감정가 대비 최저가/낙찰가 비율)을
+     묶어서 보여줌. "이 동네는 대체로 마진 얼마 선에서 낙찰이 이뤄지는지" 감을 잡기 위한
+     참고자료용 - 개별 물건 등록(auctionList)과는 완전히 별개 저장소(Redis 키 'bidCases').
+     ════════════════════════════════════ -->
+<div id="bid-case-panel">
+    <div class="auction-list-header">
+        📈 낙찰사례 통계
+        <span onclick="closeBidCasePanel()" style="float:right;cursor:pointer;">✕</span>
+    </div>
+    <div style="padding:10px 14px;border-bottom:1px solid #eee;">
+        <div style="font-size:10.5px;color:#888;margin-bottom:6px;">
+            경매정보 사이트(탱크옥션 등)의 "검색결과 목록" 화면을 그대로 복사해서 붙여넣으면
+            여러 건을 한 번에 추출합니다. 추출 후 필요한 건만 골라 저장할 수 있어요.
+        </div>
+        <textarea class="modal-input" id="bc-paste-text" rows="4"
+            placeholder="검색결과 목록 화면을 통째로 복사해서 여기 붙여넣으세요"
+            style="resize:vertical;width:100%;"></textarea>
+        <div style="margin-top:6px;text-align:right;">
+            <button class="modal-btn btn-purple" id="bc-extract-btn" onclick="extractCaseList()">AI로 일괄 추출</button>
+        </div>
+        <div id="bc-extract-status" style="font-size:11px;color:#999;margin-top:4px;"></div>
+    </div>
+    <div id="bc-preview-box"></div>
+    <div id="bc-stats-box"></div>
+    <div id="bc-list-body"></div>
 </div>
 <div id="auction-modal-bg">
 <div id="auction-modal">
@@ -1779,6 +1831,7 @@ function initMap(lat, lon) {
     // (비교물건 배지 반영을 위해 아파트/빌라 마커도 함께 다시 그림)
     fetchAuctions().then(function() { renderAuctionMarkers(); redrawMarkers(); });
     fetchSiteNotes(); // 임장메모 - 마커 클릭 시 즉시 보여줄 수 있도록 초기에 함께 로딩
+    fetchBidCases(); // 낙찰사례 통계 - 패널을 열 때 바로 보여줄 수 있도록 초기에 함께 로딩
     loadAllData(lat, lon);
     kakao.maps.event.addListener(map, 'idle', function() {
         var c = map.getCenter();
@@ -3070,6 +3123,194 @@ async function saveSiteNoteAPI(data) {
 async function deleteSiteNoteAPI(id) {
     await fetch('/api/auction?kind=siteNotes&id=' + id, { method:'DELETE' });
 }
+/* ════════════════════════════════════
+   낙찰사례 통계 - 경매정보 사이트 검색결과 목록을 붙여넣어 여러 건을 한 번에 저장하고,
+   법정동별로 낙찰가율을 묶어 보여주는 참고자료 기능. auctionList(내가 등록한 관심물건)와는
+   완전히 별개 저장소(Redis 키 'bidCases', api/auction.js?kind=bidCases 재사용).
+════════════════════════════════════ */
+var bidCaseList = [];
+var pendingCaseListExtraction = []; // AI 추출 직후, 아직 저장 전인 미리보기 항목들
+async function fetchBidCases() {
+    try {
+        var r = await fetch('/api/auction?kind=bidCases');
+        bidCaseList = await r.json();
+        if (!Array.isArray(bidCaseList)) bidCaseList = [];
+    } catch (e) { bidCaseList = []; }
+}
+async function saveBidCaseAPI(data) {
+    var r = await fetch('/api/auction?kind=bidCases', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(data) });
+    return r.json();
+}
+async function deleteBidCaseAPI(id) {
+    await fetch('/api/auction?kind=bidCases&id=' + id, { method:'DELETE' });
+}
+function openBidCasePanel() {
+    var p = document.getElementById('bid-case-panel');
+    document.getElementById('auction-list-panel').style.display = 'none'; // 같은 자리에 뜨므로 겹치지 않게 서로 닫아줌
+    if (p.style.display === 'block') { p.style.display = 'none'; return; }
+    renderBidCaseList();
+    p.style.display = 'block';
+}
+function closeBidCasePanel() {
+    document.getElementById('bid-case-panel').style.display = 'none';
+}
+async function extractCaseList() {
+    var text = document.getElementById('bc-paste-text').value.trim();
+    var statusBox = document.getElementById('bc-extract-status');
+    if (!text) { alert('검색결과 목록 텍스트를 먼저 붙여넣어 주세요.'); return; }
+    var btn = document.getElementById('bc-extract-btn');
+    btn.disabled = true; btn.innerText = '추출 중...';
+    statusBox.style.color = '#999'; statusBox.innerText = 'AI가 목록을 읽고 있습니다 (물건 수가 많으면 시간이 좀 걸릴 수 있어요)...';
+    try {
+        var res = await fetch('/api/parse-auction', {
+            method: 'POST', headers: {'Content-Type':'application/json'},
+            body: JSON.stringify({ mode: 'caseList', text: text }),
+        });
+        var data = await readJsonResponseSafe(res);
+        if (!res.ok) throw new Error((data && data.error) || ('서버 오류(' + res.status + ')'));
+        var cases = (data && Array.isArray(data.cases)) ? data.cases : [];
+        if (!cases.length) {
+            statusBox.style.color = '#e53935';
+            statusBox.innerText = '목록에서 물건을 찾지 못했습니다. 검색결과 화면 텍스트를 그대로(위→아래) 붙여넣었는지 확인해 주세요.';
+            return;
+        }
+        pendingCaseListExtraction = cases.map(function(c) { return Object.assign({ _selected: true }, c); });
+        statusBox.style.color = '#2e7d32';
+        statusBox.innerText = (data.cached ? '(캐시됨) ' : '') + cases.length + '건 추출됨 - 아래에서 저장할 항목을 확인하세요.';
+        renderCaseListPreview();
+    } catch (e) {
+        statusBox.style.color = '#e53935';
+        statusBox.innerText = '추출 중 오류: ' + e.message;
+    } finally {
+        btn.disabled = false; btn.innerText = 'AI로 일괄 추출';
+    }
+}
+function toggleCasePreviewItem(idx) {
+    if (!pendingCaseListExtraction[idx]) return;
+    pendingCaseListExtraction[idx]._selected = !pendingCaseListExtraction[idx]._selected;
+    renderCaseListPreview();
+}
+function renderCaseListPreview() {
+    var box = document.getElementById('bc-preview-box');
+    if (!pendingCaseListExtraction.length) { box.innerHTML = ''; return; }
+    var selectedCount = pendingCaseListExtraction.filter(function(c) { return c._selected; }).length;
+    var html = '<div style="padding:8px 14px;background:#fff8e1;border-bottom:1px solid #eee;">'
+        + '<div style="font-size:11px;font-weight:bold;color:#e65100;margin-bottom:6px;">추출 미리보기 (' + selectedCount + '/' + pendingCaseListExtraction.length + '건 선택됨)</div>';
+    pendingCaseListExtraction.forEach(function(c, idx) {
+        var rate = (c.appraisalPrice && c.finalBidPrice) ? Math.round(c.finalBidPrice / c.appraisalPrice * 1000) / 10 : (c.bidRate || null);
+        html += '<div style="display:flex;align-items:flex-start;gap:6px;padding:4px 0;border-bottom:1px solid #ffe9b3;">'
+            + '<input type="checkbox" ' + (c._selected ? 'checked' : '') + ' onchange="toggleCasePreviewItem(' + idx + ')" style="margin-top:3px;">'
+            + '<div style="flex:1;min-width:0;font-size:11px;">'
+            + '<div style="font-weight:bold;">' + (c.caseNo || '(사건번호 미상)') + (c.status ? ' <span style="color:#888;font-weight:normal;">· ' + c.status + '</span>' : '') + '</div>'
+            + '<div style="color:#666;">' + (c.addrJibun || '(주소 미상)') + '</div>'
+            + '<div style="color:#999;">'
+            + (c.appraisalPrice ? '감정가 ' + toEok(String(Math.round(c.appraisalPrice / 10000))) : '')
+            + (c.finalBidPrice ? ' · 낙찰가 ' + toEok(String(Math.round(c.finalBidPrice / 10000))) : (c.minBidPrice ? ' · 최저가 ' + toEok(String(Math.round(c.minBidPrice / 10000))) : ''))
+            + (rate ? ' · ' + rate + '%' : '')
+            + '</div></div></div>';
+    });
+    html += '<div style="margin-top:6px;text-align:right;">'
+        + '<button type="button" class="modal-btn btn-purple" style="font-size:11px;" onclick="saveSelectedCases()">선택 항목 저장</button>'
+        + '</div></div>';
+    box.innerHTML = html;
+}
+async function saveSelectedCases() {
+    var selected = pendingCaseListExtraction.filter(function(c) { return c._selected; });
+    if (!selected.length) { alert('저장할 항목을 하나 이상 선택해 주세요.'); return; }
+    var statusBox = document.getElementById('bc-extract-status');
+    statusBox.style.color = '#999'; statusBox.innerText = '저장 중...';
+    for (var i = 0; i < selected.length; i++) {
+        var c = selected[i];
+        var data = {
+            id: Date.now().toString() + '_' + i,
+            caseNo: c.caseNo || null, court: c.court || null, propertyType: c.propertyType || null,
+            addrJibun: c.addrJibun || null, dong: c.dong || null, bunji: c.bunji || null,
+            buildingName: c.buildingName || null, areaM2: c.areaM2 || null, floor: c.floor || null,
+            specialConditions: c.specialConditions || null,
+            appraisalPrice: c.appraisalPrice || null, minBidPrice: c.minBidPrice || null,
+            finalBidPrice: c.finalBidPrice || null, bidRate: c.bidRate || null, minBidRate: c.minBidRate || null,
+            status: c.status || null, saleDate: c.saleDate || null,
+            importedAt: Date.now(),
+        };
+        try {
+            var saved = await saveBidCaseAPI(data);
+            bidCaseList.push(saved);
+        } catch (e) { console.error('낙찰사례 저장 실패:', e.message); }
+    }
+    pendingCaseListExtraction = [];
+    document.getElementById('bc-paste-text').value = '';
+    document.getElementById('bc-preview-box').innerHTML = '';
+    statusBox.style.color = '#2e7d32'; statusBox.innerText = selected.length + '건 저장 완료.';
+    renderBidCaseList();
+}
+async function deleteBidCase(id) {
+    if (!confirm('이 낙찰사례를 삭제할까요?')) return;
+    await deleteBidCaseAPI(id);
+    bidCaseList = bidCaseList.filter(function(c) { return c.id !== id; });
+    renderBidCaseList();
+}
+function median(arr) {
+    if (!arr.length) return null;
+    var s = arr.slice().sort(function(a, b) { return a - b; });
+    var m = Math.floor(s.length / 2);
+    return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2;
+}
+/* 법정동(dong)별로 묶어서 낙찰가율(감정가 대비 최저가/낙찰가 비율) 분포를 보여줌.
+   평균 대신 중간값+최소/최대를 쓰는 이유: 한 동네 안에서도 마진 2천만대/3천만대 팀이
+   섞여 있는 경우 평균 하나로는 이런 분포가 안 보이기 때문(2026-07 대화에서 사용자가
+   직접 지적한 "평균의 오류" 문제). 매각(낙찰) 안 된 진행중/유찰 물건은 낙찰가율 통계에서
+   제외하되(낙찰가가 없어 계산 불가), 목록 자체에는 참고용으로 표시함. */
+function renderBidCaseList() {
+    var statsBox = document.getElementById('bc-stats-box');
+    var listBox = document.getElementById('bc-list-body');
+    if (!bidCaseList.length) {
+        statsBox.innerHTML = '';
+        listBox.innerHTML = '<div style="padding:20px;text-align:center;color:#aaa;font-size:12px;">저장된 낙찰사례가 없습니다. 위에서 목록 텍스트를 붙여넣어 추출해 보세요.</div>';
+        return;
+    }
+    var groups = {};
+    bidCaseList.forEach(function(c) {
+        var key = (c.dong || '(동 미상)');
+        if (!groups[key]) groups[key] = [];
+        groups[key].push(c);
+    });
+    var dongKeys = Object.keys(groups).sort(function(a, b) { return groups[b].length - groups[a].length; });
+    var statsHtml = '';
+    dongKeys.forEach(function(dong) {
+        var items = groups[dong];
+        var soldItems = items.filter(function(c) { return c.appraisalPrice && c.finalBidPrice; });
+        var rates = soldItems.map(function(c) { return Math.round(c.finalBidPrice / c.appraisalPrice * 1000) / 10; });
+        statsHtml += '<div class="bc-dong-group-title">📍 ' + dong + ' (' + items.length + '건, 낙찰 ' + soldItems.length + '건)</div>';
+        if (rates.length) {
+            statsHtml += '<div style="padding:6px 14px;">'
+                + '<div style="font-size:10px;color:#999;margin-bottom:2px;">낙찰가율(감정가 대비, %) - 중간값 / 최소 / 최대</div>'
+                + '<div class="bc-stat-grid">'
+                + '<div class="bc-stat-item"><div class="bc-stat-label">중간값</div><div class="bc-stat-value">' + median(rates).toFixed(1) + '%</div></div>'
+                + '<div class="bc-stat-item"><div class="bc-stat-label">최소</div><div class="bc-stat-value">' + Math.min.apply(null, rates).toFixed(1) + '%</div></div>'
+                + '<div class="bc-stat-item"><div class="bc-stat-label">최대</div><div class="bc-stat-value">' + Math.max.apply(null, rates).toFixed(1) + '%</div></div>'
+                + '</div></div>';
+        } else {
+            statsHtml += '<div style="padding:4px 14px;font-size:10.5px;color:#aaa;">낙찰 완료된 건이 없어 낙찰가율 통계를 낼 수 없습니다.</div>';
+        }
+        items.forEach(function(c) {
+            var rate = (c.appraisalPrice && c.finalBidPrice) ? Math.round(c.finalBidPrice / c.appraisalPrice * 1000) / 10 : null;
+            statsHtml += '<div class="bc-case-item" style="position:relative;">'
+                + '<span onclick="deleteBidCase(\'' + c.id + '\')" style="position:absolute;top:8px;right:14px;color:#bbb;cursor:pointer;font-size:11px;">✕</span>'
+                + '<div style="font-weight:bold;">' + (c.caseNo || '(사건번호 미상)') + (c.status ? ' <span style="font-weight:normal;color:#888;">· ' + c.status + '</span>' : '') + '</div>'
+                + '<div style="color:#666;">' + (c.addrJibun || '') + (c.floor ? ' ' + c.floor + '층' : '') + '</div>'
+                + '<div style="color:#999;">'
+                + (c.appraisalPrice ? '감정가 ' + toEok(String(Math.round(c.appraisalPrice / 10000))) : '')
+                + (c.finalBidPrice ? ' · 낙찰가 ' + toEok(String(Math.round(c.finalBidPrice / 10000))) : (c.minBidPrice ? ' · 최저가 ' + toEok(String(Math.round(c.minBidPrice / 10000))) : ''))
+                + (rate ? ' (' + rate + '%)' : '')
+                + (c.saleDate ? ' · ' + c.saleDate : '')
+                + '</div>'
+                + (c.specialConditions ? '<div style="color:#e65100;font-size:10.5px;margin-top:2px;">⚠️ ' + c.specialConditions + '</div>' : '')
+                + '</div>';
+        });
+    });
+    statsBox.innerHTML = '';
+    listBox.innerHTML = statsHtml;
+}
 // name(단지명, 없으면 이미 "동 번지" 조합 문자열)을 우선으로, name이 둘 다 없을 때만 dong으로 느슨하게 매칭
 // (matchesAuctionKey와 동일한 매칭 철학 - 건물 식별에 쓸 수 있는 유일한 공통 필드가 name/dong뿐이라서)
 function getSiteNotesForBuilding(name, dong) {
@@ -3086,6 +3327,8 @@ var AUCTION_LIST_PAGE_SIZE = 10;
 var auctionListPage = 0; // 0-based
 function openAuctionList() {
     var p = document.getElementById('auction-list-panel');
+    var bcPanel = document.getElementById('bid-case-panel');
+    if (bcPanel) bcPanel.style.display = 'none'; // 같은 자리에 뜨는 낙찰사례 패널과 겹치지 않게 닫아줌
     if (p.style.display === 'block') { p.style.display = 'none'; return; }
     auctionListPage = 0;
     renderAuctionList(); p.style.display = 'block';
