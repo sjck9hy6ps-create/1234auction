@@ -182,6 +182,22 @@ export default async function handler(req, res) {
         // 호수(hoNm)를 정확히 아는 경우(경매 패널)는 최신값을, 모르는 경우(일반 패널)는
         // 층+면적이 가장 가까운 유닛을 대표값으로 고름
         const latest = hoNm ? pickLatest(aptRows) : (pickBestApartRow(aptRows, sizeM2 ? Number(sizeM2) : null) || pickLatest(aptRows));
+        // 국민주택규모(85㎡) 초과 주택 매도시 건물분 부가세 계산을 위해, 같은 PNU(필지)의
+        // 개별공시지가(㎡당)도 함께 내려줌 - 집합건물(아파트/연립)이라도 그 밑에 깔린 토지는
+        // 여전히 지번 단위로 개별공시지가가 고시되므로 조회 자체는 항상 가능함(공동주택가격과는
+        // 별개 데이터). 이 조회가 실패해도 공동주택가격 응답 자체는 그대로 내려감(성능/견고성).
+        let landPriceWonPerM2 = null, landPriceStdrYear = null, landPriceStdrMt = null;
+        try {
+          const landRowsForApt = await getLandPrice(pnu, VWORLD_API_KEY, VWORLD_DOMAIN);
+          if (landRowsForApt.length) {
+            const latestLand = pickLatest(landRowsForApt);
+            landPriceWonPerM2 = latestLand.pblntfPclnd ? Number(latestLand.pblntfPclnd) : null;
+            landPriceStdrYear = latestLand.stdrYear || null;
+            landPriceStdrMt = latestLand.stdrMt || null;
+          }
+        } catch (e) {
+          console.warn('아파트 필지 개별공시지가 조회 실패(공동주택가격은 정상 반환):', e.message);
+        }
         return res.status(200).json({
           success: true,
           source: 'apartment',
@@ -198,6 +214,9 @@ export default async function handler(req, res) {
           matchedCount: aptRows.length,
           approximate: !hoNm, // 호수 특정 없이 층/면적으로 추정한 값이면 true
           history: aptRows.map(r => ({ year: r.stdrYear, month: r.stdrMt, priceWon: r.pblntfPc ? Number(r.pblntfPc) : null, dong: r.dongNm, ho: r.hoNm })),
+          landPriceWonPerM2,
+          landPriceStdrYear,
+          landPriceStdrMt,
         });
       }
     }
