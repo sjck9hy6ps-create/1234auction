@@ -5622,19 +5622,51 @@ function removeComparable(idx) {
     if (!document.getElementById('a-repair').value) { autoCalcRepairSilent(); calcMargin(); }
     autoCalcAuctionJeonseAnalysis();
 }
+/* 비교물건은 사용자가 여러 시점의 거래를 섞어서 등록하는 경우가 많음(어제 거래도, 8개월 전
+   거래도 "비슷하다"고 판단하면 똑같이 등록됨) - 예전엔 이 거래일 차이를 전혀 반영하지 않고
+   평단가를 그대로 median 냈었음. 이제 각 비교물건마다 findAptComplexMomentum으로 "지금 시세"
+   기준으로 보정한 뒤 median을 내고, 보정된 평단가들의 최소~최대 범위와 가장 오래된 비교물건의
+   경과일수(신뢰도 판단용)도 함께 반환함. */
 function getCompEstValue() {
     var list = pendingAuctionComparables || [];
     if (!list.length) return null;
-    var pyungPrices = list.map(function(c) {
-        var py = c.pyung || (c.area > 0 ? toPyung(c.area) : null);
-        return (py && c.amount) ? c.amount / py : null;
-    }).filter(function(v) { return v && v > 0; });
-    if (!pyungPrices.length) return null;
-    function median(arr) { var s = arr.slice().sort(function(a, b) { return a - b; }); var m = Math.floor(s.length / 2); return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2; }
-    var medPpp = median(pyungPrices); // 만원/평
     var targetPyung = parseFloat(document.getElementById('a-pyung').value) || null;
     if (!targetPyung) return null;
-    return { medPpp: medPpp, estValue: Math.round(medPpp * targetPyung), count: list.length };
+
+    var now = new Date();
+    var adjustedPpps = [];
+    var oldestDays = null;
+    var anyAdjusted = false;
+    list.forEach(function(c) {
+        var py = c.pyung || (c.area > 0 ? toPyung(c.area) : null);
+        if (!py || !c.amount) return;
+        var rawPpp = c.amount / py;
+        var factor = 1;
+        var compDate = c.date ? new Date(c.date) : null;
+        if (compDate && !isNaN(compDate.getTime())) {
+            var mo = findAptComplexMomentum(c.name, c.dong, compDate);
+            factor = mo.factor;
+            if (Math.abs(factor - 1) > 0.001) anyAdjusted = true;
+            var days = Math.round((now.getTime() - compDate.getTime()) / (1000 * 60 * 60 * 24));
+            if (oldestDays === null || days > oldestDays) oldestDays = days;
+        }
+        adjustedPpps.push(rawPpp * factor);
+    });
+    if (!adjustedPpps.length) return null;
+
+    function median(arr) { var s = arr.slice().sort(function(a, b) { return a - b; }); var m = Math.floor(s.length / 2); return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2; }
+    var sorted = adjustedPpps.slice().sort(function(a, b) { return a - b; });
+    var medPpp = median(adjustedPpps); // 만원/평 (시점보정 반영됨)
+
+    return {
+        medPpp: medPpp,
+        estValue: Math.round(medPpp * targetPyung),
+        estValueMin: Math.round(sorted[0] * targetPyung),
+        estValueMax: Math.round(sorted[sorted.length - 1] * targetPyung),
+        count: list.length,
+        oldestDays: oldestDays,
+        anyAdjusted: anyAdjusted,
+    };
 }
 /* 목표마진(a-comp-target-margin)을 만족하는 적정입찰가를 이분탐색으로 역산.
    순수익(bid)은 bid가 커질수록 단조 감소하므로 이분탐색으로 안전하게 수렴함.
@@ -5695,10 +5727,25 @@ function calcCompValuation() {
             return '<div class="margin-item"><div class="margin-label">' + label + '</div>'
                 + '<div class="margin-value" style="color:' + color + ';">' + value + '</div></div>';
         }
+        // 시점보정 범위 표기 - 비교물건들이 서로 다른 시점 거래라서 보정 후 평단가가 퍼져 있을 수
+        // 있음을 한눈에 보여줌 (연립다세대 buildJeonseEstimateHtml과 동일한 "범위 X ~ Y" 패턴)
+        var rangeLine = (est.estValueMax !== undefined && est.estValueMin !== undefined && est.estValueMax > est.estValueMin)
+            ? '<div style="font-size:10.5px;color:#00695c;margin:2px 0 4px;">시점보정 범위 ' + toEok(String(est.estValueMin)) + ' ~ ' + toEok(String(est.estValueMax)) + '</div>'
+            : '';
+        // 데이터 신선도 배지 - 등록된 비교물건 중 가장 오래된 거래 기준. 오래될수록 시점보정에
+        // 더 의존하고 있다는 뜻이므로 villa의 daysSinceBaseRent 배지와 동일한 임계값(180/365일) 사용
+        var freshBadge = '';
+        if (est.oldestDays !== null && est.oldestDays !== undefined && !isNaN(est.oldestDays)) {
+            var freshColor = est.oldestDays <= 180 ? '#2e7d32' : (est.oldestDays <= 365 ? '#ff9800' : '#e53935');
+            var freshText = est.oldestDays <= 180 ? '비교물건 6개월 이내' : (est.oldestDays <= 365 ? '비교물건 1년 이내' : '비교물건 1년 이상 지남 - 오차 유의');
+            freshBadge = '<div style="margin:2px 0 4px;"><span style="background:' + freshColor + ';color:white;font-size:9px;font-weight:bold;padding:1px 6px;border-radius:8px;">' + freshText + '</span>'
+                + (est.anyAdjusted ? '<span style="color:#999;font-size:9.5px;margin-left:5px;">시점보정 적용됨</span>' : '') + '</div>';
+        }
         mainHtml = '<div class="margin-result">'
             + '<div class="margin-result-title">💡 비교물건 ' + est.count + '개 기반 시세분석 (목표마진 ' + toEok(String(targetMargin)) + ' 역산)</div>'
+            + rangeLine + freshBadge
             + '<div class="margin-grid">'
-            + vItem('비교 평단가(중간값)', Math.round(est.medPpp / 100) / 10 + '천만/평', '#555')
+            + vItem('비교 평단가(중간값,시점보정)', Math.round(est.medPpp / 100) / 10 + '천만/평', '#555')
             + vItem('예상매각가', toEok(String(est.estValue)), '#2e7d32')
             + (auctionJeonseEstimate && auctionJeonseEstimate.estSaleValue
                 ? vItem('예상매도가(전세가율 기반)', toEok(String(auctionJeonseEstimate.estSaleValue)), '#00897b')
@@ -7222,7 +7269,7 @@ function latestPppInfo(trades) {
    기반 예상매도가가 4.5억대로 나옴 - 명백히 다른 지역의 훨씬 비싼 거래와 잘못 짝지어진 것).
    같은 법정동(dong)끼리만 짝짓고, 평균 대신 중앙값(극단치에 덜 흔들림)을 쓰고, 126%
    커버리지 대비 매매가 비율이 상식적인 범위(0.5~2.0배)를 벗어나는 이상치는 제외하도록 수정. */
-function findSaleRentRatio(rentList, saleTrades) {
+function computeSaleRentRatios(rentList, saleTrades) {
     var ratios = [];
     rentList.forEach(function(r) {
         if (r.monthly_rent > 0) return; // 월세 제외, 순수 전세만
@@ -7236,12 +7283,28 @@ function findSaleRentRatio(rentList, saleTrades) {
             if (amt > 0) ratios.push(amt / guarantee);
         });
     });
-    if (!ratios.length) return null;
+    if (!ratios.length) return [];
     var sane = ratios.filter(function(x) { return x >= 0.5 && x <= 2.0; });
-    var use = sane.length ? sane : ratios;
+    return sane.length ? sane : ratios;
+}
+function findSaleRentRatio(rentList, saleTrades) {
+    var use = computeSaleRentRatios(rentList, saleTrades);
+    if (!use.length) return null;
     use.sort(function(a, b) { return a - b; });
     var m = Math.floor(use.length / 2);
     return use.length % 2 ? use[m] : (use[m - 1] + use[m]) / 2;
+}
+/* findSaleRentRatio(중앙값 하나만 반환)와 같은 짝짓기 로직을 쓰되, 연립다세대 시세예측을
+   더 상세히 보여주기 위해 최소~최대 범위와 표본 건수까지 함께 반환함 - "신뢰도·범위 표기"
+   개선에 사용. 기존 findSaleRentRatio 호출부(경매 예상전세가 등)는 그대로 두고 이 함수는
+   calcVillaJeonseEstimate에서만 새로 사용함. */
+function getSaleRentRatioStats(rentList, saleTrades) {
+    var use = computeSaleRentRatios(rentList, saleTrades);
+    if (!use.length) return null;
+    var sorted = use.slice().sort(function(a, b) { return a - b; });
+    var m = Math.floor(sorted.length / 2);
+    var median = sorted.length % 2 ? sorted[m] : (sorted[m - 1] + sorted[m]) / 2;
+    return { ratio: median, min: sorted[0], max: sorted[sorted.length - 1], count: sorted.length };
 }
 function bucketKeyOf(d) {
     return d.getFullYear() + '_' + (d.getMonth() < 6 ? 'H1' : 'H2');
@@ -7250,44 +7313,98 @@ function bucketSortValue(k) {
     var parts = k.split('_');
     return parseInt(parts[0]) * 2 + (parts[1] === 'H1' ? 0 : 1);
 }
-// 같은 건물 매매 평단가의 6개월(반기) 버킷 추이로, fromDate 시점 → 현재 시세변동 배율을 구함
-function calcVillaPppMomentum(trades, fromDate) {
-    var valid = trades.filter(function(t) { return t.area > 0 && parseInt(t.amount) > 0 && parseInt(t.floor) !== 1; });
-    if (valid.length < 2) return { factor: 1, note: '같은 건물 매매 데이터가 부족해 시세변동 보정 없음' };
-
+/* calcTierYearlyTrend(연도 단위)와 같은 풀(같은 연식단계의 지역 내 모든 연립다세대)을 쓰되,
+   calcVillaPppMomentum의 건물별 버킷과 같은 반기(6개월) 단위로 집계함 - 건물 자체 매매기록이
+   부족해 시점보정을 못할 때 이 지역 추세로 폴백하기 위함(두 버킷 체계가 같아야 from/now
+   버킷을 그대로 비교할 수 있음). */
+function calcTierHalfyearlyTrend(tier) {
     var buckets = {};
+    allAptList.forEach(function(apt) {
+        if (apt.buildingType !== 'villa' || apt.ageTier !== tier) return;
+        (apt.trades || []).forEach(function(t) {
+            if (t.area <= 0 || parseInt(t.amount) <= 0 || parseInt(t.floor) === 1) return;
+            var d = tradeDate(t);
+            if (isNaN(d.getTime())) return;
+            var k = bucketKeyOf(d);
+            if (!buckets[k]) buckets[k] = [];
+            buckets[k].push(parseInt(t.amount) / toPyung(t.area));
+        });
+    });
+    var result = {};
+    Object.keys(buckets).forEach(function(k) {
+        var arr = buckets[k];
+        var sum = arr.reduce(function(a, b) { return a + b; }, 0);
+        result[k] = { avgPpp: Math.round(sum / arr.length), count: arr.length };
+    });
+    return result; // { '2025_H1': {avgPpp, count}, ... }
+}
+function nearestBucketKey(bucketAvgMap, targetKey) {
+    var keys = Object.keys(bucketAvgMap);
+    if (bucketAvgMap[targetKey] !== undefined) return targetKey;
+    var closest = keys[0], minDiff = Infinity;
+    keys.forEach(function(k) {
+        var diff = Math.abs(bucketSortValue(k) - bucketSortValue(targetKey));
+        if (diff < minDiff) { minDiff = diff; closest = k; }
+    });
+    return closest;
+}
+// 같은 건물 매매 평단가의 6개월(반기) 버킷 추이로, fromDate 시점 → 현재 시세변동 배율을 구함.
+// ⚠️ 연립다세대는 애초에 거래가 희소해서 이 건물 자체 매매기록만으로는 버킷이 2개도 안 채워지는
+// 경우가 흔함(그래서 예전엔 이럴 때 factor=1로 "보정 없음" 처리해버렸음) - ageTier가 주어지면
+// 이 경우 같은 지역·연식단계 전체 추세(calcTierHalfyearlyTrend)로 폴백해서 시점보정을 계속 시도함.
+function calcVillaPppMomentum(trades, fromDate, ageTier) {
+    var valid = trades.filter(function(t) { return t.area > 0 && parseInt(t.amount) > 0 && parseInt(t.floor) !== 1; });
+    var buildingBuckets = {};
     valid.forEach(function(t) {
         var k = bucketKeyOf(tradeDate(t));
-        if (!buckets[k]) buckets[k] = [];
-        buckets[k].push(parseInt(t.amount) / toPyung(t.area));
+        if (!buildingBuckets[k]) buildingBuckets[k] = [];
+        buildingBuckets[k].push(parseInt(t.amount) / toPyung(t.area));
     });
-    var bucketKeys = Object.keys(buckets);
-    if (bucketKeys.length < 2) return { factor: 1, note: '같은 건물 매매 데이터가 부족해 시세변동 보정 없음' };
+    var buildingKeys = Object.keys(buildingBuckets);
 
-    var bucketAvg = {};
-    bucketKeys.forEach(function(k) {
-        var arr = buckets[k];
-        bucketAvg[k] = arr.reduce(function(a, b) { return a + b; }, 0) / arr.length;
-    });
-
-    function nearestBucket(targetKey) {
-        if (bucketAvg[targetKey] !== undefined) return targetKey;
-        var closest = bucketKeys[0], minDiff = Infinity;
-        bucketKeys.forEach(function(k) {
-            var diff = Math.abs(bucketSortValue(k) - bucketSortValue(targetKey));
-            if (diff < minDiff) { minDiff = diff; closest = k; }
+    if (buildingKeys.length >= 2) {
+        var bucketAvg = {};
+        buildingKeys.forEach(function(k) {
+            var arr = buildingBuckets[k];
+            bucketAvg[k] = arr.reduce(function(a, b) { return a + b; }, 0) / arr.length;
         });
-        return closest;
+        var fromKey = nearestBucketKey(bucketAvg, bucketKeyOf(fromDate));
+        var nowKey  = nearestBucketKey(bucketAvg, bucketKeyOf(new Date()));
+        if (fromKey === nowKey) {
+            return { factor: 1, source: 'building', note: '기준 전세거래와 같은 시기라 시세변동 보정 없음' };
+        }
+        var factor = bucketAvg[nowKey] / bucketAvg[fromKey];
+        factor = Math.max(0.7, Math.min(1.5, factor)); // 데이터 부족으로 인한 극단적 왜곡 방지
+        var pct = Math.round((factor - 1) * 1000) / 10;
+        return {
+            factor: factor, source: 'building',
+            note: '이 건물 매매시세 ' + fromKey.replace('_', ' ') + ' → ' + nowKey.replace('_', ' ') + ' 변동 반영 (' + (pct >= 0 ? '+' : '') + pct + '%)',
+        };
     }
 
-    var fromKey = nearestBucket(bucketKeyOf(fromDate));
-    var nowKey  = nearestBucket(bucketKeyOf(new Date()));
-    if (fromKey === nowKey) return { factor: 1, note: '기준 전세거래와 같은 시기라 시세변동 보정 없음' };
-
-    var factor = bucketAvg[nowKey] / bucketAvg[fromKey];
-    factor = Math.max(0.7, Math.min(1.5, factor)); // 데이터 부족으로 인한 극단적 왜곡 방지
-    var pct = Math.round((factor - 1) * 1000) / 10;
-    return { factor: factor, note: fromKey.replace('_', ' ') + ' → ' + nowKey.replace('_', ' ') + ' 평단가 변동 반영 (' + (pct >= 0 ? '+' : '') + pct + '%)' };
+    // 건물 자체 데이터 부족 → 같은 지역·연식단계 전체 추세로 폴백
+    if (ageTier) {
+        var regionBuckets = calcTierHalfyearlyTrend(ageTier);
+        var regionKeys = Object.keys(regionBuckets);
+        if (regionKeys.length >= 2) {
+            var regionAvg = {};
+            regionKeys.forEach(function(k) { regionAvg[k] = regionBuckets[k].avgPpp; });
+            var rFromKey = nearestBucketKey(regionAvg, bucketKeyOf(fromDate));
+            var rNowKey  = nearestBucketKey(regionAvg, bucketKeyOf(new Date()));
+            if (rFromKey === rNowKey) {
+                return { factor: 1, source: 'region', note: '기준 전세거래와 같은 시기라 시세변동 보정 없음' };
+            }
+            var rFactor = regionAvg[rNowKey] / regionAvg[rFromKey];
+            rFactor = Math.max(0.7, Math.min(1.5, rFactor));
+            var rPct = Math.round((rFactor - 1) * 1000) / 10;
+            return {
+                factor: rFactor, source: 'region',
+                note: (getVillaTierLabel(ageTier) || '연식단계') + ' 지역 시세(' + regionBuckets[rNowKey].count + '건 기준) '
+                    + rFromKey.replace('_', ' ') + ' → ' + rNowKey.replace('_', ' ') + ' 변동 반영 (' + (rPct >= 0 ? '+' : '') + rPct + '%)',
+            };
+        }
+    }
+    return { factor: 1, source: 'none', note: '건물·지역 모두 매매 데이터가 부족해 시세변동 보정 없음' };
 }
 // 이 건물의 순수 전세 거래 목록만 뽑아냄. 여러 곳에서 재사용
 // (매매기록 없는 물건 등급 추정, 전세가 기반 예상거래가, 경매 예상전세가 계산 등).
@@ -7302,6 +7419,86 @@ function getVillaOwnRents(name, dong, bunji) {
         return false;
     });
 }
+/* 아파트판 calcTierHalfyearlyTrend - 연립다세대는 ageTier(연식단계)로 나눠 풀을 만들었지만,
+   아파트는 등급(grade)이 평단가 자체에서 파생되는 값이라 그걸로 나누면 순환참조가 되므로
+   지역에 로딩된 아파트 전체를 하나의 풀로 씀. 비교물건(pendingAuctionComparables)의 시점보정
+   폴백 소스로 쓰임(findAptComplexMomentum 참고). */
+function calcAllAptHalfyearlyTrend() {
+    var buckets = {};
+    allAptList.forEach(function(apt) {
+        if (apt.buildingType !== 'apt') return;
+        (apt.trades || []).forEach(function(t) {
+            if (t.area <= 0 || parseInt(t.amount) <= 0 || parseInt(t.floor) === 1) return;
+            var d = tradeDate(t);
+            if (isNaN(d.getTime())) return;
+            var k = bucketKeyOf(d);
+            if (!buckets[k]) buckets[k] = [];
+            buckets[k].push(parseInt(t.amount) / toPyung(t.area));
+        });
+    });
+    var result = {};
+    Object.keys(buckets).forEach(function(k) {
+        var arr = buckets[k];
+        var sum = arr.reduce(function(a, b) { return a + b; }, 0);
+        result[k] = { avgPpp: Math.round(sum / arr.length), count: arr.length };
+    });
+    return result;
+}
+/* 비교물건 하나(name/dong)의 거래일(fromDate) 시점 평단가를 "지금 시세"로 보정할 배율을 구함 -
+   calcVillaPppMomentum과 완전히 같은 구조(건물/단지 자체 반기 추이 우선, 부족하면 지역 전체로
+   폴백)이며, 아파트는 "같은 단지(name+dong)"가 연립다세대의 "같은 건물"에 대응함. 아파트는
+   거래가 잦아 대부분 단지 자체 추이만으로 충분하지만, 신축 단지처럼 자체 거래가 적을 때를
+   대비해 폴백을 그대로 유지함. */
+function findAptComplexMomentum(name, dong, fromDate) {
+    var matched = allAptList.find(function(a) {
+        return a.buildingType === 'apt' && a.latest && a.latest.name === name && a.latest.dong === dong;
+    });
+    var trades = matched ? (matched.trades || []) : [];
+    var valid = trades.filter(function(t) { return t.area > 0 && parseInt(t.amount) > 0 && parseInt(t.floor) !== 1; });
+    var buildingBuckets = {};
+    valid.forEach(function(t) {
+        var k = bucketKeyOf(tradeDate(t));
+        if (!buildingBuckets[k]) buildingBuckets[k] = [];
+        buildingBuckets[k].push(parseInt(t.amount) / toPyung(t.area));
+    });
+    var buildingKeys = Object.keys(buildingBuckets);
+
+    if (buildingKeys.length >= 2) {
+        var bucketAvg = {};
+        buildingKeys.forEach(function(k) {
+            var arr = buildingBuckets[k];
+            bucketAvg[k] = arr.reduce(function(a, b) { return a + b; }, 0) / arr.length;
+        });
+        var fromKey = nearestBucketKey(bucketAvg, bucketKeyOf(fromDate));
+        var nowKey  = nearestBucketKey(bucketAvg, bucketKeyOf(new Date()));
+        if (fromKey === nowKey) return { factor: 1, source: 'complex', note: (name || '단지') + ' 기준 - 같은 시기 거래라 보정 없음' };
+        var factor = bucketAvg[nowKey] / bucketAvg[fromKey];
+        factor = Math.max(0.7, Math.min(1.5, factor));
+        var pct = Math.round((factor - 1) * 1000) / 10;
+        return {
+            factor: factor, source: 'complex',
+            note: (name || '단지') + ' 자체 시세 ' + fromKey.replace('_', ' ') + ' → ' + nowKey.replace('_', ' ') + ' 변동 (' + (pct >= 0 ? '+' : '') + pct + '%)',
+        };
+    }
+
+    var regionBuckets = calcAllAptHalfyearlyTrend();
+    var regionKeys = Object.keys(regionBuckets);
+    if (regionKeys.length >= 2) {
+        var regionAvg = {};
+        regionKeys.forEach(function(k) { regionAvg[k] = regionBuckets[k].avgPpp; });
+        var rFromKey = nearestBucketKey(regionAvg, bucketKeyOf(fromDate));
+        var rNowKey  = nearestBucketKey(regionAvg, bucketKeyOf(new Date()));
+        if (rFromKey === rNowKey) return { factor: 1, source: 'region', note: '지역 전체 아파트 기준 - 같은 시기 거래라 보정 없음' };
+        var rFactor = regionAvg[rNowKey] / regionAvg[rFromKey];
+        rFactor = Math.max(0.7, Math.min(1.5, rFactor));
+        var rPct = Math.round((rFactor - 1) * 1000) / 10;
+        return {
+            factor: rFactor, source: 'region',
+            note: '지역 전체 아파트 시세(' + regionBuckets[rNowKey].count + '건 기준) ' + rFromKey.replace('_', ' ') + ' → ' + rNowKey.replace('_', ' ') + ' 변동 (' + (rPct >= 0 ? '+' : '') + rPct + '%)',
+        };
+    }
+    return { factor: 1, source: 'none', note: '단지·지역 모두 시세 데이터가 부족해 보정 없음' };
+}
 // villa 패널의 "전세가 기반 예상 거래가" 계산.
 // 항상 { rents, estimate, ... } 형태의 객체를 돌려주고(연립다세대가 아니면 null), estimate가 없을 때도
 // noDataReason으로 이유를 알려줘서, 화면에서 "데이터가 없는 것"과 "코드가 안 뜨는 것"을 구분할 수 있게 함.
@@ -7314,40 +7511,63 @@ function calcVillaJeonseEstimate(apt) {
         return { estimate: null, rents: [], noDataReason: '이 건물의 전세 거래 이력을 데이터베이스에서 찾지 못했습니다.' };
     }
 
-    var ratio = findSaleRentRatio(myRents, apt.trades);
+    var ratioStats = getSaleRentRatioStats(myRents, apt.trades);
     var ratioSource = '이 건물의 매매·전세 쌍 기준';
-    if (!ratio) {
-        var allVillaSales = [], allVillaRents = [];
-        allAptList.forEach(function(a) { if (a.buildingType === 'villa') allVillaSales = allVillaSales.concat(a.trades); });
+    if (!ratioStats) {
+        // 건물 자체 매매·전세 쌍이 없으면 지역 전체로 폴백하되, 연식단계를 알면 같은 연식단계
+        // 건물들의 매매기록만 모아 비교물건 정확도를 높임 - 노후/신축이 뒤섞이면 매매/전세 비율
+        // 자체가 왜곡되기 때문(신축일수록 전세가율이 낮게 나오는 경향이 있음).
+        var allVillaRents = [];
         allRentList.forEach(function(r) { if (r.buildingType === 'villa') allVillaRents.push(r); });
-        ratio = findSaleRentRatio(allVillaRents, allVillaSales);
-        ratioSource = '지역 전체 연립다세대 평균 비율';
+        if (apt.ageTier) {
+            var tierSales = [];
+            allAptList.forEach(function(a) { if (a.buildingType === 'villa' && a.ageTier === apt.ageTier) tierSales = tierSales.concat(a.trades); });
+            var tierStats = getSaleRentRatioStats(allVillaRents, tierSales);
+            if (tierStats && tierStats.count >= 3) {
+                ratioStats = tierStats;
+                ratioSource = (getVillaTierLabel(apt.ageTier) || '연식단계') + ' 연립다세대 평균 비율';
+            }
+        }
+        if (!ratioStats) {
+            // 연식단계 필터로는 표본이 너무 적거나(3건 미만) 연식단계를 몰라서 못 걸렀을 때 -
+            // 지역 전체(연식단계 무관)로 다시 시도해 표본을 확보함
+            var allVillaSales = [];
+            allAptList.forEach(function(a) { if (a.buildingType === 'villa') allVillaSales = allVillaSales.concat(a.trades); });
+            ratioStats = getSaleRentRatioStats(allVillaRents, allVillaSales);
+            ratioSource = '지역 전체 연립다세대 평균 비율' + (apt.ageTier ? ' (연식단계 구분 표본 부족으로 확장)' : '');
+        }
     }
 
     myRents.sort(function(a, b) { return String(b.deal_date).localeCompare(String(a.deal_date)); });
     var baseRent = myRents[0];
 
-    if (!ratio) {
+    if (!ratioStats) {
         return {
             estimate: null, rents: myRents,
             noDataReason: '매매·전세 짝을 찾지 못해 예상 거래가는 계산하지 못했지만, 이 건물의 전세 거래 이력은 아래와 같습니다.',
         };
     }
 
-    var baseEstimate = (baseRent.deposit || 0) * 1.26 * ratio;
-
     var ds = String(baseRent.deal_date || '');
     var rentDate = new Date(parseInt(ds.slice(0, 4)) || today.getFullYear(), (parseInt(ds.slice(4, 6)) || 1) - 1, parseInt(ds.slice(6, 8)) || 1);
-    var momentum = calcVillaPppMomentum(apt.trades, rentDate);
+    var momentum = calcVillaPppMomentum(apt.trades, rentDate, apt.ageTier);
+    var deposit = baseRent.deposit || 0;
+
+    // 신뢰도·범위 표기: 매매/전세 비율의 최소~최대 폭을 그대로 추정치에 반영해서, 점 추정치
+    // 하나만 보여주지 않고 "이 정도 범위 안에 있다"는 폭까지 함께 보여줌
+    var daysSinceBaseRent = Math.round((today.getTime() - rentDate.getTime()) / (1000 * 60 * 60 * 24));
 
     return {
-        estimate: Math.round(baseEstimate * momentum.factor),
+        estimate: Math.round(deposit * 1.26 * ratioStats.ratio * momentum.factor),
+        estimateMin: Math.round(deposit * 1.26 * ratioStats.min * momentum.factor),
+        estimateMax: Math.round(deposit * 1.26 * ratioStats.max * momentum.factor),
         baseRentDeposit: baseRent.deposit,
         baseRentDate: ds,
+        daysSinceBaseRent: daysSinceBaseRent,
         size: baseRent.size || 0, // 기준으로 삼은 전세 건의 전용면적(㎡) - 평단가 환산에 사용
-        ratio: ratio,
+        ratio: ratioStats.ratio, ratioMin: ratioStats.min, ratioMax: ratioStats.max, ratioCount: ratioStats.count,
         ratioSource: ratioSource,
-        momentumNote: momentum.note,
+        momentumNote: momentum.note, momentumSource: momentum.source,
         rents: myRents, // 이 건물의 전세 거래 히스토리 전체 (아래 buildVillaRentHistoryHtml에서 목록으로 표시)
     };
 }
@@ -7357,9 +7577,19 @@ function buildJeonseEstimateHtml(est) {
     html += '<div class="indicator-title" style="color:#e65100;">💰 전세가 기반 예상 거래가</div>';
     if (est.estimate) {
         html += '<div style="font-size:16px;font-weight:bold;color:#e65100;">' + toEok(String(est.estimate)) + '</div>';
+        if (est.estimateMin !== undefined && est.estimateMax !== undefined && est.estimateMax > est.estimateMin) {
+            html += '<div style="font-size:11px;color:#e65100;">범위 ' + toEok(String(est.estimateMin)) + ' ~ ' + toEok(String(est.estimateMax)) + '</div>';
+        }
         html += '<div style="font-size:10px;color:#999;margin-top:2px;">기준 전세 ' + toEok(String(est.baseRentDeposit)) + ' ('
             + est.baseRentDate + ') × 126% × 보정비율 ' + (Math.round(est.ratio * 100) / 100) + '</div>';
-        html += '<div style="font-size:10px;color:#999;">' + est.ratioSource + ' · ' + est.momentumNote + '</div>';
+        html += '<div style="font-size:10px;color:#999;">' + est.ratioSource + (est.ratioCount ? ' (' + est.ratioCount + '건 기준)' : '') + ' · ' + est.momentumNote + '</div>';
+        // 데이터 신선도 배지 - 기준 전세거래가 얼마나 오래됐는지 한눈에 보여줘서, 오래된
+        // 기준일수록 시점보정(momentum)에 더 의존하고 있다는 걸 사용자가 알 수 있게 함
+        if (est.daysSinceBaseRent !== undefined && est.daysSinceBaseRent !== null && !isNaN(est.daysSinceBaseRent)) {
+            var freshColor = est.daysSinceBaseRent <= 180 ? '#2e7d32' : (est.daysSinceBaseRent <= 365 ? '#ff9800' : '#e53935');
+            var freshText = est.daysSinceBaseRent <= 180 ? '기준 전세 6개월 이내' : (est.daysSinceBaseRent <= 365 ? '기준 전세 1년 이내' : '기준 전세 1년 이상 지남 - 오차 유의');
+            html += '<div style="margin-top:4px;"><span style="background:' + freshColor + ';color:white;font-size:9px;font-weight:bold;padding:1px 6px;border-radius:8px;">' + freshText + '</span></div>';
+        }
     } else {
         html += '<div style="font-size:11px;color:#999;">' + (est.noDataReason || '전세 데이터가 부족해 예상 거래가를 계산하지 못했습니다.') + '</div>';
     }
