@@ -843,6 +843,16 @@ tr:hover td { background:#fffde7; }
                 <input type="number" class="modal-input" id="a-etc" placeholder="0" oninput="calcMargin()">
                 <span style="font-size:10px;color:#aaa;margin-left:4px;">미납관리비 등</span>
             </div>
+            <div class="modal-row">
+                <span class="modal-label">인수보증금 <span onclick="showCalcInfo('assumedDeposit')" title="계산기준 보기" style="cursor:pointer;color:#1976d2;">ⓘ</span></span>
+                <input type="number" class="modal-input" id="a-assumed-deposit" placeholder="0" oninput="calcMargin()">
+                <button class="modal-btn btn-gray" onclick="suggestAssumedDeposit()" style="font-size:11px;">최악가정 제안</button>
+            </div>
+            <div style="font-size:10px;color:#c62828;margin-top:-4px;margin-bottom:6px;">
+                선순위 대항력 있는 임차인이 배당을 다 못 받으면 그 차액을 낙찰자가 떠안습니다(입찰가와 별도로 추가 지출). "최악가정 제안"은
+                AI가 뽑아둔 임차인 중 대항력 있는(hasStanding) 임차인의 보증금 전액(=배당을 한 푼도 못 받는다는 가장 보수적인 가정)을 채워줄 뿐,
+                실제 배당액이 아닙니다. 정확한 금액은 반드시 법원 배당표(입찰 전에는 배당요구서 기준 추정)나 경매정보지의 인수예상금액을 직접 확인해서 수정하세요.
+            </div>
         </div>
         <div class="modal-section">
             <div class="modal-section-title">📈 매도 계획 (만원 단위)</div>
@@ -4040,7 +4050,7 @@ function openAuctionModal(id) {
     document.getElementById('modal-delete-btn').style.display = isEdit ? '' : 'none';
      ['auction-id','a-addr','a-name','a-dong','a-floor','a-unit','a-case','a-pyung','a-date',
      'a-appraisal','a-min-bid','a-deposit-rate','a-my-bid','a-actual-bid',
-     'a-tax','a-registry-fee','a-eviction-fee','a-repair','a-agent','a-moving','a-cleaning','a-etc','a-target','a-actual-sell',
+     'a-tax','a-registry-fee','a-eviction-fee','a-repair','a-agent','a-moving','a-cleaning','a-etc','a-assumed-deposit','a-target','a-actual-sell',
      'a-official-price','a-site-rights-area','a-land-price-per-m2','a-memo','a-paste-text','a-loan-rate']
         .forEach(function(fid) { document.getElementById(fid).value = ''; });
     document.getElementById('a-status').value = '검토중';
@@ -4117,6 +4127,7 @@ function openAuctionModal(id) {
             document.getElementById('a-hold-months').value = a.holdMonths || '';
             document.getElementById('a-loan-rate').value   = a.loanRate || '';
             document.getElementById('a-etc').value         = a.etc || '';
+            document.getElementById('a-assumed-deposit').value = a.assumedDeposit || '';
             document.getElementById('a-target').value      = a.target || '';
             document.getElementById('a-actual-sell').value = a.actualSell || '';
             document.getElementById('a-memo').value        = a.memo || '';
@@ -4847,9 +4858,53 @@ var CALC_INFO_TEXT = {
         + '자동계산에는 "공시가격"과 "대지권 면적" 입력이 필요합니다. 대지권 면적은 매각물건명세서나\n'
         + '등기부등본(대지권의 표시)에서, 개별공시지가는 부동산공시가격 알리미에서 직접 확인할 수 있습니다.\n'
         + '⚠️ 참고용 추정치입니다. 실제 입찰 전 세무사를 통해 한 번 더 확인하는 것을 권장합니다.',
+    assumedDeposit: '인수보증금이란, 선순위(말소기준권리보다 먼저) 대항력을 갖춘 임차인의 보증금 중\n'
+        + '배당으로 회수되지 못한 잔액을 낙찰자가 그대로 떠안아야 하는 돈입니다(낙찰가와 별도 지출).\n\n'
+        + '"최악가정 제안" 버튼을 누르면, AI가 경매정보에서 뽑아둔 임차인 중 대항력 있음(hasStanding)으로\n'
+        + '표시된 임차인의 보증금 전액을 합산해 채워줍니다 - 즉 "이 임차인이 배당을 한 푼도 못 받는다"는\n'
+        + '가장 보수적인(최악의) 가정입니다. 실제로는 배당순위·배당재원(매각대금)에 따라 일부 또는\n'
+        + '전액 배당받을 수도 있어, 실제 인수액은 이보다 적을 수 있습니다.\n\n'
+        + '정확한 금액을 알려면 다음을 직접 확인하세요:\n'
+        + '1) 매각물건명세서의 "비고"란 - 법원이 이미 인수/소멸 여부를 명시한 경우가 많음\n'
+        + '2) 배당요구 여부와 배당요구종기일 준수 여부 - 대항력 있어도 배당요구를 안 했으면 전액 인수\n'
+        + '3) 선순위 근저당 등 채권최고액과 매각대금(예상낙찰가)을 비교한 예상 배당표 - 경매계에\n'
+        + '   문의하거나 감정평가서·매각물건명세서를 근거로 직접 추산\n\n'
+        + '⚠️ 이 항목은 법률 자문이 아닌 참고용 최악가정 추정치입니다. 실제 입찰 전 반드시 경매계·\n'
+        + '법무사를 통해 배당표(또는 예상 배당순위)를 확인하세요.',
 };
 function showCalcInfo(key) {
     alert(CALC_INFO_TEXT[key] || '설명이 없습니다.');
+}
+/* 인수보증금 "최악가정" 제안 - AI가 뽑아둔 임차인현황(pendingAuctionDetail.tenantOccupants) 중
+   대항력 있음(hasStanding===true)으로 표시된 임차인의 보증금(t.deposit, 원 단위)을 전액 합산해
+   "이 임차인이 배당을 한 푼도 못 받는다"는 가장 보수적인 가정으로 a-assumed-deposit(만원 단위)에
+   채워줌. 자동으로 조용히 채우지 않고 버튼을 눌러야만 반영되게 한 이유는, 이 값이 마진/입찰가
+   계산에 직접 영향을 주는 만큼 사용자가 근거(어떤 임차인 몇 명, 각 보증금)를 알고 확인한 뒤
+   반영하도록 하기 위함 - 대지권 면적처럼 조용히 자동채움하면 "왜 갑자기 마진이 줄었지"를
+   추적하기 어려움. */
+function suggestAssumedDeposit() {
+    var detail = pendingAuctionDetail;
+    var tenants = (detail && detail.tenantOccupants) ? detail.tenantOccupants : [];
+    var standing = tenants.filter(function(t) { return t && typeof t === 'object' && t.hasStanding === true; });
+    if (!standing.length) {
+        alert('AI가 추출한 임차인현황 중 "대항력 있음"으로 표시된 임차인이 없습니다.\n'
+            + 'AI 추출이 안 되어 있거나(경매정보 붙여넣기 후 자동채우기 먼저 실행), 이 물건에\n'
+            + '대항력 있는 선순위 임차인이 없는 경우일 수 있습니다. 경매정보지의 임차인현황을\n'
+            + '직접 확인 후 필요하면 이 항목에 수동으로 입력하세요.');
+        return;
+    }
+    var totalWon = standing.reduce(function(sum, t) { return sum + (parseInt(t.deposit) || 0); }, 0);
+    if (!totalWon) {
+        alert('대항력 있는 임차인은 있지만 보증금 금액이 추출되지 않았습니다. 경매정보지에서\n직접 확인 후 이 항목에 수동으로 입력하세요.');
+        return;
+    }
+    var totalManwon = Math.round(totalWon / 10000);
+    document.getElementById('a-assumed-deposit').value = totalManwon;
+    var names = standing.map(function(t) { return (t.name || '임차인') + ' ' + won(parseInt(t.deposit) || 0); }).join(', ');
+    alert('대항력 있는 임차인 ' + standing.length + '명의 보증금 전액(' + toEok(String(totalManwon)) + ')을\n'
+        + '"최악가정"(전액 미배당)으로 채웠습니다.\n(' + names + ')\n\n'
+        + '실제 배당표 확인 후 배당받는 금액만큼 이 항목을 줄여서 수정하세요.');
+    calcMargin();
 }
 function calcMargin() {
     var myBid    = parseInt(document.getElementById('a-my-bid').value)    || 0;
@@ -4863,6 +4918,7 @@ function calcMargin() {
     var moving   = parseInt(document.getElementById('a-moving').value) || 0;
     var cleaning = parseInt(document.getElementById('a-cleaning').value) || 0;
     var etc      = parseInt(document.getElementById('a-etc').value)    || 0;
+    var assumedDeposit = parseInt(document.getElementById('a-assumed-deposit').value) || 0;
     var target   = parseInt(document.getElementById('a-target').value) || 0;
     var actSell  = parseInt(document.getElementById('a-actual-sell').value) || 0;
     var useSell  = actSell || target;
@@ -4879,7 +4935,7 @@ function calcMargin() {
     var interestCost = calcLoanInterest(loanAmount, loanRate, holdMonths);
     var vatInfo = calcAuctionVat(useBid);
     var vat = vatInfo.computable ? vatInfo.vat : 0;
-    var feesSum   = tax + registryFee + evictionFee + repair + agent + moving + cleaning + interestCost + etc + vat;
+    var feesSum   = tax + registryFee + evictionFee + repair + agent + moving + cleaning + interestCost + etc + vat + assumedDeposit;
     var totalCost = useBid + feesSum;
     var preTaxMargin = useSell > 0 ? useSell - totalCost : 0;
     var taxResult = (useSell > 0 && preTaxMargin > 0) ? calcResaleIncomeTax(bidMethod, preTaxMargin, holdMonths) : { totalTax: 0, rateLabel: '' };
@@ -4913,6 +4969,9 @@ function calcMargin() {
       + mItem('대출이자(연' + loanRate.toFixed(1) + '%·' + holdMonths + '개월)', (loanAmount > 0 && holdMonths > 0) ? toEok(String(interestCost)) : '—', '#bf360c')
       + (vatInfo.applicable
           ? mItem('부가세(건물분,85㎡초과) <span onclick="showCalcInfo(\'vat\')" title="계산기준 보기" style="cursor:pointer;">ⓘ</span>', vatInfo.computable ? toEok(String(vat)) : '확인필요', vatInfo.computable ? '#c62828' : '#e65100')
+          : '')
+      + (assumedDeposit > 0
+          ? mItem('인수보증금(선순위 임차인) <span onclick="showCalcInfo(\'assumedDeposit\')" title="계산기준 보기" style="cursor:pointer;">ⓘ</span>', toEok(String(assumedDeposit)), '#c62828')
           : '')
       + (compEst
           ? mItem('비교물건 기준 적정입찰가(목표 ' + toEok(String(compTargetMargin)) + ')', compBidResult && compBidResult.bid > 0 ? toEok(String(compBidResult.bid)) : '마진 확보 불가', '#6a1b9a')
@@ -5012,7 +5071,9 @@ async function saveAuction() {
         moving: document.getElementById('a-moving').value, cleaning: document.getElementById('a-cleaning').value,
         bidMethod: document.getElementById('a-bid-method').value, holdMonths: document.getElementById('a-hold-months').value,
         loanRate: document.getElementById('a-loan-rate').value,
-        etc: document.getElementById('a-etc').value, target: document.getElementById('a-target').value,
+        etc: document.getElementById('a-etc').value,
+        assumedDeposit: document.getElementById('a-assumed-deposit').value || null,
+        target: document.getElementById('a-target').value,
         actualSell: document.getElementById('a-actual-sell').value,
         memo: document.getElementById('a-memo').value,
         detail: pendingAuctionDetail || null,
@@ -5833,6 +5894,9 @@ function solveAuctionBid(estValue) {
     var c = readTaxConditionInputs();
     var repair = parseInt(document.getElementById('a-repair').value) || 0;
     var etc    = parseInt(document.getElementById('a-etc').value)    || 0;
+    // 인수보증금(선순위 대항력 임차인 미배당 예상액) - 입찰가(mid)와 무관한 고정 비용이므로
+    // repair/etc와 동일하게 이분탐색 밖에서 한 번만 읽어 매 후보에 그대로 더함
+    var assumedDeposit = parseInt(document.getElementById('a-assumed-deposit').value) || 0;
     var moving   = parseInt(document.getElementById('a-moving').value) || calcMovingFee(c.pyung) || 0;
     var cleaning = parseInt(document.getElementById('a-cleaning').value) || calcCleaningFee(c.pyung) || 0;
     var bidMethod = document.getElementById('a-bid-method').value;
@@ -5855,12 +5919,13 @@ function solveAuctionBid(estValue) {
         var loanAmount = calcLoanAmount(bidMethod, mid, appraisal);
         var interestCost = calcLoanInterest(loanAmount, loanRate, holdMonths);
         var vat = vatInfo.computable ? Math.round(mid * vatInfo.buildingRatio * 0.1) : 0;
-        var preTaxCost = mid + acqTax + registryFee + evictionFee + agentFee + repair + etc + moving + cleaning + interestCost + vat;
+        var preTaxCost = mid + acqTax + registryFee + evictionFee + agentFee + repair + etc + moving + cleaning + interestCost + vat + assumedDeposit;
         var preTaxProfit = estValue - preTaxCost;
         var taxResult = calcResaleIncomeTax(bidMethod, preTaxProfit, holdMonths);
         var netProfit = preTaxProfit - taxResult.totalTax;
         result = { bid: mid, acqTax: acqTax, registryFee: registryFee, evictionFee: evictionFee, agentFee: agentFee,
             moving: moving, cleaning: cleaning, interestCost: interestCost, loanRate: loanRate, vat: vat, vatInfo: vatInfo,
+            assumedDeposit: assumedDeposit,
             preTaxProfit: preTaxProfit, resaleTax: taxResult.totalTax, netProfit: netProfit };
         if (netProfit > targetMargin) lo = mid; else hi = mid;
     }
@@ -5921,6 +5986,9 @@ function calcCompValuation() {
             + vItem('추정 대출이자(연' + r.loanRate.toFixed(1) + '%)', r.interestCost > 0 ? toEok(String(r.interestCost)) : '—', '#bf360c')
             + (r.vatInfo && r.vatInfo.applicable
                 ? vItem('부가세(건물분,85㎡초과)', r.vatInfo.computable ? toEok(String(r.vat)) : '확인필요', r.vatInfo.computable ? '#c62828' : '#e65100')
+                : '')
+            + (r.assumedDeposit > 0
+                ? vItem('인수보증금(선순위 임차인)', toEok(String(r.assumedDeposit)), '#c62828')
                 : '')
             + vItem((document.getElementById('a-bid-method').value === 'dealer' ? '종합소득세' : '양도소득세') + '(적정입찰가 기준)', r.bid > 0 ? toEok(String(r.resaleTax)) : '—', '#9c27b0')
             + vItem('적정 입찰가(세후 목표마진 기준)', r.bid > 0 ? toEok(String(r.bid)) : '마진 확보 불가', '#6a1b9a')
@@ -7056,6 +7124,17 @@ var SITE_VISIT_CHECKLIST = [
         '세대별 우편함으로 공실 여부를 확인했다.',
         '인근 재개발·재건축 여부 및 진행 단계를 확인했다.',
         '일조권 — 주변 신축 고층 건물로 인한 채광 저하 여부를 확인했다.',
+    ]},
+    { title: '⚠️ 인수보증금(선순위 대항력 임차인) 있는 고위험물건 전용 체크리스트', items: [
+        '임차인을 직접 만나(또는 우편함·초인종으로) 실제 거주 여부와 명도(이사) 협의 의사를 확인했다.',
+        '임차인에게 배당요구를 했는지, 배당요구종기일을 지켰는지 직접 물어 확인했다(안 했으면 보증금 전액 인수 위험).',
+        '경매계에 문의해 매각물건명세서 "비고"란의 인수/소멸 안내 문구를 재확인했다(법원이 이미 판단해둔 경우가 많음).',
+        '선순위 채권(근저당 등) 채권최고액과 예상낙찰가를 비교해 배당재원이 임차인 보증금을 얼마나 커버할지 가늠했다.',
+        '임차인이 이사갈 곳을 구했는지, 명도 시점(이사 가능 시기)에 대한 현실적인 답을 들었다 — 명도소송·강제집행까지 갈 경우 추가 기간·비용을 감안했다.',
+        '전입세대열람·주민등록등본상 세대원 전원의 전입일을 확인해 대항력 판단일(말소기준권리일)과 다시 대조했다.',
+        '임차인이 소액임차인 최우선변제 대상인지(보증금 액수·전입일 기준) 확인했다 — 대상이면 인수부담이 줄어들 수 있다.',
+        '점유자가 실제 등기부·매각물건명세서상 임차인과 동일인인지(위장 임차인 여부) 확인했다.',
+        '인수보증금 반영 시 목표마진이 여전히 확보되는지 "인수보증금" 항목에 최악가정 금액을 넣고 마진분석을 다시 확인했다.',
     ]},
 ];
 function siteVisitItemHtml(item) {
