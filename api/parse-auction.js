@@ -104,6 +104,11 @@ const SCHEMA_A = {
     deposit: { type: 'NUMBER' },
     depositRate: { type: 'NUMBER' },
     owner: { type: 'STRING' },
+    // 소유자란에 "OOO 외N" 또는 지분 표기(예: "권영태 외3", "1/3", "지분")가 보이면
+    // 공유지분 물건(지분경매)일 가능성이 높음 - 공유자 우선매수권 등 별도 법리가
+    // 적용되므로 권리분석 화면에 경고 배지를 띄우기 위해 별도 필드로 뽑아둠.
+    isCoOwnership: { type: 'BOOLEAN' },
+    coOwnerCount: { type: 'INTEGER' },
     debtor: { type: 'STRING' },
     creditor: { type: 'STRING' },
     claimAmount: { type: 'NUMBER' },
@@ -122,6 +127,10 @@ const SCHEMA_A = {
     officialPriceCurrent: { type: 'STRING' },
     tenantTerminationDate: { type: 'STRING' },
     tenantDistributionDeadline: { type: 'STRING' },
+    // 소액임차인 최우선변제 판단 기준일. "임차인 전입일"이 아니라 "말소기준등기(주로
+    // 최선순위 근저당) 설정일"이며, 사이트에 "소액기준일"이라는 라벨로 별도 표기되는
+    // 경우가 많음(예: "말소기준일 : ... 소액기준일 : ... 배당요구종기일 : ...").
+    minorTenantBaseDate: { type: 'STRING' },
     tenantOccupants: {
       type: 'ARRAY',
       items: {
@@ -135,6 +144,12 @@ const SCHEMA_A = {
           moveInDate: { type: 'STRING' },
           fixedDate: { type: 'STRING' },
           distributionDate: { type: 'STRING' },
+          // 이 임차인이 배당요구를 했는지 여부 - 대항력이 있어도 배당요구를 안 했으면
+          // 보증금 전액이 인수 대상으로 확정되므로 인수보증금 계산의 핵심 분기값.
+          distributionRequested: { type: 'BOOLEAN' },
+          // 사이트가 예상/실제 배당액을 제공하는 경우(예: 예상배당표)만 채우고,
+          // 확인 안 되면 비워둘 것 - 미배당액(=인수액) 추정에 사용.
+          distributionAmount: { type: 'NUMBER' },
           note: { type: 'STRING' },
         },
       },
@@ -231,12 +246,37 @@ const SCHEMA_B = {
       properties: {
         hasLien: { type: 'BOOLEAN' }, // 유치권 신고 여부
         lienNote: { type: 'STRING' },
+        lienClaimAmount: { type: 'NUMBER' }, // 유치권 신고 채권액(공사대금 등)
+        lienDisputed: { type: 'BOOLEAN' }, // 채권자 등이 유치권 배제신청서를 제출했는지
         hasLegalSuperficies: { type: 'BOOLEAN' }, // 법정지상권 성립 여지
         legalSuperficiesNote: { type: 'STRING' },
         hasGraveRights: { type: 'BOOLEAN' }, // 분묘기지권
         graveRightsNote: { type: 'STRING' },
         isIllegalBuilding: { type: 'BOOLEAN' }, // 위반건축물 여부
         illegalBuildingNote: { type: 'STRING' },
+        // 사용승인을 받지 못한 채 공사가 중단된 상태(완공 안 된 물건) - 위반건축물과는
+        // 별개 개념(이미 지어진 건물의 적법성 문제가 아니라 애초에 미완공)이라 별도 필드.
+        isUnderConstruction: { type: 'BOOLEAN' },
+        underConstructionNote: { type: 'STRING' },
+      },
+    },
+    // 임차인 등 이해관계인이 "대항력 포기" 등 권리를 포기하는 확약서를 법원에 제출한
+    // 사실이 있으면 인수 위험이 실제로는 낮아질 수 있어 별도로 뽑아둠(매각물건명세서
+    // "주요변동"란에 자주 등장).
+    hasWaiverDocument: { type: 'BOOLEAN' },
+    waiverNote: { type: 'STRING' },
+    // 이 물건/채무자와 관련된 별도 소송(지급명령, 본안소송 등) - 매각물건명세서나
+    // 경매정보 사이트의 "관련사건" 섹션에 나오면 그대로 옮겨 담을 것.
+    relatedCases: {
+      type: 'ARRAY',
+      items: {
+        type: 'OBJECT',
+        properties: {
+          court: { type: 'STRING' },
+          caseNo: { type: 'STRING' },
+          caseType: { type: 'STRING' }, // 예: "지급명령", "소유권이전등기말소청구"
+          result: { type: 'STRING' },
+        },
       },
     },
     registryStory: { type: 'STRING' },
@@ -438,7 +478,16 @@ const PROMPT_A_RULES = `
 - tenantOccupants(임차인 현황)는 표/목록에 나온 임차인을 한 명씩 객체로 나눠서 모두 담으세요.
   대항력 "있음"이면 hasStanding: true, "없음"이면 false, 언급이 없으면 null.
   전입/확정/배당요구 날짜는 각각 moveInDate/fixedDate/distributionDate에, "임차권등기자", "경매신청인" 같은
-  표시는 note에 담으세요.`;
+  표시는 note에 담으세요.
+  · distributionRequested(배당요구 여부)는 "배당:있음"/"배당요구일"처럼 날짜나 "있음"이 명시되면 true,
+    "배당:없음"이면 false, 언급이 없으면 null로 두세요.
+  · distributionAmount(예상/실제 배당액)는 배당표나 예상배당 정보가 별도로 제공된 경우에만 숫자로 채우고,
+    없으면 null (보증금(deposit)과 혼동하지 마세요 - 이건 "실제 받는/받을 금액"입니다).
+- minorTenantBaseDate(소액기준일)는 "말소기준일 : ... 소액기준일 : ... 배당요구종기일 : ..."처럼 한 줄로
+  묶여 표기되는 경우가 많으니 그 형식을 찾아 "소액기준일" 뒤의 날짜만 뽑으세요. 언급이 없으면 null.
+- isCoOwnership(공유지분 여부)은 소유자(owner)란에 "OOO 외N", "지분", "각 N/100"처럼 여러 명이 나눠
+  소유한 정황이 보이면 true로, 단독 소유가 명확하면 false로 표시하세요. coOwnerCount는 "외N"의 N+1처럼
+  전체 공유자 수를 추정할 수 있으면 숫자로, 확실하지 않으면 null로 두세요.`;
 
 const PROMPT_B_RULES = `
 - registryItems(건물등기)는 접수일 순서대로 모두 담으세요.
@@ -462,12 +511,21 @@ const PROMPT_B_RULES = `
   본문에 명시적 표기가 없다면 절대로 스스로 인수/소멸을 판단하지 말고 null로 두세요
   (법률적 최종 판단은 사람이 직접 등기부를 보고 내려야 합니다).
 - specialRights: 본문의 "주의사항", "특수조건", "매각물건명세서 비고" 등에 아래 단어가 언급되어 있는지 확인하세요.
-  · 유치권 → hasLien, 관련 문구를 lienNote에 원문 그대로.
+  · 유치권 → hasLien, 관련 문구를 lienNote에 원문 그대로. 신고 채권액(예: "공사대금 4억4천만원")이 있으면
+    숫자만 lienClaimAmount에 담고, 채권자나 신청채권자 등이 "배제신청서를 제출"했다는 문구가 있으면
+    lienDisputed: true로 표시하세요(배제신청 언급이 없으면 null).
   · 법정지상권(또는 "관습법상 법정지상권", "토지 건물 소유자 상이") → hasLegalSuperficies, legalSuperficiesNote.
   · 분묘(분묘기지권) → hasGraveRights, graveRightsNote.
   · 위반건축물(또는 "무허가 증축", "불법 확장") → isIllegalBuilding, illegalBuildingNote.
+  · 건축 중단/미사용승인(예: "사용승인을 받지 않은 건물", "건축 중단된 상태") → isUnderConstruction,
+    underConstructionNote. 이건 위반건축물과 다른 개념(완공 자체가 안 된 상태)이니 혼동하지 마세요.
   각 항목은 본문에 해당 단어가 나오면 true, "해당사항 없음"처럼 명시적으로 부인하면 false, 아예 언급이 없으면 null로 두세요.
   절대로 본문에 없는 내용을 추측해서 true/false로 채우지 마세요.
+- hasWaiverDocument(확약서 제출 여부)는 "주요변동"이나 "주의사항" 등에 임차인·채권자가 "대항력을 포기",
+  "우선변제권만 주장", "임차권등기를 말소하는 것에 동의" 같은 확약서·동의서를 제출했다는 문구가 있으면
+  true로 하고 waiverNote에 원문을 옮기세요. 언급이 없으면 null.
+- relatedCases(관련사건)는 "관련사건" 섹션에 나오는 별도 소송(지급명령, 본안소송 등)을 court/caseNo/
+  caseType/result로 나눠 모두 담으세요. 그런 섹션이 없으면 빈 배열로 두세요.
 - landCategory(지목)는 표제부·토지대장에 나온 지목(전, 답, 과수원, 대, 임야, 잡종지 등)을 그대로 담으세요.
 - zoningType(용도지역)은 본문의 "토지이용계획", "국토이용정보" 등에 표기된 용도지역명
   (예: "제2종일반주거지역", "계획관리지역", "농림지역", "자연녹지지역")을 그대로 담으세요. 언급이 없으면 null.
