@@ -868,19 +868,32 @@ tr:hover td { background:#fffde7; }
             <div id="target-bid-suggest-box"></div>
         </div>
         <div class="modal-section">
-            <div class="modal-section-title">📚 경매서류 교차분석 (등기부등본 · 매각물건명세서 · 전입세대확인서)</div>
-            <div style="font-size:11px;color:#888;margin-bottom:8px;">세 서류를 함께 올리면 AI가 서로 대조해서 건물 이력·채권관계·경매개시 경위·인수/말소되는 등기를 스토리텔링으로 요약합니다. 등기부등본만 올려도 분석되지만, 나머지 두 서류를 함께 올리면 임차인 대항력 판단 등이 훨씬 정확해집니다.</div>
+            <div class="modal-section-title">📚 경매서류 교차분석 (최대 6종)</div>
+            <div style="font-size:11px;color:#888;margin-bottom:8px;">서류를 여러 개 함께 올리면 AI가 서로 대조해서 건물 이력·채권관계·경매개시 경위·인수/말소되는 등기·유치권 점유흔적·위반건축물 여부를 스토리텔링으로 요약합니다. 등기부등본만 올려도 분석되지만, 나머지를 함께 올릴수록 판단 정확도가 올라갑니다.
+            <br>⚠️ Vercel 서버 한도상 <b>원본 파일 합계는 6종을 다 합쳐도 3MB 이내</b>여야 합니다. 한 번에 다 못 올리면 나눠서 여러 번 분석해도 되지만, 이 기능은 매번 그 호출에 포함된 서류만 다시 분석해 이전 결과를 덮어씁니다(누적 아님) — 6종을 모두 반영한 최종 분석을 원하면 마지막 한 번에 6종을 함께 담아 올리세요.</div>
             <div style="margin-bottom:7px;">
-                <label style="font-size:11px;color:#555;display:block;margin-bottom:3px;">① 등기부등본 (인터넷등기소 iros.go.kr)</label>
+                <label style="font-size:11px;color:#555;display:block;margin-bottom:3px;">① 등기부등본 (<a href="javascript:void(0)" onclick="event.preventDefault();openIrosRegistry();" style="color:#1976d2;">인터넷등기소 iros.go.kr 바로가기</a>)</label>
                 <input type="file" id="a-registry-file" accept="application/pdf" class="modal-input" style="padding:6px;">
             </div>
             <div style="margin-bottom:7px;">
-                <label style="font-size:11px;color:#555;display:block;margin-bottom:3px;">② 매각물건명세서 (법원경매정보 courtauction.go.kr)</label>
+                <label style="font-size:11px;color:#555;display:block;margin-bottom:3px;">② 매각물건명세서 (<a href="javascript:void(0)" onclick="event.preventDefault();copyAuctionCaseNo(document.getElementById('a-case').value);" style="color:#1976d2;">법원경매정보 courtauction.go.kr 바로가기</a>)</label>
                 <input type="file" id="a-salestatement-file" accept="application/pdf" class="modal-input" style="padding:6px;">
             </div>
             <div style="margin-bottom:7px;">
-                <label style="font-size:11px;color:#555;display:block;margin-bottom:3px;">③ 전입세대확인서 (전입세대열람내역, 주민센터 발급)</label>
+                <label style="font-size:11px;color:#555;display:block;margin-bottom:3px;">③ 전입세대확인서 (전입세대열람내역, 주민센터 방문 발급 - <a href="javascript:void(0)" onclick="event.preventDefault();openGov24Search('전입세대열람');" style="color:#1976d2;">정부24 안내 바로가기</a>)</label>
                 <input type="file" id="a-residentcert-file" accept="application/pdf" class="modal-input" style="padding:6px;">
+            </div>
+            <div style="margin-bottom:7px;">
+                <label style="font-size:11px;color:#555;display:block;margin-bottom:3px;">④ 감정평가서 (<a href="javascript:void(0)" onclick="event.preventDefault();copyAuctionCaseNo(document.getElementById('a-case').value);" style="color:#1976d2;">법원경매정보에서 사건검색 후 열람</a>)</label>
+                <input type="file" id="a-appraisal-file" accept="application/pdf" class="modal-input" style="padding:6px;">
+            </div>
+            <div style="margin-bottom:7px;">
+                <label style="font-size:11px;color:#555;display:block;margin-bottom:3px;">⑤ 현황조사서 (<a href="javascript:void(0)" onclick="event.preventDefault();copyAuctionCaseNo(document.getElementById('a-case').value);" style="color:#1976d2;">법원경매정보에서 사건검색 후 열람</a>)</label>
+                <input type="file" id="a-fieldsurvey-file" accept="application/pdf" class="modal-input" style="padding:6px;">
+            </div>
+            <div style="margin-bottom:7px;">
+                <label style="font-size:11px;color:#555;display:block;margin-bottom:3px;">⑥ 건축물대장 (자동조회 결과와 별개로 재확인용 - <a href="javascript:void(0)" onclick="event.preventDefault();openGov24Search('건축물대장');" style="color:#1976d2;">정부24 발급 바로가기</a>)</label>
+                <input type="file" id="a-buildingregister-file" accept="application/pdf" class="modal-input" style="padding:6px;">
             </div>
             <div style="margin-top:6px;text-align:right;">
                 <button type="button" class="modal-btn btn-purple" id="a-registry-btn" onclick="analyzeAuctionDocs()">업로드 및 교차분석</button>
@@ -2984,6 +2997,38 @@ function openHikoreaLookup() {
         + '3) 외국인등록일이 대항력 판단 기준일이 됨(내국인의 전입신고일에 대응)\n\n'
         + '※ 임차인 본인이 아니면 발급이 제한될 수 있어, 현장에서 임차인에게 직접 제시를 요청하는 편이 실무상 더 빠릅니다.');
 }
+/* 정부24는 문서 종류별로 검색 URL 파라미터가 자주 바뀌고 로그인(공동인증서/간편인증) 이후
+   단계부터는 자동화가 불가능한 구간이라, 다른 바로가기 함수들과 동일하게 "정부24 통합검색
+   화면을 새 탭으로 열기 + 안내"까지만 지원함. 전입세대열람(전입세대확인서)은 정부24
+   온라인 발급이 아예 안 되고(신청 후 방문수령), 건축물대장은 정부24에서 바로 온라인
+   발급이 가능해 문서 종류에 따라 안내 문구를 다르게 보여줌. */
+function openGov24Search(docLabel) {
+    var url = 'https://www.gov.kr/nlogin/?Mcode=10000';
+    window.open(url, '_blank', 'noopener');
+    if (docLabel === '전입세대열람') {
+        alert('전입세대열람내역(전입세대확인서)은 정부24 온라인 발급이 되지 않습니다.\n\n'
+            + '경매 이해관계인(입찰 예정자 포함)은 임대차 정보 제공 요청 등 별도 절차로\n'
+            + '관할 주민센터(행정복지센터)를 직접 방문해 신청해야 발급됩니다.\n'
+            + '(경매물건의 경우 "임대차 정보 제공요청서"와 매각물건명세서·신분증을\n'
+            + '지참하면 이해관계 소명 없이도 열람이 가능한 경우가 많습니다 - 방문 전\n'
+            + '관할 주민센터에 필요 서류를 전화로 확인해보세요.)');
+    } else if (docLabel === '농취증') {
+        alert('새로 열린 정부24에서:\n\n'
+            + '1) 검색창에 "농지취득자격증명" 입력 후 검색\n'
+            + '2) 신청 가능 여부·구비서류를 확인합니다(관할 시·구·읍·면에 따라 온라인 신청이\n'
+            + '   안 되고 방문 신청만 되는 경우도 있어, 사전에 전화로 확인하는 것을 권장합니다).\n'
+            + '3) 농업경영계획서(또는 주말·체험영농계획서)를 함께 준비해야 합니다.\n\n'
+            + '⚠️ 경매는 농취증을 제출기한 내 못 내면 매각이 불허가되고 입찰보증금이\n'
+            + '몰수되니, 반드시 입찰 전에 발급 가능 여부를 확인하세요.');
+    } else {
+        alert('새로 열린 정부24에서:\n\n'
+            + '1) 검색창에 "건축물대장" 입력 후 검색\n'
+            + '2) [건축물대장 등·초본 발급(열람)] 메뉴 선택\n'
+            + '3) 주소 입력 후 무료로 온라인 발급/열람 가능합니다.\n\n'
+            + '※ 이미 건축HUB API로 자동조회된 결과가 있어도, 위반건축물 여부는\n'
+            + '최신 정보로 한 번 더 직접 확인하는 것을 권장합니다.');
+    }
+}
 function buildCourtAuctionLinkHtml(caseNo, addr) {
     if (!caseNo) return '';
     var addrJs = (addr || '').replace(/'/g, "\\'");
@@ -4076,6 +4121,9 @@ function openAuctionModal(id) {
     document.getElementById('a-registry-file').value = '';
     document.getElementById('a-salestatement-file').value = '';
     document.getElementById('a-residentcert-file').value = '';
+    document.getElementById('a-appraisal-file').value = '';
+    document.getElementById('a-fieldsurvey-file').value = '';
+    document.getElementById('a-buildingregister-file').value = '';
     document.getElementById('registry-result-box').innerHTML = '';
     document.getElementById('a-building-info-box').innerHTML = '';
     document.getElementById('jeonse-analysis-box').innerHTML = '';
@@ -4861,9 +4909,11 @@ var CALC_INFO_TEXT = {
     assumedDeposit: '인수보증금이란, 선순위(말소기준권리보다 먼저) 대항력을 갖춘 임차인의 보증금 중\n'
         + '배당으로 회수되지 못한 잔액을 낙찰자가 그대로 떠안아야 하는 돈입니다(낙찰가와 별도 지출).\n\n'
         + '"최악가정 제안" 버튼을 누르면, AI가 경매정보에서 뽑아둔 임차인 중 대항력 있음(hasStanding)으로\n'
-        + '표시된 임차인의 보증금 전액을 합산해 채워줍니다 - 즉 "이 임차인이 배당을 한 푼도 못 받는다"는\n'
-        + '가장 보수적인(최악의) 가정입니다. 실제로는 배당순위·배당재원(매각대금)에 따라 일부 또는\n'
-        + '전액 배당받을 수도 있어, 실제 인수액은 이보다 적을 수 있습니다.\n\n'
+        + '표시된 임차인을 대상으로 계산합니다. 임차인별로 배당요구 여부와 예상/실제 배당액까지 함께\n'
+        + '추출돼 있으면 "보증금 - 배당액"만 실제 인수 부담으로 계산하고, 배당요구를 안 한 게 확인되면\n'
+        + '배당액과 무관하게 전액을 확정 인수액으로 봅니다. 이런 정보가 없으면 "이 임차인이 배당을\n'
+        + '한 푼도 못 받는다"는 가장 보수적인(최악의) 가정으로 보증금 전액을 채웁니다. 어느 쪽이든\n'
+        + '실제 배당순위·배당재원(매각대금)에 따라 결과가 달라질 수 있어 참고용 추정치입니다.\n\n'
         + '정확한 금액을 알려면 다음을 직접 확인하세요:\n'
         + '1) 매각물건명세서의 "비고"란 - 법원이 이미 인수/소멸 여부를 명시한 경우가 많음\n'
         + '2) 배당요구 여부와 배당요구종기일 준수 여부 - 대항력 있어도 배당요구를 안 했으면 전액 인수\n'
@@ -4875,11 +4925,14 @@ var CALC_INFO_TEXT = {
 function showCalcInfo(key) {
     alert(CALC_INFO_TEXT[key] || '설명이 없습니다.');
 }
-/* 인수보증금 "최악가정" 제안 - AI가 뽑아둔 임차인현황(pendingAuctionDetail.tenantOccupants) 중
-   대항력 있음(hasStanding===true)으로 표시된 임차인의 보증금(t.deposit, 원 단위)을 전액 합산해
-   "이 임차인이 배당을 한 푼도 못 받는다"는 가장 보수적인 가정으로 a-assumed-deposit(만원 단위)에
-   채워줌. 자동으로 조용히 채우지 않고 버튼을 눌러야만 반영되게 한 이유는, 이 값이 마진/입찰가
-   계산에 직접 영향을 주는 만큼 사용자가 근거(어떤 임차인 몇 명, 각 보증금)를 알고 확인한 뒤
+/* 인수보증금 제안 - AI가 뽑아둔 임차인현황(pendingAuctionDetail.tenantOccupants) 중
+   대항력 있음(hasStanding===true)으로 표시된 임차인을 대상으로 a-assumed-deposit(만원 단위)에
+   채워줌. 임차인마다 배당요구 여부(distributionRequested)와 예상/실제 배당액(distributionAmount)이
+   함께 추출돼 있으면 그 값으로 "보증금 - 배당액"(=실제 예상 인수액)을 쓰고, 이 정보가 없으면
+   기존처럼 보증금 전액을 "최악가정"(전액 미배당)으로 채움 - 배당요구를 안 한 게 확인된 임차인은
+   배당액 정보가 없어도 애초에 최악가정=확정값이므로 그대로 전액을 씀.
+   자동으로 조용히 채우지 않고 버튼을 눌러야만 반영되게 한 이유는, 이 값이 마진/입찰가 계산에
+   직접 영향을 주는 만큼 사용자가 근거(어떤 임차인 몇 명, 각 보증금·배당 상태)를 알고 확인한 뒤
    반영하도록 하기 위함 - 대지권 면적처럼 조용히 자동채움하면 "왜 갑자기 마진이 줄었지"를
    추적하기 어려움. */
 function suggestAssumedDeposit() {
@@ -4893,17 +4946,35 @@ function suggestAssumedDeposit() {
             + '직접 확인 후 필요하면 이 항목에 수동으로 입력하세요.');
         return;
     }
-    var totalWon = standing.reduce(function(sum, t) { return sum + (parseInt(t.deposit) || 0); }, 0);
+    var totalWon = 0;
+    var lines = [];
+    standing.forEach(function(t) {
+        var deposit = parseInt(t.deposit) || 0;
+        var assumed = deposit;
+        var basis = '최악가정(전액 미배당)';
+        if (t.distributionRequested === true && (t.distributionAmount || t.distributionAmount === 0)) {
+            // 배당요구를 했고 예상/실제 배당액까지 확인되면, 그 차액(보증금-배당액)만 실제
+            // 인수 부담으로 봄 - 전액 최악가정보다 더 정확한 추정치.
+            assumed = Math.max(deposit - (parseInt(t.distributionAmount) || 0), 0);
+            basis = '배당요구함 - 예상배당액 ' + won(t.distributionAmount) + ' 차감';
+        } else if (t.distributionRequested === false) {
+            // 배당요구를 안 한 게 확인됐으면 배당액과 무관하게 전액 인수가 확정값이라
+            // "최악가정"이 아니라 사실상 확정치임을 문구로 구분해줌.
+            basis = '배당요구 안 함(확정 - 전액 인수)';
+        }
+        totalWon += assumed;
+        lines.push((t.name || '임차인') + ' ' + won(assumed) + ' (' + basis + ')');
+    });
     if (!totalWon) {
         alert('대항력 있는 임차인은 있지만 보증금 금액이 추출되지 않았습니다. 경매정보지에서\n직접 확인 후 이 항목에 수동으로 입력하세요.');
         return;
     }
     var totalManwon = Math.round(totalWon / 10000);
     document.getElementById('a-assumed-deposit').value = totalManwon;
-    var names = standing.map(function(t) { return (t.name || '임차인') + ' ' + won(parseInt(t.deposit) || 0); }).join(', ');
-    alert('대항력 있는 임차인 ' + standing.length + '명의 보증금 전액(' + toEok(String(totalManwon)) + ')을\n'
-        + '"최악가정"(전액 미배당)으로 채웠습니다.\n(' + names + ')\n\n'
-        + '실제 배당표 확인 후 배당받는 금액만큼 이 항목을 줄여서 수정하세요.');
+    alert('대항력 있는 임차인 ' + standing.length + '명 기준 인수보증금 ' + toEok(String(totalManwon)) + '을 채웠습니다.\n\n'
+        + lines.join('\n') + '\n\n'
+        + '배당요구 여부·배당액이 확인 안 된 임차인은 최악가정(전액 미배당)으로 계산했습니다.\n'
+        + '실제 배당표 확인 후 차이가 있으면 이 항목을 직접 수정하세요.');
     calcMargin();
 }
 function calcMargin() {
@@ -6123,15 +6194,23 @@ async function readJsonResponseSafe(res) {
     }
 }
 
-/* 등기부등본·매각물건명세서·전입세대확인서 최대 3종을 함께 올려서 서로 대조 분석함.
-   셋 다 필수는 아니고(등기부등본만 올려도 동작), 올린 문서가 많을수록 AI가 교차검증할
-   근거가 많아져서 특히 임차인 대항력 판단(전입세대확인서 vs 등기부 vs 매각물건명세서상
-   임차인현황)의 정확도가 올라감. */
+/* 등기부등본·매각물건명세서·전입세대확인서·감정평가서·현황조사서·건축물대장 최대 6종을
+   함께 올려서 서로 대조 분석함. 전부 필수는 아니고(등기부등본만 올려도 동작), 올린 문서가
+   많을수록 AI가 교차검증할 근거가 많아져서 특히 임차인 대항력 판단(전입세대확인서 vs
+   등기부 vs 매각물건명세서상 임차인현황), 유치권 점유흔적(감정평가서·현황조사서), 위반건축물
+   여부(건축물대장) 판단 정확도가 올라감.
+   ⚠️ 이 함수는 호출 시점에 선택된 파일만 서버로 보내고, 서버(parse-registry.js)는 매번
+   "이번에 첨부된 서류만" 새로 분석해 이전 저장된 분석 결과를 덮어씀(여러 서류를 누적해서
+   합쳐주는 병합 로직은 없음) - 6종을 모두 반영한 최종 결과를 원하면 마지막에 6종을 한 번에
+   선택해서 눌러야 함. */
 async function analyzeAuctionDocs() {
     var fileMap = {
         registry: document.getElementById('a-registry-file').files[0] || null,
         saleStatement: document.getElementById('a-salestatement-file').files[0] || null,
         residentCert: document.getElementById('a-residentcert-file').files[0] || null,
+        appraisal: document.getElementById('a-appraisal-file').files[0] || null,
+        fieldSurvey: document.getElementById('a-fieldsurvey-file').files[0] || null,
+        buildingRegister: document.getElementById('a-buildingregister-file').files[0] || null,
     };
     var selected = Object.keys(fileMap).map(function(k) { return fileMap[k]; }).filter(Boolean);
     if (!selected.length) { alert('최소 1개 이상의 PDF 파일을 선택해 주세요 (등기부등본을 우선 권장합니다).'); return; }
@@ -6146,14 +6225,14 @@ async function analyzeAuctionDocs() {
     // 전에 플랫폼 자체가 요청을 막아버림(413, 응답이 JSON이 아닌 일반 에러 페이지라
     // "Unexpected token..." 같은 알아보기 힘든 오류로 사용자에게 그대로 노출됨).
     // base64로 인코딩하면 원본 용량의 약 1.33배가 되므로, 원본 파일 합계가 3MB를 넘지
-    // 않도록 여기서 미리 막아 원천 차단함. (예전엔 파일당 10MB/합계 15MB까지 허용
-    // 표시였는데, 실제로는 원본 합계가 약 3.3MB만 넘어도 무조건 실패했으므로 그 상한
-    // 표시 자체가 틀려 있었음 - config.api.bodyParser.sizeLimit는 Vercel 플랫폼의
-    // 4.5MB 하드 리밋을 못 늘림)
+    // 않도록 여기서 미리 막아 원천 차단함. 6종을 다 고르더라도 이 3MB 한도는 그대로
+    // 공유되므로(늘리지 않음 - Vercel 4.5MB 하드리밋 자체를 못 늘리기 때문), 한 번에
+    // 다 못 넣으면 우선순위가 높은 서류(등기부등본·매각물건명세서)부터 나눠서 여러 번
+    // 분석하거나 스캔 해상도를 낮춰서 용량을 줄여야 함.
     if (totalSize > 3 * 1024 * 1024) {
         alert('PDF 파일 용량이 너무 큽니다(합계 약 ' + (Math.round(totalSize / 1024 / 1024 * 10) / 10) + 'MB).\n'
-            + 'Vercel 서버는 요청 하나당 4.5MB까지만 받을 수 있어, 원본 파일 합계는 3MB 이내로 부탁드립니다.\n'
-            + '(스캔 해상도를 낮추면 파일 용량이 줄어듭니다. 필요하면 서류를 한 번에 1개씩 나눠서 순서대로 업로드해도 됩니다.)');
+            + 'Vercel 서버는 요청 하나당 4.5MB까지만 받을 수 있어, 선택한 서류 원본 합계는 3MB 이내로 부탁드립니다(6종을 다 고르더라도 동일한 한도입니다).\n'
+            + '(스캔 해상도를 낮추면 파일 용량이 줄어듭니다. 서류를 우선순위대로 나눠서 여러 번 분석해도 됩니다 - 등기부등본·매각물건명세서를 먼저 권장합니다.)');
         return;
     }
     var btn = document.getElementById('a-registry-btn');
@@ -6826,14 +6905,19 @@ function buildRightsAnalysisHtml(detail, sectionLabel, row) {
     if (!detail) return '';
     var hasBaseRight = detail.baseRightType || detail.baseRightDate || detail.baseRightHolder;
     var sr = detail.specialRights || {};
+    var lienExtra = [];
+    if (sr.lienClaimAmount) lienExtra.push('신고금액 ' + Math.round(sr.lienClaimAmount / 10000).toLocaleString() + '만원');
+    if (sr.lienDisputed === true) lienExtra.push('채권자측 배제신청 제출됨');
     var specialFlags = [
-        { key: 'hasLien', label: '유치권', note: sr.lienNote },
+        { key: 'hasLien', label: '유치권', note: [sr.lienNote, lienExtra.join(' · ')].filter(Boolean).join(' / ') },
         { key: 'hasLegalSuperficies', label: '법정지상권', note: sr.legalSuperficiesNote },
         { key: 'hasGraveRights', label: '분묘기지권', note: sr.graveRightsNote },
         { key: 'isIllegalBuilding', label: '위반건축물', note: sr.illegalBuildingNote },
+        { key: 'isUnderConstruction', label: '건축중단/미사용승인', note: sr.underConstructionNote },
     ].filter(function(f) { return sr[f.key] === true; });
     var hasZoning = detail.landCategory || detail.zoningType || detail.farmlandCertRequired !== undefined && detail.farmlandCertRequired !== null;
-    if (!hasBaseRight && !specialFlags.length && !hasZoning) return '';
+    var hasExtras = detail.isCoOwnership === true || detail.hasWaiverDocument === true || (detail.relatedCases && detail.relatedCases.length);
+    if (!hasBaseRight && !specialFlags.length && !hasZoning && !hasExtras) return '';
 
     var html = '<div style="margin-top:10px;border:1px solid #ffcdd2;border-radius:8px;padding:8px 10px;background:#fff8f8;">';
     html += '<div style="font-size:11px;font-weight:bold;color:#c62828;">⚖️ 권리분석 체크 (AI 추출 · 입찰 전 등기부 재열람 필수)</div>';
@@ -6841,6 +6925,15 @@ function buildRightsAnalysisHtml(detail, sectionLabel, row) {
     if (hasBaseRight) {
         html += '<div style="font-size:11px;color:#555;margin-top:4px;"><b>말소기준권리:</b> '
             + [detail.baseRightType, detail.baseRightDate, detail.baseRightHolder].filter(Boolean).join(' · ') + '</div>';
+    }
+    if (detail.minorTenantBaseDate) {
+        html += '<div style="font-size:11px;color:#555;margin-top:2px;"><b>소액기준일:</b> ' + detail.minorTenantBaseDate + '</div>';
+    }
+
+    if (detail.isCoOwnership === true) {
+        html += '<div style="margin-top:4px;"><span style="display:inline-block;background:#8e24aa;color:white;font-size:10px;font-weight:bold;padding:2px 6px;border-radius:3px;">👥 공유지분 물건'
+            + (detail.coOwnerCount ? ' (공유자 ' + detail.coOwnerCount + '명)' : '') + '</span></div>'
+            + '<div style="font-size:10px;color:#999;margin-top:2px;">다른 공유자의 우선매수권 등 지분경매 특유의 법리가 적용될 수 있습니다.</div>';
     }
 
     if (specialFlags.length) {
@@ -6853,6 +6946,21 @@ function buildRightsAnalysisHtml(detail, sectionLabel, row) {
             if (f.note) html += '<div style="font-size:10.5px;color:#777;margin-top:2px;">· ' + f.label + ': ' + f.note + '</div>';
         });
         html += '<div style="font-size:10px;color:#999;margin-top:2px;">위 권리는 등기 순위와 무관하게 매수인에게 인수될 수 있습니다. 현장조사(임장)로 실제 성립 여부를 반드시 확인하세요.</div>';
+    }
+
+    if (detail.hasWaiverDocument === true) {
+        html += '<div style="margin-top:6px;background:#e8f5e9;border-radius:6px;padding:6px 8px;">'
+            + '<div style="font-size:10.5px;font-weight:bold;color:#2e7d32;">✅ 권리포기 확약서 제출됨</div>'
+            + (detail.waiverNote ? '<div style="font-size:10.5px;color:#555;margin-top:2px;">' + detail.waiverNote + '</div>' : '')
+            + '<div style="font-size:9.5px;color:#999;margin-top:2px;">확약서로 인수위험이 낮아졌을 수 있지만, 조건이 바뀌면 다시 달라질 수 있으니 최신 매각물건명세서로 재확인하세요.</div>'
+            + '</div>';
+    }
+
+    if (detail.relatedCases && detail.relatedCases.length) {
+        html += sectionLabel('관련사건');
+        detail.relatedCases.forEach(function(c) {
+            html += row([c.court, c.caseNo].filter(Boolean).join(' '), [c.caseType, c.result].filter(Boolean).join(' · '));
+        });
     }
 
     if (hasZoning) {
@@ -6971,7 +7079,9 @@ var CHECKLIST_DEF = [
         '토지이음(eum.go.kr)에서 용도지역(도시/관리/농림/자연환경보전 등)을 확인했다.',
         '건폐율·용적률 한도를 확인했다.',
         '대상 토지가 도로에 접하는지 확인했다(건축허가 요건, 시골은 배수로도 확인).',
-        '건축물대장을 열람해 위반건축물 여부를 확인했다.',
+        '건축물대장을 열람해 위반건축물 여부를 확인했다. '
+            + '<a href="javascript:void(0)" onclick="event.preventDefault();event.stopPropagation();openGov24Search(\'건축물대장\');" '
+            + 'style="color:#1a237e;font-weight:bold;text-decoration:underline;white-space:nowrap;">🔗 정부24 발급 바로가기</a>',
         "재개발·재건축 대상 여부와 진행 단계(조합설립 여부='뚜껑', 사업시행인가 등)를 확인했다.",
         '재개발 물건은 강제경매/임의경매 취득 시점에 따라 현금청산 여부가 달라질 수 있어 조합사무실에 문의했다.',
     ]},
@@ -6986,11 +7096,15 @@ var CHECKLIST_DEF = [
         "해당 토지가 실제로 경작 가능한 상태인지 확인했다 — 불가능하면 '농지 복구계획서'를 첨부해야 한다.",
         '농업진흥구역 여부를 확인했다 — 농업진흥구역은 주말·체험영농 목적취득이 불가하다.',
         '농업진흥지역이면서 면적이 1,000㎡ 미만인 경우 농지대장 등록 여부를 확인했다.',
-        '정부24 또는 관할 시·구·읍·면에 농취증 발급 가능 여부를 입찰 전 사전 문의했다.',
+        '정부24 또는 관할 시·구·읍·면에 농취증 발급 가능 여부를 입찰 전 사전 문의했다. '
+            + '<a href="javascript:void(0)" onclick="event.preventDefault();event.stopPropagation();openGov24Search(\'농취증\');" '
+            + 'style="color:#1a237e;font-weight:bold;text-decoration:underline;white-space:nowrap;">🔗 정부24 안내 바로가기</a>',
         '농업경영계획서(또는 주말·체험영농계획서) 작성에 필요한 서류를 미리 확인했다.',
     ]},
     { title: '10. 입찰 직전 최종 점검', items: [
-        '최신 매각물건명세서를 법원경매정보 사이트에서 다시 확인했다(courtauction.go.kr).',
+        '최신 매각물건명세서를 법원경매정보 사이트에서 다시 확인했다(courtauction.go.kr). '
+            + '<a href="javascript:void(0)" onclick="event.preventDefault();event.stopPropagation();copyAuctionCaseNo(document.getElementById(\'a-case\').value);" '
+            + 'style="color:#1a237e;font-weight:bold;text-decoration:underline;white-space:nowrap;">🔗 법원경매정보 바로가기</a>',
         '배당요구종기일까지 배당요구한 임차인·채권자 목록에 변동이 없는지 확인했다.',
         '감정가 대비 최저매각가율과 유찰 횟수를 확인하고, 유찰 사유를 점검했다.',
         '특별매각조건(재매각, 농지취득자격증명 제출조건 등)을 확인했다.',
@@ -7367,10 +7481,16 @@ function buildAuctionDetailHtml(detail) {
             var standBadge = t.hasStanding === true
                 ? '<span style="background:#e53935;color:white;font-size:9px;font-weight:bold;padding:1px 5px;border-radius:3px;margin-left:4px;">대항력 있음</span>'
                 : (t.hasStanding === false ? '<span style="background:#9e9e9e;color:white;font-size:9px;padding:1px 5px;border-radius:3px;margin-left:4px;">대항력 없음</span>' : '');
-            html += '<div style="font-size:11px;color:#555;font-weight:bold;margin-top:4px;">' + (t.name || '임차인') + standBadge + '</div>';
+            var distBadge = t.distributionRequested === true
+                ? '<span style="background:#43a047;color:white;font-size:9px;font-weight:bold;padding:1px 5px;border-radius:3px;margin-left:4px;">배당요구함</span>'
+                : (t.distributionRequested === false ? '<span style="background:#e53935;color:white;font-size:9px;font-weight:bold;padding:1px 5px;border-radius:3px;margin-left:4px;">배당요구 안 함</span>' : '');
+            html += '<div style="font-size:11px;color:#555;font-weight:bold;margin-top:4px;">' + (t.name || '임차인') + standBadge + distBadge + '</div>';
             html += row('점유부분', t.occupancyPart);
             html += row('보증금/차임', [won(t.deposit), (t.rent ? won(t.rent) + '/월' : '')].filter(Boolean).join(' · '));
             html += row('전입/확정/배당', [t.moveInDate, t.fixedDate, t.distributionDate].filter(Boolean).join(' · '));
+            if (t.distributionAmount !== undefined && t.distributionAmount !== null && t.distributionAmount !== '') {
+                html += row('예상/실제 배당액', won(t.distributionAmount));
+            }
             html += row('비고', t.note);
         });
     } else {
