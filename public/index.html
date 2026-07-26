@@ -442,6 +442,56 @@ tr:hover td { background:#fffde7; }
     0%, 100% { box-shadow: 0 3px 14px rgba(230,81,0,0.55), 0 0 0 0 rgba(230,81,0,0.5); }
     50% { box-shadow: 0 3px 14px rgba(230,81,0,0.85), 0 0 0 6px rgba(230,81,0,0); }
 }
+/* 현장 임장용 - 나침반(거실창 방향 확인) + 실시간 내 위치. 둘 다 빈 자리인 좌측상단에 세로로 쌓음
+   (좌상단: 비어있음 / 우상단: type-filter+급등지역 / 상단중앙: 검색창·필터토글 / 좌하단: 범례 /
+   우하단: 경매관리 버튼 - 그래서 좌상단이 유일하게 비어있는 모서리) */
+#geo-tools-group {
+    position:absolute; top:10px; left:14px; z-index:10;
+    display:flex; flex-direction:column; gap:8px;
+}
+.geo-tool-btn {
+    width:42px; height:42px; border-radius:50%; border:2px solid #37474f;
+    background:white; color:#37474f; font-size:19px; cursor:pointer;
+    box-shadow:0 3px 10px rgba(0,0,0,0.2); display:flex; align-items:center; justify-content:center;
+    padding:0;
+}
+.geo-tool-btn.active { background:#1976d2; border-color:#1976d2; color:white; }
+#compass-hud {
+    position:absolute; top:60px; left:14px; z-index:10;
+    width:100px; height:100px; border-radius:50%;
+    background:rgba(255,255,255,0.97); box-shadow:0 3px 12px rgba(0,0,0,0.22);
+    display:none; align-items:center; justify-content:center;
+}
+#compass-hud.active { display:flex; }
+#compass-rose {
+    position:relative; width:100%; height:100%;
+    transform:rotate(0deg);
+}
+.compass-label {
+    position:absolute; font-size:11px; font-weight:bold; color:#666;
+}
+.compass-label.n { top:5px; left:50%; transform:translateX(-50%); color:#e53935; }
+.compass-label.e { right:6px; top:50%; transform:translateY(-50%); }
+.compass-label.s { bottom:5px; left:50%; transform:translateX(-50%); }
+.compass-label.w { left:6px; top:50%; transform:translateY(-50%); }
+#compass-pointer {
+    position:absolute; top:2px; left:50%; transform:translateX(-50%);
+    width:0; height:0; border-left:6px solid transparent; border-right:6px solid transparent;
+    border-bottom:10px solid #1976d2; z-index:2;
+}
+#compass-readout {
+    position:absolute; top:164px; left:14px; z-index:10;
+    font-size:11.5px; font-weight:bold; color:#333; white-space:nowrap;
+    background:rgba(255,255,255,0.97); padding:3px 10px; border-radius:12px;
+    box-shadow:0 2px 6px rgba(0,0,0,0.15); display:none;
+}
+#compass-readout.active { display:block; }
+#compass-se-flag {
+    display:none; position:absolute; top:196px; left:14px; z-index:10;
+    font-size:11px; font-weight:bold; color:white; background:#2e7d32;
+    padding:3px 10px; border-radius:12px; white-space:nowrap;
+    box-shadow:0 2px 6px rgba(0,0,0,0.15);
+}
 </style>
 </head>
 <body>
@@ -449,6 +499,21 @@ tr:hover td { background:#fffde7; }
     <input type="text" id="addr-input" placeholder="아파트명·도로명·지번 검색" />
     <button onclick="searchAddress()">검색</button>
 </div>
+<div id="geo-tools-group">
+    <button class="geo-tool-btn" id="compass-toggle-btn" onclick="toggleCompass()" title="나침반 (거실창 방향 확인)">🧭</button>
+    <button class="geo-tool-btn" id="mylocation-toggle-btn" onclick="toggleMyLocationTracking()" title="실시간 내 위치">📍</button>
+</div>
+<div id="compass-hud">
+    <div id="compass-pointer"></div>
+    <div id="compass-rose">
+        <span class="compass-label n">N</span>
+        <span class="compass-label e">E</span>
+        <span class="compass-label s">S</span>
+        <span class="compass-label w">W</span>
+    </div>
+</div>
+<div id="compass-readout"></div>
+<div id="compass-se-flag">✅ 남동향</div>
 <div id="type-filter">
     <button class="type-btn active-apt" onclick="setTypeFilter('apt',this)">아파트</button>
     <button class="type-btn" onclick="setTypeFilter('villa',this)">연립다세대</button>
@@ -1008,6 +1073,13 @@ var markers = {}, radiusCircle = null;
 var markerDataRegistry = {};
 var markerDataSeq = 0;
 var moveTimer = null, coordCache = {}, dataCache = {};
+/* 나침반(거실창 방향 확인) + 실시간 내위치(도보 임장 이동경로) 상태 */
+var compassActive = false;
+var compassPermissionAsked = false;
+var myLocationWatchId = null;
+var myLocationOverlay = null;
+var myLocationAccuracyCircle = null;
+var myLocationFirstFix = true;
 var today = new Date();
 // 날짜 기준
 var threeMonAgo  = daysAgo(90);
@@ -3027,6 +3099,148 @@ function openGov24Search(docLabel) {
             + '3) 주소 입력 후 무료로 온라인 발급/열람 가능합니다.\n\n'
             + '※ 이미 건축HUB API로 자동조회된 결과가 있어도, 위반건축물 여부는\n'
             + '최신 정보로 한 번 더 직접 확인하는 것을 권장합니다.');
+    }
+}
+/* ════════════════════════════════════
+   나침반 (거실창 방향 확인용) - 남동향 최우선 강조
+   iOS 13+ Safari는 DeviceOrientationEvent.requestPermission()을
+   반드시 사용자 제스처(버튼 클릭) 안에서 직접 호출해야 권한창이 뜸.
+   Android/구형 iOS/데스크톱은 그런 API가 없으므로 feature-detect 후 바로 리스너 등록.
+════════════════════════════════════ */
+function toggleCompass() {
+    if (compassActive) {
+        stopCompass();
+        return;
+    }
+    if (typeof DeviceOrientationEvent !== 'undefined'
+        && typeof DeviceOrientationEvent.requestPermission === 'function') {
+        DeviceOrientationEvent.requestPermission().then(function(state) {
+            if (state === 'granted') {
+                startCompass();
+            } else {
+                alert('나침반 권한이 거부되었습니다.\n\niPad 설정 → Safari(또는 사용 중인 브라우저) → "동작 및 방향 접근"을 허용한 뒤 다시 시도해주세요.');
+            }
+        }).catch(function(err) {
+            alert('나침반 권한 요청 중 오류가 발생했습니다: ' + err.message);
+        });
+    } else if (window.DeviceOrientationEvent) {
+        startCompass();
+    } else {
+        alert('이 기기/브라우저는 나침반(방향 센서)을 지원하지 않습니다.');
+    }
+}
+function startCompass() {
+    compassActive = true;
+    document.getElementById('compass-toggle-btn').classList.add('active');
+    document.getElementById('compass-hud').classList.add('active');
+    document.getElementById('compass-readout').classList.add('active');
+    window.addEventListener('deviceorientation', onDeviceOrientation, true);
+}
+function stopCompass() {
+    compassActive = false;
+    document.getElementById('compass-toggle-btn').classList.remove('active');
+    document.getElementById('compass-hud').classList.remove('active');
+    document.getElementById('compass-readout').classList.remove('active');
+    document.getElementById('compass-se-flag').style.display = 'none';
+    window.removeEventListener('deviceorientation', onDeviceOrientation, true);
+}
+function onDeviceOrientation(e) {
+    var heading;
+    if (typeof e.webkitCompassHeading === 'number' && !isNaN(e.webkitCompassHeading)) {
+        heading = e.webkitCompassHeading; // iOS: 0=정북, 시계방향 증가, 자북 보정 포함
+    } else if (e.absolute && typeof e.alpha === 'number') {
+        heading = 360 - e.alpha; // 비-iOS 폴백(근사치)
+    } else if (typeof e.alpha === 'number') {
+        heading = 360 - e.alpha; // absolute 플래그가 없어도 시도는 해봄(기기별 편차 있을 수 있음)
+    } else {
+        return;
+    }
+    updateCompassDisplay(heading);
+}
+function headingToKoreanDir(heading) {
+    var dirs = ['북', '북동', '동', '남동', '남', '남서', '서', '북서'];
+    var idx = Math.round(((heading % 360) + 360) % 360 / 45) % 8;
+    return dirs[idx];
+}
+function updateCompassDisplay(heading) {
+    heading = ((heading % 360) + 360) % 360;
+    var rose = document.getElementById('compass-rose');
+    if (rose) rose.style.transform = 'rotate(' + (-heading) + 'deg)';
+    var dir = headingToKoreanDir(heading);
+    var readout = document.getElementById('compass-readout');
+    if (readout) readout.innerText = Math.round(heading) + '° ' + dir;
+    var seFlag = document.getElementById('compass-se-flag');
+    if (seFlag) {
+        // 남동향: 112.5° ~ 157.5° (거실창이 이 범위를 바라보면 국내 선호 1순위 방향)
+        var isSE = heading >= 112.5 && heading <= 157.5;
+        seFlag.style.display = isSE ? 'block' : 'none';
+    }
+}
+/* ════════════════════════════════════
+   실시간 내위치 (초행길 임장 도보 이동용)
+   기존 getCurrentPosition(1회성, 지도 초기중심용)와 별개로,
+   watchPosition으로 연속 추적하며 CustomOverlay로 파란 점 마커 갱신
+════════════════════════════════════ */
+function toggleMyLocationTracking() {
+    if (myLocationWatchId !== null) {
+        stopMyLocationTracking();
+        return;
+    }
+    if (!navigator.geolocation) {
+        alert('이 브라우저는 위치 확인을 지원하지 않습니다.');
+        return;
+    }
+    myLocationFirstFix = true;
+    document.getElementById('mylocation-toggle-btn').classList.add('active');
+    myLocationWatchId = navigator.geolocation.watchPosition(
+        onMyLocationUpdate,
+        function(err) {
+            alert('현재 위치를 가져올 수 없습니다: ' + err.message + '\n\niPad 설정에서 이 브라우저의 위치 접근 권한을 허용해주세요.');
+            stopMyLocationTracking();
+        },
+        { enableHighAccuracy: true, maximumAge: 2000, timeout: 15000 }
+    );
+}
+function stopMyLocationTracking() {
+    if (myLocationWatchId !== null) {
+        navigator.geolocation.clearWatch(myLocationWatchId);
+        myLocationWatchId = null;
+    }
+    document.getElementById('mylocation-toggle-btn').classList.remove('active');
+    if (myLocationOverlay) { myLocationOverlay.setMap(null); myLocationOverlay = null; }
+    if (myLocationAccuracyCircle) { myLocationAccuracyCircle.setMap(null); myLocationAccuracyCircle = null; }
+}
+function onMyLocationUpdate(pos) {
+    var lat = pos.coords.latitude, lon = pos.coords.longitude;
+    var pt = new kakao.maps.LatLng(lat, lon);
+    if (!myLocationOverlay) {
+        var div = document.createElement('div');
+        div.style.cssText = 'width:16px;height:16px;border-radius:50%;background:#1976d2;'
+            + 'border:3px solid white;box-shadow:0 0 0 2px rgba(25,118,210,0.5),0 2px 6px rgba(0,0,0,0.3);';
+        myLocationOverlay = new kakao.maps.CustomOverlay({
+            position: pt, content: div, yAnchor: 0.5, xAnchor: 0.5, zIndex: 10000, clickable: false
+        });
+        myLocationOverlay.setMap(map);
+    } else {
+        myLocationOverlay.setPosition(pt);
+    }
+    if (pos.coords.accuracy) {
+        if (!myLocationAccuracyCircle) {
+            myLocationAccuracyCircle = new kakao.maps.Circle({
+                center: pt, radius: pos.coords.accuracy,
+                strokeWeight: 1, strokeColor: '#1976d2', strokeOpacity: 0.5,
+                fillColor: '#1976d2', fillOpacity: 0.12
+            });
+            myLocationAccuracyCircle.setMap(map);
+        } else {
+            myLocationAccuracyCircle.setPosition(pt);
+            myLocationAccuracyCircle.setRadius(pos.coords.accuracy);
+        }
+    }
+    if (myLocationFirstFix) {
+        myLocationFirstFix = false;
+        map.setCenter(pt);
+        map.setLevel(3); // 도보 임장이므로 확대해서 주변 건물이 잘 보이게
     }
 }
 function buildCourtAuctionLinkHtml(caseNo, addr) {
