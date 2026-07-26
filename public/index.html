@@ -5110,15 +5110,19 @@ var CALC_INFO_TEXT = {
         + '권리분석을 받으세요.',
     vat: '부가세(건물분)는 전용면적이 국민주택규모(85㎡)를 초과하는 주택을 "매매사업자" 입찰방법으로\n'
         + '낙찰받을 때만 대상이 됩니다(개인명의 입찰이거나 85㎡ 이하면 대상 아님).\n\n'
-        + '계산 방법(경락금액 중 건물가액을 구해 그 10%를 부가세로 봄):\n'
-        + '1) 공동주택가격을 전유면적:대지권면적 비율로 건물가액/토지가액으로 나눔\n'
-        + '   (건물·토지 각각의 기준시가가 따로 없어, 면적비율로 안분하는 방식)\n'
-        + '2) 그 비율을 경락금액(입찰가)에 그대로 적용해 "경락금액 중 건물가액"을 구함\n'
-        + '3) 그 금액의 10%가 부가세\n\n'
-        + '예) 경락금액 1억2,600만, 공동주택가격 6,300만, 전유면적 55㎡, 대지권면적 44㎡라면\n'
-        + '건물가액 비율 55/99 → 경락금액 중 건물가액 7,000만 → 부가세 700만\n\n'
-        + '자동계산에는 "공시가격"과 "대지권 면적" 입력이 필요합니다. 대지권 면적은 매각물건명세서나\n'
-        + '등기부등본(대지권의 표시)에서, 개별공시지가는 부동산공시가격 알리미에서 직접 확인할 수 있습니다.\n'
+        + '계산 방법(경락금액 중 건물가액을 구해 그 10%를 부가세로 봄) - 건물:토지 안분 비율은\n'
+        + '아래 두 가지 방식 중 입력된 값이 있는 쪽을 우선 사용합니다(둘 다 국세청 예규상 인정되는 방식):\n\n'
+        + '① 공시가격 기준(1순위): 공동주택가격을 전유면적:대지권면적 비율로 건물가액/토지가액으로 나눔\n'
+        + '   (건물·토지 각각의 기준시가가 따로 없어, 면적비율로 안분)\n'
+        + '   예) 경락금액 1억2,600만, 공동주택가격 6,300만, 전유면적 55㎡, 대지권면적 44㎡라면\n'
+        + '   건물가액 비율 55/99 → 경락금액 중 건물가액 7,000만 → 부가세 700만\n\n'
+        + '② 감정평가서 기준(공시가격·대지권면적을 못 구했을 때 자동 대체): 감정평가서에 이미\n'
+        + '   토지가격/건물가격이 별도 산정돼 있으면(AI가 자동 추출), 그 비율을 그대로 씀\n'
+        + '   예) 감정평가서상 토지 8,960만 : 건물 13,440만(비율 40:60)이면, 경락금액의 60%를\n'
+        + '   건물가액으로 보고 그 10%를 부가세로 계산\n\n'
+        + '두 값 모두 없으면(공시가격·대지권면적도 없고, 감정평가서 토지/건물가격도 못 뽑았으면)\n'
+        + '자동계산이 안 되고 "확인필요"로 표시됩니다. 대지권 면적은 매각물건명세서나 등기부등본\n'
+        + '(대지권의 표시)에서, 개별공시지가는 부동산공시가격 알리미에서 직접 확인할 수 있습니다.\n'
         + '⚠️ 참고용 추정치입니다. 실제 입찰 전 세무사를 통해 한 번 더 확인하는 것을 권장합니다.',
     assumedDeposit: '인수보증금이란, 선순위(말소기준권리보다 먼저) 대항력을 갖춘 임차인의 보증금 중\n'
         + '배당으로 회수되지 못한 잔액을 낙찰자가 그대로 떠안아야 하는 돈입니다(낙찰가와 별도 지출).\n\n'
@@ -5265,9 +5269,14 @@ function calcMargin() {
     // 지나치기 쉬우니 마진분석 박스 자체에도 눈에 띄게 안내를 추가함
     var vatWarnBox = document.getElementById('vat-warn-box');
     if (vatWarnBox) {
-        vatWarnBox.innerHTML = (vatInfo.applicable && !vatInfo.computable)
-            ? '<div style="font-size:11px;color:#e65100;background:#fff3e0;border-radius:6px;padding:6px 8px;margin-top:6px;">⚠️ ' + vatInfo.reason + '</div>'
-            : '';
+        if (vatInfo.applicable && !vatInfo.computable) {
+            vatWarnBox.innerHTML = '<div style="font-size:11px;color:#e65100;background:#fff3e0;border-radius:6px;padding:6px 8px;margin-top:6px;">⚠️ ' + vatInfo.reason + '</div>';
+        } else if (vatInfo.applicable && vatInfo.computable && vatInfo.ratioSource) {
+            // 안분 근거가 무엇인지(공시가격 기준 vs 감정평가서 기준) 계산값 옆에 바로 보이도록 표시
+            vatWarnBox.innerHTML = '<div style="font-size:11px;color:#00695c;background:#e0f2f1;border-radius:6px;padding:6px 8px;margin-top:6px;">ℹ️ 건물분 안분 근거: ' + vatInfo.ratioSource + '</div>';
+        } else {
+            vatWarnBox.innerHTML = '';
+        }
     }
 }
 /* 목표 매도가 - 목표마진 - 부대비용(세금·등기비·명도비·중개수수료 등)을 역산해서
@@ -6147,25 +6156,49 @@ function calcAuctionVat(bidAmount) {
     }
     var officialPriceWon = parseInt(document.getElementById('a-official-price').value) || 0;
     var siteRightsAreaM2 = parseFloat(document.getElementById('a-site-rights-area').value) || 0;
-    if (!officialPriceWon || !siteRightsAreaM2) {
+    var buildingRatio = null, ratioSource = null;
+    var buildingValueOfOfficialPrice = null, landValueOfOfficialPrice = null;
+
+    if (officialPriceWon && siteRightsAreaM2) {
+        // 1순위: 공동주택가격(공시가격)을 전유:대지권 면적비율로 안분(국세청 예규상 원칙적 방식)
+        buildingValueOfOfficialPrice = officialPriceWon * areaM2 / (areaM2 + siteRightsAreaM2);
+        landValueOfOfficialPrice = officialPriceWon * siteRightsAreaM2 / (areaM2 + siteRightsAreaM2);
+        buildingRatio = buildingValueOfOfficialPrice / (buildingValueOfOfficialPrice + landValueOfOfficialPrice);
+        ratioSource = '공동주택가격(공시가격) 전유:대지권 면적비율 안분';
+    } else {
+        // 2순위(폴백): 공시가격/대지권면적이 없으면, 감정평가서에서 AI가 이미 뽑아둔
+        // 토지가격/건물가격(법원 감정평가사가 직접 산정한 실제 안분값)을 그대로 씀.
+        // 국세청 예규상 감정가액 비율에 의한 안분도 인정되는 방식이라 공시가격 안분의
+        // 대체 근거로 충분함 - 오히려 이 물건은 감정평가서에 토지:건물 비율이 이미
+        // 명시돼 있어(예: "토지:건물 가격비율 40%:60%") 공시가격 안분보다 더 직접적인 값임.
+        var d = pendingAuctionDetail;
+        var landPrice = d && d.landPrice ? parseFloat(d.landPrice) : 0;
+        var buildingPrice = d && d.buildingPrice ? parseFloat(d.buildingPrice) : 0;
+        if (landPrice > 0 && buildingPrice > 0) {
+            buildingRatio = buildingPrice / (buildingPrice + landPrice);
+            ratioSource = '감정평가서상 토지가격/건물가격 비율 안분 (토지 ' + Math.round(landPrice / 10000).toLocaleString()
+                + '만 : 건물 ' + Math.round(buildingPrice / 10000).toLocaleString() + '만)';
+        }
+    }
+
+    if (buildingRatio === null) {
         var missing = [];
         if (!officialPriceWon) missing.push('공시가격');
         if (!siteRightsAreaM2) missing.push('대지권 면적');
         return {
             applicable: true, computable: false, areaM2: areaM2,
-            reason: '전용 ' + areaM2 + '㎡로 국민주택규모 초과 - 부가세 대상이지만, ' + missing.join('·') + ' 정보가 없어 자동계산이 안 됩니다.',
+            reason: '전용 ' + areaM2 + '㎡로 국민주택규모 초과 - 부가세 대상이지만, ' + missing.join('·')
+                + '(또는 감정평가서상 토지가격·건물가격) 정보가 없어 자동계산이 안 됩니다.',
         };
     }
-    var buildingValueOfOfficialPrice = officialPriceWon * areaM2 / (areaM2 + siteRightsAreaM2);
-    var landValueOfOfficialPrice = officialPriceWon * siteRightsAreaM2 / (areaM2 + siteRightsAreaM2);
-    var buildingRatio = buildingValueOfOfficialPrice / (buildingValueOfOfficialPrice + landValueOfOfficialPrice);
     var buildingValueOfBid = (bidAmount || 0) * buildingRatio;
     return {
         applicable: true, computable: true, areaM2: areaM2, siteRightsAreaM2: siteRightsAreaM2,
         officialPriceWon: officialPriceWon,
-        buildingValueOfOfficialPrice: Math.round(buildingValueOfOfficialPrice),
-        landValueOfOfficialPrice: Math.round(landValueOfOfficialPrice),
+        buildingValueOfOfficialPrice: buildingValueOfOfficialPrice !== null ? Math.round(buildingValueOfOfficialPrice) : null,
+        landValueOfOfficialPrice: landValueOfOfficialPrice !== null ? Math.round(landValueOfOfficialPrice) : null,
         buildingRatio: buildingRatio,
+        ratioSource: ratioSource,
         buildingValueOfBid: Math.round(buildingValueOfBid),
         vat: Math.round(buildingValueOfBid * 0.1),
     };
