@@ -3274,12 +3274,25 @@ async function fetchSiteNotes() {
         if (!Array.isArray(siteNoteList)) siteNoteList = [];
     } catch (e) { siteNoteList = []; }
 }
+/* ⚠️ 예전엔 r.ok를 확인하지 않고 그냥 r.json()만 반환했음 - Redis 저장이 실패해서 서버가
+   {error:...} 를 내려줘도 그걸 "저장된 메모"인 것처럼 그대로 받아 siteNoteList에 밀어넣고
+   "저장되었습니다" 알림까지 띄웠던 버그가 있었음(저장한 기기에서는 방금 push한 값이 화면에
+   바로 보여서 "저장된 것처럼" 보이지만, 실제 Redis에는 안 들어가 있어 다른 기기/새로고침
+   후에는 그 메모가 사라져 있었음 - "다른 기기에서 저장한 내용이 안 보인다"는 증상의 원인).
+   이제 실패하면 예외를 던져서 saveSiteNote()가 실패를 사용자에게 정확히 알리고, 잘못된 값을
+   목록에 넣지 않도록 함. */
 async function saveSiteNoteAPI(data) {
     var r = await fetch('/api/auction?kind=siteNotes', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(data) });
-    return r.json();
+    var body = await r.json().catch(function() { return null; });
+    if (!r.ok) throw new Error((body && body.error) || ('저장 실패 (HTTP ' + r.status + ')'));
+    return body;
 }
 async function deleteSiteNoteAPI(id) {
-    await fetch('/api/auction?kind=siteNotes&id=' + id, { method:'DELETE' });
+    var r = await fetch('/api/auction?kind=siteNotes&id=' + id, { method:'DELETE' });
+    if (!r.ok) {
+        var body = await r.json().catch(function() { return null; });
+        throw new Error((body && body.error) || ('삭제 실패 (HTTP ' + r.status + ')'));
+    }
 }
 /* ════════════════════════════════════
    낙찰사례 통계 - 경매정보 사이트 검색결과 목록을 붙여넣어 여러 건을 한 번에 저장하고,
@@ -7118,24 +7131,38 @@ async function saveSiteNote() {
         checklist: currentSiteNoteChecklist,
         createdAt: new Date().toISOString(),
     };
-    var saved = await saveSiteNoteAPI(data);
-    siteNoteList.push(saved);
-    document.getElementById('sn-memo').value = '';
-    currentSiteNoteChecklist = {};
-    document.getElementById('sn-checklist-body').innerHTML = buildSiteVisitChecklistHtml();
-    renderSiteNoteHistory();
-    // 열려 있는 매물 패널/경매 모달의 임장메모 요약도 함께 최신화
-    if (typeof renderTable === 'function' && currentPanelApt) renderTable();
-    if (typeof renderCompListBox === 'function') renderCompListBox();
-    alert('임장메모가 저장되었습니다.');
+    var btn = document.querySelector('#site-note-modal-bg button[onclick="saveSiteNote()"]');
+    if (btn) { btn.disabled = true; btn.innerText = '저장 중...'; }
+    try {
+        var saved = await saveSiteNoteAPI(data);
+        siteNoteList.push(saved);
+        document.getElementById('sn-memo').value = '';
+        currentSiteNoteChecklist = {};
+        document.getElementById('sn-checklist-body').innerHTML = buildSiteVisitChecklistHtml();
+        renderSiteNoteHistory();
+        // 열려 있는 매물 패널/경매 모달의 임장메모 요약도 함께 최신화
+        if (typeof renderTable === 'function' && currentPanelApt) renderTable();
+        if (typeof renderCompListBox === 'function') renderCompListBox();
+        alert('임장메모가 저장되었습니다.');
+    } catch (e) {
+        // 실패 시 목록에 아무것도 넣지 않음 - 예전엔 실패해도 push해버려서 "이 기기에서는
+        // 보이는데 다른 기기/새로고침 후엔 사라지는" 유령 메모가 생겼음
+        alert('임장메모 저장에 실패했습니다: ' + e.message + '\n\n네트워크 상태를 확인하고 다시 시도해 주세요. (저장되지 않았으니 메모 내용은 그대로 남아있습니다)');
+    } finally {
+        if (btn) { btn.disabled = false; btn.innerText = '이 방문 기록 저장'; }
+    }
 }
 async function deleteSiteNoteRow(id) {
     if (!confirm('이 임장메모를 삭제하시겠습니까?')) return;
-    await deleteSiteNoteAPI(id);
-    siteNoteList = siteNoteList.filter(function(n) { return n.id !== id; });
-    renderSiteNoteHistory();
-    if (typeof renderTable === 'function' && currentPanelApt) renderTable();
-    if (typeof renderCompListBox === 'function') renderCompListBox();
+    try {
+        await deleteSiteNoteAPI(id);
+        siteNoteList = siteNoteList.filter(function(n) { return n.id !== id; });
+        renderSiteNoteHistory();
+        if (typeof renderTable === 'function' && currentPanelApt) renderTable();
+        if (typeof renderCompListBox === 'function') renderCompListBox();
+    } catch (e) {
+        alert('삭제에 실패했습니다: ' + e.message + '\n다시 시도해 주세요.');
+    }
 }
 // 매물 패널/비교물건 목록 등 어디서나 재사용하는 "임장메모 요약 + 열기" 박스
 function buildSiteNoteSectionHtml(name, dong, addr, lat, lon) {
