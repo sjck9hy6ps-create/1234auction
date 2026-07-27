@@ -112,6 +112,12 @@ const SCHEMA_A = {
     debtor: { type: 'STRING' },
     creditor: { type: 'STRING' },
     claimAmount: { type: 'NUMBER' },
+    // 미납관리비(체납관리비) - 특수조건/주의사항/비고란에 "미납관리비", "체납관리비",
+    // "관리비 연체" 등의 표현과 금액이 언급된 경우에만 채움(단위: 원). 공용부분 체납관리비는
+    // 판례상 낙찰자가 인수하는 것으로 알려져 있어, 채무자=소유자 여부와 결합해 명도난이도
+    // 판단·필요자금 계산에 씀(클라이언트 로직). 개월수만 언급되고 금액이 없으면 null로 둠
+    // (금액 추정 금지 - 실제 금액이 명시된 경우에만 채움).
+    unpaidManagementFee: { type: 'NUMBER' },
     appraiser: { type: 'STRING' },
     priceDate: { type: 'STRING' },
     registrationDate: { type: 'STRING' },
@@ -487,7 +493,10 @@ const PROMPT_A_RULES = `
   묶여 표기되는 경우가 많으니 그 형식을 찾아 "소액기준일" 뒤의 날짜만 뽑으세요. 언급이 없으면 null.
 - isCoOwnership(공유지분 여부)은 소유자(owner)란에 "OOO 외N", "지분", "각 N/100"처럼 여러 명이 나눠
   소유한 정황이 보이면 true로, 단독 소유가 명확하면 false로 표시하세요. coOwnerCount는 "외N"의 N+1처럼
-  전체 공유자 수를 추정할 수 있으면 숫자로, 확실하지 않으면 null로 두세요.`;
+  전체 공유자 수를 추정할 수 있으면 숫자로, 확실하지 않으면 null로 두세요.
+- unpaidManagementFee(미납관리비)는 specialConditions·caseCautions 등에 "미납관리비", "체납관리비",
+  "관리비 연체" 같은 표현과 함께 구체적인 금액(원)이 명시된 경우에만 그 숫자를 담으세요. 개월수만
+  언급되고 금액이 없으면(예: "관리비 6개월 연체") 금액을 임의로 추정하지 말고 null로 두세요.`;
 
 const PROMPT_B_RULES = `
 - registryItems(건물등기)는 접수일 순서대로 모두 담으세요.
