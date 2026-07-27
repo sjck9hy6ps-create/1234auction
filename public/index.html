@@ -904,9 +904,14 @@ tr:hover td { background:#fffde7; }
                 <button class="modal-btn btn-gray" onclick="autoCalcCleaning()" style="font-size:11px;">자동계산</button>
             </div>
             <div class="modal-row">
+                <span class="modal-label">미납관리비 <span onclick="showCalcInfo('evictionRisk')" title="계산기준 보기" style="cursor:pointer;color:#1976d2;">ⓘ</span></span>
+                <input type="number" class="modal-input" id="a-unpaid-mgmt-fee" placeholder="0" oninput="calcMargin()">
+                <button class="modal-btn btn-gray" onclick="applyEvictionRiskSuggestion()" style="font-size:11px;">⚠️ 명도난이도 진단</button>
+            </div>
+            <div id="eviction-risk-box"></div>
+            <div class="modal-row">
                 <span class="modal-label">기타비용</span>
                 <input type="number" class="modal-input" id="a-etc" placeholder="0" oninput="calcMargin()">
-                <span style="font-size:10px;color:#aaa;margin-left:4px;">미납관리비 등</span>
             </div>
             <div class="modal-row">
                 <span class="modal-label">인수보증금 <span onclick="showCalcInfo('assumedDeposit')" title="계산기준 보기" style="cursor:pointer;color:#1976d2;">ⓘ</span></span>
@@ -4309,7 +4314,7 @@ function openAuctionModal(id) {
     document.getElementById('modal-delete-btn').style.display = isEdit ? '' : 'none';
      ['auction-id','a-addr','a-name','a-dong','a-floor','a-unit','a-case','a-pyung','a-date',
      'a-appraisal','a-min-bid','a-deposit-rate','a-my-bid','a-actual-bid',
-     'a-tax','a-registry-fee','a-eviction-fee','a-repair','a-agent','a-moving','a-cleaning','a-etc','a-assumed-deposit','a-target','a-actual-sell',
+     'a-tax','a-registry-fee','a-eviction-fee','a-repair','a-agent','a-moving','a-cleaning','a-etc','a-unpaid-mgmt-fee','a-assumed-deposit','a-target','a-actual-sell',
      'a-official-price','a-site-rights-area','a-land-price-per-m2','a-memo','a-paste-text','a-loan-rate']
         .forEach(function(fid) { document.getElementById(fid).value = ''; });
     document.getElementById('a-status').value = '검토중';
@@ -4345,6 +4350,7 @@ function openAuctionModal(id) {
     document.getElementById('dev-news-box').innerHTML = '';
     document.getElementById('auction-history-box').innerHTML = '';
     document.getElementById('resale-match-box').innerHTML = '';
+    document.getElementById('eviction-risk-box').innerHTML = '';
     if (isEdit) {
         var a = auctionList.find(function(x) { return x.id === id; });
         if (a) {
@@ -4389,6 +4395,7 @@ function openAuctionModal(id) {
             document.getElementById('a-hold-months').value = a.holdMonths || '';
             document.getElementById('a-loan-rate').value   = a.loanRate || '';
             document.getElementById('a-etc').value         = a.etc || '';
+            document.getElementById('a-unpaid-mgmt-fee').value = a.unpaidMgmtFee || '';
             document.getElementById('a-assumed-deposit').value = a.assumedDeposit || '';
             document.getElementById('a-target').value      = a.target || '';
             document.getElementById('a-actual-sell').value = a.actualSell || '';
@@ -5139,6 +5146,17 @@ var CALC_INFO_TEXT = {
         + '   문의하거나 감정평가서·매각물건명세서를 근거로 직접 추산\n\n'
         + '⚠️ 이 항목은 법률 자문이 아닌 참고용 최악가정 추정치입니다. 실제 입찰 전 반드시 경매계·\n'
         + '법무사를 통해 배당표(또는 예상 배당순위)를 확인하세요.',
+    evictionRisk: '미납관리비(체납관리비)는 판례상 공용부분에 한해 낙찰자가 인수합니다(전유부분·연체료는\n'
+        + '인수 대상 아님). 그래서 금액이 확인되면 크기와 무관하게 항상 "필요자금"에 비용으로 반영됩니다.\n\n'
+        + '추가로 "⚠️ 명도난이도 진단" 버튼은 미납관리비 100만원 이상 + 채무자=소유자(=소유자 본인 거주\n'
+        + '추정, 조사된 임차인이 없을 때)인 경우를 "명도 저항 가능성 있음"으로 판단합니다.\n'
+        + '근거: 관리비 연체는 통상 3개월쯤부터 관리사무소의 독촉이 시작되는데, 그 독촉을 견디며 계속\n'
+        + '점유하고 있다는 것은 순순히 명도에 응하지 않을 성향을 보여주는 정황일 수 있습니다.\n'
+        + '이 경우 명도소송으로 이어질 가능성을 감안해 "예상 보유기간"을 최소 6개월로 자동 설정합니다.\n\n'
+        + '반대로 임차인이 있는 것으로 확인되면(즉 채무자 본인이 아니라 세입자가 거주 중이면), 미납관리비가\n'
+        + '점유자의 저항 의사와는 무관할 가능성이 높아 보유기간은 건드리지 않고, 미납관리비 금액만\n'
+        + '인수비용으로 계산해 필요자금에 반영합니다.\n\n'
+        + '⚠️ 참고용 추정치입니다. 실제 명도 난이도는 현장 임장·관리사무소 확인을 통해 직접 판단하세요.',
 };
 function showCalcInfo(key) {
     alert(CALC_INFO_TEXT[key] || '설명이 없습니다.');
@@ -5195,6 +5213,69 @@ function suggestAssumedDeposit() {
         + '실제 배당표 확인 후 차이가 있으면 이 항목을 직접 수정하세요.');
     calcMargin();
 }
+/* 이름 비교용 정규화 - "김경애 외3", "김경애 외 3인" 같은 공유지분 표기의 "외N" 접미사와
+   공백을 제거해서 순수 이름만 남김. 채무자(debtor)·소유자(owner) 필드가 동일 인물인지
+   판단하는 데 씀(둘 다 AI가 등기부/경매정보지에서 그대로 옮긴 문자열이라 표기가 약간
+   다를 수 있어, 완전일치보다는 이 정규화 후 비교가 더 안정적임). */
+function normalizeOwnerNameForCompare(str) {
+    if (!str) return '';
+    return String(str).replace(/외\s*\d*\s*인?/g, '').replace(/\s+/g, '').trim();
+}
+/* 명도난이도 판단 - 순수 계산 함수(DOM 변경 없음). 미납관리비(a-unpaid-mgmt-fee)와
+   AI가 추출한 채무자(debtor)/소유자(owner)/임차인현황(tenantOccupants)을 근거로,
+   "소유자 본인이 거주 중인데 관리비를 오래 미납하고 있다"는 정황이면 명도소송 가능성을
+   높게 보고 보유기간 연장을 제안한다. 임차인이 있는 것으로 확인되면(=점유자가 채무자 본인이
+   아닌 것으로 추정) 이 저항 예측은 적용하지 않고, 미납관리비는 그냥 인수해야 하는 비용으로만
+   본다(공용부분 체납관리비는 점유자가 누구든 낙찰자가 인수하는 게 판례상 원칙이므로). */
+function calcEvictionRiskInfo() {
+    var detail = pendingAuctionDetail;
+    var unpaidManwon = parseInt(document.getElementById('a-unpaid-mgmt-fee').value) || 0;
+    var tenants = (detail && detail.tenantOccupants) ? detail.tenantOccupants : [];
+    var hasTenant = tenants.length > 0;
+    var debtor = detail && detail.debtor;
+    var owner = detail && detail.owner;
+    var namesKnown = !!(debtor && owner);
+    var ownerOccupied = namesKnown && !hasTenant
+        && normalizeOwnerNameForCompare(debtor) === normalizeOwnerNameForCompare(owner);
+    var THRESHOLD_MANWON = 100; // 사용자 요청 기준: 미납관리비 100만원(약 6개월분) 이상
+    var highUnpaid = unpaidManwon >= THRESHOLD_MANWON;
+    return {
+        unpaidManwon: unpaidManwon, hasTenant: hasTenant, namesKnown: namesKnown,
+        ownerOccupied: ownerOccupied, highUnpaid: highUnpaid,
+        // riskLevel: 'resistant'(소유자 거주+고액 미납 → 명도소송 예상) /
+        //            'assumeOnly'(임차인 있음 또는 저항 판단 불가 → 인수비용으로만 반영) / 'none'(미납 없음)
+        riskLevel: !unpaidManwon ? 'none' : (highUnpaid && ownerOccupied ? 'resistant' : 'assumeOnly'),
+    };
+}
+/* "⚠️ 명도난이도 진단" 버튼 - suggestAssumedDeposit()과 동일한 UX 패턴(자동으로 조용히
+   덮어쓰지 않고, 버튼을 눌러야만 보유기간 값이 바뀌게 함 - 마진에 직접 영향을 주는 값이라
+   사용자가 근거를 보고 확인한 뒤 반영하도록). */
+function applyEvictionRiskSuggestion() {
+    var info = calcEvictionRiskInfo();
+    if (info.riskLevel === 'none') {
+        alert('미납관리비를 입력하면 진단할 수 있습니다.\n\n(경매정보지의 "주의사항"·"특수조건"란에 미납/체납\n관리비 금액이 명시돼 있으면 AI 자동추출로 채워지기도 합니다.)');
+        return;
+    }
+    if (info.riskLevel === 'resistant') {
+        var cur = parseInt(document.getElementById('a-hold-months').value) || 0;
+        var next = Math.max(cur, 6);
+        document.getElementById('a-hold-months').value = next;
+        alert('⚠️ 명도 저항 가능성 - 예상 보유기간을 최소 6개월로 설정했습니다.\n\n'
+            + '근거: 미납관리비 ' + toEok(String(info.unpaidManwon)) + ' (100만원 이상) + 채무자=소유자\n'
+            + '(조사된 임차인 없음 → 소유자 본인 거주 추정)\n\n'
+            + '관리비 연체는 통상 3개월쯤부터 관리사무소 독촉이 시작되는데, 그 독촉을 견디며\n'
+            + '계속 점유 중이라는 것은 순순히 명도에 응하지 않을 성향일 수 있어 명도소송을\n'
+            + '가정해 기간을 늘렸습니다. 미납관리비 금액 자체도 인수비용으로 필요자금에 반영됩니다.\n\n'
+            + '실제로는 현장 임장·관리사무소 확인으로 점유자 태도를 직접 확인하는 것을 권장합니다.');
+    } else {
+        var reason = info.hasTenant
+            ? '조사된 임차인이 있어(채무자 본인이 아닌 세입자 거주로 추정) 명도 저항 예측은 적용하지 않았습니다.'
+            : (info.namesKnown ? '채무자와 소유자 이름이 달라 소유자 본인 거주로 보기 어렵습니다.' : '채무자/소유자 정보가 부족해 거주자를 판단할 수 없습니다.');
+        alert('미납관리비 ' + toEok(String(info.unpaidManwon)) + '은 인수비용으로 필요자금에 반영됩니다.\n\n'
+            + reason + '\n보유기간은 자동으로 바꾸지 않았습니다(필요시 직접 조정하세요).');
+    }
+    calcMargin();
+}
 function calcMargin() {
     var myBid    = parseInt(document.getElementById('a-my-bid').value)    || 0;
     var actBid   = parseInt(document.getElementById('a-actual-bid').value) || 0;
@@ -5207,6 +5288,7 @@ function calcMargin() {
     var moving   = parseInt(document.getElementById('a-moving').value) || 0;
     var cleaning = parseInt(document.getElementById('a-cleaning').value) || 0;
     var etc      = parseInt(document.getElementById('a-etc').value)    || 0;
+    var unpaidMgmtFee = parseInt(document.getElementById('a-unpaid-mgmt-fee').value) || 0;
     var assumedDeposit = parseInt(document.getElementById('a-assumed-deposit').value) || 0;
     var target   = parseInt(document.getElementById('a-target').value) || 0;
     var actSell  = parseInt(document.getElementById('a-actual-sell').value) || 0;
@@ -5224,7 +5306,7 @@ function calcMargin() {
     var interestCost = calcLoanInterest(loanAmount, loanRate, holdMonths);
     var vatInfo = calcAuctionVat(useBid);
     var vat = vatInfo.computable ? vatInfo.vat : 0;
-    var feesSum   = tax + registryFee + evictionFee + repair + agent + moving + cleaning + interestCost + etc + vat + assumedDeposit;
+    var feesSum   = tax + registryFee + evictionFee + repair + agent + moving + cleaning + interestCost + etc + vat + assumedDeposit + unpaidMgmtFee;
     var totalCost = useBid + feesSum;
     var preTaxMargin = useSell > 0 ? useSell - totalCost : 0;
     var taxResult = (useSell > 0 && preTaxMargin > 0) ? calcResaleIncomeTax(bidMethod, preTaxMargin, holdMonths) : { totalTax: 0, rateLabel: '' };
@@ -5262,6 +5344,9 @@ function calcMargin() {
       + (assumedDeposit > 0
           ? mItem('인수보증금(선순위 임차인) <span onclick="showCalcInfo(\'assumedDeposit\')" title="계산기준 보기" style="cursor:pointer;">ⓘ</span>', toEok(String(assumedDeposit)), '#c62828')
           : '')
+      + (unpaidMgmtFee > 0
+          ? mItem('미납관리비(인수비용) <span onclick="showCalcInfo(\'evictionRisk\')" title="계산기준 보기" style="cursor:pointer;">ⓘ</span>', toEok(String(unpaidMgmtFee)), '#c62828')
+          : '')
       + (compEst
           ? mItem('비교물건 기준 적정입찰가(목표 ' + toEok(String(compTargetMargin)) + ')', compBidResult && compBidResult.bid > 0 ? toEok(String(compBidResult.bid)) : '마진 확보 불가', '#6a1b9a')
           : '');
@@ -5276,6 +5361,22 @@ function calcMargin() {
             vatWarnBox.innerHTML = '<div style="font-size:11px;color:#00695c;background:#e0f2f1;border-radius:6px;padding:6px 8px;margin-top:6px;">ℹ️ 건물분 안분 근거: ' + vatInfo.ratioSource + '</div>';
         } else {
             vatWarnBox.innerHTML = '';
+        }
+    }
+    // 미납관리비 입력이 있으면(버튼을 누르지 않아도) 지금 판단 상태를 조용히 안내만 해줌 -
+    // 실제 보유기간 변경은 반드시 "⚠️ 명도난이도 진단" 버튼을 눌러야만 반영됨(suggestAssumedDeposit과
+    // 동일한 원칙: 마진에 영향을 주는 값은 사용자가 버튼으로 직접 확인하고 반영하게 함).
+    var evictionBox = document.getElementById('eviction-risk-box');
+    if (evictionBox) {
+        var eInfo = calcEvictionRiskInfo();
+        if (eInfo.riskLevel === 'resistant') {
+            evictionBox.innerHTML = '<div style="font-size:11px;color:#c62828;background:#ffebee;border-radius:6px;padding:6px 8px;margin-top:-4px;margin-bottom:6px;">'
+                + '⚠️ 소유자 본인 거주 추정 + 미납관리비 100만원 이상 - 명도 저항 가능성. "⚠️ 명도난이도 진단" 버튼으로 보유기간에 반영하세요.</div>';
+        } else if (eInfo.riskLevel === 'assumeOnly') {
+            evictionBox.innerHTML = '<div style="font-size:11px;color:#00695c;background:#e0f2f1;border-radius:6px;padding:6px 8px;margin-top:-4px;margin-bottom:6px;">'
+                + 'ℹ️ 미납관리비는 인수비용으로 필요자금에 반영됩니다' + (eInfo.hasTenant ? ' (임차인 있음 - 보유기간 자동조정 대상 아님)' : '') + '.</div>';
+        } else {
+            evictionBox.innerHTML = '';
         }
     }
 }
@@ -5366,6 +5467,7 @@ async function saveAuction() {
         bidMethod: document.getElementById('a-bid-method').value, holdMonths: document.getElementById('a-hold-months').value,
         loanRate: document.getElementById('a-loan-rate').value,
         etc: document.getElementById('a-etc').value,
+        unpaidMgmtFee: document.getElementById('a-unpaid-mgmt-fee').value || null,
         assumedDeposit: document.getElementById('a-assumed-deposit').value || null,
         target: document.getElementById('a-target').value,
         actualSell: document.getElementById('a-actual-sell').value,
@@ -6215,6 +6317,8 @@ function solveAuctionBid(estValue) {
     // 인수보증금(선순위 대항력 임차인 미배당 예상액) - 입찰가(mid)와 무관한 고정 비용이므로
     // repair/etc와 동일하게 이분탐색 밖에서 한 번만 읽어 매 후보에 그대로 더함
     var assumedDeposit = parseInt(document.getElementById('a-assumed-deposit').value) || 0;
+    // 미납관리비(공용부분, 낙찰자 인수) - 입찰가와 무관한 고정 인수비용이므로 동일하게 처리
+    var unpaidMgmtFee = parseInt(document.getElementById('a-unpaid-mgmt-fee').value) || 0;
     var moving   = parseInt(document.getElementById('a-moving').value) || calcMovingFee(c.pyung) || 0;
     var cleaning = parseInt(document.getElementById('a-cleaning').value) || calcCleaningFee(c.pyung) || 0;
     var bidMethod = document.getElementById('a-bid-method').value;
@@ -6237,13 +6341,13 @@ function solveAuctionBid(estValue) {
         var loanAmount = calcLoanAmount(bidMethod, mid, appraisal);
         var interestCost = calcLoanInterest(loanAmount, loanRate, holdMonths);
         var vat = vatInfo.computable ? Math.round(mid * vatInfo.buildingRatio * 0.1) : 0;
-        var preTaxCost = mid + acqTax + registryFee + evictionFee + agentFee + repair + etc + moving + cleaning + interestCost + vat + assumedDeposit;
+        var preTaxCost = mid + acqTax + registryFee + evictionFee + agentFee + repair + etc + moving + cleaning + interestCost + vat + assumedDeposit + unpaidMgmtFee;
         var preTaxProfit = estValue - preTaxCost;
         var taxResult = calcResaleIncomeTax(bidMethod, preTaxProfit, holdMonths);
         var netProfit = preTaxProfit - taxResult.totalTax;
         result = { bid: mid, acqTax: acqTax, registryFee: registryFee, evictionFee: evictionFee, agentFee: agentFee,
             moving: moving, cleaning: cleaning, interestCost: interestCost, loanRate: loanRate, vat: vat, vatInfo: vatInfo,
-            assumedDeposit: assumedDeposit,
+            assumedDeposit: assumedDeposit, unpaidMgmtFee: unpaidMgmtFee,
             preTaxProfit: preTaxProfit, resaleTax: taxResult.totalTax, netProfit: netProfit };
         if (netProfit > targetMargin) lo = mid; else hi = mid;
     }
@@ -7077,6 +7181,10 @@ async function parseAuctionPaste() {
         if (!document.getElementById('a-site-rights-area').value && d.siteRightsArea) {
             var extractedSiteArea = parseAreaM2FromText(d.siteRightsArea);
             if (extractedSiteArea) document.getElementById('a-site-rights-area').value = extractedSiteArea;
+        }
+        // 미납관리비 - 주의사항/특수조건에 금액이 명시된 경우에만 AI가 채워줌(원 단위 → 만원으로 변환)
+        if (!document.getElementById('a-unpaid-mgmt-fee').value && d.unpaidManagementFee) {
+            document.getElementById('a-unpaid-mgmt-fee').value = Math.round(d.unpaidManagementFee / 10000);
         }
 
         // AI가 이미 뽑아준 dong/bunji가 있으면 그걸 우선 사용해서 지오코딩 검색어를 만듦
