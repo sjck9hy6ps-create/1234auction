@@ -855,7 +855,7 @@ tr:hover td { background:#fffde7; }
             <div id="resale-match-box" style="margin-top:8px;"></div>
             <div style="margin-top:10px;border-top:1px dashed #e0d0f0;padding-top:8px;">
                 <span class="modal-label" style="display:block;margin-bottom:4px;">🏘️ 현재 매물 재고 <span onclick="showCalcInfo('listingCount')" style="cursor:pointer;color:#999;font-size:11px;">ⓘ</span></span>
-                <div style="font-size:10px;color:#999;margin-bottom:6px;">이 앱은 네이버부동산을 자동으로 긁어오지 않습니다(약관·판례상 자동수집 리스크 때문). 아래 버튼으로 직접 확인해서 건수를 적어두거나, 채팅으로 "이 물건 매물 몇 건인지 확인해줘"라고 요청하세요.</div>
+                <div style="font-size:10px;color:#999;margin-bottom:6px;">이 앱은 네이버부동산을 자동으로 긁어오지 않습니다(약관·판례상 자동수집 리스크 때문). 아래 버튼으로 직접 확인해서 건수를 적어두거나, 채팅으로 "이 물건 매물 몇 건인지 확인해줘"라고 요청하세요. 물건종류·매매 거래유형·평형(±5평)·연식(전 5년~후 10년, 사용승인일 확인된 경우)이 모두 자동 반영된 화면으로 이동합니다(ⓘ 참고).</div>
                 <button type="button" class="modal-btn btn-gray" style="font-size:11px;" onclick="openNaverLandForModal()">🟢 네이버부동산에서 확인하기</button>
                 <div class="modal-row" style="margin-top:6px;">
                     <span class="modal-label">유사 매물 건수</span>
@@ -4539,11 +4539,43 @@ function getAuctionAddressContext() {
    있어 이 앱에서는 하지 않음. 대신 지도 위치로 바로 이동하는 버튼만 제공하고, 건수는
    사용자가 직접 세어 입력하거나 채팅으로 "이 물건 매물 몇 건이야?" 요청 시 브라우저로
    확인해서 알려주는 온디맨드 방식을 씀.) */
+/* 물건유형(a-prop-type)을 네이버부동산 매물종류 코드로 매핑 - 여러 크롤링 레퍼런스에서
+   공통적으로 확인된 코드만 사용(APT=아파트, VL=연립다세대, OPST=오피스텔). 단독/다가구·기타는
+   대응 코드가 불확실해 필터를 걸지 않고 전체로 둠(잘못된 코드로 걸면 오히려 검색결과가
+   0건으로 나올 위험이 있어, 확실하지 않은 건 안 거는 쪽을 택함).
+   아래 파라미터들은 실제로 캡처한 네이버부동산 URL을 여러 개 비교해서 확인한 것:
+   - 라우트: /complexes(특정 단지 페이지)가 아니라 /houses(목록형 검색)가 맞음
+   - a=매물종류코드, b=거래유형(A1=매매,B1=전세, 콜론으로 복수결합), e=RETAIL(일반매물)
+   - h=최소전용면적(㎡), i=최대전용면적(㎡) - 슬라이더 표시값("61㎡~463㎡")과 그대로 일치 확인함
+   - j=최대연차(사용승인일 기준 몇 년 이내), k=최소연차 - 프리셋표(2/4/10/15/20/25/30년) 값과 일치 확인함
+   평형 허용오차는 전후 ±5평. 연식 허용오차는 전(더 오래된 쪽) 5년~후(더 최근 쪽) 10년으로
+   비대칭 지정(사용자 지정값) - 사용승인연도 기준으로 [Y-5년, Y+10년] 범위이므로, 연차로
+   환산하면 더 오래된 쪽(연차+5)부터 더 최근인 쪽(연차-10)까지의 범위가 됨. */
+var NAVER_PROP_TYPE_CODE = { apt: 'APT', villa: 'VL', officetel: 'OPST' };
 function openNaverLandForModal() {
     var ctx = getAuctionAddressContext();
+    var propType = document.getElementById('a-prop-type').value;
+    var naverCode = NAVER_PROP_TYPE_CODE[propType];
+    var filterQuery = naverCode ? ('&a=' + naverCode + '&b=A1&e=RETAIL') : '';
+    // 평형(전용면적) 전후 ±5평 - 이 물건의 평형을 알고 있으면 ㎡로 환산해 범위로 걸어줌
+    var pyung = parseFloat(document.getElementById('a-pyung').value);
+    if (naverCode && pyung > 0) {
+        var minM2 = Math.max(Math.round((pyung - 5) * 3.305785), 0);
+        var maxM2 = Math.round((pyung + 5) * 3.305785);
+        filterQuery += '&h=' + minM2 + '&i=' + maxM2;
+    }
+    // 사용승인일(연식) 전 5년~후 10년 - 건축HUB/AI추출로 확인된 사용승인연도가 있으면
+    // 연차 범위로 걸어줌. 사용승인연도가 Y라면 [Y-5, Y+10] 범위 → 연차로는 [연차-10, 연차+5]
+    var buildYear = getAuctionBuildYear();
+    if (naverCode && buildYear) {
+        var age = new Date().getFullYear() - buildYear;
+        var minAge = Math.max(age - 10, 0);
+        var maxAge = age + 5;
+        filterQuery += '&j=' + maxAge + '&k=' + minAge;
+    }
     var url;
     if (ctx.lat && ctx.lon) {
-        url = 'https://new.land.naver.com/complexes?ms=' + ctx.lat + ',' + ctx.lon + ',17';
+        url = 'https://new.land.naver.com/houses?ms=' + ctx.lat + ',' + ctx.lon + ',17' + filterQuery;
     } else {
         var addr = document.getElementById('a-addr').value.trim();
         var q = [ctx.name, addr || ctx.dong].filter(Boolean).join(' ').trim();
@@ -5264,7 +5296,12 @@ var CALC_INFO_TEXT = {
         + '대신 "네이버부동산에서 확인하기" 버튼으로 해당 위치 지도를 바로 열어드리니,\n'
         + '직접 보고 건수를 세어 입력하거나, 채팅으로 "이 물건 근처 매물 몇 건인지 확인해줘"라고\n'
         + '요청하시면 그때그때(온디맨드) 확인해서 알려드립니다. 입력한 건수는 확인일과 함께 저장되어\n'
-        + '"n일 전 확인"으로 표시되니, 오래됐으면 한 번씩 다시 확인해 주세요.',
+        + '"n일 전 확인"으로 표시되니, 오래됐으면 한 번씩 다시 확인해 주세요.\n\n'
+        + '세부 필터 자동 적용 범위(실제 네이버부동산 URL을 여러 번 캡처해서 확인함):\n'
+        + '- 물건종류(아파트/연립다세대/오피스텔)·매매 거래유형: 항상 자동 반영.\n'
+        + '- 평형(전용면적 ±5평): 이 물건의 "평형" 필드에 값이 입력돼 있으면 자동 반영.\n'
+        + '- 연식(사용승인일 기준 전 5년~후 10년): AI추출 또는 건축HUB 조회로 사용승인연도를\n'
+        + '  확인한 경우에만 자동 반영. 평형·사용승인일 정보가 비어 있으면 그 항목은 필터 없이(전체 범위로) 이동합니다.',
     tax: '취득세는 "내 입찰가"(또는 실제 낙찰가) 기준으로 계산됩니다.\n'
         + '- 1주택(무주택자의 첫 주택)이면 6억 이하 1%, 6~9억 구간 누진, 9억 초과 3%\n'
         + '- 다주택수·조정대상지역 여부에 따라 세율이 크게 달라집니다(다주택+조정지역은 최대 12~13%대).\n'
