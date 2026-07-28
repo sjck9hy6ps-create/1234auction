@@ -108,7 +108,9 @@ function computeDeal(a) {
     var repair = parseInt(a.repair) || 0;
     var agent  = parseInt(a.agent) || 0;
     var etc    = parseInt(a.etc) || 0;
-    var totalCost = bid + tax + registryFee + evictionFee + repair + agent + etc;
+    var propertyTax = parseInt(a.propertyTax) || 0;
+    var compTax = parseInt(a.compTax) || 0;
+    var totalCost = bid + tax + registryFee + evictionFee + repair + agent + etc + propertyTax + compTax;
     var sell = parseInt(a.actualSell) || parseInt(a.target) || 0;
     var profit = sell - totalCost;
     var roi = totalCost > 0 ? Math.round(profit / totalCost * 1000) / 10 : 0;
@@ -118,6 +120,7 @@ function computeDeal(a) {
         region: extractRegion(a.addr || a.addrLabel || ''),
         propType: a.propType || 'house',
         bid: bid, tax: tax, registryFee: registryFee, evictionFee: evictionFee, repair: repair, agent: agent, etc: etc,
+        propertyTax: propertyTax, compTax: compTax,
         totalCost: totalCost, sell: sell, profit: profit, roi: roi,
         bidDate: a.bidDate || ''
     };
@@ -197,7 +200,9 @@ function renderCostRatio(deals) {
     var sumRepair = deals.reduce(function(s,d){return s+d.repair;},0);
     var sumAgent = deals.reduce(function(s,d){return s+d.agent;},0);
     var sumEtc = deals.reduce(function(s,d){return s+d.etc;},0);
-    var total = sumBid + sumTax + sumRegistry + sumEviction + sumRepair + sumAgent + sumEtc;
+    var sumPropertyTax = deals.reduce(function(s,d){return s+d.propertyTax;},0);
+    var sumCompTax = deals.reduce(function(s,d){return s+d.compTax;},0);
+    var total = sumBid + sumTax + sumRegistry + sumEviction + sumRepair + sumAgent + sumEtc + sumPropertyTax + sumCompTax;
     if (!total) { document.getElementById('cost-ratio').innerHTML = '<div class="empty-msg">데이터 없음</div>'; return; }
     var items = [
         { label:'낙찰가', v:sumBid, color:'#6a1b9a' },
@@ -206,6 +211,8 @@ function renderCostRatio(deals) {
         { label:'명도비용', v:sumEviction, color:'#00897b' },
         { label:'수리비', v:sumRepair, color:'#ff7043' },
         { label:'중개수수료', v:sumAgent, color:'#1565c0' },
+        { label:'재산세', v:sumPropertyTax, color:'#8d6e63' },
+        { label:'종합부동산세', v:sumCompTax, color:'#6d4c41' },
         { label:'기타비용', v:sumEtc, color:'#9e9e9e' }
     ];
     var html = '';
@@ -288,6 +295,8 @@ function renderDealList(deals) {
             + detailItem('명도비용', toEok(d.evictionFee))
             + detailItem('수리비', toEok(d.repair))
             + detailItem('중개수수료', toEok(d.agent))
+            + detailItem('재산세', toEok(d.propertyTax))
+            + detailItem('종합부동산세', toEok(d.compTax))
             + detailItem('기타비용', toEok(d.etc))
             + detailItem('총 투자비용', toEok(d.totalCost))
             + detailItem('실제 매도가', toEok(d.sell))
