@@ -817,6 +817,18 @@ tr:hover td { background:#fffde7; }
                 </label>
             </div>
             <div style="font-size:10px;color:#aaa;margin-top:4px;">⚠️ 조정대상지역 목록은 수시로 바뀝니다. 실제 입찰 전 취득세는 위택스 등에서 한 번 더 확인하는 것을 권장합니다.</div>
+            <div class="modal-row">
+                <span class="modal-label">6월 1일 보유 여부 <span onclick="showCalcInfo('holdingTax')" title="계산기준 보기" style="cursor:pointer;color:#1976d2;">ⓘ</span></span>
+                <label style="display:flex;align-items:center;gap:4px;font-size:12px;">
+                    <input type="checkbox" id="a-holds-june1" onchange="autoCalcHoldingTaxSilent();calcMargin();"> 예상 보유기간에 6월 1일이 포함됨(재산세·종부세 과세기준일)
+                </label>
+            </div>
+            <div class="modal-row">
+                <span class="modal-label">보유주택 공시가격 합계</span>
+                <input type="number" class="modal-input" id="a-total-official-price" placeholder="비워두면 이 물건 공시가격만 사용" oninput="autoCalcHoldingTaxSilent();calcMargin();">
+                <span style="font-size:12px;color:#888;margin-left:4px;">만원</span>
+            </div>
+            <div style="font-size:10px;color:#aaa;margin-top:-4px;margin-bottom:6px;">종합부동산세는 이 물건 하나가 아니라 현재 보유 중인 모든 주택의 공시가격 합계(9억원, 1주택이면 12억원 초과분) 기준으로 부과됩니다. 이 물건을 포함한 전체 보유주택 공시가격 합계(만원)를 입력하면, "이 물건을 추가로 매수해서 늘어난 종부세분"만 근사 계산해 비용에 반영합니다. 비워두면 이 물건의 공시가격만으로 계산합니다(대부분 9억 미달이라 0원으로 나올 가능성이 높음 - 다른 보유주택이 있다면 꼭 입력하세요).</div>
         </div>
         <div class="modal-section">
             <div class="modal-section-title">📊 비교물건 시세분석 (최대 10개)</div>
@@ -909,6 +921,16 @@ tr:hover td { background:#fffde7; }
                 <button class="modal-btn btn-gray" onclick="applyEvictionRiskSuggestion()" style="font-size:11px;">⚠️ 명도난이도 진단</button>
             </div>
             <div id="eviction-risk-box"></div>
+            <div class="modal-row">
+                <span class="modal-label">재산세 <span onclick="showCalcInfo('holdingTax')" title="계산기준 보기" style="cursor:pointer;color:#1976d2;">ⓘ</span></span>
+                <input type="number" class="modal-input" id="a-property-tax" placeholder="0" oninput="calcMargin()">
+                <button class="modal-btn btn-gray" onclick="autoCalcHoldingTax()" style="font-size:11px;">자동계산</button>
+            </div>
+            <div class="modal-row">
+                <span class="modal-label">종합부동산세 <span onclick="showCalcInfo('holdingTax')" title="계산기준 보기" style="cursor:pointer;color:#1976d2;">ⓘ</span></span>
+                <input type="number" class="modal-input" id="a-comp-tax" placeholder="0" oninput="calcMargin()">
+                <button class="modal-btn btn-gray" onclick="autoCalcHoldingTax()" style="font-size:11px;">자동계산</button>
+            </div>
             <div class="modal-row">
                 <span class="modal-label">기타비용</span>
                 <input type="number" class="modal-input" id="a-etc" placeholder="0" oninput="calcMargin()">
@@ -4315,7 +4337,8 @@ function openAuctionModal(id) {
      ['auction-id','a-addr','a-name','a-dong','a-floor','a-unit','a-case','a-pyung','a-date',
      'a-appraisal','a-min-bid','a-deposit-rate','a-my-bid','a-actual-bid',
      'a-tax','a-registry-fee','a-eviction-fee','a-repair','a-agent','a-moving','a-cleaning','a-etc','a-unpaid-mgmt-fee','a-assumed-deposit','a-target','a-actual-sell',
-     'a-official-price','a-site-rights-area','a-land-price-per-m2','a-memo','a-paste-text','a-loan-rate']
+     'a-official-price','a-site-rights-area','a-land-price-per-m2','a-memo','a-paste-text','a-loan-rate',
+     'a-total-official-price','a-property-tax','a-comp-tax']
         .forEach(function(fid) { document.getElementById(fid).value = ''; });
     document.getElementById('a-status').value = '검토중';
     document.getElementById('a-prop-type').value = 'apt';
@@ -4324,6 +4347,7 @@ function openAuctionModal(id) {
     document.getElementById('a-house-rank').value = '1';
     document.getElementById('a-is-adjusted').checked = false;
     document.getElementById('a-is-local-cheap').checked = false;
+    document.getElementById('a-holds-june1').checked = false;
     document.getElementById('a-comp-target-margin').value = '2000';
     document.getElementById('a-addr-result').style.display = 'none';
     pendingAuctionDetail = null;
@@ -4407,6 +4431,10 @@ function openAuctionModal(id) {
             document.getElementById('a-official-price').value = a.officialPriceWon || '';
             document.getElementById('a-site-rights-area').value = a.siteRightsAreaM2 || '';
             document.getElementById('a-land-price-per-m2').value = a.landPricePerM2 || '';
+            document.getElementById('a-holds-june1').checked = !!a.holdsJune1;
+            document.getElementById('a-total-official-price').value = a.totalOfficialPriceManwon || '';
+            document.getElementById('a-property-tax').value = a.propertyTax || '';
+            document.getElementById('a-comp-tax').value = a.compTax || '';
             if (a.addrLabel) { document.getElementById('a-addr-result').innerText = '📍 ' + a.addrLabel; document.getElementById('a-addr-result').style.display = 'block'; }
         }
     }
@@ -4635,6 +4663,97 @@ function autoCalcRegistryFee() {
     if (!bid) { alert('입찰가를 먼저 입력해 주세요.'); return; }
     document.getElementById('a-registry-fee').value = calcRegistryFee(bid);
     calcMargin();
+}
+/* ════════════════════════════════════
+   보유세(재산세·종합부동산세) - 2026-07 국세청/지방세법 기준
+   ⚠️ 둘 다 매년 6월 1일 현재 소유자에게 그 해분 전액이 부과됨(보유월수 비례 아님) -
+   낙찰~매도 예상기간에 6월 1일이 끼는지는 날짜 입력이 없어 자동판정할 수 없으므로
+   "a-holds-june1" 체크박스로 직접 표시해야 계산에 반영됨(안 켜면 0원).
+
+   [재산세] 과세표준 = 공시가격 × 공정시장가액비율(1주택자는 공시가격 구간별 43~45%
+   특례, 다주택자·법인은 60%) × 아래 4단계 누진세율 + 지방교육세(재산세액의 20%)
+   + 도시지역분(과세표준의 0.14%, 도시계획구역 내 근사 적용).
+   [종합부동산세] 과세표준 = (전체 보유주택 공시가격 합계 - 공제금액(9억원, 1세대1주택
+   12억원)) × 공정시장가액비율(60%) × 아래 7단계 누진세율(2주택 이하 기준) + 농어촌특별세
+   (종부세액의 20%). ⚠️ 3주택 이상은 더 가파른 별도 세율구간이 있을 수 있는데 정확한
+   구간을 검증하지 못해 2주택 이하 표를 그대로 적용함 - 3주택 이상이면 실제 세액이 이
+   계산치보다 클 수 있어 참고용으로만 쓰고 국세청 종부세 계산기로 재확인 권장.
+   이 물건 하나가 아니라 "전체 보유주택 공시가격 합계"가 과세표준이라, 이 물건을 추가
+   취득해서 늘어난 종부세만(=전체 합계 기준 세액 - 이 물건 제외 기준 세액) 비용으로
+   계산함. ⚠️ 세율·공정시장가액비율은 매년 시행령으로 바뀔 수 있어 실제 납부 전 위택스
+   (재산세)·국세청 홈택스(종부세)에서 한 번 더 확인하세요. */
+function calcPropertyTax(officialPriceWon, houseRank, holdsJune1) {
+    if (!holdsJune1 || !officialPriceWon || officialPriceWon <= 0) return 0;
+    var rank = houseRank || 1;
+    var ratio;
+    if (rank === 1) {
+        ratio = officialPriceWon <= 300000000 ? 0.43 : (officialPriceWon <= 600000000 ? 0.44 : 0.45);
+    } else {
+        ratio = 0.6;
+    }
+    var base = officialPriceWon * ratio;
+    var propTax;
+    if (base <= 60000000) propTax = base * 0.001;
+    else if (base <= 150000000) propTax = 60000 + (base - 60000000) * 0.0015;
+    else if (base <= 300000000) propTax = 195000 + (base - 150000000) * 0.0025;
+    else propTax = 570000 + (base - 300000000) * 0.004;
+    var eduTax = propTax * 0.2;      // 지방교육세
+    var urbanTax = base * 0.0014;    // 도시지역분(근사)
+    return Math.round((propTax + eduTax + urbanTax) / 10000); // 만원 단위로 반환
+}
+var COMP_TAX_BRACKETS = [ // 종합부동산세 과세표준 구간(만원)별 세율·누진공제 - 2주택 이하 기준(2026)
+    { min: 0,      rate: 0.005, ded: 0 },
+    { min: 30000,  rate: 0.007, ded: 60 },
+    { min: 60000,  rate: 0.010, ded: 240 },
+    { min: 120000, rate: 0.020, ded: 1440 },
+    { min: 250000, rate: 0.030, ded: 3940 },
+    { min: 500000, rate: 0.040, ded: 8940 },
+    { min: 940000, rate: 0.050, ded: 18340 }
+];
+function calcCompTaxRaw(baseManwon) {
+    if (!baseManwon || baseManwon <= 0) return 0;
+    var br = COMP_TAX_BRACKETS[0];
+    for (var i = 0; i < COMP_TAX_BRACKETS.length; i++) {
+        if (baseManwon >= COMP_TAX_BRACKETS[i].min) br = COMP_TAX_BRACKETS[i]; else break;
+    }
+    return Math.max(baseManwon * br.rate - br.ded, 0);
+}
+/* totalOfficialPriceManwon: 이 물건 포함 전체 보유주택 공시가격 합계(만원, 입력 없으면 이 물건
+   단독 공시가격만 사용). propertyOfficialPriceWon: 이 물건의 공시가격(원). */
+function calcCompTax(totalOfficialPriceManwon, propertyOfficialPriceWon, houseRank, holdsJune1) {
+    if (!holdsJune1) return 0;
+    var propertyManwon = Math.round((propertyOfficialPriceWon || 0) / 10000);
+    var totalManwon = totalOfficialPriceManwon > 0 ? totalOfficialPriceManwon : propertyManwon;
+    if (!totalManwon || totalManwon <= 0) return 0;
+    var deduction = (houseRank === 1 || houseRank === '1') ? 120000 : 90000; // 1세대1주택 12억 / 그 외 9억
+    var ratio = 0.6;
+    var taxWith = calcCompTaxRaw(Math.max(totalManwon - deduction, 0) * ratio);
+    var totalWithout = Math.max(totalManwon - propertyManwon, 0);
+    var taxWithout = calcCompTaxRaw(Math.max(totalWithout - deduction, 0) * ratio);
+    var marginalTax = Math.max(taxWith - taxWithout, 0);
+    var levy = marginalTax * 0.2; // 농어촌특별세
+    return Math.round(marginalTax + levy);
+}
+function autoCalcHoldingTax() {
+    var officialPriceWon = parseInt(document.getElementById('a-official-price').value) || 0;
+    if (!officialPriceWon) { alert('공시가격을 먼저 입력해 주세요.'); return; }
+    var houseRank = parseInt(document.getElementById('a-house-rank').value) || 1;
+    var holdsJune1 = document.getElementById('a-holds-june1').checked;
+    var totalOfficialPriceManwon = parseInt(document.getElementById('a-total-official-price').value) || 0;
+    document.getElementById('a-property-tax').value = calcPropertyTax(officialPriceWon, houseRank, holdsJune1);
+    document.getElementById('a-comp-tax').value = calcCompTax(totalOfficialPriceManwon, officialPriceWon, houseRank, holdsJune1);
+    if (!holdsJune1) alert('"보유기간에 6월 1일이 포함됨" 체크박스가 꺼져 있어 0원으로 계산됐습니다. 실제로 6월 1일을 넘겨 보유할 예정이면 체크해 주세요.');
+    calcMargin();
+}
+/* 조건(공시가격·보유주택수·6월1일 체크·공시가격합계) 변경 시 알림창 없이 조용히 재계산 */
+function autoCalcHoldingTaxSilent() {
+    var officialPriceWon = parseInt(document.getElementById('a-official-price').value) || 0;
+    if (!officialPriceWon) return;
+    var houseRank = parseInt(document.getElementById('a-house-rank').value) || 1;
+    var holdsJune1 = document.getElementById('a-holds-june1').checked;
+    var totalOfficialPriceManwon = parseInt(document.getElementById('a-total-official-price').value) || 0;
+    document.getElementById('a-property-tax').value = calcPropertyTax(officialPriceWon, houseRank, holdsJune1);
+    document.getElementById('a-comp-tax').value = calcCompTax(totalOfficialPriceManwon, officialPriceWon, houseRank, holdsJune1);
 }
 /* 명도비용(점유자 이사비 등 근사) - 평당 11만원 일괄 (015. 경매 입찰가 산정표.xlsx 단기매매 시트와 동일 기준) */
 function calcEvictionFee(pyung) {
@@ -5175,6 +5294,16 @@ var CALC_INFO_TEXT = {
         + '   문의하거나 감정평가서·매각물건명세서를 근거로 직접 추산\n\n'
         + '⚠️ 이 항목은 법률 자문이 아닌 참고용 최악가정 추정치입니다. 실제 입찰 전 반드시 경매계·\n'
         + '법무사를 통해 배당표(또는 예상 배당순위)를 확인하세요.',
+    holdingTax: '재산세·종합부동산세는 둘 다 "매년 6월 1일 현재 소유자"에게 그 해분 전액이 부과됩니다\n'
+        + '(보유 개월수에 비례하지 않음). 예상 보유기간(낙찰~매도)에 6월 1일이 포함될지 직접\n'
+        + '판단해서 위 체크박스를 켜야 계산에 반영됩니다(안 켜면 0원).\n'
+        + '- 재산세: 공시가격 × 공정시장가액비율(1주택 43~45%, 다주택·법인 60%) × 4단계 누진세율\n'
+        + '  + 지방교육세(재산세액의 20%) + 도시지역분(과세표준의 0.14%, 근사).\n'
+        + '- 종합부동산세: (전체 보유주택 공시가격 합계 - 공제금액(9억, 1주택 12억)) × 60% × 7단계\n'
+        + '  누진세율(2주택 이하 기준. 3주택 이상은 더 가파른 세율일 수 있어 참고용) + 농어촌특별세\n'
+        + '  (종부세액의 20%). 이 물건 하나가 아니라 전체 보유주택 공시가격 합계가 기준이라, 위에\n'
+        + '  전체 합계를 입력하면 "이 물건 때문에 늘어난 종부세분"만 계산해서 비용에 반영합니다.\n'
+        + '세율·공정시장가액비율은 매년 바뀔 수 있으니 실제 납부 전 위택스·홈택스에서 다시 확인하세요.',
     evictionRisk: '미납관리비(체납관리비)는 판례상 공용부분에 한해 낙찰자가 인수합니다(전유부분·연체료는\n'
         + '인수 대상 아님). 그래서 금액이 확인되면 크기와 무관하게 항상 "필요자금"에 비용으로 반영됩니다.\n\n'
         + '추가로 "⚠️ 명도난이도 진단" 버튼은 미납관리비 100만원 이상 + 채무자=소유자(=소유자 본인 거주\n'
@@ -5319,6 +5448,8 @@ function calcMargin() {
     var etc      = parseInt(document.getElementById('a-etc').value)    || 0;
     var unpaidMgmtFee = parseInt(document.getElementById('a-unpaid-mgmt-fee').value) || 0;
     var assumedDeposit = parseInt(document.getElementById('a-assumed-deposit').value) || 0;
+    var propertyTax = parseInt(document.getElementById('a-property-tax').value) || 0;
+    var compTax = parseInt(document.getElementById('a-comp-tax').value) || 0;
     var target   = parseInt(document.getElementById('a-target').value) || 0;
     var actSell  = parseInt(document.getElementById('a-actual-sell').value) || 0;
     var useSell  = actSell || target;
@@ -5335,7 +5466,7 @@ function calcMargin() {
     var interestCost = calcLoanInterest(loanAmount, loanRate, holdMonths);
     var vatInfo = calcAuctionVat(useBid);
     var vat = vatInfo.computable ? vatInfo.vat : 0;
-    var feesSum   = tax + registryFee + evictionFee + repair + agent + moving + cleaning + interestCost + etc + vat + assumedDeposit + unpaidMgmtFee;
+    var feesSum   = tax + registryFee + evictionFee + repair + agent + moving + cleaning + interestCost + etc + vat + assumedDeposit + unpaidMgmtFee + propertyTax + compTax;
     var totalCost = useBid + feesSum;
     var preTaxMargin = useSell > 0 ? useSell - totalCost : 0;
     var isAdjustedForTax = document.getElementById('a-is-adjusted').checked;
@@ -5377,6 +5508,12 @@ function calcMargin() {
           : '')
       + (unpaidMgmtFee > 0
           ? mItem('미납관리비(인수비용) <span onclick="showCalcInfo(\'evictionRisk\')" title="계산기준 보기" style="cursor:pointer;">ⓘ</span>', toEok(String(unpaidMgmtFee)), '#c62828')
+          : '')
+      + (propertyTax > 0
+          ? mItem('재산세(6월1일 보유) <span onclick="showCalcInfo(\'holdingTax\')" title="계산기준 보기" style="cursor:pointer;">ⓘ</span>', toEok(String(propertyTax)), '#8d6e63')
+          : '')
+      + (compTax > 0
+          ? mItem('종합부동산세(증분) <span onclick="showCalcInfo(\'holdingTax\')" title="계산기준 보기" style="cursor:pointer;">ⓘ</span>', toEok(String(compTax)), '#8d6e63')
           : '')
       + (compEst
           ? mItem('비교물건 기준 적정입찰가(목표 ' + toEok(String(compTargetMargin)) + ')', compBidResult && compBidResult.bid > 0 ? toEok(String(compBidResult.bid)) : '마진 확보 불가', '#6a1b9a')
@@ -5513,6 +5650,10 @@ async function saveAuction() {
         officialPriceWon: document.getElementById('a-official-price').value || null,
         siteRightsAreaM2: document.getElementById('a-site-rights-area').value || null,
         landPricePerM2: document.getElementById('a-land-price-per-m2').value || null,
+        holdsJune1: document.getElementById('a-holds-june1').checked,
+        totalOfficialPriceManwon: document.getElementById('a-total-official-price').value || null,
+        propertyTax: document.getElementById('a-property-tax').value || null,
+        compTax: document.getElementById('a-comp-tax').value || null,
         registryDoc: pendingRegistryDoc || null,
         registryAnalysis: pendingRegistryAnalysis || null,
         devNews: pendingDevNews || null,
@@ -5902,6 +6043,8 @@ function buildMarginSummaryHtml(a) {
     var moving = parseInt(a.moving) || 0;
     var cleaning = parseInt(a.cleaning) || 0;
     var etc = parseInt(a.etc) || 0;
+    var propertyTax = parseInt(a.propertyTax) || 0;
+    var compTax = parseInt(a.compTax) || 0;
     var appraisal = parseInt(a.appraisal) || 0;
     var minBid = parseInt(a.minBid) || 0;
     var depositRate = parseFloat(a.depositRate) || 0;
@@ -5913,7 +6056,7 @@ function buildMarginSummaryHtml(a) {
     var loanRateSaved = parseFloat(a.loanRate);
     var loanRate = (loanRateSaved > 0) ? loanRateSaved : DEFAULT_LOAN_RATE[bidMethod === 'dealer' ? 'dealer' : 'individual'];
     var interestCost = calcLoanInterest(loanAmount, loanRate, holdMonths);
-    var feesSum = tax + registryFee + evictionFee + repair + agent + moving + cleaning + interestCost + etc;
+    var feesSum = tax + registryFee + evictionFee + repair + agent + moving + cleaning + interestCost + etc + propertyTax + compTax;
     var totalCost = useBid + feesSum;
     var preTaxMargin = useSell > 0 ? useSell - totalCost : 0;
     var taxResult = (useSell > 0 && preTaxMargin > 0) ? calcResaleIncomeTax(bidMethod, preTaxMargin, holdMonths, !!a.isAdjusted, parseInt(a.houseRank) || 1) : { totalTax: 0, rateLabel: '' };
@@ -6350,6 +6493,12 @@ function solveAuctionBid(estValue) {
     var assumedDeposit = parseInt(document.getElementById('a-assumed-deposit').value) || 0;
     // 미납관리비(공용부분, 낙찰자 인수) - 입찰가와 무관한 고정 인수비용이므로 동일하게 처리
     var unpaidMgmtFee = parseInt(document.getElementById('a-unpaid-mgmt-fee').value) || 0;
+    // 재산세·종부세도 입찰가(mid)와 무관하게 공시가격 기준 고정값이므로 이분탐색 밖에서 한 번만 계산
+    var officialPriceWon = parseInt(document.getElementById('a-official-price').value) || 0;
+    var holdsJune1 = document.getElementById('a-holds-june1').checked;
+    var totalOfficialPriceManwon = parseInt(document.getElementById('a-total-official-price').value) || 0;
+    var propertyTax = calcPropertyTax(officialPriceWon, c.houseRank, holdsJune1);
+    var compTax = calcCompTax(totalOfficialPriceManwon, officialPriceWon, c.houseRank, holdsJune1);
     var moving   = parseInt(document.getElementById('a-moving').value) || calcMovingFee(c.pyung) || 0;
     var cleaning = parseInt(document.getElementById('a-cleaning').value) || calcCleaningFee(c.pyung) || 0;
     var bidMethod = document.getElementById('a-bid-method').value;
@@ -6372,13 +6521,13 @@ function solveAuctionBid(estValue) {
         var loanAmount = calcLoanAmount(bidMethod, mid, appraisal);
         var interestCost = calcLoanInterest(loanAmount, loanRate, holdMonths);
         var vat = vatInfo.computable ? Math.round(mid * vatInfo.buildingRatio * 0.1) : 0;
-        var preTaxCost = mid + acqTax + registryFee + evictionFee + agentFee + repair + etc + moving + cleaning + interestCost + vat + assumedDeposit + unpaidMgmtFee;
+        var preTaxCost = mid + acqTax + registryFee + evictionFee + agentFee + repair + etc + moving + cleaning + interestCost + vat + assumedDeposit + unpaidMgmtFee + propertyTax + compTax;
         var preTaxProfit = estValue - preTaxCost;
         var taxResult = calcResaleIncomeTax(bidMethod, preTaxProfit, holdMonths, c.isAdjusted, c.houseRank);
         var netProfit = preTaxProfit - taxResult.totalTax;
         result = { bid: mid, acqTax: acqTax, registryFee: registryFee, evictionFee: evictionFee, agentFee: agentFee,
             moving: moving, cleaning: cleaning, interestCost: interestCost, loanRate: loanRate, vat: vat, vatInfo: vatInfo,
-            assumedDeposit: assumedDeposit, unpaidMgmtFee: unpaidMgmtFee,
+            assumedDeposit: assumedDeposit, unpaidMgmtFee: unpaidMgmtFee, propertyTax: propertyTax, compTax: compTax,
             preTaxProfit: preTaxProfit, resaleTax: taxResult.totalTax, netProfit: netProfit };
         if (netProfit > targetMargin) lo = mid; else hi = mid;
     }
@@ -6442,6 +6591,15 @@ function calcCompValuation() {
                 : '')
             + (r.assumedDeposit > 0
                 ? vItem('인수보증금(선순위 임차인)', toEok(String(r.assumedDeposit)), '#c62828')
+                : '')
+            + (r.unpaidMgmtFee > 0
+                ? vItem('미납관리비(인수비용)', toEok(String(r.unpaidMgmtFee)), '#c62828')
+                : '')
+            + (r.propertyTax > 0
+                ? vItem('재산세(6월1일 보유)', toEok(String(r.propertyTax)), '#8d6e63')
+                : '')
+            + (r.compTax > 0
+                ? vItem('종합부동산세(증분)', toEok(String(r.compTax)), '#8d6e63')
                 : '')
             + vItem((document.getElementById('a-bid-method').value === 'dealer' ? '종합소득세' : '양도소득세') + '(적정입찰가 기준)', r.bid > 0 ? toEok(String(r.resaleTax)) : '—', '#9c27b0')
             + vItem('적정 입찰가(세후 목표마진 기준)', r.bid > 0 ? toEok(String(r.bid)) : '마진 확보 불가', '#6a1b9a')
