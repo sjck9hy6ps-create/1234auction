@@ -4574,7 +4574,10 @@ function calcAcquisitionTaxDetailed(bidManwon, propType, pyung, houseRank, isAdj
             if (rank === 2) { isHeavy = true; heavyPct = 8; }
             else if (rank >= 3) { isHeavy = true; heavyPct = 12; }
         } else {
-            if (rank >= 4) { isHeavy = true; heavyPct = 12; }
+            // ⚠️ 비조정대상지역도 3주택부터 8% 중과 대상(4주택 이상만 12%로 처리하던
+            // 기존 코드에 3주택 구간이 빠져 있었음 - 지방세법 제13조의2 기준으로 보정).
+            if (rank === 3) { isHeavy = true; heavyPct = 8; }
+            else if (rank >= 4) { isHeavy = true; heavyPct = 12; }
         }
     }
     var totalRatePct;
@@ -4692,12 +4695,18 @@ function autoCalcCleaningSilent() {
     document.getElementById('a-cleaning').value = fee;
 }
 /* ════════════════════════════════════
-   되팔 때 세금 (015. 경매 입찰가 산정표.xlsx와 동일 로직, 2026-07 국세청 기준)
-   - 매매사업자(개인): 종합소득세(사업소득분) - 8단계 누진세율(6~45%) + 지방소득세10%
+   되팔 때 세금 (015. 경매 입찰가 산정표.xlsx와 동일 로직 + 다주택 양도세 중과, 2026-07 국세청 기준)
+   - 매매사업자(개인): 종합소득세(사업소득분) - 8단계 누진세율(6~45%) + 지방소득세10%.
+     다주택 양도세 중과는 "양도소득세" 제도라 사업소득(종합소득세)에는 적용되지 않음.
    - 개인명의: 양도소득세 - 보유 1년미만 70%, 2년미만 60% 단일세율(누진공제 없음),
      2년 이상이면 장기보유특별공제(연2%,최대30%, 일반 부동산 기준 단순화)+양도소득
      기본공제(연250만원) 적용 후 위와 동일한 8단계 누진세율. + 지방소득세10%
-   profitManwon: 세전 이익(매도가-입찰가-총부대비용, 만원). holdMonths: 보유기간(개월). */
+   - ⚠️ 다주택 양도세 중과(2026.5.9 유예 종료, 재시행 중): 조정대상지역 소재 주택을
+     2주택자가 팔면 기본세율+20%p, 3주택 이상이면 +30%p가 붙고, 중과 대상이면
+     장기보유특별공제도 배제됨. 보유 2년 미만이면 단기세율(70%/60%)과 중과세율
+     (기본+20~30%p) 중 세액이 더 큰 쪽을 적용(국세청 기준).
+   profitManwon: 세전 이익(매도가-입찰가-총부대비용, 만원). holdMonths: 보유기간(개월).
+   isAdjusted/houseRank: 취득세 계산과 동일하게 a-is-adjusted/a-house-rank 값을 그대로 사용. */
 var INCOME_TAX_BRACKETS = [
     { min: 0,      rate: 0.06, ded: 0 },
     { min: 1400,   rate: 0.15, ded: 126 },
@@ -4715,7 +4724,7 @@ function lookupIncomeTaxBracket(baseManwon) {
     }
     return r;
 }
-function calcResaleIncomeTax(bidMethod, profitManwon, holdMonths) {
+function calcResaleIncomeTax(bidMethod, profitManwon, holdMonths, isAdjusted, houseRank) {
     if (!profitManwon || profitManwon <= 0) return { incomeTax: 0, localTax: 0, totalTax: 0, rateLabel: '' };
     if (bidMethod === 'dealer') {
         var br = lookupIncomeTaxBracket(profitManwon);
@@ -4725,13 +4734,33 @@ function calcResaleIncomeTax(bidMethod, profitManwon, holdMonths) {
     }
     var months = holdMonths || 0;
     var basicDeduction = 250; // 양도소득 기본공제(연 250만원)
+    var rank = houseRank || 1;
+    // 조정대상지역+다주택(2주택 이상) = 양도세 중과 대상 (2026.5.9 유예 종료, 재시행 중)
+    var isHeavy = !!isAdjusted && rank >= 2;
+    var surcharge = isHeavy ? (rank >= 3 ? 0.30 : 0.20) : 0;
+    var baseAfterDeduction = Math.max(profitManwon - basicDeduction, 0);
     var incomeTax, rateLabel;
-    if (months < 12) {
-        incomeTax = Math.round(Math.max(profitManwon - basicDeduction, 0) * 0.7);
-        rateLabel = '단기 70%';
-    } else if (months < 24) {
-        incomeTax = Math.round(Math.max(profitManwon - basicDeduction, 0) * 0.6);
-        rateLabel = '단기 60%';
+    if (months < 24) {
+        var shortRate = months < 12 ? 0.7 : 0.6;
+        var shortTax = Math.round(baseAfterDeduction * shortRate);
+        var shortLabel = months < 12 ? '단기 70%' : '단기 60%';
+        if (isHeavy) {
+            // 중과 대상은 장기보유특별공제와 무관하게(2년 미만이라 애초에 대상도 아님)
+            // 기본세율+중과율로 계산한 세액과, 단기세율로 계산한 세액 중 더 큰 쪽을 적용
+            var brShort = lookupIncomeTaxBracket(baseAfterDeduction);
+            var heavyRate = brShort.rate + surcharge;
+            var heavyTax = Math.max(Math.round(baseAfterDeduction * heavyRate - brShort.ded), 0);
+            if (heavyTax > shortTax) { incomeTax = heavyTax; rateLabel = '중과 ' + Math.round(heavyRate * 100) + '%'; }
+            else { incomeTax = shortTax; rateLabel = shortLabel; }
+        } else {
+            incomeTax = shortTax; rateLabel = shortLabel;
+        }
+    } else if (isHeavy) {
+        // 중과 대상은 장기보유특별공제 배제 - 기본공제만 적용한 과세표준에 기본세율+중과율 적용
+        var brHeavy = lookupIncomeTaxBracket(baseAfterDeduction);
+        var heavyRate2 = brHeavy.rate + surcharge;
+        incomeTax = Math.max(Math.round(baseAfterDeduction * heavyRate2 - brHeavy.ded), 0);
+        rateLabel = '중과 ' + Math.round(heavyRate2 * 100) + '%';
     } else {
         var ltRate = Math.min(Math.floor(months / 12) * 0.02, 0.3);
         var base = Math.max(profitManwon * (1 - ltRate) - basicDeduction, 0);
@@ -5309,7 +5338,9 @@ function calcMargin() {
     var feesSum   = tax + registryFee + evictionFee + repair + agent + moving + cleaning + interestCost + etc + vat + assumedDeposit + unpaidMgmtFee;
     var totalCost = useBid + feesSum;
     var preTaxMargin = useSell > 0 ? useSell - totalCost : 0;
-    var taxResult = (useSell > 0 && preTaxMargin > 0) ? calcResaleIncomeTax(bidMethod, preTaxMargin, holdMonths) : { totalTax: 0, rateLabel: '' };
+    var isAdjustedForTax = document.getElementById('a-is-adjusted').checked;
+    var houseRankForTax = parseInt(document.getElementById('a-house-rank').value) || 1;
+    var taxResult = (useSell > 0 && preTaxMargin > 0) ? calcResaleIncomeTax(bidMethod, preTaxMargin, holdMonths, isAdjustedForTax, houseRankForTax) : { totalTax: 0, rateLabel: '' };
     var margin    = useSell > 0 ? preTaxMargin - taxResult.totalTax : 0;
     var roi       = (totalCost > 0 && useSell > 0) ? Math.round(margin / totalCost * 1000) / 10 : 0;
     var apprRate  = (appraisal > 0 && useBid > 0) ? Math.round(useBid / appraisal * 1000) / 10 : 0;
@@ -5885,7 +5916,7 @@ function buildMarginSummaryHtml(a) {
     var feesSum = tax + registryFee + evictionFee + repair + agent + moving + cleaning + interestCost + etc;
     var totalCost = useBid + feesSum;
     var preTaxMargin = useSell > 0 ? useSell - totalCost : 0;
-    var taxResult = (useSell > 0 && preTaxMargin > 0) ? calcResaleIncomeTax(bidMethod, preTaxMargin, holdMonths) : { totalTax: 0, rateLabel: '' };
+    var taxResult = (useSell > 0 && preTaxMargin > 0) ? calcResaleIncomeTax(bidMethod, preTaxMargin, holdMonths, !!a.isAdjusted, parseInt(a.houseRank) || 1) : { totalTax: 0, rateLabel: '' };
     var margin = useSell > 0 ? preTaxMargin - taxResult.totalTax : 0;
     var roi = (totalCost > 0 && useSell > 0) ? Math.round(margin / totalCost * 1000) / 10 : 0;
     var apprRate = (appraisal > 0 && useBid > 0) ? Math.round(useBid / appraisal * 1000) / 10 : 0;
@@ -6343,7 +6374,7 @@ function solveAuctionBid(estValue) {
         var vat = vatInfo.computable ? Math.round(mid * vatInfo.buildingRatio * 0.1) : 0;
         var preTaxCost = mid + acqTax + registryFee + evictionFee + agentFee + repair + etc + moving + cleaning + interestCost + vat + assumedDeposit + unpaidMgmtFee;
         var preTaxProfit = estValue - preTaxCost;
-        var taxResult = calcResaleIncomeTax(bidMethod, preTaxProfit, holdMonths);
+        var taxResult = calcResaleIncomeTax(bidMethod, preTaxProfit, holdMonths, c.isAdjusted, c.houseRank);
         var netProfit = preTaxProfit - taxResult.totalTax;
         result = { bid: mid, acqTax: acqTax, registryFee: registryFee, evictionFee: evictionFee, agentFee: agentFee,
             moving: moving, cleaning: cleaning, interestCost: interestCost, loanRate: loanRate, vat: vat, vatInfo: vatInfo,
