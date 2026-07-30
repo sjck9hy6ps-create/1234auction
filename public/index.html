@@ -225,6 +225,25 @@ tr:hover td { background:#fffde7; }
     font-size:11px; font-weight:bold; color:#888; letter-spacing:0.5px;
     margin-bottom:8px; padding-bottom:4px; border-bottom:1px solid #f0f0f0;
 }
+/* 경매 모달 대분류 접기/펼치기 그룹 - 매물명세서/지출비용/임장정보/등기부등본.
+   아이패드 등 터치기기에서 임장 중 빠르게 훑어볼 수 있게 헤더 탭 영역을 넉넉히 잡음. */
+.modal-group {
+    border:1px solid #e6e5ea; border-radius:10px; margin-bottom:12px; overflow:hidden;
+}
+.modal-group-header {
+    display:flex; align-items:center; justify-content:space-between;
+    padding:14px 16px; background:#f7f6fb; cursor:pointer; user-select:none;
+    font-size:14px; font-weight:bold; color:#333; min-height:20px;
+    -webkit-tap-highlight-color:transparent;
+}
+.modal-group-header:active { background:#efecf8; }
+.modal-group-chevron {
+    color:#999; font-size:12px; transition:transform .15s ease; flex-shrink:0; margin-left:8px;
+}
+.modal-group.open > .modal-group-header .modal-group-chevron { transform:rotate(90deg); }
+.modal-group-body { display:none; padding:14px 16px 2px; }
+.modal-group.open > .modal-group-body { display:block; }
+.modal-group-body > .modal-section:last-child { margin-bottom:6px; }
 .modal-row { display:flex; gap:8px; margin-bottom:8px; align-items:center; }
 .modal-label { font-size:12px; color:#555; min-width:72px; flex-shrink:0; }
 .modal-input {
@@ -684,6 +703,12 @@ tr:hover td { background:#fffde7; }
             </div>
             <div id="a-ai-summary-box"></div>
         </div>
+        <div class="modal-group open" id="mg-property">
+            <div class="modal-group-header" onclick="toggleModalGroup('mg-property')">
+                <span>📋 매물명세서</span>
+                <span class="modal-group-chevron">▶</span>
+            </div>
+            <div class="modal-group-body">
         <div class="modal-section">
             <div class="modal-section-title">📍 물건 정보</div>
             <div class="modal-row">
@@ -699,7 +724,6 @@ tr:hover td { background:#fffde7; }
                 <span style="font-size:10px;color:#999;margin-left:4px;">주소 입력 후 눌러주세요 (재개발·재건축·신속통합기획 등 AI 웹검색)</span>
             </div>
             <div id="dev-news-box" style="margin-top:4px;"></div>
-            <div id="auction-history-box" style="margin-top:4px;"></div>
             <div class="modal-row">
                 <span class="modal-label">물건유형</span>
                 <select class="modal-select" id="a-prop-type" onchange="applyDefaultTargetMarginForType();autoCalcAgentSilent();autoCalcRepairSilent();calcCompValuation();calcMargin();autoCalcAuctionJeonseAnalysis();">
@@ -831,49 +855,6 @@ tr:hover td { background:#fffde7; }
             <div style="font-size:10px;color:#aaa;margin-top:-4px;margin-bottom:6px;">종합부동산세는 이 물건 하나가 아니라 현재 보유 중인 모든 주택의 공시가격 합계(9억원, 1주택이면 12억원 초과분) 기준으로 부과됩니다. 이 물건을 포함한 전체 보유주택 공시가격 합계(만원)를 입력하면, "이 물건을 추가로 매수해서 늘어난 종부세분"만 근사 계산해 비용에 반영합니다. 비워두면 이 물건의 공시가격만으로 계산합니다(대부분 9억 미달이라 0원으로 나올 가능성이 높음 - 다른 보유주택이 있다면 꼭 입력하세요).</div>
         </div>
         <div class="modal-section">
-            <div class="modal-section-title">📊 비교물건 시세분석 (최대 10개)</div>
-            <div style="margin-bottom:8px;">
-                <button type="button" class="modal-btn btn-purple" style="font-size:11px;" onclick="openAiCompFinder()">🤖 유사물건 자동추천</button>
-                <span style="font-size:10px;color:#999;margin-left:4px;">주소·평형·층 입력 후 눌러주세요</span>
-            </div>
-            <div id="comp-list-box" style="margin-bottom:8px;"></div>
-            <div class="modal-row">
-                <span class="modal-label">목표마진(세후)</span>
-                <input type="number" class="modal-input" id="a-comp-target-margin" placeholder="0" oninput="calcCompValuation();suggestBidFromTarget();">
-                <span style="font-size:12px;color:#888;margin-left:4px;">만원</span>
-            </div>
-            <div id="comp-valuation-result" style="margin-top:8px;"></div>
-            <div style="margin-top:10px;border-top:1px dashed #e0d0f0;padding-top:8px;">
-                <button type="button" class="modal-btn btn-purple" style="font-size:11px;" onclick="calcAuctionJeonseAnalysis()">🏠 전세가 기반 분석 다시 계산</button>
-                <span style="font-size:10px;color:#999;margin-left:4px;">연립다세대·단독이고 주소·평형이 있으면 자동으로 계산됩니다 (수동 새로고침용 버튼)</span>
-            </div>
-            <div id="jeonse-analysis-box" style="margin-top:8px;"></div>
-            <div style="margin-top:10px;border-top:1px dashed #e0d0f0;padding-top:8px;">
-                <button type="button" class="modal-btn btn-purple" id="resale-match-btn" style="font-size:11px;" onclick="findApproximateResaleMatches()">🔍 낙찰가·매도가 추정 조회 (근사치)</button>
-                <span style="font-size:10px;color:#999;margin-left:4px;">주소·평형·층 입력 후 눌러주세요. 관심물건인데 입찰 안 하신 경우에도 씁니다 - 남이 얼마에 낙찰받았는지, 그 뒤 얼마에 팔렸는지 근사치로 찾아드려요.</span>
-            </div>
-            <div id="resale-match-box" style="margin-top:8px;"></div>
-            <div style="margin-top:10px;border-top:1px dashed #e0d0f0;padding-top:8px;">
-                <span class="modal-label" style="display:block;margin-bottom:4px;">🏘️ 현재 매물 재고 <span onclick="showCalcInfo('listingCount')" style="cursor:pointer;color:#999;font-size:11px;">ⓘ</span></span>
-                <div style="font-size:10px;color:#999;margin-bottom:6px;">이 앱은 네이버부동산을 자동으로 긁어오지 않습니다(약관·판례상 자동수집 리스크 때문). 아래 버튼으로 직접 확인해서 건수를 적어두거나, 채팅으로 "이 물건 매물 몇 건인지 확인해줘"라고 요청하세요. 물건종류·매매 거래유형·평형(±5평)·연식(전 5년~후 10년, 사용승인일 확인된 경우)이 모두 자동 반영된 화면으로 이동합니다(ⓘ 참고).</div>
-                <button type="button" class="modal-btn btn-gray" style="font-size:11px;" onclick="openNaverLandForModal()">🟢 네이버부동산에서 확인하기</button>
-                <div class="modal-row" style="margin-top:6px;">
-                    <span class="modal-label">유사 매물 건수</span>
-                    <input type="number" class="modal-input" id="a-listing-count" placeholder="0" oninput="stampListingCheckedDate()">
-                    <span style="font-size:12px;color:#888;margin-left:4px;">건</span>
-                </div>
-                <div class="modal-row" style="margin-top:4px;">
-                    <span class="modal-label">호가 범위</span>
-                    <input type="number" class="modal-input" id="a-ask-price-min" placeholder="최소(만원)" style="width:47%;" oninput="stampListingCheckedDate()">
-                    <span style="margin:0 3px;color:#999;">~</span>
-                    <input type="number" class="modal-input" id="a-ask-price-max" placeholder="최대(만원)" style="width:47%;" oninput="stampListingCheckedDate()">
-                </div>
-                <input type="hidden" id="a-listing-checked-date">
-                <div id="listing-checked-label" style="font-size:11px;color:#999;margin-top:2px;"></div>
-                <div id="market-adjusted-price-box"></div>
-            </div>
-        </div>
-        <div class="modal-section">
             <div class="modal-section-title">💰 가격 정보 (만원 단위)</div>
             <div class="modal-row">
                 <span class="modal-label">감정가</span>
@@ -889,6 +870,18 @@ tr:hover td { background:#fffde7; }
                 <span style="font-size:12px;color:#888;margin-left:4px;">%</span>
                 <span style="font-size:10px;color:#aaa;margin-left:4px;">보통 10%, 재매각 물건은 20~30%인 경우 있음(AI 자동추출 시 채워짐, 비어있으면 10% 가정)</span>
             </div>
+        </div>
+            </div>
+        </div>
+
+        <div class="modal-group" id="mg-cost">
+            <div class="modal-group-header" onclick="toggleModalGroup('mg-cost')">
+                <span>💸 지출비용</span>
+                <span class="modal-group-chevron">▶</span>
+            </div>
+            <div class="modal-group-body">
+        <div class="modal-section">
+            <div class="modal-section-title">💰 입찰가 / 낙찰가 (만원 단위)</div>
             <div class="modal-row">
                 <span class="modal-label">내 입찰가</span>
                 <input type="number" class="modal-input" id="a-my-bid" placeholder="0" oninput="autoCalcTaxSilent();calcMargin()">
@@ -979,6 +972,82 @@ tr:hover td { background:#fffde7; }
             <div id="target-bid-suggest-box"></div>
         </div>
         <div class="modal-section">
+            <div class="modal-section-title">📊 비교물건 시세분석 (최대 10개)</div>
+            <div style="margin-bottom:8px;">
+                <button type="button" class="modal-btn btn-purple" style="font-size:11px;" onclick="openAiCompFinder()">🤖 유사물건 자동추천</button>
+                <span style="font-size:10px;color:#999;margin-left:4px;">주소·평형·층 입력 후 눌러주세요</span>
+            </div>
+            <div id="comp-list-box" style="margin-bottom:8px;"></div>
+            <div class="modal-row">
+                <span class="modal-label">목표마진(세후)</span>
+                <input type="number" class="modal-input" id="a-comp-target-margin" placeholder="0" oninput="calcCompValuation();suggestBidFromTarget();">
+                <span style="font-size:12px;color:#888;margin-left:4px;">만원</span>
+            </div>
+            <div id="comp-valuation-result" style="margin-top:8px;"></div>
+            <div style="margin-top:10px;border-top:1px dashed #e0d0f0;padding-top:8px;">
+                <button type="button" class="modal-btn btn-purple" style="font-size:11px;" onclick="calcAuctionJeonseAnalysis()">🏠 전세가 기반 분석 다시 계산</button>
+                <span style="font-size:10px;color:#999;margin-left:4px;">연립다세대·단독이고 주소·평형이 있으면 자동으로 계산됩니다 (수동 새로고침용 버튼)</span>
+            </div>
+            <div id="jeonse-analysis-box" style="margin-top:8px;"></div>
+            <div style="margin-top:10px;border-top:1px dashed #e0d0f0;padding-top:8px;">
+                <button type="button" class="modal-btn btn-purple" id="resale-match-btn" style="font-size:11px;" onclick="findApproximateResaleMatches()">🔍 낙찰가·매도가 추정 조회 (근사치)</button>
+                <span style="font-size:10px;color:#999;margin-left:4px;">주소·평형·층 입력 후 눌러주세요. 관심물건인데 입찰 안 하신 경우에도 씁니다 - 남이 얼마에 낙찰받았는지, 그 뒤 얼마에 팔렸는지 근사치로 찾아드려요.</span>
+            </div>
+            <div id="resale-match-box" style="margin-top:8px;"></div>
+        </div>
+        <div class="margin-result" id="margin-result-box">
+            <div class="margin-result-title">💡 예상 마진 분석</div>
+            <div class="margin-grid" id="margin-grid"></div>
+            <div id="vat-warn-box"></div>
+        </div>
+            </div>
+        </div>
+
+        <div class="modal-group" id="mg-fieldvisit">
+            <div class="modal-group-header" onclick="toggleModalGroup('mg-fieldvisit')">
+                <span>🔍 임장정보</span>
+                <span class="modal-group-chevron">▶</span>
+            </div>
+            <div class="modal-group-body">
+        <div id="auction-history-box" style="margin-bottom:12px;"></div>
+        <div class="modal-section">
+            <span class="modal-label" style="display:block;margin-bottom:4px;">🏘️ 현재 매물 재고 <span onclick="showCalcInfo('listingCount')" style="cursor:pointer;color:#999;font-size:11px;">ⓘ</span></span>
+            <div style="font-size:10px;color:#999;margin-bottom:6px;">이 앱은 네이버부동산을 자동으로 긁어오지 않습니다(약관·판례상 자동수집 리스크 때문). 아래 버튼으로 직접 확인해서 건수를 적어두거나, 채팅으로 "이 물건 매물 몇 건인지 확인해줘"라고 요청하세요. 물건종류·매매 거래유형·평형(±5평)·연식(전 5년~후 10년, 사용승인일 확인된 경우)이 모두 자동 반영된 화면으로 이동합니다(ⓘ 참고).</div>
+            <button type="button" class="modal-btn btn-gray" style="font-size:11px;" onclick="openNaverLandForModal()">🟢 네이버부동산에서 확인하기</button>
+            <div class="modal-row" style="margin-top:6px;">
+                <span class="modal-label">유사 매물 건수</span>
+                <input type="number" class="modal-input" id="a-listing-count" placeholder="0" oninput="stampListingCheckedDate()">
+                <span style="font-size:12px;color:#888;margin-left:4px;">건</span>
+            </div>
+            <div class="modal-row" style="margin-top:4px;">
+                <span class="modal-label">호가 범위</span>
+                <input type="number" class="modal-input" id="a-ask-price-min" placeholder="최소(만원)" style="width:47%;" oninput="stampListingCheckedDate()">
+                <span style="margin:0 3px;color:#999;">~</span>
+                <input type="number" class="modal-input" id="a-ask-price-max" placeholder="최대(만원)" style="width:47%;" oninput="stampListingCheckedDate()">
+            </div>
+            <input type="hidden" id="a-listing-checked-date">
+            <div id="listing-checked-label" style="font-size:11px;color:#999;margin-top:2px;"></div>
+            <div id="market-adjusted-price-box"></div>
+        </div>
+        <div class="modal-section">
+            <div class="modal-section-title">✅ 경매물건 체크리스트 <span id="checklist-progress" style="font-weight:normal;color:#888;font-size:11px;margin-left:6px;"></span></div>
+            <div style="font-size:10.5px;color:#999;margin-bottom:6px;">교육자료(권리분석·임차인·용도지역·농취증) 기반 체크리스트입니다. 카테고리를 눌러 펼치고 항목을 체크하세요. 저장된 물건은 체크 즉시 자동저장됩니다.</div>
+            <div id="checklist-section-body"></div>
+        </div>
+        <div class="modal-section">
+            <div class="modal-section-title">📝 메모</div>
+            <textarea class="modal-input" id="a-memo" rows="3" placeholder="특이사항, 권리분석 등" style="resize:vertical;width:100%;"></textarea>
+        </div>
+            </div>
+        </div>
+
+        <div class="modal-group" id="mg-registry">
+            <div class="modal-group-header" onclick="toggleModalGroup('mg-registry')">
+                <span>🔏 등기부등본</span>
+                <span class="modal-group-chevron">▶</span>
+            </div>
+            <div class="modal-group-body">
+        <div class="modal-section">
             <div class="modal-section-title">📚 경매서류 교차분석 (최대 6종)</div>
             <div style="font-size:11px;color:#888;margin-bottom:8px;">서류를 여러 개 함께 올리면 AI가 서로 대조해서 건물 이력·채권관계·경매개시 경위·인수/말소되는 등기·유치권 점유흔적·위반건축물 여부를 스토리텔링으로 요약합니다. 등기부등본만 올려도 분석되지만, 나머지를 함께 올릴수록 판단 정확도가 올라갑니다.
             <br>⚠️ Vercel 서버 한도상 <b>원본 파일 합계는 6종을 다 합쳐도 3MB 이내</b>여야 합니다. 한 번에 다 못 올리면 나눠서 여러 번 분석해도 되지만, 이 기능은 매번 그 호출에 포함된 서류만 다시 분석해 이전 결과를 덮어씁니다(누적 아님) — 6종을 모두 반영한 최종 분석을 원하면 마지막 한 번에 6종을 함께 담아 올리세요.</div>
@@ -1011,19 +1080,7 @@ tr:hover td { background:#fffde7; }
             </div>
             <div id="registry-result-box"></div>
         </div>
-        <div class="modal-section">
-            <div class="modal-section-title">📝 메모</div>
-            <textarea class="modal-input" id="a-memo" rows="3" placeholder="특이사항, 권리분석 등" style="resize:vertical;width:100%;"></textarea>
-        </div>
-        <div class="modal-section">
-            <div class="modal-section-title">✅ 경매물건 체크리스트 <span id="checklist-progress" style="font-weight:normal;color:#888;font-size:11px;margin-left:6px;"></span></div>
-            <div style="font-size:10.5px;color:#999;margin-bottom:6px;">교육자료(권리분석·임차인·용도지역·농취증) 기반 체크리스트입니다. 카테고리를 눌러 펼치고 항목을 체크하세요. 저장된 물건은 체크 즉시 자동저장됩니다.</div>
-            <div id="checklist-section-body"></div>
-        </div>
-        <div class="margin-result" id="margin-result-box">
-            <div class="margin-result-title">💡 예상 마진 분석</div>
-            <div class="margin-grid" id="margin-grid"></div>
-            <div id="vat-warn-box"></div>
+            </div>
         </div>
     </div>
     <div class="modal-footer">
@@ -4346,6 +4403,13 @@ function panToAuction(id) {
             alert('이 주소의 위치를 찾을 수 없습니다. "✏️ 수정"을 눌러 주소를 확인해 주세요.');
         }
     });
+}
+/* 경매 모달 대분류 접기/펼치기 - 매물명세서/지출비용/임장정보/등기부등본 4개 그룹을 독립적으로
+   토글함(아코디언처럼 하나만 열리는 방식이 아니라 여러 개 동시에 펼쳐둘 수 있음 - 임장 중
+   비용과 체크리스트를 동시에 봐야 하는 경우가 많아서). */
+function toggleModalGroup(id) {
+    var el = document.getElementById(id);
+    if (el) el.classList.toggle('open');
 }
 function openAuctionModal(id) {
     document.getElementById('auction-list-panel').style.display = 'none';
