@@ -4669,9 +4669,14 @@ function calcMarketAdjustedSalePrice() {
     }
 
     var blendedValue = Math.round(est.estValue * (1 - marketFactor) + askMid * marketFactor);
+    // 호가-실거래가 갭(%) - "매수자 관점 vs 매도자 관점 두 각도로 시세를 물어보는" 전화임장 요령을
+    // 데이터로 대신하는 지표. 호가가 실거래가보다 많이 높으면(+) 아직 눈높이가 안 낮춰진 시장,
+    // 호가가 실거래가보다 낮으면(-) 급매 가능성으로 해석할 수 있음(참고용).
+    var gapPct = est.estValue > 0 ? Math.round((askMid - est.estValue) / est.estValue * 1000) / 10 : null;
     return {
         baseValue: est.estValue,
         askMid: Math.round(askMid),
+        gapPct: gapPct,
         listingCount: listingCount,
         monthlyRate: Math.round(monthlyRate * 10) / 10,
         monthsOfSupply: monthsOfSupply !== null ? Math.round(monthsOfSupply * 10) / 10 : null,
@@ -4691,6 +4696,12 @@ function renderMarketAdjustedPrice() {
         + ' → 호가 반영비중 ' + Math.round(r.marketFactor * 100) + '%'
         + (r.monthsOfSupply !== null ? ' (재고월수 약 ' + r.monthsOfSupply + '개월 기준)' : '')
         + '</div>'
+        + (r.gapPct !== null
+            ? '<div style="font-size:10.5px;color:' + (r.gapPct > 0 ? '#c62828' : '#2e7d32') + ';margin-top:2px;">'
+                + '📞 호가-실거래가 갭: ' + (r.gapPct > 0 ? '+' : '') + r.gapPct + '%'
+                + (r.gapPct > 0 ? ' (매도자 눈높이가 아직 안 낮춰짐)' : (r.gapPct < 0 ? ' (급매 가능성)' : ' (거의 일치)'))
+                + '</div>'
+            : '')
         + (r.dataWarning ? '<div style="font-size:10px;color:#e65100;margin-top:3px;">⚠️ ' + r.dataWarning + '</div>' : '')
         + '<div style="font-size:9.5px;color:#aaa;margin-top:3px;">참고용 근사치입니다. 반영비중 구간 기준은 일반적인 시장관행을 근사한 것으로, 통계적으로 도출된 값은 아닙니다.</div>'
         + '</div>';
@@ -5400,7 +5411,13 @@ var CALC_INFO_TEXT = {
         + '  매도자 우위(호가에 가깝게 팔림), 길수록 매수자 우위(호가 대비 크게 할인)로 보고,\n'
         + '  구간별로 호가 반영비중을 2개월 이내 70% → 2~4개월 50% → 4~8개월 30% → 8개월\n'
         + '  이상 15%로 차등 적용합니다(일반적인 시장관행을 근사한 값으로, 통계적으로 도출된\n'
-        + '  게 아니니 참고용으로만 쓰세요). 매물재고나 최근 실거래가 부족하면 기본값 30%를 씁니다.',
+        + '  게 아니니 참고용으로만 쓰세요). 매물재고나 최근 실거래가 부족하면 기본값 30%를 씁니다.\n'
+        + '- 호가-실거래가 갭(%)도 함께 표시됩니다. 매수자 관점/매도자 관점 두 각도로 시세를\n'
+        + '  물어보는 전화임장 요령을 데이터로 대신하는 지표입니다. 양수(+)면 아직 매도자 눈높이가\n'
+        + '  안 낮춰진 시장, 음수(-)면 급매 가능성으로 참고하세요.\n\n'
+        + '📈 수요 추세: 유사 매물 건수·호가를 입력할 때마다 "변경이력"에 자동으로 기록됩니다.\n'
+        + '같은 물건을 반복해서 확인하면(예: 몇 주 간격) 재고가 줄고 있는지 늘고 있는지 흐름을\n'
+        + '변경이력에서 볼 수 있습니다 - 단발성 숫자보다 이 추세가 수요를 더 잘 보여줍니다.',
     tax: '취득세는 "내 입찰가"(또는 실제 낙찰가) 기준으로 계산됩니다.\n'
         + '- 1주택(무주택자의 첫 주택)이면 6억 이하 1%, 6~9억 구간 누진, 9억 초과 3%\n'
         + '- 다주택수·조정대상지역 여부에 따라 세율이 크게 달라집니다(다주택+조정지역은 최대 12~13%대).\n'
@@ -5807,6 +5824,9 @@ async function saveAuction() {
         actualBid: document.getElementById('a-actual-bid').value,
         target: document.getElementById('a-target').value,
         actualSell: document.getElementById('a-actual-sell').value,
+        listingCount: document.getElementById('a-listing-count').value,
+        askPriceMin: document.getElementById('a-ask-price-min').value,
+        askPriceMax: document.getElementById('a-ask-price-max').value,
     }));
     var data = {
         id: document.getElementById('auction-id').value || Date.now().toString(),
@@ -7270,6 +7290,9 @@ function diffAuctionTopFields(oldA, newData) {
         { key: 'actualBid', label: '실제 낙찰가(만원)' },
         { key: 'target', label: '목표 매도가(만원)' },
         { key: 'actualSell', label: '실제 매도가(만원)' },
+        { key: 'listingCount', label: '유사 매물 건수' },
+        { key: 'askPriceMin', label: '호가 최소(만원)' },
+        { key: 'askPriceMax', label: '호가 최대(만원)' },
     ];
     var changes = [];
     FIELDS.forEach(function(f) {
