@@ -814,6 +814,11 @@ tr:hover td { background:#fffde7; }
                  계속 이 요소를 찾아 innerHTML을 채우므로 DOM에는 남겨둠(제거 시 함수 에러 발생). -->
             <div id="target-suggest-box" style="display:none;"></div>
             <div id="target-bid-suggest-box" style="display:none;"></div>
+
+            <div style="border-top:1px dashed #d8cdee;margin:10px 0 8px;"></div>
+            <button type="button" class="modal-btn btn-purple" id="ai-briefing-btn" style="font-size:12.5px;width:100%;" onclick="generateAiBriefing()">🤖 AI 투자 브리핑 생성</button>
+            <div style="font-size:10px;color:#999;margin:3px 0 0;">위 1~5번 값을 근거로 Claude가 요약·위험신호·권고를 만들어줍니다 (Claude API 호출 1회 소모)</div>
+            <div id="ai-briefing-box" style="display:none;background:#faf7ff;border:1px solid #e5dbf5;border-radius:7px;padding:10px 12px;margin-top:8px;"></div>
         </div>
 
         <!-- 🔧 상세 도구 - 5항목 금액의 계산 근거·보조 도구. 기본은 접힘(아이패드 화면 절약). -->
@@ -7256,6 +7261,75 @@ function applyEstRow5() {
     if (!res || !res.bid || res.bid <= 0) return;
     document.getElementById('a-my-bid').value = res.bid;
     autoCalcTaxSilent(); calcMargin();
+}
+// AI 투자 브리핑 - 이미 계산된 ①~⑤ 값과 pendingAuctionDetail(AI 추출/저장된 물건의 원본
+// 상세데이터 - 임차인현황·등기스토리·특수조건 등)을 모아서 서버로 보내면, Claude가 이걸
+// 종합해 3~4문장 요약+위험신호+입찰 권고를 만들어 돌려줌. 여기서 새로 뭔가를 계산하지
+//않고, 이미 화면에 있는 값을 그대로 모아 보내기만 함(계산 로직은 여전히 이 파일이 담당).
+async function generateAiBriefing() {
+    var btn = document.getElementById('ai-briefing-btn');
+    var box = document.getElementById('ai-briefing-box');
+    if (!btn || !box) return;
+    var d = pendingAuctionDetail || {};
+    var ctx = getAuctionAddressContext();
+    var marginStats = (ctx && ctx.dong) ? calcDongMarginStats(ctx.dong) : null;
+    var bidRes = computeSelectedTargetBid();
+    var num = function(id) { var v = parseInt(document.getElementById(id) && document.getElementById(id).value); return isNaN(v) ? null : v; };
+    var data = {
+        caseNo: (document.getElementById('a-case').value || null),
+        addr: (document.getElementById('a-addr').value || null),
+        propertyType: (document.getElementById('a-prop-type') ? document.getElementById('a-prop-type').value : null),
+        appraisalPrice: num('a-appraisal') ? num('a-appraisal') * 10000 : null,
+        minBidPrice: num('a-min-bid') ? num('a-min-bid') * 10000 : null,
+        myBid: num('a-my-bid') ? num('a-my-bid') * 10000 : null,
+        predictedSaleValue: window.__predictedSaleValue || null,
+        targetSaleValue: num('a-target') ? num('a-target') * 10000 : null,
+        compOnlySaleValue: window.__compOnlyValue || null,
+        predictedMarginValue: window.__predictedMarginValue || null,
+        targetMarginValue: num('a-comp-target-margin'),
+        marginSampleCount: marginStats ? marginStats.count : null,
+        recommendedBid: (bidRes && bidRes.bid) ? bidRes.bid : null,
+        unpaidManagementFee: num('a-unpaid-mgmt-fee') ? num('a-unpaid-mgmt-fee') * 10000 : null,
+        elevator: d.elevator || null,
+        buildYear: d.registrationDate || null,
+        floor: d.unitFloor || null,
+        specialConditions: d.specialConditions || null,
+        caseCautions: d.caseCautions || null,
+        registryStory: d.registryStory || null,
+        baseRightType: d.baseRightType || null,
+        tenantOccupants: d.tenantOccupants || null,
+        specialRights: d.specialRights || null,
+        serverWarnings: d.warnings || null
+    };
+    btn.disabled = true; btn.innerText = '🤖 브리핑 생성 중...';
+    box.style.display = 'block';
+    box.innerHTML = '<div style="font-size:12px;color:#888;">AI가 데이터를 종합해 브리핑을 작성하는 중입니다...</div>';
+    try {
+        var res = await fetch('/api/parse-auction', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ mode: 'briefing', data: data })
+        });
+        var json = await readJsonResponseSafe(res);
+        if (!res.ok || !json.briefing) {
+            box.innerHTML = '<div style="font-size:12px;color:#c62828;">브리핑 생성 실패: ' + (json.error || '알 수 없는 오류') + '</div>';
+            return;
+        }
+        var b = json.briefing;
+        var html = '<div style="font-size:13px;line-height:1.55;color:#333;">' + (b.summary || '') + '</div>';
+        if (b.riskFlags && b.riskFlags.length) {
+            html += '<div style="margin-top:8px;font-size:12px;color:#c62828;">' + b.riskFlags.map(function(w) { return '⚠️ ' + w; }).join('<br>') + '</div>';
+        }
+        if (b.recommendation) {
+            html += '<div style="margin-top:8px;font-size:13px;font-weight:bold;color:#6a1b9a;">💡 ' + b.recommendation + '</div>';
+        }
+        if (json.cached) html += '<div style="margin-top:6px;font-size:10px;color:#aaa;">(이전과 동일한 데이터 - 캐시된 결과)</div>';
+        box.innerHTML = html;
+    } catch (e) {
+        box.innerHTML = '<div style="font-size:12px;color:#c62828;">브리핑 생성 실패: ' + e.message + '</div>';
+    } finally {
+        btn.disabled = false; btn.innerText = '🤖 AI 투자 브리핑 생성';
+    }
 }
 function calcCompValuation() {
     var box = document.getElementById('comp-valuation-result');
