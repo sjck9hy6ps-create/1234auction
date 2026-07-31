@@ -57,8 +57,8 @@ async function vworldFetch(url, isRetry) {
       await sleep(500);
       return vworldFetch(url, true);
     }
-    console.warn('VWorld 연결 실패(재시도 후에도 실패):', err.message);
-    return { ok: false, status: 0, data: null, raw: '', networkError: true };
+    console.warn('VWorld 연결 실패(재시도 후에도 실패):', err.message, err.name, err.cause && err.cause.message);
+    return { ok: false, status: 0, data: null, raw: '', networkError: true, errMessage: err.message, errName: err.name, errCause: err.cause ? String(err.cause.message || err.cause) : null };
   }
 }
 
@@ -90,9 +90,24 @@ async function findPnu(address, key, domain) {
     key,
   });
   if (domain) params.set('domain', domain);
-  const { data, networkError } = await vworldFetch(`${VWORLD_SEARCH_URL}?${params.toString()}`);
+  const fetchResult = await vworldFetch(`${VWORLD_SEARCH_URL}?${params.toString()}`);
+  const { data, networkError, status, raw, errMessage, errName, errCause } = fetchResult;
   const items = data?.response?.result?.items;
-  if (!items || !items.length) return { pnu: null, networkError };
+  if (!items || !items.length) {
+    // 진단용(임시): 실패 원인을 정확히 보려고 VWorld 원본 응답/네트워크 에러를 그대로 실어 반환함.
+    // 원인 확정되면 이 debug 필드는 제거할 예정.
+    return {
+      pnu: null, networkError,
+      debug: {
+        httpStatus: status,
+        rawSnippet: raw ? String(raw).slice(0, 300) : null,
+        vworldStatus: data?.response?.status || null,
+        vworldErrorCode: data?.response?.error?.code || null,
+        vworldErrorText: data?.response?.error?.text || null,
+        errMessage, errName, errCause,
+      },
+    };
+  }
   return { pnu: items[0].id || null, networkError: false }; // PARCEL 검색결과의 id = PNU(19자리)
 }
 
@@ -163,12 +178,12 @@ export default async function handler(req, res) {
   }
 
   try {
-    const { pnu, networkError } = await findPnu(address, VWORLD_API_KEY, VWORLD_DOMAIN);
+    const { pnu, networkError, debug } = await findPnu(address, VWORLD_API_KEY, VWORLD_DOMAIN);
     if (!pnu) {
       if (networkError) {
-        return res.status(200).json({ success: false, error: 'VWorld 서버 연결에 일시적으로 실패했습니다. 잠시 후 다시 시도해 주세요.' });
+        return res.status(200).json({ success: false, error: 'VWorld 서버 연결에 일시적으로 실패했습니다. 잠시 후 다시 시도해 주세요.', debug });
       }
-      return res.status(200).json({ success: false, error: '해당 주소의 필지(PNU)를 찾지 못했습니다. 주소 표기를 확인해 주세요.', addressUsed: stripUnitSuffix(address) });
+      return res.status(200).json({ success: false, error: '해당 주소의 필지(PNU)를 찾지 못했습니다. 주소 표기를 확인해 주세요.', addressUsed: stripUnitSuffix(address), debug });
     }
 
     const hoNm = digitsOnly(unitNo);
