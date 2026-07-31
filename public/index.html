@@ -7524,25 +7524,28 @@ function buildResaleMatchesHtml(result) {
         html += '</div>';
         return html;
     }
+    // m.amount(=get-house.js 반환값)는 이미 "만원" 단위임(calcBidCaseMargin의 동일 가정과 일치).
+    // a-my-bid/a-target 입력값도 만원 단위이므로 서로 그대로 비교/표시해야 함 - 이전에는 amount만
+    // 원 단위로 잘못 가정해 /10000을 또 나눠서(예: 1억2천 -> "1만원") 값이 1/10000로 축소 표시되던 버그.
     var myBid = parseInt(document.getElementById('a-my-bid').value) || 0;
     var target = parseInt(document.getElementById('a-target').value) || 0;
     var afterBidMatches = matches.filter(function(m) { return m.isAfterBid === true; });
     if (myBid && afterBidMatches.length) {
         // 정렬이 최신순(내림차순)이므로 배열의 마지막 원소가 입찰일 이후 가장 이른(가장 가까운) 거래
         var earliest = afterBidMatches[afterBidMatches.length - 1];
-        var diffBid = earliest.amount - myBid * 10000;
+        var diffBid = earliest.amount - myBid;
         html += '<div style="background:#fff8e1;border-radius:6px;padding:6px 8px;margin-bottom:6px;font-size:11px;color:#795548;">'
             + '💰 내 입찰가(' + myBid.toLocaleString() + '만원) 대비 입찰일 이후 최초 거래(' + formatResaleDate(earliest.date) + '): '
-            + Math.round(earliest.amount / 10000).toLocaleString() + '만원'
-            + ' (차이 ' + (diffBid >= 0 ? '+' : '') + Math.round(diffBid / 10000).toLocaleString() + '만원)</div>';
+            + Math.round(earliest.amount).toLocaleString() + '만원'
+            + ' (차이 ' + (diffBid >= 0 ? '+' : '') + Math.round(diffBid).toLocaleString() + '만원)</div>';
     }
     if (target && afterBidMatches.length) {
         var latest = afterBidMatches[0]; // 최신순 정렬이므로 첫 원소가 가장 최근 거래
-        var diffTarget = latest.amount - target * 10000;
+        var diffTarget = latest.amount - target;
         html += '<div style="background:#fff8e1;border-radius:6px;padding:6px 8px;margin-bottom:6px;font-size:11px;color:#795548;">'
             + '🎯 목표 매도가(' + target.toLocaleString() + '만원) 대비 가장 최근 거래(' + formatResaleDate(latest.date) + '): '
-            + Math.round(latest.amount / 10000).toLocaleString() + '만원'
-            + ' (차이 ' + (diffTarget >= 0 ? '+' : '') + Math.round(diffTarget / 10000).toLocaleString() + '만원)</div>';
+            + Math.round(latest.amount).toLocaleString() + '만원'
+            + ' (차이 ' + (diffTarget >= 0 ? '+' : '') + Math.round(diffTarget).toLocaleString() + '만원)</div>';
     }
     matches.forEach(function(m) {
         var badge = m.isAfterBid === true
@@ -7551,7 +7554,7 @@ function buildResaleMatchesHtml(result) {
                 ? '<span style="background:#eceff1;color:#607d8b;border-radius:4px;padding:1px 5px;font-size:9.5px;margin-left:4px;">입찰일 이전</span>' : '');
         html += '<div style="background:white;border-radius:6px;padding:5px 8px;margin-bottom:4px;border-left:3px solid #ba68c8;font-size:11.5px;color:#555;display:flex;justify-content:space-between;">'
             + '<span>' + formatResaleDate(m.date) + ' · ' + m.floor + '층 · ' + (Math.round(m.area * 100 / 3.305785) / 100) + '평' + badge + '</span>'
-            + '<span style="font-weight:bold;">' + Math.round(m.amount / 10000).toLocaleString() + '만원</span></div>';
+            + '<span style="font-weight:bold;">' + Math.round(m.amount).toLocaleString() + '만원</span></div>';
     });
     html += '</div>';
     return html;
