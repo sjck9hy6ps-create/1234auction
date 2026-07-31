@@ -752,17 +752,22 @@ tr:hover td { background:#fffde7; }
             <button type="button" class="modal-btn btn-gray" style="font-size:11px;" onclick="openNaverLandForModal()">🟢 네이버부동산에서 확인하기</button>
             <div class="modal-row" style="margin-top:6px;">
                 <span class="modal-label">유사 매물 건수</span>
-                <input type="number" class="modal-input" id="a-listing-count" placeholder="0" oninput="stampListingCheckedDate()">
+                <input type="number" class="modal-input" id="a-listing-count" placeholder="0" oninput="markListingInventoryDirty()">
                 <span style="font-size:12px;color:#888;margin-left:4px;">건</span>
             </div>
             <div class="modal-row" style="margin-top:4px;">
                 <span class="modal-label">호가 범위</span>
-                <input type="number" class="modal-input" id="a-ask-price-min" placeholder="최소(만원)" style="width:47%;" oninput="stampListingCheckedDate()">
+                <input type="number" class="modal-input" id="a-ask-price-min" placeholder="최소(만원)" style="width:47%;" oninput="markListingInventoryDirty()">
                 <span style="margin:0 3px;color:#999;">~</span>
-                <input type="number" class="modal-input" id="a-ask-price-max" placeholder="최대(만원)" style="width:47%;" oninput="stampListingCheckedDate()">
+                <input type="number" class="modal-input" id="a-ask-price-max" placeholder="최대(만원)" style="width:47%;" oninput="markListingInventoryDirty()">
             </div>
             <input type="hidden" id="a-listing-checked-date">
             <div id="listing-checked-label" style="font-size:11px;color:#999;margin-top:2px;"></div>
+            <div style="margin-top:8px;display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+                <button type="button" class="modal-btn btn-purple" id="listing-apply-btn" style="font-size:12px;" onclick="applyListingInventory()">🔮 예측 적용</button>
+                <span id="listing-apply-status" style="font-size:10.5px;color:#999;"></span>
+            </div>
+            <div style="font-size:9.5px;color:#bbb;margin-top:2px;">⚠️ 위 값을 바꿔도 예상매도가는 실시간으로 바뀌지 않습니다. "예측 적용"을 눌러야 반영되고, 눌렀을 때 값이 실제로 바뀌었는지 아래 상태 메시지로 확인할 수 있습니다.</div>
             <div id="market-adjusted-price-box"></div>
         </div>
             </div>
@@ -928,7 +933,7 @@ tr:hover td { background:#fffde7; }
             <div class="modal-section-title">💰 가격 정보 (만원 단위)</div>
             <div class="modal-row">
                 <span class="modal-label">감정가</span>
-                <input type="number" class="modal-input" id="a-appraisal" placeholder="0" oninput="calcCompValuation();calcMargin();suggestBidFromTarget();">
+                <input type="number" class="modal-input" id="a-appraisal" placeholder="0" oninput="calcCompValuation();calcMargin();suggestBidFromTarget();renderDongMarginStatsInModal();">
             </div>
             <div class="modal-row">
                 <span class="modal-label">최저입찰가</span>
@@ -4040,18 +4045,70 @@ function calcDongMarginStats(dong) {
     var margins = items.map(function(c) { return c.estMargin; });
     return { count: margins.length, median: median(margins), min: Math.min.apply(null, margins), max: Math.max.apply(null, margins) };
 }
+/* 법정동(dong) 단위 낙찰가율(감정가 대비 낙찰가, %) 통계 - "이 동네는 보통 감정가의 몇 %에
+   낙찰되는지"를 참고해서, 목표마진 기준 적정입찰가(solveAuctionBid, 내가 써도 되는 최대 입찰가)와
+   별개로 "실제로 경쟁에서 이기려면 보통 이 정도는 써야 한다"는 시장 낙찰가 수준을 함께 보여주기
+   위함. 표본 3건 미만이면 통계적으로 불안정하니 신뢰도 경고를 함께 반환(재고월수 계산의
+   MIN_RECENT_COUNT_FOR_RATE와 같은 원칙). */
+var MIN_BIDCASE_COUNT_FOR_RATE = 3;
+function calcDongBidRateStats(dong) {
+    if (!dong) return null;
+    var items = bidCaseList.filter(function(c) { return c.dong === dong && c.appraisalPrice && c.finalBidPrice; });
+    if (!items.length) return null;
+    var rates = items.map(function(c) { return Math.round(c.finalBidPrice / c.appraisalPrice * 1000) / 10; });
+    return {
+        count: rates.length,
+        median: median(rates),
+        min: Math.min.apply(null, rates),
+        max: Math.max.apply(null, rates),
+        lowSample: rates.length < MIN_BIDCASE_COUNT_FOR_RATE,
+    };
+}
 function renderDongMarginStatsInModal() {
     var box = document.getElementById('a-dong-margin-stats');
     if (!box) return;
     var ctx = getAuctionAddressContext();
     var dong = ctx.dong;
-    var stats = dong ? calcDongMarginStats(dong) : null;
-    if (!stats) { box.innerHTML = ''; return; }
-    box.innerHTML = '<div style="font-size:11px;background:#e0f2f1;border-radius:6px;padding:6px 8px;margin:4px 0;">'
-        + '<b>⚖️ ' + dong + ' 낙찰사례 ' + stats.count + '건 기준 추정마진(세전)</b><br>'
-        + '중간값 <b>' + toEok(String(Math.round(stats.median))) + '</b>'
-        + ' (최소 ' + toEok(String(Math.round(stats.min))) + ' ~ 최대 ' + toEok(String(Math.round(stats.max))) + ')'
-        + '</div>';
+    var marginStats = dong ? calcDongMarginStats(dong) : null;
+    var rateStats = dong ? calcDongBidRateStats(dong) : null;
+    if (!marginStats && !rateStats) { box.innerHTML = ''; return; }
+    var html = '';
+    if (rateStats) {
+        var appraisal = parseInt(document.getElementById('a-appraisal').value) || 0;
+        var predictedBid = appraisal ? Math.round(appraisal * rateStats.median / 100) : null;
+        html += '<div style="font-size:11px;background:#fff3e0;border-radius:6px;padding:6px 8px;margin:4px 0;">'
+            + '<b>🎯 ' + dong + ' 낙찰사례 ' + rateStats.count + '건 기준 낙찰가율(감정가 대비)</b><br>'
+            + '중간값 <b>' + rateStats.median.toFixed(1) + '%</b>'
+            + ' (최소 ' + rateStats.min.toFixed(1) + '% ~ 최대 ' + rateStats.max.toFixed(1) + '%)'
+            + (rateStats.lowSample ? '<div style="color:#e65100;margin-top:2px;">⚠️ 표본 ' + rateStats.count + '건뿐이라 참고용으로만 보세요.</div>' : '')
+            + (predictedBid
+                ? '<div style="margin-top:4px;display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;">'
+                    + '<span>감정가 기준 시장 예상낙찰가: <b>' + toEok(String(predictedBid)) + '</b></span>'
+                    + '<button type="button" class="modal-btn btn-purple" style="font-size:10px;padding:3px 8px;" onclick="applyPredictedBid(' + predictedBid + ')">내 입찰가에 적용</button>'
+                    + '</div>'
+                : '<div style="margin-top:2px;color:#999;">감정가를 입력하면 예상낙찰가를 계산합니다.</div>')
+            + '</div>';
+    }
+    if (marginStats) {
+        html += '<div style="font-size:11px;background:#e0f2f1;border-radius:6px;padding:6px 8px;margin:4px 0;">'
+            + '<b>⚖️ ' + dong + ' 낙찰사례 ' + marginStats.count + '건 기준 추정마진(세전)</b><br>'
+            + '중간값 <b>' + toEok(String(Math.round(marginStats.median))) + '</b>'
+            + ' (최소 ' + toEok(String(Math.round(marginStats.min))) + ' ~ 최대 ' + toEok(String(Math.round(marginStats.max))) + ')'
+            + '<div style="margin-top:4px;text-align:right;">'
+            + '<button type="button" class="modal-btn btn-purple" style="font-size:10px;padding:3px 8px;" onclick="applyPredictedMargin(' + Math.round(marginStats.median) + ')">목표마진에 적용</button>'
+            + '</div></div>';
+    }
+    box.innerHTML = html;
+}
+function applyPredictedBid(bid) {
+    if (!bid || bid <= 0) return;
+    document.getElementById('a-my-bid').value = bid;
+    autoCalcTaxSilent(); calcMargin();
+}
+function applyPredictedMargin(margin) {
+    if (!margin) return;
+    document.getElementById('a-comp-target-margin').value = margin;
+    calcCompValuation(); suggestBidFromTarget();
 }
 async function matchAndSaveOneCase(c) {
     var result = await matchResaleForBidCase(c);
@@ -4446,6 +4503,9 @@ function openAuctionModal(id) {
     document.getElementById('a-listing-checked-date').value = '';
     document.getElementById('listing-checked-label').innerText = '';
     document.getElementById('market-adjusted-price-box').innerHTML = '';
+    document.getElementById('listing-apply-status').innerText = ''; // 모달을 새로 열 때마다 "적용 상태" 표시를 초기화 (다른 물건의 상태가 남아있지 않도록)
+    lastAppliedListingSnapshot = null;
+    villaRadiusSaleCache = { key: null, count: null }; // 물건이 바뀌었으니 이전 물건의 반경검색 캐시를 그대로 재사용하면 안 됨
     document.getElementById('a-comp-target-margin').value = '2000';
     document.getElementById('a-addr-result').style.display = 'none';
     pendingAuctionDetail = null;
@@ -4669,7 +4729,10 @@ function openNaverLandForModal() {
     }
     window.open(url, '_blank', 'noopener');
 }
-// 유사 매물 건수·호가 중 하나라도 입력/수정한 시점을 "확인일"로 자동 기록 - 나중에 며칠 지났는지(신선도) 보여주기 위함
+// 유사 매물 건수·호가 중 하나라도 입력/수정한 시점을 "확인일"로 자동 기록 - 나중에 며칠 지났는지(신선도) 보여주기 위함.
+// ⚠️ 예전엔 이 함수가 oninput마다 바로 renderMarketAdjustedPrice()까지 호출해서 재계산했는데,
+// "값을 바꿔도 화면이 바뀐 건지 안 바뀐 건지(오류인지) 구분이 안 된다"는 피드백(2026-07)으로
+// 날짜기록과 재계산을 분리함. 재계산은 이제 아래 "🔮 예측 적용" 버튼(applyListingInventory)에서만 함.
 function stampListingCheckedDate() {
     var hasAny = document.getElementById('a-listing-count').value !== ''
         || document.getElementById('a-ask-price-min').value !== ''
@@ -4682,7 +4745,6 @@ function stampListingCheckedDate() {
         dateField.value = iso;
     }
     renderListingCheckedLabel();
-    renderMarketAdjustedPrice();
 }
 function renderListingCheckedLabel() {
     var el = document.getElementById('listing-checked-label');
@@ -4692,27 +4754,39 @@ function renderListingCheckedLabel() {
     var days = Math.floor((Date.now() - new Date(dateStr + 'T00:00:00').getTime()) / 86400000);
     el.innerText = (days <= 0 ? '오늘 확인' : days + '일 전 확인') + (days > 30 ? ' - 오래됨, 다시 확인 권장' : '');
 }
+/* 유사 매물 건수/호가 입력칸을 만졌지만 아직 "🔮 예측 적용"을 안 눌렀다는 걸 명확히 표시.
+   버튼을 눌러야만 실제 재계산이 일어나므로, 이 상태 문구로 "아직 반영 전"과 "적용했는데
+   값이 그대로임(정상)"을 헷갈리지 않게 구분함. */
+function markListingInventoryDirty() {
+    var statusEl = document.getElementById('listing-apply-status');
+    if (statusEl) { statusEl.style.color = '#e65100'; statusEl.innerText = '값이 바뀜 - 아직 적용 전입니다.'; }
+}
 /* 연립다세대·단독의 재고월수용 "월평균 거래건수" 표본을 넓히는 캐시.
    ⚠️ 왜 필요한가: 등록된 비교물건(최대 10개)만으로 최근 6개월 거래건수를 세면, 아파트
    단지처럼 동일 매물이 반복 거래되지 않는 연립다세대·단독 특성상 0~1건에 그치기 일쑤라
    재고월수 추정이 통계적으로 불안정함(사용자 피드백으로 확인). 대신 "🟢 네이버부동산에서
    확인하기"(openNaverLandForModal) 버튼과 동일한 허용오차(평형 ±5평, 연식은 사용승인연도
    기준 -5년~+10년)로 반경 검색한 주변 매매 실거래(과거 1년, api/search-complex?mode=radiusSale)
-   를 대신 써서 표본을 넓힘. 같은 조건(좌표·평형·연식)으로는 재조회하지 않도록 키로 캐시. */
+   를 대신 써서 표본을 넓힘. 같은 조건(좌표·평형·연식)으로는 재조회하지 않도록 키로 캐시.
+   ⚠️ 예전엔 calcMarketAdjustedSalePrice()가 계산 도중 캐시가 없으면 이 함수를 "발사하고 잊는"
+   식으로 백그라운드에서 불렀는데, 그 결과가 사용자가 이미 다른 입력을 만진 뒤 뒤늦게(1~2초 후)
+   화면에 반영되면서 "방금 입력한 게 반영된 건지 오류인지" 헷갈리게 만든 원인이었음. 지금은
+   이 함수를 아래 "🔮 예측 적용" 버튼(applyListingInventory)에서만 명시적으로 await해서 호출함. */
 var villaRadiusSaleCache = { key: null, count: null };
 var villaRadiusSaleLoading = false;
 function villaRadiusSaleKey(ctx, pyung, buildYear) {
     if (!ctx || !ctx.lat || !ctx.lon) return null;
     return [Math.round(ctx.lat * 2000), Math.round(ctx.lon * 2000), pyung || '', buildYear || ''].join('_');
 }
-async function refreshVillaRadiusSaleCount() {
+async function refreshVillaRadiusSaleCount(force) {
     var propType = document.getElementById('a-prop-type').value;
     if (propType !== 'villa') return; // 연립다세대·단독일 때만 해당
     var ctx = getAuctionAddressContext();
     var pyung = parseFloat(document.getElementById('a-pyung').value) || null;
     var buildYear = getAuctionBuildYear();
     var key = villaRadiusSaleKey(ctx, pyung, buildYear);
-    if (!key || key === villaRadiusSaleCache.key || villaRadiusSaleLoading) return;
+    if (!key || villaRadiusSaleLoading) return;
+    if (!force && key === villaRadiusSaleCache.key) return; // 이미 같은 조건으로 조회한 결과가 있으면 재조회 생략
     villaRadiusSaleLoading = true;
     try {
         var qs = 'lat=' + ctx.lat + '&lon=' + ctx.lon + '&radius=1500'
@@ -4724,11 +4798,6 @@ async function refreshVillaRadiusSaleCount() {
         villaRadiusSaleCache = { key: key, count: null };
     } finally {
         villaRadiusSaleLoading = false;
-        // 표본이 새로 준비됐으니 예상매도가·적정입찰가 화면을 다시 그려서 반영
-        renderMarketAdjustedPrice();
-        if (document.getElementById('a-comp-target-margin').value !== '' || (pendingAuctionComparables || []).length) {
-            calcCompValuation();
-        }
     }
 }
 /* 📐 예상매도가 = 실거래기반 시세(매매기록) + 호가·매물재고로 추정한 "시장 온도" 가중치.
@@ -4762,7 +4831,7 @@ function calcMarketAdjustedSalePrice() {
     if (isNaN(listingCount)) listingCount = null;
 
     var propType = document.getElementById('a-prop-type').value;
-    var recentCount, monthlyRate, usedRadius = false;
+    var recentCount, monthlyRate, usedRadius = false, pendingRadiusRefresh = false;
 
     if (propType === 'villa') {
         var ctx = getAuctionAddressContext();
@@ -4773,8 +4842,11 @@ function calcMarketAdjustedSalePrice() {
             recentCount = villaRadiusSaleCache.count;
             monthlyRate = recentCount / 12; // 과거 1년 기준
             usedRadius = true;
-        } else {
-            refreshVillaRadiusSaleCount(); // 아직 못 가져왔으면 비동기로 요청(완료되면 자동 재계산)만 걸어두고, 이번 렌더는 아래 비교물건 기반 값으로 표시
+        } else if (key) {
+            // 평형·연식·주소가 바뀌어 캐시가 없음 - 여기서 바로 조회하지 않고(예전엔 이렇게 해서
+            // 뒤늦게 화면이 바뀌는 혼란이 있었음), 아래 비교물건 기반 값으로 우선 계산한 뒤
+            // "🔮 예측 적용" 버튼을 눌러야 반경 조회가 실행된다는 걸 dataWarning으로 안내함.
+            pendingRadiusRefresh = true;
         }
     }
     if (!usedRadius) {
@@ -4826,7 +4898,8 @@ function calcMarketAdjustedSalePrice() {
         marketFactor: marketFactor,
         blendedValue: blendedValue,
         dataWarning: dataWarning,
-        sampleSource: usedRadius ? '반경 내 유사매물 1년' : (propType === 'villa' ? '등록 비교물건 6개월(반경조회 준비중)' : '등록 비교물건 6개월'),
+        pendingRadiusRefresh: pendingRadiusRefresh,
+        sampleSource: usedRadius ? '반경 내 유사매물 1년' : (propType === 'villa' ? '등록 비교물건 6개월(반경조회 필요)' : '등록 비교물건 6개월'),
     };
 }
 function renderMarketAdjustedPrice() {
@@ -4847,8 +4920,55 @@ function renderMarketAdjustedPrice() {
                 + '</div>'
             : '')
         + (r.dataWarning ? '<div style="font-size:10px;color:#e65100;margin-top:3px;">⚠️ ' + r.dataWarning + '</div>' : '')
+        + (r.pendingRadiusRefresh ? '<div style="font-size:10px;color:#1976d2;margin-top:3px;">🔄 평형/연식/주소 조건이 바뀌어 반경 내 유사매물 재조회가 필요합니다 - 위 "🔮 예측 적용" 버튼을 누르면 반영됩니다(지금은 등록된 비교물건 기준으로만 계산됨).</div>' : '')
         + '<div style="font-size:9.5px;color:#aaa;margin-top:3px;">참고용 근사치입니다. 반영비중 구간 기준은 일반적인 시장관행을 근사한 것으로, 통계적으로 도출된 값은 아닙니다.</div>'
         + '</div>';
+}
+/* "🔮 예측 적용" 버튼 핸들러 - 호가·매물재고 입력을 마치고 이 버튼을 눌러야만 재계산이 일어남.
+   1) 확인일 기록 2) 연립다세대면 반경 유사매물 재조회(await로 완료까지 기다림, 캐시가 있어도
+   "적용"을 명시적으로 눌렀으니 force=true로 최신화) 3) 예상매도가 박스 재렌더 4) 목표마진/
+   비교물건이 있으면 적정입찰가까지 재계산. 마지막으로 직전 적용값과 비교해서 "실제로 바뀐 건지
+   그대로인 건지"를 상태 문구로 명확히 보여줘서, 화면이 안 바뀐 게 오류가 아니라 값이 그대로라서
+   그런 것임을 확인할 수 있게 함. */
+var lastAppliedListingSnapshot = null;
+async function applyListingInventory() {
+    var btn = document.getElementById('listing-apply-btn');
+    var statusEl = document.getElementById('listing-apply-status');
+    if (btn) { btn.disabled = true; btn.innerText = '적용 중...'; }
+    if (statusEl) { statusEl.style.color = '#999'; statusEl.innerText = '계산 중...'; }
+    stampListingCheckedDate();
+    if (document.getElementById('a-prop-type').value === 'villa') {
+        await refreshVillaRadiusSaleCount(true);
+    }
+    renderMarketAdjustedPrice();
+    if (document.getElementById('a-comp-target-margin').value !== '' || (pendingAuctionComparables || []).length) {
+        calcCompValuation();
+    } else {
+        suggestTargetFromComps();
+    }
+    var r = calcMarketAdjustedSalePrice();
+    var newValue = r ? r.blendedValue : null;
+    var now = new Date();
+    var hhmm = String(now.getHours()).padStart(2, '0') + ':' + String(now.getMinutes()).padStart(2, '0');
+    if (statusEl) {
+        if (newValue === null) {
+            statusEl.style.color = '#999';
+            statusEl.innerText = '적용됨(' + hhmm + ') - 호가를 입력해야 예상매도가가 계산됩니다.';
+        } else if (lastAppliedListingSnapshot === null) {
+            statusEl.style.color = '#2e7d32';
+            statusEl.innerText = '✅ 적용됨(' + hhmm + ') - 예상매도가 ' + toEok(String(newValue)) + ' (최초 계산)';
+        } else if (lastAppliedListingSnapshot === newValue) {
+            statusEl.style.color = '#2e7d32';
+            statusEl.innerText = '적용됨(' + hhmm + ') - 이전과 동일, 값 변화 없음.';
+        } else {
+            var diff = newValue - lastAppliedListingSnapshot;
+            statusEl.style.color = '#2e7d32';
+            statusEl.innerText = '✅ 적용됨(' + hhmm + ') - 예상매도가 ' + toEok(String(newValue))
+                + ' (이전 대비 ' + (diff > 0 ? '+' : '-') + toEok(String(Math.abs(diff))) + ')';
+        }
+        lastAppliedListingSnapshot = newValue;
+    }
+    if (btn) { btn.disabled = false; btn.innerText = '🔮 예측 적용'; }
 }
 /* 경매물건의 국토부 건축HUB 건축물대장 조회 - 일반 매물 패널에서 쓰는 loadBuildingInfo()/
    buildBuildingInfoHtml()를 그대로 재사용함(승강기·주차·세대수·사용승인일 등을 표제부에서 확인). */
