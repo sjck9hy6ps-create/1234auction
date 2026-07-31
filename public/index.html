@@ -742,13 +742,16 @@ tr:hover td { background:#fffde7; }
                     <span onclick="showCalcInfo('listingCount')" style="cursor:pointer;color:#999;font-size:11px;">ⓘ 반영기준</span>
                 </div>
                 <button type="button" class="modal-btn btn-gray" style="font-size:11px;" onclick="openNaverLandForModal()">🟢 네이버부동산에서 확인하기</button>
-                <div class="modal-row" style="margin-top:6px;">
-                    <span class="modal-label" style="min-width:56px;">매물건수</span>
-                    <input type="number" class="modal-input" id="a-listing-count" placeholder="0" oninput="markListingInventoryDirty()" style="max-width:60px;flex:0.5;">
-                    <span class="modal-label" style="min-width:32px;flex-shrink:0;">호가</span>
-                    <input type="number" class="modal-input" id="a-ask-price-min" placeholder="최소" oninput="markListingInventoryDirty()">
-                    <span style="color:#999;">~</span>
-                    <input type="number" class="modal-input" id="a-ask-price-max" placeholder="최대" oninput="markListingInventoryDirty()">
+                <div class="modal-row" style="margin-top:6px;flex-wrap:wrap;">
+                    <span class="modal-label" style="min-width:56px;flex-shrink:0;">매물건수</span>
+                    <input type="number" class="modal-input" id="a-listing-count" placeholder="0" oninput="markListingInventoryDirty()" style="max-width:70px;">
+                    <span style="font-size:12px;color:#888;flex-shrink:0;">건</span>
+                </div>
+                <div class="modal-row" style="margin-top:6px;flex-wrap:wrap;">
+                    <span class="modal-label" style="min-width:56px;flex-shrink:0;">호가</span>
+                    <input type="number" class="modal-input" id="a-ask-price-min" placeholder="최소(만원)" oninput="markListingInventoryDirty()" style="min-width:0;">
+                    <span style="color:#999;flex-shrink:0;">~</span>
+                    <input type="number" class="modal-input" id="a-ask-price-max" placeholder="최대(만원)" oninput="markListingInventoryDirty()" style="min-width:0;">
                 </div>
                 <input type="hidden" id="a-listing-checked-date">
                 <div id="listing-checked-label" style="font-size:10.5px;color:#999;margin-top:1px;"></div>
@@ -766,12 +769,21 @@ tr:hover td { background:#fffde7; }
             </div>
             <div class="est-sub" id="est-row-2-status">&nbsp;</div>
 
+            <!-- 📊 비교물건(등록해둔 실거래 유사물건) 평단가만으로 뽑은 매도가 - ①(호가·매물재고까지
+                 반영)과 달리 실거래만 반영한 값이라 따로 표기해달라는 요청(2026-07)으로 추가. -->
+            <div class="est-row" style="margin-top:2px;">
+                <span style="font-size:11px;color:#888;min-width:76px;flex-shrink:0;">📊 비교물건 매도가</span>
+                <span class="est-value" id="est-comp-value" style="font-size:13px;">-</span>
+                <button type="button" class="modal-btn btn-gray est-apply-btn" onclick="applyEstCompValue()">②에 적용</button>
+            </div>
+            <div class="est-sub">등록된 비교물건(실거래) 평단가 기반 - 호가·매물재고는 미반영</div>
+
             <div class="est-row">
                 <span class="est-num">③</span><span class="est-label">예상마진</span>
                 <span class="est-value" id="est-row-3-value">-</span>
                 <button type="button" class="modal-btn btn-purple est-apply-btn" onclick="applyEstRow3()">④에 적용</button>
             </div>
-            <div class="est-sub">이 동네 낙찰사례의 매도사례 기준 추정마진(세전)</div>
+            <div class="est-sub" id="est-row-3-sub">이 동네 낙찰사례의 매도사례 기준 추정마진(세전)</div>
 
             <div class="est-row">
                 <span class="est-num">④</span><span class="est-label">목표마진</span>
@@ -7128,15 +7140,38 @@ function renderEstimateSummary() {
     var row1El = document.getElementById('est-row-1-value');
     if (row1El) row1El.innerText = predictedSale ? toEok(String(predictedSale)) : '데이터 부족';
 
+    // 📊 비교물건 매도가 = 호가·매물재고를 섞지 않은 순수 실거래(등록된 비교물건) 기반값.
+    // ①은 호가·매물재고가 있으면 그걸 섞은 값이라 "실거래만으로는 얼마인지"를 따로 보고 싶다는
+    // 요청(2026-07)으로 추가함 - ①과 값이 같아 보여도(호가 미입력 시) 성격이 다름을 문구로 구분.
+    window.__compOnlyValue = est ? est.estValue : null;
+    var compEl = document.getElementById('est-comp-value');
+    if (compEl) compEl.innerText = est ? toEok(String(est.estValue)) : '비교물건 없음';
+
     // ③ 예상마진 = 이 동네 낙찰사례의 매도사례 매칭 기준 추정마진(세전) 중간값
     var ctx = getAuctionAddressContext();
     var marginStats = ctx.dong ? calcDongMarginStats(ctx.dong) : null;
     var predictedMargin = marginStats ? Math.round(marginStats.median) : null;
     window.__predictedMarginValue = predictedMargin;
     var row3El = document.getElementById('est-row-3-value');
+    var row3SubEl = document.getElementById('est-row-3-sub');
     if (row3El) row3El.innerText = (predictedMargin !== null) ? toEok(String(predictedMargin)) : '낙찰사례 없음';
+    if (row3SubEl) {
+        var MIN_MARGIN_SAMPLE = 3;
+        row3SubEl.innerHTML = '이 동네 낙찰사례의 매도사례 기준 추정마진(세전)'
+            + (marginStats && marginStats.count < MIN_MARGIN_SAMPLE
+                ? ' <span style="color:#e65100;">- 표본 ' + marginStats.count + '건뿐이라 참고용으로만 보세요.</span>'
+                : '');
+    }
 
     renderTargetBidSolver();
+}
+// ② 목표매도가 칸에 "📊 비교물건 매도가"(순수 실거래 기반)를 채워넣음
+function applyEstCompValue() {
+    if (!window.__compOnlyValue) return;
+    applyTargetSuggestion(window.__compOnlyValue);
+    var el = document.getElementById('est-row-2-status');
+    if (el) { el.style.color = '#2e7d32'; el.innerText = '✅ 비교물건 매도가로 적용됨'; }
+    renderEstimateSummary();
 }
 // ② 목표매도가 입력칸을 만졌지만 아직 "적용"을 안 눌렀음을 표시(매물재고 섹션과 동일한 패턴)
 function markEstRow2Dirty() {
