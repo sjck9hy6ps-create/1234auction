@@ -91,9 +91,19 @@ async function vworldFetch(url, attempt = 0) {
 
 // VWorld 응답은 XML→JSON 변환 방식에 따라 fields가 배열/단일객체/래핑객체 등으로
 // 들쭉날쭉할 수 있어, 어떤 모양이 와도 배열로 통일해서 반환
+// ⚠️ 실제로 getApartHousingPriceAttr/getIndvdLandPriceAttr(국가중점데이터API)는 검색API와 달리
+//    "response" 래핑이 아예 없고, {"apartHousingPrices":{"field":[...]}} 또는
+//    {"indvdLandPrices":{"field":[...]}}처럼 엔드포인트마다 다른 이름의 최상위 키 안에 field를
+//    담아 내려줌 - 이 키들을 못 찾아서 매번 빈 배열([])을 반환하던 게 "PNU는 정상 조회되는데
+//    이후 가격 조회는 항상 '데이터 없음'으로 뜨는" 진짜 원인이었음(네트워크 문제가 아니었음).
+//    알려진 이름을 하드코딩하는 대신, field 프로퍼티를 가진 첫 하위 객체를 자동으로 찾아 사용.
 function extractFieldList(data) {
   const resp = data?.response ?? data;
   let fields = resp?.fields ?? resp?.result?.fields ?? null;
+  if (!fields && resp && typeof resp === 'object') {
+    const wrapperKey = Object.keys(resp).find((k) => resp[k] && typeof resp[k] === 'object' && resp[k].field !== undefined);
+    if (wrapperKey) fields = resp[wrapperKey].field;
+  }
   if (fields && fields.field !== undefined) fields = fields.field;
   if (!fields) return [];
   return Array.isArray(fields) ? fields : [fields];
@@ -118,22 +128,10 @@ async function findPnu(address, key, domain) {
   });
   if (domain) params.set('domain', domain);
   const fetchResult = await vworldFetch(`${VWORLD_SEARCH_URL}?${params.toString()}`);
-  const { data, networkError, status, raw, errMessage, errName, errCause } = fetchResult;
+  const { data, networkError } = fetchResult;
   const items = data?.response?.result?.items;
   if (!items || !items.length) {
-    // 진단용(임시): 실패 원인을 정확히 보려고 VWorld 원본 응답/네트워크 에러를 그대로 실어 반환함.
-    // 원인 확정되면 이 debug 필드는 제거할 예정.
-    return {
-      pnu: null, networkError,
-      debug: {
-        httpStatus: status,
-        rawSnippet: raw ? String(raw).slice(0, 300) : null,
-        vworldStatus: data?.response?.status || null,
-        vworldErrorCode: data?.response?.error?.code || null,
-        vworldErrorText: data?.response?.error?.text || null,
-        errMessage, errName, errCause,
-      },
-    };
+    return { pnu: null, networkError };
   }
   return { pnu: items[0].id || null, networkError: false }; // PARCEL 검색결과의 id = PNU(19자리)
 }
@@ -205,12 +203,12 @@ export default async function handler(req, res) {
   }
 
   try {
-    const { pnu, networkError, debug } = await findPnu(address, VWORLD_API_KEY, VWORLD_DOMAIN);
+    const { pnu, networkError } = await findPnu(address, VWORLD_API_KEY, VWORLD_DOMAIN);
     if (!pnu) {
       if (networkError) {
-        return res.status(200).json({ success: false, error: 'VWorld 서버 연결에 일시적으로 실패했습니다. 잠시 후 다시 시도해 주세요.', debug });
+        return res.status(200).json({ success: false, error: 'VWorld 서버 연결에 일시적으로 실패했습니다. 잠시 후 다시 시도해 주세요.' });
       }
-      return res.status(200).json({ success: false, error: '해당 주소의 필지(PNU)를 찾지 못했습니다. 주소 표기를 확인해 주세요.', addressUsed: stripUnitSuffix(address), debug });
+      return res.status(200).json({ success: false, error: '해당 주소의 필지(PNU)를 찾지 못했습니다. 주소 표기를 확인해 주세요.', addressUsed: stripUnitSuffix(address) });
     }
 
     const hoNm = digitsOnly(unitNo);
