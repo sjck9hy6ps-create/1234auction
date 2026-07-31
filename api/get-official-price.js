@@ -11,8 +11,15 @@
    ⚠️ VWORLD_API_KEY 환경변수 필요 (https://www.vworld.kr 가입 → 오픈API → 인증키 발급)
    ⚠️ 인증키 발급시 등록한 도메인과 VWORLD_DOMAIN이 일치해야 함
    ⚠️ VWorld 서버가 간헐적으로 연결을 끊는 경우(SocketError 등)가 있어, 네트워크 오류는
-      500으로 죽지 않고 1회 재시도 후 "조회 실패"로 깔끔하게 응답하도록 처리함
+      500으로 죽지 않고 재시도 후 "조회 실패"로 깔끔하게 응답하도록 처리함
+   ⚠️ 이 함수는 PNU 검색 + 공동주택가격 조회 + 개별공시지가 조회를 순차로(최대 3번) 호출하고
+      각각 재시도까지 붙어있어 시간이 걸림 - parse-auction.js와 동일하게 maxDuration을 반드시
+      명시해야 함(Vercel Hobby 플랜 기본 실행시간 10초는 이 호출 패턴엔 너무 짧아서, 함수가
+      VWorld 응답을 받기도 전에 강제 종료되며 커넥션이 끊기고 그게 "연결 실패"로 잘못 보고됨
+      - 실제로 이 export가 빠져있던 게 "브라우저 직접호출은 되는데 배포된 함수는 항상 실패"
+      증상의 원인이었음).
 ════════════════════════════════════════════════════════════ */
+export const maxDuration = 60;
 
 const VWORLD_SEARCH_URL = 'https://api.vworld.kr/req/search';
 const VWORLD_APT_PRICE_URL = 'https://api.vworld.kr/ned/data/getApartHousingPriceAttr';
@@ -53,19 +60,29 @@ const BROWSER_HEADERS = {
   'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
   'Accept': 'application/json, text/plain, */*',
   'Accept-Language': 'ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7',
+  // 진단 결과 실제 에러 원인이 "other side closed"(TLS 커넥션을 상대가 먼저 끊음)였음 - Node의
+  // fetch(undici)가 커넥션을 재사용(keep-alive)하려다, VWorld 서버가 그 커넥션을 이미 닫아버린
+  // 상태에서 재사용을 시도하며 나는 전형적인 오류. 매 요청마다 새 커넥션을 쓰도록 강제해서 이 재사용
+  // 문제를 피해봄(서버리스 환경에서는 커넥션 재사용 이점이 크지 않아 부작용 없이 시도해볼만 함).
+  'Connection': 'close',
 };
 
-async function vworldFetch(url, isRetry) {
+async function vworldFetch(url, attempt = 0) {
   try {
     const res = await fetch(url, { signal: AbortSignal.timeout(15000), headers: BROWSER_HEADERS });
     const text = await res.text();
     let data;
     try { data = JSON.parse(text); } catch { data = null; }
+    // 502(게이트웨이 차단으로 추정)나 5xx도 네트워크 오류와 동일하게 재시도 대상으로 취급
+    if (!res.ok && attempt < 2) {
+      await sleep(500 * (attempt + 1));
+      return vworldFetch(url, attempt + 1);
+    }
     return { ok: res.ok, status: res.status, data, raw: text, networkError: false };
   } catch (err) {
-    if (!isRetry) {
-      await sleep(500);
-      return vworldFetch(url, true);
+    if (attempt < 2) {
+      await sleep(500 * (attempt + 1));
+      return vworldFetch(url, attempt + 1);
     }
     console.warn('VWorld 연결 실패(재시도 후에도 실패):', err.message, err.name, err.cause && err.cause.message);
     return { ok: false, status: 0, data: null, raw: '', networkError: true, errMessage: err.message, errName: err.name, errCause: err.cause ? String(err.cause.message || err.cause) : null };
