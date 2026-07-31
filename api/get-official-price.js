@@ -213,11 +213,17 @@ export default async function handler(req, res) {
 
     const hoNm = digitsOnly(unitNo);
     const floorNm = digitsOnly(unitFloor || floor);
+    // ⚠️ dong은 unitNo/floor와 달리 digitsOnly()를 안 거치고 그대로 VWorld dongNm 파라미터로
+    // 넘어가고 있었음 - 경매 모달의 "동" 입력칸 placeholder가 "예) 101동"이라 사용자가 "101동"처럼
+    // "동" 글자를 붙여 입력하는 게 자연스러운데, VWorld의 dongNm 값은 "29"/"104"처럼 숫자만
+    // 있어서 정확일치 필터에 걸려 매번 0건으로 실패하고, 그때마다 토지 개별공시지가로만 폴백되던
+    // 게 "토지 공시지가는 나오는데 해당 주소지(공동주택) 공시가격은 안 나온다"는 증상의 원인이었음.
+    const dongNm = digitsOnly(dong);
     // 단독다가구로 명시된 경우가 아니면 공동주택(아파트/연립) 조회를 먼저 시도
     const isLikelyLand = propertyType && /단독|다가구|토지/.test(propertyType);
 
     if (!isLikelyLand) {
-      const aptRows = await getApartPrice(pnu, dong || '', floorNm, hoNm, VWORLD_API_KEY, VWORLD_DOMAIN);
+      const aptRows = await getApartPrice(pnu, dongNm, floorNm, hoNm, VWORLD_API_KEY, VWORLD_DOMAIN);
       if (aptRows.length) {
         // 호수(hoNm)를 정확히 아는 경우(경매 패널)는 최신값을, 모르는 경우(일반 패널)는
         // 층+면적이 가장 가까운 유닛을 대표값으로 고름
