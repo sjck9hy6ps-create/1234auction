@@ -2,8 +2,21 @@
    경매정보지(탱크옥션 등) 텍스트/캡처 이미지 → 구조화된 JSON 추출
    - 클라이언트가 경매 상세페이지에서 복사한 텍스트를 그대로 넘기거나,
      복사가 막혀 있는 페이지는 화면 캡처 이미지(여러 장 가능)를 넘기면
-     Gemini API로 필수 항목들을 뽑아서 JSON으로 돌려줍니다. 텍스트와 이미지를
+     Claude API로 필수 항목들을 뽑아서 JSON으로 돌려줍니다. 텍스트와 이미지를
      동시에 보낼 수도 있습니다(둘 다 참고해서 추출).
+   ⚠️ 2026-08 AI 제공자 교체: 원래 Gemini(gemini-3.5-flash) 무료 티어를 썼는데, 실측 하루
+      한도가 RPD 20회(=물건 상세추출 기준 하루 10건)로 너무 낮아 "한도가 너무 자주 걸린다"는
+      신고가 반복됨. Anthropic Claude API(claude-haiku-4-5)로 완전히 교체함 - 사용량 기반
+      과금이라 Gemini 무료 티어 같은 하루 요청수 상한이 없고, 분당 한도(RPM/TPM)도 유료 티어라
+      훨씬 넉넉함. 프롬프트(HEADER/PROMPT_A_RULES/PROMPT_B_RULES/CASELIST_HEADER)와 스키마
+      (SCHEMA_A/B/CASELIST)는 AI 제공자와 무관한 내용이라 전부 그대로 재사용하고, 실제 API
+      호출부(callGemini→callClaude)와 에러 분류·재시도 로직만 Claude 방식으로 새로 작성함.
+      스키마는 여전히 Gemini 스타일 대문자 타입(OBJECT/STRING 등)로 정의돼 있고, Claude에
+      보내기 직전 convertGeminiSchemaToJsonSchema()로 표준 JSON Schema(소문자 타입)로
+      변환함(기존 스키마 정의를 그대로 재사용하기 위한 어댑터).
+      ⚠️ 필요 환경변수가 GEMINI_API_KEY → ANTHROPIC_API_KEY로 바뀌었습니다. Vercel 프로젝트
+      설정(Environment Variables)에 console.anthropic.com에서 발급받은 키를 ANTHROPIC_API_KEY로
+      추가해야 동작합니다(기존 GEMINI_API_KEY는 더 이상 쓰이지 않으니 삭제해도 무방).
    - 텍스트/이미지에 없는 값은 null로 두도록 프롬프트에 명시 (추측 금지)
    ⚠️ 예전엔 스키마 전체(60개+ 필드)를 한 번의 Gemini 호출로 처리했는데,
       Hobby 플랜의 maxDuration 상한(60초)보다 응답이 오래 걸려 타임아웃이 잦았음
@@ -32,19 +45,18 @@
       물리적 한계라, 사용자가 원한 "하루 10건"과 애초에 맞을 수 없는 구조였음. 그래서 A1+A2를
       다시 하나의 스키마 A로, B1+B2를 하나의 스키마 B로 합쳐 호출 수를 4→2로 되돌림
       (RPD 20 ÷ 2 = 하루 10건 확보, RPM 5 대비로도 여유). 대신 개별 호출이 다시 무거워져
-      52초 근처까지 걸리는 경우가 가끔 있을 수 있음 - callGemini의 55초 타임아웃과 친절한
+      52초 근처까지 걸리는 경우가 가끔 있을 수 있음 - callClaude의 55초 타임아웃과 친절한
       안내 메시지(내용을 줄여 재시도)로 대응함.
 ════════════════════════════════════ */
 import crypto from 'crypto';
 
-// ⚠️ 무료 티어 RPM 한도 때문에 gemini-2.5-flash(신규 사용자 접근 불가) → gemini-3.1-flash-lite
-//    순으로 임시로 바꿔봤었는데, 완성도 우선 + 결제(빌링) 활성화로 방향을 정해서 원래의
-//    최상위 플래그십 모델로 되돌림. 결제를 켜면 무료 티어의 RPM 제약 자체가 유료 티어 한도로
-//    바뀌어서(사용량 기반 과금, Billing info 참고) 지금 겪은 "15~20초 후 재시도" 오류가 사실상
-//    해소됨.
-const GEMINI_MODEL = 'gemini-3.5-flash';
+// claude-haiku-4-5: 구조화된 정보 추출 용도로 충분히 정확하면서 빠르고 저렴한 모델.
+// 물건 상세페이지 추출처럼 스키마가 큰 요청도 안정적으로 처리 가능.
+const CLAUDE_MODEL = 'claude-haiku-4-5-20251001';
+const ANTHROPIC_API_VERSION = '2023-06-01';
+const ANTHROPIC_MESSAGES_URL = 'https://api.anthropic.com/v1/messages';
 // Vercel 함수 자체의 실행 제한 시간을 늘림 (기본값은 너무 짧아서, 스키마가 큰 요청은
-// Gemini 응답이 오기 전에 함수가 먼저 죽어버릴 수 있음). Hobby 플랜에서도 60초까지 가능.
+// Claude 응답이 오기 전에 함수가 먼저 죽어버릴 수 있음). Hobby 플랜에서도 60초까지 가능.
 export const maxDuration = 60;
 // 캡처 이미지(여러 장)를 첨부하면 base64 페이로드가 커질 수 있어 기본 바디 제한을 올려둠
 // (parse-registry.js의 PDF 업로드와 동일한 패턴).
@@ -293,11 +305,11 @@ const SCHEMA_B = {
 // ════════════════════════════════════
 // 낙찰사례 목록 일괄 추출 (mode:'caseList') - 지역별 낙찰가/마진 통계 기능용.
 // 경매정보 사이트(탱크옥션 등) "검색결과 목록" 화면을 통째로 복사해 붙여넣으면, 여러 건을
-// 한 번의 Gemini 호출로 구조화해서 뽑아냄 (물건 1건짜리 상세페이지 추출(SCHEMA_A/B)과는
+// 한 번의 Claude 호출로 구조화해서 뽑아냄 (물건 1건짜리 상세페이지 추출(SCHEMA_A/B)과는
 // 완전히 다른 스키마·프롬프트 - 목록 화면은 사건마다 필드가 세로로 쌓여 반복되는 형태라
-// 상세페이지 프롬프트를 재사용할 수 없음). RPD(하루 요청수) 한도를 아끼기 위해 호출 1개로
-// 처리하고, 하루 사용량 예산(DAILY_GEMINI_CALL_BUDGET)에서도 실제 소모량인 1회만 정확히
-// 차감함(상세페이지 추출의 2회와 구분 - 자세한 설명은 DAILY_GEMINI_CALL_BUDGET 선언부 참고).
+// 상세페이지 프롬프트를 재사용할 수 없음). 비용을 아끼기 위해 호출 1개로 처리하고, 하루
+// 사용량 예산(DAILY_CLAUDE_CALL_BUDGET)에서도 실제 소모량인 1회만 정확히 차감함(상세페이지
+// 추출의 2회와 구분 - 자세한 설명은 DAILY_CLAUDE_CALL_BUDGET 선언부 참고).
 // ════════════════════════════════════
 const SCHEMA_CASELIST = {
   type: 'OBJECT',
@@ -367,9 +379,9 @@ const CASELIST_HEADER = `다음은 경매정보 사이트(탱크옥션 등)의 "
 - 목록에 없는 항목(다른 페이지, 광고, 메뉴 등)은 절대 포함하지 마세요.`;
 
 async function handleCaseListExtraction(req, res) {
-  const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
-  if (!GEMINI_API_KEY) {
-    return res.status(500).json({ error: 'GEMINI_API_KEY 환경변수가 없습니다. Vercel 프로젝트 설정에 추가해 주세요.' });
+  const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
+  if (!ANTHROPIC_API_KEY) {
+    return res.status(500).json({ error: 'ANTHROPIC_API_KEY 환경변수가 없습니다. Vercel 프로젝트 설정에 추가해 주세요.' });
   }
   const text = req.body && req.body.text ? String(req.body.text).trim() : '';
   if (!text) return res.status(400).json({ error: '분석할 목록 텍스트가 없습니다.' });
@@ -380,20 +392,20 @@ async function handleCaseListExtraction(req, res) {
 
   const dailyKey = `auctionparse_daily_${todayKstDateStr()}`;
   const usedToday = await getDailyExtractCount(dailyKey);
-  if (usedToday + GEMINI_CALLS_PER_CASELIST_EXTRACT > DAILY_GEMINI_CALL_BUDGET) {
+  if (usedToday + CLAUDE_CALLS_PER_CASELIST_EXTRACT > DAILY_CLAUDE_CALL_BUDGET) {
     return res.status(429).json({
-      error: `오늘 AI 자동추출 사용량 한도(무료 API 하루 호출 ${DAILY_GEMINI_CALL_BUDGET}회)에 다 찼습니다. 한국시간 자정에 초기화됩니다. (물건 상세추출은 1건당 2회, 낙찰사례 목록 추출은 1건당 1회를 소모합니다 - 지금까지 ${usedToday}회 사용)`,
+      error: `오늘 AI 자동추출 사용량 안전한도(비용 급증 방지용, 하루 ${DAILY_CLAUDE_CALL_BUDGET}회)에 다 찼습니다. 한국시간 자정에 초기화됩니다. (물건 상세추출은 1건당 2회, 낙찰사례 목록 추출은 1건당 1회를 소모합니다 - 지금까지 ${usedToday}회 사용)`,
       dailyLimitReached: true,
       usedToday,
-      limit: DAILY_GEMINI_CALL_BUDGET,
+      limit: DAILY_CLAUDE_CALL_BUDGET,
     });
   }
   const promptText = CASELIST_HEADER + '\n\n--- 붙여넣은 목록 텍스트 시작 ---\n' + trimmed + '\n--- 붙여넣은 목록 텍스트 끝 ---';
   try {
-    const result = await callGemini(GEMINI_API_KEY, promptText, SCHEMA_CASELIST, [], 1, 0);
+    const result = await callClaude(ANTHROPIC_API_KEY, promptText, SCHEMA_CASELIST, [], 1, 0);
     const cases = Array.isArray(result.cases) ? result.cases : [];
     setCachedParseResult(cacheKey, cases); // fire-and-forget
-    incrementDailyExtractCount(dailyKey, GEMINI_CALLS_PER_CASELIST_EXTRACT); // fire-and-forget
+    incrementDailyExtractCount(dailyKey, CLAUDE_CALLS_PER_CASELIST_EXTRACT); // fire-and-forget
     return res.status(200).json({ cases });
   } catch (err) {
     return res.status(500).json({ error: err.message });
@@ -547,127 +559,117 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-// 429(RESOURCE_EXHAUSTED, 무료 티어 분당 요청수 초과) 응답에는 대개
-// error.details[]에 google.rpc.RetryInfo 타입 항목이 있고, retryDelay가
-// "12.589028474s" 같은 문자열로 들어있다. 있으면 그 시간만큼, 없으면 기본값을 기다린다.
-function parseRetryDelayMs(errData) {
-  const details = errData?.error?.details;
-  if (!Array.isArray(details)) return null;
-  const retryInfo = details.find((d) => typeof d['@type'] === 'string' && d['@type'].includes('RetryInfo'));
-  const raw = retryInfo?.retryDelay;
+// SCHEMA_A/B/CASELIST는 예전 Gemini responseSchema 형식(대문자 타입: OBJECT/STRING/NUMBER/
+// INTEGER/BOOLEAN/ARRAY)으로 정의되어 있음. 스키마 자체(필드 구성)는 AI 제공자와 무관한
+// 내용이라 그대로 재사용하고, Claude(Anthropic tool use)가 요구하는 표준 JSON Schema
+// (소문자 타입)로 보내기 직전에 재귀적으로 변환만 함 - 300줄 넘는 스키마를 다시 옮겨적을
+// 필요 없이 어댑터 함수 하나로 해결.
+function convertGeminiSchemaToJsonSchema(node) {
+  if (node === null || typeof node !== 'object') return node;
+  if (Array.isArray(node)) return node.map(convertGeminiSchemaToJsonSchema);
+  const out = {};
+  for (const key of Object.keys(node)) {
+    if (key === 'type' && typeof node[key] === 'string') {
+      out.type = node[key].toLowerCase();
+    } else {
+      out[key] = convertGeminiSchemaToJsonSchema(node[key]);
+    }
+  }
+  return out;
+}
+
+// Claude(Anthropic API)가 429로 거절하면 응답 헤더에 retry-after(초)가 담겨오는 경우가
+// 많음. 있으면 그 시간만큼, 없으면 기본값을 기다린다.
+function parseAnthropicRetryDelayMs(headers) {
+  const raw = headers && headers.get ? headers.get('retry-after') : null;
   if (!raw) return null;
-  const sec = parseFloat(String(raw).replace('s', ''));
+  const sec = parseFloat(raw);
   if (!isFinite(sec) || sec <= 0) return null;
   return Math.ceil(sec * 1000) + 500; // 약간의 여유를 더함
 }
 
-// ⚠️ 429(RESOURCE_EXHAUSTED)는 셋 중 어느 걸 넘었는지에 따라 대응이 완전히 달라야 함:
-//   - RPM(분당 요청수)/TPM(분당 토큰수): "롤링 윈도우"라 수십 초~1분 안에 다시 풀림 - 재시도 가치 있음.
-//   - RPD(일일 요청수): 태평양시간 자정까지 절대 안 풀림 - 재시도해봐야 Vercel 60초 제한만 낭비하고
-//     100% 실패함. 이 경우엔 즉시 포기하고 정확한 이유를 사용자에게 알려주는 게 낫다.
-// 구글 에러 응답의 error.details[]에 담긴 QuotaFailure.violations[].quotaId 문자열에
-// 보통 "...PerDay..." 또는 "...PerMinute..." 식으로 어떤 한도인지 표시되어 있어서 이걸로 구분함.
-// (형식이 문서화되어 있지 않고 바뀔 수 있어, 못 찾으면 안전하게 '짧은 한도'로 간주해 재시도함)
-function classifyQuotaError(errData) {
-  const details = errData?.error?.details;
-  if (!Array.isArray(details)) return 'unknown';
-  const quotaFailure = details.find((d) => typeof d['@type'] === 'string' && d['@type'].includes('QuotaFailure'));
-  const violations = quotaFailure?.violations;
-  if (!Array.isArray(violations) || !violations.length) return 'unknown';
-  const idText = violations.map((v) => `${v.quotaId || ''} ${v.quotaMetric || ''}`).join(' ');
-  if (/day/i.test(idText)) return 'daily';
-  if (/minute|second/i.test(idText)) return 'short';
-  return 'unknown';
-}
-
-// Gemini가 "high demand"/"overloaded"(구글 서버 혼잡, 503 UNAVAILABLE)로 거절하는 경우가
-// 있는데, 대부분 몇~십몇 초 안에 풀리는 일시적 현상이라 최대 4회까지 자동 재시도한다.
-// ⚠️ 원래는 1초 후 최대 2회(attempt<3)까지만 재시도했는데, 실제로는 그 정도 짧은 간격으로도
-// 계속 혼잡한 경우가 있어 사용자에게 구글의 영문 원문 메시지("high demand...")가 그대로
-// 노출되는 일이 있었음. 재시도 횟수를 늘리고(attempt<5) 간격도 점점 늘려가며(1.5s→3s→4.5s→6s,
-// 총 15초 추가) 재시도하고, 그래도 안 풀리면 원문 대신 안내 문구로 바꿔서 던짐.
-// A/B 두 스키마가 병렬로 호출되고 Vercel Hobby 전체 제한이 60초이므로, 이 정도 추가 대기는
-// 개별 fetch의 실제 소요시간을 감안해도 전체 예산 안에 들어옴.
-// 무료 티어의 분당 한도(RPM/TPM, 429 RESOURCE_EXHAUSTED)에 걸린 경우도 롤링 윈도우라 곧
-// 풀리므로, Gemini가 알려주는 재시도 대기시간(+지터)만큼 기다렸다가 최대 2회까지 재시도한다
-// (일일 한도(RPD) 초과로 확인되면 재시도해봐야 소용없으므로 즉시 포기 - classifyQuotaError 참고).
+// Claude가 "overloaded_error"(529, 일시적 서버 과부하)로 거절하는 경우가 있는데, 대부분
+// 몇~십몇 초 안에 풀리는 일시적 현상이라 최대 4회까지 자동 재시도한다(간격 1.5s→3s→4.5s→6s).
+// 429(rate_limit_error, 분당 요청수/토큰수 한도)는 롤링 윈도우라 곧 풀리므로 retry-after
+// 헤더(+지터)만큼 기다렸다가 최대 2회까지 재시도한다. Gemini 무료 티어와 달리 Claude는
+// "하루 요청수(RPD)" 같은 절대 상한이 없어(사용량 기반 과금 + 분당 롤링 한도) 일일
+// 한도 분류(classifyQuotaError) 로직 자체가 필요 없어짐 - 대신 비용 급증 방지용 자체
+// 안전장치는 아래 DAILY_CLAUDE_CALL_BUDGET으로 별도 관리함.
 // (API 키 오류·잘못된 요청 같은 재시도해도 안 풀리는 오류는 즉시 그대로 던짐)
-// imageParts: [{ inline_data: { mime_type, data } }, ...] - 캡처 이미지가 없으면 빈 배열.
+// imageParts: [{ type:'image', source:{ type:'base64', media_type, data } }, ...] - 없으면 빈 배열.
 // temperature: 기본 0(재현성 우선).
-async function callGemini(apiKey, promptText, schema, imageParts, attempt, temperature) {
+async function callClaude(apiKey, promptText, schema, imageParts, attempt, temperature) {
   attempt = attempt || 1;
   imageParts = imageParts || [];
   temperature = temperature === undefined || temperature === null ? 0 : temperature;
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${apiKey}`;
-  let geminiRes;
+  const jsonSchema = convertGeminiSchemaToJsonSchema(schema);
+  let claudeRes;
   try {
     // Vercel Hobby maxDuration이 60초라, 여유(파싱·응답조립)를 좀 남기고 55초까지 기다림
-    // (스키마를 4개로 더 쪼갠 이후에도 개별 호출이 예상보다 오래 걸리는 경우를 위한 마지막 여유분)
-    geminiRes = await fetch(url, {
+    claudeRes = await fetch(ANTHROPIC_MESSAGES_URL, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': apiKey,
+        'anthropic-version': ANTHROPIC_API_VERSION,
+      },
       body: JSON.stringify({
-        contents: [{ parts: [{ text: promptText }, ...imageParts] }],
-        generationConfig: {
-          responseMimeType: 'application/json',
-          responseSchema: schema,
-          // ⚠️ 3.x 계열은 thinkingBudget(토큰 수)이 아니라 thinkingLevel(단계형)로 사고 정도를
-          //    조절함(2.5 계열의 thinkingBudget과 파라미터 자체가 다름 - 섞어 쓰면 무시되거나
-          //    오류가 남). 'minimal'로 최대한 빠르게 응답하게 함 - 스키마가 출력 형식을 강제하고
-          //    판단 규칙도 프롬프트에 구체적으로 적혀 있어 충분함.
-          thinkingConfig: { thinkingLevel: 'minimal' },
-          temperature,
-        },
+        model: CLAUDE_MODEL,
+        max_tokens: 8192,
+        temperature,
+        messages: [{
+          role: 'user',
+          content: [{ type: 'text', text: promptText }, ...imageParts],
+        }],
+        // 구조화된 JSON 출력을 강제하기 위해 tool use를 씀(Gemini의 responseSchema에 대응).
+        // tool_choice로 이 도구를 무조건 쓰도록 강제해 일반 텍스트 응답이 섞이지 않게 함.
+        tools: [{
+          name: 'extract_auction_data',
+          description: '경매정보지에서 추출한 구조화된 데이터를 담는 도구',
+          input_schema: jsonSchema,
+        }],
+        tool_choice: { type: 'tool', name: 'extract_auction_data' },
       }),
       signal: AbortSignal.timeout(55000),
     });
   } catch (e) {
     if (e.name === 'TimeoutError' || e.name === 'AbortError') {
-      throw new Error('AI 분석이 시간 내에 끝나지 못했습니다. 페이지 내용이 너무 길 수 있으니(특히 하단 학교·행정기관·지도 링크 등은 빼고) 필요한 부분만 남겨서 다시 시도해 주세요. 방금 실패했다면 곧바로 재시도하지 말고 1분 정도 기다렸다가 다시 시도해 주세요(무료 API 분당 요청수 한도에 걸려 있을 수 있습니다).');
+      throw new Error('AI 분석이 시간 내에 끝나지 못했습니다. 페이지 내용이 너무 길 수 있으니(특히 하단 학교·행정기관·지도 링크 등은 빼고) 필요한 부분만 남겨서 다시 시도해 주세요.');
     }
     throw e;
   }
-  const data = await geminiRes.json();
-  if (!geminiRes.ok) {
-    const status = data.error?.status || '';
-    const msg = data.error?.message || 'Gemini API 호출 실패';
-    const isOverloaded = geminiRes.status === 503 || status === 'UNAVAILABLE'
-      || /overloaded|high demand/i.test(msg);
-    const isQuotaExceeded = geminiRes.status === 429 || status === 'RESOURCE_EXHAUSTED';
+  const data = await claudeRes.json();
+  if (!claudeRes.ok) {
+    const errType = data.error?.type || '';
+    const msg = data.error?.message || 'Claude API 호출 실패';
+    const isOverloaded = claudeRes.status === 529 || errType === 'overloaded_error';
+    const isRateLimited = claudeRes.status === 429 || errType === 'rate_limit_error';
     if (isOverloaded && attempt < 5) {
       await sleep(1500 * attempt);
-      return callGemini(apiKey, promptText, schema, imageParts, attempt + 1, temperature);
+      return callClaude(apiKey, promptText, schema, imageParts, attempt + 1, temperature);
     }
     if (isOverloaded) {
-      throw new Error('AI 서버가 일시적으로 혼잡합니다(구글 측 일시적 과부하). 보통 1분 이내에 풀리니, 잠시 후 다시 시도해 주세요.');
+      throw new Error('AI 서버가 일시적으로 혼잡합니다(Anthropic 측 일시적 과부하). 보통 1분 이내에 풀리니, 잠시 후 다시 시도해 주세요.');
     }
-    if (isQuotaExceeded) {
-      const quotaType = classifyQuotaError(data);
-      // 어떤 한도에 걸렸는지 Vercel 로그에 그대로 남겨둠 - 이후에도 반복되면 이 로그로
-      // 정확한 원인(quotaId)을 확인할 수 있음.
-      console.error(`parse-auction 429 (attempt ${attempt}, type=${quotaType}):`, JSON.stringify(data.error?.details || data.error || {}));
-      if (quotaType === 'daily') {
-        // 하루 한도(RPD)는 태평양시간 자정까지 절대 안 풀리므로 재시도 자체가 무의미함 - 바로 포기.
-        throw new Error('오늘 무료 API 일일 사용량 한도를 모두 사용했습니다. 태평양시간 자정(한국시간 오후 4~5시경)에 초기화되니 그 이후 다시 시도해 주세요.');
-      }
-      // 분당 요청수(RPM)/분당 토큰수(TPM)는 롤링 윈도우라 곧 풀림 - 최대 2회(attempt 1→2→3)까지
-      // 재시도. 매번 살짝 다른 지터(jitter)를 더해 동시에 재시도하는 다른 3개 호출과 타이밍이
-      // 겹쳐 다시 한꺼번에 부딪히는 걸 줄임.
+    if (isRateLimited) {
+      console.error(`parse-auction 429 (attempt ${attempt}):`, msg);
       if (attempt < 3) {
-        const base = parseRetryDelayMs(data) ?? (8000 * attempt);
+        const base = parseAnthropicRetryDelayMs(claudeRes.headers) ?? (8000 * attempt);
         const jitter = Math.floor(Math.random() * 1500);
         await sleep(base + jitter);
-        return callGemini(apiKey, promptText, schema, imageParts, attempt + 1, temperature);
+        return callClaude(apiKey, promptText, schema, imageParts, attempt + 1, temperature);
       }
-      throw new Error('AI 판독기 요청이 무료 사용량 한도(분당 요청수)에 계속 걸리고 있습니다. 1분 정도 기다렸다가 다시 시도해 주세요.');
+      throw new Error('AI 판독기 요청이 분당 요청수 한도에 계속 걸리고 있습니다. 1분 정도 기다렸다가 다시 시도해 주세요.');
     }
     throw new Error(msg);
   }
-  const jsonText = data.candidates?.[0]?.content?.parts?.[0]?.text;
-  if (!jsonText) {
-    throw new Error('Gemini 응답에서 결과를 찾을 수 없습니다.');
+  const toolUseBlock = Array.isArray(data.content)
+    ? data.content.find((block) => block.type === 'tool_use')
+    : null;
+  if (!toolUseBlock || !toolUseBlock.input) {
+    throw new Error('Claude 응답에서 결과를 찾을 수 없습니다.');
   }
-  return JSON.parse(jsonText);
+  return toolUseBlock.input;
 }
 
 // ════════════════════════════════════
@@ -726,29 +728,29 @@ async function setCachedParseResult(key, payload) {
 
 // ════════════════════════════════════
 // 하루 사용량 제한 (텍스트/이미지 AI 추출 전용)
-// - Google AI Studio 사용량 대시보드로 실측한 gemini-3.5-flash 무료 티어의 진짜 하루 한도는
-//   RPD(하루 요청수) 20건 (파일 상단 "4→2 재통합" 설명 참고). 이 20을 "실제 Gemini 호출 횟수"
-//   기준 예산으로 직접 관리함(DAILY_GEMINI_CALL_BUDGET) - "건수"가 아니라 "호출 횟수"인 이유는
-//   기능마다 1건당 호출 횟수가 달라서임:
-//     - 물건 상세페이지 추출(기본 mode): 1건당 Gemini 호출 2회(스키마 A+B)
-//     - 낙찰사례 목록 일괄추출(mode:'caseList'): 1건당 Gemini 호출 1회
-//   예전엔 두 기능 모두 "1건 = 1카운트"로 똑같이 셌는데, 그러면 실제로는 RPD 20 ÷ 1 = 20건까지
-//   가능한 caseList 추출도 물건 추출과 똑같이 하루 10건에서 막혀버려 예산을 낭비했음(사용자가
-//   낙찰사례를 대량으로 붙여넣기 하려는데 자꾸 한도에 걸린다고 지적). 이제 실제 호출 횟수(2 또는 1)
-//   만큼만 정확히 차감해서, 두 기능을 섞어 써도(예: 물건추출 5건=10회 + caseList 10건=10회 = 20회)
-//   가진 예산을 낭비 없이 다 쓸 수 있게 함.
-// - mode:'devNews'(개발호재 검색, 네이버 뉴스API라 Gemini와 무관)는 이 예산 대상이 아님.
-// - 캐시로 즉시 반환되는 요청(동일 텍스트/이미지를 다시 보내 해시가 같은 경우)은 실제 Gemini
+// - Claude(Anthropic API)는 Gemini 무료 티어 같은 "하루 요청수(RPD)" 절대 상한이 없음 -
+//   사용량 기반 과금 + 분당 롤링 한도(RPM/TPM, 유료 티어라 넉넉함)라서, 이 값은 이제
+//   "진짜 기술적 한도"가 아니라 순수하게 "비용 급증 방지용 자체 안전장치"임(예: 스크립트
+//   오작동이나 남용으로 하루에 수백~수천 회씩 호출되는 걸 막는 용도). 넉넉하게 하루
+//   300회로 잡음 - 기능마다 1건당 호출 횟수가 달라서 "건수"가 아니라 "호출 횟수" 기준으로 셈:
+//     - 물건 상세페이지 추출(기본 mode): 1건당 Claude 호출 2회(스키마 A+B)
+//     - 낙찰사례 목록 일괄추출(mode:'caseList'): 1건당 Claude 호출 1회
+//   즉 물건 추출은 하루 최대 약 150건, caseList 추출은 최대 약 300건까지 가능하고, 섞어
+//   써도(예: 물건추출 50건=100회 + caseList 200건=200회 = 300회) 예산을 낭비 없이 다 쓸 수 있음.
+//   실사용량이 이 안전한도에 자주 걸리면 값을 더 올리면 됨(비용은 어차피 Anthropic 콘솔에서
+//   실사용량 기준으로 별도 청구되므로, 이 값은 "막는 상한선"일 뿐 과금액 자체를 바꾸지 않음).
+// - mode:'devNews'(개발호재 검색, 네이버 뉴스API라 Claude와 무관)는 이 예산 대상이 아님.
+// - 캐시로 즉시 반환되는 요청(동일 텍스트/이미지를 다시 보내 해시가 같은 경우)은 실제 Claude
 //   호출이 없으므로 차감하지 않음 - 이 체크는 캐시 조회(getCachedParseResult) 이후,
-//   Gemini를 실제로 호출하기 직전에만 수행함.
+//   Claude를 실제로 호출하기 직전에만 수행함.
 // - 날짜 기준은 한국 시간(KST, UTC+9) 자정. Upstash Redis에 "그날 사용한 호출 횟수" 키를 두고,
 //   그날 첫 차감일 때만 자정까지 남은 시간(+여유 1시간)으로 만료시간을 걸어 다음날 자동 초기화.
 // - Redis 설정이 없거나 조회 자체가 실패하면 제한 없이 그냥 진행함(가용성 우선 - 이 기능이
 //   고장났다고 AI 추출 자체가 막히면 안 됨).
 // ════════════════════════════════════
-const DAILY_GEMINI_CALL_BUDGET = 20;
-const GEMINI_CALLS_PER_PROPERTY_EXTRACT = 2;
-const GEMINI_CALLS_PER_CASELIST_EXTRACT = 1;
+const DAILY_CLAUDE_CALL_BUDGET = 300;
+const CLAUDE_CALLS_PER_PROPERTY_EXTRACT = 2;
+const CLAUDE_CALLS_PER_CASELIST_EXTRACT = 1;
 
 function todayKstDateStr() {
   const kst = new Date(Date.now() + 9 * 60 * 60 * 1000);
@@ -1016,8 +1018,8 @@ function buildNumericWarnings(m) {
 export default async function handler(req, res) {
   res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
   if (req.method !== 'POST') return res.status(405).json({ error: 'POST only' });
-  // 개발호재 검색(mode:'devNews')은 기존 경매정보지 추출(Gemini) 로직과 완전히 별개(네이버 뉴스검색
-  // API 사용)라 GEMINI_API_KEY 확인보다 먼저 분기함
+  // 개발호재 검색(mode:'devNews')은 기존 경매정보지 추출(Claude) 로직과 완전히 별개(네이버 뉴스검색
+  // API 사용)라 ANTHROPIC_API_KEY 확인보다 먼저 분기함
   if (req.body && req.body.mode === 'devNews') {
     return handleDevNewsSearch(req, res);
   }
@@ -1026,9 +1028,9 @@ export default async function handler(req, res) {
   if (req.body && req.body.mode === 'caseList') {
     return handleCaseListExtraction(req, res);
   }
-  const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
-  if (!GEMINI_API_KEY) {
-    return res.status(500).json({ error: 'GEMINI_API_KEY 환경변수가 없습니다. Vercel 프로젝트 설정에 추가해 주세요.' });
+  const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
+  if (!ANTHROPIC_API_KEY) {
+    return res.status(500).json({ error: 'ANTHROPIC_API_KEY 환경변수가 없습니다. Vercel 프로젝트 설정에 추가해 주세요.' });
   }
   const { text, images } = req.body || {};
   const hasText = text && String(text).trim();
@@ -1040,7 +1042,7 @@ export default async function handler(req, res) {
   const imageParts = hasImages
     ? images
         .filter((img) => img && img.data)
-        .map((img) => ({ inline_data: { mime_type: img.mimeType || 'image/jpeg', data: img.data } }))
+        .map((img) => ({ type: 'image', source: { type: 'base64', media_type: img.mimeType || 'image/jpeg', data: img.data } }))
     : [];
 
   const rawText = hasText ? String(text) : '';
@@ -1055,16 +1057,16 @@ export default async function handler(req, res) {
     return res.status(200).json({ detail: cached, cached: true });
   }
 
-  // 캐시에 없어 실제로 Gemini를 호출해야 하는 경우에만 하루 사용량 제한을 확인함
+  // 캐시에 없어 실제로 Claude를 호출해야 하는 경우에만 하루 사용량 제한을 확인함
   // (캐시 히트는 위에서 이미 반환되어 여기 도달하지 않으므로 카운트에서 자연히 제외됨).
   const dailyKey = `auctionparse_daily_${todayKstDateStr()}`;
   const usedToday = await getDailyExtractCount(dailyKey);
-  if (usedToday + GEMINI_CALLS_PER_PROPERTY_EXTRACT > DAILY_GEMINI_CALL_BUDGET) {
+  if (usedToday + CLAUDE_CALLS_PER_PROPERTY_EXTRACT > DAILY_CLAUDE_CALL_BUDGET) {
     return res.status(429).json({
-      error: `오늘 AI 자동추출 사용량 한도(무료 API 하루 호출 ${DAILY_GEMINI_CALL_BUDGET}회)에 다 찼습니다. 한국시간 자정에 초기화됩니다. (물건 상세추출은 1건당 2회, 낙찰사례 목록 추출은 1건당 1회를 소모합니다 - 지금까지 ${usedToday}회 사용) 이미 추출했던 물건을 그대로 다시 붙여넣는 건 캐시로 처리돼 소모되지 않습니다.`,
+      error: `오늘 AI 자동추출 사용량 안전한도(비용 급증 방지용, 하루 ${DAILY_CLAUDE_CALL_BUDGET}회)에 다 찼습니다. 한국시간 자정에 초기화됩니다. (물건 상세추출은 1건당 2회, 낙찰사례 목록 추출은 1건당 1회를 소모합니다 - 지금까지 ${usedToday}회 사용) 이미 추출했던 물건을 그대로 다시 붙여넣는 건 캐시로 처리돼 소모되지 않습니다.`,
       dailyLimitReached: true,
       usedToday,
-      limit: DAILY_GEMINI_CALL_BUDGET,
+      limit: DAILY_CLAUDE_CALL_BUDGET,
     });
   }
 
@@ -1072,15 +1074,12 @@ export default async function handler(req, res) {
   const promptB = buildPrompt(PROMPT_B_RULES, trimmedText);
 
   try {
-    // ⚠️ Google AI Studio 사용량 대시보드로 실측한 결과, gemini-3.5-flash 무료 티어의 진짜
-    //    한도가 RPM 5 / RPD 20으로 매우 낮다는 걸 확인함(파일 상단 "4→2 재통합" 설명 참고).
-    //    호출을 4개(A1/A2/B1/B2) 동시에 쏘면 RPD 20 ÷ 4 = 하루 5건이 물리적 한계라, "하루
-    //    10건" 목표 자체를 만족할 수 없었음. 그래서 스키마를 2개(A/B)로 되돌려 RPD 20 ÷ 2 =
-    //    하루 10건을 확보함. 대신 개별 호출이 다시 무거워져 시간이 좀 더 걸릴 수 있어서,
-    //    두 호출 시작을 700ms 어긋나게 둬 순간 버스트(RPM 5)에 덜 취약하게 함.
+    // 두 스키마(A/B)를 병렬 호출함 - Claude는 Gemini 무료 티어 같은 RPM/RPD 제약이 없어
+    // 굳이 순차 실행하거나 시작 시점을 어긋나게 둘 필요가 없지만, 순간 동시 요청 부담을
+    // 살짝 분산시키는 차원에서 700ms 지연은 그대로 유지함.
     const [resultA, resultB] = await Promise.all([
-      callGemini(GEMINI_API_KEY, promptA, SCHEMA_A, imageParts, 1, 0),
-      sleep(700).then(() => callGemini(GEMINI_API_KEY, promptB, SCHEMA_B, imageParts, 1, 0)),
+      callClaude(ANTHROPIC_API_KEY, promptA, SCHEMA_A, imageParts, 1, 0),
+      sleep(700).then(() => callClaude(ANTHROPIC_API_KEY, promptB, SCHEMA_B, imageParts, 1, 0)),
     ]);
     const merged = { ...resultA, ...resultB };
     // 방어적 보정: 프롬프트에서 aptDong에 "OOO호" 형태를 넣지 말라고 명시했지만, 간헐적으로
@@ -1093,7 +1092,7 @@ export default async function handler(req, res) {
     merged.warnings = buildNumericWarnings(merged);
     // 캐시에는 경고까지 포함한 최종 결과를 그대로 저장 - 캐시 히트 시 재계산 없이 즉시 반환.
     setCachedParseResult(cacheKey, merged); // 응답을 늦추지 않도록 await 없이 fire-and-forget
-    incrementDailyExtractCount(dailyKey, GEMINI_CALLS_PER_PROPERTY_EXTRACT); // 실제로 Gemini를 새로 호출해 성공한 경우에만 하루 사용량에 반영 (fire-and-forget)
+    incrementDailyExtractCount(dailyKey, CLAUDE_CALLS_PER_PROPERTY_EXTRACT); // 실제로 Claude를 새로 호출해 성공한 경우에만 하루 사용량에 반영 (fire-and-forget)
     return res.status(200).json({ detail: merged });
   } catch (err) {
     return res.status(500).json({ error: err.message });
