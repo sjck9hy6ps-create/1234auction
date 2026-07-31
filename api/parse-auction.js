@@ -47,6 +47,14 @@
       (RPD 20 ÷ 2 = 하루 10건 확보, RPM 5 대비로도 여유). 대신 개별 호출이 다시 무거워져
       52초 근처까지 걸리는 경우가 가끔 있을 수 있음 - callClaude의 55초 타임아웃과 친절한
       안내 메시지(내용을 줄여 재시도)로 대응함.
+   ⚠️ 2026-08 활용도 확장(유료 전환 후): (1) 프롬프트 캐싱 적용 - 스키마(input_schema)와
+      고정 지시문(HEADER+규칙, CASELIST_HEADER)에 cache_control을 붙여, 5분 내 동일한
+      고정 부분으로 재호출되면 그 부분 입력 토큰이 최대 90% 저렴해짐(buildPrompt가 이제
+      문자열이 아니라 [정적 블록(캐시대상), 동적 블록] 배열을 반환하도록 바뀜 - callClaude도
+      배열 입력을 지원하도록 확장). (2) mode:'briefing' 신규 추가 - 물건 추출과 무관하게,
+      index.html이 이미 계산해둔 값들(예상매도가·예상마진·임차인현황·등기스토리 등)을
+      Claude에 한 번 더 넘겨 "3~4문장 요약+위험신호+입찰 권고"로 자연어 브리핑을 만들어줌
+      (SCHEMA_BRIEFING/BRIEFING_HEADER/handleBriefing 참고, 1건당 호출 1회).
 ════════════════════════════════════ */
 import crypto from 'crypto';
 
@@ -400,13 +408,91 @@ async function handleCaseListExtraction(req, res) {
       limit: DAILY_CLAUDE_CALL_BUDGET,
     });
   }
-  const promptText = CASELIST_HEADER + '\n\n--- 붙여넣은 목록 텍스트 시작 ---\n' + trimmed + '\n--- 붙여넣은 목록 텍스트 끝 ---';
+  // CASELIST_HEADER(고정 지시문)는 어떤 목록을 붙여넣든 완전히 동일한 텍스트라 캐싱 대상으로
+  // 분리함 - 붙여넣은 목록 텍스트만 별도(캐싱 안 되는) 블록으로 둠.
+  const promptBlocks = [
+    { type: 'text', text: CASELIST_HEADER, cache_control: { type: 'ephemeral' } },
+    { type: 'text', text: '\n\n--- 붙여넣은 목록 텍스트 시작 ---\n' + trimmed + '\n--- 붙여넣은 목록 텍스트 끝 ---' },
+  ];
   try {
-    const result = await callClaude(ANTHROPIC_API_KEY, promptText, SCHEMA_CASELIST, [], 1, 0);
+    const result = await callClaude(ANTHROPIC_API_KEY, promptBlocks, SCHEMA_CASELIST, [], 1, 0);
     const cases = Array.isArray(result.cases) ? result.cases : [];
     setCachedParseResult(cacheKey, cases); // fire-and-forget
     incrementDailyExtractCount(dailyKey, CLAUDE_CALLS_PER_CASELIST_EXTRACT); // fire-and-forget
     return res.status(200).json({ cases });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+}
+
+// ════════════════════════════════════
+// AI 투자 브리핑 (mode:'briefing') - 2026-08 신규.
+// - 물건 추출(SCHEMA_A/B)이나 낙찰사례 통계와 달리, 이 기능은 새로 뭔가를 "추출"하지 않음.
+//   index.html이 이미 계산해둔 값들(예상매도가·목표매도가·예상마진·목표마진·목표입찰가·
+//   임차인 현황·등기 스토리·특수조건·낙찰사례 표본 수 등)을 그대로 JSON으로 넘기면,
+//   Claude가 그걸 종합해서 "3~4문장 핵심 요약 + 위험신호 목록 + 입찰 관련 한 줄 권고"로
+//   정리해줌. 즉 계산은 여전히 클라이언트(index.html)가 하고, Claude는 "숫자를 사람이
+//   읽기 편한 판단 브리핑으로 번역"하는 역할만 함 - 새로운 사실을 지어내지 말라고 명시함.
+// - 입력 데이터가 매번 달라서(물건마다 값이 다름) 캐싱 효과가 거의 없어 프롬프트 캐싱은
+//   적용하지 않음(고정 지시문 BRIEFING_HEADER 자체는 짧아 캐싱 최소 토큰 기준에도 못 미침).
+// - 물건 1건당 호출 1회(CLAUDE_CALLS_PER_BRIEFING)만 소모.
+// ════════════════════════════════════
+const SCHEMA_BRIEFING = {
+  type: 'OBJECT',
+  properties: {
+    summary: { type: 'STRING' },
+    riskFlags: { type: 'ARRAY', items: { type: 'STRING' } },
+    recommendation: { type: 'STRING' },
+  },
+};
+
+const BRIEFING_HEADER = `당신은 경매 투자자에게 물건 하나를 3초 안에 파악할 수 있도록 브리핑해주는 조수입니다.
+아래 JSON은 이 경매 물건에 대해 이미 계산·수집되어 있는 값들입니다(금액 단위는 원).
+이 데이터에 없는 사실은 절대 지어내지 마세요 - 오직 주어진 값을 근거로 판단·요약만 하세요.
+
+작성 규칙:
+- summary: 이 물건이 어떤 물건이고(유형·위치·규모), 감정가 대비 최저가·예상매도가·예상마진이
+  어느 정도 수준인지를 3~4문장의 자연스러운 한국어로 요약하세요. 아이패드에서 짧게 훑어볼
+  용도이니 문장은 간결하게, 이미 아는 숫자를 나열만 하지 말고 "그래서 어떤 상황인지" 판단이
+  드러나게 쓰세요.
+- riskFlags: 이 데이터에서 확인되는 위험 신호를 짧은 문장(각 20자 내외)의 배열로 담으세요.
+  예: 대항력 있는 임차인 존재, 인수 여부 불명(willBeAssumed가 없는 등기 항목), 미납관리비 존재,
+  낙찰사례 표본이 3건 미만이라 예상마진 신뢰도가 낮음, 목표입찰가가 감정가에 근접해 마진이 얇음 등.
+  해당하는 게 없으면 빈 배열로 두세요. 데이터에 없는 위험을 추측해서 만들지 마세요.
+- recommendation: 입찰 여부·가격에 대한 한두 문장짜리 실용적인 권고. "적극 추천" 같은 단정적
+  투자 조언이 아니라, 이 데이터가 보여주는 근거를 바탕으로 한 조건부 판단으로 쓰세요
+  (예: "예상마진 표본이 적어 참고용으로만 보고 실거래를 더 확인한 뒤 입찰가를 정하는 게 안전합니다").`;
+
+async function handleBriefing(req, res) {
+  const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
+  if (!ANTHROPIC_API_KEY) {
+    return res.status(500).json({ error: 'ANTHROPIC_API_KEY 환경변수가 없습니다. Vercel 프로젝트 설정에 추가해 주세요.' });
+  }
+  const data = req.body && req.body.data && typeof req.body.data === 'object' ? req.body.data : null;
+  if (!data) return res.status(400).json({ error: '브리핑을 만들 물건 데이터가 없습니다.' });
+
+  const inputStr = JSON.stringify(data);
+  const cacheKey = 'auctionbrief_' + crypto.createHash('sha256').update(inputStr).digest('hex');
+  const cached = await getCachedParseResult(cacheKey);
+  if (cached) return res.status(200).json({ briefing: cached, cached: true });
+
+  const dailyKey = `auctionparse_daily_${todayKstDateStr()}`;
+  const usedToday = await getDailyExtractCount(dailyKey);
+  if (usedToday + CLAUDE_CALLS_PER_BRIEFING > DAILY_CLAUDE_CALL_BUDGET) {
+    return res.status(429).json({
+      error: `오늘 AI 자동추출 사용량 안전한도(비용 급증 방지용, 하루 ${DAILY_CLAUDE_CALL_BUDGET}회)에 다 찼습니다. 한국시간 자정에 초기화됩니다. (지금까지 ${usedToday}회 사용)`,
+      dailyLimitReached: true,
+      usedToday,
+      limit: DAILY_CLAUDE_CALL_BUDGET,
+    });
+  }
+
+  const promptText = BRIEFING_HEADER + '\n\n--- 물건 데이터(JSON) ---\n' + inputStr;
+  try {
+    const result = await callClaude(ANTHROPIC_API_KEY, promptText, SCHEMA_BRIEFING, [], 1, 0.3);
+    setCachedParseResult(cacheKey, result); // fire-and-forget
+    incrementDailyExtractCount(dailyKey, CLAUDE_CALLS_PER_BRIEFING); // fire-and-forget
+    return res.status(200).json({ briefing: result });
   } catch (err) {
     return res.status(500).json({ error: err.message });
   }
@@ -429,12 +515,21 @@ const HEADER = `다음은 경매정보 사이트(탱크옥션 등)에서 가져�
 - 날짜는 가능하면 YYYY-MM-DD 형식으로 변환하세요.
 - 이미지가 첨부된 경우, 글자가 흐리거나 잘려서 정확히 읽기 어려운 값은 절대 추측하지 말고 null로 두세요.`;
 
+// 예전엔 고정 지시문(HEADER+규칙)과 매번 바뀌는 붙여넣은 텍스트를 하나의 문자열로 합쳐서
+// 보냈는데, 프롬프트 캐싱을 적용하려면 "고정 부분"과 "매번 다른 부분"을 서로 다른 콘텐츠
+// 블록으로 나눠야 함(캐시는 블록 단위로 걸림). 그래서 문자열 하나 대신 배열을 반환하도록
+// 바꿨고, 고정 지시문 블록에만 cache_control을 붙여 callClaude가 그대로 messages에 실어보냄.
 function buildPrompt(rules, text) {
-  let p = HEADER + '\n\n추가 규칙:' + rules;
+  const staticBlock = {
+    type: 'text',
+    text: HEADER + '\n\n추가 규칙:' + rules,
+    cache_control: { type: 'ephemeral' },
+  };
+  const blocks = [staticBlock];
   if (text && String(text).trim()) {
-    p += `\n\n--- 붙여넣은 텍스트 시작 ---\n${text}\n--- 붙여넣은 텍스트 끝 ---`;
+    blocks.push({ type: 'text', text: `\n\n--- 붙여넣은 텍스트 시작 ---\n${text}\n--- 붙여넣은 텍스트 끝 ---` });
   }
-  return p;
+  return blocks;
 }
 
 // 탱크옥션 등 경매정보지 상세페이지 하단에는 추출에 전혀 필요 없는 순수 UI/내비게이션성
@@ -598,11 +693,27 @@ function parseAnthropicRetryDelayMs(headers) {
 // (API 키 오류·잘못된 요청 같은 재시도해도 안 풀리는 오류는 즉시 그대로 던짐)
 // imageParts: [{ type:'image', source:{ type:'base64', media_type, data } }, ...] - 없으면 빈 배열.
 // temperature: 기본 0(재현성 우선).
-async function callClaude(apiKey, promptText, schema, imageParts, attempt, temperature) {
+// promptInput: 보통은 문자열(예전 방식, 캐싱 없이 통짜로 보냄)이지만, 배열로 넘기면
+//   [{type:'text', text, cache_control:{type:'ephemeral'}}, ...] 형태의 콘텐츠 블록을
+//   그대로 messages에 실어보냄 - 프롬프트 캐싱(아래 설명) 적용 시 호출부에서 이 배열 형태로 넘김.
+// ⚠️ 2026-08 프롬프트 캐싱 적용: 물건 상세추출(스키마 A/B)·낙찰사례 목록추출(CASELIST) 모두
+//   "고정 지시문(HEADER+규칙 또는 CASELIST_HEADER)"과 "매번 달라지는 붙여넣은 텍스트"가
+//   하나의 프롬프트에 섞여 있었는데, 고정 지시문 부분은 어떤 물건을 추출하든 완전히 동일한
+//   텍스트라서 Anthropic 프롬프트 캐싱 대상으로 적합함. 호출부(buildCachedPropertyPrompt/
+//   handleCaseListExtraction)에서 고정 지시문 블록에만 cache_control을 붙여 넘기면, 5분
+//   이내에 같은 고정 지시문으로 또 호출될 때 그 부분의 입력 토큰이 최대 90% 저렴해짐.
+//   스키마(input_schema) 자체도 모든 호출에서 완전히 동일하므로 tools 정의에도 동일하게
+//   cache_control을 붙여둠 - 사실상 이번 요청에서 진짜 "새로 읽어야 할" 부분은 사용자가
+//   붙여넣은 물건 텍스트뿐이라, 캐싱 대상(고정 지시문+스키마)이 프롬프트의 대부분을 차지함.
+async function callClaude(apiKey, promptInput, schema, imageParts, attempt, temperature) {
   attempt = attempt || 1;
   imageParts = imageParts || [];
   temperature = temperature === undefined || temperature === null ? 0 : temperature;
   const jsonSchema = convertGeminiSchemaToJsonSchema(schema);
+  const userContent = Array.isArray(promptInput)
+    ? promptInput.slice()
+    : [{ type: 'text', text: promptInput }];
+  if (imageParts.length) userContent.push(...imageParts);
   let claudeRes;
   try {
     // Vercel Hobby maxDuration이 60초라, 여유(파싱·응답조립)를 좀 남기고 55초까지 기다림
@@ -617,16 +728,15 @@ async function callClaude(apiKey, promptText, schema, imageParts, attempt, tempe
         model: CLAUDE_MODEL,
         max_tokens: 8192,
         temperature,
-        messages: [{
-          role: 'user',
-          content: [{ type: 'text', text: promptText }, ...imageParts],
-        }],
+        messages: [{ role: 'user', content: userContent }],
         // 구조화된 JSON 출력을 강제하기 위해 tool use를 씀(Gemini의 responseSchema에 대응).
         // tool_choice로 이 도구를 무조건 쓰도록 강제해 일반 텍스트 응답이 섞이지 않게 함.
+        // 스키마 자체가 모든 호출에서 동일하므로 cache_control로 캐싱 대상에 포함시킴.
         tools: [{
           name: 'extract_auction_data',
           description: '경매정보지에서 추출한 구조화된 데이터를 담는 도구',
           input_schema: jsonSchema,
+          cache_control: { type: 'ephemeral' },
         }],
         tool_choice: { type: 'tool', name: 'extract_auction_data' },
       }),
@@ -646,7 +756,7 @@ async function callClaude(apiKey, promptText, schema, imageParts, attempt, tempe
     const isRateLimited = claudeRes.status === 429 || errType === 'rate_limit_error';
     if (isOverloaded && attempt < 5) {
       await sleep(1500 * attempt);
-      return callClaude(apiKey, promptText, schema, imageParts, attempt + 1, temperature);
+      return callClaude(apiKey, promptInput, schema, imageParts, attempt + 1, temperature);
     }
     if (isOverloaded) {
       throw new Error('AI 서버가 일시적으로 혼잡합니다(Anthropic 측 일시적 과부하). 보통 1분 이내에 풀리니, 잠시 후 다시 시도해 주세요.');
@@ -657,7 +767,7 @@ async function callClaude(apiKey, promptText, schema, imageParts, attempt, tempe
         const base = parseAnthropicRetryDelayMs(claudeRes.headers) ?? (8000 * attempt);
         const jitter = Math.floor(Math.random() * 1500);
         await sleep(base + jitter);
-        return callClaude(apiKey, promptText, schema, imageParts, attempt + 1, temperature);
+        return callClaude(apiKey, promptInput, schema, imageParts, attempt + 1, temperature);
       }
       throw new Error('AI 판독기 요청이 분당 요청수 한도에 계속 걸리고 있습니다. 1분 정도 기다렸다가 다시 시도해 주세요.');
     }
@@ -685,8 +795,13 @@ const CACHE_TTL_SECONDS = 24 * 60 * 60;
 function computeCacheKey(trimmedText, imageParts) {
   const h = crypto.createHash('sha256');
   h.update(trimmedText || '');
+  // ⚠️ Claude 전환 후 imageParts 모양이 Gemini의 { inline_data:{data} }에서
+  // Claude의 { type:'image', source:{data} }로 바뀌었는데, 이 함수는 예전 모양만 읽고
+  // 있어서 이미지가 있는 요청은 텍스트만으로 캐시 키가 정해지는 버그가 있었음(이미지가
+  // 달라도 같은 텍스트면 같은 캐시로 오인될 수 있음) - source.data도 함께 확인하도록 수정.
   (imageParts || []).forEach((p) => {
-    if (p?.inline_data?.data) h.update(p.inline_data.data);
+    const data = p?.inline_data?.data || p?.source?.data;
+    if (data) h.update(data);
   });
   return `auctionparse_${h.digest('hex')}`;
 }
@@ -751,6 +866,9 @@ async function setCachedParseResult(key, payload) {
 const DAILY_CLAUDE_CALL_BUDGET = 300;
 const CLAUDE_CALLS_PER_PROPERTY_EXTRACT = 2;
 const CLAUDE_CALLS_PER_CASELIST_EXTRACT = 1;
+// AI 투자 브리핑(mode:'briefing') - 이미 계산된 값들을 한 번만 Claude에 넘겨 자연어로
+// 요약하는 기능이라 1건당 1회 호출로 끝남.
+const CLAUDE_CALLS_PER_BRIEFING = 1;
 
 function todayKstDateStr() {
   const kst = new Date(Date.now() + 9 * 60 * 60 * 1000);
@@ -1027,6 +1145,11 @@ export default async function handler(req, res) {
   // 추출(SCHEMA_A/B) 로직과는 별개 경로라 먼저 분기함.
   if (req.body && req.body.mode === 'caseList') {
     return handleCaseListExtraction(req, res);
+  }
+  // AI 투자 브리핑(mode:'briefing') - 물건 추출과 무관하게 이미 계산된 값들을 요약만 하는
+  // 별개 경로라 먼저 분기함.
+  if (req.body && req.body.mode === 'briefing') {
+    return handleBriefing(req, res);
   }
   const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
   if (!ANTHROPIC_API_KEY) {
