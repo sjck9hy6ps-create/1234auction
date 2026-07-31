@@ -252,6 +252,19 @@ tr:hover td { background:#fffde7; }
 }
 .modal-input:focus { border-color:#6a1b9a; }
 .modal-input.addr-input { border-color:#6a1b9a; background:#faf5ff; }
+/* 🎯 핵심 금액 요약 카드(예상매도가·목표매도가·예상마진·목표마진·목표입찰가) 전용 스타일.
+   아이패드에서 한눈에 보이도록 큰 글자·넉넉한 터치영역·최소한의 줄바꿈으로 구성. */
+.est-row { display:flex; align-items:center; gap:8px; margin-bottom:4px; flex-wrap:wrap; }
+.est-num { font-size:13px; font-weight:bold; color:#6a1b9a; flex-shrink:0; }
+.est-label { font-size:13px; color:#444; font-weight:bold; flex-shrink:0; min-width:76px; }
+.est-value { font-size:15px; font-weight:bold; color:#222; flex:1; min-width:70px; }
+.est-input { flex:1; min-width:90px; padding:9px 10px; border:1.5px solid #ddd; border-radius:7px; font-size:15px; outline:none; font-family:inherit; }
+.est-input:focus { border-color:#6a1b9a; }
+.est-apply-btn { padding:9px 14px; font-size:12.5px; flex-shrink:0; }
+.est-sub { font-size:10px; color:#999; margin:-2px 0 8px; }
+.est-radio-row { display:flex; gap:16px; flex-wrap:wrap; font-size:12.5px; color:#444; margin-bottom:2px; }
+.est-radio-row label { display:flex; align-items:center; gap:4px; cursor:pointer; }
+.est-radio-row input[type="radio"] { width:16px; height:16px; }
 .modal-select {
     flex:1; padding:7px 10px; border:1.5px solid #ddd; border-radius:7px;
     font-size:13px; outline:none; font-family:inherit; background:white;
@@ -709,18 +722,75 @@ tr:hover td { background:#fffde7; }
                 <span class="modal-group-chevron">▶</span>
             </div>
             <div class="modal-group-body">
-        <div class="modal-section">
-            <div class="modal-section-title">📈 매도 계획 (만원 단위)</div>
-            <div id="target-suggest-box"></div>
+        <!-- 💰 핵심 5항목 요약카드 - 아이패드에서 스크롤 없이 금액만 바로 확인하는 용도.
+             상세 근거·도구는 전부 아래 "🔧 상세 도구" 접이식 섹션으로 옮겨져 있음. -->
+        <div class="modal-section" style="background:#f7f3ff;border-radius:8px;padding:10px 12px 4px;">
+            <div class="modal-section-title" style="border-bottom:none;">💰 금액 한눈에 보기 (만원 단위)</div>
+
+            <div class="est-row">
+                <span class="est-num">①</span><span class="est-label">예상매도가</span>
+                <span class="est-value" id="est-row-1-value">-</span>
+                <button type="button" class="modal-btn btn-purple est-apply-btn" onclick="applyEstRow1()">②에 적용</button>
+            </div>
+            <div class="est-sub">호가·매물재고·유사물건·비교물건 반영 (근거는 아래 "🔧 상세 도구")</div>
+
+            <div class="est-row">
+                <span class="est-num">②</span><span class="est-label">목표매도가</span>
+                <input type="number" class="modal-input est-input" id="a-target" placeholder="0" oninput="markEstRow2Dirty()">
+                <button type="button" class="modal-btn btn-purple est-apply-btn" onclick="applyEstRow2()">적용</button>
+            </div>
+            <div class="est-sub" id="est-row-2-status">&nbsp;</div>
+
+            <div class="est-row">
+                <span class="est-num">③</span><span class="est-label">예상마진</span>
+                <span class="est-value" id="est-row-3-value">-</span>
+                <button type="button" class="modal-btn btn-purple est-apply-btn" onclick="applyEstRow3()">④에 적용</button>
+            </div>
+            <div class="est-sub">이 동네 낙찰사례의 매도사례 기준 추정마진(세전)</div>
+
+            <div class="est-row">
+                <span class="est-num">④</span><span class="est-label">목표마진</span>
+                <input type="number" class="modal-input est-input" id="a-comp-target-margin" placeholder="0" oninput="markEstRow4Dirty()">
+                <button type="button" class="modal-btn btn-purple est-apply-btn" onclick="applyEstRow4()">적용</button>
+            </div>
+            <div class="est-sub" id="est-row-4-status">&nbsp;</div>
+
+            <div style="border-top:1px dashed #d8cdee;margin:8px 0 10px;"></div>
+
+            <div class="est-row"><span class="est-num">⑤</span><span class="est-label" style="font-weight:bold;">목표입찰가</span></div>
+            <div style="font-size:11px;color:#777;margin:2px 0 3px;">매도가 기준</div>
+            <div class="est-radio-row">
+                <label><input type="radio" name="bid-sale-basis" value="predicted" checked onchange="renderTargetBidSolver()"> ① 예상매도가</label>
+                <label><input type="radio" name="bid-sale-basis" value="target" onchange="renderTargetBidSolver()"> ② 목표매도가</label>
+            </div>
+            <div style="font-size:11px;color:#777;margin:6px 0 3px;">마진 기준</div>
+            <div class="est-radio-row">
+                <label><input type="radio" name="bid-margin-basis" value="predicted" onchange="renderTargetBidSolver()"> ③ 예상마진</label>
+                <label><input type="radio" name="bid-margin-basis" value="target" checked onchange="renderTargetBidSolver()"> ④ 목표마진</label>
+            </div>
+            <div class="est-row" style="margin-top:8px;">
+                <span class="est-value" id="est-row-5-value" style="font-size:18px;color:#6a1b9a;">-</span>
+                <button type="button" class="modal-btn btn-purple est-apply-btn" onclick="applyEstRow5()">입찰가에 적용</button>
+            </div>
+            <div class="est-sub" id="est-row-5-detail" style="margin-bottom:10px;">&nbsp;</div>
+            <!-- 예전 안내 박스 - 화면엔 숨기지만(중복 정보라 요약카드로 대체) 기존 렌더 함수들이
+                 계속 이 요소를 찾아 innerHTML을 채우므로 DOM에는 남겨둠(제거 시 함수 에러 발생). -->
+            <div id="target-suggest-box" style="display:none;"></div>
+            <div id="target-bid-suggest-box" style="display:none;"></div>
+        </div>
+
+        <!-- 🔧 상세 도구 - 5항목 금액의 계산 근거·보조 도구. 기본은 접힘(아이패드 화면 절약). -->
+        <div class="modal-group" id="mg-estimate-detail">
+            <div class="modal-group-header" onclick="toggleModalGroup('mg-estimate-detail')">
+                <span>🔧 상세 도구 (비교물건·전세가·매물재고 등)</span>
+                <span class="modal-group-chevron">▶</span>
+            </div>
+            <div class="modal-group-body">
+        <div class="modal-section" id="actual-sell-row" style="display:none;">
             <div class="modal-row">
-                <span class="modal-label">목표 매도가</span>
-                <input type="number" class="modal-input" id="a-target" placeholder="0" oninput="autoCalcAgentSilent();calcMargin();suggestBidFromTarget();">
-            </div>
-            <div class="modal-row" id="actual-sell-row" style="display:none;">
                 <span class="modal-label">실제 매도가</span>
-                <input type="number" class="modal-input" id="a-actual-sell" placeholder="0" oninput="autoCalcAgentSilent();calcMargin();suggestBidFromTarget();">
+                <input type="number" class="modal-input" id="a-actual-sell" placeholder="0" oninput="autoCalcAgentSilent();calcMargin();suggestBidFromTarget();renderEstimateSummary();">
             </div>
-            <div id="target-bid-suggest-box"></div>
         </div>
         <div class="modal-section">
             <div class="modal-section-title">📊 비교물건 시세분석 (최대 10개)</div>
@@ -729,11 +799,6 @@ tr:hover td { background:#fffde7; }
                 <span style="font-size:10px;color:#999;margin-left:4px;">주소·평형·층 입력 후 눌러주세요</span>
             </div>
             <div id="comp-list-box" style="margin-bottom:8px;"></div>
-            <div class="modal-row">
-                <span class="modal-label">목표마진(세후)</span>
-                <input type="number" class="modal-input" id="a-comp-target-margin" placeholder="0" oninput="calcCompValuation();suggestBidFromTarget();">
-                <span style="font-size:12px;color:#888;margin-left:4px;">만원</span>
-            </div>
             <div id="comp-valuation-result" style="margin-top:8px;"></div>
             <div style="margin-top:10px;border-top:1px dashed #e0d0f0;padding-top:8px;">
                 <button type="button" class="modal-btn btn-purple" style="font-size:11px;" onclick="calcAuctionJeonseAnalysis()">🏠 전세가 기반 분석 다시 계산</button>
@@ -769,6 +834,8 @@ tr:hover td { background:#fffde7; }
             </div>
             <div style="font-size:9.5px;color:#bbb;margin-top:2px;">⚠️ 위 값을 바꿔도 예상매도가는 실시간으로 바뀌지 않습니다. "예측 적용"을 눌러야 반영되고, 눌렀을 때 값이 실제로 바뀌었는지 아래 상태 메시지로 확인할 수 있습니다.</div>
             <div id="market-adjusted-price-box"></div>
+        </div>
+            </div>
         </div>
             </div>
         </div>
@@ -4071,7 +4138,7 @@ function renderDongMarginStatsInModal() {
     var dong = ctx.dong;
     var marginStats = dong ? calcDongMarginStats(dong) : null;
     var rateStats = dong ? calcDongBidRateStats(dong) : null;
-    if (!marginStats && !rateStats) { box.innerHTML = ''; return; }
+    if (!marginStats && !rateStats) { box.innerHTML = ''; renderEstimateSummary(); return; }
     var html = '';
     if (rateStats) {
         var appraisal = parseInt(document.getElementById('a-appraisal').value) || 0;
@@ -4099,6 +4166,7 @@ function renderDongMarginStatsInModal() {
             + '</div></div>';
     }
     box.innerHTML = html;
+    renderEstimateSummary();
 }
 function applyPredictedBid(bid) {
     if (!bid || bid <= 0) return;
@@ -4942,9 +5010,10 @@ async function applyListingInventory() {
     }
     renderMarketAdjustedPrice();
     if (document.getElementById('a-comp-target-margin').value !== '' || (pendingAuctionComparables || []).length) {
-        calcCompValuation();
+        calcCompValuation(); // 내부에서 renderEstimateSummary()까지 호출함
     } else {
         suggestTargetFromComps();
+        renderEstimateSummary();
     }
     var r = calcMarketAdjustedSalePrice();
     var newValue = r ? r.blendedValue : null;
@@ -6982,7 +7051,10 @@ function calcAuctionVat(bidAmount) {
    목표마진은 "세후" 순수익 기준 - 입찰방법(a-bid-method)·보유기간(a-hold-months)에 따라
    calcResaleIncomeTax()로 매 후보 입찰가마다 세금을 다시 계산해서 반영함(세금이 이익 규모에
    따라 달라지므로 bid가 바뀌면 세율도 바뀔 수 있음). */
-function solveAuctionBid(estValue) {
+/* marginOverride: 생략하면 기존처럼 화면의 목표마진(a-comp-target-margin) 입력값을 씀(하위호환).
+   값을 넘기면 그 마진을 목표로 역산 - "⑤ 목표입찰가" 요약카드에서 예상마진/목표마진 중 어느
+   쪽을 기준으로 할지 라디오로 고를 수 있게 하기 위해 추가됨. */
+function solveAuctionBid(estValue, marginOverride) {
     var c = readTaxConditionInputs();
     var repair = parseInt(document.getElementById('a-repair').value) || 0;
     var etc    = parseInt(document.getElementById('a-etc').value)    || 0;
@@ -7004,7 +7076,7 @@ function solveAuctionBid(estValue) {
     var appraisal = parseInt(document.getElementById('a-appraisal').value) || 0;
     var loanRateInput = parseFloat(document.getElementById('a-loan-rate').value);
     var loanRate = (loanRateInput > 0) ? loanRateInput : DEFAULT_LOAN_RATE[bidMethod === 'dealer' ? 'dealer' : 'individual'];
-    var targetMargin = parseInt(document.getElementById('a-comp-target-margin').value) || 0;
+    var targetMargin = (marginOverride !== undefined && marginOverride !== null) ? marginOverride : (parseInt(document.getElementById('a-comp-target-margin').value) || 0);
     var agentFee = calcAgentFee(estValue, c.propType); // 매도시 지급(입찰가와 무관, 매도가 기준 고정)
     var evictionFee = calcEvictionFee(c.pyung);
     // 부가세 대상여부·비율은 입찰가(mid) 후보와 무관하게 고정이므로 이분탐색 밖에서 한 번만 계산
@@ -7034,6 +7106,120 @@ function solveAuctionBid(estValue) {
     // (루프 마지막 반복의 mid는 최종 bid와 미세하게 다를 수 있음)
     result.vat = vatInfo.computable ? Math.round(result.bid * vatInfo.buildingRatio * 0.1) : 0;
     return result;
+}
+/* ════════════════════════════════════
+   💰 "금액 한눈에 보기" 요약카드 (①예상매도가 ②목표매도가 ③예상마진 ④목표마진 ⑤목표입찰가)
+   - 예전엔 예상매도가·적정입찰가·목표마진 추천이 서로 다른 박스(target-suggest-box,
+     comp-valuation-result, a-dong-margin-stats 등)에 흩어져 있어 아이패드처럼 좁은 화면에서
+     한눈에 비교하기 어렵다는 피드백(2026-07)을 받아, 그 값들을 한 카드로 모으고 "몇 번 기준으로
+     입찰가를 역산할지"를 라디오로 직접 고를 수 있게 함.
+   - ①③(예상값)은 순수 조회/계산이라 항상 최신 상태로 표시(입력 즉시 헷갈릴 네트워크 호출이
+     없어 실시간 표시해도 안전함). ②④(사용자가 직접 정하는 목표값)는 입력만으로는 재계산하지
+     않고 각자 "적용" 버튼을 눌러야 아래 예상마진분석(margin-result-box)에 반영됨 - 매물재고
+     섹션과 같은 이유(무엇이 실제로 반영됐는지 명확히 하기 위함).
+════════════════════════════════════ */
+function renderEstimateSummary() {
+    // ① 예상매도가 = 호가·매물재고 반영값(있으면) 우선, 없으면 비교물건 실거래 기반값
+    var marketAdj = calcMarketAdjustedSalePrice();
+    var est = getCompEstValue();
+    var predictedSale = (marketAdj && marketAdj.blendedValue) ? marketAdj.blendedValue : (est ? est.estValue : null);
+    window.__predictedSaleValue = predictedSale;
+    var row1El = document.getElementById('est-row-1-value');
+    if (row1El) row1El.innerText = predictedSale ? toEok(String(predictedSale)) : '데이터 부족';
+
+    // ③ 예상마진 = 이 동네 낙찰사례의 매도사례 매칭 기준 추정마진(세전) 중간값
+    var ctx = getAuctionAddressContext();
+    var marginStats = ctx.dong ? calcDongMarginStats(ctx.dong) : null;
+    var predictedMargin = marginStats ? Math.round(marginStats.median) : null;
+    window.__predictedMarginValue = predictedMargin;
+    var row3El = document.getElementById('est-row-3-value');
+    if (row3El) row3El.innerText = (predictedMargin !== null) ? toEok(String(predictedMargin)) : '낙찰사례 없음';
+
+    renderTargetBidSolver();
+}
+// ② 목표매도가 입력칸을 만졌지만 아직 "적용"을 안 눌렀음을 표시(매물재고 섹션과 동일한 패턴)
+function markEstRow2Dirty() {
+    var el = document.getElementById('est-row-2-status');
+    if (el) { el.style.color = '#e65100'; el.innerText = '값이 바뀜 - 적용 전'; }
+}
+function markEstRow4Dirty() {
+    var el = document.getElementById('est-row-4-status');
+    if (el) { el.style.color = '#e65100'; el.innerText = '값이 바뀜 - 적용 전'; }
+}
+// ① 예상매도가를 ②목표매도가 칸에 그대로 채워넣음 (기존 applyTargetSuggestion 재사용)
+function applyEstRow1() {
+    if (!window.__predictedSaleValue) return;
+    applyTargetSuggestion(window.__predictedSaleValue);
+    var el = document.getElementById('est-row-2-status');
+    if (el) { el.style.color = '#2e7d32'; el.innerText = '✅ 예상매도가로 적용됨'; }
+    renderEstimateSummary();
+}
+// ② 목표매도가를 실제로 반영(예상마진분석 재계산)
+function applyEstRow2() {
+    autoCalcAgentSilent(); calcMargin(); suggestBidFromTarget();
+    var el = document.getElementById('est-row-2-status');
+    if (el) { el.style.color = '#2e7d32'; el.innerText = '✅ 적용됨'; }
+    renderEstimateSummary();
+}
+// ③ 예상마진을 ④목표마진 칸에 그대로 채워넣음 (기존 applyPredictedMargin 재사용)
+function applyEstRow3() {
+    if (window.__predictedMarginValue === null || window.__predictedMarginValue === undefined) return;
+    applyPredictedMargin(window.__predictedMarginValue);
+    var el = document.getElementById('est-row-4-status');
+    if (el) { el.style.color = '#2e7d32'; el.innerText = '✅ 예상마진으로 적용됨'; }
+    renderEstimateSummary();
+}
+// ④ 목표마진을 실제로 반영(비교물건 시세분석·예상마진분석 재계산)
+function applyEstRow4() {
+    calcCompValuation(); suggestBidFromTarget();
+    var el = document.getElementById('est-row-4-status');
+    if (el) { el.style.color = '#2e7d32'; el.innerText = '✅ 적용됨'; }
+    renderEstimateSummary();
+}
+// ⑤ 목표입찰가 - 라디오로 고른 매도가 기준(①or②) × 마진 기준(③or④)으로 solveAuctionBid 역산
+function computeSelectedTargetBid() {
+    var saleBasisEl = document.querySelector('input[name="bid-sale-basis"]:checked');
+    var marginBasisEl = document.querySelector('input[name="bid-margin-basis"]:checked');
+    if (!saleBasisEl || !marginBasisEl) return null;
+    var saleBasis = saleBasisEl.value, marginBasis = marginBasisEl.value;
+
+    var targetSale = parseInt(document.getElementById('a-target').value) || null;
+    var saleValue = (saleBasis === 'predicted') ? window.__predictedSaleValue : targetSale;
+
+    var targetMarginVal = parseInt(document.getElementById('a-comp-target-margin').value);
+    if (isNaN(targetMarginVal)) targetMarginVal = null;
+    var marginValue = (marginBasis === 'predicted') ? window.__predictedMarginValue : targetMarginVal;
+
+    if (!saleValue || marginValue === null || marginValue === undefined) return null;
+    var r = solveAuctionBid(saleValue, marginValue);
+    return { bid: r.bid, saleValue: saleValue, marginValue: marginValue, saleBasis: saleBasis, marginBasis: marginBasis };
+}
+function renderTargetBidSolver() {
+    var valueEl = document.getElementById('est-row-5-value');
+    var detailEl = document.getElementById('est-row-5-detail');
+    if (!valueEl) return;
+    var res = computeSelectedTargetBid();
+    if (!res) {
+        valueEl.innerText = '-';
+        if (detailEl) detailEl.innerText = '①·②(매도가) 또는 ③·④(마진) 값이 아직 없습니다.';
+        return;
+    }
+    if (!res.bid || res.bid <= 0) {
+        valueEl.innerText = '확보 불가';
+        if (detailEl) detailEl.innerText = '선택한 조건으로는 목표마진을 지키는 입찰가가 없습니다(비용이 매도가보다 큼).';
+        return;
+    }
+    valueEl.innerText = toEok(String(res.bid));
+    if (detailEl) {
+        detailEl.innerText = (res.saleBasis === 'predicted' ? '①예상매도가' : '②목표매도가') + ' ' + toEok(String(res.saleValue))
+            + ' 기준, ' + (res.marginBasis === 'predicted' ? '③예상마진' : '④목표마진') + ' ' + toEok(String(res.marginValue)) + ' 확보 역산';
+    }
+}
+function applyEstRow5() {
+    var res = computeSelectedTargetBid();
+    if (!res || !res.bid || res.bid <= 0) return;
+    document.getElementById('a-my-bid').value = res.bid;
+    autoCalcTaxSilent(); calcMargin();
 }
 function calcCompValuation() {
     var box = document.getElementById('comp-valuation-result');
@@ -7125,6 +7311,7 @@ function calcCompValuation() {
     box.innerHTML = mainHtml + buildElevatorComparisonHtml();
     suggestTargetFromComps();
     renderMarketAdjustedPrice();
+    renderEstimateSummary(); // ① 예상매도가 ③ 예상마진 ⑤ 목표입찰가 요약카드도 함께 최신화
 }
 /* 등록된 비교물건(평형·연식·층·승강기유무 등을 이미 고려해 추천/선별된 목록)의 평단가 중간값을
    이 물건 평형에 곱해 "비교물건 대비 추천 매도가"를 보여줌 - 목표 매도가를 직접 정하기 전에
