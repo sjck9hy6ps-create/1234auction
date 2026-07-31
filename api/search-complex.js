@@ -30,6 +30,51 @@ function haversineMeters(lat1, lon1, lat2, lon2) {
 }
 function m2ToPyung(m2) { return (m2 || 0) / 3.305785; }
 
+// ── 반경 안의 단지 좌표 → region 텍스트/거리 매칭 (rent/sale 두 모드가 공유) ──
+async function findNearbyRegionMatch(lat, lon, radius) {
+  const latDelta = radius / 111000;
+  const lonDelta = radius / (111000 * Math.cos((lat * Math.PI) / 180));
+
+  // ── 1. 반경 안의 단지 좌표 후보 (bbox로 넉넉히 가져온 뒤 실제 거리로 다시 거름) ──
+  const { data: coordRows, error: coordErr } = await supabase
+    .from('complex_coords')
+    .select('cache_key,lat,lon,sigungu_cd')
+    .gte('lat', lat - latDelta).lte('lat', lat + latDelta)
+    .gte('lon', lon - lonDelta).lte('lon', lon + lonDelta)
+    .limit(2000);
+  if (coordErr) throw coordErr;
+
+  // cache_key 형식: dong|danji|bunji|road_name|main_num|sub_num (warmup-locations.mjs의 buildCacheKey와 동일)
+  const nearby = (coordRows || [])
+    .map((r) => {
+      const dist = haversineMeters(lat, lon, r.lat, r.lon);
+      if (dist > radius) return null;
+      const parts = String(r.cache_key).split('|');
+      if (parts.length < 6) return null;
+      return { dong: parts[0], danji: parts[1], bunji: parts[2], sigunguCd: r.sigungu_cd, dist: Math.round(dist) };
+    })
+    .filter(Boolean);
+  if (!nearby.length) return null;
+
+  // ── 2. sigungu_cd(법정동코드 앞5자리) → region 텍스트 매칭 ──
+  const regionNames = [...new Set(nearby.map((n) => n.sigunguCd).filter(Boolean))]
+    .map((code) => (LAWD_CODES.find((r) => r.code === code) || {}).name)
+    .filter(Boolean);
+  if (!regionNames.length) return null;
+
+  // 같은 dong+danji 조합의 최소거리를 기록해뒀다가, 결과 행에 "몇 m 거리인지" 붙여줌
+  const distByDanjiKey = new Map();
+  const distByBunjiKey = new Map();
+  nearby.forEach((n) => {
+    const dk = (n.dong + '|' + n.danji).toLowerCase();
+    const bk = (n.dong + '|' + n.bunji).toLowerCase();
+    if (!distByDanjiKey.has(dk) || distByDanjiKey.get(dk) > n.dist) distByDanjiKey.set(dk, n.dist);
+    if (!distByBunjiKey.has(bk) || distByBunjiKey.get(bk) > n.dist) distByBunjiKey.set(bk, n.dist);
+  });
+
+  return { regionNames, distByDanjiKey, distByBunjiKey };
+}
+
 async function handleRadiusSearch(req, res) {
   const lat = parseFloat(req.query.lat);
   const lon = parseFloat(req.query.lon);
@@ -41,46 +86,10 @@ async function handleRadiusSearch(req, res) {
     return res.status(400).json({ error: 'lat/lon이 필요합니다.', results: [] });
   }
 
-  const latDelta = radius / 111000;
-  const lonDelta = radius / (111000 * Math.cos((lat * Math.PI) / 180));
-
   try {
-    // ── 1. 반경 안의 단지 좌표 후보 (bbox로 넉넉히 가져온 뒤 실제 거리로 다시 거름) ──
-    const { data: coordRows, error: coordErr } = await supabase
-      .from('complex_coords')
-      .select('cache_key,lat,lon,sigungu_cd')
-      .gte('lat', lat - latDelta).lte('lat', lat + latDelta)
-      .gte('lon', lon - lonDelta).lte('lon', lon + lonDelta)
-      .limit(2000);
-    if (coordErr) throw coordErr;
-
-    // cache_key 형식: dong|danji|bunji|road_name|main_num|sub_num (warmup-locations.mjs의 buildCacheKey와 동일)
-    const nearby = (coordRows || [])
-      .map((r) => {
-        const dist = haversineMeters(lat, lon, r.lat, r.lon);
-        if (dist > radius) return null;
-        const parts = String(r.cache_key).split('|');
-        if (parts.length < 6) return null;
-        return { dong: parts[0], danji: parts[1], bunji: parts[2], sigunguCd: r.sigungu_cd, dist: Math.round(dist) };
-      })
-      .filter(Boolean);
-    if (!nearby.length) return res.status(200).json({ results: [] });
-
-    // ── 2. sigungu_cd(법정동코드 앞5자리) → villa_rent.region 텍스트 매칭 ──
-    const regionNames = [...new Set(nearby.map((n) => n.sigunguCd).filter(Boolean))]
-      .map((code) => (LAWD_CODES.find((r) => r.code === code) || {}).name)
-      .filter(Boolean);
-    if (!regionNames.length) return res.status(200).json({ results: [] });
-
-    // 같은 dong+danji 조합의 최소거리를 기록해뒀다가, 결과 행에 "몇 m 거리인지" 붙여줌
-    const distByDanjiKey = new Map();
-    const distByBunjiKey = new Map();
-    nearby.forEach((n) => {
-      const dk = (n.dong + '|' + n.danji).toLowerCase();
-      const bk = (n.dong + '|' + n.bunji).toLowerCase();
-      if (!distByDanjiKey.has(dk) || distByDanjiKey.get(dk) > n.dist) distByDanjiKey.set(dk, n.dist);
-      if (!distByBunjiKey.has(bk) || distByBunjiKey.get(bk) > n.dist) distByBunjiKey.set(bk, n.dist);
-    });
+    const geo = await findNearbyRegionMatch(lat, lon, radius);
+    if (!geo) return res.status(200).json({ results: [] });
+    const { regionNames, distByDanjiKey, distByBunjiKey } = geo;
 
     const { data: rentRows, error: rentErr } = await supabase
       .from('villa_rent')
@@ -125,11 +134,92 @@ async function handleRadiusSearch(req, res) {
   }
 }
 
+/* ════════════════════════════════════
+   반경 매매 검색 모드 (?mode=radiusSale) - 연립다세대·단독 "예상매도가" 재고월수
+   계산을 위한 월평균 거래건수 근거를 넓히는 용도.
+   ⚠️ 왜 필요한가: 경매 모달에 등록된 "비교물건"은 최대 10개뿐이고, 연립다세대는
+   아파트 단지와 달리 동일 건물 반복거래가 없어 그 10개 중 최근 6개월 거래가
+   0~1건에 그치는 경우가 흔함 - 그 적은 표본으로 재고월수(시장속도)를 추정하면
+   1건 차이로 결과가 몇 배씩 흔들려 신빙성이 떨어짐. 이 모드는 "🟢 네이버부동산에서
+   확인하기"(openNaverLandForModal) 버튼과 동일한 허용오차(평형 ±5평, 연식은 사용승인
+   연도 기준 -5년~+10년)로 반경 안의 모든 유사 매물 실거래를 찾아 표본을 넓힘.
+   기간은 과거 1년(365일) 고정 - 재고월수 산식의 "월평균 거래건수"를 6개월보다
+   긴 창으로 봐서 계절성·우연한 공백 구간의 영향을 줄이기 위함. */
+async function handleRadiusSaleSearch(req, res) {
+  const lat = parseFloat(req.query.lat);
+  const lon = parseFloat(req.query.lon);
+  const radius = parseFloat(req.query.radius) || 1500;
+  const pyung = parseFloat(req.query.pyung) || null; // 네이버부동산과 동일하게 ±5평
+  const buildYear = parseInt(req.query.buildYear, 10) || null; // 사용승인연도, 있으면 -5~+10년만
+
+  if (!Number.isFinite(lat) || !Number.isFinite(lon)) {
+    return res.status(400).json({ error: 'lat/lon이 필요합니다.', results: [] });
+  }
+
+  try {
+    const geo = await findNearbyRegionMatch(lat, lon, radius);
+    if (!geo) return res.status(200).json({ results: [] });
+    const { regionNames, distByDanjiKey, distByBunjiKey } = geo;
+
+    const oneYearAgo = new Date();
+    oneYearAgo.setDate(oneYearAgo.getDate() - 365);
+    const cutoffInt = parseInt(
+      oneYearAgo.getFullYear() + String(oneYearAgo.getMonth() + 1).padStart(2, '0') + String(oneYearAgo.getDate()).padStart(2, '0'),
+      10
+    );
+
+    const { data: tradeRows, error: tradeErr } = await supabase
+      .from('villa_trades')
+      .select('region,dong,danji,bunji,road_name,size,price,floor,build_year,deal_date')
+      .in('region', regionNames)
+      .gte('deal_date', cutoffInt)
+      .limit(20000);
+    if (tradeErr) throw tradeErr;
+
+    const results = (tradeRows || [])
+      .filter((row) => {
+        const dk = (row.dong + '|' + (row.danji || '')).toLowerCase();
+        const bk = (row.dong + '|' + (row.bunji || '')).toLowerCase();
+        if (!distByDanjiKey.has(dk) && !distByBunjiKey.has(bk)) return false;
+        if (pyung) {
+          if (!row.size) return false;
+          if (Math.abs(m2ToPyung(row.size) - pyung) > 5) return false; // 네이버부동산과 동일 ±5평
+        }
+        if (buildYear) {
+          if (!row.build_year) return false;
+          // 네이버부동산과 동일: 사용승인연도 [목표연도-5, 목표연도+10]
+          if (row.build_year < buildYear - 5 || row.build_year > buildYear + 10) return false;
+        }
+        return true;
+      })
+      .map((row) => {
+        const dk = (row.dong + '|' + (row.danji || '')).toLowerCase();
+        const bk = (row.dong + '|' + (row.bunji || '')).toLowerCase();
+        const dist = distByDanjiKey.has(dk) ? distByDanjiKey.get(dk) : distByBunjiKey.get(bk);
+        return {
+          region: row.region, dong: row.dong, danji: row.danji, bunji: row.bunji, road_name: row.road_name,
+          size: row.size, price: row.price, floor: row.floor, build_year: row.build_year,
+          deal_date: row.deal_date, dist: dist != null ? dist : null,
+        };
+      })
+      .sort((a, b) => (b.deal_date || 0) - (a.deal_date || 0))
+      .slice(0, 300);
+
+    return res.status(200).json({ results, cutoffDate: cutoffInt });
+  } catch (err) {
+    console.error('search-complex 반경매매검색 에러:', err.message);
+    return res.status(500).json({ error: err.message, results: [] });
+  }
+}
+
 export default async function handler(req, res) {
   res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
 
   if (req.query.mode === 'radius') {
     return handleRadiusSearch(req, res);
+  }
+  if (req.query.mode === 'radiusSale') {
+    return handleRadiusSaleSearch(req, res);
   }
 
   const q = (req.query.q || '').trim();
