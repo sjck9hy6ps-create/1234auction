@@ -45,9 +45,19 @@ function sleep(ms) {
 // fetch() 자체가 throw하는 네트워크 오류는 여기서 잡아서 0.5초 후 1회만 재시도하고,
 // 그래도 실패하면 예외를 던지는 대신 "실패했다"는 표시를 담은 값을 정상 반환한다
 // (호출부가 500으로 죽지 않고 "조회 실패" 메시지로 깔끔하게 응답할 수 있도록)
+// Vercel 서버(Node/undici)의 기본 fetch는 User-Agent를 안 보내거나 "node" 같은 값을 보내는데,
+// VWorld 쪽 게이트웨이가 이런 요청을 봇 트래픽으로 보고 502로 막는 것으로 보여(직접 브라우저로
+// 호출하면 항상 성공하는데 Vercel에서 호출하면 502/연결실패가 반복됨 - 실제 확인된 증상).
+// 실제 브라우저와 동일한 User-Agent/Accept 헤더를 붙여서 우회를 시도함.
+const BROWSER_HEADERS = {
+  'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+  'Accept': 'application/json, text/plain, */*',
+  'Accept-Language': 'ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7',
+};
+
 async function vworldFetch(url, isRetry) {
   try {
-    const res = await fetch(url, { signal: AbortSignal.timeout(15000) });
+    const res = await fetch(url, { signal: AbortSignal.timeout(15000), headers: BROWSER_HEADERS });
     const text = await res.text();
     let data;
     try { data = JSON.parse(text); } catch { data = null; }
