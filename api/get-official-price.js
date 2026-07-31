@@ -223,11 +223,27 @@ export default async function handler(req, res) {
     const isLikelyLand = propertyType && /단독|다가구|토지/.test(propertyType);
 
     if (!isLikelyLand) {
-      const aptRows = await getApartPrice(pnu, dongNm, floorNm, hoNm, VWORLD_API_KEY, VWORLD_DOMAIN);
+      let aptRows = await getApartPrice(pnu, dongNm, floorNm, hoNm, VWORLD_API_KEY, VWORLD_DOMAIN);
+      let matchedByHo = !!hoNm;
+      // ⚠️ 연립다세대/다세대 같은 단일 건물은 VWorld dongNm 자체가 빈 문자열("")로 등록돼 있는
+      // 경우가 흔함(안산시 상록구 이동 530-21 다세대로 실제 확인) - 사용자가 입력한 동 번호가
+      // 정확해도 VWorld가 그 건물을 무동(無棟)으로 등록해놨으면 dongNm 필터에서 0건이 됨.
+      // 이 경우 동 필터를 빼고 호수만으로 재시도(호수는 훨씬 신뢰도가 높은 필드라 대부분
+      // 이걸로 충분히 특정됨) - "토지 개별공시지가만 나오고 실제 공시가격은 안 나온다"는
+      // 증상이 아파트뿐 아니라 연립다세대에서도 똑같이 재현된 게 이 케이스였음.
+      if (!aptRows.length && dongNm) {
+        aptRows = await getApartPrice(pnu, '', floorNm, hoNm, VWORLD_API_KEY, VWORLD_DOMAIN);
+      }
+      // 호수 필터까지 걸었는데도 0건이면(호수 표기 형식이 안 맞는 경우) 호수 필터도 빼고
+      // 층+면적 근사 매칭으로 최후 폴백
+      if (!aptRows.length && hoNm) {
+        aptRows = await getApartPrice(pnu, '', floorNm, '', VWORLD_API_KEY, VWORLD_DOMAIN);
+        matchedByHo = false;
+      }
       if (aptRows.length) {
         // 호수(hoNm)를 정확히 아는 경우(경매 패널)는 최신값을, 모르는 경우(일반 패널)는
         // 층+면적이 가장 가까운 유닛을 대표값으로 고름
-        const latest = hoNm ? pickLatest(aptRows) : (pickBestApartRow(aptRows, sizeM2 ? Number(sizeM2) : null) || pickLatest(aptRows));
+        const latest = matchedByHo ? pickLatest(aptRows) : (pickBestApartRow(aptRows, sizeM2 ? Number(sizeM2) : null) || pickLatest(aptRows));
         // 국민주택규모(85㎡) 초과 주택 매도시 건물분 부가세 계산을 위해, 같은 PNU(필지)의
         // 개별공시지가(㎡당)도 함께 내려줌 - 집합건물(아파트/연립)이라도 그 밑에 깔린 토지는
         // 여전히 지번 단위로 개별공시지가가 고시되므로 조회 자체는 항상 가능함(공동주택가격과는
@@ -258,7 +274,7 @@ export default async function handler(req, res) {
           stdrMt: latest.stdrMt || null,
           lastUpdated: latest.lastUpdtDt || null,
           matchedCount: aptRows.length,
-          approximate: !hoNm, // 호수 특정 없이 층/면적으로 추정한 값이면 true
+          approximate: !matchedByHo, // 호수로 정확히 못 짚고 층/면적으로 추정한 값이면 true
           history: aptRows.map(r => ({ year: r.stdrYear, month: r.stdrMt, priceWon: r.pblntfPc ? Number(r.pblntfPc) : null, dong: r.dongNm, ho: r.hoNm })),
           landPriceWonPerM2,
           landPriceStdrYear,
