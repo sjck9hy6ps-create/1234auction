@@ -1,8 +1,4 @@
 {
-  "crons": [
-    {
-      "path": "/api/update-house.js",
-      "schedule": "0 19 * * *" 
-    }
-  ]
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "regions": ["icn1"]
 }
