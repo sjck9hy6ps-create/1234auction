@@ -4692,11 +4692,54 @@ function renderListingCheckedLabel() {
     var days = Math.floor((Date.now() - new Date(dateStr + 'T00:00:00').getTime()) / 86400000);
     el.innerText = (days <= 0 ? '오늘 확인' : days + '일 전 확인') + (days > 30 ? ' - 오래됨, 다시 확인 권장' : '');
 }
+/* 연립다세대·단독의 재고월수용 "월평균 거래건수" 표본을 넓히는 캐시.
+   ⚠️ 왜 필요한가: 등록된 비교물건(최대 10개)만으로 최근 6개월 거래건수를 세면, 아파트
+   단지처럼 동일 매물이 반복 거래되지 않는 연립다세대·단독 특성상 0~1건에 그치기 일쑤라
+   재고월수 추정이 통계적으로 불안정함(사용자 피드백으로 확인). 대신 "🟢 네이버부동산에서
+   확인하기"(openNaverLandForModal) 버튼과 동일한 허용오차(평형 ±5평, 연식은 사용승인연도
+   기준 -5년~+10년)로 반경 검색한 주변 매매 실거래(과거 1년, api/search-complex?mode=radiusSale)
+   를 대신 써서 표본을 넓힘. 같은 조건(좌표·평형·연식)으로는 재조회하지 않도록 키로 캐시. */
+var villaRadiusSaleCache = { key: null, count: null };
+var villaRadiusSaleLoading = false;
+function villaRadiusSaleKey(ctx, pyung, buildYear) {
+    if (!ctx || !ctx.lat || !ctx.lon) return null;
+    return [Math.round(ctx.lat * 2000), Math.round(ctx.lon * 2000), pyung || '', buildYear || ''].join('_');
+}
+async function refreshVillaRadiusSaleCount() {
+    var propType = document.getElementById('a-prop-type').value;
+    if (propType !== 'villa') return; // 연립다세대·단독일 때만 해당
+    var ctx = getAuctionAddressContext();
+    var pyung = parseFloat(document.getElementById('a-pyung').value) || null;
+    var buildYear = getAuctionBuildYear();
+    var key = villaRadiusSaleKey(ctx, pyung, buildYear);
+    if (!key || key === villaRadiusSaleCache.key || villaRadiusSaleLoading) return;
+    villaRadiusSaleLoading = true;
+    try {
+        var qs = 'lat=' + ctx.lat + '&lon=' + ctx.lon + '&radius=1500'
+            + (pyung ? '&pyung=' + pyung : '') + (buildYear ? '&buildYear=' + buildYear : '');
+        var res = await fetch('/api/search-complex?mode=radiusSale&' + qs);
+        var data = await res.json();
+        villaRadiusSaleCache = { key: key, count: (data.results || []).length };
+    } catch (e) {
+        villaRadiusSaleCache = { key: key, count: null };
+    } finally {
+        villaRadiusSaleLoading = false;
+        // 표본이 새로 준비됐으니 예상매도가·적정입찰가 화면을 다시 그려서 반영
+        renderMarketAdjustedPrice();
+        if (document.getElementById('a-comp-target-margin').value !== '' || (pendingAuctionComparables || []).length) {
+            calcCompValuation();
+        }
+    }
+}
 /* 📐 예상매도가 = 실거래기반 시세(매매기록) + 호가·매물재고로 추정한 "시장 온도" 가중치.
    설계 원리(부동산 시장에서 널리 쓰이는 "재고월수(months of supply)" 개념을 근사 적용):
    1) 기준값 = 실거래가 기반 비교물건 시세(getCompEstValue().estValue). 가장 신뢰도 높은 값이라
       항상 기준(anchor)으로 삼고, 호가는 그 위에 "시장이 얼마나 타이트한지"에 따라 가중 반영함.
-   2) 재고월수 = 현재 매물재고 ÷ 월평균 거래건수(비교물건 중 최근 6개월 실거래건수 ÷ 6).
+   2) 재고월수 = 현재 매물재고 ÷ 월평균 거래건수. 아파트는 등록된 비교물건 중 최근 6개월
+      실거래건수 ÷ 6을 씀(단지 내 반복거래가 있어 표본이 충분한 경우가 많음). 연립다세대·
+      단독은 그 표본이 원래 너무 적어(위 캐시 설명 참고), 네이버부동산과 동일 필터로 반경
+      검색한 주변 매매 실거래(과거 1년) ÷ 12를 대신 씀 - 기간을 6개월에서 1년으로 늘려서
+      계절성·우연한 공백 구간의 영향도 줄임.
       재고월수가 짧을수록(=거래 대비 매물이 적음) 매도자 우위 시장이라 호가에 가깝게 팔리고,
       길수록(=매물이 안 팔리고 쌓임) 매수자 우위라 호가 대비 크게 할인되어 팔리는 경향이 있음.
    3) 재고월수 구간별 호가 반영비중(marketFactor). 아래 구간·비중은 일반적인 부동산 시장 관행을
@@ -4705,7 +4748,7 @@ function renderListingCheckedLabel() {
         2~4개월(균형시장)     : 50%
         4~8개월(매수자 우위)  : 30%
         8개월~(공급과잉)      : 15%
-      재고월수를 못 구하면(매물재고 미입력, 또는 최근 6개월 비교 실거래 없음) 기본값 30% 사용.
+      재고월수를 못 구하면(매물재고 미입력, 또는 비교 실거래 표본 부족) 기본값 30% 사용.
    4) 예상매도가 = 기준값×(1-반영비중) + 호가중간값×반영비중 */
 function calcMarketAdjustedSalePrice() {
     var est = getCompEstValue();
@@ -4718,18 +4761,41 @@ function calcMarketAdjustedSalePrice() {
     var listingCount = parseFloat(document.getElementById('a-listing-count').value);
     if (isNaN(listingCount)) listingCount = null;
 
-    var list = pendingAuctionComparables || [];
-    var now = new Date();
-    var sixMoAgo = new Date(now.getFullYear(), now.getMonth() - 6, now.getDate());
-    var recentCount = list.filter(function(c) {
-        if (!c.date) return false;
-        var d = new Date(c.date);
-        return !isNaN(d.getTime()) && d >= sixMoAgo;
-    }).length;
-    var monthlyRate = recentCount / 6;
+    var propType = document.getElementById('a-prop-type').value;
+    var recentCount, monthlyRate, usedRadius = false;
 
+    if (propType === 'villa') {
+        var ctx = getAuctionAddressContext();
+        var pyungForKey = parseFloat(document.getElementById('a-pyung').value) || null;
+        var buildYearForKey = getAuctionBuildYear();
+        var key = villaRadiusSaleKey(ctx, pyungForKey, buildYearForKey);
+        if (key && villaRadiusSaleCache.key === key && villaRadiusSaleCache.count !== null) {
+            recentCount = villaRadiusSaleCache.count;
+            monthlyRate = recentCount / 12; // 과거 1년 기준
+            usedRadius = true;
+        } else {
+            refreshVillaRadiusSaleCount(); // 아직 못 가져왔으면 비동기로 요청(완료되면 자동 재계산)만 걸어두고, 이번 렌더는 아래 비교물건 기반 값으로 표시
+        }
+    }
+    if (!usedRadius) {
+        var list = pendingAuctionComparables || [];
+        var now = new Date();
+        var sixMoAgo = new Date(now.getFullYear(), now.getMonth() - 6, now.getDate());
+        recentCount = list.filter(function(c) {
+            if (!c.date) return false;
+            var d = new Date(c.date);
+            return !isNaN(d.getTime()) && d >= sixMoAgo;
+        }).length;
+        monthlyRate = recentCount / 6;
+    }
+
+    // ⚠️ 표본이 너무 적으면(특히 연립다세대·단독처럼 "단지" 없이 개별 건물끼리 비교하는 경우 -
+    // 동일 매물이 반복 거래되는 아파트 단지와 달리 거래 자체가 원래 드묾) 1~2건 차이만으로
+    // 재고월수가 몇 배씩 요동쳐 신뢰하기 어려움. 최소 표본(3건) 미만이면 재고월수 계산 자체를
+    // 하지 않고 기본 반영비중(30%)으로 폴백하고, 그 이유를 명시함.
+    var MIN_RECENT_COUNT_FOR_RATE = 3;
     var monthsOfSupply = null, marketFactor = 0.3, dataWarning = null;
-    if (listingCount !== null && monthlyRate > 0) {
+    if (listingCount !== null && monthlyRate > 0 && recentCount >= MIN_RECENT_COUNT_FOR_RATE) {
         monthsOfSupply = listingCount / monthlyRate;
         if (monthsOfSupply <= 2) marketFactor = 0.7;
         else if (monthsOfSupply <= 4) marketFactor = 0.5;
@@ -4738,7 +4804,11 @@ function calcMarketAdjustedSalePrice() {
     } else {
         dataWarning = (listingCount === null)
             ? '매물재고를 입력하면 재고월수까지 반영해 더 정교하게 계산합니다.'
-            : '최근 6개월 비교 실거래가 부족해 재고월수를 계산할 수 없어 기본 반영비중(30%)을 사용합니다.';
+            : (recentCount < MIN_RECENT_COUNT_FOR_RATE
+                ? (usedRadius
+                    ? '반경 내 유사 매물(평형·연식 오차범위, 과거 1년) 실거래가 ' + recentCount + '건뿐이라 재고월수 추정이 불안정해 반영하지 않았습니다 - 기본 반영비중(30%)을 사용합니다.'
+                    : '비교물건 중 최근 6개월 실거래가 ' + recentCount + '건뿐이라 재고월수 추정이 불안정해(표본 부족) 반영하지 않았습니다. 연립다세대·단독은 아파트 단지와 달리 거래 빈도가 원래 낮아 이런 경우가 흔합니다 - 기본 반영비중(30%)을 사용합니다.')
+                : '최근 비교 실거래가 부족해 재고월수를 계산할 수 없어 기본 반영비중(30%)을 사용합니다.');
     }
 
     var blendedValue = Math.round(est.estValue * (1 - marketFactor) + askMid * marketFactor);
@@ -4756,6 +4826,7 @@ function calcMarketAdjustedSalePrice() {
         marketFactor: marketFactor,
         blendedValue: blendedValue,
         dataWarning: dataWarning,
+        sampleSource: usedRadius ? '반경 내 유사매물 1년' : (propType === 'villa' ? '등록 비교물건 6개월(반경조회 준비중)' : '등록 비교물건 6개월'),
     };
 }
 function renderMarketAdjustedPrice() {
@@ -4767,7 +4838,7 @@ function renderMarketAdjustedPrice() {
         + '<div style="font-size:12px;font-weight:bold;color:#f57f17;margin-bottom:4px;">📐 시장상황 반영 예상매도가: ' + toEok(String(r.blendedValue)) + '</div>'
         + '<div style="font-size:10.5px;color:#795548;">실거래기반 ' + toEok(String(r.baseValue)) + ' + 호가중간값 ' + toEok(String(r.askMid))
         + ' → 호가 반영비중 ' + Math.round(r.marketFactor * 100) + '%'
-        + (r.monthsOfSupply !== null ? ' (재고월수 약 ' + r.monthsOfSupply + '개월 기준)' : '')
+        + (r.monthsOfSupply !== null ? ' (재고월수 약 ' + r.monthsOfSupply + '개월, ' + r.sampleSource + ' 기준)' : '')
         + '</div>'
         + (r.gapPct !== null
             ? '<div style="font-size:10.5px;color:' + (r.gapPct > 0 ? '#c62828' : '#2e7d32') + ';margin-top:2px;">'
