@@ -87,6 +87,34 @@ function toEok(manwon) {
     return (neg ? '-' : '') + s;
 }
 var PROP_LABEL = { house:'주택', officetel:'오피스텔', other:'그외' };
+// ⚠️ 2026-08 추가: index.html의 calcMargin()/calcLoanAmount()와 동일한 대출이자 계산을
+// 여기서도 재현함 - 예전엔 이 대시보드의 총비용(totalCost)에 대출이자가 아예 빠져 있어서,
+// index.html 마진분석 화면과 여기 누적리포트 숫자가 서로 안 맞는 오차가 있었음.
+// (index.html은 대출이자를 이미 반영하는데(마진분석에 보유기간 대출이자 반영), 이 대시보드는
+// 반영이 안 된 채로 남아있던 걸 뒤늦게 맞춤.) 계산식·기본값은 index.html과 완전히 동일하게 유지.
+var DEFAULT_LOAN_RATE = { individual: 5.0, dealer: 6.5 };
+function calcLoanAmount(bidMethod, bid, appraisal) {
+    if (!bid || bid <= 0) return 0;
+    if (bidMethod === 'dealer') {
+        var trustLoan = Math.round(bid * 0.9);
+        return trustLoan < 5000 ? 0 : trustLoan;
+    }
+    var byBid = bid * 0.8;
+    var byAppraisal = (appraisal && appraisal > 0) ? appraisal * 0.7 : Infinity;
+    return Math.round(Math.min(byBid, byAppraisal));
+}
+// 실제 대출을 받아 금액이 확정됐으면(index.html "실제 대출금액" 수동입력) 그 값을 우선 씀 -
+// 비율 자동계산(calcLoanAmount)보다 실제 승인금액이 더 정확하므로.
+function getEffectiveLoanAmount(bidMethod, bid, appraisal, manualLoanAmount) {
+    if (manualLoanAmount && manualLoanAmount > 0) return manualLoanAmount;
+    return calcLoanAmount(bidMethod, bid, appraisal);
+}
+function calcLoanInterest(loanAmount, annualRatePercent, holdMonths) {
+    if (!loanAmount || loanAmount <= 0 || !holdMonths || holdMonths <= 0) return 0;
+    var rate = (annualRatePercent && annualRatePercent > 0) ? annualRatePercent : 0;
+    if (rate <= 0) return 0;
+    return Math.round(loanAmount * (rate / 100) * (holdMonths / 12));
+}
 
 function extractRegion(addr) {
     addr = String(addr || '').trim();
@@ -110,7 +138,17 @@ function computeDeal(a) {
     var etc    = parseInt(a.etc) || 0;
     var propertyTax = parseInt(a.propertyTax) || 0;
     var compTax = parseInt(a.compTax) || 0;
-    var totalCost = bid + tax + registryFee + evictionFee + repair + agent + etc + propertyTax + compTax;
+    // 대출이자 - index.html의 calcMargin()과 동일하게 계산. "실제 대출금액"을 수동입력해뒀으면
+    // (index.html "실제 대출금액(수동)" 필드) 그 금액을 우선 쓰고, 없으면 낙찰가 기준 자동계산.
+    var appraisal = parseInt(a.appraisal) || 0;
+    var bidMethod = a.bidMethod || 'dealer';
+    var holdMonths = parseInt(a.holdMonths) || 0;
+    var loanRateSaved = parseFloat(a.loanRate);
+    var loanRate = (loanRateSaved > 0) ? loanRateSaved : DEFAULT_LOAN_RATE[bidMethod === 'dealer' ? 'dealer' : 'individual'];
+    var loanAmountManual = parseInt(a.loanAmountManual) || 0;
+    var loanAmount = getEffectiveLoanAmount(bidMethod, bid, appraisal, loanAmountManual);
+    var interestCost = calcLoanInterest(loanAmount, loanRate, holdMonths);
+    var totalCost = bid + tax + registryFee + evictionFee + repair + agent + etc + propertyTax + compTax + interestCost;
     var sell = parseInt(a.actualSell) || parseInt(a.target) || 0;
     var profit = sell - totalCost;
     var roi = totalCost > 0 ? Math.round(profit / totalCost * 1000) / 10 : 0;
@@ -121,6 +159,7 @@ function computeDeal(a) {
         propType: a.propType || 'house',
         bid: bid, tax: tax, registryFee: registryFee, evictionFee: evictionFee, repair: repair, agent: agent, etc: etc,
         propertyTax: propertyTax, compTax: compTax,
+        loanAmount: loanAmount, loanAmountManual: loanAmountManual, loanRate: loanRate, interestCost: interestCost,
         totalCost: totalCost, sell: sell, profit: profit, roi: roi,
         bidDate: a.bidDate || ''
     };
@@ -202,7 +241,8 @@ function renderCostRatio(deals) {
     var sumEtc = deals.reduce(function(s,d){return s+d.etc;},0);
     var sumPropertyTax = deals.reduce(function(s,d){return s+d.propertyTax;},0);
     var sumCompTax = deals.reduce(function(s,d){return s+d.compTax;},0);
-    var total = sumBid + sumTax + sumRegistry + sumEviction + sumRepair + sumAgent + sumEtc + sumPropertyTax + sumCompTax;
+    var sumInterest = deals.reduce(function(s,d){return s+d.interestCost;},0);
+    var total = sumBid + sumTax + sumRegistry + sumEviction + sumRepair + sumAgent + sumEtc + sumPropertyTax + sumCompTax + sumInterest;
     if (!total) { document.getElementById('cost-ratio').innerHTML = '<div class="empty-msg">데이터 없음</div>'; return; }
     var items = [
         { label:'낙찰가', v:sumBid, color:'#6a1b9a' },
@@ -213,6 +253,7 @@ function renderCostRatio(deals) {
         { label:'중개수수료', v:sumAgent, color:'#1565c0' },
         { label:'재산세', v:sumPropertyTax, color:'#8d6e63' },
         { label:'종합부동산세', v:sumCompTax, color:'#6d4c41' },
+        { label:'대출이자', v:sumInterest, color:'#bf360c' },
         { label:'기타비용', v:sumEtc, color:'#9e9e9e' }
     ];
     var html = '';
@@ -298,6 +339,8 @@ function renderDealList(deals) {
             + detailItem('재산세', toEok(d.propertyTax))
             + detailItem('종합부동산세', toEok(d.compTax))
             + detailItem('기타비용', toEok(d.etc))
+            + detailItem('대출금액' + (d.loanAmountManual > 0 ? '(실제)' : '(자동계산)'), d.loanAmount > 0 ? toEok(d.loanAmount) : '—')
+            + detailItem('대출이자(연' + d.loanRate.toFixed(1) + '%)', toEok(d.interestCost))
             + detailItem('총 투자비용', toEok(d.totalCost))
             + detailItem('실제 매도가', toEok(d.sell))
             + detailItem('입찰일', d.bidDate || '-')
