@@ -858,9 +858,14 @@ tr:hover td { background:#fffde7; }
             </div>
         </div>
         <div class="margin-result" id="margin-result-box">
-            <div class="margin-result-title">💡 예상 마진 분석</div>
+            <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:6px;margin-bottom:6px;">
+                <div class="margin-result-title" style="margin-bottom:0;">💡 예상 마진 분석</div>
+                <button type="button" class="modal-btn btn-gray" id="tax-update-btn" style="font-size:10.5px;padding:4px 8px;" onclick="updateTaxRates()">🔄 최신 세율 적용</button>
+            </div>
+            <div id="tax-update-status" style="font-size:10px;color:#999;margin-bottom:6px;"></div>
             <div class="margin-grid" id="margin-grid"></div>
             <div id="vat-warn-box"></div>
+            <div id="tax-update-report-box" style="display:none;"></div>
         </div>
 
         <div class="modal-group" id="mg-property">
@@ -5123,40 +5128,158 @@ function isMetroArea(addr) {
     return /^(서울|경기|인천)/.test(a);
 }
 /* 취득세(지방교육세+농어촌특별세 포함 실효세율) - 만원 단위 입력/반환 */
+/* ════════════════════════════════════
+   TAX_CONFIG - 취득세·재산세·종부세·양도소득세·부가세 계산에 쓰이는 모든 세율·구간·공제액을
+   한 곳에 모아둔 설정 객체. 원래는 아래 각 계산함수 안에 숫자가 그대로 박혀 있었는데(예:
+   calcAcquisitionTaxDetailed 안의 8/12%, calcResaleIncomeTax 안의 0.7/0.6/0.02 등), 세법·
+   시행령이 자주 바뀌는 항목들이라 "🔄 최신 세율 적용" 버튼(예상마진분석 박스)이 AI 웹검색
+   결과로 이 객체의 값만 교체하면 모든 계산함수에 즉시 반영되도록 통합함. 세율의 "구조"(어떤
+   조건에서 어떤 공식을 쓰는지 - 예: 조정지역+다주택이면 중과, 2년미만 보유는 단기세율 등)는
+   법 조문 자체라 코드 구조로 남겨두고, 그 안의 "숫자"(세율%, 구간 금액, 공제액)만 이 객체로
+   뺐음. DEFAULT_TAX_CONFIG는 되돌리기·부분 검증용 원본 사본(JSON 딥카피)으로 따로 보관함.
+   ⚠️ "🔄 최신 세율 적용"으로 바뀐 값은 이 브라우저 세션에서만 유지되고, 새로고침하면 아래
+   코드 내장 기본값으로 돌아감(서버 DB에 저장하지 않음) - 실제로 세율이 바뀐 게 확인되면
+   Claude에게 알려줘서 이 기본값 자체를 영구 수정해야 함.
+════════════════════════════════════ */
+var TAX_CONFIG = {
+    lastUpdated: null,        // "최신 세율 적용" 마지막 실행 시각(ISO) - null이면 코드 내장 기본값 그대로
+    lastUpdateSummary: null,  // 마지막 적용 시 AI가 정리한 리포트 요약
+    acquisition: {
+        baseTierLowMax: 60000,          // 6억원 이하 구간 상한(만원) - 세율 1%
+        baseTierMidMax: 90000,          // 9억원 이하 구간 상한(만원) - 1~3% 선형 구간(지방세법 시행령 공식 자체는 고정)
+        heavyRateAdjusted2: 8,          // 조정대상지역 2주택 중과세율(%)
+        heavyRateAdjusted3plus: 12,     // 조정대상지역 3주택이상 중과세율(%)
+        heavyRateNonAdjusted3: 8,       // 비조정대상지역 3주택 중과세율(%)
+        heavyRateNonAdjusted4plus: 12,  // 비조정대상지역 4주택이상 중과세율(%)
+        eduTaxAddPct: 0.4,              // 중과 대상 지방교육세 가산(%p, 정액)
+        nongTaxAdd8: 0.6,               // 중과8%+전용85㎡초과 시 농특세 가산(%p)
+        nongTaxAdd12: 1.0,              // 중과12%+전용85㎡초과 시 농특세 가산(%p)
+        nongTaxAddBase85: 0.2,          // 비중과+전용85㎡초과 시 농특세 가산(%p)
+        otherPropertyRatePct: 4.6       // 오피스텔·상가·토지 등 정액 취득세율(%, 농특세+지방교육세 포함)
+    },
+    propertyTax: {
+        // 1주택자 공정시장가액비율 - 공시가격(원) 구간별. maxWon:Infinity가 마지막 구간이어야 함.
+        ratio1HouseTiers: [
+            { maxWon: 300000000, ratio: 0.43 },
+            { maxWon: 600000000, ratio: 0.44 },
+            { maxWon: Infinity,  ratio: 0.45 }
+        ],
+        ratioMultiHouse: 0.6,   // 다주택자·법인 공정시장가액비율
+        // 과세표준(원) 구간별 누진세율(각 구간은 그 구간에 걸린 부분에만 적용 - 계단식 누적계산)
+        brackets: [
+            { maxWon: 60000000,  rate: 0.001 },
+            { maxWon: 150000000, rate: 0.0015 },
+            { maxWon: 300000000, rate: 0.0025 },
+            { maxWon: Infinity,  rate: 0.004 }
+        ],
+        eduTaxRate: 0.2,     // 지방교육세(재산세액의 20%)
+        urbanTaxRate: 0.0014 // 도시지역분(근사, 과세표준의 0.14%)
+    },
+    compTax: {
+        deduction1HouseManwon: 120000, // 1세대1주택 공제(만원) = 12억
+        deductionOtherManwon: 90000,   // 그 외 공제(만원) = 9억
+        ratio: 0.6,                    // 공정시장가액비율
+        levyRate: 0.2,                 // 농어촌특별세(종부세액의 20%)
+        // 과세표준(만원) 구간별 세율·누진공제(만원) - 2주택 이하 기준
+        brackets: [
+            { minManwon: 0,      rate: 0.005, dedManwon: 0 },
+            { minManwon: 30000,  rate: 0.007, dedManwon: 60 },
+            { minManwon: 60000,  rate: 0.010, dedManwon: 240 },
+            { minManwon: 120000, rate: 0.020, dedManwon: 1440 },
+            { minManwon: 250000, rate: 0.030, dedManwon: 3940 },
+            { minManwon: 500000, rate: 0.040, dedManwon: 8940 },
+            { minManwon: 940000, rate: 0.050, dedManwon: 18340 }
+        ]
+    },
+    incomeTax: {
+        // 과세표준(만원) 구간별 세율·누진공제(만원) - 종합소득세/양도소득세 공통 8단계
+        brackets: [
+            { minManwon: 0,      rate: 0.06, dedManwon: 0 },
+            { minManwon: 1400,   rate: 0.15, dedManwon: 126 },
+            { minManwon: 5000,   rate: 0.24, dedManwon: 576 },
+            { minManwon: 8800,   rate: 0.35, dedManwon: 1544 },
+            { minManwon: 15000,  rate: 0.38, dedManwon: 1994 },
+            { minManwon: 30000,  rate: 0.40, dedManwon: 2594 },
+            { minManwon: 50000,  rate: 0.42, dedManwon: 3594 },
+            { minManwon: 100000, rate: 0.45, dedManwon: 6594 }
+        ],
+        localTaxRate: 0.1,              // 지방소득세(소득세액의 10%)
+        basicDeductionManwon: 250,      // 양도소득 기본공제(연 250만원)
+        shortRateUnder1y: 0.7,          // 단기양도세율(보유 1년미만)
+        shortRateUnder2y: 0.6,          // 단기양도세율(보유 1년~2년미만)
+        longTermDeductionPerYear: 0.02, // 장기보유특별공제(연 2%)
+        longTermDeductionMax: 0.3,      // 장기보유특별공제 최대(30%)
+        heavySurcharge2House: 0.20,     // 조정대상지역 2주택 양도세 중과 가산율
+        heavySurcharge3House: 0.30      // 조정대상지역 3주택이상 양도세 중과 가산율
+    },
+    vat: {
+        rate: 0.1,                  // 부가가치세율(10%)
+        nationalHousingAreaM2: 85   // 국민주택규모 기준(전용면적 ㎡)
+    }
+};
+// JSON.stringify/parse로는 Infinity를 못 살림(JSON.stringify가 Infinity를 null로 바꿔버림) -
+// TAX_CONFIG.propertyTax.brackets 마지막 구간이 실제 Infinity 값을 쓰고 있어서, 되돌리기용
+// 원본 사본은 반드시 이 재귀 복사 함수로 떠야 함.
+function deepCloneTaxConfig(obj) {
+    if (Array.isArray(obj)) return obj.map(deepCloneTaxConfig);
+    if (obj && typeof obj === 'object') {
+        var out = {};
+        for (var k in obj) out[k] = deepCloneTaxConfig(obj[k]);
+        return out;
+    }
+    return obj;
+}
+var DEFAULT_TAX_CONFIG = deepCloneTaxConfig(TAX_CONFIG);
+// 계단식(누진) 구간 세금 계산 공용 헬퍼 - brackets:[{maxWon,rate}, ...] 오름차순, 마지막 구간은
+// maxWon:Infinity여야 함. 재산세처럼 "구간마다 그 구간에 걸린 금액에만 그 구간 세율"을 적용하는
+// 방식(공제액을 따로 안 쓰고 실제로 누적 계산)에 씀 - 종부세/양도세처럼 "과세표준×세율-누진공제"
+// 공식이 이미 공표되어 있는 경우는 아래 lookupBracketWithDeduction을 대신 씀.
+function calcCumulativeBracketTax(base, brackets) {
+    var tax = 0, prevMax = 0;
+    for (var i = 0; i < brackets.length; i++) {
+        var b = brackets[i];
+        if (base <= b.maxWon) { tax += (base - prevMax) * b.rate; break; }
+        tax += (b.maxWon - prevMax) * b.rate;
+        prevMax = b.maxWon;
+    }
+    return tax;
+}
 function calcAcquisitionTaxDetailed(bidManwon, propType, pyung, houseRank, isAdjusted, isLocalCheap) {
     if (!bidManwon || bidManwon <= 0) return 0;
     var bidWon = bidManwon * 10000;
+    var T = TAX_CONFIG.acquisition;
     if (propType === 'officetel' || propType === 'other') {
-        // 오피스텔·상가·토지 등 주택 외 매매: 4.6% 정액(농특세+지방교육세 포함), 주택수 중과 대상 아님
-        return Math.round(bidManwon * 0.046);
+        // 오피스텔·상가·토지 등 주택 외 매매: 정액(농특세+지방교육세 포함), 주택수 중과 대상 아님
+        return Math.round(bidManwon * T.otherPropertyRatePct / 100);
     }
-    var over85 = (pyung || 0) > 25.7; // 전용 85㎡ 초과 근사(1평=3.3058㎡)
+    var over85 = (pyung || 0) > (TAX_CONFIG.vat.nationalHousingAreaM2 / 3.305785); // 전용 85㎡ 초과 근사(1평=3.3058㎡)
     var rank = houseRank || 1;
     function baseRatePct() {
-        if (bidWon <= 600000000) return 1;
-        if (bidWon <= 900000000) return (bidWon / 100000000) * (2 / 3) - 3;
+        var lowMaxWon = T.baseTierLowMax * 10000, midMaxWon = T.baseTierMidMax * 10000;
+        if (bidWon <= lowMaxWon) return 1;
+        if (bidWon <= midMaxWon) return (bidWon / 100000000) * (2 / 3) - 3; // 6억~9억 구간 선형식 자체는 법정 고정 공식
         return 3;
     }
     var isHeavy = false, heavyPct = 0;
     if (!isLocalCheap) {
         if (isAdjusted) {
-            if (rank === 2) { isHeavy = true; heavyPct = 8; }
-            else if (rank >= 3) { isHeavy = true; heavyPct = 12; }
+            if (rank === 2) { isHeavy = true; heavyPct = T.heavyRateAdjusted2; }
+            else if (rank >= 3) { isHeavy = true; heavyPct = T.heavyRateAdjusted3plus; }
         } else {
-            // ⚠️ 비조정대상지역도 3주택부터 8% 중과 대상(4주택 이상만 12%로 처리하던
-            // 기존 코드에 3주택 구간이 빠져 있었음 - 지방세법 제13조의2 기준으로 보정).
-            if (rank === 3) { isHeavy = true; heavyPct = 8; }
-            else if (rank >= 4) { isHeavy = true; heavyPct = 12; }
+            // ⚠️ 비조정대상지역도 3주택부터 중과 대상(4주택 이상만 처리하던 기존 코드에 3주택
+            // 구간이 빠져 있었음 - 지방세법 제13조의2 기준으로 보정).
+            if (rank === 3) { isHeavy = true; heavyPct = T.heavyRateNonAdjusted3; }
+            else if (rank >= 4) { isHeavy = true; heavyPct = T.heavyRateNonAdjusted4plus; }
         }
     }
     var totalRatePct;
     if (isHeavy) {
-        var eduAdd = 0.4;
-        var nongAdd = over85 ? (heavyPct === 8 ? 0.6 : 1.0) : 0;
-        totalRatePct = heavyPct + eduAdd + nongAdd; // 8%→8.4/9.0%, 12%→12.4/13.4%
+        var eduAdd = T.eduTaxAddPct;
+        var nongAdd = over85 ? (heavyPct === 8 ? T.nongTaxAdd8 : T.nongTaxAdd12) : 0;
+        totalRatePct = heavyPct + eduAdd + nongAdd; // 8%→8.4/9.0%, 12%→12.4/13.4% (기본값 기준)
     } else {
         var base = baseRatePct();
-        totalRatePct = base + base * 0.1 + (over85 ? 0.2 : 0); // 지방교육세(표준세율의10%)+농특세(85초과0.2%p)
+        totalRatePct = base + base * 0.1 + (over85 ? T.nongTaxAddBase85 : 0); // 지방교육세(표준세율의10%)+농특세(85초과)
     }
     return Math.round(bidManwon * totalRatePct / 100);
 }
@@ -5225,54 +5348,53 @@ function autoCalcRegistryFee() {
    (재산세)·국세청 홈택스(종부세)에서 한 번 더 확인하세요. */
 function calcPropertyTax(officialPriceWon, houseRank, holdsJune1) {
     if (!holdsJune1 || !officialPriceWon || officialPriceWon <= 0) return 0;
+    var T = TAX_CONFIG.propertyTax;
     var rank = houseRank || 1;
     var ratio;
     if (rank === 1) {
-        ratio = officialPriceWon <= 300000000 ? 0.43 : (officialPriceWon <= 600000000 ? 0.44 : 0.45);
+        var tier = T.ratio1HouseTiers[T.ratio1HouseTiers.length - 1];
+        for (var i = 0; i < T.ratio1HouseTiers.length; i++) {
+            if (officialPriceWon <= T.ratio1HouseTiers[i].maxWon) { tier = T.ratio1HouseTiers[i]; break; }
+        }
+        ratio = tier.ratio;
     } else {
-        ratio = 0.6;
+        ratio = T.ratioMultiHouse;
     }
     var base = officialPriceWon * ratio;
-    var propTax;
-    if (base <= 60000000) propTax = base * 0.001;
-    else if (base <= 150000000) propTax = 60000 + (base - 60000000) * 0.0015;
-    else if (base <= 300000000) propTax = 195000 + (base - 150000000) * 0.0025;
-    else propTax = 570000 + (base - 300000000) * 0.004;
-    var eduTax = propTax * 0.2;      // 지방교육세
-    var urbanTax = base * 0.0014;    // 도시지역분(근사)
+    var propTax = calcCumulativeBracketTax(base, T.brackets);
+    var eduTax = propTax * T.eduTaxRate;      // 지방교육세
+    var urbanTax = base * T.urbanTaxRate;     // 도시지역분(근사)
     return Math.round((propTax + eduTax + urbanTax) / 10000); // 만원 단위로 반환
 }
-var COMP_TAX_BRACKETS = [ // 종합부동산세 과세표준 구간(만원)별 세율·누진공제 - 2주택 이하 기준(2026)
-    { min: 0,      rate: 0.005, ded: 0 },
-    { min: 30000,  rate: 0.007, ded: 60 },
-    { min: 60000,  rate: 0.010, ded: 240 },
-    { min: 120000, rate: 0.020, ded: 1440 },
-    { min: 250000, rate: 0.030, ded: 3940 },
-    { min: 500000, rate: 0.040, ded: 8940 },
-    { min: 940000, rate: 0.050, ded: 18340 }
-];
+// 종부세·양도세처럼 "과세표준×세율-누진공제" 공식으로 공표된 구간표에 쓰는 공용 조회 헬퍼.
+// brackets: [{minManwon, rate, dedManwon}, ...] 오름차순.
+function lookupBracketWithDeduction(baseManwon, brackets) {
+    var br = brackets[0];
+    for (var i = 0; i < brackets.length; i++) {
+        if (baseManwon >= brackets[i].minManwon) br = brackets[i]; else break;
+    }
+    return br;
+}
 function calcCompTaxRaw(baseManwon) {
     if (!baseManwon || baseManwon <= 0) return 0;
-    var br = COMP_TAX_BRACKETS[0];
-    for (var i = 0; i < COMP_TAX_BRACKETS.length; i++) {
-        if (baseManwon >= COMP_TAX_BRACKETS[i].min) br = COMP_TAX_BRACKETS[i]; else break;
-    }
-    return Math.max(baseManwon * br.rate - br.ded, 0);
+    var br = lookupBracketWithDeduction(baseManwon, TAX_CONFIG.compTax.brackets);
+    return Math.max(baseManwon * br.rate - br.dedManwon, 0);
 }
 /* totalOfficialPriceManwon: 이 물건 포함 전체 보유주택 공시가격 합계(만원, 입력 없으면 이 물건
    단독 공시가격만 사용). propertyOfficialPriceWon: 이 물건의 공시가격(원). */
 function calcCompTax(totalOfficialPriceManwon, propertyOfficialPriceWon, houseRank, holdsJune1) {
     if (!holdsJune1) return 0;
+    var T = TAX_CONFIG.compTax;
     var propertyManwon = Math.round((propertyOfficialPriceWon || 0) / 10000);
     var totalManwon = totalOfficialPriceManwon > 0 ? totalOfficialPriceManwon : propertyManwon;
     if (!totalManwon || totalManwon <= 0) return 0;
-    var deduction = (houseRank === 1 || houseRank === '1') ? 120000 : 90000; // 1세대1주택 12억 / 그 외 9억
-    var ratio = 0.6;
+    var deduction = (houseRank === 1 || houseRank === '1') ? T.deduction1HouseManwon : T.deductionOtherManwon;
+    var ratio = T.ratio;
     var taxWith = calcCompTaxRaw(Math.max(totalManwon - deduction, 0) * ratio);
     var totalWithout = Math.max(totalManwon - propertyManwon, 0);
     var taxWithout = calcCompTaxRaw(Math.max(totalWithout - deduction, 0) * ratio);
     var marginalTax = Math.max(taxWith - taxWithout, 0);
-    var levy = marginalTax * 0.2; // 농어촌특별세
+    var levy = marginalTax * T.levyRate; // 농어촌특별세
     return Math.round(marginalTax + levy);
 }
 function autoCalcHoldingTax() {
@@ -5367,49 +5489,36 @@ function autoCalcCleaningSilent() {
      (기본+20~30%p) 중 세액이 더 큰 쪽을 적용(국세청 기준).
    profitManwon: 세전 이익(매도가-입찰가-총부대비용, 만원). holdMonths: 보유기간(개월).
    isAdjusted/houseRank: 취득세 계산과 동일하게 a-is-adjusted/a-house-rank 값을 그대로 사용. */
-var INCOME_TAX_BRACKETS = [
-    { min: 0,      rate: 0.06, ded: 0 },
-    { min: 1400,   rate: 0.15, ded: 126 },
-    { min: 5000,   rate: 0.24, ded: 576 },
-    { min: 8800,   rate: 0.35, ded: 1544 },
-    { min: 15000,  rate: 0.38, ded: 1994 },
-    { min: 30000,  rate: 0.40, ded: 2594 },
-    { min: 50000,  rate: 0.42, ded: 3594 },
-    { min: 100000, rate: 0.45, ded: 6594 }
-]; // min/ded 단위: 만원
 function lookupIncomeTaxBracket(baseManwon) {
-    var r = INCOME_TAX_BRACKETS[0];
-    for (var i = 0; i < INCOME_TAX_BRACKETS.length; i++) {
-        if (baseManwon >= INCOME_TAX_BRACKETS[i].min) r = INCOME_TAX_BRACKETS[i]; else break;
-    }
-    return r;
+    return lookupBracketWithDeduction(baseManwon, TAX_CONFIG.incomeTax.brackets);
 }
 function calcResaleIncomeTax(bidMethod, profitManwon, holdMonths, isAdjusted, houseRank) {
     if (!profitManwon || profitManwon <= 0) return { incomeTax: 0, localTax: 0, totalTax: 0, rateLabel: '' };
+    var T = TAX_CONFIG.incomeTax;
     if (bidMethod === 'dealer') {
         var br = lookupIncomeTaxBracket(profitManwon);
-        var incomeTax = Math.max(Math.round(profitManwon * br.rate - br.ded), 0);
-        var localTax = Math.round(incomeTax * 0.1);
+        var incomeTax = Math.max(Math.round(profitManwon * br.rate - br.dedManwon), 0);
+        var localTax = Math.round(incomeTax * T.localTaxRate);
         return { incomeTax: incomeTax, localTax: localTax, totalTax: incomeTax + localTax, rateLabel: Math.round(br.rate * 100) + '%' };
     }
     var months = holdMonths || 0;
-    var basicDeduction = 250; // 양도소득 기본공제(연 250만원)
+    var basicDeduction = T.basicDeductionManwon; // 양도소득 기본공제
     var rank = houseRank || 1;
     // 조정대상지역+다주택(2주택 이상) = 양도세 중과 대상 (2026.5.9 유예 종료, 재시행 중)
     var isHeavy = !!isAdjusted && rank >= 2;
-    var surcharge = isHeavy ? (rank >= 3 ? 0.30 : 0.20) : 0;
+    var surcharge = isHeavy ? (rank >= 3 ? T.heavySurcharge3House : T.heavySurcharge2House) : 0;
     var baseAfterDeduction = Math.max(profitManwon - basicDeduction, 0);
     var incomeTax, rateLabel;
     if (months < 24) {
-        var shortRate = months < 12 ? 0.7 : 0.6;
+        var shortRate = months < 12 ? T.shortRateUnder1y : T.shortRateUnder2y;
         var shortTax = Math.round(baseAfterDeduction * shortRate);
-        var shortLabel = months < 12 ? '단기 70%' : '단기 60%';
+        var shortLabel = months < 12 ? ('단기 ' + Math.round(T.shortRateUnder1y * 100) + '%') : ('단기 ' + Math.round(T.shortRateUnder2y * 100) + '%');
         if (isHeavy) {
             // 중과 대상은 장기보유특별공제와 무관하게(2년 미만이라 애초에 대상도 아님)
             // 기본세율+중과율로 계산한 세액과, 단기세율로 계산한 세액 중 더 큰 쪽을 적용
             var brShort = lookupIncomeTaxBracket(baseAfterDeduction);
             var heavyRate = brShort.rate + surcharge;
-            var heavyTax = Math.max(Math.round(baseAfterDeduction * heavyRate - brShort.ded), 0);
+            var heavyTax = Math.max(Math.round(baseAfterDeduction * heavyRate - brShort.dedManwon), 0);
             if (heavyTax > shortTax) { incomeTax = heavyTax; rateLabel = '중과 ' + Math.round(heavyRate * 100) + '%'; }
             else { incomeTax = shortTax; rateLabel = shortLabel; }
         } else {
@@ -5419,16 +5528,16 @@ function calcResaleIncomeTax(bidMethod, profitManwon, holdMonths, isAdjusted, ho
         // 중과 대상은 장기보유특별공제 배제 - 기본공제만 적용한 과세표준에 기본세율+중과율 적용
         var brHeavy = lookupIncomeTaxBracket(baseAfterDeduction);
         var heavyRate2 = brHeavy.rate + surcharge;
-        incomeTax = Math.max(Math.round(baseAfterDeduction * heavyRate2 - brHeavy.ded), 0);
+        incomeTax = Math.max(Math.round(baseAfterDeduction * heavyRate2 - brHeavy.dedManwon), 0);
         rateLabel = '중과 ' + Math.round(heavyRate2 * 100) + '%';
     } else {
-        var ltRate = Math.min(Math.floor(months / 12) * 0.02, 0.3);
+        var ltRate = Math.min(Math.floor(months / 12) * T.longTermDeductionPerYear, T.longTermDeductionMax);
         var base = Math.max(profitManwon * (1 - ltRate) - basicDeduction, 0);
         var br2 = lookupIncomeTaxBracket(base);
-        incomeTax = Math.max(Math.round(base * br2.rate - br2.ded), 0);
+        incomeTax = Math.max(Math.round(base * br2.rate - br2.dedManwon), 0);
         rateLabel = Math.round(br2.rate * 100) + '%';
     }
-    var localTax = Math.round(incomeTax * 0.1);
+    var localTax = Math.round(incomeTax * T.localTaxRate);
     return { incomeTax: incomeTax, localTax: localTax, totalTax: incomeTax + localTax, rateLabel: rateLabel };
 }
 /* 입찰보증금 - 최저입찰가의 10%가 기본(법원경매 통상 기준). AI 추출로 depositRate가
@@ -6053,13 +6162,13 @@ function calcMargin() {
     var compEst = getCompEstValue();
     var compBidResult = compEst ? solveAuctionBid(compEst.estValue) : null;
     var compTargetMargin = parseInt(document.getElementById('a-comp-target-margin').value) || 0;
-    // 최저입찰가(법원 고시 최저매각가격) 대비 내 입찰가가 몇 %인지 - 입찰가 자체는 아래에서
-    // 이미 감정가 대비(낙찰률)로도 보여주지만, 실무에서는 "최저가 대비 몇 % 써냈는지"를 더
-    // 자주 기준으로 삼기 때문에(감정가는 시세와 괴리가 큰 경우가 많음) 별도로 추가함.
-    var minBidRate = (minBid > 0 && useBid > 0) ? Math.round(useBid / minBid * 1000) / 10 : 0;
+    // 최저입찰가(법원 고시 최저매각가격)가 최초감정가 대비 몇 %인지(= 흔히 말하는 "최저가율",
+    // 유찰 횟수를 가늠하는 지표 - 1회 유찰마다 보통 20~30%씩 낮아짐). 입찰가 자체의 감정가
+    // 대비 비율은 아래 "낙찰률" 항목에서 이미 보여주므로 여기서는 최저가만 감정가 대비로 표기.
+    var minBidRatioToAppraisal = (appraisal > 0 && minBid > 0) ? Math.round(minBid / appraisal * 1000) / 10 : null;
     document.getElementById('margin-grid').innerHTML =
-        mItem('최저입찰가', minBid > 0 ? toEok(String(minBid)) : '—', '#616161')
-      + mItem(actBid ? '실제 낙찰가' : '내 입찰가', useBid > 0 ? toEok(String(useBid)) + (minBidRate > 0 ? ' (최저가대비 ' + minBidRate + '%)' : '') : '—', '#1a237e')
+        mItem('최저입찰가', minBid > 0 ? toEok(String(minBid)) + (minBidRatioToAppraisal !== null ? ' (최초감정가대비 ' + minBidRatioToAppraisal + '%)' : '') : '—', '#616161')
+      + mItem(actBid ? '실제 낙찰가' : '내 입찰가', useBid > 0 ? toEok(String(useBid)) : '—', '#1a237e')
       + mItem('총 투자비용',    totalCost > 0 ? toEok(String(totalCost)) : '—', '#555')
       + mItem('총 부대비용',    feesSum > 0 ? toEok(String(feesSum)) : '—', '#888')
       + mItem('세전 예상수익',  useSell > 0 ? toEok(String(preTaxMargin)) : '—', preTaxMargin > 0 ? '#2e7d32' : preTaxMargin < 0 ? '#e53935' : '#555')
@@ -7014,11 +7123,12 @@ function calcAuctionVat(bidAmount) {
     }
     var pyung = parseFloat(document.getElementById('a-pyung').value) || 0;
     var areaM2 = pyung > 0 ? Math.round(pyung * 3.305785 * 100) / 100 : 0;
+    var housingAreaM2 = TAX_CONFIG.vat.nationalHousingAreaM2;
     if (!areaM2) {
-        return { applicable: false, reason: '평형을 입력하면 국민주택규모(85㎡) 초과 여부를 판단합니다.' };
+        return { applicable: false, reason: '평형을 입력하면 국민주택규모(' + housingAreaM2 + '㎡) 초과 여부를 판단합니다.' };
     }
-    if (areaM2 <= 85) {
-        return { applicable: false, areaM2: areaM2, reason: '전용면적 약 ' + areaM2 + '㎡ (국민주택규모 85㎡ 이하 - 부가세 면제 대상)' };
+    if (areaM2 <= housingAreaM2) {
+        return { applicable: false, areaM2: areaM2, reason: '전용면적 약 ' + areaM2 + '㎡ (국민주택규모 ' + housingAreaM2 + '㎡ 이하 - 부가세 면제 대상)' };
     }
     var officialPriceWon = parseInt(document.getElementById('a-official-price').value) || 0;
     var siteRightsAreaM2 = parseFloat(document.getElementById('a-site-rights-area').value) || 0;
@@ -7066,7 +7176,7 @@ function calcAuctionVat(bidAmount) {
         buildingRatio: buildingRatio,
         ratioSource: ratioSource,
         buildingValueOfBid: Math.round(buildingValueOfBid),
-        vat: Math.round(buildingValueOfBid * 0.1),
+        vat: Math.round(buildingValueOfBid * TAX_CONFIG.vat.rate),
     };
 }
 /* 목표마진(a-comp-target-margin)을 만족하는 적정입찰가를 이분탐색으로 역산.
@@ -7113,7 +7223,7 @@ function solveAuctionBid(estValue, marginOverride) {
         // 이분탐색 안에서 매 후보마다 다시 계산함 - 세금과 마찬가지로 bid에 종속적임.
         var loanAmount = calcLoanAmount(bidMethod, mid, appraisal);
         var interestCost = calcLoanInterest(loanAmount, loanRate, holdMonths);
-        var vat = vatInfo.computable ? Math.round(mid * vatInfo.buildingRatio * 0.1) : 0;
+        var vat = vatInfo.computable ? Math.round(mid * vatInfo.buildingRatio * TAX_CONFIG.vat.rate) : 0;
         var preTaxCost = mid + acqTax + registryFee + evictionFee + agentFee + repair + etc + moving + cleaning + interestCost + vat + assumedDeposit + unpaidMgmtFee + propertyTax + compTax;
         var preTaxProfit = estValue - preTaxCost;
         var taxResult = calcResaleIncomeTax(bidMethod, preTaxProfit, holdMonths, c.isAdjusted, c.houseRank);
@@ -7334,6 +7444,189 @@ async function generateAiBriefing() {
         box.innerHTML = '<div style="font-size:12px;color:#c62828;">브리핑 생성 실패: ' + e.message + '</div>';
     } finally {
         btn.disabled = false; btn.innerText = '🤖 AI 투자 브리핑 생성';
+    }
+}
+/* ════════════════════════════════════
+   🔄 최신 세율 적용 - TAX_CONFIG(취득세·재산세·종부세·양도세·부가세 계산 상수 전체)를
+   서버(mode:'taxUpdate')가 Claude 웹검색으로 조사한 최신값으로 갱신함.
+   ⚠️ AI가 돌려준 값을 통째로 믿고 덮어쓰지 않음 - sanitizeAndMergeTaxConfig에서 필드 하나하나
+   범위를 검증해서, 말이 되는 값만 반영하고 이상하거나 없는 필드는 기존 기본값을 그대로 둠.
+   ⚠️ 이 적용은 이 브라우저 세션(탭)에만 유지됨 - 새로고침하면 코드 내장 기본값(DEFAULT_TAX_CONFIG)
+   으로 돌아감. 실제로 세율이 바뀐 게 맞다면 이 기본값 자체를 코드에서 영구 수정해야 함(사용자가
+   확인 후 요청).
+════════════════════════════════════ */
+// v가 유한한 숫자이고 [min,max] 범위 안에 있으면 그대로, 아니면 null(반영 안 함) 반환
+function sanitizeNum(v, min, max) {
+    if (typeof v !== 'number' || !isFinite(v)) return null;
+    if (v < min || v > max) return null;
+    return v;
+}
+// bracket/tier 배열 검증 - 각 항목이 필요한 숫자 필드를 모두 갖고 범위 안에 있어야 통과.
+// sortKey로 오름차순 정렬하고, forceLastMax가 true면 마지막 항목의 maxWon을 강제로 Infinity로
+// 바꿈(최상위 구간을 빠뜨리면 그 이상 금액에 세금이 아예 안 매겨지는 계산 누락 버그가 생기므로
+// 항상 안전하게 마지막 구간은 "그 이상 전부"로 처리함).
+function sanitizeBracketArray(arr, fieldSpecs, sortKey, forceLastMax) {
+    if (!Array.isArray(arr) || !arr.length) return null;
+    var out = [];
+    for (var i = 0; i < arr.length; i++) {
+        var item = arr[i], clean = {}, ok = true;
+        for (var f in fieldSpecs) {
+            var v = sanitizeNum(item[f], fieldSpecs[f][0], fieldSpecs[f][1]);
+            if (v === null) { ok = false; break; }
+            clean[f] = v;
+        }
+        if (!ok) return null; // 항목 하나라도 이상하면 배열 전체를 신뢰하지 않고 기존값 유지
+        out.push(clean);
+    }
+    out.sort(function(a, b) { return a[sortKey] - b[sortKey]; });
+    if (forceLastMax) out[out.length - 1].maxWon = Infinity;
+    return out;
+}
+// partial: 서버가 돌려준 config.* (없는 필드는 생략되어 있을 수 있음).
+// 반환값: { applied: [적용된 섹션명 배열], skipped: [검증 실패/누락으로 건너뛴 섹션명 배열] }
+function sanitizeAndMergeTaxConfig(partial) {
+    var applied = [], skipped = [];
+    if (!partial || typeof partial !== 'object') return { applied: applied, skipped: ['전체'] };
+
+    function mergeSection(name, build) {
+        try {
+            var result = build();
+            if (result) { Object.assign(TAX_CONFIG[name], result); applied.push(name); }
+            else skipped.push(name);
+        } catch (e) { skipped.push(name); }
+    }
+
+    mergeSection('acquisition', function() {
+        var s = partial.acquisition; if (!s) return null;
+        var out = {}, any = false;
+        var pctFields = ['heavyRateAdjusted2','heavyRateAdjusted3plus','heavyRateNonAdjusted3','heavyRateNonAdjusted4plus','otherPropertyRatePct'];
+        pctFields.forEach(function(f) { var v = sanitizeNum(s[f], 0, 30); if (v !== null) { out[f] = v; any = true; } });
+        ['eduTaxAddPct','nongTaxAdd8','nongTaxAdd12','nongTaxAddBase85'].forEach(function(f) { var v = sanitizeNum(s[f], 0, 10); if (v !== null) { out[f] = v; any = true; } });
+        var lowMax = sanitizeNum(s.baseTierLowMax, 1000, 500000); if (lowMax !== null) { out.baseTierLowMax = lowMax; any = true; }
+        var midMax = sanitizeNum(s.baseTierMidMax, 1000, 500000); if (midMax !== null) { out.baseTierMidMax = midMax; any = true; }
+        return any ? out : null;
+    });
+
+    mergeSection('propertyTax', function() {
+        var s = partial.propertyTax; if (!s) return null;
+        var out = {}, any = false;
+        var ratioMulti = sanitizeNum(s.ratioMultiHouse, 0, 1); if (ratioMulti !== null) { out.ratioMultiHouse = ratioMulti; any = true; }
+        var eduRate = sanitizeNum(s.eduTaxRate, 0, 1); if (eduRate !== null) { out.eduTaxRate = eduRate; any = true; }
+        var urbanRate = sanitizeNum(s.urbanTaxRate, 0, 0.1); if (urbanRate !== null) { out.urbanTaxRate = urbanRate; any = true; }
+        var tiers = sanitizeBracketArray(s.ratio1HouseTiers, { maxWon: [0, 1e13], ratio: [0, 1] }, 'maxWon', true);
+        if (tiers) { out.ratio1HouseTiers = tiers; any = true; }
+        var brackets = sanitizeBracketArray(s.brackets, { maxWon: [0, 1e13], rate: [0, 0.1] }, 'maxWon', true);
+        if (brackets) { out.brackets = brackets; any = true; }
+        return any ? out : null;
+    });
+
+    mergeSection('compTax', function() {
+        var s = partial.compTax; if (!s) return null;
+        var out = {}, any = false;
+        var d1 = sanitizeNum(s.deduction1HouseManwon, 1000, 1000000); if (d1 !== null) { out.deduction1HouseManwon = d1; any = true; }
+        var d2 = sanitizeNum(s.deductionOtherManwon, 1000, 1000000); if (d2 !== null) { out.deductionOtherManwon = d2; any = true; }
+        var ratio = sanitizeNum(s.ratio, 0, 1); if (ratio !== null) { out.ratio = ratio; any = true; }
+        var levy = sanitizeNum(s.levyRate, 0, 1); if (levy !== null) { out.levyRate = levy; any = true; }
+        var brackets = sanitizeBracketArray(s.brackets, { minManwon: [0, 1e8], rate: [0, 1], dedManwon: [0, 1e8] }, 'minManwon', false);
+        if (brackets) { out.brackets = brackets; any = true; }
+        return any ? out : null;
+    });
+
+    mergeSection('incomeTax', function() {
+        var s = partial.incomeTax; if (!s) return null;
+        var out = {}, any = false;
+        var localTax = sanitizeNum(s.localTaxRate, 0, 1); if (localTax !== null) { out.localTaxRate = localTax; any = true; }
+        var basicDed = sanitizeNum(s.basicDeductionManwon, 0, 10000); if (basicDed !== null) { out.basicDeductionManwon = basicDed; any = true; }
+        var s1 = sanitizeNum(s.shortRateUnder1y, 0, 1); if (s1 !== null) { out.shortRateUnder1y = s1; any = true; }
+        var s2 = sanitizeNum(s.shortRateUnder2y, 0, 1); if (s2 !== null) { out.shortRateUnder2y = s2; any = true; }
+        var ltPerYear = sanitizeNum(s.longTermDeductionPerYear, 0, 0.2); if (ltPerYear !== null) { out.longTermDeductionPerYear = ltPerYear; any = true; }
+        var ltMax = sanitizeNum(s.longTermDeductionMax, 0, 1); if (ltMax !== null) { out.longTermDeductionMax = ltMax; any = true; }
+        var sur2 = sanitizeNum(s.heavySurcharge2House, 0, 1); if (sur2 !== null) { out.heavySurcharge2House = sur2; any = true; }
+        var sur3 = sanitizeNum(s.heavySurcharge3House, 0, 1); if (sur3 !== null) { out.heavySurcharge3House = sur3; any = true; }
+        var brackets = sanitizeBracketArray(s.brackets, { minManwon: [0, 1e8], rate: [0, 1], dedManwon: [0, 1e8] }, 'minManwon', false);
+        if (brackets) { out.brackets = brackets; any = true; }
+        return any ? out : null;
+    });
+
+    mergeSection('vat', function() {
+        var s = partial.vat; if (!s) return null;
+        var out = {}, any = false;
+        var rate = sanitizeNum(s.rate, 0, 1); if (rate !== null) { out.rate = rate; any = true; }
+        var area = sanitizeNum(s.nationalHousingAreaM2, 10, 500); if (area !== null) { out.nationalHousingAreaM2 = area; any = true; }
+        return any ? out : null;
+    });
+
+    return { applied: applied, skipped: skipped };
+}
+function resetTaxConfigToDefault() {
+    TAX_CONFIG = deepCloneTaxConfig(DEFAULT_TAX_CONFIG);
+    TAX_CONFIG.lastUpdated = null;
+    TAX_CONFIG.lastUpdateSummary = null;
+    calcMargin();
+    var box = document.getElementById('tax-update-report-box');
+    if (box) { box.style.display = 'none'; box.innerHTML = ''; }
+    var statusEl = document.getElementById('tax-update-status');
+    if (statusEl) { statusEl.style.color = '#999'; statusEl.innerText = '코드 기본 세율로 되돌렸습니다.'; }
+}
+async function updateTaxRates() {
+    var btn = document.getElementById('tax-update-btn');
+    var statusEl = document.getElementById('tax-update-status');
+    var box = document.getElementById('tax-update-report-box');
+    if (!btn) return;
+    btn.disabled = true; btn.innerText = '🔍 웹검색으로 조사 중... (최대 1분)';
+    if (statusEl) { statusEl.style.color = '#999'; statusEl.innerText = ''; }
+    box.style.display = 'none'; box.innerHTML = '';
+    try {
+        var res = await fetch('/api/parse-auction', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ mode: 'taxUpdate' })
+        });
+        var json = await readJsonResponseSafe(res);
+        if (!res.ok) {
+            if (statusEl) { statusEl.style.color = '#c62828'; statusEl.innerText = '조사 실패: ' + (json.error || '알 수 없는 오류'); }
+            return;
+        }
+        var merge = sanitizeAndMergeTaxConfig(json.config || {});
+        var now = new Date();
+        TAX_CONFIG.lastUpdated = now.toISOString();
+        TAX_CONFIG.lastUpdateSummary = json.reportSummary || null;
+        calcMargin(); // 반영된 세율로 즉시 재계산
+
+        var hhmm = String(now.getHours()).padStart(2, '0') + ':' + String(now.getMinutes()).padStart(2, '0');
+        if (statusEl) {
+            statusEl.style.color = merge.applied.length ? '#2e7d32' : '#e65100';
+            statusEl.innerText = merge.applied.length
+                ? ('✅ 적용됨(' + hhmm + ') - ' + merge.applied.join('/') + ' 반영' + (merge.skipped.length ? ' · ' + merge.skipped.join('/') + '은 확인 안 돼 기존값 유지' : ''))
+                : '⚠️ 확인된 항목이 없어 기존 세율을 그대로 유지했습니다. 아래 리포트를 확인해 주세요.';
+        }
+
+        var html = '<div style="background:#fff8e1;border-radius:6px;padding:8px 10px;margin-top:6px;font-size:11.5px;line-height:1.5;">';
+        html += '<div style="font-weight:bold;color:#f57f17;margin-bottom:4px;">🔄 최신 세율 조사 리포트</div>';
+        if (json.reportSummary) html += '<div style="color:#444;margin-bottom:6px;">' + json.reportSummary + '</div>';
+        if (json.changesDetected && json.changesDetected.length) {
+            html += '<div style="color:#1565c0;margin-bottom:4px;">📌 변경 감지: ' + json.changesDetected.map(function(c) { return '· ' + c; }).join('<br>') + '</div>';
+        }
+        if (json.missingTaxesNote) {
+            html += '<div style="color:#c62828;margin-bottom:4px;">⚠️ 반영 안 된 세금 가능성: ' + json.missingTaxesNote + '</div>';
+        }
+        if (json.lowConfidenceNote) {
+            html += '<div style="color:#e65100;margin-bottom:4px;">❓ 확인 못한 부분: ' + json.lowConfidenceNote + '</div>';
+        }
+        if (json.sources && json.sources.length) {
+            html += '<div style="color:#777;margin-bottom:4px;">출처: ' + json.sources.slice(0, 6).map(function(s) {
+                return '<a href="' + s.url + '" target="_blank" rel="noopener" style="color:#1565c0;">' + (s.title || s.url) + '</a>';
+            }).join(' · ') + '</div>';
+        }
+        html += '<div style="color:#999;font-size:10px;margin-top:4px;">⚠️ AI 웹검색 기반 참고용 정보입니다. 실제 적용 전 국세청 홈택스·위택스 등 공식 출처로 반드시 재확인하세요. 이 값은 지금 이 브라우저 탭에서만 유지되고 새로고침하면 코드 기본값으로 돌아갑니다.</div>';
+        html += '<button type="button" class="modal-btn btn-gray" style="font-size:10px;margin-top:6px;" onclick="resetTaxConfigToDefault()">기본 세율로 되돌리기</button>';
+        html += '</div>';
+        box.innerHTML = html;
+        box.style.display = 'block';
+    } catch (e) {
+        if (statusEl) { statusEl.style.color = '#c62828'; statusEl.innerText = '조사 실패: ' + e.message; }
+    } finally {
+        btn.disabled = false; btn.innerText = '🔄 최신 세율 적용';
     }
 }
 function calcCompValuation() {
