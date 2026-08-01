@@ -7448,7 +7448,8 @@ async function generateAiBriefing() {
 }
 /* ════════════════════════════════════
    🔄 최신 세율 적용 - TAX_CONFIG(취득세·재산세·종부세·양도세·부가세 계산 상수 전체)를
-   서버(mode:'taxUpdate')가 Claude 웹검색으로 조사한 최신값으로 갱신함.
+   서버(mode:'taxUpdateResearch' → 'taxUpdateExtract', Vercel 60초 제한 때문에 2단계를 별도
+   요청으로 나눔)가 Claude 웹검색으로 조사한 최신값으로 갱신함.
    ⚠️ AI가 돌려준 값을 통째로 믿고 덮어쓰지 않음 - sanitizeAndMergeTaxConfig에서 필드 하나하나
    범위를 검증해서, 말이 되는 값만 반영하고 이상하거나 없는 필드는 기존 기본값을 그대로 둠.
    ⚠️ 이 적용은 이 브라우저 세션(탭)에만 유지됨 - 새로고침하면 코드 내장 기본값(DEFAULT_TAX_CONFIG)
@@ -7573,18 +7574,33 @@ async function updateTaxRates() {
     var statusEl = document.getElementById('tax-update-status');
     var box = document.getElementById('tax-update-report-box');
     if (!btn) return;
-    btn.disabled = true; btn.innerText = '🔍 웹검색으로 조사 중... (최대 1분)';
+    btn.disabled = true; btn.innerText = '🔍 웹검색으로 조사 중... (1/2단계)';
     if (statusEl) { statusEl.style.color = '#999'; statusEl.innerText = ''; }
     box.style.display = 'none'; box.innerHTML = '';
     try {
-        var res = await fetch('/api/parse-auction', {
+        // 서버(mode:'taxUpdateResearch')가 60초 함수 시간제한 안에서 웹검색 리서치만 먼저
+        // 끝내고, 결과 텍스트를 그대로 돌려줌 - 구조화 추출(2단계)은 별도 요청으로 이어감.
+        // (예전엔 한 요청 안에서 두 단계를 다 처리했는데, 리서치만으로도 55초를 넘겨 타임아웃이
+        // 자주 나서 이렇게 나눔.)
+        var res1 = await fetch('/api/parse-auction', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ mode: 'taxUpdate' })
+            body: JSON.stringify({ mode: 'taxUpdateResearch' })
         });
-        var json = await readJsonResponseSafe(res);
-        if (!res.ok) {
-            if (statusEl) { statusEl.style.color = '#c62828'; statusEl.innerText = '조사 실패: ' + (json.error || '알 수 없는 오류'); }
+        var json1 = await readJsonResponseSafe(res1);
+        if (!res1.ok) {
+            if (statusEl) { statusEl.style.color = '#c62828'; statusEl.innerText = '조사 실패: ' + (json1.error || '알 수 없는 오류'); }
+            return;
+        }
+        btn.innerText = '📝 결과 정리 중... (2/2단계)';
+        var res2 = await fetch('/api/parse-auction', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ mode: 'taxUpdateExtract', researchText: json1.researchText, sources: json1.sources })
+        });
+        var json = await readJsonResponseSafe(res2);
+        if (!res2.ok) {
+            if (statusEl) { statusEl.style.color = '#c62828'; statusEl.innerText = '정리 실패: ' + (json.error || '알 수 없는 오류'); }
             return;
         }
         var merge = sanitizeAndMergeTaxConfig(json.config || {});
