@@ -684,7 +684,10 @@ tr:hover td { background:#fffde7; }
     <div id="bc-preview-box"></div>
     <div style="padding:8px 14px;border-top:1px solid #eee;border-bottom:1px solid #eee;display:flex;justify-content:space-between;align-items:center;gap:8px;">
         <span style="font-size:10px;color:#888;">낙찰일 이후 같은 건물의 실거래를 찾아 마진을 추정합니다 (새로 추가된 사례만 시도).</span>
-        <button class="modal-btn btn-purple" id="bc-match-btn" style="font-size:10px;padding:4px 8px;white-space:nowrap;" onclick="runResaleMatching()">🔍 매도사례 매칭</button>
+        <span style="display:flex;gap:6px;flex-wrap:wrap;">
+            <button class="modal-btn btn-purple" id="bc-match-btn" style="font-size:10px;padding:4px 8px;white-space:nowrap;" onclick="runResaleMatching()">🔍 매도사례 매칭</button>
+            <button class="modal-btn btn-gray" id="bc-retry-failed-btn" style="font-size:10px;padding:4px 8px;white-space:nowrap;" onclick="retryFailedMatches()" title="매칭 조건이 완화됐으니 예전에 실패했던 건들을 새 조건으로 다시 시도합니다">🔄 실패건 재시도</button>
+        </span>
     </div>
     <div id="bc-stats-box"></div>
     <div id="bc-list-body"></div>
@@ -4112,6 +4115,46 @@ function guessPropTypeFromCase(c) {
     if (t.indexOf('상가') !== -1 || t.indexOf('토지') !== -1) return 'other';
     return 'villa'; // 다세대주택/연립주택/단독주택 등 기본값
 }
+/* 지번 문자열 정규화 - 낙찰사례 파싱 소스와 국토부 실거래 DB의 지번 표기가 "10-1"/"10-01"/
+   "010-1"/공백 등으로 서로 달라 완전일치 비교가 자주 실패함(2026-08 피드백: 연립다세대는
+   매칭률이 20%도 안 됨). 비교 전에 다양한 대시 기호를 통일하고 각 조각의 앞자리 0을 제거해서
+   같은 지번이면 표기가 달라도 매칭되게 함. */
+function normalizeBunjiStr(s) {
+    return String(s || '').trim().replace(/[‐－ㅡ]/g, '-')
+        .split('-').map(function(part) { return part.replace(/^0+(?=\d)/, ''); }).join('-');
+}
+/* 낙찰사례 하나(c)에 대해 후보 실거래 행(row)이 "같은 물건"일 가능성이 있는지 판단.
+   완전일치(건물명 또는 지번)를 우선하되, 연립다세대는 건물명이 아예 없거나 표기가 갈리는
+   경우가 많아 부분포함 매칭(같은 법정동 안에서 이름이 서로를 포함)도 허용하고, 층은 정확히
+   같은 층을 우선하되 없으면 ±1층까지 근사로 인정함(둘 다 완전일치가 아니면 approx=true로
+   표시해서 신뢰도를 구분함 - 2026-08 매칭률 개선). */
+function scoreResaleCandidate(c, row, areaTolerance) {
+    var rowName = (row.danji || '').trim();
+    var nameExact = !!(c.buildingName && rowName && rowName === c.buildingName);
+    var bunjiExact = !!(c.dong && c.bunji && row.dong === c.dong && normalizeBunjiStr(row.bunji) === normalizeBunjiStr(c.bunji));
+    var nameContains = !!(c.buildingName && rowName && c.dong && row.dong === c.dong
+        && c.buildingName.length >= 2 && rowName.length >= 2
+        && (rowName.indexOf(c.buildingName) !== -1 || c.buildingName.indexOf(rowName) !== -1));
+    if (!nameExact && !bunjiExact && !nameContains) return null;
+
+    var floorApprox = false;
+    if (c.floor !== null && c.floor !== undefined) {
+        var rowFloor = parseInt(row.floor);
+        if (!Number.isFinite(rowFloor)) return null;
+        if (rowFloor !== c.floor) {
+            if (Math.abs(rowFloor - c.floor) > 1) return null; // 2층 이상 차이는 다른 호실로 보고 제외
+            floorApprox = true;
+        }
+    }
+    if (c.areaM2) {
+        var rowArea = Number(row.size) || 0;
+        if (!rowArea || Math.abs(rowArea - c.areaM2) > areaTolerance) return null;
+    }
+    var approx = !nameExact && !bunjiExact; // nameContains만으로 매칭됐거나
+    if (floorApprox) approx = true;
+    var buildingScore = nameExact ? 0 : (bunjiExact ? 1 : 2);
+    return { row: row, floorApprox: floorApprox, approx: approx, score: buildingScore + (floorApprox ? 0.5 : 0) };
+}
 async function matchResaleForBidCase(c) {
     if (!c.addrJibun) return { matched: false, reason: '주소 정보 없음' };
     var geo = await new Promise(function(resolve) {
@@ -4134,29 +4177,23 @@ async function matchResaleForBidCase(c) {
     var res = await fetch('/api/get-house?lawdCd=' + lawdCd);
     var dbData = await readJsonResponseSafe(res);
     if (!dbData || dbData.error || !Array.isArray(dbData.apt)) return { matched: false, reason: '실거래 데이터 조회 실패' };
-    var targetAreaM2 = c.areaM2 || null;
     var saleDateNum = toDateNum(c.saleDate);
     if (!saleDateNum) return { matched: false, reason: '매각기일 정보 없음' };
-    var candidates = dbData.apt.filter(function(row) {
-        var rowName = (row.danji || '').trim();
-        var buildingMatch = (c.buildingName && rowName && rowName === c.buildingName)
-            || (c.dong && c.bunji && row.dong === c.dong && String(row.bunji || '') === String(c.bunji));
-        if (!buildingMatch) return false;
-        if (c.floor !== null && c.floor !== undefined) {
-            var rowFloor = parseInt(row.floor);
-            if (!Number.isFinite(rowFloor) || rowFloor !== c.floor) return false;
-        }
-        if (targetAreaM2) {
-            var rowArea = Number(row.size) || 0;
-            if (!rowArea || Math.abs(rowArea - targetAreaM2) > 4) return false;
-        }
+    var propType = guessPropTypeFromCase(c);
+    var areaTolerance = propType === 'villa' ? 6 : 4; // 연립다세대는 공부상·실측 면적 오차가 커서 오차범위를 넓게 잡음
+    var scored = [];
+    dbData.apt.forEach(function(row) {
         var dateNum = toDateNum(row.deal_date);
-        if (!dateNum || dateNum < saleDateNum) return false; // 낙찰일(매각기일) 이후 거래만 매도사례 후보로 봄
-        return true;
-    }).sort(function(a, b) { return toDateNum(a.deal_date) - toDateNum(b.deal_date); }); // 낙찰일과 가장 가까운(이른) 이후거래 우선
-    if (!candidates.length) return { matched: false, reason: '낙찰일 이후 매도사례 없음' };
-    var m = candidates[0];
-    return { matched: true, date: m.deal_date, amount: Number(m.price) || 0, floor: m.floor, area: Number(m.size) || 0 };
+        if (!dateNum || dateNum < saleDateNum) return; // 낙찰일(매각기일) 이후 거래만 매도사례 후보로 봄
+        var cand = scoreResaleCandidate(c, row, areaTolerance);
+        if (cand) { cand.dateNum = dateNum; scored.push(cand); }
+    });
+    if (!scored.length) return { matched: false, reason: '낙찰일 이후 매도사례 없음' };
+    // 가장 확실한 매칭(완전일치)을 우선하고, 동점이면 낙찰일과 가장 가까운(이른) 거래를 고름
+    scored.sort(function(a, b) { return (a.score - b.score) || (a.dateNum - b.dateNum); });
+    var best = scored[0];
+    var m = best.row;
+    return { matched: true, date: m.deal_date, amount: Number(m.price) || 0, floor: m.floor, area: Number(m.size) || 0, approx: best.approx };
 }
 function calcBidCaseMargin(c, match) {
     var bid = Math.round((c.finalBidPrice || 0) / 10000); // 원→만원
@@ -4204,16 +4241,63 @@ function calcDongBidRateStats(dong) {
         lowSample: rates.length < MIN_BIDCASE_COUNT_FOR_RATE,
     };
 }
+/* 법정동(dong) 단위 "매입가율" 통계 - 낙찰가÷감정가(낙찰가율)는 감정가가 경매개시 전
+   시점에 매겨진 스테일한 값이라, 그 이후 시세가 움직였으면 "얼마나 잘 샀는지"를 제대로
+   못 보여줌(2026-08 피드백). 매도사례까지 매칭된 낙찰사례는 낙찰가÷실제매도가(그 물건이
+   나중에 정말 팔린 가격)를 계산할 수 있는데, 이건 낙찰자가 결과적으로 실현된 시세의 몇
+   %에 샀는지를 그대로 보여줘서 감정가 기준보다 훨씬 신뢰도 높은 참고치임. 다만 매도사례
+   매칭까지 된 케이스만 표본이 되므로 낙찰가율보다 표본이 적을 수 있어(호출부에서 표본
+   부족 시 낙찰가율로 폴백하는 패턴을 따름 - calcDongBidRateStats와 동일 원칙). */
+function calcDongCaptureRateStats(dong) {
+    if (!dong) return null;
+    var items = bidCaseList.filter(function(c) {
+        return c.dong === dong && c.finalBidPrice && c.resaleMatch && c.resaleMatch.amount > 0;
+    });
+    if (!items.length) return null;
+    // finalBidPrice는 원 단위, resaleMatch.amount는 만원 단위(get-house.js 반환값) - 단위를 맞춰서 비교
+    var rates = items.map(function(c) {
+        return Math.round((c.finalBidPrice / 10000) / c.resaleMatch.amount * 1000) / 10;
+    });
+    return {
+        count: rates.length,
+        median: median(rates),
+        min: Math.min.apply(null, rates),
+        max: Math.max.apply(null, rates),
+        lowSample: rates.length < MIN_BIDCASE_COUNT_FOR_RATE,
+    };
+}
 function renderDongMarginStatsInModal() {
     var box = document.getElementById('a-dong-margin-stats');
     if (!box) return;
     var ctx = getAuctionAddressContext();
     var dong = ctx.dong;
     var marginStats = dong ? calcDongMarginStats(dong) : null;
-    var rateStats = dong ? calcDongBidRateStats(dong) : null;
-    if (!marginStats && !rateStats) { box.innerHTML = ''; renderEstimateSummary(); return; }
+    var captureStats = dong ? calcDongCaptureRateStats(dong) : null;
+    // 매입가율(실현매도가 기준)이 감정가 기준 낙찰가율보다 신뢰도 높은 지표라 우선 쓰되,
+    // 매도사례 매칭 표본이 3건 미만이면(감정가 기준보다 표본이 항상 더 적음) 기존
+    // 낙찰가율로 자동 폴백함(2026-08, 사용자 확인).
+    var useCaptureRate = captureStats && !captureStats.lowSample;
+    var rateStats = (!useCaptureRate && dong) ? calcDongBidRateStats(dong) : null;
+    if (!marginStats && !useCaptureRate && !rateStats) { box.innerHTML = ''; renderEstimateSummary(); return; }
     var html = '';
-    if (rateStats) {
+    if (useCaptureRate) {
+        var marketAdjForRate = calcMarketAdjustedSalePrice();
+        var estForRate = getCompEstValue();
+        var predictedSaleForRate = (marketAdjForRate && marketAdjForRate.blendedValue) ? marketAdjForRate.blendedValue : (estForRate ? estForRate.estValue : null);
+        var predictedBid2 = predictedSaleForRate ? Math.round(predictedSaleForRate * captureStats.median / 100) : null;
+        html += '<div style="font-size:11px;background:#fff3e0;border-radius:6px;padding:6px 8px;margin:4px 0;">'
+            + '<b>🎯 ' + dong + ' 낙찰사례 ' + captureStats.count + '건 기준 매입가율(실현 매도가 대비)</b><br>'
+            + '중간값 <b>' + captureStats.median.toFixed(1) + '%</b>'
+            + ' (최소 ' + captureStats.min.toFixed(1) + '% ~ 최대 ' + captureStats.max.toFixed(1) + '%)'
+            + '<div style="font-size:10px;color:#999;margin-top:2px;">감정가가 아니라 나중에 실제 팔린 가격 대비 낙찰가 비율입니다 - 낙찰가율(감정가 기준)보다 신뢰도 높은 참고치예요.</div>'
+            + (predictedBid2
+                ? '<div style="margin-top:4px;display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;">'
+                    + '<span>예상매도가 기준 시장 예상낙찰가: <b>' + toEok(String(predictedBid2)) + '</b></span>'
+                    + '<button type="button" class="modal-btn btn-purple" style="font-size:10px;padding:3px 8px;" onclick="applyPredictedBid(' + predictedBid2 + ')">내 입찰가에 적용</button>'
+                    + '</div>'
+                : '<div style="margin-top:2px;color:#999;">비교물건을 등록하면(또는 호가를 입력하면) 예상낙찰가를 계산합니다.</div>')
+            + '</div>';
+    } else if (rateStats) {
         var appraisal = parseInt(document.getElementById('a-appraisal').value) || 0;
         var predictedBid = appraisal ? Math.round(appraisal * rateStats.median / 100) : null;
         html += '<div style="font-size:11px;background:#fff3e0;border-radius:6px;padding:6px 8px;margin:4px 0;">'
@@ -4221,6 +4305,7 @@ function renderDongMarginStatsInModal() {
             + '중간값 <b>' + rateStats.median.toFixed(1) + '%</b>'
             + ' (최소 ' + rateStats.min.toFixed(1) + '% ~ 최대 ' + rateStats.max.toFixed(1) + '%)'
             + (rateStats.lowSample ? '<div style="color:#e65100;margin-top:2px;">⚠️ 표본 ' + rateStats.count + '건뿐이라 참고용으로만 보세요.</div>' : '')
+            + '<div style="font-size:10px;color:#999;margin-top:2px;">⚠️ 감정가는 경매개시 전 시점 값이라 실제 시세와 차이가 있을 수 있습니다. 매도사례가 매칭된 낙찰사례가 3건 이상 쌓이면 더 신뢰도 높은 "매입가율"로 자동 전환됩니다.</div>'
             + (predictedBid
                 ? '<div style="margin-top:4px;display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;">'
                     + '<span>감정가 기준 시장 예상낙찰가: <b>' + toEok(String(predictedBid)) + '</b></span>'
@@ -4256,7 +4341,7 @@ async function matchAndSaveOneCase(c) {
     c.matchAttempted = true;
     if (result.matched) {
         var margin = calcBidCaseMargin(c, result);
-        c.resaleMatch = { date: result.date, amount: result.amount, floor: result.floor, area: result.area };
+        c.resaleMatch = { date: result.date, amount: result.amount, floor: result.floor, area: result.area, approx: result.approx || false };
         c.estMargin = margin ? margin.preTaxMargin : null;
         c.estRoi = margin ? margin.roi : null;
         c.estTotalCost = margin ? margin.totalCost : null;
@@ -4268,11 +4353,7 @@ async function matchAndSaveOneCase(c) {
     }
     try { await saveBidCaseAPI(c); } catch (e) { console.error('낙찰사례 매칭결과 저장 실패:', e.message); }
 }
-async function runResaleMatching() {
-    var btn = document.getElementById('bc-match-btn');
-    var statusBox = document.getElementById('bc-extract-status');
-    var targets = bidCaseList.filter(function(c) { return c.status === '매각' && c.finalBidPrice && !c.matchAttempted; });
-    if (!targets.length) { alert('새로 매칭할 낙찰사례가 없습니다. (이미 매칭을 시도했거나, "매각" 완료된 사례가 없습니다. 재시도가 필요하면 개별 항목의 "🔄 재시도" 버튼을 쓰세요.)'); return; }
+async function runMatchingLoop(targets, btn, statusBox) {
     btn.disabled = true;
     for (var i = 0; i < targets.length; i++) {
         var c = targets[i];
@@ -4290,6 +4371,26 @@ async function runResaleMatching() {
     btn.disabled = false;
     statusBox.style.color = '#2e7d32';
     statusBox.innerText = '매칭 완료 (' + targets.length + '건 시도).';
+}
+async function runResaleMatching() {
+    var btn = document.getElementById('bc-match-btn');
+    var statusBox = document.getElementById('bc-extract-status');
+    var targets = bidCaseList.filter(function(c) { return c.status === '매각' && c.finalBidPrice && !c.matchAttempted; });
+    if (!targets.length) { alert('새로 매칭할 낙찰사례가 없습니다. (이미 매칭을 시도했거나, "매각" 완료된 사례가 없습니다. 실패건을 다시 시도하려면 "🔄 실패건 재시도" 버튼을 쓰세요.)'); return; }
+    await runMatchingLoop(targets, btn, statusBox);
+}
+/* 매칭 조건 완화(지번 정규화·건물명 부분매칭·층±1·면적오차 확대, 2026-08) 이후, 이전에
+   "매도사례 없음"으로 끝났던 낙찰사례들을 새 조건으로 한꺼번에 다시 시도할 수 있게 하는
+   버튼 - 실패건이 많으면(예: 연립다세대 위주 200건) 개별 "🔄 재시도"를 일일이 누르기
+   현실적으로 어려워서 추가함. matchAttempted를 강제로 리셋한 뒤 같은 매칭 루프를 재사용함. */
+async function retryFailedMatches() {
+    var btn = document.getElementById('bc-retry-failed-btn');
+    var statusBox = document.getElementById('bc-extract-status');
+    var targets = bidCaseList.filter(function(c) { return c.status === '매각' && c.finalBidPrice && !c.resaleMatch; });
+    if (!targets.length) { alert('재시도할 실패건이 없습니다.'); return; }
+    if (!confirm(targets.length + '건을 새 매칭 조건으로 다시 시도합니다. 건마다 지오코더를 호출해서 시간이 걸릴 수 있어요(약 ' + Math.ceil(targets.length * 0.3 / 60) + '분 이상). 계속할까요?')) return;
+    targets.forEach(function(c) { c.matchAttempted = false; });
+    await runMatchingLoop(targets, btn, statusBox);
 }
 /* 낙찰 후 매도까지 보통 3~4개월씩 걸리기 때문에, 한 번 매칭에 실패했거나(아직 매도 전) 아직
    시도조차 안 한 사례도 "상시" 다시 조회할 수 있어야 함 - 목록 패널의 항목별 버튼과, 배지를
@@ -4340,7 +4441,8 @@ function buildBidCaseDetailHtml(c) {
     html += '</div>';
     html += '<div class="indicator-box" style="border-color:#00695c;background:#f2fbfa;"><div class="indicator-title">💰 매도사례 · 추정마진</div>';
     if (c.resaleMatch && c.estMargin !== null && c.estMargin !== undefined) {
-        html += '<div class="margin-grid">'
+        html += (c.resaleMatch.approx ? '<div style="font-size:10px;color:#e65100;margin-bottom:4px;">🔎 근사매칭 - 건물명/층이 정확히 일치하지 않아 가장 가까운 후보로 추정한 매도사례입니다.</div>' : '')
+            + '<div class="margin-grid">'
             + item('매도일', c.resaleMatch.date || '-')
             + item('매도가', toEok(String(Math.round(c.resaleMatch.amount))), '#2e7d32')
             + item('총 소요비용(추정)', c.estTotalCost !== null && c.estTotalCost !== undefined ? toEok(String(Math.round(c.estTotalCost))) : '-', '#888')
@@ -4476,7 +4578,8 @@ function renderBidCaseList() {
             var matchLine = '';
             if (c.resaleMatch && c.estMargin !== null && c.estMargin !== undefined) {
                 matchLine = '<div style="color:#2e7d32;margin-top:2px;">✅ 매도사례 ' + c.resaleMatch.date + ' · ' + toEok(String(Math.round(c.resaleMatch.amount)))
-                    + ' → 추정 세전마진 ' + toEok(String(Math.round(c.estMargin))) + (c.estRoi !== null && c.estRoi !== undefined ? ' (' + c.estRoi + '%)' : '') + '</div>';
+                    + ' → 추정 세전마진 ' + toEok(String(Math.round(c.estMargin))) + (c.estRoi !== null && c.estRoi !== undefined ? ' (' + c.estRoi + '%)' : '')
+                    + (c.resaleMatch.approx ? ' <span style="color:#e65100;">(근사매칭)</span>' : '') + '</div>';
             } else if (c.status === '매각' && c.finalBidPrice) {
                 matchLine = '<div style="color:#aaa;margin-top:2px;">'
                     + (c.matchAttempted ? ('매도사례 아직 없음: ' + (c.matchFailReason || '')) : '매도사례 조회 전')
@@ -8656,26 +8759,24 @@ async function findApproximateResaleMatches() {
         }
         var targetAreaM2 = pyung * 3.305785;
         var bidDateNum = toDateNum(document.getElementById('a-date').value);
-        var matches = dbData.apt.filter(function(row) {
-            var rowName = (row.danji || '').trim();
-            var buildingMatch = (name && rowName && rowName === name)
-                || (ctx.dong && ctx.bunji && row.dong === ctx.dong && String(row.bunji || '') === String(ctx.bunji));
-            if (!buildingMatch) return false;
-            var rowFloor = parseInt(row.floor);
-            if (!Number.isFinite(rowFloor) || rowFloor !== floor) return false;
-            var rowArea = Number(row.size) || 0;
-            if (!rowArea || Math.abs(rowArea - targetAreaM2) > 4) return false;
-            return true;
-        }).map(function(row) {
+        var propType = document.getElementById('a-prop-type').value;
+        var areaTolerance = propType === 'villa' ? 6 : 4; // 연립다세대는 공부상·실측 면적 오차가 커서 오차범위를 넓게 잡음
+        // matchResaleForBidCase()와 같은 매칭 철학(scoreResaleCandidate) 재사용 - 건물명/지번
+        // 완전일치가 안 맞아도 부분포함·근사층으로 후보를 찾고, approx로 신뢰도를 구분함(2026-08).
+        var pseudoCase = { buildingName: name, dong: ctx.dong, bunji: ctx.bunji, floor: floor, areaM2: targetAreaM2 };
+        var matches = dbData.apt.map(function(row) {
+            var cand = scoreResaleCandidate(pseudoCase, row, areaTolerance);
+            if (!cand) return null;
             var dateNum = toDateNum(row.deal_date);
             return {
                 date: row.deal_date,
                 amount: Number(row.price) || 0,
                 area: Number(row.size) || 0,
                 floor: row.floor,
+                approx: cand.approx,
                 isAfterBid: (bidDateNum && dateNum) ? (dateNum >= bidDateNum) : null,
             };
-        }).sort(function(a, b) { return toDateNum(b.date) - toDateNum(a.date); });
+        }).filter(Boolean).sort(function(a, b) { return toDateNum(b.date) - toDateNum(a.date); });
         pendingResaleMatches = {
             matches: matches, fetchedAt: Date.now(), lawdCd: lawdCd,
             targetFloor: floor, targetPyung: pyung,
@@ -8702,7 +8803,7 @@ function buildResaleMatchesHtml(result) {
     if (!result) return '';
     var html = '<div class="indicator-box" style="border-color:#ba68c8;background:#faf5ff;margin-top:8px;">';
     html += '<div class="indicator-title" style="color:#6a1b9a;">🔍 낙찰가·매도가 추정 (근사치' + (result.fetchedAt ? ' · ' + formatResaleFetchTime(result.fetchedAt) : '') + ')</div>';
-    html += '<div style="font-size:9.5px;color:#aaa;margin-bottom:4px;">같은 건물 · ' + result.targetFloor + '층 · ' + result.targetPyung + '평 근처(±4㎡) 실거래만 모은 근사치입니다. 정확한 호수 일치가 아닐 수 있습니다.</div>';
+    html += '<div style="font-size:9.5px;color:#aaa;margin-bottom:4px;">같은 건물 · ' + result.targetFloor + '층 · ' + result.targetPyung + '평 근처 실거래만 모은 근사치입니다. "근사매칭"으로 표시된 건은 층 또는 건물명이 정확히 일치하지 않아 추정한 것이니, 정확한 호수 일치가 아닐 수 있습니다.</div>';
     var matches = result.matches || [];
     if (!matches.length) {
         html += '<div style="font-size:11.5px;color:#777;">조건에 맞는 실거래를 찾지 못했습니다.</div>';
@@ -8737,8 +8838,10 @@ function buildResaleMatchesHtml(result) {
             ? '<span style="background:#e8f5e9;color:#2e7d32;border-radius:4px;padding:1px 5px;font-size:9.5px;margin-left:4px;">입찰일 이후</span>'
             : (m.isAfterBid === false
                 ? '<span style="background:#eceff1;color:#607d8b;border-radius:4px;padding:1px 5px;font-size:9.5px;margin-left:4px;">입찰일 이전</span>' : '');
+        var approxBadge = m.approx
+            ? '<span style="background:#fff3e0;color:#e65100;border-radius:4px;padding:1px 5px;font-size:9.5px;margin-left:4px;">근사매칭</span>' : '';
         html += '<div style="background:white;border-radius:6px;padding:5px 8px;margin-bottom:4px;border-left:3px solid #ba68c8;font-size:11.5px;color:#555;display:flex;justify-content:space-between;">'
-            + '<span>' + formatResaleDate(m.date) + ' · ' + m.floor + '층 · ' + (Math.round(m.area * 100 / 3.305785) / 100) + '평' + badge + '</span>'
+            + '<span>' + formatResaleDate(m.date) + ' · ' + m.floor + '층 · ' + (Math.round(m.area * 100 / 3.305785) / 100) + '평' + badge + approxBadge + '</span>'
             + '<span style="font-weight:bold;">' + Math.round(m.amount).toLocaleString() + '만원</span></div>';
     });
     html += '</div>';
