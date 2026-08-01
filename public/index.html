@@ -1569,6 +1569,10 @@ var pendingAuctionComparables = [];
 var pendingCompMarkerData = null;
 var aiCompCandidates = [];
 var aiCompFinderMode = 'similar'; // 'similar'(조건매칭 자동추천) | 'radius'(반경 전체보기) - 공유 모달의 빈결과 안내문구 분기용
+// 유사물건 자동추천/반경 직접찾기 후보 목록에서 층·연식과 달리 승강기 유무는 실거래 데이터에
+// 바로 들어있지 않고 단지별로 건축HUB API를 조회해야 함 - 같은 단지가 여러 후보(다른 거래건)에
+// 걸쳐 반복 등장할 수 있어, 단지 캐시키 단위로 한 번만 조회하도록 결과를 캐싱함(2026-08 추가).
+var buildingElevatorCache = {};
 var pendingRegistryDoc = null;
 var pendingRegistryAnalysis = null;
 var pendingAuctionBuildingInfo = null;
@@ -7304,7 +7308,8 @@ function findComparablesInRadius(lat, lon, targetBuildingType, radiusM) {
             if (tradeDate(t) < oneYearAgo) return; // 최근 1년 거래만
             var floorNum = parseInt(t.floor);
             if (!Number.isFinite(floorNum) || floorNum <= 0) return; // 지층/반지층·층수 미상 제외
-            candidates.push({ trade: t, dist: Math.round(dist), ageDiff: null, floorDiff: null, score: dist });
+            candidates.push({ trade: t, dist: Math.round(dist), ageDiff: null, floorDiff: null, score: dist,
+                apt: apt, coordLat: coord.lat, coordLon: coord.lon }); // 승강기 조회(fetchElevatorForApt)에 씀
         });
     });
     candidates.sort(function(a, b) { return a.dist - b.dist; });
@@ -7344,7 +7349,8 @@ function findSimilarComps(lat, lon, targetYear, targetFloor, targetPyung, target
             var score = (ageDiff !== null ? ageDiff : 10) * 2
                 + (floorDiff !== null ? floorDiff : 5) * 1.5
                 + dist / 200;
-            candidates.push({ trade: t, dist: Math.round(dist), ageDiff: ageDiff, floorDiff: floorDiff, score: score });
+            candidates.push({ trade: t, dist: Math.round(dist), ageDiff: ageDiff, floorDiff: floorDiff, score: score,
+                apt: apt, coordLat: coord.lat, coordLon: coord.lon }); // 승강기 조회(fetchElevatorForApt)에 씀
         });
     });
     // 같은 단지는 가장 점수 좋은 거래 1건만 남겨서 다양성 확보
@@ -7359,6 +7365,61 @@ function findSimilarComps(lat, lon, targetYear, targetFloor, targetPyung, target
     return deduped.slice(0, 8);
 }
  
+// 1~2층은 "저층"으로 눈에 띄게 표시(renderCompListBox와 동일 기준) - 목록만 보고도 평단가가
+// 다른 후보보다 유독 낮은/높은 이유를 가늠할 수 있게 함. 두 목록(등록된 비교물건 / 자동추천·
+// 반경검색 후보)에서 공통으로 쓰도록 공유 함수로 뺌(2026-08).
+function floorTierLabel(floor) {
+    var floorNum = parseInt(floor);
+    return Number.isFinite(floorNum) && floorNum <= 2
+        ? '<span style="color:#e65100;font-weight:bold;">' + floor + '층(저층)</span>'
+        : floor + '층';
+}
+function elevatorStatusText(hasElevator) {
+    return hasElevator === true ? '승강기O' : (hasElevator === false ? '승강기X' : '승강기 미확인');
+}
+// 단지의 승강기 유무는 건축HUB API(loadBuildingInfo→/api/get-building)를 단지별로 조회해야
+// 알 수 있음 - buildingElevatorCache에 값이 있으면 그대로 재사용하고, 조회 중이면 같은
+// Promise를 공유해서(여러 후보가 같은 단지를 가리켜도) 중복 요청을 막음.
+async function fetchElevatorForApt(apt, lat, lon) {
+    var l = apt.latest || {};
+    var key = [l.dong, l.name, l.bunji, l.road_name, l.main_num, l.sub_num].join('|').toLowerCase();
+    var cached = buildingElevatorCache[key];
+    if (cached !== undefined && !(cached instanceof Promise)) return cached;
+    if (cached instanceof Promise) return cached;
+    var p = (async function() {
+        try {
+            var info = await loadBuildingInfo(apt, lat, lon);
+            return (info && info.title) ? ((info.title.rideElvtCnt || 0) + (info.title.emgenElvtCnt || 0)) > 0 : null;
+        } catch (e) { return null; }
+    })();
+    buildingElevatorCache[key] = p;
+    p.then(function(result) { buildingElevatorCache[key] = result; }); // 완료되면 Promise 대신 결과값으로 교체
+    return p;
+}
+function setAiCompElevatorCell(i, hasElevator) {
+    var el = document.getElementById('ai-comp-elev-' + i);
+    if (el) el.innerText = elevatorStatusText(hasElevator);
+}
+// 후보가 최대 40건까지 나올 수 있어 승강기 조회를 한꺼번에 다 쏘지 않고(건축HUB API 부하 우려)
+// 5개씩만 동시에 처리하는 워커풀 방식으로 돌림 - 같은 단지가 여러 후보에 겹치면
+// fetchElevatorForApt의 캐시가 중복 조회를 막아줘서 실제 API 호출 수는 더 적음.
+var AI_COMP_ELEVATOR_CONCURRENCY = 5;
+async function loadElevatorStatusesForCandidates(candidates) {
+    var queue = candidates.map(function(c, i) { return i; });
+    async function worker() {
+        while (queue.length) {
+            var i = queue.shift();
+            var c = candidates[i];
+            if (!c.apt || !c.coordLat || !c.coordLon) { setAiCompElevatorCell(i, null); continue; }
+            var hasElevator = await fetchElevatorForApt(c.apt, c.coordLat, c.coordLon);
+            c.hasElevator = hasElevator; // addSelectedAiComps()가 그대로 재사용
+            setAiCompElevatorCell(i, hasElevator);
+        }
+    }
+    var workers = [];
+    for (var w = 0; w < AI_COMP_ELEVATOR_CONCURRENCY; w++) workers.push(worker());
+    await Promise.all(workers);
+}
 function renderAiCompList() {
     var body = document.getElementById('ai-comp-body');
     if (!aiCompCandidates.length) {
@@ -7376,13 +7437,14 @@ function renderAiCompList() {
             + '<input type="checkbox" class="ai-comp-check" data-idx="' + i + '" checked style="margin-top:3px;">'
             + '<div style="flex:1;font-size:12px;">'
             + '<div style="font-weight:bold;color:#333;">' + (t.name || t.dong) + ' · ' + dateStr + '</div>'
-            + '<div style="color:#555;margin-top:2px;">' + toEok(t.amount) + ' · ' + toPyung(t.area) + '평 · ' + t.floor + '층 · ' + (t.build_year || '-') + '년</div>'
+            + '<div style="color:#555;margin-top:2px;">' + toEok(t.amount) + ' · ' + toPyung(t.area) + '평 · ' + floorTierLabel(t.floor) + ' · ' + (t.build_year || '-') + '년 · <span id="ai-comp-elev-' + i + '">' + (c.apt ? '확인 중...' : elevatorStatusText(null)) + '</span></div>'
             + '<div style="color:#999;font-size:10px;margin-top:2px;">거리 ' + c.dist + 'm'
             + (c.ageDiff !== null ? ' · 연식차 ' + c.ageDiff + '년' : '')
             + (c.floorDiff !== null ? ' · 층차 ' + c.floorDiff + '층' : '') + '</div>'
             + '</div></label>';
     });
     body.innerHTML = html;
+    loadElevatorStatusesForCandidates(aiCompCandidates);
 }
  
 function closeAiCompModal(e) {
@@ -7398,7 +7460,8 @@ function addSelectedAiComps() {
     for (var i = 0; i < checks.length; i++) {
         if (pendingAuctionComparables.length >= 10) { alert('비교물건은 최대 10개까지 등록할 수 있습니다.'); break; }
         var idx = parseInt(checks[i].getAttribute('data-idx'));
-        var t = aiCompCandidates[idx].trade;
+        var cand = aiCompCandidates[idx];
+        var t = cand.trade;
         var dateStr = t.year + '-' + String(t.month).padStart(2,'0') + '-' + String(t.day).padStart(2,'0');
         var dup = pendingAuctionComparables.some(function(x) {
             return x.name === (t.name || t.dong) && x.date === dateStr && x.amount === parseInt(t.amount);
@@ -7407,7 +7470,10 @@ function addSelectedAiComps() {
         pendingAuctionComparables.push({
             name: t.name || t.dong, dong: t.dong, date: dateStr,
             amount: parseInt(t.amount), area: t.area, pyung: toPyung(t.area),
-            floor: t.floor, buildYear: t.build_year, hasElevator: null
+            // renderAiCompList()가 이미 loadElevatorStatusesForCandidates()로 조회해 둔 값을
+            // 그대로 재사용함(2026-08) - 목록에서 "확인 중..."이 아직 안 끝났으면 undefined일 수
+            // 있으니 그 경우만 null(미확인)로 남김.
+            floor: t.floor, buildYear: t.build_year, hasElevator: (cand.hasElevator === undefined ? null : cand.hasElevator)
         });
         added++;
     }
@@ -7482,18 +7548,10 @@ function renderCompListBox() {
     }
     var html = '';
     list.forEach(function(c, i) {
-        var elevText = c.hasElevator === true ? '승강기O' : (c.hasElevator === false ? '승강기X' : '승강기 미확인');
         var noteCount = getSiteNotesForBuilding(c.name, c.dong).length;
         var noteArgs = "'" + String(c.name || '').replace(/'/g, "\\'") + "','" + String(c.dong || '').replace(/'/g, "\\'") + "','',null,null";
-        // 층수는 평단가 계산에는 안 쓰고(로열층·저층 프리미엄/디스카운트는 임장에서 직접 판단할
-        // 영역) 참고자료로만 보여줌 - 저층(1~2층)만 눈에 띄게 표시해서, 평단가가 다른 비교물건보다
-        // 유독 낮게/높게 나온 이유를 목록만 보고도 가늠할 수 있게 함.
-        var floorNum = parseInt(c.floor);
-        var floorText = Number.isFinite(floorNum) && floorNum <= 2
-            ? '<span style="color:#e65100;font-weight:bold;">' + c.floor + '층(저층)</span>'
-            : c.floor + '층';
         html += '<div class="comp-item"><span>' + c.name + ' · ' + (c.date || '-') + ' · ' + toEok(String(c.amount))
-            + ' · ' + (c.pyung ? c.pyung + '평' : '-') + ' · ' + floorText + ' · ' + (c.buildYear || '-') + '년 · ' + elevText + '</span>'
+            + ' · ' + (c.pyung ? c.pyung + '평' : '-') + ' · ' + floorTierLabel(c.floor) + ' · ' + (c.buildYear || '-') + '년 · ' + elevatorStatusText(c.hasElevator) + '</span>'
             + '<span style="cursor:pointer;color:#5e35b1;font-size:11px;margin-left:6px;" title="지도에서 위치 확인" onclick="focusCompOnMap(' + i + ')">📍</span>'
             + '<span style="cursor:pointer;color:' + (noteCount ? '#e65100;font-weight:bold;' : '#bbb;') + 'font-size:11px;margin-left:6px;" title="이 건물 임장메모 보기/작성" onclick="openSiteNoteModal(' + noteArgs + ')">📝' + (noteCount ? noteCount : '') + '</span>'
             + '<span class="comp-item-remove" onclick="removeComparable(' + i + ')">✕</span></div>';
