@@ -773,10 +773,10 @@ tr:hover td { background:#fffde7; }
                  반영)과 달리 실거래만 반영한 값이라 따로 표기해달라는 요청(2026-07)으로 추가. -->
             <div class="est-row" style="margin-top:2px;">
                 <span style="font-size:11px;color:#888;min-width:76px;flex-shrink:0;">📊 비교물건 매도가</span>
-                <span class="est-value" id="est-comp-value" style="font-size:13px;">-</span>
+                <span class="est-value" id="est-comp-value" style="font-size:13px;cursor:pointer;text-decoration:underline;text-decoration-style:dotted;" onclick="openCompViewModal()" title="등록된 비교물건 목록 보기">-</span>
                 <button type="button" class="modal-btn btn-gray est-apply-btn" onclick="applyEstCompValue()">②에 적용</button>
             </div>
-            <div class="est-sub">등록된 비교물건(실거래) 평단가 기반 - 호가·매물재고는 미반영</div>
+            <div class="est-sub">등록된 비교물건(실거래) 평단가 기반 - 호가·매물재고는 미반영 · <span style="cursor:pointer;color:#5e35b1;text-decoration:underline;" onclick="openCompViewModal()">📋 목록 보기</span></div>
 
             <div class="est-row">
                 <span class="est-num">③</span><span class="est-label">예상마진</span>
@@ -1222,7 +1222,7 @@ tr:hover td { background:#fffde7; }
 <div id="ai-comp-modal-bg" onclick="closeAiCompModal(event)" style="position:fixed;inset:0;background:rgba(0,0,0,0.45);z-index:120;display:none;align-items:center;justify-content:center;">
 <div id="ai-comp-modal" style="background:white;border-radius:14px;width:360px;max-height:75vh;overflow-y:auto;box-shadow:0 8px 32px rgba(0,0,0,0.25);">
     <div class="modal-header">
-        <span>🤖 유사물건 자동추천</span>
+        <span id="ai-comp-modal-title">🤖 유사물건 자동추천</span>
         <span class="modal-close" onclick="closeAiCompModal()">✕</span>
     </div>
     <div id="ai-comp-body" style="padding:6px 16px;"></div>
@@ -1232,6 +1232,16 @@ tr:hover td { background:#fffde7; }
     </div>
 </div>
 </div>
+<div id="comp-view-modal-bg" onclick="closeCompViewModal(event)" style="position:fixed;inset:0;background:rgba(0,0,0,0.45);z-index:130;display:none;align-items:center;justify-content:center;">
+<div style="background:white;border-radius:14px;width:340px;max-height:75vh;overflow-y:auto;box-shadow:0 8px 32px rgba(0,0,0,0.25);">
+    <div class="modal-header">
+        <span>📊 등록된 비교물건 목록</span>
+        <span class="modal-close" onclick="closeCompViewModal()">✕</span>
+    </div>
+    <div id="comp-view-body" style="padding:6px 16px 16px;"></div>
+</div>
+</div>
+<button type="button" id="comp-map-return-btn" onclick="returnToAuctionModal()" style="display:none;position:fixed;bottom:16px;right:16px;z-index:150;background:#5e35b1;color:white;border:none;border-radius:24px;padding:10px 16px;font-size:13px;font-weight:bold;box-shadow:0 4px 12px rgba(0,0,0,0.3);">↩ 등록화면으로 돌아가기</button>
 <div id="marker-stack-modal-bg" onclick="closeMarkerStackModal(event)" style="position:fixed;inset:0;background:rgba(0,0,0,0.45);z-index:125;display:none;align-items:center;justify-content:center;">
 <div style="background:white;border-radius:14px;width:320px;max-height:70vh;overflow-y:auto;box-shadow:0 8px 32px rgba(0,0,0,0.25);">
     <div class="modal-header">
@@ -7057,7 +7067,7 @@ async function openAiCompFinder() {
     document.getElementById('ai-comp-modal-bg').style.display = 'flex';
     autoCalcAuctionJeonseAnalysis(); // 유사물건 추천 결과(Pool A)가 바뀌었으니 예상전세가도 다시 계산
 }
- 
+
 /* 단지 내 관측된 거래들 중 최고층을 그 단지의 "탑층"으로 근사 (건축HUB 총층수 정보가
    없는 물건도 많아, 실거래 데이터 자체에서 관측된 최고층을 대리 지표로 사용) */
 function getMaxFloorForApt(apt) {
@@ -7258,6 +7268,77 @@ function removeComparable(idx) {
     calcCompValuation();
     if (!document.getElementById('a-repair').value) { autoCalcRepairSilent(); calcMargin(); }
     autoCalcAuctionJeonseAnalysis();
+}
+/* "📊 비교물건 매도가" 옆 클릭 시 - 예전엔 등록된 비교물건 목록(comp-list-box)을 보려면
+   모달을 아래로 스크롤해야 했음(2026-08 피드백). 값/문구를 누르면 바로 팝업으로 목록을
+   띄워주고, 각 항목에서 지도에서 실제 위치를 확인할 수 있게 함(요청: "각 항목에 비교 버튼"
+   = 지도에서 위치 확인 버튼, 사용자가 명시적으로 선택한 동작). */
+function openCompViewModal() {
+    renderCompViewList();
+    document.getElementById('comp-view-modal-bg').style.display = 'flex';
+}
+function closeCompViewModal(e) {
+    if (e && e.target !== document.getElementById('comp-view-modal-bg')) return;
+    document.getElementById('comp-view-modal-bg').style.display = 'none';
+}
+function renderCompViewList() {
+    var body = document.getElementById('comp-view-body');
+    var list = pendingAuctionComparables || [];
+    if (!list.length) {
+        body.innerHTML = '<div style="padding:16px 0;text-align:center;color:#aaa;font-size:12px;">등록된 비교물건이 없습니다.<br>지도 마커의 "+비교" 배지를 눌러 추가해 주세요.</div>';
+        return;
+    }
+    var html = '';
+    list.forEach(function(c, i) {
+        var elevText = c.hasElevator === true ? '승강기O' : (c.hasElevator === false ? '승강기X' : '승강기 미확인');
+        var floorNum = parseInt(c.floor);
+        var floorText = Number.isFinite(floorNum) && floorNum <= 2
+            ? '<span style="color:#e65100;font-weight:bold;">' + c.floor + '층(저층)</span>'
+            : c.floor + '층';
+        html += '<div style="padding:8px 0;border-bottom:1px solid #f0f0f0;font-size:12px;">'
+            + '<div style="font-weight:bold;color:#333;">' + c.name + ' · ' + (c.date || '-') + '</div>'
+            + '<div style="color:#555;margin-top:2px;">' + toEok(String(c.amount)) + ' · ' + (c.pyung ? c.pyung + '평' : '-') + ' · ' + floorText + ' · ' + (c.buildYear || '-') + '년 · ' + elevText + '</div>'
+            + '<button type="button" class="modal-btn btn-gray" style="font-size:10.5px;margin-top:5px;padding:3px 10px;" onclick="focusCompOnMap(' + i + ')">📍 지도에서 위치 확인</button>'
+            + '</div>';
+    });
+    body.innerHTML = html;
+}
+/* 비교물건은 등록 시 좌표를 따로 저장하지 않아서(이름/동/거래정보만 저장 - 용량 절감),
+   "지도에서 위치 확인" 클릭 시점에 allAptList에서 이름(+동)이 일치하는 단지를 찾아
+   coordCache에서 좌표를 조회함(findSimilarComps 등에서 쓰는 것과 같은 캐시키 조합). */
+function findCompCoord(c) {
+    var match = allAptList.find(function(apt) {
+        var l = apt.latest || {};
+        return (l.name || '') === (c.name || '') && (!c.dong || (l.dong || '') === c.dong);
+    });
+    if (!match) return null;
+    var l = match.latest || {};
+    var cacheKey = [l.dong, l.name, l.bunji, l.road_name, l.main_num, l.sub_num].join('|').toLowerCase();
+    return coordCache[cacheKey] || null;
+}
+var compHighlightMarker = null;
+/* 지도 위치 확인 - 경매 등록 모달은 화면 전체를 덮는 오버레이라 열려 있는 채로는 지도가
+   안 보임. openAuctionModal()을 다시 부르면 새 물건일 경우 폼이 리셋되어 작성 중이던
+   내용을 잃을 수 있어서, 절대 openAuctionModal을 다시 호출하지 않고 단순히 display만
+   토글해서 원래 입력값을 그대로 보존함(우측 하단 "돌아가기" 버튼으로 복귀). */
+function focusCompOnMap(idx) {
+    var c = (pendingAuctionComparables || [])[idx];
+    if (!c) return;
+    var coord = findCompCoord(c);
+    if (!coord) { alert('이 비교물건(' + c.name + ')의 위치 정보를 찾을 수 없습니다.'); return; }
+    document.getElementById('comp-view-modal-bg').style.display = 'none';
+    document.getElementById('auction-modal-bg').style.display = 'none';
+    document.getElementById('comp-map-return-btn').style.display = 'block';
+    if (compHighlightMarker) compHighlightMarker.setMap(null);
+    var pos = new kakao.maps.LatLng(coord.lat, coord.lon);
+    compHighlightMarker = new kakao.maps.Marker({ map: map, position: pos, title: c.name, zIndex: 999 });
+    map.setCenter(pos);
+    map.setLevel(3);
+}
+function returnToAuctionModal() {
+    document.getElementById('comp-map-return-btn').style.display = 'none';
+    document.getElementById('auction-modal-bg').style.display = 'flex';
+    if (compHighlightMarker) { compHighlightMarker.setMap(null); compHighlightMarker = null; }
 }
 /* 비교물건은 사용자가 여러 시점의 거래를 섞어서 등록하는 경우가 많음(어제 거래도, 8개월 전
    거래도 "비슷하다"고 판단하면 똑같이 등록됨) - 예전엔 이 거래일 차이를 전혀 반영하지 않고
@@ -7502,7 +7583,8 @@ function renderEstimateSummary() {
     // 요청(2026-07)으로 추가함 - ①과 값이 같아 보여도(호가 미입력 시) 성격이 다름을 문구로 구분.
     window.__compOnlyValue = est ? est.estValue : null;
     var compEl = document.getElementById('est-comp-value');
-    if (compEl) compEl.innerText = est ? toEok(String(est.estValue)) : '비교물건 없음';
+    var compCount = (pendingAuctionComparables || []).length;
+    if (compEl) compEl.innerText = est ? toEok(String(est.estValue)) + ' (' + compCount + '건)' : (compCount ? '평형 입력 필요 (' + compCount + '건 등록됨)' : '비교물건 없음');
 
     // ③ 예상마진 = 이 동네 낙찰사례의 매도사례 매칭 기준 추정마진(세전) 중간값
     var ctx = getAuctionAddressContext();
