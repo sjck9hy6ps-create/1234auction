@@ -144,29 +144,49 @@ export default async function handler(req, res) {
 }
 
 /* 배치 캐시조회 - 외부 API는 호출하지 않고 building_info 캐시에 있는 것만 돌려줌.
-   sigungu_cd/bjdong_cd는 보통 한 지역 로딩 안에서 몇 개 안 되는 값이라(법정동 몇 개),
-   .in()으로 그 범위만 한 번에 긁어온 뒤 bun/ji/bld_nm은 메모리에서 매칭합니다. */
+   ⚠️ 2026-08 실측으로 발견/수정한 버그: 예전엔 sigungu_cd/bjdong_cd를 각각 독립적으로
+   .in()해서, 세션 중 여러 시군구(지역)가 섞인 요청이 들어오면 실제로 요청하지 않은
+   시군구×동 조합까지 교차로 매칭돼 불필요하게 많은 행을 긁어왔음(예: A시군구+X동,
+   B시군구+Y동 두 개만 요청했는데 A시군구+Y동, B시군구+X동까지 결과에 섞여 들어감).
+   거기에 .range() 없이 select('*')만 쓰면 Supabase(PostgREST) 기본 응답 상한(1000행)에
+   묶여서, 이 상한을 넘기는 순간 뒤쪽 행은 조용히 잘려나가 "캐시가 분명 있는데 없다"고
+   잘못 응답하는 문제가 있었음. 여러 지역이 누적된 세션에서 캐시 히트율이 최대 27%까지
+   떨어지는 걸 직접 재현 확인함 - 아래처럼 (sigungu_cd,bjdong_cd) 쌍 단위로 정확히 매칭
+   시키고, 혹시 그래도 1000행을 넘기면 놓치지 않도록 .range()로 끝까지 페이지네이션함. */
 async function handleBatchCacheCheck(req, res) {
   const items = Array.isArray(req.body?.items) ? req.body.items : [];
   if (!items.length) return res.status(200).json({ results: {} });
 
-  const sigunguCds = [...new Set(items.map(i => i.sigunguCd).filter(Boolean))];
-  const bjdongCds  = [...new Set(items.map(i => i.bjdongCd).filter(Boolean))];
-  if (!sigunguCds.length || !bjdongCds.length) return res.status(200).json({ results: {} });
+  const pairMap = new Map();
+  items.forEach(i => {
+    if (!i.sigunguCd || !i.bjdongCd) return;
+    pairMap.set(`${i.sigunguCd}|${i.bjdongCd}`, { sigunguCd: i.sigunguCd, bjdongCd: i.bjdongCd });
+  });
+  const pairs = [...pairMap.values()];
+  if (!pairs.length) return res.status(200).json({ results: {} });
 
   try {
-    const { data, error } = await supabase
-      .from('building_info')
-      .select('*')
-      .in('sigungu_cd', sigunguCds)
-      .in('bjdong_cd', bjdongCds);
-    if (error) throw error;
+    const orExpr = pairs
+      .map(p => `and(sigungu_cd.eq.${p.sigunguCd},bjdong_cd.eq.${p.bjdongCd})`)
+      .join(',');
 
     const rowMap = {};
-    (data || []).forEach(row => {
-      const k = [row.sigungu_cd, row.bjdong_cd, row.bun, row.ji, row.bld_nm].join('|');
-      rowMap[k] = row;
-    });
+    const PAGE_SIZE = 1000;
+    let from = 0;
+    while (true) {
+      const { data, error } = await supabase
+        .from('building_info')
+        .select('*')
+        .or(orExpr)
+        .range(from, from + PAGE_SIZE - 1);
+      if (error) throw error;
+      (data || []).forEach(row => {
+        const k = [row.sigungu_cd, row.bjdong_cd, row.bun, row.ji, row.bld_nm].join('|');
+        rowMap[k] = row;
+      });
+      if (!data || data.length < PAGE_SIZE) break;
+      from += PAGE_SIZE;
+    }
 
     const results = {};
     items.forEach(it => {
