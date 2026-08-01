@@ -247,7 +247,7 @@ tr:hover td { background:#fffde7; }
 .modal-row { display:flex; gap:8px; margin-bottom:8px; align-items:center; }
 .modal-label { font-size:12px; color:#555; min-width:72px; flex-shrink:0; }
 .modal-input {
-    flex:1; min-width:0; padding:7px 10px; border:1.5px solid #ddd; border-radius:7px;
+    flex:1; padding:7px 10px; border:1.5px solid #ddd; border-radius:7px;
     font-size:13px; outline:none; font-family:inherit;
 }
 .modal-input:focus { border-color:#6a1b9a; }
@@ -1091,8 +1091,8 @@ tr:hover td { background:#fffde7; }
             </div>
             <div class="modal-row">
                 <span class="modal-label">수리비 <span onclick="showCalcInfo('repair')" title="계산기준 보기" style="cursor:pointer;color:#1976d2;">ⓘ</span></span>
-                <input type="number" class="modal-input" id="a-repair" placeholder="0" oninput="calcMargin()">
-                <span style="font-size:10px;color:#aaa;margin-left:4px;">연립다세대는 연식단계별 평당단가로 자동계산(직접 수정 가능)</span>
+                <input type="number" class="modal-input" id="a-repair" placeholder="0" oninput="calcMargin()" style="flex:0 0 90px;min-width:70px;">
+                <span style="font-size:10px;color:#aaa;margin-left:4px;flex:1;min-width:0;">연립다세대는 연식단계별 평당단가로 자동계산(직접 수정 가능)</span>
             </div>
             <div class="modal-row">
                 <span class="modal-label">중개수수료 <span onclick="showCalcInfo('agent')" title="계산기준 보기" style="cursor:pointer;color:#1976d2;">ⓘ</span></span>
