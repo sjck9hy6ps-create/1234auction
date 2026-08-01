@@ -687,6 +687,7 @@ tr:hover td { background:#fffde7; }
         <span style="display:flex;gap:6px;flex-wrap:wrap;">
             <button class="modal-btn btn-purple" id="bc-match-btn" style="font-size:10px;padding:4px 8px;white-space:nowrap;" onclick="runResaleMatching()">🔍 매도사례 매칭</button>
             <button class="modal-btn btn-gray" id="bc-retry-failed-btn" style="font-size:10px;padding:4px 8px;white-space:nowrap;" onclick="retryFailedMatches()" title="매칭 조건이 완화됐으니 예전에 실패했던 건들을 새 조건으로 다시 시도합니다">🔄 실패건 재시도</button>
+            <button class="modal-btn btn-gray" id="bc-cleanup-dup-btn" style="font-size:10px;padding:4px 8px;white-space:nowrap;" onclick="cleanupDuplicateBidCases()" title="같은 사건번호가 여러 번 저장된 중복 레코드를 찾아 하나만 남기고 정리합니다">🧹 중복 정리</button>
         </span>
     </div>
     <div id="bc-stats-box"></div>
@@ -4061,13 +4062,29 @@ function renderCaseListPreview() {
         + '</div></div>';
     box.innerHTML = html;
 }
+// 사건번호+담당계는 법원경매 사건 하나를 고유하게 식별함(같은 사건이 같은 법원 안에서 재사용될
+// 일이 없음) - 같은 목록을 실수로 두 번 붙여넣거나(예: 저장이 안 된 줄 알고 재시도) 여러 번에
+// 나눠 붙여넣은 텍스트가 겹칠 때 중복 저장을 막는 기준으로 씀. caseNo가 없는 항목(파싱 실패)은
+// 식별 불가하므로 dedup 대상에서 제외함(null 반환).
+function bidCaseDedupKey(c) {
+    if (!c || !c.caseNo) return null;
+    return String(c.caseNo).trim() + '|' + String(c.court || '').trim();
+}
 async function saveSelectedCases() {
     var selected = pendingCaseListExtraction.filter(function(c) { return c._selected; });
     if (!selected.length) { alert('저장할 항목을 하나 이상 선택해 주세요.'); return; }
     var statusBox = document.getElementById('bc-extract-status');
     statusBox.style.color = '#999'; statusBox.innerText = '저장 중...';
+    // 이미 저장돼 있는 사건 + 이번 배치 안에서 먼저 처리된 사건을 함께 추적해서, 같은 목록을
+    // 실수로 다시 붙여넣었거나 붙여넣은 텍스트 안에 같은 사건이 중복으로 들어있어도 한 번만 저장함
+    // (2026-08 - 같은 사건이 3번씩 저장되는 버그를 이 함수에 dedup 체크가 없어서 발견함).
+    var existingKeys = {};
+    bidCaseList.forEach(function(c) { var k = bidCaseDedupKey(c); if (k) existingKeys[k] = true; });
+    var savedCount = 0, skippedCount = 0;
     for (var i = 0; i < selected.length; i++) {
         var c = selected[i];
+        var dedupKey = bidCaseDedupKey(c);
+        if (dedupKey && existingKeys[dedupKey]) { skippedCount++; continue; }
         var data = {
             id: Date.now().toString() + '_' + i,
             caseNo: c.caseNo || null, court: c.court || null, propertyType: c.propertyType || null,
@@ -4083,18 +4100,68 @@ async function saveSelectedCases() {
         try {
             var saved = await saveBidCaseAPI(data);
             bidCaseList.push(saved);
+            if (dedupKey) existingKeys[dedupKey] = true;
+            savedCount++;
         } catch (e) { console.error('낙찰사례 저장 실패:', e.message); }
     }
     pendingCaseListExtraction = [];
     document.getElementById('bc-paste-text').value = '';
     document.getElementById('bc-preview-box').innerHTML = '';
-    statusBox.style.color = '#2e7d32'; statusBox.innerText = selected.length + '건 저장 완료.';
+    statusBox.style.color = '#2e7d32';
+    statusBox.innerText = savedCount + '건 저장 완료.' + (skippedCount ? ' (이미 저장된 사건 ' + skippedCount + '건은 중복이라 건너뜀)' : '');
     renderBidCaseList(); renderBidCaseMarkers();
 }
 async function deleteBidCase(id) {
     if (!confirm('이 낙찰사례를 삭제할까요?')) return;
     await deleteBidCaseAPI(id);
     bidCaseList = bidCaseList.filter(function(c) { return c.id !== id; });
+    renderBidCaseList(); renderBidCaseMarkers();
+}
+/* 🧹 중복 낙찰사례 정리 - saveSelectedCases()에 dedup 체크가 없었던 과거 버그로 이미 쌓인
+   중복 레코드(같은 사건번호+담당계가 2~3번씩 저장된 경우)를 한 번에 찾아 정리하는 도구.
+   그룹마다 매도사례 매칭(resaleMatch)이 이미 된 레코드가 있으면 그걸 남기고(계산 결과를
+   보존), 없으면 가장 먼저 저장된(importedAt이 가장 이른) 레코드를 남김 - 나머지는 삭제.
+   ⚠️ 실제 삭제(deleteBidCaseAPI 호출)는 이 함수를 호출한 사람이 화면에서 직접 "정리하기"
+   버튼을 눌러 확인(confirm)한 뒤에만 실행됨 - 되돌릴 수 없는 삭제라 항상 사용자 확인을 거침. */
+function findDuplicateBidCaseGroups() {
+    var byKey = {};
+    bidCaseList.forEach(function(c) {
+        var k = bidCaseDedupKey(c);
+        if (!k) return;
+        (byKey[k] = byKey[k] || []).push(c);
+    });
+    return Object.keys(byKey).map(function(k) { return byKey[k]; }).filter(function(g) { return g.length > 1; });
+}
+async function cleanupDuplicateBidCases() {
+    var groups = findDuplicateBidCaseGroups();
+    if (!groups.length) { alert('중복된 낙찰사례가 없습니다.'); return; }
+    var extraCount = groups.reduce(function(s, g) { return s + (g.length - 1); }, 0);
+    if (!confirm('같은 사건이 중복 저장된 사례가 ' + groups.length + '건 그룹, 총 ' + extraCount + '건 발견됐습니다.\n'
+        + '그룹마다 하나만 남기고(매도사례 매칭이 된 게 있으면 그걸 우선 보존) 나머지를 삭제합니다.\n'
+        + '삭제된 레코드는 복구할 수 없습니다 - 계속할까요?')) return;
+    var btn = document.getElementById('bc-cleanup-dup-btn');
+    if (btn) { btn.disabled = true; btn.innerText = '정리 중...'; }
+    var statusBox = document.getElementById('bc-extract-status');
+    var deletedCount = 0, failCount = 0;
+    for (var g = 0; g < groups.length; g++) {
+        var group = groups[g];
+        var keep = group.find(function(c) { return c.resaleMatch && c.resaleMatch.amount > 0; })
+            || group.slice().sort(function(a, b) { return (a.importedAt || 0) - (b.importedAt || 0); })[0];
+        var toDelete = group.filter(function(c) { return c.id !== keep.id; });
+        for (var j = 0; j < toDelete.length; j++) {
+            try {
+                await deleteBidCaseAPI(toDelete[j].id);
+                bidCaseList = bidCaseList.filter(function(c) { return c.id !== toDelete[j].id; });
+                deletedCount++;
+            } catch (e) { console.error('중복 삭제 실패:', toDelete[j].id, e.message); failCount++; }
+        }
+        if (statusBox) statusBox.innerText = '중복 정리 중... (' + (g + 1) + '/' + groups.length + '그룹, ' + deletedCount + '건 삭제됨)';
+    }
+    if (btn) { btn.disabled = false; btn.innerText = '🧹 중복 정리'; }
+    if (statusBox) {
+        statusBox.style.color = '#2e7d32';
+        statusBox.innerText = deletedCount + '건의 중복 레코드를 삭제했습니다.' + (failCount ? ' (' + failCount + '건 삭제 실패 - 다시 시도해 주세요)' : '');
+    }
     renderBidCaseList(); renderBidCaseMarkers();
 }
 /* ════════════════════════════════════
