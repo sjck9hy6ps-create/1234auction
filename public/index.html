@@ -7855,13 +7855,19 @@ async function generateAiBriefing() {
         appraisalPrice: num('a-appraisal') ? num('a-appraisal') * 10000 : null,
         minBidPrice: num('a-min-bid') ? num('a-min-bid') * 10000 : null,
         myBid: num('a-my-bid') ? num('a-my-bid') * 10000 : null,
-        predictedSaleValue: window.__predictedSaleValue || null,
+        // ⚠️ 2026-08 버그 수정: BRIEFING_HEADER는 "금액 단위는 원"이라고 명시하는데,
+        // window.__predictedSaleValue/__compOnlyValue/__predictedMarginValue(모두 toEok에
+        // 넘기는 만원 단위 값)와 a-comp-target-margin(다른 금액 입력칸과 동일하게 만원 단위)은
+        // ×10000 변환이 빠져 있어 AI가 실제보다 1만분의 1로 작은 금액으로 잘못 읽고 있었음
+        // (감정가·최저가·내입찰가 등 나머지 금액은 이미 정상 변환되고 있어 필드마다 단위가
+        // 들쭉날쭉했던 게 "금액을 정확히 표기 못함"의 원인). 나머지와 동일하게 ×10000 적용.
+        predictedSaleValue: window.__predictedSaleValue ? window.__predictedSaleValue * 10000 : null,
         targetSaleValue: num('a-target') ? num('a-target') * 10000 : null,
-        compOnlySaleValue: window.__compOnlyValue || null,
-        predictedMarginValue: window.__predictedMarginValue || null,
-        targetMarginValue: num('a-comp-target-margin'),
+        compOnlySaleValue: window.__compOnlyValue ? window.__compOnlyValue * 10000 : null,
+        predictedMarginValue: window.__predictedMarginValue ? window.__predictedMarginValue * 10000 : null,
+        targetMarginValue: num('a-comp-target-margin') ? num('a-comp-target-margin') * 10000 : null,
         marginSampleCount: marginStats ? marginStats.count : null,
-        recommendedBid: (bidRes && bidRes.bid) ? bidRes.bid : null,
+        recommendedBid: (bidRes && bidRes.bid) ? bidRes.bid * 10000 : null,
         unpaidManagementFee: num('a-unpaid-mgmt-fee') ? num('a-unpaid-mgmt-fee') * 10000 : null,
         elevator: d.elevator || null,
         buildYear: d.registrationDate || null,
