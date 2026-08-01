@@ -247,7 +247,7 @@ tr:hover td { background:#fffde7; }
 .modal-row { display:flex; gap:8px; margin-bottom:8px; align-items:center; }
 .modal-label { font-size:12px; color:#555; min-width:72px; flex-shrink:0; }
 .modal-input {
-    flex:1; padding:7px 10px; border:1.5px solid #ddd; border-radius:7px;
+    flex:1; min-width:0; padding:7px 10px; border:1.5px solid #ddd; border-radius:7px;
     font-size:13px; outline:none; font-family:inherit;
 }
 .modal-input:focus { border-color:#6a1b9a; }
@@ -909,10 +909,10 @@ tr:hover td { background:#fffde7; }
                 <input type="text" class="modal-input" id="a-name" placeholder="단지명">
             </div>
             <div class="modal-row">
-                <span class="modal-label">동/층/호수</span>
-                <input type="text" class="modal-input" id="a-dong" placeholder="예) 101동" style="flex:1;">
-                <input type="number" class="modal-input" id="a-floor" placeholder="층" style="flex:0.6;">
-                <input type="text" class="modal-input" id="a-unit" placeholder="호수 예) 302호" style="flex:1;">
+                <span class="modal-label" style="min-width:56px;">동/층/호수</span>
+                <input type="text" class="modal-input" id="a-dong" placeholder="101동" style="flex:1.1;min-width:0;font-size:16px;padding:7px 6px;">
+                <input type="number" class="modal-input" id="a-floor" placeholder="층" style="flex:0.55;min-width:0;font-size:16px;padding:7px 4px;">
+                <input type="text" class="modal-input" id="a-unit" placeholder="302호" style="flex:1;min-width:0;font-size:16px;padding:7px 6px;">
             </div>
             <div class="modal-row">
                 <span class="modal-label">사건번호</span>
