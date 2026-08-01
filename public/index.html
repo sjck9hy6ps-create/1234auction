@@ -11153,7 +11153,15 @@ async function batchFetchVillaBuildingInfo(villas) {
     }
 }
 async function prefetchVillaBuildingInfo(aptList) {
-    var villas = aptList.filter(function(a) { return a.buildingType === 'villa'; });
+    // ⚠️ 2026-08 실측으로 확인한 성능 버그: 호출부(placeAllMarkers 등)가 매번 이번에 새로
+    // 로드된 부분이 아니라 allAptList "전체"(세션 내내 누적 - 여러 지역을 옮겨다닐수록 계속
+    // 불어남)를 그대로 넘겨서, 이미 이전 호출에서 buildingInfo를 받아온 연립다세대까지
+    // 매번 다시 배치조회 대상에 포함시키고 있었음. 세션이 길어지고 여러 시군구를 오갈수록
+    // 배치조회 한 번에 담기는 법정동 조합이 계속 늘어났고, 이게 서버 쿼리 상한(아래
+    // handleBatchCacheCheck 참고)에 걸려 캐시가 분명 있는데도 "없음"으로 취급되는 문제로
+    // 이어졌음 - 이미 buildingInfo가 세팅된 것은 애초에 배치조회 대상에서 빼서 요청 자체를
+    // 작게 유지함(실측: 783건 중 이미 해결된 걸 계속 재요청하던 게 캐시 히트율을 끌어내림).
+    var villas = aptList.filter(function(a) { return a.buildingType === 'villa' && a.buildingInfo === undefined; });
     if (!villas.length) return;
     await batchFetchVillaBuildingInfo(villas);
     var remaining = villas.filter(function(a) { return a.buildingInfo === undefined; });
