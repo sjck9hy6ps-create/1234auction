@@ -504,24 +504,32 @@ async function handleBriefing(req, res) {
 }
 
 // ════════════════════════════════════
-// 최신 세율 조사 (mode:'taxUpdate') - 2026-08 신규.
+// 최신 세율 조사 (mode:'taxUpdateResearch' → mode:'taxUpdateExtract') - 2026-08 신규.
 // index.html의 TAX_CONFIG(취득세·재산세·종부세·양도소득세·부가세 계산에 쓰이는 모든 세율·
 // 구간·공제액)를 최신 상태로 갱신하기 위한 기능. 세법·시행령이 자주 바뀌고(다주택 중과,
 // 조정대상지역 지정, 공정시장가액비율 등) Claude의 학습 데이터만으로는 최신 여부를 장담할 수
 // 없어서, 반드시 실시간 웹검색으로 근거를 찾은 뒤에 답하도록 2단계로 나눔:
-//   1단계(callClaudeWebSearch): web_search 툴을 주고 "지금 기준으로 각 세목이 어떤지, TAX_CONFIG
-//     기본값과 비교해 뭐가 바뀌었는지"를 자유 형식으로 조사하게 함 - Claude가 스스로 검색
-//     횟수·검색어를 정하고, 국세청·위택스·행안부 등 공신력 있는 출처를 찾아 인용까지 함.
-//   2단계(callClaude, tool_choice 강제): 1단계의 텍스트 답변을 구조화된 JSON(TAX_CONFIG와
-//     동일한 모양)으로 변환함. 이 단계에서는 새로 검색하지 않고 1단계 답변만 근거로 삼음.
+//   1단계(mode:'taxUpdateResearch' → callClaudeWebSearch): web_search 툴을 주고 "지금 기준으로
+//     각 세목이 어떤지, TAX_CONFIG 기본값과 비교해 뭐가 바뀌었는지"를 자유 형식으로 조사하게
+//     함 - Claude가 스스로 검색 횟수·검색어를 정하고, 국세청·위택스·행안부 등 공신력 있는
+//     출처를 찾아 인용까지 함.
+//   2단계(mode:'taxUpdateExtract' → callClaude, tool_choice 강제): 1단계의 텍스트 답변을
+//     구조화된 JSON(TAX_CONFIG와 동일한 모양)으로 변환함. 이 단계에서는 새로 검색하지 않고
+//     1단계 답변만 근거로 삼음.
+// ⚠️ 2026-08 실동작 테스트에서 두 단계를 한 서버리스 함수 호출 안에서 순차 실행했더니(구
+// handleTaxUpdate), 1단계 웹검색만으로도 Anthropic 응답이 55초(postAnthropicMessages의
+// AbortSignal 한도)를 넘겨 타임아웃이 났음 - Vercel Hobby maxDuration이 60초라 "검색 여러
+// 번 도는 리서치" + "구조화 추출"을 한 호출에 몰아넣을 여유가 없었음. 그래서 프론트엔드
+// (index.html의 updateTaxRates)가 두 번의 별도 HTTP 요청으로 나눠 호출하도록 바꿈 - 각
+// 요청은 Claude 호출을 딱 1번만 하므로 각자 60초 예산을 온전히 씀.
 // ⚠️ 확신 없는 필드는 스키마에서 required로 강제하지 않았음 - 2단계 프롬프트에서도 "모르면
 // 그 필드는 아예 비워두라"고 명시해, 프론트엔드가 "제공된 필드만 검증 후 부분 반영"할 수
-// 있게 함(전체를 통째로 덮어쓰지 않음 - index.html의 applyTaxConfigUpdate 참고).
+// 있게 함(전체를 통째로 덮어쓰지 않음 - index.html의 sanitizeAndMergeTaxConfig 참고).
 // 리서치(1단계)는 웹검색 비용이 별도로 붙고(건당 $10/1000회) 구조화 추출(2단계)은 일반 호출과
-// 같아서, 하루 사용량 안전한도에는 2회로 계산함(실제 웹검색 횟수는 별도 청구 - Anthropic
-// 콘솔에서 확인 가능).
+// 같아서, 하루 사용량 안전한도에는 단계별로 1회씩 계산함(실제 웹검색 횟수는 별도 청구 -
+// Anthropic 콘솔에서 확인 가능).
 // ════════════════════════════════════
-const CLAUDE_CALLS_PER_TAX_UPDATE = 2;
+const CLAUDE_CALLS_PER_TAX_UPDATE_STEP = 1;
 
 const SCHEMA_TAX_UPDATE = {
   type: 'OBJECT',
@@ -647,6 +655,10 @@ web_search 툴을 사용해 국세청(nts.go.kr), 위택스(wetax.go.kr), 국토
 - 양도소득세 중과 유예가 연장되거나 재시행되는 등 상태가 바뀌었는지
 - 위 다섯 세목 외에, 경매·부동산 매매와 관련해 최근 새로 생기거나 크게 바뀐 세금·부담금이
   있는지(예: 특정 지역 한정 조치, 신설 부담금 등) - 있으면 반드시 언급하세요.
+⚠️ 시간 제한이 있으니 검색은 최대 5회 이내로 아껴서 쓰세요 - 세목별로 따로따로 찾기보다,
+한 번의 검색으로 여러 세목을 함께 다루는 요약·정리 페이지(국세청 보도자료, 세법 개정 종합
+안내 등)를 우선적으로 찾는 게 효율적입니다. 검색 횟수를 다 쓰기 전에 충분히 확인됐다고
+판단되면 그 시점에서 바로 답변을 정리해 마무리하세요.
 찾은 내용을 근거(출처)와 함께 한국어로 정리해서 답해 주세요. 확실하지 않은 부분은 추측하지 말고
 "확인 못함"이라고 솔직히 말하세요.`;
 }
@@ -670,14 +682,17 @@ function buildTaxUpdateExtractPrompt(researchText) {
 ${researchText}`;
 }
 
-async function handleTaxUpdate(req, res) {
+// 1단계: 웹검색 리서치만 수행 (Claude 호출 1회, 서버리스 함수 호출도 이것 하나뿐이라 60초
+// 예산을 온전히 씀). 결과 텍스트+출처를 그대로 프론트엔드에 돌려주면, 프론트가 이어서
+// mode:'taxUpdateExtract'를 호출해 2단계(구조화 추출)를 별도 요청으로 진행함.
+async function handleTaxUpdateResearch(req, res) {
   const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
   if (!ANTHROPIC_API_KEY) {
     return res.status(500).json({ error: 'ANTHROPIC_API_KEY 환경변수가 없습니다. Vercel 프로젝트 설정에 추가해 주세요.' });
   }
   const dailyKey = `auctionparse_daily_${todayKstDateStr()}`;
   const usedToday = await getDailyExtractCount(dailyKey);
-  if (usedToday + CLAUDE_CALLS_PER_TAX_UPDATE > DAILY_CLAUDE_CALL_BUDGET) {
+  if (usedToday + CLAUDE_CALLS_PER_TAX_UPDATE_STEP > DAILY_CLAUDE_CALL_BUDGET) {
     return res.status(429).json({
       error: `오늘 AI 자동추출 사용량 안전한도(비용 급증 방지용, 하루 ${DAILY_CLAUDE_CALL_BUDGET}회)에 다 찼습니다. 한국시간 자정에 초기화됩니다. (지금까지 ${usedToday}회 사용)`,
       dailyLimitReached: true,
@@ -686,11 +701,45 @@ async function handleTaxUpdate(req, res) {
     });
   }
   try {
-    const research = await callClaudeWebSearch(ANTHROPIC_API_KEY, buildTaxUpdateResearchPrompt(), 8);
-    const extracted = await callClaude(ANTHROPIC_API_KEY, buildTaxUpdateExtractPrompt(research.text), SCHEMA_TAX_UPDATE, [], 1, 0);
-    incrementDailyExtractCount(dailyKey, CLAUDE_CALLS_PER_TAX_UPDATE); // fire-and-forget
-    // 2단계에서 나온 sources가 비어 있으면(추출 누락) 1단계에서 직접 모은 출처로 대체
-    const sources = (Array.isArray(extracted.sources) && extracted.sources.length) ? extracted.sources : research.sources;
+    // max_uses를 8→5로 줄임: 검색을 많이 돌수록 Anthropic 응답이 느려져 55초 타임아웃에
+    // 걸리는 경우가 실동작 테스트에서 확인됨 - 5회로도 위 다섯 세목을 커버할 수 있도록
+    // 프롬프트(buildTaxUpdateResearchPrompt)에서 "여러 세목을 한 번에 다루는 페이지 우선"
+    // 전략을 안내해둠.
+    const research = await callClaudeWebSearch(ANTHROPIC_API_KEY, buildTaxUpdateResearchPrompt(), 5);
+    incrementDailyExtractCount(dailyKey, CLAUDE_CALLS_PER_TAX_UPDATE_STEP); // fire-and-forget
+    return res.status(200).json({ researchText: research.text, sources: research.sources });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+}
+
+// 2단계: 1단계에서 받은 리서치 텍스트를 구조화 JSON으로 추출 (Claude 호출 1회, 새로 검색하지
+// 않아 훨씬 빠름). researchText는 프론트엔드가 1단계 응답을 그대로 되돌려줌.
+async function handleTaxUpdateExtract(req, res) {
+  const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
+  if (!ANTHROPIC_API_KEY) {
+    return res.status(500).json({ error: 'ANTHROPIC_API_KEY 환경변수가 없습니다. Vercel 프로젝트 설정에 추가해 주세요.' });
+  }
+  const researchText = req.body && req.body.researchText;
+  if (!researchText || typeof researchText !== 'string') {
+    return res.status(400).json({ error: '리서치 결과(researchText)가 없습니다. 1단계 조사를 먼저 완료해 주세요.' });
+  }
+  const dailyKey = `auctionparse_daily_${todayKstDateStr()}`;
+  const usedToday = await getDailyExtractCount(dailyKey);
+  if (usedToday + CLAUDE_CALLS_PER_TAX_UPDATE_STEP > DAILY_CLAUDE_CALL_BUDGET) {
+    return res.status(429).json({
+      error: `오늘 AI 자동추출 사용량 안전한도(비용 급증 방지용, 하루 ${DAILY_CLAUDE_CALL_BUDGET}회)에 다 찼습니다. 한국시간 자정에 초기화됩니다. (지금까지 ${usedToday}회 사용)`,
+      dailyLimitReached: true,
+      usedToday,
+      limit: DAILY_CLAUDE_CALL_BUDGET,
+    });
+  }
+  try {
+    const extracted = await callClaude(ANTHROPIC_API_KEY, buildTaxUpdateExtractPrompt(researchText), SCHEMA_TAX_UPDATE, [], 1, 0);
+    incrementDailyExtractCount(dailyKey, CLAUDE_CALLS_PER_TAX_UPDATE_STEP); // fire-and-forget
+    // 2단계에서 나온 sources가 비어 있으면(추출 누락) 1단계에서 프론트가 넘겨준 출처로 대체
+    const fallbackSources = Array.isArray(req.body.sources) ? req.body.sources : [];
+    const sources = (Array.isArray(extracted.sources) && extracted.sources.length) ? extracted.sources : fallbackSources;
     return res.status(200).json({
       reportSummary: extracted.reportSummary || null,
       changesDetected: Array.isArray(extracted.changesDetected) ? extracted.changesDetected : [],
@@ -698,7 +747,6 @@ async function handleTaxUpdate(req, res) {
       lowConfidenceNote: extracted.lowConfidenceNote || null,
       sources: sources || [],
       config: extracted.config || {},
-      rawResearchText: research.text,
     });
   } catch (err) {
     return res.status(500).json({ error: err.message });
@@ -1394,10 +1442,15 @@ export default async function handler(req, res) {
   if (req.body && req.body.mode === 'briefing') {
     return handleBriefing(req, res);
   }
-  // 최신 세율 조사(mode:'taxUpdate') - 물건 데이터와 무관하게 세법 자체를 웹검색으로 조사하는
-  // 별개 경로라 먼저 분기함.
-  if (req.body && req.body.mode === 'taxUpdate') {
-    return handleTaxUpdate(req, res);
+  // 최신 세율 조사 - 물건 데이터와 무관하게 세법 자체를 웹검색으로 조사하는 별개 경로라 먼저
+  // 분기함. 60초 함수 시간제한 때문에 리서치(taxUpdateResearch)와 구조화 추출
+  // (taxUpdateExtract)을 별도 요청 2번으로 나눔 - 상세 이유는 위 handleTaxUpdateResearch
+  // 함수 주석 참고.
+  if (req.body && req.body.mode === 'taxUpdateResearch') {
+    return handleTaxUpdateResearch(req, res);
+  }
+  if (req.body && req.body.mode === 'taxUpdateExtract') {
+    return handleTaxUpdateExtract(req, res);
   }
   const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
   if (!ANTHROPIC_API_KEY) {
