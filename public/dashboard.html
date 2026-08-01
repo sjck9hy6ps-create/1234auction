@@ -124,6 +124,23 @@ function calcLoanPrepayFee(loanAmount, feeRatePercent) {
     return Math.round(loanAmount * (rate / 100));
 }
 
+// ⚠️ 2026-08 추가: index.html의 calcFilingDeadline()과 동일 - 부동산매매사업자는 물건을 매도할
+// 때마다 매매차익 예정신고를 양도월 말일로부터 2개월 이내에 해야 함. 여러 건을 한꺼번에 보는
+// 이 누적리포트에서 마감이 가장 임박한 건부터 놓치지 않도록 표시함.
+function calcFilingDeadline(sellDateStr) {
+    if (!sellDateStr) return null;
+    var d = new Date(sellDateStr);
+    if (isNaN(d.getTime())) return null;
+    // index.html의 calcFilingDeadline과 동일 로직(양도월+2월의 말일 - day 0 트릭으로 한 번에 계산,
+    // 말일을 구한 뒤 다시 +2월 하면 2월처럼 짧은 달에서 다음 달로 밀리는 오차가 생김).
+    var deadline = new Date(d.getFullYear(), d.getMonth() + 3, 0);
+    var today = new Date(); today.setHours(0, 0, 0, 0);
+    var diffDays = Math.round((deadline - today) / 86400000);
+    var pad = function(n) { return String(n).padStart(2, '0'); };
+    var deadlineStr = deadline.getFullYear() + '-' + pad(deadline.getMonth() + 1) + '-' + pad(deadline.getDate());
+    return { deadlineStr: deadlineStr, diffDays: diffDays };
+}
+
 function extractRegion(addr) {
     addr = String(addr || '').trim();
     if (!addr) return '주소미상';
@@ -173,7 +190,8 @@ function computeDeal(a) {
         loanAmount: loanAmount, loanAmountManual: loanAmountManual, loanRate: loanRate, interestCost: interestCost,
         loanPrepayFeeRate: loanPrepayFeeRate, prepayFee: prepayFee,
         totalCost: totalCost, sell: sell, profit: profit, roi: roi,
-        bidDate: a.bidDate || ''
+        bidDate: a.bidDate || '', sellDate: a.sellDate || '',
+        filing: calcFilingDeadline(a.sellDate || '')
     };
 }
 
@@ -331,8 +349,16 @@ function renderDealList(deals) {
     });
     var html = '<table><thead><tr><th>물건명</th><th>지역</th><th>유형</th><th>낙찰가</th><th>매도가</th><th>총비용</th><th>수익</th><th>수익률</th></tr></thead><tbody>';
     sorted.forEach(function(d, i) {
+        // 예정신고 마감이 30일 이내로 임박한 건만 목록에서 바로 눈에 띄게 표시 (여유 있는 건은
+        // 상세 펼침에서만 보여줘서 목록이 지저분해지지 않게 함)
+        var filingChip = '';
+        if (d.filing && d.filing.diffDays <= 30) {
+            var fColor = d.filing.diffDays < 0 ? '#e53935' : (d.filing.diffDays <= 14 ? '#e65100' : '#f57f17');
+            var fLabel = d.filing.diffDays < 0 ? '마감지남' : (d.filing.diffDays === 0 ? '오늘마감' : 'D-' + d.filing.diffDays);
+            filingChip = '<span style="display:inline-block;margin-left:4px;font-size:10px;font-weight:bold;color:white;background:' + fColor + ';border-radius:8px;padding:1px 6px;">📅' + fLabel + '</span>';
+        }
         html += '<tr class="clickable" onclick="toggleDetail('+i+')">'
-            + '<td>' + d.name + '</td>'
+            + '<td>' + d.name + filingChip + '</td>'
             + '<td>' + d.region + '</td>'
             + '<td>' + (PROP_LABEL[d.propType] || d.propType) + '</td>'
             + '<td>' + toEok(d.bid) + '</td>'
@@ -359,6 +385,8 @@ function renderDealList(deals) {
             + detailItem('총 투자비용', toEok(d.totalCost))
             + detailItem('실제 매도가', toEok(d.sell))
             + detailItem('입찰일', d.bidDate || '-')
+            + detailItem('매도일', d.sellDate || '-')
+            + (d.filing ? detailItem('매매차익 예정신고 마감', d.filing.deadlineStr + (d.filing.diffDays < 0 ? ' (지남)' : ' (D-' + d.filing.diffDays + ')')) : '')
             + '</div>'
             + (d.raw.memo ? '<div style="margin-top:8px;color:#888;">메모: ' + d.raw.memo.replace(/\n/g,'<br>') + '</div>' : '')
             + '</td></tr>';
