@@ -5787,6 +5787,11 @@ var DEFAULT_LOAN_RATE = { individual: 5.0, dealer: 6.5 };
    실무 통상 연 1~2%대(대출금액이 클수록 낮게 적용되는 경우도 있음) - 여기서는 보수적으로
    중간값 1.5%를 기본값으로 씀(a-loan-prepay-fee-rate로 직접 조정 가능). */
 var DEFAULT_LOAN_PREPAY_FEE_RATE = 1.5;
+/* 보유기간(a-hold-months)을 아직 입력 안 했으면 대출이자가 계속 "—"(0개월→이자 0원)로만
+   보여서 실제 비용을 놓치기 쉬웠음(2026-08 피드백). 보유기간 자체(양도세 구간 등에도 쓰임)는
+   건드리지 않고, 대출이자 계산에서만 보유기간 미입력 시 통상적인 단기매도 기준인 3개월치를
+   기본 가정으로 넣어 항상 대략적인 이자비용이 보이게 함. 입력하면 그 값으로 그대로 대체됨. */
+var DEFAULT_INTEREST_HOLD_MONTHS = 3;
 function calcLoanPrepayFee(loanAmount, feeRatePercent) {
     if (!loanAmount || loanAmount <= 0) return 0;
     var rate = (feeRatePercent > 0) ? feeRatePercent : DEFAULT_LOAN_PREPAY_FEE_RATE;
@@ -6369,7 +6374,11 @@ function calcMargin() {
     var cashNeeded = useBid > 0 ? Math.max(useBid - deposit - loanAmount, 0) : 0;
     var loanRateInput = parseFloat(document.getElementById('a-loan-rate').value);
     var loanRate = (loanRateInput > 0) ? loanRateInput : DEFAULT_LOAN_RATE[bidMethod === 'dealer' ? 'dealer' : 'individual'];
-    var interestCost = calcLoanInterest(loanAmount, loanRate, holdMonths);
+    // 보유기간을 아직 입력 안 했으면(holdMonths=0) 이자가 항상 0으로 빠져 총비용을 과소평가하게
+    // 됨 - 대출이자 계산에서만 통상적인 단기매도 기준 3개월치를 기본가정으로 씀(2026-08 피드백).
+    // holdMonths 자체(양도세 보유기간 구간 등)는 건드리지 않음.
+    var interestHoldMonths = holdMonths > 0 ? holdMonths : DEFAULT_INTEREST_HOLD_MONTHS;
+    var interestCost = calcLoanInterest(loanAmount, loanRate, interestHoldMonths);
     var loanPrepayFeeRateInput = parseFloat(document.getElementById('a-loan-prepay-fee-rate').value);
     var loanPrepayFeeRate = (loanPrepayFeeRateInput > 0) ? loanPrepayFeeRateInput : DEFAULT_LOAN_PREPAY_FEE_RATE;
     var prepayFee = calcLoanPrepayFee(loanAmount, loanPrepayFeeRate);
@@ -6386,22 +6395,11 @@ function calcMargin() {
     var roi       = (totalCost > 0 && useSell > 0) ? Math.round(margin / totalCost * 1000) / 10 : 0;
     var apprRate  = (appraisal > 0 && useBid > 0) ? Math.round(useBid / appraisal * 1000) / 10 : 0;
     var taxLabel = (bidMethod === 'dealer' ? '종합소득세' : '양도소득세') + (taxResult.rateLabel ? '(' + taxResult.rateLabel + ')' : '');
-    // ⚠️ 매도가 하락 스트레스테스트 - 목표매도가가 예상보다 낮게 나와도 마진이 버티는지 미리
-    // 확인. 총비용(totalCost)은 매도가와 무관해 그대로 두고 매도가만 낮춰서 세전마진→
-    // 양도세/종합소득세→세후마진을 다시 계산함(세율 구간이 마진 크기에 따라 달라질 수 있어
-    // 단순 비례가 아니라 다시 계산해야 정확함).
-    function calcStressMargin(sellDropPct) {
-        if (useSell <= 0) return null;
-        var stressSell = Math.round(useSell * (1 - sellDropPct));
-        var stressPreTax = stressSell - totalCost;
-        var stressTax = (stressPreTax > 0) ? calcResaleIncomeTax(bidMethod, stressPreTax, holdMonths, isAdjustedForTax, houseRankForTax) : { totalTax: 0 };
-        return stressPreTax - stressTax.totalTax;
-    }
-    var stressMargin10 = calcStressMargin(0.10);
-    var stressMargin15 = calcStressMargin(0.15);
-    function mItem(label, value, color) {
+    function mItem(label, value, color, sub) {
         return '<div class="margin-item"><div class="margin-label">' + label + '</div>'
-            + '<div class="margin-value" style="color:' + color + ';">' + value + '</div></div>';
+            + '<div class="margin-value" style="color:' + color + ';">' + value + '</div>'
+            + (sub ? '<div style="font-size:10px;color:#888;margin-top:2px;">' + sub + '</div>' : '')
+            + '</div>';
     }
     // "비교물건 기준 시세조사" 표(calcCompValuation)의 적정입찰가를 이 마진분석 박스에도
     // 그대로 가져다 보여줌 - 두 결과가 같은 화면 안에서 스크롤 없이 바로 비교되도록.
@@ -6413,9 +6411,24 @@ function calcMargin() {
     // 유찰 횟수를 가늠하는 지표 - 1회 유찰마다 보통 20~30%씩 낮아짐). 입찰가 자체의 감정가
     // 대비 비율은 아래 "낙찰률" 항목에서 이미 보여주므로 여기서는 최저가만 감정가 대비로 표기.
     var minBidRatioToAppraisal = (appraisal > 0 && minBid > 0) ? Math.round(minBid / appraisal * 1000) / 10 : null;
+    // "내 입찰가" 항목에 두 가지 매도가율을 함께 보여줌(2026-08 피드백):
+    // ①예상매도가율 = 내 입찰가 ÷ 예상매도가(①, 호가·매물재고 반영된 이 물건의 블렌드값) - 내가
+    //   시세 대비 얼마에 사는지를 바로 보여줌.
+    // ②동네 매도가율 = 이 법정동 낙찰사례 중 매도사례까지 매칭된 건들의 낙찰가÷실현매도가
+    //   중간값(=매입가율) - 다른 낙찰자들은 보통 시세의 몇 %에 샀는지 참고 기준.
+    var ctxForBidRate = getAuctionAddressContext();
+    var marketAdjForBidRate = calcMarketAdjustedSalePrice();
+    var estForBidRate = getCompEstValue();
+    var predictedSaleForBidRate = (marketAdjForBidRate && marketAdjForBidRate.blendedValue) ? marketAdjForBidRate.blendedValue : (estForBidRate ? estForBidRate.estValue : null);
+    var myBidSaleRate = (predictedSaleForBidRate > 0 && useBid > 0) ? Math.round(useBid / predictedSaleForBidRate * 1000) / 10 : null;
+    var captureStatsForBidRate = ctxForBidRate.dong ? calcDongCaptureRateStats(ctxForBidRate.dong) : null;
+    var bidRateSubParts = [];
+    if (myBidSaleRate !== null) bidRateSubParts.push('예상매도가율 ' + myBidSaleRate + '%');
+    if (captureStatsForBidRate && !captureStatsForBidRate.lowSample) bidRateSubParts.push('동네 매도가율(낙찰사례 ' + captureStatsForBidRate.count + '건 중간값) ' + captureStatsForBidRate.median.toFixed(1) + '%');
+    var bidRateSub = bidRateSubParts.join(' · ');
     document.getElementById('margin-grid').innerHTML =
         mItem('최저입찰가', minBid > 0 ? toEok(String(minBid)) + (minBidRatioToAppraisal !== null ? ' (최초감정가대비 ' + minBidRatioToAppraisal + '%)' : '') : '—', '#616161')
-      + mItem(actBid ? '실제 낙찰가' : '내 입찰가', useBid > 0 ? toEok(String(useBid)) : '—', '#1a237e')
+      + mItem(actBid ? '실제 낙찰가' : '내 입찰가', useBid > 0 ? toEok(String(useBid)) : '—', '#1a237e', bidRateSub)
       + mItem('총 투자비용',    totalCost > 0 ? toEok(String(totalCost)) : '—', '#555')
       + mItem('총 부대비용',    feesSum > 0 ? toEok(String(feesSum)) : '—', '#888')
       + mItem('세전 예상수익',  useSell > 0 ? toEok(String(preTaxMargin)) : '—', preTaxMargin > 0 ? '#2e7d32' : preTaxMargin < 0 ? '#e53935' : '#555')
@@ -6424,16 +6437,10 @@ function calcMargin() {
       + mItem('세후 수익률',    useSell > 0 ? roi + '%' : '—', roi > 10 ? '#2e7d32' : roi > 0 ? '#ff7043' : '#e53935')
       + mItem('낙찰률',         apprRate > 0 ? apprRate + '%' : '—', apprRate < 80 ? '#2e7d32' : apprRate < 90 ? '#ff7043' : '#e53935')
       + mItem('손익분기 매도가(세전)', totalCost > 0 ? toEok(String(totalCost)) : '—', '#1565c0')
-      + (stressMargin10 !== null
-          ? mItem('매도가 -10% 시 세후수익', toEok(String(stressMargin10)), stressMargin10 > 0 ? '#2e7d32' : '#e53935')
-          : '')
-      + (stressMargin15 !== null
-          ? mItem('매도가 -15% 시 세후수익', toEok(String(stressMargin15)), stressMargin15 > 0 ? '#2e7d32' : '#e53935')
-          : '')
       + mItem('보증금(' + (depositRate > 0 ? depositRate : 10) + '%)', deposit > 0 ? toEok(String(deposit)) : '—', '#6a1b9a')
       + mItem('대출금액(' + (loanAmountManual > 0 ? '실제 대출금액 수동입력' : (bidMethod === 'dealer' ? '신탁대출90% 자동계산' : '개인담보대출 자동계산')) + ')', loanAmount > 0 ? toEok(String(loanAmount)) : (useBid > 0 ? '대출불가' : '—'), loanAmountManual > 0 ? '#1565c0' : '#00695c')
       + mItem('보증금제외 필요현금', useBid > 0 ? toEok(String(cashNeeded)) : '—', '#c62828')
-      + mItem('대출이자(연' + loanRate.toFixed(1) + '%·' + holdMonths + '개월)', (loanAmount > 0 && holdMonths > 0) ? toEok(String(interestCost)) : '—', '#bf360c')
+      + mItem('대출이자(연' + loanRate.toFixed(1) + '%·' + interestHoldMonths + '개월' + (holdMonths <= 0 ? ' 기본값' : '') + ')', loanAmount > 0 ? toEok(String(interestCost)) : '—', '#bf360c')
       + (prepayFee > 0
           ? mItem('중도상환수수료(' + loanPrepayFeeRate.toFixed(1) + '%)', toEok(String(prepayFee)), '#bf360c')
           : '')
@@ -7048,7 +7055,9 @@ function buildMarginSummaryHtml(a) {
     var cashNeeded = useBid > 0 ? Math.max(useBid - deposit - loanAmount, 0) : 0;
     var loanRateSaved = parseFloat(a.loanRate);
     var loanRate = (loanRateSaved > 0) ? loanRateSaved : DEFAULT_LOAN_RATE[bidMethod === 'dealer' ? 'dealer' : 'individual'];
-    var interestCost = calcLoanInterest(loanAmount, loanRate, holdMonths);
+    // calcMargin()과 동일 - 보유기간 미입력(holdMonths=0) 시 대출이자만 3개월 기본가정 적용.
+    var interestHoldMonths = holdMonths > 0 ? holdMonths : DEFAULT_INTEREST_HOLD_MONTHS;
+    var interestCost = calcLoanInterest(loanAmount, loanRate, interestHoldMonths);
     var loanPrepayFeeRateSaved = parseFloat(a.loanPrepayFeeRate);
     var loanPrepayFeeRate = (loanPrepayFeeRateSaved > 0) ? loanPrepayFeeRateSaved : DEFAULT_LOAN_PREPAY_FEE_RATE;
     var prepayFee = calcLoanPrepayFee(loanAmount, loanPrepayFeeRate);
@@ -7060,24 +7069,25 @@ function buildMarginSummaryHtml(a) {
     var roi = (totalCost > 0 && useSell > 0) ? Math.round(margin / totalCost * 1000) / 10 : 0;
     var apprRate = (appraisal > 0 && useBid > 0) ? Math.round(useBid / appraisal * 1000) / 10 : 0;
     var taxLabel = (bidMethod === 'dealer' ? '종합소득세' : '양도소득세') + (taxResult.rateLabel ? '(' + taxResult.rateLabel + ')' : '');
-    // calcMargin()의 스트레스테스트와 동일한 계산(매도가만 -10%/-15%로 낮춰 세금까지 다시 계산) -
-    // 저장된 값 기준 요약 카드에도 똑같이 보여줌.
-    function calcStressMargin(sellDropPct) {
-        if (useSell <= 0) return null;
-        var stressSell = Math.round(useSell * (1 - sellDropPct));
-        var stressPreTax = stressSell - totalCost;
-        var stressTax = (stressPreTax > 0) ? calcResaleIncomeTax(bidMethod, stressPreTax, holdMonths, !!a.isAdjusted, parseInt(a.houseRank) || 1) : { totalTax: 0 };
-        return stressPreTax - stressTax.totalTax;
-    }
-    var stressMargin10 = calcStressMargin(0.10);
-    var stressMargin15 = calcStressMargin(0.15);
-    function mItem(label, value, color) {
+    function mItem(label, value, color, sub) {
         return '<div class="margin-item"><div class="margin-label">' + label + '</div>'
-            + '<div class="margin-value" style="color:' + color + ';">' + value + '</div></div>';
+            + '<div class="margin-value" style="color:' + color + ';">' + value + '</div>'
+            + (sub ? '<div style="font-size:10px;color:#888;margin-top:2px;">' + sub + '</div>' : '')
+            + '</div>';
     }
+    // calcMargin()과 같은 취지의 매도가율 표기(저장된 값 기준) - 다만 이 함수는 DOM 입력칸이
+    // 아니라 저장된 값(a)만 써야 하는데, ①예상매도가(호가·매물재고 반영값)는 현재 열려있는
+    // 편집모달의 DOM에서만 계산되고 별도로 저장되지 않아 여기선 쓸 수 없음. 대신 이미 저장된
+    // useSell(목표매도가/실제매도가)을 기준으로 계산함.
+    var myBidSaleRate = (useSell > 0 && useBid > 0) ? Math.round(useBid / useSell * 1000) / 10 : null;
+    var captureStatsForBidRate = a.dong ? calcDongCaptureRateStats(a.dong) : null;
+    var bidRateSubParts = [];
+    if (myBidSaleRate !== null) bidRateSubParts.push('예상매도가율 ' + myBidSaleRate + '%');
+    if (captureStatsForBidRate && !captureStatsForBidRate.lowSample) bidRateSubParts.push('동네 매도가율(낙찰사례 ' + captureStatsForBidRate.count + '건 중간값) ' + captureStatsForBidRate.median.toFixed(1) + '%');
+    var bidRateSub = bidRateSubParts.join(' · ');
     var html = '<div class="indicator-box"><div class="indicator-title">💰 예상마진 분석 (저장된 값 기준)</div>';
     html += '<div class="margin-grid">'
-        + mItem(actBid ? '실제 낙찰가' : '내 입찰가', useBid > 0 ? toEok(String(useBid)) : '—', '#1a237e')
+        + mItem(actBid ? '실제 낙찰가' : '내 입찰가', useBid > 0 ? toEok(String(useBid)) : '—', '#1a237e', bidRateSub)
         + mItem('총 투자비용', totalCost > 0 ? toEok(String(totalCost)) : '—', '#555')
         + mItem('총 부대비용', feesSum > 0 ? toEok(String(feesSum)) : '—', '#888')
         + mItem('세전 예상수익', useSell > 0 ? toEok(String(preTaxMargin)) : '—', preTaxMargin > 0 ? '#2e7d32' : preTaxMargin < 0 ? '#e53935' : '#555')
@@ -7086,16 +7096,10 @@ function buildMarginSummaryHtml(a) {
         + mItem('세후 수익률', useSell > 0 ? roi + '%' : '—', roi > 10 ? '#2e7d32' : roi > 0 ? '#ff7043' : '#e53935')
         + mItem('낙찰률', apprRate > 0 ? apprRate + '%' : '—', apprRate < 80 ? '#2e7d32' : apprRate < 90 ? '#ff7043' : '#e53935')
         + mItem('손익분기 매도가(세전)', totalCost > 0 ? toEok(String(totalCost)) : '—', '#1565c0')
-        + (stressMargin10 !== null
-            ? mItem('매도가 -10% 시 세후수익', toEok(String(stressMargin10)), stressMargin10 > 0 ? '#2e7d32' : '#e53935')
-            : '')
-        + (stressMargin15 !== null
-            ? mItem('매도가 -15% 시 세후수익', toEok(String(stressMargin15)), stressMargin15 > 0 ? '#2e7d32' : '#e53935')
-            : '')
         + mItem('보증금(' + (depositRate > 0 ? depositRate : 10) + '%)', deposit > 0 ? toEok(String(deposit)) : '—', '#6a1b9a')
         + mItem('대출금액(' + (loanAmountManual > 0 ? '실제 대출금액 수동입력' : (bidMethod === 'dealer' ? '신탁대출90% 자동계산' : '개인담보대출 자동계산')) + ')', loanAmount > 0 ? toEok(String(loanAmount)) : (useBid > 0 ? '대출불가' : '—'), loanAmountManual > 0 ? '#1565c0' : '#00695c')
         + mItem('보증금제외 필요현금', useBid > 0 ? toEok(String(cashNeeded)) : '—', '#c62828')
-        + mItem('대출이자(연' + loanRate.toFixed(1) + '%·' + holdMonths + '개월)', (loanAmount > 0 && holdMonths > 0) ? toEok(String(interestCost)) : '—', '#bf360c')
+        + mItem('대출이자(연' + loanRate.toFixed(1) + '%·' + interestHoldMonths + '개월' + (holdMonths <= 0 ? ' 기본값' : '') + ')', loanAmount > 0 ? toEok(String(interestCost)) : '—', '#bf360c')
         + (prepayFee > 0
             ? mItem('중도상환수수료(' + loanPrepayFeeRate.toFixed(1) + '%)', toEok(String(prepayFee)), '#bf360c')
             : '')
@@ -7648,6 +7652,9 @@ function solveAuctionBid(estValue, marginOverride) {
     var holdsJune1 = document.getElementById('a-holds-june1').checked;
     var totalOfficialPriceManwon = parseInt(document.getElementById('a-total-official-price').value) || 0;
     var holdMonths = parseInt(document.getElementById('a-hold-months').value) || 0;
+    // 대출이자 계산에서만 3개월 기본가정 적용(calcMargin()과 동일 원칙) - 보유기간 미입력 시에도
+    // 목표입찰가 역산이 이자비용을 0으로 무시해 입찰가를 과도하게 높게 추천하지 않도록 함.
+    var interestHoldMonths = holdMonths > 0 ? holdMonths : DEFAULT_INTEREST_HOLD_MONTHS;
     var propertyTax = calcPropertyTax(officialPriceWon, c.houseRank, holdsJune1, holdMonths);
     var compTax = calcCompTax(totalOfficialPriceManwon, officialPriceWon, c.houseRank, holdsJune1, holdMonths);
     var moving   = parseInt(document.getElementById('a-moving').value) || calcMovingFee(c.pyung) || 0;
@@ -7671,7 +7678,7 @@ function solveAuctionBid(estValue, marginOverride) {
         // 대출금액·이자는 후보 입찰가(mid)에 따라 매번 달라지므로(신탁대출=낙찰가×90% 등)
         // 이분탐색 안에서 매 후보마다 다시 계산함 - 세금과 마찬가지로 bid에 종속적임.
         var loanAmount = calcLoanAmount(bidMethod, mid, appraisal);
-        var interestCost = calcLoanInterest(loanAmount, loanRate, holdMonths);
+        var interestCost = calcLoanInterest(loanAmount, loanRate, interestHoldMonths);
         var prepayFee = calcLoanPrepayFee(loanAmount, loanPrepayFeeRate);
         var vat = vatInfo.computable ? Math.round(mid * vatInfo.buildingRatio * TAX_CONFIG.vat.rate) : 0;
         var preTaxCost = mid + acqTax + registryFee + evictionFee + agentFee + repair + etc + moving + cleaning + interestCost + prepayFee + vat + assumedDeposit + unpaidMgmtFee + propertyTax + compTax;
