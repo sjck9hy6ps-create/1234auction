@@ -742,9 +742,16 @@ async function handleTaxUpdateExtract(req, res) {
   try {
     const extracted = await callClaude(ANTHROPIC_API_KEY, buildTaxUpdateExtractPrompt(researchText), SCHEMA_TAX_UPDATE, [], 1, 0);
     incrementDailyExtractCount(dailyKey, CLAUDE_CALLS_PER_TAX_UPDATE_STEP); // fire-and-forget
-    // 2단계에서 나온 sources가 비어 있으면(추출 누락) 1단계에서 프론트가 넘겨준 출처로 대체
-    const fallbackSources = Array.isArray(req.body.sources) ? req.body.sources : [];
-    const sources = (Array.isArray(extracted.sources) && extracted.sources.length) ? extracted.sources : fallbackSources;
+    // ⚠️ 실동작 테스트에서 발견: 1단계(리서치)가 실제 web_search 툴 결과로 모은 sources는
+    // 진짜 URL이지만, 2단계(extract)는 리서치 "텍스트"만 보고 출처를 다시 뽑아내려다 보니
+    // URL을 "<UNKNOWN>" 같은 placeholder로 지어내는 경우가 있었음(빈 배열이 아니라서 예전
+    // 폴백 조건 "extracted.sources 비어있으면 대체"로는 못 걸러짐). 그래서 우선순위를
+    // 뒤집음 - 1단계가 넘겨준 진짜 출처(req.body.sources)를 우선 쓰고, 그게 비어있을 때만
+    // 2단계 추출 결과로 보완. 거기서도 http(s)로 시작하지 않는 가짜 URL은 걸러냄.
+    const isRealUrl = (s) => s && typeof s.url === 'string' && /^https?:\/\//.test(s.url);
+    const fallbackSources = Array.isArray(req.body.sources) ? req.body.sources.filter(isRealUrl) : [];
+    const extractedSources = Array.isArray(extracted.sources) ? extracted.sources.filter(isRealUrl) : [];
+    const sources = fallbackSources.length ? fallbackSources : extractedSources;
     return res.status(200).json({
       reportSummary: extracted.reportSummary || null,
       changesDetected: Array.isArray(extracted.changesDetected) ? extracted.changesDetected : [],
