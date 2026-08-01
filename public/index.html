@@ -5109,8 +5109,22 @@ async function applyListingInventory() {
     var hhmm = String(now.getHours()).padStart(2, '0') + ':' + String(now.getMinutes()).padStart(2, '0');
     if (statusEl) {
         if (newValue === null) {
-            statusEl.style.color = '#999';
-            statusEl.innerText = '적용됨(' + hhmm + ') - 호가를 입력해야 예상매도가가 계산됩니다.';
+            // ⚠️ calcMarketAdjustedSalePrice()는 (1) 비교물건 기반 실거래 기준값(getCompEstValue)이
+            // 없거나 (2) 호가를 안 입력했거나, 둘 중 하나만 있어도 null을 반환함. 예전엔 무조건
+            // "호가를 입력해야"라고만 안내해서, 실제로는 호가는 입력했는데 비교물건/평형이 없어서
+            // null이 나온 경우에도 같은 문구가 떠서 사용자가 혼란스러워했음(호가 입력했는데 왜
+            // 이러냐는 문의) - 실제 원인을 구분해서 정확히 안내함.
+            statusEl.style.color = '#e65100';
+            var estForDiag = getCompEstValue();
+            var askMinForDiag = parseFloat(document.getElementById('a-ask-price-min').value) || null;
+            var askMaxForDiag = parseFloat(document.getElementById('a-ask-price-max').value) || null;
+            if (!estForDiag) {
+                statusEl.innerText = '적용됨(' + hhmm + ') - 비교물건을 등록하고 평형을 입력해야 예상매도가가 계산됩니다.';
+            } else if (!askMinForDiag && !askMaxForDiag) {
+                statusEl.innerText = '적용됨(' + hhmm + ') - 호가를 입력해야 예상매도가가 계산됩니다.';
+            } else {
+                statusEl.innerText = '적용됨(' + hhmm + ') - 예상매도가를 계산할 수 없습니다(데이터 부족).';
+            }
         } else if (lastAppliedListingSnapshot === null) {
             statusEl.style.color = '#2e7d32';
             statusEl.innerText = '✅ 적용됨(' + hhmm + ') - 예상매도가 ' + toEok(String(newValue)) + ' (최초 계산)';
