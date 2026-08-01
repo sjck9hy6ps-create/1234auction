@@ -61,11 +61,15 @@ import crypto from 'crypto';
 // claude-haiku-4-5: 구조화된 정보 추출 용도로 충분히 정확하면서 빠르고 저렴한 모델.
 // 물건 상세페이지 추출처럼 스키마가 큰 요청도 안정적으로 처리 가능.
 const CLAUDE_MODEL = 'claude-haiku-4-5-20251001';
-// mode:'taxUpdate'(최신 세율 조사) 전용 모델 - 실시간 웹검색 후 여러 세목(취득세·양도세·
-// 종부세·재산세·부가세)을 교차 확인해야 하는 리서치 성격 작업이라, 자주 호출되는 물건추출과
-// 달리 속도보다 정확도가 훨씬 중요함. 버튼 클릭 시에만 드물게(하루 몇 번) 호출되므로 비용
-// 부담도 적어 상위 모델을 씀.
-const TAX_RESEARCH_MODEL = 'claude-sonnet-5';
+// mode:'taxUpdateResearch'(최신 세율 조사) 전용 모델.
+// ⚠️ 2026-08 실동작 테스트: 처음엔 claude-sonnet-5 + max_uses 8로 시도했다가 55초 타임아웃이
+// 났고, max_uses를 5로 줄여도 여전히 55초를 꽉 채우고 타임아웃 남 - web_search 툴을 쓸 때
+// sonnet이 검색 사이사이 추론에 시간을 많이 쓰는 것으로 보임(허용된 검색 횟수를 실제로 거의
+// 다 소진하는 경향). Vercel Hobby의 60초 벽 안에서 안정적으로 끝내려고 haiku로 낮추고
+// max_uses도 3으로 더 줄임 - 정확도보다 "제한시간 안에 완료"가 우선이 됨(부정확할 수 있는
+// 항목은 어차피 프론트엔드 sanitizeAndMergeTaxConfig가 필드별로 검증하고, 신뢰 안 되는
+// 부분은 lowConfidenceNote로 사용자에게 별도 표시함).
+const TAX_RESEARCH_MODEL = 'claude-haiku-4-5-20251001';
 const ANTHROPIC_API_VERSION = '2023-06-01';
 const ANTHROPIC_MESSAGES_URL = 'https://api.anthropic.com/v1/messages';
 // Vercel 함수 자체의 실행 제한 시간을 늘림 (기본값은 너무 짧아서, 스키마가 큰 요청은
@@ -655,10 +659,11 @@ web_search 툴을 사용해 국세청(nts.go.kr), 위택스(wetax.go.kr), 국토
 - 양도소득세 중과 유예가 연장되거나 재시행되는 등 상태가 바뀌었는지
 - 위 다섯 세목 외에, 경매·부동산 매매와 관련해 최근 새로 생기거나 크게 바뀐 세금·부담금이
   있는지(예: 특정 지역 한정 조치, 신설 부담금 등) - 있으면 반드시 언급하세요.
-⚠️ 시간 제한이 있으니 검색은 최대 5회 이내로 아껴서 쓰세요 - 세목별로 따로따로 찾기보다,
-한 번의 검색으로 여러 세목을 함께 다루는 요약·정리 페이지(국세청 보도자료, 세법 개정 종합
-안내 등)를 우선적으로 찾는 게 효율적입니다. 검색 횟수를 다 쓰기 전에 충분히 확인됐다고
-판단되면 그 시점에서 바로 답변을 정리해 마무리하세요.
+⚠️ 시간 제한이 엄격하니 검색은 최대 3회까지만 쓰세요(그 이상은 강제 종료됨) - 세목별로
+따로따로 찾지 말고, 한 번의 검색으로 여러 세목을 함께 다루는 요약·정리 페이지(국세청
+보도자료, 세법 개정 종합 안내 등)를 우선적으로 찾으세요. 1~2회 검색만으로 충분히 확인됐다고
+판단되면 남은 검색 횟수를 다 쓰지 말고 바로 답변을 정리해 마무리하세요. 검색보다 "빠르게
+답변을 끝내는 것"이 더 중요합니다.
 찾은 내용을 근거(출처)와 함께 한국어로 정리해서 답해 주세요. 확실하지 않은 부분은 추측하지 말고
 "확인 못함"이라고 솔직히 말하세요.`;
 }
@@ -701,11 +706,11 @@ async function handleTaxUpdateResearch(req, res) {
     });
   }
   try {
-    // max_uses를 8→5로 줄임: 검색을 많이 돌수록 Anthropic 응답이 느려져 55초 타임아웃에
-    // 걸리는 경우가 실동작 테스트에서 확인됨 - 5회로도 위 다섯 세목을 커버할 수 있도록
+    // max_uses 3 + haiku 모델: 검색을 많이/느리게 돌수록 55초 타임아웃에 걸리는 경우가
+    // 실동작 테스트에서 반복 확인됨(8회→5회로 줄여도 여전히 타임아웃) - 3회로 더 줄이고
     // 프롬프트(buildTaxUpdateResearchPrompt)에서 "여러 세목을 한 번에 다루는 페이지 우선"
     // 전략을 안내해둠.
-    const research = await callClaudeWebSearch(ANTHROPIC_API_KEY, buildTaxUpdateResearchPrompt(), 5);
+    const research = await callClaudeWebSearch(ANTHROPIC_API_KEY, buildTaxUpdateResearchPrompt(), 3);
     incrementDailyExtractCount(dailyKey, CLAUDE_CALLS_PER_TAX_UPDATE_STEP); // fire-and-forget
     return res.status(200).json({ researchText: research.text, sources: research.sources });
   } catch (err) {
