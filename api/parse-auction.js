@@ -61,6 +61,11 @@ import crypto from 'crypto';
 // claude-haiku-4-5: 구조화된 정보 추출 용도로 충분히 정확하면서 빠르고 저렴한 모델.
 // 물건 상세페이지 추출처럼 스키마가 큰 요청도 안정적으로 처리 가능.
 const CLAUDE_MODEL = 'claude-haiku-4-5-20251001';
+// mode:'taxUpdate'(최신 세율 조사) 전용 모델 - 실시간 웹검색 후 여러 세목(취득세·양도세·
+// 종부세·재산세·부가세)을 교차 확인해야 하는 리서치 성격 작업이라, 자주 호출되는 물건추출과
+// 달리 속도보다 정확도가 훨씬 중요함. 버튼 클릭 시에만 드물게(하루 몇 번) 호출되므로 비용
+// 부담도 적어 상위 모델을 씀.
+const TAX_RESEARCH_MODEL = 'claude-sonnet-5';
 const ANTHROPIC_API_VERSION = '2023-06-01';
 const ANTHROPIC_MESSAGES_URL = 'https://api.anthropic.com/v1/messages';
 // Vercel 함수 자체의 실행 제한 시간을 늘림 (기본값은 너무 짧아서, 스키마가 큰 요청은
@@ -498,6 +503,208 @@ async function handleBriefing(req, res) {
   }
 }
 
+// ════════════════════════════════════
+// 최신 세율 조사 (mode:'taxUpdate') - 2026-08 신규.
+// index.html의 TAX_CONFIG(취득세·재산세·종부세·양도소득세·부가세 계산에 쓰이는 모든 세율·
+// 구간·공제액)를 최신 상태로 갱신하기 위한 기능. 세법·시행령이 자주 바뀌고(다주택 중과,
+// 조정대상지역 지정, 공정시장가액비율 등) Claude의 학습 데이터만으로는 최신 여부를 장담할 수
+// 없어서, 반드시 실시간 웹검색으로 근거를 찾은 뒤에 답하도록 2단계로 나눔:
+//   1단계(callClaudeWebSearch): web_search 툴을 주고 "지금 기준으로 각 세목이 어떤지, TAX_CONFIG
+//     기본값과 비교해 뭐가 바뀌었는지"를 자유 형식으로 조사하게 함 - Claude가 스스로 검색
+//     횟수·검색어를 정하고, 국세청·위택스·행안부 등 공신력 있는 출처를 찾아 인용까지 함.
+//   2단계(callClaude, tool_choice 강제): 1단계의 텍스트 답변을 구조화된 JSON(TAX_CONFIG와
+//     동일한 모양)으로 변환함. 이 단계에서는 새로 검색하지 않고 1단계 답변만 근거로 삼음.
+// ⚠️ 확신 없는 필드는 스키마에서 required로 강제하지 않았음 - 2단계 프롬프트에서도 "모르면
+// 그 필드는 아예 비워두라"고 명시해, 프론트엔드가 "제공된 필드만 검증 후 부분 반영"할 수
+// 있게 함(전체를 통째로 덮어쓰지 않음 - index.html의 applyTaxConfigUpdate 참고).
+// 리서치(1단계)는 웹검색 비용이 별도로 붙고(건당 $10/1000회) 구조화 추출(2단계)은 일반 호출과
+// 같아서, 하루 사용량 안전한도에는 2회로 계산함(실제 웹검색 횟수는 별도 청구 - Anthropic
+// 콘솔에서 확인 가능).
+// ════════════════════════════════════
+const CLAUDE_CALLS_PER_TAX_UPDATE = 2;
+
+const SCHEMA_TAX_UPDATE = {
+  type: 'OBJECT',
+  properties: {
+    reportSummary: { type: 'STRING' },
+    changesDetected: { type: 'ARRAY', items: { type: 'STRING' } },
+    missingTaxesNote: { type: 'STRING' },
+    lowConfidenceNote: { type: 'STRING' },
+    sources: {
+      type: 'ARRAY',
+      items: { type: 'OBJECT', properties: { title: { type: 'STRING' }, url: { type: 'STRING' } } },
+    },
+    config: {
+      type: 'OBJECT',
+      properties: {
+        acquisition: {
+          type: 'OBJECT',
+          properties: {
+            baseTierLowMax: { type: 'NUMBER' },
+            baseTierMidMax: { type: 'NUMBER' },
+            heavyRateAdjusted2: { type: 'NUMBER' },
+            heavyRateAdjusted3plus: { type: 'NUMBER' },
+            heavyRateNonAdjusted3: { type: 'NUMBER' },
+            heavyRateNonAdjusted4plus: { type: 'NUMBER' },
+            eduTaxAddPct: { type: 'NUMBER' },
+            nongTaxAdd8: { type: 'NUMBER' },
+            nongTaxAdd12: { type: 'NUMBER' },
+            nongTaxAddBase85: { type: 'NUMBER' },
+            otherPropertyRatePct: { type: 'NUMBER' },
+          },
+        },
+        propertyTax: {
+          type: 'OBJECT',
+          properties: {
+            ratio1HouseTiers: {
+              type: 'ARRAY',
+              items: { type: 'OBJECT', properties: { maxWon: { type: 'NUMBER' }, ratio: { type: 'NUMBER' } } },
+            },
+            ratioMultiHouse: { type: 'NUMBER' },
+            brackets: {
+              type: 'ARRAY',
+              items: { type: 'OBJECT', properties: { maxWon: { type: 'NUMBER' }, rate: { type: 'NUMBER' } } },
+            },
+            eduTaxRate: { type: 'NUMBER' },
+            urbanTaxRate: { type: 'NUMBER' },
+          },
+        },
+        compTax: {
+          type: 'OBJECT',
+          properties: {
+            deduction1HouseManwon: { type: 'NUMBER' },
+            deductionOtherManwon: { type: 'NUMBER' },
+            ratio: { type: 'NUMBER' },
+            levyRate: { type: 'NUMBER' },
+            brackets: {
+              type: 'ARRAY',
+              items: {
+                type: 'OBJECT',
+                properties: { minManwon: { type: 'NUMBER' }, rate: { type: 'NUMBER' }, dedManwon: { type: 'NUMBER' } },
+              },
+            },
+          },
+        },
+        incomeTax: {
+          type: 'OBJECT',
+          properties: {
+            brackets: {
+              type: 'ARRAY',
+              items: {
+                type: 'OBJECT',
+                properties: { minManwon: { type: 'NUMBER' }, rate: { type: 'NUMBER' }, dedManwon: { type: 'NUMBER' } },
+              },
+            },
+            localTaxRate: { type: 'NUMBER' },
+            basicDeductionManwon: { type: 'NUMBER' },
+            shortRateUnder1y: { type: 'NUMBER' },
+            shortRateUnder2y: { type: 'NUMBER' },
+            longTermDeductionPerYear: { type: 'NUMBER' },
+            longTermDeductionMax: { type: 'NUMBER' },
+            heavySurcharge2House: { type: 'NUMBER' },
+            heavySurcharge3House: { type: 'NUMBER' },
+          },
+        },
+        vat: {
+          type: 'OBJECT',
+          properties: { rate: { type: 'NUMBER' }, nationalHousingAreaM2: { type: 'NUMBER' } },
+        },
+      },
+    },
+  },
+};
+
+// 1단계 리서치 프롬프트에 넣을 "현재 앱이 쓰고 있는 기본값" 설명 - Claude가 이 값과 비교해서
+// 뭐가 바뀌었는지 짚어줄 수 있게 함(값을 모르면 그냥 최신 정보만 조사해도 됨).
+const TAX_UPDATE_CURRENT_DEFAULTS = `
+- 취득세: 6억↓ 1%, 6억~9억 1~3%(선형), 9억↑ 3%. 다주택 중과: 조정대상지역 2주택 8%·3주택↑ 12%,
+  비조정대상지역 3주택 8%·4주택↑ 12%(+지방교육세0.4%p, 전용85㎡초과 시 농특세 0.6~1.0%p 가산).
+- 재산세: 공정시장가액비율 1주택 43~45%(공시가격 구간별)·다주택/법인 60%. 과세표준 6천만↓0.1%,
+  1.5억↓0.15%, 3억↓0.25%, 3억↑0.4%(4단계 누진) + 지방교육세(재산세액20%) + 도시지역분(과세표준0.14%).
+- 종합부동산세: 공제 1세대1주택 12억/그외 9억, 공정시장가액비율 60%, 과세표준(만원) 3천↓0.5%,
+  6천↓0.7%, 1.2억↓1.0%, 2.5억↓2.0%, 5억↓3.0%, 9.4억↓4.0%, 9.4억↑5.0%(2주택이하 기준, 누진공제
+  포함) + 농어촌특별세(종부세액20%).
+- 양도소득세/종합소득세(매매사업자): 8단계 누진세율 6~45%(1400만/5000만/8800만/1.5억/3억/5억/10억
+  구간) + 지방소득세(소득세액10%). 개인 양도세는 보유1년미만 70%·2년미만 60% 단기세율, 2년↑ 장기
+  보유특별공제(연2%,최대30%)+기본공제(연250만)+8단계 누진세율. 조정대상지역 다주택 양도세 중과:
+  2주택 +20%p·3주택↑ +30%p(2026.5.9 유예 종료, 재시행 중이라고 알려짐 - 이 유예/재시행 상태가
+  최신 기준으로도 맞는지 꼭 확인).
+- 부가가치세: 매매사업자가 국민주택규모(전용 85㎡) 초과 주택을 사고팔 때 건물분에 10%.`;
+
+function buildTaxUpdateResearchPrompt() {
+  const todayStr = todayKstDateStr();
+  return `당신은 한국 부동산 세법 리서치 담당자입니다. 오늘은 ${todayStr}(한국시간)입니다.
+아래는 "1234auction"이라는 경매 투자 분석 앱이 현재 코드에 내장해 둔 세율 기본값입니다:
+${TAX_UPDATE_CURRENT_DEFAULTS}
+
+web_search 툴을 사용해 국세청(nts.go.kr), 위택스(wetax.go.kr), 국토교통부·행정안전부 보도자료,
+법제처 국가법령정보센터 등 공신력 있는 출처를 찾아, 위 다섯 세목(취득세/재산세/종합부동산세/
+양도소득세·종합소득세/부가가치세)이 오늘(${todayStr}) 기준으로 실제로 어떤지 조사해 주세요.
+특히 아래를 중점적으로 확인하세요:
+- 다주택자 취득세·양도세 중과 제도가 여전히 시행 중인지, 세율이나 주택수 기준이 바뀌었는지
+- 조정대상지역 지정 현황이 바뀌었는지(전국 확대/축소 등 큰 변화가 있었는지)
+- 종합부동산세·재산세의 공정시장가액비율이나 세율 구간이 그 해 시행령으로 조정됐는지
+- 양도소득세 중과 유예가 연장되거나 재시행되는 등 상태가 바뀌었는지
+- 위 다섯 세목 외에, 경매·부동산 매매와 관련해 최근 새로 생기거나 크게 바뀐 세금·부담금이
+  있는지(예: 특정 지역 한정 조치, 신설 부담금 등) - 있으면 반드시 언급하세요.
+찾은 내용을 근거(출처)와 함께 한국어로 정리해서 답해 주세요. 확실하지 않은 부분은 추측하지 말고
+"확인 못함"이라고 솔직히 말하세요.`;
+}
+
+function buildTaxUpdateExtractPrompt(researchText) {
+  return `아래는 한국 부동산 세율에 대한 리서치 결과 텍스트입니다. 이 내용을 근거로만 구조화된
+데이터를 만들어 주세요 - 여기 없는 내용을 추측해서 채우지 마세요.
+
+규칙:
+- reportSummary: 리서치 결과를 2~4문장으로 요약(사용자가 앱 화면에서 바로 읽을 짧은 요약).
+- changesDetected: 기존 앱 기본값과 달라진 부분이 있으면 "OO세 X% → Y%로 변경" 같은 짧은
+  문장 배열로. 달라진 게 없으면 빈 배열.
+- missingTaxesNote: 리서치 결과에서 앱이 놓치고 있는 세금·부담금이 언급됐으면 설명, 없으면 null.
+- lowConfidenceNote: 리서치 결과 자체가 "확인 못함"이라고 밝힌 부분이 있으면 그 내용, 없으면 null.
+- sources: 리서치에서 인용된 출처(제목+URL) 목록.
+- config: 리서치 결과에서 구체적인 숫자(세율·구간·공제액)를 확인할 수 있었던 항목만 채우세요.
+  확실하지 않거나 리서치 결과에 언급이 없는 필드는 통째로 생략하세요(0이나 추측값을 넣지
+  마세요 - 생략하면 앱이 기존 기본값을 그대로 유지합니다). 확인된 항목만 정확히 채우면 됩니다.
+
+--- 리서치 결과 ---
+${researchText}`;
+}
+
+async function handleTaxUpdate(req, res) {
+  const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
+  if (!ANTHROPIC_API_KEY) {
+    return res.status(500).json({ error: 'ANTHROPIC_API_KEY 환경변수가 없습니다. Vercel 프로젝트 설정에 추가해 주세요.' });
+  }
+  const dailyKey = `auctionparse_daily_${todayKstDateStr()}`;
+  const usedToday = await getDailyExtractCount(dailyKey);
+  if (usedToday + CLAUDE_CALLS_PER_TAX_UPDATE > DAILY_CLAUDE_CALL_BUDGET) {
+    return res.status(429).json({
+      error: `오늘 AI 자동추출 사용량 안전한도(비용 급증 방지용, 하루 ${DAILY_CLAUDE_CALL_BUDGET}회)에 다 찼습니다. 한국시간 자정에 초기화됩니다. (지금까지 ${usedToday}회 사용)`,
+      dailyLimitReached: true,
+      usedToday,
+      limit: DAILY_CLAUDE_CALL_BUDGET,
+    });
+  }
+  try {
+    const research = await callClaudeWebSearch(ANTHROPIC_API_KEY, buildTaxUpdateResearchPrompt(), 8);
+    const extracted = await callClaude(ANTHROPIC_API_KEY, buildTaxUpdateExtractPrompt(research.text), SCHEMA_TAX_UPDATE, [], 1, 0);
+    incrementDailyExtractCount(dailyKey, CLAUDE_CALLS_PER_TAX_UPDATE); // fire-and-forget
+    // 2단계에서 나온 sources가 비어 있으면(추출 누락) 1단계에서 직접 모은 출처로 대체
+    const sources = (Array.isArray(extracted.sources) && extracted.sources.length) ? extracted.sources : research.sources;
+    return res.status(200).json({
+      reportSummary: extracted.reportSummary || null,
+      changesDetected: Array.isArray(extracted.changesDetected) ? extracted.changesDetected : [],
+      missingTaxesNote: extracted.missingTaxesNote || null,
+      lowConfidenceNote: extracted.lowConfidenceNote || null,
+      sources: sources || [],
+      config: extracted.config || {},
+      rawResearchText: research.text,
+    });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+}
+
 // 텍스트 붙여넣기와 캡처 이미지 첨부 양쪽에 공통으로 적용되는 안내문.
 // 이미지가 여러 장이면 스크롤을 나눠서 캡처한 같은 페이지라는 점, 그리고 하단 "다른 물건" 목록을
 // 무시해야 한다는 점은 텍스트든 이미지든 동일하게 중요해서 하나로 통일함.
@@ -705,15 +912,11 @@ function parseAnthropicRetryDelayMs(headers) {
 //   스키마(input_schema) 자체도 모든 호출에서 완전히 동일하므로 tools 정의에도 동일하게
 //   cache_control을 붙여둠 - 사실상 이번 요청에서 진짜 "새로 읽어야 할" 부분은 사용자가
 //   붙여넣은 물건 텍스트뿐이라, 캐싱 대상(고정 지시문+스키마)이 프롬프트의 대부분을 차지함.
-async function callClaude(apiKey, promptInput, schema, imageParts, attempt, temperature) {
+// 실제 fetch+재시도 로직만 떼어낸 공용 저수준 헬퍼 - callClaude(구조화 추출, tool_choice 강제)와
+// callClaudeWebSearch(mode:'taxUpdate' 리서치용, web_search 툴 자동판단) 둘 다 이 함수를 통해
+// 요청을 보내고, 응답 파싱(tool_use 꺼내기 vs 텍스트+출처 꺼내기)만 각자 다르게 함.
+async function postAnthropicMessages(apiKey, body, attempt) {
   attempt = attempt || 1;
-  imageParts = imageParts || [];
-  temperature = temperature === undefined || temperature === null ? 0 : temperature;
-  const jsonSchema = convertGeminiSchemaToJsonSchema(schema);
-  const userContent = Array.isArray(promptInput)
-    ? promptInput.slice()
-    : [{ type: 'text', text: promptInput }];
-  if (imageParts.length) userContent.push(...imageParts);
   let claudeRes;
   try {
     // Vercel Hobby maxDuration이 60초라, 여유(파싱·응답조립)를 좀 남기고 55초까지 기다림
@@ -724,22 +927,7 @@ async function callClaude(apiKey, promptInput, schema, imageParts, attempt, temp
         'x-api-key': apiKey,
         'anthropic-version': ANTHROPIC_API_VERSION,
       },
-      body: JSON.stringify({
-        model: CLAUDE_MODEL,
-        max_tokens: 8192,
-        temperature,
-        messages: [{ role: 'user', content: userContent }],
-        // 구조화된 JSON 출력을 강제하기 위해 tool use를 씀(Gemini의 responseSchema에 대응).
-        // tool_choice로 이 도구를 무조건 쓰도록 강제해 일반 텍스트 응답이 섞이지 않게 함.
-        // 스키마 자체가 모든 호출에서 동일하므로 cache_control로 캐싱 대상에 포함시킴.
-        tools: [{
-          name: 'extract_auction_data',
-          description: '경매정보지에서 추출한 구조화된 데이터를 담는 도구',
-          input_schema: jsonSchema,
-          cache_control: { type: 'ephemeral' },
-        }],
-        tool_choice: { type: 'tool', name: 'extract_auction_data' },
-      }),
+      body: JSON.stringify(body),
       signal: AbortSignal.timeout(55000),
     });
   } catch (e) {
@@ -756,7 +944,7 @@ async function callClaude(apiKey, promptInput, schema, imageParts, attempt, temp
     const isRateLimited = claudeRes.status === 429 || errType === 'rate_limit_error';
     if (isOverloaded && attempt < 5) {
       await sleep(1500 * attempt);
-      return callClaude(apiKey, promptInput, schema, imageParts, attempt + 1, temperature);
+      return postAnthropicMessages(apiKey, body, attempt + 1);
     }
     if (isOverloaded) {
       throw new Error('AI 서버가 일시적으로 혼잡합니다(Anthropic 측 일시적 과부하). 보통 1분 이내에 풀리니, 잠시 후 다시 시도해 주세요.');
@@ -767,12 +955,38 @@ async function callClaude(apiKey, promptInput, schema, imageParts, attempt, temp
         const base = parseAnthropicRetryDelayMs(claudeRes.headers) ?? (8000 * attempt);
         const jitter = Math.floor(Math.random() * 1500);
         await sleep(base + jitter);
-        return callClaude(apiKey, promptInput, schema, imageParts, attempt + 1, temperature);
+        return postAnthropicMessages(apiKey, body, attempt + 1);
       }
       throw new Error('AI 판독기 요청이 분당 요청수 한도에 계속 걸리고 있습니다. 1분 정도 기다렸다가 다시 시도해 주세요.');
     }
     throw new Error(msg);
   }
+  return data;
+}
+async function callClaude(apiKey, promptInput, schema, imageParts, attempt, temperature) {
+  imageParts = imageParts || [];
+  temperature = temperature === undefined || temperature === null ? 0 : temperature;
+  const jsonSchema = convertGeminiSchemaToJsonSchema(schema);
+  const userContent = Array.isArray(promptInput)
+    ? promptInput.slice()
+    : [{ type: 'text', text: promptInput }];
+  if (imageParts.length) userContent.push(...imageParts);
+  const data = await postAnthropicMessages(apiKey, {
+    model: CLAUDE_MODEL,
+    max_tokens: 8192,
+    temperature,
+    messages: [{ role: 'user', content: userContent }],
+    // 구조화된 JSON 출력을 강제하기 위해 tool use를 씀(Gemini의 responseSchema에 대응).
+    // tool_choice로 이 도구를 무조건 쓰도록 강제해 일반 텍스트 응답이 섞이지 않게 함.
+    // 스키마 자체가 모든 호출에서 동일하므로 cache_control로 캐싱 대상에 포함시킴.
+    tools: [{
+      name: 'extract_auction_data',
+      description: '경매정보지에서 추출한 구조화된 데이터를 담는 도구',
+      input_schema: jsonSchema,
+      cache_control: { type: 'ephemeral' },
+    }],
+    tool_choice: { type: 'tool', name: 'extract_auction_data' },
+  }, attempt || 1);
   const toolUseBlock = Array.isArray(data.content)
     ? data.content.find((block) => block.type === 'tool_use')
     : null;
@@ -780,6 +994,35 @@ async function callClaude(apiKey, promptInput, schema, imageParts, attempt, temp
     throw new Error('Claude 응답에서 결과를 찾을 수 없습니다.');
   }
   return toolUseBlock.input;
+}
+// mode:'taxUpdate' 전용 - Anthropic의 web_search 서버 툴을 붙여서 Claude가 스스로 몇 번이고
+// 검색해가며(최대 maxUses회) 답을 만들도록 함. tool_choice를 강제하지 않음(자동 판단) -
+// 구조화 출력이 필요한 게 아니라 "찾아서 정리한 리포트"가 목적이라 callClaude와는 다른 경로.
+// 반환값: { text: 최종 응답 텍스트(citations 포함), sources: [{title,url}] 중복제거 목록 }
+async function callClaudeWebSearch(apiKey, promptText, maxUses) {
+  const data = await postAnthropicMessages(apiKey, {
+    model: TAX_RESEARCH_MODEL,
+    max_tokens: 4096,
+    messages: [{ role: 'user', content: [{ type: 'text', text: promptText }] }],
+    tools: [{ type: 'web_search_20250305', name: 'web_search', max_uses: maxUses || 8 }],
+  }, 1);
+  const blocks = Array.isArray(data.content) ? data.content : [];
+  const text = blocks.filter((b) => b.type === 'text').map((b) => b.text).join('\n');
+  const seen = new Set();
+  const sources = [];
+  blocks.forEach((b) => {
+    if (b.type !== 'web_search_tool_result' || !Array.isArray(b.content)) return;
+    b.content.forEach((r) => {
+      if (r.type === 'web_search_result' && r.url && !seen.has(r.url)) {
+        seen.add(r.url);
+        sources.push({ title: r.title || r.url, url: r.url });
+      }
+    });
+  });
+  if (!text.trim()) {
+    throw new Error('Claude가 검색 결과로 응답을 만들지 못했습니다. 잠시 후 다시 시도해 주세요.');
+  }
+  return { text, sources };
 }
 
 // ════════════════════════════════════
@@ -1150,6 +1393,11 @@ export default async function handler(req, res) {
   // 별개 경로라 먼저 분기함.
   if (req.body && req.body.mode === 'briefing') {
     return handleBriefing(req, res);
+  }
+  // 최신 세율 조사(mode:'taxUpdate') - 물건 데이터와 무관하게 세법 자체를 웹검색으로 조사하는
+  // 별개 경로라 먼저 분기함.
+  if (req.body && req.body.mode === 'taxUpdate') {
+    return handleTaxUpdate(req, res);
   }
   const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
   if (!ANTHROPIC_API_KEY) {
