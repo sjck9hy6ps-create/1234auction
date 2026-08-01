@@ -6053,8 +6053,13 @@ function calcMargin() {
     var compEst = getCompEstValue();
     var compBidResult = compEst ? solveAuctionBid(compEst.estValue) : null;
     var compTargetMargin = parseInt(document.getElementById('a-comp-target-margin').value) || 0;
+    // 최저입찰가(법원 고시 최저매각가격) 대비 내 입찰가가 몇 %인지 - 입찰가 자체는 아래에서
+    // 이미 감정가 대비(낙찰률)로도 보여주지만, 실무에서는 "최저가 대비 몇 % 써냈는지"를 더
+    // 자주 기준으로 삼기 때문에(감정가는 시세와 괴리가 큰 경우가 많음) 별도로 추가함.
+    var minBidRate = (minBid > 0 && useBid > 0) ? Math.round(useBid / minBid * 1000) / 10 : 0;
     document.getElementById('margin-grid').innerHTML =
-        mItem(actBid ? '실제 낙찰가' : '내 입찰가', useBid > 0 ? toEok(String(useBid)) : '—', '#1a237e')
+        mItem('최저입찰가', minBid > 0 ? toEok(String(minBid)) : '—', '#616161')
+      + mItem(actBid ? '실제 낙찰가' : '내 입찰가', useBid > 0 ? toEok(String(useBid)) + (minBidRate > 0 ? ' (최저가대비 ' + minBidRate + '%)' : '') : '—', '#1a237e')
       + mItem('총 투자비용',    totalCost > 0 ? toEok(String(totalCost)) : '—', '#555')
       + mItem('총 부대비용',    feesSum > 0 ? toEok(String(feesSum)) : '—', '#888')
       + mItem('세전 예상수익',  useSell > 0 ? toEok(String(preTaxMargin)) : '—', preTaxMargin > 0 ? '#2e7d32' : preTaxMargin < 0 ? '#e53935' : '#555')
