@@ -833,6 +833,11 @@ tr:hover td { background:#fffde7; }
                 <span class="modal-label">실제 매도가</span>
                 <input type="number" class="modal-input" id="a-actual-sell" placeholder="0" oninput="autoCalcAgentSilent();calcMargin();suggestBidFromTarget();renderEstimateSummary();">
             </div>
+            <div class="modal-row">
+                <span class="modal-label">매도일(잔금일)</span>
+                <input type="date" class="modal-input" id="a-sell-date" oninput="renderFilingDeadlineBox();">
+            </div>
+            <div id="filing-deadline-box"></div>
         </div>
         <div class="modal-section">
             <div class="modal-section-title">📊 비교물건 시세분석 (최대 10개)</div>
@@ -1594,6 +1599,26 @@ function toEok(manwon) {
     if (eok > 0 && rem > 0) return eok + '억 ' + rem.toLocaleString() + '만';
     if (eok > 0) return eok + '억';
     return val.toLocaleString() + '만';
+}
+/* 부동산매매사업자(개인)는 물건을 매도할 때마다 종합소득세 신고와 별도로 "부동산매매차익
+   예정신고"를 양도일이 속한 달의 말일로부터 2개월 이내에 해야 함(안 하면 가산세). 물건을
+   여러 건 돌리면 건마다 마감일이 다 달라서 놓치기 쉬우므로, 매도일(a-sell-date)을 입력하면
+   마감일을 자동 계산해 D-day로 보여줌. 세무 신고 편의를 위한 참고용 계산이며, 정확한 신고는
+   반드시 세무사·홈택스로 확인해야 함. */
+function calcFilingDeadline(sellDateStr) {
+    if (!sellDateStr) return null;
+    var d = new Date(sellDateStr);
+    if (isNaN(d.getTime())) return null;
+    // 양도월 말일로부터 2개월 이내 = 양도월+2월의 말일까지(민법 기간계산 원칙: 월로 정한 기간은
+    // 최종 월에 起算日에 해당하는 날이 없으면 그 달 말일에 만료). new Date(y, m+3, 0)은 "양도월(0-idx m)
+    // +2월"의 말일을 바로 구해줌(day 0 트릭) - 말일을 구한 뒤 다시 +2월을 하면 2월처럼 31일이 없는
+    // 달로 넘어갈 때 다음 달로 밀리는 오차가 생겨서, 반드시 이 방식으로 한 번에 계산해야 함.
+    var deadline = new Date(d.getFullYear(), d.getMonth() + 3, 0);
+    var today = new Date(); today.setHours(0, 0, 0, 0);
+    var diffDays = Math.round((deadline - today) / 86400000);
+    var pad = function(n) { return String(n).padStart(2, '0'); };
+    var deadlineStr = deadline.getFullYear() + '-' + pad(deadline.getMonth() + 1) + '-' + pad(deadline.getDate());
+    return { deadlineStr: deadlineStr, diffDays: diffDays };
 }
 function toPyung(area) { return Math.round(area / 3.305785 * 10) / 10; }
 // apt.ppp는 "만원/평" 단위로 저장돼 있음(calcPriceGrades 참고). 등급은 색상으로 이미
@@ -4507,6 +4532,16 @@ function renderAuctionList() {
             ? '<div class="auction-list-sub" style="color:#e53935;font-weight:bold;">⚠️ 주소를 지도 좌표로 찾지 못해 지도에 배지가 표시되지 않습니다 - 주소를 확인해 주세요.</div>'
             : '';
         var caseNoLine = a.caseNo ? '<div class="auction-list-sub">📋 ' + a.caseNo + '</div>' : '';
+        // 매도완료 + 매도일이 있으면 매매차익 예정신고 마감 D-day를 목록에서도 바로 볼 수 있게 표시
+        var filingLine = '';
+        if (a.status === '매도완료' && a.sellDate) {
+            var fInfo = calcFilingDeadline(a.sellDate);
+            if (fInfo) {
+                var fColor = fInfo.diffDays < 0 ? '#e53935' : (fInfo.diffDays <= 14 ? '#e65100' : (fInfo.diffDays <= 30 ? '#f57f17' : '#2e7d32'));
+                var fLabel = fInfo.diffDays < 0 ? '마감 ' + Math.abs(fInfo.diffDays) + '일 지남' : (fInfo.diffDays === 0 ? '오늘 마감' : 'D-' + fInfo.diffDays);
+                filingLine = '<div class="auction-list-sub" style="color:' + fColor + ';font-weight:bold;">📅 예정신고 ' + fLabel + '</div>';
+            }
+        }
         html += '<div class="auction-list-item" style="position:relative;" onclick="panToAuction(\'' + a.id + '\')">'
             + '<span onclick="event.stopPropagation();openAuctionModal(\'' + a.id + '\')" '
             + 'style="position:absolute;top:8px;right:8px;font-size:10px;color:#1976d2;font-weight:bold;cursor:pointer;">✏️ 수정</span>'
@@ -4515,6 +4550,7 @@ function renderAuctionList() {
             + '<div class="auction-list-sub">' + (a.addr || '주소 미입력') + '</div>'
             + caseNoLine
             + '<div class="auction-list-sub" style="color:#6a1b9a;">입찰가 ' + (a.myBid ? toEok(String(parseInt(a.myBid))) : '-') + '</div>'
+            + filingLine
             + noPin
             + '</div>';
     });
@@ -4589,7 +4625,7 @@ function openAuctionModal(id) {
      'a-appraisal','a-min-bid','a-deposit-rate','a-my-bid','a-actual-bid',
      'a-tax','a-registry-fee','a-eviction-fee','a-repair','a-agent','a-moving','a-cleaning','a-etc','a-unpaid-mgmt-fee','a-assumed-deposit','a-target','a-actual-sell',
      'a-official-price','a-site-rights-area','a-land-price-per-m2','a-memo','a-paste-text','a-loan-rate','a-loan-amount-manual','a-loan-prepay-fee-rate',
-     'a-total-official-price','a-property-tax','a-comp-tax']
+     'a-total-official-price','a-property-tax','a-comp-tax','a-sell-date']
         .forEach(function(fid) { document.getElementById(fid).value = ''; });
     document.getElementById('a-status').value = '검토중';
     document.getElementById('a-prop-type').value = 'apt';
@@ -4685,6 +4721,7 @@ function openAuctionModal(id) {
             document.getElementById('a-assumed-deposit').value = a.assumedDeposit || '';
             document.getElementById('a-target').value      = a.target || '';
             document.getElementById('a-actual-sell').value = a.actualSell || '';
+            document.getElementById('a-sell-date').value = a.sellDate || '';
             document.getElementById('a-memo').value        = a.memo || '';
             document.getElementById('a-comp-target-margin').value = a.compTargetMargin || TARGET_MARGIN_DEFAULTS[a.propType || 'apt'] || '2000';
             document.getElementById('a-house-rank').value  = a.houseRank || '1';
@@ -4729,6 +4766,21 @@ function updateStatusUI() {
     var s = document.getElementById('a-status').value;
     document.getElementById('actual-bid-row').style.display  = (s === '낙찰' || s === '매도완료') ? '' : 'none';
     document.getElementById('actual-sell-row').style.display = (s === '매도완료') ? '' : 'none';
+    renderFilingDeadlineBox();
+}
+/* 매도일을 입력하면 부동산매매차익 예정신고 마감일(D-day)을 보여줌 - calcFilingDeadline 참고. */
+function renderFilingDeadlineBox() {
+    var box = document.getElementById('filing-deadline-box');
+    if (!box) return;
+    var sellDateEl = document.getElementById('a-sell-date');
+    var info = sellDateEl ? calcFilingDeadline(sellDateEl.value) : null;
+    if (!info) { box.innerHTML = ''; return; }
+    var color = info.diffDays < 0 ? '#e53935' : (info.diffDays <= 14 ? '#e65100' : (info.diffDays <= 30 ? '#f57f17' : '#2e7d32'));
+    var dLabel = info.diffDays < 0 ? '마감 ' + Math.abs(info.diffDays) + '일 지남' : (info.diffDays === 0 ? '오늘 마감' : 'D-' + info.diffDays);
+    box.innerHTML = '<div style="font-size:11px;background:#fff3e0;border-radius:6px;padding:6px 8px;margin:4px 0;">'
+        + '📅 부동산매매차익 예정신고 마감 <b style="color:' + color + ';">' + info.deadlineStr + ' (' + dLabel + ')</b>'
+        + '<div style="font-size:10px;color:#999;margin-top:2px;">매도일이 속한 달 말일로부터 2개월 이내 신고(가산세 유의) - 참고용 계산이며 정확한 신고는 세무사·홈택스로 확인하세요.</div>'
+        + '</div>';
 }
 /* 보유기간(hold-months)은 원래 개인명의 양도소득세 단기/장기 판정에만 쓰여서 매매사업자
    선택 시 숨겼었는데, 대출이자 계산(보유기간 × 대출금액 × 금리)에는 입찰방법과 무관하게
@@ -6432,6 +6484,7 @@ async function saveAuction() {
         assumedDeposit: document.getElementById('a-assumed-deposit').value || null,
         target: document.getElementById('a-target').value,
         actualSell: document.getElementById('a-actual-sell').value,
+        sellDate: document.getElementById('a-sell-date').value || null,
         memo: document.getElementById('a-memo').value,
         detail: pendingAuctionDetail || null,
         rawText: document.getElementById('a-paste-text').value.trim() || null,
