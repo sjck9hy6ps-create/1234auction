@@ -592,7 +592,7 @@ tr:hover td { background:#fffde7; }
     </div>
      <div class="filter-row">
         <div class="filter-row-label">공통</div>
-        <button class="filter-tab ft-common" onclick="toggleRecentYearOnly(this)">최근1년 거래만</button>
+        <button class="filter-tab ft-common" onclick="toggleRecentYearOnly(this)">최근6개월 거래만</button>
         <button class="filter-tab ft-common" onclick="toggleCompOnlyFilter(this)">📌 비교대상만</button>
         <button class="filter-tab ft-common" id="boundary-toggle-btn" onclick="toggleDongBoundaryMode(this)">🗺️ 법정동 경계선</button>
         <button class="filter-tab ft-common" id="rentonly-toggle-btn" onclick="toggleShowRentOnly(this)">🏠 전세거래만 있는 주소</button>
@@ -2196,8 +2196,8 @@ function toggleRecentYearOnly(btn) {
     redrawMarkers();
 }
 function hasRecentYearTrade(apt) {
-    return (apt.count3M + apt.count3MTo1Y) > 0;
-} 
+    return apt.count6M > 0;
+}
 function resetVillaFilter() {
     activeVillaFilters.clear();
     document.querySelectorAll('.ft-v').forEach(function(b) { b.classList.remove('active'); });
@@ -2740,6 +2740,9 @@ function groupDBRows(rows, sigungu, lawdCd) {
             count3MTo1Y: trades.filter(function(t) {
                 var d = tradeDate(t); return d < recentCut && d >= pastFloor;
             }).length,
+            // 건물타입 무관 "최근 6개월" 필터용 - count3M/count3MTo1Y는 타입별로 기준기간이 달라
+            // 그대로 쓸 수 없어 별도 필드로 분리(전역 sixMonAgo 고정 기준)
+            count6M: trades.filter(function(t) { return tradeDate(t) >= sixMonAgo; }).length,
         };
     });
 }
@@ -2785,7 +2788,7 @@ function buildRentOnlyEntries(existingList, rentList, sigungu, lawdCd) {
             grade: null, ppp: 0, indicators: null, investScore: null,
             disqualified: false, dqReason: '', scoreBreakdown: {},
             hasNewHigh: false, newHighPyungs: [],
-            count3M: 0, count3MTo1Y: 0,
+            count3M: 0, count3MTo1Y: 0, count6M: 0,
             rentOnly: true, // 매매기록이 아예 없는 건물 표시(패널 안내문구 등에서 참고)
         };
     });
