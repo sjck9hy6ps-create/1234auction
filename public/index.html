@@ -2433,10 +2433,22 @@ function normalizeRoadName(road) {
 }
 /* groupDBRows()/buildRentOnlyEntries() 공용 그룹 키 계산 - 두 함수가 서로 다른 로직으로 키를
    만들면(예: 한쪽만 도로명을 정규화) 매매기록과 전세기록이 같은 건물인데도 다른 건물로
-   인식되어 중복 배지가 생길 수 있어, 반드시 이 함수 하나만 거치도록 함. */
+   인식되어 중복 배지가 생길 수 있어, 반드시 이 함수 하나만 거치도록 함.
+   ⚠️ 2026-08: 단지명(name)이 있으면 도로명(road) 대신 법정동(dong)만으로 묶도록 변경함.
+   원래는 name+정규화된 road_name으로 묶었는데, 국토부 실거래가 원본이 같은 단지인데도
+   거래 신고마다 도로명이 통째로 비어있거나("") 서로 다른 도로 구간명으로 들어오는 경우가
+   많아(예: 안산 고잔동 "주공(9단지)"가 "당곡1로"/"당곡2로" 두 도로명으로 섞여 신고되는
+   실측 사례 확인 - normalizeRoadName()은 끝의 건물번호 노이즈만 제거할 뿐 아예 다른
+   도로명은 못 합침) 같은 단지가 배지 여러 개로 쪼개지는 문제가 있었음. 안산 단원구 한
+   지역만 조회해봐도 이런 식으로 34개 단지가 쪼개져 있었음(대부분은 도로명 공란 vs
+   실제값 케이스). 단지명은 국토부 데이터에서 이미 충분히 신뢰할 수 있는 식별자라(법정동
+   으로 한 번 더 구분하면 동명이인 단지가 잘못 합쳐질 위험도 낮음), 도로명을 아예 그룹
+   키에서 빼는 쪽이 안전함 - 부지가 넓어 여러 지번을 쓰는 단지도 이 방식이면 자동으로
+   하나의 배지로 합쳐짐(지번도 그룹 키에서 빠지므로). */
 function buildGroupKey(name, dong, bunji, road) {
-    var roadForKey = (name || bunji) ? normalizeRoadName(road) : (road || '').trim();
-    return (name || (dong + '_' + (bunji || ''))) + '||' + roadForKey;
+    if (name) return name + '||' + (dong || '').trim();
+    var roadForKey = bunji ? normalizeRoadName(road) : (road || '').trim();
+    return dong + '_' + (bunji || '') + '||' + roadForKey;
 }
 /* ── DB rows → apt 그룹 ── */
 function groupDBRows(rows, sigungu, lawdCd) {
