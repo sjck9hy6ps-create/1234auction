@@ -12168,9 +12168,10 @@ function passesSurgeFilter(apt) {
      api/data-coverage.js?mode=topDongs가 DB에서 GROUP BY로 처리함(원래 이 결과를
      별도의 #top-dongs-panel로 보여줬었는데, "급등지역 필터가 이 기능이었다"는 사용자
      피드백에 따라 이 패널 안으로 합침).
-   - "💰 돈되는 지역" 탭: 최근 36개월을 6개월 단위 6구간으로 나눠 각 구간의 전용면적
-     20평(size>=66) 이상 물건 평균거래가를 비교해 상승모멘텀이 큰 법정동 순위를 보여줌.
-     집계는 api/data-coverage.js?mode=priceMomentum.
+   - "💰 돈되는 지역" 탭: 최근 300일을 50일 단위 6구간으로 나눠, 각 구간의 평당가(모든
+     평형, price/size 정규화)를 비교해 상승모멘텀이 큰 법정동 순위를 보여줌. 구간당 거래
+     7건 이상 + 5구간 중 3회 이상 상승한 곳만 후보로 삼음(우연한 편차 배제). 집계는
+     api/data-coverage.js?mode=priceMomentum.
    ⚠️ 지도 마커의 🔥N위 배지·"ft-surge" 필터칩(surgeRankMap/computeSurgeRankMap/
    passesSurgeFilter)은 이 패널과 별개로 계속 buildDongSurgeRanking(현재 지도 뷰포트에
    이미 로딩된 allAptList 기준 - DB 전체가 아님)을 그대로 사용함. 이 패널은 어디까지나
@@ -12282,7 +12283,7 @@ async function loadSurgeMoneyData() {
         var data = await readJsonResponseSafe(res);
         if (!res.ok) throw new Error((data && data.error) || ('서버 오류(' + res.status + ')'));
         statusBox.style.color = '#999';
-        statusBox.innerText = '최근 6개월 평당가 모멘텀(전체 평형·구간당 3건 이상·5구간 중 3회 이상 상승)' + (sido ? ' · ' + sido : ' · 전국');
+        statusBox.innerText = '최근 300일(50일×6구간) 평당가 모멘텀(전체 평형·구간당 7건 이상·5구간 중 3회 이상 상승)' + (sido ? ' · ' + sido : ' · 전국');
         // 실거래 신고기한(계약 후 30일 이내)상 가장 최근 1개월 구간은 아직 신고가 덜 끝난
         // 거래가 섞여 있어 거래량이 구조적으로 낮게 보일 수 있음 - 사용자 요청으로 계산 로직은
         // 그대로 두고 이 안내문구만 상시 표시함.
