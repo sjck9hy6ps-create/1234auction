@@ -93,22 +93,26 @@ function mergeRanges(a, b) {
        group by region, dong order by cnt desc limit p_limit;
      $$;
 
-     create or replace function rpc_bucket_avg_price(p_start int, p_end int, p_sido text, p_type text)
+     drop function if exists rpc_bucket_avg_price(int, int, text, text);
+     create or replace function rpc_bucket_avg_price(p_start int, p_end int, p_sido text, p_type text, p_min_size int, p_max_size int)
      returns table(region text, dong text, avg_price numeric, cnt bigint)
      language sql stable as $$
        select region, dong, avg(price) as avg_price, count(*) as cnt from (
          select region, dong, price from house_trades
-           where p_type = 'apt' and deal_date >= p_start and deal_date < p_end and size >= 66
+           where p_type = 'apt' and deal_date >= p_start and deal_date < p_end
+             and size >= p_min_size and size <= p_max_size
              and dong is not null and dong <> ''
              and (p_sido is null or p_sido = '' or region like p_sido || '%')
          union all
          select region, dong, price from villa_trades
-           where p_type = 'villa' and deal_date >= p_start and deal_date < p_end and size >= 66
+           where p_type = 'villa' and deal_date >= p_start and deal_date < p_end
+             and size >= p_min_size and size <= p_max_size
              and dong is not null and dong <> ''
              and (p_sido is null or p_sido = '' or region like p_sido || '%')
          union all
          select region, dong, price from single_trades
-           where p_type = 'villa' and deal_date >= p_start and deal_date < p_end and size >= 66
+           where p_type = 'villa' and deal_date >= p_start and deal_date < p_end
+             and size >= p_min_size and size <= p_max_size
              and dong is not null and dong <> ''
              and (p_sido is null or p_sido = '' or region like p_sido || '%')
        ) t
@@ -133,7 +137,10 @@ async function getTopDongs(type, cutoff, sido, limit) {
   } catch (e) { console.warn(`topDongs(rpc): ${type} 조회 예외 -`, e.message); return []; }
 }
 
-const MOMENTUM_PYUNG20_SIZE = 66; // 20평(66.115㎡) 이상 - size는 floor(㎡) 정수 저장(RPC 내부에도 하드코딩됨)
+// 국민평형(23~25평) - 1평=3.305785㎡, 평 단위 반올림 경계로 환산하면 대략 74~84㎡.
+// size는 floor(㎡) 정수 저장이라 74<=size<=84로 필터링함(RPC에도 그대로 파라미터로 전달).
+const MOMENTUM_SIZE_MIN = 74;
+const MOMENTUM_SIZE_MAX = 84;
 function monthsAgoInt(months) {
   const d = new Date();
   d.setMonth(d.getMonth() - months);
@@ -146,11 +153,12 @@ function todayInt() {
   return parseInt(`${y}${m}${day}`, 10);
 }
 function momentumBuckets() {
-  // idx 0 = 가장 오래된 구간(36~30개월 전), idx 5 = 가장 최근 구간(6~0개월 전)
+  // 2026-08: 36개월×6개월구간 → 최근 6개월을 1개월×6구간으로 변경(더 촘촘한 흐름을 보기 위함).
+  // idx 0 = 가장 오래된 구간(6~5개월 전), idx 5 = 가장 최근 구간(1~0개월 전)
   const buckets = [];
   const today = todayInt();
   for (let i = 0; i < 6; i++) {
-    const startMonths = 36 - i * 6, endMonths = 30 - i * 6;
+    const startMonths = 6 - i, endMonths = 5 - i;
     buckets.push({
       start: monthsAgoInt(startMonths),
       end: i === 5 ? today + 1 : monthsAgoInt(endMonths), // 마지막 구간만 오늘까지 포함(미래 날짜 데이터 방지용 +1)
@@ -162,6 +170,7 @@ async function getBucketAvgPrices(type, start, end, sido) {
   try {
     const { data, error } = await supabase.rpc('rpc_bucket_avg_price', {
       p_start: start, p_end: end, p_sido: sido || null, p_type: type,
+      p_min_size: MOMENTUM_SIZE_MIN, p_max_size: MOMENTUM_SIZE_MAX,
     });
     if (error) { console.warn(`priceMomentum(rpc): ${type} 조회 실패 -`, error.message); return {}; }
     const acc = {};
@@ -181,11 +190,12 @@ async function getPriceMomentum(type, sido, limit) {
   const rankings = keys.map(k => {
     const firstAvg = firstMap[k].avg, lastAvg = lastMap[k].avg;
     if (!firstAvg) return null;
+    // prices: 6구간의 평균가 흐름을 그대로 노출(프론트에서 추세 표시용) - momentumPct는
+    // 순위 정렬용으로 첫구간→마지막구간 변화율을 그대로 유지함.
     return {
       region: firstMap[k].region,
       dong: firstMap[k].dong,
-      firstPrice: Math.round(firstAvg),
-      lastPrice: Math.round(lastAvg),
+      prices: bucketMaps.map(m => Math.round(m[k].avg)),
       momentumPct: Math.round((lastAvg - firstAvg) / firstAvg * 1000) / 10,
     };
   }).filter(r => r !== null);
