@@ -597,7 +597,7 @@ tr:hover td { background:#fffde7; }
         <button class="filter-tab ft-common" id="boundary-toggle-btn" onclick="toggleDongBoundaryMode(this)">🗺️ 법정동 경계선</button>
         <button class="filter-tab ft-common" id="rentonly-toggle-btn" onclick="toggleShowRentOnly(this)">🏠 전세거래만 있는 주소</button>
         <button class="filter-tab ft-common" id="bidcaseonly-toggle-btn" onclick="toggleBidCaseOnlyFilter(this)">⚖️ 낙찰사례만 보기</button>
-        <button class="filter-tab ft-common active" id="bidcasebadge-toggle-btn" onclick="toggleShowBidCaseBadges(this)">⚖️ 낙찰사례 배지 표시중</button>
+        <button class="filter-tab ft-common" id="bidcasebadge-toggle-btn" onclick="toggleShowBidCaseBadges(this)">⚖️ 낙찰사례 배지 숨김</button>
     </div>
 </div>
 <div id="dong-boundary-info" style="display:none;position:absolute;top:60px;left:50%;transform:translateX(-50%);z-index:50;background:rgba(0,0,0,0.75);color:white;font-size:12px;font-weight:bold;padding:5px 12px;border-radius:14px;pointer-events:none;"></div>
@@ -1439,8 +1439,10 @@ var bidCaseAptIndex = { byName: {}, byDongBunji: {} };
 // 낙찰사례(⚖️) 배지 레이어 자체를 통째로 껐다 켰다 하는 마스터 스위치 - 위 bidCaseOnlyFilter(다른
 // 필터와 AND로 결합되는 "일반 마커를 낙찰사례 매칭된 것만 보기")와는 별개 개념. 300건 이상 쌓이면
 // 배지가 지도를 뒤덮어 다른 배지가 안 보일 수 있어서, 필요할 때만 잠깐 껐다 켤 수 있게 함.
-// 기본값 true = 기존 동작(항상 표시) 그대로 유지.
-var showBidCaseBadges = true;
+// ⚠️ 2026-08: 기본값을 true(항상 표시)에서 false(기본 숨김)로 변경함 - 낙찰사례 배지가
+// 기본 로딩 상태라 매매기록 배지와 겹쳐 화면을 뒤덮는다는 사용자 피드백 반영. 필요할 때
+// 상단 필터에서 켜서 볼 수 있음.
+var showBidCaseBadges = false;
 /* 경매물건 비교물건으로 등록된 거래를 역인덱싱 (키: 이름|날짜|금액 → 등록된 경매 목록)
    비교물건 저장 시 name/date/amount로 dedup 체크하던 것과 동일한 키 형식을 사용함 */
 function computeComparableIndex() {
@@ -2304,12 +2306,35 @@ function toggleLegend() {
         document.getElementById('legend-toggle-icon').innerText = '보이기 ▸';
     }
 })();
+/* ════════════════════════════════════
+   배지 자동 크기조절 (겹침 완화)
+   ⚠️ 2026-08: 배지 밀도가 높은 지역(빌라 밀집지)은 최대로 확대해도 배지끼리 겹쳐 정보가
+   가려진다는 아이패드미니 사용자 피드백 - 줌 레벨에 따라 전체 배지 크기를 CSS 변수
+   (--badge-scale)로 일괄 조절함. 확대(레벨↓)할수록 배지가 커지고, 축소(레벨↑)할수록
+   화면에 더 많은 배지가 들어오므로 전체가 비례해서 작아짐. 마커 하나하나의 화면 좌표를
+   재는 진짜 충돌감지 대신 줌 레벨 하나로 전체를 일괄 스케일하는 방식이라, 마커가 수백 개
+   있어도 계산 부담 없이 즉시 반영됨(카카오맵 레벨: 1이 가장 확대, 숫자가 커질수록 축소).
+   각 배지의 CustomOverlay content(div)에 transform:scale(var(--badge-scale,1))을 걸어두면
+   이 변수 하나만 바꿔도 이미 그려진 배지 전체가 함께 커지고 작아짐. */
+function computeBadgeScale(level) {
+    var scale = 1.15 - (level - 1) * 0.08;
+    if (scale > 1.15) scale = 1.15;
+    if (scale < 0.45) scale = 0.45;
+    return Math.round(scale * 100) / 100;
+}
+function updateBadgeScale() {
+    var mapEl = document.getElementById('map');
+    if (!mapEl || !map) return;
+    mapEl.style.setProperty('--badge-scale', computeBadgeScale(map.getLevel()));
+}
 function initMap(lat, lon) {
     map = new kakao.maps.Map(document.getElementById('map'), {
         center: new kakao.maps.LatLng(lat, lon), level: 7
     });
     map.setMinLevel(1); map.setMaxLevel(14);
     new kakao.maps.Marker({ map: map, position: new kakao.maps.LatLng(lat, lon), title: '내 위치' });
+    updateBadgeScale();
+    kakao.maps.event.addListener(map, 'zoom_changed', updateBadgeScale);
     // 경매 등록 물건은 지역 데이터를 기다리지 않고 가장 먼저 불러와서 표시
     // (비교물건 배지 반영을 위해 아파트/빌라 마커도 함께 다시 그림)
     fetchAuctions().then(function() { renderAuctionMarkers(); redrawMarkers(); });
@@ -2728,27 +2753,51 @@ function tryStepGeocode(candidates, callback) {
         if (pendingQueries.has(qKey)) { setTimeout(next, 80); return; }
         pendingQueries.add(qKey);
         runGeocode(function() {
-            return new Promise(function(resolve) {
+            // ⚠️ 2026-08: 카카오 지오코더 SDK가 아주 드물게 addressSearch/keywordSearch
+            // 콜백을 끝내 호출하지 않는 경우가 있음(네트워크 단절/일일 쿼터 초과 등, 콘솔에
+            // 에러도 안 남음). 이 Promise가 영원히 resolve 안 되면 이 태스크를 감싼
+            // runGeocode 세마포어(동시 4개) 슬롯 하나가 영구히 반환되지 않는데, 이런 일이
+            // 누적되면(세션이 길어질수록 확률이 쌓임) 결국 4개 슬롯이 전부 막혀 지오코딩을
+            // 쓰는 모든 기능(연립다세대 정보 조회 등)이 통째로 멈춰버림 - 실사용자가 "연립
+            // 다세대 정보 불러오는 중..."에서 진행률이 몇 시간째 안 바뀌는 걸 확인해 원인
+            // 추적함. 8초 타임아웃으로 강제 실패 처리해서 슬롯을 반드시 반환하고, settled
+            // 플래그로 타임아웃 이후 뒤늦게 도착하는 콜백은 무시함(이중 callback() 호출 방지).
+            return new Promise(function(resolveOuter) {
+                var settled = false;
+                var timer = setTimeout(function() {
+                    if (settled) return;
+                    settled = true;
+                    pendingQueries.delete(qKey);
+                    resolveOuter({ found: false, timedOut: true });
+                }, 8000);
+                function finish(val) {
+                    if (settled) return;
+                    settled = true;
+                    clearTimeout(timer);
+                    resolveOuter(val);
+                }
                 // 1순위: 정식 주소 검색 (동+지번, 도로명+본번-부번)
                 geocoder.addressSearch(q, function(result, status) {
+                    if (settled) return;
                     if (status === kakao.maps.services.Status.OK && result && result.length > 0) {
                         var lat = parseFloat(result[0].y), lon = parseFloat(result[0].x);
                         coordCache[qKey] = { lat: lat, lon: lon };
                         pendingQueries.delete(qKey);
                         callback(lat, lon);
-                        resolve({ found: true });
+                        finish({ found: true });
                     } else {
                         // 2순위: 키워드(단지명) 검색 - 지도 중심 기준 20km 이내로 위치 바이어스
                         places.keywordSearch(q, function(res, st) {
+                            if (settled) return;
                             if (st === kakao.maps.services.Status.OK && res && res.length > 0) {
                                 var lat = parseFloat(res[0].y), lon = parseFloat(res[0].x);
                                 coordCache[qKey] = { lat: lat, lon: lon };
                                 pendingQueries.delete(qKey);
                                 callback(lat, lon);
-                                resolve({ found: true });
+                                finish({ found: true });
                             } else {
                                 pendingQueries.delete(qKey);
-                                resolve({ found: false });
+                                finish({ found: false });
                             }
                         }, {
                             location: new kakao.maps.LatLng(centerLat, centerLon),
@@ -2849,10 +2898,10 @@ function createMarker(cacheKey, lat, lon, apt) {
     var borderStyle = apt.gradeEstimated ? 'dashed' : 'solid';
     div.style.cssText = matchedAuction
         ? 'position:relative;background:linear-gradient(180deg,#fff,#fff7ec);border:3px solid #e65100;border-radius:9px;'
-            + 'padding:6px 10px;margin-top:10px;white-space:nowrap;cursor:pointer;transform:scale(1.1);'
+            + 'padding:6px 10px;margin-top:10px;white-space:nowrap;cursor:pointer;transform:scale(calc(1.1 * var(--badge-scale,1)));transform-origin:center bottom;'
             + 'text-align:center;line-height:1.35;max-width:250px;animation:auctionGlow 1.8s ease-in-out infinite;'
         : 'position:relative;background:white;border:2px ' + borderStyle + ' ' + color + ';border-radius:8px;'
-            + 'padding:6px 10px;white-space:nowrap;cursor:pointer;'
+            + 'padding:6px 10px;white-space:nowrap;cursor:pointer;transform:scale(var(--badge-scale,1));transform-origin:center bottom;'
             + 'box-shadow:0 2px 6px rgba(0,0,0,0.13);text-align:center;line-height:1.35;max-width:240px;';
     div.setAttribute('onclick', 'handleAptMarkerClick(\'' + mKey + '\')');
     // 아이패드 등 터치 기기는 마우스 hover가 없어서 ...으로 잘린 글자를 볼 방법이 없었음.
@@ -6960,7 +7009,7 @@ function placeAuctionMarker(a) {
     var div = document.createElement('div');
     div.style.cssText = 'position:relative;background:linear-gradient(180deg,#fff,#fff7ec);border:3px solid #e65100;border-radius:9px;'
         + 'padding:4px 9px;margin:4px;margin-top:16px;white-space:nowrap;cursor:pointer;'
-        + 'text-align:center;line-height:1.5;max-width:210px;transform:scale(1.12);'
+        + 'text-align:center;line-height:1.5;max-width:210px;transform:scale(calc(1.12 * var(--badge-scale,1)));transform-origin:center bottom;'
         + 'animation:auctionGlow 1.8s ease-in-out infinite;';
     // 터치 기기 길게 누르기 미리보기용 (setupBadgeLongPressPeek 참고)
     div.title = [((a.name && a.name.trim()) || a.addrLabel || a.addr || '(이름없음)'), '🔨 ' + a.status, priceLine, a.pyung ? a.pyung + '평' : '', ageBadgeText].filter(Boolean).join(' · ');
@@ -7031,7 +7080,7 @@ function placeBidCaseMarker(c) {
         ? '<div style="color:#2e7d32;font-size:9.5px;">추정마진 ' + toEok(String(Math.round(c.estMargin))) + '</div>' : '';
     var div = document.createElement('div');
     div.style.cssText = 'position:relative;background:linear-gradient(180deg,#fff,#eef7fb);border:2.5px solid #00695c;border-radius:9px;'
-        + 'padding:4px 9px;margin:4px;margin-top:16px;white-space:nowrap;cursor:pointer;'
+        + 'padding:4px 9px;margin:4px;margin-top:16px;white-space:nowrap;cursor:pointer;transform:scale(var(--badge-scale,1));transform-origin:center bottom;'
         + 'text-align:center;line-height:1.5;max-width:200px;';
     div.title = [(c.caseNo || '낙찰사례'), (c.addrJibun || ''), '⚖️ ' + (c.status || ''), priceLine].filter(Boolean).join(' · ');
     var cidJs = String(c.id).replace(/'/g, "\\'");
