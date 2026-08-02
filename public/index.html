@@ -854,6 +854,12 @@ tr:hover td { background:#fffde7; }
                 </div>
                 <div id="tax-update-status" style="font-size:10px;color:#999;margin-bottom:6px;"></div>
                 <div id="comp-valuation-result"></div>
+                <!-- ⚠️ 2026-08: "🏠 전세가 기반 분석 다시 계산" 버튼+결과박스를 "🔧 상세 도구"에서
+                     여기로 옮김 - comp-valuation-result 바로 아래 있는 게 자연스러움(그 안의
+                     "예상매각가(실거래 기반)" 밑 칸에 요약값/계산버튼이 함께 뜸). calcCompValuation()이
+                     comp-valuation-result의 innerHTML만 다시 그리므로, 이 박스는 그 바깥(형제
+                     요소)에 둬서 재계산할 때마다 내용이 날아가지 않도록 함. -->
+                <div id="jeonse-analysis-box" style="margin-top:6px;"></div>
                 <div style="border-top:1px dashed #e1bee7;margin:8px 0;"></div>
                 <div class="margin-grid" id="margin-grid"></div>
                 <div id="vat-warn-box"></div>
@@ -896,17 +902,11 @@ tr:hover td { background:#fffde7; }
             </div>
             <div id="filing-deadline-box"></div>
         </div>
-        <div class="modal-section">
-            <!-- 🤖자동추천/📍지도에서 직접 찾기/comp-list-box는 위쪽 "💰 금액 한눈에 보기" 카드의
-                 "📊 비교물건 매도가" 밑으로 옮겨감(2026-08) - 매도가를 확인하려면 이 접힌 섹션까지
-                 펼칠 필요 없이 카드 안에서 바로 등록이 끝나도록 함. -->
-            <div class="modal-section-title">🔍 추가 분석 도구</div>
-            <div>
-                <button type="button" class="modal-btn btn-purple" style="font-size:11px;" onclick="calcAuctionJeonseAnalysis()">🏠 전세가 기반 분석 다시 계산</button>
-                <span style="font-size:10px;color:#999;margin-left:4px;">연립다세대·단독이고 주소·평형이 있으면 자동으로 계산됩니다 (수동 새로고침용 버튼)</span>
-            </div>
-            <div id="jeonse-analysis-box" style="margin-top:8px;"></div>
-        </div>
+        <!-- ⚠️ 2026-08: 🤖자동추천/📍지도에서 직접 찾기(comp-list-box)에 이어, "🏠 전세가 기반
+             분석 다시 계산" 버튼+결과박스(#jeonse-analysis-box)도 여기서 뺐음 - "💰 금액 한눈에
+             보기" 카드 안 "예상마진분석" 표의 "예상매각가(실거래 기반)" 바로 아래(전세가율 기반
+             예상매도가 값이 없을 때 비어 보이던 칸)로 옮겨서, 그 칸을 펼치지 않고도 바로
+             계산/확인할 수 있게 함. -->
             </div>
         </div>
 
@@ -6813,7 +6813,7 @@ function calcMargin() {
     if (captureStatsForBidRate && !captureStatsForBidRate.lowSample) bidRateSubParts.push('동네 매도가율(낙찰사례 ' + captureStatsForBidRate.count + '건 중간값) ' + captureStatsForBidRate.median.toFixed(1) + '%');
     var bidRateSub = bidRateSubParts.join(' · ');
     document.getElementById('margin-grid').innerHTML =
-        mItem('최저입찰가', minBid > 0 ? toEok(String(minBid)) + (minBidRatioToAppraisal !== null ? ' (최초감정가대비 ' + minBidRatioToAppraisal + '%)' : '') : '—', '#616161')
+        mItem('최저입찰가', minBid > 0 ? toEok(String(minBid)) + (minBidRatioToAppraisal !== null ? ' <span style="font-size:10px;font-weight:normal;color:#999;">(최초감정가대비 ' + minBidRatioToAppraisal + '%)</span>' : '') : '—', '#616161')
       + mItem(actBid ? '실제 낙찰가' : '내 입찰가', useBid > 0 ? toEok(String(useBid)) : '—', '#1a237e', bidRateSub)
       + mItem('총 투자비용',    totalCost > 0 ? toEok(String(totalCost)) : '—', '#555')
       + mItem('총 부대비용',    feesSum > 0 ? toEok(String(feesSum)) : '—', '#888')
@@ -8898,14 +8898,22 @@ function calcCompValuation() {
         // 한 프레임(margin-result-box)에 합치면서, 여기서는 margin-grid에 없는 값(비교 평단가·
         // 실거래 기반 예상매각가·전세가율 기반 예상매도가)만 남기고 나머지는 뺐음 - 뺀 항목들은
         // 전부 아래 margin-grid나 "① 예상매도가"에 이미 나와 있어 정보 손실은 없음.
+        // ⚠️ 2026-08: "예상매각가(실거래 기반)" 바로 아래 칸(2x2 그리드에서 이 항목의 다음
+        // 줄)에 전세가 기반 예상매도가가 오도록 순서를 [비교평단가, 예상매각가, 적정입찰가,
+        // 전세가율기반예상매도가]로 재배치함(전에는 순서상 이 칸이 비어보였음 - 계산 전엔
+        // 값이 없어서 그리드에서 통째로 빠졌기 때문). 계산 전에는 그 칸에 "계산하기" 버튼을
+        // 대신 넣어서, 빈칸으로 두지 않고 바로 계산을 트리거할 수 있게 함.
+        var jeonseItem = (auctionJeonseEstimate && auctionJeonseEstimate.estSaleValue)
+            ? vItem('예상매도가(전세가율 기반)', toEok(String(auctionJeonseEstimate.estSaleValue))
+                + ' <span onclick="event.stopPropagation();calcAuctionJeonseAnalysis();" style="cursor:pointer;color:#999;font-size:10px;font-weight:normal;">🔄</span>', '#00897b')
+            : '<div class="margin-item"><div class="margin-label">예상매도가(전세가율 기반)</div>'
+                + '<div style="margin-top:4px;"><button type="button" class="modal-btn btn-gray" style="font-size:10px;padding:3px 8px;" onclick="calcAuctionJeonseAnalysis()">🏠 계산하기</button></div></div>';
         mainHtml = rangeLine + freshBadge + scaleMeasureBox
             + '<div class="margin-grid">'
             + vItem('비교 평단가(중간값,시점보정)', Math.round(est.medPpp / 100) / 10 + '천만/평', '#555')
             + vItem('예상매각가(실거래 기반)', toEok(String(est.estValue)), '#2e7d32')
-            + (auctionJeonseEstimate && auctionJeonseEstimate.estSaleValue
-                ? vItem('예상매도가(전세가율 기반)', toEok(String(auctionJeonseEstimate.estSaleValue)), '#00897b')
-                : '')
             + vItem('적정입찰가(비교물건 기준, 목표마진 ' + toEok(String(targetMargin)) + ' 역산)', r.bid > 0 ? toEok(String(r.bid)) : '마진 확보 불가', '#6a1b9a')
+            + jeonseItem
             + '</div>'
             + (r.vatInfo && r.vatInfo.applicable && !r.vatInfo.computable
                 ? '<div style="font-size:10px;color:#e65100;margin-top:4px;">⚠️ ' + r.vatInfo.reason + '</div>'
@@ -9771,26 +9779,29 @@ function buildRightsAnalysisHtml(detail, sectionLabel, row) {
     // ⚠️ 2026-08: "말소기준권리(=말소기준등기)" 한 줄은 이제 buildAuctionDetailHtml의
     //    "🔑 말소기준등기" 블록에서 1개 항목으로 이미 보여주고 있어서, 여기서 다시 보여주면
     //    같은 내용이 중복 표시되므로 이 박스에서는 뺐음(아래 특수권리·공유지분 등만 유지).
+    // ⚠️ 2026-08: 지목/농지증명 줄 등 여기서도 AI가 "null" 문자열을 돌려주는 경우가 있어서
+    //    (지목 대 · null 처럼 표시됨), buildAuctionDetailHtml과 동일하게 cleanField로 전부 거름.
+    function g(v) { return cleanField(v); }
     var sr = detail.specialRights || {};
     var lienExtra = [];
     if (sr.lienClaimAmount) lienExtra.push('신고금액 ' + Math.round(sr.lienClaimAmount / 10000).toLocaleString() + '만원');
     if (sr.lienDisputed === true) lienExtra.push('채권자측 배제신청 제출됨');
     var specialFlags = [
-        { key: 'hasLien', label: '유치권', note: [sr.lienNote, lienExtra.join(' · ')].filter(Boolean).join(' / ') },
-        { key: 'hasLegalSuperficies', label: '법정지상권', note: sr.legalSuperficiesNote },
-        { key: 'hasGraveRights', label: '분묘기지권', note: sr.graveRightsNote },
-        { key: 'isIllegalBuilding', label: '위반건축물', note: sr.illegalBuildingNote },
-        { key: 'isUnderConstruction', label: '건축중단/미사용승인', note: sr.underConstructionNote },
+        { key: 'hasLien', label: '유치권', note: [g(sr.lienNote), lienExtra.join(' · ')].filter(Boolean).join(' / ') },
+        { key: 'hasLegalSuperficies', label: '법정지상권', note: g(sr.legalSuperficiesNote) },
+        { key: 'hasGraveRights', label: '분묘기지권', note: g(sr.graveRightsNote) },
+        { key: 'isIllegalBuilding', label: '위반건축물', note: g(sr.illegalBuildingNote) },
+        { key: 'isUnderConstruction', label: '건축중단/미사용승인', note: g(sr.underConstructionNote) },
     ].filter(function(f) { return sr[f.key] === true; });
-    var hasZoning = detail.landCategory || detail.zoningType || detail.farmlandCertRequired !== undefined && detail.farmlandCertRequired !== null;
+    var hasZoning = g(detail.landCategory) || g(detail.zoningType) || detail.farmlandCertRequired !== undefined && detail.farmlandCertRequired !== null;
     var hasExtras = detail.isCoOwnership === true || detail.hasWaiverDocument === true || (detail.relatedCases && detail.relatedCases.length);
-    if (!specialFlags.length && !hasZoning && !hasExtras && !detail.minorTenantBaseDate) return '';
+    if (!specialFlags.length && !hasZoning && !hasExtras && !g(detail.minorTenantBaseDate)) return '';
 
     var html = '<div style="margin-top:10px;border:1px solid #ffcdd2;border-radius:8px;padding:8px 10px;background:#fff8f8;">';
     html += '<div style="font-size:11px;font-weight:bold;color:#c62828;">⚖️ 권리분석 체크 (AI 추출 · 입찰 전 등기부 재열람 필수)</div>';
 
-    if (detail.minorTenantBaseDate) {
-        html += '<div style="font-size:11px;color:#555;margin-top:2px;"><b>소액기준일:</b> ' + detail.minorTenantBaseDate + '</div>';
+    if (g(detail.minorTenantBaseDate)) {
+        html += '<div style="font-size:11px;color:#555;margin-top:2px;"><b>소액기준일:</b> ' + g(detail.minorTenantBaseDate) + '</div>';
     }
 
     if (detail.isCoOwnership === true) {
@@ -9814,21 +9825,26 @@ function buildRightsAnalysisHtml(detail, sectionLabel, row) {
     if (detail.hasWaiverDocument === true) {
         html += '<div style="margin-top:6px;background:#e8f5e9;border-radius:6px;padding:6px 8px;">'
             + '<div style="font-size:10.5px;font-weight:bold;color:#2e7d32;">✅ 권리포기 확약서 제출됨</div>'
-            + (detail.waiverNote ? '<div style="font-size:10.5px;color:#555;margin-top:2px;">' + detail.waiverNote + '</div>' : '')
+            + (g(detail.waiverNote) ? '<div style="font-size:10.5px;color:#555;margin-top:2px;">' + g(detail.waiverNote) + '</div>' : '')
             + '<div style="font-size:9.5px;color:#999;margin-top:2px;">확약서로 인수위험이 낮아졌을 수 있지만, 조건이 바뀌면 다시 달라질 수 있으니 최신 매각물건명세서로 재확인하세요.</div>'
             + '</div>';
     }
 
     if (detail.relatedCases && detail.relatedCases.length) {
-        html += sectionLabel('관련사건');
-        detail.relatedCases.forEach(function(c) {
-            html += row([c.court, c.caseNo].filter(Boolean).join(' '), [c.caseType, c.result].filter(Boolean).join(' · '));
+        var cleanRelated = detail.relatedCases.filter(function(c) {
+            return g(c.court) || g(c.caseNo) || g(c.caseType) || g(c.result);
         });
+        if (cleanRelated.length) {
+            html += sectionLabel('관련사건');
+            cleanRelated.forEach(function(c) {
+                html += row([g(c.court), g(c.caseNo)].filter(Boolean).join(' '), [g(c.caseType), g(c.result)].filter(Boolean).join(' · '));
+            });
+        }
     }
 
     if (hasZoning) {
-        html += '<div style="font-size:11px;color:#555;margin-top:6px;">'
-            + [detail.landCategory ? '지목 ' + detail.landCategory : '', detail.zoningType].filter(Boolean).join(' · ') + '</div>';
+        var zoningLine = [g(detail.landCategory) ? '지목 ' + g(detail.landCategory) : '', g(detail.zoningType)].filter(Boolean).join(' · ');
+        if (zoningLine) html += '<div style="font-size:11px;color:#555;margin-top:6px;">' + zoningLine + '</div>';
         if (detail.farmlandCertRequired === true) {
             html += '<div style="font-size:11px;color:#c62828;font-weight:bold;margin-top:2px;">🌾 농지취득자격증명원 필요 가능성 — 경매는 미제출 시 입찰보증금이 몰수됩니다. 입찰 전 관할 시·구·읍·면에 발급 가능 여부를 확인하세요.</div>';
         } else if (detail.farmlandCertRequired === false) {
@@ -10300,14 +10316,17 @@ function buildAuctionDetailHtml(detail) {
     }
 
     // ── 기본 정보(표준 크기) - 지번주소/층·호수·승강기·사용승인일/소유자·채무자·채권자/건물면적 ──
+    // ⚠️ 2026-08: 4개 값을 " · "로 한 줄에 이어붙이니 카드 폭 안에서 줄바꿈이 뒤죽박죽 되어
+    // 가독성이 떨어진다는 피드백 - "층/호수"는 한 줄, "승강기"·"사용승인일"은 각각 다음 줄로
+    // <br>로 분리함(값이 없는 줄은 그냥 생략됨).
+    var floorUnitLine1 = [g(detail.unitFloor) ? g(detail.unitFloor) + '층' : '', g(detail.unitNo)].filter(Boolean).join(' ');
     var floorUnitParts = [];
-    if (g(detail.unitFloor)) floorUnitParts.push(g(detail.unitFloor) + '층');
-    if (g(detail.unitNo)) floorUnitParts.push(g(detail.unitNo));
+    if (floorUnitLine1) floorUnitParts.push(floorUnitLine1);
     if (g(detail.elevator)) floorUnitParts.push('승강기 ' + g(detail.elevator));
     if (g(detail.approvalDate)) floorUnitParts.push('사용승인 ' + g(detail.approvalDate));
     var basicCards = ''
         + card('지번주소', detail.addrJibun, '12px', '#555')
-        + card('층/호수/승강기/사용승인일', floorUnitParts.join(' · '), '12px', '#555')
+        + card('층/호수/승강기/사용승인일', floorUnitParts.join('<br>'), '12px', '#555')
         + card('소유자', detail.owner, '12px', '#555')
         + card('채무자', detail.debtor, '12px', '#555')
         + card('채권자', detail.creditor, '12px', '#555')
