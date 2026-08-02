@@ -2319,7 +2319,11 @@ function toggleLegend() {
 function computeBadgeScale(level) {
     var scale = 1.15 - (level - 1) * 0.08;
     if (scale > 1.15) scale = 1.15;
-    if (scale < 0.45) scale = 0.45;
+    // ⚠️ 2026-08: 처음엔 최소 0.45까지 허용했는데, 실사용 확인 결과 그 정도로 줄어들면
+    // 배지 안 글자(9~15px)가 4~6px까지 작아져서 아이패드 화면에서는 아예 안 읽힘 - 최소
+    // 0.75로 올려서 "덜 겹치더라도 글자는 항상 읽을 수 있게" 우선순위를 바꿈. BADGE_SCALE_MIN
+    // (resolveBadgeOverlaps의 겹침 해소 하한)도 반드시 같은 값으로 맞춰야 함.
+    if (scale < 0.75) scale = 0.75;
     return Math.round(scale * 100) / 100;
 }
 function updateBadgeScale() {
@@ -2362,7 +2366,7 @@ function collectVisibleBadgeDivs() {
     addFrom(bidCaseMarkers);
     return divs;
 }
-var BADGE_SCALE_MIN = 0.4;
+var BADGE_SCALE_MIN = 0.75; // computeBadgeScale()의 최소값과 반드시 동일해야 함(글자 가독성 하한)
 var BADGE_SCALE_STEP = 0.06;
 var BADGE_OVERLAP_MAX_ITER = 14;
 function resolveBadgeOverlaps() {
