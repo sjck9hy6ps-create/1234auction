@@ -9335,7 +9335,11 @@ async function parseAuctionPaste() {
         // 없으면 입력칸을 비워둬서 calcMargin()의 기본값(10%)이 적용되게 함
         if (d.depositRate) document.getElementById('a-deposit-rate').value = d.depositRate;
         if (d.buildingArea) {
-            var m = String(d.buildingArea).match(/([\d.]+)\s*평/);
+            // ⚠️ 2026-08: 원본 경매서류(감정평가서 등)가 "평" 대신 한자 "坪"/"平"을 쓰는 경우가
+            // 있어("40.65㎡(12.297平)"), AI가 원문을 그대로 옮기면 한글 "평"만 찾는 정규식이
+            // 매치를 못 해서 평형이 비게 되는 버그가 있었음(인천 계양구 임학동 69-2 사례로
+            // 확인) - 세 글자 다 인식하도록 넓힘.
+            var m = String(d.buildingArea).match(/([\d.]+)\s*[평坪平]/);
             if (m) document.getElementById('a-pyung').value = Math.round(parseFloat(m[1]));
         }
         // 대지권 면적(부가세 계산용) - 이미 직접 입력해 둔 값은 덮어쓰지 않고, 비어있을 때만 채움.
