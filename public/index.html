@@ -926,7 +926,7 @@ tr:hover td { background:#fffde7; }
             </div>
             <div class="modal-row">
                 <span class="modal-label" style="min-width:56px;">동/층/호수</span>
-                <input type="text" class="modal-input" id="a-dong" placeholder="101동" style="flex:1.1;min-width:0;font-size:16px;padding:7px 6px;">
+                <input type="text" class="modal-input" id="a-dong" placeholder="101동" style="flex:1.1;min-width:0;font-size:16px;padding:7px 6px;" onchange="loadAuctionBuildingInfo(true)">
                 <input type="number" class="modal-input" id="a-floor" placeholder="층" style="flex:0.55;min-width:0;font-size:16px;padding:7px 4px;">
                 <input type="text" class="modal-input" id="a-unit" placeholder="302호" style="flex:1;min-width:0;font-size:16px;padding:7px 6px;">
             </div>
@@ -5021,6 +5021,7 @@ function getAuctionAddressContext() {
         dong: (pendingAuctionDetail && pendingAuctionDetail.dong) || (coordInfo && coordInfo.dong) || (savedRecord && savedRecord.dong) || '',
         bunji: (pendingAuctionDetail && pendingAuctionDetail.bunji) || (coordInfo && coordInfo.bunji) || (savedRecord && savedRecord.bunji) || '',
         name: document.getElementById('a-name').value.trim(),
+        aptDong: document.getElementById('a-dong').value.trim(),
     };
 }
 /* 🏘️ 매물 재고 확인 - 자동수집 대신 사용자가 직접 확인해서 수기로 기록하는 방식.
@@ -5331,20 +5332,27 @@ async function applyListingInventory() {
 }
 /* 경매물건의 국토부 건축HUB 건축물대장 조회 - 일반 매물 패널에서 쓰는 loadBuildingInfo()/
    buildBuildingInfoHtml()를 그대로 재사용함(승강기·주차·세대수·사용승인일 등을 표제부에서 확인). */
-async function loadAuctionBuildingInfo() {
+async function loadAuctionBuildingInfo(force) {
     var box = document.getElementById('a-building-info-box');
     if (!box) return;
     var ctx = getAuctionAddressContext();
     if (!ctx.lat || !ctx.lon || !ctx.bunji) { box.innerHTML = ''; return; }
     box.innerHTML = '<div style="font-size:11px;color:#999;">건축물대장 조회 중...</div>';
-    var fakeApt = { latest: { dong: ctx.dong, name: ctx.name, bunji: ctx.bunji } };
+    // ⚠️ 2026-08: aptDong(동/층/호수 칸의 "동")을 넘겨줘야, 같은 지번에 여러 동(또는 경로당·
+    // 관리동 같은 부속건물)이 표제부로 같이 조회될 때 정확한 동을 골라낼 수 있음. 동을 안
+    // 적었거나 잘못된 결과가 뜨면 아래 "🔄 다시 조회" 버튼으로 캐시를 건너뛰고 재조회 가능.
+    var fakeApt = { latest: { dong: ctx.dong, name: ctx.name, bunji: ctx.bunji, aptDong: ctx.aptDong } };
     var hadApprovalDate = !!(pendingAuctionDetail && pendingAuctionDetail.approvalDate);
-    var info = await loadBuildingInfo(fakeApt, ctx.lat, ctx.lon);
+    var info = await loadBuildingInfo(fakeApt, ctx.lat, ctx.lon, force);
     pendingAuctionBuildingInfo = info;
     var highlightUnit = document.getElementById('a-unit').value.trim();
-    box.innerHTML = info
+    var refreshBtn = '<div style="text-align:right;margin-bottom:2px;">'
+        + '<button type="button" class="modal-btn btn-gray" style="font-size:10px;padding:2px 7px;" onclick="loadAuctionBuildingInfo(true)">🔄 다시 조회</button>'
+        + '</div>';
+    box.innerHTML = refreshBtn + (info
         ? buildBuildingInfoHtml(info, { idPrefix: 'a', highlightUnit: highlightUnit })
-        : '<div style="font-size:11px;color:#999;">건축HUB에 등록된 건축물대장 정보를 찾지 못했습니다.</div>';
+        : '<div style="font-size:11px;color:#999;">건축HUB에 등록된 건축물대장 정보를 찾지 못했습니다.</div>')
+        + '<div style="font-size:10px;color:#999;margin-top:2px;">동 정보가 있으면 "동/층/호수"칸에 입력 후 다시 조회하면 더 정확해집니다. 여러 동이 같은 지번에 등록된 대단지에서 엉뚱한 동(부속건물 등)이 표시될 수 있습니다.</div>';
     // AI 추출에는 사용승인일이 없었는데 건축물대장 조회로 새로 확보됐다면(또는 애초에 AI 추출을
     // 안 거치고 주소만 검색한 "수기 입력" 경로라면), 연식을 몰라 계산이 빠졌을 수리비·전세가 분석을
     // 사용승인일 반영해서 한 번 더 자동 재계산함.
@@ -10881,7 +10889,7 @@ function deriveBunJi(l) {
     if (!main) return null;
     return { bun: String(main).padStart(4, '0'), ji: String(sub || 0).padStart(4, '0') };
 }
-async function loadBuildingInfo(apt, lat, lon) {
+async function loadBuildingInfo(apt, lat, lon, force) {
     try {
         if (!lat || !lon) return null;
         var l = apt.latest || {};
@@ -10908,8 +10916,13 @@ async function loadBuildingInfo(apt, lat, lon) {
 
         var bj = deriveBunJi(l);
         if (!bj) return null;
+        // l.aptDong(동번호, 예: "901동")이 있으면 dongNo로 같이 보내서, 같은 지번에 여러 동
+        // 표제부가 조회될 때(대단지 아파트) 정확한 동을 고를 수 있게 함. force=true면 서버
+        // 캐시를 건너뛰고 재조회(경로당 등 엉뚱한 건물이 캐시에 잘못 저장된 경우 복구용).
         var url = '/api/get-building?sigunguCd=' + sigunguCd + '&bjdongCd=' + bjdongCd
-            + '&bun=' + bj.bun + '&ji=' + bj.ji + '&bldNm=' + encodeURIComponent(l.name || '');
+            + '&bun=' + bj.bun + '&ji=' + bj.ji + '&bldNm=' + encodeURIComponent(l.name || '')
+            + (l.aptDong ? ('&dongNo=' + encodeURIComponent(l.aptDong)) : '')
+            + (force ? '&force=1' : '');
         var res  = await fetch(url);
         var data = await res.json();
         if (!data || (!data.title && !data.price)) return null;
