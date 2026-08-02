@@ -3042,6 +3042,17 @@ function createMarker(cacheKey, lat, lon, apt) {
     var auctionRibbon = matchedAuction
         ? '<div class="auction-badge" style="background:' + (STATUS_COLOR[matchedAuction.status] || '#6a1b9a') + ';">🔨 경매 · ' + matchedAuction.status + '</div>'
         : '';
+    // 매도사례(resaleMatch)가 매칭된 낙찰사례는 별도 배지 대신 이 건물배지에 ⚖️ 리본으로
+    // 편입됨(placeBidCaseMarker의 shouldSuppressBidCaseBadge와 짝을 이루는 로직 - 저쪽에서
+    // 억제 여부를 똑같은 기준(matchedApt && isAptVisibleUnderCurrentFilters)으로 판단하므로
+    // 여기서 리본이 뜨는 조건과 항상 일치함). 클릭 시 열리는 상세패널에는 buildBidCasePanelHtml로
+    // 낙찰사례 섹션이 이미 포함돼 있어 정보 손실은 없음.
+    var matchedBidCase = bidCaseList.find(function(c) {
+        return c.resaleMatch && matchesAuctionKey({ name: c.buildingName, dong: c.dong, bunji: c.bunji }, l.name, l.dong, l.bunji);
+    });
+    var bidCaseRibbon = matchedBidCase
+        ? '<div class="auction-badge" style="background:#00695c;">⚖️ 낙찰사례 · ' + (matchedBidCase.status || '매각') + '</div>'
+        : '';
     var mKey = 'mk' + (markerDataSeq++);
     var div = document.createElement('div');
     markerDataRegistry[mKey] = { apt: apt, lat: lat, lon: lon, div: div };
@@ -3065,6 +3076,7 @@ function createMarker(cacheKey, lat, lon, apt) {
     if (amount) peekParts.push(toEok(amount));
     if (l.road_name) peekParts.push(l.road_name);
     if (matchedAuction) peekParts.push('🔨 경매 ' + matchedAuction.status);
+    if (matchedBidCase) peekParts.push('⚖️ 낙찰사례 ' + (matchedBidCase.status || '매각'));
     div.title = peekParts.join(' · ');
     // 건물명이 길면 배지들(평단가/추정마진/신고가/급등순위)까지 한 줄에 우겨넣다가 뒤쪽 배지가
     // 통째로 잘려서 안 보이는 문제가 있었음(특히 평단가가 자주 잘림) - 건물명은 자기 줄에서만
@@ -3075,6 +3087,7 @@ function createMarker(cacheKey, lat, lon, apt) {
         : '';
     div.innerHTML = ''
         + auctionRibbon
+        + bidCaseRibbon
         + (count > 0 ? '<div style="font-size:15px;font-weight:900;color:' + color + ';">' + count + '건</div>' : '')
         + '<div style="font-size:13px;font-weight:bold;color:#333;overflow:hidden;text-overflow:ellipsis;">'
          +   (l.name || '')
@@ -3093,7 +3106,7 @@ function createMarker(cacheKey, lat, lon, apt) {
         clickable: true
     });
     overlay.setMap(map);
-    markers[cacheKey] = { overlay: overlay, mKey: mKey, hasAuctionRibbon: !!matchedAuction };
+    markers[cacheKey] = { overlay: overlay, mKey: mKey, hasAuctionRibbon: !!matchedAuction, hasBidCaseRibbon: !!matchedBidCase };
 }
  
 /* 마커 배지끼리 화면상 겹쳐서 아래쪽 배지를 클릭할 방법이 없는 문제 대응:
@@ -6879,14 +6892,22 @@ function matchesAuctionKey(a, name, dong, bunji) {
     // 동 구분자를 뗀 뒤 비교함.
     var aName = stripVillaDongSuffix(a.name || '');
     var n = stripVillaDongSuffix(name || '');
-    if (n && aName && aName === n) return true;
     var aDong = (a.dong || '').trim();
     var aBunji = (a.bunji || '').trim();
     var d = (dong || '').trim();
     var b = (bunji || '').trim();
     if (d && b && aDong && aBunji && aDong === d && aBunji === b) return true;
+    // ⚠️ 2026-08: 임학동 "산호빌라"처럼 완전히 다른 지번(44-15 / 69-11)에 같은 이름의 건물이
+    // 두 곳 있는 경우, 이름만으로 매칭하면 서로 다른 건물이 같은 사건으로 잘못 엮이는 문제를
+    // 발견함(낙찰사례⚖️ 리본이 엉뚱한 건물배지에 편입됨). 양쪽 다 지번 정보가 있는데 서로
+    // 다르면 이름이 같아도 매칭시키지 않음 - 지번이 없어 비교 자체가 불가능할 때만(빌라 동
+    // 표기 차이 등 원래 의도한 경우) 이름만으로 매칭을 허용함.
+    if (n && aName && aName === n) {
+        if (b && aBunji && b !== aBunji) return false;
+        return true;
+    }
     return false;
-}   
+}
 async function saveAuction() {
     var addr = document.getElementById('a-addr').value.trim();
     var name = document.getElementById('a-name').value.trim();
@@ -7206,15 +7227,28 @@ function openMatchedApt(auctionId) {
    같이 호출하는" 기존 경매 배지 클릭 방식(placeAuctionMarker/openMatchedApt)을 그대로
    재사용 - 같은 건물의 일반 거래기록이 있으면 클릭 시 매매기록까지 있는 전체 상세패널이
    열리고, 없으면 낙찰사례 패널에서 해당 항목으로 스크롤해서 보여줌.
-   auctionList와 달리 "별도 배지로 보고 싶다"는 요청이라 억제(suppress) 로직은 넣지 않음 -
-   매칭되는 일반 거래 마커가 있어도 항상 독자 배지로 표시함.
+   ⚠️ 2026-08: 매도사례(resaleMatch)가 이미 매칭된 낙찰사례는 그 결과가 해당 건물의 정규
+   매매기록(trades)에 그대로 들어있어, 낙찰사례 배지와 매매기록 배지가 같은 자리에 중복으로
+   떠서 서로 가리는 문제가 있었음 - auctionList 쪽(placeAuctionMarker)과 동일하게, 매칭된
+   일반 거래 배지가 지금 화면에 실제로 보이는 상태라면 낙찰사례 배지는 억제(suppress)하고
+   대신 그 건물배지에 ⚖️ 리본으로 편입시킴(createMarker 참고). 매도사례가 아직 없는(=아직
+   되팔리지 않은) 낙찰사례는 편입시킬 매매기록 자체가 없으므로 계속 독자 배지로 표시함.
 ════════════════════════════════════ */
 var bidCaseMarkers = {};
+var bidCaseSuppressState = {}; // c.id -> 마지막으로 그렸을 때 억제(건물배지에 편입) 상태였는지
 var bidCaseMarkerSigs = {};
 function clearBidCaseMarkers() {
     Object.keys(bidCaseMarkers).forEach(function(id) { if (bidCaseMarkers[id].overlay) bidCaseMarkers[id].overlay.setMap(null); });
     bidCaseMarkers = {};
     bidCaseMarkerSigs = {};
+    bidCaseSuppressState = {};
+}
+/* 매도사례(resaleMatch)가 이미 매칭됐고, 그 건물의 정규 매매기록 배지가 지금 화면에 실제로
+   보이는 상태라면 true - 이 경우 낙찰사례는 독자 배지 대신 그 건물배지의 ⚖️ 리본으로 편입됨 */
+function shouldSuppressBidCaseBadge(c) {
+    if (!c.resaleMatch) return false;
+    var matchedApt = findMatchedAptForBidCase(c);
+    return !!(matchedApt && isAptVisibleUnderCurrentFilters(matchedApt));
 }
 function findMatchedAptForBidCase(c) {
     return allAptList.find(function(apt) {
@@ -7253,6 +7287,16 @@ function placeBidCaseMarker(c) {
     bidCaseMarkers[c.id] = { overlay: overlay };
 }
 function upsertBidCaseMarker(c) {
+    // 억제 여부(=매도사례가 매칭되고 건물배지가 지금 화면에 보이는지)는 c 자신의 필드가 아니라
+    // 필터/지도 로딩 상태에 따라 바뀌므로, bidCaseMarkerSignature만으로는 변화를 못 잡아냄 -
+    // 매번 다시 판정해서 이전과 달라졌으면 강제로 지우고 다시 그림(깜빡임은 상태가 바뀔 때만 발생)
+    var suppress = shouldSuppressBidCaseBadge(c);
+    if (bidCaseSuppressState[c.id] !== suppress) {
+        if (bidCaseMarkers[c.id]) { if (bidCaseMarkers[c.id].overlay) bidCaseMarkers[c.id].overlay.setMap(null); delete bidCaseMarkers[c.id]; }
+        delete bidCaseMarkerSigs[c.id];
+        bidCaseSuppressState[c.id] = suppress;
+    }
+    if (suppress) { bidCaseMarkers[c.id] = { overlay: null, suppressed: true }; return; }
     var sig = bidCaseMarkerSignature(c);
     if (bidCaseMarkers[c.id] && bidCaseMarkerSigs[c.id] === sig) return;
     if (bidCaseMarkers[c.id]) { if (bidCaseMarkers[c.id].overlay) bidCaseMarkers[c.id].overlay.setMap(null); delete bidCaseMarkers[c.id]; }
@@ -7274,7 +7318,45 @@ function buildBidCaseGeocodeCandidates(c) {
     if (c.buildingName && c.dong) candidates.push((c.dong + ' ' + c.buildingName).trim());
     return candidates;
 }
+/* 낙찰사례(bidCaseList)의 매도사례 매칭 상태가 바뀌었을 때 이미 그려진 건물배지의 ⚖️ 리본을
+   최신화함 - refreshMatchedAuctionMarkers()와 동일한 이유(마커는 한 번 그려지면 pan/zoom으로
+   화면을 벗어났다 돌아오기 전까진 그대로 재사용되므로, 매칭 데이터가 나중에 갱신돼도 자동으로
+   반영되지 않음). "낙찰사례 배지 표시" 토글과 무관하게 항상 최신화함 - 리본은 그 토글이 꺼져
+   있어도(=독자 배지는 안 보여도) 건물배지 자체의 정보이므로 계속 보여야 함. */
+function refreshMatchedBidCaseMarkers() {
+    bidCaseList.forEach(function(c) {
+        if (!c.resaleMatch) return;
+        var matched = findMatchedAptForBidCase(c);
+        if (!matched) return;
+        var l = matched.latest || {};
+        var cacheKey = [l.dong, l.name, l.bunji, l.road_name, l.main_num, l.sub_num].join('|').toLowerCase();
+        var existing = markers[cacheKey];
+        if (!existing || existing.hasBidCaseRibbon) return;
+        var coord = coordCache[cacheKey];
+        if (!coord) return;
+        existing.overlay.setMap(null);
+        delete markerDataRegistry[existing.mKey];
+        delete markers[cacheKey];
+        createMarker(cacheKey, coord.lat, coord.lon, matched);
+    });
+    Object.keys(markers).forEach(function(cacheKey) {
+        var existing = markers[cacheKey];
+        if (!existing.hasBidCaseRibbon) return;
+        var data = markerDataRegistry[existing.mKey];
+        if (!data || !data.apt) return;
+        var l = data.apt.latest || {};
+        var stillMatched = bidCaseList.some(function(c) {
+            return c.resaleMatch && matchesAuctionKey({ name: c.buildingName, dong: c.dong, bunji: c.bunji }, l.name, l.dong, l.bunji);
+        });
+        if (stillMatched) return;
+        existing.overlay.setMap(null);
+        delete markerDataRegistry[existing.mKey];
+        delete markers[cacheKey];
+        createMarker(cacheKey, data.lat, data.lon, data.apt);
+    });
+}
 function renderBidCaseMarkers() {
+    refreshMatchedBidCaseMarkers();
     // "낙찰사례 배지 표시" 마스터 스위치가 꺼져 있으면 배지를 전부 지우고 지오코딩도 돌지 않음
     if (!showBidCaseBadges) { clearBidCaseMarkers(); return; }
     if (!bidCaseList || !bidCaseList.length) { clearBidCaseMarkers(); return; }
