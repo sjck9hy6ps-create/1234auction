@@ -147,8 +147,12 @@ async function getTopDongs(type, cutoff, sido, limit) {
 const MOMENTUM_SIZE_MIN = 10;
 const MOMENTUM_SIZE_MAX = 300;
 // 표본 신뢰도 필터 - 구간당 거래건수가 이보다 적으면(우연한 편차일 가능성이 큼) 그 법정동은
-// 순위 후보에서 아예 제외함.
-const MOMENTUM_MIN_BUCKET_COUNT = 3;
+// 순위 후보에서 아예 제외함. (2026-08: 3건 → 7건으로 상향)
+const MOMENTUM_MIN_BUCKET_COUNT = 7;
+// 구간 길이(일) - 원래 "달력상 1개월"(28~31일, 월마다 길이가 달라짐)이었는데, 고정폭
+// 50일로 변경함(총 6구간 × 50일 = 300일을 되돌아봄). 날짜 계산도 setDate() 기반이라
+// monthsAgoInt()의 월말 오버플로우 문제와 무관하게 항상 정확히 50일 간격이 나옴.
+const MOMENTUM_BUCKET_DAYS = 50;
 // 추세 일관성 필터 - 6구간(=5번의 구간 전환) 중 상승한 횟수가 이보다 적으면 제외함. 처음↔
 // 마지막 구간만 비교하면 중간에 들쭉날쭉해도 "모멘텀"으로 잡히는 문제를 막기 위함.
 const MOMENTUM_MIN_UP_TRANSITIONS = 3;
@@ -176,16 +180,24 @@ function todayInt() {
   const y = d.getFullYear(), m = String(d.getMonth() + 1).padStart(2, '0'), day = String(d.getDate()).padStart(2, '0');
   return parseInt(`${y}${m}${day}`, 10);
 }
+// N일 전 날짜(YYYYMMDD 정수) - Date.setDate()는 setMonth()와 달리 월/년 경계를 자동으로
+// 정확히 처리하므로(예: 3/5 - 10일 => 2/23) 별도 클램프 로직이 필요 없음.
+function daysAgoInt(days) {
+  const d = new Date();
+  d.setDate(d.getDate() - days);
+  const y = d.getFullYear(), m = String(d.getMonth() + 1).padStart(2, '0'), day = String(d.getDate()).padStart(2, '0');
+  return parseInt(`${y}${m}${day}`, 10);
+}
 function momentumBuckets() {
-  // 2026-08: 36개월×6개월구간 → 최근 6개월을 1개월×6구간으로 변경(더 촘촘한 흐름을 보기 위함).
-  // idx 0 = 가장 오래된 구간(6~5개월 전), idx 5 = 가장 최근 구간(1~0개월 전)
+  // 2026-08: 달력상 1개월(28~31일, 월마다 길이가 다름) 구간 → 고정폭 50일×6구간으로 변경
+  // (총 300일을 되돌아봄). idx 0 = 가장 오래된 구간(300~250일 전), idx 5 = 가장 최근 구간(50~0일 전)
   const buckets = [];
   const today = todayInt();
   for (let i = 0; i < 6; i++) {
-    const startMonths = 6 - i, endMonths = 5 - i;
+    const startDays = MOMENTUM_BUCKET_DAYS * (6 - i), endDays = MOMENTUM_BUCKET_DAYS * (5 - i);
     buckets.push({
-      start: monthsAgoInt(startMonths),
-      end: i === 5 ? today + 1 : monthsAgoInt(endMonths), // 마지막 구간만 오늘까지 포함(미래 날짜 데이터 방지용 +1)
+      start: daysAgoInt(startDays),
+      end: i === 5 ? today + 1 : daysAgoInt(endDays), // 마지막 구간만 오늘까지 포함(미래 날짜 데이터 방지용 +1)
     });
   }
   return buckets;
