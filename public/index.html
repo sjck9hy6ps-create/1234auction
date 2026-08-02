@@ -12283,7 +12283,12 @@ async function loadSurgeMoneyData() {
         if (!res.ok) throw new Error((data && data.error) || ('서버 오류(' + res.status + ')'));
         statusBox.style.color = '#999';
         statusBox.innerText = '최근 6개월 평당가 모멘텀(전체 평형·구간당 3건 이상·5구간 중 3회 이상 상승)' + (sido ? ' · ' + sido : ' · 전국');
-        body.innerHTML = renderMoneyRankSection('🏢 아파트', data.apt)
+        // 실거래 신고기한(계약 후 30일 이내)상 가장 최근 1개월 구간은 아직 신고가 덜 끝난
+        // 거래가 섞여 있어 거래량이 구조적으로 낮게 보일 수 있음 - 사용자 요청으로 계산 로직은
+        // 그대로 두고 이 안내문구만 상시 표시함.
+        body.innerHTML = '<div style="font-size:10px;color:#e65100;background:#fff8e1;border-radius:6px;padding:5px 8px;margin-top:6px;">'
+            + 'ℹ️ 실거래 신고기한(30일)상 가장 최근 구간은 아직 신고가 덜 끝난 거래가 있어 거래량이 낮게 보일 수 있어요.</div>'
+            + renderMoneyRankSection('🏢 아파트', data.apt)
             + renderMoneyRankSection('🏘️ 연립다세대·단독', data.villa);
     } catch (e) {
         statusBox.style.color = '#e53935';
