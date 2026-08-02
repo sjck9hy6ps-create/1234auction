@@ -2515,8 +2515,15 @@ function groupDBRows(rows, sigungu, lawdCd) {
         var isVilla = bt !== 'apt';
         var recentCut = isVilla ? sixMonAgo : threeMonAgo;
         var pastFloor = isVilla ? prevYearStart : oneYearAgo;
+        // ⚠️ 2026-08: 배지 라벨/패널 제목 등에 쓰이는 latest.name은 stripVillaDongSuffix로
+        // 동 구분자를 뗀 "기본 단지명"으로 보여줌(빌라 동번호 병합 시 "삼성하이츠맨션602동"
+        // 처럼 특정 동 이름이 대표 이름으로 노출되던 문제 수정) - trades 배열의 개별 거래
+        // name은 원본 그대로 둬서 거래내역 목록에서는 어느 동 거래인지 계속 구분 가능함.
+        var latestDisplay = {};
+        for (var latestKey in trades[0]) { latestDisplay[latestKey] = trades[0][latestKey]; }
+        latestDisplay.name = stripVillaDongSuffix(trades[0].name);
         return {
-            latest: trades[0],
+            latest: latestDisplay,
             trades: trades,
             lawdCd: lawdCd,
             buildingType: bt,
@@ -2562,7 +2569,7 @@ function buildRentOnlyEntries(existingList, rentList, sigungu, lawdCd) {
             latest: {
                 year: parseInt(ds.slice(0, 4)) || 0, month: parseInt(ds.slice(4, 6)) || 0, day: parseInt(ds.slice(6, 8)) || 0,
                 amount: '', area: Number(r0.size) || 0, floor: String(r0.floor || '-'),
-                name: r0.danji || '', dong: r0.dong || '', road_name: (r0.road_name || '').trim(), // 화면 표시용 - groupDBRows와 동일하게 원본 그대로 저장
+                name: stripVillaDongSuffix(r0.danji || ''), dong: r0.dong || '', road_name: (r0.road_name || '').trim(), // 화면 표시용 - groupDBRows와 동일하게 동 구분자 제거(stripVillaDongSuffix)
                 region: r0.region || sigungu, bunji: r0.bunji || '',
                 main_num: r0.main_num || 0, sub_num: r0.sub_num || null,
                 build_year: String(r0.build_year || ''), buildingType: 'villa', houseType: 'villa',
