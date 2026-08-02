@@ -339,6 +339,10 @@ tr:hover td { background:#fffde7; }
     background:white; border-radius:12px; width:340px; max-height:75vh;
     overflow-y:auto; box-shadow:0 4px 16px rgba(0,0,0,0.18); display:none;
 }
+/* 급등지역/돈되는지역 순위 목록 좌우 여백 - renderRankSection/renderMoneyRankSection이
+   자체 padding 없이 렌더링하므로 컨테이너에서 여백을 줌(없으면 순위·%가 패널 가장자리에
+   붙어 잘려 보이는 문제가 있었음). */
+#surge-panel-body { padding: 0 14px 10px; box-sizing: border-box; }
 .surge-panel-header {
     padding:10px 14px; font-size:12px; font-weight:bold; color:#e53935;
     border-bottom:1px solid #eee; position:sticky; top:0; background:white;
@@ -1710,6 +1714,13 @@ function toEok(manwon) {
     if (eok > 0 && rem > 0) return eok + '억 ' + rem.toLocaleString() + '만';
     if (eok > 0) return eok + '억';
     return val.toLocaleString() + '만';
+}
+// 억 단위 소수점 2자리 축약 표기(예: 12500만 → "1.25억") - 돈되는 지역 6구간 흐름처럼
+// 좁은 공간에 여러 값을 나란히 보여줘야 할 때 toEok보다 훨씬 짧아서 사용함.
+function toEokCompact(manwon) {
+    var val = parseInt(manwon);
+    if (isNaN(val)) return '-';
+    return (val / 10000).toFixed(2) + '억';
 }
 /* ⚠️ 2026-08: AI 추출(parse-auction.js)이 값이 없을 때 JS null 대신 문자열 "null"(또는
    "undefined")을 그대로 돌려주는 경우가 있어서, 화면에 값이 없으면 그냥 빈칸이어야 하는데
@@ -12196,6 +12207,7 @@ function loadSurgePanelData() {
     if (surgePanelTab === 'money') loadSurgeMoneyData();
     else loadSurgeHotData();
 }
+function esc1(s) { return String(s == null ? '' : s).replace(/'/g, "\\'"); }
 function renderRankSection(title, list, valueLabel, valueFn) {
     var html = '<div style="margin-top:8px;"><div style="font-size:11.5px;font-weight:bold;color:#4a148c;margin-bottom:4px;">' + title + '</div>';
     if (!list || !list.length) {
@@ -12203,9 +12215,9 @@ function renderRankSection(title, list, valueLabel, valueFn) {
         return html;
     }
     list.forEach(function(r, idx) {
-        html += '<div style="display:flex;justify-content:space-between;align-items:center;padding:4px 0;border-bottom:1px solid #f5f5f5;font-size:11.5px;">'
-            + '<span><span style="color:#999;font-weight:bold;margin-right:4px;">' + (idx + 1) + '</span>' + cleanField(r.region) + ' ' + cleanField(r.dong) + '</span>'
-            + '<span style="font-weight:bold;color:#e53935;white-space:nowrap;">' + valueFn(r) + '</span></div>';
+        html += '<div onclick="moveToDong(\'' + esc1(r.region) + '\',\'' + esc1(r.dong) + '\')" style="display:flex;justify-content:space-between;align-items:center;gap:8px;padding:6px 2px;border-bottom:1px solid #f5f5f5;font-size:11.5px;cursor:pointer;">'
+            + '<span style="min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;"><span style="color:#999;font-weight:bold;margin-right:4px;">' + (idx + 1) + '</span>' + cleanField(r.region) + ' ' + cleanField(r.dong) + '</span>'
+            + '<span style="font-weight:bold;color:#e53935;white-space:nowrap;flex-shrink:0;">' + valueFn(r) + '</span></div>';
     });
     html += '</div>';
     return html;
@@ -12230,7 +12242,9 @@ async function loadSurgeHotData() {
         statusBox.innerText = '불러오기 실패: ' + e.message;
     }
 }
-// 돈되는 지역 전용 렌더 - 순위/모멘텀% 외에 6구간(1개월×6) 가격 흐름을 그대로 보여줌
+// 돈되는 지역 전용 렌더 - 순위/모멘텀% 외에 6구간(1개월×6) 가격 흐름을 그대로 보여줌.
+// 클릭하면 급등지역과 동일하게 moveToDong()으로 지도를 그 동으로 이동시킴.
+// 가격은 toEokCompact(소수점 2자리 억 단위, 예 "1.25억")로 표기해 6개 값이 한 줄에 들어가게 함.
 function renderMoneyRankSection(title, list) {
     var html = '<div style="margin-top:8px;"><div style="font-size:11.5px;font-weight:bold;color:#4a148c;margin-bottom:4px;">' + title + '</div>';
     if (!list || !list.length) {
@@ -12239,12 +12253,12 @@ function renderMoneyRankSection(title, list) {
     }
     list.forEach(function(r, idx) {
         var sign = r.momentumPct >= 0 ? '+' : '';
-        var trendText = (r.prices || []).map(function(p) { return toEok(p); }).join(' → ');
-        html += '<div style="padding:5px 0;border-bottom:1px solid #f5f5f5;">'
-            + '<div style="display:flex;justify-content:space-between;align-items:center;font-size:11.5px;">'
-            + '<span><span style="color:#999;font-weight:bold;margin-right:4px;">' + (idx + 1) + '</span>' + cleanField(r.region) + ' ' + cleanField(r.dong) + '</span>'
-            + '<span style="font-weight:bold;color:#e53935;white-space:nowrap;">' + sign + r.momentumPct + '%</span></div>'
-            + '<div style="font-size:10px;color:#888;margin-top:2px;">' + trendText + '</div>'
+        var trendText = (r.prices || []).map(function(p) { return toEokCompact(p); }).join(' → ');
+        html += '<div onclick="moveToDong(\'' + esc1(r.region) + '\',\'' + esc1(r.dong) + '\')" style="padding:6px 2px;border-bottom:1px solid #f5f5f5;cursor:pointer;">'
+            + '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;font-size:11.5px;">'
+            + '<span style="min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;"><span style="color:#999;font-weight:bold;margin-right:4px;">' + (idx + 1) + '</span>' + cleanField(r.region) + ' ' + cleanField(r.dong) + '</span>'
+            + '<span style="font-weight:bold;color:#e53935;white-space:nowrap;flex-shrink:0;">' + sign + r.momentumPct + '%</span></div>'
+            + '<div style="font-size:10px;color:#888;margin-top:2px;white-space:nowrap;overflow-x:auto;">' + trendText + '</div>'
             + '</div>';
     });
     html += '</div>';
