@@ -2327,6 +2327,70 @@ function updateBadgeScale() {
     if (!mapEl || !map) return;
     mapEl.style.setProperty('--badge-scale', computeBadgeScale(map.getLevel()));
 }
+/* ⚠️ 2026-08: 처음엔 줌 레벨만 보고 전체 배지를 일괄로 줄이는 방식으로 했는데, 사용자가
+   정확히 지적한 대로 그건 "겹침 자체"를 보는 게 아니라서 밀집 지역에서는 똑같이 겹칠 수
+   있음(레벨이 같아도 그 지역에 배지가 몇 개 몰려있는지는 천차만별이라 레벨 하나로는
+   보장이 안 됨). 그래서 실제로 화면에 그려진 배지들의 getBoundingClientRect()를 서로
+   비교해서 진짜 겹치는지 확인하고, 겹치면 전체 배지를 한 단계씩 줄이면서 다시 측정하는
+   것을 겹침이 없어지거나 최소 크기(0.4)에 닿을 때까지 반복함. 개별 배지를 따로따로
+   줄이지 않고 전체를 같이 줄이는 이유는, 배지마다 크기가 들쭉날쭉하면 오히려 지도가
+   지저분해 보이고 "이 배지가 왜 유독 작지?" 하는 혼란을 주기 때문 - 줌 레벨 기준값에서
+   시작해서 필요한 만큼만 더 줄이는 식으로, 웬만한 화면에서는 줌 레벨값 그대로 쓰고
+   밀집된 화면에서만 추가로 더 줄어듦. */
+function rectsOverlap(a, b) {
+    return !(a.right <= b.left || a.left >= b.right || a.bottom <= b.top || a.top >= b.bottom);
+}
+function collectVisibleBadgeDivs() {
+    var mapEl = document.getElementById('map');
+    if (!mapEl) return [];
+    var mapRect = mapEl.getBoundingClientRect();
+    var divs = [];
+    function addFrom(registry) {
+        Object.keys(registry).forEach(function(k) {
+            var m = registry[k];
+            var el = m && m.overlay && m.overlay.getContent && m.overlay.getContent();
+            if (!el) return;
+            var r = el.getBoundingClientRect();
+            if (r.width > 0 && r.height > 0 && r.right > mapRect.left && r.left < mapRect.right
+                && r.bottom > mapRect.top && r.top < mapRect.bottom) {
+                divs.push(el);
+            }
+        });
+    }
+    addFrom(markers);
+    addFrom(auctionMarkers);
+    addFrom(bidCaseMarkers);
+    return divs;
+}
+var BADGE_SCALE_MIN = 0.4;
+var BADGE_SCALE_STEP = 0.06;
+var BADGE_OVERLAP_MAX_ITER = 14;
+function resolveBadgeOverlaps() {
+    var mapEl = document.getElementById('map');
+    if (!mapEl || !map) return;
+    var scale = computeBadgeScale(map.getLevel());
+    mapEl.style.setProperty('--badge-scale', scale);
+    for (var iter = 0; iter < BADGE_OVERLAP_MAX_ITER; iter++) {
+        var divs = collectVisibleBadgeDivs();
+        if (divs.length < 2) return;
+        var rects = divs.map(function(d) { return d.getBoundingClientRect(); });
+        var overlapped = false;
+        for (var i = 0; i < rects.length && !overlapped; i++) {
+            for (var j = i + 1; j < rects.length; j++) {
+                if (rectsOverlap(rects[i], rects[j])) { overlapped = true; break; }
+            }
+        }
+        if (!overlapped || scale <= BADGE_SCALE_MIN) return;
+        scale = Math.max(BADGE_SCALE_MIN, Math.round((scale - BADGE_SCALE_STEP) * 100) / 100);
+        mapEl.style.setProperty('--badge-scale', scale);
+        void mapEl.offsetHeight; // transform 변경을 강제로 반영(리플로우)해서 다음 측정이 정확하게 함
+    }
+}
+var badgeOverlapTimer = null;
+function scheduleOverlapResolve() {
+    clearTimeout(badgeOverlapTimer);
+    badgeOverlapTimer = setTimeout(resolveBadgeOverlaps, 350);
+}
 function initMap(lat, lon) {
     map = new kakao.maps.Map(document.getElementById('map'), {
         center: new kakao.maps.LatLng(lat, lon), level: 7
@@ -2334,7 +2398,7 @@ function initMap(lat, lon) {
     map.setMinLevel(1); map.setMaxLevel(14);
     new kakao.maps.Marker({ map: map, position: new kakao.maps.LatLng(lat, lon), title: '내 위치' });
     updateBadgeScale();
-    kakao.maps.event.addListener(map, 'zoom_changed', updateBadgeScale);
+    kakao.maps.event.addListener(map, 'zoom_changed', function() { updateBadgeScale(); scheduleOverlapResolve(); });
     // 경매 등록 물건은 지역 데이터를 기다리지 않고 가장 먼저 불러와서 표시
     // (비교물건 배지 반영을 위해 아파트/빌라 마커도 함께 다시 그림)
     fetchAuctions().then(function() { renderAuctionMarkers(); redrawMarkers(); });
@@ -2717,6 +2781,7 @@ function placeMarkers(aptList, gen) {
         // 이 배치의 모든 항목 처리 완료 - 더 이상 필요없는 마커만 지도에서 제거
         // (변경 없는 마커는 지우지 않고 그대로 유지하므로 팬/줌 시 깜빡이지 않음)
         pruneMarkers(neededKeys, gen);
+        scheduleOverlapResolve(); // 배지 구성이 바뀌었으니 겹침 여부를 다시 확인해 크기를 재조정함
     }
     runBatch();
 }
@@ -6926,6 +6991,7 @@ function renderAuctionMarkers() {
     // (markers는 한번 생성되면 pan/zoom으로 화면을 벗어났다 돌아오기 전까진 재사용되므로)
     // 경매 강조 리본이 안 붙은 채로 남아있을 수 있음 - 매칭된 건물의 마커만 골라 새로 그려서 갱신함
     refreshMatchedAuctionMarkers();
+    scheduleOverlapResolve();
 }
 /* 경매물건과 매칭된 일반 거래 마커를 강제로 다시 그려서(캐시 무효화) 🔨 강조 리본이
    항상 최신 상태로 보이도록 함 - 등록/수정/삭제 직후에도 지도를 다시 움직이지 않고 바로 반영됨 */
@@ -7146,6 +7212,7 @@ function renderBidCaseMarkers() {
             delete bidCaseMarkerSigs[id];
         }
     });
+    scheduleOverlapResolve();
 }
 function buildAuctionPanelHtml(aptName, aptDong, aptBunji) {
     var matched = auctionList.filter(function(a) { return matchesAuctionKey(a, aptName, aptDong, aptBunji); });
