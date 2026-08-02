@@ -2431,6 +2431,23 @@ async function loadAllData(centerLat, centerLon) {
 function normalizeRoadName(road) {
     return String(road || '').trim().replace(/\s+\d+(-\d+)?\s*$/, '').trim();
 }
+/* ⚠️ 2026-08: 연립다세대(빌라)는 국토부 원본 단지명(danji) 필드 자체에 동번호가 붙어
+   들어오는 경우가 매우 흔함(예: "삼성하이츠맨션602동"/"삼성하이츠맨션604동" - 같은
+   단지의 서로 다른 건물/지번인데 이름이 달라서 별개 단지로 취급됨). 아파트는 보통
+   단지명과 동번호가 분리돼 있어(동은 별도 필드) 이 문제가 없지만, 빌라는 "단지명+동"이
+   한 문자열로 등록되는 경우가 많아 배지가 건물별로 쪼개지고, 낙찰사례 매칭도 실패하는
+   사례가 확인됨(인천 계양구 임학동 "삼성하이츠맨션" 사례 - 계양구 한 지역만도 이 패턴
+   으로 35개 단지가 쪼개져 있었음, 아파트 158개 중에서는 0건으로 안전성 확인). 끝에
+   붙은 동 구분자(숫자 1~4자리/가~하 1~2자/영문 1~2자, 콤마·마침표 나열 포함)만 제거
+   해서 기준 단지명을 뽑아내며, 제거 후 남는 이름이 2자 미만이면(이상 데이터로 보고)
+   원본을 그대로 씀. */
+function stripVillaDongSuffix(name) {
+    var n = String(name || '').trim();
+    var m = n.match(/^(.+?)[\s]*((?:\d{1,4})|(?:[가나다라마바사아자차카타파하]{1,2})|(?:[A-Za-z](?:[.,·]?[A-Za-z]){0,3}))동$/);
+    if (!m) return n;
+    var base = m[1].trim();
+    return base.length >= 2 ? base : n;
+}
 /* groupDBRows()/buildRentOnlyEntries() 공용 그룹 키 계산 - 두 함수가 서로 다른 로직으로 키를
    만들면(예: 한쪽만 도로명을 정규화) 매매기록과 전세기록이 같은 건물인데도 다른 건물로
    인식되어 중복 배지가 생길 수 있어, 반드시 이 함수 하나만 거치도록 함.
@@ -2444,9 +2461,10 @@ function normalizeRoadName(road) {
    실제값 케이스). 단지명은 국토부 데이터에서 이미 충분히 신뢰할 수 있는 식별자라(법정동
    으로 한 번 더 구분하면 동명이인 단지가 잘못 합쳐질 위험도 낮음), 도로명을 아예 그룹
    키에서 빼는 쪽이 안전함 - 부지가 넓어 여러 지번을 쓰는 단지도 이 방식이면 자동으로
-   하나의 배지로 합쳐짐(지번도 그룹 키에서 빠지므로). */
+   하나의 배지로 합쳐짐(지번도 그룹 키에서 빠지므로). 단지명은 stripVillaDongSuffix()로
+   동 구분자를 제거한 뒤 비교해서, 빌라의 동별 이름 차이로 쪼개지는 것도 함께 흡수함. */
 function buildGroupKey(name, dong, bunji, road) {
-    if (name) return name + '||' + (dong || '').trim();
+    if (name) return stripVillaDongSuffix(name) + '||' + (dong || '').trim();
     var roadForKey = bunji ? normalizeRoadName(road) : (road || '').trim();
     return dong + '_' + (bunji || '') + '||' + roadForKey;
 }
@@ -4213,7 +4231,13 @@ function normalizeBunjiStr(s) {
    표시해서 신뢰도를 구분함 - 2026-08 매칭률 개선). */
 function scoreResaleCandidate(c, row, areaTolerance) {
     var rowName = (row.danji || '').trim();
-    var nameExact = !!(c.buildingName && rowName && rowName === c.buildingName);
+    // ⚠️ 2026-08: 빌라는 danji에 동번호가 붙어 들어오는 경우가 많아(buildGroupKey/
+    // stripVillaDongSuffix 주석 참고) 원본 이름 그대로 비교하면 같은 단지의 다른 동인데도
+    // "부분포함"으로만 잡혀 근사매칭(approx)으로 분류됨 - 동 구분자를 뗀 이름으로 완전일치
+    // 여부를 먼저 판단해서 같은 단지면 더 높은 신뢰도로 인정함.
+    var rowNameBase = stripVillaDongSuffix(rowName);
+    var buildingNameBase = stripVillaDongSuffix(c.buildingName || '');
+    var nameExact = !!(c.buildingName && rowName && (rowName === c.buildingName || (buildingNameBase && rowNameBase && rowNameBase === buildingNameBase)));
     var bunjiExact = !!(c.dong && c.bunji && row.dong === c.dong && normalizeBunjiStr(row.bunji) === normalizeBunjiStr(c.bunji));
     var nameContains = !!(c.buildingName && rowName && c.dong && row.dong === c.dong
         && c.buildingName.length >= 2 && rowName.length >= 2
@@ -6643,8 +6667,11 @@ function applyTargetBid(bid) {
     autoCalcTaxSilent(); calcMargin();
 }
 function matchesAuctionKey(a, name, dong, bunji) {
-    var aName = (a.name || '').trim();
-    var n = (name || '').trim();
+    // ⚠️ 2026-08: 빌라는 danji에 동번호가 붙어 들어오는 경우가 많아(buildGroupKey 주석 참고)
+    // 원본 이름 그대로 비교하면 같은 단지인데도 매칭에 실패함 - stripVillaDongSuffix로
+    // 동 구분자를 뗀 뒤 비교함.
+    var aName = stripVillaDongSuffix(a.name || '');
+    var n = stripVillaDongSuffix(name || '');
     if (n && aName && aName === n) return true;
     var aDong = (a.dong || '').trim();
     var aBunji = (a.bunji || '').trim();
