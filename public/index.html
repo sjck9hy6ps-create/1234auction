@@ -5008,7 +5008,7 @@ function renderAuctionList() {
         var noPin = (!a.lat || !a.lon)
             ? '<div class="auction-list-sub" style="color:#e53935;font-weight:bold;">⚠️ 주소를 지도 좌표로 찾지 못해 지도에 배지가 표시되지 않습니다 - 주소를 확인해 주세요.</div>'
             : '';
-        var caseNoLine = a.caseNo ? '<div class="auction-list-sub">📋 ' + a.caseNo + '</div>' : '';
+        var caseNoLine = cleanField(a.caseNo) ? '<div class="auction-list-sub">📋 ' + cleanField(a.caseNo) + '</div>' : '';
         // 매도완료 + 매도일이 있으면 매매차익 예정신고 마감 D-day를 목록에서도 바로 볼 수 있게 표시
         var filingLine = '';
         if (a.status === '매도완료' && a.sellDate) {
@@ -5022,9 +5022,9 @@ function renderAuctionList() {
         html += '<div class="auction-list-item" style="position:relative;" onclick="panToAuction(\'' + a.id + '\')">'
             + '<span onclick="event.stopPropagation();openAuctionModal(\'' + a.id + '\')" '
             + 'style="position:absolute;top:8px;right:8px;font-size:10px;color:#1976d2;font-weight:bold;cursor:pointer;">✏️ 수정</span>'
-            + '<div class="auction-list-name">' + ((a.name && a.name.trim()) || a.addrLabel || a.addr || '(이름없음)')
+            + '<div class="auction-list-name">' + (cleanField(a.name) || cleanField(a.addrLabel) || cleanField(a.addr) || '(이름없음)')
             + '<span class="auction-status-badge" style="background:' + sc + ';color:white;">' + a.status + '</span></div>'
-            + '<div class="auction-list-sub">' + (a.addr || '주소 미입력') + '</div>'
+            + '<div class="auction-list-sub">' + (cleanField(a.addr) || '주소 미입력') + '</div>'
             + caseNoLine
             + '<div class="auction-list-sub" style="color:#6a1b9a;">입찰가 ' + (a.myBid ? toEok(String(parseInt(a.myBid))) : '-') + '</div>'
             + filingLine
@@ -5165,57 +5165,61 @@ function openAuctionModal(id) {
             renderDevNewsBox();
             renderHistoryBox();
             renderResaleMatchesBox();
-            document.getElementById('a-paste-text').value = a.rawText || '';
-            document.getElementById('auction-id').value    = a.id || '';
-            document.getElementById('a-addr').value        = a.addr || '';
+            // ⚠️ 2026-08: AI 추출값이 "null"이라는 글자 그대로 저장된 경우(a.aptDong 등), 예전엔
+            // "a.xxx || ''" 패턴이 그 문자열을 그대로 참값(truthy)으로 보고 입력칸에 넣어버려서
+            // "동" 칸에 글자 그대로 "null"이 찍히는 버그가 있었음. cleanField()가 "null"/
+            // "undefined"/빈문자열을 전부 빈 값으로 통일해주므로 여기서 전 필드에 일괄 적용함.
+            document.getElementById('a-paste-text').value = cleanField(a.rawText);
+            document.getElementById('auction-id').value    = cleanField(a.id);
+            document.getElementById('a-addr').value        = cleanField(a.addr);
             document.getElementById('a-prop-type').value   = a.propType || 'apt';
-            document.getElementById('a-name').value        = a.name || '';
-            document.getElementById('a-dong').value        = a.aptDong || '';
-            document.getElementById('a-floor').value       = a.floor || '';
-            document.getElementById('a-unit').value        = a.unitNo || '';
-            document.getElementById('a-case').value        = a.caseNo || '';
-            document.getElementById('a-pyung').value       = a.pyung || '';
-            document.getElementById('a-date').value        = a.bidDate || '';
+            document.getElementById('a-name').value        = cleanField(a.name);
+            document.getElementById('a-dong').value        = cleanField(a.aptDong);
+            document.getElementById('a-floor').value       = cleanField(a.floor);
+            document.getElementById('a-unit').value        = cleanField(a.unitNo);
+            document.getElementById('a-case').value        = cleanField(a.caseNo);
+            document.getElementById('a-pyung').value       = cleanField(a.pyung);
+            document.getElementById('a-date').value        = cleanField(a.bidDate);
             document.getElementById('a-status').value      = a.status || '검토중';
-            document.getElementById('a-appraisal').value   = a.appraisal || '';
-            document.getElementById('a-min-bid').value     = a.minBid || '';
-            document.getElementById('a-deposit-rate').value = a.depositRate || '';
-            document.getElementById('a-my-bid').value      = a.myBid || '';
-            document.getElementById('a-actual-bid').value  = a.actualBid || '';
-            document.getElementById('a-tax').value         = a.tax || '';
-            document.getElementById('a-registry-fee').value = a.registryFee || '';
-            document.getElementById('a-eviction-fee').value = a.evictionFee || '';
-            document.getElementById('a-repair').value      = a.repair || '';
-            document.getElementById('a-agent').value       = a.agent || '';
-            document.getElementById('a-moving').value      = a.moving || '';
-            document.getElementById('a-cleaning').value    = a.cleaning || '';
+            document.getElementById('a-appraisal').value   = cleanField(a.appraisal);
+            document.getElementById('a-min-bid').value     = cleanField(a.minBid);
+            document.getElementById('a-deposit-rate').value = cleanField(a.depositRate);
+            document.getElementById('a-my-bid').value      = cleanField(a.myBid);
+            document.getElementById('a-actual-bid').value  = cleanField(a.actualBid);
+            document.getElementById('a-tax').value         = cleanField(a.tax);
+            document.getElementById('a-registry-fee').value = cleanField(a.registryFee);
+            document.getElementById('a-eviction-fee').value = cleanField(a.evictionFee);
+            document.getElementById('a-repair').value      = cleanField(a.repair);
+            document.getElementById('a-agent').value       = cleanField(a.agent);
+            document.getElementById('a-moving').value      = cleanField(a.moving);
+            document.getElementById('a-cleaning').value    = cleanField(a.cleaning);
             document.getElementById('a-bid-method').value  = a.bidMethod || 'dealer';
-            document.getElementById('a-hold-months').value = a.holdMonths || '';
-            document.getElementById('a-loan-rate').value   = a.loanRate || '';
-            document.getElementById('a-loan-amount-manual').value = a.loanAmountManual || '';
-            document.getElementById('a-loan-prepay-fee-rate').value = a.loanPrepayFeeRate || '';
-            document.getElementById('a-etc').value         = a.etc || '';
-            document.getElementById('a-unpaid-mgmt-fee').value = a.unpaidMgmtFee || '';
-            document.getElementById('a-assumed-deposit').value = a.assumedDeposit || '';
-            document.getElementById('a-target').value      = a.target || '';
-            document.getElementById('a-actual-sell').value = a.actualSell || '';
-            document.getElementById('a-sell-date').value = a.sellDate || '';
-            document.getElementById('a-memo').value        = a.memo || '';
-            document.getElementById('a-comp-target-margin').value = a.compTargetMargin || TARGET_MARGIN_DEFAULTS[a.propType || 'apt'] || '2000';
-            document.getElementById('a-house-rank').value  = a.houseRank || '1';
+            document.getElementById('a-hold-months').value = cleanField(a.holdMonths);
+            document.getElementById('a-loan-rate').value   = cleanField(a.loanRate);
+            document.getElementById('a-loan-amount-manual').value = cleanField(a.loanAmountManual);
+            document.getElementById('a-loan-prepay-fee-rate').value = cleanField(a.loanPrepayFeeRate);
+            document.getElementById('a-etc').value         = cleanField(a.etc);
+            document.getElementById('a-unpaid-mgmt-fee').value = cleanField(a.unpaidMgmtFee);
+            document.getElementById('a-assumed-deposit').value = cleanField(a.assumedDeposit);
+            document.getElementById('a-target').value      = cleanField(a.target);
+            document.getElementById('a-actual-sell').value = cleanField(a.actualSell);
+            document.getElementById('a-sell-date').value = cleanField(a.sellDate);
+            document.getElementById('a-memo').value        = cleanField(a.memo);
+            document.getElementById('a-comp-target-margin').value = cleanField(a.compTargetMargin) || TARGET_MARGIN_DEFAULTS[a.propType || 'apt'] || '2000';
+            document.getElementById('a-house-rank').value  = cleanField(a.houseRank) || '1';
             document.getElementById('a-is-adjusted').checked   = !!a.isAdjusted;
             document.getElementById('a-is-local-cheap').checked = !!a.isLocalCheap;
-            document.getElementById('a-official-price').value = a.officialPriceWon || '';
-            document.getElementById('a-site-rights-area').value = a.siteRightsAreaM2 || '';
-            document.getElementById('a-land-price-per-m2').value = a.landPricePerM2 || '';
+            document.getElementById('a-official-price').value = cleanField(a.officialPriceWon);
+            document.getElementById('a-site-rights-area').value = cleanField(a.siteRightsAreaM2);
+            document.getElementById('a-land-price-per-m2').value = cleanField(a.landPricePerM2);
             document.getElementById('a-holds-june1').checked = !!a.holdsJune1;
-            document.getElementById('a-total-official-price').value = a.totalOfficialPriceManwon || '';
-            document.getElementById('a-property-tax').value = a.propertyTax || '';
-            document.getElementById('a-comp-tax').value = a.compTax || '';
-            document.getElementById('a-listing-count').value = a.listingCount || '';
-            document.getElementById('a-ask-price-min').value = a.askPriceMin || '';
-            document.getElementById('a-ask-price-max').value = a.askPriceMax || '';
-            document.getElementById('a-listing-checked-date').value = a.listingCheckedDate || '';
+            document.getElementById('a-total-official-price').value = cleanField(a.totalOfficialPriceManwon);
+            document.getElementById('a-property-tax').value = cleanField(a.propertyTax);
+            document.getElementById('a-comp-tax').value = cleanField(a.compTax);
+            document.getElementById('a-listing-count').value = cleanField(a.listingCount);
+            document.getElementById('a-ask-price-min').value = cleanField(a.askPriceMin);
+            document.getElementById('a-ask-price-max').value = cleanField(a.askPriceMax);
+            document.getElementById('a-listing-checked-date').value = cleanField(a.listingCheckedDate);
             renderListingCheckedLabel();
             if (a.addrLabel) { document.getElementById('a-addr-result').innerText = '📍 ' + a.addrLabel; document.getElementById('a-addr-result').style.display = 'block'; }
         }
@@ -9637,22 +9641,25 @@ async function parseAuctionPaste() {
             renderHistoryBox();
         }
 
-        if (d.caseNo) document.getElementById('a-case').value = d.caseNo;
- 
+        // ⚠️ 2026-08: AI가 값이 없을 때 문자열 "null"을 그대로 돌려주는 경우가 있어서(예:
+        // aptDong), 아래 truthy 체크들을 전부 cleanField()로 감싸서 "null"/"undefined"/빈문자열이
+        // 입력칸에 그대로 찍히는 걸 막음(경매정보지 상세 박스와 동일한 원인·동일한 처리).
+        if (cleanField(d.caseNo)) document.getElementById('a-case').value = cleanField(d.caseNo);
+
         // 주소 입력칸에는 지번주소(동+번지 기준)를 넣어야 기존 dong+bunji 매칭 방식이 그대로 유지됨
-        var addrForInput = d.addrJibun || d.addrRoad || '';
+        var addrForInput = cleanField(d.addrJibun) || cleanField(d.addrRoad) || '';
         if (addrForInput) document.getElementById('a-addr').value = addrForInput;
- 
+
         // 건물명이 있으면 그대로, 없으면(빌라/다세대 등) 동+번지를 이름으로 대신 사용
-        if (d.buildingDongName && d.buildingDongName !== '이름없음') {
-            document.getElementById('a-name').value = d.buildingDongName;
-        } else if (d.dong && d.bunji) {
-            document.getElementById('a-name').value = d.dong + ' ' + d.bunji;
+        if (cleanField(d.buildingDongName) && cleanField(d.buildingDongName) !== '이름없음') {
+            document.getElementById('a-name').value = cleanField(d.buildingDongName);
+        } else if (cleanField(d.dong) && cleanField(d.bunji)) {
+            document.getElementById('a-name').value = cleanField(d.dong) + ' ' + cleanField(d.bunji);
         }
         // 아파트 동(건물번호)/층/호수는 아파트명과 별도 필드에 채움
-        if (d.aptDong) document.getElementById('a-dong').value = d.aptDong;
-        if (d.unitFloor !== null && d.unitFloor !== undefined) document.getElementById('a-floor').value = d.unitFloor;
-        if (d.unitNo) document.getElementById('a-unit').value = d.unitNo;
+        if (cleanField(d.aptDong)) document.getElementById('a-dong').value = cleanField(d.aptDong);
+        if (d.unitFloor !== null && d.unitFloor !== undefined && cleanField(d.unitFloor)) document.getElementById('a-floor').value = cleanField(d.unitFloor);
+        if (cleanField(d.unitNo)) document.getElementById('a-unit').value = cleanField(d.unitNo);
 
         // 물건유형 자동 선택 - 이후 수리비/중개수수료/전세가분석 등 여러 계산이 이 값을
         // 기준으로 동작하므로 최대한 반영해둠. select.value를 코드로 바꾸면 onchange가 자동
