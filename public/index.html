@@ -731,10 +731,15 @@ tr:hover td { background:#fffde7; }
         <div class="modal-section" style="background:#f7f3ff;border-radius:8px;padding:10px 12px 4px;">
             <div class="modal-section-title" style="border-bottom:none;">💰 금액 한눈에 보기 (만원 단위)</div>
 
+            <!-- ⚠️ 2026-08 재배치: 1.예상매도가(+근거자료인 네이버매물조사·유사물건자동추천/
+                 지도에서직접찾기) → 2.예상마진 → 3.목표매도가(+비교물건매도가·낙찰사례참고치) →
+                 4.목표마진 → 5.목표입찰가 → (합쳐진 시세분석·마진분석) 순서로 재요청받아 반영함.
+                 각 est-num의 번호도 이 순서에 맞게 다시 매겼고, "N에 적용" 버튼 문구도 실제
+                 이동한 목적지 번호로 맞춰 고쳤음(계산 로직·함수명 자체는 전혀 안 건드림). -->
             <div class="est-row">
                 <span class="est-num">①</span><span class="est-label">예상매도가</span>
                 <span class="est-value" id="est-row-1-value">-</span>
-                <button type="button" class="modal-btn btn-purple est-apply-btn" onclick="applyEstRow1()">②에 적용</button>
+                <button type="button" class="modal-btn btn-purple est-apply-btn" onclick="applyEstRow1()">③에 적용</button>
             </div>
             <div class="est-sub">호가·매물재고·유사물건·비교물건 반영</div>
 
@@ -766,18 +771,30 @@ tr:hover td { background:#fffde7; }
                 <div id="market-adjusted-price-box"></div>
             </div>
 
-            <!-- ⚠️ 2026-08 순서 재배치: 예상매도가→예상마진→목표매도가→(낙찰사례 참고치)→
-                 목표마진→(합쳐진 시세분석·마진분석)→목표입찰가 순으로 요청받아 ③예상마진을
-                 ②목표매도가보다 앞으로 옮김(내용·계산은 그대로, 위치만 이동). -->
+            <!-- 🤖 유사물건 자동추천 / 📍 지도에서 직접 찾기 - ①예상매도가 산정 근거자료라
+                 예전엔 ②목표매도가(현 ③) 밑에 있던 걸 ①예상매도가 바로 밑, ②예상마진 위로
+                 옮김. 등록된 비교물건 목록(comp-list-box)은 길어지면 스크롤을 많이 차지해서
+                 기본은 접어두고 필요할 때만 펼쳐보도록 숨기기/펼치기 토글로 바꿨음(층별현황과
+                 같은 토글 함수 재사용). -->
+            <div style="background:#fff;border:1px solid #e5dbf5;border-radius:7px;padding:8px 10px;margin:4px 0 12px;">
+                <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:6px;align-items:center;">
+                    <button type="button" class="modal-btn btn-purple" style="font-size:11px;" onclick="openAiCompFinder()">🤖 유사물건 자동추천</button>
+                    <button type="button" class="modal-btn btn-gray" style="font-size:11px;" onclick="openRadiusCompFinder()">📍 지도에서 직접 찾기</button>
+                    <span id="comp-list-toggle-btn" onclick="toggleBuildingTable('comp-list-box','comp-list-toggle-btn')" style="font-size:10px;color:#888;font-weight:bold;cursor:pointer;white-space:nowrap;margin-left:auto;">등록된 비교물건 보이기 ▸</span>
+                </div>
+                <div style="font-size:10px;color:#999;margin-bottom:6px;">주소·평형·층 입력 후 자동추천을 먼저 써보고, 추천 결과가 없거나 부족하면 "지도에서 직접 찾기"로 반경 1km 실거래 전체를 훑어보세요. (최대 10개까지 등록)</div>
+                <div id="comp-list-box" style="display:none;"></div>
+            </div>
+
             <div class="est-row">
-                <span class="est-num">③</span><span class="est-label">예상마진</span>
+                <span class="est-num">②</span><span class="est-label">예상마진</span>
                 <span class="est-value" id="est-row-3-value">-</span>
                 <button type="button" class="modal-btn btn-purple est-apply-btn" onclick="applyEstRow3()">④에 적용</button>
             </div>
             <div class="est-sub" id="est-row-3-sub">이 동네 낙찰사례의 매도사례 기준 추정마진(세전)</div>
 
             <div class="est-row">
-                <span class="est-num">②</span><span class="est-label">목표매도가</span>
+                <span class="est-num">③</span><span class="est-label">목표매도가</span>
                 <input type="number" class="modal-input est-input" id="a-target" placeholder="0" oninput="markEstRow2Dirty()">
                 <button type="button" class="modal-btn btn-purple est-apply-btn" onclick="applyEstRow2()">적용</button>
             </div>
@@ -788,27 +805,13 @@ tr:hover td { background:#fffde7; }
             <div class="est-row" style="margin-top:2px;">
                 <span style="font-size:11px;color:#888;min-width:76px;flex-shrink:0;">📊 비교물건 매도가</span>
                 <span class="est-value" id="est-comp-value" style="font-size:13px;">-</span>
-                <button type="button" class="modal-btn btn-gray est-apply-btn" onclick="applyEstCompValue()">②에 적용</button>
+                <button type="button" class="modal-btn btn-gray est-apply-btn" onclick="applyEstCompValue()">③에 적용</button>
             </div>
             <div class="est-sub">등록된 비교물건(실거래) 평단가 기반 - 호가·매물재고는 미반영</div>
 
-            <!-- 📍 비교물건 등록 - ②목표매도가/📊비교물건매도가를 확인하려면 실거래 비교물건을
-                 등록해야 하는데, 예전엔 아래 "🔧 상세 도구"를 펼쳐야 나오는 별도 섹션이라 여기서
-                 바로 접근이 안 됐음(2026-08 피드백: "매도가를 확인하기 위해 바로 비교매물 등록"
-                 순서로 이 카드 안에서 끝나야 함). 자동추천을 먼저 쓰고, 추천 결과가 없거나
-                 부족하면 지도 전체를 반경으로 훑는 "지도에서 직접 찾기"로 보완함. -->
-            <div style="background:#fff;border:1px solid #e5dbf5;border-radius:7px;padding:8px 10px;margin:4px 0 12px;">
-                <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:6px;">
-                    <button type="button" class="modal-btn btn-purple" style="font-size:11px;" onclick="openAiCompFinder()">🤖 유사물건 자동추천</button>
-                    <button type="button" class="modal-btn btn-gray" style="font-size:11px;" onclick="openRadiusCompFinder()">📍 지도에서 직접 찾기</button>
-                </div>
-                <div style="font-size:10px;color:#999;margin-bottom:6px;">주소·평형·층 입력 후 자동추천을 먼저 써보고, 추천 결과가 없거나 부족하면 "지도에서 직접 찾기"로 반경 1km 실거래 전체를 훑어보세요. (최대 10개까지 등록)</div>
-                <div id="comp-list-box"></div>
-            </div>
-
             <!-- ⚠️ 2026-08 재배치: "낙찰사례 기준 매입가율→입찰가 적용 / 추정마진→목표마진 적용"
-                 (renderDongMarginStatsInModal()이 채움)을 매물명세서 탭 주소칸 밑에서 여기로
-                 옮김 - 흐름상 예상매도가·마진 카드 안에서 바로 보여야 자연스러움. 내용·로직은
+                 (renderDongMarginStatsInModal()이 채움) - ③목표매도가 바로 밑, ④목표마진 위에
+                 둠(입찰가·목표마진에 바로 적용하는 참고치라 그 사이가 자연스러움). 내용·로직은
                  그대로, id만 유지한 채 위치만 이동. -->
             <div id="a-dong-margin-stats"></div>
 
@@ -819,12 +822,31 @@ tr:hover td { background:#fffde7; }
             </div>
             <div class="est-sub" id="est-row-4-status">&nbsp;</div>
 
+            <div class="est-row"><span class="est-num">⑤</span><span class="est-label" style="font-weight:bold;">목표입찰가</span></div>
+            <div style="font-size:11px;color:#777;margin:2px 0 3px;">매도가 기준</div>
+            <div class="est-radio-row">
+                <label><input type="radio" name="bid-sale-basis" value="predicted" checked onchange="renderTargetBidSolver()"> ① 예상매도가</label>
+                <label><input type="radio" name="bid-sale-basis" value="target" onchange="renderTargetBidSolver()"> ③ 목표매도가</label>
+            </div>
+            <div style="font-size:11px;color:#777;margin:6px 0 3px;">마진 기준</div>
+            <div class="est-radio-row">
+                <label><input type="radio" name="bid-margin-basis" value="predicted" onchange="renderTargetBidSolver()"> ② 예상마진</label>
+                <label><input type="radio" name="bid-margin-basis" value="target" checked onchange="renderTargetBidSolver()"> ④ 목표마진</label>
+            </div>
+            <div class="est-row" style="margin-top:8px;">
+                <span class="est-value" id="est-row-5-value" style="font-size:18px;color:#6a1b9a;">-</span>
+                <button type="button" class="modal-btn btn-purple est-apply-btn" onclick="applyEstRow5()">입찰가에 적용</button>
+            </div>
+            <div class="est-sub" id="est-row-5-detail" style="margin-bottom:10px;">&nbsp;</div>
+
             <div style="border-top:1px dashed #d8cdee;margin:8px 0 10px;"></div>
 
             <!-- ⚠️ 2026-08: "비교물건 기반 시세분석"과 "예상마진분석"이 취득세·등기비·명도비·
                  세금·적정입찰가 등을 사실상 같은 내용으로 두 번 보여주고 있었음 - 한 프레임으로
                  합치고 중복 항목은 뺐음(calcCompValuation() 쪽에서 뭘 얼마나 뺐는지는 그 함수
-                 주석 참고). 전세가 기반 예상매도가는 여기 grid 안에 그대로 남아 있음. -->
+                 주석 참고). 전세가 기반 예상매도가는 여기 grid 안에 그대로 남아 있음. 순서상으론
+                 1~5번 핵심 숫자를 다 보여준 다음, 근거·breakdown을 마지막에 두는 게 자연스러워
+                 ⑤목표입찰가 다음(카드 맨 끝)으로 옮김. -->
             <div class="margin-result" id="margin-result-box">
                 <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:6px;margin-bottom:6px;">
                     <div class="margin-result-title" style="margin-bottom:0;">💡 비교물건 시세분석 + 예상마진분석</div>
@@ -839,22 +861,6 @@ tr:hover td { background:#fffde7; }
                 <div id="tax-update-report-box" style="display:none;"></div>
             </div>
 
-            <div class="est-row"><span class="est-num">⑤</span><span class="est-label" style="font-weight:bold;">목표입찰가</span></div>
-            <div style="font-size:11px;color:#777;margin:2px 0 3px;">매도가 기준</div>
-            <div class="est-radio-row">
-                <label><input type="radio" name="bid-sale-basis" value="predicted" checked onchange="renderTargetBidSolver()"> ① 예상매도가</label>
-                <label><input type="radio" name="bid-sale-basis" value="target" onchange="renderTargetBidSolver()"> ② 목표매도가</label>
-            </div>
-            <div style="font-size:11px;color:#777;margin:6px 0 3px;">마진 기준</div>
-            <div class="est-radio-row">
-                <label><input type="radio" name="bid-margin-basis" value="predicted" onchange="renderTargetBidSolver()"> ③ 예상마진</label>
-                <label><input type="radio" name="bid-margin-basis" value="target" checked onchange="renderTargetBidSolver()"> ④ 목표마진</label>
-            </div>
-            <div class="est-row" style="margin-top:8px;">
-                <span class="est-value" id="est-row-5-value" style="font-size:18px;color:#6a1b9a;">-</span>
-                <button type="button" class="modal-btn btn-purple est-apply-btn" onclick="applyEstRow5()">입찰가에 적용</button>
-            </div>
-            <div class="est-sub" id="est-row-5-detail" style="margin-bottom:10px;">&nbsp;</div>
             <!-- 예전 안내 박스 - 화면엔 숨기지만(중복 정보라 요약카드로 대체) 기존 렌더 함수들이
                  계속 이 요소를 찾아 innerHTML을 채우므로 DOM에는 남겨둠(제거 시 함수 에러 발생). -->
             <div id="target-suggest-box" style="display:none;"></div>
@@ -1643,6 +1649,16 @@ function toEok(manwon) {
     if (eok > 0 && rem > 0) return eok + '억 ' + rem.toLocaleString() + '만';
     if (eok > 0) return eok + '억';
     return val.toLocaleString() + '만';
+}
+/* ⚠️ 2026-08: AI 추출(parse-auction.js)이 값이 없을 때 JS null 대신 문자열 "null"(또는
+   "undefined")을 그대로 돌려주는 경우가 있어서, 화면에 값이 없으면 그냥 빈칸이어야 하는데
+   "null"이라는 글자가 그대로 찍혀 오류처럼 보이는 문제가 있었음. 값을 표시하기 전에는
+   항상 이 함수로 한번 걸러서 "null"/"undefined"/빈문자열을 전부 빈 값('')으로 통일함. */
+function cleanField(v) {
+    if (v === null || v === undefined) return '';
+    var s = String(v).trim();
+    if (s === '' || s.toLowerCase() === 'null' || s.toLowerCase() === 'undefined') return '';
+    return s;
 }
 /* 부동산매매사업자(개인)는 물건을 매도할 때마다 종합소득세 신고와 별도로 "부동산매매차익
    예정신고"를 양도일이 속한 달의 말일로부터 2개월 이내에 해야 함(안 하면 가산세). 물건을
@@ -5526,12 +5542,18 @@ function renderMarketAdjustedPrice() {
     if (!box) return;
     var r = calcMarketAdjustedSalePrice();
     if (!r) { box.innerHTML = ''; return; }
-    box.innerHTML = '<div style="margin-top:8px;background:#fff8e1;border-radius:6px;padding:8px 10px;">'
-        + '<div style="font-size:12px;font-weight:bold;color:#f57f17;margin-bottom:4px;">📐 시장상황 반영 예상매도가: ' + toEok(String(r.blendedValue)) + '</div>'
-        + '<div style="font-size:10.5px;color:#795548;">실거래기반 ' + toEok(String(r.baseValue)) + ' + 호가중간값 ' + toEok(String(r.askMid))
+    // ⚠️ 2026-08: "실거래기반+호가중간값→반영비중" breakdown과 "참고용 근사치입니다" 안내문을
+    // 항상 펼쳐두면 버튼 밑이 글로 꽉 차서 복잡해 보인다는 피드백으로, 결과값(헤드라인)만 남기고
+    // 계산 근거는 ⓘ 아이콘 클릭 시에만 보이도록 뺐음 - 숫자 자체(재고월수·반영비중 등)는 물건마다
+    // 달라서 고정 문구(CALC_INFO_TEXT)에 넣을 수 없어 그때그때 이 함수에서 텍스트를 만들어 넘김.
+    var basisText = '실거래기반 ' + toEok(String(r.baseValue)) + ' + 호가중간값 ' + toEok(String(r.askMid))
         + ' → 호가 반영비중 ' + Math.round(r.marketFactor * 100) + '%'
         + (r.monthsOfSupply !== null ? ' (재고월수 약 ' + r.monthsOfSupply + '개월, ' + r.sampleSource + ' 기준)' : '')
-        + '</div>'
+        + '\n\n참고용 근사치입니다. 반영비중 구간 기준은 일반적인 시장관행을 근사한 것으로, 통계적으로 도출된 값은 아닙니다.';
+    var basisB64 = btoa(unescape(encodeURIComponent(basisText)));
+    box.innerHTML = '<div style="margin-top:8px;background:#fff8e1;border-radius:6px;padding:8px 10px;">'
+        + '<div style="font-size:12px;font-weight:bold;color:#f57f17;margin-bottom:4px;">📐 시장상황 반영 예상매도가: ' + toEok(String(r.blendedValue))
+        + ' <span onclick="showPlainInfo(\'' + basisB64 + '\')" style="cursor:pointer;color:#999;font-size:11px;font-weight:normal;">ⓘ 계산근거</span></div>'
         + (r.gapPct !== null
             ? '<div style="font-size:10.5px;color:' + (r.gapPct > 0 ? '#c62828' : '#2e7d32') + ';margin-top:2px;">'
                 + '📞 호가-실거래가 갭: ' + (r.gapPct > 0 ? '+' : '') + r.gapPct + '%'
@@ -5540,7 +5562,6 @@ function renderMarketAdjustedPrice() {
             : '')
         + (r.dataWarning ? '<div style="font-size:10px;color:#e65100;margin-top:3px;">⚠️ ' + r.dataWarning + '</div>' : '')
         + (r.pendingRadiusRefresh ? '<div style="font-size:10px;color:#1976d2;margin-top:3px;">🔄 평형/연식/주소 조건이 바뀌어 반경 내 유사매물 재조회가 필요합니다 - 위 "🔮 예측 적용" 버튼을 누르면 반영됩니다(지금은 등록된 비교물건 기준으로만 계산됨).</div>' : '')
-        + '<div style="font-size:9.5px;color:#aaa;margin-top:3px;">참고용 근사치입니다. 반영비중 구간 기준은 일반적인 시장관행을 근사한 것으로, 통계적으로 도출된 값은 아닙니다.</div>'
         + '</div>';
 }
 /* "🔮 예측 적용" 버튼 핸들러 - 호가·매물재고 입력을 마치고 이 버튼을 눌러야만 재계산이 일어남.
@@ -6581,6 +6602,16 @@ var CALC_INFO_TEXT = {
 };
 function showCalcInfo(key) {
     alert(CALC_INFO_TEXT[key] || '설명이 없습니다.');
+}
+// ⚠️ 2026-08: showCalcInfo(key)는 고정 문구(CALC_INFO_TEXT)만 보여줄 수 있어서, 물건마다
+// 달라지는 계산 근거(예: 시장상황 반영 예상매도가의 실거래기반·호가중간값·반영비중 breakdown)는
+// 담을 수 없음. 이런 "매번 값이 다른 설명"은 화면에 항상 텍스트로 늘어놓는 대신 ⓘ 아이콘 하나로
+// 압축하고, 누르면 그 자리에서 만든 텍스트를 보여주는 용도로 씀(b64 인코딩은 onclick 속성 안에
+// 줄바꿈·따옴표가 섞인 긴 문장을 안전하게 넣기 위함 - copyCourtInfoSummary와 동일한 방식).
+function showPlainInfo(b64) {
+    var text;
+    try { text = decodeURIComponent(escape(atob(b64))); } catch (e) { text = ''; }
+    alert(text || '설명이 없습니다.');
 }
 /* 인수보증금 제안 - AI가 뽑아둔 임차인현황(pendingAuctionDetail.tenantOccupants) 중
    대항력 있음(hasStanding===true)으로 표시된 임차인을 대상으로 a-assumed-deposit(만원 단위)에
@@ -9732,7 +9763,9 @@ function normalizeDateForInput(s) {
 //    입찰 전 사람이 등기부등본을 직접 재열람해서 확인해야 함(경매물건_등록후_체크리스트 참고).
 function buildRightsAnalysisHtml(detail, sectionLabel, row) {
     if (!detail) return '';
-    var hasBaseRight = detail.baseRightType || detail.baseRightDate || detail.baseRightHolder;
+    // ⚠️ 2026-08: "말소기준권리(=말소기준등기)" 한 줄은 이제 buildAuctionDetailHtml의
+    //    "🔑 말소기준등기" 블록에서 1개 항목으로 이미 보여주고 있어서, 여기서 다시 보여주면
+    //    같은 내용이 중복 표시되므로 이 박스에서는 뺐음(아래 특수권리·공유지분 등만 유지).
     var sr = detail.specialRights || {};
     var lienExtra = [];
     if (sr.lienClaimAmount) lienExtra.push('신고금액 ' + Math.round(sr.lienClaimAmount / 10000).toLocaleString() + '만원');
@@ -9746,15 +9779,11 @@ function buildRightsAnalysisHtml(detail, sectionLabel, row) {
     ].filter(function(f) { return sr[f.key] === true; });
     var hasZoning = detail.landCategory || detail.zoningType || detail.farmlandCertRequired !== undefined && detail.farmlandCertRequired !== null;
     var hasExtras = detail.isCoOwnership === true || detail.hasWaiverDocument === true || (detail.relatedCases && detail.relatedCases.length);
-    if (!hasBaseRight && !specialFlags.length && !hasZoning && !hasExtras) return '';
+    if (!specialFlags.length && !hasZoning && !hasExtras && !detail.minorTenantBaseDate) return '';
 
     var html = '<div style="margin-top:10px;border:1px solid #ffcdd2;border-radius:8px;padding:8px 10px;background:#fff8f8;">';
     html += '<div style="font-size:11px;font-weight:bold;color:#c62828;">⚖️ 권리분석 체크 (AI 추출 · 입찰 전 등기부 재열람 필수)</div>';
 
-    if (hasBaseRight) {
-        html += '<div style="font-size:11px;color:#555;margin-top:4px;"><b>말소기준권리:</b> '
-            + [detail.baseRightType, detail.baseRightDate, detail.baseRightHolder].filter(Boolean).join(' · ') + '</div>';
-    }
     if (detail.minorTenantBaseDate) {
         html += '<div style="font-size:11px;color:#555;margin-top:2px;"><b>소액기준일:</b> ' + detail.minorTenantBaseDate + '</div>';
     }
@@ -10220,13 +10249,18 @@ function buildSiteNoteSectionHtml(name, dong, addr, lat, lon) {
    항목이 가장 작음) 한눈에 우선순위가 보이도록 함. */
 function buildAuctionDetailHtml(detail) {
     if (!detail) return '';
+    // ⚠️ 2026-08: AI 추출값이 "null"이라는 글자 그대로 들어오는 경우가 있어(예: caseCautions),
+    //    이 함수 안에서 값을 꺼낼 때는 항상 g()를 거쳐서 그런 경우를 빈 값으로 통일함.
+    function g(v) { return cleanField(v); }
     function card(label, value, size, color) {
-        if (value === null || value === undefined || value === '') return '';
+        value = g(value);
+        if (value === '') return '';
         return '<div class="margin-item"><div class="margin-label">' + label + '</div>'
             + '<div class="margin-value" style="font-size:' + (size || '13px') + ';color:' + (color || '#333') + ';">' + value + '</div></div>';
     }
     function row(label, value) {
-        if (value === null || value === undefined || value === '') return '';
+        value = g(value);
+        if (value === '') return '';
         return '<div style="display:flex;justify-content:space-between;gap:8px;font-size:11px;color:#555;padding:2px 0;">'
             + '<span style="color:#999;flex-shrink:0;">' + label + '</span>'
             + '<span style="text-align:right;">' + value + '</span></div>';
@@ -10248,34 +10282,35 @@ function buildAuctionDetailHtml(detail) {
     }).length;
     var topCards = ''
         + (failCount > 0 ? card('유찰횟수', failCount + '회', '17px', '#e53935') : '')
-        + card('현재 입찰최저가', detail.minBidPrice ? won(detail.minBidPrice) + (detail.minBidRate ? ' (' + detail.minBidRate + '%)' : '') : '', '16px', '#1565c0')
+        + card('현재 입찰최저가', detail.minBidPrice ? won(detail.minBidPrice) + (g(detail.minBidRate) ? ' (' + g(detail.minBidRate) + '%)' : '') : '', '16px', '#1565c0')
         + card('처분방식', detail.disposalMethod, '14px', '#333');
     if (topCards) html += '<div class="margin-grid">' + topCards + '</div>';
 
     // ── 특수조건·주의사항 - 경고성 항목이라 카드가 아니라 눈에 띄는 전체너비 블록으로 분리 ──
-    var warnLines = [detail.specialConditions, detail.caseCautions].filter(Boolean);
+    var warnLines = [g(detail.specialConditions), g(detail.caseCautions)].filter(Boolean);
     if (warnLines.length) {
         html += '<div style="background:#ffebee;border-left:3px solid #e53935;border-radius:6px;padding:7px 9px;margin-top:8px;">'
             + warnLines.map(function(w) { return '<div style="font-size:13px;font-weight:bold;color:#c62828;line-height:1.5;">⚠️ ' + w + '</div>'; }).join('')
             + '</div>';
     }
 
-    // ── 기본 정보(표준 크기) - 지번주소/층·호수·승강기·사용승인일/소유자/채무자/건물면적 ──
+    // ── 기본 정보(표준 크기) - 지번주소/층·호수·승강기·사용승인일/소유자·채무자·채권자/건물면적 ──
     var floorUnitParts = [];
-    if (detail.unitFloor) floorUnitParts.push(detail.unitFloor + '층');
-    if (detail.unitNo) floorUnitParts.push(detail.unitNo);
-    if (detail.elevator) floorUnitParts.push('승강기 ' + detail.elevator);
-    if (detail.approvalDate) floorUnitParts.push('사용승인 ' + detail.approvalDate);
+    if (g(detail.unitFloor)) floorUnitParts.push(g(detail.unitFloor) + '층');
+    if (g(detail.unitNo)) floorUnitParts.push(g(detail.unitNo));
+    if (g(detail.elevator)) floorUnitParts.push('승강기 ' + g(detail.elevator));
+    if (g(detail.approvalDate)) floorUnitParts.push('사용승인 ' + g(detail.approvalDate));
     var basicCards = ''
         + card('지번주소', detail.addrJibun, '12px', '#555')
         + card('층/호수/승강기/사용승인일', floorUnitParts.join(' · '), '12px', '#555')
         + card('소유자', detail.owner, '12px', '#555')
         + card('채무자', detail.debtor, '12px', '#555')
+        + card('채권자', detail.creditor, '12px', '#555')
         + card('건물면적', detail.buildingArea, '12px', '#555');
     if (basicCards) html += '<div class="margin-grid" style="margin-top:8px;">' + basicCards + '</div>';
 
     // ── 법원정보(참고용, 가장 작은 글자) ──
-    var courtLine = [detail.court, detail.courtTel].filter(Boolean).join(' · ');
+    var courtLine = [g(detail.court), g(detail.courtTel)].filter(Boolean).join(' · ');
     if (courtLine) html += '<div style="font-size:10.5px;color:#999;margin-top:8px;">🏛️ ' + courtLine + '</div>';
     var courtInfoText = buildCourtInfoSummaryText(detail);
     if (courtInfoText) {
@@ -10285,35 +10320,50 @@ function buildAuctionDetailHtml(detail) {
             + 'onclick="copyCourtInfoSummary(\'' + courtInfoB64 + '\')">📋 법원정보 복사</button></div>';
     }
     if (detail.warnings && detail.warnings.length) {
-        html += '<div style="background:#fff8e1;border:1px solid #ffca28;border-radius:6px;padding:6px 8px;margin:4px 0;">'
-            + '<div style="font-size:10px;font-weight:bold;color:#f57f17;margin-bottom:2px;">⚠️ AI 추출값 확인 필요</div>'
-            + detail.warnings.map(function(w) {
-                return '<div style="font-size:10px;color:#795548;padding:1px 0;">· ' + w + '</div>';
-            }).join('')
-            + '</div>';
+        var cleanWarnings = detail.warnings.map(g).filter(Boolean);
+        if (cleanWarnings.length) {
+            html += '<div style="background:#fff8e1;border:1px solid #ffca28;border-radius:6px;padding:6px 8px;margin:4px 0;">'
+                + '<div style="font-size:10px;font-weight:bold;color:#f57f17;margin-bottom:2px;">⚠️ AI 추출값 확인 필요</div>'
+                + cleanWarnings.map(function(w) {
+                    return '<div style="font-size:10px;color:#795548;padding:1px 0;">· ' + w + '</div>';
+                }).join('')
+                + '</div>';
+        }
     }
 
-    // ── 말소기준등기: 인수(소멸안됨)/소멸되는 등기 - 있는 쪽만 표시 ──
+    // ── 말소기준등기: 정확히 무엇이 말소기준등기인지 1개만 표기, 그 아래 소멸/인수(유지) 여부는
+    //    유·무를 항상 밝히고 "유"일 때만 목록을 붙임 ──
+    var baseRightLine = [g(detail.baseRightType), g(detail.baseRightDate), g(detail.baseRightHolder)].filter(Boolean).join(' · ');
     var assumedRegs = (detail.registryItems || []).filter(function(r) { return r.willBeAssumed === true; });
     var extinguishedRegs = (detail.registryItems || []).filter(function(r) { return r.willBeAssumed === false; });
-    if (assumedRegs.length || extinguishedRegs.length) {
-        function regList(title, color, list) {
-            if (!list.length) return '';
-            var h = '<div style="font-size:11px;font-weight:bold;color:' + color + ';margin:6px 0 3px;">' + title + '</div>';
-            list.forEach(function(r) {
-                h += '<div style="background:white;border-radius:6px;padding:5px 8px;margin-bottom:3px;border-left:3px solid ' + color + ';font-size:11px;color:#555;">'
-                    + [r.date, r.type, r.holder, r.amount].filter(Boolean).join(' · ') + '</div>';
-            });
+    if (baseRightLine || assumedRegs.length || extinguishedRegs.length) {
+        function regItemLine(r) {
+            return [g(r.date), g(r.type), g(r.holder), g(r.amount)].filter(Boolean).join(' · ');
+        }
+        function regGroup(title, color, list) {
+            var has = list.some(function(r) { return regItemLine(r) !== ''; });
+            var h = '<div style="font-size:11px;font-weight:bold;color:' + color + ';margin:6px 0 3px;">'
+                + title + ' <span style="font-weight:normal;color:#999;">(' + (has ? '유' : '무') + ')</span></div>';
+            if (has) {
+                list.forEach(function(r) {
+                    var line = regItemLine(r);
+                    if (!line) return;
+                    h += '<div style="background:white;border-radius:6px;padding:5px 8px;margin-bottom:3px;border-left:3px solid ' + color + ';font-size:11px;color:#555;">' + line + '</div>';
+                });
+            }
             return h;
         }
         html += '<div style="margin-top:10px;border-top:1px dashed #d8cdee;padding-top:6px;">';
         html += '<div style="font-size:12.5px;font-weight:bold;color:#6a1b9a;">🔑 말소기준등기</div>';
-        html += regList('🔴 말소 이후 소멸되지 않는 등기 (인수)', '#e53935', assumedRegs);
-        html += regList('⚪ 말소 이후 소멸되는 등기', '#9e9e9e', extinguishedRegs);
+        html += baseRightLine
+            ? '<div style="font-size:13px;font-weight:bold;color:#4a148c;background:white;border-radius:6px;padding:5px 8px;margin:4px 0;">' + baseRightLine + '</div>'
+            : '<div style="font-size:11px;color:#999;margin:4px 0;">말소기준등기 정보 없음</div>';
+        html += regGroup('🔴 말소 후 소멸되지 않는 등기 (인수)', '#e53935', assumedRegs);
+        html += regGroup('⚪ 말소 후 소멸되는 등기', '#9e9e9e', extinguishedRegs);
         html += '</div>';
     }
 
-    // ── 권리분석 체크 AI (말소기준권리·특수권리·공유지분 등 - 기존 로직 그대로 재사용) ──
+    // ── 권리분석 체크 AI (특수권리·공유지분 등 - 기존 로직 그대로 재사용) ──
     html += buildRightsAnalysisHtml(detail, sectionLabel, row);
 
     html += '</div>';
