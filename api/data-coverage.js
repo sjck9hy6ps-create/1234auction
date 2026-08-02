@@ -129,10 +129,7 @@ function mergeRanges(a, b) {
 ════════════════════════════════════ */
 const SIDO_LIST = ['서울','부산','대구','인천','광주','대전','울산','세종','경기','강원','충북','충남','전북','전남','경북','경남','제주'];
 function sixMonthsAgoInt(months) {
-  const d = new Date();
-  d.setMonth(d.getMonth() - (months || 6));
-  const y = d.getFullYear(), m = String(d.getMonth() + 1).padStart(2, '0'), day = String(d.getDate()).padStart(2, '0');
-  return parseInt(`${y}${m}${day}`, 10);
+  return monthsAgoInt(months || 6);
 }
 async function getTopDongs(type, cutoff, sido, limit) {
   try {
@@ -158,11 +155,21 @@ const MOMENTUM_MIN_UP_TRANSITIONS = 3;
 // 거래량 급감 경고 - 직전 구간 대비 거래량이 이 비율 미만으로 줄면 신뢰도가 떨어진다고 보고
 // 결과에서 완전히 빼지는 않되(정보 자체는 유의미할 수 있어서) 프론트에 경고로 표시함.
 const MOMENTUM_VOLUME_DROP_RATIO = 0.3;
+// N개월 전 날짜(YYYYMMDD 정수) - Date.setMonth()을 그냥 쓰면 "그 달에 없는 날짜"로 넘어갈 때
+// 다음달로 오버플로우되는 버그가 있음(예: 3/31 - 1개월 => 2월엔 31일이 없어서 JS가 자동으로
+// 3/3으로 튕겨버림 - 의도한 "2월 말"보다 한 달 가까이 어긋난 엉뚱한 날짜가 됨). 이게 실제로
+// 벌어지면 이 날짜를 구간 경계로 쓰는 돈되는 지역 6구간의 길이가 서로 달라지거나 겹쳐서
+// "거래량 급감"처럼 보이는 가짜 신호나 평단가 오류를 만들 수 있어서, 대상 월의 마지막
+// 날짜로 클램프하는 방식(예: 3/31 - 1개월 => 2/28)으로 2026-08에 수정함.
 function monthsAgoInt(months) {
-  const d = new Date();
-  d.setMonth(d.getMonth() - months);
-  const y = d.getFullYear(), m = String(d.getMonth() + 1).padStart(2, '0'), day = String(d.getDate()).padStart(2, '0');
-  return parseInt(`${y}${m}${day}`, 10);
+  const now = new Date();
+  const totalMonths = now.getFullYear() * 12 + now.getMonth() - months;
+  const y = Math.floor(totalMonths / 12);
+  const m = totalMonths - y * 12; // 0-indexed month
+  const daysInTargetMonth = new Date(y, m + 1, 0).getDate();
+  const day = Math.min(now.getDate(), daysInTargetMonth);
+  const mm = String(m + 1).padStart(2, '0'), dd = String(day).padStart(2, '0');
+  return parseInt(`${y}${mm}${dd}`, 10);
 }
 function todayInt() {
   const d = new Date();
