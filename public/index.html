@@ -1611,6 +1611,9 @@ function createSemaphore(n) {
     };
 }
 var runGeocode = createSemaphore(4);
+// ⚠️ 2026-08: 연립다세대 대량 건축물정보 조회(coord2RegionCode)용 별도 세마포어 - 지도를
+// 움직일 때 쓰는 runGeocode와 공유하면 대량 백그라운드 조회가 실시간 조작을 밀어낼 수 있어 분리함.
+var runRegionCode = createSemaphore(4);
 var pendingQueries = new Set();
 var searchDebounceTimer = null;
 /* ════════════════════════════════════
@@ -11373,11 +11376,28 @@ async function loadBuildingInfo(apt, lat, lon, force) {
             sigunguCd = cached.sigunguCd;
             bjdongCd  = cached.bjdongCd;
         } else {
-            var regionCode = await new Promise(function(resolve) {
-                geocoder.coord2RegionCode(lon, lat, function(result, status) {
-                    if (status !== kakao.maps.services.Status.OK) { resolve(null); return; }
-                    var b = result.find(function(r) { return r.region_type === 'B'; });
-                    resolve(b ? b.code : null);
+            // ⚠️ 2026-08: 이 coord2RegionCode 호출이 세마포어 없이 바로 나가고 있었음 -
+            // 연립다세대 대량 조회(prefetchVillaBuildingInfo)처럼 수백~천 건이 한꺼번에
+            // 몰릴 때 카카오 API에 순간적으로 과호출이 갈 수 있어서 상한을 둠. 다만 지도를
+            // 움직일 때 쓰는 runGeocode(동시 4건)를 그대로 같이 쓰면 대량 백그라운드 조회가
+            // 실시간 지도 조작용 지오코딩까지 밀어내 버릴 수 있어, 이 용도 전용의 별도
+            // 세마포어(runRegionCode)로 분리해 서로 방해하지 않게 함.
+            var regionCode = await runRegionCode(function() {
+                return new Promise(function(resolve) {
+                    var settled = false;
+                    var timer = setTimeout(function() {
+                        if (settled) return;
+                        settled = true;
+                        resolve(null);
+                    }, 8000);
+                    geocoder.coord2RegionCode(lon, lat, function(result, status) {
+                        if (settled) return;
+                        settled = true;
+                        clearTimeout(timer);
+                        if (status !== kakao.maps.services.Status.OK) { resolve(null); return; }
+                        var b = result.find(function(r) { return r.region_type === 'B'; });
+                        resolve(b ? b.code : null);
+                    });
                 });
             });
             if (!regionCode || regionCode.length < 10) return null;
@@ -11652,7 +11672,12 @@ async function prefetchVillaBuildingInfo(aptList) {
     var remaining = villas.filter(function(a) { return a.buildingInfo === undefined; });
     if (!remaining.length) return;
     var idx = 0, done = 0, total = remaining.length;
-    var CONCURRENCY = 3;
+    // ⚠️ 2026-08: coord2RegionCode를 전용 세마포어(runRegionCode)로 분리했으니 여기 동시
+    // 처리 수를 3→6으로 올려도 지도 조작용 지오코딩을 방해하지 않음 - "낙찰사건 등록처럼
+    // 빨리 안 되냐"는 피드백에 대응해 대량 조회 자체의 처리량을 높임(완전히 즉시는
+    // 불가능 - 건물 1개 조회와 달리 이건 지역 전체를 훑는 작업이라 근본적으로 더 오래
+    // 걸림. 다만 이전보다 두 배 빠르게 끝남).
+    var CONCURRENCY = 6;
     setStatus('연립다세대 정보 불러오는 중... (0/' + total + ')');
     return new Promise(function(resolveAll) {
         function next() {
