@@ -146,17 +146,23 @@ async function getTopDongs(type, cutoff, sido, limit) {
 // 오류(0㎡ 등) 배제용 최소한의 안전장치일 뿐, 더 이상 특정 평형대를 걸러내는 필터가 아님.
 const MOMENTUM_SIZE_MIN = 10;
 const MOMENTUM_SIZE_MAX = 300;
-// 표본 신뢰도 필터 - 구간당 거래건수가 이보다 적으면(우연한 편차일 가능성이 큼) 그 법정동은
-// 순위 후보에서 아예 제외함. (2026-08: 3건 → 7건으로 상향)
-const MOMENTUM_MIN_BUCKET_COUNT = 7;
-// 구간 길이(일) - 원래 "달력상 1개월"(28~31일, 월마다 길이가 달라짐)이었는데, 고정폭으로
-// 변경함(총 6구간 × 이 값 = 되돌아보는 총 일수). 날짜 계산도 setDate() 기반이라
+// 표본 신뢰도 기준(구간당 거래건수) - 2026-08: 이 값 미만이어도 더 이상 후보에서 완전히
+// 빼지 않음(아래 getPriceMomentum 참고). 대신 그 구간에 "표본부족" 플래그를 남겨 프론트에서
+// 신뢰도가 낮다고 표시하는 용도로만 씀. 아파트/연립다세대는 원래 거래 빈도 차이가 커서
+// (연립다세대가 훨씬 뜸함 - 기존 급등지역 로직도 이걸 감안해 연립다세대는 3개월 대신
+// 6개월 단기창을 씀) 기준을 서로 다르게 둠.
+const MOMENTUM_MIN_BUCKET_COUNT_APT = 7;
+const MOMENTUM_MIN_BUCKET_COUNT_VILLA = 4;
+// 구간 길이(일, 타입별로 다름) - 원래 "달력상 1개월"(28~31일, 월마다 길이가 달라짐)이었는데
+// 고정폭으로 변경함(총 6구간 × 이 값 = 되돌아보는 총 일수). 날짜 계산도 setDate() 기반이라
 // monthsAgoInt()의 월말 오버플로우 문제와 무관하게 항상 정확한 간격이 나옴.
-// ⚠️ 2026-08: 50일(총 300일)로 했더니 house_trades(아파트) 수집 시작일이 2025-12-01이라
-// 가장 오래된 구간이 그보다 앞선 날짜를 가리켜 아파트 결과가 통째로 비는 문제가 있었음
-// (연립다세대는 2025-01-01부터 있어서 문제 없었음) - 두 유형 다 현재 보유 데이터 범위 안에
-// 들어오도록 40일(총 240일)로 낮춤.
-const MOMENTUM_BUCKET_DAYS = 40;
+// ⚠️ 2026-08: 아파트는 house_trades 수집 시작일(2025-12-01)에 맞춰 40일(총 240일)로,
+// 연립다세대는 원래 거래가 뜸해서 더 넓게 60일(총 360일, 수집 시작일 2025-01-01 안에 넉넉히
+// 들어옴)로 서로 다르게 둠.
+const MOMENTUM_BUCKET_DAYS_APT = 40;
+const MOMENTUM_BUCKET_DAYS_VILLA = 60;
+function minBucketCountFor(type) { return type === 'villa' ? MOMENTUM_MIN_BUCKET_COUNT_VILLA : MOMENTUM_MIN_BUCKET_COUNT_APT; }
+function bucketDaysFor(type) { return type === 'villa' ? MOMENTUM_BUCKET_DAYS_VILLA : MOMENTUM_BUCKET_DAYS_APT; }
 // 추세 일관성 필터 - 6구간(=5번의 구간 전환) 중 상승한 횟수가 이보다 적으면 제외함. 처음↔
 // 마지막 구간만 비교하면 중간에 들쭉날쭉해도 "모멘텀"으로 잡히는 문제를 막기 위함.
 const MOMENTUM_MIN_UP_TRANSITIONS = 3;
@@ -192,13 +198,14 @@ function daysAgoInt(days) {
   const y = d.getFullYear(), m = String(d.getMonth() + 1).padStart(2, '0'), day = String(d.getDate()).padStart(2, '0');
   return parseInt(`${y}${m}${day}`, 10);
 }
-function momentumBuckets() {
-  // 2026-08: 달력상 1개월(28~31일, 월마다 길이가 다름) 구간 → 고정폭 MOMENTUM_BUCKET_DAYS일×6구간
-  // 으로 변경(총 MOMENTUM_BUCKET_DAYS*6일을 되돌아봄). idx 0 = 가장 오래된 구간, idx 5 = 가장 최근 구간
+function momentumBuckets(type) {
+  // 2026-08: 달력상 1개월(28~31일, 월마다 길이가 다름) 구간 → 타입별 고정폭(bucketDaysFor)×6구간
+  // 으로 변경. idx 0 = 가장 오래된 구간, idx 5 = 가장 최근 구간
+  const bucketDays = bucketDaysFor(type);
   const buckets = [];
   const today = todayInt();
   for (let i = 0; i < 6; i++) {
-    const startDays = MOMENTUM_BUCKET_DAYS * (6 - i), endDays = MOMENTUM_BUCKET_DAYS * (5 - i);
+    const startDays = bucketDays * (6 - i), endDays = bucketDays * (5 - i);
     buckets.push({
       start: daysAgoInt(startDays),
       end: i === 5 ? today + 1 : daysAgoInt(endDays), // 마지막 구간만 오늘까지 포함(미래 날짜 데이터 방지용 +1)
@@ -222,35 +229,60 @@ async function getBucketAvgPrices(type, start, end, sido) {
   } catch (e) { console.warn(`priceMomentum(rpc): ${type} 조회 예외 -`, e.message); return {}; }
 }
 async function getPriceMomentum(type, sido, limit) {
-  const buckets = momentumBuckets();
+  const minCount = minBucketCountFor(type);
+  const buckets = momentumBuckets(type);
   const bucketMaps = await Promise.all(buckets.map(b => getBucketAvgPrices(type, b.start, b.end, sido)));
-  const firstMap = bucketMaps[0];
-  // 표본 신뢰도 필터: 6구간 전부에서 최소 거래건수(MOMENTUM_MIN_BUCKET_COUNT) 이상인
-  // (region,dong)만 후보로 삼음(우연히 1~2건 거래된 동이 순위 상위권을 차지하는 문제 방지)
-  const keys = Object.keys(firstMap).filter(k => bucketMaps.every(m => m[k] && m[k].count >= MOMENTUM_MIN_BUCKET_COUNT));
-  const rankings = keys.map(k => {
-    const prices = bucketMaps.map(m => Math.round(m[k].avg));
-    const counts = bucketMaps.map(m => m[k].count);
+  // 2026-08: 예전엔 "6구간 전부 최소건수 이상"을 만족해야만 후보로 삼았는데, 이러면 거래가
+  // 뜸한 동은 흐름이 통째로 끊겨(후보 탈락) 정보가 아예 안 보이는 문제가 있었음. 대신 6구간
+  // 중 하나라도 거래가 있는 (region,dong)은 모두 후보로 삼고(합집합), 거래가 없는 구간은
+  // 가장 가까운 유효 구간의 값을 그대로 이어붙여(carry-forward) 흐름이 끊기지 않게 하며,
+  // 표본이 적은(count < minCount) 구간은 lowSample 플래그만 남겨 프론트에서 "신뢰도 낮음"으로
+  // 표시하게 함(결과에서 완전히 빼지 않음).
+  const allKeys = new Set();
+  bucketMaps.forEach(m => Object.keys(m).forEach(k => allKeys.add(k)));
+  const rankings = [];
+  allKeys.forEach(k => {
+    let meta = null;
+    for (const m of bucketMaps) { if (m[k]) { meta = m[k]; break; } }
+    if (!meta) return;
+    const prices = [], counts = [], lowSample = [];
+    let lastKnownPrice = null;
+    bucketMaps.forEach(m => {
+      const b = m[k];
+      if (b && b.count > 0) {
+        const p = Math.round(b.avg);
+        prices.push(p); counts.push(b.count); lowSample.push(b.count < minCount);
+        lastKnownPrice = p;
+      } else {
+        prices.push(lastKnownPrice); counts.push(0); lowSample.push(true); // 거래 자체가 없는 구간 - 일단 null로 두고 아래서 보정
+      }
+    });
+    const firstValid = prices.find(p => p !== null);
+    if (firstValid == null) return; // 이론상 allKeys에 있으면 항상 하나는 있음
+    for (let i = 0; i < prices.length; i++) { if (prices[i] === null) prices[i] = firstValid; else break; } // 앞쪽이 비어있으면 뒤쪽 첫 유효값으로 역보정(backward-fill)
     const firstAvg = prices[0], lastAvg = prices[5];
-    if (!firstAvg) return null;
+    if (!firstAvg) return;
     // 추세 일관성: 5번의 구간 전환(idx0→1, 1→2, ..., 4→5) 중 상승한 횟수
     let upTransitions = 0;
     for (let i = 1; i < prices.length; i++) { if (prices[i] > prices[i - 1]) upTransitions++; }
-    // 거래량 급감 경고: 직전 구간 대비 거래량이 급격히 줄어든 구간이 하나라도 있으면 표시
+    // 거래량 급감 경고: 실제 거래가 있던 직전 구간 대비 급격히 줄어든 경우만 표시
+    // (carry-forward로 채워진 0건 구간끼리 비교해서 오탐하지 않도록 counts[i-1]>0 조건을 둠)
     let volumeDrop = false;
-    for (let i = 1; i < counts.length; i++) { if (counts[i] < counts[i - 1] * MOMENTUM_VOLUME_DROP_RATIO) volumeDrop = true; }
-    return {
-      region: firstMap[k].region,
-      dong: firstMap[k].dong,
-      prices, // 6구간 평당가(만원/평) 흐름 - 프론트 추세 표시용
-      counts, // 6구간 거래건수 흐름(해당 기간 전체 거래량) - 프론트 표시용
+    for (let i = 1; i < counts.length; i++) { if (counts[i - 1] > 0 && counts[i] < counts[i - 1] * MOMENTUM_VOLUME_DROP_RATIO) volumeDrop = true; }
+    rankings.push({
+      region: meta.region,
+      dong: meta.dong,
+      prices, // 6구간 평당가(만원/평) 흐름 - 프론트 추세 표시용(빈 구간은 직전/직후 값으로 채움)
+      counts, // 6구간 실제 거래건수 흐름(0이면 그 구간엔 거래가 없었다는 뜻)
+      lowSample, // 6구간 각각 표본이 minCount 미만이었는지(0건 포함)
       upTransitions, // 5번의 구간 전환 중 상승한 횟수(0~5)
       volumeDrop,
       momentumPct: Math.round((lastAvg - firstAvg) / firstAvg * 1000) / 10,
-    };
-  }).filter(r => r !== null && r.upTransitions >= MOMENTUM_MIN_UP_TRANSITIONS);
-  rankings.sort((a, b) => b.momentumPct - a.momentumPct);
-  return rankings.slice(0, limit);
+    });
+  });
+  const filtered = rankings.filter(r => r.upTransitions >= MOMENTUM_MIN_UP_TRANSITIONS);
+  filtered.sort((a, b) => b.momentumPct - a.momentumPct);
+  return filtered.slice(0, limit);
 }
 
 export default async function handler(req, res) {
