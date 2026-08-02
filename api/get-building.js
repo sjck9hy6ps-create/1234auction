@@ -49,28 +49,44 @@ export default async function handler(req, res) {
     return handleBatchCacheCheck(req, res);
   }
 
-  const { sigunguCd, bjdongCd, bun, ji, platGbCd, bldNm } = req.query;
+  const { sigunguCd, bjdongCd, bun, ji, platGbCd, bldNm, dongNo, force } = req.query;
   if (!sigunguCd || !bjdongCd || !bun) {
     return res.status(400).json({ error: 'sigunguCd, bjdongCd, bun 파라미터가 필요합니다.' });
   }
 
-  const jiParam   = ji || '0000';
-  const gbCd      = platGbCd || '0';
-  const bldNmKey  = (bldNm || '').trim();
+  const jiParam    = ji || '0000';
+  const gbCd       = platGbCd || '0';
+  const bldNmKey   = (bldNm || '').trim();
+  // ⚠️ 2026-08: 대단지 아파트는 같은 지번(bun/ji)에 표제부가 여러 건(동마다 하나씩, 또는
+  // 경로당·관리동 같은 부속건물까지) 등록돼 있는 경우가 많음. 예전엔 bldNm(단지명, 예:
+  // "주공9단지")과 표제부의 실제 bldNm(보통 "901동"처럼 동번호만 있거나 아예 비어있음)이
+  // 텍스트로 안 맞으면 무조건 items[0](API가 반환한 첫 번째 건물)을 써버려서, 안산 고잔
+  // 주공9단지 사례처럼 같은 지번의 1층짜리 경로당 정보가 아파트 정보인 것처럼 뜨는 문제가
+  // 있었음(총 층수 1층, 건폐율/용적률 0%/0% 등 - pickBestItem() 참고). dongNo(동번호, 예:
+  // "901동")를 추가로 받아 숫자 매칭을 우선 시도하고, 그마저 없으면 주용도가 "공동주택"이면서
+  // 층수가 가장 높은 건물을 고르도록 pickBestItem()을 보강함.
+  const dongNoDigits = (dongNo || '').replace(/[^0-9]/g, '');
+  // 캐시 키에 동번호를 반영(동번호가 다르면 별도 캐시 행) - 기존 bld_nm 컬럼만 재사용해서
+  // building_info 테이블 스키마 변경 없이 처리함.
+  const cacheBldNm = bldNmKey + (dongNoDigits ? ('__d' + dongNoDigits) : '');
+  const forceRefresh = force === '1' || force === 'true';
 
   try {
-    // ── 1. 캐시 조회 ──
-    const { data: cached, error: cacheErr } = await supabase
-      .from('building_info')
-      .select('*')
-      .eq('sigungu_cd', sigunguCd)
-      .eq('bjdong_cd', bjdongCd)
-      .eq('bun', bun)
-      .eq('ji', jiParam)
-      .eq('bld_nm', bldNmKey)
-      .maybeSingle();
-
-    if (cacheErr) console.error('building_info 캐시 조회 에러:', cacheErr.message);
+    // ── 1. 캐시 조회 (force=1이면 건너뛰고 바로 재조회) ──
+    let cached = null;
+    if (!forceRefresh) {
+      const { data: cachedRow, error: cacheErr } = await supabase
+        .from('building_info')
+        .select('*')
+        .eq('sigungu_cd', sigunguCd)
+        .eq('bjdong_cd', bjdongCd)
+        .eq('bun', bun)
+        .eq('ji', jiParam)
+        .eq('bld_nm', cacheBldNm)
+        .maybeSingle();
+      if (cacheErr) console.error('building_info 캐시 조회 에러:', cacheErr.message);
+      cached = cachedRow;
+    }
 
     if (cached && (Date.now() - new Date(cached.fetched_at).getTime()) < FRESH_MS) {
       return res.status(200).json({
@@ -95,7 +111,7 @@ export default async function handler(req, res) {
     const titleItems = titleResult.items;
     const priceItems = priceResult.items;
 
-    const titleItem = pickBestItem(titleItems, bldNmKey);
+    const titleItem = pickBestItem(titleItems, bldNmKey, dongNoDigits);
     const priceItem = pickLatestPrice(priceItems);
 
     const title = titleItem ? normalizeTitle(titleItem) : null;
@@ -127,7 +143,7 @@ export default async function handler(req, res) {
       bjdong_cd:  bjdongCd,
       bun,
       ji:         jiParam,
-      bld_nm:     bldNmKey,
+      bld_nm:     cacheBldNm,
       title_json: title,
       price_json: price,
       floor_json: floors,
@@ -263,11 +279,33 @@ function getAny(it, tags) {
   return '';
 }
 
-/* 단지 내 여러 동이 조회될 수 있어, 단지명(danji)과 가장 비슷한 동을 우선 선택 */
-function pickBestItem(items, bldNm) {
+/* 단지 내 여러 동(건물)이 같은 지번에 조회될 수 있어, 아래 순서로 가장 적합한 건물을 선택:
+   1) dongNo(동번호, 예: "901"/"901동")가 주어지면 표제부 bldNm에서 숫자만 뽑아 정확히
+      일치하는 항목을 우선 선택 (가장 신뢰도 높은 매칭)
+   2) bldNm(단지명, 예: "주공9단지")이 주어지면 기존처럼 텍스트 유사 매칭
+   3) 위 둘 다 실패하면(오래된 단지라 표제부 bldNm이 비어있거나 동번호 표기가 없는 경우)
+      주용도(mainPurpsCdNm)에 "공동주택"이 포함된 항목들 중 지상층수(grndFlrCnt)가 가장
+      높은(동률이면 세대수hhldCnt가 더 큰) 것을 선택. 같은 지번에 경로당·관리동·변전실
+      같은 1~2층짜리 부속건물이 함께 등록돼 있으면, items[0]을 그냥 쓸 때 이런 부속건물이
+      뽑혀서 "총 층수 1층, 건폐율/용적률 0%/0%" 식으로 잘못 표시되는 문제가 있었음
+      (2026-08 안산 고잔주공9단지 실측으로 확인됨)
+   4) 그래도 못 찾으면 items[0] (최후 안전장치, 기존 동작 유지) */
+function pickBestItem(items, bldNm, dongNo) {
   if (!items.length) return null;
+  const norm = s => (s || '').replace(/\s/g, '');
+
+  if (dongNo) {
+    const dongDigits = String(dongNo).replace(/[^0-9]/g, '');
+    if (dongDigits) {
+      const byDong = items.find(it => {
+        const itDigits = norm(it.get('bldNm')).replace(/[^0-9]/g, '');
+        return itDigits && itDigits === dongDigits;
+      });
+      if (byDong) return byDong;
+    }
+  }
+
   if (bldNm) {
-    const norm = s => (s || '').replace(/\s/g, '');
     const target = norm(bldNm);
     if (target) {
       const matched = items.find(it => {
@@ -277,6 +315,20 @@ function pickBestItem(items, bldNm) {
       if (matched) return matched;
     }
   }
+
+  const apartmentItems = items.filter(it => (it.get('mainPurpsCdNm') || '').includes('공동주택'));
+  if (apartmentItems.length) {
+    apartmentItems.sort((a, b) => {
+      const fa = parseInt(a.get('grndFlrCnt'), 10) || 0;
+      const fb = parseInt(b.get('grndFlrCnt'), 10) || 0;
+      if (fb !== fa) return fb - fa;
+      const ha = parseInt(a.get('hhldCnt'), 10) || 0;
+      const hb = parseInt(b.get('hhldCnt'), 10) || 0;
+      return hb - ha;
+    });
+    return apartmentItems[0];
+  }
+
   return items[0];
 }
 
