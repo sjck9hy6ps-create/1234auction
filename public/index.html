@@ -7466,11 +7466,130 @@ function scaleLabel(hhldCnt) {
     if (hhldCnt < SMALL_COMPLEX_HHLD_MAX) return ' · ' + hhldCnt + '세대(소규모)';
     return ' · ' + hhldCnt + '세대';
 }
-// 대단지 비교물건 가격에 곱하는 규모격차 할인율 - 통계적으로 도출된 값이 아니라, 대단지가
-// 브랜드·유동성 프리미엄으로 나홀로/소규모 대비 통상 더 비싸게 거래되는 실무 경향을 근사한
-// 값입니다(7% 할인). getCompEstValue()에서 subject가 소규모(SMALL_COMPLEX_HHLD_MAX 미만)일
-// 때만, 대단지(LARGE_COMPLEX_HHLD_MIN 이상) 비교물건에 한해 적용합니다.
+// 대단지 비교물건 가격에 곱하는 규모격차 할인율(기본값) - 통계적으로 도출된 값이 아니라,
+// 대단지가 브랜드·유동성 프리미엄으로 나홀로/소규모 대비 통상 더 비싸게 거래되는 실무
+// 경향을 근사한 값입니다(7% 할인). getCompEstValue()에서 subject가 소규모(SMALL_COMPLEX_
+// HHLD_MAX 미만)일 때만, 대단지(LARGE_COMPLEX_HHLD_MIN 이상) 비교물건에 한해 적용합니다.
+// measureScaleDiscount()로 이 지역 실측값을 구하면 scaleDiscountOverride에 담겨 이 기본값
+// 대신 쓰입니다(세션 한정 - "🔄 최신 세율 적용"과 같은 패턴, 새로고침하면 기본값 7%로 복귀).
 var SCALE_DISCOUNT_FACTOR = 0.93;
+var scaleDiscountOverride = null;
+function currentScaleDiscountFactor() { return scaleDiscountOverride !== null ? scaleDiscountOverride : SCALE_DISCOUNT_FACTOR; }
+
+/* ⚠️ 2026-08: "할인율은 왜 7%야?"라는 질문에 - 근거 자료가 있는 값이 아니라 실무 통념(5~10%)의
+   중간값을 임의로 잡은 것이었음. 더 신뢰도 높은 값을 원하면, 이미 지도에 로딩된 실거래
+   데이터(allAptList)로 직접 실측할 수 있음: 이 물건과 비슷한 연식(±7년)의 인근 아파트 단지를
+   세대수 기준 소규모(<150세대)/대단지(≥300세대)로 나누고, 각 그룹의 시점보정된 평단가
+   중앙값을 비교해서 실제 격차(%)를 구함. 세대수는 건축HUB 조회가 필요해서(같은 캐시를
+   승강기 조회 때와 공유) 이미 조회된 것 우선 사용하고, 안 된 단지는 최대
+   SCALE_DISCOUNT_MEASURE_CAP개까지만 새로 조회함(API 부담 제한 - 웜업 스크립트의
+   "실행당 상한" 패턴과 동일한 이유).
+   ⚠️ 표본이 지역마다 들쭉날쭉해서(소규모/대단지 단지 자체가 적은 동네도 많음) 참고용이며,
+   너무 적으면(단지 2개 미만 또는 거래 5건 미만) 계산을 포기하고 기본값을 쓰라고 안내함. */
+var SCALE_DISCOUNT_MEASURE_CAP = 40;
+async function measureScaleDiscount() {
+    var box = document.getElementById('scale-discount-measure-box');
+    var propType = document.getElementById('a-prop-type').value;
+    if (propType !== 'apt') { if (box) box.innerHTML = '<div style="font-size:11px;color:#e53935;">아파트 물건에서만 실측할 수 있습니다.</div>'; return; }
+    var ctx = getAuctionAddressContext();
+    var targetYear = getAuctionBuildYear();
+    if (box) box.innerHTML = '<div style="font-size:11px;color:#999;">실측 중... (인근 단지 세대수 조회, 최대 ' + SCALE_DISCOUNT_MEASURE_CAP + '개)</div>';
+
+    // 1) 후보 단지 추리기: 현재 지도에 로딩된 아파트 전체(allAptList) 중 대상 물건 자신을
+    //    제외, 연식을 알면 ±7년 이내로만(모르면 전체) - 너무 다른 연식은 건물 특성 자체가
+    //    달라 세대수 격차만으로 보기 어려움.
+    var candidates = allAptList.filter(function(a) {
+        if (a.buildingType !== 'apt') return false;
+        var l = a.latest || {};
+        if (ctx.name && l.name === ctx.name && l.dong === ctx.dong) return false; // 대상 자신 제외
+        if (targetYear) {
+            var by = parseInt(l.build_year);
+            if (!Number.isFinite(by) || Math.abs(by - targetYear) > 7) return false;
+        }
+        return (a.trades || []).some(function(t) { return tradeDate(t) >= oneYearAgo && t.area > 0 && parseInt(t.amount) > 0; });
+    });
+    if (candidates.length < 6) {
+        if (box) box.innerHTML = '<div style="font-size:11px;color:#e65100;">인근에 비교할 단지가 너무 적습니다(' + candidates.length + '개) - 기본값(7%)을 그대로 사용하세요.</div>';
+        return;
+    }
+
+    // 2) 세대수 조회 - 이미 캐시된 것은 그대로 쓰고, 없는 것은 거래 많은 순으로 최대 CAP개까지만 새로 조회
+    candidates.sort(function(a, b) { return (b.trades || []).length - (a.trades || []).length; });
+    var toFetch = [];
+    candidates.forEach(function(a) {
+        var l = a.latest || {};
+        var key = [l.dong, l.name, l.bunji, l.road_name, l.main_num, l.sub_num].join('|').toLowerCase();
+        if (buildingElevatorCache[key] === undefined) toFetch.push(a);
+    });
+    toFetch = toFetch.slice(0, SCALE_DISCOUNT_MEASURE_CAP);
+    var queue = toFetch.slice();
+    async function worker() {
+        while (queue.length) {
+            var a = queue.shift();
+            var l = a.latest || {};
+            var cacheKeyForCoord = [l.dong, l.name, l.bunji, l.road_name, l.main_num, l.sub_num].join('|').toLowerCase();
+            var coord = coordCache[cacheKeyForCoord];
+            if (!coord) continue;
+            await fetchBuildingScaleInfo(a, coord.lat, coord.lon);
+        }
+    }
+    var workers = [];
+    for (var w = 0; w < AI_COMP_ELEVATOR_CONCURRENCY; w++) workers.push(worker());
+    await Promise.all(workers);
+
+    // 3) 세대수를 확보한 단지만 소규모/대단지로 나눠 시점보정된 평단가 집계(중간 규모는 경계가
+    //    흐려서 비교 대상에서 제외)
+    var smallPpps = [], largePpps = [];
+    var smallComplexSet = {}, largeComplexSet = {};
+    candidates.forEach(function(a) {
+        var l = a.latest || {};
+        var key = [l.dong, l.name, l.bunji, l.road_name, l.main_num, l.sub_num].join('|').toLowerCase();
+        var scale = buildingElevatorCache[key];
+        if (!scale || scale instanceof Promise || !scale.hhldCnt) return;
+        var isSmall = scale.hhldCnt < SMALL_COMPLEX_HHLD_MAX;
+        var isLarge = scale.hhldCnt >= LARGE_COMPLEX_HHLD_MIN;
+        if (!isSmall && !isLarge) return;
+        (a.trades || []).forEach(function(t) {
+            if (t.area <= 0 || parseInt(t.amount) <= 0 || parseInt(t.floor) === 1) return;
+            if (tradeDate(t) < oneYearAgo) return;
+            var mo = findAptComplexMomentum(l.name, l.dong, tradeDate(t));
+            var ppp = (parseInt(t.amount) / toPyung(t.area)) * mo.factor;
+            if (isSmall) { smallPpps.push(ppp); smallComplexSet[key] = true; }
+            else { largePpps.push(ppp); largeComplexSet[key] = true; }
+        });
+    });
+
+    var smallComplexCount = Object.keys(smallComplexSet).length;
+    var largeComplexCount = Object.keys(largeComplexSet).length;
+    if (smallPpps.length < 5 || largePpps.length < 5 || smallComplexCount < 2 || largeComplexCount < 2) {
+        if (box) box.innerHTML = '<div style="font-size:11px;color:#e65100;">세대수까지 확인된 단지가 부족합니다(소규모 ' + smallComplexCount + '개·' + smallPpps.length + '건, 대단지 ' + largeComplexCount + '개·' + largePpps.length + '건) - 기본값(7%)을 그대로 사용하세요.</div>';
+        return;
+    }
+    function median(arr) { var s = arr.slice().sort(function(x, y) { return x - y; }); var m = Math.floor(s.length / 2); return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2; }
+    var smallMed = median(smallPpps), largeMed = median(largePpps);
+    var ratio = smallMed / largeMed; // 1보다 작으면 소규모가 더 싸다는 뜻(대단지 프리미엄 확인)
+    var clampedRatio = Math.max(0.8, Math.min(1.05, ratio)); // 표본이 적을 때의 극단치 방지(최대 20% 할인 ~ 오히려 5% 비싼 경우까지만 허용)
+    var discountPct = Math.round((1 - clampedRatio) * 1000) / 10;
+
+    window.__measuredScaleRatio = clampedRatio;
+    if (box) box.innerHTML = '<div style="font-size:11px;background:#f3e5f5;border-radius:6px;padding:6px 8px;">'
+        + '실측 결과: 소규모(' + smallComplexCount + '개 단지·' + smallPpps.length + '건) 평단가가 대단지(' + largeComplexCount + '개 단지·' + largePpps.length + '건) 대비 '
+        + '<b>' + (discountPct >= 0 ? discountPct + '% 낮음' : (-discountPct) + '% 오히려 높음') + '</b>'
+        + '<div style="color:#999;font-size:10px;margin-top:3px;">표본이 지역 상황에 따라 적거나 편중될 수 있어 참고용입니다.</div>'
+        + '<button type="button" class="modal-btn btn-purple" style="font-size:10px;padding:3px 8px;margin-top:5px;" onclick="applyMeasuredScaleDiscount()">이 값으로 적용</button>'
+        + '</div>';
+}
+function applyMeasuredScaleDiscount() {
+    if (window.__measuredScaleRatio === undefined) return;
+    scaleDiscountOverride = window.__measuredScaleRatio;
+    calcCompValuation();
+    var box = document.getElementById('scale-discount-measure-box');
+    if (box) box.innerHTML = '<div style="font-size:11px;color:#2e7d32;">✅ 실측값(' + Math.round((1 - scaleDiscountOverride) * 1000) / 10 + '% 할인)이 적용되었습니다. (새로고침하면 기본값 7%로 복귀)</div>';
+}
+function resetMeasuredScaleDiscount() {
+    scaleDiscountOverride = null;
+    calcCompValuation();
+}
 // 후보가 최대 40건까지 나올 수 있어 승강기·세대수 조회를 한꺼번에 다 쏘지 않고(건축HUB API
 // 부하 우려) 5개씩만 동시에 처리하는 워커풀 방식으로 돌림 - 같은 단지가 여러 후보에 겹치면
 // fetchBuildingScaleInfo의 캐시가 중복 조회를 막아줘서 실제 API 호출 수는 더 적음.
@@ -7699,11 +7818,13 @@ function getCompEstValue() {
     // ⚠️ 2026-08 규모보정: 이 물건(subject)이 나홀로/소규모 단지인데 등록된 비교물건 중
     // 일부가 세대수 훨씬 많은 대단지라면, 그 비교물건의 평단가를 그대로 쓰면 과대평가될 수
     // 있음(대단지는 브랜드·유동성 프리미엄으로 나홀로 대비 통상 더 비싸게 거래됨) - 대단지
-    // 비교물건에만 SCALE_DISCOUNT_FACTOR를 곱해 하향 보정함. subject 세대수를 모르면(건축물
-    // 대장 조회 전이거나 실패) 적용하지 않음 - 근거 없는 보정을 함부로 걸지 않기 위함.
+    // 비교물건에만 할인율(currentScaleDiscountFactor() - measureScaleDiscount()로 실측한 값이
+    // 있으면 그 값, 없으면 기본값 7%)을 곱해 하향 보정함. subject 세대수를 모르면(건축물대장
+    // 조회 전이거나 실패) 적용하지 않음 - 근거 없는 보정을 함부로 걸지 않기 위함.
     var subjectHhldCnt = (pendingAuctionBuildingInfo && pendingAuctionBuildingInfo.title && pendingAuctionBuildingInfo.title.hhldCnt) || null;
     var subjectIsSmall = subjectHhldCnt !== null && subjectHhldCnt < SMALL_COMPLEX_HHLD_MAX;
     var scaleAdjustedCount = 0;
+    var scaleDiscountFactorUsed = currentScaleDiscountFactor();
 
     var now = new Date();
     var adjustedPpps = [];
@@ -7723,7 +7844,7 @@ function getCompEstValue() {
             if (oldestDays === null || days > oldestDays) oldestDays = days;
         }
         if (subjectIsSmall && c.hhldCnt && c.hhldCnt >= LARGE_COMPLEX_HHLD_MIN) {
-            factor *= SCALE_DISCOUNT_FACTOR;
+            factor *= scaleDiscountFactorUsed;
             scaleAdjustedCount++;
         }
         adjustedPpps.push(rawPpp * factor);
@@ -7772,6 +7893,7 @@ function getCompEstValue() {
         scaleAdjustedCount: scaleAdjustedCount,
         subjectIsSmall: subjectIsSmall,
         subjectHhldCnt: subjectHhldCnt,
+        scaleDiscountFactorUsed: scaleDiscountFactorUsed,
     };
 }
 // "34.19㎡(10.34평)" 형식의 문자열에서 ㎡ 앞의 숫자만 뽑아냄 (AI가 추출한 대지권 면적 파싱용)
@@ -8380,14 +8502,29 @@ function calcCompValuation() {
         if (est.outlierCount > 0) freshInner += '<span style="color:#e65100;font-size:9.5px;margin-left:5px;">⚠️ 이상치 ' + est.outlierCount + '건 제외(IQR 기준)</span>';
         // 규모보정 배지 - 이 물건이 소규모/나홀로 단지(subjectHhldCnt < 150세대)인데 등록된
         // 비교물건 중 대단지(300세대 이상)가 섞여 있으면, 그 비교물건 가격에 할인율을 적용해
-        // 계산했다는 사실을 알려줌(getCompEstValue의 SCALE_DISCOUNT_FACTOR 참고).
+        // 계산했다는 사실을 알려줌(getCompEstValue의 currentScaleDiscountFactor() 참고 -
+        // measureScaleDiscount()로 실측한 값이 있으면 그 값, 없으면 기본값 7%).
+        var scaleDiscountPctUsed = est.scaleDiscountFactorUsed ? Math.round((1 - est.scaleDiscountFactorUsed) * 1000) / 10 : null;
         if (est.scaleAdjustedCount > 0) {
-            freshInner += '<span style="color:#6a1b9a;font-size:9.5px;margin-left:5px;" title="이 물건은 소규모/나홀로 단지(' + (est.subjectHhldCnt || '?') + '세대)로 추정되어, 비교물건 중 대단지(300세대 이상) ' + est.scaleAdjustedCount + '건에 규모격차 할인(' + Math.round((1 - SCALE_DISCOUNT_FACTOR) * 100) + '%)을 적용했습니다.">🏘️ 규모보정 적용(대단지 ' + est.scaleAdjustedCount + '건 할인)</span>';
+            freshInner += '<span style="color:#6a1b9a;font-size:9.5px;margin-left:5px;" title="이 물건은 소규모/나홀로 단지(' + (est.subjectHhldCnt || '?') + '세대)로 추정되어, 비교물건 중 대단지(300세대 이상) ' + est.scaleAdjustedCount + '건에 규모격차 할인(' + scaleDiscountPctUsed + '%, ' + (scaleDiscountOverride !== null ? '이 지역 실측값' : '기본값') + ')을 적용했습니다.">🏘️ 규모보정 적용(대단지 ' + est.scaleAdjustedCount + '건, ' + scaleDiscountPctUsed + '% 할인' + (scaleDiscountOverride !== null ? ' · 실측값' : '') + ')</span>';
         }
         if (freshInner) freshBadge = '<div style="margin:2px 0 4px;">' + freshInner + '</div>';
+        // 규모격차 할인율 실측 - subject가 소규모/나홀로로 판별됐을 때만 노출(대단지 subject는
+        // 애초에 할인 자체를 안 걸어서 실측이 무의미함). 아직 대단지 비교물건을 안 넣었어도
+        // 미리 확인해볼 수 있게 scaleAdjustedCount 조건 없이 표시함.
+        var scaleMeasureBox = '';
+        if (est.subjectIsSmall) {
+            scaleMeasureBox = '<div style="margin:2px 0 4px;font-size:10px;color:#999;">'
+                + '이 물건은 소규모/나홀로 단지(' + (est.subjectHhldCnt || '?') + '세대)로 추정됩니다. 대단지 비교물건에는 '
+                + Math.round((1 - currentScaleDiscountFactor()) * 1000) / 10 + '% 할인(' + (scaleDiscountOverride !== null ? '이 지역 실측값' : '기본 가정값') + ')이 적용됩니다. '
+                + '<button type="button" class="modal-btn btn-gray" style="font-size:9.5px;padding:1px 6px;" onclick="measureScaleDiscount()">📊 할인율 실측</button>'
+                + (scaleDiscountOverride !== null ? ' <button type="button" class="modal-btn btn-gray" style="font-size:9.5px;padding:1px 6px;" onclick="resetMeasuredScaleDiscount()">기본값으로</button>' : '')
+                + '<div id="scale-discount-measure-box" style="margin-top:3px;"></div>'
+                + '</div>';
+        }
         mainHtml = '<div class="margin-result">'
             + '<div class="margin-result-title">💡 비교물건 ' + est.count + '개 기반 시세분석 (목표마진 ' + toEok(String(targetMargin)) + ' 역산)</div>'
-            + rangeLine + freshBadge
+            + rangeLine + freshBadge + scaleMeasureBox
             + '<div class="margin-grid">'
             + vItem('비교 평단가(중간값,시점보정)', Math.round(est.medPpp / 100) / 10 + '천만/평', '#555')
             + vItem('예상매각가(실거래 기반)', toEok(String(est.estValue)), '#2e7d32')
