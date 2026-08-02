@@ -12168,12 +12168,13 @@ function passesSurgeFilter(apt) {
      api/data-coverage.js?mode=topDongs가 DB에서 GROUP BY로 처리함(원래 이 결과를
      별도의 #top-dongs-panel로 보여줬었는데, "급등지역 필터가 이 기능이었다"는 사용자
      피드백에 따라 이 패널 안으로 합침).
-   - "💰 돈되는 지역" 탭: 최근 240일을 40일 단위 6구간으로 나눠, 각 구간의 평당가(모든
-     평형, price/size 정규화)를 비교해 상승모멘텀이 큰 법정동 순위를 보여줌. 구간당 거래
-     7건 이상 + 5구간 중 3회 이상 상승한 곳만 후보로 삼음(우연한 편차 배제). 구간 길이는
-     아파트 DB 수집 시작일(2025-12-01)에 맞춰 정해진 값이라, 데이터가 더 쌓이면 늘릴 수
-     있음(api/data-coverage.js의 MOMENTUM_BUCKET_DAYS 참고). 집계는
-     api/data-coverage.js?mode=priceMomentum.
+   - "💰 돈되는 지역" 탭: 평당가(모든 평형, price/size 정규화)를 6구간으로 나눠 비교해
+     상승모멘텀이 큰 법정동 순위를 보여줌. 아파트/연립다세대는 원래 거래빈도 차이가 커서
+     구간 길이·최소표본을 서로 다르게 둠(아파트 40일×6구간·최소7건, 연립다세대 60일×6구간·
+     최소4건 - api/data-coverage.js의 MOMENTUM_BUCKET_DAYS_APT/VILLA, MOMENTUM_MIN_BUCKET_COUNT_APT/VILLA
+     참고). 표본이 부족한 구간이 있어도 후보에서 빼지 않고 직전/직후 값을 이어붙여 흐름을
+     유지하며, 그 구간은 lowSample로 표시해 프론트에서 *로 신뢰도 낮음을 알려줌. 5구간 중
+     3회 이상 상승한 곳만 후보로 삼음(우연한 편차 배제). 집계는 api/data-coverage.js?mode=priceMomentum.
    ⚠️ 지도 마커의 🔥N위 배지·"ft-surge" 필터칩(surgeRankMap/computeSurgeRankMap/
    passesSurgeFilter)은 이 패널과 별개로 계속 buildDongSurgeRanking(현재 지도 뷰포트에
    이미 로딩된 allAptList 기준 - DB 전체가 아님)을 그대로 사용함. 이 패널은 어디까지나
@@ -12246,11 +12247,13 @@ async function loadSurgeHotData() {
         statusBox.innerText = '불러오기 실패: ' + e.message;
     }
 }
-// 돈되는 지역 전용 렌더 - 순위/모멘텀% 외에 6구간(1개월×6) "평당가" 흐름과 구간별 거래량을
-// 함께 보여줌(모든 평형을 평당가로 정규화해서 비교하니 국민평형만 볼 때보다 표본이 커짐).
-// 클릭하면 급등지역과 동일하게 moveToDong()으로 지도를 그 동으로 이동시킴.
+// 돈되는 지역 전용 렌더 - 순위/모멘텀% 외에 6구간 "평당가" 흐름과 구간별 거래량을 함께
+// 보여줌(모든 평형을 평당가로 정규화해서 비교하니 특정 평형대만 볼 때보다 표본이 커짐).
+// 클릭하면 급등지역과 동일하게 moveToDong()으로 지도를 그 동으로 이동시킴(패널은 안 닫힘 -
+// 여러 지역을 연달아 둘러볼 수 있게 하기 위함, 닫으려면 헤더 ✕를 눌러야 함).
 // upTransitions(5번의 구간전환 중 상승횟수)와 volumeDrop(거래량 급감 경고)은 API에서 이미
-// 필터링/계산해서 내려주므로 여기선 그대로 표시만 함.
+// 계산해서 내려주므로 여기선 그대로 표시만 함. lowSample이 true인 구간은 표본이 적어(또는
+// 거래가 아예 없어 직전/직후 값을 이어붙인 경우) 거래건수 뒤에 *를 붙여 표시함.
 function renderMoneyRankSection(title, list) {
     var html = '<div style="margin-top:8px;"><div style="font-size:11.5px;font-weight:bold;color:#4a148c;margin-bottom:4px;">' + title + '</div>';
     if (!list || !list.length) {
@@ -12260,14 +12263,15 @@ function renderMoneyRankSection(title, list) {
     list.forEach(function(r, idx) {
         var sign = r.momentumPct >= 0 ? '+' : '';
         var priceTrend = (r.prices || []).map(function(p) { return p.toLocaleString() + '만'; }).join(' → ');
-        var countTrend = (r.counts || []).join('→');
+        var counts = r.counts || [], low = r.lowSample || [];
+        var countTrend = counts.map(function(c, i) { return c + (low[i] ? '*' : ''); }).join('→');
         var warnBadge = r.volumeDrop ? ' <span style="color:#e65100;">⚠️거래량급감구간</span>' : '';
         html += '<div onclick="moveToDong(\'' + esc1(r.region) + '\',\'' + esc1(r.dong) + '\')" style="padding:6px 2px;border-bottom:1px solid #f5f5f5;cursor:pointer;">'
             + '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;font-size:11.5px;">'
             + '<span style="min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;"><span style="color:#999;font-weight:bold;margin-right:4px;">' + (idx + 1) + '</span>' + cleanField(r.region) + ' ' + cleanField(r.dong) + '</span>'
             + '<span style="font-weight:bold;color:#e53935;white-space:nowrap;flex-shrink:0;">' + sign + r.momentumPct + '%</span></div>'
             + '<div style="font-size:10px;color:#888;margin-top:2px;white-space:nowrap;overflow-x:auto;">평당가 ' + priceTrend + '</div>'
-            + '<div style="font-size:10px;color:#aaa;margin-top:1px;">거래량 ' + countTrend + '건 · 상승 ' + r.upTransitions + '/5구간' + warnBadge + '</div>'
+            + '<div style="font-size:10px;color:#aaa;margin-top:1px;">거래량 ' + countTrend + '건(*표본부족) · 상승 ' + r.upTransitions + '/5구간' + warnBadge + '</div>'
             + '</div>';
     });
     html += '</div>';
@@ -12285,7 +12289,7 @@ async function loadSurgeMoneyData() {
         var data = await readJsonResponseSafe(res);
         if (!res.ok) throw new Error((data && data.error) || ('서버 오류(' + res.status + ')'));
         statusBox.style.color = '#999';
-        statusBox.innerText = '최근 240일(40일×6구간) 평당가 모멘텀(전체 평형·구간당 7건 이상·5구간 중 3회 이상 상승)' + (sido ? ' · ' + sido : ' · 전국');
+        statusBox.innerText = '평당가 모멘텀(전체 평형·5구간 중 3회 이상 상승) · 아파트 40일×6구간/최소7건, 연립다세대 60일×6구간/최소4건' + (sido ? ' · ' + sido : ' · 전국');
         // 실거래 신고기한(계약 후 30일 이내)상 가장 최근 1개월 구간은 아직 신고가 덜 끝난
         // 거래가 섞여 있어 거래량이 구조적으로 낮게 보일 수 있음 - 사용자 요청으로 계산 로직은
         // 그대로 두고 이 안내문구만 상시 표시함.
@@ -12299,8 +12303,12 @@ async function loadSurgeMoneyData() {
     }
 }
 function moveToDong(region, dong) {
-    closeSurgePanel();
- 
+    // 2026-08: 예전엔 여기서 closeSurgePanel()을 호출해 클릭하자마자 패널이 닫혔는데,
+    // 급등지역/돈되는 지역은 입찰 후보지를 여러 곳 비교하며 고르는 용도라 지역 하나
+    // 클릭할 때마다 패널이 닫혀버리면 매번 다시 열어야 해서 불편했음(사용자 피드백).
+    // 이제 지도만 이동하고 패널은 열린 채로 유지 - 닫으려면 헤더의 ✕(closeSurgePanel)를
+    // 직접 눌러야 함.
+
     // 1순위: 이미 지오코딩되어 coordCache에 좌표가 있는 이 동의 건물을 찾아 즉시 이동
     // (API 호출 없이 동작하므로 카카오 할당량 문제와 무관하게 항상 작동함)
     var match = allAptList.find(function(apt) {
