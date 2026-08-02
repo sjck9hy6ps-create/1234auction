@@ -645,6 +645,7 @@ tr:hover td { background:#fffde7; }
     <div style="margin-top:4px;"><a href="/backup.html" style="font-size:11px;color:#6a1b9a;font-weight:bold;">📦 데이터 백업</a></div>
     <div style="margin-top:4px;"><a href="/dashboard.html" style="font-size:11px;color:#2e7d32;font-weight:bold;">📊 누적 투자 리포트</a></div>
     <div style="margin-top:4px;"><span onclick="openBidCasePanel()" style="font-size:11px;color:#e65100;font-weight:bold;cursor:pointer;">📈 낙찰사례 통계</span></div>
+    <div style="margin-top:4px;"><span onclick="openBidTargetPanel()" style="font-size:11px;color:#f57f17;font-weight:bold;cursor:pointer;">📋 입찰예정물건 일괄등록</span></div>
     </div>
 </div>
 <button id="auction-add-btn" onclick="openAuctionList()">🔨 경매 관리</button>
@@ -693,6 +694,36 @@ tr:hover td { background:#fffde7; }
     <div id="bc-stats-box"></div>
     <div id="bc-list-body"></div>
 </div>
+<!-- ════════════════════════════════════
+     입찰예정물건 일괄등록 패널 - 낙찰사례 패널(위 bid-case-panel)과 완전히 같은 방식(붙여넣기→
+     로컬 정규식 파싱→미리보기→선택 저장)을 재사용하되, 저장 대상이 낙찰사례 전용 저장소가
+     아니라 auctionList(내가 관리하는 관심물건, 'auctions' 저장소) 자체임. 최소 필드만 채운
+     "가벼운" 상태로 저장되고 isBidTarget:true 플래그가 붙어 지도에서 연한노란색 배지(📋 입찰희망)로
+     표시됨 - placeAuctionMarker 참고. 배지를 클릭하면 그 물건의 경매 물건 등록(수정) 모달이 그대로
+     열리고, 거기서 한 번이라도 저장하면 isBidTarget이 자동으로 꺼져 일반 물건(🔨)으로 전환됨(saveAuction 참고).
+     ════════════════════════════════════ -->
+<div id="bid-target-panel">
+    <div class="auction-list-header">
+        📋 입찰예정물건 일괄등록
+        <span onclick="closeBidTargetPanel()" style="float:right;cursor:pointer;">✕</span>
+    </div>
+    <div style="padding:10px 14px;border-bottom:1px solid #eee;">
+        <div style="font-size:10.5px;color:#888;margin-bottom:6px;">
+            경매정보 사이트(탱크옥션 등)의 "검색결과 목록" 화면을 그대로 복사해서 붙여넣으면
+            여러 건을 한 번에 가볍게 등록합니다(사건번호·주소·감정가·최저가 정도만 채워짐).
+            선택한 항목은 지도에 연한노란색 "📋 입찰희망" 배지로 표시되고, 배지를 클릭하면
+            바로 경매 물건 등록 화면이 열려 나머지 정보를 채울 수 있어요.
+        </div>
+        <textarea class="modal-input" id="bt-paste-text" rows="4"
+            placeholder="검색결과 목록 화면을 통째로 복사해서 여기 붙여넣으세요"
+            style="resize:vertical;width:100%;"></textarea>
+        <div style="margin-top:6px;text-align:right;">
+            <button class="modal-btn btn-purple" id="bt-extract-btn" onclick="extractBidTargetList()">목록 일괄 추출</button>
+        </div>
+        <div id="bt-extract-status" style="font-size:11px;color:#999;margin-top:4px;"></div>
+    </div>
+    <div id="bt-preview-box"></div>
+</div>
 <div id="auction-modal-bg">
 <div id="auction-modal">
     <div class="modal-header">
@@ -701,6 +732,9 @@ tr:hover td { background:#fffde7; }
     </div>
     <div class="modal-body">
         <input type="hidden" id="auction-id">
+        <div id="bid-target-notice" style="display:none;background:#fffde7;border:1px solid #fdd835;border-radius:6px;padding:8px 10px;margin-bottom:8px;font-size:11px;color:#f57f17;font-weight:bold;">
+            📋 입찰예정물건 일괄등록으로 가볍게 등록된 물건입니다. 정보를 확인하고 저장하면 일반 물건(🔨)으로 전환됩니다.
+        </div>
         <div class="modal-section">
             <div class="modal-section-title">🤖 AI 자동 채우기</div>
             <textarea class="modal-input" id="a-paste-text" rows="4"
@@ -4405,6 +4439,174 @@ async function deleteBidCase(id) {
     bidCaseList = bidCaseList.filter(function(c) { return c.id !== id; });
     renderBidCaseList(); renderBidCaseMarkers();
 }
+/* ════════════════════════════════════
+   입찰예정물건(bidTarget) 일괄등록 - 낙찰사례 일괄등록(위 extractCaseList/saveSelectedCases)과
+   같은 붙여넣기→로컬 파싱→미리보기→선택저장 흐름을 그대로 재사용하되, 저장 대상이 별도
+   저장소가 아니라 auctionList('auctions' 저장소) 자체임. 최소 필드만 채운 채로 저장되고
+   isBidTarget:true 플래그가 붙어 지도에서 연한노란색 "📋 입찰희망" 배지로 표시됨
+   (placeAuctionMarker 참고). 배지를 클릭하면 그 물건의 경매 물건 등록(수정) 모달이 그대로
+   열리고, 거기서 한 번이라도 저장하면 isBidTarget이 자동으로 꺼짐(saveAuction 참고).
+════════════════════════════════════ */
+var pendingBidTargetExtraction = [];
+function openBidTargetPanel() {
+    var p = document.getElementById('bid-target-panel');
+    document.getElementById('auction-list-panel').style.display = 'none';
+    var bcPanel = document.getElementById('bid-case-panel');
+    if (bcPanel) bcPanel.style.display = 'none'; // 같은 자리에 뜨는 다른 패널과 겹치지 않게 닫아줌
+    if (p.style.display === 'block') { p.style.display = 'none'; return; }
+    p.style.display = 'block';
+}
+function closeBidTargetPanel() {
+    document.getElementById('bid-target-panel').style.display = 'none';
+}
+// 검색결과 목록의 "물건종류" 줄(예: 아파트/오피스텔/연립주택/다세대(빌라)/단독주택 등) 텍스트를
+// 경매 모달의 물건유형 select 값(apt/villa/officetel/other)으로 매핑
+function bidTargetPropTypeFromText(propertyType) {
+    var s = String(propertyType || '');
+    if (s.indexOf('아파트') !== -1) return 'apt';
+    if (s.indexOf('오피스텔') !== -1) return 'officetel';
+    if (s.indexOf('연립') !== -1 || s.indexOf('다세대') !== -1 || s.indexOf('단독') !== -1 || s.indexOf('다가구') !== -1) return 'villa';
+    return 'other';
+}
+async function extractBidTargetList() {
+    var text = document.getElementById('bt-paste-text').value.trim();
+    var statusBox = document.getElementById('bt-extract-status');
+    if (!text) { alert('검색결과 목록 텍스트를 먼저 붙여넣어 주세요.'); return; }
+    var btn = document.getElementById('bt-extract-btn');
+    btn.disabled = true; btn.innerText = '추출 중...';
+    statusBox.style.color = '#999'; statusBox.innerText = '목록을 읽는 중...';
+    try {
+        // 1차: 낙찰사례와 동일한 로컬 정규식 파서 재사용 - 탱크옥션 표준 목록 형식이면
+        // AI 호출 없이 즉시(무료) 처리됨. 진행중/완료 목록 모두 같은 줄바꿈 구조를 씀.
+        var local = parseCaseListTextLocally(text);
+        if (local.cases.length) {
+            pendingBidTargetExtraction = local.cases.map(function(c) { return Object.assign({ _selected: true }, c); });
+            statusBox.style.color = '#2e7d32';
+            statusBox.innerText = '⚡ 즉시 인식됨(AI 미사용) ' + local.cases.length + '건'
+                + (local.unparsedCount ? ' (형식이 다른 ' + local.unparsedCount + '건은 인식 못해 건너뜀)' : '')
+                + ' - 아래에서 등록할 항목을 확인하세요.';
+            renderBidTargetPreview();
+            return;
+        }
+        // 2차 폴백: 로컬 파싱으로 하나도 못 뽑았을 때만 AI 추출 시도(하루 사용량 소모됨)
+        statusBox.innerText = '표준 형식으로 인식되지 않아 AI로 다시 시도합니다 (사용량 소모)...';
+        var res = await fetch('/api/parse-auction', {
+            method: 'POST', headers: {'Content-Type':'application/json'},
+            body: JSON.stringify({ mode: 'caseList', text: text }),
+        });
+        var data = await readJsonResponseSafe(res);
+        if (!res.ok) throw new Error((data && data.error) || ('서버 오류(' + res.status + ')'));
+        var cases = (data && Array.isArray(data.cases)) ? data.cases : [];
+        if (!cases.length) {
+            statusBox.style.color = '#e53935';
+            statusBox.innerText = '목록에서 물건을 찾지 못했습니다. 검색결과 화면 텍스트를 그대로(위→아래) 붙여넣었는지 확인해 주세요.';
+            return;
+        }
+        pendingBidTargetExtraction = cases.map(function(c) { return Object.assign({ _selected: true }, c); });
+        statusBox.style.color = '#2e7d32';
+        statusBox.innerText = '🤖 AI 추출됨 ' + (data.cached ? '(캐시됨) ' : '') + cases.length + '건 - 아래에서 등록할 항목을 확인하세요.';
+        renderBidTargetPreview();
+    } catch (e) {
+        statusBox.style.color = '#e53935';
+        statusBox.innerText = '추출 중 오류: ' + e.message;
+    } finally {
+        btn.disabled = false; btn.innerText = '목록 일괄 추출';
+    }
+}
+function toggleBidTargetPreviewItem(idx) {
+    if (!pendingBidTargetExtraction[idx]) return;
+    pendingBidTargetExtraction[idx]._selected = !pendingBidTargetExtraction[idx]._selected;
+    renderBidTargetPreview();
+}
+function renderBidTargetPreview() {
+    var box = document.getElementById('bt-preview-box');
+    if (!pendingBidTargetExtraction.length) { box.innerHTML = ''; return; }
+    var selectedCount = pendingBidTargetExtraction.filter(function(c) { return c._selected; }).length;
+    var html = '<div style="padding:8px 14px;background:#fffde7;border-bottom:1px solid #eee;">'
+        + '<div style="font-size:11px;font-weight:bold;color:#f57f17;margin-bottom:6px;">추출 미리보기 (' + selectedCount + '/' + pendingBidTargetExtraction.length + '건 선택됨)</div>';
+    pendingBidTargetExtraction.forEach(function(c, idx) {
+        html += '<div style="display:flex;align-items:flex-start;gap:6px;padding:4px 0;border-bottom:1px solid #fff59d;">'
+            + '<input type="checkbox" ' + (c._selected ? 'checked' : '') + ' onchange="toggleBidTargetPreviewItem(' + idx + ')" style="margin-top:3px;">'
+            + '<div style="flex:1;min-width:0;font-size:11px;">'
+            + '<div style="font-weight:bold;">' + (c.caseNo || '(사건번호 미상)') + (c.status ? ' <span style="color:#888;font-weight:normal;">· ' + c.status + '</span>' : '') + '</div>'
+            + '<div style="color:#666;">' + (c.addrJibun || '(주소 미상)') + '</div>'
+            + '<div style="color:#999;">'
+            + (c.appraisalPrice ? '감정가 ' + toEok(String(Math.round(c.appraisalPrice / 10000))) : '')
+            + (c.minBidPrice ? ' · 최저가 ' + toEok(String(Math.round(c.minBidPrice / 10000))) : '')
+            + '</div></div></div>';
+    });
+    html += '<div style="margin-top:6px;text-align:right;">'
+        + '<button type="button" class="modal-btn btn-purple" style="font-size:11px;" onclick="saveSelectedBidTargets()">선택 항목 등록</button>'
+        + '</div></div>';
+    box.innerHTML = html;
+}
+// 사건번호로 이미 등록된 관심물건(auctionList)과 중복 등록되지 않게 막는 기준(낙찰사례의
+// bidCaseDedupKey와 같은 목적). caseNo가 없는 항목은 식별 불가하므로 dedup 대상에서 제외함.
+function bidTargetDedupKey(c) {
+    if (!c || !c.caseNo) return null;
+    return String(c.caseNo).trim();
+}
+async function saveSelectedBidTargets() {
+    var selected = pendingBidTargetExtraction.filter(function(c) { return c._selected; });
+    if (!selected.length) { alert('등록할 항목을 하나 이상 선택해 주세요.'); return; }
+    var statusBox = document.getElementById('bt-extract-status');
+    statusBox.style.color = '#999'; statusBox.innerText = '등록 중... (주소 좌표를 찾는 중이라 시간이 걸릴 수 있어요)';
+    var existingKeys = {};
+    auctionList.forEach(function(a) { var k = bidTargetDedupKey(a); if (k) existingKeys[k] = true; });
+    var savedCount = 0, skippedCount = 0, noPinCount = 0;
+    for (var i = 0; i < selected.length; i++) {
+        var c = selected[i];
+        var dedupKey = bidTargetDedupKey(c);
+        if (dedupKey && existingKeys[dedupKey]) { skippedCount++; continue; }
+        var addr = c.addrJibun || '';
+        var pyung = c.areaM2 ? Math.round(c.areaM2 / 3.305785 * 10) / 10 : '';
+        var data = {
+            id: Date.now().toString() + '_bt_' + i,
+            addr: addr, addrLabel: addr, name: c.buildingName || '',
+            propType: bidTargetPropTypeFromText(c.propertyType),
+            aptDong: '', floor: c.floor || '', unitNo: c.unitNo || '',
+            caseNo: c.caseNo || null, pyung: pyung, bidDate: c.saleDate || '',
+            status: '검토중',
+            appraisal: c.appraisalPrice ? Math.round(c.appraisalPrice / 10000) : '',
+            minBid: c.minBidPrice ? Math.round(c.minBidPrice / 10000) : '',
+            memo: c.specialConditions || '',
+            isBidTarget: true,
+            lat: null, lon: null, dong: '', bunji: '',
+        };
+        // saveAuction()과 동일한 방식(카카오 지도 클라이언트 지오코더)으로 주소→좌표 변환.
+        // 실패해도 저장은 계속 진행하고(목록에서 "좌표를 찾지 못함" 경고로 안내), 다음 항목으로 넘어감.
+        if (addr) {
+            await new Promise(function(resolve) {
+                geocoder.addressSearch(addr, function(result, status) {
+                    if (status === kakao.maps.services.Status.OK) {
+                        data.lat = parseFloat(result[0].y); data.lon = parseFloat(result[0].x);
+                        data.addrLabel = result[0].road_address ? result[0].road_address.address_name : result[0].address_name;
+                        data.dong = result[0].address ? (result[0].address.region_3depth_name || '') : '';
+                        data.bunji = result[0].address
+                            ? ((result[0].address.main_address_no || '') + (result[0].address.sub_address_no ? '-' + result[0].address.sub_address_no : ''))
+                            : '';
+                    }
+                    resolve();
+                });
+            });
+        }
+        if (!data.lat || !data.lon) noPinCount++;
+        try {
+            var saved = await saveAuctionAPI(data);
+            auctionList.push(saved);
+            if (dedupKey) existingKeys[dedupKey] = true;
+            savedCount++;
+        } catch (e) { console.error('입찰예정물건 등록 실패:', e.message); }
+    }
+    pendingBidTargetExtraction = [];
+    document.getElementById('bt-paste-text').value = '';
+    document.getElementById('bt-preview-box').innerHTML = '';
+    statusBox.style.color = '#2e7d32';
+    statusBox.innerText = savedCount + '건 등록 완료.'
+        + (skippedCount ? ' (이미 등록된 사건번호 ' + skippedCount + '건은 건너뜀)' : '')
+        + (noPinCount ? ' ⚠️ ' + noPinCount + '건은 주소 좌표를 찾지 못해 지도에는 안 뜨니 목록에서 주소를 확인해 주세요.' : '');
+    renderAuctionList(); redrawMarkers();
+}
 /* 🧹 중복 낙찰사례 정리 - saveSelectedCases()에 dedup 체크가 없었던 과거 버그로 이미 쌓인
    중복 레코드(같은 사건번호+담당계가 2~3번씩 저장된 경우)를 한 번에 찾아 정리하는 도구.
    그룹마다 매도사례 매칭(resaleMatch)이 이미 된 레코드가 있으면 그걸 남기고(계산 결과를
@@ -5024,6 +5226,7 @@ function renderAuctionList() {
             + '<span onclick="event.stopPropagation();openAuctionModal(\'' + a.id + '\')" '
             + 'style="position:absolute;top:8px;right:8px;font-size:10px;color:#1976d2;font-weight:bold;cursor:pointer;">✏️ 수정</span>'
             + '<div class="auction-list-name">' + (cleanField(a.name) || cleanField(a.addrLabel) || cleanField(a.addr) || '(이름없음)')
+            + (a.isBidTarget ? '<span class="auction-status-badge" style="background:#fbc02d;color:#333;">📋 입찰희망</span>' : '')
             + '<span class="auction-status-badge" style="background:' + sc + ';color:white;">' + a.status + '</span></div>'
             + '<div class="auction-list-sub">' + (cleanField(a.addr) || '주소 미입력') + '</div>'
             + caseNoLine
@@ -5150,9 +5353,11 @@ function openAuctionModal(id) {
     // ⚠️ 2026-08: "🔍 낙찰가·매도가 추정 조회" 버튼+#resale-match-box를 UI에서 뺐음(요청에
     // 따라 삭제) - 더 이상 존재하지 않는 요소라 여기서 지우려 하면 에러가 나서 이 줄도 함께 제거함.
     document.getElementById('eviction-risk-box').innerHTML = '';
+    document.getElementById('bid-target-notice').style.display = 'none';
     if (isEdit) {
         var a = auctionList.find(function(x) { return x.id === id; });
         if (a) {
+            document.getElementById('bid-target-notice').style.display = a.isBidTarget ? '' : 'none';
             pendingAuctionDetail = a.detail || null;
             pendingAuctionComparables = a.comparables ? a.comparables.slice() : [];
             pendingRegistryDoc = a.registryDoc || null;
@@ -7048,6 +7253,10 @@ async function saveAuction() {
         checklist: currentChecklist || {},
         history: pendingAuctionHistory || [],
         resaleMatches: pendingResaleMatches || null,
+        // 입찰예정물건 일괄등록으로 "가볍게" 저장됐던 물건이라도, 이 모달을 통해 한 번이라도
+        // 저장하면 정식으로 검토·확정한 것으로 보고 isBidTarget을 꺼서 연한노란색 배지에서
+        // 일반 🔨 배지로 전환함(placeAuctionMarker 참고).
+        isBidTarget: false,
     };
     if (!data.lat || !data.lon) {
         await new Promise(function(resolve) {
@@ -7190,6 +7399,10 @@ function refreshMatchedAuctionMarkers() {
 }
 function placeAuctionMarker(a) {
     var sc = STATUS_COLOR[a.status] || '#9e9e9e';
+    // 입찰예정물건 일괄등록으로 "가볍게" 저장된 물건(아직 상세정보를 채우지 않음)은 정식으로
+    // 등록된 물건(🔨 주황 글로우)과 한눈에 구분되도록 연한노란색 배지로 따로 표시함.
+    // 경매 모달에서 한 번이라도 저장하면 saveAuction()이 isBidTarget을 꺼서 일반 배지로 바뀜.
+    var isBidTarget = !!a.isBidTarget;
 
     // 같은 단지의 일반 거래 데이터가 이미 로딩되어 있으면 등급/인기평형 정보를 가져와 함께 표시
     var matchedApt = findMatchedApt(a);
@@ -7234,13 +7447,19 @@ function placeAuctionMarker(a) {
     }
  
     var div = document.createElement('div');
-    div.style.cssText = 'position:relative;background:linear-gradient(180deg,#fff,#fff7ec);border:3px solid #e65100;border-radius:9px;'
-        + 'padding:4px 9px;margin:4px;margin-top:16px;white-space:nowrap;cursor:pointer;'
-        + 'text-align:center;line-height:1.5;max-width:210px;transform:scale(calc(1.12 * var(--badge-scale,1)));transform-origin:center bottom;'
-        + 'animation:auctionGlow 1.8s ease-in-out infinite;';
+    div.style.cssText = isBidTarget
+        ? ('position:relative;background:linear-gradient(180deg,#fffde7,#fff9c4);border:3px solid #fdd835;border-radius:9px;'
+            + 'padding:4px 9px;margin:4px;margin-top:16px;white-space:nowrap;cursor:pointer;'
+            + 'text-align:center;line-height:1.5;max-width:210px;transform:scale(calc(1.12 * var(--badge-scale,1)));transform-origin:center bottom;')
+        : ('position:relative;background:linear-gradient(180deg,#fff,#fff7ec);border:3px solid #e65100;border-radius:9px;'
+            + 'padding:4px 9px;margin:4px;margin-top:16px;white-space:nowrap;cursor:pointer;'
+            + 'text-align:center;line-height:1.5;max-width:210px;transform:scale(calc(1.12 * var(--badge-scale,1)));transform-origin:center bottom;'
+            + 'animation:auctionGlow 1.8s ease-in-out infinite;');
     // 터치 기기 길게 누르기 미리보기용 (setupBadgeLongPressPeek 참고)
-    div.title = [((a.name && a.name.trim()) || a.addrLabel || a.addr || '(이름없음)'), '🔨 ' + a.status, priceLine, a.pyung ? a.pyung + '평' : '', ageBadgeText].filter(Boolean).join(' · ');
-    div.innerHTML = '<div class="auction-badge" style="background:' + sc + ';">🔨 ' + a.status + alarmBadge + '</div>'
+    div.title = [((a.name && a.name.trim()) || a.addrLabel || a.addr || '(이름없음)'), (isBidTarget ? '📋 입찰희망' : '🔨 ' + a.status), priceLine, a.pyung ? a.pyung + '평' : '', ageBadgeText].filter(Boolean).join(' · ');
+    div.innerHTML = (isBidTarget
+            ? '<div class="auction-badge" style="background:#fbc02d;color:#333;">📋 입찰희망' + alarmBadge + '</div>'
+            : '<div class="auction-badge" style="background:' + sc + ';">🔨 ' + a.status + alarmBadge + '</div>')
         + '<div style="color:#333;font-size:11px;font-weight:bold;overflow:hidden;text-overflow:ellipsis;max-width:185px;margin-top:5px;">'
         +   ((a.name && a.name.trim()) || a.addrLabel || a.addr || '(이름없음)') + surgeBadge + ageBadge
         + '</div>'
