@@ -1715,8 +1715,9 @@ function toEok(manwon) {
     if (eok > 0) return eok + '억';
     return val.toLocaleString() + '만';
 }
-// 억 단위 소수점 2자리 축약 표기(예: 12500만 → "1.25억") - 돈되는 지역 6구간 흐름처럼
-// 좁은 공간에 여러 값을 나란히 보여줘야 할 때 toEok보다 훨씬 짧아서 사용함.
+// 억 단위 소수점 2자리 축약 표기(예: 12500만 → "1.25억") - 좁은 공간에 여러 값을 나란히
+// 보여줘야 할 때 toEok보다 훨씬 짧아서 쓰는 범용 유틸(현재 돈되는 지역은 평당가라 만원
+// 단위를 그대로 쓰지만, 다른 화면에서 필요할 수 있어 남겨둠).
 function toEokCompact(manwon) {
     var val = parseInt(manwon);
     if (isNaN(val)) return '-';
@@ -12242,9 +12243,11 @@ async function loadSurgeHotData() {
         statusBox.innerText = '불러오기 실패: ' + e.message;
     }
 }
-// 돈되는 지역 전용 렌더 - 순위/모멘텀% 외에 6구간(1개월×6) 가격 흐름을 그대로 보여줌.
+// 돈되는 지역 전용 렌더 - 순위/모멘텀% 외에 6구간(1개월×6) "평당가" 흐름과 구간별 거래량을
+// 함께 보여줌(모든 평형을 평당가로 정규화해서 비교하니 국민평형만 볼 때보다 표본이 커짐).
 // 클릭하면 급등지역과 동일하게 moveToDong()으로 지도를 그 동으로 이동시킴.
-// 가격은 toEokCompact(소수점 2자리 억 단위, 예 "1.25억")로 표기해 6개 값이 한 줄에 들어가게 함.
+// upTransitions(5번의 구간전환 중 상승횟수)와 volumeDrop(거래량 급감 경고)은 API에서 이미
+// 필터링/계산해서 내려주므로 여기선 그대로 표시만 함.
 function renderMoneyRankSection(title, list) {
     var html = '<div style="margin-top:8px;"><div style="font-size:11.5px;font-weight:bold;color:#4a148c;margin-bottom:4px;">' + title + '</div>';
     if (!list || !list.length) {
@@ -12253,12 +12256,15 @@ function renderMoneyRankSection(title, list) {
     }
     list.forEach(function(r, idx) {
         var sign = r.momentumPct >= 0 ? '+' : '';
-        var trendText = (r.prices || []).map(function(p) { return toEokCompact(p); }).join(' → ');
+        var priceTrend = (r.prices || []).map(function(p) { return p.toLocaleString() + '만'; }).join(' → ');
+        var countTrend = (r.counts || []).join('→');
+        var warnBadge = r.volumeDrop ? ' <span style="color:#e65100;">⚠️거래량급감구간</span>' : '';
         html += '<div onclick="moveToDong(\'' + esc1(r.region) + '\',\'' + esc1(r.dong) + '\')" style="padding:6px 2px;border-bottom:1px solid #f5f5f5;cursor:pointer;">'
             + '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;font-size:11.5px;">'
             + '<span style="min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;"><span style="color:#999;font-weight:bold;margin-right:4px;">' + (idx + 1) + '</span>' + cleanField(r.region) + ' ' + cleanField(r.dong) + '</span>'
             + '<span style="font-weight:bold;color:#e53935;white-space:nowrap;flex-shrink:0;">' + sign + r.momentumPct + '%</span></div>'
-            + '<div style="font-size:10px;color:#888;margin-top:2px;white-space:nowrap;overflow-x:auto;">' + trendText + '</div>'
+            + '<div style="font-size:10px;color:#888;margin-top:2px;white-space:nowrap;overflow-x:auto;">평당가 ' + priceTrend + '</div>'
+            + '<div style="font-size:10px;color:#aaa;margin-top:1px;">거래량 ' + countTrend + '건 · 상승 ' + r.upTransitions + '/5구간' + warnBadge + '</div>'
             + '</div>';
     });
     html += '</div>';
@@ -12276,7 +12282,7 @@ async function loadSurgeMoneyData() {
         var data = await readJsonResponseSafe(res);
         if (!res.ok) throw new Error((data && data.error) || ('서버 오류(' + res.status + ')'));
         statusBox.style.color = '#999';
-        statusBox.innerText = '최근 6개월(1개월×6구간) · 국민평형(전용 23~25평) 상승모멘텀 기준' + (sido ? ' · ' + sido : ' · 전국');
+        statusBox.innerText = '최근 6개월 평당가 모멘텀(전체 평형·구간당 3건 이상·5구간 중 3회 이상 상승)' + (sido ? ' · ' + sido : ' · 전국');
         body.innerHTML = renderMoneyRankSection('🏢 아파트', data.apt)
             + renderMoneyRankSection('🏘️ 연립다세대·단독', data.villa);
     } catch (e) {
