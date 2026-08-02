@@ -62,16 +62,59 @@ function mergeRanges(a, b) {
 }
 
 /* ════════════════════════════════════
-   법정동별 거래량 순위(topDongs) - 2026-08 추가
-   - "최근 N개월 기준, 법정동 단위로 거래량이 많은 곳 TOP 20"을 아파트/연립다세대 각각
-     따로 보여주기 위한 집계. GROUP BY는 PostgREST의 count() 집계 임베딩 문법
-     (select=region,dong,cnt:count())을 그대로 supabase-js에 넘겨서 DB에서 직접
-     집계하게 함 - 전체 행을 서버로 끌고 와서 JS에서 세는 방식보다 훨씬 빠르고 가벼움.
-   - region 컬럼은 "서울 강남구"처럼 시/도+시군구가 한 문자열로 저장돼 있어(LAWD_CODES
-     참고), 시/도 필터는 region이 그 문자열로 시작하는지(LIKE 'xxx%')로 판단함.
-   - 연립다세대는 villa_trades(연립다세대)+single_trades(단독다가구) 두 테이블로 나뉘어
-     있어, 각각 상위 50개를 뽑아 JS에서 (region,dong) 기준으로 합산한 뒤 다시 정렬함
-     (정확한 전수 합산은 아니지만 참고용 순위로는 충분한 근사치).
+   법정동별 거래량 순위(topDongs) + 가격상승모멘텀(priceMomentum, "돈되는 지역") - 2026-08
+   - 둘 다 (region,dong) 기준 GROUP BY 집계가 필요한데, PostgREST의 count()/avg() "집계
+     임베딩" URL 문법(select=region,dong,cnt:count())은 Supabase 프로젝트에서 기본적으로
+     꺼져 있어(Database → API 설정에서 별도로 켜야 하는 기능) 실제로는 매번 빈 배열만
+     돌아왔음(에러 없이 조용히 실패) - 배포 후 실동작 테스트에서 발견.
+   - 그래서 GROUP BY 자체를 Postgres 함수(RPC)로 옮김. RPC는 일반 SQL 함수라 저 설정과
+     무관하게 항상 동작하고, 전체 행을 서버로 끌고 오지 않고 DB 안에서 이미 집계된 결과
+     (법정동 개수 정도)만 돌려주므로 전국 단위로 조회해도 가볍고 빠름.
+   - ⚠️ 아래 두 함수(rpc_top_dongs, rpc_bucket_avg_price)는 Supabase SQL 편집기에서 딱 한
+     번만 실행해서 만들어 두면 됨(마이그레이션). 이미 만들어져 있다면 이 배포에서는 별도
+     조치 없이 그대로 동작함.
+     ------------------------------------------------------------------
+     create or replace function rpc_top_dongs(p_cutoff int, p_sido text, p_type text, p_limit int default 20)
+     returns table(region text, dong text, cnt bigint)
+     language sql stable as $$
+       select region, dong, count(*) as cnt from (
+         select region, dong from house_trades
+           where p_type = 'apt' and deal_date >= p_cutoff and dong is not null and dong <> ''
+             and (p_sido is null or p_sido = '' or region like p_sido || '%')
+         union all
+         select region, dong from villa_trades
+           where p_type = 'villa' and deal_date >= p_cutoff and dong is not null and dong <> ''
+             and (p_sido is null or p_sido = '' or region like p_sido || '%')
+         union all
+         select region, dong from single_trades
+           where p_type = 'villa' and deal_date >= p_cutoff and dong is not null and dong <> ''
+             and (p_sido is null or p_sido = '' or region like p_sido || '%')
+       ) t
+       group by region, dong order by cnt desc limit p_limit;
+     $$;
+
+     create or replace function rpc_bucket_avg_price(p_start int, p_end int, p_sido text, p_type text)
+     returns table(region text, dong text, avg_price numeric, cnt bigint)
+     language sql stable as $$
+       select region, dong, avg(price) as avg_price, count(*) as cnt from (
+         select region, dong, price from house_trades
+           where p_type = 'apt' and deal_date >= p_start and deal_date < p_end and size >= 66
+             and dong is not null and dong <> ''
+             and (p_sido is null or p_sido = '' or region like p_sido || '%')
+         union all
+         select region, dong, price from villa_trades
+           where p_type = 'villa' and deal_date >= p_start and deal_date < p_end and size >= 66
+             and dong is not null and dong <> ''
+             and (p_sido is null or p_sido = '' or region like p_sido || '%')
+         union all
+         select region, dong, price from single_trades
+           where p_type = 'villa' and deal_date >= p_start and deal_date < p_end and size >= 66
+             and dong is not null and dong <> ''
+             and (p_sido is null or p_sido = '' or region like p_sido || '%')
+       ) t
+       group by region, dong;
+     $$;
+     ------------------------------------------------------------------
 ════════════════════════════════════ */
 const SIDO_LIST = ['서울','부산','대구','인천','광주','대전','울산','세종','경기','강원','충북','충남','전북','전남','경북','경남','제주'];
 function sixMonthsAgoInt(months) {
@@ -80,50 +123,17 @@ function sixMonthsAgoInt(months) {
   const y = d.getFullYear(), m = String(d.getMonth() + 1).padStart(2, '0'), day = String(d.getDate()).padStart(2, '0');
   return parseInt(`${y}${m}${day}`, 10);
 }
-async function getTopDongsRaw(table, cutoff, sido, limit) {
-  try {
-    let q = supabase.from(table).select('region,dong,cnt:count()')
-      .gte('deal_date', cutoff).not('dong', 'is', null).neq('dong', '');
-    if (sido) q = q.like('region', sido + '%');
-    q = q.order('cnt', { ascending: false }).limit(limit);
-    const { data, error } = await q;
-    if (error) { console.warn(`topDongs: ${table} 조회 실패 -`, error.message); return []; }
-    return (data || []).map(r => ({ region: r.region, dong: r.dong, count: r.cnt }));
-  } catch (e) { console.warn(`topDongs: ${table} 조회 예외 -`, e.message); return []; }
-}
 async function getTopDongs(type, cutoff, sido, limit) {
-  if (type === 'apt') {
-    return await getTopDongsRaw('house_trades', cutoff, sido, limit);
-  }
-  // 연립다세대·단독 - 두 테이블을 넉넉히(상위 50개씩) 뽑아 (region,dong) 기준으로 합산
-  const [villaRows, singleRows] = await Promise.all([
-    getTopDongsRaw('villa_trades', cutoff, sido, 50),
-    getTopDongsRaw('single_trades', cutoff, sido, 50),
-  ]);
-  const merged = {};
-  [...villaRows, ...singleRows].forEach(r => {
-    const key = r.region + '|' + r.dong;
-    if (!merged[key]) merged[key] = { region: r.region, dong: r.dong, count: 0 };
-    merged[key].count += r.count;
-  });
-  return Object.values(merged).sort((a, b) => b.count - a.count).slice(0, limit);
+  try {
+    const { data, error } = await supabase.rpc('rpc_top_dongs', {
+      p_cutoff: cutoff, p_sido: sido || null, p_type: type, p_limit: limit,
+    });
+    if (error) { console.warn(`topDongs(rpc): ${type} 조회 실패 -`, error.message); return []; }
+    return (data || []).map(r => ({ region: r.region, dong: r.dong, count: Number(r.cnt) }));
+  } catch (e) { console.warn(`topDongs(rpc): ${type} 조회 예외 -`, e.message); return []; }
 }
 
-/* ════════════════════════════════════
-   법정동별 가격상승모멘텀(priceMomentum, "돈되는 지역") - 2026-08 추가
-   - 최근 36개월을 6개월 단위 6구간으로 나눠(가장 오래된 구간→가장 최근 구간 순), 각
-     구간의 전용면적 20평(≒66㎡, size는 Math.floor(㎡) 정수 저장이라 size>=66) 이상
-     물건의 평균거래가(avg(price), price는 이미 만원 단위)를 (region,dong) 별로 구함.
-   - 6구간 전부에 거래가 있는 (region,dong)만 후보로 삼고(중간에 거래가 끊긴 곳은
-     추세를 믿기 어려우므로 제외), momentumPct = (마지막구간평균 - 첫구간평균) /
-     첫구간평균 * 100 로 상승모멘텀을 계산해 내림차순 정렬.
-   - PostgREST 집계 임베딩 문법(select=region,dong,avgPrice:avg(price),cnt:count())으로
-     DB에서 직접 GROUP BY + AVG를 계산함 - topDongs의 count() 집계와 같은 방식.
-   - 연립다세대(villa)는 villa_trades+single_trades 두 테이블을 구간별로 합쳐(거래건수
-     가중평균) 하나의 평균가로 취급함.
-   - 구간 쿼리(최대 6구간 × 테이블 1~2개)는 Promise.all로 병렬 실행해 응답시간을 줄임.
-════════════════════════════════════ */
-const MOMENTUM_PYUNG20_SIZE = 66; // 20평(66.115㎡) 이상 - size는 floor(㎡) 정수 저장
+const MOMENTUM_PYUNG20_SIZE = 66; // 20평(66.115㎡) 이상 - size는 floor(㎡) 정수 저장(RPC 내부에도 하드코딩됨)
 function monthsAgoInt(months) {
   const d = new Date();
   d.setMonth(d.getMonth() - months);
@@ -148,39 +158,28 @@ function momentumBuckets() {
   }
   return buckets;
 }
-async function getBucketAvgPrices(tables, start, end, sido) {
-  // key "region|dong" -> { region, dong, sum(가중합), count }
-  const results = await Promise.all(tables.map(async (table) => {
-    try {
-      let q = supabase.from(table).select('region,dong,avgPrice:avg(price),cnt:count()')
-        .gte('deal_date', start).lt('deal_date', end)
-        .gte('size', MOMENTUM_PYUNG20_SIZE)
-        .not('dong', 'is', null).neq('dong', '');
-      if (sido) q = q.like('region', sido + '%');
-      const { data, error } = await q;
-      if (error) { console.warn(`priceMomentum: ${table} 조회 실패 -`, error.message); return []; }
-      return data || [];
-    } catch (e) { console.warn(`priceMomentum: ${table} 조회 예외 -`, e.message); return []; }
-  }));
-  const acc = {};
-  results.flat().forEach(r => {
-    if (!r.cnt || !r.avgPrice) return;
-    const key = r.region + '|' + r.dong;
-    if (!acc[key]) acc[key] = { region: r.region, dong: r.dong, sum: 0, count: 0 };
-    acc[key].sum += r.avgPrice * r.cnt;
-    acc[key].count += r.cnt;
-  });
-  return acc;
+async function getBucketAvgPrices(type, start, end, sido) {
+  try {
+    const { data, error } = await supabase.rpc('rpc_bucket_avg_price', {
+      p_start: start, p_end: end, p_sido: sido || null, p_type: type,
+    });
+    if (error) { console.warn(`priceMomentum(rpc): ${type} 조회 실패 -`, error.message); return {}; }
+    const acc = {};
+    (data || []).forEach(r => {
+      const key = r.region + '|' + r.dong;
+      acc[key] = { region: r.region, dong: r.dong, avg: Number(r.avg_price), count: Number(r.cnt) };
+    });
+    return acc;
+  } catch (e) { console.warn(`priceMomentum(rpc): ${type} 조회 예외 -`, e.message); return {}; }
 }
 async function getPriceMomentum(type, sido, limit) {
-  const tables = type === 'villa' ? ['villa_trades', 'single_trades'] : ['house_trades'];
   const buckets = momentumBuckets();
-  const bucketMaps = await Promise.all(buckets.map(b => getBucketAvgPrices(tables, b.start, b.end, sido)));
+  const bucketMaps = await Promise.all(buckets.map(b => getBucketAvgPrices(type, b.start, b.end, sido)));
   const firstMap = bucketMaps[0], lastMap = bucketMaps[5];
+  // 6구간 전부에 거래가 있는 (region,dong)만 후보로 삼음(중간에 거래가 끊긴 곳은 추세를 믿기 어려움)
   const keys = Object.keys(firstMap).filter(k => bucketMaps.every(m => m[k] && m[k].count > 0));
   const rankings = keys.map(k => {
-    const firstAvg = firstMap[k].sum / firstMap[k].count;
-    const lastAvg = lastMap[k].sum / lastMap[k].count;
+    const firstAvg = firstMap[k].avg, lastAvg = lastMap[k].avg;
     if (!firstAvg) return null;
     return {
       region: firstMap[k].region,
