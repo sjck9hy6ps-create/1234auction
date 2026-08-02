@@ -103,7 +103,9 @@ export default async function handler(req, res) {
 
     const commonParams = { sigunguCd, bjdongCd, platGbCd: gbCd, bun, ji: jiParam };
     const [titleResult, priceResult, floorResult, exposResult] = await Promise.all([
-      fetchBld('getBrTitleInfo', commonParams),
+      // 대단지는 같은 지번에 동마다(+부속건물까지) 표제부가 여러 건 잡혀 기본 20건을 넘는
+      // 경우가 있어(안산 고잔주공9단지 실측으로 확인) numOfRows를 넉넉히 늘림
+      fetchBld('getBrTitleInfo', { ...commonParams, numOfRows: '100' }),
       fetchBld('getBrHsprcInfo', commonParams),
       fetchBld('getBrFlrOulnInfo', { ...commonParams, numOfRows: '100' }),
       fetchBld('getBrExposPubuseAreaInfo', { ...commonParams, numOfRows: '200' }),
@@ -136,6 +138,17 @@ export default async function handler(req, res) {
       floorRaw: floorResult.raw,
       exposRaw: exposResult.raw,
     } : undefined;
+    // 같은 지번에 표제부가 2건 이상 잡히면(대단지) pickBestItem이 무엇 중에서 골랐는지
+    // 바로 확인할 수 있도록 후보 요약을 항상 같이 내려줌(엉뚱한 동이 선택된 것 같을 때
+    // 브라우저 네트워크 탭에서 바로 진단 가능하도록 - 원인 재현마다 서버 코드를 다시
+    // 뜯어보지 않아도 되게 하기 위함).
+    const titleCandidates = titleItems.length > 1 ? titleItems.map(it => ({
+      bldNm: it.get('bldNm'),
+      mainPurps: it.get('mainPurpsCdNm'),
+      grndFlrCnt: it.get('grndFlrCnt'),
+      hhldCnt: it.get('hhldCnt'),
+      picked: it === titleItem,
+    })) : undefined;
 
     // ── 3. 캐시에 저장 (write-through) ──
     const { error: upsertErr } = await supabase.from('building_info').upsert({
@@ -152,7 +165,7 @@ export default async function handler(req, res) {
     }, { onConflict: 'sigungu_cd,bjdong_cd,bun,ji,bld_nm' });
     if (upsertErr) console.error('building_info 캐시 저장 에러:', upsertErr.message);
 
-    return res.status(200).json({ title, price, floors, exposAreas, cached: false, debug });
+    return res.status(200).json({ title, price, floors, exposAreas, cached: false, debug, titleCandidates });
   } catch (err) {
     console.error('건축물대장 조회 에러:', err.message);
     return res.status(500).json({ error: err.message });
@@ -283,12 +296,13 @@ function getAny(it, tags) {
    1) dongNo(동번호, 예: "901"/"901동")가 주어지면 표제부 bldNm에서 숫자만 뽑아 정확히
       일치하는 항목을 우선 선택 (가장 신뢰도 높은 매칭)
    2) bldNm(단지명, 예: "주공9단지")이 주어지면 기존처럼 텍스트 유사 매칭
-   3) 위 둘 다 실패하면(오래된 단지라 표제부 bldNm이 비어있거나 동번호 표기가 없는 경우)
-      주용도(mainPurpsCdNm)에 "공동주택"이 포함된 항목들 중 지상층수(grndFlrCnt)가 가장
-      높은(동률이면 세대수hhldCnt가 더 큰) 것을 선택. 같은 지번에 경로당·관리동·변전실
-      같은 1~2층짜리 부속건물이 함께 등록돼 있으면, items[0]을 그냥 쓸 때 이런 부속건물이
-      뽑혀서 "총 층수 1층, 건폐율/용적률 0%/0%" 식으로 잘못 표시되는 문제가 있었음
-      (2026-08 안산 고잔주공9단지 실측으로 확인됨)
+   3) 위 둘 다 실패하면(오래된 단지라 표제부 bldNm이 비어있거나 동번호 표기가 없는 경우):
+      3-a) 세대수(hhldCnt)가 등록된 항목 중 세대수가 가장 큰 것 (가장 신뢰도 높은 기준 -
+           경로당·관리동·변전실 같은 부속건물은 세대수가 0/공란인 경우가 대부분)
+      3-b) 그마저 없으면 주용도(mainPurpsCdNm)에 "공동주택"이 포함된 항목 중 지상층수가
+           가장 높은 것. 같은 지번에 1~2층짜리 부속건물이 함께 등록돼 있으면, items[0]을
+           그냥 쓸 때 이런 부속건물이 뽑혀서 "총 층수 1층, 건폐율/용적률 0%/0%" 식으로
+           잘못 표시되는 문제가 있었음 (2026-08 안산 고잔주공9단지 실측으로 확인됨)
    4) 그래도 못 찾으면 items[0] (최후 안전장치, 기존 동작 유지) */
 function pickBestItem(items, bldNm, dongNo) {
   if (!items.length) return null;
@@ -316,6 +330,17 @@ function pickBestItem(items, bldNm, dongNo) {
     }
   }
 
+  // 3-a) 세대수(hhldCnt)가 등록된 항목이 있으면 그 중 세대수가 가장 큰 것을 우선함.
+  // 경로당·관리동·변전실 같은 부속건물은 보통 세대수가 0/공란이라, mainPurps 텍스트가
+  // 애매하거나 표기가 없는 경우에도 이 기준이 가장 신뢰도 높은 "진짜 주거동" 판별법임.
+  const withHouseholds = items.filter(it => (parseInt(it.get('hhldCnt'), 10) || 0) > 0);
+  if (withHouseholds.length) {
+    withHouseholds.sort((a, b) => (parseInt(b.get('hhldCnt'), 10) || 0) - (parseInt(a.get('hhldCnt'), 10) || 0));
+    return withHouseholds[0];
+  }
+
+  // 3-b) 세대수 정보가 아예 없으면(오래된 단지 등) 주용도가 "공동주택"인 항목 중
+  // 지상층수가 가장 높은 것을 선택
   const apartmentItems = items.filter(it => (it.get('mainPurpsCdNm') || '').includes('공동주택'));
   if (apartmentItems.length) {
     apartmentItems.sort((a, b) => {
