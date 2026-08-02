@@ -12230,6 +12230,26 @@ async function loadSurgeHotData() {
         statusBox.innerText = '불러오기 실패: ' + e.message;
     }
 }
+// 돈되는 지역 전용 렌더 - 순위/모멘텀% 외에 6구간(1개월×6) 가격 흐름을 그대로 보여줌
+function renderMoneyRankSection(title, list) {
+    var html = '<div style="margin-top:8px;"><div style="font-size:11.5px;font-weight:bold;color:#4a148c;margin-bottom:4px;">' + title + '</div>';
+    if (!list || !list.length) {
+        html += '<div style="font-size:11px;color:#aaa;padding:6px 0;">해당 기간/조건에 데이터가 부족합니다.</div></div>';
+        return html;
+    }
+    list.forEach(function(r, idx) {
+        var sign = r.momentumPct >= 0 ? '+' : '';
+        var trendText = (r.prices || []).map(function(p) { return toEok(p); }).join(' → ');
+        html += '<div style="padding:5px 0;border-bottom:1px solid #f5f5f5;">'
+            + '<div style="display:flex;justify-content:space-between;align-items:center;font-size:11.5px;">'
+            + '<span><span style="color:#999;font-weight:bold;margin-right:4px;">' + (idx + 1) + '</span>' + cleanField(r.region) + ' ' + cleanField(r.dong) + '</span>'
+            + '<span style="font-weight:bold;color:#e53935;white-space:nowrap;">' + sign + r.momentumPct + '%</span></div>'
+            + '<div style="font-size:10px;color:#888;margin-top:2px;">' + trendText + '</div>'
+            + '</div>';
+    });
+    html += '</div>';
+    return html;
+}
 async function loadSurgeMoneyData() {
     var sido = document.getElementById('surge-sido-select').value;
     var statusBox = document.getElementById('surge-panel-status');
@@ -12242,13 +12262,9 @@ async function loadSurgeMoneyData() {
         var data = await readJsonResponseSafe(res);
         if (!res.ok) throw new Error((data && data.error) || ('서버 오류(' + res.status + ')'));
         statusBox.style.color = '#999';
-        statusBox.innerText = '최근 36개월(6개월×6구간) · 전용 20평 이상 상승모멘텀 기준' + (sido ? ' · ' + sido : ' · 전국');
-        var fmt = function(r) {
-            var sign = r.momentumPct >= 0 ? '+' : '';
-            return sign + r.momentumPct + '%';
-        };
-        body.innerHTML = renderRankSection('🏢 아파트', data.apt, '%', fmt)
-            + renderRankSection('🏘️ 연립다세대·단독', data.villa, '%', fmt);
+        statusBox.innerText = '최근 6개월(1개월×6구간) · 국민평형(전용 23~25평) 상승모멘텀 기준' + (sido ? ' · ' + sido : ' · 전국');
+        body.innerHTML = renderMoneyRankSection('🏢 아파트', data.apt)
+            + renderMoneyRankSection('🏘️ 연립다세대·단독', data.villa);
     } catch (e) {
         statusBox.style.color = '#e53935';
         statusBox.innerText = '불러오기 실패: ' + e.message;
