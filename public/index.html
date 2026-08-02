@@ -7420,10 +7420,14 @@ function floorTierLabel(floor) {
 function elevatorStatusText(hasElevator) {
     return hasElevator === true ? '승강기O' : (hasElevator === false ? '승강기X' : '승강기 미확인');
 }
-// 단지의 승강기 유무는 건축HUB API(loadBuildingInfo→/api/get-building)를 단지별로 조회해야
-// 알 수 있음 - buildingElevatorCache에 값이 있으면 그대로 재사용하고, 조회 중이면 같은
-// Promise를 공유해서(여러 후보가 같은 단지를 가리켜도) 중복 요청을 막음.
-async function fetchElevatorForApt(apt, lat, lon) {
+// 단지의 승강기 유무·세대수는 건축HUB API(loadBuildingInfo→/api/get-building)를 단지별로
+// 조회해야 알 수 있음 - buildingElevatorCache에 값이 있으면 그대로 재사용하고, 조회 중이면
+// 같은 Promise를 공유해서(여러 후보가 같은 단지를 가리켜도) 중복 요청을 막음.
+// ⚠️ 2026-08: 원래 승강기 유무(boolean)만 캐싱했는데, "나홀로 아파트 vs 대단지 비교 신빙성"
+// 문제(규모보정)에 세대수(hhldCnt)도 필요해져서 캐시에 저장하는 값을 {hasElevator, hhldCnt}
+// 객체로 확장함. fetchElevatorForApt()는 기존 호출부(boolean만 필요한 곳)가 그대로 쓸 수
+// 있도록 남겨두고 내부에서 이 공용 캐시를 재사용함(건축HUB API를 두 번 부르지 않도록).
+async function fetchBuildingScaleInfo(apt, lat, lon) {
     var l = apt.latest || {};
     var key = [l.dong, l.name, l.bunji, l.road_name, l.main_num, l.sub_num].join('|').toLowerCase();
     var cached = buildingElevatorCache[key];
@@ -7432,20 +7436,44 @@ async function fetchElevatorForApt(apt, lat, lon) {
     var p = (async function() {
         try {
             var info = await loadBuildingInfo(apt, lat, lon);
-            return (info && info.title) ? ((info.title.rideElvtCnt || 0) + (info.title.emgenElvtCnt || 0)) > 0 : null;
-        } catch (e) { return null; }
+            var t = info && info.title;
+            return {
+                hasElevator: t ? ((t.rideElvtCnt || 0) + (t.emgenElvtCnt || 0)) > 0 : null,
+                hhldCnt: (t && t.hhldCnt) ? t.hhldCnt : null,
+            };
+        } catch (e) { return { hasElevator: null, hhldCnt: null }; }
     })();
     buildingElevatorCache[key] = p;
     p.then(function(result) { buildingElevatorCache[key] = result; }); // 완료되면 Promise 대신 결과값으로 교체
     return p;
 }
-function setAiCompElevatorCell(i, hasElevator) {
-    var el = document.getElementById('ai-comp-elev-' + i);
-    if (el) el.innerText = elevatorStatusText(hasElevator);
+async function fetchElevatorForApt(apt, lat, lon) {
+    var r = await fetchBuildingScaleInfo(apt, lat, lon);
+    return r ? r.hasElevator : null;
 }
-// 후보가 최대 40건까지 나올 수 있어 승강기 조회를 한꺼번에 다 쏘지 않고(건축HUB API 부하 우려)
-// 5개씩만 동시에 처리하는 워커풀 방식으로 돌림 - 같은 단지가 여러 후보에 겹치면
-// fetchElevatorForApt의 캐시가 중복 조회를 막아줘서 실제 API 호출 수는 더 적음.
+function setAiCompElevatorCell(i, hasElevator, hhldCnt) {
+    var el = document.getElementById('ai-comp-elev-' + i);
+    if (el) el.innerText = elevatorStatusText(hasElevator) + scaleLabel(hhldCnt);
+}
+/* 세대수 규모 라벨 - "나홀로/소규모 vs 대단지" 구분을 후보 목록에서도 바로 보이게 함.
+   임계값은 통계적으로 도출된 기준이 아니라 통상적인 실무 구분(300세대 이상을 대단지로,
+   150세대 미만을 소규모·나홀로로 보는 경우가 많음)을 근사한 값입니다. */
+var SMALL_COMPLEX_HHLD_MAX = 150;
+var LARGE_COMPLEX_HHLD_MIN = 300;
+function scaleLabel(hhldCnt) {
+    if (!hhldCnt) return '';
+    if (hhldCnt >= LARGE_COMPLEX_HHLD_MIN) return ' · ' + hhldCnt + '세대(대단지)';
+    if (hhldCnt < SMALL_COMPLEX_HHLD_MAX) return ' · ' + hhldCnt + '세대(소규모)';
+    return ' · ' + hhldCnt + '세대';
+}
+// 대단지 비교물건 가격에 곱하는 규모격차 할인율 - 통계적으로 도출된 값이 아니라, 대단지가
+// 브랜드·유동성 프리미엄으로 나홀로/소규모 대비 통상 더 비싸게 거래되는 실무 경향을 근사한
+// 값입니다(7% 할인). getCompEstValue()에서 subject가 소규모(SMALL_COMPLEX_HHLD_MAX 미만)일
+// 때만, 대단지(LARGE_COMPLEX_HHLD_MIN 이상) 비교물건에 한해 적용합니다.
+var SCALE_DISCOUNT_FACTOR = 0.93;
+// 후보가 최대 40건까지 나올 수 있어 승강기·세대수 조회를 한꺼번에 다 쏘지 않고(건축HUB API
+// 부하 우려) 5개씩만 동시에 처리하는 워커풀 방식으로 돌림 - 같은 단지가 여러 후보에 겹치면
+// fetchBuildingScaleInfo의 캐시가 중복 조회를 막아줘서 실제 API 호출 수는 더 적음.
 var AI_COMP_ELEVATOR_CONCURRENCY = 5;
 async function loadElevatorStatusesForCandidates(candidates) {
     var queue = candidates.map(function(c, i) { return i; });
@@ -7453,10 +7481,11 @@ async function loadElevatorStatusesForCandidates(candidates) {
         while (queue.length) {
             var i = queue.shift();
             var c = candidates[i];
-            if (!c.apt || !c.coordLat || !c.coordLon) { setAiCompElevatorCell(i, null); continue; }
-            var hasElevator = await fetchElevatorForApt(c.apt, c.coordLat, c.coordLon);
-            c.hasElevator = hasElevator; // addSelectedAiComps()가 그대로 재사용
-            setAiCompElevatorCell(i, hasElevator);
+            if (!c.apt || !c.coordLat || !c.coordLon) { setAiCompElevatorCell(i, null, null); continue; }
+            var scale = await fetchBuildingScaleInfo(c.apt, c.coordLat, c.coordLon);
+            c.hasElevator = scale ? scale.hasElevator : null; // addSelectedAiComps()가 그대로 재사용
+            c.hhldCnt = scale ? scale.hhldCnt : null;          // 규모보정(getCompEstValue)에 씀
+            setAiCompElevatorCell(i, c.hasElevator, c.hhldCnt);
         }
     }
     var workers = [];
@@ -7517,8 +7546,10 @@ function addSelectedAiComps() {
             amount: parseInt(t.amount), area: t.area, pyung: toPyung(t.area),
             // renderAiCompList()가 이미 loadElevatorStatusesForCandidates()로 조회해 둔 값을
             // 그대로 재사용함(2026-08) - 목록에서 "확인 중..."이 아직 안 끝났으면 undefined일 수
-            // 있으니 그 경우만 null(미확인)로 남김.
-            floor: t.floor, buildYear: t.build_year, hasElevator: (cand.hasElevator === undefined ? null : cand.hasElevator)
+            // 있으니 그 경우만 null(미확인)로 남김. hhldCnt(세대수)도 같은 조회에서 함께 얻어와
+            // getCompEstValue()의 규모보정(나홀로 아파트 vs 대단지)에 사용함.
+            floor: t.floor, buildYear: t.build_year, hasElevator: (cand.hasElevator === undefined ? null : cand.hasElevator),
+            hhldCnt: (cand.hhldCnt === undefined ? null : cand.hhldCnt)
         });
         added++;
     }
@@ -7554,20 +7585,21 @@ async function confirmAddComparable(auctionId) {
     var dup = a.comparables.some(function(c) { return c.name === pm.name && c.date === pm.date && c.amount === pm.amount; });
     if (dup) { alert('이미 등록된 비교물건입니다.'); closeCompPickModal(); return; }
  
-    setStatus('승강기 정보 확인 중...');
-    var hasElevator = null;
+    setStatus('승강기·세대수 정보 확인 중...');
+    var hasElevator = null, hhldCnt = null;
     try {
         var info = await loadBuildingInfo(pm.apt, pm.lat, pm.lon);
         if (info && info.title) {
             hasElevator = ((info.title.rideElvtCnt || 0) + (info.title.emgenElvtCnt || 0)) > 0;
+            hhldCnt = info.title.hhldCnt || null; // getCompEstValue()의 규모보정에 사용
         }
     } catch (e) { /* 조회 실패해도 나머지 정보로 등록 진행 */ }
     setStatus('');
- 
+
     a.comparables.push({
         name: pm.name, dong: pm.dong, date: pm.date, amount: pm.amount,
         area: pm.area, pyung: pm.area > 0 ? toPyung(pm.area) : null,
-        floor: pm.floor, buildYear: pm.buildYear, hasElevator: hasElevator
+        floor: pm.floor, buildYear: pm.buildYear, hasElevator: hasElevator, hhldCnt: hhldCnt
     });
     var saved = await saveAuctionAPI(a);
     var idx = auctionList.findIndex(function(x) { return x.id === saved.id; });
@@ -7596,7 +7628,7 @@ function renderCompListBox() {
         var noteCount = getSiteNotesForBuilding(c.name, c.dong).length;
         var noteArgs = "'" + String(c.name || '').replace(/'/g, "\\'") + "','" + String(c.dong || '').replace(/'/g, "\\'") + "','',null,null";
         html += '<div class="comp-item"><span>' + c.name + ' · ' + (c.date || '-') + ' · ' + toEok(String(c.amount))
-            + ' · ' + (c.pyung ? c.pyung + '평' : '-') + ' · ' + floorTierLabel(c.floor) + ' · ' + (c.buildYear || '-') + '년 · ' + elevatorStatusText(c.hasElevator) + '</span>'
+            + ' · ' + (c.pyung ? c.pyung + '평' : '-') + ' · ' + floorTierLabel(c.floor) + ' · ' + (c.buildYear || '-') + '년 · ' + elevatorStatusText(c.hasElevator) + scaleLabel(c.hhldCnt) + '</span>'
             + '<span style="cursor:pointer;color:#5e35b1;font-size:11px;margin-left:6px;" title="지도에서 위치 확인" onclick="focusCompOnMap(' + i + ')">📍</span>'
             + '<span style="cursor:pointer;color:' + (noteCount ? '#e65100;font-weight:bold;' : '#bbb;') + 'font-size:11px;margin-left:6px;" title="이 건물 임장메모 보기/작성" onclick="openSiteNoteModal(' + noteArgs + ')">📝' + (noteCount ? noteCount : '') + '</span>'
             + '<span class="comp-item-remove" onclick="removeComparable(' + i + ')">✕</span></div>';
@@ -7664,6 +7696,15 @@ function getCompEstValue() {
     var targetPyung = parseFloat(document.getElementById('a-pyung').value) || null;
     if (!targetPyung) return null;
 
+    // ⚠️ 2026-08 규모보정: 이 물건(subject)이 나홀로/소규모 단지인데 등록된 비교물건 중
+    // 일부가 세대수 훨씬 많은 대단지라면, 그 비교물건의 평단가를 그대로 쓰면 과대평가될 수
+    // 있음(대단지는 브랜드·유동성 프리미엄으로 나홀로 대비 통상 더 비싸게 거래됨) - 대단지
+    // 비교물건에만 SCALE_DISCOUNT_FACTOR를 곱해 하향 보정함. subject 세대수를 모르면(건축물
+    // 대장 조회 전이거나 실패) 적용하지 않음 - 근거 없는 보정을 함부로 걸지 않기 위함.
+    var subjectHhldCnt = (pendingAuctionBuildingInfo && pendingAuctionBuildingInfo.title && pendingAuctionBuildingInfo.title.hhldCnt) || null;
+    var subjectIsSmall = subjectHhldCnt !== null && subjectHhldCnt < SMALL_COMPLEX_HHLD_MAX;
+    var scaleAdjustedCount = 0;
+
     var now = new Date();
     var adjustedPpps = [];
     var oldestDays = null;
@@ -7680,6 +7721,10 @@ function getCompEstValue() {
             if (Math.abs(factor - 1) > 0.001) anyAdjusted = true;
             var days = Math.round((now.getTime() - compDate.getTime()) / (1000 * 60 * 60 * 24));
             if (oldestDays === null || days > oldestDays) oldestDays = days;
+        }
+        if (subjectIsSmall && c.hhldCnt && c.hhldCnt >= LARGE_COMPLEX_HHLD_MIN) {
+            factor *= SCALE_DISCOUNT_FACTOR;
+            scaleAdjustedCount++;
         }
         adjustedPpps.push(rawPpp * factor);
     });
@@ -7724,6 +7769,9 @@ function getCompEstValue() {
         outlierCount: outlierCount,
         oldestDays: oldestDays,
         anyAdjusted: anyAdjusted,
+        scaleAdjustedCount: scaleAdjustedCount,
+        subjectIsSmall: subjectIsSmall,
+        subjectHhldCnt: subjectHhldCnt,
     };
 }
 // "34.19㎡(10.34평)" 형식의 문자열에서 ㎡ 앞의 숫자만 뽑아냄 (AI가 추출한 대지권 면적 파싱용)
@@ -8330,6 +8378,12 @@ function calcCompValuation() {
         // IQR 밖 극단값을 걸러내고 계산했으면(getCompEstValue 참고) 몇 건 뺐는지 알려줌 -
         // 비교물건 수가 갑자기 줄어든 이유를 바로 알 수 있게.
         if (est.outlierCount > 0) freshInner += '<span style="color:#e65100;font-size:9.5px;margin-left:5px;">⚠️ 이상치 ' + est.outlierCount + '건 제외(IQR 기준)</span>';
+        // 규모보정 배지 - 이 물건이 소규모/나홀로 단지(subjectHhldCnt < 150세대)인데 등록된
+        // 비교물건 중 대단지(300세대 이상)가 섞여 있으면, 그 비교물건 가격에 할인율을 적용해
+        // 계산했다는 사실을 알려줌(getCompEstValue의 SCALE_DISCOUNT_FACTOR 참고).
+        if (est.scaleAdjustedCount > 0) {
+            freshInner += '<span style="color:#6a1b9a;font-size:9.5px;margin-left:5px;" title="이 물건은 소규모/나홀로 단지(' + (est.subjectHhldCnt || '?') + '세대)로 추정되어, 비교물건 중 대단지(300세대 이상) ' + est.scaleAdjustedCount + '건에 규모격차 할인(' + Math.round((1 - SCALE_DISCOUNT_FACTOR) * 100) + '%)을 적용했습니다.">🏘️ 규모보정 적용(대단지 ' + est.scaleAdjustedCount + '건 할인)</span>';
+        }
         if (freshInner) freshBadge = '<div style="margin:2px 0 4px;">' + freshInner + '</div>';
         mainHtml = '<div class="margin-result">'
             + '<div class="margin-result-title">💡 비교물건 ' + est.count + '개 기반 시세분석 (목표마진 ' + toEok(String(targetMargin)) + ' 역산)</div>'
