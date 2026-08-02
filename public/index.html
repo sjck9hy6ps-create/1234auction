@@ -397,6 +397,18 @@ tr:hover td { background:#fffde7; }
 @media (max-width: 640px) {
     #bid-case-panel { width: calc(100vw - 16px); right: 8px; bottom: 60px; }
 }
+/* 입찰예정물건 일괄등록 패널 - 낙찰사례 패널(#bid-case-panel)과 같은 자리에 뜨되 서로 닫아줌.
+   ⚠️ 2026-08: 이 규칙이 누락돼 있으면 패널이 기본 display:block(일반 블록 요소)으로 페이지
+   흐름에 끼어 있게 되어, openBidTargetPanel()이 style.display를 토글해도 이미 보이는 상태라
+   "block"↔"none" 전환이 눈에 띄는 변화 없이 동작하는 것처럼 보이는(사실상 안 열리는) 버그가 있었음. */
+#bid-target-panel {
+    position:absolute; bottom:70px; right:14px; z-index:10;
+    background:white; border-radius:12px; width:340px; max-height:75vh;
+    overflow-y:auto; box-shadow:0 4px 16px rgba(0,0,0,0.18); display:none;
+}
+@media (max-width: 640px) {
+    #bid-target-panel { width: calc(100vw - 16px); right: 8px; bottom: 60px; }
+}
 @media (max-width: 640px) {
     #search-box {
         left: 8px; right: 8px; top: 8px;
