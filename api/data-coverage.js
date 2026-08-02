@@ -93,24 +93,31 @@ function mergeRanges(a, b) {
        group by region, dong order by cnt desc limit p_limit;
      $$;
 
-     drop function if exists rpc_bucket_avg_price(int, int, text, text);
+     -- ⚠️ 2026-08: avg_price를 "총 매매가"가 아니라 "평당가(만원/평 = price/size*3.305785)"로
+     -- 바꿈. 국민평형(23~25평)만 보면 단지별 평형 차이를 무시할 수 있어 좋지만, 그만큼 표본이
+     -- 작아져서 소도시에서는 우연한 편차가 순위 상위권을 차지하는 문제가 있었음. 평당가로
+     -- 정규화하면 모든 평형의 거래를 다 써도 서로 비교 가능해져서 표본이 훨씬 커짐.
+     -- (파라미터 목록은 그대로라 DROP 없이 CREATE OR REPLACE만으로 교체됨)
      create or replace function rpc_bucket_avg_price(p_start int, p_end int, p_sido text, p_type text, p_min_size int, p_max_size int)
      returns table(region text, dong text, avg_price numeric, cnt bigint)
      language sql stable as $$
-       select region, dong, avg(price) as avg_price, count(*) as cnt from (
-         select region, dong, price from house_trades
+       select region, dong,
+         avg((price::numeric / nullif(size, 0)) * 3.305785) as avg_price,
+         count(*) as cnt
+       from (
+         select region, dong, price, size from house_trades
            where p_type = 'apt' and deal_date >= p_start and deal_date < p_end
              and size >= p_min_size and size <= p_max_size
              and dong is not null and dong <> ''
              and (p_sido is null or p_sido = '' or region like p_sido || '%')
          union all
-         select region, dong, price from villa_trades
+         select region, dong, price, size from villa_trades
            where p_type = 'villa' and deal_date >= p_start and deal_date < p_end
              and size >= p_min_size and size <= p_max_size
              and dong is not null and dong <> ''
              and (p_sido is null or p_sido = '' or region like p_sido || '%')
          union all
-         select region, dong, price from single_trades
+         select region, dong, price, size from single_trades
            where p_type = 'villa' and deal_date >= p_start and deal_date < p_end
              and size >= p_min_size and size <= p_max_size
              and dong is not null and dong <> ''
@@ -137,10 +144,20 @@ async function getTopDongs(type, cutoff, sido, limit) {
   } catch (e) { console.warn(`topDongs(rpc): ${type} 조회 예외 -`, e.message); return []; }
 }
 
-// 국민평형(23~25평) - 1평=3.305785㎡, 평 단위 반올림 경계로 환산하면 대략 74~84㎡.
-// size는 floor(㎡) 정수 저장이라 74<=size<=84로 필터링함(RPC에도 그대로 파라미터로 전달).
-const MOMENTUM_SIZE_MIN = 74;
-const MOMENTUM_SIZE_MAX = 84;
+// 2026-08: 국민평형(23~25평)만 보던 걸 폐지하고 전체 평형을 다 씀 - 대신 avg_price가
+// "평당가"로 바뀌었으니(RPC 참고) 평형이 달라도 그대로 비교 가능함. size 범위는 데이터
+// 오류(0㎡ 등) 배제용 최소한의 안전장치일 뿐, 더 이상 특정 평형대를 걸러내는 필터가 아님.
+const MOMENTUM_SIZE_MIN = 10;
+const MOMENTUM_SIZE_MAX = 300;
+// 표본 신뢰도 필터 - 구간당 거래건수가 이보다 적으면(우연한 편차일 가능성이 큼) 그 법정동은
+// 순위 후보에서 아예 제외함.
+const MOMENTUM_MIN_BUCKET_COUNT = 3;
+// 추세 일관성 필터 - 6구간(=5번의 구간 전환) 중 상승한 횟수가 이보다 적으면 제외함. 처음↔
+// 마지막 구간만 비교하면 중간에 들쭉날쭉해도 "모멘텀"으로 잡히는 문제를 막기 위함.
+const MOMENTUM_MIN_UP_TRANSITIONS = 3;
+// 거래량 급감 경고 - 직전 구간 대비 거래량이 이 비율 미만으로 줄면 신뢰도가 떨어진다고 보고
+// 결과에서 완전히 빼지는 않되(정보 자체는 유의미할 수 있어서) 프론트에 경고로 표시함.
+const MOMENTUM_VOLUME_DROP_RATIO = 0.3;
 function monthsAgoInt(months) {
   const d = new Date();
   d.setMonth(d.getMonth() - months);
@@ -184,21 +201,31 @@ async function getBucketAvgPrices(type, start, end, sido) {
 async function getPriceMomentum(type, sido, limit) {
   const buckets = momentumBuckets();
   const bucketMaps = await Promise.all(buckets.map(b => getBucketAvgPrices(type, b.start, b.end, sido)));
-  const firstMap = bucketMaps[0], lastMap = bucketMaps[5];
-  // 6구간 전부에 거래가 있는 (region,dong)만 후보로 삼음(중간에 거래가 끊긴 곳은 추세를 믿기 어려움)
-  const keys = Object.keys(firstMap).filter(k => bucketMaps.every(m => m[k] && m[k].count > 0));
+  const firstMap = bucketMaps[0];
+  // 표본 신뢰도 필터: 6구간 전부에서 최소 거래건수(MOMENTUM_MIN_BUCKET_COUNT) 이상인
+  // (region,dong)만 후보로 삼음(우연히 1~2건 거래된 동이 순위 상위권을 차지하는 문제 방지)
+  const keys = Object.keys(firstMap).filter(k => bucketMaps.every(m => m[k] && m[k].count >= MOMENTUM_MIN_BUCKET_COUNT));
   const rankings = keys.map(k => {
-    const firstAvg = firstMap[k].avg, lastAvg = lastMap[k].avg;
+    const prices = bucketMaps.map(m => Math.round(m[k].avg));
+    const counts = bucketMaps.map(m => m[k].count);
+    const firstAvg = prices[0], lastAvg = prices[5];
     if (!firstAvg) return null;
-    // prices: 6구간의 평균가 흐름을 그대로 노출(프론트에서 추세 표시용) - momentumPct는
-    // 순위 정렬용으로 첫구간→마지막구간 변화율을 그대로 유지함.
+    // 추세 일관성: 5번의 구간 전환(idx0→1, 1→2, ..., 4→5) 중 상승한 횟수
+    let upTransitions = 0;
+    for (let i = 1; i < prices.length; i++) { if (prices[i] > prices[i - 1]) upTransitions++; }
+    // 거래량 급감 경고: 직전 구간 대비 거래량이 급격히 줄어든 구간이 하나라도 있으면 표시
+    let volumeDrop = false;
+    for (let i = 1; i < counts.length; i++) { if (counts[i] < counts[i - 1] * MOMENTUM_VOLUME_DROP_RATIO) volumeDrop = true; }
     return {
       region: firstMap[k].region,
       dong: firstMap[k].dong,
-      prices: bucketMaps.map(m => Math.round(m[k].avg)),
+      prices, // 6구간 평당가(만원/평) 흐름 - 프론트 추세 표시용
+      counts, // 6구간 거래건수 흐름(해당 기간 전체 거래량) - 프론트 표시용
+      upTransitions, // 5번의 구간 전환 중 상승한 횟수(0~5)
+      volumeDrop,
       momentumPct: Math.round((lastAvg - firstAvg) / firstAvg * 1000) / 10,
     };
-  }).filter(r => r !== null);
+  }).filter(r => r !== null && r.upTransitions >= MOMENTUM_MIN_UP_TRANSITIONS);
   rankings.sort((a, b) => b.momentumPct - a.momentumPct);
   return rankings.slice(0, limit);
 }
