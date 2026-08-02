@@ -2369,11 +2369,86 @@ function collectVisibleBadgeDivs() {
 var BADGE_SCALE_MIN = 0.75; // computeBadgeScale()의 최소값과 반드시 동일해야 함(글자 가독성 하한)
 var BADGE_SCALE_STEP = 0.06;
 var BADGE_OVERLAP_MAX_ITER = 14;
+/* ⚠️ 2026-08: 글자가 안 보일 정도로 줄이는 건 막아뒀으니(BADGE_SCALE_MIN=0.75), 그 하한에
+   닿았는데도 여전히 겹치는 밀집 지역은 축소만으로는 답이 없음 - 이럴 땐 서로 반대 방향으로
+   살짝 밀어내서(translate) 겹침을 풀어줌. 배지 크기(글자 크기 포함)는 그대로 두고 위치만
+   미세 조정하는 것이라 가독성은 그대로 유지됨. 원래 위치(진짜 건물 좌표)에서 너무 멀리
+   밀려나면 "이 배지가 어느 건물 것인지" 헷갈릴 수 있어 최대 이동거리를 32px로 제한하고,
+   그래도 다 못 풀면(초고밀집) 남은 겹침은 그대로 둠 - 클릭 자체는 항상 그 배지의 실제
+   건물로 정확히 연결되므로(위치만 살짝 옮긴 것일 뿐 데이터 바인딩은 그대로) 잘못된 건물이
+   열리는 일은 없음. */
+// ⚠️ 배지 카드 높이(대략 50~90px)보다 이동한도가 너무 작으면(예: 32px) 완전히 겹친
+// 배지끼리는 아예 안 풀리는 걸 실측으로 확인함(높이보다 적게 밀면 세로로도 여전히
+// 겹침) - 45px로 올려서 실제 지도처럼 어느 정도 X/Y가 이미 갈라져 있는 "부분 겹침"
+// 케이스는 대부분 풀리게 하되, 좌표가 사실상 같은 극단적 케이스까지 보장하진 않음.
+var BADGE_PUSH_MAX_OFFSET = 45;
+var pushedBadgeEls = [];
+function clearBadgePushOffsets() {
+    pushedBadgeEls.forEach(function(el) { el.style.transform = ''; });
+    pushedBadgeEls = [];
+}
+/* ⚠️ 2026-08: 처음엔 겹친 두 배지를 서로 반대 방향으로 절반씩 미는 물리 시뮬레이션 방식으로
+   짰는데, 배지 3개 이상이 한 줄로 붙어있는 경우(가운데 배지가 양쪽에서 동시에 밀림) 서로
+   미는 힘이 상쇄돼서 안 풀리는 경우가 실측(합성 테스트)으로 확인됨. 그래서 "겹친 것들끼리
+   그룹으로 묶고, 그 그룹을 세로(Y) 기준 위→아래 순서로 정렬한 뒤 순서대로 차곡차곡 쌓는"
+   더 단순하고 확실한 방식으로 바꿈 - 지도 위 라벨 겹침 처리에서 흔히 쓰는 방식이고,
+   상쇄 없이 그룹 내에서는 이동 한도(BADGE_PUSH_MAX_OFFSET) 안에서 항상 풀림. */
+function pushApartOverlaps(scale) {
+    var divs = collectVisibleBadgeDivs();
+    if (divs.length < 2) return;
+    var items = divs.map(function(d) {
+        var r = d.getBoundingClientRect();
+        return { div: d, rect: r, dx: 0, dy: 0 };
+    });
+    // 1) 겹친 배지들끼리 그룹(연결요소)으로 묶음
+    var groups = [];
+    var visited = items.map(function() { return false; });
+    for (var i = 0; i < items.length; i++) {
+        if (visited[i]) continue;
+        var group = [i];
+        visited[i] = true;
+        for (var qi = 0; qi < group.length; qi++) {
+            var a = items[group[qi]].rect;
+            for (var j = 0; j < items.length; j++) {
+                if (visited[j]) continue;
+                if (rectsOverlap(a, items[j].rect)) { visited[j] = true; group.push(j); }
+            }
+        }
+        if (group.length > 1) groups.push(group);
+    }
+    // 2) 그룹마다 위(top)가 낮은 순으로 정렬한 뒤, 앞 배지 바로 아래에 붙지 않도록 순서대로 내림.
+    // ⚠️ 이동거리 상한(clamp)을 맨 마지막에 한꺼번에 적용하면, 뒤쪽 배지들이 전부 상한값에
+    // 걸려 서로 같은 오프셋으로 뭉쳐버려서(=상대 위치가 그대로라 겹침이 안 풀림) 오히려
+    // 효과가 없었음(실측으로 확인) - 각 단계마다 바로바로 상한을 적용해서, 다음 배지가
+    // "실제로 배치된(상한 적용된) 앞 배지 위치" 기준으로 자기 간격을 계산하게 함.
+    groups.forEach(function(group) {
+        group.sort(function(a, b) { return items[a].rect.top - items[b].rect.top; });
+        for (var k = 1; k < group.length; k++) {
+            var prev = items[group[k - 1]];
+            var cur = items[group[k]];
+            var prevBottom = prev.rect.top + prev.dy + prev.rect.height;
+            var curTop = cur.rect.top + cur.dy;
+            var needed = (prevBottom + 4) - curTop; // 4px 여유간격
+            if (needed > 0) cur.dy += needed;
+            if (cur.dy > BADGE_PUSH_MAX_OFFSET) cur.dy = BADGE_PUSH_MAX_OFFSET;
+            else if (cur.dy < -BADGE_PUSH_MAX_OFFSET) cur.dy = -BADGE_PUSH_MAX_OFFSET;
+        }
+    });
+    items.forEach(function(it) {
+        if (Math.abs(it.dx) > 0.5 || Math.abs(it.dy) > 0.5) {
+            it.div.style.transform = 'translate(' + it.dx.toFixed(1) + 'px,' + it.dy.toFixed(1) + 'px) scale(' + scale + ')';
+            pushedBadgeEls.push(it.div);
+        }
+    });
+}
 function resolveBadgeOverlaps() {
     var mapEl = document.getElementById('map');
     if (!mapEl || !map) return;
+    clearBadgePushOffsets(); // 이전에 밀어냈던 배지들을 우선 원위치(스케일만 적용된 상태)로 되돌리고 새로 측정
     var scale = computeBadgeScale(map.getLevel());
     mapEl.style.setProperty('--badge-scale', scale);
+    void mapEl.offsetHeight;
+    var stillOverlapped = false;
     for (var iter = 0; iter < BADGE_OVERLAP_MAX_ITER; iter++) {
         var divs = collectVisibleBadgeDivs();
         if (divs.length < 2) return;
@@ -2384,11 +2459,15 @@ function resolveBadgeOverlaps() {
                 if (rectsOverlap(rects[i], rects[j])) { overlapped = true; break; }
             }
         }
-        if (!overlapped || scale <= BADGE_SCALE_MIN) return;
+        if (!overlapped) return;
+        if (scale <= BADGE_SCALE_MIN) { stillOverlapped = true; break; }
         scale = Math.max(BADGE_SCALE_MIN, Math.round((scale - BADGE_SCALE_STEP) * 100) / 100);
         mapEl.style.setProperty('--badge-scale', scale);
         void mapEl.offsetHeight; // transform 변경을 강제로 반영(리플로우)해서 다음 측정이 정확하게 함
+        stillOverlapped = true;
     }
+    // 최소 크기까지 줄였는데도 겹치면 밀어내기로 마무리함
+    if (stillOverlapped) pushApartOverlaps(scale);
 }
 var badgeOverlapTimer = null;
 function scheduleOverlapResolve() {
