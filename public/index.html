@@ -7271,11 +7271,12 @@ async function openAiCompFinder() {
     // 물건유형이 아파트/연립다세대·단독이면 같은 유형 거래만 비교 (건물유형이 다르면 시세가 안 맞음)
     var propType = document.getElementById('a-prop-type').value;
     var targetBuildingType = (propType === 'apt' || propType === 'villa') ? propType : null;
+    var ctx = getAuctionAddressContext(); // 같은 단지 매도사례를 우선순위로 올리기 위한 단지명/법정동/지번
 
     aiCompFinderMode = 'similar';
     var titleEl = document.getElementById('ai-comp-modal-title');
     if (titleEl) titleEl.innerText = '🤖 유사물건 자동추천';
-    aiCompCandidates = findSimilarComps(lat, lon, targetYear, targetFloor, targetPyung, targetBuildingType);
+    aiCompCandidates = findSimilarComps(lat, lon, targetYear, targetFloor, targetPyung, targetBuildingType, ctx.name, ctx.dong, ctx.bunji);
     renderAiCompList();
     document.getElementById('ai-comp-modal-bg').style.display = 'flex';
     autoCalcAuctionJeonseAnalysis(); // 유사물건 추천 결과(Pool A)가 바뀌었으니 예상전세가도 다시 계산
@@ -7291,9 +7292,10 @@ async function openRadiusCompFinder() {
     var lat = coordInfo.lat, lon = coordInfo.lon;
     var propType = document.getElementById('a-prop-type').value;
     var targetBuildingType = (propType === 'apt' || propType === 'villa') ? propType : null;
+    var ctx = getAuctionAddressContext(); // 같은 단지 매도사례를 우선순위로 올리기 위한 단지명/법정동/지번
 
     aiCompFinderMode = 'radius';
-    aiCompCandidates = findComparablesInRadius(lat, lon, targetBuildingType, 1000);
+    aiCompCandidates = findComparablesInRadius(lat, lon, targetBuildingType, 1000, ctx.name, ctx.dong, ctx.bunji);
     var titleEl = document.getElementById('ai-comp-modal-title');
     if (titleEl) titleEl.innerText = '📍 반경 1km 비교물건 (' + aiCompCandidates.length + '건)';
     renderAiCompList();
@@ -7311,8 +7313,12 @@ function getMaxFloorForApt(apt) {
 }
 /* 반경 내 전체 비교물건 리스트 - findSimilarComps()는 평형±4평/층±1층/연식±3년/탑층제외/
    단지당1건 등 조건이 까다로워 결과가 아예 안 나올 수 있음. 이 함수는 그런 조건 없이
-   "반경(radiusM) + 건물유형 일치 + 최근 1년 거래"만으로 걸러 거리순으로 폭넓게 보여줌. */
-function findComparablesInRadius(lat, lon, targetBuildingType, radiusM) {
+   "반경(radiusM) + 건물유형 일치 + 최근 1년 거래"만으로 걸러 폭넓게 보여줌.
+   ⚠️ 2026-08: 예전엔 순수 거리순 정렬이라, 아파트처럼 같은 단지 자체 매도사례가 충분히
+   많은 경우에도 반경 안의 다른 단지 거래가 먼저 뜨는 문제가 있었음(주공9단지 사례 등).
+   대상 물건과 같은 단지(matchesAuctionKey로 단지명 또는 법정동+지번 일치 판정)인 거래는
+   항상 맨 앞에, 그 안에서는 최신순으로 두고, 나머지만 거리순으로 뒤에 붙임. */
+function findComparablesInRadius(lat, lon, targetBuildingType, radiusM, targetName, targetDong, targetBunji) {
     var candidates = [];
     allAptList.forEach(function(apt) {
         if (apt.buildingType === 'single') return;
@@ -7321,21 +7327,32 @@ function findComparablesInRadius(lat, lon, targetBuildingType, radiusM) {
         var cacheKey = [l.dong, l.name, l.bunji, l.road_name, l.main_num, l.sub_num].join('|').toLowerCase();
         var coord = coordCache[cacheKey];
         if (!coord) return;
+        var isSameComplex = matchesAuctionKey(l, targetName, targetDong, targetBunji);
         var dist = getDistance(lat, lon, coord.lat, coord.lon);
-        if (dist > radiusM) return;
+        if (!isSameComplex && dist > radiusM) return; // 같은 단지는 반경 제한 없이 항상 포함
         (apt.trades || []).forEach(function(t) {
             if (t.area <= 0 || parseInt(t.amount) <= 0) return;
             if (tradeDate(t) < oneYearAgo) return; // 최근 1년 거래만
             var floorNum = parseInt(t.floor);
             if (!Number.isFinite(floorNum) || floorNum <= 0) return; // 지층/반지층·층수 미상 제외
             candidates.push({ trade: t, dist: Math.round(dist), ageDiff: null, floorDiff: null, score: dist,
-                apt: apt, coordLat: coord.lat, coordLon: coord.lon }); // 승강기 조회(fetchElevatorForApt)에 씀
+                apt: apt, coordLat: coord.lat, coordLon: coord.lon, isSameComplex: isSameComplex }); // 승강기 조회(fetchElevatorForApt)에 씀
         });
     });
-    candidates.sort(function(a, b) { return a.dist - b.dist; });
+    candidates.sort(function(a, b) {
+        if (a.isSameComplex !== b.isSameComplex) return b.isSameComplex ? 1 : -1;
+        return a.dist - b.dist;
+    });
     return candidates.slice(0, 40);
 }
-function findSimilarComps(lat, lon, targetYear, targetFloor, targetPyung, targetBuildingType) {
+/* ⚠️ 2026-08: 예전엔 평형±4평/층±1층/연식±3년/탑층제외 하드컷을 모든 후보에 동일하게 걸고,
+   그 뒤 "단지당 1건만" 남기는 다양성 확보 로직까지 있어서, 대상 물건과 같은 단지 자체에
+   매도사례가 여러 건 있어도(아파트는 특히 그런 경우가 흔함 - 주공9단지처럼 세대수 많은
+   단지) 1건으로만 잘리고 나머지 7자리는 전부 주변 다른 단지 거래로 채워지는 문제가 있었음.
+   같은 단지(matchesAuctionKey로 단지명 또는 법정동+지번 일치) 거래는 하드컷 없이(평형·층·
+   탑층·연식 조건 다 건너뜀 - 같은 건물이라 이미 충분히 비교 가능) 유사도 점수로만 줄세워
+   앞자리를 채우고, 남는 자리만 기존처럼 조건에 맞는 주변 단지 거래(단지당 1건)로 보충함. */
+function findSimilarComps(lat, lon, targetYear, targetFloor, targetPyung, targetBuildingType, targetName, targetDong, targetBunji) {
     var candidates = [];
     allAptList.forEach(function(apt) {
         if (apt.buildingType === 'single') return;
@@ -7344,22 +7361,25 @@ function findSimilarComps(lat, lon, targetYear, targetFloor, targetPyung, target
         var cacheKey = [l.dong, l.name, l.bunji, l.road_name, l.main_num, l.sub_num].join('|').toLowerCase();
         var coord = coordCache[cacheKey];
         if (!coord) return;
+        var isSameComplex = matchesAuctionKey(l, targetName, targetDong, targetBunji);
         var dist = getDistance(lat, lon, coord.lat, coord.lon);
-        if (dist > 2000) return; // 반경 2km 이내만
+        if (!isSameComplex && dist > 2000) return; // 반경 2km 이내만(같은 단지는 예외)
         var maxFloor = getMaxFloorForApt(apt);
         (apt.trades || []).forEach(function(t) {
             if (t.area <= 0 || parseInt(t.amount) <= 0) return;
             if (tradeDate(t) < oneYearAgo) return; // 최근 1년 거래만
-            var py = toPyung(t.area);
-            if (targetPyung && Math.abs(py - targetPyung) > 4) return; // 평형 ±4평 이내
-
             var floorNum = parseInt(t.floor);
-            if (!Number.isFinite(floorNum) || floorNum <= 0) return; // 지층/반지층·층수 미상 제외
-            if (maxFloor !== null && floorNum === maxFloor) return; // 탑층 제외
-            if (targetFloor && Math.abs(targetFloor - floorNum) > 1) return; // 목표층 ±1층 이내만
+            if (!Number.isFinite(floorNum) || floorNum <= 0) return; // 지층/반지층·층수 미상 제외(같은 단지도 동일 적용)
+
+            if (!isSameComplex) {
+                var py = toPyung(t.area);
+                if (targetPyung && Math.abs(py - targetPyung) > 4) return; // 평형 ±4평 이내
+                if (maxFloor !== null && floorNum === maxFloor) return; // 탑층 제외
+                if (targetFloor && Math.abs(targetFloor - floorNum) > 1) return; // 목표층 ±1층 이내만
+            }
 
             var by = parseInt(t.build_year);
-            if (targetYear) {
+            if (!isSameComplex && targetYear) {
                 if (!Number.isFinite(by)) return; // 연식 미상 제외
                 if (Math.abs(targetYear - by) > 3) return; // 연식 ±3년(총 6년 갭) 이내만
             }
@@ -7370,19 +7390,22 @@ function findSimilarComps(lat, lon, targetYear, targetFloor, targetPyung, target
                 + (floorDiff !== null ? floorDiff : 5) * 1.5
                 + dist / 200;
             candidates.push({ trade: t, dist: Math.round(dist), ageDiff: ageDiff, floorDiff: floorDiff, score: score,
-                apt: apt, coordLat: coord.lat, coordLon: coord.lon }); // 승강기 조회(fetchElevatorForApt)에 씀
+                apt: apt, coordLat: coord.lat, coordLon: coord.lon, isSameComplex: isSameComplex }); // 승강기 조회(fetchElevatorForApt)에 씀
         });
     });
-    // 같은 단지는 가장 점수 좋은 거래 1건만 남겨서 다양성 확보
-    candidates.sort(function(a, b) { return a.score - b.score; });
-    var seen = {}, deduped = [];
-    candidates.forEach(function(c) {
+    var sameComplex = candidates.filter(function(c) { return c.isSameComplex; });
+    var others = candidates.filter(function(c) { return !c.isSameComplex; });
+    sameComplex.sort(function(a, b) { return a.score - b.score; });
+    // 같은 단지가 아닌 후보만 "단지당 1건" 다양성 확보(같은 단지는 이미 충분히 비교 가능하므로 여러 건 허용)
+    others.sort(function(a, b) { return a.score - b.score; });
+    var seen = {}, dedupedOthers = [];
+    others.forEach(function(c) {
         var key = (c.trade.name || '') + '_' + (c.trade.dong || '');
         if (seen[key]) return;
         seen[key] = true;
-        deduped.push(c);
+        dedupedOthers.push(c);
     });
-    return deduped.slice(0, 8);
+    return sameComplex.concat(dedupedOthers).slice(0, 8);
 }
  
 // 1~2층은 "저층"으로 눈에 띄게 표시(renderCompListBox와 동일 기준) - 목록만 보고도 평단가가
@@ -7456,7 +7479,9 @@ function renderAiCompList() {
         html += '<label style="display:flex;align-items:flex-start;gap:8px;padding:8px 0;border-bottom:1px solid #f0f0f0;cursor:pointer;">'
             + '<input type="checkbox" class="ai-comp-check" data-idx="' + i + '" checked style="margin-top:3px;">'
             + '<div style="flex:1;font-size:12px;">'
-            + '<div style="font-weight:bold;color:#333;">' + (t.name || t.dong) + ' · ' + dateStr + '</div>'
+            + '<div style="font-weight:bold;color:#333;">' + (t.name || t.dong)
+            + (c.isSameComplex ? ' <span style="background:#00695c;color:#fff;font-size:9px;font-weight:normal;padding:1px 5px;border-radius:8px;">같은 단지</span>' : '')
+            + ' · ' + dateStr + '</div>'
             + '<div style="color:#555;margin-top:2px;">' + toEok(t.amount) + ' · ' + toPyung(t.area) + '평 · ' + floorTierLabel(t.floor) + ' · ' + (t.build_year || '-') + '년 · <span id="ai-comp-elev-' + i + '">' + (c.apt ? '확인 중...' : elevatorStatusText(null)) + '</span></div>'
             + '<div style="color:#999;font-size:10px;margin-top:2px;">거리 ' + c.dist + 'm'
             + (c.ageDiff !== null ? ' · 연식차 ' + c.ageDiff + '년' : '')
@@ -7584,6 +7609,13 @@ function removeComparable(idx) {
     calcCompValuation();
     if (!document.getElementById('a-repair').value) { autoCalcRepairSilent(); calcMargin(); }
     autoCalcAuctionJeonseAnalysis();
+    // ⚠️ 2026-08: 이 삭제는 addSelectedAiComps()의 추가와 마찬가지로 화면(pendingAuctionComparables)
+    // 에서만 지워질 뿐, 하단 "저장" 버튼을 눌러 saveAuction()이 실행되기 전까지는 서버에
+    // 반영되지 않음. addSelectedAiComps()는 추가 직후 이 사실을 alert로 안내하는데, 삭제
+    // 쪽에는 그 안내가 빠져 있어서 "삭제했는데 새로고침하니 다시 나타난다"는 문의가 있었음
+    // (실제로는 버그가 아니라 저장을 안 누른 것 - 다만 안내가 없어서 헷갈리기 쉬웠음).
+    // 추가와 동일하게 삭제 시에도 안내 문구를 띄워 저장을 잊지 않게 함.
+    alert('비교물건이 삭제되었습니다. (하단 "저장" 버튼을 눌러야 최종 반영됩니다)');
 }
 /* 비교물건은 등록 시 좌표를 따로 저장하지 않아서(이름/동/거래정보만 저장 - 용량 절감),
    "📍 지도에서 위치 확인" 클릭 시점에 allAptList에서 이름(+동)이 일치하는 단지를 찾아
