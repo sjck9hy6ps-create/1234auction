@@ -336,13 +336,21 @@ tr:hover td { background:#fffde7; }
 }
 #surge-panel {
     position:absolute; top:56px; right:14px; z-index:10;
-    background:white; border-radius:12px; width:300px; max-height:70vh;
+    background:white; border-radius:12px; width:340px; max-height:75vh;
     overflow-y:auto; box-shadow:0 4px 16px rgba(0,0,0,0.18); display:none;
 }
 .surge-panel-header {
     padding:10px 14px; font-size:12px; font-weight:bold; color:#e53935;
     border-bottom:1px solid #eee; position:sticky; top:0; background:white;
 }
+/* 급등지역/돈되는 지역 탭 전환 UI - 2026-08 추가. 두 탭 모두 같은 sido 선택 UI와
+   결과 영역(#surge-panel-body)을 공유하고, switchSurgeTab()이 활성 탭에 맞춰
+   loadSurgeHotData()/loadSurgeMoneyData()를 호출해 body를 다시 그림. */
+.surge-tab-btn {
+    font-size:12px; font-weight:bold; color:#aaa; cursor:pointer; margin-right:12px;
+    padding-bottom:3px; display:inline-block;
+}
+.surge-tab-btn.active { color:#e53935; border-bottom:2px solid #e53935; }
 .surge-item {
     padding:10px 14px; border-bottom:1px solid #f0f0f0; cursor:pointer; transition:background 0.1s;
 }
@@ -351,7 +359,7 @@ tr:hover td { background:#fffde7; }
 .surge-dong { font-size:13px; font-weight:bold; color:#333; }
 .surge-metric { font-size:11px; color:#555; margin-top:2px; }
 @media (max-width: 640px) {
-    #surge-panel { top: 94px; right: 8px; width: calc(100vw - 16px); max-width: 320px; }
+    #surge-panel { top: 94px; right: 8px; width: calc(100vw - 16px); max-width: 340px; }
 }
 .auction-list-item {
     padding:10px 14px; border-bottom:1px solid #f0f0f0; cursor:pointer; transition:background 0.1s;
@@ -616,9 +624,17 @@ tr:hover td { background:#fffde7; }
 <div id="autocomplete"></div>
 <div id="surge-panel">
     <div class="surge-panel-header">
-        🔥 거래량 급등 동 · <span id="surge-panel-region">-</span>
+        <span class="surge-tab-btn active" id="surge-tab-hot" onclick="switchSurgeTab('hot')">🔥 급등지역</span>
+        <span class="surge-tab-btn" id="surge-tab-money" onclick="switchSurgeTab('money')">💰 돈되는 지역</span>
         <span onclick="closeSurgePanel()" style="float:right;cursor:pointer;">✕</span>
     </div>
+    <div style="padding:10px 14px;border-bottom:1px solid #eee;display:flex;gap:6px;align-items:center;">
+        <select class="modal-select" id="surge-sido-select" style="flex:1;min-width:0;" onchange="loadSurgePanelData()">
+            <option value="">전체(전국)</option>
+        </select>
+        <button class="modal-btn btn-purple" style="font-size:11px;white-space:nowrap;" onclick="loadSurgePanelData()">불러오기</button>
+    </div>
+    <div id="surge-panel-status" style="font-size:11px;color:#999;padding:6px 14px 0;"></div>
     <div id="surge-panel-body"></div>
 </div>
 <div id="status-box"></div>
@@ -658,6 +674,7 @@ tr:hover td { background:#fffde7; }
     <div style="margin-top:4px;"><a href="/dashboard.html" style="font-size:11px;color:#2e7d32;font-weight:bold;">📊 누적 투자 리포트</a></div>
     <div style="margin-top:4px;"><span onclick="openBidCasePanel()" style="font-size:11px;color:#e65100;font-weight:bold;cursor:pointer;">📈 낙찰사례 통계</span></div>
     <div style="margin-top:4px;"><span onclick="openBidTargetPanel()" style="font-size:11px;color:#f57f17;font-weight:bold;cursor:pointer;">📋 입찰예정물건 일괄등록</span></div>
+    <div style="margin-top:4px;"><span onclick="openSurgePanel()" style="font-size:11px;color:#e53935;font-weight:bold;cursor:pointer;">🔥 급등지역 · 돈되는 지역 순위</span></div>
     </div>
 </div>
 <button id="auction-add-btn" onclick="openAuctionList()">🔨 경매 관리</button>
@@ -7417,7 +7434,10 @@ function placeAuctionMarker(a) {
     var isBidTarget = !!a.isBidTarget;
 
     // 같은 단지의 일반 거래 데이터가 이미 로딩되어 있으면 등급/인기평형 정보를 가져와 함께 표시
-    var matchedApt = findMatchedApt(a);
+    // ⚠️ 2026-08: 입찰예정물건(isBidTarget)은 매매기록이 있는 주소라도 그 건물배지에 편입시키지
+    // 않고 항상 독자적인 연한노란색 "📋 입찰희망" 배지로 남겨둠(요청에 따라) - 아직 정식 검토 전
+    // 단계라 매매기록 배지 안에 묻히면 눈에 안 띄기 때문. 그래서 matchedApt 자체를 아예 안 구함.
+    var matchedApt = isBidTarget ? null : findMatchedApt(a);
     // 매칭된 일반 거래 마커가 "지금 이 순간 실제로 화면에 그려질 때만" 경매 마커를 따로 만들지
     // 않음(배지 완전중복 방지, 경매 정보는 그 건물의 상세패널에 "🔨 경매정보" 탭으로 표시됨).
     // 반대로 매칭은 됐지만 타입탭/등급/빌라조건/비교대상필터 등으로 그 일반 마커가 화면에서
@@ -12129,41 +12149,110 @@ function passesSurgeFilter(apt) {
     return !!rank && activeSurgeRanks.has(String(rank));
 }
  
+/* ════════════════════════════════════
+   급등지역 패널 - 2026-08: 탭 2개로 재구성.
+   - "🔥 급등지역" 탭: 내 DB(house_trades/villa_trades/single_trades) 전체를 기준으로
+     "최근 6개월간 거래량이 많은 법정동" 전국 순위(TOP 20, 시/도 필터 가능). 집계는
+     api/data-coverage.js?mode=topDongs가 DB에서 GROUP BY로 처리함(원래 이 결과를
+     별도의 #top-dongs-panel로 보여줬었는데, "급등지역 필터가 이 기능이었다"는 사용자
+     피드백에 따라 이 패널 안으로 합침).
+   - "💰 돈되는 지역" 탭: 최근 36개월을 6개월 단위 6구간으로 나눠 각 구간의 전용면적
+     20평(size>=66) 이상 물건 평균거래가를 비교해 상승모멘텀이 큰 법정동 순위를 보여줌.
+     집계는 api/data-coverage.js?mode=priceMomentum.
+   ⚠️ 지도 마커의 🔥N위 배지·"ft-surge" 필터칩(surgeRankMap/computeSurgeRankMap/
+   passesSurgeFilter)은 이 패널과 별개로 계속 buildDongSurgeRanking(현재 지도 뷰포트에
+   이미 로딩된 allAptList 기준 - DB 전체가 아님)을 그대로 사용함. 이 패널은 어디까지나
+   "전국 어디가 활발한지 찾아보는" 탐색용이고, 마커 배지는 지금 보고 있는 지역 안에서의
+   상대적 순위를 보여주는 것이라 서로 다른 계산 기준을 그대로 유지함(더 무거운 전국 집계로
+   마커 배지까지 바꾸면 지도 이동마다 API를 계속 불러야 해서 성능이 나빠짐).
+════════════════════════════════════ */
+var RANK_SIDO_LIST = ['서울','부산','대구','인천','광주','대전','울산','세종','경기','강원','충북','충남','전북','전남','경북','경남','제주'];
+var surgePanelTab = 'hot';
 function openSurgePanel() {
     var p = document.getElementById('surge-panel');
+    document.getElementById('auction-list-panel').style.display = 'none';
+    var bcPanel = document.getElementById('bid-case-panel'); if (bcPanel) bcPanel.style.display = 'none';
+    var btPanel = document.getElementById('bid-target-panel'); if (btPanel) btPanel.style.display = 'none';
     if (p.style.display === 'block') { p.style.display = 'none'; return; }
-    renderSurgePanel();
+    var sel = document.getElementById('surge-sido-select');
+    if (sel.options.length <= 1) { // 시/도 옵션은 처음 열 때 한 번만 채움
+        RANK_SIDO_LIST.forEach(function(s) {
+            var opt = document.createElement('option'); opt.value = s; opt.text = s; sel.appendChild(opt);
+        });
+    }
     p.style.display = 'block';
+    loadSurgePanelData();
 }
 function closeSurgePanel() {
     document.getElementById('surge-panel').style.display = 'none';
 }
-function renderSurgePanel() {
-    var typeLabel = currentTypeFilter === 'villa' ? '연립다세대·단독다가구' : '아파트';
-    document.getElementById('surge-panel-region').innerText = typeLabel + ' · ' + (lastSigungu || '지역 미확인');
-    var body = document.getElementById('surge-panel-body');
-    var list = buildDongSurgeRanking(currentTypeFilter);
-    if (!list.length) {
-        body.innerHTML = '<div style="padding:20px;text-align:center;color:#aaa;font-size:12px;">데이터가 부족합니다.<br>지도를 이동해 지역을 먼저 불러와 주세요.</div>';
-        return;
+function switchSurgeTab(tab) {
+    surgePanelTab = tab;
+    document.getElementById('surge-tab-hot').classList.toggle('active', tab === 'hot');
+    document.getElementById('surge-tab-money').classList.toggle('active', tab === 'money');
+    loadSurgePanelData();
+}
+function loadSurgePanelData() {
+    if (surgePanelTab === 'money') loadSurgeMoneyData();
+    else loadSurgeHotData();
+}
+function renderRankSection(title, list, valueLabel, valueFn) {
+    var html = '<div style="margin-top:8px;"><div style="font-size:11.5px;font-weight:bold;color:#4a148c;margin-bottom:4px;">' + title + '</div>';
+    if (!list || !list.length) {
+        html += '<div style="font-size:11px;color:#aaa;padding:6px 0;">해당 기간/조건에 데이터가 부족합니다.</div></div>';
+        return html;
     }
-    var isVilla = currentTypeFilter === 'villa';
-    var shortLabel = isVilla ? '6개월÷1년' : '3개월÷1년';
-    var top = list.slice(0, 20);
-    var html = '';
-    top.forEach(function(item, i) {
-        var shortText = item.shortRatio === null ? '-' : item.shortRatio + '%';
-        var longText  = item.longRatio  === null ? '-' : item.longRatio + '%';
-        var shortColor = item.shortRatio !== null && item.shortRatio >= 150 ? '#e53935' : '#555';
-        var recentCount = isVilla ? item.c6m : item.c3m;
-        var recentLabel = isVilla ? '최근6개월' : '최근3개월';
-        html += '<div class="surge-item" onclick="moveToDong(\'' + item.region.replace(/'/g, "\\'") + '\',\'' + item.dong.replace(/'/g, "\\'") + '\')">'
-            + '<span class="surge-rank">' + (i + 1) + '위</span> <span class="surge-dong">' + item.dong + '</span>'
-            + '<div class="surge-metric" style="color:' + shortColor + ';">단기(' + shortLabel + ') ' + shortText + ' · ' + recentLabel + ' ' + recentCount + '건</div>'
-            + '<div class="surge-metric">중장기(1년÷3년) ' + longText + '</div>'
-            + '</div>';
+    list.forEach(function(r, idx) {
+        html += '<div style="display:flex;justify-content:space-between;align-items:center;padding:4px 0;border-bottom:1px solid #f5f5f5;font-size:11.5px;">'
+            + '<span><span style="color:#999;font-weight:bold;margin-right:4px;">' + (idx + 1) + '</span>' + cleanField(r.region) + ' ' + cleanField(r.dong) + '</span>'
+            + '<span style="font-weight:bold;color:#e53935;white-space:nowrap;">' + valueFn(r) + '</span></div>';
     });
-    body.innerHTML = html;
+    html += '</div>';
+    return html;
+}
+async function loadSurgeHotData() {
+    var sido = document.getElementById('surge-sido-select').value;
+    var statusBox = document.getElementById('surge-panel-status');
+    var body = document.getElementById('surge-panel-body');
+    statusBox.style.color = '#999'; statusBox.innerText = '불러오는 중...';
+    body.innerHTML = '';
+    try {
+        var url = '/api/data-coverage?mode=topDongs&type=both&months=6' + (sido ? '&sido=' + encodeURIComponent(sido) : '');
+        var res = await fetch(url);
+        var data = await readJsonResponseSafe(res);
+        if (!res.ok) throw new Error((data && data.error) || ('서버 오류(' + res.status + ')'));
+        statusBox.style.color = '#999';
+        statusBox.innerText = '최근 6개월 거래량 기준' + (sido ? ' · ' + sido : ' · 전국');
+        body.innerHTML = renderRankSection('🏢 아파트', data.apt, '건', function(r) { return r.count + '건'; })
+            + renderRankSection('🏘️ 연립다세대·단독', data.villa, '건', function(r) { return r.count + '건'; });
+    } catch (e) {
+        statusBox.style.color = '#e53935';
+        statusBox.innerText = '불러오기 실패: ' + e.message;
+    }
+}
+async function loadSurgeMoneyData() {
+    var sido = document.getElementById('surge-sido-select').value;
+    var statusBox = document.getElementById('surge-panel-status');
+    var body = document.getElementById('surge-panel-body');
+    statusBox.style.color = '#999'; statusBox.innerText = '불러오는 중... (최대 몇 초 걸릴 수 있어요)';
+    body.innerHTML = '';
+    try {
+        var url = '/api/data-coverage?mode=priceMomentum&type=both' + (sido ? '&sido=' + encodeURIComponent(sido) : '');
+        var res = await fetch(url);
+        var data = await readJsonResponseSafe(res);
+        if (!res.ok) throw new Error((data && data.error) || ('서버 오류(' + res.status + ')'));
+        statusBox.style.color = '#999';
+        statusBox.innerText = '최근 36개월(6개월×6구간) · 전용 20평 이상 상승모멘텀 기준' + (sido ? ' · ' + sido : ' · 전국');
+        var fmt = function(r) {
+            var sign = r.momentumPct >= 0 ? '+' : '';
+            return sign + r.momentumPct + '%';
+        };
+        body.innerHTML = renderRankSection('🏢 아파트', data.apt, '%', fmt)
+            + renderRankSection('🏘️ 연립다세대·단독', data.villa, '%', fmt);
+    } catch (e) {
+        statusBox.style.color = '#e53935';
+        statusBox.innerText = '불러오기 실패: ' + e.message;
+    }
 }
 function moveToDong(region, dong) {
     closeSurgePanel();
