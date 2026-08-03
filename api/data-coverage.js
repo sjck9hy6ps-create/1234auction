@@ -102,9 +102,15 @@ function mergeRanges(a, b) {
      -- 빌라는 2배 가까이 비싸게 거래되기도 함)이 몇 건만 섞여도 "돈되는 지역"으로 잘못
      -- 뜨는 착시를 만들 수 있어서, build_year 기준 준공 1년 이내(신축) 거래는 집계에서
      -- 빼고 new_cnt/new_avg_price로 별도 반환하도록 바꿈. 신축을 뺀 나머지도 같은
-     -- (region,dong) 중앙값 대비 2배 초과/0.5배 미만인 극단적 이상치는 느슨하게 추가로
-     -- 걸러냄(로얄동/로얄층 같은 정상 편차는 이 배수로는 안 걸림). 반환 컬럼이 늘어나서
-     -- 이번엔 DROP FUNCTION 후 CREATE로 교체해야 함(CREATE OR REPLACE만으로는 안 됨).
+     -- (region,dong) 평균 대비 표준편차 2.5배를 벗어나는 극단적 이상치는 느슨하게
+     -- 추가로 걸러냄(로얄동/로얄층 같은 정상 편차는 이 배수로는 안 걸림). 반환 컬럼이
+     -- 늘어나서 이번엔 DROP FUNCTION 후 CREATE로 교체해야 함(CREATE OR REPLACE만으로는
+     -- 안 됨).
+     -- ⚠️ 2026-08(성능 수정): 처음엔 이상치 기준을 중앙값(percentile_cont, 정렬이 필요한
+     -- 무거운 연산)으로 만들었는데, "전국"처럼 시/도 없이 조회하면 (region,dong) 그룹 수가
+     -- 훨씬 많아져 정렬 비용이 커지면서 응답이 아예 안 오는 문제가 실제 배포 후 테스트에서
+     -- 발견됨(시/도 하나로 좁히면 정상, "전국"만 멈춤). AVG/STDDEV_POP(정렬 불필요한
+     -- 단일패스 집계)로 교체해 해결함.
      drop function if exists rpc_bucket_avg_price(int, int, text, text, int, int);
      create function rpc_bucket_avg_price(p_start int, p_end int, p_sido text, p_type text, p_min_size int, p_max_size int)
      returns table(region text, dong text, avg_price numeric, cnt bigint, new_cnt bigint, new_avg_price numeric)
@@ -137,15 +143,16 @@ function mergeRanges(a, b) {
        existing as (
          select region, dong, ppp from tagged where not is_new
        ),
-       med as (
-         select region, dong, percentile_cont(0.5) within group (order by ppp) as median_ppp
+       stats as (
+         select region, dong, avg(ppp) as mean_ppp, stddev_pop(ppp) as sd_ppp
          from existing group by region, dong
        ),
        clipped as (
          select e.region, e.dong, e.ppp
          from existing e
-         join med m on m.region = e.region and m.dong = e.dong
-         where e.ppp <= m.median_ppp * 2 and e.ppp >= m.median_ppp * 0.5
+         join stats s on s.region = e.region and s.dong = e.dong
+         where e.ppp <= s.mean_ppp + 2.5 * coalesce(s.sd_ppp, 0)
+           and e.ppp >= s.mean_ppp - 2.5 * coalesce(s.sd_ppp, 0)
        ),
        new_agg as (
          select region, dong, avg(ppp) as new_avg_price, count(*) as new_cnt
@@ -443,8 +450,12 @@ export default async function handler(req, res) {
       const sido = (req.query.sido || '').trim();
       const typeParam = req.query.type === 'apt' || req.query.type === 'villa' ? req.query.type : 'both';
       const result = {};
-      if (typeParam === 'both' || typeParam === 'apt') result.apt = await getPriceMomentum('apt', sido, 20);
-      if (typeParam === 'both' || typeParam === 'villa') result.villa = await getPriceMomentum('villa', sido, 20);
+      // 2026-08: apt/villa를 순차 await하면 "전국"처럼 무거운 조회에서 둘의 시간이
+      // 그대로 합산돼 더 느려짐 - Promise.all로 병렬 실행해 전체 응답시간을 줄임.
+      const jobs = [];
+      if (typeParam === 'both' || typeParam === 'apt') jobs.push(getPriceMomentum('apt', sido, 20).then(r => { result.apt = r; }));
+      if (typeParam === 'both' || typeParam === 'villa') jobs.push(getPriceMomentum('villa', sido, 20).then(r => { result.villa = r; }));
+      await Promise.all(jobs);
       return res.status(200).json({ sidoList: SIDO_LIST, sido: sido || null, ...result });
     } catch (err) {
       return res.status(500).json({ error: err.message });
