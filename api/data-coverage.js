@@ -333,7 +333,103 @@ async function getPriceMomentum(type, sido, limit) {
   return filtered.slice(0, limit);
 }
 
+/* ════════════════════════════════════
+   법정동(읍면동) 경계 폴리곤 조회 - 2026-08: 원래 api/get-boundary.js라는 별도
+   함수였는데, Vercel Hobby 12개 함수 한도에 이미 꽉 차 있어서(auction.js,
+   data-coverage.js, export-table.js, get-building.js, get-coords.js,
+   get-house.js, get-official-price.js, import-csv-batch.js, parse-auction.js,
+   parse-registry.js, save-coord.js, search-complex.js = 12개) 새 파일을 추가할
+   수 없었음. data-coverage.js가 이미 mode 분기 방식(topDongs/priceMomentum)을
+   쓰고 있어서 여기에 mode=boundary로 합침. 로직 자체는 get-boundary.js와 동일:
+   VWorld Data API(LT_C_ADEMD_INFO 레이어)를 시군구코드(sggCd) 단위로 조회하고,
+   dong_boundaries 테이블에 영구 캐시(법정동 경계는 거의 안 바뀜) - 이후 같은
+   시군구는 VWorld 재호출 없이 DB에서 바로 반환됨.
+   ════════════════════════════════════ */
+async function getBoundary(sggCd, wantRaw) {
+  // 1순위: DB에 이미 저장된 경계가 있으면 VWorld를 호출하지 않고 바로 반환
+  try {
+    const { data: cached, error: cacheErr } = await supabase
+      .from('dong_boundaries')
+      .select('emd_cd, emd_nm, geometry')
+      .eq('sgg_cd', sggCd);
+    if (cacheErr) console.error('dong_boundaries 조회 에러:', cacheErr.message);
+    if (cached && cached.length > 0) {
+      const boundaries = cached.map((row) => ({ emdCd: row.emd_cd, emdNm: row.emd_nm, geometry: row.geometry }));
+      return { status: 200, body: { boundaries, source: 'db' } };
+    }
+  } catch (e) {
+    console.error('dong_boundaries 조회 실패:', e.message);
+    // DB 조회가 실패해도 아래 VWorld 호출로 계속 진행 (캐시 미스와 동일하게 취급)
+  }
+
+  const VWORLD_KEY = process.env.VWORLD_API_KEY;
+  if (!VWORLD_KEY) {
+    return { status: 500, body: { error: 'VWORLD_API_KEY 환경변수가 없습니다. Vercel 프로젝트 설정에 추가해 주세요.' } };
+  }
+
+  // domain은 VWorld 키 발급 시 등록한 도메인과 반드시 일치해야 함
+  const DOMAIN = 'https://1234auction.vercel.app';
+
+  const url = `https://api.vworld.kr/req/data?service=data&request=GetFeature&data=LT_C_ADEMD_INFO`
+    + `&key=${encodeURIComponent(VWORLD_KEY)}&domain=${encodeURIComponent(DOMAIN)}`
+    + `&attrFilter=sggCd:=:${sggCd}&size=200&format=json&crs=EPSG:4326`;
+
+  try {
+    const r = await fetch(url, { signal: AbortSignal.timeout(15000) });
+    const data = await r.json();
+
+    if (data?.response?.status !== 'OK') {
+      return {
+        status: 502,
+        body: { error: 'VWorld 응답 오류: ' + (data?.response?.status || 'UNKNOWN'), raw: data?.response?.error || null },
+      };
+    }
+
+    const features = data?.response?.result?.featureCollection?.features || [];
+    // ⚠️ VWorld 응답의 속성 필드명은 데이터셋 버전에 따라 emd_cd/emdCd, emd_kor_nm/emdKorNm 등으로
+    // 다를 수 있습니다. wantRaw=true로 한 번 호출해서 실제 필드명을 확인할 수 있음.
+    const boundaries = features.map((f) => {
+      const p = f.properties || {};
+      return {
+        emdCd: p.emd_cd || p.emdCd || p.EMD_CD || '',
+        emdNm: p.emd_kor_nm || p.emdKorNm || p.EMD_KOR_NM || p.full_nm || '',
+        geometry: f.geometry,
+      };
+    });
+
+    if (wantRaw) return { status: 200, body: { raw: data } };
+
+    // DB에 영구 저장 - 다음부터는 이 시군구는 VWorld 재호출 없이 DB에서 바로 반환됨
+    const rows = boundaries
+      .filter((b) => b.emdCd && b.geometry)
+      .map((b) => ({ emd_cd: b.emdCd, sgg_cd: sggCd, emd_nm: b.emdNm, geometry: b.geometry }));
+    if (rows.length > 0) {
+      const { error: upsertErr } = await supabase
+        .from('dong_boundaries')
+        .upsert(rows, { onConflict: 'emd_cd' });
+      if (upsertErr) console.error('dong_boundaries 저장 에러:', upsertErr.message);
+    }
+
+    return { status: 200, body: { boundaries, source: 'vworld' } };
+  } catch (err) {
+    return { status: 500, body: { error: err.message } };
+  }
+}
+
 export default async function handler(req, res) {
+  if (req.query.mode === 'boundary') {
+    res.setHeader('Cache-Control', 's-maxage=86400, stale-while-revalidate=604800');
+    const sggCd = req.query.sggCd;
+    if (!sggCd || String(sggCd).length !== 5) {
+      return res.status(400).json({ error: 'sggCd(5자리 시군구코드)가 필요합니다.' });
+    }
+    try {
+      const { status, body } = await getBoundary(String(sggCd), req.query.raw === 'true');
+      return res.status(status).json(body);
+    } catch (err) {
+      return res.status(500).json({ error: err.message });
+    }
+  }
   if (req.query.mode === 'priceMomentum') {
     // 6구간 병렬조회라도 무거운 집계라 캐시를 넉넉히(1시간) 둠
     res.setHeader('Cache-Control', 's-maxage=3600, stale-while-revalidate=7200');
