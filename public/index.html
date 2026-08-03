@@ -1906,7 +1906,9 @@ function checkDongBoundaryAt(lat, lon) {
             applyDongBoundary(emdCd, sigungu, emdNm, dongBoundaryCacheBySgg[sggCd]);
             return;
         }
-        fetch('/api/get-boundary?sggCd=' + sggCd)
+        // 2026-08: api/get-boundary.js 단독 함수였는데 Vercel 12개 함수 한도에 걸려서
+        // data-coverage.js의 mode=boundary 분기로 합침 (get-boundary.js는 더 이상 안 씀)
+        fetch('/api/data-coverage?mode=boundary&sggCd=' + sggCd)
             .then(function(r) { return r.json(); })
             .then(function(d) {
                 var list = (d && d.boundaries) || [];
