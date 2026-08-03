@@ -12266,12 +12266,15 @@ function renderMoneyRankSection(title, list) {
         var counts = r.counts || [], low = r.lowSample || [];
         var countTrend = counts.map(function(c, i) { return c + (low[i] ? '*' : ''); }).join('→');
         var warnBadge = r.volumeDrop ? ' <span style="color:#e65100;">⚠️거래량급감구간</span>' : '';
+        // 신축(준공2년내) 거래는 이미 RPC 단계에서 평단가 집계에서 빠져있음 - newCntTotal이
+        // 있으면 "이만큼은 별도로 빠졌다"는 걸 알려주는 참고 배지만 추가로 보여줌
+        var newBadge = r.newCntTotal > 0 ? ' <span style="color:#1976d2;">🏗️신축 ' + r.newCntTotal + '건 별도(집계제외)</span>' : '';
         html += '<div onclick="moveToDong(\'' + esc1(r.region) + '\',\'' + esc1(r.dong) + '\')" style="padding:6px 2px;border-bottom:1px solid #f5f5f5;cursor:pointer;">'
             + '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;font-size:11.5px;">'
             + '<span style="min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;"><span style="color:#999;font-weight:bold;margin-right:4px;">' + (idx + 1) + '</span>' + cleanField(r.region) + ' ' + cleanField(r.dong) + '</span>'
             + '<span style="font-weight:bold;color:#e53935;white-space:nowrap;flex-shrink:0;">' + sign + r.momentumPct + '%</span></div>'
             + '<div style="font-size:10px;color:#888;margin-top:2px;white-space:nowrap;overflow-x:auto;">평당가 ' + priceTrend + '</div>'
-            + '<div style="font-size:10px;color:#aaa;margin-top:1px;">거래량 ' + countTrend + '건(*표본부족) · 상승 ' + r.upTransitions + '/5구간' + warnBadge + '</div>'
+            + '<div style="font-size:10px;color:#aaa;margin-top:1px;">거래량 ' + countTrend + '건(*표본부족) · 상승 ' + r.upTransitions + '/5구간' + warnBadge + newBadge + '</div>'
             + '</div>';
     });
     html += '</div>';
@@ -12289,7 +12292,7 @@ async function loadSurgeMoneyData() {
         var data = await readJsonResponseSafe(res);
         if (!res.ok) throw new Error((data && data.error) || ('서버 오류(' + res.status + ')'));
         statusBox.style.color = '#999';
-        statusBox.innerText = '평당가 모멘텀(전체 평형·5구간 중 3회 이상 상승) · 아파트 40일×6구간/최소7건, 연립다세대 60일×6구간/최소4건' + (sido ? ' · ' + sido : ' · 전국');
+        statusBox.innerText = '평당가 모멘텀(전체 평형·5구간 중 3회 이상 상승·신축1년내 제외) · 아파트 40일×6구간/최소7건, 연립다세대 60일×6구간/최소4건' + (sido ? ' · ' + sido : ' · 전국');
         // 실거래 신고기한(계약 후 30일 이내)상 가장 최근 1개월 구간은 아직 신고가 덜 끝난
         // 거래가 섞여 있어 거래량이 구조적으로 낮게 보일 수 있음 - 사용자 요청으로 계산 로직은
         // 그대로 두고 이 안내문구만 상시 표시함.
