@@ -93,37 +93,72 @@ function mergeRanges(a, b) {
        group by region, dong order by cnt desc limit p_limit;
      $$;
 
-     -- ⚠️ 2026-08: avg_price를 "총 매매가"가 아니라 "평당가(만원/평 = price/size*3.305785)"로
-     -- 바꿈. 국민평형(23~25평)만 보면 단지별 평형 차이를 무시할 수 있어 좋지만, 그만큼 표본이
-     -- 작아져서 소도시에서는 우연한 편차가 순위 상위권을 차지하는 문제가 있었음. 평당가로
-     -- 정규화하면 모든 평형의 거래를 다 써도 서로 비교 가능해져서 표본이 훨씬 커짐.
-     -- (파라미터 목록은 그대로라 DROP 없이 CREATE OR REPLACE만으로 교체됨)
-     create or replace function rpc_bucket_avg_price(p_start int, p_end int, p_sido text, p_type text, p_min_size int, p_max_size int)
-     returns table(region text, dong text, avg_price numeric, cnt bigint)
+     -- ⚠️ 2026-08(1차): avg_price를 "총 매매가"가 아니라 "평당가(만원/평 = price/size*
+     -- 3.305785)"로 바꿈. 국민평형(23~25평)만 보면 단지별 평형 차이를 무시할 수 있어 좋지만,
+     -- 그만큼 표본이 작아져서 소도시에서는 우연한 편차가 순위 상위권을 차지하는 문제가
+     -- 있었음. 평당가로 정규화하면 모든 평형의 거래를 다 써도 서로 비교 가능해져서 표본이
+     -- 훨씬 커짐.
+     -- ⚠️ 2026-08(2차): 단순 평균은 신축 프리미엄 건물(아파트는 주변시세 대비 15~20%,
+     -- 빌라는 2배 가까이 비싸게 거래되기도 함)이 몇 건만 섞여도 "돈되는 지역"으로 잘못
+     -- 뜨는 착시를 만들 수 있어서, build_year 기준 준공 1년 이내(신축) 거래는 집계에서
+     -- 빼고 new_cnt/new_avg_price로 별도 반환하도록 바꿈. 신축을 뺀 나머지도 같은
+     -- (region,dong) 중앙값 대비 2배 초과/0.5배 미만인 극단적 이상치는 느슨하게 추가로
+     -- 걸러냄(로얄동/로얄층 같은 정상 편차는 이 배수로는 안 걸림). 반환 컬럼이 늘어나서
+     -- 이번엔 DROP FUNCTION 후 CREATE로 교체해야 함(CREATE OR REPLACE만으로는 안 됨).
+     drop function if exists rpc_bucket_avg_price(int, int, text, text, int, int);
+     create function rpc_bucket_avg_price(p_start int, p_end int, p_sido text, p_type text, p_min_size int, p_max_size int)
+     returns table(region text, dong text, avg_price numeric, cnt bigint, new_cnt bigint, new_avg_price numeric)
      language sql stable as $$
-       select region, dong,
-         avg((price::numeric / nullif(size, 0)) * 3.305785) as avg_price,
-         count(*) as cnt
-       from (
-         select region, dong, price, size from house_trades
+       with raw as (
+         select region, dong, price, size, build_year from house_trades
            where p_type = 'apt' and deal_date >= p_start and deal_date < p_end
              and size >= p_min_size and size <= p_max_size
              and dong is not null and dong <> ''
              and (p_sido is null or p_sido = '' or region like p_sido || '%')
          union all
-         select region, dong, price, size from villa_trades
+         select region, dong, price, size, build_year from villa_trades
            where p_type = 'villa' and deal_date >= p_start and deal_date < p_end
              and size >= p_min_size and size <= p_max_size
              and dong is not null and dong <> ''
              and (p_sido is null or p_sido = '' or region like p_sido || '%')
          union all
-         select region, dong, price, size from single_trades
+         select region, dong, price, size, build_year from single_trades
            where p_type = 'villa' and deal_date >= p_start and deal_date < p_end
              and size >= p_min_size and size <= p_max_size
              and dong is not null and dong <> ''
              and (p_sido is null or p_sido = '' or region like p_sido || '%')
-       ) t
-       group by region, dong;
+       ),
+       tagged as (
+         select region, dong,
+           (price::numeric / nullif(size, 0)) * 3.305785 as ppp,
+           (build_year is not null and build_year >= (extract(year from current_date)::int - 1)) as is_new
+         from raw
+       ),
+       existing as (
+         select region, dong, ppp from tagged where not is_new
+       ),
+       med as (
+         select region, dong, percentile_cont(0.5) within group (order by ppp) as median_ppp
+         from existing group by region, dong
+       ),
+       clipped as (
+         select e.region, e.dong, e.ppp
+         from existing e
+         join med m on m.region = e.region and m.dong = e.dong
+         where e.ppp <= m.median_ppp * 2 and e.ppp >= m.median_ppp * 0.5
+       ),
+       new_agg as (
+         select region, dong, avg(ppp) as new_avg_price, count(*) as new_cnt
+         from tagged where is_new group by region, dong
+       )
+       select c.region, c.dong,
+         avg(c.ppp) as avg_price,
+         count(*) as cnt,
+         coalesce(n.new_cnt, 0) as new_cnt,
+         n.new_avg_price
+       from clipped c
+       left join new_agg n on n.region = c.region and n.dong = c.dong
+       group by c.region, c.dong, n.new_cnt, n.new_avg_price;
      $$;
      ------------------------------------------------------------------
 ════════════════════════════════════ */
@@ -223,7 +258,13 @@ async function getBucketAvgPrices(type, start, end, sido) {
     const acc = {};
     (data || []).forEach(r => {
       const key = r.region + '|' + r.dong;
-      acc[key] = { region: r.region, dong: r.dong, avg: Number(r.avg_price), count: Number(r.cnt) };
+      // newCount/newAvg: 신축(준공 1년 이내)으로 분류돼 avg/count 집계에서 제외된 거래
+      // (RPC 쪽에서 이미 신축 제외 + 이상치 클리핑까지 끝낸 값이 avg_price/cnt로 옴)
+      acc[key] = {
+        region: r.region, dong: r.dong, avg: Number(r.avg_price), count: Number(r.cnt),
+        newCount: Number(r.new_cnt) || 0,
+        newAvg: r.new_avg_price != null ? Number(r.new_avg_price) : null,
+      };
     });
     return acc;
   } catch (e) { console.warn(`priceMomentum(rpc): ${type} 조회 예외 -`, e.message); return {}; }
@@ -245,10 +286,14 @@ async function getPriceMomentum(type, sido, limit) {
     let meta = null;
     for (const m of bucketMaps) { if (m[k]) { meta = m[k]; break; } }
     if (!meta) return;
-    const prices = [], counts = [], lowSample = [];
+    const prices = [], counts = [], lowSample = [], newCounts = [];
     let lastKnownPrice = null;
     bucketMaps.forEach(m => {
       const b = m[k];
+      // newCounts: 이 구간에서 신축(준공 1년 이내)이라 avg_price/cnt 집계에서 빠진 거래 건수.
+      // b가 없어도(=신축만 있어서 clipped 집계에 아예 안 잡힌 경우 등) 0으로 둠 - 참고용
+      // 정보라 흐름 로직(carry-forward)에는 영향 없음.
+      newCounts.push(b ? b.newCount : 0);
       if (b && b.count > 0) {
         const p = Math.round(b.avg);
         prices.push(p); counts.push(b.count); lowSample.push(b.count < minCount);
@@ -269,12 +314,15 @@ async function getPriceMomentum(type, sido, limit) {
     // (carry-forward로 채워진 0건 구간끼리 비교해서 오탐하지 않도록 counts[i-1]>0 조건을 둠)
     let volumeDrop = false;
     for (let i = 1; i < counts.length; i++) { if (counts[i - 1] > 0 && counts[i] < counts[i - 1] * MOMENTUM_VOLUME_DROP_RATIO) volumeDrop = true; }
+    const newCntTotal = newCounts.reduce((a, b) => a + b, 0);
     rankings.push({
       region: meta.region,
       dong: meta.dong,
       prices, // 6구간 평당가(만원/평) 흐름 - 프론트 추세 표시용(빈 구간은 직전/직후 값으로 채움)
       counts, // 6구간 실제 거래건수 흐름(0이면 그 구간엔 거래가 없었다는 뜻)
       lowSample, // 6구간 각각 표본이 minCount 미만이었는지(0건 포함)
+      newCounts, // 6구간 각각 신축(준공2년내)이라 위 prices/counts 집계에서 빠진 거래 건수(참고용)
+      newCntTotal, // newCounts 합계 - 프론트에서 "신축 거래 별도" 배지 표시 여부 판단용
       upTransitions, // 5번의 구간 전환 중 상승한 횟수(0~5)
       volumeDrop,
       momentumPct: Math.round((lastAvg - firstAvg) / firstAvg * 1000) / 10,
