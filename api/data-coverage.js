@@ -370,9 +370,15 @@ async function getBoundary(sggCd, wantRaw) {
   // domain은 VWorld 키 발급 시 등록한 도메인과 반드시 일치해야 함
   const DOMAIN = 'https://1234auction.vercel.app';
 
+  // ⚠️ 2026-08: LT_C_ADEMD_INFO 레이어는 attrFilter로 걸 수 있는 필드가
+  // [emd_eng_nm, ag_geom, emd_kor_nm, full_nm, emd_cd] 뿐이라 원래 쓰던
+  // "sggCd:=:..." 필터는 VWorld가 INVALID_RANGE 에러로 거부함(실제 배포 후
+  // 라이브 호출로 확인) - 애초에 이 필터가 안 먹혀서 법정동 경계선 기능이
+  // 한 번도 정상 동작한 적이 없었던 것. emd_cd(10자리 법정동코드 = 앞5자리
+  // 시군구코드+뒤5자리 동코드)를 LIKE로 앞자리(sggCd) 일치 검색하는 방식으로 교체.
   const url = `https://api.vworld.kr/req/data?service=data&request=GetFeature&data=LT_C_ADEMD_INFO`
     + `&key=${encodeURIComponent(VWORLD_KEY)}&domain=${encodeURIComponent(DOMAIN)}`
-    + `&attrFilter=sggCd:=:${sggCd}&size=200&format=json&crs=EPSG:4326`;
+    + `&attrFilter=emd_cd:like:${sggCd}&size=200&format=json&crs=EPSG:4326`;
 
   try {
     const r = await fetch(url, { signal: AbortSignal.timeout(15000) });
