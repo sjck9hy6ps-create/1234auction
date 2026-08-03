@@ -1920,7 +1920,12 @@ function checkDongBoundaryAt(lat, lon) {
 }
 function applyDongBoundary(emdCd, sigungu, emdNm, list) {
     if (!dongBoundaryMode) return;
-    var match = list.find(function(b) { return b.emdCd === emdCd; });
+    // ⚠️ 2026-08: emdCd로 매칭이 계속 실패해서 경계선이 전혀 안 그려지던 버그 수정.
+    // 카카오 coord2RegionCode가 주는 법정동코드(10자리, 예: 1168010100)와 VWorld
+    // LT_C_ADEMD_INFO의 emd_cd(8자리, 예: 11680105)가 서로 다른 코드체계라 절대
+    // 일치하지 않았음(라이브 API 응답 직접 비교로 확인). 대신 같은 시군구 안에서는
+    // 법정동 이름이 고유하므로 이름(emdNm)으로 매칭.
+    var match = list.find(function(b) { return b.emdNm === emdNm; });
     if (!match || !match.geometry) {
         dongBoundaryCurrentEmdCd = null;
         clearDongBoundaryOverlay();
