@@ -7507,13 +7507,15 @@ function placeAuctionMarker(a) {
             + 'text-align:center;line-height:1.5;max-width:210px;transform:scale(calc(1.12 * var(--badge-scale,1)));transform-origin:center bottom;'
             + 'animation:auctionGlow 1.8s ease-in-out infinite;');
     // 터치 기기 길게 누르기 미리보기용 (setupBadgeLongPressPeek 참고)
-    div.title = [((a.name && a.name.trim()) || a.addrLabel || a.addr || '(이름없음)'), (isBidTarget ? '📋 입찰희망' : '🔨 ' + a.status), priceLine, a.pyung ? a.pyung + '평' : '', ageBadgeText].filter(Boolean).join(' · ');
+    div.title = [((a.name && a.name.trim()) || a.addrLabel || a.addr || '(이름없음)'), (isBidTarget ? '📋 입찰희망' : '🔨 ' + a.status), a.caseNo ? '사건번호 ' + a.caseNo : '', priceLine, a.pyung ? a.pyung + '평' : '', ageBadgeText].filter(Boolean).join(' · ');
     div.innerHTML = (isBidTarget
             ? '<div class="auction-badge" style="background:#fbc02d;color:#333;">📋 입찰희망' + alarmBadge + '</div>'
             : '<div class="auction-badge" style="background:' + sc + ';">🔨 ' + a.status + alarmBadge + '</div>')
         + '<div style="color:#333;font-size:11px;font-weight:bold;overflow:hidden;text-overflow:ellipsis;max-width:185px;margin-top:5px;">'
         +   ((a.name && a.name.trim()) || a.addrLabel || a.addr || '(이름없음)') + surgeBadge + ageBadge
         + '</div>'
+        // 입찰예정물건 일괄등록으로 채워진 사건번호(caseNo)를 배지에서 바로 확인할 수 있도록 표시
+        + (a.caseNo ? '<div style="color:#795548;font-size:9.5px;overflow:hidden;text-overflow:ellipsis;max-width:185px;">📄 ' + a.caseNo + '</div>' : '')
         + '<div style="color:' + sc + ';font-size:12px;font-weight:bold;">' + priceLine + '</div>'
         + (a.pyung ? '<div style="color:#888;font-size:10px;">' + a.pyung + '평</div>' : '')
         // 매칭된 일반 거래가 있는데(타입탭/등급 등 필터 때문에) 지금 이 독자 마커로 대신
