@@ -100,12 +100,17 @@ function mergeRanges(a, b) {
      -- 훨씬 커짐.
      -- ⚠️ 2026-08(2차): 단순 평균은 신축 프리미엄 건물(아파트는 주변시세 대비 15~20%,
      -- 빌라는 2배 가까이 비싸게 거래되기도 함)이 몇 건만 섞여도 "돈되는 지역"으로 잘못
-     -- 뜨는 착시를 만들 수 있어서, build_year 기준 준공 1년 이내(신축) 거래는 집계에서
-     -- 빼고 new_cnt/new_avg_price로 별도 반환하도록 바꿈. 신축을 뺀 나머지도 같은
+     -- 뜨는 착시를 만들 수 있어서, build_year 기준 신축 거래는 집계에서 빼고
+     -- new_cnt/new_avg_price로 별도 반환하도록 바꿈. 신축을 뺀 나머지도 같은
      -- (region,dong) 평균 대비 표준편차 2.5배를 벗어나는 극단적 이상치는 느슨하게
      -- 추가로 걸러냄(로얄동/로얄층 같은 정상 편차는 이 배수로는 안 걸림). 반환 컬럼이
      -- 늘어나서 이번엔 DROP FUNCTION 후 CREATE로 교체해야 함(CREATE OR REPLACE만으로는
      -- 안 됨).
+     -- ⚠️ 2026-08(신축 기준 조정): 처음엔 준공 1년 이내를 신축으로 봤는데, 아파트/빌라는
+     -- 프리미엄이 꺼지는 속도가 달라(아파트는 입주 2~3년차까지도 초기 시세가 남아있는
+     -- 경우가 많고, 빌라는 신축 프리미엄이 상대적으로 더 오래/크게 남는 경향) 타입별로
+     -- 기준을 다르게 둠: 아파트는 준공 2년 이내, 빌라(연립다세대·단독)는 준공 3년 이내를
+     -- 신축으로 판단(p_type에 따라 분기).
      -- ⚠️ 2026-08(성능 수정): 처음엔 이상치 기준을 중앙값(percentile_cont, 정렬이 필요한
      -- 무거운 연산)으로 만들었는데, "전국"처럼 시/도 없이 조회하면 (region,dong) 그룹 수가
      -- 훨씬 많아져 정렬 비용이 커지면서 응답이 아예 안 오는 문제가 실제 배포 후 테스트에서
@@ -149,7 +154,7 @@ function mergeRanges(a, b) {
        tagged as (
          select region, dong, danji,
            (price::numeric / nullif(size, 0)) * 3.305785 as ppp,
-           (build_year is not null and build_year >= (extract(year from current_date)::int - 1)) as is_new
+           (build_year is not null and build_year >= (extract(year from current_date)::int - case when p_type = 'apt' then 2 else 3 end)) as is_new
          from raw
        ),
        existing as (
