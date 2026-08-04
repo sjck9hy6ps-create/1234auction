@@ -24,6 +24,19 @@
      ALTER TABLE building_info ADD COLUMN IF NOT EXISTS floor_json jsonb;
      ALTER TABLE building_info ADD COLUMN IF NOT EXISTS expos_json jsonb;
 
+   ── 2026-07 인천 서구→서해구/검단구 분구 대응 ──
+   2026-07-01자로 인천광역시 서구가 폐지되고 서해구/검단구로 분리되면서 법정동코드가
+   바뀌었습니다(예: 연희동 28260-10600 → 28275-10400). 카카오맵 좌표→행정동코드 변환
+   (coord2RegionCode)은 이미 새 코드를 반환하는데, 국토교통부 건축HUB 백엔드 DB는 아직
+   분구 이전 구코드로만 건물이 색인돼 있어 새 코드로 조회하면 항상 0건이 나옵니다
+   (2026-08 인천 서해구 연희동 712-2번지 실측: 새 코드 28275-10400 → totalCount 0,
+   구 코드 28260-10600 → "대명그린빌" 정상 조회됨. 앱 버그가 아니라 정부기관 간
+   데이터 동기화 지연 문제).
+   새 코드로 조회했는데 표제부가 0건이면, 아래 LEGACY_REGION_MAP에 등록된 구코드로
+   자동 재시도합니다. 확인된 동만 우선 등록했고, 다른 동에서도 같은 증상이 확인되면
+   여기에 계속 추가하면 됩니다. 캐시는 항상 "요청받은(새) 코드" 기준으로 저장하므로,
+   폴백이 성공해도 다음 조회부터는 캐시로 바로 응답합니다.
+
    ── 디버그 ──
    title이 없거나, price/floor/expos가 비어있을 때 응답에 debug 필드를
    추가로 포함시켜서 건축HUB가 실제로 뭐라고 응답했는지 바로 확인 가능.
@@ -41,6 +54,13 @@ const supabase = createClient(
 const API_KEY = process.env.PUBLIC_DATA_API_KEY;
 const BASE = 'https://apis.data.go.kr/1613000/BldRgstHubService';
 const FRESH_MS = 1000 * 60 * 60 * 24 * 180; // 180일
+
+// 2026-07 인천 서구→서해구/검단구 분구로 법정동코드가 바뀐 지역 중, 건축HUB가 아직
+// 새 코드를 인식하지 못해 구코드로 재시도해야 하는 것으로 "확인된" 매핑만 등록.
+// key: `${새 sigunguCd}|${새 bjdongCd}`, value: 분구 이전 구코드
+const LEGACY_REGION_MAP = {
+  '28275|10400': { sigunguCd: '28260', bjdongCd: '10600' }, // 서해구 연희동 → (구)인천 서구 연희동
+};
 
 export default async function handler(req, res) {
   res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
@@ -73,6 +93,8 @@ export default async function handler(req, res) {
 
   try {
     // ── 1. 캐시 조회 (force=1이면 건너뛰고 바로 재조회) ──
+    // 항상 "요청받은(새) 코드" 기준으로 캐시를 찾음 - 아래에서 구코드 폴백이 성공해도
+    // 캐시 저장은 이 키로 하므로, 다음 조회부터는 폴백 없이 캐시로 바로 응답됨.
     let cached = null;
     if (!forceRefresh) {
       const { data: cachedRow, error: cacheErr } = await supabase
@@ -101,15 +123,22 @@ export default async function handler(req, res) {
     // ── 2. 캐시 없거나 오래됨 → 실시간 조회 ──
     if (!API_KEY) return res.status(500).json({ error: 'PUBLIC_DATA_API_KEY 없음' });
 
-    const commonParams = { sigunguCd, bjdongCd, platGbCd: gbCd, bun, ji: jiParam };
-    const [titleResult, priceResult, floorResult, exposResult] = await Promise.all([
-      // 대단지는 같은 지번에 동마다(+부속건물까지) 표제부가 여러 건 잡혀 기본 20건을 넘는
-      // 경우가 있어(안산 고잔주공9단지 실측으로 확인) numOfRows를 넉넉히 늘림
-      fetchBld('getBrTitleInfo', { ...commonParams, numOfRows: '100' }),
-      fetchBld('getBrHsprcInfo', commonParams),
-      fetchBld('getBrFlrOulnInfo', { ...commonParams, numOfRows: '100' }),
-      fetchBld('getBrExposPubuseAreaInfo', { ...commonParams, numOfRows: '200' }),
-    ]);
+    let { titleResult, priceResult, floorResult, exposResult } =
+      await fetchAllBld(sigunguCd, bjdongCd, bun, jiParam, gbCd);
+
+    // 새 코드로 표제부가 0건이면(분구로 인한 코드 불일치 가능성) 등록된 구코드로 재시도
+    let legacyFallbackUsed = false;
+    if (!titleResult.items.length) {
+      const legacy = LEGACY_REGION_MAP[`${sigunguCd}|${bjdongCd}`];
+      if (legacy) {
+        const legacyFetch = await fetchAllBld(legacy.sigunguCd, legacy.bjdongCd, bun, jiParam, gbCd);
+        if (legacyFetch.titleResult.items.length) {
+          ({ titleResult, priceResult, floorResult, exposResult } = legacyFetch);
+          legacyFallbackUsed = true;
+        }
+      }
+    }
+
     const titleItems = titleResult.items;
     const priceItems = priceResult.items;
 
@@ -151,6 +180,8 @@ export default async function handler(req, res) {
     })) : undefined;
 
     // ── 3. 캐시에 저장 (write-through) ──
+    // 요청받은(새) sigunguCd/bjdongCd 기준으로 저장 - 구코드 폴백을 썼어도 마찬가지.
+    // 다음 조회부터는 이 캐시로 바로 응답되어 폴백 재시도 자체가 필요 없어짐.
     const { error: upsertErr } = await supabase.from('building_info').upsert({
       sigungu_cd: sigunguCd,
       bjdong_cd:  bjdongCd,
@@ -165,11 +196,29 @@ export default async function handler(req, res) {
     }, { onConflict: 'sigungu_cd,bjdong_cd,bun,ji,bld_nm' });
     if (upsertErr) console.error('building_info 캐시 저장 에러:', upsertErr.message);
 
-    return res.status(200).json({ title, price, floors, exposAreas, cached: false, debug, titleCandidates });
+    return res.status(200).json({
+      title, price, floors, exposAreas, cached: false, debug, titleCandidates,
+      legacyFallbackUsed: legacyFallbackUsed || undefined,
+    });
   } catch (err) {
     console.error('건축물대장 조회 에러:', err.message);
     return res.status(500).json({ error: err.message });
   }
+}
+
+/* 표제부/공시가격/층별개요/전유공용면적 4종을 한 세트로 조회하는 헬퍼.
+   2026-07 분구로 인한 구코드 폴백 재시도에서도 동일하게 재사용하기 위해 분리함. */
+async function fetchAllBld(sigunguCd, bjdongCd, bun, jiParam, gbCd) {
+  const commonParams = { sigunguCd, bjdongCd, platGbCd: gbCd, bun, ji: jiParam };
+  const [titleResult, priceResult, floorResult, exposResult] = await Promise.all([
+    // 대단지는 같은 지번에 동마다(+부속건물까지) 표제부가 여러 건 잡혀 기본 20건을 넘는
+    // 경우가 있어(안산 고잔주공9단지 실측으로 확인) numOfRows를 넉넉히 늘림
+    fetchBld('getBrTitleInfo', { ...commonParams, numOfRows: '100' }),
+    fetchBld('getBrHsprcInfo', commonParams),
+    fetchBld('getBrFlrOulnInfo', { ...commonParams, numOfRows: '100' }),
+    fetchBld('getBrExposPubuseAreaInfo', { ...commonParams, numOfRows: '200' }),
+  ]);
+  return { titleResult, priceResult, floorResult, exposResult };
 }
 
 /* 배치 캐시조회 - 외부 API는 호출하지 않고 building_info 캐시에 있는 것만 돌려줌.
