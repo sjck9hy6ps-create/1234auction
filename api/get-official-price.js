@@ -33,6 +33,16 @@
    구코드로 바꾼 PNU로 한 번 더 시도"하는 방식으로 해결합니다.
    확인된 동만 우선 등록했고, 다른 동에서도 같은 증상이 확인되면 LEGACY_PNU_PREFIX_MAP에
    계속 추가하면 됩니다.
+
+   ── 위와는 별개로: 주소 텍스트 자체에 옛 지명("서구")이 남아있는 경우 ──
+   경매 패널(addrJibun)은 법원 서류 원문을 AI가 그대로 추출하는 경우가 많아, 주소 텍스트에
+   분구 이전 지명("인천광역시 서구")이 그대로 남아있는 사례가 흔함. 그런데 VWorld 주소검색은
+   이미 새 지명으로 완전히 전환되어 있어서, "서구"라는 옛 지명으로는 PNU 검색 자체가 0건으로
+   실패함(2026-08 실측: "인천광역시 서구 연희동 712-2" 검색 → 0건, "인천광역시 서해구
+   연희동 712-2"로 바꿔야 정상 조회됨 - 반대로 region+dong+bunji로 주소를 조립하는 일반
+   매물 패널은 DB region 값이 이미 최신화 마이그레이션을 거쳐 "서해구"로 저장돼 있어 이
+   문제가 없었음). RENAMED_REGION_CANDIDATES에 등록된 옛 지명이 주소에 섞여 있으면 새
+   지명 후보로 자동 치환해 재시도함.
 ════════════════════════════════════════════════════════════ */
 export const maxDuration = 60;
 
@@ -164,6 +174,28 @@ async function findPnu(address, key, domain) {
   return { pnu: items[0].id || null, networkError: false }; // PARCEL 검색결과의 id = PNU(19자리)
 }
 
+// 분구로 이름이 바뀐 지역의 "옛 지명"이 주소 텍스트에 남아있으면 PNU 검색 자체가 실패하는
+// 문제 대응. 패턴에 매칭되면 후보 새 지명들로 순서대로 바꿔서 재시도하고, 하나라도 PNU를
+// 찾으면 그 결과를 사용함. 확인된 지역만 등록, 필요시 계속 추가.
+const RENAMED_REGION_CANDIDATES = [
+  { pattern: /인천\s*(광역시)?\s*서구/, replacements: ['인천광역시 서해구', '인천광역시 검단구'] },
+];
+
+async function findPnuWithRegionRetry(address, key, domain) {
+  const primary = await findPnu(address, key, domain);
+  if (primary.pnu || primary.networkError) return primary;
+  for (const rule of RENAMED_REGION_CANDIDATES) {
+    if (!rule.pattern.test(address)) continue;
+    for (const newRegion of rule.replacements) {
+      const altAddress = address.replace(rule.pattern, newRegion);
+      if (altAddress === address) continue;
+      const altResult = await findPnu(altAddress, key, domain);
+      if (altResult.pnu) return altResult;
+    }
+  }
+  return primary; // 옛 지명 치환도 실패하면 원래(실패) 결과 그대로 반환
+}
+
 async function getApartPrice(pnu, dongNm, floorNm, hoNm, key, domain) {
   const params = new URLSearchParams({ pnu, format: 'json', numOfRows: '100', pageNo: '1', key });
   if (domain) params.set('domain', domain);
@@ -271,7 +303,7 @@ export default async function handler(req, res) {
   }
 
   try {
-    const { pnu, networkError } = await findPnu(address, VWORLD_API_KEY, VWORLD_DOMAIN);
+    const { pnu, networkError } = await findPnuWithRegionRetry(address, VWORLD_API_KEY, VWORLD_DOMAIN);
     if (!pnu) {
       if (networkError) {
         return res.status(200).json({ success: false, error: 'VWorld 서버 연결에 일시적으로 실패했습니다. 잠시 후 다시 시도해 주세요.' });
