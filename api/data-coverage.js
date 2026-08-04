@@ -255,6 +255,43 @@ function momentumBuckets(type) {
   }
   return buckets;
 }
+// 진단용: 특정 (region,dong,type) 구간의 rpc_bucket_avg_price 집계 뒤에 숨은
+// 원본 거래 목록을 그대로 보여줌 - "왜 이 구간 평단가가 이렇게 나왔는지" 근거자료
+// 확인용. 범위가 (region,dong,40~60일)로 좁아서 가볍고 빠름. 신규 서버리스 함수를
+// 새로 만들지 않고 기존 mode 분기 방식 그대로 씀.
+async function getBucketDetailRows(type, region, dong, start, end) {
+  const cols = 'region,dong,danji,price,size,floor,deal_date,build_year';
+  let rows = [];
+  if (type === 'villa') {
+    const [{ data: v, error: e1 }, { data: s, error: e2 }] = await Promise.all([
+      supabase.from('villa_trades').select(cols).eq('region', region).eq('dong', dong)
+        .gte('deal_date', start).lt('deal_date', end)
+        .gte('size', MOMENTUM_SIZE_MIN).lte('size', MOMENTUM_SIZE_MAX),
+      supabase.from('single_trades').select(cols).eq('region', region).eq('dong', dong)
+        .gte('deal_date', start).lt('deal_date', end)
+        .gte('size', MOMENTUM_SIZE_MIN).lte('size', MOMENTUM_SIZE_MAX),
+    ]);
+    if (e1) throw e1;
+    if (e2) throw e2;
+    rows = [...(v || []), ...(s || [])];
+  } else {
+    const { data, error } = await supabase.from('house_trades').select(cols)
+      .eq('region', region).eq('dong', dong)
+      .gte('deal_date', start).lt('deal_date', end)
+      .gte('size', MOMENTUM_SIZE_MIN).lte('size', MOMENTUM_SIZE_MAX);
+    if (error) throw error;
+    rows = data || [];
+  }
+  const curYear = new Date().getFullYear();
+  return rows
+    .map(r => ({
+      danji: r.danji, price: r.price, size: r.size, floor: r.floor, deal_date: r.deal_date,
+      build_year: r.build_year,
+      ppp: r.size ? Math.round((r.price / r.size) * 3.305785 * 10) / 10 : null,
+      isNew: r.build_year != null && r.build_year >= curYear - 1,
+    }))
+    .sort((a, b) => a.deal_date - b.deal_date);
+}
 async function getBucketAvgPrices(type, start, end, sido) {
   try {
     const { data, error } = await supabase.rpc('rpc_bucket_avg_price', {
@@ -439,6 +476,23 @@ export default async function handler(req, res) {
     try {
       const { status, body } = await getBoundary(String(sggCd), req.query.raw === 'true');
       return res.status(status).json(body);
+    } catch (err) {
+      return res.status(500).json({ error: err.message });
+    }
+  }
+  if (req.query.mode === 'bucketDetail') {
+    // 진단용 - "돈되는 지역" 특정 구간 평단가의 근거가 된 원본 거래를 그대로 보여줌.
+    // 캐시하지 않음(디버깅용, 최신 상태를 바로바로 봐야 함).
+    res.setHeader('Cache-Control', 'no-store');
+    const { region, dong, type, start, end } = req.query;
+    if (!region || !dong || !start || !end) {
+      return res.status(400).json({ error: 'region, dong, start, end 쿼리파라미터가 필요합니다.' });
+    }
+    try {
+      const rows = await getBucketDetailRows(
+        type === 'villa' ? 'villa' : 'apt', region, dong, parseInt(start, 10), parseInt(end, 10)
+      );
+      return res.status(200).json({ region, dong, start, end, count: rows.length, rows });
     } catch (err) {
       return res.status(500).json({ error: err.message });
     }
