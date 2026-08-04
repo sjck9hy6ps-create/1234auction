@@ -111,44 +111,51 @@ function mergeRanges(a, b) {
      -- 훨씬 많아져 정렬 비용이 커지면서 응답이 아예 안 오는 문제가 실제 배포 후 테스트에서
      -- 발견됨(시/도 하나로 좁히면 정상, "전국"만 멈춤). AVG/STDDEV_POP(정렬 불필요한
      -- 단일패스 집계)로 교체해 해결함.
+     -- ⚠️ 2026-08(mix-shift 수정): "서울 마포구 아현동"에서 특정 구간에 우연히 저가/구축
+     -- 단지 거래가 몰리면서 단지들 시세는 그대로인데 동 평균만 훅 떨어져 보인 사례가 발견됨
+     -- ("돈되는 지역"이 실제 가격변동이 아니라 구간별 거래 단지 구성 변화만으로 뽑히는 착시).
+     -- danji(단지명)별로도 그룹핑해서 반환하도록 바꾸고, 실제 mix-shift 보정(각 단지를 자기
+     -- 자신의 전체기간 평균과 비교하는 상대지수 계산)은 이 함수를 "구간 범위"로 한 번, "6구간
+     -- 전체 범위(baseline)"로 한 번 더 호출해서 얻은 두 결과를 JS(getBucketDanjiPrices/
+     -- getPriceMomentum)에서 조합해 수행함 - SQL은 danji별 평단가만 돌려줌.
      drop function if exists rpc_bucket_avg_price(int, int, text, text, int, int);
      create function rpc_bucket_avg_price(p_start int, p_end int, p_sido text, p_type text, p_min_size int, p_max_size int)
-     returns table(region text, dong text, avg_price numeric, cnt bigint, new_cnt bigint, new_avg_price numeric)
+     returns table(region text, dong text, danji text, avg_price numeric, cnt bigint, new_cnt bigint, new_avg_price numeric)
      language sql stable as $$
        with raw as (
-         select region, dong, price, size, build_year from house_trades
+         select region, dong, coalesce(nullif(danji, ''), '(단지미상)') as danji, price, size, build_year from house_trades
            where p_type = 'apt' and deal_date >= p_start and deal_date < p_end
              and size >= p_min_size and size <= p_max_size
              and dong is not null and dong <> ''
              and (p_sido is null or p_sido = '' or region like p_sido || '%')
          union all
-         select region, dong, price, size, build_year from villa_trades
+         select region, dong, coalesce(nullif(danji, ''), '(단지미상)') as danji, price, size, build_year from villa_trades
            where p_type = 'villa' and deal_date >= p_start and deal_date < p_end
              and size >= p_min_size and size <= p_max_size
              and dong is not null and dong <> ''
              and (p_sido is null or p_sido = '' or region like p_sido || '%')
          union all
-         select region, dong, price, size, build_year from single_trades
+         select region, dong, coalesce(nullif(danji, ''), '(단지미상)') as danji, price, size, build_year from single_trades
            where p_type = 'villa' and deal_date >= p_start and deal_date < p_end
              and size >= p_min_size and size <= p_max_size
              and dong is not null and dong <> ''
              and (p_sido is null or p_sido = '' or region like p_sido || '%')
        ),
        tagged as (
-         select region, dong,
+         select region, dong, danji,
            (price::numeric / nullif(size, 0)) * 3.305785 as ppp,
            (build_year is not null and build_year >= (extract(year from current_date)::int - 1)) as is_new
          from raw
        ),
        existing as (
-         select region, dong, ppp from tagged where not is_new
+         select region, dong, danji, ppp from tagged where not is_new
        ),
        stats as (
          select region, dong, avg(ppp) as mean_ppp, stddev_pop(ppp) as sd_ppp
          from existing group by region, dong
        ),
        clipped as (
-         select e.region, e.dong, e.ppp
+         select e.region, e.dong, e.danji, e.ppp
          from existing e
          join stats s on s.region = e.region and s.dong = e.dong
          where e.ppp <= s.mean_ppp + 2.5 * coalesce(s.sd_ppp, 0)
@@ -158,14 +165,14 @@ function mergeRanges(a, b) {
          select region, dong, avg(ppp) as new_avg_price, count(*) as new_cnt
          from tagged where is_new group by region, dong
        )
-       select c.region, c.dong,
+       select c.region, c.dong, c.danji,
          avg(c.ppp) as avg_price,
          count(*) as cnt,
          coalesce(n.new_cnt, 0) as new_cnt,
          n.new_avg_price
        from clipped c
        left join new_agg n on n.region = c.region and n.dong = c.dong
-       group by c.region, c.dong, n.new_cnt, n.new_avg_price;
+       group by c.region, c.dong, c.danji, n.new_cnt, n.new_avg_price;
      $$;
      ------------------------------------------------------------------
 ════════════════════════════════════ */
@@ -292,7 +299,10 @@ async function getBucketDetailRows(type, region, dong, start, end) {
     }))
     .sort((a, b) => a.deal_date - b.deal_date);
 }
-async function getBucketAvgPrices(type, start, end, sido) {
+// (region,dong) 단위가 아니라 (region,dong,danji) 단위로 평단가/건수를 받아옴 - danji별로
+// 나눠 받는 이유는 getPriceMomentum에서 "이 단지가 원래(baseline 기간) 얼마였는지"와
+// 비교하는 상대지수 계산을 하기 위함(아래 getPriceMomentum 주석 참고).
+async function getBucketDanjiPrices(type, start, end, sido) {
   try {
     const { data, error } = await supabase.rpc('rpc_bucket_avg_price', {
       p_start: start, p_end: end, p_sido: sido || null, p_type: type,
@@ -302,13 +312,12 @@ async function getBucketAvgPrices(type, start, end, sido) {
     const acc = {};
     (data || []).forEach(r => {
       const key = r.region + '|' + r.dong;
-      // newCount/newAvg: 신축(준공 1년 이내)으로 분류돼 avg/count 집계에서 제외된 거래
-      // (RPC 쪽에서 이미 신축 제외 + 이상치 클리핑까지 끝낸 값이 avg_price/cnt로 옴)
-      acc[key] = {
-        region: r.region, dong: r.dong, avg: Number(r.avg_price), count: Number(r.cnt),
-        newCount: Number(r.new_cnt) || 0,
-        newAvg: r.new_avg_price != null ? Number(r.new_avg_price) : null,
-      };
+      if (!acc[key]) acc[key] = { region: r.region, dong: r.dong, danjis: {}, newCount: 0, newAvg: null };
+      acc[key].danjis[r.danji || '(단지미상)'] = { avg: Number(r.avg_price), count: Number(r.cnt) };
+      // newCount/newAvg는 dong 단위 값이라 같은 dong의 danji 행마다 똑같이 반복되어 옴 -
+      // 그냥 마지막 값으로 덮어써도 결과는 같음(참고용 정보라 병합 계산과는 무관).
+      acc[key].newCount = Number(r.new_cnt) || 0;
+      acc[key].newAvg = r.new_avg_price != null ? Number(r.new_avg_price) : null;
     });
     return acc;
   } catch (e) { console.warn(`priceMomentum(rpc): ${type} 조회 예외 -`, e.message); return {}; }
@@ -316,37 +325,74 @@ async function getBucketAvgPrices(type, start, end, sido) {
 async function getPriceMomentum(type, sido, limit) {
   const minCount = minBucketCountFor(type);
   const buckets = momentumBuckets(type);
-  const bucketMaps = await Promise.all(buckets.map(b => getBucketAvgPrices(type, b.start, b.end, sido)));
-  // 2026-08(3차): 표본이 적은 구간(특히 1건짜리)은 그 몇 건이 우연히 비싸거나 싸면 평단가가
-  // 크게 흔들리는 문제가 있었음(예: 인천 계양구 방축동 - 10건→1건으로 표본이 줄면서 그
-  // 1건이 하필 싼 단지라 평단가가 뚝 떨어져 보인 사례). 예전엔 이런 구간을 그냥 "직전 유효
-  // 구간의 값을 그대로 복붙"(carry-forward)했는데, 이번엔 최소표본(minCount) 미달 구간만
-  // 더 과거 구간의 "원본 합계"를 필요한 만큼 끌어와 가중평균으로 합쳐서 표본을 확보함(그래도
-  // 부족하면 이후 구간에서도 끌어옴). 표본이 이미 충분한 구간은 자기 구간 데이터만 그대로
-  // 쓰므로 최신성이 유지됨. ⚠️ 거래량(counts)은 이 병합과 무관하게 항상 그 구간의 실제
-  // 거래건수를 그대로 보여줌 - "몇 건이 합쳐진 평단가인지"가 아니라 "이 구간에 실제로 거래가
-  // 몇 건 있었는지"를 보여주는 용도이기 때문. lowSample은 병합 후에도 표본이 minCount
-  // 미만인 경우에만 true(즉 병합으로 채워졌으면 더 이상 표본부족 경고가 뜨지 않음).
+  // baseline = 6구간을 합친 전체 기간(아파트 240일/빌라 360일) - "이 단지가 원래 얼마였는지"의
+  // 기준값을 구하기 위해, 구간별 조회와 별도로 전체 범위를 한 번 더 조회함(구간 경계가 서로
+  // 딱 맞닿아 있어 buckets[0].start~buckets[5].end가 곧 전체 기간과 정확히 일치함).
+  const [bucketMaps, baselineMap] = await Promise.all([
+    Promise.all(buckets.map(b => getBucketDanjiPrices(type, b.start, b.end, sido))),
+    getBucketDanjiPrices(type, buckets[0].start, buckets[5].end, sido),
+  ]);
+  // 2026-08(4차, mix-shift 수정): "서울 마포구 아현동" 사례에서, 특정 구간에 우연히 저가/구축
+  // 단지(애오개아이파크·예미원 등) 거래가 몰리면서 단지들 자체 시세는 그대로인데 동 전체
+  // 평균만 훅 떨어져 보이는 문제가 발견됨. 단순히 그 구간에 거래된 모든 건을 평균내면 "이번에
+  // 어떤 단지가 거래됐는지"에 따라 평단가가 출렁여서, 실제 가격변동이 아닌데도 "돈되는 지역"
+  // 순위에 잘못 뽑히는 착시가 생길 수 있음.
+  // → 각 거래를 "그 단지의 baseline(6구간 전체기간) 평균 대비 몇 배(상대비율)"로 바꾼 뒤,
+  //   그 상대비율들을 구간별로 평균냄. 이러면 "이번 구간엔 원래 싼 단지가 많이 거래됐다"는
+  //   사실 자체가 지수에 거의 영향을 못 줌(각 단지가 자기 자신의 기준가 대비 얼마나
+  //   움직였는지만 잡아내기 때문 - 반복거래/헤도닉 지수와 같은 원리). 화면엔 이 상대지수에
+  //   그 동의 baseline 평균 평단가(dongBaseline)를 다시 곱해서 "만원/평" 단위로 환산해
+  //   보여줌(지수 자체는 무차원 비율이라 그대로 보여주면 이해하기 어려움).
+  // ⚠️ 표본부족(minCount 미달) 구간을 직전 구간과 합치는 로직은 그대로 유지하되, 이제
+  //   "원본 평단가 합계"가 아니라 "원본 상대비율 합계"를 합침(방식은 동일, 대상만 바뀜).
+  //   거래량(counts)은 지금처럼 병합과 무관하게 항상 그 구간의 실제 원본 거래건수를 보여줌.
   const allKeys = new Set();
   bucketMaps.forEach(m => Object.keys(m).forEach(k => allKeys.add(k)));
+  Object.keys(baselineMap).forEach(k => allKeys.add(k));
   const rankings = [];
   allKeys.forEach(k => {
     let meta = null;
     for (const m of bucketMaps) { if (m[k]) { meta = m[k]; break; } }
+    if (!meta) meta = baselineMap[k];
     if (!meta) return;
-    const rawCount = bucketMaps.map(m => (m[k] ? m[k].count : 0));
-    const rawSum = bucketMaps.map(m => (m[k] ? m[k].avg * m[k].count : 0));
+    const baseDanjis = baselineMap[k] ? baselineMap[k].danjis : {};
+    // 그 동의 baseline 평균 평단가(모든 단지를 거래건수 가중평균) - 상대지수를 다시
+    // "만원/평" 단위로 환산해 보여주기 위한 눈금(scale)으로만 쓰임.
+    let dongBaseSum = 0, dongBaseCnt = 0;
+    Object.values(baseDanjis).forEach(b => { dongBaseSum += b.avg * b.count; dongBaseCnt += b.count; });
+    const dongBaseline = dongBaseCnt > 0 ? dongBaseSum / dongBaseCnt : null;
+    if (!dongBaseline) return; // baseline 자체가 없으면(이론상 불가능 - 후보가 됐다면 어딘가 거래가 있음) 스킵
+
+    const rawCount = bucketMaps.map(m => {
+      const danjis = (m[k] || {}).danjis || {};
+      return Object.values(danjis).reduce((sum, d) => sum + d.count, 0);
+    });
+    // relSum[i] = 구간 i의 "단지별 상대비율(그 단지 평단가 / 그 단지 baseline 평단가) ×
+    //   건수"의 합 - 이 값을 rawCount로 나누면 구간 i의 "상대지수 평균"이 됨. baseline은
+    //   그 단지의 전체기간(이 구간 포함) 평균이라 값이 항상 존재함(표본 1건짜리 단지는
+    //   baseline과 자기 자신이 같아 상대비율이 정확히 1.0이 되어 왜곡을 만들지 않음).
+    const relSum = bucketMaps.map(m => {
+      const danjis = (m[k] || {}).danjis || {};
+      let sum = 0;
+      Object.entries(danjis).forEach(([danjiName, d]) => {
+        const base = baseDanjis[danjiName];
+        const rel = (base && base.avg > 0) ? (d.avg / base.avg) : 1;
+        sum += rel * d.count;
+      });
+      return sum;
+    });
     const newCounts = bucketMaps.map(m => (m[k] ? m[k].newCount : 0));
 
     const prices = [], lowSample = [];
     for (let i = 0; i < 6; i++) {
-      let windowSum = rawSum[i], windowCount = rawCount[i];
+      let windowRelSum = relSum[i], windowCount = rawCount[i];
       let back = i - 1;
-      while (windowCount < minCount && back >= 0) { windowSum += rawSum[back]; windowCount += rawCount[back]; back--; }
+      while (windowCount < minCount && back >= 0) { windowRelSum += relSum[back]; windowCount += rawCount[back]; back--; }
       // 과거 방향(직전 구간들)을 다 끌어와도 부족하면(주로 맨 첫 구간) 미래 방향으로도 보충
       let fwd = i + 1;
-      while (windowCount < minCount && fwd < 6) { windowSum += rawSum[fwd]; windowCount += rawCount[fwd]; fwd++; }
-      prices.push(windowCount > 0 ? Math.round(windowSum / windowCount) : null);
+      while (windowCount < minCount && fwd < 6) { windowRelSum += relSum[fwd]; windowCount += rawCount[fwd]; fwd++; }
+      // 상대지수 평균 × dongBaseline = "만원/평" 단위로 환산한 표시용 평단가
+      prices.push(windowCount > 0 ? Math.round((windowRelSum / windowCount) * dongBaseline) : null);
       lowSample.push(windowCount < minCount);
     }
     // 이론상 allKeys에 있으면 최소 한 구간엔 데이터가 있어 null이 안 남지만, 혹시 몰라 방어적으로 처리
@@ -365,7 +411,7 @@ async function getPriceMomentum(type, sido, limit) {
     rankings.push({
       region: meta.region,
       dong: meta.dong,
-      prices, // 6구간 평당가(만원/평) 흐름 - 표본부족 구간은 인접 구간과 합산된 값
+      prices, // 6구간 평당가(만원/평) 흐름 - 단지 baseline 대비 상대지수를 환산한 값(표본부족 구간은 인접 구간과 합산)
       counts: rawCount, // 6구간 실제 거래건수 흐름(병합과 무관, 그 구간의 원본 건수 그대로)
       lowSample, // 병합 후에도 표본이 minCount 미만이었는지
       newCounts, // 6구간 각각 신축(준공1년내)이라 위 prices/counts 집계에서 빠진 거래 건수(참고용)
