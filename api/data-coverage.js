@@ -317,12 +317,16 @@ async function getPriceMomentum(type, sido, limit) {
   const minCount = minBucketCountFor(type);
   const buckets = momentumBuckets(type);
   const bucketMaps = await Promise.all(buckets.map(b => getBucketAvgPrices(type, b.start, b.end, sido)));
-  // 2026-08: 예전엔 "6구간 전부 최소건수 이상"을 만족해야만 후보로 삼았는데, 이러면 거래가
-  // 뜸한 동은 흐름이 통째로 끊겨(후보 탈락) 정보가 아예 안 보이는 문제가 있었음. 대신 6구간
-  // 중 하나라도 거래가 있는 (region,dong)은 모두 후보로 삼고(합집합), 거래가 없는 구간은
-  // 가장 가까운 유효 구간의 값을 그대로 이어붙여(carry-forward) 흐름이 끊기지 않게 하며,
-  // 표본이 적은(count < minCount) 구간은 lowSample 플래그만 남겨 프론트에서 "신뢰도 낮음"으로
-  // 표시하게 함(결과에서 완전히 빼지 않음).
+  // 2026-08(3차): 표본이 적은 구간(특히 1건짜리)은 그 몇 건이 우연히 비싸거나 싸면 평단가가
+  // 크게 흔들리는 문제가 있었음(예: 인천 계양구 방축동 - 10건→1건으로 표본이 줄면서 그
+  // 1건이 하필 싼 단지라 평단가가 뚝 떨어져 보인 사례). 예전엔 이런 구간을 그냥 "직전 유효
+  // 구간의 값을 그대로 복붙"(carry-forward)했는데, 이번엔 최소표본(minCount) 미달 구간만
+  // 더 과거 구간의 "원본 합계"를 필요한 만큼 끌어와 가중평균으로 합쳐서 표본을 확보함(그래도
+  // 부족하면 이후 구간에서도 끌어옴). 표본이 이미 충분한 구간은 자기 구간 데이터만 그대로
+  // 쓰므로 최신성이 유지됨. ⚠️ 거래량(counts)은 이 병합과 무관하게 항상 그 구간의 실제
+  // 거래건수를 그대로 보여줌 - "몇 건이 합쳐진 평단가인지"가 아니라 "이 구간에 실제로 거래가
+  // 몇 건 있었는지"를 보여주는 용도이기 때문. lowSample은 병합 후에도 표본이 minCount
+  // 미만인 경우에만 true(즉 병합으로 채워졌으면 더 이상 표본부족 경고가 뜨지 않음).
   const allKeys = new Set();
   bucketMaps.forEach(m => Object.keys(m).forEach(k => allKeys.add(k)));
   const rankings = [];
@@ -330,42 +334,41 @@ async function getPriceMomentum(type, sido, limit) {
     let meta = null;
     for (const m of bucketMaps) { if (m[k]) { meta = m[k]; break; } }
     if (!meta) return;
-    const prices = [], counts = [], lowSample = [], newCounts = [];
-    let lastKnownPrice = null;
-    bucketMaps.forEach(m => {
-      const b = m[k];
-      // newCounts: 이 구간에서 신축(준공 1년 이내)이라 avg_price/cnt 집계에서 빠진 거래 건수.
-      // b가 없어도(=신축만 있어서 clipped 집계에 아예 안 잡힌 경우 등) 0으로 둠 - 참고용
-      // 정보라 흐름 로직(carry-forward)에는 영향 없음.
-      newCounts.push(b ? b.newCount : 0);
-      if (b && b.count > 0) {
-        const p = Math.round(b.avg);
-        prices.push(p); counts.push(b.count); lowSample.push(b.count < minCount);
-        lastKnownPrice = p;
-      } else {
-        prices.push(lastKnownPrice); counts.push(0); lowSample.push(true); // 거래 자체가 없는 구간 - 일단 null로 두고 아래서 보정
-      }
-    });
+    const rawCount = bucketMaps.map(m => (m[k] ? m[k].count : 0));
+    const rawSum = bucketMaps.map(m => (m[k] ? m[k].avg * m[k].count : 0));
+    const newCounts = bucketMaps.map(m => (m[k] ? m[k].newCount : 0));
+
+    const prices = [], lowSample = [];
+    for (let i = 0; i < 6; i++) {
+      let windowSum = rawSum[i], windowCount = rawCount[i];
+      let back = i - 1;
+      while (windowCount < minCount && back >= 0) { windowSum += rawSum[back]; windowCount += rawCount[back]; back--; }
+      // 과거 방향(직전 구간들)을 다 끌어와도 부족하면(주로 맨 첫 구간) 미래 방향으로도 보충
+      let fwd = i + 1;
+      while (windowCount < minCount && fwd < 6) { windowSum += rawSum[fwd]; windowCount += rawCount[fwd]; fwd++; }
+      prices.push(windowCount > 0 ? Math.round(windowSum / windowCount) : null);
+      lowSample.push(windowCount < minCount);
+    }
+    // 이론상 allKeys에 있으면 최소 한 구간엔 데이터가 있어 null이 안 남지만, 혹시 몰라 방어적으로 처리
     const firstValid = prices.find(p => p !== null);
-    if (firstValid == null) return; // 이론상 allKeys에 있으면 항상 하나는 있음
-    for (let i = 0; i < prices.length; i++) { if (prices[i] === null) prices[i] = firstValid; else break; } // 앞쪽이 비어있으면 뒤쪽 첫 유효값으로 역보정(backward-fill)
+    if (firstValid == null) return;
+    for (let i = 0; i < prices.length; i++) { if (prices[i] === null) prices[i] = firstValid; }
     const firstAvg = prices[0], lastAvg = prices[5];
     if (!firstAvg) return;
     // 추세 일관성: 5번의 구간 전환(idx0→1, 1→2, ..., 4→5) 중 상승한 횟수
     let upTransitions = 0;
     for (let i = 1; i < prices.length; i++) { if (prices[i] > prices[i - 1]) upTransitions++; }
     // 거래량 급감 경고: 실제 거래가 있던 직전 구간 대비 급격히 줄어든 경우만 표시
-    // (carry-forward로 채워진 0건 구간끼리 비교해서 오탐하지 않도록 counts[i-1]>0 조건을 둠)
     let volumeDrop = false;
-    for (let i = 1; i < counts.length; i++) { if (counts[i - 1] > 0 && counts[i] < counts[i - 1] * MOMENTUM_VOLUME_DROP_RATIO) volumeDrop = true; }
+    for (let i = 1; i < rawCount.length; i++) { if (rawCount[i - 1] > 0 && rawCount[i] < rawCount[i - 1] * MOMENTUM_VOLUME_DROP_RATIO) volumeDrop = true; }
     const newCntTotal = newCounts.reduce((a, b) => a + b, 0);
     rankings.push({
       region: meta.region,
       dong: meta.dong,
-      prices, // 6구간 평당가(만원/평) 흐름 - 프론트 추세 표시용(빈 구간은 직전/직후 값으로 채움)
-      counts, // 6구간 실제 거래건수 흐름(0이면 그 구간엔 거래가 없었다는 뜻)
-      lowSample, // 6구간 각각 표본이 minCount 미만이었는지(0건 포함)
-      newCounts, // 6구간 각각 신축(준공2년내)이라 위 prices/counts 집계에서 빠진 거래 건수(참고용)
+      prices, // 6구간 평당가(만원/평) 흐름 - 표본부족 구간은 인접 구간과 합산된 값
+      counts: rawCount, // 6구간 실제 거래건수 흐름(병합과 무관, 그 구간의 원본 건수 그대로)
+      lowSample, // 병합 후에도 표본이 minCount 미만이었는지
+      newCounts, // 6구간 각각 신축(준공1년내)이라 위 prices/counts 집계에서 빠진 거래 건수(참고용)
       newCntTotal, // newCounts 합계 - 프론트에서 "신축 거래 별도" 배지 표시 여부 판단용
       upTransitions, // 5번의 구간 전환 중 상승한 횟수(0~5)
       volumeDrop,
