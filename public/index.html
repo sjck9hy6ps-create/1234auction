@@ -7479,9 +7479,14 @@ function placeAuctionMarker(a) {
         : '';
     // 일반 거래 마커가 없는(단독) 경매물건이므로, 수만 건의 일반 거래 배지 사이에서도
     // 눈에 띄도록 굵은 주황 테두리 + 은은한 발광 애니메이션으로 강조 표시함
+    // 📋 입찰희망(입찰예정물건 일괄등록) 배지는 아직 확정 안 된 감정가보다 실제 진행 중인
+    // 현재 최저입찰가(minBid)를 우선 표시함 - 감정가는 최초 1회차 기준이라 유찰이 반복된
+    // 물건은 실제 입찰가와 크게 동떨어져 보일 수 있음. minBid가 없으면 감정가로 폴백.
     var priceLine = a.myBid
         ? toEok(String(parseInt(a.myBid))) + ' (내 입찰가)'
-        : (a.appraisal ? toEok(String(parseInt(a.appraisal))) + ' (감정가)' : '가격 미입력');
+        : (isBidTarget && a.minBid
+            ? toEok(String(parseInt(a.minBid))) + ' (최저가)'
+            : (a.appraisal ? toEok(String(parseInt(a.appraisal))) + ' (감정가)' : '가격 미입력'));
  
     // 입찰일 전일 0시 ~ 입찰일 24시 사이면 알람 배지 표시
     var alarmBadge = '';
