@@ -196,6 +196,19 @@ tr:hover td { background:#fffde7; }
     padding:1px 7px; border-radius:10px; white-space:nowrap;
     box-shadow:0 1px 4px rgba(0,0,0,0.4); border:1.5px solid white; z-index:3;
 }
+/* ⚠️ 2026-08: 겹친 배지가 --badge-scale/밀어내기(resolveBadgeOverlaps)로 아무리 줄어도
+   최소 크기(0.75)보다 더는 못 줄어서, 밀집 지역에서는 여전히 글자가 잘리거나 뒤에 깔린
+   배지가 거의 안 보이는 경우가 있음("최대 확대해도 겹쳐서 작아지는 배지가 안 보인다"는
+   피드백). 마우스/트랙패드로 커서를 올리면(hover) 그 배지만 확대하고 앞으로 올려서 내용을
+   바로 확인할 수 있게 함(attachBadgeHoverEnlarge 참고 - z-index는 각 배지의 카카오
+   CustomOverlay.setZIndex()로 직접 올려야 실제로 다른 배지 위로 나옴, CSS z-index만으로는
+   카카오가 배지마다 별도로 감싼 오버레이 래퍼 간 순서를 못 바꿈). 아이패드는 트랙패드/마우스
+   연결 시 이 hover가 그대로 동작함(iPadOS 포인터 지원) - 손가락 터치만 쓰는 경우엔 기존
+   길게 누르기 미리보기(setupBadgeLongPressPeek, title 속성 기반)로 계속 확인 가능. */
+.map-badge-hover-enlarge {
+    transform: scale(1.4) !important;
+    transition: transform 0.12s ease;
+}
 /* 경매 모달 */
 #auction-modal-bg {
     position:fixed; inset:0; background:rgba(0,0,0,0.45);
@@ -773,6 +786,11 @@ tr:hover td { background:#fffde7; }
             <textarea class="modal-input" id="a-paste-text" rows="4"
                 placeholder="탱크옥션 등 경매정보지 상세페이지 내용을 그대로 복사해서 여기 붙여넣으세요"
                 style="resize:vertical;width:100%;"></textarea>
+            <!-- 화면 전환(다른 앱/탭으로 이동)으로 등록 화면이 사라져 유료 AI 추출 API를 다시
+                 호출해야 했던 문제 대응 - 추출 성공 직후 결과를 localStorage에 저장해두고,
+                 새 물건 등록 화면을 다시 열었을 때 저장된 초안이 있으면 이 안내가 뜸(restoreAuctionDraft
+                 참고). API를 다시 부르지 않고 저장된 추출 결과 그대로 폼을 채움. -->
+            <div id="a-draft-restore-hint" style="display:none;font-size:11px;color:#f57f17;font-weight:bold;margin-top:6px;cursor:pointer;background:#fffde7;border:1px solid #fdd835;border-radius:6px;padding:6px 8px;" onclick="restoreAuctionDraft()"></div>
             <div style="margin-top:8px;">
                 <label class="modal-btn btn-purple" style="display:inline-block;cursor:pointer;">
                     📷 캡처 이미지 첨부
@@ -1832,6 +1850,11 @@ function setStatus(msg) {
 function clearMarkers() {
     Object.keys(markers).forEach(function(key) { markers[key].overlay.setMap(null); });
     markers = {};
+    // ⚠️ markerDataRegistry는 일반 거래 마커뿐 아니라 경매/입찰희망 마커(placeAuctionMarker)도
+    // 겹침 스택피커용으로 같이 등록해두므로, 통째로 비우면 auctionMarkers[id].mKey가 가리키는
+    // 항목이 사라져 다음 렌더링까지 그 배지가 겹침 확인에서 빠지는 상태가 됨 - 같이 정리해줌.
+    clearAuctionMarkers();
+    clearBidCaseMarkers();
     markerDataRegistry = {};
 }
 function closePanel() {
@@ -2446,6 +2469,23 @@ function updateBadgeScale() {
     var mapEl = document.getElementById('map');
     if (!mapEl || !map) return;
     mapEl.style.setProperty('--badge-scale', computeBadgeScale(map.getLevel()));
+}
+/* 겹쳐서 축소/밀림된 배지에 커서를 올리면 확대 + 맨 앞으로 올려서 가려진 내용을 바로
+   볼 수 있게 함(.map-badge-hover-enlarge CSS 규칙과 짝을 이룸). z-index는 CSS만으로는
+   카카오가 배지마다 따로 감싼 오버레이 래퍼끼리의 순서를 못 바꾸므로, 반드시
+   overlay.setZIndex()로 실제 오버레이 자체의 순서를 올려야 다른 배지 위로 나옴 - 마우스가
+   벗어나면 원래 zIndex로 되돌림. 등록 시점의 baseZIndex를 그대로 넘겨받아 복원 기준으로 씀. */
+function attachBadgeHoverEnlarge(div, overlay, baseZIndex) {
+    if (!div || !overlay) return;
+    div.classList.add('map-badge');
+    div.addEventListener('mouseenter', function() {
+        div.classList.add('map-badge-hover-enlarge');
+        if (overlay.setZIndex) overlay.setZIndex(100000);
+    });
+    div.addEventListener('mouseleave', function() {
+        div.classList.remove('map-badge-hover-enlarge');
+        if (overlay.setZIndex) overlay.setZIndex(baseZIndex);
+    });
 }
 /* ⚠️ 2026-08: 처음엔 줌 레벨만 보고 전체 배지를 일괄로 줄이는 방식으로 했는데, 사용자가
    정확히 지적한 대로 그건 "겹침 자체"를 보는 게 아니라서 밀집 지역에서는 똑같이 겹칠 수
@@ -3222,6 +3262,7 @@ function createMarker(cacheKey, lat, lon, apt) {
         clickable: true
     });
     overlay.setMap(map);
+    attachBadgeHoverEnlarge(div, overlay, matchedAuction ? 9999 : 1);
     markers[cacheKey] = { overlay: overlay, mKey: mKey, hasAuctionRibbon: !!matchedAuction, hasBidCaseRibbon: !!matchedBidCase };
 }
  
@@ -3246,6 +3287,19 @@ function findOverlappingMarkers(key) {
     });
     return result;
 }
+// markerDataRegistry 항목을 실제로 "여는" 동작을 타입별로 분기 - 일반 거래 마커(type
+// 없음/apt)는 상세패널(openPanel), 경매/입찰희망 마커(type:'auction', placeAuctionMarker에서
+// 등록)는 매칭된 거래가 있으면 매매기록까지 함께 보이는 전체 상세패널(openMatchedApt), 없으면
+// 경매 수정 모달을 엶. handleAptMarkerClick/pickMarkerFromStack이 겹침 유무와 무관하게 공통 사용.
+function openMarkerItemDirect(d) {
+    if (!d) return;
+    if (d.type === 'auction') {
+        if (d.matchedApt) { openMatchedApt(d.a.id); } else { openAuctionModal(d.a.id); }
+        return;
+    }
+    showRadiusCircle(d.lat, d.lon);
+    openPanel(d.apt, d.lat, d.lon);
+}
 function handleAptMarkerClick(key) {
     var d = markerDataRegistry[key];
     if (!d) return;
@@ -3254,15 +3308,32 @@ function handleAptMarkerClick(key) {
         openMarkerStackPicker(overlapping);
         return;
     }
-    showRadiusCircle(d.lat, d.lon);
-    openPanel(d.apt, d.lat, d.lon);
+    openMarkerItemDirect(d);
 }
 function openMarkerStackPicker(list) {
     var titleEl = document.getElementById('marker-stack-title');
     if (titleEl) titleEl.innerText = '📍 겹쳐있는 매물 (' + list.length + '건)';
     var body = document.getElementById('marker-stack-body');
     body.innerHTML = list.map(function(item) {
-        var l = (item.data.apt && item.data.apt.latest) || {};
+        var d = item.data;
+        // 경매(🔨)/입찰희망(📋) 항목은 apt 항목과 데이터 모양이 달라서(latest 트레이드가 아니라
+        // 경매물건 필드) 별도 렌더링 분기가 필요함 - "비교등록" 버튼은 매매기록에만 의미가 있어
+        // 경매/입찰희망 항목에는 붙이지 않음.
+        if (d.type === 'auction') {
+            var a = d.a;
+            var isBidTarget = !!a.isBidTarget;
+            var label = isBidTarget ? '📋 입찰희망' : ('🔨 ' + (a.status || '경매'));
+            var priceStr = a.myBid ? toEok(String(parseInt(a.myBid))) + ' (내 입찰가)'
+                : (isBidTarget && a.minBid) ? toEok(String(parseInt(a.minBid))) + ' (최저가)'
+                : (a.appraisal ? toEok(String(parseInt(a.appraisal))) + ' (감정가)' : '');
+            return '<div class="comp-item" style="align-items:flex-start;gap:6px;">'
+                + '<div style="cursor:pointer;flex:1;min-width:0;" onclick="pickMarkerFromStack(\'' + item.key + '\')">'
+                + '<div style="font-weight:bold;">' + label + ' · ' + ((a.name && a.name.trim()) || a.addrLabel || a.addr || '(이름없음)') + '</div>'
+                + '<div style="font-size:11px;color:#888;">' + [a.caseNo, priceStr].filter(Boolean).join(' · ') + '</div>'
+                + '</div>'
+                + '</div>';
+        }
+        var l = (d.apt && d.apt.latest) || {};
         var amountStr = l.amount ? toEok(String(l.amount)) : '';
         return '<div class="comp-item" style="align-items:flex-start;gap:6px;">'
             + '<div style="cursor:pointer;flex:1;min-width:0;" onclick="pickMarkerFromStack(\'' + item.key + '\')">'
@@ -3281,9 +3352,7 @@ function closeMarkerStackModal(e) {
 function pickMarkerFromStack(key) {
     closeMarkerStackModal();
     var d = markerDataRegistry[key];
-    if (!d) return;
-    showRadiusCircle(d.lat, d.lon);
-    openPanel(d.apt, d.lat, d.lon);
+    openMarkerItemDirect(d);
 }
 function handleCompBtnClick(key) {
     var d = markerDataRegistry[key];
@@ -5491,6 +5560,26 @@ function openAuctionModal(id) {
         if (extractedSiteArea) document.getElementById('a-site-rights-area').value = extractedSiteArea;
     }
     updateStatusUI(); updateBidMethodUI(); calcMargin(); calcCompValuation(); suggestBidFromTarget(); renderChecklistSection(); loadAuctionBuildingInfo(); autoCalcAuctionJeonseAnalysis(); renderDongMarginStatsInModal();
+    // 새 물건 등록 화면일 때만: 화면 전환(다른 앱/탭 이동 등)으로 이전에 붙여넣은 텍스트와
+    // AI 추출 결과가 날아간 경우를 대비해 저장해둔 초안(AUCTION_DRAFT_KEY)이 있으면 복원
+    // 안내를 띄움 - 탭하면 restoreAuctionDraft()가 API 재호출 없이 그대로 폼을 채움.
+    var draftHintEl = document.getElementById('a-draft-restore-hint');
+    if (draftHintEl) {
+        draftHintEl.style.display = 'none';
+        if (!isEdit) {
+            var draftRaw = null;
+            try { draftRaw = localStorage.getItem(AUCTION_DRAFT_KEY); } catch (e) {}
+            if (draftRaw) {
+                try {
+                    var draft = JSON.parse(draftRaw);
+                    if (draft && draft.detail && draft.savedAt && (Date.now() - draft.savedAt) < 24 * 60 * 60 * 1000) {
+                        draftHintEl.innerText = '🔄 이전에 추출하다 만 AI 결과가 남아있어요 (탭해서 복원 - API 재호출 없음)';
+                        draftHintEl.style.display = 'block';
+                    }
+                } catch (e) {}
+            }
+        }
+    }
     document.getElementById('auction-modal-bg').style.display = 'flex';
 }
 /* 배경(모달 바깥) 클릭으로 닫히던 동작 제거됨 - 입력 중이던 내용이 실수로 날아가는 문제가 있어
@@ -7329,6 +7418,10 @@ async function saveAuction() {
     var saved = await saveAuctionAPI(data);
     var idx = auctionList.findIndex(function(a) { return a.id === saved.id; });
     if (idx >= 0) auctionList[idx] = saved; else auctionList.push(saved);
+    // 저장이 끝나면 원문(rawText)이 이미 이 레코드 자체에 보관되므로, 화면전환 대비용
+    // 임시 초안(AUCTION_DRAFT_KEY)은 더 이상 필요 없음 - 다음 새 물건에서 엉뚱하게
+    // 다시 뜨지 않도록 지워둠.
+    try { localStorage.removeItem(AUCTION_DRAFT_KEY); } catch (e) {}
     setStatus(''); closeAuctionModal(); redrawMarkers(); alert('저장되었습니다.');
 }
 async function deleteAuction() {
@@ -7345,7 +7438,11 @@ async function deleteAuction() {
    (내용이 바뀌지 않았으면 시그니처가 같아서 다시 그리지 않음)
 ──────────────────────────────────── */
 function clearAuctionMarkers() {
-    Object.keys(auctionMarkers).forEach(function(id) { if (auctionMarkers[id].overlay) auctionMarkers[id].overlay.setMap(null); });
+    Object.keys(auctionMarkers).forEach(function(id) {
+        if (auctionMarkers[id].overlay) auctionMarkers[id].overlay.setMap(null);
+        // 겹친배지 스택피커(markerDataRegistry)에도 같이 등록해뒀으므로 마커를 지울 때 짝을 맞춰 정리
+        if (auctionMarkers[id].mKey) delete markerDataRegistry[auctionMarkers[id].mKey];
+    });
     auctionMarkers = {};
     auctionMarkerSigs = {};
 }
@@ -7372,7 +7469,11 @@ function auctionMarkerSignature(a) {
 function upsertAuctionMarker(a) {
     var sig = auctionMarkerSignature(a);
     if (auctionMarkers[a.id] && auctionMarkerSigs[a.id] === sig) return; // 변경 없음 - 그대로 유지 (깜빡임 방지)
-    if (auctionMarkers[a.id]) { if (auctionMarkers[a.id].overlay) auctionMarkers[a.id].overlay.setMap(null); delete auctionMarkers[a.id]; }
+    if (auctionMarkers[a.id]) {
+        if (auctionMarkers[a.id].overlay) auctionMarkers[a.id].overlay.setMap(null);
+        if (auctionMarkers[a.id].mKey) delete markerDataRegistry[auctionMarkers[a.id].mKey];
+        delete auctionMarkers[a.id];
+    }
     placeAuctionMarker(a);
     auctionMarkerSigs[a.id] = sig;
 }
@@ -7401,6 +7502,7 @@ function renderAuctionMarkers() {
     Object.keys(auctionMarkers).forEach(function(id) {
         if (!neededIds[id]) {
             if (auctionMarkers[id].overlay) auctionMarkers[id].overlay.setMap(null);
+            if (auctionMarkers[id].mKey) delete markerDataRegistry[auctionMarkers[id].mKey];
             delete auctionMarkers[id];
             delete auctionMarkerSigs[id];
         }
@@ -7529,16 +7631,24 @@ function placeAuctionMarker(a) {
     // 매칭된 일반 거래가 있으면(지금 화면엔 필터 때문에 그 마커가 안 보이는 상태라도) 클릭 시
     // 경매 수정 모달이 아니라 매매기록+경매탭이 모두 있는 전체 상세패널이 열리도록 함 -
     // 그래야 "경매정보만 보이고 매매기록은 사라졌다"는 상황이 재발하지 않음
-    div.setAttribute('onclick', matchedApt
-        ? 'openMatchedApt(\'' + String(a.id).replace(/'/g, "\\'") + '\')'
-        : 'openAuctionModal(\'' + String(a.id).replace(/'/g, "\\'") + '\')');
+    // ⚠️ 2026-08: 경매물건(🔨)/입찰희망(📋) 배지는 기존에 겹침 확인(markerDataRegistry 기반
+    // findOverlappingMarkers/openMarkerStackPicker) 대상에서 완전히 빠져 있었음 - 일반 거래
+    // 마커와 겹쳐도(또는 경매/입찰희망 배지끼리 겹쳐도) 겹침 선택 팝업이 뜨지 않고 클릭한 배지
+    // 하나만 그냥 열려서, 뒤에 가려진 물건은 존재 자체를 확인할 방법이 없었음("경매희망물건
+    // 등록시 배지가 겹친것들은 확인이 안돼" 피드백으로 확인). 일반 마커와 동일하게
+    // markerDataRegistry에 등록하고 handleAptMarkerClick을 그대로 재사용해 겹침이 있으면
+    // 스택피커가 뜨도록 함(openMarkerItemDirect가 type별로 실제 열기 동작을 분기함).
+    var aMKey = 'mk' + (markerDataSeq++);
+    markerDataRegistry[aMKey] = { type: 'auction', a: a, matchedApt: matchedApt, lat: a.lat, lon: a.lon, div: div };
+    div.setAttribute('onclick', 'handleAptMarkerClick(\'' + aMKey + '\')');
     var overlay = new kakao.maps.CustomOverlay({
         position: new kakao.maps.LatLng(a.lat, a.lon),
         content: div, yAnchor: 1.2, zIndex: 9999,
         clickable: true
     });
     overlay.setMap(map);
-    auctionMarkers[a.id] = { overlay: overlay };
+    attachBadgeHoverEnlarge(div, overlay, 9999);
+    auctionMarkers[a.id] = { overlay: overlay, mKey: aMKey };
 }
 /* 경매물건에 매칭된 일반 거래 건물이 있으면(현재 타입탭/필터 때문에 그 건물의 일반 마커
    자체는 화면에 없더라도) 매매기록+경매정보 탭이 모두 있는 전체 상세패널을 열어줌.
@@ -7615,6 +7725,7 @@ function placeBidCaseMarker(c) {
         clickable: true
     });
     overlay.setMap(map);
+    attachBadgeHoverEnlarge(div, overlay, 9998);
     bidCaseMarkers[c.id] = { overlay: overlay };
 }
 function upsertBidCaseMarker(c) {
@@ -9871,18 +9982,27 @@ function renderResaleMatchesBox() {
 // 쓰지 않고 조용히 무시하도록 이중으로 막음.
 var parseAuctionRequestSeq = 0;
 var parseAuctionAbortController = null;
-async function parseAuctionPaste() {
+// ⚠️ 2026-08: 경매정보 AI 자동추출(유료 API) 진행 중/직후에 아이패드에서 다른 앱으로 전환했다
+// 돌아오면 iOS Safari가 메모리 확보를 위해 백그라운드 탭을 새로고침해버려 붙여넣은 텍스트와
+// 방금 받은 추출 결과가 통째로 날아가고, 다시 처음부터 붙여넣고 API를 또 호출해야 했던 문제
+// 대응("경매등록 중 다른화면을 켜서 등록화면이 사라져... 유료 api가 매번 반복되" 피드백).
+// 새로 추출에 성공할 때마다 원문+결과를 localStorage에 저장해두고, 새 물건 등록 화면을 다시
+// 열었을 때 저장된 초안이 있으면 복원 안내를 띄움(openAuctionModal 참고) - "복원"을 누르면
+// restoreAuctionDraft()가 저장된 결과를 그대로 폼에 채워서 API를 다시 호출하지 않음.
+var AUCTION_DRAFT_KEY = 'auctionAiDraft_v1';
+async function parseAuctionPaste(restoreDetail) {
     var text = document.getElementById('a-paste-text').value.trim();
     var hasImages = pendingAuctionImages.length > 0;
-    if (!text && !hasImages) { alert('경매정보지 텍스트를 붙여넣거나 캡처 이미지를 첨부해 주세요.'); return; }
+    if (!restoreDetail && !text && !hasImages) { alert('경매정보지 텍스트를 붙여넣거나 캡처 이미지를 첨부해 주세요.'); return; }
     // ⚠️ Vercel 요청 전체 용량 한도(4.5MB)를 넘으면 서버에 닿기도 전에 플랫폼이 요청을
     // 거부하고, 그 응답이 JSON이 아니라서 "Unexpected token 'A', "A server e"..."처럼
     // 알아보기 힘든 오류가 그대로 사용자에게 노출됨. 이미지가 압축돼도 여러 장을 한꺼번에
     // 붙이면 base64 인코딩(원본의 약 1.33배)까지 더해 쉽게 한도를 넘을 수 있어서,
-    // 보내기 전에 미리 크기를 가늠해 안내하고 전송 자체를 막음.
+    // 보내기 전에 미리 크기를 가늠해 안내하고 전송 자체를 막음. (복원 경로는 새로 전송할
+    // 데이터가 없으므로 이 용량 체크 자체가 필요 없음)
     var estimatedBytes = (text ? text.length : 0)
         + pendingAuctionImages.reduce(function(sum, img) { return sum + (img.data ? img.data.length * 0.75 : 0); }, 0);
-    if (estimatedBytes > 3.5 * 1024 * 1024) {
+    if (!restoreDetail && estimatedBytes > 3.5 * 1024 * 1024) {
         alert('첨부한 이미지(또는 텍스트) 용량이 너무 큽니다(약 ' + (Math.round(estimatedBytes / 1024 / 1024 * 10) / 10) + 'MB).\n'
             + 'Vercel 서버는 요청 하나당 4.5MB까지만 받을 수 있어요. 이미지 장수를 줄이거나(예: 한 번에 3~4장씩 나눠서 여러 번 추출), 캡처 해상도를 낮춰서 다시 시도해 주세요.');
         return;
@@ -9894,26 +10014,35 @@ async function parseAuctionPaste() {
     parseAuctionAbortController = myAbort;
     var mySeq = ++parseAuctionRequestSeq;
     var btn = document.getElementById('a-parse-btn');
-    btn.disabled = true; btn.innerText = hasImages ? '이미지 분석 중... (최대 1분 소요)' : '분석 중...';
+    btn.disabled = true; btn.innerText = restoreDetail ? '저장된 초안 복원 중...' : (hasImages ? '이미지 분석 중... (최대 1분 소요)' : '분석 중...');
     try {
-        var res = await fetch('/api/parse-auction', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                text: text,
-                images: pendingAuctionImages.map(function(img) { return { data: img.data, mimeType: img.mimeType }; })
-            }),
-            signal: myAbort.signal
-        });
-        // 응답이 도착했을 때 이미 더 최신 요청이 시작돼 있으면(= 내가 취소당한 옛 요청이면)
-        // 폼에 아무것도 반영하지 않고 조용히 종료함 (abort()가 걸려도 극히 드물게 응답이
-        // 이미 도착해있던 경합 상황까지 이중으로 막기 위함).
-        if (mySeq !== parseAuctionRequestSeq) return;
-        var data = await readJsonResponseSafe(res);
-        if (mySeq !== parseAuctionRequestSeq) return;
-        if (!res.ok || !data.detail) {
-            alert('자동 추출 실패: ' + (data.error || '알 수 없는 오류'));
-            return;
+        var data;
+        if (restoreDetail) {
+            // 저장된 초안을 그대로 씀 - 서버 호출(유료 API) 없이 아래 동일한 필드 채움 로직을 재사용
+            data = { detail: restoreDetail };
+        } else {
+            var res = await fetch('/api/parse-auction', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    text: text,
+                    images: pendingAuctionImages.map(function(img) { return { data: img.data, mimeType: img.mimeType }; })
+                }),
+                signal: myAbort.signal
+            });
+            // 응답이 도착했을 때 이미 더 최신 요청이 시작돼 있으면(= 내가 취소당한 옛 요청이면)
+            // 폼에 아무것도 반영하지 않고 조용히 종료함 (abort()가 걸려도 극히 드물게 응답이
+            // 이미 도착해있던 경합 상황까지 이중으로 막기 위함).
+            if (mySeq !== parseAuctionRequestSeq) return;
+            data = await readJsonResponseSafe(res);
+            if (mySeq !== parseAuctionRequestSeq) return;
+            if (!res.ok || !data.detail) {
+                alert('자동 추출 실패: ' + (data.error || '알 수 없는 오류'));
+                return;
+            }
+            // 새로 성공한 추출만 초안으로 저장(복원 실행 시에는 다시 저장할 필요 없음 - 저장
+            // 실패해도(사생활 보호 모드 등) 본 기능에는 영향 없도록 조용히 무시함)
+            try { localStorage.setItem(AUCTION_DRAFT_KEY, JSON.stringify({ text: text, detail: data.detail, savedAt: Date.now() })); } catch (e) {}
         }
         var d = data.detail;
         // 관심물건 경과 추적: 기존에 이미 한 번 추출해둔 물건을 다시 붙여넣어 재추출한
@@ -9986,8 +10115,21 @@ async function parseAuctionPaste() {
         }
 
         // AI가 이미 뽑아준 dong/bunji가 있으면 그걸 우선 사용해서 지오코딩 검색어를 만듦
-        // (지번주소 문자열에 층/호수가 섞여 있으면 카카오 검색이 실패하거나 다른 곳을 찾을 수 있어서)
-        var geoQuery = (d.dong && d.bunji) ? (d.dong + ' ' + d.bunji) : addrForInput;
+        // (지번주소 문자열에 층/호수가 섞여 있으면 카카오 검색이 실패하거나 다른 곳을 찾을 수 있어서).
+        // ⚠️ 2026-08: dong+bunji만 쓰면 같은 동이름이 여러 지역에 있을 때(예: "연희동"이 인천
+        // 서구에도, 서울 서대문구에도 있음) 카카오 지오코더가 엉뚱한 지역으로 매칭해버리는 사고가
+        // 있었음(인천광역시 서구 연희동 712-2를 등록했는데 서울 서대문구 연희동으로 지오코딩된
+        // 실제 사례로 확인 - 이후 네이버부동산 연결까지 그 잘못된 좌표를 그대로 써서 엉뚱한
+        // 지역이 열림). addrForInput(AI가 뽑은 전체 지번/도로명주소)에서 dong 이름이 나오기
+        // "이전" 부분을 시/도+구 프리픽스로 추출해 dong+bunji 앞에 붙여 동명이인 지역을 구분함.
+        var regionPrefix = '';
+        if (d.dong && addrForInput) {
+            var dongIdx = addrForInput.indexOf(d.dong);
+            if (dongIdx > 0) regionPrefix = addrForInput.slice(0, dongIdx).trim();
+        }
+        var geoQuery = (d.dong && d.bunji)
+            ? [regionPrefix, d.dong, d.bunji].filter(Boolean).join(' ')
+            : addrForInput;
         var addrToSearch = geoQuery.trim();
         // 서버가 준 정합성/교차검증 경고에, 클라이언트에서만 확인 가능한 "주소 인식 실패" 경고를 더함
         var warnings = (d.warnings || []).slice();
@@ -10040,6 +10182,22 @@ async function parseAuctionPaste() {
         }
         if (parseAuctionAbortController === myAbort) parseAuctionAbortController = null;
     }
+}
+/* AUCTION_DRAFT_KEY에 저장된 초안(원문 텍스트+AI 추출 결과)을 그대로 복원함 - API를 다시
+   호출하지 않고 parseAuctionPaste(restoreDetail)에 저장된 detail을 그대로 넘겨서 기존 필드
+   채움 로직을 재사용함. openAuctionModal에서 새 물건 등록 화면을 열 때 초안이 있으면 뜨는
+   안내(a-draft-restore-hint)의 클릭 핸들러로 연결됨. */
+function restoreAuctionDraft() {
+    var raw = null;
+    try { raw = localStorage.getItem(AUCTION_DRAFT_KEY); } catch (e) {}
+    if (!raw) return;
+    var draft;
+    try { draft = JSON.parse(raw); } catch (e) { return; }
+    if (!draft || !draft.detail) return;
+    document.getElementById('a-paste-text').value = draft.text || '';
+    var hintEl = document.getElementById('a-draft-restore-hint');
+    if (hintEl) hintEl.style.display = 'none';
+    parseAuctionPaste(draft.detail);
 }
 
 function normalizeDateForInput(s) {
