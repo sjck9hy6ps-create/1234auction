@@ -327,7 +327,88 @@ async function getBucketDanjiPrices(type, start, end, sido) {
     return acc;
   } catch (e) { console.warn(`priceMomentum(rpc): ${type} 조회 예외 -`, e.message); return {}; }
 }
+// 전국(시/도 미지정) 조회 전용 - dong 단위(danji 없이) 평단가/건수를 받아옴.
+// getPriceMomentumSimple에서만 씀(아래 getPriceMomentum 주석 참고).
+async function getBucketDongPrices(type, start, end, sido) {
+  try {
+    const { data, error } = await supabase.rpc('rpc_bucket_avg_price_dong', {
+      p_start: start, p_end: end, p_sido: sido || null, p_type: type,
+      p_min_size: MOMENTUM_SIZE_MIN, p_max_size: MOMENTUM_SIZE_MAX,
+    });
+    if (error) { console.warn(`priceMomentum(rpc dong): ${type} 조회 실패 -`, error.message); return {}; }
+    const acc = {};
+    (data || []).forEach(r => {
+      const key = r.region + '|' + r.dong;
+      acc[key] = {
+        region: r.region, dong: r.dong, avg: Number(r.avg_price), count: Number(r.cnt),
+        newCount: Number(r.new_cnt) || 0,
+        newAvg: r.new_avg_price != null ? Number(r.new_avg_price) : null,
+      };
+    });
+    return acc;
+  } catch (e) { console.warn(`priceMomentum(rpc dong): ${type} 조회 예외 -`, e.message); return {}; }
+}
+// 2026-08(mix-shift 수정, 전국 폴백): 단지기준 상대지수(아래 getPriceMomentumRelative)는
+// danji까지 그룹핑해서 조회하다 보니 그룹 수가 훨씬 커지는데, "전국"(시/도 미지정)처럼
+// 조회 범위가 넓으면 이 그룹 수가 감당이 안 될 만큼 커져서 DB 조회가 타임아웃 나
+// 아파트 결과가 통째로 빈 배열로 오는 문제가 실제 배포 후 테스트에서 발견됨(연립다세대는
+// 거래량 자체가 훨씬 적어 전국이어도 문제없었음 - 아파트만 증상이 있었던 이유). 시/도를
+// 하나로 좁히면 정상 동작하는 걸 확인함. 그래서 "전국" 조회에서는 danji 그룹핑 없는
+// 가벼운 dong 단위 함수(rpc_bucket_avg_price_dong)로 폴백해 예전 방식(표본부족 구간만
+// 직전/직후와 병합, mix-shift 보정 없음)을 그대로 씀 - 시/도를 하나 골라서 보면 최신
+// 단지기준 상대지수가 적용된 결과를 볼 수 있음.
+async function getPriceMomentumSimple(type, sido, limit) {
+  const minCount = minBucketCountFor(type);
+  const buckets = momentumBuckets(type);
+  const bucketMaps = await Promise.all(buckets.map(b => getBucketDongPrices(type, b.start, b.end, sido)));
+  const allKeys = new Set();
+  bucketMaps.forEach(m => Object.keys(m).forEach(k => allKeys.add(k)));
+  const rankings = [];
+  allKeys.forEach(k => {
+    let meta = null;
+    for (const m of bucketMaps) { if (m[k]) { meta = m[k]; break; } }
+    if (!meta) return;
+    const rawCount = bucketMaps.map(m => (m[k] ? m[k].count : 0));
+    const rawSum = bucketMaps.map(m => (m[k] ? m[k].avg * m[k].count : 0));
+    const newCounts = bucketMaps.map(m => (m[k] ? m[k].newCount : 0));
+    const prices = [], lowSample = [];
+    for (let i = 0; i < 6; i++) {
+      let windowSum = rawSum[i], windowCount = rawCount[i];
+      let back = i - 1;
+      while (windowCount < minCount && back >= 0) { windowSum += rawSum[back]; windowCount += rawCount[back]; back--; }
+      let fwd = i + 1;
+      while (windowCount < minCount && fwd < 6) { windowSum += rawSum[fwd]; windowCount += rawCount[fwd]; fwd++; }
+      prices.push(windowCount > 0 ? Math.round(windowSum / windowCount) : null);
+      lowSample.push(windowCount < minCount);
+    }
+    const firstValid = prices.find(p => p !== null);
+    if (firstValid == null) return;
+    for (let i = 0; i < prices.length; i++) { if (prices[i] === null) prices[i] = firstValid; }
+    const firstAvg = prices[0], lastAvg = prices[5];
+    if (!firstAvg) return;
+    let upTransitions = 0;
+    for (let i = 1; i < prices.length; i++) { if (prices[i] > prices[i - 1]) upTransitions++; }
+    let volumeDrop = false;
+    for (let i = 1; i < rawCount.length; i++) { if (rawCount[i - 1] > 0 && rawCount[i] < rawCount[i - 1] * MOMENTUM_VOLUME_DROP_RATIO) volumeDrop = true; }
+    const newCntTotal = newCounts.reduce((a, b) => a + b, 0);
+    rankings.push({
+      region: meta.region,
+      dong: meta.dong,
+      prices, counts: rawCount, lowSample, newCounts, newCntTotal,
+      upTransitions, volumeDrop,
+      momentumPct: Math.round((lastAvg - firstAvg) / firstAvg * 1000) / 10,
+    });
+  });
+  const filtered = rankings.filter(r => r.upTransitions >= MOMENTUM_MIN_UP_TRANSITIONS);
+  filtered.sort((a, b) => b.momentumPct - a.momentumPct);
+  return filtered.slice(0, limit);
+}
 async function getPriceMomentum(type, sido, limit) {
+  // 전국(시/도 미지정)은 성능 때문에 danji 없는 단순 버전으로 폴백 - 위 주석 참고.
+  if (!sido) return getPriceMomentumSimple(type, sido, limit);
+  return getPriceMomentumRelative(type, sido, limit);
+}
+async function getPriceMomentumRelative(type, sido, limit) {
   const minCount = minBucketCountFor(type);
   const buckets = momentumBuckets(type);
   // ⚠️ 2026-08(mix-shift 수정, 1차 시도 롤백): baseline(6구간 전체기간 평균)을 구하려고
