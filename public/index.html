@@ -12179,9 +12179,15 @@ function passesSurgeFilter(apt) {
      상승모멘텀이 큰 법정동 순위를 보여줌. 아파트/연립다세대는 원래 거래빈도 차이가 커서
      구간 길이·최소표본을 서로 다르게 둠(아파트 40일×6구간·최소7건, 연립다세대 60일×6구간·
      최소4건 - api/data-coverage.js의 MOMENTUM_BUCKET_DAYS_APT/VILLA, MOMENTUM_MIN_BUCKET_COUNT_APT/VILLA
-     참고). 표본이 부족한 구간이 있어도 후보에서 빼지 않고 직전/직후 값을 이어붙여 흐름을
-     유지하며, 그 구간은 lowSample로 표시해 프론트에서 *로 신뢰도 낮음을 알려줌. 5구간 중
-     3회 이상 상승한 곳만 후보로 삼음(우연한 편차 배제). 집계는 api/data-coverage.js?mode=priceMomentum.
+     참고). 표본부족(minCount 미달) 구간은 직전(부족하면 직후까지) 구간과 원본 데이터를
+     합쳐서 표본을 보강함. 5구간 중 3회 이상 상승한 곳만 후보로 삼음(우연한 편차 배제).
+     ⚠️ 2026-08: 단순히 그 구간에 거래된 모든 건을 평균내면 "이번 구간엔 우연히 어떤
+     단지가 거래됐는지"에 따라 평단가가 출렁여(예: 서울 마포구 아현동 - 저가/구축 단지 거래가
+     한 구간에 몰려 실제로는 안 떨어졌는데 평균만 훅 떨어져 보인 사례) 실제 가격변동이
+     아닌 착시가 "돈되는 지역"으로 잘못 뽑힐 수 있었음. 그래서 각 거래를 "그 단지 자체의
+     baseline(6구간 전체기간) 평균 대비 상대비율"로 정규화한 뒤 구간별 평균을 내는 방식으로
+     바꿈(api/data-coverage.js의 getPriceMomentum 참고) - 어떤 단지가 거래됐는지와 무관하게
+     순수 가격변동만 잡아냄. 집계는 api/data-coverage.js?mode=priceMomentum.
    ⚠️ 지도 마커의 🔥N위 배지·"ft-surge" 필터칩(surgeRankMap/computeSurgeRankMap/
    passesSurgeFilter)은 이 패널과 별개로 계속 buildDongSurgeRanking(현재 지도 뷰포트에
    이미 로딩된 allAptList 기준 - DB 전체가 아님)을 그대로 사용함. 이 패널은 어디까지나
@@ -12299,7 +12305,7 @@ async function loadSurgeMoneyData() {
         var data = await readJsonResponseSafe(res);
         if (!res.ok) throw new Error((data && data.error) || ('서버 오류(' + res.status + ')'));
         statusBox.style.color = '#999';
-        statusBox.innerText = '평당가 모멘텀(전체 평형·5구간 중 3회 이상 상승·신축1년내 제외) · 아파트 40일×6구간/최소7건, 연립다세대 60일×6구간/최소4건' + (sido ? ' · ' + sido : ' · 전국');
+        statusBox.innerText = '평당가 모멘텀(단지기준 상대지수·5구간 중 3회 이상 상승·신축1년내 제외) · 아파트 40일×6구간/최소7건, 연립다세대 60일×6구간/최소4건' + (sido ? ' · ' + sido : ' · 전국');
         // 실거래 신고기한(계약 후 30일 이내)상 가장 최근 1개월 구간은 아직 신고가 덜 끝난
         // 거래가 섞여 있어 거래량이 구조적으로 낮게 보일 수 있음 - 사용자 요청으로 계산 로직은
         // 그대로 두고 이 안내문구만 상시 표시함.
