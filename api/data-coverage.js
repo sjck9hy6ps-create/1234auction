@@ -115,9 +115,14 @@ function mergeRanges(a, b) {
      -- 단지 거래가 몰리면서 단지들 시세는 그대로인데 동 평균만 훅 떨어져 보인 사례가 발견됨
      -- ("돈되는 지역"이 실제 가격변동이 아니라 구간별 거래 단지 구성 변화만으로 뽑히는 착시).
      -- danji(단지명)별로도 그룹핑해서 반환하도록 바꾸고, 실제 mix-shift 보정(각 단지를 자기
-     -- 자신의 전체기간 평균과 비교하는 상대지수 계산)은 이 함수를 "구간 범위"로 한 번, "6구간
-     -- 전체 범위(baseline)"로 한 번 더 호출해서 얻은 두 결과를 JS(getBucketDanjiPrices/
-     -- getPriceMomentum)에서 조합해 수행함 - SQL은 danji별 평단가만 돌려줌.
+     -- 자신의 전체기간 평균과 비교하는 상대지수 계산)은 JS(getPriceMomentum)에서 이 함수를
+     -- "구간별로" 6번 호출해 받은 danji별 평단가를 그대로 합산해 baseline(6구간 전체기간
+     -- 평균)까지 만들어냄 - SQL은 danji별 평단가만 돌려줌. ⚠️ 처음엔 baseline을 위해 이
+     -- 함수를 전체 범위로 한 번 더(타입당 7번째) 호출했는데, type=both일 때 (6+1)×2=14개
+     -- RPC 호출이 한꺼번에 몰리면서 커넥션이 막혀 "서울 조회가 안 됨"(무한 로딩) 버그가
+     -- 실제 배포 후 테스트에서 발견됨 - 6구간을 합치면 곧 전체기간과 정확히 같으므로 별도
+     -- 호출 없이 이미 받은 6개 결과를 합산하는 방식으로 바꿔 호출 횟수를 원래(6번)대로
+     -- 되돌림.
      drop function if exists rpc_bucket_avg_price(int, int, text, text, int, int);
      create function rpc_bucket_avg_price(p_start int, p_end int, p_sido text, p_type text, p_min_size int, p_max_size int)
      returns table(region text, dong text, danji text, avg_price numeric, cnt bigint, new_cnt bigint, new_avg_price numeric)
@@ -325,13 +330,15 @@ async function getBucketDanjiPrices(type, start, end, sido) {
 async function getPriceMomentum(type, sido, limit) {
   const minCount = minBucketCountFor(type);
   const buckets = momentumBuckets(type);
-  // baseline = 6구간을 합친 전체 기간(아파트 240일/빌라 360일) - "이 단지가 원래 얼마였는지"의
-  // 기준값을 구하기 위해, 구간별 조회와 별도로 전체 범위를 한 번 더 조회함(구간 경계가 서로
-  // 딱 맞닿아 있어 buckets[0].start~buckets[5].end가 곧 전체 기간과 정확히 일치함).
-  const [bucketMaps, baselineMap] = await Promise.all([
-    Promise.all(buckets.map(b => getBucketDanjiPrices(type, b.start, b.end, sido))),
-    getBucketDanjiPrices(type, buckets[0].start, buckets[5].end, sido),
-  ]);
+  // ⚠️ 2026-08(mix-shift 수정, 1차 시도 롤백): baseline(6구간 전체기간 평균)을 구하려고
+  // 처음엔 구간별 조회와 별도로 "전체 범위"를 한 번 더(타입당 7번째) 조회했는데, 이 7번째
+  // 호출이 배포 후 "서울 조회가 안 됨"(무한 로딩, 데이터 부족으로 표시) 버그를 일으킴 -
+  // type=both면 아파트/빌라 합쳐 (6+1)×2=14개의 Supabase RPC 호출이 한꺼번에 몰리면서
+  // 커넥션이 막혀 응답이 아예 안 오는 문제가 실제 배포 후 테스트에서 발견됨. 6구간 경계가
+  // 서로 딱 맞닿아 있어 6개 구간을 합치면 곧 전체 기간과 정확히 같으므로, 별도 쿼리 없이
+  // 이미 받아온 bucketMaps(6개)를 그대로 합산해서 baseline을 만듦(DB 호출 그대로 6번 유지 -
+  // 이전 버전과 동일한 부하로 되돌림).
+  const bucketMaps = await Promise.all(buckets.map(b => getBucketDanjiPrices(type, b.start, b.end, sido)));
   // 2026-08(4차, mix-shift 수정): "서울 마포구 아현동" 사례에서, 특정 구간에 우연히 저가/구축
   // 단지(애오개아이파크·예미원 등) 거래가 몰리면서 단지들 자체 시세는 그대로인데 동 전체
   // 평균만 훅 떨어져 보이는 문제가 발견됨. 단순히 그 구간에 거래된 모든 건을 평균내면 "이번에
@@ -348,14 +355,23 @@ async function getPriceMomentum(type, sido, limit) {
   //   거래량(counts)은 지금처럼 병합과 무관하게 항상 그 구간의 실제 원본 거래건수를 보여줌.
   const allKeys = new Set();
   bucketMaps.forEach(m => Object.keys(m).forEach(k => allKeys.add(k)));
-  Object.keys(baselineMap).forEach(k => allKeys.add(k));
   const rankings = [];
   allKeys.forEach(k => {
     let meta = null;
     for (const m of bucketMaps) { if (m[k]) { meta = m[k]; break; } }
-    if (!meta) meta = baselineMap[k];
     if (!meta) return;
-    const baseDanjis = baselineMap[k] ? baselineMap[k].danjis : {};
+    // baseDanjis = 6구간을 다 합친 단지별 baseline(전체기간 평균) - 별도 쿼리 없이 이미
+    // 받아온 6개 bucketMaps를 단지별로 합산해서 만듦(위 주석 참고).
+    const baseDanjis = {};
+    bucketMaps.forEach(m => {
+      const danjis = (m[k] || {}).danjis || {};
+      Object.entries(danjis).forEach(([danjiName, d]) => {
+        if (!baseDanjis[danjiName]) baseDanjis[danjiName] = { sum: 0, count: 0 };
+        baseDanjis[danjiName].sum += d.avg * d.count;
+        baseDanjis[danjiName].count += d.count;
+      });
+    });
+    Object.values(baseDanjis).forEach(b => { b.avg = b.count > 0 ? b.sum / b.count : 0; });
     // 그 동의 baseline 평균 평단가(모든 단지를 거래건수 가중평균) - 상대지수를 다시
     // "만원/평" 단위로 환산해 보여주기 위한 눈금(scale)으로만 쓰임.
     let dongBaseSum = 0, dongBaseCnt = 0;
