@@ -12277,6 +12277,7 @@ function renderMoneyRankSection(title, list) {
         var sign = r.momentumPct >= 0 ? '+' : '';
         var priceTrend = (r.prices || []).map(function(p) { return p.toLocaleString() + '만'; }).join(' → ');
         var counts = r.counts || [], low = r.lowSample || [];
+        var hasLowSample = low.some(function(v) { return v; });
         var countTrend = counts.map(function(c, i) { return c + (low[i] ? '*' : ''); }).join('→');
         var warnBadge = r.volumeDrop ? ' <span style="color:#e65100;">⚠️거래량급감구간</span>' : '';
         // 신축(준공2년내) 거래는 이미 RPC 단계에서 평단가 집계에서 빠져있음 - newCntTotal이
@@ -12287,7 +12288,7 @@ function renderMoneyRankSection(title, list) {
             + '<span style="min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;"><span style="color:#999;font-weight:bold;margin-right:4px;">' + (idx + 1) + '</span>' + cleanField(r.region) + ' ' + cleanField(r.dong) + '</span>'
             + '<span style="font-weight:bold;color:#e53935;white-space:nowrap;flex-shrink:0;">' + sign + r.momentumPct + '%</span></div>'
             + '<div style="font-size:10px;color:#888;margin-top:2px;white-space:nowrap;overflow-x:auto;">평당가 ' + priceTrend + '</div>'
-            + '<div style="font-size:10px;color:#aaa;margin-top:1px;">거래량 ' + countTrend + '건(*표본부족) · 상승 ' + r.upTransitions + '/5구간' + warnBadge + newBadge + '</div>'
+            + '<div style="font-size:10px;color:#aaa;margin-top:1px;">거래량 ' + countTrend + '건' + (hasLowSample ? '(*표본부족→직전구간과 합산됨)' : '') + ' · 상승 ' + r.upTransitions + '/5구간' + warnBadge + newBadge + '</div>'
             + '</div>';
     });
     html += '</div>';
