@@ -162,6 +162,218 @@ async function getBaseRateTrend(force) {
 }
 
 /* ════════════════════════════════════
+   한국부동산원 R-ONE 매매/전세가격지수 추세 (mode=roneIndex) - 2026-08 추가
+   ECOS 기준금리와 같은 취지 - 실거래 기반 비교물건 시세는 그 지역의 "최근 실거래"만
+   반영하므로, R-ONE이 매월 공식 발표하는 전국/시도 단위 매매·전세가격지수로 "그 시/도
+   전체가 최근 1년간 얼마나 올랐는지"라는 광역 추세를 보완함. 참고용 정성적 보정치로만
+   씀(marketFactor ±0.05, ECOS와 합쳐도 ±0.08로 상한).
+   ⚠️ 아래는 실제 라이브 호출로 확인한 내용(2026-08):
+   - 요청: https://www.reb.or.kr/r-one/openapi/SttsApiTblData.do?STATBL_ID=...&DTACYCLE_CD=MM
+     &WRTTIME_IDTFR_ID=YYYYMM&Type=json&KEY=인증키
+   - 통계표코드: 아파트 매매지수(지역별)=A_2024_00178, 아파트 전세지수(지역별)=A_2024_00182
+     (사용자가 업로드한 OpenAPI_통계코드.xls에서 확인)
+   - 정상 응답: {"SttsApiTblData":[{"head":[...]},{"row":[{...,"CLS_ID":500001,
+     "CLS_NM":"전국",...,"DTA_VAL":128.7...,"WRTTIME_DESC":"2026년 1월"},...]}]}
+   - 데이터없음 응답: {"RESULT":{"CODE":"INFO-200","MESSAGE":"해당하는 데이터가 없습니다."}}
+     - 발표 지연으로 최근 몇 개월은 데이터가 없는 경우가 흔함(라이브 테스트 시 당월부터
+     역순으로 6개월치가 전부 없었음) - 최대 12개월 역순으로 값이 나올 때까지 시도함.
+   - CLS_ID(지역 분류코드, 라이브 응답에서 직접 확인): 500001=전국, 500007=서울, 500008=부산,
+     500009=대구, 500010=인천, 500011=광주, 500012=대전, 500013=울산, 500014=세종,
+     500015=경기, 500016=강원, 500017=충북, 500018=충남, 500019=전북, 500020=전남,
+     500021=경북, 500022=경남, 500023=제주. 시/군/구 단위 세분류는 없음(서울만 5개 권역
+     세분류 있음 - 이 앱에서는 안 씀).
+   ⚠️ 아래 SQL을 Supabase에 먼저 한 번 실행:
+     create table if not exists rone_index_cache (
+       id text primary key,
+       latest_month text,
+       latest_data jsonb,
+       year_ago_month text,
+       year_ago_data jsonb,
+       fetched_at timestamptz
+     );
+════════════════════════════════════ */
+const RONE_API_KEY = process.env.RONE_API_KEY;
+const RONE_BASE_URL = 'https://www.reb.or.kr/r-one/openapi/SttsApiTblData.do';
+const RONE_STAT_CODES = { sale: 'A_2024_00178', jeonse: 'A_2024_00182' };
+const RONE_SIDO_CLS = {
+  '전국': 500001, '서울': 500007, '부산': 500008, '대구': 500009, '인천': 500010,
+  '광주': 500011, '대전': 500012, '울산': 500013, '세종': 500014, '경기': 500015,
+  '강원': 500016, '충북': 500017, '충남': 500018, '전북': 500019, '전남': 500020,
+  '경북': 500021, '경남': 500022, '제주': 500023,
+};
+const RONE_FRESH_MS = 1000 * 60 * 60 * 24; // 24시간 - 월 1회만 갱신되는 값
+
+function shiftYyyymm(yyyymm, deltaMonths) {
+  const y = parseInt(String(yyyymm).slice(0, 4), 10), m = parseInt(String(yyyymm).slice(4, 6), 10);
+  const total = y * 12 + (m - 1) + deltaMonths;
+  const ny = Math.floor(total / 12), nm = total - ny * 12;
+  return `${ny}${String(nm + 1).padStart(2, '0')}`;
+}
+
+async function fetchRoneMonth(statblId, yyyymm) {
+  const url = `${RONE_BASE_URL}?STATBL_ID=${statblId}&DTACYCLE_CD=MM&WRTTIME_IDTFR_ID=${yyyymm}&Type=json&KEY=${RONE_API_KEY}`;
+  let data;
+  try {
+    const r = await fetch(url, { signal: AbortSignal.timeout(10000) });
+    data = await r.json();
+  } catch (e) { return null; }
+  const rows = data && data.SttsApiTblData && data.SttsApiTblData[1] && data.SttsApiTblData[1].row;
+  if (!Array.isArray(rows) || !rows.length) return null; // INFO-200(데이터없음) 등은 전부 이 케이스로 처리
+  const byCls = {};
+  rows.forEach(row => { byCls[row.CLS_ID] = { name: row.CLS_NM, value: row.DTA_VAL }; });
+  return { month: yyyymm, byCls };
+}
+
+// 최근월부터 최대 12개월 역순으로 시도 - 발표 지연으로 최근 몇 개월은 데이터가 없는 경우가 흔함(라이브 확인).
+async function fetchLatestRoneMonth(statblId) {
+  const now = new Date();
+  let yyyymm = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}`;
+  for (let i = 0; i < 12; i++) {
+    const result = await fetchRoneMonth(statblId, yyyymm);
+    if (result) return result;
+    yyyymm = shiftYyyymm(yyyymm, -1);
+  }
+  return null;
+}
+
+async function fetchRoneTrendForStat(statblId) {
+  const latest = await fetchLatestRoneMonth(statblId);
+  if (!latest) return { error: 'R-ONE 응답에서 최근 12개월 내 데이터를 찾지 못했습니다.' };
+  const yearAgoMonth = shiftYyyymm(latest.month, -12);
+  const yearAgo = await fetchRoneMonth(statblId, yearAgoMonth);
+  return {
+    latestMonth: latest.month, latestData: latest.byCls,
+    yearAgoMonth: yearAgo ? yearAgo.month : null, yearAgoData: yearAgo ? yearAgo.byCls : null,
+  };
+}
+
+async function getRoneTrend(force) {
+  if (!RONE_API_KEY) return { error: 'RONE_API_KEY 환경변수가 없습니다. reb.or.kr(R-ONE)에서 발급받은 인증키를 Vercel에 추가해 주세요.' };
+  const result = {};
+  for (const kind of Object.keys(RONE_STAT_CODES)) {
+    if (!force) {
+      try {
+        const { data: cached, error } = await supabase.from('rone_index_cache').select('*').eq('id', kind).maybeSingle();
+        if (!error && cached && (Date.now() - new Date(cached.fetched_at).getTime()) < RONE_FRESH_MS) {
+          result[kind] = { latestMonth: cached.latest_month, latestData: cached.latest_data, yearAgoMonth: cached.year_ago_month, yearAgoData: cached.year_ago_data, cached: true };
+          continue;
+        }
+      } catch (e) { console.warn('rone_index_cache 조회 예외:', e.message); }
+    }
+    const fresh = await fetchRoneTrendForStat(RONE_STAT_CODES[kind]);
+    if (fresh.error) { result[kind] = fresh; continue; }
+    try {
+      const { error: upsertErr } = await supabase.from('rone_index_cache').upsert({
+        id: kind, latest_month: fresh.latestMonth, latest_data: fresh.latestData,
+        year_ago_month: fresh.yearAgoMonth, year_ago_data: fresh.yearAgoData, fetched_at: new Date().toISOString(),
+      });
+      if (upsertErr) console.warn('rone_index_cache 저장 실패:', upsertErr.message);
+    } catch (e) { console.warn('rone_index_cache 저장 예외:', e.message); }
+    result[kind] = { ...fresh, cached: false };
+  }
+  return result;
+}
+
+// roneResult(sale/jeonse 각각 latestData/yearAgoData 포함)를 특정 시/도 기준 YoY 변화율로 요약
+function roneTrendForSido(roneResult, sido) {
+  const clsId = RONE_SIDO_CLS[sido] || RONE_SIDO_CLS['전국'];
+  const out = {};
+  Object.keys(RONE_STAT_CODES).forEach(kind => {
+    const r = roneResult[kind];
+    if (!r || r.error || !r.latestData || !r.yearAgoData) { out[kind] = r && r.error ? { error: r.error } : null; return; }
+    const latest = r.latestData[clsId], base = r.yearAgoData[clsId];
+    if (!latest || !base || !base.value) { out[kind] = null; return; }
+    const pct = Math.round((latest.value - base.value) / base.value * 1000) / 10;
+    let trend = 'flat';
+    if (pct > 0.3) trend = 'up'; else if (pct < -0.3) trend = 'down';
+    out[kind] = { regionName: latest.name, latestMonth: r.latestMonth, yearAgoMonth: r.yearAgoMonth, pct, trend };
+  });
+  return out;
+}
+
+/* ════════════════════════════════════
+   KOSIS(국가통계포털) 시군구 인구·세대수 증감 (mode=population) - 2026-08 추가
+   ⚠️ 통계표ID는 실제 getStatisticsList API(parentListId=A_7 "주민등록인구현황") 라이브
+   호출로 확인함: 인구수=DT_1B040A3("행정구역(시군구)별, 성별 인구수"), 세대수=DT_1B040B3
+   ("행정구역(시군구)별 주민등록세대수"), 둘 다 orgId=101(통계청).
+   ⚠️⚠️ 실제 데이터조회(statisticsData/getStatisticsData)와 메타조회(statisticsMeta/getITM)
+   오퍼레이션을 라이브로 테스트했더니 둘 다 "SERVICE_KEY_IS_NOT_REGISTERED_ERROR"(등록되지
+   않은 서비스키) 오류가 남 - 반면 statisticsList/getStatisticsList(통계목록조회)는 같은
+   인증키로 정상 동작함. data.go.kr는 API마다(같은 서비스 그룹 안에서도 오퍼레이션마다)
+   별도 활용신청이 필요한 구조라, 사용자가 아직 "통계자료조회"/"통계메타 분류·항목" 두
+   오퍼레이션은 활용신청을 안 한 것으로 보임 - data.go.kr에서 "국가통계포털_통계자료"
+   서비스의 나머지 오퍼레이션도 활용신청(보통 즉시 자동승인) 후에야 아래 코드가 실제로
+   동작함. 이 코드는 공식 기술문서(사용자 업로드 KOSIS 공유서비스 기술문서_V.4.0.doc)
+   스펙대로 작성했지만, 활용신청 전이라 라이브 검증은 못 했음.
+   ⚠️ objL1(분류1=시군구코드)의 정확한 코드값도 위 이유로 라이브 확인 불가 - 통계청 표준
+   5자리 행정구역코드(이 앱이 이미 쓰는 LAWD_CODES와 같은 체계)로 추정해 시도함. 활용신청
+   승인 후 실제 응답으로 재검증 필요(안 맞으면 "데이터없음" 형태로 안전하게 실패함).
+   ⚠️ Supabase 캐시 SQL:
+     create table if not exists kosis_population_cache (
+       id text primary key,
+       latest_prd text,
+       latest_value numeric,
+       year_ago_prd text,
+       year_ago_value numeric,
+       fetched_at timestamptz
+     );
+════════════════════════════════════ */
+const KOSIS_API_KEY = process.env.KOSIS_API_KEY;
+const KOSIS_DATA_URL = 'https://apis.data.go.kr/1240000/statisticsData/getStatisticsData';
+const KOSIS_TBL = { population: 'DT_1B040A3', households: 'DT_1B040B3' };
+const KOSIS_FRESH_MS = 1000 * 60 * 60 * 24;
+
+async function fetchKosisLatest(tblId, sigunguCd) {
+  const url = `${KOSIS_DATA_URL}?serviceKey=${encodeURIComponent(KOSIS_API_KEY)}&format=json&orgId=101&tblId=${tblId}`
+    + `&objL1=${sigunguCd}&itmId=ALL&prdSe=M&newEstPrdCnt=13`;
+  let data;
+  try {
+    const r = await fetch(url, { signal: AbortSignal.timeout(10000) });
+    data = await r.json();
+  } catch (e) { return { error: 'KOSIS 호출 실패: ' + e.message }; }
+  if (data && data.OpenAPI_ServiceResponse) {
+    const h = data.OpenAPI_ServiceResponse.cmmMsgHeader || {};
+    return { error: 'KOSIS 오류: ' + (h.returnAuthMsg || h.errMsg || '알 수 없는 오류'), raw: data };
+  }
+  const items = data && data.response && data.response.body && data.response.body.items && data.response.body.items.item;
+  if (!Array.isArray(items) || !items.length) return { error: 'KOSIS 응답에 데이터가 없습니다(objL1 시군구코드가 안 맞을 수 있음).', raw: data };
+  const sorted = items.slice().sort((a, b) => String(a.PRD_DE).localeCompare(String(b.PRD_DE)));
+  const history = sorted.map(it => ({ prd: it.PRD_DE, value: parseFloat(it.DT) })).filter(h => Number.isFinite(h.value));
+  if (!history.length) return { error: 'KOSIS 응답 값을 숫자로 변환하지 못했습니다.', raw: data };
+  const latest = history[history.length - 1];
+  const yearAgo = history.length >= 13 ? history[history.length - 13] : history[0];
+  return { latestPrd: latest.prd, latestValue: latest.value, yearAgoPrd: yearAgo.prd, yearAgoValue: yearAgo.value };
+}
+
+async function getKosisTrend(sigunguCd, force) {
+  if (!KOSIS_API_KEY) return { error: 'KOSIS_API_KEY 환경변수가 없습니다. data.go.kr(국가통계포털)에서 발급받은 인증키를 Vercel에 추가해 주세요.' };
+  const result = {};
+  for (const kind of Object.keys(KOSIS_TBL)) {
+    const cacheId = kind + '|' + sigunguCd;
+    if (!force) {
+      try {
+        const { data: cached, error } = await supabase.from('kosis_population_cache').select('*').eq('id', cacheId).maybeSingle();
+        if (!error && cached && (Date.now() - new Date(cached.fetched_at).getTime()) < KOSIS_FRESH_MS) {
+          result[kind] = { latestPrd: cached.latest_prd, latestValue: cached.latest_value, yearAgoPrd: cached.year_ago_prd, yearAgoValue: cached.year_ago_value, cached: true };
+          continue;
+        }
+      } catch (e) { console.warn('kosis_population_cache 조회 예외:', e.message); }
+    }
+    const fresh = await fetchKosisLatest(KOSIS_TBL[kind], sigunguCd);
+    if (fresh.error) { result[kind] = fresh; continue; }
+    try {
+      const { error: upsertErr } = await supabase.from('kosis_population_cache').upsert({
+        id: cacheId, latest_prd: fresh.latestPrd, latest_value: fresh.latestValue,
+        year_ago_prd: fresh.yearAgoPrd, year_ago_value: fresh.yearAgoValue, fetched_at: new Date().toISOString(),
+      });
+      if (upsertErr) console.warn('kosis_population_cache 저장 실패:', upsertErr.message);
+    } catch (e) { console.warn('kosis_population_cache 저장 예외:', e.message); }
+    result[kind] = { ...fresh, cached: false };
+  }
+  return result;
+}
+
+/* ════════════════════════════════════
    법정동별 거래량 순위(topDongs) + 가격상승모멘텀(priceMomentum, "돈되는 지역") - 2026-08
    - 둘 다 (region,dong) 기준 GROUP BY 집계가 필요한데, PostgREST의 count()/avg() "집계
      임베딩" URL 문법(select=region,dong,cnt:count())은 Supabase 프로젝트에서 기본적으로
@@ -789,6 +1001,31 @@ export default async function handler(req, res) {
     try {
       const result = await getBaseRateTrend(req.query.force === '1');
       if (result.error) return res.status(502).json(result);
+      return res.status(200).json(result);
+    } catch (err) {
+      return res.status(500).json({ error: err.message });
+    }
+  }
+  if (req.query.mode === 'roneIndex') {
+    // 6시간 CDN 캐시 위에 Supabase 24시간 캐시가 또 있음(getRoneTrend 참고) - 월 1회만 갱신되는 값이라 실제 R-ONE 호출은 하루 몇 번 안 됨.
+    res.setHeader('Cache-Control', 's-maxage=21600, stale-while-revalidate=43200');
+    try {
+      const roneResult = await getRoneTrend(req.query.force === '1');
+      const sido = (req.query.sido || '전국').trim();
+      const bySido = roneTrendForSido(roneResult, sido);
+      return res.status(200).json({ sido, ...bySido });
+    } catch (err) {
+      return res.status(500).json({ error: err.message });
+    }
+  }
+  if (req.query.mode === 'population') {
+    res.setHeader('Cache-Control', 's-maxage=21600, stale-while-revalidate=43200');
+    try {
+      const sigunguCd = req.query.sigunguCd;
+      if (!sigunguCd || String(sigunguCd).length !== 5) {
+        return res.status(400).json({ error: 'sigunguCd(5자리 시군구코드)가 필요합니다.' });
+      }
+      const result = await getKosisTrend(String(sigunguCd), req.query.force === '1');
       return res.status(200).json(result);
     } catch (err) {
       return res.status(500).json({ error: err.message });
