@@ -415,9 +415,15 @@ async function getKosisTrend(sigunguCd, force) {
    - 방법론(Frisch-Waugh-Lovell 고정효과 회귀), 변수 정의는 train-avm.py 상단 주석 참고.
      같은 정의를 여기서도 그대로 써야 함(예측식이 학습식과 어긋나면 안 됨):
        y = log(평당가) = global_coefs·[log(size), floor, floor^2, age, age^2, time_trend]
-           + dong_effects[region|dong]  (그 법정동 표본이 부족했으면 학습 때 region 단위로
-           승격되어 있을 수 있고, 아예 처음 보는 지역이면 dong_effects["__default__"](전체
-           법정동 효과 평균)로 폴백함)
+           + dong_effects[키]
+     ⚠️ 2026-08(단지 단위 세분화): 처음엔 "키"가 항상 region|dong(법정동)이었는데, 실제
+     배포 후 확인해보니 같은 법정동 안에서도 단지별 편차가 커서(예: 고잔동 실측 - 준공연도
+     다른 단지 섞이며 평단가 3.4배 차이) 오차가 컸음. 아파트는 이제 danji(단지명)까지 포함한
+     3단계 폴백 체인으로 키를 찾음: region|dong|danji(단지 표본 충분) → region|dong(그 단지
+     표본부족 시 학습 때 법정동 단위로 승격됨) → region(그 법정동조차 표본부족 시 시군구로
+     승격) → dong_effects["__default__"](전국 평균, 완전히 새 지역일 때만). 연립다세대는
+     아직 danji 단계 없이 region|dong → region 2단계만 씀(train-avm.py MIN_DANJI_SAMPLES
+     주석 참고 - 거래 자체가 뜸해 단지 단위로 쪼개면 오히려 불안정해짐).
    ⚠️ 아래 SQL을 Supabase에 먼저 한 번 실행해서 테이블을 만들어야 합니다:
      create table if not exists avm_model_coefs (
        id text primary key,
@@ -457,30 +463,35 @@ function daysBetweenYyyymmdd(a, b) {
   return Math.round((toDate(b).getTime() - toDate(a).getTime()) / 86400000);
 }
 
-function avmPredict(model, features, region, dong) {
+function avmPredict(model, features, region, dong, danji) {
   const coefs = model.global_coefs || {};
   const featureOrder = ['log_size', 'floor', 'floor2', 'age', 'age2', 'time_trend'];
   let logPpp = 0;
   featureOrder.forEach(k => { logPpp += (coefs[k] || 0) * (features[k] || 0); });
 
   const dongEffects = model.dong_effects || {};
-  const key = `${region}|${dong}`;
-  let effectUsed = 'exact'; // 진단/신뢰도 표시용 - 정확히 그 법정동 효과를 썼는지, region으로
-  // 승격된 값을 썼는지, 아예 전국 평균 폴백인지를 그대로 응답에 남겨 프론트에서 "이 값이
-  // 그 동네 데이터인지, 대략적인 폴백인지"를 사용자에게 투명하게 보여줄 수 있게 함.
-  let effect = dongEffects[key];
-  if (effect === undefined) {
-    effect = dongEffects[region]; // train-avm.py에서 표본부족 동은 region 단위로 승격됨
-    effectUsed = effect !== undefined ? 'region_fallback' : 'default_fallback';
+  // 진단/신뢰도 표시용 - danji(단지) 정확 매칭인지, dong(법정동) 단위인지, region(시군구)
+  // 폴백인지, 아예 전국 평균 폴백인지를 그대로 응답에 남겨 프론트에서 "이 값이 얼마나
+  // 구체적인 데이터에 기반했는지"를 사용자에게 투명하게 보여줄 수 있게 함. 순서는
+  // train-avm.py의 승격 순서(danji→dong→region)와 반드시 같아야 함.
+  let effect, effectUsed;
+  const danjiKey = danji ? `${region}|${dong}|${danji}` : null;
+  if (danjiKey && dongEffects[danjiKey] !== undefined) {
+    effect = dongEffects[danjiKey]; effectUsed = 'danji';
+  } else if (dongEffects[`${region}|${dong}`] !== undefined) {
+    effect = dongEffects[`${region}|${dong}`]; effectUsed = 'dong';
+  } else if (dongEffects[region] !== undefined) {
+    effect = dongEffects[region]; effectUsed = 'region_fallback';
+  } else {
+    effect = dongEffects['__default__'] || 0; effectUsed = 'default_fallback';
   }
-  if (effect === undefined) effect = dongEffects['__default__'] || 0;
   logPpp += effect;
 
   const ppp = Math.exp(logPpp); // 만원/평
   return { ppp: Math.round(ppp * 10) / 10, effectUsed };
 }
 
-async function getAvmEstimate(type, region, dong, size, floor, buildYear) {
+async function getAvmEstimate(type, region, dong, size, floor, buildYear, danji) {
   const modelId = AVM_MODEL_ID_BY_TYPE[type];
   if (!modelId) return { error: `AVM v1은 아직 이 매물 유형(${type})을 지원하지 않습니다(아파트만 지원).` };
   if (!(size > 0) || !(floor >= 0) || !(buildYear > 1900)) {
@@ -496,15 +507,17 @@ async function getAvmEstimate(type, region, dong, size, floor, buildYear) {
 
   const timeOrigin = (model.feature_ranges && model.feature_ranges.time_origin) || 20251201;
   const features = avmFeatureVector({ size, floor, buildYear, timeOrigin });
-  const { ppp, effectUsed } = avmPredict(model, features, region, dong);
+  const { ppp, effectUsed } = avmPredict(model, features, region, dong, danji);
   const totalPrice = Math.round(ppp * (size / 3.305785));
 
   return {
     pppManwon: ppp, // 예상 평당가(만원/평)
     totalPriceManwon: totalPrice, // 입력한 size 기준 예상 총액(만원)
-    effectUsed, // 'exact' | 'region_fallback' | 'default_fallback' - 신뢰도 판단용
+    effectUsed, // 'danji' | 'dong' | 'region_fallback' | 'default_fallback' - 신뢰도 판단용
     modelId, trainedAt: model.trained_at, nSamples: model.n_samples, rSquared: model.r_squared,
-    lowConfidence: (model.r_squared != null && model.r_squared < 0.3) || effectUsed !== 'exact',
+    // dong까지는 실제 그 동네 실거래 기반이라 신뢰도 있음 - region_fallback/default_fallback일
+    // 때만(단지·법정동 표본 자체가 부족해서 더 넓은 단위로 승격된 경우) 낮은 신뢰도로 표시함.
+    lowConfidence: (model.r_squared != null && model.r_squared < 0.3) || effectUsed === 'region_fallback' || effectUsed === 'default_fallback',
   };
 }
 
@@ -1173,7 +1186,7 @@ export default async function handler(req, res) {
     // 대신 계수 자체가 주 1회만 바뀌므로(train-avm.py 스케줄) 짧게 CDN 캐시만 둠.
     res.setHeader('Cache-Control', 's-maxage=3600, stale-while-revalidate=7200');
     try {
-      const { type, dong, size, floor, buildYear, lawdCd } = req.query;
+      const { type, dong, size, floor, buildYear, lawdCd, danji } = req.query;
       // ⚠️ 2026-08(버그 수정): 처음엔 프론트가 카카오 geocoder 지역명을 문자열로 가공해서
       // region으로 그대로 보냈는데, "수원시 영통구"처럼 시+구가 함께 있는 지역은
       // house_trades.region이 "수원 영통구"(시 생략)로 저장돼 있어 불일치가 났음(안산 등에서
@@ -1191,7 +1204,8 @@ export default async function handler(req, res) {
       }
       const result = await getAvmEstimate(
         type === 'villa' ? 'villa' : 'apt', region, dong,
-        parseFloat(size), parseFloat(floor), parseInt(buildYear, 10)
+        parseFloat(size), parseFloat(floor), parseInt(buildYear, 10),
+        danji ? String(danji).trim() : null
       );
       if (result.error) return res.status(422).json(result);
       return res.status(200).json(result);
