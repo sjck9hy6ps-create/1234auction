@@ -403,6 +403,111 @@ async function getKosisTrend(sigunguCd, force) {
 }
 
 /* ════════════════════════════════════
+   헤도닉 회귀모델(AVM, Automated Valuation Model) 예측 (mode=avmEstimate) - 2026-08 추가
+   - index.html의 getCompEstValue()(비교물건 몇 건의 평단가 평균/중앙값)를 대체하는 게
+     아니라 "독립적인 교차검증용 참고치"로 나란히 보여주기 위한 것. 표본이 적은 물건(나홀로
+     아파트 등)에서 비교물건 자체가 몇 건 없어 우연한 편차에 휘둘리는 문제를, 전체
+     house_trades(28만+건)를 다 써서 학습한 회귀계수로 보완함.
+   - 학습(무거운 연산)은 이 서버리스 함수가 아니라 GitHub Actions(주 1회, train-avm.py)에서
+     오프라인으로 돌리고, 여기서는 이미 학습된 계수(avm_model_coefs 테이블)를 읽어 가벼운
+     내적(dot product) 계산만 함(요청마다 재학습하면 느리고 비용도 큼).
+   - 방법론(Frisch-Waugh-Lovell 고정효과 회귀), 변수 정의는 train-avm.py 상단 주석 참고.
+     같은 정의를 여기서도 그대로 써야 함(예측식이 학습식과 어긋나면 안 됨):
+       y = log(평당가) = global_coefs·[log(size), floor, floor^2, age, age^2, time_trend]
+           + dong_effects[region|dong]  (그 법정동 표본이 부족했으면 학습 때 region 단위로
+           승격되어 있을 수 있고, 아예 처음 보는 지역이면 dong_effects["__default__"](전체
+           법정동 효과 평균)로 폴백함)
+   ⚠️ 아래 SQL을 Supabase에 먼저 한 번 실행해서 테이블을 만들어야 합니다:
+     create table if not exists avm_model_coefs (
+       id text primary key,
+       model_type text,
+       trained_at timestamptz,
+       n_samples int,
+       r_squared numeric,
+       global_coefs jsonb,
+       dong_effects jsonb,
+       feature_ranges jsonb
+     );
+   ⚠️ train-avm.py를 최소 한 번(GitHub Actions 또는 로컬)은 실행해서 이 테이블에 apt_v1 행이
+   채워져 있어야 mode=avmEstimate가 정상 응답함 - 비어 있으면 "AVM 모델이 아직 학습되지
+   않았습니다" 에러를 그대로 반환함(폴백으로 조용히 다른 값을 지어내지 않음).
+════════════════════════════════════ */
+const AVM_MODEL_ID_BY_TYPE = { apt: 'apt_v1' }; // v1은 house_trades(아파트)만 학습 - 연립다세대는
+// 거래 빈도가 낮아 법정동별 표본이 훨씬 부족하므로 v1 범위에서 일부러 제외함(#297/#298과
+// 함께 데이터가 더 쌓이면 villa_v1 추가 검토 - train-avm.py 하단 주석 참고).
+const AVM_CURRENT_YEAR_FALLBACK = () => new Date().getFullYear();
+
+// train-avm.py의 fit_fwl()과 반드시 같은 정의를 씀 - 여기서 정의가 어긋나면(예: age 계산
+// 기준이 다르거나 time_trend 기준일이 다르면) 학습된 계수를 엉뚱한 값에 곱하게 되어 예측이
+// 조용히 틀려버림(에러 없이 그럴듯한 숫자만 나와 알아채기 어려운 위험한 버그 유형).
+function avmFeatureVector({ size, floor, buildYear, timeOrigin }) {
+  const dealYear = AVM_CURRENT_YEAR_FALLBACK(); // 예측 시점 = "지금 팔면 얼마" 기준이므로 오늘 연도를 씀
+  const age = Math.max(0, dealYear - buildYear);
+  const today = todayInt();
+  const timeTrend = daysBetweenYyyymmdd(timeOrigin, today) / 365.0;
+  return {
+    log_size: Math.log(size), floor, floor2: floor * floor,
+    age, age2: age * age, time_trend: timeTrend,
+  };
+}
+// YYYYMMDD 정수 두 값 사이의 일수 차이(a 기준 → b까지, 음수 가능) - Date 객체로 변환해 계산.
+function daysBetweenYyyymmdd(a, b) {
+  const toDate = (n) => { const s = String(n); return new Date(`${s.slice(0,4)}-${s.slice(4,6)}-${s.slice(6,8)}T00:00:00Z`); };
+  return Math.round((toDate(b).getTime() - toDate(a).getTime()) / 86400000);
+}
+
+function avmPredict(model, features, region, dong) {
+  const coefs = model.global_coefs || {};
+  const featureOrder = ['log_size', 'floor', 'floor2', 'age', 'age2', 'time_trend'];
+  let logPpp = 0;
+  featureOrder.forEach(k => { logPpp += (coefs[k] || 0) * (features[k] || 0); });
+
+  const dongEffects = model.dong_effects || {};
+  const key = `${region}|${dong}`;
+  let effectUsed = 'exact'; // 진단/신뢰도 표시용 - 정확히 그 법정동 효과를 썼는지, region으로
+  // 승격된 값을 썼는지, 아예 전국 평균 폴백인지를 그대로 응답에 남겨 프론트에서 "이 값이
+  // 그 동네 데이터인지, 대략적인 폴백인지"를 사용자에게 투명하게 보여줄 수 있게 함.
+  let effect = dongEffects[key];
+  if (effect === undefined) {
+    effect = dongEffects[region]; // train-avm.py에서 표본부족 동은 region 단위로 승격됨
+    effectUsed = effect !== undefined ? 'region_fallback' : 'default_fallback';
+  }
+  if (effect === undefined) effect = dongEffects['__default__'] || 0;
+  logPpp += effect;
+
+  const ppp = Math.exp(logPpp); // 만원/평
+  return { ppp: Math.round(ppp * 10) / 10, effectUsed };
+}
+
+async function getAvmEstimate(type, region, dong, size, floor, buildYear) {
+  const modelId = AVM_MODEL_ID_BY_TYPE[type];
+  if (!modelId) return { error: `AVM v1은 아직 이 매물 유형(${type})을 지원하지 않습니다(아파트만 지원).` };
+  if (!(size > 0) || !(floor >= 0) || !(buildYear > 1900)) {
+    return { error: 'size(면적), floor(층), buildYear(준공연도)가 유효해야 합니다.' };
+  }
+  let model;
+  try {
+    const { data, error } = await supabase.from('avm_model_coefs').select('*').eq('id', modelId).maybeSingle();
+    if (error) return { error: 'avm_model_coefs 조회 실패: ' + error.message };
+    model = data;
+  } catch (e) { return { error: 'avm_model_coefs 조회 예외: ' + e.message }; }
+  if (!model) return { error: 'AVM 모델이 아직 학습되지 않았습니다. GitHub Actions(train-avm 워크플로)를 한 번 실행해 주세요.' };
+
+  const timeOrigin = (model.feature_ranges && model.feature_ranges.time_origin) || 20251201;
+  const features = avmFeatureVector({ size, floor, buildYear, timeOrigin });
+  const { ppp, effectUsed } = avmPredict(model, features, region, dong);
+  const totalPrice = Math.round(ppp * (size / 3.305785));
+
+  return {
+    pppManwon: ppp, // 예상 평당가(만원/평)
+    totalPriceManwon: totalPrice, // 입력한 size 기준 예상 총액(만원)
+    effectUsed, // 'exact' | 'region_fallback' | 'default_fallback' - 신뢰도 판단용
+    modelId, trainedAt: model.trained_at, nSamples: model.n_samples, rSquared: model.r_squared,
+    lowConfidence: (model.r_squared != null && model.r_squared < 0.3) || effectUsed !== 'exact',
+  };
+}
+
+/* ════════════════════════════════════
    법정동별 거래량 순위(topDongs) + 가격상승모멘텀(priceMomentum, "돈되는 지역") - 2026-08
    - 둘 다 (region,dong) 기준 GROUP BY 집계가 필요한데, PostgREST의 count()/avg() "집계
      임베딩" URL 문법(select=region,dong,cnt:count())은 Supabase 프로젝트에서 기본적으로
@@ -1057,6 +1162,25 @@ export default async function handler(req, res) {
         return res.status(400).json({ error: 'sigunguCd(2~5자리 행정구역코드)가 필요합니다.' });
       }
       const result = await getKosisTrend(String(sigunguCd), req.query.force === '1');
+      return res.status(200).json(result);
+    } catch (err) {
+      return res.status(500).json({ error: err.message });
+    }
+  }
+  if (req.query.mode === 'avmEstimate') {
+    // 학습된 계수를 읽어 가벼운 내적만 하는 요청이라 캐시 없이 매번 계산해도 충분히 빠름 -
+    // 대신 계수 자체가 주 1회만 바뀌므로(train-avm.py 스케줄) 짧게 CDN 캐시만 둠.
+    res.setHeader('Cache-Control', 's-maxage=3600, stale-while-revalidate=7200');
+    try {
+      const { type, region, dong, size, floor, buildYear } = req.query;
+      if (!region || !dong || !size || !floor || !buildYear) {
+        return res.status(400).json({ error: 'region, dong, size, floor, buildYear 쿼리파라미터가 필요합니다.' });
+      }
+      const result = await getAvmEstimate(
+        type === 'villa' ? 'villa' : 'apt', region, dong,
+        parseFloat(size), parseFloat(floor), parseInt(buildYear, 10)
+      );
+      if (result.error) return res.status(422).json(result);
       return res.status(200).json(result);
     } catch (err) {
       return res.status(500).json({ error: err.message });
