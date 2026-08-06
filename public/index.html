@@ -5442,6 +5442,9 @@ function openAuctionModal(id) {
     document.getElementById('listing-apply-status').innerText = ''; // 모달을 새로 열 때마다 "적용 상태" 표시를 초기화 (다른 물건의 상태가 남아있지 않도록)
     lastAppliedListingSnapshot = null;
     villaRadiusSaleCache = { key: null, count: null }; // 물건이 바뀌었으니 이전 물건의 반경검색 캐시를 그대로 재사용하면 안 됨
+    refreshBaseRateTrend(); // 세션당 한 번만 실제 조회함(캐시 로직은 함수 내부) - 백그라운드로 시작, 완료되면 알아서 재렌더
+    roneTrendCache = { sido: null, loaded: false, loading: false, sale: null, jeonse: null }; // 물건이 바뀌었으니(시/도가 다를 수 있음) 이전 캐시 초기화
+    refreshRoneTrend(); // 주소가 아직 비어있으면 '전국' 기준으로 우선 조회 - 주소 입력 후 "🔮 예측 적용" 시 시/도 맞춰 재조회됨
     document.getElementById('a-comp-target-margin').value = '2000';
     document.getElementById('a-addr-result').style.display = 'none';
     pendingAuctionDetail = null;
@@ -5756,6 +5759,64 @@ function markListingInventoryDirty() {
    이 함수를 아래 "🔮 예측 적용" 버튼(applyListingInventory)에서만 명시적으로 await해서 호출함. */
 var villaRadiusSaleCache = { key: null, count: null };
 var villaRadiusSaleLoading = false;
+/* 한국은행 ECOS 기준금리 추세(참고용 거시지표) - 세션당 한 번만 조회해 캐시(자주 안 바뀌는 값이라
+   /api/data-coverage?mode=baseRate 쪽에서도 이미 24시간 캐시하고 있음). 모달을 열 때
+   refreshBaseRateTrend()로 백그라운드 조회를 시작하고, 로딩 전에 계산이 일어나면 그냥
+   보정 없이(marketFactor 그대로) 계산됨 - 로딩 완료 후 renderMarketAdjustedPrice()를
+   다시 호출해 반영함. */
+var baseRateTrendCache = { loaded: false, trend: null, currentRate: null, error: null };
+async function refreshBaseRateTrend() {
+    if (baseRateTrendCache.loaded || baseRateTrendCache.loading) return;
+    baseRateTrendCache.loading = true;
+    try {
+        var res = await fetch('/api/data-coverage?mode=baseRate');
+        var data = await res.json();
+        if (data && !data.error) {
+            baseRateTrendCache = { loaded: true, trend: data.trend, currentRate: data.currentRate, error: null };
+        } else {
+            baseRateTrendCache = { loaded: true, trend: null, currentRate: null, error: (data && data.error) || '조회 실패' };
+        }
+    } catch (e) {
+        baseRateTrendCache = { loaded: true, trend: null, currentRate: null, error: e.message };
+    } finally {
+        baseRateTrendCache.loading = false;
+        renderMarketAdjustedPrice(); // 로딩 완료 후 이미 열려있는 박스가 있으면 최신 추세로 다시 그림
+    }
+}
+/* 한국부동산원 R-ONE 매매/전세가격지수 추세(참고용 거시지표) - ECOS와 같은 취지. 물건 주소의
+   시/도 단위로 "최근 1년간 그 지역 아파트값이 전체적으로 얼마나 올랐는지"를 참고용으로 반영함.
+   ECOS와 달리 물건마다(시/도가 다르면) 값이 달라질 수 있어 시/도별로 캐시함(같은 시/도면
+   재조회 안 함). */
+var SIDO_FULL_TO_SHORT = {
+    '서울특별시': '서울', '부산광역시': '부산', '대구광역시': '대구', '인천광역시': '인천', '광주광역시': '광주',
+    '대전광역시': '대전', '울산광역시': '울산', '세종특별자치시': '세종', '경기도': '경기',
+    '강원특별자치도': '강원', '강원도': '강원', '충청북도': '충북', '충청남도': '충남',
+    '전북특별자치도': '전북', '전라북도': '전북', '전라남도': '전남',
+    '경상북도': '경북', '경상남도': '경남', '제주특별자치도': '제주', '제주도': '제주',
+};
+function extractSidoShort(addr) {
+    if (!addr) return null;
+    for (var full in SIDO_FULL_TO_SHORT) { if (addr.indexOf(full) !== -1) return SIDO_FULL_TO_SHORT[full]; }
+    return null;
+}
+var roneTrendCache = { sido: null, loaded: false, loading: false, sale: null, jeonse: null };
+async function refreshRoneTrend() {
+    var addr = document.getElementById('a-addr').value.trim();
+    var sido = extractSidoShort(addr) || '전국';
+    if (roneTrendCache.loaded && roneTrendCache.sido === sido) return;
+    if (roneTrendCache.loading) return;
+    roneTrendCache.loading = true;
+    try {
+        var res = await fetch('/api/data-coverage?mode=roneIndex&sido=' + encodeURIComponent(sido));
+        var data = await res.json();
+        roneTrendCache = { sido: sido, loaded: true, loading: false, sale: data.sale || null, jeonse: data.jeonse || null };
+    } catch (e) {
+        roneTrendCache = { sido: sido, loaded: true, loading: false, sale: null, jeonse: null };
+    } finally {
+        roneTrendCache.loading = false;
+        renderMarketAdjustedPrice();
+    }
+}
 function villaRadiusSaleKey(ctx, pyung, buildYear) {
     if (!ctx || !ctx.lat || !ctx.lon) return null;
     return [Math.round(ctx.lat * 2000), Math.round(ctx.lon * 2000), pyung || '', buildYear || ''].join('_');
@@ -5865,6 +5926,25 @@ function calcMarketAdjustedSalePrice() {
                 : '최근 비교 실거래가 부족해 재고월수를 계산할 수 없어 기본 반영비중(30%)을 사용합니다.');
     }
 
+    // 거시지표 보정(참고용) - 국지적 수급(재고월수)만으로는 "금리가 오르는 중이라 매수심리
+    // 전체가 위축되고 있다"·"이 시/도 전체가 최근 1년간 하락세다" 같은 거시 흐름을 못 잡아내는
+    // 걸 한국은행 ECOS 기준금리(전국 공통) + 한국부동산원 R-ONE 매매지수(시/도별) 두 지표로
+    // 보완함. 둘 다 통계적으로 검증된 관계식이 아니라 정성적 방향성만 참고하는 용도라 각각
+    // ±0.05만 반영하고, 두 신호가 겹쳐도 합계 ±0.08로 상한을 둠(과도한 이중보정 방지).
+    var macroNotes = [];
+    var baseRateAdj = 0;
+    if (baseRateTrendCache.trend === 'up') { baseRateAdj = -0.05; macroNotes.push('기준금리 상승 추세(참고, 한국은행 ECOS) → -5%p'); }
+    else if (baseRateTrendCache.trend === 'down') { baseRateAdj = 0.05; macroNotes.push('기준금리 하락 추세(참고, 한국은행 ECOS) → +5%p'); }
+    var roneAdj = 0;
+    var roneSale = roneTrendCache.sale;
+    if (roneSale && !roneSale.error) {
+        if (roneSale.trend === 'up') { roneAdj = -0.05; macroNotes.push('이 지역(' + (roneSale.regionName || '') + ') 매매지수 1년간 +' + roneSale.pct + '% (참고, 한국부동산원 R-ONE) → -5%p'); }
+        else if (roneSale.trend === 'down') { roneAdj = 0.05; macroNotes.push('이 지역(' + (roneSale.regionName || '') + ') 매매지수 1년간 ' + roneSale.pct + '% (참고, 한국부동산원 R-ONE) → +5%p'); }
+    }
+    var macroAdj = Math.max(-0.08, Math.min(0.08, baseRateAdj + roneAdj));
+    var macroNote = macroNotes.length ? macroNotes.join(' / ') : null;
+    if (macroAdj !== 0) marketFactor = Math.min(1, Math.max(0, marketFactor + macroAdj));
+
     var blendedValue = Math.round(est.estValue * (1 - marketFactor) + askMid * marketFactor);
     // 호가-실거래가 갭(%) - "매수자 관점 vs 매도자 관점 두 각도로 시세를 물어보는" 전화임장 요령을
     // 데이터로 대신하는 지표. 호가가 실거래가보다 많이 높으면(+) 아직 눈높이가 안 낮춰진 시장,
@@ -5880,6 +5960,7 @@ function calcMarketAdjustedSalePrice() {
         marketFactor: marketFactor,
         blendedValue: blendedValue,
         dataWarning: dataWarning,
+        baseRateNote: macroNote,
         pendingRadiusRefresh: pendingRadiusRefresh,
         sampleSource: usedRadius ? '반경 내 유사매물 1년' : (propType === 'villa' ? '등록 비교물건 6개월(반경조회 필요)' : '등록 비교물건 6개월'),
     };
@@ -5896,6 +5977,7 @@ function renderMarketAdjustedPrice() {
     var basisText = '실거래기반 ' + toEok(String(r.baseValue)) + ' + 호가중간값 ' + toEok(String(r.askMid))
         + ' → 호가 반영비중 ' + Math.round(r.marketFactor * 100) + '%'
         + (r.monthsOfSupply !== null ? ' (재고월수 약 ' + r.monthsOfSupply + '개월, ' + r.sampleSource + ' 기준)' : '')
+        + (r.baseRateNote ? '\n' + r.baseRateNote : '')
         + '\n\n참고용 근사치입니다. 반영비중 구간 기준은 일반적인 시장관행을 근사한 것으로, 통계적으로 도출된 값은 아닙니다.';
     var basisB64 = btoa(unescape(encodeURIComponent(basisText)));
     box.innerHTML = '<div style="margin-top:8px;background:#fff8e1;border-radius:6px;padding:8px 10px;">'
@@ -5908,6 +5990,7 @@ function renderMarketAdjustedPrice() {
                 + '</div>'
             : '')
         + (r.dataWarning ? '<div style="font-size:10px;color:#e65100;margin-top:3px;">⚠️ ' + r.dataWarning + '</div>' : '')
+        + (r.baseRateNote ? '<div style="font-size:10px;color:#1565c0;margin-top:2px;">🏦 ' + r.baseRateNote + ' (참고용)</div>' : '')
         + (r.pendingRadiusRefresh ? '<div style="font-size:10px;color:#1976d2;margin-top:3px;">🔄 평형/연식/주소 조건이 바뀌어 반경 내 유사매물 재조회가 필요합니다 - 위 "🔮 예측 적용" 버튼을 누르면 반영됩니다(지금은 등록된 비교물건 기준으로만 계산됨).</div>' : '')
         + '</div>';
 }
@@ -5927,6 +6010,8 @@ async function applyListingInventory() {
     if (document.getElementById('a-prop-type').value === 'villa') {
         await refreshVillaRadiusSaleCount(true);
     }
+    roneTrendCache = { sido: null, loaded: false, loading: false, sale: null, jeonse: null }; // 주소가 바뀌었을 수 있으니 시/도 다시 판정
+    await refreshRoneTrend();
     renderMarketAdjustedPrice();
     if (document.getElementById('a-comp-target-margin').value !== '' || (pendingAuctionComparables || []).length) {
         calcCompValuation(); // 내부에서 renderEstimateSummary()까지 호출함
