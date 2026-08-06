@@ -5872,24 +5872,42 @@ async function refreshRoneTrend() {
 /* 🤖 AVM(헤도닉 회귀모델) 추정가 - 2026-08 추가. getCompEstValue()(비교물건 몇 건 평균)와
    달리 house_trades 전체를 오프라인(GitHub Actions, train-avm.py)에서 회귀분석해 미리
    학습해둔 계수로 계산하는 독립적인 참고치. data-coverage.js mode=avmEstimate 주석 참고.
-   region은 이 앱에서 house_trades.region과 매칭되는 유일한 프론트 상태값인 lastSigungu를
-   그대로 씀(다른 곳(findAptComplexMomentum 등)에서도 이미 이 필드로 지역 폴백을 함).
-   ⚠️ 2026-08(버그 수정): lastSigungu는 카카오 geocoder(coord2RegionCode)가 주는
-   "인천광역시 계양구" 같은 정식 명칭인데, house_trades.region(=avm_model_coefs의 dong_effects
-   키)은 "인천 계양구"처럼 짧은 표기임(topDongs API 라이브 응답으로 확인) - 이 불일치 때문에
-   법정동/시군구 매칭이 매번 실패해서 항상 "전국 평균(__default__)"으로만 폴백되고 있었음
-   (실제 배포 후 테스트에서 발견 - 어떤 물건을 넣어도 "전국 평균 기준(신규지역)"만 나왔음).
-   KOSIS/R-ONE 연동에서 이미 쓰던 SIDO_FULL_TO_SHORT 매핑을 재사용해 시/도 부분만 짧은
-   표기로 바꿔서 보냄. */
-function shortenSigunguRegion(fullRegion) {
-    if (!fullRegion) return fullRegion;
-    for (var full in SIDO_FULL_TO_SHORT) {
-        if (fullRegion.indexOf(full) === 0) return SIDO_FULL_TO_SHORT[full] + fullRegion.slice(full.length);
-    }
-    return fullRegion; // 이미 짧은 표기이거나 매핑에 없는 경우 원본 그대로
+   ⚠️ 2026-08(1차 수정, 롤백): 처음엔 lastSigungu(카카오 지역명)를 SIDO_FULL_TO_SHORT로
+   시/도만 짧게 바꿔서 region으로 보냈는데, "인천 계양구"류는 맞아도 "경기 안산 상록구"처럼
+   시+구가 함께 있는 지역은 house_trades.region이 "안산시"가 아니라 "안산"(시 생략)으로
+   저장돼 있어서 여전히 불일치가 났음(안산 매물로 실제 테스트해 발견 - "전국 평균"만 계속
+   나옴). 문자열 가공으로는 이 불규칙한 표기를 다 못 맞춤.
+   ⚠️ 2026-08(2차 수정, 현재): findApproximateResaleMatches() 등에서 이미 쓰던 패턴대로,
+   물건의 좌표(ctx.lat/lon)를 geocoder.coord2RegionCode로 역지오코딩해 5자리 법정동코드
+   (lawdCd)를 구하고, 그 코드를 그대로 서버에 보냄 - 서버가 LAWD_CODES(이 앱이 실거래
+   수집 때부터 써온 코드→지역명 매핑, house_trades.region과 100% 같은 값)로 직접 지역명을
+   찾으므로 표기 불일치 문제 자체가 생기지 않음. */
+var subjectLawdCache = { key: null, loading: false, lawdCd: null };
+function subjectLawdCacheKey(lat, lon) {
+    if (!lat || !lon) return null;
+    return Math.round(lat * 2000) + '_' + Math.round(lon * 2000);
 }
-function avmCacheKey(region, dong, sizeM2, floor, buildYear) {
-    return [region, dong, Math.round(sizeM2), floor, buildYear].join('|');
+// 물건 좌표(ctx.lat/lon) 기준 5자리 법정동코드를 구해 onReady(lawdCd)로 콜백함. 좌표가 안
+// 바뀌었으면 캐시된 값을 즉시 콜백(카카오 API 재호출 없음).
+function resolveSubjectLawdCd(lat, lon, onReady) {
+    var key = subjectLawdCacheKey(lat, lon);
+    if (!key) { onReady(null); return; }
+    if (subjectLawdCache.key === key && !subjectLawdCache.loading) { onReady(subjectLawdCache.lawdCd); return; }
+    if (subjectLawdCache.loading && subjectLawdCache.key === key) return; // 이미 같은 좌표 조회중 - 응답 오면 renderEstimateSummary 다음 호출 때 캐시 히트로 반영됨
+    subjectLawdCache = { key: key, loading: true, lawdCd: null };
+    geocoder.coord2RegionCode(lon, lat, function(result, status) {
+        var lawdCd = null;
+        if (status === kakao.maps.services.Status.OK) {
+            for (var i = 0; i < result.length; i++) {
+                if (result[i].region_type === 'B') { lawdCd = result[i].code.substring(0, 5); break; }
+            }
+        }
+        subjectLawdCache = { key: key, loading: false, lawdCd: lawdCd };
+        onReady(lawdCd);
+    });
+}
+function avmCacheKey(lawdCd, dong, sizeM2, floor, buildYear) {
+    return [lawdCd, dong, Math.round(sizeM2), floor, buildYear].join('|');
 }
 function renderAvmEstimateBox(data) {
     var avmEl = document.getElementById('est-avm-value');
@@ -5918,36 +5936,38 @@ function refreshAvmEstimateIfNeeded() {
     var floor = parseFloat(document.getElementById('a-floor').value) || null;
     var buildYear = getAuctionBuildYear();
     var ctx = getAuctionAddressContext();
-    var region = shortenSigunguRegion(lastSigungu || '');
     var dong = ctx.dong || '';
-    if (!pyung || !floor || !buildYear || !region || !dong) {
+    if (!pyung || !floor || !buildYear || !dong || !ctx.lat || !ctx.lon) {
         avmEstCache = { key: null, loading: false, data: null };
         renderAvmEstimateBox(null);
         return;
     }
-    var sizeM2 = pyung * 3.305785;
-    var key = avmCacheKey(region, dong, sizeM2, floor, buildYear);
-    if (avmEstCache.key === key) { renderAvmEstimateBox(avmEstCache.data); return; }
-    if (avmEstCache.loading) return; // 이미 같은 요청이 진행중이면 중복 호출 방지(렌더 경로에서 자주 불림)
-    avmEstCache = { key: key, loading: true, data: null };
-    var avmSubEl = document.getElementById('est-avm-sub');
-    avmEl.innerText = '조회중...';
-    if (avmSubEl) avmSubEl.innerText = '';
-    fetch('/api/data-coverage?mode=avmEstimate&type=apt'
-        + '&region=' + encodeURIComponent(region) + '&dong=' + encodeURIComponent(dong)
-        + '&size=' + sizeM2 + '&floor=' + floor + '&buildYear=' + buildYear)
-      .then(function(r) { return r.json().then(function(d) { return { ok: r.ok, data: d }; }); })
-      .then(function(res) {
-          var result = (res.ok && !res.data.error) ? res.data : { error: (res.data && res.data.error) || 'AVM 조회 실패' };
-          if (avmEstCache.key !== key) return; // 응답 오는 사이 물건이 바뀌었으면 무시(레이스 컨디션 방지)
-          avmEstCache = { key: key, loading: false, data: result };
-          renderAvmEstimateBox(result);
-      })
-      .catch(function(e) {
-          if (avmEstCache.key !== key) return;
-          avmEstCache = { key: key, loading: false, data: { error: 'AVM 호출 실패: ' + e.message } };
-          renderAvmEstimateBox(avmEstCache.data);
-      });
+    resolveSubjectLawdCd(ctx.lat, ctx.lon, function(lawdCd) {
+        if (!lawdCd) { renderAvmEstimateBox({ error: '물건 좌표로 지역코드를 확인하지 못했습니다.' }); return; }
+        var sizeM2 = pyung * 3.305785;
+        var key = avmCacheKey(lawdCd, dong, sizeM2, floor, buildYear);
+        if (avmEstCache.key === key) { renderAvmEstimateBox(avmEstCache.data); return; }
+        if (avmEstCache.loading) return; // 이미 같은 요청이 진행중이면 중복 호출 방지(렌더 경로에서 자주 불림)
+        avmEstCache = { key: key, loading: true, data: null };
+        var avmSubEl = document.getElementById('est-avm-sub');
+        avmEl.innerText = '조회중...';
+        if (avmSubEl) avmSubEl.innerText = '';
+        fetch('/api/data-coverage?mode=avmEstimate&type=apt'
+            + '&lawdCd=' + encodeURIComponent(lawdCd) + '&dong=' + encodeURIComponent(dong)
+            + '&size=' + sizeM2 + '&floor=' + floor + '&buildYear=' + buildYear)
+          .then(function(r) { return r.json().then(function(d) { return { ok: r.ok, data: d }; }); })
+          .then(function(res) {
+              var result = (res.ok && !res.data.error) ? res.data : { error: (res.data && res.data.error) || 'AVM 조회 실패' };
+              if (avmEstCache.key !== key) return; // 응답 오는 사이 물건이 바뀌었으면 무시(레이스 컨디션 방지)
+              avmEstCache = { key: key, loading: false, data: result };
+              renderAvmEstimateBox(result);
+          })
+          .catch(function(e) {
+              if (avmEstCache.key !== key) return;
+              avmEstCache = { key: key, loading: false, data: { error: 'AVM 호출 실패: ' + e.message } };
+              renderAvmEstimateBox(avmEstCache.data);
+          });
+    });
 }
 function applyEstAvmValue() {
     if (!window.__avmEstValue) return;
