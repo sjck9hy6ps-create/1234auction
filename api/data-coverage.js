@@ -226,18 +226,23 @@ async function fetchRoneMonth(statblId, yyyymm) {
   }
   const rows = data && data.SttsApiTblData && data.SttsApiTblData[1] && data.SttsApiTblData[1].row;
   if (!Array.isArray(rows) || !rows.length) {
-    // 인증키 오류 등은 {RESULT:{CODE,MESSAGE}} 형태로 옴(SttsApiTblData 래핑이 아예 없음) -
-    // "진짜 데이터없음"(INFO-200)과 구분해서 원인을 남김.
+    // 인증키 오류 등은 {RESULT:{CODE,MESSAGE}} 형태로 옴(SttsApiTblData 래핑이 아예 없음).
+    // ⚠️ 2026-08(버그 수정): 처음엔 메시지 문자열에 "데이터없음"이 포함되는지로 "재시도해도
+    // 되는 실패인지"를 판정했는데, 실제 R-ONE의 진짜 데이터없음 메시지는 "해당하는 데이터가
+    // 없습니다"라 그 부분 문자열이 아예 다르게 나와서(라이브 배포 후 발견) 매번 첫 달만
+    // 시도하고 바로 포기해버리는 문제가 있었음 - CODE 값(INFO-200=데이터없음, 재시도 가치
+    // 있음)으로 명확히 판정하도록 수정.
     const resultInfo = data && data.RESULT;
+    const retryable = !resultInfo || resultInfo.CODE === 'INFO-200';
     const reason = resultInfo
       ? `R-ONE 오류(${resultInfo.CODE}): ${resultInfo.MESSAGE}`
       : `R-ONE(${yyyymm}) 데이터없음`;
-    if (resultInfo) console.warn(`R-ONE(${statblId},${yyyymm}) 오류 -`, resultInfo.CODE, resultInfo.MESSAGE);
-    return { month: yyyymm, byCls: null, reason };
+    if (resultInfo && resultInfo.CODE !== 'INFO-200') console.warn(`R-ONE(${statblId},${yyyymm}) 오류 -`, resultInfo.CODE, resultInfo.MESSAGE);
+    return { month: yyyymm, byCls: null, reason, retryable };
   }
   const byCls = {};
   rows.forEach(row => { byCls[row.CLS_ID] = { name: row.CLS_NM, value: row.DTA_VAL }; });
-  return { month: yyyymm, byCls, reason: null };
+  return { month: yyyymm, byCls, reason: null, retryable: false };
 }
 
 // 최근월부터 최대 12개월 역순으로 시도 - 발표 지연으로 최근 몇 개월은 데이터가 없는 경우가 흔함(라이브 확인).
@@ -250,7 +255,7 @@ async function fetchLatestRoneMonth(statblId) {
     if (result.byCls) return result;
     lastReason = result.reason;
     // 인증키/네트워크 오류처럼 달을 바꿔봐야 소용없는 실패는 즉시 중단(불필요한 12회 반복 방지)
-    if (lastReason && !lastReason.includes('데이터없음')) return { month: null, byCls: null, reason: lastReason };
+    if (!result.retryable) return { month: null, byCls: null, reason: lastReason };
     yyyymm = shiftYyyymm(yyyymm, -1);
   }
   return { month: null, byCls: null, reason: lastReason || '최근 12개월 모두 데이터없음' };
