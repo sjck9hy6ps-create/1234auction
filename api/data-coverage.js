@@ -1202,8 +1202,15 @@ export default async function handler(req, res) {
       if (!region || !dong || !size || !floor || !buildYear) {
         return res.status(400).json({ error: 'region(또는 lawdCd), dong, size, floor, buildYear 쿼리파라미터가 필요합니다.' });
       }
+      // ⚠️ 2026-08(버그 수정): 처음엔 'villa'가 아니면 무조건 'apt'로 취급했는데(오피스텔/
+      // 그외 유형까지 다 아파트로 잘못 분류됨), 프론트도 실제로는 항상 type=apt만 보내고
+      // 있었던 게 겹쳐서 - 연립다세대·단독(villa) 물건을 열어도 AVM이 "아파트 시세"로
+      // 계산돼 실제 매물보다 몇 배 높은 값이 나오는 버그가 있었음(안산 이동 530-21 실제
+      // 테스트에서 발견 - 비교물건 1.65억 vs AVM 7.7억). type을 있는 그대로 넘겨서
+      // AVM_MODEL_ID_BY_TYPE에 없는 유형(villa/officetel/other)은 정직하게 "지원 안 함"
+      // 에러를 내도록 수정 - 잘못된 시장의 값을 그럴듯하게 보여주지 않음.
       const result = await getAvmEstimate(
-        type === 'villa' ? 'villa' : 'apt', region, dong,
+        type || 'apt', region, dong,
         parseFloat(size), parseFloat(floor), parseInt(buildYear, 10),
         danji ? String(danji).trim() : null
       );
