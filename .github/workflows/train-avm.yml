@@ -1,0 +1,42 @@
+# AVM(헤도닉 회귀모델) 주간 재학습 워크플로 - 2026-08 추가
+#
+# ⚠️ 이 파일은 저장소의 .github/workflows/train-avm.yml 경로에 저장해야 GitHub Actions가
+# 인식합니다(GitHub 웹 에디터에서 "Add file" → 경로를 .github/workflows/train-avm.yml로
+# 직접 입력하면 됩니다).
+#
+# ⚠️ 실행 전 GitHub 저장소 Settings → Secrets and variables → Actions에 아래 2개를 등록:
+#   SUPABASE_URL              (Vercel에 이미 등록된 것과 동일한 값)
+#   SUPABASE_SERVICE_ROLE_KEY (Vercel에 이미 등록된 것과 동일한 값 - service_role 키, anon 키 아님)
+# Vercel 환경변수와는 완전히 별개 저장소라 GitHub Actions는 GitHub Secrets에 따로
+# 등록해야만 값을 읽을 수 있습니다(값 자체는 Vercel 것과 동일하게 복사해 넣으면 됨).
+#
+# 매주 월요일 04:00 UTC(한국시간 13:00)에 자동 실행되고, Actions 탭에서 수동 실행도 가능함
+# (workflow_dispatch). house_trades가 매일 갱신되긴 하지만 회귀계수가 하루이틀 차이로
+# 크게 바뀌진 않으므로 주 1회면 충분함 - 더 자주 돌리고 싶으면 cron만 바꾸면 됨.
+name: Train AVM model
+
+on:
+  schedule:
+    - cron: '0 4 * * 1'
+  workflow_dispatch: {}
+
+jobs:
+  train:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install pandas numpy requests
+
+      - name: Train AVM
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: python train-avm.py
