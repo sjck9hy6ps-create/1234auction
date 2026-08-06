@@ -5906,9 +5906,12 @@ function resolveSubjectLawdCd(lat, lon, onReady) {
         onReady(lawdCd);
     });
 }
-function avmCacheKey(lawdCd, dong, sizeM2, floor, buildYear) {
-    return [lawdCd, dong, Math.round(sizeM2), floor, buildYear].join('|');
+function avmCacheKey(lawdCd, dong, danji, sizeM2, floor, buildYear) {
+    return [lawdCd, dong, danji, Math.round(sizeM2), floor, buildYear].join('|');
 }
+// effectUsed: 'danji'(단지 표본충분, 가장 정밀) > 'dong'(법정동 단위, 단지 표본부족이거나
+// 단지명 모름) > 'region_fallback'(시군구 평균, 그 법정동도 표본부족) > 'default_fallback'
+// (전국 평균, 완전 신규지역) - data-coverage.js avmPredict()와 반드시 같은 순서/의미로 둠.
 function renderAvmEstimateBox(data) {
     var avmEl = document.getElementById('est-avm-value');
     var avmSubEl = document.getElementById('est-avm-sub');
@@ -5922,8 +5925,10 @@ function renderAvmEstimateBox(data) {
     window.__avmEstValue = data.totalPriceManwon;
     avmEl.innerText = toEok(String(data.totalPriceManwon)) + (data.lowConfidence ? ' ⚠️' : '');
     if (avmSubEl) {
-        var confNote = data.effectUsed === 'exact' ? '이 법정동 기준'
-            : (data.effectUsed === 'region_fallback' ? '시군구 평균 기준(동 표본부족)' : '전국 평균 기준(신규지역)');
+        var confNote = data.effectUsed === 'danji' ? '이 단지 기준'
+            : data.effectUsed === 'dong' ? '이 법정동 기준(단지 표본부족)'
+            : data.effectUsed === 'region_fallback' ? '시군구 평균 기준(동 표본부족)'
+            : '전국 평균 기준(신규지역)';
         avmSubEl.innerText = '실거래 ' + (data.nSamples || 0).toLocaleString() + '건 회귀분석(R²='
             + (data.rSquared != null ? data.rSquared.toFixed(2) : '-') + ') · ' + confNote
             + (data.lowConfidence ? ' - 참고용으로만 보세요' : '');
@@ -5937,6 +5942,9 @@ function refreshAvmEstimateIfNeeded() {
     var buildYear = getAuctionBuildYear();
     var ctx = getAuctionAddressContext();
     var dong = ctx.dong || '';
+    // 단지명(danji) - findAptComplexMomentum 등 기존 기능도 이미 a-name을 "단지명"으로 씀.
+    // 없어도(단독주택 형태 등) 동작은 하고, 단지 단위 대신 법정동 단위로 자동 폴백됨.
+    var danji = document.getElementById('a-name').value.trim();
     if (!pyung || !floor || !buildYear || !dong || !ctx.lat || !ctx.lon) {
         avmEstCache = { key: null, loading: false, data: null };
         renderAvmEstimateBox(null);
@@ -5945,7 +5953,7 @@ function refreshAvmEstimateIfNeeded() {
     resolveSubjectLawdCd(ctx.lat, ctx.lon, function(lawdCd) {
         if (!lawdCd) { renderAvmEstimateBox({ error: '물건 좌표로 지역코드를 확인하지 못했습니다.' }); return; }
         var sizeM2 = pyung * 3.305785;
-        var key = avmCacheKey(lawdCd, dong, sizeM2, floor, buildYear);
+        var key = avmCacheKey(lawdCd, dong, danji, sizeM2, floor, buildYear);
         if (avmEstCache.key === key) { renderAvmEstimateBox(avmEstCache.data); return; }
         if (avmEstCache.loading) return; // 이미 같은 요청이 진행중이면 중복 호출 방지(렌더 경로에서 자주 불림)
         avmEstCache = { key: key, loading: true, data: null };
@@ -5954,6 +5962,7 @@ function refreshAvmEstimateIfNeeded() {
         if (avmSubEl) avmSubEl.innerText = '';
         fetch('/api/data-coverage?mode=avmEstimate&type=apt'
             + '&lawdCd=' + encodeURIComponent(lawdCd) + '&dong=' + encodeURIComponent(dong)
+            + (danji ? '&danji=' + encodeURIComponent(danji) : '')
             + '&size=' + sizeM2 + '&floor=' + floor + '&buildYear=' + buildYear)
           .then(function(r) { return r.json().then(function(d) { return { ok: r.ok, data: d }; }); })
           .then(function(res) {
