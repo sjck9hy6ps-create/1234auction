@@ -29,6 +29,7 @@
      );
 ════════════════════════════════════ */
 import { createClient } from '@supabase/supabase-js';
+import { LAWD_CODES } from '../scripts/lawd-codes.mjs';
 const supabase = createClient(
   process.env.SUPABASE_URL,
   process.env.SUPABASE_SERVICE_ROLE_KEY
@@ -1172,9 +1173,21 @@ export default async function handler(req, res) {
     // 대신 계수 자체가 주 1회만 바뀌므로(train-avm.py 스케줄) 짧게 CDN 캐시만 둠.
     res.setHeader('Cache-Control', 's-maxage=3600, stale-while-revalidate=7200');
     try {
-      const { type, region, dong, size, floor, buildYear } = req.query;
+      const { type, dong, size, floor, buildYear, lawdCd } = req.query;
+      // ⚠️ 2026-08(버그 수정): 처음엔 프론트가 카카오 geocoder 지역명을 문자열로 가공해서
+      // region으로 그대로 보냈는데, "수원시 영통구"처럼 시+구가 함께 있는 지역은
+      // house_trades.region이 "수원 영통구"(시 생략)로 저장돼 있어 불일치가 났음(안산 등에서
+      // 실제 배포 후 테스트로 발견 - 전국 평균으로만 폴백됨). LAWD_CODES(이 앱이 실거래 수집
+      // 때부터 써온 5자리 법정동코드→region 매핑, search-complex.js 등에서도 이미 씀)가
+      // 유일한 정답 소스라, lawdCd가 오면 그걸로 region을 직접 찾아서 씀 - 문자열 가공에
+      // 의존하지 않음. lawdCd가 없는(구형 프론트) 호출을 위해 region 직접 지정도 계속 지원.
+      let region = req.query.region;
+      if (lawdCd) {
+        const found = LAWD_CODES.find((r) => r.code === String(lawdCd));
+        if (found) region = found.name;
+      }
       if (!region || !dong || !size || !floor || !buildYear) {
-        return res.status(400).json({ error: 'region, dong, size, floor, buildYear 쿼리파라미터가 필요합니다.' });
+        return res.status(400).json({ error: 'region(또는 lawdCd), dong, size, floor, buildYear 쿼리파라미터가 필요합니다.' });
       }
       const result = await getAvmEstimate(
         type === 'villa' ? 'villa' : 'apt', region, dong,
