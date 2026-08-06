@@ -319,7 +319,10 @@ function roneTrendForSido(roneResult, sido) {
        fetched_at timestamptz
      );
 ════════════════════════════════════ */
-const KOSIS_API_KEY = process.env.KOSIS_API_KEY;
+// ⚠️ 별도 KOSIS_API_KEY를 새로 안 만들고 기존 PUBLIC_DATA_API_KEY(국토부 실거래가 수집 등에
+// 이미 쓰는 data.go.kr 공공데이터포털 키)를 재사용함 - KOSIS도 같은 data.go.kr 계정 소속이라
+// "일반 인증키" 값이 동일함(사용자가 캡처해 보내준 두 KOSIS 서비스 페이지에서 같은 키 값 확인).
+const KOSIS_API_KEY = process.env.PUBLIC_DATA_API_KEY;
 const KOSIS_DATA_URL = 'https://apis.data.go.kr/1240000/statisticsData/getStatisticsData';
 const KOSIS_TBL = { population: { tblId: 'DT_1B040A3', itmId: 'T20' }, households: { tblId: 'DT_1B040B3', itmId: 'T1' } };
 const KOSIS_FRESH_MS = 1000 * 60 * 60 * 24;
@@ -347,7 +350,7 @@ async function fetchKosisLatest(tblId, itmId, sigunguCd) {
 }
 
 async function getKosisTrend(sigunguCd, force) {
-  if (!KOSIS_API_KEY) return { error: 'KOSIS_API_KEY 환경변수가 없습니다. data.go.kr(국가통계포털)에서 발급받은 인증키를 Vercel에 추가해 주세요.' };
+  if (!KOSIS_API_KEY) return { error: 'PUBLIC_DATA_API_KEY 환경변수가 없습니다. data.go.kr에서 발급받은 인증키를 Vercel에 추가해 주세요.' };
   const result = {};
   for (const kind of Object.keys(KOSIS_TBL)) {
     const cacheId = kind + '|' + sigunguCd;
