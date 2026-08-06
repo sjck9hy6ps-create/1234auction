@@ -221,12 +221,20 @@ def upsert_model(model_id: str, model_type: str, beta: dict, group_effects: dict
     print(f"  {model_id} 저장 완료 - n={n_samples}, R^2={r_squared:.4f}" if r_squared is not None else f"  {model_id} 저장 완료 - n={n_samples}")
 
 
-def train_one(table: str, model_id: str, model_type: str, use_danji: bool):
-    print(f"[{model_id}] {table} 학습 시작 (그룹 단위: {'단지→법정동→시군구' if use_danji else '법정동→시군구'})")
-    raw = fetch_all_rows(table)
-    if raw.empty:
-        print(f"  {table}: 데이터 없음, 스킵")
+def train_one(tables, model_id: str, model_type: str, use_danji: bool):
+    # tables: 테이블 하나(str) 또는 여러 개(list) - 연립다세대는 villa_trades(연립다세대)+
+    # single_trades(단독다가구) 두 테이블을 합쳐서 하나의 모델로 학습함(이 앱 다른 곳(예:
+    # rpc_top_dongs SQL, data-coverage.js getBucketDetailRows)도 "villa" 타입을 이 두 테이블의
+    # 합집합으로 다뤄서 같은 관례를 따름).
+    if isinstance(tables, str):
+        tables = [tables]
+    print(f"[{model_id}] {', '.join(tables)} 학습 시작 (그룹 단위: {'단지→법정동→시군구' if use_danji else '법정동→시군구'})")
+    raw_parts = [fetch_all_rows(t) for t in tables]
+    raw_parts = [p for p in raw_parts if not p.empty]
+    if not raw_parts:
+        print(f"  {', '.join(tables)}: 데이터 없음, 스킵")
         return
+    raw = pd.concat(raw_parts, ignore_index=True)
     df = clean_and_featurize(raw, use_danji)
     print(f"  전처리 후 {len(df)}행 (그룹 {df['group_key'].nunique()}개)")
     if len(df) < 200:
@@ -246,13 +254,17 @@ def train_one(table: str, model_id: str, model_type: str, use_danji: bool):
 
 
 def main():
-    # ⚠️ 2026-08 v1: 아파트(house_trades)만 우선 학습함. 연립다세대(villa_trades/single_trades)는
-    # 거래 빈도가 원래 낮아 그룹별(동별) 표본이 훨씬 더 부족함 - v1 배포 후 실제 R^2·표본수를
-    # 보고 별도로 그룹 승격 기준(MIN_DONG_SAMPLES)을 더 크게 잡아 재검토할 예정.
-    # ⚠️ 2026-08(v2): 아파트는 단지(danji) 단위까지 고정효과를 세분화함(위 모듈 docstring
-    # "그룹(고정효과 단위)" 참고) - 동일 법정동 내 단지 간 편차(준공연도·브랜드)를 직접
-    # 반영해 예측 정확도를 높임. 연립다세대(향후 villa_v1 추가 시)는 기존처럼 법정동 단위로.
+    # 아파트: 단지(danji) 단위까지 고정효과를 세분화(위 모듈 docstring "그룹(고정효과 단위)"
+    # 참고) - 동일 법정동 내 단지 간 편차(준공연도·브랜드)를 직접 반영해 예측 정확도를 높임.
     train_one("house_trades", "apt_v1", "apt", use_danji=True)
+    # ⚠️ 2026-08(villa_v1 추가): 연립다세대·단독다가구는 villa_trades(연립다세대)+
+    # single_trades(단독다가구) 두 테이블을 합쳐서 학습함(이 앱의 다른 집계 로직(rpc_top_dongs,
+    # getBucketDetailRows 등)도 "villa" 타입을 이 두 테이블의 합집합으로 다뤄서 같은 관례를
+    # 따름). 아파트와 달리 danji(단지) 단위는 안 씀(use_danji=False) - 거래 자체가 뜸하고
+    # 단지 개념도 아파트만큼 뚜렷하지 않아(다세대는 한 필지에 한 동인 경우가 많음) 단지
+    # 단위로 쪼개면 표본이 너무 잘게 쪼개져 오히려 불안정해짐 - 법정동 단위(표본부족 시
+    # 시군구로 폴백) 2단계만 씀.
+    train_one(["villa_trades", "single_trades"], "villa_v1", "villa", use_danji=False)
 
 
 if __name__ == "__main__":
