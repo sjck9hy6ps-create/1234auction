@@ -5445,6 +5445,8 @@ function openAuctionModal(id) {
     refreshBaseRateTrend(); // 세션당 한 번만 실제 조회함(캐시 로직은 함수 내부) - 백그라운드로 시작, 완료되면 알아서 재렌더
     roneTrendCache = { sido: null, loaded: false, loading: false, sale: null, jeonse: null }; // 물건이 바뀌었으니(시/도가 다를 수 있음) 이전 캐시 초기화
     refreshRoneTrend(); // 주소가 아직 비어있으면 '전국' 기준으로 우선 조회 - 주소 입력 후 "🔮 예측 적용" 시 시/도 맞춰 재조회됨
+    populationTrendCache = { sido: null, loaded: false, loading: false, population: null, households: null };
+    refreshPopulationTrend();
     document.getElementById('a-comp-target-margin').value = '2000';
     document.getElementById('a-addr-result').style.display = 'none';
     pendingAuctionDetail = null;
@@ -5799,6 +5801,38 @@ function extractSidoShort(addr) {
     for (var full in SIDO_FULL_TO_SHORT) { if (addr.indexOf(full) !== -1) return SIDO_FULL_TO_SHORT[full]; }
     return null;
 }
+/* KOSIS(국가통계포털) 인구·세대수 증감(참고용, 정보성 표시만 함) - R-ONE/ECOS와 달리 marketFactor
+   보정에는 넣지 않음. 인구 증감은 1년 단위로 보면 변동폭이 워낙 작고(보통 ±1~2% 이내) 단기
+   시세(재고월수 기반)와의 관계도 느슨해서, 억지로 ±5%p 같은 보정을 걸면 과적합 위험이 큼 - 대신
+   "이 지역이 장기적으로 성장/축소 중인지" 참고 정보로만 보여줌. 프론트에서 정확한 시군구코드(5자리
+   PNU)를 아직 구할 수 없는 화면이라(get-official-price.js 등 서버 쪽에서만 계산됨), 시/도 2자리
+   코드로 우선 조회함(R-ONE과 같은 시/도 단위 - 정밀도는 떨어지지만 추가 API 호출/플러밍 없이 바로
+   씀). */
+var SIDO_SHORT_TO_KOSIS_CODE = {
+    '서울': '11', '부산': '26', '대구': '27', '인천': '28', '광주': '29', '대전': '30', '울산': '31',
+    '세종': '36', '경기': '41', '강원': '42', '충북': '43', '충남': '44', '전북': '45', '전남': '46',
+    '경북': '47', '경남': '48', '제주': '50',
+};
+var populationTrendCache = { sido: null, loaded: false, loading: false, population: null, households: null };
+async function refreshPopulationTrend() {
+    var addr = document.getElementById('a-addr').value.trim();
+    var sido = extractSidoShort(addr);
+    var code = sido && SIDO_SHORT_TO_KOSIS_CODE[sido];
+    if (!code) { populationTrendCache = { sido: null, loaded: true, loading: false, population: null, households: null }; return; }
+    if (populationTrendCache.loaded && populationTrendCache.sido === sido) return;
+    if (populationTrendCache.loading) return;
+    populationTrendCache.loading = true;
+    try {
+        var res = await fetch('/api/data-coverage?mode=population&sigunguCd=' + code);
+        var data = await res.json();
+        populationTrendCache = { sido: sido, loaded: true, loading: false, population: data.population || null, households: data.households || null };
+    } catch (e) {
+        populationTrendCache = { sido: sido, loaded: true, loading: false, population: null, households: null };
+    } finally {
+        populationTrendCache.loading = false;
+        renderMarketAdjustedPrice();
+    }
+}
 var roneTrendCache = { sido: null, loaded: false, loading: false, sale: null, jeonse: null };
 async function refreshRoneTrend() {
     var addr = document.getElementById('a-addr').value.trim();
@@ -5945,6 +5979,22 @@ function calcMarketAdjustedSalePrice() {
     var macroNote = macroNotes.length ? macroNotes.join(' / ') : null;
     if (macroAdj !== 0) marketFactor = Math.min(1, Math.max(0, marketFactor + macroAdj));
 
+    // KOSIS 인구/세대수 증감(순수 참고용, 계산에는 미반영) - 위 macroNotes 주석 참고.
+    var populationNote = null;
+    var popP = populationTrendCache.population, popH = populationTrendCache.households;
+    if ((popP && !popP.error) || (popH && !popH.error)) {
+        var parts = [];
+        if (popP && !popP.error && popP.yearAgoValue) {
+            var popPct = Math.round((popP.latestValue - popP.yearAgoValue) / popP.yearAgoValue * 1000) / 10;
+            parts.push('인구 1년간 ' + (popPct > 0 ? '+' : '') + popPct + '%');
+        }
+        if (popH && !popH.error && popH.yearAgoValue) {
+            var hhPct = Math.round((popH.latestValue - popH.yearAgoValue) / popH.yearAgoValue * 1000) / 10;
+            parts.push('세대수 1년간 ' + (hhPct > 0 ? '+' : '') + hhPct + '%');
+        }
+        if (parts.length) populationNote = '이 지역(' + populationTrendCache.sido + ') ' + parts.join(', ') + ' (참고, KOSIS - 계산에는 반영 안 함)';
+    }
+
     var blendedValue = Math.round(est.estValue * (1 - marketFactor) + askMid * marketFactor);
     // 호가-실거래가 갭(%) - "매수자 관점 vs 매도자 관점 두 각도로 시세를 물어보는" 전화임장 요령을
     // 데이터로 대신하는 지표. 호가가 실거래가보다 많이 높으면(+) 아직 눈높이가 안 낮춰진 시장,
@@ -5961,6 +6011,7 @@ function calcMarketAdjustedSalePrice() {
         blendedValue: blendedValue,
         dataWarning: dataWarning,
         baseRateNote: macroNote,
+        populationNote: populationNote,
         pendingRadiusRefresh: pendingRadiusRefresh,
         sampleSource: usedRadius ? '반경 내 유사매물 1년' : (propType === 'villa' ? '등록 비교물건 6개월(반경조회 필요)' : '등록 비교물건 6개월'),
     };
@@ -5991,6 +6042,7 @@ function renderMarketAdjustedPrice() {
             : '')
         + (r.dataWarning ? '<div style="font-size:10px;color:#e65100;margin-top:3px;">⚠️ ' + r.dataWarning + '</div>' : '')
         + (r.baseRateNote ? '<div style="font-size:10px;color:#1565c0;margin-top:2px;">🏦 ' + r.baseRateNote + ' (참고용)</div>' : '')
+        + (r.populationNote ? '<div style="font-size:10px;color:#6a1b9a;margin-top:2px;">👪 ' + r.populationNote + '</div>' : '')
         + (r.pendingRadiusRefresh ? '<div style="font-size:10px;color:#1976d2;margin-top:3px;">🔄 평형/연식/주소 조건이 바뀌어 반경 내 유사매물 재조회가 필요합니다 - 위 "🔮 예측 적용" 버튼을 누르면 반영됩니다(지금은 등록된 비교물건 기준으로만 계산됨).</div>' : '')
         + '</div>';
 }
@@ -6012,6 +6064,8 @@ async function applyListingInventory() {
     }
     roneTrendCache = { sido: null, loaded: false, loading: false, sale: null, jeonse: null }; // 주소가 바뀌었을 수 있으니 시/도 다시 판정
     await refreshRoneTrend();
+    populationTrendCache = { sido: null, loaded: false, loading: false, population: null, households: null };
+    await refreshPopulationTrend();
     renderMarketAdjustedPrice();
     if (document.getElementById('a-comp-target-margin').value !== '' || (pendingAuctionComparables || []).length) {
         calcCompValuation(); // 내부에서 renderEstimateSummary()까지 호출함
