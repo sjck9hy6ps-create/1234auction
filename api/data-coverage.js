@@ -210,40 +210,60 @@ function shiftYyyymm(yyyymm, deltaMonths) {
   return `${ny}${String(nm + 1).padStart(2, '0')}`;
 }
 
+// ⚠️ 실패 이유(네트워크 예외 / 인증키 오류 / 진짜 데이터없음)를 구분해 last.reason에 남김 -
+// 예전엔 무조건 null만 반환해서 "12개월 내 데이터를 찾지 못했습니다"라는 뭉뚱그려진 메시지만
+// 나왔는데, 실제로는 원인이 완전히 다른 문제(예: 키 오류)일 수도 있어 진단이 안 됐던 문제가
+// 있었음(라이브 배포 후 발견) - 이제 마지막으로 시도한 실패 이유를 그대로 응답에 노출시킴.
 async function fetchRoneMonth(statblId, yyyymm) {
   const url = `${RONE_BASE_URL}?STATBL_ID=${statblId}&DTACYCLE_CD=MM&WRTTIME_IDTFR_ID=${yyyymm}&Type=json&KEY=${RONE_API_KEY}`;
   let data;
   try {
     const r = await fetch(url, { signal: AbortSignal.timeout(10000) });
     data = await r.json();
-  } catch (e) { return null; }
+  } catch (e) {
+    console.warn(`R-ONE(${statblId},${yyyymm}) 호출 예외 -`, e.message);
+    return { month: yyyymm, byCls: null, reason: 'R-ONE 호출 실패(네트워크): ' + e.message };
+  }
   const rows = data && data.SttsApiTblData && data.SttsApiTblData[1] && data.SttsApiTblData[1].row;
-  if (!Array.isArray(rows) || !rows.length) return null; // INFO-200(데이터없음) 등은 전부 이 케이스로 처리
+  if (!Array.isArray(rows) || !rows.length) {
+    // 인증키 오류 등은 {RESULT:{CODE,MESSAGE}} 형태로 옴(SttsApiTblData 래핑이 아예 없음) -
+    // "진짜 데이터없음"(INFO-200)과 구분해서 원인을 남김.
+    const resultInfo = data && data.RESULT;
+    const reason = resultInfo
+      ? `R-ONE 오류(${resultInfo.CODE}): ${resultInfo.MESSAGE}`
+      : `R-ONE(${yyyymm}) 데이터없음`;
+    if (resultInfo) console.warn(`R-ONE(${statblId},${yyyymm}) 오류 -`, resultInfo.CODE, resultInfo.MESSAGE);
+    return { month: yyyymm, byCls: null, reason };
+  }
   const byCls = {};
   rows.forEach(row => { byCls[row.CLS_ID] = { name: row.CLS_NM, value: row.DTA_VAL }; });
-  return { month: yyyymm, byCls };
+  return { month: yyyymm, byCls, reason: null };
 }
 
 // 최근월부터 최대 12개월 역순으로 시도 - 발표 지연으로 최근 몇 개월은 데이터가 없는 경우가 흔함(라이브 확인).
 async function fetchLatestRoneMonth(statblId) {
   const now = new Date();
   let yyyymm = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}`;
+  let lastReason = null;
   for (let i = 0; i < 12; i++) {
     const result = await fetchRoneMonth(statblId, yyyymm);
-    if (result) return result;
+    if (result.byCls) return result;
+    lastReason = result.reason;
+    // 인증키/네트워크 오류처럼 달을 바꿔봐야 소용없는 실패는 즉시 중단(불필요한 12회 반복 방지)
+    if (lastReason && !lastReason.includes('데이터없음')) return { month: null, byCls: null, reason: lastReason };
     yyyymm = shiftYyyymm(yyyymm, -1);
   }
-  return null;
+  return { month: null, byCls: null, reason: lastReason || '최근 12개월 모두 데이터없음' };
 }
 
 async function fetchRoneTrendForStat(statblId) {
   const latest = await fetchLatestRoneMonth(statblId);
-  if (!latest) return { error: 'R-ONE 응답에서 최근 12개월 내 데이터를 찾지 못했습니다.' };
+  if (!latest.byCls) return { error: 'R-ONE 조회 실패: ' + (latest.reason || '알 수 없는 오류') };
   const yearAgoMonth = shiftYyyymm(latest.month, -12);
   const yearAgo = await fetchRoneMonth(statblId, yearAgoMonth);
   return {
     latestMonth: latest.month, latestData: latest.byCls,
-    yearAgoMonth: yearAgo ? yearAgo.month : null, yearAgoData: yearAgo ? yearAgo.byCls : null,
+    yearAgoMonth: yearAgo.byCls ? yearAgo.month : null, yearAgoData: yearAgo.byCls,
   };
 }
 
