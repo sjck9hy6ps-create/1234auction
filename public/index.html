@@ -5925,8 +5925,12 @@ function renderAvmEstimateBox(data) {
     window.__avmEstValue = data.totalPriceManwon;
     avmEl.innerText = toEok(String(data.totalPriceManwon)) + (data.lowConfidence ? ' ⚠️' : '');
     if (avmSubEl) {
+        // ⚠️ 2026-08(villa_v1 추가): 빌라는 애초에 단지 단위를 안 쓰므로(법정동이 최상위
+        // 세분화 단계) 'dong'을 "단지 표본부족"이라고 표현하면 마치 단지 매칭을 시도했다가
+        // 실패한 것처럼 오해를 살 수 있음 - modelId로 구분해서 문구를 다르게 씀.
+        var isVillaModel = data.modelId === 'villa_v1';
         var confNote = data.effectUsed === 'danji' ? '이 단지 기준'
-            : data.effectUsed === 'dong' ? '이 법정동 기준(단지 표본부족)'
+            : data.effectUsed === 'dong' ? (isVillaModel ? '이 법정동 기준' : '이 법정동 기준(단지 표본부족)')
             : data.effectUsed === 'region_fallback' ? '시군구 평균 기준(동 표본부족)'
             : '전국 평균 기준(신규지역)';
         avmSubEl.innerText = '실거래 ' + (data.nSamples || 0).toLocaleString() + '건 회귀분석(R²='
@@ -5945,12 +5949,16 @@ function refreshAvmEstimateIfNeeded() {
     // ⚠️ 2026-08(버그 수정): 여기서 물건 유형(a-prop-type)을 안 보고 항상 type=apt로만
     // 호출하고 있었음 - 연립다세대·단독(villa) 물건을 열어도 "아파트 시세" 기준으로 계산돼
     // 실제보다 몇 배 높게 나오는 버그가 있었음(안산 이동 530-21 실제 테스트로 발견 - 비교물건
-    // 1.65억인데 AVM은 7.7억). AVM v1은 아파트만 지원하므로, 아파트가 아니면 애초에 API를
-    // 부르지 않고 명확한 안내만 표시함(추측으로 다른 시장 값을 잘못 보여주지 않기 위함).
+    // 1.65억인데 AVM은 7.7억). type을 있는 그대로 서버에 넘기고, 서버가 지원 여부를
+    // AVM_MODEL_ID_BY_TYPE 기준으로 판단해 정직하게 에러를 내도록 함(추측으로 다른
+    // 시장 값을 잘못 보여주지 않기 위함).
+    // ⚠️ 2026-08(villa_v1 추가): apt_v1(단지→법정동→시군구)에 이어 villa_v1(법정동→시군구)
+    // 모델도 학습해 배포함 - 연립다세대·단독(villa)도 이제 지원. 오피스텔/그외는 아직
+    // 학습 데이터가 없어 계속 미지원(서버가 AVM_MODEL_ID_BY_TYPE에 없으면 에러 반환).
     var propType = document.getElementById('a-prop-type').value;
-    if (propType !== 'apt') {
+    if (propType !== 'apt' && propType !== 'villa') {
         avmEstCache = { key: null, loading: false, data: null };
-        renderAvmEstimateBox({ error: 'AVM v1은 아직 아파트만 지원합니다(연립다세대·단독/오피스텔 등은 추후 지원 예정).' });
+        renderAvmEstimateBox({ error: 'AVM v1은 아직 이 매물 유형은 지원하지 않습니다(아파트·연립다세대·단독만 지원).' });
         return;
     }
     // 단지명(danji) - findAptComplexMomentum 등 기존 기능도 이미 a-name을 "단지명"으로 씀.
@@ -5964,14 +5972,16 @@ function refreshAvmEstimateIfNeeded() {
     resolveSubjectLawdCd(ctx.lat, ctx.lon, function(lawdCd) {
         if (!lawdCd) { renderAvmEstimateBox({ error: '물건 좌표로 지역코드를 확인하지 못했습니다.' }); return; }
         var sizeM2 = pyung * 3.305785;
-        var key = avmCacheKey(lawdCd, dong, danji, sizeM2, floor, buildYear);
+        // propType을 캐시 키에도 포함 - 같은 물건이라도 유형을 바꾸면(아파트↔빌라) 다른 모델을
+        // 타므로 이전 유형 결과를 잘못 재사용하면 안 됨.
+        var key = avmCacheKey(lawdCd, dong, danji, sizeM2, floor, buildYear) + '|' + propType;
         if (avmEstCache.key === key) { renderAvmEstimateBox(avmEstCache.data); return; }
         if (avmEstCache.loading) return; // 이미 같은 요청이 진행중이면 중복 호출 방지(렌더 경로에서 자주 불림)
         avmEstCache = { key: key, loading: true, data: null };
         var avmSubEl = document.getElementById('est-avm-sub');
         avmEl.innerText = '조회중...';
         if (avmSubEl) avmSubEl.innerText = '';
-        fetch('/api/data-coverage?mode=avmEstimate&type=apt'
+        fetch('/api/data-coverage?mode=avmEstimate&type=' + encodeURIComponent(propType)
             + '&lawdCd=' + encodeURIComponent(lawdCd) + '&dong=' + encodeURIComponent(dong)
             + (danji ? '&danji=' + encodeURIComponent(danji) : '')
             + '&size=' + sizeM2 + '&floor=' + floor + '&buildYear=' + buildYear)
