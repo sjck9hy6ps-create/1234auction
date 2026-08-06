@@ -4,6 +4,29 @@
      최소~최대 deal_date(수집된 데이터 범위)와 건수를 반환합니다.
    - 프론트엔드 지도 화면에 "데이터 수집 범위" 표시 + 과거 데이터 추가 시
      알림 기능에 사용됩니다.
+
+   ── mode=baseRate: 한국은행 기준금리 추세 (2026-08 추가) ──
+   예상매도가 계산(calcMarketAdjustedSalePrice, index.html)의 "호가 반영비중"은 지금
+   매물재고÷월평균실거래건수(재고월수)로만 정해지는데, 이건 순전히 개별 물건 주변의
+   국지적 수급 신호라 "금리가 오르는 중이라 매수심리 전체가 위축되고 있다" 같은 거시적
+   흐름은 못 잡아냄. 한국은행 ECOS 기준금리(통계표코드 722Y001, 항목코드 0101000)를
+   최근 13개월치 가져와서 "1년 전 대비 오름세/내림세/보합"을 판정해두면, 프론트에서
+   금리 상승기엔 호가 반영비중을 살짝 낮추고(매도자 눈높이가 아직 안 낮춰졌을 가능성을
+   경계) 하락기엔 살짝 올리는 식의 참고용 보정치로 쓸 수 있음. 통계적으로 검증된
+   관계식이 아니라 정성적 방향성만 참고하는 용도라, 프론트 반영 시에도 아주 작은
+   폭(예: marketFactor ±0.05)으로만 조정하고 "참고용" 표시를 반드시 같이 해야 함.
+   ⚠️ 기준금리는 통화정책방향회의(연 8회, 약 1.5개월 간격)에서만 바뀌므로 자주 조회할
+   필요가 없음 - Supabase에 24시간 캐시.
+   ⚠️ 아래 SQL을 Supabase에 먼저 한 번 실행해서 캐시 테이블을 만들어야 합니다:
+     create table if not exists ecos_base_rate_cache (
+       id text primary key,
+       current_rate numeric,
+       rate_time text,
+       rate_12m_ago numeric,
+       trend text,
+       history jsonb,
+       fetched_at timestamptz
+     );
 ════════════════════════════════════ */
 import { createClient } from '@supabase/supabase-js';
 const supabase = createClient(
@@ -59,6 +82,83 @@ function mergeRanges(a, b) {
     count: (a.count || 0) + (b.count || 0),
     warnings: [...(a.warnings || []), ...(b.warnings || [])],
   };
+}
+
+/* ════════════════════════════════════
+   한국은행 ECOS 기준금리 추세 (mode=baseRate) - 파일 상단 주석 참고
+════════════════════════════════════ */
+const ECOS_API_KEY = process.env.ECOS_API_KEY;
+const ECOS_BASE_URL = 'https://ecos.bok.or.kr/api/StatisticSearch';
+const BASE_RATE_STAT_CODE = '722Y001'; // 한국은행 기준금리
+const BASE_RATE_ITEM_CODE = '0101000';
+const BASE_RATE_CACHE_ID = 'latest'; // 단일 값(지역 구분 없음)이라 캐시 테이블에 행 1개만 씀
+const BASE_RATE_FRESH_MS = 1000 * 60 * 60 * 24; // 24시간 - 통화정책방향회의(연 8회)때만 바뀌는 값이라 자주 조회할 필요 없음
+
+function yyyymm(d) {
+  return `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}`;
+}
+
+/* ECOS StatisticSearch 응답은 정상일 때 {StatisticSearch:{row:[...]}}, 인증키 오류나
+   데이터 없음일 때 {RESULT:{CODE,MESSAGE}}로 형태 자체가 달라짐 - 둘 다 방어적으로 처리. */
+async function fetchEcosBaseRateHistory() {
+  const end = new Date();
+  const start = new Date(end.getFullYear(), end.getMonth() - 13, 1); // 여유있게 14개월치 요청(최소 13개월 필요)
+  const url = `${ECOS_BASE_URL}/${ECOS_API_KEY}/json/kr/1/100/${BASE_RATE_STAT_CODE}/M/${yyyymm(start)}/${yyyymm(end)}/${BASE_RATE_ITEM_CODE}`;
+  let data;
+  try {
+    const r = await fetch(url, { signal: AbortSignal.timeout(10000) });
+    data = await r.json();
+  } catch (e) {
+    return { error: 'ECOS 호출 실패: ' + e.message };
+  }
+  if (data && data.RESULT) {
+    return { error: 'ECOS 오류: ' + (data.RESULT.MESSAGE || data.RESULT.CODE), raw: data };
+  }
+  const rows = data && data.StatisticSearch && data.StatisticSearch.row;
+  if (!Array.isArray(rows) || !rows.length) {
+    return { error: 'ECOS 응답에 데이터가 없습니다.', raw: data };
+  }
+  const sorted = rows.slice().sort((a, b) => String(a.TIME).localeCompare(String(b.TIME)));
+  const history = sorted.map(row => ({ time: row.TIME, value: parseFloat(row.DATA_VALUE) })).filter(h => Number.isFinite(h.value));
+  if (!history.length) return { error: 'ECOS 응답 값을 숫자로 변환하지 못했습니다.', raw: data };
+  const current = history[history.length - 1];
+  const yearAgo = history.length >= 13 ? history[history.length - 13] : history[0];
+  let trend = 'flat';
+  if (current.value > yearAgo.value) trend = 'up';
+  else if (current.value < yearAgo.value) trend = 'down';
+  return {
+    currentRate: current.value, currentTime: current.time,
+    rate12mAgo: yearAgo.value, trend, history,
+  };
+}
+
+async function getBaseRateTrend(force) {
+  if (!ECOS_API_KEY) return { error: 'ECOS_API_KEY 환경변수가 없습니다. ecos.bok.or.kr에서 발급받은 인증키를 Vercel에 추가해 주세요.' };
+  if (!force) {
+    try {
+      const { data: cached, error } = await supabase
+        .from('ecos_base_rate_cache').select('*').eq('id', BASE_RATE_CACHE_ID).maybeSingle();
+      if (error) console.warn('ecos_base_rate_cache 조회 실패:', error.message);
+      else if (cached && (Date.now() - new Date(cached.fetched_at).getTime()) < BASE_RATE_FRESH_MS) {
+        return {
+          currentRate: cached.current_rate, currentTime: cached.rate_time,
+          rate12mAgo: cached.rate_12m_ago, trend: cached.trend, history: cached.history, cached: true,
+        };
+      }
+    } catch (e) { console.warn('ecos_base_rate_cache 조회 예외:', e.message); }
+  }
+  const fresh = await fetchEcosBaseRateHistory();
+  if (fresh.error) return fresh;
+  try {
+    const { error: upsertErr } = await supabase.from('ecos_base_rate_cache').upsert({
+      id: BASE_RATE_CACHE_ID,
+      current_rate: fresh.currentRate, rate_time: fresh.currentTime,
+      rate_12m_ago: fresh.rate12mAgo, trend: fresh.trend, history: fresh.history,
+      fetched_at: new Date().toISOString(),
+    });
+    if (upsertErr) console.warn('ecos_base_rate_cache 저장 실패:', upsertErr.message);
+  } catch (e) { console.warn('ecos_base_rate_cache 저장 예외:', e.message); }
+  return { ...fresh, cached: false };
 }
 
 /* ════════════════════════════════════
@@ -678,6 +778,18 @@ export default async function handler(req, res) {
       if (typeParam === 'both' || typeParam === 'apt') result.apt = await getTopDongs('apt', cutoff, sido, 20);
       if (typeParam === 'both' || typeParam === 'villa') result.villa = await getTopDongs('villa', cutoff, sido, 20);
       return res.status(200).json({ sidoList: SIDO_LIST, months, sido: sido || null, cutoff, ...result });
+    } catch (err) {
+      return res.status(500).json({ error: err.message });
+    }
+  }
+  if (req.query.mode === 'baseRate') {
+    // 6시간 CDN 캐시 위에 Supabase 24시간 캐시가 또 있음(getBaseRateTrend 참고) - 이중 캐시라
+    // 실제 ECOS 호출은 하루 몇 번 안 됨.
+    res.setHeader('Cache-Control', 's-maxage=21600, stale-while-revalidate=43200');
+    try {
+      const result = await getBaseRateTrend(req.query.force === '1');
+      if (result.error) return res.status(502).json(result);
+      return res.status(200).json(result);
     } catch (err) {
       return res.status(500).json({ error: err.message });
     }
