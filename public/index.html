@@ -5873,7 +5873,21 @@ async function refreshRoneTrend() {
    달리 house_trades 전체를 오프라인(GitHub Actions, train-avm.py)에서 회귀분석해 미리
    학습해둔 계수로 계산하는 독립적인 참고치. data-coverage.js mode=avmEstimate 주석 참고.
    region은 이 앱에서 house_trades.region과 매칭되는 유일한 프론트 상태값인 lastSigungu를
-   그대로 씀(다른 곳(findAptComplexMomentum 등)에서도 이미 이 필드로 지역 폴백을 함). */
+   그대로 씀(다른 곳(findAptComplexMomentum 등)에서도 이미 이 필드로 지역 폴백을 함).
+   ⚠️ 2026-08(버그 수정): lastSigungu는 카카오 geocoder(coord2RegionCode)가 주는
+   "인천광역시 계양구" 같은 정식 명칭인데, house_trades.region(=avm_model_coefs의 dong_effects
+   키)은 "인천 계양구"처럼 짧은 표기임(topDongs API 라이브 응답으로 확인) - 이 불일치 때문에
+   법정동/시군구 매칭이 매번 실패해서 항상 "전국 평균(__default__)"으로만 폴백되고 있었음
+   (실제 배포 후 테스트에서 발견 - 어떤 물건을 넣어도 "전국 평균 기준(신규지역)"만 나왔음).
+   KOSIS/R-ONE 연동에서 이미 쓰던 SIDO_FULL_TO_SHORT 매핑을 재사용해 시/도 부분만 짧은
+   표기로 바꿔서 보냄. */
+function shortenSigunguRegion(fullRegion) {
+    if (!fullRegion) return fullRegion;
+    for (var full in SIDO_FULL_TO_SHORT) {
+        if (fullRegion.indexOf(full) === 0) return SIDO_FULL_TO_SHORT[full] + fullRegion.slice(full.length);
+    }
+    return fullRegion; // 이미 짧은 표기이거나 매핑에 없는 경우 원본 그대로
+}
 function avmCacheKey(region, dong, sizeM2, floor, buildYear) {
     return [region, dong, Math.round(sizeM2), floor, buildYear].join('|');
 }
@@ -5904,7 +5918,7 @@ function refreshAvmEstimateIfNeeded() {
     var floor = parseFloat(document.getElementById('a-floor').value) || null;
     var buildYear = getAuctionBuildYear();
     var ctx = getAuctionAddressContext();
-    var region = lastSigungu || '';
+    var region = shortenSigunguRegion(lastSigungu || '');
     var dong = ctx.dong || '';
     if (!pyung || !floor || !buildYear || !region || !dong) {
         avmEstCache = { key: null, loading: false, data: null };
