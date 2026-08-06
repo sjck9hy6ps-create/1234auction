@@ -435,13 +435,16 @@ async function getKosisTrend(sigunguCd, force) {
        dong_effects jsonb,
        feature_ranges jsonb
      );
-   ⚠️ train-avm.py를 최소 한 번(GitHub Actions 또는 로컬)은 실행해서 이 테이블에 apt_v1 행이
-   채워져 있어야 mode=avmEstimate가 정상 응답함 - 비어 있으면 "AVM 모델이 아직 학습되지
-   않았습니다" 에러를 그대로 반환함(폴백으로 조용히 다른 값을 지어내지 않음).
+   ⚠️ train-avm.py를 최소 한 번(GitHub Actions 또는 로컬)은 실행해서 이 테이블에 apt_v1/
+   villa_v1 행이 채워져 있어야 mode=avmEstimate가 정상 응답함 - 비어 있으면 "AVM 모델이
+   아직 학습되지 않았습니다" 에러를 그대로 반환함(폴백으로 조용히 다른 값을 지어내지 않음).
 ════════════════════════════════════ */
-const AVM_MODEL_ID_BY_TYPE = { apt: 'apt_v1' }; // v1은 house_trades(아파트)만 학습 - 연립다세대는
-// 거래 빈도가 낮아 법정동별 표본이 훨씬 부족하므로 v1 범위에서 일부러 제외함(#297/#298과
-// 함께 데이터가 더 쌓이면 villa_v1 추가 검토 - train-avm.py 하단 주석 참고).
+// ⚠️ 2026-08(villa_v1 추가): 처음엔 아파트(apt_v1)만 학습했는데, 프론트가 물건 유형과
+// 무관하게 항상 type=apt로만 AVM을 조회하는 버그가 있었음(연립다세대 물건도 아파트
+// 시세로 계산돼 비교물건 대비 몇 배 높게 나옴 - 실제 배포 후 안산 이동 530-21로 테스트해
+// 발견) - 버그를 고치면서 "그럼 연립다세대는 왜 AVM이 아예 안 되나"라는 질문에 답하며
+// villa_v1도 추가함(train-avm.py 참고 - villa_trades+single_trades 합쳐 법정동 단위로 학습).
+const AVM_MODEL_ID_BY_TYPE = { apt: 'apt_v1', villa: 'villa_v1' };
 const AVM_CURRENT_YEAR_FALLBACK = () => new Date().getFullYear();
 
 // train-avm.py의 fit_fwl()과 반드시 같은 정의를 씀 - 여기서 정의가 어긋나면(예: age 계산
@@ -493,7 +496,7 @@ function avmPredict(model, features, region, dong, danji) {
 
 async function getAvmEstimate(type, region, dong, size, floor, buildYear, danji) {
   const modelId = AVM_MODEL_ID_BY_TYPE[type];
-  if (!modelId) return { error: `AVM v1은 아직 이 매물 유형(${type})을 지원하지 않습니다(아파트만 지원).` };
+  if (!modelId) return { error: `AVM v1은 아직 이 매물 유형(${type})을 지원하지 않습니다(아파트·연립다세대·단독만 지원).` };
   if (!(size > 0) || !(floor >= 0) || !(buildYear > 1900)) {
     return { error: 'size(면적), floor(층), buildYear(준공연도)가 유효해야 합니다.' };
   }
