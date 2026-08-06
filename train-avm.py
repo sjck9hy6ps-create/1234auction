@@ -15,13 +15,26 @@ mode=avmEstimate)가 그 계수로 임의의 물건 평단가를 예측하게 �
 ## 방법론: Fixed-Effects(고정효과) 회귀 - Frisch-Waugh-Lovell(FWL) 정리 이용
 법정동마다 "그 동네 자체의 기본 수준"이 다르므로(강남 vs 강북), 법정동을 더미변수로 넣는
 게 정석이지만 법정동 수가 수천 개라 원-핫 인코딩하면 회귀행렬이 커짐. 대신 FWL 정리를 써서:
-  1) 종속변수(y)와 설명변수(X)를 각각 "자기 법정동 평균"만큼 빼서 중심화(demean)함
-  2) 중심화된 데이터로 회귀하면, 법정동 더미를 실제로 넣은 것과 수학적으로 완전히 동일한
-     계수(β)가 나옴(고전적인 패널데이터 계량경제학 기법) - 그런데 계산량은 훨씬 적음
-  3) 법정동별 절편(그 동네 고유의 기본 수준)은 "그 동네 y 평균 - 그 동네 X 평균·β"로 뒤에서
+  1) 종속변수(y)와 설명변수(X)를 각각 "자기 그룹 평균"만큼 빼서 중심화(demean)함
+  2) 중심화된 데이터로 회귀하면, 그 그룹을 더미변수로 실제로 넣은 것과 수학적으로 완전히
+     동일한 계수(β)가 나옴(고전적인 패널데이터 계량경제학 기법) - 그런데 계산량은 훨씬 적음
+  3) 그룹별 절편(그 그룹 고유의 기본 수준)은 "그 그룹 y 평균 - 그 그룹 X 평균·β"로 뒤에서
      따로 구함
-이렇게 하면 "법정동 고정효과 + 연속변수(면적/층/연식/시점) 회귀"를 동시에 반영하면서도
+이렇게 하면 "그룹 고정효과 + 연속변수(면적/층/연식/시점) 회귀"를 동시에 반영하면서도
 행렬 크기는 변수 개수(6개)만큼만 유지됨.
+
+## 그룹(고정효과 단위) - 아파트 vs 연립다세대 다르게 적용 (2026-08 추가)
+처음엔 그룹을 법정동(region+dong) 하나로만 뒀는데, 실제 배포 후 확인해보니 같은 법정동
+안에서도 단지(danji)별 편차가 매우 컸음(예: 인천/안산 고잔동 실측 573건 - 평단가 최소
+1,291만원 ~ 최대 4,426만원, 약 3.4배 차이 - 준공연도·브랜드가 다른 단지가 섞여 있어서).
+아파트는 표본이 넉넉하고(단지별로도 대부분 몇 건 이상 모임) danji 컬럼이 실제로 그 단지
+정체성을 반영하므로, 아파트는 "단지(danji) 단위"까지 고정효과를 세분화함:
+  danji(region+dong+danji) → 표본부족 시 dong(region+dong) → 그래도 부족하면 region
+  3단계로 표본이 확보될 때까지 순서대로 승격(promote)함.
+연립다세대는 애초에 거래 자체가 뜸하고(#297/#298 데이터 보강 전까지는) 단지 개념도
+아파트만큼 뚜렷하지 않아(다세대는 한 필지에 한 동인 경우가 많음) 단지 단위로 쪼개면 표본이
+너무 잘게 쪼개져 오히려 불안정해짐 - 연립다세대는 기존처럼 "법정동(dong) 단위" → 표본부족
+시 region 2단계만 씀.
 
 ## 설명변수(X)
 - log(size): 면적(㎡) 로그 - 면적이 클수록 평당가는 보통 체감(로그관계가 선형관계보다 잘 맞음)
@@ -63,10 +76,11 @@ HEADERS = {
     "Content-Type": "application/json",
 }
 
-# ⚠️ 표본이 극단적으로 적은 법정동(< MIN_DONG_SAMPLES)은 FWL 중심화 자체가 불안정해짐
-# (거래 1~2건짜리 동은 "그 동의 평균"이 곧 그 거래 자체라 회귀에 아무 정보도 안 남음).
-# 이런 동은 법정동 자체를 시/군/구 단위로 묶어(더 큰 그룹) 표본을 확보함.
-MIN_DONG_SAMPLES = 5
+# ⚠️ 표본이 극단적으로 적은 그룹(< MIN_*_SAMPLES)은 FWL 중심화 자체가 불안정해짐
+# (거래 1~2건짜리 그룹은 "그 그룹의 평균"이 곧 그 거래 자체라 회귀에 아무 정보도 안 남음).
+# 이런 그룹은 한 단계 더 큰 단위로 묶어(승격) 표본을 확보함.
+MIN_DANJI_SAMPLES = 5  # 아파트 전용 - 단지 단위 그룹의 최소 표본
+MIN_DONG_SAMPLES = 5   # 법정동 단위 그룹의 최소 표본(아파트는 단지 승격 후 2차 기준, 연립다세대는 1차 기준)
 MAX_AGE_YEARS = 60  # 이보다 오래된 건 데이터 오류로 보고 제외
 PAGE_SIZE = 1000
 
@@ -92,7 +106,7 @@ def fetch_all_rows(table: str) -> pd.DataFrame:
     return df
 
 
-def clean_and_featurize(df: pd.DataFrame) -> pd.DataFrame:
+def clean_and_featurize(df: pd.DataFrame, use_danji: bool) -> pd.DataFrame:
     df = df.copy()
     # 필수 필드 결측/이상치 제거
     df = df.dropna(subset=["price", "size", "floor", "deal_date", "region", "dong"])
@@ -126,12 +140,32 @@ def clean_and_featurize(df: pd.DataFrame) -> pd.DataFrame:
 
     df["time_trend"] = df["deal_date"].apply(days_since_min)
 
-    # 표본 부족 동은 시/군/구(region) 단위로 그룹을 승격 - region은 "서울특별시 강남구"
-    # 처럼 이미 시군구 단위 문자열이라 이 자체를 그룹키로 씀.
-    df["group_key"] = df["region"].astype(str) + "|" + df["dong"].astype(str)
-    counts = df["group_key"].value_counts()
-    small_groups = counts[counts < MIN_DONG_SAMPLES].index
-    df.loc[df["group_key"].isin(small_groups), "group_key"] = df.loc[df["group_key"].isin(small_groups), "region"]
+    # region은 "서울특별시 강남구"처럼 이미 시군구 단위 문자열 - 그대로 그룹키의 최상위
+    # 단계(최후의 폴백)로 씀.
+    df["dong_key"] = df["region"].astype(str) + "|" + df["dong"].astype(str)
+
+    if use_danji:
+        # 1단계: 단지(danji) 단위로 최대한 세분화 - 단지명 결측/공란은 "(단지미상)"으로 묶어
+        # 최소한 법정동 단위 폴백과 동급 취급되게 함(단지가 없으면 danji_key === dong_key와
+        # 사실상 동치가 되어 굳이 별도 승격 로직이 없어도 자연스럽게 동일하게 동작함).
+        danji_col = df["danji"].fillna("").astype(str)
+        danji_col = danji_col.where(danji_col.str.strip() != "", "(단지미상)")
+        df["danji_key"] = df["dong_key"] + "|" + danji_col
+        df["group_key"] = df["danji_key"]
+        danji_counts = df["group_key"].value_counts()
+        small_danji = danji_counts[danji_counts < MIN_DANJI_SAMPLES].index
+        df.loc[df["group_key"].isin(small_danji), "group_key"] = df.loc[df["group_key"].isin(small_danji), "dong_key"]
+    else:
+        df["group_key"] = df["dong_key"]
+
+    # 2단계: (단지 승격 후 남은, 혹은 애초에 danji를 안 쓰는 경우의) 법정동 단위 그룹도
+    # 표본이 부족하면 시/군/구(region)로 한 번 더 승격. group_key가 여전히 "dong_key 그
+    # 자체"인 행들만 대상으로 함(이미 단지 단위로 세분화된 표본충분 그룹은 건드리지 않음).
+    is_dong_level = df["group_key"] == df["dong_key"]
+    dong_counts = df.loc[is_dong_level, "group_key"].value_counts()
+    small_dong = dong_counts[dong_counts < MIN_DONG_SAMPLES].index
+    promote_mask = is_dong_level & df["group_key"].isin(small_dong)
+    df.loc[promote_mask, "group_key"] = df.loc[promote_mask, "region"]
 
     return df
 
@@ -187,13 +221,13 @@ def upsert_model(model_id: str, model_type: str, beta: dict, group_effects: dict
     print(f"  {model_id} 저장 완료 - n={n_samples}, R^2={r_squared:.4f}" if r_squared is not None else f"  {model_id} 저장 완료 - n={n_samples}")
 
 
-def train_one(table: str, model_id: str, model_type: str):
-    print(f"[{model_id}] {table} 학습 시작")
+def train_one(table: str, model_id: str, model_type: str, use_danji: bool):
+    print(f"[{model_id}] {table} 학습 시작 (그룹 단위: {'단지→법정동→시군구' if use_danji else '법정동→시군구'})")
     raw = fetch_all_rows(table)
     if raw.empty:
         print(f"  {table}: 데이터 없음, 스킵")
         return
-    df = clean_and_featurize(raw)
+    df = clean_and_featurize(raw, use_danji)
     print(f"  전처리 후 {len(df)}행 (그룹 {df['group_key'].nunique()}개)")
     if len(df) < 200:
         print(f"  표본이 너무 적어({len(df)}행) 학습을 건너뜁니다(최소 200건 필요).")
@@ -215,7 +249,10 @@ def main():
     # ⚠️ 2026-08 v1: 아파트(house_trades)만 우선 학습함. 연립다세대(villa_trades/single_trades)는
     # 거래 빈도가 원래 낮아 그룹별(동별) 표본이 훨씬 더 부족함 - v1 배포 후 실제 R^2·표본수를
     # 보고 별도로 그룹 승격 기준(MIN_DONG_SAMPLES)을 더 크게 잡아 재검토할 예정.
-    train_one("house_trades", "apt_v1", "apt")
+    # ⚠️ 2026-08(v2): 아파트는 단지(danji) 단위까지 고정효과를 세분화함(위 모듈 docstring
+    # "그룹(고정효과 단위)" 참고) - 동일 법정동 내 단지 간 편차(준공연도·브랜드)를 직접
+    # 반영해 예측 정확도를 높임. 연립다세대(향후 villa_v1 추가 시)는 기존처럼 법정동 단위로.
+    train_one("house_trades", "apt_v1", "apt", use_danji=True)
 
 
 if __name__ == "__main__":
