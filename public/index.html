@@ -5942,6 +5942,17 @@ function refreshAvmEstimateIfNeeded() {
     var buildYear = getAuctionBuildYear();
     var ctx = getAuctionAddressContext();
     var dong = ctx.dong || '';
+    // ⚠️ 2026-08(버그 수정): 여기서 물건 유형(a-prop-type)을 안 보고 항상 type=apt로만
+    // 호출하고 있었음 - 연립다세대·단독(villa) 물건을 열어도 "아파트 시세" 기준으로 계산돼
+    // 실제보다 몇 배 높게 나오는 버그가 있었음(안산 이동 530-21 실제 테스트로 발견 - 비교물건
+    // 1.65억인데 AVM은 7.7억). AVM v1은 아파트만 지원하므로, 아파트가 아니면 애초에 API를
+    // 부르지 않고 명확한 안내만 표시함(추측으로 다른 시장 값을 잘못 보여주지 않기 위함).
+    var propType = document.getElementById('a-prop-type').value;
+    if (propType !== 'apt') {
+        avmEstCache = { key: null, loading: false, data: null };
+        renderAvmEstimateBox({ error: 'AVM v1은 아직 아파트만 지원합니다(연립다세대·단독/오피스텔 등은 추후 지원 예정).' });
+        return;
+    }
     // 단지명(danji) - findAptComplexMomentum 등 기존 기능도 이미 a-name을 "단지명"으로 씀.
     // 없어도(단독주택 형태 등) 동작은 하고, 단지 단위 대신 법정동 단위로 자동 폴백됨.
     var danji = document.getElementById('a-name').value.trim();
