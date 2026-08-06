@@ -894,6 +894,19 @@ tr:hover td { background:#fffde7; }
             </div>
             <div class="est-sub">등록된 비교물건(실거래) 평단가 기반 - 호가·매물재고는 미반영</div>
 
+            <!-- 🤖 AVM(헤도닉 회귀모델) 추정가 - 2026-08 추가. 위 두 값(①②)은 "이 물건과 비슷한
+                 몇 건"만 보는 방식이라 비교물건이 적으면 편차에 흔들릴 수 있음. 이 값은 전체
+                 실거래(28만+건)를 회귀분석해 면적·층·연식·법정동·시점의 영향을 계수화해 둔 뒤
+                 계산한 독립적인 참고치 - ①②와 다른 방식으로 나온 값이 서로 얼마나 가까운지
+                 교차검증용으로 같이 보는 용도. 평형·층·준공연도·주소(동)가 모두 확인돼야
+                 계산됨(하나라도 없으면 "-"). -->
+            <div class="est-row" style="margin-top:2px;">
+                <span style="font-size:11px;color:#888;min-width:76px;flex-shrink:0;">🤖 AVM 추정가</span>
+                <span class="est-value" id="est-avm-value" style="font-size:13px;">-</span>
+                <button type="button" class="modal-btn btn-gray est-apply-btn" onclick="applyEstAvmValue()">③에 적용</button>
+            </div>
+            <div class="est-sub" id="est-avm-sub">전체 실거래 회귀분석 기반 참고치</div>
+
             <!-- ⚠️ 2026-08 재배치: "낙찰사례 기준 매입가율→입찰가 적용 / 추정마진→목표마진 적용"
                  (renderDongMarginStatsInModal()이 채움) - ③목표매도가 바로 밑, ④목표마진 위에
                  둠(입찰가·목표마진에 바로 적용하는 참고치라 그 사이가 자연스러움). 내용·로직은
@@ -5447,6 +5460,7 @@ function openAuctionModal(id) {
     refreshRoneTrend(); // 주소가 아직 비어있으면 '전국' 기준으로 우선 조회 - 주소 입력 후 "🔮 예측 적용" 시 시/도 맞춰 재조회됨
     populationTrendCache = { sido: null, loaded: false, loading: false, population: null, households: null };
     refreshPopulationTrend();
+    avmEstCache = { key: null, loading: false, data: null }; // 물건이 바뀌었으니 이전 물건의 AVM 결과를 재사용하면 안 됨 - renderEstimateSummary가 다음 호출 때 자동으로 새로 조회함
     document.getElementById('a-comp-target-margin').value = '2000';
     document.getElementById('a-addr-result').style.display = 'none';
     pendingAuctionDetail = null;
@@ -5834,6 +5848,10 @@ async function refreshPopulationTrend() {
     }
 }
 var roneTrendCache = { sido: null, loaded: false, loading: false, sale: null, jeonse: null };
+// 🤖 AVM 추정가 캐시 - ECOS/R-ONE/KOSIS와 같은 이유(renderEstimateSummary가 무관한 필드
+// 입력(oninput)마다도 호출되는 경로가 있어, 매번 새로 fetch하면 낭비가 큼)로 (region,dong,
+// size,floor,buildYear) 조합이 바뀔 때만 재조회하도록 키 캐시를 둠.
+var avmEstCache = { key: null, loading: false, data: null };
 async function refreshRoneTrend() {
     var addr = document.getElementById('a-addr').value.trim();
     var sido = extractSidoShort(addr) || '전국';
@@ -5850,6 +5868,79 @@ async function refreshRoneTrend() {
         roneTrendCache.loading = false;
         renderMarketAdjustedPrice();
     }
+}
+/* 🤖 AVM(헤도닉 회귀모델) 추정가 - 2026-08 추가. getCompEstValue()(비교물건 몇 건 평균)와
+   달리 house_trades 전체를 오프라인(GitHub Actions, train-avm.py)에서 회귀분석해 미리
+   학습해둔 계수로 계산하는 독립적인 참고치. data-coverage.js mode=avmEstimate 주석 참고.
+   region은 이 앱에서 house_trades.region과 매칭되는 유일한 프론트 상태값인 lastSigungu를
+   그대로 씀(다른 곳(findAptComplexMomentum 등)에서도 이미 이 필드로 지역 폴백을 함). */
+function avmCacheKey(region, dong, sizeM2, floor, buildYear) {
+    return [region, dong, Math.round(sizeM2), floor, buildYear].join('|');
+}
+function renderAvmEstimateBox(data) {
+    var avmEl = document.getElementById('est-avm-value');
+    var avmSubEl = document.getElementById('est-avm-sub');
+    if (!avmEl) return;
+    if (!data || data.error) {
+        avmEl.innerText = '-';
+        window.__avmEstValue = null;
+        if (avmSubEl) avmSubEl.innerText = (data && data.error) || '평형·층·준공연도·주소(동)가 모두 확인되어야 계산됩니다.';
+        return;
+    }
+    window.__avmEstValue = data.totalPriceManwon;
+    avmEl.innerText = toEok(String(data.totalPriceManwon)) + (data.lowConfidence ? ' ⚠️' : '');
+    if (avmSubEl) {
+        var confNote = data.effectUsed === 'exact' ? '이 법정동 기준'
+            : (data.effectUsed === 'region_fallback' ? '시군구 평균 기준(동 표본부족)' : '전국 평균 기준(신규지역)');
+        avmSubEl.innerText = '실거래 ' + (data.nSamples || 0).toLocaleString() + '건 회귀분석(R²='
+            + (data.rSquared != null ? data.rSquared.toFixed(2) : '-') + ') · ' + confNote
+            + (data.lowConfidence ? ' - 참고용으로만 보세요' : '');
+    }
+}
+function refreshAvmEstimateIfNeeded() {
+    var avmEl = document.getElementById('est-avm-value');
+    if (!avmEl) return;
+    var pyung = parseFloat(document.getElementById('a-pyung').value) || null;
+    var floor = parseFloat(document.getElementById('a-floor').value) || null;
+    var buildYear = getAuctionBuildYear();
+    var ctx = getAuctionAddressContext();
+    var region = lastSigungu || '';
+    var dong = ctx.dong || '';
+    if (!pyung || !floor || !buildYear || !region || !dong) {
+        avmEstCache = { key: null, loading: false, data: null };
+        renderAvmEstimateBox(null);
+        return;
+    }
+    var sizeM2 = pyung * 3.305785;
+    var key = avmCacheKey(region, dong, sizeM2, floor, buildYear);
+    if (avmEstCache.key === key) { renderAvmEstimateBox(avmEstCache.data); return; }
+    if (avmEstCache.loading) return; // 이미 같은 요청이 진행중이면 중복 호출 방지(렌더 경로에서 자주 불림)
+    avmEstCache = { key: key, loading: true, data: null };
+    var avmSubEl = document.getElementById('est-avm-sub');
+    avmEl.innerText = '조회중...';
+    if (avmSubEl) avmSubEl.innerText = '';
+    fetch('/api/data-coverage?mode=avmEstimate&type=apt'
+        + '&region=' + encodeURIComponent(region) + '&dong=' + encodeURIComponent(dong)
+        + '&size=' + sizeM2 + '&floor=' + floor + '&buildYear=' + buildYear)
+      .then(function(r) { return r.json().then(function(d) { return { ok: r.ok, data: d }; }); })
+      .then(function(res) {
+          var result = (res.ok && !res.data.error) ? res.data : { error: (res.data && res.data.error) || 'AVM 조회 실패' };
+          if (avmEstCache.key !== key) return; // 응답 오는 사이 물건이 바뀌었으면 무시(레이스 컨디션 방지)
+          avmEstCache = { key: key, loading: false, data: result };
+          renderAvmEstimateBox(result);
+      })
+      .catch(function(e) {
+          if (avmEstCache.key !== key) return;
+          avmEstCache = { key: key, loading: false, data: { error: 'AVM 호출 실패: ' + e.message } };
+          renderAvmEstimateBox(avmEstCache.data);
+      });
+}
+function applyEstAvmValue() {
+    if (!window.__avmEstValue) return;
+    applyTargetSuggestion(window.__avmEstValue);
+    var el = document.getElementById('est-row-2-status');
+    if (el) { el.style.color = '#2e7d32'; el.innerText = '✅ AVM 추정가로 적용됨'; }
+    renderEstimateSummary();
 }
 function villaRadiusSaleKey(ctx, pyung, buildYear) {
     if (!ctx || !ctx.lat || !ctx.lon) return null;
@@ -8970,6 +9061,9 @@ function renderEstimateSummary() {
     var compEl = document.getElementById('est-comp-value');
     var compCount = (pendingAuctionComparables || []).length;
     if (compEl) compEl.innerText = est ? toEok(String(est.estValue)) + ' (' + compCount + '건)' : (compCount ? '평형 입력 필요 (' + compCount + '건 등록됨)' : '비교물건 없음');
+
+    // 🤖 AVM 추정가 - 캐시 키가 안 바뀌었으면 네트워크 호출 없이 캐시된 값만 다시 그림(위 refreshAvmEstimateIfNeeded 참고)
+    refreshAvmEstimateIfNeeded();
 
     // ③ 예상마진 = 이 동네 낙찰사례의 매도사례 매칭 기준 추정마진(세전) 중간값
     var ctx = getAuctionAddressContext();
