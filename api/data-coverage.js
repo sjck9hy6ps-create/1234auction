@@ -293,21 +293,22 @@ function roneTrendForSido(roneResult, sido) {
 
 /* ════════════════════════════════════
    KOSIS(국가통계포털) 시군구 인구·세대수 증감 (mode=population) - 2026-08 추가
-   ⚠️ 통계표ID는 실제 getStatisticsList API(parentListId=A_7 "주민등록인구현황") 라이브
-   호출로 확인함: 인구수=DT_1B040A3("행정구역(시군구)별, 성별 인구수"), 세대수=DT_1B040B3
-   ("행정구역(시군구)별 주민등록세대수"), 둘 다 orgId=101(통계청).
-   ⚠️⚠️ 실제 데이터조회(statisticsData/getStatisticsData)와 메타조회(statisticsMeta/getITM)
-   오퍼레이션을 라이브로 테스트했더니 둘 다 "SERVICE_KEY_IS_NOT_REGISTERED_ERROR"(등록되지
-   않은 서비스키) 오류가 남 - 반면 statisticsList/getStatisticsList(통계목록조회)는 같은
-   인증키로 정상 동작함. data.go.kr는 API마다(같은 서비스 그룹 안에서도 오퍼레이션마다)
-   별도 활용신청이 필요한 구조라, 사용자가 아직 "통계자료조회"/"통계메타 분류·항목" 두
-   오퍼레이션은 활용신청을 안 한 것으로 보임 - data.go.kr에서 "국가통계포털_통계자료"
-   서비스의 나머지 오퍼레이션도 활용신청(보통 즉시 자동승인) 후에야 아래 코드가 실제로
-   동작함. 이 코드는 공식 기술문서(사용자 업로드 KOSIS 공유서비스 기술문서_V.4.0.doc)
-   스펙대로 작성했지만, 활용신청 전이라 라이브 검증은 못 했음.
-   ⚠️ objL1(분류1=시군구코드)의 정확한 코드값도 위 이유로 라이브 확인 불가 - 통계청 표준
-   5자리 행정구역코드(이 앱이 이미 쓰는 LAWD_CODES와 같은 체계)로 추정해 시도함. 활용신청
-   승인 후 실제 응답으로 재검증 필요(안 맞으면 "데이터없음" 형태로 안전하게 실패함).
+   ⚠️ 아래는 사용자가 data.go.kr에서 "국가데이터처_KOSIS 통계자료 조회 서비스"(별도
+   활용신청 필요 - 처음엔 "통계목록" 서비스만 신청되어 있어 SERVICE_KEY_IS_NOT_REGISTERED_
+   ERROR가 났었음)를 추가로 활용신청한 뒤 실제 라이브 호출로 전부 확인한 내용(2026-08):
+   - 통계표ID: 인구수=DT_1B040A3("행정구역(시군구)별, 성별 인구수"), 세대수=DT_1B040B3
+     ("행정구역(시군구)별 주민등록세대수"), 둘 다 orgId=101(통계청/국가데이터처).
+   - itmId는 ALL로 주면 인구수 표는 총인구수(T20)/남자(T21)/여자(T22) 3종류가 섞여서
+     나오므로, 원하는 값만 정확히 받으려면 반드시 항목코드를 지정해야 함: 인구수 표는
+     itmId=T20(총인구수), 세대수 표는 itmId=T1(세대수)만 쓰는 단일 항목이라 T1 고정.
+   - objL1(분류1=시군구코드)은 통계청 표준 5자리 행정구역코드(이 앱이 이미 쓰는
+     LAWD_CODES와 완전히 같은 체계) - 예: 28245(인천 계양구)로 조회하면 C1_NM:"계양구"로
+     정확히 매칭됨(라이브 확인). objL1=ALL이면 전국+시/도+시/군/구가 전부 섞여서 나옴.
+   - newEstPrdCnt=N이면 최근 N개 기간을 PRD_DE 오름차순으로 반환함(가장 최근이 배열 끝).
+   - 정상 응답: {"response":{"header":{"resultCode":"00",...},"body":{"items":{"item":
+     [{...,"C1":"28245","C1_NM":"계양구","PRD_DE":"202607","DT":"276125",...}]}}}}
+   - 오류 응답(활용신청 안 된 오퍼레이션 호출 시): {"OpenAPI_ServiceResponse":{
+     "cmmMsgHeader":{"errMsg":"SERVICE_KEY_IS_NOT_REGISTERED_ERROR",...}}}
    ⚠️ Supabase 캐시 SQL:
      create table if not exists kosis_population_cache (
        id text primary key,
@@ -320,12 +321,12 @@ function roneTrendForSido(roneResult, sido) {
 ════════════════════════════════════ */
 const KOSIS_API_KEY = process.env.KOSIS_API_KEY;
 const KOSIS_DATA_URL = 'https://apis.data.go.kr/1240000/statisticsData/getStatisticsData';
-const KOSIS_TBL = { population: 'DT_1B040A3', households: 'DT_1B040B3' };
+const KOSIS_TBL = { population: { tblId: 'DT_1B040A3', itmId: 'T20' }, households: { tblId: 'DT_1B040B3', itmId: 'T1' } };
 const KOSIS_FRESH_MS = 1000 * 60 * 60 * 24;
 
-async function fetchKosisLatest(tblId, sigunguCd) {
+async function fetchKosisLatest(tblId, itmId, sigunguCd) {
   const url = `${KOSIS_DATA_URL}?serviceKey=${encodeURIComponent(KOSIS_API_KEY)}&format=json&orgId=101&tblId=${tblId}`
-    + `&objL1=${sigunguCd}&itmId=ALL&prdSe=M&newEstPrdCnt=13`;
+    + `&objL1=${sigunguCd}&itmId=${itmId}&prdSe=M&newEstPrdCnt=13`;
   let data;
   try {
     const r = await fetch(url, { signal: AbortSignal.timeout(10000) });
@@ -359,7 +360,7 @@ async function getKosisTrend(sigunguCd, force) {
         }
       } catch (e) { console.warn('kosis_population_cache 조회 예외:', e.message); }
     }
-    const fresh = await fetchKosisLatest(KOSIS_TBL[kind], sigunguCd);
+    const fresh = await fetchKosisLatest(KOSIS_TBL[kind].tblId, KOSIS_TBL[kind].itmId, sigunguCd);
     if (fresh.error) { result[kind] = fresh; continue; }
     try {
       const { error: upsertErr } = await supabase.from('kosis_population_cache').upsert({
@@ -1021,9 +1022,11 @@ export default async function handler(req, res) {
   if (req.query.mode === 'population') {
     res.setHeader('Cache-Control', 's-maxage=21600, stale-while-revalidate=43200');
     try {
+      // 시/군/구(5자리) 또는 시/도(2자리) 행정구역코드 둘 다 허용 - 프론트에서 물건 주소의
+      // 정확한 시군구코드를 아직 못 구하는 화면(경매 모달)에서는 시/도 2자리로 우선 조회함.
       const sigunguCd = req.query.sigunguCd;
-      if (!sigunguCd || String(sigunguCd).length !== 5) {
-        return res.status(400).json({ error: 'sigunguCd(5자리 시군구코드)가 필요합니다.' });
+      if (!sigunguCd || !/^\d{2,5}$/.test(String(sigunguCd))) {
+        return res.status(400).json({ error: 'sigunguCd(2~5자리 행정구역코드)가 필요합니다.' });
       }
       const result = await getKosisTrend(String(sigunguCd), req.query.force === '1');
       return res.status(200).json(result);
