@@ -91,6 +91,30 @@ MIN_DONG_SAMPLES = 5   # 법정동 단위 그룹의 최소 표본(아파트는 �
 MAX_AGE_YEARS = 60  # 이보다 오래된 건 데이터 오류로 보고 제외
 PAGE_SIZE = 1000
 
+# ⚠️ 2026-08(정확도 보완 - 이상치 제거/홀드아웃 검증 추가) ────────────────────────
+# 배경: 이전엔 학습 데이터에 이상치 제거가 전혀 없었고(가격>0, 연식 0~60년 필터만 있었음),
+# 학습 스크립트가 보고하는 R^2도 "전체 데이터로 학습한 뒤 그 데이터로 다시 채점"하는
+# in-sample 값이라 실제 예측 정확도를 보여주지 못했음(특히 이 모델처럼 그룹(단지/법정동)
+# 고정효과를 쓰면 그룹 수가 많을수록 R^2가 원래 낙관적으로 나옴 - 그룹 평균만 알아도 분산의
+# 대부분이 설명되기 때문). 아래 두 가지로 보완함:
+#  1) remove_residual_outliers(): 1차 학습 후 "잔차"(그룹·면적·층·연식·시점을 다 반영하고도
+#     설명 안 되는 편차) IQR 기준 밖인 행을 제외하고 재학습. 원본 평단가가 아니라 잔차로
+#     걸러내는 이유는 원본 평단가는 지역·면적차만으로도 자연스럽게 몇 배씩 벌어지므로
+#     그 자체로는 이상치 판별 기준이 될 수 없기 때문(비교물건 UI의 getCompEstValue IQR
+#     이상치 제거와 같은 발상이나, 회귀는 그룹 내 변동뿐 아니라 면적/층/연식차까지 이미
+#     설명하므로 "잔차" 기준이 더 정확함).
+#  2) evaluate_holdout(): 무작위 80/20 분할 - train만으로 재학습해서 test(모델이 한 번도
+#     못 본 실제 거래)를 얼마나 잘 맞히는지 측정. 이 값이 in-sample R^2보다 훨씬 정직한
+#     "새 물건 예측이 실제로 얼마나 정확한지" 추정치임. avm_model_coefs.feature_ranges(이미
+#     jsonb라 스키마 변경 없이 새 키를 추가할 수 있음)에 저장해서 서버(data-coverage.js)가
+#     예측값과 함께 오차범위를 같이 내려줄 수 있게 함.
+RESIDUAL_IQR_MULT = 3.0  # 일반적인 이상치 탐지 기준(1.5)보다 훨씬 보수적으로 잡음 - 이 모델이
+# 못 보는 정상적 요인(리모델링 상태·조망·급매 등)까지 이상치로 오인해 지워버리면 표본이
+# 줄어 소규모 그룹이 더 불안정해지는 부작용이 있어, "명백한 데이터 이상"만 걸러내는 데 목적을 둠.
+HOLDOUT_FRACTION = 0.2
+HOLDOUT_SEED = 42  # 실행마다 다른 표본이 빠지면 검증지표가 매번 흔들려 비교가 어려움 - 고정
+MIN_HOLDOUT_SAMPLES = 200  # 이보다 적으면 홀드아웃 지표 자체가 불안정해 계산을 건너뜀(null)
+
 
 def fetch_all_rows(table: str, cols: str = "region,dong,danji,price,size,floor,deal_date,build_year") -> pd.DataFrame:
     """Supabase REST API에서 페이지네이션으로 전체 행을 가져옴. cols 기본값은 house_trades류
@@ -454,6 +478,64 @@ def fit_fwl(df: pd.DataFrame, feature_cols):
     return beta_dict, {str(k): float(v) for k, v in group_effects.items()}, r_squared, len(df2)
 
 
+def _predict_with_fallback(df: pd.DataFrame, feature_cols, beta: dict, group_effects: dict, default_effect: float):
+    """beta/group_effects로 df를 예측(로그 평단가). group_key가 group_effects에 없으면(=이
+    학습에 안 쓰인 그룹) 실서빙 때(data-coverage.js avmPredict의 dong_effects.__default__
+    폴백)와 동일하게 default_effect로 대체함 - 홀드아웃 평가가 실제 서빙 조건과 최대한
+    같아야 의미가 있으므로."""
+    beta_vec = np.array([beta[c] for c in feature_cols])
+    group_effect = df["group_key"].map(group_effects).fillna(default_effect).to_numpy()
+    return df[feature_cols].to_numpy() @ beta_vec + group_effect
+
+
+def remove_residual_outliers(df: pd.DataFrame, feature_cols):
+    """전체 데이터로 1차 학습 후, 그 잔차의 IQR 기준(RESIDUAL_IQR_MULT배) 밖인 행을 제외함.
+    반환: (필터링된 df, 제외된 행 수)"""
+    beta0, group_effects0, _, _ = fit_fwl(df, feature_cols)
+    default0 = float(np.mean(list(group_effects0.values()))) if group_effects0 else 0.0
+    resid = df["y"].to_numpy() - _predict_with_fallback(df, feature_cols, beta0, group_effects0, default0)
+    q1, q3 = np.percentile(resid, [25, 75])
+    iqr = q3 - q1
+    if iqr <= 0:
+        return df, 0
+    lo, hi = q1 - RESIDUAL_IQR_MULT * iqr, q3 + RESIDUAL_IQR_MULT * iqr
+    keep = (resid >= lo) & (resid <= hi)
+    n_removed = int((~keep).sum())
+    if n_removed == 0:
+        return df, 0
+    return df[keep].reset_index(drop=True), n_removed
+
+
+def evaluate_holdout(df: pd.DataFrame, feature_cols):
+    """무작위 80/20 분할 - train만으로 재학습해서 test(모델이 한 번도 못 본 거래)를 얼마나 잘
+    맞히는지 측정함. 학습 스크립트가 자체 보고하는 R^2(전체 데이터로 학습한 뒤 그 데이터로
+    다시 채점하는 in-sample 값)는 항상 실제보다 낙관적으로 나오므로(그룹 고정효과 모델은
+    그룹 수가 많을수록 원래 R^2가 잘 나올 수밖에 없음), 이 홀드아웃 지표가 "새 물건 예측이
+    실제로 얼마나 정확한지"에 대한 훨씬 정직한 추정치임. 표본 부족 시 None을 반환함."""
+    if len(df) < MIN_HOLDOUT_SAMPLES:
+        return None
+    rng = np.random.RandomState(HOLDOUT_SEED)
+    shuffled_idx = rng.permutation(len(df))
+    n_test = max(1, int(len(df) * HOLDOUT_FRACTION))
+    test_idx, train_idx = shuffled_idx[:n_test], shuffled_idx[n_test:]
+    df_train = df.iloc[train_idx].reset_index(drop=True)
+    df_test = df.iloc[test_idx].reset_index(drop=True)
+    if len(df_train) < MIN_HOLDOUT_SAMPLES:
+        return None
+    beta_t, group_effects_t, _, _ = fit_fwl(df_train, feature_cols)
+    default_t = float(np.mean(list(group_effects_t.values()))) if group_effects_t else 0.0
+    y_pred_test = _predict_with_fallback(df_test, feature_cols, beta_t, group_effects_t, default_t)
+    resid_test = df_test["y"].to_numpy() - y_pred_test
+    # 로그공간 잔차를 실제 %오차로 환산 - exp(로그차이)-1 이 곧 원래 스케일에서의 상대오차 비율임
+    pct_err = np.abs(np.exp(resid_test) - 1.0) * 100.0
+    return {
+        "n": int(len(df_test)),
+        "mape_pct": round(float(np.mean(pct_err)), 2),
+        "median_ape_pct": round(float(np.median(pct_err)), 2),
+        "residual_std_log": round(float(np.std(resid_test)), 5),
+    }
+
+
 def upsert_model(model_id: str, model_type: str, beta: dict, group_effects: dict, r_squared, n_samples: int, feature_ranges: dict):
     default_effect = float(np.mean(list(group_effects.values()))) if group_effects else 0.0
     payload = {
@@ -539,6 +621,20 @@ def train_one(tables, model_id: str, model_type: str, use_danji: bool, attach_ka
     if len(df) < 200:
         print(f"  표본이 너무 적어({len(df)}행) 학습을 건너뜁니다(최소 200건 필요).")
         return
+
+    # 이상치 제거(잔차 IQR 기준) - 모듈 상단 "정확도 보완" 주석 참고
+    df, n_outliers_removed = remove_residual_outliers(df, feature_cols)
+    if n_outliers_removed > 0:
+        print(f"  이상치(잔차 IQR×{RESIDUAL_IQR_MULT} 밖) {n_outliers_removed}건 제외 → {len(df)}행 남음")
+
+    # 홀드아웃 검증(무작위 80/20) - 최종 서빙 모델은 아래에서 전체(이상치 제거된) 데이터로
+    # 다시 학습하지만, 이 지표는 "새 물건 예측이 실제로 얼마나 정확한지"를 미리 가늠하는 용도
+    holdout = evaluate_holdout(df, feature_cols)
+    if holdout:
+        print(f"  홀드아웃 검증(무작위 20%, {holdout['n']}건): 평균오차 {holdout['mape_pct']}% / 중앙값오차 {holdout['median_ape_pct']}%")
+    else:
+        print(f"  홀드아웃 검증: 표본 부족으로 건너뜀")
+
     beta, group_effects, r_squared, n = fit_fwl(df, feature_cols)
     # time_origin: time_trend 계산의 기준일(가장 오래된 거래일, YYYYMMDD 정수). 예측 시점(서버)
     # 에서도 "오늘 - time_origin" 일수로 같은 time_trend를 계산해야 학습 때와 정의가 일치하므로
@@ -561,6 +657,15 @@ def train_one(tables, model_id: str, model_type: str, use_danji: bool, attach_ka
         # K-apt와 같은 이유 - 예측 시점에 transit_features 매칭이 안 되는 물건은 서버가
         # 이 중앙값으로 폴백함(학습 때와 같은 값이어야 계수 해석이 어긋나지 않음).
         feature_ranges["median_dist_subway"] = median_dist_subway
+    # 정확도 보완(2026-08) - feature_ranges는 이미 jsonb라 스키마 변경 없이 새 키를 추가할 수
+    # 있음(위 모듈 상단 주석 참고). 서버(data-coverage.js)가 이 값들을 읽어 point estimate와
+    # 함께 "검증된" 오차범위를 같이 내려줌 - in-sample r_squared만 보여주는 것보다 훨씬 정직함.
+    feature_ranges["outliers_removed"] = n_outliers_removed
+    if holdout:
+        feature_ranges["holdout_mape_pct"] = holdout["mape_pct"]
+        feature_ranges["holdout_median_ape_pct"] = holdout["median_ape_pct"]
+        feature_ranges["holdout_n"] = holdout["n"]
+        feature_ranges["residual_std_log"] = holdout["residual_std_log"]
     upsert_model(model_id, model_type, beta, group_effects, r_squared, n, feature_ranges)
 
 
