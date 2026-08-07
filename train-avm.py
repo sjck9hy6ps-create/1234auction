@@ -286,6 +286,36 @@ def attach_school_features(df: pd.DataFrame, school_lookup):
     return merged
 
 
+def build_month_dummies(df: pd.DataFrame):
+    """#299: 거래연월(YYYYMM) 더미변수를 추가함. 기존 time_trend(선형 추세 하나, 기울기 1개)
+    만으로는 실제 시장의 비선형 변동(정책 발표·금리 급변·계절성 등으로 특정 달에만 확 튀는
+    경우)을 못 잡음 - 월별 더미를 추가하면 "그 달엔 선형추세가 예측한 값보다 얼마나 더/덜
+    비쌌는가"를 달마다 독립적으로 추정해 학습기간 내부의 적합도를 세분화함.
+    가장 이른 달(time_trend의 기준일이 속한 달)을 기준(reference)으로 빼서 더미변수 함정
+    (dummy trap - 모든 달을 다 넣으면 절편과 완전공선성)을 피함.
+    ⚠️ 예측 시점(항상 "오늘")은 학습 데이터의 마지막 달보다 미래라 이 달 더미들 중 어떤
+    것에도 해당하지 않음(전부 0). avmPredict가 모델에 없는 계수/모델엔 있지만 features에
+    없는 키를 자동으로 0 취급하도록 이미 일반화돼 있어서(K-apt 연동 때 Object.keys(coefs)
+    패턴으로 바꿔둠) 서버(data-coverage.js) 쪽 코드 변경이 전혀 필요 없음 - 예측은 항상
+    time_trend의 선형 연장분만 적용되고, 월별 더미는 과거 데이터 적합에만 기여함(K-apt
+    세대수가 표본충분 단지에서 그룹고정효과에 흡수돼 기여가 0이 되는 것과 같은 구조로,
+    "지금 당장 서빙에 값이 없어도 안전하게 무시됨"을 이용한 설계)."""
+    df = df.copy()
+    deal_month_num = (df["deal_date"] // 100 % 100).astype(int)
+    deal_ym = df["deal_year"] * 100 + deal_month_num
+    months = sorted(deal_ym.unique())
+    ref_month = months[0]
+    dummy_cols = []
+    for ym in months:
+        if ym == ref_month:
+            continue
+        col = f"ym_{ym}"
+        df[col] = (deal_ym == ym).astype(float)
+        dummy_cols.append(col)
+    print(f"  월별 시점보정: {len(months)}개월 구간(기준월 {ref_month}) → 더미 {len(dummy_cols)}개 추가")
+    return df, dummy_cols
+
+
 def attach_kapt_features(df: pd.DataFrame, kapt_lookup):
     """df(house_trades 기반)에 K-apt 세대수를 조인해 log_households 컬럼을 추가함.
     매칭 안 되는 행(K-apt 미등록 단지, 이름 표기 차이 등)은 전체 매칭분의 중앙값으로
@@ -446,7 +476,7 @@ def upsert_model(model_id: str, model_type: str, beta: dict, group_effects: dict
 
 
 def train_one(tables, model_id: str, model_type: str, use_danji: bool, attach_kapt: bool = False,
-              attach_transit: bool = False, attach_school: bool = False):
+              attach_transit: bool = False, attach_school: bool = False, attach_month_fe: bool = True):
     # tables: 테이블 하나(str) 또는 여러 개(list) - 연립다세대는 villa_trades(연립다세대)+
     # single_trades(단독다가구) 두 테이블을 합쳐서 하나의 모델로 학습함(이 앱 다른 곳(예:
     # rpc_top_dongs SQL, data-coverage.js getBucketDetailRows)도 "villa" 타입을 이 두 테이블의
@@ -499,6 +529,12 @@ def train_one(tables, model_id: str, model_type: str, use_danji: bool, attach_ka
         df = attach_school_features(df, school_lookup)
         feature_cols = feature_cols + ["log_elem_count", "log_middle_count"]
 
+    # #299: 월별 시점보정 더미 - 외부 데이터 동기화가 필요없는(house_trades 자체의 deal_date만
+    # 씀) 순수 모델링 개선이라 기본값 True(위 build_month_dummies 설명 참고).
+    if attach_month_fe:
+        df, month_cols = build_month_dummies(df)
+        feature_cols = feature_cols + month_cols
+
     print(f"  전처리 후 {len(df)}행 (그룹 {df['group_key'].nunique()}개, 변수 {len(feature_cols)}개)")
     if len(df) < 200:
         print(f"  표본이 너무 적어({len(df)}행) 학습을 건너뜁니다(최소 200건 필요).")
@@ -535,8 +571,9 @@ def main():
     # attach_transit=True: 지하철역 거리(역세권) 추가 변수 반영 - 단지 좌표(complex_coords)
     # 커버리지가 필요해 아파트만 적용. attach_school=True: (region,dong) 초/중학교 밀집도
     # 근사치 반영(#298 - 실제 학업성취도 API는 공개돼 있지 않아 밀집도로 근사, 모듈 상단 참고).
+    # attach_month_fe=True(기본값): 월별 시점보정 더미 추가(#299 - build_month_dummies 참고).
     train_one("house_trades", "apt_v1", "apt", use_danji=True, attach_kapt=True,
-              attach_transit=True, attach_school=True)
+              attach_transit=True, attach_school=True, attach_month_fe=True)
     # ⚠️ 2026-08(villa_v1 추가): 연립다세대·단독다가구는 villa_trades(연립다세대)+
     # single_trades(단독다가구) 두 테이블을 합쳐서 학습함(이 앱의 다른 집계 로직(rpc_top_dongs,
     # getBucketDetailRows 등)도 "villa" 타입을 이 두 테이블의 합집합으로 다뤄서 같은 관례를
@@ -547,7 +584,7 @@ def main():
     # 이상 등 요건) attach_kapt=False로 둠. attach_transit도 이번 단계는 아파트만(모듈 내
     # train_one 주석 참고) - attach_school은 (region,dong) 집계라 연립다세대에도 그대로 적용.
     train_one(["villa_trades", "single_trades"], "villa_v1", "villa", use_danji=False, attach_kapt=False,
-              attach_transit=False, attach_school=True)
+              attach_transit=False, attach_school=True, attach_month_fe=True)
 
 
 if __name__ == "__main__":
