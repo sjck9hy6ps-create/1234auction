@@ -1,0 +1,40 @@
+# 학군 근사치(초/중/고 밀집도) 동기화 워크플로 - 2026-08 추가
+#
+# ⚠️ 저장소의 .github/workflows/sync-school.yml 경로에 저장해야 GitHub Actions가 인식합니다.
+#
+# ⚠️ 실행 전 GitHub 저장소 Settings → Secrets and variables → Actions에 아래 확인/등록:
+#   SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY / KAKAO_REST_API_KEY (기존 키 재사용, 그대로 있으면 됨)
+#   NEIS_API_KEY (신규) - https://open.neis.go.kr/hub/schoolInfo 페이지에서 "인증키 신청"으로
+#     무료 발급받아 추가해야 합니다(승인 즉시 사용 가능, data.go.kr과는 별개 사이트/인증키입니다).
+#
+# ⚠️ 카카오 API 일일 할당량을 warmup-locations.mjs, sync-transit.mjs와 나눠 쓰므로
+# 겹치지 않게 다른 시간대 cron으로 잡아뒀습니다.
+name: Sync school info (학군 근사치)
+
+on:
+  schedule:
+    - cron: '30 6 * * *'
+  workflow_dispatch: {}
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install dependencies
+        run: npm install @supabase/supabase-js ws
+
+      - name: Sync school info
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          KAKAO_REST_API_KEY: ${{ secrets.KAKAO_REST_API_KEY }}
+          NEIS_API_KEY: ${{ secrets.NEIS_API_KEY }}
+        run: node sync-school.mjs
