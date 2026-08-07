@@ -447,10 +447,27 @@ async function getKosisTrend(sigunguCd, force) {
 const AVM_MODEL_ID_BY_TYPE = { apt: 'apt_v1', villa: 'villa_v1' };
 const AVM_CURRENT_YEAR_FALLBACK = () => new Date().getFullYear();
 
+// ⚠️ 2026-08(K-apt 2단계): train-avm.py의 normalize_complex_name()과 반드시 동일한 로직이어야
+// 함(학습 시점과 예측 시점의 정규화가 어긋나면 매칭이 조용히 실패함). 공백 제거 +
+// "아파트"/"단지" 접미사 제거만 하는 보수적 정규화 - 괄호까지 지우면 "이촌코오롱(A)"/
+// "이촌코오롱(B)"처럼 실제로 다른 단지를 같은 단지로 잘못 묶을 위험이 있어 피함.
+function normalizeComplexName(name) {
+  if (!name) return '';
+  let s = String(name).trim().replace(/\s+/g, '');
+  for (const suf of ['아파트', '단지']) {
+    if (s.endsWith(suf)) s = s.slice(0, -suf.length);
+  }
+  return s;
+}
+
 // train-avm.py의 fit_fwl()과 반드시 같은 정의를 씀 - 여기서 정의가 어긋나면(예: age 계산
 // 기준이 다르거나 time_trend 기준일이 다르면) 학습된 계수를 엉뚱한 값에 곱하게 되어 예측이
 // 조용히 틀려버림(에러 없이 그럴듯한 숫자만 나와 알아채기 어려운 위험한 버그 유형).
-function avmFeatureVector({ size, floor, buildYear, timeOrigin }) {
+// ⚠️ 2026-08(K-apt 2단계): log_households(세대수) 추가 - apt_v1만 이 항을 쓰고(villa_v1은
+// global_coefs에 이 키가 없어 avmPredict에서 자동으로 무시됨) logHouseholds가 없으면(K-apt
+// 미매칭) 0을 넣지 않고 호출부(getAvmEstimate)가 모델 학습 때와 같은 중앙값 폴백을 미리
+// 계산해서 넘겨줌 - 0을 넣으면 "세대수 1채" 취급이 되어 계수가 터무니없이 왜곡되므로 주의.
+function avmFeatureVector({ size, floor, buildYear, timeOrigin, logHouseholds }) {
   const dealYear = AVM_CURRENT_YEAR_FALLBACK(); // 예측 시점 = "지금 팔면 얼마" 기준이므로 오늘 연도를 씀
   const age = Math.max(0, dealYear - buildYear);
   const today = todayInt();
@@ -458,6 +475,7 @@ function avmFeatureVector({ size, floor, buildYear, timeOrigin }) {
   return {
     log_size: Math.log(size), floor, floor2: floor * floor,
     age, age2: age * age, time_trend: timeTrend,
+    log_households: logHouseholds != null ? logHouseholds : 0,
   };
 }
 // YYYYMMDD 정수 두 값 사이의 일수 차이(a 기준 → b까지, 음수 가능) - Date 객체로 변환해 계산.
@@ -468,9 +486,11 @@ function daysBetweenYyyymmdd(a, b) {
 
 function avmPredict(model, features, region, dong, danji) {
   const coefs = model.global_coefs || {};
-  const featureOrder = ['log_size', 'floor', 'floor2', 'age', 'age2', 'time_trend'];
+  // ⚠️ 2026-08(K-apt 2단계): 하드코딩된 6개 목록 대신 실제 저장된 계수의 키를 그대로 씀 -
+  // 모델마다(apt_v1엔 log_households가 있고 villa_v1엔 없음) 변수 개수가 달라졌고, 앞으로
+  // #298(역세권/학군) 등이 추가돼도 이 함수를 다시 안 고쳐도 되게 하기 위함.
   let logPpp = 0;
-  featureOrder.forEach(k => { logPpp += (coefs[k] || 0) * (features[k] || 0); });
+  Object.keys(coefs).forEach(k => { logPpp += (coefs[k] || 0) * (features[k] || 0); });
 
   const dongEffects = model.dong_effects || {};
   // 진단/신뢰도 표시용 - danji(단지) 정확 매칭인지, dong(법정동) 단위인지, region(시군구)
@@ -494,7 +514,7 @@ function avmPredict(model, features, region, dong, danji) {
   return { ppp: Math.round(ppp * 10) / 10, effectUsed };
 }
 
-async function getAvmEstimate(type, region, dong, size, floor, buildYear, danji) {
+async function getAvmEstimate(type, region, dong, size, floor, buildYear, danji, sigunguCode) {
   const modelId = AVM_MODEL_ID_BY_TYPE[type];
   if (!modelId) return { error: `AVM v1은 아직 이 매물 유형(${type})을 지원하지 않습니다(아파트·연립다세대·단독만 지원).` };
   if (!(size > 0) || !(floor >= 0) || !(buildYear > 1900)) {
@@ -508,8 +528,35 @@ async function getAvmEstimate(type, region, dong, size, floor, buildYear, danji)
   } catch (e) { return { error: 'avm_model_coefs 조회 예외: ' + e.message }; }
   if (!model) return { error: 'AVM 모델이 아직 학습되지 않았습니다. GitHub Actions(train-avm 워크플로)를 한 번 실행해 주세요.' };
 
+  // ⚠️ 2026-08(K-apt 2단계): 이 모델이 log_households를 실제로 쓰는 경우에만(villa_v1은 안 씀)
+  // 조회 비용을 들임 - 물건의 단지(danji)를 kapt_complex_info에서 찾아 세대수를 가져오고,
+  // 못 찾으면(K-apt 미등록 단지, 이름 표기 차이 등) train-avm.py가 학습 때 쓴 것과 같은
+  // 중앙값(median_households)으로 폴백함 - 학습/서빙이 다른 임의값을 쓰면 계수 해석이
+  // 어긋나므로 반드시 모델에 저장된 값을 그대로 재사용함. sigunguCode는 지역명 문자열
+  // 매칭보다 신뢰도가 높아(이미 프론트가 좌표 역지오코딩으로 구한 정확한 5자리 코드) 이걸로
+  // kapt_complex_info.sigungu_code를 직접 필터링함.
+  let logHouseholds = null;
+  const coefs = model.global_coefs || {};
+  if (coefs.log_households !== undefined && danji && sigunguCode && dong) {
+    try {
+      const normDanji = normalizeComplexName(danji);
+      const { data: kaptRows } = await supabase
+        .from('kapt_complex_info')
+        .select('kapt_name, households')
+        .eq('sigungu_code', String(sigunguCode))
+        .eq('as3', dong)
+        .not('households', 'is', null);
+      const matched = (kaptRows || []).find((r) => normalizeComplexName(r.kapt_name) === normDanji);
+      if (matched && matched.households > 0) logHouseholds = Math.log(matched.households);
+    } catch (e) { /* K-apt 조회 실패해도 AVM 자체를 막지 않고 중앙값 폴백으로 진행 */ }
+    if (logHouseholds == null) {
+      const medianHh = model.feature_ranges && model.feature_ranges.median_households;
+      if (medianHh > 0) logHouseholds = Math.log(medianHh);
+    }
+  }
+
   const timeOrigin = (model.feature_ranges && model.feature_ranges.time_origin) || 20251201;
-  const features = avmFeatureVector({ size, floor, buildYear, timeOrigin });
+  const features = avmFeatureVector({ size, floor, buildYear, timeOrigin, logHouseholds });
   const { ppp, effectUsed } = avmPredict(model, features, region, dong, danji);
   const totalPrice = Math.round(ppp * (size / 3.305785));
 
@@ -1198,9 +1245,16 @@ export default async function handler(req, res) {
       // 유일한 정답 소스라, lawdCd가 오면 그걸로 region을 직접 찾아서 씀 - 문자열 가공에
       // 의존하지 않음. lawdCd가 없는(구형 프론트) 호출을 위해 region 직접 지정도 계속 지원.
       let region = req.query.region;
+      // ⚠️ 2026-08(K-apt 2단계): kapt_complex_info.sigungu_code 조회에 lawdCd를 그대로 씀 -
+      // region 문자열 매칭보다 신뢰도가 높음(구형 프론트가 region만 보낸 경우엔 역으로
+      // LAWD_CODES에서 코드를 찾아 채움).
+      let sigunguCode = lawdCd ? String(lawdCd) : null;
       if (lawdCd) {
         const found = LAWD_CODES.find((r) => r.code === String(lawdCd));
         if (found) region = found.name;
+      } else if (region) {
+        const found = LAWD_CODES.find((r) => r.name === region);
+        if (found) sigunguCode = found.code;
       }
       if (!region || !dong || !size || !floor || !buildYear) {
         return res.status(400).json({ error: 'region(또는 lawdCd), dong, size, floor, buildYear 쿼리파라미터가 필요합니다.' });
@@ -1215,7 +1269,8 @@ export default async function handler(req, res) {
       const result = await getAvmEstimate(
         type || 'apt', region, dong,
         parseFloat(size), parseFloat(floor), parseInt(buildYear, 10),
-        danji ? String(danji).trim() : null
+        danji ? String(danji).trim() : null,
+        sigunguCode
       );
       if (result.error) return res.status(422).json(result);
       return res.status(200).json(result);
