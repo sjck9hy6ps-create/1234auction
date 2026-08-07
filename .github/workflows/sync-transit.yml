@@ -1,0 +1,38 @@
+# 역세권(지하철역 거리) 동기화 워크플로 - 2026-08 추가
+#
+# ⚠️ 저장소의 .github/workflows/sync-transit.yml 경로에 저장해야 GitHub Actions가 인식합니다.
+#
+# ⚠️ 새 Secret 불필요 - 기존 SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY / KAKAO_REST_API_KEY
+# (warmup-locations.mjs가 이미 쓰고 있는 것과 동일한 키)를 그대로 재사용합니다.
+#
+# ⚠️ warmup-locations.mjs와 같은 카카오 앱(키)의 일일 호출 할당량을 나눠 씁니다.
+# 두 워크플로가 같은 시간대에 겹치면 할당량을 서로 갉아먹을 수 있으니, 아래 cron을
+# warmup-locations.yml과 다른 시간대로 잡아뒀습니다(필요시 조정 가능).
+name: Sync transit (subway distance)
+
+on:
+  schedule:
+    - cron: '0 6 * * *'
+  workflow_dispatch: {}
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install dependencies
+        run: npm install @supabase/supabase-js ws
+
+      - name: Sync transit
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          KAKAO_REST_API_KEY: ${{ secrets.KAKAO_REST_API_KEY }}
+        run: node sync-transit.mjs
