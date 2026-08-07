@@ -7,6 +7,16 @@
    - complex_coords가 좌표를 못 채운 단지는 여기서도 자연히 대상에서 빠짐(좌표 없이는
      지하철역 거리도 계산 불가) → complex_coords 웜업이 먼저 돌아야 이 스크립트도 의미가 있음.
    - 카카오 API 일일 할당량 소진 감지/중단 로직은 warmup-locations.mjs와 동일하게 이식.
+   ⚠️ 2026-08(실배포 발견, 우선순위 수정): complex_coords는 house_trades(아파트)+
+   villa_trades(연립다세대) 단지를 합쳐 약 20만 개인데, train-avm.py는 지금 역세권
+   피처를 house_trades(아파트)에만 씀(모듈 상단 설명 참고 - 연립다세대는 단지 좌표
+   커버리지 비용 대비 효용이 낮아 제외). 첫 배포 때 구분 없이 처리했더니 실행당 상한
+   3000개 중 상당수가 지금 당장은 안 쓰이는 연립다세대 단지에 소모되는 걸 실제 로그로
+   확인함(197,745개 중 3,000개 처리해도 실제 쓰이는 아파트 커버리지는 그만큼 못 늘어남
+   - 무작위 순서라 섞여서 처리됨). house_trades 단지 목록을 먼저 불러와 그쪽을
+   최우선으로 처리하도록 순서를 바꿔서, 지금 당장 AVM에 반영되는 아파트 커버리지가
+   먼저 빠르게 올라가게 함(연립다세대는 남는 여유분으로만 처리 - 나중에 villa_v1도
+   역세권을 쓰게 되면 그때는 이미 상당수 처리돼 있을 것).
 ════════════════════════════════════ */
 import { createClient } from '@supabase/supabase-js';
 import ws from 'ws';
@@ -71,6 +81,28 @@ async function nearestSubway(lat, lon) {
   if (!doc) return null; // 반경 내 지하철역 없음(멀다는 뜻 - null로 저장해 구분)
   return { distM: parseFloat(doc.distance), stationName: doc.place_name };
 }
+/* warmup-locations.mjs의 buildCacheKey()와 반드시 동일해야 함 */
+function buildCacheKey(dong, danji, bunji, roadName, mainNum, subNum) {
+  return [dong, danji, bunji, roadName, mainNum, subNum].join('|').toLowerCase();
+}
+/* house_trades(아파트) 단지의 cache_key만 뽑음 - 지금 역세권 피처를 실제로 쓰는 대상이라
+   우선순위를 여기 먼저 둠(모듈 상단 설명 참고). */
+async function fetchAptCacheKeys() {
+  const set = new Set();
+  let from = 0;
+  while (true) {
+    const { data, error } = await supabase
+      .from('house_trades')
+      .select('dong,danji,bunji,road_name,main_num,sub_num')
+      .range(from, from + PAGE_SIZE - 1);
+    if (error) { console.error('❌ house_trades 조회 에러:', error.message); break; }
+    if (!data || data.length === 0) break;
+    data.forEach(r => set.add(buildCacheKey(r.dong, r.danji, r.bunji, r.road_name, r.main_num, r.sub_num)));
+    if (data.length < PAGE_SIZE) break;
+    from += PAGE_SIZE;
+  }
+  return set;
+}
 async function fetchAllCoords() {
   const map = new Map();
   let from = 0;
@@ -134,8 +166,17 @@ async function main() {
   console.log('📦 이미 처리된 transit_features 목록 불러오는 중...');
   const existing = await fetchExistingTransit();
   console.log(`   → 이미 처리됨 ${existing.size}개`);
-  const targets = [...coords.entries()].filter(([key]) => !existing.has(key)).slice(0, MAX_PER_RUN);
-  console.log(`📦 이번 실행 처리 대상: ${targets.length}개 (실행당 상한 ${MAX_PER_RUN}개)\n`);
+  console.log('📦 house_trades(아파트) 단지 목록 불러오는 중(우선순위용)...');
+  const aptKeys = await fetchAptCacheKeys();
+  console.log(`   → 아파트 단지 ${aptKeys.size}개`);
+  const remaining = [...coords.entries()].filter(([key]) => !existing.has(key));
+  // 아파트 단지 먼저, 그다음 나머지(연립다세대 등) - 지금 AVM이 실제로 쓰는 쪽을 우선 처리
+  const aptTargets = remaining.filter(([key]) => aptKeys.has(key));
+  const otherTargets = remaining.filter(([key]) => !aptKeys.has(key));
+  const targets = [...aptTargets, ...otherTargets].slice(0, MAX_PER_RUN);
+  const aptInTargets = targets.filter(([key]) => aptKeys.has(key)).length;
+  console.log(`📦 미처리 아파트 단지 ${aptTargets.length}개 / 기타(연립다세대 등) ${otherTargets.length}개`);
+  console.log(`📦 이번 실행 처리 대상: ${targets.length}개 (아파트 ${aptInTargets}개 우선 포함, 실행당 상한 ${MAX_PER_RUN}개)\n`);
   let success = 0, none = 0, fail = 0;
   await processQueue(targets, async ([cacheKey, coord]) => {
     const result = await nearestSubway(coord.lat, coord.lon);
