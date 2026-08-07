@@ -161,6 +161,112 @@ def build_kapt_lookup():
     return raw[["region", "dong", "_name_norm", "households"]]
 
 
+def build_cache_key(dong, danji, bunji, road_name, main_num, sub_num) -> str:
+    """warmup-locations.mjs의 buildCacheKey()와 반드시 동일해야 함(complex_coords/
+    transit_features가 그 키로 저장돼 있음). JS의 Array.join은 null/undefined를 빈
+    문자열로 바꾸므로 여기서도 None을 ""로 치환해 맞춤."""
+    parts = [dong, danji, bunji, road_name, main_num, sub_num]
+    return "|".join("" if p is None or (isinstance(p, float) and math.isnan(p)) else str(p) for p in parts).lower()
+
+
+def build_transit_lookup():
+    """transit_features(sync-transit.mjs가 채움)를 그대로 불러옴 - cache_key가
+    complex_coords와 동일한 체계라 house_trades 쪽에서도 같은 함수로 cache_key를
+    만들어 정확히 일치(exact match)시킬 수 있음(K-apt처럼 이름 정규화 매칭이 아님)."""
+    raw = fetch_all_rows("transit_features", cols="cache_key,dist_subway_m")
+    if raw.empty:
+        print("  transit_features: 데이터 없음 - 아직 sync-transit.mjs가 한 번도 안 돌았거나 초기 단계")
+        return None
+    raw["dist_subway_m"] = pd.to_numeric(raw["dist_subway_m"], errors="coerce")
+    print(f"  transit_features: {len(raw)}행 로드 (역 발견 {int(raw['dist_subway_m'].notna().sum())}건, 반경밖 {int(raw['dist_subway_m'].isna().sum())}건)")
+    return raw
+
+
+SUBWAY_SEARCH_RADIUS_M = 2000  # sync-transit.mjs의 SEARCH_RADIUS_M과 동일(반경 밖은 "역세권 아님")
+
+
+def attach_transit_features(df: pd.DataFrame, transit_lookup):
+    """df에 지하철역까지 거리(log_dist_subway)를 조인함. 아파트(house_trades)만 씀 -
+    complex_coords/transit_features가 단지(danji) 단위 좌표라 danji 개념이 뚜렷한
+    아파트에만 정확히 맞고, 연립다세대는 건물 수가 훨씬 많아 전수 좌표화 비용이 커서
+    이번 단계에서는 제외함(모듈 상단 K-apt 설명과 같은 이유로 예산 문제).
+    매칭 3가지 케이스:
+      1) transit_features에 아예 없음(아직 좌표 웜업/역거리 동기화가 안 된 단지) → 결측 취급
+      2) 있는데 dist_subway_m이 null(반경 2km 안에 역이 없음이 확인됨) → "먼 거리"로 확정 처리(반경값 그대로 사용)
+      3) 역을 찾음 → 그 거리값 사용
+    1)의 결측만 중앙값으로 폴백(모르는 것과 "확인해봤더니 멂"은 다른 정보이므로 구분)."""
+    df = df.copy()
+    df["_cache_key"] = df.apply(
+        lambda r: build_cache_key(r.get("dong"), r.get("danji"), r.get("bunji"), r.get("road_name"), r.get("main_num"), r.get("sub_num")),
+        axis=1,
+    )
+    if transit_lookup is None or transit_lookup.empty:
+        median_dist = 500.0
+        df["log_dist_subway"] = np.log(median_dist + 100)
+        df = df.drop(columns=["_cache_key"], errors="ignore")
+        return df, median_dist
+    merged = df.merge(transit_lookup, left_on="_cache_key", right_on="cache_key", how="left")
+    matched_mask = merged["cache_key"].notna()
+    n_matched = int(matched_mask.sum())
+    print(f"  역세권 매칭: {n_matched}/{len(merged)}행 ({n_matched / len(merged) * 100:.1f}%)")
+    # 반경 안에서 역을 못 찾은 확정 케이스는 반경값으로 채움(모르는 게 아니라 "멀다"는 확정 정보)
+    merged.loc[matched_mask & merged["dist_subway_m"].isna(), "dist_subway_m"] = SUBWAY_SEARCH_RADIUS_M
+    known_vals = merged.loc[matched_mask, "dist_subway_m"]
+    median_dist = float(known_vals.median()) if not known_vals.empty else 500.0
+    # 아직 동기화 자체가 안 된(매칭 자체가 안 된) 행만 중앙값 폴백
+    merged["dist_subway_m"] = merged["dist_subway_m"].fillna(median_dist)
+    merged["log_dist_subway"] = np.log(merged["dist_subway_m"] + 100)  # +100: 매우 가까운 경우도 log(0) 방지
+    merged = merged.drop(columns=["_cache_key", "cache_key", "dist_subway_m"], errors="ignore")
+    return merged, median_dist
+
+
+def build_school_lookup():
+    """school_info(sync-school.mjs가 채움)에서 (region, dong)별 초등학교/중학교 개수를 집계함.
+    ⚠️ 실제 학업성취도/진학률 데이터가 아니라 "밀집도 근사치"임(모듈 상단 설명 참고) - 학교
+    수가 많다고 반드시 학군이 좋다는 뜻은 아니지만, 초등학교 도보통학권/중학교 배정권 개념과
+    상관관계가 있어 참고 지표로 씀. 아직 지오코딩(region/dong 채우기) 안 된 학교는 자동으로
+    제외됨(région/dong이 null이라 groupby에서 빠짐) - sync-school.mjs Phase B가 진행될수록
+    커버리지가 늘어남."""
+    raw = fetch_all_rows("school_info", cols="school_type,region,dong")
+    if raw.empty:
+        print("  school_info: 데이터 없음 - 아직 sync-school.mjs가 한 번도 안 돌았거나 초기 단계")
+        return None
+    raw = raw.dropna(subset=["region", "dong", "school_type"])
+    if raw.empty:
+        print("  school_info: 지오코딩(region/dong) 완료된 행이 아직 없음")
+        return None
+    counts = raw.groupby(["region", "dong", "school_type"]).size().unstack(fill_value=0)
+    counts = counts.reset_index()
+    for col in ("초등학교", "중학교"):
+        if col not in counts.columns:
+            counts[col] = 0
+    counts = counts.rename(columns={"초등학교": "elem_count", "중학교": "middle_count"})
+    print(f"  school_info: 지오코딩 완료 {len(raw)}건 → {len(counts)}개 법정동에 집계")
+    return counts[["region", "dong", "elem_count", "middle_count"]]
+
+
+def attach_school_features(df: pd.DataFrame, school_lookup):
+    """df에 (region,dong) 기준 초/중학교 개수를 조인함. count=0은 "그 동네에 학교가 없다"는
+    실제 정보일 수도, 아직 지오코딩이 안 끝나 비어 보이는 것일 수도 있음 - 다만 log(1+count)를
+    쓰므로(count=0이어도 log(1)=0으로 안전, K-apt의 log(0) 문제 자체가 구조적으로 발생 안 함)
+    별도 중앙값 폴백 없이 그대로 0으로 둬도 회귀가 깨지지 않음(초기엔 신호가 약하다가
+    sync-school.mjs가 더 돌수록 자연히 정보량이 늘어나는 구조)."""
+    df = df.copy()
+    if school_lookup is None or school_lookup.empty:
+        df["log_elem_count"] = 0.0
+        df["log_middle_count"] = 0.0
+        return df
+    merged = df.merge(school_lookup, on=["region", "dong"], how="left")
+    merged["elem_count"] = merged["elem_count"].fillna(0)
+    merged["middle_count"] = merged["middle_count"].fillna(0)
+    n_matched = int((merged["elem_count"] + merged["middle_count"] > 0).sum())
+    print(f"  학군(밀집도) 매칭: {n_matched}/{len(merged)}행에서 1개 이상 학교 확인 ({n_matched / len(merged) * 100:.1f}%)")
+    merged["log_elem_count"] = np.log1p(merged["elem_count"])
+    merged["log_middle_count"] = np.log1p(merged["middle_count"])
+    merged = merged.drop(columns=["elem_count", "middle_count"], errors="ignore")
+    return merged
+
+
 def attach_kapt_features(df: pd.DataFrame, kapt_lookup):
     """df(house_trades 기반)에 K-apt 세대수를 조인해 log_households 컬럼을 추가함.
     매칭 안 되는 행(K-apt 미등록 단지, 이름 표기 차이 등)은 전체 매칭분의 중앙값으로
@@ -320,7 +426,8 @@ def upsert_model(model_id: str, model_type: str, beta: dict, group_effects: dict
     print(f"  {model_id} 저장 완료 - n={n_samples}, R^2={r_squared:.4f}" if r_squared is not None else f"  {model_id} 저장 완료 - n={n_samples}")
 
 
-def train_one(tables, model_id: str, model_type: str, use_danji: bool, attach_kapt: bool = False):
+def train_one(tables, model_id: str, model_type: str, use_danji: bool, attach_kapt: bool = False,
+              attach_transit: bool = False, attach_school: bool = False):
     # tables: 테이블 하나(str) 또는 여러 개(list) - 연립다세대는 villa_trades(연립다세대)+
     # single_trades(단독다가구) 두 테이블을 합쳐서 하나의 모델로 학습함(이 앱 다른 곳(예:
     # rpc_top_dongs SQL, data-coverage.js getBucketDetailRows)도 "villa" 타입을 이 두 테이블의
@@ -328,7 +435,13 @@ def train_one(tables, model_id: str, model_type: str, use_danji: bool, attach_ka
     if isinstance(tables, str):
         tables = [tables]
     print(f"[{model_id}] {', '.join(tables)} 학습 시작 (그룹 단위: {'단지→법정동→시군구' if use_danji else '법정동→시군구'})")
-    raw_parts = [fetch_all_rows(t) for t in tables]
+    # attach_transit=True면 cache_key 조합에 필요한 주소 세부 컬럼(bunji/road_name/main_num/
+    # sub_num)까지 같이 가져와야 함 - complex_coords/transit_features와 정확히 같은 키를
+    # 재구성하려면 이 필드들이 반드시 필요함(warmup-locations.mjs가 저장할 때 쓴 것과 동일).
+    cols = "region,dong,danji,price,size,floor,deal_date,build_year"
+    if attach_transit:
+        cols += ",bunji,road_name,main_num,sub_num"
+    raw_parts = [fetch_all_rows(t, cols=cols) for t in tables]
     raw_parts = [p for p in raw_parts if not p.empty]
     if not raw_parts:
         print(f"  {', '.join(tables)}: 데이터 없음, 스킵")
@@ -348,6 +461,24 @@ def train_one(tables, model_id: str, model_type: str, use_danji: bool, attach_ka
         kapt_lookup = build_kapt_lookup()
         df, median_households = attach_kapt_features(df, kapt_lookup)
         feature_cols = feature_cols + ["log_households"]
+
+    # ⚠️ 2026-08(역세권/학군 연동): K-apt와 같은 이유로 표본충분한 단지는 danji 고정효과가
+    # 이미 "그 위치"를 반영하므로 지하철역 거리도 그룹 내에서는 상수에 가까워 득이 적지만,
+    # dong/region으로 승격된 그룹에서는 같은 그룹 안에 위치가 다른 여러 단지가 섞여 유의미한
+    # 신호가 남음. 연립다세대(villa_v1)는 danji를 안 쓰므로(dong 고정효과) transit_features가
+    # 요구하는 단지 단위 좌표 커버리지 비용 대비 효용이 낮아 이번 단계에선 아파트만 적용.
+    median_dist_subway = None
+    if attach_transit:
+        transit_lookup = build_transit_lookup()
+        df, median_dist_subway = attach_transit_features(df, transit_lookup)
+        feature_cols = feature_cols + ["log_dist_subway"]
+
+    # 학군(밀집도 근사치)은 danji가 아니라 (region,dong) 단위 집계라 아파트/연립다세대 모두
+    # 적용 가능함(단지 좌표 커버리지와 무관 - school_info는 학교 위치만 있으면 됨).
+    if attach_school:
+        school_lookup = build_school_lookup()
+        df = attach_school_features(df, school_lookup)
+        feature_cols = feature_cols + ["log_elem_count", "log_middle_count"]
 
     print(f"  전처리 후 {len(df)}행 (그룹 {df['group_key'].nunique()}개, 변수 {len(feature_cols)}개)")
     if len(df) < 200:
@@ -371,6 +502,10 @@ def train_one(tables, model_id: str, model_type: str, use_danji: bool, attach_ka
         # 표기 차이 등) 서버가 학습 때와 같은 중앙값으로 안전하게 폴백하기 위함 - 학습/서빙이
         # 서로 다른 임의값을 쓰면 계수 해석이 어긋나므로 반드시 같은 값을 공유해야 함.
         feature_ranges["median_households"] = median_households
+    if median_dist_subway is not None:
+        # K-apt와 같은 이유 - 예측 시점에 transit_features 매칭이 안 되는 물건은 서버가
+        # 이 중앙값으로 폴백함(학습 때와 같은 값이어야 계수 해석이 어긋나지 않음).
+        feature_ranges["median_dist_subway"] = median_dist_subway
     upsert_model(model_id, model_type, beta, group_effects, r_squared, n, feature_ranges)
 
 
@@ -378,7 +513,11 @@ def main():
     # 아파트: 단지(danji) 단위까지 고정효과를 세분화(위 모듈 docstring "그룹(고정효과 단위)"
     # 참고) - 동일 법정동 내 단지 간 편차(준공연도·브랜드)를 직접 반영해 예측 정확도를 높임.
     # attach_kapt=True: K-apt 세대수를 추가 변수로 반영(위 train_one 안 주석 참고).
-    train_one("house_trades", "apt_v1", "apt", use_danji=True, attach_kapt=True)
+    # attach_transit=True: 지하철역 거리(역세권) 추가 변수 반영 - 단지 좌표(complex_coords)
+    # 커버리지가 필요해 아파트만 적용. attach_school=True: (region,dong) 초/중학교 밀집도
+    # 근사치 반영(#298 - 실제 학업성취도 API는 공개돼 있지 않아 밀집도로 근사, 모듈 상단 참고).
+    train_one("house_trades", "apt_v1", "apt", use_danji=True, attach_kapt=True,
+              attach_transit=True, attach_school=True)
     # ⚠️ 2026-08(villa_v1 추가): 연립다세대·단독다가구는 villa_trades(연립다세대)+
     # single_trades(단독다가구) 두 테이블을 합쳐서 학습함(이 앱의 다른 집계 로직(rpc_top_dongs,
     # getBucketDetailRows 등)도 "villa" 타입을 이 두 테이블의 합집합으로 다뤄서 같은 관례를
@@ -386,8 +525,10 @@ def main():
     # 단지 개념도 아파트만큼 뚜렷하지 않아(다세대는 한 필지에 한 동인 경우가 많음) 단지
     # 단위로 쪼개면 표본이 너무 잘게 쪼개져 오히려 불안정해짐 - 법정동 단위(표본부족 시
     # 시군구로 폴백) 2단계만 씀. K-apt도 연립다세대는 등록 대상이 아니라(공동주택 300세대
-    # 이상 등 요건) attach_kapt=False로 둠.
-    train_one(["villa_trades", "single_trades"], "villa_v1", "villa", use_danji=False, attach_kapt=False)
+    # 이상 등 요건) attach_kapt=False로 둠. attach_transit도 이번 단계는 아파트만(모듈 내
+    # train_one 주석 참고) - attach_school은 (region,dong) 집계라 연립다세대에도 그대로 적용.
+    train_one(["villa_trades", "single_trades"], "villa_v1", "villa", use_danji=False, attach_kapt=False,
+              attach_transit=False, attach_school=True)
 
 
 if __name__ == "__main__":
