@@ -614,11 +614,38 @@ async function getAvmEstimate(type, region, dong, size, floor, buildYear, danji,
   const { ppp, effectUsed } = avmPredict(model, features, region, dong, danji);
   const totalPrice = Math.round(ppp * (size / 3.305785));
 
+  // ⚠️ 2026-08(정확도 보완) - r_squared는 학습 데이터 자체로 채점한 in-sample 값이라 항상
+  // 낙관적으로 나옴(특히 그룹 고정효과가 많은 모델은 그룹 수만으로도 R^2가 잘 나올 수밖에
+  // 없음). train-avm.py가 이제 무작위 20% 홀드아웃(모델이 한 번도 안 본 실제 거래)으로
+  // 별도 검증해 feature_ranges에 저장해두므로(train-avm.py RESIDUAL_IQR_MULT/evaluate_holdout
+  // 주석 참고), 여기서 그 값을 읽어 point estimate와 함께 "검증된" 오차범위를 같이 내려줌.
+  // feature_ranges는 이미 jsonb라 구버전 모델(이 필드들이 없는 채로 학습된 경우)에서도
+  // undefined로 조용히 빠질 뿐 에러가 나지 않음.
+  const fr = model.feature_ranges || {};
+  let errorMargin = null;
+  if (fr.residual_std_log != null) {
+    // 로그공간 표준편차 1개(≈정규분포 근사 시 약 68% 구간)를 원래 스케일 %오차로 환산.
+    // exp(std)-1이 곧 "그 표준편차만큼 벗어났을 때의 상대오차 비율"임(로그 잔차의 정의상).
+    const marginPct = Math.round((Math.exp(fr.residual_std_log) - 1) * 1000) / 10;
+    errorMargin = {
+      marginPct, // ± 이 %만큼(약 68% 구간, 정규분포 근사 - 참고용)
+      priceRangeManwon: [
+        Math.round(totalPrice * (1 - marginPct / 100)),
+        Math.round(totalPrice * (1 + marginPct / 100)),
+      ],
+      holdoutMapePct: fr.holdout_mape_pct != null ? fr.holdout_mape_pct : null, // 홀드아웃 평균 절대오차(%)
+      holdoutMedianApePct: fr.holdout_median_ape_pct != null ? fr.holdout_median_ape_pct : null,
+      holdoutN: fr.holdout_n != null ? fr.holdout_n : null, // 검증에 쓰인 표본 수
+    };
+  }
+
   return {
     pppManwon: ppp, // 예상 평당가(만원/평)
     totalPriceManwon: totalPrice, // 입력한 size 기준 예상 총액(만원)
     effectUsed, // 'danji' | 'dong' | 'region_fallback' | 'default_fallback' - 신뢰도 판단용
     modelId, trainedAt: model.trained_at, nSamples: model.n_samples, rSquared: model.r_squared,
+    outliersRemoved: fr.outliers_removed != null ? fr.outliers_removed : null,
+    errorMargin, // null이면 구버전 모델(홀드아웃 검증 이전에 학습됨) - 프론트는 이 경우 오차범위를 숨김
     // dong까지는 실제 그 동네 실거래 기반이라 신뢰도 있음 - region_fallback/default_fallback일
     // 때만(단지·법정동 표본 자체가 부족해서 더 넓은 단위로 승격된 경우) 낮은 신뢰도로 표시함.
     lowConfidence: (model.r_squared != null && model.r_squared < 0.3) || effectUsed === 'region_fallback' || effectUsed === 'default_fallback',
@@ -1182,6 +1209,43 @@ async function getBoundary(sggCd, wantRaw) {
 }
 
 export default async function handler(req, res) {
+  if (req.query.mode === 'transitBatch') {
+    // 저장/등록 시점에만 호출되는 배치조회라 캐시 불필요
+    res.setHeader('Cache-Control', 'no-store');
+    try {
+      if (req.method !== 'POST') {
+        return res.status(405).json({ error: 'POST로 {cacheKeys:[...]} 를 보내주세요.' });
+      }
+      const cacheKeys = Array.isArray(req.body?.cacheKeys) ? req.body.cacheKeys.filter(Boolean) : [];
+      if (cacheKeys.length === 0) {
+        return res.status(400).json({ error: 'cacheKeys 배열이 필요합니다.' });
+      }
+      const results = {};
+      cacheKeys.forEach((k) => { results[k] = null; }); // 아직 미동기화(sync-transit 대상)면 null 유지
+      const CHUNK = 200; // PostgREST .in() URL 길이 한도를 넘지 않도록 청크 분할
+      for (let i = 0; i < cacheKeys.length; i += CHUNK) {
+        const chunk = cacheKeys.slice(i, i + CHUNK);
+        const { data, error } = await supabase
+          .from('transit_features')
+          .select('cache_key,dist_subway_m,nearest_station,station_lat,station_lon')
+          .in('cache_key', chunk);
+        if (error) { console.warn('data-coverage: transitBatch 조회 실패 -', error.message); continue; }
+        (data || []).forEach((row) => {
+          // dist_subway_m/nearest_station이 null인 행은 "동기화됐지만 반경 밖(역세권 아님)"으로
+          // 구분되는 유의미한 결과라, null이 아니라 필드가 채워진 객체(값 자체는 null)로 내려줌.
+          results[row.cache_key] = {
+            distM: row.dist_subway_m,
+            stationName: row.nearest_station,
+            stationLat: row.station_lat,
+            stationLon: row.station_lon,
+          };
+        });
+      }
+      return res.status(200).json({ results });
+    } catch (err) {
+      return res.status(500).json({ error: err.message });
+    }
+  }
   if (req.query.mode === 'boundary') {
     res.setHeader('Cache-Control', 's-maxage=86400, stale-while-revalidate=604800');
     const sggCd = req.query.sggCd;
