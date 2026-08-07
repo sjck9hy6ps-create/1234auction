@@ -108,6 +108,18 @@ def fetch_all_rows(table: str) -> pd.DataFrame:
 
 def clean_and_featurize(df: pd.DataFrame, use_danji: bool) -> pd.DataFrame:
     df = df.copy()
+    # ⚠️ 2026-08(villa_v1 버그 수정): villa_trades+single_trades처럼 테이블 두 개를 concat하면,
+    # 한쪽 테이블에서 특정 컬럼이 전부 null(JSON null)인 경우(예: 단독다가구는 "floor" 개념이
+    # 없어 single_trades.floor가 전부 null) pandas가 그 컬럼을 dtype object로 잡고, 다른
+    # 테이블의 float64 컬럼과 concat되면 합쳐진 컬럼 전체가 object dtype이 됨. 이후 floor**2 같은
+    # 산술 연산까지는 통과하지만(object라도 원소가 숫자면 pow는 동작) 최종적으로 fit_fwl()에서
+    # .to_numpy()로 numpy 배열을 만들 때 dtype object가 그대로 남아 np.linalg.lstsq가
+    # "Cannot cast ... dtype('O') to dtype('float64')"로 실패함(house_trades는 테이블이
+    # 하나뿐이라 이 문제가 없었음 - villa_v1 학습에서 실제로 발생 확인). price/size/floor/
+    # build_year를 여기서 명시적으로 숫자형 변환해 원천 차단.
+    for col in ("price", "size", "floor", "build_year"):
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors="coerce")
     # 필수 필드 결측/이상치 제거
     df = df.dropna(subset=["price", "size", "floor", "deal_date", "region", "dong"])
     df = df[(df["price"] > 0) & (df["size"] > 0)]
