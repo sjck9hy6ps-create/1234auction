@@ -467,7 +467,11 @@ function normalizeComplexName(name) {
 // global_coefs에 이 키가 없어 avmPredict에서 자동으로 무시됨) logHouseholds가 없으면(K-apt
 // 미매칭) 0을 넣지 않고 호출부(getAvmEstimate)가 모델 학습 때와 같은 중앙값 폴백을 미리
 // 계산해서 넘겨줌 - 0을 넣으면 "세대수 1채" 취급이 되어 계수가 터무니없이 왜곡되므로 주의.
-function avmFeatureVector({ size, floor, buildYear, timeOrigin, logHouseholds }) {
+// ⚠️ 2026-08(역세권/학군 연동): log_dist_subway(지하철역 거리)/log_elem_count·
+// log_middle_count(초/중학교 밀집도) 추가 - K-apt와 같은 이유로, 이 값들이 null이면(호출부가
+// 계산 못한 경우) 0을 넣지 않고 반드시 모델 학습 때와 같은 폴백값을 미리 계산해 넘겨야 함
+// (0을 넣으면 "지하철역이 100m 거리다"/"학교가 1개다"처럼 엉뚱한 값으로 왜곡됨).
+function avmFeatureVector({ size, floor, buildYear, timeOrigin, logHouseholds, logDistSubway, logElemCount, logMiddleCount }) {
   const dealYear = AVM_CURRENT_YEAR_FALLBACK(); // 예측 시점 = "지금 팔면 얼마" 기준이므로 오늘 연도를 씀
   const age = Math.max(0, dealYear - buildYear);
   const today = todayInt();
@@ -476,6 +480,9 @@ function avmFeatureVector({ size, floor, buildYear, timeOrigin, logHouseholds })
     log_size: Math.log(size), floor, floor2: floor * floor,
     age, age2: age * age, time_trend: timeTrend,
     log_households: logHouseholds != null ? logHouseholds : 0,
+    log_dist_subway: logDistSubway != null ? logDistSubway : 0,
+    log_elem_count: logElemCount != null ? logElemCount : 0,
+    log_middle_count: logMiddleCount != null ? logMiddleCount : 0,
   };
 }
 // YYYYMMDD 정수 두 값 사이의 일수 차이(a 기준 → b까지, 음수 가능) - Date 객체로 변환해 계산.
@@ -555,8 +562,55 @@ async function getAvmEstimate(type, region, dong, size, floor, buildYear, danji,
     }
   }
 
+  // ⚠️ 2026-08(역세권 연동, #298): transit_features.cache_key는 warmup-locations.mjs의
+  // buildCacheKey(dong, danji, bunji, road_name, main_num, sub_num)와 완전히 같은 값인데,
+  // 예측 대상 물건은 bunji/road_name/main_num/sub_num을 안 받으므로(K-apt처럼 정확한
+  // full key 재구성이 불가) dong+danji 두 구간(`동|단지명|`)만으로 접두어(prefix) 매칭함 -
+  // 같은 단지면 주소 세부만 다르고 dong+danji는 항상 같은 값이라 안전하게 좁혀짐. 참고로
+  // 이 cache_key는 K-apt처럼 아파트/단지명 정규화를 하지 않고 원본 그대로(소문자화만)
+  // 저장돼 있음(buildCacheKey 자체가 정규화 없이 원본 필드를 이어붙이는 방식이라 여기서도
+  // 동일하게 원본 danji를 그대로 씀 - normalizeComplexName을 쓰면 오히려 어긋남).
+  const SUBWAY_SEARCH_RADIUS_M = 2000; // sync-transit.mjs / train-avm.py와 반드시 같은 값
+  let logDistSubway = null;
+  if (coefs.log_dist_subway !== undefined && danji && dong) {
+    try {
+      const prefix = `${dong}|${danji}|`.toLowerCase();
+      const { data: transitRows } = await supabase
+        .from('transit_features')
+        .select('dist_subway_m')
+        .ilike('cache_key', `${prefix}%`)
+        .limit(1);
+      if (transitRows && transitRows.length > 0) {
+        const distM = transitRows[0].dist_subway_m != null ? transitRows[0].dist_subway_m : SUBWAY_SEARCH_RADIUS_M;
+        logDistSubway = Math.log(distM + 100);
+      }
+    } catch (e) { /* 역세권 조회 실패해도 AVM 자체를 막지 않고 중앙값 폴백으로 진행 */ }
+    if (logDistSubway == null) {
+      const medianDist = model.feature_ranges && model.feature_ranges.median_dist_subway;
+      if (medianDist > 0) logDistSubway = Math.log(medianDist + 100);
+    }
+  }
+
+  // ⚠️ 2026-08(학군 근사치 연동, #298): school_info는 (region,dong) 단위 집계라 K-apt/역세권과
+  // 달리 정확한 개수를 그대로 셀 수 있음(폴백이 필요없음 - 매칭 0건도 "그 동네에 아직 지오코딩
+  // 안 된/없는 학교"라는 있는 그대로의 값이고, log1p라 0이어도 안전함 - train-avm.py 주석 참고).
+  let logElemCount = null, logMiddleCount = null;
+  if (coefs.log_elem_count !== undefined && region && dong) {
+    try {
+      const { data: schoolRows } = await supabase
+        .from('school_info')
+        .select('school_type')
+        .eq('region', region)
+        .eq('dong', dong);
+      const elemCount = (schoolRows || []).filter((r) => r.school_type === '초등학교').length;
+      const middleCount = (schoolRows || []).filter((r) => r.school_type === '중학교').length;
+      logElemCount = Math.log1p(elemCount);
+      logMiddleCount = Math.log1p(middleCount);
+    } catch (e) { logElemCount = 0; logMiddleCount = 0; }
+  }
+
   const timeOrigin = (model.feature_ranges && model.feature_ranges.time_origin) || 20251201;
-  const features = avmFeatureVector({ size, floor, buildYear, timeOrigin, logHouseholds });
+  const features = avmFeatureVector({ size, floor, buildYear, timeOrigin, logHouseholds, logDistSubway, logElemCount, logMiddleCount });
   const { ppp, effectUsed } = avmPredict(model, features, region, dong, danji);
   const totalPrice = Math.round(ppp * (size / 3.305785));
 
