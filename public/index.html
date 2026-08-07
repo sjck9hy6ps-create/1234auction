@@ -4490,6 +4490,14 @@ function toggleCasePreviewItem(idx) {
     pendingCaseListExtraction[idx]._selected = !pendingCaseListExtraction[idx]._selected;
     renderCaseListPreview();
 }
+// 응찰자수(경쟁강도) 수동입력 - 체크박스와 달리 다시 그릴 필요가 없어(입력값이 그대로
+// 남아있음) renderCaseListPreview()를 다시 호출하지 않음(불필요한 리렌더로 포커스가 날아가는
+// 것을 피함).
+function setPendingBidderCount(idx, value) {
+    if (!pendingCaseListExtraction[idx]) return;
+    var n = parseInt(value, 10);
+    pendingCaseListExtraction[idx].bidderCount = (n > 0) ? n : null;
+}
 function renderCaseListPreview() {
     var box = document.getElementById('bc-preview-box');
     if (!pendingCaseListExtraction.length) { box.innerHTML = ''; return; }
@@ -4507,7 +4515,16 @@ function renderCaseListPreview() {
             + (c.appraisalPrice ? '감정가 ' + toEok(String(Math.round(c.appraisalPrice / 10000))) : '')
             + (c.finalBidPrice ? ' · 낙찰가 ' + toEok(String(Math.round(c.finalBidPrice / 10000))) : (c.minBidPrice ? ' · 최저가 ' + toEok(String(Math.round(c.minBidPrice / 10000))) : ''))
             + (rate ? ' · ' + rate + '%' : '')
-            + '</div></div></div>';
+            + '</div></div>'
+            // 응찰자수(경쟁강도) - "검색결과 목록" 텍스트 자체엔 이 값이 없어서(사이트마다 노출
+            // 위치가 다르고, 이 앱이 지원하는 목록 형식엔 아예 없음) 자동 추출은 안 하고,
+            // 알고 있으면(법원 매각통계 등에서 따로 확인한 경우) 직접 입력하도록 함. 아래
+            // calcDongBidRateStatsByCompetition 참고 - 낙찰확률 모델이 아니라 "경쟁이 심했던
+            // 사례는 보통 어느 정도 가율에 낙찰됐는지" 사후 참고 통계용임.
+            + '<input type="number" min="1" placeholder="응찰수" title="응찰자수(알고 있으면 입력 - 자동 추출 안 됨)" '
+            + 'value="' + (c.bidderCount || '') + '" style="width:46px;font-size:10px;padding:2px 3px;margin-top:3px;" '
+            + 'onchange="setPendingBidderCount(' + idx + ', this.value)">'
+            + '</div>';
     });
     html += '<div style="margin-top:6px;text-align:right;">'
         + '<button type="button" class="modal-btn btn-purple" style="font-size:11px;" onclick="saveSelectedCases()">선택 항목 저장</button>'
@@ -4547,6 +4564,7 @@ async function saveSelectedCases() {
             appraisalPrice: c.appraisalPrice || null, minBidPrice: c.minBidPrice || null,
             finalBidPrice: c.finalBidPrice || null, bidRate: c.bidRate || null, minBidRate: c.minBidRate || null,
             status: c.status || null, saleDate: c.saleDate || null,
+            bidderCount: c.bidderCount || null, // 응찰자수(경쟁강도, 수동입력) - calcDongBidRateStatsByCompetition 참고
             importedAt: Date.now(),
         };
         try {
@@ -4934,6 +4952,32 @@ function calcDongBidRateStats(dong) {
         lowSample: rates.length < MIN_BIDCASE_COUNT_FOR_RATE,
     };
 }
+/* 법정동(dong) 단위 응찰자수(경쟁강도, bidderCount) 구간별 낙찰가율 분포 - 2026-08 추가.
+   ⚠️ 이건 "낙찰확률" 모델이 아님: 법원 경매는 패찰(떨어진) 입찰자의 금액을 공개하지 않아서
+   "이 가격을 쓰면 몇 % 확률로 낙찰된다"는 계산 자체가 데이터 구조상 불가능함(공개되는 건
+   낙찰자 1명의 최종가뿐). 여기서 보여주는 건 "이미 낙찰된 사례들 중 응찰자가 많았던 건은
+   보통 어느 정도 가율에 낙찰됐는지"를 사후에 묶어 보여주는 참고 통계일 뿐임 - 응찰자수 자체도
+   목록 텍스트에 없는 값이라(사이트마다 표시 위치가 다름) 사용자가 직접 입력한 값만 씀
+   (renderCaseListPreview/renderBidCaseList의 "응찰수" 입력칸 참고). */
+var BID_COMPETITION_BUCKETS = [
+    { label: '응찰 1~2명', min: 1, max: 2 },
+    { label: '응찰 3~5명', min: 3, max: 5 },
+    { label: '응찰 6명+', min: 6, max: Infinity },
+];
+function calcDongBidRateStatsByCompetition(dong) {
+    if (!dong) return null;
+    var items = bidCaseList.filter(function(c) {
+        return c.dong === dong && c.appraisalPrice && c.finalBidPrice && c.bidderCount > 0;
+    });
+    if (!items.length) return null;
+    var buckets = BID_COMPETITION_BUCKETS.map(function(b) {
+        var bucketItems = items.filter(function(c) { return c.bidderCount >= b.min && c.bidderCount <= b.max; });
+        if (!bucketItems.length) return null;
+        var rates = bucketItems.map(function(c) { return Math.round(c.finalBidPrice / c.appraisalPrice * 1000) / 10; });
+        return { label: b.label, count: rates.length, median: median(rates) };
+    }).filter(function(b) { return b !== null; });
+    return buckets.length ? { totalCount: items.length, buckets: buckets } : null;
+}
 /* 법정동(dong) 단위 "매입가율" 통계 - 낙찰가÷감정가(낙찰가율)는 감정가가 경매개시 전
    시점에 매겨진 스테일한 값이라, 그 이후 시세가 움직였으면 "얼마나 잘 샀는지"를 제대로
    못 보여줌(2026-08 피드백). 매도사례까지 매칭된 낙찰사례는 낙찰가÷실제매도가(그 물건이
@@ -5254,6 +5298,17 @@ function renderBidCaseList() {
         } else {
             statsHtml += '<div style="padding:4px 14px;font-size:10.5px;color:#aaa;">낙찰 완료된 건이 없어 낙찰가율 통계를 낼 수 없습니다.</div>';
         }
+        // 응찰자수(경쟁강도) 구간별 낙찰가율 - 응찰수를 입력해둔 사례가 하나도 없으면 조용히 생략함
+        var compStats = calcDongBidRateStatsByCompetition(dong);
+        if (compStats) {
+            statsHtml += '<div style="padding:0 14px 6px;">'
+                + '<div style="font-size:10px;color:#999;margin-bottom:2px;">응찰자수 구간별 낙찰가율(감정가 대비, 중간값) - 응찰수 입력된 ' + compStats.totalCount + '건 · 참고용(낙찰확률 아님)</div>'
+                + '<div class="bc-stat-grid">'
+                + compStats.buckets.map(function(b) {
+                    return '<div class="bc-stat-item"><div class="bc-stat-label">' + b.label + ' (' + b.count + '건)</div><div class="bc-stat-value">' + b.median.toFixed(1) + '%</div></div>';
+                }).join('')
+                + '</div></div>';
+        }
         if (margins.length) {
             statsHtml += '<div style="padding:0 14px 6px;">'
                 + '<div style="font-size:10px;color:#999;margin-bottom:2px;">추정 세전마진(만원, 세금·대출이자·수리비 제외) - 중간값 / 최소 / 최대</div>'
@@ -5290,11 +5345,30 @@ function renderBidCaseList() {
                 + '</div>'
                 + matchLine
                 + (c.specialConditions ? '<div style="color:#e65100;font-size:10.5px;margin-top:2px;">⚠️ ' + c.specialConditions + '</div>' : '')
+                // 응찰자수(경쟁강도) - 목록 텍스트 자체엔 없는 값이라(위 calcDongBidRateStatsByCompetition
+                // 주석 참고) 저장 후에도 언제든 직접 입력/수정할 수 있게 함
+                + '<div style="margin-top:3px;font-size:10px;color:#999;" onclick="event.stopPropagation();">응찰자수 '
+                + '<input type="number" min="1" value="' + (c.bidderCount || '') + '" placeholder="-" '
+                + 'style="width:36px;font-size:10px;padding:1px 3px;" '
+                + 'onclick="event.stopPropagation();" onchange="updateBidCaseBidderCount(\'' + c.id + '\', this.value)"></div>'
                 + '</div>';
         });
     });
     statsBox.innerHTML = '';
     listBox.innerHTML = statsHtml;
+}
+// 이미 저장된 낙찰사례의 응찰자수를 나중에라도 채워/수정할 수 있게 함(saveBidCaseAPI가 같은
+// id로 upsert하므로 그대로 재저장하면 됨). 저장 성공 시 목록을 다시 그려서 경쟁강도별
+// 낙찰가율 통계(calcDongBidRateStatsByCompetition)에도 바로 반영되게 함.
+async function updateBidCaseBidderCount(id, value) {
+    var n = parseInt(value, 10);
+    var c = bidCaseList.find(function(x) { return x.id === id; });
+    if (!c) return;
+    c.bidderCount = (n > 0) ? n : null;
+    try {
+        await saveBidCaseAPI(c);
+        renderBidCaseList();
+    } catch (e) { console.error('응찰자수 저장 실패:', e.message); }
 }
 // name(단지명, 없으면 이미 "동 번지" 조합 문자열)을 우선으로, name이 둘 다 없을 때만 dong으로 느슨하게 매칭
 // (matchesAuctionKey와 동일한 매칭 철학 - 건물 식별에 쓸 수 있는 유일한 공통 필드가 name/dong뿐이라서)
@@ -5933,9 +6007,21 @@ function renderAvmEstimateBox(data) {
             : data.effectUsed === 'dong' ? (isVillaModel ? '이 법정동 기준' : '이 법정동 기준(단지 표본부족)')
             : data.effectUsed === 'region_fallback' ? '시군구 평균 기준(동 표본부족)'
             : '전국 평균 기준(신규지역)';
-        avmSubEl.innerText = '실거래 ' + (data.nSamples || 0).toLocaleString() + '건 회귀분석(R²='
-            + (data.rSquared != null ? data.rSquared.toFixed(2) : '-') + ') · ' + confNote
-            + (data.lowConfidence ? ' - 참고용으로만 보세요' : '');
+        // ⚠️ 2026-08(정확도 보완): R²는 학습 데이터 자체로 채점한 in-sample 값이라 항상
+        // 낙관적으로 나옴(과신 위험) - data.errorMargin이 있으면(홀드아웃 검증 이후 학습된
+        // 모델) "이 모델이 한 번도 안 본 실제 거래로 검증한" 오차범위를 별도 줄로 같이
+        // 보여줘서, R² 하나만 보고 정확도를 과신하지 않게 함. 구버전 모델(errorMargin이
+        // 없는 경우)은 이 줄 자체를 안 보여줌 - 없는 값을 지어내지 않기 위함.
+        var marginLine = data.errorMargin
+            ? '<div style="margin-top:2px;color:#8a6d00;">📏 검증 오차범위 ±' + data.errorMargin.marginPct + '% ('
+                + toEok(String(data.errorMargin.priceRangeManwon[0])) + ' ~ ' + toEok(String(data.errorMargin.priceRangeManwon[1])) + ')'
+                + (data.errorMargin.holdoutN ? ' · 홀드아웃(모델이 안 본 실거래) ' + data.errorMargin.holdoutN.toLocaleString() + '건으로 검증' : '')
+                + '</div>'
+            : '';
+        avmSubEl.innerHTML = '실거래 ' + (data.nSamples || 0).toLocaleString() + '건 회귀분석(R²='
+            + (data.rSquared != null ? data.rSquared.toFixed(2) : '-') + ', 학습데이터 자체 기준) · ' + confNote
+            + (data.lowConfidence ? ' - 참고용으로만 보세요' : '')
+            + marginLine;
     }
 }
 function refreshAvmEstimateIfNeeded() {
@@ -6807,6 +6893,22 @@ var DEFAULT_LOAN_PREPAY_FEE_RATE = 1.5;
    건드리지 않고, 대출이자 계산에서만 보유기간 미입력 시 통상적인 단기매도 기준인 3개월치를
    기본 가정으로 넣어 항상 대략적인 이자비용이 보이게 함. 입력하면 그 값으로 그대로 대체됨. */
 var DEFAULT_INTEREST_HOLD_MONTHS = 3;
+/* ⚠️ 2026-08(정확도 보완) - 위 3개월 고정값은 "아무 근거 없이" 늘 3개월로 가정하고
+   있었는데, calcMarketAdjustedSalePrice()가 이미 그 물건 주변의 실제 수급 상황으로
+   재고월수(monthsOfSupply = 매물재고÷월평균 거래건수, "지금 속도로 팔리는 데 걸리는
+   개월수")를 계산해두고 있어서 - 이게 사실상 "예상 매도 소요기간"과 같은 개념임. 재고월수를
+   구할 수 있으면(호가·매물재고를 입력했고 최소표본을 만족하는 경우) 그 값을, 못 구하면
+   기존처럼 3개월 고정값으로 조용히 폴백함. 극단값이 이자비용을 비현실적으로 왜곡하지
+   않도록 1~24개월로 clamp함. */
+function getHoldMonthsEstimate() {
+    try {
+        var marketAdj = calcMarketAdjustedSalePrice();
+        if (marketAdj && marketAdj.monthsOfSupply != null && marketAdj.monthsOfSupply > 0) {
+            return { months: Math.min(24, Math.max(1, Math.round(marketAdj.monthsOfSupply))), fromInventory: true };
+        }
+    } catch (e) { /* 계산 실패해도 아래 기본값으로 조용히 폴백 */ }
+    return { months: DEFAULT_INTEREST_HOLD_MONTHS, fromInventory: false };
+}
 function calcLoanPrepayFee(loanAmount, feeRatePercent) {
     if (!loanAmount || loanAmount <= 0) return 0;
     var rate = (feeRatePercent > 0) ? feeRatePercent : DEFAULT_LOAN_PREPAY_FEE_RATE;
@@ -7400,9 +7502,11 @@ function calcMargin() {
     var loanRateInput = parseFloat(document.getElementById('a-loan-rate').value);
     var loanRate = (loanRateInput > 0) ? loanRateInput : DEFAULT_LOAN_RATE[bidMethod === 'dealer' ? 'dealer' : 'individual'];
     // 보유기간을 아직 입력 안 했으면(holdMonths=0) 이자가 항상 0으로 빠져 총비용을 과소평가하게
-    // 됨 - 대출이자 계산에서만 통상적인 단기매도 기준 3개월치를 기본가정으로 씀(2026-08 피드백).
-    // holdMonths 자체(양도세 보유기간 구간 등)는 건드리지 않음.
-    var interestHoldMonths = holdMonths > 0 ? holdMonths : DEFAULT_INTEREST_HOLD_MONTHS;
+    // 됨 - 대출이자 계산에서만 재고월수 기반 추정치(구할 수 없으면 3개월 기본가정)를 씀
+    // (getHoldMonthsEstimate 참고, 2026-08 정확도 보완). holdMonths 자체(양도세 보유기간
+    // 구간 등)는 건드리지 않음.
+    var holdEst = holdMonths > 0 ? null : getHoldMonthsEstimate();
+    var interestHoldMonths = holdMonths > 0 ? holdMonths : holdEst.months;
     var interestCost = calcLoanInterest(loanAmount, loanRate, interestHoldMonths);
     var loanPrepayFeeRateInput = parseFloat(document.getElementById('a-loan-prepay-fee-rate').value);
     var loanPrepayFeeRate = (loanPrepayFeeRateInput > 0) ? loanPrepayFeeRateInput : DEFAULT_LOAN_PREPAY_FEE_RATE;
@@ -7465,7 +7569,7 @@ function calcMargin() {
       + mItem('보증금(' + (depositRate > 0 ? depositRate : 10) + '%)', deposit > 0 ? toEok(String(deposit)) : '—', '#6a1b9a')
       + mItem('대출금액(' + (loanAmountManual > 0 ? '실제 대출금액 수동입력' : (bidMethod === 'dealer' ? '신탁대출90% 자동계산' : '개인담보대출 자동계산')) + ')', loanAmount > 0 ? toEok(String(loanAmount)) : (useBid > 0 ? '대출불가' : '—'), loanAmountManual > 0 ? '#1565c0' : '#00695c')
       + mItem('보증금제외 필요현금', useBid > 0 ? toEok(String(cashNeeded)) : '—', '#c62828')
-      + mItem('대출이자(연' + loanRate.toFixed(1) + '%·' + interestHoldMonths + '개월' + (holdMonths <= 0 ? ' 기본값' : '') + ')', loanAmount > 0 ? toEok(String(interestCost)) : '—', '#bf360c')
+      + mItem('대출이자(연' + loanRate.toFixed(1) + '%·' + interestHoldMonths + '개월' + (holdMonths <= 0 ? (holdEst.fromInventory ? ' 재고월수 기반 추정' : ' 기본값') : '') + ')', loanAmount > 0 ? toEok(String(interestCost)) : '—', '#bf360c')
       + (prepayFee > 0
           ? mItem('중도상환수수료(' + loanPrepayFeeRate.toFixed(1) + '%)', toEok(String(prepayFee)), '#bf360c')
           : '')
@@ -9053,9 +9157,10 @@ function solveAuctionBid(estValue, marginOverride) {
     var holdsJune1 = document.getElementById('a-holds-june1').checked;
     var totalOfficialPriceManwon = parseInt(document.getElementById('a-total-official-price').value) || 0;
     var holdMonths = parseInt(document.getElementById('a-hold-months').value) || 0;
-    // 대출이자 계산에서만 3개월 기본가정 적용(calcMargin()과 동일 원칙) - 보유기간 미입력 시에도
-    // 목표입찰가 역산이 이자비용을 0으로 무시해 입찰가를 과도하게 높게 추천하지 않도록 함.
-    var interestHoldMonths = holdMonths > 0 ? holdMonths : DEFAULT_INTEREST_HOLD_MONTHS;
+    // 대출이자 계산에서만 재고월수 기반 추정치 적용(calcMargin()과 동일 원칙, getHoldMonthsEstimate
+    // 참고) - 보유기간 미입력 시에도 목표입찰가 역산이 이자비용을 0으로 무시해 입찰가를
+    // 과도하게 높게 추천하지 않도록 함.
+    var interestHoldMonths = holdMonths > 0 ? holdMonths : getHoldMonthsEstimate().months;
     var propertyTax = calcPropertyTax(officialPriceWon, c.houseRank, holdsJune1, holdMonths);
     var compTax = calcCompTax(totalOfficialPriceManwon, officialPriceWon, c.houseRank, holdsJune1, holdMonths);
     var moving   = parseInt(document.getElementById('a-moving').value) || calcMovingFee(c.pyung) || 0;
