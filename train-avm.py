@@ -161,12 +161,31 @@ def build_kapt_lookup():
     return raw[["region", "dong", "_name_norm", "households"]]
 
 
+def _cache_key_part(p) -> str:
+    """cache_key 한 조각을 warmup-locations.mjs(JS)와 같은 문자열로 만듦.
+    ⚠️ 2026-08(실배포 발견, 역세권 매칭 0% 버그): Supabase REST에서 가져온 행을
+    pd.DataFrame으로 만들면, main_num/sub_num처럼 일부 행이 null인 정수 컬럼은
+    pandas가 컬럼 전체를 float64로 승격시켜(정수 dtype은 NaN을 못 담으므로) 152가
+    152.0으로 바뀜 - str(152.0) == "152.0"인데 JS 쪽 Number(152).toString()은
+    "152"라 뒤에 ".0"이 붙어 cache_key가 절대 일치하지 않게 됨(실제 배포 로그에서
+    역세권 매칭 0/281398행으로 발견). 정수값을 갖는 float은 정수 문자열로 되돌려 맞춤."""
+    # pd.isna()로 None/np.nan/pd.NA(nullable dtype)/NaT를 한 번에 다 걸러냄 - math.isnan()은
+    # pd.NA(정수 컬럼이 nullable Int64/Float64로 들어오는 경우 발생 가능)에서 TypeError가 남.
+    if pd.isna(p):
+        return ""
+    if isinstance(p, (float, np.floating)):
+        if float(p).is_integer():
+            return str(int(p))
+        return str(p)
+    return str(p)
+
+
 def build_cache_key(dong, danji, bunji, road_name, main_num, sub_num) -> str:
     """warmup-locations.mjs의 buildCacheKey()와 반드시 동일해야 함(complex_coords/
     transit_features가 그 키로 저장돼 있음). JS의 Array.join은 null/undefined를 빈
-    문자열로 바꾸므로 여기서도 None을 ""로 치환해 맞춤."""
+    문자열로 바꾸므로 여기서도 None을 ""로 치환해 맞춤(_cache_key_part 참고)."""
     parts = [dong, danji, bunji, road_name, main_num, sub_num]
-    return "|".join("" if p is None or (isinstance(p, float) and math.isnan(p)) else str(p) for p in parts).lower()
+    return "|".join(_cache_key_part(p) for p in parts).lower()
 
 
 def build_transit_lookup():
