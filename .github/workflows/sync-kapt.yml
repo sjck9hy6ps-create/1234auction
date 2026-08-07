@@ -1,0 +1,46 @@
+# K-apt(공동주택관리정보시스템) 단지특성 동기화 워크플로 - 2026-08 추가
+#
+# ⚠️ 저장소의 .github/workflows/sync-kapt.yml 경로에 저장해야 GitHub Actions가 인식합니다
+# (GitHub 웹 에디터에서 "Add file" → 경로를 .github/workflows/sync-kapt.yml로 직접 입력).
+#
+# ⚠️ 실행 전 GitHub 저장소 Settings → Secrets and variables → Actions에 아래 3개 확인/등록:
+#   SUPABASE_URL              (train-avm.yml에 이미 등록돼 있으면 그대로 재사용됨)
+#   SUPABASE_SERVICE_ROLE_KEY (위와 동일 - 이미 등록돼 있으면 새로 안 넣어도 됨)
+#   PUBLIC_DATA_API_KEY        (신규 - Vercel 환경변수에 등록된 것과 동일한 값을 복사)
+# PUBLIC_DATA_API_KEY는 공공데이터포털(data.go.kr)에서 아래 두 API에 대해 "활용신청"을
+# 먼저 해야 합니다(둘 다 자동승인이라 즉시 사용 가능):
+#   - 국토교통부_공동주택 단지 목록제공 서비스 (getSigunguAptList3)
+#   - 국토교통부_공동주택 기본 정보제공 서비스 (getAphusBassInfoV4)
+# 이미 이 앱의 다른 기능(실거래가/건축물대장 등)에서 쓰고 있는 것과 같은 계정의 일반
+# 인증키를 그대로 쓰면 됩니다 - 서비스별로 활용신청만 추가로 하면 됨.
+#
+# 매일 자동 실행(전국 250개 시군구를 하루 조금씩 처리 - 일일 API 호출 한도 보호 목적으로
+# sync-kapt.py가 실행당 상세정보 500건까지만 가져옴, 전국 1회 완주에 약 한 달 예상).
+name: Sync K-apt complex info
+
+on:
+  schedule:
+    - cron: '30 5 * * *'
+  workflow_dispatch: {}
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install requests
+
+      - name: Sync K-apt
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          PUBLIC_DATA_API_KEY: ${{ secrets.PUBLIC_DATA_API_KEY }}
+        run: python sync-kapt.py
