@@ -141,6 +141,13 @@ def build_kapt_lookup():
         return None
     raw["households"] = pd.to_numeric(raw["households"], errors="coerce")
     raw = raw.dropna(subset=["households"])
+    # ⚠️ 세대수 0(또는 음수)인 행이 섞여 있으면 np.log(0) = -inf가 되어 회귀행렬을 깨뜨림
+    # (2026-08 실배포 중 SVD did not converge 크래시로 발견됨 - K-apt 원본에 상가/오피스
+    # 복합단지 등에서 세대수 0으로 잘못 채워진 행이 실제로 존재함). 아예 매칭 후보에서 제외.
+    raw = raw[raw["households"] > 0]
+    if raw.empty:
+        print("  kapt_complex_info: 세대수>0인 유효 행이 없음")
+        return None
     raw["region"] = raw["sigungu_code"].astype(str).map(CODE_TO_REGION)
     raw = raw.dropna(subset=["region"])  # LAWD_CODES에 없는 코드는 매칭 불가(있을 수 없지만 방어)
     raw = raw.rename(columns={"as3": "dong"})
@@ -168,10 +175,15 @@ def attach_kapt_features(df: pd.DataFrame, kapt_lookup):
     df["_danji_norm"] = df["danji"].fillna("").map(normalize_complex_name)
     merged = df.merge(kapt_lookup, left_on=["region", "dong", "_danji_norm"],
                        right_on=["region", "dong", "_name_norm"], how="left")
+    # 방어적 처리: kapt_lookup은 이미 households>0만 남겼지만, 혹시라도 0/음수가 섞여
+    # 들어오면 np.log가 -inf/NaN을 내며 회귀 전체를 깨뜨리므로 여기서도 한 번 더 결측 취급.
+    merged.loc[merged["households"] <= 0, "households"] = np.nan
     n_matched = int(merged["households"].notna().sum())
     print(f"  K-apt 세대수 매칭: {n_matched}/{len(merged)}행 ({n_matched / len(merged) * 100:.1f}%)")
     matched_vals = merged.loc[merged["households"].notna(), "households"]
     median_hh = float(matched_vals.median()) if not matched_vals.empty else 500.0
+    if median_hh <= 0:
+        median_hh = 500.0
     merged["households"] = merged["households"].fillna(median_hh)
     merged["log_households"] = np.log(merged["households"])
     merged = merged.drop(columns=["_danji_norm", "_name_norm", "households"], errors="ignore")
