@@ -29,12 +29,13 @@ train-avm.py는 아파트를 danji(단지) 단위로 고정효과를 주는데, 
 즉 이 기능은 정확히 지금 신뢰도가 떨어지는 케이스를 보강하는 목적임.
 
 ## 페이지네이션/할당량 처리
-공공데이터포털 개발계정은 보통 API당 일일 호출 한도(대개 1,000회)가 있어 전국 약 250개
-시군구 × 시군구당 수십~수백 개 단지(전국 총 1만5천~2만 개 추정)를 한 번에 다 못 가져옴.
-그래서 kapt_sync_state 테이블에 "현재 처리 중인 시군구 인덱스"를 저장해두고, 매 실행마다
-DAILY_DETAIL_CAP개까지만 상세정보를 가져온 뒤 이어서 다음 실행에서 계속하는 방식으로 설계함
-(GitHub Actions 스케줄로 매일 자동 실행 - 전국 1회 완주에 약 한 달 예상, 이후엔 그 상태로
-월 1회씩 갱신해도 충분함 - 단지 특성은 거의 안 바뀌므로).
+실제 활용신청 결과 이 두 API 모두 일일 트래픽 5,000회로 승인됨(2026-08). 전국 약 250개
+시군구 × 시군구당 수십~수백 개 단지(전국 총 1만5천~2만 개 추정)를 감안해 DAILY_DETAIL_CAP을
+넉넉히 잡아도 여러 날에 걸쳐 나눠 처리하는 게 안전함(getSigunguAptList3 목록조회 호출도
+같은 계정 트래픽을 같이 쓰므로). kapt_sync_state 테이블에 "현재 처리 중인 시군구 인덱스"를
+저장해두고, 매 실행마다 DAILY_DETAIL_CAP개까지만 상세정보를 가져온 뒤 이어서 다음 실행에서
+계속하는 방식으로 설계함(GitHub Actions 스케줄로 매일 자동 실행 - 전국 1회 완주에 약 1~2주
+예상, 이후엔 그 상태로 월 1회씩 갱신해도 충분함 - 단지 특성은 거의 안 바뀌므로).
 
 ## 사용법
   python sync-kapt.py
@@ -64,8 +65,12 @@ SB_HEADERS = {
     "Authorization": f"Bearer {SUPABASE_SERVICE_ROLE_KEY}",
     "Content-Type": "application/json",
 }
-KAPT_BASE = "https://apis.data.go.kr/1613000"
-DAILY_DETAIL_CAP = 500  # 실행 1회당 getAphusBassInfoV4(상세정보) 최대 호출 수 - 일일 할당량 보호
+# ⚠️ 실제 활용신청 승인 화면(End Point)으로 확인한 정확한 경로 - Swagger 문서의
+# "Base URL: apis.data.go.kr/1613000/"만 보고 짐작하면 서비스명 세그먼트(AptListService3/
+# AptBasisInfoServiceV4)가 빠져 404가 남. 두 API가 서비스명이 서로 달라 base를 분리함.
+KAPT_LIST_BASE = "https://apis.data.go.kr/1613000/AptListService3"
+KAPT_BASS_BASE = "https://apis.data.go.kr/1613000/AptBasisInfoServiceV4"
+DAILY_DETAIL_CAP = 2000  # 실행 1회당 getAphusBassInfoV4(상세정보) 최대 호출 수 - 일일 트래픽 5,000건 승인분 내에서 여유있게 설정
 
 # scripts/lawd-codes.mjs와 동일한 자료(2026-07-18 기준 최신) - 이 스크립트는 순수 Python이라
 # .mjs를 직접 import할 수 없어 값을 그대로 복제함. lawd-codes.mjs가 갱신되면(행정구역 개편 등)
@@ -175,9 +180,9 @@ def sb_upsert(table: str, rows: list, on_conflict: str):
         r.raise_for_status()
 
 
-def kapt_get(endpoint: str, params: dict):
+def kapt_get(base: str, endpoint: str, params: dict):
     params = {**params, "serviceKey": PUBLIC_DATA_API_KEY}
-    r = requests.get(f"{KAPT_BASE}/{endpoint}", params=params, timeout=30)
+    r = requests.get(f"{base}/{endpoint}", params=params, timeout=30)
     r.raise_for_status()
     data = r.json()
     result_code = data.get("header", {}).get("resultCode")
@@ -191,7 +196,7 @@ def fetch_sigungu_complex_list(sigungu_code: str) -> list:
     items = []
     page = 1
     while True:
-        body = kapt_get("getSigunguAptList3", {
+        body = kapt_get(KAPT_LIST_BASE, "getSigunguAptList3", {
             "sigunguCode": sigungu_code, "pageNo": page, "numOfRows": 200,
         })
         batch = body.get("items") or []
@@ -210,7 +215,7 @@ def fetch_sigungu_complex_list(sigungu_code: str) -> list:
 
 def fetch_complex_detail(kapt_code: str) -> dict:
     """getAphusBassInfoV4 - 단지코드로 세대수/동수/난방방식/시공사/사용승인일/최고층수 조회."""
-    body = kapt_get("getAphusBassInfoV4", {"kaptCode": kapt_code})
+    body = kapt_get(KAPT_BASS_BASE, "getAphusBassInfoV4", {"kaptCode": kapt_code})
     return body.get("item") or {}
 
 
