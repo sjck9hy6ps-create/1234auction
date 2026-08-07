@@ -55,6 +55,7 @@ log(평단가) = log(price / size * 3.305785) - 로그를 씌우는 이유는 (a
 환경변수 SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY 필요(GitHub Actions 시크릿으로 주입).
 """
 import os
+import re
 import sys
 import json
 import math
@@ -63,6 +64,11 @@ from datetime import datetime, timezone
 import numpy as np
 import pandas as pd
 import requests
+
+# ⚠️ 2026-08(K-apt 2단계 추가): sync-kapt.py가 채워둔 kapt_complex_info(세대수 등)를
+# 여기서 조인하려면 "5자리 시군구코드 → house_trades.region과 동일한 표기의 지역명" 매핑이
+# 필요함 - sync-kapt.py와 어긋나지 않도록 공용 모듈(lawd_codes_py.py)에서 가져옴.
+from lawd_codes_py import LAWD_CODES
 
 SUPABASE_URL = os.environ.get("SUPABASE_URL")
 SUPABASE_SERVICE_ROLE_KEY = os.environ.get("SUPABASE_SERVICE_ROLE_KEY")
@@ -75,6 +81,7 @@ HEADERS = {
     "Authorization": f"Bearer {SUPABASE_SERVICE_ROLE_KEY}",
     "Content-Type": "application/json",
 }
+CODE_TO_REGION = dict(LAWD_CODES)
 
 # ⚠️ 표본이 극단적으로 적은 그룹(< MIN_*_SAMPLES)은 FWL 중심화 자체가 불안정해짐
 # (거래 1~2건짜리 그룹은 "그 그룹의 평균"이 곧 그 거래 자체라 회귀에 아무 정보도 안 남음).
@@ -85,9 +92,9 @@ MAX_AGE_YEARS = 60  # 이보다 오래된 건 데이터 오류로 보고 제외
 PAGE_SIZE = 1000
 
 
-def fetch_all_rows(table: str) -> pd.DataFrame:
-    """Supabase REST API에서 페이지네이션으로 전체 행을 가져옴."""
-    cols = "region,dong,danji,price,size,floor,deal_date,build_year"
+def fetch_all_rows(table: str, cols: str = "region,dong,danji,price,size,floor,deal_date,build_year") -> pd.DataFrame:
+    """Supabase REST API에서 페이지네이션으로 전체 행을 가져옴. cols 기본값은 house_trades류
+    테이블 기준이고, kapt_complex_info처럼 스키마가 다른 테이블은 호출부에서 cols를 넘겨씀."""
     rows = []
     offset = 0
     while True:
@@ -104,6 +111,71 @@ def fetch_all_rows(table: str) -> pd.DataFrame:
     df = pd.DataFrame(rows)
     print(f"  {table}: {len(df)}행 로드")
     return df
+
+
+def normalize_complex_name(name) -> str:
+    """단지명 정규화 - house_trades.danji와 kapt_complex_info.kapt_name을 조인하기 위함.
+    ⚠️ data-coverage.js의 normalizeComplexName()과 반드시 동일한 로직이어야 함(학습 시점과
+    예측 시점의 정규화가 어긋나면 매칭이 조용히 실패함). 공백 제거 + "아파트"/"단지" 접미사
+    제거 정도로 보수적으로만 정규화함 - 너무 공격적으로 정규화하면(예: 괄호 제거) 서로 다른
+    단지(예: "이촌코오롱(A)"/"이촌코오롱(B)")를 잘못 같은 단지로 묶어버릴 위험이 있어 피함."""
+    if not name:
+        return ""
+    s = re.sub(r"\s+", "", str(name).strip())
+    for suf in ("아파트", "단지"):
+        if s.endswith(suf):
+            s = s[: -len(suf)]
+    return s
+
+
+def build_kapt_lookup():
+    """kapt_complex_info에서 (region, dong, 정규화단지명) → households 매핑을 만듦.
+    households가 아직 없는(sync-kapt.py가 상세정보를 아직 못 가져온) 행은 제외함."""
+    raw = fetch_all_rows("kapt_complex_info", cols="kapt_name,sigungu_code,as3,households")
+    if raw.empty:
+        print("  kapt_complex_info: 데이터 없음 - 아직 sync-kapt.py가 한 번도 안 돌았거나 초기 단계")
+        return None
+    raw = raw.dropna(subset=["kapt_name", "sigungu_code", "as3", "households"])
+    if raw.empty:
+        print("  kapt_complex_info: 상세정보(세대수) 채워진 행이 아직 없음")
+        return None
+    raw["households"] = pd.to_numeric(raw["households"], errors="coerce")
+    raw = raw.dropna(subset=["households"])
+    raw["region"] = raw["sigungu_code"].astype(str).map(CODE_TO_REGION)
+    raw = raw.dropna(subset=["region"])  # LAWD_CODES에 없는 코드는 매칭 불가(있을 수 없지만 방어)
+    raw = raw.rename(columns={"as3": "dong"})
+    raw["_name_norm"] = raw["kapt_name"].map(normalize_complex_name)
+    # 같은 (region,dong,정규화이름) 조합에 단지가 둘 이상 걸리면(드묾 - 동명이인 단지 등)
+    # 세대수가 더 큰 쪽을 대표값으로 씀(대단지가 실거래도 더 많아 매칭 효용이 큼).
+    raw = raw.sort_values("households", ascending=False).drop_duplicates(
+        subset=["region", "dong", "_name_norm"], keep="first"
+    )
+    print(f"  kapt_complex_info: 매칭 가능한 단지 {len(raw)}개 (세대수 정보 있는 것만)")
+    return raw[["region", "dong", "_name_norm", "households"]]
+
+
+def attach_kapt_features(df: pd.DataFrame, kapt_lookup):
+    """df(house_trades 기반)에 K-apt 세대수를 조인해 log_households 컬럼을 추가함.
+    매칭 안 되는 행(K-apt 미등록 단지, 이름 표기 차이 등)은 전체 매칭분의 중앙값으로
+    대체함(회귀에서 상수 취급되어 실질적으로 정보가 없는 것과 같게 처리됨 - 잘못된 값을
+    지어내지 않으면서도 컬럼 자체는 항상 숫자로 채워둬야 행렬 연산이 되므로).
+    반환: (컬럼 추가된 df, 사용된 중앙값 세대수(서버 예측 시 미매칭 폴백에도 재사용))"""
+    df = df.copy()
+    if kapt_lookup is None or kapt_lookup.empty:
+        median_hh = 500  # 매칭 자료 자체가 없으면 전 행이 이 상수라 회귀에 실질적 영향 없음
+        df["log_households"] = np.log(median_hh)
+        return df, median_hh
+    df["_danji_norm"] = df["danji"].fillna("").map(normalize_complex_name)
+    merged = df.merge(kapt_lookup, left_on=["region", "dong", "_danji_norm"],
+                       right_on=["region", "dong", "_name_norm"], how="left")
+    n_matched = int(merged["households"].notna().sum())
+    print(f"  K-apt 세대수 매칭: {n_matched}/{len(merged)}행 ({n_matched / len(merged) * 100:.1f}%)")
+    matched_vals = merged.loc[merged["households"].notna(), "households"]
+    median_hh = float(matched_vals.median()) if not matched_vals.empty else 500.0
+    merged["households"] = merged["households"].fillna(median_hh)
+    merged["log_households"] = np.log(merged["households"])
+    merged = merged.drop(columns=["_danji_norm", "_name_norm", "households"], errors="ignore")
+    return merged, median_hh
 
 
 def clean_and_featurize(df: pd.DataFrame, use_danji: bool) -> pd.DataFrame:
@@ -185,26 +257,29 @@ def clean_and_featurize(df: pd.DataFrame, use_danji: bool) -> pd.DataFrame:
 FEATURE_COLS = ["log_size", "floor", "floor2", "age", "age2", "time_trend"]
 
 
-def fit_fwl(df: pd.DataFrame):
-    """Frisch-Waugh-Lovell 고정효과 회귀. 반환: (beta dict, group_effects dict, r_squared, n)"""
-    group_means = df.groupby("group_key")[["y"] + FEATURE_COLS].transform("mean")
+def fit_fwl(df: pd.DataFrame, feature_cols):
+    """Frisch-Waugh-Lovell 고정효과 회귀. 반환: (beta dict, group_effects dict, r_squared, n)
+    ⚠️ 2026-08(K-apt 연동): feature_cols를 모듈 상수 대신 파라미터로 받도록 일반화함 - 아파트는
+    log_households(세대수)까지 포함한 7개, 연립다세대는 기존 6개(FEATURE_COLS) 그대로라
+    모델별로 변수 개수가 달라짐."""
+    group_means = df.groupby("group_key")[["y"] + feature_cols].transform("mean")
     y_tilde = (df["y"] - group_means["y"]).to_numpy()
-    X_tilde = (df[FEATURE_COLS] - group_means[FEATURE_COLS]).to_numpy()
+    X_tilde = (df[feature_cols] - group_means[feature_cols]).to_numpy()
 
     # 최소제곱해 (X_tilde^T X_tilde) beta = X_tilde^T y_tilde
     beta, residuals, rank, sv = np.linalg.lstsq(X_tilde, y_tilde, rcond=None)
-    beta_dict = {name: float(b) for name, b in zip(FEATURE_COLS, beta)}
+    beta_dict = {name: float(b) for name, b in zip(feature_cols, beta)}
 
     # 그룹별 절편 = 그 그룹의 y평균 - 그 그룹의 X평균·beta
-    group_agg = df.groupby("group_key")[FEATURE_COLS + ["y"]].mean()
-    group_agg["pred_no_intercept"] = group_agg[FEATURE_COLS].to_numpy() @ beta
+    group_agg = df.groupby("group_key")[feature_cols + ["y"]].mean()
+    group_agg["pred_no_intercept"] = group_agg[feature_cols].to_numpy() @ beta
     group_agg["effect"] = group_agg["y"] - group_agg["pred_no_intercept"]
     group_effects = group_agg["effect"].to_dict()
 
     # 전체 예측치로 R^2 계산
     df2 = df.copy()
     df2["group_effect"] = df2["group_key"].map(group_effects)
-    y_pred = df2[FEATURE_COLS].to_numpy() @ beta + df2["group_effect"].to_numpy()
+    y_pred = df2[feature_cols].to_numpy() @ beta + df2["group_effect"].to_numpy()
     ss_res = float(np.sum((df2["y"].to_numpy() - y_pred) ** 2))
     ss_tot = float(np.sum((df2["y"].to_numpy() - df2["y"].mean()) ** 2))
     r_squared = 1 - ss_res / ss_tot if ss_tot > 0 else None
@@ -233,7 +308,7 @@ def upsert_model(model_id: str, model_type: str, beta: dict, group_effects: dict
     print(f"  {model_id} 저장 완료 - n={n_samples}, R^2={r_squared:.4f}" if r_squared is not None else f"  {model_id} 저장 완료 - n={n_samples}")
 
 
-def train_one(tables, model_id: str, model_type: str, use_danji: bool):
+def train_one(tables, model_id: str, model_type: str, use_danji: bool, attach_kapt: bool = False):
     # tables: 테이블 하나(str) 또는 여러 개(list) - 연립다세대는 villa_trades(연립다세대)+
     # single_trades(단독다가구) 두 테이블을 합쳐서 하나의 모델로 학습함(이 앱 다른 곳(예:
     # rpc_top_dongs SQL, data-coverage.js getBucketDetailRows)도 "villa" 타입을 이 두 테이블의
@@ -248,11 +323,25 @@ def train_one(tables, model_id: str, model_type: str, use_danji: bool):
         return
     raw = pd.concat(raw_parts, ignore_index=True)
     df = clean_and_featurize(raw, use_danji)
-    print(f"  전처리 후 {len(df)}행 (그룹 {df['group_key'].nunique()}개)")
+
+    # ⚠️ 2026-08(K-apt 2단계): 표본충분한 단지는 이미 danji 고정효과가 그 단지 평균을 정확히
+    # 반영하므로 세대수 같은 "단지 고유 상수"를 더해도 득이 없음(그룹 내에서 상수라 FWL
+    # 중심화 후 0이 되어 계수 추정에 기여를 못 함) - 대신 표본부족으로 dong/region 단위로
+    # 승격된 그룹(=지금 "⚠️ 표본부족"으로 표시되는 케이스)에서는 그 그룹 안에 여러 단지가
+    # 섞여 세대수가 실제로 달라지므로 거기서 유의미한 계수가 나옴. 즉 지금 신뢰도가 낮은
+    # 케이스를 정확히 겨눈 보강 변수임(모듈 docstring 및 sync-kapt.py 참고).
+    feature_cols = list(FEATURE_COLS)
+    median_households = None
+    if attach_kapt:
+        kapt_lookup = build_kapt_lookup()
+        df, median_households = attach_kapt_features(df, kapt_lookup)
+        feature_cols = feature_cols + ["log_households"]
+
+    print(f"  전처리 후 {len(df)}행 (그룹 {df['group_key'].nunique()}개, 변수 {len(feature_cols)}개)")
     if len(df) < 200:
         print(f"  표본이 너무 적어({len(df)}행) 학습을 건너뜁니다(최소 200건 필요).")
         return
-    beta, group_effects, r_squared, n = fit_fwl(df)
+    beta, group_effects, r_squared, n = fit_fwl(df, feature_cols)
     # time_origin: time_trend 계산의 기준일(가장 오래된 거래일, YYYYMMDD 정수). 예측 시점(서버)
     # 에서도 "오늘 - time_origin" 일수로 같은 time_trend를 계산해야 학습 때와 정의가 일치하므로
     # 반드시 같이 저장해야 함(빠뜨리면 시점보정 계수가 엉뚱한 기준으로 적용되는 버그가 됨).
@@ -261,22 +350,32 @@ def train_one(tables, model_id: str, model_type: str, use_danji: bool):
         "floor": [float(df["floor"].min()), float(df["floor"].max())],
         "age": [float(df["age"].min()), float(df["age"].max())],
         "time_origin": int(df["deal_date"].min()),
+        # feature_cols를 그대로 저장해둬야 서버(data-coverage.js)가 이 모델이 log_households를
+        # 쓰는지 여부를 하드코딩 없이 global_coefs 키 존재만으로 판단할 수 있음.
+        "feature_cols": feature_cols,
     }
+    if median_households is not None:
+        # 예측 시점에 주어진 물건이 K-apt에서 못 찾아지는 경우(신축이라 아직 미등록, 이름
+        # 표기 차이 등) 서버가 학습 때와 같은 중앙값으로 안전하게 폴백하기 위함 - 학습/서빙이
+        # 서로 다른 임의값을 쓰면 계수 해석이 어긋나므로 반드시 같은 값을 공유해야 함.
+        feature_ranges["median_households"] = median_households
     upsert_model(model_id, model_type, beta, group_effects, r_squared, n, feature_ranges)
 
 
 def main():
     # 아파트: 단지(danji) 단위까지 고정효과를 세분화(위 모듈 docstring "그룹(고정효과 단위)"
     # 참고) - 동일 법정동 내 단지 간 편차(준공연도·브랜드)를 직접 반영해 예측 정확도를 높임.
-    train_one("house_trades", "apt_v1", "apt", use_danji=True)
+    # attach_kapt=True: K-apt 세대수를 추가 변수로 반영(위 train_one 안 주석 참고).
+    train_one("house_trades", "apt_v1", "apt", use_danji=True, attach_kapt=True)
     # ⚠️ 2026-08(villa_v1 추가): 연립다세대·단독다가구는 villa_trades(연립다세대)+
     # single_trades(단독다가구) 두 테이블을 합쳐서 학습함(이 앱의 다른 집계 로직(rpc_top_dongs,
     # getBucketDetailRows 등)도 "villa" 타입을 이 두 테이블의 합집합으로 다뤄서 같은 관례를
     # 따름). 아파트와 달리 danji(단지) 단위는 안 씀(use_danji=False) - 거래 자체가 뜸하고
     # 단지 개념도 아파트만큼 뚜렷하지 않아(다세대는 한 필지에 한 동인 경우가 많음) 단지
     # 단위로 쪼개면 표본이 너무 잘게 쪼개져 오히려 불안정해짐 - 법정동 단위(표본부족 시
-    # 시군구로 폴백) 2단계만 씀.
-    train_one(["villa_trades", "single_trades"], "villa_v1", "villa", use_danji=False)
+    # 시군구로 폴백) 2단계만 씀. K-apt도 연립다세대는 등록 대상이 아니라(공동주택 300세대
+    # 이상 등 요건) attach_kapt=False로 둠.
+    train_one(["villa_trades", "single_trades"], "villa_v1", "villa", use_danji=False, attach_kapt=False)
 
 
 if __name__ == "__main__":
