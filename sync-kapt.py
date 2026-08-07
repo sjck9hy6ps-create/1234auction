@@ -184,11 +184,20 @@ def kapt_get(base: str, endpoint: str, params: dict):
     params = {**params, "serviceKey": PUBLIC_DATA_API_KEY}
     r = requests.get(f"{base}/{endpoint}", params=params, timeout=30)
     r.raise_for_status()
-    data = r.json()
+    raw = r.json()
+    # ⚠️ 2026-08(버그 수정): 공공데이터포털 API는 최상위에 "response" 래퍼가 있는 것과 없는 것이
+    # 섞여 있음 - Swagger 문서의 예시 스키마는 래퍼 없이 {"header":..,"body":..}만 보여주지만
+    # 실제 응답은 {"response":{"header":..,"body":..}}로 오는 경우가 흔함(첫 실행에서 서울
+    # 종로구가 "0건 조회됨"으로 나온 원인 - 래퍼를 못 벗겨서 body를 못 찾았던 것으로 추정).
+    # 둘 다 처리하도록 방어.
+    data = raw.get("response", raw) if isinstance(raw, dict) else {}
     result_code = data.get("header", {}).get("resultCode")
     if result_code not in (None, "00", "0"):
         raise RuntimeError(f"{endpoint} 실패: {data.get('header')}")
-    return data.get("body", {})
+    body = data.get("body") or {}
+    if not body:
+        print(f"  [디버그] {endpoint} body 없음 - 원본 응답: {json.dumps(raw, ensure_ascii=False)[:1500]}")
+    return body
 
 
 def fetch_sigungu_complex_list(sigungu_code: str) -> list:
