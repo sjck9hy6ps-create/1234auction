@@ -1116,7 +1116,11 @@ tr:hover td { background:#fffde7; }
                 <input type="number" step="0.1" class="modal-input" id="a-loan-prepay-fee-rate" placeholder="1.5" oninput="calcCompValuation();calcMargin();suggestBidFromTarget();">
                 <span style="font-size:12px;color:#888;margin-left:4px;">% (대출금액 기준)</span>
             </div>
-            <div style="font-size:10px;color:#aaa;margin-top:-4px;margin-bottom:6px;">보유기간은 낙찰~매도까지 예상 개월수로, 개인명의는 양도소득세(1년미만 70%·2년미만 60%·2년이상 기본세율) 판단에, 매매사업자는 종합소득세(사업소득, 누진세율) 계산과 별개로 두 경우 모두 대출이자(마진분석의 "대출이자" 항목) 계산에 쓰입니다. 대출금리는 비워두면 개인 5.0%/매매사업자(신탁대출) 6.5%가 기본 적용됩니다(2026년 경락잔금대출·신탁대출 시세 참고치, 실제 승인금리는 금융기관마다 다르니 직접 확인 후 수정하세요). 대출금액은 비워두면 낙찰가 기준 자동계산(신탁대출 90%/개인담보대출)을 쓰고, 실제 대출을 받아 금액이 정해졌으면 "실제 대출금액"에 직접 입력하세요 - 이후 마진분석의 대출이자·필요현금이 그 실제 금액 기준으로 다시 계산됩니다. 중도상환수수료율은 비워두면 1.5%(경락잔금대출 통상 1~2%대 참고치)가 기본 적용되며, 대출금액 전액을 매도 시점에 조기상환한다고 가정한 근사치입니다(실제로는 대출기간 경과에 따라 낮아지는 경우가 많으니 금융기관 약정서로 확인하세요). 상세 계산기준은 아래 "세금" 항목의 ⓘ를 참고하세요.</div>
+            <!-- ⚠️ 2026-08 추가 - 대출방법(신탁대출/개인 가계대출)과 대출한도가 이제 주소 기반
+                 지역판정(수도권 규제/비규제/지방)에 따라 자동으로 갈리므로, 그 판정 결과를
+                 여기서 바로 보여줌(calcMargin()이 채움). -->
+            <div id="loan-region-status" style="font-size:11px;color:#6a1b9a;background:#faf7ff;border:1px solid #e5dbf5;border-radius:6px;padding:6px 8px;margin:2px 0 6px;display:none;"></div>
+            <div style="font-size:10px;color:#aaa;margin-top:-4px;margin-bottom:6px;">보유기간은 낙찰~매도까지 예상 개월수로, 개인명의는 양도소득세(1년미만 70%·2년미만 60%·2년이상 기본세율) 판단에, 매매사업자는 종합소득세(사업소득, 누진세율) 계산과 별개로 두 경우 모두 대출이자(마진분석의 "대출이자" 항목) 계산에 쓰입니다. 대출방법·한도는 2025.10.15 부동산대책 기준으로 주소를 보고 자동 판정됩니다: 비수도권(지방)은 기존처럼 매매사업자=신탁대출 낙찰가의 90%, 개인=min(낙찰가80%, 감정가70%)를 그대로 쓰고, 수도권(서울·경기·인천)은 규제지역 여부와 무관하게 매매사업자(신탁)대출이 전면 금지라 개인 가계대출로 자동 전환되며 LTV(규제지역 40% / 비규제지역 70%)와 가격구간별 절대한도(15억 이하 6억·15~25억 4억·25억 초과 2억, 규제지역은 매도금액 기준) 중 낮은 값이 적용됩니다. 대출금리는 비워두면 위 판정 결과에 맞는 기본값(개인 5.0%/신탁대출 6.5%)이 적용됩니다(실제 승인금리는 금융기관·신용도마다 다르니 상담 후 직접 수정하세요). 대출금액은 비워두면 위 로직으로 자동계산되고, 실제 대출을 받아 금액이 정해졌으면 "실제 대출금액"에 직접 입력하세요 - 이후 마진분석의 대출이자·필요현금이 그 실제 금액 기준으로 다시 계산됩니다. 중도상환수수료율은 비워두면 1.5%(경락잔금대출 통상 1~2%대 참고치)가 기본 적용되며, 대출금액 전액을 매도 시점에 조기상환한다고 가정한 근사치입니다(실제로는 대출기간 경과에 따라 낮아지는 경우가 많으니 금융기관 약정서로 확인하세요). 상세 계산기준은 아래 "세금" 항목의 ⓘ를 참고하세요.</div>
             <div class="modal-row">
                 <span class="modal-label">보유주택수</span>
                 <select class="modal-select" id="a-house-rank" onchange="autoCalcTaxSilent();calcCompValuation();calcMargin();">
@@ -5509,6 +5513,8 @@ function openAuctionModal(id) {
     // 있었음(2026-08 피드백). 다른 결과박스들과 동일하게 내용과 표시 상태를 초기화함.
     document.getElementById('ai-briefing-box').innerHTML = '';
     document.getElementById('ai-briefing-box').style.display = 'none';
+    document.getElementById('loan-region-status').innerHTML = '';
+    document.getElementById('loan-region-status').style.display = 'none';
     if (isEdit) {
         var a = auctionList.find(function(x) { return x.id === id; });
         if (a) {
@@ -5676,6 +5682,9 @@ function searchAuctionAddr() {
                 : '';
             auctionCoordCache[r.address_name] = { lat: parseFloat(r.y), lon: parseFloat(r.x), label: label, dong: dong, bunji: bunji };
             calcCompValuation();
+            // ⚠️ 2026-08: 대출방법·한도가 이제 주소 기반 지역판정(수도권 규제/비규제/지방)에
+            // 따라 달라지므로, 주소가 확정되는 시점에 마진분석을 다시 계산해 반영함.
+            calcMargin();
             loadAuctionBuildingInfo();
             autoCalcAuctionJeonseAnalysis();
             renderDongMarginStatsInModal();
@@ -6850,6 +6859,99 @@ function getEffectiveLoanAmount(bidMethod, bid, appraisal, manualLoanAmount) {
 }
 // 대출금리 기본값(연%) - 비워두면 이 값 적용. 2026년 경락잔금대출(개인)·신탁대출(매매사업자) 시세 참고치.
 var DEFAULT_LOAN_RATE = { individual: 5.0, dealer: 6.5 };
+/* ════════════════════════════════════
+   지역 기반 대출방법 자동판정 (2026-08 추가)
+   ⚠️ 2025.10.15 부동산대책 + 2026-09 후속조치(가계부채 관리방안) 기준 - 세법과 마찬가지로
+   대출규제도 수시로 바뀌는 영역이라 아래 숫자는 "2026-08 웹검색 확인" 시점 기준 참고치이며,
+   실제 대출 진행 전에는 반드시 은행/금융위 공지로 재확인해야 함.
+   - 수도권(서울·경기·인천)은 규제지역 여부와 무관하게 주택 매매·임대사업자 대출(신탁대출
+     포함)이 전면 금지(LTV 0%)됨 → 매매사업자(dealer)로 입찰방법을 선택해도 물건 주소가
+     수도권이면 개인 가계대출로 자동 전환해서 계산함("기존 신탁대출은 유지" 요청에 따라
+     지방 물건은 아래 nonmetro 분기에서 신탁대출 계산을 그대로 유지함).
+   - 수도권은 규제지역 여부와 무관하게 주택가격 구간별 대출 "절대금액" 상한이 걸림
+     (LTV와 별도로 적용되는 캡): 시가 15억원 이하 6억 / 15억초과~25억원 이하 4억 /
+     25억원 초과 2억.
+   - LTV 상한: 규제지역(투기과열지구·조정대상지역 - guessIsAdjustedArea와 동일 지역 목록,
+     서울 전역+경기 12곳) 40%, 비규제지역 70%. (생애최초 구입자는 규제지역도 70%까지 예외가
+     있으나 이 앱은 생애최초 여부를 입력받지 않아 보수적으로 일반 기준만 적용함.)
+   - 지방(비수도권)은 위 대출한도 상한·LTV 강화의 영향을 받지 않아 기존 로직을 그대로 씀.
+   - 규제지역은 감정가가 실제 시세보다 낮게 잡히는 경매 특성상 감정가를 LTV 기준값으로 쓰면
+     한도를 과소평가하게 되어, 사용자 요청대로 이 앱이 이미 계산해둔 "매도금액"(예상매도가/
+     목표매도가 등 - 호출부에서 saleValueEstimate로 넘김)을 기준값으로 우선 사용함(없으면
+     감정가 → 낙찰가 순으로 폴백).
+════════════════════════════════════ */
+var METRO_LOAN_LTV = { regulated: 0.40, unregulated: 0.70 };
+function calcMetroAbsoluteLoanCap(priceManwon) {
+    if (!priceManwon || priceManwon <= 0) return Infinity;
+    if (priceManwon <= 150000) return 60000;   // 시가 15억 이하 → 6억
+    if (priceManwon <= 250000) return 40000;   // 15억초과~25억 이하 → 4억
+    return 20000;                               // 25억 초과 → 2억
+}
+function getRegionLoanCategory(addr) {
+    if (!isMetroArea(addr)) return 'nonmetro';
+    return guessIsAdjustedArea(addr) ? 'metro_regulated' : 'metro_unregulated';
+}
+/* 대출방법(신탁대출/개인 가계대출)·금액·금리를 지역판정까지 반영해 한 번에 산정.
+   bid/appraisal/saleValueEstimate 단위: 만원. */
+function calcRegionAwareLoan(bidMethod, addr, bid, appraisal, saleValueEstimate) {
+    var category = getRegionLoanCategory(addr);
+    if (!bid || bid <= 0) {
+        return { amount: 0, rate: DEFAULT_LOAN_RATE[bidMethod === 'dealer' ? 'dealer' : 'individual'], loanType: 'none', category: category, forcedIndividual: false, note: null };
+    }
+    if (category === 'nonmetro') {
+        // 지방(비수도권) - 기존 로직 그대로: 매매사업자=신탁대출90%, 개인=min(낙찰가80%,감정가70%)
+        return {
+            amount: calcLoanAmount(bidMethod, bid, appraisal),
+            rate: DEFAULT_LOAN_RATE[bidMethod === 'dealer' ? 'dealer' : 'individual'],
+            loanType: bidMethod === 'dealer' ? 'trust' : 'individual',
+            category: category, forcedIndividual: false, note: null
+        };
+    }
+    // 수도권(규제·비규제 공통) - 매매사업자대출 전면 금지 → 개인 가계대출로 강제 전환
+    var forced = bidMethod === 'dealer';
+    var priceBasis, ltv, note;
+    if (category === 'metro_regulated') {
+        priceBasis = (saleValueEstimate && saleValueEstimate > 0) ? saleValueEstimate : ((appraisal && appraisal > 0) ? appraisal : bid);
+        ltv = METRO_LOAN_LTV.regulated;
+        note = '수도권 규제지역: LTV 40%(생애최초 제외)와 매도금액 기준 가격구간별 한도(15억↓6억·25억↓4억·25억↑2억) 중 낮은 값 적용. 매매사업자대출은 전면금지라 개인 가계대출만 가능하며 2년 실거주의무 등이 붙어 사실상 진입이 어려운 참고용 추정치입니다.';
+    } else {
+        priceBasis = (appraisal && appraisal > 0) ? appraisal : bid;
+        ltv = METRO_LOAN_LTV.unregulated;
+        note = '수도권 비규제지역: 매매사업자(신탁)대출이 금지돼 개인 가계대출로 자동 전환되었고, LTV 70%와 가격구간별 한도(15억↓6억·25억↓4억·25억↑2억) 중 낮은 값을 적용했습니다.';
+    }
+    var ltvAmount = Math.round(priceBasis * ltv);
+    var cap = calcMetroAbsoluteLoanCap(priceBasis);
+    return {
+        amount: Math.max(0, Math.min(ltvAmount, cap)),
+        rate: DEFAULT_LOAN_RATE.individual,
+        loanType: category === 'metro_regulated' ? 'individual_regulated' : 'individual_forced',
+        category: category, forcedIndividual: forced, note: note
+    };
+}
+function loanTypeLabel(loanType) {
+    switch (loanType) {
+        case 'manual': return '실제 대출금액 수동입력';
+        case 'trust': return '신탁대출90% 자동계산';
+        case 'individual': return '개인담보대출 자동계산';
+        case 'individual_forced': return '수도권 비규제지역 · 개인 가계대출 전환';
+        case 'individual_regulated': return '수도권 규제지역 · LTV+한도 제한';
+        default: return '대출불가';
+    }
+}
+function loanCategoryLabel(category) {
+    if (category === 'metro_regulated') return '수도권 규제지역';
+    if (category === 'metro_unregulated') return '수도권 비규제지역';
+    return '비수도권(지방)';
+}
+/* 수동입력이 있으면 그 값을 그대로 쓰고(rate/note는 지역판정 결과를 참고용으로 유지),
+   없으면 calcRegionAwareLoan()의 자동산정 결과를 그대로 씀. */
+function getEffectiveLoanPlan(bidMethod, addr, bid, appraisal, manualLoanAmount, saleValueEstimate) {
+    var auto = calcRegionAwareLoan(bidMethod, addr, bid, appraisal, saleValueEstimate);
+    if (manualLoanAmount && manualLoanAmount > 0) {
+        return { amount: manualLoanAmount, rate: auto.rate, loanType: 'manual', category: auto.category, forcedIndividual: auto.forcedIndividual, note: auto.note };
+    }
+    return auto;
+}
 /* 경락잔금대출 중도상환수수료 - 대출금액을 매도 시점에 전액 조기상환한다고 가정한 근사치.
    실무 통상 연 1~2%대(대출금액이 클수록 낮게 적용되는 경우도 있음) - 여기서는 보수적으로
    중간값 1.5%를 기본값으로 씀(a-loan-prepay-fee-rate로 직접 조정 가능). */
@@ -7462,11 +7564,27 @@ function calcMargin() {
     var bidMethod = document.getElementById('a-bid-method').value;
     var holdMonths = parseInt(document.getElementById('a-hold-months').value) || 0;
     var deposit   = calcDeposit(minBid, depositRate);
+    var addr = document.getElementById('a-addr').value.trim();
     var loanAmountManual = parseInt(document.getElementById('a-loan-amount-manual').value) || 0;
-    var loanAmount = getEffectiveLoanAmount(bidMethod, useBid, appraisal, loanAmountManual);
+    // ⚠️ 2026-08: 대출방법·한도를 주소 기반 지역규제(수도권 비규제=매매사업자대출 금지→개인전환,
+    // 수도권 규제지역=LTV40%+매도금액 기준 가격구간별 한도)까지 반영해 산정함(calcRegionAwareLoan
+    // 참고). useSell(목표매도가/실제매도가)을 saleValueEstimate로 넘겨 규제지역 한도 산정 기준값으로 씀.
+    var loanPlan = getEffectiveLoanPlan(bidMethod, addr, useBid, appraisal, loanAmountManual, useSell);
+    var loanAmount = loanPlan.amount;
     var cashNeeded = useBid > 0 ? Math.max(useBid - deposit - loanAmount, 0) : 0;
     var loanRateInput = parseFloat(document.getElementById('a-loan-rate').value);
-    var loanRate = (loanRateInput > 0) ? loanRateInput : DEFAULT_LOAN_RATE[bidMethod === 'dealer' ? 'dealer' : 'individual'];
+    var loanRate = (loanRateInput > 0) ? loanRateInput : loanPlan.rate;
+    var loanRegionStatusEl = document.getElementById('loan-region-status');
+    if (loanRegionStatusEl) {
+        if (!addr) {
+            loanRegionStatusEl.style.display = 'none';
+        } else {
+            loanRegionStatusEl.style.display = 'block';
+            loanRegionStatusEl.innerHTML = '📍 <b>' + loanCategoryLabel(loanPlan.category) + '</b> 판정 → ' + loanTypeLabel(loanPlan.loanType)
+                + (loanPlan.forcedIndividual ? ' <span style="color:#c62828;">(매매사업자 선택했지만 수도권이라 개인 가계대출로 자동 전환됨)</span>' : '')
+                + (loanPlan.note ? '<div style="margin-top:2px;color:#888;">' + loanPlan.note + '</div>' : '');
+        }
+    }
     // 보유기간을 아직 입력 안 했으면(holdMonths=0) 이자가 항상 0으로 빠져 총비용을 과소평가하게
     // 됨 - 대출이자 계산에서만 재고월수 기반 추정치(구할 수 없으면 3개월 기본가정)를 씀
     // (getHoldMonthsEstimate 참고, 2026-08 정확도 보완). holdMonths 자체(양도세 보유기간
@@ -7533,7 +7651,7 @@ function calcMargin() {
       + mItem('낙찰률',         apprRate > 0 ? apprRate + '%' : '—', apprRate < 80 ? '#2e7d32' : apprRate < 90 ? '#ff7043' : '#e53935')
       + mItem('손익분기 매도가(세전)', totalCost > 0 ? toEok(String(totalCost)) : '—', '#1565c0')
       + mItem('보증금(' + (depositRate > 0 ? depositRate : 10) + '%)', deposit > 0 ? toEok(String(deposit)) : '—', '#6a1b9a')
-      + mItem('대출금액(' + (loanAmountManual > 0 ? '실제 대출금액 수동입력' : (bidMethod === 'dealer' ? '신탁대출90% 자동계산' : '개인담보대출 자동계산')) + ')', loanAmount > 0 ? toEok(String(loanAmount)) : (useBid > 0 ? '대출불가' : '—'), loanAmountManual > 0 ? '#1565c0' : '#00695c')
+      + mItem('대출금액(' + loanCategoryLabel(loanPlan.category) + ' · ' + loanTypeLabel(loanPlan.loanType) + ')', loanAmount > 0 ? toEok(String(loanAmount)) : (useBid > 0 ? '대출불가' : '—'), loanPlan.loanType === 'manual' ? '#1565c0' : '#00695c', loanPlan.note)
       + mItem('보증금제외 필요현금', useBid > 0 ? toEok(String(cashNeeded)) : '—', '#c62828')
       + mItem('대출이자(연' + loanRate.toFixed(1) + '%·' + interestHoldMonths + '개월' + (holdMonths <= 0 ? (holdEst.fromInventory ? ' 재고월수 기반 추정' : ' 기본값') : '') + ')', loanAmount > 0 ? toEok(String(interestCost)) : '—', '#bf360c')
       + (prepayFee > 0
@@ -8266,10 +8384,14 @@ function buildMarginSummaryHtml(a) {
     var holdMonths = parseInt(a.holdMonths) || 0;
     var deposit = calcDeposit(minBid, depositRate);
     var loanAmountManual = parseInt(a.loanAmountManual) || 0;
-    var loanAmount = getEffectiveLoanAmount(bidMethod, useBid, appraisal, loanAmountManual);
+    // ⚠️ 2026-08: calcMargin()과 동일하게 저장된 주소(a.addr) 기반 지역판정을 반영함
+    // (calcRegionAwareLoan 참고 - 수도권 비규제=매매사업자대출 금지→개인전환, 수도권
+    // 규제지역=LTV40%+매도금액 기준 가격구간별 한도).
+    var loanPlan = getEffectiveLoanPlan(bidMethod, a.addr || '', useBid, appraisal, loanAmountManual, useSell);
+    var loanAmount = loanPlan.amount;
     var cashNeeded = useBid > 0 ? Math.max(useBid - deposit - loanAmount, 0) : 0;
     var loanRateSaved = parseFloat(a.loanRate);
-    var loanRate = (loanRateSaved > 0) ? loanRateSaved : DEFAULT_LOAN_RATE[bidMethod === 'dealer' ? 'dealer' : 'individual'];
+    var loanRate = (loanRateSaved > 0) ? loanRateSaved : loanPlan.rate;
     // calcMargin()과 동일 - 보유기간 미입력(holdMonths=0) 시 대출이자만 3개월 기본가정 적용.
     var interestHoldMonths = holdMonths > 0 ? holdMonths : DEFAULT_INTEREST_HOLD_MONTHS;
     var interestCost = calcLoanInterest(loanAmount, loanRate, interestHoldMonths);
@@ -8312,7 +8434,7 @@ function buildMarginSummaryHtml(a) {
         + mItem('낙찰률', apprRate > 0 ? apprRate + '%' : '—', apprRate < 80 ? '#2e7d32' : apprRate < 90 ? '#ff7043' : '#e53935')
         + mItem('손익분기 매도가(세전)', totalCost > 0 ? toEok(String(totalCost)) : '—', '#1565c0')
         + mItem('보증금(' + (depositRate > 0 ? depositRate : 10) + '%)', deposit > 0 ? toEok(String(deposit)) : '—', '#6a1b9a')
-        + mItem('대출금액(' + (loanAmountManual > 0 ? '실제 대출금액 수동입력' : (bidMethod === 'dealer' ? '신탁대출90% 자동계산' : '개인담보대출 자동계산')) + ')', loanAmount > 0 ? toEok(String(loanAmount)) : (useBid > 0 ? '대출불가' : '—'), loanAmountManual > 0 ? '#1565c0' : '#00695c')
+        + mItem('대출금액(' + loanCategoryLabel(loanPlan.category) + ' · ' + loanTypeLabel(loanPlan.loanType) + ')', loanAmount > 0 ? toEok(String(loanAmount)) : (useBid > 0 ? '대출불가' : '—'), loanPlan.loanType === 'manual' ? '#1565c0' : '#00695c', loanPlan.note)
         + mItem('보증금제외 필요현금', useBid > 0 ? toEok(String(cashNeeded)) : '—', '#c62828')
         + mItem('대출이자(연' + loanRate.toFixed(1) + '%·' + interestHoldMonths + '개월' + (holdMonths <= 0 ? ' 기본값' : '') + ')', loanAmount > 0 ? toEok(String(interestCost)) : '—', '#bf360c')
         + (prepayFee > 0
@@ -9158,8 +9280,11 @@ function solveAuctionBid(estValue, marginOverride) {
     var cleaning = parseInt(document.getElementById('a-cleaning').value) || calcCleaningFee(c.pyung) || 0;
     var bidMethod = document.getElementById('a-bid-method').value;
     var appraisal = parseInt(document.getElementById('a-appraisal').value) || 0;
+    var addr = document.getElementById('a-addr').value.trim();
+    // ⚠️ 2026-08: 대출방법·금리도 calcMargin()과 동일하게 지역판정을 반영함. estValue(이 함수가
+    // 역산 기준으로 쓰는 매도금액)를 그대로 saleValueEstimate로 넘겨 규제지역 한도 산정에 씀.
     var loanRateInput = parseFloat(document.getElementById('a-loan-rate').value);
-    var loanRate = (loanRateInput > 0) ? loanRateInput : DEFAULT_LOAN_RATE[bidMethod === 'dealer' ? 'dealer' : 'individual'];
+    var loanRate = (loanRateInput > 0) ? loanRateInput : calcRegionAwareLoan(bidMethod, addr, estValue, appraisal, estValue).rate;
     var loanPrepayFeeRateInput = parseFloat(document.getElementById('a-loan-prepay-fee-rate').value);
     var loanPrepayFeeRate = (loanPrepayFeeRateInput > 0) ? loanPrepayFeeRateInput : DEFAULT_LOAN_PREPAY_FEE_RATE;
     var targetMargin = (marginOverride !== undefined && marginOverride !== null) ? marginOverride : (parseInt(document.getElementById('a-comp-target-margin').value) || 0);
@@ -9174,7 +9299,10 @@ function solveAuctionBid(estValue, marginOverride) {
         var registryFee = calcRegistryFee(mid);
         // 대출금액·이자는 후보 입찰가(mid)에 따라 매번 달라지므로(신탁대출=낙찰가×90% 등)
         // 이분탐색 안에서 매 후보마다 다시 계산함 - 세금과 마찬가지로 bid에 종속적임.
-        var loanAmount = calcLoanAmount(bidMethod, mid, appraisal);
+        // 지역판정(calcRegionAwareLoan)도 반영 - 규제지역 한도는 mid가 아니라 estValue(매도금액)
+        // 기준으로 고정 산정되므로 mid가 바뀌어도 한도 자체는 안 바뀌고, 그 한도 안에서 실제
+        // 대출금액만 mid 종속적으로 달라짐(신탁대출/개인담보대출/지방은 기존처럼 mid 기준).
+        var loanAmount = calcRegionAwareLoan(bidMethod, addr, mid, appraisal, estValue).amount;
         var interestCost = calcLoanInterest(loanAmount, loanRate, interestHoldMonths);
         var prepayFee = calcLoanPrepayFee(loanAmount, loanPrepayFeeRate);
         var vat = vatInfo.computable ? Math.round(mid * vatInfo.buildingRatio * TAX_CONFIG.vat.rate) : 0;
