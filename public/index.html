@@ -1068,7 +1068,7 @@ tr:hover td { background:#fffde7; }
             </div>
             <div class="modal-row">
                 <span class="modal-label">평형</span>
-                <input type="number" class="modal-input" id="a-pyung" placeholder="예) 24" oninput="autoCalcRepairSilent();autoCalcMovingSilent();autoCalcCleaningSilent();calcCompValuation();calcMargin();autoCalcAuctionJeonseAnalysis();">
+                <input type="number" class="modal-input" id="a-pyung" placeholder="예) 24" oninput="autoCalcRepairSilent();autoCalcMovingSilent();autoCalcCleaningSilent();autoCalcEvictionFeeSilent();calcCompValuation();calcMargin();autoCalcAuctionJeonseAnalysis();">
                 <span style="font-size:12px;color:#888;margin-left:4px;">평</span>
             </div>
             <div class="modal-row">
@@ -1213,11 +1213,11 @@ tr:hover td { background:#fffde7; }
             <div class="modal-section-title">💰 입찰가 / 낙찰가 (만원 단위)</div>
             <div class="modal-row">
                 <span class="modal-label">내 입찰가</span>
-                <input type="number" class="modal-input" id="a-my-bid" placeholder="0" oninput="autoCalcTaxSilent();calcMargin()">
+                <input type="number" class="modal-input" id="a-my-bid" placeholder="0" oninput="autoCalcTaxSilent();autoCalcRegistryFeeSilent();calcMargin()">
             </div>
             <div class="modal-row" id="actual-bid-row" style="display:none;">
                 <span class="modal-label">실제 낙찰가</span>
-                <input type="number" class="modal-input" id="a-actual-bid" placeholder="0" oninput="autoCalcTaxSilent();calcMargin()">
+                <input type="number" class="modal-input" id="a-actual-bid" placeholder="0" oninput="autoCalcTaxSilent();autoCalcRegistryFeeSilent();calcMargin()">
             </div>
         </div>
         <div class="modal-section">
@@ -5035,7 +5035,7 @@ function renderDongMarginStatsInModal() {
 function applyPredictedBid(bid) {
     if (!bid || bid <= 0) return;
     document.getElementById('a-my-bid').value = bid;
-    autoCalcTaxSilent(); calcMargin();
+    autoCalcTaxSilent(); autoCalcRegistryFeeSilent(); calcMargin();
 }
 function applyPredictedMargin(margin) {
     if (!margin) return;
@@ -5580,10 +5580,14 @@ function openAuctionModal(id) {
         }
     }
    renderCompListBox();
-    // 저장된 수리비/이사비용/청소비용 값이 없는(비어있는) 경우에만 자동계산 — 이미 직접 입력/수정해 둔 값은 덮어쓰지 않음
+    // 저장된 수리비/이사비용/청소비용/등기비용/명도비용 값이 없는(비어있는) 경우에만 자동계산
+    // — 이미 직접 입력/수정해 둔 값은 덮어쓰지 않음. 등기비용·명도비용은 예전엔 여기 없어서
+    // (2026-08 이전 저장분) "자동계산" 버튼을 직접 눌러야만 채워졌던 게 버그였음(2026-08 피드백).
     if (!document.getElementById('a-repair').value) autoCalcRepairSilent();
     if (!document.getElementById('a-moving').value) autoCalcMovingSilent();
     if (!document.getElementById('a-cleaning').value) autoCalcCleaningSilent();
+    if (!document.getElementById('a-registry-fee').value) autoCalcRegistryFeeSilent();
+    if (!document.getElementById('a-eviction-fee').value) autoCalcEvictionFeeSilent();
     // 대지권 면적이 비어있고 AI가 추출해둔 값(pendingAuctionDetail.siteRightsArea, "34.19㎡(10.34평)" 형식)이
     // 있으면 자동으로 채워줌 - 부가세 계산에 필요한 세 값(공시가격·대지권면적·개별공시지가) 중
     // 대지권면적은 VWorld로 조회가 안 되는 값이라 AI 추출이 유일한 자동화 경로임
@@ -6564,6 +6568,16 @@ function autoCalcRegistryFee() {
     document.getElementById('a-registry-fee').value = calcRegistryFee(bid);
     calcMargin();
 }
+// ⚠️ 2026-08 버그 수정: 등기비용은 그동안 "자동계산" 버튼을 직접 눌러야만 채워졌음(취득세/
+// 수리비/이사비용/청소비용/재산세 등은 이미 입찰가·평형 입력만으로 조용히 자동계산되는데
+// 등기비용·명도비용만 빠져 있었음). 그래서 하단 예상마진분석의 "총 부대비용"이 버튼을 안
+// 누르면 실제보다 작게 잡히는 문제가 있었음(2026-08 피드백). 다른 Silent 계산들과 동일한
+// 패턴으로 입찰가가 바뀔 때마다 조용히 재계산되도록 함.
+function autoCalcRegistryFeeSilent() {
+    var bid = parseInt(document.getElementById('a-actual-bid').value) || parseInt(document.getElementById('a-my-bid').value) || 0;
+    if (!bid) return;
+    document.getElementById('a-registry-fee').value = calcRegistryFee(bid);
+}
 /* ════════════════════════════════════
    보유세(재산세·종합부동산세) - 2026-07 국세청/지방세법 기준
    ⚠️ 둘 다 매년 6월 1일 현재 소유자에게 그 해분 전액이 부과됨(보유월수 비례 아님) -
@@ -6678,6 +6692,13 @@ function autoCalcEvictionFee() {
     if (!pyung) { alert('평형을 먼저 입력해 주세요.'); return; }
     document.getElementById('a-eviction-fee').value = calcEvictionFee(pyung);
     calcMargin();
+}
+// ⚠️ 2026-08 버그 수정: 등기비용과 마찬가지로 명도비용도 "자동계산" 버튼을 눌러야만
+// 채워졌음. 평형이 이미 입력돼 있으면(AI 자동추출 포함) 조용히 계산되도록 함.
+function autoCalcEvictionFeeSilent() {
+    var pyung = parseFloat(document.getElementById('a-pyung').value) || 0;
+    if (!pyung) return;
+    document.getElementById('a-eviction-fee').value = calcEvictionFee(pyung);
 }
 /* ════════════════════════════════════
    이사비용 / 청소비용
@@ -8799,13 +8820,15 @@ function renderCompPickList() {
     var html = '';
     inRadius.forEach(function(x) {
         var a = x.a, cnt = (a.comparables || []).length;
-        var subParts = [];
-        if (a.caseNo) subParts.push(a.caseNo);
-        subParts.push(Math.round(x.dist) + 'm');
-        subParts.push('비교물건 ' + cnt + '/10');
+        // ⚠️ 2026-08: 사건번호를 거리·비교물건수와 함께 회색 보조줄에만 넣었더니 눈에
+        // 잘 안 띈다는 피드백(2026-08)이 있어, 어떤 경매 사건인지 가장 먼저 판단하는
+        // 정보인 사건번호를 제목줄로 승격함. 사건번호를 아직 안 채운 물건은 "(사건번호
+        // 미입력)"이라고 명시해서, 안 보이는 게 표시 버그가 아니라 그 물건 등록 시
+        // 사건번호를 안 넣었다는 뜻임을 바로 알 수 있게 함.
+        var name = (a.name && a.name.trim()) || a.addrLabel || a.addr || '(이름없음)';
         html += '<div class="auction-list-item" onclick="confirmAddComparable(\'' + a.id + '\')">'
-            + '<div class="auction-list-name">' + ((a.name && a.name.trim()) || a.addrLabel || a.addr || '(이름없음)') + '</div>'
-            + '<div class="auction-list-sub">' + subParts.join(' · ') + '</div>'
+            + '<div class="auction-list-name">' + (a.caseNo || '(사건번호 미입력)') + '</div>'
+            + '<div class="auction-list-sub">' + name + ' · ' + Math.round(x.dist) + 'm · 비교물건 ' + cnt + '/10</div>'
             + '</div>';
     });
     var note = [];
@@ -9313,7 +9336,7 @@ function applyEstRow5() {
     // 반영해, 하단 예상마진분석이 항상 같은 기준으로 채워지도록 함.
     var targetEl = document.getElementById('a-target');
     if (targetEl) targetEl.value = res.saleValue;
-    autoCalcTaxSilent(); calcMargin();
+    autoCalcTaxSilent(); autoCalcRegistryFeeSilent(); calcMargin();
 }
 // AI 투자 브리핑 - 이미 계산된 ①~⑤ 값과 pendingAuctionDetail(AI 추출/저장된 물건의 원본
 // 상세데이터 - 임차인현황·등기스토리·특수조건 등)을 모아서 서버로 보내면, Claude가 이걸
@@ -10531,7 +10554,7 @@ async function parseAuctionPaste(restoreDetail) {
         }
         // 지오코딩 대기(await) 중에도 더 최신 요청이 시작될 수 있어 마지막으로 한 번 더 확인
         if (mySeq !== parseAuctionRequestSeq) return;
-        autoCalcRepairSilent(); autoCalcMovingSilent(); autoCalcCleaningSilent(); calcCompValuation(); calcMargin(); loadAuctionBuildingInfo(); autoCalcAuctionJeonseAnalysis(); renderDongMarginStatsInModal();
+        autoCalcRepairSilent(); autoCalcMovingSilent(); autoCalcCleaningSilent(); autoCalcRegistryFeeSilent(); autoCalcEvictionFeeSilent(); calcCompValuation(); calcMargin(); loadAuctionBuildingInfo(); autoCalcAuctionJeonseAnalysis(); renderDongMarginStatsInModal();
         renderAiSummaryBox();
         clearAuctionImages();
         if (warnings.length) {
