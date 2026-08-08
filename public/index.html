@@ -4490,14 +4490,6 @@ function toggleCasePreviewItem(idx) {
     pendingCaseListExtraction[idx]._selected = !pendingCaseListExtraction[idx]._selected;
     renderCaseListPreview();
 }
-// 응찰자수(경쟁강도) 수동입력 - 체크박스와 달리 다시 그릴 필요가 없어(입력값이 그대로
-// 남아있음) renderCaseListPreview()를 다시 호출하지 않음(불필요한 리렌더로 포커스가 날아가는
-// 것을 피함).
-function setPendingBidderCount(idx, value) {
-    if (!pendingCaseListExtraction[idx]) return;
-    var n = parseInt(value, 10);
-    pendingCaseListExtraction[idx].bidderCount = (n > 0) ? n : null;
-}
 function renderCaseListPreview() {
     var box = document.getElementById('bc-preview-box');
     if (!pendingCaseListExtraction.length) { box.innerHTML = ''; return; }
@@ -4515,16 +4507,7 @@ function renderCaseListPreview() {
             + (c.appraisalPrice ? '감정가 ' + toEok(String(Math.round(c.appraisalPrice / 10000))) : '')
             + (c.finalBidPrice ? ' · 낙찰가 ' + toEok(String(Math.round(c.finalBidPrice / 10000))) : (c.minBidPrice ? ' · 최저가 ' + toEok(String(Math.round(c.minBidPrice / 10000))) : ''))
             + (rate ? ' · ' + rate + '%' : '')
-            + '</div></div>'
-            // 응찰자수(경쟁강도) - "검색결과 목록" 텍스트 자체엔 이 값이 없어서(사이트마다 노출
-            // 위치가 다르고, 이 앱이 지원하는 목록 형식엔 아예 없음) 자동 추출은 안 하고,
-            // 알고 있으면(법원 매각통계 등에서 따로 확인한 경우) 직접 입력하도록 함. 아래
-            // calcDongBidRateStatsByCompetition 참고 - 낙찰확률 모델이 아니라 "경쟁이 심했던
-            // 사례는 보통 어느 정도 가율에 낙찰됐는지" 사후 참고 통계용임.
-            + '<input type="number" min="1" placeholder="응찰수" title="응찰자수(알고 있으면 입력 - 자동 추출 안 됨)" '
-            + 'value="' + (c.bidderCount || '') + '" style="width:46px;font-size:10px;padding:2px 3px;margin-top:3px;" '
-            + 'onchange="setPendingBidderCount(' + idx + ', this.value)">'
-            + '</div>';
+            + '</div></div></div>';
     });
     html += '<div style="margin-top:6px;text-align:right;">'
         + '<button type="button" class="modal-btn btn-purple" style="font-size:11px;" onclick="saveSelectedCases()">선택 항목 저장</button>'
@@ -4564,7 +4547,6 @@ async function saveSelectedCases() {
             appraisalPrice: c.appraisalPrice || null, minBidPrice: c.minBidPrice || null,
             finalBidPrice: c.finalBidPrice || null, bidRate: c.bidRate || null, minBidRate: c.minBidRate || null,
             status: c.status || null, saleDate: c.saleDate || null,
-            bidderCount: c.bidderCount || null, // 응찰자수(경쟁강도, 수동입력) - calcDongBidRateStatsByCompetition 참고
             importedAt: Date.now(),
         };
         try {
@@ -4952,32 +4934,6 @@ function calcDongBidRateStats(dong) {
         lowSample: rates.length < MIN_BIDCASE_COUNT_FOR_RATE,
     };
 }
-/* 법정동(dong) 단위 응찰자수(경쟁강도, bidderCount) 구간별 낙찰가율 분포 - 2026-08 추가.
-   ⚠️ 이건 "낙찰확률" 모델이 아님: 법원 경매는 패찰(떨어진) 입찰자의 금액을 공개하지 않아서
-   "이 가격을 쓰면 몇 % 확률로 낙찰된다"는 계산 자체가 데이터 구조상 불가능함(공개되는 건
-   낙찰자 1명의 최종가뿐). 여기서 보여주는 건 "이미 낙찰된 사례들 중 응찰자가 많았던 건은
-   보통 어느 정도 가율에 낙찰됐는지"를 사후에 묶어 보여주는 참고 통계일 뿐임 - 응찰자수 자체도
-   목록 텍스트에 없는 값이라(사이트마다 표시 위치가 다름) 사용자가 직접 입력한 값만 씀
-   (renderCaseListPreview/renderBidCaseList의 "응찰수" 입력칸 참고). */
-var BID_COMPETITION_BUCKETS = [
-    { label: '응찰 1~2명', min: 1, max: 2 },
-    { label: '응찰 3~5명', min: 3, max: 5 },
-    { label: '응찰 6명+', min: 6, max: Infinity },
-];
-function calcDongBidRateStatsByCompetition(dong) {
-    if (!dong) return null;
-    var items = bidCaseList.filter(function(c) {
-        return c.dong === dong && c.appraisalPrice && c.finalBidPrice && c.bidderCount > 0;
-    });
-    if (!items.length) return null;
-    var buckets = BID_COMPETITION_BUCKETS.map(function(b) {
-        var bucketItems = items.filter(function(c) { return c.bidderCount >= b.min && c.bidderCount <= b.max; });
-        if (!bucketItems.length) return null;
-        var rates = bucketItems.map(function(c) { return Math.round(c.finalBidPrice / c.appraisalPrice * 1000) / 10; });
-        return { label: b.label, count: rates.length, median: median(rates) };
-    }).filter(function(b) { return b !== null; });
-    return buckets.length ? { totalCount: items.length, buckets: buckets } : null;
-}
 /* 법정동(dong) 단위 "매입가율" 통계 - 낙찰가÷감정가(낙찰가율)는 감정가가 경매개시 전
    시점에 매겨진 스테일한 값이라, 그 이후 시세가 움직였으면 "얼마나 잘 샀는지"를 제대로
    못 보여줌(2026-08 피드백). 매도사례까지 매칭된 낙찰사례는 낙찰가÷실제매도가(그 물건이
@@ -5298,17 +5254,6 @@ function renderBidCaseList() {
         } else {
             statsHtml += '<div style="padding:4px 14px;font-size:10.5px;color:#aaa;">낙찰 완료된 건이 없어 낙찰가율 통계를 낼 수 없습니다.</div>';
         }
-        // 응찰자수(경쟁강도) 구간별 낙찰가율 - 응찰수를 입력해둔 사례가 하나도 없으면 조용히 생략함
-        var compStats = calcDongBidRateStatsByCompetition(dong);
-        if (compStats) {
-            statsHtml += '<div style="padding:0 14px 6px;">'
-                + '<div style="font-size:10px;color:#999;margin-bottom:2px;">응찰자수 구간별 낙찰가율(감정가 대비, 중간값) - 응찰수 입력된 ' + compStats.totalCount + '건 · 참고용(낙찰확률 아님)</div>'
-                + '<div class="bc-stat-grid">'
-                + compStats.buckets.map(function(b) {
-                    return '<div class="bc-stat-item"><div class="bc-stat-label">' + b.label + ' (' + b.count + '건)</div><div class="bc-stat-value">' + b.median.toFixed(1) + '%</div></div>';
-                }).join('')
-                + '</div></div>';
-        }
         if (margins.length) {
             statsHtml += '<div style="padding:0 14px 6px;">'
                 + '<div style="font-size:10px;color:#999;margin-bottom:2px;">추정 세전마진(만원, 세금·대출이자·수리비 제외) - 중간값 / 최소 / 최대</div>'
@@ -5345,30 +5290,11 @@ function renderBidCaseList() {
                 + '</div>'
                 + matchLine
                 + (c.specialConditions ? '<div style="color:#e65100;font-size:10.5px;margin-top:2px;">⚠️ ' + c.specialConditions + '</div>' : '')
-                // 응찰자수(경쟁강도) - 목록 텍스트 자체엔 없는 값이라(위 calcDongBidRateStatsByCompetition
-                // 주석 참고) 저장 후에도 언제든 직접 입력/수정할 수 있게 함
-                + '<div style="margin-top:3px;font-size:10px;color:#999;" onclick="event.stopPropagation();">응찰자수 '
-                + '<input type="number" min="1" value="' + (c.bidderCount || '') + '" placeholder="-" '
-                + 'style="width:36px;font-size:10px;padding:1px 3px;" '
-                + 'onclick="event.stopPropagation();" onchange="updateBidCaseBidderCount(\'' + c.id + '\', this.value)"></div>'
                 + '</div>';
         });
     });
     statsBox.innerHTML = '';
     listBox.innerHTML = statsHtml;
-}
-// 이미 저장된 낙찰사례의 응찰자수를 나중에라도 채워/수정할 수 있게 함(saveBidCaseAPI가 같은
-// id로 upsert하므로 그대로 재저장하면 됨). 저장 성공 시 목록을 다시 그려서 경쟁강도별
-// 낙찰가율 통계(calcDongBidRateStatsByCompetition)에도 바로 반영되게 함.
-async function updateBidCaseBidderCount(id, value) {
-    var n = parseInt(value, 10);
-    var c = bidCaseList.find(function(x) { return x.id === id; });
-    if (!c) return;
-    c.bidderCount = (n > 0) ? n : null;
-    try {
-        await saveBidCaseAPI(c);
-        renderBidCaseList();
-    } catch (e) { console.error('응찰자수 저장 실패:', e.message); }
 }
 // name(단지명, 없으면 이미 "동 번지" 조합 문자열)을 우선으로, name이 둘 다 없을 때만 dong으로 느슨하게 매칭
 // (matchesAuctionKey와 동일한 매칭 철학 - 건물 식별에 쓸 수 있는 유일한 공통 필드가 name/dong뿐이라서)
