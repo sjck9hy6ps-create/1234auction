@@ -10765,10 +10765,34 @@ function buildRightsAnalysisHtml(detail, sectionLabel, row) {
     ].filter(function(f) { return sr[f.key] === true; });
     var hasZoning = g(detail.landCategory) || g(detail.zoningType) || detail.farmlandCertRequired !== undefined && detail.farmlandCertRequired !== null;
     var hasExtras = detail.isCoOwnership === true || detail.hasWaiverDocument === true || (detail.relatedCases && detail.relatedCases.length);
-    if (!specialFlags.length && !hasZoning && !hasExtras && !g(detail.minorTenantBaseDate)) return '';
+    // ── 세금(조세채권) 인수위험 - 대항력 있는 임차인(hasStanding===true)이 있는 물건에서
+    //    문건/송달내역에 "교부권자"(세무서·지자체) 송달 기록이 AI에 의해 감지된 경우(taxClaimDelivery)
+    //    자동 경고 배너를 띄움. taxClaimDelivery는 false/null이어도 원문에 해당 섹션 자체가 없어서
+    //    "확인 못함"인 경우가 많아 "위험 없음"으로 오인되면 안 되므로, 대항력 있는 임차인이 있으면
+    //    taxClaimDelivery 값과 무관하게 최소한 안내는 항상 띄운다(⚠️ 사용자 요청: 반드시 체크사항으로).
+    var standingTenants = (detail.tenantOccupants || []).filter(function(t) { return t && t.hasStanding === true; });
+    var hasTaxRisk = standingTenants.length > 0 || detail.taxClaimDelivery === true;
+    if (!specialFlags.length && !hasZoning && !hasExtras && !g(detail.minorTenantBaseDate) && !hasTaxRisk) return '';
 
     var html = '<div style="margin-top:10px;border:1px solid #ffcdd2;border-radius:8px;padding:8px 10px;background:#fff8f8;">';
     html += '<div style="font-size:11px;font-weight:bold;color:#c62828;">⚖️ 권리분석 체크 (AI 추출 · 입찰 전 등기부 재열람 필수)</div>';
+
+    if (detail.taxClaimDelivery === true) {
+        html += '<div style="margin-top:6px;background:#fff3e0;border:1.5px solid #e65100;border-radius:6px;padding:7px 9px;">'
+            + '<div style="font-size:11.5px;font-weight:bold;color:#e65100;">🚨 세금(조세채권) 인수위험 감지</div>'
+            + '<div style="font-size:10.5px;color:#795548;margin-top:2px;line-height:1.5;">문건/송달내역에 교부권자'
+            + (g(detail.taxClaimant) ? '(' + g(detail.taxClaimant) + ')' : '') + ' 송달 기록이 있어 체납 세금이 있을 가능성이 높습니다. '
+            + '정확한 금액은 알 수 없으니 법원 경매계 또는 임차인에게 직접 확인하세요.'
+            + (standingTenants.length ? ' 대항력 있는 임차인이 ' + standingTenants.length + '명 있어, 세금의 법정기일이 임차인 확정일자(확정일자가 없다면 전입일)보다 빠르면 배당에서 세금이 우선해 임차인 미배당액이 낙찰자에게 인수될 수 있습니다.' : '')
+            + '</div>'
+            + (g(detail.taxClaimNote) ? '<div style="font-size:10px;color:#a1887f;margin-top:3px;">원문: ' + g(detail.taxClaimNote) + '</div>' : '')
+            + '</div>';
+    } else if (standingTenants.length) {
+        html += '<div style="margin-top:6px;background:#fafafa;border:1px dashed #bbb;border-radius:6px;padding:6px 8px;">'
+            + '<div style="font-size:10.5px;color:#777;line-height:1.5;">💡 대항력 있는 임차인이 ' + standingTenants.length + '명 있는 물건입니다. 문건/송달내역에 "교부권자"(세무서·지자체) 표기가 있는지 직접 확인하세요 — '
+            + 'AI가 원문에서 해당 섹션을 찾지 못했을 수 있어 위 감지결과는 참고용일 뿐 "위험 없음"을 의미하지 않습니다.</div>'
+            + '</div>';
+    }
 
     if (g(detail.minorTenantBaseDate)) {
         html += '<div style="font-size:11px;color:#555;margin-top:2px;"><b>소액기준일:</b> ' + g(detail.minorTenantBaseDate) + '</div>';
@@ -10868,6 +10892,8 @@ var CHECKLIST_DEF = [
             '배당요구를 했더라도 보증금을 전액 배당받는지 확인했다 — 일부만 배당되면 잔액은 인수.',
             '소액임차인 최우선변제 대상인지 확인했다(담보권 설정일 기준 그 해 공고금액 기준표 대조).',
             '상가 물건은 환산보증금(보증금 + 월세×100) 기준 「상가임대차보호법」 적용 범위를 확인했다.',
+            '문건/송달내역에서 "교부권자"(세무서·지자체) 송달 기록이 있는지 확인했다 — 있으면 체납 세금 존재 가능성이 높다는 신호다(정확한 금액은 알 수 없음).',
+            '교부권자가 확인되면, 세금의 법정기일이 임차인의 확정일자보다 빠른지 법원 경매계 또는 임차인과 직접 확인했다 — 단, 확정일자를 등록하지 않은 임차인이 실제로 많으므로, 확정일자가 없다면 비교 자체가 불가능해 세금(및 다른 채권자)에 밀릴 위험이 더 크다고 보고 전입일(대항력) 하나만으로 최악의 경우(인수)를 기본 가정으로 잡았다.',
         ]},
         { sub: '가등기', items: [
             '담보가등기인지 순위보전가등기인지 구분했다(배당요구 여부로 유추).',
@@ -10889,12 +10915,20 @@ var CHECKLIST_DEF = [
     ]},
     { title: '4. 임차인 권리분석 — 대항력 있는 선순위 임차인만 집중 검토',
       note: '대항력 없는 임차인이거나 후순위라면 배당 분석 자체가 불필요합니다.',
+      warn: { title: '세금(조세채권) 인수위험 — 등기부로는 알 수 없음', lines: [
+        '체납세금은 압류등기가 되어있지 않으면 등기부등본에 나타나지 않는다 — 문건/송달내역의 "교부권자" 표기가 사실상 유일한 1차 확인 수단이다.',
+        '그 부동산 자체에 부과된 당해세(재산세·종부세 등)는 법정기일과 무관하게 원칙적으로 최우선순위다.',
+        '법 조문상 세금과 순위를 다투는 기준은 임차인의 확정일자지만, 확정일자를 등록하지 않은 임차인이 실제로 많다 — 확정일자가 없으면 비교 자체가 안 되어 오히려 세금(및 다른 채권자)에 밀릴 위험이 더 크므로, 전입일(대항력) 하나만으로도 최악가정(인수)을 기본값으로 잡는 게 안전하다.',
+        '세금이 배당에서 먼저 가져가 임차인 미배당액이 생기면, 대항력 있는 임차인은 그 미배당액을 낙찰자에게 인수시킬 수 있다.',
+        '정확한 세액을 확인할 방법이 없다면(임차인 비협조 등) 인수액을 특정할 수 없는 고위험 물건으로 보고 입찰 보류를 검토한다.',
+      ]},
       items: [
         '임차인의 전입신고일(익일 0시 효력)과 말소기준권리일을 비교해 대항력 유무를 판정했다.',
         '대항력 있는 임차인이 배당요구를 했는지, 배당요구종기일을 지켰는지 확인했다.',
         '배당요구를 했다면 예상 배당액과 보증금 차액(인수 예상액)을 계산했다.',
         '임차인이 여러 명인 경우 순위별로 각각 대항력·배당액을 분리 계산했다.',
         '상가는 계약갱신요구권·권리금 회수기회 이슈가 남아있는지 확인했다.',
+        '위 세금 인수위험(교부권자 확인·법정기일 대조)까지 함께 확인했다.',
     ]},
     { title: '5. 가짜(허위) 임차인 의심 신호 체크',
       items: [
@@ -11097,6 +11131,7 @@ var SITE_VISIT_CHECKLIST = [
         '전입세대열람·주민등록등본상 세대원 전원의 전입일을 확인해 대항력 판단일(말소기준권리일)과 다시 대조했다.',
         '임차인이 소액임차인 최우선변제 대상인지(보증금 액수·전입일 기준) 확인했다 — 대상이면 인수부담이 줄어들 수 있다.',
         '점유자가 실제 등기부·매각물건명세서상 임차인과 동일인인지(위장 임차인 여부) 확인했다.',
+        '임차인에게 세금(국세·지방세) 체납 여부와 대략적인 금액을 직접 물어보고, 법원 경매계에도 문건/송달내역상 교부권자 여부를 재확인했다 — 확정일자가 없는 임차인이라면 비교 기준 자체가 없어 더 위험하므로, 전입일(대항력) 기준만으로 최악가정을 넉넉히 잡았다.',
         '인수보증금 반영 시 목표마진이 여전히 확보되는지 "인수보증금" 항목에 최악가정 금액을 넣고 마진분석을 다시 확인했다.',
     ]},
 ];
