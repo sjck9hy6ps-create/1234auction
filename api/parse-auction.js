@@ -864,6 +864,10 @@ const PROMPT_A_RULES = `
 - officialPriceCurrent는 그 중 가장 최근 연도/월 기준 공시가격 한 건만 "83,700,000원 (2025.01 기준)" 형식으로 뽑으세요.
 - tenantOccupants(임차인 현황)는 표/목록에 나온 임차인을 한 명씩 객체로 나눠서 모두 담으세요.
   대항력 "있음"이면 hasStanding: true, "없음"이면 false, 언급이 없으면 null.
+  ⚠️ 점유자 이름이 위에서 뽑은 owner(소유자) 또는 debtor(채무자) 이름과 같으면(동일인으로 보이면),
+  자기 소유 부동산에는 임대차가 성립하지 않으므로 그 사람은 진짜 임차인이 아닙니다 - hasStanding을
+  true로 채우지 말고 반드시 false로 하고, note에 "소유자/채무자 본인으로 추정 - 임차인 아님"이라고
+  표시하세요. 이름이 다르면 평소대로 대항력 여부를 판단하세요.
   전입/확정/배당요구 날짜는 각각 moveInDate/fixedDate/distributionDate에, "임차권등기자", "경매신청인" 같은
   표시는 note에 담으세요.
   · distributionRequested(배당요구 여부)는 "배당:있음"/"배당요구일"처럼 날짜나 "있음"이 명시되면 true,
