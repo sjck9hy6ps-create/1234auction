@@ -6913,16 +6913,18 @@ function calcRegionAwareLoan(bidMethod, addr, bid, appraisal, saleValueEstimate)
     if (category === 'metro_regulated') {
         priceBasis = (saleValueEstimate && saleValueEstimate > 0) ? saleValueEstimate : ((appraisal && appraisal > 0) ? appraisal : bid);
         ltv = METRO_LOAN_LTV.regulated;
-        note = '수도권 규제지역: LTV 40%(생애최초 제외)와 매도금액 기준 가격구간별 한도(15억↓6억·25억↓4억·25억↑2억) 중 낮은 값 적용. 매매사업자대출은 전면금지라 개인 가계대출만 가능하며 2년 실거주의무 등이 붙어 사실상 진입이 어려운 참고용 추정치입니다.';
+        note = '수도권 규제지역: LTV 40%(생애최초 제외)·매도금액 기준 가격구간별 한도(15억↓6억·25억↓4억·25억↑2억)·개인담보대출 기본한도(낙찰가80%·감정가70%) 중 가장 낮은 값 적용. 매매사업자대출은 전면금지라 개인 가계대출만 가능하며 2년 실거주의무 등이 붙어 사실상 진입이 어려운 참고용 추정치입니다.';
     } else {
         priceBasis = (appraisal && appraisal > 0) ? appraisal : bid;
         ltv = METRO_LOAN_LTV.unregulated;
-        note = '수도권 비규제지역: 매매사업자(신탁)대출이 금지돼 개인 가계대출로 자동 전환되었고, LTV 70%와 가격구간별 한도(15억↓6억·25억↓4억·25억↑2억) 중 낮은 값을 적용했습니다.';
+        note = '수도권 비규제지역: 매매사업자(신탁)대출이 금지돼 개인 가계대출로 자동 전환되었고, LTV 70%·가격구간별 한도(15억↓6억·25억↓4억·25억↑2억)·개인담보대출 기본한도(낙찰가80%·감정가70%) 중 가장 낮은 값을 적용했습니다.';
     }
     var ltvAmount = Math.round(priceBasis * ltv);
     var cap = calcMetroAbsoluteLoanCap(priceBasis);
+    // 개인담보대출 구조적 상한: 낙찰가 80% / 감정가 70% (신탁대출90%는 매매사업자 전용이라 여기 미적용)
+    var individualStructCap = Math.min(bid * 0.8, (appraisal && appraisal > 0) ? appraisal * 0.7 : Infinity);
     return {
-        amount: Math.max(0, Math.min(ltvAmount, cap)),
+        amount: Math.max(0, Math.min(ltvAmount, cap, individualStructCap)),
         rate: DEFAULT_LOAN_RATE.individual,
         loanType: category === 'metro_regulated' ? 'individual_regulated' : 'individual_forced',
         category: category, forcedIndividual: forced, note: note
