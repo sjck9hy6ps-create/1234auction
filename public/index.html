@@ -8779,17 +8779,40 @@ function addSelectedAiComps() {
     closeAiCompModal();
     if (added > 0) alert(added + '개 비교물건이 추가되었습니다. (저장을 눌러야 최종 반영됩니다)');
 }
+// ⚠️ 2026-08 수정: 원래 auctionList 전체(모든 지역의 경매물건)를 그대로 나열해서, 등록된
+// 경매물건이 많아지면 지금 클릭한 마커와 아무 관련 없는 먼 지역 물건까지 다 뒤져야 하는
+// 문제가 있었음(2026-08 피드백). pendingCompMarkerData(클릭한 매물의 좌표)를 기준으로
+// 반경 1km 이내 경매물건만 거리순으로 보여주고, 어떤 사건인지 바로 알 수 있게 사건번호도
+// 함께 표기함.
+var COMP_PICK_RADIUS_M = 1000;
 function renderCompPickList() {
     var body = document.getElementById('comp-pick-body');
+    var pm = pendingCompMarkerData;
+    var withDist = auctionList.map(function(a) {
+        var dist = (pm && pm.lat && pm.lon && a.lat && a.lon) ? getDistance(pm.lat, pm.lon, a.lat, a.lon) : null;
+        return { a: a, dist: dist };
+    });
+    var inRadius = withDist.filter(function(x) { return x.dist !== null && x.dist <= COMP_PICK_RADIUS_M; });
+    var noCoord = withDist.filter(function(x) { return x.dist === null; }).length;
+    var outRadius = withDist.length - inRadius.length - noCoord;
+    inRadius.sort(function(x, y) { return x.dist - y.dist; });
     var html = '';
-    auctionList.slice().reverse().forEach(function(a) {
-        var cnt = (a.comparables || []).length;
+    inRadius.forEach(function(x) {
+        var a = x.a, cnt = (a.comparables || []).length;
+        var subParts = [];
+        if (a.caseNo) subParts.push(a.caseNo);
+        subParts.push(Math.round(x.dist) + 'm');
+        subParts.push('비교물건 ' + cnt + '/10');
         html += '<div class="auction-list-item" onclick="confirmAddComparable(\'' + a.id + '\')">'
             + '<div class="auction-list-name">' + ((a.name && a.name.trim()) || a.addrLabel || a.addr || '(이름없음)') + '</div>'
-            + '<div class="auction-list-sub">비교물건 ' + cnt + '/10</div>'
+            + '<div class="auction-list-sub">' + subParts.join(' · ') + '</div>'
             + '</div>';
     });
-    body.innerHTML = html || '<div style="padding:20px;text-align:center;color:#aaa;font-size:12px;">등록된 경매물건이 없습니다</div>';
+    var note = [];
+    if (outRadius > 0) note.push('반경 1km 밖 ' + outRadius + '건 제외됨');
+    if (noCoord > 0) note.push('위치 미확인 ' + noCoord + '건 제외됨(경매물건 상세에서 주소 재검색 필요)');
+    if (note.length) html += '<div style="font-size:10px;color:#999;padding:6px 10px;">📍 ' + note.join(' · ') + '</div>';
+    body.innerHTML = html || ('<div style="padding:20px;text-align:center;color:#aaa;font-size:12px;">반경 1km 이내에 등록된 경매물건이 없습니다' + (note.length ? ' (' + note.join(', ') + ')' : '') + '</div>');
 }
 async function confirmAddComparable(auctionId) {
     if (!pendingCompMarkerData) return;
