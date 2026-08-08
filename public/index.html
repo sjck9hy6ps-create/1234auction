@@ -7439,12 +7439,16 @@ function showPlainInfo(b64) {
 function suggestAssumedDeposit() {
     var detail = pendingAuctionDetail;
     var tenants = (detail && detail.tenantOccupants) ? detail.tenantOccupants : [];
-    var standing = tenants.filter(function(t) { return t && typeof t === 'object' && t.hasStanding === true; });
+    var split = splitGenuineTenants(tenants, detail && detail.owner, detail && detail.debtor);
+    var standing = split.genuine.filter(function(t) { return t && typeof t === 'object' && t.hasStanding === true; });
     if (!standing.length) {
-        alert('AI가 추출한 임차인현황 중 "대항력 있음"으로 표시된 임차인이 없습니다.\n'
+        var selfNote = split.selfOccupied.length
+            ? ('\n\n(참고: "' + split.selfOccupied.map(function(t) { return t.name; }).join(', ') + '" 점유자는 이름이 소유자/채무자와 같아 자가점유로 보고 제외했습니다.)')
+            : '';
+        alert('AI가 추출한 임차인현황 중 "대항력 있음"으로 표시된 (자가점유가 아닌) 임차인이 없습니다.\n'
             + 'AI 추출이 안 되어 있거나(경매정보 붙여넣기 후 자동채우기 먼저 실행), 이 물건에\n'
             + '대항력 있는 선순위 임차인이 없는 경우일 수 있습니다. 경매정보지의 임차인현황을\n'
-            + '직접 확인 후 필요하면 이 항목에 수동으로 입력하세요.');
+            + '직접 확인 후 필요하면 이 항목에 수동으로 입력하세요.' + selfNote);
         return;
     }
     var totalWon = 0;
@@ -7486,6 +7490,24 @@ function normalizeOwnerNameForCompare(str) {
     if (!str) return '';
     return String(str).replace(/외\s*\d*\s*인?/g, '').replace(/\s+/g, '').trim();
 }
+/* AI가 뽑은 tenantOccupants 중 실제로는 소유자·채무자 본인(자가점유)일 가능성이 높은 항목을
+   걸러내는 공용 함수. 자기 소유 부동산에는 임대차가 성립하지 않으므로, 점유자 이름이 소유자
+   또는 채무자 이름과 (정규화 후) 일치하면 "임차인"이 아니라 "소유자 본인 점유"로 취급한다.
+   세금 인수위험 배너·인수보증금 자동채움·명도난이도 진단이 모두 같은 원본 tenantOccupants를
+   쓰기 때문에 판단 로직을 한 곳에 모아 재사용함 (2026-08 추가 - 채무자=소유자인 물건에서 그
+   본인을 "대항력 있는 임차인"으로 잘못 집계해 세금 인수위험 경고가 오발생하는 문제 수정). */
+function splitGenuineTenants(tenants, owner, debtor) {
+    var ownerNorm = normalizeOwnerNameForCompare(owner);
+    var debtorNorm = normalizeOwnerNameForCompare(debtor);
+    var genuine = [], selfOccupied = [];
+    (tenants || []).forEach(function(t) {
+        if (!t || typeof t !== 'object' || !t.name) { genuine.push(t); return; }
+        var nameNorm = normalizeOwnerNameForCompare(t.name);
+        var isSelf = !!nameNorm && ((!!ownerNorm && nameNorm === ownerNorm) || (!!debtorNorm && nameNorm === debtorNorm));
+        if (isSelf) selfOccupied.push(t); else genuine.push(t);
+    });
+    return { genuine: genuine, selfOccupied: selfOccupied };
+}
 /* 명도난이도 판단 - 순수 계산 함수(DOM 변경 없음). 미납관리비(a-unpaid-mgmt-fee)와
    AI가 추출한 채무자(debtor)/소유자(owner)/임차인현황(tenantOccupants)을 근거로,
    "소유자 본인이 거주 중인데 관리비를 오래 미납하고 있다"는 정황이면 명도소송 가능성을
@@ -7495,10 +7517,12 @@ function normalizeOwnerNameForCompare(str) {
 function calcEvictionRiskInfo() {
     var detail = pendingAuctionDetail;
     var unpaidManwon = parseInt(document.getElementById('a-unpaid-mgmt-fee').value) || 0;
-    var tenants = (detail && detail.tenantOccupants) ? detail.tenantOccupants : [];
-    var hasTenant = tenants.length > 0;
     var debtor = detail && detail.debtor;
     var owner = detail && detail.owner;
+    var tenants = (detail && detail.tenantOccupants) ? detail.tenantOccupants : [];
+    // ⚠️ 점유자 이름이 소유자/채무자와 같으면(자가점유) 임차인이 아니므로 hasTenant 판정에서 제외한다
+    // (splitGenuineTenants - 채무자=소유자 물건에서 본인을 임차인으로 잘못 집계하던 버그 수정).
+    var hasTenant = splitGenuineTenants(tenants, owner, debtor).genuine.length > 0;
     var namesKnown = !!(debtor && owner);
     var ownerOccupied = namesKnown && !hasTenant
         && normalizeOwnerNameForCompare(debtor) === normalizeOwnerNameForCompare(owner);
@@ -10770,7 +10794,12 @@ function buildRightsAnalysisHtml(detail, sectionLabel, row) {
     //    자동 경고 배너를 띄움. taxClaimDelivery는 false/null이어도 원문에 해당 섹션 자체가 없어서
     //    "확인 못함"인 경우가 많아 "위험 없음"으로 오인되면 안 되므로, 대항력 있는 임차인이 있으면
     //    taxClaimDelivery 값과 무관하게 최소한 안내는 항상 띄운다(⚠️ 사용자 요청: 반드시 체크사항으로).
-    var standingTenants = (detail.tenantOccupants || []).filter(function(t) { return t && t.hasStanding === true; });
+    // ⚠️ 2026-08: 채무자=소유자인 물건에서 점유자 이름이 소유자/채무자와 같으면(자가점유) 애초에
+    //    임차인이 아니므로(자기 소유 부동산에는 임대차가 성립하지 않음) splitGenuineTenants로
+    //    걸러낸다 - 안 그러면 "대항력 있는 임차인 없음"인 물건에도 경고가 잘못 뜨는 버그가 있었음.
+    var tenantSplit = splitGenuineTenants(detail.tenantOccupants, detail.owner, detail.debtor);
+    var standingTenants = tenantSplit.genuine.filter(function(t) { return t && t.hasStanding === true; });
+    var selfOccupiedStanding = tenantSplit.selfOccupied.filter(function(t) { return t && t.hasStanding === true; });
     var hasTaxRisk = standingTenants.length > 0 || detail.taxClaimDelivery === true;
     if (!specialFlags.length && !hasZoning && !hasExtras && !g(detail.minorTenantBaseDate) && !hasTaxRisk) return '';
 
@@ -10792,6 +10821,10 @@ function buildRightsAnalysisHtml(detail, sectionLabel, row) {
             + '<div style="font-size:10.5px;color:#777;line-height:1.5;">💡 대항력 있는 임차인이 ' + standingTenants.length + '명 있는 물건입니다. 문건/송달내역에 "교부권자"(세무서·지자체) 표기가 있는지 직접 확인하세요 — '
             + 'AI가 원문에서 해당 섹션을 찾지 못했을 수 있어 위 감지결과는 참고용일 뿐 "위험 없음"을 의미하지 않습니다.</div>'
             + '</div>';
+    }
+    if (selfOccupiedStanding.length) {
+        html += '<div style="margin-top:4px;font-size:10px;color:#9e9e9e;">ℹ️ "' + selfOccupiedStanding.map(function(t) { return g(t.name); }).filter(Boolean).join(', ')
+            + '"은(는) 이름이 소유자·채무자와 동일해 자가점유로 보고 위 세금 인수위험 판단에서 제외했습니다 — 실제로는 별도 임차인일 수도 있으니 헷갈리면 등기부·전입세대열람으로 다시 확인하세요.</div>';
     }
 
     if (g(detail.minorTenantBaseDate)) {
