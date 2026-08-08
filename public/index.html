@@ -828,9 +828,15 @@ tr:hover td { background:#fffde7; }
             </div>
             <div class="est-sub">호가·매물재고·유사물건·비교물건 반영</div>
 
-            <!-- 🟢 네이버부동산 매물조사 - ①예상매도가 계산에 바로 쓰이는 입력이라 같은 자리에 둠
-                 (예전엔 "상세 도구"를 펼쳐야 나오는 별도 섹션이라 복잡하다는 피드백을 받음). -->
-            <div style="background:#fff;border:1px solid #e5dbf5;border-radius:7px;padding:8px 10px;margin:2px 0 12px;">
+            <!-- 🟢 네이버부동산 매물조사(입력) - ①예상매도가 계산에 바로 쓰이는 입력이라 같은
+                 자리에 둠(예전엔 "상세 도구"를 펼쳐야 나오는 별도 섹션이라 복잡하다는 피드백을
+                 받음). ⚠️ 2026-08 재배치: "🔮 예측 적용" 버튼을 비교물건 등록 블록보다 먼저
+                 두면, 비교물건을 아직 등록하기 전에 눌러버려서(getCompEstValue가 comp이 없으면
+                 null을 반환 - calcMarketAdjustedSalePrice도 그대로 null) 계산이 비거나 실제와
+                 다른 값이 나오는 순서 문제가 있었음(2026-08 피드백). 입력칸만 여기 두고, 버튼은
+                 비교물건 등록 블록 다음으로 옮김 - "호가 입력 → 비교물건 등록 → 예측 적용" 순서를
+                 화면 배치로 자연스럽게 유도함. -->
+            <div style="background:#fff;border:1px solid #e5dbf5;border-radius:7px;padding:8px 10px;margin:2px 0 8px;">
                 <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;">
                     <span style="font-size:11.5px;color:#666;">🟢 네이버부동산 매물조사</span>
                     <span onclick="showCalcInfo('listingCount')" style="cursor:pointer;color:#999;font-size:11px;">ⓘ 반영기준</span>
@@ -849,19 +855,15 @@ tr:hover td { background:#fffde7; }
                 </div>
                 <input type="hidden" id="a-listing-checked-date">
                 <div id="listing-checked-label" style="font-size:10.5px;color:#999;margin-top:1px;"></div>
-                <div style="margin-top:6px;display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
-                    <button type="button" class="modal-btn btn-purple" id="listing-apply-btn" style="font-size:11.5px;" onclick="applyListingInventory()">🔮 예측 적용</button>
-                    <span id="listing-apply-status" style="font-size:10.5px;color:#999;"></span>
-                </div>
-                <div id="market-adjusted-price-box"></div>
             </div>
 
             <!-- 🤖 유사물건 자동추천 / 📍 지도에서 직접 찾기 - ①예상매도가 산정 근거자료라
                  예전엔 ②목표매도가(현 ③) 밑에 있던 걸 ①예상매도가 바로 밑, ②예상마진 위로
                  옮김. 등록된 비교물건 목록(comp-list-box)은 길어지면 스크롤을 많이 차지해서
                  기본은 접어두고 필요할 때만 펼쳐보도록 숨기기/펼치기 토글로 바꿨음(층별현황과
-                 같은 토글 함수 재사용). -->
-            <div style="background:#fff;border:1px solid #e5dbf5;border-radius:7px;padding:8px 10px;margin:4px 0 12px;">
+                 같은 토글 함수 재사용). 위 호가입력과 아래 "🔮 예측 적용" 버튼 사이에 둬서
+                 등록 순서를 유도함(바로 위 주석 참고). -->
+            <div style="background:#fff;border:1px solid #e5dbf5;border-radius:7px;padding:8px 10px;margin:0 0 8px;">
                 <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:6px;align-items:center;">
                     <button type="button" class="modal-btn btn-purple" style="font-size:11px;" onclick="openAiCompFinder()">🤖 유사물건 자동추천</button>
                     <button type="button" class="modal-btn btn-gray" style="font-size:11px;" onclick="openRadiusCompFinder()">📍 지도에서 직접 찾기</button>
@@ -869,6 +871,17 @@ tr:hover td { background:#fffde7; }
                 </div>
                 <div style="font-size:10px;color:#999;margin-bottom:6px;">주소·평형·층 입력 후 자동추천을 먼저 써보고, 추천 결과가 없거나 부족하면 "지도에서 직접 찾기"로 반경 1km 실거래 전체를 훑어보세요. (최대 10개까지 등록)</div>
                 <div id="comp-list-box" style="display:none;"></div>
+            </div>
+
+            <!-- 🔮 예측 적용 - 위 호가·비교물건을 모두 반영해 ①예상매도가(calcMarketAdjustedSalePrice)를
+                 계산함. 비교물건이 하나도 없으면 getCompEstValue()가 null을 반환해 이 계산 자체가
+                 비어버리므로, 반드시 위 비교물건 등록 다음에 누르는 게 맞음(화면 순서로 유도). -->
+            <div style="background:#fff;border:1px solid #e5dbf5;border-radius:7px;padding:8px 10px;margin:0 0 12px;">
+                <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+                    <button type="button" class="modal-btn btn-purple" id="listing-apply-btn" style="font-size:11.5px;" onclick="applyListingInventory()">🔮 예측 적용</button>
+                    <span id="listing-apply-status" style="font-size:10.5px;color:#999;"></span>
+                </div>
+                <div id="market-adjusted-price-box"></div>
             </div>
 
             <div class="est-row">
@@ -9268,6 +9281,15 @@ function applyEstRow5() {
     var res = computeSelectedTargetBid();
     if (!res || !res.bid || res.bid <= 0) return;
     document.getElementById('a-my-bid').value = res.bid;
+    // ⚠️ 2026-08 버그 수정: 하단 예상마진분석(calcMargin)은 a-target(목표매도가) DOM 값을
+    // useSell 기준으로 그대로 읽는데, ⑤목표입찰가는 라디오 선택에 따라 ①예상매도가
+    // (window.__predictedSaleValue)를 기준으로 역산될 수도 있음. saleBasis가 'predicted'일
+    // 때 a-target을 갱신하지 않으면, 하단 그리드가 입찰가 산출에 실제로 쓰인 매도가와 다른
+    // (예전에 따로 입력해둔) 값으로 세전/세후 예상수익을 계산해 서로 안 맞는 숫자가 나옴.
+    // 그래서 여기서 입찰가 산출에 실제로 쓰인 매도가(res.saleValue)를 a-target에도 그대로
+    // 반영해, 하단 예상마진분석이 항상 같은 기준으로 채워지도록 함.
+    var targetEl = document.getElementById('a-target');
+    if (targetEl) targetEl.value = res.saleValue;
     autoCalcTaxSilent(); calcMargin();
 }
 // AI 투자 브리핑 - 이미 계산된 ①~⑤ 값과 pendingAuctionDetail(AI 추출/저장된 물건의 원본
