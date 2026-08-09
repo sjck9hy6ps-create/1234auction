@@ -686,6 +686,10 @@ tr:hover td { background:#fffde7; }
         <span style="background:#6a1b9a;color:white;font-size:10px;font-weight:bold;padding:1px 6px;border-radius:10px;">🔨 경매</span>
         등록된 경매 물건
     </div>
+    <div style="border-top:1px solid #eee;margin-top:4px;padding-top:4px;font-size:11px;">
+        <div style="margin-bottom:2px;"><span style="background:#1565c0;color:white;font-size:10px;font-weight:bold;padding:1px 6px;border-radius:10px;">🏢 입찰희망</span> 아파트</div>
+        <div><span style="background:#8e24aa;color:white;font-size:10px;font-weight:bold;padding:1px 6px;border-radius:10px;">🏘️ 입찰희망</span> 빌라·연립다세대·단독</div>
+    </div>
     <div style="font-size:11px;color:#888;margin-top:4px;">핀 숫자 = 기간 내 거래건수</div>
     <div style="margin-top:4px;"><a href="/backup.html" style="font-size:11px;color:#6a1b9a;font-weight:bold;">📦 데이터 백업</a></div>
     <div style="margin-top:4px;"><a href="/dashboard.html" style="font-size:11px;color:#2e7d32;font-weight:bold;">📊 누적 투자 리포트</a></div>
@@ -1730,6 +1734,15 @@ var STATUS_COLOR = {
     '검토중':'#9e9e9e','입찰예정':'#1565c0','낙찰':'#2e7d32',
     '유찰':'#e53935','포기':'#757575','매도완료':'#6a1b9a'
 };
+// 📋 입찰희망(입찰예정물건 일괄등록) 배지 - 아파트/빌라를 propType 기준으로 색상 차등화
+// (2026-08 추가: "일괄등록시 아파트/빌라 배지가 다 똑같은 노란색이라 구분이 안 된다"는 요청).
+// 아이콘까지 함께 바꿔서 색약 등으로 색 구분이 어려운 경우에도 유형이 구분되도록 함.
+// officetel/other/미지정은 기존 노란색 배색을 그대로 유지(BID_TARGET_DEFAULT_STYLE).
+var BID_TARGET_TYPE_STYLE = {
+    apt:   { bgFrom: '#e3f2fd', bgTo: '#90caf9', border: '#1565c0', pillBg: '#1565c0', pillColor: '#fff', icon: '🏢' },
+    villa: { bgFrom: '#f3e5f5', bgTo: '#ce93d8', border: '#8e24aa', pillBg: '#8e24aa', pillColor: '#fff', icon: '🏘️' },
+};
+var BID_TARGET_DEFAULT_STYLE = { bgFrom: '#fffde7', bgTo: '#fff9c4', border: '#fdd835', pillBg: '#fbc02d', pillColor: '#333', icon: '📋' };
 // Geocode 세마포어
 function createSemaphore(n) {
     var running = 0, queue = [];
@@ -8112,9 +8125,10 @@ function placeAuctionMarker(a) {
         }
     }
  
+    var btStyle = isBidTarget ? (BID_TARGET_TYPE_STYLE[a.propType] || BID_TARGET_DEFAULT_STYLE) : null;
     var div = document.createElement('div');
     div.style.cssText = isBidTarget
-        ? ('position:relative;background:linear-gradient(180deg,#fffde7,#fff9c4);border:3px solid #fdd835;border-radius:9px;'
+        ? ('position:relative;background:linear-gradient(180deg,' + btStyle.bgFrom + ',' + btStyle.bgTo + ');border:3px solid ' + btStyle.border + ';border-radius:9px;'
             + 'padding:4px 9px;margin:4px;margin-top:16px;white-space:nowrap;cursor:pointer;'
             + 'text-align:center;line-height:1.5;max-width:210px;transform:scale(calc(1.12 * var(--badge-scale,1)));transform-origin:center bottom;')
         : ('position:relative;background:linear-gradient(180deg,#fff,#fff7ec);border:3px solid #e65100;border-radius:9px;'
@@ -8122,9 +8136,9 @@ function placeAuctionMarker(a) {
             + 'text-align:center;line-height:1.5;max-width:210px;transform:scale(calc(1.12 * var(--badge-scale,1)));transform-origin:center bottom;'
             + 'animation:auctionGlow 1.8s ease-in-out infinite;');
     // 터치 기기 길게 누르기 미리보기용 (setupBadgeLongPressPeek 참고)
-    div.title = [((a.name && a.name.trim()) || a.addrLabel || a.addr || '(이름없음)'), (isBidTarget ? '📋 입찰희망' : '🔨 ' + a.status), a.caseNo ? '사건번호 ' + a.caseNo : '', priceLine, a.pyung ? a.pyung + '평' : '', ageBadgeText].filter(Boolean).join(' · ');
+    div.title = [((a.name && a.name.trim()) || a.addrLabel || a.addr || '(이름없음)'), (isBidTarget ? btStyle.icon + ' 입찰희망' : '🔨 ' + a.status), a.caseNo ? '사건번호 ' + a.caseNo : '', priceLine, a.pyung ? a.pyung + '평' : '', ageBadgeText].filter(Boolean).join(' · ');
     div.innerHTML = (isBidTarget
-            ? '<div class="auction-badge" style="background:#fbc02d;color:#333;">📋 입찰희망' + alarmBadge + '</div>'
+            ? '<div class="auction-badge" style="background:' + btStyle.pillBg + ';color:' + btStyle.pillColor + ';">' + btStyle.icon + ' 입찰희망' + alarmBadge + '</div>'
             : '<div class="auction-badge" style="background:' + sc + ';">🔨 ' + a.status + alarmBadge + '</div>')
         + '<div style="color:#333;font-size:11px;font-weight:bold;overflow:hidden;text-overflow:ellipsis;max-width:185px;margin-top:5px;">'
         +   ((a.name && a.name.trim()) || a.addrLabel || a.addr || '(이름없음)') + surgeBadge + ageBadge
