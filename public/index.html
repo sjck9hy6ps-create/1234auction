@@ -1814,6 +1814,18 @@ function calcFilingDeadline(sellDateStr) {
     var deadlineStr = deadline.getFullYear() + '-' + pad(deadline.getMonth() + 1) + '-' + pad(deadline.getDate());
     return { deadlineStr: deadlineStr, diffDays: diffDays };
 }
+/* 경매 입찰일(bidDate) 기준 D-day 라벨 계산 - 입찰예정물건(📋)/경매등록물건(🔨) 배지 및
+   매매기록에 흡수된 경매정보(auctionRibbon)에서 공통으로 재사용. calcFilingDeadline과
+   동일한 표기 규칙(마감 지남/오늘 마감/D-N)을 그대로 따름. */
+function calcAuctionDday(bidDateStr) {
+    if (!bidDateStr) return null;
+    var d = new Date(bidDateStr + 'T00:00:00');
+    if (isNaN(d.getTime())) return null;
+    var today = new Date(); today.setHours(0, 0, 0, 0);
+    var diffDays = Math.round((d - today) / 86400000);
+    var label = diffDays < 0 ? '입찰 ' + Math.abs(diffDays) + '일 지남' : (diffDays === 0 ? '오늘 입찰' : 'D-' + diffDays);
+    return { diffDays: diffDays, label: label };
+}
 function toPyung(area) { return Math.round(area / 3.305785 * 10) / 10; }
 // apt.ppp는 "만원/평" 단위로 저장돼 있음(calcPriceGrades 참고). 등급은 색상으로 이미
 // 구분되니, 배지 텍스트로는 등급 숫자 대신 실제 평단가를 10만원 단위로 반올림해서 보여줌
@@ -3238,8 +3250,11 @@ function createMarker(cacheKey, lat, lon, apt) {
     // 이 주소에 등록된 경매물건이 있으면(=이미 이 자리에 일반 거래 마커가 있어서 별도 경매 마커를
     // 만들지 않은 경우) 지도에서도 바로 알아볼 수 있도록 이 마커 자체를 강조 표시함
     var matchedAuction = auctionList.find(function(a) { return matchesAuctionKey(a, l.name, l.dong, l.bunji); });
+    // 매매기록 배지 안에 흡수된 경매물건도 입찰일 D-day를 놓치면 안 되므로 리본 바로 아래 한 줄로 표시
+    var matchedAuctionDday = matchedAuction && matchedAuction.bidDate ? calcAuctionDday(matchedAuction.bidDate) : null;
     var auctionRibbon = matchedAuction
         ? '<div class="auction-badge" style="background:' + (STATUS_COLOR[matchedAuction.status] || '#6a1b9a') + ';">🔨 경매 · ' + matchedAuction.status + '</div>'
+            + (matchedAuctionDday ? '<div style="color:' + (matchedAuctionDday.diffDays < 0 ? '#9e9e9e' : (matchedAuctionDday.diffDays <= 3 ? '#e53935' : '#1565c0')) + ';font-size:9.5px;font-weight:bold;">⏰ ' + matchedAuctionDday.label + '</div>' : '')
         : '';
     // 매도사례(resaleMatch)가 매칭된 낙찰사례는 별도 배지 대신 이 건물배지에 ⚖️ 리본으로
     // 편입됨(placeBidCaseMarker의 shouldSuppressBidCaseBadge와 짝을 이루는 로직 - 저쪽에서
@@ -8135,7 +8150,12 @@ function placeAuctionMarker(a) {
             }
         }
     }
- 
+    // 입찰일까지 남은 일수(D-day) - 오늘 기준으로 계산해 매번 최신값으로 표시됨
+    var dDayInfo = a.bidDate ? calcAuctionDday(a.bidDate) : null;
+    var dDayBadge = dDayInfo
+        ? '<div style="color:' + (dDayInfo.diffDays < 0 ? '#9e9e9e' : (dDayInfo.diffDays <= 3 ? '#e53935' : '#1565c0')) + ';font-size:10px;font-weight:bold;margin-top:1px;">⏰ ' + dDayInfo.label + ' (' + a.bidDate + ')</div>'
+        : '';
+
     var btStyle = isBidTarget ? (BID_TARGET_TYPE_STYLE[a.propType] || BID_TARGET_DEFAULT_STYLE) : null;
     var div = document.createElement('div');
     div.style.cssText = isBidTarget
@@ -8147,7 +8167,7 @@ function placeAuctionMarker(a) {
             + 'text-align:center;line-height:1.5;max-width:210px;transform:scale(calc(1.12 * var(--badge-scale,1)));transform-origin:center bottom;'
             + 'animation:auctionGlow 1.8s ease-in-out infinite;');
     // 터치 기기 길게 누르기 미리보기용 (setupBadgeLongPressPeek 참고)
-    div.title = [((a.name && a.name.trim()) || a.addrLabel || a.addr || '(이름없음)'), (isBidTarget ? btStyle.icon + ' 입찰희망' : '🔨 ' + a.status), a.caseNo ? '사건번호 ' + a.caseNo : '', priceLine, a.pyung ? a.pyung + '평' : '', ageBadgeText].filter(Boolean).join(' · ');
+    div.title = [((a.name && a.name.trim()) || a.addrLabel || a.addr || '(이름없음)'), (isBidTarget ? btStyle.icon + ' 입찰희망' : '🔨 ' + a.status), a.caseNo ? '사건번호 ' + a.caseNo : '', priceLine, a.pyung ? a.pyung + '평' : '', ageBadgeText, dDayInfo ? dDayInfo.label + ' (' + a.bidDate + ')' : ''].filter(Boolean).join(' · ');
     div.innerHTML = (isBidTarget
             ? '<div class="auction-badge" style="background:' + btStyle.pillBg + ';color:' + btStyle.pillColor + ';">' + btStyle.icon + ' 입찰희망' + alarmBadge + '</div>'
             : '<div class="auction-badge" style="background:' + sc + ';">🔨 ' + a.status + alarmBadge + '</div>')
@@ -8158,6 +8178,7 @@ function placeAuctionMarker(a) {
         + (a.caseNo ? '<div style="color:#795548;font-size:9.5px;overflow:hidden;text-overflow:ellipsis;max-width:185px;">📄 ' + a.caseNo + '</div>' : '')
         + '<div style="color:' + sc + ';font-size:12px;font-weight:bold;">' + priceLine + '</div>'
         + (a.pyung ? '<div style="color:#888;font-size:10px;">' + a.pyung + '평</div>' : '')
+        + dDayBadge
         // 매칭된 일반 거래가 있는데(타입탭/등급 등 필터 때문에) 지금 이 독자 마커로 대신
         // 표시되는 중이라면, 클릭하면 매매기록까지 함께 있는 전체 상세패널이 열린다는 걸 알려줌
         + (matchedApt ? '<div style="color:#e65100;font-size:9px;margin-top:2px;">📊 클릭하면 매매기록도 함께 보여요</div>' : '');
