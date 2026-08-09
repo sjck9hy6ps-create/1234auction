@@ -953,6 +953,10 @@ tr:hover td { background:#fffde7; }
                 <button type="button" class="modal-btn btn-purple est-apply-btn" onclick="applyEstRow5()">입찰가에 적용</button>
             </div>
             <div class="est-sub" id="est-row-5-detail" style="margin-bottom:10px;">&nbsp;</div>
+            <!-- ⚠️ 2026-08: "실제 낙찰가"를 입력해두면(내가 입찰했든 안 했든), 계산식이 예측한
+                 ⑤목표입찰가와 비교해 오차를 바로 보여줌 - 모델이 실제 시장가를 얼마나 잘 맞췄는지
+                 사후 검증하는 용도. 값이 없으면 아예 표시 안 함(renderTargetBidSolver 참고). -->
+            <div id="est-row-5-actual-compare" style="display:none;margin:-6px 0 10px;font-size:11.5px;background:#f3e5f5;border-radius:6px;padding:6px 9px;"></div>
 
             <div style="border-top:1px dashed #d8cdee;margin:8px 0 10px;"></div>
 
@@ -1223,10 +1227,15 @@ tr:hover td { background:#fffde7; }
                 <span class="modal-label">내 입찰가</span>
                 <input type="number" class="modal-input" id="a-my-bid" placeholder="0" oninput="autoCalcTaxSilent();autoCalcRegistryFeeSilent();calcMargin()">
             </div>
-            <div class="modal-row" id="actual-bid-row" style="display:none;">
+            <div class="modal-row" id="actual-bid-row">
                 <span class="modal-label">실제 낙찰가</span>
-                <input type="number" class="modal-input" id="a-actual-bid" placeholder="0" oninput="autoCalcTaxSilent();autoCalcRegistryFeeSilent();calcMargin()">
+                <input type="number" class="modal-input" id="a-actual-bid" placeholder="0" oninput="autoCalcTaxSilent();autoCalcRegistryFeeSilent();calcMargin();renderTargetBidSolver()">
             </div>
+            <!-- ⚠️ 2026-08: 예전엔 상태가 "낙찰/매도완료"일 때만 이 입력칸을 보여줬는데, 내가 직접
+                 입찰하지 않은(검토중/유찰/포기) 물건이라도 실제 그 물건이 얼마에 낙찰됐는지 알게 되면
+                 기록해두고 싶다는 요청(2026-08) - 계산식이 예측한 목표입찰가와 실제 시장 낙찰가를
+                 비교해 모델 정확도를 검증하는 용도라 내가 이긴 입찰만으로 한정할 이유가 없음. -->
+            <div id="actual-bid-hint" style="font-size:10px;color:#999;margin:-4px 0 6px 0;">💡 내가 입찰하지 않은 물건이라도, 실제 낙찰금액을 알게 되면 입력해보세요 - 아래 ⑤목표입찰가와 비교해 예측이 얼마나 맞았는지 확인할 수 있습니다.</div>
         </div>
         <div class="modal-section">
             <div class="modal-section-title">🧾 비용 (만원 단위)</div>
@@ -5374,6 +5383,14 @@ function openAuctionList() {
     auctionListPage = 0;
     renderAuctionList(); p.style.display = 'block';
 }
+/* renderAuctionList 정렬용 키: [tier, val] - tier0(입찰일 남음, val=diffDays 오름차순)이
+   최우선, tier1(입찰일 지남, val=지난지 며칠인지 오름차순=최근에 지난 것부터)이 다음,
+   tier2(입찰일 미입력)가 맨 마지막(같은 tier끼리는 배열 정렬이 안정정렬이라 등록순 유지됨). */
+function auctionListDdaySortKey(a) {
+    var info = a.bidDate ? calcAuctionDday(a.bidDate) : null;
+    if (!info) return [2, 0];
+    return info.diffDays >= 0 ? [0, info.diffDays] : [1, -info.diffDays];
+}
 /* 등록물건이 많아지면 스크롤로 원하는 물건을 찾기 어렵다는 피드백에 따라 10개씩 페이지네이션함.
    목록/페이저 둘 다 여기서 다시 그림 - 페이지 이동(auctionListGoToPage)도 이 함수를 재호출함. */
 function renderAuctionList() {
@@ -5384,7 +5401,15 @@ function renderAuctionList() {
         pager.innerHTML = '';
         return;
     }
+    // ⚠️ 2026-08: 예전엔 등록한 순서(최신 등록이 위)로만 보여줬는데, 입찰일이 임박한 물건을
+    // 놓치기 쉽다는 요청으로 D-day 오름차순(임박한 순)으로 바꿈 - 아직 안 지난 입찰일이 최우선,
+    // 그다음 이미 지난 입찰일(최근에 지난 것부터), 입찰일 자체가 없는 물건은 맨 아래에 기존과
+    // 동일하게 최신 등록순으로 배치함(Array.sort는 안정정렬이라 동순위 안에서는 순서 유지됨).
     var reversed = auctionList.slice().reverse();
+    reversed.sort(function(x, y) {
+        var kx = auctionListDdaySortKey(x), ky = auctionListDdaySortKey(y);
+        return (kx[0] - ky[0]) || (kx[1] - ky[1]);
+    });
     var totalPages = Math.max(1, Math.ceil(reversed.length / AUCTION_LIST_PAGE_SIZE));
     if (auctionListPage >= totalPages) auctionListPage = totalPages - 1;
     if (auctionListPage < 0) auctionListPage = 0;
@@ -5398,6 +5423,13 @@ function renderAuctionList() {
             ? '<div class="auction-list-sub" style="color:#e53935;font-weight:bold;">⚠️ 주소를 지도 좌표로 찾지 못해 지도에 배지가 표시되지 않습니다 - 주소를 확인해 주세요.</div>'
             : '';
         var caseNoLine = cleanField(a.caseNo) ? '<div class="auction-list-sub">📋 ' + cleanField(a.caseNo) + '</div>' : '';
+        // 입찰일 D-day - 위 정렬기준(auctionListDdaySortKey)과 동일한 값을 목록에서도 바로 볼 수 있게 표시
+        var ddayLine = '';
+        var ddayInfo = a.bidDate ? calcAuctionDday(a.bidDate) : null;
+        if (ddayInfo) {
+            var ddColor = ddayInfo.diffDays < 0 ? '#9e9e9e' : (ddayInfo.diffDays <= 3 ? '#e53935' : '#1565c0');
+            ddayLine = '<div class="auction-list-sub" style="color:' + ddColor + ';font-weight:bold;">⏰ ' + ddayInfo.label + ' (' + a.bidDate + ')</div>';
+        }
         // 매도완료 + 매도일이 있으면 매매차익 예정신고 마감 D-day를 목록에서도 바로 볼 수 있게 표시
         var filingLine = '';
         if (a.status === '매도완료' && a.sellDate) {
@@ -5417,6 +5449,7 @@ function renderAuctionList() {
             + '<div class="auction-list-sub">' + (cleanField(a.addr) || '주소 미입력') + '</div>'
             + caseNoLine
             + '<div class="auction-list-sub" style="color:#6a1b9a;">입찰가 ' + (a.myBid ? toEok(String(parseInt(a.myBid))) : '-') + '</div>'
+            + ddayLine
             + filingLine
             + noPin
             + '</div>';
@@ -5676,7 +5709,8 @@ function closeAuctionModal() {
 }
 function updateStatusUI() {
     var s = document.getElementById('a-status').value;
-    document.getElementById('actual-bid-row').style.display  = (s === '낙찰' || s === '매도완료') ? '' : 'none';
+    // ⚠️ 2026-08: 실제 낙찰가(actual-bid-row)는 더 이상 상태(낙찰/매도완료)로 숨기지 않음 -
+    // 내가 입찰하지 않은 물건도 실제 낙찰결과를 기록해 목표입찰가 예측 정확도를 검증할 수 있게 함.
     document.getElementById('actual-sell-row').style.display = (s === '매도완료') ? '' : 'none';
     renderFilingDeadlineBox();
 }
@@ -9516,11 +9550,13 @@ function renderTargetBidSolver() {
     if (!res) {
         valueEl.innerText = '-';
         if (detailEl) detailEl.innerText = '①·②(매도가) 또는 ③·④(마진) 값이 아직 없습니다.';
+        renderActualBidVsPredicted(null);
         return;
     }
     if (!res.bid || res.bid <= 0) {
         valueEl.innerText = '확보 불가';
         if (detailEl) detailEl.innerText = '선택한 조건으로는 목표마진을 지키는 입찰가가 없습니다(비용이 매도가보다 큼).';
+        renderActualBidVsPredicted(null);
         return;
     }
     valueEl.innerText = toEok(String(res.bid));
@@ -9528,6 +9564,30 @@ function renderTargetBidSolver() {
         detailEl.innerText = (res.saleBasis === 'predicted' ? '①예상매도가' : '②목표매도가') + ' ' + toEok(String(res.saleValue))
             + ' 기준, ' + (res.marginBasis === 'predicted' ? '③예상마진' : '④목표마진') + ' ' + toEok(String(res.marginValue)) + ' 확보 역산';
     }
+    renderActualBidVsPredicted(res.bid);
+}
+/* ⚠️ 2026-08 추가: "계산식이 예상했던 입찰가(⑤목표입찰가)"와 "실제 낙찰가"(a-actual-bid,
+   내가 입찰했든 안 했든 시장에서 실제로 낙찰된 금액)를 비교해 예측 오차를 보여줌 - 모델
+   사후검증용. 실제 낙찰가가 예측보다 높으면(경쟁이 더 치열했으면) 빨강, 낮으면(더 여유있게
+   낙찰됐으면) 파랑으로 구분. predictedBid가 없으면(목표입찰가 계산 불가) 박스를 아예 숨김 -
+   비교 기준 자체가 없어 오차를 말할 수 없기 때문. */
+function renderActualBidVsPredicted(predictedBid) {
+    var box = document.getElementById('est-row-5-actual-compare');
+    if (!box) return;
+    var actEl = document.getElementById('a-actual-bid');
+    var actualBid = actEl ? (parseInt(actEl.value) || 0) : 0;
+    if (!predictedBid || predictedBid <= 0 || !actualBid || actualBid <= 0) {
+        box.style.display = 'none';
+        box.innerHTML = '';
+        return;
+    }
+    var diff = actualBid - predictedBid;
+    var diffPct = Math.round((diff / predictedBid) * 1000) / 10;
+    var color = diff > 0 ? '#c62828' : (diff < 0 ? '#1565c0' : '#555');
+    var diffLabel = diff === 0 ? '일치' : (diff > 0 ? '+' + toEok(String(diff)) + ' (실제가 ' + diffPct + '% 높음)' : toEok(String(diff)) + ' (실제가 ' + Math.abs(diffPct) + '% 낮음)');
+    box.style.display = '';
+    box.innerHTML = '<b style="color:#6a1b9a;">📐 예측 오차검증</b> - ⑤목표입찰가 ' + toEok(String(predictedBid)) + ' vs 실제 낙찰가 ' + toEok(String(actualBid))
+        + '<div style="margin-top:2px;font-weight:bold;color:' + color + ';">차이 ' + diffLabel + '</div>';
 }
 function applyEstRow5() {
     var res = computeSelectedTargetBid();
