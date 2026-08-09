@@ -5430,6 +5430,31 @@ function renderAuctionList() {
             var ddColor = ddayInfo.diffDays < 0 ? '#9e9e9e' : (ddayInfo.diffDays <= 3 ? '#e53935' : '#1565c0');
             ddayLine = '<div class="auction-list-sub" style="color:' + ddColor + ';font-weight:bold;">⏰ ' + ddayInfo.label + ' (' + a.bidDate + ')</div>';
         }
+        // ⚠️ 2026-08: 실제낙찰가를 입력하려면 그동안 "✏️ 수정" 모달을 통째로 열어야 했는데,
+        // 빠르게 여러 건을 입력하고 싶다는 요청으로 목록에 바로 입력칸을 추가함 - blur(포커스
+        // 아웃) 또는 Enter 시 그 즉시 저장되고, 저장된 내 입찰가(또는 최저입찰가)와의 차이를
+        // 바로 아래 줄에 표시함(모달을 열지 않고도 "얼마나 차이났는지" 즉시 확인 가능).
+        var actualBidInputRow = '<div class="auction-list-sub" style="display:flex;align-items:center;gap:4px;margin-top:2px;" onclick="event.stopPropagation();">'
+            + '<span style="color:#e65100;font-weight:bold;white-space:nowrap;">실제낙찰가</span>'
+            + '<input type="number" value="' + (cleanField(a.actualBid) || '') + '" placeholder="만원 단위" '
+            + 'style="width:88px;font-size:11px;padding:2px 4px;border:1px solid #ddd;border-radius:4px;" '
+            + 'onkeydown="if(event.key===\'Enter\'){this.blur();}" '
+            + 'onblur="saveActualBidInline(\'' + a.id + '\', this)">'
+            + '<span id="actual-bid-save-status-' + a.id + '" style="font-size:9px;"></span>'
+            + '</div>';
+        var actBidVal = parseInt(a.actualBid) || 0;
+        var actualBidDiffLine = '';
+        if (actBidVal > 0) {
+            var cmpBase = parseInt(a.myBid) || 0, cmpLabel = '내 입찰가';
+            if (!cmpBase) { cmpBase = parseInt(a.minBid) || 0; cmpLabel = '최저입찰가'; }
+            if (cmpBase > 0) {
+                var bidDiff = actBidVal - cmpBase;
+                var bidDiffPct = Math.round((bidDiff / cmpBase) * 1000) / 10;
+                var bidDiffColor = bidDiff > 0 ? '#c62828' : (bidDiff < 0 ? '#1565c0' : '#555');
+                actualBidDiffLine = '<div class="auction-list-sub" style="color:' + bidDiffColor + ';">📐 ' + cmpLabel + ' 대비 '
+                    + (bidDiff > 0 ? '+' : '') + toEok(String(bidDiff)) + ' (' + (bidDiff > 0 ? '+' : '') + bidDiffPct + '%)</div>';
+            }
+        }
         // 매도완료 + 매도일이 있으면 매매차익 예정신고 마감 D-day를 목록에서도 바로 볼 수 있게 표시
         var filingLine = '';
         if (a.status === '매도완료' && a.sellDate) {
@@ -5449,6 +5474,8 @@ function renderAuctionList() {
             + '<div class="auction-list-sub">' + (cleanField(a.addr) || '주소 미입력') + '</div>'
             + caseNoLine
             + '<div class="auction-list-sub" style="color:#6a1b9a;">입찰가 ' + (a.myBid ? toEok(String(parseInt(a.myBid))) : '-') + '</div>'
+            + actualBidInputRow
+            + actualBidDiffLine
             + ddayLine
             + filingLine
             + noPin
@@ -5456,6 +5483,31 @@ function renderAuctionList() {
     });
     body.innerHTML = html;
     pager.innerHTML = buildAuctionListPagerHtml(auctionListPage, totalPages, reversed.length);
+}
+/* 경매관리 목록의 실제낙찰가 인라인 입력칸 - blur(포커스 아웃)나 Enter에서 호출됨.
+   ⚠️ api/auction.js의 POST는 id가 같으면 레코드를 "통째로" 덮어씀(부분 병합 아님) -
+   그래서 {id, actualBid}만 보내면 나머지 필드(감정가·비용·메모 등)가 전부 날아감. 반드시
+   기존 레코드 전체를 복사한 뒤 actualBid 필드만 바꿔서 보내야 함(saveAuction()의 전체
+   저장 로직과 달리, 여기는 모달을 열지 않고 이 필드 하나만 빠르게 바꾸는 경로이기 때문에
+   더더욱 실수하기 쉬운 지점). */
+async function saveActualBidInline(id, inputEl) {
+    var existing = auctionList.find(function(x) { return x.id === id; });
+    if (!existing) return;
+    var raw = inputEl.value.trim();
+    if (String(cleanField(existing.actualBid)) === raw) return; // 값이 안 바뀌었으면 저장 생략
+    var statusEl = document.getElementById('actual-bid-save-status-' + id);
+    if (statusEl) { statusEl.style.color = '#999'; statusEl.innerText = '저장 중...'; }
+    var updated = Object.assign({}, existing, { actualBid: raw });
+    try {
+        var saved = await saveAuctionAPI(updated);
+        var idx = auctionList.findIndex(function(x) { return x.id === id; });
+        if (idx >= 0) auctionList[idx] = saved;
+        renderAuctionList(); // 재렌더링해서 방금 입력한 값 대비 차이(📐)를 바로 보여줌
+        redrawMarkers();
+        refreshOpenPanelIfVisible(); // 지도 배지 상세패널이 열려있으면 예상마진분석도 같이 최신화
+    } catch (e) {
+        if (statusEl) { statusEl.style.color = '#e53935'; statusEl.innerText = '저장 실패 - 다시 시도해 주세요'; }
+    }
 }
 /* 페이지 번호가 많아지면(예: 30페이지) 전부 나열하지 않고, 현재 페이지 주변만 보여주고
    나머지는 "…"으로 생략함(현재±2, 처음, 끝은 항상 표시) */
