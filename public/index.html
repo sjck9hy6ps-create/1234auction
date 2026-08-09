@@ -8003,7 +8003,26 @@ async function saveAuction() {
     // 임시 초안(AUCTION_DRAFT_KEY)은 더 이상 필요 없음 - 다음 새 물건에서 엉뚱하게
     // 다시 뜨지 않도록 지워둠.
     try { localStorage.removeItem(AUCTION_DRAFT_KEY); } catch (e) {}
-    setStatus(''); closeAuctionModal(); redrawMarkers(); alert('저장되었습니다.');
+    setStatus(''); closeAuctionModal(); redrawMarkers();
+    // ⚠️ 2026-08 버그 수정: 매매기록 있는 건물의 배지를 클릭하면 openMatchedApt()가
+    // openPanel(matched,...)로 건물 상세패널을 여는데, 그 안 "🔨 경매정보" 탭의
+    // 예상마진분석(buildMarginSummaryHtml)은 저장된 auctionList 값을 읽어서 그림. 그
+    // 패널에서 "수정" 버튼으로 이 모달을 열어 값을 바꾸고 저장해도, 지금까지는 모달만
+    // 닫고 뒤에 열려있던 패널은 다시 그리지 않아서 예상마진분석이 저장 전 값 그대로 남는
+    // 버그가 있었음(2026-08 사용자 리포트: "배지클릭 후 경매내용 수정 시 배지클릭 후
+    // 보이는 예상마진에 변화가 없어"). 패널이 지금 열려있으면 같은 apt로 다시 그려 최신화함.
+    refreshOpenPanelIfVisible();
+    alert('저장되었습니다.');
+}
+// saveAuction()/deleteAuction() 공통 - 건물 상세패널(id=panel)이 지금 화면에 열려있으면
+// currentPanelApt 기준으로 다시 그려서, 방금 저장/삭제한 경매물건 값이 패널의
+// "🔨 경매정보" 탭(예상마진분석 포함)에도 즉시 반영되도록 함. 패널이 닫혀있으면 아무것도
+// 안 함(어차피 다음에 열 때 auctionList 최신값으로 새로 그려짐).
+function refreshOpenPanelIfVisible() {
+    var panelEl = document.getElementById('panel');
+    if (panelEl && panelEl.style.display !== 'none' && currentPanelApt) {
+        openPanel(currentPanelApt, currentPanelLat, currentPanelLon);
+    }
 }
 async function deleteAuction() {
     var id = document.getElementById('auction-id').value;
@@ -8012,6 +8031,7 @@ async function deleteAuction() {
     await deleteAuctionAPI(id);
     auctionList = auctionList.filter(function(a) { return a.id !== id; });
     setStatus(''); closeAuctionModal(); redrawMarkers();
+    refreshOpenPanelIfVisible();
 }
 /* ────────────────────────────────────
    경매 마커도 팬/줌마다 전부 지웠다 다시 그리면 깜빡이므로,
@@ -10751,8 +10771,16 @@ async function parseAuctionPaste(restoreDetail) {
 
         var normDate = normalizeDateForInput(d.saleDate);
         if (normDate) document.getElementById('a-date').value = normDate;
-        if (d.appraisalPrice) document.getElementById('a-appraisal').value = Math.round(d.appraisalPrice / 10000);
-        if (d.minBidPrice) document.getElementById('a-min-bid').value = Math.round(d.minBidPrice / 10000);
+        // ⚠️ 2026-08 버그 수정: 스키마는 NUMBER 타입이지만 AI가 드물게 "미상"/"-" 같은
+        // 비숫자 문자열을 돌려주는 경우가 있어 Math.round(.../10000)가 NaN이 되고, 그걸
+        // <input type="number">.value에 그대로 넣으면 콘솔에 'The specified value "NaN"
+        // cannot be parsed' 경고가 뜨며 입력칸이 깨진 상태로 남았음(사용자 리포트로 확인).
+        // isFinite로 걸러서 NaN이면 아예 채우지 않고 빈 칸으로 둠(다른 필드도 없으면 빈 칸인
+        // 것과 동일한 처리 - 사용자가 직접 확인 후 입력하면 됨).
+        var apprVal = d.appraisalPrice ? Math.round(d.appraisalPrice / 10000) : null;
+        if (isFinite(apprVal) && apprVal !== null) document.getElementById('a-appraisal').value = apprVal;
+        var minBidVal = d.minBidPrice ? Math.round(d.minBidPrice / 10000) : null;
+        if (isFinite(minBidVal) && minBidVal !== null) document.getElementById('a-min-bid').value = minBidVal;
         // 입찰보증금율 - AI가 추출한 depositRate가 있으면 그대로 사용(재매각 등 20%인 경우 대응),
         // 없으면 입력칸을 비워둬서 calcMargin()의 기본값(10%)이 적용되게 함
         if (d.depositRate) document.getElementById('a-deposit-rate').value = d.depositRate;
@@ -10772,8 +10800,10 @@ async function parseAuctionPaste(restoreDetail) {
             if (extractedSiteArea) document.getElementById('a-site-rights-area').value = extractedSiteArea;
         }
         // 미납관리비 - 주의사항/특수조건에 금액이 명시된 경우에만 AI가 채워줌(원 단위 → 만원으로 변환)
+        // - 위 감정가/최저가와 동일한 이유로 NaN 가드 적용
         if (!document.getElementById('a-unpaid-mgmt-fee').value && d.unpaidManagementFee) {
-            document.getElementById('a-unpaid-mgmt-fee').value = Math.round(d.unpaidManagementFee / 10000);
+            var unpaidMgmtVal = Math.round(d.unpaidManagementFee / 10000);
+            if (isFinite(unpaidMgmtVal)) document.getElementById('a-unpaid-mgmt-fee').value = unpaidMgmtVal;
         }
 
         // AI가 이미 뽑아준 dong/bunji가 있으면 그걸 우선 사용해서 지오코딩 검색어를 만듦
