@@ -6270,8 +6270,8 @@ function resolveSubjectLawdCd(lat, lon, onReady) {
         onReady(lawdCd);
     });
 }
-function avmCacheKey(lawdCd, dong, danji, sizeM2, floor, buildYear) {
-    return [lawdCd, dong, danji, Math.round(sizeM2), floor, buildYear].join('|');
+function avmCacheKey(lawdCd, dong, danji, sizeM2, floor, buildYear, topFloor) {
+    return [lawdCd, dong, danji, Math.round(sizeM2), floor, buildYear, topFloor || ''].join('|');
 }
 // effectUsed: 'danji'(단지 표본충분, 가장 정밀) > 'dong'(법정동 단위, 단지 표본부족이거나
 // 단지명 모름) > 'region_fallback'(시군구 평균, 그 법정동도 표본부족) > 'default_fallback'
@@ -6308,10 +6308,23 @@ function renderAvmEstimateBox(data) {
                 + (data.errorMargin.holdoutN ? ' · 홀드아웃(모델이 안 본 실거래) ' + data.errorMargin.holdoutN.toLocaleString() + '건으로 검증' : '')
                 + '</div>'
             : '';
+        // ⚠️ 2026-08(빌라 층위치 보정, 사용자 요청): 빌라는 단지 개념이 없어 학습 자체에
+        // 층위치 계수가 없고, 대신 이 건물의 건축HUB 총층수로 서빙 시점에 아파트 모델의
+        // 층위치 계수를 "차용"해 배율로 보정함(source: apt_v1_borrowed) - 어떤 근거로 얼마나
+        // 조정됐는지 투명하게 보여줘야 사용자가 신뢰/검증할 수 있음(값을 조용히 바꾸면 안 됨).
+        var floorTierLine = data.floorTierAdjustment
+            ? '<div style="margin-top:2px;color:#00695c;">🏢 층위치 보정: '
+                + data.floorTierAdjustment.reasons.join('·') + ' '
+                + (data.floorTierAdjustment.multiplierPct > 0 ? '+' : '') + data.floorTierAdjustment.multiplierPct + '% ('
+                + toEok(String(data.floorTierAdjustment.beforeManwon)) + ' → ' + toEok(String(data.floorTierAdjustment.afterManwon)) + ')'
+                + '<br><span style="color:#999;font-size:9.5px;">건축물대장 총층수 기준, 아파트 모델의 층위치 계수를 참고로 적용한 근사치입니다</span>'
+                + '</div>'
+            : '';
         avmSubEl.innerHTML = '실거래 ' + (data.nSamples || 0).toLocaleString() + '건 회귀분석(R²='
             + (data.rSquared != null ? data.rSquared.toFixed(2) : '-') + ', 학습데이터 자체 기준) · ' + confNote
             + (data.lowConfidence ? ' - 참고용으로만 보세요' : '')
-            + marginLine;
+            + marginLine
+            + floorTierLine;
     }
 }
 function refreshAvmEstimateIfNeeded() {
@@ -6340,6 +6353,12 @@ function refreshAvmEstimateIfNeeded() {
     // 단지명(danji) - findAptComplexMomentum 등 기존 기능도 이미 a-name을 "단지명"으로 씀.
     // 없어도(단독주택 형태 등) 동작은 하고, 단지 단위 대신 법정동 단위로 자동 폴백됨.
     var danji = document.getElementById('a-name').value.trim();
+    // ⚠️ 2026-08(빌라 층위치 보정): 이 건물의 건축HUB 총층수(pendingAuctionBuildingInfo,
+    // loadAuctionBuildingInfo가 미리 채워둠)가 있으면 서버로 같이 넘김 - 아파트는 K-apt
+    // 단지명 매칭보다 "이 건물 자체"의 값이라 더 정확하고, 빌라는 K-apt 자체가 없어 이 값이
+    // 유일한 층위치 정보원임(사용자 요청: "빌라도 건축물대장 기준으로 비교할 수 있잖아").
+    var topFloor = (pendingAuctionBuildingInfo && pendingAuctionBuildingInfo.title && pendingAuctionBuildingInfo.title.grndFlrCnt)
+        ? parseInt(pendingAuctionBuildingInfo.title.grndFlrCnt) || null : null;
     if (!pyung || !floor || !buildYear || !dong || !ctx.lat || !ctx.lon) {
         avmEstCache = { key: null, loading: false, data: null };
         renderAvmEstimateBox(null);
@@ -6350,7 +6369,7 @@ function refreshAvmEstimateIfNeeded() {
         var sizeM2 = pyung * 3.305785;
         // propType을 캐시 키에도 포함 - 같은 물건이라도 유형을 바꾸면(아파트↔빌라) 다른 모델을
         // 타므로 이전 유형 결과를 잘못 재사용하면 안 됨.
-        var key = avmCacheKey(lawdCd, dong, danji, sizeM2, floor, buildYear) + '|' + propType;
+        var key = avmCacheKey(lawdCd, dong, danji, sizeM2, floor, buildYear, topFloor) + '|' + propType;
         if (avmEstCache.key === key) { renderAvmEstimateBox(avmEstCache.data); return; }
         if (avmEstCache.loading) return; // 이미 같은 요청이 진행중이면 중복 호출 방지(렌더 경로에서 자주 불림)
         avmEstCache = { key: key, loading: true, data: null };
@@ -6360,7 +6379,8 @@ function refreshAvmEstimateIfNeeded() {
         fetch('/api/data-coverage?mode=avmEstimate&type=' + encodeURIComponent(propType)
             + '&lawdCd=' + encodeURIComponent(lawdCd) + '&dong=' + encodeURIComponent(dong)
             + (danji ? '&danji=' + encodeURIComponent(danji) : '')
-            + '&size=' + sizeM2 + '&floor=' + floor + '&buildYear=' + buildYear)
+            + '&size=' + sizeM2 + '&floor=' + floor + '&buildYear=' + buildYear
+            + (topFloor ? '&topFloor=' + topFloor : ''))
           .then(function(r) { return r.json().then(function(d) { return { ok: r.ok, data: d }; }); })
           .then(function(res) {
               var result = (res.ok && !res.data.error) ? res.data : { error: (res.data && res.data.error) || 'AVM 조회 실패' };
