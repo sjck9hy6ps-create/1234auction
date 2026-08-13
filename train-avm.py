@@ -153,9 +153,13 @@ def normalize_complex_name(name) -> str:
 
 
 def build_kapt_lookup():
-    """kapt_complex_info에서 (region, dong, 정규화단지명) → households 매핑을 만듦.
-    households가 아직 없는(sync-kapt.py가 상세정보를 아직 못 가져온) 행은 제외함."""
-    raw = fetch_all_rows("kapt_complex_info", cols="kapt_name,sigungu_code,as3,households")
+    """kapt_complex_info에서 (region, dong, 정규화단지명) → households/top_floor 매핑을 만듦.
+    households가 아직 없는(sync-kapt.py가 상세정보를 아직 못 가져온) 행은 제외함.
+    ⚠️ top_floor(최고층수, 2026-08 추가 - AVM 정확도 개선)는 households와 달리 선택적
+    특성값으로 둠 - K-apt 원본에 top_floor가 비어있는 단지가 households보다 흔해서,
+    households 기준 필수로 걸러내면 안 그래도 소중한 표본이 필요 이상 줄어듦(결측은
+    attach_kapt_features에서 중앙값으로 폴백)."""
+    raw = fetch_all_rows("kapt_complex_info", cols="kapt_name,sigungu_code,as3,households,top_floor")
     if raw.empty:
         print("  kapt_complex_info: 데이터 없음 - 아직 sync-kapt.py가 한 번도 안 돌았거나 초기 단계")
         return None
@@ -172,6 +176,7 @@ def build_kapt_lookup():
     if raw.empty:
         print("  kapt_complex_info: 세대수>0인 유효 행이 없음")
         return None
+    raw["top_floor"] = pd.to_numeric(raw["top_floor"], errors="coerce")
     raw["region"] = raw["sigungu_code"].astype(str).map(CODE_TO_REGION)
     raw = raw.dropna(subset=["region"])  # LAWD_CODES에 없는 코드는 매칭 불가(있을 수 없지만 방어)
     raw = raw.rename(columns={"as3": "dong"})
@@ -182,7 +187,7 @@ def build_kapt_lookup():
         subset=["region", "dong", "_name_norm"], keep="first"
     )
     print(f"  kapt_complex_info: 매칭 가능한 단지 {len(raw)}개 (세대수 정보 있는 것만)")
-    return raw[["region", "dong", "_name_norm", "households"]]
+    return raw[["region", "dong", "_name_norm", "households", "top_floor"]]
 
 
 def _cache_key_part(p) -> str:
@@ -340,17 +345,58 @@ def build_month_dummies(df: pd.DataFrame):
     return df, dummy_cols
 
 
+def _attach_floor_tier_features(df: pd.DataFrame, top_floor_col, median_top_floor):
+    """면적/연식처럼 매끄러운 곡선(log_size, age/age^2)으로는 못 잡는 지하/1층/탑층의
+    불연속적 가격차를 반영하는 피처 4개를 추가함(2026-08, AVM 정확도 개선 - 경매 비교물건
+    매칭에 이미 쓰던 getFloorTier 개념과 같은 통찰을 회귀모델에도 반영). floor/floor^2 하나만
+    으로는 "5층짜리 건물의 5층(탑층)"과 "20층짜리 건물의 5층(중간층)"을 구분 못 함(절대
+    층수만 같고 건물 높이 정보가 없어서) - top_floor(K-apt 최고층수)로 상대적 위치를 알아야
+    구분 가능함.
+      - floor_ratio: 층/최고층수(0~1에 가까울수록 고층) - 건물 높이와 무관하게 "얼마나
+        꼭대기에 가까운지"를 반영하는 연속값
+      - is_top_floor: 탑층 여부(누수·단열 리스크로 통상 할인되는 불연속 요인)
+      - is_ground_floor: 1층 여부(사생활·소음 우려로 통상 할인 - floor^2 곡선의 매끄러운
+        추세만으로는 못 잡는 1층 특유의 튐)
+      - is_basement: 반지하 이하 여부(가장 큰 폭의 할인) - floor<=0 관례는 이 앱 다른 곳
+        (JS의 getFloorTier/clExtractFloor)과 동일
+    top_floor를 못 구한 행은 median_top_floor로 폴백함(households와 동일한 원칙) - 그마저도
+    없으면(K-apt 자체가 비어있는 초기 상태) floor_ratio/is_top_floor는 0(중립값)으로 안전하게
+    무력화됨."""
+    df = df.copy()
+    floor = df["floor"]
+    df["is_basement"] = (floor <= 0).astype(float)
+    df["is_ground_floor"] = (floor == 1).astype(float)
+    if top_floor_col is not None and top_floor_col in df.columns:
+        top = pd.to_numeric(df[top_floor_col], errors="coerce")
+        if median_top_floor is not None:
+            top = top.fillna(median_top_floor)
+        valid = top.notna() & (top > 0) & (floor > 0)
+        ratio = pd.Series(0.0, index=df.index)
+        ratio.loc[valid] = (floor[valid] / top[valid]).clip(upper=1.2)
+        df["floor_ratio"] = ratio
+        top_flag = pd.Series(0.0, index=df.index)
+        top_flag.loc[valid] = (floor[valid] >= top[valid]).astype(float)
+        df["is_top_floor"] = top_flag
+    else:
+        df["floor_ratio"] = 0.0
+        df["is_top_floor"] = 0.0
+    return df
+
+
 def attach_kapt_features(df: pd.DataFrame, kapt_lookup):
-    """df(house_trades 기반)에 K-apt 세대수를 조인해 log_households 컬럼을 추가함.
-    매칭 안 되는 행(K-apt 미등록 단지, 이름 표기 차이 등)은 전체 매칭분의 중앙값으로
-    대체함(회귀에서 상수 취급되어 실질적으로 정보가 없는 것과 같게 처리됨 - 잘못된 값을
-    지어내지 않으면서도 컬럼 자체는 항상 숫자로 채워둬야 행렬 연산이 되므로).
-    반환: (컬럼 추가된 df, 사용된 중앙값 세대수(서버 예측 시 미매칭 폴백에도 재사용))"""
+    """df(house_trades 기반)에 K-apt 세대수(log_households)와 최고층수 기반 상대층 피처
+    4개(_attach_floor_tier_features 참고)를 추가함. 매칭 안 되는 행(K-apt 미등록 단지, 이름
+    표기 차이 등)은 세대수/최고층수 모두 전체 매칭분의 중앙값으로 대체함(회귀에서 상수
+    취급되어 실질적으로 정보가 없는 것과 같게 처리됨 - 잘못된 값을 지어내지 않으면서도
+    컬럼 자체는 항상 숫자로 채워둬야 행렬 연산이 되므로).
+    반환: (컬럼 추가된 df, 사용된 중앙값 세대수, 사용된 중앙값 최고층수(top_floor 정보가
+    전혀 없으면 None) - 둘 다 서버 예측 시 미매칭 폴백에 재사용됨)"""
     df = df.copy()
     if kapt_lookup is None or kapt_lookup.empty:
         median_hh = 500  # 매칭 자료 자체가 없으면 전 행이 이 상수라 회귀에 실질적 영향 없음
         df["log_households"] = np.log(median_hh)
-        return df, median_hh
+        df = _attach_floor_tier_features(df, top_floor_col=None, median_top_floor=None)
+        return df, median_hh, None
     df["_danji_norm"] = df["danji"].fillna("").map(normalize_complex_name)
     merged = df.merge(kapt_lookup, left_on=["region", "dong", "_danji_norm"],
                        right_on=["region", "dong", "_name_norm"], how="left")
@@ -365,8 +411,15 @@ def attach_kapt_features(df: pd.DataFrame, kapt_lookup):
         median_hh = 500.0
     merged["households"] = merged["households"].fillna(median_hh)
     merged["log_households"] = np.log(merged["households"])
-    merged = merged.drop(columns=["_danji_norm", "_name_norm", "households"], errors="ignore")
-    return merged, median_hh
+
+    matched_top = merged.loc[merged["top_floor"].notna() & (merged["top_floor"] > 0), "top_floor"]
+    median_top_floor = float(matched_top.median()) if not matched_top.empty else None
+    n_top_matched = int((merged["top_floor"].notna() & (merged["top_floor"] > 0)).sum())
+    print(f"  K-apt 최고층수 매칭: {n_top_matched}/{len(merged)}행 ({n_top_matched / len(merged) * 100:.1f}%)")
+    merged = _attach_floor_tier_features(merged, top_floor_col="top_floor", median_top_floor=median_top_floor)
+
+    merged = merged.drop(columns=["_danji_norm", "_name_norm", "households", "top_floor"], errors="ignore")
+    return merged, median_hh, median_top_floor
 
 
 def clean_and_featurize(df: pd.DataFrame, use_danji: bool) -> pd.DataFrame:
@@ -586,12 +639,20 @@ def train_one(tables, model_id: str, model_type: str, use_danji: bool, attach_ka
     # 승격된 그룹(=지금 "⚠️ 표본부족"으로 표시되는 케이스)에서는 그 그룹 안에 여러 단지가
     # 섞여 세대수가 실제로 달라지므로 거기서 유의미한 계수가 나옴. 즉 지금 신뢰도가 낮은
     # 케이스를 정확히 겨눈 보강 변수임(모듈 docstring 및 sync-kapt.py 참고).
+    # ⚠️ 2026-08(층위치 피처 추가 - AVM 정확도 개선): 위 households 설명과 달리 floor_ratio/
+    # is_top_floor/is_ground_floor/is_basement는 표본충분한 danji 그룹에서도 그대로 유의미함 -
+    # households는 "단지 고유 상수"라 같은 단지 안에서는 항상 같은 값이므로 danji 고정효과가
+    # 이미 흡수해버리지만(FWL 중심화 후 0), 층위치는 같은 단지 안에서도 호실마다 다르므로
+    # (같은 건물이라도 1층/중간층/탑층이 섞여 거래됨) danji 고정효과로는 전혀 흡수되지 않고
+    # 항상 추가 설명력을 가짐. K-apt 매칭 여부와 무관하게 attach_kapt=True 경로에 함께 묶어둔
+    # 이유는 top_floor(K-apt 전용 데이터)에 의존하기 때문(households와 조회 경로가 같음).
     feature_cols = list(FEATURE_COLS)
     median_households = None
+    median_top_floor = None
     if attach_kapt:
         kapt_lookup = build_kapt_lookup()
-        df, median_households = attach_kapt_features(df, kapt_lookup)
-        feature_cols = feature_cols + ["log_households"]
+        df, median_households, median_top_floor = attach_kapt_features(df, kapt_lookup)
+        feature_cols = feature_cols + ["log_households", "floor_ratio", "is_top_floor", "is_ground_floor", "is_basement"]
 
     # ⚠️ 2026-08(역세권/학군 연동): K-apt와 같은 이유로 표본충분한 단지는 danji 고정효과가
     # 이미 "그 위치"를 반영하므로 지하철역 거리도 그룹 내에서는 상수에 가까워 득이 적지만,
@@ -657,6 +718,10 @@ def train_one(tables, model_id: str, model_type: str, use_danji: bool, attach_ka
         # K-apt와 같은 이유 - 예측 시점에 transit_features 매칭이 안 되는 물건은 서버가
         # 이 중앙값으로 폴백함(학습 때와 같은 값이어야 계수 해석이 어긋나지 않음).
         feature_ranges["median_dist_subway"] = median_dist_subway
+    if median_top_floor is not None:
+        # households/역세권과 같은 이유 - 예측 시점에 K-apt에서 top_floor를 못 찾는 물건은
+        # 서버가 이 중앙값으로 폴백함(floor_ratio/is_top_floor 계산에 필요).
+        feature_ranges["median_top_floor"] = median_top_floor
     # 정확도 보완(2026-08) - feature_ranges는 이미 jsonb라 스키마 변경 없이 새 키를 추가할 수
     # 있음(위 모듈 상단 주석 참고). 서버(data-coverage.js)가 이 값들을 읽어 point estimate와
     # 함께 "검증된" 오차범위를 같이 내려줌 - in-sample r_squared만 보여주는 것보다 훨씬 정직함.
