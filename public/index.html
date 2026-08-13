@@ -351,6 +351,21 @@ tr:hover td { background:#fffde7; }
     font-size:11.5px; color:#6a1b9a; font-weight:bold; cursor:pointer;
 }
 .auction-bias-toggle:hover { text-decoration:underline; }
+/* 예측 오차 누적통계 - 법정동별 접기/펼치기. 아이패드 미니 등 좁은 화면에서 물건이 쌓일수록
+   법정동 목록이 계속 길어지는 걸 막기 위해 기본은 동 이름 한 줄(+오차율)만 보이고, 탭하면
+   그 동의 통계·개별 건 목록이 펼쳐짐(터치하기 쉽게 헤더 영역을 넉넉히 잡음). */
+.bias-dong-group { border-bottom:1px solid #f0f0f0; }
+.bias-dong-header {
+    display:flex; align-items:center; justify-content:space-between; gap:8px;
+    padding:9px 14px; background:#f8f2fb; cursor:pointer; user-select:none;
+    font-size:11.5px; font-weight:bold; color:#4a148c; min-height:18px;
+    -webkit-tap-highlight-color:transparent;
+}
+.bias-dong-header:active { background:#efdff5; }
+.bias-dong-chevron { color:#aaa; font-size:11px; transition:transform .15s ease; flex-shrink:0; }
+.bias-dong-group.open > .bias-dong-header .bias-dong-chevron { transform:rotate(90deg); }
+.bias-dong-body { display:none; }
+.bias-dong-group.open > .bias-dong-body { display:block; }
 .auction-list-header {
     padding:10px 14px; font-size:12px; font-weight:bold; color:#6a1b9a;
     border-bottom:1px solid #eee; position:sticky; top:0; background:white;
@@ -5567,6 +5582,15 @@ function auctionBiasCases() {
         return { a: a, predicted: predicted, actual: actual, diff: diff, diffPct: diffPct };
     });
 }
+// 법정동 아코디언 펼침 상태 기억 - 재렌더링(다른 건 저장 등) 후에도 펼쳐뒀던 동은 다시
+// 접히지 않게 유지함(2026-08: 아이패드 미니 등 좁은 화면에서 매번 접힌 채로 리셋되면
+// 다시 찾아 펼쳐야 해서 불편하다는 점을 고려).
+var auctionBiasOpenDongs = {};
+function toggleBiasDongGroup(dong, groupId) {
+    auctionBiasOpenDongs[dong] = !auctionBiasOpenDongs[dong];
+    var el = document.getElementById(groupId);
+    if (el) el.classList.toggle('open');
+}
 function renderAuctionBiasStats() {
     var box = document.getElementById('auction-bias-stats-body');
     if (!box) return;
@@ -5575,6 +5599,8 @@ function renderAuctionBiasStats() {
         box.innerHTML = '<div style="padding:10px 14px;font-size:11px;color:#aaa;">예상낙찰가와 실제낙찰가가 모두 기록된 물건이 아직 없습니다. 목표매도가·목표마진이 저장돼 있는 물건이라면, 목록에서 실제낙찰가만 입력해도 예상낙찰가가 자동으로 함께 계산·저장됩니다.</div>';
         return;
     }
+    // 전체 요약카드는 데이터량과 무관하게 항상 한 장으로 고정이라 접지 않고 항상 보여줌 -
+    // 좁은 화면에서 계속 길어지는 건 법정동별 목록 쪽이라, 그 부분만 아코디언으로 접음.
     var html = buildBiasStatBlock('📊 전체', cases, false);
     var groups = {};
     cases.forEach(function(c) {
@@ -5583,14 +5609,31 @@ function renderAuctionBiasStats() {
         groups[key].push(c);
     });
     var dongKeys = Object.keys(groups).sort(function(x, y) { return groups[y].length - groups[x].length; });
-    dongKeys.forEach(function(dong) {
-        html += buildBiasStatBlock('📍 ' + dong, groups[dong], true);
+    dongKeys.forEach(function(dong, idx) {
+        var dongCases = groups[dong];
+        var pcts = dongCases.map(function(c) { return c.diffPct; });
+        var medPct = Math.round(median(pcts) * 10) / 10;
+        var biasColor = medPct > 0 ? '#c62828' : (medPct < 0 ? '#1565c0' : '#555');
+        var groupId = 'bias-dong-group-' + idx;
+        var isOpen = !!auctionBiasOpenDongs[dong];
+        var dongJs = dong.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+        html += '<div class="bias-dong-group' + (isOpen ? ' open' : '') + '" id="' + groupId + '">'
+            + '<div class="bias-dong-header" onclick="toggleBiasDongGroup(\'' + dongJs + '\', \'' + groupId + '\')">'
+            + '<span>📍 ' + dong + ' (' + dongCases.length + '건)</span>'
+            + '<span style="display:flex;align-items:center;gap:6px;flex-shrink:0;">'
+            + '<b style="color:' + biasColor + ';">' + (medPct > 0 ? '+' : '') + medPct + '%</b>'
+            + '<span class="bias-dong-chevron">▶</span></span>'
+            + '</div>'
+            + '<div class="bias-dong-body">' + buildBiasStatBlock('', dongCases, true) + '</div>'
+            + '</div>';
     });
     box.innerHTML = html;
 }
 /* 한 그룹(전체 또는 법정동 하나)의 편향 요약 카드 - 중간값을 주지표로 씀(이상치 1~2건에
    평균이 크게 휘둘리는 걸 막기 위함, renderBidCaseList와 동일한 이유). showCases가 true면
-   그 아래 개별 건(사건번호 클릭시 해당 모달로 바로 이동 - "사건번호로 지난 결과 확인") 나열. */
+   그 아래 개별 건(사건번호 클릭시 해당 모달로 바로 이동 - "사건번호로 지난 결과 확인") 나열.
+   title이 빈 문자열이면(법정동 아코디언 안에서 호출되는 경우) 동이름 줄은 생략함 -
+   아코디언 헤더에 이미 동이름·건수·오차율이 표시돼 있어 중복이라서. */
 function buildBiasStatBlock(title, cases, showCases) {
     var pcts = cases.map(function(c) { return c.diffPct; });
     var avgPct = Math.round((pcts.reduce(function(s, v) { return s + v; }, 0) / pcts.length) * 10) / 10;
@@ -5603,7 +5646,9 @@ function buildBiasStatBlock(title, cases, showCases) {
         : (medPct < 0
             ? '실제낙찰가가 예측보다 중간값 기준 ' + medPct + '% 낮음 (목표마진을 더 낮춰도 낙찰 가능했을 여지)'
             : '예측과 실제가 대체로 일치');
-    var html = '<div class="bc-dong-group-title">' + title + ' (' + cases.length + '건, 실제↑ ' + overBid + ' · 실제↓ ' + underBid + ')</div>';
+    var html = title
+        ? '<div class="bc-dong-group-title">' + title + ' (' + cases.length + '건, 실제↑ ' + overBid + ' · 실제↓ ' + underBid + ')</div>'
+        : '<div style="padding:6px 14px 0;font-size:10px;color:#999;">실제↑ ' + overBid + '건 · 실제↓ ' + underBid + '건</div>';
     html += '<div style="padding:6px 14px;">'
         + '<div style="font-size:10px;color:#999;margin-bottom:2px;">오차율(%) - 중간값 / 평균 / 최소 / 최대</div>'
         + '<div class="bc-stat-grid" style="grid-template-columns:repeat(4,1fr);">'
