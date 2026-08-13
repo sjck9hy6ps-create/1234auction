@@ -4399,6 +4399,13 @@ function clExtractDongBunji(addrJibun) {
 function clExtractFloor(line) {
     var mBasement = line.match(/지(\d+)층/);
     if (mBasement) return -parseInt(mBasement[1], 10);
+    // ⚠️ 2026-08 버그 수정: "지1층"처럼 숫자가 붙은 표기가 아니라, 지하가 한 층뿐인 건물에서
+    // 흔히 쓰는 "지층"(숫자 없음) 표기는 위 정규식에 안 걸려서 그냥 null로 새어나갔음. 그러면
+    // a-floor 입력칸이 비어서 findSimilarComps의 층수 필터(targetFloor 있어야만 작동)가
+    // 통째로 무력화되고, 지층 물건인데 고층 매물과 비교돼 예상매도가가 과대평가되는 사고로
+    // 이어짐(2026-08 사용자 리포트: 시흥 거모동 태영하이빌 지층2호). "지층"만 있으면 지1층
+    // (-1)과 동일하게 취급.
+    if (/지층/.test(line)) return -1;
     var m = line.match(/(\d+)층/);
     if (m) return parseInt(m[1], 10);
     return null;
@@ -8732,7 +8739,8 @@ async function openRadiusCompFinder() {
     var ctx = getAuctionAddressContext(); // 같은 단지 매도사례를 우선순위로 올리기 위한 단지명/법정동/지번
 
     aiCompFinderMode = 'radius';
-    aiCompCandidates = findComparablesInRadius(lat, lon, targetBuildingType, 1000, ctx.name, ctx.dong, ctx.bunji);
+    var targetFloor = parseInt(document.getElementById('a-floor').value) || null;
+    aiCompCandidates = findComparablesInRadius(lat, lon, targetBuildingType, 1000, ctx.name, ctx.dong, ctx.bunji, targetFloor);
     var titleEl = document.getElementById('ai-comp-modal-title');
     if (titleEl) titleEl.innerText = '📍 반경 1km 비교물건 (' + aiCompCandidates.length + '건)';
     renderAiCompList();
@@ -8748,6 +8756,22 @@ function getMaxFloorForApt(apt) {
         .filter(function(f) { return Number.isFinite(f) && f > 0; });
     return floors.length ? Math.max.apply(null, floors) : null;
 }
+/* ⚠️ 2026-08 추가: 층수 구간 분류 - 지하/1층/탑층은 일반층과 매매가 형성이 뚜렷하게 다름
+   (2026-08 사용자 리포트: 시흥 거모동 태영하이빌 지층2호를 등록했더니 비교물건이 층수와
+   무관하게 잡혀서, 지층인데도 고층 매물과 비교되며 예상매도가가 과대평가됨 - "지하층·1층·
+   탑층은 매도가에 차이가 분명히 있다"). 아래 findSimilarComps는 "같은 단지 거래는 평형·층·
+   탑층·연식 하드컷을 건너뛴다"는 완화 로직이 있는데(과거 표본부족 문제로 일부러 완화함),
+   이 4단계 구간 구분만큼은 같은 단지 여부와 무관하게 항상 지켜야 시세 왜곡이 안 생기므로
+   별도 함수로 분리해 그 완화 로직 밖에서 공통 적용함.
+   maxFloor를 모르면(다른 단지라 총층수를 알 수 없는 경우 등) 'top' 판정은 포기함(과도한
+   제외를 막기 위함 - 대신 !isSameComplex 경로의 기존 "탑층 제외" 줄이 이중 안전장치로 남음). */
+function getFloorTier(floorNum, maxFloor) {
+    if (!Number.isFinite(floorNum)) return null;
+    if (floorNum <= 0) return 'basement';
+    if (floorNum === 1) return 'ground';
+    if (maxFloor !== null && floorNum >= maxFloor) return 'top';
+    return 'mid';
+}
 /* 반경 내 전체 비교물건 리스트 - findSimilarComps()는 평형±4평/층±1층/연식±3년/탑층제외/
    단지당1건 등 조건이 까다로워 결과가 아예 안 나올 수 있음. 이 함수는 그런 조건 없이
    "반경(radiusM) + 건물유형 일치 + 최근 1년 거래"만으로 걸러 폭넓게 보여줌.
@@ -8755,8 +8779,11 @@ function getMaxFloorForApt(apt) {
    많은 경우에도 반경 안의 다른 단지 거래가 먼저 뜨는 문제가 있었음(주공9단지 사례 등).
    대상 물건과 같은 단지(matchesAuctionKey로 단지명 또는 법정동+지번 일치 판정)인 거래는
    항상 맨 앞에, 그 안에서는 최신순으로 두고, 나머지만 거리순으로 뒤에 붙임. */
-function findComparablesInRadius(lat, lon, targetBuildingType, radiusM, targetName, targetDong, targetBunji) {
+function findComparablesInRadius(lat, lon, targetBuildingType, radiusM, targetName, targetDong, targetBunji, targetFloor) {
     var candidates = [];
+    // targetFloor가 없으면(호출부에서 안 넘겼거나 대상 층수를 모르면) 기존처럼 지하는 항상 제외.
+    // 있으면 대상과 같은 층수구간(지하/1층/탑층/일반층)인 거래만 남김 - getFloorTier 참고.
+    var targetTierNoMax = (targetFloor !== undefined && targetFloor !== null) ? getFloorTier(targetFloor, null) : null;
     allAptList.forEach(function(apt) {
         if (apt.buildingType === 'single') return;
         if (targetBuildingType && apt.buildingType !== targetBuildingType) return;
@@ -8767,11 +8794,16 @@ function findComparablesInRadius(lat, lon, targetBuildingType, radiusM, targetNa
         var isSameComplex = matchesAuctionKey(l, targetName, targetDong, targetBunji);
         var dist = getDistance(lat, lon, coord.lat, coord.lon);
         if (!isSameComplex && dist > radiusM) return; // 같은 단지는 반경 제한 없이 항상 포함
+        var maxFloor = getMaxFloorForApt(apt);
+        var targetTier = isSameComplex ? getFloorTier(targetFloor, maxFloor) : targetTierNoMax;
         (apt.trades || []).forEach(function(t) {
             if (t.area <= 0 || parseInt(t.amount) <= 0) return;
             if (tradeDate(t) < oneYearAgo) return; // 최근 1년 거래만
             var floorNum = parseInt(t.floor);
-            if (!Number.isFinite(floorNum) || floorNum <= 0) return; // 지층/반지층·층수 미상 제외
+            if (!Number.isFinite(floorNum)) return; // 층수 미상은 항상 제외
+            var candTier = getFloorTier(floorNum, isSameComplex ? maxFloor : null);
+            if (targetTier) { if (candTier !== targetTier) return; }
+            else if (candTier === 'basement') return; // 대상층 모름 - 기존처럼 최소한 지하는 제외
             candidates.push({ trade: t, dist: Math.round(dist), ageDiff: null, floorDiff: null, score: dist,
                 apt: apt, coordLat: coord.lat, coordLon: coord.lon, isSameComplex: isSameComplex }); // 승강기 조회(fetchElevatorForApt)에 씀
         });
@@ -8802,16 +8834,27 @@ function findSimilarComps(lat, lon, targetYear, targetFloor, targetPyung, target
         var dist = getDistance(lat, lon, coord.lat, coord.lon);
         if (!isSameComplex && dist > 2000) return; // 반경 2km 이내만(같은 단지는 예외)
         var maxFloor = getMaxFloorForApt(apt);
+        // ⚠️ 2026-08: 지하/1층/탑층 구간(getFloorTier)만큼은 "같은 단지는 하드컷 건너뜀" 완화
+        // 대상이 아님 - 아래 !isSameComplex 블록 밖에서 항상 먼저 확인함(자세한 이유는
+        // getFloorTier 함수 주석 참고).
+        var targetTier = getFloorTier(targetFloor, isSameComplex ? maxFloor : null);
         (apt.trades || []).forEach(function(t) {
             if (t.area <= 0 || parseInt(t.amount) <= 0) return;
             if (tradeDate(t) < oneYearAgo) return; // 최근 1년 거래만
             var floorNum = parseInt(t.floor);
-            if (!Number.isFinite(floorNum) || floorNum <= 0) return; // 지층/반지층·층수 미상 제외(같은 단지도 동일 적용)
+            if (!Number.isFinite(floorNum)) return; // 층수 미상은 항상 제외
+
+            var candTier = getFloorTier(floorNum, isSameComplex ? maxFloor : null);
+            if (targetTier) {
+                if (candTier !== targetTier) return; // 지하/1층/탑층/일반층 구간 불일치는 같은 단지라도 제외
+            } else {
+                if (candTier === 'basement') return; // 대상층 모름 - 기존처럼 최소한 지하는 제외
+                if (candTier === 'top' && !isSameComplex) return; // 대상층 모름 - 기존처럼 다른 단지 탑층은 제외
+            }
 
             if (!isSameComplex) {
                 var py = toPyung(t.area);
                 if (targetPyung && Math.abs(py - targetPyung) > 4) return; // 평형 ±4평 이내
-                if (maxFloor !== null && floorNum === maxFloor) return; // 탑층 제외
                 if (targetFloor && Math.abs(targetFloor - floorNum) > 1) return; // 목표층 ±1층 이내만
             }
 
