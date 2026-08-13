@@ -91,6 +91,21 @@ MIN_DONG_SAMPLES = 5   # 법정동 단위 그룹의 최소 표본(아파트는 �
 MAX_AGE_YEARS = 60  # 이보다 오래된 건 데이터 오류로 보고 제외
 PAGE_SIZE = 1000
 
+# ⚠️ 2026-08(빌라 반경기반 공간 그룹핑 - 사용자 요청) ──────────────────────────────
+# 배경: villa_v1의 홀드아웃 오차(±36%)가 apt_v1(±10%)보다 훨씬 컸는데, 원인 중 하나가
+# 법정동(행정동) 단위 그룹핑이었음 - 행정동 경계는 행정 편의로 그어진 것이라 실제
+# 매수자의 비교 반경(사용자: "빌라 매매를 위해 사실은 1km 내에서 움직이는게 핵심")과
+# 일치하지 않음. 진짜 "반경 검색"은 물건마다 이웃 집합이 겹쳐서 FWL 고정효과 회귀의
+# groupby.transform('mean') 방식과 근본적으로 안 맞음(그룹은 반드시 배타적 파티션이어야
+# 함) - 대신 좌표를 GRID_CELL_KM 크기 격자로 스냅해 그룹 삼음(각 물건은 정확히 하나의
+# 격자에 속하면서도, 격자 크기가 법정동보다 훨씬 작아 실제 도보/생활권 비교 단위에 더
+# 가까움). 아파트는 danji(단지) 고정효과가 이미 위치를 정확히 반영하므로 이 격자 그룹핑을
+# 적용하지 않음(danji 자체가 최고 수준의 위치 정보라 격자로 덮어쓸 이유가 없음).
+GRID_CELL_KM = 1.0     # 격자 한 변의 대략적인 길이(km) - 사용자가 말한 "1km 내" 비교 반경에 맞춤
+MIN_GRID_SAMPLES = 5   # 격자 단위 그룹의 최소 표본(danji/dong과 동일 기준 - 표본부족 시 법정동으로 승격)
+LAT_KM_PER_DEG = 111.0  # 위도 1도 ≈ 111km(지구 어디서나 거의 일정) - 경도는 위도에 따라 달라져
+# cos(위도)를 곱해 보정함(적도에서 111km, 극지방으로 갈수록 좁아짐 - 한국은 위도 약 33~38도).
+
 # ⚠️ 2026-08(정확도 보완 - 이상치 제거/홀드아웃 검증 추가) ────────────────────────
 # 배경: 이전엔 학습 데이터에 이상치 제거가 전혀 없었고(가격>0, 연식 0~60년 필터만 있었음),
 # 학습 스크립트가 보고하는 R^2도 "전체 데이터로 학습한 뒤 그 데이터로 다시 채점"하는
@@ -228,6 +243,84 @@ def build_transit_lookup():
     raw["dist_subway_m"] = pd.to_numeric(raw["dist_subway_m"], errors="coerce")
     print(f"  transit_features: {len(raw)}행 로드 (역 발견 {int(raw['dist_subway_m'].notna().sum())}건, 반경밖 {int(raw['dist_subway_m'].isna().sum())}건)")
     return raw
+
+
+def build_coords_lookup():
+    """complex_coords(warmup-locations.mjs가 채워둔 단지/건물 좌표 캐시)를 그대로 불러옴 -
+    cache_key가 house_trades/villa_trades 양쪽 모두와 같은 체계라 attach_transit_features와
+    동일한 방식(build_cache_key)으로 정확히 일치(exact match)시킬 수 있음. 빌라 반경기반
+    그룹핑(attach_spatial_grid_grouping)에만 씀 - single_trades(단독다가구)는 애초에
+    지오코딩 대상이 아니라 여기 매칭될 수 없고, 그 행들은 자동으로 법정동 단위로 폴백됨."""
+    raw = fetch_all_rows("complex_coords", cols="cache_key,lat,lon")
+    if raw.empty:
+        print("  complex_coords: 데이터 없음 - 아직 웜업 스크립트가 한 번도 안 돌았거나 초기 단계")
+        return None
+    raw["lat"] = pd.to_numeric(raw["lat"], errors="coerce")
+    raw["lon"] = pd.to_numeric(raw["lon"], errors="coerce")
+    raw = raw.dropna(subset=["lat", "lon"])
+    print(f"  complex_coords: 좌표 있는 캐시 {len(raw)}개 로드")
+    return raw
+
+
+def _spatial_grid_key(lat, lon, cell_km):
+    """좌표를 cell_km 크기 격자로 스냅해 격자 ID 문자열을 만듦.
+    ⚠️ data-coverage.js의 spatialGridKey()와 반드시 같은 공식이어야 함(학습 시점과 예측
+    시점의 격자 정의가 어긋나면 group_key가 절대 일치하지 않음 - K-apt/역세권 cache_key와
+    같은 종류의 학습/서빙 일치 요구사항)."""
+    if pd.isna(lat) or pd.isna(lon):
+        return None
+    lon_km_per_deg = LAT_KM_PER_DEG * math.cos(math.radians(lat))
+    if lon_km_per_deg <= 1.0:  # 극단적 위도(사실상 발생 안 함) 방어 - 0 나눗셈류 문제 예방
+        lon_km_per_deg = LAT_KM_PER_DEG
+    lat_cell = int(math.floor(lat * LAT_KM_PER_DEG / cell_km))
+    lon_cell = int(math.floor(lon * lon_km_per_deg / cell_km))
+    return f"grid_{lat_cell}_{lon_cell}"
+
+
+def attach_spatial_grid_grouping(df: pd.DataFrame, coords_lookup, cell_km: float, min_grid_samples: int):
+    """clean_and_featurize가 이미 만들어둔 group_key(법정동→시군구 2단계)를, 좌표가 있는
+    행에 한해 더 촘촘한 공간 격자(grid) 단위로 대체함 - danji가 아파트의 1차 그룹인 것과
+    같은 자리에 빌라는 grid를 씀(grid→dong→region 3단계). 표본부족(min_grid_samples 미만)
+    격자는 기존 danji 승격 로직과 동일하게 법정동 단위로 되돌림. 좌표를 못 찾은 행(단독주택
+    등)은 건드리지 않고 기존 법정동/시군구 폴백을 그대로 유지함."""
+    df = df.copy()
+    df["_cache_key"] = df.apply(
+        lambda r: build_cache_key(r.get("dong"), r.get("danji"), r.get("bunji"), r.get("road_name"), r.get("main_num"), r.get("sub_num")),
+        axis=1,
+    )
+    if coords_lookup is None or coords_lookup.empty:
+        print("  공간격자 그룹핑: complex_coords 데이터 없음 - 법정동 단위로 전량 폴백")
+        df = df.drop(columns=["_cache_key"], errors="ignore")
+        return df
+    merged = df.merge(coords_lookup, left_on="_cache_key", right_on="cache_key", how="left")
+    has_coord = merged["lat"].notna() & merged["lon"].notna()
+    n_matched = int(has_coord.sum())
+    print(f"  공간격자 좌표 매칭: {n_matched}/{len(merged)}행 ({n_matched / len(merged) * 100:.1f}%) - 나머지는 법정동 단위로 폴백")
+    grid_key = pd.Series([None] * len(merged), index=merged.index, dtype=object)
+    if n_matched > 0:
+        idx = merged.index[has_coord]
+        grid_key.loc[idx] = [
+            _spatial_grid_key(lat, lon, cell_km)
+            for lat, lon in zip(merged.loc[idx, "lat"], merged.loc[idx, "lon"])
+        ]
+    merged["grid_key"] = grid_key
+    merged = merged.drop(columns=["_cache_key", "cache_key", "lat", "lon"], errors="ignore")
+
+    # group_key 재구성: grid_key가 있는 행은 우선 그걸로 바꾸되(표본부족 시 원래 법정동/
+    # 시군구 값으로 되돌림), 좌표가 없던 행은 clean_and_featurize가 만들어둔 값을 그대로 둠.
+    has_grid = merged["grid_key"].notna()
+    original_group = merged["group_key"].copy()
+    new_group = original_group.copy()
+    new_group.loc[has_grid] = merged.loc[has_grid, "grid_key"]
+    grid_counts = new_group[has_grid].value_counts()
+    small_grid = grid_counts[grid_counts < min_grid_samples].index
+    demote_mask = has_grid & new_group.isin(small_grid)
+    new_group.loc[demote_mask] = original_group.loc[demote_mask]
+    merged["group_key"] = new_group
+    merged = merged.drop(columns=["grid_key"], errors="ignore")
+    n_grid_level = int((has_grid & ~demote_mask).sum())
+    print(f"  공간격자({cell_km}km) 그룹 채택: {n_grid_level}/{len(merged)}행 (표본부족으로 법정동 승격 {int(demote_mask.sum())}행)")
+    return merged
 
 
 SUBWAY_SEARCH_RADIUS_M = 2000  # sync-transit.mjs의 SEARCH_RADIUS_M과 동일(반경 밖은 "역세권 아님")
@@ -436,6 +529,17 @@ def clean_and_featurize(df: pd.DataFrame, use_danji: bool) -> pd.DataFrame:
     for col in ("price", "size", "floor", "build_year"):
         if col in df.columns:
             df[col] = pd.to_numeric(df[col], errors="coerce")
+    # ⚠️ 2026-08(단독주택 학습 제외 버그 수정): is_single_house=1인 행(single_trades,
+    # 단독/다가구)은 floor 개념 자체가 없어 원본이 항상 null인데, 바로 아래 dropna가
+    # floor를 필수 필드로 요구해 이 행들을 전부 걸러내고 있었음 - villa_v1이 "villa_trades+
+    # single_trades를 합쳐 학습한다"는 문서/주석과 달리 실제로는 단독주택이 단 한 건도
+    # 학습되지 않고 있었음(사용자 피드백으로 발견). 임의의 층수를 지어내는 대신 "층 개념
+    # 없음"을 뜻하는 중립값 1(1층 취급, floor^2도 1로 왜곡 최소화)로 채우고, is_single_house
+    # 더미(아래 train_one에서 feature_cols에 추가됨)로 다세대/연립과의 평균 가격수준 차이를
+    # 회귀가 별도 계수로 직접 추정하게 함.
+    if "is_single_house" in df.columns:
+        single_mask = df["is_single_house"] == 1
+        df.loc[single_mask, "floor"] = df.loc[single_mask, "floor"].fillna(1.0)
     # 필수 필드 결측/이상치 제거
     df = df.dropna(subset=["price", "size", "floor", "deal_date", "region", "dong"])
     df = df[(df["price"] > 0) & (df["size"] > 0)]
@@ -610,28 +714,50 @@ def upsert_model(model_id: str, model_type: str, beta: dict, group_effects: dict
     print(f"  {model_id} 저장 완료 - n={n_samples}, R^2={r_squared:.4f}" if r_squared is not None else f"  {model_id} 저장 완료 - n={n_samples}")
 
 
-def train_one(tables, model_id: str, model_type: str, use_danji: bool, attach_kapt: bool = False,
-              attach_transit: bool = False, attach_school: bool = False, attach_month_fe: bool = True):
+def train_one(tables, model_id: str, model_type: str, use_danji: bool, use_grid: bool = False,
+              attach_kapt: bool = False, attach_transit: bool = False, attach_school: bool = False,
+              attach_month_fe: bool = True):
     # tables: 테이블 하나(str) 또는 여러 개(list) - 연립다세대는 villa_trades(연립다세대)+
     # single_trades(단독다가구) 두 테이블을 합쳐서 하나의 모델로 학습함(이 앱 다른 곳(예:
     # rpc_top_dongs SQL, data-coverage.js getBucketDetailRows)도 "villa" 타입을 이 두 테이블의
     # 합집합으로 다뤄서 같은 관례를 따름).
     if isinstance(tables, str):
         tables = [tables]
-    print(f"[{model_id}] {', '.join(tables)} 학습 시작 (그룹 단위: {'단지→법정동→시군구' if use_danji else '법정동→시군구'})")
-    # attach_transit=True면 cache_key 조합에 필요한 주소 세부 컬럼(bunji/road_name/main_num/
-    # sub_num)까지 같이 가져와야 함 - complex_coords/transit_features와 정확히 같은 키를
-    # 재구성하려면 이 필드들이 반드시 필요함(warmup-locations.mjs가 저장할 때 쓴 것과 동일).
+    group_desc = '단지→법정동→시군구' if use_danji else ('공간격자→법정동→시군구' if use_grid else '법정동→시군구')
+    print(f"[{model_id}] {', '.join(tables)} 학습 시작 (그룹 단위: {group_desc})")
+    # attach_transit/use_grid가 True면 cache_key 조합에 필요한 주소 세부 컬럼(bunji/road_name/
+    # main_num/sub_num)까지 같이 가져와야 함 - complex_coords/transit_features와 정확히 같은
+    # 키를 재구성하려면 이 필드들이 반드시 필요함(warmup-locations.mjs가 저장할 때 쓴 것과 동일).
     cols = "region,dong,danji,price,size,floor,deal_date,build_year"
-    if attach_transit:
+    if attach_transit or use_grid:
         cols += ",bunji,road_name,main_num,sub_num"
-    raw_parts = [fetch_all_rows(t, cols=cols) for t in tables]
-    raw_parts = [p for p in raw_parts if not p.empty]
+    raw_parts = []
+    for t in tables:
+        p = fetch_all_rows(t, cols=cols)
+        if not p.empty:
+            # is_single_house: single_trades(단독/다가구) 행을 표시해두는 더미 - 아래
+            # clean_and_featurize의 floor 결측 처리 및 feature_cols 추가에 씀(모듈 내 주석 참고).
+            p["is_single_house"] = 1.0 if t == "single_trades" else 0.0
+            raw_parts.append(p)
     if not raw_parts:
         print(f"  {', '.join(tables)}: 데이터 없음, 스킵")
         return
     raw = pd.concat(raw_parts, ignore_index=True)
     df = clean_and_featurize(raw, use_danji)
+
+    feature_cols = list(FEATURE_COLS)
+    if "is_single_house" in df.columns and df["is_single_house"].nunique() > 1:
+        # 단독/다가구와 연립/다세대가 실제로 섞여 학습되는 경우(villa_v1)에만 추가 - 두
+        # 유형의 평균 가격수준 차이(단독주택은 층 개념이 없고 대지지분 비중이 다름 등)를
+        # 회귀가 별도 계수로 흡수하게 함(다른 하나뿐인 값이면(0만 있음) 의미가 없어 제외).
+        feature_cols.append("is_single_house")
+
+    # ⚠️ 2026-08(빌라 반경기반 그룹핑, 사용자 요청): 법정동 대신 좌표 기반 격자를 1차 그룹
+    # 단위로 씀 - 모듈 상단 GRID_CELL_KM 설명 참고. 좌표가 없는 행(단독주택 등)은 자동으로
+    # 법정동/시군구 폴백을 그대로 유지함.
+    if use_grid:
+        coords_lookup = build_coords_lookup()
+        df = attach_spatial_grid_grouping(df, coords_lookup, cell_km=GRID_CELL_KM, min_grid_samples=MIN_GRID_SAMPLES)
 
     # ⚠️ 2026-08(K-apt 2단계): 표본충분한 단지는 이미 danji 고정효과가 그 단지 평균을 정확히
     # 반영하므로 세대수 같은 "단지 고유 상수"를 더해도 득이 없음(그룹 내에서 상수라 FWL
@@ -657,8 +783,15 @@ def train_one(tables, model_id: str, model_type: str, use_danji: bool, attach_ka
     # ⚠️ 2026-08(역세권/학군 연동): K-apt와 같은 이유로 표본충분한 단지는 danji 고정효과가
     # 이미 "그 위치"를 반영하므로 지하철역 거리도 그룹 내에서는 상수에 가까워 득이 적지만,
     # dong/region으로 승격된 그룹에서는 같은 그룹 안에 위치가 다른 여러 단지가 섞여 유의미한
-    # 신호가 남음. 연립다세대(villa_v1)는 danji를 안 쓰므로(dong 고정효과) transit_features가
-    # 요구하는 단지 단위 좌표 커버리지 비용 대비 효용이 낮아 이번 단계에선 아파트만 적용.
+    # 신호가 남음.
+    # ⚠️ 2026-08(빌라 오차범위 개선 - 역세권 확대 적용): 처음엔 "연립다세대는 danji를
+    # 안 써서(dong 고정효과) 단지 단위 좌표 커버리지 비용 대비 효용이 낮다"는 이유로
+    # 아파트만 적용했었음. 그런데 이제 villa_v1도 grid(공간격자, danji보다도 더 촘촘한
+    # 단위) 고정효과를 쓰게 되면서 오히려 사정이 반대가 됨 - 격자 내에서도 역과의 거리는
+    # 여전히 달라질 수 있고, complex_coords는 villa_trades 좌표도 이미 갖고 있어(웜업
+    # 스크립트가 아파트+빌라를 함께 지오코딩함) 추가 좌표화 비용 없이 바로 쓸 수 있음
+    # (sync-transit.mjs가 지하철역-거리 동기화 우선순위를 아파트 위주로 둬서 빌라 커버리지가
+    # 아직 얕을 수 있지만, 매칭 안 되는 행은 기존처럼 중앙값으로 안전하게 폴백됨).
     median_dist_subway = None
     if attach_transit:
         transit_lookup = build_transit_lookup()
@@ -722,6 +855,12 @@ def train_one(tables, model_id: str, model_type: str, use_danji: bool, attach_ka
         # households/역세권과 같은 이유 - 예측 시점에 K-apt에서 top_floor를 못 찾는 물건은
         # 서버가 이 중앙값으로 폴백함(floor_ratio/is_top_floor 계산에 필요).
         feature_ranges["median_top_floor"] = median_top_floor
+    if use_grid:
+        # ⚠️ 서버(data-coverage.js)가 예측 시점에 물건 좌표로 grid_key를 재계산할 때 반드시
+        # 같은 격자 크기를 써야 group_key가 일치함 - 하드코딩 대신 학습 때 실제 쓴 값을
+        # 저장해 서버가 그대로 읽어쓰게 함(GRID_CELL_KM을 나중에 튜닝해도 서버 코드를
+        # 따로 안 고쳐도 되는 부수효과도 있음).
+        feature_ranges["grid_cell_km"] = GRID_CELL_KM
     # 정확도 보완(2026-08) - feature_ranges는 이미 jsonb라 스키마 변경 없이 새 키를 추가할 수
     # 있음(위 모듈 상단 주석 참고). 서버(data-coverage.js)가 이 값들을 읽어 point estimate와
     # 함께 "검증된" 오차범위를 같이 내려줌 - in-sample r_squared만 보여주는 것보다 훨씬 정직함.
@@ -747,14 +886,18 @@ def main():
     # ⚠️ 2026-08(villa_v1 추가): 연립다세대·단독다가구는 villa_trades(연립다세대)+
     # single_trades(단독다가구) 두 테이블을 합쳐서 학습함(이 앱의 다른 집계 로직(rpc_top_dongs,
     # getBucketDetailRows 등)도 "villa" 타입을 이 두 테이블의 합집합으로 다뤄서 같은 관례를
-    # 따름). 아파트와 달리 danji(단지) 단위는 안 씀(use_danji=False) - 거래 자체가 뜸하고
-    # 단지 개념도 아파트만큼 뚜렷하지 않아(다세대는 한 필지에 한 동인 경우가 많음) 단지
-    # 단위로 쪼개면 표본이 너무 잘게 쪼개져 오히려 불안정해짐 - 법정동 단위(표본부족 시
-    # 시군구로 폴백) 2단계만 씀. K-apt도 연립다세대는 등록 대상이 아니라(공동주택 300세대
-    # 이상 등 요건) attach_kapt=False로 둠. attach_transit도 이번 단계는 아파트만(모듈 내
-    # train_one 주석 참고) - attach_school은 (region,dong) 집계라 연립다세대에도 그대로 적용.
-    train_one(["villa_trades", "single_trades"], "villa_v1", "villa", use_danji=False, attach_kapt=False,
-              attach_transit=False, attach_school=True, attach_month_fe=True)
+    # 따름). K-apt도 연립다세대는 등록 대상이 아니라(공동주택 300세대 이상 등 요건)
+    # attach_kapt=False로 둠. attach_school은 (region,dong) 집계라 연립다세대에도 그대로 적용.
+    # ⚠️ 2026-08(빌라 오차범위 개선, ±36.1%→개선 목표 - 사용자 피드백): danji(단지) 개념이
+    # 없는 빌라는 use_danji=False 그대로 두되, 대신 use_grid=True로 좌표 기반 약 1km 격자를
+    # 1차 그룹 단위로 씀(법정동 행정구역 경계 대신 실제 거리 기준 - 모듈 상단 GRID_CELL_KM
+    # 설명 참고). attach_transit=True로 바꿔 역세권도 이제 반영(과거엔 아파트만 적용했었는데,
+    # complex_coords가 이미 빌라 좌표도 갖고 있어 추가 비용 없이 켤 수 있음 - train_one 내
+    # 주석 참고). 이 3가지 변경 + is_single_house 버그 수정(clean_and_featurize 참고)이
+    # 이번 개선의 전부임 - use_danji는 여전히 False(단지 단위로 쪼개면 표본이 너무 잘게
+    # 쪼개져 불안정해지는 문제는 격자 그룹핑과 무관하게 그대로 유효).
+    train_one(["villa_trades", "single_trades"], "villa_v1", "villa", use_danji=False, use_grid=True,
+              attach_kapt=False, attach_transit=True, attach_school=True, attach_month_fe=True)
 
 
 if __name__ == "__main__":
