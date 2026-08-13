@@ -539,7 +539,7 @@ function avmPredict(model, features, region, dong, danji) {
   return { ppp: Math.round(ppp * 10) / 10, effectUsed };
 }
 
-async function getAvmEstimate(type, region, dong, size, floor, buildYear, danji, sigunguCode) {
+async function getAvmEstimate(type, region, dong, size, floor, buildYear, danji, sigunguCode, clientTopFloor) {
   const modelId = AVM_MODEL_ID_BY_TYPE[type];
   if (!modelId) return { error: `AVM v1은 아직 이 매물 유형(${type})을 지원하지 않습니다(아파트·연립다세대·단독만 지원).` };
   if (!(size > 0) || !(floor >= 0) || !(buildYear > 1900)) {
@@ -588,6 +588,10 @@ async function getAvmEstimate(type, region, dong, size, floor, buildYear, danji,
       if (medianTop > 0) topFloorForModel = medianTop;
     }
   }
+  // ⚠️ 2026-08(빌라 층위치 보정): 클라이언트가 이 특정 건물의 건축HUB 총층수(clientTopFloor)를
+  // 보내오면 K-apt 단지명 매칭/중앙값 폴백보다 우선함 - "그 단지의 평균"이 아니라 "이 건물
+  // 자체"의 값이라 더 정확함(사용자 요청: 지금 보는 건물의 건축HUB 총층수를 바로 쓰기).
+  if (clientTopFloor > 0) topFloorForModel = clientTopFloor;
 
   // ⚠️ 2026-08(역세권 연동, #298): transit_features.cache_key는 warmup-locations.mjs의
   // buildCacheKey(dong, danji, bunji, road_name, main_num, sub_num)와 완전히 같은 값인데,
@@ -639,7 +643,46 @@ async function getAvmEstimate(type, region, dong, size, floor, buildYear, danji,
   const timeOrigin = (model.feature_ranges && model.feature_ranges.time_origin) || 20251201;
   const features = avmFeatureVector({ size, floor, buildYear, timeOrigin, logHouseholds, logDistSubway, logElemCount, logMiddleCount, topFloor: topFloorForModel });
   const { ppp, effectUsed } = avmPredict(model, features, region, dong, danji);
-  const totalPrice = Math.round(ppp * (size / 3.305785));
+  let totalPrice = Math.round(ppp * (size / 3.305785));
+
+  // ⚠️ 2026-08(빌라 층위치 보정, 사용자 요청): villa_v1은 K-apt 같은 벌크 데이터가 없어
+  // floor_ratio/is_top_floor/is_ground_floor/is_basement 계수를 학습 자체에서 갖지 못함(단독
+  // 다세대는 "단지" 개념이 없어 층위치를 대량으로 미리 알 방법이 없음 - 물건을 열 때마다
+  // 건축HUB를 그 건물 하나만 조회하는 구조라 학습 시점엔 이 데이터가 없음). 대신 서빙 시점에
+  // apt_v1이 이미 학습해 둔 층위치 계수를 "차용"해 배율로 얹음 - 같은 부동산 시장이라 탑층/
+  // 1층/반지하 할인·할증의 방향과 크기는 아파트·빌라가 비슷한 패턴을 보인다는 가정.
+  // floor_ratio(연속값, 중간층 완만한 곡선)는 일부러 제외함 - villa_v1 자체의 floor/floor^2
+  // 곡선과 겹쳐 이중 계산될 위험이 있는 반면, is_top_floor 등 불연속 더미는 villa_v1에 아예
+  // 대응 계수가 없어 겹칠 여지가 없음(더 안전하게 차용 가능). apt_v1에 아직 이 계수들이 없는
+  // 구버전 모델이면 logAdj가 0이 돼 자동으로 보정 없이(floorTierAdjustment=null) 넘어감.
+  let floorTierAdjustment = null;
+  if (modelId === 'villa_v1' && clientTopFloor > 0 && floor != null) {
+    try {
+      const { data: aptModel } = await supabase.from('avm_model_coefs').select('global_coefs').eq('id', 'apt_v1').maybeSingle();
+      const aptCoefs = (aptModel && aptModel.global_coefs) || {};
+      const isBasement = floor <= 0 ? 1 : 0;
+      const isGroundFloor = floor === 1 ? 1 : 0;
+      const isTopFloor = floor > 0 && floor >= clientTopFloor ? 1 : 0;
+      const logAdj = (aptCoefs.is_top_floor || 0) * isTopFloor
+        + (aptCoefs.is_ground_floor || 0) * isGroundFloor
+        + (aptCoefs.is_basement || 0) * isBasement;
+      if (logAdj !== 0) {
+        const multiplier = Math.exp(logAdj);
+        const beforeManwon = totalPrice;
+        totalPrice = Math.round(totalPrice * multiplier);
+        const reasons = [];
+        if (isTopFloor) reasons.push('탑층');
+        if (isGroundFloor) reasons.push('1층');
+        if (isBasement) reasons.push('반지하/지하');
+        floorTierAdjustment = {
+          multiplierPct: Math.round((multiplier - 1) * 1000) / 10, // ±% - 양수면 할증, 음수면 할인
+          beforeManwon, afterManwon: totalPrice,
+          reasons, // 어떤 층위치 특성이 반영됐는지(복수 가능 - 예: 총 1층짜리 건물이면 1층+탑층 동시)
+          source: 'apt_v1_borrowed', // 아파트 모델 계수를 빌려 썼다는 표시(투명성용)
+        };
+      }
+    } catch (e) { /* apt_v1 계수 조회 실패해도 기본 villa AVM 값은 그대로 반환 */ }
+  }
 
   // ⚠️ 2026-08(정확도 보완) - r_squared는 학습 데이터 자체로 채점한 in-sample 값이라 항상
   // 낙관적으로 나옴(특히 그룹 고정효과가 많은 모델은 그룹 수만으로도 R^2가 잘 나올 수밖에
@@ -673,6 +716,7 @@ async function getAvmEstimate(type, region, dong, size, floor, buildYear, danji,
     modelId, trainedAt: model.trained_at, nSamples: model.n_samples, rSquared: model.r_squared,
     outliersRemoved: fr.outliers_removed != null ? fr.outliers_removed : null,
     errorMargin, // null이면 구버전 모델(홀드아웃 검증 이전에 학습됨) - 프론트는 이 경우 오차범위를 숨김
+    floorTierAdjustment, // 빌라만 채워짐(null이면 미적용) - 아파트 모델 계수를 빌린 층위치 보정 내역
     // dong까지는 실제 그 동네 실거래 기반이라 신뢰도 있음 - region_fallback/default_fallback일
     // 때만(단지·법정동 표본 자체가 부족해서 더 넓은 단위로 승격된 경우) 낮은 신뢰도로 표시함.
     lowConfidence: (model.r_squared != null && model.r_squared < 0.3) || effectUsed === 'region_fallback' || effectUsed === 'default_fallback',
@@ -1381,7 +1425,7 @@ export default async function handler(req, res) {
     // 대신 계수 자체가 주 1회만 바뀌므로(train-avm.py 스케줄) 짧게 CDN 캐시만 둠.
     res.setHeader('Cache-Control', 's-maxage=3600, stale-while-revalidate=7200');
     try {
-      const { type, dong, size, floor, buildYear, lawdCd, danji } = req.query;
+      const { type, dong, size, floor, buildYear, lawdCd, danji, topFloor } = req.query;
       // ⚠️ 2026-08(버그 수정): 처음엔 프론트가 카카오 geocoder 지역명을 문자열로 가공해서
       // region으로 그대로 보냈는데, "수원시 영통구"처럼 시+구가 함께 있는 지역은
       // house_trades.region이 "수원 영통구"(시 생략)로 저장돼 있어 불일치가 났음(안산 등에서
@@ -1415,7 +1459,8 @@ export default async function handler(req, res) {
         type || 'apt', region, dong,
         parseFloat(size), parseFloat(floor), parseInt(buildYear, 10),
         danji ? String(danji).trim() : null,
-        sigunguCode
+        sigunguCode,
+        topFloor ? parseInt(topFloor, 10) : null
       );
       if (result.error) return res.status(422).json(result);
       return res.status(200).json(result);
