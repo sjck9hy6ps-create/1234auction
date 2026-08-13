@@ -471,11 +471,27 @@ function normalizeComplexName(name) {
 // log_middle_count(초/중학교 밀집도) 추가 - K-apt와 같은 이유로, 이 값들이 null이면(호출부가
 // 계산 못한 경우) 0을 넣지 않고 반드시 모델 학습 때와 같은 폴백값을 미리 계산해 넘겨야 함
 // (0을 넣으면 "지하철역이 100m 거리다"/"학교가 1개다"처럼 엉뚱한 값으로 왜곡됨).
-function avmFeatureVector({ size, floor, buildYear, timeOrigin, logHouseholds, logDistSubway, logElemCount, logMiddleCount }) {
+// ⚠️ 2026-08(AVM 정확도 개선 - 층위치 피처): floor/floor^2 곡선만으로는 "5층짜리 건물의
+// 5층(탑층)"과 "20층짜리 건물의 5층(중간층)"을 구분 못 함(절대 층수만 같고 건물 높이 정보가
+// 없어서) - train-avm.py의 _attach_floor_tier_features와 반드시 같은 정의를 써야 함(비교물건
+// 매칭에 쓰는 getFloorTier와 같은 통찰: 지하/1층/탑층은 매끄러운 곡선이 아니라 불연속적
+// 할인 요인). is_ground_floor/is_basement는 floor만 있으면 항상 계산 가능하지만(topFloor
+// 불필요), floor_ratio/is_top_floor는 topFloor(K-apt 최고층수)가 있어야만 의미가 있어 topFloor가
+// 없으면(K-apt 미매칭이고 학습 때 median_top_floor도 없던 초기 상태) 0(중립값)으로 둠 - 어차피
+// villa_v1처럼 이 계수 자체가 없는 모델에서는 avmPredict가 Object.keys(coefs) 순회 방식이라
+// 이 값이 있어도 무시됨(무해).
+function avmFeatureVector({ size, floor, buildYear, timeOrigin, logHouseholds, logDistSubway, logElemCount, logMiddleCount, topFloor }) {
   const dealYear = AVM_CURRENT_YEAR_FALLBACK(); // 예측 시점 = "지금 팔면 얼마" 기준이므로 오늘 연도를 씀
   const age = Math.max(0, dealYear - buildYear);
   const today = todayInt();
   const timeTrend = daysBetweenYyyymmdd(timeOrigin, today) / 365.0;
+  const isBasement = floor <= 0 ? 1 : 0;
+  const isGroundFloor = floor === 1 ? 1 : 0;
+  let floorRatio = 0, isTopFloor = 0;
+  if (floor > 0 && topFloor > 0) {
+    floorRatio = Math.min(1.2, floor / topFloor);
+    isTopFloor = floor >= topFloor ? 1 : 0;
+  }
   return {
     log_size: Math.log(size), floor, floor2: floor * floor,
     age, age2: age * age, time_trend: timeTrend,
@@ -483,6 +499,8 @@ function avmFeatureVector({ size, floor, buildYear, timeOrigin, logHouseholds, l
     log_dist_subway: logDistSubway != null ? logDistSubway : 0,
     log_elem_count: logElemCount != null ? logElemCount : 0,
     log_middle_count: logMiddleCount != null ? logMiddleCount : 0,
+    floor_ratio: floorRatio, is_top_floor: isTopFloor,
+    is_ground_floor: isGroundFloor, is_basement: isBasement,
   };
 }
 // YYYYMMDD 정수 두 값 사이의 일수 차이(a 기준 → b까지, 음수 가능) - Date 객체로 변환해 계산.
@@ -543,22 +561,31 @@ async function getAvmEstimate(type, region, dong, size, floor, buildYear, danji,
   // 매칭보다 신뢰도가 높아(이미 프론트가 좌표 역지오코딩으로 구한 정확한 5자리 코드) 이걸로
   // kapt_complex_info.sigungu_code를 직접 필터링함.
   let logHouseholds = null;
+  let topFloorForModel = null;
   const coefs = model.global_coefs || {};
   if (coefs.log_households !== undefined && danji && sigunguCode && dong) {
     try {
       const normDanji = normalizeComplexName(danji);
+      // ⚠️ 2026-08(층위치 피처): top_floor도 households와 같은 kapt_complex_info 조회
+      // 한 번에 같이 가져옴(추가 DB 왕복 없이) - train-avm.py의 build_kapt_lookup과 같은
+      // 소스에서 같은 매칭 로직(정규화 단지명)으로 찾아야 학습/서빙 정의가 어긋나지 않음.
       const { data: kaptRows } = await supabase
         .from('kapt_complex_info')
-        .select('kapt_name, households')
+        .select('kapt_name, households, top_floor')
         .eq('sigungu_code', String(sigunguCode))
         .eq('as3', dong)
         .not('households', 'is', null);
       const matched = (kaptRows || []).find((r) => normalizeComplexName(r.kapt_name) === normDanji);
       if (matched && matched.households > 0) logHouseholds = Math.log(matched.households);
+      if (matched && matched.top_floor > 0) topFloorForModel = matched.top_floor;
     } catch (e) { /* K-apt 조회 실패해도 AVM 자체를 막지 않고 중앙값 폴백으로 진행 */ }
     if (logHouseholds == null) {
       const medianHh = model.feature_ranges && model.feature_ranges.median_households;
       if (medianHh > 0) logHouseholds = Math.log(medianHh);
+    }
+    if (topFloorForModel == null) {
+      const medianTop = model.feature_ranges && model.feature_ranges.median_top_floor;
+      if (medianTop > 0) topFloorForModel = medianTop;
     }
   }
 
@@ -610,7 +637,7 @@ async function getAvmEstimate(type, region, dong, size, floor, buildYear, danji,
   }
 
   const timeOrigin = (model.feature_ranges && model.feature_ranges.time_origin) || 20251201;
-  const features = avmFeatureVector({ size, floor, buildYear, timeOrigin, logHouseholds, logDistSubway, logElemCount, logMiddleCount });
+  const features = avmFeatureVector({ size, floor, buildYear, timeOrigin, logHouseholds, logDistSubway, logElemCount, logMiddleCount, topFloor: topFloorForModel });
   const { ppp, effectUsed } = avmPredict(model, features, region, dong, danji);
   const totalPrice = Math.round(ppp * (size / 3.305785));
 
