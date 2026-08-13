@@ -5572,7 +5572,7 @@ function renderAuctionBiasStats() {
     if (!box) return;
     var cases = auctionBiasCases();
     if (!cases.length) {
-        box.innerHTML = '<div style="padding:10px 14px;font-size:11px;color:#aaa;">예상낙찰가(⑤목표입찰가)와 실제낙찰가가 모두 기록된 물건이 아직 없습니다. 모달에서 ①~④ 계산조건을 설정해 ⑤목표입찰가가 표시된 상태로 저장한 뒤, 실제낙찰가를 입력하면 여기 집계됩니다.</div>';
+        box.innerHTML = '<div style="padding:10px 14px;font-size:11px;color:#aaa;">예상낙찰가와 실제낙찰가가 모두 기록된 물건이 아직 없습니다. 목표매도가·목표마진이 저장돼 있는 물건이라면, 목록에서 실제낙찰가만 입력해도 예상낙찰가가 자동으로 함께 계산·저장됩니다.</div>';
         return;
     }
     var html = buildBiasStatBlock('📊 전체', cases, false);
@@ -5639,6 +5639,14 @@ async function saveActualBidInline(id, inputEl) {
     var statusEl = document.getElementById('actual-bid-save-status-' + id);
     if (statusEl) { statusEl.style.color = '#999'; statusEl.innerText = '저장 중...'; }
     var updated = Object.assign({}, existing, { actualBid: raw });
+    // ⚠️ 2026-08 추가: 목록 간편입력에서도(모달을 열지 않아도) predictedBid가 아직 없으면
+    // 저장된 값(목표매도가·목표마진 등)만으로 자동 계산해 같이 저장함 - solveAuctionBidFromRecord
+    // 참고 주석에 배경 설명 있음. 이미 predictedBid가 있으면(모달에서 한 번 계산된 적 있으면)
+    // 그 값을 그대로 유지함(실제낙찰가를 안다는 이유로 예측치가 뒤늦게 바뀌지 않게).
+    if (!updated.predictedBid) {
+        var predRes = solveAuctionBidFromRecord(updated);
+        if (predRes && predRes.bid > 0) updated.predictedBid = predRes.bid;
+    }
     try {
         var saved = await saveAuctionAPI(updated);
         var idx = auctionList.findIndex(function(x) { return x.id === id; });
@@ -8101,18 +8109,6 @@ async function saveAuction() {
     // 값을 그대로 유지해서 애써 확인해둔 연식 정보가 지워지지 않게 함.
     var existingAuctionForYear = auctionList.find(function(x) { return x.id === document.getElementById('auction-id').value; });
     var resolvedBuildYear = getAuctionBuildYear() || (existingAuctionForYear ? existingAuctionForYear.buildYear : null) || null;
-    // ⚠️ 2026-08 추가: "예상낙찰가(⑤목표입찰가) vs 실제낙찰가" 누적편향 통계를 나중에(모달을
-    // 다시 열지 않고도) 낼 수 있으려면, 그 시점의 예측치를 레코드에 스냅샷으로 저장해둬야 함
-    // (computeSelectedTargetBid()는 모달이 열려 a-target·비교물건 등 DOM이 있을 때만 계산
-    // 가능하고, 실제낙찰가(a-actual-bid) 값과는 무관하게 독립적으로 계산되므로 사후에 값을
-    // "맞춰서" 저장하는 게 아님 - 순수 모델 예측치임). 이번 저장에서 계산이 안 되면(가격만
-    // 수정하는 경우 등) 기존에 저장돼 있던 값을 그대로 유지함(buildYear와 동일한 보존 패턴).
-    var predictedBidSnapshot = null;
-    try {
-        var tbRes = computeSelectedTargetBid();
-        if (tbRes && tbRes.bid > 0) predictedBidSnapshot = tbRes.bid;
-    } catch (e) {}
-    if (predictedBidSnapshot === null && existingAuctionForYear) predictedBidSnapshot = existingAuctionForYear.predictedBid || null;
     // 관심물건 경과 추적: 저장 직전 값(진행상태·입찰일·가격 등)을 기존 저장분과 비교해서
     // 달라진 점이 있으면 이력에 남김 (유찰 → 다음 입찰일 갱신, 낙찰/포기 전환 등을 나중에
     // 시간순으로 되짚어볼 수 있게). existingAuctionForYear는 위에서 이미 조회해둔 기존 레코드.
@@ -8147,7 +8143,7 @@ async function saveAuction() {
         appraisal: document.getElementById('a-appraisal').value,
         minBid: document.getElementById('a-min-bid').value, myBid: document.getElementById('a-my-bid').value,
         depositRate: document.getElementById('a-deposit-rate').value,
-        actualBid: document.getElementById('a-actual-bid').value, predictedBid: predictedBidSnapshot, tax: document.getElementById('a-tax').value,
+        actualBid: document.getElementById('a-actual-bid').value, predictedBid: null, tax: document.getElementById('a-tax').value,
         registryFee: document.getElementById('a-registry-fee').value,
         evictionFee: document.getElementById('a-eviction-fee').value,
         repair: document.getElementById('a-repair').value, agent: document.getElementById('a-agent').value,
@@ -8192,6 +8188,22 @@ async function saveAuction() {
         // 일반 🔨 배지로 전환함(placeAuctionMarker 참고).
         isBidTarget: false,
     };
+    // ⚠️ 2026-08 추가: "예상낙찰가 vs 실제낙찰가" 누적편향 통계용 예측치 스냅샷. 처음엔
+    // computeSelectedTargetBid()(모달 DOM 라이브 계산)로 여기서 채웠는데, "실제낙찰가는
+    // 대부분 경매관리 목록의 간편입력으로 넣지 모달을 열지 않는다"는 피드백에 따라 DOM 없이도
+    // 계산되는 solveAuctionBidFromRecord(저장된 값만 사용)로 바꿈 - 이제 목록 간편입력
+    // (saveActualBidInline)에서도 같은 방식으로 predictedBid가 자동으로 채워짐(모달 필요 없음).
+    // ⚠️ 한 번 계산된 predictedBid는 이후 저장에서 목표매도가·목표마진을 바꿔도 덮어쓰지
+    // 않고 그대로 유지함(saveActualBidInline과 동일 정책) - 실제낙찰가를 이미 알게 된 뒤
+    // 목표값을 조정해서 "예측치"가 사후에 유리하게 바뀌는 걸 막기 위함(예측 오차 통계의
+    // 신뢰성 확보). 처음 계산이 안 되면(목표매도가·목표마진 미입력 등) null로 둠 - 이후
+    // 저장에서 조건이 채워지면 그때 처음으로 채워짐.
+    if (!(existingAuctionForYear && existingAuctionForYear.predictedBid)) {
+        var predictedBidResult = solveAuctionBidFromRecord(data);
+        data.predictedBid = (predictedBidResult && predictedBidResult.bid > 0) ? predictedBidResult.bid : null;
+    } else {
+        data.predictedBid = existingAuctionForYear.predictedBid;
+    }
     if (!data.lat || !data.lon) {
         await new Promise(function(resolve) {
             geocoder.addressSearch(addr, function(result, status) {
@@ -9699,6 +9711,66 @@ function solveAuctionBid(estValue, marginOverride) {
     // (루프 마지막 반복의 mid는 최종 bid와 미세하게 다를 수 있음)
     result.vat = vatInfo.computable ? Math.round(result.bid * vatInfo.buildingRatio * 0.1) : 0;
     return result;
+}
+/* ════════════════════════════════════
+   solveAuctionBid()의 "저장된 값 기준" 버전 - 2026-08 추가. buildMarginSummaryHtml()이
+   calcMargin()의 저장값 기준 트윈인 것과 같은 이유: "실제낙찰가는 대부분 경매관리 목록의
+   간편입력(saveActualBidInline)으로 넣지, 그때마다 모달을 여는 건 비효율적이다"라는 피드백에
+   따라 만듦. solveAuctionBid()는 a-target·a-repair 등 모달 DOM을 직접 읽는데, 그 DOM은
+   모달이 열려 있을 때만 존재하므로 목록 화면(모달 없음)에서는 호출할 수 없음 - 그래서 저장된
+   레코드(a) 필드만으로 동일한 이분탐색을 다시 수행함.
+   ⚠️ 기준값 차이: 모달의 라이브 ⑤목표입찰가는 라디오 선택에 따라 ①예상매도가(비교물건
+   실시간 분석값, window.__predictedSaleValue)를 쓸 수도 있는데, 그건 DOM 계산 결과라 저장된
+   적이 없어 여기서는 재현이 불가능함. 그래서 이 함수는 항상 ③목표매도가(a.target)+
+   ④목표마진(a.compTargetMargin) 조합으로만 계산함 - 사용자가 직접 정한 목표값이라 항상
+   저장돼 있고, 결과 해석도 "내가 세운 목표 기준으로 얼마를 써야 했나"로 명확함.
+   ⚠️ 부가세는 buildMarginSummaryHtml과 동일하게 생략함(매매사업자+국민주택규모 초과인
+   일부 케이스에만 해당되고 계산 근거 필드가 부족한 경우가 많아 단순화 - 모달의 실시간
+   ⑤목표입찰가·calcAuctionVat는 이 생략과 무관하게 그대로 부가세를 반영함). */
+function solveAuctionBidFromRecord(a) {
+    var saleValue = parseInt(a.target) || null;
+    var marginValueRaw = parseInt(a.compTargetMargin);
+    var marginValue = isNaN(marginValueRaw) ? null : marginValueRaw;
+    if (!saleValue || saleValue <= 0 || marginValue === null) return null;
+    var propType = a.propType || '', pyung = parseFloat(a.pyung) || 0;
+    var houseRank = parseInt(a.houseRank) || 1, isAdjusted = !!a.isAdjusted, isLocalCheap = !!a.isLocalCheap;
+    var repair = parseInt(a.repair) || 0, etc = parseInt(a.etc) || 0;
+    var assumedDeposit = parseInt(a.assumedDeposit) || 0;
+    var unpaidMgmtFee = parseInt(a.unpaidMgmtFee) || 0;
+    var officialPriceWon = parseInt(a.officialPriceWon) || 0;
+    var holdsJune1 = !!a.holdsJune1;
+    var totalOfficialPriceManwon = parseInt(a.totalOfficialPriceManwon) || 0;
+    var holdMonths = parseInt(a.holdMonths) || 0;
+    // calcMargin()·buildMarginSummaryHtml()과 동일 - 보유기간 미입력 시 대출이자만 3개월 기본가정
+    var interestHoldMonths = holdMonths > 0 ? holdMonths : DEFAULT_INTEREST_HOLD_MONTHS;
+    var propertyTax = calcPropertyTax(officialPriceWon, houseRank, holdsJune1, holdMonths);
+    var compTax = calcCompTax(totalOfficialPriceManwon, officialPriceWon, houseRank, holdsJune1, holdMonths);
+    var moving = parseInt(a.moving) || calcMovingFee(pyung) || 0;
+    var cleaning = parseInt(a.cleaning) || calcCleaningFee(pyung) || 0;
+    var bidMethod = a.bidMethod || 'dealer';
+    var appraisal = parseInt(a.appraisal) || 0;
+    var addr = a.addr || '';
+    var loanRateInput = parseFloat(a.loanRate);
+    var loanRate = (loanRateInput > 0) ? loanRateInput : calcRegionAwareLoan(bidMethod, addr, saleValue, appraisal, saleValue).rate;
+    var loanPrepayFeeRateInput = parseFloat(a.loanPrepayFeeRate);
+    var loanPrepayFeeRate = (loanPrepayFeeRateInput > 0) ? loanPrepayFeeRateInput : DEFAULT_LOAN_PREPAY_FEE_RATE;
+    var agentFee = calcAgentFee(saleValue, propType);
+    var evictionFee = calcEvictionFee(pyung);
+    var lo = 0, hi = saleValue;
+    for (var i = 0; i < 45; i++) {
+        var mid = (lo + hi) / 2;
+        var acqTax = calcAcquisitionTaxDetailed(mid, propType, pyung, houseRank, isAdjusted, isLocalCheap);
+        var registryFee = calcRegistryFee(mid);
+        var loanAmount = calcRegionAwareLoan(bidMethod, addr, mid, appraisal, saleValue).amount;
+        var interestCost = calcLoanInterest(loanAmount, loanRate, interestHoldMonths);
+        var prepayFee = calcLoanPrepayFee(loanAmount, loanPrepayFeeRate);
+        var preTaxCost = mid + acqTax + registryFee + evictionFee + agentFee + repair + etc + moving + cleaning + interestCost + prepayFee + assumedDeposit + unpaidMgmtFee + propertyTax + compTax;
+        var preTaxProfit = saleValue - preTaxCost;
+        var taxResult = calcResaleIncomeTax(bidMethod, preTaxProfit, holdMonths, isAdjusted, houseRank);
+        var netProfit = preTaxProfit - taxResult.totalTax;
+        if (netProfit > marginValue) lo = mid; else hi = mid;
+    }
+    return { bid: Math.round(lo) };
 }
 /* ════════════════════════════════════
    💰 "금액 한눈에 보기" 요약카드 (①예상매도가 ②목표매도가 ③예상마진 ④목표마진 ⑤목표입찰가)
