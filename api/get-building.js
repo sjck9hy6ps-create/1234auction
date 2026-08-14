@@ -111,6 +111,9 @@ export default async function handler(req, res) {
     }
 
     if (cached && (Date.now() - new Date(cached.fetched_at).getTime()) < FRESH_MS) {
+      // 무료 Vercel 사용량 절약: 건축물대장 데이터는 몇 달 단위로만 바뀌므로 엣지에서
+      // 6시간 동안 재사용 - 같은 건물을 반복 조회해도 함수를 다시 실행하지 않음.
+      res.setHeader('Cache-Control', 'public, s-maxage=21600, stale-while-revalidate=604800');
       return res.status(200).json({
         title: cached.title_json,
         price: cached.price_json,
@@ -196,6 +199,7 @@ export default async function handler(req, res) {
     }, { onConflict: 'sigungu_cd,bjdong_cd,bun,ji,bld_nm' });
     if (upsertErr) console.error('building_info 캐시 저장 에러:', upsertErr.message);
 
+    res.setHeader('Cache-Control', 'public, s-maxage=21600, stale-while-revalidate=604800');
     return res.status(200).json({
       title, price, floors, exposAreas, cached: false, debug, titleCandidates,
       legacyFallbackUsed: legacyFallbackUsed || undefined,
