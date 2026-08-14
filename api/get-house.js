@@ -232,6 +232,10 @@ export default async function handler(req, res) {
     const finalApt = dedup([...realtimeNormalized, ...dbPayload.apt]);
     console.log(`실시간 반영: +${realtimeNormalized.length}건 (최종 ${finalApt.length}건)`);
 
+    // 무료 Vercel 사용량 절약: 같은 지역(lawdCd)을 5분 안에 다시 조회하면(지도 패닝/재방문
+    // 등) 함수를 다시 실행하지 않고 Vercel 엣지 캐시에서 바로 응답. 실시간 신고건은 어차피
+    // 하루에도 자주 바뀌지 않으므로 5분 지연은 체감상 무의미하고, 함수 호출 수를 크게 줄여줌.
+    res.setHeader('Cache-Control', 'public, s-maxage=300, stale-while-revalidate=1800');
     return res.status(200).json({ apt: finalApt, rent: dbPayload.rent });
   } catch (err) {
     console.error('핸들러 에러:', err.message);
