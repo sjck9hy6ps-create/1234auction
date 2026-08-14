@@ -213,7 +213,10 @@ async function handleRadiusSaleSearch(req, res) {
 }
 
 export default async function handler(req, res) {
-  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
+  // 무료 Vercel 사용량 절약: 실거래 검색 결과는 사용자별 정보가 아니고 자주 바뀌지도
+  // 않으므로(배치 수집 기준) 엣지에서 30분 재사용 - 같은 물건/지역을 반복 조회해도
+  // 함수를 다시 실행하지 않음.
+  res.setHeader('Cache-Control', 'public, s-maxage=1800, stale-while-revalidate=86400');
 
   if (req.query.mode === 'radius') {
     return handleRadiusSearch(req, res);
