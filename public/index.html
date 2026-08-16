@@ -2742,7 +2742,7 @@ function initMap(lat, lon) {
     // (비교물건 배지 반영을 위해 아파트/빌라 마커도 함께 다시 그림)
     fetchAuctions().then(function() { renderAuctionMarkers(); redrawMarkers(); });
     fetchSiteNotes(); // 임장메모 - 마커 클릭 시 즉시 보여줄 수 있도록 초기에 함께 로딩
-    fetchBidCases().then(function() { renderBidCaseMarkers(); }); // 낙찰사례 지도 배지
+    fetchBidCases().then(function() { renderBidCaseMarkers(); autoFillMissingBidCaseMargins(); }); // 낙찰사례 지도 배지 + 자동매칭된 마진 채우기
     loadAllData(lat, lon);
     kakao.maps.event.addListener(map, 'idle', function() {
         var c = map.getCenter();
@@ -4584,19 +4584,30 @@ async function extractCaseList() {
 }
 function toggleCasePreviewItem(idx) {
     if (!pendingCaseListExtraction[idx]) return;
+    if (pendingCaseListExtraction[idx]._dateBlocked) return; // 이미 등록된 최신 사례보다 이전이라 선택 불가
     pendingCaseListExtraction[idx]._selected = !pendingCaseListExtraction[idx]._selected;
     renderCaseListPreview();
 }
 function renderCaseListPreview() {
     var box = document.getElementById('bc-preview-box');
     if (!pendingCaseListExtraction.length) { box.innerHTML = ''; return; }
+    // 낙찰사례 신선도 유지(2026-08 추가): 법정동별로 이미 등록된 사례 중 가장 최근 매각기일보다
+    // 같거나 이전인 사례는 이미 반영됐을 가능성이 높은 과거 데이터라 등록을 막고 자동으로 선택해제함.
+    pendingCaseListExtraction.forEach(function(c) {
+        var latest = getBcDongLatestDate(c.dong);
+        c._dateBlocked = !!(latest && c.saleDate && c.saleDate <= latest);
+        if (c._dateBlocked) c._selected = false;
+    });
     var selectedCount = pendingCaseListExtraction.filter(function(c) { return c._selected; }).length;
+    var blockedCount = pendingCaseListExtraction.filter(function(c) { return c._dateBlocked; }).length;
     var html = '<div style="padding:8px 14px;background:#fff8e1;border-bottom:1px solid #eee;">'
-        + '<div style="font-size:11px;font-weight:bold;color:#e65100;margin-bottom:6px;">추출 미리보기 (' + selectedCount + '/' + pendingCaseListExtraction.length + '건 선택됨)</div>';
+        + '<div style="font-size:11px;font-weight:bold;color:#e65100;margin-bottom:6px;">추출 미리보기 (' + selectedCount + '/' + pendingCaseListExtraction.length + '건 선택됨'
+        + (blockedCount ? ', 최신 아님 ' + blockedCount + '건 자동제외' : '') + ')</div>';
     pendingCaseListExtraction.forEach(function(c, idx) {
         var rate = (c.appraisalPrice && c.finalBidPrice) ? Math.round(c.finalBidPrice / c.appraisalPrice * 1000) / 10 : (c.bidRate || null);
-        html += '<div style="display:flex;align-items:flex-start;gap:6px;padding:4px 0;border-bottom:1px solid #ffe9b3;">'
-            + '<input type="checkbox" ' + (c._selected ? 'checked' : '') + ' onchange="toggleCasePreviewItem(' + idx + ')" style="margin-top:3px;">'
+        var latest = getBcDongLatestDate(c.dong);
+        html += '<div style="display:flex;align-items:flex-start;gap:6px;padding:4px 0;border-bottom:1px solid #ffe9b3;' + (c._dateBlocked ? 'opacity:0.5;' : '') + '">'
+            + '<input type="checkbox" ' + (c._selected ? 'checked' : '') + (c._dateBlocked ? ' disabled' : '') + ' onchange="toggleCasePreviewItem(' + idx + ')" style="margin-top:3px;">'
             + '<div style="flex:1;min-width:0;font-size:11px;">'
             + '<div style="font-weight:bold;">' + (c.caseNo || '(사건번호 미상)') + (c.status ? ' <span style="color:#888;font-weight:normal;">· ' + c.status + '</span>' : '') + '</div>'
             + '<div style="color:#666;">' + (c.addrJibun || '(주소 미상)') + '</div>'
@@ -4604,7 +4615,9 @@ function renderCaseListPreview() {
             + (c.appraisalPrice ? '감정가 ' + toEok(String(Math.round(c.appraisalPrice / 10000))) : '')
             + (c.finalBidPrice ? ' · 낙찰가 ' + toEok(String(Math.round(c.finalBidPrice / 10000))) : (c.minBidPrice ? ' · 최저가 ' + toEok(String(Math.round(c.minBidPrice / 10000))) : ''))
             + (rate ? ' · ' + rate + '%' : '')
-            + '</div></div></div>';
+            + '</div>'
+            + (c._dateBlocked ? '<div style="color:#e65100;font-size:10px;margin-top:2px;">⚠️ 이 법정동에 이미 등록된 최근 낙찰사례(' + latest + ')보다 이전이라 제외됨</div>' : '')
+            + '</div></div>';
     });
     html += '<div style="margin-top:6px;text-align:right;">'
         + '<button type="button" class="modal-btn btn-purple" style="font-size:11px;" onclick="saveSelectedCases()">선택 항목 저장</button>'
@@ -4629,8 +4642,16 @@ function bidCaseDedupKey(c) {
     if (!c || !c.caseNo) return null;
     return normalizeCaseNoForCompare(c.caseNo) + '|' + String(c.court || '').trim();
 }
+// 법정동(dong) 안에 이미 저장된 낙찰사례 중 가장 최근 매각기일(saleDate)을 반환 - 신규 등록 시
+// 이 날짜보다 같거나 이전인 사례는 이미 반영된 과거 데이터일 가능성이 높아 등록을 막는 기준으로 씀
+// (2026-08 추가: 법정동별 결과를 "최신 낙찰사례 일자" 기준으로 신선하게 유지하기 위함).
+function getBcDongLatestDate(dong) {
+    if (!dong) return null;
+    var dates = bidCaseList.filter(function(c) { return c.dong === dong && c.saleDate; }).map(function(c) { return c.saleDate; });
+    return dates.length ? dates.reduce(function(a, b) { return b > a ? b : a; }) : null;
+}
 async function saveSelectedCases() {
-    var selected = pendingCaseListExtraction.filter(function(c) { return c._selected; });
+    var selected = pendingCaseListExtraction.filter(function(c) { return c._selected && !c._dateBlocked; });
     if (!selected.length) { alert('저장할 항목을 하나 이상 선택해 주세요.'); return; }
     var statusBox = document.getElementById('bc-extract-status');
     statusBox.style.color = '#999'; statusBox.innerText = '저장 중...';
@@ -5014,6 +5035,30 @@ function calcBidCaseMargin(c, match) {
     var roi = totalCost > 0 ? Math.round(preTaxMargin / totalCost * 1000) / 10 : 0;
     return { bid: bid, sell: sell, totalCost: totalCost, preTaxMargin: preTaxMargin, roi: roi };
 }
+/* ⚖️ 2026-08: 낙찰사례 매도사례 매칭은 이제 주기적 자동화 스크립트(scripts/match-bid-cases.mjs,
+   GitHub Actions 매주 실행)가 백그라운드에서도 채워둘 수 있음. 그 스크립트는 resaleMatch(매도
+   일자·금액 등)만 저장하고 마진(estMargin/estRoi/estTotalCost)은 일부러 계산하지 않음 - 취득세/
+   등기비/명도비/중개수수료 등 마진계산 로직이 계속 개정되는데 그 로직 전체가 이 파일에만 있어서,
+   스크립트에도 그대로 복사해두면 나중에 세율이 바뀔 때마다 두 곳을 같이 고쳐야 하고 자칫 서로
+   어긋날 위험이 있기 때문(세금 로직은 항상 이 파일 하나에서만 관리하기 위한 의도적 분리).
+   대신 앱이 열릴 때마다(fetchBidCases 직후) resaleMatch는 있는데 estMargin이 비어있는 건을
+   찾아 여기서 바로(외부 API 호출 없이 순수 계산만) 채워 넣고 저장함. */
+async function autoFillMissingBidCaseMargins() {
+    var targets = bidCaseList.filter(function(c) {
+        return c.resaleMatch && c.resaleMatch.amount && (c.estMargin === null || c.estMargin === undefined);
+    });
+    if (!targets.length) return;
+    for (var i = 0; i < targets.length; i++) {
+        var c = targets[i];
+        var margin = calcBidCaseMargin(c, c.resaleMatch);
+        if (!margin) continue;
+        c.estMargin = margin.preTaxMargin;
+        c.estRoi = margin.roi;
+        c.estTotalCost = margin.totalCost;
+        try { await saveBidCaseAPI(c); } catch (e) { console.error('낙찰사례 마진 자동계산 저장 실패:', e.message); }
+    }
+    renderBidCaseList(); renderBidCaseMarkers();
+}
 /* 법정동(dong) 단위 낙찰사례 추정마진 통계 - 신규 경매물건 등록 모달에서 주소의 동이 확인되면
    "이 동네는 보통 이 정도 마진에서 낙찰이 이뤄진다"를 바로 참고할 수 있도록 표시함. */
 function calcDongMarginStats(dong) {
@@ -5325,6 +5370,17 @@ function median(arr) {
    섞여 있는 경우 평균 하나로는 이런 분포가 안 보이기 때문(2026-07 대화에서 사용자가
    직접 지적한 "평균의 오류" 문제). 매각(낙찰) 안 된 진행중/유찰 물건은 낙찰가율 통계에서
    제외하되(낙찰가가 없어 계산 불가), 목록 자체에는 참고용으로 표시함. */
+// 법정동별 개별 목록(bc-list-body, 패널 맨 아래)의 펼침 상태 - 기본은 전부 접힘(요약 통계만
+// 바로 보이고, 개별 사례는 필요할 때만 펼쳐서 확인). 패널을 닫았다 다시 열어도 유지됨.
+var bcExpandedDongs = {};
+function toggleBcDongList(dong) {
+    bcExpandedDongs[dong] = !bcExpandedDongs[dong];
+    renderBidCaseList();
+}
+/* ⚠️ 2026-08 재구성: 법정동별 "결과"(통계+최근 낙찰일자)는 bc-stats-box에 항상 바로 보이게
+   두고, 개별 사례 목록은 bc-list-body(패널 맨 아래, HTML상으로도 stats-box보다 아래에 위치)로
+   옮겨 법정동별로 접기/펼치기(기본 접힘)로만 확인하게 재구성함. 이전에는 두 정보가 법정동
+   섹션 안에 섞여 있어 스크롤이 길고 필요없는 개별 항목까지 항상 다 보였음. */
 function renderBidCaseList() {
     var statsBox = document.getElementById('bc-stats-box');
     var listBox = document.getElementById('bc-list-body');
@@ -5344,13 +5400,17 @@ function renderBidCaseList() {
     var statsHtml = hasAnyMatch
         ? '<div style="padding:6px 14px;font-size:10px;color:#aaa;background:#fafafa;">⚠️ 추정 세전마진은 낙찰가·매도가·취득세·등기비·명도비·이사비·청소비·중개수수료만 반영한 참고치입니다. 실제 낙찰자의 대출이자·수리비·양도세(또는 종합소득세)는 알 수 없어 제외되어 있어, 실제 마진은 이보다 낮을 수 있습니다.</div>'
         : '';
+    var listHtml = '';
     dongKeys.forEach(function(dong) {
         var items = groups[dong];
         var soldItems = items.filter(function(c) { return c.appraisalPrice && c.finalBidPrice; });
         var rates = soldItems.map(function(c) { return Math.round(c.finalBidPrice / c.appraisalPrice * 1000) / 10; });
         var matchedItems = items.filter(function(c) { return c.resaleMatch && c.estMargin !== null && c.estMargin !== undefined; });
         var margins = matchedItems.map(function(c) { return c.estMargin; });
-        statsHtml += '<div class="bc-dong-group-title">📍 ' + dong + ' (' + items.length + '건, 낙찰 ' + soldItems.length + '건, 매도사례 매칭 ' + matchedItems.length + '건)</div>';
+        var latestDate = getBcDongLatestDate(dong);
+        var isOpen = !!bcExpandedDongs[dong];
+        statsHtml += '<div class="bc-dong-group-title">📍 ' + dong + ' (' + items.length + '건, 낙찰 ' + soldItems.length + '건, 매도사례 매칭 ' + matchedItems.length + '건)'
+            + (latestDate ? '<span style="font-weight:normal;color:#999;font-size:10px;"> · 최근 낙찰일 ' + latestDate + '</span>' : '') + '</div>';
         if (rates.length) {
             statsHtml += '<div style="padding:6px 14px;">'
                 + '<div style="font-size:10px;color:#999;margin-bottom:2px;">낙찰가율(감정가 대비, %) - 중간값 / 최소 / 최대</div>'
@@ -5371,38 +5431,44 @@ function renderBidCaseList() {
                 + '<div class="bc-stat-item"><div class="bc-stat-label">최대</div><div class="bc-stat-value" style="color:#2e7d32;">' + toEok(String(Math.round(Math.max.apply(null, margins)))) + '</div></div>'
                 + '</div></div>';
         }
-        items.forEach(function(c) {
-            var rate = (c.appraisalPrice && c.finalBidPrice) ? Math.round(c.finalBidPrice / c.appraisalPrice * 1000) / 10 : null;
-            // 낙찰 후 매도까지 보통 3~4개월씩 걸리므로, 매칭에 실패했든(아직 매도 전) 아예 시도를
-            // 안 했든 상관없이 "상시" 다시 조회할 수 있게 버튼을 항상 노출함(한 번 실패했다고
-            // 숨기지 않음) - 매칭에 이미 성공한 건만 재조회 버튼 없이 결과를 그대로 보여줌.
-            var matchLine = '';
-            if (c.resaleMatch && c.estMargin !== null && c.estMargin !== undefined) {
-                matchLine = '<div style="color:#2e7d32;margin-top:2px;">✅ 매도사례 ' + c.resaleMatch.date + ' · ' + toEok(String(Math.round(c.resaleMatch.amount)))
-                    + ' → 추정 세전마진 ' + toEok(String(Math.round(c.estMargin))) + (c.estRoi !== null && c.estRoi !== undefined ? ' (' + c.estRoi + '%)' : '')
-                    + (c.resaleMatch.approx ? ' <span style="color:#e65100;">(근사매칭)</span>' : '') + '</div>';
-            } else if (c.status === '매각' && c.finalBidPrice) {
-                matchLine = '<div style="color:#aaa;margin-top:2px;">'
-                    + (c.matchAttempted ? ('매도사례 아직 없음: ' + (c.matchFailReason || '')) : '매도사례 조회 전')
-                    + ' <span onclick="retryMatchOneCase(\'' + c.id + '\')" style="color:#1976d2;cursor:pointer;text-decoration:underline;">🔍 조회</span></div>';
-            }
-            statsHtml += '<div class="bc-case-item" id="bc-case-' + c.id + '" style="position:relative;transition:background 0.4s;">'
-                + '<span onclick="deleteBidCase(\'' + c.id + '\')" style="position:absolute;top:8px;right:14px;color:#bbb;cursor:pointer;font-size:11px;">✕</span>'
-                + '<div style="font-weight:bold;">' + (c.caseNo || '(사건번호 미상)') + (c.status ? ' <span style="font-weight:normal;color:#888;">· ' + c.status + '</span>' : '') + '</div>'
-                + '<div style="color:#666;">' + (c.addrJibun || '') + (c.floor ? ' ' + c.floor + '층' : '') + (c.unitNo ? ' ' + c.unitNo : '') + '</div>'
-                + '<div style="color:#999;">'
-                + (c.appraisalPrice ? '감정가 ' + toEok(String(Math.round(c.appraisalPrice / 10000))) : '')
-                + (c.finalBidPrice ? ' · 낙찰가 ' + toEok(String(Math.round(c.finalBidPrice / 10000))) : (c.minBidPrice ? ' · 최저가 ' + toEok(String(Math.round(c.minBidPrice / 10000))) : ''))
-                + (rate ? ' (' + rate + '%)' : '')
-                + (c.saleDate ? ' · ' + c.saleDate : '')
-                + '</div>'
-                + matchLine
-                + (c.specialConditions ? '<div style="color:#e65100;font-size:10.5px;margin-top:2px;">⚠️ ' + c.specialConditions + '</div>' : '')
-                + '</div>';
-        });
+        statsHtml += '<div style="padding:2px 14px 10px;">'
+            + '<span onclick="toggleBcDongList(\'' + dong.replace(/'/g, "\\'") + '\')" style="font-size:10.5px;color:#1976d2;cursor:pointer;text-decoration:underline;">'
+            + (isOpen ? '▾ 개별 목록 숨기기' : '▸ 개별 목록 보기') + ' (' + items.length + '건)</span></div>';
+        if (isOpen) {
+            listHtml += '<div class="bc-dong-group-title" style="background:#f5f5f5;">📍 ' + dong + ' 개별 목록 (' + items.length + '건)</div>';
+            items.forEach(function(c) {
+                var rate = (c.appraisalPrice && c.finalBidPrice) ? Math.round(c.finalBidPrice / c.appraisalPrice * 1000) / 10 : null;
+                // 낙찰 후 매도까지 보통 3~4개월씩 걸리므로, 매칭에 실패했든(아직 매도 전) 아예 시도를
+                // 안 했든 상관없이 "상시" 다시 조회할 수 있게 버튼을 항상 노출함(한 번 실패했다고
+                // 숨기지 않음) - 매칭에 이미 성공한 건만 재조회 버튼 없이 결과를 그대로 보여줌.
+                var matchLine = '';
+                if (c.resaleMatch && c.estMargin !== null && c.estMargin !== undefined) {
+                    matchLine = '<div style="color:#2e7d32;margin-top:2px;">✅ 매도사례 ' + c.resaleMatch.date + ' · ' + toEok(String(Math.round(c.resaleMatch.amount)))
+                        + ' → 추정 세전마진 ' + toEok(String(Math.round(c.estMargin))) + (c.estRoi !== null && c.estRoi !== undefined ? ' (' + c.estRoi + '%)' : '')
+                        + (c.resaleMatch.approx ? ' <span style="color:#e65100;">(근사매칭)</span>' : '') + '</div>';
+                } else if (c.status === '매각' && c.finalBidPrice) {
+                    matchLine = '<div style="color:#aaa;margin-top:2px;">'
+                        + (c.matchAttempted ? ('매도사례 아직 없음: ' + (c.matchFailReason || '')) : '매도사례 조회 전')
+                        + ' <span onclick="retryMatchOneCase(\'' + c.id + '\')" style="color:#1976d2;cursor:pointer;text-decoration:underline;">🔍 조회</span></div>';
+                }
+                listHtml += '<div class="bc-case-item" id="bc-case-' + c.id + '" style="position:relative;transition:background 0.4s;">'
+                    + '<span onclick="deleteBidCase(\'' + c.id + '\')" style="position:absolute;top:8px;right:14px;color:#bbb;cursor:pointer;font-size:11px;">✕</span>'
+                    + '<div style="font-weight:bold;">' + (c.caseNo || '(사건번호 미상)') + (c.status ? ' <span style="font-weight:normal;color:#888;">· ' + c.status + '</span>' : '') + '</div>'
+                    + '<div style="color:#666;">' + (c.addrJibun || '') + (c.floor ? ' ' + c.floor + '층' : '') + (c.unitNo ? ' ' + c.unitNo : '') + '</div>'
+                    + '<div style="color:#999;">'
+                    + (c.appraisalPrice ? '감정가 ' + toEok(String(Math.round(c.appraisalPrice / 10000))) : '')
+                    + (c.finalBidPrice ? ' · 낙찰가 ' + toEok(String(Math.round(c.finalBidPrice / 10000))) : (c.minBidPrice ? ' · 최저가 ' + toEok(String(Math.round(c.minBidPrice / 10000))) : ''))
+                    + (rate ? ' (' + rate + '%)' : '')
+                    + (c.saleDate ? ' · ' + c.saleDate : '')
+                    + '</div>'
+                    + matchLine
+                    + (c.specialConditions ? '<div style="color:#e65100;font-size:10.5px;margin-top:2px;">⚠️ ' + c.specialConditions + '</div>' : '')
+                    + '</div>';
+            });
+        }
     });
-    statsBox.innerHTML = '';
-    listBox.innerHTML = statsHtml;
+    statsBox.innerHTML = statsHtml;
+    listBox.innerHTML = listHtml || '<div style="padding:14px;text-align:center;color:#bbb;font-size:11px;">위 법정동 카드에서 "개별 목록 보기"를 누르면 여기에 표시됩니다.</div>';
 }
 // name(단지명, 없으면 이미 "동 번지" 조합 문자열)을 우선으로, name이 둘 다 없을 때만 dong으로 느슨하게 매칭
 // (matchesAuctionKey와 동일한 매칭 철학 - 건물 식별에 쓸 수 있는 유일한 공통 필드가 name/dong뿐이라서)
