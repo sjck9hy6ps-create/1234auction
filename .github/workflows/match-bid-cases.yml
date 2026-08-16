@@ -1,0 +1,25 @@
+name: 낙찰사례 매도사례 자동매칭
+
+on:
+  workflow_dispatch:
+  schedule:
+    # 매주 목요일 UTC 19:00(KST 금요일 04:00) - 다른 카카오REST/국토부API 사용
+    # 크론(warmup-locations 03:00, warmup-house-cache 월요일 03:30, train-avm 월요일
+    # 13:00)과 시간이 겹치지 않게 배치함. 낙찰 후 실제 매도까지 보통 3~4개월씩
+    # 걸려 데이터가 급하게 바뀌지 않으므로 주 1회로 충분함.
+    - cron: '0 19 * * 4'
+
+jobs:
+  match-bid-cases:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: 낙찰사례 매도사례 자동매칭 실행
+        env:
+          KAKAO_REST_API_KEY: ${{ secrets.KAKAO_REST_API_KEY }}
+          SITE_URL: https://1234auction.vercel.app
+        run: node scripts/match-bid-cases.mjs
