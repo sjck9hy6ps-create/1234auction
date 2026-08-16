@@ -6412,9 +6412,27 @@ function refreshAvmEstimateIfNeeded() {
 }
 function applyEstAvmValue() {
     if (!window.__avmEstValue) return;
-    applyTargetSuggestion(window.__avmEstValue);
+    // ⚠️ 2026-08(사용자 요청 - "최대예상치가 아니라 팔릴만한 값이어야 함"): 이 앱의 목적이
+    // "낙찰 후 빠른 매도가 가능한 금액"을 계산하는 것이라, AVM 추정가를 그대로 적용하면
+    // 안 됨 - AVM은 반경 1km 격자 안의 실거래 전체를 회귀분석한 값이라 이 물건 하나만
+    // 직접 보는 비교물건 기준값보다 오차범위가 훨씬 넓음(빌라 기준 ±42%대, 실측 사례로
+    // 확인 - 파주 야당동/고양 로얄팰리스). AVM이 비교물건 기준값보다 높게 나오면 그 차이를
+    // 그대로 목표매도가로 올리는 건 낙관적인 방향으로만 작용해 "보수적으로"라는 원칙에
+    // 어긋나므로, 비교물건 기준값(있으면)을 넘지 않도록 캡(cap)함 - AVM은 목표매도가를
+    // 낮추는 참고치로만 쓰고 올리는 용도로는 안 씀.
+    var compEst = getCompEstValue();
+    var valueToApply = window.__avmEstValue;
+    var wasCapped = false;
+    if (compEst && compEst.estValue > 0 && valueToApply > compEst.estValue) {
+        valueToApply = compEst.estValue;
+        wasCapped = true;
+    }
+    applyTargetSuggestion(valueToApply);
     var el = document.getElementById('est-row-2-status');
-    if (el) { el.style.color = '#2e7d32'; el.innerText = '✅ AVM 추정가로 적용됨'; }
+    if (el) {
+        el.style.color = '#2e7d32';
+        el.innerText = '✅ AVM 추정가로 적용됨' + (wasCapped ? ' (비교물건 기준값 ' + toEok(String(compEst.estValue)) + '으로 보수적으로 캡됨)' : '');
+    }
     renderEstimateSummary();
 }
 function villaRadiusSaleKey(ctx, pyung, buildYear) {
@@ -9692,7 +9710,14 @@ function getCompEstValue() {
         }
     }
     var sorted = usedPpps.slice().sort(function(a, b) { return a - b; });
-    var medPpp = median(usedPpps); // 만원/평 (유사도 필터 + 시점보정 + 이상치 제거 반영됨)
+    // ⚠️ 2026-08(사용자 요청 - "최대예상치가 아니라 팔릴만한 값이어야 함"): 이 앱의 목적이
+    // "낙찰 후 빠른 매도가 가능한 금액"을 계산하는 것이므로, 딱 중간값(50th percentile)보다
+    // 살짝 낮은 30th percentile을 기준값으로 씀 - 중앙값은 "이 근처 매물들의 평균적인
+    // 가격"일 뿐 "이 가격이면 금방 팔린다"는 보장은 없음(중앙값 매물도 평균적으로 몇 달씩
+    // 걸려 팔림). 표본이 아주 적으면(2~3건) 30th percentile이 사실상 최솟값에 가까워지는데,
+    // 이 앱의 목적상 오히려 바람직한 방향(보수적으로)이라고 판단함.
+    var COMP_EST_PERCENTILE = 0.3;
+    var medPpp = sorted.length >= 2 ? percentile(sorted, COMP_EST_PERCENTILE) : sorted[0]; // 만원/평 (유사도 필터 + 시점보정 + 이상치 제거 반영됨)
 
     return {
         medPpp: medPpp,
