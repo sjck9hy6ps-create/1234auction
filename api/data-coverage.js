@@ -529,6 +529,7 @@ function avmPredict(model, features, region, dong, danji, gridKey) {
   // #298(역세권/학군) 등이 추가돼도 이 함수를 다시 안 고쳐도 되게 하기 위함.
   let logPpp = 0;
   Object.keys(coefs).forEach(k => { logPpp += (coefs[k] || 0) * (features[k] || 0); });
+  const logPppFromFeatures = logPpp; // 진단용 - 그룹효과(dong_effects) 더하기 전 값
 
   const dongEffects = model.dong_effects || {};
   // 진단/신뢰도 표시용 - grid(공간격자, 빌라 전용 1차 단위)/danji(단지) 정확 매칭인지,
@@ -554,7 +555,10 @@ function avmPredict(model, features, region, dong, danji, gridKey) {
   logPpp += effect;
 
   const ppp = Math.exp(logPpp); // 만원/평
-  return { ppp: Math.round(ppp * 10) / 10, effectUsed };
+  // groupEffect/logPppFromFeatures는 진단용(getAvmEstimate의 debug 필드로 노출) - 이상하게
+  // 큰/작은 추정치가 나왔을 때 "피처(층·연식·역세권 등) 문제인지 그룹효과(그 동네 자체
+  // 가격수준) 문제인지"를 DB를 직접 조회하지 않고도 API 응답만으로 구분할 수 있게 함.
+  return { ppp: Math.round(ppp * 10) / 10, effectUsed, groupEffect: effect, logPppFromFeatures };
 }
 
 async function getAvmEstimate(type, region, dong, size, floor, buildYear, danji, sigunguCode, clientTopFloor, lat, lon) {
@@ -581,22 +585,32 @@ async function getAvmEstimate(type, region, dong, size, floor, buildYear, danji,
   let logHouseholds = null;
   let topFloorForModel = null;
   const coefs = model.global_coefs || {};
-  if (coefs.log_households !== undefined && danji && sigunguCode && dong) {
-    try {
-      const normDanji = normalizeComplexName(danji);
-      // ⚠️ 2026-08(층위치 피처): top_floor도 households와 같은 kapt_complex_info 조회
-      // 한 번에 같이 가져옴(추가 DB 왕복 없이) - train-avm.py의 build_kapt_lookup과 같은
-      // 소스에서 같은 매칭 로직(정규화 단지명)으로 찾아야 학습/서빙 정의가 어긋나지 않음.
-      const { data: kaptRows } = await supabase
-        .from('kapt_complex_info')
-        .select('kapt_name, households, top_floor')
-        .eq('sigungu_code', String(sigunguCode))
-        .eq('as3', dong)
-        .not('households', 'is', null);
-      const matched = (kaptRows || []).find((r) => normalizeComplexName(r.kapt_name) === normDanji);
-      if (matched && matched.households > 0) logHouseholds = Math.log(matched.households);
-      if (matched && matched.top_floor > 0) topFloorForModel = matched.top_floor;
-    } catch (e) { /* K-apt 조회 실패해도 AVM 자체를 막지 않고 중앙값 폴백으로 진행 */ }
+  // ⚠️ 2026-08(버그 수정 - 파주 야당동 AVM 20억 오추정 사례로 발견): 중앙값 폴백이 "danji &&
+  // sigunguCode && dong" 조건문 "안쪽"에 있어서, 이 물건에 단지명(danji, a-name 필드)이
+  // 비어있으면(단독주택 형태 등) K-apt 조회 자체를 건너뛰면서 폴백조차 실행되지 않고
+  // logHouseholds/topFloorForModel이 그대로 null로 남았음. 그러면 avmFeatureVector()가
+  // null을 0으로 치환해버리는데, log_households=0은 "이 단지가 세대수 1채"라는 뜻이라
+  // 학습 때 본 적 없는 극단치가 되어 계수가 왜곡된 방향으로 크게 튐. 폴백 계산을 조건문
+  // "바깥"으로 빼서, 단지명이 없어도(=K-apt 조회를 아예 못 해도) 항상 학습 때와 같은
+  // 중앙값으로 채워지도록 수정.
+  if (coefs.log_households !== undefined) {
+    if (danji && sigunguCode && dong) {
+      try {
+        const normDanji = normalizeComplexName(danji);
+        // ⚠️ 2026-08(층위치 피처): top_floor도 households와 같은 kapt_complex_info 조회
+        // 한 번에 같이 가져옴(추가 DB 왕복 없이) - train-avm.py의 build_kapt_lookup과 같은
+        // 소스에서 같은 매칭 로직(정규화 단지명)으로 찾아야 학습/서빙 정의가 어긋나지 않음.
+        const { data: kaptRows } = await supabase
+          .from('kapt_complex_info')
+          .select('kapt_name, households, top_floor')
+          .eq('sigungu_code', String(sigunguCode))
+          .eq('as3', dong)
+          .not('households', 'is', null);
+        const matched = (kaptRows || []).find((r) => normalizeComplexName(r.kapt_name) === normDanji);
+        if (matched && matched.households > 0) logHouseholds = Math.log(matched.households);
+        if (matched && matched.top_floor > 0) topFloorForModel = matched.top_floor;
+      } catch (e) { /* K-apt 조회 실패해도 AVM 자체를 막지 않고 중앙값 폴백으로 진행 */ }
+    }
     if (logHouseholds == null) {
       const medianHh = model.feature_ranges && model.feature_ranges.median_households;
       if (medianHh > 0) logHouseholds = Math.log(medianHh);
@@ -621,19 +635,28 @@ async function getAvmEstimate(type, region, dong, size, floor, buildYear, danji,
   // 동일하게 원본 danji를 그대로 씀 - normalizeComplexName을 쓰면 오히려 어긋남).
   const SUBWAY_SEARCH_RADIUS_M = 2000; // sync-transit.mjs / train-avm.py와 반드시 같은 값
   let logDistSubway = null;
-  if (coefs.log_dist_subway !== undefined && danji && dong) {
-    try {
-      const prefix = `${dong}|${danji}|`.toLowerCase();
-      const { data: transitRows } = await supabase
-        .from('transit_features')
-        .select('dist_subway_m')
-        .ilike('cache_key', `${prefix}%`)
-        .limit(1);
-      if (transitRows && transitRows.length > 0) {
-        const distM = transitRows[0].dist_subway_m != null ? transitRows[0].dist_subway_m : SUBWAY_SEARCH_RADIUS_M;
-        logDistSubway = Math.log(distM + 100);
-      }
-    } catch (e) { /* 역세권 조회 실패해도 AVM 자체를 막지 않고 중앙값 폴백으로 진행 */ }
+  // ⚠️ 2026-08(버그 수정 - 파주 야당동 AVM 20억 오추정 사례로 발견): 위 log_households와
+  // 완전히 같은 유형의 버그. 중앙값 폴백이 "danji && dong" 조건문 안쪽에 있어서, 단지명이
+  // 없는 물건(danji가 빈 문자열)이면 역세권 조회 자체를 건너뛰며 폴백도 실행 안 되고
+  // logDistSubway가 null로 남음 → avmFeatureVector()가 이걸 0으로 치환. log_dist_subway=0은
+  // "역과의 거리가 1m(거의 역 안)"라는 뜻이라(학습식이 log(거리+100)이므로 0=exp(0)-100=-99m)
+  // 실제로는 안 가까운 물건도 "역세권 최고 입지"로 잘못 취급돼 값이 크게 부풀려짐. 폴백을
+  // 조건문 밖으로 빼서 단지명이 없어도 항상 학습 때와 같은 중앙값 거리로 채워지게 수정.
+  if (coefs.log_dist_subway !== undefined) {
+    if (danji && dong) {
+      try {
+        const prefix = `${dong}|${danji}|`.toLowerCase();
+        const { data: transitRows } = await supabase
+          .from('transit_features')
+          .select('dist_subway_m')
+          .ilike('cache_key', `${prefix}%`)
+          .limit(1);
+        if (transitRows && transitRows.length > 0) {
+          const distM = transitRows[0].dist_subway_m != null ? transitRows[0].dist_subway_m : SUBWAY_SEARCH_RADIUS_M;
+          logDistSubway = Math.log(distM + 100);
+        }
+      } catch (e) { /* 역세권 조회 실패해도 AVM 자체를 막지 않고 중앙값 폴백으로 진행 */ }
+    }
     if (logDistSubway == null) {
       const medianDist = model.feature_ranges && model.feature_ranges.median_dist_subway;
       if (medianDist > 0) logDistSubway = Math.log(medianDist + 100);
@@ -668,7 +691,7 @@ async function getAvmEstimate(type, region, dong, size, floor, buildYear, danji,
   const gridCellKm = model.feature_ranges && model.feature_ranges.grid_cell_km;
   const gridKey = gridCellKm > 0 && lat != null && lon != null
     ? spatialGridKey(parseFloat(lat), parseFloat(lon), gridCellKm) : null;
-  const { ppp, effectUsed } = avmPredict(model, features, region, dong, danji, gridKey);
+  const { ppp, effectUsed, groupEffect, logPppFromFeatures } = avmPredict(model, features, region, dong, danji, gridKey);
   let totalPrice = Math.round(ppp * (size / 3.305785));
 
   // ⚠️ 2026-08(빌라 층위치 보정, 사용자 요청): villa_v1은 K-apt 같은 벌크 데이터가 없어
@@ -743,6 +766,18 @@ async function getAvmEstimate(type, region, dong, size, floor, buildYear, danji,
     outliersRemoved: fr.outliers_removed != null ? fr.outliers_removed : null,
     errorMargin, // null이면 구버전 모델(홀드아웃 검증 이전에 학습됨) - 프론트는 이 경우 오차범위를 숨김
     floorTierAdjustment, // 빌라만 채워짐(null이면 미적용) - 아파트 모델 계수를 빌린 층위치 보정 내역
+    // ⚠️ 2026-08(진단용, 파주 야당동 20억 오추정 사례로 추가): 추정치가 비정상적으로 크거나
+    // 작을 때 "층·연식·역세권 등 피처 문제인지" vs "그룹효과(그 동네 자체 가격수준) 문제인지"를
+    // DB를 직접 조회하지 않고도 이 응답만 보고 구분할 수 있게 함. groupKey는 실제 매칭된
+    // dong_effects의 키 문자열(디버깅 시 Supabase에서 바로 조회 가능하도록).
+    debug: {
+      danjiReceived: danji || null,
+      groupKeyTier: effectUsed,
+      groupEffectLog: groupEffect, // dong_effects[매칭키] 원값(로그 스케일)
+      featuresLogContribution: logPppFromFeatures, // 층/연식/역세권 등 피처들의 로그 기여 합
+      logDistSubwayUsed: logDistSubway, // null이면 이 모델이 역세권 계수 자체가 없는 것, 0이면 과거 버그 재발 의심
+      logHouseholdsUsed: logHouseholds,
+    },
     // dong까지는 실제 그 동네 실거래 기반이라 신뢰도 있음 - region_fallback/default_fallback일
     // 때만(단지·법정동 표본 자체가 부족해서 더 넓은 단위로 승격된 경우) 낮은 신뢰도로 표시함.
     lowConfidence: (model.r_squared != null && model.r_squared < 0.3) || effectUsed === 'region_fallback' || effectUsed === 'default_fallback',
