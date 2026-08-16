@@ -345,7 +345,7 @@ def attach_transit_features(df: pd.DataFrame, transit_lookup):
         median_dist = 500.0
         df["log_dist_subway"] = np.log(median_dist + 100)
         df = df.drop(columns=["_cache_key"], errors="ignore")
-        return df, median_dist
+        return df, median_dist, 0.0
     merged = df.merge(transit_lookup, left_on="_cache_key", right_on="cache_key", how="left")
     matched_mask = merged["cache_key"].notna()
     n_matched = int(matched_mask.sum())
@@ -358,7 +358,8 @@ def attach_transit_features(df: pd.DataFrame, transit_lookup):
     merged["dist_subway_m"] = merged["dist_subway_m"].fillna(median_dist)
     merged["log_dist_subway"] = np.log(merged["dist_subway_m"] + 100)  # +100: 매우 가까운 경우도 log(0) 방지
     merged = merged.drop(columns=["_cache_key", "cache_key", "dist_subway_m"], errors="ignore")
-    return merged, median_dist
+    match_rate = n_matched / len(merged) if len(merged) else 0.0
+    return merged, median_dist, match_rate
 
 
 def build_school_lookup():
@@ -792,11 +793,25 @@ def train_one(tables, model_id: str, model_type: str, use_danji: bool, use_grid:
     # 스크립트가 아파트+빌라를 함께 지오코딩함) 추가 좌표화 비용 없이 바로 쓸 수 있음
     # (sync-transit.mjs가 지하철역-거리 동기화 우선순위를 아파트 위주로 둬서 빌라 커버리지가
     # 아직 얕을 수 있지만, 매칭 안 되는 행은 기존처럼 중앙값으로 안전하게 폴백됨).
+    # ⚠️ 2026-08(버그 수정 - 파주 야당동 빌라 AVM 20억 오추정 사례로 발견): 매칭률(coverage)이
+    # 극히 낮으면(예: 빌라 역세권 동기화 초기 단계 - 172,264행 중 19행, 0.01%) log_dist_subway
+    # 값이 99.99%의 행에서 똑같은 중앙값 상수라, 회귀가 이 계수를 사실상 그 소수의 매칭된
+    # 행(19건)만으로 추정하게 됨 - 표본이 극단적으로 적어 계수가 불안정/과적합되기 쉽고,
+    # 실제로 매칭된(=중앙값이 아닌 진짜 거리값을 쓰는) 물건에 그 불안정한 계수가 곱해지면
+    # 추정가가 크게 튈 수 있음(사용자 실측 사례로 확인). MIN_TRANSIT_MATCH_RATE 미만이면
+    # 아예 변수 자체를 추가하지 않음(danji/grid 표본부족 시 상위 단위로 승격하는 것과 같은
+    # 안전장치) - sync-transit.mjs가 매주 조금씩 매칭을 늘려가므로, 커버리지가 쌓이면 다음
+    # 재학습부터 자동으로 다시 포함됨(코드를 다시 안 고쳐도 됨).
+    MIN_TRANSIT_MATCH_RATE = 0.05  # 최소 5% 매칭돼야 계수를 안정적으로 추정할 수 있다고 봄
     median_dist_subway = None
     if attach_transit:
         transit_lookup = build_transit_lookup()
-        df, median_dist_subway = attach_transit_features(df, transit_lookup)
-        feature_cols = feature_cols + ["log_dist_subway"]
+        df, median_dist_subway, transit_match_rate = attach_transit_features(df, transit_lookup)
+        if transit_match_rate >= MIN_TRANSIT_MATCH_RATE:
+            feature_cols = feature_cols + ["log_dist_subway"]
+        else:
+            print(f"  역세권 매칭률({transit_match_rate*100:.2f}%)이 {MIN_TRANSIT_MATCH_RATE*100:.0f}% 미만이라 "
+                  f"log_dist_subway를 이번 학습에서 제외합니다(계수 불안정 방지 - 커버리지가 쌓이면 자동 재포함).")
 
     # 학군(밀집도 근사치)은 danji가 아니라 (region,dong) 단위 집계라 아파트/연립다세대 모두
     # 적용 가능함(단지 좌표 커버리지와 무관 - school_info는 학교 위치만 있으면 됨).
