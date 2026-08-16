@@ -6508,13 +6508,19 @@ function calcMarketAdjustedSalePrice() {
     // 동일 매물이 반복 거래되는 아파트 단지와 달리 거래 자체가 원래 드묾) 1~2건 차이만으로
     // 재고월수가 몇 배씩 요동쳐 신뢰하기 어려움. 최소 표본(3건) 미만이면 재고월수 계산 자체를
     // 하지 않고 기본 반영비중(30%)으로 폴백하고, 그 이유를 명시함.
+    // ⚠️ 2026-08(사용자 요청 - 반영비중 상한 하향): 재고월수가 아무리 타이트해도(2개월 이하)
+    // 호가 비중이 70%까지 올라가는 건 실거래(비교물건 기준값) 쪽 신뢰도를 지나치게 낮춘다는
+    // 피드백을 반영해, 상한을 45%로 낮춤(MARKET_FACTOR_CAP). 호가는 매도자 희망가일 뿐 아직
+    // 성사된 거래가 아니므로, 아무리 시장이 빠르게 도는 것처럼 보여도 실거래 기반값이 최소
+    // 절반 이상은 항상 반영되도록 하는 게 더 보수적이고 안전한 기본값이라고 판단함.
+    var MARKET_FACTOR_CAP = 0.45;
     var MIN_RECENT_COUNT_FOR_RATE = 3;
     var monthsOfSupply = null, marketFactor = 0.3, dataWarning = null;
     if (listingCount !== null && monthlyRate > 0 && recentCount >= MIN_RECENT_COUNT_FOR_RATE) {
         monthsOfSupply = listingCount / monthlyRate;
-        if (monthsOfSupply <= 2) marketFactor = 0.7;
-        else if (monthsOfSupply <= 4) marketFactor = 0.5;
-        else if (monthsOfSupply <= 8) marketFactor = 0.3;
+        if (monthsOfSupply <= 2) marketFactor = MARKET_FACTOR_CAP;
+        else if (monthsOfSupply <= 4) marketFactor = 0.35;
+        else if (monthsOfSupply <= 8) marketFactor = 0.25;
         else marketFactor = 0.15;
     } else {
         dataWarning = (listingCount === null)
@@ -6543,7 +6549,9 @@ function calcMarketAdjustedSalePrice() {
     }
     var macroAdj = Math.max(-0.08, Math.min(0.08, baseRateAdj + roneAdj));
     var macroNote = macroNotes.length ? macroNotes.join(' / ') : null;
-    if (macroAdj !== 0) marketFactor = Math.min(1, Math.max(0, marketFactor + macroAdj));
+    // ⚠️ 거시보정으로 올라가는 경우(금리 하락·매매지수 하락 추세 → 호가 비중을 오히려 늘림)도
+    // 위 MARKET_FACTOR_CAP(45%) 상한을 그대로 지키도록 Math.min(1, ...) 대신 이 상한을 씀.
+    if (macroAdj !== 0) marketFactor = Math.min(MARKET_FACTOR_CAP, Math.max(0, marketFactor + macroAdj));
 
     // KOSIS 인구/세대수 증감(순수 참고용, 계산에는 미반영) - 위 macroNotes 주석 참고.
     var populationNote = null;
