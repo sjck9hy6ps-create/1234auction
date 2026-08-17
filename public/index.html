@@ -604,6 +604,30 @@ tr:hover td { background:#fffde7; }
     padding:3px 10px; border-radius:12px; white-space:nowrap;
     box-shadow:0 2px 6px rgba(0,0,0,0.15);
 }
+/* 목적지 핀(dropDestinationPin) - 목록/검색결과 클릭으로 지도가 이동했을 때 주변 배지들과
+   헷갈리지 않게 "정확히 여기로 이동했다"를 보여주는 임시 마커(2026-08 추가). 배지(마커)
+   zIndex가 최대 9999~10000까지 쓰이므로 그보다 위에 그려지도록 CustomOverlay zIndex를
+   10001로 줌. 떨어지는 애니메이션 + 바닥에서 계속 퍼지는 펄스 링으로 눈에 띄게 함. */
+.dest-pin-wrap { position:relative; width:30px; height:42px; pointer-events:none; }
+.dest-pin-drop {
+    position:absolute; left:50%; top:2px; width:18px; height:18px;
+    background:#e53935; border:3px solid white; border-radius:50% 50% 50% 0;
+    transform:translateX(-50%) rotate(-45deg); box-shadow:0 2px 8px rgba(0,0,0,0.45);
+    animation:destPinDrop 0.45s cubic-bezier(.34,1.56,.64,1);
+}
+.dest-pin-ring {
+    position:absolute; left:50%; bottom:0; width:12px; height:12px; margin-left:-6px;
+    border-radius:50%; background:rgba(229,57,53,0.4);
+    animation:destPinPulse 1.1s ease-out infinite;
+}
+@keyframes destPinDrop {
+    0% { top:-18px; opacity:0; }
+    100% { top:2px; opacity:1; }
+}
+@keyframes destPinPulse {
+    0% { transform:scale(1); opacity:0.7; }
+    100% { transform:scale(3); opacity:0; }
+}
 </style>
 </head>
 <body>
@@ -3575,6 +3599,7 @@ function showDropdown(results) {
             document.getElementById('addr-input').value = r.label;
             map.setCenter(new kakao.maps.LatLng(r.lat, r.lon));
             map.setLevel(4);
+            dropDestinationPin(r.lat, r.lon);
             lastLawdCd = null;
             loadAllData(r.lat, r.lon);
         };
@@ -3616,6 +3641,7 @@ function selectLocalComplex(apt) {
     function moveTo(lat, lon) {
         map.setCenter(new kakao.maps.LatLng(lat, lon));
         map.setLevel(4);
+        dropDestinationPin(lat, lon);
         showRadiusCircle(lat, lon);
         openPanel(apt);
     }
@@ -5809,6 +5835,7 @@ function panToBiasDong(dong) {
     if (!withCoord) { alert('이 법정동 물건의 좌표를 찾지 못해 이동할 수 없습니다.'); return; }
     map.setCenter(new kakao.maps.LatLng(withCoord.a.lat, withCoord.a.lon));
     map.setLevel(5);
+    dropDestinationPin(withCoord.a.lat, withCoord.a.lon);
 }
 function renderAuctionBiasStats() {
     var box = document.getElementById('auction-bias-stats-body');
@@ -5947,6 +5974,39 @@ function auctionListGoToPage(page) {
     var body = document.getElementById('auction-list-body');
     if (body) body.scrollTop = 0;
 }
+/* 목록/검색결과 클릭 후 지도가 이동했을 때 "정확히 어디로 이동했는지" 주변 배지와
+   헷갈리지 않게 보여주는 임시 핀(2026-08 추가). 검색/단지선택/경매목록/낙찰사례/
+   급등지역·돈되는지역/누적편향 법정동 등 map.setCenter로 화면을 옮기는 모든 지점에서
+   이동 직후 이 함수를 같이 호출함. 배지 zIndex(최대 9999~10000)보다 위에 그려지도록
+   CustomOverlay zIndex를 10001로 주고, 5초 후 자동으로 사라지게 하며(계속 남아있으면
+   나중에 딴 곳을 봐도 예전 위치를 가리키는 핀이 되어 오히려 헷갈릴 수 있음), 사용자가
+   지도를 직접 드래그하면(자기가 원하는 곳을 보려는 의도) 그 즉시 지워줌. */
+var destPinOverlay = null;
+var destPinTimer = null;
+var destPinDragListenerAdded = false;
+function dropDestinationPin(lat, lon) {
+    if (destPinOverlay) { destPinOverlay.setMap(null); destPinOverlay = null; }
+    if (destPinTimer) { clearTimeout(destPinTimer); destPinTimer = null; }
+    var div = document.createElement('div');
+    div.className = 'dest-pin-wrap';
+    div.innerHTML = '<div class="dest-pin-drop"></div><div class="dest-pin-ring"></div>';
+    destPinOverlay = new kakao.maps.CustomOverlay({
+        position: new kakao.maps.LatLng(lat, lon),
+        content: div, yAnchor: 1, xAnchor: 0.5, zIndex: 10001, clickable: false
+    });
+    destPinOverlay.setMap(map);
+    destPinTimer = setTimeout(function() {
+        if (destPinOverlay) { destPinOverlay.setMap(null); destPinOverlay = null; }
+        destPinTimer = null;
+    }, 5000);
+    if (!destPinDragListenerAdded) {
+        destPinDragListenerAdded = true;
+        kakao.maps.event.addListener(map, 'dragstart', function() {
+            if (destPinOverlay) { destPinOverlay.setMap(null); destPinOverlay = null; }
+            if (destPinTimer) { clearTimeout(destPinTimer); destPinTimer = null; }
+        });
+    }
+}
 /* 경매목록에서 항목을 클릭하면(수정 버튼 제외) 편집 모달을 바로 띄우지 않고 지도를 그
    주소로 이동시킴 - 여러 물건을 훑어보며 주변 시세(일반 거래 배지)를 같이 보고 싶을 때
    모달이 지도를 가리지 않도록 함. 수정하려면 우측 상단 "✏️ 수정"을 누르거나, 이동 후
@@ -5958,6 +6018,7 @@ function panToAuction(id) {
     if (a.lat && a.lon) {
         map.setCenter(new kakao.maps.LatLng(a.lat, a.lon));
         map.setLevel(4);
+        dropDestinationPin(a.lat, a.lon);
         return;
     }
     if (!a.addr) { alert('등록된 주소가 없어 이동할 수 없습니다. "✏️ 수정"을 눌러 주소를 입력해 주세요.'); return; }
@@ -5969,6 +6030,7 @@ function panToAuction(id) {
             saveAuctionAPI(a); renderAuctionMarkers();
             map.setCenter(new kakao.maps.LatLng(lat, lon));
             map.setLevel(4);
+            dropDestinationPin(lat, lon);
         } else {
             alert('이 주소의 위치를 찾을 수 없습니다. "✏️ 수정"을 눌러 주소를 확인해 주세요.');
         }
@@ -5984,6 +6046,7 @@ function panToBidCase(id) {
         closeBidCasePanel();
         map.setCenter(new kakao.maps.LatLng(c.lat, c.lon));
         map.setLevel(3);
+        dropDestinationPin(c.lat, c.lon);
         return;
     }
     var candidates = buildBidCaseGeocodeCandidates(c);
@@ -5997,6 +6060,7 @@ function panToBidCase(id) {
             closeBidCasePanel();
             map.setCenter(new kakao.maps.LatLng(lat, lon));
             map.setLevel(3);
+            dropDestinationPin(lat, lon);
         } else {
             alert('이 사례의 위치를 찾을 수 없습니다.');
         }
@@ -13383,6 +13447,7 @@ function selectRemoteComplex(row) {
         if (!lat || !lon) { setStatus(''); alert('이 단지의 위치를 찾을 수 없습니다.'); return; }
         map.setCenter(new kakao.maps.LatLng(lat, lon));
         map.setLevel(4);
+        dropDestinationPin(lat, lon);
         lastLawdCd = null; // 새 지역 데이터 강제 로드
         loadAllData(lat, lon).then(function() {
             setStatus('');
@@ -14047,6 +14112,7 @@ function moveToDong(region, dong) {
         var c = coordCache[key];
         map.setCenter(new kakao.maps.LatLng(c.lat, c.lon));
         map.setLevel(5);
+        dropDestinationPin(c.lat, c.lon);
         return;
     }
  
@@ -14057,6 +14123,7 @@ function moveToDong(region, dong) {
         if (lat && lon) {
             map.setCenter(new kakao.maps.LatLng(lat, lon));
             map.setLevel(5);
+            dropDestinationPin(lat, lon);
         } else {
             alert('이 동의 위치를 찾을 수 없습니다. (카카오 API 일일 호출 제한 중일 수 있어요)');
         }
