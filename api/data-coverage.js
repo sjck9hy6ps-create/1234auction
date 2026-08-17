@@ -1085,10 +1085,23 @@ async function getBucketDongPrices(type, start, end, sido) {
 // 가벼운 dong 단위 함수(rpc_bucket_avg_price_dong)로 폴백해 예전 방식(표본부족 구간만
 // 직전/직후와 병합, mix-shift 보정 없음)을 그대로 씀 - 시/도를 하나 골라서 보면 최신
 // 단지기준 상대지수가 적용된 결과를 볼 수 있음.
+// ⚠️ 2026-08(전국 동시조회 타임아웃 수정): 6구간을 Promise.all로 한꺼번에 쏘면(게다가
+// mode=priceMomentum 라우터가 apt/villa도 동시에 돌리니 최악의 경우 12개 동시), "전국"
+// (시/도 미지정 - region 필터가 없어 house_trades/villa_trades/single_trades 전체를
+// 매 구간마다 훑는 가장 무거운 조회 패턴)에서 Supabase 커넥션이 몰려 일부/전체 구간이
+// 타임아웃 나고 getBucketDongPrices의 catch가 조용히 {}를 반환 - 결과적으로 "돈되는 지역"
+// 전국 조회가 통째로 "데이터가 없다"로 보이는 문제가 실제 배포 후 테스트에서 발견됨.
+// (직접 SQL로 rpc_bucket_avg_price_dong을 단독 호출하면 같은 구간이 1000건 넘게 정상
+// 반환되는 걸 확인함 - 함수/데이터 자체는 멀쩡하고, 동시요청 부하만 문제였음.) 구간별로
+// 순차 호출하도록 바꿔 동시 커넥션 수를 6→1로 줄임(danji 기준 상대지수 경로는 시/도로
+// 좁혀서 가벼우니 그대로 Promise.all 유지 - 이 함수는 "전국" 전용 폴백이라 여기만 수정).
 async function getPriceMomentumSimple(type, sido, limit) {
   const minCount = minBucketCountFor(type);
   const buckets = momentumBuckets(type);
-  const bucketMaps = await Promise.all(buckets.map(b => getBucketDongPrices(type, b.start, b.end, sido)));
+  const bucketMaps = [];
+  for (const b of buckets) {
+    bucketMaps.push(await getBucketDongPrices(type, b.start, b.end, sido));
+  }
   const allKeys = new Set();
   bucketMaps.forEach(m => Object.keys(m).forEach(k => allKeys.add(k)));
   const rankings = [];
