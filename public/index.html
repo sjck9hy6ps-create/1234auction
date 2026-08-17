@@ -8060,12 +8060,60 @@ function showPlainInfo(b64) {
     try { text = decodeURIComponent(escape(atob(b64))); } catch (e) { text = ''; }
     alert(text || '설명이 없습니다.');
 }
+/* ⚠️ 2026-08 추가: 대항력 있는 임차인의 보증금이 경매정보지에 "미상"으로만 나와 AI가 추출하지
+   못하는 경우가 흔함(특히 배당요구를 안 한 임차인은 법원 서류에 금액이 아예 안 나오기도 함).
+   "정상적인 임대차라면 전월세 신고(실거래가 등록)가 되어 있을 것"이라는 전제로, 그 임차인의
+   전입일(moveInDate) 근처에서 같은 건물(matchesAuctionKey)·비슷한 층(±1)·비슷한 면적의 실제
+   전월세 계약을 이 지역에 이미 로드된 allRentList(house_rent/villa_rent, get-house.js가 함께
+   내려줌)에서 찾아 그 보증금을 참고 추정치로 제시함. 완전히 확실한 매칭은 아님(같은 건물의
+   다른 세대 계약일 수 있음) - 그래서 항상 "추정치, 참고용"임을 함께 표시하고 표본 개수·계약일
+   차이(전입일과 몇 개월 차이인지)도 같이 보여줘서 사용자가 신뢰도를 직접 판단할 수 있게 함. */
+var LEASE_MATCH_MONTHS = 4; // 전입일 기준 앞뒤 몇 개월까지 "같은 계약일 가능성"으로 볼지
+function findLeaseDepositEstimate(tenant) {
+    if (!tenant || !tenant.moveInDate) return null;
+    var moveInDt = toDateObjFromStr(tenant.moveInDate);
+    if (!moveInDt) return null;
+    var ctx = getAuctionAddressContext();
+    var floorEl = document.getElementById('a-floor');
+    var pyungEl = document.getElementById('a-pyung');
+    var propTypeEl = document.getElementById('a-prop-type');
+    var targetFloor = floorEl ? parseInt(floorEl.value) : NaN;
+    var targetPyung = pyungEl ? parseFloat(pyungEl.value) : NaN;
+    var targetAreaM2 = Number.isFinite(targetPyung) ? targetPyung * 3.305785 : null;
+    var propType = propTypeEl ? propTypeEl.value : null;
+    var areaTolerance = propType === 'villa' ? 6 : 4;
+    var candidates = [];
+    (allRentList || []).forEach(function(r) {
+        if (!matchesAuctionKey({ name: ctx.name, dong: ctx.dong, bunji: ctx.bunji }, r.danji, r.dong, r.bunji)) return;
+        var rFloor = parseInt(r.floor);
+        if (Number.isFinite(targetFloor) && Number.isFinite(rFloor) && Math.abs(rFloor - targetFloor) > 1) return;
+        if (targetAreaM2 && r.size) {
+            if (Math.abs(r.size - targetAreaM2) > areaTolerance) return;
+        }
+        var dealDt = toDateObjFromStr(r.deal_date);
+        if (!dealDt) return;
+        var days = Math.abs((dealDt.getTime() - moveInDt.getTime()) / (1000 * 60 * 60 * 24));
+        if (days > LEASE_MATCH_MONTHS * 30.44) return;
+        candidates.push({ row: r, dealDt: dealDt, days: days });
+    });
+    if (!candidates.length) return null;
+    candidates.sort(function(a, b) { return a.days - b.days; }); // 전입일과 가장 가까운 계약을 우선
+    var best = candidates[0];
+    return {
+        deposit: best.row.deposit, dealDate: best.row.deal_date,
+        monthsDiff: Math.round(best.days / 30.44 * 10) / 10, sampleCount: candidates.length,
+    };
+}
 /* 인수보증금 제안 - AI가 뽑아둔 임차인현황(pendingAuctionDetail.tenantOccupants) 중
    대항력 있음(hasStanding===true)으로 표시된 임차인을 대상으로 a-assumed-deposit(만원 단위)에
    채워줌. 임차인마다 배당요구 여부(distributionRequested)와 예상/실제 배당액(distributionAmount)이
    함께 추출돼 있으면 그 값으로 "보증금 - 배당액"(=실제 예상 인수액)을 쓰고, 이 정보가 없으면
    기존처럼 보증금 전액을 "최악가정"(전액 미배당)으로 채움 - 배당요구를 안 한 게 확인된 임차인은
    배당액 정보가 없어도 애초에 최악가정=확정값이므로 그대로 전액을 씀.
+   ⚠️ 2026-08 추가: 보증금 자체가 AI 추출로 확인 안 된 임차인은(deposit이 0/없음) 곧바로
+   포기하지 않고, findLeaseDepositEstimate()로 전입일 근처 실거래 전월세를 찾아 "추정치"로
+   대신 채움(찾았을 때만) - 이때는 basis 문구에 반드시 "실거래가 추정(참고용)"이라고 표시해서
+   AI가 실제로 추출한 확정값과 절대 혼동되지 않게 함.
    자동으로 조용히 채우지 않고 버튼을 눌러야만 반영되게 한 이유는, 이 값이 마진/입찰가 계산에
    직접 영향을 주는 만큼 사용자가 근거(어떤 임차인 몇 명, 각 보증금·배당 상태)를 알고 확인한 뒤
    반영하도록 하기 위함 - 대지권 면적처럼 조용히 자동채움하면 "왜 갑자기 마진이 줄었지"를
@@ -8087,31 +8135,46 @@ function suggestAssumedDeposit() {
     }
     var totalWon = 0;
     var lines = [];
+    var anyEstimated = false;
     standing.forEach(function(t) {
         var deposit = parseInt(t.deposit) || 0;
+        // ⚠️ 보증금이 AI 추출로 확인 안 됐으면(경매정보지에 "미상") 바로 포기하지 않고,
+        // 전입일 근처 실거래 전월세로 추정치를 찾아봄 - 찾았을 때만 대신 씀.
+        var isEstimated = false, estimateNote = '';
+        if (!deposit && t.moveInDate) {
+            var leaseEst = findLeaseDepositEstimate(t);
+            if (leaseEst && leaseEst.deposit) {
+                deposit = leaseEst.deposit;
+                isEstimated = true; anyEstimated = true;
+                estimateNote = ' [전입일(' + t.moveInDate + ') 근처 실거래 ' + leaseEst.dealDate + ' 계약 기준, 전입일과 '
+                    + leaseEst.monthsDiff + '개월 차이 · 유사거래 ' + leaseEst.sampleCount + '건 중 가장 가까운 계약]';
+            }
+        }
         var assumed = deposit;
-        var basis = '최악가정(전액 미배당)';
+        var estimatedSuffix = isEstimated ? ' - 보증금은 실거래가 추정치(참고용, 실제 계약과 다를 수 있음)' + estimateNote : '';
+        var basis = '최악가정(전액 미배당)' + estimatedSuffix;
         if (t.distributionRequested === true && (t.distributionAmount || t.distributionAmount === 0)) {
             // 배당요구를 했고 예상/실제 배당액까지 확인되면, 그 차액(보증금-배당액)만 실제
             // 인수 부담으로 봄 - 전액 최악가정보다 더 정확한 추정치.
             assumed = Math.max(deposit - (parseInt(t.distributionAmount) || 0), 0);
-            basis = '배당요구함 - 예상배당액 ' + won(t.distributionAmount) + ' 차감';
+            basis = '배당요구함 - 예상배당액 ' + won(t.distributionAmount) + ' 차감' + estimatedSuffix;
         } else if (t.distributionRequested === false) {
             // 배당요구를 안 한 게 확인됐으면 배당액과 무관하게 전액 인수가 확정값이라
             // "최악가정"이 아니라 사실상 확정치임을 문구로 구분해줌.
-            basis = '배당요구 안 함(확정 - 전액 인수)';
+            basis = '배당요구 안 함(확정 - 전액 인수)' + estimatedSuffix;
         }
         totalWon += assumed;
         lines.push((t.name || '임차인') + ' ' + won(assumed) + ' (' + basis + ')');
     });
     if (!totalWon) {
-        alert('대항력 있는 임차인은 있지만 보증금 금액이 추출되지 않았습니다. 경매정보지에서\n직접 확인 후 이 항목에 수동으로 입력하세요.');
+        alert('대항력 있는 임차인은 있지만 보증금 금액이 추출되지 않았고, 전입일 근처 실거래\n전월세에서도 비슷한 계약을 찾지 못했습니다(같은 건물의 실거래 신고가 아직 없거나,\n이 지역 실거래 데이터가 아직 로드되지 않았을 수 있습니다). 경매정보지에서\n직접 확인 후 이 항목에 수동으로 입력하세요.');
         return;
     }
     var totalManwon = Math.round(totalWon / 10000);
     document.getElementById('a-assumed-deposit').value = totalManwon;
     alert('대항력 있는 임차인 ' + standing.length + '명 기준 인수보증금 ' + toEok(String(totalManwon)) + '을 채웠습니다.\n\n'
         + lines.join('\n') + '\n\n'
+        + (anyEstimated ? '⚠️ 일부 임차인은 보증금이 확인되지 않아 전입일 근처 실거래 전월세로 추정한 참고치입니다. 같은 건물의 다른 세대 계약일 수 있으니 전입세대열람·현장 임장으로 반드시 재확인하세요.\n\n' : '')
         + '배당요구 여부·배당액이 확인 안 된 임차인은 최악가정(전액 미배당)으로 계산했습니다.\n'
         + '실제 배당표 확인 후 차이가 있으면 이 항목을 직접 수정하세요.');
     calcMargin();
