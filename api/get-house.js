@@ -31,7 +31,10 @@ async function getCachedHouseData(lawdCd) {
     const data = await r.json();
     if (!data || !data.result) return null;
     const parsed = JSON.parse(data.result);
-    if (!parsed || !Array.isArray(parsed.apt)) return null;
+    // apt만 검사하면, 전세(rent) 조회 기능이 추가되기 전에 저장된 구식 캐시({apt:[...]}만 있고
+    // rent 필드 자체가 없는 상태)가 "유효한 캐시"로 통과되어 계속 빈 전세 데이터를 반환하는
+    // 버그가 있었습니다. rent도 배열인지 함께 검사해서 구식 캐시는 자동으로 무효 처리되게 함.
+    if (!parsed || !Array.isArray(parsed.apt) || !Array.isArray(parsed.rent)) return null;
     return parsed;
   } catch (e) {
     console.error('get-house Redis 캐시 조회 실패:', e.message);
