@@ -35,7 +35,11 @@ body { font-family:'Malgun Gothic',sans-serif; }
     z-index:11; width:340px; background:white; border-radius:0 0 8px 8px;
     box-shadow:0 4px 12px rgba(0,0,0,0.15); display:none; max-height:300px; overflow-y:auto;
 }
-#map { width:100%; height:100vh; }
+/* position:relative + z-index:0 로 새 스태킹 컨텍스트를 만들어줌 - 이게 없으면 카카오맵이
+   내부적으로 배지(마커)에 매기는 zIndex(최대 9999~10000)가 지도 div 경계를 넘어 바깥
+   페이지 레벨까지 그대로 적용되어, z-index:10인 범례/목록 패널보다 배지가 위에 그려지는
+   버그가 있었음(아이패드에서 범례와 배지가 뒤섞여 보이는 문제로 발견됨). */
+#map { width:100%; height:100vh; position:relative; z-index:0; }
 #status-box {
     position:absolute; top:112px; left:50%; transform:translateX(-50%);
     z-index:10; background:rgba(0,0,0,0.75); color:white;
