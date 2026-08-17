@@ -1102,7 +1102,7 @@ tr:hover td { background:#fffde7; }
             <div id="dev-news-box" style="margin-top:4px;"></div>
             <div class="modal-row">
                 <span class="modal-label">물건유형</span>
-                <select class="modal-select" id="a-prop-type" onchange="applyDefaultTargetMarginForType();autoCalcAgentSilent();autoCalcRepairSilent();calcCompValuation();calcMargin();autoCalcAuctionJeonseAnalysis();">
+                <select class="modal-select" id="a-prop-type" onchange="applyDefaultTargetMarginForType();autoCalcAgentSilent();autoCalcRepairSilent();calcCompValuation();calcMargin();autoCalcAuctionJeonseAnalysis();renderHoldMonthsHint();">
                     <option value="apt">아파트</option>
                     <option value="villa">연립다세대·단독</option>
                     <option value="officetel">오피스텔</option>
@@ -1158,6 +1158,12 @@ tr:hover td { background:#fffde7; }
                 <input type="number" class="modal-input" id="a-hold-months" placeholder="예) 3" oninput="autoCalcHoldingTaxSilent();calcCompValuation();calcMargin();suggestBidFromTarget();">
                 <span style="font-size:12px;color:#888;margin-left:4px;">개월</span>
             </div>
+            <!-- ⚠️ 2026-08 추가: 대출이자 등 지출비용 계산에 쓰이는 "예상 보유기간"을 사용자가
+                 직접 입력할 때 참고할 수 있도록, 이 법정동의 같은 물건유형(아파트/빌라)에서
+                 실제 낙찰→매도까지 걸린 기간(매도사례 매칭된 낙찰사례 실측치)을 보여줌.
+                 renderHoldMonthsHint() 참고 - 값을 자동으로 채우지 않고 참고 문구만 표시함
+                 (사용자가 "즉시 반영보다는 참고사항으로"라고 명시적으로 요청함). -->
+            <div id="a-hold-months-hint" style="font-size:10.5px;color:#00695c;margin:-4px 0 6px;"></div>
             <div class="modal-row" id="loan-rate-row">
                 <span class="modal-label">대출금리 <span onclick="showCalcInfo('loanInterest')" title="계산기준 보기" style="cursor:pointer;color:#1976d2;">ⓘ</span></span>
                 <input type="number" step="0.1" class="modal-input" id="a-loan-rate" placeholder="5.0" oninput="calcCompValuation();calcMargin();suggestBidFromTarget();">
@@ -1248,7 +1254,7 @@ tr:hover td { background:#fffde7; }
             <div class="modal-section-title">💰 가격 정보 (만원 단위)</div>
             <div class="modal-row">
                 <span class="modal-label">감정가</span>
-                <input type="number" class="modal-input" id="a-appraisal" placeholder="0" oninput="calcCompValuation();calcMargin();suggestBidFromTarget();renderDongMarginStatsInModal();">
+                <input type="number" class="modal-input" id="a-appraisal" placeholder="0" oninput="calcCompValuation();calcMargin();suggestBidFromTarget();renderDongMarginStatsInModal();renderHoldMonthsHint();">
             </div>
             <div class="modal-row">
                 <span class="modal-label">최저입찰가</span>
@@ -5094,6 +5100,59 @@ async function autoFillMissingBidCaseMargins() {
     }
     renderBidCaseList(); renderBidCaseMarkers();
 }
+// 'YYYYMMDD'/'YYYY-MM-DD' 등 어떤 표기든 Date 객체로 변환 - toDateNum(숫자 8자리로만
+// 정규화)과 달리 실제 날짜 간 일수 차이 계산에 쓰려고 별도로 둠.
+function toDateObjFromStr(s) {
+    var digits = String(s || '').replace(/[^0-9]/g, '');
+    if (digits.length < 8) return null;
+    var y = parseInt(digits.slice(0, 4), 10), m = parseInt(digits.slice(4, 6), 10), d = parseInt(digits.slice(6, 8), 10);
+    if (!y || !m || !d) return null;
+    var dt = new Date(y, m - 1, d);
+    return isNaN(dt.getTime()) ? null : dt;
+}
+/* 법정동(dong)+물건유형(propType: 'apt'/'villa' 등, guessPropTypeFromCase와 동일 분류)별
+   실제 "낙찰~매도" 보유기간(개월) 통계 - 매도사례가 매칭된 낙찰사례(c.resaleMatch)만 표본이
+   됨. c.saleDate(낙찰/매각기일)부터 c.resaleMatch.date(그 물건이 실제로 팔린 실거래일)까지
+   걸린 일수를 개월로 환산(30.44일/개월 근사)해서 중간값/최소/최대를 냄.
+   ⚠️ 2026-08 추가: 대출이자 등 지출비용 계산에 쓰이는 "예상 보유기간"(a-hold-months)을
+   사용자가 직접 입력할 때 참고하라는 용도로만 씀 - 자동으로 입력칸을 채우지 않음(사용자가
+   "즉시 반영보다는 참고사항으로 표기"를 명시적으로 요청함, renderHoldMonthsHint 참고).
+   재고월수(현재 매물 수급) 기반의 getHoldMonthsEstimate()와는 별개로, 이쪽은 "실제로 이
+   동네에서 낙찰받은 사람들이 파는 데 걸린 기간" 실측치라는 점이 다름. */
+function calcDongHoldMonthsStats(dong, propType) {
+    if (!dong || !propType) return null;
+    var monthsList = [];
+    bidCaseList.forEach(function(c) {
+        if (c.dong !== dong) return;
+        if (!c.resaleMatch || !c.resaleMatch.date || !c.saleDate) return;
+        if (guessPropTypeFromCase(c) !== propType) return;
+        var d1 = toDateObjFromStr(c.saleDate), d2 = toDateObjFromStr(c.resaleMatch.date);
+        if (!d1 || !d2) return;
+        var days = (d2.getTime() - d1.getTime()) / (1000 * 60 * 60 * 24);
+        if (days > 0) monthsList.push(days / 30.44);
+    });
+    if (!monthsList.length) return null;
+    return {
+        count: monthsList.length,
+        median: Math.round(median(monthsList) * 10) / 10,
+        min: Math.round(Math.min.apply(null, monthsList) * 10) / 10,
+        max: Math.round(Math.max.apply(null, monthsList) * 10) / 10,
+    };
+}
+/* a-hold-months 입력칸 바로 아래 힌트(#a-hold-months-hint)를 채움 - 값을 자동으로 넣지
+   않고 참고 문구만 보여줌. 현재 주소의 법정동+물건유형(a-prop-type)을 기준으로 함. */
+function renderHoldMonthsHint() {
+    var box = document.getElementById('a-hold-months-hint');
+    if (!box) return;
+    var ctx = getAuctionAddressContext();
+    var propTypeEl = document.getElementById('a-prop-type');
+    var propType = propTypeEl ? propTypeEl.value : null;
+    var stats = (ctx.dong && propType) ? calcDongHoldMonthsStats(ctx.dong, propType) : null;
+    if (!stats) { box.innerHTML = ''; return; }
+    var typeLabel = propType === 'villa' ? '빌라(연립다세대)' : (propType === 'apt' ? '아파트' : propType);
+    box.innerHTML = '⏱ 참고: ' + ctx.dong + ' ' + typeLabel + ' 낙찰사례 ' + stats.count + '건의 실제 낙찰~매도 평균 보유기간 <b>'
+        + stats.median + '개월</b> (최소 ' + stats.min + '개월 ~ 최대 ' + stats.max + '개월) - 자동으로 반영되지 않으니 참고해서 직접 입력하세요.';
+}
 /* 법정동(dong) 단위 낙찰사례 추정마진 통계 - 신규 경매물건 등록 모달에서 주소의 동이 확인되면
    "이 동네는 보통 이 정도 마진에서 낙찰이 이뤄진다"를 바로 참고할 수 있도록 표시함. */
 function calcDongMarginStats(dong) {
@@ -6110,7 +6169,7 @@ function openAuctionModal(id) {
         var extractedSiteArea = parseAreaM2FromText(pendingAuctionDetail.siteRightsArea);
         if (extractedSiteArea) document.getElementById('a-site-rights-area').value = extractedSiteArea;
     }
-    updateStatusUI(); updateBidMethodUI(); calcMargin(); calcCompValuation(); suggestBidFromTarget(); renderChecklistSection(); loadAuctionBuildingInfo(); autoCalcAuctionJeonseAnalysis(); renderDongMarginStatsInModal();
+    updateStatusUI(); updateBidMethodUI(); calcMargin(); calcCompValuation(); suggestBidFromTarget(); renderChecklistSection(); loadAuctionBuildingInfo(); autoCalcAuctionJeonseAnalysis(); renderDongMarginStatsInModal();renderHoldMonthsHint();
     // 새 물건 등록 화면일 때만: 화면 전환(다른 앱/탭 이동 등)으로 이전에 붙여넣은 텍스트와
     // AI 추출 결과가 날아간 경우를 대비해 저장해둔 초안(AUCTION_DRAFT_KEY)이 있으면 복원
     // 안내를 띄움 - 탭하면 restoreAuctionDraft()가 API 재호출 없이 그대로 폼을 채움.
@@ -6191,7 +6250,7 @@ function searchAuctionAddr() {
             calcMargin();
             loadAuctionBuildingInfo();
             autoCalcAuctionJeonseAnalysis();
-            renderDongMarginStatsInModal();
+            renderDongMarginStatsInModal();renderHoldMonthsHint();
         } else {
             alert('주소를 찾을 수 없습니다.');
         }
@@ -11530,7 +11589,7 @@ async function parseAuctionPaste(restoreDetail) {
         }
         // 지오코딩 대기(await) 중에도 더 최신 요청이 시작될 수 있어 마지막으로 한 번 더 확인
         if (mySeq !== parseAuctionRequestSeq) return;
-        autoCalcRepairSilent(); autoCalcMovingSilent(); autoCalcCleaningSilent(); autoCalcRegistryFeeSilent(); autoCalcEvictionFeeSilent(); calcCompValuation(); calcMargin(); loadAuctionBuildingInfo(); autoCalcAuctionJeonseAnalysis(); renderDongMarginStatsInModal();
+        autoCalcRepairSilent(); autoCalcMovingSilent(); autoCalcCleaningSilent(); autoCalcRegistryFeeSilent(); autoCalcEvictionFeeSilent(); calcCompValuation(); calcMargin(); loadAuctionBuildingInfo(); autoCalcAuctionJeonseAnalysis(); renderDongMarginStatsInModal();renderHoldMonthsHint();
         renderAiSummaryBox();
         clearAuctionImages();
         if (warnings.length) {
