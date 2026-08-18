@@ -2099,45 +2099,67 @@ function toggleDongBoundaryMode(btn) {
 function onDongBoundaryMouseMove(mouseEvent) {
     var latlng = mouseEvent.latLng;
     clearTimeout(dongBoundaryDebounceTimer);
+    // ⚠️ 2026-08: 220ms → 500ms로 완화 - 아래 세마포어 적용과 별개로, 애초에 마우스가
+    // 계속 움직이는 동안 호출 빈도 자체를 줄여서 카카오 API 할당량 소모를 줄임
     dongBoundaryDebounceTimer = setTimeout(function() {
         checkDongBoundaryAt(latlng.getLat(), latlng.getLng());
-    }, 220);
+    }, 500);
 }
-function checkDongBoundaryAt(lat, lon) {
+// ⚠️ 2026-08: 이 coord2RegionCode 호출이 세마포어 없이 바로 나가고 있었음(loadBuildingInfo에서
+// 예전에 겪었던 것과 동일한 문제 - 13597행 주석 참고). 법정동 경계선 모드를 켠 채로 지도 위에서
+// 마우스를 움직이면 배지 지오코딩(runGeocode)이 쓰는 것과 같은 카카오 앱키 할당량을 두고
+// 무제한으로 경쟁하게 되어, 배지 쪽 지오코딩 요청이 튕겨나가는(브라우저엔 CORS 에러로 보임)
+// 원인이었음. loadBuildingInfo와 동일하게 runRegionCode 세마포어(동시 4건) + 8초 타임아웃을
+// 거치도록 고쳐서, 배지 로딩과 서로 밀어내지 않고 사이좋게 순서를 나눠 쓰게 함.
+async function checkDongBoundaryAt(lat, lon) {
     if (!dongBoundaryMode || !geocoder) return;
     // 커서가 25m 이내로만 움직였으면 굳이 다시 역지오코딩하지 않음
     if (dongBoundaryLastLat !== null
         && getDistance(lat, lon, dongBoundaryLastLat, dongBoundaryLastLon) < 25) return;
     dongBoundaryLastLat = lat; dongBoundaryLastLon = lon;
-    geocoder.coord2RegionCode(lon, lat, function(result, status) {
-        if (!dongBoundaryMode) return; // 응답 오는 사이 꺼졌으면 무시
-        if (status !== kakao.maps.services.Status.OK) return;
-        var emdCd = null, sigungu = '', emdNm = '';
-        for (var i = 0; i < result.length; i++) {
-            if (result[i].region_type === 'B') {
-                emdCd = result[i].code;
-                sigungu = result[i].region_1depth_name + ' ' + result[i].region_2depth_name;
-                emdNm = result[i].region_3depth_name;
-                break;
-            }
-        }
-        if (!emdCd || emdCd === dongBoundaryCurrentEmdCd) return;
-        var sggCd = emdCd.substring(0, 5);
-        if (dongBoundaryCacheBySgg[sggCd]) {
-            applyDongBoundary(emdCd, sigungu, emdNm, dongBoundaryCacheBySgg[sggCd]);
-            return;
-        }
-        // 2026-08: api/get-boundary.js 단독 함수였는데 Vercel 12개 함수 한도에 걸려서
-        // data-coverage.js의 mode=boundary 분기로 합침 (get-boundary.js는 더 이상 안 씀)
-        fetch('/api/data-coverage?mode=boundary&sggCd=' + sggCd)
-            .then(function(r) { return r.json(); })
-            .then(function(d) {
-                var list = (d && d.boundaries) || [];
-                dongBoundaryCacheBySgg[sggCd] = list;
-                applyDongBoundary(emdCd, sigungu, emdNm, list);
-            })
-            .catch(function() { /* 경계 조회 실패해도 지도 사용에는 지장 없으므로 조용히 무시 */ });
+    var result = await runRegionCode(function() {
+        return new Promise(function(resolve) {
+            var settled = false;
+            var timer = setTimeout(function() {
+                if (settled) return;
+                settled = true;
+                resolve(null);
+            }, 8000);
+            geocoder.coord2RegionCode(lon, lat, function(res, status) {
+                if (settled) return;
+                settled = true;
+                clearTimeout(timer);
+                if (status !== kakao.maps.services.Status.OK) { resolve(null); return; }
+                resolve(res);
+            });
+        });
     });
+    if (!dongBoundaryMode || !result) return; // 응답 오는 사이 꺼졌거나 실패했으면 무시
+    var emdCd = null, sigungu = '', emdNm = '';
+    for (var i = 0; i < result.length; i++) {
+        if (result[i].region_type === 'B') {
+            emdCd = result[i].code;
+            sigungu = result[i].region_1depth_name + ' ' + result[i].region_2depth_name;
+            emdNm = result[i].region_3depth_name;
+            break;
+        }
+    }
+    if (!emdCd || emdCd === dongBoundaryCurrentEmdCd) return;
+    var sggCd = emdCd.substring(0, 5);
+    if (dongBoundaryCacheBySgg[sggCd]) {
+        applyDongBoundary(emdCd, sigungu, emdNm, dongBoundaryCacheBySgg[sggCd]);
+        return;
+    }
+    // 2026-08: api/get-boundary.js 단독 함수였는데 Vercel 12개 함수 한도에 걸려서
+    // data-coverage.js의 mode=boundary 분기로 합침 (get-boundary.js는 더 이상 안 씀)
+    fetch('/api/data-coverage?mode=boundary&sggCd=' + sggCd)
+        .then(function(r) { return r.json(); })
+        .then(function(d) {
+            var list = (d && d.boundaries) || [];
+            dongBoundaryCacheBySgg[sggCd] = list;
+            applyDongBoundary(emdCd, sigungu, emdNm, list);
+        })
+        .catch(function() { /* 경계 조회 실패해도 지도 사용에는 지장 없으므로 조용히 무시 */ });
 }
 function applyDongBoundary(emdCd, sigungu, emdNm, list) {
     if (!dongBoundaryMode) return;
