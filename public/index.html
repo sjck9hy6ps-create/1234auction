@@ -3205,8 +3205,37 @@ function redrawMarkers() {
     bidCaseAptIndex = computeBidCaseAptIndex();
     dongTypeMarginStats = computeDongTypeMarginStats();
     var list = allAptList.filter(isAptVisibleUnderCurrentFilters);
+    // ⚠️ 2026-08: 다른 지역으로 이동해도 배지가 안 사라지게(누적 렌더링, mergedLawdCds
+    // 참고) 바꾼 뒤로, 세션 중 방문한 모든 지역의 좌표 확정 매물이 매번 전부 마커로
+    // 그려지고 겹침판정(scheduleOverlapResolve)까지 돌면서, 지역을 옮길수록 지도 이동이
+    // 점점 느려지는 문제가 생김. 데이터(allAptList/dataCache)는 계속 누적해서 갖고
+    // 있되, 실제 마커 생성은 지금 화면(뷰포트) 근처만으로 제한해서 성능이 "누적된 총량"이
+    // 아니라 "지금 보이는 양"에만 비례하게 함 - 다른 지역으로 되돌아가면 이미 좌표를 아는
+    // 매물이라 재요청 없이 즉시 다시 그려지니 "배지가 안 사라짐" 요구사항은 그대로 유지됨.
+    list = filterAptListToViewport(list);
     placeMarkers(list, myGen);
     setTimeout(function() { renderAuctionMarkers(); renderBidCaseMarkers(); }, 100);
+}
+/* 뷰포트(상하좌우 50% 여유) 밖에 있는, 좌표를 이미 아는 매물은 마커 생성 후보에서 제외.
+   좌표를 아직 모르는 매물은 여기서 걸러내지 않고 그대로 둠 - placeMarkers 안에서
+   지오코딩을 시도한 뒤 자체적으로 15km 거리 체크를 하므로 이중으로 안전하게 걸러짐. */
+function filterAptListToViewport(list) {
+    if (!map) return list;
+    var bounds = map.getBounds();
+    if (!bounds) return list;
+    var sw = bounds.getSouthWest(), ne = bounds.getNorthEast();
+    var latPad = (ne.getLat() - sw.getLat()) * 0.5;
+    var lonPad = (ne.getLng() - sw.getLng()) * 0.5;
+    var minLat = sw.getLat() - latPad, maxLat = ne.getLat() + latPad;
+    var minLon = sw.getLng() - lonPad, maxLon = ne.getLng() + lonPad;
+    return list.filter(function(apt) {
+        var l = apt.latest || {};
+        var cacheKey = [l.dong, l.name, l.bunji, l.road_name, l.main_num, l.sub_num]
+            .join('|').toLowerCase();
+        var c = coordCache[cacheKey];
+        if (!c) return true; // 좌표 미확인 - 후보로 남겨둠(placeMarkers가 알아서 처리)
+        return c.lat >= minLat && c.lat <= maxLat && c.lon >= minLon && c.lon <= maxLon;
+    });
 }
  
 function getPinConfig(apt) {
