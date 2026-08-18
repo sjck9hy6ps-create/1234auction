@@ -2092,6 +2092,24 @@ var dongBoundaryCacheBySgg = {};
 var dongBoundaryCurrentEmdCd = null;
 var dongBoundaryDebounceTimer = null;
 var dongBoundaryLastLat = null, dongBoundaryLastLon = null;
+/* ════════════════════════════════════
+   현재 보고 있는 법정동 + 그 법정동과 경계가 맞닿은 인접 법정동만 배지를
+   남기는 필터 (2026-08, Task #381) - 누적 렌더링(#376)이 지역을 옮길수록
+   배지가 무한히 쌓여서 사용성이 떨어진다는 피드백으로 대체함.
+   - 지도 idle 때마다(법정동 경계선 모드와 무관하게 항상) 지도 중심 좌표를
+     coord2RegionCode로 역지오코딩해서 현재 법정동을 알아내고, 위 법정동
+     경계선 기능과 같은 /api/data-coverage?mode=boundary 폴리곤 데이터를
+     재사용해서 "현재 법정동 + 경계가 닿은 동" 목록을 계산함
+   - 배지 자체는 여전히 좌표(lat/lon)만 알면 되고, 배지마다 법정동코드를
+     따로 역지오코딩할 필요가 없음 - point-in-polygon으로 좌표가 허용
+     영역(현재동+인접동 폴리곤) 안에 있는지만 확인
+════════════════════════════════════ */
+var currentDongAreaEmdCd = null;
+var currentDongAreaEmdNm = '';
+var currentDongAreaSigungu = '';
+var currentDongAreaLastLat = null, currentDongAreaLastLon = null;
+var currentDongAreaUpdating = false;
+var currentDongAllowedGeoms = null; // null = 아직 계산 전(필터링 안 함, 전부 통과)
 function toggleDongBoundaryMode(btn) {
     dongBoundaryMode = !dongBoundaryMode;
     if (btn) btn.classList.toggle('active', dongBoundaryMode);
@@ -2123,13 +2141,11 @@ function onDongBoundaryMouseMove(mouseEvent) {
 // 무제한으로 경쟁하게 되어, 배지 쪽 지오코딩 요청이 튕겨나가는(브라우저엔 CORS 에러로 보임)
 // 원인이었음. loadBuildingInfo와 동일하게 runRegionCode 세마포어(동시 4건) + 8초 타임아웃을
 // 거치도록 고쳐서, 배지 로딩과 서로 밀어내지 않고 사이좋게 순서를 나눠 쓰게 함.
-async function checkDongBoundaryAt(lat, lon) {
-    if (!dongBoundaryMode || !geocoder) return;
-    // 커서가 25m 이내로만 움직였으면 굳이 다시 역지오코딩하지 않음
-    if (dongBoundaryLastLat !== null
-        && getDistance(lat, lon, dongBoundaryLastLat, dongBoundaryLastLon) < 25) return;
-    dongBoundaryLastLat = lat; dongBoundaryLastLon = lon;
-    var result = await runRegionCode(function() {
+/* coord2RegionCode를 세마포어(runRegionCode, 동시 4건) + 8초 타임아웃으로 감싼 공용
+   헬퍼 - 법정동 경계선 호버 기능과 아래 "현재동+인접동" 배지 필터 기능이 함께 씀 */
+function regionCodeAt(lat, lon) {
+    if (!geocoder) return Promise.resolve(null);
+    return runRegionCode(function() {
         return new Promise(function(resolve) {
             var settled = false;
             var timer = setTimeout(function() {
@@ -2146,32 +2162,51 @@ async function checkDongBoundaryAt(lat, lon) {
             });
         });
     });
-    if (!dongBoundaryMode || !result) return; // 응답 오는 사이 꺼졌거나 실패했으면 무시
-    var emdCd = null, sigungu = '', emdNm = '';
+}
+/* result_type 'B'(법정동) 항목에서 코드/시군구명/법정동명을 뽑아냄 - null 리턴은 못 찾은 경우 */
+function extractEmdInfo(result) {
+    if (!result) return null;
     for (var i = 0; i < result.length; i++) {
         if (result[i].region_type === 'B') {
-            emdCd = result[i].code;
-            sigungu = result[i].region_1depth_name + ' ' + result[i].region_2depth_name;
-            emdNm = result[i].region_3depth_name;
-            break;
+            return {
+                emdCd: result[i].code,
+                sigungu: result[i].region_1depth_name + ' ' + result[i].region_2depth_name,
+                emdNm: result[i].region_3depth_name
+            };
         }
     }
-    if (!emdCd || emdCd === dongBoundaryCurrentEmdCd) return;
-    var sggCd = emdCd.substring(0, 5);
-    if (dongBoundaryCacheBySgg[sggCd]) {
-        applyDongBoundary(emdCd, sigungu, emdNm, dongBoundaryCacheBySgg[sggCd]);
-        return;
-    }
+    return null;
+}
+/* 시군구코드(sggCd) 기준 법정동 경계 폴리곤 목록을 캐시(dongBoundaryCacheBySgg)에서
+   가져오거나, 없으면 fetch해서 캐시에 채운 뒤 리턴 - 법정동 경계선 호버 기능과
+   "현재동+인접동" 배지 필터 기능이 공유해서 씀(하나가 이미 불러온 시군구면 서로 재사용) */
+function fetchBoundaryList(sggCd) {
+    if (dongBoundaryCacheBySgg[sggCd]) return Promise.resolve(dongBoundaryCacheBySgg[sggCd]);
     // 2026-08: api/get-boundary.js 단독 함수였는데 Vercel 12개 함수 한도에 걸려서
     // data-coverage.js의 mode=boundary 분기로 합침 (get-boundary.js는 더 이상 안 씀)
-    fetch('/api/data-coverage?mode=boundary&sggCd=' + sggCd)
+    return fetch('/api/data-coverage?mode=boundary&sggCd=' + sggCd)
         .then(function(r) { return r.json(); })
         .then(function(d) {
             var list = (d && d.boundaries) || [];
             dongBoundaryCacheBySgg[sggCd] = list;
-            applyDongBoundary(emdCd, sigungu, emdNm, list);
+            return list;
         })
-        .catch(function() { /* 경계 조회 실패해도 지도 사용에는 지장 없으므로 조용히 무시 */ });
+        .catch(function() { return []; /* 경계 조회 실패해도 지도 사용에는 지장 없으므로 조용히 무시 */ });
+}
+async function checkDongBoundaryAt(lat, lon) {
+    if (!dongBoundaryMode || !geocoder) return;
+    // 커서가 25m 이내로만 움직였으면 굳이 다시 역지오코딩하지 않음
+    if (dongBoundaryLastLat !== null
+        && getDistance(lat, lon, dongBoundaryLastLat, dongBoundaryLastLon) < 25) return;
+    dongBoundaryLastLat = lat; dongBoundaryLastLon = lon;
+    var result = await regionCodeAt(lat, lon);
+    if (!dongBoundaryMode || !result) return; // 응답 오는 사이 꺼졌거나 실패했으면 무시
+    var info = extractEmdInfo(result);
+    if (!info || !info.emdCd || info.emdCd === dongBoundaryCurrentEmdCd) return;
+    var sggCd = info.emdCd.substring(0, 5);
+    var list = await fetchBoundaryList(sggCd);
+    if (!dongBoundaryMode) return; // 응답 오는 사이 꺼졌으면 무시
+    applyDongBoundary(info.emdCd, info.sigungu, info.emdNm, list);
 }
 function applyDongBoundary(emdCd, sigungu, emdNm, list) {
     if (!dongBoundaryMode) return;
@@ -2224,6 +2259,136 @@ function clearDongBoundaryOverlay() {
     if (dongBoundaryPolygon) { dongBoundaryPolygon.setMap(null); dongBoundaryPolygon = null; }
     var box = document.getElementById('dong-boundary-info');
     if (box) { box.style.display = 'none'; box.textContent = ''; }
+}
+/* ════════════════════════════════════
+   "현재 법정동 + 인접 법정동"만 배지로 남기는 필터 (Task #381)
+   - geometry(Polygon/MultiPolygon, GeoJSON [lon,lat] 좌표) 몇 개를 놓고
+     "두 폴리곤이 경계를 맞대고 있는지"와 "이 좌표가 이 폴리곤들 안에 있는지"만
+     계산하면 되므로, 정식 GIS 라이브러리 없이 아래 두 개면 충분함:
+     1) polygonsAreAdjacent - 정점끼리 최단거리를 샘플링해서 문턱값(60m) 이내면 인접으로 판단
+        (행정경계 폴리곤은 시스템마다 좌표 정밀도가 살짝 달라 정확히 0m로 안 맞물릴 수 있어 여유를 둠)
+     2) isPointInGeometry - 표준 ray-casting 알고리즘으로 점-폴리곤 포함 여부 판정
+════════════════════════════════════ */
+/* geometry(Polygon/MultiPolygon)의 모든 외곽선 정점을 [lon,lat] 배열로 펼치고,
+   너무 많으면(maxPoints 초과) 균등 간격으로 솎아냄 - 인접 판정용이라 정밀도보다 속도 우선 */
+function flattenGeometryPoints(geometry, maxPoints) {
+    if (!geometry) return [];
+    var rings = [];
+    if (geometry.type === 'Polygon') {
+        rings = geometry.coordinates || [];
+    } else if (geometry.type === 'MultiPolygon') {
+        (geometry.coordinates || []).forEach(function(poly) {
+            (poly || []).forEach(function(ring) { rings.push(ring); });
+        });
+    }
+    var pts = [];
+    rings.forEach(function(ring) { (ring || []).forEach(function(pt) { pts.push(pt); }); });
+    if (pts.length <= maxPoints) return pts;
+    var step = pts.length / maxPoints;
+    var sampled = [];
+    for (var i = 0; i < maxPoints; i++) sampled.push(pts[Math.floor(i * step)]);
+    return sampled;
+}
+function polygonsAreAdjacent(geomA, geomB, thresholdMeters) {
+    var ptsA = flattenGeometryPoints(geomA, 60);
+    var ptsB = flattenGeometryPoints(geomB, 60);
+    for (var i = 0; i < ptsA.length; i++) {
+        for (var j = 0; j < ptsB.length; j++) {
+            if (getDistance(ptsA[i][1], ptsA[i][0], ptsB[j][1], ptsB[j][0]) < thresholdMeters) return true;
+        }
+    }
+    return false;
+}
+function ringContainsPoint(ring, lon, lat) {
+    var inside = false;
+    for (var i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+        var xi = ring[i][0], yi = ring[i][1];
+        var xj = ring[j][0], yj = ring[j][1];
+        var intersect = ((yi > lat) !== (yj > lat))
+            && (lon < (xj - xi) * (lat - yi) / (yj - yi) + xi);
+        if (intersect) inside = !inside;
+    }
+    return inside;
+}
+function isPointInGeometry(lat, lon, geometry) {
+    if (!geometry) return false;
+    if (geometry.type === 'Polygon') {
+        var rings = geometry.coordinates || [];
+        return rings.length > 0 && ringContainsPoint(rings[0], lon, lat);
+    }
+    if (geometry.type === 'MultiPolygon') {
+        return (geometry.coordinates || []).some(function(poly) {
+            return poly && poly.length > 0 && ringContainsPoint(poly[0], lon, lat);
+        });
+    }
+    return false;
+}
+/* 지도 idle 때마다(법정동 경계선 호버 모드 on/off와 무관하게 항상) 호출됨.
+   현재 지도 중심의 법정동을 알아내고, 그 동과 경계가 닿은 인접 동들의 폴리곤을
+   모아 currentDongAllowedGeoms에 저장 - 실제 필터링은 filterAptListToDongArea가 함 */
+async function updateCurrentDongArea(lat, lon) {
+    // 300m 이내로만 움직였으면 동이 바뀌었을 가능성이 낮으므로 재계산 생략
+    if (currentDongAreaLastLat !== null
+        && getDistance(lat, lon, currentDongAreaLastLat, currentDongAreaLastLon) < 300) return;
+    if (currentDongAreaUpdating) return; // 이미 계산 중이면 다음 idle 때 다시 시도
+    currentDongAreaLastLat = lat; currentDongAreaLastLon = lon;
+    currentDongAreaUpdating = true;
+    try {
+        var result = await regionCodeAt(lat, lon);
+        var info = extractEmdInfo(result);
+        if (!info || !info.emdCd) return; // 역지오코딩 실패 - 기존 상태(필터) 유지
+        if (info.emdCd === currentDongAreaEmdCd) return; // 같은 동이면 재계산 불필요
+        var sggCd = info.emdCd.substring(0, 5);
+        var list = await fetchBoundaryList(sggCd);
+        var currentEntry = list.find(function(b) { return b.emdNm === info.emdNm; });
+        if (!currentEntry || !currentEntry.geometry) {
+            // 이 시군구의 경계 데이터를 못 구했으면 필터링을 포기하고 전부 보여줌
+            // (배지가 갑자기 사라지는 것보다 안전한 폴백)
+            currentDongAllowedGeoms = null;
+            currentDongAreaEmdCd = null;
+            return;
+        }
+        var allowed = [currentEntry.geometry];
+        list.forEach(function(b) {
+            if (b !== currentEntry && b.geometry && polygonsAreAdjacent(currentEntry.geometry, b.geometry, 60)) {
+                allowed.push(b.geometry);
+            }
+        });
+        // 이미 캐시된 다른 시군구 경계 데이터도 훑어서 구 경계에 걸친 인접동을 놓치지 않음
+        // (누적 로딩 방식(#376) 덕에 인접 시군구 데이터도 이미 캐시돼 있는 경우가 많음)
+        Object.keys(dongBoundaryCacheBySgg).forEach(function(otherSgg) {
+            if (otherSgg === sggCd) return;
+            (dongBoundaryCacheBySgg[otherSgg] || []).forEach(function(b) {
+                if (b.geometry && polygonsAreAdjacent(currentEntry.geometry, b.geometry, 60)) {
+                    allowed.push(b.geometry);
+                }
+            });
+        });
+        currentDongAllowedGeoms = allowed;
+        currentDongAreaEmdCd = info.emdCd;
+        currentDongAreaEmdNm = info.emdNm;
+        currentDongAreaSigungu = info.sigungu;
+        redrawMarkers();
+    } catch (e) {
+        /* 실패해도 조용히 무시 - 기존 필터 상태 유지 */
+    } finally {
+        currentDongAreaUpdating = false;
+    }
+}
+/* 좌표를 아는 매물만 "현재동+인접동" 영역 안에 있는지 확인해서 거름 - 좌표를 아직
+   모르는 매물은(coordCache 미확정) 걸러내지 않고 그대로 둠(placeMarkers가 지오코딩
+   시도 후 자체적으로 처리). currentDongAllowedGeoms가 null이면(아직 계산 전이거나
+   경계 데이터 조회 실패) 필터링하지 않고 전부 통과시킴 */
+function filterAptListToDongArea(list) {
+    if (!currentDongAllowedGeoms) return list;
+    return list.filter(function(apt) {
+        var l = apt.latest || {};
+        var cacheKey = [l.dong, l.name, l.bunji, l.road_name, l.main_num, l.sub_num]
+            .join('|').toLowerCase();
+        var c = coordCache[cacheKey];
+        if (!c) return true; // 좌표 미확인 - 후보로 남겨둠
+        return currentDongAllowedGeoms.some(function(g) { return isPointInGeometry(c.lat, c.lon, g); });
+    });
 }
 /* ── DB 날짜 파싱: "20260630" → {year,month,day} ── */
 function parseDealDate(dateStr) {
@@ -2876,11 +3041,13 @@ function initMap(lat, lon) {
     fetchSiteNotes(); // 임장메모 - 마커 클릭 시 즉시 보여줄 수 있도록 초기에 함께 로딩
     fetchBidCases().then(function() { renderBidCaseMarkers(); autoFillMissingBidCaseMargins(); }); // 낙찰사례 지도 배지 + 자동매칭된 마진 채우기
     loadAllData(lat, lon);
+    updateCurrentDongArea(lat, lon); // 초기 화면도 "현재동+인접동" 필터가 바로 적용되도록
     kakao.maps.event.addListener(map, 'idle', function() {
         var c = map.getCenter();
         clearTimeout(moveTimer);
         moveTimer = setTimeout(function() {
             loadAllData(c.getLat(), c.getLng()).then(function() { renderAuctionMarkers(); renderBidCaseMarkers(); });
+            updateCurrentDongArea(c.getLat(), c.getLng());
         }, 1200);
     });
 }
@@ -3207,7 +3374,7 @@ function redrawMarkers() {
     // 여유) 스코프 리스트를 먼저 한 번만 만들어서 마커 생성과 급등순위 계산 양쪽에 그대로
     // 재사용함 - 데이터(allAptList/dataCache) 자체는 계속 누적해서 갖고 있으니 "배지가
     // 안 사라짐" 요구사항은 그대로 유지되고, 실제 계산량은 "지금 보이는 양"에만 비례하게 됨.
-    var viewportList = filterAptListToViewport(allAptList);
+    var viewportList = filterAptListToDongArea(filterAptListToViewport(allAptList));
     surgeRankMap = computeSurgeRankMap(currentTypeFilter, viewportList);
     comparableIndex = computeComparableIndex();
     bidCaseAptIndex = computeBidCaseAptIndex();
