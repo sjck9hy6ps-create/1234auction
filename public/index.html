@@ -3200,19 +3200,19 @@ function isAptVisibleUnderCurrentFilters(apt) {
 function redrawMarkers() {
     renderGen++;
     var myGen = renderGen;
-    surgeRankMap = computeSurgeRankMap(currentTypeFilter);
+    // ⚠️ 2026-08: 다른 지역으로 이동해도 배지가 안 사라지게(누적 렌더링, mergedLawdCds
+    // 참고) allAptList를 세션 내내 누적하게 바꾼 뒤로, 매 호출마다 누적된 전체를 대상으로
+    // 마커도 만들고 급등순위(buildDongSurgeRanking - 건물마다 trades까지 전부 훑음)까지
+    // 다시 계산하면서, 지역을 옮길수록 지도 이동이 점점 느려지는 문제가 생김. 뷰포트(+50%
+    // 여유) 스코프 리스트를 먼저 한 번만 만들어서 마커 생성과 급등순위 계산 양쪽에 그대로
+    // 재사용함 - 데이터(allAptList/dataCache) 자체는 계속 누적해서 갖고 있으니 "배지가
+    // 안 사라짐" 요구사항은 그대로 유지되고, 실제 계산량은 "지금 보이는 양"에만 비례하게 됨.
+    var viewportList = filterAptListToViewport(allAptList);
+    surgeRankMap = computeSurgeRankMap(currentTypeFilter, viewportList);
     comparableIndex = computeComparableIndex();
     bidCaseAptIndex = computeBidCaseAptIndex();
     dongTypeMarginStats = computeDongTypeMarginStats();
-    var list = allAptList.filter(isAptVisibleUnderCurrentFilters);
-    // ⚠️ 2026-08: 다른 지역으로 이동해도 배지가 안 사라지게(누적 렌더링, mergedLawdCds
-    // 참고) 바꾼 뒤로, 세션 중 방문한 모든 지역의 좌표 확정 매물이 매번 전부 마커로
-    // 그려지고 겹침판정(scheduleOverlapResolve)까지 돌면서, 지역을 옮길수록 지도 이동이
-    // 점점 느려지는 문제가 생김. 데이터(allAptList/dataCache)는 계속 누적해서 갖고
-    // 있되, 실제 마커 생성은 지금 화면(뷰포트) 근처만으로 제한해서 성능이 "누적된 총량"이
-    // 아니라 "지금 보이는 양"에만 비례하게 함 - 다른 지역으로 되돌아가면 이미 좌표를 아는
-    // 매물이라 재요청 없이 즉시 다시 그려지니 "배지가 안 사라짐" 요구사항은 그대로 유지됨.
-    list = filterAptListToViewport(list);
+    var list = viewportList.filter(isAptVisibleUnderCurrentFilters);
     placeMarkers(list, myGen);
     setTimeout(function() { renderAuctionMarkers(); renderBidCaseMarkers(); }, 100);
 }
@@ -14053,12 +14053,18 @@ function saveCoordToDB(cacheKey, lat, lon, sigunguCd, bjdongCd) {
 /* ════════════════════════════════════
    동(읍면동/법정동) 단위 단기 거래량 급등 순위
 ════════════════════════════════════ */
-function buildDongSurgeRanking(type) {
+// ⚠️ 2026-08: sourceList 파라미터 추가 - 다른 지역으로 이동해도 배지가 안 사라지도록
+// allAptList를 세션 내내 누적하게 바꾼 뒤로, 이 함수가 인자 없이 전역 allAptList를 그대로
+// 쓰면 방문한 모든 지역의 건물+거래 전체를 매번(지도 이동마다) 다시 훑게 되어 갈수록
+// 느려졌음. "🔥N위" 배지는 원래도 "지금 보는 지역 안에서의 상대순위"가 취지였으므로
+// (14140행 부근 주석 참고) 호출부(redrawMarkers)에서 뷰포트로 좁힌 리스트를 넘겨받아
+// 쓰도록 함 - 성능뿐 아니라 의미상으로도 더 맞음. 인자를 안 주면 기존처럼 전역 리스트 사용.
+function buildDongSurgeRanking(type, sourceList) {
     // 연립다세대·단독다가구(villa)는 아파트보다 거래가 뜸해서 단기 구간을 6개월로 넓혀서 봄
     // (일반 거래배지/과거거래 기준 변경과 동일한 맥락)
     var isVilla = type === 'villa';
     var map = {}; // dong -> { region, dong, c3m, c6m, c1y, c3y }
-    allAptList.forEach(function(apt) {
+    (sourceList || allAptList).forEach(function(apt) {
         if (type && apt.buildingType !== type) return;
         (apt.trades || []).forEach(function(t) {
             var dong = (t.dong || '').trim();
@@ -14091,8 +14097,8 @@ function buildDongSurgeRanking(type) {
     });
     return list;
 }
-function computeSurgeRankMap(type) {
-    var list = buildDongSurgeRanking(type); // 이미 shortRatio(단기지수) 내림차순 정렬됨
+function computeSurgeRankMap(type, sourceList) {
+    var list = buildDongSurgeRanking(type, sourceList); // 이미 shortRatio(단기지수) 내림차순 정렬됨
     var map = {};
     list.slice(0, 5).forEach(function(item, i) {
         map[item.dong] = i + 1; // 1~5위
