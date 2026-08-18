@@ -14020,6 +14020,13 @@ async function fetchOneVillaInfo(apt) {
 /* ════════════════════════════════════
    좌표/법정동코드 영구 캐시 (Supabase)
 ════════════════════════════════════ */
+// ⚠️ 2026-08: 이 fetch에 타임아웃이 없어서, /api/get-coords가 응답을 안 하는 상황(백엔드
+// 장애·네트워크 문제 등)이 되면 await 지점에서 영원히 멈춰 loadAllData 전체가 "데이터
+// 로딩 중..."에서 더 진행되지 않던 문제가 있었음(실사용 중 라이브 사이트에서 직접 재현·확인함
+// - /api/get-coords가 8~12초 넘게 응답 자체를 안 보내는 상태였음). 이 캐시 일괄조회는
+// "있으면 빠르고 없어도 되는" 최적화일 뿐(실패해도 placeMarkers 안에서 매물별 개별
+// 지오코딩으로 자연스럽게 폴백됨)이므로, 8초 안에 응답이 없으면 그냥 포기하고 나머지
+// 로딩(마커 표시 등)을 계속 진행하게 함 - runGeocode의 8초 타임아웃과 동일한 패턴.
 async function prefetchCoordsFromDB(aptList) {
     var keys = [];
     aptList.forEach(function(apt) {
@@ -14029,11 +14036,16 @@ async function prefetchCoordsFromDB(aptList) {
     });
     if (!keys.length) return;
     try {
-        var res = await fetch('/api/get-coords', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ keys: keys })
-        });
+        var res = await Promise.race([
+            fetch('/api/get-coords', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ keys: keys })
+            }),
+            new Promise(function(_, reject) {
+                setTimeout(function() { reject(new Error('get-coords 응답 시간초과(8초)')); }, 8000);
+            })
+        ]);
         var data = await res.json();
         Object.keys(data.coords || {}).forEach(function(key) {
             coordCache[key] = data.coords[key];
