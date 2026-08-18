@@ -703,6 +703,13 @@ tr:hover td { background:#fffde7; }
         <button class="filter-tab ft-common" id="bidcaseonly-toggle-btn" onclick="toggleBidCaseOnlyFilter(this)">⚖️ 낙찰사례만 보기</button>
         <button class="filter-tab ft-common" id="bidcasebadge-toggle-btn" onclick="toggleShowBidCaseBadges(this)">⚖️ 낙찰사례 배지 숨김</button>
     </div>
+    <div class="filter-row">
+        <div class="filter-row-label">경매건</div>
+        <button class="filter-tab ft-adate" data-adate="past" onclick="toggleAuctionDateFilter('past',this)">지난 경매건</button>
+        <button class="filter-tab ft-adate" data-adate="today" onclick="toggleAuctionDateFilter('today',this)">오늘 경매건</button>
+        <button class="filter-tab ft-adate" data-adate="other" onclick="toggleAuctionDateFilter('other',this)">그외 경매건</button>
+        <button class="filter-tab ft-reset" onclick="resetAuctionDateFilter()">초기화</button>
+    </div>
 </div>
 <div id="dong-boundary-info" style="display:none;position:absolute;top:60px;left:50%;transform:translateX(-50%);z-index:50;background:rgba(0,0,0,0.75);color:white;font-size:12px;font-weight:bold;padding:5px 12px;border-radius:14px;pointer-events:none;"></div>
 <div id="autocomplete"></div>
@@ -1689,6 +1696,11 @@ var bidCaseAptIndex = { byName: {}, byDongBunji: {} };
 // 기본 로딩 상태라 매매기록 배지와 겹쳐 화면을 뒤덮는다는 사용자 피드백 반영. 필요할 때
 // 상단 필터에서 켜서 볼 수 있음.
 var showBidCaseBadges = false;
+// 경매건 보기 필터("지난 경매건"/"오늘 경매건"/"그외 경매건") - 다른 필터들과 달리 일반 거래
+// 마커가 아니라 내가 등록한 경매물건(🔨) 자체를 bidDate(입찰일) 기준으로 골라 보여줌.
+// 경매 마커는 원래 다른 필터를 다 무시하고 항상 표시되는 규칙이었는데(#87), 이 필터만은
+// 예외로 경매 마커 표시 여부에 직접 관여함. 값이 비어있으면(아무것도 선택 안 함) 전체 표시.
+var activeAuctionDateFilters = new Set();
 /* 경매물건 비교물건으로 등록된 거래를 역인덱싱 (키: 이름|날짜|금액 → 등록된 경매 목록)
    비교물건 저장 시 name/date/amount로 dedup 체크하던 것과 동일한 키 형식을 사용함 */
 function computeComparableIndex() {
@@ -1800,6 +1812,18 @@ function toggleShowBidCaseBadges(btn) {
     btn.classList.toggle('active');
     btn.innerText = showBidCaseBadges ? '⚖️ 낙찰사례 배지 표시중' : '⚖️ 낙찰사례 배지 숨김';
     renderBidCaseMarkers();
+}
+// "경매건" 필터(지난/오늘/그외) - 등급 필터(toggleGrade)와 동일하게 복수 선택 가능한
+// OR 조건: 하나도 선택 안 하면 전체 표시, 선택하면 선택된 버킷에 해당하는 경매물건만 표시.
+function toggleAuctionDateFilter(val, btn) {
+    if (activeAuctionDateFilters.has(val)) { activeAuctionDateFilters.delete(val); btn.classList.remove('active'); }
+    else { activeAuctionDateFilters.add(val); btn.classList.add('active'); }
+    renderAuctionMarkers();
+}
+function resetAuctionDateFilter() {
+    activeAuctionDateFilters.clear();
+    document.querySelectorAll('.ft-adate').forEach(function(b) { b.classList.remove('active'); });
+    renderAuctionMarkers();
 }
 var villaInfoLoading = false;
 var GRADE_COLORS = {1:'#b71c1c',2:'#e53935',3:'#ff7043',4:'#ffa726',5:'#66bb6a',6:'#42a5f5',7:'#9e9e9e'};
@@ -1934,6 +1958,16 @@ function calcAuctionDday(bidDateStr) {
     var diffDays = Math.round((d - today) / 86400000);
     var label = diffDays < 0 ? '입찰 ' + Math.abs(diffDays) + '일 지남' : (diffDays === 0 ? '오늘 입찰' : 'D-' + diffDays);
     return { diffDays: diffDays, label: label };
+}
+// "경매건" 필터용 버킷 분류 - calcAuctionDday와 동일한 기준(diffDays)을 재사용해서
+// D-day 배지 표기와 필터 결과가 항상 일치하도록 함. 입찰일이 없거나 미래(D-N)인 경우는
+// "그외 경매건"으로 묶임.
+function classifyAuctionDateBucket(a) {
+    var dd = a && a.bidDate ? calcAuctionDday(a.bidDate) : null;
+    if (!dd) return 'other';
+    if (dd.diffDays < 0) return 'past';
+    if (dd.diffDays === 0) return 'today';
+    return 'other';
 }
 function toPyung(area) { return Math.round(area / 3.305785 * 10) / 10; }
 // apt.ppp는 "만원/평" 단위로 저장돼 있음(calcPriceGrades 참고). 등급은 색상으로 이미
@@ -8805,6 +8839,9 @@ function renderAuctionMarkers() {
     if (!auctionList || !auctionList.length) { clearAuctionMarkers(); return; }
     var neededIds = {};
     auctionList.forEach(function(a) {
+        // "경매건" 필터(지난/오늘/그외)에 걸리면 이 경매물건은 지도에서 제외 - neededIds에
+        // 안 넣으면 아래 정리 루프에서 기존 마커도 함께 제거됨
+        if (activeAuctionDateFilters.size && !activeAuctionDateFilters.has(classifyAuctionDateBucket(a))) return;
         neededIds[a.id] = true;
         if (a.lat && a.lon) { upsertAuctionMarker(a); }
         else if (a.addr) {
