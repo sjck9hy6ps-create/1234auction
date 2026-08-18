@@ -81,6 +81,13 @@ body { font-family:'Malgun Gothic',sans-serif; }
 .ft-tier.active { background:#8d6e63; border-color:#8d6e63; color:white; }
 .ft-common.active { background:#37474f; border-color:#37474f; color:white; }
 .ft-surge.active { background:#e53935; border-color:#e53935; color:white; }
+/* ⚠️ 2026-08: 경매건 필터(ft-adate) 추가할 때 이 active 색상 규칙을 빼먹어서, 눌러도
+   색이 하나도 안 바뀌어 뭘 선택했는지 전혀 안 보이던 버그. */
+.ft-adate.active { background:#ef6c00; border-color:#ef6c00; color:white; }
+/* 2026-08: 카테고리별 active 색상이 서로 옅거나(예: 갈색 계열 tier) 비슷한 톤끼리 붙어있으면
+   눌렀는지 한눈에 안 들어온다는 피드백 - 색상과 별개로 테두리 강조 링 + 살짝 확대를 공통으로
+   얹어서, 어떤 카테고리든 active 상태가 항상 뚜렷하게 튀어 보이도록 함. */
+.filter-tab.active { box-shadow:0 0 0 2px rgba(0,0,0,0.28); transform:scale(1.06); font-weight:900; }
 .ft-reset { background:#f5f5f5; color:#888; }
 #filter-panel { max-width: 680px; }
 #filter-toggle-btn { max-width: 680px; }
@@ -1644,6 +1651,11 @@ var isLoading = false;
 var renderGen = 0;
 var lastLawdCd = null;
 var lastResolvedLat = null, lastResolvedLon = null;
+// ⚠️ 2026-08: 다른 지역(시군구)으로 이동하면 allAptList가 통째로 교체되면서 이전 지역
+// 배지가 다 사라지던 문제 수정용 - 이번 세션에서 한 번이라도 allAptList에 병합한
+// lawdCd를 기록해서, 이미 병합된 지역을 다시 만나면 중복으로 또 이어붙이지 않게 함.
+// (dataCache 자체는 그대로 "이 lawdCd 하나만의" 목록을 담고, allAptList는 그걸 누적한 합집합)
+var mergedLawdCds = new Set();
 var lastSigungu = '';
 var currentTrades = [], currentSort = 'date', currentPyung = 'all';
 var currentTypeFilter = 'apt';
@@ -2910,9 +2922,15 @@ async function loadAllData(centerLat, centerLon) {
             // dataCache에 데이터가 남아있는데도 재사용하지 못하고 매번 새로 불러왔음.
             // 세션 중 한 번이라도 불러온 지역이면(dataCache[lawdCd] 존재) 바로 재사용하도록 완화.
             if (dataCache[lawdCd]) {
-                allAptList = dataCache[lawdCd];
-                allRentList = rentCacheByLawd[lawdCd] || [];
                 lastLawdCd = lawdCd;
+                // ⚠️ 2026-08: 예전엔 allAptList를 이 지역 데이터로 통째로 교체해서, 다른
+                // 지역으로 이동하면 방금 전까지 보이던 배지가 전부 사라졌음. 이미 병합된
+                // 지역이 아닐 때만 기존 목록에 이어붙여서(누적) 이전에 본 배지가 계속 남게 함.
+                if (!mergedLawdCds.has(lawdCd)) {
+                    mergedLawdCds.add(lawdCd);
+                    allAptList = allAptList.concat(dataCache[lawdCd]);
+                    allRentList = allRentList.concat(rentCacheByLawd[lawdCd] || []);
+                }
                 redrawMarkers(); resolve(); return;
             }
             lastLawdCd = lawdCd;
@@ -2926,30 +2944,36 @@ async function loadAllData(centerLat, centerLon) {
                     isLoading = false; resolve(); return;
                 }
                 // ── DB rows → trade 객체 변환 ──
-                 allAptList = groupDBRows(dbData.apt, sigungu, lawdCd);
-                allRentList = Array.isArray(dbData.rent) ? dbData.rent : [];
-                rentCacheByLawd[lawdCd] = allRentList;
-                // 매매 실거래가 단 한 건도 없어서 allAptList에 아예 항목 자체가 없던 연립다세대를,
+                // ⚠️ 2026-08: 등급 계산(calcPriceGrades)이 "구 내 상대순위"라 여러 지역을
+                // 섞어서 계산하면 랭킹 의미가 깨짐 - 그래서 이 지역만의 목록(regionAptList)을
+                // 따로 두고 지역 스코프 계산을 전부 마친 뒤에만 전역 allAptList에 이어붙임.
+                var regionAptList = groupDBRows(dbData.apt, sigungu, lawdCd);
+                var regionRentList = Array.isArray(dbData.rent) ? dbData.rent : [];
+                rentCacheByLawd[lawdCd] = regionRentList;
+                // 매매 실거래가 단 한 건도 없어서 regionAptList에 아예 항목 자체가 없던 연립다세대를,
                 // 전세 거래만으로 "매매기록 없음" 상태의 항목으로 만들어 끼워넣음 - 이래야 마커/패널이
                 // 생기고, 그 안에서 전세가 기반 추정 등급/예상거래가/히스토리를 볼 수 있게 됨.
                 // (매매 기록이 있는 건물은 이미 groupDBRows가 만든 항목이 있으므로 건너뜀)
-                allAptList = allAptList.concat(buildRentOnlyEntries(allAptList, allRentList, sigungu, lawdCd));
+                regionAptList = regionAptList.concat(buildRentOnlyEntries(regionAptList, regionRentList, sigungu, lawdCd));
                 // ── 좌표 캐시 미리 불러오기 (이미 지오코딩된 단지는 카카오 API 스킵) ──
-                await prefetchCoordsFromDB(allAptList);
+                await prefetchCoordsFromDB(regionAptList);
                 // ── 지표 계산 (평단가 등급만 유지, 투자점수는 삭제) ──
-                calcPriceGrades(allAptList);
-                 allAptList.forEach(function(apt) {
+                calcPriceGrades(regionAptList);
+                 regionAptList.forEach(function(apt) {
                     var nh = calcNewHigh(apt.trades);
                     apt.hasNewHigh   = nh.hasNewHigh;
                     apt.newHighPyungs = nh.newHighPyungs;
                     apt.popularPyeong = calcPopularPyeong(apt);
                 });
-                dataCache[lawdCd] = allAptList;
+                dataCache[lawdCd] = regionAptList;
+                mergedLawdCds.add(lawdCd);
+                allAptList = allAptList.concat(regionAptList);
+                allRentList = allRentList.concat(regionRentList);
                 setStatus('');
                 redrawMarkers();
-                setTimeout(function() { warmBuildingCache(allAptList); }, 3000);
+                setTimeout(function() { warmBuildingCache(regionAptList); }, 3000);
                 villaInfoLoading = true;
-                prefetchVillaBuildingInfo(allAptList).then(function() {
+                prefetchVillaBuildingInfo(regionAptList).then(function() {
                     villaInfoLoading = false;
                     redrawMarkers();
                 });
@@ -8862,7 +8886,11 @@ function renderAuctionMarkers() {
     var neededIds = {};
     auctionList.forEach(function(a) {
         // "경매건" 필터(지난/오늘/그외)에 걸리면 이 경매물건은 지도에서 제외 - neededIds에
-        // 안 넣으면 아래 정리 루프에서 기존 마커도 함께 제거됨
+        // 안 넣으면 아래 정리 루프에서 기존 마커도 함께 제거됨.
+        // ⚠️ 2026-08: 입찰예정물건 일괄등록(📋, isBidTarget:true)도 이 필터에 포함되는지
+        // 별도로 확인함 - 📋 항목도 정식 경매물건(🔨)과 완전히 같은 auctionList 배열에
+        // bidDate 필드(=일괄등록 시 c.saleDate)를 갖고 들어오므로, isBidTarget 여부를
+        // 가리지 않고 이 한 줄에서 자동으로 같이 걸러짐(따로 분기 처리 필요 없음).
         if (activeAuctionDateFilters.size && !activeAuctionDateFilters.has(classifyAuctionDateBucket(a))) return;
         neededIds[a.id] = true;
         if (a.lat && a.lon) { upsertAuctionMarker(a); }
