@@ -610,22 +610,83 @@ def fit_fwl(df: pd.DataFrame, feature_cols):
     """Frisch-Waugh-Lovell 고정효과 회귀. 반환: (beta dict, group_effects dict, r_squared, n)
     ⚠️ 2026-08(K-apt 연동): feature_cols를 모듈 상수 대신 파라미터로 받도록 일반화함 - 아파트는
     log_households(세대수)까지 포함한 7개, 연립다세대는 기존 6개(FEATURE_COLS) 그대로라
-    모델별로 변수 개수가 달라짐."""
+    모델별로 변수 개수가 달라짐.
+
+    ⚠️ 2026-08(경험적 베이즈 수축(empirical Bayes shrinkage) 도입 - 빌라 AVM 오차범위 근본개선):
+    지금까지 그룹별 절편(group_effects)은 "그 그룹 표본의 y평균 - X평균·β"를 그대로 썼는데,
+    이건 표본이 적을수록(MIN_GRID_SAMPLES=5처럼 최소치를 겨우 넘긴 그룹) 그 평균 자체가
+    우연한 노이즈에 크게 휘둘림(동전을 5번 던진 앞면 비율이 500번 던진 것보다 훨씬 들쭉날쭉한
+    것과 같은 원리). 아파트는 danji가 표본이 넉넉한 경우가 많아 이 노이즈가 상대적으로
+    덜 문제였지만, 연립다세대는 grid(공간격자)/법정동 그룹이 최소표본(5건) 근처에 훨씬 자주
+    몰려있어 이 노이즈가 villa_v1의 홀드아웃 오차(±36%)를 키우는 핵심 원인 중 하나로 추정됨
+    (MIN_TRANSIT_MATCH_RATE 같은 개별 변수 단위 임시방편으로는 이 구조적 문제 자체를 못 고침).
+    고전적인 축소추정(James-Stein/empirical Bayes, Efron & Morris 1975)을 적용해 표본이 적은
+    그룹일수록 전체 평균(theta_bar) 쪽으로 더 많이 끌어당김:
+      1) sigma2_w(그룹 내 개별 관측치 노이즈 분산)를 그룹별 잔차제곱합을 자유도(n_i-1)로
+         풀링해 추정 - "설명 안 되는 개별 매물 편차"의 크기.
+      2) v_i = sigma2_w / n_i - 그룹 i의 표본평균(raw effect)이 갖는 표준오차의 분산(그룹
+         표본이 적을수록 v_i가 커짐 = 그 그룹 추정치를 믿을 수 없다는 뜻).
+      3) tau2(그룹 간 "진짜" 차이의 분산)를 DerSimonian-Laird 방법(메타분석에서 쓰는 표준
+         적률법)으로 추정.
+      4) 수축가중치 B_i = tau2/(tau2+v_i) - v_i가 크면(표본↓) B_i가 0에 가까워져 grand mean
+         쪽으로 많이 끌려가고, v_i가 작으면(표본↑) B_i가 1에 가까워져 원래 raw 평균을 거의
+         그대로 씀. 표본이 큰 그룹은 사실상 원래와 거의 동일하게 동작하므로 아파트 쪽 정확도를
+         해칠 위험은 낮고, 표본이 작은 그룹(villa에 훨씬 흔함)에서만 선택적으로 안정화됨.
+    R^2도 이 수축된 효과로 채점함(그룹이 많을수록 낙관적으로 부풀던 in-sample R^2가 더 정직한
+    값으로 낮아지는 부수효과가 있음 - 모듈 상단 "정확도 보완" 취지와 일치)."""
     group_means = df.groupby("group_key")[["y"] + feature_cols].transform("mean")
     y_tilde = (df["y"] - group_means["y"]).to_numpy()
     X_tilde = (df[feature_cols] - group_means[feature_cols]).to_numpy()
 
-    # 최소제곱해 (X_tilde^T X_tilde) beta = X_tilde^T y_tilde
+    # 최소제곱해 (X_tilde^T X_tilde) beta = X_tilde^T y_tilde (기울기 계수는 그대로 OLS - 수축은
+    # 그룹 절편에만 적용함. 기울기까지 수축하면 "표본이 적은 그룹의 면적/연식 효과까지 다른
+    # 그룹과 강제로 비슷해진다"는 의미가 되어 원래 FWL의 취지(그룹 고유 수준차만 분리)를 벗어남)
     beta, residuals, rank, sv = np.linalg.lstsq(X_tilde, y_tilde, rcond=None)
     beta_dict = {name: float(b) for name, b in zip(feature_cols, beta)}
 
-    # 그룹별 절편 = 그 그룹의 y평균 - 그 그룹의 X평균·beta
+    # 그룹별 raw 절편 = 그 그룹의 y평균 - 그 그룹의 X평균·beta
     group_agg = df.groupby("group_key")[feature_cols + ["y"]].mean()
     group_agg["pred_no_intercept"] = group_agg[feature_cols].to_numpy() @ beta
-    group_agg["effect"] = group_agg["y"] - group_agg["pred_no_intercept"]
-    group_effects = group_agg["effect"].to_dict()
+    group_agg["effect_raw"] = group_agg["y"] - group_agg["pred_no_intercept"]
+    n_by_group = df.groupby("group_key").size()
+    group_agg["n"] = n_by_group
 
-    # 전체 예측치로 R^2 계산
+    # sigma2_w 추정 - 그룹 고유효과(raw)까지 반영한 개별 관측치 잔차의 그룹내 제곱합을
+    # 전체 자유도(sum of (n_i-1))로 풀링. raw effect가 정의상 그룹평균이라 그룹 내 잔차평균은
+    # 항상 0이므로, 이 잔차의 분산이 곧 "그 그룹 평균만으로는 설명 안 되는 개별 노이즈" 크기.
+    df_tmp = df[["group_key"] + feature_cols + ["y"]].copy()
+    df_tmp["_effect_raw"] = df_tmp["group_key"].map(group_agg["effect_raw"])
+    df_tmp["_pred"] = df_tmp[feature_cols].to_numpy() @ beta + df_tmp["_effect_raw"].to_numpy()
+    df_tmp["_resid"] = df_tmp["y"] - df_tmp["_pred"]
+    resid_ss_by_group = df_tmp.groupby("group_key")["_resid"].apply(lambda s: float((s ** 2).sum()))
+    dof = (n_by_group - 1).clip(lower=0)
+    total_dof = float(dof.sum())
+    sigma2_w = float(resid_ss_by_group.sum() / total_dof) if total_dof > 0 else float(df_tmp["_resid"].var())
+    if not np.isfinite(sigma2_w) or sigma2_w <= 0:
+        sigma2_w = max(float(df_tmp["_resid"].var()), 1e-6)  # 극단적으로 표본이 다 n=1인 방어적 폴백
+
+    v_i = sigma2_w / n_by_group.clip(lower=1)  # 그룹평균(raw effect)의 표본오차 분산
+    theta_hat = group_agg["effect_raw"]
+    w_i = 1.0 / v_i
+    theta_bar = float((w_i * theta_hat).sum() / w_i.sum())  # 가중평균("grand mean") - 수축 종착점
+    K = len(theta_hat)
+    if K > 1:
+        Q = float((w_i * (theta_hat - theta_bar) ** 2).sum())
+        dof_k = K - 1
+        denom = float(w_i.sum() - (w_i ** 2).sum() / w_i.sum())
+        tau2 = max(0.0, (Q - dof_k) / denom) if denom > 0 else 0.0
+    else:
+        tau2 = 0.0
+
+    if tau2 > 0:
+        B_i = tau2 / (tau2 + v_i)
+    else:
+        # tau2==0: 그룹 간 진짜 차이가 통계적으로 안 잡히는 극단적 경우 - 전부 grand mean으로
+        # 완전히 수축(모든 그룹이 사실상 같은 수준이라는 뜻이므로 안전함)
+        B_i = pd.Series(0.0, index=theta_hat.index)
+    group_effects = (B_i * theta_hat + (1 - B_i) * theta_bar).to_dict()
+
+    # 전체 예측치로 R^2 계산 (수축된 효과 기준 - 실제 서빙에 쓰는 값으로 채점해야 정직함)
     df2 = df.copy()
     df2["group_effect"] = df2["group_key"].map(group_effects)
     y_pred = df2[feature_cols].to_numpy() @ beta + df2["group_effect"].to_numpy()
@@ -773,13 +834,34 @@ def train_one(tables, model_id: str, model_type: str, use_danji: bool, use_grid:
     # (같은 건물이라도 1층/중간층/탑층이 섞여 거래됨) danji 고정효과로는 전혀 흡수되지 않고
     # 항상 추가 설명력을 가짐. K-apt 매칭 여부와 무관하게 attach_kapt=True 경로에 함께 묶어둔
     # 이유는 top_floor(K-apt 전용 데이터)에 의존하기 때문(households와 조회 경로가 같음).
-    feature_cols = list(FEATURE_COLS)
+    # ⚠️ 2026-08(버그 수정 - is_single_house 피처가 회귀에 실제로 반영되지 않던 문제, 빌라 AVM
+    # 근본개선): 바로 위(line ~749)에서 feature_cols에 "is_single_house"를 추가해뒀는데
+    # (clean_and_featurize의 단독주택 학습 제외 버그 수정과 짝을 이루는 부분), 여기서
+    # feature_cols를 list(FEATURE_COLS)로 다시 초기화하며 그 추가분을 그대로 덮어써버리고
+    # 있었음 - "단독주택과 연립다세대의 평균 가격수준 차이를 별도 계수로 흡수한다"는 문서상
+    # 설계와 달리 실제로는 그 계수 자체가 회귀에 한 번도 들어간 적이 없었음(단독다가구가
+    # 연립다세대와 완전히 동일하게 취급되어 옴 - villa_v1이 villa_trades+single_trades를
+    # 합쳐 학습하는 만큼 이 버그의 영향이 작지 않았을 것으로 추정). list(FEATURE_COLS)로
+    # 되초기화하는 대신 지금까지 쌓인 feature_cols를 그대로 이어감.
     median_households = None
     median_top_floor = None
+    # ⚠️ 2026-08(villa 반지하/1층 할인 반영 - 빌라 AVM 근본개선): is_basement/is_ground_floor는
+    # top_floor(K-apt 전용 데이터) 없이 floor 컬럼만으로 계산 가능한데, 지금까지
+    # _attach_floor_tier_features가 attach_kapt_features 안에서만 호출돼(K-apt가 커버하지 않는
+    # villa_v1은 attach_kapt=False라 이 로직 자체가 전혀 적용 안 됨) 연립다세대에서 특히 크고
+    # 뚜렷한 가격요인인 반지하/1층 할인을 villa_v1이 하나도 못 잡고 있었음(floor/floor^2
+    # 매끄러운 곡선만으론 반지하의 불연속적 대폭할인을 표현 못함 - _attach_floor_tier_features
+    # 설명 참고). top_floor_col=None으로 먼저 무조건 호출해 is_basement/is_ground_floor만
+    # 확보하고(floor_ratio/is_top_floor는 top_floor 정보가 없으니 0으로 중립화), attach_kapt=True
+    # (아파트)면 아래에서 attach_kapt_features가 실제 top_floor로 다시 덮어써 floor_ratio/
+    # is_top_floor까지 마저 채움(is_basement/is_ground_floor는 중복 추가 방지를 위해 거기서는
+    # feature_cols에 다시 넣지 않음).
+    df = _attach_floor_tier_features(df, top_floor_col=None, median_top_floor=None)
+    feature_cols = feature_cols + ["is_basement", "is_ground_floor"]
     if attach_kapt:
         kapt_lookup = build_kapt_lookup()
         df, median_households, median_top_floor = attach_kapt_features(df, kapt_lookup)
-        feature_cols = feature_cols + ["log_households", "floor_ratio", "is_top_floor", "is_ground_floor", "is_basement"]
+        feature_cols = feature_cols + ["log_households", "floor_ratio", "is_top_floor"]
 
     # ⚠️ 2026-08(역세권/학군 연동): K-apt와 같은 이유로 표본충분한 단지는 danji 고정효과가
     # 이미 "그 위치"를 반영하므로 지하철역 거리도 그룹 내에서는 상수에 가까워 득이 적지만,
