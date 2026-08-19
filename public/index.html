@@ -798,6 +798,12 @@ tr:hover td { background:#fffde7; }
         <span class="auction-bias-toggle" onclick="toggleAuctionBiasStats()" id="auction-bias-toggle-label">📐 예측 오차 누적통계 보기</span>
     </div>
     <div id="auction-bias-stats-body" style="display:none;"></div>
+    <!-- 💰 2026-08: 예상매도가(①) vs 실제매도가 백테스트 - 위 예상낙찰가 통계와 같은 자리,
+         같은 UI 패턴(토글+법정동 아코디언)으로 둠 -->
+    <div style="padding:6px 14px;border-bottom:1px solid #eee;">
+        <span class="auction-bias-toggle" onclick="toggleAuctionSellBiasStats()" id="auction-sell-bias-toggle-label">💰 예상매도가 오차 누적통계 보기</span>
+    </div>
+    <div id="auction-sell-bias-stats-body" style="display:none;"></div>
     <div id="auction-list-body"></div>
     <div id="auction-list-pager"></div>
 </div>
@@ -5976,6 +5982,7 @@ var AUCTION_LIST_PAGE_SIZE = 10;
 var auctionListPage = 0; // 0-based
 var auctionListSearchText = ''; // 2026-08 추가: 사건번호·주소·이름·법정동 검색어 (데이터 누적시 탐색용)
 var auctionBiasStatsOpen = false;
+var auctionSellBiasStatsOpen = false; // 2026-08: 예상매도가(①) vs 실제매도가 누적통계 토글 - 낙찰가 통계와 별개 상태
 /* 검색창 입력 즉시 반영 - 페이지는 0으로 리셋(필터 결과가 이전 페이지 범위를 벗어날 수 있어서) */
 function onAuctionListSearchInput() {
     var el = document.getElementById('auction-list-search');
@@ -6073,6 +6080,7 @@ function openAuctionList() {
     auctionListPage = 0;
     renderAuctionList(); p.style.display = 'block';
     if (auctionBiasStatsOpen) renderAuctionBiasStats(); // 이전에 펼쳐둔 채였다면 최신 데이터로 다시 그림
+    if (auctionSellBiasStatsOpen) renderAuctionSellBiasStats();
 }
 /* renderAuctionList 정렬용 키: [tier, val] - tier0(입찰일 남음, val=diffDays 오름차순)이
    최우선, tier1(입찰일 지남, val=지난지 며칠인지 오름차순=최근에 지난 것부터)이 다음,
@@ -6346,6 +6354,131 @@ function buildBiasStatBlock(title, cases, showCases) {
                 + '<div style="font-weight:bold;">' + (cleanField(c.a.caseNo) || cleanField(c.a.name) || cleanField(c.a.addr) || '(물건정보 없음)') + '</div>'
                 + '<div style="color:#999;">예측 ' + toEok(String(c.predicted)) + ' → 실제 ' + toEok(String(c.actual))
                 + ' <span style="color:' + (c.diff > 0 ? '#c62828' : (c.diff < 0 ? '#1565c0' : '#555')) + ';">(' + (c.diffPct > 0 ? '+' : '') + c.diffPct + '%)</span></div>'
+                + '</div>';
+        });
+    }
+    return html;
+}
+/* ════════════════════════════════════
+   예상매도가(①, saveAuction에서 predictedSell로 스냅샷 저장됨) vs 실제매도가(actualSell)
+   누적편향 통계 - 2026-08 추가("예상매각가의 정확도를 올릴 수 있는 방법" 논의에서, "지금은
+   예상낙찰가↔실제낙찰가만 검증하고 있고, 정작 이 앱의 핵심 산출물인 ①예상매도가 자체는
+   실측으로 검증하는 장치가 없다"는 점을 확인하고 추가함).
+   predictedBid/actualBid 누적통계(바로 위 auctionBiasCases 계열)와 같은 구조·같은 이유를
+   그대로 재사용함 - 개별 건 오차는 노이즈지만 여러 건이 쌓였을 때의 방향성(편향)은
+   marketFactor 상한(45%)·재고월수 구간(2/4/8개월)·30th percentile 같은, 코드 주석에
+   스스로 "통계적으로 검증된 값이 아님"이라 적어둔 휴리스틱들을 실측 근거로 재조정할 수
+   있게 해줌.
+   ⚠️ predictedSell은 saveAuction()에서 처음 계산된 값을 그대로 얼려두고(freeze) 이후
+   목표매도가 등을 바꿔도 절대 덮어쓰지 않으므로(predictedBid와 동일 정책), 여기 쌓이는
+   오차는 "매도 결과를 미리 알고 나서 예측치를 유리하게 사후 조정한" 편향이 섞이지 않은
+   정직한 수치임.
+   ════════════════════════════════════ */
+function toggleAuctionSellBiasStats() {
+    auctionSellBiasStatsOpen = !auctionSellBiasStatsOpen;
+    var box = document.getElementById('auction-sell-bias-stats-body');
+    var label = document.getElementById('auction-sell-bias-toggle-label');
+    if (!box) return;
+    box.style.display = auctionSellBiasStatsOpen ? '' : 'none';
+    if (label) label.innerText = auctionSellBiasStatsOpen ? '💰 예상매도가 오차 누적통계 접기' : '💰 예상매도가 오차 누적통계 보기';
+    if (auctionSellBiasStatsOpen) renderAuctionSellBiasStats();
+}
+// predictedSell·actualSell이 둘 다 기록된 건만 대상
+function auctionSellBiasCases() {
+    return auctionList.filter(function(a) {
+        return (parseInt(a.predictedSell) || 0) > 0 && (parseInt(a.actualSell) || 0) > 0;
+    }).map(function(a) {
+        var predicted = parseInt(a.predictedSell), actual = parseInt(a.actualSell);
+        var diff = actual - predicted;
+        var diffPct = Math.round((diff / predicted) * 1000) / 10;
+        return { a: a, predicted: predicted, actual: actual, diff: diff, diffPct: diffPct };
+    });
+}
+var auctionSellBiasOpenDongs = {};
+function toggleSellBiasDongGroup(dong, groupId) {
+    auctionSellBiasOpenDongs[dong] = !auctionSellBiasOpenDongs[dong];
+    var el = document.getElementById(groupId);
+    if (el) el.classList.toggle('open');
+}
+function panToSellBiasDong(dong) {
+    var group = auctionSellBiasCases().filter(function(c) { return (c.a.dong || '(법정동 미상)') === dong; });
+    var withCoord = group.find(function(c) { return c.a.lat && c.a.lon; });
+    if (!withCoord) { alert('이 법정동 물건의 좌표를 찾지 못해 이동할 수 없습니다.'); return; }
+    map.setCenter(new kakao.maps.LatLng(withCoord.a.lat, withCoord.a.lon));
+    map.setLevel(5);
+    dropDestinationPin(withCoord.a.lat, withCoord.a.lon);
+}
+function renderAuctionSellBiasStats() {
+    var box = document.getElementById('auction-sell-bias-stats-body');
+    if (!box) return;
+    var cases = auctionSellBiasCases();
+    if (!cases.length) {
+        box.innerHTML = '<div style="padding:10px 14px;font-size:11px;color:#aaa;">예상매도가와 실제매도가가 모두 기록된 물건이 아직 없습니다. 물건을 저장해서 ①예상매도가가 한 번 계산되면 자동으로 스냅샷이 남고, 이후 매도완료 시 실제매도가를 입력하면 여기 쌓입니다.</div>';
+        return;
+    }
+    var html = buildSellBiasStatBlock('📊 전체', cases, false);
+    var groups = {};
+    cases.forEach(function(c) {
+        var key = c.a.dong || '(법정동 미상)';
+        if (!groups[key]) groups[key] = [];
+        groups[key].push(c);
+    });
+    var dongKeys = Object.keys(groups).sort(function(x, y) { return groups[y].length - groups[x].length; });
+    dongKeys.forEach(function(dong, idx) {
+        var dongCases = groups[dong];
+        var pcts = dongCases.map(function(c) { return c.diffPct; });
+        var medPct = Math.round(median(pcts) * 10) / 10;
+        var biasColor = medPct > 0 ? '#1565c0' : (medPct < 0 ? '#c62828' : '#555');
+        var groupId = 'sell-bias-dong-group-' + idx;
+        var isOpen = !!auctionSellBiasOpenDongs[dong];
+        var dongJs = dong.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+        html += '<div class="bias-dong-group' + (isOpen ? ' open' : '') + '" id="' + groupId + '">'
+            + '<div class="bias-dong-header" onclick="toggleSellBiasDongGroup(\'' + dongJs + '\', \'' + groupId + '\')">'
+            + '<span onclick="event.stopPropagation();panToSellBiasDong(\'' + dongJs + '\')" style="text-decoration:underline dotted;text-underline-offset:2px;">📍 ' + dong + ' (' + dongCases.length + '건)</span>'
+            + '<span style="display:flex;align-items:center;gap:6px;flex-shrink:0;">'
+            + '<b style="color:' + biasColor + ';">' + (medPct > 0 ? '+' : '') + medPct + '%</b>'
+            + '<span class="bias-dong-chevron">▶</span></span>'
+            + '</div>'
+            + '<div class="bias-dong-body">' + buildSellBiasStatBlock('', dongCases, true) + '</div>'
+            + '</div>';
+    });
+    box.innerHTML = html;
+}
+/* buildBiasStatBlock(낙찰가용)과 구조는 동일하지만, 색상·문구의 방향이 반대임: 낙찰가는
+   "실제가 예측보다 높으면"(더 비싸게 낙찰) 나쁜 신호(빨강)였는데, 매도가는 "실제가
+   예측보다 높으면"(더 비싸게 팔림) 오히려 좋은 신호라 파랑으로 둠(비용↑=빨강,
+   수익↑=파랑이라는 앱 전반의 색상 관례를 그대로 따름). */
+function buildSellBiasStatBlock(title, cases, showCases) {
+    var pcts = cases.map(function(c) { return c.diffPct; });
+    var avgPct = Math.round((pcts.reduce(function(s, v) { return s + v; }, 0) / pcts.length) * 10) / 10;
+    var medPct = Math.round(median(pcts) * 10) / 10;
+    var overSell = cases.filter(function(c) { return c.diff > 0; }).length;
+    var underSell = cases.filter(function(c) { return c.diff < 0; }).length;
+    var biasColor = medPct > 0 ? '#1565c0' : (medPct < 0 ? '#c62828' : '#555');
+    var biasLabel = medPct > 0
+        ? '실제매도가가 예상(①)보다 중간값 기준 +' + medPct + '% 높음 (예상매도가가 보수적이었을 가능성 - 목표매도가를 더 높여도 팔렸을 여지가 있음)'
+        : (medPct < 0
+            ? '실제매도가가 예상(①)보다 중간값 기준 ' + medPct + '% 낮음 (예상매도가가 낙관적이었을 가능성 - 비교물건 선정·호가 반영비중을 재점검할 필요)'
+            : '예상과 실제가 대체로 일치');
+    var html = title
+        ? '<div class="bc-dong-group-title">' + title + ' (' + cases.length + '건, 실제↑ ' + overSell + ' · 실제↓ ' + underSell + ')</div>'
+        : '<div style="padding:6px 14px 0;font-size:10px;color:#999;">실제↑ ' + overSell + '건 · 실제↓ ' + underSell + '건</div>';
+    html += '<div style="padding:6px 14px;">'
+        + '<div style="font-size:10px;color:#999;margin-bottom:2px;">오차율(%) - 중간값 / 평균 / 최소 / 최대</div>'
+        + '<div class="bc-stat-grid" style="grid-template-columns:repeat(4,1fr);">'
+        + '<div class="bc-stat-item"><div class="bc-stat-label">중간값</div><div class="bc-stat-value" style="color:' + biasColor + ';">' + (medPct > 0 ? '+' : '') + medPct + '%</div></div>'
+        + '<div class="bc-stat-item"><div class="bc-stat-label">평균</div><div class="bc-stat-value">' + (avgPct > 0 ? '+' : '') + avgPct + '%</div></div>'
+        + '<div class="bc-stat-item"><div class="bc-stat-label">최소</div><div class="bc-stat-value">' + (Math.round(Math.min.apply(null, pcts) * 10) / 10) + '%</div></div>'
+        + '<div class="bc-stat-item"><div class="bc-stat-label">최대</div><div class="bc-stat-value">' + (Math.round(Math.max.apply(null, pcts) * 10) / 10) + '%</div></div>'
+        + '</div>'
+        + '<div style="font-size:10.5px;margin-top:4px;color:' + biasColor + ';font-weight:bold;">' + biasLabel + '</div>'
+        + '</div>';
+    if (showCases) {
+        cases.slice().sort(function(x, y) { return (y.a.sellDate || '').localeCompare(x.a.sellDate || ''); }).forEach(function(c) {
+            html += '<div class="bc-case-item" style="cursor:pointer;" onclick="openAuctionModal(\'' + c.a.id + '\')">'
+                + '<div style="font-weight:bold;">' + (cleanField(c.a.caseNo) || cleanField(c.a.name) || cleanField(c.a.addr) || '(물건정보 없음)') + '</div>'
+                + '<div style="color:#999;">예상 ' + toEok(String(c.predicted)) + ' → 실제 ' + toEok(String(c.actual))
+                + ' <span style="color:' + (c.diff > 0 ? '#1565c0' : (c.diff < 0 ? '#c62828' : '#555')) + ';">(' + (c.diffPct > 0 ? '+' : '') + c.diffPct + '%)</span></div>'
                 + '</div>';
         });
     }
@@ -9119,6 +9252,26 @@ async function saveAuction() {
     } else {
         data.predictedBid = existingAuctionForYear.predictedBid;
     }
+    // 🚨 2026-08 추가("예상매각가 정확도를 어떻게 올릴까" 논의): 이 앱의 핵심 산출물인
+    // ①예상매도가 자체를 실측(실제매도가)으로 검증하는 장치가 그동안 없었음(위 predictedBid는
+    // 낙찰가만 검증). 모달이 열려있는 이 시점엔 calcMarketAdjustedSalePrice()/getCompEstValue()가
+    // 필요로 하는 DOM·전역상태(pendingAuctionComparables 등)가 이미 다 채워져 있으므로
+    // solveAuctionBidFromRecord처럼 굳이 DOM-프리 버전을 새로 만들 필요 없이 renderEstimateSummary()와
+    // 완전히 동일한 계산을 그대로 재사용함. predictedBid와 같은 정책으로 처음 계산된 값을
+    // 얼려두고(freeze) 이후 저장에서 절대 덮어쓰지 않음 - 매도 결과를 알고 나서 목표값을
+    // 조정해 예측치가 사후에 유리해지는 걸 막기 위함(예측 오차 통계의 신뢰성 확보).
+    if (!(existingAuctionForYear && existingAuctionForYear.predictedSell)) {
+        var marketAdjForSnapshot = calcMarketAdjustedSalePrice();
+        var compEstForSnapshot = getCompEstValue();
+        var predictedSellSnapshot = (marketAdjForSnapshot && marketAdjForSnapshot.blendedValue)
+            ? marketAdjForSnapshot.blendedValue
+            : (compEstForSnapshot ? compEstForSnapshot.estValue : null);
+        data.predictedSell = predictedSellSnapshot || null;
+        data.predictedSellSource = !predictedSellSnapshot ? null : (marketAdjForSnapshot && marketAdjForSnapshot.blendedValue ? 'blended' : 'comp');
+    } else {
+        data.predictedSell = existingAuctionForYear.predictedSell;
+        data.predictedSellSource = existingAuctionForYear.predictedSellSource || null;
+    }
     if (!data.lat || !data.lon) {
         await new Promise(function(resolve) {
             geocoder.addressSearch(addr, function(result, status) {
@@ -10510,19 +10663,32 @@ function getCompEstValue() {
 
         var isSameComplex = matchesAuctionKey(c, ctx.name, ctx.dong, null);
         var isSimilar = true;
+        // ⚠️ 2026-08(사용자 요청 - "유사도 가중평균 도입"): 지금까지 유사도는 하드컷(통과/탈락)
+        // 판정에만 쓰이고, 통과한 후보끼리는 전부 동등하게 취급돼 단순 percentile을 냈음.
+        // 같은 단지(isSameComplex)는 정의상 가장 비교 가능한 물건이라 최대가중치(1)를 주고,
+        // 그 외에는 평형·층·연식 차이의 합이 클수록 가중치가 0에 가까워지게(1/(1+거리)) 매겨서
+        // 아래 가중 percentile(weightedPercentile) 계산에 반영함 - 하드컷은 그대로 유지하되,
+        // 통과한 후보 중에서도 더 비슷한 쪽 목소리가 더 크게 반영되도록 함.
+        var simWeight = 1;
         if (!isSameComplex) {
-            if (Math.abs(py - targetPyung) > PYUNG_TOLERANCE) isSimilar = false;
+            var pyungDiff = Math.abs(py - targetPyung);
+            if (pyungDiff > PYUNG_TOLERANCE) isSimilar = false;
             var floorNum = parseFloat(c.floor);
-            if (isSimilar && targetFloor !== null && Number.isFinite(floorNum) && Math.abs(floorNum - targetFloor) > FLOOR_TOLERANCE) isSimilar = false;
+            var floorDiff = (targetFloor !== null && Number.isFinite(floorNum)) ? Math.abs(floorNum - targetFloor) : null;
+            if (isSimilar && floorDiff !== null && floorDiff > FLOOR_TOLERANCE) isSimilar = false;
             var cYear = parseInt(c.buildYear);
-            if (isSimilar && targetBuildYear && Number.isFinite(cYear) && Math.abs(cYear - targetBuildYear) > AGE_TOLERANCE) isSimilar = false;
+            var ageDiff = (targetBuildYear && Number.isFinite(cYear)) ? Math.abs(cYear - targetBuildYear) : null;
+            if (isSimilar && ageDiff !== null && ageDiff > AGE_TOLERANCE) isSimilar = false;
             // 좌표는 2026-08 이후 새로 등록된 비교물건에만 있음(addSelectedAiComps 참고) -
             // 그 이전에 등록된 비교물건은 좌표가 없어 거리 조건을 건너뜀(있는 조건만 적용).
             if (isSimilar && ctx.lat != null && ctx.lon != null && c.lat != null && c.lon != null) {
                 if (getDistance(ctx.lat, ctx.lon, c.lat, c.lon) > DIST_TOLERANCE_M) isSimilar = false;
             }
+            // 값을 모르는 항목(층·연식 미상 등)은 "보통 정도로 다르다"는 중립값(2)으로 채워서
+            // 정보가 없다고 무조건 가중치가 높아지지도 낮아지지도 않게 함.
+            simWeight = 1 / (1 + (pyungDiff !== null ? pyungDiff : 2) + (floorDiff !== null ? floorDiff : 2) + (ageDiff !== null ? ageDiff * 0.7 : 1.4));
         }
-        comps.push({ ppp: rawPpp * factor, isSimilar: isSimilar });
+        comps.push({ ppp: rawPpp * factor, isSimilar: isSimilar, weight: simWeight });
     });
     if (!comps.length) return null;
 
@@ -10537,7 +10703,9 @@ function getCompEstValue() {
         excludedBySimilarity = comps.length - similarComps.length;
         usedComps = similarComps;
     }
-    var adjustedPpps = usedComps.map(function(x) { return x.ppp; });
+    // ppp(가격)뿐 아니라 weight(유사도 가중치)도 같이 들고 다님 - 아래 이상치 제거·percentile
+    // 단계 모두 이 {ppp, weight} 쌍 단위로 처리해야 어떤 값이 어떤 가중치였는지 잃지 않음.
+    var adjustedEntries = usedComps.map(function(x) { return { ppp: x.ppp, weight: x.weight }; });
 
     function median(arr) { var s = arr.slice().sort(function(a, b) { return a - b; }); var m = Math.floor(s.length / 2); return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2; }
     function percentile(sortedArr, p) {
@@ -10546,26 +10714,46 @@ function getCompEstValue() {
         if (lo === hi) return sortedArr[lo];
         return sortedArr[lo] + (sortedArr[hi] - sortedArr[lo]) * (idx - lo);
     }
+    // 가중 percentile - sortedEntries(ppp 오름차순)를 누적가중치 기준으로 훑다가, 목표
+    // 누적비율(p×전체가중치)에 도달하는 지점을 이전 값과 선형보간함. 유사한(가중치 높은)
+    // 비교물건 근처에서 percentile 경계가 더 촘촘하게 움직이는 효과가 생김. 가중치가
+    // 전부 0인 예외적 상황이면 기존 균등가중 percentile로 안전하게 폴백함.
+    function weightedPercentile(sortedEntries, p) {
+        var totalWeight = sortedEntries.reduce(function(s, e) { return s + e.weight; }, 0);
+        if (!(totalWeight > 0)) return percentile(sortedEntries.map(function(e) { return e.ppp; }), p);
+        var target = p * totalWeight, cum = 0;
+        for (var i = 0; i < sortedEntries.length; i++) {
+            var prevCum = cum;
+            cum += sortedEntries[i].weight;
+            if (cum >= target) {
+                if (cum === prevCum) return sortedEntries[i].ppp;
+                var prevVal = i > 0 ? sortedEntries[i - 1].ppp : sortedEntries[i].ppp;
+                var frac = (target - prevCum) / (cum - prevCum);
+                return prevVal + (sortedEntries[i].ppp - prevVal) * frac;
+            }
+        }
+        return sortedEntries[sortedEntries.length - 1].ppp;
+    }
     // ⚠️ 이상치(극단값) 제거 - 비교물건 하나가 특수 사유(급매·특수관계 거래 등)로 확 튀면
     // 중앙값이 그 하나에 휘둘릴 수 있어서, 5개 이상 모였을 때만 IQR(사분위범위) 밖 값을
     // 걸러내고 median을 냄. 표본이 적으면(5개 미만) 오히려 하나 빼는 게 왜곡을 키우니
     // 그대로 둠. 다 걸러져서 3개 미만 남으면(극단적으로 좁은 IQR 등) 안전하게 원본 그대로.
-    var usedPpps = adjustedPpps;
+    var usedEntries = adjustedEntries;
     var outlierCount = 0;
-    if (adjustedPpps.length >= 5) {
-        var sortedForIqr = adjustedPpps.slice().sort(function(a, b) { return a - b; });
+    if (adjustedEntries.length >= 5) {
+        var sortedForIqr = adjustedEntries.map(function(e) { return e.ppp; }).sort(function(a, b) { return a - b; });
         var q1 = percentile(sortedForIqr, 0.25);
         var q3 = percentile(sortedForIqr, 0.75);
         var iqr = q3 - q1;
         var lowerBound = q1 - 1.5 * iqr;
         var upperBound = q3 + 1.5 * iqr;
-        var trimmed = adjustedPpps.filter(function(v) { return v >= lowerBound && v <= upperBound; });
-        if (trimmed.length >= 3 && trimmed.length < adjustedPpps.length) {
-            outlierCount = adjustedPpps.length - trimmed.length;
-            usedPpps = trimmed;
+        var trimmed = adjustedEntries.filter(function(e) { return e.ppp >= lowerBound && e.ppp <= upperBound; });
+        if (trimmed.length >= 3 && trimmed.length < adjustedEntries.length) {
+            outlierCount = adjustedEntries.length - trimmed.length;
+            usedEntries = trimmed;
         }
     }
-    var sorted = usedPpps.slice().sort(function(a, b) { return a - b; });
+    var sortedEntries = usedEntries.slice().sort(function(a, b) { return a.ppp - b.ppp; });
     // ⚠️ 2026-08(사용자 요청 - "최대예상치가 아니라 팔릴만한 값이어야 함"): 이 앱의 목적이
     // "낙찰 후 빠른 매도가 가능한 금액"을 계산하는 것이므로, 딱 중간값(50th percentile)보다
     // 살짝 낮은 30th percentile을 기준값으로 씀 - 중앙값은 "이 근처 매물들의 평균적인
@@ -10573,18 +10761,19 @@ function getCompEstValue() {
     // 걸려 팔림). 표본이 아주 적으면(2~3건) 30th percentile이 사실상 최솟값에 가까워지는데,
     // 이 앱의 목적상 오히려 바람직한 방향(보수적으로)이라고 판단함.
     var COMP_EST_PERCENTILE = 0.3;
-    var medPpp = sorted.length >= 2 ? percentile(sorted, COMP_EST_PERCENTILE) : sorted[0]; // 만원/평 (유사도 필터 + 시점보정 + 이상치 제거 반영됨)
+    var medPpp = sortedEntries.length >= 2 ? weightedPercentile(sortedEntries, COMP_EST_PERCENTILE) : sortedEntries[0].ppp; // 만원/평 (유사도 필터+가중 + 시점보정 + 이상치 제거 반영됨)
 
     return {
         medPpp: medPpp,
         estValue: Math.round(medPpp * targetPyung),
-        estValueMin: Math.round(sorted[0] * targetPyung),
-        estValueMax: Math.round(sorted[sorted.length - 1] * targetPyung),
+        estValueMin: Math.round(sortedEntries[0].ppp * targetPyung),
+        estValueMax: Math.round(sortedEntries[sortedEntries.length - 1].ppp * targetPyung),
         count: list.length,
-        usedCount: usedPpps.length,
+        usedCount: usedEntries.length,
         outlierCount: outlierCount,
         similarityFilterApplied: similarityFilterApplied, // false면 유사물건이 너무 적어 필터를 못 걸고 전체를 씀
         excludedBySimilarity: excludedBySimilarity, // 평형±4평/층±1층/연식±3년/거리±500m 중 하나라도 벗어나 제외된 건수
+        similarityWeighted: true, // 2026-08: 통과한 후보끼리도 평형·층·연식 유사도로 가중 percentile을 냈음을 표시
         oldestDays: oldestDays,
         anyAdjusted: anyAdjusted,
         scaleAdjustedCount: scaleAdjustedCount,
