@@ -5170,7 +5170,7 @@ async function saveSelectedBidTargets() {
     var selected = pendingBidTargetExtraction.filter(function(c) { return c._selected; });
     if (!selected.length) { alert('등록할 항목을 하나 이상 선택해 주세요.'); return; }
     var statusBox = document.getElementById('bt-extract-status');
-    statusBox.style.color = '#999'; statusBox.innerText = '등록 중... (주소 좌표를 찾는 중이라 시간이 걸릴 수 있어요)';
+    statusBox.style.color = '#999'; statusBox.innerText = '등록 중... (주소 좌표·건물 연식을 찾는 중이라 시간이 걸릴 수 있어요)';
     var existingKeys = {};
     auctionList.forEach(function(a) { var k = bidTargetDedupKey(a); if (k) existingKeys[k] = true; });
     var savedCount = 0, skippedCount = 0, noPinCount = 0;
@@ -5191,7 +5191,7 @@ async function saveSelectedBidTargets() {
             minBid: c.minBidPrice ? Math.round(c.minBidPrice / 10000) : '',
             memo: c.specialConditions || '',
             isBidTarget: true,
-            lat: null, lon: null, dong: '', bunji: '',
+            lat: null, lon: null, dong: '', bunji: '', buildYear: null,
         };
         // saveAuction()과 동일한 방식(카카오 지도 클라이언트 지오코더)으로 주소→좌표 변환.
         // 실패해도 저장은 계속 진행하고(목록에서 "좌표를 찾지 못함" 경고로 안내), 다음 항목으로 넘어감.
@@ -5211,6 +5211,33 @@ async function saveSelectedBidTargets() {
             });
         }
         if (!data.lat || !data.lon) noPinCount++;
+        // ⚠️ 2026-08(사용자 요청): 일괄등록은 caseNo/appraisalPrice 등 AI 추출 텍스트에 있는
+        // 정보만 채우고 건물 연식(buildYear)은 비워둔 채 저장했음 - 그러면 이 물건이 정식
+        // 모달에서 열리기 전까지는 연식 배지·수리비 자동계산·비교물건 연식±3년 필터 등이
+        // 전부 동작하지 않음. 좌표를 찾았으면 loadBuildingInfo()와 동일한 방식(좌표→법정동코드
+        // →건축HUB 조회)으로 사용승인일을 가져와 채워둠 - 실패해도(건축HUB 응답 없음/타임아웃)
+        // 조용히 넘어가고 나머지 필드로 등록은 계속 진행함.
+        if (data.lat && data.lon && data.bunji) {
+            try {
+                var regionResult = await regionCodeAt(data.lat, data.lon);
+                var emdInfo = extractEmdInfo(regionResult);
+                var bj = deriveBunJi({ bunji: data.bunji });
+                if (emdInfo && emdInfo.emdCd && bj) {
+                    var bSigunguCd = emdInfo.emdCd.substring(0, 5);
+                    var bBjdongCd  = emdInfo.emdCd.substring(5, 10);
+                    var bUrl = '/api/get-building?sigunguCd=' + bSigunguCd + '&bjdongCd=' + bBjdongCd
+                        + '&bun=' + bj.bun + '&ji=' + bj.ji + '&bldNm=' + encodeURIComponent(data.name || '');
+                    var bInfo = await Promise.race([
+                        fetch(bUrl).then(function(r) { return r.json(); }),
+                        new Promise(function(resolve) { setTimeout(function() { resolve(null); }, 10000); })
+                    ]);
+                    if (bInfo && bInfo.title && bInfo.title.useAprDay) {
+                        var ym = String(bInfo.title.useAprDay).match(/(\d{4})/);
+                        if (ym) data.buildYear = parseInt(ym[1], 10);
+                    }
+                }
+            } catch (e) { /* 건축HUB 조회 실패해도 나머지 정보로 등록 진행 */ }
+        }
         try {
             var saved = await saveAuctionAPI(data);
             auctionList.push(saved);
