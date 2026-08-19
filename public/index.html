@@ -788,6 +788,12 @@ tr:hover td { background:#fffde7; }
     <div style="padding:8px 14px;border-bottom:1px solid #eee;">
         <input type="text" id="auction-list-search" placeholder="🔍 사건번호·주소·이름·법정동 검색" oninput="onAuctionListSearchInput()">
     </div>
+    <div style="padding:4px 14px 6px;border-bottom:1px solid #eee;display:flex;align-items:center;gap:6px;">
+        <label style="font-size:11px;color:#555;display:flex;align-items:center;gap:4px;cursor:pointer;" title="임차보증금이 공시가격의 126%(HUG 전세보증금반환보증 가입 기준선)·140%(국토부 전세사기 자가진단 위험 기준)를 초과하거나, 감정가 대비 전세가율이 80~90% 이상인 물건을 목록에서 숨깁니다. 임차인이 누구인지·대항력 포기 여부가 아니라 순수 숫자(보증금/공시가격/감정가) 기준이며, 참고용이니 최종 판단 전 등기부·매각물건명세서를 직접 확인하세요.">
+            <input type="checkbox" id="auction-hide-guarantee-risk" onchange="onToggleHideGuaranteeRisk()">
+            🚨 깡통전세 의심물건(공시가 126/140%·전세가율 기준) 숨기기 <span id="auction-guarantee-risk-count" style="color:#999;"></span>
+        </label>
+    </div>
     <div style="padding:6px 14px;border-bottom:1px solid #eee;">
         <span class="auction-bias-toggle" onclick="toggleAuctionBiasStats()" id="auction-bias-toggle-label">📐 예측 오차 누적통계 보기</span>
     </div>
@@ -5983,11 +5989,87 @@ function auctionMatchesSearch(a, q) {
     var fields = [a.caseNo, a.addr, a.addrLabel, a.name, a.dong, a.aptDong, a.unitNo];
     return fields.some(function(f) { return f && String(f).toLowerCase().indexOf(q) !== -1; });
 }
+/* 🚨 2026-08(사용자 요청으로 재설계): 처음엔 "특별매각조건·대항력포기" 같은 원문 문구를
+   키워드로 찾는 방식으로 만들었는데, 사용자 피드백은 "임차인이 누구냐, 대항력을 포기했냐로
+   판단하면 경매 참여할 수 있는 물건이 없다 - 그런 물건은 남들도 다 피해서 마진도 적고,
+   패찰만 반복하게 된다"였음. 즉 정성적(누가/어떤 조건) 판단이 아니라 순수 수치 기준으로
+   다시 만들어야 함.
+   그래서 "이 물건이 보증기관(HUG/HF) 대위변제·직접낙찰 대상일 가능성이 있는가"를 판단할 때
+   문구가 아니라, 임차보증금이라는 숫자 하나로 판단함: HUG 전세보증금반환보증은 주택가격을
+   공시가격×126%(연립다세대 등 기존 인정 기준, 이 앱 다른 곳(HUG 126% 경고)에서도 이미 쓰는
+   숫자)로 보고, 이를 넘어서면 보증가입이 사실상 막히거나 위험군으로 취급됨. 국토부가 배포한
+   전세사기 예방 자가진단 체크리스트에서도 "전세금이 공시가격의 140%를 넘으면 위험 신호"로
+   안내함. 그래서 두 숫자(126%/140%)를 그대로 등급 경계로 재사용함:
+     - 임차보증금 ÷ 공시가격 > 140% → high (시세 추정치까지 넘어서는 명백한 과다전세)
+     - 임차보증금 ÷ 공시가격 > 126% → medium (HUG 보증가입 기준선 초과)
+   공시가격이 없는 물건은 감정가(또는 최저입찰가) 대비 "전세가율"(보증금÷집값)을 보조
+   지표로 씀 - 통상 전세가율 80% 이상이면 "깡통전세" 위험군, 90% 이상이면 고위험으로 보는
+   업계 관행 수치를 그대로 적용(단, 최저입찰가는 유찰이 반복될수록 실제 시세보다 낮아져서
+   전세가율이 과장될 수 있어 감정가를 우선 사용하고 감정가가 없을 때만 최저입찰가로 대체).
+   ⚠️ 등기부상 실제 채권자(HUG 여부)를 직접 조회하는 게 아니라 "임차보증금이 비정상적으로
+   크다"는 수치 신호일 뿐이라, 오탐(공시가격/보증금 입력 자체가 틀린 경우)·누락(AI가 보증금을
+   못 뽑은 경우) 가능성이 있음 - 참고용이며 최종 판단은 등기부·매각물건명세서로 확인 필요. */
+var GUARANTEE_RATIO_OFFICIAL_HIGH = 1.40;   // 보증금 ÷ 공시가격 > 140%
+var GUARANTEE_RATIO_OFFICIAL_MEDIUM = 1.26; // 보증금 ÷ 공시가격 > 126% (HUG 보증가입 기준선)
+var GUARANTEE_RATIO_SALE_HIGH = 0.90;       // 보증금 ÷ 감정가(또는 최저가) > 90%
+var GUARANTEE_RATIO_SALE_MEDIUM = 0.80;     // 보증금 ÷ 감정가(또는 최저가) > 80%
+// 물건 하나(auction record a)에서 "숫자로 확인 가능한" 임차보증금을 뽑음 - tenantOccupants가
+// 여러 명이면(다가구주택 등) 합산이 더 정확하고, 없으면 AI가 요약해둔 상단 deposit 필드로 폴백.
+function extractGuaranteeDepositWon(a) {
+    var d = (a && a.detail) || {};
+    var tenants = d.tenantOccupants || [];
+    var sumTenants = tenants.reduce(function(sum, t) { return sum + (parseFloat(t && t.deposit) || 0); }, 0);
+    if (sumTenants > 0) return sumTenants;
+    var topDeposit = parseFloat(d.deposit) || 0;
+    return topDeposit > 0 ? topDeposit : null;
+}
+function detectNumericAuctionRisk(a) {
+    var d = (a && a.detail) || {};
+    var depositWon = extractGuaranteeDepositWon(a);
+    if (!depositWon) return { level: null, reasons: [] };
+    var officialPriceWon = parseFloat(a && a.officialPriceWon) || 0;
+    // 감정가(AI 추출, 원 단위) 우선, 없으면 모달에 입력된 감정가(만원 단위 → 원 환산)로 폴백
+    var saleValueWon = parseFloat(d.appraisalPrice) || (parseFloat(a && a.appraisal) ? parseFloat(a.appraisal) * 10000 : 0);
+    var ratioOfficial = officialPriceWon > 0 ? depositWon / officialPriceWon : null;
+    var ratioSale = saleValueWon > 0 ? depositWon / saleValueWon : null;
+    var level = null;
+    var reasons = [];
+    if (ratioOfficial !== null) {
+        if (ratioOfficial > GUARANTEE_RATIO_OFFICIAL_HIGH) {
+            level = 'high';
+            reasons.push('보증금이 공시가격의 ' + Math.round(ratioOfficial * 100) + '% (140% 초과 - 국토부 전세사기 자가진단 위험 기준)');
+        } else if (ratioOfficial > GUARANTEE_RATIO_OFFICIAL_MEDIUM) {
+            level = 'medium';
+            reasons.push('보증금이 공시가격의 ' + Math.round(ratioOfficial * 100) + '% (126% 초과 - HUG 전세보증금반환보증 가입 기준선)');
+        }
+    }
+    if (ratioSale !== null) {
+        if (ratioSale >= GUARANTEE_RATIO_SALE_HIGH) {
+            level = 'high';
+            reasons.push('전세가율(보증금÷감정가) ' + Math.round(ratioSale * 100) + '% (90%↑ - 낙찰가가 보증금보다 낮아질 위험)');
+        } else if (ratioSale >= GUARANTEE_RATIO_SALE_MEDIUM && level !== 'high') {
+            level = 'medium';
+            reasons.push('전세가율(보증금÷감정가) ' + Math.round(ratioSale * 100) + '% (80%↑)');
+        }
+    }
+    return { level: level, reasons: reasons, ratioOfficial: ratioOfficial, ratioSale: ratioSale, depositWon: depositWon };
+}
+var hideGuaranteeRiskAuctions = false;
+try { hideGuaranteeRiskAuctions = localStorage.getItem('hideGuaranteeRiskAuctions') === '1'; } catch (e) {}
+function onToggleHideGuaranteeRisk() {
+    var cb = document.getElementById('auction-hide-guarantee-risk');
+    hideGuaranteeRiskAuctions = !!(cb && cb.checked);
+    try { localStorage.setItem('hideGuaranteeRiskAuctions', hideGuaranteeRiskAuctions ? '1' : '0'); } catch (e) {}
+    auctionListPage = 0;
+    renderAuctionList();
+}
 function openAuctionList() {
     var p = document.getElementById('auction-list-panel');
     var bcPanel = document.getElementById('bid-case-panel');
     if (bcPanel) bcPanel.style.display = 'none'; // 같은 자리에 뜨는 낙찰사례 패널과 겹치지 않게 닫아줌
     if (p.style.display === 'block') { p.style.display = 'none'; return; }
+    var hgCb = document.getElementById('auction-hide-guarantee-risk');
+    if (hgCb) hgCb.checked = hideGuaranteeRiskAuctions; // 저장된(localStorage) 토글 상태를 패널 열 때마다 동기화
     auctionListPage = 0;
     renderAuctionList(); p.style.display = 'block';
     if (auctionBiasStatsOpen) renderAuctionBiasStats(); // 이전에 펼쳐둔 채였다면 최신 데이터로 다시 그림
@@ -6029,6 +6111,27 @@ function renderAuctionList() {
             return;
         }
     }
+    // 🚨 2026-08: 깡통전세/보증기관 개입 의심 물건 감지(수치 기준) - 매 렌더마다 계산해서
+    // a._guaranteeRisk에 캐시해둠. 체크박스가 켜져있으면 'high' 등급은 목록에서 아예 제외하고,
+    // 몇 건이 걸러졌는지 카운트로 알려줌.
+    var guaranteeRiskHiddenCount = 0;
+    reversed.forEach(function(a) { a._guaranteeRisk = detectNumericAuctionRisk(a); });
+    if (hideGuaranteeRiskAuctions) {
+        reversed = reversed.filter(function(a) {
+            if (a._guaranteeRisk && a._guaranteeRisk.level === 'high') { guaranteeRiskHiddenCount++; return false; }
+            return true;
+        });
+    }
+    var guaranteeCountEl = document.getElementById('auction-guarantee-risk-count');
+    if (guaranteeCountEl) {
+        var totalHighRisk = auctionList.filter(function(a) { return detectNumericAuctionRisk(a).level === 'high'; }).length;
+        guaranteeCountEl.textContent = totalHighRisk ? '(감지 ' + totalHighRisk + '건' + (hideGuaranteeRiskAuctions ? ', 숨김 ' + guaranteeRiskHiddenCount + '건' : '') + ')' : '';
+    }
+    if (hideGuaranteeRiskAuctions && !reversed.length) {
+        body.innerHTML = '<div style="padding:20px;text-align:center;color:#aaa;font-size:12px;">깡통전세 의심 물건(수치 기준)을 제외하니 표시할 물건이 없습니다.</div>';
+        pager.innerHTML = '';
+        return;
+    }
     var totalPages = Math.max(1, Math.ceil(reversed.length / AUCTION_LIST_PAGE_SIZE));
     if (auctionListPage >= totalPages) auctionListPage = totalPages - 1;
     if (auctionListPage < 0) auctionListPage = 0;
@@ -6042,6 +6145,13 @@ function renderAuctionList() {
             ? '<div class="auction-list-sub" style="color:#e53935;font-weight:bold;">⚠️ 주소를 지도 좌표로 찾지 못해 지도에 배지가 표시되지 않습니다 - 주소를 확인해 주세요.</div>'
             : '';
         var caseNoLine = cleanField(a.caseNo) ? '<div class="auction-list-sub">📋 ' + cleanField(a.caseNo) + '</div>' : '';
+        // 🚨 깡통전세/보증기관 개입 의심 배지(수치 기준) - 숨기기 토글이 꺼져있을 때만 목록에 남아있으므로 여기서 표시됨
+        var guaranteeRiskLine = '';
+        if (a._guaranteeRisk && a._guaranteeRisk.level === 'high') {
+            guaranteeRiskLine = '<div class="auction-list-sub" style="color:#ad1457;font-weight:bold;">🚨 깡통전세 의심(고위험) - ' + a._guaranteeRisk.reasons.join(', ') + '</div>';
+        } else if (a._guaranteeRisk && a._guaranteeRisk.level === 'medium') {
+            guaranteeRiskLine = '<div class="auction-list-sub" style="color:#ad1457;">🚨 깡통전세 의심 - ' + a._guaranteeRisk.reasons.join(', ') + '</div>';
+        }
         // 입찰일 D-day - 위 정렬기준(auctionListDdaySortKey)과 동일한 값을 목록에서도 바로 볼 수 있게 표시
         var ddayLine = '';
         var ddayInfo = a.bidDate ? calcAuctionDday(a.bidDate) : null;
@@ -6088,10 +6198,18 @@ function renderAuctionList() {
             + '<span onclick="event.stopPropagation();openAuctionModal(\'' + a.id + '\')" '
             + 'style="position:absolute;top:8px;right:8px;font-size:10px;color:#1976d2;font-weight:bold;cursor:pointer;">✏️ 수정</span>'
             + '<div class="auction-list-name">' + (cleanField(a.name) || cleanField(a.addrLabel) || cleanField(a.addr) || '(이름없음)')
-            + (a.isBidTarget ? '<span class="auction-status-badge" style="background:#fbc02d;color:#333;">📋 입찰희망</span>' : '')
+            // 🚨 2026-08(사용자 요청): 수치 기반 깡통전세 의심 판정을 "입찰희망" 배지 자체에 바로
+            // 표기함(별도 줄이 아니라 배지 색상·아이콘으로) - 많은 물건을 훑어보는 상황에서 이
+            // 배지 하나만 보고도 거를 수 있어야 하기 때문. high면 배지를 진한 빨강으로, medium이면
+            // 주황으로 바꾸고 🚨 아이콘을 붙임(위험 없으면 기존 노란색 그대로).
+            + (a.isBidTarget ? '<span class="auction-status-badge" style="background:'
+                + (a._guaranteeRisk && a._guaranteeRisk.level === 'high' ? '#c62828' : (a._guaranteeRisk && a._guaranteeRisk.level === 'medium' ? '#ef6c00' : '#fbc02d'))
+                + ';color:' + (a._guaranteeRisk && a._guaranteeRisk.level ? 'white' : '#333') + ';">'
+                + (a._guaranteeRisk && a._guaranteeRisk.level ? '🚨 ' : '📋 ') + '입찰희망</span>' : '')
             + '<span class="auction-status-badge" style="background:' + sc + ';color:white;">' + a.status + '</span></div>'
             + '<div class="auction-list-sub">' + (cleanField(a.addr) || '주소 미입력') + '</div>'
             + caseNoLine
+            + guaranteeRiskLine
             + '<div class="auction-list-sub" style="color:#6a1b9a;">입찰가 ' + (a.myBid ? toEok(String(parseInt(a.myBid))) : '-') + '</div>'
             + actualBidInputRow
             + actualBidDiffLine
@@ -9243,9 +9361,14 @@ function placeAuctionMarker(a) {
         : '';
 
     var btStyle = isBidTarget ? (BID_TARGET_TYPE_STYLE[a.propType] || BID_TARGET_DEFAULT_STYLE) : null;
+    // 🚨 2026-08(사용자 요청): "입찰희망" 지도 배지에도 수치 기반 깡통전세 의심 판정을 바로
+    // 표기함 - 목록까지 열지 않아도 지도에서 배지만 보고 거를 수 있어야 함(수치 근거: 임차보증금
+    // ÷ 공시가격이 126%/140%를 넘거나, 임차보증금 ÷ 감정가(전세가율)가 80%/90%를 넘는 경우).
+    var numRisk = isBidTarget ? detectNumericAuctionRisk(a) : { level: null, reasons: [] };
     var div = document.createElement('div');
     div.style.cssText = isBidTarget
-        ? ('position:relative;background:linear-gradient(180deg,' + btStyle.bgFrom + ',' + btStyle.bgTo + ');border:3px solid ' + btStyle.border + ';border-radius:9px;'
+        ? ('position:relative;background:linear-gradient(180deg,' + btStyle.bgFrom + ',' + btStyle.bgTo + ');border:3px solid '
+            + (numRisk.level === 'high' ? '#c62828' : (numRisk.level === 'medium' ? '#ef6c00' : btStyle.border)) + ';border-radius:9px;'
             + 'padding:4px 9px;margin:4px;margin-top:16px;white-space:nowrap;cursor:pointer;'
             + 'text-align:center;line-height:1.5;max-width:210px;transform:scale(calc(1.12 * var(--badge-scale,1)));transform-origin:center bottom;')
         : ('position:relative;background:linear-gradient(180deg,#fff,#fff7ec);border:3px solid #e65100;border-radius:9px;'
@@ -9253,9 +9376,10 @@ function placeAuctionMarker(a) {
             + 'text-align:center;line-height:1.5;max-width:210px;transform:scale(calc(1.12 * var(--badge-scale,1)));transform-origin:center bottom;'
             + 'animation:auctionGlow 1.8s ease-in-out infinite;');
     // 터치 기기 길게 누르기 미리보기용 (setupBadgeLongPressPeek 참고)
-    div.title = [((a.name && a.name.trim()) || a.addrLabel || a.addr || '(이름없음)'), (isBidTarget ? btStyle.icon + ' 입찰희망' : '🔨 ' + a.status), a.caseNo ? '사건번호 ' + a.caseNo : '', priceLine, a.pyung ? a.pyung + '평' : '', ageBadgeText, dDayInfo ? dDayInfo.label + ' (' + a.bidDate + ')' : ''].filter(Boolean).join(' · ');
+    div.title = [((a.name && a.name.trim()) || a.addrLabel || a.addr || '(이름없음)'), (isBidTarget ? btStyle.icon + ' 입찰희망' : '🔨 ' + a.status), a.caseNo ? '사건번호 ' + a.caseNo : '', priceLine, a.pyung ? a.pyung + '평' : '', ageBadgeText, dDayInfo ? dDayInfo.label + ' (' + a.bidDate + ')' : '', numRisk.reasons.length ? '🚨 ' + numRisk.reasons.join(', ') : ''].filter(Boolean).join(' · ');
     div.innerHTML = (isBidTarget
-            ? '<div class="auction-badge" style="background:' + btStyle.pillBg + ';color:' + btStyle.pillColor + ';">' + btStyle.icon + ' 입찰희망' + alarmBadge + '</div>'
+            ? '<div class="auction-badge" style="background:' + (numRisk.level === 'high' ? '#c62828' : (numRisk.level === 'medium' ? '#ef6c00' : btStyle.pillBg)) + ';color:' + (numRisk.level ? 'white' : btStyle.pillColor) + ';">'
+                + (numRisk.level ? '🚨 ' : btStyle.icon + ' ') + '입찰희망' + alarmBadge + '</div>'
             : '<div class="auction-badge" style="background:' + sc + ';">🔨 ' + a.status + alarmBadge + '</div>')
         + '<div style="color:#333;font-size:11px;font-weight:bold;overflow:hidden;text-overflow:ellipsis;max-width:185px;margin-top:5px;">'
         +   ((a.name && a.name.trim()) || a.addrLabel || a.addr || '(이름없음)') + surgeBadge + ageBadge
@@ -9265,6 +9389,9 @@ function placeAuctionMarker(a) {
         + '<div style="color:' + sc + ';font-size:12px;font-weight:bold;">' + priceLine + '</div>'
         + (a.pyung ? '<div style="color:#888;font-size:10px;">' + a.pyung + '평</div>' : '')
         + dDayBadge
+        // 수치 기준 깡통전세 의심 판정이 있으면(감정가/공시가격 대비 보증금 비율 초과) 배지 안에
+        // 근거를 그대로 노출 - 색상만으로는 왜 위험한지 알 수 없어서 클릭 전에 판단 가능하도록 함
+        + (numRisk.level ? '<div style="color:' + (numRisk.level === 'high' ? '#c62828' : '#ef6c00') + ';font-size:9px;font-weight:bold;margin-top:2px;white-space:normal;">🚨 ' + numRisk.reasons.join('<br>') + '</div>' : '')
         // 매칭된 일반 거래가 있는데(타입탭/등급 등 필터 때문에) 지금 이 독자 마커로 대신
         // 표시되는 중이라면, 클릭하면 매매기록까지 함께 있는 전체 상세패널이 열린다는 걸 알려줌
         + (matchedApt ? '<div style="color:#e65100;font-size:9px;margin-top:2px;">📊 클릭하면 매매기록도 함께 보여요</div>' : '');
@@ -9495,7 +9622,7 @@ function buildAuctionPanelHtml(aptName, aptDong, aptBunji) {
         // 그래서 저장된 값(a.myBid 등)만으로 계산하는 정적 버전을 따로 만들어 붙임
         // (매매기록 없는 단독 경매물건은 편집모달을 직접 여니 원래도 마진분석이 보였음)
         html += buildMarginSummaryHtml(a);
-        html += buildAuctionDetailHtml(a.detail);
+        html += buildAuctionDetailHtml(a.detail, a.officialPriceWon, a.appraisal);
         html += buildHistoryHtml(a.history);
         html += buildResaleMatchesHtml(a.resaleMatches);
         html += buildDevNewsHtml(a.devNews);
@@ -11471,7 +11598,13 @@ function renderAiSummaryBox() {
     var box = document.getElementById('a-ai-summary-box');
     if (!box) return;
     if (!pendingAuctionDetail) { box.innerHTML = ''; return; }
-    box.innerHTML = '<div style="margin-top:10px;">' + buildAuctionDetailHtml(pendingAuctionDetail) + '</div>';
+    // 아직 저장 전(모달에서 AI 자동채우기 직후) 미리보기라, 저장된 a.officialPriceWon/a.appraisal이
+    // 없는 대신 지금 입력칸에 채워져 있는 값(공시가격 자동조회·감정가 입력)을 그대로 씀
+    var officialPriceWonEl = document.getElementById('a-official-price');
+    var appraisalEl = document.getElementById('a-appraisal');
+    var officialPriceWon = officialPriceWonEl ? (parseFloat(officialPriceWonEl.value) || null) : null;
+    var appraisalManwon = appraisalEl ? (parseFloat(appraisalEl.value) || null) : null;
+    box.innerHTML = '<div style="margin-top:10px;">' + buildAuctionDetailHtml(pendingAuctionDetail, officialPriceWon, appraisalManwon) + '</div>';
 }
 // ── 개발호재 검색 (재개발/재건축/신속통합기획 등, Gemini 웹검색) ──
 // AI가 생성한 텍스트를 그대로 innerHTML에 넣지 않도록 이스케이프 후 줄바꿈만 <br>로 치환
@@ -12644,7 +12777,7 @@ function buildSiteNoteSectionHtml(name, dong, addr, lat, lon) {
    (.margin-result/.margin-grid/.margin-item)을 그대로 재사용해서 톤을 통일하고, 항목별
    중요도에 따라 글자 크기를 다르게 줘서(경고성 항목이 가장 크고, 법원 연락처처럼 참고용인
    항목이 가장 작음) 한눈에 우선순위가 보이도록 함. */
-function buildAuctionDetailHtml(detail) {
+function buildAuctionDetailHtml(detail, officialPriceWon, fallbackAppraisalManwon) {
     if (!detail) return '';
     // ⚠️ 2026-08: AI 추출값이 "null"이라는 글자 그대로 들어오는 경우가 있어(예: caseCautions),
     //    이 함수 안에서 값을 꺼낼 때는 항상 g()를 거쳐서 그런 경우를 빈 값으로 통일함.
@@ -12685,6 +12818,15 @@ function buildAuctionDetailHtml(detail) {
 
     // ── 특수조건·주의사항 - 경고성 항목이라 카드가 아니라 눈에 띄는 전체너비 블록으로 분리 ──
     var warnLines = [g(detail.specialConditions), g(detail.caseCautions)].filter(Boolean);
+    // 🚨 2026-08: 목록(renderAuctionList)에 붙인 수치 기반 위험 판정(공시가격 126%/140%,
+    // 전세가율 80%/90%)을 모달에도 반영 - 목록을 안 거치고 바로 모달을 열어 확인하는 경로
+    // (예: 지도 배지 클릭)도 있어서 필요함.
+    var numericRisk = detectNumericAuctionRisk({ detail: detail, officialPriceWon: officialPriceWon, appraisal: fallbackAppraisalManwon });
+    if (numericRisk.level === 'high') {
+        warnLines.unshift('🚨 깡통전세/보증기관 개입 의심(수치 기준) - ' + numericRisk.reasons.join(', ') + '. 일반 입찰자 낙찰확률이 낮을 수 있습니다(참고용 수치이며 최종 판단은 등기부·매각물건명세서로 확인 필요).');
+    } else if (numericRisk.level === 'medium') {
+        warnLines.unshift('🚨 깡통전세/보증기관 개입 의심(수치 기준) - ' + numericRisk.reasons.join(', ') + '. 확인을 권장합니다.');
+    }
     if (warnLines.length) {
         html += '<div style="background:#ffebee;border-left:3px solid #e53935;border-radius:6px;padding:7px 9px;margin-top:8px;">'
             + warnLines.map(function(w) { return '<div style="font-size:13px;font-weight:bold;color:#c62828;line-height:1.5;">⚠️ ' + w + '</div>'; }).join('')
