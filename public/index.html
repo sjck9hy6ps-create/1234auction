@@ -10054,10 +10054,59 @@ function findMatchedAptForBidCase(c) {
 function bidCaseMarkerSignature(c) {
     return JSON.stringify({ status: c.status, finalBidPrice: c.finalBidPrice, minBidPrice: c.minBidPrice, estMargin: c.estMargin, lat: c.lat, lon: c.lon });
 }
+/* ⚖️ 낙찰사례 배지 - 2026-08(사용자 요청: "감정가 대신 ①내 로직상의 예상매도가 ②낙찰가
+   ③낙찰가로 역산한 예상매도가를 표기해줘") - ①은 runBacktestPipeline()이 이미 검증해 쓰고
+   있는 헤드리스 comp 매칭(findSimilarComps+getCompEstValueHeadless)을 그대로 재사용함. 다만
+   낙찰사례는 등록된 경매물건과 달리 건축HUB로 정확한 연식을 조회해두지 않으므로(그걸 배지
+   그릴 때마다 하면 API 부담이 너무 큼) targetBuildYear를 null로 넘김 - findSimilarComps는
+   targetYear가 없으면 연식 하드컷을 그냥 건너뛸 뿐 나머지(평형·층·거리) 필터는 그대로
+   동작하므로 완전히 의미없는 값이 나오진 않지만, 등록된 경매물건의 "🤖 유사물건 자동추천"
+   보다는 정밀도가 낮은 근사치임을 감안할 것.
+   ③은 예측 오차 누적통계에 쓰는 solveImpliedTargetFromBid()를 그대로 재사용하되, marginValue=0
+   (손익분기)으로 고정함 - 낙찰사례는 낙찰자가 개인/매매사업자인지, 실제 대출조건이 얼마였는지
+   알 수 없어(위 buildBidCaseDetailHtml 주석 참고) 목표마진을 가정할 근거가 없음. "적어도 이
+   가격엔 팔아야 손해를 안 본다"는 손익분기 기준이 유일하게 임의성 없이 정할 수 있는 값이라
+   marginValue=0으로 통일함. */
+function computeBidCasePredictedSale(c) {
+    if (!c.lat || !c.lon) return null;
+    var buildingType = backtestBuildingType(c);
+    if (!buildingType) return null; // 상가/토지 등 이 앱 산식 대상이 아닌 유형
+    var pyung = c.areaM2 ? toPyung(c.areaM2) : null;
+    if (!pyung) return null;
+    var floor = parseFloat(c.floor);
+    if (isNaN(floor)) floor = null;
+    var candidates = findSimilarComps(c.lat, c.lon, null, floor, pyung, buildingType, c.buildingName, c.dong, c.bunji, buildingType === 'villa' ? 500 : 2000);
+    if (!candidates.length) return null;
+    var compRecords = candidates.map(convertCandidateToCompRecordHeadless);
+    var estResult = getCompEstValueHeadless(compRecords, pyung, floor, null, { lat: c.lat, lon: c.lon, name: c.buildingName, dong: c.dong });
+    return estResult ? estResult.estValue : null;
+}
+function computeBidCaseImpliedTarget(c) {
+    if (!c.finalBidPrice) return null; // 낙찰가가 확정된 사건만 역산 가능
+    var buildingType = backtestBuildingType(c);
+    if (!buildingType) return null;
+    var fakeRecord = {
+        actualBid: Math.round(c.finalBidPrice / 10000), propType: buildingType,
+        pyung: c.areaM2 ? toPyung(c.areaM2) : 0, addr: c.addrJibun || '',
+        appraisal: c.appraisalPrice ? Math.round(c.appraisalPrice / 10000) : 0,
+        // 낙찰자의 실제 매매사업자여부·대출조건 등은 알 수 없어 대표 기본값으로 근사(위 주석 참고).
+        bidMethod: 'dealer', houseRank: 1, isAdjusted: false, isLocalCheap: false,
+        repair: 0, etc: 0, assumedDeposit: 0, unpaidMgmtFee: 0,
+        officialPriceWon: 0, holdsJune1: false, totalOfficialPriceManwon: 0, holdMonths: 0,
+        loanRate: null, loanPrepayFeeRate: null,
+    };
+    var result = solveImpliedTargetFromBid(fakeRecord, 0); // marginValue=0 = 손익분기 기준
+    return result ? result.target : null;
+}
 function placeBidCaseMarker(c) {
     var priceLine = c.finalBidPrice
         ? toEok(String(Math.round(c.finalBidPrice / 10000))) + ' (낙찰가)'
         : (c.minBidPrice ? toEok(String(Math.round(c.minBidPrice / 10000))) + ' (최저가)' : '가격 미상');
+    var predictedSale = computeBidCasePredictedSale(c);
+    var predictedLine = '<div style="color:#1976d2;font-size:10.5px;">🤖 예상매도가 ' + (predictedSale ? toEok(String(predictedSale)) : '데이터 부족') + '</div>';
+    var impliedTarget = computeBidCaseImpliedTarget(c);
+    var impliedLine = c.finalBidPrice
+        ? '<div style="color:#6a1b9a;font-size:10.5px;">↩️ 역산매도가 ' + (impliedTarget ? toEok(String(impliedTarget)) : '계산 불가') + '</div>' : '';
     var marginLine = (c.resaleMatch && c.estMargin !== null && c.estMargin !== undefined)
         ? '<div style="color:#2e7d32;font-size:9.5px;">추정마진 ' + toEok(String(Math.round(c.estMargin))) + '</div>' : '';
     var div = document.createElement('div');
@@ -10070,7 +10119,9 @@ function placeBidCaseMarker(c) {
         + '<div class="bc-rematch-badge" title="매도사례 재매칭" onclick="event.stopPropagation();retryMatchOneCase(\'' + cidJs + '\')">🔄</div>'
         + '<div class="bc-delete-badge" title="이 낙찰사례 삭제" onclick="event.stopPropagation();deleteBidCase(\'' + cidJs + '\')">✕</div>'
         + '<div style="color:#333;font-size:11px;font-weight:bold;overflow:hidden;text-overflow:ellipsis;max-width:180px;margin-top:5px;">' + (c.caseNo || '(사건번호 미상)') + '</div>'
+        + predictedLine
         + '<div style="color:#00695c;font-size:12px;font-weight:bold;">' + priceLine + '</div>'
+        + impliedLine
         + marginLine
         + '<div style="color:#888;font-size:9px;margin-top:2px;">📊 클릭하면 매매기록도 함께 보여요</div>';
     div.setAttribute('onclick', 'openBidCaseDetail(\'' + cidJs + '\')');
