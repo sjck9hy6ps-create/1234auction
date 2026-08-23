@@ -10138,10 +10138,28 @@ function computeBidCaseInferredBuildYear(cands) {
     if (!years.length) return null;
     return years[Math.floor(years.length / 2)];
 }
+/* ⚠️ 2026-08(사용자 피드백: "보통 빌라는 2000~3000만원 사이 값을 마진으로 보고 입찰에
+   참여한다. 낙찰사례가 많아 예상마진이 계산되는 지역은 그 예상마진을 반영해달라. 과도하면
+   상한(3500만원)을 두고, 계산 자체가 안 되는 지역은 2000만원을 기본으로 써달라") - 원래
+   marginValue=0(손익분기)으로 고정했었는데, 이걸 그 동네의 실제 낙찰 관행에 더 가깝게 바꿈.
+   getDongTypeMarginStat(법정동+건물유형별 낙찰사례 평균 추정마진, 일반 매물 배지의
+   "📊 평균 추정마진"과 동일한 통계를 재사용)이 있으면 그 값을 상한 3500만원까지만 인정하고,
+   통계 자체가 없는 지역(낙찰사례가 아직 없거나 매도사례 매칭이 안 된 지역)은 기본값
+   2000만원을 가정함. */
+var BC_IMPLIED_MARGIN_CAP = 3500; // 만원 - 지역 평균이 과도할 때의 상한(사용자 지정)
+var BC_IMPLIED_MARGIN_DEFAULT = 2000; // 만원 - 지역 통계가 없을 때 기본 가정(사용자 지정)
+function computeBidCaseImpliedMargin(c, buildingType) {
+    var stat = getDongTypeMarginStat(c.dong, buildingType);
+    if (stat && Number.isFinite(stat.avg)) {
+        return { margin: Math.min(stat.avg, BC_IMPLIED_MARGIN_CAP), source: 'region', regionAvg: stat.avg, count: stat.count };
+    }
+    return { margin: BC_IMPLIED_MARGIN_DEFAULT, source: 'default' };
+}
 function computeBidCaseImpliedTarget(c) {
     if (!c.finalBidPrice) return null; // 낙찰가가 확정된 사건만 역산 가능
     var buildingType = backtestBuildingType(c);
     if (!buildingType) return null;
+    var marginInfo = computeBidCaseImpliedMargin(c, buildingType);
     var fakeRecord = {
         actualBid: Math.round(c.finalBidPrice / 10000), propType: buildingType,
         pyung: c.areaM2 ? toPyung(c.areaM2) : 0, addr: c.addrJibun || '',
@@ -10152,8 +10170,9 @@ function computeBidCaseImpliedTarget(c) {
         officialPriceWon: 0, holdsJune1: false, totalOfficialPriceManwon: 0, holdMonths: 0,
         loanRate: null, loanPrepayFeeRate: null,
     };
-    var result = solveImpliedTargetFromBid(fakeRecord, 0); // marginValue=0 = 손익분기 기준
-    return result ? result.target : null;
+    var result = solveImpliedTargetFromBid(fakeRecord, marginInfo.margin);
+    if (!result) return null;
+    return { target: result.target, marginUsed: marginInfo.margin, marginSource: marginInfo.source, regionAvg: marginInfo.regionAvg, count: marginInfo.count };
 }
 /* ⚠️ 2026-08(사용자 피드백: "낙찰사례배지 토글 사용시 딜레이가 많이 발생해") - toggleShowBidCaseBadges()가
    껐다 켤 때마다 clearBidCaseMarkers()가 bidCaseMarkerSigs를 통째로 비우기 때문에, 다시 켤 때
@@ -10190,9 +10209,14 @@ function placeBidCaseMarker(c) {
     var bcEst = getBidCaseEstimates(c);
     var predictedSale = bcEst.predictedSale;
     var predictedLine = '<div style="color:#1976d2;font-size:10.5px;">🤖 예상매도가 ' + (predictedSale ? toEok(String(predictedSale)) : '데이터 부족') + '</div>';
-    var impliedTarget = bcEst.impliedTarget;
+    var implied = bcEst.impliedTarget; // {target, marginUsed, marginSource, regionAvg, count} 또는 null
+    var impliedMarginNote = implied
+        ? (implied.marginSource === 'region'
+            ? '이 동 낙찰사례 ' + implied.count + '건 평균 추정마진 ' + toEok(String(implied.regionAvg)) + (implied.marginUsed < implied.regionAvg ? '(상한 ' + toEok(String(implied.marginUsed)) + '으로 조정)' : '') + ' 가정'
+            : '지역 통계 없어 기본 마진 ' + toEok(String(implied.marginUsed)) + ' 가정')
+        : '';
     var impliedLine = c.finalBidPrice
-        ? '<div style="color:#6a1b9a;font-size:10.5px;">↩️ 역산매도가 ' + (impliedTarget ? toEok(String(impliedTarget)) : '계산 불가') + '</div>' : '';
+        ? '<div style="color:#6a1b9a;font-size:10.5px;" title="' + impliedMarginNote + '">↩️ 역산매도가 ' + (implied ? toEok(String(implied.target)) : '계산 불가') + '</div>' : '';
     // 2026-08(사용자 요청: "연식구분과 평형까지 해줘") - 경매물건 배지(placeAuctionMarker)의
     // ageBadge와 동일한 스타일(AGE_TIER_COLORS·getVillaTierLabel)을 재사용. 연식은 확정값이
     // 아니라 유사물건 후보의 중앙값 근사치라 "(추정)"을 붙여 오해를 막음.
