@@ -870,6 +870,7 @@ tr:hover td { background:#fffde7; }
             <button class="modal-btn btn-purple" id="bc-match-btn" style="font-size:10px;padding:4px 8px;white-space:nowrap;" onclick="runResaleMatching()">🔍 매도사례 매칭</button>
             <button class="modal-btn btn-gray" id="bc-retry-failed-btn" style="font-size:10px;padding:4px 8px;white-space:nowrap;" onclick="retryFailedMatches()" title="매칭 조건이 완화됐으니 예전에 실패했던 건들을 새 조건으로 다시 시도합니다">🔄 실패건 재시도</button>
             <button class="modal-btn btn-gray" id="bc-cleanup-dup-btn" style="font-size:10px;padding:4px 8px;white-space:nowrap;" onclick="cleanupDuplicateBidCases()" title="같은 사건번호가 여러 번 저장된 중복 레코드를 찾아 하나만 남기고 정리합니다">🧹 중복 정리</button>
+            <button class="modal-btn btn-gray" id="bc-buildyear-btn" style="font-size:10px;padding:4px 8px;white-space:nowrap;" onclick="resolveMissingBidCaseBuildYears()" title="건축HUB에서 실제 사용승인일을 조회해 연식을 채웁니다 (예상매도가 정밀도 개선, 배지의 '(추정)' 라벨 제거)">🏗️ 건물연식 일괄조회</button>
         </span>
     </div>
     <div style="padding:8px 14px;border-bottom:1px solid #eee;">
@@ -6061,6 +6062,53 @@ async function retryFailedMatches() {
     targets.forEach(function(c) { c.matchAttempted = false; });
     await runMatchingLoop(targets, btn, statusBox);
 }
+/* ⚠️ 2026-08(사용자 요청: "역산매도가/예상매도가 정밀도 개선을 위해 낙찰사례에도 건축HUB
+   연식을 붙여달라") - 낙찰사례는 등록 당시 건물 연식을 안 받아뒀어서(경매물건과 달리)
+   지금까지는 유사물건 후보의 중앙값으로만 근사했음(getBidCaseEstimates의 inferredBuildYear,
+   "(추정)" 라벨). 이 함수는 getAuctionBuildYear와 동일한 방식(건축HUB 사용승인일 useAprDay)으로
+   c.buildYear를 실제 값으로 채워 넣어, 이후 findSimilarComps/getCompEstValueHeadless가
+   ±3년 하드컷을 정확한 연식 기준으로 적용하게 함(예상매도가 정밀도 개선) + 배지의
+   "(추정)" 라벨도 뗄 수 있게 함(buildYearConfirmed). */
+async function resolveOneBidCaseBuildYear(c) {
+    if (!c.lat || !c.lon || !c.bunji) return false;
+    var fakeApt = { latest: { dong: c.dong, name: c.buildingName || '', bunji: c.bunji } };
+    var info = await loadBuildingInfo(fakeApt, c.lat, c.lon);
+    var year = info && info.title && info.title.useAprDay
+        ? parseInt(String(info.title.useAprDay).match(/(\d{4})/) ? String(info.title.useAprDay).match(/(\d{4})/)[1] : '')
+        : NaN;
+    if (!Number.isFinite(year) || year < 1950 || year > today.getFullYear()) return false;
+    c.buildYear = year;
+    delete bidCaseEstCache[c.id]; // 새 연식 반영해서 다시 계산되도록 캐시 무효화
+    try { await saveBidCaseAPI(c); } catch (e) { /* 로컬 값은 이미 반영했으니 저장 실패해도 화면엔 보임 */ }
+    return true;
+}
+// 후보가 한꺼번에 많이(수백 건) 밀릴 수 있어 건축HUB 부하를 줄이려고 5개씩 동시 처리하는
+// 워커풀 방식을 씀 (loadElevatorStatusesForCandidates와 같은 패턴, AI_COMP_ELEVATOR_CONCURRENCY 재사용).
+async function resolveMissingBidCaseBuildYears() {
+    var btn = document.getElementById('bc-buildyear-btn');
+    var statusBox = document.getElementById('bc-extract-status');
+    var targets = bidCaseList.filter(function(c) { return !c.buildYear && c.lat && c.lon && c.bunji; });
+    if (!targets.length) { alert('건축HUB로 조회할 대상이 없습니다. (이미 연식이 있거나, 좌표/번지 정보가 없는 사례입니다.)'); return; }
+    if (!confirm(targets.length + '건의 건물 연식을 건축HUB에서 조회합니다. 시간이 걸릴 수 있어요. 계속할까요?')) return;
+    if (btn) { btn.disabled = true; btn.innerText = '조회 중... 0/' + targets.length; }
+    var done = 0, ok = 0;
+    var queue = targets.map(function(c, i) { return i; });
+    async function worker() {
+        while (queue.length) {
+            var i = queue.shift();
+            var success = await resolveOneBidCaseBuildYear(targets[i]);
+            if (success) ok++;
+            done++;
+            if (btn) btn.innerText = '조회 중... ' + done + '/' + targets.length;
+        }
+    }
+    var workers = [];
+    for (var w = 0; w < AI_COMP_ELEVATOR_CONCURRENCY; w++) workers.push(worker());
+    await Promise.all(workers);
+    if (btn) { btn.disabled = false; btn.innerText = '🏗️ 건물연식 일괄조회'; }
+    if (statusBox) { statusBox.style.color = '#2e7d32'; statusBox.innerText = '연식 조회 완료: ' + ok + '/' + targets.length + '건 확인됨.'; }
+    renderBidCaseList(); renderBidCaseMarkers();
+}
 /* 낙찰 후 매도까지 보통 3~4개월씩 걸리기 때문에, 한 번 매칭에 실패했거나(아직 매도 전) 아직
    시도조차 안 한 사례도 "상시" 다시 조회할 수 있어야 함 - 목록 패널의 항목별 버튼과, 배지를
    클릭해서 여는 상세뷰(buildBidCaseDetailHtml)의 버튼이 모두 이 함수 하나를 공유함.
@@ -10116,20 +10164,27 @@ function computeBidCaseCandidates(c) {
     if (!pyung) return null;
     var floor = parseFloat(c.floor);
     if (isNaN(floor)) floor = null;
-    var candidates = findSimilarComps(c.lat, c.lon, null, floor, pyung, buildingType, c.buildingName, c.dong, c.bunji, buildingType === 'villa' ? 500 : 2000);
-    return { buildingType: buildingType, pyung: pyung, floor: floor, candidates: candidates };
+    // ⚠️ 2026-08(사용자 피드백: "예상매도가 오차의 가장 큰 원인 - 낙찰사례는 연식을 몰라
+    // 비교물건 필터에서 ±3년 하드컷을 못 건다") - resolveMissingBidCaseBuildYears()로
+    // 건축HUB 사용승인일을 미리 조회해 c.buildYear에 저장해둔 건은 등록된 경매물건과
+    // 동일하게 findSimilarComps에 정확한 targetYear를 넘겨 연식 필터를 적용함. 아직
+    // 조회 전이면(연식 미상) null을 넘겨 예전처럼 하드컷 없이 평형·층·거리만으로 근사함.
+    var targetYear = c.buildYear || null;
+    var candidates = findSimilarComps(c.lat, c.lon, targetYear, floor, pyung, buildingType, c.buildingName, c.dong, c.bunji, buildingType === 'villa' ? 500 : 2000);
+    return { buildingType: buildingType, pyung: pyung, floor: floor, candidates: candidates, targetYear: targetYear };
 }
 function computeBidCasePredictedSale(cands, c) {
     if (!cands || !cands.candidates.length) return null;
     var compRecords = cands.candidates.map(convertCandidateToCompRecordHeadless);
-    var estResult = getCompEstValueHeadless(compRecords, cands.pyung, cands.floor, null, { lat: c.lat, lon: c.lon, name: c.buildingName, dong: c.dong });
+    var estResult = getCompEstValueHeadless(compRecords, cands.pyung, cands.floor, cands.targetYear, { lat: c.lat, lon: c.lon, name: c.buildingName, dong: c.dong });
     return estResult ? estResult.estValue : null;
 }
-/* 2026-08(사용자 요청: "연식구분과 평형까지 해줘") - 낙찰사례는 건축HUB로 정확한 연식을
-   조회해두지 않아(배지 그릴 때마다 하면 API 부담이 너무 큼) getAuctionBuildYear()의 세 번째
-   폴백(비교물건 연식 중앙값)과 같은 방식으로, 위 computeBidCaseCandidates가 이미 구해둔
-   유사물건 후보들의 build_year 중앙값을 근사 연식으로 씀 - 추가 API 호출 없이 기존
-   findSimilarComps 결과를 그대로 재사용함. 확정값이 아니라 근사치라 배지에는 "(추정)"을 붙임. */
+/* 2026-08(사용자 요청: "연식구분과 평형까지 해줘") - c.buildYear가 아직 조회 전이면(연식
+   미상), getAuctionBuildYear()의 세 번째 폴백(비교물건 연식 중앙값)과 같은 방식으로 위
+   computeBidCaseCandidates가 이미 구해둔 유사물건 후보들의 build_year 중앙값을 근사
+   연식으로 씀 - 추가 API 호출 없이 기존 findSimilarComps 결과를 그대로 재사용함. 확정값이
+   아니라 근사치라 배지에는 "(추정)"을 붙임. c.buildYear가 있으면 이 함수는 아예 안 씀
+   (getBidCaseEstimates에서 c.buildYear를 우선 사용). */
 function computeBidCaseInferredBuildYear(cands) {
     if (!cands || !cands.candidates.length) return null;
     var years = cands.candidates.map(function(cand) { return parseInt(cand.trade.build_year); })
@@ -10174,6 +10229,24 @@ function computeBidCaseImpliedTarget(c) {
     if (!result) return null;
     return { target: result.target, marginUsed: marginInfo.margin, marginSource: marginInfo.source, regionAvg: marginInfo.regionAvg, count: marginInfo.count };
 }
+/* ⚠️ 2026-08(사용자 피드백: "실수로 고액 낙찰, 주택보증공사, 실거주 목적 등으로 높은 금액에
+   입찰하는 경우가 있는데, 그런 특수사유를 모든 걸 필터로 걸러내기엔 한계가 있다. 그건 직접
+   확인해야 할 부분") - 정확한 사유를 자동으로 가려내는 건 포기하고, 대신 "이 건이 이 동네
+   보통보다 유난히 비싸게 낙찰됐는지"만 계산해서 참고용 경고로만 보여줌(자동 제외/필터링은
+   하지 않음 - 사용자가 직접 눌러서 확인하도록). calcDongBidRateStats(감정가 대비 낙찰가
+   비율의 법정동 중앙값, 이미 있는 통계)와 비교해서, 이 건의 낙찰가율이 중앙값보다 15%p
+   이상 높으면 "고가낙찰 의심"으로 표시함. 표본이 너무 적으면(calcDongBidRateStats.lowSample)
+   비교 자체가 불안정하므로 경고를 내지 않음. */
+var BC_HIGH_BID_RATE_GAP = 15; // %p - 휴리스틱, 통계적으로 검증된 값 아님
+function computeBidCaseHighBidFlag(c) {
+    if (!c.appraisalPrice || !c.finalBidPrice || !c.dong) return null;
+    var stats = calcDongBidRateStats(c.dong);
+    if (!stats || stats.lowSample) return null;
+    var myRate = Math.round(c.finalBidPrice / c.appraisalPrice * 1000) / 10;
+    var gap = Math.round((myRate - stats.median) * 10) / 10;
+    if (gap < BC_HIGH_BID_RATE_GAP) return null;
+    return { myRate: myRate, dongMedian: stats.median, gap: gap, count: stats.count };
+}
 /* ⚠️ 2026-08(사용자 피드백: "낙찰사례배지 토글 사용시 딜레이가 많이 발생해") - toggleShowBidCaseBadges()가
    껐다 켤 때마다 clearBidCaseMarkers()가 bidCaseMarkerSigs를 통째로 비우기 때문에, 다시 켤 때
    화면에 보이는 낙찰사례 전부가 placeBidCaseMarker()를 다시 타면서 computeBidCasePredictedSale
@@ -10183,21 +10256,28 @@ function computeBidCaseImpliedTarget(c) {
    이 필드 목록에 없으므로 토글만으로는 캐시가 깨지지 않고, 첫 계산 이후로는 즉시 그려짐. */
 var bidCaseEstCache = {};
 function bidCaseEstSignature(c) {
-    return [c.lat, c.lon, c.floor, c.areaM2, c.propertyType, c.buildingName, c.dong, c.bunji, c.finalBidPrice, c.appraisalPrice, c.addrJibun].join('|');
+    // ⚠️ buildYear를 추가함(2026-08) - 건축HUB 조회로 c.buildYear가 새로 채워지면 캐시가
+    // 자동으로 무효화되어 예상매도가·연식배지가 정확한 값으로 다시 계산됨.
+    return [c.lat, c.lon, c.floor, c.areaM2, c.propertyType, c.buildingName, c.dong, c.bunji, c.finalBidPrice, c.appraisalPrice, c.addrJibun, c.buildYear].join('|');
 }
 function getBidCaseEstimates(c) {
     var sig = bidCaseEstSignature(c);
     var cached = bidCaseEstCache[c.id];
     if (cached && cached.sig === sig) return cached;
     var cands = computeBidCaseCandidates(c);
-    var inferredBuildYear = computeBidCaseInferredBuildYear(cands);
+    // c.buildYear(건축HUB로 확정 조회된 값)가 있으면 그걸 우선 쓰고, 없을 때만 유사물건
+    // 중앙값 근사치(computeBidCaseInferredBuildYear)로 폴백함.
+    var buildYearConfirmed = !!c.buildYear;
+    var inferredBuildYear = c.buildYear || computeBidCaseInferredBuildYear(cands);
     var result = {
         sig: sig,
         predictedSale: computeBidCasePredictedSale(cands, c),
         impliedTarget: computeBidCaseImpliedTarget(c),
         pyung: c.areaM2 ? toPyung(c.areaM2) : null,
         inferredBuildYear: inferredBuildYear,
+        buildYearConfirmed: buildYearConfirmed,
         ageTier: inferredBuildYear ? getAgeTierByYear(inferredBuildYear) : null,
+        highBidFlag: computeBidCaseHighBidFlag(c),
     };
     bidCaseEstCache[c.id] = result;
     return result;
@@ -10215,15 +10295,22 @@ function placeBidCaseMarker(c) {
             ? '이 동 낙찰사례 ' + implied.count + '건 평균 추정마진 ' + toEok(String(implied.regionAvg)) + (implied.marginUsed < implied.regionAvg ? '(상한 ' + toEok(String(implied.marginUsed)) + '으로 조정)' : '') + ' 가정'
             : '지역 통계 없어 기본 마진 ' + toEok(String(implied.marginUsed)) + ' 가정')
         : '';
+    // 2026-08(사용자 요청: "실수로 고액낙찰/주택보증공사/실거주 등은 필터로 걸러낼 수 없으니
+    // 참고용 경고만 달아달라") - 낙찰가율이 이 동 중앙값보다 눈에 띄게 높으면 역산매도가 줄에
+    // ⚠️ 경고만 덧붙임. 후보에서 제외/필터링하지 않음(계산은 그대로 진행).
+    var hb = bcEst.highBidFlag; // {myRate, dongMedian, gap, count} 또는 null
+    var highBidNote = hb
+        ? '이 동 낙찰사례 ' + hb.count + '건 낙찰가율 중앙값 ' + hb.dongMedian + '% 대비 이 건 ' + hb.myRate + '%(+' + hb.gap + '%p) - 고가낙찰 의심(실수/주택보증공사/실거주 등), 역산매도가가 과대추정됐을 수 있으니 직접 확인 필요'
+        : '';
     var impliedLine = c.finalBidPrice
-        ? '<div style="color:#6a1b9a;font-size:10.5px;" title="' + impliedMarginNote + '">↩️ 역산매도가 ' + (implied ? toEok(String(implied.target)) : '계산 불가') + '</div>' : '';
+        ? '<div style="color:#6a1b9a;font-size:10.5px;" title="' + (hb ? highBidNote : impliedMarginNote) + '">' + (hb ? '⚠️ ' : '') + '↩️ 역산매도가 ' + (implied ? toEok(String(implied.target)) : '계산 불가') + '</div>' : '';
     // 2026-08(사용자 요청: "연식구분과 평형까지 해줘") - 경매물건 배지(placeAuctionMarker)의
-    // ageBadge와 동일한 스타일(AGE_TIER_COLORS·getVillaTierLabel)을 재사용. 연식은 확정값이
-    // 아니라 유사물건 후보의 중앙값 근사치라 "(추정)"을 붙여 오해를 막음.
+    // ageBadge와 동일한 스타일(AGE_TIER_COLORS·getVillaTierLabel)을 재사용. buildYearConfirmed가
+    // true면(건축HUB로 실제 조회된 값) "(추정)"을 떼고, 아니면(유사물건 중앙값 근사치) 계속 붙임.
     var ageTierLabel = bcEst.ageTier ? getVillaTierLabel(bcEst.ageTier) : null;
     var ageBadge = ageTierLabel
         ? '<span style="background:' + (AGE_TIER_COLORS[bcEst.ageTier] || '#607d8b') + ';color:white;font-size:9px;font-weight:bold;padding:1px 6px;border-radius:3px;">'
-            + ageTierLabel + (bcEst.inferredBuildYear ? ' · ' + (today.getFullYear() - bcEst.inferredBuildYear) + '년차(추정)' : '') + '</span>'
+            + ageTierLabel + (bcEst.inferredBuildYear ? ' · ' + (today.getFullYear() - bcEst.inferredBuildYear) + '년차' + (bcEst.buildYearConfirmed ? '' : '(추정)') : '') + '</span>'
         : '';
     var sizeAgeLine = (bcEst.pyung || ageBadge)
         ? '<div style="font-size:10px;color:#555;margin-top:2px;">' + (bcEst.pyung ? bcEst.pyung + '평 ' : '') + ageBadge + '</div>'
