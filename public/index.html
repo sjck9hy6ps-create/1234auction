@@ -5642,15 +5642,26 @@ async function runBacktestPipeline() {
     var statusBox = document.getElementById('bx-extract-status');
     var runBtn = document.querySelector('#bx-preview-box button');
     if (runBtn) runBtn.disabled = true;
+    // ⚠️ 2026-08: 값(true)이 아니라 레코드 자체를 저장 - "이미 있지만 예측입찰가가 비어있는
+    // 백테스트 건"(위 loadAllData 누락 버그로 만들어진 것들)을 재실행 때 그냥 건너뛰지 않고
+    // 같은 id로 덮어써서 다시 계산하기 위함(아래 recompute 분기 참고).
     var existingKeys = {};
-    auctionList.forEach(function(a) { var k = bidTargetDedupKey(a); if (k) existingKeys[k] = true; });
-    var savedCount = 0, skippedDup = 0, skippedType = 0, noGeocode = 0, noComps = 0;
+    auctionList.forEach(function(a) { var k = bidTargetDedupKey(a); if (k) existingKeys[k] = a; });
+    var savedCount = 0, recomputedCount = 0, skippedDup = 0, skippedType = 0, noGeocode = 0, noComps = 0;
     for (var i = 0; i < selected.length; i++) {
         var c = selected[i];
         statusBox.style.color = '#999';
-        statusBox.innerText = '백테스트 실행 중... (' + (i + 1) + '/' + selected.length + ') - 지오코딩·유사물건 검색 중이라 건당 몇 초씩 걸릴 수 있어요.';
+        statusBox.innerText = '백테스트 실행 중... (' + (i + 1) + '/' + selected.length + ') - 지오코딩·지역데이터 로딩·유사물건 검색 중이라 건당 몇 초씩 걸릴 수 있어요.';
         var dedupKey = bidTargetDedupKey(c);
-        if (dedupKey && existingKeys[dedupKey]) { skippedDup++; continue; }
+        var existingRec = dedupKey ? existingKeys[dedupKey] : null;
+        var recomputeId = null;
+        if (existingRec) {
+            if (existingRec.isBacktest && !existingRec.predictedBid) {
+                recomputeId = existingRec.id; // 예측입찰가 없이 저장됐던 건 - 같은 id로 다시 계산
+            } else {
+                skippedDup++; continue;
+            }
+        }
         var buildingType = backtestBuildingType(c);
         if (!buildingType) { skippedType++; continue; } // 상가/토지 등 이 앱 산식 대상이 아닌 유형
         var addr = c.addrJibun || '';
@@ -5675,6 +5686,13 @@ async function runBacktestPipeline() {
         if (!geo) { noGeocode++; continue; }
         var dong = c.dong || geo.dong;
         var bunji = c.bunji || geo.bunji;
+        // ⚠️ 2026-08(사용자 피드백: 95건 중 94건 "유사물건 못찾음"): findSimilarComps는 allAptList만
+        // 훑는데, allAptList는 지도가 실제로 그 지역을 지나가야(loadAllData) 채워짐 - 실사용 흐름은
+        // "지도에서 해당 위치로 이동→자동추천 클릭"이라 항상 이 순서를 타지만, 배치 백테스트는 지도를
+        // 전혀 움직이지 않고 지오코더 좌표만으로 바로 findSimilarComps를 불러서 대부분의 사건이 아직
+        // 로드된 적 없는 지역이라 후보가 0건이었음. 지도 이동 없이도 loadAllData(lat, lon)만 먼저
+        // await해서 해당 법정동 실거래 캐시(+좌표캐시)를 채운 뒤에 찾도록 수정.
+        await loadAllData(geo.lat, geo.lon);
         var candidates = findSimilarComps(geo.lat, geo.lon, null, floor, pyung, buildingType, c.buildingName, dong, bunji, buildingType === 'villa' ? 500 : 2000);
         var compRecords = candidates.map(convertCandidateToCompRecordHeadless);
         var estResult = pyung ? getCompEstValueHeadless(compRecords, pyung, floor, null, { lat: geo.lat, lon: geo.lon, name: c.buildingName, dong: dong }) : null;
@@ -5682,7 +5700,7 @@ async function runBacktestPipeline() {
         var target = estResult ? estResult.estValue : null;
         var margin = parseInt(TARGET_MARGIN_DEFAULTS[buildingType]) || 2000;
         var data = {
-            id: Date.now().toString() + '_bx_' + i,
+            id: recomputeId || (Date.now().toString() + '_bx_' + i),
             addr: addr, addrLabel: geo.addrLabel || addr, name: c.buildingName || '',
             propType: buildingType, aptDong: '', floor: c.floor || '', unitNo: c.unitNo || '',
             caseNo: c.caseNo || null, pyung: pyung || '', bidDate: c.saleDate || '',
@@ -5699,9 +5717,15 @@ async function runBacktestPipeline() {
         data.predictedBid = (predRes && predRes.bid > 0) ? predRes.bid : null;
         try {
             var saved = await saveAuctionAPI(data);
-            auctionList.push(saved);
-            if (dedupKey) existingKeys[dedupKey] = true;
-            savedCount++;
+            if (recomputeId) {
+                var idx = auctionList.findIndex(function(a) { return a.id === recomputeId; });
+                if (idx !== -1) auctionList[idx] = saved; else auctionList.push(saved);
+                recomputedCount++;
+            } else {
+                auctionList.push(saved);
+                savedCount++;
+            }
+            if (dedupKey) existingKeys[dedupKey] = saved;
         } catch (e) { console.error('백테스트 사건 저장 실패:', e.message); }
     }
     backtestRunning = false;
@@ -5710,7 +5734,8 @@ async function runBacktestPipeline() {
     document.getElementById('bx-preview-box').innerHTML = '';
     statusBox.style.color = '#2e7d32';
     statusBox.innerText = savedCount + '건 백테스트 등록 완료.'
-        + (skippedDup ? ' (이미 등록된 사건번호 ' + skippedDup + '건 건너뜀)' : '')
+        + (recomputedCount ? ' / 예측입찰가가 비어있던 기존 ' + recomputedCount + '건 재계산 완료.' : '')
+        + (skippedDup ? ' (이미 계산 완료된 사건번호 ' + skippedDup + '건 건너뜀)' : '')
         + (skippedType ? ' (상가·토지 등 대상 외 ' + skippedType + '건 건너뜀)' : '')
         + (noGeocode ? ' ⚠️ 주소 좌표를 못 찾은 ' + noGeocode + '건은 제외됨' : '')
         + (noComps ? ' ⚠️ 유사물건을 못 찾아 예측입찰가가 비어있는 건 ' + noComps + '건' : '')
