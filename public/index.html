@@ -10108,7 +10108,7 @@ function bidCaseMarkerSignature(c) {
    알 수 없어(위 buildBidCaseDetailHtml 주석 참고) 목표마진을 가정할 근거가 없음. "적어도 이
    가격엔 팔아야 손해를 안 본다"는 손익분기 기준이 유일하게 임의성 없이 정할 수 있는 값이라
    marginValue=0으로 통일함. */
-function computeBidCasePredictedSale(c) {
+function computeBidCaseCandidates(c) {
     if (!c.lat || !c.lon) return null;
     var buildingType = backtestBuildingType(c);
     if (!buildingType) return null; // 상가/토지 등 이 앱 산식 대상이 아닌 유형
@@ -10117,10 +10117,26 @@ function computeBidCasePredictedSale(c) {
     var floor = parseFloat(c.floor);
     if (isNaN(floor)) floor = null;
     var candidates = findSimilarComps(c.lat, c.lon, null, floor, pyung, buildingType, c.buildingName, c.dong, c.bunji, buildingType === 'villa' ? 500 : 2000);
-    if (!candidates.length) return null;
-    var compRecords = candidates.map(convertCandidateToCompRecordHeadless);
-    var estResult = getCompEstValueHeadless(compRecords, pyung, floor, null, { lat: c.lat, lon: c.lon, name: c.buildingName, dong: c.dong });
+    return { buildingType: buildingType, pyung: pyung, floor: floor, candidates: candidates };
+}
+function computeBidCasePredictedSale(cands, c) {
+    if (!cands || !cands.candidates.length) return null;
+    var compRecords = cands.candidates.map(convertCandidateToCompRecordHeadless);
+    var estResult = getCompEstValueHeadless(compRecords, cands.pyung, cands.floor, null, { lat: c.lat, lon: c.lon, name: c.buildingName, dong: c.dong });
     return estResult ? estResult.estValue : null;
+}
+/* 2026-08(사용자 요청: "연식구분과 평형까지 해줘") - 낙찰사례는 건축HUB로 정확한 연식을
+   조회해두지 않아(배지 그릴 때마다 하면 API 부담이 너무 큼) getAuctionBuildYear()의 세 번째
+   폴백(비교물건 연식 중앙값)과 같은 방식으로, 위 computeBidCaseCandidates가 이미 구해둔
+   유사물건 후보들의 build_year 중앙값을 근사 연식으로 씀 - 추가 API 호출 없이 기존
+   findSimilarComps 결과를 그대로 재사용함. 확정값이 아니라 근사치라 배지에는 "(추정)"을 붙임. */
+function computeBidCaseInferredBuildYear(cands) {
+    if (!cands || !cands.candidates.length) return null;
+    var years = cands.candidates.map(function(cand) { return parseInt(cand.trade.build_year); })
+        .filter(function(y) { return Number.isFinite(y) && y > 1900; })
+        .sort(function(a, b) { return a - b; });
+    if (!years.length) return null;
+    return years[Math.floor(years.length / 2)];
 }
 function computeBidCaseImpliedTarget(c) {
     if (!c.finalBidPrice) return null; // 낙찰가가 확정된 사건만 역산 가능
@@ -10154,7 +10170,16 @@ function getBidCaseEstimates(c) {
     var sig = bidCaseEstSignature(c);
     var cached = bidCaseEstCache[c.id];
     if (cached && cached.sig === sig) return cached;
-    var result = { sig: sig, predictedSale: computeBidCasePredictedSale(c), impliedTarget: computeBidCaseImpliedTarget(c) };
+    var cands = computeBidCaseCandidates(c);
+    var inferredBuildYear = computeBidCaseInferredBuildYear(cands);
+    var result = {
+        sig: sig,
+        predictedSale: computeBidCasePredictedSale(cands, c),
+        impliedTarget: computeBidCaseImpliedTarget(c),
+        pyung: c.areaM2 ? toPyung(c.areaM2) : null,
+        inferredBuildYear: inferredBuildYear,
+        ageTier: inferredBuildYear ? getAgeTierByYear(inferredBuildYear) : null,
+    };
     bidCaseEstCache[c.id] = result;
     return result;
 }
@@ -10168,6 +10193,17 @@ function placeBidCaseMarker(c) {
     var impliedTarget = bcEst.impliedTarget;
     var impliedLine = c.finalBidPrice
         ? '<div style="color:#6a1b9a;font-size:10.5px;">↩️ 역산매도가 ' + (impliedTarget ? toEok(String(impliedTarget)) : '계산 불가') + '</div>' : '';
+    // 2026-08(사용자 요청: "연식구분과 평형까지 해줘") - 경매물건 배지(placeAuctionMarker)의
+    // ageBadge와 동일한 스타일(AGE_TIER_COLORS·getVillaTierLabel)을 재사용. 연식은 확정값이
+    // 아니라 유사물건 후보의 중앙값 근사치라 "(추정)"을 붙여 오해를 막음.
+    var ageTierLabel = bcEst.ageTier ? getVillaTierLabel(bcEst.ageTier) : null;
+    var ageBadge = ageTierLabel
+        ? '<span style="background:' + (AGE_TIER_COLORS[bcEst.ageTier] || '#607d8b') + ';color:white;font-size:9px;font-weight:bold;padding:1px 6px;border-radius:3px;">'
+            + ageTierLabel + (bcEst.inferredBuildYear ? ' · ' + (today.getFullYear() - bcEst.inferredBuildYear) + '년차(추정)' : '') + '</span>'
+        : '';
+    var sizeAgeLine = (bcEst.pyung || ageBadge)
+        ? '<div style="font-size:10px;color:#555;margin-top:2px;">' + (bcEst.pyung ? bcEst.pyung + '평 ' : '') + ageBadge + '</div>'
+        : '';
     var marginLine = (c.resaleMatch && c.estMargin !== null && c.estMargin !== undefined)
         ? '<div style="color:#2e7d32;font-size:9.5px;">추정마진 ' + toEok(String(Math.round(c.estMargin))) + '</div>' : '';
     var div = document.createElement('div');
@@ -10180,6 +10216,7 @@ function placeBidCaseMarker(c) {
         + '<div class="bc-rematch-badge" title="매도사례 재매칭" onclick="event.stopPropagation();retryMatchOneCase(\'' + cidJs + '\')">🔄</div>'
         + '<div class="bc-delete-badge" title="이 낙찰사례 삭제" onclick="event.stopPropagation();deleteBidCase(\'' + cidJs + '\')">✕</div>'
         + '<div style="color:#333;font-size:11px;font-weight:bold;overflow:hidden;text-overflow:ellipsis;max-width:180px;margin-top:5px;">' + (c.caseNo || '(사건번호 미상)') + '</div>'
+        + sizeAgeLine
         + predictedLine
         + '<div style="color:#00695c;font-size:12px;font-weight:bold;">' + priceLine + '</div>'
         + impliedLine
