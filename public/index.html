@@ -10428,11 +10428,14 @@ async function openRadiusCompFinder() {
 
     aiCompFinderMode = 'radius';
     var targetFloor = parseInt(document.getElementById('a-floor').value) || null;
+    // ⚠️ 2026-08(사용자 요청): "연식차 범위가 너무 넓다" - findComparablesInRadius에 대상
+    // 건물연식을 넘겨 ±5년 하드컷을 적용함(아래 findComparablesInRadius 참고).
+    var targetYear = getAuctionBuildYear();
     // ⚠️ 2026-08(사용자 요청): "500m 밖은 시세로 확인하기에 편차가 너무 크다" - 연립다세대만
     // 500m로 좁힘(아파트는 기존 1km 그대로, 절대 함께 바꾸지 말 것).
     var radiusM = (targetBuildingType === 'villa') ? 500 : 1000;
     var radiusLabel = radiusM >= 1000 ? (radiusM / 1000) + 'km' : radiusM + 'm';
-    aiCompCandidates = findComparablesInRadius(lat, lon, targetBuildingType, radiusM, ctx.name, ctx.dong, ctx.bunji, targetFloor);
+    aiCompCandidates = findComparablesInRadius(lat, lon, targetBuildingType, radiusM, ctx.name, ctx.dong, ctx.bunji, targetFloor, targetYear);
     var titleEl = document.getElementById('ai-comp-modal-title');
     if (titleEl) titleEl.innerText = '📍 반경 ' + radiusLabel + ' 비교물건 (' + aiCompCandidates.length + '건)';
     renderAiCompList();
@@ -10471,8 +10474,13 @@ function getFloorTier(floorNum, maxFloor) {
    많은 경우에도 반경 안의 다른 단지 거래가 먼저 뜨는 문제가 있었음(주공9단지 사례 등).
    대상 물건과 같은 단지(matchesAuctionKey로 단지명 또는 법정동+지번 일치 판정)인 거래는
    항상 맨 앞에, 그 안에서는 최신순으로 두고, 나머지만 거리순으로 뒤에 붙임. */
-function findComparablesInRadius(lat, lon, targetBuildingType, radiusM, targetName, targetDong, targetBunji, targetFloor) {
+function findComparablesInRadius(lat, lon, targetBuildingType, radiusM, targetName, targetDong, targetBunji, targetFloor, targetYear) {
     var candidates = [];
+    // ⚠️ 2026-08(사용자 피드백: "연식차 범위가 너무 넓다. 최대연식차 10년이 안되게") - 원래
+    // 이 함수는 하드컷이 아예 없어(자동추천이 실패했을 때 폭넓게 훑어보는 용도) 연식이 16년
+    // 이상 차이나는 후보까지 섞여 나올 수 있었음. findSimilarComps의 ±3년보다는 여유를 두되
+    // (완전히 없애면 원래 취지가 사라지므로) ±5년(대상과 최대 5년 차이, 총 갭 10년)으로 제한함.
+    var RADIUS_AGE_TOLERANCE = 5;
     // targetFloor가 없으면(호출부에서 안 넘겼거나 대상 층수를 모르면) 기존처럼 지하는 항상 제외.
     // 있으면 대상과 같은 층수구간(지하/1층/탑층/일반층)인 거래만 남김 - getFloorTier 참고.
     var targetTierNoMax = (targetFloor !== undefined && targetFloor !== null) ? getFloorTier(targetFloor, null) : null;
@@ -10496,7 +10504,10 @@ function findComparablesInRadius(lat, lon, targetBuildingType, radiusM, targetNa
             var candTier = getFloorTier(floorNum, isSameComplex ? maxFloor : null);
             if (targetTier) { if (candTier !== targetTier) return; }
             else if (candTier === 'basement') return; // 대상층 모름 - 기존처럼 최소한 지하는 제외
-            candidates.push({ trade: t, dist: Math.round(dist), ageDiff: null, floorDiff: null, score: dist,
+            var by = parseInt(t.build_year);
+            var ageDiff = (targetYear && Number.isFinite(by)) ? Math.abs(targetYear - by) : null;
+            if (ageDiff !== null && ageDiff > RADIUS_AGE_TOLERANCE) return; // 연식차 ±5년(최대 갭 10년) 초과 제외
+            candidates.push({ trade: t, dist: Math.round(dist), ageDiff: ageDiff, floorDiff: null, score: dist,
                 apt: apt, coordLat: coord.lat, coordLon: coord.lon, isSameComplex: isSameComplex }); // 승강기 조회(fetchElevatorForApt)에 씀
         });
     });
@@ -10828,14 +10839,22 @@ function renderAiCompList() {
         return;
     }
     var html = '';
+    // ⚠️ 2026-08(사용자 요청: "연식차가 많이 나면 비교버튼으로 등록이 안되게") - 후보 생성
+    // 단계(findComparablesInRadius/findSimilarComps)에서 이미 연식 하드컷을 걸어두지만, 같은
+    // 단지(isSameComplex) 거래는 그 하드컷을 건너뛰는 예외가 있어 이론상 큰 연식차가 남을 수
+    // 있음. 그런 경우까지 이중으로 막기 위해 렌더링 단계에서도 ageDiff가 이 값을 넘으면
+    // 체크박스를 아예 비활성화(선택 불가)하고 흐리게 표시함.
+    var AI_COMP_AGE_DISABLE = 5;
     aiCompCandidates.forEach(function(c, i) {
         var t = c.trade;
         var dateStr = t.year + '.' + String(t.month).padStart(2,'0') + '.' + String(t.day).padStart(2,'0');
-        html += '<label style="display:flex;align-items:flex-start;gap:8px;padding:8px 0;border-bottom:1px solid #f0f0f0;cursor:pointer;">'
-            + '<input type="checkbox" class="ai-comp-check" data-idx="' + i + '" checked style="margin-top:3px;">'
+        var ageTooBig = c.ageDiff !== null && c.ageDiff > AI_COMP_AGE_DISABLE;
+        html += '<label style="display:flex;align-items:flex-start;gap:8px;padding:8px 0;border-bottom:1px solid #f0f0f0;' + (ageTooBig ? 'opacity:0.45;cursor:not-allowed;' : 'cursor:pointer;') + '">'
+            + '<input type="checkbox" class="ai-comp-check" data-idx="' + i + '" ' + (ageTooBig ? 'disabled' : 'checked') + ' style="margin-top:3px;">'
             + '<div style="flex:1;font-size:12px;">'
             + '<div style="font-weight:bold;color:#333;">' + (t.name || t.dong)
             + (c.isSameComplex ? ' <span style="background:#00695c;color:#fff;font-size:9px;font-weight:normal;padding:1px 5px;border-radius:8px;">같은 단지</span>' : '')
+            + (ageTooBig ? ' <span style="background:#e53935;color:#fff;font-size:9px;font-weight:normal;padding:1px 5px;border-radius:8px;">연식차 커서 등록불가</span>' : '')
             + ' · ' + dateStr + '</div>'
             + '<div style="color:#555;margin-top:2px;">' + toEok(t.amount) + ' · ' + toPyung(t.area) + '평 · ' + floorTierLabel(t.floor) + ' · ' + (t.build_year || '-') + '년 · <span id="ai-comp-elev-' + i + '">' + (c.apt ? '확인 중...' : elevatorStatusText(null)) + '</span></div>'
             + '<div style="color:#999;font-size:10px;margin-top:2px;">거리 ' + c.dist + 'm'
