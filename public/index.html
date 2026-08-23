@@ -6759,7 +6759,21 @@ function auctionBiasCases() {
         var predicted = parseInt(a.predictedBid), actual = parseInt(a.actualBid);
         var diff = actual - predicted;
         var diffPct = Math.round((diff / predicted) * 1000) / 10;
-        return { a: a, predicted: predicted, actual: actual, diff: diff, diffPct: diffPct };
+        // 🏷️ 낙찰가 역산 시세(2026-08) - 실제낙찰가로 손익분기(margin=0)를 맞추려면 최소 얼마에
+        // 팔 수 있어야 했는지 역산(solveImpliedTargetFromBid)해서, 시스템이 애초에 추정했던
+        // 매도가(a.target, 비교물건 기반)와 비교함. predictedBid가 있다는 건 이미 a.target>0이
+        // 보장된 케이스라(solveAuctionBidFromRecord가 target>0을 요구) 별도 필터 없이 계산 가능.
+        var impliedTarget = null, targetGapPct = null;
+        var systemTarget = parseInt(a.target) || 0;
+        if (systemTarget > 0) {
+            var impliedRes = solveImpliedTargetFromBid(a, 0);
+            if (impliedRes && impliedRes.target > 0) {
+                impliedTarget = impliedRes.target;
+                targetGapPct = Math.round(((impliedTarget - systemTarget) / systemTarget) * 1000) / 10;
+            }
+        }
+        return { a: a, predicted: predicted, actual: actual, diff: diff, diffPct: diffPct,
+            impliedTarget: impliedTarget, systemTarget: systemTarget, targetGapPct: targetGapPct };
     });
 }
 // 법정동 아코디언 펼침 상태 기억 - 재렌더링(다른 건 저장 등) 후에도 펼쳐뒀던 동은 다시
@@ -6852,12 +6866,40 @@ function buildBiasStatBlock(title, cases, showCases) {
         + '</div>'
         + '<div style="font-size:10.5px;margin-top:4px;color:' + biasColor + ';font-weight:bold;">' + biasLabel + '</div>'
         + '</div>';
+    // 🏷️ 낙찰가 역산(손익분기) 시세 vs 시스템 추정 매도가 - 비교물건/AVM과는 다른 각도(실제
+    // 낙찰자의 입찰행동)로 지역 시세를 검증하는 보조지표. targetGapPct가 있는 케이스만 집계.
+    var tgCases = cases.filter(function(c) { return c.targetGapPct !== null; });
+    if (tgCases.length) {
+        var tgPcts = tgCases.map(function(c) { return c.targetGapPct; });
+        var tgAvg = Math.round((tgPcts.reduce(function(s, v) { return s + v; }, 0) / tgPcts.length) * 10) / 10;
+        var tgMed = Math.round(median(tgPcts) * 10) / 10;
+        var tgColor = tgMed > 0 ? '#c62828' : (tgMed < 0 ? '#1565c0' : '#555');
+        var tgLabel = tgMed > 0
+            ? '낙찰가 역산 손익분기 시세가 시스템 추정 매도가보다 중간값 +' + tgMed + '% 높음 (이 지역 시세를 낮게 잡고 있을 가능성)'
+            : (tgMed < 0
+                ? '낙찰가 역산 손익분기 시세가 시스템 추정 매도가보다 중간값 ' + tgMed + '% 낮음 (낙찰자들이 무리하게 입찰했거나, 시스템 추정이 낙관적일 가능성)'
+                : '역산 시세와 시스템 추정 매도가가 대체로 일치');
+        html += '<div style="padding:6px 14px;border-top:1px dashed #eee;">'
+            + '<div style="font-size:10px;color:#999;margin-bottom:2px;">🏷️ 낙찰가 역산(손익분기) 시세 vs 시스템 추정 매도가 - 오차율(%), 표본 ' + tgCases.length + '건</div>'
+            + '<div class="bc-stat-grid" style="grid-template-columns:repeat(4,1fr);">'
+            + '<div class="bc-stat-item"><div class="bc-stat-label">중간값</div><div class="bc-stat-value" style="color:' + tgColor + ';">' + (tgMed > 0 ? '+' : '') + tgMed + '%</div></div>'
+            + '<div class="bc-stat-item"><div class="bc-stat-label">평균</div><div class="bc-stat-value">' + (tgAvg > 0 ? '+' : '') + tgAvg + '%</div></div>'
+            + '<div class="bc-stat-item"><div class="bc-stat-label">최소</div><div class="bc-stat-value">' + (Math.round(Math.min.apply(null, tgPcts) * 10) / 10) + '%</div></div>'
+            + '<div class="bc-stat-item"><div class="bc-stat-label">최대</div><div class="bc-stat-value">' + (Math.round(Math.max.apply(null, tgPcts) * 10) / 10) + '%</div></div>'
+            + '</div>'
+            + '<div style="font-size:10.5px;margin-top:4px;color:' + tgColor + ';font-weight:bold;">' + tgLabel + '</div>'
+            + '</div>';
+    }
     if (showCases) {
         cases.slice().sort(function(x, y) { return (y.a.bidDate || '').localeCompare(x.a.bidDate || ''); }).forEach(function(c) {
             html += '<div class="bc-case-item" style="cursor:pointer;" onclick="openAuctionModal(\'' + c.a.id + '\')">'
                 + '<div style="font-weight:bold;">' + (cleanField(c.a.caseNo) || cleanField(c.a.name) || cleanField(c.a.addr) || '(물건정보 없음)') + '</div>'
                 + '<div style="color:#999;">예측 ' + toEok(String(c.predicted)) + ' → 실제 ' + toEok(String(c.actual))
                 + ' <span style="color:' + (c.diff > 0 ? '#c62828' : (c.diff < 0 ? '#1565c0' : '#555')) + ';">(' + (c.diffPct > 0 ? '+' : '') + c.diffPct + '%)</span></div>'
+                + (c.targetGapPct !== null
+                    ? '<div style="color:#999;">🏷️ 역산시세 ' + toEok(String(c.impliedTarget)) + ' vs 추정매도가 ' + toEok(String(c.systemTarget))
+                        + ' <span style="color:' + (c.targetGapPct > 0 ? '#c62828' : (c.targetGapPct < 0 ? '#1565c0' : '#555')) + ';">(' + (c.targetGapPct > 0 ? '+' : '') + c.targetGapPct + '%)</span></div>'
+                    : '')
                 + '</div>';
         });
     }
@@ -11543,6 +11585,72 @@ function solveAuctionBidFromRecord(a) {
         if (netProfit > marginValue) lo = mid; else hi = mid;
     }
     return { bid: Math.round(lo) };
+}
+/* 🔄 solveAuctionBidFromRecord()의 역함수(2026-08, 사용자 요청: "낙찰가 기준으로 낙찰자가
+   얼마에 팔 생각이었는지 추론해서 시세를 검증하고 싶다") - 실제낙찰가(actualBid)는 고정하고,
+   그 낙찰가로 marginValue(목표마진, 0=손익분기)를 달성하려면 매도가가 최소 얼마여야 하는지를
+   거꾸로 이진탐색으로 역산함. 같은 비용함수(취등록세·법무비·대출이자·중개수수료·양도세 등)를
+   그대로 재사용하되, 검색 변수만 bid↔target으로 뒤바뀜:
+     - solveAuctionBidFromRecord: target 고정 → bid를 찾음 (agentFee는 target이 고정이라
+       루프 밖에서 한 번만 계산, acqTax/registryFee/loanAmount는 bid 후보(mid)마다 재계산)
+     - 이 함수: bid(actualBid) 고정 → target을 찾음 (반대로 acqTax/registryFee는 bid가
+       고정이라 루프 밖에서 한 번만 계산, agentFee/loanAmount는 target 후보(mid)마다 재계산 -
+       agentFee는 매도가 기준 중개수수료라 target에 의존하고, loanAmount도 수도권 규제지역
+       LTV 산정에 saleValueEstimate(=target)를 쓰므로 target이 바뀌면 같이 바뀜)
+   활용법: 낙찰자가 실제로 그 가격에 입찰했다는 사실 자체가 "이 정도엔 팔릴 것"이라 믿었다는
+   방증이므로, marginValue=0(손익분기)으로 역산한 값이 시스템의 비교물건/AVM 추정 매도가보다
+   훨씬 높으면 그 지역 시세를 시스템이 과소평가하고 있다는 신호. 반대로 훨씬 낮으면 낙찰자가
+   손해를 감수하고 무리하게 입찰했을(초보 입찰자의 과열입찰 등) 가능성 쪽으로 해석함 - 어느
+   쪽이든 비교물건 표본이 부족한 동네에서도 "낙찰가 데이터만 있으면" 계산되는 독립적인 시세
+   검증 신호라, 비교물건 표본과는 다른 각도로 지역 시세를 교차검증하는 용도로 씀. */
+function solveImpliedTargetFromBid(a, marginValue) {
+    var actualBid = parseInt(a.actualBid) || 0;
+    if (!actualBid || actualBid <= 0 || marginValue === null || marginValue === undefined) return null;
+    var propType = a.propType || '', pyung = parseFloat(a.pyung) || 0;
+    var houseRank = parseInt(a.houseRank) || 1, isAdjusted = !!a.isAdjusted, isLocalCheap = !!a.isLocalCheap;
+    var repair = parseInt(a.repair) || 0, etc = parseInt(a.etc) || 0;
+    var assumedDeposit = parseInt(a.assumedDeposit) || 0;
+    var unpaidMgmtFee = parseInt(a.unpaidMgmtFee) || 0;
+    var officialPriceWon = parseInt(a.officialPriceWon) || 0;
+    var holdsJune1 = !!a.holdsJune1;
+    var totalOfficialPriceManwon = parseInt(a.totalOfficialPriceManwon) || 0;
+    var holdMonths = parseInt(a.holdMonths) || 0;
+    var interestHoldMonths = holdMonths > 0 ? holdMonths : DEFAULT_INTEREST_HOLD_MONTHS;
+    var propertyTax = calcPropertyTax(officialPriceWon, houseRank, holdsJune1, holdMonths);
+    var compTax = calcCompTax(totalOfficialPriceManwon, officialPriceWon, houseRank, holdsJune1, holdMonths);
+    var moving = parseInt(a.moving) || calcMovingFee(pyung) || 0;
+    var cleaning = parseInt(a.cleaning) || calcCleaningFee(pyung) || 0;
+    var bidMethod = a.bidMethod || 'dealer';
+    var appraisal = parseInt(a.appraisal) || 0;
+    var addr = a.addr || '';
+    var evictionFee = calcEvictionFee(pyung);
+    // bid(=actualBid)는 이미 고정값이므로 bid에만 의존하는 항목(취등록세·법무비)은 루프 밖에서
+    // 한 번만 계산 - loanRate도 category별 고정값이라(수도권 규제지역이든 아니든 금리 자체는
+    // priceBasis에 안 좌우됨, calcRegionAwareLoan 참고) 대표값(actualBid)으로 한 번만 조회.
+    var acqTax = calcAcquisitionTaxDetailed(actualBid, propType, pyung, houseRank, isAdjusted, isLocalCheap);
+    var registryFee = calcRegistryFee(actualBid);
+    var loanRateInput = parseFloat(a.loanRate);
+    var loanRate = (loanRateInput > 0) ? loanRateInput : calcRegionAwareLoan(bidMethod, addr, actualBid, appraisal, actualBid).rate;
+    var loanPrepayFeeRateInput = parseFloat(a.loanPrepayFeeRate);
+    var loanPrepayFeeRate = (loanPrepayFeeRateInput > 0) ? loanPrepayFeeRateInput : DEFAULT_LOAN_PREPAY_FEE_RATE;
+    // ⚠️ 상한을 처음엔 3배로 뒀다가 라운드트립 테스트(target→bid→역산target 왕복)에서 저가·고마진
+    // 조합(예: 1억 목표+2천만 마진처럼 마진 비중이 큰 경우) 낙찰가가 목표가 대비 극단적으로
+    // 낮게 나올 수 있어 3배로는 탐색범위가 모자라 상한에 값이 눌리는(클리핑) 사례를 발견함 -
+    // 10배로 넉넉히 늘림(이진탐색 45회 반복이면 10배든 3배든 정밀도엔 차이가 없어 손해 없음).
+    var lo = actualBid, hi = actualBid * 10; // 매도가가 낙찰가보다 낮을 이유는 없다고 가정(하한=낙찰가)
+    for (var i = 0; i < 45; i++) {
+        var mid = (lo + hi) / 2; // mid = 후보 매도가(target)
+        var loanAmount = calcRegionAwareLoan(bidMethod, addr, actualBid, appraisal, mid).amount;
+        var interestCost = calcLoanInterest(loanAmount, loanRate, interestHoldMonths);
+        var prepayFee = calcLoanPrepayFee(loanAmount, loanPrepayFeeRate);
+        var agentFee = calcAgentFee(mid, propType);
+        var preTaxCost = actualBid + acqTax + registryFee + evictionFee + agentFee + repair + etc + moving + cleaning + interestCost + prepayFee + assumedDeposit + unpaidMgmtFee + propertyTax + compTax;
+        var preTaxProfit = mid - preTaxCost;
+        var taxResult = calcResaleIncomeTax(bidMethod, preTaxProfit, holdMonths, isAdjusted, houseRank);
+        var netProfit = preTaxProfit - taxResult.totalTax;
+        if (netProfit < marginValue) lo = mid; else hi = mid; // 목표마진에 못 미치면(target 부족) target을 올려야 함
+    }
+    return { target: Math.round(hi) };
 }
 /* ════════════════════════════════════
    💰 "금액 한눈에 보기" 요약카드 (①예상매도가 ②목표매도가 ③예상마진 ④목표마진 ⑤목표입찰가)
