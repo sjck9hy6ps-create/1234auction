@@ -9981,6 +9981,12 @@ function placeAuctionMarker(a) {
     // 등록된 물건(🔨 주황 글로우)과 한눈에 구분되도록 연한노란색 배지로 따로 표시함.
     // 경매 모달에서 한 번이라도 저장하면 saveAuction()이 isBidTarget을 꺼서 일반 배지로 바뀜.
     var isBidTarget = !!a.isBidTarget;
+    // ⚠️ 2026-08(사용자 피드백: "낙찰사례배지와 낙찰금액 입력한 입찰희망배지는 결국 같은
+    // 배지 같아") - 입찰희망물건에 실제 낙찰금액(actualBid)이 들어오면 더 이상 "희망(대기)"
+    // 상태가 아니라 낙찰사례와 동일하게 "낙찰이 확정된 사건"이므로, 낙찰사례 배지와 같은
+    // 정보(🤖예상매도가/↩️역산매도가/연식·평형/고가낙찰경고)를 보여주도록 함.
+    var isWon = isBidTarget && !!parseFloat(a.actualBid);
+    var awEst = isWon ? getAuctionWonEstimates(a) : null;
 
     // 같은 단지의 일반 거래 데이터가 이미 로딩되어 있으면 등급/인기평형 정보를 가져와 함께 표시
     // ⚠️ 2026-08: 입찰예정물건(isBidTarget)은 매매기록이 있는 주소라도 그 건물배지에 편입시키지
@@ -10012,15 +10018,44 @@ function placeAuctionMarker(a) {
     // 📋 입찰희망(입찰예정물건 일괄등록) 배지는 아직 확정 안 된 감정가보다 실제 진행 중인
     // 현재 최저입찰가(minBid)를 우선 표시함 - 감정가는 최초 1회차 기준이라 유찰이 반복된
     // 물건은 실제 입찰가와 크게 동떨어져 보일 수 있음. minBid가 없으면 감정가로 폴백.
-    var priceLine = a.myBid
-        ? toEok(String(parseInt(a.myBid))) + ' (내 입찰가)'
-        : (isBidTarget && a.minBid
-            ? toEok(String(parseInt(a.minBid))) + ' (최저가)'
-            : (a.appraisal ? toEok(String(parseInt(a.appraisal))) + ' (감정가)' : '가격 미입력'));
- 
-    // 입찰일 전일 0시 ~ 입찰일 24시 사이면 알람 배지 표시
+    var priceLine = isWon
+        ? toEok(String(parseInt(a.actualBid))) + ' (낙찰가)'
+        : a.myBid
+            ? toEok(String(parseInt(a.myBid))) + ' (내 입찰가)'
+            : (isBidTarget && a.minBid
+                ? toEok(String(parseInt(a.minBid))) + ' (최저가)'
+                : (a.appraisal ? toEok(String(parseInt(a.appraisal))) + ' (감정가)' : '가격 미입력'));
+    // 낙찰사례 배지와 동일한 3종 표기(🤖예상매도가/낙찰가/↩️역산매도가) - 낙찰이 이미 확정된
+    // 사건이라 입찰일 알람/D-day는 더 이상 의미가 없어(아래 alarmBadge/dDayBadge는 isWon일 때
+    // 건너뜀) 대신 이 줄들을 보여줌.
+    var predictedLine = '', impliedLine = '', sizeAgeLine = '';
+    if (isWon) {
+        var awPredicted = awEst.predictedSale;
+        predictedLine = '<div style="color:#1976d2;font-size:10.5px;">🤖 예상매도가 ' + (awPredicted ? toEok(String(awPredicted)) : '데이터 부족') + '</div>';
+        var awImplied = awEst.impliedTarget;
+        var awImpliedNote = awImplied
+            ? (awImplied.marginSource === 'region'
+                ? '이 동 낙찰사례 ' + awImplied.count + '건 평균 추정마진 ' + toEok(String(awImplied.regionAvg)) + (awImplied.marginUsed < awImplied.regionAvg ? '(상한 ' + toEok(String(awImplied.marginUsed)) + '으로 조정)' : '') + ' 가정'
+                : '지역 통계 없어 기본 마진 ' + toEok(String(awImplied.marginUsed)) + ' 가정')
+            : '';
+        var awHb = awEst.highBidFlag;
+        var awHighBidNote = awHb
+            ? '이 동 낙찰사례 ' + awHb.count + '건 낙찰가율 중앙값 ' + awHb.dongMedian + '% 대비 이 건 ' + awHb.myRate + '%(+' + awHb.gap + '%p) - 고가낙찰 의심(실수/주택보증공사/실거주 등), 역산매도가가 과대추정됐을 수 있으니 직접 확인 필요'
+            : '';
+        impliedLine = '<div style="color:#6a1b9a;font-size:10.5px;" title="' + (awHb ? awHighBidNote : awImpliedNote) + '">' + (awHb ? '⚠️ ' : '') + '↩️ 역산매도가 ' + (awImplied ? toEok(String(awImplied.target)) : '계산 불가') + '</div>';
+        var awAgeTierLabel = awEst.ageTier ? getVillaTierLabel(awEst.ageTier) : null;
+        var awAgeBadge = awAgeTierLabel
+            ? '<span style="background:' + (AGE_TIER_COLORS[awEst.ageTier] || '#607d8b') + ';color:white;font-size:9px;font-weight:bold;padding:1px 6px;border-radius:3px;">'
+                + awAgeTierLabel + (awEst.inferredBuildYear ? ' · ' + (today.getFullYear() - awEst.inferredBuildYear) + '년차' + (awEst.buildYearConfirmed ? '' : '(추정)') : '') + '</span>'
+            : '';
+        sizeAgeLine = (awEst.pyung || awAgeBadge)
+            ? '<div style="font-size:10px;color:#555;margin-top:2px;">' + (awEst.pyung ? awEst.pyung + '평 ' : '') + awAgeBadge + '</div>'
+            : '';
+    }
+
+    // 입찰일 전일 0시 ~ 입찰일 24시 사이면 알람 배지 표시 (낙찰 확정건은 더 이상 대기중이 아니므로 생략)
     var alarmBadge = '';
-    if (a.bidDate) {
+    if (a.bidDate && !isWon) {
         var bidD = new Date(a.bidDate + 'T00:00:00');
         if (!isNaN(bidD.getTime())) {
             var todayStart = new Date(); todayStart.setHours(0, 0, 0, 0);
@@ -10031,8 +10066,8 @@ function placeAuctionMarker(a) {
             }
         }
     }
-    // 입찰일까지 남은 일수(D-day) - 오늘 기준으로 계산해 매번 최신값으로 표시됨
-    var dDayInfo = a.bidDate ? calcAuctionDday(a.bidDate) : null;
+    // 입찰일까지 남은 일수(D-day) - 오늘 기준으로 계산해 매번 최신값으로 표시됨 (낙찰 확정건은 생략)
+    var dDayInfo = (a.bidDate && !isWon) ? calcAuctionDday(a.bidDate) : null;
     var dDayBadge = dDayInfo
         ? '<div style="color:' + (dDayInfo.diffDays < 0 ? '#9e9e9e' : (dDayInfo.diffDays <= 3 ? '#e53935' : '#1565c0')) + ';font-size:10px;font-weight:bold;margin-top:1px;">⏰ ' + dDayInfo.label + ' (' + a.bidDate + ')</div>'
         : '';
@@ -10043,7 +10078,14 @@ function placeAuctionMarker(a) {
     // ÷ 공시가격이 126%/140%를 넘거나, 임차보증금 ÷ 감정가(전세가율)가 80%/90%를 넘는 경우).
     var numRisk = isBidTarget ? detectNumericAuctionRisk(a) : { level: null, reasons: [] };
     var div = document.createElement('div');
-    div.style.cssText = isBidTarget
+    div.style.cssText = isWon
+        // 낙찰사례 배지(placeBidCaseMarker)와 같은 톤(#00695c, 옅은 청록 그라데이션)으로 맞춰서
+        // "낙찰이 확정된 사건"이라는 게 배지 색만 봐도 낙찰사례와 동일하게 읽히도록 함.
+        ? ('position:relative;background:linear-gradient(180deg,#fff,#eef7fb);border:3px solid '
+            + (numRisk.level === 'high' ? '#c62828' : (numRisk.level === 'medium' ? '#ef6c00' : '#00695c')) + ';border-radius:9px;'
+            + 'padding:4px 9px;margin:4px;margin-top:16px;white-space:nowrap;cursor:pointer;'
+            + 'text-align:center;line-height:1.5;max-width:210px;transform:scale(calc(1.12 * var(--badge-scale,1)));transform-origin:center bottom;')
+        : isBidTarget
         ? ('position:relative;background:linear-gradient(180deg,' + btStyle.bgFrom + ',' + btStyle.bgTo + ');border:3px solid '
             + (numRisk.level === 'high' ? '#c62828' : (numRisk.level === 'medium' ? '#ef6c00' : btStyle.border)) + ';border-radius:9px;'
             + 'padding:4px 9px;margin:4px;margin-top:16px;white-space:nowrap;cursor:pointer;'
@@ -10053,18 +10095,23 @@ function placeAuctionMarker(a) {
             + 'text-align:center;line-height:1.5;max-width:210px;transform:scale(calc(1.12 * var(--badge-scale,1)));transform-origin:center bottom;'
             + 'animation:auctionGlow 1.8s ease-in-out infinite;');
     // 터치 기기 길게 누르기 미리보기용 (setupBadgeLongPressPeek 참고)
-    div.title = [((a.name && a.name.trim()) || a.addrLabel || a.addr || '(이름없음)'), (isBidTarget ? btStyle.icon + ' 입찰희망' : '🔨 ' + a.status), a.caseNo ? '사건번호 ' + a.caseNo : '', priceLine, a.pyung ? a.pyung + '평' : '', ageBadgeText, dDayInfo ? dDayInfo.label + ' (' + a.bidDate + ')' : '', numRisk.reasons.length ? '🚨 ' + numRisk.reasons.join(', ') : ''].filter(Boolean).join(' · ');
-    div.innerHTML = (isBidTarget
+    div.title = [((a.name && a.name.trim()) || a.addrLabel || a.addr || '(이름없음)'), (isWon ? '⚖️ 낙찰' : isBidTarget ? btStyle.icon + ' 입찰희망' : '🔨 ' + a.status), a.caseNo ? '사건번호 ' + a.caseNo : '', priceLine, a.pyung ? a.pyung + '평' : '', ageBadgeText, dDayInfo ? dDayInfo.label + ' (' + a.bidDate + ')' : '', numRisk.reasons.length ? '🚨 ' + numRisk.reasons.join(', ') : ''].filter(Boolean).join(' · ');
+    div.innerHTML = (isWon
+            ? '<div class="auction-badge" style="background:' + (numRisk.level === 'high' ? '#c62828' : (numRisk.level === 'medium' ? '#ef6c00' : '#00695c')) + ';">' + (numRisk.level ? '🚨 ' : '⚖️ ') + '낙찰' + alarmBadge + '</div>'
+            : isBidTarget
             ? '<div class="auction-badge" style="background:' + (numRisk.level === 'high' ? '#c62828' : (numRisk.level === 'medium' ? '#ef6c00' : btStyle.pillBg)) + ';color:' + (numRisk.level ? 'white' : btStyle.pillColor) + ';">'
                 + (numRisk.level ? '🚨 ' : btStyle.icon + ' ') + '입찰희망' + alarmBadge + '</div>'
             : '<div class="auction-badge" style="background:' + sc + ';">🔨 ' + a.status + alarmBadge + '</div>')
         + '<div style="color:#333;font-size:11px;font-weight:bold;overflow:hidden;text-overflow:ellipsis;max-width:185px;margin-top:5px;">'
-        +   ((a.name && a.name.trim()) || a.addrLabel || a.addr || '(이름없음)') + surgeBadge + ageBadge
+        +   ((a.name && a.name.trim()) || a.addrLabel || a.addr || '(이름없음)') + surgeBadge + (isWon ? '' : ageBadge)
         + '</div>'
         // 입찰예정물건 일괄등록으로 채워진 사건번호(caseNo)를 배지에서 바로 확인할 수 있도록 표시
         + (a.caseNo ? '<div style="color:#795548;font-size:9.5px;overflow:hidden;text-overflow:ellipsis;max-width:185px;">📄 ' + a.caseNo + '</div>' : '')
-        + '<div style="color:' + sc + ';font-size:12px;font-weight:bold;">' + priceLine + '</div>'
-        + (a.pyung ? '<div style="color:#888;font-size:10px;">' + a.pyung + '평</div>' : '')
+        + sizeAgeLine
+        + predictedLine
+        + '<div style="color:' + (isWon ? '#00695c' : sc) + ';font-size:12px;font-weight:bold;">' + priceLine + '</div>'
+        + impliedLine
+        + (isWon ? '' : (a.pyung ? '<div style="color:#888;font-size:10px;">' + a.pyung + '평</div>' : ''))
         + dDayBadge
         // 수치 기준 깡통전세 의심 판정이 있으면(감정가/공시가격 대비 보증금 비율 초과) 배지 안에
         // 근거를 그대로 노출 - 색상만으로는 왜 위험한지 알 수 없어서 클릭 전에 판단 가능하도록 함
@@ -10280,6 +10327,93 @@ function getBidCaseEstimates(c) {
         highBidFlag: computeBidCaseHighBidFlag(c),
     };
     bidCaseEstCache[c.id] = result;
+    return result;
+}
+/* ⚠️ 2026-08(사용자 피드백: "낙찰사례배지와 입찰예정물건 일괄등록 후 낙찰금액 입력한 배지는
+   결국 같은 배지 같아") - 실제로 코드를 보니 맞는 지적이었음: 입찰예정물건(auctionList,
+   isBidTarget:true)에 saveActualBidInline()으로 낙찰금액(actualBid)을 넣어도 isBidTarget
+   플래그는 그대로 남고 배지 라벨도 "📋 입찰희망"에서 안 바뀌며 가격 줄도 actualBid를 아예
+   안 봄(myBid/minBid/appraisal만 확인) - 낙찰됐다는 사실 자체가 지도 배지엔 반영이 안 됐음.
+   사용자가 "낙찰사례 배지처럼 보강"을 선택해서, 위 낙찰사례(bidCaseList) 배지의 예상매도가/
+   역산매도가/연식·평형/고가낙찰경고 로직을 auctionList 레코드에도 그대로 적용함. 필드명이
+   달라서(bidCase: areaM2·finalBidPrice·appraisalPrice → 원 단위 / auction: pyung·actualBid·
+   appraisal → 이미 만원 단위) 그대로 재사용은 못 하고 같은 패턴으로 별도 구현하되, 마진 상한/
+   기본값(BC_IMPLIED_MARGIN_CAP/DEFAULT)과 고가낙찰 임계값(BC_HIGH_BID_RATE_GAP)은 그대로 공유함.
+   ⚠️ 단위 주의: auctionList의 actualBid/appraisal/myBid/minBid는 저장 시점부터 이미 "만원"
+   단위임(bidCaseList의 finalBidPrice/appraisalPrice처럼 원 단위가 아님) - 그래서 여기서는
+   /10000 변환을 하지 않음. */
+function auctionWonBuildingType(a) {
+    return (a.propType === 'apt' || a.propType === 'villa') ? a.propType : null;
+}
+function computeAuctionWonCandidates(a) {
+    if (!a.lat || !a.lon) return null;
+    var buildingType = auctionWonBuildingType(a);
+    if (!buildingType) return null;
+    var pyung = parseFloat(a.pyung);
+    if (!pyung || isNaN(pyung)) return null;
+    var floor = parseFloat(a.floor);
+    if (isNaN(floor)) floor = null;
+    var targetYear = a.buildYear || null;
+    var candidates = findSimilarComps(a.lat, a.lon, targetYear, floor, pyung, buildingType, a.name, a.dong, a.bunji, buildingType === 'villa' ? 500 : 2000);
+    return { buildingType: buildingType, pyung: pyung, floor: floor, candidates: candidates, targetYear: targetYear };
+}
+function computeAuctionWonPredictedSale(cands, a) {
+    if (!cands || !cands.candidates.length) return null;
+    var compRecords = cands.candidates.map(convertCandidateToCompRecordHeadless);
+    var estResult = getCompEstValueHeadless(compRecords, cands.pyung, cands.floor, cands.targetYear, { lat: a.lat, lon: a.lon, name: a.name, dong: a.dong });
+    return estResult ? estResult.estValue : null;
+}
+function computeAuctionWonImpliedTarget(a) {
+    if (!a.actualBid) return null;
+    var bid = parseFloat(a.actualBid);
+    if (!bid) return null;
+    var buildingType = auctionWonBuildingType(a);
+    if (!buildingType) return null;
+    var marginInfo = computeBidCaseImpliedMargin({ dong: a.dong }, buildingType);
+    var fakeRecord = {
+        actualBid: bid, propType: buildingType,
+        pyung: parseFloat(a.pyung) || 0, addr: a.addr || a.addrLabel || '',
+        appraisal: parseFloat(a.appraisal) || 0,
+        bidMethod: 'dealer', houseRank: 1, isAdjusted: false, isLocalCheap: false,
+        repair: 0, etc: 0, assumedDeposit: 0, unpaidMgmtFee: 0,
+        officialPriceWon: 0, holdsJune1: false, totalOfficialPriceManwon: 0, holdMonths: 0,
+        loanRate: null, loanPrepayFeeRate: null,
+    };
+    var result = solveImpliedTargetFromBid(fakeRecord, marginInfo.margin);
+    if (!result) return null;
+    return { target: result.target, marginUsed: marginInfo.margin, marginSource: marginInfo.source, regionAvg: marginInfo.regionAvg, count: marginInfo.count };
+}
+function computeAuctionWonHighBidFlag(a) {
+    var bid = parseFloat(a.actualBid), appraisal = parseFloat(a.appraisal);
+    if (!bid || !appraisal || !a.dong) return null;
+    var stats = calcDongBidRateStats(a.dong);
+    if (!stats || stats.lowSample) return null;
+    var myRate = Math.round(bid / appraisal * 1000) / 10;
+    var gap = Math.round((myRate - stats.median) * 10) / 10;
+    if (gap < BC_HIGH_BID_RATE_GAP) return null;
+    return { myRate: myRate, dongMedian: stats.median, gap: gap, count: stats.count };
+}
+var auctionWonEstCache = {};
+function auctionWonEstSignature(a) {
+    return [a.lat, a.lon, a.floor, a.pyung, a.propType, a.name, a.dong, a.bunji, a.actualBid, a.appraisal, a.addr, a.buildYear].join('|');
+}
+function getAuctionWonEstimates(a) {
+    var sig = auctionWonEstSignature(a);
+    var cached = auctionWonEstCache[a.id];
+    if (cached && cached.sig === sig) return cached;
+    var cands = computeAuctionWonCandidates(a);
+    var inferredBuildYear = a.buildYear || computeBidCaseInferredBuildYear(cands);
+    var result = {
+        sig: sig,
+        predictedSale: computeAuctionWonPredictedSale(cands, a),
+        impliedTarget: computeAuctionWonImpliedTarget(a),
+        pyung: parseFloat(a.pyung) || null,
+        inferredBuildYear: inferredBuildYear,
+        buildYearConfirmed: !!a.buildYear,
+        ageTier: inferredBuildYear ? getAgeTierByYear(inferredBuildYear) : null,
+        highBidFlag: computeAuctionWonHighBidFlag(a),
+    };
+    auctionWonEstCache[a.id] = result;
     return result;
 }
 function placeBidCaseMarker(c) {
