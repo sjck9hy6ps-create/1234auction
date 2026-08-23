@@ -1668,6 +1668,39 @@ var lastResolvedLat = null, lastResolvedLon = null;
 // lawdCd를 기록해서, 이미 병합된 지역을 다시 만나면 중복으로 또 이어붙이지 않게 함.
 // (dataCache 자체는 그대로 "이 lawdCd 하나만의" 목록을 담고, allAptList는 그걸 누적한 합집합)
 var mergedLawdCds = new Set();
+// ⚠️ 2026-08(누적 렌더링 상한 도입 - 사용자 피드백): 위 mergedLawdCds가 "병합된 지역"을
+// 무제한으로 계속 늘리기만 해서, 세션이 길어지고 여러 시군구를 옮겨다닐수록 allAptList가
+// 끝없이 불어나 redrawMarkers마다(뷰포트로 걸러내는 단계 포함) 훑어야 할 총량이 계속
+// 커지는 문제가 있었음(부천처럼 인접 구가 많은 지역에서 체감 지연이 유독 심했던 원인 중
+// 하나 - 방금 고친 villaInfoQueue 동시성 버그와 같이 겹쳐서 작용함). "배지가 안 사라짐"
+// 요구사항은 유지하되, 최근 방문한 MAX_MERGED_REGIONS개 지역까지만 실제로 누적 렌더링
+// 대상(allAptList/allRentList)에 남기고, 그보다 오래전에 떠난 지역은 화면에서만 빠지게
+// 함(LRU - 최근에 다시 방문하면 맨 뒤로 이동해 계속 살아남음). dataCache/rentCacheByLawd
+// 자체는 지워지지 않으므로, 빠졌던 지역을 다시 방문해도 API 재호출·연립다세대 건축물정보
+// 재조회 없이 즉시 복원됨(이미 계산해둔 등급·buildingInfo가 그대로 남아있는 객체를 재사용).
+var MAX_MERGED_REGIONS = 8;
+var lawdCdVisitOrder = []; // 앞쪽이 오래된 방문, 뒤쪽이 최근 방문(LRU)
+function touchLawdCd(lawdCd) {
+    var idx = lawdCdVisitOrder.indexOf(lawdCd);
+    if (idx !== -1) lawdCdVisitOrder.splice(idx, 1);
+    lawdCdVisitOrder.push(lawdCd);
+    while (lawdCdVisitOrder.length > MAX_MERGED_REGIONS) {
+        mergedLawdCds.delete(lawdCdVisitOrder.shift());
+    }
+    rebuildMergedLists();
+}
+// mergedLawdCds(현재 "살아있는" 지역 집합)만 골라 allAptList/allRentList를 다시 조립함 -
+// dataCache/rentCacheByLawd는 원본 그대로 두고 그 위에서 뷰(view)만 다시 만드는 것이라,
+// 나중에 지역이 다시 살아나도(touchLawdCd) 잃어버리는 데이터 없이 그대로 복원됨.
+function rebuildMergedLists() {
+    var newAptList = [], newRentList = [];
+    mergedLawdCds.forEach(function(lc) {
+        if (dataCache[lc]) newAptList = newAptList.concat(dataCache[lc]);
+        if (rentCacheByLawd[lc]) newRentList = newRentList.concat(rentCacheByLawd[lc]);
+    });
+    allAptList = newAptList;
+    allRentList = newRentList;
+}
 var lastSigungu = '';
 var currentTrades = [], currentSort = 'date', currentPyung = 'all';
 var currentTypeFilter = 'apt';
@@ -3121,13 +3154,11 @@ async function loadAllData(centerLat, centerLon) {
             if (dataCache[lawdCd]) {
                 lastLawdCd = lawdCd;
                 // ⚠️ 2026-08: 예전엔 allAptList를 이 지역 데이터로 통째로 교체해서, 다른
-                // 지역으로 이동하면 방금 전까지 보이던 배지가 전부 사라졌음. 이미 병합된
-                // 지역이 아닐 때만 기존 목록에 이어붙여서(누적) 이전에 본 배지가 계속 남게 함.
-                if (!mergedLawdCds.has(lawdCd)) {
-                    mergedLawdCds.add(lawdCd);
-                    allAptList = allAptList.concat(dataCache[lawdCd]);
-                    allRentList = allRentList.concat(rentCacheByLawd[lawdCd] || []);
-                }
+                // 지역으로 이동하면 방금 전까지 보이던 배지가 전부 사라졌음. touchLawdCd가
+                // (이미 병합돼 있든 새로 병합하든) LRU를 갱신하고 상한(MAX_MERGED_REGIONS)을
+                // 넘으면 가장 오래전에 본 지역을 자동으로 빼줌 - 위 선언부 주석 참고.
+                mergedLawdCds.add(lawdCd);
+                touchLawdCd(lawdCd);
                 redrawMarkers(); resolve(); return;
             }
             lastLawdCd = lawdCd;
@@ -3164,8 +3195,7 @@ async function loadAllData(centerLat, centerLon) {
                 });
                 dataCache[lawdCd] = regionAptList;
                 mergedLawdCds.add(lawdCd);
-                allAptList = allAptList.concat(regionAptList);
-                allRentList = allRentList.concat(regionRentList);
+                touchLawdCd(lawdCd); // LRU 갱신 + 상한 초과시 오래된 지역 제거(allAptList/allRentList 재조립)
                 setStatus('');
                 redrawMarkers();
                 setTimeout(function() { warmBuildingCache(regionAptList); }, 3000);
