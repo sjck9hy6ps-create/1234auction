@@ -10400,17 +10400,33 @@ function computeAuctionWonHighBidFlag(a) {
 }
 var auctionWonEstCache = {};
 function auctionWonEstSignature(a) {
-    return [a.lat, a.lon, a.floor, a.pyung, a.propType, a.name, a.dong, a.bunji, a.actualBid, a.appraisal, a.addr, a.buildYear].join('|');
+    // ⚠️ a.target(저장된 목표매도가) 추가 - predictedSale이 이 값을 최우선으로 쓰므로, 사용자가
+    // 모달에서 목표매도가를 다시 계산/적용해 값이 바뀌면 캐시가 자동으로 무효화되어야 함.
+    return [a.lat, a.lon, a.floor, a.pyung, a.propType, a.name, a.dong, a.bunji, a.actualBid, a.appraisal, a.addr, a.buildYear, a.target].join('|');
 }
+// ⚠️ 2026-08(사용자 피드백: "기존에 입력해두었던 예상매도가 내용이 데이터부족이라고 나와,
+// 입찰예정일때 분명히 자동계산되었었어") - computeAuctionWonPredictedSale은 findSimilarComps로
+// 반경만 새로 훑는 "맨땅" 재계산이라, 등록 단계에서 이미 저장해둔 진짜 예상매도가(a.target,
+// "③목표매도가" - 호가·매물재고·비교물건·AVM까지 다 반영해서 "🔮 예측 적용"으로 채웠던 값)를
+// 전혀 활용하지 않았음. 그 결과 그 주변에 findSimilarComps로 새로 찾을 후보가 부족한
+// 지역(예: 인천 계양구 임학동 일대 - 낙찰사례 조사 때도 확인했듯 실거래 자체가 드문 동네)에서는
+// 이미 갖고 있던 좋은 값을 버리고 "데이터 부족"으로 후퇴해버리는 문제였음. a.target(저장된
+// 목표매도가)이 있으면 그걸 최우선으로 쓰고, 없을 때만(주로 아직 상세정보를 안 채운 순수
+// 입찰희망 일괄등록 건) findSimilarComps 재계산으로 폴백함.
 function getAuctionWonEstimates(a) {
     var sig = auctionWonEstSignature(a);
     var cached = auctionWonEstCache[a.id];
     if (cached && cached.sig === sig) return cached;
+    var savedTarget = parseInt(a.target) || 0;
+    // cands는 predictedSale이 savedTarget으로 대체되는 경우에도 inferredBuildYear 폴백(연식
+    // 미확정 시 유사물건 중앙값 근사)에 계속 쓰이므로 항상 계산해둠 - 캐싱 레이어가 있어
+    // 신호(sig)가 안 바뀌면 재호출되지 않으니 성능 부담은 없음.
     var cands = computeAuctionWonCandidates(a);
     var inferredBuildYear = a.buildYear || computeBidCaseInferredBuildYear(cands);
     var result = {
         sig: sig,
-        predictedSale: computeAuctionWonPredictedSale(cands, a),
+        predictedSale: savedTarget > 0 ? savedTarget : computeAuctionWonPredictedSale(cands, a),
+        predictedSaleSource: savedTarget > 0 ? 'saved' : 'recalc',
         impliedTarget: computeAuctionWonImpliedTarget(a),
         pyung: parseFloat(a.pyung) || null,
         inferredBuildYear: inferredBuildYear,
