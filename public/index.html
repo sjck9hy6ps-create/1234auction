@@ -10139,13 +10139,33 @@ function computeBidCaseImpliedTarget(c) {
     var result = solveImpliedTargetFromBid(fakeRecord, 0); // marginValue=0 = 손익분기 기준
     return result ? result.target : null;
 }
+/* ⚠️ 2026-08(사용자 피드백: "낙찰사례배지 토글 사용시 딜레이가 많이 발생해") - toggleShowBidCaseBadges()가
+   껐다 켤 때마다 clearBidCaseMarkers()가 bidCaseMarkerSigs를 통째로 비우기 때문에, 다시 켤 때
+   화면에 보이는 낙찰사례 전부가 placeBidCaseMarker()를 다시 타면서 computeBidCasePredictedSale
+   (findSimilarComps 전수조사)을 매번 새로 돌렸음 - 이게 토글할 때마다 눈에 띄게 느려진 원인.
+   이 값은 위치·평형·층·건물유형처럼 거의 안 바뀌는 필드에만 의존하므로, id별로 계산 결과를
+   캐싱해서 그 필드들이 실제로 안 바뀌었으면 재계산을 건너뜀 - showBidCaseBadges(토글 자체)는
+   이 필드 목록에 없으므로 토글만으로는 캐시가 깨지지 않고, 첫 계산 이후로는 즉시 그려짐. */
+var bidCaseEstCache = {};
+function bidCaseEstSignature(c) {
+    return [c.lat, c.lon, c.floor, c.areaM2, c.propertyType, c.buildingName, c.dong, c.bunji, c.finalBidPrice, c.appraisalPrice, c.addrJibun].join('|');
+}
+function getBidCaseEstimates(c) {
+    var sig = bidCaseEstSignature(c);
+    var cached = bidCaseEstCache[c.id];
+    if (cached && cached.sig === sig) return cached;
+    var result = { sig: sig, predictedSale: computeBidCasePredictedSale(c), impliedTarget: computeBidCaseImpliedTarget(c) };
+    bidCaseEstCache[c.id] = result;
+    return result;
+}
 function placeBidCaseMarker(c) {
     var priceLine = c.finalBidPrice
         ? toEok(String(Math.round(c.finalBidPrice / 10000))) + ' (낙찰가)'
         : (c.minBidPrice ? toEok(String(Math.round(c.minBidPrice / 10000))) + ' (최저가)' : '가격 미상');
-    var predictedSale = computeBidCasePredictedSale(c);
+    var bcEst = getBidCaseEstimates(c);
+    var predictedSale = bcEst.predictedSale;
     var predictedLine = '<div style="color:#1976d2;font-size:10.5px;">🤖 예상매도가 ' + (predictedSale ? toEok(String(predictedSale)) : '데이터 부족') + '</div>';
-    var impliedTarget = computeBidCaseImpliedTarget(c);
+    var impliedTarget = bcEst.impliedTarget;
     var impliedLine = c.finalBidPrice
         ? '<div style="color:#6a1b9a;font-size:10.5px;">↩️ 역산매도가 ' + (impliedTarget ? toEok(String(impliedTarget)) : '계산 불가') + '</div>' : '';
     var marginLine = (c.resaleMatch && c.estMargin !== null && c.estMargin !== undefined)
