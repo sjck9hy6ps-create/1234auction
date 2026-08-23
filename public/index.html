@@ -2171,16 +2171,6 @@ function setStatus(msg) {
     if (!msg) { box.style.display = 'none'; return; }
     box.innerText = msg; box.style.display = 'block';
 }
-function clearMarkers() {
-    Object.keys(markers).forEach(function(key) { markers[key].overlay.setMap(null); });
-    markers = {};
-    // ⚠️ markerDataRegistry는 일반 거래 마커뿐 아니라 경매/입찰희망 마커(placeAuctionMarker)도
-    // 겹침 스택피커용으로 같이 등록해두므로, 통째로 비우면 auctionMarkers[id].mKey가 가리키는
-    // 항목이 사라져 다음 렌더링까지 그 배지가 겹침 확인에서 빠지는 상태가 됨 - 같이 정리해줌.
-    clearAuctionMarkers();
-    clearBidCaseMarkers();
-    markerDataRegistry = {};
-}
 function closePanel() {
     document.getElementById('panel').style.display = 'none';
     if (radiusCircle) { radiusCircle.setMap(null); radiusCircle = null; }
@@ -2504,56 +2494,9 @@ function filterAptListToDongArea(list) {
         return currentDongAllowedGeoms.some(function(g) { return isPointInGeometry(c.lat, c.lon, g); });
     });
 }
-/* ── DB 날짜 파싱: "20260630" → {year,month,day} ── */
-function parseDealDate(dateStr) {
-    var s = String(dateStr || '');
-    if (s.length !== 8) return { year: 0, month: 0, day: 0 };
-    return {
-        year:  parseInt(s.slice(0, 4)),
-        month: parseInt(s.slice(4, 6)),
-        day:   parseInt(s.slice(6, 8))
-    };
-}
 /* ════════════════════════════════════
    필터
 ════════════════════════════════════ */
-function getInvestGrade(score, disqualified) {
-    if (disqualified) return { label:'X', color:'#607d8b', bg:'#eceff1' };
-    if (score === null) return null;
-    if (score >= 85) return { label:'S', color:'#b71c1c', bg:'#ffebee' };
-    if (score >= 70) return { label:'A', color:'#e53935', bg:'#fff3e0' };
-    if (score >= 55) return { label:'B', color:'#ff7043', bg:'#fff8e1' };
-    if (score >= 40) return { label:'C', color:'#9e9e9e', bg:'#f5f5f5' };
-    return               { label:'D', color:'#bdbdbd', bg:'#f5f5f5' };
-}
-function calcInvestScore(ind) {
-    if (!ind) return { score: null, disqualified: false, reason: '', breakdown: {} };
-    var reason = [], disqualified = false;
-    if (ind.recentCount !== null && ind.recentCount < 3)  { disqualified = true; reason.push('최근12개월 거래 ' + ind.recentCount + '건'); }
-    if (ind.momentum   !== null && ind.momentum   < 0)   { disqualified = true; reason.push('가격상승률 마이너스(' + ind.momentum + '%)'); }
-    if (ind.volatility !== null && ind.volatility > 10)   { disqualified = true; reason.push('변동계수 ' + ind.volatility + '%'); }
-    var s1 = 0;
-    if (ind.momentum !== null) {
-        if (ind.momentum >= 15) s1 = 40;
-        else if (ind.momentum >= 10) s1 = 32;
-        else if (ind.momentum >= 5)  s1 = 24;
-        else if (ind.momentum >= 0)  s1 = 12;
-    }
-    var s2 = 0;
-    if (ind.volatility !== null) {
-        if (ind.volatility < 3) s2 = 20;
-        else if (ind.volatility < 5) s2 = 15;
-        else if (ind.volatility < 8) s2 = 8;
-    }
-    var s3 = 0;
-    if (ind.turnover !== null) {
-        if (ind.turnover >= 15) s3 = 20;
-        else if (ind.turnover >= 10) s3 = 16;
-        else if (ind.turnover >= 5)  s3 = 10;
-        else s3 = 3;
-    }
-    return { score: s1+s2+s3, disqualified: disqualified, reason: reason.join(' / '), breakdown: { momentum:s1, volatility:s2, turnover:s3 } };
-}
 function calcNewHigh(trades) {
     var pyungMap = {};
     trades.forEach(function(t) {
@@ -2624,58 +2567,6 @@ function buildComparableBadgeHtml(apt) {
     return '<span style="background:#3f51b5;color:white;font-size:10px;font-weight:bold;padding:2px 6px;border-radius:3px;white-space:nowrap;">📌 비교대상: ' + text + '</span>';
 }
 
-function calcInvestIndicators(aptList) {
-    aptList.forEach(function(apt) {
-        var trades = apt.trades;
-        if (!trades || trades.length === 0) { apt.indicators = null; return; }
-        // 월별 평단가 맵
-        var monthMap = {};
-        trades.forEach(function(t) {
-            if (t.area <= 0 || parseInt(t.amount) <= 0) return;
-            var ym = String(t.year) + String(t.month).padStart(2, '0');
-            if (!monthMap[ym]) monthMap[ym] = [];
-            monthMap[ym].push(parseInt(t.amount) / toPyung(t.area));
-        });
-        var ymKeys = Object.keys(monthMap).sort();
-        if (ymKeys.length < 2) { apt.indicators = null; return; }
-        function median(arr) {
-            var s = arr.slice().sort(function(a, b) { return a - b; });
-            var m = Math.floor(s.length / 2);
-            return s.length % 2 ? s[m] : (s[m-1] + s[m]) / 2;
-        }
-        // 모멘텀: 최근 12개월 vs 이전 12개월
-        var now12 = [], prev12 = [];
-        ymKeys.forEach(function(ym) {
-            var yr = parseInt(ym.slice(0,4)), mo = parseInt(ym.slice(4,6));
-            var dt = new Date(yr, mo-1, 1);
-            if (dt >= oneYearAgo) now12 = now12.concat(monthMap[ym]);
-            else if (dt >= twoYearAgo) prev12 = prev12.concat(monthMap[ym]);
-        });
-        var momentum = null;
-        if (now12.length > 0 && prev12.length > 0) {
-            momentum = Math.round((median(now12) - median(prev12)) / median(prev12) * 1000) / 10;
-        }
-        // 변동성
-        var recentYms = ymKeys.filter(function(ym) {
-            var yr = parseInt(ym.slice(0,4)), mo = parseInt(ym.slice(4,6));
-            return new Date(yr, mo-1, 1) >= oneYearAgo;
-        });
-        var volatility = null;
-        if (recentYms.length >= 3) {
-            var meds = recentYms.map(function(ym) { return median(monthMap[ym]); });
-            var mean = meds.reduce(function(a,b) { return a+b; }, 0) / meds.length;
-            var std  = Math.sqrt(meds.reduce(function(a,b) { return a+(b-mean)*(b-mean); }, 0) / meds.length);
-            volatility = Math.round(std / mean * 1000) / 10;
-        }
-        // 회전율
-        var recentTrades = trades.filter(function(t) { return tradeDate(t) >= oneYearAgo; });
-        var recentCount  = recentTrades.length;
-        var uniqueUnits  = new Set(trades.map(function(t) { return t.floor + '_' + Math.round(t.area); })).size;
-        var estUnits     = Math.max(uniqueUnits * 3, recentTrades.length);
-        var turnover     = estUnits > 0 ? Math.round(recentTrades.length / estUnits * 1000) / 10 : null;
-        apt.indicators = { momentum: momentum, volatility: volatility, turnover: turnover, recentCount: recentCount };
-    });
-}
 function getVillaAgeTier(apt) {
     var l = apt.latest || {};
     var buildYear = parseInt(l.build_year, 10);
@@ -2860,45 +2751,6 @@ function passesVillaFilter(apt) {
     }
  
     return matchesElev && matchesPark;
-}
-function pickLatestOne(list) {
-    if (!list.length) return [];
-    var best = list[0];
-    list.forEach(function(a) {
-        var al = a.latest, bl = best.latest;
-        var av = al.year*10000 + al.month*100 + al.day;
-        var bv = bl.year*10000 + bl.month*100 + bl.day;
-        if (av > bv) best = a;
-    });
-    return [best];
-}
-function pickLatestNewHigh(list) {
-    var candidates = [];
-    list.forEach(function(apt) {
-        if (!apt.hasNewHigh) return;
-        var amounts = (apt.newHighPyungs || []).map(function(x) { return x.recentMax; });
-        var matchTrade = null;
-        (apt.trades || []).forEach(function(t) {
-            if (amounts.indexOf(parseInt(t.amount)) !== -1) {
-                if (!matchTrade || tradeDate(t) > tradeDate(matchTrade)) matchTrade = t;
-            }
-        });
-        if (matchTrade) candidates.push({ apt: apt, date: tradeDate(matchTrade) });
-    });
-    if (!candidates.length) return pickLatestOne(list);
-    candidates.sort(function(a, b) { return b.date - a.date; });
-    return [candidates[0].apt];
-}
-function passesFilter(apt) {
-    if (currentTypeFilter === 'apt'   && apt.buildingType !== 'apt')   return false;
-    if (currentTypeFilter === 'villa' && apt.buildingType !== 'villa') return false;
- 
-    if (!activeGrades.has('all')) {
-        // 필터칸의 "등급"은 연식단계 구분 없는 지역 전체 등급(overallGrade) 기준.
-        // 마커·패널의 배지 표기(연식단계별 grade)와는 별개 값임.
-        if (!apt.overallGrade || !activeGrades.has(String(apt.overallGrade))) return false;
-    }
-    return true;
 }
 function toggleFilterPanel() {
     var p = document.getElementById('filter-panel');
@@ -6798,6 +6650,19 @@ function panToBiasDong(dong) {
     map.setLevel(5);
     dropDestinationPin(withCoord.a.lat, withCoord.a.lon);
 }
+/* 개별 건(사건번호) 클릭시 그 물건의 정확한 주소지로 이동 - panToBiasDong(동 단위, 그 동의
+   "아무 물건 좌표"로 대략 이동)보다 더 정밀하게 이 건 자체의 좌표로 이동함. 기존엔 사건 항목을
+   누르면 무조건 상세 모달이 열렸는데(openAuctionModal), 지도에서 위치부터 눈으로 확인하고
+   싶다는 요청(2026-08)으로 사건번호 텍스트만 따로 이 함수에 연결하고 나머지 영역은 기존처럼
+   모달을 열도록 둠 - panToBiasDong과 동일하게 event.stopPropagation()으로 부모(모달 열기)
+   클릭이 같이 발동하지 않게 함. */
+function panToBiasCase(id) {
+    var c = auctionList.find(function(a) { return a.id === id; });
+    if (!c || !c.lat || !c.lon) { alert('이 물건의 좌표를 찾지 못해 이동할 수 없습니다.'); return; }
+    map.setCenter(new kakao.maps.LatLng(c.lat, c.lon));
+    map.setLevel(4);
+    dropDestinationPin(c.lat, c.lon);
+}
 function renderAuctionBiasStats() {
     var box = document.getElementById('auction-bias-stats-body');
     if (!box) return;
@@ -6893,7 +6758,7 @@ function buildBiasStatBlock(title, cases, showCases) {
     if (showCases) {
         cases.slice().sort(function(x, y) { return (y.a.bidDate || '').localeCompare(x.a.bidDate || ''); }).forEach(function(c) {
             html += '<div class="bc-case-item" style="cursor:pointer;" onclick="openAuctionModal(\'' + c.a.id + '\')">'
-                + '<div style="font-weight:bold;">' + (cleanField(c.a.caseNo) || cleanField(c.a.name) || cleanField(c.a.addr) || '(물건정보 없음)') + '</div>'
+                + '<div style="font-weight:bold;"><span onclick="event.stopPropagation();panToBiasCase(\'' + c.a.id + '\')" style="text-decoration:underline dotted;text-underline-offset:2px;" title="클릭하면 이 물건 위치로 지도가 이동합니다">' + (cleanField(c.a.caseNo) || cleanField(c.a.name) || cleanField(c.a.addr) || '(물건정보 없음)') + '</span></div>'
                 + '<div style="color:#999;">예측 ' + toEok(String(c.predicted)) + ' → 실제 ' + toEok(String(c.actual))
                 + ' <span style="color:' + (c.diff > 0 ? '#c62828' : (c.diff < 0 ? '#1565c0' : '#555')) + ';">(' + (c.diffPct > 0 ? '+' : '') + c.diffPct + '%)</span></div>'
                 + (c.targetGapPct !== null
@@ -8662,16 +8527,6 @@ function calcLoanAmount(bidMethod, bid, appraisal) {
     var byBid = bid * 0.8;
     var byAppraisal = (appraisal && appraisal > 0) ? appraisal * 0.7 : Infinity;
     return Math.round(Math.min(byBid, byAppraisal));
-}
-/* ⚠️ 대출금액 수동입력(2026-08 추가) - calcLoanAmount()는 "낙찰가×비율" 자동추정치라
-   실제 승인금액과 다를 수 있음(신탁대출90%/개인담보대출은 어디까지나 근사치). 실제로
-   대출을 실행하면 금액이 비율이 아니라 확정된 액수로 나오므로, 사용자가 "실제 대출금액"
-   칸(a-loan-amount-manual)에 그 금액을 직접 입력하면 이 함수가 자동계산 대신 그 값을
-   그대로 씀 - 마진분석의 대출이자·필요현금이 실제 승인금액 기준으로 계산돼 종합
-   누적리포트(dashboard.html)와의 오차를 줄임. 비워두면(0 또는 미입력) 기존처럼 자동계산. */
-function getEffectiveLoanAmount(bidMethod, bid, appraisal, manualLoanAmount) {
-    if (manualLoanAmount && manualLoanAmount > 0) return manualLoanAmount;
-    return calcLoanAmount(bidMethod, bid, appraisal);
 }
 // 대출금리 기본값(연%) - 비워두면 이 값 적용. 2026년 경락잔금대출(개인)·신탁대출(매매사업자) 시세 참고치.
 var DEFAULT_LOAN_RATE = { individual: 5.0, dealer: 6.5 };
