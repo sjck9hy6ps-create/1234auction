@@ -3009,8 +3009,8 @@ function clearBadgePushOffsets() {
    그룹으로 묶고, 그 그룹을 세로(Y) 기준 위→아래 순서로 정렬한 뒤 순서대로 차곡차곡 쌓는"
    더 단순하고 확실한 방식으로 바꿈 - 지도 위 라벨 겹침 처리에서 흔히 쓰는 방식이고,
    상쇄 없이 그룹 내에서는 이동 한도(BADGE_PUSH_MAX_OFFSET) 안에서 항상 풀림. */
-function pushApartOverlaps(scale) {
-    var divs = collectVisibleBadgeDivs();
+function pushApartOverlaps(scale, divs) {
+    divs = divs || collectVisibleBadgeDivs();
     if (divs.length < 2) return;
     var items = divs.map(function(d) {
         var r = d.getBoundingClientRect();
@@ -3064,10 +3064,23 @@ function resolveBadgeOverlaps() {
     var scale = computeBadgeScale(map.getLevel());
     mapEl.style.setProperty('--badge-scale', scale);
     void mapEl.offsetHeight;
+    // ⚠️ 2026-08(부천 확대 중 프리징 재현·원인분석 - #393): collectVisibleBadgeDivs()는
+    // markers/auctionMarkers/bidCaseMarkers 레지스트리 전체(누적 렌더링(#376) 이후 세션이
+    // 길어지고 경매물건이 쌓일수록 계속 커짐 - 부천처럼 여러 구를 오간 뒤라면 수백 개도
+    // 흔함)를 순회하며 원소마다 getBoundingClientRect()를 호출해 화면 안에 있는지 확인함.
+    // 예전엔 이 전체 스캔을 아래 반복문 안에서 매 반복(최대 14회, BADGE_OVERLAP_MAX_ITER)마다
+    // 다시 실행했는데, 정작 반복 사이에 바뀌는 건 배지 크기/위치(스케일)뿐이고 "어떤 배지가
+    // 화면에 보이는지" 자체는 같은 resolveBadgeOverlaps() 호출 안에서는 바뀌지 않음 - 그런데도
+    // 레지스트리 전체 스캔을 14번 반복해서 getBoundingClientRect 호출 수가
+    // (레지스트리 크기)×14로 불어났고, 이후 pushApartOverlaps()가 또 한 번 전체를 재스캔했음.
+    // 레지스트리가 큰 지역에서 줌(확대)할 때 이 반복 스캔 + 매 단계 강제 리플로우(offsetHeight)가
+    // 누적되어 브라우저 응답없음의 유력한 원인으로 보고, 화면에 보이는 배지 목록은 딱 한 번만
+    // 구하고 이후 반복에서는 그 목록만 재측정하도록 바꿈(스캔 비용을 레지스트리 크기가 아니라
+    // 실제 화면에 보이는 배지 수에 비례하게 함).
+    var divs = collectVisibleBadgeDivs();
+    if (divs.length < 2) return;
     var stillOverlapped = false;
     for (var iter = 0; iter < BADGE_OVERLAP_MAX_ITER; iter++) {
-        var divs = collectVisibleBadgeDivs();
-        if (divs.length < 2) return;
         var rects = divs.map(function(d) { return d.getBoundingClientRect(); });
         var overlapped = false;
         for (var i = 0; i < rects.length && !overlapped; i++) {
@@ -3082,8 +3095,8 @@ function resolveBadgeOverlaps() {
         void mapEl.offsetHeight; // transform 변경을 강제로 반영(리플로우)해서 다음 측정이 정확하게 함
         stillOverlapped = true;
     }
-    // 최소 크기까지 줄였는데도 겹치면 밀어내기로 마무리함
-    if (stillOverlapped) pushApartOverlaps(scale);
+    // 최소 크기까지 줄였는데도 겹치면 밀어내기로 마무리함 (이미 구한 divs를 그대로 넘겨 재스캔 방지)
+    if (stillOverlapped) pushApartOverlaps(scale, divs);
 }
 var badgeOverlapTimer = null;
 function scheduleOverlapResolve() {
