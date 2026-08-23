@@ -91,6 +91,11 @@ body { font-family:'Malgun Gothic',sans-serif; }
 .ft-reset { background:#f5f5f5; color:#888; }
 #filter-panel { max-width: 680px; }
 #filter-toggle-btn { max-width: 680px; }
+/* 2026-08(사용자 피드백: "지도 배지 종류가 많아 헷갈리고 자주 쓰는 기능까지 클릭수가 많다") -
+   filter-panel 안을 "표시"(껐다 켰다 하는 보기 토글)와 "속성 필터"(등급·연식 등으로 거르는
+   조건) 두 탭으로 나눔. 기존 surge-tab-btn 스타일을 그대로 재사용해 새 CSS를 늘리지 않음. */
+.filter-panel-tabs { display:flex; gap:4px; padding-bottom:4px; margin-bottom:2px; border-bottom:1px solid #eee; }
+.filter-panel-tabs .surge-tab-btn { margin-right:0; }
     
 #legend {
     position:absolute; bottom:20px; left:14px; z-index:10;
@@ -645,6 +650,12 @@ tr:hover td { background:#fffde7; }
 <div id="geo-tools-group">
     <button class="geo-tool-btn" id="compass-toggle-btn" onclick="toggleCompass()" title="나침반 (거실창 방향 확인)">🧭</button>
     <button class="geo-tool-btn" id="mylocation-toggle-btn" onclick="toggleMyLocationTracking()" title="실시간 내 위치">📍</button>
+    <!-- 2026-08(사용자 피드백: "자주 쓰는 기능까지 클릭수가 많다") - 예전엔 ⚖️ 낙찰사례 배지
+         숨김/표시가 필터 ▾ 패널을 열어야만 있었음. 가장 자주 여닫는 토글이라 다른 지도 도구
+         버튼(나침반·내위치)과 같은 자리에 아이콘 하나만 추가해 바로 누를 수 있게 함 - 상태는
+         필터패널 안의 기존 bidcasebadge-toggle-btn과 toggleShowBidCaseBadges()가 그대로
+         동기화해줌(둘 중 아무거나 눌러도 서로 같이 바뀜). -->
+    <button class="geo-tool-btn" id="bidcasebadge-quick-btn" onclick="toggleShowBidCaseBadges()" title="⚖️ 낙찰사례 배지 표시/숨김">⚖️</button>
 </div>
 <div id="compass-hud">
     <div id="compass-pointer"></div>
@@ -664,58 +675,71 @@ tr:hover td { background:#fffde7; }
 </div>
 <button id="filter-toggle-btn" onclick="toggleFilterPanel()">필터 ▾</button>
 <div id="filter-panel">
-     <div class="filter-row">
-        <div class="filter-row-label">등급</div>
-        <button class="filter-tab ft-g" data-g="1" onclick="toggleGrade('1',this)">1등급</button>
-        <button class="filter-tab ft-g" data-g="2" onclick="toggleGrade('2',this)">2등급</button>
-        <button class="filter-tab ft-g" data-g="3" onclick="toggleGrade('3',this)">3등급</button>
-        <button class="filter-tab ft-g" data-g="4" onclick="toggleGrade('4',this)">4등급</button>
-        <button class="filter-tab ft-g" data-g="5" onclick="toggleGrade('5',this)">5등급</button>
-        <button class="filter-tab ft-g" data-g="6" onclick="toggleGrade('6',this)">6등급</button>
-        <button class="filter-tab ft-g" data-g="7" onclick="toggleGrade('7',this)">7등급</button>
-        <button class="filter-tab ft-reset" onclick="resetGradeFilter()">초기화</button>
+    <!-- ⚠️ 2026-08(사용자 피드백: "지도 배지가 종류별로 너무 많아 헷갈리고, 자주 쓰는 기능까지
+         클릭수가 많다") - 예전엔 6개 filter-row가 한 화면에 다 펼쳐져 있어 "표시할지 말지"
+         토글(공통 row)과 "어떤 조건으로 거를지" 필터(등급·급등순위·연립다세대·연식단계·경매건)가
+         뒤섞여 한눈에 안 들어왔음. 성격이 다른 두 그룹을 탭으로 나눠 한 번에 하나만 보이게 함 -
+         기존 filter-row/filter-tab 마크업·JS(toggleGrade 등)는 전혀 안 바꾸고 감싸는 구조만 바꿈. -->
+    <div class="filter-panel-tabs">
+        <span class="surge-tab-btn active" id="fp-tab-btn-display" onclick="switchFilterPanelTab('display')">🏷️ 표시</span>
+        <span class="surge-tab-btn" id="fp-tab-btn-attr" onclick="switchFilterPanelTab('attr')">🔍 속성 필터</span>
     </div>
-    <div class="filter-row">
-        <div class="filter-row-label">급등순위</div>
-        <button class="filter-tab ft-surge" data-s="1" onclick="toggleSurgeRank('1',this)">1위</button>
-        <button class="filter-tab ft-surge" data-s="2" onclick="toggleSurgeRank('2',this)">2위</button>
-        <button class="filter-tab ft-surge" data-s="3" onclick="toggleSurgeRank('3',this)">3위</button>
-        <button class="filter-tab ft-surge" data-s="4" onclick="toggleSurgeRank('4',this)">4위</button>
-        <button class="filter-tab ft-surge" data-s="5" onclick="toggleSurgeRank('5',this)">5위</button>
-        <button class="filter-tab ft-reset" onclick="resetSurgeRankFilter()">초기화</button>
+    <div id="fp-group-display">
+        <div class="filter-row">
+            <div class="filter-row-label">공통</div>
+            <button class="filter-tab ft-common" onclick="toggleRecentYearOnly(this)">최근6개월 거래만</button>
+            <button class="filter-tab ft-common" onclick="toggleCompOnlyFilter(this)">📌 비교대상만</button>
+            <button class="filter-tab ft-common" id="boundary-toggle-btn" onclick="toggleDongBoundaryMode(this)">🗺️ 법정동 경계선</button>
+            <button class="filter-tab ft-common" id="rentonly-toggle-btn" onclick="toggleShowRentOnly(this)">🏠 전세거래만 있는 주소</button>
+            <button class="filter-tab ft-common" id="bidcaseonly-toggle-btn" onclick="toggleBidCaseOnlyFilter(this)">⚖️ 낙찰사례만 보기</button>
+            <button class="filter-tab ft-common" id="bidcasebadge-toggle-btn" onclick="toggleShowBidCaseBadges()">⚖️ 낙찰사례 배지 숨김</button>
+        </div>
     </div>
-<div class="filter-row">
-        <div class="filter-row-label">연립다세대</div>
-        <button class="filter-tab ft-v" data-v="elev_y" onclick="toggleVillaFilter('elev_y',this)">승강기O</button>
-        <button class="filter-tab ft-v" data-v="elev_n" onclick="toggleVillaFilter('elev_n',this)">승강기X</button>
-        <button class="filter-tab ft-v" data-v="park_y" onclick="toggleVillaFilter('park_y',this)">주차O</button>
-        <button class="filter-tab ft-v" data-v="park_n" onclick="toggleVillaFilter('park_n',this)">주차X</button>
-        <button class="filter-tab ft-reset" onclick="resetVillaFilter()">초기화</button>
-    </div>
-    <div class="filter-row">
-        <div class="filter-row-label">연식단계</div>
-        <button class="filter-tab ft-tier" data-tier="premium" onclick="toggleVillaTier('premium',this)">프리미엄신축(0~3년)</button>
-        <button class="filter-tab ft-tier" data-tier="new" onclick="toggleVillaTier('new',this)">신축(4~8년)</button>
-        <button class="filter-tab ft-tier" data-tier="semi" onclick="toggleVillaTier('semi',this)">준신축(9~15년)</button>
-        <button class="filter-tab ft-tier" data-tier="old" onclick="toggleVillaTier('old',this)">구축(16~25년)</button>
-        <button class="filter-tab ft-tier" data-tier="aged" onclick="toggleVillaTier('aged',this)">노후(26년~)</button>
-        <button class="filter-tab ft-reset" onclick="resetVillaTierFilter()">초기화</button>
-    </div>
-     <div class="filter-row">
-        <div class="filter-row-label">공통</div>
-        <button class="filter-tab ft-common" onclick="toggleRecentYearOnly(this)">최근6개월 거래만</button>
-        <button class="filter-tab ft-common" onclick="toggleCompOnlyFilter(this)">📌 비교대상만</button>
-        <button class="filter-tab ft-common" id="boundary-toggle-btn" onclick="toggleDongBoundaryMode(this)">🗺️ 법정동 경계선</button>
-        <button class="filter-tab ft-common" id="rentonly-toggle-btn" onclick="toggleShowRentOnly(this)">🏠 전세거래만 있는 주소</button>
-        <button class="filter-tab ft-common" id="bidcaseonly-toggle-btn" onclick="toggleBidCaseOnlyFilter(this)">⚖️ 낙찰사례만 보기</button>
-        <button class="filter-tab ft-common" id="bidcasebadge-toggle-btn" onclick="toggleShowBidCaseBadges(this)">⚖️ 낙찰사례 배지 숨김</button>
-    </div>
-    <div class="filter-row">
-        <div class="filter-row-label">경매건</div>
-        <button class="filter-tab ft-adate" data-adate="past" onclick="toggleAuctionDateFilter('past',this)">지난 경매건</button>
-        <button class="filter-tab ft-adate" data-adate="today" onclick="toggleAuctionDateFilter('today',this)">오늘 경매건</button>
-        <button class="filter-tab ft-adate" data-adate="other" onclick="toggleAuctionDateFilter('other',this)">그외 경매건</button>
-        <button class="filter-tab ft-reset" onclick="resetAuctionDateFilter()">초기화</button>
+    <div id="fp-group-attr" style="display:none;">
+        <div class="filter-row">
+            <div class="filter-row-label">등급</div>
+            <button class="filter-tab ft-g" data-g="1" onclick="toggleGrade('1',this)">1등급</button>
+            <button class="filter-tab ft-g" data-g="2" onclick="toggleGrade('2',this)">2등급</button>
+            <button class="filter-tab ft-g" data-g="3" onclick="toggleGrade('3',this)">3등급</button>
+            <button class="filter-tab ft-g" data-g="4" onclick="toggleGrade('4',this)">4등급</button>
+            <button class="filter-tab ft-g" data-g="5" onclick="toggleGrade('5',this)">5등급</button>
+            <button class="filter-tab ft-g" data-g="6" onclick="toggleGrade('6',this)">6등급</button>
+            <button class="filter-tab ft-g" data-g="7" onclick="toggleGrade('7',this)">7등급</button>
+            <button class="filter-tab ft-reset" onclick="resetGradeFilter()">초기화</button>
+        </div>
+        <div class="filter-row">
+            <div class="filter-row-label">급등순위</div>
+            <button class="filter-tab ft-surge" data-s="1" onclick="toggleSurgeRank('1',this)">1위</button>
+            <button class="filter-tab ft-surge" data-s="2" onclick="toggleSurgeRank('2',this)">2위</button>
+            <button class="filter-tab ft-surge" data-s="3" onclick="toggleSurgeRank('3',this)">3위</button>
+            <button class="filter-tab ft-surge" data-s="4" onclick="toggleSurgeRank('4',this)">4위</button>
+            <button class="filter-tab ft-surge" data-s="5" onclick="toggleSurgeRank('5',this)">5위</button>
+            <button class="filter-tab ft-reset" onclick="resetSurgeRankFilter()">초기화</button>
+        </div>
+        <div class="filter-row">
+            <div class="filter-row-label">연립다세대</div>
+            <button class="filter-tab ft-v" data-v="elev_y" onclick="toggleVillaFilter('elev_y',this)">승강기O</button>
+            <button class="filter-tab ft-v" data-v="elev_n" onclick="toggleVillaFilter('elev_n',this)">승강기X</button>
+            <button class="filter-tab ft-v" data-v="park_y" onclick="toggleVillaFilter('park_y',this)">주차O</button>
+            <button class="filter-tab ft-v" data-v="park_n" onclick="toggleVillaFilter('park_n',this)">주차X</button>
+            <button class="filter-tab ft-reset" onclick="resetVillaFilter()">초기화</button>
+        </div>
+        <div class="filter-row">
+            <div class="filter-row-label">연식단계</div>
+            <button class="filter-tab ft-tier" data-tier="premium" onclick="toggleVillaTier('premium',this)">프리미엄신축(0~3년)</button>
+            <button class="filter-tab ft-tier" data-tier="new" onclick="toggleVillaTier('new',this)">신축(4~8년)</button>
+            <button class="filter-tab ft-tier" data-tier="semi" onclick="toggleVillaTier('semi',this)">준신축(9~15년)</button>
+            <button class="filter-tab ft-tier" data-tier="old" onclick="toggleVillaTier('old',this)">구축(16~25년)</button>
+            <button class="filter-tab ft-tier" data-tier="aged" onclick="toggleVillaTier('aged',this)">노후(26년~)</button>
+            <button class="filter-tab ft-reset" onclick="resetVillaTierFilter()">초기화</button>
+        </div>
+        <div class="filter-row">
+            <div class="filter-row-label">경매건</div>
+            <button class="filter-tab ft-adate" data-adate="past" onclick="toggleAuctionDateFilter('past',this)">지난 경매건</button>
+            <button class="filter-tab ft-adate" data-adate="today" onclick="toggleAuctionDateFilter('today',this)">오늘 경매건</button>
+            <button class="filter-tab ft-adate" data-adate="other" onclick="toggleAuctionDateFilter('other',this)">그외 경매건</button>
+            <button class="filter-tab ft-reset" onclick="resetAuctionDateFilter()">초기화</button>
+        </div>
     </div>
 </div>
 <div id="dong-boundary-info" style="display:none;position:absolute;top:60px;left:50%;transform:translateX(-50%);z-index:50;background:rgba(0,0,0,0.75);color:white;font-size:12px;font-weight:bold;padding:5px 12px;border-radius:14px;pointer-events:none;"></div>
@@ -1914,11 +1938,19 @@ function toggleBidCaseOnlyFilter(btn) {
 }
 /* 낙찰사례(⚖️) 배지 레이어를 통째로 껐다 켰다 함 - AND필터(bidCaseOnlyFilter)와 달리 일반
    거래 마커에는 영향이 없고, ⚖️ 배지 자체의 노출 여부만 바꿈. 꺼져 있는 동안엔 지오코딩도
-   다시 돌 필요 없게 renderBidCaseMarkers 쪽에서 바로 clearBidCaseMarkers()로 정리함. */
-function toggleShowBidCaseBadges(btn) {
+   다시 돌 필요 없게 renderBidCaseMarkers 쪽에서 바로 clearBidCaseMarkers()로 정리함.
+   ⚠️ 2026-08: 이 토글을 누르는 버튼이 필터패널 안(bidcasebadge-toggle-btn)과 지도 좌상단
+   퀵아이콘(bidcasebadge-quick-btn) 두 곳으로 늘어나서, 클릭된 버튼(this)만 바꾸던 예전
+   방식 대신 두 버튼을 id로 직접 찾아 항상 같이 동기화함 - 어느 쪽을 눌러도 둘 다 바뀜. */
+function toggleShowBidCaseBadges() {
     showBidCaseBadges = !showBidCaseBadges;
-    btn.classList.toggle('active');
-    btn.innerText = showBidCaseBadges ? '⚖️ 낙찰사례 배지 표시중' : '⚖️ 낙찰사례 배지 숨김';
+    var panelBtn = document.getElementById('bidcasebadge-toggle-btn');
+    if (panelBtn) {
+        panelBtn.classList.toggle('active', showBidCaseBadges);
+        panelBtn.innerText = showBidCaseBadges ? '⚖️ 낙찰사례 배지 표시중' : '⚖️ 낙찰사례 배지 숨김';
+    }
+    var quickBtn = document.getElementById('bidcasebadge-quick-btn');
+    if (quickBtn) quickBtn.classList.toggle('active', showBidCaseBadges);
     renderBidCaseMarkers();
 }
 // "경매건" 필터(지난/오늘/그외) - 등급 필터(toggleGrade)와 동일하게 복수 선택 가능한
@@ -2759,6 +2791,15 @@ function toggleFilterPanel() {
     p.style.display = isOpen ? 'none' : 'flex';
     btn.classList.toggle('active', !isOpen);
     btn.innerText = isOpen ? '필터 ▾' : '필터 ▴';
+}
+// filter-panel 안의 "🏷️ 표시" / "🔍 속성 필터" 두 그룹 중 하나만 보이게 전환 - 기존
+// filter-row/필터 로직(toggleGrade 등)은 그대로 두고 감싸는 두 div의 표시여부만 바꿈.
+function switchFilterPanelTab(tab) {
+    var showDisplay = tab === 'display';
+    document.getElementById('fp-group-display').style.display = showDisplay ? '' : 'none';
+    document.getElementById('fp-group-attr').style.display = showDisplay ? 'none' : '';
+    document.getElementById('fp-tab-btn-display').classList.toggle('active', showDisplay);
+    document.getElementById('fp-tab-btn-attr').classList.toggle('active', !showDisplay);
 }
 /* ════════════════════════════════════
    카카오 지도 초기화
