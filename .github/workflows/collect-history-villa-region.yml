@@ -1,0 +1,38 @@
+name: 지역 지정 연립다세대·단독다가구 백필
+
+on:
+  workflow_dispatch:
+    inputs:
+      region_codes:
+        description: '백필할 LAWD 코드 (콤마로 여러 개, 예: 41271 또는 41271,41273)'
+        required: false
+        default: '41271'
+      start_year:
+        description: '시작 연도'
+        required: false
+        default: '2022'
+      end_year:
+        description: '종료 연도'
+        required: false
+        default: '2026'
+
+jobs:
+  backfill:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: 의존성 설치
+        run: npm install @supabase/supabase-js ws
+      - name: 지역 지정 백필 실행
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          PUBLIC_DATA_API_KEY: ${{ secrets.PUBLIC_DATA_API_KEY }}
+          REGION_CODES: ${{ github.event.inputs.region_codes }}
+          START_YEAR: ${{ github.event.inputs.start_year }}
+          END_YEAR: ${{ github.event.inputs.end_year }}
+        run: node scripts/collect-history-villa-region.mjs
