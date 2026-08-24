@@ -1375,12 +1375,12 @@ tr:hover td { background:#fffde7; }
                 개별공시지가는 위 "🏛️ 부동산공시가격 알리미"에서 직접 확인해 입력하세요.
             </div>
             <div class="modal-row">
-                <span class="modal-label">지방 저가주택</span>
+                <span class="modal-label">저가주택(중과배제)</span>
                 <label style="display:flex;align-items:center;gap:4px;font-size:12px;">
-                    <input type="checkbox" id="a-is-local-cheap" onchange="autoCalcTaxSilent();calcCompValuation();calcMargin();"> 비수도권 + 공시가격 2억 이하 (공시가격 입력 시 자동 판정, 필요시 직접 수정 가능)
+                    <input type="checkbox" id="a-is-local-cheap" onchange="autoCalcTaxSilent();calcCompValuation();calcMargin();"> 공시가격 1억 이하(전국) 또는 비수도권 2억 이하 (공시가격 입력 시 자동 판정, 필요시 직접 수정 가능)
                 </label>
             </div>
-            <div style="font-size:10px;color:#aaa;margin-top:4px;">⚠️ 조정대상지역 목록은 수시로 바뀝니다. 실제 입찰 전 취득세는 위택스 등에서 한 번 더 확인하는 것을 권장합니다.</div>
+            <div style="font-size:10px;color:#aaa;margin-top:4px;">⚠️ 정비구역·사업시행구역 소재는 공시가격 1억 이하라도 예외적으로 주택수에 포함될 수 있습니다(자동판정 불가 - 해당 시 위 체크를 직접 해제하세요). 조정대상지역 목록도 수시로 바뀝니다. 실제 입찰 전 취득세는 위택스 등에서 한 번 더 확인하는 것을 권장합니다.</div>
             <div class="modal-row">
                 <span class="modal-label">6월 1일 보유 여부 <span onclick="showCalcInfo('holdingTax')" title="계산기준 보기" style="cursor:pointer;color:#1976d2;">ⓘ</span></span>
                 <label style="display:flex;align-items:center;gap:4px;font-size:12px;">
@@ -8122,8 +8122,14 @@ async function loadAuctionBuildingInfo(force) {
      경기 12곳: 과천·광명·성남 분당/수정/중원·수원 영통/장안/팔달·
      안양 동안·용인 수지·의왕·하남). 이후 지정/해제되면 이 배열을
      갱신해야 함.
-   - 지방 저가주택 취득세 중과 배제: 비수도권(서울·경기·인천 외) +
-     공시가격 2억원 이하(2025.1.2 이후 유상취득분부터 1억→2억 완화).
+   - 저가주택 취득세 중과 배제(isLocalCheap 플래그)는 실제로는 서로 다른 두 규정을 하나로
+     합쳐서 적용함(지방세법 시행령 제28조의4):
+     ① 전국 공통(수도권 포함) - 공시가격 1억원 이하 주택은 주택수 산정에서 제외 + 해당
+        주택 자체 취득세도 중과 없이 1.1%. 단, 정비구역·사업시행구역 소재는 1억 이하라도
+        예외적으로 주택수에 포함됨(이 앱은 정비구역 여부를 자동 판정하지 못하므로 해당
+        사항이 있으면 체크박스를 수동으로 꺼야 함).
+     ② 지방 저가주택 특례 - 비수도권(서울·경기·인천 외) + 공시가격 2억원 이하
+        (2025.1.2 이후 유상취득분부터 1억→2억 완화). ①과 달리 수도권에는 적용되지 않음.
 ════════════════════════════════════ */
 var ADJUSTED_AREAS = [
     '서울',
@@ -8323,7 +8329,13 @@ function applyOfficialPriceInput() {
     if (!priceWon) return;
     var addr = document.getElementById('a-addr').value.trim();
     var metro = isMetroArea(addr);
-    var isLocalCheap = !metro && priceWon <= 200000000;
+    // ⚠️ 두 규정을 OR로 합침 - ①전국 공통(수도권 포함) 공시가격 1억원 이하는 주택수 제외+중과
+    // 배제(정비구역·사업시행구역은 예외지만 자동판정 불가), ②비수도권 한정 공시가격 2억원
+    // 이하 지방저가주택 특례(2025.1.2 이후 취득분, 완화 전 1억). 기존 코드는 ②만 반영하고
+    // ①(수도권 포함 1억 이하 주택)을 놓쳐서, 예를 들어 서울 소재 공시가격 8천만원 주택도
+    // 중과 대상으로 잘못 계산되는 문제가 있었음.
+    var isNationwideCheap = priceWon <= 100000000;
+    var isLocalCheap = isNationwideCheap || (!metro && priceWon <= 200000000);
     document.getElementById('a-is-local-cheap').checked = isLocalCheap;
     autoCalcTaxSilent(); calcCompValuation(); calcMargin(); refreshAuctionJeonse126Warning();
 }
