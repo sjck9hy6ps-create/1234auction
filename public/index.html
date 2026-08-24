@@ -10052,9 +10052,15 @@ function placeAuctionMarker(a) {
     var surgeBadge = surgeRank
         ? '<span style="background:#e53935;color:white;font-size:9px;font-weight:bold;padding:1px 5px;border-radius:3px;margin-left:3px;">🔥' + surgeRank + '위</span>'
         : '';
-    // 연식 배지 - 저장 시점에 확정해둔 buildYear(건축HUB 사용승인일 우선)를 기준으로
-    // 다른 마커(연립다세대 등)와 동일한 연식단계 라벨을 보여줌
-    var ageTier = a.buildYear ? getAgeTierByYear(a.buildYear) : null;
+    // 연식단계(프리미엄신축/신축/준신축/구축/노후) 배지 - 저장 시점에 확정해둔
+    // buildYear(건축HUB 사용승인일 우선)를 기준으로 표시함.
+    // ⚠️ 2026-08(사용자 피드백: "귤현동 531(계양센트레빌1단지, 아파트)인데 빌라 필터(연식)가
+    // 적용됐다 - 아파트는 빌라와 전혀 다른 필터가 예전부터 적용됐었다") - VILLA_AGE_TIERS/
+    // getVillaTierLabel은 이름 그대로 연립다세대 전용 분류 체계인데, 이 배지는 a.propType을
+    // 확인하지 않고 buildYear만 있으면 아파트에도 그대로 씌워버리는 버그였음(일반 아파트
+    // 거래배지는 애초에 이 연식단계 배지 자체가 없고 등급(1~7등급)만 씀 - 두 체계는 원래도
+    // 완전히 분리돼 있었음). propType이 villa일 때만 계산/표시하도록 제한함.
+    var ageTier = (a.propType === 'villa' && a.buildYear) ? getAgeTierByYear(a.buildYear) : null;
     var ageBadgeText = ageTier ? (getVillaTierLabel(ageTier) + ' · ' + (today.getFullYear() - a.buildYear) + '년차') : '';
     var ageBadge = ageTier
         ? '<span style="background:' + (AGE_TIER_COLORS[ageTier] || '#607d8b') + ';color:white;font-size:9px;font-weight:bold;padding:1px 6px;border-radius:3px;margin-left:3px;">' + ageBadgeText + '</span>'
@@ -10089,7 +10095,8 @@ function placeAuctionMarker(a) {
             ? '이 동 낙찰사례 ' + awHb.count + '건 낙찰가율 중앙값 ' + awHb.dongMedian + '% 대비 이 건 ' + awHb.myRate + '%(+' + awHb.gap + '%p) - 고가낙찰 의심(실수/주택보증공사/실거주 등), 역산매도가가 과대추정됐을 수 있으니 직접 확인 필요'
             : '';
         impliedLine = '<div style="color:#6a1b9a;font-size:10.5px;" title="' + (awHb ? awHighBidNote : awImpliedNote) + '">' + (awHb ? '⚠️ ' : '') + '↩️ 역산매도가 ' + (awImplied ? toEok(String(awImplied.target)) : '계산 불가') + '</div>';
-        var awAgeTierLabel = awEst.ageTier ? getVillaTierLabel(awEst.ageTier) : null;
+        // ⚠️ 위 ageBadge와 동일한 이유로 propType==='villa'일 때만 연식단계 배지를 씀
+        var awAgeTierLabel = (a.propType === 'villa' && awEst.ageTier) ? getVillaTierLabel(awEst.ageTier) : null;
         var awAgeBadge = awAgeTierLabel
             ? '<span style="background:' + (AGE_TIER_COLORS[awEst.ageTier] || '#607d8b') + ';color:white;font-size:9px;font-weight:bold;padding:1px 6px;border-radius:3px;">'
                 + awAgeTierLabel + (awEst.inferredBuildYear ? ' · ' + (today.getFullYear() - awEst.inferredBuildYear) + '년차' + (awEst.buildYearConfirmed ? '' : '(추정)') : '') + '</span>'
@@ -10526,7 +10533,11 @@ function placeBidCaseMarker(c) {
     // 2026-08(사용자 요청: "연식구분과 평형까지 해줘") - 경매물건 배지(placeAuctionMarker)의
     // ageBadge와 동일한 스타일(AGE_TIER_COLORS·getVillaTierLabel)을 재사용. buildYearConfirmed가
     // true면(건축HUB로 실제 조회된 값) "(추정)"을 떼고, 아니면(유사물건 중앙값 근사치) 계속 붙임.
-    var ageTierLabel = bcEst.ageTier ? getVillaTierLabel(bcEst.ageTier) : null;
+    // ⚠️ 2026-08(사용자 피드백: "귤현동 531(계양센트레빌1단지, 아파트)에 빌라 필터(연식)가
+    // 적용됐다 - 아파트는 빌라와 전혀 다른 필터가 예전부터 적용됐었다") - VILLA_AGE_TIERS/
+    // getVillaTierLabel은 연립다세대 전용 분류라, backtestBuildingType(c)==='villa'일 때만
+    // 이 배지를 계산/표시하도록 제한함(placeAuctionMarker의 동일 버그와 같은 원인).
+    var ageTierLabel = (backtestBuildingType(c) === 'villa' && bcEst.ageTier) ? getVillaTierLabel(bcEst.ageTier) : null;
     var ageBadge = ageTierLabel
         ? '<span style="background:' + (AGE_TIER_COLORS[bcEst.ageTier] || '#607d8b') + ';color:white;font-size:9px;font-weight:bold;padding:1px 6px;border-radius:3px;">'
             + ageTierLabel + (bcEst.inferredBuildYear ? ' · ' + (today.getFullYear() - bcEst.inferredBuildYear) + '년차' + (bcEst.buildYearConfirmed ? '' : '(추정)') : '') + '</span>'
