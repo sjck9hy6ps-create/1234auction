@@ -80,7 +80,7 @@ body { font-family:'Malgun Gothic',sans-serif; }
 .ft-v.active { background:#00897b; border-color:#00897b; color:white; }
 .ft-tier.active { background:#8d6e63; border-color:#8d6e63; color:white; }
 .ft-common.active { background:#37474f; border-color:#37474f; color:white; }
-.ft-surge.active { background:#e53935; border-color:#e53935; color:white; }
+.ft-pyeong.active { background:#5e35b1; border-color:#5e35b1; color:white; }
 /* ⚠️ 2026-08: 경매건 필터(ft-adate) 추가할 때 이 active 색상 규칙을 빼먹어서, 눌러도
    색이 하나도 안 바뀌어 뭘 선택했는지 전혀 안 보이던 버그. */
 .ft-adate.active { background:#ef6c00; border-color:#ef6c00; color:white; }
@@ -708,13 +708,14 @@ tr:hover td { background:#fffde7; }
             <button class="filter-tab ft-reset" onclick="resetGradeFilter()">초기화</button>
         </div>
         <div class="filter-row">
-            <div class="filter-row-label">급등순위</div>
-            <button class="filter-tab ft-surge" data-s="1" onclick="toggleSurgeRank('1',this)">1위</button>
-            <button class="filter-tab ft-surge" data-s="2" onclick="toggleSurgeRank('2',this)">2위</button>
-            <button class="filter-tab ft-surge" data-s="3" onclick="toggleSurgeRank('3',this)">3위</button>
-            <button class="filter-tab ft-surge" data-s="4" onclick="toggleSurgeRank('4',this)">4위</button>
-            <button class="filter-tab ft-surge" data-s="5" onclick="toggleSurgeRank('5',this)">5위</button>
-            <button class="filter-tab ft-reset" onclick="resetSurgeRankFilter()">초기화</button>
+            <div class="filter-row-label">평형대</div>
+            <button class="filter-tab ft-pyeong" data-p="t1" onclick="togglePyeongTier('t1',this)">10평 이하</button>
+            <button class="filter-tab ft-pyeong" data-p="t2" onclick="togglePyeongTier('t2',this)">10~13평</button>
+            <button class="filter-tab ft-pyeong" data-p="t3" onclick="togglePyeongTier('t3',this)">13~17평</button>
+            <button class="filter-tab ft-pyeong" data-p="t4" onclick="togglePyeongTier('t4',this)">17~20평</button>
+            <button class="filter-tab ft-pyeong" data-p="t5" onclick="togglePyeongTier('t5',this)">20평대~85㎡</button>
+            <button class="filter-tab ft-pyeong" data-p="t6" onclick="togglePyeongTier('t6',this)">85㎡ 초과</button>
+            <button class="filter-tab ft-reset" onclick="resetPyeongTierFilter()">초기화</button>
         </div>
         <div class="filter-row">
             <div class="filter-row-label">연립다세대</div>
@@ -1809,7 +1810,30 @@ var VILLA_AGE_TIERS = [
 // 경매물건 배지의 연식단계 표시용 색상(가격등급과 무관하게 연식단계 자체를 나타냄)
 var AGE_TIER_COLORS = { premium:'#2e7d32', new:'#66bb6a', semi:'#ff9800', old:'#8d6e63', aged:'#757575' };
 var surgeRankMap = {};
-var activeSurgeRanks = new Set();
+// ⚠️ 2026-08(사용자 요청: "급등순위 필터를 평형대 필터로 변경") - 예전엔 여기가
+// activeSurgeRanks(🔥1~5위 필터칩)였음. 🔥N위 배지 자체(surgeRankMap 기반 표시)는
+// 그대로 두고, "거를 조건"만 평형대로 바꿈. 경계는 국토부 실거래 area(㎡) 기준:
+// 10평(약 33㎡)/20평(약 66㎡)/85㎡(국민주택규모, 약 25.7평)를 그대로 씀 - 흔히 쓰는
+// "10평대/20평대/85㎡ 초과" 구분과 맞아떨어짐.
+var activePyeongTiers = new Set();
+// ⚠️ 2026-08(사용자 요청: "10~20평형을 3단계로 분리") - 원래 10~20평(33~66㎡)이 한 구간이었는데,
+// 그 33㎡ 폭을 3등분(약 11㎡씩)해서 t2/t3/t4 세 단계로 나눔.
+var PYEONG_TIERS = [
+    { key:'t1', label:'10평 이하',   maxM2:33 },
+    { key:'t2', label:'10~13평',     maxM2:44 },
+    { key:'t3', label:'13~17평',     maxM2:55 },
+    { key:'t4', label:'17~20평',     maxM2:66 },
+    { key:'t5', label:'20평대~85㎡', maxM2:85 },
+    { key:'t6', label:'85㎡ 초과',   maxM2:Infinity }
+];
+function getPyeongTier(areaM2) {
+    var a = parseFloat(areaM2);
+    if (!a || a <= 0) return null;
+    for (var i = 0; i < PYEONG_TIERS.length; i++) {
+        if (a <= PYEONG_TIERS[i].maxM2) return PYEONG_TIERS[i].key;
+    }
+    return null;
+}
 var recentYearOnly = false;
 var comparableIndex = {};
 var compOnlyFilter = false;
@@ -3150,6 +3174,11 @@ async function loadAllData(centerLat, centerLon) {
                     apt.hasNewHigh   = nh.hasNewHigh;
                     apt.newHighPyungs = nh.newHighPyungs;
                     apt.popularPyeong = calcPopularPyeong(apt);
+                    // ⚠️ 2026-08(급등순위 필터→평형대 필터 교체): 이 apt 항목(=건물+평형 클러스터)의
+                    // 대표 전용면적은 최신 거래(latest.area)를 그대로 씀 - popularPyeong처럼 여러
+                    // 평형이 섞인 대형단지도 groupDBRows가 애초에 평형별로 항목을 쪼개두므로 latest
+                    // 하나만 봐도 충분함(다른 등급·연식단계 계산도 전부 이 전제로 동작함).
+                    apt.pyeongTier = apt.latest ? getPyeongTier(apt.latest.area) : null;
                 });
                 dataCache[lawdCd] = regionAptList;
                 mergedLawdCds.add(lawdCd);
@@ -3384,7 +3413,7 @@ function isAptVisibleUnderCurrentFilters(apt) {
         if (activeVillaFilters.size > 0 && !passesVillaFilter(apt)) return false;
         if (activeVillaTiers.size > 0 && !(apt.ageTier && activeVillaTiers.has(apt.ageTier))) return false;
     }
-    if (activeSurgeRanks.size > 0 && !passesSurgeFilter(apt)) return false;
+    if (activePyeongTiers.size > 0 && !(apt.pyeongTier && activePyeongTiers.has(apt.pyeongTier))) return false;
     if (compOnlyFilter && !(getAptComparableRefs(apt).length > 0)) return false;
     // "낙찰사례만 보기"는 다른 필터들과 동일하게 AND 조건으로 결합됨 - 이 apt 주소지에
     // 매칭되는 낙찰사례가 하나도 없으면 숨김(경매/낙찰사례 배지 자체는 이 필터와 무관하게
@@ -10195,9 +10224,32 @@ function clearBidCaseMarkers() {
 /* 매도사례(resaleMatch)가 이미 매칭됐고, 그 건물의 정규 매매기록 배지가 지금 화면에 실제로
    보이는 상태라면 true - 이 경우 낙찰사례는 독자 배지 대신 그 건물배지의 ⚖️ 리본으로 편입됨 */
 function shouldSuppressBidCaseBadge(c) {
+    // ⚠️ 2026-08(사용자 피드백: "낙찰사례 일괄등록한 것은 현재 필터를 적용받지 않는데, 이
+    // 배지도 필터를 그대로 적용받도록 해줘") - 이전엔 이 함수가 "매칭된 건물배지랑 중복
+    // 표시 방지" 목적으로만 쓰였고, 타입탭/평형대/연식단계 같은 속성 필터는 전혀 검사하지
+    // 않아 낙찰사례 배지만 필터와 무관하게 항상 남아있는 버그였음. passesFiltersForBidCase
+    // 체크를 제일 먼저 추가함.
+    if (!passesFiltersForBidCase(c)) return true;
     if (!c.resaleMatch) return false;
     var matchedApt = findMatchedAptForBidCase(c);
     return !!(matchedApt && isAptVisibleUnderCurrentFilters(matchedApt));
+}
+/* 낙찰사례가 지금 활성화된 속성 필터(타입탭·평형대·연식단계)를 통과하는지 판정.
+   등급(activeGrades)·연립다세대 조건(activeVillaFilters - 승강기/주차)은 낙찰사례 데이터에
+   해당 필드가 없어(건물 단위 실거래 등급 계산 대상이 아니고, 승강기/주차 여부는 일괄등록
+   시 수집하지 않음) 검사하지 않음 - 이 두 필터를 걸어도 낙찰사례 배지는 계속 보임. */
+function passesFiltersForBidCase(c) {
+    var bt = backtestBuildingType(c); // 'apt' | 'villa' | null(상가·토지 등)
+    if (bt !== currentTypeFilter) return false;
+    if (activePyeongTiers.size > 0) {
+        var tier = getPyeongTier(c.areaM2);
+        if (!tier || !activePyeongTiers.has(tier)) return false;
+    }
+    if (bt === 'villa' && activeVillaTiers.size > 0) {
+        var bcEst = getBidCaseEstimates(c);
+        if (!bcEst.ageTier || !activeVillaTiers.has(bcEst.ageTier)) return false;
+    }
+    return true;
 }
 function findMatchedAptForBidCase(c) {
     return allAptList.find(function(apt) {
@@ -15640,21 +15692,15 @@ function computeSurgeRankMap(type, sourceList) {
     });
     return map;
 }
-function toggleSurgeRank(val, btn) {
-    if (activeSurgeRanks.has(val)) { activeSurgeRanks.delete(val); btn.classList.remove('active'); }
-    else { activeSurgeRanks.add(val); btn.classList.add('active'); }
+function togglePyeongTier(val, btn) {
+    if (activePyeongTiers.has(val)) { activePyeongTiers.delete(val); btn.classList.remove('active'); }
+    else { activePyeongTiers.add(val); btn.classList.add('active'); }
     redrawMarkers();
 }
-function resetSurgeRankFilter() {
-    activeSurgeRanks.clear();
-    document.querySelectorAll('.ft-surge').forEach(function(b) { b.classList.remove('active'); });
+function resetPyeongTierFilter() {
+    activePyeongTiers.clear();
+    document.querySelectorAll('.ft-pyeong').forEach(function(b) { b.classList.remove('active'); });
     redrawMarkers();
-}
-function passesSurgeFilter(apt) {
-    if (activeSurgeRanks.size === 0) return true;
-    var l = apt.latest || {};
-    var rank = surgeRankMap[l.dong];
-    return !!rank && activeSurgeRanks.has(String(rank));
 }
  
 /* ════════════════════════════════════
@@ -15677,12 +15723,16 @@ function passesSurgeFilter(apt) {
      baseline(6구간 전체기간) 평균 대비 상대비율"로 정규화한 뒤 구간별 평균을 내는 방식으로
      바꿈(api/data-coverage.js의 getPriceMomentum 참고) - 어떤 단지가 거래됐는지와 무관하게
      순수 가격변동만 잡아냄. 집계는 api/data-coverage.js?mode=priceMomentum.
-   ⚠️ 지도 마커의 🔥N위 배지·"ft-surge" 필터칩(surgeRankMap/computeSurgeRankMap/
-   passesSurgeFilter)은 이 패널과 별개로 계속 buildDongSurgeRanking(현재 지도 뷰포트에
-   이미 로딩된 allAptList 기준 - DB 전체가 아님)을 그대로 사용함. 이 패널은 어디까지나
-   "전국 어디가 활발한지 찾아보는" 탐색용이고, 마커 배지는 지금 보고 있는 지역 안에서의
-   상대적 순위를 보여주는 것이라 서로 다른 계산 기준을 그대로 유지함(더 무거운 전국 집계로
-   마커 배지까지 바꾸면 지도 이동마다 API를 계속 불러야 해서 성능이 나빠짐).
+   ⚠️ 지도 마커의 🔥N위 배지(surgeRankMap/computeSurgeRankMap)는 이 패널과 별개로 계속
+   buildDongSurgeRanking(현재 지도 뷰포트에 이미 로딩된 allAptList 기준 - DB 전체가 아님)을
+   그대로 사용함. 이 패널은 어디까지나 "전국 어디가 활발한지 찾아보는" 탐색용이고, 마커
+   배지는 지금 보고 있는 지역 안에서의 상대적 순위를 보여주는 것이라 서로 다른 계산 기준을
+   그대로 유지함(더 무거운 전국 집계로 마커 배지까지 바꾸면 지도 이동마다 API를 계속 불러야
+   해서 성능이 나빠짐).
+   ⚠️ 2026-08(사용자 요청: "급등 순위 필터를 평형대 필터로 변경") - 예전엔 이 🔥N위와 짝을
+   이루는 필터칩("ft-surge" 1~5위)이 있었는데, 배지 자체는 그대로 두고 필터칩만 평형대
+   필터(activePyeongTiers/ft-pyeong, isAptVisibleUnderCurrentFilters 안에서 적용)로
+   교체함 - 그래서 지금은 🔥N위 배지를 보고 필터로 좁혀볼 수는 없고, 참고용 배지로만 남음.
 ════════════════════════════════════ */
 var RANK_SIDO_LIST = ['서울','부산','대구','인천','광주','대전','울산','세종','경기','강원','충북','충남','전북','전남','경북','경남','제주'];
 var surgePanelTab = 'hot';
