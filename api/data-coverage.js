@@ -931,27 +931,51 @@ async function getAvmEstimate(type, region, dong, size, floor, buildYear, danji,
      ⚠️ 성능 주의: rpc_bucket_avg_price와 마찬가지로 danji 단위 partition이 꼭 필요해서(다른
      건물끼리 가격을 비교하면 의미가 없음) "전국"(시/도 미지정) 조회는 무거울 수 있음 -
      danji 그룹 수가 늘면서 rpc_bucket_avg_price가 겪었던 것과 같은 종류의 타임아웃 위험이
-     있음. 배포 후 "전국" 스코프에서 실제로 응답이 오는지 반드시 확인 필요(#419).
+     있음. 배포 후 실제로 "전국" 단일 구간은 8초대로 확인됨(#420) - 다만 아래 v2에서 흐름을
+     보려고 6구간을 도는 만큼, "전국" 스코프는 6배 가까이 걸릴 수 있어 순차 호출로 바꿈
+     (getPriceMomentumSimple과 동일한 이유 - 동시 커넥션 과다로 인한 타임아웃 방지).
+
+     ⚠️ 2026-08(v2, 사용자 피드백 2건 반영):
+     1) "돈되는 지역처럼 흐름(증감 추이)이 보고 싶다" - 원래는 p_cutoff 이후 전체를 한 번에
+        세어 "건수" 하나만 반환했는데, 돈되는지역과 동일한 6구간(momentumBuckets, 아파트
+        40일×6/빌라 60일×6)으로 나눠 구간별 건수를 배열로 반환하도록 p_end(구간 종료일,
+        NULL이면 상한 없음)를 추가함. JS(getNewHighDongsTrend)가 이 함수를 구간마다 호출해서
+        합침.
+     2) "신축 거래가 신고가로 오탐될 수 있는지 확인해달라" - 실제로 있었음: 새로 준공된
+        단지는 첫 거래(분양가) 이후 두세 번째 거래부터 자연스러운 "프리미엄" 상승이 붙어
+        반복적으로 "역대 최고가 경신"으로 잡히는데, 이건 그 동네 전체의 개발호재/모멘텀이
+        아니라 그 한 단지의 초기 시세형성 과정일 뿐이라 신호로 부적절함. rpc_bucket_avg_price
+        (돈되는지역)가 이미 신축을 집계에서 빼는 것과 동일 기준(아파트 준공 2년 이내, 빌라
+        3년 이내)으로, 신축 danji의 거래는 "신고가 이벤트"로 셈하지 않도록(=신고가 여부
+        판정 자체에서 제외, ranked 대상에서 배제) build_year 필터를 추가함. (과거 이력
+        비교용 prior_max_ppp 계산에는 계속 포함시킴 - 신축이었을 때의 가격도 나중에 그
+        단지가 "신축"딱지를 뗀 뒤의 진짜 신고가를 판정할 때는 여전히 유효한 과거 최고가여야
+        하기 때문.)
+     반환 컬럼(counts 배열 계산은 JS에서 합산하므로 이 함수 자체는 예전처럼 단일 cnt만
+     반환 - p_end로 구간을 좁혀서 호출하는 건 호출하는 쪽의 몫)이 그대로라 CREATE OR REPLACE로
+     충분하지만, 매개변수(p_end)가 새로 추가돼 이전 시그니처와 달라지므로 이전 함수를 먼저
+     지워야 함(그대로 두면 6-인자/7-인자 버전이 둘 다 남아 헷갈릴 수 있음).
      ------------------------------------------------------------------
-     create or replace function rpc_new_high_dongs(p_cutoff int, p_sido text, p_type text, p_min_size int default 10, p_max_size int default 300, p_limit int default 50)
+     drop function if exists rpc_new_high_dongs(int, text, text, int, int, int);
+     create function rpc_new_high_dongs(p_cutoff int, p_end int, p_sido text, p_type text, p_min_size int default 10, p_max_size int default 300, p_limit int default 50)
      returns table(region text, dong text, cnt bigint)
      language sql stable as $$
        with raw as (
-         select region, dong, coalesce(nullif(danji, ''), '(단지미상)') as danji, deal_date,
+         select region, dong, coalesce(nullif(danji, ''), '(단지미상)') as danji, deal_date, build_year,
            (price::numeric / nullif(size, 0)) * 3.305785 as ppp
          from house_trades
            where p_type = 'apt' and size >= p_min_size and size <= p_max_size
              and dong is not null and dong <> ''
              and (p_sido is null or p_sido = '' or region like p_sido || '%')
          union all
-         select region, dong, coalesce(nullif(danji, ''), '(단지미상)') as danji, deal_date,
+         select region, dong, coalesce(nullif(danji, ''), '(단지미상)') as danji, deal_date, build_year,
            (price::numeric / nullif(size, 0)) * 3.305785 as ppp
          from villa_trades
            where p_type = 'villa' and size >= p_min_size and size <= p_max_size
              and dong is not null and dong <> ''
              and (p_sido is null or p_sido = '' or region like p_sido || '%')
          union all
-         select region, dong, coalesce(nullif(danji, ''), '(단지미상)') as danji, deal_date,
+         select region, dong, coalesce(nullif(danji, ''), '(단지미상)') as danji, deal_date, build_year,
            (price::numeric / nullif(size, 0)) * 3.305785 as ppp
          from single_trades
            where p_type = 'villa' and size >= p_min_size and size <= p_max_size
@@ -959,7 +983,7 @@ async function getAvmEstimate(type, region, dong, size, floor, buildYear, danji,
              and (p_sido is null or p_sido = '' or region like p_sido || '%')
        ),
        ranked as (
-         select region, dong, danji, deal_date, ppp,
+         select region, dong, danji, deal_date, build_year, ppp,
            max(ppp) over (
              partition by region, dong, danji
              order by deal_date
@@ -969,7 +993,12 @@ async function getAvmEstimate(type, region, dong, size, floor, buildYear, danji,
        )
        select region, dong, count(*) as cnt
        from ranked
-       where deal_date >= p_cutoff and prior_max_ppp is not null and ppp > prior_max_ppp
+       where deal_date >= p_cutoff
+         and (p_end is null or deal_date < p_end)
+         and prior_max_ppp is not null and ppp > prior_max_ppp
+         -- 신축(아파트 준공 2년 이내, 빌라 3년 이내) 거래는 신고가 이벤트로 셈하지 않음
+         and not (build_year is not null
+                  and build_year >= (extract(year from current_date)::int - case when p_type = 'apt' then 2 else 3 end))
        group by region, dong
        order by cnt desc
        limit p_limit;
@@ -989,18 +1018,50 @@ async function getTopDongs(type, cutoff, sido, limit) {
     return (data || []).map(r => ({ region: r.region, dong: r.dong, count: Number(r.cnt) }));
   } catch (e) { console.warn(`topDongs(rpc): ${type} 조회 예외 -`, e.message); return []; }
 }
-// 신고가(전고점 갱신) 거래량 지역 순위 - rpc_new_high_dongs 참고(위 SQL 주석). 반환 shape이
-// getTopDongs와 동일(region/dong/count)이라 프론트에서 급등지역과 같은 renderRankSection을
-// 그대로 재사용할 수 있음.
-async function getNewHighDongs(type, cutoff, sido, limit) {
+// 신고가(전고점 갱신) 거래 - 구간 하나(start~end)에 대한 (region,dong)별 건수. rpc_new_high_dongs
+// 참고(위 SQL 주석). getNewHighDongsTrend가 이 함수를 구간마다 호출해서 흐름을 합침.
+// ⚠️ p_limit을 넉넉히 크게 줌(구간별 상위 50개만 받으면, "총합 상위 50개" 랭킹을 뒤에서
+// 다시 계산할 때 어떤 구간에선 50위 밖이었지만 다른 구간 합산하면 상위권일 동(dong)이
+// 누락될 수 있음 - 그래서 이 함수 자체에서는 사실상 전부(최대 2000개) 받고, 최종 "상위
+// N개"는 getNewHighDongsTrend가 6구간 합산 이후에 자름).
+const NEW_HIGH_BUCKET_FETCH_LIMIT = 2000;
+async function getNewHighDongsBucket(type, sido, start, end) {
   try {
     const { data, error } = await supabase.rpc('rpc_new_high_dongs', {
-      p_cutoff: cutoff, p_sido: sido || null, p_type: type,
-      p_min_size: MOMENTUM_SIZE_MIN, p_max_size: MOMENTUM_SIZE_MAX, p_limit: limit,
+      p_cutoff: start, p_end: end, p_sido: sido || null, p_type: type,
+      p_min_size: MOMENTUM_SIZE_MIN, p_max_size: MOMENTUM_SIZE_MAX, p_limit: NEW_HIGH_BUCKET_FETCH_LIMIT,
     });
     if (error) { console.warn(`newHighDongs(rpc): ${type} 조회 실패 -`, error.message); return []; }
     return (data || []).map(r => ({ region: r.region, dong: r.dong, count: Number(r.cnt) }));
   } catch (e) { console.warn(`newHighDongs(rpc): ${type} 조회 예외 -`, e.message); return []; }
+}
+// 신고가 "흐름" - 돈되는지역(getPriceMomentum)과 같은 6구간(momentumBuckets)으로 나눠 구간별
+// 신고가 건수를 배열로 반환. 순위는 6구간 합계(total) 내림차순. ⚠️ "전국"(시/도 미지정)은
+// danji 그룹 수가 많아 구간 하나에도 몇 초가 걸릴 수 있어(#420 실측 8초대) 6구간을 한꺼번에
+// Promise.all로 쏘면 동시 커넥션이 몰려 타임아웃 위험이 있음(getPriceMomentumSimple이 이미
+// 겪은 문제와 동일) - 시/도를 지정한 조회만 병렬로 돌리고, "전국"은 순차 호출로 안전하게 감.
+async function getNewHighDongsTrend(type, sido, limit) {
+  const buckets = momentumBuckets(type); // 아파트 40일×6구간 / 빌라 60일×6구간 - 돈되는지역과 동일 창
+  let bucketRows;
+  if (!sido) {
+    bucketRows = [];
+    for (const b of buckets) {
+      bucketRows.push(await getNewHighDongsBucket(type, sido, b.start, b.end));
+    }
+  } else {
+    bucketRows = await Promise.all(buckets.map(b => getNewHighDongsBucket(type, sido, b.start, b.end)));
+  }
+  const acc = {}; // key(region|dong) -> { region, dong, counts:[6개], total }
+  bucketRows.forEach((rows, i) => {
+    rows.forEach(r => {
+      const key = r.region + '|' + r.dong;
+      if (!acc[key]) acc[key] = { region: r.region, dong: r.dong, counts: [0, 0, 0, 0, 0, 0] };
+      acc[key].counts[i] = r.count;
+    });
+  });
+  const list = Object.values(acc).map(x => ({ ...x, total: x.counts.reduce((a, b) => a + b, 0) }));
+  list.sort((a, b) => b.total - a.total);
+  return list.slice(0, limit);
 }
 
 // 2026-08: 국민평형(23~25평)만 보던 걸 폐지하고 전체 평형을 다 씀 - 대신 avg_price가
@@ -1548,20 +1609,18 @@ export default async function handler(req, res) {
   }
   if (req.query.mode === 'newHighDongs') {
     // 2026-08(사용자 요청: "신고가 갱신이 많은 지역 순위를 조금 더 빠르게 진입하기 위한
-    // 신호로 보고 싶다") - topDongs(단순 거래량)보다 이른 신호를 원해서 기본 조회기간을
-    // 3개월로 짧게 잡음(topDongs 기본 6개월보다 짧게). danji 단위 집계라 무거울 수 있어
-    // 캐시를 30분으로 둠(topDongs와 동일).
+    // 신호로 보고 싶다" → 이후 "돈되는 지역처럼 흐름이 필요하다") - v2: months 파라미터
+    // 대신 돈되는지역과 동일한 6구간(momentumBuckets, 아파트 40일×6/빌라 60일×6)으로 신고가
+    // 건수 흐름을 보여줌. danji 단위 집계라 무거울 수 있어 캐시를 30분으로 둠(topDongs와 동일).
     res.setHeader('Cache-Control', 's-maxage=1800, stale-while-revalidate=3600');
     try {
-      const months = parseInt(req.query.months, 10) || 3;
-      const cutoff = sixMonthsAgoInt(months);
       const sido = (req.query.sido || '').trim();
       const typeParam = req.query.type === 'apt' || req.query.type === 'villa' ? req.query.type : 'both';
       const result = {};
       const RANK_LIMIT = 50;
-      if (typeParam === 'both' || typeParam === 'apt') result.apt = await getNewHighDongs('apt', cutoff, sido, RANK_LIMIT);
-      if (typeParam === 'both' || typeParam === 'villa') result.villa = await getNewHighDongs('villa', cutoff, sido, RANK_LIMIT);
-      return res.status(200).json({ sidoList: SIDO_LIST, months, sido: sido || null, cutoff, ...result });
+      if (typeParam === 'both' || typeParam === 'apt') result.apt = await getNewHighDongsTrend('apt', sido, RANK_LIMIT);
+      if (typeParam === 'both' || typeParam === 'villa') result.villa = await getNewHighDongsTrend('villa', sido, RANK_LIMIT);
+      return res.status(200).json({ sidoList: SIDO_LIST, sido: sido || null, ...result });
     } catch (err) {
       return res.status(500).json({ error: err.message });
     }
