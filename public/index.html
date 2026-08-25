@@ -10048,6 +10048,16 @@ function placeAuctionMarker(a) {
         auctionMarkers[a.id] = { overlay: null, suppressed: true };
         return;
     }
+    // ⚠️ 2026-08(사용자 피드백: "계양구 귤현길 24 낙찰배지는 20평형/구축 필터를 걸어도 반응
+    // 안 하고 항상 보인다") - 바로 위 주석의 "항상 최소 하나는 보여야 함"은 #87 당시 의도였는데,
+    // 그 뒤 낙찰사례 배지(#415)에는 이미 타입탭·평형대·연식단계 필터를 적용하도록 바꿔놔서
+    // 같은 "낙찰" 정보인데 등록 경로(직접 등록 vs 낙찰사례 일괄등록)에 따라 필터 반응이 서로
+    // 달라져 있었음. 사용자에게 확인 후("경매물건도 필터 적용") 낙찰사례와 동일하게 통일함 -
+    // passesFiltersForAuction()에서 걸러지면 이제 등록 경매물건도 낙찰사례처럼 숨겨짐.
+    if (!passesFiltersForAuction(a)) {
+        auctionMarkers[a.id] = { overlay: null, suppressed: true };
+        return;
+    }
     var surgeRank = a.dong ? surgeRankMap[a.dong] : null;
     var surgeBadge = surgeRank
         ? '<span style="background:#e53935;color:white;font-size:9px;font-weight:bold;padding:1px 5px;border-radius:3px;margin-left:3px;">🔥' + surgeRank + '위</span>'
@@ -10255,6 +10265,24 @@ function passesFiltersForBidCase(c) {
     if (bt === 'villa' && activeVillaTiers.size > 0) {
         var bcEst = getBidCaseEstimates(c);
         if (!bcEst.ageTier || !activeVillaTiers.has(bcEst.ageTier)) return false;
+    }
+    return true;
+}
+/* 등록된 경매물건(낙찰 포함)이 지금 활성화된 속성 필터(타입탭·평형대·연식단계)를 통과하는지
+   판정 - passesFiltersForBidCase와 대칭되는 함수. 2026-08(사용자 피드백, 귤현길 24 사례)로
+   신설: 경매물건은 a.propType('apt'/'villa')·a.pyung(평 단위)·a.buildYear를 그대로 사용.
+   등급(activeGrades)·연립다세대 조건(activeVillaFilters - 승강기/주차)은 경매물건 데이터에
+   해당 필드가 없어 검사하지 않음(낙찰사례와 동일한 제약). */
+function passesFiltersForAuction(a) {
+    if (a.propType !== currentTypeFilter) return false;
+    if (activePyeongTiers.size > 0) {
+        var areaM2 = a.pyung ? parseFloat(a.pyung) * 3.305785 : null;
+        var tier = areaM2 ? getPyeongTier(areaM2) : null;
+        if (!tier || !activePyeongTiers.has(tier)) return false;
+    }
+    if (a.propType === 'villa' && activeVillaTiers.size > 0) {
+        var ageTier = a.buildYear ? getAgeTierByYear(a.buildYear) : null;
+        if (!ageTier || !activeVillaTiers.has(ageTier)) return false;
     }
     return true;
 }
