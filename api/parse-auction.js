@@ -1375,6 +1375,17 @@ async function handleDevNewsSearch(req, res) {
   }
   queries.push(gunguForBroaderQuery + ' 신속통합기획');
   queries.push(gunguForBroaderQuery + ' 정비구역');
+  // ⚠️ 2026-08 추가(사용자 요청: "경매물건 조합원 지위 승계 리스크 체크의 정비사업
+  // 단계·권리산정기준일을 뉴스검색으로 확인하고 싶다") - 기존 4개 쿼리는 "이 동네에
+  // 정비사업이 있는가"만 잡아내고, 실제로 지금 몇 단계인지(조합설립/사업시행/관리처분
+  // 인가)나 권리산정기준일 고시 여부는 별도 쿼리 없이는 검색결과에 묻혀서 잘 안 보임.
+  // 동 이름이 있을 때만 단계별 쿼리를 추가함(구 단위로 돌리면 다른 동 얘기가 너무 섞임).
+  if (parts.dongName) {
+    queries.push(parts.dongName + ' 조합설립인가');
+    queries.push(parts.dongName + ' 사업시행인가');
+    queries.push(parts.dongName + ' 관리처분계획인가');
+    queries.push(parts.dongName + ' 권리산정기준일');
+  }
 
   try {
     const resultsPerQuery = await Promise.all(
@@ -1402,12 +1413,22 @@ async function handleDevNewsSearch(req, res) {
         });
       });
     });
-    items.sort((a, b) => {
+    // ⚠️ 2026-08 추가: 쿼리가 8개로 늘어나면서 "조합설립인가/권리산정기준일" 같은 단계별
+    // 쿼리로 잡힌(정작 사용자가 가장 궁금해할) 기사가 날짜순 정렬에서 뒤로 밀려 slice(15)에서
+    // 잘려나갈 수 있음 - 단계별 쿼리 매칭 기사를 먼저 모아 최신순으로 앞에 두고, 나머지
+    // 일반 재개발/재건축 기사를 그 뒤에 이어붙임(각 그룹 내부는 여전히 최신순).
+    const STAGE_QUERY_SUFFIXES = ['조합설립인가', '사업시행인가', '관리처분계획인가', '권리산정기준일'];
+    function isStageMatch(it) {
+      return STAGE_QUERY_SUFFIXES.some((s) => (it.matchedQuery || '').endsWith(s));
+    }
+    function byDateDesc(a, b) {
       const ta = a.pubDate ? new Date(a.pubDate).getTime() : 0;
       const tb = b.pubDate ? new Date(b.pubDate).getTime() : 0;
       return tb - ta;
-    });
-    items = items.slice(0, 15);
+    }
+    const stageItems = items.filter(isStageMatch).sort(byDateDesc);
+    const otherItems = items.filter((it) => !isStageMatch(it)).sort(byDateDesc);
+    items = [...stageItems, ...otherItems].slice(0, 20);
     const payload = { items, fetchedAt: Date.now(), address, queries };
     setCachedDevNews(cacheKey, payload); // 응답을 늦추지 않도록 await 없이 fire-and-forget
     return res.status(200).json({ devNews: payload });
