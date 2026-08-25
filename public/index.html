@@ -1361,6 +1361,28 @@ tr:hover td { background:#fffde7; }
                 </label>
                 <button type="button" class="modal-btn btn-gray" style="font-size:11px;" onclick="autoDetectAdjustedArea()">주소로 자동판정</button>
             </div>
+            <!-- 2026-08 추가: 재개발·재건축 조합원 지위 승계 리스크 체크 - 규제지역(투기과열지구)
+                 여부·경매원인 채권자 유형은 위 조정대상지역 판정 및 AI 추출 채권자 텍스트로
+                 자동판정하지만, 정비사업 단계와 권리산정기준일은 시/도 정비사업 홈페이지 고시문을
+                 사용자가 직접 확인해서 입력해야 함(전국 정비구역을 주소만으로 자동 매칭할 공식
+                 API가 없음) - renderAiSummaryBox()가 이 두 값+위 판정을 합쳐서 아래 AI 상세
+                 박스 안에 종합 배지로 보여줌. -->
+            <div class="modal-row">
+                <span class="modal-label">정비사업 단계</span>
+                <select class="modal-select" id="a-redev-stage" onchange="renderAiSummaryBox();">
+                    <option value="">해당없음/모름</option>
+                    <option value="before">정비구역 지정 전(추진위 이전)</option>
+                    <option value="union">조합설립인가 후</option>
+                    <option value="approval">사업시행인가 후</option>
+                    <option value="management">관리처분계획인가 후</option>
+                    <option value="moving">이주·철거~착공</option>
+                </select>
+            </div>
+            <div class="modal-row">
+                <span class="modal-label">권리산정기준일</span>
+                <input type="date" class="modal-input" id="a-rights-calc-date" onchange="renderAiSummaryBox();">
+                <span style="font-size:10px;color:#999;margin-left:4px;">부산/서울시 정비사업 홈페이지 고시문에서 확인 후 입력</span>
+            </div>
             <div class="modal-row">
                 <span class="modal-label">공시가격 조회</span>
                 <button type="button" class="modal-btn btn-gray" style="font-size:11px;" onclick="window.open('https://www.realtyprice.kr','_blank')">🏛️ 부동산공시가격 알리미 열기</button>
@@ -7219,6 +7241,8 @@ function openAuctionModal(id) {
     document.getElementById('a-hold-months').value = '';
     document.getElementById('a-house-rank').value = '1';
     document.getElementById('a-is-adjusted').checked = false;
+    document.getElementById('a-redev-stage').value = '';
+    document.getElementById('a-rights-calc-date').value = '';
     document.getElementById('a-is-local-cheap').checked = false;
     document.getElementById('a-holds-june1').checked = false;
     document.getElementById('a-listing-count').value = '';
@@ -7333,6 +7357,8 @@ function openAuctionModal(id) {
             document.getElementById('a-comp-target-margin').value = cleanField(a.compTargetMargin) || TARGET_MARGIN_DEFAULTS[a.propType || 'apt'] || '2000';
             document.getElementById('a-house-rank').value  = cleanField(a.houseRank) || '1';
             document.getElementById('a-is-adjusted').checked   = !!a.isAdjusted;
+            document.getElementById('a-redev-stage').value = a.redevStage || '';
+            document.getElementById('a-rights-calc-date').value = cleanField(a.rightsCalcDate);
             document.getElementById('a-is-local-cheap').checked = !!a.isLocalCheap;
             document.getElementById('a-official-price').value = cleanField(a.officialPriceWon);
             document.getElementById('a-site-rights-area').value = cleanField(a.siteRightsAreaM2);
@@ -8210,6 +8236,99 @@ function autoDetectAdjustedArea() {
     alert((guess ? '조정대상지역으로 추정됩니다.' : '비조정대상지역으로 추정됩니다.')
         + '\n(2026년 2월 국토부 지정 기준 참고 판정이며, 최신 고시와 다를 수 있으니 국토부 홈페이지에서 다시 확인하세요.)');
     autoCalcTaxSilent(); calcCompValuation(); calcMargin();
+}
+/* ════════════════════════════════════
+   2026-08 추가: 재개발·재건축 경매물건 "조합원 지위 승계" 리스크 자동판정
+   ────────────────────────────────────
+   사용자 질문("입찰예정물건에서 개발단계별 조합원지위 리스크를 확인할 방법") 대응.
+   도시정비법 제39조2항 - 투기과열지구에서만 "조합설립인가 후(재건축)/관리처분계획인가
+   후(재개발)" 매수 시 조합원 지위 승계가 제한됨(비규제지역이면 이 조항 자체가 적용 안 됨).
+   예외적으로 시행령 37조3항5호에 따라 "국가·지자체·금융기관에 대한 채무불이행"으로 인한
+   경/공매는 그 예외로 인정되지만, 개인 간 채무로 인한 경매는 예외로 인정 안 됨(서울시
+   주거정비과-15631호, 2023.10.16 유권해석) - 그래서 경매개시원인이 된 채권자가 금융기관인지
+   개인인지가 핵심 분기점임.
+   이와 별개로 권리산정기준일(지분쪼개기 방지, 도시정비법 제77조)은 규제지역 여부와
+   무관하게 항상 적용되고 경매도 예외가 없음 - 시/도지사가 정비구역별로 개별 고시하는
+   날짜라 전국 API가 없어서 자동 매칭이 불가능함(부산시/서울시 정비사업 홈페이지에서
+   사용자가 직접 확인해서 입력해야 함). 대신 건축HUB로 이미 자동조회 중인 사용승인일과
+   비교해서 "사용승인일이 권리산정기준일 이후"면 신축분할 의심 경고를 자동으로 띄움.
+   ════════════════════════════════════ */
+// 주택법 시행령 제71조제1호가 말하는 "금융기관"에 통상 해당하는 명칭 키워드. 대부업체는
+// 원칙적으로 금융기관이 아니지만, 은행 근저당을 대위변제받아 진행하는 경매는 국토부가
+// 예외 인정한 사례가 있어(국토부 주택정비과 2023.8.29 유권해석) '대부'도 별도 주의 문구로
+// 안내함(자동으로 "금융기관"으로 단정하지 않음).
+var FINANCIAL_INSTITUTION_KEYWORDS = [
+    '은행', '저축은행', '캐피탈', '카드', '보험', '신협', '새마을금고', '수협', '농협', '산림조합',
+    '주택도시보증공사', 'HUG', '한국주택금융공사', 'HF', '신용보증기금', '기술보증기금',
+    '자산관리공사', 'AMC', '유동화', '대부'
+];
+function classifyCreditorType(creditorText) {
+    var t = (creditorText || '').trim();
+    if (!t) return { type: 'unknown', label: '확인 안 됨', note: '경매정보지에 채권자가 명확히 안 나옴 - 등기부등본 근저당권자를 직접 확인하세요.' };
+    var isDaebu = t.indexOf('대부') !== -1;
+    var isFin = FINANCIAL_INSTITUTION_KEYWORDS.some(function(k) { return t.indexOf(k) !== -1; });
+    if (isDaebu) {
+        return { type: 'daebu', label: '대부업체(주의)', note: '대부업체는 원칙적으로 시행령상 "금융기관"이 아니지만, 은행 근저당을 대위변제받아 진행한 경매라면 국토부가 예외를 인정한 사례가 있습니다(대위변제 채권임을 등기부·법원기록으로 확인 필요).' };
+    }
+    if (isFin) {
+        return { type: 'financial', label: '금융기관(추정)', note: '채권자명에 은행·저축은행 등 금융기관 키워드가 포함되어 있습니다 - 최종 확인은 등기부등본 근저당권자로 하세요.' };
+    }
+    return { type: 'individual', label: '개인/기타(추정)', note: '금융기관 키워드가 감지되지 않았습니다 - 개인 간 채무로 인한 경매라면 투기과열지구에서는 시행령 37조3항5호 예외가 인정되지 않습니다(서울시 주거정비과-15631호, 2023.10.16).' };
+}
+var REDEV_STAGE_LABELS = {
+    before: '정비구역 지정 전(추진위 이전)',
+    union: '조합설립인가 후',
+    approval: '사업시행인가 후',
+    management: '관리처분계획인가 후',
+    moving: '이주·철거~착공'
+};
+// addr: 물건 주소(규제지역 판정용), creditorText: AI추출 채권자, approvalDate: 건물 사용승인일
+// (건축HUB 자동조회값), redevStage/rightsCalcDate: 사용자가 위 모달에서 직접 입력한 값
+function buildRedevRiskHtml(addr, creditorText, approvalDate, redevStage, rightsCalcDate) {
+    if (!(addr || '').trim()) return ''; // 주소 자체가 없으면 규제지역 판정이 무의미하므로 박스 자체를 생략
+    var isAdj = guessIsAdjustedArea(addr);
+    var creditor = classifyCreditorType(creditorText);
+    var lines = [];
+    var summaryColor = '#2e7d32', summaryIcon = '✅';
+
+    lines.push((isAdj ? '🔶' : '⚪') + ' 규제지역(투기과열지구·조정대상지역): <b>' + (isAdj ? '해당' : '비해당') + '</b>'
+        + (isAdj ? ' - 재건축은 조합설립인가 후, 재개발은 관리처분계획인가 후 매수 시 원칙적으로 조합원 지위 승계 불가(도시정비법 제39조2항)'
+                 : ' - 이 조항 자체가 적용되지 않아 어느 단계에 매수해도 조합원 지위 승계에 원칙적으로 제한이 없습니다. (규제지역 지정은 정부 대책 발표로 바뀔 수 있어 입찰 직전 국토부 realestate.go.kr에서 재확인 권장)'));
+
+    if (isAdj) {
+        var creditorColor = creditor.type === 'financial' ? '#2e7d32' : (creditor.type === 'individual' ? '#c62828' : '#f57f17');
+        lines.push('🔶 경매원인 채권자 유형: <b style="color:' + creditorColor + ';">' + creditor.label + '</b> - ' + creditor.note);
+        if (creditor.type === 'individual') { summaryColor = '#c62828'; summaryIcon = '🚨'; }
+        else if (creditor.type !== 'financial') { summaryColor = '#f57f17'; summaryIcon = '⚠️'; }
+    }
+
+    if (redevStage) {
+        lines.push('📋 정비사업 단계(직접입력): <b>' + (REDEV_STAGE_LABELS[redevStage] || redevStage) + '</b>');
+    }
+
+    if (rightsCalcDate) {
+        var rcd = rightsCalcDate.replace(/-/g, '');
+        var apv = (approvalDate || '').replace(/[^0-9]/g, '').slice(0, 8);
+        lines.push('📅 권리산정기준일(직접입력): <b>' + rightsCalcDate + '</b> - 이 날짜 이후 지분쪼개기(신축분할 등)로 생긴 물건은 경매로 사도 현금청산 대상(도시정비법 제77조, 예외 없음)');
+        if (apv && apv.length === 8 && rcd.length === 10) {
+            var apvNum = parseInt(apv, 10), rcdNum = parseInt(rcd.slice(0,4)+rcd.slice(5,7)+rcd.slice(8,10), 10);
+            if (apvNum > rcdNum) {
+                lines.push('🚨 건물 사용승인일(' + approvalDate + ')이 권리산정기준일보다 늦습니다 - 권리산정기준일 이후 신축된 건물일 가능성이 있어 분양자격(입주권) 없이 현금청산될 위험이 높습니다. 반드시 정비사업 조합/시청 정비사업과에 분양자격 해당 여부를 직접 확인하세요.');
+                summaryColor = '#c62828'; summaryIcon = '🚨';
+            } else {
+                lines.push('✅ 건물 사용승인일(' + approvalDate + ')이 권리산정기준일보다 빠릅니다 - 신축분할로 인한 현금청산 위험은 낮아 보입니다(다른 사유로 인한 현금청산 가능성은 별개로 확인 필요).');
+            }
+        }
+    } else {
+        lines.push('⬜ 권리산정기준일 미입력 - 부산시/서울시 정비사업 통합홈페이지 고시문에서 확인 후 위 입력칸에 입력하면, 건물 사용승인일과 자동 비교해 신축분할(현금청산) 위험을 판정합니다.');
+    }
+
+    var html = '<div style="background:#f3f7fb;border:1px solid #cfe0f0;border-radius:6px;padding:8px 10px;margin:8px 0;">'
+        + '<div style="font-size:11px;font-weight:bold;color:' + summaryColor + ';margin-bottom:4px;">' + summaryIcon + ' 재개발·재건축 조합원 지위 승계 리스크 체크</div>'
+        + lines.map(function(l) { return '<div style="font-size:10.5px;color:#555;margin-top:3px;line-height:1.5;">' + l + '</div>'; }).join('')
+        + '<div style="font-size:9.5px;color:#999;margin-top:5px;">※ 참고용 자동판정이며 법률자문이 아닙니다. 실제 입찰 전 조합 사무실·법무사로 반드시 재확인하세요.</div>'
+        + '</div>';
+    return html;
 }
 /* 수도권(서울·경기·인천) 여부 - 지방 저가주택 특례 판정용 */
 function isMetroArea(addr) {
@@ -9780,6 +9899,8 @@ async function saveAuction() {
         compTargetMargin: document.getElementById('a-comp-target-margin').value,
         houseRank: document.getElementById('a-house-rank').value,
         isAdjusted: document.getElementById('a-is-adjusted').checked,
+        redevStage: document.getElementById('a-redev-stage').value || null,
+        rightsCalcDate: document.getElementById('a-rights-calc-date').value || null,
         isLocalCheap: document.getElementById('a-is-local-cheap').checked,
         officialPriceWon: document.getElementById('a-official-price').value || null,
         siteRightsAreaM2: document.getElementById('a-site-rights-area').value || null,
@@ -10782,7 +10903,7 @@ function buildAuctionPanelHtml(aptName, aptDong, aptBunji) {
         // 그래서 저장된 값(a.myBid 등)만으로 계산하는 정적 버전을 따로 만들어 붙임
         // (매매기록 없는 단독 경매물건은 편집모달을 직접 여니 원래도 마진분석이 보였음)
         html += buildMarginSummaryHtml(a);
-        html += buildAuctionDetailHtml(a.detail, a.officialPriceWon, a.appraisal);
+        html += buildAuctionDetailHtml(a.detail, a.officialPriceWon, a.appraisal, a.redevStage, a.rightsCalcDate);
         html += buildHistoryHtml(a.history);
         html += buildResaleMatchesHtml(a.resaleMatches);
         html += buildDevNewsHtml(a.devNews);
@@ -12928,7 +13049,11 @@ function renderAiSummaryBox() {
     var appraisalEl = document.getElementById('a-appraisal');
     var officialPriceWon = officialPriceWonEl ? (parseFloat(officialPriceWonEl.value) || null) : null;
     var appraisalManwon = appraisalEl ? (parseFloat(appraisalEl.value) || null) : null;
-    box.innerHTML = '<div style="margin-top:10px;">' + buildAuctionDetailHtml(pendingAuctionDetail, officialPriceWon, appraisalManwon) + '</div>';
+    var redevStageEl = document.getElementById('a-redev-stage');
+    var rightsCalcDateEl = document.getElementById('a-rights-calc-date');
+    var redevStage = redevStageEl ? redevStageEl.value : '';
+    var rightsCalcDate = rightsCalcDateEl ? rightsCalcDateEl.value : '';
+    box.innerHTML = '<div style="margin-top:10px;">' + buildAuctionDetailHtml(pendingAuctionDetail, officialPriceWon, appraisalManwon, redevStage, rightsCalcDate) + '</div>';
 }
 // ── 개발호재 검색 (재개발/재건축/신속통합기획 등, Gemini 웹검색) ──
 // AI가 생성한 텍스트를 그대로 innerHTML에 넣지 않도록 이스케이프 후 줄바꿈만 <br>로 치환
@@ -12949,23 +13074,43 @@ function formatNewsPubDate(pubDate) {
     if (isNaN(d.getTime())) return '';
     return d.getFullYear() + '.' + String(d.getMonth() + 1).padStart(2, '0') + '.' + String(d.getDate()).padStart(2, '0');
 }
+// 2026-08 추가: 백엔드가 이제 "{동} 조합설립인가/사업시행인가/관리처분계획인가/권리산정기준일"
+// 쿼리도 함께 돌려서 matchedQuery에 그 쿼리 문자열을 그대로 남겨둠 - 어떤 쿼리로 잡힌
+// 기사인지가 곧 "이 기사가 어느 정비사업 단계를 말하는지"의 가장 정확한 신호라, 제목/본문을
+// 다시 키워드 매칭하는 것보다 matchedQuery를 그대로 쓰는 게 안전함(오탐 없음).
+var DEV_NEWS_STAGE_BADGES = {
+    '조합설립인가': { label: '🏗️ 조합설립인가', color: '#6a1b9a' },
+    '사업시행인가': { label: '🏗️ 사업시행인가', color: '#00695c' },
+    '관리처분계획인가': { label: '🏗️ 관리처분계획인가', color: '#e65100' },
+    '권리산정기준일': { label: '📅 권리산정기준일', color: '#c62828' },
+};
+function getDevNewsStageBadge(matchedQuery) {
+    var mq = matchedQuery || '';
+    for (var suffix in DEV_NEWS_STAGE_BADGES) {
+        if (mq.indexOf(suffix) !== -1 && mq.slice(-suffix.length) === suffix) return DEV_NEWS_STAGE_BADGES[suffix];
+    }
+    return null;
+}
 function buildDevNewsHtml(devNews) {
     if (!devNews) return '';
     var html = '<div class="indicator-box" style="border-color:#90caf9;background:#f3f9ff;margin-top:8px;">';
     html += '<div class="indicator-title" style="color:#1565c0;">🏗️ 주변 개발호재 뉴스 (네이버 뉴스검색' + (devNews.fetchedAt ? ' · ' + formatDevNewsTime(devNews.fetchedAt) : '') + ')</div>';
+    html += '<div style="font-size:10px;color:#1565c0;margin-bottom:4px;">🔴 빨간 배지 = 권리산정기준일 언급 기사, 🟣 보라/주황 배지 = 정비사업 단계(조합설립·사업시행·관리처분인가) 언급 기사 - 위쪽에 우선 표시됩니다.</div>';
     var items = devNews.items || [];
     if (!items.length) {
         html += '<div style="font-size:11.5px;color:#777;">관련 뉴스를 찾지 못했습니다.</div>';
     } else {
         items.forEach(function(it) {
-            html += '<div style="background:white;border-radius:6px;padding:6px 8px;margin-bottom:5px;border-left:3px solid #90caf9;">'
+            var badge = getDevNewsStageBadge(it.matchedQuery);
+            html += '<div style="background:white;border-radius:6px;padding:6px 8px;margin-bottom:5px;border-left:3px solid ' + (badge ? badge.color : '#90caf9') + ';">'
+                + (badge ? '<span style="display:inline-block;font-size:9.5px;font-weight:bold;color:#fff;background:' + badge.color + ';border-radius:3px;padding:1px 5px;margin-right:5px;">' + badge.label + '</span>' : '')
                 + '<a href="' + escapeHtmlText(it.link) + '" target="_blank" rel="noopener" style="font-size:11.5px;font-weight:bold;color:#1565c0;text-decoration:none;">' + escapeHtmlText(it.title) + '</a>'
                 + '<div style="font-size:10px;color:#999;margin-top:1px;">' + [it.source, formatNewsPubDate(it.pubDate)].filter(Boolean).map(escapeHtmlText).join(' · ') + '</div>'
                 + (it.description ? '<div style="font-size:11px;color:#666;margin-top:3px;">' + escapeHtmlText(it.description) + '</div>' : '')
                 + '</div>';
         });
     }
-    html += '<div style="font-size:9.5px;color:#aaa;margin-top:4px;">⚠️ 키워드 기반 뉴스검색 결과이니 실제 진행 여부·범위는 해당 지자체·조합 공고 원문으로 다시 확인하세요.</div>';
+    html += '<div style="font-size:9.5px;color:#aaa;margin-top:4px;">⚠️ 키워드 기반 뉴스검색 결과이니 실제 진행 여부·범위·권리산정기준일 날짜는 해당 지자체·조합 공고 원문으로 다시 확인한 뒤, 위 "정비사업 단계"·"권리산정기준일" 입력칸에 직접 반영하세요.</div>';
     html += '</div>';
     return html;
 }
@@ -14101,7 +14246,7 @@ function buildSiteNoteSectionHtml(name, dong, addr, lat, lon) {
    (.margin-result/.margin-grid/.margin-item)을 그대로 재사용해서 톤을 통일하고, 항목별
    중요도에 따라 글자 크기를 다르게 줘서(경고성 항목이 가장 크고, 법원 연락처처럼 참고용인
    항목이 가장 작음) 한눈에 우선순위가 보이도록 함. */
-function buildAuctionDetailHtml(detail, officialPriceWon, fallbackAppraisalManwon) {
+function buildAuctionDetailHtml(detail, officialPriceWon, fallbackAppraisalManwon, redevStage, rightsCalcDate) {
     if (!detail) return '';
     // ⚠️ 2026-08: AI 추출값이 "null"이라는 글자 그대로 들어오는 경우가 있어(예: caseCautions),
     //    이 함수 안에서 값을 꺼낼 때는 항상 g()를 거쳐서 그런 경우를 빈 값으로 통일함.
@@ -14156,6 +14301,11 @@ function buildAuctionDetailHtml(detail, officialPriceWon, fallbackAppraisalManwo
             + warnLines.map(function(w) { return '<div style="font-size:13px;font-weight:bold;color:#c62828;line-height:1.5;">⚠️ ' + w + '</div>'; }).join('')
             + '</div>';
     }
+
+    // ── 재개발·재건축 조합원 지위 승계 리스크(2026-08 추가) - 주소는 지번주소가 있으면
+    //    우선 쓰고 없으면 도로명(caseCautions 등엔 안 들어있으므로 detail.addrJibun이 사실상
+    //    유일한 소스), 채권자는 AI 추출값, 사용승인일도 이미 AI가 추출해둔 값을 그대로 재사용함. ──
+    html += buildRedevRiskHtml(detail.addrJibun, detail.creditor, detail.approvalDate, redevStage, rightsCalcDate);
 
     // ── 기본 정보(표준 크기) - 지번주소/층·호수·승강기·사용승인일/소유자·채무자·채권자/건물면적 ──
     // ⚠️ 2026-08: 4개 값을 " · "로 한 줄에 이어붙이니 카드 폭 안에서 줄바꿈이 뒤죽박죽 되어
