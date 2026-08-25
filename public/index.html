@@ -702,6 +702,7 @@ tr:hover td { background:#fffde7; }
             <button class="filter-tab ft-common" id="rentonly-toggle-btn" onclick="toggleShowRentOnly(this)">🏠 전세거래만 있는 주소</button>
             <button class="filter-tab ft-common" id="bidcaseonly-toggle-btn" onclick="toggleBidCaseOnlyFilter(this)">⚖️ 낙찰사례만 보기</button>
             <button class="filter-tab ft-common" id="bidcasebadge-toggle-btn" onclick="toggleShowBidCaseBadges()">⚖️ 낙찰사례 배지 숨김</button>
+            <button class="filter-tab ft-common" id="newhighonly-toggle-btn" onclick="toggleNewHighOnlyFilter(this)">⭐ 신고가만 보기</button>
         </div>
     </div>
     <div id="fp-group-attr" style="display:none;">
@@ -1862,6 +1863,12 @@ var showRentOnlyFilter = false;
 // (경매 배지가 필터 무시하고 항상 뜨는 기존 규칙과 동일하게 유지).
 var bidCaseOnlyFilter = false;
 var bidCaseAptIndex = { byName: {}, byDongBunji: {} };
+// "낙찰사례만 보기"와 동일한 AND필터 패턴 - 켜면 일반 거래 마커 중 hasNewHigh(★신고가 배지
+// 대상)인 것만 보여줌. 2026-08: "급등지역/돈되는지역/신고가지역" 순위에서 특정 동으로
+// 이동해도 그 동 안에 수백 개 마커가 섞여 있으면 신고가 배지 몇 개를 눈으로 찾기 어렵다는
+// 피드백으로 추가 - moveToDongWithType()으로 이동한 뒤 이 필터까지 켜면 그 동의 신고가
+// 배지만 남기고 나머지는 다 숨길 수 있음.
+var newHighOnlyFilter = false;
 // 낙찰사례(⚖️) 배지 레이어 자체를 통째로 껐다 켰다 하는 마스터 스위치 - 위 bidCaseOnlyFilter(다른
 // 필터와 AND로 결합되는 "일반 마커를 낙찰사례 매칭된 것만 보기")와는 별개 개념. 300건 이상 쌓이면
 // 배지가 지도를 뒤덮어 다른 배지가 안 보일 수 있어서, 필요할 때만 잠깐 껐다 켤 수 있게 함.
@@ -1974,6 +1981,11 @@ function toggleShowRentOnly(btn) {
 }
 function toggleBidCaseOnlyFilter(btn) {
     bidCaseOnlyFilter = !bidCaseOnlyFilter;
+    btn.classList.toggle('active');
+    redrawMarkers();
+}
+function toggleNewHighOnlyFilter(btn) {
+    newHighOnlyFilter = !newHighOnlyFilter;
     btn.classList.toggle('active');
     redrawMarkers();
 }
@@ -3435,6 +3447,9 @@ function isAptVisibleUnderCurrentFilters(apt) {
     // 매칭되는 낙찰사례가 하나도 없으면 숨김(경매/낙찰사례 배지 자체는 이 필터와 무관하게
     // 항상 표시되므로 여기서는 일반 거래 마커만 대상으로 함)
     if (bidCaseOnlyFilter && !aptHasMatchingBidCase(apt)) return false;
+    // "신고가만 보기" - hasNewHigh는 calcNewHigh()가 이미 계산해둔 값(같은 건물+평형에서
+    // 최근 6개월 최고가가 그 이전 최고가를 넘었는지)을 그대로 씀 - 별도 계산 없이 필터링만 함
+    if (newHighOnlyFilter && !apt.hasNewHigh) return false;
     return true;
 }
 function redrawMarkers() {
