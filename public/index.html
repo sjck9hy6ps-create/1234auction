@@ -15858,14 +15858,14 @@ function loadSurgePanelData() {
     else loadSurgeHotData();
 }
 function esc1(s) { return String(s == null ? '' : s).replace(/'/g, "\\'"); }
-function renderRankSection(title, list, valueLabel, valueFn) {
+function renderRankSection(title, list, valueLabel, valueFn, type) {
     var html = '<div style="margin-top:8px;"><div style="font-size:11.5px;font-weight:bold;color:#4a148c;margin-bottom:4px;">' + title + '</div>';
     if (!list || !list.length) {
         html += '<div style="font-size:11px;color:#aaa;padding:6px 0;">해당 기간/조건에 데이터가 부족합니다.</div></div>';
         return html;
     }
     list.forEach(function(r, idx) {
-        html += '<div onclick="moveToDong(\'' + esc1(r.region) + '\',\'' + esc1(r.dong) + '\')" style="display:flex;justify-content:space-between;align-items:center;gap:8px;padding:6px 2px;border-bottom:1px solid #f5f5f5;font-size:11.5px;cursor:pointer;">'
+        html += '<div onclick="moveToDongWithType(\'' + esc1(r.region) + '\',\'' + esc1(r.dong) + '\',\'' + type + '\')" style="display:flex;justify-content:space-between;align-items:center;gap:8px;padding:6px 2px;border-bottom:1px solid #f5f5f5;font-size:11.5px;cursor:pointer;">'
             + '<span style="min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;"><span style="color:#999;font-weight:bold;margin-right:4px;">' + (idx + 1) + '</span>' + cleanField(r.region) + ' ' + cleanField(r.dong) + '</span>'
             + '<span style="font-weight:bold;color:#e53935;white-space:nowrap;flex-shrink:0;">' + valueFn(r) + '</span></div>';
     });
@@ -15899,8 +15899,8 @@ function renderSurgeHotBody() {
     statusBox.style.color = '#999';
     statusBox.innerText = '최근 6개월 거래량 기준' + (sido ? ' · ' + sido : ' · 전국')
         + (surgeRegAreaFilter === 'unregulated' ? ' · 비규제지역만' : ' · 규제지역 포함');
-    body.innerHTML = renderRankSection('🏢 아파트', filterByRegArea(data.apt), '건', function(r) { return r.count + '건'; })
-        + renderRankSection('🏘️ 연립다세대·단독', filterByRegArea(data.villa), '건', function(r) { return r.count + '건'; });
+    body.innerHTML = renderRankSection('🏢 아파트', filterByRegArea(data.apt), '건', function(r) { return r.count + '건'; }, 'apt')
+        + renderRankSection('🏘️ 연립다세대·단독', filterByRegArea(data.villa), '건', function(r) { return r.count + '건'; }, 'villa');
 }
 /* ⭐ 신고가 지역 - 2026-08(사용자 요청: "돈되는 지역으로 확인될 즈음이면 이미 진입시점이
    늦다. 조금 더 빠르게 진입하기 위해 신고가 갱신이 많은 지역 순위를 알고 싶다") - 급등지역
@@ -15952,7 +15952,7 @@ async function loadSurgeNewHighData() {
 // "언제부터 신고가가 몰리기 시작했는지" 흐름을 그대로 볼 수 있게 함(돈되는지역처럼 표본부족
 // carry-forward 보정은 안 함 - 신고가는 "건수"라 0건도 그 자체로 의미있는 정보라서 굳이
 // 다른 구간과 합칠 필요가 없음).
-function renderNewHighRankSection(title, list) {
+function renderNewHighRankSection(title, list, type) {
     var html = '<div style="margin-top:8px;"><div style="font-size:11.5px;font-weight:bold;color:#4a148c;margin-bottom:4px;">' + title + '</div>';
     if (!list || !list.length) {
         html += '<div style="font-size:11px;color:#aaa;padding:6px 0;">해당 기간/조건에 데이터가 부족합니다.</div></div>';
@@ -15960,7 +15960,7 @@ function renderNewHighRankSection(title, list) {
     }
     list.forEach(function(r, idx) {
         var trend = (r.counts || []).join('→');
-        html += '<div onclick="moveToDong(\'' + esc1(r.region) + '\',\'' + esc1(r.dong) + '\')" style="padding:6px 2px;border-bottom:1px solid #f5f5f5;cursor:pointer;">'
+        html += '<div onclick="moveToDongWithType(\'' + esc1(r.region) + '\',\'' + esc1(r.dong) + '\',\'' + type + '\')" style="padding:6px 2px;border-bottom:1px solid #f5f5f5;cursor:pointer;">'
             + '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;font-size:11.5px;">'
             + '<span style="min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;"><span style="color:#999;font-weight:bold;margin-right:4px;">' + (idx + 1) + '</span>' + cleanField(r.region) + ' ' + cleanField(r.dong) + '</span>'
             + '<span style="font-weight:bold;color:#e53935;white-space:nowrap;flex-shrink:0;">' + r.total + '건</span></div>'
@@ -15985,8 +15985,8 @@ function renderSurgeNewHighBody() {
     body.innerHTML = failBanner
         + '<div style="font-size:10px;color:#e65100;background:#fff8e1;border-radius:6px;padding:5px 8px;margin-top:6px;">'
         + 'ℹ️ "신고가"는 같은 단지(danji)의 역대 최고 평당가를 넘어선 거래를 뜻해요. 첫 거래뿐인 단지·전고점 이력이 없는 단지, 신축 초기 거래는 집계에서 빠집니다. 순위는 6구간 합계 기준, 건수 흐름은 오래된→최근 순입니다.</div>'
-        + renderNewHighRankSection('🏢 아파트', filterByRegArea(data.apt))
-        + renderNewHighRankSection('🏘️ 연립다세대·단독', filterByRegArea(data.villa));
+        + renderNewHighRankSection('🏢 아파트', filterByRegArea(data.apt), 'apt')
+        + renderNewHighRankSection('🏘️ 연립다세대·단독', filterByRegArea(data.villa), 'villa');
 }
 // 돈되는 지역 전용 렌더 - 순위/모멘텀% 외에 6구간 "평당가" 흐름과 구간별 거래량을 함께
 // 보여줌(모든 평형을 평당가로 정규화해서 비교하니 특정 평형대만 볼 때보다 표본이 커짐).
@@ -15995,7 +15995,7 @@ function renderSurgeNewHighBody() {
 // upTransitions(5번의 구간전환 중 상승횟수)와 volumeDrop(거래량 급감 경고)은 API에서 이미
 // 계산해서 내려주므로 여기선 그대로 표시만 함. lowSample이 true인 구간은 표본이 적어(또는
 // 거래가 아예 없어 직전/직후 값을 이어붙인 경우) 거래건수 뒤에 *를 붙여 표시함.
-function renderMoneyRankSection(title, list) {
+function renderMoneyRankSection(title, list, type) {
     var html = '<div style="margin-top:8px;"><div style="font-size:11.5px;font-weight:bold;color:#4a148c;margin-bottom:4px;">' + title + '</div>';
     if (!list || !list.length) {
         html += '<div style="font-size:11px;color:#aaa;padding:6px 0;">해당 기간/조건에 데이터가 부족합니다.</div></div>';
@@ -16011,7 +16011,7 @@ function renderMoneyRankSection(title, list) {
         // 신축(아파트 준공2년내/빌라 준공3년내) 거래는 이미 RPC 단계에서 평단가 집계에서 빠져있음 - newCntTotal이
         // 있으면 "이만큼은 별도로 빠졌다"는 걸 알려주는 참고 배지만 추가로 보여줌
         var newBadge = r.newCntTotal > 0 ? ' <span style="color:#1976d2;">🏗️신축 ' + r.newCntTotal + '건 별도(집계제외)</span>' : '';
-        html += '<div onclick="moveToDong(\'' + esc1(r.region) + '\',\'' + esc1(r.dong) + '\')" style="padding:6px 2px;border-bottom:1px solid #f5f5f5;cursor:pointer;">'
+        html += '<div onclick="moveToDongWithType(\'' + esc1(r.region) + '\',\'' + esc1(r.dong) + '\',\'' + type + '\')" style="padding:6px 2px;border-bottom:1px solid #f5f5f5;cursor:pointer;">'
             + '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;font-size:11.5px;">'
             + '<span style="min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;"><span style="color:#999;font-weight:bold;margin-right:4px;">' + (idx + 1) + '</span>' + cleanField(r.region) + ' ' + cleanField(r.dong) + '</span>'
             + '<span style="font-weight:bold;color:#e53935;white-space:nowrap;flex-shrink:0;">' + sign + r.momentumPct + '%</span></div>'
@@ -16054,8 +16054,23 @@ function renderSurgeMoneyBody() {
     // 그대로 두고 이 안내문구만 상시 표시함.
     body.innerHTML = '<div style="font-size:10px;color:#e65100;background:#fff8e1;border-radius:6px;padding:5px 8px;margin-top:6px;">'
         + 'ℹ️ 실거래 신고기한(30일)상 가장 최근 구간은 아직 신고가 덜 끝난 거래가 있어 거래량이 낮게 보일 수 있어요.</div>'
-        + renderMoneyRankSection('🏢 아파트', filterByRegArea(data.apt))
-        + renderMoneyRankSection('🏘️ 연립다세대·단독', filterByRegArea(data.villa));
+        + renderMoneyRankSection('🏢 아파트', filterByRegArea(data.apt), 'apt')
+        + renderMoneyRankSection('🏘️ 연립다세대·단독', filterByRegArea(data.villa), 'villa');
+}
+// 급등지역/돈되는지역/신고가지역 패널의 "아파트"/"연립다세대" 각 행은 그 타입의 순위인데,
+// moveToDong()은 지도만 이동시킬 뿐 현재 아파트/연립다세대 타입 필터(currentTypeFilter)는
+// 건드리지 않았음 - 그래서 예를 들어 화면이 "아파트" 필터로 켜져 있는 상태에서 "연립다세대"
+// 순위의 안양동을 클릭하면 지도는 안양동으로 이동하지만 연립다세대 마커 자체가 안 그려지니
+// (아파트 마커만 표시되니) 그 동에 실제로 있는 ★신고가 배지가 전혀 안 보이는 문제가 있었음
+// (사용자 리포트: "안양동이 신고가 1위인데 배지가 하나도 안 보인다" - 실제로는 배지 17개가
+// 있었지만 타입 필터가 아파트로 켜져 있어 화면에 렌더링 자체가 안 됐던 것으로 확인됨).
+// 그래서 지도 이동 전에 필요하면 타입 필터부터 맞는 쪽으로 전환하도록 함.
+function moveToDongWithType(region, dong, type) {
+    if (type && type !== currentTypeFilter) {
+        var btn = document.querySelector('.type-btn[onclick*="\'' + type + '\'"]');
+        if (btn) setTypeFilter(type, btn);
+    }
+    moveToDong(region, dong);
 }
 function moveToDong(region, dong) {
     // 2026-08: 예전엔 여기서 closeSurgePanel()을 호출해 클릭하자마자 패널이 닫혔는데,
