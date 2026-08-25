@@ -10321,6 +10321,15 @@ function passesFiltersForAuction(a) {
         var ageTier = a.buildYear ? getAgeTierByYear(a.buildYear) : null;
         if (!ageTier || !activeVillaTiers.has(ageTier)) return false;
     }
+    // 2026-08(사용자 확인 - "매칭된 건물이 신고가일 때만 표시"): "신고가만 보기"를 켜면
+    // 경매물건 배지도 매칭된 일반 거래 건물(matchedApt)의 hasNewHigh 값을 그대로 따라감.
+    // 경매물건 자체엔 "신고가" 개념이 없어서(단발성 경매 낙찰가일 뿐 danji 시세 흐름이 아님)
+    // 매매기록 쪽 계산을 그대로 재사용함 - 매칭되는 건물이 없으면(신축 등) 판정 근거가
+    // 없으므로 숨김 처리함.
+    if (newHighOnlyFilter) {
+        var matchedForNewHigh = findMatchedApt(a);
+        if (!matchedForNewHigh || !matchedForNewHigh.hasNewHigh) return false;
+    }
     return true;
 }
 function findMatchedAptForBidCase(c) {
