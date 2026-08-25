@@ -1428,11 +1428,18 @@ export default async function handler(req, res) {
       const sido = (req.query.sido || '').trim();
       const typeParam = req.query.type === 'apt' || req.query.type === 'villa' ? req.query.type : 'both';
       const result = {};
+      // 2026-08(사용자 요청: "규제지역/비규제지역 나눠서 순위 보고 싶다"): 프론트에서
+      // "비규제지역만" 토글을 누르면 규제지역을 걸러낸 뒤에도 상위 20개가 남아있어야 하는데,
+      // 여기서 20개만 내려주면 규제지역이 앞쪽을 많이 차지하는 지역(예: 서울/경기 조회)에서는
+      // 필터링 후 표시할 게 거의 안 남을 수 있음. getPriceMomentum이 어차피 전체를 계산한 뒤
+      // 마지막에 slice(0, limit)만 하는 구조라(SQL 자체 연산량과 무관) limit을 20→50으로
+      // 올려도 서버 부하는 거의 늘지 않음 - 응답 payload만 조금 커짐.
+      const RANK_LIMIT = 50;
       // 2026-08: apt/villa를 순차 await하면 "전국"처럼 무거운 조회에서 둘의 시간이
       // 그대로 합산돼 더 느려짐 - Promise.all로 병렬 실행해 전체 응답시간을 줄임.
       const jobs = [];
-      if (typeParam === 'both' || typeParam === 'apt') jobs.push(getPriceMomentum('apt', sido, 20).then(r => { result.apt = r; }));
-      if (typeParam === 'both' || typeParam === 'villa') jobs.push(getPriceMomentum('villa', sido, 20).then(r => { result.villa = r; }));
+      if (typeParam === 'both' || typeParam === 'apt') jobs.push(getPriceMomentum('apt', sido, RANK_LIMIT).then(r => { result.apt = r; }));
+      if (typeParam === 'both' || typeParam === 'villa') jobs.push(getPriceMomentum('villa', sido, RANK_LIMIT).then(r => { result.villa = r; }));
       await Promise.all(jobs);
       return res.status(200).json({ sidoList: SIDO_LIST, sido: sido || null, ...result });
     } catch (err) {
@@ -1448,8 +1455,12 @@ export default async function handler(req, res) {
       const sido = (req.query.sido || '').trim();
       const typeParam = req.query.type === 'apt' || req.query.type === 'villa' ? req.query.type : 'both';
       const result = {};
-      if (typeParam === 'both' || typeParam === 'apt') result.apt = await getTopDongs('apt', cutoff, sido, 20);
-      if (typeParam === 'both' || typeParam === 'villa') result.villa = await getTopDongs('villa', cutoff, sido, 20);
+      // 2026-08: priceMomentum과 동일한 이유(규제지역 필터링 후에도 20개가 남도록) limit을
+      // 20→50으로 상향. rpc_top_dongs는 SQL의 LIMIT절로 직접 쓰이지만, 이미 GROUP BY·ORDER BY로
+      // 집계된 결과에서 몇 개를 더 잘라오는 차이일 뿐이라 부하 증가는 미미함.
+      const RANK_LIMIT = 50;
+      if (typeParam === 'both' || typeParam === 'apt') result.apt = await getTopDongs('apt', cutoff, sido, RANK_LIMIT);
+      if (typeParam === 'both' || typeParam === 'villa') result.villa = await getTopDongs('villa', cutoff, sido, RANK_LIMIT);
       return res.status(200).json({ sidoList: SIDO_LIST, months, sido: sido || null, cutoff, ...result });
     } catch (err) {
       return res.status(500).json({ error: err.message });
