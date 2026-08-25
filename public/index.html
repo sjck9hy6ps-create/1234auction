@@ -410,6 +410,15 @@ tr:hover td { background:#fffde7; }
     padding-bottom:3px; display:inline-block;
 }
 .surge-tab-btn.active { color:#e53935; border-bottom:2px solid #e53935; }
+/* 규제지역/비규제지역 순위 분리 토글 - 2026-08 추가. 급등지역·돈되는 지역 두 탭 모두 같은
+   토글을 공유하며, 서버에서 이미 받아온 데이터(surgeHotCache/surgeMoneyCache)를 다시
+   fetch하지 않고 클라이언트에서 필터링만 다시 해서 즉시 반영함(renderSurgeHotBody/
+   renderSurgeMoneyBody 참고). */
+.reg-area-btn {
+    font-size:10.5px; font-weight:bold; color:#777; cursor:pointer; padding:3px 9px;
+    border:1px solid #ddd; border-radius:12px; background:#fafafa; white-space:nowrap;
+}
+.reg-area-btn.active { color:white; background:#5e35b1; border-color:#5e35b1; }
 .surge-item {
     padding:10px 14px; border-bottom:1px solid #f0f0f0; cursor:pointer; transition:background 0.1s;
 }
@@ -756,6 +765,12 @@ tr:hover td { background:#fffde7; }
             <option value="">전체(전국)</option>
         </select>
         <button class="modal-btn btn-purple" style="font-size:11px;white-space:nowrap;" onclick="loadSurgePanelData()">불러오기</button>
+    </div>
+    <div style="padding:8px 14px 0;display:flex;gap:6px;align-items:center;">
+        <span style="font-size:10.5px;color:#999;">규제지역</span>
+        <span class="reg-area-btn active" id="reg-area-btn-all" onclick="setSurgeRegAreaFilter('all')">전체</span>
+        <span class="reg-area-btn" id="reg-area-btn-unreg" onclick="setSurgeRegAreaFilter('unregulated')">비규제지역만</span>
+        <span onclick="showCalcInfo('regAreaRank')" title="규제지역 기준 안내" style="cursor:pointer;color:#1976d2;font-size:11px;">ⓘ</span>
     </div>
     <div id="surge-panel-status" style="font-size:11px;color:#999;padding:6px 14px 0;"></div>
     <div id="surge-panel-body"></div>
@@ -9111,6 +9126,12 @@ var CALC_INFO_TEXT = {
         + '위한 합의금·소송 대비 비용(점유자에게 지급)이며, 낙찰자 본인의 이사비용은 별도의\n'
         + '"이사비용" 항목에서 계산합니다. 임차인 유무와 협의 난이도에 따라 실제 비용은 크게\n'
         + '달라질 수 있으니 참고용으로만 사용하세요.',
+    regAreaRank: '"규제지역"은 취득세 자동계산(guessIsAdjustedArea)에 이미 쓰이던 조정대상지역 목록\n'
+        + '(2026-02 국토부 지정 기준: 서울 25개구 전체 + 경기 12곳)을 그대로 재사용합니다.\n\n'
+        + '- "전체": 서버가 계산해둔 순위(최대 50개 지역)를 그대로 상위 20개 보여줍니다(규제지역 포함).\n'
+        + '- "비규제지역만": 같은 순위 데이터에서 규제지역만 걸러내고, 남은 지역 중 상위 20개를 다시 보여줍니다.\n'
+        + '  API를 다시 호출하지 않고 이미 받아온 데이터로 즉시 재계산합니다.\n\n'
+        + '규제지역 목록은 수시로 바뀔 수 있어(지정/해제), 실제 입찰 전에는 국토부 공고로 한 번 더 확인하세요.',
     repair: '수리비는 연식단계(프리미엄신축/신축/준신축/구축/노후)별 평당 단가 × 평형으로 자동계산되며,\n'
         + '단가표는 물건유형별로 다릅니다(연식은 AI추출 사용승인일 → 건축HUB 사용승인일 →\n'
         + '등록된 유사물건 준공연도 중앙값 순으로 채워짐).\n'
@@ -15775,6 +15796,33 @@ function resetPyeongTierFilter() {
 ════════════════════════════════════ */
 var RANK_SIDO_LIST = ['서울','부산','대구','인천','광주','대전','울산','세종','경기','강원','충북','충남','전북','전남','경북','경남','제주'];
 var surgePanelTab = 'hot';
+// ⚠️ 2026-08(사용자 요청: "돈되는 지역/급등지역 서치를 규제지역/비규제지역으로 나눠서 보고
+// 싶다") - 서버(getTopDongs/getPriceMomentum)는 이미 20→50개로 넉넉히 받아오고
+// (limit 상향은 SQL 연산량과 무관 - 어차피 전체를 계산한 뒤 마지막에 slice만 하는
+// 구조라 응답 payload만 조금 커짐, api/data-coverage.js 참고), 클라이언트에서
+// "전체(규제지역 포함)"/"비규제지역만" 두 관점으로 재필터링만 함 - API 재호출 없이 토글
+// 즉시 반영됨. 규제지역 판정은 취득세 계산에 이미 쓰던 guessIsAdjustedArea/ADJUSTED_AREAS를
+// 그대로 재사용(region 필드 포맷이 LAWD_CODES와 동일해 바로 매칭됨).
+var surgeRegAreaFilter = 'all'; // 'all' | 'unregulated'
+var surgeHotCache = null;   // 마지막으로 불러온 급등지역 원본 응답(최대 50개씩)
+var surgeMoneyCache = null; // 마지막으로 불러온 돈되는지역 원본 응답(최대 50개씩)
+var SURGE_RANK_DISPLAY_COUNT = 20;
+function filterByRegArea(list) {
+    var arr = list || [];
+    if (surgeRegAreaFilter === 'unregulated') {
+        arr = arr.filter(function(r) { return !guessIsAdjustedArea(r.region); });
+    }
+    return arr.slice(0, SURGE_RANK_DISPLAY_COUNT);
+}
+function setSurgeRegAreaFilter(mode) {
+    if (surgeRegAreaFilter === mode) return;
+    surgeRegAreaFilter = mode;
+    document.getElementById('reg-area-btn-all').classList.toggle('active', mode === 'all');
+    document.getElementById('reg-area-btn-unreg').classList.toggle('active', mode === 'unregulated');
+    // 이미 받아온 캐시로 즉시 재렌더링(재조회 없음)
+    if (surgePanelTab === 'money') renderSurgeMoneyBody();
+    else renderSurgeHotBody();
+}
 function openSurgePanel() {
     var p = document.getElementById('surge-panel');
     document.getElementById('auction-list-panel').style.display = 'none';
@@ -15829,14 +15877,24 @@ async function loadSurgeHotData() {
         var res = await fetch(url);
         var data = await readJsonResponseSafe(res);
         if (!res.ok) throw new Error((data && data.error) || ('서버 오류(' + res.status + ')'));
-        statusBox.style.color = '#999';
-        statusBox.innerText = '최근 6개월 거래량 기준' + (sido ? ' · ' + sido : ' · 전국');
-        body.innerHTML = renderRankSection('🏢 아파트', data.apt, '건', function(r) { return r.count + '건'; })
-            + renderRankSection('🏘️ 연립다세대·단독', data.villa, '건', function(r) { return r.count + '건'; });
+        surgeHotCache = data; // ⚠️ 규제지역/비규제지역 토글이 재조회 없이 즉시 반영되도록 원본을 캐시해둠
+        renderSurgeHotBody();
     } catch (e) {
         statusBox.style.color = '#e53935';
         statusBox.innerText = '불러오기 실패: ' + e.message;
     }
+}
+function renderSurgeHotBody() {
+    var data = surgeHotCache;
+    if (!data) return;
+    var sido = document.getElementById('surge-sido-select').value;
+    var statusBox = document.getElementById('surge-panel-status');
+    var body = document.getElementById('surge-panel-body');
+    statusBox.style.color = '#999';
+    statusBox.innerText = '최근 6개월 거래량 기준' + (sido ? ' · ' + sido : ' · 전국')
+        + (surgeRegAreaFilter === 'unregulated' ? ' · 비규제지역만' : ' · 규제지역 포함');
+    body.innerHTML = renderRankSection('🏢 아파트', filterByRegArea(data.apt), '건', function(r) { return r.count + '건'; })
+        + renderRankSection('🏘️ 연립다세대·단독', filterByRegArea(data.villa), '건', function(r) { return r.count + '건'; });
 }
 // 돈되는 지역 전용 렌더 - 순위/모멘텀% 외에 6구간 "평당가" 흐름과 구간별 거래량을 함께
 // 보여줌(모든 평형을 평당가로 정규화해서 비교하니 특정 평형대만 볼 때보다 표본이 커짐).
@@ -15883,19 +15941,29 @@ async function loadSurgeMoneyData() {
         var res = await fetch(url);
         var data = await readJsonResponseSafe(res);
         if (!res.ok) throw new Error((data && data.error) || ('서버 오류(' + res.status + ')'));
-        statusBox.style.color = '#999';
-        statusBox.innerText = '평당가 모멘텀(단지기준 상대지수·5구간 중 3회 이상 상승·신축 제외: 아파트2년/빌라3년) · 아파트 40일×6구간/최소7건, 연립다세대 60일×6구간/최소4건' + (sido ? ' · ' + sido : ' · 전국');
-        // 실거래 신고기한(계약 후 30일 이내)상 가장 최근 1개월 구간은 아직 신고가 덜 끝난
-        // 거래가 섞여 있어 거래량이 구조적으로 낮게 보일 수 있음 - 사용자 요청으로 계산 로직은
-        // 그대로 두고 이 안내문구만 상시 표시함.
-        body.innerHTML = '<div style="font-size:10px;color:#e65100;background:#fff8e1;border-radius:6px;padding:5px 8px;margin-top:6px;">'
-            + 'ℹ️ 실거래 신고기한(30일)상 가장 최근 구간은 아직 신고가 덜 끝난 거래가 있어 거래량이 낮게 보일 수 있어요.</div>'
-            + renderMoneyRankSection('🏢 아파트', data.apt)
-            + renderMoneyRankSection('🏘️ 연립다세대·단독', data.villa);
+        surgeMoneyCache = data; // ⚠️ 규제지역/비규제지역 토글이 재조회 없이 즉시 반영되도록 원본을 캐시해둠
+        renderSurgeMoneyBody();
     } catch (e) {
         statusBox.style.color = '#e53935';
         statusBox.innerText = '불러오기 실패: ' + e.message;
     }
+}
+function renderSurgeMoneyBody() {
+    var data = surgeMoneyCache;
+    if (!data) return;
+    var sido = document.getElementById('surge-sido-select').value;
+    var statusBox = document.getElementById('surge-panel-status');
+    var body = document.getElementById('surge-panel-body');
+    statusBox.style.color = '#999';
+    statusBox.innerText = '평당가 모멘텀(단지기준 상대지수·5구간 중 3회 이상 상승·신축 제외: 아파트2년/빌라3년) · 아파트 40일×6구간/최소7건, 연립다세대 60일×6구간/최소4건' + (sido ? ' · ' + sido : ' · 전국')
+        + (surgeRegAreaFilter === 'unregulated' ? ' · 비규제지역만' : ' · 규제지역 포함');
+    // 실거래 신고기한(계약 후 30일 이내)상 가장 최근 1개월 구간은 아직 신고가 덜 끝난
+    // 거래가 섞여 있어 거래량이 구조적으로 낮게 보일 수 있음 - 사용자 요청으로 계산 로직은
+    // 그대로 두고 이 안내문구만 상시 표시함.
+    body.innerHTML = '<div style="font-size:10px;color:#e65100;background:#fff8e1;border-radius:6px;padding:5px 8px;margin-top:6px;">'
+        + 'ℹ️ 실거래 신고기한(30일)상 가장 최근 구간은 아직 신고가 덜 끝난 거래가 있어 거래량이 낮게 보일 수 있어요.</div>'
+        + renderMoneyRankSection('🏢 아파트', filterByRegArea(data.apt))
+        + renderMoneyRankSection('🏘️ 연립다세대·단독', filterByRegArea(data.villa));
 }
 function moveToDong(region, dong) {
     // 2026-08: 예전엔 여기서 closeSurgePanel()을 호출해 클릭하자마자 패널이 닫혔는데,
