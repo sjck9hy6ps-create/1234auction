@@ -105,23 +105,41 @@ async function clearHouseCache() {
 // 직접 긁는 별도 경로라 이 버그의 영향을 받지 않았음 - 그래서 순위와 배지가 어긋나 보였음.)
 // id(PK, BIGINT GENERATED ALWAYS AS IDENTITY - house_rent와 동일한 패턴)를 오름차순 정렬
 // 기준으로 삼아 range()로 끝까지 안전하게 페이지네이션합니다.
+// ⚠️ 2026-08 추가: 처음엔 while 루프로 페이지를 하나씩 순차 요청했는데, 거래량이 많은
+// 지역(예: 남양주시 전체 - house_trades만 7000건대)은 페이지가 7~9개씩 나와서 매번
+// Supabase 왕복시간이 그대로 누적되어 캐시가 없을 때(Redis 미스) 응답이 10초 넘게
+// 걸리는 게 실측 확인됐습니다. 먼저 count만 가벼운 head 요청으로 받아서 전체 페이지
+// 수를 계산한 뒤, 모든 페이지를 Promise.all로 동시에 요청하도록 바꿔서 왕복시간을
+// "페이지 수 x 1회"가 아니라 "약 1회"로 줄였습니다. (단순 region 인덱스 조회라
+// 페이지 몇 개 더 병렬로 나가는 정도는 앞서 겪은 rpc_new_high_dongs류의 무거운
+// 윈도우함수 SQL 병렬호출 문제와는 성격이 달라 안전함.)
 const FETCH_PAGE_SIZE = 1000;
 async function fetchAllRows(table, regionName) {
-  let all = [];
-  let from = 0;
-  while (true) {
-    const { data, error } = await supabase
-      .from(table)
-      .select('*')
-      .eq('region', regionName)
-      .order('id', { ascending: true })
-      .range(from, from + FETCH_PAGE_SIZE - 1);
-    if (error) return { data: null, error };
-    if (!data || data.length === 0) break;
-    all = all.concat(data);
-    if (data.length < FETCH_PAGE_SIZE) break; // 마지막 페이지(꽉 안 찼음) - 종료
-    from += FETCH_PAGE_SIZE;
+  const { count, error: countError } = await supabase
+    .from(table)
+    .select('id', { count: 'exact', head: true })
+    .eq('region', regionName);
+  if (countError) return { data: null, error: countError };
+  if (!count) return { data: [], error: null };
+
+  const pageCount = Math.ceil(count / FETCH_PAGE_SIZE);
+  const pagePromises = [];
+  for (let i = 0; i < pageCount; i++) {
+    const from = i * FETCH_PAGE_SIZE;
+    pagePromises.push(
+      supabase
+        .from(table)
+        .select('*')
+        .eq('region', regionName)
+        .order('id', { ascending: true })
+        .range(from, from + FETCH_PAGE_SIZE - 1)
+    );
   }
+  const results = await Promise.all(pagePromises);
+  for (const r of results) {
+    if (r.error) return { data: null, error: r.error };
+  }
+  const all = results.flatMap(r => r.data || []);
   return { data: all, error: null };
 }
 
