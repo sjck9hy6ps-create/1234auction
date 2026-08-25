@@ -15905,16 +15905,19 @@ function renderSurgeHotBody() {
    늦다. 조금 더 빠르게 진입하기 위해 신고가 갱신이 많은 지역 순위를 알고 싶다") - 급등지역
    (topDongs, 거래량 단순집계)/돈되는지역(priceMomentum, 6구간 추세 확인까지 필요해 신호가
    늦음)보다 이른 신호로, "지금 막 그 단지 역대 최고 평당가를 갱신한 거래"의 건수를 법정동
-   단위로 세어 순위를 매김(정의는 api/data-coverage.js의 rpc_new_high_dongs 참고). 반환
-   shape이 급등지역과 동일(region/dong/count)이라 renderRankSection을 그대로 재사용함. */
+   단위로 세어 순위를 매김(정의는 api/data-coverage.js의 rpc_new_high_dongs 참고).
+   ⚠️ 2026-08(v2, 사용자 요청: "돈되는 지역과 같이 흐름이 필요해") - 예전엔 단일 기간(3개월)
+   건수 하나만 받아왔는데, 돈되는지역과 동일한 6구간(momentumBuckets)으로 건수 흐름을
+   받아오도록 API가 바뀜(months 파라미터 제거, 반환 shape이 {region,dong,counts:[6],total}로
+   변경) - renderRankSection 대신 전용 렌더(renderNewHighRankSection)로 흐름을 표시함. */
 async function loadSurgeNewHighData() {
     var sido = document.getElementById('surge-sido-select').value;
     var statusBox = document.getElementById('surge-panel-status');
     var body = document.getElementById('surge-panel-body');
-    statusBox.style.color = '#999'; statusBox.innerText = '불러오는 중... (전국 조회는 몇 초 걸릴 수 있어요)';
+    statusBox.style.color = '#999'; statusBox.innerText = '불러오는 중... (전국 조회는 몇~수십 초 걸릴 수 있어요)';
     body.innerHTML = '';
     try {
-        var url = '/api/data-coverage?mode=newHighDongs&type=both&months=3' + (sido ? '&sido=' + encodeURIComponent(sido) : '');
+        var url = '/api/data-coverage?mode=newHighDongs&type=both' + (sido ? '&sido=' + encodeURIComponent(sido) : '');
         var res = await fetch(url);
         var data = await readJsonResponseSafe(res);
         if (!res.ok) throw new Error((data && data.error) || ('서버 오류(' + res.status + ')'));
@@ -15925,6 +15928,29 @@ async function loadSurgeNewHighData() {
         statusBox.innerText = '불러오기 실패: ' + e.message;
     }
 }
+// 신고가 지역 전용 렌더 - renderMoneyRankSection과 같은 자리에 "평당가 흐름" 대신 "신고가
+// 건수 흐름"(6구간, 오래된→최근 순)을 보여줌. counts[i]가 0인 구간도 그대로 0으로 표시해서
+// "언제부터 신고가가 몰리기 시작했는지" 흐름을 그대로 볼 수 있게 함(돈되는지역처럼 표본부족
+// carry-forward 보정은 안 함 - 신고가는 "건수"라 0건도 그 자체로 의미있는 정보라서 굳이
+// 다른 구간과 합칠 필요가 없음).
+function renderNewHighRankSection(title, list) {
+    var html = '<div style="margin-top:8px;"><div style="font-size:11.5px;font-weight:bold;color:#4a148c;margin-bottom:4px;">' + title + '</div>';
+    if (!list || !list.length) {
+        html += '<div style="font-size:11px;color:#aaa;padding:6px 0;">해당 기간/조건에 데이터가 부족합니다.</div></div>';
+        return html;
+    }
+    list.forEach(function(r, idx) {
+        var trend = (r.counts || []).join('→');
+        html += '<div onclick="moveToDong(\'' + esc1(r.region) + '\',\'' + esc1(r.dong) + '\')" style="padding:6px 2px;border-bottom:1px solid #f5f5f5;cursor:pointer;">'
+            + '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;font-size:11.5px;">'
+            + '<span style="min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;"><span style="color:#999;font-weight:bold;margin-right:4px;">' + (idx + 1) + '</span>' + cleanField(r.region) + ' ' + cleanField(r.dong) + '</span>'
+            + '<span style="font-weight:bold;color:#e53935;white-space:nowrap;flex-shrink:0;">' + r.total + '건</span></div>'
+            + '<div style="font-size:10px;color:#888;margin-top:2px;">신고가 건수 ' + trend + '</div>'
+            + '</div>';
+    });
+    html += '</div>';
+    return html;
+}
 function renderSurgeNewHighBody() {
     var data = surgeNewHighCache;
     if (!data) return;
@@ -15932,12 +15958,12 @@ function renderSurgeNewHighBody() {
     var statusBox = document.getElementById('surge-panel-status');
     var body = document.getElementById('surge-panel-body');
     statusBox.style.color = '#999';
-    statusBox.innerText = '최근 3개월간 단지별 역대 최고 평당가를 갱신한 거래 건수 기준' + (sido ? ' · ' + sido : ' · 전국')
+    statusBox.innerText = '단지별 역대 최고 평당가를 갱신한 거래 건수 흐름(6구간, 아파트 40일×6/빌라 60일×6) · 신축(아파트2년/빌라3년) 제외' + (sido ? ' · ' + sido : ' · 전국')
         + (surgeRegAreaFilter === 'unregulated' ? ' · 비규제지역만' : ' · 규제지역 포함');
     body.innerHTML = '<div style="font-size:10px;color:#e65100;background:#fff8e1;border-radius:6px;padding:5px 8px;margin-top:6px;">'
-        + 'ℹ️ "신고가"는 같은 단지(danji)의 역대 최고 평당가를 넘어선 거래를 뜻해요. 첫 거래뿐인 단지·전고점 이력이 없는 단지는 집계에서 빠집니다.</div>'
-        + renderRankSection('🏢 아파트', filterByRegArea(data.apt), '건', function(r) { return r.count + '건'; })
-        + renderRankSection('🏘️ 연립다세대·단독', filterByRegArea(data.villa), '건', function(r) { return r.count + '건'; });
+        + 'ℹ️ "신고가"는 같은 단지(danji)의 역대 최고 평당가를 넘어선 거래를 뜻해요. 첫 거래뿐인 단지·전고점 이력이 없는 단지, 신축 초기 거래는 집계에서 빠집니다. 순위는 6구간 합계 기준, 건수 흐름은 오래된→최근 순입니다.</div>'
+        + renderNewHighRankSection('🏢 아파트', filterByRegArea(data.apt))
+        + renderNewHighRankSection('🏘️ 연립다세대·단독', filterByRegArea(data.villa));
 }
 // 돈되는 지역 전용 렌더 - 순위/모멘텀% 외에 6구간 "평당가" 흐름과 구간별 거래량을 함께
 // 보여줌(모든 평형을 평당가로 정규화해서 비교하니 특정 평형대만 볼 때보다 표본이 커짐).
