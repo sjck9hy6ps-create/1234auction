@@ -908,6 +908,73 @@ async function getAvmEstimate(type, region, dong, size, floor, buildYear, danji,
        group by c.region, c.dong, c.danji, n.new_cnt, n.new_avg_price;
      $$;
      ------------------------------------------------------------------
+
+     ════════════════════════════════════
+     신고가(전고점 갱신) 거래량 지역 순위 - 2026-08 추가
+     "돈되는 지역(가격모멘텀)"으로 이미 상승세가 확인될 즈음이면 이미 진입시점이 늦다는
+     사용자 피드백에 따라, "지금 막 신고가가 갱신되고 있는 지역"을 더 이른 신호로 보여줌.
+
+     신고가 정의: 지도 마커의 ★신고가 배지(calcNewHigh, index.html)는 "같은 건물의 같은
+     평형에서 최근 6개월 거래 최고가가 그 이전 전체 거래 최고가를 넘었는지"를 건물 단위로
+     판정하는데, 이건 특정 건물 하나의 배지 표시용이라 이미 로딩된 데이터(지도 뷰포트) 안에서만
+     계산 가능함. 이 순위는 "전국 어디서 지금 신고가가 많이 나오고 있는지"를 봐야 해서 DB
+     전체를 SQL에서 집계해야 함 - 그래서 건물+평형 대신 건물(danji) 단위 평당가(ppp, 다른
+     RPC와 동일한 정규화 - 평형이 달라도 비교 가능)로 판정 기준을 바꿈: 각 거래를 그 거래
+     이전(strict히 더 이른 날짜)의 같은 danji 거래들과 비교해서, 그 danji 역대 최고 평당가를
+     처음으로 넘어선 거래를 "신고가 거래"로 셈. (윈도우 함수 RANGE BETWEEN UNBOUNDED
+     PRECEDING AND 1 PRECEDING을 deal_date(정수 YYYYMMDD) 기준으로 쓰면 "이 거래보다 이전
+     날짜의 모든 행"이 정확히 잡힘 - 같은 날짜 거래끼리는 서로 비교하지 않음. YYYYMMDD 정수
+     빼기 1이 실제 달력상 하루 전과 정확히 일치하지 않는 날도 있지만(예: 20260301-1=20260229는
+     실존 안 할 수도 있음) 부등호 비교 목적("더 작은 정수인가")에는 문제 없음.)
+     danji 이력이 전혀 없는(그 danji의 첫 거래) 건은 비교 대상이 없어 "갱신"이라 부를 수
+     없으므로 제외함(prior_max_ppp is null).
+     ⚠️ 성능 주의: rpc_bucket_avg_price와 마찬가지로 danji 단위 partition이 꼭 필요해서(다른
+     건물끼리 가격을 비교하면 의미가 없음) "전국"(시/도 미지정) 조회는 무거울 수 있음 -
+     danji 그룹 수가 늘면서 rpc_bucket_avg_price가 겪었던 것과 같은 종류의 타임아웃 위험이
+     있음. 배포 후 "전국" 스코프에서 실제로 응답이 오는지 반드시 확인 필요(#419).
+     ------------------------------------------------------------------
+     create or replace function rpc_new_high_dongs(p_cutoff int, p_sido text, p_type text, p_min_size int default 10, p_max_size int default 300, p_limit int default 50)
+     returns table(region text, dong text, cnt bigint)
+     language sql stable as $$
+       with raw as (
+         select region, dong, coalesce(nullif(danji, ''), '(단지미상)') as danji, deal_date,
+           (price::numeric / nullif(size, 0)) * 3.305785 as ppp
+         from house_trades
+           where p_type = 'apt' and size >= p_min_size and size <= p_max_size
+             and dong is not null and dong <> ''
+             and (p_sido is null or p_sido = '' or region like p_sido || '%')
+         union all
+         select region, dong, coalesce(nullif(danji, ''), '(단지미상)') as danji, deal_date,
+           (price::numeric / nullif(size, 0)) * 3.305785 as ppp
+         from villa_trades
+           where p_type = 'villa' and size >= p_min_size and size <= p_max_size
+             and dong is not null and dong <> ''
+             and (p_sido is null or p_sido = '' or region like p_sido || '%')
+         union all
+         select region, dong, coalesce(nullif(danji, ''), '(단지미상)') as danji, deal_date,
+           (price::numeric / nullif(size, 0)) * 3.305785 as ppp
+         from single_trades
+           where p_type = 'villa' and size >= p_min_size and size <= p_max_size
+             and dong is not null and dong <> ''
+             and (p_sido is null or p_sido = '' or region like p_sido || '%')
+       ),
+       ranked as (
+         select region, dong, danji, deal_date, ppp,
+           max(ppp) over (
+             partition by region, dong, danji
+             order by deal_date
+             range between unbounded preceding and 1 preceding
+           ) as prior_max_ppp
+         from raw
+       )
+       select region, dong, count(*) as cnt
+       from ranked
+       where deal_date >= p_cutoff and prior_max_ppp is not null and ppp > prior_max_ppp
+       group by region, dong
+       order by cnt desc
+       limit p_limit;
+     $$;
+     ------------------------------------------------------------------
 ════════════════════════════════════ */
 const SIDO_LIST = ['서울','부산','대구','인천','광주','대전','울산','세종','경기','강원','충북','충남','전북','전남','경북','경남','제주'];
 function sixMonthsAgoInt(months) {
@@ -921,6 +988,19 @@ async function getTopDongs(type, cutoff, sido, limit) {
     if (error) { console.warn(`topDongs(rpc): ${type} 조회 실패 -`, error.message); return []; }
     return (data || []).map(r => ({ region: r.region, dong: r.dong, count: Number(r.cnt) }));
   } catch (e) { console.warn(`topDongs(rpc): ${type} 조회 예외 -`, e.message); return []; }
+}
+// 신고가(전고점 갱신) 거래량 지역 순위 - rpc_new_high_dongs 참고(위 SQL 주석). 반환 shape이
+// getTopDongs와 동일(region/dong/count)이라 프론트에서 급등지역과 같은 renderRankSection을
+// 그대로 재사용할 수 있음.
+async function getNewHighDongs(type, cutoff, sido, limit) {
+  try {
+    const { data, error } = await supabase.rpc('rpc_new_high_dongs', {
+      p_cutoff: cutoff, p_sido: sido || null, p_type: type,
+      p_min_size: MOMENTUM_SIZE_MIN, p_max_size: MOMENTUM_SIZE_MAX, p_limit: limit,
+    });
+    if (error) { console.warn(`newHighDongs(rpc): ${type} 조회 실패 -`, error.message); return []; }
+    return (data || []).map(r => ({ region: r.region, dong: r.dong, count: Number(r.cnt) }));
+  } catch (e) { console.warn(`newHighDongs(rpc): ${type} 조회 예외 -`, e.message); return []; }
 }
 
 // 2026-08: 국민평형(23~25평)만 보던 걸 폐지하고 전체 평형을 다 씀 - 대신 avg_price가
@@ -1461,6 +1541,26 @@ export default async function handler(req, res) {
       const RANK_LIMIT = 50;
       if (typeParam === 'both' || typeParam === 'apt') result.apt = await getTopDongs('apt', cutoff, sido, RANK_LIMIT);
       if (typeParam === 'both' || typeParam === 'villa') result.villa = await getTopDongs('villa', cutoff, sido, RANK_LIMIT);
+      return res.status(200).json({ sidoList: SIDO_LIST, months, sido: sido || null, cutoff, ...result });
+    } catch (err) {
+      return res.status(500).json({ error: err.message });
+    }
+  }
+  if (req.query.mode === 'newHighDongs') {
+    // 2026-08(사용자 요청: "신고가 갱신이 많은 지역 순위를 조금 더 빠르게 진입하기 위한
+    // 신호로 보고 싶다") - topDongs(단순 거래량)보다 이른 신호를 원해서 기본 조회기간을
+    // 3개월로 짧게 잡음(topDongs 기본 6개월보다 짧게). danji 단위 집계라 무거울 수 있어
+    // 캐시를 30분으로 둠(topDongs와 동일).
+    res.setHeader('Cache-Control', 's-maxage=1800, stale-while-revalidate=3600');
+    try {
+      const months = parseInt(req.query.months, 10) || 3;
+      const cutoff = sixMonthsAgoInt(months);
+      const sido = (req.query.sido || '').trim();
+      const typeParam = req.query.type === 'apt' || req.query.type === 'villa' ? req.query.type : 'both';
+      const result = {};
+      const RANK_LIMIT = 50;
+      if (typeParam === 'both' || typeParam === 'apt') result.apt = await getNewHighDongs('apt', cutoff, sido, RANK_LIMIT);
+      if (typeParam === 'both' || typeParam === 'villa') result.villa = await getNewHighDongs('villa', cutoff, sido, RANK_LIMIT);
       return res.status(200).json({ sidoList: SIDO_LIST, months, sido: sido || null, cutoff, ...result });
     } catch (err) {
       return res.status(500).json({ error: err.message });
