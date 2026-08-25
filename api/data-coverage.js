@@ -1025,15 +1025,34 @@ async function getTopDongs(type, cutoff, sido, limit) {
 // 누락될 수 있음 - 그래서 이 함수 자체에서는 사실상 전부(최대 2000개) 받고, 최종 "상위
 // N개"는 getNewHighDongsTrend가 6구간 합산 이후에 자름).
 const NEW_HIGH_BUCKET_FETCH_LIMIT = 2000;
-async function getNewHighDongsBucket(type, sido, start, end) {
-  try {
-    const { data, error } = await supabase.rpc('rpc_new_high_dongs', {
-      p_cutoff: start, p_end: end, p_sido: sido || null, p_type: type,
-      p_min_size: MOMENTUM_SIZE_MIN, p_max_size: MOMENTUM_SIZE_MAX, p_limit: NEW_HIGH_BUCKET_FETCH_LIMIT,
-    });
-    if (error) { console.warn(`newHighDongs(rpc): ${type} 조회 실패 -`, error.message); return []; }
-    return (data || []).map(r => ({ region: r.region, dong: r.dong, count: Number(r.cnt) }));
-  } catch (e) { console.warn(`newHighDongs(rpc): ${type} 조회 예외 -`, e.message); return []; }
+// ⚠️ 2026-08 추가: 무거운 윈도우함수 RPC라 간헐적으로 실패하는 게 이미 알려진 상태였는데
+// (아래 getNewHighDongsTrend 주석 참고), 실패하면 그냥 []를 반환해버려서 "이 구간엔
+// 진짜 신고가가 0건이었다"와 "이 구간 조회 자체가 실패했다"를 구분할 수 없었음. 그 결과
+// 전국+아파트처럼 무거운 조합에서 6구간 중 몇 개가 실패해도 나머지만으로 정상 응답(200)이
+// 만들어져서 "0→0→17→0→0→0"처럼 한 구간만 값이 있는 깨진 흐름이 그대로 사용자에게
+// 나갔고, 심지어 이 깨진 응답이 30분 캐시(+60분 stale-while-revalidate)에 그대로 박혀서
+// 최대 90분 동안 계속 같은 깨진 데이터가 나가는 문제로 이어졌음(실측: 전국+아파트 재조회시
+// 17.9초 걸려 캐시 없이 새로 계산하면 6구간 전부 정상적으로 채워지는 것 확인 - RPC 자체
+// 버그가 아니라 순수 타임아웃성 실패였음). 최대 2회 재시도 + 실패 여부를 별도로 반환해서
+// 호출부가 "이 응답은 일부 구간이 끝내 실패했다"는 걸 알고 캐시하지 않도록 함.
+async function getNewHighDongsBucket(type, sido, start, end, retries) {
+  const maxRetries = retries == null ? 2 : retries;
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    try {
+      const { data, error } = await supabase.rpc('rpc_new_high_dongs', {
+        p_cutoff: start, p_end: end, p_sido: sido || null, p_type: type,
+        p_min_size: MOMENTUM_SIZE_MIN, p_max_size: MOMENTUM_SIZE_MAX, p_limit: NEW_HIGH_BUCKET_FETCH_LIMIT,
+      });
+      if (error) {
+        console.warn(`newHighDongs(rpc): ${type} 조회 실패(시도 ${attempt + 1}/${maxRetries + 1}) -`, error.message);
+        continue;
+      }
+      return { rows: (data || []).map(r => ({ region: r.region, dong: r.dong, count: Number(r.cnt) })), ok: true };
+    } catch (e) {
+      console.warn(`newHighDongs(rpc): ${type} 조회 예외(시도 ${attempt + 1}/${maxRetries + 1}) -`, e.message);
+    }
+  }
+  return { rows: [], ok: false }; // 재시도까지 다 실패 - 진짜 0건이 아니라 "조회 실패"임을 표시
 }
 // 신고가 "흐름" - 돈되는지역(getPriceMomentum)과 같은 6구간(momentumBuckets)으로 나눠 구간별
 // 신고가 건수를 배열로 반환. 순위는 6구간 합계(total) 내림차순.
@@ -1047,15 +1066,18 @@ async function getNewHighDongsBucket(type, sido, start, end) {
 // 이 전국 스코프에서 겪은 것과 같은 종류의 문제가 경기처럼 danji 수가 많은 단일 시/도에서도
 // 재현됨). 그래서 "전국만 순차, 시/도 지정은 병렬"이라는 기존 구분을 없애고 항상 순차 호출로
 // 통일함 - 느리더라도 매번 동시 커넥션 6개가 아니라 1개씩만 쓰니 훨씬 안정적임.
+// 반환값에 ok(모든 구간이 성공했는지)를 같이 담아서, 호출부가 실패 섞인 응답을 캐시하지
+// 않도록 함(위 주석의 "0→0→17→0→0→0" 캐시 고착 버그 참고).
 async function getNewHighDongsTrend(type, sido, limit) {
   const buckets = momentumBuckets(type); // 아파트 40일×6구간 / 빌라 60일×6구간 - 돈되는지역과 동일 창
-  const bucketRows = [];
+  const bucketResults = [];
   for (const b of buckets) {
-    bucketRows.push(await getNewHighDongsBucket(type, sido, b.start, b.end));
+    bucketResults.push(await getNewHighDongsBucket(type, sido, b.start, b.end));
   }
+  const allOk = bucketResults.every(b => b.ok);
   const acc = {}; // key(region|dong) -> { region, dong, counts:[6개], total }
-  bucketRows.forEach((rows, i) => {
-    rows.forEach(r => {
+  bucketResults.forEach((b, i) => {
+    b.rows.forEach(r => {
       const key = r.region + '|' + r.dong;
       if (!acc[key]) acc[key] = { region: r.region, dong: r.dong, counts: [0, 0, 0, 0, 0, 0] };
       acc[key].counts[i] = r.count;
@@ -1063,7 +1085,7 @@ async function getNewHighDongsTrend(type, sido, limit) {
   });
   const list = Object.values(acc).map(x => ({ ...x, total: x.counts.reduce((a, b) => a + b, 0) }));
   list.sort((a, b) => b.total - a.total);
-  return list.slice(0, limit);
+  return { list: list.slice(0, limit), ok: allOk };
 }
 
 // 2026-08: 국민평형(23~25평)만 보던 걸 폐지하고 전체 평형을 다 씀 - 대신 avg_price가
@@ -1617,7 +1639,6 @@ export default async function handler(req, res) {
     // 신호로 보고 싶다" → 이후 "돈되는 지역처럼 흐름이 필요하다") - v2: months 파라미터
     // 대신 돈되는지역과 동일한 6구간(momentumBuckets, 아파트 40일×6/빌라 60일×6)으로 신고가
     // 건수 흐름을 보여줌. danji 단위 집계라 무거울 수 있어 캐시를 30분으로 둠(topDongs와 동일).
-    res.setHeader('Cache-Control', 's-maxage=1800, stale-while-revalidate=3600');
     try {
       const sido = (req.query.sido || '').trim();
       const typeParam = req.query.type === 'apt' || req.query.type === 'villa' ? req.query.type : 'both';
@@ -1633,10 +1654,24 @@ export default async function handler(req, res) {
       // 올려도 추가 연산 부하는 없고 응답 페이로드만 조금 커짐 - topDongs(#418)와 동일한
       // 조치.
       const RANK_LIMIT = 200;
-      if (typeParam === 'both' || typeParam === 'apt') result.apt = await getNewHighDongsTrend('apt', sido, RANK_LIMIT);
-      if (typeParam === 'both' || typeParam === 'villa') result.villa = await getNewHighDongsTrend('villa', sido, RANK_LIMIT);
+      let allOk = true;
+      if (typeParam === 'both' || typeParam === 'apt') {
+        const r = await getNewHighDongsTrend('apt', sido, RANK_LIMIT);
+        result.apt = r.list; allOk = allOk && r.ok;
+      }
+      if (typeParam === 'both' || typeParam === 'villa') {
+        const r = await getNewHighDongsTrend('villa', sido, RANK_LIMIT);
+        result.villa = r.list; allOk = allOk && r.ok;
+      }
+      // ⚠️ 2026-08: 6구간 중 일부가 (타임아웃 등으로) 끝내 실패했으면 "0→0→17→0→0→0"처럼
+      // 깨진 흐름이 그대로 반환된 것 - 이걸 30분+stale-while-revalidate 60분 캐시에 박아두면
+      // 최대 90분간 사용자 전원이 깨진 데이터를 보게 됨(실제 발생 확인됨). 실패가 섞였을
+      // 때는 캐시하지 않고(no-store) 다음 요청이 새로 재계산하도록 함 - 성공했을 때만
+      // 기존처럼 30분 캐시.
+      res.setHeader('Cache-Control', allOk ? 's-maxage=1800, stale-while-revalidate=3600' : 'no-store');
       return res.status(200).json({ sidoList: SIDO_LIST, sido: sido || null, ...result });
     } catch (err) {
+      res.setHeader('Cache-Control', 'no-store');
       return res.status(500).json({ error: err.message });
     }
   }
