@@ -1036,20 +1036,22 @@ async function getNewHighDongsBucket(type, sido, start, end) {
   } catch (e) { console.warn(`newHighDongs(rpc): ${type} 조회 예외 -`, e.message); return []; }
 }
 // 신고가 "흐름" - 돈되는지역(getPriceMomentum)과 같은 6구간(momentumBuckets)으로 나눠 구간별
-// 신고가 건수를 배열로 반환. 순위는 6구간 합계(total) 내림차순. ⚠️ "전국"(시/도 미지정)은
-// danji 그룹 수가 많아 구간 하나에도 몇 초가 걸릴 수 있어(#420 실측 8초대) 6구간을 한꺼번에
-// Promise.all로 쏘면 동시 커넥션이 몰려 타임아웃 위험이 있음(getPriceMomentumSimple이 이미
-// 겪은 문제와 동일) - 시/도를 지정한 조회만 병렬로 돌리고, "전국"은 순차 호출로 안전하게 감.
+// 신고가 건수를 배열로 반환. 순위는 6구간 합계(total) 내림차순.
+// ⚠️ 2026-08 실측 수정: rpc_new_high_dongs는 rpc_bucket_avg_price와 달리 raw CTE에
+// deal_date 필터가 없음(윈도우 함수가 "이 거래 이전 전체 이력"을 봐야 prior_max_ppp를 정확히
+// 계산할 수 있어서, 구간 시작일 이전 거래도 다 필요함 - 의도된 설계). 그 말은 6구간 중
+// 어느 구간을 조회하든 매번 해당 시/도의 전체 이력에 대해 동일한 무거운 윈도우 계산을
+// 다시 돌린다는 뜻이라, "시/도를 지정했으니 가볍다"는 가정이 성립하지 않음. 실제로 배포 후
+// 경기(단일 sido, type=apt 하나만)조차 6구간을 Promise.all로 병렬 호출했을 때 간헐적으로
+// 전부 빈 배열로 실패하는 게 확인됨(#422 - 동시 커넥션 과다로 인한 타임아웃, getPriceMomentumSimple
+// 이 전국 스코프에서 겪은 것과 같은 종류의 문제가 경기처럼 danji 수가 많은 단일 시/도에서도
+// 재현됨). 그래서 "전국만 순차, 시/도 지정은 병렬"이라는 기존 구분을 없애고 항상 순차 호출로
+// 통일함 - 느리더라도 매번 동시 커넥션 6개가 아니라 1개씩만 쓰니 훨씬 안정적임.
 async function getNewHighDongsTrend(type, sido, limit) {
   const buckets = momentumBuckets(type); // 아파트 40일×6구간 / 빌라 60일×6구간 - 돈되는지역과 동일 창
-  let bucketRows;
-  if (!sido) {
-    bucketRows = [];
-    for (const b of buckets) {
-      bucketRows.push(await getNewHighDongsBucket(type, sido, b.start, b.end));
-    }
-  } else {
-    bucketRows = await Promise.all(buckets.map(b => getNewHighDongsBucket(type, sido, b.start, b.end)));
+  const bucketRows = [];
+  for (const b of buckets) {
+    bucketRows.push(await getNewHighDongsBucket(type, sido, b.start, b.end));
   }
   const acc = {}; // key(region|dong) -> { region, dong, counts:[6개], total }
   bucketRows.forEach((rows, i) => {
