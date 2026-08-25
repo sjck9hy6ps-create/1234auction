@@ -758,6 +758,7 @@ tr:hover td { background:#fffde7; }
     <div class="surge-panel-header">
         <span class="surge-tab-btn active" id="surge-tab-hot" onclick="switchSurgeTab('hot')">🔥 급등지역</span>
         <span class="surge-tab-btn" id="surge-tab-money" onclick="switchSurgeTab('money')">💰 돈되는 지역</span>
+        <span class="surge-tab-btn" id="surge-tab-newhigh" onclick="switchSurgeTab('newhigh')">⭐ 신고가 지역</span>
         <span onclick="closeSurgePanel()" style="float:right;cursor:pointer;">✕</span>
     </div>
     <div style="padding:10px 14px;border-bottom:1px solid #eee;display:flex;gap:6px;align-items:center;">
@@ -15804,8 +15805,9 @@ var surgePanelTab = 'hot';
 // 즉시 반영됨. 규제지역 판정은 취득세 계산에 이미 쓰던 guessIsAdjustedArea/ADJUSTED_AREAS를
 // 그대로 재사용(region 필드 포맷이 LAWD_CODES와 동일해 바로 매칭됨).
 var surgeRegAreaFilter = 'all'; // 'all' | 'unregulated'
-var surgeHotCache = null;   // 마지막으로 불러온 급등지역 원본 응답(최대 50개씩)
-var surgeMoneyCache = null; // 마지막으로 불러온 돈되는지역 원본 응답(최대 50개씩)
+var surgeHotCache = null;     // 마지막으로 불러온 급등지역 원본 응답(최대 50개씩)
+var surgeMoneyCache = null;   // 마지막으로 불러온 돈되는지역 원본 응답(최대 50개씩)
+var surgeNewHighCache = null; // 마지막으로 불러온 신고가 지역 원본 응답(최대 50개씩)
 var SURGE_RANK_DISPLAY_COUNT = 20;
 function filterByRegArea(list) {
     var arr = list || [];
@@ -15821,6 +15823,7 @@ function setSurgeRegAreaFilter(mode) {
     document.getElementById('reg-area-btn-unreg').classList.toggle('active', mode === 'unregulated');
     // 이미 받아온 캐시로 즉시 재렌더링(재조회 없음)
     if (surgePanelTab === 'money') renderSurgeMoneyBody();
+    else if (surgePanelTab === 'newhigh') renderSurgeNewHighBody();
     else renderSurgeHotBody();
 }
 function openSurgePanel() {
@@ -15845,10 +15848,12 @@ function switchSurgeTab(tab) {
     surgePanelTab = tab;
     document.getElementById('surge-tab-hot').classList.toggle('active', tab === 'hot');
     document.getElementById('surge-tab-money').classList.toggle('active', tab === 'money');
+    document.getElementById('surge-tab-newhigh').classList.toggle('active', tab === 'newhigh');
     loadSurgePanelData();
 }
 function loadSurgePanelData() {
     if (surgePanelTab === 'money') loadSurgeMoneyData();
+    else if (surgePanelTab === 'newhigh') loadSurgeNewHighData();
     else loadSurgeHotData();
 }
 function esc1(s) { return String(s == null ? '' : s).replace(/'/g, "\\'"); }
@@ -15894,6 +15899,44 @@ function renderSurgeHotBody() {
     statusBox.innerText = '최근 6개월 거래량 기준' + (sido ? ' · ' + sido : ' · 전국')
         + (surgeRegAreaFilter === 'unregulated' ? ' · 비규제지역만' : ' · 규제지역 포함');
     body.innerHTML = renderRankSection('🏢 아파트', filterByRegArea(data.apt), '건', function(r) { return r.count + '건'; })
+        + renderRankSection('🏘️ 연립다세대·단독', filterByRegArea(data.villa), '건', function(r) { return r.count + '건'; });
+}
+/* ⭐ 신고가 지역 - 2026-08(사용자 요청: "돈되는 지역으로 확인될 즈음이면 이미 진입시점이
+   늦다. 조금 더 빠르게 진입하기 위해 신고가 갱신이 많은 지역 순위를 알고 싶다") - 급등지역
+   (topDongs, 거래량 단순집계)/돈되는지역(priceMomentum, 6구간 추세 확인까지 필요해 신호가
+   늦음)보다 이른 신호로, "지금 막 그 단지 역대 최고 평당가를 갱신한 거래"의 건수를 법정동
+   단위로 세어 순위를 매김(정의는 api/data-coverage.js의 rpc_new_high_dongs 참고). 반환
+   shape이 급등지역과 동일(region/dong/count)이라 renderRankSection을 그대로 재사용함. */
+async function loadSurgeNewHighData() {
+    var sido = document.getElementById('surge-sido-select').value;
+    var statusBox = document.getElementById('surge-panel-status');
+    var body = document.getElementById('surge-panel-body');
+    statusBox.style.color = '#999'; statusBox.innerText = '불러오는 중... (전국 조회는 몇 초 걸릴 수 있어요)';
+    body.innerHTML = '';
+    try {
+        var url = '/api/data-coverage?mode=newHighDongs&type=both&months=3' + (sido ? '&sido=' + encodeURIComponent(sido) : '');
+        var res = await fetch(url);
+        var data = await readJsonResponseSafe(res);
+        if (!res.ok) throw new Error((data && data.error) || ('서버 오류(' + res.status + ')'));
+        surgeNewHighCache = data; // ⚠️ 규제지역/비규제지역 토글이 재조회 없이 즉시 반영되도록 원본을 캐시해둠
+        renderSurgeNewHighBody();
+    } catch (e) {
+        statusBox.style.color = '#e53935';
+        statusBox.innerText = '불러오기 실패: ' + e.message;
+    }
+}
+function renderSurgeNewHighBody() {
+    var data = surgeNewHighCache;
+    if (!data) return;
+    var sido = document.getElementById('surge-sido-select').value;
+    var statusBox = document.getElementById('surge-panel-status');
+    var body = document.getElementById('surge-panel-body');
+    statusBox.style.color = '#999';
+    statusBox.innerText = '최근 3개월간 단지별 역대 최고 평당가를 갱신한 거래 건수 기준' + (sido ? ' · ' + sido : ' · 전국')
+        + (surgeRegAreaFilter === 'unregulated' ? ' · 비규제지역만' : ' · 규제지역 포함');
+    body.innerHTML = '<div style="font-size:10px;color:#e65100;background:#fff8e1;border-radius:6px;padding:5px 8px;margin-top:6px;">'
+        + 'ℹ️ "신고가"는 같은 단지(danji)의 역대 최고 평당가를 넘어선 거래를 뜻해요. 첫 거래뿐인 단지·전고점 이력이 없는 단지는 집계에서 빠집니다.</div>'
+        + renderRankSection('🏢 아파트', filterByRegArea(data.apt), '건', function(r) { return r.count + '건'; })
         + renderRankSection('🏘️ 연립다세대·단독', filterByRegArea(data.villa), '건', function(r) { return r.count + '건'; });
 }
 // 돈되는 지역 전용 렌더 - 순위/모멘텀% 외에 6구간 "평당가" 흐름과 구간별 거래량을 함께
