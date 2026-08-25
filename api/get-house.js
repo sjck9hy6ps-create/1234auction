@@ -93,6 +93,38 @@ async function clearHouseCache() {
   return { cleared: keys.length };
 }
 
+// ════════════════════════════════════
+// 2026-08: house_trades/villa_trades/house_rent/villa_rent 조회에 .limit()/.range()가
+// 전혀 없어서 Supabase/PostgREST 기본 응답 상한(설정된 db-max-rows)에 걸려 조용히 잘려나가는
+// 버그가 있었습니다. deal_date 내림차순 정렬 상태에서 잘리기 때문에 "가장 최근 N건"만 남고
+// 오래된 거래이력은 통째로 사라지는 형태 - 거래량이 많은 지역(예: 남양주 다산동)일수록
+// 심각해서, 실측으로는 2025-12부터 쌓인 이력 중 최근 7주치만 남고 나머지가 다 사라진 사례를
+// 확인했습니다. 그 결과 calcNewHigh()가 "최근 6개월" vs "그 이전" 비교를 할 "이전" 데이터
+// 자체를 못 받아서, 신고가(★) 배지가 지역 순위(다산동 아파트 신고가 1위, 126건)와 전혀
+// 맞지 않게 거의 뜨지 않는 문제로 이어졌습니다. (신고가 지역 순위 자체는 SQL RPC가 DB를
+// 직접 긁는 별도 경로라 이 버그의 영향을 받지 않았음 - 그래서 순위와 배지가 어긋나 보였음.)
+// id(PK, BIGINT GENERATED ALWAYS AS IDENTITY - house_rent와 동일한 패턴)를 오름차순 정렬
+// 기준으로 삼아 range()로 끝까지 안전하게 페이지네이션합니다.
+const FETCH_PAGE_SIZE = 1000;
+async function fetchAllRows(table, regionName) {
+  let all = [];
+  let from = 0;
+  while (true) {
+    const { data, error } = await supabase
+      .from(table)
+      .select('*')
+      .eq('region', regionName)
+      .order('id', { ascending: true })
+      .range(from, from + FETCH_PAGE_SIZE - 1);
+    if (error) return { data: null, error };
+    if (!data || data.length === 0) break;
+    all = all.concat(data);
+    if (data.length < FETCH_PAGE_SIZE) break; // 마지막 페이지(꽉 안 찼음) - 종료
+    from += FETCH_PAGE_SIZE;
+  }
+  return { data: all, error: null };
+}
+
 export default async function handler(req, res) {
   res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
   res.setHeader('Pragma', 'no-cache');
@@ -137,31 +169,13 @@ export default async function handler(req, res) {
       let villaRentQuery = Promise.resolve({ data: [], error: null });
 
       if (regionName) {
-        aptQuery = supabase
-          .from('house_trades')
-          .select('*')
-          .eq('region', regionName)
-          .order('deal_date', { ascending: false });
-
-        villaQuery = supabase
-          .from('villa_trades')
-          .select('*')
-          .eq('region', regionName)
-          .order('deal_date', { ascending: false });
+        aptQuery = fetchAllRows('house_trades', regionName);
+        villaQuery = fetchAllRows('villa_trades', regionName);
         // 단독/다가구(single_trades)는 지도에 표시하지 않기로 했으므로 조회하지 않음
 
         // 전세가(house_rent/villa_rent) - 전세가 기반 시세추정(연립다세대) 등에 사용
-        aptRentQuery = supabase
-          .from('house_rent')
-          .select('*')
-          .eq('region', regionName)
-          .order('deal_date', { ascending: false });
-
-        villaRentQuery = supabase
-          .from('villa_rent')
-          .select('*')
-          .eq('region', regionName)
-          .order('deal_date', { ascending: false });
+        aptRentQuery = fetchAllRows('house_rent', regionName);
+        villaRentQuery = fetchAllRows('villa_rent', regionName);
       } else {
         console.warn('LAWD_CODES에서 lawdCd(' + lawdCd + ')에 매칭되는 지역명을 찾지 못해 DB 조회를 건너뜁니다.');
       }
