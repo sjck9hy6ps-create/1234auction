@@ -1601,7 +1601,10 @@ export default async function handler(req, res) {
       // 2026-08: priceMomentum과 동일한 이유(규제지역 필터링 후에도 20개가 남도록) limit을
       // 20→50으로 상향. rpc_top_dongs는 SQL의 LIMIT절로 직접 쓰이지만, 이미 GROUP BY·ORDER BY로
       // 집계된 결과에서 몇 개를 더 잘라오는 차이일 뿐이라 부하 증가는 미미함.
-      const RANK_LIMIT = 50;
+      // ⚠️ 2026-08(재조정): 50도 부족한 걸로 실측 확인됨 - "전국" 연립다세대 스코프는 서울
+      // (전체 규제지역) 거래량이 워낙 커서 상위 50개 중 41개가 서울이고 비규제지역은 9개뿐이었음
+      // (신고가지역 RANK_LIMIT과 같은 문제, 같은 조치로 200까지 상향).
+      const RANK_LIMIT = 200;
       if (typeParam === 'both' || typeParam === 'apt') result.apt = await getTopDongs('apt', cutoff, sido, RANK_LIMIT);
       if (typeParam === 'both' || typeParam === 'villa') result.villa = await getTopDongs('villa', cutoff, sido, RANK_LIMIT);
       return res.status(200).json({ sidoList: SIDO_LIST, months, sido: sido || null, cutoff, ...result });
@@ -1619,7 +1622,17 @@ export default async function handler(req, res) {
       const sido = (req.query.sido || '').trim();
       const typeParam = req.query.type === 'apt' || req.query.type === 'villa' ? req.query.type : 'both';
       const result = {};
-      const RANK_LIMIT = 50;
+      // 2026-08(사용자 리포트: "전국 조회시 연립다세대 순위가 9개에서 끊긴다") - topDongs와
+      // 똑같은 원인이었음: 규제지역/비규제지역 필터링은 프론트에서 이 응답을 받은 뒤에
+      // 클라이언트 단에서 적용되는데(filterByRegArea), 그전에 이미 서버가 상위 50개로
+      // 잘라서 보냄. "전국" 스코프는 서울(전체 규제지역)의 거래량이 워낙 커서 상위 50개
+      // 중 대부분이 서울 소속 동으로 채워지고, 정작 비규제지역만 걸러내면 9개 정도만
+      // 남는 문제가 실측으로 확인됨(예: 연립다세대 전국 상위 50개 중 비규제지역 9개뿐).
+      // getNewHighDongsTrend는 어차피 6구간을 병합한 뒤 마지막에만 .slice(limit)하므로
+      // (구간별 조회 자체는 이미 넉넉한 p_limit=2000으로 전부 받아둠) limit을 50→200으로
+      // 올려도 추가 연산 부하는 없고 응답 페이로드만 조금 커짐 - topDongs(#418)와 동일한
+      // 조치.
+      const RANK_LIMIT = 200;
       if (typeParam === 'both' || typeParam === 'apt') result.apt = await getNewHighDongsTrend('apt', sido, RANK_LIMIT);
       if (typeParam === 'both' || typeParam === 'villa') result.villa = await getNewHighDongsTrend('villa', sido, RANK_LIMIT);
       return res.status(200).json({ sidoList: SIDO_LIST, sido: sido || null, ...result });
