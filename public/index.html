@@ -15808,6 +15808,7 @@ var surgeRegAreaFilter = 'all'; // 'all' | 'unregulated'
 var surgeHotCache = null;     // 마지막으로 불러온 급등지역 원본 응답(최대 50개씩)
 var surgeMoneyCache = null;   // 마지막으로 불러온 돈되는지역 원본 응답(최대 50개씩)
 var surgeNewHighCache = null; // 마지막으로 불러온 신고가 지역 원본 응답(최대 50개씩)
+var surgeNewHighFailNote = ''; // 아파트/빌라 중 한쪽 fetch가 실패했을 때 안내문구(부분 실패)
 var SURGE_RANK_DISPLAY_COUNT = 20;
 function filterByRegArea(list) {
     var arr = list || [];
@@ -15909,19 +15910,37 @@ function renderSurgeHotBody() {
    ⚠️ 2026-08(v2, 사용자 요청: "돈되는 지역과 같이 흐름이 필요해") - 예전엔 단일 기간(3개월)
    건수 하나만 받아왔는데, 돈되는지역과 동일한 6구간(momentumBuckets)으로 건수 흐름을
    받아오도록 API가 바뀜(months 파라미터 제거, 반환 shape이 {region,dong,counts:[6],total}로
-   변경) - renderRankSection 대신 전용 렌더(renderNewHighRankSection)로 흐름을 표시함. */
+   변경) - renderRankSection 대신 전용 렌더(renderNewHighRankSection)로 흐름을 표시함.
+   ⚠️ 2026-08(배포 후 실측): type=both로 한 번에 부르면 서버가 아파트→빌라를 순차로(6구간씩
+   두 번) 계산하느라 "경기"처럼 danji가 많은 큰 시/도에서 가끔 타임아웃으로 아파트 쪽이
+   조용히 빈 배열로 돌아오는 게 실제로 재현됨(같은 조건으로 재시도하면 정상 반환되기도 함 -
+   간헐적). type=apt/type=villa를 각각 별도 요청으로 나눠 Promise.all로 병렬 호출하면
+   요청당 계산량이 절반으로 줄고 병렬 실행이라 전체 대기시간도 늘지 않아 타임아웃 위험이
+   줄어듦 - 한쪽만 실패해도 다른 쪽은 정상 표시되도록 개별 catch로 처리함. */
 async function loadSurgeNewHighData() {
     var sido = document.getElementById('surge-sido-select').value;
     var statusBox = document.getElementById('surge-panel-status');
     var body = document.getElementById('surge-panel-body');
-    statusBox.style.color = '#999'; statusBox.innerText = '불러오는 중... (전국 조회는 몇~수십 초 걸릴 수 있어요)';
+    statusBox.style.color = '#999'; statusBox.innerText = '불러오는 중... (전국/경기 등 큰 지역은 몇~수십 초 걸릴 수 있어요)';
     body.innerHTML = '';
-    try {
-        var url = '/api/data-coverage?mode=newHighDongs&type=both' + (sido ? '&sido=' + encodeURIComponent(sido) : '');
+    async function fetchType(type) {
+        var url = '/api/data-coverage?mode=newHighDongs&type=' + type + (sido ? '&sido=' + encodeURIComponent(sido) : '');
         var res = await fetch(url);
         var data = await readJsonResponseSafe(res);
         if (!res.ok) throw new Error((data && data.error) || ('서버 오류(' + res.status + ')'));
-        surgeNewHighCache = data; // ⚠️ 규제지역/비규제지역 토글이 재조회 없이 즉시 반영되도록 원본을 캐시해둠
+        return data[type] || [];
+    }
+    try {
+        var results = await Promise.allSettled([fetchType('apt'), fetchType('villa')]);
+        var aptResult = results[0], villaResult = results[1];
+        surgeNewHighCache = {
+            apt: aptResult.status === 'fulfilled' ? aptResult.value : [],
+            villa: villaResult.status === 'fulfilled' ? villaResult.value : [],
+        };
+        var failNote = [];
+        if (aptResult.status === 'rejected') failNote.push('아파트: ' + aptResult.reason.message);
+        if (villaResult.status === 'rejected') failNote.push('연립다세대: ' + villaResult.reason.message);
+        surgeNewHighFailNote = failNote.join(' / ');
         renderSurgeNewHighBody();
     } catch (e) {
         statusBox.style.color = '#e53935';
@@ -15960,7 +15979,11 @@ function renderSurgeNewHighBody() {
     statusBox.style.color = '#999';
     statusBox.innerText = '단지별 역대 최고 평당가를 갱신한 거래 건수 흐름(6구간, 아파트 40일×6/빌라 60일×6) · 신축(아파트2년/빌라3년) 제외' + (sido ? ' · ' + sido : ' · 전국')
         + (surgeRegAreaFilter === 'unregulated' ? ' · 비규제지역만' : ' · 규제지역 포함');
-    body.innerHTML = '<div style="font-size:10px;color:#e65100;background:#fff8e1;border-radius:6px;padding:5px 8px;margin-top:6px;">'
+    var failBanner = surgeNewHighFailNote
+        ? '<div style="font-size:10px;color:#c62828;background:#ffebee;border-radius:6px;padding:5px 8px;margin-top:6px;">⚠️ 일부 조회 실패(' + surgeNewHighFailNote + ') - 잠시 후 다시 시도해 주세요.</div>'
+        : '';
+    body.innerHTML = failBanner
+        + '<div style="font-size:10px;color:#e65100;background:#fff8e1;border-radius:6px;padding:5px 8px;margin-top:6px;">'
         + 'ℹ️ "신고가"는 같은 단지(danji)의 역대 최고 평당가를 넘어선 거래를 뜻해요. 첫 거래뿐인 단지·전고점 이력이 없는 단지, 신축 초기 거래는 집계에서 빠집니다. 순위는 6구간 합계 기준, 건수 흐름은 오래된→최근 순입니다.</div>'
         + renderNewHighRankSection('🏢 아파트', filterByRegArea(data.apt))
         + renderNewHighRankSection('🏘️ 연립다세대·단독', filterByRegArea(data.villa));
