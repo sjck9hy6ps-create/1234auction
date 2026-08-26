@@ -498,6 +498,19 @@ tr:hover td { background:#fffde7; }
 @media (max-width: 640px) {
     #bid-target-panel { width: calc(100vw - 16px); right: 8px; bottom: 60px; }
 }
+/* 📐 낙찰가 백테스트 일괄등록 패널 - 위 #bid-case-panel/#bid-target-panel과 같은 자리에 뜨는
+   세 번째 패널인데, 이 규칙이 통째로 누락돼 있었음(2026-08 사용자 피드백: "지도 축소할 때랑
+   구분이 안 되고, 페이지 맨 아래로 스크롤해야 보인다") - 위 #bid-target-panel 주석에 이미
+   경고해뒀던 바로 그 버그(규칙 없으면 기본 display:block인 일반 블록 요소로 페이지 흐름에
+   끼어버림)를 이 패널만 빠뜨렸던 것. 나머지 두 패널과 동일하게 우측 하단 고정 오버레이로 뜨게 함. */
+#backtest-panel {
+    position:absolute; bottom:70px; right:14px; z-index:10;
+    background:white; border-radius:12px; width:360px; max-height:75vh;
+    overflow-y:auto; box-shadow:0 4px 16px rgba(0,0,0,0.18); display:none;
+}
+@media (max-width: 640px) {
+    #backtest-panel { width: calc(100vw - 16px); right: 8px; bottom: 60px; }
+}
 @media (max-width: 640px) {
     #search-box {
         left: 8px; right: 8px; top: 8px;
@@ -5050,6 +5063,10 @@ async function deleteBidCaseAPI(id) {
 function openBidCasePanel() {
     var p = document.getElementById('bid-case-panel');
     document.getElementById('auction-list-panel').style.display = 'none'; // 같은 자리에 뜨므로 겹치지 않게 서로 닫아줌
+    var btPanel = document.getElementById('bid-target-panel');
+    if (btPanel) btPanel.style.display = 'none';
+    var bxPanel = document.getElementById('backtest-panel');
+    if (bxPanel) bxPanel.style.display = 'none';
     if (p.style.display === 'block') { p.style.display = 'none'; return; }
     renderBidCaseList(); renderBidCaseMarkers();
     p.style.display = 'block';
@@ -5390,6 +5407,8 @@ function openBidTargetPanel() {
     document.getElementById('auction-list-panel').style.display = 'none';
     var bcPanel = document.getElementById('bid-case-panel');
     if (bcPanel) bcPanel.style.display = 'none'; // 같은 자리에 뜨는 다른 패널과 겹치지 않게 닫아줌
+    var bxPanel = document.getElementById('backtest-panel');
+    if (bxPanel) bxPanel.style.display = 'none';
     if (p.style.display === 'block') { p.style.display = 'none'; return; }
     p.style.display = 'block';
 }
