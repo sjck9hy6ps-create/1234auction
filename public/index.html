@@ -1958,6 +1958,32 @@ function aptHasMatchingBidCase(apt) {
     if (l.dong && l.bunji && bidCaseAptIndex.byDongBunji[l.dong + '|' + l.bunji]) return true;
     return false;
 }
+/* ⚠️ 2026-08(사용자 피드백: "데이터가 많아지니 점점 느려진다") - dongTypeMarginStats/
+   bidCaseAptIndex는 원래 지도를 팬/줌할 때마다(redrawMarkers, 'idle' 이벤트) bidCaseList
+   전체를 매번 처음부터 다시 훑어 재계산했음. 낙찰사례가 쌓일수록(현재 2000건대) 지도를
+   움직일 때마다 이 재계산 비용이 계속 커지는데, 정작 이 두 값은 낙찰사례 데이터 자체가
+   바뀔 때(추가/삭제/매칭결과 갱신)만 실제로 달라짐 - 화면을 옮기기만 해서는 결과가 똑같은데
+   매번 다시 계산하고 있었던 것. bidCaseList의 간단한 지문(길이+처음/끝 id)이 지난번과
+   같으면 재계산을 건너뛰고 캐시를 그대로 재사용하도록 바꿈. 길이가 안 바뀌는 in-place 수정
+   (예: matchAndSaveOneCase의 resaleMatch/estMargin 갱신)은 지문만으로는 못 잡아내므로,
+   그런 지점에서는 invalidateBidCaseIndexCache()를 직접 호출해 캐시를 무효화함. */
+var bidCaseIndexCache = { sig: null, aptIndex: {}, marginStats: {} };
+function getBidCaseListSig() {
+    if (!bidCaseList.length) return '0';
+    return bidCaseList.length + '|' + bidCaseList[0].id + ':' + bidCaseList[bidCaseList.length - 1].id;
+}
+function invalidateBidCaseIndexCache() {
+    bidCaseIndexCache.sig = null;
+}
+function getCachedBidCaseIndexes() {
+    var sig = getBidCaseListSig();
+    if (bidCaseIndexCache.sig !== sig) {
+        bidCaseIndexCache.sig = sig;
+        bidCaseIndexCache.aptIndex = computeBidCaseAptIndex();
+        bidCaseIndexCache.marginStats = computeDongTypeMarginStats();
+    }
+    return bidCaseIndexCache;
+}
 /* 낙찰추정가(estMargin)가 계산된 낙찰사례들을 법정동+건물유형별로 묶어 평균 추정마진을 냄 -
    일반 매물 배지(createMarker)에 "이 동네·이 유형은 보통 이 정도 마진에 낙찰됐다"는 참고치를
    바로 보여주기 위함. guessPropTypeFromCase가 반환하는 유형('apt'/'officetel'/'other'/'villa')을
@@ -3573,8 +3599,12 @@ function redrawMarkers() {
     var viewportList = filterAptListToDongArea(filterAptListToViewport(allAptList));
     surgeRankMap = computeSurgeRankMap(currentTypeFilter, viewportList);
     comparableIndex = computeComparableIndex();
-    bidCaseAptIndex = computeBidCaseAptIndex();
-    dongTypeMarginStats = computeDongTypeMarginStats();
+    // ⚠️ 2026-08(성능 개선): 아래 두 값은 bidCaseList 데이터 자체가 바뀔 때만 다시 계산함
+    // (getBidCaseListSig 지문이 지난번과 같으면 재계산 없이 캐시 재사용) - 팬/줌만으로는
+    // 매번 2000여 건을 다시 훑지 않게 됨.
+    var _bcIdx = getCachedBidCaseIndexes();
+    bidCaseAptIndex = _bcIdx.aptIndex;
+    dongTypeMarginStats = _bcIdx.marginStats;
     // villaBucketStats(법정동+평형+연식 낙찰사례 통계)는 findSimilarComps를 태우는 폴백이
     // 껴있어 전체를 매번 다시 계산하면 무거움 - 캐시만 비워서 "다음에 그 법정동 배지를 열 때"
     // 다시 계산하게 함(getVillaBucketStats의 지연계산 참고).
@@ -6202,6 +6232,10 @@ async function matchAndSaveOneCase(c) {
         c.estMargin = null; c.estRoi = null; c.estTotalCost = null;
         c.matchFailReason = result.reason;
     }
+    // resaleMatch/estMargin이 bidCaseList 배열 자체의 길이는 안 바꾸는 in-place 수정이라
+    // getBidCaseListSig 지문만으로는 안 잡힘 - dongTypeMarginStats(estMargin 기반)가 이
+    // 갱신을 놓치지 않도록 캐시를 직접 무효화함.
+    invalidateBidCaseIndexCache();
     try { await saveBidCaseAPI(c); } catch (e) { console.error('낙찰사례 매칭결과 저장 실패:', e.message); }
 }
 async function runMatchingLoop(targets, btn, statusBox) {
