@@ -1991,6 +1991,82 @@ function getDongTypeMarginStat(dong, buildingType) {
     if (!dong || !buildingType) return null;
     return dongTypeMarginStats[dong + '|' + buildingType] || null;
 }
+/* ⚠️ 2026-08(사용자 요청: "지도상 모든 배지에 평형·연식필터 적용해서, 낙찰사례 기준 낙찰값
+   중위값·역산 예상매도가 중위값·실제 매칭사례 중위값을 표본수와 함께 표기해줘. 낙찰사례/
+   경매물건 배지의 동단위 낙찰가율 중앙값 표기는 빼고, 법정동+평형+연식 세분화로. 빌라만
+   적용") - 법정동+평형대(PYEONG_TIERS)+연식단계(VILLA_AGE_TIERS) 3단 버킷으로 낙찰사례
+   (bidCaseList)를 묶어 3종 중위값을 미리 계산해둠. dongTypeMarginStats와 같은 패턴으로
+   redrawMarkers()에서 한 번만 계산해 전역 맵에 캐싱하고, 배지 클릭 시엔 조회만 함(성능 부담 없음).
+   - 낙찰가: c.finalBidPrice(원 단위→만원 환산)
+   - 역산매도가: computeBidCaseImpliedTarget(c) - findSimilarComps 등 비교물건 탐색이 필요
+     없는 저비용 계산(동네 평균 추정마진을 가정해 산술로 역산)이라 낙찰사례 전체를 매번
+     다시 계산해도 성능 부담이 거의 없음(⚖️ 배지 자체의 "🤖 예상매도가"(predictedSale)와는
+     다른 값 - 그건 비교물건 탐색이 필요해 훨씬 비쌈).
+   - 실매칭 매도가: c.resaleMatch.amount(만원 단위, 이미 매도사례 매칭이 끝나 저장된 실거래가)
+   - 연식단계는 c.buildYear(건축HUB로 확정 조회된 값)가 있는 사례만 포함함. 확정값이 없는
+     사례까지 추정 연식으로 넣으려면 findSimilarComps 기반 근사 계산(getBidCaseEstimates)을
+     낙찰사례 전체에 매번 돌려야 해서 무거워짐 - 과거 여러 번(#379,#392~394 등) 마커 렌더링
+     성능 문제가 있었던 지점이라 보수적으로 확정값만 사용함. */
+var villaBucketStats = {};
+function villaBucketKey(dong, pyeongTier, ageTier) {
+    return dong + '|' + pyeongTier + '|' + ageTier;
+}
+function computeVillaBucketStats() {
+    var buckets = {};
+    bidCaseList.forEach(function(c) {
+        if (backtestBuildingType(c) !== 'villa') return;
+        if (!c.dong) return;
+        var pyeongTier = getPyeongTier(c.areaM2);
+        if (!pyeongTier) return;
+        var ageTier = c.buildYear ? getAgeTierByYear(c.buildYear) : null;
+        if (!ageTier) return;
+        var key = villaBucketKey(c.dong, pyeongTier, ageTier);
+        if (!buckets[key]) buckets[key] = { bid: [], implied: [], resale: [] };
+        if (c.finalBidPrice) buckets[key].bid.push(Math.round(c.finalBidPrice / 10000));
+        var implied = computeBidCaseImpliedTarget(c);
+        if (implied && implied.target) buckets[key].implied.push(implied.target);
+        if (c.resaleMatch && c.resaleMatch.amount > 0) buckets[key].resale.push(c.resaleMatch.amount);
+    });
+    var result = {};
+    Object.keys(buckets).forEach(function(key) {
+        var b = buckets[key];
+        result[key] = {
+            bid: b.bid.length ? { median: median(b.bid), count: b.bid.length } : null,
+            implied: b.implied.length ? { median: median(b.implied), count: b.implied.length } : null,
+            resale: b.resale.length ? { median: median(b.resale), count: b.resale.length } : null,
+        };
+    });
+    return result;
+}
+function getVillaBucketStats(dong, areaM2, ageTier) {
+    if (!dong || !ageTier) return null;
+    var pyeongTier = getPyeongTier(areaM2);
+    if (!pyeongTier) return null;
+    return villaBucketStats[villaBucketKey(dong, pyeongTier, ageTier)] || null;
+}
+/* 위 3종 중위값을 배지 상세패널에 보여주는 공용 HTML - 매매기록 패널(openPanel/renderTable)/
+   낙찰사례 패널(buildBidCaseDetailHtml)/경매물건 패널(buildAuctionPanelHtml) 3곳에서 공유해서
+   씀(사용자 요청: "지도에 표시되는 모든 배지" - 클릭 시 열리는 상세패널에 표시, 빌라만). */
+function buildVillaBucketStatsHtml(dong, areaM2, ageTier) {
+    var stats = getVillaBucketStats(dong, areaM2, ageTier);
+    if (!stats || (!stats.bid && !stats.implied && !stats.resale)) return '';
+    var pyeongTier = getPyeongTier(areaM2);
+    var tierDef = PYEONG_TIERS.find(function(t) { return t.key === pyeongTier; });
+    var tierLabel = tierDef ? tierDef.label : '';
+    var ageLabel = getVillaTierLabel(ageTier) || '';
+    function row(label, val, color) {
+        return '<div class="margin-item"><div class="margin-label">' + label + '</div><div class="margin-value" style="color:' + color + ';">' + val + '</div></div>';
+    }
+    var rows = '';
+    if (stats.bid) rows += row('낙찰가 중위값', toEok(String(stats.bid.median)) + ' (' + stats.bid.count + ')', '#e65100');
+    if (stats.implied) rows += row('↩️ 역산 예상매도가 중위값', toEok(String(stats.implied.median)) + ' (' + stats.implied.count + ')', '#6a1b9a');
+    if (stats.resale) rows += row('실매칭 매도가 중위값', toEok(String(stats.resale.median)) + ' (' + stats.resale.count + ')', '#2e7d32');
+    return '<div class="indicator-box" style="border-color:#8e24aa;background:#f8f2fb;">'
+        + '<div class="indicator-title" style="color:#6a1b9a;">📐 ' + dong + ' · ' + tierLabel + ' · ' + ageLabel + ' 낙찰사례 통계</div>'
+        + '<div class="margin-grid">' + rows + '</div>'
+        + '<div style="font-size:10px;color:#aaa;margin-top:4px;">이 법정동+평형대+연식단계에 해당하는 낙찰사례를 모아 계산한 중위값입니다. 괄호 안 숫자는 표본 수입니다.</div>'
+        + '</div>';
+}
 function toggleCompOnlyFilter(btn) {
     compOnlyFilter = !compOnlyFilter;
     btn.classList.toggle('active');
@@ -3489,6 +3565,7 @@ function redrawMarkers() {
     comparableIndex = computeComparableIndex();
     bidCaseAptIndex = computeBidCaseAptIndex();
     dongTypeMarginStats = computeDongTypeMarginStats();
+    villaBucketStats = computeVillaBucketStats();
     var list = viewportList.filter(isAptVisibleUnderCurrentFilters);
     placeMarkers(list, myGen);
     setTimeout(function() { renderAuctionMarkers(); renderBidCaseMarkers(); }, 100);
@@ -4710,6 +4787,15 @@ function renderTable() {
     if (currentPppTimeline) html += buildPppAnalysisHtml(currentPppTimeline);
     if (currentVolumeIndicators) html += buildVolumeAnalysisHtml(currentVolumeIndicators);
     if (currentJeonseEstimate) html += buildJeonseEstimateHtml(currentJeonseEstimate);
+    // 2026-08(사용자 요청): 이 건물과 같은 법정동+평형대+연식단계의 낙찰사례 기준 3종
+    // 중위값(낙찰가/역산매도가/실매칭매도가, 표본수 포함) - 빌라만 표시.
+    if (currentPanelApt && currentPanelApt.buildingType === 'villa' && currentPanelApt.ageTier) {
+        html += buildVillaBucketStatsHtml(
+            currentPanelApt.latest && currentPanelApt.latest.dong,
+            currentPanelApt.latest && currentPanelApt.latest.area,
+            currentPanelApt.ageTier
+        );
+    }
 
     // 거래 테이블
     var newHighAmountByPy = {};
@@ -6238,6 +6324,12 @@ function buildBidCaseDetailHtml(c) {
         + '</div>';
     if (c.specialConditions) html += '<div style="font-size:11px;color:#e65100;margin-top:6px;">⚠️ ' + c.specialConditions + '</div>';
     html += '</div>';
+    // 2026-08(사용자 요청): 이 사건과 같은 법정동+평형대+연식단계의 낙찰사례 기준 3종
+    // 중위값 - 빌라만 표시. ageTier는 getBidCaseEstimates(c)가 이미 계산해둔(대부분 캐시
+    // 히트) 값을 그대로 재사용함.
+    if (backtestBuildingType(c) === 'villa') {
+        html += buildVillaBucketStatsHtml(c.dong, c.areaM2, getBidCaseEstimates(c).ageTier);
+    }
     html += '<div class="indicator-box" style="border-color:#00695c;background:#f2fbfa;"><div class="indicator-title">💰 매도사례 · 추정마진</div>';
     if (c.resaleMatch && c.estMargin !== null && c.estMargin !== undefined) {
         html += (c.resaleMatch.approx ? '<div style="font-size:10px;color:#e65100;margin-bottom:4px;">🔎 근사매칭 - 건물명/층이 정확히 일치하지 않아 가장 가까운 후보로 추정한 매도사례입니다.</div>' : '')
@@ -10903,6 +10995,14 @@ function buildAuctionPanelHtml(aptName, aptDong, aptBunji) {
         // 그래서 저장된 값(a.myBid 등)만으로 계산하는 정적 버전을 따로 만들어 붙임
         // (매매기록 없는 단독 경매물건은 편집모달을 직접 여니 원래도 마진분석이 보였음)
         html += buildMarginSummaryHtml(a);
+        // 2026-08(사용자 요청): 이 물건과 같은 법정동+평형대+연식단계의 낙찰사례 기준 3종
+        // 중위값 - 빌라만 표시. a.pyung(평)을 ㎡로 환산해 다른 두 진입점(매매기록/낙찰사례
+        // 배지)과 동일한 PYEONG_TIERS 버킷 기준을 그대로 씀.
+        if (a.propType === 'villa') {
+            var aBucketAreaM2 = a.pyung ? parseFloat(a.pyung) * 3.305785 : null;
+            var aBucketAgeTier = a.buildYear ? getAgeTierByYear(a.buildYear) : null;
+            html += buildVillaBucketStatsHtml(a.dong, aBucketAreaM2, aBucketAgeTier);
+        }
         html += buildAuctionDetailHtml(a.detail, a.officialPriceWon, a.appraisal, a.redevStage, a.rightsCalcDate);
         html += buildHistoryHtml(a.history);
         html += buildResaleMatchesHtml(a.resaleMatches);
@@ -13053,7 +13153,21 @@ function renderAiSummaryBox() {
     var rightsCalcDateEl = document.getElementById('a-rights-calc-date');
     var redevStage = redevStageEl ? redevStageEl.value : '';
     var rightsCalcDate = rightsCalcDateEl ? rightsCalcDateEl.value : '';
-    box.innerHTML = '<div style="margin-top:10px;">' + buildAuctionDetailHtml(pendingAuctionDetail, officialPriceWon, appraisalManwon, redevStage, rightsCalcDate) + '</div>';
+    var villaBucketHtml = '';
+    // 2026-08(사용자 요청): 아직 저장 전(등록 미리보기)이거나, 매매기록 배지와 겹쳐있지 않아
+    // buildAuctionPanelHtml을 안 거치는 단독 경매/입찰희망 물건도 같은 3종 중위값을 보여줌.
+    // 법정동은 getAuctionAddressContext()(주소 지오코딩 결과 또는 저장된 값), 평형은 지금
+    // 입력칸 값, 연식은 저장된 레코드의 buildYear(건축HUB 확정 조회값이 있을 때만)를 씀.
+    var propTypeEl = document.getElementById('a-prop-type');
+    if (propTypeEl && propTypeEl.value === 'villa') {
+        var ctxForBucket = getAuctionAddressContext();
+        var pyungEl = document.getElementById('a-pyung');
+        var bucketAreaM2 = pyungEl && parseFloat(pyungEl.value) ? parseFloat(pyungEl.value) * 3.305785 : null;
+        var savedRecordForBucket = currentAuctionId ? auctionList.find(function(x) { return x.id === currentAuctionId; }) : null;
+        var bucketAgeTier = (savedRecordForBucket && savedRecordForBucket.buildYear) ? getAgeTierByYear(savedRecordForBucket.buildYear) : null;
+        villaBucketHtml = buildVillaBucketStatsHtml(ctxForBucket.dong, bucketAreaM2, bucketAgeTier);
+    }
+    box.innerHTML = '<div style="margin-top:10px;">' + villaBucketHtml + buildAuctionDetailHtml(pendingAuctionDetail, officialPriceWon, appraisalManwon, redevStage, rightsCalcDate) + '</div>';
 }
 // ── 개발호재 검색 (재개발/재건축/신속통합기획 등, Gemini 웹검색) ──
 // AI가 생성한 텍스트를 그대로 innerHTML에 넣지 않도록 이스케이프 후 줄바꿈만 <br>로 치환
