@@ -416,14 +416,19 @@ async function getKosisTrend(sigunguCd, force) {
      같은 정의를 여기서도 그대로 써야 함(예측식이 학습식과 어긋나면 안 됨):
        y = log(평당가) = global_coefs·[log(size), floor, floor^2, age, age^2, time_trend]
            + dong_effects[키]
-     ⚠️ 2026-08(단지 단위 세분화): 처음엔 "키"가 항상 region|dong(법정동)이었는데, 실제
-     배포 후 확인해보니 같은 법정동 안에서도 단지별 편차가 커서(예: 고잔동 실측 - 준공연도
-     다른 단지 섞이며 평단가 3.4배 차이) 오차가 컸음. 아파트는 이제 danji(단지명)까지 포함한
-     3단계 폴백 체인으로 키를 찾음: region|dong|danji(단지 표본 충분) → region|dong(그 단지
-     표본부족 시 학습 때 법정동 단위로 승격됨) → region(그 법정동조차 표본부족 시 시군구로
-     승격) → dong_effects["__default__"](전국 평균, 완전히 새 지역일 때만). 연립다세대는
-     아직 danji 단계 없이 region|dong → region 2단계만 씀(train-avm.py MIN_DANJI_SAMPLES
-     주석 참고 - 거래 자체가 뜸해 단지 단위로 쪼개면 오히려 불안정해짐).
+     ⚠️ 2026-08(단지 단위 세분화 + 공간격자 + 법정동 내 평형·연식 세분화): 처음엔 "키"가
+     항상 region|dong(법정동)이었는데, 실제 배포 후 확인해보니 같은 법정동 안에서도 단지별
+     편차가 커서(예: 고잔동 실측 - 준공연도 다른 단지 섞이며 평단가 3.4배 차이) 오차가 컸음.
+     지금은 4단계 폴백 체인으로 키를 찾음(아파트/연립다세대 1단계만 다름):
+       1) 아파트: region|dong|danji(단지 표본 충분) / 연립다세대: grid_{lat}_{lon}(공간격자
+          1km, 좌표가 있고 표본 충분한 경우)
+       2) region|dong|평형대|연식단계(법정동+평형대+연식단계 조합 표본이 있으면 - 사용자
+          요청 "AVM 추정가를 법정동 기준만 적용하지 말고 연식·평형 필터를 적용한 값으로")
+       3) region|dong(그마저 표본부족 시 법정동 단위로 승격됨)
+       4) region(그 법정동조차 표본부족 시 시군구로 승격) → dong_effects["__default__"]
+          (전국 평균, 완전히 새 지역일 때만)
+     각 단계는 train-avm.py의 group_key 승격 순서와 반드시 일치해야 함(avmPredict 함수
+     본문 주석 참고).
    ⚠️ 아래 SQL을 Supabase에 먼저 한 번 실행해서 테이블을 만들어야 합니다:
      create table if not exists avm_model_coefs (
        id text primary key,
@@ -522,7 +527,25 @@ function spatialGridKey(lat, lon, cellKm) {
   return `grid_${latCell}_${lonCell}`;
 }
 
-function avmPredict(model, features, region, dong, danji, gridKey) {
+// ⚠️ 2026-08(사용자 요청: "AVM 추정가를 법정동 기준만 적용하지 말고, 법정동 내 연식·평형
+// 필터를 적용한 값으로") - train-avm.py의 PYEONG_TIER_BOUNDS/AGE_TIER_BOUNDS와 반드시 같은
+// 경계값이어야 함(학습/서빙 그룹키 불일치 방지 - grid_key와 같은 종류의 요구사항). index.html의
+// PYEONG_TIERS/VILLA_AGE_TIERS와도 동일한 경계를 씀(사용자에게 보이는 평형대/연식단계 개념과
+// AVM 내부 그룹핑 개념을 일치시켜 "이 동네 이 평형·연식대"라는 말이 실제로 같은 뜻이 되게 함).
+const AVM_PYEONG_TIER_BOUNDS = [['t1', 33], ['t2', 44], ['t3', 55], ['t4', 66], ['t5', 85], ['t6', Infinity]];
+const AVM_AGE_TIER_BOUNDS = [['premium', 0, 3], ['new', 4, 8], ['semi', 9, 15], ['old', 16, 25], ['aged', 26, Infinity]];
+function avmPyeongTier(sizeM2) {
+  if (!(sizeM2 > 0)) return null;
+  for (const [key, maxM2] of AVM_PYEONG_TIER_BOUNDS) { if (sizeM2 <= maxM2) return key; }
+  return 't6';
+}
+function avmAgeTier(ageYears) {
+  if (ageYears == null || !Number.isFinite(ageYears)) return null;
+  for (const [key, lo, hi] of AVM_AGE_TIER_BOUNDS) { if (ageYears >= lo && ageYears <= hi) return key; }
+  return 'aged';
+}
+
+function avmPredict(model, features, region, dong, danji, gridKey, tierKey) {
   const coefs = model.global_coefs || {};
   // ⚠️ 2026-08(K-apt 2단계): 하드코딩된 6개 목록 대신 실제 저장된 계수의 키를 그대로 씀 -
   // 모델마다(apt_v1엔 log_households가 있고 villa_v1엔 없음) 변수 개수가 달라졌고, 앞으로
@@ -533,18 +556,26 @@ function avmPredict(model, features, region, dong, danji, gridKey) {
 
   const dongEffects = model.dong_effects || {};
   // 진단/신뢰도 표시용 - grid(공간격자, 빌라 전용 1차 단위)/danji(단지) 정확 매칭인지,
-  // dong(법정동) 단위인지, region(시군구) 폴백인지, 아예 전국 평균 폴백인지를 그대로
-  // 응답에 남겨 프론트에서 "이 값이 얼마나 구체적인 데이터에 기반했는지"를 사용자에게
-  // 투명하게 보여줄 수 있게 함. 순서는 train-avm.py의 승격 순서와 반드시 같아야 함
-  // (아파트: danji→dong→region, 빌라: grid→dong→region - gridKey는 빌라 예측일 때만
-  // 계산되므로 아파트에는 영향이 없고, danjiKey는 빌라 dong_effects에 애초에 존재하지
-  // 않는 키 형식이라 둘이 서로 간섭하지 않음).
+  // dong_tier(법정동+평형대+연식단계) 단위인지, dong(법정동) 단위인지, region(시군구)
+  // 폴백인지, 아예 전국 평균 폴백인지를 그대로 응답에 남겨 프론트에서 "이 값이 얼마나
+  // 구체적인 데이터에 기반했는지"를 사용자에게 투명하게 보여줄 수 있게 함. 순서는
+  // train-avm.py의 승격 순서와 반드시 같아야 함(아파트: danji→dong_tier→dong→region,
+  // 빌라: grid→dong_tier→dong→region - gridKey는 빌라 예측일 때만 계산되므로 아파트에는
+  // 영향이 없고, danjiKey는 빌라 dong_effects에 애초에 존재하지 않는 키 형식이라 둘이 서로
+  // 간섭하지 않음).
+  // ⚠️ 2026-08(사용자 요청: "AVM 추정가를 법정동 기준만 적용하지 말고, 법정동 내 연식·평형
+  // 필터를 적용한 값으로") - danji/grid 표본이 부족해 법정동으로 승격됐을 때도, 그 동
+  // 전체를 뭉뚱그리기 전에 "같은 법정동 + 같은 평형대 + 같은 연식단계" 조합의 표본이
+  // 있으면 그걸 먼저 씀(tierKey). train-avm.py clean_and_featurize()의 tier_key 승격
+  // 로직과 반드시 같은 순서여야 함.
   let effect, effectUsed;
   const danjiKey = danji ? `${region}|${dong}|${danji}` : null;
   if (gridKey && dongEffects[gridKey] !== undefined) {
     effect = dongEffects[gridKey]; effectUsed = 'grid';
   } else if (danjiKey && dongEffects[danjiKey] !== undefined) {
     effect = dongEffects[danjiKey]; effectUsed = 'danji';
+  } else if (tierKey && dongEffects[tierKey] !== undefined) {
+    effect = dongEffects[tierKey]; effectUsed = 'dong_tier';
   } else if (dongEffects[`${region}|${dong}`] !== undefined) {
     effect = dongEffects[`${region}|${dong}`]; effectUsed = 'dong';
   } else if (dongEffects[region] !== undefined) {
@@ -691,7 +722,16 @@ async function getAvmEstimate(type, region, dong, size, floor, buildYear, danji,
   const gridCellKm = model.feature_ranges && model.feature_ranges.grid_cell_km;
   const gridKey = gridCellKm > 0 && lat != null && lon != null
     ? spatialGridKey(parseFloat(lat), parseFloat(lon), gridCellKm) : null;
-  const { ppp, effectUsed, groupEffect, logPppFromFeatures } = avmPredict(model, features, region, dong, danji, gridKey);
+  // ⚠️ 2026-08(사용자 요청: "AVM 추정가를 법정동 기준만 적용하지 말고, 법정동 내 연식·평형
+  // 필터를 적용한 값으로") - danji/grid가 없거나 표본부족으로 법정동까지 승격되는 경우를
+  // 위한 중간 키. age는 avmFeatureVector 내부와 똑같이 "오늘 기준" 연식으로 계산해야
+  // train-avm.py의 tier_key(deal_year - build_year, 학습 시 각 거래의 연식)와 같은 경계
+  // 로직을 타되, 서빙은 항상 "지금 팔면"이 기준이라 avmFeatureVector의 age 계산과 일치시킴.
+  const ageForTier = Math.max(0, AVM_CURRENT_YEAR_FALLBACK() - buildYear);
+  const pyeongTier = avmPyeongTier(size);
+  const ageTier = avmAgeTier(ageForTier);
+  const tierKey = (pyeongTier && ageTier) ? `${region}|${dong}|${pyeongTier}|${ageTier}` : null;
+  const { ppp, effectUsed, groupEffect, logPppFromFeatures } = avmPredict(model, features, region, dong, danji, gridKey, tierKey);
   let totalPrice = Math.round(ppp * (size / 3.305785));
 
   // ⚠️ 2026-08(빌라 층위치 보정, 사용자 요청): villa_v1은 K-apt 같은 벌크 데이터가 없어
