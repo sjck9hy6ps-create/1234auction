@@ -2086,6 +2086,13 @@ function getDongTypeMarginStat(dong, buildingType) {
 var villaBucketStatsCache = {}; // 법정동 -> { '평형대|연식단계': {bid,implied,resale} }
 function computeVillaBucketStatsForDong(dong) {
     var buckets = {};
+    function addToBucket(pyeongTier, ageTier, bidManwon, impliedManwon, resaleManwon) {
+        var key = pyeongTier + '|' + ageTier;
+        if (!buckets[key]) buckets[key] = { bid: [], implied: [], resale: [] };
+        if (bidManwon) buckets[key].bid.push(Math.round(bidManwon));
+        if (impliedManwon) buckets[key].implied.push(Math.round(impliedManwon));
+        if (resaleManwon) buckets[key].resale.push(Math.round(resaleManwon));
+    }
     bidCaseList.forEach(function(c) {
         if (c.dong !== dong) return;
         if (backtestBuildingType(c) !== 'villa') return;
@@ -2093,12 +2100,32 @@ function computeVillaBucketStatsForDong(dong) {
         if (!pyeongTier) return;
         var ageTier = c.buildYear ? getAgeTierByYear(c.buildYear) : getBidCaseEstimates(c).ageTier;
         if (!ageTier) return;
-        var key = pyeongTier + '|' + ageTier;
-        if (!buckets[key]) buckets[key] = { bid: [], implied: [], resale: [] };
-        if (c.finalBidPrice) buckets[key].bid.push(Math.round(c.finalBidPrice / 10000));
         var implied = computeBidCaseImpliedTarget(c);
-        if (implied && implied.target) buckets[key].implied.push(implied.target);
-        if (c.resaleMatch && c.resaleMatch.amount > 0) buckets[key].resale.push(c.resaleMatch.amount);
+        addToBucket(pyeongTier, ageTier,
+            c.finalBidPrice ? c.finalBidPrice / 10000 : null,
+            implied && implied.target,
+            (c.resaleMatch && c.resaleMatch.amount > 0) ? c.resaleMatch.amount : null);
+    });
+    // ⚠️ 2026-08(사용자 피드백: "샘골로7길 35 - 낙찰사례 등록건인데 평형 필터 적용 안됨") - 실제
+    // 원인 확인해보니 이 건은 bidCaseList(낙찰사례 일괄등록)가 아니라 auctionList(경매물건
+    // 일괄등록/백테스트)로 들어온 건이었음. #413에서 이미 "실제 낙찰가(actualBid)가 입력된
+    // 경매물건은 낙찰사례처럼 취급"하기로 정해서 🤖예상매도가/↩️역산매도가/연식·평형 배지에는
+    // 반영돼 있었는데, 이 법정동+평형+연식 버킷 통계 집계에서만 빠져 있어서 이런 건들이
+    // "필터가 안 먹는다"가 아니라 애초부터 집계 대상 자체에서 통째로 누락되고 있었음.
+    // auctionList도 같은 기준(isWon=actualBid 존재, propType==='villa')으로 포함시킴.
+    auctionList.forEach(function(a) {
+        if (a.dong !== dong) return;
+        if (a.propType !== 'villa') return;
+        if (!parseFloat(a.actualBid)) return;
+        var areaM2 = a.pyung ? parseFloat(a.pyung) * 3.305785 : null;
+        var pyeongTier = getPyeongTier(areaM2);
+        if (!pyeongTier) return;
+        var awEst = getAuctionWonEstimates(a);
+        var ageTier = a.buildYear ? getAgeTierByYear(a.buildYear) : awEst.ageTier;
+        if (!ageTier) return;
+        var implied = computeAuctionWonImpliedTarget(a);
+        // auctionList엔 낙찰사례의 resaleMatch에 대응하는 실매칭 매도사례 필드가 없어 그 항목만 제외.
+        addToBucket(pyeongTier, ageTier, parseFloat(a.actualBid), implied && implied.target, null);
     });
     var result = {};
     Object.keys(buckets).forEach(function(key) {
