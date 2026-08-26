@@ -2031,10 +2031,13 @@ function computeVillaBucketStatsForDong(dong) {
     var result = {};
     Object.keys(buckets).forEach(function(key) {
         var b = buckets[key];
+        // 2026-08(사용자 요청: "낙찰가/매칭 매도가는 최저·중위·최고로 보여줘") - 이 두 값만
+        // min/max를 추가함(역산 예상매도가는 실측값이 아니라 마진 가정치로 계산한 추정값이라
+        // 요청 대상에서 제외 - 기존처럼 중위값+표본수만 유지).
         result[key] = {
-            bid: b.bid.length ? { median: median(b.bid), count: b.bid.length } : null,
+            bid: b.bid.length ? { median: median(b.bid), min: Math.min.apply(null, b.bid), max: Math.max.apply(null, b.bid), count: b.bid.length } : null,
             implied: b.implied.length ? { median: median(b.implied), count: b.implied.length } : null,
-            resale: b.resale.length ? { median: median(b.resale), count: b.resale.length } : null,
+            resale: b.resale.length ? { median: median(b.resale), min: Math.min.apply(null, b.resale), max: Math.max.apply(null, b.resale), count: b.resale.length } : null,
         };
     });
     return result;
@@ -2059,14 +2062,19 @@ function buildVillaBucketStatsHtml(dong, areaM2, ageTier) {
     function row(label, val, color) {
         return '<div class="margin-item"><div class="margin-label">' + label + '</div><div class="margin-value" style="color:' + color + ';">' + val + '</div></div>';
     }
+    // 2026-08(사용자 요청): 낙찰가/실매칭 매도가는 중위값 하나만이 아니라 최저·중위·최고를
+    // 함께 보여줌(표본수는 그대로 괄호 표기).
+    function minMedMaxRow(label, s, color) {
+        return row(label, toEok(String(s.min)) + ' / ' + toEok(String(s.median)) + ' / ' + toEok(String(s.max)) + ' (' + s.count + ')', color);
+    }
     var rows = '';
-    if (stats.bid) rows += row('낙찰가 중위값', toEok(String(stats.bid.median)) + ' (' + stats.bid.count + ')', '#e65100');
+    if (stats.bid) rows += minMedMaxRow('낙찰가 최저/중위/최고', stats.bid, '#e65100');
     if (stats.implied) rows += row('↩️ 역산 예상매도가 중위값', toEok(String(stats.implied.median)) + ' (' + stats.implied.count + ')', '#6a1b9a');
-    if (stats.resale) rows += row('실매칭 매도가 중위값', toEok(String(stats.resale.median)) + ' (' + stats.resale.count + ')', '#2e7d32');
+    if (stats.resale) rows += minMedMaxRow('실매칭 매도가 최저/중위/최고', stats.resale, '#2e7d32');
     return '<div class="indicator-box" style="border-color:#8e24aa;background:#f8f2fb;">'
         + '<div class="indicator-title" style="color:#6a1b9a;">📐 ' + dong + ' · ' + tierLabel + ' · ' + ageLabel + ' 낙찰사례 통계</div>'
         + '<div class="margin-grid">' + rows + '</div>'
-        + '<div style="font-size:10px;color:#aaa;margin-top:4px;">이 법정동+평형대+연식단계에 해당하는 낙찰사례를 모아 계산한 중위값입니다. 괄호 안 숫자는 표본 수입니다.</div>'
+        + '<div style="font-size:10px;color:#aaa;margin-top:4px;">이 법정동+평형대+연식단계에 해당하는 낙찰사례를 모아 계산했습니다. 괄호 안 숫자는 표본 수입니다.</div>'
         + '</div>';
 }
 function toggleCompOnlyFilter(btn) {
