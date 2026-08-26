@@ -91,6 +91,46 @@ MIN_DONG_SAMPLES = 5   # 법정동 단위 그룹의 최소 표본(아파트는 �
 MAX_AGE_YEARS = 60  # 이보다 오래된 건 데이터 오류로 보고 제외
 PAGE_SIZE = 1000
 
+# ⚠️ 2026-08(사용자 요청: "AVM 추정가를 법정동 기준만 적용하지 말고, 법정동 내 연식·평형
+# 필터를 적용한 값으로") ──────────────────────────────────────────────────────
+# 배경: 지금까지 "법정동" 고정효과(dong_effects[region|dong])는 danji(아파트)/grid(빌라)
+# 표본이 부족해 승격됐을 때, 그 동 안의 모든 연식·평형을 뭉뚱그려 하나의 절편값으로 씀 -
+# 신축 20평대와 노후 10평대가 같은 동이면 같은 "동네 기본가격"을 적용받았음. 개별 매물의
+# 연식/면적 자체는 이미 age/log_size 회귀계수(전국 공통 기울기)로 반영되지만, "그 동네
+# 안에서 연식·평형별로 가격수준 자체가 다르게 형성되는" 지역별 상호작용까지는 못 잡았음.
+# danji/grid와 plain dong 사이에 "법정동+평형대+연식단계" 중간 그룹을 하나 더 끼워 넣어,
+# 표본이 있으면 그 조합의 실제 평균 가격수준을 쓰고, 그마저 부족하면 기존처럼 법정동 →
+# 시군구로 계속 승격되게 함. 경계값은 index.html의 PYEONG_TIERS/VILLA_AGE_TIERS와 반드시
+# 일치시켜야 함(학습 시점과 서빙 시점의 그룹 정의가 어긋나면 group_key가 안 맞아 이 중간
+# 단계가 사실상 무의미해짐 - grid_key/danji_key와 같은 종류의 학습/서빙 일치 요구사항).
+MIN_TIER_SAMPLES = 5  # 법정동+평형대+연식단계 그룹의 최소 표본(danji/dong과 동일 기준)
+PYEONG_TIER_BOUNDS = [  # (키, 상한 ㎡) - index.html PYEONG_TIERS와 반드시 동일
+    ("t1", 33.0), ("t2", 44.0), ("t3", 55.0), ("t4", 66.0), ("t5", 85.0), ("t6", float("inf")),
+]
+AGE_TIER_BOUNDS = [  # (키, 최소연차, 최대연차) - index.html VILLA_AGE_TIERS와 반드시 동일
+    ("premium", 0, 3), ("new", 4, 8), ("semi", 9, 15), ("old", 16, 25), ("aged", 26, float("inf")),
+]
+
+
+def _pyeong_tier_from_size(size_m2):
+    """전용면적(㎡) → 평형대 키. index.html getPyeongTier()와 동일 경계."""
+    if pd.isna(size_m2) or size_m2 <= 0:
+        return "t_na"
+    for key, max_m2 in PYEONG_TIER_BOUNDS:
+        if size_m2 <= max_m2:
+            return key
+    return "t6"
+
+
+def _age_tier_from_age(age_years):
+    """연식(년) → 연식단계 키. index.html getAgeTierByYear()와 동일 경계."""
+    if pd.isna(age_years):
+        return "a_na"
+    for key, lo, hi in AGE_TIER_BOUNDS:
+        if lo <= age_years <= hi:
+            return key
+    return "aged"
+
 # ⚠️ 2026-08(빌라 반경기반 공간 그룹핑 - 사용자 요청) ──────────────────────────────
 # 배경: villa_v1의 홀드아웃 오차(±36%)가 apt_v1(±10%)보다 훨씬 컸는데, 원인 중 하나가
 # 법정동(행정동) 단위 그룹핑이었음 - 행정동 경계는 행정 편의로 그어진 것이라 실제
@@ -576,6 +616,11 @@ def clean_and_featurize(df: pd.DataFrame, use_danji: bool) -> pd.DataFrame:
     # region은 "서울특별시 강남구"처럼 이미 시군구 단위 문자열 - 그대로 그룹키의 최상위
     # 단계(최후의 폴백)로 씀.
     df["dong_key"] = df["region"].astype(str) + "|" + df["dong"].astype(str)
+    # ⚠️ 2026-08(법정동+평형대+연식단계 중간 그룹) - danji/grid와 plain dong 사이에 끼워 넣을
+    # 중간 단계 키. 위 PYEONG_TIER_BOUNDS/AGE_TIER_BOUNDS 참고.
+    df["pyeong_tier"] = df["size"].apply(_pyeong_tier_from_size)
+    df["age_tier"] = df["age"].apply(_age_tier_from_age)
+    df["tier_key"] = df["dong_key"] + "|" + df["pyeong_tier"] + "|" + df["age_tier"]
 
     if use_danji:
         # 1단계: 단지(danji) 단위로 최대한 세분화 - 단지명 결측/공란은 "(단지미상)"으로 묶어
@@ -587,13 +632,29 @@ def clean_and_featurize(df: pd.DataFrame, use_danji: bool) -> pd.DataFrame:
         df["group_key"] = df["danji_key"]
         danji_counts = df["group_key"].value_counts()
         small_danji = danji_counts[danji_counts < MIN_DANJI_SAMPLES].index
-        df.loc[df["group_key"].isin(small_danji), "group_key"] = df.loc[df["group_key"].isin(small_danji), "dong_key"]
+        # ⚠️ 표본부족 단지는 곧장 법정동(dong_key)이 아니라 법정동+평형대+연식단계(tier_key)로
+        # 먼저 승격함 - 아래 "1.5단계"에서 이 tier_key도 표본이 부족하면 다시 dong_key로
+        # 승격되므로, 최종 결과는 기존과 같거나(표본이 있으면) 더 세분화됨(표본이 있으면).
+        df.loc[df["group_key"].isin(small_danji), "group_key"] = df.loc[df["group_key"].isin(small_danji), "tier_key"]
     else:
-        df["group_key"] = df["dong_key"]
+        # 연립다세대(grid를 쓰지 않는 경우)도 danji와 동일한 이유로 dong_key 대신 tier_key에서
+        # 시작함 - use_grid=True인 모델은 이후 attach_spatial_grid_grouping()이 grid 표본이
+        # 부족한 행만 이 tier_key(원본 group_key)로 되돌리므로 자동으로 grid→tier→dong→region
+        # 4단계 승격 사슬이 완성됨.
+        df["group_key"] = df["tier_key"]
 
-    # 2단계: (단지 승격 후 남은, 혹은 애초에 danji를 안 쓰는 경우의) 법정동 단위 그룹도
+    # 1.5단계: (단지/grid 승격 후 남은, 혹은 애초에 danji/grid를 안 쓰는 경우의) 법정동+평형대+
+    # 연식단계 그룹도 표본이 부족하면 법정동(dong) 단위로 승격. group_key가 여전히 "tier_key
+    # 그 자체"인 행들만 대상으로 함(이미 danji/grid로 세분화된 표본충분 그룹은 건드리지 않음).
+    is_tier_level = df["group_key"] == df["tier_key"]
+    tier_counts = df.loc[is_tier_level, "group_key"].value_counts()
+    small_tier = tier_counts[tier_counts < MIN_TIER_SAMPLES].index
+    promote_tier_mask = is_tier_level & df["group_key"].isin(small_tier)
+    df.loc[promote_tier_mask, "group_key"] = df.loc[promote_tier_mask, "dong_key"]
+
+    # 2단계: (위에서 남은, 혹은 애초에 danji/grid/tier를 안 쓰는 경우의) 법정동 단위 그룹도
     # 표본이 부족하면 시/군/구(region)로 한 번 더 승격. group_key가 여전히 "dong_key 그
-    # 자체"인 행들만 대상으로 함(이미 단지 단위로 세분화된 표본충분 그룹은 건드리지 않음).
+    # 자체"인 행들만 대상으로 함(이미 더 세분화된 표본충분 그룹은 건드리지 않음).
     is_dong_level = df["group_key"] == df["dong_key"]
     dong_counts = df.loc[is_dong_level, "group_key"].value_counts()
     small_dong = dong_counts[dong_counts < MIN_DONG_SAMPLES].index
