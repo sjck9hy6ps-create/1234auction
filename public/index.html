@@ -1995,32 +1995,33 @@ function getDongTypeMarginStat(dong, buildingType) {
    중위값·역산 예상매도가 중위값·실제 매칭사례 중위값을 표본수와 함께 표기해줘. 낙찰사례/
    경매물건 배지의 동단위 낙찰가율 중앙값 표기는 빼고, 법정동+평형+연식 세분화로. 빌라만
    적용") - 법정동+평형대(PYEONG_TIERS)+연식단계(VILLA_AGE_TIERS) 3단 버킷으로 낙찰사례
-   (bidCaseList)를 묶어 3종 중위값을 미리 계산해둠. dongTypeMarginStats와 같은 패턴으로
-   redrawMarkers()에서 한 번만 계산해 전역 맵에 캐싱하고, 배지 클릭 시엔 조회만 함(성능 부담 없음).
-   - 낙찰가: c.finalBidPrice(원 단위→만원 환산)
-   - 역산매도가: computeBidCaseImpliedTarget(c) - findSimilarComps 등 비교물건 탐색이 필요
-     없는 저비용 계산(동네 평균 추정마진을 가정해 산술로 역산)이라 낙찰사례 전체를 매번
-     다시 계산해도 성능 부담이 거의 없음(⚖️ 배지 자체의 "🤖 예상매도가"(predictedSale)와는
-     다른 값 - 그건 비교물건 탐색이 필요해 훨씬 비쌈).
-   - 실매칭 매도가: c.resaleMatch.amount(만원 단위, 이미 매도사례 매칭이 끝나 저장된 실거래가)
-   - 연식단계는 c.buildYear(건축HUB로 확정 조회된 값)가 있는 사례만 포함함. 확정값이 없는
-     사례까지 추정 연식으로 넣으려면 findSimilarComps 기반 근사 계산(getBidCaseEstimates)을
-     낙찰사례 전체에 매번 돌려야 해서 무거워짐 - 과거 여러 번(#379,#392~394 등) 마커 렌더링
-     성능 문제가 있었던 지점이라 보수적으로 확정값만 사용함. */
-var villaBucketStats = {};
-function villaBucketKey(dong, pyeongTier, ageTier) {
-    return dong + '|' + pyeongTier + '|' + ageTier;
-}
-function computeVillaBucketStats() {
+   (bidCaseList)를 묶어 3종 중위값을 계산해둠.
+   ⚠️ 실측 버그 수정(첫 배포 직후 "아무리 봐도 안 보인다"는 신고로 조사): 처음엔 연식단계를
+   c.buildYear(건축HUB로 "확정 조회"된 값)가 있는 사례만 대상으로 했는데, 실제 배포 사이트를
+   콘솔로 확인해보니 연립다세대성 낙찰사례 2096건 중 c.buildYear가 채워진 건 0건이었음(이
+   필드는 목록 화면의 "🏗️ 건물연식 일괄조회" 버튼을 사용자가 직접 눌러야만 채워지는데, 그
+   조회를 아직 실행한 적이 없으면 전부 비어있음) - 그 결과 모든 버킷이 항상 비어서 기능 자체가
+   먹통이었음. 그래서 getBidCaseEstimates(c).ageTier(건축HUB 확정값이 없으면 이 사건의 유사
+   비교물건 연식 중앙값으로 근사 추정하는, 낙찰사례 배지가 이미 쓰고 있는 것과 동일한 폴백)로
+   바꿔 대부분의 사례가 버킷에 잡히게 함. 다만 이 폴백은 findSimilarComps(비교물건 탐색)를
+   태우는 함수라 낙찰사례 전체(수천 건)를 한 번에 돌리면 무거워짐(과거 #379,#392~394 등
+   마커 렌더링 성능 문제가 반복됐던 지점) - 그래서 dongTypeMarginStats처럼 매 redrawMarkers()
+   마다 전체를 미리 계산해두지 않고, "지금 실제로 열어본 법정동"만 그 순간에 계산해서
+   villaBucketStatsCache에 담아두는 지연(lazy) 계산 방식으로 바꿈. 한 법정동의 낙찰사례
+   수는 보통 수십~수백 건 수준이라 배지 하나 클릭할 때 한 번 계산하는 정도는 체감 지연이
+   거의 없고, 같은 법정동을 다시 열면 캐시를 그대로 씀(redrawMarkers()가 새 데이터 로딩
+   시마다 캐시를 초기화). */
+var villaBucketStatsCache = {}; // 법정동 -> { '평형대|연식단계': {bid,implied,resale} }
+function computeVillaBucketStatsForDong(dong) {
     var buckets = {};
     bidCaseList.forEach(function(c) {
+        if (c.dong !== dong) return;
         if (backtestBuildingType(c) !== 'villa') return;
-        if (!c.dong) return;
         var pyeongTier = getPyeongTier(c.areaM2);
         if (!pyeongTier) return;
-        var ageTier = c.buildYear ? getAgeTierByYear(c.buildYear) : null;
+        var ageTier = c.buildYear ? getAgeTierByYear(c.buildYear) : getBidCaseEstimates(c).ageTier;
         if (!ageTier) return;
-        var key = villaBucketKey(c.dong, pyeongTier, ageTier);
+        var key = pyeongTier + '|' + ageTier;
         if (!buckets[key]) buckets[key] = { bid: [], implied: [], resale: [] };
         if (c.finalBidPrice) buckets[key].bid.push(Math.round(c.finalBidPrice / 10000));
         var implied = computeBidCaseImpliedTarget(c);
@@ -2042,7 +2043,8 @@ function getVillaBucketStats(dong, areaM2, ageTier) {
     if (!dong || !ageTier) return null;
     var pyeongTier = getPyeongTier(areaM2);
     if (!pyeongTier) return null;
-    return villaBucketStats[villaBucketKey(dong, pyeongTier, ageTier)] || null;
+    if (!villaBucketStatsCache[dong]) villaBucketStatsCache[dong] = computeVillaBucketStatsForDong(dong);
+    return villaBucketStatsCache[dong][pyeongTier + '|' + ageTier] || null;
 }
 /* 위 3종 중위값을 배지 상세패널에 보여주는 공용 HTML - 매매기록 패널(openPanel/renderTable)/
    낙찰사례 패널(buildBidCaseDetailHtml)/경매물건 패널(buildAuctionPanelHtml) 3곳에서 공유해서
@@ -3565,7 +3567,10 @@ function redrawMarkers() {
     comparableIndex = computeComparableIndex();
     bidCaseAptIndex = computeBidCaseAptIndex();
     dongTypeMarginStats = computeDongTypeMarginStats();
-    villaBucketStats = computeVillaBucketStats();
+    // villaBucketStats(법정동+평형+연식 낙찰사례 통계)는 findSimilarComps를 태우는 폴백이
+    // 껴있어 전체를 매번 다시 계산하면 무거움 - 캐시만 비워서 "다음에 그 법정동 배지를 열 때"
+    // 다시 계산하게 함(getVillaBucketStats의 지연계산 참고).
+    villaBucketStatsCache = {};
     var list = viewportList.filter(isAptVisibleUnderCurrentFilters);
     placeMarkers(list, myGen);
     setTimeout(function() { renderAuctionMarkers(); renderBidCaseMarkers(); }, 100);
