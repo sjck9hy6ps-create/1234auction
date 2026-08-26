@@ -970,6 +970,10 @@ tr:hover td { background:#fffde7; }
         <div id="bx-extract-status" style="font-size:11px;color:#999;margin-top:4px;"></div>
     </div>
     <div id="bx-preview-box"></div>
+    <div style="padding:8px 14px;border-top:1px solid #eee;display:flex;justify-content:space-between;align-items:center;gap:8px;">
+        <span style="font-size:10px;color:#888;">이 패널로 등록한 건은 모달을 안 거쳐 건축HUB 연식 자동조회가 안 됩니다 - 예상매도가·연식단계·평형연식 통계 정확도를 위해 실측값으로 채우세요.</span>
+        <button class="modal-btn btn-gray" id="bx-buildyear-btn" style="font-size:10px;padding:4px 8px;white-space:nowrap;" onclick="resolveMissingAuctionBuildYears()" title="건축HUB에서 실제 사용승인일을 조회해 연식을 채웁니다 (유사물건 중앙값 근사치보다 정확)">🏗️ 건물연식 일괄조회</button>
+    </div>
 </div>
 <div id="auction-modal-bg">
 <div id="auction-modal">
@@ -6396,6 +6400,55 @@ async function resolveMissingBidCaseBuildYears() {
     if (btn) { btn.disabled = false; btn.innerText = '🏗️ 건물연식 일괄조회'; }
     if (statusBox) { statusBox.style.color = '#2e7d32'; statusBox.innerText = '연식 조회 완료: ' + ok + '/' + targets.length + '건 확인됨.'; }
     renderBidCaseList(); renderBidCaseMarkers();
+}
+/* ⚠️ 2026-08(사용자 피드백: "샘골로7길 35(auctionList 📐백테스트 등록건) - 실제로는
+   2024년 프리미엄신축인데 유사물건 중앙값 근사치(getAuctionWonEstimates.inferredBuildYear)는
+   2014년 준신축으로 나와 두 단계나 틀렸다") - 바로 위 resolveOneBidCaseBuildYear/
+   resolveMissingBidCaseBuildYears와 완전히 같은 이유·같은 방식의 auctionList용 짝. 특히
+   📐 낙찰가 백테스트 일괄등록으로 들어온 건들은 경매 모달을 한 번도 열지 않아
+   getAuctionBuildYear()의 건축HUB 자동조회 경로(저장 시점 saveAuction)를 안 타서 buildYear가
+   계속 비어있음 - 그 결과 예상매도가/역산매도가/연식단계 배지/법정동 평형·연식 버킷 통계가
+   모두 "그 동네 다른 건물들 연식을 섞은 근사치"에 의존하게 됨. 이 함수는 건축HUB 사용승인일을
+   직접 조회해서(loadBuildingInfo, resolveOneBidCaseBuildYear와 동일 API) 근사치를 그 건물의
+   실제 연식으로 덮어씀. */
+async function resolveOneAuctionBuildYear(a) {
+    if (!a.lat || !a.lon || !a.bunji) return false;
+    var fakeApt = { latest: { dong: a.dong, name: a.name || '', bunji: a.bunji } };
+    var info = await loadBuildingInfo(fakeApt, a.lat, a.lon);
+    var year = info && info.title && info.title.useAprDay
+        ? parseInt(String(info.title.useAprDay).match(/(\d{4})/) ? String(info.title.useAprDay).match(/(\d{4})/)[1] : '')
+        : NaN;
+    if (!Number.isFinite(year) || year < 1950 || year > today.getFullYear()) return false;
+    a.buildYear = year;
+    delete auctionWonEstCache[a.id]; // 새 연식 반영해서 다시 계산되도록 캐시 무효화
+    try { await saveAuctionAPI(a); } catch (e) { /* 로컬 값은 이미 반영했으니 저장 실패해도 화면엔 보임 */ }
+    return true;
+}
+async function resolveMissingAuctionBuildYears() {
+    var btn = document.getElementById('bx-buildyear-btn');
+    var statusBox = document.getElementById('bx-extract-status');
+    var targets = auctionList.filter(function(a) { return !a.buildYear && a.lat && a.lon && a.bunji; });
+    if (!targets.length) { alert('건축HUB로 조회할 대상이 없습니다. (이미 연식이 있거나, 좌표/번지 정보가 없는 물건입니다.)'); return; }
+    if (!confirm(targets.length + '건의 건물 연식을 건축HUB에서 조회합니다. 시간이 걸릴 수 있어요. 계속할까요?')) return;
+    if (btn) { btn.disabled = true; btn.innerText = '조회 중... 0/' + targets.length; }
+    var done = 0, ok = 0;
+    var queue = targets.map(function(a, i) { return i; });
+    async function worker() {
+        while (queue.length) {
+            var i = queue.shift();
+            var success = await resolveOneAuctionBuildYear(targets[i]);
+            if (success) ok++;
+            done++;
+            if (btn) btn.innerText = '조회 중... ' + done + '/' + targets.length;
+        }
+    }
+    var workers = [];
+    for (var w = 0; w < AI_COMP_ELEVATOR_CONCURRENCY; w++) workers.push(worker());
+    await Promise.all(workers);
+    if (btn) { btn.disabled = false; btn.innerText = '🏗️ 건물연식 일괄조회'; }
+    if (statusBox) { statusBox.style.color = '#2e7d32'; statusBox.innerText = '연식 조회 완료: ' + ok + '/' + targets.length + '건 확인됨.'; }
+    villaBucketStatsCache = {}; // 연식이 바뀌었으니 평형·연식 버킷 통계도 다시 계산되도록 리셋
+    renderAuctionList(); renderAuctionMarkers();
 }
 /* 낙찰 후 매도까지 보통 3~4개월씩 걸리기 때문에, 한 번 매칭에 실패했거나(아직 매도 전) 아직
    시도조차 안 한 사례도 "상시" 다시 조회할 수 있어야 함 - 목록 패널의 항목별 버튼과, 배지를
