@@ -1967,7 +1967,7 @@ function aptHasMatchingBidCase(apt) {
    같으면 재계산을 건너뛰고 캐시를 그대로 재사용하도록 바꿈. 길이가 안 바뀌는 in-place 수정
    (예: matchAndSaveOneCase의 resaleMatch/estMargin 갱신)은 지문만으로는 못 잡아내므로,
    그런 지점에서는 invalidateBidCaseIndexCache()를 직접 호출해 캐시를 무효화함. */
-var bidCaseIndexCache = { sig: null, aptIndex: {}, marginStats: {} };
+var bidCaseIndexCache = { sig: null, aptIndex: {}, marginStats: {}, spatial: { grid: {}, noCoord: [] } };
 function getBidCaseListSig() {
     if (!bidCaseList.length) return '0';
     return bidCaseList.length + '|' + bidCaseList[0].id + ':' + bidCaseList[bidCaseList.length - 1].id;
@@ -1975,12 +1975,58 @@ function getBidCaseListSig() {
 function invalidateBidCaseIndexCache() {
     bidCaseIndexCache.sig = null;
 }
+/* ⚠️ 2026-08(위 성능 개선 2탄): renderBidCaseMarkers()가 매 팬/줌마다 bidCaseList
+   전체(수천 건)를 순회하며 "화면 안에 있는지"를 하나하나 좌표비교하던 것도 데이터가
+   쌓일수록 느려지는 지점이었음. 좌표를 0.01도(위도 기준 약 1.1km) 격자로 나눠 미리
+   인덱싱해두면, 지금 화면이 걸치는 격자칸의 낙찰사례만 후보로 추려서 그 안에서만 정밀
+   경계 체크를 하면 되므로 전체를 매번 다시 훑지 않아도 됨. 위 aptIndex/marginStats와
+   같은 지문(sig) 기준으로 함께 캐싱됨 - 데이터가 안 바뀌면 격자도 다시 안 만듦.
+   ⚠️ 좌표가 아직 없는(geocoding 전) 사례는 격자에 넣을 수 없어 매번 후보에 포함되는데,
+   이건 보통 방금 추가돼 아직 지오코딩 안 된 소수 건뿐이라 부담이 크지 않음. */
+var BC_GRID_SIZE = 0.01;
+function bcGridCellKey(lat, lon) {
+    return Math.floor(lat / BC_GRID_SIZE) + '_' + Math.floor(lon / BC_GRID_SIZE);
+}
+function buildBidCaseSpatialIndex() {
+    var grid = {};
+    var noCoord = [];
+    bidCaseList.forEach(function(c) {
+        if (c.lat && c.lon) {
+            var key = bcGridCellKey(c.lat, c.lon);
+            if (!grid[key]) grid[key] = [];
+            grid[key].push(c);
+        } else {
+            noCoord.push(c);
+        }
+    });
+    return { grid: grid, noCoord: noCoord };
+}
+// 화면이 워낙 넓게 축소돼(예: 전국 단위) 격자칸 수 자체가 너무 많아지면 격자 순회가
+// 오히려 손해이므로, 그런 경우엔 안전하게 전체 목록으로 폴백함.
+var BC_GRID_CELL_SCAN_CAP = 4000;
+function getBidCaseViewportCandidates(vp) {
+    var spatial = getCachedBidCaseIndexes().spatial;
+    if (!vp) return bidCaseList;
+    var minLa = Math.floor(vp.minLat / BC_GRID_SIZE), maxLa = Math.floor(vp.maxLat / BC_GRID_SIZE);
+    var minLo = Math.floor(vp.minLon / BC_GRID_SIZE), maxLo = Math.floor(vp.maxLon / BC_GRID_SIZE);
+    var cellCount = (maxLa - minLa + 1) * (maxLo - minLo + 1);
+    if (cellCount > BC_GRID_CELL_SCAN_CAP) return bidCaseList;
+    var result = spatial.noCoord.slice();
+    for (var la = minLa; la <= maxLa; la++) {
+        for (var lo = minLo; lo <= maxLo; lo++) {
+            var cell = spatial.grid[la + '_' + lo];
+            if (cell) result = result.concat(cell);
+        }
+    }
+    return result;
+}
 function getCachedBidCaseIndexes() {
     var sig = getBidCaseListSig();
     if (bidCaseIndexCache.sig !== sig) {
         bidCaseIndexCache.sig = sig;
         bidCaseIndexCache.aptIndex = computeBidCaseAptIndex();
         bidCaseIndexCache.marginStats = computeDongTypeMarginStats();
+        bidCaseIndexCache.spatial = buildBidCaseSpatialIndex();
     }
     return bidCaseIndexCache;
 }
@@ -10986,16 +11032,20 @@ function renderBidCaseMarkers() {
     // 줌할 때마다 카카오맵 SDK가 다시 그려야 하는 오버레이 개수만 줄어듦.
     var vp = getPaddedViewportBounds();
     var neededIds = {};
-    bidCaseList.forEach(function(c) {
+    // 2026-08(성능 개선): bidCaseList 전체를 매번 훑는 대신, 뷰포트가 걸치는 격자칸의
+    // 낙찰사례만 후보로 추림(getBidCaseViewportCandidates). 격자칸은 뷰포트보다 살짝
+    // 넉넉하게 걸릴 수 있어서, 후보 안에서도 아래 정밀 사각 경계 체크는 그대로 유지함.
+    var bcCandidates = getBidCaseViewportCandidates(vp);
+    bcCandidates.forEach(function(c) {
         if (vp && c.lat && c.lon
             && (c.lat < vp.minLat || c.lat > vp.maxLat || c.lon < vp.minLon || c.lon > vp.maxLon)) {
             return;
         }
         neededIds[c.id] = true;
         if (c.lat && c.lon) { upsertBidCaseMarker(c); return; }
-        var candidates = buildBidCaseGeocodeCandidates(c);
-        if (!candidates.length) return;
-        tryStepGeocode(candidates, function(lat, lon) {
+        var geoCandidates = buildBidCaseGeocodeCandidates(c);
+        if (!geoCandidates.length) return;
+        tryStepGeocode(geoCandidates, function(lat, lon) {
             if (lat && lon) {
                 c.lat = lat; c.lon = lon;
                 saveBidCaseAPI(c); upsertBidCaseMarker(c);
