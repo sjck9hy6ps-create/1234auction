@@ -11507,7 +11507,11 @@ function buildMarginSummaryHtml(a) {
     var loanPrepayFeeRateSaved = parseFloat(a.loanPrepayFeeRate);
     var loanPrepayFeeRate = (loanPrepayFeeRateSaved > 0) ? loanPrepayFeeRateSaved : DEFAULT_LOAN_PREPAY_FEE_RATE;
     var prepayFee = calcLoanPrepayFee(loanAmount, loanPrepayFeeRate);
-    var feesSum = tax + registryFee + evictionFee + repair + agent + moving + cleaning + interestCost + prepayFee + etc + propertyTax + compTax;
+    // ⚠️ 2026-09(석삼말로 175-1 사례): 매매사업자+전용 85㎡초과 건물분 부가세가 이 "저장된 값
+    // 기준" 요약에서 통째로 빠져 있었음 - calcMargin()(라이브 모달)에는 있는데 여기엔 없었음.
+    var vatInfo = calcAuctionVatFromRecord(a, useBid);
+    var vat = vatInfo.computable ? vatInfo.vat : 0;
+    var feesSum = tax + registryFee + evictionFee + repair + agent + moving + cleaning + interestCost + prepayFee + etc + vat + propertyTax + compTax;
     var totalCost = useBid + feesSum;
     var preTaxMargin = useSell > 0 ? useSell - totalCost : 0;
     var taxResult = (useSell > 0 && preTaxMargin > 0) ? calcResaleIncomeTax(bidMethod, preTaxMargin, holdMonths, !!a.isAdjusted, parseInt(a.houseRank) || 1) : { totalTax: 0, rateLabel: '' };
@@ -11549,7 +11553,15 @@ function buildMarginSummaryHtml(a) {
         + (prepayFee > 0
             ? mItem('중도상환수수료(' + loanPrepayFeeRate.toFixed(1) + '%)', toEok(String(prepayFee)), '#bf360c')
             : '')
+        + (vatInfo.applicable
+            ? mItem('부가세(건물분,85㎡초과) <span onclick="showCalcInfo(\'vat\')" title="계산기준 보기" style="cursor:pointer;">ⓘ</span>', vatInfo.computable ? toEok(String(vat)) : '확인필요', vatInfo.computable ? '#c62828' : '#e65100')
+            : '')
         + '</div>';
+    // calcMargin()과 동일 - 부가세 대상인데 자동계산에 필요한 데이터(공시가격·대지권면적/감정평가서
+    // 안분값)가 없으면 항목만 보고 지나치기 쉬우니 눈에 띄게 안내를 덧붙임.
+    if (vatInfo.applicable && !vatInfo.computable) {
+        html += '<div style="font-size:11px;color:#e65100;background:#fff3e0;border-radius:6px;padding:6px 8px;margin-top:6px;">⚠️ ' + vatInfo.reason + '</div>';
+    }
     html += '<div style="font-size:10px;color:#aaa;margin-top:6px;">저장된 값을 기준으로 한 요약이며, 값을 바꾸려면 위 "수정" 버튼을 눌러주세요.</div>';
     html += '</div>';
     return html;
@@ -12587,6 +12599,68 @@ function calcAuctionVat(bidAmount) {
         vat: Math.round(buildingValueOfBid * TAX_CONFIG.vat.rate),
     };
 }
+/* calcAuctionVat()의 "저장된 값 기준" 트윈 - buildMarginSummaryHtml(경매관리 목록의 "저장된 값
+   기준" 예상마진분석 박스)에서 씀. ⚠️ 2026-09(석삼말로 175-1 사례 - "지출비용항목에 부가세가
+   없다" 지적으로 발견): buildMarginSummaryHtml은 지금까지 부가세를 아예 생략하고 있었음(당시
+   "계산 근거 필드가 부족한 경우가 많아 단순화"라는 이유였는데, 실제로는 a.officialPriceWon·
+   a.siteRightsAreaM2가 이미 저장돼 있고(공시가격 자동조회 기능), 감정평가서 안분값도 a.detail에
+   그대로 저장돼 있어(AI 추출) DOM 없이도 재현 가능함 - 그래서 생략할 이유가 없었음. DOM(모달
+   입력칸)이 없는 목록 화면에서도 동작해야 해서 calcAuctionVat과 동일한 안분 우선순위(①공시가격
+   전유:대지권 면적비율 → ②감정평가서상 토지/건물가격 비율)를 저장된 필드만으로 재현함. */
+function calcAuctionVatFromRecord(a, bidAmount) {
+    var bidMethod = a.bidMethod || 'dealer';
+    if (bidMethod !== 'dealer') {
+        return { applicable: false, reason: '개인명의 입찰은 부가세 과세사업자가 아니므로 대상이 아닙니다.' };
+    }
+    var pyung = parseFloat(a.pyung) || 0;
+    var areaM2 = pyung > 0 ? Math.round(pyung * 3.305785 * 100) / 100 : 0;
+    var housingAreaM2 = TAX_CONFIG.vat.nationalHousingAreaM2;
+    if (!areaM2) {
+        return { applicable: false, reason: '평형을 입력하면 국민주택규모(' + housingAreaM2 + '㎡) 초과 여부를 판단합니다.' };
+    }
+    if (areaM2 <= housingAreaM2) {
+        return { applicable: false, areaM2: areaM2, reason: '전용면적 약 ' + areaM2 + '㎡ (국민주택규모 ' + housingAreaM2 + '㎡ 이하 - 부가세 면제 대상)' };
+    }
+    var officialPriceWon = parseInt(a.officialPriceWon) || 0;
+    var siteRightsAreaM2 = parseFloat(a.siteRightsAreaM2) || 0;
+    var buildingRatio = null, ratioSource = null;
+
+    if (officialPriceWon && siteRightsAreaM2) {
+        var buildingValueOfOfficialPrice = officialPriceWon * areaM2 / (areaM2 + siteRightsAreaM2);
+        var landValueOfOfficialPrice = officialPriceWon * siteRightsAreaM2 / (areaM2 + siteRightsAreaM2);
+        buildingRatio = buildingValueOfOfficialPrice / (buildingValueOfOfficialPrice + landValueOfOfficialPrice);
+        ratioSource = '공동주택가격(공시가격) 전유:대지권 면적비율 안분';
+    } else {
+        var d = a.detail || {};
+        var landPrice = d.landPrice ? parseFloat(d.landPrice) : 0;
+        var buildingPrice = d.buildingPrice ? parseFloat(d.buildingPrice) : 0;
+        if (landPrice > 0 && buildingPrice > 0) {
+            buildingRatio = buildingPrice / (buildingPrice + landPrice);
+            ratioSource = '감정평가서상 토지가격/건물가격 비율 안분 (토지 ' + Math.round(landPrice / 10000).toLocaleString()
+                + '만 : 건물 ' + Math.round(buildingPrice / 10000).toLocaleString() + '만)';
+        }
+    }
+
+    if (buildingRatio === null) {
+        var missing = [];
+        if (!officialPriceWon) missing.push('공시가격');
+        if (!siteRightsAreaM2) missing.push('대지권 면적');
+        return {
+            applicable: true, computable: false, areaM2: areaM2,
+            reason: '전용 ' + areaM2 + '㎡로 국민주택규모 초과 - 부가세 대상이지만, ' + missing.join('·')
+                + '(또는 감정평가서상 토지가격·건물가격) 정보가 없어 자동계산이 안 됩니다.',
+        };
+    }
+    var buildingValueOfBid = (bidAmount || 0) * buildingRatio;
+    return {
+        applicable: true, computable: true, areaM2: areaM2, siteRightsAreaM2: siteRightsAreaM2,
+        officialPriceWon: officialPriceWon,
+        buildingRatio: buildingRatio,
+        ratioSource: ratioSource,
+        buildingValueOfBid: Math.round(buildingValueOfBid),
+        vat: Math.round(buildingValueOfBid * TAX_CONFIG.vat.rate),
+    };
+}
 /* 목표마진(a-comp-target-margin)을 만족하는 적정입찰가를 이분탐색으로 역산.
    순수익(bid)은 bid가 커질수록 단조 감소하므로 이분탐색으로 안전하게 수렴함.
    목표마진은 "세후" 순수익 기준 - 입찰방법(a-bid-method)·보유기간(a-hold-months)에 따라
@@ -12673,8 +12747,11 @@ function solveAuctionBid(estValue, marginOverride) {
    적이 없어 여기서는 재현이 불가능함. 그래서 이 함수는 항상 ③목표매도가(a.target)+
    ④목표마진(a.compTargetMargin) 조합으로만 계산함 - 사용자가 직접 정한 목표값이라 항상
    저장돼 있고, 결과 해석도 "내가 세운 목표 기준으로 얼마를 써야 했나"로 명확함.
-   ⚠️ 부가세는 buildMarginSummaryHtml과 동일하게 생략함(매매사업자+국민주택규모 초과인
-   일부 케이스에만 해당되고 계산 근거 필드가 부족한 경우가 많아 단순화 - 모달의 실시간
+   ⚠️ 부가세는 이 함수(목표입찰가 역산)에서는 생략함 - saleValue(목표매도가)가 고정이라
+   부가세를 넣어도 이분탐색 방향 자체는 안 바뀌고, 매매사업자+국민주택규모 초과인 일부
+   케이스에만 해당돼 단순화함. 2026-09: buildMarginSummaryHtml()은 더 이상 이렇지 않음 -
+   "지출비용항목에 부가세가 없다" 지적으로 calcAuctionVatFromRecord() 트윈을 추가해 부가세를
+   반영하도록 고쳤음(아래 solveAuctionBidFromRecord 함수 자체는 여전히 생략 - 모달의 실시간
    ⑤목표입찰가·calcAuctionVat는 이 생략과 무관하게 그대로 부가세를 반영함). */
 function solveAuctionBidFromRecord(a) {
     var saleValue = parseInt(a.target) || null;
