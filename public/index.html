@@ -2623,7 +2623,7 @@ function regionCodeAt(lat, lon) {
                 settled = true;
                 resolve(null);
             }, 8000);
-            geocoder.coord2RegionCode(lon, lat, function(res, status) {
+            coord2RegionCodeCached(lon, lat, function(res, status) {
                 if (settled) return;
                 settled = true;
                 clearTimeout(timer);
@@ -3138,6 +3138,52 @@ function switchFilterPanelTab(tab) {
 /* ════════════════════════════════════
    카카오 지도 초기화
 ════════════════════════════════════ */
+/* ⚠️ 2026-09(카카오 coord2RegionCode 일일 쿼터(10만건/일) 소진 사례 - "API limit has been
+   exceeded" code -10 에러 실측): 신규 지역 데이터 로딩(loadAllData)·법정동 경계선 호버·
+   "현재동+인접동" 필터·건축물대장 좌표변환 등 여러 기능이 같은 카카오 앱키로 이 API를
+   공유해서 써서, 트래픽이 몰리면 하루 쿼터가 다 소진돼 지도 자체가 정상 동작하지 않는 문제가
+   있었음. 대한민국 행정구역 경계는 사실상 거의 안 바뀌므로, 한 번 조회된 좌표는 만료 없이
+   영구 캐시해서 재사용해도 무방함 - Supabase에 격자(소수점4자리, 위경도 약 11m) 단위로
+   저장해두고(data-coverage.js mode=regionCodeGet/regionCodeSet), 전국 어떤 사용자가 같은
+   지역을 다시 봐도 카카오를 다시 안 부르고 이 캐시로 바로 응답하게 함. 완전히 "무제한"으로
+   만들 수는 없음(카카오가 서버단에서 강제하는 한도라 클라이언트 코드로 우회 불가) - 대신
+   이미 조회된 지역(전국 대부분)은 카카오 호출이 사실상 0에 가까워지므로 한도 재소진
+   가능성을 크게 낮추는 방식임.
+   geocoder.coord2RegionCode와 완전히 동일한 인자 순서(lon, lat, callback)·콜백 시그니처
+   (result, status)를 그대로 씀 - 기존 7개 호출부를 함수명만 바꿔 그대로 재사용 가능. */
+var regionCodeMemCache = {}; // 세션 내 메모리 캐시(같은 세션에서 같은 좌표 또 조회 안 하도록)
+function regionGridKey(lat, lon) {
+    return (Math.round(lat * 10000) / 10000) + ',' + (Math.round(lon * 10000) / 10000);
+}
+function coord2RegionCodeCached(lon, lat, callback) {
+    var key = regionGridKey(lat, lon);
+    if (regionCodeMemCache[key]) { callback(regionCodeMemCache[key], kakao.maps.services.Status.OK); return; }
+    fetch('/api/data-coverage?mode=regionCodeGet&lat=' + lat + '&lon=' + lon)
+        .then(function(r) { return r.json(); })
+        .then(function(d) {
+            if (d && d.found && d.result) {
+                regionCodeMemCache[key] = d.result;
+                callback(d.result, kakao.maps.services.Status.OK);
+                return;
+            }
+            // 서버 캐시 미스 - 기존처럼 실제 카카오 API를 호출하고, 성공하면 다음 사용자를
+            // 위해 서버에도 비동기로 저장해둠(응답을 기다리지 않음 - 실패해도 지도 사용엔 지장 없음).
+            geocoder.coord2RegionCode(lon, lat, function(result, status) {
+                if (status === kakao.maps.services.Status.OK && result) {
+                    regionCodeMemCache[key] = result;
+                    fetch('/api/data-coverage?mode=regionCodeSet', {
+                        method: 'POST', headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ lat: lat, lon: lon, result: result }),
+                    }).catch(function() {});
+                }
+                callback(result, status);
+            });
+        })
+        .catch(function() {
+            // 캐시 조회 자체가 실패해도(네트워크 등) 기존처럼 카카오 API로 폴백
+            geocoder.coord2RegionCode(lon, lat, callback);
+        });
+}
 function loadKakaoSDK() {
     var s = document.createElement('script');
     s.src = 'https://dapi.kakao.com/v2/maps/sdk.js?appkey=2348fc777815a26856e77b16b1a3d0b7&autoload=false&libraries=services';
@@ -3429,7 +3475,7 @@ async function loadAllData(centerLat, centerLon) {
             return;
         }
  
-        geocoder.coord2RegionCode(centerLon, centerLat, async function(result, status) {
+        coord2RegionCodeCached(centerLon, centerLat, async function(result, status) {
             if (status !== kakao.maps.services.Status.OK) { resolve(); return; }
             var regionCode = null, sigungu = '';
             for (var i = 0; i < result.length; i++) {
@@ -6217,7 +6263,7 @@ async function matchResaleForBidCase(c) {
     });
     if (!geo) return { matched: false, reason: '주소를 좌표로 찾지 못함' };
     var lawdCd = await new Promise(function(resolve) {
-        geocoder.coord2RegionCode(geo.lon, geo.lat, function(result, status) {
+        coord2RegionCodeCached(geo.lon, geo.lat, function(result, status) {
             if (status !== kakao.maps.services.Status.OK) { resolve(null); return; }
             for (var i = 0; i < result.length; i++) {
                 if (result[i].region_type === 'B') { resolve(result[i].code.substring(0, 5)); return; }
@@ -8168,7 +8214,7 @@ function resolveSubjectLawdCd(lat, lon, onReady) {
     if (subjectLawdCache.key === key && !subjectLawdCache.loading) { onReady(subjectLawdCache.lawdCd); return; }
     if (subjectLawdCache.loading && subjectLawdCache.key === key) return; // 이미 같은 좌표 조회중 - 응답 오면 renderEstimateSummary 다음 호출 때 캐시 히트로 반영됨
     subjectLawdCache = { key: key, loading: true, lawdCd: null };
-    geocoder.coord2RegionCode(lon, lat, function(result, status) {
+    coord2RegionCodeCached(lon, lat, function(result, status) {
         var lawdCd = null;
         if (status === kakao.maps.services.Status.OK) {
             for (var i = 0; i < result.length; i++) {
@@ -14065,7 +14111,7 @@ async function findApproximateResaleMatches() {
     box.innerHTML = '<div style="font-size:11px;color:#999;">주변 실거래 조회 중...</div>';
     try {
         var lawdCd = await new Promise(function(resolve) {
-            geocoder.coord2RegionCode(ctx.lon, ctx.lat, function(result, status) {
+            coord2RegionCodeCached(ctx.lon, ctx.lat, function(result, status) {
                 if (status !== kakao.maps.services.Status.OK) { resolve(null); return; }
                 for (var i = 0; i < result.length; i++) {
                     if (result[i].region_type === 'B') { resolve(result[i].code.substring(0, 5)); return; }
@@ -16235,7 +16281,7 @@ async function loadBuildingInfo(apt, lat, lon, force) {
                         settled = true;
                         resolve(null);
                     }, 8000);
-                    geocoder.coord2RegionCode(lon, lat, function(result, status) {
+                    coord2RegionCodeCached(lon, lat, function(result, status) {
                         if (settled) return;
                         settled = true;
                         clearTimeout(timer);
