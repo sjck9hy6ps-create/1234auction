@@ -10523,7 +10523,12 @@ function placeAuctionMarker(a) {
     // 계양구 임학안로 26" 같은, 이미 정식 등록됐지만 낙찰가만 나중에 채운 사례도 낙찰사례 배지와
     // 동일한 정보(🤖예상매도가/↩️역산매도가/연식·평형/고가낙찰경고)를 보여줌.
     var isWon = !!parseFloat(a.actualBid);
-    var awEst = isWon ? getAuctionWonEstimates(a) : null;
+    // ⚠️ 2026-09(사용자 요청: "입찰희망 물건도 낙찰사례처럼 연식·평형·예상매도가 3종 표기해줘") -
+    // 원래는 isWon(낙찰금액 확정)일 때만 awEst를 계산했는데, predictedSale/pyung/ageTier는
+    // actualBid 없이도(findSimilarComps 재계산 또는 저장된 목표매도가 a.target 기준) 계산
+    // 가능함 - impliedTarget/highBidFlag만 actualBid가 필요해서 null로 나올 뿐. isBidTarget이면
+    // 아직 낙찰 전이라도 awEst를 미리 계산해서 아래에서 연식/평형/예상매도가 3종을 보여줌.
+    var awEst = (isWon || isBidTarget) ? getAuctionWonEstimates(a) : null;
 
     // 같은 단지의 일반 거래 데이터가 이미 로딩되어 있으면 등급/인기평형 정보를 가져와 함께 표시
     // ⚠️ 2026-08: 입찰예정물건(isBidTarget)은 매매기록이 있는 주소라도 그 건물배지에 편입시키지
@@ -10582,9 +10587,23 @@ function placeAuctionMarker(a) {
     // 사건이라 입찰일 알람/D-day는 더 이상 의미가 없어(아래 alarmBadge/dDayBadge는 isWon일 때
     // 건너뜀) 대신 이 줄들을 보여줌.
     var predictedLine = '', impliedLine = '', sizeAgeLine = '';
-    if (isWon) {
+    // ⚠️ 2026-09(사용자 요청): 예상매도가/연식/평형은 actualBid 없이도 계산 가능하므로
+    // isBidTarget이면 낙찰 전이라도 함께 보여줌 - impliedTarget(역산매도가)/highBidFlag는
+    // actualBid가 있어야 의미가 있으므로 isWon일 때만 별도로 계산해서 붙임.
+    if (isWon || isBidTarget) {
         var awPredicted = awEst.predictedSale;
         predictedLine = '<div style="color:#1976d2;font-size:10.5px;">🤖 예상매도가 ' + (awPredicted ? toEok(String(awPredicted)) : '데이터 부족') + '</div>';
+        // ⚠️ 위 ageBadge와 동일한 이유로 propType==='villa'일 때만 연식단계 배지를 씀
+        var awAgeTierLabel = (a.propType === 'villa' && awEst.ageTier) ? getVillaTierLabel(awEst.ageTier) : null;
+        var awAgeBadge = awAgeTierLabel
+            ? '<span style="background:' + (AGE_TIER_COLORS[awEst.ageTier] || '#607d8b') + ';color:white;font-size:9px;font-weight:bold;padding:1px 6px;border-radius:3px;">'
+                + awAgeTierLabel + (awEst.inferredBuildYear ? ' · ' + (today.getFullYear() - awEst.inferredBuildYear) + '년차' + (awEst.buildYearConfirmed ? '' : '(추정)') : '') + '</span>'
+            : '';
+        sizeAgeLine = (awEst.pyung || awAgeBadge)
+            ? '<div style="font-size:10px;color:#555;margin-top:2px;">' + (awEst.pyung ? awEst.pyung + '평 ' : '') + awAgeBadge + '</div>'
+            : '';
+    }
+    if (isWon) {
         var awImplied = awEst.impliedTarget;
         var awImpliedNote = awImplied
             ? (awImplied.marginSource === 'region'
@@ -10596,15 +10615,6 @@ function placeAuctionMarker(a) {
             ? '이 동 낙찰사례 ' + awHb.count + '건 낙찰가율 중앙값 ' + awHb.dongMedian + '% 대비 이 건 ' + awHb.myRate + '%(+' + awHb.gap + '%p) - 고가낙찰 의심(실수/주택보증공사/실거주 등), 역산매도가가 과대추정됐을 수 있으니 직접 확인 필요'
             : '';
         impliedLine = '<div style="color:#6a1b9a;font-size:10.5px;" title="' + (awHb ? awHighBidNote : awImpliedNote) + '">' + (awHb ? '⚠️ ' : '') + '↩️ 역산매도가 ' + (awImplied ? toEok(String(awImplied.target)) : '계산 불가') + '</div>';
-        // ⚠️ 위 ageBadge와 동일한 이유로 propType==='villa'일 때만 연식단계 배지를 씀
-        var awAgeTierLabel = (a.propType === 'villa' && awEst.ageTier) ? getVillaTierLabel(awEst.ageTier) : null;
-        var awAgeBadge = awAgeTierLabel
-            ? '<span style="background:' + (AGE_TIER_COLORS[awEst.ageTier] || '#607d8b') + ';color:white;font-size:9px;font-weight:bold;padding:1px 6px;border-radius:3px;">'
-                + awAgeTierLabel + (awEst.inferredBuildYear ? ' · ' + (today.getFullYear() - awEst.inferredBuildYear) + '년차' + (awEst.buildYearConfirmed ? '' : '(추정)') : '') + '</span>'
-            : '';
-        sizeAgeLine = (awEst.pyung || awAgeBadge)
-            ? '<div style="font-size:10px;color:#555;margin-top:2px;">' + (awEst.pyung ? awEst.pyung + '평 ' : '') + awAgeBadge + '</div>'
-            : '';
     }
 
     // 입찰일 전일 0시 ~ 입찰일 24시 사이면 알람 배지 표시 (낙찰 확정건은 더 이상 대기중이 아니므로 생략)
@@ -10657,7 +10667,7 @@ function placeAuctionMarker(a) {
                 + (numRisk.level ? '🚨 ' : btStyle.icon + ' ') + '입찰희망' + alarmBadge + '</div>'
             : '<div class="auction-badge" style="background:' + sc + ';">🔨 ' + a.status + alarmBadge + '</div>')
         + '<div style="color:#333;font-size:11px;font-weight:bold;overflow:hidden;text-overflow:ellipsis;max-width:185px;margin-top:5px;">'
-        +   ((a.name && a.name.trim()) || a.addrLabel || a.addr || '(이름없음)') + surgeBadge + (isWon ? '' : ageBadge)
+        +   ((a.name && a.name.trim()) || a.addrLabel || a.addr || '(이름없음)') + surgeBadge + ((isWon || isBidTarget) ? '' : ageBadge)
         + '</div>'
         // 입찰예정물건 일괄등록으로 채워진 사건번호(caseNo)를 배지에서 바로 확인할 수 있도록 표시
         + (a.caseNo ? '<div style="color:#795548;font-size:9.5px;overflow:hidden;text-overflow:ellipsis;max-width:185px;">📄 ' + a.caseNo + '</div>' : '')
@@ -10665,7 +10675,7 @@ function placeAuctionMarker(a) {
         + predictedLine
         + '<div style="color:' + (isWon ? '#00695c' : sc) + ';font-size:12px;font-weight:bold;">' + priceLine + '</div>'
         + impliedLine
-        + (isWon ? '' : (a.pyung ? '<div style="color:#888;font-size:10px;">' + a.pyung + '평</div>' : ''))
+        + ((isWon || isBidTarget) ? '' : (a.pyung ? '<div style="color:#888;font-size:10px;">' + a.pyung + '평</div>' : ''))
         + dDayBadge
         // 수치 기준 깡통전세 의심 판정이 있으면(감정가/공시가격 대비 보증금 비율 초과) 배지 안에
         // 근거를 그대로 노출 - 색상만으로는 왜 위험한지 알 수 없어서 클릭 전에 판단 가능하도록 함
