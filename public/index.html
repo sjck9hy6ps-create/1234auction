@@ -3394,7 +3394,13 @@ function initMap(lat, lon) {
     fetchAuctions().then(function() { renderAuctionMarkers(); redrawMarkers(); });
     fetchSiteNotes(); // 임장메모 - 마커 클릭 시 즉시 보여줄 수 있도록 초기에 함께 로딩
     fetchBidCases().then(function() { renderBidCaseMarkers(); autoFillMissingBidCaseMargins(); }); // 낙찰사례 지도 배지 + 자동매칭된 마진 채우기
-    loadAllData(lat, lon);
+    // ⚠️ 2026-09(일동 560 사례로 발견): 이 최초 loadAllData 호출에 재렌더 콜백이 없었음.
+    // 처음 방문하는 지역(예: 안산)은 실제 로딩이 10초 넘게 걸리는데, 지도가 뜨자마자 자체
+    // 발생하는 첫 idle 이벤트가 1.2초 뒤 아래 idle 리스너를 통해 loadAllData를 한 번 더
+    // 호출하면 isLoading 가드에 걸려 빈 상태로 즉시 resolve되어버림 - 그러면 진짜 데이터가
+    // 나중에 도착해도 이 최초 호출(여기)엔 재렌더 콜백이 없어 배지가 "데이터 부족"으로
+    // 영구 고정되고, 사용자가 지도를 손으로 움직여야만(새 idle 발생) 정상화됐음.
+    loadAllData(lat, lon).then(function() { renderAuctionMarkers(); renderBidCaseMarkers(); });
     updateCurrentDongArea(lat, lon); // 초기 화면도 "현재동+인접동" 필터가 바로 적용되도록
     kakao.maps.event.addListener(map, 'idle', function() {
         var c = map.getCenter();
