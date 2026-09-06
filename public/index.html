@@ -5626,6 +5626,30 @@ function bidTargetDedupKey(c) {
     if (!c || !c.caseNo) return null;
     return normalizeCaseNoForCompare(c.caseNo);
 }
+// ⚠️ 2026-09(일동 560-2 금성타운 사례로 발견 - "건축물대장이 안 불러와져") -
+// geocoder.addressSearch가 후보를 여러 개 반환할 때, 입력 주소에 분명히 부번지(-N)가
+// 있는데도 카카오가 "본번지만"(sub_address_no 없음) 결과를 1순위로, 실제 정확한
+// 부번지+건물명 결과를 2순위 이하로 주는 경우가 있음(실측: "일동 560-2 금성타운" 검색 시
+// result[0]=일동 560(본번지, 건물명 없음, 오좌표), result[1]=일동 560-2(정확한 좌표+
+// road_address.building_name="금성타운")). 그동안 여러 등록 경로가 무조건 result[0]만
+// 썼는데, 이러면 좌표·지번이 전혀 다른 필지로 저장되고 이후 건축HUB 조회(bun/ji 기반)도
+// 엉뚱한 지번으로 나가 실패함. 입력 주소 문자열에서 기대하는 본번-부번을 정규식으로 뽑아,
+// 그 부번지와 정확히 일치하는 후보가 있으면 그걸 우선 선택하도록 보강함(없으면 기존처럼
+// result[0] 폴백).
+function pickBestGeocodeResult(list, addrText) {
+    if (!list || !list.length) return null;
+    var m = /(\d+)\s*-\s*(\d+)/.exec(addrText || '');
+    if (m) {
+        var expectedMain = m[1], expectedSub = m[2];
+        for (var i = 0; i < list.length; i++) {
+            var a = list[i].address;
+            if (a && String(a.main_address_no) === expectedMain && String(a.sub_address_no) === expectedSub) {
+                return list[i];
+            }
+        }
+    }
+    return list[0];
+}
 async function saveSelectedBidTargets() {
     var selected = pendingBidTargetExtraction.filter(function(c) { return c._selected; });
     if (!selected.length) { alert('등록할 항목을 하나 이상 선택해 주세요.'); return; }
@@ -5659,11 +5683,12 @@ async function saveSelectedBidTargets() {
             await new Promise(function(resolve) {
                 geocoder.addressSearch(addr, function(result, status) {
                     if (status === kakao.maps.services.Status.OK) {
-                        data.lat = parseFloat(result[0].y); data.lon = parseFloat(result[0].x);
-                        data.addrLabel = result[0].road_address ? result[0].road_address.address_name : result[0].address_name;
-                        data.dong = result[0].address ? (result[0].address.region_3depth_name || '') : '';
-                        data.bunji = result[0].address
-                            ? ((result[0].address.main_address_no || '') + (result[0].address.sub_address_no ? '-' + result[0].address.sub_address_no : ''))
+                        var best = pickBestGeocodeResult(result, addr);
+                        data.lat = parseFloat(best.y); data.lon = parseFloat(best.x);
+                        data.addrLabel = best.road_address ? best.road_address.address_name : best.address_name;
+                        data.dong = best.address ? (best.address.region_3depth_name || '') : '';
+                        data.bunji = best.address
+                            ? ((best.address.main_address_no || '') + (best.address.sub_address_no ? '-' + best.address.sub_address_no : ''))
                             : '';
                     }
                     resolve();
@@ -6001,7 +6026,7 @@ async function runBacktestPipeline() {
         var geo = await new Promise(function(resolve) {
             geocoder.addressSearch(addr, function(result, status) {
                 if (status === kakao.maps.services.Status.OK) {
-                    var r = result[0];
+                    var r = pickBestGeocodeResult(result, addr);
                     resolve({
                         lat: parseFloat(r.y), lon: parseFloat(r.x),
                         addrLabel: r.road_address ? r.road_address.address_name : r.address_name,
@@ -10395,11 +10420,12 @@ async function saveAuction() {
         await new Promise(function(resolve) {
             geocoder.addressSearch(addr, function(result, status) {
                 if (status === kakao.maps.services.Status.OK) {
-                    data.lat = parseFloat(result[0].y); data.lon = parseFloat(result[0].x);
-                    data.addrLabel = result[0].road_address ? result[0].road_address.address_name : result[0].address_name;
-                    data.dong = result[0].address ? (result[0].address.region_3depth_name || '') : '';
-                    data.bunji = result[0].address
-                        ? ((result[0].address.main_address_no || '') + (result[0].address.sub_address_no ? '-' + result[0].address.sub_address_no : ''))
+                    var best = pickBestGeocodeResult(result, addr);
+                    data.lat = parseFloat(best.y); data.lon = parseFloat(best.x);
+                    data.addrLabel = best.road_address ? best.road_address.address_name : best.address_name;
+                    data.dong = best.address ? (best.address.region_3depth_name || '') : '';
+                    data.bunji = best.address
+                        ? ((best.address.main_address_no || '') + (best.address.sub_address_no ? '-' + best.address.sub_address_no : ''))
                         : '';
                 }
                 resolve();
@@ -11544,7 +11570,7 @@ async function resolveAuctionCoordForModal() {
         coordInfo = await new Promise(function(resolve) {
             geocoder.addressSearch(addr, function(result, status) {
                 if (status === kakao.maps.services.Status.OK) {
-                    var r = result[0];
+                    var r = pickBestGeocodeResult(result, addr);
                     var label = r.road_address ? r.road_address.address_name : r.address_name;
                     var dong = r.address ? (r.address.region_3depth_name || '') : '';
                     var bunji = r.address
