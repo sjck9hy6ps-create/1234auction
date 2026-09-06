@@ -43,6 +43,22 @@
    층별개요/전유공용면적의 필드명(tag)은 공식 문서 기준 추정치라, 실제
    응답에서 비어있는 값이 보이면 debug.floorRaw/exposRaw로 실제 태그명을
    확인해서 normalizeFloor/normalizeExposArea를 수정해야 할 수 있습니다.
+
+   ── 2026-09 버그수정: 타임아웃 결과가 180일 캐시에 그대로 저장되던 문제 ──
+   안산 상록구 본오동 856 일괄등록 건에서 재현: 건축HUB(apis.data.go.kr)가 일시적으로
+   느려져 4개 하위 API(getBrTitleInfo 등)가 전부 8초 타임아웃으로 실패했는데도, 기존
+   코드는 이 "실패" 결과(title/price/floor/expos 전부 null)를 성공 결과와 구분 없이
+   그대로 building_info 테이블에 write-through 캐시해버렸습니다(FRESH_MS=180일). 그
+   결과 건축HUB가 몇 분 뒤 정상화돼도, 같은 주소는 180일 동안 "정보 없음" 캐시만
+   계속 반환됨 - 일괄등록 중 여러 건이 동시에 이 타이밍에 걸리면 "주변 물건 전부 같은
+   증상"으로 나타남(실측: 같은 세션에서 임의의 다른 지역 주소로도 동일하게 재현됨 -
+   특정 법정동코드 문제가 아니라 건축HUB API 자체의 순간적 지연/장애였음).
+   fetchBld()에서 fetch 자체가 예외(타임아웃 포함)로 실패하면 httpStatus를 null로
+   반환하도록 이미 돼 있었으므로, 아래 fetchAllBld() 이후 hadFetchError로 4개 중
+   하나라도 httpStatus===null이면 "진짜 실패"로 판단해 캐시 저장을 건너뛰고 응답에도
+   no-store를 씀 - 다음 요청이 다시 건축HUB에 실제로 물어보게 됨. (반대로 건축HUB가
+   정상 응답했지만 단순히 그 주소에 등록된 건물이 없는 경우는 httpStatus=200 그대로
+   유지되므로 계속 캐시됨 - 이건 실제로 "없는 게 맞는" 경우라 캐시하는 게 맞습니다)
 ════════════════════════════════════ */
 import { createClient } from '@supabase/supabase-js';
 
@@ -142,6 +158,12 @@ export default async function handler(req, res) {
       }
     }
 
+    // ⚠️ 2026-09: 4개 하위 API 중 하나라도 fetch 자체가 실패(타임아웃/네트워크 예외 -
+    // httpStatus===null)했으면 "이 주소엔 건물이 없다"가 아니라 "지금 물어보질 못했다"는
+    // 뜻이므로, 아래에서 이 경우엔 캐시 저장을 건너뛰고 응답도 no-store로 내려보냄.
+    const hadFetchError = [titleResult, priceResult, floorResult, exposResult]
+      .some(r => r.httpStatus === null);
+
     const titleItems = titleResult.items;
     const priceItems = priceResult.items;
 
@@ -185,24 +207,33 @@ export default async function handler(req, res) {
     // ── 3. 캐시에 저장 (write-through) ──
     // 요청받은(새) sigunguCd/bjdongCd 기준으로 저장 - 구코드 폴백을 썼어도 마찬가지.
     // 다음 조회부터는 이 캐시로 바로 응답되어 폴백 재시도 자체가 필요 없어짐.
-    const { error: upsertErr } = await supabase.from('building_info').upsert({
-      sigungu_cd: sigunguCd,
-      bjdong_cd:  bjdongCd,
-      bun,
-      ji:         jiParam,
-      bld_nm:     cacheBldNm,
-      title_json: title,
-      price_json: price,
-      floor_json: floors,
-      expos_json: exposAreas,
-      fetched_at: new Date().toISOString(),
-    }, { onConflict: 'sigungu_cd,bjdong_cd,bun,ji,bld_nm' });
-    if (upsertErr) console.error('building_info 캐시 저장 에러:', upsertErr.message);
+    // ⚠️ hadFetchError(타임아웃 등 진짜 실패)면 저장하지 않음 - 안산 본오동 사례처럼
+    // 실패 결과가 180일 캐시로 굳어버리는 걸 방지(위 헤더 주석 참고).
+    if (!hadFetchError) {
+      const { error: upsertErr } = await supabase.from('building_info').upsert({
+        sigungu_cd: sigunguCd,
+        bjdong_cd:  bjdongCd,
+        bun,
+        ji:         jiParam,
+        bld_nm:     cacheBldNm,
+        title_json: title,
+        price_json: price,
+        floor_json: floors,
+        expos_json: exposAreas,
+        fetched_at: new Date().toISOString(),
+      }, { onConflict: 'sigungu_cd,bjdong_cd,bun,ji,bld_nm' });
+      if (upsertErr) console.error('building_info 캐시 저장 에러:', upsertErr.message);
+    }
 
-    res.setHeader('Cache-Control', 'public, s-maxage=21600, stale-while-revalidate=604800');
+    // hadFetchError면 이 실패 응답 자체도 엣지에 6시간 캐시되지 않도록 no-store로 덮어씀
+    // (성공/정상-빈결과 케이스는 기존처럼 6시간 엣지캐시 유지).
+    res.setHeader('Cache-Control', hadFetchError
+      ? 'no-store, no-cache, must-revalidate'
+      : 'public, s-maxage=21600, stale-while-revalidate=604800');
     return res.status(200).json({
       title, price, floors, exposAreas, cached: false, debug, titleCandidates,
       legacyFallbackUsed: legacyFallbackUsed || undefined,
+      fetchFailed: hadFetchError || undefined,
     });
   } catch (err) {
     console.error('건축물대장 조회 에러:', err.message);
