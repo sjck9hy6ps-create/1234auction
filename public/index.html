@@ -3773,8 +3773,14 @@ function filterAptListToViewport(list) {
     var bounds = map.getBounds();
     if (!bounds) return list;
     var sw = bounds.getSouthWest(), ne = bounds.getNorthEast();
-    var latPad = (ne.getLat() - sw.getLat()) * 0.5;
-    var lonPad = (ne.getLng() - sw.getLng()) * 0.5;
+    var latSpan = ne.getLat() - sw.getLat(), lonSpan = ne.getLng() - sw.getLng();
+    // ⚠️ 2026-09(getPaddedViewportBounds와 동일한 이유 - "줌인했더니 배지가 사라지고 안
+    // 돌아온다" 조사 중 발견): 지도 컨테이너 크기가 순간 0일 때 map.getBounds()가 면적 0인
+    // bounds를 줄 수 있음. 그대로 쓰면 사실상 모든 매물이 뷰포트 밖으로 걸러져 배지가 전부
+    // 사라짐 - 이런 비정상 bounds는 무시하고 필터링 없이 전체 리스트를 돌려줌(안전한 폴백).
+    if (!(latSpan > 0.00005) || !(lonSpan > 0.00005)) return list;
+    var latPad = latSpan * 0.5;
+    var lonPad = lonSpan * 0.5;
     var minLat = sw.getLat() - latPad, maxLat = ne.getLat() + latPad;
     var minLon = sw.getLng() - lonPad, maxLon = ne.getLng() + lonPad;
     return list.filter(function(apt) {
@@ -10458,13 +10464,29 @@ function upsertAuctionMarker(a) {
 }
 // 지도 중심 기준 뷰포트(+50% 여유) 범위를 반환 - filterAptListToViewport와 같은 여유폭을 씀.
 // 경매/낙찰사례 마커의 화면 밖 항목을 걸러낼 때도 동일 기준을 재사용하기 위해 분리함.
+// ⚠️ 2026-09(사용자 제보: "줌인했더니 입찰희망 배지가 사라지고 줌아웃해도 다시 안 나옴" 조사
+// 중 발견): 지도 컨테이너가 순간적으로 크기 0(탭이 잠깐 숨겨지거나, 리사이즈/레이아웃 전환
+// 도중 등)이 되는 타이밍에 map.getBounds()를 부르면 카카오맵 SDK가 남서/북동 좌표가 같은
+// "면적 0" bounds를 반환할 수 있음(직접 재현 확인). 이 상태로 minLat===maxLat 같은 범위가
+// 나오면, 좌표가 그 한 점과 정확히 일치하지 않는 한 사실상 모든 물건이 "뷰포트 밖"으로
+// 판정돼 버림 - auctionMarkers/bidCaseMarkers는 한 번 이렇게 지워지면 dict에서 빠진 채로
+// 남고 다음 idle에서 정상 bounds가 와야만 다시 나타나므로, 그 사이에 화면을 보면 "배지가
+// 사라진 채 안 돌아온다"로 보임. 면적이 0에 가까운(비정상) bounds는 신뢰하지 않고 null을
+// 반환해서(=필터링 건너뜀, 안전한 쪽으로 폴백 - 화면 밖 배지가 살짝 더 남아있는 정도의
+// 비용만 있고 배지가 사라지는 사고는 안 남) 호출부가 "이번엔 거르지 말고 다 보여주기"로
+// 처리하게 함.
 function getPaddedViewportBounds() {
     if (!map) return null;
     var bounds = map.getBounds();
     if (!bounds) return null;
     var sw = bounds.getSouthWest(), ne = bounds.getNorthEast();
-    var latPad = (ne.getLat() - sw.getLat()) * 0.5;
-    var lonPad = (ne.getLng() - sw.getLng()) * 0.5;
+    var latSpan = ne.getLat() - sw.getLat();
+    var lonSpan = ne.getLng() - sw.getLng();
+    // 정상적인 지도라면 아무리 최대줌이어도 위경도 범위가 이 정도보다는 넓음 - 컨테이너
+    // 크기가 0이거나 레이아웃이 아직 안 잡힌 순간의 "면적 0(또는 거의 0)" bounds를 걸러냄.
+    if (!(latSpan > 0.00005) || !(lonSpan > 0.00005)) return null;
+    var latPad = latSpan * 0.5;
+    var lonPad = lonSpan * 0.5;
     return {
         minLat: sw.getLat() - latPad, maxLat: ne.getLat() + latPad,
         minLon: sw.getLng() - lonPad, maxLon: ne.getLng() + lonPad
