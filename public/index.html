@@ -1307,6 +1307,18 @@ tr:hover td { background:#fffde7; }
                 <input type="number" class="modal-input" id="a-pyung" placeholder="예) 24" oninput="autoCalcRepairSilent();autoCalcMovingSilent();autoCalcCleaningSilent();autoCalcEvictionFeeSilent();calcCompValuation();calcMargin();autoCalcAuctionJeonseAnalysis();">
                 <span style="font-size:12px;color:#888;margin-left:4px;">평</span>
             </div>
+            <!-- ⚠️ 2026-09(사용자 피드백: "성원예가는 실제 2016년 준신축인데 예상매도가가 연식을
+                 전혀 반영 못 한다") - 건축HUB 자동조회가 실패하거나(이 사건처럼 조회 자체가 안
+                 되는 경우) AI 추출로도 사용승인일을 못 찾았을 때, 사용자가 직접 아는 준공연도를
+                 입력해 넣을 방법이 그동안 아예 없었음(자동조회/비교물건 근사치만 있었음). 이
+                 칸에 값을 넣으면 getAuctionBuildYear()가 그 무엇보다도 최우선으로 이 값을 쓰므로,
+                 연식±3년 하드컷·연식단계 배지·수리비 자동계산·예상매도가 계산에 즉시 정확히 반영됨. -->
+            <div class="modal-row">
+                <span class="modal-label" title="건축HUB 자동조회·AI 추출보다 우선 적용됩니다. 아는 경우에만 입력하세요.">준공연도(직접입력)</span>
+                <input type="number" class="modal-input" id="a-build-year-manual" placeholder="예) 2016 (모르면 비워두세요)"
+                    oninput="calcCompValuation();calcMargin();autoCalcRepairSilent();autoCalcAuctionJeonseAnalysis();">
+                <span style="font-size:12px;color:#888;margin-left:4px;">년</span>
+            </div>
             <div class="modal-row">
                 <span class="modal-label">입찰일</span>
                 <input type="date" class="modal-input" id="a-date">
@@ -6667,6 +6679,73 @@ async function resolveMissingAuctionBuildYears() {
     villaBucketStatsCache = {}; // 연식이 바뀌었으니 평형·연식 버킷 통계도 다시 계산되도록 리셋
     renderAuctionList(); renderAuctionMarkers();
 }
+/* ════════════════════════════════════
+   배지의 "🤖 예상매도가" 옆 🔄 새로고침 아이콘 - 2026-09(사용자 피드백: "성원예가(장제로1025번길
+   29-5)는 실제 2016년 준신축인데 예상매도가가 연식을 전혀 반영 못 하고 구축 수준으로 낮게
+   나온다") 대응.
+   이 앱의 예상매도가는 두 갈래로 "굳는" 문제가 있었음: ①낙찰가 백테스트 일괄등록(runBacktestPipeline)
+   으로 들어온 auctionList 건은 등록 당시 buildYear 없이 findSimilarComps를 한 번만 돌려
+   a.target에 스냅샷 저장하고, getAuctionWonEstimates가 그 저장값을 최우선으로 쓰기 때문에
+   나중에 연식을 알게 돼도 화면엔 절대 반영이 안 됨. ②bidCaseList 건은 매번 새로 계산되긴
+   하지만 buildYear를 모르면 findSimilarComps의 연식±3년 하드컷 자체가 안 걸려(위
+   computeAuctionWonCandidates 주석 참고) 엉뚱한 연식대 건물이 섞여 들어감.
+   두 경우 다 "그 건물의 실제 준공연도"만 확보되면 해결되므로, 배지에서 바로 눌러 1) 아직
+   연식을 모르면 건축HUB 실제 사용승인일부터 조회(resolveOneAuctionBuildYear/
+   resolveOneBidCaseBuildYear 재사용) 2) 그 지역 비교물건 데이터가 로딩 안 돼 있을 수 있어
+   loadAllData로 먼저 채우고 3) 지금 시점 기준으로 다시 계산해서(auctionList는 a.target에
+   덮어써서 저장까지 함 - 안 그러면 스냅샷 우선 규칙 때문에 계속 옛날 값만 보임) 배지를
+   갱신함. */
+async function refreshAuctionWonPredictedSale(id, iconEl) {
+    var a = auctionList.find(function(x) { return x.id === id; });
+    if (!a) return;
+    var origText = iconEl ? iconEl.innerHTML : '🔄';
+    if (iconEl) { iconEl.innerHTML = '⏳'; iconEl.style.pointerEvents = 'none'; }
+    try {
+        var buildYearNote = '';
+        if (!a.buildYear) {
+            var got = await resolveOneAuctionBuildYear(a);
+            buildYearNote = got ? ('건축HUB 조회로 준공연도 ' + a.buildYear + '년을 확인해 반영했습니다. ')
+                : '건축HUB에서 준공연도를 확인하지 못해 기존 방식(비교물건 근사치)으로 계산합니다. ';
+        }
+        if (a.lat && a.lon) { try { await loadAllData(a.lat, a.lon); } catch (e) { /* 이미 로딩된 지역이면 조용히 무시 */ } }
+        var cands = computeAuctionWonCandidates(a);
+        var fresh = computeAuctionWonPredictedSale(cands, a);
+        if (fresh) {
+            a.target = fresh; // 스냅샷을 지금 시점 계산값으로 덮어써야 저장된 값 우선 규칙에도 반영됨
+            try { var saved = await saveAuctionAPI(a); var idx = auctionList.findIndex(function(x){return x.id===id;}); if (idx>=0) auctionList[idx]=saved; } catch (e) { /* 로컬 값은 이미 반영됨 */ }
+        }
+        delete auctionWonEstCache[id];
+        delete auctionMarkerSigs[id]; // 시그니처에 target/buildYear가 없어 강제로 다시 그리게 함
+        renderAuctionMarkers();
+        refreshOpenPanelIfVisible();
+        if (!fresh) alert(buildYearNote + '이 물건 주변에서 비교물건을 찾지 못해 예상매도가를 다시 계산하지 못했습니다.');
+    } finally {
+        if (iconEl) { iconEl.innerHTML = origText; iconEl.style.pointerEvents = ''; }
+    }
+}
+async function refreshBidCasePredictedSale(id, iconEl) {
+    var c = bidCaseList.find(function(x) { return x.id === id; });
+    if (!c) return;
+    var origText = iconEl ? iconEl.innerHTML : '🔄';
+    if (iconEl) { iconEl.innerHTML = '⏳'; iconEl.style.pointerEvents = 'none'; }
+    try {
+        var buildYearNote = '';
+        if (!c.buildYear) {
+            var got = await resolveOneBidCaseBuildYear(c);
+            buildYearNote = got ? ('건축HUB 조회로 준공연도 ' + c.buildYear + '년을 확인해 반영했습니다. ')
+                : '건축HUB에서 준공연도를 확인하지 못해 기존 방식(비교물건 근사치)으로 계산합니다. ';
+        }
+        if (c.lat && c.lon) { try { await loadAllData(c.lat, c.lon); } catch (e) { /* 이미 로딩된 지역이면 조용히 무시 */ } }
+        delete bidCaseEstCache[id];
+        delete bidCaseMarkerSigs[id];
+        renderBidCaseMarkers();
+        refreshOpenPanelIfVisible();
+        var check = getBidCaseEstimates(c);
+        if (!check.predictedSale) alert(buildYearNote + '이 물건 주변에서 비교물건을 찾지 못해 예상매도가를 다시 계산하지 못했습니다.');
+    } finally {
+        if (iconEl) { iconEl.innerHTML = origText; iconEl.style.pointerEvents = ''; }
+    }
+}
 /* 낙찰 후 매도까지 보통 3~4개월씩 걸리기 때문에, 한 번 매칭에 실패했거나(아직 매도 전) 아직
    시도조차 안 한 사례도 "상시" 다시 조회할 수 있어야 함 - 목록 패널의 항목별 버튼과, 배지를
    클릭해서 여는 상세뷰(buildBidCaseDetailHtml)의 버튼이 모두 이 함수 하나를 공유함.
@@ -7731,7 +7810,7 @@ function openAuctionModal(id) {
     var isEdit = !!id;
     document.getElementById('modal-title').innerText = isEdit ? '🔨 경매 물건 수정' : '🔨 경매 물건 등록';
     document.getElementById('modal-delete-btn').style.display = isEdit ? '' : 'none';
-     ['auction-id','a-addr','a-name','a-dong','a-floor','a-unit','a-case','a-pyung','a-date',
+     ['auction-id','a-addr','a-name','a-dong','a-floor','a-unit','a-case','a-pyung','a-build-year-manual','a-date',
      'a-appraisal','a-min-bid','a-deposit-rate','a-my-bid','a-actual-bid',
      'a-tax','a-registry-fee','a-eviction-fee','a-repair','a-agent','a-moving','a-cleaning','a-etc','a-unpaid-mgmt-fee','a-assumed-deposit','a-target','a-actual-sell',
      'a-official-price','a-site-rights-area','a-land-price-per-m2','a-memo','a-paste-text','a-loan-rate','a-loan-amount-manual','a-loan-prepay-fee-rate',
@@ -7830,6 +7909,11 @@ function openAuctionModal(id) {
             document.getElementById('a-unit').value        = cleanField(a.unitNo);
             document.getElementById('a-case').value        = cleanField(a.caseNo);
             document.getElementById('a-pyung').value       = cleanField(a.pyung);
+            // ⚠️ 2026-09: buildYear가 건축HUB 확정조회 값인지 사용자가 직접 입력한 값인지는
+            // 저장 데이터만으로 구분할 방법이 없어(둘 다 그냥 a.buildYear 숫자임), 다시 열었을 때도
+            // 그대로 이 칸에 채워 보여줌 - 사용자가 "내가 입력한 값이 맞나" 확인할 수 있고,
+            // 지워서 다시 자동조회로 되돌리는 것도 가능함.
+            document.getElementById('a-build-year-manual').value = cleanField(a.buildYear);
             document.getElementById('a-date').value        = cleanField(a.bidDate);
             document.getElementById('a-status').value      = a.status || '검토중';
             document.getElementById('a-appraisal').value   = cleanField(a.appraisal);
@@ -9491,6 +9575,14 @@ function resolveOwnBuildYear(name, dong, bunji) {
     return null;
 }
 function getAuctionBuildYear() {
+    // ⚠️ 2026-09(성원예가/장제로1025번길 29-5 사례 - "실제 2016년 준신축인데 건축HUB 조회가
+    // 아예 안 되는 건물이라 연식이 전혀 반영이 안 된다") - 사용자가 모달의 "준공연도(직접입력)"
+    // 칸에 값을 넣었으면 건축HUB·AI 추출·비교물건 근사치보다도 최우선으로 그 값을 씀. 건축HUB가
+    // 커버하지 못하는 건물(이 사건처럼 조회 자체가 실패하는 경우)에 대한 유일한 보정 수단이라
+    // 맨 위에 둠.
+    var manualEl = document.getElementById('a-build-year-manual');
+    var manualYear = manualEl ? parseInt(manualEl.value, 10) : NaN;
+    if (Number.isFinite(manualYear) && manualYear > 1900 && manualYear <= today.getFullYear()) return manualYear;
     if (pendingAuctionDetail && pendingAuctionDetail.approvalDate) {
         var m = String(pendingAuctionDetail.approvalDate).match(/(\d{4})/);
         if (m) return parseInt(m[1], 10);
@@ -10821,7 +10913,8 @@ function placeAuctionMarker(a) {
     // actualBid가 있어야 의미가 있으므로 isWon일 때만 별도로 계산해서 붙임.
     if (isWon || isBidTarget) {
         var awPredicted = awEst.predictedSale;
-        predictedLine = '<div style="color:#1976d2;font-size:10.5px;">🤖 예상매도가 ' + (awPredicted ? toEok(String(awPredicted)) : '데이터 부족') + '</div>';
+        predictedLine = '<div style="color:#1976d2;font-size:10.5px;">🤖 예상매도가 ' + (awPredicted ? toEok(String(awPredicted)) : '데이터 부족')
+            + ' <span onclick="event.stopPropagation();refreshAuctionWonPredictedSale(\'' + a.id + '\', this)" title="지금 시점 기준으로 다시 계산(연식 미상이면 건축HUB 조회 포함)" style="cursor:pointer;">🔄</span></div>';
         // ⚠️ 위 ageBadge와 동일한 이유로 propType==='villa'일 때만 연식단계 배지를 씀
         var awAgeTierLabel = (a.propType === 'villa' && awEst.ageTier) ? getVillaTierLabel(awEst.ageTier) : null;
         var awAgeBadge = awAgeTierLabel
@@ -11362,7 +11455,9 @@ function placeBidCaseMarker(c) {
         : (c.minBidPrice ? toEok(String(Math.round(c.minBidPrice / 10000))) + ' (최저가)' : '가격 미상');
     var bcEst = getBidCaseEstimates(c);
     var predictedSale = bcEst.predictedSale;
-    var predictedLine = '<div style="color:#1976d2;font-size:10.5px;">🤖 예상매도가 ' + (predictedSale ? toEok(String(predictedSale)) : '데이터 부족') + '</div>';
+    var cidJsForRefresh = String(c.id).replace(/'/g, "\\'");
+    var predictedLine = '<div style="color:#1976d2;font-size:10.5px;">🤖 예상매도가 ' + (predictedSale ? toEok(String(predictedSale)) : '데이터 부족')
+        + ' <span onclick="event.stopPropagation();refreshBidCasePredictedSale(\'' + cidJsForRefresh + '\', this)" title="지금 시점 기준으로 다시 계산(연식 미상이면 건축HUB 조회 포함)" style="cursor:pointer;">🔄</span></div>';
     var implied = bcEst.impliedTarget; // {target, marginUsed, marginSource, regionAvg, count} 또는 null
     var impliedMarginNote = implied
         ? (implied.marginSource === 'region'
