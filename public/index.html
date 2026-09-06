@@ -9414,6 +9414,36 @@ function calcLoanInterest(loanAmount, annualRatePercent, holdMonths) {
    사용승인일(연식)은 AI 자동추출 결과(pendingAuctionDetail.approvalDate)에서 가져옴. */
 var APT_REPAIR_PER_PYUNG = { premium: 60, new: 70, semi: 80, old: 90, aged: 100 }; // 만원/평 (아파트)
 var VILLA_REPAIR_PER_PYUNG = { premium: 90, new: 105, semi: 120, old: 135, aged: 150 }; // 만원/평 (연립다세대·단독)
+/* ⚠️ 2026-09(본오동 844-5 사례 - "92년 노후 건물인데 예상매도가가 준신축 수준으로 표기됨"):
+   buildYear가 미상일 때 지금까지 3곳(getAuctionBuildYear/getAuctionWonEstimates/
+   getBidCaseEstimates)이 전부 "findSimilarComps로 찾아낸 비교물건들의 준공연도 중앙값"으로
+   근사했음. 근데 이 중앙값은 findSimilarComps가 "반경+최근1년" 조건으로 우연히 찾아낸
+   다른 건물들 기준이라, 정작 그 주소 자체의 건물이 allAptList에 이미 있어도(실거래는
+   있지만 전부 "최근1년" 컷에 걸려 findSimilarComps 후보에선 빠지는 경우 등) 안 쓰이고,
+   대신 반경 내 아무 연식의 건물이나(연식 필터 자체가 targetYear 없인 안 걸림 - 아래
+   findSimilarComps 주석 참고) 섞여 들어가 중앙값이 크게 틀어질 수 있음. 실측: 844-5는
+   실제 준공연도가 1992(자체 실거래 5건 전부 build_year=1992로 정확히 기록돼 있음)인데,
+   전부 최근1년 밖이라 제외되고 대신 반경 내 2001~2021년생 빌라 10건의 중앙값(2011)이
+   쓰여 "준신축" 오분류 + 예상매도가 과다산정으로 이어짐.
+   비교물건 중앙값 폴백보다 먼저, 그 주소 자체와 동+지번이 정확히 일치하는 건물을
+   allAptList에서 직접 찾아(findMatchedAptByKey - 반경/최근성 제한 전혀 없이 "그 건물"만
+   정확히 찾음) 그 건물의 실제 준공연도를 최우선으로 사용함. */
+function resolveOwnBuildYear(name, dong, bunji) {
+    var matched = findMatchedAptByKey(name, dong, bunji);
+    if (!matched) return null;
+    var l = matched.latest || {};
+    var by = parseInt(l.build_year, 10);
+    if (by) return by;
+    // 최신 거래에만 건축연도가 비어있어도 같은 건물의 다른 거래엔 채워져 있을 수 있음
+    // (getVillaAgeTier와 동일한 폴백 - 실거래가 신고 항목이 건마다 누락될 수 있어서).
+    if (matched.trades && matched.trades.length) {
+        for (var i = 0; i < matched.trades.length; i++) {
+            var y = parseInt(matched.trades[i].build_year, 10);
+            if (y) return y;
+        }
+    }
+    return null;
+}
 function getAuctionBuildYear() {
     if (pendingAuctionDetail && pendingAuctionDetail.approvalDate) {
         var m = String(pendingAuctionDetail.approvalDate).match(/(\d{4})/);
@@ -9425,6 +9455,11 @@ function getAuctionBuildYear() {
         var m2 = String(pendingAuctionBuildingInfo.title.useAprDay).match(/(\d{4})/);
         if (m2) return parseInt(m2[1], 10);
     }
+    // 그 다음 대체: 그 주소 자체의 건물이 allAptList에 이미 있으면(실거래 기록의 build_year)
+    // 그 값을 사용 - "비교물건 중앙값" 근사보다 훨씬 정확함(위 resolveOwnBuildYear 주석 참고).
+    var ctx = getAuctionAddressContext();
+    var ownBuildYear = resolveOwnBuildYear(ctx.name, ctx.dong, ctx.bunji);
+    if (ownBuildYear) return ownBuildYear;
     // 마지막 대체: 등록된 유사물건(비교물건)들의 준공연도 중앙값.
     // 유사물건은 이미 연식±3년으로 골라진 것들이라(findSimilarComps), AI 추출과
     // 건축HUB 조회가 모두 실패했을 때 참고할 만한 근사치가 됨.
@@ -11001,7 +11036,10 @@ function computeBidCaseCandidates(c) {
     // 건축HUB 사용승인일을 미리 조회해 c.buildYear에 저장해둔 건은 등록된 경매물건과
     // 동일하게 findSimilarComps에 정확한 targetYear를 넘겨 연식 필터를 적용함. 아직
     // 조회 전이면(연식 미상) null을 넘겨 예전처럼 하드컷 없이 평형·층·거리만으로 근사함.
-    var targetYear = c.buildYear || null;
+    // ⚠️ 2026-09(본오동 844-5 사례): c.buildYear가 없을 때도 곧장 null로 넘기기 전에, 그
+    // 주소 자체의 건물이 allAptList에 이미 있는지 먼저 확인함(위 resolveOwnBuildYear 참고) -
+    // 건축HUB 조회 없이도 그 건물 자신의 실거래 데이터로 정확한 연식을 알 수 있는 경우가 많음.
+    var targetYear = c.buildYear || resolveOwnBuildYear(c.buildingName, c.dong, c.bunji) || null;
     var candidates = findSimilarComps(c.lat, c.lon, targetYear, floor, pyung, buildingType, c.buildingName, c.dong, c.bunji, buildingType === 'villa' ? 500 : 2000);
     return { buildingType: buildingType, pyung: pyung, floor: floor, candidates: candidates, targetYear: targetYear };
 }
@@ -11106,10 +11144,12 @@ function getBidCaseEstimates(c) {
     // 비용 부담은 findSimilarComps 재호출 한 번뿐임.
     if (cached && cached.sig === sig && cached.predictedSale !== null) return cached;
     var cands = computeBidCaseCandidates(c);
-    // c.buildYear(건축HUB로 확정 조회된 값)가 있으면 그걸 우선 쓰고, 없을 때만 유사물건
-    // 중앙값 근사치(computeBidCaseInferredBuildYear)로 폴백함.
+    // c.buildYear(건축HUB로 확정 조회된 값)가 있으면 그걸 우선 쓰고, 없으면 그 다음으로
+    // 그 주소 자체의 건물을 allAptList에서 직접 찾아보고(resolveOwnBuildYear), 그마저
+    // 없을 때만 유사물건 중앙값 근사치(computeBidCaseInferredBuildYear)로 폴백함
+    // (2026-09 본오동 844-5 사례 - 위 resolveOwnBuildYear 주석 참고).
     var buildYearConfirmed = !!c.buildYear;
-    var inferredBuildYear = c.buildYear || computeBidCaseInferredBuildYear(cands);
+    var inferredBuildYear = c.buildYear || resolveOwnBuildYear(c.buildingName, c.dong, c.bunji) || computeBidCaseInferredBuildYear(cands);
     var result = {
         sig: sig,
         predictedSale: computeBidCasePredictedSale(cands, c),
@@ -11147,7 +11187,10 @@ function computeAuctionWonCandidates(a) {
     if (!pyung || isNaN(pyung)) return null;
     var floor = parseFloat(a.floor);
     if (isNaN(floor)) floor = null;
-    var targetYear = a.buildYear || null;
+    // ⚠️ 2026-09(본오동 844-5 사례): a.buildYear가 없을 때 곧장 null로 넘기면 findSimilarComps의
+    // 연식±3년 필터가 아예 안 걸려 엉뚱한 연식대 건물이 섞여 들어옴 - resolveOwnBuildYear로
+    // 그 주소 자체의 건물 연식을 먼저 확인함(위 getAuctionBuildYear 주석 참고).
+    var targetYear = a.buildYear || resolveOwnBuildYear(a.name, a.dong, a.bunji) || null;
     var candidates = findSimilarComps(a.lat, a.lon, targetYear, floor, pyung, buildingType, a.name, a.dong, a.bunji, buildingType === 'villa' ? 500 : 2000);
     return { buildingType: buildingType, pyung: pyung, floor: floor, candidates: candidates, targetYear: targetYear };
 }
@@ -11219,7 +11262,10 @@ function getAuctionWonEstimates(a) {
     // 미확정 시 유사물건 중앙값 근사)에 계속 쓰이므로 항상 계산해둠 - 캐싱 레이어가 있어
     // 신호(sig)가 안 바뀌면 재호출되지 않으니 성능 부담은 없음.
     var cands = computeAuctionWonCandidates(a);
-    var inferredBuildYear = a.buildYear || computeBidCaseInferredBuildYear(cands);
+    // ⚠️ 2026-09(본오동 844-5 사례): a.buildYear가 없을 때 곧장 "비교물건 중앙값"으로
+    // 넘어가기 전에, 그 주소 자체의 건물이 allAptList에 이미 있는지 먼저 확인함 - 있으면
+    // 훨씬 정확함(위 resolveOwnBuildYear/getAuctionBuildYear 주석 참고).
+    var inferredBuildYear = a.buildYear || resolveOwnBuildYear(a.name, a.dong, a.bunji) || computeBidCaseInferredBuildYear(cands);
     var result = {
         sig: sig,
         predictedSale: savedTarget > 0 ? savedTarget : computeAuctionWonPredictedSale(cands, a),
