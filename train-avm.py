@@ -851,7 +851,7 @@ def train_one(tables, model_id: str, model_type: str, use_danji: bool, use_grid:
     # attach_transit/use_grid가 True면 cache_key 조합에 필요한 주소 세부 컬럼(bunji/road_name/
     # main_num/sub_num)까지 같이 가져와야 함 - complex_coords/transit_features와 정확히 같은
     # 키를 재구성하려면 이 필드들이 반드시 필요함(warmup-locations.mjs가 저장할 때 쓴 것과 동일).
-    cols = "region,dong,danji,price,size,floor,deal_date,build_year"
+    cols = "region,dong,danji,price,size,floor,deal_date,build_year,dealing_type"
     if attach_transit or use_grid:
         cols += ",bunji,road_name,main_num,sub_num"
     raw_parts = []
@@ -866,6 +866,16 @@ def train_one(tables, model_id: str, model_type: str, use_danji: bool, use_grid:
         print(f"  {', '.join(tables)}: 데이터 없음, 스킵")
         return
     raw = pd.concat(raw_parts, ignore_index=True)
+    # ⚠️ 2026-09(직거래 제외, 사용자 요청): 직거래는 특수관계자간 저가신고 등으로 시세를
+    # 왜곡할 수 있어 학습에서 제외함. dealing_type이 아예 없는 행(과거에 이 필드를 읽기 전에
+    # 수집됐거나, 원본 API가 값을 안 준 경우)은 "직거래 아님"이 확인된 게 아니라 "모름"이므로
+    # 보수적으로 학습에 남겨둠(제외하면 표본이 과도하게 줄어들 위험) - '직거래'로 명시된 행만 뺌.
+    if "dealing_type" in raw.columns:
+        n_before = len(raw)
+        raw = raw[raw["dealing_type"] != "직거래"].reset_index(drop=True)
+        n_removed = n_before - len(raw)
+        if n_removed:
+            print(f"  직거래 {n_removed}건 제외 ({n_before}→{len(raw)}행)")
     df = clean_and_featurize(raw, use_danji)
 
     feature_cols = list(FEATURE_COLS)
