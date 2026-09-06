@@ -328,7 +328,11 @@ export function parseXML(xml, regionName) {
         const n = parseInt(v, 10);
         return v === '' || Number.isNaN(n) ? null : n;
       })(),
-      road_name: getTag(b, 'roadNm') || ''                  // road_name
+      road_name: getTag(b, 'roadNm') || '',                 // road_name
+      // 2026-09 추가: 직거래/중개거래 구분(dealingGbn) - RTMSDataSvcAptTradeDev 응답에
+      // 원래부터 있던 필드인데 지금까지 안 읽고 버리고 있었음. 값이 없으면 null(구버전
+      // API 응답이나 파싱 실패 등 - "직거래 아님"이 아니라 "알 수 없음"으로 취급해야 함).
+      dealing_type: getTag(b, 'dealingGbn') || null
     });
   }
   return rows;
