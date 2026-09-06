@@ -340,6 +340,9 @@ export function parseXMLVilla(xml, regionName) {
         return v === '' || Number.isNaN(n) ? null : n;
       })(),
       road_name:  getTag(b, 'roadNm')    || '',
+      // 2026-09 추가: 직거래/중개거래 구분(dealingGbn) - RTMSDataSvcRHTrade 응답에
+      // 원래부터 있던 필드인데 지금까지 안 읽고 버리고 있었음. "알 수 없음"은 null로 남김.
+      dealing_type: getTag(b, 'dealingGbn') || null,
     });
   }
   return rows;
@@ -405,6 +408,10 @@ export function parseXMLSingle(xml, regionName) {
         return v === '' || Number.isNaN(n) ? null : n;
       })(),
       road_name:  getTag(b, 'roadNm') || '',
+      // 2026-09 추가: 직거래/중개거래 구분(dealingGbn). RTMSDataSvcSHTrade(단독/다가구)
+      // 응답에 동일한 필드가 있는지는 실사용 데이터로 아직 확인 못 했음(RTMSDataSvcAptTradeDev/
+      // RHTrade 두 API에서는 문서로 확인됨) - 태그가 없으면 그냥 null로 남으니 안전함.
+      dealing_type: getTag(b, 'dealingGbn') || null,
     });
   }
   return rows;
