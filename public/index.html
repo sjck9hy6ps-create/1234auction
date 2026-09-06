@@ -3494,6 +3494,24 @@ async function loadAllData(centerLat, centerLon) {
                     // 평형이 섞인 대형단지도 groupDBRows가 애초에 평형별로 항목을 쪼개두므로 latest
                     // 하나만 봐도 충분함(다른 등급·연식단계 계산도 전부 이 전제로 동작함).
                     apt.pyeongTier = apt.latest ? getPyeongTier(apt.latest.area) : null;
+                    // ⚠️ 2026-09(일동 578-4 사례로 발견 - "평형필터 적용이 안 되고 있어"):
+                    // 위 전제("groupDBRows가 평형별로 쪼개둠")가 다세대/연립에서는 항상
+                    // 성립하지 않음 - 같은 지번(다세대주택)에 실제로 크기가 전혀 다른 여러
+                    // 세대(예: 17㎡·45㎡·58㎡)가 섞여 하나의 apt 항목(trades 배열)에 다
+                    // 들어있는 경우가 있음. 이럴 때 apt.pyeongTier(최신 거래 하나만의 값)로
+                    // 필터를 걸면, 필터와 맞는 과거 거래가 있어도 최신 거래 평형만 보고
+                    // 숨겨지거나 반대로 계속 나타나 "필터가 안 먹힌다"처럼 보임. 그래서 이
+                    // 항목에 존재하는 모든 거래의 평형대 집합도 함께 구해서, 필터 판정은
+                    // "필터 조건에 맞는 거래가 하나라도 있는지"로 하도록 함(isAptVisibleUnder
+                    // CurrentFilters 참고).
+                    var _pyeongTierSet = {};
+                    (apt.trades || []).forEach(function(t) {
+                        if (t.area > 0) _pyeongTierSet[getPyeongTier(t.area)] = true;
+                    });
+                    // 매매기록이 아예 없는 "전세거래만" 항목(rentOnly, trades=[])은 latest.area가
+                    // 전세 매물 면적을 담고 있으므로 이것도 집합에 포함시켜야 필터에서 안 빠짐.
+                    if (apt.latest && apt.latest.area > 0) _pyeongTierSet[getPyeongTier(apt.latest.area)] = true;
+                    apt.pyeongTierSet = Object.keys(_pyeongTierSet);
                 });
                 dataCache[lawdCd] = regionAptList;
                 mergedLawdCds.add(lawdCd);
@@ -3733,7 +3751,14 @@ function isAptVisibleUnderCurrentFilters(apt) {
         if (activeVillaFilters.size > 0 && !passesVillaFilter(apt)) return false;
         if (activeVillaTiers.size > 0 && !(apt.ageTier && activeVillaTiers.has(apt.ageTier))) return false;
     }
-    if (activePyeongTiers.size > 0 && !(apt.pyeongTier && activePyeongTiers.has(apt.pyeongTier))) return false;
+    // ⚠️ 2026-09(일동 578-4 사례): apt.pyeongTier(최신 거래 하나) 대신 apt.pyeongTierSet
+    // (이 주소지의 모든 거래가 걸치는 평형대 집합)으로 판정 - 다세대주택처럼 한 주소에
+    // 여러 크기의 세대가 섞인 경우도 "필터 조건에 맞는 거래가 하나라도 있으면" 보여줌.
+    // pyeongTierSet이 없는(구버전 캐시 등) 예외 상황은 기존 pyeongTier로 폴백함.
+    if (activePyeongTiers.size > 0) {
+        var _tiers = apt.pyeongTierSet || (apt.pyeongTier ? [apt.pyeongTier] : []);
+        if (!_tiers.some(function(t) { return activePyeongTiers.has(t); })) return false;
+    }
     if (compOnlyFilter && !(getAptComparableRefs(apt).length > 0)) return false;
     // "낙찰사례만 보기"는 다른 필터들과 동일하게 AND 조건으로 결합됨 - 이 apt 주소지에
     // 매칭되는 낙찰사례가 하나도 없으면 숨김(경매/낙찰사례 배지 자체는 이 필터와 무관하게
