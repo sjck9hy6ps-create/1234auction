@@ -5962,11 +5962,11 @@ function getCompEstValueHeadless(list, targetPyung, targetFloor, targetBuildYear
     }
     var sortedEntries = usedEntries.slice().sort(function(a, b) { return a.ppp - b.ppp; });
     var COMP_EST_PERCENTILE = 0.3;
-    // ⚠️ 2026-09(사용자 요청): 30th percentile 자체는 유지하되(여전히 "시장 대비 보수적"),
-    // 그 결과가 기존보다 너무 낮게 느껴진다는 피드백에 따라 +10% 낙관 보정을 곱함.
-    // getCompEstValue()(line ~12379)와 반드시 같이 맞춰야 함(DOM 유무만 다른 쌍둥이 함수).
-    var COMP_EST_OPTIMISM_FACTOR = 1.10;
-    var medPpp = (sortedEntries.length >= 2 ? weightedPercentile(sortedEntries, COMP_EST_PERCENTILE) : sortedEntries[0].ppp) * COMP_EST_OPTIMISM_FACTOR;
+    // ⚠️ 2026-09: 한때 +10% 낙관 보정(COMP_EST_OPTIMISM_FACTOR)을 곱했었으나, 사용자 확인
+    // 결과 "빌라는 재개발 이슈가 없는 한 최근 실거래보다 비싸게 나올 이유가 없는데, 순수
+    // 통계 추정치가 최근 거래가보다 높게 나오는 건 과함"이라는 피드백에 따라 원상 복귀함
+    // (30th percentile 그대로, 보정 없음). 표본 수(최대 10건)는 그대로 유지함.
+    var medPpp = sortedEntries.length >= 2 ? weightedPercentile(sortedEntries, COMP_EST_PERCENTILE) : sortedEntries[0].ppp;
     return {
         medPpp: medPpp,
         estValue: Math.round(medPpp * targetPyung),
@@ -12438,11 +12438,12 @@ function getCompEstValue() {
     // 걸려 팔림). 표본이 아주 적으면(2~3건) 30th percentile이 사실상 최솟값에 가까워지는데,
     // 이 앱의 목적상 오히려 바람직한 방향(보수적으로)이라고 판단함.
     var COMP_EST_PERCENTILE = 0.3;
-    // ⚠️ 2026-09(사용자 요청): 30th percentile 기준은 유지("시장 대비 보수적"인 성격은 그대로),
-    // 다만 기존 값이 너무 낮다는 피드백에 따라 +10% 낙관 보정을 곱함. getCompEstValueHeadless()
-    // (line ~5908)와 반드시 같이 맞춰야 함(DOM 유무만 다른 쌍둥이 함수).
-    var COMP_EST_OPTIMISM_FACTOR = 1.10;
-    var medPpp = (sortedEntries.length >= 2 ? weightedPercentile(sortedEntries, COMP_EST_PERCENTILE) : sortedEntries[0].ppp) * COMP_EST_OPTIMISM_FACTOR; // 만원/평 (유사도 필터+가중 + 시점보정 + 이상치 제거 + 낙관보정 반영됨)
+    // ⚠️ 2026-09: 한때 +10% 낙관 보정(COMP_EST_OPTIMISM_FACTOR)을 곱했었으나, 사용자 확인
+    // 결과 "빌라는 재개발 이슈가 없는 한 최근 실거래보다 비싸게 나올 이유가 없는데, 순수
+    // 통계 추정치가 최근 거래가보다 높게 나오는 건 과함"이라는 피드백에 따라 원상 복귀함
+    // (30th percentile 그대로, 보정 없음). 표본 수(최대 10건)는 그대로 유지함.
+    // getCompEstValueHeadless()(line ~5908)와 반드시 같이 맞춰야 함(DOM 유무만 다른 쌍둥이 함수).
+    var medPpp = sortedEntries.length >= 2 ? weightedPercentile(sortedEntries, COMP_EST_PERCENTILE) : sortedEntries[0].ppp; // 만원/평 (유사도 필터+가중 + 시점보정 + 이상치 제거 반영됨)
 
     return {
         medPpp: medPpp,
