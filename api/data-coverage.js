@@ -1559,6 +1559,78 @@ async function getBoundary(sggCd, wantRaw) {
 }
 
 export default async function handler(req, res) {
+  // ⚠️ 2026-09(카카오 coord2RegionCode 일일 쿼터(10만건/일) 소진 사례 - "API limit has been
+  // exceeded" code -10): 좌표→법정동코드 변환 결과를 격자(소수점4자리, 위경도 약 11m) 단위로
+  // Supabase에 영구 캐시함. 대한민국 행정구역 경계는 거의 안 바뀌므로 TTL 없이 계속 재사용 -
+  // 한 번 조회된 좌표는 전국 어떤 사용자가 다시 봐도 카카오를 다시 안 부름. 이미 있는
+  // create-region-code-cache.sql로 테이블을 먼저 만들어야 함. index.html의
+  // coord2RegionCodeCached()가 이 두 모드를 씀(캐시 미스 시에만 실제 카카오 API를 부르고,
+  // 그 결과를 regionCodeSet으로 여기에 저장해둠).
+  if (req.query.mode === 'regionCodeGet') {
+    res.setHeader('Cache-Control', 'no-store');
+    try {
+      const lat = parseFloat(req.query.lat);
+      const lon = parseFloat(req.query.lon);
+      if (!Number.isFinite(lat) || !Number.isFinite(lon)) {
+        return res.status(400).json({ error: 'lat/lon이 필요합니다.' });
+      }
+      const gridLat = Math.round(lat * 10000) / 10000;
+      const gridLon = Math.round(lon * 10000) / 10000;
+      const { data, error } = await supabase
+        .from('region_code_cache')
+        .select('b_code,region1,region2,region3')
+        .eq('grid_lat', gridLat)
+        .eq('grid_lon', gridLon)
+        .maybeSingle();
+      if (error) {
+        console.warn('regionCodeGet 조회 실패:', error.message);
+        return res.status(200).json({ found: false });
+      }
+      if (!data) return res.status(200).json({ found: false });
+      return res.status(200).json({
+        found: true,
+        result: [{
+          region_type: 'B',
+          region_1depth_name: data.region1 || '',
+          region_2depth_name: data.region2 || '',
+          region_3depth_name: data.region3 || '',
+          code: data.b_code,
+        }],
+      });
+    } catch (err) {
+      console.warn('regionCodeGet 예외:', err.message);
+      return res.status(200).json({ found: false });
+    }
+  }
+  if (req.query.mode === 'regionCodeSet') {
+    res.setHeader('Cache-Control', 'no-store');
+    if (req.method !== 'POST') return res.status(405).json({ error: 'POST로 {lat,lon,result} 를 보내주세요.' });
+    try {
+      const { lat, lon, result } = req.body || {};
+      const latNum = parseFloat(lat);
+      const lonNum = parseFloat(lon);
+      if (!Number.isFinite(latNum) || !Number.isFinite(lonNum) || !Array.isArray(result)) {
+        return res.status(400).json({ error: 'lat/lon/result가 필요합니다.' });
+      }
+      const bEntry = result.find((r) => r && r.region_type === 'B');
+      if (!bEntry || !bEntry.code) return res.status(200).json({ ok: false }); // 저장할 법정동 정보가 없으면 조용히 무시
+      const gridLat = Math.round(latNum * 10000) / 10000;
+      const gridLon = Math.round(lonNum * 10000) / 10000;
+      const { error } = await supabase.from('region_code_cache').upsert({
+        grid_lat: gridLat,
+        grid_lon: gridLon,
+        b_code: bEntry.code,
+        region1: bEntry.region_1depth_name || null,
+        region2: bEntry.region_2depth_name || null,
+        region3: bEntry.region_3depth_name || null,
+      }, { onConflict: 'grid_lat,grid_lon' });
+      if (error) console.warn('regionCodeSet 저장 실패:', error.message);
+      return res.status(200).json({ ok: !error });
+    } catch (err) {
+      console.warn('regionCodeSet 예외:', err.message);
+      return res.status(200).json({ ok: false });
+    }
+  }
   if (req.query.mode === 'transitBatch') {
     // 저장/등록 시점에만 호출되는 배치조회라 캐시 불필요
     res.setHeader('Cache-Control', 'no-store');
