@@ -1833,6 +1833,63 @@ function rebuildMergedLists() {
     });
     allAptList = newAptList;
     allRentList = newRentList;
+    buildAptMatchIndex();
+}
+// ⚠️ 2026-09(줌/팬 지연 원인 진단 - 사용자 요청): findMatchedApt/findMatchedAptForBidCase가
+// 경매물건(383건)·낙찰사례(2,447건) 각각을 지도 idle(줌/팬)마다 allAptList(5,535건) 전체를
+// 처음부터 끝까지 훑는 O(N) 선형탐색(allAptList.find)으로 매칭해서, 줌 한 번에 800~980ms씩
+// 메인스레드가 멈추는 게 실측으로 확인됨(renderAuctionMarkers ~390ms + renderBidCaseMarkers
+// ~490ms). allAptList가 바뀔 때(rebuildMergedLists)만 한 번 동+지번/이름 기준 Map 인덱스를
+// 만들어두고, 이후 조회는 그 인덱스로 O(1)에 끝내도록 함 - matchesAuctionKey의 매칭 규칙
+// (①동+지번 정확히 일치 우선 ②둘 다 지번이 있는데 다르면 이름매칭도 거부)을 그대로 보존함.
+var aptIndexByDongBunji = new Map();
+var aptIndexByName = new Map();
+function buildAptMatchIndex() {
+    aptIndexByDongBunji = new Map();
+    aptIndexByName = new Map();
+    allAptList.forEach(function(apt) {
+        var l = apt.latest || {};
+        var dong = (l.dong || '').trim();
+        var bunji = (l.bunji || '').trim();
+        if (dong && bunji) {
+            var key = dong + '|' + bunji;
+            var arr = aptIndexByDongBunji.get(key);
+            if (!arr) { arr = []; aptIndexByDongBunji.set(key, arr); }
+            arr.push(apt);
+        }
+        var name = stripVillaDongSuffix(l.name || '').trim();
+        if (name) {
+            var arr2 = aptIndexByName.get(name);
+            if (!arr2) { arr2 = []; aptIndexByName.set(name, arr2); }
+            arr2.push(apt);
+        }
+    });
+}
+/* matchesAuctionKey(a, name, dong, bunji)와 동일한 매칭규칙을 인덱스 기반 O(1)로 재구현.
+   name/dong/bunji는 매칭 대상(경매물건 a 또는 낙찰사례 c)의 필드를 그대로 넘기면 됨 -
+   matchesAuctionKey는 양쪽을 대칭으로 비교하므로 순서가 바뀌어도 결과는 같음. */
+function findMatchedAptByKey(name, dong, bunji) {
+    var n = stripVillaDongSuffix(name || '').trim();
+    var d = (dong || '').trim();
+    var b = (bunji || '').trim();
+    if (d && b) {
+        var arr = aptIndexByDongBunji.get(d + '|' + b);
+        if (arr && arr.length) return arr[0];
+    }
+    if (n) {
+        var arr2 = aptIndexByName.get(n);
+        if (arr2) {
+            for (var i = 0; i < arr2.length; i++) {
+                var apt = arr2[i];
+                var aBunji = ((apt.latest && apt.latest.bunji) || '').trim();
+                // ⚠️ matchesAuctionKey 규칙 ②: 양쪽 다 지번이 있는데 서로 다르면 이름이
+                // 같아도 매칭시키지 않음(다른 지번의 동명 건물 오매칭 방지, #234/#337 참고).
+                if (b && aBunji && b !== aBunji) continue;
+                return apt;
+            }
+        }
+    }
+    return undefined;
 }
 var lastSigungu = '';
 var currentTrades = [], currentSort = 'date', currentPyung = 'all';
@@ -10365,9 +10422,9 @@ function clearAuctionMarkers() {
     auctionMarkerSigs = {};
 }
 function findMatchedApt(a) {
-    return allAptList.find(function(apt) {
-        return matchesAuctionKey(a, apt.latest && apt.latest.name, apt.latest && apt.latest.dong, apt.latest && apt.latest.bunji);
-    });
+    // ⚠️ 2026-09: allAptList.find() O(N) 선형탐색을 buildAptMatchIndex()가 만들어둔
+    // Map 인덱스 O(1) 조회로 교체(줌/팬 렉 원인 - 위 buildAptMatchIndex 주석 참고).
+    return findMatchedAptByKey(a.name, a.dong, a.bunji);
 }
 function auctionMarkerSignature(a) {
     var matched = findMatchedApt(a);
@@ -10801,9 +10858,9 @@ function passesFiltersForAuction(a) {
     return true;
 }
 function findMatchedAptForBidCase(c) {
-    return allAptList.find(function(apt) {
-        return matchesAuctionKey({ name: c.buildingName, dong: c.dong, bunji: c.bunji }, apt.latest && apt.latest.name, apt.latest && apt.latest.dong, apt.latest && apt.latest.bunji);
-    });
+    // ⚠️ 2026-09: findMatchedApt와 동일한 이유로 인덱스 O(1) 조회로 교체 - 낙찰사례가
+    // 2,447건까지 쌓이면서 이 함수의 O(N) 탐색이 줌/팬 렉의 절반 이상을 차지하고 있었음.
+    return findMatchedAptByKey(c.buildingName, c.dong, c.bunji);
 }
 function bidCaseMarkerSignature(c) {
     // ⚠️ 2026-09(본오동 830-16 사례): allAptList.length를 넣어서, 지도를 이동해 그 지역
