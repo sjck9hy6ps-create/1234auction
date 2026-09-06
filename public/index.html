@@ -5906,7 +5906,11 @@ function getCompEstValueHeadless(list, targetPyung, targetFloor, targetBuildYear
     }
     var sortedEntries = usedEntries.slice().sort(function(a, b) { return a.ppp - b.ppp; });
     var COMP_EST_PERCENTILE = 0.3;
-    var medPpp = sortedEntries.length >= 2 ? weightedPercentile(sortedEntries, COMP_EST_PERCENTILE) : sortedEntries[0].ppp;
+    // ⚠️ 2026-09(사용자 요청): 30th percentile 자체는 유지하되(여전히 "시장 대비 보수적"),
+    // 그 결과가 기존보다 너무 낮게 느껴진다는 피드백에 따라 +10% 낙관 보정을 곱함.
+    // getCompEstValue()(line ~12379)와 반드시 같이 맞춰야 함(DOM 유무만 다른 쌍둥이 함수).
+    var COMP_EST_OPTIMISM_FACTOR = 1.10;
+    var medPpp = (sortedEntries.length >= 2 ? weightedPercentile(sortedEntries, COMP_EST_PERCENTILE) : sortedEntries[0].ppp) * COMP_EST_OPTIMISM_FACTOR;
     return {
         medPpp: medPpp,
         estValue: Math.round(medPpp * targetPyung),
@@ -11773,7 +11777,7 @@ function findSimilarComps(lat, lon, targetYear, targetFloor, targetPyung, target
         seen[key] = true;
         dedupedOthers.push(c);
     });
-    return sameComplex.concat(dedupedOthers).slice(0, 8);
+    return sameComplex.concat(dedupedOthers).slice(0, 10);
 }
  
 // 1~2층은 "저층"으로 눈에 띄게 표시(renderCompListBox와 동일 기준) - 목록만 보고도 평단가가
@@ -12377,7 +12381,11 @@ function getCompEstValue() {
     // 걸려 팔림). 표본이 아주 적으면(2~3건) 30th percentile이 사실상 최솟값에 가까워지는데,
     // 이 앱의 목적상 오히려 바람직한 방향(보수적으로)이라고 판단함.
     var COMP_EST_PERCENTILE = 0.3;
-    var medPpp = sortedEntries.length >= 2 ? weightedPercentile(sortedEntries, COMP_EST_PERCENTILE) : sortedEntries[0].ppp; // 만원/평 (유사도 필터+가중 + 시점보정 + 이상치 제거 반영됨)
+    // ⚠️ 2026-09(사용자 요청): 30th percentile 기준은 유지("시장 대비 보수적"인 성격은 그대로),
+    // 다만 기존 값이 너무 낮다는 피드백에 따라 +10% 낙관 보정을 곱함. getCompEstValueHeadless()
+    // (line ~5908)와 반드시 같이 맞춰야 함(DOM 유무만 다른 쌍둥이 함수).
+    var COMP_EST_OPTIMISM_FACTOR = 1.10;
+    var medPpp = (sortedEntries.length >= 2 ? weightedPercentile(sortedEntries, COMP_EST_PERCENTILE) : sortedEntries[0].ppp) * COMP_EST_OPTIMISM_FACTOR; // 만원/평 (유사도 필터+가중 + 시점보정 + 이상치 제거 + 낙관보정 반영됨)
 
     return {
         medPpp: medPpp,
