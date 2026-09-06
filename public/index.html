@@ -3550,6 +3550,11 @@ function groupDBRows(rows, sigungu, lawdCd) {
             build_year: String(row.build_year || ''),
             buildingType: buildingType,
             houseType: buildingType,
+            // 2026-09 추가: 직거래/중개거래 구분 - findSimilarComps/findComparablesInRadius가
+            // 이 값을 보고 직거래를 비교물건 후보에서 제외함(신빙성 낮음, 사용자 요청).
+            // get-house.js가 select('*')라 DB에 컬럼만 추가돼 있으면(add-dealing-type-column.sql)
+            // 별도 API 수정 없이 그대로 내려옴 - 컬럼이 없던 시절 수집된 행은 undefined→null.
+            dealing_type: row.dealing_type || null,
         });
     });
     return Object.keys(aptMap).map(function(key) {
@@ -11522,6 +11527,11 @@ function findComparablesInRadius(lat, lon, targetBuildingType, radiusM, targetNa
         var targetTier = isSameComplex ? getFloorTier(targetFloor, maxFloor) : targetTierNoMax;
         (apt.trades || []).forEach(function(t) {
             if (t.area <= 0 || parseInt(t.amount) <= 0) return;
+            // 2026-09 추가(사용자 요청): "지도에서 직접 찾기"는 하드컷이 느슨해서 이상치가
+            // 섞여 들어오기 쉬움 - 직거래(특수관계자간 저가신고 등 시세왜곡 우려)는 후보에서
+            // 제외(findSimilarComps와 동일 기준). dealing_type 없는 옛 데이터는 "모름"으로
+            // 두고 포함.
+            if (t.dealing_type === '직거래') return;
             if (tradeDate(t) < oneYearAgo) return; // 최근 1년 거래만
             var floorNum = parseInt(t.floor);
             if (!Number.isFinite(floorNum)) return; // 층수 미상은 항상 제외
@@ -11582,6 +11592,11 @@ function findSimilarComps(lat, lon, targetYear, targetFloor, targetPyung, target
         var targetTier = getFloorTier(targetFloor, isSameComplex ? maxFloor : null);
         (apt.trades || []).forEach(function(t) {
             if (t.area <= 0 || parseInt(t.amount) <= 0) return;
+            // 2026-09 추가(사용자 요청): 직거래는 특수관계자간 저가신고 등으로 시세를 왜곡할
+            // 수 있어 비교물건 후보에서 제외함 - 신빙성 낮은 거래 하나가 예상매도가/적정입찰가
+            // 계산에 섞여 들어가는 걸 막기 위함. dealing_type이 없는(옛 데이터) 행은 "직거래
+            // 아님"이 확인된 게 아니라 "모름"이라 그대로 둠(제외하면 표본이 과도하게 줄어듦).
+            if (t.dealing_type === '직거래') return;
             if (tradeDate(t) < oneYearAgo) return; // 최근 1년 거래만
             var floorNum = parseInt(t.floor);
             if (!Number.isFinite(floorNum)) return; // 층수 미상은 항상 제외
