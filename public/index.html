@@ -5733,7 +5733,7 @@ async function saveSelectedBidTargets() {
             minBid: c.minBidPrice ? Math.round(c.minBidPrice / 10000) : '',
             memo: c.specialConditions || '',
             isBidTarget: true,
-            lat: null, lon: null, dong: '', bunji: '', buildYear: null,
+            lat: null, lon: null, dong: '', bunji: '', buildYear: null, bCode: null,
         };
         // saveAuction()과 동일한 방식(카카오 지도 클라이언트 지오코더)으로 주소→좌표 변환.
         // 실패해도 저장은 계속 진행하고(목록에서 "좌표를 찾지 못함" 경고로 안내), 다음 항목으로 넘어감.
@@ -5748,6 +5748,10 @@ async function saveSelectedBidTargets() {
                         data.bunji = best.address
                             ? ((best.address.main_address_no || '') + (best.address.sub_address_no ? '-' + best.address.sub_address_no : ''))
                             : '';
+                        // ⚠️ 2026-09 - 주소검색 응답에 이미 법정동코드(b_code)가 들어있어 바로
+                        // 아래에서 재사용함(위 loadBuildingInfo 주석 참고) - 카카오
+                        // coord2RegionCode(regionCodeAt)를 또 부를 필요가 없어짐.
+                        data.bCode = best.address ? best.address.b_code : null;
                     }
                     resolve();
                 });
@@ -5760,14 +5764,17 @@ async function saveSelectedBidTargets() {
         // 전부 동작하지 않음. 좌표를 찾았으면 loadBuildingInfo()와 동일한 방식(좌표→법정동코드
         // →건축HUB 조회)으로 사용승인일을 가져와 채워둠 - 실패해도(건축HUB 응답 없음/타임아웃)
         // 조용히 넘어가고 나머지 필드로 등록은 계속 진행함.
+        // ⚠️ 2026-09(장제로1025번길 29-5 사례) - 예전엔 여기서 regionCodeAt(좌표→법정동코드,
+        // 카카오 coord2RegionCode 재호출)를 또 불렀는데, 바로 위 주소검색 결과에 이미 b_code가
+        // 있으므로 그걸 직접 슬라이스해서 씀 - coord2RegionCode 쿼터가 소진된 상태에서도
+        // 건축HUB 조회가 막히지 않게 됨.
         if (data.lat && data.lon && data.bunji) {
             try {
-                var regionResult = await regionCodeAt(data.lat, data.lon);
-                var emdInfo = extractEmdInfo(regionResult);
+                var bCodeParts = bCodeToSigunguBjdong(data.bCode);
                 var bj = deriveBunJi({ bunji: data.bunji });
-                if (emdInfo && emdInfo.emdCd && bj) {
-                    var bSigunguCd = emdInfo.emdCd.substring(0, 5);
-                    var bBjdongCd  = emdInfo.emdCd.substring(5, 10);
+                if (bCodeParts && bj) {
+                    var bSigunguCd = bCodeParts.sigunguCd;
+                    var bBjdongCd  = bCodeParts.bjdongCd;
                     var bUrl = '/api/get-building?sigunguCd=' + bSigunguCd + '&bjdongCd=' + bBjdongCd
                         + '&bun=' + bj.bun + '&ji=' + bj.ji + '&bldNm=' + encodeURIComponent(data.name || '');
                     var bInfo = await Promise.race([
@@ -6090,6 +6097,10 @@ async function runBacktestPipeline() {
                         addrLabel: r.road_address ? r.road_address.address_name : r.address_name,
                         dong: r.address ? (r.address.region_3depth_name || '') : '',
                         bunji: r.address ? ((r.address.main_address_no || '') + (r.address.sub_address_no ? '-' + r.address.sub_address_no : '')) : '',
+                        // ⚠️ 2026-09 - 이 주소검색 응답의 b_code를 그대로 저장해두면(아래 data.bCode)
+                        // 나중에 resolveOneAuctionBuildYear(🔄 새로고침 버튼/건물연식 일괄조회)가
+                        // 카카오 coord2RegionCode 재호출 없이 바로 건축HUB를 조회할 수 있음.
+                        bCode: r.address ? r.address.b_code : null,
                     });
                 } else resolve(null);
             });
@@ -6122,7 +6133,7 @@ async function runBacktestPipeline() {
             target: target, compTargetMargin: margin,
             comparables: compRecords,
             isBacktest: true, isBidTarget: false,
-            lat: geo.lat, lon: geo.lon, dong: dong, bunji: bunji, buildYear: null,
+            lat: geo.lat, lon: geo.lon, dong: dong, bunji: bunji, buildYear: null, bCode: geo.bCode || null,
         };
         var predRes = solveAuctionBidFromRecord(data);
         data.predictedBid = (predRes && predRes.bid > 0) ? predRes.bid : null;
@@ -6270,11 +6281,15 @@ async function matchResaleForBidCase(c) {
     var geo = await new Promise(function(resolve) {
         geocoder.addressSearch(c.addrJibun, function(result, status) {
             if (status !== kakao.maps.services.Status.OK || !result.length) { resolve(null); return; }
-            resolve({ lat: parseFloat(result[0].y), lon: parseFloat(result[0].x) });
+            resolve({ lat: parseFloat(result[0].y), lon: parseFloat(result[0].x), bCode: result[0].address ? result[0].address.b_code : null });
         });
     });
     if (!geo) return { matched: false, reason: '주소를 좌표로 찾지 못함' };
-    var lawdCd = await new Promise(function(resolve) {
+    // ⚠️ 2026-09 - 위 addressSearch 응답에 이미 법정동코드(b_code)가 들어있어 그 앞 5자리가
+    // 곧 LAWD코드임 - 별도로 coord2RegionCode를 또 부를 필요가 없음(위 loadBuildingInfo 주석
+    // 참고, coord2RegionCode 쿼터 소진과 무관하게 항상 동작함). 혹시 b_code가 비어있는 예외적인
+    // 경우에만 기존 방식(coord2RegionCodeCached)으로 폴백함.
+    var lawdCd = geo.bCode && geo.bCode.length >= 5 ? geo.bCode.substring(0, 5) : await new Promise(function(resolve) {
         coord2RegionCodeCached(geo.lon, geo.lat, function(result, status) {
             if (status !== kakao.maps.services.Status.OK) { resolve(null); return; }
             for (var i = 0; i < result.length; i++) {
@@ -6643,7 +6658,7 @@ async function resolveMissingBidCaseBuildYears() {
 async function resolveOneAuctionBuildYear(a) {
     if (!a.lat || !a.lon || !a.bunji) return false;
     var fakeApt = { latest: { dong: a.dong, name: a.name || '', bunji: a.bunji } };
-    var info = await loadBuildingInfo(fakeApt, a.lat, a.lon);
+    var info = await loadBuildingInfo(fakeApt, a.lat, a.lon, false, a.bCode);
     var year = info && info.title && info.title.useAprDay
         ? parseInt(String(info.title.useAprDay).match(/(\d{4})/) ? String(info.title.useAprDay).match(/(\d{4})/)[1] : '')
         : NaN;
@@ -8051,7 +8066,7 @@ function searchAuctionAddr() {
             var bunji = r.address
                 ? ((r.address.main_address_no || '') + (r.address.sub_address_no ? '-' + r.address.sub_address_no : ''))
                 : '';
-            auctionCoordCache[r.address_name] = { lat: parseFloat(r.y), lon: parseFloat(r.x), label: label, dong: dong, bunji: bunji };
+            auctionCoordCache[r.address_name] = { lat: parseFloat(r.y), lon: parseFloat(r.x), label: label, dong: dong, bunji: bunji, bCode: r.address ? r.address.b_code : null };
             calcCompValuation();
             // ⚠️ 2026-08: 대출방법·한도가 이제 주소 기반 지역판정(수도권 규제/비규제/지방)에
             // 따라 달라지므로, 주소가 확정되는 시점에 마진분석을 다시 계산해 반영함.
@@ -8079,6 +8094,9 @@ function getAuctionAddressContext() {
         lon: coordInfo ? coordInfo.lon : (savedRecord ? savedRecord.lon : null),
         dong: (pendingAuctionDetail && pendingAuctionDetail.dong) || (coordInfo && coordInfo.dong) || (savedRecord && savedRecord.dong) || '',
         bunji: (pendingAuctionDetail && pendingAuctionDetail.bunji) || (coordInfo && coordInfo.bunji) || (savedRecord && savedRecord.bunji) || '',
+        // 주소검색(searchAuctionAddr) 때 이미 받아둔 법정동코드 - 건축HUB 조회 시 카카오
+        // coord2RegionCode 재호출 없이 바로 쓰기 위함(위 loadBuildingInfo 주석 참고).
+        bCode: (coordInfo && coordInfo.bCode) || (savedRecord && savedRecord.bCode) || null,
         name: document.getElementById('a-name').value.trim(),
         aptDong: document.getElementById('a-dong').value.trim(),
     };
@@ -8755,7 +8773,7 @@ async function loadAuctionBuildingInfo(force) {
     var myReqSeq = ++auctionBuildingInfoReqSeq;
     var fakeApt = { latest: { dong: ctx.dong, name: ctx.name, bunji: ctx.bunji, aptDong: ctx.aptDong } };
     var hadApprovalDate = !!(pendingAuctionDetail && pendingAuctionDetail.approvalDate);
-    var info = await loadBuildingInfo(fakeApt, ctx.lat, ctx.lon, force);
+    var info = await loadBuildingInfo(fakeApt, ctx.lat, ctx.lon, force, ctx.bCode);
     // ⚠️ 2026-08 버그 수정: 이 fetch가 진행되는 동안 사용자가 모달을 닫고 다른 경매물건을
     // 열어(=이 함수가 새 요청으로 다시 호출돼) 더 최신 요청이 시작됐다면, 지금 이 응답은
     // "이미 닫은 옛 물건"의 건축물대장 정보임. 순번 체크 없이 그대로 반영하면 지금 화면에
@@ -10472,6 +10490,13 @@ async function saveAuction() {
     // 값을 그대로 유지해서 애써 확인해둔 연식 정보가 지워지지 않게 함.
     var existingAuctionForYear = auctionList.find(function(x) { return x.id === document.getElementById('auction-id').value; });
     var resolvedBuildYear = getAuctionBuildYear() || (existingAuctionForYear ? existingAuctionForYear.buildYear : null) || null;
+    // ⚠️ 2026-09(장제로1025번길 29-5 사례) - 주소검색(searchAuctionAddr)에서 이미 받아둔
+    // 법정동코드(b_code)를 레코드에 같이 저장해둠. 건축HUB 재조회(resolveOneAuctionBuildYear,
+    // 배지의 🔄 새로고침 등) 때 카카오 coord2RegionCode를 다시 안 불러도 되게 하기 위함
+    // (coord2RegionCode 쿼터 소진 시에도 건축HUB 조회가 막히지 않음 - 위 loadBuildingInfo
+    // 주석 참고). 이번 저장에서 새로 검색 안 했으면(주소만 그대로 두고 다른 값만 수정하는
+    // 경우) 기존 값을 유지함.
+    var resolvedBCode = (coordInfo && coordInfo.bCode) || (existingAuctionForYear ? existingAuctionForYear.bCode : null) || null;
     // 관심물건 경과 추적: 저장 직전 값(진행상태·입찰일·가격 등)을 기존 저장분과 비교해서
     // 달라진 점이 있으면 이력에 남김 (유찰 → 다음 입찰일 갱신, 낙찰/포기 전환 등을 나중에
     // 시간순으로 되짚어볼 수 있게). existingAuctionForYear는 위에서 이미 조회해둔 기존 레코드.
@@ -10491,6 +10516,7 @@ async function saveAuction() {
     var data = {
         id: document.getElementById('auction-id').value || Date.now().toString(),
         buildYear: resolvedBuildYear,
+        bCode: resolvedBCode,
         addr: addr, addrLabel: coordInfo ? coordInfo.label : addr,
         lat: coordInfo ? coordInfo.lat : null, lon: coordInfo ? coordInfo.lon : null,
         dong: coordInfo ? (coordInfo.dong || '') : '',
@@ -16380,7 +16406,25 @@ function deriveBunJi(l) {
     if (!main) return null;
     return { bun: String(main).padStart(4, '0'), ji: String(sub || 0).padStart(4, '0') };
 }
-async function loadBuildingInfo(apt, lat, lon, force) {
+// ⚠️ 2026-09(장제로1025번길 29-5/성원예가 사례 - "건축물대장 조회 실패 이유를 근본적으로
+// 개선해줘") - 실측 결과 건축HUB 자체는 이 건물 정보를 정상 보유하고 있었음(사용승인일
+// 2016-10-20 확인됨). 조회가 실패한 진짜 이유는 sigunguCd/bjdongCd를 구하는 전 단계인
+// 좌표→법정동코드 변환(coord2RegionCode, 카카오 로컬 API)이 그 시점에 일일 무료 한도를
+// 초과해 실패했기 때문 - 건축HUB 커버리지 문제가 아니라 카카오 API 쿼터 문제였음.
+// 그런데 이 좌표는 애초에 "주소 검색"(geocoder.addressSearch, 예: searchAuctionAddr)으로
+// 얻은 것이고, 그 addressSearch 응답에는 법정동코드(b_code, 10자리)가 이미 공짜로 들어있음
+// (실측 확인: {..."b_code":"2824510900"...}). addressSearch와 coord2RegionCode는 카카오
+// 로컬 API 안에서 서로 별도의 일일 한도가 매겨지는 별개 엔드포인트라(실측: coord2RegionCode
+// 한도초과 중에도 addressSearch는 정상 응답), 이미 갖고 있는 b_code를 재사용하면 ①한도가
+// 다른 별개 API라 그 자체로 실패를 피하고 ②안 그래도 부족한 coord2RegionCode 호출량을
+// 줄여 그쪽 한도 회복에도 도움이 됨. 아래 knownBCode가 있으면 coord2RegionCode 왕복을
+// 통째로 건너뜀 - 이게 이 함수의 핵심 개선점.
+function bCodeToSigunguBjdong(bCode) {
+    var s = String(bCode || '');
+    if (s.length < 10) return null;
+    return { sigunguCd: s.slice(0, 5), bjdongCd: s.slice(5, 10) };
+}
+async function loadBuildingInfo(apt, lat, lon, force, knownBCode) {
     try {
         if (!lat || !lon) return null;
         var l = apt.latest || {};
@@ -16388,7 +16432,11 @@ async function loadBuildingInfo(apt, lat, lon, force) {
         var cached = coordCache[cacheKey];
 
         var sigunguCd, bjdongCd;
-        if (cached && cached.sigunguCd && cached.bjdongCd) {
+        var fromKnownBCode = bCodeToSigunguBjdong(knownBCode);
+        if (fromKnownBCode) {
+            sigunguCd = fromKnownBCode.sigunguCd;
+            bjdongCd  = fromKnownBCode.bjdongCd;
+        } else if (cached && cached.sigunguCd && cached.bjdongCd) {
             sigunguCd = cached.sigunguCd;
             bjdongCd  = cached.bjdongCd;
         } else {
