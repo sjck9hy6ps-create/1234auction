@@ -5888,7 +5888,7 @@ function getCompEstValueHeadless(list, targetPyung, targetFloor, targetBuildYear
         var factor = 1;
         var compDate = c.date ? new Date(c.date) : null;
         if (compDate && !isNaN(compDate.getTime())) {
-            var mo = findAptComplexMomentum(c.name, c.dong, compDate);
+            var mo = findComplexMomentum(c.name, c.dong, compDate, ctx.buildingType);
             factor = mo.factor;
             if (Math.abs(factor - 1) > 0.001) anyAdjusted = true;
             var days = Math.round((now.getTime() - compDate.getTime()) / (1000 * 60 * 60 * 24));
@@ -6048,7 +6048,7 @@ async function runBacktestPipeline() {
         await loadAllData(geo.lat, geo.lon);
         var candidates = findSimilarComps(geo.lat, geo.lon, null, floor, pyung, buildingType, c.buildingName, dong, bunji, buildingType === 'villa' ? 500 : 2000);
         var compRecords = candidates.map(convertCandidateToCompRecordHeadless);
-        var estResult = pyung ? getCompEstValueHeadless(compRecords, pyung, floor, null, { lat: geo.lat, lon: geo.lon, name: c.buildingName, dong: dong }) : null;
+        var estResult = pyung ? getCompEstValueHeadless(compRecords, pyung, floor, null, { lat: geo.lat, lon: geo.lon, name: c.buildingName, dong: dong, buildingType: buildingType }) : null;
         if (!estResult) noComps++; // 예상매도가를 못 냈어도 실제낙찰가·감정가 참고자료로는 남겨둠(예측입찰가만 비워짐)
         var target = estResult ? estResult.estValue : null;
         var margin = parseInt(TARGET_MARGIN_DEFAULTS[buildingType]) || 2000;
@@ -11008,7 +11008,7 @@ function computeBidCaseCandidates(c) {
 function computeBidCasePredictedSale(cands, c) {
     if (!cands || !cands.candidates.length) return null;
     var compRecords = cands.candidates.map(convertCandidateToCompRecordHeadless);
-    var estResult = getCompEstValueHeadless(compRecords, cands.pyung, cands.floor, cands.targetYear, { lat: c.lat, lon: c.lon, name: c.buildingName, dong: c.dong });
+    var estResult = getCompEstValueHeadless(compRecords, cands.pyung, cands.floor, cands.targetYear, { lat: c.lat, lon: c.lon, name: c.buildingName, dong: c.dong, buildingType: cands.buildingType });
     return estResult ? estResult.estValue : null;
 }
 /* 2026-08(사용자 요청: "연식구분과 평형까지 해줘") - c.buildYear가 아직 조회 전이면(연식
@@ -11154,7 +11154,7 @@ function computeAuctionWonCandidates(a) {
 function computeAuctionWonPredictedSale(cands, a) {
     if (!cands || !cands.candidates.length) return null;
     var compRecords = cands.candidates.map(convertCandidateToCompRecordHeadless);
-    var estResult = getCompEstValueHeadless(compRecords, cands.pyung, cands.floor, cands.targetYear, { lat: a.lat, lon: a.lon, name: a.name, dong: a.dong });
+    var estResult = getCompEstValueHeadless(compRecords, cands.pyung, cands.floor, cands.targetYear, { lat: a.lat, lon: a.lon, name: a.name, dong: a.dong, buildingType: cands.buildingType });
     return estResult ? estResult.estValue : null;
 }
 function computeAuctionWonImpliedTarget(a) {
@@ -12368,6 +12368,9 @@ function getCompEstValue() {
     var targetFloor = parseFloat(document.getElementById('a-floor').value);
     if (isNaN(targetFloor)) targetFloor = null;
     var targetBuildYear = getAuctionBuildYear();
+    // ⚠️ 2026-09(본오동 856-5 사례): 시점보정(findComplexMomentum)이 빌라/아파트를 다르게
+    // 취급해야 하므로, 대상물건 유형(a-prop-type)을 여기서 미리 읽어둠.
+    var targetBuildingTypeForMomentum = document.getElementById('a-prop-type').value;
     var PYUNG_TOLERANCE = 4, FLOOR_TOLERANCE = 1, AGE_TOLERANCE = 3, DIST_TOLERANCE_M = 500;
 
     var now = new Date();
@@ -12381,7 +12384,7 @@ function getCompEstValue() {
         var factor = 1;
         var compDate = c.date ? new Date(c.date) : null;
         if (compDate && !isNaN(compDate.getTime())) {
-            var mo = findAptComplexMomentum(c.name, c.dong, compDate);
+            var mo = findComplexMomentum(c.name, c.dong, compDate, targetBuildingTypeForMomentum);
             factor = mo.factor;
             if (Math.abs(factor - 1) > 0.001) anyAdjusted = true;
             var days = Math.round((now.getTime() - compDate.getTime()) / (1000 * 60 * 60 * 24));
@@ -15417,6 +15420,27 @@ function calcAllAptHalfyearlyTrend() {
    폴백)이며, 아파트는 "같은 단지(name+dong)"가 연립다세대의 "같은 건물"에 대응함. 아파트는
    거래가 잦아 대부분 단지 자체 추이만으로 충분하지만, 신축 단지처럼 자체 거래가 적을 때를
    대비해 폴백을 그대로 유지함. */
+// ⚠️ 2026-09(본오동 856-5 사례 - "같은 5건 비교물건인데 볼 때마다 예상매도가가 다르게 나온다"는
+// 지적으로 발견): getCompEstValue/getCompEstValueHeadless가 비교물건 유형과 무관하게 항상
+// findAptComplexMomentum()만 호출했음. 이 함수는 "①이름·동이 같은 아파트 단지를 찾아 자체
+// 시세추이로 보정 → ②없으면 calcAllAptHalfyearlyTrend()(그 시점까지 지도에 로딩된 아파트
+// 전체 평균 추이)로 폴백"하는 구조라, 빌라 비교물건에 써도 ①은 절대 못 찾고(빌라인데 apt만
+// 찾음) 항상 ②로 빠짐 - 결국 빌라 예상매도가가 "빌라 시세"가 아니라 "그때그때 사용자가 지도를
+// 돌아다니며 우연히 로딩해둔 아파트 데이터량"에 좌우되는 재현 불가능한 값이 됐던 것.
+// 빌라는 이미 전용 시점보정 함수(calcVillaPppMomentum - 건물 자체 추이 → 없으면 같은
+// 연식단계(ageTier) 지역 추이)가 따로 있으므로, 대상물건 유형(buildingType)에 따라 갈라 쓰도록
+// 래퍼를 추가함. findAptComplexMomentum 자체(아파트 로직)는 그대로 둠.
+function findComplexMomentum(name, dong, fromDate, buildingType) {
+    if (buildingType === 'villa') {
+        var matched = allAptList.find(function(a) {
+            return a.buildingType === 'villa' && a.latest && a.latest.name === name && a.latest.dong === dong;
+        });
+        var trades = matched ? (matched.trades || []) : [];
+        var ageTier = matched ? matched.ageTier : null;
+        return calcVillaPppMomentum(trades, fromDate, ageTier);
+    }
+    return findAptComplexMomentum(name, dong, fromDate);
+}
 function findAptComplexMomentum(name, dong, fromDate) {
     var matched = allAptList.find(function(a) {
         return a.buildingType === 'apt' && a.latest && a.latest.name === name && a.latest.dong === dong;
