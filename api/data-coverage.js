@@ -353,8 +353,8 @@ const KOSIS_DATA_URL = 'https://apis.data.go.kr/1240000/statisticsData/getStatis
 const KOSIS_TBL = { population: { tblId: 'DT_1B040A3', itmId: 'T20' }, households: { tblId: 'DT_1B040B3', itmId: 'T1' } };
 const KOSIS_FRESH_MS = 1000 * 60 * 60 * 24;
 
-async function fetchKosisLatest(tblId, itmId, sigunguCd) {
-  const url = `${KOSIS_DATA_URL}?serviceKey=${encodeURIComponent(KOSIS_API_KEY)}&format=json&orgId=101&tblId=${tblId}`
+async function fetchKosisLatest(tblId, itmId, sigunguCd, orgId) {
+  const url = `${KOSIS_DATA_URL}?serviceKey=${encodeURIComponent(KOSIS_API_KEY)}&format=json&orgId=${orgId || '101'}&tblId=${tblId}`
     + `&objL1=${sigunguCd}&itmId=${itmId}&prdSe=M&newEstPrdCnt=13`;
   let data;
   try {
@@ -373,6 +373,28 @@ async function fetchKosisLatest(tblId, itmId, sigunguCd) {
   const latest = history[history.length - 1];
   const yearAgo = history.length >= 13 ? history[history.length - 13] : history[0];
   return { latestPrd: latest.prd, latestValue: latest.value, yearAgoPrd: yearAgo.prd, yearAgoValue: yearAgo.value };
+}
+
+/* ⚠️ 2026-09 추가: 새 KOSIS 통계표(예: 미분양현황)를 연동하기 전, 그 표가 itmId를 어떻게
+   나누는지 실제로 확인해봐야 하는 진단 전용 엔드포인트(mode=kosisRaw). itmId=ALL로 호출하면
+   그 표에 있는 모든 항목(itmId/itmNm)이 섞여서 그대로 돌아오므로, 응답을 보고 "합계/총
+   미분양호수"에 해당하는 정확한 itmId 코드를 찾아낸 뒤에야 population/households처럼
+   전용 kind로 등록할 수 있음(위 population 도입 때도 이 과정을 거쳤음 - 상단 주석 참고).
+   확인이 끝나면 이 mode는 남겨두어도 무방함(향후 다른 KOSIS 표 추가할 때 재사용 가능). */
+async function fetchKosisRaw(tblId, orgId, objL1, itmId, prdSe, newEstPrdCnt) {
+  const url = `${KOSIS_DATA_URL}?serviceKey=${encodeURIComponent(KOSIS_API_KEY)}&format=json&orgId=${orgId}&tblId=${tblId}`
+    + `&objL1=${objL1}&itmId=${itmId || 'ALL'}&prdSe=${prdSe || 'M'}&newEstPrdCnt=${newEstPrdCnt || '3'}`;
+  let data;
+  try {
+    const r = await fetch(url, { signal: AbortSignal.timeout(10000) });
+    data = await r.json();
+  } catch (e) { return { error: 'KOSIS 호출 실패: ' + e.message, url }; }
+  if (data && data.OpenAPI_ServiceResponse) {
+    const h = data.OpenAPI_ServiceResponse.cmmMsgHeader || {};
+    return { error: 'KOSIS 오류: ' + (h.returnAuthMsg || h.errMsg || '알 수 없는 오류'), url, raw: data };
+  }
+  const items = data && data.response && data.response.body && data.response.body.items && data.response.body.items.item;
+  return { url, itemCount: Array.isArray(items) ? items.length : 0, items: items || [], raw: (!items) ? data : undefined };
 }
 
 async function getKosisTrend(sigunguCd, force) {
@@ -1821,6 +1843,21 @@ export default async function handler(req, res) {
         return res.status(400).json({ error: 'sigunguCd(2~5자리 행정구역코드)가 필요합니다.' });
       }
       const result = await getKosisTrend(String(sigunguCd), req.query.force === '1');
+      return res.status(200).json(result);
+    } catch (err) {
+      return res.status(500).json({ error: err.message });
+    }
+  }
+  if (req.query.mode === 'kosisRaw') {
+    // 진단 전용(위 fetchKosisRaw 주석 참고) - 새 KOSIS 표의 itmId 체계를 확인할 때만 씀.
+    res.setHeader('Cache-Control', 'no-store');
+    try {
+      if (!KOSIS_API_KEY) return res.status(500).json({ error: 'PUBLIC_DATA_API_KEY 환경변수가 없습니다.' });
+      const { tblId, orgId, objL1, itmId, prdSe, newEstPrdCnt } = req.query;
+      if (!tblId || !orgId || !objL1) {
+        return res.status(400).json({ error: 'tblId, orgId, objL1(시군구/시도 코드)이 필요합니다.' });
+      }
+      const result = await fetchKosisRaw(String(tblId), String(orgId), String(objL1), itmId, prdSe, newEstPrdCnt);
       return res.status(200).json(result);
     } catch (err) {
       return res.status(500).json({ error: err.message });
