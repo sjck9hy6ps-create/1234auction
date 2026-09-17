@@ -705,6 +705,12 @@ async function fetchApplyhomeRaw(srcKey, page, perPage, cond) {
   if (data && (data.error || data.errorCode)) {
     return { error: '청약홈 오류: ' + (data.error || data.errorMessage || data.errorCode), url: redactKey(url), raw: data };
   }
+  // ⚠️ 2026-09: 활용신청 미승인 등 odcloud 자체 오류는 {"error":...}가 아니라
+  // {"code":-4,"msg":"등록되지 않은 인증키 입니다."} 형태로 옴(실측 확인) - 위 data.error 체크로는
+  // 안 걸러져서 추가함.
+  if (data && typeof data.code === 'number' && data.code < 0) {
+    return { error: '청약홈 오류: ' + (data.msg || data.code), url: redactKey(url), raw: data };
+  }
   const items = (data && data.data) || [];
   // ⚠️ 응답이 비어 있으면(활용신청 미승인/필드명 상이 등 원인 추정 불가) 진단을 위해 raw 전체를
   // 그대로 돌려줌 - items가 있을 때는 raw를 안 붙여 응답 용량을 아낌.
@@ -712,6 +718,114 @@ async function fetchApplyhomeRaw(srcKey, page, perPage, cond) {
     url: redactKey(url), totalCount: data && data.totalCount, currentCount: data && data.currentCount, items,
     raw: items.length ? undefined : data,
   };
+}
+
+/* ════════════════════════════════════
+   미분양(무순위·잔여세대 + 임의공급) 단지 목록 (mode=unsoldComplex) - 2026-09 추가
+   ⚠️ 위 applyhomeRaw 진단으로 활용신청 승인 확인 + 실제 필드 확인 완료. 이 함수는 그걸 바탕으로
+   "지도에 마커로 찍을 수 있는 단지 목록"을 만듦. 좌표는 여기서 만들지 않음(이 API 자체에
+   위경도가 없고, 서버에 Kakao REST 키가 없어 서버사이드 지오코딩이 안 됨) - 프론트가 이미 갖고
+   있는 Kakao 지오코딩 캐시(coordCache)로 주소→좌표 변환은 클라이언트에서 함.
+   ⚠️ "무순위·잔여세대"(remnant)뿐 아니라 "임의공급"(opt, 무순위에서도 남은 물량을 선착순으로
+   다시 파는 단계)도 같이 합침 - 둘 다 "청약으로 다 안 팔렸다"는 신호라 미분양 스크리닝
+   목적에는 같은 카테고리로 취급해도 됨(HOUSE_SECD_NM 필드로 구분은 남겨둠).
+   ⚠️ 날짜 형식이 소스마다 다름(remnant는 "2026-09-16", opt는 "20260915") - normDate()로
+   통일. 접수마감이 지난 공고를 빼지 않는 이유: 접수는 끝났어도 그 회차에 남았던 세대가 그 뒤
+   다음 회차 무순위로 또 나올 수 있어("보통 회차를 거듭한다"는 게 무순위의 특성), 최근
+   공고일 기준으로만 자르고 접수상태로는 안 자름 - 마감 지난 것도 "이 근처에 최근 미분양이
+   있었다"는 참고 신호로는 유효함.
+   ⚠️ 아래 SQL을 Supabase에 먼저 한 번 실행해야 합니다:
+     create table if not exists unsold_complex_cache (
+       id text primary key,
+       items jsonb,
+       fetched_at timestamptz
+     );
+════════════════════════════════════ */
+const UNSOLD_COMPLEX_FRESH_MS = 1000 * 60 * 60 * 24; // 24시간 - 무순위 공고는 매일 갱신되지만 지도 스크리닝 용도라 이 정도 지연은 무방함
+const UNSOLD_COMPLEX_WINDOW_DAYS = 540; // 최근 약 18개월 - 그 이상 지난 공고는 이미 다 팔렸을 가능성이 높음
+
+function normDate(s) {
+  if (!s) return null;
+  const digits = String(s).replace(/-/g, '');
+  if (digits.length !== 8) return null;
+  return digits.slice(0, 4) + '-' + digits.slice(4, 6) + '-' + digits.slice(6, 8);
+}
+// 블록코드("D1-1BL", "A-5블록")와 "OO 일원" 접미사만 가볍게 제거함 - 나머지 정제(괄호 추출,
+// 번지 우선 등)는 프론트의 기존 다단계 지오코딩(tryStepGeocode)이 이미 여러 후보를 시도하므로
+// 서버에서 과하게 다듬지 않음(README 실측: 도로명 16%뿐이라 완벽한 정제는 애초에 어려움).
+function lightCleanAddr(addr) {
+  if (!addr) return '';
+  return String(addr)
+    .replace(/[A-Za-z]\d*-\d+\s*(BL|블록)/gi, '')
+    .replace(/\s*일원\s*$/, '')
+    .trim();
+}
+
+async function fetchUnsoldComplexFresh() {
+  const cutoff = new Date(Date.now() - UNSOLD_COMPLEX_WINDOW_DAYS * 86400000);
+  const cutoffStr = cutoff.toISOString().slice(0, 10).replace(/-/g, '');
+  const sources = [
+    { key: 'remnant', label: '무순위·잔여세대' },
+    { key: 'opt', label: '임의공급' },
+  ];
+  const merged = [];
+  const errors = [];
+  for (const src of sources) {
+    const r = await fetchApplyhomeRaw(src.key, '1', '500');
+    if (r.error) { errors.push(src.label + ': ' + r.error); continue; }
+    (r.items || []).forEach(it => {
+      const noticeDate = normDate(it.RCRIT_PBLANC_DE);
+      if (!noticeDate || noticeDate.replace(/-/g, '') < cutoffStr) return; // 너무 오래된 공고는 제외
+      const addr = it.HSSPLY_ADRES ? String(it.HSSPLY_ADRES).trim() : '';
+      if (!addr) return; // 주소 없으면 지도에 못 찍으므로 제외
+      merged.push({
+        pblancNo: it.PBLANC_NO || it.HOUSE_MANAGE_NO,
+        name: it.HOUSE_NM || '(단지명 미상)',
+        addr, addrClean: lightCleanAddr(addr),
+        zip: it.HSSPLY_ZIP || null,
+        totalSupply: Number.isFinite(Number(it.TOT_SUPLY_HSHLDCO)) ? Number(it.TOT_SUPLY_HSHLDCO) : null,
+        sido: it.SUBSCRPT_AREA_CODE_NM || null,
+        noticeDate,
+        receiptStart: normDate(it.SUBSCRPT_RCEPT_BGNDE || it.GNRL_RCEPT_BGNDE),
+        receiptEnd: normDate(it.SUBSCRPT_RCEPT_ENDDE || it.GNRL_RCEPT_ENDDE),
+        url: it.PBLANC_URL || null,
+        kind: it.HOUSE_SECD_NM || src.label,
+      });
+    });
+  }
+  if (!merged.length && errors.length) return { error: errors.join(' / ') };
+  // 같은 단지가 무순위 회차를 여러 번 거치며 중복 등록될 수 있어 단지명+주소 기준으로 중복
+  // 제거하되, 더 최근 공고(noticeDate가 더 큰 것)를 남김 - "지금도 안 팔리고 있다"는 최신
+  // 상태가 더 중요한 정보라서임.
+  const byKey = new Map();
+  merged.forEach(it => {
+    const key = it.name + '|' + it.addrClean;
+    const prev = byKey.get(key);
+    if (!prev || it.noticeDate > prev.noticeDate) byKey.set(key, it);
+  });
+  const list = Array.from(byKey.values()).sort((a, b) => b.noticeDate.localeCompare(a.noticeDate));
+  return { items: list };
+}
+
+async function getUnsoldComplexList(force) {
+  const cacheId = 'all';
+  if (!force) {
+    try {
+      const { data: cached, error } = await supabase.from('unsold_complex_cache').select('*').eq('id', cacheId).maybeSingle();
+      if (!error && cached && (Date.now() - new Date(cached.fetched_at).getTime()) < UNSOLD_COMPLEX_FRESH_MS) {
+        return { items: cached.items || [], cached: true };
+      }
+    } catch (e) { console.warn('unsold_complex_cache 조회 예외:', e.message); }
+  }
+  const fresh = await fetchUnsoldComplexFresh();
+  if (fresh.error) return fresh;
+  try {
+    const { error: upsertErr } = await supabase.from('unsold_complex_cache').upsert({
+      id: cacheId, items: fresh.items, fetched_at: new Date().toISOString(),
+    });
+    if (upsertErr) console.warn('unsold_complex_cache 저장 실패:', upsertErr.message);
+  } catch (e) { console.warn('unsold_complex_cache 저장 예외:', e.message); }
+  return { items: fresh.items, cached: false };
 }
 
 /* ════════════════════════════════════
@@ -2151,6 +2265,20 @@ export default async function handler(req, res) {
       }
       const result = await getUnsoldTrend(resolved.c1, resolved.c2, req.query.force === '1');
       return res.status(200).json({ ...result, matchedLevel: resolved.matchedLevel, matchedName: resolved.matchedName });
+    } catch (err) {
+      return res.status(500).json({ error: err.message });
+    }
+  }
+  if (req.query.mode === 'unsoldComplex') {
+    // 전국 목록을 하루 1회만 갱신하면 되는 데이터라 CDN 캐시도 길게 둠.
+    res.setHeader('Cache-Control', 's-maxage=21600, stale-while-revalidate=43200');
+    try {
+      if (!KOSIS_API_KEY) return res.status(500).json({ error: 'PUBLIC_DATA_API_KEY 환경변수가 없습니다.' });
+      const result = await getUnsoldComplexList(req.query.force === '1');
+      if (result.error) return res.status(502).json(result);
+      const sido = req.query.sido ? String(req.query.sido).trim() : null;
+      const items = sido ? result.items.filter(it => it.sido === sido) : result.items;
+      return res.status(200).json({ items, cached: result.cached });
     } catch (err) {
       return res.status(500).json({ error: err.message });
     }
