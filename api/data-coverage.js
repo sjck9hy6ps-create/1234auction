@@ -397,13 +397,18 @@ async function fetchKosisRaw(tblId, orgId, objL1, itmId, prdSe, newEstPrdCnt, ex
   try {
     const r = await fetch(url, { signal: AbortSignal.timeout(10000) });
     data = await r.json();
-  } catch (e) { return { error: 'KOSIS 호출 실패: ' + e.message, url }; }
+  } catch (e) { return { error: 'KOSIS 호출 실패: ' + e.message, url: redactKey(url) }; }
   if (data && data.OpenAPI_ServiceResponse) {
     const h = data.OpenAPI_ServiceResponse.cmmMsgHeader || {};
-    return { error: 'KOSIS 오류: ' + (h.returnAuthMsg || h.errMsg || '알 수 없는 오류'), url, raw: data };
+    return { error: 'KOSIS 오류: ' + (h.returnAuthMsg || h.errMsg || '알 수 없는 오류'), url: redactKey(url), raw: data };
   }
   const items = data && data.response && data.response.body && data.response.body.items && data.response.body.items.item;
-  return { url, itemCount: Array.isArray(items) ? items.length : 0, items: items || [], raw: (!items) ? data : undefined };
+  return { url: redactKey(url), itemCount: Array.isArray(items) ? items.length : 0, items: items || [], raw: (!items) ? data : undefined };
+}
+// 진단용 응답의 url 필드에 인증키가 그대로 노출되지 않도록 마스킹함(이 엔드포인트들은 인증
+// 없이 누구나 호출 가능하므로, url을 그대로 돌려주면 PUBLIC_DATA_API_KEY가 공개로 유출됨).
+function redactKey(url) {
+  return String(url).replace(/([?&]serviceKey=)[^&]+/, '$1***REDACTED***');
 }
 
 async function getKosisTrend(sigunguCd, force) {
@@ -695,12 +700,18 @@ async function fetchApplyhomeRaw(srcKey, page, perPage, cond) {
   try {
     const r = await fetch(url, { signal: AbortSignal.timeout(10000) });
     data = await r.json();
-  } catch (e) { return { error: '청약홈 호출 실패: ' + e.message, url }; }
+  } catch (e) { return { error: '청약홈 호출 실패: ' + e.message, url: redactKey(url) }; }
   // odcloud는 에러도 200으로 주고 body에 담는 경우가 있어(예: {"error":"..."}) 방어적으로 확인.
   if (data && (data.error || data.errorCode)) {
-    return { error: '청약홈 오류: ' + (data.error || data.errorMessage || data.errorCode), url, raw: data };
+    return { error: '청약홈 오류: ' + (data.error || data.errorMessage || data.errorCode), url: redactKey(url), raw: data };
   }
-  return { url, totalCount: data && data.totalCount, currentCount: data && data.currentCount, items: (data && data.data) || [] };
+  const items = (data && data.data) || [];
+  // ⚠️ 응답이 비어 있으면(활용신청 미승인/필드명 상이 등 원인 추정 불가) 진단을 위해 raw 전체를
+  // 그대로 돌려줌 - items가 있을 때는 raw를 안 붙여 응답 용량을 아낌.
+  return {
+    url: redactKey(url), totalCount: data && data.totalCount, currentCount: data && data.currentCount, items,
+    raw: items.length ? undefined : data,
+  };
 }
 
 /* ════════════════════════════════════
