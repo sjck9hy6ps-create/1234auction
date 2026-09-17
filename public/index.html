@@ -17310,28 +17310,43 @@ function renderSurgeNewHighBody() {
 // 같이 둬서 아파트/연립다세대 두 목록에 같은 지역이 중복으로 떠도 fetch는 한 번만 나감.
 var unsoldBadgeCache = {}; // key: "시도|시군구" -> {pct,latestValue,matchedName,matchedLevel} | 'none' | Promise
 function unsoldBadgeKey(sido, sigungu) { return sido + '|' + (sigungu || ''); }
+// ⚠️ 2026-09(배포 후 실측 발견): 처음엔 목록에 나온 지역 수십 곳을 Promise.all처럼 한꺼번에
+// 조회했는데, 순위 목록 특성상 대부분 처음 보는 지역(캐시 미스)이라 짧은 시간에 KOSIS로
+// 실호출이 몰려 "초당 서비스 요청제한 횟수 초과" 에러가 다발했음(대부분의 배지가 비어
+// 있던 원인). createSemaphore(1)로 한 번에 하나씩만 실제 호출을 내보내고, 매 호출 뒤에도
+// 350ms를 더 쉬어(KOSIS의 초당 제한 아래로 여유있게 유지) 순차 처리함 - 20~40개 지역이면
+// 전부 채워지는 데 몇 초 걸리지만, 순위 목록은 어차피 사용자가 스크롤하며 훑어보는
+// 용도라 배지가 한 박자 늦게 채워져도 체감상 문제 없음.
+var runUnsoldBadgeFetch = createSemaphore(1);
+function sleepMsClient(ms) { return new Promise(function(r) { setTimeout(r, ms); }); }
 function fetchUnsoldBadgeData(sido, sigungu) {
     var key = unsoldBadgeKey(sido, sigungu);
     var cached = unsoldBadgeCache[key];
     if (cached && typeof cached.then === 'function') return cached; // 이미 요청 중
     if (cached !== undefined) return Promise.resolve(cached); // 완료 캐시(성공 or 'none')
-    var p = (async function() {
+    var p = runUnsoldBadgeFetch(async function() {
         try {
             var url = '/api/data-coverage?mode=unsoldHousing&sido=' + encodeURIComponent(sido) + (sigungu ? '&sigungu=' + encodeURIComponent(sigungu) : '');
             var res = await fetch(url);
             var data = await readJsonResponseSafe(res);
-            if (!res.ok || !data || data.error || !Number.isFinite(data.latestValue)) { unsoldBadgeCache[key] = 'none'; return 'none'; }
-            var pct = (Number.isFinite(data.yearAgoValue) && data.yearAgoValue > 0)
-                ? Math.round((data.latestValue - data.yearAgoValue) / data.yearAgoValue * 1000) / 10
-                : null;
-            var result = { pct: pct, latestValue: data.latestValue, matchedName: data.matchedName, matchedLevel: data.matchedLevel };
+            var result;
+            if (!res.ok || !data || data.error || !Number.isFinite(data.latestValue)) {
+                result = 'none';
+            } else {
+                var pct = (Number.isFinite(data.yearAgoValue) && data.yearAgoValue > 0)
+                    ? Math.round((data.latestValue - data.yearAgoValue) / data.yearAgoValue * 1000) / 10
+                    : null;
+                result = { pct: pct, latestValue: data.latestValue, matchedName: data.matchedName, matchedLevel: data.matchedLevel };
+            }
             unsoldBadgeCache[key] = result;
+            await sleepMsClient(350); // 다음 대기 중인 지역 호출까지 최소 간격을 둠(KOSIS 초당 제한 방지)
             return result;
         } catch (e) {
             unsoldBadgeCache[key] = 'none';
+            await sleepMsClient(350);
             return 'none';
         }
-    })();
+    });
     unsoldBadgeCache[key] = p;
     return p;
 }
