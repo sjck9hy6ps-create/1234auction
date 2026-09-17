@@ -381,6 +381,7 @@ async function fetchKosisLatest(tblId, itmId, sigunguCd, orgId) {
    미분양호수"에 해당하는 정확한 itmId 코드를 찾아낸 뒤에야 population/households처럼
    전용 kind로 등록할 수 있음(위 population 도입 때도 이 과정을 거쳤음 - 상단 주석 참고).
    확인이 끝나면 이 mode는 남겨두어도 무방함(향후 다른 KOSIS 표 추가할 때 재사용 가능). */
+function sleepMs(ms) { return new Promise(resolve => setTimeout(resolve, ms)); }
 async function fetchKosisRaw(tblId, orgId, objL1, itmId, prdSe, newEstPrdCnt, extra) {
   // ⚠️ 2026-09: 표마다 필요한 분류축(objL2~objL8)이나 prdSe 코드가 다를 수 있어(실측:
   // DT_MLTM_2082는 population 표와 같은 prdSe='M'/objL1만으로는 INVALID_REQUEST_PARAMETER_ERROR/
@@ -393,14 +394,26 @@ async function fetchKosisRaw(tblId, orgId, objL1, itmId, prdSe, newEstPrdCnt, ex
   if (extra && typeof extra === 'object') {
     Object.keys(extra).forEach(k => { url += `&${k}=${encodeURIComponent(extra[k])}`; });
   }
-  let data;
-  try {
-    const r = await fetch(url, { signal: AbortSignal.timeout(10000) });
-    data = await r.json();
-  } catch (e) { return { error: 'KOSIS 호출 실패: ' + e.message, url: redactKey(url) }; }
-  if (data && data.OpenAPI_ServiceResponse) {
-    const h = data.OpenAPI_ServiceResponse.cmmMsgHeader || {};
-    return { error: 'KOSIS 오류: ' + (h.returnAuthMsg || h.errMsg || '알 수 없는 오류'), url: redactKey(url), raw: data };
+  // ⚠️ 2026-09(실측 발견): "지방 우량아파트 스크리닝" 배지가 순위 목록의 서로 다른 시/군/구
+  // 수십 곳을 짧은 시간에 연달아 조회하다 보니 KOSIS가 "초당 서비스 요청제한 횟수 초과"
+  // 에러를 자주 반환함(캐시 미스인 지역만 실제 KOSIS 호출로 이어짐 - population/roneIndex처럼
+  // 물건 하나당 한 번만 부르던 기존 사용 패턴에서는 안 보이던 문제). 이 에러 문구가 보이면
+  // 짧게 대기 후 최대 2회 재시도함(클라이언트 쪽에서도 동시요청을 줄이지만, 서버도 자체
+  // 방어선을 하나 더 둠 - 두 지역이 정확히 같은 타이밍에 캐시미스가 나는 경우까지 커버).
+  let data, lastErr;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      const r = await fetch(url, { signal: AbortSignal.timeout(10000) });
+      data = await r.json();
+    } catch (e) { return { error: 'KOSIS 호출 실패: ' + e.message, url: redactKey(url) }; }
+    if (data && data.OpenAPI_ServiceResponse) {
+      const h = data.OpenAPI_ServiceResponse.cmmMsgHeader || {};
+      const msg = h.returnAuthMsg || h.errMsg || '알 수 없는 오류';
+      if (msg.indexOf('요청제한') !== -1 && attempt < 2) { lastErr = msg; await sleepMs(500 + attempt * 500); continue; }
+      return { error: 'KOSIS 오류: ' + msg, url: redactKey(url), raw: data };
+    }
+    lastErr = null;
+    break;
   }
   const items = data && data.response && data.response.body && data.response.body.items && data.response.body.items.item;
   return { url: redactKey(url), itemCount: Array.isArray(items) ? items.length : 0, items: items || [], raw: (!items) ? data : undefined };
