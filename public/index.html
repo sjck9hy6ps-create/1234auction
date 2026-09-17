@@ -1100,6 +1100,7 @@ tr:hover td { background:#fffde7; }
                     <span id="listing-apply-status" style="font-size:10.5px;color:#999;"></span>
                 </div>
                 <div id="market-adjusted-price-box"></div>
+                <div id="unsold-nearby-box"></div>
             </div>
 
             <div class="est-row">
@@ -7857,6 +7858,8 @@ function openAuctionModal(id) {
     refreshPopulationTrend();
     unsoldTrendCache = { key: null, loaded: false, loading: false, data: null };
     refreshUnsoldTrend();
+    unsoldNearbyCache = { key: null, list: [] };
+    refreshNearbyUnsoldComplexes(); // 저장된 물건이면 lat/lon이 이미 있으니(getAuctionAddressContext) 바로 시도됨
     avmEstCache = { key: null, loading: false, data: null }; // 물건이 바뀌었으니 이전 물건의 AVM 결과를 재사용하면 안 됨 - renderEstimateSummary가 다음 호출 때 자동으로 새로 조회함
     document.getElementById('a-comp-target-margin').value = '2000';
     document.getElementById('a-addr-result').style.display = 'none';
@@ -8021,6 +8024,7 @@ function openAuctionModal(id) {
    ✕ 버튼/취소 버튼으로만 닫히도록 변경. */
 function closeAuctionModal() {
     document.getElementById('auction-modal-bg').style.display = 'none';
+    clearUnsoldMarkers(); // 모달 닫으면 이 물건 전용으로 찍었던 미분양 단지 마커도 같이 지움
 }
 function updateStatusUI() {
     var s = document.getElementById('a-status').value;
@@ -8076,6 +8080,8 @@ function searchAuctionAddr() {
             loadAuctionBuildingInfo();
             autoCalcAuctionJeonseAnalysis();
             renderDongMarginStatsInModal();renderHoldMonthsHint();
+            unsoldNearbyCache = { key: null, list: [] }; // 주소가 바뀌었으니(좌표도 바뀜) 이전 캐시 무효화
+            refreshNearbyUnsoldComplexes();
         } else {
             alert('주소를 찾을 수 없습니다.');
         }
@@ -8312,6 +8318,105 @@ async function refreshUnsoldTrend() {
         unsoldTrendCache.loading = false;
         renderMarketAdjustedPrice();
     }
+}
+/* 미분양(무순위·잔여세대/임의공급) 단지 지도 마커 + 입찰 물건과의 거리 표시 - 2026-09 추가.
+   위 KOSIS 미분양(시/군/구 집계 숫자)과 달리 이건 실제 단지명·주소가 있는 청약홈 데이터라
+   지도에 마커로 찍고 거리 계산이 가능함. 다만 카카오 지오코딩 호출량 한도 문제(이 세션에서
+   이미 겪음)가 있어 전국 857개 단지를 한꺼번에 지오코딩하지 않고, "지금 보는 경매 물건과
+   같은 시/도" 범위로만, 그것도 이 모달을 열었을 때만 지오코딩함(항상 켜진 지도 레이어가
+   아니라 경매 모달 전용 기능).
+   ⚠️ 좌표는 mode=unsoldComplex 응답에 없으므로(서버에 Kakao 키가 없음) tryStepGeocode(이미
+   coordCache로 캐싱됨 - 한번 지오코딩되면 재사용됨)를 그대로 재사용함. */
+var unsoldComplexCacheBySido = {}; // sido(짧은 이름, 예:"인천") -> 서버 응답 items 배열(원본, 좌표 없음)
+var unsoldMarkerOverlays = [];
+var unsoldNearbyCache = { key: null, list: [] };
+var UNSOLD_NEARBY_RADIUS_M = 3000;
+
+async function fetchUnsoldComplexBySido(sido) {
+    if (unsoldComplexCacheBySido[sido]) return unsoldComplexCacheBySido[sido];
+    try {
+        var res = await fetch('/api/data-coverage?mode=unsoldComplex&sido=' + encodeURIComponent(sido));
+        var data = await res.json();
+        unsoldComplexCacheBySido[sido] = (data && data.items) || [];
+    } catch (e) {
+        unsoldComplexCacheBySido[sido] = [];
+    }
+    return unsoldComplexCacheBySido[sido];
+}
+// tryStepGeocode(콜백 방식)를 Promise로 감싼 것 - 이미 지오코딩된 항목(item.lat 있음)은
+// 재조회 안 함(coordCache와 별개로 이 배열 자체에도 캐싱해 페이지 재방문 때 낭비 없게 함).
+function geocodeUnsoldItem(item) {
+    return new Promise(function(resolve) {
+        if (item.lat && item.lon) { resolve(); return; }
+        tryStepGeocode([item.addrClean || item.addr, item.name], function(lat, lon) {
+            if (lat && lon) { item.lat = lat; item.lon = lon; }
+            resolve();
+        });
+    });
+}
+function clearUnsoldMarkers() {
+    unsoldMarkerOverlays.forEach(function(o) { o.setMap(null); });
+    unsoldMarkerOverlays = [];
+}
+function placeUnsoldMarkers(list) {
+    clearUnsoldMarkers();
+    list.forEach(function(it) {
+        var div = document.createElement('div');
+        div.style.cssText = 'background:#ff6f00;color:#fff;border-radius:10px;padding:2px 6px;font-size:10px;'
+            + 'font-weight:bold;white-space:nowrap;cursor:pointer;box-shadow:0 1px 3px rgba(0,0,0,.35);border:1px solid #e65100;';
+        div.textContent = '🏗️ ' + it.name;
+        div.onclick = function() {
+            var info = it.name + '\n' + it.addr
+                + '\n공급세대: ' + (it.totalSupply != null ? it.totalSupply + '세대' : '알 수 없음')
+                + '\n구분: ' + it.kind
+                + '\n공고일: ' + it.noticeDate
+                + '\n접수기간: ' + (it.receiptStart || '?') + ' ~ ' + (it.receiptEnd || '?')
+                + '\n내 물건까지 거리: 약 ' + Math.round(it.dist) + 'm'
+                + (it.url ? '\n' + it.url : '');
+            showPlainInfo(btoa(unescape(encodeURIComponent(info))));
+        };
+        var overlay = new kakao.maps.CustomOverlay({
+            position: new kakao.maps.LatLng(it.lat, it.lon),
+            content: div, yAnchor: 1, xAnchor: 0.5, zIndex: 550, clickable: true
+        });
+        overlay.setMap(map);
+        unsoldMarkerOverlays.push(overlay);
+    });
+}
+function renderUnsoldNearbyBox(list) {
+    var box = document.getElementById('unsold-nearby-box');
+    if (!box) return;
+    if (!list || !list.length) { box.innerHTML = ''; return; }
+    var nearest = list[0];
+    var itemsHtml = list.slice(0, 8).map(function(it) {
+        return '<div style="padding:3px 0;border-top:1px solid #ffe0b2;">'
+            + '<b>' + it.name + '</b> (' + it.kind + ') - 약 ' + Math.round(it.dist) + 'm'
+            + '<div style="color:#8d6e63;">' + (it.totalSupply != null ? it.totalSupply + '세대, ' : '') + it.noticeDate + ' 공고' + (it.url ? ' · <a href="' + it.url + '" target="_blank" rel="noopener">청약홈</a>' : '') + '</div>'
+            + '</div>';
+    }).join('');
+    box.innerHTML = '<div style="margin-top:6px;background:#fff3e0;border-radius:6px;padding:8px 10px;font-size:11px;">'
+        + '<div style="font-weight:bold;color:#e65100;">🏗️ 반경 ' + (UNSOLD_NEARBY_RADIUS_M / 1000) + 'km 내 미분양(무순위·임의공급) 신축단지 ' + list.length + '곳'
+        + ' <span style="font-weight:normal;color:#999;">(최근접 ' + Math.round(nearest.dist) + 'm: ' + nearest.name + ')</span></div>'
+        + itemsHtml
+        + '<div style="color:#999;margin-top:3px;">⚠️ 신축 분양단지의 무순위·잔여세대 공고 기준입니다(청약홈). 구축 아파트 재고 전체의 미분양 여부는 위 👪 지역통계의 미분양 항목을 참고하세요.</div>'
+        + '</div>';
+}
+async function refreshNearbyUnsoldComplexes() {
+    var addr = document.getElementById('a-addr').value.trim();
+    var sido = extractSidoShort(addr);
+    var ctx = getAuctionAddressContext();
+    if (!sido || !ctx.lat || !ctx.lon) { clearUnsoldMarkers(); renderUnsoldNearbyBox(null); return; }
+    var key = sido + '|' + ctx.lat.toFixed(4) + '|' + ctx.lon.toFixed(4);
+    if (unsoldNearbyCache.key === key) { placeUnsoldMarkers(unsoldNearbyCache.list); renderUnsoldNearbyBox(unsoldNearbyCache.list); return; }
+    var items = await fetchUnsoldComplexBySido(sido);
+    if (!items.length) { unsoldNearbyCache = { key: key, list: [] }; clearUnsoldMarkers(); renderUnsoldNearbyBox(null); return; }
+    await Promise.all(items.map(geocodeUnsoldItem));
+    var nearby = items.filter(function(it) { return it.lat && it.lon; }).map(function(it) {
+        return Object.assign({}, it, { dist: getDistance(ctx.lat, ctx.lon, it.lat, it.lon) });
+    }).filter(function(it) { return it.dist <= UNSOLD_NEARBY_RADIUS_M; }).sort(function(a, b) { return a.dist - b.dist; });
+    unsoldNearbyCache = { key: key, list: nearby };
+    placeUnsoldMarkers(nearby);
+    renderUnsoldNearbyBox(nearby);
 }
 var roneTrendCache = { sido: null, loaded: false, loading: false, sale: null, jeonse: null };
 // 🤖 AVM 추정가 캐시 - ECOS/R-ONE/KOSIS와 같은 이유(renderEstimateSummary가 무관한 필드
@@ -8781,6 +8886,8 @@ async function applyListingInventory() {
     await refreshPopulationTrend();
     unsoldTrendCache = { key: null, loaded: false, loading: false, data: null };
     await refreshUnsoldTrend();
+    unsoldNearbyCache = { key: null, list: [] };
+    await refreshNearbyUnsoldComplexes();
     renderMarketAdjustedPrice();
     if (document.getElementById('a-comp-target-margin').value !== '' || (pendingAuctionComparables || []).length) {
         calcCompValuation(); // 내부에서 renderEstimateSummary()까지 호출함
