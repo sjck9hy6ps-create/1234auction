@@ -17293,6 +17293,74 @@ function renderSurgeNewHighBody() {
         + renderNewHighRankSection('🏢 아파트', filterByRegArea(data.apt), 'apt')
         + renderNewHighRankSection('🏘️ 연립다세대·단독', filterByRegArea(data.villa), 'villa');
 }
+// ⭐ 지방 우량아파트 스크리닝(2026-09, 사용자 요청 "미분양·거래량·가격모멘텀 지표를 종합해
+// 지방 유망 지역을 자동 추천") - "돈되는지역" 순위(momentumPct=가격모멘텀, countTrend·
+// upTransitions=거래량, 이미 아래 표시 중)에 이어 지역별 미분양(mode=unsoldHousing) 증감
+// 배지를 얹어 세 지표를 한 화면에서 같이 보게 함("거래량·가격 다 좋아지는데 미분양도 줄고
+// 있다" / "좋아 보이는데 미분양은 오히려 늘고 있다"를 바로 구분).
+// ⚠️ 순위 자체를 미분양까지 합쳐 하나의 점수로 재계산하지는 않음 - momentumPct/거래량은
+// 전국 공통 기준(단지 상대지수)으로 이미 순위가 매겨져 있는데, 미분양은 시/군/구 단위라
+// 같은 순위 목록 안에서도 매칭 레벨(시군구 vs 시/도 전체, resolveUnsoldCode 참고)이 섞여
+// 억지로 합산하면 오히려 왜곡됨 - 그래서 "참고 배지"로만 옆에 붙이고 최종 판단은 사용자가
+// 세 지표를 같이 보고 내리도록 함.
+// 렌더는 스켈레톤(빈 배지 자리)을 먼저 그리고, 목록에 나온 지역의 고유 시/도+시/군/구만
+// 모아(중복 제거) 순차 조회 후 완료되는 대로 해당 배지 DOM만 채워 넣음(이미 그려진 평당가·
+// 거래량 부분은 다시 그리지 않아 깜빡이지 않음). 서버(mode=unsoldHousing)가 이미 24시간
+// 캐시라 같은 지역을 반복 조회해도 실제 KOSIS 호출은 하루 한 번뿐 - 요청 중 캐시(Promise)도
+// 같이 둬서 아파트/연립다세대 두 목록에 같은 지역이 중복으로 떠도 fetch는 한 번만 나감.
+var unsoldBadgeCache = {}; // key: "시도|시군구" -> {pct,latestValue,matchedName,matchedLevel} | 'none' | Promise
+function unsoldBadgeKey(sido, sigungu) { return sido + '|' + (sigungu || ''); }
+function fetchUnsoldBadgeData(sido, sigungu) {
+    var key = unsoldBadgeKey(sido, sigungu);
+    var cached = unsoldBadgeCache[key];
+    if (cached && typeof cached.then === 'function') return cached; // 이미 요청 중
+    if (cached !== undefined) return Promise.resolve(cached); // 완료 캐시(성공 or 'none')
+    var p = (async function() {
+        try {
+            var url = '/api/data-coverage?mode=unsoldHousing&sido=' + encodeURIComponent(sido) + (sigungu ? '&sigungu=' + encodeURIComponent(sigungu) : '');
+            var res = await fetch(url);
+            var data = await readJsonResponseSafe(res);
+            if (!res.ok || !data || data.error || !Number.isFinite(data.latestValue)) { unsoldBadgeCache[key] = 'none'; return 'none'; }
+            var pct = (Number.isFinite(data.yearAgoValue) && data.yearAgoValue > 0)
+                ? Math.round((data.latestValue - data.yearAgoValue) / data.yearAgoValue * 1000) / 10
+                : null;
+            var result = { pct: pct, latestValue: data.latestValue, matchedName: data.matchedName, matchedLevel: data.matchedLevel };
+            unsoldBadgeCache[key] = result;
+            return result;
+        } catch (e) {
+            unsoldBadgeCache[key] = 'none';
+            return 'none';
+        }
+    })();
+    unsoldBadgeCache[key] = p;
+    return p;
+}
+function unsoldBadgeHtml(b) {
+    if (!b || b === 'none') return '';
+    var label = b.matchedLevel === 'sigungu' ? b.matchedName : (b.matchedName + ' 전체');
+    if (b.pct == null) {
+        return '<span style="color:#8d6e63;">🏗️ ' + label + ' 미분양 ' + b.latestValue.toLocaleString() + '호(전년比 비교불가)</span>';
+    }
+    var color = b.pct <= -10 ? '#2e7d32' : (b.pct >= 10 ? '#c62828' : '#8d6e63');
+    var arrow = b.pct < 0 ? '↓' : (b.pct > 0 ? '↑' : '');
+    var sign = b.pct > 0 ? '+' : '';
+    return '<span style="color:' + color + ';">🏗️ ' + label + ' 미분양 ' + sign + b.pct + '%' + arrow + '(전년比, ' + b.latestValue.toLocaleString() + '호)</span>';
+}
+// list는 filterByRegArea까지 거쳐 실제 화면에 렌더된 것과 동일한 배열이어야 idx가 DOM의
+// placeholder(id="unsold-badge-{type}-{idx}")와 정확히 일치함 - renderSurgeMoneyBody에서
+// html 생성에 쓴 것과 같은 배열을 그대로 넘겨줘야 함.
+function enrichMoneyRankUnsoldBadges(list, type) {
+    if (!list || !list.length) return;
+    list.forEach(function(r, idx) {
+        var parts = (r.region || '').trim().split(/\s+/);
+        var sido = parts[0], sigungu = parts[1] || null;
+        if (!sido) return;
+        fetchUnsoldBadgeData(sido, sigungu).then(function(b) {
+            var el = document.getElementById('unsold-badge-' + type + '-' + idx);
+            if (el) el.innerHTML = unsoldBadgeHtml(b);
+        });
+    });
+}
 // 돈되는 지역 전용 렌더 - 순위/모멘텀% 외에 6구간 "평당가" 흐름과 구간별 거래량을 함께
 // 보여줌(모든 평형을 평당가로 정규화해서 비교하니 특정 평형대만 볼 때보다 표본이 커짐).
 // 클릭하면 급등지역과 동일하게 moveToDong()으로 지도를 그 동으로 이동시킴(패널은 안 닫힘 -
@@ -17300,6 +17368,8 @@ function renderSurgeNewHighBody() {
 // upTransitions(5번의 구간전환 중 상승횟수)와 volumeDrop(거래량 급감 경고)은 API에서 이미
 // 계산해서 내려주므로 여기선 그대로 표시만 함. lowSample이 true인 구간은 표본이 적어(또는
 // 거래가 아예 없어 직전/직후 값을 이어붙인 경우) 거래건수 뒤에 *를 붙여 표시함.
+// ⭐ 2026-09: 마지막 줄에 미분양 배지 placeholder(빈 div)를 추가함 - 실제 내용은
+// enrichMoneyRankUnsoldBadges()가 비동기로 채움(자세한 이유는 위 주석 참고).
 function renderMoneyRankSection(title, list, type) {
     var html = '<div style="margin-top:8px;"><div style="font-size:11.5px;font-weight:bold;color:#4a148c;margin-bottom:4px;">' + title + '</div>';
     if (!list || !list.length) {
@@ -17322,6 +17392,7 @@ function renderMoneyRankSection(title, list, type) {
             + '<span style="font-weight:bold;color:#e53935;white-space:nowrap;flex-shrink:0;">' + sign + r.momentumPct + '%</span></div>'
             + '<div style="font-size:10px;color:#888;margin-top:2px;white-space:nowrap;overflow-x:auto;">평당가 ' + priceTrend + '</div>'
             + '<div style="font-size:10px;color:#aaa;margin-top:1px;">거래량 ' + countTrend + '건' + (hasLowSample ? '(*표본부족→직전구간과 합산됨)' : '') + ' · 상승 ' + r.upTransitions + '/5구간' + warnBadge + newBadge + '</div>'
+            + '<div style="font-size:10px;margin-top:1px;" id="unsold-badge-' + type + '-' + idx + '"></div>'
             + '</div>';
     });
     html += '</div>';
@@ -17357,10 +17428,14 @@ function renderSurgeMoneyBody() {
     // 실거래 신고기한(계약 후 30일 이내)상 가장 최근 1개월 구간은 아직 신고가 덜 끝난
     // 거래가 섞여 있어 거래량이 구조적으로 낮게 보일 수 있음 - 사용자 요청으로 계산 로직은
     // 그대로 두고 이 안내문구만 상시 표시함.
+    var aptList = filterByRegArea(data.apt), villaList = filterByRegArea(data.villa);
     body.innerHTML = '<div style="font-size:10px;color:#e65100;background:#fff8e1;border-radius:6px;padding:5px 8px;margin-top:6px;">'
-        + 'ℹ️ 실거래 신고기한(30일)상 가장 최근 구간은 아직 신고가 덜 끝난 거래가 있어 거래량이 낮게 보일 수 있어요.</div>'
-        + renderMoneyRankSection('🏢 아파트', filterByRegArea(data.apt), 'apt')
-        + renderMoneyRankSection('🏘️ 연립다세대·단독', filterByRegArea(data.villa), 'villa');
+        + 'ℹ️ 실거래 신고기한(30일)상 가장 최근 구간은 아직 신고가 덜 끝난 거래가 있어 거래량이 낮게 보일 수 있어요.<br>'
+        + '🏗️ 미분양 배지(전년 동월 대비)는 KOSIS 시/군/구 통계 기준 참고용이며, 잠시 후 순위와 별개로 채워집니다.</div>'
+        + renderMoneyRankSection('🏢 아파트', aptList, 'apt')
+        + renderMoneyRankSection('🏘️ 연립다세대·단독', villaList, 'villa');
+    enrichMoneyRankUnsoldBadges(aptList, 'apt');
+    enrichMoneyRankUnsoldBadges(villaList, 'villa');
 }
 // 급등지역/돈되는지역/신고가지역 패널의 "아파트"/"연립다세대" 각 행은 그 타입의 순위인데,
 // moveToDong()은 지도만 이동시킬 뿐 현재 아파트/연립다세대 타입 필터(currentTypeFilter)는
