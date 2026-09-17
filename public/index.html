@@ -773,19 +773,40 @@ tr:hover td { background:#fffde7; }
         <span class="surge-tab-btn active" id="surge-tab-hot" onclick="switchSurgeTab('hot')">🔥 급등지역</span>
         <span class="surge-tab-btn" id="surge-tab-money" onclick="switchSurgeTab('money')">💰 돈되는 지역</span>
         <span class="surge-tab-btn" id="surge-tab-newhigh" onclick="switchSurgeTab('newhigh')">⭐ 신고가 지역</span>
+        <span class="surge-tab-btn" id="surge-tab-leader" onclick="switchSurgeTab('leader')">🏆 후발주자</span>
         <span onclick="closeSurgePanel()" style="float:right;cursor:pointer;">✕</span>
     </div>
-    <div style="padding:10px 14px;border-bottom:1px solid #eee;display:flex;gap:6px;align-items:center;">
+    <div id="surge-sido-row" style="padding:10px 14px;border-bottom:1px solid #eee;display:flex;gap:6px;align-items:center;">
         <select class="modal-select" id="surge-sido-select" style="flex:1;min-width:0;" onchange="loadSurgePanelData()">
             <option value="">전체(전국)</option>
         </select>
         <button class="modal-btn btn-purple" style="font-size:11px;white-space:nowrap;" onclick="loadSurgePanelData()">불러오기</button>
     </div>
-    <div style="padding:8px 14px 0;display:flex;gap:6px;align-items:center;">
+    <div id="surge-regarea-row" style="padding:8px 14px 0;display:flex;gap:6px;align-items:center;">
         <span style="font-size:10.5px;color:#999;">규제지역</span>
         <span class="reg-area-btn active" id="reg-area-btn-all" onclick="setSurgeRegAreaFilter('all')">전체</span>
         <span class="reg-area-btn" id="reg-area-btn-unreg" onclick="setSurgeRegAreaFilter('unregulated')">비규제지역만</span>
         <span onclick="showCalcInfo('regAreaRank')" title="규제지역 기준 안내" style="cursor:pointer;color:#1976d2;font-size:11px;">ⓘ</span>
+    </div>
+    <!-- ⭐ 2026-09(후발주자 예측, 사용자 요청: "대장아파트가 오르면 따라 오르는 아파트들의
+         순서를 알아내 곧 오를 후보를 미리 예측하고 싶다") - 서울 제외 지역만 지원하고 시/도
+         만으로는 범위가 너무 넓어(법정동 기준 대장 산정 + 100위 랭킹이 시/군/구 단위로 계산됨)
+         기존 시/도 select와 별개로 시/군/구까지 고르는 전용 컨트롤 행을 둠. 다른 탭과 달리
+         '전체(전국)' 옵션이 없음(시/군/구를 반드시 하나 골라야 계산 가능) - loadRegionListOnce()가
+         패널을 처음 열 때 mode=regionList로 시/도→시/군/구 매핑을 한 번만 받아와 채움. -->
+    <div id="surge-leader-row" style="display:none;padding:10px 14px;border-bottom:1px solid #eee;">
+        <div style="display:flex;gap:6px;align-items:center;margin-bottom:6px;">
+            <select class="modal-select" id="lf-sido-select" style="flex:1;min-width:0;" onchange="onLfSidoChange()">
+                <option value="">시/도 선택(서울 제외)</option>
+            </select>
+            <select class="modal-select" id="lf-sigungu-select" style="flex:1;min-width:0;">
+                <option value="">시/군/구 선택</option>
+            </select>
+        </div>
+        <div style="display:flex;gap:6px;align-items:center;">
+            <button class="modal-btn btn-purple" style="font-size:11px;white-space:nowrap;" onclick="loadLeaderFollowerData()">조회</button>
+            <span style="font-size:10px;color:#999;">법정동 단위로 대장아파트를 자동 산정해 후발주자 후보를 찾아요(참고용 신호 - 확정 예측 아님)</span>
+        </div>
     </div>
     <div id="surge-panel-status" style="font-size:11px;color:#999;padding:6px 14px 0;"></div>
     <div id="surge-panel-body"></div>
@@ -17155,9 +17176,106 @@ function switchSurgeTab(tab) {
     document.getElementById('surge-tab-hot').classList.toggle('active', tab === 'hot');
     document.getElementById('surge-tab-money').classList.toggle('active', tab === 'money');
     document.getElementById('surge-tab-newhigh').classList.toggle('active', tab === 'newhigh');
-    loadSurgePanelData();
+    document.getElementById('surge-tab-leader').classList.toggle('active', tab === 'leader');
+    // 후발주자 탭은 시/도만으로는 계산 범위(법정동 대장+100위 랭킹)가 너무 넓어 시/군/구까지
+    // 골라야 하므로, 기존 시/도-only 컨트롤 대신 전용 행(surge-leader-row)을 보여줌.
+    document.getElementById('surge-sido-row').style.display = tab === 'leader' ? 'none' : 'flex';
+    document.getElementById('surge-regarea-row').style.display = tab === 'leader' ? 'none' : 'flex';
+    document.getElementById('surge-leader-row').style.display = tab === 'leader' ? 'block' : 'none';
+    if (tab === 'leader') {
+        document.getElementById('surge-panel-status').innerText = '';
+        document.getElementById('surge-panel-body').innerHTML = '';
+        loadRegionListOnce();
+    } else {
+        loadSurgePanelData();
+    }
+}
+/* ⭐ 후발주자 예측(mode=leaderFollower) 프론트 - 2026-09 추가
+   서버(mode=regionList)가 미분양 기능용으로 이미 만들어둔 시도+시군구 매핑(UNSOLD_CODE_ROWS)을
+   재사용해 시/군/구 드롭다운을 채움(서울은 서버가 이미 제외해서 내려줌). */
+var lfRegionMap = null; // { "경기": ["수원시","성남시",...], ... } - 한 번만 받아와 캐시
+async function loadRegionListOnce() {
+    var sidoSel = document.getElementById('lf-sido-select');
+    if (lfRegionMap) return; // 이미 받아옴
+    if (sidoSel.options.length > 1) return; // 중복 호출 방지
+    try {
+        var res = await fetch('/api/data-coverage?mode=regionList');
+        var data = await readJsonResponseSafe(res);
+        if (!res.ok || !data || !data.bySido) throw new Error((data && data.error) || '지역 목록을 불러오지 못했습니다.');
+        lfRegionMap = data.bySido;
+        Object.keys(lfRegionMap).sort().forEach(function(sido) {
+            var opt = document.createElement('option'); opt.value = sido; opt.text = sido; sidoSel.appendChild(opt);
+        });
+    } catch (e) {
+        document.getElementById('surge-panel-status').style.color = '#e53935';
+        document.getElementById('surge-panel-status').innerText = '지역 목록 로딩 실패: ' + e.message;
+    }
+}
+function onLfSidoChange() {
+    var sido = document.getElementById('lf-sido-select').value;
+    var guSel = document.getElementById('lf-sigungu-select');
+    guSel.innerHTML = '<option value="">시/군/구 선택</option>';
+    if (sido && lfRegionMap && lfRegionMap[sido]) {
+        lfRegionMap[sido].forEach(function(gu) {
+            var opt = document.createElement('option'); opt.value = gu; opt.text = gu; guSel.appendChild(opt);
+        });
+    }
+}
+async function loadLeaderFollowerData() {
+    var sido = document.getElementById('lf-sido-select').value;
+    var gu = document.getElementById('lf-sigungu-select').value;
+    var statusBox = document.getElementById('surge-panel-status');
+    var body = document.getElementById('surge-panel-body');
+    if (!sido || !gu) { statusBox.style.color = '#e53935'; statusBox.innerText = '시/도와 시/군/구를 모두 선택해 주세요.'; return; }
+    var region = sido + ' ' + gu;
+    statusBox.style.color = '#999'; statusBox.innerText = '불러오는 중... (법정동별 대장아파트를 새로 계산 중이면 몇 초 걸릴 수 있어요)';
+    body.innerHTML = '';
+    try {
+        var res = await fetch('/api/data-coverage?mode=leaderFollower&type=apt&region=' + encodeURIComponent(region));
+        var data = await readJsonResponseSafe(res);
+        if (!res.ok || data.error) throw new Error((data && data.error) || ('서버 오류(' + res.status + ')'));
+        statusBox.style.color = '#999';
+        statusBox.innerText = region + ' · 법정동 ' + data.leaders.length + '곳 대장아파트 기준 · 최근 ' + Math.round(data.bucketDays * data.bucketCount / 30) + '개월 데이터';
+        renderLeaderFollowerBody(data);
+    } catch (e) {
+        statusBox.style.color = '#e53935';
+        statusBox.innerText = '불러오기 실패: ' + e.message;
+    }
+}
+function renderLeaderFollowerBody(data) {
+    var html = '<div style="font-size:10px;color:#e65100;background:#fff8e1;border-radius:6px;padding:5px 8px;margin:6px 14px 0;">'
+        + 'ℹ️ 과거 대장아파트와 같이 움직인 이력(상관계수)이 있고, 대장은 최근 올랐는데 이 단지는 아직 덜 오른 경우만 "후발주자 후보"로 순위를 매겨요. 통계 표본이 짧아(최근 ' + Math.round(data.bucketDays * data.bucketCount / 30) + '개월) 확정 예측이 아니라 참고 신호로만 활용해 주세요.</div>';
+    if (data.leaders && data.leaders.length) {
+        html += '<div style="margin:8px 14px 0;font-size:11.5px;font-weight:bold;color:#4a148c;">🏆 법정동별 대장아파트</div>'
+            + '<div style="margin:4px 14px 0;font-size:10.5px;color:#555;max-height:90px;overflow-y:auto;border:1px solid #f0f0f0;border-radius:6px;padding:6px 8px;">'
+            + data.leaders.map(function(l) {
+                return '<div style="padding:2px 0;">' + cleanField(l.dong) + ' · <b>' + cleanField(l.danji) + '</b> (' + l.ppp.toLocaleString() + '만/평, 최근 ' + (l.recentPct >= 0 ? '+' : '') + l.recentPct + '%)</div>';
+            }).join('')
+            + '</div>';
+    }
+    if (!data.ranked || !data.ranked.length) {
+        html += '<div style="font-size:11px;color:#aaa;padding:10px 14px;">조건을 만족하는 후발주자 후보가 없습니다(대장 자체가 안 올랐거나, 표본이 부족하거나, 이미 갭이 없는 지역일 수 있어요).</div>';
+    } else {
+        html += '<div style="margin:10px 14px 0;font-size:11.5px;font-weight:bold;color:#4a148c;">🥈 후발주자 후보 순위 (최대 100위)</div>';
+        html += '<div style="margin:4px 14px 0;">' + data.ranked.map(function(r) {
+            var corrTxt = r.corr != null ? (r.corr * 100).toFixed(0) + '%' : '-';
+            var lagTxt = r.lag != null ? (r.lag === 0 ? '동시' : r.lag + '구간(' + Math.round(r.lag * data.bucketDays) + '일)뒤') : '-';
+            return '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;padding:6px 2px;border-bottom:1px solid #f5f5f5;font-size:11.5px;">'
+                + '<span style="min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;"><span style="color:#999;font-weight:bold;margin-right:4px;">' + r.rank + '위</span>' + cleanField(r.dong) + ' ' + cleanField(r.danji) + '<span style="color:#aaa;"> (대장:' + cleanField(r.leaderDanji) + ')</span></span>'
+                + '<span style="white-space:nowrap;flex-shrink:0;font-size:10.5px;color:#666;">갭 ' + r.gapPct + '%p · 동행성 ' + corrTxt + ' · ' + lagTxt + '</span></div>';
+        }).join('') + '</div>';
+    }
+    if (data.unranked && data.unranked.length) {
+        html += '<details style="margin:10px 14px 14px;">'
+            + '<summary style="font-size:11px;color:#999;cursor:pointer;">순위 밖 단지 ' + data.unranked.length + '곳 보기</summary>'
+            + '<div style="margin-top:6px;font-size:10.5px;color:#888;">' + data.unranked.map(function(u) {
+                return '<div style="padding:2px 0;border-bottom:1px solid #f8f8f8;">' + cleanField(u.dong) + ' ' + cleanField(u.danji) + ' <span style="color:#bbb;">- ' + u.reason + '</span></div>';
+            }).join('') + '</div></details>';
+    }
+    document.getElementById('surge-panel-body').innerHTML = html;
 }
 function loadSurgePanelData() {
+    if (surgePanelTab === 'leader') return; // 후발주자 탭은 시/도+시/군/구를 고른 뒤 loadLeaderFollowerData()로 직접 조회함
     if (surgePanelTab === 'money') loadSurgeMoneyData();
     else if (surgePanelTab === 'newhigh') loadSurgeNewHighData();
     else loadSurgeHotData();
