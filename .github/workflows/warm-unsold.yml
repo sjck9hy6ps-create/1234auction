@@ -1,0 +1,29 @@
+name: 미분양(청약홈 무순위·잔여세대) 캐시 주간 갱신
+
+# ⚠️ 2026-09 추가: mode=unsoldComplex(data-coverage.js)는 전국 단일 캐시(unsold_complex_cache
+# 테이블, id='all')로 Supabase에 24시간 TTL로 저장됨 - 사용자가 경매 모달을 열 때마다 알아서
+# 최신인지 확인하고 오래됐으면 다시 받아오긴 하지만, 그 "첫 방문자"가 최대 24시간치 지연을
+# 그대로 떠안는 구조라 매주 한 번 미리 강제 갱신(force=1)해 둠 - 실제 화면에서는 항상
+# 신선한 캐시만 보이게 하려는 목적. KOSIS 미분양(mode=unsoldHousing)은 물건 주소별로 캐시
+# 키가 나뉘어(시/군/구 246개 조합) 전량 사전 웜업은 비용 대비 이득이 적어 대상에서 뺐음 -
+# 그쪽은 기존 population/roneIndex와 동일하게 사용자가 실제로 열람할 때만 24시간 캐시로 조회함.
+on:
+  schedule:
+    - cron: '0 20 * * 0'  # 매주 일요일 05:00 KST(=UTC 20:00 토요일)
+  workflow_dispatch: {}   # Actions 탭에서 수동 실행도 가능하게 함(배포 직후 즉시 확인용)
+
+jobs:
+  warm-unsold-complex-cache:
+    runs-on: ubuntu-latest
+    steps:
+      - name: mode=unsoldComplex 강제 갱신 호출
+        run: |
+          status=$(curl -sf -o /tmp/resp.json -w "%{http_code}" \
+            "https://1234auction.vercel.app/api/data-coverage?mode=unsoldComplex&force=1")
+          echo "HTTP status: $status"
+          cat /tmp/resp.json | head -c 300
+          echo
+          if [ "$status" != "200" ]; then
+            echo "::error::unsoldComplex 캐시 갱신 실패(HTTP $status)"
+            exit 1
+          fi
