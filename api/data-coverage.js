@@ -381,9 +381,18 @@ async function fetchKosisLatest(tblId, itmId, sigunguCd, orgId) {
    미분양호수"에 해당하는 정확한 itmId 코드를 찾아낸 뒤에야 population/households처럼
    전용 kind로 등록할 수 있음(위 population 도입 때도 이 과정을 거쳤음 - 상단 주석 참고).
    확인이 끝나면 이 mode는 남겨두어도 무방함(향후 다른 KOSIS 표 추가할 때 재사용 가능). */
-async function fetchKosisRaw(tblId, orgId, objL1, itmId, prdSe, newEstPrdCnt) {
-  const url = `${KOSIS_DATA_URL}?serviceKey=${encodeURIComponent(KOSIS_API_KEY)}&format=json&orgId=${orgId}&tblId=${tblId}`
-    + `&objL1=${objL1}&itmId=${itmId || 'ALL'}&prdSe=${prdSe || 'M'}&newEstPrdCnt=${newEstPrdCnt || '3'}`;
+async function fetchKosisRaw(tblId, orgId, objL1, itmId, prdSe, newEstPrdCnt, extra) {
+  // ⚠️ 2026-09: 표마다 필요한 분류축(objL2~objL8)이나 prdSe 코드가 다를 수 있어(실측:
+  // DT_MLTM_2082는 population 표와 같은 prdSe='M'/objL1만으로는 INVALID_REQUEST_PARAMETER_ERROR/
+  // NO_MANDATORY_REQUEST_PARAMETER_ERROR가 남) extra(objL2..objL8 등 임의 파라미터)를 그대로
+  // 이어붙여서, 코드 재배포 없이 쿼리스트링만 바꿔가며 시행착오로 맞는 조합을 찾을 수 있게 함.
+  let url = `${KOSIS_DATA_URL}?serviceKey=${encodeURIComponent(KOSIS_API_KEY)}&format=json&orgId=${orgId}&tblId=${tblId}`
+    + `&objL1=${objL1}&itmId=${itmId || 'ALL'}`;
+  if (prdSe) url += `&prdSe=${prdSe}`;
+  url += `&newEstPrdCnt=${newEstPrdCnt || '3'}`;
+  if (extra && typeof extra === 'object') {
+    Object.keys(extra).forEach(k => { url += `&${k}=${encodeURIComponent(extra[k])}`; });
+  }
   let data;
   try {
     const r = await fetch(url, { signal: AbortSignal.timeout(10000) });
@@ -1853,11 +1862,12 @@ export default async function handler(req, res) {
     res.setHeader('Cache-Control', 'no-store');
     try {
       if (!KOSIS_API_KEY) return res.status(500).json({ error: 'PUBLIC_DATA_API_KEY 환경변수가 없습니다.' });
-      const { tblId, orgId, objL1, itmId, prdSe, newEstPrdCnt } = req.query;
+      const { tblId, orgId, objL1, itmId, prdSe, newEstPrdCnt, ...extra } = req.query;
+      delete extra.mode;
       if (!tblId || !orgId || !objL1) {
         return res.status(400).json({ error: 'tblId, orgId, objL1(시군구/시도 코드)이 필요합니다.' });
       }
-      const result = await fetchKosisRaw(String(tblId), String(orgId), String(objL1), itmId, prdSe, newEstPrdCnt);
+      const result = await fetchKosisRaw(String(tblId), String(orgId), String(objL1), itmId, prdSe, newEstPrdCnt, extra);
       return res.status(200).json(result);
     } catch (err) {
       return res.status(500).json({ error: err.message });
