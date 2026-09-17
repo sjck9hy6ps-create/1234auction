@@ -659,6 +659,51 @@ async function getUnsoldTrend(c1, c2, force) {
 }
 
 /* ════════════════════════════════════
+   청약홈(한국부동산원) APT 무순위·잔여세대 (mode=applyhomeRaw, 진단 전용) - 2026-09 추가
+   ⚠️ KOSIS 미분양(위)은 시/군/구 "집계 숫자"만 주고 어느 단지인지는 전혀 모른다 - 사용자가
+   "미분양 아파트를 지도에 마커로, 내 입찰 물건과 거리도 보고 싶다"고 요청해서, 단지명+주소가
+   있는 다른 공공데이터를 웹 리서치로 찾음: 한국부동산원 청약홈이 "무순위·잔여세대"(청약
+   추첨에서 다 안 팔려 무순위/선착순으로 다시 파는 신축 분양단지) 목록을 제공함
+   (data.go.kr/data/15098547/openapi.do, getRemndrLttotPblancDetail 오퍼레이션).
+   ⚠️ 이 API는 apis.data.go.kr이 아니라 별도 게이트웨이 odcloud.kr을 씀(공공데이터포털이
+   "파일데이터"를 자동변환해 만든 REST API 계열 - population/roneIndex 등 지금까지 쓰던
+   apis.data.go.kr 계열과 인증키 재사용은 되지만 호출 방식·페이징 파라미터가 다름):
+     GET https://api.odcloud.kr/api/ApplyhomeInfoDetailSvc/v1/getRemndrLttotPblancDetail
+         ?page=1&perPage=200&serviceKey=...
+   ⚠️ 중요한 한계(사용자에게 이미 설명함): (1) 신축 분양단지의 "무순위/잔여세대"만 잡히고
+   구축 아파트 재고 전체의 미분양은 안 잡힘(KOSIS 쪽이 그 역할). (2) 위경도 필드가 아예
+   없음 - 공급위치(주소)를 프론트에서 기존 Kakao 지오코딩으로 좌표 변환해야 마커를 찍을 수
+   있음. (3) 주소 형식이 지저분함(도로명 16%, "OO 일원" 43%, 괄호 표기 34%, 번지 없음 30%,
+   블록코드 포함 - 실측 기준, GitHub 공개 구현체 확인). 아직 이 API가 우리 계정에 활용신청
+   승인돼 있는지도 모르므로(청약홈은 population 때와 마찬가지로 한국부동산원이 제공기관이라
+   별도 활용신청이 필요할 수 있음), 이 함수는 순수 진단용이고 실제 mode=unsoldComplex 같은
+   전용 엔드포인트는 이 응답을 실제로 보고 필드명을 확인한 뒤에 만들어야 함(population 도입
+   때와 같은 순서).
+════════════════════════════════════ */
+const APPLYHOME_BASE = 'https://api.odcloud.kr/api/ApplyhomeInfoDetailSvc/v1/';
+const APPLYHOME_SRC = {
+  remnant: 'getRemndrLttotPblancDetail', // 무순위·잔여세대 (미분양에 가장 가까움)
+  apt: 'getAPTLttotPblancDetail',        // 일반 분양 공고
+  opt: 'getOPTLttotPblancDetail',        // 임의공급
+};
+async function fetchApplyhomeRaw(srcKey, page, perPage, cond) {
+  const op = APPLYHOME_SRC[srcKey] || APPLYHOME_SRC.remnant;
+  let url = APPLYHOME_BASE + op + '?page=' + (page || '1') + '&perPage=' + (perPage || '20')
+    + '&serviceKey=' + encodeURIComponent(KOSIS_API_KEY);
+  if (cond) url += '&' + encodeURIComponent('cond[' + cond.field + '::' + (cond.op || 'EQ') + ']') + '=' + encodeURIComponent(cond.value);
+  let data;
+  try {
+    const r = await fetch(url, { signal: AbortSignal.timeout(10000) });
+    data = await r.json();
+  } catch (e) { return { error: '청약홈 호출 실패: ' + e.message, url }; }
+  // odcloud는 에러도 200으로 주고 body에 담는 경우가 있어(예: {"error":"..."}) 방어적으로 확인.
+  if (data && (data.error || data.errorCode)) {
+    return { error: '청약홈 오류: ' + (data.error || data.errorMessage || data.errorCode), url, raw: data };
+  }
+  return { url, totalCount: data && data.totalCount, currentCount: data && data.currentCount, items: (data && data.data) || [] };
+}
+
+/* ════════════════════════════════════
    헤도닉 회귀모델(AVM, Automated Valuation Model) 예측 (mode=avmEstimate) - 2026-08 추가
    - index.html의 getCompEstValue()(비교물건 몇 건의 평단가 평균/중앙값)를 대체하는 게
      아니라 "독립적인 교차검증용 참고치"로 나란히 보여주기 위한 것. 표본이 적은 물건(나홀로
@@ -2095,6 +2140,20 @@ export default async function handler(req, res) {
       }
       const result = await getUnsoldTrend(resolved.c1, resolved.c2, req.query.force === '1');
       return res.status(200).json({ ...result, matchedLevel: resolved.matchedLevel, matchedName: resolved.matchedName });
+    } catch (err) {
+      return res.status(500).json({ error: err.message });
+    }
+  }
+  if (req.query.mode === 'applyhomeRaw') {
+    // 진단 전용(위 fetchApplyhomeRaw 주석 참고) - 청약홈 무순위·잔여세대 API의 활용신청
+    // 승인 여부/실제 응답 필드를 확인할 때만 씀.
+    res.setHeader('Cache-Control', 'no-store');
+    try {
+      if (!KOSIS_API_KEY) return res.status(500).json({ error: 'PUBLIC_DATA_API_KEY 환경변수가 없습니다.' });
+      const { src, page, perPage, condField, condOp, condValue } = req.query;
+      const cond = condField ? { field: String(condField), op: condOp ? String(condOp) : 'EQ', value: condValue } : null;
+      const result = await fetchApplyhomeRaw(src ? String(src) : 'remnant', page, perPage, cond);
+      return res.status(200).json(result);
     } catch (err) {
       return res.status(500).json({ error: err.message });
     }
