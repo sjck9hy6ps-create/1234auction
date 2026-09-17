@@ -842,6 +842,184 @@ async function getUnsoldComplexList(force) {
 }
 
 /* ════════════════════════════════════
+   후발주자 예측 랭킹 (mode=leaderFollower) - 2026-09 추가
+   사용자 요청: "대장아파트가 상승하면 후발주자로 따라오는 아파트들이 있다. 그 순서를 알아내서
+   곧 오를 수 있다는 예측에 쓰고 싶다." + "서울 제외 지역에서 법정동 기준으로 대장아파트를
+   선정하고, 모든 아파트 순위를 100위까지 만들어달라(순위밖도 표기)."
+
+   ⚠️ 방법론(의도적으로 단순하게 설계함 - 표본이 얇은 지방 단지가 많아 과적합 위험이 큼):
+   1) 시/군/구 하나를 지정하면(예: "경북 구미시"), 이미 돈되는지역(getPriceMomentum
+      Relative)에서 쓰던 getBucketDanjiPrices(region,dong,danji별 구간 평단가)를 그대로
+      재사용해서 법정동×단지별 구간 시계열을 만듦(신규 SQL 불필요 - rpc_bucket_avg_price가
+      p_sido 인자에 "시도 시군구" 풀네임을 그대로 넣으면 그 시/군/구로 정확히 좁혀짐을
+      실측으로 확인함).
+   2) 구간은 7개(아파트 40일×7=280일 - house_trades 수집기간이 2025-12-01부터라 최대
+      약 290일치뿐이라 7구간이 한도, 연립다세대는 60일×7=420일).
+   3) 법정동별 "대장" = 그 동 안에서 baseline(7구간 전체 평균) 평단가가 가장 높은 단지
+      (표본 부족한 대장 오탐 방지를 위해 총 거래건수 LF_MIN_TOTAL_COUNT 이상 요구).
+   4) 같은 법정동의 나머지 단지(후발주자 후보)마다:
+      - 표본부족 구간은 돈되는지역과 동일한 방식으로 직전/직후 구간과 합쳐 보정.
+      - "최근 갭"(gapPct) = 대장의 최근 2구간 상승률 - 이 단지의 최근 2구간 상승률.
+        양수면 "대장은 오르고 있는데 이 단지는 아직 덜 올랐다"는 뜻(갭메우기 여지).
+      - "과거 동행성"(corr) = 두 단지의 구간별 등락률(수익률) 시계열의 피어슨 상관계수를
+        lag 0~2구간(0~80일 뒤처짐)으로 각각 계산해 최댓값을 채택(단순 동시상관이 아니라
+        "대장이 먼저 움직이고 얼마 뒤에 따라 움직이는지"까지 확인하기 위함).
+      - 두 조건(과거에 실제로 같이 움직인 이력이 있고 + 지금 갭이 벌어져 있음)을 모두
+        만족해야만 "후발주자 후보"로 인정함(둘 중 하나만으로는 우연의 일치일 수 있음).
+   5) score = corr × gapPct로 전체 시/군/구의 모든 법정동을 통틀어 한 줄 세우기 → 순위
+      1~100위까지 매기고, 그 밖(조건 미달 포함)은 "순위밖"으로 사유와 함께 표기.
+   ⚠️ 상관계수·시차 추정 둘 다 최대 6개 구간 수익률(=7구간)만으로 계산하는 얇은 통계라
+      "확정적 예측"이 아니라 "과거 패턴상 후보"라는 참고 신호로만 취급해야 함 - 프론트에도
+      이 caveat을 표시함.
+   ⚠️ 아래 SQL을 Supabase에 먼저 한 번 실행해서 캐시 테이블을 만들어야 합니다:
+     create table if not exists leader_follower_cache (
+       id text primary key,
+       payload jsonb,
+       fetched_at timestamptz
+     );
+════════════════════════════════════ */
+const LF_FRESH_MS = 1000 * 60 * 60 * 24; // 24시간 - 하루 안에 여러 번 볼 이유가 없는 무거운 집계라 넉넉히
+const LF_BUCKET_COUNT = 7;
+const LF_MIN_TOTAL_COUNT = 10; // 7구간 합계 거래건수 - 이보다 적으면 대장/후발주자 후보 모두에서 제외
+const LF_MIN_CORR = 0.3; // 이 미만이면 "우연히 같이 움직인 걸로 보기 어렵다"고 판단해 제외
+const LF_MAX_LAG = 2; // 0~2구간(아파트 기준 최대 80일) 뒤처짐까지만 확인
+const LF_TOP_N = 100;
+function pearsonCorr(xs, ys) {
+  const n = xs.length;
+  if (n < 3) return null; // 점 3개 미만이면 상관계수 자체가 의미 없음
+  const mx = xs.reduce((a, b) => a + b, 0) / n, my = ys.reduce((a, b) => a + b, 0) / n;
+  let sxy = 0, sxx = 0, syy = 0;
+  for (let i = 0; i < n; i++) { const dx = xs[i] - mx, dy = ys[i] - my; sxy += dx * dy; sxx += dx * dx; syy += dy * dy; }
+  if (sxx === 0 || syy === 0) return null;
+  return sxy / Math.sqrt(sxx * syy);
+}
+// 돈되는지역(getPriceMomentumRelative)과 동일한 방식 - 표본부족(count<minCount) 구간은
+// 직전→직후 순서로 합쳐서 채움. 반환: { prices[N](null 없음), returns[N-1](구간별 등락률) }
+function fillBucketSeries(avgArr, countArr, minCount) {
+  const n = avgArr.length;
+  const prices = [];
+  for (let i = 0; i < n; i++) {
+    let sum = (avgArr[i] || 0) * (countArr[i] || 0), cnt = countArr[i] || 0;
+    let back = i - 1;
+    while (cnt < minCount && back >= 0) { sum += (avgArr[back] || 0) * (countArr[back] || 0); cnt += (countArr[back] || 0); back--; }
+    let fwd = i + 1;
+    while (cnt < minCount && fwd < n) { sum += (avgArr[fwd] || 0) * (countArr[fwd] || 0); cnt += (countArr[fwd] || 0); fwd++; }
+    prices.push(cnt > 0 ? sum / cnt : null);
+  }
+  const firstValid = prices.find(p => p !== null);
+  if (firstValid == null) return null; // 이 단지는 전 구간에 거래가 하나도 없음
+  for (let i = 0; i < prices.length; i++) { if (prices[i] === null) prices[i] = firstValid; }
+  const returns = [];
+  for (let i = 1; i < prices.length; i++) { returns.push(prices[i - 1] > 0 ? (prices[i] - prices[i - 1]) / prices[i - 1] : 0); }
+  return { prices, returns };
+}
+async function computeLeaderFollowerFresh(type, region) {
+  const bucketDays = bucketDaysFor(type);
+  const minCount = minBucketCountFor(type);
+  const today = todayInt();
+  const buckets = [];
+  for (let i = 0; i < LF_BUCKET_COUNT; i++) {
+    const startDays = bucketDays * (LF_BUCKET_COUNT - i), endDays = bucketDays * (LF_BUCKET_COUNT - 1 - i);
+    buckets.push({ start: daysAgoInt(startDays), end: i === LF_BUCKET_COUNT - 1 ? today + 1 : daysAgoInt(endDays) });
+  }
+  const bucketMaps = await Promise.all(buckets.map(b => getBucketDanjiPrices(type, b.start, b.end, region)));
+  // dongMap: dong -> danjiName -> { avgArr[N], countArr[N] }
+  const dongMap = {};
+  bucketMaps.forEach((m, bi) => {
+    Object.values(m).forEach(entry => {
+      const dong = entry.dong;
+      if (!dongMap[dong]) dongMap[dong] = {};
+      Object.entries(entry.danjis).forEach(([danjiName, d]) => {
+        if (!danjiName || danjiName === '(단지미상)') return; // 단지명 없는 거래는 대장/후발주자 비교 대상에서 제외
+        if (!dongMap[dong][danjiName]) dongMap[dong][danjiName] = { avgArr: new Array(LF_BUCKET_COUNT).fill(null), countArr: new Array(LF_BUCKET_COUNT).fill(0) };
+        dongMap[dong][danjiName].avgArr[bi] = d.avg;
+        dongMap[dong][danjiName].countArr[bi] = d.count;
+      });
+    });
+  });
+  const leaders = [];
+  const candidates = []; // 순위 매길 후보(대장 자신은 제외)
+  Object.entries(dongMap).forEach(([dong, danjis]) => {
+    // 이 법정동에서 최소 거래요건을 만족하는 단지만 후보로 삼음
+    const qualified = Object.entries(danjis)
+      .map(([name, d]) => {
+        const totalCount = d.countArr.reduce((a, b) => a + b, 0);
+        const filled = fillBucketSeries(d.avgArr, d.countArr, minCount);
+        if (!filled || totalCount < LF_MIN_TOTAL_COUNT) return null;
+        const baseline = filled.prices.reduce((a, b) => a + b, 0) / filled.prices.length;
+        return { name, totalCount, filled, baseline };
+      })
+      .filter(Boolean);
+    if (qualified.length < 2) return; // 대장-후발주자 관계 자체가 성립하려면 최소 2개 단지 필요
+    qualified.sort((a, b) => b.baseline - a.baseline);
+    const leader = qualified[0];
+    const n = leader.filled.prices.length;
+    const leaderRecentPct = Math.round(((leader.filled.prices[n - 1] / leader.filled.prices[n - 3]) - 1) * 1000) / 10;
+    leaders.push({ dong, danji: leader.name, totalCount: leader.totalCount, ppp: Math.round(leader.baseline), recentPct: leaderRecentPct });
+    if (leaderRecentPct <= 0) return; // 대장 자체가 안 올랐으면 "따라 오를 후발주자"라는 전제가 성립하지 않음
+    qualified.slice(1).forEach(f => {
+      const followerRecentPct = Math.round(((f.filled.prices[n - 1] / f.filled.prices[n - 3]) - 1) * 1000) / 10;
+      const gapPct = Math.round((leaderRecentPct - followerRecentPct) * 10) / 10;
+      let bestCorr = null, bestLag = null;
+      for (let lag = 0; lag <= LF_MAX_LAG; lag++) {
+        const followerReturns = f.filled.returns.slice(lag);
+        const leaderReturns = leader.filled.returns.slice(0, leader.filled.returns.length - lag);
+        const c = pearsonCorr(leaderReturns, followerReturns);
+        if (c != null && (bestCorr == null || c > bestCorr)) { bestCorr = c; bestLag = lag; }
+      }
+      const qualifies = bestCorr != null && bestCorr >= LF_MIN_CORR && gapPct > 0;
+      let reason = null;
+      if (!qualifies) {
+        if (bestCorr == null) reason = '대장과의 상관관계 계산 불가(표본부족)';
+        else if (bestCorr < LF_MIN_CORR) reason = '과거 대장과 동행한 이력이 약함(상관계수 ' + bestCorr.toFixed(2) + ')';
+        else reason = '이미 대장만큼(또는 더) 올라 갭이 없음';
+      }
+      candidates.push({
+        dong, danji: f.name, leaderDanji: leader.name, totalCount: f.totalCount,
+        gapPct, corr: bestCorr != null ? Math.round(bestCorr * 100) / 100 : null, lag: bestLag,
+        leaderRecentPct, followerRecentPct,
+        score: qualifies ? bestCorr * gapPct : null,
+        qualifies, reason,
+      });
+    });
+  });
+  candidates.sort((a, b) => {
+    if (a.qualifies && b.qualifies) return b.score - a.score;
+    if (a.qualifies) return -1;
+    if (b.qualifies) return 1;
+    return 0;
+  });
+  const ranked = [];
+  const unranked = [];
+  candidates.forEach((c, idx) => {
+    if (c.qualifies && ranked.length < LF_TOP_N) {
+      ranked.push({ ...c, rank: ranked.length + 1 });
+    } else {
+      unranked.push({ ...c, reason: c.qualifies ? '순위 100위 밖(점수 낮음)' : c.reason });
+    }
+  });
+  leaders.sort((a, b) => b.totalCount - a.totalCount);
+  return { region, type, bucketDays, bucketCount: LF_BUCKET_COUNT, leaders, ranked, unranked, totalCandidates: candidates.length };
+}
+async function getLeaderFollowerRank(type, region, force) {
+  const cacheId = region + '|' + type;
+  if (!force) {
+    try {
+      const { data: cached, error } = await supabase.from('leader_follower_cache').select('*').eq('id', cacheId).maybeSingle();
+      if (!error && cached && (Date.now() - new Date(cached.fetched_at).getTime()) < LF_FRESH_MS) {
+        return { ...cached.payload, cached: true };
+      }
+    } catch (e) { console.warn('leader_follower_cache 조회 예외:', e.message); }
+  }
+  const fresh = await computeLeaderFollowerFresh(type, region);
+  try {
+    const { error: upsertErr } = await supabase.from('leader_follower_cache').upsert({ id: cacheId, payload: fresh, fetched_at: new Date().toISOString() });
+    if (upsertErr) console.warn('leader_follower_cache 저장 실패:', upsertErr.message);
+  } catch (e) { console.warn('leader_follower_cache 저장 예외:', e.message); }
+  return { ...fresh, cached: false };
+}
+
+/* ════════════════════════════════════
    헤도닉 회귀모델(AVM, Automated Valuation Model) 예측 (mode=avmEstimate) - 2026-08 추가
    - index.html의 getCompEstValue()(비교물건 몇 건의 평단가 평균/중앙값)를 대체하는 게
      아니라 "독립적인 교차검증용 참고치"로 나란히 보여주기 위한 것. 표본이 적은 물건(나홀로
@@ -2292,6 +2470,33 @@ export default async function handler(req, res) {
       const sido = req.query.sido ? String(req.query.sido).trim() : null;
       const items = sido ? result.items.filter(it => it.sido === sido) : result.items;
       return res.status(200).json({ items, cached: result.cached });
+    } catch (err) {
+      return res.status(500).json({ error: err.message });
+    }
+  }
+  if (req.query.mode === 'regionList') {
+    // 후발주자 예측(mode=leaderFollower) 프론트의 시/군/구 선택 드롭다운용 - 신규 데이터
+    // 없이 미분양(mode=unsoldHousing)용으로 이미 만들어둔 UNSOLD_CODE_ROWS(시도+시군구
+    // 246행)를 재사용함. "계"(시/도 전체 합계 placeholder row)와 서울은 이 기능이
+    // "서울 제외 지방"만 다루므로 제외함.
+    const bySido = {};
+    UNSOLD_CODE_ROWS.forEach(([sidoNm, , guNm]) => {
+      if (sidoNm === '서울' || guNm === '계') return;
+      if (!bySido[sidoNm]) bySido[sidoNm] = [];
+      bySido[sidoNm].push(guNm);
+    });
+    return res.status(200).json({ bySido });
+  }
+  if (req.query.mode === 'leaderFollower') {
+    res.setHeader('Cache-Control', 's-maxage=21600, stale-while-revalidate=43200');
+    try {
+      const region = req.query.region ? String(req.query.region).trim() : '';
+      const type = req.query.type === 'villa' ? 'villa' : 'apt';
+      if (!region) return res.status(400).json({ error: 'region(예: "경북 구미시")이 필요합니다.' });
+      if (region.startsWith('서울')) return res.status(400).json({ error: '이 기능은 서울을 제외한 지역만 지원합니다(사용자 요청 - 서울은 이미 급등지역·돈되는지역 등 다른 지표로 충분히 다뤄지고 있고, 이 기능은 지방 갭메우기 신호에 초점을 둠).' });
+      const result = await getLeaderFollowerRank(type, region, req.query.force === '1');
+      if (result.error) return res.status(502).json(result);
+      return res.status(200).json(result);
     } catch (err) {
       return res.status(500).json({ error: err.message });
     }
