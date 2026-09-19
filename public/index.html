@@ -17262,24 +17262,33 @@ function renderLeaderFollowerBody(data) {
             }).join('')
             + '</div>';
     }
-    if (!data.ranked || !data.ranked.length) {
+    if (!data.rankedByDong || !data.rankedByDong.length) {
         html += '<div style="font-size:11px;color:#aaa;padding:10px 14px;">조건을 만족하는 후발주자 후보가 없습니다(대장 자체가 안 올랐거나, 표본이 부족하거나, 이미 갭이 없는 지역일 수 있어요).</div>';
     } else {
-        html += '<div style="margin:10px 14px 0;font-size:11.5px;font-weight:bold;color:#4a148c;">🥈 후발주자 후보 순위 (최대 100위)</div>'
-            + '<div style="margin:2px 14px 0;font-size:9.5px;color:#999;">종합 매력도(갭×동행성) 순 - 대장아파트를 기준(현재상태 0%, 갭 0)으로 봤을 때, 이 단지가 실제로는 얼마나 올랐고(현재 상태) 앞으로 대장만큼 따라갈 경우 남은 상승여력이 얼마인지(예상 흐름)를 %와 평단가 금액으로 같이 표시.</div>';
-        html += '<div style="margin:4px 14px 0;">' + data.ranked.map(function(r) {
-            var corrTxt = r.corr != null ? (r.corr * 100).toFixed(0) + '%' : '-';
-            var lagTxt = r.lag != null ? (r.lag === 0 ? '동시' : r.lag + '구간(' + Math.round(r.lag * data.bucketDays) + '일)뒤') : '-';
-            var gapAmtTxt = r.gapAmount > 0 ? ('약 ' + r.gapAmount.toLocaleString() + '만/평↑ 여력') : (r.gapAmount < 0 ? ('이미 대장보다 ' + Math.abs(r.gapAmount).toLocaleString() + '만/평 높음') : '갭 없음');
-            return '<div style="padding:6px 2px;border-bottom:1px solid #f5f5f5;font-size:11.5px;">'
-                + '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;">'
-                + '<span style="min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;"><span style="color:#999;font-weight:bold;margin-right:4px;">' + r.rank + '위</span>' + cleanField(r.dong) + ' ' + cleanField(r.danji) + '<span style="color:#aaa;"> (대장:' + cleanField(r.leaderDanji) + ')</span></span>'
-                + '<span style="white-space:nowrap;flex-shrink:0;font-size:10px;color:#999;">거래 ' + r.totalCount + '건</span></div>'
-                + '<div style="margin-top:2px;font-size:10.5px;color:#666;">'
-                + '현재 상태: 최근 ' + (r.followerRecentPct >= 0 ? '+' : '') + r.followerRecentPct + '% 상승(평단가 ' + r.followerPpp.toLocaleString() + '만/평, 대장은 ' + (r.leaderRecentPct >= 0 ? '+' : '') + r.leaderRecentPct + '%)'
-                + '<br>예상 흐름: 대장 대비 ' + r.gapPct + '%p 남음 · ' + gapAmtTxt + ' · 동행성 ' + corrTxt + ' · ' + lagTxt
-                + '</div></div>';
-        }).join('') + '</div>';
+        // ⚠️ 2026-09(#461): 시/군/구 전체를 하나로 통합한 순위 대신, 법정동별로 그룹을 나눠
+        // 각 동 안에서만 순위(1위~)를 매김 - 동마다 시장 성격이 다를 수 있는 지방 시/군에서
+        // 서로 다른 동네 후보를 한 줄로 비교하지 않기 위함(사용자 피드백 반영).
+        html += '<div style="margin:10px 14px 0;font-size:11.5px;font-weight:bold;color:#4a148c;">🥈 법정동별 후발주자 후보 순위</div>'
+            + '<div style="margin:2px 14px 0;font-size:9.5px;color:#999;">같은 법정동 안에서만 순위를 매겨요(동마다 최대 100위) - 종합 매력도(갭×동행성) 순. 대장아파트를 기준(현재상태 0%, 갭 0)으로 이 단지가 실제로 얼마나 올랐고(현재 상태), 대장만큼 따라갈 경우 남은 상승여력(예상 흐름)을 %와 평단가 금액으로 같이 표시.</div>';
+        html += data.rankedByDong.map(function(group) {
+            var rows = group.items.map(function(r) {
+                var corrTxt = r.corr != null ? (r.corr * 100).toFixed(0) + '%' : '-';
+                var lagTxt = r.lag != null ? (r.lag === 0 ? '동시' : r.lag + '구간(' + Math.round(r.lag * data.bucketDays) + '일)뒤') : '-';
+                var gapAmtTxt = r.gapAmount > 0 ? ('약 ' + r.gapAmount.toLocaleString() + '만/평↑ 여력') : (r.gapAmount < 0 ? ('이미 대장보다 ' + Math.abs(r.gapAmount).toLocaleString() + '만/평 높음') : '갭 없음');
+                return '<div style="padding:6px 2px;border-bottom:1px solid #f5f5f5;font-size:11.5px;">'
+                    + '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;">'
+                    + '<span style="min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;"><span style="color:#999;font-weight:bold;margin-right:4px;">' + r.rank + '위</span>' + cleanField(r.danji) + '</span>'
+                    + '<span style="white-space:nowrap;flex-shrink:0;font-size:10px;color:#999;">거래 ' + r.totalCount + '건</span></div>'
+                    + '<div style="margin-top:2px;font-size:10.5px;color:#666;">'
+                    + '현재 상태: 최근 ' + (r.followerRecentPct >= 0 ? '+' : '') + r.followerRecentPct + '% 상승(평단가 ' + r.followerPpp.toLocaleString() + '만/평, 대장은 ' + (r.leaderRecentPct >= 0 ? '+' : '') + r.leaderRecentPct + '%)'
+                    + '<br>예상 흐름: 대장 대비 ' + r.gapPct + '%p 남음 · ' + gapAmtTxt + ' · 동행성 ' + corrTxt + ' · ' + lagTxt
+                    + '</div></div>';
+            }).join('');
+            return '<div style="margin:8px 14px 0;">'
+                + '<div style="font-size:11px;font-weight:bold;color:#333;background:#f5f5f7;border-radius:4px;padding:4px 8px;">' + cleanField(group.dong) + ' <span style="color:#aaa;font-weight:normal;">(대장: ' + cleanField(group.leaderDanji) + ')</span></div>'
+                + rows
+                + '</div>';
+        }).join('');
     }
     if (data.unranked && data.unranked.length) {
         html += '<details style="margin:10px 14px 14px;">'
