@@ -960,23 +960,19 @@ async function computeLeaderFollowerFresh(type, region) {
   // 테이블을, 같은 정규화 매칭 방식(normalizeComplexName)으로 재사용함 - 여기서는 법정동
   // 전체를 한 번에 조회해 매칭하므로 단지마다 왕복하지 않음(성능).
   const householdMap = {}; // `${법정동}|${normalizeComplexName(단지명)}` -> 세대수
-  // ⚠️ 2026-09 진단용(임시): 회전율 폴백(2순위)이 왜 한 번도 안 걸리는지(households가 항상
-  // null) 확인하려고 원인 후보(지역코드 매칭/실제 로우 존재 여부/조회 에러)를 그대로 담아서
-  // 응답에 실어봄 - 원인 확인되면 제거.
-  const kaptDebug = { lawdFound: false, sigunguCode: null, rawRowCount: null, sampleRows: null, error: null };
+  // ⚠️ 2026-09: 진단 결과 - 이 조회 로직(지역코드 매칭, 쿼리) 자체는 정상이고(에러 없음),
+  // kapt_complex_info 테이블에 households가 채워진 행이 전국 어디에도 없어서(부산/경기/대구
+  // 등 7개 지역 실측 - 전부 0건) 회전율 폴백이 항상 비어있었음. sync-kapt.yml(K-apt 동기화
+  // GitHub Actions)이 실제로는 한 번도 성공적으로 households를 채운 적이 없다는 뜻 - 이 파일
+  // 코드가 아니라 그 워크플로/시크릿 쪽 문제라 여기서 고칠 수 있는 부분이 아님(아래 대응 참고).
   try {
     const lawdEntry = LAWD_CODES.find((r) => r.name === region);
-    kaptDebug.lawdFound = !!lawdEntry;
-    kaptDebug.sigunguCode = lawdEntry ? lawdEntry.code : null;
     if (lawdEntry) {
-      const { data: kaptRows, error: kaptErr } = await supabase
+      const { data: kaptRows } = await supabase
         .from('kapt_complex_info')
         .select('kapt_name, as3, households')
         .eq('sigungu_code', lawdEntry.code)
         .not('households', 'is', null);
-      if (kaptErr) kaptDebug.error = kaptErr.message;
-      kaptDebug.rawRowCount = (kaptRows || []).length;
-      kaptDebug.sampleRows = (kaptRows || []).slice(0, 5).map((r) => ({ kapt_name: r.kapt_name, as3: r.as3, households: r.households }));
       (kaptRows || []).forEach((r) => {
         if (!r.as3 || !(r.households > 0)) return;
         const key = `${r.as3}|${normalizeComplexName(r.kapt_name)}`;
@@ -985,7 +981,7 @@ async function computeLeaderFollowerFresh(type, region) {
         if (!householdMap[key] || r.households > householdMap[key]) householdMap[key] = r.households;
       });
     }
-  } catch (e) { kaptDebug.error = 'exception: ' + e.message; /* K-apt 조회 실패해도 막지 않음 - 회전율 없이 가격 기준 폴백으로 계속 진행 */ }
+  } catch (e) { /* K-apt 조회 실패해도 막지 않음 - 회전율 없이 가격 기준 폴백으로 계속 진행 */ }
   const windowDays = bucketDays * LF_BUCKET_COUNT;
 
   const leaders = [];
@@ -1122,7 +1118,7 @@ async function computeLeaderFollowerFresh(type, region) {
     }
   });
   leaders.sort((a, b) => b.totalCount - a.totalCount);
-  return { region, type, bucketDays, bucketCount: LF_BUCKET_COUNT, leaders, ranked, unranked, totalCandidates: candidates.length, kaptDebug };
+  return { region, type, bucketDays, bucketCount: LF_BUCKET_COUNT, leaders, ranked, unranked, totalCandidates: candidates.length };
 }
 async function getLeaderFollowerRank(type, region, force) {
   const cacheId = region + '|' + type;
