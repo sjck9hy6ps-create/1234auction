@@ -189,6 +189,16 @@ tr:hover td { background:#fffde7; }
     box-shadow:0 1px 3px rgba(0,0,0,0.35); border:1.5px solid white; z-index:4;
 }
 .comp-add-badge:hover { background:#00695c; }
+/* 평단가 등급(구 내 상대순위, 1=최고~7=최저) 배지 - 2026-09 사용자 요청: "모든 배지에
+   순위표시가 빠져있다, +비교 배지처럼 좌측 상단에 순위를 표기해달라". 기존엔 등급이
+   배경색으로만 구분돼서(gradeBadge) 숫자가 어디에도 안 보였음 - +비교 배지(우측 상단)와
+   대칭되는 좌측 상단 자리에 등급 숫자만 작게 얹어줌(범례의 색상-숫자 매핑과 동일한 배경색). */
+.grade-rank-badge {
+    position:absolute; top:-10px; left:-8px;
+    color:white; font-size:9px; font-weight:900;
+    padding:1px 6px; border-radius:10px; white-space:nowrap;
+    box-shadow:0 1px 3px rgba(0,0,0,0.35); border:1.5px solid white; z-index:4;
+}
 /* 낙찰사례(⚖️) 배지 위 개별 재매칭/삭제 버튼 - +비교 배지와 같은 자리(모서리) 패턴을
    그대로 따라, 상세페이지를 열지 않고도 지도에서 바로 조작할 수 있게 함 */
 .bc-rematch-badge {
@@ -4139,6 +4149,10 @@ function createMarker(cacheKey, lat, lon, apt) {
         var estSuffix = apt.gradeEstimated ? '(추정)' : '';
         gradeBadge = '<span style="background:' + gc + ';color:white;font-size:10px;font-weight:bold;padding:2px 6px;border-radius:3px;' + estStyle + '">' + tierPrefix + pppText + estSuffix + '</span>';
     }
+    // 등급 순위 배지(좌측 상단, +비교 배지와 대칭) - 2026-09 사용자 요청
+    var rankBadge = apt.grade
+        ? '<div class="grade-rank-badge" style="background:' + gc + ';">' + apt.grade + '</div>'
+        : '';
     // 낙찰사례 평균 추정마진 배지 - 이 매물의 법정동+건물유형과 같은 낙찰사례들의 추정마진
     // 평균을 평단가(gradeBadge) 배지들과 같은 줄에 보여줌. 매칭되는 낙찰사례가 하나도 없으면 표시 안 함
     var marginStat = getDongTypeMarginStat(l.dong, apt.buildingType);
@@ -4221,6 +4235,7 @@ function createMarker(cacheKey, lat, lon, apt) {
         ? '<div style="display:flex;flex-wrap:wrap;justify-content:center;gap:3px;margin-top:3px;">' + gradeBadge + marginBadge + nhBadge + surgeBadge + lfBadge + '</div>'
         : '';
     div.innerHTML = ''
+        + rankBadge
         + auctionRibbon
         + bidCaseRibbon
         + (count > 0 ? '<div style="font-size:15px;font-weight:900;color:' + color + ';">' + count + '건</div>' : '')
