@@ -879,12 +879,22 @@ async function getUnsoldComplexList(force) {
      );
 ════════════════════════════════════ */
 const LF_FRESH_MS = 1000 * 60 * 60 * 24; // 24시간 - 하루 안에 여러 번 볼 이유가 없는 무거운 집계라 넉넉히
-// ⚠️ 2026-09(#458): 과거자료(2017-09~)가 다 들어와서 house_trades가 실질적으로 9년치를
-// 커버하게 됨에 따라 버킷 수를 7→26으로 늘림(아파트 40일×26구간≈2.85년 - 2022년 하락기·
-// 2023~24년 회복기·2025~26년 흐름까지 최소 한 번 이상의 상승/하락 국면을 포괄하도록).
-// 최소 표본(LF_MIN_TOTAL_COUNT)과 최대 시차(LF_MAX_LAG)도 늘어난 버킷 수에 비례해 올림.
-const LF_BUCKET_COUNT = 26;
-const LF_MIN_TOTAL_COUNT = 20; // 26구간 합계 거래건수 - 이보다 적으면 대장/후발주자 후보 모두에서 제외
+// ⚠️ 2026-09(#465, 사용자 피드백: "대장아파트 선정 창이 35개월이면 너무 짧다 - 대장=인기
+// 아파트라는 전제는 그대로면 2017년 전체이력을 봐야 한다"): 기존엔 이 상수(26버킷≈35개월)가
+// 대장 선정(시차상관)의 창 길이였는데, "대장"이 유행이 아니라 그 동네에서 오래 자리잡은
+// 지위라는 사용자 지적에 따라 창을 2017-09(과거자료 백필 시작 시점)~오늘 전체이력으로
+// 늘림(아래 computeLeaderFollowerFresh에서 bucketN을 동적으로 계산). 이 상수는 더 이상 안
+// 쓰이지만, 버킷 크기(40일)당 통계적으로 의미 있는 최소 표본이 얼마였는지 기록해두기 위해
+// 남겨둠(LF_MAX_LAG/LF_LEAD_MIN_CORR가 이 크기 기준으로 검증됐던 값들 - #460 참고).
+const LF_MIN_TOTAL_COUNT = 20; // 전체이력 합계 거래건수 - 이보다 적으면 대장/후발주자 후보 모두에서 제외
+// ⚠️ 2026-09(#465, 사용자 피드백: "신축단지는 생긴 다음부터 계산되어 순위에 속할 수 있게
+// 해달라"): 창을 전체이력으로 늘리면서, 창 중간에 처음 등장한(=신축) 단지를 창 시작부터
+// 존재했던 것처럼 취급하면(예전 fillBucketSeries의 역채움 방식) 실제로 없었던 기간까지
+// "가격이 안 변한 것"으로 잡혀 시차상관이 오염됨 - 그래서 각 단지는 자신의 첫 실거래
+// 버킷(genesisIdx)부터만 시계열을 만듦. 다만 활동기간이 이 값(버킷 수)보다 짧으면 시차상관
+// 자체를 시도하지 않음(표본 3~4개로 상관계수를 내면 노이즈일 뿐임) - 순위 포함 여부와는
+// 무관(총 거래건수 요건만 만족하면 순위엔 그대로 들어감).
+const LF_MIN_ACTIVE_BUCKETS = 8; // 아파트 기준 40일×8≈10.7개월
 const LF_MIN_CORR = 0.3; // 이 미만이면 "우연히 같이 움직인 걸로 보기 어렵다"고 판단해 제외
 const LF_MAX_LAG = 6; // 0~6구간(아파트 기준 최대 240일≈8개월) 뒤처짐까지 확인
 // ⚠️ 2026-09: corrByLag 진단(lag 1~16 전체 곡선) 결과, 상관계수가 lag별로 완만한 봉우리 없이
@@ -932,42 +942,33 @@ async function computeLeaderFollowerFresh(type, region) {
   const bucketDays = bucketDaysFor(type);
   const minCount = minBucketCountFor(type);
   const today = todayInt();
-  const buckets = [];
-  for (let i = 0; i < LF_BUCKET_COUNT; i++) {
-    const startDays = bucketDays * (LF_BUCKET_COUNT - i), endDays = bucketDays * (LF_BUCKET_COUNT - 1 - i);
-    buckets.push({ start: daysAgoInt(startDays), end: i === LF_BUCKET_COUNT - 1 ? today + 1 : daysAgoInt(endDays) });
-  }
-  const bucketMaps = await Promise.all(buckets.map(b => getBucketDanjiPrices(type, b.start, b.end, region)));
-  // ⚠️ 2026-09(#464, 사용자 피드백): "순위를 단순 거래량으로만 매기는 건 잘못됐다 - 17년도
-  // 자료부터 근거자료로 써서 대장아파트를 꼽은 것처럼, 평단가·거래량·세대수대비 회전율 등으로
-  // 정말 가치있는 2등·3등을 골라야 한다"는 지적 반영. 위 26버킷(최근 약 35개월)은 대장의
-  // "선행성(시차상관)" 판정용 창일 뿐이라 원래도 순위용 근거로 쓰기엔 기간이 짧음 - 그래서
-  // 순위 계산 전용으로 2017-09(과거자료 백필 시작 시점) ~ 오늘 전체 이력을 한 번 더(단일
-  // 버킷) 집계 조회함. rpc_bucket_avg_price가 이미 서버에서 groupby 집계해 반환하므로
-  // (get-house.js처럼 원시 row를 클라이언트로 내려주는 방식이 아님) 9년치를 한 번에 물어도
-  // 응답은 danji당 1행뿐이라 부담이 없음.
+  // ⚠️ 2026-09(#465, 사용자 피드백: "대장 선정 창(35개월)이 너무 짧다 - 대장=인기아파트라는
+  // 전제가 그대로면 2017년 전체이력을 봐야 한다" + "신축단지는 생긴 다음부터 계산되어 순위에
+  // 속할 수 있게 해달라"): 2017-09(과거자료 백필 시작 시점)~오늘 전체를 대장 선정(시차상관)
+  // 창으로 씀. 버킷을 JS에서 여러 번 왕복해 가져오던 기존 방식(26회 Promise.all)을 그대로
+  // 늘리면 80개 이상 버킷이 되어 동시 커넥션이 크게 늘어나는데, #422/#423에서 "경기"처럼 큰
+  // 스코프를 병렬조회했을 때 타임아웃이 실측된 바 있어(이번엔 시/군/구 1곳 스코프라 상대적으로
+  // 가볍지만 굳이 감수할 위험은 아니라 판단) 버킷 나누기 자체를 SQL에서 한 번에 처리하는
+  // rpc_bucket_series_avg_price(migration_leader_series_rpc.sql)로 교체해 왕복을 1번으로
+  // 줄임. 이 RPC는 momentum 계열(rpc_bucket_avg_price)과 달리 신축(준공 2~3년 이내) 거래를
+  // 배제하지 않으므로 신축단지도 첫 거래 시점부터 danji 집계에 정상적으로 잡힘.
   const FULL_HIST_START = 20170901;
-  const fullHistMap = await getBucketDanjiPrices(type, FULL_HIST_START, today + 1, region);
-  const fullHistByDong = {}; // dong -> danjiName -> { avg, count }
-  Object.values(fullHistMap).forEach((entry) => {
-    if (!fullHistByDong[entry.dong]) fullHistByDong[entry.dong] = {};
-    Object.entries(entry.danjis).forEach(([danjiName, d]) => {
-      fullHistByDong[entry.dong][danjiName] = { avg: d.avg, count: d.count };
-    });
-  });
   function intToDate(n) { const s = String(n); return new Date(+s.slice(0, 4), +s.slice(4, 6) - 1, +s.slice(6, 8)); }
-  const FULL_HIST_DAYS = Math.max(1, Math.round((intToDate(today + 1) - intToDate(FULL_HIST_START)) / 86400000));
-  // dongMap: dong -> danjiName -> { avgArr[N], countArr[N] }
+  const totalDays = Math.max(1, Math.round((intToDate(today + 1) - intToDate(FULL_HIST_START)) / 86400000));
+  const bucketN = Math.max(1, Math.ceil(totalDays / bucketDays));
+  const seriesMap = await getBucketSeriesDanjiPrices(type, FULL_HIST_START, today + 1, bucketDays, region);
+  // dongMap: dong -> danjiName -> { avgArr[bucketN](null=이 구간 거래 없음), countArr[bucketN](0=거래 없음) }
   const dongMap = {};
-  bucketMaps.forEach((m, bi) => {
-    Object.values(m).forEach(entry => {
-      const dong = entry.dong;
-      if (!dongMap[dong]) dongMap[dong] = {};
-      Object.entries(entry.danjis).forEach(([danjiName, d]) => {
-        if (!danjiName || danjiName === '(단지미상)') return; // 단지명 없는 거래는 대장/후발주자 비교 대상에서 제외
-        if (!dongMap[dong][danjiName]) dongMap[dong][danjiName] = { avgArr: new Array(LF_BUCKET_COUNT).fill(null), countArr: new Array(LF_BUCKET_COUNT).fill(0) };
-        dongMap[dong][danjiName].avgArr[bi] = d.avg;
-        dongMap[dong][danjiName].countArr[bi] = d.count;
+  Object.values(seriesMap).forEach((entry) => {
+    const dong = entry.dong;
+    if (!dongMap[dong]) dongMap[dong] = {};
+    Object.entries(entry.danjis).forEach(([danjiName, buckets]) => {
+      if (!danjiName || danjiName === '(단지미상)') return; // 단지명 없는 거래는 대장/후발주자 비교 대상에서 제외
+      if (!dongMap[dong][danjiName]) dongMap[dong][danjiName] = { avgArr: new Array(bucketN).fill(null), countArr: new Array(bucketN).fill(0) };
+      buckets.forEach((b) => {
+        if (b.idx < 0 || b.idx >= bucketN) return; // 방어적 처리(경계 반올림 오차 대비)
+        dongMap[dong][danjiName].avgArr[b.idx] = b.avg;
+        dongMap[dong][danjiName].countArr[b.idx] = b.count;
       });
     });
   });
@@ -1001,7 +1002,19 @@ async function computeLeaderFollowerFresh(type, region) {
       });
     }
   } catch (e) { /* K-apt 조회 실패해도 막지 않음 - 회전율 없이 가격 기준 폴백으로 계속 진행 */ }
-  const windowDays = bucketDays * LF_BUCKET_COUNT;
+
+  // ⚠️ 2026-09(#465): 창을 전체이력으로 늘리면서, 창 중간에 처음 등장한(=신축) 단지를 창
+  // 시작부터 존재했던 것처럼 취급하면(예전 fillBucketSeries의 역채움 방식) 실제로 없었던
+  // 기간까지 "가격이 안 변한 것"으로 잡혀 시차상관이 오염됨(진짜 신축 강세단지가 선행성
+  // 문턱을 못 넘게 될 수 있음). 그래서 각 단지는 자신의 첫 실거래 버킷(genesisIdx)부터만
+  // 시계열을 만듦 - "신축단지는 생긴 다음부터 계산되게 해달라"는 요청을 정확히 반영.
+  function genesisSeries(avgArr, countArr) {
+    const genesisIdx = avgArr.findIndex((_, i) => (countArr[i] || 0) > 0);
+    if (genesisIdx < 0) return null; // 실거래가 아예 없음
+    const filled = fillBucketSeries(avgArr.slice(genesisIdx), countArr.slice(genesisIdx), minCount);
+    if (!filled) return null;
+    return { genesisIdx, filled };
+  }
 
   const leaders = [];
   const candidates = []; // 순위 매길 후보(대장 자신은 제외)
@@ -1010,21 +1023,23 @@ async function computeLeaderFollowerFresh(type, region) {
     const qualified = Object.entries(danjis)
       .map(([name, d]) => {
         const totalCount = d.countArr.reduce((a, b) => a + b, 0);
-        const filled = fillBucketSeries(d.avgArr, d.countArr, minCount);
-        if (!filled || totalCount < LF_MIN_TOTAL_COUNT) return null;
-        const baseline = filled.prices.reduce((a, b) => a + b, 0) / filled.prices.length;
+        const g = genesisSeries(d.avgArr, d.countArr);
+        if (!g || totalCount < LF_MIN_TOTAL_COUNT) return null;
+        const baseline = g.filled.prices.reduce((a, b) => a + b, 0) / g.filled.prices.length;
         const households = householdMap[`${dong}|${normalizeComplexName(name)}`] || null;
-        // 연환산 회전율(%) = 구간 내 거래건수÷세대수를 1년 기준으로 환산 - "1년에 세대의 몇 %가
-        // 거래되는지"로 단지 규모와 무관하게 비교 가능한 값으로 만듦
-        const turnoverPct = households ? Math.round((totalCount / households) * (365 / windowDays) * 1000) / 10 : null;
-        // ⚠️ 2026-09(#464): 순위(2등·3등) 산정 전용 - 2017-09~ 전체 이력 기준 평단가/거래량과,
-        // 그 전체 거래량으로 다시 계산한 회전율. 대장의 선행성 판정(위 turnoverPct/households)은
-        // 그대로 35개월 창을 씀 - 그건 "최근 흐름"을 봐야 하는 다른 목적이라 건드리지 않음.
-        const fh = (fullHistByDong[dong] || {})[name] || null;
-        const fullPpp = fh ? fh.avg : baseline;
-        const fullCount = fh ? fh.count : totalCount;
-        const fullTurnoverPct = households ? Math.round((fullCount / households) * (365 / FULL_HIST_DAYS) * 1000) / 10 : null;
-        return { name, totalCount, filled, baseline, households, turnoverPct, fullPpp, fullCount, fullTurnoverPct, avgArr: d.avgArr, countArr: d.countArr };
+        // 연환산 회전율(%) = 이 단지가 실제로 존재했던 기간(activeDays, genesisIdx부터)만
+        // 분모로 써서 "1년에 세대의 몇 %가 거래되는지"를 계산 - 전체 9년을 분모로 쓰면 최근에
+        // 생긴 신축단지의 회전율이 실제보다 한참 낮게 나오는 왜곡이 생김(#465).
+        const activeDays = (bucketN - g.genesisIdx) * bucketDays;
+        const turnoverPct = households ? Math.round((totalCount / households) * (365 / activeDays) * 1000) / 10 : null;
+        // ⚠️ 2026-09(#465): 창을 전체이력으로 통일하면서 #464에서 따로 조회하던 "전체이력
+        // 평단가/거래량/회전율(fullPpp/fullCount/fullTurnoverPct)"이 대장 선정용 지표와 완전히
+        // 같은 데이터가 됨 - 별도 조회 없이 그대로 재사용(중복 계산 제거).
+        return {
+          name, totalCount, filled: g.filled, genesisIdx: g.genesisIdx, avgArr: d.avgArr, countArr: d.countArr,
+          baseline, households, turnoverPct,
+          fullPpp: baseline, fullCount: totalCount, fullTurnoverPct: turnoverPct,
+        };
       })
       .filter(Boolean);
     if (qualified.length < 2) return; // 대장-후발주자 관계 자체가 성립하려면 최소 2개 단지 필요
@@ -1037,7 +1052,6 @@ async function computeLeaderFollowerFresh(type, region) {
     // 항상 높게 나오는 자기상관 문제가 생김 - 자신을 뺀 나머지와 비교해야 "내가 나머지를
     // 이끈다"는 관계가 깨끗하게 나옴.) 데이터가 얇아 이 판정이 안 되는 법정동은 기존 방식
     // (회전율 1위 → 그마저 안 되면 평단가 1위)으로 순서대로 폴백함.
-    const bucketN = LF_BUCKET_COUNT; // ⚠️ 아래쪽 leaderRecentPct 계산에서 쓰는 n(=leader.filled.prices.length)과 이름 겹치지 않게 별도로 둠
     const sumWeighted = new Array(bucketN).fill(0), sumCount = new Array(bucketN).fill(0);
     qualified.forEach((d) => {
       for (let i = 0; i < bucketN; i++) {
@@ -1046,19 +1060,26 @@ async function computeLeaderFollowerFresh(type, region) {
       }
     });
     qualified.forEach((d) => {
+      d.leadCorr = null; d.leadLag = null; d.corrByLag = [];
+      // ⚠️ 2026-09(#465): 활동기간이 너무 짧으면(방금 생긴 신축단지 등) 시차상관 자체를
+      // 시도하지 않음(표본 3~4개짜리 상관계수는 노이즈일 뿐) - 순위 포함 여부와는 무관, 총
+      // 거래건수 요건(LF_MIN_TOTAL_COUNT)만 만족하면 순위엔 그대로 들어감.
+      if (bucketN - d.genesisIdx < LF_MIN_ACTIVE_BUCKETS) return;
       const restAvgArr = new Array(bucketN), restCountArr = new Array(bucketN);
       for (let i = 0; i < bucketN; i++) {
         const rc = sumCount[i] - (d.countArr[i] || 0);
         restCountArr[i] = rc;
         restAvgArr[i] = rc > 0 ? (sumWeighted[i] - (d.avgArr[i] || 0) * (d.countArr[i] || 0)) / rc : null;
       }
-      const restFilled = fillBucketSeries(restAvgArr, restCountArr, minCount);
+      // 이 단지가 존재하기 시작한 시점(genesisIdx)부터만 나머지 동네와 비교함 - 그 이전엔 이
+      // 단지가 없었으니 "선행/후행" 관계 자체가 성립하지 않음.
+      const restSub = fillBucketSeries(restAvgArr.slice(d.genesisIdx), restCountArr.slice(d.genesisIdx), minCount);
       let bestCorr = null, bestLag = null;
       const corrByLag = [];
-      if (restFilled) {
+      if (restSub) {
         for (let lag = 1; lag <= LF_DIAG_MAX_LAG; lag++) {
           const leaderPart = d.filled.returns.slice(0, d.filled.returns.length - lag);
-          const restPart = restFilled.returns.slice(lag);
+          const restPart = restSub.returns.slice(lag);
           const c = pearsonCorr(leaderPart, restPart);
           corrByLag.push([lag, c != null ? Math.round(c * 1000) / 1000 : null]);
           if (lag <= LF_MAX_LAG && c != null && (bestCorr == null || c > bestCorr)) { bestCorr = c; bestLag = lag; }
@@ -1089,7 +1110,7 @@ async function computeLeaderFollowerFresh(type, region) {
       }
     }
     const n = leader.filled.prices.length;
-    const leaderRecentPct = Math.round(((leader.filled.prices[n - 1] / leader.filled.prices[n - 3]) - 1) * 1000) / 10;
+    const leaderRecentPct = n >= 3 ? Math.round(((leader.filled.prices[n - 1] / leader.filled.prices[n - 3]) - 1) * 1000) / 10 : 0;
     leaders.push({
       dong, danji: leader.name, totalCount: leader.totalCount, ppp: Math.round(leader.baseline), recentPct: leaderRecentPct,
       households: leader.households, turnoverPct: leader.turnoverPct, leaderSource,
@@ -1099,14 +1120,23 @@ async function computeLeaderFollowerFresh(type, region) {
     });
     if (leaderRecentPct <= 0) return; // 대장 자체가 안 올랐으면 "따라 오를 후발주자"라는 전제가 성립하지 않음
     qualified.filter((f) => f.name !== leader.name).forEach(f => {
-      const followerRecentPct = Math.round(((f.filled.prices[n - 1] / f.filled.prices[n - 3]) - 1) * 1000) / 10;
+      const fn = f.filled.prices.length;
+      const followerRecentPct = fn >= 3 ? Math.round(((f.filled.prices[fn - 1] / f.filled.prices[fn - 3]) - 1) * 1000) / 10 : 0;
       const gapPct = Math.round((leaderRecentPct - followerRecentPct) * 10) / 10;
+      // ⚠️ 2026-09(#465): 대장과 후발주자 후보의 활동기간(genesisIdx)이 서로 다를 수 있음
+      // (특히 후보가 신축인 경우) - 두 단지가 함께 존재했던 겹치는 구간(calendar overlap)만
+      // 잘라내 상관계수를 계산함. 그렇지 않으면 서로 다른 시점의 가격흐름을 비교하는 오류가
+      // 생김(예: 후발주자의 최근 3개월치 returns를 대장의 9년 전 returns와 비교하게 됨).
+      const overlapStart = Math.max(leader.genesisIdx, f.genesisIdx);
+      const leaderOff = overlapStart - leader.genesisIdx, followerOff = overlapStart - f.genesisIdx;
       let bestCorr = null, bestLag = null;
-      for (let lag = 0; lag <= LF_MAX_LAG; lag++) {
-        const followerReturns = f.filled.returns.slice(lag);
-        const leaderReturns = leader.filled.returns.slice(0, leader.filled.returns.length - lag);
-        const c = pearsonCorr(leaderReturns, followerReturns);
-        if (c != null && (bestCorr == null || c > bestCorr)) { bestCorr = c; bestLag = lag; }
+      if (leader.filled.returns.length - leaderOff >= 3 && f.filled.returns.length - followerOff >= 3) {
+        for (let lag = 0; lag <= LF_MAX_LAG; lag++) {
+          const followerReturns = f.filled.returns.slice(followerOff + lag);
+          const leaderReturns = leader.filled.returns.slice(leaderOff, leader.filled.returns.length - lag);
+          const c = pearsonCorr(leaderReturns, followerReturns);
+          if (c != null && (bestCorr == null || c > bestCorr)) { bestCorr = c; bestLag = lag; }
+        }
       }
       const qualifies = bestCorr != null && bestCorr >= LF_MIN_CORR && gapPct > 0;
       let reason = null;
@@ -1191,7 +1221,7 @@ async function computeLeaderFollowerFresh(type, region) {
   // 동 그룹의 나열 순서도 같은 기준으로 "이 동 1위 단지의 종합 가치점수"가 높은 순으로 둠.
   rankedByDong.sort((a, b) => b.topScore - a.topScore);
   leaders.sort((a, b) => b.totalCount - a.totalCount);
-  return { region, type, bucketDays, bucketCount: LF_BUCKET_COUNT, leaders, rankedByDong, unranked, totalCandidates: candidates.length };
+  return { region, type, bucketDays, bucketCount: bucketN, histStart: FULL_HIST_START, leaders, rankedByDong, unranked, totalCandidates: candidates.length };
 }
 async function getLeaderFollowerRank(type, region, force) {
   const cacheId = region + '|' + type;
@@ -2067,6 +2097,30 @@ async function getBucketDanjiPrices(type, start, end, sido) {
     });
     return acc;
   } catch (e) { console.warn(`priceMomentum(rpc): ${type} 조회 예외 -`, e.message); return {}; }
+}
+// ⚠️ 2026-09(#465): leaderFollower(대장/후발주자) 전용 - [p_start,p_end)를 p_bucket_days
+// 간격으로 잘라 (region,dong,danji)별 시계열을 SQL에서 한 번에 집계해 옴(왕복 1번,
+// rpc_bucket_series_avg_price - migration_leader_series_rpc.sql 참고). 위 getBucketDanjiPrices
+// (rpc_bucket_avg_price)와 달리 신축(준공 2~3년 이내) 거래를 배제하지 않음 - leaderFollower는
+// 신축단지도 생긴 시점부터 정상적으로 후보에 잡혀야 하기 때문(momentum 계열 함수엔 영향 없음).
+// 반환: { [region|dong]: { region, dong, danjis: { [danjiName]: [{idx, avg, count}, ...] } } }
+async function getBucketSeriesDanjiPrices(type, start, end, bucketDays, sido) {
+  try {
+    const { data, error } = await supabase.rpc('rpc_bucket_series_avg_price', {
+      p_start: start, p_end: end, p_bucket_days: bucketDays, p_sido: sido || null, p_type: type,
+      p_min_size: MOMENTUM_SIZE_MIN, p_max_size: MOMENTUM_SIZE_MAX,
+    });
+    if (error) { console.warn(`leaderFollower(rpc_series): ${type} 조회 실패 -`, error.message); return {}; }
+    const acc = {};
+    (data || []).forEach(r => {
+      const key = r.region + '|' + r.dong;
+      if (!acc[key]) acc[key] = { region: r.region, dong: r.dong, danjis: {} };
+      const danjiName = r.danji || '(단지미상)';
+      if (!acc[key].danjis[danjiName]) acc[key].danjis[danjiName] = [];
+      acc[key].danjis[danjiName].push({ idx: Number(r.bucket_idx), avg: Number(r.avg_price), count: Number(r.cnt) });
+    });
+    return acc;
+  } catch (e) { console.warn(`leaderFollower(rpc_series): ${type} 조회 예외 -`, e.message); return {}; }
 }
 // 전국(시/도 미지정) 조회 전용 - dong 단위(danji 없이) 평단가/건수를 받아옴.
 // getPriceMomentumSimple에서만 씀(아래 getPriceMomentum 주석 참고).
