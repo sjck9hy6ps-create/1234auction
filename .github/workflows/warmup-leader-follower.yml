@@ -1,0 +1,27 @@
+name: 대장/후발주자 인기순위 캐시 웜업 (전국, 서울 포함)
+
+on:
+  workflow_dispatch:
+  schedule:
+    # 매일 UTC 19:00(KST 04:00) - 위치/get-house 웜업(03:00~03:30 KST) 직후 시간대.
+    # leaderFollower API 자체가 24시간 캐시라 매일 돌려도 실제로 무거운 재계산이
+    # 일어나는 지역은 "캐시가 만료됐거나 처음인" 지역뿐임(scripts/warmup-leader-follower.mjs
+    # 상단 주석 참고) - 그래서 get-house 웜업(주 1회로 낮춘 것)과 달리 매일 유지함.
+    # ⚠️ 2026-09(사용자 요청): 서울도 웜업 대상에 포함됨(mode=regionList/leaderFollower
+    # API가 서울을 더 이상 거부하지 않도록 백엔드 제한을 풀었음) - 대상 지역이 늘어난
+    # 만큼 아래 timeout-minutes에 여유를 둠.
+    - cron: '0 19 * * *'
+
+jobs:
+  warmup-leader-follower:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: 대장/후발주자 캐시 웜업 실행
+        env:
+          SITE_URL: https://1234auction.vercel.app
+        run: node scripts/warmup-leader-follower.mjs
