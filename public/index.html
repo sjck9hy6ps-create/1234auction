@@ -17247,9 +17247,18 @@ function renderLeaderFollowerBody(data) {
         + 'ℹ️ 과거 대장아파트와 같이 움직인 이력(상관계수)이 있고, 대장은 최근 올랐는데 이 단지는 아직 덜 오른 경우만 "후발주자 후보"로 순위를 매겨요. 통계 표본이 짧아(최근 ' + Math.round(data.bucketDays * data.bucketCount / 30) + '개월) 확정 예측이 아니라 참고 신호로만 활용해 주세요.</div>';
     if (data.leaders && data.leaders.length) {
         html += '<div style="margin:8px 14px 0;font-size:11.5px;font-weight:bold;color:#4a148c;">🏆 법정동별 대장아파트</div>'
-            + '<div style="margin:4px 14px 0;font-size:10.5px;color:#555;max-height:90px;overflow-y:auto;border:1px solid #f0f0f0;border-radius:6px;padding:6px 8px;">'
+            + '<div style="margin:2px 14px 0;font-size:9.5px;color:#999;">대장 선정 기준(1순위): 이 동네 시세를 실제로 먼저 반영하는(선행하는) 단지 - 과거 여러 해 데이터로 "이 단지가 먼저 움직이고 몇 구간 뒤에 동네 나머지가 따라 움직였는지" 시차상관을 확인해서 뽑음. 이 판정이 안 되는 곳은 회전율(세대수 대비 거래빈도) → 평단가 순으로 대체 선정(출처 표시).</div>'
+            + '<div style="margin:4px 14px 0;font-size:10.5px;color:#555;max-height:130px;overflow-y:auto;border:1px solid #f0f0f0;border-radius:6px;padding:6px 8px;">'
             + data.leaders.map(function(l) {
-                return '<div style="padding:2px 0;">' + cleanField(l.dong) + ' · <b>' + cleanField(l.danji) + '</b> (' + l.ppp.toLocaleString() + '만/평, 최근 ' + (l.recentPct >= 0 ? '+' : '') + l.recentPct + '%)</div>';
+                var sourceTxt;
+                if (l.leaderSource === 'lead_lag') {
+                    sourceTxt = '🥇 선행지표 확인됨(동네 나머지보다 ' + l.leadLag + '구간 먼저 움직임, 상관 ' + Math.round(l.leadCorr * 100) + '%)';
+                } else if (l.leaderSource === 'turnover') {
+                    sourceTxt = '회전율 기준 대체(선행성 미확인) - 연 ' + l.turnoverPct + '%, ' + l.households.toLocaleString() + '세대';
+                } else {
+                    sourceTxt = '⚠️ 평단가 기준 대체(선행성·회전율 모두 미확인)';
+                }
+                return '<div style="padding:2px 0;">' + cleanField(l.dong) + ' · <b>' + cleanField(l.danji) + '</b> (' + l.ppp.toLocaleString() + '만/평, 최근 ' + (l.recentPct >= 0 ? '+' : '') + l.recentPct + '%)<br><span style="color:#888;">' + sourceTxt + '</span></div>';
             }).join('')
             + '</div>';
     }
