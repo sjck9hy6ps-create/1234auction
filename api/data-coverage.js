@@ -2175,6 +2175,45 @@ async function getBoundary(sggCd, wantRaw) {
 }
 
 export default async function handler(req, res) {
+  // 진단 전용(mode=monthlyGapCheck) - 2026-09 추가. 사용자 요청: "지방아파트 매매 데이터에
+  // 백데이터(CSV)를 채워넣기 전에, 지금 업로드된 기간 안에 비어있는 달이 있는지 먼저 확인하고
+  // 싶다"에 대응. house_trades(또는 villa_trades)의 min~max 기간을 월 단위로 잘라서 달마다
+  // 전체 건수와 "지방"(서울·경기·인천 제외) 건수를 세어봄 - 정상 수집된 달은 수만 건씩
+  // 꾸준히 나오므로, 유독 0건이거나 확 줄어든 달이 있으면 그 기간의 수집이 비어있다는 뜻.
+  if (req.query.mode === 'monthlyGapCheck') {
+    res.setHeader('Cache-Control', 'no-store');
+    try {
+      const table = req.query.table === 'villa' ? 'villa_trades' : 'house_trades';
+      const range = await getRange(table);
+      if (range.min == null || range.max == null) return res.status(200).json({ table, months: [], warnings: range.warnings });
+      const toDate = n => new Date(Math.floor(n / 10000), Math.floor((n % 10000) / 100) - 1, n % 100);
+      const start = toDate(range.min), end = toDate(range.max);
+      const months = [];
+      let cur = new Date(start.getFullYear(), start.getMonth(), 1);
+      while (cur <= end) {
+        const next = new Date(cur.getFullYear(), cur.getMonth() + 1, 1);
+        const y = cur.getFullYear(), m = String(cur.getMonth() + 1).padStart(2, '0');
+        const ny = next.getFullYear(), nm = String(next.getMonth() + 1).padStart(2, '0');
+        months.push({ label: `${y}-${m}`, start: parseInt(`${y}${m}01`, 10), end: parseInt(`${ny}${nm}01`, 10) });
+        cur = next;
+      }
+      const results = [];
+      for (const mo of months) {
+        const { count: totalCount, error: e1 } = await supabase.from(table).select('*', { count: 'estimated', head: true })
+          .gte('deal_date', mo.start).lt('deal_date', mo.end);
+        const { count: nonMetroCount, error: e2 } = await supabase.from(table).select('*', { count: 'estimated', head: true })
+          .gte('deal_date', mo.start).lt('deal_date', mo.end)
+          .not('region', 'ilike', '서울%').not('region', 'ilike', '경기%').not('region', 'ilike', '인천%');
+        results.push({
+          month: mo.label, totalCount: totalCount || 0, nonMetroCount: nonMetroCount || 0,
+          error: (e1 && e1.message) || (e2 && e2.message) || null,
+        });
+      }
+      return res.status(200).json({ table, min: range.min, max: range.max, months: results });
+    } catch (err) {
+      return res.status(500).json({ error: err.message });
+    }
+  }
   // ⚠️ 2026-09(카카오 coord2RegionCode 일일 쿼터(10만건/일) 소진 사례 - "API limit has been
   // exceeded" code -10): 좌표→법정동코드 변환 결과를 격자(소수점4자리, 위경도 약 11m) 단위로
   // Supabase에 영구 캐시함. 대한민국 행정구역 경계는 거의 안 바뀌므로 TTL 없이 계속 재사용 -
