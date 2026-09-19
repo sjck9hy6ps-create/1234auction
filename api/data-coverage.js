@@ -945,18 +945,46 @@ async function computeLeaderFollowerFresh(type, region) {
   // ⚠️ 2026-09(#465, 사용자 피드백: "대장 선정 창(35개월)이 너무 짧다 - 대장=인기아파트라는
   // 전제가 그대로면 2017년 전체이력을 봐야 한다" + "신축단지는 생긴 다음부터 계산되어 순위에
   // 속할 수 있게 해달라"): 2017-09(과거자료 백필 시작 시점)~오늘 전체를 대장 선정(시차상관)
-  // 창으로 씀. 버킷을 JS에서 여러 번 왕복해 가져오던 기존 방식(26회 Promise.all)을 그대로
-  // 늘리면 80개 이상 버킷이 되어 동시 커넥션이 크게 늘어나는데, #422/#423에서 "경기"처럼 큰
-  // 스코프를 병렬조회했을 때 타임아웃이 실측된 바 있어(이번엔 시/군/구 1곳 스코프라 상대적으로
-  // 가볍지만 굳이 감수할 위험은 아니라 판단) 버킷 나누기 자체를 SQL에서 한 번에 처리하는
-  // rpc_bucket_series_avg_price(migration_leader_series_rpc.sql)로 교체해 왕복을 1번으로
-  // 줄임. 이 RPC는 momentum 계열(rpc_bucket_avg_price)과 달리 신축(준공 2~3년 이내) 거래를
+  // 창으로 씀. rpc_bucket_series_avg_price(migration_leader_series_rpc.sql)가 SQL에서 버킷
+  // 나누기까지 다 처리하므로 이 자체는 1번 호출로 충분한데, 9년치를 한 번에 긁으면(#466 실측)
+  // Postgres statement_timeout(약 8초)에 걸림 - service_role의 timeout을 30초로 올려도
+  // (migration_service_role_timeout.sql) 반영이 안 되는 게 실측 확인돼서(Supabase 커넥션
+  // 풀러 쪽 사정으로 추정, 서버 설정에 기대는 방식은 신뢰할 수 없다고 판단) 서버 설정과
+  // 무관하게 동작하도록 스캔 범위 자체를 여러 해씩 쪼개 순차 호출함(#422/#423과 동일하게
+  // 순차 - 동시 커넥션을 늘리지 않음). bucket_idx는 p_bucket_origin(항상 전체 조회의 시작일
+  // 고정)을 기준으로 계산되므로, 청크별로 스캔 범위(p_start/p_end)만 좁혀도 반환되는
+  // bucket_idx는 전체 기준으로 일관됨 - 그래서 청크 결과를 그대로 합치기만 하면 됨.
+  // 이 RPC는 momentum 계열(rpc_bucket_avg_price)과 달리 신축(준공 2~3년 이내) 거래를
   // 배제하지 않으므로 신축단지도 첫 거래 시점부터 danji 집계에 정상적으로 잡힘.
   const FULL_HIST_START = 20170901;
   function intToDate(n) { const s = String(n); return new Date(+s.slice(0, 4), +s.slice(4, 6) - 1, +s.slice(6, 8)); }
+  function addDaysToInt(dateInt, days) {
+    const d = intToDate(dateInt);
+    d.setDate(d.getDate() + days);
+    return d.getFullYear() * 10000 + (d.getMonth() + 1) * 100 + d.getDate();
+  }
   const totalDays = Math.max(1, Math.round((intToDate(today + 1) - intToDate(FULL_HIST_START)) / 86400000));
   const bucketN = Math.max(1, Math.ceil(totalDays / bucketDays));
-  const seriesMap = await getBucketSeriesDanjiPrices(type, FULL_HIST_START, today + 1, bucketDays, region);
+  // ⚠️ 2026-09(#466): 청크 하나당 약 1.5~2년 분량(20버킷) - 실측상 9년(83버킷) 한 번에
+  // 조회하면 8~9초로 타임아웃 문턱에 걸리므로, 이 크기면 청크당 여유 있게 안전권.
+  const LF_QUERY_CHUNK_BUCKETS = 20;
+  const seriesMap = {};
+  function mergeSeriesMap(target, src) {
+    Object.entries(src).forEach(([key, entry]) => {
+      if (!target[key]) target[key] = { region: entry.region, dong: entry.dong, danjis: {} };
+      Object.entries(entry.danjis).forEach(([danjiName, buckets]) => {
+        if (!target[key].danjis[danjiName]) target[key].danjis[danjiName] = [];
+        target[key].danjis[danjiName].push(...buckets);
+      });
+    });
+  }
+  for (let cs = 0; cs < bucketN; cs += LF_QUERY_CHUNK_BUCKETS) {
+    const ce = Math.min(cs + LF_QUERY_CHUNK_BUCKETS, bucketN);
+    const chunkStart = addDaysToInt(FULL_HIST_START, cs * bucketDays);
+    const chunkEnd = ce >= bucketN ? today + 1 : addDaysToInt(FULL_HIST_START, ce * bucketDays);
+    const chunkMap = await getBucketSeriesDanjiPrices(type, chunkStart, chunkEnd, FULL_HIST_START, bucketDays, region);
+    mergeSeriesMap(seriesMap, chunkMap);
+  }
   // dongMap: dong -> danjiName -> { avgArr[bucketN](null=이 구간 거래 없음), countArr[bucketN](0=거래 없음) }
   const dongMap = {};
   Object.values(seriesMap).forEach((entry) => {
@@ -2105,10 +2133,10 @@ async function getBucketDanjiPrices(type, start, end, sido) {
 // 신축단지도 생긴 시점부터 정상적으로 후보에 잡혀야 하기 때문(momentum 계열 함수엔 영향 없음).
 // 반환: { [region|dong]: { region, dong, danjis: { [danjiName]: [{idx, avg, count}, ...] } } }
 let _lastRpcSeriesDebug = null; // ⚠️ 2026-09 임시 진단용 - 원인 확인 후 제거 예정
-async function getBucketSeriesDanjiPrices(type, start, end, bucketDays, sido) {
+async function getBucketSeriesDanjiPrices(type, start, end, bucketOrigin, bucketDays, sido) {
   try {
     const { data, error } = await supabase.rpc('rpc_bucket_series_avg_price', {
-      p_start: start, p_end: end, p_bucket_days: bucketDays, p_sido: sido || null, p_type: type,
+      p_start: start, p_end: end, p_bucket_origin: bucketOrigin, p_bucket_days: bucketDays, p_sido: sido || null, p_type: type,
       p_min_size: MOMENTUM_SIZE_MIN, p_max_size: MOMENTUM_SIZE_MAX,
     });
     if (error) {
