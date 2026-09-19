@@ -17275,7 +17275,7 @@ async function loadLeaderFollowerData() {
         var data = await readJsonResponseSafe(res);
         if (!res.ok || data.error) throw new Error((data && data.error) || ('서버 오류(' + res.status + ')'));
         statusBox.style.color = '#999';
-        statusBox.innerText = region + ' · 법정동 ' + data.leaders.length + '곳 대장아파트 기준 · 최근 ' + Math.round(data.bucketDays * data.bucketCount / 30) + '개월 데이터';
+        statusBox.innerText = region + ' · 법정동 ' + data.leaders.length + '곳 대장아파트 기준 · 2017-09~오늘 전체이력(약 ' + Math.round(data.bucketDays * data.bucketCount / 30) + '개월) 기준';
         lastLfData = data;
         // ⚠️ 2026-09(#463, 사용자 요청: "급등지역 내 메뉴에서 법정동까지 확인할 수 있는 필터를
         // 추가"): 시/군/구 전체를 한 번에 보여주면 법정동이 많을수록(동마다 최대 100위) 스크롤이
@@ -17318,11 +17318,11 @@ async function loadLeaderFollowerData() {
 // 각 행 클릭시 지도 이동.
 function renderLeaderFollowerBody(data, dongFilter) {
     var html = '<div style="font-size:10px;color:#e65100;background:#fff8e1;border-radius:6px;padding:5px 8px;margin:6px 14px 0;">'
-        + 'ℹ️ 순위는 2017-09~오늘 전체 거래이력을 근거로, 평단가·누적 거래량·세대수 대비 회전율(3개 지표를 동 안에서 백분위화해 평균한 종합 가치점수) 순으로 대장을 제외한 모든 단지에 매겨요. 그중 과거 대장아파트와 같이 움직인 이력이 있고 아직 덜 오른 단지에는 "(후발주자)" 표식이 붙어요(참고용 신호 - 확정 예측 아님). 대장의 선행성 판정 자체는 최근 ' + Math.round(data.bucketDays * data.bucketCount / 30) + '개월 표본을 씁니다.</div>';
+        + 'ℹ️ 순위는 2017-09~오늘 전체 거래이력을 근거로, 평단가·누적 거래량·세대수 대비 회전율(3개 지표를 동 안에서 백분위화해 평균한 종합 가치점수) 순으로 대장을 제외한 모든 단지에 매겨요. 그중 과거 대장아파트와 같이 움직인 이력이 있고 아직 덜 오른 단지에는 "(후발주자)" 표식이 붙어요(참고용 신호 - 확정 예측 아님). 대장의 선행성 판정도 이제 같은 2017-09~오늘 전체이력을 쓰고, 신축단지는 생긴 시점부터의 기간만으로 판정해요(그 전 기간까지 존재했던 것처럼 계산하지 않음).</div>';
     var leaders = dongFilter ? (data.leaders || []).filter(function(l) { return l.dong === dongFilter; }) : (data.leaders || []);
     if (leaders.length) {
         html += '<div style="margin:8px 14px 0;font-size:11.5px;font-weight:bold;color:#4a148c;">🏆 법정동별 대장아파트</div>'
-            + '<div style="margin:2px 14px 0;font-size:9.5px;color:#999;">대장 선정 기준(1순위): 이 동네 시세를 실제로 먼저 반영하는(선행하는) 단지 - 과거 여러 해 데이터로 "이 단지가 먼저 움직이고 몇 구간 뒤에 동네 나머지가 따라 움직였는지" 시차상관을 확인해서 뽑음. 이 판정이 안 되는 곳은 회전율(세대수 대비 거래빈도) → 평단가 순으로 대체 선정(출처 표시). 클릭하면 지도에서 위치를 볼 수 있어요.</div>'
+            + '<div style="margin:2px 14px 0;font-size:9.5px;color:#999;">대장 선정 기준(1순위): 이 동네 시세를 실제로 먼저 반영하는(선행하는) 단지 - 2017-09~오늘 전체이력으로 "이 단지가 먼저 움직이고 몇 구간 뒤에 동네 나머지가 따라 움직였는지" 시차상관을 확인해서 뽑음(신축단지는 생긴 시점부터의 기간만 봄). 이 판정이 안 되는 곳은 회전율(세대수 대비 거래빈도) → 평단가 순으로 대체 선정(출처 표시). 클릭하면 지도에서 위치를 볼 수 있어요.</div>'
             + '<div style="margin:4px 14px 0;font-size:10.5px;color:#555;max-height:130px;overflow-y:auto;border:1px solid #f0f0f0;border-radius:6px;padding:6px 8px;">'
             + leaders.map(function(l) {
                 var sourceTxt;
