@@ -2801,11 +2801,14 @@ export default async function handler(req, res) {
   if (req.query.mode === 'regionList') {
     // 후발주자 예측(mode=leaderFollower) 프론트의 시/군/구 선택 드롭다운용 - 신규 데이터
     // 없이 미분양(mode=unsoldHousing)용으로 이미 만들어둔 UNSOLD_CODE_ROWS(시도+시군구
-    // 246행)를 재사용함. "계"(시/도 전체 합계 placeholder row)와 서울은 이 기능이
-    // "서울 제외 지방"만 다루므로 제외함.
+    // 246행)를 재사용함. "계"(시/도 전체 합계 placeholder row)만 제외함.
+    // ⚠️ 2026-09(사용자 요청: "서울지역 포함해서 전국 웜업하는 워크플로우로 다시 만들어줘"):
+    // 원래는 "서울 제외 지방"만 다룬다는 의도적 결정으로 서울도 여기서 걸러냈었는데
+    // (아래 mode=leaderFollower 참고), 사용자가 서울까지 포함한 전국 커버리지를
+    // 원해서 그 제한을 풀었음 - 이제 서울도 다른 시/군/구와 동일하게 취급됨.
     const bySido = {};
     UNSOLD_CODE_ROWS.forEach(([sidoNm, , guNm]) => {
-      if (sidoNm === '서울' || guNm === '계') return;
+      if (guNm === '계') return;
       if (!bySido[sidoNm]) bySido[sidoNm] = [];
       bySido[sidoNm].push(guNm);
     });
@@ -2817,7 +2820,13 @@ export default async function handler(req, res) {
       const region = req.query.region ? String(req.query.region).trim() : '';
       const type = req.query.type === 'villa' ? 'villa' : 'apt';
       if (!region) return res.status(400).json({ error: 'region(예: "경북 구미시")이 필요합니다.' });
-      if (region.startsWith('서울')) return res.status(400).json({ error: '이 기능은 서울을 제외한 지역만 지원합니다(사용자 요청 - 서울은 이미 급등지역·돈되는지역 등 다른 지표로 충분히 다뤄지고 있고, 이 기능은 지방 갭메우기 신호에 초점을 둠).' });
+      // ⚠️ 2026-09(사용자 요청: "서울지역 포함해서 전국 웜업"): 예전엔 여기서 "서울"로
+      // 시작하는 region을 400 에러로 거부했음(당시 사유: "서울은 이미 급등지역·돈되는지역
+      // 등 다른 지표로 충분히 다뤄지고 있고, 이 기능은 지방 갭메우기 신호에 초점을 둠") -
+      // 사용자가 서울도 포함한 전국 커버리지를 요청해서 이 제한을 제거함. 계산 자체는
+      // "시/군/구 하나"(예: "서울 강남구") 단위 스코프라 다른 인구밀집 지역(수원 영통구
+      // 등)과 계산 부담이 크게 다르지 않을 것으로 보이나, 실제로 유독 느리거나 타임아웃
+      // 나는 서울 자치구가 있으면 추가 조치가 필요할 수 있음.
       const result = await getLeaderFollowerRank(type, region, req.query.force === '1');
       if (result.error) return res.status(502).json(result);
       return res.status(200).json(result);
