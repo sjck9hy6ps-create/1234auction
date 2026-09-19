@@ -1987,6 +1987,15 @@ var surgeRankMap = {};
 // 큰 시차상관 분석(leave-one-out)을 지도 팬/줌마다 전국적으로 돌리면 get-house.js에서 이미
 // 겪은 것과 같은 성능 문제가 재현되기 때문(사용자와 상의 후 이 범위로 결정).
 var leaderFollowerRankMap = {};
+// ⚠️ 2026-09(사용자 피드백: "법정동 단위로 순위를 정한건데 왜 후발주자 패널에서 조회해야만
+// 배지에 표기되냐"): 위 설명대로 전국을 지도 팬/줌마다 매번 돌리면 안 되지만, "지금 보고 있는
+// 시/군/구 하나"만이라면 얘기가 다름 - #466에서 캐시 저장 버그를 고쳐 24시간 캐시가 정상
+// 동작하므로, 같은 시/군/구를 다시 보면 API가 캐시(≈0.4초)로 응답함. 그래서 후발주자 패널을
+// 직접 열지 않아도, 지도가 새 시/군/구 데이터를 불러올 때(loadAllData) 자동으로 이 API를
+// 백그라운드에서(화면 로딩을 막지 않고) 한 번 호출해 배지에 바로 반영되게 함. 같은 시/군/구를
+// 이 세션에서 이미 시도했으면(성공/실패 무관) 다시 부르지 않음 - 처음 보는(캐시 없는) 지역은
+// 서버가 최대 30초 가까이 걸릴 수 있어(#465/#466) 팬/줌할 때마다 반복 호출하면 낭비이기 때문.
+var lfAutoFetchedRegions = {};
 function lfNormName(name) {
     if (!name) return '';
     var s = String(name).trim().replace(/\s+/g, '');
@@ -3561,6 +3570,11 @@ async function loadAllData(centerLat, centerLon) {
             if (!regionCode) { resolve(); return; }
             var lawdCd = regionCode.substring(0, 5);
             lastSigungu = sigungu;
+            // ⚠️ 2026-09: 후발주자 인기순위 배지가 패널을 직접 열어야만 표시되던 문제 - 지도가
+            // 새 시/군/구를 확인할 때마다(캐시 재사용 여부와 무관하게) 백그라운드에서 자동 조회함
+            // (fire-and-forget, await 안 함 - 지도 로딩을 막지 않음). autoLoadLeaderFollowerForRegion
+            // 내부에서 세션당 지역별 1회로 제한하므로 팬/줌을 반복해도 중복 호출되지 않음.
+            autoLoadLeaderFollowerForRegion(sigungu);
             lastResolvedLat = centerLat;
             lastResolvedLon = centerLon;
             // 예전엔 "바로 직전에 봤던 지역"일 때만 캐시를 재사용했는데(lawdCd === lastLawdCd),
@@ -17314,25 +17328,52 @@ async function loadLeaderFollowerData() {
         renderLeaderFollowerBody(data, '');
         // ⚠️ 2026-09(#462): 이 시/군/구 조회 결과를 지도 배지에도 반영 - 이전 조회 결과는
         // 통째로 버리고(leaderFollowerRankMap = 새 객체) 이번 지역 것으로만 교체함(범위를
-        // "패널에서 마지막으로 조회한 시/군/구"로 한정하기로 한 결정과 일치).
-        var newLfMap = {};
-        (data.leaders || []).forEach(function(l) {
-            newLfMap[lfRankKey(l.dong, l.danji)] = { isLeader: true, rank: null };
-        });
-        (data.rankedByDong || []).forEach(function(group) {
-            group.items.forEach(function(r) {
-                // ⚠️ 2026-09(#463): 순위 기준이 인기순(거래량)으로 바뀌면서 순위가 있다고 해서
-                // 전부 "대장을 따라가는 후발주자"는 아니게 됨 - isFollower(동행성 0.3+ & 갭 있음)
-                // 조건을 만족한 단지만 배지에 "(후발주자)"를 덧붙이도록 같이 저장.
-                newLfMap[lfRankKey(r.dong || group.dong, r.danji)] = { isLeader: false, rank: r.rank, isFollower: !!r.isFollower };
-            });
-        });
-        leaderFollowerRankMap = newLfMap;
-        redrawMarkers();
+        // "마지막으로 조회한 시/군/구"로 한정하기로 한 결정과 일치 - applyLeaderFollowerToMap 참고).
+        applyLeaderFollowerToMap(data);
     } catch (e) {
         statusBox.style.color = '#e53935';
         statusBox.innerText = '불러오기 실패: ' + e.message;
     }
+}
+// leaderFollower API 응답을 leaderFollowerRankMap(지도 배지용)에 반영하고 다시 그림 -
+// 패널의 수동 조회(loadLeaderFollowerData)와 아래 자동 백그라운드 조회(autoLoadLeaderFollowerForRegion)
+// 양쪽에서 공통으로 씀.
+function applyLeaderFollowerToMap(data) {
+    var newLfMap = {};
+    (data.leaders || []).forEach(function(l) {
+        newLfMap[lfRankKey(l.dong, l.danji)] = { isLeader: true, rank: null };
+    });
+    (data.rankedByDong || []).forEach(function(group) {
+        group.items.forEach(function(r) {
+            // ⚠️ 2026-09(#463): 순위 기준이 인기순(거래량)으로 바뀌면서 순위가 있다고 해서
+            // 전부 "대장을 따라가는 후발주자"는 아니게 됨 - isFollower(동행성 0.3+ & 갭 있음)
+            // 조건을 만족한 단지만 배지에 "(후발주자)"를 덧붙이도록 같이 저장.
+            newLfMap[lfRankKey(r.dong || group.dong, r.danji)] = { isLeader: false, rank: r.rank, isFollower: !!r.isFollower };
+        });
+    });
+    leaderFollowerRankMap = newLfMap;
+    redrawMarkers();
+}
+// ⚠️ 2026-09(사용자 피드백: "법정동 단위로 순위를 정한건데 왜 후발주자 패널에서 조회해야만
+// 배지에 표기되냐") - leaderFollowerRankMap 선언부 주석 참고: 전국 상시 계산은 안 되지만,
+// "지금 보고 있는 시/군/구"라면 지도가 그 지역 데이터를 불러올 때(loadAllData) 자동으로
+// 백그라운드에서 이 API를 한 번 불러 배지에 반영함(화면 로딩을 막지 않는 fire-and-forget).
+// 캐시가 있으면 0.4초 안팎, 없으면 최대 30초 가까이 걸릴 수 있으나(#465/#466) 어차피
+// 결과가 오면 그때 배지만 갱신되는 방식이라 사용자는 기다릴 필요가 없음.
+async function autoLoadLeaderFollowerForRegion(kakaoSigungu) {
+    if (!kakaoSigungu) return;
+    var sidoShort = extractSidoShort(kakaoSigungu);
+    var guShort = extractSigunguShort(kakaoSigungu);
+    if (!sidoShort || !guShort || sidoShort === '서울') return; // 서울은 이 기능 자체가 미지원(백엔드에서 거부)
+    var region = sidoShort + ' ' + guShort;
+    if (lfAutoFetchedRegions[region]) return; // 이 세션에서 이미 시도한 지역(성공/실패 무관)
+    lfAutoFetchedRegions[region] = true;
+    try {
+        var res = await fetch('/api/data-coverage?mode=leaderFollower&type=apt&region=' + encodeURIComponent(region));
+        var data = await readJsonResponseSafe(res);
+        if (!res.ok || !data || data.error) return; // 참고용 배지라 실패해도 조용히 무시(지도 자체는 정상 동작)
+        applyLeaderFollowerToMap(data);
+    } catch (e) { /* 참고용 배지 - 네트워크 오류 시에도 조용히 무시 */ }
 }
 // ⚠️ 2026-09(#463, 사용자 요청: "순위는 인기순으로 고정해줘 - 그럼 모든 단지에 순위가
 // 나올거야. 동행성 있는 단지는 (후발주자)라고 표기, 상세내역은 우측상단 메뉴로 확인. 법정동
