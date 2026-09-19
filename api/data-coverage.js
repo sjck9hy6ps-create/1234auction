@@ -879,10 +879,16 @@ async function getUnsoldComplexList(force) {
      );
 ════════════════════════════════════ */
 const LF_FRESH_MS = 1000 * 60 * 60 * 24; // 24시간 - 하루 안에 여러 번 볼 이유가 없는 무거운 집계라 넉넉히
-const LF_BUCKET_COUNT = 7;
-const LF_MIN_TOTAL_COUNT = 10; // 7구간 합계 거래건수 - 이보다 적으면 대장/후발주자 후보 모두에서 제외
+// ⚠️ 2026-09(#458): 과거자료(2017-09~)가 다 들어와서 house_trades가 실질적으로 9년치를
+// 커버하게 됨에 따라 버킷 수를 7→26으로 늘림(아파트 40일×26구간≈2.85년 - 2022년 하락기·
+// 2023~24년 회복기·2025~26년 흐름까지 최소 한 번 이상의 상승/하락 국면을 포괄하도록).
+// 최소 표본(LF_MIN_TOTAL_COUNT)과 최대 시차(LF_MAX_LAG)도 늘어난 버킷 수에 비례해 올림.
+const LF_BUCKET_COUNT = 26;
+const LF_MIN_TOTAL_COUNT = 20; // 26구간 합계 거래건수 - 이보다 적으면 대장/후발주자 후보 모두에서 제외
 const LF_MIN_CORR = 0.3; // 이 미만이면 "우연히 같이 움직인 걸로 보기 어렵다"고 판단해 제외
-const LF_MAX_LAG = 2; // 0~2구간(아파트 기준 최대 80일) 뒤처짐까지만 확인
+const LF_MAX_LAG = 6; // 0~6구간(아파트 기준 최대 240일≈8개월) 뒤처짐까지 확인
+const LF_LEAD_MIN_CORR = 0.35; // 대장(선행지표) 판정 최소 상관계수 - 후발주자 판정(LF_MIN_CORR=0.3)보다
+// 약간 더 엄격하게 둠(대장 자체를 잘못 뽑으면 그 밑의 후발주자 판정 전체가 같이 틀어지므로).
 const LF_TOP_N = 100;
 const LF_MIN_HOUSEHOLDS = 100; // 회전율 기준 대장 후보 최소 세대수 - 나홀로 단지가 우연한 회전율로 뽑히는 것 방지
 function pearsonCorr(xs, ys) {
@@ -979,29 +985,74 @@ async function computeLeaderFollowerFresh(type, region) {
         // 연환산 회전율(%) = 구간 내 거래건수÷세대수를 1년 기준으로 환산 - "1년에 세대의 몇 %가
         // 거래되는지"로 단지 규모와 무관하게 비교 가능한 값으로 만듦
         const turnoverPct = households ? Math.round((totalCount / households) * (365 / windowDays) * 1000) / 10 : null;
-        return { name, totalCount, filled, baseline, households, turnoverPct };
+        return { name, totalCount, filled, baseline, households, turnoverPct, avgArr: d.avgArr, countArr: d.countArr };
       })
       .filter(Boolean);
     if (qualified.length < 2) return; // 대장-후발주자 관계 자체가 성립하려면 최소 2개 단지 필요
 
-    // 회전율(세대수 데이터 있고 LF_MIN_HOUSEHOLDS 이상) 기준 1위를 대장으로 삼되, 이 법정동의
-    // 모든 단지가 K-apt 미매칭이거나 소규모라 회전율을 못 구하면 예전 방식(평단가 최고)으로 폴백
-    // - 대장 자체가 사라지는 것보다 정확도가 낮은 값이라도 있는 게 나음(프론트에 출처 표시).
-    const turnoverEligible = qualified.filter((d) => d.turnoverPct != null && d.households >= LF_MIN_HOUSEHOLDS);
+    // ⚠️ 2026-09(#458): "평단가/회전율이 1등인 단지"가 아니라 "이 동네 시세를 실제로 먼저
+    // 반영하는(선행하는) 단지"를 대장으로 뽑는 로직으로 교체. 방법: 후보 단지마다 "이 법정동
+    // 나머지 전체(자기 자신을 뺀 leave-one-out 집계)"를 만들어서, 자기 자신의 수익률(returns)이
+    // 나머지 동네의 수익률을 몇 구간 앞서서(lag 1~LF_MAX_LAG) 예고하는지 시차상관으로 확인함.
+    // (leave-one-out인 이유: 그냥 "동 전체 평균"과 비교하면 자기 자신의 비중 때문에 상관계수가
+    // 항상 높게 나오는 자기상관 문제가 생김 - 자신을 뺀 나머지와 비교해야 "내가 나머지를
+    // 이끈다"는 관계가 깨끗하게 나옴.) 데이터가 얇아 이 판정이 안 되는 법정동은 기존 방식
+    // (회전율 1위 → 그마저 안 되면 평단가 1위)으로 순서대로 폴백함.
+    const bucketN = LF_BUCKET_COUNT; // ⚠️ 아래쪽 leaderRecentPct 계산에서 쓰는 n(=leader.filled.prices.length)과 이름 겹치지 않게 별도로 둠
+    const sumWeighted = new Array(bucketN).fill(0), sumCount = new Array(bucketN).fill(0);
+    qualified.forEach((d) => {
+      for (let i = 0; i < bucketN; i++) {
+        sumWeighted[i] += (d.avgArr[i] || 0) * (d.countArr[i] || 0);
+        sumCount[i] += (d.countArr[i] || 0);
+      }
+    });
+    qualified.forEach((d) => {
+      const restAvgArr = new Array(bucketN), restCountArr = new Array(bucketN);
+      for (let i = 0; i < bucketN; i++) {
+        const rc = sumCount[i] - (d.countArr[i] || 0);
+        restCountArr[i] = rc;
+        restAvgArr[i] = rc > 0 ? (sumWeighted[i] - (d.avgArr[i] || 0) * (d.countArr[i] || 0)) / rc : null;
+      }
+      const restFilled = fillBucketSeries(restAvgArr, restCountArr, minCount);
+      let bestCorr = null, bestLag = null;
+      if (restFilled) {
+        for (let lag = 1; lag <= LF_MAX_LAG; lag++) {
+          const leaderPart = d.filled.returns.slice(0, d.filled.returns.length - lag);
+          const restPart = restFilled.returns.slice(lag);
+          const c = pearsonCorr(leaderPart, restPart);
+          if (c != null && (bestCorr == null || c > bestCorr)) { bestCorr = c; bestLag = lag; }
+        }
+      }
+      d.leadCorr = bestCorr;
+      d.leadLag = bestLag;
+    });
+    const leadEligible = qualified.filter((d) => d.leadCorr != null && d.leadCorr >= LF_LEAD_MIN_CORR);
     let leader, leaderSource;
-    if (turnoverEligible.length > 0) {
-      turnoverEligible.sort((a, b) => b.turnoverPct - a.turnoverPct);
-      leader = turnoverEligible[0];
-      leaderSource = 'turnover';
+    if (leadEligible.length > 0) {
+      leadEligible.sort((a, b) => b.leadCorr - a.leadCorr);
+      leader = leadEligible[0];
+      leaderSource = 'lead_lag';
     } else {
-      leader = qualified.slice().sort((a, b) => b.baseline - a.baseline)[0];
-      leaderSource = 'price_fallback';
+      // 회전율(세대수 데이터 있고 LF_MIN_HOUSEHOLDS 이상) 기준 1위를 대장으로 삼되, 이 법정동의
+      // 모든 단지가 K-apt 미매칭이거나 소규모라 회전율을 못 구하면 예전 방식(평단가 최고)으로 폴백
+      // - 대장 자체가 사라지는 것보다 정확도가 낮은 값이라도 있는 게 나음(프론트에 출처 표시).
+      const turnoverEligible = qualified.filter((d) => d.turnoverPct != null && d.households >= LF_MIN_HOUSEHOLDS);
+      if (turnoverEligible.length > 0) {
+        turnoverEligible.sort((a, b) => b.turnoverPct - a.turnoverPct);
+        leader = turnoverEligible[0];
+        leaderSource = 'turnover';
+      } else {
+        leader = qualified.slice().sort((a, b) => b.baseline - a.baseline)[0];
+        leaderSource = 'price_fallback';
+      }
     }
     const n = leader.filled.prices.length;
     const leaderRecentPct = Math.round(((leader.filled.prices[n - 1] / leader.filled.prices[n - 3]) - 1) * 1000) / 10;
     leaders.push({
       dong, danji: leader.name, totalCount: leader.totalCount, ppp: Math.round(leader.baseline), recentPct: leaderRecentPct,
       households: leader.households, turnoverPct: leader.turnoverPct, leaderSource,
+      leadCorr: leader.leadCorr != null ? Math.round(leader.leadCorr * 100) / 100 : null,
+      leadLag: leader.leadLag,
     });
     if (leaderRecentPct <= 0) return; // 대장 자체가 안 올랐으면 "따라 오를 후발주자"라는 전제가 성립하지 않음
     qualified.filter((f) => f.name !== leader.name).forEach(f => {
