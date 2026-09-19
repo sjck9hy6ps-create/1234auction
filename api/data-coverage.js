@@ -938,6 +938,25 @@ async function computeLeaderFollowerFresh(type, region) {
     buckets.push({ start: daysAgoInt(startDays), end: i === LF_BUCKET_COUNT - 1 ? today + 1 : daysAgoInt(endDays) });
   }
   const bucketMaps = await Promise.all(buckets.map(b => getBucketDanjiPrices(type, b.start, b.end, region)));
+  // ⚠️ 2026-09(#464, 사용자 피드백): "순위를 단순 거래량으로만 매기는 건 잘못됐다 - 17년도
+  // 자료부터 근거자료로 써서 대장아파트를 꼽은 것처럼, 평단가·거래량·세대수대비 회전율 등으로
+  // 정말 가치있는 2등·3등을 골라야 한다"는 지적 반영. 위 26버킷(최근 약 35개월)은 대장의
+  // "선행성(시차상관)" 판정용 창일 뿐이라 원래도 순위용 근거로 쓰기엔 기간이 짧음 - 그래서
+  // 순위 계산 전용으로 2017-09(과거자료 백필 시작 시점) ~ 오늘 전체 이력을 한 번 더(단일
+  // 버킷) 집계 조회함. rpc_bucket_avg_price가 이미 서버에서 groupby 집계해 반환하므로
+  // (get-house.js처럼 원시 row를 클라이언트로 내려주는 방식이 아님) 9년치를 한 번에 물어도
+  // 응답은 danji당 1행뿐이라 부담이 없음.
+  const FULL_HIST_START = 20170901;
+  const fullHistMap = await getBucketDanjiPrices(type, FULL_HIST_START, today + 1, region);
+  const fullHistByDong = {}; // dong -> danjiName -> { avg, count }
+  Object.values(fullHistMap).forEach((entry) => {
+    if (!fullHistByDong[entry.dong]) fullHistByDong[entry.dong] = {};
+    Object.entries(entry.danjis).forEach(([danjiName, d]) => {
+      fullHistByDong[entry.dong][danjiName] = { avg: d.avg, count: d.count };
+    });
+  });
+  function intToDate(n) { const s = String(n); return new Date(+s.slice(0, 4), +s.slice(4, 6) - 1, +s.slice(6, 8)); }
+  const FULL_HIST_DAYS = Math.max(1, Math.round((intToDate(today + 1) - intToDate(FULL_HIST_START)) / 86400000));
   // dongMap: dong -> danjiName -> { avgArr[N], countArr[N] }
   const dongMap = {};
   bucketMaps.forEach((m, bi) => {
@@ -998,7 +1017,14 @@ async function computeLeaderFollowerFresh(type, region) {
         // 연환산 회전율(%) = 구간 내 거래건수÷세대수를 1년 기준으로 환산 - "1년에 세대의 몇 %가
         // 거래되는지"로 단지 규모와 무관하게 비교 가능한 값으로 만듦
         const turnoverPct = households ? Math.round((totalCount / households) * (365 / windowDays) * 1000) / 10 : null;
-        return { name, totalCount, filled, baseline, households, turnoverPct, avgArr: d.avgArr, countArr: d.countArr };
+        // ⚠️ 2026-09(#464): 순위(2등·3등) 산정 전용 - 2017-09~ 전체 이력 기준 평단가/거래량과,
+        // 그 전체 거래량으로 다시 계산한 회전율. 대장의 선행성 판정(위 turnoverPct/households)은
+        // 그대로 35개월 창을 씀 - 그건 "최근 흐름"을 봐야 하는 다른 목적이라 건드리지 않음.
+        const fh = (fullHistByDong[dong] || {})[name] || null;
+        const fullPpp = fh ? fh.avg : baseline;
+        const fullCount = fh ? fh.count : totalCount;
+        const fullTurnoverPct = households ? Math.round((fullCount / households) * (365 / FULL_HIST_DAYS) * 1000) / 10 : null;
+        return { name, totalCount, filled, baseline, households, turnoverPct, fullPpp, fullCount, fullTurnoverPct, avgArr: d.avgArr, countArr: d.countArr };
       })
       .filter(Boolean);
     if (qualified.length < 2) return; // 대장-후발주자 관계 자체가 성립하려면 최소 2개 단지 필요
@@ -1099,6 +1125,8 @@ async function computeLeaderFollowerFresh(type, region) {
         followerPpp: Math.round(f.baseline), gapAmount: Math.round(leader.baseline - f.baseline),
         score: qualifies ? bestCorr * gapPct : null,
         qualifies, reason,
+        // ⚠️ 2026-09(#464): 순위 산정(인기·가치 복합점수)에 쓰는 전체이력(2017-09~) 지표.
+        fullPpp: Math.round(f.fullPpp), fullCount: f.fullCount, fullTurnoverPct: f.fullTurnoverPct,
       });
     });
   });
@@ -1109,11 +1137,25 @@ async function computeLeaderFollowerFresh(type, region) {
   // 맞춰져 있지만(절대가격 아님), 그래도 "곧 따라잡힐 갭"인지의 신뢰도는 같은 동네 안에서
   // 비교할 때가 더 의미 있음 - 그래서 시/군/구 전체 통합 순위 대신, 법정동별로 그룹을 나누고
   // 각 그룹 안에서 1위~N위를 매기는 방식으로 변경함(기존 flat ranked[] → rankedByDong[]).
-  // ⚠️ 2026-09(#463, 사용자 피드백): "동행성/갭 조건을 만족하는 단지만 순위가 생기는 게
-  // 이상하다 - 모든 단지에 순위가 나와야 한다"는 지적 반영. qualifies(동행성 0.3 이상 & 갭
-  // 있음)는 이제 순위 포함 여부를 가르는 조건이 아니라 "(후발주자)" 표식 여부로만 씀 - 순위
-  // 자체는 사용자가 요청한 대로 "인기순(거래량 desc)"으로 고정해서, 이 법정동에서 통계적으로
-  // 평가 가능했던(=qualified 단계를 통과한) 단지는 대장을 제외하고 전부 순위를 받음.
+  // ⚠️ 2026-09(#463→#464, 사용자 피드백 반영 2차): "동행성/갭 조건을 만족하는 단지만 순위가
+  // 생기는 게 이상하다"는 1차 피드백에 이어 "단순 거래량만으로 순위를 매기는 것도 잘못됐다 -
+  // 17년도 자료부터 근거로 삼아 대장아파트를 꼽은 것처럼, 평단가·거래량·세대수대비 회전율 등
+  // 여러 근거로 '정말 가치있는' 2등·3등을 골라야 한다"는 2차 피드백까지 반영함. qualifies
+  // (동행성 0.3 이상 & 갭 있음)는 여전히 순위 포함 여부가 아니라 "(후발주자)" 표식 여부로만
+  // 쓰고, 순위 자체는 세 지표(fullPpp/fullCount/fullTurnoverPct, 전부 2017-09~ 전체이력
+  // 기준)를 동 안에서 각각 백분위로 바꿔 평균한 복합 가치점수(valueScore)로 매김 - 단위가
+  // 서로 다른 지표(만원/평, 건수, %)를 그냥 더하면 안 되니 순위(percentile)로 정규화 후
+  // 평균하는 방식을 씀. 세대수 데이터가 아직 없는 단지(K-apt 동기화 진행 중이라 흔함)는
+  // fullTurnoverPct가 null이라 그 지표만 빼고 나머지 지표의 평균으로 계산됨(완전히 배제되지
+  // 않음).
+  function percentileScores(list, keyFn) {
+    const withVal = list.map((item, i) => ({ i, v: keyFn(item) })).filter((x) => x.v != null);
+    withVal.sort((a, b) => b.v - a.v);
+    const n = withVal.length;
+    const out = {};
+    withVal.forEach((x, rank) => { out[x.i] = n > 1 ? (n - rank) / n : 1; });
+    return out;
+  }
   const dongGroups = {};
   candidates.forEach((c) => {
     if (!dongGroups[c.dong]) dongGroups[c.dong] = [];
@@ -1122,9 +1164,16 @@ async function computeLeaderFollowerFresh(type, region) {
   const rankedByDong = [];
   const unranked = [];
   Object.entries(dongGroups).forEach(([dong, list]) => {
-    // 인기순 = 거래량(totalCount) desc. 동률이면 이름순으로 고정해 호출마다 순서가 흔들리지 않게 함.
+    const pppScores = percentileScores(list, (c) => c.fullPpp);
+    const volScores = percentileScores(list, (c) => c.fullCount);
+    const turnoverScores = percentileScores(list, (c) => c.fullTurnoverPct);
+    list.forEach((c, i) => {
+      const parts = [pppScores[i], volScores[i], turnoverScores[i]].filter((v) => v != null);
+      c.valueScore = parts.length ? parts.reduce((a, b) => a + b, 0) / parts.length : 0;
+    });
+    // 복합 가치점수 desc. 동률이면 이름순으로 고정해 호출마다 순서가 흔들리지 않게 함.
     list.sort((a, b) => {
-      if (b.totalCount !== a.totalCount) return b.totalCount - a.totalCount;
+      if (b.valueScore !== a.valueScore) return b.valueScore - a.valueScore;
       return a.danji.localeCompare(b.danji);
     });
     const items = [];
@@ -1132,15 +1181,15 @@ async function computeLeaderFollowerFresh(type, region) {
       if (items.length < LF_TOP_N) {
         items.push({ ...c, rank: items.length + 1, isFollower: c.qualifies });
       } else {
-        unranked.push({ ...c, reason: '순위 ' + LF_TOP_N + '위 밖(거래량 기준)' });
+        unranked.push({ ...c, reason: '순위 ' + LF_TOP_N + '위 밖(종합 가치점수 기준)' });
       }
     });
     if (items.length) {
-      rankedByDong.push({ dong, leaderDanji: items[0].leaderDanji, topCount: items[0].totalCount, items });
+      rankedByDong.push({ dong, leaderDanji: items[0].leaderDanji, topScore: items[0].valueScore, items });
     }
   });
-  // 동 그룹의 나열 순서도 인기순 기준과 일관되게 "이 동 1위 단지의 거래량"이 높은 순으로 둠.
-  rankedByDong.sort((a, b) => b.topCount - a.topCount);
+  // 동 그룹의 나열 순서도 같은 기준으로 "이 동 1위 단지의 종합 가치점수"가 높은 순으로 둠.
+  rankedByDong.sort((a, b) => b.topScore - a.topScore);
   leaders.sort((a, b) => b.totalCount - a.totalCount);
   return { region, type, bucketDays, bucketCount: LF_BUCKET_COUNT, leaders, rankedByDong, unranked, totalCandidates: candidates.length };
 }
