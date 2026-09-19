@@ -960,14 +960,23 @@ async function computeLeaderFollowerFresh(type, region) {
   // 테이블을, 같은 정규화 매칭 방식(normalizeComplexName)으로 재사용함 - 여기서는 법정동
   // 전체를 한 번에 조회해 매칭하므로 단지마다 왕복하지 않음(성능).
   const householdMap = {}; // `${법정동}|${normalizeComplexName(단지명)}` -> 세대수
+  // ⚠️ 2026-09 진단용(임시): 회전율 폴백(2순위)이 왜 한 번도 안 걸리는지(households가 항상
+  // null) 확인하려고 원인 후보(지역코드 매칭/실제 로우 존재 여부/조회 에러)를 그대로 담아서
+  // 응답에 실어봄 - 원인 확인되면 제거.
+  const kaptDebug = { lawdFound: false, sigunguCode: null, rawRowCount: null, sampleRows: null, error: null };
   try {
     const lawdEntry = LAWD_CODES.find((r) => r.name === region);
+    kaptDebug.lawdFound = !!lawdEntry;
+    kaptDebug.sigunguCode = lawdEntry ? lawdEntry.code : null;
     if (lawdEntry) {
-      const { data: kaptRows } = await supabase
+      const { data: kaptRows, error: kaptErr } = await supabase
         .from('kapt_complex_info')
         .select('kapt_name, as3, households')
         .eq('sigungu_code', lawdEntry.code)
         .not('households', 'is', null);
+      if (kaptErr) kaptDebug.error = kaptErr.message;
+      kaptDebug.rawRowCount = (kaptRows || []).length;
+      kaptDebug.sampleRows = (kaptRows || []).slice(0, 5).map((r) => ({ kapt_name: r.kapt_name, as3: r.as3, households: r.households }));
       (kaptRows || []).forEach((r) => {
         if (!r.as3 || !(r.households > 0)) return;
         const key = `${r.as3}|${normalizeComplexName(r.kapt_name)}`;
@@ -976,7 +985,7 @@ async function computeLeaderFollowerFresh(type, region) {
         if (!householdMap[key] || r.households > householdMap[key]) householdMap[key] = r.households;
       });
     }
-  } catch (e) { /* K-apt 조회 실패해도 막지 않음 - 회전율 없이 가격 기준 폴백으로 계속 진행 */ }
+  } catch (e) { kaptDebug.error = 'exception: ' + e.message; /* K-apt 조회 실패해도 막지 않음 - 회전율 없이 가격 기준 폴백으로 계속 진행 */ }
   const windowDays = bucketDays * LF_BUCKET_COUNT;
 
   const leaders = [];
@@ -1113,7 +1122,7 @@ async function computeLeaderFollowerFresh(type, region) {
     }
   });
   leaders.sort((a, b) => b.totalCount - a.totalCount);
-  return { region, type, bucketDays, bucketCount: LF_BUCKET_COUNT, leaders, ranked, unranked, totalCandidates: candidates.length };
+  return { region, type, bucketDays, bucketCount: LF_BUCKET_COUNT, leaders, ranked, unranked, totalCandidates: candidates.length, kaptDebug };
 }
 async function getLeaderFollowerRank(type, region, force) {
   const cacheId = region + '|' + type;
