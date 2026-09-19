@@ -46,6 +46,7 @@ train-avm.py는 아파트를 danji(단지) 단위로 고정효과를 주는데, 
 import os
 import sys
 import json
+import time
 from datetime import datetime, timezone
 
 import requests
@@ -96,8 +97,27 @@ def sb_upsert(table: str, rows: list, on_conflict: str):
 
 def kapt_get(base: str, endpoint: str, params: dict):
     params = {**params, "serviceKey": PUBLIC_DATA_API_KEY}
-    r = requests.get(f"{base}/{endpoint}", params=params, timeout=30)
-    r.raise_for_status()
+    # ⚠️ 2026-09(버그 수정): 실제 GitHub Actions 실행 로그로 확인 - 253개 시군구 중 인덱스
+    # 10(서울 노원구)에서 apis.data.go.kr 접속이 타임아웃으로 실패하면 예외가 그대로 위로
+    # 전파되어 그날 실행 전체가 크래시했음(재시도 없음). sigungu_idx는 실패 시 안 넘어가서
+    # 다음날 다시 같은 시군구부터 재시도는 되지만, 공공데이터포털 서버가 간헐적으로 느리거나
+    # 일시적으로 응답이 늦는 경우(해외/CI 환경에서 흔함) 매번 그 순간에 걸리면 영영 못 넘어갈
+    # 수 있음 - 그래서 딱 이 지점(네트워크 요청 자체)에만 지수백오프 재시도를 추가함. 성공한
+    # 이후의 로직(응답 파싱 등)은 원래대로 그대로 두고 예외를 던짐.
+    last_err = None
+    for attempt in range(4):  # 최대 4회 시도(최초 1회 + 재시도 3회)
+        try:
+            r = requests.get(f"{base}/{endpoint}", params=params, timeout=45)
+            r.raise_for_status()
+            break
+        except requests.exceptions.RequestException as e:
+            last_err = e
+            if attempt < 3:
+                wait = 5 * (attempt + 1)  # 5s, 10s, 15s
+                print(f"    [재시도 {attempt + 1}/3] {endpoint} 요청 실패({e.__class__.__name__}) - {wait}초 후 재시도", file=sys.stderr)
+                time.sleep(wait)
+            else:
+                raise
     raw = r.json()
     # ⚠️ 2026-08(버그 수정): 공공데이터포털 API는 최상위에 "response" 래퍼가 있는 것과 없는 것이
     # 섞여 있음 - Swagger 문서의 예시 스키마는 래퍼 없이 {"header":..,"body":..}만 보여주지만
