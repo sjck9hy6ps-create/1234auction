@@ -65,6 +65,9 @@ const supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 const TABLES = ['house_trades', 'house_rent', 'villa_trades', 'villa_rent', 'single_trades', 'single_rent'];
 
 function detectTable(filename) {
+  // ⚠️ 2026-09: 맥에서 드래그한 파일명은 한글이 NFD(자모 분리) 형태로 오는 경우가 있어
+  // 화면엔 "아파트"로 똑같이 보여도 코드상 문자열은 다르게 인식됨(includes 실패) - NFC로 정규화 후 비교
+  filename = filename.normalize('NFC');
   const isApt = filename.includes('아파트');
   const isVilla = filename.includes('연립다세대');
   const isSingle = filename.includes('단독다가구');
@@ -139,6 +142,7 @@ function renderQueue() {
         const id = Number(e.target.dataset.id);
         const item = fileQueue.find(f => f.id === id);
         if (item) item.table = e.target.value;
+        renderQueue(); // ⚠️ 경고(⚠️) 아이콘이 수동 선택 후에도 안 지워지는 버그 방지 - 재렌더링으로 갱신
       });
     });
     listEl.querySelectorAll('.queueRemoveBtn').forEach(btn => {
