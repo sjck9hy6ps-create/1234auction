@@ -801,15 +801,18 @@ tr:hover td { background:#fffde7; }
         <span onclick="showCalcInfo('regAreaRank')" title="규제지역 기준 안내" style="cursor:pointer;color:#1976d2;font-size:11px;">ⓘ</span>
     </div>
     <!-- ⭐ 2026-09(후발주자 예측, 사용자 요청: "대장아파트가 오르면 따라 오르는 아파트들의
-         순서를 알아내 곧 오를 후보를 미리 예측하고 싶다") - 서울 제외 지역만 지원하고 시/도
-         만으로는 범위가 너무 넓어(법정동 기준 대장 산정 + 100위 랭킹이 시/군/구 단위로 계산됨)
-         기존 시/도 select와 별개로 시/군/구까지 고르는 전용 컨트롤 행을 둠. 다른 탭과 달리
-         '전체(전국)' 옵션이 없음(시/군/구를 반드시 하나 골라야 계산 가능) - loadRegionListOnce()가
-         패널을 처음 열 때 mode=regionList로 시/도→시/군/구 매핑을 한 번만 받아와 채움. -->
+         순서를 알아내 곧 오를 후보를 미리 예측하고 싶다") - 시/도만으로는 범위가 너무 넓어
+         (법정동 기준 대장 산정 + 100위 랭킹이 시/군/구 단위로 계산됨) 기존 시/도 select와
+         별개로 시/군/구까지 고르는 전용 컨트롤 행을 둠. 다른 탭과 달리 '전체(전국)' 옵션이
+         없음(시/군/구를 반드시 하나 골라야 계산 가능) - loadRegionListOnce()가 패널을 처음
+         열 때 mode=regionList로 시/도→시/군/구 매핑을 한 번만 받아와 채움.
+         ⚠️ 2026-09(사용자 요청: "서울지역 포함해서 전국 웜업"): 원래 서울은 이 기능
+         자체가 미지원이라 드롭다운에서도 빠져 있었는데, 백엔드 제한을 풀면서 서울도
+         포함되도록 함(아래 select 안내문구도 "서울 제외" 삭제). -->
     <div id="surge-leader-row" style="display:none;padding:10px 14px;border-bottom:1px solid #eee;">
         <div style="display:flex;gap:6px;align-items:center;margin-bottom:6px;">
             <select class="modal-select" id="lf-sido-select" style="flex:1;min-width:0;" onchange="onLfSidoChange()">
-                <option value="">시/도 선택(서울 제외)</option>
+                <option value="">시/도 선택</option>
             </select>
             <select class="modal-select" id="lf-sigungu-select" style="flex:1;min-width:0;">
                 <option value="">시/군/구 선택</option>
@@ -3570,15 +3573,16 @@ async function loadAllData(centerLat, centerLon) {
             if (!regionCode) { resolve(); return; }
             var lawdCd = regionCode.substring(0, 5);
             lastSigungu = sigungu;
-            // ⚠️ 2026-09(사용자 피드백: "지도를 옮길때마다 로딩되는 시간을 줄여야겠다"): 처음에는
-            // 이 지점(지역 확인 직후, 캐시 재사용 여부 판단 전)에서 바로 autoLoadLeaderFollowerForRegion를
-            // 불렀는데, migration_leader_follower_cache_grant.sql에 적어뒀듯 대장/후발주자 계산은
-            // 캐시가 없는 지역이면 최대 26초 가까이 걸리는 무거운 연산(2017~현재 전체이력을 여러
-            // 구간으로 나눠 순차 조회)임 - 이걸 get-house.js 본 데이터 fetch와 "동시에" 같은
-            // Supabase DB로 쏘면, 지도 정식 로딩(get-house)이 새 지역일 때 체감상 더 느려짐.
-            // 그래서 호출 위치를 아래 두 분기(캐시 히트/신규 fetch) 각각의 "본 데이터 로딩이 끝난
-            // 뒤"로 옮기고, setTimeout으로 한 번 더 늦춰 지도 렌더링이 완전히 끝난 뒤에야 시작하도록
-            // 함 - 배지 순위가 붙는 시점만 조금 늦어질 뿐, 지도 자체 로딩 속도에는 영향이 없어짐.
+            // ⚠️ 2026-09(사용자 피드백: "배지표기가 느린게 내가 느리다고 표현하는거 같아"): 한때
+            // "get-house 본 데이터 fetch와 동시에 쏘면 DB 경합으로 지도 로딩이 느려진다"는
+            // 가설로 이 호출을 일부러 늦춘 적이 있었는데, 실제 불만은 지도 로딩 자체가 아니라
+            // "배지 순위가 뜨는 게 늦다"였음 - 그래서 다시 여기서 바로(지연 없이) 호출함.
+            // 대신 근본 원인(캐시 없는 지역은 최대 26초 걸리는 계산)은 scripts/
+            // warmup-leader-follower.mjs(야간 웜업, 매일 새벽 자동 실행)로 미리 채워두는
+            // 쪽으로 해결함 - 사용자가 방문할 땐 대부분 이미 캐시가 있어(≈0.4초) 배지가
+            // 거의 바로 뜸. autoLoadLeaderFollowerForRegion 내부에서 세션당 지역별 1회로
+            // 제한하므로 팬/줌을 반복해도 중복 호출되지 않음.
+            autoLoadLeaderFollowerForRegion(sigungu);
             lastResolvedLat = centerLat;
             lastResolvedLon = centerLon;
             // 예전엔 "바로 직전에 봤던 지역"일 때만 캐시를 재사용했는데(lawdCd === lastLawdCd),
@@ -3593,10 +3597,7 @@ async function loadAllData(centerLat, centerLon) {
                 // 넘으면 가장 오래전에 본 지역을 자동으로 빼줌 - 위 선언부 주석 참고.
                 mergedLawdCds.add(lawdCd);
                 touchLawdCd(lawdCd);
-                redrawMarkers();
-                // 캐시 히트라 본 로딩 자체는 이미 끝났지만, 화면이 자리잡을 시간을 살짝 준 뒤 시작.
-                setTimeout(function() { autoLoadLeaderFollowerForRegion(sigungu); }, 1500);
-                resolve(); return;
+                redrawMarkers(); resolve(); return;
             }
             lastLawdCd = lawdCd;
             isLoading = true;
@@ -3658,9 +3659,6 @@ async function loadAllData(centerLat, centerLon) {
                 touchLawdCd(lawdCd); // LRU 갱신 + 상한 초과시 오래된 지역 제거(allAptList/allRentList 재조립)
                 setStatus('');
                 redrawMarkers();
-                // 본 지도 데이터(get-house) 로딩이 끝난 뒤에만 시작 - 위 coord2RegionCodeCached
-                // 콜백 상단 주석 참고("동시에 쏘면 DB 경합으로 지도 로딩 자체가 느려짐").
-                setTimeout(function() { autoLoadLeaderFollowerForRegion(sigungu); }, 2500);
                 setTimeout(function() { warmBuildingCache(regionAptList); }, 3000);
                 // ⚠️ 2026-08: 직접 호출하지 않고 villaInfoQueue에 이어붙임 - 다른 지역(lawdCd)의
                 // loadAllData가 짧은 간격으로 여러 번 실행돼도, 연립다세대 건축물정보 배치조회
@@ -17276,7 +17274,8 @@ function switchSurgeTab(tab) {
 }
 /* ⭐ 후발주자 예측(mode=leaderFollower) 프론트 - 2026-09 추가
    서버(mode=regionList)가 미분양 기능용으로 이미 만들어둔 시도+시군구 매핑(UNSOLD_CODE_ROWS)을
-   재사용해 시/군/구 드롭다운을 채움(서울은 서버가 이미 제외해서 내려줌). */
+   재사용해 시/군/구 드롭다운을 채움. ⚠️ 2026-09(사용자 요청: "서울지역 포함해서 전국 웜업"):
+   원래는 서버가 서울을 제외하고 내려줬는데, 이제 서울도 포함해서 내려줌. */
 var lfRegionMap = null; // { "경기": ["수원시","성남시",...], ... } - 한 번만 받아와 캐시
 var lastLfData = null; // ⚠️ 2026-09(#463): 법정동 필터 select를 바꿀 때마다 재조회하지 않고
                         // 마지막으로 받아온 시/군/구 전체 응답을 그대로 재사용해 클라이언트에서만
@@ -17374,7 +17373,10 @@ async function autoLoadLeaderFollowerForRegion(kakaoSigungu) {
     if (!kakaoSigungu) return;
     var sidoShort = extractSidoShort(kakaoSigungu);
     var guShort = extractSigunguShort(kakaoSigungu);
-    if (!sidoShort || !guShort || sidoShort === '서울') return; // 서울은 이 기능 자체가 미지원(백엔드에서 거부)
+    // ⚠️ 2026-09(사용자 요청: "서울지역 포함해서 전국 웜업"): 예전엔 여기서 서울을
+    // 걸렀는데(백엔드가 서울을 거부했었음), 이제 백엔드(mode=leaderFollower)가 서울도
+    // 지원하도록 바뀌어서 이 가드를 제거함 - 서울도 다른 시/군/구와 동일하게 자동조회됨.
+    if (!sidoShort || !guShort) return;
     var region = sidoShort + ' ' + guShort;
     if (lfAutoFetchedRegions[region]) return; // 이 세션에서 이미 시도한 지역(성공/실패 무관)
     lfAutoFetchedRegions[region] = true;
