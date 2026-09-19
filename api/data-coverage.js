@@ -2104,13 +2104,19 @@ async function getBucketDanjiPrices(type, start, end, sido) {
 // (rpc_bucket_avg_price)와 달리 신축(준공 2~3년 이내) 거래를 배제하지 않음 - leaderFollower는
 // 신축단지도 생긴 시점부터 정상적으로 후보에 잡혀야 하기 때문(momentum 계열 함수엔 영향 없음).
 // 반환: { [region|dong]: { region, dong, danjis: { [danjiName]: [{idx, avg, count}, ...] } } }
+let _lastRpcSeriesDebug = null; // ⚠️ 2026-09 임시 진단용 - 원인 확인 후 제거 예정
 async function getBucketSeriesDanjiPrices(type, start, end, bucketDays, sido) {
   try {
     const { data, error } = await supabase.rpc('rpc_bucket_series_avg_price', {
       p_start: start, p_end: end, p_bucket_days: bucketDays, p_sido: sido || null, p_type: type,
       p_min_size: MOMENTUM_SIZE_MIN, p_max_size: MOMENTUM_SIZE_MAX,
     });
-    if (error) { console.warn(`leaderFollower(rpc_series): ${type} 조회 실패 -`, error.message); return {}; }
+    if (error) {
+      console.warn(`leaderFollower(rpc_series): ${type} 조회 실패 -`, error.message);
+      _lastRpcSeriesDebug = { phase: 'rpc_error', message: error.message, details: error.details, hint: error.hint, code: error.code };
+      return {};
+    }
+    _lastRpcSeriesDebug = { phase: 'ok', rowCount: (data || []).length };
     const acc = {};
     (data || []).forEach(r => {
       const key = r.region + '|' + r.dong;
@@ -2120,7 +2126,11 @@ async function getBucketSeriesDanjiPrices(type, start, end, bucketDays, sido) {
       acc[key].danjis[danjiName].push({ idx: Number(r.bucket_idx), avg: Number(r.avg_price), count: Number(r.cnt) });
     });
     return acc;
-  } catch (e) { console.warn(`leaderFollower(rpc_series): ${type} 조회 예외 -`, e.message); return {}; }
+  } catch (e) {
+    console.warn(`leaderFollower(rpc_series): ${type} 조회 예외 -`, e.message);
+    _lastRpcSeriesDebug = { phase: 'exception', message: e.message };
+    return {};
+  }
 }
 // 전국(시/도 미지정) 조회 전용 - dong 단위(danji 없이) 평단가/건수를 받아옴.
 // getPriceMomentumSimple에서만 씀(아래 getPriceMomentum 주석 참고).
@@ -2783,6 +2793,7 @@ export default async function handler(req, res) {
       if (!region) return res.status(400).json({ error: 'region(예: "경북 구미시")이 필요합니다.' });
       if (region.startsWith('서울')) return res.status(400).json({ error: '이 기능은 서울을 제외한 지역만 지원합니다(사용자 요청 - 서울은 이미 급등지역·돈되는지역 등 다른 지표로 충분히 다뤄지고 있고, 이 기능은 지방 갭메우기 신호에 초점을 둠).' });
       const result = await getLeaderFollowerRank(type, region, req.query.force === '1');
+      if (req.query.debug === '1') result._rpcDebug = _lastRpcSeriesDebug; // ⚠️ 2026-09 임시 진단용 - 제거 예정
       if (result.error) return res.status(502).json(result);
       return res.status(200).json(result);
     } catch (err) {
