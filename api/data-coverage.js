@@ -1109,6 +1109,11 @@ async function computeLeaderFollowerFresh(type, region) {
   // 맞춰져 있지만(절대가격 아님), 그래도 "곧 따라잡힐 갭"인지의 신뢰도는 같은 동네 안에서
   // 비교할 때가 더 의미 있음 - 그래서 시/군/구 전체 통합 순위 대신, 법정동별로 그룹을 나누고
   // 각 그룹 안에서 1위~N위를 매기는 방식으로 변경함(기존 flat ranked[] → rankedByDong[]).
+  // ⚠️ 2026-09(#463, 사용자 피드백): "동행성/갭 조건을 만족하는 단지만 순위가 생기는 게
+  // 이상하다 - 모든 단지에 순위가 나와야 한다"는 지적 반영. qualifies(동행성 0.3 이상 & 갭
+  // 있음)는 이제 순위 포함 여부를 가르는 조건이 아니라 "(후발주자)" 표식 여부로만 씀 - 순위
+  // 자체는 사용자가 요청한 대로 "인기순(거래량 desc)"으로 고정해서, 이 법정동에서 통계적으로
+  // 평가 가능했던(=qualified 단계를 통과한) 단지는 대장을 제외하고 전부 순위를 받음.
   const dongGroups = {};
   candidates.forEach((c) => {
     if (!dongGroups[c.dong]) dongGroups[c.dong] = [];
@@ -1117,27 +1122,25 @@ async function computeLeaderFollowerFresh(type, region) {
   const rankedByDong = [];
   const unranked = [];
   Object.entries(dongGroups).forEach(([dong, list]) => {
+    // 인기순 = 거래량(totalCount) desc. 동률이면 이름순으로 고정해 호출마다 순서가 흔들리지 않게 함.
     list.sort((a, b) => {
-      if (a.qualifies && b.qualifies) return b.score - a.score;
-      if (a.qualifies) return -1;
-      if (b.qualifies) return 1;
-      return 0;
+      if (b.totalCount !== a.totalCount) return b.totalCount - a.totalCount;
+      return a.danji.localeCompare(b.danji);
     });
     const items = [];
     list.forEach((c) => {
-      if (c.qualifies && items.length < LF_TOP_N) {
-        items.push({ ...c, rank: items.length + 1 });
+      if (items.length < LF_TOP_N) {
+        items.push({ ...c, rank: items.length + 1, isFollower: c.qualifies });
       } else {
-        unranked.push({ ...c, reason: c.qualifies ? ('순위 ' + LF_TOP_N + '위 밖(점수 낮음)') : c.reason });
+        unranked.push({ ...c, reason: '순위 ' + LF_TOP_N + '위 밖(거래량 기준)' });
       }
     });
     if (items.length) {
-      rankedByDong.push({ dong, leaderDanji: items[0].leaderDanji, topScore: items[0].score, items });
+      rankedByDong.push({ dong, leaderDanji: items[0].leaderDanji, topCount: items[0].totalCount, items });
     }
   });
-  // 동 그룹의 나열 순서는 "이 동에서 가장 매력적인 후보(1위)의 점수"가 높은 순 - 여러 법정동 중
-  // 어디부터 훑어볼지 우선순위를 주기 위함(그룹 내부 순위와는 별개 개념).
-  rankedByDong.sort((a, b) => b.topScore - a.topScore);
+  // 동 그룹의 나열 순서도 인기순 기준과 일관되게 "이 동 1위 단지의 거래량"이 높은 순으로 둠.
+  rankedByDong.sort((a, b) => b.topCount - a.topCount);
   leaders.sort((a, b) => b.totalCount - a.totalCount);
   return { region, type, bucketDays, bucketCount: LF_BUCKET_COUNT, leaders, rankedByDong, unranked, totalCandidates: candidates.length };
 }
