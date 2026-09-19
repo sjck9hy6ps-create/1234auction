@@ -884,6 +884,7 @@ const LF_MIN_TOTAL_COUNT = 10; // 7구간 합계 거래건수 - 이보다 적으
 const LF_MIN_CORR = 0.3; // 이 미만이면 "우연히 같이 움직인 걸로 보기 어렵다"고 판단해 제외
 const LF_MAX_LAG = 2; // 0~2구간(아파트 기준 최대 80일) 뒤처짐까지만 확인
 const LF_TOP_N = 100;
+const LF_MIN_HOUSEHOLDS = 100; // 회전율 기준 대장 후보 최소 세대수 - 나홀로 단지가 우연한 회전율로 뽑히는 것 방지
 function pearsonCorr(xs, ys) {
   const n = xs.length;
   if (n < 3) return null; // 점 3개 미만이면 상관계수 자체가 의미 없음
@@ -937,6 +938,33 @@ async function computeLeaderFollowerFresh(type, region) {
       });
     });
   });
+  // ⚠️ 2026-09(회전율 기반 대장 선정): "평단가가 제일 높은 단지"가 아니라 "실제로 가장 활발히
+  // 거래되는(=거래선호도가 높은) 단지"를 대장으로 뽑아달라는 요청 반영. 부산 해운대구로 실측한
+  // 결과, 평단가 기준이었을 땐 엘시티/두산위브더제니스처럼 시장이 실제로 대장이라 부르는 단지가
+  // 거래가 워낙 희소하다는 이유로 후보에도 못 들었음 - 회전율(거래건수÷세대수)로 바꾸면 이
+  // 문제가 풀림. 세대수는 AVM(mode=avmEstimate)에서 이미 쓰는 것과 같은 kapt_complex_info
+  // 테이블을, 같은 정규화 매칭 방식(normalizeComplexName)으로 재사용함 - 여기서는 법정동
+  // 전체를 한 번에 조회해 매칭하므로 단지마다 왕복하지 않음(성능).
+  const householdMap = {}; // `${법정동}|${normalizeComplexName(단지명)}` -> 세대수
+  try {
+    const lawdEntry = LAWD_CODES.find((r) => r.name === region);
+    if (lawdEntry) {
+      const { data: kaptRows } = await supabase
+        .from('kapt_complex_info')
+        .select('kapt_name, as3, households')
+        .eq('sigungu_code', lawdEntry.code)
+        .not('households', 'is', null);
+      (kaptRows || []).forEach((r) => {
+        if (!r.as3 || !(r.households > 0)) return;
+        const key = `${r.as3}|${normalizeComplexName(r.kapt_name)}`;
+        // 같은 키에 여러 행이 있으면(리모델링 등으로 K-apt에 신구 레코드가 같이 남아있는 경우)
+        // 세대수가 더 큰 쪽을 보수적으로 채택
+        if (!householdMap[key] || r.households > householdMap[key]) householdMap[key] = r.households;
+      });
+    }
+  } catch (e) { /* K-apt 조회 실패해도 막지 않음 - 회전율 없이 가격 기준 폴백으로 계속 진행 */ }
+  const windowDays = bucketDays * LF_BUCKET_COUNT;
+
   const leaders = [];
   const candidates = []; // 순위 매길 후보(대장 자신은 제외)
   Object.entries(dongMap).forEach(([dong, danjis]) => {
@@ -947,17 +975,36 @@ async function computeLeaderFollowerFresh(type, region) {
         const filled = fillBucketSeries(d.avgArr, d.countArr, minCount);
         if (!filled || totalCount < LF_MIN_TOTAL_COUNT) return null;
         const baseline = filled.prices.reduce((a, b) => a + b, 0) / filled.prices.length;
-        return { name, totalCount, filled, baseline };
+        const households = householdMap[`${dong}|${normalizeComplexName(name)}`] || null;
+        // 연환산 회전율(%) = 구간 내 거래건수÷세대수를 1년 기준으로 환산 - "1년에 세대의 몇 %가
+        // 거래되는지"로 단지 규모와 무관하게 비교 가능한 값으로 만듦
+        const turnoverPct = households ? Math.round((totalCount / households) * (365 / windowDays) * 1000) / 10 : null;
+        return { name, totalCount, filled, baseline, households, turnoverPct };
       })
       .filter(Boolean);
     if (qualified.length < 2) return; // 대장-후발주자 관계 자체가 성립하려면 최소 2개 단지 필요
-    qualified.sort((a, b) => b.baseline - a.baseline);
-    const leader = qualified[0];
+
+    // 회전율(세대수 데이터 있고 LF_MIN_HOUSEHOLDS 이상) 기준 1위를 대장으로 삼되, 이 법정동의
+    // 모든 단지가 K-apt 미매칭이거나 소규모라 회전율을 못 구하면 예전 방식(평단가 최고)으로 폴백
+    // - 대장 자체가 사라지는 것보다 정확도가 낮은 값이라도 있는 게 나음(프론트에 출처 표시).
+    const turnoverEligible = qualified.filter((d) => d.turnoverPct != null && d.households >= LF_MIN_HOUSEHOLDS);
+    let leader, leaderSource;
+    if (turnoverEligible.length > 0) {
+      turnoverEligible.sort((a, b) => b.turnoverPct - a.turnoverPct);
+      leader = turnoverEligible[0];
+      leaderSource = 'turnover';
+    } else {
+      leader = qualified.slice().sort((a, b) => b.baseline - a.baseline)[0];
+      leaderSource = 'price_fallback';
+    }
     const n = leader.filled.prices.length;
     const leaderRecentPct = Math.round(((leader.filled.prices[n - 1] / leader.filled.prices[n - 3]) - 1) * 1000) / 10;
-    leaders.push({ dong, danji: leader.name, totalCount: leader.totalCount, ppp: Math.round(leader.baseline), recentPct: leaderRecentPct });
+    leaders.push({
+      dong, danji: leader.name, totalCount: leader.totalCount, ppp: Math.round(leader.baseline), recentPct: leaderRecentPct,
+      households: leader.households, turnoverPct: leader.turnoverPct, leaderSource,
+    });
     if (leaderRecentPct <= 0) return; // 대장 자체가 안 올랐으면 "따라 오를 후발주자"라는 전제가 성립하지 않음
-    qualified.slice(1).forEach(f => {
+    qualified.filter((f) => f.name !== leader.name).forEach(f => {
       const followerRecentPct = Math.round(((f.filled.prices[n - 1] / f.filled.prices[n - 3]) - 1) * 1000) / 10;
       const gapPct = Math.round((leaderRecentPct - followerRecentPct) * 10) / 10;
       let bestCorr = null, bestLag = null;
@@ -2199,9 +2246,12 @@ export default async function handler(req, res) {
       }
       const results = [];
       for (const mo of months) {
-        const { count: totalCount, error: e1 } = await supabase.from(table).select('*', { count: 'estimated', head: true })
+        // ⚠️ 2026-09: count:'estimated'는 실제로 세지 않고 Postgres 플래너 통계로 "추정"만
+        // 하는 값이라, 서로 다른 달인데 똑같은 숫자가 나오는 등 신뢰할 수 없었음(진단용
+        // 도구인데 정확도가 없으면 의미 없음) - count:'exact'로 실제 카운트하도록 수정.
+        const { count: totalCount, error: e1 } = await supabase.from(table).select('*', { count: 'exact', head: true })
           .gte('deal_date', mo.start).lt('deal_date', mo.end);
-        const { count: nonMetroCount, error: e2 } = await supabase.from(table).select('*', { count: 'estimated', head: true })
+        const { count: nonMetroCount, error: e2 } = await supabase.from(table).select('*', { count: 'exact', head: true })
           .gte('deal_date', mo.start).lt('deal_date', mo.end)
           .not('region', 'ilike', '서울%').not('region', 'ilike', '경기%').not('region', 'ilike', '인천%');
         results.push({
