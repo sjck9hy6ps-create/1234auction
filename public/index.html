@@ -17318,7 +17318,7 @@ async function loadLeaderFollowerData() {
 // 각 행 클릭시 지도 이동.
 function renderLeaderFollowerBody(data, dongFilter) {
     var html = '<div style="font-size:10px;color:#e65100;background:#fff8e1;border-radius:6px;padding:5px 8px;margin:6px 14px 0;">'
-        + 'ℹ️ 순위는 거래량(인기) 기준으로 이 법정동 대장을 제외한 모든 단지에 매겨요. 그중 과거 대장아파트와 같이 움직인 이력이 있고 아직 덜 오른 단지에는 "(후발주자)" 표식이 붙어요(참고용 신호 - 확정 예측 아님). 통계 표본은 최근 ' + Math.round(data.bucketDays * data.bucketCount / 30) + '개월입니다.</div>';
+        + 'ℹ️ 순위는 2017-09~오늘 전체 거래이력을 근거로, 평단가·누적 거래량·세대수 대비 회전율(3개 지표를 동 안에서 백분위화해 평균한 종합 가치점수) 순으로 대장을 제외한 모든 단지에 매겨요. 그중 과거 대장아파트와 같이 움직인 이력이 있고 아직 덜 오른 단지에는 "(후발주자)" 표식이 붙어요(참고용 신호 - 확정 예측 아님). 대장의 선행성 판정 자체는 최근 ' + Math.round(data.bucketDays * data.bucketCount / 30) + '개월 표본을 씁니다.</div>';
     var leaders = dongFilter ? (data.leaders || []).filter(function(l) { return l.dong === dongFilter; }) : (data.leaders || []);
     if (leaders.length) {
         html += '<div style="margin:8px 14px 0;font-size:11.5px;font-weight:bold;color:#4a148c;">🏆 법정동별 대장아파트</div>'
@@ -17341,21 +17341,23 @@ function renderLeaderFollowerBody(data, dongFilter) {
     if (!groups.length) {
         html += '<div style="font-size:11px;color:#aaa;padding:10px 14px;">' + (dongFilter ? '이 법정동에는 순위를 매길 단지가 없습니다(대장 하나뿐이거나 표본이 부족해요).' : '순위를 매길 단지가 없습니다(대장 자체가 없거나 표본이 부족한 지역일 수 있어요).') + '</div>';
     } else {
-        html += '<div style="margin:10px 14px 0;font-size:11.5px;font-weight:bold;color:#4a148c;">🥈 법정동별 순위(인기순, 최대 100위)</div>'
-            + '<div style="margin:2px 14px 0;font-size:9.5px;color:#999;">같은 법정동 안에서 대장을 제외한 모든 단지를 거래량(인기) 순으로 나열해요. "(후발주자)"가 붙은 단지는 과거 대장과 동행한 이력이 있고 아직 갭이 남은 단지 - 자세한 갭/동행성 수치는 항목을 눌러 확인하세요. 목록을 클릭하면 지도가 그 단지로 이동합니다.</div>';
+        html += '<div style="margin:10px 14px 0;font-size:11.5px;font-weight:bold;color:#4a148c;">🥈 법정동별 순위(종합 가치점수, 최대 100위)</div>'
+            + '<div style="margin:2px 14px 0;font-size:9.5px;color:#999;">같은 법정동 안에서 대장을 제외한 모든 단지를, 2017-09~오늘 누적 평단가·거래량·세대수 대비 회전율을 종합한 점수 순으로 나열해요(세대수 정보가 아직 없는 단지는 회전율만 빼고 나머지로 계산). "(후발주자)"가 붙은 단지는 과거 대장과 동행한 이력이 있고 아직 갭이 남은 단지 - 자세한 갭/동행성 수치는 항목을 눌러 확인하세요. 목록을 클릭하면 지도가 그 단지로 이동합니다.</div>';
         html += groups.map(function(group) {
             var rows = group.items.map(function(r) {
                 var corrTxt = r.corr != null ? (r.corr * 100).toFixed(0) + '%' : '-';
                 var lagTxt = r.lag != null ? (r.lag === 0 ? '동시' : r.lag + '구간(' + Math.round(r.lag * data.bucketDays) + '일)뒤') : '-';
                 var gapAmtTxt = r.gapAmount > 0 ? ('약 ' + r.gapAmount.toLocaleString() + '만/평↑ 여력') : (r.gapAmount < 0 ? ('이미 대장보다 ' + Math.abs(r.gapAmount).toLocaleString() + '만/평 높음') : '갭 없음');
+                var turnoverTxt = r.fullTurnoverPct != null ? (r.fullTurnoverPct + '%') : '자료없음';
+                var basisLine = '근거: 평단가 ' + r.fullPpp.toLocaleString() + '만/평 · 누적 거래 ' + r.fullCount + '건(2017~) · 세대수대비 회전율(연) ' + turnoverTxt;
                 var detailLine = r.isFollower
-                    ? ('현재 상태: 최근 ' + (r.followerRecentPct >= 0 ? '+' : '') + r.followerRecentPct + '% 상승(평단가 ' + r.followerPpp.toLocaleString() + '만/평, 대장은 ' + (r.leaderRecentPct >= 0 ? '+' : '') + r.leaderRecentPct + '%)'
+                    ? (basisLine + '<br>현재 상태: 최근 ' + (r.followerRecentPct >= 0 ? '+' : '') + r.followerRecentPct + '% 상승(대장은 ' + (r.leaderRecentPct >= 0 ? '+' : '') + r.leaderRecentPct + '%)'
                         + '<br>예상 흐름: 대장 대비 ' + r.gapPct + '%p 남음 · ' + gapAmtTxt + ' · 동행성 ' + corrTxt + ' · ' + lagTxt)
-                    : ('평단가 ' + r.followerPpp.toLocaleString() + '만/평 · 최근 ' + (r.followerRecentPct >= 0 ? '+' : '') + r.followerRecentPct + '% 변동');
+                    : basisLine;
                 return '<div style="padding:6px 2px;border-bottom:1px solid #f5f5f5;font-size:11.5px;cursor:pointer;" onclick="moveToDanji(\'' + data.region + '\',\'' + (r.dong || group.dong) + '\',\'' + r.danji.replace(/'/g, "\\'") + '\')">'
                     + '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;">'
                     + '<span style="min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;"><span style="color:#999;font-weight:bold;margin-right:4px;">' + r.rank + '위</span>' + cleanField(r.danji) + (r.isFollower ? '<span style="color:#7b1fa2;font-weight:bold;"> (후발주자)</span>' : '') + '</span>'
-                    + '<span style="white-space:nowrap;flex-shrink:0;font-size:10px;color:#999;">거래 ' + r.totalCount + '건</span></div>'
+                    + '<span style="white-space:nowrap;flex-shrink:0;font-size:10px;color:#999;">거래 ' + r.fullCount + '건</span></div>'
                     + '<div style="margin-top:2px;font-size:10.5px;color:#666;">' + detailLine + '</div></div>';
             }).join('');
             return '<div style="margin:8px 14px 0;">'
