@@ -889,6 +889,11 @@ const LF_MIN_CORR = 0.3; // 이 미만이면 "우연히 같이 움직인 걸로 
 const LF_MAX_LAG = 6; // 0~6구간(아파트 기준 최대 240일≈8개월) 뒤처짐까지 확인
 const LF_LEAD_MIN_CORR = 0.35; // 대장(선행지표) 판정 최소 상관계수 - 후발주자 판정(LF_MIN_CORR=0.3)보다
 // 약간 더 엄격하게 둠(대장 자체를 잘못 뽑으면 그 밑의 후발주자 판정 전체가 같이 틀어지므로).
+// ⚠️ 2026-09 진단용: leadLag가 LF_MAX_LAG(6)에 몰리는 현상이 실제로 "그 너머까지 상관이
+// 계속 오르는 것"인지 "6 근처에서 이미 꺾였는데 우연히 그쯤이 최고인 것"인지 확인하기 위해,
+// 실제 판정(LF_MAX_LAG=6)과 별개로 lag 1~LF_DIAG_MAX_LAG까지 상관계수 전체 곡선을 응답에
+// 같이 실어봄(판정 로직 자체는 변경 없음 - LF_MAX_LAG는 그대로 6).
+const LF_DIAG_MAX_LAG = 16;
 const LF_TOP_N = 100;
 const LF_MIN_HOUSEHOLDS = 100; // 회전율 기준 대장 후보 최소 세대수 - 나홀로 단지가 우연한 회전율로 뽑히는 것 방지
 function pearsonCorr(xs, ys) {
@@ -1015,16 +1020,19 @@ async function computeLeaderFollowerFresh(type, region) {
       }
       const restFilled = fillBucketSeries(restAvgArr, restCountArr, minCount);
       let bestCorr = null, bestLag = null;
+      const corrByLag = [];
       if (restFilled) {
-        for (let lag = 1; lag <= LF_MAX_LAG; lag++) {
+        for (let lag = 1; lag <= LF_DIAG_MAX_LAG; lag++) {
           const leaderPart = d.filled.returns.slice(0, d.filled.returns.length - lag);
           const restPart = restFilled.returns.slice(lag);
           const c = pearsonCorr(leaderPart, restPart);
-          if (c != null && (bestCorr == null || c > bestCorr)) { bestCorr = c; bestLag = lag; }
+          corrByLag.push([lag, c != null ? Math.round(c * 1000) / 1000 : null]);
+          if (lag <= LF_MAX_LAG && c != null && (bestCorr == null || c > bestCorr)) { bestCorr = c; bestLag = lag; }
         }
       }
       d.leadCorr = bestCorr;
       d.leadLag = bestLag;
+      d.corrByLag = corrByLag;
     });
     const leadEligible = qualified.filter((d) => d.leadCorr != null && d.leadCorr >= LF_LEAD_MIN_CORR);
     let leader, leaderSource;
@@ -1053,6 +1061,7 @@ async function computeLeaderFollowerFresh(type, region) {
       households: leader.households, turnoverPct: leader.turnoverPct, leaderSource,
       leadCorr: leader.leadCorr != null ? Math.round(leader.leadCorr * 100) / 100 : null,
       leadLag: leader.leadLag,
+      corrByLag: leader.corrByLag, // ⚠️ 2026-09 진단용 임시 필드 - lag별 상관계수 전체 곡선(추후 제거 예정)
     });
     if (leaderRecentPct <= 0) return; // 대장 자체가 안 올랐으면 "따라 오를 후발주자"라는 전제가 성립하지 않음
     qualified.filter((f) => f.name !== leader.name).forEach(f => {
