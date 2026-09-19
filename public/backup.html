@@ -35,6 +35,7 @@
   <div id="queueList"></div>
   <div style="margin-top:8px;">
     <button id="uploadBtn" disabled>가져오기 시작 (0개)</button>
+    <button id="stopUploadBtn" disabled style="background:#c33;">⏹ 중지</button>
     <button id="clearQueueBtn" disabled style="background:#999;">목록 비우기</button>
   </div>
   <progress id="progressBar" value="0" max="100"></progress>
@@ -103,7 +104,11 @@ function loadRows(text) {
 }
 
 async function backupRawFile(file, table) {
-  const key = `${Date.now()}_${table}_${file.name}`;
+  // ⚠️ 2026-09: Supabase Storage 키에 괄호"()"나 한글이 섞이면 "Invalid key" 오류가 남
+  // (원본 데이터 임포트와는 무관 - 이 파일을 그대로 한 부 저장해두는 백업 단계에서만 실패함).
+  // 키에 쓸 파일명만 영문/숫자/._- 로 치환해서 안전하게 만듦.
+  const safeName = file.name.normalize('NFC').replace(/[^A-Za-z0-9._-]/g, '_');
+  const key = `${Date.now()}_${table}_${safeName}`;
   const { error } = await supabaseClient.storage.from('csv-backups').upload(key, file);
   if (error) throw error;
 }
@@ -111,6 +116,7 @@ async function backupRawFile(file, table) {
 // ── 여러 파일 큐 처리 ──────────────────────────────────────
 let fileQueue = []; // { id, file, table }
 let queueIdSeq = 0;
+let uploadCancelled = false; // ⏹ 중지 버튼 눌리면 true - 진행 중인 배치는 끝까지 마치고 다음 배치/파일부터 멈춤
 const TABLE_OPTIONS = [
   ['', '-- 자동인식 실패, 선택 필요 --'],
   ['house_trades', '아파트 매매'], ['house_rent', '아파트 전월세'],
@@ -194,11 +200,18 @@ async function uploadOneFile(item, logEl) {
   );
 
   const CHUNK = 1500;
-  let totalSaved = 0, totalMatched = 0, totalUnmatched = 0;
+  let totalSaved = 0, totalMatched = 0, totalUnmatched = 0, totalDbErrors = 0;
   const unmatchedSample = new Map();
   const totalChunks = Math.ceil(rows.length / CHUNK);
+  let stopped = false;
 
   for (let i = 0; i < rows.length; i += CHUNK) {
+    if (uploadCancelled) {
+      stopped = true;
+      logEl.textContent += `  ⏹ 중지 요청으로 이 파일은 배치 ${Math.floor(i / CHUNK) + 1}/${totalChunks}에서 멈춤 (이 파일은 미완료 상태).\n`;
+      logEl.scrollTop = logEl.scrollHeight;
+      break;
+    }
     const chunk = rows.slice(i, i + CHUNK);
     const chunkNum = Math.floor(i / CHUNK) + 1;
     logEl.textContent += `  배치 ${chunkNum}/${totalChunks} 처리 중... (${chunk.length}행)\n`;
@@ -217,26 +230,43 @@ async function uploadOneFile(item, logEl) {
       (j.unmatchedRegions || []).forEach(([r, c]) => {
         unmatchedSample.set(r, (unmatchedSample.get(r) || 0) + c);
       });
+      // ⚠️ 2026-09: importBatch()가 DB 저장(upsert) 실패시 saved=0으로 두고
+      // errors 배열에만 담아서 반환하는데, 지금까지 여기서 이 필드를 안 읽고 버리고
+      // 있었음 - 그래서 실제로는 DB 저장이 실패해도 화면엔 그냥 "0건 저장"이라고만
+      // 뜨고 왜 실패했는지 안 보였음. 있으면 바로 눈에 띄게 표시.
+      if (j.errors && j.errors.length > 0) {
+        totalDbErrors += j.errors.length;
+        logEl.textContent += `  🚨 배치 ${chunkNum} DB 저장 실패(${j.errors.length}건): ${j.errors[0]}\n`;
+        logEl.scrollTop = logEl.scrollHeight;
+      }
     } catch (e) {
       logEl.textContent += `  ❌ 배치 ${chunkNum} 실패: ${e.message}\n`;
       logEl.scrollTop = logEl.scrollHeight;
     }
   }
 
-  logEl.textContent += `  🎉 완료! ${totalSaved}건 저장 (매칭 ${totalMatched}건 / 매칭 실패 ${totalUnmatched}건)\n`;
+  if (!stopped) {
+    logEl.textContent += `  🎉 완료! ${totalSaved}건 저장 (매칭 ${totalMatched}건 / 매칭 실패 ${totalUnmatched}건)\n`;
+  } else {
+    logEl.textContent += `  (중지 전까지) ${totalSaved}건 저장 (매칭 ${totalMatched}건 / 매칭 실패 ${totalUnmatched}건)\n`;
+  }
+  if (totalDbErrors > 0) {
+    logEl.textContent += `  ⚠️ 이 중 ${totalDbErrors}개 배치는 DB 저장 자체가 실패했어(위 🚨 로그 참고) - 이 파일은 나중에 다시 올려줘야 함.\n`;
+  }
   if (unmatchedSample.size > 0) {
     logEl.textContent += '  매칭 실패 지역 샘플:\n';
     [...unmatchedSample.entries()].slice(0, 5).forEach(([r, c]) => {
       logEl.textContent += `    "${r}" - ${c}건\n`;
     });
   }
-  return { totalSaved, totalMatched, totalUnmatched };
+  return { totalSaved, totalMatched, totalUnmatched, totalDbErrors, stopped };
 }
 
 document.getElementById('uploadBtn').addEventListener('click', async () => {
   const logEl = document.getElementById('log');
   const progressEl = document.getElementById('progressBar');
   const btn = document.getElementById('uploadBtn');
+  const stopBtn = document.getElementById('stopUploadBtn');
   const clearBtn = document.getElementById('clearQueueBtn');
 
   if (fileQueue.length === 0) return;
@@ -246,32 +276,65 @@ document.getElementById('uploadBtn').addEventListener('click', async () => {
     return;
   }
 
+  uploadCancelled = false;
   btn.disabled = true;
   clearBtn.disabled = true;
+  stopBtn.disabled = false;
   progressEl.value = 0;
   logEl.textContent = `총 ${fileQueue.length}개 파일 업로드 시작...\n`;
 
-  let grandSaved = 0, grandMatched = 0, grandUnmatched = 0, failedFiles = 0;
+  let grandSaved = 0, grandMatched = 0, grandUnmatched = 0, failedFiles = 0, grandDbErrors = 0;
+  const dbErrorFiles = [];
+  let stoppedAtIdx = -1;
   for (let idx = 0; idx < fileQueue.length; idx++) {
+    if (uploadCancelled) { stoppedAtIdx = idx; break; }
     const item = fileQueue[idx];
     logEl.textContent += `\n📄 [${idx + 1}/${fileQueue.length}] ${item.file.name}\n`;
     logEl.scrollTop = logEl.scrollHeight;
     try {
       const r = await uploadOneFile(item, logEl);
       grandSaved += r.totalSaved; grandMatched += r.totalMatched; grandUnmatched += r.totalUnmatched;
+      if (r.totalDbErrors > 0) { grandDbErrors += r.totalDbErrors; dbErrorFiles.push(item.file.name); }
+      if (r.stopped) { stoppedAtIdx = idx; break; } // 이 파일 도중에 중지됨 - 이 파일부터 큐에 남겨둠
     } catch (e) {
       failedFiles++;
       logEl.textContent += `  💥 파일 실패: ${e.message}\n`;
       logEl.scrollTop = logEl.scrollHeight;
     }
     progressEl.value = Math.round(((idx + 1) / fileQueue.length) * 100);
+    // ⚠️ 2026-09: 100개 파일을 쉬지 않고 연달아 올리면 Supabase DB 커넥션이 고갈돼서
+    // ("Too many connections issued to the database") 뒷부분 파일들의 실제 저장이
+    // 통째로 실패하는 걸 확인함. 파일 사이에 짧게 쉬어서 커넥션이 정리될 시간을 줌.
+    await new Promise(resolve => setTimeout(resolve, 800));
   }
 
-  logEl.textContent += `\n✅ 전체 완료! ${fileQueue.length}개 파일 중 ${fileQueue.length - failedFiles}개 성공 / 총 ${grandSaved}건 저장 (매칭 ${grandMatched}건 / 매칭 실패 ${grandUnmatched}건)\n`;
+  const wasStopped = stoppedAtIdx !== -1;
+  const processedCount = wasStopped ? stoppedAtIdx : fileQueue.length;
+  if (wasStopped) {
+    logEl.textContent += `\n⏹ 중지됨. ${fileQueue.length}개 중 ${processedCount}개 파일까지 처리 / 총 ${grandSaved}건 저장 (매칭 ${grandMatched}건 / 매칭 실패 ${grandUnmatched}건)\n`;
+    logEl.textContent += `나머지 ${fileQueue.length - processedCount}개 파일은 목록에 그대로 남겨뒀어 - "가져오기 시작"을 다시 누르면 이어서 진행돼.\n`;
+  } else {
+    logEl.textContent += `\n✅ 전체 완료! ${fileQueue.length}개 파일 중 ${fileQueue.length - failedFiles}개 성공 / 총 ${grandSaved}건 저장 (매칭 ${grandMatched}건 / 매칭 실패 ${grandUnmatched}건)\n`;
+  }
+  if (grandDbErrors > 0) {
+    logEl.textContent += `\n🚨 주의: 아래 ${dbErrorFiles.length}개 파일은 DB 저장 중 오류가 나서 일부(또는 전부) 데이터가 안 들어갔을 수 있어. 다시 올려줘:\n`;
+    dbErrorFiles.forEach(name => { logEl.textContent += `   - ${name}\n`; });
+  }
   logEl.scrollTop = logEl.scrollHeight;
   btn.disabled = false;
-  fileQueue = [];
+  stopBtn.disabled = true;
+  clearBtn.disabled = false;
+  // 중지된 경우 아직 처리 안 한(중단된 파일 포함) 항목들은 큐에 남겨서 이어서 올릴 수 있게 함
+  fileQueue = wasStopped ? fileQueue.slice(processedCount) : [];
   renderQueue();
+});
+
+document.getElementById('stopUploadBtn').addEventListener('click', () => {
+  uploadCancelled = true;
+  document.getElementById('stopUploadBtn').disabled = true;
+  const logEl = document.getElementById('log');
+  logEl.textContent += `\n⏹ 중지 요청됨 - 진행 중인 배치를 마치는 대로 멈출게...\n`;
+  logEl.scrollTop = logEl.scrollHeight;
 });
 
 document.getElementById('clearCacheBtn').addEventListener('click', async () => {
