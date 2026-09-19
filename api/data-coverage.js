@@ -1088,6 +1088,10 @@ async function computeLeaderFollowerFresh(type, region) {
         dong, danji: f.name, leaderDanji: leader.name, totalCount: f.totalCount,
         gapPct, corr: bestCorr != null ? Math.round(bestCorr * 100) / 100 : null, lag: bestLag,
         leaderRecentPct, followerRecentPct,
+        // ⚠️ 2026-09: "현재 상태(실제 상승률 %)"/"예상 흐름(남은 갭 %)"에 실감나는 금액을 같이
+        // 보여달라는 요청 - 평단가 자체(followerPpp)와, 대장과의 평단가 차이(gapAmount, 만원/평 -
+        // "앞으로 이만큼 더 오를 여력"으로 해석 가능)를 추가.
+        followerPpp: Math.round(f.baseline), gapAmount: Math.round(leader.baseline - f.baseline),
         score: qualifies ? bestCorr * gapPct : null,
         qualifies, reason,
       });
