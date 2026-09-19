@@ -1256,6 +1256,7 @@ async function getLeaderFollowerRank(type, region, force) {
   if (!force) {
     try {
       const { data: cached, error } = await supabase.from('leader_follower_cache').select('*').eq('id', cacheId).maybeSingle();
+      _lastRpcSeriesDebug = { ...( _lastRpcSeriesDebug||{}), cacheRead: { error: error ? error.message : null, found: !!cached, fetchedAt: cached ? cached.fetched_at : null, ageMs: cached ? Date.now() - new Date(cached.fetched_at).getTime() : null } };
       if (!error && cached && (Date.now() - new Date(cached.fetched_at).getTime()) < LF_FRESH_MS) {
         return { ...cached.payload, cached: true };
       }
@@ -1264,8 +1265,12 @@ async function getLeaderFollowerRank(type, region, force) {
   const fresh = await computeLeaderFollowerFresh(type, region);
   try {
     const { error: upsertErr } = await supabase.from('leader_follower_cache').upsert({ id: cacheId, payload: fresh, fetched_at: new Date().toISOString() });
+    _lastRpcSeriesDebug = { ...( _lastRpcSeriesDebug||{}), cacheWrite: { error: upsertErr ? upsertErr.message : null } };
     if (upsertErr) console.warn('leader_follower_cache 저장 실패:', upsertErr.message);
-  } catch (e) { console.warn('leader_follower_cache 저장 예외:', e.message); }
+  } catch (e) {
+    _lastRpcSeriesDebug = { ...( _lastRpcSeriesDebug||{}), cacheWrite: { exception: e.message } };
+    console.warn('leader_follower_cache 저장 예외:', e.message);
+  }
   return { ...fresh, cached: false };
 }
 
