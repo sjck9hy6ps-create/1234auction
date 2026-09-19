@@ -181,7 +181,26 @@ def main():
     print(f"[sync-kapt] 진행 인덱스 {sigungu_idx}/{len(LAWD_CODES)} - {sigungu_code} {sigungu_name}")
 
     # 1) 이 시군구의 단지 목록을 우선 확보(기존에 없는 단지만 기본행 upsert, 상세정보는 아직 null)
-    complex_list = fetch_sigungu_complex_list(sigungu_code)
+    # ⚠️ 2026-09(2차 버그 수정): 재시도(위 kapt_get의 4회 백오프)를 추가했는데도 서울 노원구
+    # (11350)에서 매번 4번 다 타임아웃으로 실패 - 이건 "가끔 느림" 수준이 아니라 이 시군구
+    # 하나가 지속적으로 막혀있다는 뜻(원인은 apis.data.go.kr 쪽 문제로 추정, 이 코드로는 통제
+    # 불가). 문제는 이 목록조회 자체가 예외를 던지면 sigungu_idx가 절대 못 넘어가서 전체
+    # 파이프라인이 이 시군구 하나에 영원히 멈춰버림(대장아파트는 늘 존재해야 한다는 설계
+    # 원칙과 동일하게, 이 동기화도 한 시군구 때문에 전체가 멈추면 안 됨) - 그래서 목록조회
+    # 실패는 더 이상 크래시시키지 않고, 이 시군구를 이번 실행만 건너뛰고 다음 시군구로 진행함
+    # (다음 달 전국 재순환 때 다시 시도되므로 영구 누락은 아님).
+    try:
+        complex_list = fetch_sigungu_complex_list(sigungu_code)
+    except Exception as e:
+        print(f"  ERROR 단지 목록 조회 실패({sigungu_code} {sigungu_name}): {e}", file=sys.stderr)
+        print(f"  이 시군구는 이번 실행에서 건너뛰고 다음 시군구로 진행합니다(다음 순환에서 재시도됨).")
+        next_idx = sigungu_idx + 1
+        patch_url = f"{SUPABASE_URL}/rest/v1/kapt_sync_state?id=eq.1"
+        requests.patch(patch_url, headers=SB_HEADERS, data=json.dumps({
+            "sigungu_idx": next_idx, "updated_at": datetime.now(timezone.utc).isoformat(),
+        }), timeout=30)
+        print(f"[sync-kapt] {sigungu_code} {sigungu_name} 목록조회 실패로 건너뜀 - 다음 실행 인덱스: {next_idx % len(LAWD_CODES)}")
+        return
     print(f"  단지 목록 {len(complex_list)}건 조회됨")
     if complex_list:
         # 첫 실행 디버그용 - as1~as4가 실제로 무엇을 담고 있는지 로그로 확인(문서에 필드 설명이 없음)
