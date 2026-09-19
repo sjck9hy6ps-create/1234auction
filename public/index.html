@@ -1957,6 +1957,23 @@ var VILLA_AGE_TIERS = [
 // 경매물건 배지의 연식단계 표시용 색상(가격등급과 무관하게 연식단계 자체를 나타냄)
 var AGE_TIER_COLORS = { premium:'#2e7d32', new:'#66bb6a', semi:'#ff9800', old:'#8d6e63', aged:'#757575' };
 var surgeRankMap = {};
+// ⚠️ 2026-09(#462, 사용자 요청: "배지 순위 표기도 법정동 기준으로 해줘"): 후발주자(leaderFollower)
+// 패널에서 특정 시/군/구를 조회하면, 그 결과(법정동별 대장아파트+동별 순위)를 지도 배지에도
+// 그대로 얹어서 보여줌. surgeRankMap(급등순위)과 달리 이건 "법정동" 단위가 아니라 "법정동+단지"
+// 단위 매칭이 필요해서(같은 동 안에서도 단지마다 대장/몇 위가 다름) 키를 dong+정규화된 단지명
+// 조합으로 둠. 범위는 의도적으로 "패널에서 마지막으로 조회한 시/군/구"로 한정함 - 계산 비용이
+// 큰 시차상관 분석(leave-one-out)을 지도 팬/줌마다 전국적으로 돌리면 get-house.js에서 이미
+// 겪은 것과 같은 성능 문제가 재현되기 때문(사용자와 상의 후 이 범위로 결정).
+var leaderFollowerRankMap = {};
+function lfNormName(name) {
+    if (!name) return '';
+    var s = String(name).trim().replace(/\s+/g, '');
+    ['아파트', '단지'].forEach(function(suf) {
+        if (s.length > suf.length && s.slice(-suf.length) === suf) s = s.slice(0, -suf.length);
+    });
+    return s;
+}
+function lfRankKey(dong, name) { return (dong || '') + '|' + lfNormName(name); }
 // ⚠️ 2026-08(사용자 요청: "급등순위 필터를 평형대 필터로 변경") - 예전엔 여기가
 // activeSurgeRanks(🔥1~5위 필터칩)였음. 🔥N위 배지 자체(surgeRankMap 기반 표시)는
 // 그대로 두고, "거를 조건"만 평형대로 바꿈. 경계는 국토부 실거래 area(㎡) 기준:
@@ -4127,6 +4144,15 @@ function createMarker(cacheKey, lat, lon, apt) {
     var surgeBadge = surgeRank
         ? '<span style="background:#e53935;color:white;font-size:10px;font-weight:bold;padding:2px 6px;border-radius:10px;">🔥급등 ' + surgeRank + '위</span>'
         : '';
+    // 후발주자(leaderFollower) 배지 - #462, 사용자 요청("배지 순위 표기도 법정동 기준으로
+    // 해줘"): 후발주자 패널에서 마지막으로 조회한 시/군/구에 한해, 그 법정동의 대장아파트는
+    // 👑, 순위에 든 후발주자는 몇 위인지 지도 배지에도 그대로 얹어 보여줌.
+    var lfInfo = leaderFollowerRankMap[lfRankKey(l.dong, l.name)];
+    var lfBadge = lfInfo
+        ? (lfInfo.isLeader
+            ? '<span style="background:#4a148c;color:white;font-size:10px;font-weight:bold;padding:2px 6px;border-radius:10px;">👑 대장</span>'
+            : '<span style="background:#7b1fa2;color:white;font-size:10px;font-weight:bold;padding:2px 6px;border-radius:10px;">🥈 ' + lfInfo.rank + '위</span>')
+        : '';
     // 인기 평형 배지
     var popBadge = buildPopularPyeongBadge(apt);
     // 경매 비교물건 배지 (이 마커의 거래가 어떤 경매물건의 비교물건으로 등록돼 있으면 사건번호 표시)
@@ -4175,13 +4201,14 @@ function createMarker(cacheKey, lat, lon, apt) {
     if (l.road_name) peekParts.push(l.road_name);
     if (matchedAuction) peekParts.push('🔨 경매 ' + matchedAuction.status);
     if (matchedBidCase) peekParts.push('⚖️ 낙찰사례 ' + (matchedBidCase.status || '매각'));
+    if (lfInfo) peekParts.push(lfInfo.isLeader ? '👑 대장아파트' : ('🥈 후발주자 ' + lfInfo.rank + '위'));
     div.title = peekParts.join(' · ');
     // 건물명이 길면 배지들(평단가/추정마진/신고가/급등순위)까지 한 줄에 우겨넣다가 뒤쪽 배지가
     // 통째로 잘려서 안 보이는 문제가 있었음(특히 평단가가 자주 잘림) - 건물명은 자기 줄에서만
     // 말줄임(...)되게 하고, 배지들은 별도 줄에서 flex-wrap으로 넘치면 다음 줄로 내려가게 분리해서
     // 배지 내용이 잘리는 일 없이 항상 전체가 보이도록 함.
-    var badgeRow = (gradeBadge || marginBadge || nhBadge || surgeBadge)
-        ? '<div style="display:flex;flex-wrap:wrap;justify-content:center;gap:3px;margin-top:3px;">' + gradeBadge + marginBadge + nhBadge + surgeBadge + '</div>'
+    var badgeRow = (gradeBadge || marginBadge || nhBadge || surgeBadge || lfBadge)
+        ? '<div style="display:flex;flex-wrap:wrap;justify-content:center;gap:3px;margin-top:3px;">' + gradeBadge + marginBadge + nhBadge + surgeBadge + lfBadge + '</div>'
         : '';
     div.innerHTML = ''
         + auctionRibbon
@@ -17237,6 +17264,20 @@ async function loadLeaderFollowerData() {
         statusBox.style.color = '#999';
         statusBox.innerText = region + ' · 법정동 ' + data.leaders.length + '곳 대장아파트 기준 · 최근 ' + Math.round(data.bucketDays * data.bucketCount / 30) + '개월 데이터';
         renderLeaderFollowerBody(data);
+        // ⚠️ 2026-09(#462): 이 시/군/구 조회 결과를 지도 배지에도 반영 - 이전 조회 결과는
+        // 통째로 버리고(leaderFollowerRankMap = 새 객체) 이번 지역 것으로만 교체함(범위를
+        // "패널에서 마지막으로 조회한 시/군/구"로 한정하기로 한 결정과 일치).
+        var newLfMap = {};
+        (data.leaders || []).forEach(function(l) {
+            newLfMap[lfRankKey(l.dong, l.danji)] = { isLeader: true, rank: null };
+        });
+        (data.rankedByDong || []).forEach(function(group) {
+            group.items.forEach(function(r) {
+                newLfMap[lfRankKey(r.dong || group.dong, r.danji)] = { isLeader: false, rank: r.rank };
+            });
+        });
+        leaderFollowerRankMap = newLfMap;
+        redrawMarkers();
     } catch (e) {
         statusBox.style.color = '#e53935';
         statusBox.innerText = '불러오기 실패: ' + e.message;
