@@ -1102,23 +1102,44 @@ async function computeLeaderFollowerFresh(type, region) {
       });
     });
   });
-  candidates.sort((a, b) => {
-    if (a.qualifies && b.qualifies) return b.score - a.score;
-    if (a.qualifies) return -1;
-    if (b.qualifies) return 1;
-    return 0;
+  // ⚠️ 2026-09(#461, 사용자 피드백): "서울 마포구처럼 구 안 동들이 사실상 같은 생활권인 곳과
+  // 달리, 지방 시/군은 동마다 시장 성격 자체가 다를 수 있어(신도시/구도심/산업단지 등) 시/군/구
+  // 전체를 하나로 통합해 100위를 매기면 서로 다른 동네 후보끼리 뒤섞여 비교된다"는 지적 반영.
+  // 각 후보의 갭%/상관계수는 원래도 "자기 법정동 대장" 기준 상대값이라 스케일 자체는 이미
+  // 맞춰져 있지만(절대가격 아님), 그래도 "곧 따라잡힐 갭"인지의 신뢰도는 같은 동네 안에서
+  // 비교할 때가 더 의미 있음 - 그래서 시/군/구 전체 통합 순위 대신, 법정동별로 그룹을 나누고
+  // 각 그룹 안에서 1위~N위를 매기는 방식으로 변경함(기존 flat ranked[] → rankedByDong[]).
+  const dongGroups = {};
+  candidates.forEach((c) => {
+    if (!dongGroups[c.dong]) dongGroups[c.dong] = [];
+    dongGroups[c.dong].push(c);
   });
-  const ranked = [];
+  const rankedByDong = [];
   const unranked = [];
-  candidates.forEach((c, idx) => {
-    if (c.qualifies && ranked.length < LF_TOP_N) {
-      ranked.push({ ...c, rank: ranked.length + 1 });
-    } else {
-      unranked.push({ ...c, reason: c.qualifies ? '순위 100위 밖(점수 낮음)' : c.reason });
+  Object.entries(dongGroups).forEach(([dong, list]) => {
+    list.sort((a, b) => {
+      if (a.qualifies && b.qualifies) return b.score - a.score;
+      if (a.qualifies) return -1;
+      if (b.qualifies) return 1;
+      return 0;
+    });
+    const items = [];
+    list.forEach((c) => {
+      if (c.qualifies && items.length < LF_TOP_N) {
+        items.push({ ...c, rank: items.length + 1 });
+      } else {
+        unranked.push({ ...c, reason: c.qualifies ? ('순위 ' + LF_TOP_N + '위 밖(점수 낮음)') : c.reason });
+      }
+    });
+    if (items.length) {
+      rankedByDong.push({ dong, leaderDanji: items[0].leaderDanji, topScore: items[0].score, items });
     }
   });
+  // 동 그룹의 나열 순서는 "이 동에서 가장 매력적인 후보(1위)의 점수"가 높은 순 - 여러 법정동 중
+  // 어디부터 훑어볼지 우선순위를 주기 위함(그룹 내부 순위와는 별개 개념).
+  rankedByDong.sort((a, b) => b.topScore - a.topScore);
   leaders.sort((a, b) => b.totalCount - a.totalCount);
-  return { region, type, bucketDays, bucketCount: LF_BUCKET_COUNT, leaders, ranked, unranked, totalCandidates: candidates.length };
+  return { region, type, bucketDays, bucketCount: LF_BUCKET_COUNT, leaders, rankedByDong, unranked, totalCandidates: candidates.length };
 }
 async function getLeaderFollowerRank(type, region, force) {
   const cacheId = region + '|' + type;
