@@ -189,10 +189,12 @@ tr:hover td { background:#fffde7; }
     box-shadow:0 1px 3px rgba(0,0,0,0.35); border:1.5px solid white; z-index:4;
 }
 .comp-add-badge:hover { background:#00695c; }
-/* 평단가 등급(구 내 상대순위, 1=최고~7=최저) 배지 - 2026-09 사용자 요청: "모든 배지에
-   순위표시가 빠져있다, +비교 배지처럼 좌측 상단에 순위를 표기해달라". 기존엔 등급이
-   배경색으로만 구분돼서(gradeBadge) 숫자가 어디에도 안 보였음 - +비교 배지(우측 상단)와
-   대칭되는 좌측 상단 자리에 등급 숫자만 작게 얹어줌(범례의 색상-숫자 매핑과 동일한 배경색). */
+/* 후발주자(leaderFollower) 인기순위 배지 - 2026-09 사용자 요청: "모든 배지에 순위표시가
+   빠져있다, +비교 배지처럼 좌측 상단에 순위를 표기해달라" → (1차: 평단가 등급 숫자로
+   구현) → "등급 숫자가 아니라 대장아파트를 1위로 보고 대장/2/3/4 등 인기순위를 표기해줘"
+   (2차, 최종): +비교 배지(우측 상단)와 대칭되는 좌측 상단 자리에 대장은 "대장" 텍스트,
+   나머지는 대장을 1위로 친 인기순위 숫자(2,3,4...)를 얹어줌 - leaderFollowerRankMap이
+   채워져 있는(후발주자 패널에서 마지막으로 조회한 시/군/구) 마커에만 표시됨. */
 .grade-rank-badge {
     position:absolute; top:-10px; left:-8px;
     color:white; font-size:9px; font-weight:900;
@@ -4149,10 +4151,6 @@ function createMarker(cacheKey, lat, lon, apt) {
         var estSuffix = apt.gradeEstimated ? '(추정)' : '';
         gradeBadge = '<span style="background:' + gc + ';color:white;font-size:10px;font-weight:bold;padding:2px 6px;border-radius:3px;' + estStyle + '">' + tierPrefix + pppText + estSuffix + '</span>';
     }
-    // 등급 순위 배지(좌측 상단, +비교 배지와 대칭) - 2026-09 사용자 요청
-    var rankBadge = apt.grade
-        ? '<div class="grade-rank-badge" style="background:' + gc + ';">' + apt.grade + '</div>'
-        : '';
     // 낙찰사례 평균 추정마진 배지 - 이 매물의 법정동+건물유형과 같은 낙찰사례들의 추정마진
     // 평균을 평단가(gradeBadge) 배지들과 같은 줄에 보여줌. 매칭되는 낙찰사례가 하나도 없으면 표시 안 함
     var marginStat = getDongTypeMarginStat(l.dong, apt.buildingType);
@@ -4176,6 +4174,16 @@ function createMarker(cacheKey, lat, lon, apt) {
         ? (lfInfo.isLeader
             ? '<span style="background:#4a148c;color:white;font-size:10px;font-weight:bold;padding:2px 6px;border-radius:10px;">👑 대장</span>'
             : '<span style="background:#7b1fa2;color:white;font-size:10px;font-weight:bold;padding:2px 6px;border-radius:10px;">🥈 ' + lfInfo.rank + '위' + (lfInfo.isFollower ? '(후발주자)' : '') + '</span>')
+        : '';
+    // 인기순위 배지(좌측 상단, +비교 배지와 대칭) - 2026-09 사용자 요청("배지등급 숫자가
+    // 아니라, 대장 아파트를 1위로 보고, 대장/2/3/4 등 인기순위를 표기해줘"): 후발주자
+    // 패널의 종합 가치점수 순위(leaderFollowerRankMap)를 그대로 재사용 - 대장은 텍스트로
+    // "대장"만 표기하고, 나머지는 대장이 1위를 차지한 것으로 보고 rank+1을 매김(패널
+    // 목록에서는 대장을 뺀 순위라 1부터 시작하므로, 여기서는 +1해서 대장=1위 기준에 맞춤).
+    var popRankBadge = lfInfo
+        ? (lfInfo.isLeader
+            ? '<div class="grade-rank-badge" style="background:#4a148c;">대장</div>'
+            : '<div class="grade-rank-badge" style="background:#7b1fa2;">' + (lfInfo.rank + 1) + '</div>')
         : '';
     // 인기 평형 배지
     var popBadge = buildPopularPyeongBadge(apt);
@@ -4235,7 +4243,7 @@ function createMarker(cacheKey, lat, lon, apt) {
         ? '<div style="display:flex;flex-wrap:wrap;justify-content:center;gap:3px;margin-top:3px;">' + gradeBadge + marginBadge + nhBadge + surgeBadge + lfBadge + '</div>'
         : '';
     div.innerHTML = ''
-        + rankBadge
+        + popRankBadge
         + auctionRibbon
         + bidCaseRibbon
         + (count > 0 ? '<div style="font-size:15px;font-weight:900;color:' + color + ';">' + count + '건</div>' : '')
