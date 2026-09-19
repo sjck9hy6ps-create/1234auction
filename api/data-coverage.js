@@ -1256,7 +1256,6 @@ async function getLeaderFollowerRank(type, region, force) {
   if (!force) {
     try {
       const { data: cached, error } = await supabase.from('leader_follower_cache').select('*').eq('id', cacheId).maybeSingle();
-      _lastRpcSeriesDebug = { ...( _lastRpcSeriesDebug||{}), cacheRead: { error: error ? error.message : null, found: !!cached, fetchedAt: cached ? cached.fetched_at : null, ageMs: cached ? Date.now() - new Date(cached.fetched_at).getTime() : null } };
       if (!error && cached && (Date.now() - new Date(cached.fetched_at).getTime()) < LF_FRESH_MS) {
         return { ...cached.payload, cached: true };
       }
@@ -1265,10 +1264,8 @@ async function getLeaderFollowerRank(type, region, force) {
   const fresh = await computeLeaderFollowerFresh(type, region);
   try {
     const { error: upsertErr } = await supabase.from('leader_follower_cache').upsert({ id: cacheId, payload: fresh, fetched_at: new Date().toISOString() });
-    _lastRpcSeriesDebug = { ...( _lastRpcSeriesDebug||{}), cacheWrite: { error: upsertErr ? upsertErr.message : null } };
     if (upsertErr) console.warn('leader_follower_cache 저장 실패:', upsertErr.message);
   } catch (e) {
-    _lastRpcSeriesDebug = { ...( _lastRpcSeriesDebug||{}), cacheWrite: { exception: e.message } };
     console.warn('leader_follower_cache 저장 예외:', e.message);
   }
   return { ...fresh, cached: false };
@@ -2137,7 +2134,6 @@ async function getBucketDanjiPrices(type, start, end, sido) {
 // (rpc_bucket_avg_price)와 달리 신축(준공 2~3년 이내) 거래를 배제하지 않음 - leaderFollower는
 // 신축단지도 생긴 시점부터 정상적으로 후보에 잡혀야 하기 때문(momentum 계열 함수엔 영향 없음).
 // 반환: { [region|dong]: { region, dong, danjis: { [danjiName]: [{idx, avg, count}, ...] } } }
-let _lastRpcSeriesDebug = null; // ⚠️ 2026-09 임시 진단용 - 원인 확인 후 제거 예정
 async function getBucketSeriesDanjiPrices(type, start, end, bucketOrigin, bucketDays, sido) {
   try {
     const { data, error } = await supabase.rpc('rpc_bucket_series_avg_price', {
@@ -2146,10 +2142,8 @@ async function getBucketSeriesDanjiPrices(type, start, end, bucketOrigin, bucket
     });
     if (error) {
       console.warn(`leaderFollower(rpc_series): ${type} 조회 실패 -`, error.message);
-      _lastRpcSeriesDebug = { phase: 'rpc_error', message: error.message, details: error.details, hint: error.hint, code: error.code };
       return {};
     }
-    _lastRpcSeriesDebug = { phase: 'ok', rowCount: (data || []).length };
     const acc = {};
     (data || []).forEach(r => {
       const key = r.region + '|' + r.dong;
@@ -2161,7 +2155,6 @@ async function getBucketSeriesDanjiPrices(type, start, end, bucketOrigin, bucket
     return acc;
   } catch (e) {
     console.warn(`leaderFollower(rpc_series): ${type} 조회 예외 -`, e.message);
-    _lastRpcSeriesDebug = { phase: 'exception', message: e.message };
     return {};
   }
 }
@@ -2826,7 +2819,6 @@ export default async function handler(req, res) {
       if (!region) return res.status(400).json({ error: 'region(예: "경북 구미시")이 필요합니다.' });
       if (region.startsWith('서울')) return res.status(400).json({ error: '이 기능은 서울을 제외한 지역만 지원합니다(사용자 요청 - 서울은 이미 급등지역·돈되는지역 등 다른 지표로 충분히 다뤄지고 있고, 이 기능은 지방 갭메우기 신호에 초점을 둠).' });
       const result = await getLeaderFollowerRank(type, region, req.query.force === '1');
-      if (req.query.debug === '1') result._rpcDebug = _lastRpcSeriesDebug; // ⚠️ 2026-09 임시 진단용 - 제거 예정
       if (result.error) return res.status(502).json(result);
       return res.status(200).json(result);
     } catch (err) {
