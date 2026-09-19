@@ -3570,11 +3570,15 @@ async function loadAllData(centerLat, centerLon) {
             if (!regionCode) { resolve(); return; }
             var lawdCd = regionCode.substring(0, 5);
             lastSigungu = sigungu;
-            // ⚠️ 2026-09: 후발주자 인기순위 배지가 패널을 직접 열어야만 표시되던 문제 - 지도가
-            // 새 시/군/구를 확인할 때마다(캐시 재사용 여부와 무관하게) 백그라운드에서 자동 조회함
-            // (fire-and-forget, await 안 함 - 지도 로딩을 막지 않음). autoLoadLeaderFollowerForRegion
-            // 내부에서 세션당 지역별 1회로 제한하므로 팬/줌을 반복해도 중복 호출되지 않음.
-            autoLoadLeaderFollowerForRegion(sigungu);
+            // ⚠️ 2026-09(사용자 피드백: "지도를 옮길때마다 로딩되는 시간을 줄여야겠다"): 처음에는
+            // 이 지점(지역 확인 직후, 캐시 재사용 여부 판단 전)에서 바로 autoLoadLeaderFollowerForRegion를
+            // 불렀는데, migration_leader_follower_cache_grant.sql에 적어뒀듯 대장/후발주자 계산은
+            // 캐시가 없는 지역이면 최대 26초 가까이 걸리는 무거운 연산(2017~현재 전체이력을 여러
+            // 구간으로 나눠 순차 조회)임 - 이걸 get-house.js 본 데이터 fetch와 "동시에" 같은
+            // Supabase DB로 쏘면, 지도 정식 로딩(get-house)이 새 지역일 때 체감상 더 느려짐.
+            // 그래서 호출 위치를 아래 두 분기(캐시 히트/신규 fetch) 각각의 "본 데이터 로딩이 끝난
+            // 뒤"로 옮기고, setTimeout으로 한 번 더 늦춰 지도 렌더링이 완전히 끝난 뒤에야 시작하도록
+            // 함 - 배지 순위가 붙는 시점만 조금 늦어질 뿐, 지도 자체 로딩 속도에는 영향이 없어짐.
             lastResolvedLat = centerLat;
             lastResolvedLon = centerLon;
             // 예전엔 "바로 직전에 봤던 지역"일 때만 캐시를 재사용했는데(lawdCd === lastLawdCd),
@@ -3589,7 +3593,10 @@ async function loadAllData(centerLat, centerLon) {
                 // 넘으면 가장 오래전에 본 지역을 자동으로 빼줌 - 위 선언부 주석 참고.
                 mergedLawdCds.add(lawdCd);
                 touchLawdCd(lawdCd);
-                redrawMarkers(); resolve(); return;
+                redrawMarkers();
+                // 캐시 히트라 본 로딩 자체는 이미 끝났지만, 화면이 자리잡을 시간을 살짝 준 뒤 시작.
+                setTimeout(function() { autoLoadLeaderFollowerForRegion(sigungu); }, 1500);
+                resolve(); return;
             }
             lastLawdCd = lawdCd;
             isLoading = true;
@@ -3651,6 +3658,9 @@ async function loadAllData(centerLat, centerLon) {
                 touchLawdCd(lawdCd); // LRU 갱신 + 상한 초과시 오래된 지역 제거(allAptList/allRentList 재조립)
                 setStatus('');
                 redrawMarkers();
+                // 본 지도 데이터(get-house) 로딩이 끝난 뒤에만 시작 - 위 coord2RegionCodeCached
+                // 콜백 상단 주석 참고("동시에 쏘면 DB 경합으로 지도 로딩 자체가 느려짐").
+                setTimeout(function() { autoLoadLeaderFollowerForRegion(sigungu); }, 2500);
                 setTimeout(function() { warmBuildingCache(regionAptList); }, 3000);
                 // ⚠️ 2026-08: 직접 호출하지 않고 villaInfoQueue에 이어붙임 - 다른 지역(lawdCd)의
                 // loadAllData가 짧은 간격으로 여러 번 실행돼도, 연립다세대 건축물정보 배치조회
