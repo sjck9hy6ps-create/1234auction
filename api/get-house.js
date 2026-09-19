@@ -114,11 +114,27 @@ async function clearHouseCache() {
 // 페이지 몇 개 더 병렬로 나가는 정도는 앞서 겪은 rpc_new_high_dongs류의 무거운
 // 윈도우함수 SQL 병렬호출 문제와는 성격이 달라 안전함.)
 const FETCH_PAGE_SIZE = 1000;
+// ⚠️ 2026-09: 과거자료(2017-09~) 백필로 house_trades 등이 9년치로 불어나면서, 시군구 전체를
+// 기간제한 없이 통째로 내려주던 이 엔드포인트가 지역에 따라 응답 6~13초·페이로드 최대
+// 20MB대까지 커졌고, 남양주시 같은 곳은 간헐적으로 500(타임아웃/메모리 추정)까지 실제로
+// 발생함(실측 확인). 지도 배지·비교물건 등 이 엔드포인트를 쓰는 기능들은 전부 "최근 시세"가
+// 목적이라 그 이전 역사까지는 필요 없고(장기추세형 기능인 leaderFollower/돈되는지역/R-ONE/
+// AVM 학습은 전부 이 엔드포인트를 거치지 않고 data-coverage.js·train-avm.py에서 Supabase를
+// 직접 SQL로 조회하므로 이 변경과 무관함) - 사용자 요청대로 클라이언트 로딩은 최근 2년으로
+// 제한하고, 그 이전 데이터는 DB에 그대로 남겨 "백데이터"로만 계속 활용함(삭제 아님).
+const RECENT_WINDOW_YEARS = 2;
+function recentCutoffDateStr() {
+  const d = new Date();
+  d.setFullYear(d.getFullYear() - RECENT_WINDOW_YEARS);
+  return String(d.getFullYear()) + String(d.getMonth() + 1).padStart(2, '0') + String(d.getDate()).padStart(2, '0');
+}
 async function fetchAllRows(table, regionName) {
+  const cutoff = recentCutoffDateStr();
   const { count, error: countError } = await supabase
     .from(table)
     .select('id', { count: 'exact', head: true })
-    .eq('region', regionName);
+    .eq('region', regionName)
+    .gte('deal_date', cutoff);
   if (countError) return { data: null, error: countError };
   if (!count) return { data: [], error: null };
 
@@ -131,6 +147,7 @@ async function fetchAllRows(table, regionName) {
         .from(table)
         .select('*')
         .eq('region', regionName)
+        .gte('deal_date', cutoff)
         .order('id', { ascending: true })
         .range(from, from + FETCH_PAGE_SIZE - 1)
     );
