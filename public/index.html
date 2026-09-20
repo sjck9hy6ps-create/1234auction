@@ -4192,19 +4192,21 @@ function createMarker(cacheKey, lat, lon, apt) {
     // 해줘"): 후발주자 패널에서 마지막으로 조회한 시/군/구에 한해, 그 법정동의 대장아파트는
     // 👑, 순위에 든 후발주자는 몇 위인지 지도 배지에도 그대로 얹어 보여줌.
     var lfInfo = leaderFollowerRankMap[lfRankKey(l.dong, l.name)];
-    var lfBadge = lfInfo
-        ? (lfInfo.isLeader
-            ? '<span style="background:#4a148c;color:white;font-size:10px;font-weight:bold;padding:2px 6px;border-radius:10px;">👑 대장</span>'
-            : '<span style="background:#7b1fa2;color:white;font-size:10px;font-weight:bold;padding:2px 6px;border-radius:10px;">🥈 ' + lfInfo.rank + '위' + (lfInfo.isFollower ? '(후발주자)' : '') + '</span>')
-        : '';
+    // ⚠️ 2026-09(사용자 요청: "배지내부에 있는 순위표시는 없어도 되"): 카드 내부(badgeRow)에
+    // 있던 순위 pill(🥈N위/👑대장)은 제거함 - 순위는 카드 좌측 상단의 popRankBadge 하나로만
+    // 표시함(대장은 아래에서 크게 강조).
+    var lfBadge = '';
     // 인기순위 배지(좌측 상단, +비교 배지와 대칭) - 2026-09 사용자 요청("배지등급 숫자가
     // 아니라, 대장 아파트를 1위로 보고, 대장/2/3/4 등 인기순위를 표기해줘"): 후발주자
     // 패널의 종합 가치점수 순위(leaderFollowerRankMap)를 그대로 재사용 - 대장은 텍스트로
     // "대장"만 표기하고, 나머지는 대장이 1위를 차지한 것으로 보고 rank+1을 매김(패널
     // 목록에서는 대장을 뺀 순위라 1부터 시작하므로, 여기서는 +1해서 대장=1위 기준에 맞춤).
+    // ⚠️ 2026-09(사용자 피드백: "대장아파트가 눈에 띄지 않아 찾기 어려워"): 위에서 카드 내부
+    // 순위 pill을 없앤 대신, 대장만큼은 이 corner 배지 글씨를 훨씬 크게 키워서 지도에서
+    // 한눈에 띄도록 함(대장이 아닌 일반 순위 숫자는 기존 크기 그대로 유지).
     var popRankBadge = lfInfo
         ? (lfInfo.isLeader
-            ? '<div class="grade-rank-badge" style="background:#4a148c;">대장</div>'
+            ? '<div class="grade-rank-badge" style="background:#4a148c;font-size:16px;font-weight:900;padding:3px 10px;top:-14px;left:-10px;box-shadow:0 2px 6px rgba(0,0,0,0.5);">👑대장</div>'
             : '<div class="grade-rank-badge" style="background:#7b1fa2;">' + (lfInfo.rank + 1) + '</div>')
         : '';
     // 인기 평형 배지
