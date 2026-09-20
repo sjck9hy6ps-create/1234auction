@@ -32,6 +32,14 @@
          0건 처리된 채 계속 이월되고 있었습니다 - 이 재시도 대상을 좌표 웜업보다 먼저,
          한도의 절반을 예약해서 처리하도록 순서를 바꿔 매 실행마다 반드시 진행되게
          했습니다(processBuildingOnlyBatch 참고).
+   ⚠️ 2026-09(사용자가 공유해준 data.go.kr 활용신청 현황): get-building.js가 부르는
+      건축HUB 세부 API 4개(getBrTitleInfo/getBrHsprcInfo/getBrFlrOulnInfo/
+      getBrExposPubuseAreaInfo) 모두 일일 트래픽 한도가 각각 10,000건임을 확인했습니다.
+      건물 1건 조회 = 4개 API 각 1회 소모(1:1)이므로 실질 하루 한도는 약 10,000건 -
+      예전엔 이 숫자를 몰라 500건(5%)으로만 보수적으로 잡았던 걸, 낮 시간 실사용 몫
+      (6,000건 이상)을 넉넉히 남기면서 MAX_BUILDING_WARMUP_PER_RUN을 4,000건으로
+      올렸습니다. 대신 한도가 8배 늘어난 만큼 순차 처리로는 실행시간이 너무 길어져
+      processBuildingOnlyBatch를 동시처리(BUILDING_CONCURRENCY=6)로 바꿨습니다.
 ════════════════════════════════════ */
 import { createClient } from '@supabase/supabase-js';
 import ws from 'ws';
@@ -47,12 +55,20 @@ const supabase = createClient(
 const KAKAO_REST_KEY = process.env.KAKAO_REST_API_KEY?.trim();
 const SITE_URL = (process.env.SITE_URL?.trim()) || 'https://1234auction.vercel.app';
 const DELAY_MS = 250;          // 카카오 REST API 호출 사이 간격 (레이트리밋 안전 마진)
-const BUILDING_DELAY_MS = 300; // 건축물대장만 재시도할 때 호출 간격
+const BUILDING_DELAY_MS = 300; // 건축물대장만 재시도할 때 동시처리 워커 사이 시작 간격(레이트리밋 안전마진)
+const BUILDING_CONCURRENCY = 6; // 건축물대장 재시도 동시 처리 수 - 아래 MAX_BUILDING_WARMUP_PER_RUN
+                                 // 상향에 맞춰 순차(1개씩)로는 실행시간이 너무 길어져 동시처리로 전환.
 const CONCURRENCY = 3;         // 동시 처리 단지 수
 const PAGE_SIZE = 1000;        // Supabase 페이지네이션 단위
-// 건축물대장(PUBLIC_DATA_API_KEY) 웜업 호출 수 실행당 상한 - 낮 시간 실사용을 위해
-// 하루 할당량을 웜업이 혼자 다 쓰지 않도록 남겨둠. 환경변수로 조절 가능.
-const MAX_BUILDING_WARMUP_PER_RUN = parseInt(process.env.MAX_BUILDING_WARMUP_PER_RUN || '500', 10);
+// ⚠️ 2026-09(사용자가 공유해준 data.go.kr 활용신청 현황): get-building.js 한 번 호출이
+// 내부적으로 건축HUB의 getBrTitleInfo/getBrHsprcInfo/getBrFlrOulnInfo/getBrExposPubuseAreaInfo
+// 4개 세부 API를 동시에 부르는데(각 API 일일 트래픽 10,000건, PUBLIC_DATA_API_KEY로 공유),
+// 이 4개가 전부 같은 만큼(1:1) 소모되니 사실상 "하루 10,000번 건물 조회"까지 여유가 있음.
+// 예전엔 이 숫자를 몰라서 500건(전체의 5%)으로만 아주 보수적으로 잡았었는데, 실제 한도를
+// 알고 나니 너무 낮았음 - 낮 시간 실사용(개인 앱이라 하루 수십~수백 건 수준으로 추정)에
+// 넉넉한 여유(10,000건 중 6,000건 이상)를 남기면서도 19,623건 백로그를 며칠 안에 털어낼 수
+// 있도록 4,000건으로 올림. 그래도 환경변수로 조절 가능하게 유지함(필요시 낮추거나 더 올릴 수 있음).
+const MAX_BUILDING_WARMUP_PER_RUN = parseInt(process.env.MAX_BUILDING_WARMUP_PER_RUN || '4000', 10);
 let buildingWarmupCount = 0;
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 /* ── 호출 제한 대응 ──
@@ -375,21 +391,29 @@ async function main() {
   // 먼저 처리하도록 순서를 바꿈 - 매 실행마다 이 백로그도 최소한만큼은 반드시 줄어듦.
   // 재시도 대상이 예약분보다 적으면 남는 한도는 그대로 좌표 웜업 단계로 넘어가 낭비되지
   // 않고, 좌표 웜업이 끝난 뒤에도 한도가 남으면 재시도 대상을 이어서 더 처리함.
+  // ⚠️ 2026-09: MAX_BUILDING_WARMUP_PER_RUN을 500→4,000으로 올리면서, 예전처럼 한 건씩
+  // 순차 처리(건당 BUILDING_DELAY_MS 대기)하면 4,000건 × 0.3초만 해도 20분에 이 API
+  // 호출 자체의 소요시간(초 단위)까지 겹쳐 실행시간이 지나치게 길어짐 - coordTargets
+  // 웜업(processQueue)과 동일하게 동시처리(BUILDING_CONCURRENCY)로 바꿔서 늘어난 상한
+  // 만큼의 실행시간 증가를 감당 가능한 수준으로 유지함.
   async function processBuildingOnlyBatch(targets, startIdx, budgetCap) {
     let success = 0, idx = startIdx, doneInBatch = 0;
-    for (; idx < targets.length; idx++) {
-      if (buildingWarmupCount >= budgetCap) break;
-      const [, row] = targets[idx];
-      const key = buildCacheKey(row.dong, row.danji, row.bunji, row.road_name, row.main_num, row.sub_num);
-      const coord = existingCoords.get(key);
-      if (coord && coord.sigunguCd && coord.bjdongCd) {
-        await warmBuildingInfo(row, coord.sigunguCd, coord.bjdongCd);
-        success++;
+    const batchTotal = Math.max(0, Math.min(targets.length, budgetCap - buildingWarmupCount) );
+    async function runOne() {
+      while (idx < targets.length && buildingWarmupCount < budgetCap) {
+        const [, row] = targets[idx++];
+        const key = buildCacheKey(row.dong, row.danji, row.bunji, row.road_name, row.main_num, row.sub_num);
+        const coord = existingCoords.get(key);
+        if (coord && coord.sigunguCd && coord.bjdongCd) {
+          await warmBuildingInfo(row, coord.sigunguCd, coord.bjdongCd);
+          success++;
+        }
+        doneInBatch++;
+        await sleep(BUILDING_DELAY_MS);
+        if (doneInBatch % 200 === 0) console.log(`   진행: ${doneInBatch}${batchTotal ? '/' + batchTotal : ''}건 처리`);
       }
-      doneInBatch++;
-      await sleep(BUILDING_DELAY_MS);
-      if (doneInBatch % 50 === 0) console.log(`   진행: ${doneInBatch}건 처리`);
     }
+    await Promise.all(Array.from({ length: BUILDING_CONCURRENCY }, runOne));
     return { success, nextIdx: idx };
   }
 
