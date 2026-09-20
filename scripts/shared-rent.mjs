@@ -8,6 +8,8 @@ const supabaseUrl = process.env.SUPABASE_URL?.trim();
 const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY?.trim();
 export const supabase = createClient(supabaseUrl, supabaseKey, {
   auth: { persistSession: false },
+  // Node 20은 네이티브 WebSocket이 없어 최신 supabase-js의 Realtime 클라이언트
+  // 초기화가 실패함 → ws 패키지를 명시적으로 transport로 지정해 우회
   realtime: { transport: ws }
 });
 
@@ -95,19 +97,25 @@ export function parseXMLRent(xml, regionName) {
 export async function fetchMonthRent(code, name, ym) {
   const url = `https://apis.data.go.kr/1613000/RTMSDataSvcAptRent/getRTMSDataSvcAptRent`
     + `?serviceKey=${encodeURIComponent(API_KEY)}&LAWD_CD=${code}&DEAL_YMD=${ym}&numOfRows=1000&pageNo=1`;
-  try {
-    const res  = await fetch(url, { signal: AbortSignal.timeout(15000) });
-    const text = await res.text();
-    return parseXMLRent(text, name);
-  } catch (e) {
-    console.error(`❌ ${code}/${ym} 전월세 실패:`, e.message);
-    return [];
+  // ⚠️ 2026-09(house_trades와 동일한 원인으로 house_rent도 5월 이후 수집 중단 확인):
+  // e.message만 찍던 걸 e.cause까지 찍도록 보강 + 일시적 네트워크 문제 대비 재시도 추가
+  // (shared.mjs fetchMonth와 동일한 조치 - 자세한 배경은 그쪽 주석 참고).
+  const MAX_ATTEMPTS = 3;
+  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+    try {
+      const res  = await fetch(url, { signal: AbortSignal.timeout(15000) });
+      const text = await res.text();
+      return parseXMLRent(text, name);
+    } catch (e) {
+      const causeInfo = e.cause ? ` / cause: ${e.cause.code || e.cause.message || e.cause}` : '';
+      console.error(`❌ ${code}/${ym} 전월세 실패(시도 ${attempt}/${MAX_ATTEMPTS}): ${e.message}${causeInfo}`);
+      if (attempt < MAX_ATTEMPTS) await sleep(1000 * attempt);
+    }
   }
+  return [];
 }
 
-// ── upsert (500건씩 나눠서 저장 - 한 번에 다 넣으면 statement timeout 발생) ──
-const UPSERT_BATCH_SIZE = 500;
-
+// ── upsert ──
 export async function upsertRent(rows) {
   if (!rows.length) return;
   const uniqueRows = Array.from(
@@ -115,18 +123,8 @@ export async function upsertRent(rows) {
       `${r.region}_${r.dong}_${r.danji}_${r.size}_${r.floor}_${r.deal_date}`, r
     ])).values()
   );
-
-  let successCount = 0;
-  for (let i = 0; i < uniqueRows.length; i += UPSERT_BATCH_SIZE) {
-    const chunk = uniqueRows.slice(i, i + UPSERT_BATCH_SIZE);
-    const { error } = await supabase.from('house_rent').upsert(chunk, {
-      onConflict: 'region,dong,danji,size,floor,deal_date'
-    });
-    if (error) {
-      console.error(`❌ house_rent upsert 에러 (${i + 1}~${i + chunk.length}행):`, error.message);
-    } else {
-      successCount += chunk.length;
-    }
-  }
-  console.log(`   → house_rent 저장 완료: ${successCount}/${uniqueRows.length}건`);
+  const { error } = await supabase.from('house_rent').upsert(uniqueRows, {
+    onConflict: 'region,dong,danji,size,floor,deal_date'
+  });
+  if (error) console.error('❌ house_rent upsert 에러:', error.message);
 }
