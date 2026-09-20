@@ -339,14 +339,27 @@ export function parseXML(xml, regionName) {
 }
 export async function fetchMonth(code, name, ym) {
   const url = `https://apis.data.go.kr/1613000/RTMSDataSvcAptTradeDev/getRTMSDataSvcAptTradeDev?serviceKey=${encodeURIComponent(API_KEY)}&LAWD_CD=${code}&DEAL_YMD=${ym}&numOfRows=1000&pageNo=1`;
-  try {
-    const res = await fetch(url, { signal: AbortSignal.timeout(15000) });
-    const text = await res.text();
-    return parseXML(text, name);
-  } catch (e) {
-    console.error(`❌ ${code}/${ym} 실패:`, e.message);
-    return [];
+  // ⚠️ 2026-09(사용자 리포트: 전 지역 250개 코드가 전부 "fetch failed"로 실패, 6월 이후
+  // house_trades에 데이터가 아예 안 쌓임): 기존엔 e.message만 찍어서 "fetch failed"라는
+  // 뭉뚱그려진 메시지밖에 안 보였음 - Node fetch는 DNS 실패/TLS 실패/연결거부처럼
+  // "연결 자체가 안 되는" 에러를 TypeError('fetch failed')로 뭉뚱그리고 진짜 원인은
+  // e.cause에 담아두므로, 그걸 같이 찍어야 진짜 원인(예: ENOTFOUND, ECONNRESET,
+  // 인증서 오류, 타임아웃 등)을 알 수 있음. 같은 API를 Vercel(get-house.js 실시간 조회)은
+  // 정상 호출 중이라 국토부 API 자체 장애가 아니라 GitHub Actions 실행환경 쪽 네트워크
+  // 문제일 가능성이 높음 - 그래서 일시적 문제일 경우를 대비해 최대 2회 재시도도 추가함.
+  const MAX_ATTEMPTS = 3;
+  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+    try {
+      const res = await fetch(url, { signal: AbortSignal.timeout(15000) });
+      const text = await res.text();
+      return parseXML(text, name);
+    } catch (e) {
+      const causeInfo = e.cause ? ` / cause: ${e.cause.code || e.cause.message || e.cause}` : '';
+      console.error(`❌ ${code}/${ym} 실패(시도 ${attempt}/${MAX_ATTEMPTS}): ${e.message}${causeInfo}`);
+      if (attempt < MAX_ATTEMPTS) await sleep(1000 * attempt);
+    }
   }
+  return [];
 }
 export async function upsertBatch(rows) {
   if (rows.length === 0) return;
