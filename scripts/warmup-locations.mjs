@@ -21,6 +21,17 @@
       둬서, 낮 시간용 할당량을 항상 일부 남겨두도록 했습니다. 상한에 도달하면
       나머지는 다음 실행(다음날 새벽)으로 넘어가며, 이미 처리된 건 건너뛰므로
       결국엔 전부 처리됩니다 - 그냥 하루에 몰아서 처리하지 않을 뿐입니다.
+   ⚠️ 2026-09(사용자 피드백): 두 가지를 고쳤습니다.
+      1) house_trades처럼 행이 아주 많은 테이블을 OFFSET(.range()) 페이지네이션으로 돌면
+         뒤쪽 페이지일수록 앞부분을 다 스캔하고 버리는 비용이 커져 statement_timeout에
+         걸리기 쉬웠고, 실패하면 그 지점에서 조용히 "부분 목록"만으로 계속 진행되고
+         있었습니다 - id 기준 키셋(커서) 페이지네이션으로 바꿔 이 문제의 근본 원인을
+         없앴습니다(fetchDistinctComplexes/fetchExistingCoords 참고).
+      2) 좌표 웜업(coordTargets) 단계가 매번 건축물대장 웜업 한도(MAX_BUILDING_WARMUP_PER_RUN)
+         전체를 먼저 써버려서, "좌표는 있지만 건축물대장만 없는" 재시도 대상이 매 실행
+         0건 처리된 채 계속 이월되고 있었습니다 - 이 재시도 대상을 좌표 웜업보다 먼저,
+         한도의 절반을 예약해서 처리하도록 순서를 바꿔 매 실행마다 반드시 진행되게
+         했습니다(processBuildingOnlyBatch 참고).
 ════════════════════════════════════ */
 import { createClient } from '@supabase/supabase-js';
 import ws from 'ws';
@@ -125,40 +136,74 @@ function computeBunJi(row) {
 function buildBuildingKey(sigunguCd, bjdongCd, bun, ji, bldNm) {
   return [sigunguCd, bjdongCd, bun, ji, (bldNm || '').trim()].join('|');
 }
-/* ── 테이블에서 고유 단지 목록(주소 관련 컬럼만) 페이지네이션으로 전부 뽑아 dedupe ── */
+/* ── 테이블에서 고유 단지 목록(주소 관련 컬럼만) 페이지네이션으로 전부 뽑아 dedupe ──
+   ⚠️ 2026-09(사용자 피드백: 실행 로그에 "house_trades 조회 에러: canceling statement
+   due to statement timeout"가 찍히고 그 뒤로 조용히 부분 목록만으로 계속 진행됨을 발견):
+   원래는 .range(from, from+999)로 OFFSET 기반 페이지네이션을 했는데, house_trades처럼
+   행이 아주 많은 테이블에서는 오프셋이 커질수록 Postgres가 앞부분을 다 스캔하고
+   버리는 비용이 계속 늘어나(전형적인 "깊은 OFFSET 페이지네이션" 문제) 뒤쪽 페이지에서
+   service_role의 statement_timeout(30s, migration_service_role_timeout.sql 참고)에
+   걸리기 쉬웠음. 그리고 실패하면 그 지점에서 바로 break해서 "그 뒤 오프셋에 있던 단지들"이
+   그날 목록에서 통째로 누락됐는데도 로그상 개수만 보면 정상 완료처럼 보였음.
+   → id 기준 키셋(커서) 페이지네이션(.gt('id', lastId).order('id').limit(n))으로 바꿔서
+   페이지 비용이 오프셋 크기와 무관하게 항상 비슷하게 유지되도록 함 - 애초에 이 타임아웃의
+   근본 원인을 없앰. 그래도 일시적 오류(네트워크 등)가 나면 페이지 크기를 절반씩 줄여가며
+   몇 차례 재시도하고, 그래도 안 되면 그 지점에서 멈추되 "부분 목록"이라는 걸 명확히 로그로
+   남김(예전처럼 조용히 넘어가지 않음). */
 async function fetchDistinctComplexes(table) {
   const map = new Map();
-  let from = 0;
+  let lastId = 0;
+  let pageSize = PAGE_SIZE;
+  const MAX_ATTEMPTS_PER_PAGE = 4;
   while (true) {
-    const { data, error } = await supabase
-      .from(table)
-      .select('region,dong,danji,bunji,road_name,main_num,sub_num')
-      .range(from, from + PAGE_SIZE - 1);
-    if (error) { console.error(`❌ ${table} 조회 에러:`, error.message); break; }
+    let data = null, error = null, attemptSize = pageSize;
+    for (let attempt = 1; attempt <= MAX_ATTEMPTS_PER_PAGE; attempt++) {
+      const res = await supabase
+        .from(table)
+        .select('id,region,dong,danji,bunji,road_name,main_num,sub_num')
+        .gt('id', lastId)
+        .order('id', { ascending: true })
+        .limit(attemptSize);
+      data = res.data; error = res.error;
+      if (!error) break;
+      console.error(`⚠️  ${table} 조회 실패(id>${lastId}, 페이지크기 ${attemptSize}, 시도 ${attempt}/${MAX_ATTEMPTS_PER_PAGE}): ${error.message}`);
+      attemptSize = Math.max(50, Math.floor(attemptSize / 2)); // 다음 시도는 더 작은 페이지로
+      await sleep(1000 * attempt);
+    }
+    if (error) {
+      console.error(`❌ ${table} 조회 에러: id>${lastId} 지점에서 ${MAX_ATTEMPTS_PER_PAGE}회 재시도 후에도 실패 - 이 지점부터는 이번 실행에서 건너뜁니다(⚠️ 부분 목록):`, error.message);
+      break;
+    }
     if (!data || data.length === 0) break;
     for (const row of data) {
       const key = buildCacheKey(row.dong, row.danji, row.bunji, row.road_name, row.main_num, row.sub_num);
       if (!map.has(key)) map.set(key, row);
+      lastId = row.id;
     }
-    if (data.length < PAGE_SIZE) break;
-    from += PAGE_SIZE;
+    if (data.length < attemptSize) break;
+    pageSize = PAGE_SIZE; // 다음 페이지는 원래 크기로 복귀 (이전 페이지에서만 줄었을 수 있으므로)
   }
   return map;
 }
-/* ── 이미 캐시된 좌표: cache_key → {lat,lon,sigunguCd,bjdongCd} ── */
+/* ── 이미 캐시된 좌표: cache_key → {lat,lon,sigunguCd,bjdongCd} ──
+   ⚠️ 2026-09: complex_coords도 house_trades와 같은 id 컬럼 구조(complex_coords_table.sql
+   참고)라 같은 깊은 OFFSET 페이지네이션 위험이 있음 - 25만건을 이미 넘어 계속 느는
+   테이블이라 미리 id 기준 키셋 페이지네이션으로 바꿔둠(fetchDistinctComplexes 상단
+   주석 참고 - 같은 문제, 같은 해법). */
 async function fetchExistingCoords() {
   const map = new Map();
-  let from = 0;
+  let lastId = 0;
   while (true) {
     const { data, error } = await supabase
       .from('complex_coords')
-      .select('cache_key,lat,lon,sigungu_cd,bjdong_cd')
-      .range(from, from + PAGE_SIZE - 1);
+      .select('id,cache_key,lat,lon,sigungu_cd,bjdong_cd')
+      .gt('id', lastId)
+      .order('id', { ascending: true })
+      .limit(PAGE_SIZE);
     if (error) { console.error('❌ complex_coords 조회 에러:', error.message); break; }
     if (!data || data.length === 0) break;
-    data.forEach(r => map.set(r.cache_key, { lat: r.lat, lon: r.lon, sigunguCd: r.sigungu_cd, bjdongCd: r.bjdong_cd }));
+    data.forEach(r => { map.set(r.cache_key, { lat: r.lat, lon: r.lon, sigunguCd: r.sigungu_cd, bjdongCd: r.bjdong_cd }); lastId = r.id; });
     if (data.length < PAGE_SIZE) break;
-    from += PAGE_SIZE;
   }
   return map;
 }
@@ -320,6 +365,43 @@ async function main() {
   });
   console.log(`📦 신규 좌표 웜업 대상: ${coordTargets.length}개`);
   console.log(`📦 건축물대장만 재시도 대상: ${buildingOnlyTargets.length}개\n`);
+
+  // ⚠️ 2026-09(사용자 요청: "건축물대장도 같이 웜업할 수 있게 해줘"): 원래는 좌표 웜업
+  // (coordTargets) 단계에서 새로 지오코딩에 성공할 때마다 그 자리에서 warmBuildingInfo를
+  // 호출했는데, coordTargets가 많은 날은 이 단계만으로 MAX_BUILDING_WARMUP_PER_RUN
+  // 전체를 다 써버려서 "좌표는 이미 있는데 건축물대장만 없는" 재시도 대상(buildingOnlyTargets)이
+  // 매번 0건 처리된 채 그대로 다음날로 밀리기만 했음(실행 로그에서 19623건 전체 이월로
+  // 확인됨). 그래서 이 재시도 대상을 좌표 웜업보다 먼저, 전체 한도의 절반을 예약해서
+  // 먼저 처리하도록 순서를 바꿈 - 매 실행마다 이 백로그도 최소한만큼은 반드시 줄어듦.
+  // 재시도 대상이 예약분보다 적으면 남는 한도는 그대로 좌표 웜업 단계로 넘어가 낭비되지
+  // 않고, 좌표 웜업이 끝난 뒤에도 한도가 남으면 재시도 대상을 이어서 더 처리함.
+  async function processBuildingOnlyBatch(targets, startIdx, budgetCap) {
+    let success = 0, idx = startIdx, doneInBatch = 0;
+    for (; idx < targets.length; idx++) {
+      if (buildingWarmupCount >= budgetCap) break;
+      const [, row] = targets[idx];
+      const key = buildCacheKey(row.dong, row.danji, row.bunji, row.road_name, row.main_num, row.sub_num);
+      const coord = existingCoords.get(key);
+      if (coord && coord.sigunguCd && coord.bjdongCd) {
+        await warmBuildingInfo(row, coord.sigunguCd, coord.bjdongCd);
+        success++;
+      }
+      doneInBatch++;
+      await sleep(BUILDING_DELAY_MS);
+      if (doneInBatch % 50 === 0) console.log(`   진행: ${doneInBatch}건 처리`);
+    }
+    return { success, nextIdx: idx };
+  }
+
+  const MAX_BUILDING_RETRY_RESERVE = Math.ceil(MAX_BUILDING_WARMUP_PER_RUN / 2);
+  let buildingOnlyNextIdx = 0;
+  if (buildingOnlyTargets.length > 0) {
+    console.log(`📦 건축물대장 재시도 우선 처리 시작 (좌표는 있지만 아직 건축물대장이 없는 단지, 전체 ${buildingOnlyTargets.length}개 중 이번 실행 예약분 최대 ${MAX_BUILDING_RETRY_RESERVE}개)...`);
+    const { success: bSuccess, nextIdx } = await processBuildingOnlyBatch(buildingOnlyTargets, 0, MAX_BUILDING_RETRY_RESERVE);
+    buildingOnlyNextIdx = nextIdx;
+    console.log(`🎉 건축물대장 재시도(우선분) 완료! 처리 ${bSuccess}건\n`);
+  }
+
   let success = 0, fail = 0;
   await processQueue(coordTargets, async ([cacheKey, row, type]) => {
     const coord = await geocodeComplex(row, type);
@@ -341,28 +423,19 @@ async function main() {
       console.log(`   (실패한 단지는 주소 정보가 부실하거나 카카오에서 찾지 못한 경우입니다. 다시 실행하면 재시도됩니다.)`);
     }
   }
-  // 건축물대장만 재시도 (좌표는 이미 있으므로 카카오 지오코딩 호출 없이 진행 - 할당량과 무관)
-  if (buildingOnlyTargets.length > 0 && buildingWarmupCount < MAX_BUILDING_WARMUP_PER_RUN) {
-    console.log(`\n📦 건축물대장 재시도 시작 (좌표는 있지만 아직 건축물대장이 없는 단지, 전체 ${buildingOnlyTargets.length}개 중 이번 실행 남은 한도 ${MAX_BUILDING_WARMUP_PER_RUN - buildingWarmupCount}개까지)...`);
-    let bSuccess = 0, bDone = 0;
-    for (const [, row] of buildingOnlyTargets) {
-      if (buildingWarmupCount >= MAX_BUILDING_WARMUP_PER_RUN) {
-        console.log(`   ⏸️  건축물대장 웜업 실행당 상한(${MAX_BUILDING_WARMUP_PER_RUN}건) 도달 → 나머지는 다음 실행으로 넘어갑니다.`);
-        break;
-      }
-      const key = buildCacheKey(row.dong, row.danji, row.bunji, row.road_name, row.main_num, row.sub_num);
-      const coord = existingCoords.get(key);
-      if (coord && coord.sigunguCd && coord.bjdongCd) {
-        await warmBuildingInfo(row, coord.sigunguCd, coord.bjdongCd);
-        bSuccess++;
-      }
-      bDone++;
-      await sleep(BUILDING_DELAY_MS);
-      if (bDone % 50 === 0) console.log(`   진행: ${bDone}건 처리`);
+
+  // 건축물대장 재시도 이어서 처리 (좌표 웜업 단계에서 얼마나 소진했는지에 따라 남는 한도로)
+  if (buildingOnlyNextIdx < buildingOnlyTargets.length) {
+    if (buildingWarmupCount < MAX_BUILDING_WARMUP_PER_RUN) {
+      const remaining = buildingOnlyTargets.length - buildingOnlyNextIdx;
+      console.log(`\n📦 건축물대장 재시도 이어서 처리 (좌표 웜업 이후 남은 한도 ${MAX_BUILDING_WARMUP_PER_RUN - buildingWarmupCount}건, 남은 대상 ${remaining}건 중)...`);
+      const { success: bSuccess2, nextIdx: nextIdx2 } = await processBuildingOnlyBatch(buildingOnlyTargets, buildingOnlyNextIdx, MAX_BUILDING_WARMUP_PER_RUN);
+      buildingOnlyNextIdx = nextIdx2;
+      console.log(`\n🎉 건축물대장 재시도(이어서분) 완료! 처리 ${bSuccess2}건`);
     }
-    console.log(`\n🎉 건축물대장 재시도 이번 실행분 완료! 처리 ${bSuccess}건 (전체 미처리 ${buildingOnlyTargets.length}건 중, 나머지는 다음날 이어서 처리)`);
-  } else if (buildingOnlyTargets.length > 0) {
-    console.log(`\n⏸️  건축물대장 웜업 실행당 상한(${MAX_BUILDING_WARMUP_PER_RUN}건)에 이미 도달해(신규 좌표 웜업 단계에서 소진) 재시도 단계는 건너뜁니다. 전체 미처리 ${buildingOnlyTargets.length}건은 다음 실행으로 넘어갑니다.`);
+    if (buildingOnlyNextIdx < buildingOnlyTargets.length) {
+      console.log(`\n⏸️  건축물대장 웜업 실행당 상한(${MAX_BUILDING_WARMUP_PER_RUN}건)에 도달 - 전체 미처리 ${buildingOnlyTargets.length - buildingOnlyNextIdx}건은 다음 실행으로 넘어갑니다.`);
+    }
   }
 }
 main().catch(e => { console.error('❌ 치명적 오류:', e); process.exit(1); });
