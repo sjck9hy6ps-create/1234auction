@@ -972,10 +972,17 @@ async function saveSeriesBaseline(type, region, dongMap, throughBucket, bucketDa
     if (error) console.warn('leader_follower_series_cache 저장 실패:', error.message);
   } catch (e) { console.warn('leader_follower_series_cache 저장 예외:', e.message); }
 }
-async function computeLeaderFollowerFresh(type, region, force) {
+// ⚠️ #480(사용자 요청: "기존 참고자료들의 신뢰도를 높이는 방법" - 후발주자/돈되는지역 신호가
+// 실제로 맞는지 검증하고 싶다): asOfDate 파라미터를 추가해서 "실제 오늘"이 아니라 "작년 말
+// 기준으로 계산했다면 어땠을까"를 재현할 수 있게 함(기본값 null이면 기존 동작과 100% 동일 -
+// 실서비스 경로는 전혀 안 바뀜). asOfDate가 있을 때는 backbone 캐시(leader_follower_series_cache)를
+// 절대 읽거나 쓰지 않음 - 그 캐시는 "실제 오늘 기준" 데이터라 과거 시뮬레이션에 섞이면
+// (혹은 시뮬레이션 결과가 실캐시를 덮어쓰면) 운영 중인 실시간 배지 데이터가 오염될 수 있음.
+async function computeLeaderFollowerFresh(type, region, force, asOfDate) {
   const bucketDays = bucketDaysFor(type);
   const minCount = minBucketCountFor(type);
-  const today = todayInt();
+  const today = asOfDate || todayInt();
+  const isBacktest = !!asOfDate;
   // ⚠️ 2026-09(#465, 사용자 피드백: "대장 선정 창(35개월)이 너무 짧다 - 대장=인기아파트라는
   // 전제가 그대로면 2017년 전체이력을 봐야 한다" + "신축단지는 생긴 다음부터 계산되어 순위에
   // 속할 수 있게 해달라"): 2017-09(과거자료 백필 시작 시점)~오늘 전체를 대장 선정(시차상관)
@@ -1019,7 +1026,7 @@ async function computeLeaderFollowerFresh(type, region, force) {
   // 백본 캐싱 설계 자체의 사각지대 - collect-history.mjs를 매달 재실행해 늦게 신고된 거래를
   // house_trades에는 정상적으로 채워 넣어도, 이 백본은 그 사실을 모름). force=1(전체 새로고침)
   // 요청일 때는 백본을 아예 무시하고 0구간부터 완전히 다시 스캔해 이런 누락을 스스로 고치게 함.
-  const seriesBaseline = force ? null : await loadSeriesBaseline(type, region);
+  const seriesBaseline = (force || isBacktest) ? null : await loadSeriesBaseline(type, region);
   const baseDongMap = (seriesBaseline && seriesBaseline.bucket_days === bucketDays) ? (seriesBaseline.series || {}) : null;
   const baseThrough = baseDongMap ? Math.max(0, Math.min(seriesBaseline.through_bucket || 0, bucketN)) : 0;
   const queryStartBucket = baseThrough; // 백본이 커버하는 구간은 다시 안 긁고, 그 이후부터만 조회
@@ -1086,7 +1093,7 @@ async function computeLeaderFollowerFresh(type, region, force) {
   // 다음 호출이 다시 0구간부터 스캔하게 될 뿐, 이번 요청의 결과 자체는 영향받지 않음.
   const LF_RECENT_REFRESH_BUCKETS = 3;
   const newThrough = Math.max(0, bucketN - LF_RECENT_REFRESH_BUCKETS);
-  if (newThrough > baseThrough) { // 저장할 새 구간이 실제로 생겼을 때만 씀(완전히 같은 날 재호출 등은 스킵)
+  if (!isBacktest && newThrough > baseThrough) { // 저장할 새 구간이 실제로 생겼을 때만 씀(완전히 같은 날 재호출 등은 스킵) - 백테스트(과거 시점 시뮬레이션)는 절대 실캐시에 쓰지 않음
     const trimmedDongMap = {};
     Object.entries(dongMap).forEach(([dong, danjis]) => {
       trimmedDongMap[dong] = {};
@@ -1239,8 +1246,14 @@ async function computeLeaderFollowerFresh(type, region, force) {
     const n = leader.filled.prices.length;
     const leaderLastReal = Math.max(0, Math.min(n - 1, lastDataBucketIdx(leader.countArr) - leader.genesisIdx));
     const leaderRecentPct = leaderLastReal >= 2 ? Math.round(((leader.filled.prices[leaderLastReal] / leader.filled.prices[leaderLastReal - 2]) - 1) * 1000) / 10 : 0;
+    // ⚠️ #480: 백테스트용 "as-of-cutoff 최근 평단가" - 9년 장기평균(baseline)이 아니라
+    // 실제 마지막 실거래 버킷의 평단가(leaderLastReal 시점)를 따로 남겨둠. 이래야 이후
+    // "asOfDate 이후 실제로 얼마나 올랐는지"를 이 값 대비로 계산할 수 있음(장기평균 대비로
+    // 계산하면 컷오프 시점의 실제 시세 수준을 못 담아 오차가 커짐).
+    const leaderRecentPpp = Math.round(leader.filled.prices[leaderLastReal]);
     leaders.push({
       dong, danji: leader.name, totalCount: leader.totalCount, ppp: Math.round(leader.baseline), recentPct: leaderRecentPct,
+      recentPpp: leaderRecentPpp,
       households: leader.households, turnoverPct: leader.turnoverPct, leaderSource,
       leadCorr: leader.leadCorr != null ? Math.round(leader.leadCorr * 100) / 100 : null,
       leadLag: leader.leadLag,
@@ -1284,6 +1297,8 @@ async function computeLeaderFollowerFresh(type, region, force) {
         dong, danji: f.name, leaderDanji: leader.name, totalCount: f.totalCount,
         gapPct, corr: bestCorr != null ? Math.round(bestCorr * 100) / 100 : null, lag: bestLag,
         leaderRecentPct, followerRecentPct,
+        // ⚠️ #480: leaderRecentPpp와 같은 목적 - 이 단지의 as-of-cutoff 최근 평단가.
+        recentPpp: Math.round(f.filled.prices[followerLastReal]), leaderRecentPpp: leaderRecentPpp,
         // ⚠️ 2026-09: "현재 상태(실제 상승률 %)"/"예상 흐름(남은 갭 %)"에 실감나는 금액을 같이
         // 보여달라는 요청 - 평단가 자체(followerPpp)와, 대장과의 평단가 차이(gapAmount, 만원/평 -
         // "앞으로 이만큼 더 오를 여력"으로 해석 가능)를 추가.
@@ -2974,6 +2989,99 @@ export default async function handler(req, res) {
       const result = await getLeaderFollowerRank(type, region, req.query.force === '1');
       if (result.error) return res.status(502).json(result);
       return res.status(200).json(result);
+    } catch (err) {
+      return res.status(500).json({ error: err.message });
+    }
+  }
+  // ⚠️ #480(사용자 요청: "기존 참고자료들의 신뢰도를 높이는 방법이 더 중요할 거 같아" →
+  // "올해데이터를 제외하고 작년데이터는 모두 백데이터화 시켜"): 후발주자 신호를 검증하기
+  // 위한 백테스트 엔드포인트. 컷오프를 "작년 12월 31일"로 고정해서(대장을 새로 찾지 않고
+  // 그대로 재사용하는 경량 방식과 달리, 이건 대장 재선정까지 포함한 완전한 재계산임 -
+  // 다만 딱 1번만 계산하면 되므로(반복 없음) 오늘 실서비스가 매일 하는 최초 1회 계산과
+  // 비용이 동일함), 그 시점까지의 데이터만으로 후발주자 자격·순위를 계산한 뒤, 이미
+  // house_trades에 쌓여있는 "올해" 실거래(자동수집 파이프라인이 매주 채워주는 데이터)로
+  // 실제 결과와 대조함. 지역 하나만 계산하므로 웜업과 같은 비용 프로필(최악 몇십 초) -
+  // scripts/backtest-leader-follower.mjs가 이 엔드포인트를 지역별로 순차 호출해 결과를
+  // 모은 뒤 집계함(웜업 스크립트와 동일한 순차 호출 패턴 - 동시 부하를 늘리지 않음).
+  if (req.query.mode === 'backtestSignalRegion') {
+    res.setHeader('Cache-Control', 'no-store');
+    try {
+      const type = req.query.type === 'villa' ? 'villa' : 'apt';
+      let region = req.query.region ? String(req.query.region).trim() : '';
+      if (req.query.lawdCd) {
+        const found = LAWD_CODES.find((r) => r.code === String(req.query.lawdCd));
+        if (found) region = found.name;
+      }
+      if (!region) return res.status(400).json({ error: 'region 또는 lawdCd가 필요합니다.' });
+      const now = todayInt();
+      const curYear = Math.floor(now / 10000);
+      const cutoff = (curYear - 1) * 10000 + 1231; // 작년 12/31 - "올해 데이터는 제외, 작년까지는 전부 백데이터"
+      const snapshot = await computeLeaderFollowerFresh(type, region, false, cutoff);
+      // 올해(1/1~오늘) 실제 평단가 - 버킷을 딱 1개로 잡아서(bucketDays를 올해 일수보다
+      // 크게) 가벼운 단일 조회로 끝냄(멀티버킷 청크 스캔 불필요 - 최대 1년치뿐이라
+      // computeLeaderFollowerFresh의 다년치 스캔보다 훨씬 가벼움).
+      const yearStart = curYear * 10000 + 101;
+      const actualMap = await getBucketSeriesDanjiPrices(type, yearStart, now + 1, yearStart, 400, region);
+      function lookupActual(dong, danjiName) {
+        const entry = actualMap[region + '|' + dong];
+        const arr = entry && entry.danjis && entry.danjis[danjiName];
+        if (!arr || !arr.length) return null;
+        // bucketDays=400으로 걸었으므로 올해 전체가 항상 idx=0 하나뿐임
+        const b = arr.find((x) => x.idx === 0) || arr[0];
+        return b ? { avg: b.avg, count: b.count } : null;
+      }
+      const results = [];
+      (snapshot.leaders || []).forEach((l) => {
+        const actual = lookupActual(l.dong, l.danji);
+        results.push({
+          dong: l.dong, danji: l.danji, role: 'leader',
+          recentPpp: l.recentPpp,
+          actualPpp: actual ? Math.round(actual.avg) : null, actualCount: actual ? actual.count : 0,
+        });
+      });
+      (snapshot.rankedByDong || []).forEach((group) => {
+        group.items.forEach((it) => {
+          const actual = lookupActual(it.dong, it.danji);
+          results.push({
+            dong: it.dong, danji: it.danji, leaderDanji: it.leaderDanji,
+            role: it.isFollower ? 'follower' : 'nonfollower', rank: it.rank,
+            recentPpp: it.recentPpp, leaderRecentPpp: it.leaderRecentPpp,
+            actualPpp: actual ? Math.round(actual.avg) : null, actualCount: actual ? actual.count : 0,
+          });
+        });
+      });
+      return res.status(200).json({ region, type, cutoff, results });
+    } catch (err) {
+      return res.status(500).json({ error: err.message });
+    }
+  }
+  if (req.query.mode === 'saveSignalBacktestStats') {
+    // ⚠️ #480: 다른 write 계열 엔드포인트(save-auction 등)와 동일하게 별도 인증 없이 둠 -
+    // 이 앱 전체의 기존 관례를 따름(비밀키 기반 보호가 필요하면 추후 일괄 도입 검토).
+    if (req.method !== 'POST') return res.status(405).json({ error: 'POST만 지원합니다.' });
+    try {
+      const { signalType, sampleSizeFollower, sampleSizeNonFollower, hitRateFollower, hitRateNonFollower,
+        avgFollowerCatchUpPct, avgNonFollowerCatchUpPct, cutoff, regionsChecked } = req.body || {};
+      if (!signalType) return res.status(400).json({ error: 'signalType이 필요합니다.' });
+      const { error } = await supabase.from('signal_backtest_stats').upsert({
+        signal_type: signalType, cutoff, regions_checked: regionsChecked,
+        sample_size_follower: sampleSizeFollower, sample_size_nonfollower: sampleSizeNonFollower,
+        hit_rate_follower: hitRateFollower, hit_rate_nonfollower: hitRateNonFollower,
+        avg_follower_catchup_pct: avgFollowerCatchUpPct, avg_nonfollower_catchup_pct: avgNonFollowerCatchUpPct,
+        updated_at: new Date().toISOString(),
+      });
+      if (error) return res.status(500).json({ error: error.message });
+      return res.status(200).json({ ok: true });
+    } catch (err) {
+      return res.status(500).json({ error: err.message });
+    }
+  }
+  if (req.query.mode === 'signalBacktestStats') {
+    res.setHeader('Cache-Control', 's-maxage=3600, stale-while-revalidate=86400');
+    try {
+      const { data, error } = await supabase.from('signal_backtest_stats').select('*');
+      if (error) return res.status(500).json({ error: error.message });
+      return res.status(200).json({ stats: data || [] });
     } catch (err) {
       return res.status(500).json({ error: err.message });
     }
