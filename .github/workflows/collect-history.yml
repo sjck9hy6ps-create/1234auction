@@ -1,4 +1,4 @@
-name: 아파트 매매 과거 데이터 수집 (수동)
+name: 아파트 매매 과거 데이터 수집 (수동 + 매월 자동)
 
 on:
   workflow_dispatch:
@@ -7,6 +7,10 @@ on:
         description: '수집할 연도 (예: 2026) - 올해면 1월~이번달까지, 과거연도면 1~12월 전체'
         required: true
         default: '2026'
+  schedule:
+    # 매월 1일 새벽 4시(KST) = 전날 19:00 UTC
+    # 늦게 신고된(지연신고) 거래를 놓치지 않기 위해 올해 데이터를 매달 한 번씩 통째로 재수집(upsert)합니다.
+    - cron: '0 19 1 * *'
 
 jobs:
   collect:
@@ -26,5 +30,13 @@ jobs:
           PUBLIC_DATA_API_KEY: ${{ secrets.PUBLIC_DATA_API_KEY }}
           SITE_URL: ${{ secrets.SITE_URL }}
           COLLECT_PROXY_SECRET: ${{ secrets.COLLECT_PROXY_SECRET }}
-          TARGET_YEAR: ${{ github.event.inputs.target_year }}
-        run: node scripts/collect-history.mjs
+          TARGET_YEAR_INPUT: ${{ github.event.inputs.target_year }}
+        run: |
+          # 수동 실행(workflow_dispatch)이면 입력값 사용, 자동 실행(schedule)이면 올해 연도 자동 사용
+          if [ -n "$TARGET_YEAR_INPUT" ]; then
+            export TARGET_YEAR="$TARGET_YEAR_INPUT"
+          else
+            export TARGET_YEAR=$(date +%Y)
+          fi
+          echo "TARGET_YEAR=$TARGET_YEAR"
+          node scripts/collect-history.mjs
