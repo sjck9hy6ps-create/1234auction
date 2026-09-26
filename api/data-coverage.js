@@ -972,7 +972,7 @@ async function saveSeriesBaseline(type, region, dongMap, throughBucket, bucketDa
     if (error) console.warn('leader_follower_series_cache 저장 실패:', error.message);
   } catch (e) { console.warn('leader_follower_series_cache 저장 예외:', e.message); }
 }
-async function computeLeaderFollowerFresh(type, region) {
+async function computeLeaderFollowerFresh(type, region, force) {
   const bucketDays = bucketDaysFor(type);
   const minCount = minBucketCountFor(type);
   const today = todayInt();
@@ -1012,7 +1012,14 @@ async function computeLeaderFollowerFresh(type, region) {
   // 있으면 그 백본이 커버하는 구간(through_bucket) 이후부터만 새로 조회함. 백본이 없으면(이
   // 지역을 한 번도 성공적으로 계산한 적 없음) 기존처럼 0구간부터 전체를 조회함(최초 1회는
   // 여전히 느릴 수 있음 - #468의 maxDuration 60초 상향이 이 최초 1회를 위한 안전판).
-  const seriesBaseline = await loadSeriesBaseline(type, region);
+  // ⚠️ 2026-09(#472, 사용자 제보 - 인천 미추홀구 주안동 힐스테이트푸르지오주안이 대장/후발주자
+  // 계산에서 아예 빠짐): 원인은 "지각신고(late-filing)" - 이 백본은 through_bucket 이전
+  // 구간을 다시는 안 긁는데, 그 이미 저장된 구간에 나중에(신고기한 내) 뒤늦게 접수된 실거래가
+  // 끼어들면 백본이 절대 이를 반영하지 못해 해당 단지가 통째로 순위 계산에서 누락됨(#469
+  // 백본 캐싱 설계 자체의 사각지대 - collect-history.mjs를 매달 재실행해 늦게 신고된 거래를
+  // house_trades에는 정상적으로 채워 넣어도, 이 백본은 그 사실을 모름). force=1(전체 새로고침)
+  // 요청일 때는 백본을 아예 무시하고 0구간부터 완전히 다시 스캔해 이런 누락을 스스로 고치게 함.
+  const seriesBaseline = force ? null : await loadSeriesBaseline(type, region);
   const baseDongMap = (seriesBaseline && seriesBaseline.bucket_days === bucketDays) ? (seriesBaseline.series || {}) : null;
   const baseThrough = baseDongMap ? Math.max(0, Math.min(seriesBaseline.through_bucket || 0, bucketN)) : 0;
   const queryStartBucket = baseThrough; // 백본이 커버하는 구간은 다시 안 긁고, 그 이후부터만 조회
@@ -1361,7 +1368,7 @@ async function getLeaderFollowerRank(type, region, force) {
       }
     } catch (e) { console.warn('leader_follower_cache 조회 예외:', e.message); }
   }
-  const fresh = await computeLeaderFollowerFresh(type, region);
+  const fresh = await computeLeaderFollowerFresh(type, region, force);
   try {
     const { error: upsertErr } = await supabase.from('leader_follower_cache').upsert({ id: cacheId, payload: fresh, fetched_at: new Date().toISOString() });
     if (upsertErr) console.warn('leader_follower_cache 저장 실패:', upsertErr.message);
