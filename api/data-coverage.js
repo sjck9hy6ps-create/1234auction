@@ -938,6 +938,29 @@ function fillBucketSeries(avgArr, countArr, minCount) {
   for (let i = 1; i < prices.length; i++) { returns.push(prices[i - 1] > 0 ? (prices[i] - prices[i - 1]) / prices[i - 1] : 0); }
   return { prices, returns };
 }
+// ⚠️ 2026-09(#469, 사용자 요청: "과거데이터 기반이기 때문에 매번 새롭게 웜업을 하는것은
+// 최근몇달 데이터로 충분해 보여. 과거 데이터를 분석해서 백업데이터를 만들고 최근몇달분만
+// 덮어써 새로운 데이터를 만드는 형식으로 가야 할거 같아"): computeLeaderFollowerFresh가
+// 매번 2017-09~오늘 전체(최대 83구간)를 통째로 재조회하던 걸, "안 변하는 과거 구간"은
+// leader_follower_series_cache에 한 번 저장해두고 재사용하고, 그 이후(최근 몇 달)만 매번
+// 새로 조회하는 방식으로 바꿈. migration_leader_follower_series_cache.sql 참고.
+// 이 백본 캐시는 leader_follower_cache(최종 순위 결과, 24시간 캐시)와는 다른 테이블임 -
+// 저건 "오늘 계산한 최종 순위"를, 이건 "계산에 쓰는 원재료(구간별 평단가 시계열)"를 저장함.
+async function loadSeriesBaseline(type, region) {
+  try {
+    const { data, error } = await supabase.from('leader_follower_series_cache').select('*').eq('id', region + '|' + type).maybeSingle();
+    if (error || !data) return null;
+    return data;
+  } catch (e) { console.warn('leader_follower_series_cache 조회 예외:', e.message); return null; }
+}
+async function saveSeriesBaseline(type, region, dongMap, throughBucket, bucketDaysVal) {
+  try {
+    const { error } = await supabase.from('leader_follower_series_cache').upsert({
+      id: region + '|' + type, series: dongMap, through_bucket: throughBucket, bucket_days: bucketDaysVal, updated_at: new Date().toISOString(),
+    });
+    if (error) console.warn('leader_follower_series_cache 저장 실패:', error.message);
+  } catch (e) { console.warn('leader_follower_series_cache 저장 예외:', e.message); }
+}
 async function computeLeaderFollowerFresh(type, region) {
   const bucketDays = bucketDaysFor(type);
   const minCount = minBucketCountFor(type);
@@ -965,9 +988,23 @@ async function computeLeaderFollowerFresh(type, region) {
   }
   const totalDays = Math.max(1, Math.round((intToDate(today + 1) - intToDate(FULL_HIST_START)) / 86400000));
   const bucketN = Math.max(1, Math.ceil(totalDays / bucketDays));
-  // ⚠️ 2026-09(#466): 청크 하나당 약 1.5~2년 분량(20버킷) - 실측상 9년(83버킷) 한 번에
-  // 조회하면 8~9초로 타임아웃 문턱에 걸리므로, 이 크기면 청크당 여유 있게 안전권.
-  const LF_QUERY_CHUNK_BUCKETS = 20;
+  // ⚠️ 2026-09(#468, 사용자 제보 - 안산시 단원구 고잔동에서 대장/후발주자 순위가 계속 안
+  // 뜨는 버그): 20버킷 청크(#466 당시 기준)는 부산 해운대구 등으로 실측해 정한 값인데,
+  // 안산 단원구처럼 거래량이 훨씬 많은 지역(주공1~11단지 등 대단지 밀집)은 청크 하나가
+  // 8~9초를 넘겨 5개 청크 합계가 Vercel 함수 제한시간(당시 30초)을 넘어 504로 실패 -
+  // 게다가 매일 도는 웜업(warmup-leader-follower.mjs)도 같은 30초 제한으로 호출해서
+  // 캐시가 밤마다 계속 채워지지 못하고 영구히 비어있었음(고잔동만이 아니라 단원구 전체
+  // 영향 가능). vercel.json의 maxDuration을 60초로 올리는 것과 함께, 청크 크기도 12로
+  // 줄여 청크 수를 늘리는 대신 청크당 소요시간을 더 낮춰 안전 여유를 키움.
+  const LF_QUERY_CHUNK_BUCKETS = 12;
+  // ⚠️ 2026-09(#469): 매번 0구간부터 스캔하지 않고, 저장된 백본(leader_follower_series_cache)이
+  // 있으면 그 백본이 커버하는 구간(through_bucket) 이후부터만 새로 조회함. 백본이 없으면(이
+  // 지역을 한 번도 성공적으로 계산한 적 없음) 기존처럼 0구간부터 전체를 조회함(최초 1회는
+  // 여전히 느릴 수 있음 - #468의 maxDuration 60초 상향이 이 최초 1회를 위한 안전판).
+  const seriesBaseline = await loadSeriesBaseline(type, region);
+  const baseDongMap = (seriesBaseline && seriesBaseline.bucket_days === bucketDays) ? (seriesBaseline.series || {}) : null;
+  const baseThrough = baseDongMap ? Math.max(0, Math.min(seriesBaseline.through_bucket || 0, bucketN)) : 0;
+  const queryStartBucket = baseThrough; // 백본이 커버하는 구간은 다시 안 긁고, 그 이후부터만 조회
   const seriesMap = {};
   function mergeSeriesMap(target, src) {
     Object.entries(src).forEach(([key, entry]) => {
@@ -978,28 +1015,69 @@ async function computeLeaderFollowerFresh(type, region) {
       });
     });
   }
-  for (let cs = 0; cs < bucketN; cs += LF_QUERY_CHUNK_BUCKETS) {
+  for (let cs = queryStartBucket; cs < bucketN; cs += LF_QUERY_CHUNK_BUCKETS) {
     const ce = Math.min(cs + LF_QUERY_CHUNK_BUCKETS, bucketN);
     const chunkStart = addDaysToInt(FULL_HIST_START, cs * bucketDays);
     const chunkEnd = ce >= bucketN ? today + 1 : addDaysToInt(FULL_HIST_START, ce * bucketDays);
     const chunkMap = await getBucketSeriesDanjiPrices(type, chunkStart, chunkEnd, FULL_HIST_START, bucketDays, region);
     mergeSeriesMap(seriesMap, chunkMap);
   }
-  // dongMap: dong -> danjiName -> { avgArr[bucketN](null=이 구간 거래 없음), countArr[bucketN](0=거래 없음) }
-  const dongMap = {};
+  // freshDongMap: 방금 새로 조회한 [queryStartBucket, bucketN) 구간만 채워진 dong->danji 배열
+  // (dong -> danjiName -> { avgArr[bucketN](null=이 구간 거래 없음), countArr[bucketN](0=거래 없음) })
+  const freshDongMap = {};
   Object.values(seriesMap).forEach((entry) => {
     const dong = entry.dong;
-    if (!dongMap[dong]) dongMap[dong] = {};
+    if (!freshDongMap[dong]) freshDongMap[dong] = {};
     Object.entries(entry.danjis).forEach(([danjiName, buckets]) => {
       if (!danjiName || danjiName === '(단지미상)') return; // 단지명 없는 거래는 대장/후발주자 비교 대상에서 제외
-      if (!dongMap[dong][danjiName]) dongMap[dong][danjiName] = { avgArr: new Array(bucketN).fill(null), countArr: new Array(bucketN).fill(0) };
+      if (!freshDongMap[dong][danjiName]) freshDongMap[dong][danjiName] = { avgArr: new Array(bucketN).fill(null), countArr: new Array(bucketN).fill(0) };
       buckets.forEach((b) => {
         if (b.idx < 0 || b.idx >= bucketN) return; // 방어적 처리(경계 반올림 오차 대비)
-        dongMap[dong][danjiName].avgArr[b.idx] = b.avg;
-        dongMap[dong][danjiName].countArr[b.idx] = b.count;
+        freshDongMap[dong][danjiName].avgArr[b.idx] = b.avg;
+        freshDongMap[dong][danjiName].countArr[b.idx] = b.count;
       });
     });
   });
+  // dongMap: 백본(baseDongMap, 0..baseThrough-1 구간)과 새로 조회한 freshDongMap
+  // (baseThrough..bucketN-1 구간)을 합쳐 0..bucketN-1 전체 길이 배열로 만듦. 이후 로직
+  // (대장 선정, 시차상관, 후발주자 스코어링)은 이 dongMap만 보고 동작하므로 전혀 수정할
+  // 필요가 없음 - 백본 유무와 무관하게 항상 "전체이력이 다 있는 것처럼" 보이게 하는 게 이
+  // 병합 단계의 목적.
+  const dongMap = {};
+  const allDongNames = new Set([...(baseDongMap ? Object.keys(baseDongMap) : []), ...Object.keys(freshDongMap)]);
+  allDongNames.forEach((dong) => {
+    dongMap[dong] = {};
+    const baseDanjis = (baseDongMap && baseDongMap[dong]) || {};
+    const freshDanjis = freshDongMap[dong] || {};
+    const allDanjiNames = new Set([...Object.keys(baseDanjis), ...Object.keys(freshDanjis)]);
+    allDanjiNames.forEach((name) => {
+      const avgArr = new Array(bucketN).fill(null);
+      const countArr = new Array(bucketN).fill(0);
+      const b = baseDanjis[name], f = freshDanjis[name];
+      for (let i = 0; i < bucketN; i++) {
+        if (i < baseThrough && b) { avgArr[i] = b.avgArr[i] != null ? b.avgArr[i] : null; countArr[i] = b.countArr[i] || 0; }
+        else if (f) { avgArr[i] = f.avgArr[i] != null ? f.avgArr[i] : null; countArr[i] = f.countArr[i] || 0; }
+      }
+      dongMap[dong][name] = { avgArr, countArr };
+    });
+  });
+  // ⚠️ 2026-09(#469): 이번 계산 결과를 다음 호출을 위한 새 백본으로 저장함 - "최근 3구간"은
+  // late-filing 등으로 값이 바뀔 수 있어 백본에서 제외하고 항상 다시 조회하게 남겨둠(그
+  // 이전 구간은 이미 신고기한이 한참 지나 사실상 확정된 값이라 안전하게 저장). 이 저장이
+  // 실패해도(예: 테이블 미생성) saveSeriesBaseline 내부에서 조용히 무시하고 계속 진행함 -
+  // 다음 호출이 다시 0구간부터 스캔하게 될 뿐, 이번 요청의 결과 자체는 영향받지 않음.
+  const LF_RECENT_REFRESH_BUCKETS = 3;
+  const newThrough = Math.max(0, bucketN - LF_RECENT_REFRESH_BUCKETS);
+  if (newThrough > baseThrough) { // 저장할 새 구간이 실제로 생겼을 때만 씀(완전히 같은 날 재호출 등은 스킵)
+    const trimmedDongMap = {};
+    Object.entries(dongMap).forEach(([dong, danjis]) => {
+      trimmedDongMap[dong] = {};
+      Object.entries(danjis).forEach(([name, d]) => {
+        trimmedDongMap[dong][name] = { avgArr: d.avgArr.slice(0, newThrough), countArr: d.countArr.slice(0, newThrough) };
+      });
+    });
+    await saveSeriesBaseline(type, region, trimmedDongMap, newThrough, bucketDays);
+  }
   // ⚠️ 2026-09(회전율 기반 대장 선정): "평단가가 제일 높은 단지"가 아니라 "실제로 가장 활발히
   // 거래되는(=거래선호도가 높은) 단지"를 대장으로 뽑아달라는 요청 반영. 부산 해운대구로 실측한
   // 결과, 평단가 기준이었을 땐 엘시티/두산위브더제니스처럼 시장이 실제로 대장이라 부르는 단지가
