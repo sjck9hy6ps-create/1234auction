@@ -2,8 +2,10 @@ import { LAWD_CODES, sleep, DELAY_MS, fetchMonthRent, upsertRent } from './share
 
 const now    = new Date();
 const months = [];
-// 이번달 + 전달 (신고 지연 대응)
-for (let i = 0; i <= 1; i++) {
+// 이번달 + 전달 + 전전달 (신고 지연 대응 - 2026-09: 2개월치만으로는 국토부에 늦게
+// 신고되는 과거월 전월세 거래를 놓치는 문제 확인, 3개월치로 확장. shared.mjs
+// fetchMonth와 동일한 배경).
+for (let i = 0; i <= 2; i++) {
   const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
   months.push(String(d.getFullYear()) + String(d.getMonth() + 1).padStart(2, '0'));
 }
