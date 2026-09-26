@@ -1,9 +1,17 @@
 import { createClient } from '@supabase/supabase-js';
+import ws from 'ws';
 import { LAWD_CODES, fetchMonth, sleep, DELAY_MS } from './shared.mjs';
 
+// ⚠️ 2026-09: Node 20은 네이티브 WebSocket이 없어 ws 패키지를 transport로 명시하지
+// 않으면 createClient()가 즉시 예외를 던짐(shared.mjs 등 다른 파일들은 이미 이 옵션이
+// 있었는데 이 파일만 누락돼 있었음) - 동일하게 맞춤.
 const supabase = createClient(
   process.env.SUPABASE_URL,
-  process.env.SUPABASE_SERVICE_ROLE_KEY
+  process.env.SUPABASE_SERVICE_ROLE_KEY,
+  {
+    auth: { persistSession: false },
+    realtime: { transport: ws }
+  }
 );
 
 const TARGET_YEAR = parseInt(process.env.TARGET_YEAR || String(new Date().getFullYear()));
