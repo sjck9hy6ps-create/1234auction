@@ -3298,6 +3298,12 @@ function initKakao() {
         clearTimeout(searchDebounceTimer);
         searchDebounceTimer = setTimeout(function() { searchNationwide(q); }, 300);
     });
+    // ⚠️ #476: 입력창이 <form> 안에 없어서 Enter를 눌러도 원래 아무 동작이 없었음(디버그해보니
+    // 사용자는 타이핑 후 300ms 자동완성이 뜨기 전에 Enter/검색버튼을 누르는 경우가 많았을 것으로
+    // 추정) - Enter 키도 "검색" 버튼과 동일하게 searchAddress()가 실행되도록 배선.
+    document.getElementById('addr-input').addEventListener('keydown', function(e) {
+        if (e.key === 'Enter') { e.preventDefault(); searchAddress(); }
+    });
 }
 /* 범례 접기/펼치기 - 상태를 기억해서 다음 방문 때도 유지(특히 화면이 좁은 아이패드/모바일에서 유용) */
 function toggleLegend() {
@@ -4422,6 +4428,14 @@ function updateLegendLabels() {
 function searchAddress() {
     var query = document.getElementById('addr-input').value.trim();
     if (!query) { alert('검색어를 입력해 주세요.'); return; }
+    // ⚠️ 2026-09(#476, 사용자 제보 "안산시 상록구 성포동 아파트거래 배지가 안떠" 조사 중 발견):
+    // 검색창의 "검색" 버튼(그리고 Enter - 아래 keydown 핸들러)은 원래 카카오맵 자체 장소검색
+    // (geocoder.addressSearch + places.keywordSearch)만 사용했음. 실제 DB(우리 house_trades에
+    // 있는 단지)를 조회하는 /api/search-complex는 입력창에 "타이핑하고 300ms 멈췄을 때"만
+    // 자동완성으로 돌아가는 별도 경로(searchNationwide)였음 - 두 경로가 서로 연결이 안 돼
+      // 있어서, 카카오 자체 색인에 깨끗하게 없는 단지(예: 안산현대1처럼 오래된/소규모 단지)를
+    // 검색하면 우리 DB엔 정상적으로 있는데도 "검색 결과가 없습니다"가 떠버림. 카카오 검색이
+    // 빈 결과일 때는 즉시 alert하지 않고 searchNationwide(우리 DB 검색)로 폴백하도록 수정.
     var addrResults = [], aptResults = [], done = 0;
     function onDone() {
         if (++done < 2) return;
@@ -4430,7 +4444,7 @@ function searchAddress() {
             var key = r.lat.toFixed(4) + '_' + r.lon.toFixed(4);
             if (!seen[key]) { seen[key] = true; merged.push(r); }
         });
-        if (!merged.length) { alert('검색 결과가 없습니다.'); return; }
+        if (!merged.length) { searchNationwide(query, true); return; }
         showDropdown(merged);
     }
     geocoder.addressSearch(query, function(result, status) {
@@ -16607,13 +16621,13 @@ async function searchPanelDevNews() {
         alert('개발호재 검색 중 오류: ' + e.message);
     }
 }
-async function searchNationwide(q) {
+async function searchNationwide(q, notifyEmpty) {
     try {
         var res = await fetch('/api/search-complex?q=' + encodeURIComponent(q));
         var data = await res.json();
         var localLabelSet = {};
         searchLocalComplexes(q).forEach(function(r) { localLabelSet[normalizeSearchStr(r.label)] = true; });
- 
+
         var nationalResults = (data.results || [])
             .filter(function(row) { return !localLabelSet[normalizeSearchStr(row.danji || (row.dong + row.bunji))]; })
             .map(function(row) {
@@ -16624,12 +16638,16 @@ async function searchNationwide(q) {
                     remote: row
                 };
             });
- 
+
         // 이미 로컬 결과가 화면에 떠있는 상태에 이어붙임
         var combined = searchLocalComplexes(q).concat(nationalResults);
         if (combined.length) showLocalDropdown(combined);
+        // ⚠️ #476: "검색" 버튼(카카오 검색 폴백)에서 넘어온 호출이고 그마저도 결과가 없을 때만
+        // 사용자에게 알림 - 자동완성(타이핑 중) 호출에서는 매 글자마다 alert가 뜨면 안 되므로 조용히 무시.
+        else if (notifyEmpty) alert('검색 결과가 없습니다.');
     } catch (e) {
         console.error('전국 검색 실패:', e);
+        if (notifyEmpty) alert('검색 중 오류가 발생했습니다.');
     }
 }
  
