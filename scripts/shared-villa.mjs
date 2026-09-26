@@ -418,21 +418,28 @@ export function parseXMLSingle(xml, regionName) {
 }
 
 // ── API 호출 ──
-// ⚠️ 2026-09(house_trades와 동일한 원인으로 연립다세대/단독다가구도 수집 중단 의심):
-// e.message만 찍던 걸 e.cause까지 찍도록 보강 + 일시적 네트워크 문제 대비 재시도 추가
-// (shared.mjs fetchMonth와 동일한 조치 - 자세한 배경은 그쪽 주석 참고).
+// ⚠️ 2026-09(확정 원인 - shared.mjs fetchMonth와 동일): GitHub Actions에서 국토부 API를
+// 직접 부르면 전 지역 100%에서 UND_ERR_CONNECT_TIMEOUT 재현(Vercel 네트워크는 정상) -
+// GitHub Actions는 이제 국토부 API를 직접 부르지 않고 Vercel의 get-house.js?action=
+// molitProxy를 경유함. SITE_URL/COLLECT_PROXY_SECRET 없으면 기존 직접호출로 폴백.
+const SITE_URL      = process.env.SITE_URL?.trim();
+const PROXY_SECRET  = process.env.COLLECT_PROXY_SECRET?.trim();
+
 export async function fetchMonthVilla(code, name, ym) {
-  const url = `https://apis.data.go.kr/1613000/RTMSDataSvcRHTrade/getRTMSDataSvcRHTrade`
+  const directUrl = `https://apis.data.go.kr/1613000/RTMSDataSvcRHTrade/getRTMSDataSvcRHTrade`
     + `?serviceKey=${encodeURIComponent(API_KEY)}&LAWD_CD=${code}&DEAL_YMD=${ym}&numOfRows=1000&pageNo=1`;
+  const proxyUrl = SITE_URL && PROXY_SECRET
+    ? `${SITE_URL}/api/get-house?action=molitProxy&endpoint=rhTrade&code=${code}&ym=${ym}&secret=${encodeURIComponent(PROXY_SECRET)}`
+    : null;
   const MAX_ATTEMPTS = 3;
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
     try {
-      const res  = await fetch(url, { signal: AbortSignal.timeout(15000) });
+      const res  = await fetch(proxyUrl || directUrl, { signal: AbortSignal.timeout(20000) });
       const text = await res.text();
       return parseXMLVilla(text, name);
     } catch (e) {
       const causeInfo = e.cause ? ` / cause: ${e.cause.code || e.cause.message || e.cause}` : '';
-      console.error(`❌ ${code}${ym} 연립다세대 실패(시도 ${attempt}/${MAX_ATTEMPTS}): ${e.message}${causeInfo}`);
+      console.error(`❌ ${code}${ym} 연립다세대 실패(시도 ${attempt}/${MAX_ATTEMPTS}, ${proxyUrl ? 'proxy' : 'direct'}): ${e.message}${causeInfo}`);
       if (attempt < MAX_ATTEMPTS) await sleep(1000 * attempt);
     }
   }
@@ -440,17 +447,20 @@ export async function fetchMonthVilla(code, name, ym) {
 }
 
 export async function fetchMonthSingle(code, name, ym) {
-  const url = `https://apis.data.go.kr/1613000/RTMSDataSvcSHTrade/getRTMSDataSvcSHTrade`
+  const directUrl = `https://apis.data.go.kr/1613000/RTMSDataSvcSHTrade/getRTMSDataSvcSHTrade`
     + `?serviceKey=${encodeURIComponent(API_KEY)}&LAWD_CD=${code}&DEAL_YMD=${ym}&numOfRows=1000&pageNo=1`;
+  const proxyUrl = SITE_URL && PROXY_SECRET
+    ? `${SITE_URL}/api/get-house?action=molitProxy&endpoint=shTrade&code=${code}&ym=${ym}&secret=${encodeURIComponent(PROXY_SECRET)}`
+    : null;
   const MAX_ATTEMPTS = 3;
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
     try {
-      const res  = await fetch(url, { signal: AbortSignal.timeout(15000) });
+      const res  = await fetch(proxyUrl || directUrl, { signal: AbortSignal.timeout(20000) });
       const text = await res.text();
       return parseXMLSingle(text, name);
     } catch (e) {
       const causeInfo = e.cause ? ` / cause: ${e.cause.code || e.cause.message || e.cause}` : '';
-      console.error(`❌ ${code}/${ym} 단독/다가구 실패(시도 ${attempt}/${MAX_ATTEMPTS}): ${e.message}${causeInfo}`);
+      console.error(`❌ ${code}/${ym} 단독/다가구 실패(시도 ${attempt}/${MAX_ATTEMPTS}, ${proxyUrl ? 'proxy' : 'direct'}): ${e.message}${causeInfo}`);
       if (attempt < MAX_ATTEMPTS) await sleep(1000 * attempt);
     }
   }
