@@ -2010,6 +2010,24 @@ var leaderFollowerRankMap = {};
 // 이 세션에서 이미 시도했으면(성공/실패 무관) 다시 부르지 않음 - 처음 보는(캐시 없는) 지역은
 // 서버가 최대 30초 가까이 걸릴 수 있어(#465/#466) 팬/줌할 때마다 반복 호출하면 낭비이기 때문.
 var lfAutoFetchedRegions = {};
+// ⚠️ #479(사용자 제보: "매매히스토리 배지와 대장아파트/차순위 표기가 각각 진행되는거 같아 -
+// 순위까지 확인 후 표기되도록 로직 순서를 바꿔줘"): autoLoadLeaderFollowerForRegion이
+// fire-and-forget(호출만 하고 결과를 기다리지 않음)이라, 매매기록 배지(redrawMarkers)가
+// 먼저 그려지고 몇백ms~몇 초 뒤 이 API가 응답하면 순위 숫자가 나중에 "팝업"하듯 덧붙는
+// 2단계 렌더링으로 보였음. lawdCd별로 진행 중인/끝난 fetch의 Promise를 저장해두고,
+// loadAllData가 첫 redrawMarkers를 부르기 전에 이 Promise를 기다리게 해서 한 번에
+// (순위까지 포함해서) 그려지도록 함 - waitForLeaderFollowerOrTimeout 참고.
+var lfFetchPromises = {};
+// 위 목적으로 기다리되, 캐시가 없는 초행 지역은 최대 26초까지 걸릴 수 있어(#465/#466) 무한정
+// 기다리면 "배지 표기가 느리다"는 예전 불만이 재현됨 - 6초까지만 기다리고, 그 안에 못 받으면
+// 일단 순위 없이 그린 뒤(fallback) 나중에 응답이 오면 applyLeaderFollowerToMap이 알아서
+// 다시 그려줌(기존 동작과 동일, 워스트케이스만 예전과 같음).
+function waitForLeaderFollowerOrTimeout(promise, timeoutMs) {
+    return Promise.race([
+        Promise.resolve(promise).catch(function() {}),
+        new Promise(function(resolve) { setTimeout(resolve, timeoutMs); })
+    ]);
+}
 function lfNormName(name) {
     if (!name) return '';
     var s = String(name).trim().replace(/\s+/g, '');
@@ -3607,7 +3625,14 @@ async function loadAllData(centerLat, centerLon) {
             // 쪽으로 해결함 - 사용자가 방문할 땐 대부분 이미 캐시가 있어(≈0.4초) 배지가
             // 거의 바로 뜸. autoLoadLeaderFollowerForRegion 내부에서 세션당 지역별 1회로
             // 제한하므로 팬/줌을 반복해도 중복 호출되지 않음.
-            autoLoadLeaderFollowerForRegion(sigungu, lawdCd);
+            // ⚠️ #479(사용자 제보: "매매히스토리 배지와 대장아파트/차순위 표기가 각각
+            // 진행되는거 같아 - 순위까지 확인 후 표기되도록 로직 순서를 바꿔줘"): 예전엔 이
+            // 호출을 fire-and-forget으로 던져놓고 바로 아래에서 redrawMarkers()를 불러서,
+            // 매매기록 배지가 먼저 그려지고 순위 숫자가 나중에 따로 팝업하듯 나타났음.
+            // Promise를 변수에 담아뒀다가, 아래 두 redrawMarkers() 호출 직전에
+            // waitForLeaderFollowerOrTimeout으로 기다려서 순위까지 반영된 상태로 한 번에
+            // 그려지게 함(응답이 6초를 넘기는 드문 경우에만 예전처럼 순위 없이 먼저 그려짐).
+            var lfPromise = autoLoadLeaderFollowerForRegion(sigungu, lawdCd);
             lastResolvedLat = centerLat;
             lastResolvedLon = centerLon;
             // 예전엔 "바로 직전에 봤던 지역"일 때만 캐시를 재사용했는데(lawdCd === lastLawdCd),
@@ -3622,6 +3647,7 @@ async function loadAllData(centerLat, centerLon) {
                 // 넘으면 가장 오래전에 본 지역을 자동으로 빼줌 - 위 선언부 주석 참고.
                 mergedLawdCds.add(lawdCd);
                 touchLawdCd(lawdCd);
+                await waitForLeaderFollowerOrTimeout(lfPromise, 6000);
                 redrawMarkers(); resolve(); return;
             }
             lastLawdCd = lawdCd;
@@ -3683,6 +3709,10 @@ async function loadAllData(centerLat, centerLon) {
                 mergedLawdCds.add(lawdCd);
                 touchLawdCd(lawdCd); // LRU 갱신 + 상한 초과시 오래된 지역 제거(allAptList/allRentList 재조립)
                 setStatus('');
+                // ⚠️ #479: 여기까지 오는 동안(get-house 응답 + prefetchCoordsFromDB 등) 이미
+                // 시간이 꽤 걸렸으므로, 대부분은 위에서 던져둔 lfPromise가 이미 끝나 있거나
+                // 곧 끝남 - 최종 6초 캡만 걸어 순위까지 반영해서 한 번에 그림.
+                await waitForLeaderFollowerOrTimeout(lfPromise, 6000);
                 redrawMarkers();
                 setTimeout(function() { warmBuildingCache(regionAptList); }, 3000);
                 // ⚠️ 2026-08: 직접 호출하지 않고 villaInfoQueue에 이어붙임 - 다른 지역(lawdCd)의
@@ -17453,14 +17483,21 @@ async function autoLoadLeaderFollowerForRegion(kakaoSigungu, lawdCd) {
     // lawdCd를 그대로 서버에 보내 LAWD_CODES(수집 파이프라인이 쓰는 것과 완전히 같은
     // 소스)로 region을 직접 찾게 함 - 텍스트 불일치 가능성을 원천 차단함.
     if (!lawdCd) return;
-    if (lfAutoFetchedRegions[lawdCd]) return; // 이 세션에서 이미 시도한 지역(성공/실패 무관)
+    // ⚠️ #479: 이 세션에서 이미 시도한 지역(성공/실패 무관)이면, loadAllData가 여전히 기다릴
+    // 대상이 있도록 저장해둔 이전 Promise를 그대로 돌려줌(없으면 즉시 resolve) - 과거엔 여기서
+    // undefined를 반환해 호출부가 await해도 곧바로 넘어가버렸음.
+    if (lfAutoFetchedRegions[lawdCd]) return lfFetchPromises[lawdCd] || Promise.resolve();
     lfAutoFetchedRegions[lawdCd] = true;
-    try {
-        var res = await fetch('/api/data-coverage?mode=leaderFollower&type=apt&lawdCd=' + encodeURIComponent(lawdCd));
-        var data = await readJsonResponseSafe(res);
-        if (!res.ok || !data || data.error) return; // 참고용 배지라 실패해도 조용히 무시(지도 자체는 정상 동작)
-        applyLeaderFollowerToMap(data);
-    } catch (e) { /* 참고용 배지 - 네트워크 오류 시에도 조용히 무시 */ }
+    var fetchPromise = (async function() {
+        try {
+            var res = await fetch('/api/data-coverage?mode=leaderFollower&type=apt&lawdCd=' + encodeURIComponent(lawdCd));
+            var data = await readJsonResponseSafe(res);
+            if (!res.ok || !data || data.error) return; // 참고용 배지라 실패해도 조용히 무시(지도 자체는 정상 동작)
+            applyLeaderFollowerToMap(data);
+        } catch (e) { /* 참고용 배지 - 네트워크 오류 시에도 조용히 무시 */ }
+    })();
+    lfFetchPromises[lawdCd] = fetchPromise;
+    return fetchPromise;
 }
 // ⚠️ #478: 상단 검색버튼 옆 "🔄 배지 재로딩" 버튼 핸들러. autoLoadLeaderFollowerForRegion은
 // 세션당 지역별 1회만 실행되도록 lfAutoFetchedRegions로 막혀있는데(#465/#466 타임아웃 방지
