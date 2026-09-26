@@ -2242,27 +2242,42 @@ async function getBucketDanjiPrices(type, start, end, sido) {
 // 신축단지도 생긴 시점부터 정상적으로 후보에 잡혀야 하기 때문(momentum 계열 함수엔 영향 없음).
 // 반환: { [region|dong]: { region, dong, danjis: { [danjiName]: [{idx, avg, count}, ...] } } }
 async function getBucketSeriesDanjiPrices(type, start, end, bucketOrigin, bucketDays, sido) {
+  // ⚠️ 2026-09(#475, 사용자 제보 "인천 주안동 힐스테이트푸르지오주안 여전히 누락" 최종 원인):
+  // 이 RPC 호출에 .range()/limit 지정이 전혀 없으면 PostgREST가 프로젝트 기본
+  // max-rows(이 프로젝트는 1000행)로 결과를 "에러 없이 조용히" 잘라버림 - 미추홀구처럼
+  // 단지 수가 많은 밀집 지역에서 12버킷(LF_QUERY_CHUNK_BUCKETS)치 청크 하나의 결과가
+  // 1000행을 넘으면, 정렬 순서상 뒤쪽에 걸리는 일부 단지(특히 데이터가 최근 buckets에
+  // 몰려있는 단지)의 행이 통째로 잘려나가 이후 dongMap에 아예 존재하지 않게 됨 - RPC
+  // 자체는 정상 데이터를 갖고 있어도(직접 SQL로 확인됨) JS가 받는 결과만 잘림. 매 청크마다
+  // 1000행 단위로 완전히 다 받을 때까지 .range()로 페이지네이션해서 이 묵시적 truncation을
+  // 원천 차단함.
+  const PAGE_SIZE = 1000;
+  const acc = {};
   try {
-    const { data, error } = await supabase.rpc('rpc_bucket_series_avg_price', {
-      p_start: start, p_end: end, p_bucket_origin: bucketOrigin, p_bucket_days: bucketDays, p_sido: sido || null, p_type: type,
-      p_min_size: MOMENTUM_SIZE_MIN, p_max_size: MOMENTUM_SIZE_MAX,
-    });
-    if (error) {
-      console.warn(`leaderFollower(rpc_series): ${type} 조회 실패 -`, error.message);
-      return {};
+    let offset = 0;
+    for (;;) {
+      const { data, error } = await supabase.rpc('rpc_bucket_series_avg_price', {
+        p_start: start, p_end: end, p_bucket_origin: bucketOrigin, p_bucket_days: bucketDays, p_sido: sido || null, p_type: type,
+        p_min_size: MOMENTUM_SIZE_MIN, p_max_size: MOMENTUM_SIZE_MAX,
+      }).range(offset, offset + PAGE_SIZE - 1);
+      if (error) {
+        console.warn(`leaderFollower(rpc_series): ${type} 조회 실패 -`, error.message);
+        break;
+      }
+      (data || []).forEach(r => {
+        const key = r.region + '|' + r.dong;
+        if (!acc[key]) acc[key] = { region: r.region, dong: r.dong, danjis: {} };
+        const danjiName = r.danji || '(단지미상)';
+        if (!acc[key].danjis[danjiName]) acc[key].danjis[danjiName] = [];
+        acc[key].danjis[danjiName].push({ idx: Number(r.bucket_idx), avg: Number(r.avg_price), count: Number(r.cnt) });
+      });
+      if (!data || data.length < PAGE_SIZE) break;
+      offset += PAGE_SIZE;
     }
-    const acc = {};
-    (data || []).forEach(r => {
-      const key = r.region + '|' + r.dong;
-      if (!acc[key]) acc[key] = { region: r.region, dong: r.dong, danjis: {} };
-      const danjiName = r.danji || '(단지미상)';
-      if (!acc[key].danjis[danjiName]) acc[key].danjis[danjiName] = [];
-      acc[key].danjis[danjiName].push({ idx: Number(r.bucket_idx), avg: Number(r.avg_price), count: Number(r.cnt) });
-    });
     return acc;
   } catch (e) {
     console.warn(`leaderFollower(rpc_series): ${type} 조회 예외 -`, e.message);
-    return {};
+    return acc;
   }
 }
 // 전국(시/도 미지정) 조회 전용 - dong 단위(danji 없이) 평단가/건수를 받아옴.
