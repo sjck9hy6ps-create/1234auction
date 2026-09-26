@@ -938,6 +938,17 @@ function fillBucketSeries(avgArr, countArr, minCount) {
   for (let i = 1; i < prices.length; i++) { returns.push(prices[i - 1] > 0 ? (prices[i] - prices[i - 1]) / prices[i - 1] : 0); }
   return { prices, returns };
 }
+// ⚠️ 2026-09(#471, 사용자 제보 "차순위 나오지 않는 문제" - 전남광주 조사 중 발견): 최근
+// 구간에 실거래가 전혀 없는 지역(예: 국토부 RTMS 쪽 신고 공백)에서는 fillBucketSeries가
+// 맨 끝 버킷들까지 직전 실거래 평균을 그대로 반복해서 채움(뒤쪽엔 채울 실거래가 없어
+// 앞쪽으로만 minCount를 채우기 때문) - 그 결과 "최근 상승률"을 마지막 버킷 기준으로 계산하면
+// 항상 정확히 0%가 나와, 대장이 안 오른 것으로 오판되고 후발주자 전체가 스킵됨. 달력상
+// 마지막 버킷이 아니라 "실제 거래가 있었던 마지막 버킷"을 기준으로 최근 상승률을 계산해야
+// 이런 데이터 공백에 안 속음.
+function lastDataBucketIdx(countArr) {
+  for (let i = countArr.length - 1; i >= 0; i--) { if ((countArr[i] || 0) > 0) return i; }
+  return countArr.length - 1;
+}
 // ⚠️ 2026-09(#469, 사용자 요청: "과거데이터 기반이기 때문에 매번 새롭게 웜업을 하는것은
 // 최근몇달 데이터로 충분해 보여. 과거 데이터를 분석해서 백업데이터를 만들고 최근몇달분만
 // 덮어써 새로운 데이터를 만드는 형식으로 가야 할거 같아"): computeLeaderFollowerFresh가
@@ -1215,8 +1226,12 @@ async function computeLeaderFollowerFresh(type, region) {
         leaderSource = 'price_fallback';
       }
     }
+    // ⚠️ 2026-09(#471): n-1/n-3(달력상 마지막 버킷) 대신, 이 단지의 실제 마지막 실거래
+    // 버킷(leaderLastReal)을 기준으로 최근 상승률을 계산 - 데이터 공백 기간이 있어도
+    // "실제로 마지막까지 거래된 시점" 기준 흐름을 보므로 공백을 상승률 0%로 오판하지 않음.
     const n = leader.filled.prices.length;
-    const leaderRecentPct = n >= 3 ? Math.round(((leader.filled.prices[n - 1] / leader.filled.prices[n - 3]) - 1) * 1000) / 10 : 0;
+    const leaderLastReal = Math.max(0, Math.min(n - 1, lastDataBucketIdx(leader.countArr) - leader.genesisIdx));
+    const leaderRecentPct = leaderLastReal >= 2 ? Math.round(((leader.filled.prices[leaderLastReal] / leader.filled.prices[leaderLastReal - 2]) - 1) * 1000) / 10 : 0;
     leaders.push({
       dong, danji: leader.name, totalCount: leader.totalCount, ppp: Math.round(leader.baseline), recentPct: leaderRecentPct,
       households: leader.households, turnoverPct: leader.turnoverPct, leaderSource,
@@ -1224,10 +1239,17 @@ async function computeLeaderFollowerFresh(type, region) {
       leadLag: leader.leadLag,
       corrByLag: leader.corrByLag, // ⚠️ 2026-09 진단용 임시 필드 - lag별 상관계수 전체 곡선(추후 제거 예정)
     });
-    if (leaderRecentPct <= 0) return; // 대장 자체가 안 올랐으면 "따라 오를 후발주자"라는 전제가 성립하지 않음
+    // ⚠️ 2026-09(#471, 사용자 제보 "차순위 나오지 않는 문제"): 예전에는 대장이 최근에 안
+    // 올랐으면(leaderRecentPct<=0) 이 법정동 전체를 스킵해서 순위 자체(1위~N위)가 통째로
+    // 안 보였음. 그런데 순위(rank)는 원래 #464에서 "동행성/갭 조건과 무관하게 평단가·거래량·
+    // 회전율 복합점수(valueScore)로 매긴다"고 이미 정했으므로, 대장의 최근 등락 여부와
+    // 순위 표시는 별개여야 함 - 아래 후발주자(qualifies) 판정에서 gapPct<=0으로 자연히
+    // 걸러지게 두고, 법정동 전체를 건너뛰지는 않음(대장만 있고 후발주자 배지가 하나도 없던
+    // 문제의 근본 원인).
     qualified.filter((f) => f.name !== leader.name).forEach(f => {
       const fn = f.filled.prices.length;
-      const followerRecentPct = fn >= 3 ? Math.round(((f.filled.prices[fn - 1] / f.filled.prices[fn - 3]) - 1) * 1000) / 10 : 0;
+      const followerLastReal = Math.max(0, Math.min(fn - 1, lastDataBucketIdx(f.countArr) - f.genesisIdx));
+      const followerRecentPct = followerLastReal >= 2 ? Math.round(((f.filled.prices[followerLastReal] / f.filled.prices[followerLastReal - 2]) - 1) * 1000) / 10 : 0;
       const gapPct = Math.round((leaderRecentPct - followerRecentPct) * 10) / 10;
       // ⚠️ 2026-09(#465): 대장과 후발주자 후보의 활동기간(genesisIdx)이 서로 다를 수 있음
       // (특히 후보가 신축인 경우) - 두 단지가 함께 존재했던 겹치는 구간(calendar overlap)만
