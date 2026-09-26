@@ -160,9 +160,63 @@ async function fetchAllRows(table, regionName) {
   return { data: all, error: null };
 }
 
+// ════════════════════════════════════
+// 2026-09: GitHub Actions(주간 수집 스크립트)가 국토부 API(apis.data.go.kr)로
+// 직접 fetch할 때 전 지역(~250개 LAWD 코드) 100%에서 UND_ERR_CONNECT_TIMEOUT
+// (TCP 연결 자체가 안 됨)이 재현됨 - 6월 이후 house_trades/house_rent/villa_trades/
+// single_trades 수집이 전면 중단됐던 원인. 동일 API를 이 파일의 fetchRealtimeApt()가
+// Vercel 네트워크에서는 지금도 정상 호출 중이라, GitHub Actions 전용 IP 대역이
+// 국토부(혹은 중간 방화벽)에서 막힌 것으로 추정 - 코드/재시도로 해결 불가능한
+// 네트워크 문제라 GitHub Actions는 국토부 API를 직접 부르지 않고 이 프록시를
+// 경유해서 데이터를 받아가도록 우회함. 인증 없이 열어두면 공용 서비스키의 일일
+// 호출 한도를 외부에서 소진시킬 수 있어 공유 비밀값(COLLECT_PROXY_SECRET)으로
+// 우리 GitHub Actions 요청만 허용함 - Vercel 환경변수 + GitHub 저장소 시크릿 양쪽에
+// 동일한 값을 등록해야 함.
+// ════════════════════════════════════
+const PROXY_SECRET = process.env.COLLECT_PROXY_SECRET;
+const PROXY_ENDPOINTS = {
+  aptTrade: 'RTMSDataSvcAptTradeDev', // 아파트 매매 (house_trades)
+  aptRent:  'RTMSDataSvcAptRent',     // 아파트 전월세 (house_rent)
+  rhTrade:  'RTMSDataSvcRHTrade',     // 연립다세대 매매 (villa_trades)
+  shTrade:  'RTMSDataSvcSHTrade',     // 단독/다가구 매매 (single_trades)
+};
+
+async function handleMolitProxy(req, res) {
+  if (!PROXY_SECRET || req.query.secret !== PROXY_SECRET) {
+    return res.status(401).json({ error: 'unauthorized' });
+  }
+  const endpoint = PROXY_ENDPOINTS[req.query.endpoint];
+  if (!endpoint) {
+    return res.status(400).json({ error: 'invalid endpoint (use aptTrade/aptRent/rhTrade/shTrade)' });
+  }
+  const code = req.query.code;
+  const ym   = req.query.ym;
+  if (!code || !ym) return res.status(400).json({ error: 'code, ym required' });
+  if (!APT_API_KEY) return res.status(500).json({ error: 'PUBLIC_DATA_API_KEY not configured' });
+
+  try {
+    const url = `https://apis.data.go.kr/1613000/${endpoint}/get${endpoint}`
+      + `?serviceKey=${encodeURIComponent(APT_API_KEY)}&LAWD_CD=${code}&DEAL_YMD=${ym}&numOfRows=1000&pageNo=1`;
+    const response = await fetch(url, { signal: AbortSignal.timeout(15000) });
+    const text = await response.text();
+    res.setHeader('Content-Type', 'text/xml; charset=utf-8');
+    return res.status(200).send(text);
+  } catch (e) {
+    const causeInfo = e.cause ? (e.cause.code || e.cause.message || String(e.cause)) : null;
+    console.error('molitProxy 실패:', req.query.endpoint, code, ym, e.message, causeInfo);
+    return res.status(502).json({ error: e.message, cause: causeInfo });
+  }
+}
+
 export default async function handler(req, res) {
   res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
   res.setHeader('Pragma', 'no-cache');
+
+  // GitHub Actions 주간 수집 스크립트 전용 - 국토부 API를 대신 호출해서 XML을 그대로 돌려줌
+  // (위 handleMolitProxy 설명 참고). lawdCd 파라미터 흐름과 무관하니 가장 먼저 분기.
+  if (req.query.action === 'molitProxy') {
+    return handleMolitProxy(req, res);
+  }
 
   // CSV 대량 업로드 후 backup.html에서 이 액션으로 지역별 캐시를 통째로 비움
   // (평소 지도 조회 흐름과 무관한 관리용 액션이라 lawdCd 없이도 처리)
