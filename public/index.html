@@ -17408,6 +17408,23 @@ function onLfSidoChange() {
         });
     }
 }
+// ⚠️ #480(사용자 요청: "기존 참고자료들의 신뢰도를 높일 수 있는 방법이 더 중요할 거 같아"):
+// 작년 말 기준 후발주자 예측을 이미 쌓인 올해 실거래와 대조한 백테스트 결과
+// (scripts/backtest-leader-follower.mjs가 매달 갱신)를 패널에 함께 보여줌 - 세션당
+// 한 번만 조회하고 캐시(전국 공통 통계라 지역을 바꿔도 다시 조회할 필요 없음).
+var signalBacktestStats = null;
+var signalBacktestStatsFetched = false;
+async function ensureSignalBacktestStats() {
+    if (signalBacktestStatsFetched) return;
+    signalBacktestStatsFetched = true;
+    try {
+        var res = await fetch('/api/data-coverage?mode=signalBacktestStats');
+        var data = await readJsonResponseSafe(res);
+        if (res.ok && data && Array.isArray(data.stats)) {
+            signalBacktestStats = data.stats.find(function(s) { return s.signal_type === 'leaderFollower_apt'; }) || null;
+        }
+    } catch (e) { /* 참고용 통계 - 실패해도 패널 자체는 정상 동작해야 함 */ }
+}
 async function loadLeaderFollowerData() {
     var sido = document.getElementById('lf-sido-select').value;
     var gu = document.getElementById('lf-sigungu-select').value;
@@ -17417,6 +17434,7 @@ async function loadLeaderFollowerData() {
     var region = sido + ' ' + gu;
     statusBox.style.color = '#999'; statusBox.innerText = '불러오는 중... (법정동별 대장아파트를 새로 계산 중이면 몇 초 걸릴 수 있어요)';
     body.innerHTML = '';
+    await ensureSignalBacktestStats();
     try {
         var res = await fetch('/api/data-coverage?mode=leaderFollower&type=apt&region=' + encodeURIComponent(region));
         var data = await readJsonResponseSafe(res);
@@ -17528,6 +17546,17 @@ async function reloadBadges() {
 function renderLeaderFollowerBody(data, dongFilter) {
     var html = '<div style="font-size:10px;color:#e65100;background:#fff8e1;border-radius:6px;padding:5px 8px;margin:6px 14px 0;">'
         + 'ℹ️ 순위는 2017-09~오늘 전체 거래이력을 근거로, 평단가·누적 거래량·세대수 대비 회전율(3개 지표를 동 안에서 백분위화해 평균한 종합 가치점수) 순으로 대장을 제외한 모든 단지에 매겨요. 그중 과거 대장아파트와 같이 움직인 이력이 있고 아직 덜 오른 단지에는 "(후발주자)" 표식이 붙어요(참고용 신호 - 확정 예측 아님). 대장의 선행성 판정도 이제 같은 2017-09~오늘 전체이력을 쓰고, 신축단지는 생긴 시점부터의 기간만으로 판정해요(그 전 기간까지 존재했던 것처럼 계산하지 않음).</div>';
+    // ⚠️ #480: 이 신호 자체가 실제로 맞았는지를 보여주는 자체 검증 결과 - 작년 말 기준
+    // 예측을 이미 쌓인 올해 실거래와 대조한 전국 집계(지역 무관, 매달 갱신). signalBacktestStats가
+    // 아직 없으면(첫 배포 직후, 스크립트를 아직 안 돌렸거나 조회 실패) 조용히 생략함.
+    if (signalBacktestStats && signalBacktestStats.sample_size_follower >= 10) {
+        var s = signalBacktestStats;
+        html += '<div style="font-size:10px;color:#1565c0;background:#e3f2fd;border-radius:6px;padding:5px 8px;margin:4px 14px 0;">'
+            + '📊 신호 자체 검증(전국, ' + s.cutoff + ' 기준 예측 → 올해 실거래로 대조): "(후발주자)" 표식이 붙은 단지가 실제로 대장보다 더 오른(격차가 줄어든) 비율 <b>' + s.hit_rate_follower + '%</b>'
+            + '(표본 ' + s.sample_size_follower + '건, 평균 격차변화 ' + (s.avg_follower_catchup_pct > 0 ? '+' : '') + s.avg_follower_catchup_pct + '%p)'
+            + (s.hit_rate_nonfollower != null ? ' · 비교기준(후발주자 표식 없는 단지) ' + s.hit_rate_nonfollower + '%' : '')
+            + '</div>';
+    }
     var leaders = dongFilter ? (data.leaders || []).filter(function(l) { return l.dong === dongFilter; }) : (data.leaders || []);
     if (leaders.length) {
         html += '<div style="margin:8px 14px 0;font-size:11.5px;font-weight:bold;color:#4a148c;">🏆 법정동별 대장아파트</div>'
