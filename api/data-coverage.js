@@ -2877,27 +2877,49 @@ export default async function handler(req, res) {
     }
   }
   if (req.query.mode === 'regionList') {
-    // 후발주자 예측(mode=leaderFollower) 프론트의 시/군/구 선택 드롭다운용 - 신규 데이터
-    // 없이 미분양(mode=unsoldHousing)용으로 이미 만들어둔 UNSOLD_CODE_ROWS(시도+시군구
-    // 246행)를 재사용함. "계"(시/도 전체 합계 placeholder row)만 제외함.
-    // ⚠️ 2026-09(사용자 요청: "서울지역 포함해서 전국 웜업하는 워크플로우로 다시 만들어줘"):
-    // 원래는 "서울 제외 지방"만 다룬다는 의도적 결정으로 서울도 여기서 걸러냈었는데
-    // (아래 mode=leaderFollower 참고), 사용자가 서울까지 포함한 전국 커버리지를
-    // 원해서 그 제한을 풀었음 - 이제 서울도 다른 시/군/구와 동일하게 취급됨.
+    // 후발주자 예측(mode=leaderFollower) 프론트의 시/군/구 선택 드롭다운 + 야간 웜업
+    // 스크립트(warmup-leader-follower.mjs)의 순회 대상 목록.
+    // ⚠️ 2026-09(#470, 사용자 제보 - 안산시 단원구 배지가 항상 비어있음): 예전엔 미분양
+    // (mode=unsoldHousing)용 UNSOLD_CODE_ROWS를 재사용했는데, 이 목록은 "안산시"처럼
+    // 다구(多區) 도시를 구로 안 쪼갠 시 단위 이름이라(미분양 통계 자체가 시 단위로만
+    // 나옴) house_trades.region의 실제 표기("안산 단원구"/"안산 상록구" 등 구 단위,
+    // '시' 없음)와 전혀 안 맞았음 - 그래서 이 목록으로 웜업/조회를 시도한 다구 도시는
+    // 전부 지역명 불일치로 항상 빈 결과만 받고 있었음(안산뿐 아니라 수원/성남/안양/
+    // 부천/용인/고양/청주/전주 등도 동일 영향 - 안산만 우연히 사용자가 먼저 알아챈 것).
+    // 지금은 LAWD_CODES(수집 파이프라인이 실제로 쓰는, house_trades.region과 100%
+    // 일치하는 유일한 정답 소스)에서 직접 만듦 - name이 "{시/도} {나머지}" 형태라
+    // 첫 공백만 기준으로 나누면 정확히 시/도와 시/군/구가 분리됨.
     const bySido = {};
-    UNSOLD_CODE_ROWS.forEach(([sidoNm, , guNm]) => {
-      if (guNm === '계') return;
+    LAWD_CODES.forEach(({ name }) => {
+      const spaceIdx = name.indexOf(' ');
+      if (spaceIdx < 0) return;
+      const sidoNm = name.slice(0, spaceIdx);
+      const guNm = name.slice(spaceIdx + 1);
       if (!bySido[sidoNm]) bySido[sidoNm] = [];
-      bySido[sidoNm].push(guNm);
+      if (!bySido[sidoNm].includes(guNm)) bySido[sidoNm].push(guNm); // 부천시처럼 3개 코드가 같은 이름을 공유하는 경우 중복 제거
     });
     return res.status(200).json({ bySido });
   }
   if (req.query.mode === 'leaderFollower') {
     res.setHeader('Cache-Control', 's-maxage=21600, stale-while-revalidate=43200');
     try {
-      const region = req.query.region ? String(req.query.region).trim() : '';
       const type = req.query.type === 'villa' ? 'villa' : 'apt';
-      if (!region) return res.status(400).json({ error: 'region(예: "경북 구미시")이 필요합니다.' });
+      // ⚠️ 2026-09(#470, 사용자 제보 - 안산시 단원구 고잔동 순위 배지가 항상 비어있음):
+      // 프론트가 지도 중심 좌표를 카카오로 역지오코딩해서 얻은 "시 이름"(예: "안산시")과
+      // house_trades.region에 실제 저장된 이름("안산 단원구", '시' 없음 - avmEstimate 등
+      // 다른 기능들의 기존 주석에 이미 문서화된 표기 관례)이 다구(多區) 도시에서는 절대
+      // 일치하지 않음(안산/수원/성남/안양/부천/용인/고양/청주/전주 등). index.html이
+      // 이미 좌표→법정동코드(lawdCd) 변환을 다른 목적으로 하고 있으므로, region 텍스트를
+      // 직접 재구성하지 말고 이 lawdCd를 그대로 보내게 하면 LAWD_CODES(수집 파이프라인이
+      // 쓰는 것과 완전히 같은 소스)로 region을 서버에서 직접 찾아 100% 일치를 보장함.
+      // region 파라미터는 하위호환(패널의 수동 드롭다운, 아래 mode=regionList가 이제
+      // LAWD_CODES를 그대로 쓰므로 그 값도 정확함)을 위해 계속 지원함.
+      let region = req.query.region ? String(req.query.region).trim() : '';
+      if (req.query.lawdCd) {
+        const found = LAWD_CODES.find((r) => r.code === String(req.query.lawdCd));
+        if (found) region = found.name;
+      }
+      if (!region) return res.status(400).json({ error: 'region(예: "경북 구미시") 또는 lawdCd가 필요합니다.' });
       // ⚠️ 2026-09(사용자 요청: "서울지역 포함해서 전국 웜업"): 예전엔 여기서 "서울"로
       // 시작하는 region을 400 에러로 거부했음(당시 사유: "서울은 이미 급등지역·돈되는지역
       // 등 다른 지표로 충분히 다뤄지고 있고, 이 기능은 지방 갭메우기 신호에 초점을 둠") -
