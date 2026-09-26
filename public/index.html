@@ -21,6 +21,12 @@ body { font-family:'Malgun Gothic',sans-serif; }
     border-radius:6px; font-size:14px; font-weight:bold; cursor:pointer;
 }
 #search-box button:hover { background:#e6d000; }
+/* ⚠️ #478: 배지 재로딩 버튼은 검색 버튼과 나란히 들어가면서 텍스트가 길어(🔄 배지 재로딩)
+   좁은 화면에서 줄바꿈되기 쉬움 - 패딩/폰트를 살짝 줄이고 줄바꿈을 막음. */
+#badge-reload-btn { padding:8px 10px; font-size:12px; white-space:nowrap; }
+@media (max-width: 640px) {
+    #badge-reload-btn { padding:8px 8px; font-size:11px; }
+}
 #type-filter {
     position:absolute; top:10px; right:14px; z-index:10; display:flex; gap:5px;
 }
@@ -680,6 +686,11 @@ tr:hover td { background:#fffde7; }
 <div id="search-box">
     <input type="text" id="addr-input" placeholder="아파트명·도로명·지번 검색" />
     <button onclick="searchAddress()">검색</button>
+    <!-- ⚠️ #478(사용자 요청: "상단 검색버튼 옆에 배지재로딩 버튼을 만들어줘"): 대장/후발주자
+         순위 배지는 지역당 세션에 1회만 자동 조회(lfAutoFetchedRegions)되므로, 야간 웜업 이후
+         데이터가 갱신됐거나 배지가 이상해 보일 때 사용자가 직접 강제로 다시 불러올 방법이
+         없었음 - reloadBadges()가 현재 지역의 "이미 시도함" 플래그를 지우고 재조회함. -->
+    <button id="badge-reload-btn" onclick="reloadBadges()" title="현재 지역의 대장/후발주자 순위 배지를 다시 불러옵니다">🔄 배지 재로딩</button>
 </div>
 <div id="geo-tools-group">
     <button class="geo-tool-btn" id="compass-toggle-btn" onclick="toggleCompass()" title="나침반 (거실창 방향 확인)">🧭</button>
@@ -2633,8 +2644,10 @@ function getDistance(lat1, lon1, lat2, lon2) {
 }
 /* ════════════════════════════════════
    커서 위치에 따라 법정동(읍면동) 경계선 표시
-   - "필터" 패널의 "🗺️ 법정동 경계선" 버튼으로 켜고 끔 (기본 꺼짐 - 카카오
-     coord2RegionCode 호출량을 아낌 위해 실제로 켰을 때만 동작)
+   - "필터" 패널의 "🗺️ 법정동 경계선" 버튼으로 켜고 끔. ⚠️ #478(사용자 요청): 기본값을
+     꺼짐→켜짐으로 변경(initMap에서 toggleDongBoundaryMode를 자동 호출) - 대신 실제
+     좌표 조회는 마우스가 지도 위에서 멈춰야만(디바운스 500ms) 나가므로, 그냥 켜두는
+     것만으로 coord2RegionCode 호출량이 늘지는 않음.
    - 마우스가 멈춘 지점의 좌표를 coord2RegionCode로 역지오코딩해서 법정동코드(B타입,
      10자리)를 얻고, 앞 5자리(시군구코드)로 /api/get-boundary를 호출해 그 시군구
      전체 법정동 경계 목록을 받아옴(시군구 단위로 캐싱해서 같은 시군구 안에서는
@@ -3524,6 +3537,12 @@ function initMap(lat, lon) {
     });
     map.setMinLevel(1); map.setMaxLevel(14);
     new kakao.maps.Marker({ map: map, position: new kakao.maps.LatLng(lat, lon), title: '내 위치' });
+    // ⚠️ #478(사용자 요청: "필터 기본사항을 법정동 경계선 on 으로 설정해줘"): 예전엔 이 모드가
+    // 기본 꺼짐이라(2636행 주석 참고, 카카오 coord2RegionCode 호출량을 아끼려는 목적이었음)
+    // 매번 방문할 때마다 사용자가 필터 패널을 열어 직접 켜야 했음 - toggleDongBoundaryMode를
+    // 그대로 호출해서(수동 클릭과 완전히 같은 경로) 버튼 active 표시 + mousemove 리스너 등록을
+    // 한 번에 처리함. map이 막 생성된 시점이라야 리스너 등록이 되므로 여기(initMap)에서 호출.
+    toggleDongBoundaryMode(document.getElementById('boundary-toggle-btn'));
     updateBadgeScale();
     kakao.maps.event.addListener(map, 'zoom_changed', function() { updateBadgeScale(); scheduleOverlapResolve(); });
     // 경매 등록 물건은 지역 데이터를 기다리지 않고 가장 먼저 불러와서 표시
@@ -17442,6 +17461,27 @@ async function autoLoadLeaderFollowerForRegion(kakaoSigungu, lawdCd) {
         if (!res.ok || !data || data.error) return; // 참고용 배지라 실패해도 조용히 무시(지도 자체는 정상 동작)
         applyLeaderFollowerToMap(data);
     } catch (e) { /* 참고용 배지 - 네트워크 오류 시에도 조용히 무시 */ }
+}
+// ⚠️ #478: 상단 검색버튼 옆 "🔄 배지 재로딩" 버튼 핸들러. autoLoadLeaderFollowerForRegion은
+// 세션당 지역별 1회만 실행되도록 lfAutoFetchedRegions로 막혀있는데(#465/#466 타임아웃 방지
+// 목적으로 만든 캐시), 이 가드 때문에 사용자가 배지를 강제로 새로고침할 방법이 없었음 -
+// 현재 지역(lastLawdCd)의 플래그만 지우고 다시 호출해서, 세션당 1회 제한은 유지하면서도
+// 필요할 때는 수동으로 재조회할 수 있게 함. 실패해도(네트워크 오류 등) autoLoadLeaderFollowerForRegion
+// 내부에서 조용히 무시하므로 여기서도 사용자에게 결과를 안내함.
+async function reloadBadges() {
+    var btn = document.getElementById('badge-reload-btn');
+    if (!lastLawdCd) {
+        alert('먼저 지도를 이동해 지역 데이터를 한 번 불러온 뒤 다시 시도해 주세요.');
+        return;
+    }
+    delete lfAutoFetchedRegions[lastLawdCd];
+    var origText = btn ? btn.innerText : '';
+    if (btn) { btn.disabled = true; btn.innerText = '🔄 불러오는 중...'; }
+    try {
+        await autoLoadLeaderFollowerForRegion(lastSigungu, lastLawdCd);
+    } finally {
+        if (btn) { btn.disabled = false; btn.innerText = origText || '🔄 배지 재로딩'; }
+    }
 }
 // ⚠️ 2026-09(#463, 사용자 요청: "순위는 인기순으로 고정해줘 - 그럼 모든 단지에 순위가
 // 나올거야. 동행성 있는 단지는 (후발주자)라고 표기, 상세내역은 우측상단 메뉴로 확인. 법정동
