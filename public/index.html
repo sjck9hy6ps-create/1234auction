@@ -3582,7 +3582,7 @@ async function loadAllData(centerLat, centerLon) {
             // 쪽으로 해결함 - 사용자가 방문할 땐 대부분 이미 캐시가 있어(≈0.4초) 배지가
             // 거의 바로 뜸. autoLoadLeaderFollowerForRegion 내부에서 세션당 지역별 1회로
             // 제한하므로 팬/줌을 반복해도 중복 호출되지 않음.
-            autoLoadLeaderFollowerForRegion(sigungu);
+            autoLoadLeaderFollowerForRegion(sigungu, lawdCd);
             lastResolvedLat = centerLat;
             lastResolvedLon = centerLon;
             // 예전엔 "바로 직전에 봤던 지역"일 때만 캐시를 재사용했는데(lawdCd === lastLawdCd),
@@ -17403,19 +17403,23 @@ function applyLeaderFollowerToMap(data) {
 // 백그라운드에서 이 API를 한 번 불러 배지에 반영함(화면 로딩을 막지 않는 fire-and-forget).
 // 캐시가 있으면 0.4초 안팎, 없으면 최대 30초 가까이 걸릴 수 있으나(#465/#466) 어차피
 // 결과가 오면 그때 배지만 갱신되는 방식이라 사용자는 기다릴 필요가 없음.
-async function autoLoadLeaderFollowerForRegion(kakaoSigungu) {
-    if (!kakaoSigungu) return;
-    var sidoShort = extractSidoShort(kakaoSigungu);
-    var guShort = extractSigunguShort(kakaoSigungu);
-    // ⚠️ 2026-09(사용자 요청: "서울지역 포함해서 전국 웜업"): 예전엔 여기서 서울을
-    // 걸렀는데(백엔드가 서울을 거부했었음), 이제 백엔드(mode=leaderFollower)가 서울도
-    // 지원하도록 바뀌어서 이 가드를 제거함 - 서울도 다른 시/군/구와 동일하게 자동조회됨.
-    if (!sidoShort || !guShort) return;
-    var region = sidoShort + ' ' + guShort;
-    if (lfAutoFetchedRegions[region]) return; // 이 세션에서 이미 시도한 지역(성공/실패 무관)
-    lfAutoFetchedRegions[region] = true;
+async function autoLoadLeaderFollowerForRegion(kakaoSigungu, lawdCd) {
+    // ⚠️ 2026-09(#470, 사용자 제보 - 안산시 단원구 고잔동 순위 배지가 항상 비어있음):
+    // 예전엔 카카오 역지오코딩 문자열(kakaoSigungu, 예: "경기도 안산시 단원구")에서
+    // extractSidoShort/extractSigunguShort로 "경기 안산시"를 재구성해 보냈는데, 이 텍스트
+    // 조합은 두 가지 이유로 house_trades.region과 절대 일치하지 않았음: ①extractSigunguShort는
+    // 원래 미분양(다구 시를 구로 안 쪼개는) 기능용이라 첫 토큰("안산시")만 반환해 구 이름
+    // ("단원구")이 통째로 빠짐, ②설령 구 이름이 붙어도 DB에는 '시'를 뗀 "안산 단원구"로
+    // 저장돼 있어 "안산시 단원구"와 여전히 다름(수원/성남/안양/부천/용인/고양/청주/전주
+    // 등 구가 있는 모든 시가 동일하게 영향받음). 이 함수를 부르는 곳(loadAllData)이 이미
+    // 좌표→법정동코드(lawdCd) 변환을 다른 용도로 해두고 있으므로, 텍스트 재구성 대신 그
+    // lawdCd를 그대로 서버에 보내 LAWD_CODES(수집 파이프라인이 쓰는 것과 완전히 같은
+    // 소스)로 region을 직접 찾게 함 - 텍스트 불일치 가능성을 원천 차단함.
+    if (!lawdCd) return;
+    if (lfAutoFetchedRegions[lawdCd]) return; // 이 세션에서 이미 시도한 지역(성공/실패 무관)
+    lfAutoFetchedRegions[lawdCd] = true;
     try {
-        var res = await fetch('/api/data-coverage?mode=leaderFollower&type=apt&region=' + encodeURIComponent(region));
+        var res = await fetch('/api/data-coverage?mode=leaderFollower&type=apt&lawdCd=' + encodeURIComponent(lawdCd));
         var data = await readJsonResponseSafe(res);
         if (!res.ok || !data || data.error) return; // 참고용 배지라 실패해도 조용히 무시(지도 자체는 정상 동작)
         applyLeaderFollowerToMap(data);
