@@ -337,25 +337,31 @@ export function parseXML(xml, regionName) {
   }
   return rows;
 }
+// ⚠️ 2026-09(확정 원인): 위 재시도+cause로깅 추가 후 재실행한 결과, 전 지역 250개 코드
+// 전부에서 UND_ERR_CONNECT_TIMEOUT(TCP 연결 자체가 안 됨)이 3회 재시도 모두 100% 재현됨.
+// 같은 API를 Vercel(get-house.js의 fetchRealtimeApt)은 지금도 정상 호출 중이라 국토부 API
+// 자체 장애가 아니라 GitHub Actions 호스트 러너의 IP 대역이 국토부(혹은 중간 방화벽)에서
+// 막힌 것으로 확인 - 재시도로는 해결 불가능한 네트워크 문제라서, GitHub Actions는 국토부
+// API를 직접 부르지 않고 Vercel의 get-house.js?action=molitProxy 엔드포인트를 경유하도록
+// 구조를 바꿈(Vercel 네트워크는 정상 통신 확인됨). SITE_URL/COLLECT_PROXY_SECRET 환경변수가
+// 없으면 기존 직접호출 방식으로 자동 폴백(로컬 테스트 등에서도 그대로 동작하게 하기 위함).
+const SITE_URL      = process.env.SITE_URL?.trim();
+const PROXY_SECRET  = process.env.COLLECT_PROXY_SECRET?.trim();
+
 export async function fetchMonth(code, name, ym) {
-  const url = `https://apis.data.go.kr/1613000/RTMSDataSvcAptTradeDev/getRTMSDataSvcAptTradeDev?serviceKey=${encodeURIComponent(API_KEY)}&LAWD_CD=${code}&DEAL_YMD=${ym}&numOfRows=1000&pageNo=1`;
-  // ⚠️ 2026-09(사용자 리포트: 전 지역 250개 코드가 전부 "fetch failed"로 실패, 6월 이후
-  // house_trades에 데이터가 아예 안 쌓임): 기존엔 e.message만 찍어서 "fetch failed"라는
-  // 뭉뚱그려진 메시지밖에 안 보였음 - Node fetch는 DNS 실패/TLS 실패/연결거부처럼
-  // "연결 자체가 안 되는" 에러를 TypeError('fetch failed')로 뭉뚱그리고 진짜 원인은
-  // e.cause에 담아두므로, 그걸 같이 찍어야 진짜 원인(예: ENOTFOUND, ECONNRESET,
-  // 인증서 오류, 타임아웃 등)을 알 수 있음. 같은 API를 Vercel(get-house.js 실시간 조회)은
-  // 정상 호출 중이라 국토부 API 자체 장애가 아니라 GitHub Actions 실행환경 쪽 네트워크
-  // 문제일 가능성이 높음 - 그래서 일시적 문제일 경우를 대비해 최대 2회 재시도도 추가함.
+  const directUrl = `https://apis.data.go.kr/1613000/RTMSDataSvcAptTradeDev/getRTMSDataSvcAptTradeDev?serviceKey=${encodeURIComponent(API_KEY)}&LAWD_CD=${code}&DEAL_YMD=${ym}&numOfRows=1000&pageNo=1`;
+  const proxyUrl = SITE_URL && PROXY_SECRET
+    ? `${SITE_URL}/api/get-house?action=molitProxy&endpoint=aptTrade&code=${code}&ym=${ym}&secret=${encodeURIComponent(PROXY_SECRET)}`
+    : null;
   const MAX_ATTEMPTS = 3;
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
     try {
-      const res = await fetch(url, { signal: AbortSignal.timeout(15000) });
+      const res = await fetch(proxyUrl || directUrl, { signal: AbortSignal.timeout(20000) });
       const text = await res.text();
       return parseXML(text, name);
     } catch (e) {
       const causeInfo = e.cause ? ` / cause: ${e.cause.code || e.cause.message || e.cause}` : '';
-      console.error(`❌ ${code}/${ym} 실패(시도 ${attempt}/${MAX_ATTEMPTS}): ${e.message}${causeInfo}`);
+      console.error(`❌ ${code}/${ym} 실패(시도 ${attempt}/${MAX_ATTEMPTS}, ${proxyUrl ? 'proxy' : 'direct'}): ${e.message}${causeInfo}`);
       if (attempt < MAX_ATTEMPTS) await sleep(1000 * attempt);
     }
   }
