@@ -1,13 +1,16 @@
 import { LAWD_CODES, sleep, DELAY_MS, fetchMonthVilla, fetchMonthSingle, upsertVilla, upsertSingle } from './shared-villa.mjs';
 
-// 실거래가 신고는 계약일로부터 최대 30일까지 지연될 수 있어
-// 이번 달과 지난 달, 두 달치를 함께 갱신합니다.
+// 실거래가 신고는 계약일로부터 최대 30일까지 지연될 수 있고, 실제로는 이보다도 늦게
+// 신고되는 경우가 있어(2026-09 확인: 2개월치만 봐서는 늦게 신고된 과거월 거래를 영영
+// 놓치는 문제 발생) 이번 달 + 지난 달 + 지지난 달, 세 달치를 함께 갱신합니다.
 const now = new Date();
 const targets = [
   { year: now.getFullYear(), month: now.getMonth() + 1 },
 ];
-const prevDate = new Date(now.getFullYear(), now.getMonth() - 1, 1);
-targets.push({ year: prevDate.getFullYear(), month: prevDate.getMonth() + 1 });
+for (let i = 1; i <= 2; i++) {
+  const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+  targets.push({ year: d.getFullYear(), month: d.getMonth() + 1 });
+}
 
 console.log(`\n📅 연립다세대 + 단독/다가구 주간 수집 시작`);
 console.log(`대상 월: ${targets.map(t => `${t.year}${String(t.month).padStart(2, '0')}`).join(', ')}`);
