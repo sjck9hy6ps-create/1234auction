@@ -786,12 +786,48 @@ def remove_residual_outliers(df: pd.DataFrame, feature_cols):
     return df[keep].reset_index(drop=True), n_removed
 
 
+MIN_LEVEL_HOLDOUT_SAMPLES = 30  # 세그먼트별 오차를 따로 보여줄 최소 표본(#480) - 이보다 적으면 세그먼트 자체를 생략(노이즈성 숫자 방지)
+
+
+def _classify_holdout_level(df_test: pd.DataFrame, group_effects_t: dict):
+    """#480(사용자 요청: "기존 참고자료들의 신뢰도를 높일 수 있는 방법") - 지금까지는 홀드아웃
+    오차를 모델 전체 평균 하나로만 보고했는데, 실제로는 "단지 표본이 충분한 대단지"와
+    "표본이 없어 시/군/구 평균으로 대체된 나홀로 단지"의 오차가 크게 다름(빌라 최대 ±42%
+    사례가 바로 후자 유형). 각 테스트 행이 실제로 어느 단위(그룹)의 효과값을 썼는지를
+    data-coverage.js avmPredict()의 effectUsed와 동일한 이름 체계(grid/danji/dong_tier/
+    dong/region_fallback/default_fallback)로 분류해서, 세그먼트별 오차를 따로 계산할 수
+    있게 함. 이렇게 하면 서버가 서빙 시점의 effectUsed 값으로 정확히 같은 세그먼트의
+    검증된 오차범위를 찾아 보여줄 수 있음(전체 뭉뚱그린 오차범위 대신)."""
+    gk = df_test["group_key"]
+    # 실제로 학습(train 80%)에 존재하지 않는 그룹은 default_effect로 대체되므로, 명목상
+    # group_key의 레벨과 무관하게 "실제로 무슨 값이 쓰였는지"를 최우선으로 반영함.
+    not_trained = ~gk.isin(group_effects_t.keys())
+    has_grid = "grid_key" in df_test.columns
+    has_danji = "danji_key" in df_test.columns
+    is_grid = has_grid & (gk == df_test.get("grid_key"))
+    is_danji = has_danji & (gk == df_test.get("danji_key"))
+    is_tier = gk == df_test["tier_key"]
+    is_dong = gk == df_test["dong_key"]
+    level = pd.Series("region_fallback", index=df_test.index)
+    level[is_dong] = "dong"
+    level[is_tier] = "dong_tier"
+    if has_danji:
+        level[is_danji] = "danji"
+    if has_grid:
+        level[is_grid] = "grid"
+    level[not_trained] = "default_fallback"
+    return level
+
+
 def evaluate_holdout(df: pd.DataFrame, feature_cols):
     """무작위 80/20 분할 - train만으로 재학습해서 test(모델이 한 번도 못 본 거래)를 얼마나 잘
     맞히는지 측정함. 학습 스크립트가 자체 보고하는 R^2(전체 데이터로 학습한 뒤 그 데이터로
     다시 채점하는 in-sample 값)는 항상 실제보다 낙관적으로 나오므로(그룹 고정효과 모델은
     그룹 수가 많을수록 원래 R^2가 잘 나올 수밖에 없음), 이 홀드아웃 지표가 "새 물건 예측이
-    실제로 얼마나 정확한지"에 대한 훨씬 정직한 추정치임. 표본 부족 시 None을 반환함."""
+    실제로 얼마나 정확한지"에 대한 훨씬 정직한 추정치임. 표본 부족 시 None을 반환함.
+    ⚠️ #480: 전체 평균과 함께, effectUsed 세그먼트별(danji/dong_tier/dong/region_fallback 등)
+    오차도 by_level에 같이 반환함 - 서버가 서빙 시점에 실제로 쓴 effectUsed와 매칭되는
+    세그먼트를 찾아 "이 추정치는 이 정도 신뢰도"를 훨씬 정확하게 보여줄 수 있게 함."""
     if len(df) < MIN_HOLDOUT_SAMPLES:
         return None
     rng = np.random.RandomState(HOLDOUT_SEED)
@@ -808,11 +844,29 @@ def evaluate_holdout(df: pd.DataFrame, feature_cols):
     resid_test = df_test["y"].to_numpy() - y_pred_test
     # 로그공간 잔차를 실제 %오차로 환산 - exp(로그차이)-1 이 곧 원래 스케일에서의 상대오차 비율임
     pct_err = np.abs(np.exp(resid_test) - 1.0) * 100.0
+
+    by_level = {}
+    try:
+        levels = _classify_holdout_level(df_test, group_effects_t)
+        for lvl in levels.unique():
+            mask = (levels == lvl).to_numpy()
+            n_lvl = int(mask.sum())
+            if n_lvl < MIN_LEVEL_HOLDOUT_SAMPLES:
+                continue  # 표본이 너무 적은 세그먼트는 노이즈일 뿐이라 생략(전체 평균으로만 안내)
+            by_level[str(lvl)] = {
+                "n": n_lvl,
+                "mape_pct": round(float(np.mean(pct_err[mask])), 2),
+                "median_ape_pct": round(float(np.median(pct_err[mask])), 2),
+            }
+    except Exception as e:  # 세그먼트 분류가 실패해도 전체 평균 지표는 정상 반환돼야 함
+        print(f"  ⚠️ 세그먼트별 홀드아웃 분류 실패(전체 평균만 사용): {e}")
+
     return {
         "n": int(len(df_test)),
         "mape_pct": round(float(np.mean(pct_err)), 2),
         "median_ape_pct": round(float(np.median(pct_err)), 2),
         "residual_std_log": round(float(np.std(resid_test)), 5),
+        "by_level": by_level,
     }
 
 
@@ -1037,6 +1091,12 @@ def train_one(tables, model_id: str, model_type: str, use_danji: bool, use_grid:
         feature_ranges["holdout_mape_pct"] = holdout["mape_pct"]
         feature_ranges["holdout_median_ape_pct"] = holdout["median_ape_pct"]
         feature_ranges["holdout_n"] = holdout["n"]
+        # ⚠️ #480: effectUsed(danji/dong_tier/dong/region_fallback/grid/default_fallback)별
+        # 오차 - 서버(data-coverage.js)가 실제 서빙 시점의 effectUsed와 매칭되는 세그먼트를
+        # 찾아 "이 추정치는 단지 표본이 충분해서 정확도가 높다/시군구 평균이라 낮다"를
+        # 구체적으로 보여줄 수 있게 함.
+        if holdout.get("by_level"):
+            feature_ranges["holdout_by_level"] = holdout["by_level"]
         feature_ranges["residual_std_log"] = holdout["residual_std_log"]
     upsert_model(model_id, model_type, beta, group_effects, r_squared, n, feature_ranges)
 
