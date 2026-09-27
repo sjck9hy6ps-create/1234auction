@@ -1161,7 +1161,7 @@ def train_one(tables, model_id: str, model_type: str, use_danji: bool, use_grid:
     upsert_model(model_id, model_type, beta, group_effects, r_squared, n, feature_ranges)
 
 
-def main():
+def main(target: str = "all"):
     # 아파트: 단지(danji) 단위까지 고정효과를 세분화(위 모듈 docstring "그룹(고정효과 단위)"
     # 참고) - 동일 법정동 내 단지 간 편차(준공연도·브랜드)를 직접 반영해 예측 정확도를 높임.
     # attach_kapt=True: K-apt 세대수를 추가 변수로 반영(위 train_one 안 주석 참고).
@@ -1169,8 +1169,9 @@ def main():
     # 커버리지가 필요해 아파트만 적용. attach_school=True: (region,dong) 초/중학교 밀집도
     # 근사치 반영(#298 - 실제 학업성취도 API는 공개돼 있지 않아 밀집도로 근사, 모듈 상단 참고).
     # attach_month_fe=True(기본값): 월별 시점보정 더미 추가(#299 - build_month_dummies 참고).
-    train_one("house_trades", "apt_v1", "apt", use_danji=True, attach_kapt=True,
-              attach_transit=True, attach_school=True, attach_month_fe=True)
+    if target in ("all", "apt"):
+        train_one("house_trades", "apt_v1", "apt", use_danji=True, attach_kapt=True,
+                  attach_transit=True, attach_school=True, attach_month_fe=True)
     # ⚠️ 2026-08(villa_v1 추가): 연립다세대·단독다가구는 villa_trades(연립다세대)+
     # single_trades(단독다가구) 두 테이블을 합쳐서 학습함(이 앱의 다른 집계 로직(rpc_top_dongs,
     # getBucketDetailRows 등)도 "villa" 타입을 이 두 테이블의 합집합으로 다뤄서 같은 관례를
@@ -1184,9 +1185,25 @@ def main():
     # 주석 참고). 이 3가지 변경 + is_single_house 버그 수정(clean_and_featurize 참고)이
     # 이번 개선의 전부임 - use_danji는 여전히 False(단지 단위로 쪼개면 표본이 너무 잘게
     # 쪼개져 불안정해지는 문제는 격자 그룹핑과 무관하게 그대로 유효).
-    train_one(["villa_trades", "single_trades"], "villa_v1", "villa", use_danji=False, use_grid=True,
-              attach_kapt=False, attach_transit=True, attach_school=True, attach_month_fe=True)
+    if target in ("all", "villa"):
+        train_one(["villa_trades", "single_trades"], "villa_v1", "villa", use_danji=False, use_grid=True,
+                  attach_kapt=False, attach_transit=True, attach_school=True, attach_month_fe=True)
 
 
 if __name__ == "__main__":
-    main()
+    # ⚠️ (2026-09, "The hosted runner lost communication with the server." 반복 대응):
+    # build_month_dummies 단편화 수정 후에도 OOM으로 추정되는 원인불명 중단이 계속됨(50분→
+    # 1시간36분으로 더 오래 버티다 죽는 걸로 봐서 메모리가 서서히 누적되다 터지는 패턴으로
+    # 추정) - 아파트(apt_v1)와 연립다세대(villa_v1) 두 모델을 한 파이썬 프로세스 안에서
+    # 순차로 학습하면, 앞 모델이 다 쓴 대용량 DataFrame/배열을 파이썬이 논리적으로는
+    # 참조를 끊어도 OS 입장에서 메모리가 바로 반환되지 않는 경우가 있어(malloc 단편화 등)
+    # 두 모델의 메모리 사용량이 사실상 누적됨. 커맨드라인 인자(apt/villa/all)를 받게 해
+    # GitHub Actions 워크플로(train-avm.yml)에서 이 둘을 완전히 별개의 프로세스(별도 run
+    # 스텝)로 나눠 실행할 수 있게 함 - 프로세스가 완전히 종료되면 OS가 메모리를 100% 회수해
+    # 어떤 잠재적 누적/단편화 문제든 구조적으로 차단됨(정확히 뭐가 새는지 못 찾아도 안전).
+    # 인자 없이 실행하면(기존과 동일하게) 둘 다 순차로 돎.
+    _target = sys.argv[1] if len(sys.argv) > 1 else "all"
+    if _target not in ("all", "apt", "villa"):
+        print(f"ERROR: 알 수 없는 인자 '{_target}' (apt/villa/all 중 하나여야 함)", file=sys.stderr)
+        sys.exit(1)
+    main(_target)
