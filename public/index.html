@@ -17598,6 +17598,20 @@ function renderLeaderFollowerBody(data, dongFilter) {
             + '📊 신호 자체 검증(전국, ' + s.cutoff + ' 기준 예측 → 올해 실거래로 대조): "(후발주자)" 표식이 붙은 단지가 실제로 대장보다 더 오른(격차가 줄어든) 비율 <b>' + s.hit_rate_follower + '%</b>'
             + '(표본 ' + s.sample_size_follower + '건, 평균 격차변화 ' + (s.avg_follower_catchup_pct > 0 ? '+' : '') + s.avg_follower_catchup_pct + '%p)'
             + (s.hit_rate_nonfollower != null ? ' · 비교기준(후발주자 표식 없는 단지) ' + s.hit_rate_nonfollower + '%' : '')
+            // ⚠️ 2026-09(사용자 요청 "분기별 흐름이 조금더 디테일해 나에게 필요한 정보로 더
+            // 활용될거같아"): 연말까지 뭉친 숫자 1개만 보여주면 "대장이 오른 뒤 몇 개월 뒤에
+            // 후발주자가 따라오는지"(시차)가 안 보임 - 연초~분기말 누적 적중률을 분기별로
+            // 나란히 보여줘서, 시간이 지날수록(Q1→Q2→Q3→Q4) 격차가 실제로 좁혀지는 흐름인지
+            // 한눈에 확인할 수 있게 함.
+            + (s.by_quarter ? (function() {
+                var order = ['q1', 'q2', 'q3', 'q4'];
+                var parts = order.map(function(k, i) {
+                    var q = s.by_quarter[k];
+                    if (!q || q.sampleSizeFollower < 10) return null;
+                    return 'Q' + (i + 1) + ' ' + q.hitRateFollower + '%(' + q.sampleSizeFollower + '건)';
+                }).filter(Boolean);
+                return parts.length ? '<br><span style="color:#555;">분기별 누적 추이: ' + parts.join(' → ') + '</span>' : '';
+            })() : '')
             + '</div>';
     }
     var leaders = dongFilter ? (data.leaders || []).filter(function(l) { return l.dong === dongFilter; }) : (data.leaders || []);
