@@ -35,8 +35,29 @@ jobs:
       - name: Install dependencies
         run: pip install pandas numpy requests
 
-      - name: Train AVM
+      # ⚠️ (2026-09, "The hosted runner lost communication with the server." 반복 대응):
+      # 아파트(apt_v1)+연립다세대(villa_v1)를 한 파이썬 프로세스에서 순차로 학습하면 메모리가
+      # 누적되다 OOM으로 추정되는 원인불명 중단이 반복됨(50분→1시간36분으로 점점 더 늦게
+      # 죽는 패턴이 누적을 뒷받침함). train-avm.py가 apt/villa 인자를 받도록 바꿔서, 완전히
+      # 별개의 run 스텝(=별개의 프로세스)으로 나눔 - 한 스텝이 끝나 프로세스가 종료되면 OS가
+      # 메모리를 100% 회수하므로, 정확한 누수 지점을 못 찾아도 두 모델 간 메모리 누적 자체가
+      # 구조적으로 차단됨.
+      - name: Train AVM (apt)
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
-        run: python train-avm.py
+          # ⚠️ (사용자 문의 대응) 파이썬은 표준출력이 터미널이 아니라 파일/파이프로 리다이렉트되면
+          # (GitHub Actions 로그가 바로 이 경우) 기본적으로 완전버퍼링을 씀 - print()가 즉시
+          # 로그에 안 뜨고 내부 버퍼가 다 찰 때까지(또는 프로세스 종료 시까지) 쌓여있기만 함.
+          # 그래서 실제로는 정상 진행 중이어도 로그가 30분 넘게 완전히 비어 보일 수 있음(사용자가
+          # "멈춘 것 같다"고 오인한 원인으로 추정). PYTHONUNBUFFERED=1로 줄단위 즉시 flush시켜
+          # 로그가 실시간으로 보이게 함 - 스크립트 동작 자체는 전혀 안 바뀜.
+          PYTHONUNBUFFERED: '1'
+        run: python train-avm.py apt
+
+      - name: Train AVM (villa)
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          PYTHONUNBUFFERED: '1'
+        run: python train-avm.py villa
