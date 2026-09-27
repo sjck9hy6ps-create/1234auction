@@ -2242,6 +2242,73 @@ async function getBucketDetailRows(type, region, dong, start, end) {
     }))
     .sort((a, b) => a.deal_date - b.deal_date);
 }
+// ⚠️ #481(예상매도가 대규모 히스토리 백테스트, 사용자 요청): index.html의
+// getCompEstValueHeadless()가 실제로 쓰는 핵심 통계("반경/평형/연식 등으로 골라낸 비교물건들의
+// 평단가 중 30th percentile을 씀 - #363에서 낙관 보정 없이 원상복귀, IQR 이상치 제거는
+// >=5건일 때만") 그 자체가 미래 실제 거래가를 얼마나 잘 맞히는지 검증하기 위해, (region,dong,
+// danji) 단위로 원본 거래 행(가격/면적)을 통째로 받아옴. getBucketDetailRows와 달리 dong을
+// 지정하지 않고 지역 전체를 한 번에 받음(지역별로 순회하는 백테스트 스크립트가 danji 단위로
+// 다시 묶어 쓰기 편하도록) - #475에서 이미 겪은 PostgREST 기본 max-rows(1000) 묵시적 truncation을
+// 피하기 위해 .range()로 완전히 페이지네이션함.
+async function getRegionTradeRowsPpp(type, region, start, end) {
+  const PAGE_SIZE = 1000;
+  const cols = 'dong,danji,price,size';
+  async function fetchTable(table) {
+    let rows = [];
+    let offset = 0;
+    for (;;) {
+      const { data, error } = await supabase.from(table).select(cols)
+        .eq('region', region)
+        .gte('deal_date', start).lt('deal_date', end)
+        .gte('size', MOMENTUM_SIZE_MIN).lte('size', MOMENTUM_SIZE_MAX)
+        .range(offset, offset + PAGE_SIZE - 1);
+      if (error) throw error;
+      rows = rows.concat(data || []);
+      if (!data || data.length < PAGE_SIZE) break;
+      offset += PAGE_SIZE;
+    }
+    return rows;
+  }
+  let raw;
+  if (type === 'villa') {
+    const [v, s] = await Promise.all([fetchTable('villa_trades'), fetchTable('single_trades')]);
+    raw = [...v, ...s];
+  } else {
+    raw = await fetchTable('house_trades');
+  }
+  const byDanji = {};
+  raw.forEach((r) => {
+    if (!r.size || !r.price) return;
+    const ppp = (r.price / r.size) * 3.305785;
+    const danjiName = r.danji || '(단지미상)';
+    const key = r.dong + '|' + danjiName;
+    if (!byDanji[key]) byDanji[key] = { dong: r.dong, danji: danjiName, ppps: [] };
+    byDanji[key].ppps.push(ppp);
+  });
+  return byDanji;
+}
+// getCompEstValueHeadless()의 핵심 통계(IQR 이상치 제거 + 30th percentile)만 그대로 재현함 -
+// 백테스트는 "이 통계 방법 자체"가 맞는지 검증하는 게 목적이라, 개별 목표물건과의
+// 평형/층/연식/거리 유사도 가중치(실서빙 로직의 나머지 절반)는 여기선 재현하지 않음(모든
+// 표본을 동일 가중치로 취급) - 이 단순화는 백엔드 주석과 프론트 안내문 양쪽에 명시함.
+function compEstPercentile30(ppps) {
+  if (!ppps || !ppps.length) return null;
+  function percentile(sorted, p) {
+    const idx = (sorted.length - 1) * p;
+    const lo = Math.floor(idx), hi = Math.ceil(idx);
+    if (lo === hi) return sorted[lo];
+    return sorted[lo] + (sorted[hi] - sorted[lo]) * (idx - lo);
+  }
+  let arr = ppps.slice().sort((a, b) => a - b);
+  if (arr.length >= 5) {
+    const q1 = percentile(arr, 0.25), q3 = percentile(arr, 0.75);
+    const iqr = q3 - q1;
+    const lo = q1 - 1.5 * iqr, hi = q3 + 1.5 * iqr;
+    const trimmed = arr.filter((x) => x >= lo && x <= hi);
+    if (trimmed.length >= 3 && trimmed.length < arr.length) arr = trimmed.slice().sort((a, b) => a - b);
+  }
+  return percentile(arr, 0.3);
+}
 // (region,dong) 단위가 아니라 (region,dong,danji) 단위로 평단가/건수를 받아옴 - danji별로
 // 나눠 받는 이유는 getPriceMomentum에서 "이 단지가 원래(baseline 기간) 얼마였는지"와
 // 비교하는 상대지수 계산을 하기 위함(아래 getPriceMomentum 주석 참고).
@@ -3097,6 +3164,72 @@ export default async function handler(req, res) {
       const { data, error } = await supabase.from('signal_backtest_stats').select('*');
       if (error) return res.status(500).json({ error: error.message });
       return res.status(200).json({ stats: data || [] });
+    } catch (err) {
+      return res.status(500).json({ error: err.message });
+    }
+  }
+  if (req.query.mode === 'backtestCompEstRegion') {
+    // ⚠️ #481(예상매도가 대규모 히스토리 백테스트, 사용자 요청 "기존 참고자료들의 신뢰도를
+    // 높일 수 있는 방법이 더 중요할 거 같아" + #479와 동일한 방식 재사용): 작년 1년 전체를
+    // "백데이터"(비교물건 풀)로 고정하고, 그 30th percentile을 예측치로 삼아서, 올해(이미
+    // 자동수집 중인) 실거래 평단가와 대조함. #479가 정한 관례(작년 1/1~12/31 = 과거,
+    // 올해 1/1~오늘 = 검증용 실측)를 그대로 따름 - 컷오프 시점을 여러 개로 늘리지 않고
+    // 지역당 딱 1번씩만 계산해 가벼움(경량 방식).
+    res.setHeader('Cache-Control', 'no-store');
+    try {
+      const type = req.query.type === 'villa' ? 'villa' : 'apt';
+      let region = req.query.region ? String(req.query.region).trim() : '';
+      if (req.query.lawdCd) {
+        const found = LAWD_CODES.find((r) => r.code === String(req.query.lawdCd));
+        if (found) region = found.name;
+      }
+      if (!region) return res.status(400).json({ error: 'region 또는 lawdCd가 필요합니다.' });
+      const now = todayInt();
+      const curYear = Math.floor(now / 10000);
+      const preStart = (curYear - 1) * 10000 + 101;   // 작년 1/1
+      const cutoff = (curYear - 1) * 10000 + 1231;    // 작년 12/31
+      const postStart = curYear * 10000 + 101;        // 올해 1/1
+      const [predMap, actualMap] = await Promise.all([
+        getRegionTradeRowsPpp(type, region, preStart, cutoff + 1),
+        getRegionTradeRowsPpp(type, region, postStart, now + 1),
+      ]);
+      const MIN_PRE_SAMPLE = 5; // 이보다 적으면 30th percentile 자체가 불안정해 예측 대상에서 제외
+      const results = [];
+      Object.keys(predMap).forEach((key) => {
+        const pre = predMap[key];
+        if (pre.ppps.length < MIN_PRE_SAMPLE) return;
+        const predictedPpp = compEstPercentile30(pre.ppps);
+        const post = actualMap[key];
+        results.push({
+          dong: pre.dong, danji: pre.danji,
+          predictedPpp: Math.round(predictedPpp),
+          preSampleSize: pre.ppps.length,
+          actualPpp: post && post.ppps.length ? Math.round(post.ppps.reduce((a, b) => a + b, 0) / post.ppps.length) : null,
+          actualCount: post ? post.ppps.length : 0,
+        });
+      });
+      return res.status(200).json({ region, type, cutoff, results });
+    } catch (err) {
+      return res.status(500).json({ error: err.message });
+    }
+  }
+  if (req.query.mode === 'saveCompEstBacktestStats') {
+    // 다른 write 계열 엔드포인트(save-auction, saveSignalBacktestStats 등)와 동일하게 별도
+    // 인증 없이 둠(이 앱 전체의 기존 관례).
+    if (req.method !== 'POST') return res.status(405).json({ error: 'POST만 지원합니다.' });
+    try {
+      const { signalType, cutoff, regionsChecked, sampleSize, mapePct, medianApePct } = req.body || {};
+      if (!signalType) return res.status(400).json({ error: 'signalType이 필요합니다.' });
+      // signal_backtest_stats 테이블을 그대로 재사용함(#479가 만든 범용 signal_type PK
+      // 구조) - 후발주자 전용 컬럼(hit_rate 등)은 null로 두고, 이 백테스트 전용 컬럼
+      // (mape_pct/median_ape_pct/sample_size, migration_comp_estimate_backtest_fix481.sql)만 채움.
+      const { error } = await supabase.from('signal_backtest_stats').upsert({
+        signal_type: signalType, cutoff, regions_checked: regionsChecked,
+        sample_size: sampleSize, mape_pct: mapePct, median_ape_pct: medianApePct,
+        updated_at: new Date().toISOString(),
+      });
+      if (error) return res.status(500).json({ error: error.message });
+      return res.status(200).json({ ok: true });
     } catch (err) {
       return res.status(500).json({ error: err.message });
     }
