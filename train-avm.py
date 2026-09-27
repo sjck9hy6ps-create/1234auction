@@ -60,6 +60,7 @@ import sys
 import json
 import math
 import time
+import gc
 from urllib.parse import quote
 from datetime import datetime, timezone
 
@@ -755,9 +756,13 @@ def fit_fwl(df: pd.DataFrame, feature_cols):
          해칠 위험은 낮고, 표본이 작은 그룹(villa에 훨씬 흔함)에서만 선택적으로 안정화됨.
     R^2도 이 수축된 효과로 채점함(그룹이 많을수록 낙관적으로 부풀던 in-sample R^2가 더 정직한
     값으로 낮아지는 부수효과가 있음 - 모듈 상단 "정확도 보완" 취지와 일치)."""
-    group_means = df.groupby("group_key")[["y"] + feature_cols].transform("mean")
-    y_tilde = (df["y"] - group_means["y"]).to_numpy()
-    X_tilde = (df[feature_cols] - group_means[feature_cols]).to_numpy()
+    # ⚠️ (2026-09, 메모리 문제 대응): train_one이 이미 feature_cols/y를 float32로 낮춰두지만,
+    # pandas groupby.transform이 내부적으로 float64로 승격시키는 경우를 대비해 여기서도
+    # 명시적으로 float32를 강제함(설계행렬 X_tilde가 이 함수의 메모리 사용량 대부분을
+    # 차지하므로, 이 두 줄만 제대로 float32면 절반 메모리 절감 효과가 실제로 보장됨).
+    group_means = df.groupby("group_key")[["y"] + feature_cols].transform("mean").astype(np.float32)
+    y_tilde = (df["y"] - group_means["y"]).to_numpy(dtype=np.float32)
+    X_tilde = (df[feature_cols] - group_means[feature_cols]).to_numpy(dtype=np.float32)
 
     # 최소제곱해 (X_tilde^T X_tilde) beta = X_tilde^T y_tilde (기울기 계수는 그대로 OLS - 수축은
     # 그룹 절편에만 적용함. 기울기까지 수축하면 "표본이 적은 그룹의 면적/연식 효과까지 다른
@@ -1093,6 +1098,24 @@ def train_one(tables, model_id: str, model_type: str, use_danji: bool, use_grid:
         df, month_cols = build_month_dummies(df)
         feature_cols = feature_cols + month_cols
 
+    # ⚠️ (2026-09, "The operation was canceled." 반복 대응 - 근본원인 3차): apt/villa를
+    # 별개 프로세스로 나눠도(2차 조치) apt_v1 혼자서 이 지점 직후(fit_fwl 최초 호출)에서 계속
+    # 죽는 걸 실제 로그로 확인함 - 2017-09~ 전체 이력이 430만 행, 월별 더미까지 합쳐 변수가
+    # 122개(109개월 구간)까지 늘어나면서, fit_fwl이 만드는 N×K 설계행렬(X_tilde) 하나만도
+    # float64 기준 약 4GB(430만행 × 122열 × 8바이트)에 달함. 이 함수가 이상치제거/홀드아웃/
+    # 최종학습, 세 단계에 걸쳐 반복 호출되고 그때마다 group_means·X_tilde·잔차용 사본이
+    # 동시에 여러 개 살아있을 수 있어, 순간 최대 메모리가 GitHub Actions 러너 한도(약 7GB)를
+    # 훌쩍 넘김(코드 버그가 아니라 "이 정도 크기를 float64로 다루기엔 물리적으로 부족하다"는
+    # 문제 - 데이터가 계속 느는 이상 언젠가는 다시 만날 문제이기도 함). 주택가격 예측에
+    # float64의 유효자릿수가 다 필요하지도 않으므로(부동산 평단가는 몇 자릿수 안의 값),
+    # 여기서 딱 한 번 feature_cols/y를 float32로 낮춰두면 이후 모든 파생 배열(groupby.
+    # transform, to_numpy, np.linalg.lstsq 등)이 자동으로 절반 메모리만 씀 - fit_fwl/
+    # remove_residual_outliers/evaluate_holdout 쪽 코드는 전혀 안 고쳐도 됨(입력 dtype만
+    # 바꾸면 pandas/numpy가 그 dtype을 그대로 이어감).
+    for _col in feature_cols + ["y"]:
+        if _col in df.columns:
+            df[_col] = df[_col].astype(np.float32)
+
     print(f"  전처리 후 {len(df)}행 (그룹 {df['group_key'].nunique()}개, 변수 {len(feature_cols)}개)")
     if len(df) < 200:
         print(f"  표본이 너무 적어({len(df)}행) 학습을 건너뜁니다(최소 200건 필요).")
@@ -1102,6 +1125,7 @@ def train_one(tables, model_id: str, model_type: str, use_danji: bool, use_grid:
     df, n_outliers_removed = remove_residual_outliers(df, feature_cols)
     if n_outliers_removed > 0:
         print(f"  이상치(잔차 IQR×{RESIDUAL_IQR_MULT} 밖) {n_outliers_removed}건 제외 → {len(df)}행 남음")
+    gc.collect()  # ⚠️ (메모리 문제 대응) fit_fwl이 만든 대용량 임시 배열을 다음 단계 전에 확실히 회수
 
     # 홀드아웃 검증(무작위 80/20) - 최종 서빙 모델은 아래에서 전체(이상치 제거된) 데이터로
     # 다시 학습하지만, 이 지표는 "새 물건 예측이 실제로 얼마나 정확한지"를 미리 가늠하는 용도
@@ -1110,6 +1134,7 @@ def train_one(tables, model_id: str, model_type: str, use_danji: bool, use_grid:
         print(f"  홀드아웃 검증(무작위 20%, {holdout['n']}건): 평균오차 {holdout['mape_pct']}% / 중앙값오차 {holdout['median_ape_pct']}%")
     else:
         print(f"  홀드아웃 검증: 표본 부족으로 건너뜀")
+    gc.collect()  # ⚠️ (메모리 문제 대응) 홀드아웃 학습(80%)용 임시 배열 회수 후 최종 학습 진입
 
     beta, group_effects, r_squared, n = fit_fwl(df, feature_cols)
     # time_origin: time_trend 계산의 기준일(가장 오래된 거래일, YYYYMMDD 정수). 예측 시점(서버)
