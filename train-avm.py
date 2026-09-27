@@ -780,16 +780,23 @@ def fit_fwl(df: pd.DataFrame, feature_cols):
     # sigma2_w 추정 - 그룹 고유효과(raw)까지 반영한 개별 관측치 잔차의 그룹내 제곱합을
     # 전체 자유도(sum of (n_i-1))로 풀링. raw effect가 정의상 그룹평균이라 그룹 내 잔차평균은
     # 항상 0이므로, 이 잔차의 분산이 곧 "그 그룹 평균만으로는 설명 안 되는 개별 노이즈" 크기.
-    df_tmp = df[["group_key"] + feature_cols + ["y"]].copy()
-    df_tmp["_effect_raw"] = df_tmp["group_key"].map(group_agg["effect_raw"])
-    df_tmp["_pred"] = df_tmp[feature_cols].to_numpy() @ beta + df_tmp["_effect_raw"].to_numpy()
-    df_tmp["_resid"] = df_tmp["y"] - df_tmp["_pred"]
-    resid_ss_by_group = df_tmp.groupby("group_key")["_resid"].apply(lambda s: float((s ** 2).sum()))
+    # ⚠️ (2026-09, 성능 문제 대응 - "100분 넘게 진행 상황이 안 보인다"): 예전엔 df_tmp =
+    # df[[...]].copy()로 feature_cols 전체(122개 컬럼 × 430만행)를 통째로 복사한 뒤,
+    # groupby().apply(lambda ...)로 그룹 3만8천개마다 파이썬 콜백을 하나씩 호출했음 -
+    # .apply(lambda)는 그룹 수만큼 파이썬 레벨 반복이 생겨서 벡터화 연산보다 수십~수백 배
+    # 느림(진행 로그가 이 구간에 전혀 없어서 "멈춘 것처럼" 보이던 진짜 원인으로 추정됨).
+    # 불필요한 전체 컬럼 복사도 없애고, 잔차 제곱합도 groupby().sum()(pandas가 C 레벨로
+    # 벡터화 처리)으로 바꿔서 수학적으로 동일한 결과를 훨씬 빠르게 냄.
+    effect_raw_per_row = df["group_key"].map(group_agg["effect_raw"]).to_numpy(dtype=np.float32)
+    pred = df[feature_cols].to_numpy(dtype=np.float32) @ beta.astype(np.float32) + effect_raw_per_row
+    resid = df["y"].to_numpy(dtype=np.float32) - pred
+    resid_sq = pd.Series(resid, index=df.index).astype(np.float64) ** 2  # 제곱합 정밀도 확보를 위해 float64로 누적
+    resid_ss_by_group = resid_sq.groupby(df["group_key"]).sum()
     dof = (n_by_group - 1).clip(lower=0)
     total_dof = float(dof.sum())
-    sigma2_w = float(resid_ss_by_group.sum() / total_dof) if total_dof > 0 else float(df_tmp["_resid"].var())
+    sigma2_w = float(resid_ss_by_group.sum() / total_dof) if total_dof > 0 else float(np.var(resid))
     if not np.isfinite(sigma2_w) or sigma2_w <= 0:
-        sigma2_w = max(float(df_tmp["_resid"].var()), 1e-6)  # 극단적으로 표본이 다 n=1인 방어적 폴백
+        sigma2_w = max(float(np.var(resid)), 1e-6)  # 극단적으로 표본이 다 n=1인 방어적 폴백
 
     v_i = sigma2_w / n_by_group.clip(lower=1)  # 그룹평균(raw effect)의 표본오차 분산
     theta_hat = group_agg["effect_raw"]
@@ -813,14 +820,17 @@ def fit_fwl(df: pd.DataFrame, feature_cols):
     group_effects = (B_i * theta_hat + (1 - B_i) * theta_bar).to_dict()
 
     # 전체 예측치로 R^2 계산 (수축된 효과 기준 - 실제 서빙에 쓰는 값으로 채점해야 정직함)
-    df2 = df.copy()
-    df2["group_effect"] = df2["group_key"].map(group_effects)
-    y_pred = df2[feature_cols].to_numpy() @ beta + df2["group_effect"].to_numpy()
-    ss_res = float(np.sum((df2["y"].to_numpy() - y_pred) ** 2))
-    ss_tot = float(np.sum((df2["y"].to_numpy() - df2["y"].mean()) ** 2))
+    # ⚠️ (2026-09, 성능 문제 대응): 여기서도 df2 = df.copy()로 feature_cols 전체를 또 한 번
+    # 통째로 복사하고 있었음 - 위와 같은 이유로 불필요한 전체 컬럼 복사를 없애고 필요한 배열만
+    # 계산함(결과는 동일).
+    group_effect_per_row = df["group_key"].map(group_effects).to_numpy(dtype=np.float32)
+    y_pred = df[feature_cols].to_numpy(dtype=np.float32) @ beta.astype(np.float32) + group_effect_per_row
+    y_actual = df["y"].to_numpy(dtype=np.float32)
+    ss_res = float(np.sum((y_actual.astype(np.float64) - y_pred.astype(np.float64)) ** 2))
+    ss_tot = float(np.sum((y_actual.astype(np.float64) - float(y_actual.mean())) ** 2))
     r_squared = 1 - ss_res / ss_tot if ss_tot > 0 else None
 
-    return beta_dict, {str(k): float(v) for k, v in group_effects.items()}, r_squared, len(df2)
+    return beta_dict, {str(k): float(v) for k, v in group_effects.items()}, r_squared, len(df)
 
 
 def _predict_with_fallback(df: pd.DataFrame, feature_cols, beta: dict, group_effects: dict, default_effect: float):
