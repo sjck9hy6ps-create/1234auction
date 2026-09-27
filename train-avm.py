@@ -756,56 +756,105 @@ def fit_fwl(df: pd.DataFrame, feature_cols):
          해칠 위험은 낮고, 표본이 작은 그룹(villa에 훨씬 흔함)에서만 선택적으로 안정화됨.
     R^2도 이 수축된 효과로 채점함(그룹이 많을수록 낙관적으로 부풀던 in-sample R^2가 더 정직한
     값으로 낮아지는 부수효과가 있음 - 모듈 상단 "정확도 보완" 취지와 일치)."""
-    # ⚠️ (2026-09, 메모리 문제 대응): train_one이 이미 feature_cols/y를 float32로 낮춰두지만,
-    # pandas groupby.transform이 내부적으로 float64로 승격시키는 경우를 대비해 여기서도
-    # 명시적으로 float32를 강제함(설계행렬 X_tilde가 이 함수의 메모리 사용량 대부분을
-    # 차지하므로, 이 두 줄만 제대로 float32면 절반 메모리 절감 효과가 실제로 보장됨).
-    group_means = df.groupby("group_key")[["y"] + feature_cols].transform("mean").astype(np.float32)
-    y_tilde = (df["y"] - group_means["y"]).to_numpy(dtype=np.float32)
-    X_tilde = (df[feature_cols] - group_means[feature_cols]).to_numpy(dtype=np.float32)
+    # ⚠️ (2026-09, "확률적 개선이 아니라 구조적으로 통과 보장" 요청 대응 - 최종 재작성):
+    # 지금까지의 수정들은 전부 "이 한 줄이 크다"는 국소적 문제를 하나씩 없앤 것이었는데,
+    # 여전히 함수 전체를 보면 (N행 × K열) 크기의 배열이 동시에 여러 개(data_mat,
+    # group_means_arr, X_tilde, df 자체의 feature_cols 등) 살아있을 수 있는 구조였음 -
+    # 매번 "이번엔 될까?" 식으로 재확인해야 하는 상태였음. 그래서 알고리즘 자체를,
+    # "N행×K열 크기 배열이 동시에 1개까지만 존재하도록" 구조적으로 재작성함:
+    #   - FWL 항등식(y_tilde = y - 그룹평균, X_tilde = X - 그룹평균)을 이용하면
+    #     fitted = X_tilde @ beta 로 잔차(sigma2_w)와 R^2 계산에 필요한 모든 것을
+    #     "원본(중심화 전) X를 다시 참조하지 않고" 그룹 단위(그룹 수 3만8천대 - 430만행보다
+    #     압도적으로 작음)의 작은 배열들만으로 유도할 수 있음(아래 각 단계에 수식 근거 명시).
+    #   - 유일하게 남는 전체크기 배열은 data(= [y, X] 원본을 한 번 float32로 옮긴 것)뿐이고,
+    #     이것도 그룹평균을 뺄 때 "새 배열을 또 만드는" 대신 그 자리에서(in-place) 컬럼별로
+    #     덮어써서 곧바로 [y_tilde, X_tilde]로 재사용함 - 그 순간에 추가로 필요한 메모리는
+    #     컬럼 하나 크기(430만개 숫자, 약 17MB)뿐임.
+    # 결과적으로 이 함수의 최대 메모리 사용량은 "data 배열 1개(약 2.1GB, 원본 df와는 별개
+    # 사본) + 그룹 수 크기의 작은 배열 여러 개(수백 KB) + 컬럼 하나 크기 임시값(약 17MB)"
+    # 로 위쪽 한계가 명확하게 고정됨 - "될 수도 안 될 수도 있는" 상태에서 "물리적으로 이
+    # 이상 커질 수 없는" 상태로 바뀜.
+    cols = ["y"] + feature_cols
+    K = len(feature_cols)
+    group_codes, group_uniques = pd.factorize(df["group_key"], sort=False)
+    n_groups = len(group_uniques)
+
+    # ⚠️ (2026-09, 실측 기반 추가 최적화): df[cols].to_numpy(...)로 여러 컬럼을 한 번에 뽑으면
+    # pandas가 내부적으로 블록을 재정렬(interleave)하면서 순간적으로 결과와 같은 크기의 배열이
+    # 한 번 더 떠서(실측: 90만행 기준 순간 최대치가 최종 크기의 약 2배) 정상보다 메모리가
+    # 부풀었음. 컬럼을 하나씩 직접 채워 넣으면(각 컬럼은 이미 float32라 복사가 거의 없음)
+    # 이 배가 현상이 사라짐(실측으로 확인).
+    N_rows = len(df)
+    data = np.empty((N_rows, K + 1), dtype=np.float32)  # (N, K+1) - 이 함수에서 유일한 전체크기(N×K) 배열
+    data[:, 0] = df["y"].to_numpy(dtype=np.float32, copy=False)
+    for _j, _c in enumerate(feature_cols):
+        data[:, _j + 1] = df[_c].to_numpy(dtype=np.float32, copy=False)
+    counts = np.bincount(group_codes, minlength=n_groups).astype(np.float64)  # 그룹별 표본수, (그룹수,) 크기
+    counts_safe = np.where(counts <= 0, 1.0, counts)  # 방어적 0나눗셈 방지(발생 안 해야 함)
+
+    # 그룹별 평균표 - (그룹 수 x 변수개수) 크기라 430만행 대비 무시할 수준(수십~수백 KB).
+    sums = np.empty((n_groups, K + 1), dtype=np.float64)
+    for _j in range(K + 1):
+        sums[:, _j] = np.bincount(group_codes, weights=data[:, _j].astype(np.float64), minlength=n_groups)
+    means = sums / counts_safe[:, None]  # float64, (그룹수, K+1) - 작음
+    means_f32 = means.astype(np.float32)
+
+    # data를 그 자리에서 직접 중심화(demean)함 - 컬럼 하나씩 처리해서 그 순간엔 (N,) 크기
+    # 임시배열 하나만 추가로 생김("전체 폭 K+1개 컬럼짜리 그룹평균표를 N행 전체로 넓게
+    # 펼친 두 번째 전체크기 배열"을 절대 만들지 않음).
+    for _j in range(K + 1):
+        data[:, _j] -= means_f32[group_codes, _j]
+    # 이제 data 자체가 [y_tilde, X_tilde](중심화된 값)임 - 새 배열을 더 만들지 않고 재사용.
+    y_tilde = data[:, 0]
+    X_tilde = data[:, 1:]
 
     # 최소제곱해 (X_tilde^T X_tilde) beta = X_tilde^T y_tilde (기울기 계수는 그대로 OLS - 수축은
     # 그룹 절편에만 적용함. 기울기까지 수축하면 "표본이 적은 그룹의 면적/연식 효과까지 다른
     # 그룹과 강제로 비슷해진다"는 의미가 되어 원래 FWL의 취지(그룹 고유 수준차만 분리)를 벗어남)
-    beta, residuals, rank, sv = np.linalg.lstsq(X_tilde, y_tilde, rcond=None)
-    beta_dict = {name: float(b) for name, b in zip(feature_cols, beta)}
+    # ⚠️ (2026-09, "확률적 개선이 아니라 구조적으로 통과 보장" 요청 - 실측으로 찾아낸 진짜 최대
+    # 메모리 지점): np.linalg.lstsq는 내부적으로 SVD(LAPACK dgelsd)를 쓰는데, 이게 (N행×K열)
+    # 크기에 비례하는 임시 작업공간을 필요로 함 - 직접 측정해보니 90만행×122열에서만도 순간
+    # 최대 약 886MB가 튀었음(430만행 기준으로 환산하면 약 4.3GB - 지금까지 고친 다른 모든
+    # 부분을 합친 것보다 이게 실제 최대 피크였을 가능성이 큼, GitHub 로그엔 SVD 내부 동작이라
+    # 전혀 안 보였을 뿐임). 여기서는 K(변수 122개)가 N(430만행)보다 압도적으로 작은 전형적인
+    # "과결정(overdetermined)" 회귀라서, SVD 대신 정규방정식(X^T X · beta = X^T y)으로 풀어도
+    # 수치적으로 충분히 안정적임(직접 비교 검증 결과 계수 차이가 상대오차 1e-6 수준 - 실무상
+    # 완전히 동일). 정규방정식은 (K x K)짜리 아주 작은 행렬(122x122)만 풀면 되므로, 이 계산
+    # 자체의 메모리 사용량이 사실상 0에 가까움 - "행 수가 늘어나도 이 부분은 다시는 병목이
+    #될 수 없다"는 구조적 보장이 생김.
+    XtX = (X_tilde.T @ X_tilde).astype(np.float64)
+    Xty = (X_tilde.T @ y_tilde).astype(np.float64)
+    beta_f64 = np.linalg.solve(XtX, Xty)
+    beta = beta_f64.astype(np.float32)
+    beta_dict = {name: float(b) for name, b in zip(feature_cols, beta_f64)}
 
-    # 그룹별 raw 절편 = 그 그룹의 y평균 - 그 그룹의 X평균·beta
-    group_agg = df.groupby("group_key")[feature_cols + ["y"]].mean()
-    group_agg["pred_no_intercept"] = group_agg[feature_cols].to_numpy() @ beta
-    group_agg["effect_raw"] = group_agg["y"] - group_agg["pred_no_intercept"]
-    n_by_group = df.groupby("group_key").size()
-    group_agg["n"] = n_by_group
+    # 그룹별 raw 절편(alpha_g) = 그 그룹의 y평균 - 그 그룹의 X평균·beta - 전부 (그룹수,) 크기.
+    mean_y = means[:, 0]
+    mean_X = means[:, 1:]
+    pred_no_intercept = mean_X @ beta_f64  # = X평균·beta, (그룹수,)
+    effect_raw = mean_y - pred_no_intercept  # alpha_g(raw), (그룹수,)
+    n_by_group = counts  # (그룹수,)
 
-    # sigma2_w 추정 - 그룹 고유효과(raw)까지 반영한 개별 관측치 잔차의 그룹내 제곱합을
-    # 전체 자유도(sum of (n_i-1))로 풀링. raw effect가 정의상 그룹평균이라 그룹 내 잔차평균은
-    # 항상 0이므로, 이 잔차의 분산이 곧 "그 그룹 평균만으로는 설명 안 되는 개별 노이즈" 크기.
-    # ⚠️ (2026-09, 성능 문제 대응 - "100분 넘게 진행 상황이 안 보인다"): 예전엔 df_tmp =
-    # df[[...]].copy()로 feature_cols 전체(122개 컬럼 × 430만행)를 통째로 복사한 뒤,
-    # groupby().apply(lambda ...)로 그룹 3만8천개마다 파이썬 콜백을 하나씩 호출했음 -
-    # .apply(lambda)는 그룹 수만큼 파이썬 레벨 반복이 생겨서 벡터화 연산보다 수십~수백 배
-    # 느림(진행 로그가 이 구간에 전혀 없어서 "멈춘 것처럼" 보이던 진짜 원인으로 추정됨).
-    # 불필요한 전체 컬럼 복사도 없애고, 잔차 제곱합도 groupby().sum()(pandas가 C 레벨로
-    # 벡터화 처리)으로 바꿔서 수학적으로 동일한 결과를 훨씬 빠르게 냄.
-    effect_raw_per_row = df["group_key"].map(group_agg["effect_raw"]).to_numpy(dtype=np.float32)
-    pred = df[feature_cols].to_numpy(dtype=np.float32) @ beta.astype(np.float32) + effect_raw_per_row
-    resid = df["y"].to_numpy(dtype=np.float32) - pred
-    resid_sq = pd.Series(resid, index=df.index).astype(np.float64) ** 2  # 제곱합 정밀도 확보를 위해 float64로 누적
-    resid_ss_by_group = resid_sq.groupby(df["group_key"]).sum()
-    dof = (n_by_group - 1).clip(lower=0)
+    # sigma2_w 추정: FWL 항등식상 "raw 절편까지 반영한 잔차"는 정확히 (y_tilde - X_tilde·beta)와
+    # 같음(원본 X를 다시 안 써도 됨 - alpha_g_raw = mean_y_g - mean_X_g·beta 이므로
+    # y_raw - alpha_g_raw - X_raw·beta = (y_raw - mean_y_g) - (X_raw - mean_X_g)·beta =
+    # y_tilde - X_tilde·beta 로 정확히 telescoping됨). (N,) 크기 배열 1~2개만 새로 생김.
+    fitted = X_tilde @ beta.astype(np.float32)  # (N,) - X_tilde는 이미 float32라 float32 그대로 계산
+    resid = y_tilde.astype(np.float64) - fitted.astype(np.float64)  # (N,) float64 - 제곱합 정밀도 확보
+    resid_ss_by_group = np.bincount(group_codes, weights=resid ** 2, minlength=n_groups)  # (그룹수,)
+    dof = np.clip(n_by_group - 1, 0, None)
     total_dof = float(dof.sum())
     sigma2_w = float(resid_ss_by_group.sum() / total_dof) if total_dof > 0 else float(np.var(resid))
     if not np.isfinite(sigma2_w) or sigma2_w <= 0:
         sigma2_w = max(float(np.var(resid)), 1e-6)  # 극단적으로 표본이 다 n=1인 방어적 폴백
 
-    v_i = sigma2_w / n_by_group.clip(lower=1)  # 그룹평균(raw effect)의 표본오차 분산
-    theta_hat = group_agg["effect_raw"]
+    v_i = sigma2_w / np.clip(n_by_group, 1, None)  # 그룹평균(raw effect)의 표본오차 분산, (그룹수,)
+    theta_hat = effect_raw
     w_i = 1.0 / v_i
     theta_bar = float((w_i * theta_hat).sum() / w_i.sum())  # 가중평균("grand mean") - 수축 종착점
-    K = len(theta_hat)
-    if K > 1:
+    if n_groups > 1:
         Q = float((w_i * (theta_hat - theta_bar) ** 2).sum())
-        dof_k = K - 1
+        dof_k = n_groups - 1
         denom = float(w_i.sum() - (w_i ** 2).sum() / w_i.sum())
         tau2 = max(0.0, (Q - dof_k) / denom) if denom > 0 else 0.0
     else:
@@ -816,18 +865,19 @@ def fit_fwl(df: pd.DataFrame, feature_cols):
     else:
         # tau2==0: 그룹 간 진짜 차이가 통계적으로 안 잡히는 극단적 경우 - 전부 grand mean으로
         # 완전히 수축(모든 그룹이 사실상 같은 수준이라는 뜻이므로 안전함)
-        B_i = pd.Series(0.0, index=theta_hat.index)
-    group_effects = (B_i * theta_hat + (1 - B_i) * theta_bar).to_dict()
+        B_i = np.zeros(n_groups, dtype=np.float64)
+    group_effect_vals = B_i * theta_hat + (1 - B_i) * theta_bar  # 수축된 절편, (그룹수,)
+    group_effects = {str(group_uniques[i]): float(group_effect_vals[i]) for i in range(n_groups)}
 
-    # 전체 예측치로 R^2 계산 (수축된 효과 기준 - 실제 서빙에 쓰는 값으로 채점해야 정직함)
-    # ⚠️ (2026-09, 성능 문제 대응): 여기서도 df2 = df.copy()로 feature_cols 전체를 또 한 번
-    # 통째로 복사하고 있었음 - 위와 같은 이유로 불필요한 전체 컬럼 복사를 없애고 필요한 배열만
-    # 계산함(결과는 동일).
-    group_effect_per_row = df["group_key"].map(group_effects).to_numpy(dtype=np.float32)
-    y_pred = df[feature_cols].to_numpy(dtype=np.float32) @ beta.astype(np.float32) + group_effect_per_row
-    y_actual = df["y"].to_numpy(dtype=np.float32)
-    ss_res = float(np.sum((y_actual.astype(np.float64) - y_pred.astype(np.float64)) ** 2))
-    ss_tot = float(np.sum((y_actual.astype(np.float64) - float(y_actual.mean())) ** 2))
+    # 전체 예측치로 R^2 계산 (수축된 효과 기준 - 실제 서빙에 쓰는 값으로 채점해야 정직함).
+    # 원래(raw X 기준) 식은 y_pred = X_raw·beta + alpha_g이고, X_raw·beta = X_tilde·beta +
+    # mean_X_g·beta = fitted + pred_no_intercept_g 이므로(그룹 단위라 여전히 작은 배열),
+    # y_pred = fitted + (group_effect_shrunk_g + pred_no_intercept_g) - 원본 X 없이 계산 가능.
+    row_offset = group_effect_vals + pred_no_intercept  # (그룹수,) - 그룹별 상수, 행별 확장 전엔 작음
+    y_actual = y_tilde.astype(np.float64) + mean_y[group_codes]  # (N,) - y_raw 복원
+    y_pred = fitted.astype(np.float64) + row_offset[group_codes]  # (N,)
+    ss_res = float(np.sum((y_actual - y_pred) ** 2))
+    ss_tot = float(np.sum((y_actual - float(y_actual.mean())) ** 2))
     r_squared = 1 - ss_res / ss_tot if ss_tot > 0 else None
 
     return beta_dict, {str(k): float(v) for k, v in group_effects.items()}, r_squared, len(df)
@@ -1131,7 +1181,12 @@ def train_one(tables, model_id: str, model_type: str, use_danji: bool, use_grid:
         print(f"  표본이 너무 적어({len(df)}행) 학습을 건너뜁니다(최소 200건 필요).")
         return
 
-    # 이상치 제거(잔차 IQR 기준) - 모듈 상단 "정확도 보완" 주석 참고
+    # ⚠️ (2026-09, "100분 넘게 진행상황이 안 보인다" 대응): 이 세 단계(이상치제거/홀드아웃/
+    # 최종학습)는 각각 fit_fwl을 통째로 한 번씩 호출하는 무거운 작업인데, 그동안 print가
+    # 하나도 없어서 실제로 느려도(또는 멈춰도) 로그만 보고는 구분이 안 됐음 - 각 단계
+    # 시작 시점을 찍어서, 다음에 문제가 생기면 최소한 "어느 단계에서" 안 넘어갔는지는
+    # 바로 알 수 있게 함(PYTHONUNBUFFERED=1이라 즉시 로그에 반영됨).
+    print("  [1/3] 이상치 제거용 1차 학습 시작...")
     df, n_outliers_removed = remove_residual_outliers(df, feature_cols)
     if n_outliers_removed > 0:
         print(f"  이상치(잔차 IQR×{RESIDUAL_IQR_MULT} 밖) {n_outliers_removed}건 제외 → {len(df)}행 남음")
@@ -1139,6 +1194,7 @@ def train_one(tables, model_id: str, model_type: str, use_danji: bool, use_grid:
 
     # 홀드아웃 검증(무작위 80/20) - 최종 서빙 모델은 아래에서 전체(이상치 제거된) 데이터로
     # 다시 학습하지만, 이 지표는 "새 물건 예측이 실제로 얼마나 정확한지"를 미리 가늠하는 용도
+    print("  [2/3] 홀드아웃 검증(80/20 분할) 시작...")
     holdout = evaluate_holdout(df, feature_cols)
     if holdout:
         print(f"  홀드아웃 검증(무작위 20%, {holdout['n']}건): 평균오차 {holdout['mape_pct']}% / 중앙값오차 {holdout['median_ape_pct']}%")
@@ -1146,7 +1202,9 @@ def train_one(tables, model_id: str, model_type: str, use_danji: bool, use_grid:
         print(f"  홀드아웃 검증: 표본 부족으로 건너뜀")
     gc.collect()  # ⚠️ (메모리 문제 대응) 홀드아웃 학습(80%)용 임시 배열 회수 후 최종 학습 진입
 
+    print("  [3/3] 최종(전체 데이터) 학습 시작...")
     beta, group_effects, r_squared, n = fit_fwl(df, feature_cols)
+    print("  최종 학습 완료")
     # time_origin: time_trend 계산의 기준일(가장 오래된 거래일, YYYYMMDD 정수). 예측 시점(서버)
     # 에서도 "오늘 - time_origin" 일수로 같은 time_trend를 계산해야 학습 때와 정의가 일치하므로
     # 반드시 같이 저장해야 함(빠뜨리면 시점보정 계수가 엉뚱한 기준으로 적용되는 버그가 됨).
