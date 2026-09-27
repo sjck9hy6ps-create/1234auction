@@ -19,15 +19,19 @@
    - leaderFollower API 자체가 24시간 캐시(leader_follower_cache, s-maxage=21600)라
      이미 오늘 계산된 지역은 그냥 캐시를 읽기만 하고 끝남(≈0.4초) - 그래서 매일 돌려도
      실제로 무거운 재계산이 일어나는 지역은 "캐시가 만료됐거나 이번이 처음인" 지역뿐임.
-   - Vercel 함수 제한시간(vercel.json: api/data-coverage.js maxDuration=30)에 맞춰
-     요청 타임아웃도 30초로 둠 - 그 안에 못 끝나면 실패로 기록하고 다음 지역으로
+   - Vercel 함수 제한시간(vercel.json: api/data-coverage.js maxDuration)에 맞춰
+     요청 타임아웃을 둠 - 그 안에 못 끝나면 실패로 기록하고 다음 지역으로
      넘어감(그 지역은 다음 실행 때 다시 시도됨. 사용자가 먼저 방문해서 트리거해도
      결과는 같음 - autoLoadLeaderFollowerForRegion도 실패를 조용히 무시하도록 돼 있음).
+   - ⚠️ 2026-09(#468, 사용자 제보 - 안산시 단원구 고잔동에서 순위 배지가 계속 안 뜸):
+     안산 단원구처럼 거래량이 많은 지역은 계산이 30초를 넘겨 이 웜업 자체가 매일 밤
+     실패하고 있었음(캐시가 영원히 안 채워짐) - vercel.json의 maxDuration을 60초로
+     올리고 이 스크립트의 타임아웃도 같이 60초로 맞춤.
 ════════════════════════════════════ */
 const SITE_URL = (process.env.SITE_URL?.trim()) || 'https://1234auction.vercel.app';
 const DELAY_MS = 300; // 호출 사이 간격(서버 부담 방지용 여유 마진) - 계산 자체가 오래 걸리는
                        // 지역이 많아 이 간격이 전체 소요시간에 미치는 영향은 작음.
-const TIMEOUT_MS = 30000; // vercel.json의 maxDuration(30초)과 맞춤.
+const TIMEOUT_MS = 60000; // vercel.json의 maxDuration(60초)과 맞춤(#468).
 
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
