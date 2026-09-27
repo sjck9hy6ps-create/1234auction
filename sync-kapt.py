@@ -95,6 +95,12 @@ def sb_upsert(table: str, rows: list, on_conflict: str):
         r.raise_for_status()
 
 
+class QuotaExceededError(Exception):
+    """공공데이터포털 일일 호출 한도(resultCode=22) 초과 - 재시도/시군구 건너뛰기로는
+    해결이 안 되므로 이번 실행 자체를 즉시 멈추는 용도의 전용 예외."""
+    pass
+
+
 def kapt_get(base: str, endpoint: str, params: dict):
     params = {**params, "serviceKey": PUBLIC_DATA_API_KEY}
     # ⚠️ 2026-09(버그 수정): 실제 GitHub Actions 실행 로그로 확인 - 253개 시군구 중 인덱스
@@ -127,6 +133,18 @@ def kapt_get(base: str, endpoint: str, params: dict):
     data = raw.get("response", raw) if isinstance(raw, dict) else {}
     result_code = data.get("header", {}).get("resultCode")
     if result_code not in (None, "00", "0"):
+        # ⚠️ (2026-09, 사용자 문의 대응 - "할당량 등 과거 에러 다 보완됐냐"): 공공데이터포털은
+        # 일일 호출 한도를 다 쓰면 HTTP 에러가 아니라 200 응답 안에 resultCode="22"
+        # (LIMITED_NUMBER_OF_SERVICE_REQUESTS_EXCEEDS_ERROR)를 담아서 줌 - 이 경우는 재시도
+        # 해봐야(위 kapt_get 백오프는 네트워크 예외에만 걸림) 절대 안 풀리고, 이 시군구만
+        # 건너뛰는 것도 의미 없음(오늘 남은 모든 호출이 다 이 코드로 실패할 것이므로). 이런
+        # 단지별로 계속 실패 호출을 쌓는 대신, 별도 예외로 구분해서 위(process_one_sigungu/
+        # main)에서 오늘 실행 자체를 즉시 멈추게 함 - 이미 처리한 진행분은 그대로 저장돼
+        # 있으므로 내일 이어서 하면 됨(getSigunguAptList3/getAphusBassInfoV4는 같은 계정
+        # 트래픽을 공유하므로, 다른 스크립트가 먼저 할당량을 많이 썼다면 이 코드가 실제로
+        # 발생할 수 있음).
+        if result_code == "22":
+            raise QuotaExceededError(f"{endpoint} 일일 호출 한도 초과(resultCode=22)")
         raise RuntimeError(f"{endpoint} 실패: {data.get('header')}")
     body = data.get("body") or {}
     if not body:
@@ -171,12 +189,18 @@ def to_int(v):
         return None
 
 
-def main():
-    state = sb_get("kapt_sync_state?id=eq.1&select=sigungu_idx")
-    sigungu_idx = state[0]["sigungu_idx"] if state else 0
-    if sigungu_idx >= len(LAWD_CODES):
-        sigungu_idx = 0  # 전국 완주 후 처음부터 다시(월 1회 갱신 목적)
+MAX_SIGUNGU_PER_RUN = 60  # 안전장치 - 상세정보가 이미 다 채워진 시군구(재순환 구간)가 여러 개
+# 연달아 나오면 detail 호출이 거의 없어 순식간에 다음 시군구로 넘어가므로, list 조회
+# (getSigunguAptList3)만 너무 많이 쏘지 않도록 한 실행에서 처리하는 시군구 수 자체에도 상한을 둠.
 
+
+def process_one_sigungu(sigungu_idx: int, detail_budget: int):
+    """시군구 하나를 처리함(목록 확보 + 상세정보를 최대 detail_budget건까지).
+    반환: (이번에 실제로 사용한 상세조회 건수, 이 시군구를 완료했는지 여부, 일일 할당량
+    초과를 만났는지 여부).
+    완료 = households가 아직 null인 단지가 이 시군구에 하나도 안 남음. 목록조회 자체가
+    (할당량 문제가 아닌 이유로) 실패한 경우도 "완료" 취급해 다음 시군구로 넘어감(다음 전국
+    순환 때 다시 시도되므로 영구 누락은 아님 - 기존 단일 시군구 로직과 동일한 정책)."""
     sigungu_code, sigungu_name = LAWD_CODES[sigungu_idx]
     print(f"[sync-kapt] 진행 인덱스 {sigungu_idx}/{len(LAWD_CODES)} - {sigungu_code} {sigungu_name}")
 
@@ -191,16 +215,16 @@ def main():
     # (다음 달 전국 재순환 때 다시 시도되므로 영구 누락은 아님).
     try:
         complex_list = fetch_sigungu_complex_list(sigungu_code)
+    except QuotaExceededError:
+        # ⚠️ 할당량 초과는 "이 시군구만의 문제"가 아니라 오늘 남은 모든 호출이 다 같은 이유로
+        # 실패할 상황임 - 이 시군구는 하나도 진행 못 했으니 인덱스도 그대로 두고(done=False),
+        # quota_hit=True로 main()에 알려 오늘 실행을 여기서 멈추게 함.
+        print(f"  일일 할당량 초과로 {sigungu_code} {sigungu_name} 목록조회부터 실패 - 오늘 실행을 멈춥니다.", file=sys.stderr)
+        return 0, False, True
     except Exception as e:
         print(f"  ERROR 단지 목록 조회 실패({sigungu_code} {sigungu_name}): {e}", file=sys.stderr)
         print(f"  이 시군구는 이번 실행에서 건너뛰고 다음 시군구로 진행합니다(다음 순환에서 재시도됨).")
-        next_idx = sigungu_idx + 1
-        patch_url = f"{SUPABASE_URL}/rest/v1/kapt_sync_state?id=eq.1"
-        requests.patch(patch_url, headers=SB_HEADERS, data=json.dumps({
-            "sigungu_idx": next_idx, "updated_at": datetime.now(timezone.utc).isoformat(),
-        }), timeout=30)
-        print(f"[sync-kapt] {sigungu_code} {sigungu_name} 목록조회 실패로 건너뜀 - 다음 실행 인덱스: {next_idx % len(LAWD_CODES)}")
-        return
+        return 0, True, False
     print(f"  단지 목록 {len(complex_list)}건 조회됨")
     if complex_list:
         # 첫 실행 디버그용 - as1~as4가 실제로 무엇을 담고 있는지 로그로 확인(문서에 필드 설명이 없음)
@@ -221,16 +245,26 @@ def main():
         if r.status_code >= 300:
             print(f"  ERROR 기본행 upsert 실패: {r.status_code} {r.text}", file=sys.stderr)
 
-    # 2) 이 시군구에서 아직 상세정보(households) 없는 단지를 하루 한도까지 채움
+    # 2) 이 시군구에서 아직 상세정보(households) 없는 단지를, 이번 실행에 남은 예산까지만 채움
     pending = sb_get(
-        f"kapt_complex_info?sigungu_code=eq.{sigungu_code}&households=is.null&select=kapt_code&limit={DAILY_DETAIL_CAP}"
+        f"kapt_complex_info?sigungu_code=eq.{sigungu_code}&households=is.null&select=kapt_code&limit={max(detail_budget, 0)}"
     )
-    print(f"  상세정보 미조회 단지 {len(pending)}건 (이번 실행 한도 {DAILY_DETAIL_CAP}건)")
+    print(f"  상세정보 미조회 단지 {len(pending)}건 (이번 실행에 남은 상세조회 한도 {detail_budget}건)")
     detailed = 0
+    quota_hit = False
     for row in pending:
         kapt_code = row["kapt_code"]
         try:
             detail = fetch_complex_detail(kapt_code)
+        except QuotaExceededError:
+            # ⚠️ 상세조회 도중 할당량이 바닥나면, 남은 단지들도 다 같은 이유로 실패할 것이므로
+            # 헛되이 계속 호출하지 않고 여기서 바로 중단함 - 지금까지 성공한 detailed건수는
+            # 그대로 유지되어 저장되고, 이 시군구는 아래 "완료 여부" 체크에서 자연히
+            # done=False(할 일이 남음)로 판정돼 다음 실행(내일, 할당량이 리셋된 뒤) 같은
+            # 인덱스로 이어서 처리됨.
+            print(f"    상세조회 중 일일 할당량 초과 감지 - 이번 실행을 여기서 멈춥니다(내일 이어서 처리됨).", file=sys.stderr)
+            quota_hit = True
+            break
         except Exception as e:
             print(f"    {kapt_code} 상세조회 실패: {e}", file=sys.stderr)
             continue
@@ -253,17 +287,69 @@ def main():
             detailed += 1
     print(f"  상세정보 {detailed}건 저장 완료")
 
-    # 3) 이 시군구를 다 처리했으면 다음 시군구로, 아니면(한도 초과로 남았으면) 같은 인덱스 유지
+    # 3) 이 시군구를 다 처리했는지 확인
     remaining = sb_get(
         f"kapt_complex_info?sigungu_code=eq.{sigungu_code}&households=is.null&select=kapt_code&limit=1"
     )
-    next_idx = sigungu_idx if remaining else sigungu_idx + 1
-    patch_url = f"{SUPABASE_URL}/rest/v1/kapt_sync_state?id=eq.1"
-    requests.patch(patch_url, headers=SB_HEADERS, data=json.dumps({
-        "sigungu_idx": next_idx, "updated_at": datetime.now(timezone.utc).isoformat(),
-    }), timeout=30)
-    status = "이어서 처리 예정(한도 초과)" if remaining else "완료, 다음 시군구로 진행"
-    print(f"[sync-kapt] {sigungu_code} {sigungu_name} {status} - 다음 실행 인덱스: {next_idx % len(LAWD_CODES)}")
+    done = not remaining
+    status = "완료, 다음 시군구로 진행" if done else "이어서 처리 예정(한도 초과)"
+    print(f"[sync-kapt] {sigungu_code} {sigungu_name} {status}")
+    return detailed, done, quota_hit
+
+
+def main():
+    # ⚠️ (2026-09, 사용자 문의 대응 - "전국 완주 언제 되냐"): 원래 이 함수는 실행 1번마다
+    # 시군구를 딱 1개만 처리하고 끝났음(그 시군구 단지가 하루 한도(2,000건)보다 훨씬 적어도
+    # 다음 시군구로 안 넘어가고 그냥 종료) - 진짜 병목이 "하루 API 할당량"이 아니라 "하루에
+    # 한 번 도는 실행 자체"였음. 실측 확인 결과 253개 시군구 중 19개만 처리된 상태(하루 1개
+    # 페이스와 일치) - 이대로면 전국 1회 완주에 약 230일(7개월+)이 걸려, 스크립트 설계
+    # 당시의 목표치("1~2주")와 완전히 어긋남. 승인받은 일일 상세조회 한도(DAILY_DETAIL_CAP=
+    # 2,000건)를 실제로 다 쓸 때까지 여러 시군구를 이어서 처리하도록 while 루프로 바꿈 -
+    # 시군구 하나를 처리할 때마다 곧바로 kapt_sync_state를 갱신해두므로(기존과 동일), 중간에
+    # 실행이 죽어도(타임아웃 등) 이미 처리한 시군구만큼은 그대로 보존됨. list 조회
+    # (getSigunguAptList3)가 시군구마다 1번씩 추가로 붙지만, MAX_SIGUNGU_PER_RUN(60개)
+    # 상한을 같이 둬서 list+detail 합계가 일일 승인량(5,000건)을 넘지 않도록 안전하게 잡음.
+    state = sb_get("kapt_sync_state?id=eq.1&select=sigungu_idx")
+    sigungu_idx = state[0]["sigungu_idx"] if state else 0
+    if sigungu_idx >= len(LAWD_CODES):
+        sigungu_idx = 0  # 전국 완주 후 처음부터 다시(월 1회 갱신 목적)
+
+    total_detail_used = 0
+    sigungu_run_count = 0
+    while total_detail_used < DAILY_DETAIL_CAP and sigungu_run_count < MAX_SIGUNGU_PER_RUN:
+        if sigungu_idx >= len(LAWD_CODES):
+            sigungu_idx = 0  # 이번 실행 중에 전국을 다 돌았으면 처음부터 다시
+
+        remaining_budget = DAILY_DETAIL_CAP - total_detail_used
+        detail_used, done, quota_hit = process_one_sigungu(sigungu_idx, remaining_budget)
+        total_detail_used += detail_used
+        sigungu_run_count += 1
+
+        next_idx = (sigungu_idx + 1) if done else sigungu_idx
+        # 시군구 하나 끝날 때마다 즉시 저장 - 이번 실행이 도중에 실패해도 이미 처리한 진행분은
+        # 유지됨(예전처럼 실행 맨 끝에서 한 번만 저장하면, 중간에 죽었을 때 이번 실행에서
+        # 처리한 시군구들이 전부 다시 처리돼야 함).
+        patch_url = f"{SUPABASE_URL}/rest/v1/kapt_sync_state?id=eq.1"
+        requests.patch(patch_url, headers=SB_HEADERS, data=json.dumps({
+            "sigungu_idx": next_idx % len(LAWD_CODES), "updated_at": datetime.now(timezone.utc).isoformat(),
+        }), timeout=30)
+
+        if quota_hit:
+            # ⚠️ (2026-09, 사용자 문의 대응 - "할당량 에러까지 다 보완됐냐"): 일일 할당량이
+            # 이미 바닥난 상태에서 남은 시군구를 계속 시도해봐야 전부 같은 이유로 실패할 뿐이라,
+            # 여기서 즉시 실행을 끝냄(다음 시군구 목록조회조차 하지 않음 - 불필요한 실패 호출을
+            # 더 쌓지 않기 위함). 할당량은 하루 단위로 리셋되므로 내일 실행이 같은 인덱스로
+            # 자동으로 이어서 처리함 - 별도 조치 필요 없음.
+            print("[sync-kapt] 일일 할당량 초과로 이번 실행을 조기 종료합니다 - 내일 자동으로 이어서 처리됩니다.")
+            break
+        if not done:
+            # 이 시군구 하나가 이번 실행의 남은 상세조회 예산을 다 써버려서 못 끝났다는 뜻
+            # (그만큼 큰 시군구) - 여기서 실행을 마치고, 다음 실행이 같은 인덱스로 이어서 처리함.
+            break
+        sigungu_idx = next_idx
+
+    print(f"[sync-kapt] 이번 실행 요약: 시군구 {sigungu_run_count}개 처리, 상세조회 {total_detail_used}건 사용"
+          f"(한도 {DAILY_DETAIL_CAP}건) - 다음 실행 시작 인덱스: {sigungu_idx % len(LAWD_CODES)}")
 
 
 if __name__ == "__main__":
