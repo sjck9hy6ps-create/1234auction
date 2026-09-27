@@ -512,19 +512,29 @@ def build_month_dummies(df: pd.DataFrame):
     패턴으로 바꿔둠) 서버(data-coverage.js) 쪽 코드 변경이 전혀 필요 없음 - 예측은 항상
     time_trend의 선형 연장분만 적용되고, 월별 더미는 과거 데이터 적합에만 기여함(K-apt
     세대수가 표본충분 단지에서 그룹고정효과에 흡수돼 기여가 0이 되는 것과 같은 구조로,
-    "지금 당장 서빙에 값이 없어도 안전하게 무시됨"을 이용한 설계)."""
+    "지금 당장 서빙에 값이 없어도 안전하게 무시됨"을 이용한 설계).
+    ⚠️ (2026-09, 메모리 문제 진단 - "The operation was canceled." 원인 추정): 2017~ 전체
+    이력을 다 쓰게 된 뒤로 달 수가 100개를 훌쩍 넘어감. 예전엔 파이썬 for 루프 안에서
+    df[col] = ...로 컬럼을 하나씩 끼워 넣었는데, 이 방식은 컬럼을 추가할 때마다 pandas
+    내부에 별도 메모리 블록이 생기고 정리가 안 돼("DataFrame is highly fragmented" 경고가
+    실제로 발생) 필요한 양보다 메모리를 몇 배 더 잡아먹을 수 있음. train-avm.py가 특정
+    에러 메시지 없이(Read timeout도 아니고 파이썬 예외도 안 찍힌 채) 50분 안팎에서
+    "The operation was canceled."로 끊긴 정황과 정확히 맞아떨어짐 - GitHub Actions
+    러너(약 7GB 메모리) 한도를 넘기면 OOM killer가 프로세스를 강제 종료시키는데, 이 경우
+    파이썬 예외조차 못 남기고 죽어서 로그에 원인이 보이지 않음. pd.get_dummies로 한 번에
+    원-핫 인코딩 행렬을 만들고 pd.concat(axis=1)으로 한 번만 합치면(컬럼을 한꺼번에 배치해
+    단편화 자체가 안 생김) 같은 결과를 훨씬 적은 메모리로 얻을 수 있음."""
     df = df.copy()
     deal_month_num = (df["deal_date"] // 100 % 100).astype(int)
     deal_ym = df["deal_year"] * 100 + deal_month_num
     months = sorted(deal_ym.unique())
     ref_month = months[0]
-    dummy_cols = []
-    for ym in months:
-        if ym == ref_month:
-            continue
-        col = f"ym_{ym}"
-        df[col] = (deal_ym == ym).astype(float)
-        dummy_cols.append(col)
+    dummy_df = pd.get_dummies(deal_ym, prefix="ym", dtype=float)
+    ref_col = f"ym_{ref_month}"
+    if ref_col in dummy_df.columns:
+        dummy_df = dummy_df.drop(columns=[ref_col])
+    dummy_cols = list(dummy_df.columns)
+    df = pd.concat([df, dummy_df], axis=1)
     print(f"  월별 시점보정: {len(months)}개월 구간(기준월 {ref_month}) → 더미 {len(dummy_cols)}개 추가")
     return df, dummy_cols
 
