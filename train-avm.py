@@ -59,6 +59,7 @@ import re
 import sys
 import json
 import math
+import time
 from datetime import datetime, timezone
 
 import numpy as np
@@ -176,15 +177,42 @@ def fetch_all_rows(table: str, cols: str = "region,dong,danji,price,size,floor,d
     테이블 기준이고, kapt_complex_info처럼 스키마가 다른 테이블은 호출부에서 cols를 넘겨씀."""
     rows = []
     offset = 0
+    # ⚠️ (사용자 문의 대응, 2026-09): #458에서 2017-09~ 과거자료를 전량 업로드한 뒤로
+    # house_trades가 전국 규모로 커져서 이 페이지네이션 루프 자체가 수십 분씩 걸릴 수 있음.
+    # 원래는 끝날 때 한 줄만 찍어서, 로딩 중엔 로그가 완전히 비어 있어 "멈춘 건지 알 수 없다"는
+    # 문의를 받음 - 50페이지(5만행)마다 진행상황을 찍어 지금 진행 중임을 알 수 있게 함.
+    # ⚠️ (실제 실패 원인, 2026-09): 42분 진행 후 requests.exceptions.ReadTimeout(read
+    # timeout=30)으로 전체가 죽는 걸 실제 로그로 확인함. OFFSET 기반 페이지네이션은 Postgres가
+    # offset만큼 매번 다시 스캔+스킵해야 해서, 테이블이 커질수록(뒤쪽 페이지일수록) 각 페이지
+    # 자체가 점점 느려짐 - 데이터가 더 늘어나면 고정 30초로는 언젠가 다시 터짐. (1) 타임아웃을
+    # 90초로 넉넉히 늘리고, (2) 순간적인 네트워크 문제/일시적 지연에도 전체를 처음부터 다시
+    # 돌리지 않도록 페이지 단위 재시도(최대 3회, 지수 백오프)를 추가함 - 재시도도 실패하면 그때는
+    # 진짜 문제이므로 그대로 에러를 올림(조용히 일부 데이터만 갖고 계속 진행하지 않음).
+    PAGE_TIMEOUT = 90
+    MAX_PAGE_RETRIES = 3
     while True:
         url = f"{SUPABASE_URL}/rest/v1/{table}?select={cols}&limit={PAGE_SIZE}&offset={offset}"
-        r = requests.get(url, headers=HEADERS, timeout=30)
-        r.raise_for_status()
-        batch = r.json()
+        batch = None
+        last_err = None
+        for attempt in range(1, MAX_PAGE_RETRIES + 1):
+            try:
+                r = requests.get(url, headers=HEADERS, timeout=PAGE_TIMEOUT)
+                r.raise_for_status()
+                batch = r.json()
+                break
+            except requests.exceptions.RequestException as e:
+                last_err = e
+                print(f"  ⚠️ {table} offset={offset} 요청 실패(시도 {attempt}/{MAX_PAGE_RETRIES}): {e}")
+                if attempt < MAX_PAGE_RETRIES:
+                    time.sleep(2 * attempt)
+        if batch is None:
+            raise last_err
         if not batch:
             break
         rows.extend(batch)
         offset += PAGE_SIZE
+        if (offset // PAGE_SIZE) % 50 == 0:
+            print(f"  {table}: {len(rows)}행 로딩 중...")
         if len(batch) < PAGE_SIZE:
             break
     df = pd.DataFrame(rows)
