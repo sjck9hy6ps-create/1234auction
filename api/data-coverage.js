@@ -3097,38 +3097,42 @@ export default async function handler(req, res) {
       if (!region) return res.status(400).json({ error: 'region 또는 lawdCd가 필요합니다.' });
       const now = todayInt();
       const curYear = Math.floor(now / 10000);
-      const cutoff = (curYear - 1) * 10000 + 1231; // 작년 12/31 - "올해 데이터는 제외, 작년까지는 전부 백데이터"
+      const cutoff = (curYear - 1) * 10000 + 1231; // 작년 12/31 - "2017~작년까지는 전부 백데이터, 올해부터 누적 검증"(사용자 요청)
       const snapshot = await computeLeaderFollowerFresh(type, region, false, cutoff);
-      // 올해(1/1~오늘) 실제 평단가 - 버킷을 딱 1개로 잡아서(bucketDays를 올해 일수보다
-      // 크게) 가벼운 단일 조회로 끝냄(멀티버킷 청크 스캔 불필요 - 최대 1년치뿐이라
-      // computeLeaderFollowerFresh의 다년치 스캔보다 훨씬 가벼움).
+      // ⚠️ 2026-09(사용자 요청: "분기별 흐름이 좀 더 디테일해 필요한 정보로 활용될 거 같아"):
+      // 원래는 올해 전체를 버킷 1개(400일)로 뭉쳐서 "올해 전체 평균 vs 예측" 딱 1점만 봤는데,
+      // 이러면 "대장이 오른 뒤 몇 개월 뒤에 후발주자가 따라오는지"(시차/lag)를 전혀 검증할 수
+      // 없었음. bucketDays를 분기(91일)로 쪼개서, 올해가 진행되는 동안 분기가 늘어날 때마다
+      // (Q1→Q2→Q3→...) 후발주자가 대장을 얼마나 따라잡았는지 누적 추이를 볼 수 있게 함 -
+      // computeLeaderFollowerFresh(2017~작년, 무거운 부분)는 여전히 지역당 1번만 호출하므로
+      // (사용자가 우려한 "매번 반복 조회로 느려짐" 문제 없음), 가벼운 이 부분만 세분화한 것임.
       const yearStart = curYear * 10000 + 101;
-      const actualMap = await getBucketSeriesDanjiPrices(type, yearStart, now + 1, yearStart, 400, region);
-      function lookupActual(dong, danjiName) {
+      const QUARTER_DAYS = 91;
+      const actualMap = await getBucketSeriesDanjiPrices(type, yearStart, now + 1, yearStart, QUARTER_DAYS, region);
+      // 분기별(비누적) 원본 버킷을 그대로 반환함 - 누적 여부는 집계 스크립트
+      // (scripts/backtest-leader-follower.mjs)가 idx 0..N을 이어붙여 계산함(여기서 미리
+      // 누적해버리면 스크립트가 "이번 분기만"의 값을 따로 볼 수 없어짐).
+      function lookupActualByQuarter(dong, danjiName) {
         const entry = actualMap[region + '|' + dong];
         const arr = entry && entry.danjis && entry.danjis[danjiName];
-        if (!arr || !arr.length) return null;
-        // bucketDays=400으로 걸었으므로 올해 전체가 항상 idx=0 하나뿐임
-        const b = arr.find((x) => x.idx === 0) || arr[0];
-        return b ? { avg: b.avg, count: b.count } : null;
+        if (!arr || !arr.length) return [];
+        return arr.map((x) => ({ q: x.idx, avg: Math.round(x.avg), count: x.count })).sort((a, b) => a.q - b.q);
       }
       const results = [];
       (snapshot.leaders || []).forEach((l) => {
-        const actual = lookupActual(l.dong, l.danji);
         results.push({
           dong: l.dong, danji: l.danji, role: 'leader',
           recentPpp: l.recentPpp,
-          actualPpp: actual ? Math.round(actual.avg) : null, actualCount: actual ? actual.count : 0,
+          actualByQuarter: lookupActualByQuarter(l.dong, l.danji),
         });
       });
       (snapshot.rankedByDong || []).forEach((group) => {
         group.items.forEach((it) => {
-          const actual = lookupActual(it.dong, it.danji);
           results.push({
             dong: it.dong, danji: it.danji, leaderDanji: it.leaderDanji,
             role: it.isFollower ? 'follower' : 'nonfollower', rank: it.rank,
             recentPpp: it.recentPpp, leaderRecentPpp: it.leaderRecentPpp,
-            actualPpp: actual ? Math.round(actual.avg) : null, actualCount: actual ? actual.count : 0,
+            actualByQuarter: lookupActualByQuarter(it.dong, it.danji),
           });
         });
       });
@@ -3143,13 +3147,17 @@ export default async function handler(req, res) {
     if (req.method !== 'POST') return res.status(405).json({ error: 'POST만 지원합니다.' });
     try {
       const { signalType, sampleSizeFollower, sampleSizeNonFollower, hitRateFollower, hitRateNonFollower,
-        avgFollowerCatchUpPct, avgNonFollowerCatchUpPct, cutoff, regionsChecked } = req.body || {};
+        avgFollowerCatchUpPct, avgNonFollowerCatchUpPct, cutoff, regionsChecked, byQuarter } = req.body || {};
       if (!signalType) return res.status(400).json({ error: 'signalType이 필요합니다.' });
+      // ⚠️ 2026-09(사용자 요청 - 분기별 디테일): byQuarter는 { q1: {sampleSizeFollower, hitRateFollower,
+      // hitRateNonFollower, avgFollowerCatchUpPct}, q2: {...}, ... } 형태의 누적(연초~해당 분기말)
+      // 집계 - migration_signal_backtest_quarterly_fix479q.sql의 jsonb 컬럼에 그대로 저장함.
       const { error } = await supabase.from('signal_backtest_stats').upsert({
         signal_type: signalType, cutoff, regions_checked: regionsChecked,
         sample_size_follower: sampleSizeFollower, sample_size_nonfollower: sampleSizeNonFollower,
         hit_rate_follower: hitRateFollower, hit_rate_nonfollower: hitRateNonFollower,
         avg_follower_catchup_pct: avgFollowerCatchUpPct, avg_nonfollower_catchup_pct: avgNonFollowerCatchUpPct,
+        by_quarter: byQuarter || null,
         updated_at: new Date().toISOString(),
       });
       if (error) return res.status(500).json({ error: error.message });
