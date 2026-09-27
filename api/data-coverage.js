@@ -1776,15 +1776,30 @@ async function getAvmEstimate(type, region, dong, size, floor, buildYear, danji,
     // 로그공간 표준편차 1개(≈정규분포 근사 시 약 68% 구간)를 원래 스케일 %오차로 환산.
     // exp(std)-1이 곧 "그 표준편차만큼 벗어났을 때의 상대오차 비율"임(로그 잔차의 정의상).
     const marginPct = Math.round((Math.exp(fr.residual_std_log) - 1) * 1000) / 10;
+    // ⚠️ #480(사용자 요청: "기존 참고자료들의 신뢰도를 높일 수 있는 방법") - 이제까지는
+    // 이 모델 전체(전국, 모든 단지 뭉뚱그림)의 홀드아웃 오차 하나만 보여줬는데, 실제로는
+    // "단지 표본이 충분한 대단지(danji)"와 "표본이 없어 시/군/구 평균으로 대체된 나홀로
+    // 단지(region_fallback)"의 정확도가 크게 다름(빌라 실측 최대 ±42% 사례가 후자
+    // 유형이었음 - train-avm.py evaluate_holdout 주석 참고). effectUsed(위에서 이미
+    // 계산됨)와 정확히 같은 세그먼트의 홀드아웃 오차가 있으면 그걸 우선 쓰고, 표본이 적어
+    // 세그먼트 자체가 없으면(train-avm.py가 MIN_LEVEL_HOLDOUT_SAMPLES 미만이면 아예 안
+    // 만듦) 기존처럼 전체 평균으로 안전하게 폴백함 - 구버전 모델(holdout_by_level 없음)도
+    // 자동으로 이 폴백 경로를 타 하위호환됨.
+    const byLevel = fr.holdout_by_level || {};
+    const seg = byLevel[effectUsed] || null;
+    const segMapePct = seg ? seg.mape_pct : (fr.holdout_mape_pct != null ? fr.holdout_mape_pct : null);
+    const segMedianApePct = seg ? seg.median_ape_pct : (fr.holdout_median_ape_pct != null ? fr.holdout_median_ape_pct : null);
+    const segN = seg ? seg.n : (fr.holdout_n != null ? fr.holdout_n : null);
     errorMargin = {
-      marginPct, // ± 이 %만큼(약 68% 구간, 정규분포 근사 - 참고용)
+      marginPct, // ± 이 %만큼(약 68% 구간, 정규분포 근사 - 참고용, 항상 모델 전체 기준)
       priceRangeManwon: [
         Math.round(totalPrice * (1 - marginPct / 100)),
         Math.round(totalPrice * (1 + marginPct / 100)),
       ],
-      holdoutMapePct: fr.holdout_mape_pct != null ? fr.holdout_mape_pct : null, // 홀드아웃 평균 절대오차(%)
-      holdoutMedianApePct: fr.holdout_median_ape_pct != null ? fr.holdout_median_ape_pct : null,
-      holdoutN: fr.holdout_n != null ? fr.holdout_n : null, // 검증에 쓰인 표본 수
+      holdoutMapePct: segMapePct, // 이 물건과 같은 신뢰도 등급(effectUsed) 세그먼트의 평균 절대오차(%) - 세그먼트 없으면 전체 평균
+      holdoutMedianApePct: segMedianApePct,
+      holdoutN: segN, // 검증에 쓰인 표본 수(세그먼트 기준)
+      isSegmentSpecific: !!seg, // true면 이 물건과 같은 신뢰도 등급만의 오차, false면 모델 전체 평균(구버전 모델 또는 표본부족)
     };
   }
 
