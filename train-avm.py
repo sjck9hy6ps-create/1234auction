@@ -60,6 +60,7 @@ import sys
 import json
 import math
 import time
+from urllib.parse import quote
 from datetime import datetime, timezone
 
 import numpy as np
@@ -172,26 +173,44 @@ HOLDOUT_SEED = 42  # 실행마다 다른 표본이 빠지면 검증지표가 매
 MIN_HOLDOUT_SAMPLES = 200  # 이보다 적으면 홀드아웃 지표 자체가 불안정해 계산을 건너뜀(null)
 
 
-def fetch_all_rows(table: str, cols: str = "region,dong,danji,price,size,floor,deal_date,build_year") -> pd.DataFrame:
+def fetch_all_rows(table: str, cols: str = "region,dong,danji,price,size,floor,deal_date,build_year",
+                    order_col: str = "id") -> pd.DataFrame:
     """Supabase REST API에서 페이지네이션으로 전체 행을 가져옴. cols 기본값은 house_trades류
-    테이블 기준이고, kapt_complex_info처럼 스키마가 다른 테이블은 호출부에서 cols를 넘겨씀."""
+    테이블 기준이고, kapt_complex_info처럼 스키마가 다른 테이블은 호출부에서 cols를 넘겨씀.
+    order_col은 이 테이블에서 유일하고(unique) 정렬 가능한 컬럼이어야 함(house_trades류는
+    id 시퀀스, kapt_complex_info는 kapt_code, transit_features/complex_coords는 cache_key/id,
+    school_info는 school_code).
+    ⚠️ (사용자 문의 대응, 2026-09): #458에서 2017-09~ 과거자료를 전량 업로드한 뒤로
+    house_trades가 전국 규모로 커져서 이 페이지네이션 루프 자체가 수십 분씩 걸릴 수 있음.
+    원래는 끝날 때 한 줄만 찍어서, 로딩 중엔 로그가 완전히 비어 있어 "멈춘 건지 알 수 없다"는
+    문의를 받음 - 50페이지(5만행)마다 진행상황을 찍어 지금 진행 중임을 알 수 있게 함.
+    ⚠️ (실제 실패 원인 1차, 2026-09): 42분 진행 후 requests.exceptions.ReadTimeout(read
+    timeout=30)으로 전체가 죽는 걸 실제 로그로 확인함. 1차 조치로 타임아웃을 90초로 늘리고
+    페이지 단위 재시도(최대 3회, 지수 백오프)를 추가했었음.
+    ⚠️ (근본 원인 2차, 2026-09 - 3시간 넘게 안 끝나는 문제): 1차 조치는 "가끔 있는 네트워크
+    지연"만 다뤘을 뿐, OFFSET 기반 페이지네이션 자체의 구조적 문제는 그대로였음 - Postgres는
+    OFFSET N을 처리할 때 앞의 N행을 매번 다시 스캔하고 버려야 해서, 뒤쪽 페이지로 갈수록
+    (오프셋이 커질수록) 페이지 하나 처리 시간이 계속 느려짐(테이블 전체 스캔 비용이 페이지
+    수에 비례해 누적되는 사실상 O(N^2) 패턴). house_trades가 전국 규모로 커진 뒤로는 뒷부분
+    페이지 하나가 수십 초~수 분까지 걸릴 수 있어, 재시도가 매번 "성공"해도 전체 소요 시간이
+    3시간을 넘어가는 게 실제로 가능함(에러 없이 그냥 느린 것 - 진짜 멈춘 게 아니라 초반 몇
+    분과 후반 페이지 하나의 속도 차이가 수백 배로 벌어짐). 근본 해결은 OFFSET을 쓰지 않는
+    키셋(keyset)/커서 페이지네이션으로 바꾸는 것 - "WHERE id > 마지막으로 받은 id ORDER BY id
+    LIMIT N"은 인덱스를 타고 항상 그 지점부터 바로 시작하므로, 테이블이 아무리 커도(오프셋이
+    커도) 페이지 하나 처리 시간이 거의 일정하게 유지됨."""
     rows = []
-    offset = 0
-    # ⚠️ (사용자 문의 대응, 2026-09): #458에서 2017-09~ 과거자료를 전량 업로드한 뒤로
-    # house_trades가 전국 규모로 커져서 이 페이지네이션 루프 자체가 수십 분씩 걸릴 수 있음.
-    # 원래는 끝날 때 한 줄만 찍어서, 로딩 중엔 로그가 완전히 비어 있어 "멈춘 건지 알 수 없다"는
-    # 문의를 받음 - 50페이지(5만행)마다 진행상황을 찍어 지금 진행 중임을 알 수 있게 함.
-    # ⚠️ (실제 실패 원인, 2026-09): 42분 진행 후 requests.exceptions.ReadTimeout(read
-    # timeout=30)으로 전체가 죽는 걸 실제 로그로 확인함. OFFSET 기반 페이지네이션은 Postgres가
-    # offset만큼 매번 다시 스캔+스킵해야 해서, 테이블이 커질수록(뒤쪽 페이지일수록) 각 페이지
-    # 자체가 점점 느려짐 - 데이터가 더 늘어나면 고정 30초로는 언젠가 다시 터짐. (1) 타임아웃을
-    # 90초로 넉넉히 늘리고, (2) 순간적인 네트워크 문제/일시적 지연에도 전체를 처음부터 다시
-    # 돌리지 않도록 페이지 단위 재시도(최대 3회, 지수 백오프)를 추가함 - 재시도도 실패하면 그때는
-    # 진짜 문제이므로 그대로 에러를 올림(조용히 일부 데이터만 갖고 계속 진행하지 않음).
+    last_val = None
     PAGE_TIMEOUT = 90
     MAX_PAGE_RETRIES = 3
+    col_list = [c.strip() for c in cols.split(",")]
+    # order_col이 select 목록에 없으면 커서로 쓸 수 있도록 임시로 추가함(다음 페이지 시작점을
+    # 알려면 응답에 이 값이 있어야 함) - 최종 반환 DataFrame에서는 다시 제거해 호출부가 기대하는
+    # 기존 컬럼 구성을 그대로 유지함.
+    select_cols = cols if order_col in col_list else f"{cols},{order_col}"
+    page_num = 0
     while True:
-        url = f"{SUPABASE_URL}/rest/v1/{table}?select={cols}&limit={PAGE_SIZE}&offset={offset}"
+        cursor_filter = f"&{order_col}=gt.{quote(str(last_val), safe='')}" if last_val is not None else ""
+        url = f"{SUPABASE_URL}/rest/v1/{table}?select={select_cols}&order={order_col}.asc{cursor_filter}&limit={PAGE_SIZE}"
         batch = None
         last_err = None
         for attempt in range(1, MAX_PAGE_RETRIES + 1):
@@ -202,7 +221,7 @@ def fetch_all_rows(table: str, cols: str = "region,dong,danji,price,size,floor,d
                 break
             except requests.exceptions.RequestException as e:
                 last_err = e
-                print(f"  ⚠️ {table} offset={offset} 요청 실패(시도 {attempt}/{MAX_PAGE_RETRIES}): {e}")
+                print(f"  ⚠️ {table} cursor={last_val} 요청 실패(시도 {attempt}/{MAX_PAGE_RETRIES}): {e}")
                 if attempt < MAX_PAGE_RETRIES:
                     time.sleep(2 * attempt)
         if batch is None:
@@ -210,12 +229,15 @@ def fetch_all_rows(table: str, cols: str = "region,dong,danji,price,size,floor,d
         if not batch:
             break
         rows.extend(batch)
-        offset += PAGE_SIZE
-        if (offset // PAGE_SIZE) % 50 == 0:
+        last_val = batch[-1][order_col]
+        page_num += 1
+        if page_num % 50 == 0:
             print(f"  {table}: {len(rows)}행 로딩 중...")
         if len(batch) < PAGE_SIZE:
             break
     df = pd.DataFrame(rows)
+    if not df.empty and order_col not in col_list and order_col in df.columns:
+        df = df.drop(columns=[order_col])
     print(f"  {table}: {len(df)}행 로드")
     return df
 
@@ -242,7 +264,7 @@ def build_kapt_lookup():
     특성값으로 둠 - K-apt 원본에 top_floor가 비어있는 단지가 households보다 흔해서,
     households 기준 필수로 걸러내면 안 그래도 소중한 표본이 필요 이상 줄어듦(결측은
     attach_kapt_features에서 중앙값으로 폴백)."""
-    raw = fetch_all_rows("kapt_complex_info", cols="kapt_name,sigungu_code,as3,households,top_floor")
+    raw = fetch_all_rows("kapt_complex_info", cols="kapt_name,sigungu_code,as3,households,top_floor", order_col="kapt_code")
     if raw.empty:
         print("  kapt_complex_info: 데이터 없음 - 아직 sync-kapt.py가 한 번도 안 돌았거나 초기 단계")
         return None
@@ -304,7 +326,7 @@ def build_transit_lookup():
     """transit_features(sync-transit.mjs가 채움)를 그대로 불러옴 - cache_key가
     complex_coords와 동일한 체계라 house_trades 쪽에서도 같은 함수로 cache_key를
     만들어 정확히 일치(exact match)시킬 수 있음(K-apt처럼 이름 정규화 매칭이 아님)."""
-    raw = fetch_all_rows("transit_features", cols="cache_key,dist_subway_m")
+    raw = fetch_all_rows("transit_features", cols="cache_key,dist_subway_m", order_col="cache_key")
     if raw.empty:
         print("  transit_features: 데이터 없음 - 아직 sync-transit.mjs가 한 번도 안 돌았거나 초기 단계")
         return None
@@ -437,7 +459,7 @@ def build_school_lookup():
     상관관계가 있어 참고 지표로 씀. 아직 지오코딩(region/dong 채우기) 안 된 학교는 자동으로
     제외됨(région/dong이 null이라 groupby에서 빠짐) - sync-school.mjs Phase B가 진행될수록
     커버리지가 늘어남."""
-    raw = fetch_all_rows("school_info", cols="school_type,region,dong")
+    raw = fetch_all_rows("school_info", cols="school_type,region,dong", order_col="school_code")
     if raw.empty:
         print("  school_info: 데이터 없음 - 아직 sync-school.mjs가 한 번도 안 돌았거나 초기 단계")
         return None
