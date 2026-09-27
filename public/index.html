@@ -8687,10 +8687,23 @@ function renderAvmEstimateBox(data) {
         // 모델) "이 모델이 한 번도 안 본 실제 거래로 검증한" 오차범위를 별도 줄로 같이
         // 보여줘서, R² 하나만 보고 정확도를 과신하지 않게 함. 구버전 모델(errorMargin이
         // 없는 경우)은 이 줄 자체를 안 보여줌 - 없는 값을 지어내지 않기 위함.
+        // ⚠️ #480(AVM 오차범위 세분화, 사용자 요청 "기존 참고자료들의 신뢰도를 높일 수
+        // 있는 방법이 더 중요할 거 같아"): 기존엔 항상 "모델 전체 평균" 오차율만 보여줬는데,
+        // 이는 표본이 풍부한 대단지와 표본이 거의 없어 region_fallback으로 추정한 물건이
+        // 같은 숫자로 표시되는 문제가 있었음(과신/과소신 둘 다 유발). 서버가 effectUsed와
+        // 같은 축(grid/danji/dong_tier/dong/region_fallback/default_fallback)으로 홀드아웃
+        // 오차를 재계산해 isSegmentSpecific으로 표시해주면, "이 물건과 비슷한 확신도의
+        // 케이스들만 따로 검증한 값"인지 "모델 전체 평균값(구버전 모델 또는 표본부족으로
+        // 세그먼트 생략)"인지 구분해서 보여줌 - 조용히 다른 숫자로 바꿔치기하지 않기 위함.
         var marginLine = data.errorMargin
             ? '<div style="margin-top:2px;color:#8a6d00;">📏 검증 오차범위 ±' + data.errorMargin.marginPct + '% ('
                 + toEok(String(data.errorMargin.priceRangeManwon[0])) + ' ~ ' + toEok(String(data.errorMargin.priceRangeManwon[1])) + ')'
-                + (data.errorMargin.holdoutN ? ' · 홀드아웃(모델이 안 본 실거래) ' + data.errorMargin.holdoutN.toLocaleString() + '건으로 검증' : '')
+                + (data.errorMargin.holdoutN
+                    ? ' · 홀드아웃(모델이 안 본 실거래) ' + data.errorMargin.holdoutN.toLocaleString() + '건으로 검증'
+                        + (data.errorMargin.isSegmentSpecific
+                            ? ' <span style="color:#00695c;">(이 물건과 같은 확신도 구간만)</span>'
+                            : ' <span style="color:#999;">(모델 전체 평균 - 이 구간 전용 검증 아직 없음)</span>')
+                    : '')
                 + '</div>'
             : '';
         // ⚠️ 2026-08(빌라 층위치 보정, 사용자 요청): 빌라는 단지 개념이 없어 학습 자체에
