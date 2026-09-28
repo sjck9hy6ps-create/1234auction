@@ -1927,7 +1927,7 @@ function buildAptMatchIndex() {
             if (!arr) { arr = []; aptIndexByDongBunji.set(key, arr); }
             arr.push(apt);
         }
-        var name = stripVillaDongSuffix(l.name || '').trim();
+        var name = matchNormName(l.name || '').trim();
         if (name) {
             var arr2 = aptIndexByName.get(name);
             if (!arr2) { arr2 = []; aptIndexByName.set(name, arr2); }
@@ -1939,7 +1939,7 @@ function buildAptMatchIndex() {
    name/dong/bunji는 매칭 대상(경매물건 a 또는 낙찰사례 c)의 필드를 그대로 넘기면 됨 -
    matchesAuctionKey는 양쪽을 대칭으로 비교하므로 순서가 바뀌어도 결과는 같음. */
 function findMatchedAptByKey(name, dong, bunji) {
-    var n = stripVillaDongSuffix(name || '').trim();
+    var n = matchNormName(name || '').trim();
     var d = (dong || '').trim();
     var b = (bunji || '').trim();
     if (d && b) {
@@ -3780,6 +3780,21 @@ function stripVillaDongSuffix(name) {
     var base = m[1].trim();
     return base.length >= 2 ? base : n;
 }
+// ⚠️ 2026-09(사용자 요청: "매칭관련된 오류가 더 없는지 확인해줘" - lfNormName 수정 후 감사):
+// lfNormName(후발주자 순위 배지 전용)에서 고친 것과 완전히 같은 종류의 문제(괄호/하이픈/
+// 가운뎃점 등 표기 차이로 "같은 단지인데 다른 이름"으로 인식되는 매칭 실패)가, 경매/낙찰사례
+// 매칭의 핵심 함수인 stripVillaDongSuffix에도 독립적으로 존재했음(예: 경매물건엔
+// "초정마을동아", 실거래 DB엔 "초정마을(동아)"로 들어와 findMatchedApt/matchesAuctionKey가
+// 서로 다른 단지로 판단 → 매매기록과 통합 안 되고 배지가 따로 뜸). 다만 stripVillaDongSuffix의
+// 반환값은 매칭 키뿐 아니라 화면에 보이는 건물명 표시(예: 빌라 배지 이름)에도 그대로 쓰이고
+// 있어서, 그 함수 자체에 괄호 제거를 넣으면 "주공(9단지)" 같은 표시용 이름에서까지 괄호가
+// 사라져버림(매칭 문제 해결과 무관한 표시 형식 변경이 되어버림) - 그래서 "비교(매칭) 목적"
+// 전용 정규화만 별도 함수로 분리해서, 매칭에 쓰는 곳(buildGroupKey/matchesAuctionKey/
+// findMatchedAptByKey/scoreResaleCandidate)만 이걸 거치게 하고, 화면 표시용 호출(빌라 배지
+// 이름 등)은 원래의 stripVillaDongSuffix를 그대로 씀 - 표시 형식은 전혀 안 바뀜.
+function matchNormName(name) {
+    return stripVillaDongSuffix(name).replace(/[\s()（）\-‐–·,，.．]/g, '');
+}
 /* groupDBRows()/buildRentOnlyEntries() 공용 그룹 키 계산 - 두 함수가 서로 다른 로직으로 키를
    만들면(예: 한쪽만 도로명을 정규화) 매매기록과 전세기록이 같은 건물인데도 다른 건물로
    인식되어 중복 배지가 생길 수 있어, 반드시 이 함수 하나만 거치도록 함.
@@ -3796,7 +3811,7 @@ function stripVillaDongSuffix(name) {
    하나의 배지로 합쳐짐(지번도 그룹 키에서 빠지므로). 단지명은 stripVillaDongSuffix()로
    동 구분자를 제거한 뒤 비교해서, 빌라의 동별 이름 차이로 쪼개지는 것도 함께 흡수함. */
 function buildGroupKey(name, dong, bunji, road) {
-    if (name) return stripVillaDongSuffix(name) + '||' + (dong || '').trim();
+    if (name) return matchNormName(name) + '||' + (dong || '').trim();
     var roadForKey = bunji ? normalizeRoadName(road) : (road || '').trim();
     return dong + '_' + (bunji || '') + '||' + roadForKey;
 }
@@ -6425,8 +6440,8 @@ function scoreResaleCandidate(c, row, areaTolerance) {
     // stripVillaDongSuffix 주석 참고) 원본 이름 그대로 비교하면 같은 단지의 다른 동인데도
     // "부분포함"으로만 잡혀 근사매칭(approx)으로 분류됨 - 동 구분자를 뗀 이름으로 완전일치
     // 여부를 먼저 판단해서 같은 단지면 더 높은 신뢰도로 인정함.
-    var rowNameBase = stripVillaDongSuffix(rowName);
-    var buildingNameBase = stripVillaDongSuffix(c.buildingName || '');
+    var rowNameBase = matchNormName(rowName);
+    var buildingNameBase = matchNormName(c.buildingName || '');
     var nameExact = !!(c.buildingName && rowName && (rowName === c.buildingName || (buildingNameBase && rowNameBase && rowNameBase === buildingNameBase)));
     var bunjiExact = !!(c.dong && c.bunji && row.dong === c.dong && normalizeBunjiStr(row.bunji) === normalizeBunjiStr(c.bunji));
     var nameContains = !!(c.buildingName && rowName && c.dong && row.dong === c.dong
@@ -10822,8 +10837,8 @@ function matchesAuctionKey(a, name, dong, bunji) {
     // ⚠️ 2026-08: 빌라는 danji에 동번호가 붙어 들어오는 경우가 많아(buildGroupKey 주석 참고)
     // 원본 이름 그대로 비교하면 같은 단지인데도 매칭에 실패함 - stripVillaDongSuffix로
     // 동 구분자를 뗀 뒤 비교함.
-    var aName = stripVillaDongSuffix(a.name || '');
-    var n = stripVillaDongSuffix(name || '');
+    var aName = matchNormName(a.name || '');
+    var n = matchNormName(name || '');
     var aDong = (a.dong || '').trim();
     var aBunji = (a.bunji || '').trim();
     var d = (dong || '').trim();
