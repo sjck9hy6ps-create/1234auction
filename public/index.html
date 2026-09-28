@@ -2030,7 +2030,14 @@ function waitForLeaderFollowerOrTimeout(promise, timeoutMs) {
 }
 function lfNormName(name) {
     if (!name) return '';
-    var s = String(name).trim().replace(/\s+/g, '');
+    // ⚠️ 2026-09(사용자 요청: "경매물건에 순위가 안 붙는 경우를 고쳐줘" - 실측으로 발견한
+    // 사례): 실거래 DB엔 "초정마을(동아)"처럼 괄호로 표기된 단지가, 경매물건 쪽엔
+    // "초정마을동아"처럼 괄호 없이 등록돼 있어 공백 제거만으로는 서로 다른 문자열로 남아
+    // 매칭에 실패했음(순위 배지가 안 붙음). 괄호/하이픈/가운뎃점/마침표/쉼표 등 흔히 쓰이는
+    // 구두점을 "내용은 남기고 기호만" 제거하도록 확장함 - 예전엔 공백만 지웠으므로 이 확장은
+    // 기존에 이미 매칭되던 쌍(구두점이 없는 이름들)에는 전혀 영향이 없고, 구두점 표기 차이로
+    // 실패하던 쌍만 새로 매칭되게 하는 순수 개선임.
+    var s = String(name).trim().replace(/[\s()（）\-‐–·,，.．]/g, '');
     ['아파트', '단지'].forEach(function(suf) {
         if (s.length > suf.length && s.slice(-suf.length) === suf) s = s.slice(0, -suf.length);
     });
