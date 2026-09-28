@@ -114,6 +114,23 @@ def kapt_get(base: str, endpoint: str, params: dict):
     for attempt in range(4):  # 최대 4회 시도(최초 1회 + 재시도 3회)
         try:
             r = requests.get(f"{base}/{endpoint}", params=params, timeout=45)
+            # ⚠️ 2026-09(사용자 요청 "매도가능성 진단" 작업 중 발견 - 실제 GitHub Actions 로그로
+            # 확인): 253개 시군구 전부가 예외 없이 매번 "400 Client Error: Bad Request"로
+            # 실패하고 있었음(일부만 실패하는 할당량/네트워크 문제가 아니라 100% 재현). 기존
+            # 코드는 r.raise_for_status()가 던진 requests.exceptions.HTTPError의 기본 메시지만
+            # 로그에 남겨서 "왜" 거부됐는지(서비스키 미등록/활용신청 미승인/키 형식 오류 등)를
+            # 전혀 알 수 없었음 - 공공데이터포털은 이런 인증 단계 오류를 200+JSON이 아니라
+            # HTTP 400/401 + XML 본문(SERVICE_KEY_IS_NOT_REGISTERED_ERROR 등)으로 돌려주는
+            # 경우가 흔해서, 아래 resultCode 분기(라인 133~)에 도달하기도 전에 raise_for_status()
+            # 에서 막혀버림. 그래서 4xx/5xx일 때는 재시도 전에 실제 응답 본문(r.text)을 먼저
+            # 출력해서, 다음 실행 로그만 보면 정확한 원인이 바로 드러나게 함(추측성 진단 반복을
+            # 막기 위함). 4xx는 재시도해도 같은 이유로 계속 실패할 뿐이므로(네트워크 일시
+            # 장애가 아니라 인증/설정 문제) 즉시 예외를 던지고 재시도 루프를 돌지 않음 - 5xx만
+            # (일시적 서버 문제일 수 있으므로) 기존처럼 재시도함.
+            if r.status_code >= 400:
+                print(f"    [진단] {endpoint} HTTP {r.status_code} 응답 본문: {r.text[:1000]}", file=sys.stderr)
+                if r.status_code < 500:
+                    r.raise_for_status()  # 4xx는 재시도해도 의미 없음 - 바로 위로 던짐
             r.raise_for_status()
             break
         except requests.exceptions.RequestException as e:
