@@ -12,8 +12,8 @@ AVM(train-avm.py)이 지금 쓰는 변수는 면적/층/연식/거래시점/위�
 없음 - 아래 "왜 여기서 끝나는가" 참고).
 
 ## 이 스크립트가 하는 일 (1단계: 데이터 수집만)
-국토교통부_공동주택 단지 목록제공 서비스(getSigunguAptList3)로 시군구별 단지 목록(단지코드+
-단지명)을 가져오고, 국토교통부_공동주택 기본 정보제공 서비스(getAphusBassInfoV4)로 단지코드별
+국토교통부_공동주택 단지 목록제공 서비스(getSigunguAptList4)로 시군구별 단지 목록(단지코드+
+단지명)을 가져오고, 국토교통부_공동주택 기본 정보제공 서비스(getAphusBassInfoV5)로 단지코드별
 세대수·동수·난방방식·시공사·사용승인일·최고층수를 가져와 Supabase kapt_complex_info 테이블에
 저장함. train-avm.py가 이 테이블을 조인해서 실제로 회귀 변수에 반영하는 건 다음 단계(2단계) -
 먼저 이 스크립트로 실제 데이터가 어떤 모양으로 들어오는지(특히 as1~as4 필드가 정확히 무엇을
@@ -31,7 +31,7 @@ train-avm.py는 아파트를 danji(단지) 단위로 고정효과를 주는데, 
 ## 페이지네이션/할당량 처리
 실제 활용신청 결과 이 두 API 모두 일일 트래픽 5,000회로 승인됨(2026-08). 전국 약 250개
 시군구 × 시군구당 수십~수백 개 단지(전국 총 1만5천~2만 개 추정)를 감안해 DAILY_DETAIL_CAP을
-넉넉히 잡아도 여러 날에 걸쳐 나눠 처리하는 게 안전함(getSigunguAptList3 목록조회 호출도
+넉넉히 잡아도 여러 날에 걸쳐 나눠 처리하는 게 안전함(getSigunguAptList4 목록조회 호출도
 같은 계정 트래픽을 같이 쓰므로). kapt_sync_state 테이블에 "현재 처리 중인 시군구 인덱스"를
 저장해두고, 매 실행마다 DAILY_DETAIL_CAP개까지만 상세정보를 가져온 뒤 이어서 다음 실행에서
 계속하는 방식으로 설계함(GitHub Actions 스케줄로 매일 자동 실행 - 전국 1회 완주에 약 1~2주
@@ -71,11 +71,20 @@ SB_HEADERS = {
     "Content-Type": "application/json",
 }
 # ⚠️ 실제 활용신청 승인 화면(End Point)으로 확인한 정확한 경로 - Swagger 문서의
-# "Base URL: apis.data.go.kr/1613000/"만 보고 짐작하면 서비스명 세그먼트(AptListService3/
-# AptBasisInfoServiceV4)가 빠져 404가 남. 두 API가 서비스명이 서로 달라 base를 분리함.
-KAPT_LIST_BASE = "https://apis.data.go.kr/1613000/AptListService3"
-KAPT_BASS_BASE = "https://apis.data.go.kr/1613000/AptBasisInfoServiceV4"
-DAILY_DETAIL_CAP = 2000  # 실행 1회당 getAphusBassInfoV4(상세정보) 최대 호출 수 - 일일 트래픽 5,000건 승인분 내에서 여유있게 설정
+# "Base URL: apis.data.go.kr/1613000/"만 보고 짐작하면 서비스명 세그먼트(AptListService4/
+# AptBasisInfoServiceV5)가 빠져 404가 남. 두 API가 서비스명이 서로 달라 base를 분리함.
+# ⚠️ 2026-09(사용자 요청 "매도가능성 진단" 작업 중 발견 - 전 시군구 100% "400 Bad Request"
+# 재현으로 판명): 이 스크립트를 처음 작성한 시점엔 AptListService3/getSigunguAptList3,
+# AptBasisInfoServiceV4/getAphusBassInfoV4가 최신 버전이었는데, 그 뒤 공공데이터포털이 각각
+# V4/V5로 버전을 올리면서 구버전 엔드포인트를 막아버림(활용신청 화면에서 실제 승인된
+# End Point를 사용자가 직접 확인해줌: AptListService4, AptBasisInfoServiceV5). 새 버전으로
+# 맞춰줌 - kaptdaCnt(세대수)/kaptDongCnt(동수)/codeHeatNm(난방방식)/kaptBcompany(시공사)/
+# kaptUsedate(사용승인일) 필드명은 활용신청 화면의 V5 상세기능 설명과 일치해 그대로 둠.
+# 다만 kaptTopFloor(최고층수)는 V5 설명 목록에 명시적으로 보이지 않아 확실하지 않음 - 이번
+# 실행 로그(또는 [진단] 응답 본문)로 실제 응답에 이 필드가 있는지 한 번 더 확인 필요.
+KAPT_LIST_BASE = "https://apis.data.go.kr/1613000/AptListService4"
+KAPT_BASS_BASE = "https://apis.data.go.kr/1613000/AptBasisInfoServiceV5"
+DAILY_DETAIL_CAP = 2000  # 실행 1회당 getAphusBassInfoV5(상세정보) 최대 호출 수 - 일일 트래픽 5,000건 승인분 내에서 여유있게 설정
 
 
 def sb_get(path: str):
@@ -157,7 +166,7 @@ def kapt_get(base: str, endpoint: str, params: dict):
         # 건너뛰는 것도 의미 없음(오늘 남은 모든 호출이 다 이 코드로 실패할 것이므로). 이런
         # 단지별로 계속 실패 호출을 쌓는 대신, 별도 예외로 구분해서 위(process_one_sigungu/
         # main)에서 오늘 실행 자체를 즉시 멈추게 함 - 이미 처리한 진행분은 그대로 저장돼
-        # 있으므로 내일 이어서 하면 됨(getSigunguAptList3/getAphusBassInfoV4는 같은 계정
+        # 있으므로 내일 이어서 하면 됨(getSigunguAptList4/getAphusBassInfoV5는 같은 계정
         # 트래픽을 공유하므로, 다른 스크립트가 먼저 할당량을 많이 썼다면 이 코드가 실제로
         # 발생할 수 있음).
         if result_code == "22":
@@ -170,11 +179,11 @@ def kapt_get(base: str, endpoint: str, params: dict):
 
 
 def fetch_sigungu_complex_list(sigungu_code: str) -> list:
-    """getSigunguAptList3 - 시군구 내 전체 단지 목록(단지코드+단지명+주소필드)을 페이지네이션으로 수집."""
+    """getSigunguAptList4 - 시군구 내 전체 단지 목록(단지코드+단지명+주소필드)을 페이지네이션으로 수집."""
     items = []
     page = 1
     while True:
-        body = kapt_get(KAPT_LIST_BASE, "getSigunguAptList3", {
+        body = kapt_get(KAPT_LIST_BASE, "getSigunguAptList4", {
             "sigunguCode": sigungu_code, "pageNo": page, "numOfRows": 200,
         })
         batch = body.get("items") or []
@@ -192,8 +201,8 @@ def fetch_sigungu_complex_list(sigungu_code: str) -> list:
 
 
 def fetch_complex_detail(kapt_code: str) -> dict:
-    """getAphusBassInfoV4 - 단지코드로 세대수/동수/난방방식/시공사/사용승인일/최고층수 조회."""
-    body = kapt_get(KAPT_BASS_BASE, "getAphusBassInfoV4", {"kaptCode": kapt_code})
+    """getAphusBassInfoV5 - 단지코드로 세대수/동수/난방방식/시공사/사용승인일/최고층수 조회."""
+    body = kapt_get(KAPT_BASS_BASE, "getAphusBassInfoV5", {"kaptCode": kapt_code})
     return body.get("item") or {}
 
 
@@ -208,7 +217,7 @@ def to_int(v):
 
 MAX_SIGUNGU_PER_RUN = 60  # 안전장치 - 상세정보가 이미 다 채워진 시군구(재순환 구간)가 여러 개
 # 연달아 나오면 detail 호출이 거의 없어 순식간에 다음 시군구로 넘어가므로, list 조회
-# (getSigunguAptList3)만 너무 많이 쏘지 않도록 한 실행에서 처리하는 시군구 수 자체에도 상한을 둠.
+# (getSigunguAptList4)만 너무 많이 쏘지 않도록 한 실행에서 처리하는 시군구 수 자체에도 상한을 둠.
 
 
 def process_one_sigungu(sigungu_idx: int, detail_budget: int):
@@ -324,7 +333,7 @@ def main():
     # 2,000건)를 실제로 다 쓸 때까지 여러 시군구를 이어서 처리하도록 while 루프로 바꿈 -
     # 시군구 하나를 처리할 때마다 곧바로 kapt_sync_state를 갱신해두므로(기존과 동일), 중간에
     # 실행이 죽어도(타임아웃 등) 이미 처리한 시군구만큼은 그대로 보존됨. list 조회
-    # (getSigunguAptList3)가 시군구마다 1번씩 추가로 붙지만, MAX_SIGUNGU_PER_RUN(60개)
+    # (getSigunguAptList4)가 시군구마다 1번씩 추가로 붙지만, MAX_SIGUNGU_PER_RUN(60개)
     # 상한을 같이 둬서 list+detail 합계가 일일 승인량(5,000건)을 넘지 않도록 안전하게 잡음.
     state = sb_get("kapt_sync_state?id=eq.1&select=sigungu_idx")
     sigungu_idx = state[0]["sigungu_idx"] if state else 0
