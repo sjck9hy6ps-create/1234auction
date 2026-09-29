@@ -56,49 +56,82 @@ async function backtestOneRegion(region, type) {
   }
 }
 
-async function main() {
-  console.log('📊 예상매도가(30th percentile) 백테스트 시작:', new Date().toISOString());
-  console.log('SITE_URL:', SITE_URL);
+// ⚠️ 2026-09(사용자 요청 "빌라 백테스트 진행해줘" - #488 신뢰도 작업의 연장): v1(#481)은
+// apt만 돌렸음 - 사용자가 아파트/빌라 신뢰도를 따로 물어봤을 때 빌라 쪽은 실측 수치가
+// 아예 없어서 "느낌상" 답할 수밖에 없었음. 서버(mode=backtestCompEstRegion)는 처음부터
+// type=villa를 이미 지원하고 있었으므로(data-coverage.js), 이 스크립트만 apt 하나로
+// 고정돼 있던 걸 두 타입 다 순회하도록 바꿈 - 지역 목록/딜레이/저장 방식은 완전히 동일하게
+// 재사용하고, 타입별로 별도 signalType('compEstimate_apt' / 'compEstimate_villa')로 저장해
+// 기존 apt 통계를 덮어쓰지 않음.
+// ⚠️ 2026-09(#492 "편향 계산 추가" + #493 "보수적/중간값 나란히"): 기존엔 30th percentile
+// (실서빙값) 기준 절대오차(부호 없음)만 쟀음. 이번에 (1) 부호 있는 오차(signed - 실제/예측 기준,
+// 양수면 실제가 예측보다 높았다는 뜻)를 같이 재서 "쏠림 방향"을 알 수 있게 하고, (2) 50th
+// percentile(진짜 중앙값, 서버가 predictedMedianPpp로 같이 내려줌) 기준 오차도 나란히 재서
+// 두 방식 중 어느 쪽이 실제로 더 잘 맞는지 비교할 수 있게 함.
+function summarizeErrors(rows, predictedField) {
+  const absErrs = [], signedErrs = [];
+  rows.forEach(r => {
+    const predicted = r[predictedField];
+    if (r.actualCount < MIN_ACTUAL_COUNT || !r.actualPpp || !predicted) return;
+    const signedPct = ((r.actualPpp / predicted) - 1) * 100; // 양수=실제가 예측보다 높음
+    signedErrs.push(signedPct);
+    absErrs.push(Math.abs(signedPct));
+  });
+  function med(arr) {
+    if (!arr.length) return null;
+    const s = arr.slice().sort((a, b) => a - b);
+    const n = s.length;
+    return n % 2 ? s[(n - 1) / 2] : (s[n / 2 - 1] + s[n / 2]) / 2;
+  }
+  function mean(arr) { return arr.length ? arr.reduce((a, b) => a + b, 0) / arr.length : null; }
+  const round1 = v => v === null ? null : Math.round(v * 10) / 10;
+  return {
+    n: absErrs.length,
+    mapePct: round1(mean(absErrs)),
+    medianApePct: round1(med(absErrs)),
+    meanBiasPct: round1(mean(signedErrs)),
+    medianBiasPct: round1(med(signedErrs)),
+  };
+}
 
-  const targets = await fetchRegionList();
-  console.log(`🎯 대상: ${targets.length}개 지역 (apt만, #481 v1)\n`);
-
+async function runOneType(targets, type) {
   let cutoff = null;
-  const pctErrs = [];
+  const allRows = [];
   let regionsChecked = 0;
 
   for (const region of targets) {
-    const data = await backtestOneRegion(region, 'apt');
+    const data = await backtestOneRegion(region, type);
     await sleep(DELAY_MS);
     if (!data) continue;
     regionsChecked++;
     if (cutoff == null) cutoff = data.cutoff;
-
-    (data.results || []).forEach(r => {
-      if (r.actualCount < MIN_ACTUAL_COUNT || !r.actualPpp || !r.predictedPpp) return; // 검증 불가
-      const pctErr = Math.abs((r.actualPpp / r.predictedPpp) - 1) * 100;
-      pctErrs.push(pctErr);
-    });
+    (data.results || []).forEach(r => allRows.push(r));
   }
 
-  pctErrs.sort((a, b) => a - b);
-  const n = pctErrs.length;
-  const mapePct = n ? Math.round((pctErrs.reduce((a, b) => a + b, 0) / n) * 10) / 10 : null;
-  const medianApePct = n
-    ? Math.round((n % 2 ? pctErrs[(n - 1) / 2] : (pctErrs[n / 2 - 1] + pctErrs[n / 2]) / 2) * 10) / 10
-    : null;
+  const p30 = summarizeErrors(allRows, 'predictedPpp');       // 실서빙값(30th, 보수적)
+  const p50 = summarizeErrors(allRows, 'predictedMedianPpp'); // 진짜 중앙값(50th, 참고 비교용)
 
-  console.log('\n📊 집계 결과');
+  console.log(`\n📊 [${type}] 집계 결과 (30th percentile - 실서빙 기준)`);
   console.log('컷오프:', cutoff, '/ 검사한 지역 수:', regionsChecked);
-  console.log('표본 수:', n, '/ 평균오차율(MAPE):', mapePct, '% / 중앙값오차율:', medianApePct, '%');
+  console.log('표본 수:', p30.n, '/ MAPE:', p30.mapePct, '% / 중앙값오차율:', p30.medianApePct,
+    '% / 평균쏠림(부호):', p30.meanBiasPct, '% / 중앙값쏠림(부호):', p30.medianBiasPct, '%');
+  console.log(`📊 [${type}] 참고: 50th percentile(진짜 중앙값) 기준`);
+  console.log('표본 수:', p50.n, '/ MAPE:', p50.mapePct, '% / 중앙값오차율:', p50.medianApePct,
+    '% / 평균쏠림(부호):', p50.meanBiasPct, '% / 중앙값쏠림(부호):', p50.medianBiasPct, '%');
 
   const payload = {
-    signalType: 'compEstimate_apt',
+    signalType: `compEstimate_${type}`,
     cutoff,
     regionsChecked,
-    sampleSize: n,
-    mapePct,
-    medianApePct,
+    sampleSize: p30.n,
+    mapePct: p30.mapePct,
+    medianApePct: p30.medianApePct,
+    meanBiasPct: p30.meanBiasPct,
+    medianBiasPct: p30.medianBiasPct,
+    mapePctP50: p50.mapePct,
+    medianApePctP50: p50.medianApePct,
+    meanBiasPctP50: p50.meanBiasPct,
+    medianBiasPctP50: p50.medianBiasPct,
   };
 
   const saveRes = await fetch(`${SITE_URL}/api/data-coverage?mode=saveCompEstBacktestStats`, {
@@ -108,9 +141,20 @@ async function main() {
   });
   if (!saveRes.ok) {
     const body = await saveRes.json().catch(() => null);
-    throw new Error(`결과 저장 실패: HTTP ${saveRes.status} ${body && body.error ? '- ' + body.error : ''}`);
+    throw new Error(`[${type}] 결과 저장 실패: HTTP ${saveRes.status} ${body && body.error ? '- ' + body.error : ''}`);
   }
-  console.log('\n💾 결과 저장 완료');
+  console.log(`💾 [${type}] 결과 저장 완료`);
+}
+
+async function main() {
+  console.log('📊 예상매도가(30th percentile) 백테스트 시작:', new Date().toISOString());
+  console.log('SITE_URL:', SITE_URL);
+
+  const targets = await fetchRegionList();
+  console.log(`🎯 대상: ${targets.length}개 지역 × apt/villa 2종\n`);
+
+  await runOneType(targets, 'apt');
+  await runOneType(targets, 'villa');
 }
 
 main().catch(e => {
