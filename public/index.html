@@ -6240,9 +6240,13 @@ function getCompEstValueHeadless(list, targetPyung, targetFloor, targetBuildYear
     // 통계 추정치가 최근 거래가보다 높게 나오는 건 과함"이라는 피드백에 따라 원상 복귀함
     // (30th percentile 그대로, 보정 없음). 표본 수(최대 10건)는 그대로 유지함.
     var medPpp = sortedEntries.length >= 2 ? weightedPercentile(sortedEntries, COMP_EST_PERCENTILE) : sortedEntries[0].ppp;
+    // getCompEstValue()(line ~13157)와 반드시 같이 맞춰야 함 - medianPpp(50th, 진짜 중앙값) 추가.
+    var medianPppTrue = sortedEntries.length >= 2 ? weightedPercentile(sortedEntries, 0.5) : sortedEntries[0].ppp;
     return {
         medPpp: medPpp,
         estValue: Math.round(medPpp * targetPyung),
+        medianPpp: medianPppTrue,
+        medianValue: Math.round(medianPppTrue * targetPyung),
         count: list.length,
         usedCount: usedEntries.length,
         outlierCount: outlierCount,
@@ -13155,10 +13159,17 @@ function getCompEstValue() {
     // (30th percentile 그대로, 보정 없음). 표본 수(최대 10건)는 그대로 유지함.
     // getCompEstValueHeadless()(line ~5908)와 반드시 같이 맞춰야 함(DOM 유무만 다른 쌍둥이 함수).
     var medPpp = sortedEntries.length >= 2 ? weightedPercentile(sortedEntries, COMP_EST_PERCENTILE) : sortedEntries[0].ppp; // 만원/평 (유사도 필터+가중 + 시점보정 + 이상치 제거 반영됨)
+    // ⚠️ 2026-09(사용자 요청 "보수적/중간값 나란히 표시"): medPpp라는 이름 때문에 실제로는
+    // 30th percentile인데 "중간값"으로 오인하기 쉬웠음. 여기서 진짜 50th percentile(중앙값)도
+    // 별도로 계산해 같이 반환함 - medPpp/estValue(30th, 보수적 기준값)는 기존 호출부 호환을 위해
+    // 그대로 두고, medianPpp/medianValue(50th, "이 근처 매물들의 평균적인 가격")를 추가함.
+    var medianPppTrue = sortedEntries.length >= 2 ? weightedPercentile(sortedEntries, 0.5) : sortedEntries[0].ppp;
 
     return {
         medPpp: medPpp,
         estValue: Math.round(medPpp * targetPyung),
+        medianPpp: medianPppTrue,
+        medianValue: Math.round(medianPppTrue * targetPyung),
         estValueMin: Math.round(sortedEntries[0].ppp * targetPyung),
         estValueMax: Math.round(sortedEntries[sortedEntries.length - 1].ppp * targetPyung),
         count: list.length,
@@ -14072,10 +14083,20 @@ function calcCompValuation() {
                 + ' <span onclick="event.stopPropagation();calcAuctionJeonseAnalysis();" style="cursor:pointer;color:#999;font-size:10px;font-weight:normal;">🔄</span>', '#00897b')
             : '<div class="margin-item"><div class="margin-label">예상매도가(전세가율 기반)</div>'
                 + '<div style="margin-top:4px;"><button type="button" class="modal-btn btn-gray" style="font-size:10px;padding:3px 8px;" onclick="calcAuctionJeonseAnalysis()">🏠 계산하기</button></div></div>';
+        // ⚠️ 2026-09(사용자 요청 "보수적/중간값 나란히 표시"): 기존엔 30th percentile(보수적) 값
+        // 하나만 "예상매각가"로 보여줘서, 이게 얼마나 보수적으로 잡은 값인지 감이 안 왔음. 50th
+        // percentile(진짜 중앙값 - "이 근처 매물들의 평균적인 가격")을 괄호로 같이 보여줘서 두 값의
+        // 격차로 보수성 정도를 바로 체감할 수 있게 함. 중앙값은 참고용일 뿐 계산에는 그대로 30th를
+        // 씀(#363 결정 유지 - "낙찰 후 빠른 매도"가 목적이라 중앙값 매물도 평균 몇 달 걸려 팔림).
+        var medianGapPct = (est.medianValue && est.estValue) ? Math.round((est.medianValue - est.estValue) / est.estValue * 1000) / 10 : null;
+        var estValueWithMedian = toEok(String(est.estValue))
+            + (est.medianValue && est.medianValue !== est.estValue
+                ? ' <span style="font-size:10px;color:#999;font-weight:normal;" title="이 근처 비교물건들의 진짜 중앙값(50th percentile) - 보수적 기준값보다 빨리 안 팔릴 수도 있는 값">(중간값 ' + toEok(String(est.medianValue)) + (medianGapPct !== null ? ', +' + medianGapPct + '%' : '') + ')</span>'
+                : '');
         mainHtml = rangeLine + freshBadge + scaleMeasureBox
             + '<div class="margin-grid">'
-            + vItem('비교 평단가(중간값,시점보정)', Math.round(est.medPpp / 100) / 10 + '천만/평', '#555')
-            + vItem('예상매각가(실거래 기반)', toEok(String(est.estValue)), '#2e7d32')
+            + vItem('비교 평단가(보수적 30%,시점보정)', Math.round(est.medPpp / 100) / 10 + '천만/평', '#555')
+            + vItem('예상매각가(실거래 기반, 보수적)', estValueWithMedian, '#2e7d32')
             + vItem('적정입찰가(비교물건 기준, 목표마진 ' + toEok(String(targetMargin)) + ' 역산)', r.bid > 0 ? toEok(String(r.bid)) : '마진 확보 불가', '#6a1b9a')
             + jeonseItem
             + '</div>'
@@ -14094,9 +14115,28 @@ function calcCompValuation() {
     var compBt = getCompEstBacktestStats();
     var compBtLine = '';
     if (compBt && compBt.sample_size >= 20 && compBt.mape_pct != null) {
+        // ⚠️ 2026-09(#492 "편향 계산 추가"): 기존엔 절대오차(MAPE)만 보여줘서 "쏠림 방향"은 알 수
+        // 없었음. mean_bias_pct(부호 있는 오차, 양수=실제가 예측보다 높았음=우리 예측이 보수적
+        // 방향이었음/음수=실제가 예측보다 낮았음=우리 예측이 낙관적이었음)를 같이 보여줌. 추가로
+        // 50th percentile(진짜 중앙값) 기준 오차도 참고용으로 병기해, 30th(실서빙)가 실제로
+        // 더 보수적으로 안전한 방향인지 데이터로 확인할 수 있게 함.
+        var biasVal = compBt.mean_bias_pct;
+        var biasLine = '';
+        if (biasVal !== null && biasVal !== undefined) {
+            var biasDir = biasVal > 1 ? '실제가 예측보다 평균 <b>+' + biasVal + '%</b> 높게 팔림(우리 예측이 보수적 방향)'
+                : (biasVal < -1 ? '실제가 예측보다 평균 <b>' + biasVal + '%</b> 낮게 팔림(우리 예측이 낙관적 방향 - 유의)'
+                    : '평균적으로 쏠림 없이 대체로 맞음(평균 ' + (biasVal > 0 ? '+' : '') + biasVal + '%)');
+            biasLine = '<br>쏠림(편향): ' + biasDir;
+        }
+        var p50Line = '';
+        if (compBt.mape_pct_p50 != null) {
+            p50Line = '<br><span style="color:#999;">참고 - 30th 대신 진짜 중앙값(50th percentile)을 썼다면: 평균오차율 ' + compBt.mape_pct_p50 + '%'
+                + (compBt.mean_bias_pct_p50 != null ? ', 쏠림 평균 ' + (compBt.mean_bias_pct_p50 > 0 ? '+' : '') + compBt.mean_bias_pct_p50 + '%' : '') + '</span>';
+        }
         compBtLine = '<div style="font-size:10px;color:#1565c0;background:#e3f2fd;border-radius:6px;padding:5px 8px;margin-top:6px;">'
             + '📊 이 계산방식(비교물건 30th percentile) 자체 검증(전국, ' + compBt.cutoff + ' 기준 예측 → 올해 실거래로 대조): '
             + '평균 오차율 <b>' + compBt.mape_pct + '%</b>(중앙값 ' + compBt.median_ape_pct + '%, 표본 ' + compBt.sample_size.toLocaleString() + '건)'
+            + biasLine + p50Line
             + '<br><span style="color:#999;">단순화된 검증치입니다 - 이 물건과의 평형·층·연식·거리 유사도 가중치는 반영되지 않은, 단지 단위 평균 오차입니다.</span>'
             + '</div>';
     }
