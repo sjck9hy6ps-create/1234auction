@@ -2291,7 +2291,12 @@ async function getRegionTradeRowsPpp(type, region, start, end) {
 // 백테스트는 "이 통계 방법 자체"가 맞는지 검증하는 게 목적이라, 개별 목표물건과의
 // 평형/층/연식/거리 유사도 가중치(실서빙 로직의 나머지 절반)는 여기선 재현하지 않음(모든
 // 표본을 동일 가중치로 취급) - 이 단순화는 백엔드 주석과 프론트 안내문 양쪽에 명시함.
-function compEstPercentile30(ppps) {
+// ⚠️ 2026-09(사용자 요청 "보수적/중간값 나란히 표시" + "편향 계산 추가"): 원래 30th percentile
+// 하나만 반환했으나, (1) 실제 서빙값(30th, 보수적)뿐 아니라 진짜 중앙값(50th)도 같이 백테스트해서
+// "어느 쪽이 실제로 더 잘 맞는지"를 데이터로 비교할 수 있게, (2) 부호 있는 오차(쏠림 방향)까지
+// 호출부에서 계산할 수 있게 p30/p50을 객체로 함께 반환하도록 바꿈. 반환값 형태만 바뀌었고
+// IQR 이상치 제거 로직 자체는 그대로임.
+function compEstPercentiles(ppps) {
   if (!ppps || !ppps.length) return null;
   function percentile(sorted, p) {
     const idx = (sorted.length - 1) * p;
@@ -2307,7 +2312,7 @@ function compEstPercentile30(ppps) {
     const trimmed = arr.filter((x) => x >= lo && x <= hi);
     if (trimmed.length >= 3 && trimmed.length < arr.length) arr = trimmed.slice().sort((a, b) => a - b);
   }
-  return percentile(arr, 0.3);
+  return { p30: percentile(arr, 0.3), p50: percentile(arr, 0.5) };
 }
 // (region,dong) 단위가 아니라 (region,dong,danji) 단위로 평단가/건수를 받아옴 - danji별로
 // 나눠 받는 이유는 getPriceMomentum에서 "이 단지가 원래(baseline 기간) 얼마였는지"와
@@ -3206,11 +3211,12 @@ export default async function handler(req, res) {
       Object.keys(predMap).forEach((key) => {
         const pre = predMap[key];
         if (pre.ppps.length < MIN_PRE_SAMPLE) return;
-        const predictedPpp = compEstPercentile30(pre.ppps);
+        const pcts = compEstPercentiles(pre.ppps);
         const post = actualMap[key];
         results.push({
           dong: pre.dong, danji: pre.danji,
-          predictedPpp: Math.round(predictedPpp),
+          predictedPpp: Math.round(pcts.p30),
+          predictedMedianPpp: Math.round(pcts.p50), // 2026-09: 50th percentile(진짜 중앙값)도 같이 백테스트
           preSampleSize: pre.ppps.length,
           actualPpp: post && post.ppps.length ? Math.round(post.ppps.reduce((a, b) => a + b, 0) / post.ppps.length) : null,
           actualCount: post ? post.ppps.length : 0,
@@ -3226,14 +3232,27 @@ export default async function handler(req, res) {
     // 인증 없이 둠(이 앱 전체의 기존 관례).
     if (req.method !== 'POST') return res.status(405).json({ error: 'POST만 지원합니다.' });
     try {
-      const { signalType, cutoff, regionsChecked, sampleSize, mapePct, medianApePct } = req.body || {};
+      const {
+        signalType, cutoff, regionsChecked, sampleSize, mapePct, medianApePct,
+        // ⚠️ 2026-09(#492 "편향 계산 추가" + #493 "보수적/중간값 나란히"): 기존엔 절대오차
+        // (MAPE)만 저장해서 "얼마나 틀리는지"는 알아도 "어느 방향으로 쏠려 틀리는지"는 몰랐음.
+        // meanBiasPct/medianBiasPct(부호 있는 오차, 실제-예측 기준. 양수=실제가 더 높음=예측이
+        // 낙관적이 아니라 오히려 보수적이었다는 뜻)를 추가함. 동시에 30th percentile(실서빙값,
+        // 보수적)뿐 아니라 50th percentile(진짜 중앙값) 기준 오차도 같이 저장해 두 방식 중
+        // 어느 쪽이 실제로 더 잘 맞는지 나중에 비교할 수 있게 함(*P50 접미사).
+        meanBiasPct, medianBiasPct, mapePctP50, medianApePctP50, meanBiasPctP50, medianBiasPctP50,
+      } = req.body || {};
       if (!signalType) return res.status(400).json({ error: 'signalType이 필요합니다.' });
       // signal_backtest_stats 테이블을 그대로 재사용함(#479가 만든 범용 signal_type PK
       // 구조) - 후발주자 전용 컬럼(hit_rate 등)은 null로 두고, 이 백테스트 전용 컬럼
-      // (mape_pct/median_ape_pct/sample_size, migration_comp_estimate_backtest_fix481.sql)만 채움.
+      // (mape_pct/median_ape_pct/sample_size, migration_comp_estimate_backtest_fix481.sql +
+      // 2026-09 migration_comp_estimate_bias_fix492.sql로 추가된 bias/*_p50 컬럼)만 채움.
       const { error } = await supabase.from('signal_backtest_stats').upsert({
         signal_type: signalType, cutoff, regions_checked: regionsChecked,
         sample_size: sampleSize, mape_pct: mapePct, median_ape_pct: medianApePct,
+        mean_bias_pct: meanBiasPct ?? null, median_bias_pct: medianBiasPct ?? null,
+        mape_pct_p50: mapePctP50 ?? null, median_ape_pct_p50: medianApePctP50 ?? null,
+        mean_bias_pct_p50: meanBiasPctP50 ?? null, median_bias_pct_p50: medianBiasPctP50 ?? null,
         updated_at: new Date().toISOString(),
       });
       if (error) return res.status(500).json({ error: error.message });
