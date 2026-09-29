@@ -6234,11 +6234,17 @@ function getCompEstValueHeadless(list, targetPyung, targetFloor, targetBuildYear
         }
     }
     var sortedEntries = usedEntries.slice().sort(function(a, b) { return a.ppp - b.ppp; });
-    var COMP_EST_PERCENTILE = 0.3;
     // ⚠️ 2026-09: 한때 +10% 낙관 보정(COMP_EST_OPTIMISM_FACTOR)을 곱했었으나, 사용자 확인
     // 결과 "빌라는 재개발 이슈가 없는 한 최근 실거래보다 비싸게 나올 이유가 없는데, 순수
     // 통계 추정치가 최근 거래가보다 높게 나오는 건 과함"이라는 피드백에 따라 원상 복귀함
     // (30th percentile 그대로, 보정 없음). 표본 수(최대 10건)는 그대로 유지함.
+    // ⚠️ 2026-09(#494, 백테스트 실측 결과 반영): 전국 백테스트(backtest-comp-estimate.mjs)
+    // 결과 아파트는 30th percentile이 쏠림 +8.7%로 적당히 보수적이었지만, 빌라는 쏠림 +32.1%
+    // (오차 37.6%)로 지나치게 낮게 잡혀 있었음 - 표본이 원래 적은 빌라 특성상 30th percentile이
+    // 사실상 최솟값에 가까워지는 경우가 많았던 것으로 보임. 빌라만 40th percentile로 올려서
+    // 과도한 보수성을 완화함(데이터-coverage.js의 compEstPercentiles/backtestCompEstRegion과
+    // 반드시 같은 기준을 써야 백테스트와 실서빙이 어긋나지 않음 - 그쪽도 함께 수정함).
+    var COMP_EST_PERCENTILE = (ctx && ctx.buildingType === 'villa') ? 0.4 : 0.3;
     var medPpp = sortedEntries.length >= 2 ? weightedPercentile(sortedEntries, COMP_EST_PERCENTILE) : sortedEntries[0].ppp;
     // getCompEstValue()(line ~13157)와 반드시 같이 맞춰야 함 - medianPpp(50th, 진짜 중앙값) 추가.
     var medianPppTrue = sortedEntries.length >= 2 ? weightedPercentile(sortedEntries, 0.5) : sortedEntries[0].ppp;
@@ -13152,12 +13158,16 @@ function getCompEstValue() {
     // 가격"일 뿐 "이 가격이면 금방 팔린다"는 보장은 없음(중앙값 매물도 평균적으로 몇 달씩
     // 걸려 팔림). 표본이 아주 적으면(2~3건) 30th percentile이 사실상 최솟값에 가까워지는데,
     // 이 앱의 목적상 오히려 바람직한 방향(보수적으로)이라고 판단함.
-    var COMP_EST_PERCENTILE = 0.3;
     // ⚠️ 2026-09: 한때 +10% 낙관 보정(COMP_EST_OPTIMISM_FACTOR)을 곱했었으나, 사용자 확인
     // 결과 "빌라는 재개발 이슈가 없는 한 최근 실거래보다 비싸게 나올 이유가 없는데, 순수
     // 통계 추정치가 최근 거래가보다 높게 나오는 건 과함"이라는 피드백에 따라 원상 복귀함
     // (30th percentile 그대로, 보정 없음). 표본 수(최대 10건)는 그대로 유지함.
-    // getCompEstValueHeadless()(line ~5908)와 반드시 같이 맞춰야 함(DOM 유무만 다른 쌍둥이 함수).
+    // ⚠️ 2026-09(#494, 백테스트 실측 결과 반영): 전국 백테스트 결과 아파트는 30th percentile
+    // 쏠림 +8.7%(적당히 보수적)였지만 빌라는 +32.1%(오차 37.6%)로 지나치게 낮았음 - 빌라만
+    // 40th percentile로 올려 과도한 보수성을 완화함. data-coverage.js의 compEstPercentiles/
+    // backtestCompEstRegion과 반드시 같은 기준을 써야 백테스트와 실서빙이 어긋나지 않음.
+    // getCompEstValueHeadless()(line ~6146)와 반드시 같이 맞춰야 함(DOM 유무만 다른 쌍둥이 함수).
+    var COMP_EST_PERCENTILE = (targetBuildingTypeForMomentum === 'villa') ? 0.4 : 0.3;
     var medPpp = sortedEntries.length >= 2 ? weightedPercentile(sortedEntries, COMP_EST_PERCENTILE) : sortedEntries[0].ppp; // 만원/평 (유사도 필터+가중 + 시점보정 + 이상치 제거 반영됨)
     // ⚠️ 2026-09(사용자 요청 "보수적/중간값 나란히 표시"): medPpp라는 이름 때문에 실제로는
     // 30th percentile인데 "중간값"으로 오인하기 쉬웠음. 여기서 진짜 50th percentile(중앙값)도
@@ -14093,9 +14103,12 @@ function calcCompValuation() {
             + (est.medianValue && est.medianValue !== est.estValue
                 ? ' <span style="font-size:10px;color:#999;font-weight:normal;" title="이 근처 비교물건들의 진짜 중앙값(50th percentile) - 보수적 기준값보다 빨리 안 팔릴 수도 있는 값">(중간값 ' + toEok(String(est.medianValue)) + (medianGapPct !== null ? ', +' + medianGapPct + '%' : '') + ')</span>'
                 : '');
+        // ⚠️ 2026-09(#494): 빌라는 percentile이 40th로 올라갔으므로(백테스트 실측 결과 30th가
+        // 과도하게 낮았음) 라벨의 숫자도 물건유형에 맞게 표시함.
+        var compEstPctLabel = document.getElementById('a-prop-type').value === 'villa' ? '보수적 40%' : '보수적 30%';
         mainHtml = rangeLine + freshBadge + scaleMeasureBox
             + '<div class="margin-grid">'
-            + vItem('비교 평단가(보수적 30%,시점보정)', Math.round(est.medPpp / 100) / 10 + '천만/평', '#555')
+            + vItem('비교 평단가(' + compEstPctLabel + ',시점보정)', Math.round(est.medPpp / 100) / 10 + '천만/평', '#555')
             + vItem('예상매각가(실거래 기반, 보수적)', estValueWithMedian, '#2e7d32')
             + vItem('적정입찰가(비교물건 기준, 목표마진 ' + toEok(String(targetMargin)) + ' 역산)', r.bid > 0 ? toEok(String(r.bid)) : '마진 확보 불가', '#6a1b9a')
             + jeonseItem
@@ -14112,19 +14125,22 @@ function calcCompValuation() {
     // 매달 갱신) - 표본 20건 미만이면 아직 신뢰하기엔 이르므로 숨김. 이 백테스트는 개별
     // 목표물건과의 평형/층/연식/거리 유사도 가중치는 재현하지 않은 단순화된 버전이라는 점을
     // 안내문에 명시함(위 getRegionTradeRowsPpp/compEstPercentile30 주석 참고).
-    var compBt = getCompEstBacktestStats();
+    // ⚠️ 2026-09(#495 버그수정): 물건유형별로 백테스트 통계를 구분해서 가져옴 - 이전엔 빌라
+    // 물건을 보고 있을 때도 항상 apt 통계(훨씬 좋음)가 표시되는 버그가 있었음.
+    var compBtPropType = document.getElementById('a-prop-type').value;
+    var compBt = getCompEstBacktestStats(compBtPropType);
     var compBtLine = '';
     if (compBt && compBt.sample_size >= 20 && compBt.mape_pct != null) {
-        // ⚠️ 2026-09(#492 "편향 계산 추가"): 기존엔 절대오차(MAPE)만 보여줘서 "쏠림 방향"은 알 수
-        // 없었음. mean_bias_pct(부호 있는 오차, 양수=실제가 예측보다 높았음=우리 예측이 보수적
-        // 방향이었음/음수=실제가 예측보다 낮았음=우리 예측이 낙관적이었음)를 같이 보여줌. 추가로
-        // 50th percentile(진짜 중앙값) 기준 오차도 참고용으로 병기해, 30th(실서빙)가 실제로
-        // 더 보수적으로 안전한 방향인지 데이터로 확인할 수 있게 함.
+        // ⚠️ 2026-09(#492 "편향 계산 추가" + #495 "쏠림 문구 개선"): 기존엔 절대오차(MAPE)만
+        // 보여줘서 "쏠림 방향"은 알 수 없었음. mean_bias_pct(부호 있는 오차, 양수=실제가
+        // 예측보다 높았음=우리 예측이 보수적 방향이었음/음수=실제가 예측보다 낮았음=우리 예측이
+        // 낙관적이었음)를 같이 보여줌. 오차율 자체가 크면(빌라처럼) 쏠림이 양수여도 안심할 수
+        // 없으므로, 오차율 크기에 따라 "주의" 톤을 함께 얹어 숫자만 보고 오해하지 않게 함.
         var biasVal = compBt.mean_bias_pct;
         var biasLine = '';
         if (biasVal !== null && biasVal !== undefined) {
-            var biasDir = biasVal > 1 ? '실제가 예측보다 평균 <b>+' + biasVal + '%</b> 높게 팔림(우리 예측이 보수적 방향)'
-                : (biasVal < -1 ? '실제가 예측보다 평균 <b>' + biasVal + '%</b> 낮게 팔림(우리 예측이 낙관적 방향 - 유의)'
+            var biasDir = biasVal > 1 ? '실제가 예측보다 평균 <b>+' + biasVal + '%</b> 높게 팔림(예측이 보수적 방향)'
+                : (biasVal < -1 ? '실제가 예측보다 평균 <b>' + biasVal + '%</b> 낮게 팔림(예측이 낙관적 방향 - 유의)'
                     : '평균적으로 쏠림 없이 대체로 맞음(평균 ' + (biasVal > 0 ? '+' : '') + biasVal + '%)');
             biasLine = '<br>쏠림(편향): ' + biasDir;
         }
@@ -14133,8 +14149,14 @@ function calcCompValuation() {
             p50Line = '<br><span style="color:#999;">참고 - 30th 대신 진짜 중앙값(50th percentile)을 썼다면: 평균오차율 ' + compBt.mape_pct_p50 + '%'
                 + (compBt.mean_bias_pct_p50 != null ? ', 쏠림 평균 ' + (compBt.mean_bias_pct_p50 > 0 ? '+' : '') + compBt.mean_bias_pct_p50 + '%' : '') + '</span>';
         }
+        // 한눈에 판단할 수 있는 요약 한 줄 - 오차율(mape_pct) 크기로 "믿을만함/주의" 톤을 정함.
+        // 15% 미만이면 초록(믿을만함), 15~25%는 주황(참고만), 25% 이상은 빨강(주의 - 빌라가 여기 해당).
+        var trustColor = compBt.mape_pct < 15 ? '#2e7d32' : (compBt.mape_pct < 25 ? '#e65100' : '#c62828');
+        var trustLabel = compBt.mape_pct < 15 ? '✅ 이 유형은 대체로 신뢰할 만함'
+            : (compBt.mape_pct < 25 ? '⚠️ 참고용으로만(오차 다소 큼)' : '🚨 이 유형은 오차가 커서 주의 필요');
         compBtLine = '<div style="font-size:10px;color:#1565c0;background:#e3f2fd;border-radius:6px;padding:5px 8px;margin-top:6px;">'
-            + '📊 이 계산방식(비교물건 30th percentile) 자체 검증(전국, ' + compBt.cutoff + ' 기준 예측 → 올해 실거래로 대조): '
+            + '<div style="font-weight:bold;color:' + trustColor + ';margin-bottom:2px;">' + trustLabel + '</div>'
+            + '📊 이 계산방식(비교물건 ' + (compBtPropType === 'villa' ? '40th' : '30th') + ' percentile, ' + (compBtPropType === 'villa' ? '연립다세대' : '아파트') + ') 자체 검증(전국, ' + compBt.cutoff + ' 기준 예측 → 올해 실거래로 대조): '
             + '평균 오차율 <b>' + compBt.mape_pct + '%</b>(중앙값 ' + compBt.median_ape_pct + '%, 표본 ' + compBt.sample_size.toLocaleString() + '건)'
             + biasLine + p50Line
             + '<br><span style="color:#999;">단순화된 검증치입니다 - 이 물건과의 평형·층·연식·거리 유사도 가중치는 반영되지 않은, 단지 단위 평균 오차입니다.</span>'
@@ -17561,8 +17583,13 @@ async function ensureSignalBacktestStats() {
         }
     } catch (e) { /* 참고용 통계 - 실패해도 패널 자체는 정상 동작해야 함 */ }
 }
-function getCompEstBacktestStats() {
-    return allSignalBacktestStats.find(function(s) { return s.signal_type === 'compEstimate_apt'; }) || null;
+// ⚠️ 2026-09(#495 버그수정): 원래 'compEstimate_apt'로 고정돼 있어서, 빌라 물건을 보고 있을
+// 때도 아파트의(훨씬 좋은) 백테스트 통계가 표시되는 문제가 있었음(빌라 백테스트가 나오기 전엔
+// 존재하지 않는 값이라 안전했지만, #488/villa 백테스트 이후로는 실제로 잘못된 수치를 보여주는
+// 상태였음). 물건유형(type)을 인자로 받아 compEstimate_apt/compEstimate_villa를 구분함.
+function getCompEstBacktestStats(type) {
+    var signalType = (type === 'villa') ? 'compEstimate_villa' : 'compEstimate_apt';
+    return allSignalBacktestStats.find(function(s) { return s.signal_type === signalType; }) || null;
 }
 async function loadLeaderFollowerData() {
     var sido = document.getElementById('lf-sido-select').value;
