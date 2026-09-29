@@ -2292,10 +2292,10 @@ async function getRegionTradeRowsPpp(type, region, start, end) {
 // 평형/층/연식/거리 유사도 가중치(실서빙 로직의 나머지 절반)는 여기선 재현하지 않음(모든
 // 표본을 동일 가중치로 취급) - 이 단순화는 백엔드 주석과 프론트 안내문 양쪽에 명시함.
 // ⚠️ 2026-09(사용자 요청 "보수적/중간값 나란히 표시" + "편향 계산 추가"): 원래 30th percentile
-// 하나만 반환했으나, (1) 실제 서빙값(30th, 보수적)뿐 아니라 진짜 중앙값(50th)도 같이 백테스트해서
-// "어느 쪽이 실제로 더 잘 맞는지"를 데이터로 비교할 수 있게, (2) 부호 있는 오차(쏠림 방향)까지
-// 호출부에서 계산할 수 있게 p30/p50을 객체로 함께 반환하도록 바꿈. 반환값 형태만 바뀌었고
-// IQR 이상치 제거 로직 자체는 그대로임.
+// 하나만 반환했으나, (1) 실제 서빙값(30th 또는 빌라는 40th, 보수적)뿐 아니라 진짜 중앙값(50th)도
+// 같이 백테스트해서 "어느 쪽이 실제로 더 잘 맞는지"를 데이터로 비교할 수 있게, (2) 부호 있는
+// 오차(쏠림 방향)까지 호출부에서 계산할 수 있게 p30/p40/p50을 객체로 함께 반환하도록 바꿈.
+// 반환값 형태만 바뀌었고 IQR 이상치 제거 로직 자체는 그대로임.
 function compEstPercentiles(ppps) {
   if (!ppps || !ppps.length) return null;
   function percentile(sorted, p) {
@@ -2312,7 +2312,7 @@ function compEstPercentiles(ppps) {
     const trimmed = arr.filter((x) => x >= lo && x <= hi);
     if (trimmed.length >= 3 && trimmed.length < arr.length) arr = trimmed.slice().sort((a, b) => a - b);
   }
-  return { p30: percentile(arr, 0.3), p50: percentile(arr, 0.5) };
+  return { p30: percentile(arr, 0.3), p40: percentile(arr, 0.4), p50: percentile(arr, 0.5) };
 }
 // (region,dong) 단위가 아니라 (region,dong,danji) 단위로 평단가/건수를 받아옴 - danji별로
 // 나눠 받는 이유는 getPriceMomentum에서 "이 단지가 원래(baseline 기간) 얼마였는지"와
@@ -3213,9 +3213,13 @@ export default async function handler(req, res) {
         if (pre.ppps.length < MIN_PRE_SAMPLE) return;
         const pcts = compEstPercentiles(pre.ppps);
         const post = actualMap[key];
+        // ⚠️ 2026-09(#494): 실서빙값과 반드시 같은 기준을 써야 함 - 빌라는 index.html의
+        // getCompEstValue()/getCompEstValueHeadless()가 이제 40th percentile을 쓰므로 여기도
+        // type==='villa'면 p40, 아니면 p30을 predictedPpp(실서빙 기준)로 씀.
+        const predicted = type === 'villa' ? pcts.p40 : pcts.p30;
         results.push({
           dong: pre.dong, danji: pre.danji,
-          predictedPpp: Math.round(pcts.p30),
+          predictedPpp: Math.round(predicted),
           predictedMedianPpp: Math.round(pcts.p50), // 2026-09: 50th percentile(진짜 중앙값)도 같이 백테스트
           preSampleSize: pre.ppps.length,
           actualPpp: post && post.ppps.length ? Math.round(post.ppps.reduce((a, b) => a + b, 0) / post.ppps.length) : null,
