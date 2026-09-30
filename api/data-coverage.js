@@ -3221,7 +3221,8 @@ export default async function handler(req, res) {
         // ⚠️ 2026-09(#494): 실서빙값과 반드시 같은 기준을 써야 함 - 빌라는 index.html의
         // getCompEstValue()/getCompEstValueHeadless()가 이제 40th percentile을 쓰므로 여기도
         // type==='villa'면 p40, 아니면 p30을 predictedPpp(실서빙 기준)로 씀.
-        const predicted = type === 'villa' ? pcts.p40 : pcts.p30;
+        // ⚠️ 2026-09(#496): 아파트도 40th로 통일함(index.html COMP_EST_PERCENTILE과 같은 기준).
+        const predicted = pcts.p40;
         results.push({
           dong: pre.dong, danji: pre.danji,
           predictedPpp: Math.round(predicted),
