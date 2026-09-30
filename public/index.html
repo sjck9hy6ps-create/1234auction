@@ -14107,6 +14107,82 @@ async function updateTaxRates() {
         btn.disabled = false; btn.innerText = '🔄 최신 세율 적용';
     }
 }
+/* ⚠️ 2026-09(#499, 사용자 요청 "앞으로의 가격 흐름 - 수도권은 대장아파트 기준, 지방아파트는 인기순
+   기준"): 낙찰 후 실제 매도까지 약 4개월 걸리므로, 현재 시세 기준 예상매도가에 "그 사이 오를 폭"을
+   더함. 전국 아파트 실거래 93만 건으로 검증(2025-07~2026-05 6개 시점에서, 단지·평형별 최근 3개월
+   시세로 다음 4개월 실거래를 예측 - 앞 3개 시점으로 계수를 정하고 뒤 3개 시점으로만 채점):
+   - 수도권: 같은 법정동 대장(평단가·거래량 백분위 평균 1위)의 최근 3개월 상승률 × 0.5를 더하면
+     중앙오차 3.92%→3.48%, 쏠림(과소평가) -2.4%→0%. 대장이 5~10% 오르면 나머지 단지는 다음 4개월
+     중앙 +4.8%(82%가 상승), 대장이 내려도 나머지는 거의 안 내림(±0%) → 상승분만 반영.
+     계수는 시점별로 0.31~0.58로 안정적이라 0.5를 씀. 대장 상승률은 10%까지만 인정(최대 +5%).
+   - 지방: 인기 상위 3개 단지(거래량 순)의 상승률 × 0.2(최대 +2%) - 검증상 효과가 작아(중앙오차
+     3.77%→3.71%) 보수적으로만 반영함. 지방은 대장 흐름을 따라가는 경향이 수도권보다 훨씬 약했음.
+   빌라는 검증하지 않았으므로 적용하지 않음. */
+var FWD_TREND_HORIZON_MONTHS = 4;
+var FWD_TREND_BETA_METRO = 0.5, FWD_TREND_BETA_LOCAL = 0.2, FWD_TREND_MOVE_CAP = 0.10;
+function calcForwardTrend(opts) {
+    // opts: { region, dong, buildingType }
+    if (!opts || opts.buildingType !== 'apt' || !opts.region || !opts.dong) return null;
+    var now = new Date();
+    var d3 = new Date(now); d3.setMonth(d3.getMonth() - 3);
+    var d9 = new Date(now); d9.setMonth(d9.getMonth() - 9);
+    function med(a) { var x = a.slice().sort(function(p, q) { return p - q; }); var m = x.length >> 1; return x.length % 2 ? x[m] : (x[m - 1] + x[m]) / 2; }
+    var complexes = [];
+    allAptList.forEach(function(a) {
+        if (a.buildingType !== 'apt' || !a.latest || a.latest.region !== opts.region || a.latest.dong !== opts.dong) return;
+        var units = {}, lvl = [], cnt = 0;
+        (a.trades || []).forEach(function(t) {
+            if (t.dealing_type === '직거래') return;
+            var td = tradeDate(t), amt = parseInt(t.amount), py = toPyung(t.area);
+            if (!(amt > 0) || !(py > 0) || td <= d9 || td > now) return;
+            var ppp = amt / py, k = Math.round(t.area);
+            if (!units[k]) units[k] = { rec: [], pri: [] };
+            (td > d3 ? units[k].rec : units[k].pri).push(ppp);
+            lvl.push(ppp); cnt++;
+        });
+        if (cnt < 3) return;
+        var moves = [];
+        Object.keys(units).forEach(function(k) { var u = units[k]; if (u.rec.length && u.pri.length) moves.push(med(u.rec) / med(u.pri) - 1); });
+        complexes.push({ name: a.latest.name, lvl: med(lvl), cnt: cnt, moves: moves });
+    });
+    if (complexes.length < 2) return null;
+    function pctMap(key) { var s = complexes.slice().sort(function(a, b) { return b[key] - a[key]; }); var m = {}; s.forEach(function(c, i) { m[c.name] = (s.length - i) / s.length; }); return m; }
+    var isMetro = /^(서울|경기|인천)/.test(opts.region);
+    var basis, group;
+    if (isMetro) {
+        var pp = pctMap('lvl'), vv = pctMap('cnt');
+        var leader = complexes.slice().sort(function(a, b) { var sa = (pp[a.name] + vv[a.name]) / 2, sb = (pp[b.name] + vv[b.name]) / 2; return sb !== sa ? sb - sa : b.cnt - a.cnt; })[0];
+        basis = '대장'; group = [leader];
+    } else {
+        basis = '인기단지'; group = complexes.slice().sort(function(a, b) { return b.cnt - a.cnt; }).slice(0, 3);
+    }
+    var allMoves = [];
+    group.forEach(function(c) { allMoves = allMoves.concat(c.moves); });
+    if (!allMoves.length) return null;
+    var move = med(allMoves);
+    var beta = isMetro ? FWD_TREND_BETA_METRO : FWD_TREND_BETA_LOCAL;
+    var forward = beta * Math.max(0, Math.min(move, FWD_TREND_MOVE_CAP));
+    return {
+        forwardPct: Math.round(forward * 1000) / 10,
+        basis: basis, isMetro: isMetro,
+        groupNames: group.map(function(c) { return c.name; }),
+        groupMovePct: Math.round(move * 1000) / 10,
+        horizonMonths: FWD_TREND_HORIZON_MONTHS
+    };
+}
+function calcForwardTrendForModal() {
+    if (document.getElementById('a-prop-type').value !== 'apt') return null;
+    var ctx = getAuctionAddressContext();
+    var addr = document.getElementById('a-addr').value || '';
+    // allAptList의 region 표기('경기 안산 단원구' 등)와 맞추기 위해 이 동을 가진 아파트 단지의 region을 그대로 씀
+    var sample = ctx.dong ? allAptList.find(function(a) { return a.buildingType === 'apt' && a.latest && a.latest.dong === ctx.dong && addr.indexOf(String(a.latest.region || '').split(' ').pop()) !== -1; }) : null;
+    if (!sample && ctx.dong) sample = allAptList.find(function(a) { return a.buildingType === 'apt' && a.latest && a.latest.dong === ctx.dong; });
+    if (!sample) return null;
+    return calcForwardTrend({ region: sample.latest.region, dong: ctx.dong, buildingType: 'apt' });
+}
+function applyForwardTrend(value, fwd) {
+    return (fwd && fwd.forwardPct > 0 && value > 0) ? Math.round(value * (1 + fwd.forwardPct / 100)) : value;
+}
 function calcCompValuation() {
     var box = document.getElementById('comp-valuation-result');
     if (!box) return;
@@ -14133,6 +14209,10 @@ function calcCompValuation() {
         // 목표를 위해 실거래뿐 아니라 현재 매물 재고·호가까지 계산에 실제로 반영되도록 함.
         var marketAdj = calcMarketAdjustedSalePrice();
         var baseValue = (marketAdj && marketAdj.blendedValue) ? marketAdj.blendedValue : est.estValue;
+        // #499: 매도 시점(약 4개월 후)까지의 예상 흐름을 반영한 값으로 적정입찰가를 역산함(아파트만)
+        var fwdTrend = calcForwardTrendForModal();
+        var baseValueNow = baseValue;
+        baseValue = applyForwardTrend(baseValue, fwdTrend);
         var r = solveAuctionBid(baseValue);
         var targetMargin = parseInt(document.getElementById('a-comp-target-margin').value) || 0;
         function vItem(label, value, color) {
@@ -14228,9 +14308,18 @@ function calcCompValuation() {
             + '<div class="margin-grid">'
             + vItem('비교 평단가(' + compEstPctLabel + ',시점보정)', Math.round(est.medPpp / 100) / 10 + '천만/평', '#555')
             + vItem('예상매각가(실거래 기반, 보수적)', estValueWithMedian, '#2e7d32')
-            + vItem('적정입찰가(비교물건 기준, 목표마진 ' + toEok(String(targetMargin)) + ' 역산)', r.bid > 0 ? toEok(String(r.bid)) : '마진 확보 불가', '#6a1b9a')
+            + vItem('적정입찰가(비교물건 기준, 목표마진 ' + toEok(String(targetMargin)) + ' 역산' + (fwdTrend && fwdTrend.forwardPct > 0 ? ', 매도시점 흐름 반영' : '') + ')', r.bid > 0 ? toEok(String(r.bid)) : '마진 확보 불가', '#6a1b9a')
             + jeonseItem
             + '</div>'
+            + (fwdTrend
+                ? '<div style="font-size:10.5px;color:#1a237e;background:#e8eaf6;border-radius:6px;padding:5px 8px;margin-top:6px;">'
+                    + '📈 <b>매도 시점(약 ' + fwdTrend.horizonMonths + '개월 후) 예상 흐름: ' + (fwdTrend.forwardPct > 0 ? '+' + fwdTrend.forwardPct + '%' : '변동 없음(보합)') + '</b>'
+                    + (fwdTrend.forwardPct > 0 ? ' → 예상매도가 ' + toEok(String(baseValue)) + ' <span style="color:#999;">(현재 시세 기준 ' + toEok(String(baseValueNow)) + ')</span>' : '')
+                    + '<br><span style="color:#555;">근거: ' + (fwdTrend.isMetro ? '이 동 대장아파트 ' : '이 동 인기 상위 단지 ') + fwdTrend.groupNames.join(', ') + '의 최근 3개월 시세 ' + (fwdTrend.groupMovePct >= 0 ? '+' : '') + fwdTrend.groupMovePct + '%</span>'
+                    + '<br><span style="color:#999;">' + (fwdTrend.isMetro
+                        ? '과거 검증(수도권 아파트): 대장이 오르면 나머지 단지는 다음 4개월간 대장 상승폭의 약 절반을 따라감(하락은 거의 안 따라감).'
+                        : '과거 검증(지방 아파트): 인기단지 흐름을 따라가는 경향이 약해 상승폭의 20%만 소폭 반영.') + '</span></div>'
+                : '')
             + (r.vatInfo && r.vatInfo.applicable && !r.vatInfo.computable
                 ? '<div style="font-size:10px;color:#e65100;margin-top:4px;">⚠️ ' + r.vatInfo.reason + '</div>'
                 : '')
@@ -14369,7 +14458,9 @@ function buildElevatorComparisonHtml() {
 function applyCompBid() {
     var est = getCompEstValue();
     if (!est) return;
-    var r = solveAuctionBid(est.estValue);
+    // #499: 화면의 적정입찰가와 같은 기준(매도시점 흐름 반영)으로 채움
+    var saleForBid = applyForwardTrend(est.estValue, calcForwardTrendForModal());
+    var r = solveAuctionBid(saleForBid);
     document.getElementById('a-my-bid').value = r.bid > 0 ? r.bid : 0;
     document.getElementById('a-tax').value = r.acqTax;
     document.getElementById('a-registry-fee').value = r.registryFee;
@@ -14377,7 +14468,7 @@ function applyCompBid() {
     document.getElementById('a-agent').value = r.agentFee;
     document.getElementById('a-moving').value = r.moving;
     document.getElementById('a-cleaning').value = r.cleaning;
-    document.getElementById('a-target').value = est.estValue;
+    document.getElementById('a-target').value = saleForBid;
     calcMargin();
 }
 /* ════════════════════════════════════
