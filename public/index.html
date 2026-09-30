@@ -6244,7 +6244,10 @@ function getCompEstValueHeadless(list, targetPyung, targetFloor, targetBuildYear
     // 사실상 최솟값에 가까워지는 경우가 많았던 것으로 보임. 빌라만 40th percentile로 올려서
     // 과도한 보수성을 완화함(데이터-coverage.js의 compEstPercentiles/backtestCompEstRegion과
     // 반드시 같은 기준을 써야 백테스트와 실서빙이 어긋나지 않음 - 그쪽도 함께 수정함).
-    var COMP_EST_PERCENTILE = (ctx && ctx.buildingType === 'villa') ? 0.4 : 0.3;
+    // ⚠️ 2026-09(#496, 백테스트 재실측 후 사용자 결정): 단독/다가구를 뺀 재백테스트 결과 빌라 40th가
+    // 50th와 정확도가 거의 같으면서(중앙값오차 7.7% vs 7.8%) 적당히 보수적이었고, 아파트 30th는
+    // 중앙값쏠림 +6.1%로 과하게 낮았음(50th면 중앙값오차 6.7%→4.6%) - 아파트도 40th로 통일함.
+    var COMP_EST_PERCENTILE = 0.4;
     var medPpp = sortedEntries.length >= 2 ? weightedPercentile(sortedEntries, COMP_EST_PERCENTILE) : sortedEntries[0].ppp;
     // getCompEstValue()(line ~13157)와 반드시 같이 맞춰야 함 - medianPpp(50th, 진짜 중앙값) 추가.
     var medianPppTrue = sortedEntries.length >= 2 ? weightedPercentile(sortedEntries, 0.5) : sortedEntries[0].ppp;
@@ -13167,7 +13170,10 @@ function getCompEstValue() {
     // 40th percentile로 올려 과도한 보수성을 완화함. data-coverage.js의 compEstPercentiles/
     // backtestCompEstRegion과 반드시 같은 기준을 써야 백테스트와 실서빙이 어긋나지 않음.
     // getCompEstValueHeadless()(line ~6146)와 반드시 같이 맞춰야 함(DOM 유무만 다른 쌍둥이 함수).
-    var COMP_EST_PERCENTILE = (targetBuildingTypeForMomentum === 'villa') ? 0.4 : 0.3;
+    // ⚠️ 2026-09(#496, 백테스트 재실측 후 사용자 결정): 단독/다가구를 뺀 재백테스트 결과 빌라 40th가
+    // 50th와 정확도가 거의 같으면서(중앙값오차 7.7% vs 7.8%) 적당히 보수적이었고, 아파트 30th는
+    // 중앙값쏠림 +6.1%로 과하게 낮았음(50th면 중앙값오차 6.7%→4.6%) - 아파트도 40th로 통일함.
+    var COMP_EST_PERCENTILE = 0.4;
     var medPpp = sortedEntries.length >= 2 ? weightedPercentile(sortedEntries, COMP_EST_PERCENTILE) : sortedEntries[0].ppp; // 만원/평 (유사도 필터+가중 + 시점보정 + 이상치 제거 반영됨)
     // ⚠️ 2026-09(사용자 요청 "보수적/중간값 나란히 표시"): medPpp라는 이름 때문에 실제로는
     // 30th percentile인데 "중간값"으로 오인하기 쉬웠음. 여기서 진짜 50th percentile(중앙값)도
@@ -14105,7 +14111,7 @@ function calcCompValuation() {
                 : '');
         // ⚠️ 2026-09(#494): 빌라는 percentile이 40th로 올라갔으므로(백테스트 실측 결과 30th가
         // 과도하게 낮았음) 라벨의 숫자도 물건유형에 맞게 표시함.
-        var compEstPctLabel = document.getElementById('a-prop-type').value === 'villa' ? '보수적 40%' : '보수적 30%';
+        var compEstPctLabel = '보수적 40%'; // #496: 아파트도 40th로 통일
         mainHtml = rangeLine + freshBadge + scaleMeasureBox
             + '<div class="margin-grid">'
             + vItem('비교 평단가(' + compEstPctLabel + ',시점보정)', Math.round(est.medPpp / 100) / 10 + '천만/평', '#555')
@@ -14146,7 +14152,7 @@ function calcCompValuation() {
         }
         var p50Line = '';
         if (compBt.mape_pct_p50 != null) {
-            p50Line = '<br><span style="color:#999;">참고 - 30th 대신 진짜 중앙값(50th percentile)을 썼다면: 평균오차율 ' + compBt.mape_pct_p50 + '%'
+            p50Line = '<br><span style="color:#999;">참고 - 40th 대신 진짜 중앙값(50th percentile)을 썼다면: 평균오차율 ' + compBt.mape_pct_p50 + '%'
                 + (compBt.mean_bias_pct_p50 != null ? ', 쏠림 평균 ' + (compBt.mean_bias_pct_p50 > 0 ? '+' : '') + compBt.mean_bias_pct_p50 + '%' : '') + '</span>';
         }
         // 한눈에 판단할 수 있는 요약 한 줄 - 오차율(mape_pct) 크기로 "믿을만함/주의" 톤을 정함.
@@ -14156,7 +14162,7 @@ function calcCompValuation() {
             : (compBt.mape_pct < 25 ? '⚠️ 참고용으로만(오차 다소 큼)' : '🚨 이 유형은 오차가 커서 주의 필요');
         compBtLine = '<div style="font-size:10px;color:#1565c0;background:#e3f2fd;border-radius:6px;padding:5px 8px;margin-top:6px;">'
             + '<div style="font-weight:bold;color:' + trustColor + ';margin-bottom:2px;">' + trustLabel + '</div>'
-            + '📊 이 계산방식(비교물건 ' + (compBtPropType === 'villa' ? '40th' : '30th') + ' percentile, ' + (compBtPropType === 'villa' ? '연립다세대' : '아파트') + ') 자체 검증(전국, ' + compBt.cutoff + ' 기준 예측 → 올해 실거래로 대조): '
+            + '📊 이 계산방식(비교물건 40th percentile, ' + (compBtPropType === 'villa' ? '연립다세대' : '아파트') + ') 자체 검증(전국, ' + compBt.cutoff + ' 기준 예측 → 올해 실거래로 대조): '
             + '평균 오차율 <b>' + compBt.mape_pct + '%</b>(중앙값 ' + compBt.median_ape_pct + '%, 표본 ' + compBt.sample_size.toLocaleString() + '건)'
             + biasLine + p50Line
             + '<br><span style="color:#999;">단순화된 검증치입니다 - 이 물건과의 평형·층·연식·거리 유사도 가중치는 반영되지 않은, 단지 단위 평균 오차입니다.</span>'
