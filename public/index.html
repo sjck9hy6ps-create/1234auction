@@ -6143,7 +6143,95 @@ function convertCandidateToCompRecordHeadless(cand) {
    "실사용 화면에서 보는 예상매도가"와 "백테스트 통계에 쓰인 예상매도가"가 서로 다른 산식이 되어버림.
    subjectHhldCnt는 항상 null로 취급함(배치 처리에서는 대상 물건의 세대수까지 조회하지 않음 -
    실사용 대비 규모보정만 생략되는 보수적인 단순화). */
+/* ⚠️ 2026-09(#498, 사용자 요청 "예상매도가 정확도 - 수도권 빌라"): 비교물건이 3건 미만일 때 쓰는
+   "동네 시세" 추정. 실측 백테스트(수도권 낙찰사례 중 실제 매도가가 확인된 건을, 입찰일 30일 전까지
+   신고된 거래만으로 예측해 실제 매도가와 대조)에서, 비교물건이 0건이면 예상매도가 자체를 못 냈고
+   (수도권 빌라 절반), 1~2건이면 중앙오차 17.5%·평균 24%로 크게 틀렸음(한두 건이 그 동네 시세를
+   대표하지 못함). 같은 법정동의 같은 유형·연식대(±5년)·비슷한 평형(±6평) 거래를 모아 평단가
+   40th percentile(비교물건 기준과 동일한 보수성)을 쓰면 - 표본이 5건 이상 모일 때까지 동→반경1km,
+   1년→2년 순서로 넓힘 - 수도권 빌라는 예측 가능 비율 53%→86%(중앙오차 12.0%→11.7%, 평균
+   17.7%→16.5%), 수도권 아파트는 69%→97%(중앙오차 6.1%→4.8%, 평균 17.7%→5.6%)로 좋아졌음.
+   비교물건이 3건 이상이면 기존 비교물건 값이 더 정확해서(빌라 중앙 10.3% vs 동네시세 11.2%) 그대로 씀.
+   ("동네 시세와 평균"·"반경 확대" 등 다른 방식도 시험했지만 이 방식이 가장 좋았음.) */
+var AREA_EST_MIN_SAMPLES = 5;
+var COMP_EST_MIN_FOR_COMPS = 3; // 비교물건이 이보다 적으면 동네 시세로 대체
+function calcAreaMarketEstimate(opts) {
+    // opts: { lat, lon, dong, buildingType('apt'|'villa'), pyung, buildYear, floor, asOf(선택 - 백테스트용 기준일, 없으면 오늘) }
+    if (!opts || !opts.pyung || (opts.buildingType !== 'apt' && opts.buildingType !== 'villa')) return null;
+    var now = opts.asOf ? new Date(opts.asOf) : new Date();
+    function collect(sameDongOnly, radius, days) {
+        var from = new Date(now); from.setDate(from.getDate() - days);
+        var ppps = [];
+        allAptList.forEach(function(a) {
+            if (a.buildingType !== opts.buildingType || !a.latest) return;
+            var l = a.latest;
+            if (sameDongOnly) {
+                if (!opts.dong || l.dong !== opts.dong) return;
+            } else {
+                if (opts.lat == null || opts.lon == null) return;
+                var cc = coordCache[[l.dong, l.name, l.bunji, l.road_name, l.main_num, l.sub_num].join('|').toLowerCase()];
+                if (!cc || getDistance(opts.lat, opts.lon, cc.lat, cc.lon) > radius) return;
+            }
+            (a.trades || []).forEach(function(t) {
+                var td = tradeDate(t);
+                if (td < from || td > now || t.dealing_type === '직거래') return;
+                var f = parseInt(t.floor);
+                var targetIsBasement = opts.floor !== null && opts.floor !== undefined && opts.floor < 1;
+                if (!(f >= 1) && !targetIsBasement) return; // 지하는 대상도 지하일 때만
+                var tpy = toPyung(t.area);
+                if (!(tpy > 0) || Math.abs(tpy - opts.pyung) > 6) return;
+                var by = parseInt(t.build_year);
+                if (opts.buildYear && (!Number.isFinite(by) || Math.abs(by - opts.buildYear) > 5)) return;
+                var amt = parseInt(t.amount);
+                if (amt > 0) ppps.push(amt / tpy);
+            });
+        });
+        return ppps;
+    }
+    var stages = [[true, 0, 365, '같은 동·최근 1년'], [false, 1000, 365, '반경 1km·최근 1년'], [true, 0, 730, '같은 동·최근 2년'], [false, 1000, 730, '반경 1km·최근 2년']];
+    for (var i = 0; i < stages.length; i++) {
+        var ppps = collect(stages[i][0], stages[i][1], stages[i][2]);
+        if (ppps.length < AREA_EST_MIN_SAMPLES) continue;
+        ppps.sort(function(a, b) { return a - b; });
+        var q = function(p) { var idx = (ppps.length - 1) * p, lo = Math.floor(idx), hi = Math.ceil(idx); return ppps[lo] + (ppps[hi] - ppps[lo]) * (idx - lo); };
+        return { ppp: q(0.4), pppMedian: q(0.5), pppLow: q(0.1), pppHigh: q(0.9), count: ppps.length, scope: stages[i][3] };
+    }
+    return null;
+}
+// 비교물건 결과(core, null 가능)에 동네 시세 대체를 적용 - getCompEstValue/getCompEstValueHeadless 공용.
+function applyAreaFallback(core, compCount, areaOpts) {
+    if (compCount >= COMP_EST_MIN_FOR_COMPS) return core;
+    var area = calcAreaMarketEstimate(areaOpts);
+    if (!area) {
+        // 동네 시세도 못 구하면 기존 값을 그대로 쓰되, 표본 부족을 표시만 함
+        if (core) { core.lowConfidence = true; core.compCountForConfidence = compCount; }
+        return core;
+    }
+    var py = areaOpts.pyung;
+    var base = core || { count: compCount, usedCount: 0, outlierCount: 0, oldestDays: null, anyAdjusted: false, scaleAdjustedCount: 0, subjectIsSmall: false, subjectHhldCnt: null };
+    return Object.assign({}, base, {
+        medPpp: area.ppp,
+        estValue: Math.round(area.ppp * py),
+        medianPpp: area.pppMedian,
+        medianValue: Math.round(area.pppMedian * py),
+        estValueMin: Math.round(area.pppLow * py),
+        estValueMax: Math.round(area.pppHigh * py),
+        areaFallback: true,
+        areaCount: area.count,
+        areaScope: area.scope,
+        compOnlyEstValue: core ? core.estValue : null,
+        compCountForConfidence: compCount,
+        lowConfidence: false,
+    });
+}
 function getCompEstValueHeadless(list, targetPyung, targetFloor, targetBuildYear, ctx) {
+    var core = (list && list.length) ? getCompEstValueHeadlessCore(list, targetPyung, targetFloor, targetBuildYear, ctx) : null;
+    return applyAreaFallback(core, (list || []).length, {
+        lat: ctx && ctx.lat, lon: ctx && ctx.lon, dong: ctx && ctx.dong, buildingType: ctx && ctx.buildingType,
+        pyung: targetPyung, buildYear: targetBuildYear, floor: targetFloor, asOf: ctx && ctx.asOf
+    });
+}
+function getCompEstValueHeadlessCore(list, targetPyung, targetFloor, targetBuildYear, ctx) {
     if (!list || !list.length || !targetPyung) return null;
     var subjectHhldCnt = null;
     var subjectIsSmall = false;
@@ -11626,7 +11714,7 @@ function computeBidCaseCandidates(c) {
     return { buildingType: buildingType, pyung: pyung, floor: floor, candidates: candidates, targetYear: targetYear };
 }
 function computeBidCasePredictedSale(cands, c) {
-    if (!cands || !cands.candidates.length) return null;
+    if (!cands) return null; // #498: 비교물건 0건이어도 동네 시세 대체를 위해 계속 진행
     var compRecords = cands.candidates.map(convertCandidateToCompRecordHeadless);
     var estResult = getCompEstValueHeadless(compRecords, cands.pyung, cands.floor, cands.targetYear, { lat: c.lat, lon: c.lon, name: c.buildingName, dong: c.dong, buildingType: cands.buildingType });
     return estResult ? estResult.estValue : null;
@@ -11797,7 +11885,7 @@ function computeAuctionWonCandidates(a) {
     return { buildingType: buildingType, pyung: pyung, floor: floor, candidates: candidates, targetYear: targetYear };
 }
 function computeAuctionWonPredictedSale(cands, a) {
-    if (!cands || !cands.candidates.length) return null;
+    if (!cands) return null; // #498: 비교물건 0건이어도 동네 시세 대체를 위해 계속 진행
     var compRecords = cands.candidates.map(convertCandidateToCompRecordHeadless);
     var estResult = getCompEstValueHeadless(compRecords, cands.pyung, cands.floor, cands.targetYear, { lat: a.lat, lon: a.lon, name: a.name, dong: a.dong, buildingType: cands.buildingType });
     return estResult ? estResult.estValue : null;
@@ -13005,6 +13093,19 @@ function returnToAuctionModal() {
    기준으로 보정한 뒤 median을 내고, 보정된 평단가들의 최소~최대 범위와 가장 오래된 비교물건의
    경과일수(신뢰도 판단용)도 함께 반환함. */
 function getCompEstValue() {
+    // #498: 비교물건 3건 미만이면 동네 시세로 대체(calcAreaMarketEstimate 주석 참고)
+    var core = getCompEstValueCore();
+    var targetPyung = parseFloat(document.getElementById('a-pyung').value) || null;
+    if (!targetPyung) return core;
+    var ctx = getAuctionAddressContext();
+    var fl = parseFloat(document.getElementById('a-floor').value);
+    var pt = document.getElementById('a-prop-type').value;
+    return applyAreaFallback(core, (pendingAuctionComparables || []).length, {
+        lat: ctx.lat, lon: ctx.lon, dong: ctx.dong, buildingType: pt === 'apt' || pt === 'villa' ? pt : null,
+        pyung: targetPyung, buildYear: getAuctionBuildYear(), floor: isNaN(fl) ? null : fl
+    });
+}
+function getCompEstValueCore() {
     var list = pendingAuctionComparables || [];
     if (!list.length) return null;
     var targetPyung = parseFloat(document.getElementById('a-pyung').value) || null;
@@ -14069,6 +14170,17 @@ function calcCompValuation() {
             freshInner += '<span style="color:#6a1b9a;font-size:9.5px;margin-left:5px;" title="이 물건은 소규모/나홀로 단지(' + (est.subjectHhldCnt || '?') + '세대)로 추정되어, 비교물건 중 대단지(300세대 이상) ' + est.scaleAdjustedCount + '건에 규모격차 할인(' + scaleDiscountPctUsed + '%, ' + (scaleDiscountOverride !== null ? '이 지역 실측값' : '기본값') + ')을 적용했습니다.">🏘️ 규모보정 적용(대단지 ' + est.scaleAdjustedCount + '건, ' + scaleDiscountPctUsed + '% 할인' + (scaleDiscountOverride !== null ? ' · 실측값' : '') + ')</span>';
         }
         if (freshInner) freshBadge = '<div style="margin:2px 0 4px;">' + freshInner + '</div>';
+        // #498(C): 예상매도가의 근거가 약할 때 눈에 띄게 알림 - 실측 백테스트에서 비교물건 1~2건
+        // 기반 값은 중앙오차 17.5%·평균 24%로 크게 틀렸음(3건 이상이면 약 10%).
+        if (est.areaFallback) {
+            freshBadge += '<div style="font-size:10.5px;color:#6d4c41;background:#fff8e1;border-radius:6px;padding:4px 8px;margin:2px 0 4px;">'
+                + '📍 비교물건이 ' + (est.compCountForConfidence || 0) + '건뿐이라 <b>동네 시세</b>(' + est.areaScope + ', 같은 유형·연식대·비슷한 평형 거래 ' + est.areaCount + '건)로 계산했습니다.'
+                + (est.compOnlyEstValue ? ' <span style="color:#999;">(비교물건만으로는 ' + toEok(String(est.compOnlyEstValue)) + ')</span>' : '')
+                + '<br><span style="color:#999;">비슷한 조건 거래가 3건 이상 쌓이면 비교물건 기준으로 자동 전환됩니다. 과거 검증 오차: 빌라 약 12%, 아파트 약 5%.</span></div>';
+        } else if (est.lowConfidence) {
+            freshBadge += '<div style="font-size:10.5px;color:#c62828;background:#ffebee;border-radius:6px;padding:4px 8px;margin:2px 0 4px;">'
+                + '⚠️ 비교물건 ' + (est.compCountForConfidence || 0) + '건 기준 값이라 오차가 클 수 있습니다(과거 검증: 1~2건 기준은 평균 오차 20%대). 주변 시세를 직접 확인하세요.</div>';
+        }
         // 규모격차 할인율 실측 - subject가 소규모/나홀로로 판별됐을 때만 노출(대단지 subject는
         // 애초에 할인 자체를 안 걸어서 실측이 무의미함). 아직 대단지 비교물건을 안 넣었어도
         // 미리 확인해볼 수 있게 scaleAdjustedCount 조건 없이 표시함.
