@@ -48,6 +48,32 @@ console.log(`\n📅 지역 지정 연립다세대+단독다가구 백필 시작`
 console.log(`대상 지역: ${targetRegions.map(r => `${r.name}(${r.code})`).join(', ')}`);
 console.log(`대상 연도: ${startYear} ~ ${endYear}\n`);
 
+// ⚠️ 2026-09(#498): 2026-07-01 인천 구 개편 이전 달은 국토부가 옛 코드(28110 중구/28140 동구/
+// 28260 서구)로만 거래를 내려주므로, 새 구 코드(제물포/영종/서해/검단)로 과거 달을 조회하면
+// 빈 응답만 옴 - 그래서 수도권 빌라 실측 백테스트에서 이 4개 구가 2024-10~2026-04 통째로 비어
+// 있었음. 개편 이전 달은 옛 코드로 조회한 뒤, unify-region-names-migration.sql PART C와 똑같은
+// 동(dong) 기준으로 새 구에 나눠 담음(같은 규칙이어야 이미 이관된 기존 행과 중복/충돌이 안 남).
+const INCHEON_REORG_YM = '202607';
+const YEONGJONG_DONGS = ['중산동', '운남동', '운북동', '운서동', '을왕동', '남북동', '덕교동', '무의동'];
+const GEOMDAN_DONGS = ['검단동', '불로대곡동', '원당동', '당하동', '오류왕길동', '마전동', '아라동', '아라1동', '아라2동'];
+const INCHEON_LEGACY = {
+  '28125': [{ code: '28110', keep: d => !YEONGJONG_DONGS.includes(d) }, { code: '28140', keep: () => true }], // 제물포구
+  '28155': [{ code: '28110', keep: d => YEONGJONG_DONGS.includes(d) }],                                     // 영종구
+  '28275': [{ code: '28260', keep: d => !GEOMDAN_DONGS.includes(d) }],                                      // 서해구
+  '28290': [{ code: '28260', keep: d => GEOMDAN_DONGS.includes(d) }],                                       // 검단구
+};
+async function fetchMonthWithLegacy(fetchFn, code, name, ym) {
+  const legacy = INCHEON_LEGACY[code];
+  if (!legacy || ym >= INCHEON_REORG_YM) return fetchFn(code, name, ym);
+  const rows = [];
+  for (const src of legacy) {
+    const r = await fetchFn(src.code, name, ym); // region 라벨은 새 구 이름(name)으로 붙음
+    rows.push(...r.filter(row => src.keep(String(row.dong || '').trim())));
+    await sleep(DELAY_MS);
+  }
+  return rows;
+}
+
 let totalVilla  = 0;
 let totalSingle = 0;
 // 지역별/월별 건수를 따로 기록해서, 실행 로그만 보고도 "그 달에 실거래가 원래 없는 것"인지
@@ -65,11 +91,11 @@ for (let year = startYear; year <= endYear; year++) {
     const singleRows = [];
 
     for (const { code, name } of targetRegions) {
-      const vRows = await fetchMonthVilla(code, name, ym);
+      const vRows = await fetchMonthWithLegacy(fetchMonthVilla, code, name, ym);
       villaRows.push(...vRows);
       await sleep(DELAY_MS);
 
-      const sRows = await fetchMonthSingle(code, name, ym);
+      const sRows = await fetchMonthWithLegacy(fetchMonthSingle, code, name, ym);
       singleRows.push(...sRows);
       await sleep(DELAY_MS);
 
