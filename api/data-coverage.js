@@ -2270,9 +2270,14 @@ async function getRegionTradeRowsPpp(type, region, start, end) {
     return rows;
   }
   let raw;
+  // ⚠️ 2026-09(#495, 빌라 백테스트 재분석): 원래 villa면 single_trades(단독/다가구)까지 합쳤는데,
+  // (1) 실서빙 비교물건 검색(index.html findComparablesInRadius 등)은 buildingType==='single'을
+  // 항상 제외하므로 실서빙과 기준이 달랐고, (2) 단독/다가구는 danji가 "숭의동 1**"처럼 지번이
+  // 마스킹된 값이라 서로 무관한 건물들이 한 "단지"로 묶여 예측이 크게 틀렸음(실측: 빌라 표본
+  // 874건 중 486건이 이 마스킹 그룹, MAPE 45.4% - 실제 연립다세대만 보면 MAPE 14.0%).
+  // 그래서 villa는 villa_trades만 씀.
   if (type === 'villa') {
-    const [v, s] = await Promise.all([fetchTable('villa_trades'), fetchTable('single_trades')]);
-    raw = [...v, ...s];
+    raw = await fetchTable('villa_trades');
   } else {
     raw = await fetchTable('house_trades');
   }
