@@ -111,7 +111,7 @@ async function runOneType(targets, type) {
   const p30 = summarizeErrors(allRows, 'predictedPpp');       // 실서빙값(30th, 보수적)
   const p50 = summarizeErrors(allRows, 'predictedMedianPpp'); // 진짜 중앙값(50th, 참고 비교용)
 
-  console.log(`\n📊 [${type}] 집계 결과 (30th percentile - 실서빙 기준)`);
+  console.log(`\n📊 [${type}] 집계 결과 (${type === 'villa' ? '40th' : '30th'} percentile - 실서빙 기준)`);
   console.log('컷오프:', cutoff, '/ 검사한 지역 수:', regionsChecked);
   console.log('표본 수:', p30.n, '/ MAPE:', p30.mapePct, '% / 중앙값오차율:', p30.medianApePct,
     '% / 평균쏠림(부호):', p30.meanBiasPct, '% / 중앙값쏠림(부호):', p30.medianBiasPct, '%');
@@ -147,7 +147,7 @@ async function runOneType(targets, type) {
 }
 
 async function main() {
-  console.log('📊 예상매도가(30th percentile) 백테스트 시작:', new Date().toISOString());
+  console.log('📊 예상매도가(apt 30th / villa 40th percentile) 백테스트 시작:', new Date().toISOString());
   console.log('SITE_URL:', SITE_URL);
 
   const targets = await fetchRegionList();
