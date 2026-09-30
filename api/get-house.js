@@ -123,13 +123,19 @@ const FETCH_PAGE_SIZE = 1000;
 // 직접 SQL로 조회하므로 이 변경과 무관함) - 사용자 요청대로 클라이언트 로딩은 최근 2년으로
 // 제한하고, 그 이전 데이터는 DB에 그대로 남겨 "백데이터"로만 계속 활용함(삭제 아님).
 const RECENT_WINDOW_YEARS = 2;
-function recentCutoffDateStr() {
+// ⚠️ 2026-09(#498, 예상매도가 실측 백테스트): 연립다세대는 아파트보다 거래가 훨씬 드물어서, 수도권
+// 빌라 낙찰사례의 절반가량이 "비교물건 없음"으로 예상매도가를 못 냈음. 비교물건 검색
+// (index.html findSimilarComps)은 1년→2년→10년 순으로 기간을 넓혀가며 찾는데, 클라이언트가 2년치만
+// 받으면 그 폴백이 2년에서 막힘 - 빌라만 3년으로 늘림(빌라 거래량은 아파트의 수분의 1이라 응답
+// 크기 부담이 작음).
+const RECENT_WINDOW_YEARS_VILLA = 3;
+function recentCutoffDateStr(years) {
   const d = new Date();
-  d.setFullYear(d.getFullYear() - RECENT_WINDOW_YEARS);
+  d.setFullYear(d.getFullYear() - (years || RECENT_WINDOW_YEARS));
   return String(d.getFullYear()) + String(d.getMonth() + 1).padStart(2, '0') + String(d.getDate()).padStart(2, '0');
 }
 async function fetchAllRows(table, regionName) {
-  const cutoff = recentCutoffDateStr();
+  const cutoff = recentCutoffDateStr(table === 'villa_trades' ? RECENT_WINDOW_YEARS_VILLA : RECENT_WINDOW_YEARS);
   const { count, error: countError } = await supabase
     .from(table)
     .select('id', { count: 'exact', head: true })
