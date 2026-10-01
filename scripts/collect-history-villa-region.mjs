@@ -62,9 +62,15 @@ const INCHEON_LEGACY = {
   '28275': [{ code: '28260', keep: d => !GEOMDAN_DONGS.includes(d) }],                                      // 서해구
   '28290': [{ code: '28260', keep: d => GEOMDAN_DONGS.includes(d) }],                                       // 검단구
 };
+// ⚠️ 2026-10(#498 실행 결과 반영): 실제로 돌려보니 옛 코드(28110/28140/28260)는 모든 달이 0건이었고,
+// 이미 DB에 있던 서해구 2025-11~ 데이터는 새 코드로 수집된 것이었음 - 국토부가 과거 거래도 새 구
+// 코드로 다시 분류해 둔 것으로 보임. 그래서 새 코드로 먼저 조회하고, 그 결과가 0건일 때만 옛 코드로
+// 한 번 더 시도함(혹시 일부 달만 옛 코드에 남아있는 경우 대비).
 async function fetchMonthWithLegacy(fetchFn, code, name, ym) {
   const legacy = INCHEON_LEGACY[code];
-  if (!legacy || ym >= INCHEON_REORG_YM) return fetchFn(code, name, ym);
+  const direct = await fetchFn(code, name, ym);
+  if (direct.length || !legacy || ym >= INCHEON_REORG_YM) return direct;
+  await sleep(DELAY_MS);
   const rows = [];
   for (const src of legacy) {
     const r = await fetchFn(src.code, name, ym); // region 라벨은 새 구 이름(name)으로 붙음
