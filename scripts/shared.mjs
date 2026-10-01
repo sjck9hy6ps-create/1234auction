@@ -388,6 +388,28 @@ export async function fetchMonth(code, name, ym) {
   }
   return [];
 }
+// ⚠️ 2026-10: 한 달치(아파트 매매 약 4.5만 행, 전월세 약 8만 행)를 한 번의 upsert로 보내면 Supabase
+// statement timeout(또는 Cloudflare 520)으로 그 달 전체가 통째로 저장 실패했음(2026-10-01 재수집에서
+// 1~4·6~7월 실패 실측). 2,000행씩 나눠 보내고, 실패한 묶음은 잠시 쉬었다가 최대 3번 재시도함.
+export const UPSERT_CHUNK_SIZE = 2000;
+export async function upsertChunked(table, rows, onConflict) {
+  let failed = 0;
+  for (let i = 0; i < rows.length; i += UPSERT_CHUNK_SIZE) {
+    const chunk = rows.slice(i, i + UPSERT_CHUNK_SIZE);
+    let ok = false;
+    for (let attempt = 1; attempt <= 3 && !ok; attempt++) {
+      const { error } = await supabase.from(table).upsert(chunk, { onConflict });
+      if (!error) { ok = true; break; }
+      const msg = String(error.message || '').slice(0, 120);
+      console.error(`❌ ${table} upsert 에러(${i}~${i + chunk.length}행, 시도 ${attempt}/3): ${msg}`);
+      await sleep(3000 * attempt);
+    }
+    if (!ok) failed += chunk.length;
+  }
+  if (failed) console.error(`⚠️ ${table}: ${failed}행 최종 저장 실패 - 다시 실행해 주세요.`);
+  return failed;
+}
+
 export async function upsertBatch(rows) {
   if (rows.length === 0) return;
   const uniqueRows = Array.from(
@@ -398,8 +420,5 @@ export async function upsertBatch(rows) {
       ])
     ).values()
   );
-  const { error } = await supabase.from('house_trades').upsert(uniqueRows, {
-    onConflict: 'region,dong,danji,size,floor,deal_date'
-  });
-  if (error) console.error('❌ upsert 에러:', error.message);
+  await upsertChunked('house_trades', uniqueRows, 'region,dong,danji,size,floor,deal_date');
 }

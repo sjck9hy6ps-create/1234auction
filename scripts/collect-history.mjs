@@ -1,6 +1,6 @@
 import { createClient } from '@supabase/supabase-js';
 import ws from 'ws';
-import { LAWD_CODES, fetchMonth, sleep, DELAY_MS } from './shared.mjs';
+import { LAWD_CODES, fetchMonth, sleep, DELAY_MS, upsertChunked } from './shared.mjs';
 
 // ⚠️ 2026-09: Node 20은 네이티브 WebSocket이 없어 ws 패키지를 transport로 명시하지
 // 않으면 createClient()가 즉시 예외를 던짐(shared.mjs 등 다른 파일들은 이미 이 옵션이
@@ -58,15 +58,7 @@ for (const month of targetMonths) {
     ).values()
   );
 
-  const { error } = await supabase
-    .from('house_trades')
-    .upsert(uniqueRows, {
-      onConflict: 'region,dong,danji,size,floor,deal_date'
-    });
-
-  if (error) {
-    console.error(`❌ upsert 에러: ${error.message}`);
-  }
+  await upsertChunked('house_trades', uniqueRows, 'region,dong,danji,size,floor,deal_date');
 
   totalInserted += uniqueRows.length;
   console.log(`✅ ${ym} 완료: ${uniqueRows.length}건 (누적 ${totalInserted}건)`);

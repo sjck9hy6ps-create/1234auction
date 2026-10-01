@@ -1,6 +1,6 @@
 import { createClient } from '@supabase/supabase-js';
 import ws from 'ws';
-import { LAWD_CODES } from './shared.mjs';
+import { LAWD_CODES, upsertChunked } from './shared.mjs';
 
 export { LAWD_CODES };
 
@@ -130,8 +130,5 @@ export async function upsertRent(rows) {
       `${r.region}_${r.dong}_${r.danji}_${r.size}_${r.floor}_${r.deal_date}`, r
     ])).values()
   );
-  const { error } = await supabase.from('house_rent').upsert(uniqueRows, {
-    onConflict: 'region,dong,danji,size,floor,deal_date'
-  });
-  if (error) console.error('❌ house_rent upsert 에러:', error.message);
+  await upsertChunked('house_rent', uniqueRows, 'region,dong,danji,size,floor,deal_date');
 }
