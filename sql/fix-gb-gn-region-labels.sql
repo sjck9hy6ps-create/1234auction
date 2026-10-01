@@ -14,7 +14,7 @@
 
 BEGIN;
 
-CREATE TEMP TABLE em_map (prov text, em text, county text) ON COMMIT DROP;
+CREATE TEMP TABLE em_map (prov text, em text, county text);
 INSERT INTO em_map VALUES
 ('경북','가산면','경북 칠곡군'),
 ('경북','가음면','경북 의성군'),
@@ -295,9 +295,9 @@ UPDATE villa_rent SET region = 'ZZFIX_' || pg_temp.fix_region(region, dong)
   WHERE region IN ('경북 의성군', '경북 청송군', '경북 영양군', '경북 영덕군', '경북 청도군', '경북 고령군', '경북 성주군', '경북 칠곡군', '경북 예천군', '경북 봉화군', '경북 울진군', '경북 울릉군', '경남 고성군', '경남 남해군', '경남 하동군', '경남 산청군', '경남 함양군', '경남 거창군', '경남 합천군') AND pg_temp.fix_region(region, dong) <> region;
 UPDATE villa_rent SET region = substring(region from 7) WHERE region LIKE 'ZZFIX\_%';
 
+COMMIT;
+
 -- ---- 확인: 이름과 읍·면이 안 맞는 행이 남았는지(0이어야 정상) ----
 SELECT 'house_trades' AS tbl, count(*) AS mismatched FROM house_trades WHERE region IN ('경북 의성군', '경북 청송군', '경북 영양군', '경북 영덕군', '경북 청도군', '경북 고령군', '경북 성주군', '경북 칠곡군', '경북 예천군', '경북 봉화군', '경북 울진군', '경북 울릉군', '경남 고성군', '경남 남해군', '경남 하동군', '경남 산청군', '경남 함양군', '경남 거창군', '경남 합천군') AND pg_temp.fix_region(region, dong) <> region
 UNION ALL SELECT 'villa_trades', count(*) FROM villa_trades WHERE region IN ('경북 의성군', '경북 청송군', '경북 영양군', '경북 영덕군', '경북 청도군', '경북 고령군', '경북 성주군', '경북 칠곡군', '경북 예천군', '경북 봉화군', '경북 울진군', '경북 울릉군', '경남 고성군', '경남 남해군', '경남 하동군', '경남 산청군', '경남 함양군', '경남 거창군', '경남 합천군') AND pg_temp.fix_region(region, dong) <> region
 UNION ALL SELECT 'house_rent', count(*) FROM house_rent WHERE region IN ('경북 의성군', '경북 청송군', '경북 영양군', '경북 영덕군', '경북 청도군', '경북 고령군', '경북 성주군', '경북 칠곡군', '경북 예천군', '경북 봉화군', '경북 울진군', '경북 울릉군', '경남 고성군', '경남 남해군', '경남 하동군', '경남 산청군', '경남 함양군', '경남 거창군', '경남 합천군') AND pg_temp.fix_region(region, dong) <> region;
-
-COMMIT;
