@@ -110,13 +110,18 @@ function guessPropTypeFromCase(c) {
   if (t.indexOf('상가') !== -1 || t.indexOf('토지') !== -1) return 'other';
   return 'villa';
 }
+// ⚠️ 2026-10(#502): index.html의 dongKey와 동일 - 국토부는 읍·면 동을 "완도읍 군내리"로, 경매 주소는 "군내리"로 주므로 마지막 단어만 비교.
+function dongKey(d) {
+  var t = String(d || '').trim().split(/\s+/);
+  return t[t.length - 1] || '';
+}
 function scoreResaleCandidate(c, row, areaTolerance) {
   var rowName = (row.danji || '').trim();
   var rowNameBase = stripVillaDongSuffix(rowName);
   var buildingNameBase = stripVillaDongSuffix(c.buildingName || '');
   var nameExact = !!(c.buildingName && rowName && (rowName === c.buildingName || (buildingNameBase && rowNameBase && rowNameBase === buildingNameBase)));
-  var bunjiExact = !!(c.dong && c.bunji && row.dong === c.dong && normalizeBunjiStr(row.bunji) === normalizeBunjiStr(c.bunji));
-  var nameContains = !!(c.buildingName && rowName && c.dong && row.dong === c.dong
+  var bunjiExact = !!(c.dong && c.bunji && dongKey(row.dong) === dongKey(c.dong) && normalizeBunjiStr(row.bunji) === normalizeBunjiStr(c.bunji));
+  var nameContains = !!(c.buildingName && rowName && c.dong && dongKey(row.dong) === dongKey(c.dong)
     && c.buildingName.length >= 2 && rowName.length >= 2
     && (rowName.indexOf(c.buildingName) !== -1 || c.buildingName.indexOf(rowName) !== -1));
   if (!nameExact && !bunjiExact && !nameContains) return null;

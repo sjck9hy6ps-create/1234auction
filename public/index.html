@@ -1914,12 +1914,19 @@ function rebuildMergedLists() {
 // (①동+지번 정확히 일치 우선 ②둘 다 지번이 있는데 다르면 이름매칭도 거부)을 그대로 보존함.
 var aptIndexByDongBunji = new Map();
 var aptIndexByName = new Map();
+/* ⚠️ 2026-10(#502, 전남 낙찰사례 실측에서 발견): 국토부 실거래는 읍·면 지역의 동을 "완도읍 군내리"처럼
+   읍·면을 붙여 주는데, 경매 주소에서 뽑은 동은 "군내리"만 있어서 같은 건물인데도 매칭이 안 됐음
+   (전남·광주 낙찰사례 975건 중 120건이 이 이유로 단지를 못 찾음). 동을 비교할 때는 마지막 단어만 씀. */
+function dongKey(d) {
+    var t = String(d || '').trim().split(/\s+/);
+    return t[t.length - 1] || '';
+}
 function buildAptMatchIndex() {
     aptIndexByDongBunji = new Map();
     aptIndexByName = new Map();
     allAptList.forEach(function(apt) {
         var l = apt.latest || {};
-        var dong = (l.dong || '').trim();
+        var dong = dongKey(l.dong);
         var bunji = (l.bunji || '').trim();
         if (dong && bunji) {
             var key = dong + '|' + bunji;
@@ -1940,7 +1947,7 @@ function buildAptMatchIndex() {
    matchesAuctionKey는 양쪽을 대칭으로 비교하므로 순서가 바뀌어도 결과는 같음. */
 function findMatchedAptByKey(name, dong, bunji) {
     var n = matchNormName(name || '').trim();
-    var d = (dong || '').trim();
+    var d = dongKey(dong);
     var b = (bunji || '').trim();
     if (d && b) {
         var arr = aptIndexByDongBunji.get(d + '|' + b);
@@ -6171,14 +6178,14 @@ function calcAreaMarketEstimate(opts) {
     var dongRegion = null;
     if (opts.dong) {
         var sameDongRegions = {};
-        allAptList.forEach(function(a) { if (a.latest && a.latest.dong === opts.dong && a.latest.region) sameDongRegions[a.latest.region] = true; });
+        allAptList.forEach(function(a) { if (a.latest && dongKey(a.latest.dong) === dongKey(opts.dong) && a.latest.region) sameDongRegions[a.latest.region] = true; });
         var regionList = Object.keys(sameDongRegions);
         if (regionList.length === 1) {
             dongRegion = regionList[0];
         } else if (regionList.length > 1 && opts.lat != null && opts.lon != null) {
             var regionVotes = {};
             allAptList.forEach(function(a) {
-                if (!a.latest || a.latest.dong !== opts.dong || !a.latest.region) return;
+                if (!a.latest || dongKey(a.latest.dong) !== dongKey(opts.dong) || !a.latest.region) return;
                 var cc = coordCache[keyOf(a.latest)];
                 if (cc && getDistance(opts.lat, opts.lon, cc.lat, cc.lon) <= 3000) regionVotes[a.latest.region] = (regionVotes[a.latest.region] || 0) + 1;
             });
@@ -6202,7 +6209,7 @@ function calcAreaMarketEstimate(opts) {
             if (a.buildingType !== opts.buildingType || !a.latest) return;
             var l = a.latest;
             if (sameDongOnly) {
-                if (!opts.dong || !dongRegion || l.dong !== opts.dong || l.region !== dongRegion) return;
+                if (!opts.dong || !dongRegion || dongKey(l.dong) !== dongKey(opts.dong) || l.region !== dongRegion) return;
             } else {
                 if (opts.lat == null || opts.lon == null) return;
                 var cc = coordCache[[l.dong, l.name, l.bunji, l.road_name, l.main_num, l.sub_num].join('|').toLowerCase()];
@@ -6597,8 +6604,8 @@ function scoreResaleCandidate(c, row, areaTolerance) {
     var rowNameBase = matchNormName(rowName);
     var buildingNameBase = matchNormName(c.buildingName || '');
     var nameExact = !!(c.buildingName && rowName && (rowName === c.buildingName || (buildingNameBase && rowNameBase && rowNameBase === buildingNameBase)));
-    var bunjiExact = !!(c.dong && c.bunji && row.dong === c.dong && normalizeBunjiStr(row.bunji) === normalizeBunjiStr(c.bunji));
-    var nameContains = !!(c.buildingName && rowName && c.dong && row.dong === c.dong
+    var bunjiExact = !!(c.dong && c.bunji && dongKey(row.dong) === dongKey(c.dong) && normalizeBunjiStr(row.bunji) === normalizeBunjiStr(c.bunji));
+    var nameContains = !!(c.buildingName && rowName && c.dong && dongKey(row.dong) === dongKey(c.dong)
         && c.buildingName.length >= 2 && rowName.length >= 2
         && (rowName.indexOf(c.buildingName) !== -1 || c.buildingName.indexOf(rowName) !== -1));
     if (!nameExact && !bunjiExact && !nameContains) return null;
@@ -10993,9 +11000,9 @@ function matchesAuctionKey(a, name, dong, bunji) {
     // 동 구분자를 뗀 뒤 비교함.
     var aName = matchNormName(a.name || '');
     var n = matchNormName(name || '');
-    var aDong = (a.dong || '').trim();
+    var aDong = dongKey(a.dong);
     var aBunji = (a.bunji || '').trim();
-    var d = (dong || '').trim();
+    var d = dongKey(dong);
     var b = (bunji || '').trim();
     if (d && b && aDong && aBunji && aDong === d && aBunji === b) return true;
     // ⚠️ 2026-08: 임학동 "산호빌라"처럼 완전히 다른 지번(44-15 / 69-11)에 같은 이름의 건물이
@@ -12775,7 +12782,7 @@ async function measureScaleDiscount() {
     var candidates = allAptList.filter(function(a) {
         if (a.buildingType !== 'apt') return false;
         var l = a.latest || {};
-        if (ctx.name && l.name === ctx.name && l.dong === ctx.dong) return false; // 대상 자신 제외
+        if (ctx.name && l.name === ctx.name && dongKey(l.dong) === dongKey(ctx.dong)) return false; // 대상 자신 제외
         if (targetYear) {
             var by = parseInt(l.build_year);
             if (!Number.isFinite(by) || Math.abs(by - targetYear) > 7) return false;
@@ -14197,7 +14204,7 @@ function calcForwardTrend(opts) {
     var regime = regionMove === null ? null : (regionMove < -0.02 ? '하락장' : (regionMove > 0.02 ? '상승장' : '보합장'));
     var complexes = [];
     allAptList.forEach(function(a) {
-        if (a.buildingType !== 'apt' || !a.latest || a.latest.region !== opts.region || a.latest.dong !== opts.dong) return;
+        if (a.buildingType !== 'apt' || !a.latest || a.latest.region !== opts.region || dongKey(a.latest.dong) !== dongKey(opts.dong)) return;
         var units = {}, lvl = [], cnt = 0;
         (a.trades || []).forEach(function(t) {
             if (t.dealing_type === '직거래') return;
@@ -14251,8 +14258,8 @@ function calcForwardTrendForModal() {
     var ctx = getAuctionAddressContext();
     var addr = document.getElementById('a-addr').value || '';
     // allAptList의 region 표기('경기 안산 단원구' 등)와 맞추기 위해 이 동을 가진 아파트 단지의 region을 그대로 씀
-    var sample = ctx.dong ? allAptList.find(function(a) { return a.buildingType === 'apt' && a.latest && a.latest.dong === ctx.dong && addr.indexOf(String(a.latest.region || '').split(' ').pop()) !== -1; }) : null;
-    if (!sample && ctx.dong) sample = allAptList.find(function(a) { return a.buildingType === 'apt' && a.latest && a.latest.dong === ctx.dong; });
+    var sample = ctx.dong ? allAptList.find(function(a) { return a.buildingType === 'apt' && a.latest && dongKey(a.latest.dong) === dongKey(ctx.dong) && addr.indexOf(String(a.latest.region || '').split(' ').pop()) !== -1; }) : null;
+    if (!sample && ctx.dong) sample = allAptList.find(function(a) { return a.buildingType === 'apt' && a.latest && dongKey(a.latest.dong) === dongKey(ctx.dong); });
     if (!sample) return null;
     return calcForwardTrend({ region: sample.latest.region, dong: ctx.dong, buildingType: 'apt' });
 }
