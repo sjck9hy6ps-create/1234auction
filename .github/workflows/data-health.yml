@@ -1,0 +1,27 @@
+name: 데이터 자동 점검 (거래 건수·지역코드)
+
+# 매주 화요일 오전 9시(KST) - 월요일 주간 수집(아파트 10:00, 빌라 10:30, 전월세 11:00)이 끝난 뒤.
+# 문제가 있으면 이 작업이 "실패"로 끝나고 GitHub가 저장소 주인에게 메일로 알려줌.
+# 결과 표는 실행 화면의 Summary에서 볼 수 있음. scripts/check-data-health.mjs 상단 주석 참고.
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 0 * * 2'
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: 의존성 설치
+        run: npm install @supabase/supabase-js ws
+      - name: 데이터 점검 실행
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          KAKAO_REST_API_KEY: ${{ secrets.KAKAO_REST_API_KEY }}
+        run: node scripts/check-data-health.mjs
