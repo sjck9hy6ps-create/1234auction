@@ -1091,6 +1091,31 @@ async function computeLeaderFollowerFresh(type, region, force, asOfDate) {
   // 이전 구간은 이미 신고기한이 한참 지나 사실상 확정된 값이라 안전하게 저장). 이 저장이
   // 실패해도(예: 테이블 미생성) saveSeriesBaseline 내부에서 조용히 무시하고 계속 진행함 -
   // 다음 호출이 다시 0구간부터 스캔하게 될 뿐, 이번 요청의 결과 자체는 영향받지 않음.
+  // ⚠️ 2026-10(#505, 사용자 요청 "모든 아파트 배지에 순위가 있어야 함"): 국토부가 행정구역 개편 후
+  // 같은 동을 다른 표기로 주는 경우(화성 분구 후 "목동" → "동탄구 목동", 읍·면은 "완도읍 군내리")가 있어
+  // 같은 동의 이력이 두 그룹으로 쪼개지고 순위가 지도 배지와 안 맞았음(화성 705개 단지 중 271개).
+  // 동 이름의 마지막 단어 기준으로 합쳐서 계산함(같은 구간에 둘 다 거래가 있으면 거래량 가중평균).
+  {
+    const lfDongKey = (d) => { const t = String(d || '').trim().split(/\s+/); return t[t.length - 1] || ''; };
+    const normMap = {};
+    Object.entries(dongMap).forEach(([dong, danjis]) => {
+      const k = lfDongKey(dong);
+      if (!normMap[k]) normMap[k] = {};
+      Object.entries(danjis).forEach(([name, d]) => {
+        const t = normMap[k][name];
+        if (!t) { normMap[k][name] = { avgArr: d.avgArr.slice(), countArr: d.countArr.slice() }; return; }
+        for (let i = 0; i < bucketN; i++) {
+          const dc = d.countArr[i] || 0;
+          if (!dc) continue;
+          const tc = t.countArr[i] || 0;
+          t.avgArr[i] = tc > 0 ? ((t.avgArr[i] || 0) * tc + (d.avgArr[i] || 0) * dc) / (tc + dc) : d.avgArr[i];
+          t.countArr[i] = tc + dc;
+        }
+      });
+    });
+    Object.keys(dongMap).forEach((k) => { delete dongMap[k]; });
+    Object.assign(dongMap, normMap);
+  }
   const LF_RECENT_REFRESH_BUCKETS = 3;
   const newThrough = Math.max(0, bucketN - LF_RECENT_REFRESH_BUCKETS);
   if (!isBacktest && newThrough > baseThrough) { // 저장할 새 구간이 실제로 생겼을 때만 씀(완전히 같은 날 재호출 등은 스킵) - 백테스트(과거 시점 시뮬레이션)는 절대 실캐시에 쓰지 않음
@@ -1126,7 +1151,8 @@ async function computeLeaderFollowerFresh(type, region, force, asOfDate) {
         .not('households', 'is', null);
       (kaptRows || []).forEach((r) => {
         if (!r.as3 || !(r.households > 0)) return;
-        const key = `${r.as3}|${normalizeComplexName(r.kapt_name)}`;
+        const as3Key = String(r.as3).trim().split(/\s+/).pop(); // 동 그룹과 같은 기준(마지막 단어)
+        const key = `${as3Key}|${normalizeComplexName(r.kapt_name)}`;
         // 같은 키에 여러 행이 있으면(리모델링 등으로 K-apt에 신구 레코드가 같이 남아있는 경우)
         // 세대수가 더 큰 쪽을 보수적으로 채택
         if (!householdMap[key] || r.households > householdMap[key]) householdMap[key] = r.households;
@@ -1151,11 +1177,22 @@ async function computeLeaderFollowerFresh(type, region, force, asOfDate) {
   const candidates = []; // 순위 매길 후보(대장 자신은 제외)
   Object.entries(dongMap).forEach(([dong, danjis]) => {
     // 이 법정동에서 최소 거래요건을 만족하는 단지만 후보로 삼음
+    // ⚠️ 2026-10(#505): 누적 거래 20건 미만 단지는 대장 후보에선 빼되(표본 부족 오탐 방지 - 기존 원칙),
+    // 순위는 매기도록 따로 모아둠(minors) - 예전엔 순위에서도 통째로 빠져 지도 배지에 순위가 없었음.
+    const minors = [];
     const qualified = Object.entries(danjis)
       .map(([name, d]) => {
         const totalCount = d.countArr.reduce((a, b) => a + b, 0);
         const g = genesisSeries(d.avgArr, d.countArr);
-        if (!g || totalCount < LF_MIN_TOTAL_COUNT) return null;
+        if (!g || totalCount < LF_MIN_TOTAL_COUNT) {
+          if (totalCount > 0) {
+            let wsum = 0, wcnt = 0;
+            for (let i = 0; i < bucketN; i++) { if ((d.countArr[i] || 0) > 0 && d.avgArr[i] != null) { wsum += d.avgArr[i] * d.countArr[i]; wcnt += d.countArr[i]; } }
+            const households = householdMap[`${dong}|${normalizeComplexName(name)}`] || null;
+            if (wcnt > 0) minors.push({ name, totalCount, ppp: wsum / wcnt, households });
+          }
+          return null;
+        }
         const baseline = g.filled.prices.reduce((a, b) => a + b, 0) / g.filled.prices.length;
         const households = householdMap[`${dong}|${normalizeComplexName(name)}`] || null;
         // 연환산 회전율(%) = 이 단지가 실제로 존재했던 기간(activeDays, genesisIdx부터)만
@@ -1173,7 +1210,20 @@ async function computeLeaderFollowerFresh(type, region, force, asOfDate) {
         };
       })
       .filter(Boolean);
-    if (qualified.length < 2) return; // 대장-후발주자 관계 자체가 성립하려면 최소 2개 단지 필요
+    function pushMinors(leaderName) {
+      minors.forEach((m) => {
+        candidates.push({
+          dong, danji: m.name, leaderDanji: leaderName, totalCount: m.totalCount,
+          gapPct: null, corr: null, lag: null, leaderRecentPct: null, followerRecentPct: null,
+          recentPpp: Math.round(m.ppp), leaderRecentPpp: null, followerPpp: Math.round(m.ppp), gapAmount: null,
+          score: null, qualifies: false, reason: '누적 거래 ' + m.totalCount + '건(20건 미만) - 순위만 표시',
+          fullPpp: Math.round(m.ppp), fullCount: m.totalCount, fullTurnoverPct: null,
+        });
+      });
+    }
+    // ⚠️ 2026-10(#505): 예전엔 단지가 2개 미만인 동은 통째로 건너뛰어(대장-후발 관계 불성립) 지방 읍·면처럼
+    // 아파트가 한 곳뿐인 동은 배지에 순위가 없었음 - 1개면 그 단지를 그 동의 대장으로 표시함.
+    if (qualified.length === 0) { pushMinors(null); return; }
 
     // ⚠️ 2026-09(#458): "평단가/회전율이 1등인 단지"가 아니라 "이 동네 시세를 실제로 먼저
     // 반영하는(선행하는) 단지"를 대장으로 뽑는 로직으로 교체. 방법: 후보 단지마다 "이 법정동
@@ -1222,7 +1272,10 @@ async function computeLeaderFollowerFresh(type, region, force, asOfDate) {
     });
     const leadEligible = qualified.filter((d) => d.leadCorr != null && d.leadCorr >= LF_LEAD_MIN_CORR);
     let leader, leaderSource;
-    if (leadEligible.length > 0) {
+    if (qualified.length === 1) {
+      leader = qualified[0];
+      leaderSource = 'only';
+    } else if (leadEligible.length > 0) {
       leadEligible.sort((a, b) => b.leadCorr - a.leadCorr);
       leader = leadEligible[0];
       leaderSource = 'lead_lag';
@@ -1309,6 +1362,7 @@ async function computeLeaderFollowerFresh(type, region, force, asOfDate) {
         fullPpp: Math.round(f.fullPpp), fullCount: f.fullCount, fullTurnoverPct: f.fullTurnoverPct,
       });
     });
+    pushMinors(leader.name);
   });
   // ⚠️ 2026-09(#461, 사용자 피드백): "서울 마포구처럼 구 안 동들이 사실상 같은 생활권인 곳과
   // 달리, 지방 시/군은 동마다 시장 성격 자체가 다를 수 있어(신도시/구도심/산업단지 등) 시/군/구

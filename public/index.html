@@ -2050,7 +2050,8 @@ function lfNormName(name) {
     });
     return s;
 }
-function lfRankKey(dong, name) { return (dong || '') + '|' + lfNormName(name); }
+// #505: 동 표기 차이("동탄구 목동"↔"목동", "완도읍 군내리"↔"군내리")와 무관하게 맞도록 마지막 단어 기준
+function lfRankKey(dong, name) { return dongKey(dong) + '|' + lfNormName(name); }
 // ⚠️ 2026-08(사용자 요청: "급등순위 필터를 평형대 필터로 변경") - 예전엔 여기가
 // activeSurgeRanks(🔥1~5위 필터칩)였음. 🔥N위 배지 자체(surgeRankMap 기반 표시)는
 // 그대로 두고, "거를 조건"만 평형대로 바꿈. 경계는 국토부 실거래 area(㎡) 기준:
@@ -17972,7 +17973,10 @@ async function loadLeaderFollowerData() {
 // 패널의 수동 조회(loadLeaderFollowerData)와 아래 자동 백그라운드 조회(autoLoadLeaderFollowerForRegion)
 // 양쪽에서 공통으로 씀.
 function applyLeaderFollowerToMap(data) {
-    var newLfMap = {};
+    // ⚠️ 2026-10(#505): 예전엔 조회할 때마다 지도 순위 정보를 "이번 지역 것만"으로 통째로 바꿨는데,
+    // 지역별 자동 조회는 세션당 한 번만 하므로(autoLoadLeaderFollowerForRegion) A→B→A로 돌아오면 A 배지의
+    // 순위가 사라진 채 다시 안 채워졌음 - 기존 정보에 이번 지역 것을 덧붙이는 방식으로 바꿈.
+    var newLfMap = Object.assign({}, leaderFollowerRankMap);
     (data.leaders || []).forEach(function(l) {
         newLfMap[lfRankKey(l.dong, l.danji)] = { isLeader: true, rank: null };
     });
@@ -18122,6 +18126,8 @@ function renderLeaderFollowerBody(data, dongFilter) {
                 var sourceTxt;
                 if (l.leaderSource === 'lead_lag') {
                     sourceTxt = '🥇 선행지표 확인됨(동네 나머지보다 ' + l.leadLag + '구간 먼저 움직임, 상관 ' + Math.round(l.leadCorr * 100) + '%)';
+                } else if (l.leaderSource === 'only') {
+                    sourceTxt = '이 동에서 거래가 충분한(20건 이상) 아파트가 이 단지뿐이라 대장으로 표시';
                 } else if (l.leaderSource === 'turnover') {
                     sourceTxt = '회전율 기준 대체(선행성 미확인) - 연 ' + l.turnoverPct + '%, ' + l.households.toLocaleString() + '세대';
                 } else {
@@ -18184,7 +18190,7 @@ function moveToDanji(region, dong, danjiName) {
     var targetNorm = lfNormName(danjiName);
     var match = allAptList.find(function(apt) {
         var l = apt.latest || {};
-        if ((l.dong || '').trim() !== dong) return false;
+        if (dongKey(l.dong) !== dongKey(dong)) return false;
         if (lfNormName(l.name) !== targetNorm) return false;
         var key = [l.dong, l.name, l.bunji, l.road_name, l.main_num, l.sub_num].join('|').toLowerCase();
         return !!coordCache[key];
