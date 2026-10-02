@@ -1,0 +1,24 @@
+name: 하락장 검증 분석 (읽기 전용, 수동)
+
+# 2020-06~2024-12 아파트 실거래로 "매도 시점 흐름 반영"이 하락장에서도 맞는지 검증 - DB는 읽기만 함.
+# scripts/analyze-downturn.mjs 상단 주석 참고. 결과는 실행 로그에 표로 남음.
+on:
+  workflow_dispatch:
+
+jobs:
+  analyze:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: 의존성 설치
+        run: npm install @supabase/supabase-js ws
+      - name: 분석 실행
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          NODE_OPTIONS: --max-old-space-size=6144
+        run: node scripts/analyze-downturn.mjs
