@@ -132,9 +132,17 @@ function stopForQuota(reason) {
   console.error(`   ⚠️  이 할당량은 앱(App) 단위라서, 실제 서비스 화면(브라우저)의 카카오맵 주소 검색도 같이 막혀 있을 수 있습니다.`);
   console.error(`   이미 처리된 단지는 저장되어 있으니, 할당량이 초기화된 뒤(보통 자정 기준) workflow를 다시 실행하면 남은 단지부터 이어서 처리됩니다.\n`);
 }
+// ⚠️ 2026-10(#504): 앱(index.html)은 get-house가 정규화한 값으로 키를 만듦 - 본번(main_num)이 비면 0,
+// 부번(sub_num)이 비면 빈 값. 예전엔 여기서 DB 원본(빈 본번 → 빈 칸)으로 키를 만들어 저장해서, 같은
+// 건물인데 앱이 "…||0|"로 찾고 DB엔 "…|||"로 있어 좌표가 있어도 배지가 안 떴음. 이제 앱과 같은 규칙으로
+// 저장하고, 예전 방식 키(buildLegacyCacheKey)로 이미 저장된 좌표도 "있음"으로 인정함.
 function buildCacheKey(dong, danji, bunji, roadName, mainNum, subNum) {
+  return [dong || '', danji || '', bunji || '', roadName || '', mainNum || 0, subNum || ''].join('|').toLowerCase();
+}
+function buildLegacyCacheKey(dong, danji, bunji, roadName, mainNum, subNum) {
   return [dong, danji, bunji, roadName, mainNum, subNum].join('|').toLowerCase();
 }
+const legacyKeyOf = (row) => buildLegacyCacheKey(row.dong, row.danji, row.bunji, row.road_name, row.main_num, row.sub_num);
 /* 건축물대장 캐시 키 (get-building.js가 building_info에 저장할 때 쓰는 유니크 키와 동일한 개념) */
 function computeBunJi(row) {
   let main = null, sub = null;
@@ -368,11 +376,11 @@ async function main() {
   }
   console.log(`\n📦 전체 고유 단지: ${allEntries.length}개`);
   // 좌표가 아예 없는 단지 → 신규 웜업 대상
-  const coordTargets = allEntries.filter(([key]) => !existingCoords.has(key));
+  const coordTargets = allEntries.filter(([key, row]) => !existingCoords.has(key) && !existingCoords.has(legacyKeyOf(row)));
   // 좌표는 있지만 건축물대장이 아직 캐시 안 된 단지 → 건축물대장만 재시도 대상
   const buildingOnlyTargets = allEntries.filter(([key, row]) => {
-    if (!existingCoords.has(key)) return false; // 좌표 없는 건 위에서 이미 처리
-    const coord = existingCoords.get(key);
+    const coord = existingCoords.get(key) || existingCoords.get(legacyKeyOf(row));
+    if (!coord) return false; // 좌표 없는 건 위에서 이미 처리
     if (!coord.sigunguCd || !coord.bjdongCd) return false; // 법정동코드 자체가 없으면 재시도 불가
     const bunJi = computeBunJi(row);
     if (!bunJi) return false;
@@ -403,7 +411,7 @@ async function main() {
       while (idx < targets.length && buildingWarmupCount < budgetCap) {
         const [, row] = targets[idx++];
         const key = buildCacheKey(row.dong, row.danji, row.bunji, row.road_name, row.main_num, row.sub_num);
-        const coord = existingCoords.get(key);
+        const coord = existingCoords.get(key) || existingCoords.get(legacyKeyOf(row));
         if (coord && coord.sigunguCd && coord.bjdongCd) {
           await warmBuildingInfo(row, coord.sigunguCd, coord.bjdongCd);
           success++;

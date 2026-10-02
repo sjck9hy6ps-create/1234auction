@@ -17641,31 +17641,49 @@ async function fetchOneVillaInfo(apt) {
 // 지오코딩으로 자연스럽게 폴백됨)이므로, 8초 안에 응답이 없으면 그냥 포기하고 나머지
 // 로딩(마커 표시 등)을 계속 진행하게 함 - runGeocode의 8초 타임아웃과 동일한 패턴.
 async function prefetchCoordsFromDB(aptList) {
-    var keys = [];
+    // ⚠️ 2026-10(#504, "배지가 빠진다" 조사): get-house가 본번(main_num)이 비어 있는 행을 0으로 바꿔
+    // 내려주는데, 좌표 웜업(scripts/warmup-locations.mjs)은 DB 원본(빈 값)으로 키를 만들어 저장함 →
+    // 같은 건물인데 앱 키는 "…|505-4||0|", DB 키는 "…|505-4|||"라 좌표가 있어도 못 찾았음(실측: 안산
+    // 단원구 빌라 802곳 중 751곳, 인천 서해구 1,213곳 중 1,022곳이 이 이유로 배지 없음). 본번 0인 키는
+    // 빈 값 버전도 같이 물어보고, 찾으면 앱 키로 저장함. 키가 수천 개인 지역은 한 번에 보내면 8초를
+    // 넘겨 통째로 실패할 수 있어 400개씩 나눠 동시에 조회함.
+    var wanted = {}; // DB에 물어볼 키 → 앱이 쓰는 키
     aptList.forEach(function(apt) {
         var l = apt.latest || {};
         var key = [l.dong, l.name, l.bunji, l.road_name, l.main_num, l.sub_num].join('|').toLowerCase();
-        if (!coordCache[key]) keys.push(key);
+        if (coordCache[key]) return;
+        wanted[key] = key;
+        if (l.main_num === 0 || l.main_num === '0') {
+            var alt = [l.dong, l.name, l.bunji, l.road_name, '', l.sub_num].join('|').toLowerCase();
+            if (!wanted[alt]) wanted[alt] = key;
+        }
     });
+    var keys = Object.keys(wanted);
     if (!keys.length) return;
-    try {
-        var res = await Promise.race([
-            fetch('/api/get-coords', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ keys: keys })
-            }),
-            new Promise(function(_, reject) {
-                setTimeout(function() { reject(new Error('get-coords 응답 시간초과(8초)')); }, 8000);
-            })
-        ]);
-        var data = await res.json();
-        Object.keys(data.coords || {}).forEach(function(key) {
-            coordCache[key] = data.coords[key];
-        });
-    } catch (e) {
-        console.error('좌표 캐시 조회 실패:', e.message);
-    }
+    var CHUNK = 400;
+    var chunks = [];
+    for (var i = 0; i < keys.length; i += CHUNK) chunks.push(keys.slice(i, i + CHUNK));
+    await Promise.all(chunks.map(async function(chunk) {
+        try {
+            var res = await Promise.race([
+                fetch('/api/get-coords', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ keys: chunk })
+                }),
+                new Promise(function(_, reject) {
+                    setTimeout(function() { reject(new Error('get-coords 응답 시간초과(8초)')); }, 8000);
+                })
+            ]);
+            var data = await res.json();
+            Object.keys(data.coords || {}).forEach(function(k) {
+                var appKey = wanted[k] || k;
+                if (!coordCache[appKey]) coordCache[appKey] = data.coords[k];
+            });
+        } catch (e) {
+            console.error('좌표 캐시 조회 실패:', e.message);
+        }
+    }));
 }
  
 function saveCoordToDB(cacheKey, lat, lon, sigunguCd, bjdongCd) {
