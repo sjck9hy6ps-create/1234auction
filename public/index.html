@@ -14156,6 +14156,21 @@ async function updateTaxRates() {
    빌라는 검증하지 않았으므로 적용하지 않음. */
 var FWD_TREND_HORIZON_MONTHS = 4;
 var FWD_TREND_BETA_METRO = 0.5, FWD_TREND_BETA_LOCAL = 0.2, FWD_TREND_MOVE_CAP = 0.10;
+/* ⚠️ 2026-10(#501, 사용자 요청 "하락장에서도 사용할 수 있는 방법"): 2022 급락·2023~24 회복이 들어있는
+   2020-06~2024-12 아파트 실거래 207만 건으로 재검증(scripts/analyze-downturn.mjs, 읽기 전용):
+   - 시군구가 최근 3개월 5% 넘게 빠져도 나머지 단지의 다음 4개월 변동은 수도권 0.0%, 지방 -0.3%
+     (-2~-5% 구간 지방 -1.0%) - 하락은 4개월 뒤까지 이어지지 않았음. 대장·인기단지·시군구·동 하락을
+     반영하는 6가지 방식을 시험했지만 하락 계수가 0.02~0.11로 사실상 0이었고 오차도 안 줄었음
+     → 하락은 더 깎지 않음(상승분만 반영하는 기존 규칙 유지 - 2021~24 데이터로도 상승 계수 0.4~0.7로 재확인).
+   - 오히려 하락장에선 최근 시세 기준 예측이 실제보다 낮게 나왔음(쏠림 수도권 +2.8%, 지방 +1.9% =
+     보수적 방향). 대신 오차가 커짐: 아래 표(현재 앱 규칙 기준 중앙오차, 2021~24 채점 구간).
+   그래서 하락장을 자동 감지(시군구 최근 3개월 -2% 미만)해서 "이 국면의 과거 오차"와 그 오차를 버틸
+   최소 마진을 보여주고, 목표마진이 그보다 작으면 경고함. 시점보정(findAptComplexMomentum)은 이미
+   하락도 반영(최대 -30%)하므로 비교물건 기준값은 하락 후 시세로 맞춰짐. */
+var FWD_REGIME_ERR_PCT = {
+    metro: { '하락장': 5.5, '보합장': 3.3, '상승장': 4.8 },
+    local: { '하락장': 4.8, '보합장': 4.0, '상승장': 4.7 }
+};
 function calcForwardTrend(opts) {
     // opts: { region, dong, buildingType }
     if (!opts || opts.buildingType !== 'apt' || !opts.region || !opts.dong) return null;
@@ -14163,6 +14178,23 @@ function calcForwardTrend(opts) {
     var d3 = new Date(now); d3.setMonth(d3.getMonth() - 3);
     var d9 = new Date(now); d9.setMonth(d9.getMonth() - 9);
     function med(a) { var x = a.slice().sort(function(p, q) { return p - q; }); var m = x.length >> 1; return x.length % 2 ? x[m] : (x[m - 1] + x[m]) / 2; }
+    // 시군구 전체 흐름(국면 판정용) - 단지·평형별 최근 3개월 vs 그 앞 6개월 변동률의 중앙값
+    var regionMoves = [];
+    allAptList.forEach(function(a) {
+        if (a.buildingType !== 'apt' || !a.latest || a.latest.region !== opts.region) return;
+        var u = {};
+        (a.trades || []).forEach(function(t) {
+            if (t.dealing_type === '직거래') return;
+            var td = tradeDate(t), amt = parseInt(t.amount), py = toPyung(t.area);
+            if (!(amt > 0) || !(py > 0) || td <= d9 || td > now) return;
+            var k = Math.round(t.area);
+            if (!u[k]) u[k] = { rec: [], pri: [] };
+            (td > d3 ? u[k].rec : u[k].pri).push(amt / py);
+        });
+        Object.keys(u).forEach(function(k) { if (u[k].rec.length && u[k].pri.length) regionMoves.push(med(u[k].rec) / med(u[k].pri) - 1); });
+    });
+    var regionMove = regionMoves.length >= 10 ? med(regionMoves) : null;
+    var regime = regionMove === null ? null : (regionMove < -0.02 ? '하락장' : (regionMove > 0.02 ? '상승장' : '보합장'));
     var complexes = [];
     allAptList.forEach(function(a) {
         if (a.buildingType !== 'apt' || !a.latest || a.latest.region !== opts.region || a.latest.dong !== opts.dong) return;
@@ -14181,7 +14213,14 @@ function calcForwardTrend(opts) {
         Object.keys(units).forEach(function(k) { var u = units[k]; if (u.rec.length && u.pri.length) moves.push(med(u.rec) / med(u.pri) - 1); });
         complexes.push({ name: a.latest.name, lvl: med(lvl), cnt: cnt, moves: moves });
     });
-    if (complexes.length < 2) return null;
+    var isMetroR = /^(서울|경기|인천)/.test(opts.region);
+    var regimeInfo = {
+        regime: regime,
+        regionMovePct: regionMove === null ? null : Math.round(regionMove * 1000) / 10,
+        regimeErrPct: regime ? FWD_REGIME_ERR_PCT[isMetroR ? 'metro' : 'local'][regime] : null
+    };
+    var noGroup = { forwardPct: 0, basis: null, isMetro: isMetroR, groupNames: [], groupMovePct: null, horizonMonths: FWD_TREND_HORIZON_MONTHS };
+    if (complexes.length < 2) return regime ? Object.assign(noGroup, regimeInfo) : null;
     function pctMap(key) { var s = complexes.slice().sort(function(a, b) { return b[key] - a[key]; }); var m = {}; s.forEach(function(c, i) { m[c.name] = (s.length - i) / s.length; }); return m; }
     var isMetro = /^(서울|경기|인천)/.test(opts.region);
     var basis, group;
@@ -14194,7 +14233,7 @@ function calcForwardTrend(opts) {
     }
     var allMoves = [];
     group.forEach(function(c) { allMoves = allMoves.concat(c.moves); });
-    if (!allMoves.length) return null;
+    if (!allMoves.length) return regime ? Object.assign(noGroup, regimeInfo) : null;
     var move = med(allMoves);
     var beta = isMetro ? FWD_TREND_BETA_METRO : FWD_TREND_BETA_LOCAL;
     var forward = beta * Math.max(0, Math.min(move, FWD_TREND_MOVE_CAP));
@@ -14203,7 +14242,8 @@ function calcForwardTrend(opts) {
         basis: basis, isMetro: isMetro,
         groupNames: group.map(function(c) { return c.name; }),
         groupMovePct: Math.round(move * 1000) / 10,
-        horizonMonths: FWD_TREND_HORIZON_MONTHS
+        horizonMonths: FWD_TREND_HORIZON_MONTHS,
+        regime: regimeInfo.regime, regionMovePct: regimeInfo.regionMovePct, regimeErrPct: regimeInfo.regimeErrPct
     };
 }
 function calcForwardTrendForModal() {
@@ -14351,7 +14391,24 @@ function calcCompValuation() {
                 ? '<div style="font-size:10.5px;color:#1a237e;background:#e8eaf6;border-radius:6px;padding:5px 8px;margin-top:6px;">'
                     + '📈 <b>매도 시점(약 ' + fwdTrend.horizonMonths + '개월 후) 예상 흐름: ' + (fwdTrend.forwardPct > 0 ? '+' + fwdTrend.forwardPct + '%' : '변동 없음(보합)') + '</b>'
                     + (fwdTrend.forwardPct > 0 ? ' → 예상매도가 ' + toEok(String(baseValue)) + ' <span style="color:#999;">(현재 시세 기준 ' + toEok(String(baseValueNow)) + ')</span>' : '')
-                    + '<br><span style="color:#555;">근거: ' + (fwdTrend.isMetro ? '이 동 대장아파트 ' : '이 동 인기 상위 단지 ') + fwdTrend.groupNames.join(', ') + '의 최근 3개월 시세 ' + (fwdTrend.groupMovePct >= 0 ? '+' : '') + fwdTrend.groupMovePct + '%</span>'
+                    + (fwdTrend.groupNames.length
+                        ? '<br><span style="color:#555;">근거: ' + (fwdTrend.isMetro ? '이 동 대장아파트 ' : '이 동 인기 상위 단지 ') + fwdTrend.groupNames.join(', ') + '의 최근 3개월 시세 ' + (fwdTrend.groupMovePct >= 0 ? '+' : '') + fwdTrend.groupMovePct + '%</span>'
+                        : '<br><span style="color:#555;">이 동은 비교할 단지가 적어 대장/인기단지 흐름을 계산하지 못했어요.</span>')
+                    + (fwdTrend.regime
+                        ? (function() {
+                            var minMargin = Math.round(baseValue * fwdTrend.regimeErrPct / 100);
+                            var low = targetMargin > 0 && targetMargin < minMargin;
+                            var col = fwdTrend.regime === '하락장' ? '#c62828' : '#1a237e';
+                            return '<div style="margin-top:5px;padding-top:5px;border-top:1px dashed #9fa8da;color:' + col + ';">'
+                                + (fwdTrend.regime === '하락장' ? '📉' : (fwdTrend.regime === '상승장' ? '📈' : '➖')) + ' <b>시장 국면: ' + fwdTrend.regime + '</b> (시군구 최근 3개월 ' + (fwdTrend.regionMovePct >= 0 ? '+' : '') + fwdTrend.regionMovePct + '%)'
+                                + ' · 이 국면의 과거 예상매도가 오차 약 <b>±' + fwdTrend.regimeErrPct + '%</b> → 버틸 최소 마진 <b>' + toEok(String(minMargin)) + '</b>'
+                                + (low ? '<br><span style="color:#c62828;font-weight:bold;">⚠️ 목표마진(' + toEok(String(targetMargin)) + ')이 이 오차보다 작아요 - 예상매도가가 보통 수준만 빗나가도 손해일 수 있어요.</span>' : '')
+                                + (fwdTrend.regime === '하락장'
+                                    ? '<br><span style="color:#999;">과거 하락장(2022~23) 검증: 하락은 4개월 뒤까지 거의 이어지지 않아(수도권 0%, 지방 -0~1%) 추가로 깎지는 않았어요. 대신 오차가 커지니 마진 여유를 두세요.</span>'
+                                    : '')
+                                + '</div>';
+                        })()
+                        : '')
                     + '<br><span style="color:#999;">' + (fwdTrend.isMetro
                         ? '과거 검증(수도권 아파트): 대장이 오르면 나머지 단지는 다음 4개월간 대장 상승폭의 약 절반을 따라감(하락은 거의 안 따라감).'
                         : '과거 검증(지방 아파트): 인기단지 흐름을 따라가는 경향이 약해 상승폭의 20%만 소폭 반영.') + '</span></div>'
