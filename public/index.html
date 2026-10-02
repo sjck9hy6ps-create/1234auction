@@ -17653,10 +17653,16 @@ async function prefetchCoordsFromDB(aptList) {
         var key = [l.dong, l.name, l.bunji, l.road_name, l.main_num, l.sub_num].join('|').toLowerCase();
         if (coordCache[key]) return;
         wanted[key] = key;
-        if (l.main_num === 0 || l.main_num === '0') {
-            var alt = [l.dong, l.name, l.bunji, l.road_name, '', l.sub_num].join('|').toLowerCase();
-            if (!wanted[alt]) wanted[alt] = key;
-        }
+        // 웜업이 DB 원본으로 저장한 옛 키 변형들: 본번 빈 값("…||"), 부번 0("…|0")
+        var mains = [l.main_num], subs = [l.sub_num];
+        if (l.main_num === 0 || l.main_num === '0') mains.push('');
+        if (l.sub_num === null || l.sub_num === undefined || l.sub_num === '' || l.sub_num === 0) subs.push('0');
+        mains.forEach(function(m) {
+            subs.forEach(function(sb) {
+                var alt = [l.dong, l.name, l.bunji, l.road_name, m, sb].join('|').toLowerCase();
+                if (!wanted[alt]) wanted[alt] = key;
+            });
+        });
     });
     var keys = Object.keys(wanted);
     if (!keys.length) return;
