@@ -7356,9 +7356,9 @@ function renderBidCaseList() {
                 statsHtml += '<div style="padding:2px 14px 6px 26px;">'
                     + '<div style="font-size:10px;color:#999;margin-bottom:2px;">낙찰가율(감정가 대비, %) - 중간값 / 최소 / 최대</div>'
                     + '<div class="bc-stat-grid">'
-                    + '<div class="bc-stat-item"><div class="bc-stat-label">중간값</div><div class="bc-stat-value">' + median(rates).toFixed(1) + '%</div></div>'
-                    + '<div class="bc-stat-item"><div class="bc-stat-label">최소</div><div class="bc-stat-value">' + Math.min.apply(null, rates).toFixed(1) + '%</div></div>'
-                    + '<div class="bc-stat-item"><div class="bc-stat-label">최대</div><div class="bc-stat-value">' + Math.max.apply(null, rates).toFixed(1) + '%</div></div>'
+                    + '<div class="bc-stat-item"><div class="bc-stat-label">보통</div><div class="bc-stat-value">' + median(rates).toFixed(1) + '%</div></div>'
+                    + '<div class="bc-stat-item"><div class="bc-stat-label">가장 낮게</div><div class="bc-stat-value">' + Math.min.apply(null, rates).toFixed(1) + '%</div></div>'
+                    + '<div class="bc-stat-item"><div class="bc-stat-label">가장 높게</div><div class="bc-stat-value">' + Math.max.apply(null, rates).toFixed(1) + '%</div></div>'
                     + '</div></div>';
             } else {
                 statsHtml += '<div style="padding:0 14px 6px 26px;font-size:10.5px;color:#aaa;">낙찰 완료된 건이 없어 낙찰가율 통계를 낼 수 없습니다.</div>';
@@ -7367,9 +7367,9 @@ function renderBidCaseList() {
                 statsHtml += '<div style="padding:0 14px 8px 26px;">'
                     + '<div style="font-size:10px;color:#999;margin-bottom:2px;">추정 세전마진(만원, 세금·대출이자·수리비 제외) - 중간값 / 최소 / 최대</div>'
                     + '<div class="bc-stat-grid">'
-                    + '<div class="bc-stat-item"><div class="bc-stat-label">중간값</div><div class="bc-stat-value" style="color:#2e7d32;">' + toEok(String(Math.round(median(margins)))) + '</div></div>'
-                    + '<div class="bc-stat-item"><div class="bc-stat-label">최소</div><div class="bc-stat-value" style="color:#2e7d32;">' + toEok(String(Math.round(Math.min.apply(null, margins)))) + '</div></div>'
-                    + '<div class="bc-stat-item"><div class="bc-stat-label">최대</div><div class="bc-stat-value" style="color:#2e7d32;">' + toEok(String(Math.round(Math.max.apply(null, margins)))) + '</div></div>'
+                    + '<div class="bc-stat-item"><div class="bc-stat-label">보통</div><div class="bc-stat-value" style="color:#2e7d32;">' + toEok(String(Math.round(median(margins)))) + '</div></div>'
+                    + '<div class="bc-stat-item"><div class="bc-stat-label">가장 낮게</div><div class="bc-stat-value" style="color:#2e7d32;">' + toEok(String(Math.round(Math.min.apply(null, margins)))) + '</div></div>'
+                    + '<div class="bc-stat-item"><div class="bc-stat-label">가장 높게</div><div class="bc-stat-value" style="color:#2e7d32;">' + toEok(String(Math.round(Math.max.apply(null, margins)))) + '</div></div>'
                     + '</div></div>';
             }
             // 사건번호/주소/건물명으로 찾아온 경우(동이름 자체는 안 맞음)는 이 동의 전체 목록이 아니라
@@ -7833,20 +7833,20 @@ function buildBiasStatBlock(title, cases, showCases) {
     var underBid = cases.filter(function(c) { return c.diff < 0; }).length;
     var biasColor = medPct > 0 ? '#c62828' : (medPct < 0 ? '#1565c0' : '#555');
     var biasLabel = medPct > 0
-        ? '실제낙찰가가 예측보다 중간값 기준 +' + medPct + '% 높음 (경쟁이 예상보다 치열 - 비교물건·수리비·목표마진 재점검 필요)'
+        ? '실제낙찰가가 예측보다 보통 +' + medPct + '% 높음 (경쟁이 예상보다 치열 - 비교물건·수리비·목표마진 재점검 필요)'
         : (medPct < 0
-            ? '실제낙찰가가 예측보다 중간값 기준 ' + medPct + '% 낮음 (목표마진을 더 낮춰도 낙찰 가능했을 여지)'
+            ? '실제낙찰가가 예측보다 보통 ' + medPct + '% 낮음 (목표마진을 더 낮춰도 낙찰 가능했을 여지)'
             : '예측과 실제가 대체로 일치');
     var html = title
         ? '<div class="bc-dong-group-title">' + title + ' (' + cases.length + '건, 실제↑ ' + overBid + ' · 실제↓ ' + underBid + ')</div>'
         : '<div style="padding:6px 14px 0;font-size:10px;color:#999;">실제↑ ' + overBid + '건 · 실제↓ ' + underBid + '건</div>';
     html += '<div style="padding:6px 14px;">'
-        + '<div style="font-size:10px;color:#999;margin-bottom:2px;">오차율(%) - 중간값 / 평균 / 최소 / 최대</div>'
+        + '<div style="font-size:10px;color:#999;margin-bottom:2px;">예측과 실제의 차이(%) - 보통 / 평균 / 가장 낮게 / 가장 높게</div>'
         + '<div class="bc-stat-grid" style="grid-template-columns:repeat(4,1fr);">'
-        + '<div class="bc-stat-item"><div class="bc-stat-label">중간값</div><div class="bc-stat-value" style="color:' + biasColor + ';">' + (medPct > 0 ? '+' : '') + medPct + '%</div></div>'
+        + '<div class="bc-stat-item"><div class="bc-stat-label">보통</div><div class="bc-stat-value" style="color:' + biasColor + ';">' + (medPct > 0 ? '+' : '') + medPct + '%</div></div>'
         + '<div class="bc-stat-item"><div class="bc-stat-label">평균</div><div class="bc-stat-value">' + (avgPct > 0 ? '+' : '') + avgPct + '%</div></div>'
-        + '<div class="bc-stat-item"><div class="bc-stat-label">최소</div><div class="bc-stat-value">' + (Math.round(Math.min.apply(null, pcts) * 10) / 10) + '%</div></div>'
-        + '<div class="bc-stat-item"><div class="bc-stat-label">최대</div><div class="bc-stat-value">' + (Math.round(Math.max.apply(null, pcts) * 10) / 10) + '%</div></div>'
+        + '<div class="bc-stat-item"><div class="bc-stat-label">가장 낮게</div><div class="bc-stat-value">' + (Math.round(Math.min.apply(null, pcts) * 10) / 10) + '%</div></div>'
+        + '<div class="bc-stat-item"><div class="bc-stat-label">가장 높게</div><div class="bc-stat-value">' + (Math.round(Math.max.apply(null, pcts) * 10) / 10) + '%</div></div>'
         + '</div>'
         + '<div style="font-size:10.5px;margin-top:4px;color:' + biasColor + ';font-weight:bold;">' + biasLabel + '</div>'
         + '</div>';
@@ -7859,17 +7859,17 @@ function buildBiasStatBlock(title, cases, showCases) {
         var tgMed = Math.round(median(tgPcts) * 10) / 10;
         var tgColor = tgMed > 0 ? '#c62828' : (tgMed < 0 ? '#1565c0' : '#555');
         var tgLabel = tgMed > 0
-            ? '낙찰가 역산 손익분기 시세가 시스템 추정 매도가보다 중간값 +' + tgMed + '% 높음 (이 지역 시세를 낮게 잡고 있을 가능성)'
+            ? '낙찰가 역산 손익분기 시세가 시스템 추정 매도가보다 보통 +' + tgMed + '% 높음 (이 지역 시세를 낮게 잡고 있을 가능성)'
             : (tgMed < 0
-                ? '낙찰가 역산 손익분기 시세가 시스템 추정 매도가보다 중간값 ' + tgMed + '% 낮음 (낙찰자들이 무리하게 입찰했거나, 시스템 추정이 낙관적일 가능성)'
+                ? '낙찰가 역산 손익분기 시세가 시스템 추정 매도가보다 보통 ' + tgMed + '% 낮음 (낙찰자들이 무리하게 입찰했거나, 시스템 추정이 낙관적일 가능성)'
                 : '역산 시세와 시스템 추정 매도가가 대체로 일치');
         html += '<div style="padding:6px 14px;border-top:1px dashed #eee;">'
-            + '<div style="font-size:10px;color:#999;margin-bottom:2px;">🏷️ 낙찰가 역산(손익분기) 시세 vs 시스템 추정 매도가 - 오차율(%), 표본 ' + tgCases.length + '건</div>'
+            + '<div style="font-size:10px;color:#999;margin-bottom:2px;">🏷️ 낙찰가 역산(손익분기) 시세 vs 시스템 추정 매도가 - 차이(%), 표본 ' + tgCases.length + '건</div>'
             + '<div class="bc-stat-grid" style="grid-template-columns:repeat(4,1fr);">'
-            + '<div class="bc-stat-item"><div class="bc-stat-label">중간값</div><div class="bc-stat-value" style="color:' + tgColor + ';">' + (tgMed > 0 ? '+' : '') + tgMed + '%</div></div>'
+            + '<div class="bc-stat-item"><div class="bc-stat-label">보통</div><div class="bc-stat-value" style="color:' + tgColor + ';">' + (tgMed > 0 ? '+' : '') + tgMed + '%</div></div>'
             + '<div class="bc-stat-item"><div class="bc-stat-label">평균</div><div class="bc-stat-value">' + (tgAvg > 0 ? '+' : '') + tgAvg + '%</div></div>'
-            + '<div class="bc-stat-item"><div class="bc-stat-label">최소</div><div class="bc-stat-value">' + (Math.round(Math.min.apply(null, tgPcts) * 10) / 10) + '%</div></div>'
-            + '<div class="bc-stat-item"><div class="bc-stat-label">최대</div><div class="bc-stat-value">' + (Math.round(Math.max.apply(null, tgPcts) * 10) / 10) + '%</div></div>'
+            + '<div class="bc-stat-item"><div class="bc-stat-label">가장 낮게</div><div class="bc-stat-value">' + (Math.round(Math.min.apply(null, tgPcts) * 10) / 10) + '%</div></div>'
+            + '<div class="bc-stat-item"><div class="bc-stat-label">가장 높게</div><div class="bc-stat-value">' + (Math.round(Math.max.apply(null, tgPcts) * 10) / 10) + '%</div></div>'
             + '</div>'
             + '<div style="font-size:10.5px;margin-top:4px;color:' + tgColor + ';font-weight:bold;">' + tgLabel + '</div>'
             + '</div>';
@@ -7986,20 +7986,20 @@ function buildSellBiasStatBlock(title, cases, showCases) {
     var underSell = cases.filter(function(c) { return c.diff < 0; }).length;
     var biasColor = medPct > 0 ? '#1565c0' : (medPct < 0 ? '#c62828' : '#555');
     var biasLabel = medPct > 0
-        ? '실제매도가가 예상(①)보다 중간값 기준 +' + medPct + '% 높음 (예상매도가가 보수적이었을 가능성 - 목표매도가를 더 높여도 팔렸을 여지가 있음)'
+        ? '실제매도가가 예상(①)보다 보통 +' + medPct + '% 높음 (예상매도가가 보수적이었을 가능성 - 목표매도가를 더 높여도 팔렸을 여지가 있음)'
         : (medPct < 0
-            ? '실제매도가가 예상(①)보다 중간값 기준 ' + medPct + '% 낮음 (예상매도가가 낙관적이었을 가능성 - 비교물건 선정·호가 반영비중을 재점검할 필요)'
+            ? '실제매도가가 예상(①)보다 보통 ' + medPct + '% 낮음 (예상매도가가 낙관적이었을 가능성 - 비교물건 선정·호가 반영비중을 재점검할 필요)'
             : '예상과 실제가 대체로 일치');
     var html = title
         ? '<div class="bc-dong-group-title">' + title + ' (' + cases.length + '건, 실제↑ ' + overSell + ' · 실제↓ ' + underSell + ')</div>'
         : '<div style="padding:6px 14px 0;font-size:10px;color:#999;">실제↑ ' + overSell + '건 · 실제↓ ' + underSell + '건</div>';
     html += '<div style="padding:6px 14px;">'
-        + '<div style="font-size:10px;color:#999;margin-bottom:2px;">오차율(%) - 중간값 / 평균 / 최소 / 최대</div>'
+        + '<div style="font-size:10px;color:#999;margin-bottom:2px;">예측과 실제의 차이(%) - 보통 / 평균 / 가장 낮게 / 가장 높게</div>'
         + '<div class="bc-stat-grid" style="grid-template-columns:repeat(4,1fr);">'
-        + '<div class="bc-stat-item"><div class="bc-stat-label">중간값</div><div class="bc-stat-value" style="color:' + biasColor + ';">' + (medPct > 0 ? '+' : '') + medPct + '%</div></div>'
+        + '<div class="bc-stat-item"><div class="bc-stat-label">보통</div><div class="bc-stat-value" style="color:' + biasColor + ';">' + (medPct > 0 ? '+' : '') + medPct + '%</div></div>'
         + '<div class="bc-stat-item"><div class="bc-stat-label">평균</div><div class="bc-stat-value">' + (avgPct > 0 ? '+' : '') + avgPct + '%</div></div>'
-        + '<div class="bc-stat-item"><div class="bc-stat-label">최소</div><div class="bc-stat-value">' + (Math.round(Math.min.apply(null, pcts) * 10) / 10) + '%</div></div>'
-        + '<div class="bc-stat-item"><div class="bc-stat-label">최대</div><div class="bc-stat-value">' + (Math.round(Math.max.apply(null, pcts) * 10) / 10) + '%</div></div>'
+        + '<div class="bc-stat-item"><div class="bc-stat-label">가장 낮게</div><div class="bc-stat-value">' + (Math.round(Math.min.apply(null, pcts) * 10) / 10) + '%</div></div>'
+        + '<div class="bc-stat-item"><div class="bc-stat-label">가장 높게</div><div class="bc-stat-value">' + (Math.round(Math.max.apply(null, pcts) * 10) / 10) + '%</div></div>'
         + '</div>'
         + '<div style="font-size:10.5px;margin-top:4px;color:' + biasColor + ';font-weight:bold;">' + biasLabel + '</div>'
         + '</div>';
@@ -8879,13 +8879,13 @@ function renderAvmEstimateBox(data) {
         // 케이스들만 따로 검증한 값"인지 "모델 전체 평균값(구버전 모델 또는 표본부족으로
         // 세그먼트 생략)"인지 구분해서 보여줌 - 조용히 다른 숫자로 바꿔치기하지 않기 위함.
         var marginLine = data.errorMargin
-            ? '<div style="margin-top:2px;color:#8a6d00;">📏 검증 오차범위 ±' + data.errorMargin.marginPct + '% ('
-                + toEok(String(data.errorMargin.priceRangeManwon[0])) + ' ~ ' + toEok(String(data.errorMargin.priceRangeManwon[1])) + ')'
+            ? '<div style="margin-top:2px;color:#8a6d00;">📏 실제 가격은 보통 이 범위 안: <b>'
+                + toEok(String(data.errorMargin.priceRangeManwon[0])) + ' ~ ' + toEok(String(data.errorMargin.priceRangeManwon[1])) + '</b> (±' + data.errorMargin.marginPct + '%)'
                 + (data.errorMargin.holdoutN
-                    ? ' · 홀드아웃(모델이 안 본 실거래) ' + data.errorMargin.holdoutN.toLocaleString() + '건으로 검증'
+                    ? ' · 모델이 배우지 않은 실제 거래 ' + data.errorMargin.holdoutN.toLocaleString() + '건으로 시험한 결과'
                         + (data.errorMargin.isSegmentSpecific
-                            ? ' <span style="color:#00695c;">(이 물건과 같은 확신도 구간만)</span>'
-                            : ' <span style="color:#999;">(모델 전체 평균 - 이 구간 전용 검증 아직 없음)</span>')
+                            ? ' <span style="color:#00695c;">(이 물건과 비슷한 조건만 따로 시험)</span>'
+                            : ' <span style="color:#999;">(전체 평균 - 이 물건 같은 조건만 따로 시험한 결과는 아직 없음)</span>')
                     : '')
                 + '</div>'
             : '';
@@ -14339,10 +14339,10 @@ function calcCompValuation() {
             freshBadge += '<div style="font-size:10.5px;color:#6d4c41;background:#fff8e1;border-radius:6px;padding:4px 8px;margin:2px 0 4px;">'
                 + '📍 비교물건이 ' + (est.compCountForConfidence || 0) + '건뿐이라 <b>동네 시세</b>(' + est.areaScope + ', 같은 유형·연식대·비슷한 평형 거래 ' + est.areaCount + '건)로 계산했습니다.'
                 + (est.compOnlyEstValue ? ' <span style="color:#999;">(비교물건만으로는 ' + toEok(String(est.compOnlyEstValue)) + ')</span>' : '')
-                + '<br><span style="color:#999;">비슷한 조건 거래가 3건 이상 쌓이면 비교물건 기준으로 자동 전환됩니다. 과거 검증 오차: 빌라 약 12%, 아파트 약 5%.</span></div>';
+                + '<br><span style="color:#999;">비슷한 조건 거래가 3건 이상 쌓이면 비교물건 기준으로 자동 전환됩니다. 이렇게 계산한 값은 과거에 실제 거래가와 보통 빌라 ±12%, 아파트 ±5% 정도 차이 났어요.</span></div>';
         } else if (est.lowConfidence) {
             freshBadge += '<div style="font-size:10.5px;color:#c62828;background:#ffebee;border-radius:6px;padding:4px 8px;margin:2px 0 4px;">'
-                + '⚠️ 비교물건 ' + (est.compCountForConfidence || 0) + '건 기준 값이라 오차가 클 수 있습니다(과거 검증: 1~2건 기준은 평균 오차 20%대). 주변 시세를 직접 확인하세요.</div>';
+                + '⚠️ 비교물건 ' + (est.compCountForConfidence || 0) + '건만 보고 계산한 값이에요. 이런 경우 과거에 실제 거래가와 평균 20% 넘게 차이 났으니 주변 시세를 직접 확인하세요.</div>';
         }
         // 규모격차 할인율 실측 - subject가 소규모/나홀로로 판별됐을 때만 노출(대단지 subject는
         // 애초에 할인 자체를 안 걸어서 실측이 무의미함). 아직 대단지 비교물건을 안 넣었어도
@@ -14382,14 +14382,14 @@ function calcCompValuation() {
         var medianGapPct = (est.medianValue && est.estValue) ? Math.round((est.medianValue - est.estValue) / est.estValue * 1000) / 10 : null;
         var estValueWithMedian = toEok(String(est.estValue))
             + (est.medianValue && est.medianValue !== est.estValue
-                ? ' <span style="font-size:10px;color:#999;font-weight:normal;" title="이 근처 비교물건들의 진짜 중앙값(50th percentile) - 보수적 기준값보다 빨리 안 팔릴 수도 있는 값">(중간값 ' + toEok(String(est.medianValue)) + (medianGapPct !== null ? ', +' + medianGapPct + '%' : '') + ')</span>'
+                ? ' <span style="font-size:10px;color:#999;font-weight:normal;" title="근처 비교 거래 가격의 딱 가운데 값 - 예상매각가보다 높지만, 이 가격이면 파는 데 더 오래 걸릴 수 있어요">(가운데 값 ' + toEok(String(est.medianValue)) + (medianGapPct !== null ? ', +' + medianGapPct + '%' : '') + ')</span>'
                 : '');
         // ⚠️ 2026-09(#494): 빌라는 percentile이 40th로 올라갔으므로(백테스트 실측 결과 30th가
         // 과도하게 낮았음) 라벨의 숫자도 물건유형에 맞게 표시함.
-        var compEstPctLabel = '보수적 40%'; // #496: 아파트도 40th로 통일
+        var compEstPctLabel = '빨리 팔릴 가격 기준'; // #496: 아파트도 40th로 통일 / #503: 쉬운 표현
         mainHtml = rangeLine + freshBadge + scaleMeasureBox
             + '<div class="margin-grid">'
-            + vItem('비교 평단가(' + compEstPctLabel + ',시점보정)', Math.round(est.medPpp / 100) / 10 + '천만/평', '#555')
+            + vItem('비교 평당가(' + compEstPctLabel + '·현재 시세로 환산)', Math.round(est.medPpp / 100) / 10 + '천만/평', '#555')
             + vItem('예상매각가(실거래 기반, 보수적)', estValueWithMedian, '#2e7d32')
             + vItem('적정입찰가(비교물건 기준, 목표마진 ' + toEok(String(targetMargin)) + ' 역산' + (fwdTrend && fwdTrend.forwardPct > 0 ? ', 매도시점 흐름 반영' : '') + ')', r.bid > 0 ? toEok(String(r.bid)) : '마진 확보 불가', '#6a1b9a')
             + jeonseItem
@@ -14408,10 +14408,11 @@ function calcCompValuation() {
                             var col = fwdTrend.regime === '하락장' ? '#c62828' : '#1a237e';
                             return '<div style="margin-top:5px;padding-top:5px;border-top:1px dashed #9fa8da;color:' + col + ';">'
                                 + (fwdTrend.regime === '하락장' ? '📉' : (fwdTrend.regime === '상승장' ? '📈' : '➖')) + ' <b>시장 국면: ' + fwdTrend.regime + '</b> (시군구 최근 3개월 ' + (fwdTrend.regionMovePct >= 0 ? '+' : '') + fwdTrend.regionMovePct + '%)'
-                                + ' · 이 국면의 과거 예상매도가 오차 약 <b>±' + fwdTrend.regimeErrPct + '%</b> → 버틸 최소 마진 <b>' + toEok(String(minMargin)) + '</b>'
-                                + (low ? '<br><span style="color:#c62828;font-weight:bold;">⚠️ 목표마진(' + toEok(String(targetMargin)) + ')이 이 오차보다 작아요 - 예상매도가가 보통 수준만 빗나가도 손해일 수 있어요.</span>' : '')
+                                + '<br>이런 시장에서는 예상가가 실제 거래가와 보통 <b>±' + fwdTrend.regimeErrPct + '% (약 ' + toEok(String(minMargin)) + ')</b> 차이 나요.'
+                                + ' 이만큼 빗나가도 손해 보지 않으려면 <b>마진을 최소 ' + toEok(String(minMargin)) + '</b> 이상 잡으세요.'
+                                + (low ? '<br><span style="color:#c62828;font-weight:bold;">⚠️ 지금 목표마진(' + toEok(String(targetMargin)) + ')은 이보다 작아요 - 예상가가 보통 수준만 빗나가도 손해일 수 있어요.</span>' : '')
                                 + (fwdTrend.regime === '하락장'
-                                    ? '<br><span style="color:#999;">과거 하락장(2022~23) 검증: 하락은 4개월 뒤까지 거의 이어지지 않아(수도권 0%, 지방 -0~1%) 추가로 깎지는 않았어요. 대신 오차가 커지니 마진 여유를 두세요.</span>'
+                                    ? '<br><span style="color:#999;">과거 하락장(2022~23)을 보면, 값이 떨어진 뒤 4개월 동안 더 떨어지지는 않았어요(수도권 0%, 지방 0~1%). 그래서 예상가를 더 깎지는 않았고, 대신 빗나가는 폭이 커지니 마진을 넉넉히 잡도록 안내해요.</span>'
                                     : '')
                                 + '</div>';
                         })()
@@ -14446,15 +14447,17 @@ function calcCompValuation() {
         var biasVal = compBt.mean_bias_pct;
         var biasLine = '';
         if (biasVal !== null && biasVal !== undefined) {
-            var biasDir = biasVal > 1 ? '실제가 예측보다 평균 <b>+' + biasVal + '%</b> 높게 팔림(예측이 보수적 방향)'
-                : (biasVal < -1 ? '실제가 예측보다 평균 <b>' + biasVal + '%</b> 낮게 팔림(예측이 낙관적 방향 - 유의)'
-                    : '평균적으로 쏠림 없이 대체로 맞음(평균 ' + (biasVal > 0 ? '+' : '') + biasVal + '%)');
-            biasLine = '<br>쏠림(편향): ' + biasDir;
+            // #503(사용자 요청 "처음 보는 사람도 이해할 수 있게"): '쏠림/편향' 대신 "실제로는 예상보다 얼마나
+            // 비싸게/싸게 팔렸는지"와 "그래서 예상가가 조심스러운 편인지"를 풀어서 씀.
+            var biasDir = biasVal > 1 ? '실제로는 예상보다 <b>' + biasVal + '% 비싸게</b> 팔린 편 → 예상가가 조심스럽게(낮게) 잡혀서 안전한 쪽이에요'
+                : (biasVal < -1 ? '실제로는 예상보다 <b>' + Math.abs(biasVal) + '% 싸게</b> 팔린 편 → 예상가가 높게 잡히는 편이니 주의하세요'
+                    : '실제로 팔린 값이 예상보다 비싸거나 싸게 한쪽으로 치우치지 않았어요');
+            biasLine = '<br>· 틀리는 방향: ' + biasDir;
         }
         var p50Line = '';
         if (compBt.mape_pct_p50 != null) {
-            p50Line = '<br><span style="color:#999;">참고 - 40th 대신 진짜 중앙값(50th percentile)을 썼다면: 평균오차율 ' + compBt.mape_pct_p50 + '%'
-                + (compBt.mean_bias_pct_p50 != null ? ', 쏠림 평균 ' + (compBt.mean_bias_pct_p50 > 0 ? '+' : '') + compBt.mean_bias_pct_p50 + '%' : '') + '</span>';
+            p50Line = '<br><span style="color:#999;">참고: 근처 거래의 딱 가운데 가격으로 계산했다면 실제와 평균 ±' + compBt.mape_pct_p50 + '% 차이'
+                + (compBt.mean_bias_pct_p50 != null ? '(실제가 ' + Math.abs(compBt.mean_bias_pct_p50) + '% ' + (compBt.mean_bias_pct_p50 >= 0 ? '비싸게' : '싸게') + ' 팔린 편)' : '') + '</span>';
         }
         // 한눈에 판단할 수 있는 요약 한 줄 - 오차율(mape_pct) 크기로 "믿을만함/주의" 톤을 정함.
         // 15% 미만이면 초록(믿을만함), 15~25%는 주황(참고만), 25% 이상은 빨강(주의 - 빌라가 여기 해당).
@@ -14463,10 +14466,13 @@ function calcCompValuation() {
             : (compBt.mape_pct < 25 ? '⚠️ 참고용으로만(오차 다소 큼)' : '🚨 이 유형은 오차가 커서 주의 필요');
         compBtLine = '<div style="font-size:10px;color:#1565c0;background:#e3f2fd;border-radius:6px;padding:5px 8px;margin-top:6px;">'
             + '<div style="font-weight:bold;color:' + trustColor + ';margin-bottom:2px;">' + trustLabel + '</div>'
-            + '📊 이 계산방식(비교물건 40th percentile, ' + (compBtPropType === 'villa' ? '연립다세대' : '아파트') + ') 자체 검증(전국, ' + compBt.cutoff + ' 기준 예측 → 올해 실거래로 대조): '
-            + '평균 오차율 <b>' + compBt.mape_pct + '%</b>(중앙값 ' + compBt.median_ape_pct + '%, 표본 ' + compBt.sample_size.toLocaleString() + '건)'
+            + '📊 이 계산 방법을 과거 거래로 시험해 봤어요 (전국 ' + (compBtPropType === 'villa' ? '연립다세대' : '아파트') + ' ' + compBt.sample_size.toLocaleString() + '개 단지, '
+            + String(compBt.cutoff).slice(0, 4) + '년 거래만 보고 올해 실제 거래 가격을 맞혀보기)'
+            + '<br>· 예상가와 실제 거래가 차이: 보통 <b>±' + compBt.median_ape_pct + '%</b>'
+            + (est && est.estValue ? ' (이 물건이면 약 ±' + toEok(String(Math.round(est.estValue * compBt.median_ape_pct / 100))) + ')' : '')
+            + ', 평균 ±' + compBt.mape_pct + '%'
             + biasLine + p50Line
-            + '<br><span style="color:#999;">단순화된 검증치입니다 - 이 물건과의 평형·층·연식·거리 유사도 가중치는 반영되지 않은, 단지 단위 평균 오차입니다.</span>'
+            + '<br><span style="color:#999;">※ 단지 평균으로 시험한 값이라, 이 물건만의 층·향·수리 상태 차이는 빠져 있어요.</span>'
             + '</div>';
     }
     box.innerHTML = mainHtml + buildElevatorComparisonHtml() + compBtLine;
@@ -18064,9 +18070,9 @@ function renderLeaderFollowerBody(data, dongFilter) {
     if (signalBacktestStats && signalBacktestStats.sample_size_follower >= 10) {
         var s = signalBacktestStats;
         html += '<div style="font-size:10px;color:#1565c0;background:#e3f2fd;border-radius:6px;padding:5px 8px;margin:4px 14px 0;">'
-            + '📊 신호 자체 검증(전국, ' + s.cutoff + ' 기준 예측 → 올해 실거래로 대조): "(후발주자)" 표식이 붙은 단지가 실제로 대장보다 더 오른(격차가 줄어든) 비율 <b>' + s.hit_rate_follower + '%</b>'
-            + '(표본 ' + s.sample_size_follower + '건, 평균 격차변화 ' + (s.avg_follower_catchup_pct > 0 ? '+' : '') + s.avg_follower_catchup_pct + '%p)'
-            + (s.hit_rate_nonfollower != null ? ' · 비교기준(후발주자 표식 없는 단지) ' + s.hit_rate_nonfollower + '%' : '')
+            + '📊 이 표시가 실제로 맞았는지 과거 거래로 시험해 봤어요(전국, ' + String(s.cutoff).slice(0, 4) + '년 기준 → 올해 실제 거래): "(후발주자)" 표시 단지가 이후 대장과의 가격 차이를 줄인(따라 오른) 비율 <b>' + s.hit_rate_follower + '%</b>'
+            + '(' + s.sample_size_follower + '건)'
+            + (s.hit_rate_nonfollower != null ? ' · 표시 없는 단지는 ' + s.hit_rate_nonfollower + '%' : '')
             // ⚠️ 2026-09(사용자 요청 "분기별 흐름이 조금더 디테일해 나에게 필요한 정보로 더
             // 활용될거같아"): 연말까지 뭉친 숫자 1개만 보여주면 "대장이 오른 뒤 몇 개월 뒤에
             // 후발주자가 따라오는지"(시차)가 안 보임 - 연초~분기말 누적 적중률을 분기별로
