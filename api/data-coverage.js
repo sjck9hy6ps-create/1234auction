@@ -908,6 +908,8 @@ const LF_LEAD_MIN_CORR = 0.55;
 // 확인했으므로 6 그대로 유지. corrByLag 진단 필드는 향후 재검증 필요시를 위해 남겨둠.
 const LF_DIAG_MAX_LAG = 16;
 const LF_TOP_N = 100;
+// ⚠️ 2026-10(#505): 순위 계산 규칙이 바뀌면 올려서, 예전 규칙으로 만든 캐시를 만료로 취급함(24시간 기다리지 않고 바로 새 규칙 적용).
+const LF_ALGO_VERSION = 2;
 const LF_MIN_HOUSEHOLDS = 100; // 회전율 기준 대장 후보 최소 세대수 - 나홀로 단지가 우연한 회전율로 뽑히는 것 방지
 function pearsonCorr(xs, ys) {
   const n = xs.length;
@@ -1425,14 +1427,14 @@ async function computeLeaderFollowerFresh(type, region, force, asOfDate) {
   // 동 그룹의 나열 순서도 같은 기준으로 "이 동 1위 단지의 종합 가치점수"가 높은 순으로 둠.
   rankedByDong.sort((a, b) => b.topScore - a.topScore);
   leaders.sort((a, b) => b.totalCount - a.totalCount);
-  return { region, type, bucketDays, bucketCount: bucketN, histStart: FULL_HIST_START, leaders, rankedByDong, unranked, totalCandidates: candidates.length };
+  return { region, type, bucketDays, bucketCount: bucketN, histStart: FULL_HIST_START, leaders, rankedByDong, unranked, totalCandidates: candidates.length, algoVersion: LF_ALGO_VERSION };
 }
 async function getLeaderFollowerRank(type, region, force) {
   const cacheId = region + '|' + type;
   if (!force) {
     try {
       const { data: cached, error } = await supabase.from('leader_follower_cache').select('*').eq('id', cacheId).maybeSingle();
-      if (!error && cached && (Date.now() - new Date(cached.fetched_at).getTime()) < LF_FRESH_MS) {
+      if (!error && cached && cached.payload && cached.payload.algoVersion === LF_ALGO_VERSION && (Date.now() - new Date(cached.fetched_at).getTime()) < LF_FRESH_MS) {
         return { ...cached.payload, cached: true };
       }
     } catch (e) { console.warn('leader_follower_cache 조회 예외:', e.message); }
