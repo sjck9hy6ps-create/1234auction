@@ -3322,6 +3322,42 @@ function loadKakaoSDK() {
     document.head.appendChild(s);
 }
 window.addEventListener('load', loadKakaoSDK);
+// 2026-10(사용자 요청: "이메일을 확인하지 않으면 수정을 할 수가 없어?") - 매주 화요일 데이터 자동
+// 점검(.github/workflows/data-health.yml)이 거래가 빈 지역은 스스로 다시 수집해서 고치고, 결과를
+// public/data-health.json에 남김. 자동으로 못 고친 문제가 있을 때만 화면 위에 알림 띠를 띄워
+// 메일을 안 봐도 알 수 있게 함. 닫으면 같은 점검 결과에 대해서는 다시 뜨지 않음.
+function showDataHealthBanner() {
+    fetch('/data-health.json', { cache: 'no-store' })
+        .then(function(r) { return r.ok ? r.json() : null; })
+        .then(function(h) {
+            if (!h || h.status !== 'attention' || !h.attention || !h.attention.length) return;
+            var seenKey = 'dataHealthSeen';
+            try { if (localStorage.getItem(seenKey) === h.checkedAt) return; } catch (e) {}
+            var d = new Date(h.checkedAt);
+            var when = (d.getMonth() + 1) + '월 ' + d.getDate() + '일';
+            var bar = document.createElement('div');
+            bar.id = 'data-health-banner';
+            bar.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:100000;background:#fff4e5;color:#7a4100;' +
+                'border-bottom:2px solid #f0a040;padding:10px 40px 10px 14px;font-size:13px;line-height:1.5;' +
+                'box-shadow:0 2px 6px rgba(0,0,0,.15);max-height:40vh;overflow:auto;';
+            var items = h.attention.slice(0, 5).map(function(t) {
+                return '<li>' + String(t).replace(/[<>&]/g, function(c) { return { '<': '&lt;', '>': '&gt;', '&': '&amp;' }[c]; }) + '</li>';
+            }).join('');
+            var more = h.attention.length > 5 ? '<div>외 ' + (h.attention.length - 5) + '건</div>' : '';
+            var fixedNote = (h.fixed && h.fixed.length) ? '<div style="margin-top:4px;color:#2e6b2e">✅ ' + h.fixed.length + '건은 자동으로 다시 수집해서 고쳤어요.</div>' : '';
+            bar.innerHTML = '<b>⚠️ ' + when + ' 데이터 점검에서 자동으로 못 고친 문제가 있어요</b>' +
+                '<div style="margin-top:2px">이 지역은 예상매도가가 덜 정확할 수 있어요. Claude에게 "데이터 점검 결과 확인해줘"라고 말해 주세요.</div>' +
+                '<ul style="margin:4px 0 0 18px;padding:0">' + items + '</ul>' + more + fixedNote +
+                '<button aria-label="닫기" style="position:absolute;top:6px;right:8px;border:none;background:none;font-size:20px;cursor:pointer;color:#7a4100">×</button>';
+            bar.querySelector('button').onclick = function() {
+                try { localStorage.setItem(seenKey, h.checkedAt); } catch (e) {}
+                bar.remove();
+            };
+            document.body.appendChild(bar);
+        })
+        .catch(function() {});
+}
+window.addEventListener('load', showDataHealthBanner);
 function initKakao() {
     geocoder = new kakao.maps.services.Geocoder();
     places   = new kakao.maps.services.Places();
