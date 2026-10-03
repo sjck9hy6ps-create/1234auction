@@ -5479,6 +5479,8 @@ function switchPanelTab(tab) {
 ════════════════════════════════════ */
 async function fetchAuctions() {
     try {
+        auctionList = await fetchStoredList('');
+        return;
         var r = await fetch('/api/auction');
         auctionList = await r.json();
         if (!Array.isArray(auctionList)) auctionList = [];
@@ -5498,8 +5500,31 @@ async function deleteAuctionAPI(id) {
       (api/auction.js가 auctions/siteNotes 두 Redis 키를 모두 처리하도록 확장됨).
    경매 건이 종료·삭제돼도 메모는 남아 같은 건물/지역을 나중에 다시 검토할 때 재사용됨
 ════════════════════════════════════ */
+// ⚠️ 2026-10(사고 대응): 저장소(Upstash)가 한도 초과 등으로 응답을 거부하면 예전엔 빈 목록처럼 보여서
+// "경매물건이 다 사라졌다"로 보였음 - 서버가 이제 503 오류를 주므로, 화면 위에 "데이터는 그대로지만 지금
+// 불러올 수 없음 - 저장하지 마세요" 안내 띠를 띄움(한 번만).
+var storageErrorBannerShown = false;
+function showStorageErrorBanner(msg) {
+    if (storageErrorBannerShown) return;
+    storageErrorBannerShown = true;
+    var bar = document.createElement('div');
+    bar.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:100001;background:#ffebee;color:#b71c1c;border-bottom:2px solid #e53935;padding:10px 40px 10px 14px;font-size:13px;line-height:1.5;';
+    bar.innerHTML = '<b>🚨 경매물건·낙찰사례·임장메모를 지금 불러올 수 없어요</b><div>데이터가 지워진 게 아니라 저장소가 잠시 막힌 상태예요. 해결될 때까지 새 물건 등록·수정은 하지 마세요.</div>'
+        + '<div style="font-size:11px;color:#c62828;">' + String(msg || '').replace(/[<>&]/g, '') + '</div>'
+        + '<button style="position:absolute;top:6px;right:8px;border:none;background:none;font-size:20px;cursor:pointer;color:#b71c1c">×</button>';
+    bar.querySelector('button').onclick = function() { bar.remove(); };
+    document.body.appendChild(bar);
+}
+async function fetchStoredList(kind) {
+    var r = await fetch('/api/auction' + (kind ? '?kind=' + kind : ''));
+    var data = await r.json();
+    if (!r.ok || !Array.isArray(data)) { showStorageErrorBanner(data && data.error); return []; }
+    return data;
+}
 async function fetchSiteNotes() {
     try {
+        siteNoteList = await fetchStoredList('siteNotes');
+        return;
         var r = await fetch('/api/auction?kind=siteNotes');
         siteNoteList = await r.json();
         if (!Array.isArray(siteNoteList)) siteNoteList = [];
@@ -5536,6 +5561,8 @@ var pendingBacktestExtraction = []; // 📐 낙찰가 백테스트 일괄등록 
 var backtestRunning = false; // 배치 실행 중 중복 클릭 방지
 async function fetchBidCases() {
     try {
+        bidCaseList = await fetchStoredList('bidCases');
+        return;
         var r = await fetch('/api/auction?kind=bidCases');
         bidCaseList = await r.json();
         if (!Array.isArray(bidCaseList)) bidCaseList = [];

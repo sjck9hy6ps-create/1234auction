@@ -19,12 +19,12 @@ const APT_API_KEY = process.env.PUBLIC_DATA_API_KEY;
 // ════════════════════════════════════
 const REDIS_URL = process.env.UPSTASH_REDIS_URL;
 const REDIS_TOKEN = process.env.UPSTASH_REDIS_TOKEN;
-// ⚠️ 2026-10(로딩속도 개선): 10시간 → 8일. 거래 DB는 매주 월요일에만 수집되고(이번 달 신고분은
-// 캐시와 별개로 방문 때마다 실시간으로 합쳐짐), 매주 화요일 데이터 점검 직후 전 지역 캐시를 새로
-// 채우므로(data-health.yml → warmup-house-cache.mjs) 10시간마다 버릴 이유가 없음 - 예전엔 하루 중
-// 첫 방문마다 DB를 다시 긁느라 지역에 따라 3~10초씩 걸렸음. CSV 대량 업로드 후엔 backup.html의
-// "캐시 전체 삭제"가 그대로 동작함.
-const CACHE_TTL_SECONDS = 8 * 24 * 60 * 60;
+// ⚠️ 2026-10(사고 후 되돌림): 같은 날 로딩속도 개선으로 8일 보관 + 매주 전 지역(257곳) 미리 채우기를 했더니
+// Upstash 저장소(경매물건·낙찰사례·임장메모와 같은 DB)가 플랜 용량 한도를 넘어 모든 읽기/쓰기가 막혔음
+// ("reached current Fixed plan limits"). 지역 캐시는 다시 10시간 보관으로 되돌리고, 큰 지역(압축 후
+// HOUSE_CACHE_MAX_BYTES 초과)은 Redis에 저장하지 않음 - 대신 브라우저 보관(IndexedDB 6시간)이 재방문을 빠르게 함.
+const CACHE_TTL_SECONDS = 10 * 60 * 60;
+const HOUSE_CACHE_MAX_BYTES = 600 * 1024;
 // ⚠️ 2026-10(사용자 요청: "배지 로딩속도를 확연하게 높여줘") - 실측: 가평(0.5MB)·성남(4.6MB)은
 // 캐시가 돼서 0.15~0.6초인데, 부천(11MB)·강남(9MB)처럼 큰 지역은 원본 JSON 그대로는 Redis 저장/
 // 조회(요청 크기 상한·3초 제한)에 걸려 매번 캐시를 못 쓰고 DB를 다시 긁느라 3~7초(바쁠 땐 18초)가
@@ -60,10 +60,12 @@ async function getCachedHouseData(lawdCd) {
 async function setCachedHouseData(lawdCd, payload) {
   if (!REDIS_URL || !REDIS_TOKEN) return;
   try {
+    const packed = GZ_PREFIX + gzipSync(Buffer.from(JSON.stringify(payload), 'utf8')).toString('base64');
+    if (packed.length > HOUSE_CACHE_MAX_BYTES) return; // 저장소 용량 보호(위 주석)
     const r = await fetch(`${REDIS_URL}/set/house_${lawdCd}?EX=${CACHE_TTL_SECONDS}`, {
       method: 'POST',
       headers: { Authorization: `Bearer ${REDIS_TOKEN}`, 'Content-Type': 'text/plain' },
-      body: GZ_PREFIX + gzipSync(Buffer.from(JSON.stringify(payload), 'utf8')).toString('base64'),
+      body: packed,
       signal: AbortSignal.timeout(5000),
     });
     if (!r.ok) {
