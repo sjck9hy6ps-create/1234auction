@@ -842,6 +842,55 @@ body.ui2 #dong-boundary-info { top:108px !important; }
 }
 </style>
 
+<style>
+/* ════ 2026-10 세부 패널·필터 정리(사용자: "세부 탭 UI는 기존 방식, 필터 on/off가 제대로 안 되고 중복 표기가 많다") ════ */
+/* 상세 필터 패널 - 탭 없이 한 화면, 머리글(적용 개수·모두 끄기·닫기) */
+body.ui2 #filter-panel { padding:0; gap:0; background:#fff; border:1px solid #e3e6ea; border-radius:12px; box-shadow:0 8px 24px rgba(0,0,0,0.14); max-height:calc(100vh - 120px); overflow-y:auto; width:520px; }
+body.ui2 #filter-panel .filter-panel-tabs { display:none; }
+body.ui2 #filter-panel #fp-group-display, body.ui2 #filter-panel #fp-group-attr { display:block !important; padding:4px 14px 10px; }
+body.ui2 #filter-panel .filter-row { padding:8px 0; border-bottom:1px solid #f2f3f5; align-items:flex-start; gap:6px; }
+body.ui2 #filter-panel .filter-row:last-child { border-bottom:none; }
+body.ui2 #filter-panel .filter-row-label { width:100%; min-width:0; text-align:left; font-size:11.5px; color:#333; padding:0 0 2px; }
+body.ui2 .fp-dup { display:none !important; }
+body.ui2 .fp-villa-only { display:none !important; }
+body.ui2.type-villa .fp-villa-only { display:flex !important; }
+.fp-head { position:sticky; top:0; z-index:2; background:#fff; display:flex; align-items:center; gap:8px; padding:10px 14px; border-bottom:1px solid #e3e6ea; }
+.fp-head b { font-size:14px; }
+.fp-head .fp-count { color:var(--ui-blue,#1e5eff); font-size:12px; font-weight:bold; }
+.fp-head .fp-reset { margin-left:auto; border:1px solid #d6dbe1; background:#fff; border-radius:16px; padding:3px 10px; font-size:11.5px; cursor:pointer; }
+.fp-head .fp-close { border:none; background:#f1f3f5; border-radius:16px; padding:3px 10px; font-size:12px; cursor:pointer; }
+.fp-note { color:#888; font-size:10.5px; padding:4px 14px 0; }
+/* 켜짐/꺼짐이 한눈에: 켜진 버튼은 진하게 채우고 ✓ 표시, 확대·그림자 효과는 없앰 */
+body.ui2 .filter-tab { background:#fff; border:1px solid #d6dbe1; color:#444; font-weight:600; transform:none !important; box-shadow:none !important; padding:5px 11px; }
+body.ui2 .filter-tab.active { color:#fff !important; font-weight:700; }
+body.ui2 .filter-tab.active::before { content:'✓ '; }
+body.ui2 .ft-common.active, body.ui2 .ft-pyeong.active, body.ui2 .ft-tier.active, body.ui2 .ft-v.active, body.ui2 .ft-adate.active { background:var(--ui-blue,#1e5eff); border-color:var(--ui-blue,#1e5eff); }
+body.ui2 .ft-reset { color:#888; background:#f6f7f9; border-color:#eceef1; }
+body.ui2 .ft-reset::before { content:''; }
+/* 칩: 켜지면 파랗게 채움 + ✓ */
+body.ui2 #chipbar .chip.on { background:var(--ui-blue,#1e5eff); border-color:var(--ui-blue,#1e5eff); color:#fff; }
+body.ui2 #chipbar .chip.on::before { content:'✓ '; }
+body.ui2 #chipbar .chip.open { border-color:var(--ui-blue,#1e5eff); color:var(--ui-blue,#1e5eff); }
+#chip-filter-reset { display:none; color:#c62828; border-color:#f3c7c7; }
+/* 오른쪽 패널들 - 같은 자리·같은 모양(지도 도구 버튼을 가리지 않게) */
+body.ui2 #auction-list-panel, body.ui2 #bid-target-panel, body.ui2 #bid-case-panel, body.ui2 #backtest-panel, body.ui2 #surge-panel {
+    position:fixed; top:104px; right:64px; left:auto; bottom:auto; width:400px; max-height:calc(100vh - 120px);
+    z-index:57; border:1px solid #e3e6ea; border-radius:12px; box-shadow:0 8px 24px rgba(0,0,0,0.14); background:#fff; overflow-y:auto; }
+body.ui2 .auction-list-header, body.ui2 .surge-panel-header { font-size:14px; color:#222; padding:12px 14px; display:flex; align-items:center; gap:8px; flex-wrap:wrap; z-index:3; }
+body.ui2 .auction-list-header > span[onclick*="close"], body.ui2 .surge-panel-header > span[onclick*="close"], body.ui2 .panel-x { margin-left:auto; float:none !important; background:#f1f3f5; border-radius:16px; padding:2px 10px; font-size:12px; cursor:pointer; color:#555; }
+body.ui2 .auction-list-header button { float:none !important; }
+body.ui2 .surge-tab-btn { color:#666; background:#f1f3f5; border-radius:16px; padding:4px 10px; margin-right:0; font-size:12px; border:none !important; }
+body.ui2 .surge-tab-btn.active { color:#fff; background:var(--ui-blue,#1e5eff); }
+body.ui2 .auction-list-item:hover { background:#f5f9ff; }
+body.ui2 .auction-list-name { font-size:13.5px; display:flex; align-items:center; gap:4px; flex-wrap:wrap; padding-right:44px; }
+body.ui2 .al-opts { display:flex; flex-wrap:wrap; gap:6px; padding:8px 14px; border-bottom:1px solid #eee; }
+body.ui2 .al-opts label, body.ui2 .al-opts .auction-bias-toggle { font-size:11.5px; border:1px solid #d6dbe1; border-radius:16px; padding:3px 10px; display:inline-flex; align-items:center; gap:4px; cursor:pointer; color:#444; background:#fff; }
+body.ui2 .al-opts input[type=checkbox] { margin:0; }
+@media (max-width: 640px) {
+    body.ui2 #auction-list-panel, body.ui2 #bid-target-panel, body.ui2 #bid-case-panel, body.ui2 #backtest-panel, body.ui2 #surge-panel, body.ui2 #filter-panel {
+        left:8px; right:8px; width:auto; top:100px; max-height:calc(100vh - 160px); }
+}
+</style>
 </head>
 <body>
 <div id="topbar">
@@ -11897,7 +11946,8 @@ function auctionMarkerSignature(a) {
         // ⚠️ 2026-09(본오동 725-3 사례): 타입탭/평형대/연식단계/신고가만보기 필터가 바뀌면
         // passesFiltersForAuction의 판정 결과도 바뀌어야 하므로 지문을 포함시킴(위
         // currentFilterStateSig 주석 참고).
-        filterState: currentFilterStateSig()
+        filterState: currentFilterStateSig(),
+        verdict: bidVerdictKey(a)
     });
 }
 function upsertAuctionMarker(a) {
@@ -12188,6 +12238,11 @@ function placeAuctionMarker(a) {
     // 표기함 - 목록까지 열지 않아도 지도에서 배지만 보고 거를 수 있어야 함(수치 근거: 임차보증금
     // ÷ 공시가격이 126%/140%를 넘거나, 임차보증금 ÷ 감정가(전세가율)가 80%/90%를 넘는 경우).
     var numRisk = isBidTarget ? detectNumericAuctionRisk(a) : { level: null, reasons: [] };
+    // 🎯 입찰후보 판정(보드와 같은 계산) - 낙찰 확정건은 제외
+    var bvRow = isWon ? null : getBidVerdictForMarker(a);
+    var bvS = bidVerdictShort(bvRow);
+    var verdictLine = bvS ? '<div style="margin-top:4px;"><span style="background:' + bvS.bg + ';color:' + bvS.color + ';font-size:10.5px;font-weight:bold;padding:1px 7px;border-radius:10px;border:1px solid ' + bvS.color + ';">'
+        + bvS.label + (bvS.room ? ' · ' + bvS.room : '') + '</span></div>' : '';
     var div = document.createElement('div');
     div.style.cssText = isWon
         // 낙찰사례 배지(placeBidCaseMarker)와 같은 톤(#00695c, 옅은 청록 그라데이션)으로 맞춰서
@@ -12213,6 +12268,7 @@ function placeAuctionMarker(a) {
             ? '<div class="auction-badge" style="background:' + (numRisk.level === 'high' ? '#c62828' : (numRisk.level === 'medium' ? '#ef6c00' : btStyle.pillBg)) + ';color:' + (numRisk.level ? 'white' : btStyle.pillColor) + ';">'
                 + (numRisk.level ? '🚨 ' : btStyle.icon + ' ') + '입찰희망' + alarmBadge + '</div>'
             : '<div class="auction-badge" style="background:' + sc + ';">🔨 ' + a.status + alarmBadge + '</div>')
+        + verdictLine
         + '<div style="color:#333;font-size:11px;font-weight:bold;overflow:hidden;text-overflow:ellipsis;max-width:185px;margin-top:5px;">'
         +   ((a.name && a.name.trim()) || a.addrLabel || a.addr || '(이름없음)') + surgeBadge + lfBadge + ((isWon || isBidTarget) ? '' : ageBadge)
         + '</div>'
@@ -12244,9 +12300,10 @@ function placeAuctionMarker(a) {
     if (typeof badgeMode !== 'undefined' && badgeMode === 'simple') {
         // 2026-10 화면 개편: 간단 배지 모드에선 경매 배지도 3줄(종류·D-day / 단지명 / 예상매도가·가격)로 - 자세한 건 클릭·마우스 올리기로
         var headBg = numRisk.level === 'high' ? '#c62828' : (numRisk.level === 'medium' ? '#ef6c00'
-            : (isWon ? '#00695c' : (isBidTarget ? btStyle.border : sc)));
-        var headLabel = (numRisk.level ? '🚨' : '') + (isWon ? '⚖️낙찰' : (isBidTarget ? btStyle.icon + '입찰희망' : '🔨' + a.status))
-            + (dDayInfo ? ' · ' + dDayInfo.label : '');
+            : (isWon ? '#00695c' : (bvS ? bvS.color : (isBidTarget ? btStyle.border : sc))));
+        var headLabel = (numRisk.level ? '🚨' : '') + (isWon ? '⚖️낙찰' : (bvS ? bvS.label : (isBidTarget ? btStyle.icon + '입찰희망' : '🔨' + a.status)))
+            + (bvS && bvS.room ? ' ' + bvS.room : '')
+            + (dDayInfo ? ' · ' + (bvS && bvRow.assumedFail ? '결과 확인' : dDayInfo.label) : '');
         var predTxt = (awEst && awEst.predictedSale) ? '예상 ' + toEok(String(awEst.predictedSale)) : '';
         var shortName = (a.name && a.name.trim()) || buildingNameFromAddr(a.addr, a.dong)
             || ((dongKey(a.dong) || '') + ' ' + (fullBunjiFromAddr(a.addr, a.dong, a.bunji) || '')).trim() || a.addrLabel || '(이름없음)';
@@ -14764,6 +14821,48 @@ function computeBidBoardRow(a) {
     }
     return row;
 }
+// ── 지도 배지에도 판정 표시(2026-10 사용자 요청) - 물건마다 판정을 기억해 두고, 입력값·지역 자료가 바뀔 때만 다시 계산 ──
+var bidVerdictCache = {};
+var bidVerdictLawdPending = false;
+function bidVerdictSig(a) {
+    var lawd = bidBoardLawdOf(a);
+    return [auctionWonEstSignature(a), a.minBid, a.bidDate, a.court, a.failCount, lawd, lawd && dataCache[lawd] ? 1 : 0,
+        Object.keys(popularMap).length, lawd && cycleDataByLawd[lawd] ? 1 : 0, Object.keys(leaderFollowerRankMap).length].join('|');
+}
+function getBidVerdictForMarker(a) {
+    if (!isBidBoardCandidate(a) || (a.propType !== 'apt' && a.propType !== 'villa')) return null;
+    var lawd = bidBoardLawdOf(a);
+    if (!lawd) {
+        // 예전에 등록한 물건은 지역코드가 없음 - 좌표로 찾은 뒤 배지를 다시 그림
+        if (a.lat && a.lon && !a._lawdTried) {
+            a._lawdTried = true;
+            resolveBidBoardLawd(a).then(function() {
+                if (bidVerdictLawdPending) return;
+                bidVerdictLawdPending = true;
+                setTimeout(function() { bidVerdictLawdPending = false; try { renderAuctionMarkers(); } catch (e) {} }, 800);
+            });
+        }
+        return bidVerdictCache[a.id] ? bidVerdictCache[a.id].row : null;
+    }
+    var cached = bidVerdictCache[a.id];
+    if (!dataCache[lawd]) return cached ? cached.row : null; // 지역 자료가 내려가 있으면 마지막 판정 유지
+    var sig = bidVerdictSig(a);
+    if (cached && cached.sig === sig) return cached.row;
+    var row = null;
+    try { row = computeBidBoardRow(a); } catch (e) { row = null; }
+    bidVerdictCache[a.id] = { sig: sig, row: row };
+    return row;
+}
+function bidVerdictKey(a) {
+    var r = getBidVerdictForMarker(a);
+    return r ? r.verdict + (r.assumedFail ? 'A' : '') + (r.roomPct != null ? r.roomPct : '') : '';
+}
+function bidVerdictShort(r) {
+    if (!r) return null;
+    var v = BID_BOARD_VERDICT[r.verdict];
+    var room = r.roomPct == null ? '' : (r.roomPct >= 0 ? '여유 ' + r.roomPct + '%' : '부족 ' + Math.abs(r.roomPct) + '%');
+    return { label: (r.assumedFail ? '유찰되면 ' : '') + v.label, room: room, color: v.color, bg: v.bg };
+}
 var BID_BOARD_VERDICT = {
     yes:    { label: '✅ 추천', color: '#2e7d32', bg: '#e8f5e9', order: 0 },
     check:  { label: '🟡 검토', color: '#ef6c00', bg: '#fff3e0', order: 1 },
@@ -14830,7 +14929,10 @@ async function refreshBidBoard() {
             } catch (e) { console.error('입찰후보 지역 자료 실패:', lawd, e && e.message); }
         }
         var fresh = {};
-        byLawd[lawd].forEach(function(a) { try { fresh[a.id] = computeBidBoardRow(a); } catch (e) { console.error('입찰후보 계산 실패:', a.id, e); } });
+        byLawd[lawd].forEach(function(a) {
+            try { fresh[a.id] = computeBidBoardRow(a); bidVerdictCache[a.id] = { sig: bidVerdictSig(a), row: fresh[a.id] }; }
+            catch (e) { console.error('입찰후보 계산 실패:', a.id, e); }
+        });
         bidBoardRows = bidBoardRows.map(function(r) { return fresh[r.id] || r; });
         renderBidBoard();
         // 보드 때문에 새로 불러온 지역은 계산이 끝나면 메모리에서 내림(지역당 수 MB - 다시 필요하면 브라우저 저장본에서 금방 불러옴)
@@ -20302,6 +20404,162 @@ window.addEventListener('load', function() {
         } else if (++tries > 120) clearInterval(t);
     }, 500);
 });
+/* ════ 2026-10 필터·패널 정리 (사용자: "세부 탭 UI는 기존 방식이 유지되고, 필터 on/off가 제대로 작동하지 않거나 중복 표기가 많다")
+   원인: ① 같은 필터가 위 칩·필터 패널·오른쪽 도구 버튼 여러 곳에 있는데 서로 켜짐 표시가 연결 안 됨(패널에서 켜도 칩은 꺼짐으로 보임)
+   ② "필터 전체"/"평형·연식·등급" 칩은 열기만 하고 다시 눌러도 안 닫힘, 패널에 닫기 버튼도 없음 ③ 경매 목록에 주소가 두 번 나오는 등 중복.
+   해결: 필터 상태(변수)를 기준으로 모든 버튼·칩을 한 번에 다시 칠함(syncFilterUi) - 어느 버튼을 눌러도 같은 결과. ════ */
+var FILTER_FLAG_DEFS = [
+    { v: 'newHighOnlyFilter', sel: '#newhighonly-toggle-btn', label: '신고가만' },
+    { v: 'recentYearOnly', sel: '#fp-group-display [onclick^="toggleRecentYearOnly"]', label: '최근 6개월 거래만' },
+    { v: 'bidCaseOnlyFilter', sel: '#bidcaseonly-toggle-btn', label: '낙찰사례만' },
+    { v: 'compOnlyFilter', sel: '#fp-group-display [onclick^="toggleCompOnlyFilter"]', label: '비교대상만' },
+    { v: 'showRentOnlyFilter', sel: '#rentonly-toggle-btn', label: '전세거래만 있는 주소' }
+];
+var FILTER_SET_DEFS = [
+    { set: function() { return activeGrades; }, cls: '.ft-g', attr: 'g', reset: 'resetGradeFilter' },
+    { set: function() { return activePyeongTiers; }, cls: '.ft-pyeong', attr: 'p', reset: 'resetPyeongTierFilter' },
+    { set: function() { return activeVillaFilters; }, cls: '.ft-v', attr: 'v', reset: 'resetVillaFilter' },
+    { set: function() { return activeVillaTiers; }, cls: '.ft-tier', attr: 'tier', reset: 'resetVillaTierFilter' },
+    { set: function() { return activeAuctionDateFilters; }, cls: '.ft-adate', attr: 'adate', reset: 'resetAuctionDateFilter' }
+];
+function activeFilterCount() {
+    var n = 0;
+    FILTER_FLAG_DEFS.forEach(function(d) { if (window[d.v]) n++; });
+    FILTER_SET_DEFS.forEach(function(d) { n += d.set().size; });
+    return n;
+}
+function syncFilterUi() {
+    FILTER_FLAG_DEFS.forEach(function(d) { var b = document.querySelector(d.sel); if (b) b.classList.toggle('active', !!window[d.v]); });
+    var bd = document.getElementById('boundary-toggle-btn'); if (bd) bd.classList.toggle('active', !!dongBoundaryMode);
+    var bc = document.getElementById('bidcasebadge-toggle-btn'); if (bc) bc.classList.toggle('active', !!showBidCaseBadges);
+    var bq = document.getElementById('bidcasebadge-quick-btn'); if (bq) bq.classList.toggle('active', !!showBidCaseBadges);
+    FILTER_SET_DEFS.forEach(function(d) {
+        var s = d.set();
+        document.querySelectorAll(d.cls).forEach(function(b) { b.classList.toggle('active', s.has(b.dataset[d.attr])); });
+    });
+    document.querySelectorAll('[data-proxy],[data-proxy-onclick]').forEach(function(chip) {
+        var target = chip.dataset.proxy ? document.getElementById(chip.dataset.proxy)
+            : document.querySelector('#fp-group-display [onclick^="' + chip.dataset.proxyOnclick + '"]');
+        chip.classList.toggle('on', !!(target && target.classList.contains('active')));
+    });
+    var n = activeFilterCount();
+    var chip = document.getElementById('chip-filter-all');
+    if (chip) chip.innerHTML = '⚙️ 상세 필터' + (n ? ' <b>' + n + '</b>' : '') + ' ▾';
+    var rs = document.getElementById('chip-filter-reset'); if (rs) rs.style.display = n ? '' : 'none';
+    var hc = document.getElementById('fp-count'); if (hc) hc.textContent = n ? n + '개 적용 중' : '적용된 필터 없음';
+    var hr = document.getElementById('fp-reset'); if (hr) hr.style.display = n ? '' : 'none';
+    document.body.classList.toggle('type-villa', typeof currentTypeFilter !== 'undefined' && currentTypeFilter === 'villa');
+}
+syncProxyChips = function() { setTimeout(syncFilterUi, 0); };
+function resetAllFilters() {
+    FILTER_FLAG_DEFS.forEach(function(d) { if (window[d.v]) { var b = document.querySelector(d.sel); if (b) b.click(); } });
+    FILTER_SET_DEFS.forEach(function(d) { if (d.set().size && typeof window[d.reset] === 'function') window[d.reset](); });
+    syncFilterUi();
+}
+function isFilterPanelOpen() { var p = document.getElementById('filter-panel'); return !!p && p.style.display === 'flex'; }
+function closeFilterPanel() {
+    var p = document.getElementById('filter-panel'); if (p) p.style.display = 'none';
+    var c = document.getElementById('chip-filter-all'); if (c) c.classList.remove('open');
+}
+function toggleDetailFilterPanel() {
+    if (isFilterPanelOpen()) { closeFilterPanel(); return; }
+    closeSidePanels();
+    var p = document.getElementById('filter-panel'); p.style.display = 'flex';
+    var c = document.getElementById('chip-filter-all'); if (c) c.classList.add('open');
+    syncFilterUi();
+}
+// 예전 호출부(openFilterPanelTab) 호환 - 탭 없이 같은 패널을 엶
+openFilterPanelTab = function() { if (!isFilterPanelOpen()) toggleDetailFilterPanel(); };
+// ── 오른쪽 패널은 한 번에 하나만 ──
+var SIDE_PANEL_OPENERS = { openAuctionList: 'auction-list-panel', openBidTargetPanel: 'bid-target-panel', openBidCasePanel: 'bid-case-panel', openSurgePanel: 'surge-panel', openBacktestPanel: 'backtest-panel' };
+function closeSidePanels(exceptId) {
+    Object.keys(SIDE_PANEL_OPENERS).forEach(function(k) {
+        var id = SIDE_PANEL_OPENERS[k];
+        if (id === exceptId) return;
+        var e = document.getElementById(id); if (e) e.style.display = 'none';
+    });
+}
+Object.keys(SIDE_PANEL_OPENERS).forEach(function(fn) {
+    var orig = window[fn];
+    if (typeof orig !== 'function') return;
+    window[fn] = function() {
+        var r = orig.apply(this, arguments);
+        var me = document.getElementById(SIDE_PANEL_OPENERS[fn]);
+        if (me && getComputedStyle(me).display !== 'none') { closeSidePanels(SIDE_PANEL_OPENERS[fn]); closeFilterPanel(); if (typeof closeBidBoard === 'function') closeBidBoard(); }
+        return r;
+    };
+});
+// 필터를 바꾸는 모든 함수 뒤에 화면 동기화
+['toggleRecentYearOnly', 'toggleCompOnlyFilter', 'toggleShowRentOnly', 'toggleBidCaseOnlyFilter', 'toggleNewHighOnlyFilter', 'toggleShowBidCaseBadges',
+ 'toggleDongBoundaryMode', 'toggleGrade', 'resetGradeFilter', 'togglePyeongTier', 'resetPyeongTierFilter', 'toggleVillaFilter', 'resetVillaFilter',
+ 'toggleVillaTier', 'resetVillaTierFilter', 'toggleAuctionDateFilter', 'resetAuctionDateFilter', 'setTypeFilter'].forEach(function(fn) {
+    var orig = window[fn];
+    if (typeof orig !== 'function') return;
+    window[fn] = function() { var r = orig.apply(this, arguments); syncFilterUi(); return r; };
+});
+function setupUiV3() {
+    // 1) 칩: "평형·연식·등급"·"필터 전체" 두 개 → "상세 필터" 하나(누르면 열고, 다시 누르면 닫힘) + 적용 중일 때만 "모두 끄기"
+    document.querySelectorAll('#chipbar .chip').forEach(function(c) {
+        var oc = c.getAttribute('onclick') || '';
+        if (oc.indexOf("openFilterPanelTab('attr')") >= 0) c.remove();
+        else if (oc.indexOf("openFilterPanelTab('display')") >= 0) {
+            c.id = 'chip-filter-all'; c.setAttribute('onclick', 'toggleDetailFilterPanel()');
+            var rs = document.createElement('button');
+            rs.className = 'chip'; rs.id = 'chip-filter-reset'; rs.textContent = '✕ 필터 모두 끄기';
+            rs.onclick = resetAllFilters;
+            c.after(rs);
+        }
+    });
+    // 2) 필터 패널: 머리글 추가, 위 칩·오른쪽 도구와 겹치는 버튼은 패널에서 숨김(동작은 그대로 - 칩이 이 버튼을 대신 누름)
+    var p = document.getElementById('filter-panel');
+    if (p && !document.getElementById('fp-count')) {
+        var head = document.createElement('div');
+        head.className = 'fp-head';
+        head.innerHTML = '<b>상세 필터</b><span class="fp-count" id="fp-count"></span>'
+            + '<button class="fp-reset" id="fp-reset" onclick="resetAllFilters()">모두 끄기</button>'
+            + '<button class="fp-close" onclick="closeFilterPanel()">✕ 닫기</button>';
+        p.insertBefore(head, p.firstChild);
+        var note = document.createElement('div');
+        note.className = 'fp-note';
+        note.textContent = '신고가만·최근 6개월·낙찰사례만은 위 칩에서, 경계선·낙찰사례 배지는 오른쪽 도구 버튼에서 켜고 꺼요.';
+        head.after(note);
+        ['#newhighonly-toggle-btn', '#fp-group-display [onclick^="toggleRecentYearOnly"]', '#bidcaseonly-toggle-btn', '#boundary-toggle-btn', '#bidcasebadge-toggle-btn'].forEach(function(sel) {
+            var b = document.querySelector(sel); if (b) b.classList.add('fp-dup');
+        });
+        var lbl = document.querySelector('#fp-group-display .filter-row-label'); if (lbl) lbl.textContent = '보기 조건';
+        var rent = document.getElementById('rentonly-toggle-btn'); if (rent) rent.textContent = '🏠 전세거래만 있는 주소(빌라)';
+        document.querySelectorAll('#fp-group-attr .filter-row').forEach(function(row) {
+            var l = row.querySelector('.filter-row-label');
+            if (l && /연립다세대/.test(l.textContent)) { row.classList.add('fp-villa-only'); l.textContent = '빌라 승강기·주차'; }
+        });
+    }
+    // 3) 경매 목록 위 옵션(깡통전세 숨김·백테스트 표시·통계 2개)을 한 줄 버튼으로 모음
+    var lp = document.getElementById('auction-list-panel');
+    if (lp && !lp.querySelector('.al-opts')) {
+        var opts = document.createElement('div'); opts.className = 'al-opts';
+        var g = document.getElementById('auction-hide-guarantee-risk'), bt = document.getElementById('auction-show-backtest');
+        var b1 = document.getElementById('auction-bias-toggle-label'), b2 = document.getElementById('auction-sell-bias-toggle-label');
+        [g && g.closest('label'), bt && bt.closest('label'), b1, b2].forEach(function(el) {
+            if (!el) return;
+            var holder = el.parentElement;
+            opts.appendChild(el);
+            if (holder && holder !== lp && !holder.children.length && !holder.textContent.trim()) holder.remove();
+        });
+        var gl = g && g.closest('label'); if (gl) gl.lastChild && gl.childNodes.forEach(function(n) { if (n.nodeType === 3 && /깡통전세/.test(n.textContent)) n.textContent = ' 🚨 깡통전세 의심 숨기기 '; });
+        var bl = bt && bt.closest('label'); if (bl) bl.childNodes.forEach(function(n) { if (n.nodeType === 3 && /백테스트/.test(n.textContent)) n.textContent = ' 📐 백테스트 사건도 보기 '; });
+        var search = lp.querySelector('#auction-list-search');
+        var anchor = search ? search.parentElement : lp.firstChild;
+        anchor.after(opts);
+    }
+    // 4) 닫기 버튼이 없는 패널 머리글에 ✕ 추가
+    [['auction-list-panel', function() { document.getElementById('auction-list-panel').style.display = 'none'; }]].forEach(function(x) {
+        var el = document.getElementById(x[0]); var h = el && el.querySelector('.auction-list-header');
+        if (h && !h.querySelector('.panel-x')) { var s = document.createElement('span'); s.className = 'panel-x'; s.textContent = '✕'; s.onclick = x[1]; h.appendChild(s); }
+    });
+    document.addEventListener('keydown', function(e) { if (e.key === 'Escape') { closeFilterPanel(); } });
+    syncFilterUi();
+}
+window.addEventListener('load', function() { setTimeout(setupUiV3, 0); });
 </script>
 
 </body>
