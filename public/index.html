@@ -12699,6 +12699,12 @@ function findComparablesInRadius(lat, lon, targetBuildingType, radiusM, targetNa
    앞자리를 채우고, 남는 자리만 기존처럼 조건에 맞는 주변 단지 거래(단지당 1건)로 보충함. */
 function findSimilarComps(lat, lon, targetYear, targetFloor, targetPyung, targetBuildingType, targetName, targetDong, targetBunji, maxRadiusM, recencyCutoffOverride) {
     var candidates = [];
+    // ⚠️ 2026-10(사용자 리포트: "광주 서구 화정우미 입찰희망 - 예상매도가가 최근 거래내역과 현저히 다르다,
+    // 이러면 앱을 만드는 이유가 없다"): 20층(탑층) 물건이라 같은 단지에선 탑층 거래 1건만 남고, 같은
+    // 평형 4·15층 거래(1.9억·1.81억)는 층 구간이 달라 빠졌음. 빈자리를 반경 내 더 싼 다른 단지(1.2억대)가
+    // 채워 예상매도가가 1.18억으로 나왔음. 아파트는 같은 단지 같은 평형 탑층↔일반층 시세 차이가 작으므로,
+    // 같은 구간 거래가 3건 미만이면 같은 단지 같은 평형의 일반층/탑층 거래로 채움(1층·지하는 여전히 분리).
+    var relaxedSame = [];
     // ⚠️ 2026-08(사용자 요청): 호출부(openAiCompFinder)에서 빌라는 500m, 아파트는 기존 2km를
     // 그대로 넘겨줌 - 인자를 안 넘기면(다른 호출부가 있을 경우 대비) 기존 2km로 폴백.
     var radiusLimit = maxRadiusM || 2000;
@@ -12735,7 +12741,16 @@ function findSimilarComps(lat, lon, targetYear, targetFloor, targetPyung, target
 
             var candTier = getFloorTier(floorNum, isSameComplex ? maxFloor : null);
             if (targetTier) {
-                if (candTier !== targetTier) return; // 지하/1층/탑층/일반층 구간 불일치는 같은 단지라도 제외
+                if (candTier !== targetTier) {
+                    if (isSameComplex && apt.buildingType === 'apt'
+                        && (targetTier === 'top' || targetTier === 'mid') && (candTier === 'top' || candTier === 'mid')
+                        && targetPyung && Math.abs(toPyung(t.area) - targetPyung) <= 4) {
+                        relaxedSame.push({ trade: t, dist: Math.round(dist), ageDiff: null, floorDiff: targetFloor ? Math.abs(targetFloor - floorNum) : null,
+                            pyungDiff: Math.abs(toPyung(t.area) - targetPyung), score: 50 + Math.abs(toPyung(t.area) - targetPyung) * 1.5,
+                            apt: apt, coordLat: coord.lat, coordLon: coord.lon, isSameComplex: true, relaxedFloorTier: true });
+                    }
+                    return; // 지하/1층/탑층/일반층 구간 불일치는 같은 단지라도 제외(위 아파트 예외는 아래에서 부족할 때만 씀)
+                }
             } else {
                 if (candTier === 'basement') return; // 대상층 모름 - 기존처럼 최소한 지하는 제외
                 if (candTier === 'top' && !isSameComplex) return; // 대상층 모름 - 기존처럼 다른 단지 탑층은 제외
@@ -12781,7 +12796,21 @@ function findSimilarComps(lat, lon, targetYear, targetFloor, targetPyung, target
     });
     var sameComplex = dedupedCandidates.filter(function(c) { return c.isSameComplex; });
     var others = dedupedCandidates.filter(function(c) { return !c.isSameComplex; });
+    var isSameSize = function(c) { return !targetPyung || (c.pyungDiff !== null && c.pyungDiff <= 4); };
+    if (sameComplex.filter(isSameSize).length < 3 && relaxedSame.length) {
+        relaxedSame.forEach(function(c) {
+            var t = c.trade;
+            var k = t.year + '-' + t.month + '-' + t.day + '_' + t.amount + '_' + t.area + '_' + t.floor;
+            if (seenTrade[k]) return;
+            seenTrade[k] = true;
+            sameComplex.push(c);
+        });
+    }
     sameComplex.sort(function(a, b) { return a.score - b.score; });
+    // 같은 단지 같은 평형 거래가 3건 이상이면 그 단지 시세만으로 충분함 - 다른 단지를 섞으면 단지 간
+    // 가격 차이(브랜드·입지·관리상태)가 그대로 예상매도가를 끌어내리거나 올림(화정우미 사례).
+    var sameComplexSameSize = sameComplex.filter(isSameSize);
+    if (sameComplexSameSize.length >= 3) return sameComplexSameSize.slice(0, 10);
     // 같은 단지가 아닌 후보만 "단지당 1건" 다양성 확보(같은 단지는 이미 충분히 비교 가능하므로 여러 건 허용)
     others.sort(function(a, b) { return a.score - b.score; });
     var seen = {}, dedupedOthers = [];
