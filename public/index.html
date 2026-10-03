@@ -758,7 +758,11 @@ body.ui2 #status-box { top:108px; }
 body.ui2 #surge-panel { top:104px; right:62px; }
 body.ui2 #panel { top:52px; height:calc(100vh - 52px); z-index:65; }
 body.ui2 #auction-add-btn { display:none; }
-body.ui2 #map { margin-top:96px; height:calc(100vh - 96px); }
+body.ui2 #map { margin-top:96px; height:calc(100vh - 96px); margin-left:320px; width:calc(100% - 320px); transition:none; }
+body.ui2.sb-closed #map { margin-left:0; width:100%; }
+.simple-badge .comp-add-badge { display:none; }
+.simple-badge:hover .comp-add-badge { display:block; }
+@media (max-width: 640px) { body.ui2 #map { margin-left:0; width:100%; } }
 @media (max-width: 640px) { body.ui2 #map { height:calc(100vh - 96px - 46px); } }
 body.ui2 #cycle-panel { top:104px !important; right:62px !important; }
 body.ui2 #data-health-banner { top:52px !important; }
@@ -19469,8 +19473,10 @@ function toggleSidebar() {
         document.getElementById('sb-handle').innerText = (open ? '▼ ' : '▲ ') + '이 지역 단지 목록' + (lastSidebarCount ? ' (' + lastSidebarCount + ')' : '');
         return;
     }
+    var center = map && map.getCenter();
     var closed = document.body.classList.toggle('sb-closed');
     document.getElementById('sb-toggle').innerText = closed ? '▶' : '◀';
+    if (map) { try { map.relayout(); if (center) map.setCenter(center); } catch (e) {} } // 지도 폭이 바뀌었으니 다시 맞춤
     try { localStorage.setItem('sbClosed', closed ? '1' : '0'); } catch (e) {}
 }
 function updateBadgeModeChip() {
@@ -19493,6 +19499,7 @@ function applySimpleBadge(div, apt, opts) {
     var icons = (apt.hasNewHigh ? '<span title="신고가">⭐</span>' : '') + (opts.matchedAuction ? '<span title="등록한 경매물건">🔨</span>' : '')
         + (opts.matchedBidCase ? '<span title="낙찰사례">⚖️</span>' : '');
     var esc = function(s) { return String(s || '').replace(/[<>&]/g, function(c) { return { '<': '&lt;', '>': '&gt;', '&': '&amp;' }[c]; }); };
+    div.classList.add('simple-badge');
     div.style.cssText = 'position:relative;background:#fff;border:1.5px solid ' + hc + ';border-radius:6px;padding:0;margin-top:12px;white-space:nowrap;cursor:pointer;'
         + 'text-align:center;min-width:56px;max-width:150px;box-shadow:0 1px 4px rgba(0,0,0,.28);transform:scale(var(--badge-scale,1));transform-origin:center bottom;line-height:1.25;'
         + (opts.matchedAuction ? 'animation:auctionGlow 1.8s ease-in-out infinite;' : '');
