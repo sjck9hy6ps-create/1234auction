@@ -1208,6 +1208,7 @@ body.ui2 #dong-boundary-info { top:108px !important; }
             <select onchange="setBidBoardFilter('sort', this.value)">
                 <option value="verdict">판정 → 여유 큰 순</option><option value="date">입찰일 빠른 순</option><option value="room">여유 큰 순</option>
             </select>
+            <label class="bb-chk"><input type="checkbox" onchange="setBidBoardFilter('popOnly', this.checked)"> 인기 상위 20% 단지만</label>
             <label class="bb-chk"><input type="checkbox" onchange="setBidBoardFilter('showPast', this.checked)"> 오래 지난 입찰(45일+)도 보기</label>
         </div>
         <div id="bb-progress" style="display:none;"></div>
@@ -2261,6 +2262,20 @@ var leaderFollowerRankMap = {};
 var villaRankMap = {};
 // 2026-10: 과거 사이클 이력 기반 후발주자 정보(analyze-cycle.py → API mode=marketCycle). key = lfRankKey(dong, danji)
 var followerHistMap = {};
+// 2026-10 인기 단지(analyze-liquidity.py): 같은 동 안 최근 3년 거래량 순으로 상위20%/중간/하위40% + 분기마다 거래된 비율.
+// 검증: 지방 상위20% 단지는 최근 3년 모든 분기에 거래(중앙값 100%), 하위40%는 17% - 하위 단지는 낙찰 후 팔리는 데 오래 걸림.
+var popularMap = {};
+function resolvePopInfo(dong, name, bunji, type, altName) {
+    if (type === 'villa' || !dong) return null;
+    var keys = [name, altName];
+    var own = resolveOwnComplexName(dong, bunji, 'apt'); if (own) keys.push(own);
+    for (var i = 0; i < keys.length; i++) {
+        if (!keys[i]) continue;
+        var h = popularMap[lfRankKey(dong, keys[i])];
+        if (h) return h;
+    }
+    return null;
+}
 var cycleDataByLawd = {};
 async function loadMarketCycle(lawdCd) {
     if (!lawdCd) return null;
@@ -2270,6 +2285,12 @@ async function loadMarketCycle(lawdCd) {
         if (!r.ok) return null;
         var d = await r.json();
         cycleDataByLawd[lawdCd] = d;
+        var pop = d.popular && d.popular.byDong;
+        if (pop) {
+            var pm = Object.assign({}, popularMap);
+            Object.keys(pop).forEach(function(dg) { (pop[dg] || []).forEach(function(x) { if (x.danji) pm[lfRankKey(dg, x.danji)] = x; }); });
+            popularMap = pm;
+        }
         var fol = (d.region && d.region.followers) || [];
         if (fol.length) {
             var m = Object.assign({}, followerHistMap);
@@ -14419,12 +14440,16 @@ function solveImpliedTargetFromBid(a, marginValue) {
 // (낙찰된 경우 예측이 평균 +3.3% 높았음 - "승자의 저주") 마진이 예측 오차를 덮어야 함.
 // "500만 + 예상매도가 × (자기 단지 같은 평형 거래 3건↑면 5%, 아니면 9%)"는 낙찰 29%·손실 16%·총 순이익 7.5억.
 // 아파트만 검증됨 - 빌라는 아직 추천하지 않음.
-function riskMarginFor(predictedSale, ownTrades, downRisk) {
+// 2026-10: 거래가 드문 단지(같은 동 거래량 하위 40% - 최근 3년 중 거래 있던 분기 17%)는 팔릴 때까지 더 오래 들고 있어야 하고
+// 1년간 지역보다 평균 0.9%(지방)~1.75%(수도권) 덜 올랐음 → 보유기간 비용(이자·관리비 약 1%)과 합쳐 예상매도가의 2%를 더 얹음.
+var LOW_POP_EXTRA_RATE = 0.02;
+function riskMarginFor(predictedSale, ownTrades, downRisk, popInfo) {
     if (!predictedSale) return null;
     var rate = ownTrades >= 3 ? 0.05 : 0.09;
     // 2026-10: 지역 "6개월 하락 위험 높음"이면 그 등급의 과거 평균 6개월 하락폭(수도권 3.8%·지방 2.1%)만큼 더 얹음
     var extra = (downRisk && downRisk.level === '높음' && downRisk.avgDropPct > 0) ? downRisk.avgDropPct / 100 : 0;
-    return { margin: Math.round((500 + predictedSale * (rate + extra)) / 10) * 10, rate: rate, extra: extra };
+    var popExtra = popInfo && popInfo.tier === '하위40%' ? LOW_POP_EXTRA_RATE : 0;
+    return { margin: Math.round((500 + predictedSale * (rate + extra + popExtra)) / 10) * 10, rate: rate, extra: extra, popExtra: popExtra };
 }
 var subjectRiskCache = {}; // lawdCd -> {level, avgDropPct, negative} (사이클 분석 결과)
 function getSubjectDownRisk(ctx, onReady) {
@@ -14454,12 +14479,15 @@ function renderRiskMarginSuggestion(predictedSale) {
     var pyung = parseFloat(document.getElementById('a-pyung').value) || null;
     var own = countOwnComplexTrades(ctx.dong, fullBunjiFromAddr(document.getElementById('a-addr').value, ctx.dong, ctx.bunji), 'apt', pyung);
     var dr = getSubjectDownRisk(ctx, function() { renderRiskMarginSuggestion(window.__predictedSaleValue); });
-    var r = riskMarginFor(predictedSale, own, dr);
+    var addrVal = document.getElementById('a-addr').value;
+    var popInfo = resolvePopInfo(ctx.dong, (document.getElementById('a-name') || {}).value, fullBunjiFromAddr(addrVal, ctx.dong, ctx.bunji), 'apt', buildingNameFromAddr(addrVal, ctx.dong));
+    var r = riskMarginFor(predictedSale, own, dr, popInfo);
     if (!r) { el.innerHTML = ''; return; }
     el.innerHTML = '<span style="color:#6a1b9a;">🎯 추천 목표마진 <b>' + toEok(String(r.margin)) + '</b> '
         + '<span style="color:#888;">(500만 + 예상매도가의 ' + Math.round(r.rate * 100) + '% - '
         + (own >= 3 ? '이 단지 같은 평형 거래 ' + own + '건이라 예측이 비교적 정확' : '이 단지 비교 거래가 적어 예측 오차가 큼')
-        + (r.extra > 0 ? ' + 지역 하락위험 높음 ' + Math.round(r.extra * 1000) / 10 + '%' : '') + ')</span></span> '
+        + (r.extra > 0 ? ' + 지역 하락위험 높음 ' + Math.round(r.extra * 1000) / 10 + '%' : '')
+        + (r.popExtra > 0 ? ' + 거래 드문 단지 ' + Math.round(r.popExtra * 100) + '%(팔릴 때까지 오래 보유)' : '') + ')</span></span> '
         + '<button type="button" class="modal-btn btn-gray" style="font-size:10px;padding:2px 6px;" onclick="document.getElementById(\'a-comp-target-margin\').value=' + r.margin + ';applyEstRow4();">④에 적용</button>'
         + (r.extra > 0 ? '<div style="color:#c62828;font-size:10.5px;">⚠️ 이 지역 6개월 뒤 하락 위험 높음(' + (dr.negative || []).join(', ') + ') - 과거 같은 조건에서 '
             + (dr.dropShare != null ? dr.dropShare + '%가 6개월 뒤 2%+ 하락, ' : '') + '평균 −' + dr.avgDropPct + '% → 그만큼 마진을 더 잡았어요</div>' : '')
@@ -14644,10 +14672,11 @@ function computeBidBoardRow(a) {
     var hist = type === 'apt' ? resolveFollowerHist(a.dong, a.name, bunjiFull, type, altName) : null;
     row.catchup = hist && typeof hist.expectedCatchupPct === 'number' ? cappedCatchup(hist.expectedCatchupPct) : null;
     row.risk = bidBoardDownRisk(lawd);
+    row.pop = type ? resolvePopInfo(a.dong, a.name, bunjiFull, type, altName) : null;
     row.guarantee = a._guaranteeRisk || detectNumericAuctionRisk(a);
     // 목표마진: 모달에서 직접 정해 저장한 값이 있으면 그걸, 없으면 추천 목표마진
     var userMargin = parseInt(a.compTargetMargin);
-    var rm = row.sale ? riskMarginFor(row.sale, row.own, row.risk) : null;
+    var rm = row.sale ? riskMarginFor(row.sale, row.own, row.risk, row.pop) : null;
     row.marginUser = !isNaN(userMargin) && parseInt(a.target) > 0;
     row.margin = row.marginUser ? userMargin : (rm ? rm.margin : null);
     if (row.sale && row.margin != null) {
@@ -14661,9 +14690,11 @@ function computeBidBoardRow(a) {
     row.roomPct = row.recBid && minBid ? Math.round((row.recBid - minBid) / minBid * 1000) / 10 : null;
     row.salePerMin = row.sale && minBid ? Math.round(minBid / row.sale * 1000) / 10 : null;
     // ── 판정 ──
-    var popular = row.lf && (row.lf.isLeader || (row.lf.rank && row.lf.rank <= 5));
-    var active = row.complex3y >= 20 || popular;
-    var rare = row.complex3y < 6;
+    // 인기 단지 분석(row.pop)이 있으면 그 등급으로, 없으면 예전 기준(동 순위·3년 거래 건수)으로
+    var popular = row.pop ? row.pop.tier === '상위20%' : (row.lf && (row.lf.isLeader || (row.lf.rank && row.lf.rank <= 5)));
+    var active = row.pop ? row.pop.tier !== '하위40%' : (row.complex3y >= 20 || popular);
+    var rare = row.pop ? row.pop.tier === '하위40%' : row.complex3y < 6;
+    row.popular = !!popular;
     if (!type) { row.verdict = 'nodata'; row.reasons.push('아파트·빌라만 계산해요'); }
     else if (!a.lat || !a.lon) { row.verdict = 'nodata'; row.reasons.push('주소 위치를 못 찾았어요 - 상세에서 주소 확인'); }
     else if (!row.loaded) { row.verdict = 'nodata'; row.reasons.push('지역 자료를 아직 못 불러왔어요'); }
@@ -14685,8 +14716,9 @@ function computeBidBoardRow(a) {
         var ok = true;
         if (type !== 'apt') { ok = false; row.warns.push('빌라는 검증 전이라 직접 확인'); }
         if (row.own < 3) { ok = false; row.warns.push('이 단지 같은 평형 거래가 ' + row.own + '건뿐이라 예상매도가 오차가 커요'); }
-        if (rare) { ok = false; row.warns.push('최근 3년 거래 ' + row.complex3y + '건 - 팔기 어려울 수 있어요'); }
+        if (rare) { ok = false; row.warns.push(row.pop ? '거래 드문 단지(동 하위 40%, 최근 3년 중 거래 있던 분기 ' + row.pop.activeQuarterPct + '%) - 팔리는 데 오래 걸릴 수 있어 마진 2% 더 잡음' : '최근 3년 거래 ' + row.complex3y + '건 - 팔기 어려울 수 있어요'); }
         else if (!active) { ok = false; row.warns.push('거래가 많은 단지는 아니에요(3년 ' + row.complex3y + '건)'); }
+        else if (row.pop && !popular && row.pop.activeQuarterPct < 70) { ok = false; row.warns.push('인기 중간 단지 - 최근 3년 중 거래 있던 분기 ' + row.pop.activeQuarterPct + '%'); }
         if (row.risk && row.risk.level === '높음') { ok = false; row.warns.push('지역 6개월 하락 위험 높음'); }
         if (row.guarantee && row.guarantee.level) { ok = false; row.warns.push('🚨 인수 보증금 의심 - 권리 확인 필요'); }
         if (minBid < row.sale * 0.5) { ok = false; row.warns.push('최저가가 예상매도가의 절반도 안 돼요 - 지분·특수물건이거나 입력값 오류인지 확인'); }
@@ -14795,6 +14827,7 @@ function bidBoardVisibleRows() {
         if (!s.showPast && r.dday && r.dday.diffDays < -BID_RESULT_WAIT_DAYS) return false;
         if (s.region && r.region !== s.region) return false;
         if (s.type && r.a.propType !== s.type) return false;
+        if (s.popOnly && !r.popular) return false;
         return true;
     });
 }
@@ -14854,12 +14887,17 @@ function renderBidBoardRow(r) {
         : r.dday ? '<span class="bb-dday' + (r.dday.diffDays <= 3 && r.dday.diffDays >= 0 ? ' soon' : '') + '">' + r.dday.label + '</span><div class="bb-sub">' + bbEsc(a.bidDate || '') + '</div>' : '<span class="bb-sub">미정</span>';
     var saleCell = r.pending ? '<span class="bb-sub">계산 중…</span>'
         : (r.sale ? '<b>' + toEok(String(r.sale)) + '</b><div class="bb-sub">' + (r.saleSaved ? '내가 저장한 값' : '이 단지 같은 평형 ' + r.own + '건') + (r.salePerMin != null ? ' · 최저가는 ' + r.salePerMin + '%' : '') + '</div>' : '<span class="bb-sub">-</span>');
-    var recCell = r.recBid ? '<b>' + toEok(String(r.recBid)) + '</b><div class="bb-sub">마진 ' + toEok(String(r.margin)) + (r.marginUser ? '(내가 정함)' : '(추천)') + '</div>' : '<span class="bb-sub">-</span>';
+    var recCell = r.recBid ? '<b>' + toEok(String(r.recBid)) + '</b><div class="bb-sub">마진 ' + toEok(String(r.margin)) + (r.marginUser ? '(내가 정함)' : '(추천' + (r.pop && r.pop.tier === '하위40%' ? ', 거래 드묾 +2%' : '') + ')') + '</div>' : '<span class="bb-sub">-</span>';
     var roomCell = r.roomPct == null ? '<span class="bb-sub">-</span>'
         : '<b style="color:' + (r.roomPct >= 0 ? '#2e7d32' : '#c62828') + ';">' + (r.roomPct >= 0 ? r.roomPct + '% 여유' : Math.abs(r.roomPct) + '% 부족') + '</b>'
           + '<div class="bb-sub">' + (r.roomPct >= 0 ? '최저가보다 ' + toEok(String(r.recBid - r.minBid)) + ' 더 써도 됨' : '한 번 더 떨어지면 다시 보기') + '</div>';
-    var popCell = r.pending ? '' : ((r.lf ? (r.lf.isLeader ? '<span class="bb-pill lead">👑 대장</span>' : '<span class="bb-pill">동 ' + r.lf.rank + '위</span>') : '')
-        + '<div class="bb-sub">3년 거래 ' + (r.complex3y || 0) + '건' + (r.complex3y >= 20 ? ' · 활발' : (r.complex3y < 6 ? ' · 드묾' : '')) + '</div>');
+    var popCell = r.pending ? '' : (r.pop
+        ? '<span class="bb-pill ' + (r.pop.tier === '상위20%' ? 'good' : (r.pop.tier === '하위40%' ? 'bad' : '')) + '">' + (r.pop.tier === '상위20%' ? '🔥 인기 상위 20%' : (r.pop.tier === '하위40%' ? '거래 드묾(하위 40%)' : '인기 중간')) + '</span>'
+            + (r.lf && r.lf.isLeader ? ' <span class="bb-pill lead">👑 대장</span>' : '')
+            + '<div class="bb-sub">동 ' + r.pop.rankInDong + '위/' + r.pop.complexesInDong + '단지 · 3년 ' + r.pop.trades3y + '건</div>'
+            + '<div class="bb-sub">분기마다 거래 ' + r.pop.activeQuarterPct + '%</div>'
+        : ((r.lf ? (r.lf.isLeader ? '<span class="bb-pill lead">👑 대장</span>' : '<span class="bb-pill">동 ' + r.lf.rank + '위</span>') : '')
+            + '<div class="bb-sub">3년 거래 ' + (r.complex3y || 0) + '건' + (r.complex3y >= 20 ? ' · 활발' : (r.complex3y < 6 ? ' · 드묾' : '')) + '</div>'));
     var riskCell = r.pending ? '' : (r.risk ? (r.risk.level === '높음' ? '<span class="bb-pill bad">하락위험 높음</span><div class="bb-sub">' + bbEsc((r.risk.negative || []).join(', ')) + '</div>' : '<span class="bb-pill good">낮음</span>') : '<span class="bb-sub">-</span>');
     var cuCell = r.catchup == null ? '<span class="bb-sub">-</span>'
         : (r.catchup >= 0.5 ? '<span style="color:#2e7d32;font-weight:bold;">+' + r.catchup + '% 여지</span>' : (r.catchup <= -0.5 ? '<span style="color:#c62828;">' + Math.abs(r.catchup) + '% 덜 오를 수도</span>' : '<span class="bb-sub">대장과 비슷</span>'));

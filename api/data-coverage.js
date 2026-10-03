@@ -3369,7 +3369,7 @@ export default async function handler(req, res) {
     try {
       let region = req.query.region || null;
       if (req.query.lawdCd) { const f = LAWD_CODES.find((r) => r.code === String(req.query.lawdCd)); if (f) region = f.name; }
-      const ids = ['cycle|__summary__', 'cycle|__forecast__'].concat(region ? ['cycle|' + region] : []);
+      const ids = ['cycle|__summary__', 'cycle|__forecast__'].concat(region ? ['cycle|' + region, 'pop|' + region] : []);
       const { data, error } = await supabase.from('leader_follower_cache').select('id,payload,fetched_at').in('id', ids);
       if (error) return res.status(500).json({ error: error.message });
       const sum = (data || []).find((r) => r.id === 'cycle|__summary__');
@@ -3392,6 +3392,8 @@ export default async function handler(req, res) {
         forecastValidation: p.forecastValidation, followerValidation: p.followerValidationStrict || p.followerValidation,
         followerCatchupCoefUsed: p.followerCatchupCoefUsed,
         region: reg ? reg.payload : null,
+        // 2026-10 인기 단지 목록(analyze-liquidity.py, 동별 상위20%/중간/하위40% + 분기마다 거래된 비율)
+        popular: region ? (((data || []).find((r) => r.id === 'pop|' + region) || {}).payload || null) : null,
         risk,
       });
     } catch (err) {
