@@ -9050,6 +9050,11 @@ function refreshAvmEstimateIfNeeded() {
     // 단지명(danji) - findAptComplexMomentum 등 기존 기능도 이미 a-name을 "단지명"으로 씀.
     // 없어도(단독주택 형태 등) 동작은 하고, 단지 단위 대신 법정동 단위로 자동 폴백됨.
     var danji = document.getElementById('a-name').value.trim();
+    // ⚠️ 2026-10(사용자 리포트: 광주 남구 광복마을3길 26-3 입찰희망 - "AVM 추정가가 이 건물과 무관한 금액"):
+    // 일괄등록 물건은 단지명이 비어 있어 AVM이 단지를 못 찾고 "시군구 평균(1982년식 남구 아파트 평균)"
+    // 1.87억을 냈음(실제 이 단지 옥천아파트는 1.1~1.3억). 단지명이 없으면 같은 동·같은 지번의 실거래 단지명,
+    // 그것도 없으면 주소 끝 건물명으로 채워서 보냄.
+    if (!danji) danji = resolveOwnComplexName(dong, ctx.bunji, propType) || buildingNameFromAddr(document.getElementById('a-addr').value, dong) || '';
     // ⚠️ 2026-08(빌라 층위치 보정): 이 건물의 건축HUB 총층수(pendingAuctionBuildingInfo,
     // loadAuctionBuildingInfo가 미리 채워둠)가 있으면 서버로 같이 넘김 - 아파트는 K-apt
     // 단지명 매칭보다 "이 건물 자체"의 값이라 더 정확하고, 빌라는 K-apt 자체가 없어 이 값이
@@ -12708,6 +12713,11 @@ function findSimilarComps(lat, lon, targetYear, targetFloor, targetPyung, target
     // 채워 예상매도가가 1.18억으로 나왔음. 아파트는 같은 단지 같은 평형 탑층↔일반층 시세 차이가 작으므로,
     // 같은 구간 거래가 3건 미만이면 같은 단지 같은 평형의 일반층/탑층 거래로 채움(1층·지하는 여전히 분리).
     var relaxedSame = [];
+    // 같은 단지 같은 평형의 최근 3년 거래(층 구간 규칙은 그대로) - 최근 1년에 자기 단지 거래가 없거나 적을 때
+    // 다른 단지를 섞기 전에 먼저 씀(광주 진월동 옥천아파트: 1년 내 같은 평형·같은 층구간 0건 → 주변 단지가 섞여
+    // 1.81억, 실제 이 단지 3년 거래는 1.15~1.3억).
+    var ownLong = [];
+    var ownLongCutoff = daysAgo(1095);
     // ⚠️ 2026-08(사용자 요청): 호출부(openAiCompFinder)에서 빌라는 500m, 아파트는 기존 2km를
     // 그대로 넘겨줌 - 인자를 안 넘기면(다른 호출부가 있을 경우 대비) 기존 2km로 폴백.
     var radiusLimit = maxRadiusM || 2000;
@@ -12738,6 +12748,19 @@ function findSimilarComps(lat, lon, targetYear, targetFloor, targetPyung, target
             // 계산에 섞여 들어가는 걸 막기 위함. dealing_type이 없는(옛 데이터) 행은 "직거래
             // 아님"이 확인된 게 아니라 "모름"이라 그대로 둠(제외하면 표본이 과도하게 줄어듦).
             if (t.dealing_type === '직거래') return;
+            if (isSameComplex && !recencyCutoffOverride && tradeDate(t) >= ownLongCutoff && targetPyung
+                && Math.abs(toPyung(t.area) - targetPyung) <= 4 && Number.isFinite(parseInt(t.floor))) {
+                var oTier = getFloorTier(parseInt(t.floor), maxFloor);
+                var tierOk = targetTier
+                    ? (oTier === targetTier || (apt.buildingType === 'apt' && (targetTier === 'top' || targetTier === 'mid') && (oTier === 'top' || oTier === 'mid')))
+                    : oTier !== 'basement';
+                if (tierOk) {
+                    var pd = Math.abs(toPyung(t.area) - targetPyung);
+                    ownLong.push({ trade: t, dist: Math.round(dist), ageDiff: null, floorDiff: targetFloor ? Math.abs(targetFloor - parseInt(t.floor)) : null,
+                        pyungDiff: pd, score: 100 + pd * 1.5 + (Date.now() - tradeDate(t)) / 86400000 / 30,
+                        apt: apt, coordLat: coord.lat, coordLon: coord.lon, isSameComplex: true });
+                }
+            }
             if (tradeDate(t) < recencyCutoff) return; // 최근 1년(또는 폴백시 2년) 거래만
             var floorNum = parseInt(t.floor);
             if (!Number.isFinite(floorNum)) return; // 층수 미상은 항상 제외
@@ -12817,11 +12840,15 @@ function findSimilarComps(lat, lon, targetYear, targetFloor, targetPyung, target
     // 같은 단지 같은 평형 거래가 최근 1년에 1~2건뿐이면, 다른 단지를 섞기 전에 같은 단지 3년치로 먼저
     // 넓혀봄(광천동 사례: 자기 단지 1건 3.4억인데 주변 구축 단지가 섞여 1.46억으로 나왔음). 그래도 자기
     // 단지 거래가 있으면 그 단지 거래만 씀 - 단지 간 가격 차이가 기간 차이보다 훨씬 큼.
-    if (sameComplexSameSize.length >= 1 && !recencyCutoffOverride) {
-        var ownLonger = findSimilarComps(lat, lon, targetYear, targetFloor, targetPyung, targetBuildingType, targetName, targetDong, targetBunji, 1, daysAgo(1095))
-            .filter(function(c) { return c.isSameComplex && isSameSize(c); });
-        var ownList = ownLonger.length > sameComplexSameSize.length ? ownLonger : sameComplexSameSize;
-        if (ownLonger.length > sameComplexSameSize.length) ownList.usedExtendedWindow = true;
+    if (!recencyCutoffOverride && (sameComplexSameSize.length >= 1 || ownLong.length >= 1)) {
+        var seenOwn = {}, ownDedup = [];
+        ownLong.forEach(function(c) {
+            var t = c.trade, k = t.year + '-' + t.month + '-' + t.day + '_' + t.amount + '_' + t.area + '_' + t.floor;
+            if (seenOwn[k]) return; seenOwn[k] = true; ownDedup.push(c);
+        });
+        ownDedup.sort(function(a, b) { return a.score - b.score; });
+        var ownList = ownDedup.length > sameComplexSameSize.length ? ownDedup : sameComplexSameSize;
+        if (ownList === ownDedup) ownList.usedExtendedWindow = true;
         return ownList.slice(0, 10);
     }
     // 같은 단지가 아닌 후보만 "단지당 1건" 다양성 확보(같은 단지는 이미 충분히 비교 가능하므로 여러 건 허용)
@@ -18205,6 +18232,16 @@ function fullBunjiFromAddr(addr, dong, bunji) {
 }
 // ⚠️ 2026-10: type('apt'|'villa')별로 다른 순위표를 씀. 지번으로 찾을 때도 같은 종류의 건물만 봄 -
 // 예전엔 빌라 입찰희망(본오동 880)이 같은 지번의 아파트 순위("2위")를 잘못 달고 있었음.
+// 같은 동·같은 지번에 있는 같은 종류(apt/villa) 실거래 건물의 단지명 - 단지명 없이 등록된 경매물건용
+function resolveOwnComplexName(dong, bunji, type) {
+    var b = String(bunji || '').trim();
+    if (!dong || !b) return '';
+    var cands = aptIndexByDongBunji.get(dongKey(dong) + '|' + b) || [];
+    for (var i = 0; i < cands.length; i++) {
+        if ((cands[i].buildingType || 'apt') === (type === 'villa' ? 'villa' : 'apt') && cands[i].latest && cands[i].latest.name) return cands[i].latest.name;
+    }
+    return '';
+}
 // 주소 끝의 건물명("…용봉동 1475 용봉동 도나우270" → "도나우270", "…1769 수하임아파트 101동" → "수하임아파트").
 // 입찰희망 일괄등록은 name이 비어 있는 경우가 많아, 지번이 국토부와 다를 때(도나우270: 법원 1475 ↔ 국토부 1492)
 // 이름으로라도 찾기 위함.
