@@ -2008,6 +2008,14 @@ var surgeRankMap = {};
 // 큰 시차상관 분석(leave-one-out)을 지도 팬/줌마다 전국적으로 돌리면 get-house.js에서 이미
 // 겪은 것과 같은 성능 문제가 재현되기 때문(사용자와 상의 후 이 범위로 결정).
 var leaderFollowerRankMap = {};
+// ⚠️ 2026-10(사용자 요청: "입찰희망 경매배지에는 순위가 표기가 안 돼 - 흡수되기 전에도 배지 자체에서
+// 건물 순위를 확인할 수 있어야 해"): 입찰희망 물건은 거의 전부 빌라인데, 앱은 아파트 순위
+// (type=apt)만 불러와서 빌라는 매매배지·경매배지 어디에도 순위가 없었음. 서버는 빌라도 법정동 안
+// 건물별 순위(type=villa)를 계산해 주므로, 수도권(서울·인천·경기 - 빌라 입찰 대상 지역)은 빌라 순위도
+// 불러와 아파트와 섞이지 않게 따로 보관함(같은 동·같은 이름의 아파트/빌라가 서로 순위를 빌려가지 않게).
+var villaRankMap = {};
+function isVillaRankRegion(lawdCd) { return /^(11|28|41)/.test(String(lawdCd || '')); }
+function rankMapFor(type) { return type === 'villa' ? villaRankMap : leaderFollowerRankMap; }
 // ⚠️ 2026-09(사용자 피드백: "법정동 단위로 순위를 정한건데 왜 후발주자 패널에서 조회해야만
 // 배지에 표기되냐"): 위 설명대로 전국을 지도 팬/줌마다 매번 돌리면 안 되지만, "지금 보고 있는
 // 시/군/구 하나"만이라면 얘기가 다름 - #466에서 캐시 저장 버그를 고쳐 24시간 캐시가 정상
@@ -4397,7 +4405,7 @@ function createMarker(cacheKey, lat, lon, apt) {
     // 후발주자(leaderFollower) 배지 - #462, 사용자 요청("배지 순위 표기도 법정동 기준으로
     // 해줘"): 후발주자 패널에서 마지막으로 조회한 시/군/구에 한해, 그 법정동의 대장아파트는
     // 👑, 순위에 든 후발주자는 몇 위인지 지도 배지에도 그대로 얹어 보여줌.
-    var lfInfo = leaderFollowerRankMap[lfRankKey(l.dong, l.name)];
+    var lfInfo = rankMapFor(apt.buildingType === 'villa' ? 'villa' : 'apt')[lfRankKey(l.dong, l.name)];
     // ⚠️ 2026-09(사용자 요청: "배지내부에 있는 순위표시는 없어도 되"): 카드 내부(badgeRow)에
     // 있던 순위 pill(🥈N위/👑대장)은 제거함 - 순위는 카드 좌측 상단의 popRankBadge 하나로만
     // 표시함(대장은 아래에서 크게 강조).
@@ -11344,7 +11352,7 @@ function auctionMarkerSignature(a) {
         grade: matched ? matched.grade : null,
         pop: matched ? matched.popularPyeong : null,
         surgeRank: a.dong ? surgeRankMap[a.dong] : null,
-        lfRank: lfRankSig(a.dong, a.name, a.bunji),
+        lfRank: lfRankSig(a.dong, a.name, a.bunji, a.propType),
         // 매칭된 건물이 지금 화면에 실제로 그려지는지(=필터 통과 여부)가 바뀌면 경매 마커도
         // 독자표시↔억제 상태를 다시 판단해야 하므로 시그니처에 포함시킴 - 이게 없으면 필터를
         // 바꿔도(타입탭 전환, 등급/비교대상 필터 등) 경매 마커가 갱신되지 않아 사라진 채로 남음
@@ -11557,7 +11565,7 @@ function placeAuctionMarker(a) {
     // ⚠️ 2026-09(사용자 요청: "경매관련 모든 배지에 아파트 순위를 표기해줘") - 매매기록
     // 배지(popRankBadge)와 같은 원천(leaderFollowerRankMap)을 재사용해서 대장/후발주자 순위를
     // 표시함. a.name/a.dong은 매매기록 마커의 l.name/l.dong과 동일한 이름 체계(lfRankKey 참고).
-    var lfBadge = buildLfRankBadgeHtml(a.dong, a.name, a.bunji);
+    var lfBadge = (a.propType === 'apt' || a.propType === 'villa' ? buildLfRankBadgeHtml(a.dong, a.name, a.bunji, a.propType) : '');
     // 연식단계(프리미엄신축/신축/준신축/구축/노후) 배지 - 저장 시점에 확정해둔
     // buildYear(건축HUB 사용승인일 우선)를 기준으로 표시함.
     // ⚠️ 2026-08(사용자 피드백: "귤현동 531(계양센트레빌1단지, 아파트)인데 빌라 필터(연식)가
@@ -11608,7 +11616,7 @@ function placeAuctionMarker(a) {
     // 아직 입찰 전이라 예상매도가(awEst)와는 별개로, "이 법정동 대장아파트 대비 이 단지가
     // 아직 못 채운 상승률 갭"을 참고 신호로 같이 보여줌. 낙찰 확정건(isWon)에도 같은 정보가
     // 유효하므로(사고 나서도 앞으로의 추가 상승 여력을 참고할 수 있음) 함께 표시함.
-    var lfUpsideLine = (isBidTarget || isWon) ? buildLfUpsideLineHtml(a.dong, a.name, a.bunji) : '';
+    var lfUpsideLine = (isBidTarget || isWon) ? buildLfUpsideLineHtml(a.dong, a.name, a.bunji, a.propType) : '';
     if (isWon) {
         var awImplied = awEst.impliedTarget;
         var awImpliedNote = awImplied
@@ -11832,7 +11840,7 @@ function bidCaseMarkerSignature(c) {
     // 시그니처가 안 바뀌어 재호출이 안 되므로 "예상매도가/연식 데이터 부족"으로 그대로 굳어있음.
     // ⚠️ 2026-09(본오동 725-3 사례): filterState도 포함 - auctionMarkerSignature와 동일한
     // 이유(passesFiltersForBidCase가 타입탭/평형대/연식단계 필터를 참조함).
-    return JSON.stringify({ status: c.status, finalBidPrice: c.finalBidPrice, minBidPrice: c.minBidPrice, estMargin: c.estMargin, lat: c.lat, lon: c.lon, aptCount: allAptList.length, filterState: currentFilterStateSig(), lfRank: lfRankSig(c.dong, c.buildingName, c.bunji) });
+    return JSON.stringify({ status: c.status, finalBidPrice: c.finalBidPrice, minBidPrice: c.minBidPrice, estMargin: c.estMargin, lat: c.lat, lon: c.lon, aptCount: allAptList.length, filterState: currentFilterStateSig(), lfRank: lfRankSig(c.dong, c.buildingName, c.bunji, backtestBuildingType(c)) });
 }
 /* ⚖️ 낙찰사례 배지 - 2026-08(사용자 요청: "감정가 대신 ①내 로직상의 예상매도가 ②낙찰가
    ③낙찰가로 역산한 예상매도가를 표기해줘") - ①은 runBacktestPipeline()이 이미 검증해 쓰고
@@ -12178,9 +12186,9 @@ function placeBidCaseMarker(c) {
     // ⚠️ 2026-09(사용자 요청: "경매관련 모든 배지에 아파트 순위를 표기해줘") - placeAuctionMarker와
     // 동일한 공통 헬퍼 재사용. 낙찰사례는 필드명이 c.buildingName(= 매매기록의 name과 동일
     // 체계)이라 findMatchedAptForBidCase가 이미 쓰는 것과 같은 이름을 그대로 넘김.
-    var lfBadge = buildLfRankBadgeHtml(c.dong, c.buildingName, c.bunji);
+    var lfBadge = (backtestBuildingType(c) ? buildLfRankBadgeHtml(c.dong, c.buildingName, c.bunji, backtestBuildingType(c)) : '');
     // 낙찰이 이미 확정된 사건이라도 "앞으로 더 오를 여력이 남았는지"는 여전히 참고할 수 있음
-    var lfUpsideLine = buildLfUpsideLineHtml(c.dong, c.buildingName, c.bunji);
+    var lfUpsideLine = (backtestBuildingType(c) ? buildLfUpsideLineHtml(c.dong, c.buildingName, c.bunji, backtestBuildingType(c)) : '');
     var div = document.createElement('div');
     div.style.cssText = 'position:relative;background:linear-gradient(180deg,#fff,#eef7fb);border:2.5px solid #00695c;border-radius:9px;'
         + 'padding:4px 9px;margin:4px;margin-top:16px;white-space:nowrap;cursor:pointer;transform:scale(var(--badge-scale,1));transform-origin:center bottom;'
@@ -18082,11 +18090,12 @@ async function loadLeaderFollowerData() {
 // leaderFollower API 응답을 leaderFollowerRankMap(지도 배지용)에 반영하고 다시 그림 -
 // 패널의 수동 조회(loadLeaderFollowerData)와 아래 자동 백그라운드 조회(autoLoadLeaderFollowerForRegion)
 // 양쪽에서 공통으로 씀.
-function applyLeaderFollowerToMap(data) {
+function applyLeaderFollowerToMap(data, type) {
+    type = type || (data && data.type) || 'apt';
     // ⚠️ 2026-10(#505): 예전엔 조회할 때마다 지도 순위 정보를 "이번 지역 것만"으로 통째로 바꿨는데,
     // 지역별 자동 조회는 세션당 한 번만 하므로(autoLoadLeaderFollowerForRegion) A→B→A로 돌아오면 A 배지의
     // 순위가 사라진 채 다시 안 채워졌음 - 기존 정보에 이번 지역 것을 덧붙이는 방식으로 바꿈.
-    var newLfMap = Object.assign({}, leaderFollowerRankMap);
+    var newLfMap = Object.assign({}, rankMapFor(type));
     (data.leaders || []).forEach(function(l) {
         newLfMap[lfRankKey(l.dong, l.danji)] = { isLeader: true, rank: null };
     });
@@ -18108,7 +18117,7 @@ function applyLeaderFollowerToMap(data) {
             };
         });
     });
-    leaderFollowerRankMap = newLfMap;
+    if (type === 'villa') villaRankMap = newLfMap; else leaderFollowerRankMap = newLfMap;
     redrawMarkers();
 }
 // ⚠️ 2026-09(#459/경매 배지 순위표기 - 사용자 요청: "경매관련 모든 배지에 아파트 순위를
@@ -18124,23 +18133,37 @@ function applyLeaderFollowerToMap(data) {
 // 그래서 이름으로 못 찾으면 매매기록 배지와 같은 매칭 규칙(findMatchedAptByKey: 같은 동+같은
 // 지번 우선)으로 그 건물의 실거래 단지를 찾아 그 단지명으로 순위를 다시 찾음 - 실측상 1,097건으로
 // 늘어남(나머지는 실거래 기록이 없는 소규모 단지라 순위 자체가 없음).
-function resolveLfInfo(dong, name, bunji) {
-    var info = (dong && name) ? leaderFollowerRankMap[lfRankKey(dong, name)] : null;
+// ⚠️ 2026-10: type('apt'|'villa')별로 다른 순위표를 씀. 지번으로 찾을 때도 같은 종류의 건물만 봄 -
+// 예전엔 빌라 입찰희망(본오동 880)이 같은 지번의 아파트 순위("2위")를 잘못 달고 있었음.
+function resolveLfInfo(dong, name, bunji, type) {
+    type = type === 'villa' ? 'villa' : 'apt';
+    var rmap = rankMapFor(type);
+    var info = (dong && name) ? rmap[lfRankKey(dong, name)] : null;
     if (info) return info;
     if (!dong) return null;
-    var m = findMatchedAptByKey(name, dong, bunji);
-    var l = m && m.latest;
-    return (l && l.dong && l.name) ? (leaderFollowerRankMap[lfRankKey(l.dong, l.name)] || null) : null;
+    var b = String(bunji || '').trim();
+    var cands = b ? (aptIndexByDongBunji.get(dongKey(dong) + '|' + b) || []) : [];
+    for (var i = 0; i < cands.length; i++) {
+        var l = cands[i].latest;
+        if ((cands[i].buildingType || 'apt') !== type || !l || !l.name) continue;
+        var hit = rmap[lfRankKey(l.dong, l.name)];
+        if (hit) return hit;
+    }
+    // 지번이 없으면 기존 이름 규칙(findMatchedAptByKey)으로 한 번 더 - 같은 종류일 때만 인정
+    var m = b ? null : findMatchedAptByKey(name, dong, bunji);
+    var ml = m && m.latest;
+    if (m && (m.buildingType || 'apt') === type && ml && ml.name) return rmap[lfRankKey(ml.dong, ml.name)] || null;
+    return null;
 }
 // 배지 다시 그리기 판단용(마커 시그니처) - 순위 데이터는 지도보다 늦게(최대 30초) 도착하므로
 // 이게 시그니처에 없으면 이미 그려진 경매/낙찰사례 배지에 순위가 끝내 안 붙음.
-function lfRankSig(dong, name, bunji) {
-    var info = resolveLfInfo(dong, name, bunji);
+function lfRankSig(dong, name, bunji, type) {
+    var info = resolveLfInfo(dong, name, bunji, type);
     return info ? (info.isLeader ? 'L' : String(info.rank)) + '|' + info.gapPct : null;
 }
-function buildLfRankBadgeHtml(dong, name, bunji) {
+function buildLfRankBadgeHtml(dong, name, bunji, type) {
     if (!dong) return '';
-    var lfInfo = resolveLfInfo(dong, name, bunji);
+    var lfInfo = resolveLfInfo(dong, name, bunji, type);
     if (!lfInfo) return '';
     return lfInfo.isLeader
         ? '<span style="background:#4a148c;color:white;font-size:9px;font-weight:bold;padding:1px 5px;border-radius:3px;margin-left:3px;" title="후발주자 순위 기준 이 법정동의 대장아파트">👑대장</span>'
@@ -18149,9 +18172,9 @@ function buildLfRankBadgeHtml(dong, name, bunji) {
 // gapPct(대장 대비 아직 못 채운 상승률 갭) 기반 "예상 상승/하락폭" 참고 줄. 대장 본인이거나
 // gapPct를 계산할 수 없는 경우(동행성 부족 등)는 표시하지 않음 - 확정 예측이 아니라 과거
 // 패턴상 참고 신호라는 점을 title에 항상 명시함(leaderFollower 패널의 기존 안내 문구와 동일 취지).
-function buildLfUpsideLineHtml(dong, name, bunji) {
+function buildLfUpsideLineHtml(dong, name, bunji, type) {
     if (!dong) return '';
-    var lfInfo = resolveLfInfo(dong, name, bunji);
+    var lfInfo = resolveLfInfo(dong, name, bunji, type);
     if (!lfInfo || lfInfo.isLeader || typeof lfInfo.gapPct !== 'number') return '';
     var gp = lfInfo.gapPct;
     var color = gp > 0 ? '#2e7d32' : (gp < 0 ? '#c62828' : '#757575');
@@ -18183,14 +18206,15 @@ async function autoLoadLeaderFollowerForRegion(kakaoSigungu, lawdCd) {
     // undefined를 반환해 호출부가 await해도 곧바로 넘어가버렸음.
     if (lfAutoFetchedRegions[lawdCd]) return lfFetchPromises[lawdCd] || Promise.resolve();
     lfAutoFetchedRegions[lawdCd] = true;
-    var fetchPromise = (async function() {
+    var loadType = async function(type) {
         try {
-            var res = await fetch('/api/data-coverage?mode=leaderFollower&type=apt&lawdCd=' + encodeURIComponent(lawdCd));
+            var res = await fetch('/api/data-coverage?mode=leaderFollower&type=' + type + '&lawdCd=' + encodeURIComponent(lawdCd));
             var data = await readJsonResponseSafe(res);
             if (!res.ok || !data || data.error) return; // 참고용 배지라 실패해도 조용히 무시(지도 자체는 정상 동작)
-            applyLeaderFollowerToMap(data);
+            applyLeaderFollowerToMap(data, type);
         } catch (e) { /* 참고용 배지 - 네트워크 오류 시에도 조용히 무시 */ }
-    })();
+    };
+    var fetchPromise = Promise.all([loadType('apt'), isVillaRankRegion(lawdCd) ? loadType('villa') : null]);
     lfFetchPromises[lawdCd] = fetchPromise;
     return fetchPromise;
 }

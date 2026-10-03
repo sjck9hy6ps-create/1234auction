@@ -47,8 +47,8 @@ async function fetchRegionList() {
   return targets;
 }
 
-async function warmOneRegion(region) {
-  const url = `${SITE_URL}/api/data-coverage?mode=leaderFollower&type=apt&region=${encodeURIComponent(region)}`;
+async function warmOneRegion(region, type = 'apt') {
+  const url = `${SITE_URL}/api/data-coverage?mode=leaderFollower&type=${type}&region=${encodeURIComponent(region)}`;
   const startedAt = Date.now();
   try {
     const res = await fetch(url, { signal: AbortSignal.timeout(TIMEOUT_MS) });
@@ -60,7 +60,7 @@ async function warmOneRegion(region) {
     }
     const data = await res.json();
     const leaderCount = Array.isArray(data.leaders) ? data.leaders.length : 0;
-    console.log(`✅ [${region}] 캐시 완료 (법정동 ${leaderCount}곳, ${elapsed}초)`);
+    console.log(`✅ [${region}${type === 'villa' ? ' 빌라' : ''}] 캐시 완료 (법정동 ${leaderCount}곳, ${elapsed}초)`);
     return true;
   } catch (e) {
     const elapsed = ((Date.now() - startedAt) / 1000).toFixed(1);
@@ -79,6 +79,15 @@ async function main() {
   let success = 0, fail = 0;
   for (const region of targets) {
     const ok = await warmOneRegion(region);
+    if (ok) success++; else fail++;
+    await sleep(DELAY_MS);
+  }
+  // ⚠️ 2026-10: 수도권(서울·인천·경기)은 빌라 순위(type=villa)도 미리 계산해 둠 - 지도의 빌라 매매배지·
+  // 입찰희망 배지에 건물 순위를 표시하는데(index.html villaRankMap), 캐시가 없으면 첫 조회가 20초 넘게 걸림.
+  const villaTargets = targets.filter(r => /^(서울|인천|경기)/.test(r));
+  console.log(`\n🏘️ 빌라 순위 예열: ${villaTargets.length}개 지역`);
+  for (const region of villaTargets) {
+    const ok = await warmOneRegion(region, 'villa');
     if (ok) success++; else fail++;
     await sleep(DELAY_MS);
   }
