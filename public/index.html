@@ -2274,6 +2274,10 @@ function resolvePopInfo(dong, name, bunji, type, altName) {
         var h = popularMap[lfRankKey(dong, keys[i])];
         if (h) return h;
     }
+    // 경매 물건명과 국토부 단지명이 다른 경우(예: 경매 "우영아파트" ↔ 국토부 "월산우영타워") - 순위 배지와 같은 매칭 규칙
+    // (지번·이름 포함 관계)으로 찾은 국토부 단지명으로 다시 찾음
+    var lf = resolveLfInfo(dong, name, bunji, 'apt', altName);
+    if (lf && lf.danji) return popularMap[lfRankKey(lf.dong || dong, lf.danji)] || null;
     return null;
 }
 var cycleDataByLawd = {};
@@ -19307,7 +19311,7 @@ function applyLeaderFollowerToMap(data, type) {
     // 순위가 사라진 채 다시 안 채워졌음 - 기존 정보에 이번 지역 것을 덧붙이는 방식으로 바꿈.
     var newLfMap = Object.assign({}, rankMapFor(type));
     (data.leaders || []).forEach(function(l) {
-        newLfMap[lfRankKey(l.dong, l.danji)] = { isLeader: true, rank: null };
+        newLfMap[lfRankKey(l.dong, l.danji)] = { isLeader: true, rank: null, dong: l.dong, danji: l.danji };
     });
     (data.rankedByDong || []).forEach(function(group) {
         group.items.forEach(function(r) {
@@ -19321,7 +19325,7 @@ function applyLeaderFollowerToMap(data, type) {
             // 오른 갭이 남아있다는 뜻 - data-coverage.js computeLeaderFollowerFresh 주석 참고)와
             // leaderDanji(비교 대상 대장 이름, 툴팁용)를 추가로 저장함.
             newLfMap[lfRankKey(r.dong || group.dong, r.danji)] = {
-                isLeader: false, rank: r.rank, isFollower: !!r.isFollower,
+                isLeader: false, rank: r.rank, isFollower: !!r.isFollower, dong: r.dong || group.dong, danji: r.danji,
                 gapPct: (typeof r.gapPct === 'number') ? r.gapPct : null,
                 leaderDanji: r.leaderDanji || group.leaderDanji || null
             };
