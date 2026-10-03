@@ -68,7 +68,7 @@ const PAGE_SIZE = 1000;        // Supabase 페이지네이션 단위
 // 알고 나니 너무 낮았음 - 낮 시간 실사용(개인 앱이라 하루 수십~수백 건 수준으로 추정)에
 // 넉넉한 여유(10,000건 중 6,000건 이상)를 남기면서도 19,623건 백로그를 며칠 안에 털어낼 수
 // 있도록 4,000건으로 올림. 그래도 환경변수로 조절 가능하게 유지함(필요시 낮추거나 더 올릴 수 있음).
-const MAX_BUILDING_WARMUP_PER_RUN = parseInt(process.env.MAX_BUILDING_WARMUP_PER_RUN || '4000', 10);
+const MAX_BUILDING_WARMUP_PER_RUN = parseInt(process.env.MAX_BUILDING_WARMUP_PER_RUN || '7000', 10); // 2026-10: 4000→7000(한도 초과 시 자동 중단되므로 새벽 3시 실행이 그날 할당량 대부분을 쓰고, 낮 사용분 약 3천 건 남김)
 let buildingWarmupCount = 0;
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 /* ── 호출 제한 대응 ──
