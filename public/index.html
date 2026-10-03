@@ -11276,6 +11276,7 @@ function auctionMarkerSignature(a) {
         grade: matched ? matched.grade : null,
         pop: matched ? matched.popularPyeong : null,
         surgeRank: a.dong ? surgeRankMap[a.dong] : null,
+        lfRank: lfRankSig(a.dong, a.name, a.bunji),
         // 매칭된 건물이 지금 화면에 실제로 그려지는지(=필터 통과 여부)가 바뀌면 경매 마커도
         // 독자표시↔억제 상태를 다시 판단해야 하므로 시그니처에 포함시킴 - 이게 없으면 필터를
         // 바꿔도(타입탭 전환, 등급/비교대상 필터 등) 경매 마커가 갱신되지 않아 사라진 채로 남음
@@ -11483,7 +11484,7 @@ function placeAuctionMarker(a) {
     // ⚠️ 2026-09(사용자 요청: "경매관련 모든 배지에 아파트 순위를 표기해줘") - 매매기록
     // 배지(popRankBadge)와 같은 원천(leaderFollowerRankMap)을 재사용해서 대장/후발주자 순위를
     // 표시함. a.name/a.dong은 매매기록 마커의 l.name/l.dong과 동일한 이름 체계(lfRankKey 참고).
-    var lfBadge = buildLfRankBadgeHtml(a.dong, a.name);
+    var lfBadge = buildLfRankBadgeHtml(a.dong, a.name, a.bunji);
     // 연식단계(프리미엄신축/신축/준신축/구축/노후) 배지 - 저장 시점에 확정해둔
     // buildYear(건축HUB 사용승인일 우선)를 기준으로 표시함.
     // ⚠️ 2026-08(사용자 피드백: "귤현동 531(계양센트레빌1단지, 아파트)인데 빌라 필터(연식)가
@@ -11534,7 +11535,7 @@ function placeAuctionMarker(a) {
     // 아직 입찰 전이라 예상매도가(awEst)와는 별개로, "이 법정동 대장아파트 대비 이 단지가
     // 아직 못 채운 상승률 갭"을 참고 신호로 같이 보여줌. 낙찰 확정건(isWon)에도 같은 정보가
     // 유효하므로(사고 나서도 앞으로의 추가 상승 여력을 참고할 수 있음) 함께 표시함.
-    var lfUpsideLine = (isBidTarget || isWon) ? buildLfUpsideLineHtml(a.dong, a.name) : '';
+    var lfUpsideLine = (isBidTarget || isWon) ? buildLfUpsideLineHtml(a.dong, a.name, a.bunji) : '';
     if (isWon) {
         var awImplied = awEst.impliedTarget;
         var awImpliedNote = awImplied
@@ -11758,7 +11759,7 @@ function bidCaseMarkerSignature(c) {
     // 시그니처가 안 바뀌어 재호출이 안 되므로 "예상매도가/연식 데이터 부족"으로 그대로 굳어있음.
     // ⚠️ 2026-09(본오동 725-3 사례): filterState도 포함 - auctionMarkerSignature와 동일한
     // 이유(passesFiltersForBidCase가 타입탭/평형대/연식단계 필터를 참조함).
-    return JSON.stringify({ status: c.status, finalBidPrice: c.finalBidPrice, minBidPrice: c.minBidPrice, estMargin: c.estMargin, lat: c.lat, lon: c.lon, aptCount: allAptList.length, filterState: currentFilterStateSig() });
+    return JSON.stringify({ status: c.status, finalBidPrice: c.finalBidPrice, minBidPrice: c.minBidPrice, estMargin: c.estMargin, lat: c.lat, lon: c.lon, aptCount: allAptList.length, filterState: currentFilterStateSig(), lfRank: lfRankSig(c.dong, c.buildingName, c.bunji) });
 }
 /* ⚖️ 낙찰사례 배지 - 2026-08(사용자 요청: "감정가 대신 ①내 로직상의 예상매도가 ②낙찰가
    ③낙찰가로 역산한 예상매도가를 표기해줘") - ①은 runBacktestPipeline()이 이미 검증해 쓰고
@@ -12104,9 +12105,9 @@ function placeBidCaseMarker(c) {
     // ⚠️ 2026-09(사용자 요청: "경매관련 모든 배지에 아파트 순위를 표기해줘") - placeAuctionMarker와
     // 동일한 공통 헬퍼 재사용. 낙찰사례는 필드명이 c.buildingName(= 매매기록의 name과 동일
     // 체계)이라 findMatchedAptForBidCase가 이미 쓰는 것과 같은 이름을 그대로 넘김.
-    var lfBadge = buildLfRankBadgeHtml(c.dong, c.buildingName);
+    var lfBadge = buildLfRankBadgeHtml(c.dong, c.buildingName, c.bunji);
     // 낙찰이 이미 확정된 사건이라도 "앞으로 더 오를 여력이 남았는지"는 여전히 참고할 수 있음
-    var lfUpsideLine = buildLfUpsideLineHtml(c.dong, c.buildingName);
+    var lfUpsideLine = buildLfUpsideLineHtml(c.dong, c.buildingName, c.bunji);
     var div = document.createElement('div');
     div.style.cssText = 'position:relative;background:linear-gradient(180deg,#fff,#eef7fb);border:2.5px solid #00695c;border-radius:9px;'
         + 'padding:4px 9px;margin:4px;margin-top:16px;white-space:nowrap;cursor:pointer;transform:scale(var(--badge-scale,1));transform-origin:center bottom;'
@@ -18043,9 +18044,30 @@ function applyLeaderFollowerToMap(data) {
 // 3곳(placeAuctionMarker, placeBidCaseMarker)에서 각자 다른 필드명(a.name/a.dong,
 // c.buildingName/c.dong)으로 부르므로 dong/name을 인자로 직접 받게 함. 인라인 span으로
 // 만들어서(코너 배지가 아니라) 기존 surgeBadge·ageBadge와 같은 줄에 자연스럽게 이어붙게 함.
-function buildLfRankBadgeHtml(dong, name) {
-    if (!dong || !name) return '';
-    var lfInfo = leaderFollowerRankMap[lfRankKey(dong, name)];
+// ⚠️ 2026-10(사용자 질문: "경매관련 배지(4종류)에도 순위가 잘 로딩되고 있어?") - 실측해 보니
+// 아파트 경매/낙찰사례 배지 1,263건 중 순위가 붙은 건 133건뿐이었음. 원인은 ① 1,030건이
+// 건물이름 없이 지번만 저장돼 있고(일괄등록·법원자료 형식), ② 이름이 있어도 국토부 단지명과
+// 표기가 다름("이편한세상사하"↔"e편한세상사하", "화성봉담신동아파밀리에"↔"봉담신동아파밀리에").
+// 그래서 이름으로 못 찾으면 매매기록 배지와 같은 매칭 규칙(findMatchedAptByKey: 같은 동+같은
+// 지번 우선)으로 그 건물의 실거래 단지를 찾아 그 단지명으로 순위를 다시 찾음 - 실측상 1,097건으로
+// 늘어남(나머지는 실거래 기록이 없는 소규모 단지라 순위 자체가 없음).
+function resolveLfInfo(dong, name, bunji) {
+    var info = (dong && name) ? leaderFollowerRankMap[lfRankKey(dong, name)] : null;
+    if (info) return info;
+    if (!dong) return null;
+    var m = findMatchedAptByKey(name, dong, bunji);
+    var l = m && m.latest;
+    return (l && l.dong && l.name) ? (leaderFollowerRankMap[lfRankKey(l.dong, l.name)] || null) : null;
+}
+// 배지 다시 그리기 판단용(마커 시그니처) - 순위 데이터는 지도보다 늦게(최대 30초) 도착하므로
+// 이게 시그니처에 없으면 이미 그려진 경매/낙찰사례 배지에 순위가 끝내 안 붙음.
+function lfRankSig(dong, name, bunji) {
+    var info = resolveLfInfo(dong, name, bunji);
+    return info ? (info.isLeader ? 'L' : String(info.rank)) + '|' + info.gapPct : null;
+}
+function buildLfRankBadgeHtml(dong, name, bunji) {
+    if (!dong) return '';
+    var lfInfo = resolveLfInfo(dong, name, bunji);
     if (!lfInfo) return '';
     return lfInfo.isLeader
         ? '<span style="background:#4a148c;color:white;font-size:9px;font-weight:bold;padding:1px 5px;border-radius:3px;margin-left:3px;" title="후발주자 순위 기준 이 법정동의 대장아파트">👑대장</span>'
@@ -18054,9 +18076,9 @@ function buildLfRankBadgeHtml(dong, name) {
 // gapPct(대장 대비 아직 못 채운 상승률 갭) 기반 "예상 상승/하락폭" 참고 줄. 대장 본인이거나
 // gapPct를 계산할 수 없는 경우(동행성 부족 등)는 표시하지 않음 - 확정 예측이 아니라 과거
 // 패턴상 참고 신호라는 점을 title에 항상 명시함(leaderFollower 패널의 기존 안내 문구와 동일 취지).
-function buildLfUpsideLineHtml(dong, name) {
-    if (!dong || !name) return '';
-    var lfInfo = leaderFollowerRankMap[lfRankKey(dong, name)];
+function buildLfUpsideLineHtml(dong, name, bunji) {
+    if (!dong) return '';
+    var lfInfo = resolveLfInfo(dong, name, bunji);
     if (!lfInfo || lfInfo.isLeader || typeof lfInfo.gapPct !== 'number') return '';
     var gp = lfInfo.gapPct;
     var color = gp > 0 ? '#2e7d32' : (gp < 0 ? '#c62828' : '#757575');
