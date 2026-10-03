@@ -53,7 +53,7 @@ import requests
 
 # ⚠️ 2026-08(K-apt 2단계 준비): train-avm.py도 같은 시군구코드→지역명 매핑이 필요해져서
 # lawd_codes_py.py 공용 모듈로 뺐음(이 파일에 직접 박아두면 두 스크립트가 어긋날 위험).
-from lawd_codes_py import LAWD_CODES
+from lawd_codes_py import LAWD_CODES, LEGACY_CODES_BY_NAME
 
 SUPABASE_URL = os.environ.get("SUPABASE_URL")
 SUPABASE_SERVICE_ROLE_KEY = os.environ.get("SUPABASE_SERVICE_ROLE_KEY")
@@ -84,7 +84,7 @@ SB_HEADERS = {
 # 실행 로그(또는 [진단] 응답 본문)로 실제 응답에 이 필드가 있는지 한 번 더 확인 필요.
 KAPT_LIST_BASE = "https://apis.data.go.kr/1613000/AptListService4"
 KAPT_BASS_BASE = "https://apis.data.go.kr/1613000/AptBasisInfoServiceV5"
-DAILY_DETAIL_CAP = 2000  # 실행 1회당 getAphusBassInfoV5(상세정보) 최대 호출 수 - 일일 트래픽 5,000건 승인분 내에서 여유있게 설정
+DAILY_DETAIL_CAP = 4000  # 2026-10: 2,000→4,000(목록조회 최대 60건 포함해도 일일 승인 5,000건 이내)  # 실행 1회당 getAphusBassInfoV5(상세정보) 최대 호출 수 - 일일 트래픽 5,000건 승인분 내에서 여유있게 설정
 
 
 def sb_get(path: str):
@@ -241,6 +241,14 @@ def process_one_sigungu(sigungu_idx: int, detail_budget: int):
     # (다음 달 전국 재순환 때 다시 시도되므로 영구 누락은 아님).
     try:
         complex_list = fetch_sigungu_complex_list(sigungu_code)
+        # ⚠️ 2026-10: 행정구역 개편(전남광주 통합, 강원·전북 특별자치도, 화성 분구)으로 국토부 실거래는 새
+        # 코드가 됐지만 K-apt는 옛 코드로만 단지가 나오는 지역이 있음 - 새 코드로 0건이면 옛 코드로 다시 조회.
+        # 저장은 항상 새 코드(sigungu_code)로 함(data-coverage.js가 새 코드로 세대수를 찾음).
+        if not complex_list:
+            for old_code in LEGACY_CODES_BY_NAME.get(sigungu_name, []):
+                got = fetch_sigungu_complex_list(old_code)
+                print(f"  새 코드로 0건 → 옛 코드 {old_code}로 {len(got)}건 조회")
+                complex_list.extend(got)
     except QuotaExceededError:
         # ⚠️ 할당량 초과는 "이 시군구만의 문제"가 아니라 오늘 남은 모든 호출이 다 같은 이유로
         # 실패할 상황임 - 이 시군구는 하나도 진행 못 했으니 인덱스도 그대로 두고(done=False),
@@ -294,7 +302,12 @@ def process_one_sigungu(sigungu_idx: int, detail_budget: int):
         except Exception as e:
             print(f"    {kapt_code} 상세조회 실패: {e}", file=sys.stderr)
             continue
-        if not detail:
+        if not detail or not detail.get("kaptCode"):
+            # ⚠️ 2026-10: 상세정보가 비어 오는 단지(예: 아산 'test001' 같은 시험용 등록)는 영원히 안 채워져서
+            # 이 시군구가 "미완료"로 남고 매일 같은 자리만 다시 도는 문제가 있었음(9/28부터 정지) - 세대수 0으로
+            # 표시해 "확인함" 처리하고 넘어감(0은 회전율 계산에서 자동 제외됨).
+            requests.patch(f"{SUPABASE_URL}/rest/v1/kapt_complex_info?kapt_code=eq.{kapt_code}", headers=SB_HEADERS,
+                           data=json.dumps({"households": 0, "updated_at": datetime.now(timezone.utc).isoformat()}), timeout=30)
             continue
         update_row = {
             "households": to_int(detail.get("kaptdaCnt")),
@@ -337,6 +350,9 @@ def main():
     # 상한을 같이 둬서 list+detail 합계가 일일 승인량(5,000건)을 넘지 않도록 안전하게 잡음.
     state = sb_get("kapt_sync_state?id=eq.1&select=sigungu_idx")
     sigungu_idx = state[0]["sigungu_idx"] if state else 0
+    if os.environ.get("KAPT_START_IDX", "").strip().isdigit():
+        sigungu_idx = int(os.environ["KAPT_START_IDX"].strip())
+        print(f"[sync-kapt] 시작 인덱스를 {sigungu_idx}로 지정해 실행")
     if sigungu_idx >= len(LAWD_CODES):
         sigungu_idx = 0  # 전국 완주 후 처음부터 다시(월 1회 갱신 목적)
 

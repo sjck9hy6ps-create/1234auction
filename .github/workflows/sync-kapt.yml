@@ -25,7 +25,12 @@ name: Sync K-apt complex info
 on:
   schedule:
     - cron: '30 5 * * *'
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      start_idx:
+        description: '시작 시군구 인덱스(비우면 이어서)'
+        required: false
+        default: ''
 
 jobs:
   sync:
@@ -47,4 +52,5 @@ jobs:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
           PUBLIC_DATA_API_KEY: ${{ secrets.PUBLIC_DATA_API_KEY }}
+          KAPT_START_IDX: ${{ github.event.inputs.start_idx }}
         run: python sync-kapt.py
