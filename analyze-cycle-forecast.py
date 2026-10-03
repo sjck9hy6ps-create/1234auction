@@ -208,6 +208,50 @@ def baselines(feats, cols):
     return {"변화없음": scores(y, np.zeros(len(y))), "최근6개월흐름×0.5": scores(y, d["mom6"].to_numpy(float) * 0.5)}
 
 
+# ════ 6개월 하락 위험 규칙(2026-10, 구간표 결과로 정함 - 회귀가 아니라 해석 가능한 규칙) ════
+# 2017-09~ 실거래 구간표: 최근 6개월 거래량이 직전 1년 대비 30%+ 줄면 6개월 뒤 2%+ 하락 비율 수도권 52%·지방 46%
+# (전체 평균의 약 2배). 수도권 전세가율 50% 미만 33%(70~80%는 18%). 지방 미분양 1년 새 2배+ 35%(절반 이하로 감소 14%),
+# 5년 평균의 2.5배+ 32%, 전세가율 1년 3%p+ 하락 29%(3%p+ 상승 18%). 거래량 40%+ 증가는 4~10%로 낮음.
+LN = math.log
+
+
+def risk_flags(r, seg):
+    neg, pos = [], []
+    v = r.get("vol_ratio")
+    if v is not None and not pd.isna(v):
+        if v <= LN(0.7): neg.append(("거래량 30%+ 감소(최근 6개월, 직전 1년 대비)", 2))
+        elif v >= LN(1.4): pos.append("거래량 40%+ 증가")
+    if seg == "metro":
+        jl = r.get("jr_level")
+        if jl is not None and not pd.isna(jl) and jl < 0.5: neg.append(("전세가율 50% 미만", 1))
+    else:
+        uy, ur = r.get("uns_yoy"), r.get("uns_rel")
+        if (uy is not None and not pd.isna(uy) and uy >= LN(2)) or (ur is not None and not pd.isna(ur) and ur >= LN(2.5)):
+            neg.append(("미분양 급증(1년 새 2배+ 또는 5년 평균의 2.5배+)", 1))
+        elif uy is not None and not pd.isna(uy) and uy <= LN(0.5):
+            pos.append("미분양 절반 이하로 감소")
+        jc = r.get("jr_chg")
+        if jc is not None and not pd.isna(jc):
+            if jc <= -0.03: neg.append(("전세가율 1년 새 3%p+ 하락", 1))
+            elif jc >= 0.03: pos.append("전세가율 1년 새 3%p+ 상승")
+    score = sum(w for _, w in neg)
+    level = "높음" if score >= 2 else ("보통" if score == 1 else "낮음")
+    return level, [n for n, _ in neg], pos
+
+
+def risk_backtest(feats, seg):
+    d = feats.dropna(subset=["fwd", "vol_ratio"])
+    levels = d.apply(lambda r: risk_flags(r, seg)[0], axis=1)
+    out = {}
+    for lv in ("낮음", "보통", "높음"):
+        g = d[levels == lv]
+        if len(g) >= 30:
+            out[lv] = {"n": int(len(g)), "dropOver2PctShare": round(float((g["fwd"] < -0.02).mean()) * 100, 1),
+                       "avgFwd6mPct": round(float(g["fwd"].mean()) * 100, 2)}
+    out["전체"] = {"n": int(len(d)), "dropOver2PctShare": round(float((d["fwd"] < -0.02).mean()) * 100, 1)}
+    return out
+
+
 def main():
     now = datetime.now(timezone.utc).isoformat()
     print("🔮 사이클 예측 검증(수도권/지방 분리) 시작", now)
@@ -289,6 +333,19 @@ def main():
             tables["거래량(최근6개월/직전1년)"] = condition_table(feats, "vol_ratio", [-9, np.log(0.7), np.log(0.9), np.log(1.1), np.log(1.4), 9],
                                                       ["30%+ 감소", "10~30% 감소", "비슷", "10~40% 증가", "40%+ 증가"])
         res["conditionTables"] = tables
+        res["riskRuleBacktest"] = risk_backtest(feats, seg)
+        print(f"  [{segname}] 하락위험 규칙 검증: {json.dumps(res['riskRuleBacktest'], ensure_ascii=False)}")
+        # 실거래 신고기한(30일) 때문에 마지막 달은 거래량이 덜 잡힘 → 그 전 달(신고가 거의 끝난 달) 기준으로 현재 위험을 냄
+        latest = feats.sort_values("ym").groupby("region").nth(-2)
+        cur = {}
+        for _, r in latest.iterrows():
+            lv, neg, pos = risk_flags(r, seg)
+            cur[r["region"]] = {"asOf": cyc.ym_label(int(r["ym"])), "level": lv, "negative": neg, "positive": pos,
+                                "volRatioPct": None if pd.isna(r.get("vol_ratio")) else round((math.exp(r["vol_ratio"]) - 1) * 100, 1),
+                                "jeonseRatioPct": None if pd.isna(r.get("jr_level", np.nan)) else round(float(r["jr_level"]) * 100, 1),
+                                "jeonseRatioChgPp": None if pd.isna(r.get("jr_chg", np.nan)) else round(float(r["jr_chg"]) * 100, 1),
+                                "unsoldYoyPct": None if pd.isna(r.get("uns_yoy", np.nan)) else round((math.exp(r["uns_yoy"]) - 1) * 100, 1)}
+        res["currentRisk"] = cur
         print(f"  [{segname}] 구간표: {json.dumps(tables, ensure_ascii=False)}")
         out["segments"][segname] = res
 
