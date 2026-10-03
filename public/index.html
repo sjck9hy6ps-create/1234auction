@@ -2277,7 +2277,14 @@ function resolvePopInfo(dong, name, bunji, type, altName) {
     // 경매 물건명과 국토부 단지명이 다른 경우(예: 경매 "우영아파트" ↔ 국토부 "월산우영타워") - 순위 배지와 같은 매칭 규칙
     // (지번·이름 포함 관계)으로 찾은 국토부 단지명으로 다시 찾음
     var lf = resolveLfInfo(dong, name, bunji, 'apt', altName);
-    if (lf && lf.danji) return popularMap[lfRankKey(lf.dong || dong, lf.danji)] || null;
+    if (lf && lf.danji) {
+        var hit = popularMap[lfRankKey(lf.dong || dong, lf.danji)];
+        if (hit) return hit;
+        // 이 동의 인기 목록은 받았는데 그 단지가 없음 = 최근 3년(2층 이상·중개거래 기준) 거래가 한 건도 없던 단지
+        var dk = dongKey(lf.dong || dong) + '|';
+        var inDong = Object.keys(popularMap).filter(function(k) { return k.indexOf(dk) === 0; }).length;
+        if (inDong) return { danji: lf.danji, tier: '하위40%', trades3y: 0, activeQuarterPct: 0, rankInDong: null, complexesInDong: inDong, noRecent: true };
+    }
     return null;
 }
 var cycleDataByLawd = {};
@@ -14898,7 +14905,7 @@ function renderBidBoardRow(r) {
     var popCell = r.pending ? '' : (r.pop
         ? '<span class="bb-pill ' + (r.pop.tier === '상위20%' ? 'good' : (r.pop.tier === '하위40%' ? 'bad' : '')) + '">' + (r.pop.tier === '상위20%' ? '🔥 인기 상위 20%' : (r.pop.tier === '하위40%' ? '거래 드묾(하위 40%)' : '인기 중간')) + '</span>'
             + (r.lf && r.lf.isLeader ? ' <span class="bb-pill lead">👑 대장</span>' : '')
-            + '<div class="bb-sub">동 ' + r.pop.rankInDong + '위/' + r.pop.complexesInDong + '단지 · 3년 ' + r.pop.trades3y + '건</div>'
+            + (r.pop.noRecent ? '<div class="bb-sub">최근 3년 거래 없음</div>' : '<div class="bb-sub">동 ' + r.pop.rankInDong + '위/' + r.pop.complexesInDong + '단지 · 3년 ' + r.pop.trades3y + '건</div>')
             + '<div class="bb-sub">분기마다 거래 ' + r.pop.activeQuarterPct + '%</div>'
         : ((r.lf ? (r.lf.isLeader ? '<span class="bb-pill lead">👑 대장</span>' : '<span class="bb-pill">동 ' + r.lf.rank + '위</span>') : '')
             + '<div class="bb-sub">3년 거래 ' + (r.complex3y || 0) + '건' + (r.complex3y >= 20 ? ' · 활발' : (r.complex3y < 6 ? ' · 드묾' : '')) + '</div>'));
