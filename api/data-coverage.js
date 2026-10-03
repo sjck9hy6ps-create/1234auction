@@ -3340,7 +3340,7 @@ export default async function handler(req, res) {
       return res.status(200).json({
         generatedAt: p.generatedAt, dataFrom: p.dataFrom, dataTo: p.dataTo,
         national: p.national, sido: sidoKey && p.sido ? { name: sidoKey, ...(p.sido[sidoKey] || {}) } : null,
-        forecastValidation: p.forecastValidation, followerValidation: p.followerValidation,
+        forecastValidation: p.forecastValidation, followerValidation: p.followerValidationStrict || p.followerValidation,
         followerCatchupCoefUsed: p.followerCatchupCoefUsed,
         region: reg ? reg.payload : null,
       });
