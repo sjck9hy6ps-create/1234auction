@@ -23,11 +23,29 @@ export default async function handler(req, res) {
         : req.query.kind === 'bidCases' ? 'bidCases'
         : 'auctions';
     try {
+        if (req.method === 'GET' && req.query.diag === '1') {
+            // 2026-10 진단 전용(읽기만 함): 저장소 응답 상태를 그대로 보여줌 - 값 자체/비밀값은 노출하지 않음
+            const r1 = await fetch(`${REDIS_URL}/get/${redisKey}`, { headers: { Authorization: `Bearer ${REDIS_TOKEN}` } });
+            const j1 = await r1.json().catch(() => null);
+            const r2 = await fetch(`${REDIS_URL}/dbsize`, { headers: { Authorization: `Bearer ${REDIS_TOKEN}` } });
+            const j2 = await r2.json().catch(() => null);
+            const r3 = await fetch(`${REDIS_URL}/strlen/${redisKey}`, { headers: { Authorization: `Bearer ${REDIS_TOKEN}` } });
+            const j3 = await r3.json().catch(() => null);
+            return res.status(200).json({
+                key: redisKey,
+                get: { status: r1.status, error: j1 && j1.error, hasResult: !!(j1 && j1.result), resultLen: j1 && j1.result ? String(j1.result).length : 0 },
+                dbsize: { status: r2.status, error: j2 && j2.error, result: j2 && j2.result },
+                strlen: { status: r3.status, error: j3 && j3.error, result: j3 && j3.result },
+            });
+        }
         if (req.method === 'GET') {
             const response = await fetch(`${REDIS_URL}/get/${redisKey}`, {
                 headers: { Authorization: `Bearer ${REDIS_TOKEN}` }
             });
             const data = await response.json();
+            // ⚠️ 2026-10: 저장소가 오류를 돌려주면(요청 한도 초과 등) 예전엔 빈 목록([])을 돌려줘서, 화면에서
+            // 저장하면 빈 목록 위에 덮어써 실제 데이터가 지워질 위험이 있었음 - 오류는 오류로 돌려줌.
+            if (data && data.error) return res.status(503).json({ error: '저장소 오류: ' + data.error });
             let list = data.result ? JSON.parse(data.result) : [];
             if (!Array.isArray(list)) list = [];
             return res.status(200).json(list);
@@ -38,6 +56,7 @@ export default async function handler(req, res) {
                 headers: { Authorization: `Bearer ${REDIS_TOKEN}` }
             });
             const dataGet = await responseGet.json();
+            if (dataGet && dataGet.error) return res.status(503).json({ error: '저장소 오류(저장 중단 - 기존 데이터 보호): ' + dataGet.error });
             let list = dataGet.result ? JSON.parse(dataGet.result) : [];
             if (!Array.isArray(list)) list = [];
             const newItem = req.body;
@@ -68,6 +87,7 @@ export default async function handler(req, res) {
                 headers: { Authorization: `Bearer ${REDIS_TOKEN}` }
             });
             const dataGet = await responseGet.json();
+            if (dataGet && dataGet.error) return res.status(503).json({ error: '저장소 오류(저장 중단 - 기존 데이터 보호): ' + dataGet.error });
             let list = dataGet.result ? JSON.parse(dataGet.result) : [];
             if (!Array.isArray(list)) list = [];
             list = list.filter(a => a.id !== id);
