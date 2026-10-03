@@ -11352,7 +11352,7 @@ function auctionMarkerSignature(a) {
         grade: matched ? matched.grade : null,
         pop: matched ? matched.popularPyeong : null,
         surgeRank: a.dong ? surgeRankMap[a.dong] : null,
-        lfRank: lfRankSig(a.dong, a.name, fullBunjiFromAddr(a.addr, a.dong, a.bunji), a.propType),
+        lfRank: lfRankSig(a.dong, a.name, fullBunjiFromAddr(a.addr, a.dong, a.bunji), a.propType, buildingNameFromAddr(a.addr, a.dong)),
         // 매칭된 건물이 지금 화면에 실제로 그려지는지(=필터 통과 여부)가 바뀌면 경매 마커도
         // 독자표시↔억제 상태를 다시 판단해야 하므로 시그니처에 포함시킴 - 이게 없으면 필터를
         // 바꿔도(타입탭 전환, 등급/비교대상 필터 등) 경매 마커가 갱신되지 않아 사라진 채로 남음
@@ -11565,7 +11565,7 @@ function placeAuctionMarker(a) {
     // ⚠️ 2026-09(사용자 요청: "경매관련 모든 배지에 아파트 순위를 표기해줘") - 매매기록
     // 배지(popRankBadge)와 같은 원천(leaderFollowerRankMap)을 재사용해서 대장/후발주자 순위를
     // 표시함. a.name/a.dong은 매매기록 마커의 l.name/l.dong과 동일한 이름 체계(lfRankKey 참고).
-    var lfBadge = (a.propType === 'apt' || a.propType === 'villa' ? buildLfRankBadgeHtml(a.dong, a.name, fullBunjiFromAddr(a.addr, a.dong, a.bunji), a.propType) : '');
+    var lfBadge = (a.propType === 'apt' || a.propType === 'villa' ? buildLfRankBadgeHtml(a.dong, a.name, fullBunjiFromAddr(a.addr, a.dong, a.bunji), a.propType, buildingNameFromAddr(a.addr, a.dong)) : '');
     // 연식단계(프리미엄신축/신축/준신축/구축/노후) 배지 - 저장 시점에 확정해둔
     // buildYear(건축HUB 사용승인일 우선)를 기준으로 표시함.
     // ⚠️ 2026-08(사용자 피드백: "귤현동 531(계양센트레빌1단지, 아파트)인데 빌라 필터(연식)가
@@ -11616,7 +11616,7 @@ function placeAuctionMarker(a) {
     // 아직 입찰 전이라 예상매도가(awEst)와는 별개로, "이 법정동 대장아파트 대비 이 단지가
     // 아직 못 채운 상승률 갭"을 참고 신호로 같이 보여줌. 낙찰 확정건(isWon)에도 같은 정보가
     // 유효하므로(사고 나서도 앞으로의 추가 상승 여력을 참고할 수 있음) 함께 표시함.
-    var lfUpsideLine = (isBidTarget || isWon) ? buildLfUpsideLineHtml(a.dong, a.name, fullBunjiFromAddr(a.addr, a.dong, a.bunji), a.propType) : '';
+    var lfUpsideLine = (isBidTarget || isWon) ? buildLfUpsideLineHtml(a.dong, a.name, fullBunjiFromAddr(a.addr, a.dong, a.bunji), a.propType, buildingNameFromAddr(a.addr, a.dong)) : '';
     if (isWon) {
         var awImplied = awEst.impliedTarget;
         var awImpliedNote = awImplied
@@ -18202,11 +18202,26 @@ function fullBunjiFromAddr(addr, dong, bunji) {
 }
 // ⚠️ 2026-10: type('apt'|'villa')별로 다른 순위표를 씀. 지번으로 찾을 때도 같은 종류의 건물만 봄 -
 // 예전엔 빌라 입찰희망(본오동 880)이 같은 지번의 아파트 순위("2위")를 잘못 달고 있었음.
-function resolveLfInfo(dong, name, bunji, type) {
+// 주소 끝의 건물명("…용봉동 1475 용봉동 도나우270" → "도나우270", "…1769 수하임아파트 101동" → "수하임아파트").
+// 입찰희망 일괄등록은 name이 비어 있는 경우가 많아, 지번이 국토부와 다를 때(도나우270: 법원 1475 ↔ 국토부 1492)
+// 이름으로라도 찾기 위함.
+function buildingNameFromAddr(addr, dong) {
+    var toks = String(addr || '').split(/\s+/);
+    var dk = dongKey(dong);
+    var i = toks.indexOf(dk);
+    if (i < 0) return '';
+    var rest = toks.slice(i + 1);
+    if (rest.length && /^(산)?\d+(-\d+)?(번지)?$/.test(rest[0])) rest = rest.slice(1);
+    return rest.filter(function(t) {
+        return t !== dk && !/^(제)?[\dA-Za-z가-힣]{0,3}\d+(동|호|층)$/.test(t) && !/^(외|필지|지하층.*|.*필지)$/.test(t) && !/^[가-힣]동$/.test(t);
+    }).join('');
+}
+function resolveLfInfo(dong, name, bunji, type, altName) {
     type = type === 'villa' ? 'villa' : 'apt';
     var rmap = rankMapFor(type);
     var info = (dong && name) ? rmap[lfRankKey(dong, name)] : null;
     if (info) return info;
+    if (dong && altName && rmap[lfRankKey(dong, altName)]) return rmap[lfRankKey(dong, altName)];
     if (!dong) return null;
     var b = String(bunji || '').trim();
     var cands = b ? (aptIndexByDongBunji.get(dongKey(dong) + '|' + b) || []) : [];
@@ -18229,6 +18244,16 @@ function resolveLfInfo(dong, name, bunji, type) {
             }
         }
     }
+    // 이름이 한쪽에 포함되는 경우("수하임" ↔ 순위표 "수하임아파트101동", "도나우270" ↔ "용봉도나우270") -
+    // 같은 동 안에서 딱 한 건물만 걸릴 때만 인정(여러 개면 엉뚱한 단지일 수 있어 포기).
+    var nms = [name, altName].map(function(x) { return lfNormName(x || ''); }).filter(function(x) { return x.length >= 3; });
+    if (nms.length) {
+        var byDong2 = lfKeysByDong(rmap)[dongKey(dong)] || [];
+        for (var q = 0; q < nms.length; q++) {
+            var hits = byDong2.filter(function(e) { return e.rest.length >= 3 && (e.rest.indexOf(nms[q]) >= 0 || nms[q].indexOf(e.rest) >= 0); });
+            if (hits.length === 1) return rmap[hits[0].key];
+        }
+    }
     // 지번이 없으면 기존 이름 규칙(findMatchedAptByKey)으로 한 번 더 - 같은 종류일 때만 인정
     var m = b ? null : findMatchedAptByKey(name, dong, bunji);
     var ml = m && m.latest;
@@ -18237,13 +18262,13 @@ function resolveLfInfo(dong, name, bunji, type) {
 }
 // 배지 다시 그리기 판단용(마커 시그니처) - 순위 데이터는 지도보다 늦게(최대 30초) 도착하므로
 // 이게 시그니처에 없으면 이미 그려진 경매/낙찰사례 배지에 순위가 끝내 안 붙음.
-function lfRankSig(dong, name, bunji, type) {
-    var info = resolveLfInfo(dong, name, bunji, type);
+function lfRankSig(dong, name, bunji, type, altName) {
+    var info = resolveLfInfo(dong, name, bunji, type, altName);
     return info ? (info.isLeader ? 'L' : String(info.rank)) + '|' + info.gapPct : null;
 }
-function buildLfRankBadgeHtml(dong, name, bunji, type) {
+function buildLfRankBadgeHtml(dong, name, bunji, type, altName) {
     if (!dong) return '';
-    var lfInfo = resolveLfInfo(dong, name, bunji, type);
+    var lfInfo = resolveLfInfo(dong, name, bunji, type, altName);
     if (!lfInfo) return '';
     return lfInfo.isLeader
         ? '<span style="background:#4a148c;color:white;font-size:9px;font-weight:bold;padding:1px 5px;border-radius:3px;margin-left:3px;" title="후발주자 순위 기준 이 법정동의 대장아파트">👑대장</span>'
@@ -18252,9 +18277,9 @@ function buildLfRankBadgeHtml(dong, name, bunji, type) {
 // gapPct(대장 대비 아직 못 채운 상승률 갭) 기반 "예상 상승/하락폭" 참고 줄. 대장 본인이거나
 // gapPct를 계산할 수 없는 경우(동행성 부족 등)는 표시하지 않음 - 확정 예측이 아니라 과거
 // 패턴상 참고 신호라는 점을 title에 항상 명시함(leaderFollower 패널의 기존 안내 문구와 동일 취지).
-function buildLfUpsideLineHtml(dong, name, bunji, type) {
+function buildLfUpsideLineHtml(dong, name, bunji, type, altName) {
     if (!dong) return '';
-    var lfInfo = resolveLfInfo(dong, name, bunji, type);
+    var lfInfo = resolveLfInfo(dong, name, bunji, type, altName);
     if (!lfInfo || lfInfo.isLeader || typeof lfInfo.gapPct !== 'number') return '';
     var gp = lfInfo.gapPct;
     var color = gp > 0 ? '#2e7d32' : (gp < 0 ? '#c62828' : '#757575');
