@@ -13170,6 +13170,7 @@ function getMaxFloorForApt(apt) {
    별도 함수로 분리해 그 완화 로직 밖에서 공통 적용함.
    maxFloor를 모르면(다른 단지라 총층수를 알 수 없는 경우 등) 'top' 판정은 포기함(과도한
    제외를 막기 위함 - 대신 !isSameComplex 경로의 기존 "탑층 제외" 줄이 이중 안전장치로 남음). */
+var GROUND_FLOOR_PRICE_RATIO = 0.915; // 1층 ÷ 같은 단지·같은 면적 일반층(2026-10 실거래 11,000건 중앙값)
 function getFloorTier(floorNum, maxFloor) {
     if (!Number.isFinite(floorNum)) return null;
     if (floorNum <= 0) return 'basement';
@@ -13264,6 +13265,11 @@ function findSimilarComps(lat, lon, targetYear, targetFloor, targetPyung, target
     // 1.81억, 실제 이 단지 3년 거래는 1.15~1.3억).
     var ownLong = [];
     var ownLongCutoff = daysAgo(1095);
+    // ⚠️ 2026-10(낙찰가·매도 검증에서 발견 - 광양 흥한에르가 1층 예상매도가 2.51억 vs 실제 재매도 1.75억, 광주 월산동
+    // 우영아파트 9층 3.73억 vs 1.4억): 자기 단지에 같은 층 구간(1층 ↔ 일반층) 거래가 없으면 곧장 주변 다른 단지로 넘어가
+    // 크게 빗나갔음. 아파트는 그 전에 "같은 단지 같은 평형의 다른 층 구간 거래"를 층 차이만큼 보정해서 씀.
+    // 보정 비율은 실거래 11,000건 실측: 1층은 같은 단지·같은 면적 일반층(4층~탑층 아래)의 중앙값 91.5%(수도권 91.7%·지방 91.5%).
+    var ownCrossTier = [];
     // ⚠️ 2026-08(사용자 요청): 호출부(openAiCompFinder)에서 빌라는 500m, 아파트는 기존 2km를
     // 그대로 넘겨줌 - 인자를 안 넘기면(다른 호출부가 있을 경우 대비) 기존 2km로 폴백.
     var radiusLimit = maxRadiusM || 2000;
@@ -13300,6 +13306,15 @@ function findSimilarComps(lat, lon, targetYear, targetFloor, targetPyung, target
                 var tierOk = targetTier
                     ? (oTier === targetTier || (apt.buildingType === 'apt' && (targetTier === 'top' || targetTier === 'mid') && (oTier === 'top' || oTier === 'mid')))
                     : oTier !== 'basement';
+                if (!tierOk && apt.buildingType === 'apt' && targetTier && oTier !== 'basement' && targetTier !== 'basement'
+                    && ((targetTier === 'ground') !== (oTier === 'ground'))) {
+                    var adjF = targetTier === 'ground' ? GROUND_FLOOR_PRICE_RATIO : 1 / GROUND_FLOOR_PRICE_RATIO;
+                    var pd0 = Math.abs(toPyung(t.area) - targetPyung);
+                    ownCrossTier.push({ trade: Object.assign({}, t, { amount: String(Math.round(parseInt(t.amount) * adjF)), floorAdjustedFrom: parseInt(t.amount) }),
+                        dist: Math.round(dist), ageDiff: null, floorDiff: targetFloor ? Math.abs(targetFloor - parseInt(t.floor)) : null,
+                        pyungDiff: pd0, score: 200 + pd0 * 1.5 + (Date.now() - tradeDate(t)) / 86400000 / 30,
+                        apt: apt, coordLat: coord.lat, coordLon: coord.lon, isSameComplex: true, floorAdjusted: true });
+                }
                 if (tierOk) {
                     var pd = Math.abs(toPyung(t.area) - targetPyung);
                     ownLong.push({ trade: t, dist: Math.round(dist), ageDiff: null, floorDiff: targetFloor ? Math.abs(targetFloor - parseInt(t.floor)) : null,
@@ -13404,6 +13419,18 @@ function findSimilarComps(lat, lon, targetYear, targetFloor, targetPyung, target
         ownList = exactOnly(ownList).slice(0, 10);
         if (extended) ownList.usedExtendedWindow = true;
         return ownList;
+    }
+    // 같은 층 구간 거래는 없지만 같은 단지 같은 평형의 다른 층 구간(1층↔일반층) 거래가 있으면 보정해서 씀(위 ownCrossTier 주석)
+    if (!recencyCutoffOverride && ownCrossTier.length) {
+        var seenX = {}, crossDedup = [];
+        ownCrossTier.forEach(function(c) {
+            var t = c.trade, k = t.year + '-' + t.month + '-' + t.day + '_' + t.floorAdjustedFrom + '_' + t.area + '_' + t.floor;
+            if (seenX[k]) return; seenX[k] = true; crossDedup.push(c);
+        });
+        crossDedup.sort(function(a, b) { return a.score - b.score; });
+        var crossList = exactOnly(crossDedup).slice(0, 10);
+        crossList.usedFloorAdjust = true;
+        return crossList;
     }
     // 같은 단지가 아닌 후보만 "단지당 1건" 다양성 확보(같은 단지는 이미 충분히 비교 가능하므로 여러 건 허용)
     others.sort(function(a, b) { return a.score - b.score; });
