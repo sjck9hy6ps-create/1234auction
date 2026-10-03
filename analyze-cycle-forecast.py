@@ -122,6 +122,9 @@ def build_features(region, sale_r, rent_r, leaders, is_metro):
             u = U.shift(1)  # 미분양 통계는 한 달 늦게 발표 - 그 시점에 알 수 있던 값만 씀
             f["uns_yoy"] = (np.log(u + 10) - np.log(u.shift(12) + 10)).reindex(f.index)
             f["uns_rel"] = (np.log(u + 10) - np.log(u.rolling(60, min_periods=24).mean() + 10)).reindex(f.index)
+            # 비선형(2026-10): 미분양은 평소엔 영향이 작다가 "급증"했을 때만 크게 작용할 수 있어 임계값 넘는 부분만 따로 둠
+            f["uns_spike"] = np.maximum(0.0, f["uns_yoy"] - np.log(1.5))   # 1년 새 1.5배 넘게 늘어난 정도
+            f["uns_high"] = np.maximum(0.0, f["uns_rel"] - np.log(1.5))    # 5년 평균의 1.5배를 넘는 정도
     f["fwd"] = I.shift(-H) - I
     f["ym"] = f.index
     f["region"] = region
@@ -132,7 +135,22 @@ FEATURE_SETS = {
     "기본(가격·거래량)": ["mom3", "mom6", "mom12", "vol_ratio", "vol_long"],
     "+전세가율": ["mom3", "mom6", "mom12", "vol_ratio", "vol_long", "jr_level", "jr_chg", "j_mom6"],
 }
-SEG_EXTRA = {"metro": ["lead_gap6", "lead_gap3"], "local": ["uns_yoy", "uns_rel"]}
+SEG_EXTRA = {"metro": ["lead_gap6", "lead_gap3"], "local": ["uns_yoy", "uns_rel", "uns_spike", "uns_high"]}
+
+
+def condition_table(feats, col, cuts, labels):
+    """지표 구간별 '6개월 뒤 가격변화' 평균·하락비율 - 회귀가 못 잡는 비선형 관계를 직접 확인하는 표"""
+    d = feats.dropna(subset=[col, "fwd"])
+    if d.empty:
+        return None
+    b = pd.cut(d[col], bins=cuts, labels=labels)
+    out = {}
+    for lab, g in d.groupby(b, observed=True):
+        if len(g) < 30:
+            continue
+        out[str(lab)] = {"n": int(len(g)), "avgFwd6mPct": round(float(g["fwd"].mean()) * 100, 2),
+                         "dropOver2PctShare": round(float((g["fwd"] < -0.02).mean()) * 100, 1)}
+    return out
 
 
 def ridge_fit(X, y, lam):
@@ -253,6 +271,25 @@ def main():
             res["sameSample"][name] = None if r is None else {k: v for k, v in r.items() if k != "byYear"}
         print(f"  [{segname}] 같은표본 비교: {json.dumps(res['sameSample'], ensure_ascii=False)}")
         print(f"  [{segname}] 기준선: {json.dumps(res['baselines'], ensure_ascii=False)}")
+        tables = {}
+        if "uns_yoy" in feats.columns:
+            tables["미분양 1년 증감"] = condition_table(feats, "uns_yoy", [-9, np.log(0.5), np.log(0.8), np.log(1.25), np.log(2), 9],
+                                                ["절반 이하로 감소", "20%+ 감소", "비슷", "25~100% 증가", "2배 이상 증가"])
+            tables["미분양 5년평균 대비"] = condition_table(feats, "uns_rel", [-9, np.log(0.5), np.log(1.0), np.log(1.5), np.log(2.5), 9],
+                                                  ["평균의 절반 이하", "평균 이하", "평균~1.5배", "1.5~2.5배", "2.5배 이상"])
+        if "jr_chg" in feats.columns:
+            tables["전세가율 1년 변화"] = condition_table(feats, "jr_chg", [-9, -0.03, -0.01, 0.01, 0.03, 9],
+                                                 ["3%p+ 하락", "1~3%p 하락", "비슷", "1~3%p 상승", "3%p+ 상승"])
+        if "jr_level" in feats.columns:
+            tables["전세가율 수준"] = condition_table(feats, "jr_level", [0, 0.5, 0.6, 0.7, 0.8, 2], ["50% 미만", "50~60%", "60~70%", "70~80%", "80% 이상"])
+        if "lead_gap6" in feats.columns:
+            tables["대장그룹 6개월 선행폭"] = condition_table(feats, "lead_gap6", [-9, -0.03, -0.01, 0.01, 0.03, 9],
+                                                   ["대장 3%p+ 덜 오름", "1~3%p 덜", "비슷", "1~3%p 더 오름", "대장 3%p+ 더 오름"])
+        if "vol_ratio" in feats.columns:
+            tables["거래량(최근6개월/직전1년)"] = condition_table(feats, "vol_ratio", [-9, np.log(0.7), np.log(0.9), np.log(1.1), np.log(1.4), 9],
+                                                      ["30%+ 감소", "10~30% 감소", "비슷", "10~40% 증가", "40%+ 증가"])
+        res["conditionTables"] = tables
+        print(f"  [{segname}] 구간표: {json.dumps(tables, ensure_ascii=False)}")
         out["segments"][segname] = res
 
     cyc.upsert_rows([{"id": "cycle|__forecast__", "payload": cyc.clean_json(out), "fetched_at": now}])
