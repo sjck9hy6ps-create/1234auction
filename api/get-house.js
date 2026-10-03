@@ -25,6 +25,11 @@ const REDIS_TOKEN = process.env.UPSTASH_REDIS_TOKEN;
 // HOUSE_CACHE_MAX_BYTES 초과)은 Redis에 저장하지 않음 - 대신 브라우저 보관(IndexedDB 6시간)이 재방문을 빠르게 함.
 const CACHE_TTL_SECONDS = 10 * 60 * 60;
 const HOUSE_CACHE_MAX_BYTES = 600 * 1024;
+// ⚠️ 2026-10(사고 원인 확정 - Upstash 콘솔): 용량이 아니라 "월 데이터 전송량(Bandwidth) 10GB" 초과로
+// 정지됐음(12GB). 지역 캐시는 조회할 때마다 수 MB씩 이 저장소에서 꺼내 와서 전송량을 거의 다 차지함 -
+// 경매물건·낙찰사례·임장메모가 같은 저장소라 함께 막힘. 지역 캐시는 Redis에 더 이상 두지 않음
+// (브라우저 IndexedDB 6시간 보관 + Vercel 엣지 캐시로 대신함). clearCache는 남은 키 정리용으로 유지.
+const HOUSE_REDIS_CACHE_ENABLED = false;
 // ⚠️ 2026-10(사용자 요청: "배지 로딩속도를 확연하게 높여줘") - 실측: 가평(0.5MB)·성남(4.6MB)은
 // 캐시가 돼서 0.15~0.6초인데, 부천(11MB)·강남(9MB)처럼 큰 지역은 원본 JSON 그대로는 Redis 저장/
 // 조회(요청 크기 상한·3초 제한)에 걸려 매번 캐시를 못 쓰고 DB를 다시 긁느라 3~7초(바쁠 땐 18초)가
@@ -33,7 +38,7 @@ const HOUSE_CACHE_MAX_BYTES = 600 * 1024;
 const GZ_PREFIX = 'gz:';
 
 async function getCachedHouseData(lawdCd) {
-  if (!REDIS_URL || !REDIS_TOKEN) return null;
+  if (!HOUSE_REDIS_CACHE_ENABLED || !REDIS_URL || !REDIS_TOKEN) return null;
   try {
     const r = await fetch(`${REDIS_URL}/get/house_${lawdCd}`, {
       headers: { Authorization: `Bearer ${REDIS_TOKEN}` },
@@ -58,7 +63,7 @@ async function getCachedHouseData(lawdCd) {
 }
 
 async function setCachedHouseData(lawdCd, payload) {
-  if (!REDIS_URL || !REDIS_TOKEN) return;
+  if (!HOUSE_REDIS_CACHE_ENABLED || !REDIS_URL || !REDIS_TOKEN) return;
   try {
     const packed = GZ_PREFIX + gzipSync(Buffer.from(JSON.stringify(payload), 'utf8')).toString('base64');
     if (packed.length > HOUSE_CACHE_MAX_BYTES) return; // 저장소 용량 보호(위 주석)
