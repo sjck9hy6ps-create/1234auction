@@ -199,7 +199,10 @@ if (!KAKAO_KEY) {
         if (!j.documents) continue; // 카카오 오류 → 재시도
         const ok = j.documents.some(d => {
           const a = (d.address && d.address.address_name) || d.address_name || '';
-          return a.includes(p.em) && sigungu.every(s => a.includes(s));
+          // 읍·면 이름 자체는 비교하지 않음 - 면→읍 승격(예: 달성군 구지면 → 구지읍, 2026-10 확인)처럼
+          // 국토부는 옛 이름, 카카오는 새 이름을 주는 경우가 있어서. 카카오가 그 읍·면을 "이 지역 안"에서
+          // 찾았는지만 봄(양평읍을 '경기 여주시'로 넣으면 양평군 결과만 나와 여기서 걸림).
+          return sigungu.every(s => a.includes(s));
         });
         return { ...p, ok, checked: true };
       } catch (e) { await sleep(1000); }
