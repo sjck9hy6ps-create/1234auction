@@ -534,7 +534,7 @@ tr:hover td { background:#fffde7; }
 #bid-board .bb-verdict { display:inline-block; font-weight:bold; border-radius:12px; padding:2px 8px; white-space:nowrap; font-size:12px; }
 #bid-board .bb-dday { font-weight:bold; white-space:nowrap; }
 #bid-board .bb-dday.soon { color:#c62828; }
-#bid-board .bb-name { min-width:180px; max-width:280px; }
+#bid-board .bb-name { min-width:160px; max-width:240px; }
 #bid-board .bb-notes { margin-top:3px; display:flex; flex-wrap:wrap; gap:3px; }
 #bid-board .bb-notes span { background:#f3f4f6; color:#555; border-radius:4px; padding:1px 5px; font-size:10.5px; }
 #bid-board .bb-pill { display:inline-block; background:#ede7f6; color:#4a148c; border-radius:4px; padding:1px 6px; font-size:11px; font-weight:bold; white-space:nowrap; }
@@ -15241,8 +15241,8 @@ function renderBidBoard() {
     }
     if (!rows.length) { body.innerHTML = '<div class="bb-empty">조건에 맞는 물건이 없어요.</div>'; return; }
     body.innerHTML = '<table class="bb-table"><thead><tr>'
-        + '<th>판정</th><th>입찰일</th><th>물건</th><th class="r">최저가</th><th class="r">예상매도가</th>'
-        + '<th class="r">추천 입찰가</th><th class="r">최저가 대비</th><th>평형 인기순위</th><th>지역 위험</th><th>대장 따라잡기</th><th></th>'
+        + '<th>판정</th><th>입찰일</th><th>물건</th><th>평형 인기순위</th><th class="r">최저가</th><th class="r">예상매도가</th>'
+        + '<th class="r">추천 입찰가</th><th class="r">최저가 대비</th><th>지역 위험</th><th>대장 따라잡기</th><th></th>'
         + '</tr></thead><tbody>' + rows.map(renderBidBoardRow).join('') + '</tbody></table>';
 }
 function renderBidBoardRow(r) {
@@ -15286,6 +15286,7 @@ function renderBidBoardRow(r) {
         + '<td data-l="물건" class="bb-name"><b>' + bbEsc(r.name) + '</b>' + (bidBoardState.highlight[r.id] ? ' <span class="bb-pill new">새로 등록</span>' : '') + (bidBoardState.updated[r.id] ? ' <span class="bb-pill new">결과 반영</span>' : '')
             + '<div class="bb-sub">' + bbEsc(r.region) + (sub ? ' · ' + bbEsc(sub) : '') + (a.caseNo ? ' · ' + bbEsc(a.caseNo) : '') + '</div>'
             + (notes ? '<div class="bb-notes">' + notes + '</div>' : '') + '</td>'
+        + '<td data-l="평형 인기순위">' + popCell + '</td>'
         + '<td data-l="최저가" class="r">' + (r.minBid ? toEok(String(r.minBid)) : '-')
             + (r.assumedFail ? '<div class="bb-sub" style="color:#ef6c00;">유찰 가정: ' + toEok(String(r.assumedFail.prevMin)) + '에서 ' + Math.round(r.assumedFail.rate * 100) + '%↓</div>'
                 + '<div class="bb-sub" title="' + bbEsc(r.assumedFail.pattern.src) + '">' + BID_REDUCTION_PATTERNS[r.assumedFail.pattern.pat].label + ' 법원</div>' : '')
@@ -15293,7 +15294,6 @@ function renderBidBoardRow(r) {
         + '<td data-l="예상매도가" class="r">' + saleCell + '</td>'
         + '<td data-l="추천 입찰가" class="r">' + recCell + '</td>'
         + '<td data-l="최저가 대비" class="r">' + roomCell + '</td>'
-        + '<td data-l="평형 인기순위">' + popCell + '</td>'
         + '<td data-l="지역 위험">' + riskCell + '</td>'
         + '<td data-l="대장 따라잡기">' + cuCell + '</td>'
         + '<td class="bb-act"><button onclick="event.stopPropagation();closeBidBoard();openAuctionModal(\'' + idJs + '\')">상세</button></td>'
