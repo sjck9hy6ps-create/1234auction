@@ -63,6 +63,25 @@ def analyze_region(dfr, region_q, leaders, cutoffs, seg, out):
         vdf = pd.DataFrame({"vol": vol, "act": act})
         vdf["dong"] = [ck_dong.get(k) for k in vdf.index]
         vdf = vdf[vdf["vol"] > 0]
+        if c == max_q:
+            # 2026-10(사용자: "평형에 따라 인기 단지가 달라질 것 같다") - 실측: 평형대별 상위 20% 단지 중 전체 상위 20%에 없는
+            # 비율 소형 21%·중형 26%·대형 61%. 같은 동 안에서 평형대(소형 60㎡ 미만/중형 60~85㎡/대형 85㎡ 초과)별로 따로 등급을 매김.
+            w = dfr[dfr["q"].isin(win)]
+            if len(w):
+                w = w.assign(band=np.where(w["size"] < 60, "소형", np.where(w["size"] <= 85, "중형", "대형")))
+                grp = w.groupby([w["ckey"].astype(str), "band"])
+                bdf = pd.DataFrame({"vol": grp.size(), "act": grp["q"].nunique() / len(win)}).reset_index()
+                bdf.columns = ["ckey", "band", "vol", "act"]
+                bdf["dong"] = bdf["ckey"].map(lambda k: ck_dong.get(k))
+                for (dong, bnd), g in bdf.groupby(["dong", "band"]):
+                    if len(g) < MIN_DONG_CPLX:
+                        continue
+                    g = g.assign(pct=g["vol"].rank(pct=True, method="average")).sort_values("vol", ascending=False)
+                    lst = out["currentBand"].setdefault(dong, {}).setdefault(bnd, [])
+                    for _, r in g.iterrows():
+                        lst.append({"danji": ck_name.get(r["ckey"]), "tier": tier_of(r["pct"]), "trades3y": int(r["vol"]),
+                                    "activeQuarterPct": round(float(r["act"]) * 100), "rankInBand": int((g["vol"] > r["vol"]).sum()) + 1,
+                                    "complexesInBand": int(len(g))})
         for dong, g in vdf.groupby("dong"):
             if len(g) < MIN_DONG_CPLX:
                 continue
@@ -186,7 +205,10 @@ def main():
     print(f"  {len(df):,}건")
     leaders = cyc.fetch_leaders()
     cutoffs = [q for q in range(int(df["q"].min()) + WIN_Q, last_full_q - FWD_Q + 1) if q % 2 == 0]
-    acc = {seg: {"concentration": [], "co": [], "ret": [], "fol": [], "liq": [], "current": {}} for seg in ("수도권", "지방")}
+    current_only = os.environ.get("CURRENT_ONLY") == "1"  # 현재 인기 목록만 갱신(검증 생략 - 빠름)
+    if current_only:
+        cutoffs = []
+    acc = {seg: {"concentration": [], "co": [], "ret": [], "fol": [], "liq": [], "current": {}, "currentBand": {}} for seg in ("수도권", "지방")}
     rows = []
     regions = sorted(df["region"].unique())
     for i, region in enumerate(regions):
@@ -198,17 +220,18 @@ def main():
             continue
         trail = cyc.smooth_series(s, "trail")
         region_q = trail.groupby(trail.index // 3).mean()
-        out = {"concentration": [], "co": [], "ret": [], "fol": [], "liq": [], "current": {}}
+        out = {"concentration": [], "co": [], "ret": [], "fol": [], "liq": [], "current": {}, "currentBand": {}}
         analyze_region(dfr, region_q, leaders.get(region, {}), cutoffs, seg, out)
         for k in ("concentration", "co", "ret", "fol", "liq"):
             acc[seg][k].extend(out[k])
-        rows.append({"id": f"pop|{region}", "payload": cyc.clean_json({"region": region, "segment": seg, "asOfQuarter": cyc.q_label(last_full_q), "byDong": out["current"]}), "fetched_at": now})
+        rows.append({"id": f"pop|{region}", "payload": cyc.clean_json({"region": region, "segment": seg, "asOfQuarter": cyc.q_label(last_full_q), "byDong": out["current"], "byDongBand": out["currentBand"]}), "fetched_at": now})
         if (i + 1) % 25 == 0:
             print(f"  지역 {i + 1}/{len(regions)}")
     summary = {"generatedAt": now, "windowQuarters": WIN_Q, "fwdQuarters": FWD_Q, "segments": {seg: summarize(a) for seg, a in acc.items()}}
     for seg, sm in summary["segments"].items():
         print(f"  [{seg}] {json.dumps(sm, ensure_ascii=False)}")
-    rows.append({"id": "cycle|__liquidity__", "payload": cyc.clean_json(summary), "fetched_at": now})
+    if not current_only:
+        rows.append({"id": "cycle|__liquidity__", "payload": cyc.clean_json(summary), "fetched_at": now})
     cyc.upsert_rows(rows)
     print(f"✅ 저장 완료 (시군구 {len(rows) - 1}곳)")
     if os.environ.get("GITHUB_STEP_SUMMARY"):

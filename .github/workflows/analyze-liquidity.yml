@@ -2,7 +2,12 @@
 name: Analyze popular complexes
 
 on:
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      current_only:
+        description: '현재 인기 목록만 갱신(검증 생략)'
+        required: false
+        default: '0'
   schedule:
     - cron: '0 20 * * 1'
 
@@ -20,4 +25,5 @@ jobs:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
           PYTHONUNBUFFERED: '1'
+          CURRENT_ONLY: ${{ github.event.inputs.current_only || '0' }}
         run: python analyze-liquidity.py
