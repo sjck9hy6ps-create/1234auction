@@ -268,8 +268,12 @@ def follower_history(dfr, region_q, leaders_by_dong, cutoffs):
             beta_dn = ols_slope(L4.loc[ix][dn_mask].to_numpy(), F4.loc[ix][dn_mask].to_numpy()) if dn_mask.sum() >= 4 else None
             last_q = int(bi.index.max())
             gap_now = None
-            if beta is not None and last_q - 4 in bi.index:
-                gap_now = beta * (bi["L"].loc[last_q] - bi["L"].loc[last_q - 4]) - (bi["F"].loc[last_q] - bi["F"].loc[last_q - 4])
+            # 백테스트와 같은 규칙: β를 0~1.5로 자름(음수·0 근처 β로 갭이 부풀던 문제 - 2026-10 화면 확인)
+            beta_c = None if beta is None else max(0.0, min(1.5, beta))
+            if beta_c is not None and last_q - 4 in bi.index:
+                gap_now = beta_c * (bi["L"].loc[last_q] - bi["L"].loc[last_q - 4]) - (bi["F"].loc[last_q] - bi["F"].loc[last_q - 4])
+            # "실제로 대장을 따라 움직인 단지"만 후발주자로 봄: β 0.3~1.5, 분기 변화 상관 0.2 이상
+            is_follower = beta is not None and 0.3 <= beta <= 1.5 and best_corr is not None and best_corr >= 0.2
             results.append({
                 "dong": dongk, "danji": ck_name.get(ck), "leader": leader_name,
                 "beta": None if beta is None else round(beta, 3), "betaUp": None if beta_up is None else round(beta_up, 3),
@@ -277,6 +281,7 @@ def follower_history(dfr, region_q, leaders_by_dong, cutoffs):
                 "lagQ": best_lag, "corr": None if best_corr is None else round(best_corr, 3),
                 "nQuarters": int(len(bi)), "lastQ": q_label(last_q),
                 "gapNowPct": None if gap_now is None else round(gap_now * 100, 1),
+                "isFollower": bool(is_follower),
             })
             # 백테스트 표본: 컷오프 시점까지 자료로 β·갭 계산 → 다음 4분기 "시군구 대비 초과변화"
             for cq_ in cutoffs:
@@ -293,7 +298,14 @@ def follower_history(dfr, region_q, leaders_by_dong, cutoffs):
                 fwdF = bi["F"].loc[cq_ + GAP_HORIZON_Q] - bi["F"].loc[cq_]
                 if cq_ in region_q.index and cq_ + GAP_HORIZON_Q in region_q.index:
                     excess = fwdF - (region_q.loc[cq_ + GAP_HORIZON_Q] - region_q.loc[cq_])
-                    samples.append((cq_, float(gap), float(excess), float(bi["L"].loc[cq_] - bi["L"].loc[cq_ - 4])))
+                    hcorr = None
+                    hdL, hdF = hist["L"].diff().dropna(), hist["F"].diff().dropna()
+                    hix2 = hdL.index.intersection(hdF.index)
+                    if len(hix2) >= 8 and np.std(hdL.loc[hix2]) > 0 and np.std(hdF.loc[hix2]) > 0:
+                        hcorr = float(np.corrcoef(hdL.loc[hix2], hdF.loc[hix2])[0, 1])
+                    raw_hb = ols_slope(hL4.loc[hix].to_numpy(), hF4.loc[hix].to_numpy())
+                    fol_flag = 1.0 if (raw_hb is not None and 0.3 <= raw_hb <= 1.5 and hcorr is not None and hcorr >= 0.2) else 0.0
+                    samples.append((cq_, float(gap), float(excess), float(bi["L"].loc[cq_] - bi["L"].loc[cq_ - 4]), fol_flag))
     return results, samples
 
 
@@ -458,6 +470,12 @@ def main():
     print("  사이클 위치→미래 검증:", json.dumps(summary["forecastValidation"], ensure_ascii=False)[:1500])
     fv, k = validate_followers(all_samples)
     summary["followerValidation"] = fv
+    fol_only = [x for x in all_samples if len(x) > 4 and x[4] == 1.0]
+    fv2, k2 = validate_followers(fol_only)
+    summary["followerValidationStrict"] = fv2
+    print("  후발주자(β 0.3~1.5·상관 0.2↑)만 검증:", json.dumps(fv2, ensure_ascii=False)[:800])
+    if fv2 and fv2.get("corr", 0) > 0.05 and k2:
+        k = k2  # 화면엔 실제 후발주자만 쓰므로 그 집합에서 추정한 계수를 씀
     print("  후발주자 이력 검증:", json.dumps(fv, ensure_ascii=False)[:1500])
     k_use = max(0.0, min(1.0, k or 0.0)) if fv and fv.get("corr", 0) > 0.05 else 0.0
     summary["followerCatchupCoefUsed"] = k_use
@@ -477,7 +495,7 @@ def main():
     rows = []
     for rr in region_rows:
         for fo in rr["followers"]:
-            if fo.get("gapNowPct") is not None:
+            if fo.get("gapNowPct") is not None and fo.get("isFollower"):
                 fo["expectedCatchupPct"] = round(fo["gapNowPct"] * k_use, 1)
         rr["forecast"] = {h: summary["currentForecast"].get(h, {}).get(rr["region"]) for h in ("6m", "12m")}
         rows.append({"id": f"cycle|{rr['region']}", "payload": clean_json(rr), "fetched_at": now})
