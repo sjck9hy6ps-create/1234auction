@@ -6256,6 +6256,7 @@ function convertCandidateToCompRecordHeadless(cand) {
         floor: t.floor, buildYear: t.build_year, hasElevator: null, hhldCnt: null,
         lat: cand.coordLat != null ? cand.coordLat : null,
         lon: cand.coordLon != null ? cand.coordLon : null,
+        sameComplex: !!cand.isSameComplex,
     };
 }
 /* getCompEstValue()(라인 ~10721)의 DOM-프리 쌍둥이 함수 - 실사용 모달이 DOM(#a-pyung 등)과
@@ -6385,6 +6386,13 @@ function applyAreaFallback(core, compCount, areaOpts) {
 }
 function getCompEstValueHeadless(list, targetPyung, targetFloor, targetBuildYear, ctx) {
     var core = (list && list.length) ? getCompEstValueHeadlessCore(list, targetPyung, targetFloor, targetBuildYear, ctx) : null;
+    // ⚠️ 2026-10(광주 진월동 옥천아파트 사례): 비교물건이 3건 미만이면 동네 시세로 통째로 대체하는데, 그 1~2건이
+    // "이 아파트 단지 자체의 같은 평형 거래"일 때도 버려져서 같은 동 다른 단지 평균(9,561만)이 나왔음(자기 단지
+    // 같은 면적 거래는 1.3억). 아파트이고 비교물건이 전부 자기 단지 거래면 동네 시세로 바꾸지 않음.
+    if (core && ctx && ctx.buildingType === 'apt' && list.length && list.every(function(r) { return r.sameComplex; })) {
+        core.ownComplexOnly = true;
+        return core;
+    }
     return applyAreaFallback(core, (list || []).length, {
         lat: ctx && ctx.lat, lon: ctx && ctx.lon, dong: ctx && ctx.dong, buildingType: ctx && ctx.buildingType,
         pyung: targetPyung, buildYear: targetBuildYear, floor: targetFloor, asOf: ctx && ctx.asOf
