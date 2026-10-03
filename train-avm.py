@@ -171,11 +171,30 @@ RESIDUAL_IQR_MULT = 3.0  # 일반적인 이상치 탐지 기준(1.5)보다 훨�
 # 줄어 소규모 그룹이 더 불안정해지는 부작용이 있어, "명백한 데이터 이상"만 걸러내는 데 목적을 둠.
 HOLDOUT_FRACTION = 0.2
 HOLDOUT_SEED = 42  # 실행마다 다른 표본이 빠지면 검증지표가 매번 흔들려 비교가 어려움 - 고정
-MIN_HOLDOUT_SAMPLES = 200  # 이보다 적으면 홀드아웃 지표 자체가 불안정해 계산을 건너뜀(null)
+MIN_HOLDOUT_SAMPLES = 200
+# ════════════════════════════════════════════════════════════
+# v2 (2026-10, 사용자 요청: "빌라와 아파트 AVM 추정값의 신뢰도를 높여줘")
+# 실측(2026-08~10 실거래 270건을 API로 채점): 아파트 v1 중앙오차 17.8%·실거래보다 +17% 비싸게 쏠림,
+# 빌라 v1 중앙오차 16%. 원인:
+#  ① 시점 처리 - 2017~ 전국 공통 선형추세(time_trend) + 전국 월 더미인데, 예측("오늘")에선 월 더미가
+#     전부 0이라 전국 직선 연장분만 들어감 → 지역마다 다른 사이클(광주는 +20~24% 과대)을 못 따라감.
+#     → v2: 시군구×분기 시점효과(region_time)를 백피팅으로 추정하고, 예측엔 그 시군구의 최근 분기 효과를 씀.
+#     (시군구 최근 쏠림만 사후 보정해도 아파트 17.8%→7.0%로 확인)
+#  ② 단지/격자 효과를 9년 평균으로 고정 → v2: 최근 TRAIN_WINDOW_YEARS년 거래로만 학습.
+#  ③ 빌라 1km 격자에 서로 다른 건물이 섞임 → v2: 같은 건물(법정동+지번) 거래가 MIN_BUILDING_SAMPLES건
+#     이상이면 건물 단위 효과를 1순위로 씀(건물→격자→법정동+평형+연식→법정동→시군구).
+#  ④ 홀드아웃이 무작위 분할이라 "오늘 시세 맞히기"보다 낙관적 → v2: 시간 분할(마지막 3개월을 그 이전
+#     데이터만으로 예측) - 실제 서빙과 같은 조건.
+TRAIN_WINDOW_YEARS = 4
+MIN_BUILDING_SAMPLES = 3
+RT_SHRINK_K = 15          # 시군구×분기 효과 수축(표본 적은 칸은 0 쪽으로) - n/(n+K)
+RT_MIN_LATEST = 10        # 예측에 쓸 "최근 분기"의 최소 표본(부족하면 그 전 분기)
+BACKFIT_ITERS = 4
+TIME_SPLIT_TEST_MONTHS = 3  # 이보다 적으면 홀드아웃 지표 자체가 불안정해 계산을 건너뜀(null)
 
 
 def fetch_all_rows(table: str, cols: str = "region,dong,danji,price,size,floor,deal_date,build_year",
-                    order_col: str = "id") -> pd.DataFrame:
+                    order_col: str = "id", extra_filter: str = "") -> pd.DataFrame:
     """Supabase REST API에서 페이지네이션으로 전체 행을 가져옴. cols 기본값은 house_trades류
     테이블 기준이고, kapt_complex_info처럼 스키마가 다른 테이블은 호출부에서 cols를 넘겨씀.
     order_col은 이 테이블에서 유일하고(unique) 정렬 가능한 컬럼이어야 함(house_trades류는
@@ -211,7 +230,7 @@ def fetch_all_rows(table: str, cols: str = "region,dong,danji,price,size,floor,d
     page_num = 0
     while True:
         cursor_filter = f"&{order_col}=gt.{quote(str(last_val), safe='')}" if last_val is not None else ""
-        url = f"{SUPABASE_URL}/rest/v1/{table}?select={select_cols}&order={order_col}.asc{cursor_filter}&limit={PAGE_SIZE}"
+        url = f"{SUPABASE_URL}/rest/v1/{table}?select={select_cols}&order={order_col}.asc{cursor_filter}{extra_filter}&limit={PAGE_SIZE}"
         batch = None
         last_err = None
         for attempt in range(1, MAX_PAGE_RETRIES + 1):
@@ -408,7 +427,8 @@ def attach_spatial_grid_grouping(df: pd.DataFrame, coords_lookup, cell_km: float
     demote_mask = has_grid & new_group.isin(small_grid)
     new_group.loc[demote_mask] = original_group.loc[demote_mask]
     merged["group_key"] = new_group
-    merged = merged.drop(columns=["grid_key"], errors="ignore")
+    # ⚠️ 2026-10(v2): grid_key 컬럼은 남겨둠 - 홀드아웃 세그먼트 분류(_classify_holdout_level)가 "grid"
+    # 단위를 구분하려면 필요함(예전엔 지워져서 빌라 grid 세그먼트 오차가 따로 집계되지 않았음).
     n_grid_level = int((has_grid & ~demote_mask).sum())
     print(f"  공간격자({cell_km}km) 그룹 채택: {n_grid_level}/{len(merged)}행 (표본부족으로 법정동 승격 {int(demote_mask.sum())}행)")
     return merged
@@ -927,6 +947,7 @@ def _classify_holdout_level(df_test: pd.DataFrame, group_effects_t: dict):
     # 실제로 학습(train 80%)에 존재하지 않는 그룹은 default_effect로 대체되므로, 명목상
     # group_key의 레벨과 무관하게 "실제로 무슨 값이 쓰였는지"를 최우선으로 반영함.
     not_trained = ~gk.isin(group_effects_t.keys())
+    has_building = "building_key" in df_test.columns
     has_grid = "grid_key" in df_test.columns
     has_danji = "danji_key" in df_test.columns
     is_grid = has_grid & (gk == df_test.get("grid_key"))
@@ -940,6 +961,8 @@ def _classify_holdout_level(df_test: pd.DataFrame, group_effects_t: dict):
         level[is_danji] = "danji"
     if has_grid:
         level[is_grid] = "grid"
+    if has_building:
+        level[gk == df_test["building_key"]] = "building"
     level[not_trained] = "default_fallback"
     return level
 
@@ -995,6 +1018,124 @@ def evaluate_holdout(df: pd.DataFrame, feature_cols):
     }
 
 
+def _quarter_key(deal_date_series):
+    d = deal_date_series.astype(np.int64)
+    year = d // 10000
+    q = ((d // 100 % 100) - 1) // 3 + 1
+    return year * 10 + q  # 예: 20263 = 2026년 3분기
+
+
+def fit_full(df: pd.DataFrame, feature_cols, use_rt: bool, iters: int = BACKFIT_ITERS):
+    """v2: y = X·β + 그룹효과(단지/건물/격자…) + 시군구×분기 효과(rt)를 백피팅으로 추정.
+    rt를 빼고 fit_fwl → 잔차를 시군구×분기 평균(수축)으로 rt 갱신 → 반복. use_rt=False면 fit_fwl 그대로.
+    반환: (beta, group_effects, r2, n, rt_effects{(region,quarter):eff}, rt_counts)"""
+    if not use_rt:
+        beta, ge, r2, n = fit_fwl(df, feature_cols)
+        return beta, ge, r2, n, None, None
+    y0 = df["y"].to_numpy(dtype=np.float64).copy()
+    rq_codes, rq_uniques = pd.factorize(df["rt_key"], sort=False)
+    n_rq = len(rq_uniques)
+    rq_counts = np.bincount(rq_codes, minlength=n_rq).astype(np.float64)
+    rt_vals = np.zeros(n_rq, dtype=np.float64)
+    beta = ge = r2 = n = None
+    try:
+        for it in range(iters):
+            df["y"] = (y0 - rt_vals[rq_codes]).astype(np.float32)
+            beta, ge, r2, n = fit_fwl(df, feature_cols)
+            default = float(np.mean(list(ge.values()))) if ge else 0.0
+            pred = _predict_with_fallback(df, feature_cols, beta, ge, default)
+            resid = y0 - pred
+            sums = np.bincount(rq_codes, weights=resid, minlength=n_rq)
+            new_rt = sums / (rq_counts + RT_SHRINK_K)
+            delta = float(np.max(np.abs(new_rt - rt_vals))) if n_rq else 0.0
+            rt_vals = new_rt
+            print(f"    백피팅 {it + 1}/{iters}: 시군구×분기 효과 최대변화 {delta:.4f}")
+            gc.collect()
+            if delta < 0.002:
+                break
+        # 최종 r2: rt 포함 예측으로 다시 채점
+        df["y"] = (y0 - rt_vals[rq_codes]).astype(np.float32)
+        beta, ge, _, n = fit_fwl(df, feature_cols)
+        default = float(np.mean(list(ge.values()))) if ge else 0.0
+        pred = _predict_with_fallback(df, feature_cols, beta, ge, default) + rt_vals[rq_codes]
+        ss_res = float(np.sum((y0 - pred) ** 2)); ss_tot = float(np.sum((y0 - y0.mean()) ** 2))
+        r2 = 1 - ss_res / ss_tot if ss_tot > 0 else None
+    finally:
+        df["y"] = y0.astype(np.float32)
+    rt_effects = {str(rq_uniques[i]): float(rt_vals[i]) for i in range(n_rq)}
+    rt_counts = {str(rq_uniques[i]): int(rq_counts[i]) for i in range(n_rq)}
+    return beta, ge, r2, n, rt_effects, rt_counts
+
+
+def latest_region_time_effects(rt_effects: dict, rt_counts: dict) -> dict:
+    """서빙용: 시군구별로 "표본 RT_MIN_LATEST건 이상인 가장 최근 분기"의 효과(없으면 가장 최근 분기)."""
+    by_region = {}
+    for key, eff in rt_effects.items():
+        region, q = key.rsplit("|", 1)
+        by_region.setdefault(region, []).append((int(q), eff, rt_counts.get(key, 0)))
+    out = {}
+    for region, lst in by_region.items():
+        lst.sort(key=lambda x: x[0], reverse=True)
+        chosen = next((x for x in lst if x[2] >= RT_MIN_LATEST), lst[0])
+        out[region] = {"eff": round(chosen[1], 5), "quarter": chosen[0], "n": chosen[2]}
+    return out
+
+
+def _predict_v2(df_test, feature_cols, beta, ge, region_now: dict):
+    default = float(np.mean(list(ge.values()))) if ge else 0.0
+    base = _predict_with_fallback(df_test, feature_cols, beta, ge, default)
+    rt = df_test["region"].map(lambda r: region_now.get(r, {}).get("eff", 0.0)).to_numpy(dtype=np.float64)
+    return base + rt
+
+
+def evaluate_holdout_time(df: pd.DataFrame, feature_cols, use_rt: bool):
+    """v2 ④: 시간 분할 홀드아웃 - 마지막 TIME_SPLIT_TEST_MONTHS개월 거래를, 그 이전 거래만으로 학습한
+    모델(+그 시점 기준 '최근 분기' 시군구 효과)로 예측해 채점. 실제 서빙("오늘 시세")과 같은 조건이라
+    무작위 분할보다 정직함. effectUsed 세그먼트별 오차(by_level)도 같이 냄."""
+    max_d = int(df["deal_date"].max())
+    y, m = max_d // 10000, max_d // 100 % 100
+    m -= TIME_SPLIT_TEST_MONTHS
+    while m <= 0:
+        m += 12; y -= 1
+    cutoff = y * 10000 + m * 100 + (max_d % 100)
+    train_mask = (df["deal_date"] < cutoff).to_numpy()
+    df_train = df[train_mask].reset_index(drop=True)
+    df_test = df[~train_mask].reset_index(drop=True)
+    if len(df_train) < MIN_HOLDOUT_SAMPLES or len(df_test) < MIN_HOLDOUT_SAMPLES:
+        return None
+    beta_t, ge_t, _, _, rt_t, rtc_t = fit_full(df_train, feature_cols, use_rt, iters=3)
+    region_now = latest_region_time_effects(rt_t, rtc_t) if use_rt else {}
+    y_pred = _predict_v2(df_test, feature_cols, beta_t, ge_t, region_now)
+    resid = df_test["y"].to_numpy(dtype=np.float64) - y_pred
+    pct_err = np.abs(np.exp(resid) - 1.0) * 100.0
+    signed = (np.exp(-resid) - 1.0) * 100.0  # 예측/실제 - 1 (양수=과대)
+    by_level = {}
+    try:
+        levels = _classify_holdout_level(df_test, ge_t)
+        for lvl in levels.unique():
+            mask = (levels == lvl).to_numpy()
+            if int(mask.sum()) < MIN_LEVEL_HOLDOUT_SAMPLES:
+                continue
+            by_level[str(lvl)] = {
+                "n": int(mask.sum()),
+                "mape_pct": round(float(np.mean(pct_err[mask])), 2),
+                "median_ape_pct": round(float(np.median(pct_err[mask])), 2),
+                "within10_pct": round(float(np.mean(pct_err[mask] <= 10) * 100), 1),
+                "bias_pct": round(float(np.median(signed[mask])), 2),
+            }
+    except Exception as e:
+        print(f"  ⚠️ 세그먼트별 홀드아웃 분류 실패(전체 평균만 사용): {e}")
+    return {
+        "n": int(len(df_test)), "cutoff": cutoff,
+        "mape_pct": round(float(np.mean(pct_err)), 2),
+        "median_ape_pct": round(float(np.median(pct_err)), 2),
+        "within10_pct": round(float(np.mean(pct_err <= 10) * 100), 1),
+        "bias_pct": round(float(np.median(signed)), 2),
+        "residual_std_log": round(float(np.std(resid)), 5),
+        "by_level": by_level,
+    }
+
+
 def upsert_model(model_id: str, model_type: str, beta: dict, group_effects: dict, r_squared, n_samples: int, feature_ranges: dict):
     default_effect = float(np.mean(list(group_effects.values()))) if group_effects else 0.0
     payload = {
@@ -1018,7 +1159,10 @@ def upsert_model(model_id: str, model_type: str, beta: dict, group_effects: dict
 
 def train_one(tables, model_id: str, model_type: str, use_danji: bool, use_grid: bool = False,
               attach_kapt: bool = False, attach_transit: bool = False, attach_school: bool = False,
-              attach_month_fe: bool = True):
+              attach_month_fe: bool = True, version: str = "v1"):
+    is_v2 = version == "v2"
+    use_rt = is_v2
+    use_building = is_v2 and not use_danji
     # tables: 테이블 하나(str) 또는 여러 개(list) - 연립다세대는 villa_trades(연립다세대)+
     # single_trades(단독다가구) 두 테이블을 합쳐서 하나의 모델로 학습함(이 앱 다른 곳(예:
     # rpc_top_dongs SQL, data-coverage.js getBucketDetailRows)도 "villa" 타입을 이 두 테이블의
@@ -1031,11 +1175,16 @@ def train_one(tables, model_id: str, model_type: str, use_danji: bool, use_grid:
     # main_num/sub_num)까지 같이 가져와야 함 - complex_coords/transit_features와 정확히 같은
     # 키를 재구성하려면 이 필드들이 반드시 필요함(warmup-locations.mjs가 저장할 때 쓴 것과 동일).
     cols = "region,dong,danji,price,size,floor,deal_date,build_year,dealing_type"
-    if attach_transit or use_grid:
+    extra_filter = ""
+    if is_v2:
+        _now = datetime.now()
+        extra_filter = f"&deal_date=gte.{(_now.year - TRAIN_WINDOW_YEARS) * 10000 + _now.month * 100 + 1}"
+        print(f"  v2: 최근 {TRAIN_WINDOW_YEARS}년 거래만 학습({extra_filter})")
+    if attach_transit or use_grid or use_building:
         cols += ",bunji,road_name,main_num,sub_num"
     raw_parts = []
     for t in tables:
-        p = fetch_all_rows(t, cols=cols)
+        p = fetch_all_rows(t, cols=cols, extra_filter=extra_filter)
         if not p.empty:
             # is_single_house: single_trades(단독/다가구) 행을 표시해두는 더미 - 아래
             # clean_and_featurize의 floor 결측 처리 및 feature_cols 추가에 씀(모듈 내 주석 참고).
@@ -1070,6 +1219,18 @@ def train_one(tables, model_id: str, model_type: str, use_danji: bool, use_grid:
     if use_grid:
         coords_lookup = build_coords_lookup()
         df = attach_spatial_grid_grouping(df, coords_lookup, cell_km=GRID_CELL_KM, min_grid_samples=MIN_GRID_SAMPLES)
+    if use_building:
+        # v2 ③: 같은 건물(법정동+지번) 거래가 MIN_BUILDING_SAMPLES건 이상이면 건물 단위 효과를 1순위로
+        _bunji = df["bunji"].fillna("").astype(str).str.strip() if "bunji" in df.columns else pd.Series([""] * len(df), index=df.index)
+        df["building_key"] = df["dong_key"] + "|b:" + _bunji
+        _valid = _bunji != ""
+        _bc = df.loc[_valid, "building_key"].value_counts()
+        _ok = _valid & df["building_key"].isin(_bc[_bc >= MIN_BUILDING_SAMPLES].index)
+        df.loc[_ok, "group_key"] = df.loc[_ok, "building_key"]
+        print(f"  건물 단위 그룹 채택: {int(_ok.sum())}/{len(df)}행 (건물 {int((_bc >= MIN_BUILDING_SAMPLES).sum())}개)")
+    if use_rt:
+        df["rt_key"] = df["region"].astype(str) + "|" + _quarter_key(df["deal_date"]).astype(str)
+        feature_cols = [c for c in feature_cols if c != "time_trend"]
 
     # ⚠️ 2026-08(K-apt 2단계): 표본충분한 단지는 이미 danji 고정효과가 그 단지 평균을 정확히
     # 반영하므로 세대수 같은 "단지 고유 상수"를 더해도 득이 없음(그룹 내에서 상수라 FWL
@@ -1154,7 +1315,7 @@ def train_one(tables, model_id: str, model_type: str, use_danji: bool, use_grid:
 
     # #299: 월별 시점보정 더미 - 외부 데이터 동기화가 필요없는(house_trades 자체의 deal_date만
     # 씀) 순수 모델링 개선이라 기본값 True(위 build_month_dummies 설명 참고).
-    if attach_month_fe:
+    if attach_month_fe and not use_rt:
         df, month_cols = build_month_dummies(df)
         feature_cols = feature_cols + month_cols
 
@@ -1187,23 +1348,41 @@ def train_one(tables, model_id: str, model_type: str, use_danji: bool, use_grid:
     # 시작 시점을 찍어서, 다음에 문제가 생기면 최소한 "어느 단계에서" 안 넘어갔는지는
     # 바로 알 수 있게 함(PYTHONUNBUFFERED=1이라 즉시 로그에 반영됨).
     print("  [1/3] 이상치 제거용 1차 학습 시작...")
-    df, n_outliers_removed = remove_residual_outliers(df, feature_cols)
+    if use_rt:
+        _b0, _g0, _, _, _rt0, _ = fit_full(df, feature_cols, True, iters=2)
+        _d0 = float(np.mean(list(_g0.values()))) if _g0 else 0.0
+        _rtv = df["rt_key"].map(_rt0).fillna(0.0).to_numpy(dtype=np.float64)
+        _res = df["y"].to_numpy(dtype=np.float64) - (_predict_with_fallback(df, feature_cols, _b0, _g0, _d0) + _rtv)
+        _q1, _q3 = np.percentile(_res, [25, 75]); _iqr = _q3 - _q1
+        _keep = ((_res >= _q1 - RESIDUAL_IQR_MULT * _iqr) & (_res <= _q3 + RESIDUAL_IQR_MULT * _iqr)) if _iqr > 0 else np.ones(len(df), bool)
+        n_outliers_removed = int((~_keep).sum())
+        df = df[_keep].reset_index(drop=True)
+    else:
+        df, n_outliers_removed = remove_residual_outliers(df, feature_cols)
     if n_outliers_removed > 0:
         print(f"  이상치(잔차 IQR×{RESIDUAL_IQR_MULT} 밖) {n_outliers_removed}건 제외 → {len(df)}행 남음")
     gc.collect()  # ⚠️ (메모리 문제 대응) fit_fwl이 만든 대용량 임시 배열을 다음 단계 전에 확실히 회수
 
     # 홀드아웃 검증(무작위 80/20) - 최종 서빙 모델은 아래에서 전체(이상치 제거된) 데이터로
     # 다시 학습하지만, 이 지표는 "새 물건 예측이 실제로 얼마나 정확한지"를 미리 가늠하는 용도
-    print("  [2/3] 홀드아웃 검증(80/20 분할) 시작...")
-    holdout = evaluate_holdout(df, feature_cols)
+    if is_v2:
+        print(f"  [2/3] 시간분할 홀드아웃(마지막 {TIME_SPLIT_TEST_MONTHS}개월을 그 이전 데이터로 예측) 시작...")
+        holdout = evaluate_holdout_time(df, feature_cols, use_rt)
+    else:
+        print("  [2/3] 홀드아웃 검증(80/20 분할) 시작...")
+        holdout = evaluate_holdout(df, feature_cols)
     if holdout:
-        print(f"  홀드아웃 검증(무작위 20%, {holdout['n']}건): 평균오차 {holdout['mape_pct']}% / 중앙값오차 {holdout['median_ape_pct']}%")
+        print(f"  홀드아웃 검증({holdout['n']}건): 평균오차 {holdout['mape_pct']}% / 중앙값오차 {holdout['median_ape_pct']}%"
+              + (f" / ±10%이내 {holdout.get('within10_pct')}% / 쏠림 {holdout.get('bias_pct')}%" if is_v2 else ""))
+        if holdout.get("by_level"):
+            for _k, _v in holdout["by_level"].items():
+                print(f"    - {_k}: {_v}")
     else:
         print(f"  홀드아웃 검증: 표본 부족으로 건너뜀")
     gc.collect()  # ⚠️ (메모리 문제 대응) 홀드아웃 학습(80%)용 임시 배열 회수 후 최종 학습 진입
 
     print("  [3/3] 최종(전체 데이터) 학습 시작...")
-    beta, group_effects, r_squared, n = fit_fwl(df, feature_cols)
+    beta, group_effects, r_squared, n, rt_effects, rt_counts = fit_full(df, feature_cols, use_rt)
     print("  최종 학습 완료")
     # time_origin: time_trend 계산의 기준일(가장 오래된 거래일, YYYYMMDD 정수). 예측 시점(서버)
     # 에서도 "오늘 - time_origin" 일수로 같은 time_trend를 계산해야 학습 때와 정의가 일치하므로
@@ -1240,6 +1419,17 @@ def train_one(tables, model_id: str, model_type: str, use_danji: bool, use_grid:
     # 있음(위 모듈 상단 주석 참고). 서버(data-coverage.js)가 이 값들을 읽어 point estimate와
     # 함께 "검증된" 오차범위를 같이 내려줌 - in-sample r_squared만 보여주는 것보다 훨씬 정직함.
     feature_ranges["outliers_removed"] = n_outliers_removed
+    if use_rt:
+        feature_ranges["region_time_effects"] = latest_region_time_effects(rt_effects, rt_counts)
+        feature_ranges["model_version"] = "v2"
+        feature_ranges["train_window_years"] = TRAIN_WINDOW_YEARS
+    if use_building:
+        feature_ranges["min_building_samples"] = MIN_BUILDING_SAMPLES
+    if holdout and holdout.get("cutoff"):
+        feature_ranges["holdout_kind"] = "time_split"
+        feature_ranges["holdout_cutoff"] = holdout["cutoff"]
+        feature_ranges["holdout_within10_pct"] = holdout.get("within10_pct")
+        feature_ranges["holdout_bias_pct"] = holdout.get("bias_pct")
     if holdout:
         feature_ranges["holdout_mape_pct"] = holdout["mape_pct"]
         feature_ranges["holdout_median_ape_pct"] = holdout["median_ape_pct"]
@@ -1254,7 +1444,7 @@ def train_one(tables, model_id: str, model_type: str, use_danji: bool, use_grid:
     upsert_model(model_id, model_type, beta, group_effects, r_squared, n, feature_ranges)
 
 
-def main(target: str = "all"):
+def main(target: str = "all", version: str = "v1"):
     # 아파트: 단지(danji) 단위까지 고정효과를 세분화(위 모듈 docstring "그룹(고정효과 단위)"
     # 참고) - 동일 법정동 내 단지 간 편차(준공연도·브랜드)를 직접 반영해 예측 정확도를 높임.
     # attach_kapt=True: K-apt 세대수를 추가 변수로 반영(위 train_one 안 주석 참고).
@@ -1263,8 +1453,8 @@ def main(target: str = "all"):
     # 근사치 반영(#298 - 실제 학업성취도 API는 공개돼 있지 않아 밀집도로 근사, 모듈 상단 참고).
     # attach_month_fe=True(기본값): 월별 시점보정 더미 추가(#299 - build_month_dummies 참고).
     if target in ("all", "apt"):
-        train_one("house_trades", "apt_v1", "apt", use_danji=True, attach_kapt=True,
-                  attach_transit=True, attach_school=True, attach_month_fe=True)
+        train_one("house_trades", f"apt_{version}", "apt", use_danji=True, attach_kapt=True,
+                  attach_transit=True, attach_school=True, attach_month_fe=True, version=version)
     # ⚠️ 2026-08(villa_v1 추가): 연립다세대·단독다가구는 villa_trades(연립다세대)+
     # single_trades(단독다가구) 두 테이블을 합쳐서 학습함(이 앱의 다른 집계 로직(rpc_top_dongs,
     # getBucketDetailRows 등)도 "villa" 타입을 이 두 테이블의 합집합으로 다뤄서 같은 관례를
@@ -1279,8 +1469,8 @@ def main(target: str = "all"):
     # 이번 개선의 전부임 - use_danji는 여전히 False(단지 단위로 쪼개면 표본이 너무 잘게
     # 쪼개져 불안정해지는 문제는 격자 그룹핑과 무관하게 그대로 유효).
     if target in ("all", "villa"):
-        train_one(["villa_trades", "single_trades"], "villa_v1", "villa", use_danji=False, use_grid=True,
-                  attach_kapt=False, attach_transit=True, attach_school=True, attach_month_fe=True)
+        train_one(["villa_trades", "single_trades"], f"villa_{version}", "villa", use_danji=False, use_grid=True,
+                  attach_kapt=False, attach_transit=True, attach_school=True, attach_month_fe=True, version=version)
 
 
 if __name__ == "__main__":
@@ -1299,4 +1489,8 @@ if __name__ == "__main__":
     if _target not in ("all", "apt", "villa"):
         print(f"ERROR: 알 수 없는 인자 '{_target}' (apt/villa/all 중 하나여야 함)", file=sys.stderr)
         sys.exit(1)
-    main(_target)
+    _version = sys.argv[2] if len(sys.argv) > 2 else "v1"
+    if _version not in ("v1", "v2"):
+        print(f"ERROR: 알 수 없는 버전 '{_version}' (v1/v2)", file=sys.stderr)
+        sys.exit(1)
+    main(_target, _version)

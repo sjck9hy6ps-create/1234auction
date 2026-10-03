@@ -1498,6 +1498,16 @@ async function getLeaderFollowerRank(type, region, force) {
 // 발견) - 버그를 고치면서 "그럼 연립다세대는 왜 AVM이 아예 안 되나"라는 질문에 답하며
 // villa_v1도 추가함(train-avm.py 참고 - villa_trades+single_trades 합쳐 법정동 단위로 학습).
 const AVM_MODEL_ID_BY_TYPE = { apt: 'apt_v1', villa: 'villa_v1' };
+// ⚠️ 2026-10(AVM v2 - train-avm.py 상단 v2 주석 참고): 시군구×분기 시점효과 + 최근 4년 학습 + 빌라 건물 단위
+// 효과 + 시간분할 검증. 검증이 끝날 때까지 v1과 나란히 두고 ?ver=v2로만 호출해 비교함 - 검증 통과 후
+// AVM_DEFAULT_VERSION만 'v2'로 바꾸면 전체 전환.
+const AVM_DEFAULT_VERSION = 'v1';
+function avmModelIdFor(type, ver) {
+  const base = AVM_MODEL_ID_BY_TYPE[type];
+  if (!base) return null;
+  const v = ver === 'v1' || ver === 'v2' ? ver : AVM_DEFAULT_VERSION;
+  return base.replace(/_v\d+$/, '_' + v);
+}
 const AVM_CURRENT_YEAR_FALLBACK = () => new Date().getFullYear();
 
 // ⚠️ 2026-08(K-apt 2단계): train-avm.py의 normalize_complex_name()과 반드시 동일한 로직이어야
@@ -1593,7 +1603,7 @@ function avmAgeTier(ageYears) {
   return 'aged';
 }
 
-function avmPredict(model, features, region, dong, danji, gridKey, tierKey) {
+function avmPredict(model, features, region, dong, danji, gridKey, tierKey, buildingKey) {
   const coefs = model.global_coefs || {};
   // ⚠️ 2026-08(K-apt 2단계): 하드코딩된 6개 목록 대신 실제 저장된 계수의 키를 그대로 씀 -
   // 모델마다(apt_v1엔 log_households가 있고 villa_v1엔 없음) 변수 개수가 달라졌고, 앞으로
@@ -1618,7 +1628,10 @@ function avmPredict(model, features, region, dong, danji, gridKey, tierKey) {
   // 로직과 반드시 같은 순서여야 함.
   let effect, effectUsed;
   const danjiKey = danji ? `${region}|${dong}|${danji}` : null;
-  if (gridKey && dongEffects[gridKey] !== undefined) {
+  if (buildingKey && dongEffects[buildingKey] !== undefined) {
+    // v2 빌라: 같은 건물(법정동+지번) 거래가 충분했던 건물은 그 건물 자체의 가격수준을 1순위로 씀
+    effect = dongEffects[buildingKey]; effectUsed = 'building';
+  } else if (gridKey && dongEffects[gridKey] !== undefined) {
     effect = dongEffects[gridKey]; effectUsed = 'grid';
   } else if (danjiKey && dongEffects[danjiKey] !== undefined) {
     effect = dongEffects[danjiKey]; effectUsed = 'danji';
@@ -1640,8 +1653,8 @@ function avmPredict(model, features, region, dong, danji, gridKey, tierKey) {
   return { ppp: Math.round(ppp * 10) / 10, effectUsed, groupEffect: effect, logPppFromFeatures };
 }
 
-async function getAvmEstimate(type, region, dong, size, floor, buildYear, danji, sigunguCode, clientTopFloor, lat, lon) {
-  const modelId = AVM_MODEL_ID_BY_TYPE[type];
+async function getAvmEstimate(type, region, dong, size, floor, buildYear, danji, sigunguCode, clientTopFloor, lat, lon, ver, bunji) {
+  const modelId = avmModelIdFor(type, ver);
   if (!modelId) return { error: `AVM v1은 아직 이 매물 유형(${type})을 지원하지 않습니다(아파트·연립다세대·단독만 지원).` };
   if (!(size > 0) || !(floor >= 0) || !(buildYear > 1900)) {
     return { error: 'size(면적), floor(층), buildYear(준공연도)가 유효해야 합니다.' };
@@ -1779,7 +1792,14 @@ async function getAvmEstimate(type, region, dong, size, floor, buildYear, danji,
   const pyeongTier = avmPyeongTier(size);
   const ageTier = avmAgeTier(ageForTier);
   const tierKey = (pyeongTier && ageTier) ? `${region}|${dong}|${pyeongTier}|${ageTier}` : null;
-  const { ppp, effectUsed, groupEffect, logPppFromFeatures } = avmPredict(model, features, region, dong, danji, gridKey, tierKey);
+  const buildingKey = bunji ? `${region}|${dong}|b:${String(bunji).trim()}` : null;
+  const avmOut = avmPredict(model, features, region, dong, danji, gridKey, tierKey, buildingKey);
+  const { effectUsed, groupEffect, logPppFromFeatures } = avmOut;
+  let ppp = avmOut.ppp;
+  // v2: 이 시군구의 "최근 분기" 시점효과(train-avm.py latest_region_time_effects)를 곱함 - v1은 이 값이 없어 무시됨
+  const rte = (model.feature_ranges && model.feature_ranges.region_time_effects) || null;
+  const regionTime = rte ? (rte[region] || null) : null;
+  if (regionTime && Number.isFinite(regionTime.eff)) ppp = Math.round(ppp * Math.exp(regionTime.eff) * 10) / 10;
   let totalPrice = Math.round(ppp * (size / 3.305785));
 
   // ⚠️ 2026-08(빌라 층위치 보정, 사용자 요청): villa_v1은 K-apt 같은 벌크 데이터가 없어
@@ -1858,6 +1878,10 @@ async function getAvmEstimate(type, region, dong, size, floor, buildYear, danji,
       holdoutMedianApePct: segMedianApePct,
       holdoutN: segN, // 검증에 쓰인 표본 수(세그먼트 기준)
       isSegmentSpecific: !!seg, // true면 이 물건과 같은 신뢰도 등급만의 오차, false면 모델 전체 평균(구버전 모델 또는 표본부족)
+      // v2: 시간분할 검증(과거만 보고 최근 3개월을 맞힌 결과)인지 - 프론트 문구를 "최근 거래로 시험"으로 바꿈
+      holdoutKind: fr.holdout_kind || 'random',
+      within10Pct: seg && seg.within10_pct != null ? seg.within10_pct : (fr.holdout_within10_pct != null ? fr.holdout_within10_pct : null),
+      biasPct: seg && seg.bias_pct != null ? seg.bias_pct : (fr.holdout_bias_pct != null ? fr.holdout_bias_pct : null),
     };
   }
 
@@ -1869,6 +1893,7 @@ async function getAvmEstimate(type, region, dong, size, floor, buildYear, danji,
     outliersRemoved: fr.outliers_removed != null ? fr.outliers_removed : null,
     errorMargin, // null이면 구버전 모델(홀드아웃 검증 이전에 학습됨) - 프론트는 이 경우 오차범위를 숨김
     floorTierAdjustment, // 빌라만 채워짐(null이면 미적용) - 아파트 모델 계수를 빌린 층위치 보정 내역
+    regionTime, // v2: 반영한 시군구 최근 분기 시점효과({eff, quarter, n}) - v1은 null
     // ⚠️ 2026-08(진단용, 파주 야당동 20억 오추정 사례로 추가): 추정치가 비정상적으로 크거나
     // 작을 때 "층·연식·역세권 등 피처 문제인지" vs "그룹효과(그 동네 자체 가격수준) 문제인지"를
     // DB를 직접 조회하지 않고도 이 응답만 보고 구분할 수 있게 함. groupKey는 실제 매칭된
@@ -3364,7 +3389,7 @@ export default async function handler(req, res) {
     // 대신 계수 자체가 주 1회만 바뀌므로(train-avm.py 스케줄) 짧게 CDN 캐시만 둠.
     res.setHeader('Cache-Control', 's-maxage=3600, stale-while-revalidate=7200');
     try {
-      const { type, dong, size, floor, buildYear, lawdCd, danji, topFloor, lat, lon } = req.query;
+      const { type, dong, size, floor, buildYear, lawdCd, danji, topFloor, lat, lon, ver, bunji } = req.query;
       // ⚠️ 2026-08(버그 수정): 처음엔 프론트가 카카오 geocoder 지역명을 문자열로 가공해서
       // region으로 그대로 보냈는데, "수원시 영통구"처럼 시+구가 함께 있는 지역은
       // house_trades.region이 "수원 영통구"(시 생략)로 저장돼 있어 불일치가 났음(안산 등에서
@@ -3401,7 +3426,9 @@ export default async function handler(req, res) {
         sigunguCode,
         topFloor ? parseInt(topFloor, 10) : null,
         lat ? parseFloat(lat) : null,
-        lon ? parseFloat(lon) : null
+        lon ? parseFloat(lon) : null,
+        ver ? String(ver) : null,
+        bunji ? String(bunji) : null
       );
       if (result.error) return res.status(422).json(result);
       return res.status(200).json(result);
