@@ -12049,6 +12049,15 @@ function placeAuctionMarker(a) {
     // 등록시 배지가 겹친것들은 확인이 안돼" 피드백으로 확인). 일반 마커와 동일하게
     // markerDataRegistry에 등록하고 handleAptMarkerClick을 그대로 재사용해 겹침이 있으면
     // 스택피커가 뜨도록 함(openMarkerItemDirect가 type별로 실제 열기 동작을 분기함).
+    if (typeof badgeMode !== 'undefined' && badgeMode === 'simple') {
+        // 2026-10 화면 개편: 간단 배지 모드에선 경매 배지도 3줄(종류·D-day / 단지명 / 예상매도가·가격)로 - 자세한 건 클릭·마우스 올리기로
+        var headBg = numRisk.level === 'high' ? '#c62828' : (numRisk.level === 'medium' ? '#ef6c00'
+            : (isWon ? '#00695c' : (isBidTarget ? btStyle.border : sc)));
+        var headLabel = (numRisk.level ? '🚨' : '') + (isWon ? '⚖️낙찰' : (isBidTarget ? btStyle.icon + '입찰희망' : '🔨' + a.status))
+            + (dDayInfo ? ' · ' + dDayInfo.label : '');
+        var predTxt = (awEst && awEst.predictedSale) ? '예상 ' + toEok(String(awEst.predictedSale)) : '';
+        applySimpleAuctionBadge(div, headBg, headLabel, (a.name && a.name.trim()) || a.addrLabel || a.addr || '(이름없음)', [predTxt, priceLine].filter(Boolean).join(' · '), lfBadge);
+    }
     var aMKey = 'mk' + (markerDataSeq++);
     markerDataRegistry[aMKey] = { type: 'auction', a: a, matchedApt: matchedApt, lat: a.lat, lon: a.lon, div: div };
     div.setAttribute('onclick', 'handleAptMarkerClick(\'' + aMKey + '\')');
@@ -12547,6 +12556,10 @@ function placeBidCaseMarker(c) {
         + impliedLine
         + marginLine
         + '<div style="color:#888;font-size:9px;margin-top:2px;">📊 클릭하면 매매기록도 함께 보여요</div>';
+    if (typeof badgeMode !== 'undefined' && badgeMode === 'simple') {
+        applySimpleAuctionBadge(div, '#00695c', '⚖️ ' + (c.status || '낙찰사례'), c.addrJibun || c.caseNo || '',
+            [predictedSale ? '예상 ' + toEok(String(predictedSale)) : '', priceLine].filter(Boolean).join(' · '), lfBadge);
+    }
     div.setAttribute('onclick', 'openBidCaseDetail(\'' + cidJs + '\')');
     var overlay = new kakao.maps.CustomOverlay({
         position: new kakao.maps.LatLng(c.lat, c.lon),
@@ -19507,6 +19520,17 @@ function applySimpleBadge(div, apt, opts) {
         + '<div style="background:' + hc + ';color:#fff;font-size:11px;font-weight:bold;padding:2px 7px;border-radius:4px 4px 0 0;overflow:hidden;text-overflow:ellipsis;">' + esc(l.name) + '</div>'
         + '<div style="font-size:11px;font-weight:bold;color:#1f2937;padding:1px 6px 2px;">' + priceLine + (icons ? ' ' + icons : '') + '</div>'
         + '<div class="comp-add-badge" onclick="event.stopPropagation();handleCompBtnClick(\'' + opts.mKey + '\')">+비교</div>';
+}
+function applySimpleAuctionBadge(div, headBg, headLabel, name, line3, rankHtml) {
+    var esc = function(s) { return String(s || '').replace(/[<>&]/g, function(c) { return { '<': '&lt;', '>': '&gt;', '&': '&amp;' }[c]; }); };
+    var keepAnim = /auctionGlow/.test(div.style.cssText || '');
+    div.classList.add('simple-badge');
+    div.style.cssText = 'position:relative;background:#fff;border:2px solid ' + headBg + ';border-radius:7px;padding:0;margin-top:12px;white-space:nowrap;cursor:pointer;'
+        + 'text-align:center;min-width:70px;max-width:170px;box-shadow:0 2px 6px rgba(0,0,0,.3);transform:scale(var(--badge-scale,1));transform-origin:center bottom;line-height:1.3;'
+        + (keepAnim ? 'animation:auctionGlow 1.8s ease-in-out infinite;' : '');
+    div.innerHTML = '<div style="background:' + headBg + ';color:#fff;font-size:10.5px;font-weight:bold;padding:2px 7px;border-radius:4px 4px 0 0;">' + esc(headLabel) + '</div>'
+        + '<div style="font-size:11px;font-weight:bold;color:#1f2937;padding:1px 6px 0;overflow:hidden;text-overflow:ellipsis;">' + esc(name) + (rankHtml || '') + '</div>'
+        + (line3 ? '<div style="font-size:10.5px;color:#374151;padding:0 6px 2px;">' + esc(line3) + '</div>' : '');
 }
 // ── 왼쪽 단지 목록 ──
 var lastSidebarCount = 0, sidebarTimer = null;
