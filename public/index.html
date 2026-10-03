@@ -12811,6 +12811,16 @@ function findSimilarComps(lat, lon, targetYear, targetFloor, targetPyung, target
     // 가격 차이(브랜드·입지·관리상태)가 그대로 예상매도가를 끌어내리거나 올림(화정우미 사례).
     var sameComplexSameSize = sameComplex.filter(isSameSize);
     if (sameComplexSameSize.length >= 3) return sameComplexSameSize.slice(0, 10);
+    // 같은 단지 같은 평형 거래가 최근 1년에 1~2건뿐이면, 다른 단지를 섞기 전에 같은 단지 3년치로 먼저
+    // 넓혀봄(광천동 사례: 자기 단지 1건 3.4억인데 주변 구축 단지가 섞여 1.46억으로 나왔음). 그래도 자기
+    // 단지 거래가 있으면 그 단지 거래만 씀 - 단지 간 가격 차이가 기간 차이보다 훨씬 큼.
+    if (sameComplexSameSize.length >= 1 && !recencyCutoffOverride) {
+        var ownLonger = findSimilarComps(lat, lon, targetYear, targetFloor, targetPyung, targetBuildingType, targetName, targetDong, targetBunji, 1, daysAgo(1095))
+            .filter(function(c) { return c.isSameComplex && isSameSize(c); });
+        var ownList = ownLonger.length > sameComplexSameSize.length ? ownLonger : sameComplexSameSize;
+        if (ownLonger.length > sameComplexSameSize.length) ownList.usedExtendedWindow = true;
+        return ownList.slice(0, 10);
+    }
     // 같은 단지가 아닌 후보만 "단지당 1건" 다양성 확보(같은 단지는 이미 충분히 비교 가능하므로 여러 건 허용)
     others.sort(function(a, b) { return a.score - b.score; });
     var seen = {}, dedupedOthers = [];
