@@ -4831,7 +4831,8 @@ function createMarker(cacheKey, lat, lon, apt) {
     // 순위 pill을 없앤 대신, 대장만큼은 이 corner 배지 글씨를 훨씬 크게 키워서 지도에서
     // 한눈에 띄도록 함(대장이 아닌 일반 순위 숫자는 기존 크기 그대로 유지).
     var popRankBadge = lfInfo
-        ? (lfInfo.isLeader
+        ? (lfInfo.isLeader && lfInfo.only ? ''
+            : lfInfo.isLeader
             ? '<div class="grade-rank-badge" style="background:#4a148c;font-size:16px;font-weight:900;padding:3px 10px;top:-14px;left:-10px;box-shadow:0 2px 6px rgba(0,0,0,0.5);">👑대장</div>'
             : '<div class="grade-rank-badge" style="background:#7b1fa2;">' + (lfInfo.rank + 1) + '</div>')
         : '';
@@ -4883,7 +4884,7 @@ function createMarker(cacheKey, lat, lon, apt) {
     if (l.road_name) peekParts.push(l.road_name);
     if (matchedAuction) peekParts.push('🔨 경매 ' + matchedAuction.status);
     if (matchedBidCase) peekParts.push('⚖️ 낙찰사례 ' + (matchedBidCase.status || '매각'));
-    if (lfInfo) peekParts.push(lfInfo.isLeader ? '👑 대장아파트' : ('🥈 ' + lfInfo.rank + '위' + (lfInfo.isFollower ? '(후발주자)' : '')));
+    if (lfInfo) peekParts.push(lfInfo.isLeader ? (lfInfo.only ? '동에 아파트 단독' : '👑 대장아파트') : ('🥈 ' + lfInfo.rank + '위' + (lfInfo.isFollower ? '(후발주자)' : '')));
     div.title = peekParts.join(' · ');
     // 건물명이 길면 배지들(평단가/추정마진/신고가/급등순위)까지 한 줄에 우겨넣다가 뒤쪽 배지가
     // 통째로 잘려서 안 보이는 문제가 있었음(특히 평단가가 자주 잘림) - 건물명은 자기 줄에서만
@@ -14953,6 +14954,8 @@ function resolveBidBoardLawd(a) {
    동·생활권 모두 상위 20%면 재매도 64%, 동만 상위 20%(생활권은 중간)면 42% - 동 순위만으론 걸러지지 않는 경우를 잡아냄.
    700m·1.5km도 비슷해 1km로 정함. 지도에 불러온 시군구 자료만 쓰므로 시군구 경계 근처는 옆 동네가 빠질 수 있음. */
 var LIVING_AREA_RADIUS_M = 1000;
+// 단지가 띄엄띄엄 있는 곳(혁신도시·읍면)은 1km 안에 비교할 단지가 너무 적음 - 5곳 이상이 될 때까지 넓힘(최대 3km)
+var LIVING_AREA_RADII_M = [1000, 1500, 2000, 3000], LIVING_AREA_MIN_COMPLEXES = 5;
 var livingRankCache = {};
 function livingAreaRank(dong, bunji, lat, lon) {
     if (!dong || !bunji || !lat || !lon) return null;
@@ -14960,23 +14963,30 @@ function livingAreaRank(dong, bunji, lat, lon) {
     if (livingRankCache[ck0] !== undefined) return livingRankCache[ck0];
     var subj = (aptIndexByDongBunji.get(dongKey(dong) + '|' + bunji) || []).find(function(ap) { return (ap.buildingType || 'apt') === 'apt'; });
     if (!subj || !subj.latest) { livingRankCache[ck0] = null; return null; }
-    var sk = dongKey(subj.latest.dong) + '|' + subj.latest.name, cut = daysAgo(730), comp = {};
+    var sk = dongKey(subj.latest.dong) + '|' + subj.latest.name, cut = daysAgo(730), all = {};
+    var maxR = LIVING_AREA_RADII_M[LIVING_AREA_RADII_M.length - 1];
     allAptList.forEach(function(ap) {
         if ((ap.buildingType || 'apt') !== 'apt') return;
         var l = ap.latest || {};
         var c = coordCache[[l.dong, l.name, l.bunji, l.road_name, l.main_num, l.sub_num].join('|').toLowerCase()];
         if (!c) return;
         var key = dongKey(l.dong) + '|' + l.name;
-        if (key !== sk && getDistance(lat, lon, c.lat, c.lon) > LIVING_AREA_RADIUS_M) return;
-        var o = comp[key] = comp[key] || { n: 0, name: l.name };
+        var dist = key === sk ? 0 : getDistance(lat, lon, c.lat, c.lon);
+        if (dist > maxR) return;
+        var o = all[key] = all[key] || { n: 0, name: l.name, d: dist };
+        if (dist < o.d) o.d = dist;
         (ap.trades || []).forEach(function(t) { if (t.dealing_type !== '직거래' && t.area > 0 && tradeDate(t) >= cut) o.n++; });
     });
-    var me = comp[sk];
-    var arr = Object.keys(comp).map(function(k) { return comp[k]; }).filter(function(o) { return o.n > 0; });
+    var me = all[sk], arr = [], radius = null;
+    for (var ri = 0; ri < LIVING_AREA_RADII_M.length; ri++) {
+        radius = LIVING_AREA_RADII_M[ri];
+        arr = Object.keys(all).map(function(k) { return all[k]; }).filter(function(o) { return o.n > 0 && o.d <= radius; });
+        if (arr.length >= LIVING_AREA_MIN_COMPLEXES) break;
+    }
     var res = null;
     if (me && arr.length >= 4) {
         var le = arr.filter(function(o) { return o.n <= me.n; }).length / arr.length;
-        res = { rank: me.n ? arr.filter(function(o) { return o.n > me.n; }).length + 1 : null, of: arr.length, trades2y: me.n,
+        res = { rank: me.n ? arr.filter(function(o) { return o.n > me.n; }).length + 1 : null, of: arr.length, trades2y: me.n, radius: radius,
             tier: !me.n ? '하위40%' : (le >= 0.8 ? '상위20%' : (le >= 0.4 ? '중간' : '하위40%')) };
     }
     livingRankCache[ck0] = res;
@@ -15042,7 +15052,7 @@ function computeBidBoardRow(a) {
     var pe = row.popEff;
     row.liv = type === 'apt' ? livingAreaRank(a.dong, bunjiFull, a.lat, a.lon) : null;
     // 인기 단지 = 동(평형대) 순위와 생활권 순위가 모두 상위 20%(생활권 자료가 없으면 동 기준만)
-    var popular = pe ? (pe.tier === '상위20%' && (!row.liv || row.liv.tier === '상위20%')) : (row.lf && (row.lf.isLeader || (row.lf.rank && row.lf.rank <= 5)));
+    var popular = pe ? (pe.tier === '상위20%' && (!row.liv || row.liv.tier === '상위20%')) : (row.lf && ((row.lf.isLeader && !row.lf.only) || (row.lf.rank && row.lf.rank <= 5)));
     var active = pe ? pe.tier !== '하위40%' : (row.complex3y >= 20 || popular);
     var rare = pe ? pe.tier === '하위40%' : row.complex3y < 6;
     row.popular = !!popular;
@@ -15069,7 +15079,7 @@ function computeBidBoardRow(a) {
         if (row.own < 3) { ok = false; row.warns.push('이 단지 같은 평형 거래가 ' + row.own + '건뿐이라 예상매도가 오차가 커요'); }
         if (rare) { ok = false; row.warns.push(pe ? '거래 드문 ' + (pe.band ? pe.band + ' 평형' : '단지') + '(동 하위 40%, ' + (pe.noRecent ? '최근 3년 거래 ' + row.complex3y + '건' : '최근 3년 중 거래 있던 분기 ' + pe.activeQuarterPct + '%') + ') - 팔리는 데 오래 걸릴 수 있어 마진 2% 더 잡음' : '최근 3년 거래 ' + row.complex3y + '건 - 팔기 어려울 수 있어요'); }
         else if (!active) { ok = false; row.warns.push('거래가 많은 단지는 아니에요(3년 ' + row.complex3y + '건)'); }
-        else if (pe && pe.tier === '상위20%' && row.liv && row.liv.tier !== '상위20%') { ok = false; row.warns.push('동에선 거래량 상위지만 생활권(1km)에선 ' + row.liv.rank + '위/' + row.liv.of + ' - 주변에 더 많이 팔리는 단지가 있어요'); }
+        else if (pe && pe.tier === '상위20%' && row.liv && row.liv.tier !== '상위20%') { ok = false; row.warns.push('동에선 거래량 상위지만 생활권(' + (row.liv.radius / 1000) + 'km)에선 ' + row.liv.rank + '위/' + row.liv.of + ' - 주변에 더 많이 팔리는 단지가 있어요'); }
         else if (pe && !popular && pe.activeQuarterPct < 70) { ok = false; row.warns.push('인기 중간' + (pe.band ? '(' + pe.band + ' 평형)' : ' 단지') + ' - 최근 3년 중 거래 있던 분기 ' + pe.activeQuarterPct + '%'); }
         if (row.risk && row.risk.level === '높음') { ok = false; row.warns.push('지역 6개월 하락 위험 높음'); }
         if (row.guarantee && row.guarantee.level) { ok = false; row.warns.push('🚨 인수 보증금 의심 - 권리 확인 필요'); }
@@ -15319,7 +15329,7 @@ function renderBidBoardRow(r) {
         : '<b style="color:' + (r.roomPct >= 0 ? '#2e7d32' : '#c62828') + ';">' + (r.roomPct >= 0 ? r.roomPct + '% 여유' : Math.abs(r.roomPct) + '% 부족') + '</b>'
           + '<div class="bb-sub">' + (r.roomPct >= 0 ? '최저가보다 ' + toEok(String(r.recBid - r.minBid)) + ' 더 써도 됨' : '한 번 더 떨어지면 다시 보기') + '</div>';
     var tierPill = function(t, prefix) { return '<span class="bb-pill ' + (t === '상위20%' ? 'good' : (t === '하위40%' ? 'bad' : '')) + '">' + (prefix || '') + (t === '상위20%' ? '🔥 인기 상위 20%' : (t === '하위40%' ? '거래 드묾(하위 40%)' : '인기 중간')) + '</span>'; };
-    var livHtml = r.liv ? '<div style="font-weight:bold;font-size:12px;margin-bottom:2px;">생활권 거래량 <span style="color:' + (r.liv.tier === '상위20%' ? '#2e7d32' : (r.liv.tier === '하위40%' ? '#c62828' : '#ef6c00')) + ';">' + (r.liv.rank ? r.liv.rank + '위' : '-') + '</span><span style="color:#888;font-weight:normal;font-size:11px;"> / 1km 안 ' + r.liv.of + '단지</span></div>' : '';
+    var livHtml = r.liv ? '<div style="font-weight:bold;font-size:12px;margin-bottom:2px;">생활권 거래량 <span style="color:' + (r.liv.tier === '상위20%' ? '#2e7d32' : (r.liv.tier === '하위40%' ? '#c62828' : '#ef6c00')) + ';">' + (r.liv.rank ? r.liv.rank + '위' : '-') + '</span><span style="color:#888;font-weight:normal;font-size:11px;"> / ' + (r.liv.radius >= 1000 ? (r.liv.radius / 1000) + 'km' : r.liv.radius + 'm') + ' 안 ' + r.liv.of + '단지</span></div>' : '';
     var popCell = r.pending ? '' : livHtml + (r.pop
         ? (r.pop.band
             // 2026-10(사용자 요청: "입찰후보 탭 안에 해당 평형에 맞는 인기순위도 표기") - 같은 동·같은 평형대 안 순위를 맨 위에 크게
@@ -15330,10 +15340,10 @@ function renderBidBoardRow(r) {
                 + '<div class="bb-sub">단지 전체: 동 거래량 ' + r.pop.rankInDong + '위/' + r.pop.complexesInDong + '</div>'
             : (r.pop.noRecent ? '' : '<div style="font-weight:bold;font-size:12.5px;">동 거래량 <span style="color:var(--ui-blue,#1e5eff);">' + r.pop.rankInDong + '위</span><span style="color:#888;font-weight:normal;font-size:11px;"> / ' + r.pop.complexesInDong + '단지</span></div>')
                 + tierPill(r.pop.tier) + (sizeBandOf(r.pyung) ? '<div class="bb-sub" style="color:#bbb;">' + sizeBandOf(r.pyung) + ' 평형 거래량 순위는 분석 준비 중</div>' : ''))
-            + (r.lf && r.lf.isLeader ? ' <span class="bb-pill lead">👑 대장</span>' : '')
+            + (r.lf && r.lf.isLeader && !r.lf.only ? ' <span class="bb-pill lead">👑 대장</span>' : '')
             + (r.pop.band ? '' : (r.pop.noRecent ? '<div class="bb-sub">' + (r.complex3y ? '최근 3년 거래 ' + r.complex3y + '건뿐' : '최근 3년 거래 없음') + '</div>'
                 : '<div class="bb-sub">3년 ' + r.pop.trades3y + '건 · 분기마다 거래 ' + r.pop.activeQuarterPct + '%</div>'))
-        : ((r.lf ? (r.lf.isLeader ? '<span class="bb-pill lead">👑 대장</span>' : '<span class="bb-pill">동 ' + r.lf.rank + '위</span>') : '')
+        : ((r.lf ? (r.lf.isLeader ? (r.lf.only ? '<span class="bb-pill">동에 아파트 단독</span>' : '<span class="bb-pill lead">👑 대장</span>') : '<span class="bb-pill">동 ' + r.lf.rank + '위</span>') : '')
             + '<div class="bb-sub">3년 거래 ' + (r.complex3y || 0) + '건' + (r.complex3y >= 20 ? ' · 활발' : (r.complex3y < 6 ? ' · 드묾' : '')) + '</div>'));
     var riskCell = r.pending ? '' : (r.risk ? (r.risk.level === '높음' ? '<span class="bb-pill bad">하락위험 높음</span><div class="bb-sub">' + bbEsc((r.risk.negative || []).join(', ')) + '</div>' : '<span class="bb-pill good">낮음</span>') : '<span class="bb-sub">-</span>');
     var cuCell = r.catchup == null ? '<span class="bb-sub">-</span>'
@@ -19745,7 +19755,8 @@ function applyLeaderFollowerToMap(data, type) {
     // 순위가 사라진 채 다시 안 채워졌음 - 기존 정보에 이번 지역 것을 덧붙이는 방식으로 바꿈.
     var newLfMap = Object.assign({}, rankMapFor(type));
     (data.leaders || []).forEach(function(l) {
-        newLfMap[lfRankKey(l.dong, l.danji)] = { isLeader: true, rank: null, dong: l.dong, danji: l.danji };
+        // leaderSource 'only' = 그 동에 거래 충분한 아파트가 이 단지뿐이라 자동으로 대장이 된 경우 - 순위 의미가 없어 "동 단독"으로 표시
+        newLfMap[lfRankKey(l.dong, l.danji)] = { isLeader: true, rank: null, dong: l.dong, danji: l.danji, only: l.leaderSource === 'only' };
     });
     (data.rankedByDong || []).forEach(function(group) {
         group.items.forEach(function(r) {
@@ -19890,6 +19901,7 @@ function buildLfRankBadgeHtml(dong, name, bunji, type, altName) {
     if (!dong) return '';
     var lfInfo = resolveLfInfo(dong, name, bunji, type, altName);
     if (!lfInfo) return '';
+    if (lfInfo.isLeader && lfInfo.only) return '<span style="background:#9e9e9e;color:white;font-size:9px;font-weight:bold;padding:1px 5px;border-radius:3px;margin-left:3px;" title="이 법정동에 거래가 충분한 아파트가 이 단지뿐이라 동 순위를 매길 수 없어요 - 입찰후보의 생활권 순위를 보세요">동 단독</span>';
     return lfInfo.isLeader
         ? '<span style="background:#4a148c;color:white;font-size:9px;font-weight:bold;padding:1px 5px;border-radius:3px;margin-left:3px;" title="후발주자 순위 기준 이 법정동의 대장아파트">👑대장</span>'
         : '<span style="background:#7b1fa2;color:white;font-size:9px;font-weight:bold;padding:1px 5px;border-radius:3px;margin-left:3px;" title="이 법정동 순위(대장을 1위로 볼 때) - 지방 아파트: 인기순(세대수 대비 거래 회전율·최근 3년 거래량·최근 거래 증가), 수도권: 종합 가치점수(평단가·거래량·회전율)">' + (lfInfo.rank + 1) + '위</span>';
@@ -20653,7 +20665,7 @@ function renderSidebarList() {
     if (!items.length) { listEl.innerHTML = '<div id="sb-empty">이 화면 안에 표시할 단지가 없어요. 지도를 움직이거나 확대해 보세요.</div>'; return; }
     var esc = function(s) { return String(s || '').replace(/[<>&]/g, function(c) { return { '<': '&lt;', '>': '&gt;', '&': '&amp;' }[c]; }); };
     listEl.innerHTML = window.__sbItems.map(function(g, i) {
-        var rk = g.rank ? (g.rank.isLeader ? '<span class="sb-rank leader">👑대장</span>' : '<span class="sb-rank">' + (g.rank.rank + 1) + '위</span>') : '';
+        var rk = g.rank ? (g.rank.isLeader ? (g.rank.only ? '' : '<span class="sb-rank leader">👑대장</span>') : '<span class="sb-rank">' + (g.rank.rank + 1) + '위</span>') : '';
         var last = g.last ? (Math.round(toPyung(g.last.area)) + '평 ' + toEok(String(g.last.amount)) + ' <span style="color:#9ca3af;font-weight:normal;">(' + g.last.td.getFullYear() + '.' + (g.last.td.getMonth() + 1) + ')</span>') : '거래 없음';
         var tags = '';
         if (g.vol3y >= 30) tags += '<span class="sb-tag" style="background:#fff1e6;color:#c2410c;">🔥 거래활발</span>';
