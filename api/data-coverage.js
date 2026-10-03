@@ -3176,8 +3176,24 @@ export default async function handler(req, res) {
       if (!resolved || !resolved.c2) return res.status(404).json({ error: '미분양 코드를 찾지 못했습니다.', region });
       const raw = await fetchKosisRaw(UNSOLD_TBL.tblId, UNSOLD_TBL.orgId, resolved.c1, 'ALL', 'M', String(Math.min(120, parseInt(req.query.months, 10) || 120)), { objL2: resolved.c2, numOfRows: 500 });
       if (raw.error) return res.status(502).json({ error: raw.error });
-      const series = (raw.items || []).map((it) => [String(it.PRD_DE), parseFloat(it.DT)]).filter((x) => Number.isFinite(x[1]))
-        .sort((a, b) => a[0].localeCompare(b[0]));
+      let series = (raw.items || []).map((it) => [String(it.PRD_DE), parseFloat(it.DT)]).filter((x) => Number.isFinite(x[1]));
+      // 전남광주는 2026-07부터 통합 코드라 그 이전 이력은 옛 광주(A.0006)·전남(A.0014) 코드에 있음 - 이름으로 찾아 앞에 이어 붙임
+      if (toks[0] === '전남광주') {
+        const have = new Set(series.map((x) => x[0]));
+        const gu = toks[1];
+        for (const oldC1 of ['13102871087A.0006', '13102871087A.0014']) {
+          const list = await fetchKosisRaw(UNSOLD_TBL.tblId, UNSOLD_TBL.orgId, oldC1, 'ALL', 'M', '1', { objL2: 'ALL', numOfRows: 500 });
+          const hit = (list.items || []).find((it) => [gu, gu + '시', gu + '군', gu + '구'].includes(String(it.C2_NM || '').trim()));
+          if (!hit) continue;
+          const hist = await fetchKosisRaw(UNSOLD_TBL.tblId, UNSOLD_TBL.orgId, oldC1, 'ALL', 'M', '120', { objL2: hit.C2, numOfRows: 500 });
+          (hist.items || []).forEach((it) => {
+            const v = parseFloat(it.DT);
+            if (Number.isFinite(v) && !have.has(String(it.PRD_DE))) { series.push([String(it.PRD_DE), v]); have.add(String(it.PRD_DE)); }
+          });
+          break;
+        }
+      }
+      series = series.sort((a, b) => a[0].localeCompare(b[0]));
       return res.status(200).json({ region, matchedLevel: resolved.matchedLevel, matchedName: resolved.matchedName, series });
     } catch (err) {
       return res.status(500).json({ error: err.message });
