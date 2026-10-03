@@ -911,7 +911,7 @@ const LF_DIAG_MAX_LAG = 16;
 // (전국 1,302곳) - 사용자 요구는 "모든 아파트 배지에 순위"라 사실상 상한을 없앰.
 const LF_TOP_N = 5000;
 // ⚠️ 2026-10(#505): 순위 계산 규칙이 바뀌면 올려서, 예전 규칙으로 만든 캐시를 만료로 취급함(24시간 기다리지 않고 바로 새 규칙 적용).
-const LF_ALGO_VERSION = 3;
+const LF_ALGO_VERSION = 4; // 4: 지방 아파트 인기순(2026-10)
 const LF_MIN_HOUSEHOLDS = 100; // 회전율 기준 대장 후보 최소 세대수 - 나홀로 단지가 우연한 회전율로 뽑히는 것 방지
 function pearsonCorr(xs, ys) {
   const n = xs.length;
@@ -1010,6 +1010,53 @@ async function computeLeaderFollowerFresh(type, region, force, asOfDate) {
   }
   const totalDays = Math.max(1, Math.round((intToDate(today + 1) - intToDate(FULL_HIST_START)) / 86400000));
   const bucketN = Math.max(1, Math.ceil(totalDays / bucketDays));
+  // ⚠️ 2026-10(사용자 기준: "수도권 아파트는 대장아파트, 지방 아파트는 인기순" + "인기순 = (가) 실제로 많이·자주
+  // 거래되는 단지(비중 큼) + (나) 사람들이 많이 찾는 단지"): 예전엔 전국이 같은 방식(평단가·누적거래량·회전율
+  // 백분위 평균, 세대수 미수집으로 실제론 평단가 50%+거래량 50%)이라 지방도 "비싼 단지"가 대장·상위였음.
+  // 지방은 평단가를 빼고 인기 지표로만 순위·대장을 정함:
+  //   (가) 최근 3년 세대수 대비 연 회전율(세대수 있을 때) 40% + 최근 3년 거래량 30%
+  //   (나) 관심 증가: 최근 1년 거래량 ÷ 그 전 연평균 거래량 30% (조회수는 공개자료가 없어, 사람이 몰리면
+  //        먼저 늘어나는 거래량 증가로 대신함)
+  //   세대수가 없으면 (가)는 최근 3년 거래량 70%로 계산.
+  const isLocalRegion = !/^(서울|인천|경기)/.test(String(region || ''));
+  const POP_N1 = Math.max(1, Math.round(365 / bucketDays)), POP_N3 = Math.max(1, Math.round(1095 / bucketDays));
+  function popularityStats(countArr, households) {
+    let r1 = 0, r3 = 0, total = 0, first = -1;
+    for (let i = 0; i < bucketN; i++) {
+      const c = (countArr && countArr[i]) || 0;
+      total += c;
+      if (c > 0 && first < 0) first = i;
+      if (i >= bucketN - POP_N1) r1 += c;
+      if (i >= bucketN - POP_N3) r3 += c;
+    }
+    const activeYears = first < 0 ? 0 : (bucketN - first) * bucketDays / 365;
+    const priorAnnual = activeYears > 1.5 ? (total - r1) / (activeYears - 1) : null;
+    return {
+      popRecent3y: r3,
+      popTurnover3y: households && households >= LF_MIN_HOUSEHOLDS ? Math.round(r3 / households / 3 * 1000) / 10 : null,
+      popInterest: priorAnnual && priorAnnual > 0 ? Math.round(r1 / priorAnnual * 100) / 100 : null,
+    };
+  }
+  function popularityScores(list) {
+    const pt = percentileScoresTop(list, (c) => c.popTurnover3y);
+    const pv = percentileScoresTop(list, (c) => c.popRecent3y);
+    const pi = percentileScoresTop(list, (c) => c.popInterest);
+    return list.map((c, i) => {
+      const parts = [];
+      if (pt[i] != null) { parts.push([pt[i], 0.4]); parts.push([pv[i] != null ? pv[i] : 0, 0.3]); }
+      else parts.push([pv[i] != null ? pv[i] : 0, 0.7]);
+      if (pi[i] != null) parts.push([pi[i], 0.3]);
+      const w = parts.reduce((a, p) => a + p[1], 0);
+      return w > 0 ? parts.reduce((a, p) => a + p[0] * p[1], 0) / w : 0;
+    });
+  }
+  function percentileScoresTop(list, keyFn) {
+    const withVal = list.map((item, i) => ({ i, v: keyFn(item) })).filter((x) => x.v != null);
+    withVal.sort((a, b) => b.v - a.v);
+    const n = withVal.length, out = {};
+    withVal.forEach((x, rank) => { out[x.i] = n > 1 ? (n - rank) / n : 1; });
+    return out;
+  }
   // ⚠️ 2026-09(#468, 사용자 제보 - 안산시 단원구 고잔동에서 대장/후발주자 순위가 계속 안
   // 뜨는 버그): 20버킷 청크(#466 당시 기준)는 부산 해운대구 등으로 실측해 정한 값인데,
   // 안산 단원구처럼 거래량이 훨씬 많은 지역(주공1~11단지 등 대단지 밀집)은 청크 하나가
@@ -1193,7 +1240,7 @@ async function computeLeaderFollowerFresh(type, region, force, asOfDate) {
             let wsum = 0, wcnt = 0;
             for (let i = 0; i < bucketN; i++) { if ((d.countArr[i] || 0) > 0 && d.avgArr[i] != null) { wsum += d.avgArr[i] * d.countArr[i]; wcnt += d.countArr[i]; } }
             const households = householdMap[`${dong}|${normalizeComplexName(name)}`] || null;
-            if (wcnt > 0) minors.push({ name, totalCount, ppp: wsum / wcnt, households });
+            if (wcnt > 0) minors.push({ name, totalCount, ppp: wsum / wcnt, households, ...popularityStats(d.countArr, households) });
           }
           return null;
         }
@@ -1211,6 +1258,7 @@ async function computeLeaderFollowerFresh(type, region, force, asOfDate) {
           name, totalCount, filled: g.filled, genesisIdx: g.genesisIdx, avgArr: d.avgArr, countArr: d.countArr,
           baseline, households, turnoverPct,
           fullPpp: baseline, fullCount: totalCount, fullTurnoverPct: turnoverPct,
+          ...popularityStats(d.countArr, households),
         };
       })
       .filter(Boolean);
@@ -1222,6 +1270,7 @@ async function computeLeaderFollowerFresh(type, region, force, asOfDate) {
           recentPpp: Math.round(m.ppp), leaderRecentPpp: null, followerPpp: Math.round(m.ppp), gapAmount: null,
           score: null, qualifies: false, reason: '누적 거래 ' + m.totalCount + '건(20건 미만) - 순위만 표시',
           fullPpp: Math.round(m.ppp), fullCount: m.totalCount, fullTurnoverPct: null,
+          popRecent3y: m.popRecent3y, popTurnover3y: m.popTurnover3y, popInterest: m.popInterest,
         });
       });
     }
@@ -1279,6 +1328,13 @@ async function computeLeaderFollowerFresh(type, region, force, asOfDate) {
     if (qualified.length === 1) {
       leader = qualified[0];
       leaderSource = 'only';
+    } else if (isLocalRegion) {
+      // 지방: 인기 1위가 대장(위 주석 참고)
+      const ps = popularityScores(qualified);
+      let bi = 0;
+      ps.forEach((v, i) => { if (v > ps[bi] || (v === ps[bi] && qualified[i].totalCount > qualified[bi].totalCount)) bi = i; });
+      leader = qualified[bi];
+      leaderSource = 'popularity';
     } else if (leadEligible.length > 0) {
       leadEligible.sort((a, b) => b.leadCorr - a.leadCorr);
       leader = leadEligible[0];
@@ -1312,6 +1368,7 @@ async function computeLeaderFollowerFresh(type, region, force, asOfDate) {
       dong, danji: leader.name, totalCount: leader.totalCount, ppp: Math.round(leader.baseline), recentPct: leaderRecentPct,
       recentPpp: leaderRecentPpp,
       households: leader.households, turnoverPct: leader.turnoverPct, leaderSource,
+      popRecent3y: leader.popRecent3y, popTurnover3y: leader.popTurnover3y, popInterest: leader.popInterest,
       leadCorr: leader.leadCorr != null ? Math.round(leader.leadCorr * 100) / 100 : null,
       leadLag: leader.leadLag,
       corrByLag: leader.corrByLag, // ⚠️ 2026-09 진단용 임시 필드 - lag별 상관계수 전체 곡선(추후 제거 예정)
@@ -1364,6 +1421,7 @@ async function computeLeaderFollowerFresh(type, region, force, asOfDate) {
         qualifies, reason,
         // ⚠️ 2026-09(#464): 순위 산정(인기·가치 복합점수)에 쓰는 전체이력(2017-09~) 지표.
         fullPpp: Math.round(f.fullPpp), fullCount: f.fullCount, fullTurnoverPct: f.fullTurnoverPct,
+        popRecent3y: f.popRecent3y, popTurnover3y: f.popTurnover3y, popInterest: f.popInterest,
       });
     });
     pushMinors(leader.name);
@@ -1402,13 +1460,18 @@ async function computeLeaderFollowerFresh(type, region, force, asOfDate) {
   const rankedByDong = [];
   const unranked = [];
   Object.entries(dongGroups).forEach(([dong, list]) => {
-    const pppScores = percentileScores(list, (c) => c.fullPpp);
-    const volScores = percentileScores(list, (c) => c.fullCount);
-    const turnoverScores = percentileScores(list, (c) => c.fullTurnoverPct);
-    list.forEach((c, i) => {
-      const parts = [pppScores[i], volScores[i], turnoverScores[i]].filter((v) => v != null);
-      c.valueScore = parts.length ? parts.reduce((a, b) => a + b, 0) / parts.length : 0;
-    });
+    if (isLocalRegion) {
+      const ps = popularityScores(list);
+      list.forEach((c, i) => { c.valueScore = ps[i]; });
+    } else {
+      const pppScores = percentileScores(list, (c) => c.fullPpp);
+      const volScores = percentileScores(list, (c) => c.fullCount);
+      const turnoverScores = percentileScores(list, (c) => c.fullTurnoverPct);
+      list.forEach((c, i) => {
+        const parts = [pppScores[i], volScores[i], turnoverScores[i]].filter((v) => v != null);
+        c.valueScore = parts.length ? parts.reduce((a, b) => a + b, 0) / parts.length : 0;
+      });
+    }
     // 복합 가치점수 desc. 동률이면 이름순으로 고정해 호출마다 순서가 흔들리지 않게 함.
     list.sort((a, b) => {
       if (b.valueScore !== a.valueScore) return b.valueScore - a.valueScore;
@@ -1429,7 +1492,7 @@ async function computeLeaderFollowerFresh(type, region, force, asOfDate) {
   // 동 그룹의 나열 순서도 같은 기준으로 "이 동 1위 단지의 종합 가치점수"가 높은 순으로 둠.
   rankedByDong.sort((a, b) => b.topScore - a.topScore);
   leaders.sort((a, b) => b.totalCount - a.totalCount);
-  return { region, type, bucketDays, bucketCount: bucketN, histStart: FULL_HIST_START, leaders, rankedByDong, unranked, totalCandidates: candidates.length, algoVersion: LF_ALGO_VERSION };
+  return { region, type, bucketDays, bucketCount: bucketN, histStart: FULL_HIST_START, leaders, rankedByDong, unranked, totalCandidates: candidates.length, algoVersion: LF_ALGO_VERSION, rankBasis: isLocalRegion ? 'popularity' : 'value' };
 }
 async function getLeaderFollowerRank(type, region, force) {
   const cacheId = region + '|' + type;
