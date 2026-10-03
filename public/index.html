@@ -9064,10 +9064,27 @@ function avmCacheKey(lawdCd, dong, danji, sizeM2, floor, buildYear, topFloor, la
 // 단지 표본충분) > 'dong'(법정동 단위, 격자·단지 표본부족이거나 단지명 모름) >
 // 'region_fallback'(시군구 평균, 그 법정동도 표본부족) > 'default_fallback'(전국 평균,
 // 완전 신규지역) - data-coverage.js avmPredict()와 반드시 같은 순서/의미로 둠.
+// ⚠️ 2026-10(사용자 요청 "AVM 신뢰도 개선" ⑤): 실측상 비교물건 기반 🤖예상매도가(중앙오차 약 6%)가 AVM
+// (아파트 17.8%·빌라 16%, v1 기준)보다 훨씬 정확함. 자기 단지(건물)에 최근 3년 같은 평형대 실거래가 있으면
+// AVM은 "보조 참고값"으로 흐리게 표시하고 예상매도가를 우선 보라고 안내함.
+var avmOwnComplexTradeN = 0;
+function countOwnComplexTrades(dong, bunji, type, pyung) {
+    var b = String(bunji || '').trim();
+    if (!dong || !b || !pyung) return 0;
+    var cutoff = daysAgo(1095), n = 0;
+    (aptIndexByDongBunji.get(dongKey(dong) + '|' + b) || []).forEach(function(apt) {
+        if ((apt.buildingType || 'apt') !== (type === 'villa' ? 'villa' : 'apt')) return;
+        (apt.trades || []).forEach(function(t) {
+            if (tradeDate(t) >= cutoff && t.area > 0 && Math.abs(toPyung(t.area) - pyung) <= 4) n++;
+        });
+    });
+    return n;
+}
 function renderAvmEstimateBox(data) {
     var avmEl = document.getElementById('est-avm-value');
     var avmSubEl = document.getElementById('est-avm-sub');
     if (!avmEl) return;
+    avmEl.style.color = '';
     if (!data || data.error) {
         avmEl.innerText = '-';
         window.__avmEstValue = null;
@@ -9076,6 +9093,8 @@ function renderAvmEstimateBox(data) {
     }
     window.__avmEstValue = data.totalPriceManwon;
     avmEl.innerText = toEok(String(data.totalPriceManwon)) + (data.lowConfidence ? ' ⚠️' : '');
+    var avmIsSecondary = avmOwnComplexTradeN > 0;
+    if (avmIsSecondary) avmEl.style.color = '#9e9e9e';
     if (avmSubEl) {
         // ⚠️ 2026-08(villa_v1 추가): 빌라는 애초에 단지 단위를 안 쓰므로(법정동이 최상위
         // 세분화 단계) 'dong'을 "단지 표본부족"이라고 표현하면 마치 단지 매칭을 시도했다가
@@ -9102,7 +9121,12 @@ function renderAvmEstimateBox(data) {
         // 오차를 재계산해 isSegmentSpecific으로 표시해주면, "이 물건과 비슷한 확신도의
         // 케이스들만 따로 검증한 값"인지 "모델 전체 평균값(구버전 모델 또는 표본부족으로
         // 세그먼트 생략)"인지 구분해서 보여줌 - 조용히 다른 숫자로 바꿔치기하지 않기 위함.
-        var marginLine = data.errorMargin
+        var em = data.errorMargin;
+        var timeSplitLine = (em && em.holdoutKind === 'time_split')
+            ? '<div style="margin-top:2px;color:#00695c;">🧪 과거 자료만 보고 최근 3개월 실거래 ' + (em.holdoutN || 0).toLocaleString() + '건을 맞혀 본 결과: 보통 ±' + em.holdoutMedianApePct + '% 차이'
+                + (em.within10Pct != null ? ', ' + Math.round(em.within10Pct) + '%가 ±10% 안' : '') + '</div>'
+            : '';
+        var marginLine = timeSplitLine ? timeSplitLine : data.errorMargin
             ? '<div style="margin-top:2px;color:#8a6d00;">📏 실제 가격은 보통 이 범위 안: <b>'
                 + toEok(String(data.errorMargin.priceRangeManwon[0])) + ' ~ ' + toEok(String(data.errorMargin.priceRangeManwon[1])) + '</b> (±' + data.errorMargin.marginPct + '%)'
                 + (data.errorMargin.holdoutN
@@ -9125,7 +9149,10 @@ function renderAvmEstimateBox(data) {
                 + '<br><span style="color:#999;font-size:9.5px;">건축물대장 총층수 기준, 아파트 모델의 층위치 계수를 참고로 적용한 근사치입니다</span>'
                 + '</div>'
             : '';
-        avmSubEl.innerHTML = '실거래 ' + (data.nSamples || 0).toLocaleString() + '건 회귀분석(R²='
+        avmSubEl.innerHTML = (avmIsSecondary
+                ? '<div style="color:#1565c0;font-weight:bold;">ℹ️ 이 단지(건물) 최근 실거래 ' + avmOwnComplexTradeN + '건이 있어요 - 🤖예상매도가를 우선 보세요(AVM은 보조 참고값)</div>'
+                : '')
+            + '실거래 ' + (data.nSamples || 0).toLocaleString() + '건 회귀분석(R²='
             + (data.rSquared != null ? data.rSquared.toFixed(2) : '-') + ', 학습데이터 자체 기준) · ' + confNote
             + (data.lowConfidence ? ' - 참고용으로만 보세요' : '')
             + marginLine
@@ -9163,6 +9190,8 @@ function refreshAvmEstimateIfNeeded() {
     // 1.87억을 냈음(실제 이 단지 옥천아파트는 1.1~1.3억). 단지명이 없으면 같은 동·같은 지번의 실거래 단지명,
     // 그것도 없으면 주소 끝 건물명으로 채워서 보냄.
     if (!danji) danji = resolveOwnComplexName(dong, ctx.bunji, propType) || buildingNameFromAddr(document.getElementById('a-addr').value, dong) || '';
+    var subjectBunji = fullBunjiFromAddr(document.getElementById('a-addr').value, dong, ctx.bunji);
+    avmOwnComplexTradeN = countOwnComplexTrades(dong, subjectBunji, propType, pyung);
     // ⚠️ 2026-08(빌라 층위치 보정): 이 건물의 건축HUB 총층수(pendingAuctionBuildingInfo,
     // loadAuctionBuildingInfo가 미리 채워둠)가 있으면 서버로 같이 넘김 - 아파트는 K-apt
     // 단지명 매칭보다 "이 건물 자체"의 값이라 더 정확하고, 빌라는 K-apt 자체가 없어 이 값이
@@ -9179,7 +9208,7 @@ function refreshAvmEstimateIfNeeded() {
         var sizeM2 = pyung * 3.305785;
         // propType을 캐시 키에도 포함 - 같은 물건이라도 유형을 바꾸면(아파트↔빌라) 다른 모델을
         // 타므로 이전 유형 결과를 잘못 재사용하면 안 됨.
-        var key = avmCacheKey(lawdCd, dong, danji, sizeM2, floor, buildYear, topFloor, ctx.lat, ctx.lon) + '|' + propType;
+        var key = avmCacheKey(lawdCd, dong, danji, sizeM2, floor, buildYear, topFloor, ctx.lat, ctx.lon) + '|' + propType + '|' + subjectBunji;
         if (avmEstCache.key === key) { renderAvmEstimateBox(avmEstCache.data); return; }
         if (avmEstCache.loading) return; // 이미 같은 요청이 진행중이면 중복 호출 방지(렌더 경로에서 자주 불림)
         avmEstCache = { key: key, loading: true, data: null };
@@ -9195,6 +9224,7 @@ function refreshAvmEstimateIfNeeded() {
             + (danji ? '&danji=' + encodeURIComponent(danji) : '')
             + '&size=' + sizeM2 + '&floor=' + floor + '&buildYear=' + buildYear
             + (topFloor ? '&topFloor=' + topFloor : '')
+            + (subjectBunji ? '&bunji=' + encodeURIComponent(subjectBunji) : '')
             + '&lat=' + ctx.lat + '&lon=' + ctx.lon)
           .then(function(r) { return r.json().then(function(d) { return { ok: r.ok, data: d }; }); })
           .then(function(res) {
