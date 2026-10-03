@@ -907,9 +907,11 @@ const LF_LEAD_MIN_CORR = 0.55;
 // LF_MAX_LAG를 16까지 늘려서 봐도 6 너머에서 더 뚜렷한 신호가 나오지 않고 요동만 커짐을
 // 확인했으므로 6 그대로 유지. corrByLag 진단 필드는 향후 재검증 필요시를 위해 남겨둠.
 const LF_DIAG_MAX_LAG = 16;
-const LF_TOP_N = 100;
+// ⚠️ 2026-10(#505): 100위까지만 매겨서 단지가 많은 동(서초동·반포동·연산동 등)은 나머지 배지에 순위가 없었음
+// (전국 1,302곳) - 사용자 요구는 "모든 아파트 배지에 순위"라 사실상 상한을 없앰.
+const LF_TOP_N = 5000;
 // ⚠️ 2026-10(#505): 순위 계산 규칙이 바뀌면 올려서, 예전 규칙으로 만든 캐시를 만료로 취급함(24시간 기다리지 않고 바로 새 규칙 적용).
-const LF_ALGO_VERSION = 2;
+const LF_ALGO_VERSION = 3;
 const LF_MIN_HOUSEHOLDS = 100; // 회전율 기준 대장 후보 최소 세대수 - 나홀로 단지가 우연한 회전율로 뽑히는 것 방지
 function pearsonCorr(xs, ys) {
   const n = xs.length;
