@@ -18284,11 +18284,18 @@ function buildLfUpsideLineHtml(dong, name, bunji, type, altName) {
     if (!dong) return '';
     var lfInfo = resolveLfInfo(dong, name, bunji, type, altName);
     if (!lfInfo || lfInfo.isLeader || typeof lfInfo.gapPct !== 'number') return '';
-    var gp = lfInfo.gapPct;
-    var color = gp > 0 ? '#2e7d32' : (gp < 0 ? '#c62828' : '#757575');
-    var label = gp > 0 ? '📈 후발주자 갭메우기 여지' : (gp < 0 ? '📉 대장보다 더 오름' : '➖ 대장과 갭 없음');
-    var titleTxt = '대장아파트' + (lfInfo.leaderDanji ? '(' + lfInfo.leaderDanji + ')' : '') + ' 최근 상승률 대비 이 단지의 갭 - 과거 동행 패턴(상관계수) 기반 참고 신호이며 확정 예측이 아닙니다.';
-    return '<div style="color:' + color + ';font-size:10px;font-weight:bold;margin-top:1px;" title="' + titleTxt + '">' + label + ' ' + (gp > 0 ? '+' : '') + gp + '%</div>';
+    var gp = lfInfo.gapPct; // 대장 최근 상승률 − 이 단지 최근 상승률(%p)
+    // ⚠️ 2026-10(사용자 피드백: "'대장보다 더 오름 -0.8%'는 이해가 안 돼 - 무시할 수준이면 비슷하게
+    // 움직인다고 바꿔줘"): 부호(+/−) 대신 "덜 오름/더 오름 X%"처럼 크기만 보여주고, ±2%p 안쪽은 거래 몇 건의
+    // 층·향 차이로도 생기는 수준이라 "대장과 비슷하게 움직임"으로 표시함.
+    var GAP_SIMILAR_PCT = 2;
+    var absGp = Math.round(Math.abs(gp) * 10) / 10;
+    var color, label;
+    if (absGp < GAP_SIMILAR_PCT) { color = '#757575'; label = '➖ 대장과 비슷하게 움직임'; }
+    else if (gp > 0) { color = '#2e7d32'; label = '📈 대장보다 ' + absGp + '% 덜 오름(따라 오를 여지)'; }
+    else { color = '#c62828'; label = '📉 대장보다 ' + absGp + '% 더 오름'; }
+    var titleTxt = '최근 약 3개월 평단가 상승률을 대장아파트' + (lfInfo.leaderDanji ? '(' + lfInfo.leaderDanji + ')' : '') + '와 비교한 것 - 과거 함께 움직인 패턴을 근거로 한 참고 신호이며 확정 예측이 아닙니다.';
+    return '<div style="color:' + color + ';font-size:10px;font-weight:bold;margin-top:1px;" title="' + titleTxt + '">' + label + '</div>';
 }
 // ⚠️ 2026-09(사용자 피드백: "법정동 단위로 순위를 정한건데 왜 후발주자 패널에서 조회해야만
 // 배지에 표기되냐") - leaderFollowerRankMap 선언부 주석 참고: 전국 상시 계산은 안 되지만,
@@ -18415,7 +18422,7 @@ function renderLeaderFollowerBody(data, dongFilter) {
                 var basisLine = '근거: 평단가 ' + r.fullPpp.toLocaleString() + '만/평 · 누적 거래 ' + r.fullCount + '건(2017~) · 세대수대비 회전율(연) ' + turnoverTxt;
                 var detailLine = r.isFollower
                     ? (basisLine + '<br>현재 상태: 최근 ' + (r.followerRecentPct >= 0 ? '+' : '') + r.followerRecentPct + '% 상승(대장은 ' + (r.leaderRecentPct >= 0 ? '+' : '') + r.leaderRecentPct + '%)'
-                        + '<br>예상 흐름: 대장 대비 ' + r.gapPct + '%p 남음 · ' + gapAmtTxt + ' · 동행성 ' + corrTxt + ' · ' + lagTxt)
+                        + '<br>예상 흐름: ' + (Math.abs(r.gapPct) < 2 ? '대장과 비슷하게 움직임' : (r.gapPct > 0 ? '대장보다 ' + Math.abs(r.gapPct) + '% 덜 오름' : '대장보다 ' + Math.abs(r.gapPct) + '% 더 오름')) + ' · ' + gapAmtTxt + ' · 동행성 ' + corrTxt + ' · ' + lagTxt)
                     : basisLine;
                 return '<div style="padding:6px 2px;border-bottom:1px solid #f5f5f5;font-size:11.5px;cursor:pointer;" onclick="moveToDanji(\'' + data.region + '\',\'' + (r.dong || group.dong) + '\',\'' + r.danji.replace(/'/g, "\\'") + '\')">'
                     + '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;">'
