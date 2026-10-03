@@ -1255,7 +1255,7 @@ body.ui2 .al-opts input[type=checkbox] { margin:0; }
                 <option value="">아파트·빌라</option><option value="apt">아파트만</option><option value="villa">빌라만</option>
             </select>
             <select onchange="setBidBoardFilter('sort', this.value)">
-                <option value="verdict">판정 → 여유 큰 순</option><option value="date">입찰일 빠른 순</option><option value="room">여유 큰 순</option>
+                <option value="verdict">판정 → 여유 큰 순</option><option value="date">입찰일 빠른 순</option><option value="room">여유 큰 순</option><option value="pop">평형 인기순위 높은 순</option>
             </select>
             <label class="bb-chk"><input type="checkbox" onchange="setBidBoardFilter('popOnly', this.checked)"> 인기 상위 20% 단지만</label>
             <label class="bb-chk"><input type="checkbox" onchange="setBidBoardFilter('showPast', this.checked)"> 오래 지난 입찰(45일+)도 보기</label>
@@ -15213,7 +15213,16 @@ function renderBidBoard() {
         fn.innerHTML = '⏳ 입찰일이 지났는데 결과를 아직 안 넣은 <b>' + assumed + '건</b>은 <b>유찰됐다고 가정</b>하고, 그 법원의 저감 규칙으로 낮춘 다음 최저가로 판정했어요(추정). '
             + '법원 검색 목록을 <b>📋 입찰희망</b>에 다시 붙여넣으면 실제 결과(유찰·매각·취하, 새 최저가·입찰일)로 바뀌어요.';
     }
+    var popRankOf = function(r) {
+        if (!r.pop) return 9999;
+        if (r.pop.band) return r.pop.band.rankInBand / Math.max(1, r.pop.band.complexesInBand);
+        return r.pop.noRecent ? 2 : (r.pop.rankInDong / Math.max(1, r.pop.complexesInDong) + 0.001);
+    };
     rows.sort(function(x, y) {
+        if (s.sort === 'pop') {
+            var px = popRankOf(x), py = popRankOf(y);
+            if (px !== py) return px - py;
+        }
         if (s.sort === 'date') {
             var dx = x.dday ? x.dday.diffDays : 9999, dy = y.dday ? y.dday.diffDays : 9999;
             if (dx !== dy) return dx - dy;
@@ -15233,7 +15242,7 @@ function renderBidBoard() {
     if (!rows.length) { body.innerHTML = '<div class="bb-empty">조건에 맞는 물건이 없어요.</div>'; return; }
     body.innerHTML = '<table class="bb-table"><thead><tr>'
         + '<th>판정</th><th>입찰일</th><th>물건</th><th class="r">최저가</th><th class="r">예상매도가</th>'
-        + '<th class="r">추천 입찰가</th><th class="r">최저가 대비</th><th>단지 인기</th><th>지역 위험</th><th>대장 따라잡기</th><th></th>'
+        + '<th class="r">추천 입찰가</th><th class="r">최저가 대비</th><th>평형 인기순위</th><th>지역 위험</th><th>대장 따라잡기</th><th></th>'
         + '</tr></thead><tbody>' + rows.map(renderBidBoardRow).join('') + '</tbody></table>';
 }
 function renderBidBoardRow(r) {
@@ -15251,10 +15260,18 @@ function renderBidBoardRow(r) {
           + '<div class="bb-sub">' + (r.roomPct >= 0 ? '최저가보다 ' + toEok(String(r.recBid - r.minBid)) + ' 더 써도 됨' : '한 번 더 떨어지면 다시 보기') + '</div>';
     var tierPill = function(t, prefix) { return '<span class="bb-pill ' + (t === '상위20%' ? 'good' : (t === '하위40%' ? 'bad' : '')) + '">' + (prefix || '') + (t === '상위20%' ? '🔥 인기 상위 20%' : (t === '하위40%' ? '거래 드묾(하위 40%)' : '인기 중간')) + '</span>'; };
     var popCell = r.pending ? '' : (r.pop
-        ? (r.pop.band ? tierPill(r.pop.band.tier, r.pop.band.name + ' ') + '<div class="bb-sub">' + r.pop.band.name + ' 중 ' + r.pop.band.rankInBand + '위/' + r.pop.band.complexesInBand + ' · 분기마다 거래 ' + r.pop.band.activeQuarterPct + '%</div><div class="bb-sub">단지 전체: ' + (r.pop.tier === '상위20%' ? '상위 20%' : (r.pop.tier === '하위40%' ? '하위 40%' : '중간')) + '</div>' : tierPill(r.pop.tier))
+        ? (r.pop.band
+            // 2026-10(사용자 요청: "입찰후보 탭 안에 해당 평형에 맞는 인기순위도 표기") - 같은 동·같은 평형대 안 순위를 맨 위에 크게
+            ? '<div style="font-weight:bold;font-size:12.5px;">' + r.pop.band.name + ' 인기 <span style="color:var(--ui-blue,#1e5eff);">' + r.pop.band.rankInBand + '위</span>'
+                + '<span style="color:#888;font-weight:normal;font-size:11px;"> / ' + r.pop.band.complexesInBand + '단지</span></div>'
+                + tierPill(r.pop.band.tier)
+                + '<div class="bb-sub">' + r.pop.band.name + ' 3년 ' + r.pop.band.trades3y + '건 · 분기마다 거래 ' + r.pop.band.activeQuarterPct + '%</div>'
+                + '<div class="bb-sub">단지 전체: 동 ' + r.pop.rankInDong + '위/' + r.pop.complexesInDong + '</div>'
+            : (r.pop.noRecent ? '' : '<div style="font-weight:bold;font-size:12.5px;">동 인기 <span style="color:var(--ui-blue,#1e5eff);">' + r.pop.rankInDong + '위</span><span style="color:#888;font-weight:normal;font-size:11px;"> / ' + r.pop.complexesInDong + '단지</span></div>')
+                + tierPill(r.pop.tier) + (sizeBandOf(r.pyung) ? '<div class="bb-sub" style="color:#bbb;">' + sizeBandOf(r.pyung) + ' 평형 순위는 분석 준비 중</div>' : ''))
             + (r.lf && r.lf.isLeader ? ' <span class="bb-pill lead">👑 대장</span>' : '')
             + (r.pop.band ? '' : (r.pop.noRecent ? '<div class="bb-sub">' + (r.complex3y ? '최근 3년 거래 ' + r.complex3y + '건뿐' : '최근 3년 거래 없음') + '</div>'
-                : '<div class="bb-sub">동 ' + r.pop.rankInDong + '위/' + r.pop.complexesInDong + '단지 · 3년 ' + r.pop.trades3y + '건 · 분기마다 거래 ' + r.pop.activeQuarterPct + '%</div>'))
+                : '<div class="bb-sub">3년 ' + r.pop.trades3y + '건 · 분기마다 거래 ' + r.pop.activeQuarterPct + '%</div>'))
         : ((r.lf ? (r.lf.isLeader ? '<span class="bb-pill lead">👑 대장</span>' : '<span class="bb-pill">동 ' + r.lf.rank + '위</span>') : '')
             + '<div class="bb-sub">3년 거래 ' + (r.complex3y || 0) + '건' + (r.complex3y >= 20 ? ' · 활발' : (r.complex3y < 6 ? ' · 드묾' : '')) + '</div>'));
     var riskCell = r.pending ? '' : (r.risk ? (r.risk.level === '높음' ? '<span class="bb-pill bad">하락위험 높음</span><div class="bb-sub">' + bbEsc((r.risk.negative || []).join(', ')) + '</div>' : '<span class="bb-pill good">낮음</span>') : '<span class="bb-sub">-</span>');
@@ -15276,7 +15293,7 @@ function renderBidBoardRow(r) {
         + '<td data-l="예상매도가" class="r">' + saleCell + '</td>'
         + '<td data-l="추천 입찰가" class="r">' + recCell + '</td>'
         + '<td data-l="최저가 대비" class="r">' + roomCell + '</td>'
-        + '<td data-l="단지 인기">' + popCell + '</td>'
+        + '<td data-l="평형 인기순위">' + popCell + '</td>'
         + '<td data-l="지역 위험">' + riskCell + '</td>'
         + '<td data-l="대장 따라잡기">' + cuCell + '</td>'
         + '<td class="bb-act"><button onclick="event.stopPropagation();closeBidBoard();openAuctionModal(\'' + idJs + '\')">상세</button></td>'
