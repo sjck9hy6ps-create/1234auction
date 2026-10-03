@@ -15353,7 +15353,7 @@ function renderBidBoardRow(r) {
             // 2026-10(사용자 요청: "입찰후보 탭 안에 해당 평형에 맞는 인기순위도 표기") - 같은 동·같은 평형대 안 순위를 맨 위에 크게
             ? '<div style="font-weight:bold;font-size:12.5px;">' + r.pop.band.name + ' 거래량 <span style="color:var(--ui-blue,#1e5eff);">' + r.pop.band.rankInBand + '위</span>'
                 + '<span style="color:#888;font-weight:normal;font-size:11px;"> / ' + r.pop.band.complexesInBand + '단지</span></div>'
-                + tierPill(r.pop.band.tier)
+                + (r.popular ? '<span class="bb-pill good" title="동·같은 평형·생활권 거래량이 모두 상위 20%">🔥 인기 단지</span>' : tierPill(r.pop.band.tier, r.pop.band.name + ' 평형 '))
                 + '<div class="bb-sub">' + r.pop.band.name + ' 3년 ' + r.pop.band.trades3y + '건 · 분기마다 거래 ' + r.pop.band.activeQuarterPct + '%</div>'
                 + '<div class="bb-sub">단지 전체: 동 거래량 ' + r.pop.rankInDong + '위/' + r.pop.complexesInDong + '</div>'
             : (r.pop.noRecent ? '' : '<div style="font-weight:bold;font-size:12.5px;">동 거래량 <span style="color:var(--ui-blue,#1e5eff);">' + r.pop.rankInDong + '위</span><span style="color:#888;font-weight:normal;font-size:11px;"> / ' + r.pop.complexesInDong + '단지</span></div>')
