@@ -14727,7 +14727,7 @@ function computeBidBoardRow(a) {
         var ok = true;
         if (type !== 'apt') { ok = false; row.warns.push('빌라는 검증 전이라 직접 확인'); }
         if (row.own < 3) { ok = false; row.warns.push('이 단지 같은 평형 거래가 ' + row.own + '건뿐이라 예상매도가 오차가 커요'); }
-        if (rare) { ok = false; row.warns.push(row.pop ? '거래 드문 단지(동 하위 40%, 최근 3년 중 거래 있던 분기 ' + row.pop.activeQuarterPct + '%) - 팔리는 데 오래 걸릴 수 있어 마진 2% 더 잡음' : '최근 3년 거래 ' + row.complex3y + '건 - 팔기 어려울 수 있어요'); }
+        if (rare) { ok = false; row.warns.push(row.pop ? '거래 드문 단지(동 하위 40%, ' + (row.pop.noRecent ? '최근 3년 거래 ' + row.complex3y + '건' : '최근 3년 중 거래 있던 분기 ' + row.pop.activeQuarterPct + '%') + ') - 팔리는 데 오래 걸릴 수 있어 마진 2% 더 잡음' : '최근 3년 거래 ' + row.complex3y + '건 - 팔기 어려울 수 있어요'); }
         else if (!active) { ok = false; row.warns.push('거래가 많은 단지는 아니에요(3년 ' + row.complex3y + '건)'); }
         else if (row.pop && !popular && row.pop.activeQuarterPct < 70) { ok = false; row.warns.push('인기 중간 단지 - 최근 3년 중 거래 있던 분기 ' + row.pop.activeQuarterPct + '%'); }
         if (row.risk && row.risk.level === '높음') { ok = false; row.warns.push('지역 6개월 하락 위험 높음'); }
@@ -14905,7 +14905,7 @@ function renderBidBoardRow(r) {
     var popCell = r.pending ? '' : (r.pop
         ? '<span class="bb-pill ' + (r.pop.tier === '상위20%' ? 'good' : (r.pop.tier === '하위40%' ? 'bad' : '')) + '">' + (r.pop.tier === '상위20%' ? '🔥 인기 상위 20%' : (r.pop.tier === '하위40%' ? '거래 드묾(하위 40%)' : '인기 중간')) + '</span>'
             + (r.lf && r.lf.isLeader ? ' <span class="bb-pill lead">👑 대장</span>' : '')
-            + (r.pop.noRecent ? '<div class="bb-sub">최근 3년 거래 없음</div>' : '<div class="bb-sub">동 ' + r.pop.rankInDong + '위/' + r.pop.complexesInDong + '단지 · 3년 ' + r.pop.trades3y + '건</div>')
+            + (r.pop.noRecent ? '<div class="bb-sub">' + (r.complex3y ? '최근 3년 거래 ' + r.complex3y + '건뿐' : '최근 3년 거래 없음') + '</div>' : '<div class="bb-sub">동 ' + r.pop.rankInDong + '위/' + r.pop.complexesInDong + '단지 · 3년 ' + r.pop.trades3y + '건</div>')
             + '<div class="bb-sub">분기마다 거래 ' + r.pop.activeQuarterPct + '%</div>'
         : ((r.lf ? (r.lf.isLeader ? '<span class="bb-pill lead">👑 대장</span>' : '<span class="bb-pill">동 ' + r.lf.rank + '위</span>') : '')
             + '<div class="bb-sub">3년 거래 ' + (r.complex3y || 0) + '건' + (r.complex3y >= 20 ? ' · 활발' : (r.complex3y < 6 ? ' · 드묾' : '')) + '</div>'));
