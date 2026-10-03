@@ -3182,7 +3182,7 @@ export default async function handler(req, res) {
         const have = new Set(series.map((x) => x[0]));
         const gu = toks[1];
         for (const oldC1 of ['13102871087A.0006', '13102871087A.0014']) {
-          const list = await fetchKosisRaw(UNSOLD_TBL.tblId, UNSOLD_TBL.orgId, oldC1, 'ALL', 'M', '1', { objL2: 'ALL', numOfRows: 500 });
+          const list = await fetchKosisRaw(UNSOLD_TBL.tblId, UNSOLD_TBL.orgId, oldC1, 'ALL', 'M', '6', { objL2: 'ALL', numOfRows: 2000 }); // 최신월(통합 후)엔 옛 코드 자료가 없어 최근 6개월로 이름 목록을 받음
           const hit = (list.items || []).find((it) => [gu, gu + '시', gu + '군', gu + '구'].includes(String(it.C2_NM || '').trim()));
           if (!hit) continue;
           const hist = await fetchKosisRaw(UNSOLD_TBL.tblId, UNSOLD_TBL.orgId, oldC1, 'ALL', 'M', '120', { objL2: hit.C2, numOfRows: 500 });
