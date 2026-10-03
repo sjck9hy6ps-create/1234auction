@@ -58,7 +58,7 @@ async function fetchDistinctRegions(table) {
 async function warmOneRegion(lawdCd, regionName) {
   const url = `${SITE_URL}/api/get-house?lawdCd=${lawdCd}&skipRealtime=1`;
   try {
-    const res = await fetch(url, { signal: AbortSignal.timeout(30000) });
+    const res = await fetch(url, { signal: AbortSignal.timeout(60000) });
     if (!res.ok) {
       console.error(`❌ [${regionName} / ${lawdCd}] 실패: HTTP ${res.status}`);
       return false;
@@ -77,25 +77,12 @@ async function main() {
   console.log('🌙 get-house 캐시 웜업 시작:', new Date().toISOString());
   console.log('SITE_URL:', SITE_URL);
 
-  const [aptRegions, villaRegions] = await Promise.all([
-    fetchDistinctRegions('house_trades'),
-    fetchDistinctRegions('villa_trades'),
-  ]);
-  const allRegions = new Set([...aptRegions, ...villaRegions]);
-  console.log(`📍 실거래 데이터가 있는 지역: ${allRegions.size}곳`);
-
-  // region명 → lawdCd 역매핑 (get-house.js가 쓰는 것과 동일한 LAWD_CODES 기준)
+  // ⚠️ 2026-10: 예전엔 house_trades/villa_trades의 region 컬럼을 1,000행씩 전부 훑어서 "데이터 있는
+  // 지역"을 골랐는데, 9년치 백필로 수백만 행이 되면서 이 단계만 수십 분이 걸림 - 수집 대상 지역
+  // 목록(LAWD_CODES) 전체를 그대로 예열함(데이터 없는 지역은 빈 응답이라 부담 없음).
   const targets = [];
-  const unmatched = [];
-  allRegions.forEach(regionName => {
-    const info = LAWD_CODES.find(r => r.name === regionName);
-    if (info) targets.push({ lawdCd: info.code, regionName });
-    else unmatched.push(regionName);
-  });
-
-  if (unmatched.length) {
-    console.warn(`⚠️  LAWD_CODES에서 매칭되지 않은 지역명 ${unmatched.length}곳 (예열 건너뜀):`, unmatched.slice(0, 10));
-  }
+  const seen = new Set();
+  LAWD_CODES.forEach(r => { if (!seen.has(r.code)) { seen.add(r.code); targets.push({ lawdCd: r.code, regionName: r.name }); } });
 
   console.log(`🎯 예열 대상: ${targets.length}개 지역\n`);
 

@@ -19,7 +19,12 @@ const APT_API_KEY = process.env.PUBLIC_DATA_API_KEY;
 // ════════════════════════════════════
 const REDIS_URL = process.env.UPSTASH_REDIS_URL;
 const REDIS_TOKEN = process.env.UPSTASH_REDIS_TOKEN;
-const CACHE_TTL_SECONDS = 10 * 60 * 60; // 10시간
+// ⚠️ 2026-10(로딩속도 개선): 10시간 → 8일. 거래 DB는 매주 월요일에만 수집되고(이번 달 신고분은
+// 캐시와 별개로 방문 때마다 실시간으로 합쳐짐), 매주 화요일 데이터 점검 직후 전 지역 캐시를 새로
+// 채우므로(data-health.yml → warmup-house-cache.mjs) 10시간마다 버릴 이유가 없음 - 예전엔 하루 중
+// 첫 방문마다 DB를 다시 긁느라 지역에 따라 3~10초씩 걸렸음. CSV 대량 업로드 후엔 backup.html의
+// "캐시 전체 삭제"가 그대로 동작함.
+const CACHE_TTL_SECONDS = 8 * 24 * 60 * 60;
 // ⚠️ 2026-10(사용자 요청: "배지 로딩속도를 확연하게 높여줘") - 실측: 가평(0.5MB)·성남(4.6MB)은
 // 캐시가 돼서 0.15~0.6초인데, 부천(11MB)·강남(9MB)처럼 큰 지역은 원본 JSON 그대로는 Redis 저장/
 // 조회(요청 크기 상한·3초 제한)에 걸려 매번 캐시를 못 쓰고 DB를 다시 긁느라 3~7초(바쁠 땐 18초)가

@@ -16,7 +16,7 @@ permissions:
 jobs:
   check:
     runs-on: ubuntu-latest
-    timeout-minutes: 120
+    timeout-minutes: 180
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -34,6 +34,16 @@ jobs:
           SITE_URL: ${{ secrets.SITE_URL }}
           COLLECT_PROXY_SECRET: ${{ secrets.COLLECT_PROXY_SECRET }}
         run: node scripts/check-data-health.mjs
+      - name: 지도 지역 데이터 캐시 새로 채우기(로딩속도용)
+        # 월요일 주간 수집 + 위 자동 재수집이 끝난 데이터로 전 지역 get-house 캐시(8일 보관)를 새로 채움.
+        # 이게 있어야 지도 첫 방문도 DB를 다시 긁지 않고 0.5초 안팎으로 뜸(api/get-house.js 참고).
+        if: always()
+        continue-on-error: true
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          SITE_URL: https://1234auction.vercel.app
+        run: node scripts/warmup-house-cache.mjs
       - name: 점검 결과 저장(앱 배너용)
         if: always()
         run: |
