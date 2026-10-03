@@ -3117,11 +3117,14 @@ function isPointInGeometry(lat, lon, geometry) {
 /* 지도 idle 때마다(법정동 경계선 호버 모드 on/off와 무관하게 항상) 호출됨.
    현재 지도 중심의 법정동을 알아내고, 그 동과 경계가 닿은 인접 동들의 폴리곤을
    모아 currentDongAllowedGeoms에 저장 - 실제 필터링은 filterAptListToDongArea가 함 */
+var currentDongAreaPending = null;
 async function updateCurrentDongArea(lat, lon) {
     // 300m 이내로만 움직였으면 동이 바뀌었을 가능성이 낮으므로 재계산 생략
     if (currentDongAreaLastLat !== null
         && getDistance(lat, lon, currentDongAreaLastLat, currentDongAreaLastLon) < 300) return;
-    if (currentDongAreaUpdating) return; // 이미 계산 중이면 다음 idle 때 다시 시도
+    // ⚠️ 2026-10: 계산 중에 지도를 옮기면 예전엔 그냥 건너뛰어서, 첫 화면(서울) 계산이 늦게 끝나는 동안 다른 지역으로
+    // 옮기면 "현재동+인접동" 필터가 첫 위치에 굳어 새 지역 배지가 전부 숨겨졌음 - 끝난 뒤 마지막 위치로 다시 계산함.
+    if (currentDongAreaUpdating) { currentDongAreaPending = [lat, lon]; return; }
     currentDongAreaLastLat = lat; currentDongAreaLastLon = lon;
     currentDongAreaUpdating = true;
     try {
@@ -3164,6 +3167,10 @@ async function updateCurrentDongArea(lat, lon) {
         /* 실패해도 조용히 무시 - 기존 필터 상태 유지 */
     } finally {
         currentDongAreaUpdating = false;
+        if (currentDongAreaPending) {
+            var _p = currentDongAreaPending; currentDongAreaPending = null;
+            setTimeout(function() { updateCurrentDongArea(_p[0], _p[1]).then(function() { redrawMarkers(); }); }, 0);
+        }
     }
 }
 /* 좌표를 아는 매물만 "현재동+인접동" 영역 안에 있는지 확인해서 거름 - 좌표를 아직
