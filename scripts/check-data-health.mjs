@@ -16,6 +16,8 @@
 // 점검 2) 지역코드 검증: 코드 목록의 지역명을 카카오 주소검색에 넣어 나오는 실제 법정동코드와
 //         비교 - 행정구역 개편으로 코드가 바뀌거나 목록이 밀리면 바로 잡힘. 이건 자동으로 고치면
 //         다른 지역 데이터가 섞일 위험이 있어 고치지 않고 "확인 필요"로 남김.
+// 점검 3) 읍·면 위치 검증: 최근 3개월 거래의 "지역 이름 + 읍·면"이 실제로 그 지역에 있는지 카카오로
+//         확인 - 코드가 맞아도 옆 지역 거래가 섞여 들어온 경우(2026-10 양평→여주 등)를 잡음. 자동 수정 안 함.
 //
 // 결과는 public/data-health.json에 쉬운 말로 저장(워크플로가 커밋 → 앱 상단 배너가 읽음).
 // 자동 복구 못 한 문제가 남으면 작업을 "실패"로 끝내 GitHub 메일 알림도 함께 감.
@@ -158,6 +160,60 @@ if (!KAKAO_KEY) {
   const msg = `지역코드 검증: ${targets.length}개 중 불일치 ${bad}곳`;
   console.log((bad ? '❌ ' : '✅ ') + msg);
   lines.push(`- ${bad ? '❌' : '✅'} ${msg}`);
+
+  // ── 점검 3: 읍·면이 엉뚱한 지역 이름 아래 저장됐는지 (2026-10-03 추가) ──
+  // 2026-10 실제 사고: 지역코드 목록은 맞는데도 2025~2026 빌라 거래 일부가 옆 지역 이름으로 저장돼
+  // 있었음(양평군 → '경기 여주시', 연천군 → '경기 양주시', 가평군 → '경기 포천시') - 이름이 틀리니
+  // 지도에서 위치를 못 찾아 배지가 안 떴고, 원인은 끝내 못 찾음. 그래서 최근 3개월 거래의
+  // "지역 이름 + 읍·면"을 카카오 주소검색에 넣어, 그 읍·면이 실제로 그 지역에 있는지 확인함.
+  // (같은 이름 읍·면이 여러 지역에 있는 경우 - 예: 양주 남면/가평 북면 - 도 지역 이름까지 넣어
+  //  검색하므로 정상이면 그대로 통과함.) 잘못 옮기면 다른 지역 데이터가 섞이므로 자동으로
+  //  고치지 않고 "확인 필요"로 남김(고칠 땐 sql/fix-gyeonggi-villa-region-labels.sql 방식).
+  const emFrom = toInt(ymAdd(cur.y, cur.m, -3));
+  const pairs = new Map(); // "region|읍면" → { region, em, tables:Set, cnt }
+  for (const t of TABLES) {
+    await pool(regions, async (region) => {
+      for (let from = 0; ; from += 1000) {
+        const { data, error } = await supabase.from(t.table).select('dong')
+          .eq('region', region).gte('deal_date', emFrom)
+          .or('dong.like.*읍 *,dong.like.*면 *').range(from, from + 999);
+        if (error || !data) break;
+        for (const { dong } of data) {
+          const em = String(dong || '').trim().split(/\s+/)[0];
+          if (!/[읍면]$/.test(em)) continue;
+          const k = region + '|' + em;
+          if (!pairs.has(k)) pairs.set(k, { region, em, tables: new Set(), cnt: 0 });
+          const p = pairs.get(k); p.tables.add(t.name); p.cnt++;
+        }
+        if (data.length < 1000) break;
+      }
+    });
+  }
+  const pairList = [...pairs.values()].filter(p => p.region !== '세종특별자치시');
+  const emRes = await pool(pairList, async (p) => {
+    const sigungu = fullName(p.region).split(' ').slice(1); // 예: ['여주시'] / ['수원시','장안구']
+    for (let attempt = 1; attempt <= 2; attempt++) {
+      try {
+        const url = `https://dapi.kakao.com/v2/local/search/address.json?query=${encodeURIComponent(fullName(p.region) + ' ' + p.em)}`;
+        const j = await (await fetch(url, { headers: { Authorization: `KakaoAK ${KAKAO_KEY}` } })).json();
+        if (!j.documents) continue; // 카카오 오류 → 재시도
+        const ok = j.documents.some(d => {
+          const a = (d.address && d.address.address_name) || d.address_name || '';
+          return a.includes(p.em) && sigungu.every(s => a.includes(s));
+        });
+        return { ...p, ok, checked: true };
+      } catch (e) { await sleep(1000); }
+    }
+    return { ...p, ok: true, checked: false }; // 확인 못 하면 넘어감(다음 주에 다시 봄)
+  });
+  const misplaced = emRes.filter(r => !r.ok);
+  for (const r of misplaced) {
+    attention.push(`지역 이름 섞임 · ${r.region}: '${r.em}'은(는) 이 지역에 없는 읍·면인데 최근 거래 ${r.cnt}건(${[...r.tables].join(', ')})이 이 이름으로 저장돼 있어요(옆 지역 거래가 잘못 들어온 것 같아요 - 지도 배지·시세가 틀어질 수 있어요)`);
+  }
+  const unchecked = emRes.filter(r => !r.checked).length;
+  const emMsg = `읍·면 위치 검증(최근 3개월): ${pairList.length}개 중 다른 지역 섞임 ${misplaced.length}곳` + (unchecked ? ` (확인 못 함 ${unchecked}곳)` : '');
+  console.log((misplaced.length ? '❌ ' : '✅ ') + emMsg);
+  lines.push(`- ${misplaced.length ? '❌' : '✅'} ${emMsg}`);
 }
 
 // ── 결과 저장(앱 배너용) + 요약 ──
