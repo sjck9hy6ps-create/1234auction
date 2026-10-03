@@ -1,0 +1,27 @@
+# 부동산 사이클·후발주자(과거 이력) 분석 - 2026-10 (analyze-cycle.py 상단 설명 참고)
+# 2017-09~ 전체 아파트 실거래로 전국·시도·시군구 가격지수/상승기·하락기/현재 위치를 계산하고,
+# 과거 사이클에서 대장아파트를 따라간 후발주자 이력(β·지연·현재 갭)을 단지별로 저장함.
+# 매주 월요일 주간 수집·AVM 학습 뒤(화요일 03:00 KST)에 자동 실행.
+name: Analyze market cycle
+
+on:
+  workflow_dispatch: {}
+  schedule:
+    - cron: '0 18 * * 1'
+
+jobs:
+  analyze:
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install pandas numpy requests
+      - name: 사이클·후발주자 분석
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          PYTHONUNBUFFERED: '1'
+        run: python analyze-cycle.py
