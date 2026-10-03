@@ -14126,6 +14126,26 @@ function cycleSparkSvg(series, turning, color) {
     return '<svg viewBox="0 0 ' + W + ' ' + H + '" style="width:100%;height:80px;"><path d="' + d + '" fill="none" stroke="' + color + '" stroke-width="1.6"/>' + marks
         + '<text x="5" y="10" font-size="9" fill="#999">' + series[0][0] + '</text><text x="' + (W - 5) + '" y="10" font-size="9" fill="#999" text-anchor="end">' + series[series.length - 1][0] + '</text></svg>';
 }
+// 2026-10(사용자 기준 "수도권: 전세가율·대장그룹 선행 / 지방: 전세가율·미분양 / 거래량은 공통"으로 검증한 결과):
+// 지표 구간별 "6개월 뒤 2%+ 하락 비율"이 뚜렷이 갈린 조건만 모아 만든 규칙(analyze-cycle-forecast.py risk_flags).
+function buildRiskBlockHtml(risk, regionName) {
+    if (!risk || !risk.current) return '';
+    var c = risk.current, bt = risk.backtest || {};
+    var color = c.level === '높음' ? '#c62828' : (c.level === '보통' ? '#ef6c00' : '#2e7d32');
+    var lvStat = bt[c.level], all = bt['전체'];
+    var html = '<div style="margin-top:10px;border:1.5px solid ' + color + ';border-radius:8px;padding:8px 10px;">'
+        + '<b>⚠️ 6개월 뒤 하락 위험: <span style="color:' + color + ';">' + c.level + '</span></b> <span style="color:#999;font-size:10px;">(' + (regionName || '') + ' · ' + c.asOf + ' 기준 · ' + risk.segment + ' 규칙)</span>';
+    if (c.negative && c.negative.length) html += '<div style="font-size:11px;color:#c62828;">하락 신호: ' + c.negative.join(', ') + '</div>';
+    if (c.positive && c.positive.length) html += '<div style="font-size:11px;color:#2e7d32;">상승 신호: ' + c.positive.join(', ') + '</div>';
+    var facts = [];
+    if (c.volRatioPct != null) facts.push('거래량(최근 6개월, 직전 1년 대비) ' + (c.volRatioPct > 0 ? '+' : '') + c.volRatioPct + '%');
+    if (c.jeonseRatioPct != null) facts.push('전세가율 ' + c.jeonseRatioPct + '%' + (c.jeonseRatioChgPp != null ? '(1년 ' + (c.jeonseRatioChgPp > 0 ? '+' : '') + c.jeonseRatioChgPp + '%p)' : ''));
+    if (c.unsoldYoyPct != null) facts.push('미분양 1년 ' + (c.unsoldYoyPct > 0 ? '+' : '') + c.unsoldYoyPct + '%');
+    if (facts.length) html += '<div style="font-size:10.5px;color:#666;">' + facts.join(' · ') + '</div>';
+    if (lvStat && all) html += '<div style="font-size:10px;color:#888;margin-top:2px;">과거(2017~) 같은 위험 등급일 때 6개월 뒤 2% 넘게 떨어진 비율 <b>' + lvStat.dropOver2PctShare + '%</b>(평균 '
+        + (lvStat.avgFwd6mPct > 0 ? '+' : '') + lvStat.avgFwd6mPct + '%) · 전체 평균 ' + all.dropOver2PctShare + '%</div>';
+    return html + '</div>';
+}
 async function openCyclePanel() {
     var box = document.getElementById('cycle-panel');
     if (!box) {
@@ -14151,6 +14171,7 @@ async function openCyclePanel() {
     html += block('전국', d.national, '#424242');
     if (d.sido) html += block(d.sido.name + ' 전체', d.sido, '#6a1b9a');
     if (d.region) html += block(d.region.region, d.region, '#00897b');
+    html += buildRiskBlockHtml(d.risk, d.region && d.region.region);
     html += '<div style="margin-top:8px;background:#fff8e1;color:#8a6d00;border-radius:6px;padding:6px 8px;font-size:11px;">ℹ️ 사이클 위치는 참고용이에요. 과거 자료로 "지금 위치 → 6~12개월 뒤 가격"을 맞혀 봤더니 "변화 없음"으로 보는 것보다 정확하지 않아서, 예상매도가에는 반영하지 않아요.</div>';
     var fol = (d.region && d.region.followers) || [];
     var top = fol.filter(function(f) { return f.isFollower && typeof f.expectedCatchupPct === 'number' && f.expectedCatchupPct >= 0.5; })

@@ -3369,7 +3369,7 @@ export default async function handler(req, res) {
     try {
       let region = req.query.region || null;
       if (req.query.lawdCd) { const f = LAWD_CODES.find((r) => r.code === String(req.query.lawdCd)); if (f) region = f.name; }
-      const ids = ['cycle|__summary__'].concat(region ? ['cycle|' + region] : []);
+      const ids = ['cycle|__summary__', 'cycle|__forecast__'].concat(region ? ['cycle|' + region] : []);
       const { data, error } = await supabase.from('leader_follower_cache').select('id,payload,fetched_at').in('id', ids);
       if (error) return res.status(500).json({ error: error.message });
       const sum = (data || []).find((r) => r.id === 'cycle|__summary__');
@@ -3377,12 +3377,22 @@ export default async function handler(req, res) {
       if (!sum) return res.status(404).json({ error: '사이클 분석 결과가 아직 없습니다(analyze-cycle 워크플로 실행 필요).' });
       const p = sum.payload || {};
       const sidoKey = region ? String(region).split(' ')[0] : null;
+      // 6개월 하락 위험(analyze-cycle-forecast.py) - 수도권/지방 별도 규칙
+      const fc = ((data || []).find((r) => r.id === 'cycle|__forecast__') || {}).payload || null;
+      const segName = region && /^(서울|인천|경기)/.test(region) ? '수도권' : '지방';
+      const segRes = fc && fc.segments ? fc.segments[segName] : null;
+      const risk = segRes ? {
+        segment: segName, generatedAt: fc.generatedAt,
+        current: region && segRes.currentRisk ? (segRes.currentRisk[region] || null) : null,
+        backtest: segRes.riskRuleBacktest || null,
+      } : null;
       return res.status(200).json({
         generatedAt: p.generatedAt, dataFrom: p.dataFrom, dataTo: p.dataTo,
         national: p.national, sido: sidoKey && p.sido ? { name: sidoKey, ...(p.sido[sidoKey] || {}) } : null,
         forecastValidation: p.forecastValidation, followerValidation: p.followerValidationStrict || p.followerValidation,
         followerCatchupCoefUsed: p.followerCatchupCoefUsed,
         region: reg ? reg.payload : null,
+        risk,
       });
     } catch (err) {
       return res.status(500).json({ error: err.message });
