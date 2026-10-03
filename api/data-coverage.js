@@ -3159,6 +3159,30 @@ export default async function handler(req, res) {
       return res.status(500).json({ error: err.message });
     }
   }
+  if (req.query.mode === 'unsoldHistory') {
+    // 2026-10(사이클 예측 검증용, analyze-cycle-forecast.py): 시군구(LAWD 지역명) 미분양 월별 이력(최대 120개월).
+    // 다구 시("경기 수원 영통구")는 미분양 표가 시 전체 합계라 "수원시"로 찾음 - 프론트와 같은 규칙.
+    res.setHeader('Cache-Control', 's-maxage=86400, stale-while-revalidate=172800');
+    try {
+      const region = String(req.query.region || '').trim();
+      const toks = region.split(/\s+/);
+      if (toks.length < 2) return res.status(400).json({ error: 'region(예: 전남광주 서구)이 필요합니다.' });
+      let resolved = null;
+      for (const cand of [toks[1], toks[1] + '시', toks[1] + '군', toks[1] + '구']) {
+        const r = resolveUnsoldCode(toks[0], cand);
+        if (r && r.matchedLevel === 'sigungu') { resolved = r; break; }
+      }
+      if (!resolved) resolved = resolveUnsoldCode(toks[0], null);
+      if (!resolved || !resolved.c2) return res.status(404).json({ error: '미분양 코드를 찾지 못했습니다.', region });
+      const raw = await fetchKosisRaw(UNSOLD_TBL.tblId, UNSOLD_TBL.orgId, resolved.c1, 'ALL', 'M', String(Math.min(120, parseInt(req.query.months, 10) || 120)), { objL2: resolved.c2, numOfRows: 500 });
+      if (raw.error) return res.status(502).json({ error: raw.error });
+      const series = (raw.items || []).map((it) => [String(it.PRD_DE), parseFloat(it.DT)]).filter((x) => Number.isFinite(x[1]))
+        .sort((a, b) => a[0].localeCompare(b[0]));
+      return res.status(200).json({ region, matchedLevel: resolved.matchedLevel, matchedName: resolved.matchedName, series });
+    } catch (err) {
+      return res.status(500).json({ error: err.message });
+    }
+  }
   if (req.query.mode === 'unsoldComplex') {
     // 전국 목록을 하루 1회만 갱신하면 되는 데이터라 CDN 캐시도 길게 둠.
     res.setHeader('Cache-Control', 's-maxage=21600, stale-while-revalidate=43200');
