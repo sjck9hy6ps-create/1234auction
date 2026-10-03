@@ -1222,6 +1222,8 @@ tr:hover td { background:#fffde7; }
                 <button type="button" class="modal-btn btn-purple est-apply-btn" onclick="applyEstRow4()">적용</button>
             </div>
             <div class="est-sub" id="est-row-4-status">&nbsp;</div>
+            <!-- 2026-10: 예상매도가 불확실성을 반영한 추천 목표마진(renderEstimateSummary가 채움) -->
+            <div class="est-sub" id="est-risk-margin"></div>
 
             <div class="est-row"><span class="est-num">⑤</span><span class="est-label" style="font-weight:bold;">목표입찰가</span></div>
             <div style="font-size:11px;color:#777;margin:2px 0 3px;">매도가 기준</div>
@@ -14038,12 +14040,40 @@ function solveImpliedTargetFromBid(a, marginValue) {
      않고 각자 "적용" 버튼을 눌러야 아래 예상마진분석(margin-result-box)에 반영됨 - 매물재고
      섹션과 같은 이유(무엇이 실제로 반영됐는지 명확히 하기 위함).
 ════════════════════════════════════ */
+// ⚠️ 2026-10(사용자 요청 "예상입찰가 결과 검증"): 전남·광주 아파트 낙찰물건 281건(실제 재매도 확인)으로
+// "입찰일 30일 전 자료로 낸 예상매도가 → 목표마진 빼고 입찰했다면?"을 시뮬레이션함. 고정 2,000만 마진은
+// 낙찰 19%·낙찰 후 손실 15%·총 순이익 4.4억이었는데, 낙찰되는 건 대체로 예상매도가를 높게 본 물건이라
+// (낙찰된 경우 예측이 평균 +3.3% 높았음 - "승자의 저주") 마진이 예측 오차를 덮어야 함.
+// "500만 + 예상매도가 × (자기 단지 같은 평형 거래 3건↑면 5%, 아니면 9%)"는 낙찰 29%·손실 16%·총 순이익 7.5억.
+// 아파트만 검증됨 - 빌라는 아직 추천하지 않음.
+function riskMarginFor(predictedSale, ownTrades) {
+    if (!predictedSale) return null;
+    var rate = ownTrades >= 3 ? 0.05 : 0.09;
+    return { margin: Math.round((500 + predictedSale * rate) / 10) * 10, rate: rate };
+}
+function renderRiskMarginSuggestion(predictedSale) {
+    var el = document.getElementById('est-risk-margin');
+    if (!el) return;
+    var propType = (document.getElementById('a-prop-type') || {}).value;
+    if (propType !== 'apt' || !predictedSale) { el.innerHTML = ''; return; }
+    var ctx = getAuctionAddressContext();
+    var pyung = parseFloat(document.getElementById('a-pyung').value) || null;
+    var own = countOwnComplexTrades(ctx.dong, fullBunjiFromAddr(document.getElementById('a-addr').value, ctx.dong, ctx.bunji), 'apt', pyung);
+    var r = riskMarginFor(predictedSale, own);
+    if (!r) { el.innerHTML = ''; return; }
+    el.innerHTML = '<span style="color:#6a1b9a;">🎯 추천 목표마진 <b>' + toEok(String(r.margin)) + '</b> '
+        + '<span style="color:#888;">(500만 + 예상매도가의 ' + Math.round(r.rate * 100) + '% - '
+        + (own >= 3 ? '이 단지 같은 평형 거래 ' + own + '건이라 예측이 비교적 정확' : '이 단지 비교 거래가 적어 예측 오차가 큼') + ')</span></span> '
+        + '<button type="button" class="modal-btn btn-gray" style="font-size:10px;padding:2px 6px;" onclick="document.getElementById(\'a-comp-target-margin\').value=' + r.margin + ';applyEstRow4();">④에 적용</button>'
+        + '<div style="color:#999;font-size:10px;">낙찰되는 물건은 대체로 시세를 높게 본 경우라, 마진이 예측 오차를 덮도록 잡은 값이에요(전남·광주 낙찰물건 281건 검증: 고정 2천만 대비 낙찰 1.5배·총 순이익 1.7배, 손실 비율은 비슷).</div>';
+}
 function renderEstimateSummary() {
     // ① 예상매도가 = 호가·매물재고 반영값(있으면) 우선, 없으면 비교물건 실거래 기반값
     var marketAdj = calcMarketAdjustedSalePrice();
     var est = getCompEstValue();
     var predictedSale = (marketAdj && marketAdj.blendedValue) ? marketAdj.blendedValue : (est ? est.estValue : null);
     window.__predictedSaleValue = predictedSale;
+    renderRiskMarginSuggestion(predictedSale);
     var row1El = document.getElementById('est-row-1-value');
     if (row1El) row1El.innerText = predictedSale ? toEok(String(predictedSale)) : '데이터 부족';
 
