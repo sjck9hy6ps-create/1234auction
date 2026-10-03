@@ -1,0 +1,23 @@
+# 사이클 → 6개월 뒤 가격변화 예측 검증(수도권/지방 분리) - 2026-10 (analyze-cycle-forecast.py 상단 설명 참고)
+name: Analyze cycle forecast
+
+on:
+  workflow_dispatch: {}
+
+jobs:
+  forecast:
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install pandas numpy requests
+      - name: 예측 검증
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          SITE_URL: https://1234auction.vercel.app
+          PYTHONUNBUFFERED: '1'
+        run: python analyze-cycle-forecast.py
