@@ -82,15 +82,6 @@ async function main() {
     if (ok) success++; else fail++;
     await sleep(DELAY_MS);
   }
-  // ⚠️ 2026-10: 수도권(서울·인천·경기)은 빌라 순위(type=villa)도 미리 계산해 둠 - 지도의 빌라 매매배지·
-  // 입찰희망 배지에 건물 순위를 표시하는데(index.html villaRankMap), 캐시가 없으면 첫 조회가 20초 넘게 걸림.
-  const villaTargets = targets.filter(r => /^(서울|인천|경기)/.test(r));
-  console.log(`\n🏘️ 빌라 순위 예열: ${villaTargets.length}개 지역`);
-  for (const region of villaTargets) {
-    const ok = await warmOneRegion(region, 'villa');
-    if (ok) success++; else fail++;
-    await sleep(DELAY_MS);
-  }
 
   console.log(`\n🌙 웜업 종료: 성공 ${success} / 실패 ${fail} / 전체 ${targets.length}`);
 }
