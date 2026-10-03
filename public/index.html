@@ -9103,7 +9103,8 @@ function renderAvmEstimateBox(data) {
         // ⚠️ 2026-08(빌라 반경기반 그룹핑): 'grid'는 villa_v1 전용 - 법정동 대신 이 물건 좌표
         // 기준 약 1km 반경 격자 내 실거래로 계산됐다는 뜻(data-coverage.js avmPredict 참고).
         // dong은 이제 빌라 기준으로는 "격자 표본부족으로 법정동 단위 승격" 케이스가 됨.
-        var confNote = data.effectUsed === 'grid' ? '반경 약 1km 이내 실거래 기준'
+        var confNote = data.effectUsed === 'building' ? '이 건물 실거래 기준'
+            : data.effectUsed === 'grid' ? '반경 약 1km 이내 실거래 기준'
             : data.effectUsed === 'danji' ? '이 단지 기준'
             : data.effectUsed === 'dong' ? (isVillaModel ? '이 법정동 기준(반경 1km 내 표본부족)' : '이 법정동 기준(단지 표본부족)')
             : data.effectUsed === 'region_fallback' ? '시군구 평균 기준(동 표본부족)'
@@ -9219,7 +9220,7 @@ function refreshAvmEstimateIfNeeded() {
         // 법정동 대신 좌표 기반 격자(약 1km)로 1차 그룹핑하도록 바뀌어(data-coverage.js
         // getAvmEstimate 참고), 이 물건이 정확히 어느 격자에 속하는지 서버가 계산하려면
         // 좌표가 필요함. 아파트는 이 값을 안 씀(danji 고정효과를 그대로 씀)이라 무해함.
-        fetch('/api/data-coverage?mode=avmEstimate&type=' + encodeURIComponent(propType)
+        fetch('/api/data-coverage?mode=avmEstimate&ver=v2&type=' + encodeURIComponent(propType)
             + '&lawdCd=' + encodeURIComponent(lawdCd) + '&dong=' + encodeURIComponent(dong)
             + (danji ? '&danji=' + encodeURIComponent(danji) : '')
             + '&size=' + sizeM2 + '&floor=' + floor + '&buildYear=' + buildYear

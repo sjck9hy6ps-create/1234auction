@@ -53,11 +53,11 @@ jobs:
           # "멈춘 것 같다"고 오인한 원인으로 추정). PYTHONUNBUFFERED=1로 줄단위 즉시 flush시켜
           # 로그가 실시간으로 보이게 함 - 스크립트 동작 자체는 전혀 안 바뀜.
           PYTHONUNBUFFERED: '1'
-        run: python train-avm.py apt
+        run: python train-avm.py apt v2
 
       - name: Train AVM (villa)
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
           PYTHONUNBUFFERED: '1'
-        run: python train-avm.py villa
+        run: python train-avm.py villa v2

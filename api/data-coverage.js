@@ -1501,7 +1501,7 @@ const AVM_MODEL_ID_BY_TYPE = { apt: 'apt_v1', villa: 'villa_v1' };
 // ⚠️ 2026-10(AVM v2 - train-avm.py 상단 v2 주석 참고): 시군구×분기 시점효과 + 최근 4년 학습 + 빌라 건물 단위
 // 효과 + 시간분할 검증. 검증이 끝날 때까지 v1과 나란히 두고 ?ver=v2로만 호출해 비교함 - 검증 통과 후
 // AVM_DEFAULT_VERSION만 'v2'로 바꾸면 전체 전환.
-const AVM_DEFAULT_VERSION = 'v1';
+const AVM_DEFAULT_VERSION = 'v2'; // 2026-10-03 검증 통과(아파트 중앙오차 12.2%→5.9%, 빌라 15.9%→12.5%)
 function avmModelIdFor(type, ver) {
   const base = AVM_MODEL_ID_BY_TYPE[type];
   if (!base) return null;
