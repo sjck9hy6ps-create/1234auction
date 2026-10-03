@@ -14433,9 +14433,24 @@ function bidBoardDownRisk(lawd) {
     if (!c) return null;
     return { level: c.level, negative: c.negative || [], avgDropPct: hi && hi.avgFwd6mPct < 0 ? Math.round(-hi.avgFwd6mPct * 10) / 10 : 0 };
 }
+// 예전에 등록한 물건은 법정동코드(bCode)가 없는 경우가 많아(빌라 381건 중 8건만 있음) 좌표로 시군구 코드를 찾아 둠(저장은 안 함)
+function bidBoardLawdOf(a) { return a.bCode ? String(a.bCode).slice(0, 5) : (a._lawd || null); }
+function resolveBidBoardLawd(a) {
+    return new Promise(function(resolve) {
+        if (a.bCode || a._lawd || !a.lat || !a.lon) { resolve(); return; }
+        coord2RegionCodeCached(a.lon, a.lat, function(result, status) {
+            if (status === kakao.maps.services.Status.OK) {
+                for (var i = 0; i < result.length; i++) {
+                    if (result[i].region_type === 'B') { a._lawd = result[i].code.substring(0, 5); break; }
+                }
+            }
+            resolve();
+        });
+    });
+}
 function computeBidBoardRow(a) {
     var type = (a.propType === 'apt' || a.propType === 'villa') ? a.propType : null;
-    var lawd = a.bCode ? String(a.bCode).slice(0, 5) : null;
+    var lawd = bidBoardLawdOf(a);
     var bunjiFull = fullBunjiFromAddr(a.addr, a.dong, a.bunji);
     var altName = buildingNameFromAddr(a.addr, a.dong);
     var pyung = parseFloat(a.pyung) || null;
@@ -14447,7 +14462,7 @@ function computeBidBoardRow(a) {
         pyung: pyung, floor: cleanField(a.floor), minBid: minBid, appraisal: parseInt(a.appraisal) || 0,
         dday: a.bidDate ? calcAuctionDday(a.bidDate) : null, reasons: [], warns: []
     };
-    row.loaded = !lawd || !!dataCache[lawd];
+    row.loaded = !!(lawd && dataCache[lawd]);
     var est = type && a.lat && a.lon ? getAuctionWonEstimates(a) : null;
     row.sale = est && est.predictedSale ? est.predictedSale : null;
     row.saleSaved = !!(est && est.predictedSaleSource === 'saved');
@@ -14478,6 +14493,7 @@ function computeBidBoardRow(a) {
     var active = row.complex3y >= 20 || popular;
     var rare = row.complex3y < 6;
     if (!type) { row.verdict = 'nodata'; row.reasons.push('아파트·빌라만 계산해요'); }
+    else if (!a.lat || !a.lon) { row.verdict = 'nodata'; row.reasons.push('주소 위치를 못 찾았어요 - 상세에서 주소 확인'); }
     else if (!row.loaded) { row.verdict = 'nodata'; row.reasons.push('지역 자료를 아직 못 불러왔어요'); }
     else if (!row.sale) { row.verdict = 'nodata'; row.reasons.push('비교할 실거래가 부족해요'); }
     else if (!minBid) { row.verdict = 'nodata'; row.reasons.push('최저가가 없어요'); }
@@ -14514,18 +14530,23 @@ async function refreshBidBoard() {
     if (bidBoardRunning) return;
     bidBoardRunning = true;
     var cands = auctionList.filter(isBidBoardCandidate);
+    var rowsById = {};
+    bidBoardRows.forEach(function(r) { rowsById[r.id] = r; });
+    bidBoardRows = cands.map(function(a) { return rowsById[a.id] || { id: a.id, a: a, pending: true, region: bidBoardRegionLabel(a.addr), name: cleanField(a.name) || cleanField(a.addr) || '', dday: a.bidDate ? calcAuctionDday(a.bidDate) : null, verdict: 'nodata', reasons: ['계산 중...'], warns: [] }; });
+    renderBidBoard();
+    var noCode = cands.filter(function(a) { return !a.bCode && !a._lawd && a.lat && a.lon; });
+    for (var j = 0; j < noCode.length; j += 8) {
+        setBidBoardProgress('물건 위치 확인 중 ' + Math.min(j + 8, noCode.length) + '/' + noCode.length);
+        await Promise.all(noCode.slice(j, j + 8).map(resolveBidBoardLawd));
+    }
     var byLawd = {}, order = [];
     cands.forEach(function(a) {
-        var k = a.bCode ? String(a.bCode).slice(0, 5) : '_';
+        var k = bidBoardLawdOf(a) || '_';
         if (!byLawd[k]) { byLawd[k] = []; order.push(k); }
         byLawd[k].push(a);
     });
     // 이미 불러온 지역부터 - 첫 화면이 빨리 채워지게
     order.sort(function(x, y) { return (dataCache[y] ? 1 : 0) - (dataCache[x] ? 1 : 0); });
-    var rowsById = {};
-    bidBoardRows.forEach(function(r) { rowsById[r.id] = r; });
-    bidBoardRows = cands.map(function(a) { return rowsById[a.id] || { id: a.id, a: a, pending: true, region: bidBoardRegionLabel(a.addr), name: cleanField(a.name) || cleanField(a.addr) || '', dday: a.bidDate ? calcAuctionDday(a.bidDate) : null, verdict: 'nodata', reasons: ['계산 중...'], warns: [] }; });
-    renderBidBoard();
     var keepLawd = typeof lastLawdCd !== 'undefined' ? lastLawdCd : null;
     for (var i = 0; i < order.length; i++) {
         var lawd = order[i];
