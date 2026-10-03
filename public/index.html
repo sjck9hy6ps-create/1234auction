@@ -1246,7 +1246,8 @@ body.ui2 .al-opts input[type=checkbox] { margin:0; }
             <b>추천 입찰가</b> = 예상매도가(이 단지 최근 실거래 기준)에서 세금·비용과 <b>추천 목표마진</b>(예측 오차·지역 하락위험만큼)을 뺀 값이에요.
             <b style="color:#2e7d32;">✅ 추천</b>: 최저가로 사도 마진이 남고, 거래가 활발한 아파트, 예상매도가 믿을 만함, 지역 위험 낮음 ·
             <b style="color:#ef6c00;">🟡 검토</b>: 마진은 남지만 걸리는 점이 있음 ·
-            <b style="color:#c62828;">❌ 제외</b>: 이번 최저가로는 마진이 안 남음
+            <b style="color:#c62828;">❌ 제외</b>: 이번 최저가로는 마진이 안 남음 ·
+            <b style="color:#e65100;">🎯 기회</b>: 인기 단지인데 2번 이상 유찰(과거 낙찰자 손해 2%)
         </div>
         <div class="bb-tools">
             <span id="bb-tabs"></span>
@@ -1258,6 +1259,7 @@ body.ui2 .al-opts input[type=checkbox] { margin:0; }
                 <option value="verdict">판정 → 여유 큰 순</option><option value="date">입찰일 빠른 순</option><option value="room">여유 큰 순</option><option value="pop">거래량 순위 높은 순</option>
             </select>
             <label class="bb-chk"><input type="checkbox" onchange="setBidBoardFilter('popOnly', this.checked)"> 인기 상위 20% 단지만</label>
+            <label class="bb-chk" title="인기 상위 20% 단지인데 2번 이상 유찰된 물건 - 과거 낙찰자 손해 2%"><input type="checkbox" onchange="setBidBoardFilter('oppOnly', this.checked)"> 🎯 기회만(인기 단지 2회+ 유찰)</label>
             <label class="bb-chk"><input type="checkbox" onchange="setBidBoardFilter('showPast', this.checked)"> 오래 지난 입찰(45일+)도 보기</label>
         </div>
         <div id="bb-progress" style="display:none;"></div>
@@ -15037,6 +15039,25 @@ function computeBidBoardRow(a) {
         if (minBid < row.sale * 0.5) { ok = false; row.warns.push('최저가가 예상매도가의 절반도 안 돼요 - 지분·특수물건이거나 입력값 오류인지 확인'); }
         row.verdict = ok ? 'yes' : 'check';
     }
+    // ── 유찰 횟수별 기회/주의 (2026-10 전남·광주 낙찰 968건 실측) ──
+    // 인기 상위 20% 단지 · 2회+ 유찰: 낙찰가 = 예상매도가의 74.5%, 낙찰자 손해 2%(41건 중), 순이익 중앙 1,312만 → 기회
+    // 인기 상위 20% 단지 · 1회 유찰: 낙찰가 91%, 낙찰자 26%가 손해 → 경쟁 치열 / 신건: 낙찰가 106%, 40%가 손해
+    var ap0 = parseFloat(a.appraisal) || 0, mb0 = parseInt(a.minBid) || 0;
+    var r0 = ap0 && mb0 ? mb0 / ap0 : null;
+    var f0 = r0 == null ? null : (r0 >= 0.995 ? 0 : (matchReductionStep(r0).n || parseInt(a.failCount) || 1));
+    row.fails = f0 == null ? null : f0 + (row.assumedFail ? 1 : 0);
+    row.notes = [];
+    row.opportunity = false;
+    if (row.fails != null && type === 'apt' && row.verdict !== 'nodata') {
+        if (popular && row.fails >= 2) {
+            row.opportunity = true;
+            row.notes.push('🎯 기회: 인기 단지 ' + row.fails + '회 유찰 - 과거 같은 경우 낙찰자 손해 2%, 예상매도가의 75% 안팎에 낙찰');
+        } else if (popular && row.fails === 1) {
+            row.notes.push('⚔️ 경쟁 치열: 인기 단지 1회 유찰은 과거 낙찰자 26%가 손해 - 한 번 더 유찰되면 기회');
+        } else if (row.fails === 0) {
+            row.notes.push('⚠️ 신건: 시세보다 높게 낙찰되는 구간(과거 낙찰자 40%가 손해)');
+        }
+    }
     return row;
 }
 // ── 지도 배지에도 판정 표시(2026-10 사용자 요청) - 물건마다 판정을 기억해 두고, 입력값·지역 자료가 바뀔 때만 다시 계산 ──
@@ -15073,13 +15094,13 @@ function getBidVerdictForMarker(a) {
 }
 function bidVerdictKey(a) {
     var r = getBidVerdictForMarker(a);
-    return r ? r.verdict + (r.assumedFail ? 'A' : '') + (r.roomPct != null ? r.roomPct : '') : '';
+    return r ? r.verdict + (r.assumedFail ? 'A' : '') + (r.opportunity ? 'O' : '') + (r.roomPct != null ? r.roomPct : '') : '';
 }
 function bidVerdictShort(r) {
     if (!r) return null;
     var v = BID_BOARD_VERDICT[r.verdict];
     var room = r.roomPct == null ? '' : (r.roomPct >= 0 ? '여유 ' + r.roomPct + '%' : '부족 ' + Math.abs(r.roomPct) + '%');
-    return { label: (r.assumedFail ? '유찰되면 ' : '') + v.label, room: room, color: v.color, bg: v.bg };
+    return { label: (r.opportunity ? '🎯' : '') + (r.assumedFail ? '유찰되면 ' : '') + v.label, room: room, color: v.color, bg: v.bg, opportunity: r.opportunity };
 }
 var BID_BOARD_VERDICT = {
     yes:    { label: '✅ 추천', color: '#2e7d32', bg: '#e8f5e9', order: 0 },
@@ -15185,7 +15206,8 @@ function bidBoardVisibleRows() {
         if (!s.showPast && r.dday && r.dday.diffDays < -BID_RESULT_WAIT_DAYS) return false;
         if (s.region && r.region !== s.region) return false;
         if (s.type && r.a.propType !== s.type) return false;
-        if (s.popOnly && !r.popular) return false; // 평형대 등급이 있으면 그 평형대 기준 상위 20%
+        if (s.popOnly && !r.popular) return false;
+        if (s.oppOnly && !r.opportunity) return false; // 평형대 등급이 있으면 그 평형대 기준 상위 20%
         return true;
     });
 }
@@ -15230,6 +15252,7 @@ function renderBidBoard() {
         if (s.sort === 'verdict' || s.sort === 'date') {
             var ox = BID_BOARD_VERDICT[x.verdict].order, oy = BID_BOARD_VERDICT[y.verdict].order;
             if (ox !== oy) return ox - oy;
+            if (!!x.opportunity !== !!y.opportunity) return x.opportunity ? -1 : 1;
         }
         var rx = x.roomPct == null ? -999 : x.roomPct, ry = y.roomPct == null ? -999 : y.roomPct;
         return ry - rx;
@@ -15277,10 +15300,11 @@ function renderBidBoardRow(r) {
     var riskCell = r.pending ? '' : (r.risk ? (r.risk.level === '높음' ? '<span class="bb-pill bad">하락위험 높음</span><div class="bb-sub">' + bbEsc((r.risk.negative || []).join(', ')) + '</div>' : '<span class="bb-pill good">낮음</span>') : '<span class="bb-sub">-</span>');
     var cuCell = r.catchup == null ? '<span class="bb-sub">-</span>'
         : (r.catchup >= 0.5 ? '<span style="color:#2e7d32;font-weight:bold;">+' + r.catchup + '% 여지</span>' : (r.catchup <= -0.5 ? '<span style="color:#c62828;">' + Math.abs(r.catchup) + '% 덜 오를 수도</span>' : '<span class="bb-sub">대장과 비슷</span>'));
-    var notes = (r.historyNote ? [r.historyNote] : []).concat(r.reasons, r.warns).map(function(t) { return '<span>' + bbEsc(t) + '</span>'; }).join('');
+    var notes = (r.historyNote ? [r.historyNote] : []).concat(r.notes || [], r.reasons, r.warns).map(function(t) { return '<span>' + bbEsc(t) + '</span>'; }).join('');
     return '<tr class="bb-row' + (bidBoardState.highlight[r.id] || bidBoardState.updated[r.id] ? ' new' : '') + '" onclick="bidBoardGo(\'' + idJs + '\')">'
         + '<td data-l="판정">' + (r.assumedFail && !r.pending ? '<div class="bb-sub" style="color:#ef6c00;">유찰되면</div>' : '')
             + '<span class="bb-verdict" style="color:' + v.color + ';background:' + v.bg + ';">' + v.label + '</span>'
+            + (r.opportunity ? '<div style="margin-top:3px;"><span class="bb-pill" style="background:#fff8e1;color:#e65100;border:1px solid #ffb300;">🎯 기회</span></div>' : '')
             + (bidBoardState.prevVerdicts[r.id] && bidBoardState.prevVerdicts[r.id] !== r.verdict ? '<div class="bb-sub">이전 ' + BID_BOARD_VERDICT[bidBoardState.prevVerdicts[r.id]].label + ' → 바뀜</div>' : '') + '</td>'
         + '<td data-l="입찰일">' + dd + '</td>'
         + '<td data-l="물건" class="bb-name"><b>' + bbEsc(r.name) + '</b>' + (bidBoardState.highlight[r.id] ? ' <span class="bb-pill new">새로 등록</span>' : '') + (bidBoardState.updated[r.id] ? ' <span class="bb-pill new">결과 반영</span>' : '')
