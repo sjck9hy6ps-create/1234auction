@@ -6478,8 +6478,7 @@ function btPopEffective(c) {
 async function analyzeBidTargetPopularity() {
     var token = ++btPopRunToken;
     var list = pendingBidTargetExtraction.filter(function(c) { return bidTargetPropTypeFromText(c.propertyType) === 'apt' && c.addrJibun; });
-    var st = document.getElementById('bt-pop-status');
-    var say = function(t) { if (st) st.textContent = t; };
+    var say = function(t) { var st = document.getElementById('bt-pop-status'); if (st) st.textContent = t; }; // 미리보기를 다시 그리면 요소가 바뀌므로 매번 찾음
     if (!list.length) { say(''); return; }
     for (var i = 0; i < list.length; i += 6) {
         if (token !== btPopRunToken) return;
@@ -6566,8 +6565,9 @@ function btFinderSetBand(b, el) {
     if (document.getElementById('btf-sigungu').value) btFinderRun();
 }
 async function btFinderRun() {
-    var region = document.getElementById('btf-sigungu').value, box = document.getElementById('btf-result');
-    if (!region) { box.textContent = '시/군/구를 골라 주세요.'; return; }
+    var sido = document.getElementById('btf-sido').value, gu = document.getElementById('btf-sigungu').value, box = document.getElementById('btf-result');
+    if (!gu) { box.textContent = '시/군/구를 골라 주세요.'; return; }
+    var region = gu.indexOf(sido + ' ') === 0 ? gu : sido + ' ' + gu; // 지역 목록은 "북구"처럼 시/도 없이 옴
     box.textContent = '불러오는 중…';
     try {
         var res = await fetch('/api/data-coverage?mode=marketCycle&region=' + encodeURIComponent(region));
