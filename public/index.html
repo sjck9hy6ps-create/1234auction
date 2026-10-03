@@ -3639,6 +3639,67 @@ function initMap(lat, lon) {
 /* ════════════════════════════════════
    DB 데이터 로드 (핵심)
 ════════════════════════════════════ */
+// ⚠️ 2026-10(사용자 요청: "배지 로딩속도를 확연하게 높여줘") - 지역 데이터(get-house, 부천 기준
+// 거래·전월세 5만 건 ≈ 11MB)를 브라우저 저장소(IndexedDB)에 지역별로 보관해서, 6시간 안에 다시
+// 오면(새로고침·다음 방문 포함) 서버를 거치지 않고 바로 씀. 거래 데이터는 매주 월요일 수집 +
+// 이번 달 실시간분이라 6시간 지연은 체감 차이가 없음. 저장소가 막혀 있거나(사생활 보호 모드 등)
+// 오류가 나면 조용히 예전처럼 서버에서 받음. 용량 보호를 위해 최근 본 12개 지역만 보관.
+var HOUSE_IDB_TTL_MS = 6 * 60 * 60 * 1000;
+var HOUSE_IDB_MAX_REGIONS = 12;
+var _houseIdbPromise = null;
+function houseIdb() {
+    if (_houseIdbPromise) return _houseIdbPromise;
+    _houseIdbPromise = new Promise(function(resolve) {
+        try {
+            var req = indexedDB.open('auction-house-cache', 1);
+            req.onupgradeneeded = function() { req.result.createObjectStore('house'); };
+            req.onsuccess = function() { resolve(req.result); };
+            req.onerror = function() { resolve(null); };
+            req.onblocked = function() { resolve(null); };
+        } catch (e) { resolve(null); }
+    });
+    return _houseIdbPromise;
+}
+function houseIdbReq(mode, fn) {
+    return houseIdb().then(function(db) {
+        if (!db) return null;
+        return new Promise(function(resolve) {
+            try {
+                var tx = db.transaction('house', mode);
+                var r = fn(tx.objectStore('house'));
+                tx.oncomplete = function() { resolve(r && 'result' in r ? r.result : null); };
+                tx.onerror = tx.onabort = function() { resolve(null); };
+            } catch (e) { resolve(null); }
+        });
+    });
+}
+async function fetchHouseDataCached(lawdCd) {
+    var cached = await houseIdbReq('readonly', function(st) { return st.get(lawdCd); });
+    if (cached && cached.v && Array.isArray(cached.v.apt) && Date.now() - cached.t < HOUSE_IDB_TTL_MS) {
+        return cached.v;
+    }
+    var res = await fetch('/api/get-house?lawdCd=' + lawdCd);
+    var data = await res.json();
+    if (data && !data.error && Array.isArray(data.apt)) {
+        // 저장은 화면 그리기를 막지 않도록 뒤에서(실패해도 무시)
+        setTimeout(function() {
+            houseIdbReq('readwrite', function(st) { return st.put({ t: Date.now(), v: data }, lawdCd); })
+                .then(function() { return houseIdbReq('readonly', function(st) { return st.getAllKeys(); }); })
+                .then(function(keys) {
+                    if (!keys || keys.length <= HOUSE_IDB_MAX_REGIONS) return;
+                    // 가장 오래 전에 저장된 지역부터 지움
+                    return Promise.all(keys.map(function(k) {
+                        return houseIdbReq('readonly', function(st) { return st.get(k); }).then(function(v) { return { k: k, t: v ? v.t : 0 }; });
+                    })).then(function(list) {
+                        list.sort(function(x, y) { return x.t - y.t; });
+                        var drop = list.slice(0, list.length - HOUSE_IDB_MAX_REGIONS);
+                        return houseIdbReq('readwrite', function(st) { drop.forEach(function(d) { st.delete(d.k); }); return null; });
+                    });
+                }).catch(function() {});
+        }, 0);
+    }
+    return data;
+}
 async function loadAllData(centerLat, centerLon) {
     return new Promise(function(resolve) {
         if (isLoading) { resolve(); return; }
@@ -3705,8 +3766,7 @@ async function loadAllData(centerLat, centerLon) {
             isLoading = true;
             setStatus('데이터 로딩 중...');
             try {
-                var res = await fetch('/api/get-house?lawdCd=' + lawdCd);
-                var dbData = await res.json();
+                var dbData = await fetchHouseDataCached(lawdCd);
                 if (!dbData || dbData.error || !Array.isArray(dbData.apt)) {
                     setStatus('데이터가 없습니다.');
                     isLoading = false; resolve(); return;
@@ -11451,7 +11511,11 @@ function placeAuctionMarker(a) {
     // actualBid 없이도(findSimilarComps 재계산 또는 저장된 목표매도가 a.target 기준) 계산
     // 가능함 - impliedTarget/highBidFlag만 actualBid가 필요해서 null로 나올 뿐. isBidTarget이면
     // 아직 낙찰 전이라도 awEst를 미리 계산해서 아래에서 연식/평형/예상매도가 3종을 보여줌.
-    var awEst = (isWon || isBidTarget) ? getAuctionWonEstimates(a) : null;
+    // ⚠️ 2026-10(로딩속도 개선): awEst(비교물건 재계산 - findSimilarComps, 건당 10~40ms)는 아래
+    // "매매기록 배지에 흡수"·"필터에 걸림" 판정으로 바로 return되는 물건에는 쓰이지 않는데도 예전엔
+    // 그보다 먼저 계산했음 - 실측: 화면 안 207건 중 대부분이 흡수돼 안 그려지는데 이 계산에만 4.9초
+    // (화면 멈춤). 실제로 독자 배지를 그릴 때만 계산하도록 아래로 옮김.
+    var awEst = null;
 
     // 같은 단지의 일반 거래 데이터가 이미 로딩되어 있으면 등급/인기평형 정보를 가져와 함께 표시
     // ⚠️ 2026-08: 입찰예정물건(isBidTarget)은 매매기록이 있는 주소라도 그 건물배지에 편입시키지
@@ -11477,6 +11541,7 @@ function placeAuctionMarker(a) {
         auctionMarkers[a.id] = { overlay: null, suppressed: true };
         return;
     }
+    awEst = (isWon || isBidTarget) ? getAuctionWonEstimates(a) : null;
     var surgeRank = a.dong ? surgeRankMap[a.dong] : null;
     var surgeBadge = surgeRank
         ? '<span style="background:#e53935;color:white;font-size:9px;font-weight:bold;padding:1px 5px;border-radius:3px;margin-left:3px;">🔥' + surgeRank + '위</span>'

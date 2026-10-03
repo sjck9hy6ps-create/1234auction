@@ -1,5 +1,6 @@
 import { createClient } from '@supabase/supabase-js';
 import { LAWD_CODES } from '../scripts/lawd-codes.mjs';
+import { gzipSync, gunzipSync } from 'zlib';
 const supabase = createClient(
   process.env.SUPABASE_URL,
   process.env.SUPABASE_SERVICE_ROLE_KEY
@@ -19,6 +20,12 @@ const APT_API_KEY = process.env.PUBLIC_DATA_API_KEY;
 const REDIS_URL = process.env.UPSTASH_REDIS_URL;
 const REDIS_TOKEN = process.env.UPSTASH_REDIS_TOKEN;
 const CACHE_TTL_SECONDS = 10 * 60 * 60; // 10시간
+// ⚠️ 2026-10(사용자 요청: "배지 로딩속도를 확연하게 높여줘") - 실측: 가평(0.5MB)·성남(4.6MB)은
+// 캐시가 돼서 0.15~0.6초인데, 부천(11MB)·강남(9MB)처럼 큰 지역은 원본 JSON 그대로는 Redis 저장/
+// 조회(요청 크기 상한·3초 제한)에 걸려 매번 캐시를 못 쓰고 DB를 다시 긁느라 3~7초(바쁠 땐 18초)가
+// 걸렸음. gzip으로 압축해서(약 1/10) 저장하면 큰 지역도 캐시가 됨. 'gz:' 접두어로 구분하고,
+// 접두어 없는 예전 캐시(평문 JSON)도 그대로 읽음.
+const GZ_PREFIX = 'gz:';
 
 async function getCachedHouseData(lawdCd) {
   if (!REDIS_URL || !REDIS_TOKEN) return null;
@@ -30,7 +37,10 @@ async function getCachedHouseData(lawdCd) {
     if (!r.ok) return null;
     const data = await r.json();
     if (!data || !data.result) return null;
-    const parsed = JSON.parse(data.result);
+    const raw = String(data.result);
+    const parsed = raw.startsWith(GZ_PREFIX)
+      ? JSON.parse(gunzipSync(Buffer.from(raw.slice(GZ_PREFIX.length), 'base64')).toString('utf8'))
+      : JSON.parse(raw);
     // apt만 검사하면, 전세(rent) 조회 기능이 추가되기 전에 저장된 구식 캐시({apt:[...]}만 있고
     // rent 필드 자체가 없는 상태)가 "유효한 캐시"로 통과되어 계속 빈 전세 데이터를 반환하는
     // 버그가 있었습니다. rent도 배열인지 함께 검사해서 구식 캐시는 자동으로 무효 처리되게 함.
@@ -47,9 +57,9 @@ async function setCachedHouseData(lawdCd, payload) {
   try {
     const r = await fetch(`${REDIS_URL}/set/house_${lawdCd}?EX=${CACHE_TTL_SECONDS}`, {
       method: 'POST',
-      headers: { Authorization: `Bearer ${REDIS_TOKEN}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
-      signal: AbortSignal.timeout(3000),
+      headers: { Authorization: `Bearer ${REDIS_TOKEN}`, 'Content-Type': 'text/plain' },
+      body: GZ_PREFIX + gzipSync(Buffer.from(JSON.stringify(payload), 'utf8')).toString('base64'),
+      signal: AbortSignal.timeout(5000),
     });
     if (!r.ok) {
       const errText = await r.text();
@@ -251,6 +261,10 @@ export default async function handler(req, res) {
   try {
     // ── 1. DB 배치 수집분(apt/villa/전세)은 캐시가 있으면 그대로 재사용 ──
     let dbPayload = null;
+    // 실시간(이번달 신규 신고건) 조회는 캐시/DB 조회와 무관하므로 미리 출발시켜 둠(직렬 대기 ~1초 제거)
+    const now    = new Date();
+    const thisYm = String(now.getFullYear()) + String(now.getMonth() + 1).padStart(2, '0');
+    const realtimePromise = skipRealtime ? Promise.resolve([]) : fetchRealtimeApt(lawdCd, thisYm);
     if (!skipRealtime) {
       dbPayload = await getCachedHouseData(lawdCd);
       if (dbPayload) console.log('get-house DB캐시 히트:', lawdCd);
@@ -337,9 +351,7 @@ export default async function handler(req, res) {
     }
 
     // ── 실시간(이번달 신규 신고건)은 캐시 여부와 무관하게 방문할 때마다 항상 새로 불러와서 합침 ──
-    const now    = new Date();
-    const thisYm = String(now.getFullYear()) + String(now.getMonth() + 1).padStart(2, '0');
-    const realtimeItems = await fetchRealtimeApt(lawdCd, thisYm);
+    const realtimeItems = await realtimePromise;
     const realtimeNormalized = realtimeItems.map(item => normalizeXMLItem(item, regionName));
     const finalApt = dedup([...realtimeNormalized, ...dbPayload.apt]);
     console.log(`실시간 반영: +${realtimeNormalized.length}건 (최종 ${finalApt.length}건)`);
