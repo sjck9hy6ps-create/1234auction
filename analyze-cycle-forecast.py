@@ -118,7 +118,8 @@ def build_features(region, sale_r, rent_r, leaders, is_metro):
     if not is_metro:
         U = fetch_unsold(region)
         if U is not None:
-            U = U.reindex(range(int(U.index.min()), int(U.index.max()) + 1)).interpolate(limit=2)
+            # 미분양 통계는 실거래보다 1~2달 늦게 나와 최근 달이 비어 있음 → 마지막 값을 최대 3개월 이어 씀(현재 위험 계산용)
+            U = U.reindex(range(int(U.index.min()), max(int(U.index.max()), int(f.index.max())) + 1)).interpolate(limit=2).ffill(limit=3)
             u = U.shift(1)  # 미분양 통계는 한 달 늦게 발표 - 그 시점에 알 수 있던 값만 씀
             f["uns_yoy"] = (np.log(u + 10) - np.log(u.shift(12) + 10)).reindex(f.index)
             f["uns_rel"] = (np.log(u + 10) - np.log(u.rolling(60, min_periods=24).mean() + 10)).reindex(f.index)

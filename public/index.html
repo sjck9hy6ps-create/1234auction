@@ -14068,10 +14068,31 @@ function solveImpliedTargetFromBid(a, marginValue) {
 // (낙찰된 경우 예측이 평균 +3.3% 높았음 - "승자의 저주") 마진이 예측 오차를 덮어야 함.
 // "500만 + 예상매도가 × (자기 단지 같은 평형 거래 3건↑면 5%, 아니면 9%)"는 낙찰 29%·손실 16%·총 순이익 7.5억.
 // 아파트만 검증됨 - 빌라는 아직 추천하지 않음.
-function riskMarginFor(predictedSale, ownTrades) {
+function riskMarginFor(predictedSale, ownTrades, downRisk) {
     if (!predictedSale) return null;
     var rate = ownTrades >= 3 ? 0.05 : 0.09;
-    return { margin: Math.round((500 + predictedSale * rate) / 10) * 10, rate: rate };
+    // 2026-10: 지역 "6개월 하락 위험 높음"이면 그 등급의 과거 평균 6개월 하락폭(수도권 3.8%·지방 2.1%)만큼 더 얹음
+    var extra = (downRisk && downRisk.level === '높음' && downRisk.avgDropPct > 0) ? downRisk.avgDropPct / 100 : 0;
+    return { margin: Math.round((500 + predictedSale * (rate + extra)) / 10) * 10, rate: rate, extra: extra };
+}
+var subjectRiskCache = {}; // lawdCd -> {level, avgDropPct, negative} (사이클 분석 결과)
+function getSubjectDownRisk(ctx, onReady) {
+    if (!ctx || !ctx.lat || !ctx.lon) return null;
+    var key = subjectLawdCacheKey(ctx.lat, ctx.lon);
+    if (subjectRiskCache[key] !== undefined) return subjectRiskCache[key];
+    subjectRiskCache[key] = null;
+    resolveSubjectLawdCd(ctx.lat, ctx.lon, function(lawd) {
+        if (!lawd) return;
+        loadMarketCycle(lawd).then(function(d) {
+            var r = d && d.risk, c = r && r.current, hi = r && r.backtest && r.backtest['높음'];
+            if (c) {
+                subjectRiskCache[key] = { level: c.level, negative: c.negative || [], segment: r.segment,
+                    avgDropPct: hi && hi.avgFwd6mPct < 0 ? Math.round(-hi.avgFwd6mPct * 10) / 10 : 0, dropShare: hi ? hi.dropOver2PctShare : null };
+                if (onReady) onReady();
+            }
+        });
+    });
+    return null;
 }
 function renderRiskMarginSuggestion(predictedSale) {
     var el = document.getElementById('est-risk-margin');
@@ -14081,12 +14102,16 @@ function renderRiskMarginSuggestion(predictedSale) {
     var ctx = getAuctionAddressContext();
     var pyung = parseFloat(document.getElementById('a-pyung').value) || null;
     var own = countOwnComplexTrades(ctx.dong, fullBunjiFromAddr(document.getElementById('a-addr').value, ctx.dong, ctx.bunji), 'apt', pyung);
-    var r = riskMarginFor(predictedSale, own);
+    var dr = getSubjectDownRisk(ctx, function() { renderRiskMarginSuggestion(window.__predictedSaleValue); });
+    var r = riskMarginFor(predictedSale, own, dr);
     if (!r) { el.innerHTML = ''; return; }
     el.innerHTML = '<span style="color:#6a1b9a;">🎯 추천 목표마진 <b>' + toEok(String(r.margin)) + '</b> '
         + '<span style="color:#888;">(500만 + 예상매도가의 ' + Math.round(r.rate * 100) + '% - '
-        + (own >= 3 ? '이 단지 같은 평형 거래 ' + own + '건이라 예측이 비교적 정확' : '이 단지 비교 거래가 적어 예측 오차가 큼') + ')</span></span> '
+        + (own >= 3 ? '이 단지 같은 평형 거래 ' + own + '건이라 예측이 비교적 정확' : '이 단지 비교 거래가 적어 예측 오차가 큼')
+        + (r.extra > 0 ? ' + 지역 하락위험 높음 ' + Math.round(r.extra * 1000) / 10 + '%' : '') + ')</span></span> '
         + '<button type="button" class="modal-btn btn-gray" style="font-size:10px;padding:2px 6px;" onclick="document.getElementById(\'a-comp-target-margin\').value=' + r.margin + ';applyEstRow4();">④에 적용</button>'
+        + (r.extra > 0 ? '<div style="color:#c62828;font-size:10.5px;">⚠️ 이 지역 6개월 뒤 하락 위험 높음(' + (dr.negative || []).join(', ') + ') - 과거 같은 조건에서 '
+            + (dr.dropShare != null ? dr.dropShare + '%가 6개월 뒤 2%+ 하락, ' : '') + '평균 −' + dr.avgDropPct + '% → 그만큼 마진을 더 잡았어요</div>' : '')
         + '<div style="color:#999;font-size:10px;">낙찰되는 물건은 대체로 시세를 높게 본 경우라, 마진이 예측 오차를 덮도록 잡은 값이에요(전남·광주 낙찰물건 281건 검증: 고정 2천만 대비 낙찰 1.5배·총 순이익 1.7배, 손실 비율은 비슷).</div>';
 }
 /* ════ 📈 시장 사이클 패널 (2026-10, 사용자 요청: "과거 자료로 상승기·하락기를 파악해 지금 5년 주기 중 어디쯤인지,
@@ -14131,11 +14156,13 @@ function cycleSparkSvg(series, turning, color) {
 function buildRiskBlockHtml(risk, regionName) {
     if (!risk || !risk.current) return '';
     var c = risk.current, bt = risk.backtest || {};
-    var color = c.level === '높음' ? '#c62828' : (c.level === '보통' ? '#ef6c00' : '#2e7d32');
-    var lvStat = bt[c.level], all = bt['전체'];
+    // 검증 결과 "보통"(약한 신호 1개)은 과거 하락 비율이 "낮음"과 비슷했음 → 화면에선 높음/낮음 두 단계로만 보여줌
+    var shown = c.level === '높음' ? '높음' : (c.level === '보통' ? '낮음(참고 신호 있음)' : '낮음');
+    var color = c.level === '높음' ? '#c62828' : '#2e7d32';
+    var lvStat = c.level === '높음' ? bt['높음'] : bt['낮음'], all = bt['전체'];
     var html = '<div style="margin-top:10px;border:1.5px solid ' + color + ';border-radius:8px;padding:8px 10px;">'
-        + '<b>⚠️ 6개월 뒤 하락 위험: <span style="color:' + color + ';">' + c.level + '</span></b> <span style="color:#999;font-size:10px;">(' + (regionName || '') + ' · ' + c.asOf + ' 기준 · ' + risk.segment + ' 규칙)</span>';
-    if (c.negative && c.negative.length) html += '<div style="font-size:11px;color:#c62828;">하락 신호: ' + c.negative.join(', ') + '</div>';
+        + '<b>⚠️ 6개월 뒤 하락 위험: <span style="color:' + color + ';">' + shown + '</span></b> <span style="color:#999;font-size:10px;">(' + (regionName || '') + ' · ' + c.asOf + ' 기준 · ' + risk.segment + ' 규칙)</span>';
+    if (c.negative && c.negative.length) html += '<div style="font-size:11px;color:' + (c.level === '높음' ? '#c62828' : '#ef6c00') + ';">' + (c.level === '높음' ? '하락 신호: ' : '참고 신호(단독으로는 과거 하락 위험이 크지 않았음): ') + c.negative.join(', ') + '</div>';
     if (c.positive && c.positive.length) html += '<div style="font-size:11px;color:#2e7d32;">상승 신호: ' + c.positive.join(', ') + '</div>';
     var facts = [];
     if (c.volRatioPct != null) facts.push('거래량(최근 6개월, 직전 1년 대비) ' + (c.volRatioPct > 0 ? '+' : '') + c.volRatioPct + '%');
