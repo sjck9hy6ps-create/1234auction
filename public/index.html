@@ -5488,10 +5488,13 @@ async function fetchAuctions() {
 }
 async function saveAuctionAPI(data) {
     var r = await fetch('/api/auction', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(data) });
-    return r.json();
+    var body = await r.json();
+    if (r.ok) applyStoredListChange('', r.headers.get('X-List-Version'), upsertById(data));
+    return body;
 }
 async function deleteAuctionAPI(id) {
-    await fetch('/api/auction?id=' + id, { method:'DELETE' });
+    var r = await fetch('/api/auction?id=' + id, { method:'DELETE' });
+    if (r.ok) applyStoredListChange('', r.headers.get('X-List-Version'), removeById(id));
 }
 /* ════════════════════════════════════
    임장(현장조사) 메모 - 경매 사건과는 독립된 저장소(Redis 키 'siteNotes').
@@ -5515,11 +5518,76 @@ function showStorageErrorBanner(msg) {
     bar.querySelector('button').onclick = function() { bar.remove(); };
     document.body.appendChild(bar);
 }
+// ⚠️ 2026-10(저장소 월 전송량 초과 사고 후): 목록(경매물건 3.2MB·낙찰사례 1.5MB)을 매번 통째로 받지 않음 -
+// 브라우저(IndexedDB)에 {버전, 목록}을 보관하고 서버에 "이 버전 그대로야?"만 물어봄(api/auction.js 참고).
+// 바뀌었을 때만 전체를 받음. 저장/삭제 후엔 서버가 돌려준 새 버전으로 보관본도 같이 고쳐서 다시 받지 않게 함.
+var _listIdbPromise = null;
+function listIdb() {
+    if (_listIdbPromise) return _listIdbPromise;
+    _listIdbPromise = new Promise(function(resolve) {
+        try {
+            var req = indexedDB.open('auction-list-cache', 1);
+            req.onupgradeneeded = function() { req.result.createObjectStore('lists'); };
+            req.onsuccess = function() { resolve(req.result); };
+            req.onerror = req.onblocked = function() { resolve(null); };
+        } catch (e) { resolve(null); }
+    });
+    return _listIdbPromise;
+}
+function listIdbOp(mode, fn) {
+    return listIdb().then(function(db) {
+        if (!db) return null;
+        return new Promise(function(resolve) {
+            try {
+                var tx = db.transaction('lists', mode);
+                var r = fn(tx.objectStore('lists'));
+                tx.oncomplete = function() { resolve(r && 'result' in r ? r.result : null); };
+                tx.onerror = tx.onabort = function() { resolve(null); };
+            } catch (e) { resolve(null); }
+        });
+    });
+}
+function listCacheKey(kind) { return 'list:' + (kind || 'auctions'); }
 async function fetchStoredList(kind) {
-    var r = await fetch('/api/auction' + (kind ? '?kind=' + kind : ''));
-    var data = await r.json();
-    if (!r.ok || !Array.isArray(data)) { showStorageErrorBanner(data && data.error); return []; }
-    return data;
+    var cached = await listIdbOp('readonly', function(st) { return st.get(listCacheKey(kind)); });
+    var url = '/api/auction?withVer=1' + (kind ? '&kind=' + kind : '') + (cached && cached.ver ? '&since=' + encodeURIComponent(cached.ver) : '');
+    var r, data;
+    try { r = await fetch(url); data = await r.json(); } catch (e) { r = { ok: false }; data = { error: e.message }; }
+    if (!r.ok || !data || (!data.unchanged && !Array.isArray(data.list))) {
+        showStorageErrorBanner(data && data.error);
+        return cached && Array.isArray(cached.list) ? cached.list : [];
+    }
+    if (data.unchanged && cached && Array.isArray(cached.list)) return cached.list;
+    if (data.unchanged) { // 보관본이 없는데 unchanged가 올 일은 없지만 방어적으로 전체 재요청
+        var r2 = await fetch('/api/auction?withVer=1' + (kind ? '&kind=' + kind : ''));
+        data = await r2.json();
+        if (!r2.ok || !Array.isArray(data.list)) { showStorageErrorBanner(data && data.error); return []; }
+    }
+    listIdbOp('readwrite', function(st) { return st.put({ ver: data.ver, list: data.list }, listCacheKey(kind)); });
+    return data.list;
+}
+// 저장/삭제 성공 후 보관본 갱신 - 서버 새 버전이 "내 보관본 버전 + 1"일 때만(=그 사이 다른 기기 변경 없음)
+// 그대로 고쳐 쓰고, 아니면 보관본을 버려 다음에 전체를 새로 받게 함.
+async function applyStoredListChange(kind, newVer, mutate) {
+    if (!newVer) return;
+    var key = listCacheKey(kind);
+    var cached = await listIdbOp('readonly', function(st) { return st.get(key); });
+    if (!cached || !Array.isArray(cached.list) || String(parseInt(cached.ver, 10) + 1) !== String(newVer)) {
+        await listIdbOp('readwrite', function(st) { return st.delete(key); });
+        return;
+    }
+    var list = mutate(cached.list.slice());
+    await listIdbOp('readwrite', function(st) { return st.put({ ver: String(newVer), list: list }, key); });
+}
+function upsertById(item) {
+    return function(list) {
+        var i = list.findIndex(function(x) { return x && x.id === item.id; });
+        if (i > -1) list[i] = item; else list.push(item);
+        return list;
+    };
+}
+function removeById(id) {
+    return function(list) { return list.filter(function(x) { return x && String(x.id) !== String(id); }); };
 }
 async function fetchSiteNotes() {
     try {
@@ -5541,6 +5609,7 @@ async function saveSiteNoteAPI(data) {
     var r = await fetch('/api/auction?kind=siteNotes', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(data) });
     var body = await r.json().catch(function() { return null; });
     if (!r.ok) throw new Error((body && body.error) || ('저장 실패 (HTTP ' + r.status + ')'));
+    applyStoredListChange('siteNotes', r.headers.get('X-List-Version'), upsertById(data));
     return body;
 }
 async function deleteSiteNoteAPI(id) {
@@ -5549,6 +5618,7 @@ async function deleteSiteNoteAPI(id) {
         var body = await r.json().catch(function() { return null; });
         throw new Error((body && body.error) || ('삭제 실패 (HTTP ' + r.status + ')'));
     }
+    applyStoredListChange('siteNotes', r.headers.get('X-List-Version'), removeById(id));
 }
 /* ════════════════════════════════════
    낙찰사례 통계 - 경매정보 사이트 검색결과 목록을 붙여넣어 여러 건을 한 번에 저장하고,
@@ -5570,10 +5640,13 @@ async function fetchBidCases() {
 }
 async function saveBidCaseAPI(data) {
     var r = await fetch('/api/auction?kind=bidCases', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(data) });
-    return r.json();
+    var body = await r.json();
+    if (r.ok) applyStoredListChange('bidCases', r.headers.get('X-List-Version'), upsertById(data));
+    return body;
 }
 async function deleteBidCaseAPI(id) {
-    await fetch('/api/auction?kind=bidCases&id=' + id, { method:'DELETE' });
+    var r = await fetch('/api/auction?kind=bidCases&id=' + id, { method:'DELETE' });
+    if (r.ok) applyStoredListChange('bidCases', r.headers.get('X-List-Version'), removeById(id));
 }
 function openBidCasePanel() {
     var p = document.getElementById('bid-case-panel');
