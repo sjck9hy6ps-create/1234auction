@@ -1,0 +1,23 @@
+# 인기(거래활발) 단지 검증 + 시군구별 현재 인기 단지 목록 - 2026-10 (analyze-liquidity.py 상단 설명 참고)
+name: Analyze popular complexes
+
+on:
+  workflow_dispatch: {}
+  schedule:
+    - cron: '0 20 * * 1'
+
+jobs:
+  analyze:
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install pandas numpy requests
+      - env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          PYTHONUNBUFFERED: '1'
+        run: python analyze-liquidity.py
