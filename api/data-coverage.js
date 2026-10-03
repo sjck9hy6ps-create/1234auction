@@ -3322,6 +3322,32 @@ export default async function handler(req, res) {
       return res.status(500).json({ error: err.message });
     }
   }
+  if (req.query.mode === 'marketCycle') {
+    // 2026-10: analyze-cycle.py(주 1회)가 leader_follower_cache에 저장한 사이클·후발주자 이력 결과를 읽어 줌.
+    // ?lawdCd=(또는 region=) 이 있으면 그 시군구 결과 + 그 시도 + 전국 요약, 없으면 전국·시도 요약만.
+    res.setHeader('Cache-Control', 's-maxage=3600, stale-while-revalidate=86400');
+    try {
+      let region = req.query.region || null;
+      if (req.query.lawdCd) { const f = LAWD_CODES.find((r) => r.code === String(req.query.lawdCd)); if (f) region = f.name; }
+      const ids = ['cycle|__summary__'].concat(region ? ['cycle|' + region] : []);
+      const { data, error } = await supabase.from('leader_follower_cache').select('id,payload,fetched_at').in('id', ids);
+      if (error) return res.status(500).json({ error: error.message });
+      const sum = (data || []).find((r) => r.id === 'cycle|__summary__');
+      const reg = region ? (data || []).find((r) => r.id === 'cycle|' + region) : null;
+      if (!sum) return res.status(404).json({ error: '사이클 분석 결과가 아직 없습니다(analyze-cycle 워크플로 실행 필요).' });
+      const p = sum.payload || {};
+      const sidoKey = region ? String(region).split(' ')[0] : null;
+      return res.status(200).json({
+        generatedAt: p.generatedAt, dataFrom: p.dataFrom, dataTo: p.dataTo,
+        national: p.national, sido: sidoKey && p.sido ? { name: sidoKey, ...(p.sido[sidoKey] || {}) } : null,
+        forecastValidation: p.forecastValidation, followerValidation: p.followerValidation,
+        followerCatchupCoefUsed: p.followerCatchupCoefUsed,
+        region: reg ? reg.payload : null,
+      });
+    } catch (err) {
+      return res.status(500).json({ error: err.message });
+    }
+  }
   if (req.query.mode === 'signalBacktestStats') {
     res.setHeader('Cache-Control', 's-maxage=3600, stale-while-revalidate=86400');
     try {
