@@ -3130,6 +3130,14 @@ function calcPppForGrade(apt) {
      거래 평단가 순으로 1~7등급을 매김(아파트와 동일한 방식). 상단 필터칸의 "등급" 버튼은 이 값으로
      걸러서, 연식이 다른 건물들의 "그 연식대 안에서의 1등급"이 전부 섞여 나오는 일이 없도록 함. */
 function calcPriceGrades(aptList) {
+    // ⚠️ 2026-10(로딩속도 개선): calcPppForGrade를 아래 두 순위 계산(연식단계별/지역 전체)에서
+    // 건물마다 두 번씩 불렀음 - 부천처럼 큰 지역은 이 함수만 1.3초. 한 번 계산한 값을 재사용함.
+    var pppMemo = new Map();
+    function pppOf(apt) {
+        var r = pppMemo.get(apt);
+        if (!r) { r = calcPppForGrade(apt); pppMemo.set(apt, r); }
+        return r;
+    }
     var ageTierGroups = {};
     aptList.forEach(function(apt) {
         var type = apt.buildingType || 'apt';
@@ -3144,7 +3152,7 @@ function calcPriceGrades(aptList) {
 
     Object.keys(ageTierGroups).forEach(function(groupKey) {
         var scored = ageTierGroups[groupKey].map(function(apt) {
-            var r = calcPppForGrade(apt);
+            var r = pppOf(apt);
             return { apt: apt, ppp: r.ppp, estimated: r.estimated };
         }).filter(function(x) { return x.ppp > 0; });
 
@@ -3168,7 +3176,7 @@ function calcPriceGrades(aptList) {
     });
     Object.keys(overallGroups).forEach(function(type) {
         var scored = overallGroups[type].map(function(apt) {
-            return { apt: apt, ppp: calcPppForGrade(apt).ppp };
+            return { apt: apt, ppp: pppOf(apt).ppp };
         }).filter(function(x) { return x.ppp > 0; });
 
         scored.sort(function(a, b) { return b.ppp - a.ppp; });
@@ -3633,7 +3641,7 @@ function initMap(lat, lon) {
         moveTimer = setTimeout(function() {
             loadAllData(c.getLat(), c.getLng()).then(function() { renderAuctionMarkers(); renderBidCaseMarkers(); });
             updateCurrentDongArea(c.getLat(), c.getLng());
-        }, 1200);
+        }, 600); // 2026-10(로딩속도 개선): 지도가 멈춘 뒤 1.2초 기다리던 것을 0.6초로 줄임(같은 지역 안 이동은 캐시로 즉시 처리됨)
     });
 }
 /* ════════════════════════════════════
