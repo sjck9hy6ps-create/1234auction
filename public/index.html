@@ -508,6 +508,55 @@ tr:hover td { background:#fffde7; }
    ⚠️ 2026-08: 이 규칙이 누락돼 있으면 패널이 기본 display:block(일반 블록 요소)으로 페이지
    흐름에 끼어 있게 되어, openBidTargetPanel()이 style.display를 토글해도 이미 보이는 상태라
    "block"↔"none" 전환이 눈에 띄는 변화 없이 동작하는 것처럼 보이는(사실상 안 열리는) 버그가 있었음. */
+/* 🎯 입찰후보 보드 */
+#bid-board { position:fixed; top:52px; left:0; right:0; bottom:0; z-index:70; background:#f6f7f9; display:none; flex-direction:column; font-size:12.5px; color:#222; }
+#bid-board .bb-head { background:white; border-bottom:1px solid #e3e6ea; padding:10px 16px 8px; }
+#bid-board .bb-title { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
+#bid-board .bb-title h2 { font-size:16px; margin:0; }
+#bid-board .bb-title .bb-x { margin-left:auto; border:none; background:#eee; border-radius:16px; padding:5px 12px; cursor:pointer; font-size:12px; }
+#bid-board .bb-guide { color:#666; font-size:11px; margin-top:4px; line-height:1.5; }
+#bid-board .bb-tools { display:flex; flex-wrap:wrap; gap:6px; align-items:center; margin-top:8px; }
+#bid-board .bb-tab { border:1px solid #d6dbe1; background:white; border-radius:16px; padding:4px 10px; cursor:pointer; font-size:12px; }
+#bid-board .bb-tab.on { background:var(--ui-blue, #1e5eff); border-color:var(--ui-blue, #1e5eff); color:white; }
+#bid-board select, #bid-board .bb-chk { font-size:12px; border:1px solid #d6dbe1; border-radius:6px; padding:4px 6px; background:white; }
+#bid-board .bb-chk { display:inline-flex; align-items:center; gap:4px; cursor:pointer; }
+#bid-board #bb-progress { color:#1565c0; font-size:11.5px; margin-top:6px; }
+#bid-board #bb-body { flex:1; overflow:auto; padding:10px 16px 24px; }
+#bid-board .bb-empty { text-align:center; color:#888; padding:60px 10px; line-height:1.8; }
+#bid-board .bb-table { width:100%; border-collapse:separate; border-spacing:0; background:white; border-radius:10px; overflow:hidden; box-shadow:0 1px 3px rgba(0,0,0,0.06); }
+#bid-board .bb-table th { position:sticky; top:0; background:#fafbfc; color:#666; font-weight:600; font-size:11px; text-align:left; padding:8px; border-bottom:1px solid #e3e6ea; white-space:nowrap; z-index:1; }
+#bid-board .bb-table td { padding:8px; border-bottom:1px solid #f0f2f4; vertical-align:top; }
+#bid-board .bb-table .r { text-align:right; white-space:nowrap; }
+#bid-board .bb-row { cursor:pointer; }
+#bid-board .bb-row:hover td { background:#f5f9ff; }
+#bid-board .bb-row.new td { background:#fffde7; }
+#bid-board .bb-sub { color:#888; font-size:10.5px; margin-top:1px; }
+#bid-board .bb-verdict { display:inline-block; font-weight:bold; border-radius:12px; padding:2px 8px; white-space:nowrap; font-size:12px; }
+#bid-board .bb-dday { font-weight:bold; white-space:nowrap; }
+#bid-board .bb-dday.soon { color:#c62828; }
+#bid-board .bb-name { min-width:180px; max-width:280px; }
+#bid-board .bb-notes { margin-top:3px; display:flex; flex-wrap:wrap; gap:3px; }
+#bid-board .bb-notes span { background:#f3f4f6; color:#555; border-radius:4px; padding:1px 5px; font-size:10.5px; }
+#bid-board .bb-pill { display:inline-block; background:#ede7f6; color:#4a148c; border-radius:4px; padding:1px 6px; font-size:11px; font-weight:bold; white-space:nowrap; }
+#bid-board .bb-pill.lead { background:#4a148c; color:white; }
+#bid-board .bb-pill.bad { background:#ffebee; color:#c62828; }
+#bid-board .bb-pill.good { background:#e8f5e9; color:#2e7d32; }
+#bid-board .bb-pill.new { background:#fbc02d; color:#333; }
+#bid-board .bb-act button { border:1px solid #d6dbe1; background:white; border-radius:6px; padding:3px 8px; cursor:pointer; font-size:11px; }
+@media (max-width: 900px) {
+    #bid-board .bb-table, #bid-board .bb-table tbody { display:block; background:none; box-shadow:none; }
+    #bid-board .bb-table thead { display:none; }
+    #bid-board .bb-table tr { display:grid; grid-template-columns:1fr 1fr; gap:2px 10px; background:white; border-radius:10px; padding:10px 12px; margin-bottom:8px; box-shadow:0 1px 3px rgba(0,0,0,0.08); }
+    #bid-board .bb-table td { border:none; padding:3px 0; }
+    #bid-board .bb-table td.r { text-align:left; }
+    #bid-board .bb-table td[data-l]:not(.bb-name)::before { content:attr(data-l); display:block; color:#999; font-size:10px; }
+    #bid-board .bb-table td[data-l="판정"]::before, #bid-board .bb-table td[data-l="입찰일"]::before { display:none; }
+    #bid-board .bb-name { grid-column:1 / -1; max-width:none; min-width:0; order:-1; }
+    #bid-board .bb-act { grid-column:1 / -1; text-align:right; }
+    #bid-board .bb-row.new td { background:none; }
+    #bid-board .bb-row.new { outline:2px solid #fbc02d; }
+    #bid-board #bb-body { padding:10px 12px 24px; }
+}
 #bid-target-panel {
     position:absolute; bottom:70px; right:14px; z-index:10;
     background:white; border-radius:12px; width:340px; max-height:75vh;
@@ -800,6 +849,7 @@ body.ui2 #dong-boundary-info { top:108px !important; }
     <div id="tb-search-slot"></div>
     <nav id="tb-menu">
         <button onclick="openAuctionList(); closeTbMenus();">🔨 경매관리</button>
+        <button onclick="openBidBoard(); closeTbMenus();" style="font-weight:bold;">🎯 입찰후보</button>
         <button onclick="openBidTargetPanel(); closeTbMenus();">📋 입찰희망</button>
         <button onclick="openBidCasePanel(); closeTbMenus();">⚖️ 낙찰사례</button>
         <button onclick="openSurgePanel(); closeTbMenus();">🔥 급등·돈되는지역</button>
@@ -1135,6 +1185,35 @@ body.ui2 #dong-boundary-info { top:108px !important; }
      표시됨 - placeAuctionMarker 참고. 배지를 클릭하면 그 물건의 경매 물건 등록(수정) 모달이 그대로
      열리고, 거기서 한 번이라도 저장하면 isBidTarget이 자동으로 꺼져 일반 물건(🔨)으로 전환됨(saveAuction 참고).
      ════════════════════════════════════ -->
+<div id="bid-board">
+    <div class="bb-head">
+        <div class="bb-title">
+            <h2>🎯 입찰후보</h2>
+            <span style="color:#888;font-size:11.5px;">등록한 입찰희망·입찰예정 물건을 한 번에 비교해요</span>
+            <button class="bb-x" onclick="refreshBidBoard()">↻ 다시 계산</button>
+            <button class="bb-x" style="margin-left:0;" onclick="closeBidBoard()">✕ 닫기</button>
+        </div>
+        <div class="bb-guide">
+            <b>추천 입찰가</b> = 예상매도가(이 단지 최근 실거래 기준)에서 세금·비용과 <b>추천 목표마진</b>(예측 오차·지역 하락위험만큼)을 뺀 값이에요.
+            <b style="color:#2e7d32;">✅ 추천</b>: 최저가로 사도 마진이 남고, 거래가 활발한 아파트, 예상매도가 믿을 만함, 지역 위험 낮음 ·
+            <b style="color:#ef6c00;">🟡 검토</b>: 마진은 남지만 걸리는 점이 있음 ·
+            <b style="color:#c62828;">❌ 제외</b>: 이번 최저가로는 마진이 안 남음
+        </div>
+        <div class="bb-tools">
+            <span id="bb-tabs"></span>
+            <select id="bb-region" onchange="setBidBoardFilter('region', this.value)"></select>
+            <select onchange="setBidBoardFilter('type', this.value)">
+                <option value="">아파트·빌라</option><option value="apt">아파트만</option><option value="villa">빌라만</option>
+            </select>
+            <select onchange="setBidBoardFilter('sort', this.value)">
+                <option value="verdict">판정 → 여유 큰 순</option><option value="date">입찰일 빠른 순</option><option value="room">여유 큰 순</option>
+            </select>
+            <label class="bb-chk"><input type="checkbox" onchange="setBidBoardFilter('showPast', this.checked)"> 지난 입찰도 보기</label>
+        </div>
+        <div id="bb-progress" style="display:none;"></div>
+    </div>
+    <div id="bb-body"></div>
+</div>
 <div id="bid-target-panel">
     <div class="auction-list-header">
         📋 입찰예정물건 일괄등록
@@ -3909,6 +3988,55 @@ async function fetchHouseDataCached(lawdCd) {
     }
     return data;
 }
+// 시군구 실거래 원본(get-house 응답) → 지도용 단지 목록으로 바꿔 dataCache에 넣고 화면 목록에 합침.
+// loadAllData와 🎯입찰후보 보드(지도를 그 지역으로 옮기지 않고 여러 지역 자료를 불러옴)가 같이 씀.
+async function ingestRegionHouseData(dbData, sigungu, lawdCd) {
+    var regionAptList = groupDBRows(dbData.apt, sigungu, lawdCd);
+    var regionRentList = Array.isArray(dbData.rent) ? dbData.rent : [];
+    rentCacheByLawd[lawdCd] = regionRentList;
+    // 매매 실거래가 단 한 건도 없어서 regionAptList에 아예 항목 자체가 없던 연립다세대를,
+    // 전세 거래만으로 "매매기록 없음" 상태의 항목으로 만들어 끼워넣음 - 이래야 마커/패널이
+    // 생기고, 그 안에서 전세가 기반 추정 등급/예상거래가/히스토리를 볼 수 있게 됨.
+    // (매매 기록이 있는 건물은 이미 groupDBRows가 만든 항목이 있으므로 건너뜀)
+    regionAptList = regionAptList.concat(buildRentOnlyEntries(regionAptList, regionRentList, sigungu, lawdCd));
+    // ── 좌표 캐시 미리 불러오기 (이미 지오코딩된 단지는 카카오 API 스킵) ──
+    await prefetchCoordsFromDB(regionAptList);
+    // ── 지표 계산 (평단가 등급만 유지, 투자점수는 삭제) ──
+    calcPriceGrades(regionAptList);
+     regionAptList.forEach(function(apt) {
+        var nh = calcNewHigh(apt.trades);
+        apt.hasNewHigh   = nh.hasNewHigh;
+        apt.newHighPyungs = nh.newHighPyungs;
+        apt.popularPyeong = calcPopularPyeong(apt);
+        // ⚠️ 2026-08(급등순위 필터→평형대 필터 교체): 이 apt 항목(=건물+평형 클러스터)의
+        // 대표 전용면적은 최신 거래(latest.area)를 그대로 씀 - popularPyeong처럼 여러
+        // 평형이 섞인 대형단지도 groupDBRows가 애초에 평형별로 항목을 쪼개두므로 latest
+        // 하나만 봐도 충분함(다른 등급·연식단계 계산도 전부 이 전제로 동작함).
+        apt.pyeongTier = apt.latest ? getPyeongTier(apt.latest.area) : null;
+        // ⚠️ 2026-09(일동 578-4 사례로 발견 - "평형필터 적용이 안 되고 있어"):
+        // 위 전제("groupDBRows가 평형별로 쪼개둠")가 다세대/연립에서는 항상
+        // 성립하지 않음 - 같은 지번(다세대주택)에 실제로 크기가 전혀 다른 여러
+        // 세대(예: 17㎡·45㎡·58㎡)가 섞여 하나의 apt 항목(trades 배열)에 다
+        // 들어있는 경우가 있음. 이럴 때 apt.pyeongTier(최신 거래 하나만의 값)로
+        // 필터를 걸면, 필터와 맞는 과거 거래가 있어도 최신 거래 평형만 보고
+        // 숨겨지거나 반대로 계속 나타나 "필터가 안 먹힌다"처럼 보임. 그래서 이
+        // 항목에 존재하는 모든 거래의 평형대 집합도 함께 구해서, 필터 판정은
+        // "필터 조건에 맞는 거래가 하나라도 있는지"로 하도록 함(isAptVisibleUnder
+        // CurrentFilters 참고).
+        var _pyeongTierSet = {};
+        (apt.trades || []).forEach(function(t) {
+            if (t.area > 0) _pyeongTierSet[getPyeongTier(t.area)] = true;
+        });
+        // 매매기록이 아예 없는 "전세거래만" 항목(rentOnly, trades=[])은 latest.area가
+        // 전세 매물 면적을 담고 있으므로 이것도 집합에 포함시켜야 필터에서 안 빠짐.
+        if (apt.latest && apt.latest.area > 0) _pyeongTierSet[getPyeongTier(apt.latest.area)] = true;
+        apt.pyeongTierSet = Object.keys(_pyeongTierSet);
+    });
+    dataCache[lawdCd] = regionAptList;
+    mergedLawdCds.add(lawdCd);
+    touchLawdCd(lawdCd); // LRU 갱신 + 상한 초과시 오래된 지역 제거(allAptList/allRentList 재조립)
+    return regionAptList;
+}
 async function loadAllData(centerLat, centerLon) {
     return new Promise(function(resolve) {
         if (isLoading) { resolve(); return; }
@@ -3984,50 +4112,7 @@ async function loadAllData(centerLat, centerLon) {
                 // ⚠️ 2026-08: 등급 계산(calcPriceGrades)이 "구 내 상대순위"라 여러 지역을
                 // 섞어서 계산하면 랭킹 의미가 깨짐 - 그래서 이 지역만의 목록(regionAptList)을
                 // 따로 두고 지역 스코프 계산을 전부 마친 뒤에만 전역 allAptList에 이어붙임.
-                var regionAptList = groupDBRows(dbData.apt, sigungu, lawdCd);
-                var regionRentList = Array.isArray(dbData.rent) ? dbData.rent : [];
-                rentCacheByLawd[lawdCd] = regionRentList;
-                // 매매 실거래가 단 한 건도 없어서 regionAptList에 아예 항목 자체가 없던 연립다세대를,
-                // 전세 거래만으로 "매매기록 없음" 상태의 항목으로 만들어 끼워넣음 - 이래야 마커/패널이
-                // 생기고, 그 안에서 전세가 기반 추정 등급/예상거래가/히스토리를 볼 수 있게 됨.
-                // (매매 기록이 있는 건물은 이미 groupDBRows가 만든 항목이 있으므로 건너뜀)
-                regionAptList = regionAptList.concat(buildRentOnlyEntries(regionAptList, regionRentList, sigungu, lawdCd));
-                // ── 좌표 캐시 미리 불러오기 (이미 지오코딩된 단지는 카카오 API 스킵) ──
-                await prefetchCoordsFromDB(regionAptList);
-                // ── 지표 계산 (평단가 등급만 유지, 투자점수는 삭제) ──
-                calcPriceGrades(regionAptList);
-                 regionAptList.forEach(function(apt) {
-                    var nh = calcNewHigh(apt.trades);
-                    apt.hasNewHigh   = nh.hasNewHigh;
-                    apt.newHighPyungs = nh.newHighPyungs;
-                    apt.popularPyeong = calcPopularPyeong(apt);
-                    // ⚠️ 2026-08(급등순위 필터→평형대 필터 교체): 이 apt 항목(=건물+평형 클러스터)의
-                    // 대표 전용면적은 최신 거래(latest.area)를 그대로 씀 - popularPyeong처럼 여러
-                    // 평형이 섞인 대형단지도 groupDBRows가 애초에 평형별로 항목을 쪼개두므로 latest
-                    // 하나만 봐도 충분함(다른 등급·연식단계 계산도 전부 이 전제로 동작함).
-                    apt.pyeongTier = apt.latest ? getPyeongTier(apt.latest.area) : null;
-                    // ⚠️ 2026-09(일동 578-4 사례로 발견 - "평형필터 적용이 안 되고 있어"):
-                    // 위 전제("groupDBRows가 평형별로 쪼개둠")가 다세대/연립에서는 항상
-                    // 성립하지 않음 - 같은 지번(다세대주택)에 실제로 크기가 전혀 다른 여러
-                    // 세대(예: 17㎡·45㎡·58㎡)가 섞여 하나의 apt 항목(trades 배열)에 다
-                    // 들어있는 경우가 있음. 이럴 때 apt.pyeongTier(최신 거래 하나만의 값)로
-                    // 필터를 걸면, 필터와 맞는 과거 거래가 있어도 최신 거래 평형만 보고
-                    // 숨겨지거나 반대로 계속 나타나 "필터가 안 먹힌다"처럼 보임. 그래서 이
-                    // 항목에 존재하는 모든 거래의 평형대 집합도 함께 구해서, 필터 판정은
-                    // "필터 조건에 맞는 거래가 하나라도 있는지"로 하도록 함(isAptVisibleUnder
-                    // CurrentFilters 참고).
-                    var _pyeongTierSet = {};
-                    (apt.trades || []).forEach(function(t) {
-                        if (t.area > 0) _pyeongTierSet[getPyeongTier(t.area)] = true;
-                    });
-                    // 매매기록이 아예 없는 "전세거래만" 항목(rentOnly, trades=[])은 latest.area가
-                    // 전세 매물 면적을 담고 있으므로 이것도 집합에 포함시켜야 필터에서 안 빠짐.
-                    if (apt.latest && apt.latest.area > 0) _pyeongTierSet[getPyeongTier(apt.latest.area)] = true;
-                    apt.pyeongTierSet = Object.keys(_pyeongTierSet);
-                });
-                dataCache[lawdCd] = regionAptList;
-                mergedLawdCds.add(lawdCd);
-                touchLawdCd(lawdCd); // LRU 갱신 + 상한 초과시 오래된 지역 제거(allAptList/allRentList 재조립)
+                var regionAptList = await ingestRegionHouseData(dbData, sigungu, lawdCd);
                 setStatus('');
                 // ⚠️ #479: 여기까지 오는 동안(get-house 응답 + prefetchCoordsFromDB 등) 이미
                 // 시간이 꽤 걸렸으므로, 대부분은 위에서 던져둔 lfPromise가 이미 끝나 있거나
@@ -6428,6 +6513,8 @@ async function saveSelectedBidTargets() {
         + (skippedCount ? ' (이미 등록된 사건번호 ' + skippedCount + '건은 건너뜀)' : '')
         + (noPinCount ? ' ⚠️ ' + noPinCount + '건은 주소 좌표를 찾지 못해 지도에는 안 뜨니 목록에서 주소를 확인해 주세요.' : '');
     renderAuctionList(); redrawMarkers();
+    // 등록이 끝나면 입찰후보 보드를 바로 열어 방금 등록한 물건을 표시함
+    if (savedCount) openBidBoard({ highlightIds: auctionList.slice(-savedCount).map(function(x) { return x.id; }) });
 }
 /* ════════════════════════════════════
    📐 낙찰가 백테스트 일괄등록 (2026-08 추가)
@@ -14304,6 +14391,260 @@ function renderRiskMarginSuggestion(predictedSale) {
         + (r.extra > 0 ? '<div style="color:#c62828;font-size:10.5px;">⚠️ 이 지역 6개월 뒤 하락 위험 높음(' + (dr.negative || []).join(', ') + ') - 과거 같은 조건에서 '
             + (dr.dropShare != null ? dr.dropShare + '%가 6개월 뒤 2%+ 하락, ' : '') + '평균 −' + dr.avgDropPct + '% → 그만큼 마진을 더 잡았어요</div>' : '')
         + '<div style="color:#999;font-size:10px;">낙찰되는 물건은 대체로 시세를 높게 본 경우라, 마진이 예측 오차를 덮도록 잡은 값이에요(전남·광주 낙찰물건 281건 검증: 고정 2천만 대비 낙찰 1.5배·총 순이익 1.7배, 손실 비율은 비슷).</div>';
+}
+/* ════ 🎯 입찰후보 보드 (2026-10, 사용자 요청: "입찰예정인 물건을 등록할 경우, 입찰할만한 물건을 한번에 볼 수 있는 ui")
+   등록된 입찰희망·입찰예정 물건 전부를 한 화면에 모아, 물건마다
+   예상매도가(자기 단지 실거래 기준) → 추천 목표마진(예측 오차·지역 하락위험 반영) → 추천 입찰가를 계산하고
+   최저가와 비교해 ✅추천 / 🟡검토 / ❌제외 / ⏳자료부족으로 나눠 보여줌.
+   예상매도가는 그 시군구 실거래가 불러와져 있어야 계산되므로(computeAuctionWonPredictedSale 참고),
+   지도를 옮기지 않고 필요한 지역 자료를 차례로 불러온 뒤 그 지역 물건을 바로 계산함
+   (지역이 8개를 넘으면 화면 목록에서 오래된 지역이 빠지므로 "불러오고 바로 계산" 순서를 지킴). ════ */
+var bidBoardRows = [];
+var bidBoardState = { verdict: 'all', region: '', type: '', sort: 'verdict', showPast: false, highlight: {} };
+var bidBoardRunning = false;
+function bbEsc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function(c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
+function bidBoardRegionLabel(addr) {
+    var t = String(addr || '').trim().split(/\s+/);
+    if (!t[0]) return '주소 미상';
+    var sido = t[0].replace(/(통합특별시|특별자치시|특별자치도|특별시|광역시)$/, '');
+    if (/도$/.test(sido) && sido.length > 2) sido = sido.slice(0, -1);
+    return sido + (t[1] ? ' ' + t[1] : '');
+}
+function isBidBoardCandidate(a) {
+    if (!a || a.isBacktest || parseFloat(a.actualBid) > 0) return false;
+    if (a.isBidTarget) return true;
+    var dd = a.bidDate ? calcAuctionDday(a.bidDate) : null;
+    return !!(dd && dd.diffDays >= 0);
+}
+// 이 단지(같은 동+지번) 전체 평형의 최근 3년 거래 건수 - "실제로 사고팔리는 단지인가"
+function countComplexTrades3y(dong, bunji, type) {
+    var b = String(bunji || '').trim();
+    if (!dong || !b) return 0;
+    var cutoff = daysAgo(1095), n = 0;
+    (aptIndexByDongBunji.get(dongKey(dong) + '|' + b) || []).forEach(function(apt) {
+        if ((apt.buildingType || 'apt') !== (type === 'villa' ? 'villa' : 'apt')) return;
+        (apt.trades || []).forEach(function(t) { if (tradeDate(t) >= cutoff) n++; });
+    });
+    return n;
+}
+function bidBoardDownRisk(lawd) {
+    var d = lawd && cycleDataByLawd[lawd];
+    var r = d && d.risk, c = r && r.current, hi = r && r.backtest && r.backtest['높음'];
+    if (!c) return null;
+    return { level: c.level, negative: c.negative || [], avgDropPct: hi && hi.avgFwd6mPct < 0 ? Math.round(-hi.avgFwd6mPct * 10) / 10 : 0 };
+}
+function computeBidBoardRow(a) {
+    var type = (a.propType === 'apt' || a.propType === 'villa') ? a.propType : null;
+    var lawd = a.bCode ? String(a.bCode).slice(0, 5) : null;
+    var bunjiFull = fullBunjiFromAddr(a.addr, a.dong, a.bunji);
+    var altName = buildingNameFromAddr(a.addr, a.dong);
+    var pyung = parseFloat(a.pyung) || null;
+    var minBid = parseInt(a.minBid) || 0;
+    var row = {
+        id: a.id, a: a, type: type, lawd: lawd, region: bidBoardRegionLabel(a.addr),
+        metro: /^(서울|경기|인천)/.test(String(a.addr || '').trim()),
+        name: cleanField(a.name) || altName || ((a.dong || '') + ' ' + (a.bunji || '')).trim() || cleanField(a.addr) || '(이름없음)',
+        pyung: pyung, floor: cleanField(a.floor), minBid: minBid, appraisal: parseInt(a.appraisal) || 0,
+        dday: a.bidDate ? calcAuctionDday(a.bidDate) : null, reasons: [], warns: []
+    };
+    row.loaded = !lawd || !!dataCache[lawd];
+    var est = type && a.lat && a.lon ? getAuctionWonEstimates(a) : null;
+    row.sale = est && est.predictedSale ? est.predictedSale : null;
+    row.saleSaved = !!(est && est.predictedSaleSource === 'saved');
+    row.own = type ? countOwnComplexTrades(a.dong, bunjiFull, type, pyung) : 0;
+    row.complex3y = type ? countComplexTrades3y(a.dong, bunjiFull, type) : 0;
+    row.lf = type ? resolveLfInfo(a.dong, a.name, bunjiFull, type, altName) : null;
+    var hist = type === 'apt' ? resolveFollowerHist(a.dong, a.name, bunjiFull, type, altName) : null;
+    row.catchup = hist && typeof hist.expectedCatchupPct === 'number' ? cappedCatchup(hist.expectedCatchupPct) : null;
+    row.risk = bidBoardDownRisk(lawd);
+    row.guarantee = a._guaranteeRisk || detectNumericAuctionRisk(a);
+    // 목표마진: 모달에서 직접 정해 저장한 값이 있으면 그걸, 없으면 추천 목표마진
+    var userMargin = parseInt(a.compTargetMargin);
+    var rm = row.sale ? riskMarginFor(row.sale, row.own, row.risk) : null;
+    row.marginUser = !isNaN(userMargin) && parseInt(a.target) > 0;
+    row.margin = row.marginUser ? userMargin : (rm ? rm.margin : null);
+    if (row.sale && row.margin != null) {
+        var buildYear = a.buildYear || (est && est.inferredBuildYear) || null;
+        var rec = solveAuctionBidFromRecord(Object.assign({}, a, {
+            target: row.sale, compTargetMargin: row.margin,
+            repair: parseInt(a.repair) || calcRepairFee(type, pyung || 0, buildYear) || 0
+        }));
+        row.recBid = rec ? rec.bid : null;
+    } else row.recBid = null;
+    row.roomPct = row.recBid && minBid ? Math.round((row.recBid - minBid) / minBid * 1000) / 10 : null;
+    row.salePerMin = row.sale && minBid ? Math.round(minBid / row.sale * 1000) / 10 : null;
+    // ── 판정 ──
+    var popular = row.lf && (row.lf.isLeader || (row.lf.rank && row.lf.rank <= 5));
+    var active = row.complex3y >= 20 || popular;
+    var rare = row.complex3y < 6;
+    if (!type) { row.verdict = 'nodata'; row.reasons.push('아파트·빌라만 계산해요'); }
+    else if (!row.loaded) { row.verdict = 'nodata'; row.reasons.push('지역 자료를 아직 못 불러왔어요'); }
+    else if (!row.sale) { row.verdict = 'nodata'; row.reasons.push('비교할 실거래가 부족해요'); }
+    else if (!minBid) { row.verdict = 'nodata'; row.reasons.push('최저가가 없어요'); }
+    else if (row.recBid < minBid) { row.verdict = 'no'; row.reasons.push('최저가로 사도 목표마진이 안 남아요'); }
+    else {
+        var ok = true;
+        if (type !== 'apt') { ok = false; row.warns.push('빌라는 검증 전이라 직접 확인'); }
+        if (row.own < 3) { ok = false; row.warns.push('이 단지 같은 평형 거래가 ' + row.own + '건뿐이라 예상매도가 오차가 커요'); }
+        if (rare) { ok = false; row.warns.push('최근 3년 거래 ' + row.complex3y + '건 - 팔기 어려울 수 있어요'); }
+        else if (!active) { ok = false; row.warns.push('거래가 많은 단지는 아니에요(3년 ' + row.complex3y + '건)'); }
+        if (row.risk && row.risk.level === '높음') { ok = false; row.warns.push('지역 6개월 하락 위험 높음'); }
+        if (row.guarantee && row.guarantee.level) { ok = false; row.warns.push('🚨 인수 보증금 의심 - 권리 확인 필요'); }
+        row.verdict = ok ? 'yes' : 'check';
+        if (ok) row.reasons.push('거래 활발한 단지 · 예상매도가 믿을 만함 · 지역 위험 낮음');
+    }
+    return row;
+}
+var BID_BOARD_VERDICT = {
+    yes:    { label: '✅ 추천', color: '#2e7d32', bg: '#e8f5e9', order: 0 },
+    check:  { label: '🟡 검토', color: '#ef6c00', bg: '#fff3e0', order: 1 },
+    no:     { label: '❌ 제외', color: '#c62828', bg: '#ffebee', order: 2 },
+    nodata: { label: '⏳ 자료부족', color: '#757575', bg: '#f5f5f5', order: 3 }
+};
+function openBidBoard(opts) {
+    opts = opts || {};
+    var el = document.getElementById('bid-board');
+    el.style.display = 'flex';
+    bidBoardState.highlight = {};
+    (opts.highlightIds || []).forEach(function(id) { bidBoardState.highlight[id] = true; });
+    refreshBidBoard();
+}
+function closeBidBoard() { document.getElementById('bid-board').style.display = 'none'; }
+async function refreshBidBoard() {
+    if (bidBoardRunning) return;
+    bidBoardRunning = true;
+    var cands = auctionList.filter(isBidBoardCandidate);
+    var byLawd = {}, order = [];
+    cands.forEach(function(a) {
+        var k = a.bCode ? String(a.bCode).slice(0, 5) : '_';
+        if (!byLawd[k]) { byLawd[k] = []; order.push(k); }
+        byLawd[k].push(a);
+    });
+    // 이미 불러온 지역부터 - 첫 화면이 빨리 채워지게
+    order.sort(function(x, y) { return (dataCache[y] ? 1 : 0) - (dataCache[x] ? 1 : 0); });
+    var rowsById = {};
+    bidBoardRows.forEach(function(r) { rowsById[r.id] = r; });
+    bidBoardRows = cands.map(function(a) { return rowsById[a.id] || { id: a.id, a: a, pending: true, region: bidBoardRegionLabel(a.addr), name: cleanField(a.name) || cleanField(a.addr) || '', dday: a.bidDate ? calcAuctionDday(a.bidDate) : null, verdict: 'nodata', reasons: ['계산 중...'], warns: [] }; });
+    renderBidBoard();
+    var keepLawd = typeof lastLawdCd !== 'undefined' ? lastLawdCd : null;
+    for (var i = 0; i < order.length; i++) {
+        var lawd = order[i];
+        setBidBoardProgress('지역 자료 불러오는 중 ' + (i + 1) + '/' + order.length + ' · ' + bidBoardRegionLabel(byLawd[lawd][0].addr));
+        if (lawd !== '_') {
+            try {
+                if (!dataCache[lawd]) {
+                    var dbData = await fetchHouseDataCached(lawd);
+                    if (dbData && !dbData.error && Array.isArray(dbData.apt)) await ingestRegionHouseData(dbData, '', lawd);
+                } else { mergedLawdCds.add(lawd); touchLawdCd(lawd); }
+                await waitForLeaderFollowerOrTimeout(autoLoadLeaderFollowerForRegion('', lawd), 8000);
+                await loadMarketCycle(lawd);
+            } catch (e) { console.error('입찰후보 지역 자료 실패:', lawd, e && e.message); }
+        }
+        var fresh = {};
+        byLawd[lawd].forEach(function(a) { fresh[a.id] = computeBidBoardRow(a); });
+        bidBoardRows = bidBoardRows.map(function(r) { return fresh[r.id] || r; });
+        renderBidBoard();
+    }
+    // 지도에서 보던 지역이 목록에서 빠졌으면 되살림
+    if (keepLawd && dataCache[keepLawd]) { mergedLawdCds.add(keepLawd); touchLawdCd(keepLawd); }
+    setBidBoardProgress('');
+    bidBoardRunning = false;
+    try { redrawMarkers(); } catch (e) {}
+}
+function setBidBoardProgress(t) {
+    var p = document.getElementById('bb-progress');
+    if (p) { p.innerText = t; p.style.display = t ? '' : 'none'; }
+}
+function setBidBoardFilter(key, val) {
+    bidBoardState[key] = val;
+    renderBidBoard();
+}
+function bidBoardVisibleRows() {
+    var s = bidBoardState;
+    return bidBoardRows.filter(function(r) {
+        if (!s.showPast && r.dday && r.dday.diffDays < 0) return false;
+        if (s.region && r.region !== s.region) return false;
+        if (s.type && r.a.propType !== s.type) return false;
+        return true;
+    });
+}
+function renderBidBoard() {
+    var s = bidBoardState;
+    var base = bidBoardVisibleRows();
+    var counts = { all: base.length, yes: 0, check: 0, no: 0, nodata: 0 };
+    base.forEach(function(r) { counts[r.verdict]++; });
+    var tabs = document.getElementById('bb-tabs');
+    tabs.innerHTML = [['all', '전체'], ['yes', BID_BOARD_VERDICT.yes.label], ['check', BID_BOARD_VERDICT.check.label], ['no', BID_BOARD_VERDICT.no.label], ['nodata', BID_BOARD_VERDICT.nodata.label]].map(function(t) {
+        return '<button class="bb-tab' + (s.verdict === t[0] ? ' on' : '') + '" onclick="setBidBoardFilter(\'verdict\',\'' + t[0] + '\')">' + t[1] + ' <b>' + counts[t[0]] + '</b></button>';
+    }).join('');
+    // 지역 선택지
+    var regions = {};
+    bidBoardRows.forEach(function(r) { regions[r.region] = (regions[r.region] || 0) + 1; });
+    var sel = document.getElementById('bb-region');
+    sel.innerHTML = '<option value="">지역 전체</option>' + Object.keys(regions).sort().map(function(k) {
+        return '<option value="' + bbEsc(k) + '"' + (s.region === k ? ' selected' : '') + '>' + bbEsc(k) + ' (' + regions[k] + ')</option>';
+    }).join('');
+    var rows = base.filter(function(r) { return s.verdict === 'all' || r.verdict === s.verdict; });
+    rows.sort(function(x, y) {
+        if (s.sort === 'date') {
+            var dx = x.dday ? x.dday.diffDays : 9999, dy = y.dday ? y.dday.diffDays : 9999;
+            if (dx !== dy) return dx - dy;
+        }
+        if (s.sort === 'verdict' || s.sort === 'date') {
+            var ox = BID_BOARD_VERDICT[x.verdict].order, oy = BID_BOARD_VERDICT[y.verdict].order;
+            if (ox !== oy) return ox - oy;
+        }
+        var rx = x.roomPct == null ? -999 : x.roomPct, ry = y.roomPct == null ? -999 : y.roomPct;
+        return ry - rx;
+    });
+    var body = document.getElementById('bb-body');
+    if (!bidBoardRows.length) {
+        body.innerHTML = '<div class="bb-empty">등록된 입찰희망 물건이 없어요.<br>상단 <b>📋 입찰희망</b>에서 법원 경매 목록을 붙여넣어 일괄등록하면 여기에 모여요.</div>';
+        return;
+    }
+    if (!rows.length) { body.innerHTML = '<div class="bb-empty">조건에 맞는 물건이 없어요.</div>'; return; }
+    body.innerHTML = '<table class="bb-table"><thead><tr>'
+        + '<th>판정</th><th>입찰일</th><th>물건</th><th class="r">최저가</th><th class="r">예상매도가</th>'
+        + '<th class="r">추천 입찰가</th><th class="r">최저가 대비</th><th>단지 인기</th><th>지역 위험</th><th>대장 따라잡기</th><th></th>'
+        + '</tr></thead><tbody>' + rows.map(renderBidBoardRow).join('') + '</tbody></table>';
+}
+function renderBidBoardRow(r) {
+    var v = BID_BOARD_VERDICT[r.verdict];
+    var idJs = String(r.id).replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+    var a = r.a;
+    var sub = [r.type === 'villa' ? '빌라' : (r.type === 'apt' ? '아파트' : (a.propType || '')), r.pyung ? r.pyung + '평' : '', r.floor ? r.floor + '층' : ''].filter(Boolean).join(' · ');
+    var dd = r.dday ? '<span class="bb-dday' + (r.dday.diffDays <= 3 && r.dday.diffDays >= 0 ? ' soon' : '') + '">' + r.dday.label + '</span><div class="bb-sub">' + bbEsc(a.bidDate || '') + '</div>' : '<span class="bb-sub">미정</span>';
+    var saleCell = r.pending ? '<span class="bb-sub">계산 중…</span>'
+        : (r.sale ? '<b>' + toEok(String(r.sale)) + '</b><div class="bb-sub">' + (r.saleSaved ? '내가 저장한 값' : '이 단지 같은 평형 ' + r.own + '건') + (r.salePerMin != null ? ' · 최저가는 ' + r.salePerMin + '%' : '') + '</div>' : '<span class="bb-sub">-</span>');
+    var recCell = r.recBid ? '<b>' + toEok(String(r.recBid)) + '</b><div class="bb-sub">마진 ' + toEok(String(r.margin)) + (r.marginUser ? '(내가 정함)' : '(추천)') + '</div>' : '<span class="bb-sub">-</span>';
+    var roomCell = r.roomPct == null ? '<span class="bb-sub">-</span>'
+        : '<b style="color:' + (r.roomPct >= 0 ? '#2e7d32' : '#c62828') + ';">' + (r.roomPct >= 0 ? r.roomPct + '% 여유' : Math.abs(r.roomPct) + '% 부족') + '</b>'
+          + '<div class="bb-sub">' + (r.roomPct >= 0 ? '최저가보다 ' + toEok(String(r.recBid - r.minBid)) + ' 더 써도 됨' : '한 번 더 떨어지면 다시 보기') + '</div>';
+    var popCell = r.pending ? '' : ((r.lf ? (r.lf.isLeader ? '<span class="bb-pill lead">👑 대장</span>' : '<span class="bb-pill">동 ' + r.lf.rank + '위</span>') : '')
+        + '<div class="bb-sub">3년 거래 ' + (r.complex3y || 0) + '건' + (r.complex3y >= 20 ? ' · 활발' : (r.complex3y < 6 ? ' · 드묾' : '')) + '</div>');
+    var riskCell = r.pending ? '' : (r.risk ? (r.risk.level === '높음' ? '<span class="bb-pill bad">하락위험 높음</span><div class="bb-sub">' + bbEsc((r.risk.negative || []).join(', ')) + '</div>' : '<span class="bb-pill good">낮음</span>') : '<span class="bb-sub">-</span>');
+    var cuCell = r.catchup == null ? '<span class="bb-sub">-</span>'
+        : (r.catchup >= 0.5 ? '<span style="color:#2e7d32;font-weight:bold;">+' + r.catchup + '% 여지</span>' : (r.catchup <= -0.5 ? '<span style="color:#c62828;">' + Math.abs(r.catchup) + '% 덜 오를 수도</span>' : '<span class="bb-sub">대장과 비슷</span>'));
+    var notes = r.reasons.concat(r.warns).map(function(t) { return '<span>' + bbEsc(t) + '</span>'; }).join('');
+    return '<tr class="bb-row' + (bidBoardState.highlight[r.id] ? ' new' : '') + '" onclick="bidBoardGo(\'' + idJs + '\')">'
+        + '<td data-l="판정"><span class="bb-verdict" style="color:' + v.color + ';background:' + v.bg + ';">' + v.label + '</span></td>'
+        + '<td data-l="입찰일">' + dd + '</td>'
+        + '<td data-l="물건" class="bb-name"><b>' + bbEsc(r.name) + '</b>' + (bidBoardState.highlight[r.id] ? ' <span class="bb-pill new">새로 등록</span>' : '')
+            + '<div class="bb-sub">' + bbEsc(r.region) + (sub ? ' · ' + bbEsc(sub) : '') + (a.caseNo ? ' · ' + bbEsc(a.caseNo) : '') + '</div>'
+            + (notes ? '<div class="bb-notes">' + notes + '</div>' : '') + '</td>'
+        + '<td data-l="최저가" class="r">' + (r.minBid ? toEok(String(r.minBid)) : '-') + (r.appraisal && r.minBid ? '<div class="bb-sub">감정가의 ' + Math.round(r.minBid / r.appraisal * 100) + '%</div>' : '') + '</td>'
+        + '<td data-l="예상매도가" class="r">' + saleCell + '</td>'
+        + '<td data-l="추천 입찰가" class="r">' + recCell + '</td>'
+        + '<td data-l="최저가 대비" class="r">' + roomCell + '</td>'
+        + '<td data-l="단지 인기">' + popCell + '</td>'
+        + '<td data-l="지역 위험">' + riskCell + '</td>'
+        + '<td data-l="대장 따라잡기">' + cuCell + '</td>'
+        + '<td class="bb-act"><button onclick="event.stopPropagation();closeBidBoard();openAuctionModal(\'' + idJs + '\')">상세</button></td>'
+        + '</tr>';
+}
+function bidBoardGo(id) {
+    closeBidBoard();
+    panToAuction(id);
 }
 /* ════ 📈 시장 사이클 패널 (2026-10, 사용자 요청: "과거 자료로 상승기·하락기를 파악해 지금 5년 주기 중 어디쯤인지,
    그리고 과거 흐름으로 후발주자를 찾는 게 목표") - analyze-cycle.py 결과를 보여줌. 사이클 위치로 6~12개월 뒤를
