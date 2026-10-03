@@ -75,6 +75,7 @@ const isProblem = (recentCnt, baseAvg) =>
 const regions = [...new Set(LAWD_CODES.map(r => r.name))];
 const fixed = [];      // 자동 복구된 문제
 const attention = [];  // 사람이 확인해야 하는 문제
+const notes = [];      // 국토부 원본도 같은 건수 = 수집 문제가 아니라 실제로 거래가 줄어든 것(참고용)
 const lines = [];
 let fixBudget = AUTO_FIX_MAX_REGIONS;
 
@@ -98,18 +99,23 @@ for (const t of TABLES) {
     fixBudget--;
     // ── 자동 복구: 그 지역의 모든 코드로 문제 달 + 지난달을 다시 수집 ──
     const codes = t.codes.filter(c => c.name === r.region);
+    let sourceCnt = 0, fetchErr = false; // 국토부 원본에서 문제 달에 받아온 건수
     for (const ym of [ymStr(recent), ymStr(recentEnd)]) {
       for (const { code, name } of codes) {
         try {
           const rows = await t.fetch(code, name, ym);
+          if (ym === ymStr(recent)) sourceCnt += (rows || []).filter(x => x.deal_date >= toInt(recent) && x.deal_date < toInt(recentEnd)).length;
           if (rows && rows.length) await t.upsert(rows);
-        } catch (e) { console.error(`재수집 실패 ${t.table} ${name} ${ym}: ${e.message}`); }
+        } catch (e) { fetchErr = true; console.error(`재수집 실패 ${t.table} ${name} ${ym}: ${e.message}`); }
         await sleep(DELAY_MS);
       }
     }
     const after = await countRows(t.table, r.region, toInt(recent), toInt(recentEnd));
     if (after !== null && !isProblem(after, r.baseAvg)) {
       fixed.push(`${desc} → 다시 수집해서 ${after}건으로 복구`); fixedHere++;
+    } else if (!fetchErr && after !== null && after >= sourceCnt * 0.9 && (after > 0 || r.baseAvg < 20)) {
+      // 국토부 원본에도 이만큼밖에 없음 → 수집은 정상, 실제 거래가 줄어든 것(지역코드 검증은 점검 2에서 따로 함)
+      notes.push(`${desc} → 국토부 원본도 ${sourceCnt}건이라 수집 문제는 아니에요(실제로 거래가 줄었어요)`); fixedHere++;
     } else {
       attention.push(`${desc} → 다시 수집해도 ${after ?? '?'}건이에요. 지역코드가 바뀌었거나 실제로 거래가 줄었을 수 있어요`);
     }
@@ -156,12 +162,13 @@ if (!KAKAO_KEY) {
 
 // ── 결과 저장(앱 배너용) + 요약 ──
 const status = attention.length ? 'attention' : (fixed.length ? 'fixed' : 'ok');
-const result = { checkedAt: now.toISOString(), checkedMonth: label(recent), status, fixed, attention };
+const result = { checkedAt: now.toISOString(), checkedMonth: label(recent), status, fixed, attention, notes };
 fs.mkdirSync('public', { recursive: true });
 fs.writeFileSync('public/data-health.json', JSON.stringify(result, null, 2));
 
 const summary = [`## 데이터 자동 점검 (${now.toISOString().slice(0, 10)})`, '', ...lines, '',
   fixed.length ? '### 자동으로 복구한 것' : '', ...fixed.map(p => `- ✅ ${p}`), '',
+  notes.length ? '### 참고: 실제로 거래가 줄어든 곳(수집은 정상)' : '', ...notes.map(p => `- ℹ️ ${p}`), '',
   attention.length ? '### 확인이 필요한 것' : '문제 없음 ✅', ...attention.map(p => `- ⚠️ ${p}`)].join('\n');
 console.log('\n' + summary);
 if (process.env.GITHUB_STEP_SUMMARY) fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, summary + '\n');
