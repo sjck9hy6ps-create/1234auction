@@ -12400,6 +12400,11 @@ function computeAuctionWonCandidates(a) {
 }
 function computeAuctionWonPredictedSale(cands, a) {
     if (!cands) return null; // #498: 비교물건 0건이어도 동네 시세 대체를 위해 계속 진행
+    // ⚠️ 2026-10(광주 풍암동 우미광장 사례): 물건이 속한 시군구 실거래가 아직 안 불러와진 상태(지도에 이웃 구만 떠 있음)에서
+    // 계산하면 자기 단지 없이 옆 구 단지들로만 계산돼 엉뚱하게 낮게 나왔음(1.7억 → 1.33억). 그 시군구 자료가 없으면
+    // 값을 내지 않음(캐시도 안 됨 - 지도를 그 지역으로 옮겨 자료가 들어오면 다시 계산됨).
+    var subjCode = a && a.bCode ? String(a.bCode).slice(0, 5) : null;
+    if (subjCode && typeof dataCache !== 'undefined' && !dataCache[subjCode]) return null;
     var compRecords = cands.candidates.map(convertCandidateToCompRecordHeadless);
     var estResult = getCompEstValueHeadless(compRecords, cands.pyung, cands.floor, cands.targetYear, { lat: a.lat, lon: a.lon, name: a.name, dong: a.dong, buildingType: cands.buildingType });
     return estResult ? estResult.estValue : null;
