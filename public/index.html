@@ -681,8 +681,163 @@ tr:hover td { background:#fffde7; }
     100% { transform:scale(3); opacity:0; }
 }
 </style>
+<!-- ════ 2026-10 화면 개편(사용자 요청: "아실처럼 보기 편하게") ════
+     기존 버튼·패널·함수는 그대로 두고, 상단 메뉴줄(#topbar)·필터 칩줄(#chipbar)·왼쪽 단지 목록(#sidebar)·
+     오른쪽 지도도구 세로줄(#right-tools)이라는 새 틀을 만들어 기존 요소를 그 안으로 옮김(relocateUiV2).
+     지도 배지는 기본 "간단"(단지명 + 평형·최근 거래가 2줄), 칩줄의 "배지: 자세히"로 예전 배지로 돌아감. -->
+<style>
+:root { --ui-blue:#2443c4; --ui-blue-dark:#1a33a0; --ui-line:#e3e7f2; --ui-bg:#f6f8fc; --ui-text:#1f2937; --ui-sub:#6b7280; }
+body.ui2 { margin:0; font-family:'Pretendard','Apple SD Gothic Neo','Malgun Gothic',sans-serif; background:#fff; }
+#topbar { position:fixed; top:0; left:0; right:0; height:52px; z-index:60; background:var(--ui-blue);
+  display:flex; align-items:center; gap:14px; padding:0 14px; box-shadow:0 2px 6px rgba(0,0,0,.18); }
+#tb-brand { color:#fff; font-weight:900; font-size:17px; white-space:nowrap; letter-spacing:-0.5px; }
+#tb-search-slot { position:relative; flex:0 1 360px; min-width:0; }
+body.ui2 #search-box { position:static; transform:none; display:flex; gap:0; }
+body.ui2 #search-box input { flex:1; width:auto; min-width:0; border:none; border-radius:6px 0 0 6px; padding:8px 12px; font-size:14px; }
+body.ui2 #search-box > button { background:var(--ui-blue-dark); color:#fff; border-radius:0 6px 6px 0; padding:8px 14px; font-size:13px; }
+body.ui2 #search-box > button:hover { background:#14287f; }
+body.ui2 #autocomplete { top:100%; left:0; transform:none; width:100%; margin-top:2px; }
+#tb-menu { display:flex; align-items:center; gap:2px; margin-left:auto; }
+#tb-menu > button, #tb-more > button { background:transparent; border:none; color:#fff; font-size:13px; font-weight:bold;
+  padding:8px 10px; border-radius:6px; cursor:pointer; white-space:nowrap; }
+#tb-menu > button:hover, #tb-more > button:hover { background:rgba(255,255,255,.16); }
+#tb-more { position:relative; }
+#tb-more-menu { display:none; position:absolute; right:0; top:42px; background:#fff; border-radius:8px; min-width:200px;
+  box-shadow:0 6px 18px rgba(0,0,0,.2); padding:6px; z-index:70; }
+#tb-more-menu.open { display:block; }
+#tb-more-menu a, #tb-more-menu button { display:block; width:100%; text-align:left; background:none; border:none; padding:8px 10px;
+  font-size:13px; color:var(--ui-text); text-decoration:none; border-radius:6px; cursor:pointer; }
+#tb-more-menu a:hover, #tb-more-menu button:hover { background:var(--ui-bg); }
+#tb-hamburger { display:none; margin-left:auto; background:transparent; border:none; color:#fff; font-size:22px; cursor:pointer; }
+#chipbar { position:fixed; top:52px; left:0; right:0; height:44px; z-index:55; background:#fff; border-bottom:1px solid var(--ui-line);
+  display:flex; align-items:center; gap:6px; padding:0 12px; overflow-x:auto; white-space:nowrap; -webkit-overflow-scrolling:touch; }
+body.ui2 #type-filter { position:static; display:flex; gap:4px; }
+body.ui2 .type-btn { padding:5px 12px; font-size:12.5px; border-width:1.5px; }
+body.ui2 .type-btn.active-apt { background:var(--ui-blue); border-color:var(--ui-blue); }
+body.ui2 .type-btn.active-villa { background:#0f766e; border-color:#0f766e; }
+.chip { flex-shrink:0; padding:5px 12px; font-size:12.5px; font-weight:bold; border:1.5px solid #d6dbe8; border-radius:16px;
+  background:#fff; color:#4b5563; cursor:pointer; }
+.chip:hover { border-color:var(--ui-blue); color:var(--ui-blue); }
+.chip.on { background:var(--ui-blue); border-color:var(--ui-blue); color:#fff; }
+.chip-sep { width:1px; height:22px; background:var(--ui-line); flex-shrink:0; }
+body.ui2 #filter-toggle-btn { display:none; }
+body.ui2 #filter-panel { top:104px; left:auto; right:64px; transform:none; max-width:560px; z-index:56; }
+#sidebar { position:fixed; top:96px; left:0; bottom:0; width:320px; z-index:50; background:#fff; border-right:1px solid var(--ui-line);
+  display:flex; flex-direction:column; box-shadow:2px 0 8px rgba(0,0,0,.06); transition:transform .2s; }
+body.sb-closed #sidebar { transform:translateX(-100%); }
+#sb-toggle { position:fixed; top:110px; left:320px; z-index:51; width:22px; height:48px; border:1px solid var(--ui-line); border-left:none;
+  background:#fff; border-radius:0 8px 8px 0; cursor:pointer; color:var(--ui-sub); font-size:12px; box-shadow:2px 0 6px rgba(0,0,0,.08); transition:left .2s; }
+body.sb-closed #sb-toggle { left:0; }
+#sb-handle { display:none; }
+#sb-region { padding:10px 14px 6px; font-size:13px; color:var(--ui-sub); }
+#sb-region b { color:var(--ui-text); font-size:15px; }
+#sb-sort { display:flex; gap:0; padding:0 10px 8px; border-bottom:1px solid var(--ui-line); flex-wrap:wrap; }
+#sb-sort span { font-size:12px; color:var(--ui-sub); padding:4px 7px; cursor:pointer; border-radius:6px; }
+#sb-sort span.on { color:var(--ui-blue); font-weight:bold; background:#eef2ff; }
+#sb-list { flex:1; overflow-y:auto; }
+.sb-item { padding:10px 14px; border-bottom:1px solid #f0f2f7; cursor:pointer; }
+.sb-item:hover { background:var(--ui-bg); }
+.sb-name { font-weight:bold; font-size:14px; color:var(--ui-text); display:flex; align-items:center; gap:6px; }
+.sb-rank { font-size:10.5px; font-weight:bold; color:#fff; background:#7b1fa2; border-radius:4px; padding:1px 5px; }
+.sb-rank.leader { background:#4a148c; }
+.sb-meta { font-size:12px; color:var(--ui-sub); margin-top:2px; }
+.sb-price { font-size:12.5px; color:var(--ui-text); font-weight:bold; margin-top:2px; }
+.sb-tag { display:inline-block; font-size:10.5px; padding:1px 5px; border-radius:4px; margin-left:4px; font-weight:bold; }
+#sb-empty { padding:20px 14px; color:var(--ui-sub); font-size:13px; }
+#right-tools { position:fixed; top:108px; right:12px; z-index:52; display:flex; flex-direction:column; gap:6px; }
+body.ui2 #geo-tools-group { position:static; display:flex; flex-direction:column; gap:6px; }
+body.ui2 .geo-tool-btn, .rt-btn { width:40px; height:40px; border-radius:8px; border:1px solid #d6dbe8; background:#fff; color:#374151;
+  font-size:17px; box-shadow:0 2px 6px rgba(0,0,0,.12); cursor:pointer; display:flex; align-items:center; justify-content:center; padding:0; }
+.rt-btn { flex-direction:column; font-size:10px; font-weight:bold; line-height:1.15; }
+.rt-btn .rt-ico { font-size:16px; }
+.rt-btn.on, body.ui2 .geo-tool-btn.active { background:var(--ui-blue); border-color:var(--ui-blue); color:#fff; }
+body.ui2 #compass-hud { top:108px; left:auto; right:62px; }
+body.ui2 #legend { display:none; bottom:16px; left:auto; right:62px; top:auto; }
+body.ui2.legend-open #legend { display:block; }
+body.ui2 #status-box { top:108px; }
+body.ui2 #surge-panel { top:104px; right:62px; }
+body.ui2 #panel { top:52px; height:calc(100vh - 52px); z-index:65; }
+body.ui2 #auction-add-btn { display:none; }
+body.ui2 #map { margin-top:96px; height:calc(100vh - 96px); }
+@media (max-width: 640px) { body.ui2 #map { height:calc(100vh - 96px - 46px); } }
+body.ui2 #cycle-panel { top:104px !important; right:62px !important; }
+body.ui2 #data-health-banner { top:52px !important; }
+body.ui2 #dong-boundary-info { top:108px !important; }
+@media (max-width: 900px) {
+  #tb-brand { font-size:15px; }
+  #tb-menu > button { padding:8px 6px; font-size:12px; }
+}
+@media (max-width: 640px) {
+  #topbar { gap:8px; padding:0 8px; }
+  #tb-brand { display:none; }
+  #tb-search-slot { flex:1; }
+  #tb-hamburger { display:block; }
+  #tb-menu { display:none; position:fixed; top:52px; right:0; left:0; background:var(--ui-blue); flex-direction:column; align-items:stretch; padding:6px; z-index:70; }
+  #tb-menu.open { display:flex; }
+  #tb-menu > button { text-align:left; padding:10px; font-size:14px; }
+  #tb-more-menu { position:static; box-shadow:none; }
+  #sidebar { top:auto; bottom:0; left:0; right:0; width:auto; height:46px; border-right:none; border-top:1px solid var(--ui-line);
+    border-radius:14px 14px 0 0; box-shadow:0 -3px 12px rgba(0,0,0,.12); transition:height .2s; }
+  body.sb-mobile-open #sidebar { height:62vh; }
+  body.sb-closed #sidebar { transform:none; }
+  #sb-toggle { display:none; }
+  #sb-handle { display:block; text-align:center; font-size:13px; font-weight:bold; color:var(--ui-text); padding:12px 0 6px; cursor:pointer; }
+  #right-tools { top:104px; right:8px; }
+  body.ui2 #filter-panel { left:8px; right:8px; top:100px; max-width:none; }
+  body.ui2 #legend { right:8px; bottom:56px; }
+  body.ui2 #surge-panel, body.ui2 #cycle-panel { right:8px !important; left:8px; width:auto !important; }
+}
+</style>
+
 </head>
 <body>
+<div id="topbar">
+    <div id="tb-brand">🏠 경매 시세지도</div>
+    <div id="tb-search-slot"></div>
+    <nav id="tb-menu">
+        <button onclick="openAuctionList(); closeTbMenus();">🔨 경매관리</button>
+        <button onclick="openBidTargetPanel(); closeTbMenus();">📋 입찰희망</button>
+        <button onclick="openBidCasePanel(); closeTbMenus();">⚖️ 낙찰사례</button>
+        <button onclick="openSurgePanel(); closeTbMenus();">🔥 급등·돈되는지역</button>
+        <button onclick="openCyclePanel(); closeTbMenus();">📈 사이클</button>
+        <div id="tb-more">
+            <button onclick="toggleTbMore(event)">더보기 ▾</button>
+            <div id="tb-more-menu">
+                <a href="/backup.html">📦 데이터 백업</a>
+                <a href="/dashboard.html">📊 누적 투자 리포트</a>
+                <button onclick="openBacktestPanel(); closeTbMenus();">📐 낙찰가 백테스트 일괄등록</button>
+                <button onclick="reloadBadges(); closeTbMenus();">🔄 배지 재로딩</button>
+            </div>
+        </div>
+    </nav>
+    <button id="tb-hamburger" onclick="toggleTbMenuMobile()" aria-label="메뉴">☰</button>
+</div>
+<div id="chipbar">
+    <div id="chip-type-slot"></div>
+    <span class="chip-sep"></span>
+    <button class="chip" data-proxy="newhighonly-toggle-btn">⭐ 신고가만</button>
+    <button class="chip" data-proxy-onclick="toggleRecentYearOnly">🕒 최근 6개월 거래만</button>
+    <button class="chip" data-proxy="bidcaseonly-toggle-btn">⚖️ 낙찰사례만</button>
+    <button class="chip" onclick="openFilterPanelTab('attr')">📐 평형·연식·등급 ▾</button>
+    <button class="chip" onclick="openFilterPanelTab('display')">⚙️ 필터 전체 ▾</button>
+    <span class="chip-sep"></span>
+    <button class="chip" id="chip-badge-mode" onclick="toggleBadgeMode()">🔍 배지: 간단</button>
+</div>
+<div id="sidebar">
+    <div id="sb-handle" onclick="toggleSidebar()">▲ 이 지역 단지 목록</div>
+    <div id="sb-region">지도를 움직이면 이 지역 단지가 나와요</div>
+    <div id="sb-sort">
+        <span data-sort="pop" class="on">인기순</span><span data-sort="vol">거래량순</span><span data-sort="price">평단가순</span><span data-sort="year">입주년도순</span><span data-sort="name">이름순</span>
+    </div>
+    <div id="sb-list"></div>
+</div>
+<button id="sb-toggle" onclick="toggleSidebar()" title="단지 목록 접기/펴기">◀</button>
+<div id="right-tools">
+    <div id="rt-geo-slot"></div>
+    <button class="rt-btn" id="rt-legend" onclick="toggleLegendPanel()" title="범례·데이터 범위"><span class="rt-ico">📍</span>범례</button>
+    <button class="rt-btn" data-proxy="boundary-toggle-btn" title="법정동 경계선"><span class="rt-ico">🗺️</span>경계</button>
+</div>
+
 <div id="search-box">
     <input type="text" id="addr-input" placeholder="아파트명·도로명·지번 검색" />
     <button onclick="searchAddress()">검색</button>
@@ -4521,6 +4676,10 @@ function createMarker(cacheKey, lat, lon, apt) {
         + (amount ? '<div style="font-size:13px;font-weight:bold;color:' + color + ';">' + toEok(amount) + '</div>' : '')
         + (l.road_name ? '<div style="font-size:11px;color:#aaa;">' + l.road_name + '</div>' : '')
         + '<div class="comp-add-badge" onclick="event.stopPropagation();handleCompBtnClick(\'' + mKey + '\')">+비교</div>';
+    // 2026-10 화면 개편: 기본은 아실처럼 2줄짜리 간단 배지(단지명 + 평형·최근 거래가) - 칩줄 "배지: 자세히"로 위 상세 배지
+    if (typeof badgeMode !== 'undefined' && badgeMode === 'simple') {
+        applySimpleBadge(div, apt, { matchedAuction: matchedAuction, matchedBidCase: matchedBidCase, color: color, popRankBadge: popRankBadge, mKey: mKey });
+    }
     var overlay = new kakao.maps.CustomOverlay({
         position: new kakao.maps.LatLng(lat, lon),
         content: div,
@@ -19233,5 +19392,211 @@ function moveToDong(region, dong) {
     });
 }
 </script>
+<script>
+/* ════ 2026-10 화면 개편(아실 참고) - 새 틀 배치·칩·왼쪽 단지 목록·간단 배지 모드 ════ */
+var badgeMode = (function() { try { return localStorage.getItem('badgeMode') || 'simple'; } catch (e) { return 'simple'; } })();
+var sidebarSort = (function() { try { return localStorage.getItem('sbSort') || 'pop'; } catch (e) { return 'pop'; } })();
+function relocateUiV2() {
+    document.body.classList.add('ui2');
+    var put = function(id, slotId) { var el = document.getElementById(id), slot = document.getElementById(slotId); if (el && slot) slot.appendChild(el); };
+    put('search-box', 'tb-search-slot');
+    put('autocomplete', 'tb-search-slot');
+    put('type-filter', 'chip-type-slot');
+    put('geo-tools-group', 'rt-geo-slot');
+    // 검색창 옆에 있던 버튼들(배지 재로딩·사이클)은 상단 메뉴로 옮겼으니 숨김, 급등지역은 메뉴에 있음
+    ['badge-reload-btn', 'cycle-btn', 'surge-btn'].forEach(function(id) { var el = document.getElementById(id); if (el) el.style.display = 'none'; });
+    // 칩/도구 버튼이 기존 버튼을 대신 눌러주고(data-proxy), 켜짐 상태를 따라 표시
+    document.querySelectorAll('[data-proxy],[data-proxy-onclick]').forEach(function(chip) {
+        chip.addEventListener('click', function() {
+            var target = chip.dataset.proxy ? document.getElementById(chip.dataset.proxy)
+                : document.querySelector('[onclick^="' + chip.dataset.proxyOnclick + '"]');
+            if (target) target.click();
+            syncProxyChips();
+        });
+    });
+    document.querySelectorAll('#sb-sort span').forEach(function(s) {
+        s.classList.toggle('on', s.dataset.sort === sidebarSort);
+        s.addEventListener('click', function() {
+            sidebarSort = s.dataset.sort;
+            try { localStorage.setItem('sbSort', sidebarSort); } catch (e) {}
+            document.querySelectorAll('#sb-sort span').forEach(function(x) { x.classList.toggle('on', x === s); });
+            renderSidebarList();
+        });
+    });
+    if (window.innerWidth <= 640) document.body.classList.remove('sb-closed');
+    else { try { if (localStorage.getItem('sbClosed') === '1') document.body.classList.add('sb-closed'); } catch (e) {} }
+    updateBadgeModeChip();
+    syncProxyChips();
+    document.addEventListener('click', function(e) {
+        var more = document.getElementById('tb-more');
+        if (more && !more.contains(e.target)) document.getElementById('tb-more-menu').classList.remove('open');
+    });
+}
+function syncProxyChips() {
+    setTimeout(function() {
+        document.querySelectorAll('[data-proxy],[data-proxy-onclick]').forEach(function(chip) {
+            var target = chip.dataset.proxy ? document.getElementById(chip.dataset.proxy)
+                : document.querySelector('[onclick^="' + chip.dataset.proxyOnclick + '"]');
+            chip.classList.toggle('on', !!(target && target.classList.contains('active')));
+        });
+    }, 50);
+}
+function toggleTbMore(e) { if (e) e.stopPropagation(); document.getElementById('tb-more-menu').classList.toggle('open'); }
+function toggleTbMenuMobile() { document.getElementById('tb-menu').classList.toggle('open'); }
+function closeTbMenus() { document.getElementById('tb-more-menu').classList.remove('open'); document.getElementById('tb-menu').classList.remove('open'); }
+function openFilterPanelTab(tab) {
+    var panel = document.getElementById('filter-panel');
+    var isOpen = panel && getComputedStyle(panel).display !== 'none';
+    if (!isOpen) toggleFilterPanel();
+    switchFilterPanelTab(tab);
+}
+function toggleLegendPanel() {
+    var on = document.body.classList.toggle('legend-open');
+    document.getElementById('rt-legend').classList.toggle('on', on);
+    var lg = document.getElementById('legend');
+    if (on && lg && lg.classList.contains('collapsed')) toggleLegend();
+}
+function toggleSidebar() {
+    if (window.innerWidth <= 640) {
+        var open = document.body.classList.toggle('sb-mobile-open');
+        document.getElementById('sb-handle').innerText = (open ? '▼ ' : '▲ ') + '이 지역 단지 목록' + (lastSidebarCount ? ' (' + lastSidebarCount + ')' : '');
+        return;
+    }
+    var closed = document.body.classList.toggle('sb-closed');
+    document.getElementById('sb-toggle').innerText = closed ? '▶' : '◀';
+    try { localStorage.setItem('sbClosed', closed ? '1' : '0'); } catch (e) {}
+}
+function updateBadgeModeChip() {
+    var c = document.getElementById('chip-badge-mode');
+    if (c) { c.innerText = badgeMode === 'simple' ? '🔍 배지: 간단' : '🔍 배지: 자세히'; c.classList.toggle('on', badgeMode !== 'simple'); }
+}
+function toggleBadgeMode() {
+    badgeMode = badgeMode === 'simple' ? 'detail' : 'simple';
+    try { localStorage.setItem('badgeMode', badgeMode); } catch (e) {}
+    updateBadgeModeChip();
+    Object.keys(markers).forEach(function(k) { try { if (markers[k] && markers[k].overlay) markers[k].overlay.setMap(null); } catch (e) {} delete markers[k]; });
+    redrawMarkers();
+}
+// ── 간단 배지(아실처럼 단지명 + 평형·최근 거래가 2줄) - createMarker가 호출 ──
+function applySimpleBadge(div, apt, opts) {
+    var l = apt.latest || {};
+    var hc = opts.matchedAuction ? '#e65100' : (opts.matchedBidCase ? '#00695c' : opts.color);
+    var py = l.area ? Math.round(toPyung(l.area)) : null;
+    var priceLine = (py ? py + '평 ' : '') + (l.amount ? toEok(String(l.amount)) : '');
+    var icons = (apt.hasNewHigh ? '<span title="신고가">⭐</span>' : '') + (opts.matchedAuction ? '<span title="등록한 경매물건">🔨</span>' : '')
+        + (opts.matchedBidCase ? '<span title="낙찰사례">⚖️</span>' : '');
+    var esc = function(s) { return String(s || '').replace(/[<>&]/g, function(c) { return { '<': '&lt;', '>': '&gt;', '&': '&amp;' }[c]; }); };
+    div.style.cssText = 'position:relative;background:#fff;border:1.5px solid ' + hc + ';border-radius:6px;padding:0;margin-top:12px;white-space:nowrap;cursor:pointer;'
+        + 'text-align:center;min-width:56px;max-width:150px;box-shadow:0 1px 4px rgba(0,0,0,.28);transform:scale(var(--badge-scale,1));transform-origin:center bottom;line-height:1.25;'
+        + (opts.matchedAuction ? 'animation:auctionGlow 1.8s ease-in-out infinite;' : '');
+    div.innerHTML = (opts.popRankBadge || '')
+        + '<div style="background:' + hc + ';color:#fff;font-size:11px;font-weight:bold;padding:2px 7px;border-radius:4px 4px 0 0;overflow:hidden;text-overflow:ellipsis;">' + esc(l.name) + '</div>'
+        + '<div style="font-size:11px;font-weight:bold;color:#1f2937;padding:1px 6px 2px;">' + priceLine + (icons ? ' ' + icons : '') + '</div>'
+        + '<div class="comp-add-badge" onclick="event.stopPropagation();handleCompBtnClick(\'' + opts.mKey + '\')">+비교</div>';
+}
+// ── 왼쪽 단지 목록 ──
+var lastSidebarCount = 0, sidebarTimer = null;
+function scheduleSidebar() { clearTimeout(sidebarTimer); sidebarTimer = setTimeout(renderSidebarList, 350); }
+function sidebarComplexes() {
+    if (!map || !allAptList) return [];
+    var b = map.getBounds(); if (!b) return [];
+    var sw = b.getSouthWest(), ne = b.getNorthEast();
+    var cut3y = daysAgo(1095), groups = {};
+    allAptList.forEach(function(apt) {
+        if (apt.buildingType === 'single') return;
+        if (currentTypeFilter && apt.buildingType !== currentTypeFilter) return;
+        var l = apt.latest || {};
+        var key = [l.dong, l.name, l.bunji, l.road_name, l.main_num, l.sub_num].join('|').toLowerCase();
+        var c = coordCache[key];
+        if (!c || c.lat < sw.getLat() || c.lat > ne.getLat() || c.lon < sw.getLng() || c.lon > ne.getLng()) return;
+        if (typeof isAptVisibleUnderCurrentFilters === 'function' && !isAptVisibleUnderCurrentFilters(apt)) return;
+        var gk = dongKey(l.dong) + '|' + (l.name || '');
+        var g = groups[gk] || (groups[gk] = { name: l.name, dong: l.dong, type: apt.buildingType, apts: [], lat: c.lat, lon: c.lon, vol3y: 0, last: null, buildYear: null, pppSum: 0, pppN: 0 });
+        g.apts.push(apt);
+        (apt.trades || []).forEach(function(t) {
+            var td = tradeDate(t);
+            if (td >= cut3y) g.vol3y++;
+            if (!g.last || td > g.last.td) g.last = { td: td, amount: t.amount, area: t.area, apt: apt };
+            if (td >= daysAgo(365) && t.area > 0 && parseInt(t.amount) > 0) { g.pppSum += parseInt(t.amount) / toPyung(t.area); g.pppN++; }
+            if (!g.buildYear && t.build_year) g.buildYear = parseInt(t.build_year);
+        });
+    });
+    return Object.keys(groups).map(function(k) {
+        var g = groups[k];
+        g.ppp = g.pppN ? g.pppSum / g.pppN : (g.last && g.last.area > 0 ? parseInt(g.last.amount) / toPyung(g.last.area) : 0);
+        g.rank = rankMapFor(g.type)[lfRankKey(g.dong, g.name)] || null;
+        return g;
+    });
+}
+function renderSidebarList() {
+    var listEl = document.getElementById('sb-list'); if (!listEl) return;
+    var items = sidebarComplexes();
+    var rankVal = function(g) { return g.rank ? (g.rank.isLeader ? 0 : g.rank.rank + 1) : 9999; };
+    var sorters = {
+        pop: function(a, b) { return rankVal(a) - rankVal(b) || b.vol3y - a.vol3y; },
+        vol: function(a, b) { return b.vol3y - a.vol3y; },
+        price: function(a, b) { return b.ppp - a.ppp; },
+        year: function(a, b) { return (b.buildYear || 0) - (a.buildYear || 0); },
+        name: function(a, b) { return String(a.name).localeCompare(String(b.name)); },
+    };
+    items.sort(sorters[sidebarSort] || sorters.pop);
+    lastSidebarCount = items.length;
+    var handle = document.getElementById('sb-handle');
+    if (handle) handle.innerText = (document.body.classList.contains('sb-mobile-open') ? '▼ ' : '▲ ') + '이 지역 단지 목록 (' + items.length + ')';
+    window.__sbItems = items.slice(0, 300);
+    if (!items.length) { listEl.innerHTML = '<div id="sb-empty">이 화면 안에 표시할 단지가 없어요. 지도를 움직이거나 확대해 보세요.</div>'; return; }
+    var esc = function(s) { return String(s || '').replace(/[<>&]/g, function(c) { return { '<': '&lt;', '>': '&gt;', '&': '&amp;' }[c]; }); };
+    listEl.innerHTML = window.__sbItems.map(function(g, i) {
+        var rk = g.rank ? (g.rank.isLeader ? '<span class="sb-rank leader">👑대장</span>' : '<span class="sb-rank">' + (g.rank.rank + 1) + '위</span>') : '';
+        var last = g.last ? (Math.round(toPyung(g.last.area)) + '평 ' + toEok(String(g.last.amount)) + ' <span style="color:#9ca3af;font-weight:normal;">(' + g.last.td.getFullYear() + '.' + (g.last.td.getMonth() + 1) + ')</span>') : '거래 없음';
+        var tags = '';
+        if (g.vol3y >= 30) tags += '<span class="sb-tag" style="background:#fff1e6;color:#c2410c;">🔥 거래활발</span>';
+        if (g.apts.some(function(a) { return a.hasNewHigh; })) tags += '<span class="sb-tag" style="background:#fff7d6;color:#a16207;">⭐신고가</span>';
+        return '<div class="sb-item" onclick="pickSidebarItem(' + i + ')">'
+            + '<div class="sb-name">' + esc(g.name) + rk + '</div>'
+            + '<div class="sb-meta">' + esc(dongKey(g.dong)) + (g.buildYear ? ' · ' + g.buildYear + '년 입주' : '') + ' · 최근 3년 거래 ' + g.vol3y + '건' + tags + '</div>'
+            + '<div class="sb-price">' + last + (g.ppp ? ' · 평당 ' + Math.round(g.ppp).toLocaleString() + '만' : '') + '</div>'
+            + '</div>';
+    }).join('');
+}
+function pickSidebarItem(i) {
+    var g = (window.__sbItems || [])[i]; if (!g) return;
+    var apt = (g.last && g.last.apt) || g.apts[0];
+    map.panTo(new kakao.maps.LatLng(g.lat, g.lon));
+    if (window.innerWidth <= 640) document.body.classList.remove('sb-mobile-open');
+    if (typeof showRadiusCircle === 'function') showRadiusCircle(g.lat, g.lon);
+    openPanel(apt, g.lat, g.lon);
+}
+function updateSidebarRegion() {
+    if (!map) return;
+    var c = map.getCenter();
+    coord2RegionCodeCached(c.getLng(), c.getLat(), function(result, status) {
+        if (status !== kakao.maps.services.Status.OK) return;
+        var b = (result || []).find(function(r) { return r.region_type === 'B'; });
+        if (!b) return;
+        document.getElementById('sb-region').innerHTML = b.region_1depth_name + ' › ' + b.region_2depth_name + ' › <b>' + b.region_3depth_name + '</b>';
+    });
+}
+// 기존 지도 그리기 뒤에 목록·지역표시를 따라 갱신(함수 이름으로 호출되므로 감싸기만 하면 됨)
+(function hookRedraw() {
+    var orig = window.redrawMarkers;
+    if (typeof orig === 'function') {
+        window.redrawMarkers = function() { var r = orig.apply(this, arguments); scheduleSidebar(); return r; };
+    }
+})();
+window.addEventListener('load', function() {
+    relocateUiV2();
+    var tries = 0;
+    var t = setInterval(function() {
+        if (window.map && window.kakao && kakao.maps && kakao.maps.event) {
+            clearInterval(t);
+            kakao.maps.event.addListener(map, 'idle', function() { scheduleSidebar(); updateSidebarRegion(); });
+            try { map.relayout(); } catch (e) {}
+            scheduleSidebar(); updateSidebarRegion();
+        } else if (++tries > 120) clearInterval(t);
+    }, 500);
+});
+</script>
+
 </body>
 </html>
