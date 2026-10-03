@@ -163,6 +163,7 @@ export default async function handler(req, res) {
     // 뜻이므로, 아래에서 이 경우엔 캐시 저장을 건너뛰고 응답도 no-store로 내려보냄.
     const hadFetchError = [titleResult, priceResult, floorResult, exposResult]
       .some(r => r.httpStatus === null);
+    const quotaExceeded = [titleResult, priceResult, floorResult, exposResult].some(r => r.quotaExceeded);
 
     const titleItems = titleResult.items;
     const priceItems = priceResult.items;
@@ -234,6 +235,7 @@ export default async function handler(req, res) {
       title, price, floors, exposAreas, cached: false, debug, titleCandidates,
       legacyFallbackUsed: legacyFallbackUsed || undefined,
       fetchFailed: hadFetchError || undefined,
+      quotaExceeded: quotaExceeded || undefined,
     });
   } catch (err) {
     console.error('건축물대장 조회 에러:', err.message);
@@ -341,7 +343,11 @@ async function fetchBld(op, params) {
     const text = await r.text();
     if (text.includes('SERVICE_KEY_IS_NOT_REGISTERED_ERROR') || text.includes('<errMsg>') || text.includes('<returnAuthMsg>')) {
       console.warn(op, '건축HUB 에러:', text.slice(0, 300));
-      return { items: [], raw: text.slice(0, 500), httpStatus: r.status };
+      // ⚠️ 2026-10(사용자 리포트 "건축물대장 누락이 많다"): 일일 요청한도 초과(returnReasonCode 22,
+      // HTTP 429)·키 오류 같은 "API 오류"도 예전엔 httpStatus가 숫자라서 정상 응답(=그 주소에 건물 없음)처럼
+      // 180일 캐시에 저장됐음 → 전체 캐시 20만 건 중 6만 건이 '정보 없음'(래미안첼리투스·이촌코오롱 등 실재 단지
+      // 포함)으로 굳어 있었음. 오류는 httpStatus=null(=조회 실패)로 돌려 캐시하지 않게 함.
+      return { items: [], raw: text.slice(0, 500), httpStatus: null, quotaExceeded: /LIMITED_NUMBER_OF_SERVICE_REQUESTS|<returnReasonCode>22</.test(text) };
     }
     return { items: parseItems(text), raw: text.slice(0, 500), httpStatus: r.status };
   } catch (e) {

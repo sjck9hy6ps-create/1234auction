@@ -326,7 +326,14 @@ async function warmBuildingInfo(row, sigunguCd, bjdongCd) {
   const url = `${SITE_URL}/api/get-building?sigunguCd=${sigunguCd}&bjdongCd=${bjdongCd}`
     + `&bun=${bunJi.bun}&ji=${bunJi.ji}&bldNm=${encodeURIComponent(row.danji || '')}`;
   try {
-    await fetch(url, { signal: AbortSignal.timeout(15000) });
+    const r = await fetch(url, { signal: AbortSignal.timeout(15000) });
+    const j = await r.json().catch(() => null);
+    // ⚠️ 2026-10: 건축HUB 일일 한도를 넘기면 이후 호출은 전부 실패하므로 이번 실행의 건축물대장 웜업을 멈춤
+    // (예전엔 한도 초과 응답을 "건물 없음"으로 캐시하며 계속 호출했음 - get-building.js 주석 참고)
+    if (j && j.quotaExceeded) {
+      if (buildingWarmupCount < MAX_BUILDING_WARMUP_PER_RUN) console.log(`⛔ 건축HUB 일일 한도 초과 - 건축물대장 웜업 중단(${buildingWarmupCount}건 시도)`);
+      buildingWarmupCount = MAX_BUILDING_WARMUP_PER_RUN;
+    }
   } catch (e) {
     console.error('❌ 건축물대장 웜업 실패:', e.message);
   }
