@@ -14153,7 +14153,7 @@ async function openCyclePanel() {
     if (d.region) html += block(d.region.region, d.region, '#00897b');
     html += '<div style="margin-top:8px;background:#fff8e1;color:#8a6d00;border-radius:6px;padding:6px 8px;font-size:11px;">ℹ️ 사이클 위치는 참고용이에요. 과거 자료로 "지금 위치 → 6~12개월 뒤 가격"을 맞혀 봤더니 "변화 없음"으로 보는 것보다 정확하지 않아서, 예상매도가에는 반영하지 않아요.</div>';
     var fol = (d.region && d.region.followers) || [];
-    var top = fol.filter(function(f) { return typeof f.expectedCatchupPct === 'number' && f.expectedCatchupPct >= 0.5; })
+    var top = fol.filter(function(f) { return f.isFollower && typeof f.expectedCatchupPct === 'number' && f.expectedCatchupPct >= 0.5; })
         .sort(function(a, b) { return b.expectedCatchupPct - a.expectedCatchupPct; }).slice(0, 12);
     if (top.length) {
         var fv = d.followerValidation || {};
@@ -14162,7 +14162,8 @@ async function openCyclePanel() {
             + (fv.gapPositiveHitPct || '-') + '%가 이후 1년간 시군구보다 더 오름(평균 +' + (fv.gapPositiveAvgExcessPct || '-') + '%)</div>';
         top.forEach(function(f) {
             html += '<div style="padding:4px 0;border-bottom:1px solid #f5f5f5;cursor:pointer;" onclick="moveToDanji(\'' + esc1(d.region.region) + '\',\'' + esc1(f.dong) + '\',\'' + esc1(f.danji) + '\')">'
-                + '<b>' + f.dong + ' ' + f.danji + '</b> <span style="color:#2e7d32;font-weight:bold;">+' + f.expectedCatchupPct + '%</span>'
+                + '<b>' + f.dong + ' ' + f.danji + '</b> <span style="color:#2e7d32;font-weight:bold;">+' + cappedCatchup(f.expectedCatchupPct) + '%' + (f.expectedCatchupPct > FOLLOWER_CATCHUP_CAP ? '↑' : '') + '</span>'
+                + (Math.abs(f.gapNowPct) > 30 ? ' <span style="color:#e65100;font-size:10px;">(갭이 매우 큼 - 거래가 드물어 생긴 값일 수 있음)</span>' : '')
                 + '<div style="color:#888;font-size:10px;">대장 ' + f.leader + ' 대비 약 ' + f.beta + '배·' + (f.lagQ ? f.lagQ + '분기 늦게' : '같은 시기') + ' 동행 · 현재 갭 ' + f.gapNowPct + '%</div></div>';
         });
         html += '</div>';
@@ -18610,12 +18611,17 @@ function resolveFollowerHist(dong, name, bunji, type, altName) {
     }
     return null;
 }
+// 예상 따라잡기는 검증된 범위(갭 몇~30% 안팎, 1년 평균 초과상승 +1.4%) 밖으로 늘어나지 않게 ±5%로 자름 -
+// 갭이 수십 %인 단지는 거래가 드물어 생긴 값일 가능성이 큼(부산 우동 벽산금호 갭 57% → 직선 연장 +13% 사례).
+var FOLLOWER_CATCHUP_CAP = 5;
+function cappedCatchup(e) { return Math.max(-FOLLOWER_CATCHUP_CAP, Math.min(FOLLOWER_CATCHUP_CAP, e)); }
 function buildFollowerHistLineHtml(h) {
     if (!h || typeof h.expectedCatchupPct !== 'number') return '';
-    var e = h.expectedCatchupPct;
+    var e = cappedCatchup(h.expectedCatchupPct);
     var color = e >= 0.5 ? '#2e7d32' : (e <= -0.5 ? '#c62828' : '#757575');
-    var label = e >= 0.5 ? '📈 과거 이력상 대장 따라 1년 내 +' + e + '% 더 오를 여지'
-        : (e <= -0.5 ? '📉 대장보다 앞서 올라 1년간 ' + Math.abs(e) + '% 덜 오를 가능성' : '➖ 대장과 비슷하게 움직임');
+    var capped = Math.abs(h.expectedCatchupPct) > FOLLOWER_CATCHUP_CAP;
+    var label = e >= 0.5 ? '📈 과거 이력상 대장 따라 1년 내 +' + e + '%' + (capped ? '↑' : '') + ' 더 오를 여지'
+        : (e <= -0.5 ? '📉 대장보다 앞서 올라 1년간 ' + Math.abs(e) + '%' + (capped ? '↑' : '') + ' 덜 오를 가능성' : '➖ 대장과 비슷하게 움직임');
     var titleTxt = '2017년부터의 실거래 기준: 대장(' + (h.leader || '') + ')이 1 오를 때 이 단지는 약 ' + (h.beta != null ? h.beta : '?') + '배, '
         + (h.lagQ ? h.lagQ + '분기 늦게' : '거의 같은 시기에') + ' 따라 움직였음 · 최근 1년 기준 아직 못 따라온 갭 ' + h.gapNowPct + '% · '
         + '검증(2020~2025, 11개 시점): 갭 3%↑ 단지의 56%가 이후 1년간 시군구보다 더 오름(평균 +1.5%) - 참고 신호이며 확정 예측이 아님';
