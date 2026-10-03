@@ -1208,9 +1208,10 @@ body.ui2 #dong-boundary-info { top:108px !important; }
             <select onchange="setBidBoardFilter('sort', this.value)">
                 <option value="verdict">판정 → 여유 큰 순</option><option value="date">입찰일 빠른 순</option><option value="room">여유 큰 순</option>
             </select>
-            <label class="bb-chk"><input type="checkbox" onchange="setBidBoardFilter('showPast', this.checked)"> 지난 입찰도 보기</label>
+            <label class="bb-chk"><input type="checkbox" onchange="setBidBoardFilter('showPast', this.checked)"> 오래 지난 입찰(45일+)도 보기</label>
         </div>
         <div id="bb-progress" style="display:none;"></div>
+        <div id="bb-fail-note" class="bb-guide" style="display:none;"></div>
     </div>
     <div id="bb-body"></div>
 </div>
@@ -6381,6 +6382,13 @@ function renderBidTargetPreview() {
             + '<input type="checkbox" ' + (c._selected ? 'checked' : '') + ' onchange="toggleBidTargetPreviewItem(' + idx + ')" style="margin-top:3px;">'
             + '<div style="flex:1;min-width:0;font-size:11px;">'
             + '<div style="font-weight:bold;">' + (c.caseNo || '(사건번호 미상)') + (c.status ? ' <span style="color:#888;font-weight:normal;">· ' + c.status + '</span>' : '') + '</div>'
+            + (function() {
+                var ex = findExistingBidTarget(c);
+                if (!ex) return '';
+                var u = classifyBidTargetUpdate(ex, c);
+                var col = u.kind === 'fail' ? '#2e7d32' : (u.kind === 'same' ? '#999' : '#e65100');
+                return '<div style="color:' + col + ';font-size:10.5px;">🔄 이미 등록됨 → ' + u.label + '</div>';
+            })()
             + '<div style="color:#666;">' + (c.addrJibun || '(주소 미상)') + '</div>'
             + '<div style="color:#999;">'
             + (c.appraisalPrice ? '감정가 ' + toEok(String(Math.round(c.appraisalPrice / 10000))) : '')
@@ -6423,6 +6431,44 @@ function pickBestGeocodeResult(list, addrText) {
     }
     return list[0];
 }
+/* ⚠️ 2026-10(사용자 요청: "유찰될 경우 다시 판단해 주는 로직이 필요해"): 예전엔 같은 사건번호를 다시 붙여넣으면
+   "이미 등록됨"으로 건너뛰어 법원 목록에 담긴 결과(유찰·매각·취하, 새 최저가·새 기일)가 버려졌음 - 이제 기존 물건을 찾아
+   결과를 반영함. 유찰이면 최저가·입찰일을 바꾸고 이력을 남겨 🎯입찰후보 보드에서 새 최저가로 다시 판정함. */
+function findExistingBidTarget(c) {
+    var k = bidTargetDedupKey(c);
+    if (!k) return null;
+    return auctionList.find(function(a) { return bidTargetDedupKey(a) === k && !a.isBacktest; }) || null;
+}
+function classifyBidTargetUpdate(a, c) {
+    var st = String(c.status || '').replace(/\s+/g, '');
+    var newMin = c.minBidPrice ? Math.round(c.minBidPrice / 10000) : 0;
+    var oldMin = parseInt(a.minBid) || 0;
+    if (/매각/.test(st) && !/불허/.test(st)) return { kind: 'sold', label: '매각됨' + (c.finalBidPrice ? '(낙찰 ' + toEok(String(Math.round(c.finalBidPrice / 10000))) + ')' : '') };
+    if (/취하|기각|정지|종결|각하|취소/.test(st)) return { kind: 'closed', label: st + ' - 보드에서 뺌' };
+    if (newMin && oldMin && newMin < oldMin * 0.99) return { kind: 'fail', label: '유찰 반영: 최저가 ' + toEok(String(oldMin)) + ' → ' + toEok(String(newMin)) + (c.saleDate ? ', 입찰일 ' + c.saleDate : '') };
+    if (c.saleDate && c.saleDate !== a.bidDate) return { kind: 'reschedule', label: '입찰일 변경: ' + (a.bidDate || '?') + ' → ' + c.saleDate };
+    return { kind: 'same', label: '변동 없음' };
+}
+function applyBidTargetUpdate(a, c, upd) {
+    var b = Object.assign({}, a);
+    b.court = c.court || b.court || null;
+    b.resultCheckedAt = new Date().toISOString().slice(0, 10);
+    if (upd.kind === 'sold' || upd.kind === 'closed') {
+        b.courtResult = upd.kind === 'sold' ? '매각' : String(c.status || '').trim();
+        if (c.finalBidPrice) b.soldPrice = Math.round(c.finalBidPrice / 10000);
+        b.courtResultDate = c.saleDate || a.bidDate || '';
+    } else if (upd.kind === 'fail' || upd.kind === 'reschedule') {
+        var hist = Array.isArray(b.bidHistory) ? b.bidHistory.slice() : [];
+        hist.push({ date: a.bidDate || '', minBid: parseInt(a.minBid) || null, result: upd.kind === 'fail' ? '유찰' : '기일변경' });
+        b.bidHistory = hist;
+        if (upd.kind === 'fail') b.failCount = (parseInt(b.failCount) || 0) + 1;
+        if (c.minBidPrice) b.minBid = Math.round(c.minBidPrice / 10000);
+        if (c.appraisalPrice) b.appraisal = Math.round(c.appraisalPrice / 10000);
+        if (c.saleDate) b.bidDate = c.saleDate;
+        b.courtResult = null;
+    }
+    return b;
+}
 async function saveSelectedBidTargets() {
     var selected = pendingBidTargetExtraction.filter(function(c) { return c._selected; });
     if (!selected.length) { alert('등록할 항목을 하나 이상 선택해 주세요.'); return; }
@@ -6431,9 +6477,28 @@ async function saveSelectedBidTargets() {
     var existingKeys = {};
     auctionList.forEach(function(a) { var k = bidTargetDedupKey(a); if (k) existingKeys[k] = true; });
     var savedCount = 0, skippedCount = 0, noPinCount = 0;
+    var upCount = { fail: 0, reschedule: 0, sold: 0, closed: 0 }, prevVerdicts = {}, updatedIds = [], newIds = [];
+    var prevRowById = {};
+    bidBoardRows.forEach(function(r) { prevRowById[r.id] = r; });
     for (var i = 0; i < selected.length; i++) {
         var c = selected[i];
         var dedupKey = bidTargetDedupKey(c);
+        var existing = findExistingBidTarget(c);
+        if (existing) {
+            var upd = classifyBidTargetUpdate(existing, c);
+            if (upd.kind === 'same') { skippedCount++; continue; }
+            try {
+                var updated = await saveAuctionAPI(applyBidTargetUpdate(existing, c, upd));
+                var ix = auctionList.indexOf(existing);
+                if (ix !== -1) auctionList[ix] = updated;
+                delete auctionWonEstCache[existing.id];
+                upCount[upd.kind]++;
+                updatedIds.push(existing.id);
+                var pr = prevRowById[existing.id];
+                if (pr && !pr.pending && !pr.skippedPast) prevVerdicts[existing.id] = pr.verdict;
+            } catch (e) { console.error('입찰예정물건 갱신 실패:', e.message); }
+            continue;
+        }
         if (dedupKey && existingKeys[dedupKey]) { skippedCount++; continue; }
         var addr = c.addrJibun || '';
         var pyung = c.areaM2 ? Math.round(c.areaM2 / 3.305785 * 10) / 10 : '';
@@ -6442,7 +6507,7 @@ async function saveSelectedBidTargets() {
             addr: addr, addrLabel: addr, name: c.buildingName || '',
             propType: bidTargetPropTypeFromText(c.propertyType),
             aptDong: '', floor: c.floor || '', unitNo: c.unitNo || '',
-            caseNo: c.caseNo || null, pyung: pyung, bidDate: c.saleDate || '',
+            caseNo: c.caseNo || null, court: c.court || null, pyung: pyung, bidDate: c.saleDate || '',
             status: '검토중',
             appraisal: c.appraisalPrice ? Math.round(c.appraisalPrice / 10000) : '',
             minBid: c.minBidPrice ? Math.round(c.minBidPrice / 10000) : '',
@@ -6508,18 +6573,21 @@ async function saveSelectedBidTargets() {
             auctionList.push(saved);
             if (dedupKey) existingKeys[dedupKey] = true;
             savedCount++;
+            newIds.push(saved.id);
         } catch (e) { console.error('입찰예정물건 등록 실패:', e.message); }
     }
     pendingBidTargetExtraction = [];
     document.getElementById('bt-paste-text').value = '';
     document.getElementById('bt-preview-box').innerHTML = '';
     statusBox.style.color = '#2e7d32';
+    var upTotal = upCount.fail + upCount.reschedule + upCount.sold + upCount.closed;
     statusBox.innerText = savedCount + '건 등록 완료.'
-        + (skippedCount ? ' (이미 등록된 사건번호 ' + skippedCount + '건은 건너뜀)' : '')
+        + (upTotal ? ' 이미 등록된 물건 ' + upTotal + '건 결과 반영(' + [upCount.fail ? '유찰 ' + upCount.fail : '', upCount.reschedule ? '기일변경 ' + upCount.reschedule : '', upCount.sold ? '매각 ' + upCount.sold : '', upCount.closed ? '취하 등 ' + upCount.closed : ''].filter(Boolean).join('·') + ').' : '')
+        + (skippedCount ? ' (변동 없는 사건 ' + skippedCount + '건은 건너뜀)' : '')
         + (noPinCount ? ' ⚠️ ' + noPinCount + '건은 주소 좌표를 찾지 못해 지도에는 안 뜨니 목록에서 주소를 확인해 주세요.' : '');
     renderAuctionList(); redrawMarkers();
     // 등록이 끝나면 입찰후보 보드를 바로 열어 방금 등록한 물건을 표시함
-    if (savedCount) openBidBoard({ highlightIds: auctionList.slice(-savedCount).map(function(x) { return x.id; }) });
+    if (savedCount || upTotal) openBidBoard({ highlightIds: newIds, updatedIds: updatedIds, prevVerdicts: prevVerdicts });
 }
 /* ════════════════════════════════════
    📐 낙찰가 백테스트 일괄등록 (2026-08 추가)
@@ -14405,7 +14473,7 @@ function renderRiskMarginSuggestion(predictedSale) {
    지도를 옮기지 않고 필요한 지역 자료를 차례로 불러온 뒤 그 지역 물건을 바로 계산함
    (지역이 8개를 넘으면 화면 목록에서 오래된 지역이 빠지므로 "불러오고 바로 계산" 순서를 지킴). ════ */
 var bidBoardRows = [];
-var bidBoardState = { verdict: 'all', region: '', type: '', sort: 'verdict', showPast: false, highlight: {} };
+var bidBoardState = { verdict: 'all', region: '', type: '', sort: 'verdict', showPast: false, highlight: {}, updated: {}, prevVerdicts: {} };
 var bidBoardRunning = false;
 function bbEsc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function(c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
 function bidBoardRegionLabel(addr) {
@@ -14415,8 +14483,95 @@ function bidBoardRegionLabel(addr) {
     if (/도$/.test(sido) && sido.length > 2) sido = sido.slice(0, -1);
     return sido + (t[1] ? ' ' + t[1] : '');
 }
+/* 유찰 시 최저가 저감 규칙(2026-10) - 법원마다 다름. 쌓아 둔 낙찰사례 2,447건 + 경매물건의 "최저가 ÷ 감정가"가
+   어느 계단(80·64·51.2 / 70·49·34.3 / 70·56·44.8)에 놓이는지로 법원·지역별 규칙을 직접 찾아냄. 실측 결과:
+   서울·안양·충주는 매번 20%, 인천·안산·성남·부천·고양·수원·용인·청주는 매번 30%,
+   광주·전남(목포·순천·광양·여수 등)은 첫 유찰만 30%이고 그 뒤로는 20%. 자료가 없으면 수도권 20%·지방 30%로 둠. */
+var BID_REDUCTION_PATTERNS = {
+    r20:   { label: '매번 20%↓', seq: [0.2, 0.2, 0.2, 0.2, 0.2, 0.2, 0.2] },
+    r30:   { label: '매번 30%↓', seq: [0.3, 0.3, 0.3, 0.3, 0.3, 0.3, 0.3] },
+    r30_20: { label: '첫 유찰 30%↓, 이후 20%↓', seq: [0.3, 0.2, 0.2, 0.2, 0.2, 0.2, 0.2] }
+};
+function reductionLevels(pat) {
+    var lv = [1], r = 1;
+    pat.seq.forEach(function(d) { r = r * (1 - d); lv.push(r); });
+    return lv;
+}
+// 최저가 비율이 어느 규칙의 몇 번째 계단과 맞는지(맞는 규칙 목록, 유찰 횟수)
+function matchReductionStep(ratio) {
+    var hits = [], n = null;
+    if (!ratio || ratio >= 0.995) return { pats: [], n: 0 };
+    Object.keys(BID_REDUCTION_PATTERNS).forEach(function(k) {
+        var lv = reductionLevels(BID_REDUCTION_PATTERNS[k]);
+        for (var i = 1; i < lv.length; i++) if (Math.abs(lv[i] - ratio) < 0.004) { hits.push(k); n = i; break; }
+    });
+    return { pats: hits, n: n };
+}
+function bbSidoKey(addr) {
+    var t = String(addr || '').trim().split(/\s+/), sd = t[0] || '';
+    if (/^(전남광주|광주|전남|전라남)/.test(sd)) sd = '전남광주';
+    else if (/^(전북|전라북)/.test(sd)) sd = '전북';
+    else if (/^(경남|경상남)/.test(sd)) sd = '경남';
+    else if (/^(경북|경상북)/.test(sd)) sd = '경북';
+    else if (/^(충남|충청남)/.test(sd)) sd = '충남';
+    else if (/^(충북|충청북)/.test(sd)) sd = '충북';
+    else sd = sd.slice(0, 2);
+    return { sido: sd, sgg: sd + ' ' + (t[1] || '') };
+}
+function courtPrefix(court) { return court ? String(court).replace(/\s*\d+\s*계$/, '').trim() || null : null; }
+var bidReductionTable = null;
+function buildBidReductionTable() {
+    var t = { court: {}, sgg: {}, sido: {} };
+    var add = function(addr, court, ratio) {
+        var m = matchReductionStep(ratio);
+        if (m.pats.length !== 1) return; // 70%처럼 두 규칙 모두에 있는 값은 판별에 안 씀
+        var k = bbSidoKey(addr), cp = courtPrefix(court);
+        [['court', cp], ['sgg', k.sgg], ['sido', k.sido]].forEach(function(p) {
+            if (!p[1]) return;
+            var o = t[p[0]][p[1]] = t[p[0]][p[1]] || {};
+            o[m.pats[0]] = (o[m.pats[0]] || 0) + 1;
+        });
+    };
+    auctionList.forEach(function(a) { add(a.addr, a.court, parseFloat(a.minBid) / parseFloat(a.appraisal)); });
+    (typeof bidCaseList !== 'undefined' ? bidCaseList : []).forEach(function(c) { add(c.addrJibun, c.court, c.minBidRate / 100); });
+    bidReductionTable = t;
+    return t;
+}
+function bidReductionPatternFor(a) {
+    var t = bidReductionTable || buildBidReductionTable();
+    var k = bbSidoKey(a.addr), cp = courtPrefix(a.court);
+    var pick = function(o) {
+        if (!o) return null;
+        var best = null, tot = 0;
+        Object.keys(o).forEach(function(p) { tot += o[p]; if (!best || o[p] > o[best]) best = p; });
+        return tot >= 3 ? { pat: best, n: tot } : null;
+    };
+    var r = (cp && pick(t.court[cp]) && Object.assign(pick(t.court[cp]), { src: cp + ' 법원 과거 경매' }))
+        || (pick(t.sgg[k.sgg]) && Object.assign(pick(t.sgg[k.sgg]), { src: k.sgg + ' 과거 경매' }))
+        || (pick(t.sido[k.sido]) && Object.assign(pick(t.sido[k.sido]), { src: k.sido + ' 과거 경매' }));
+    if (r) return r;
+    var metro = /^(서울|경기|인천)/.test(String(a.addr || '').trim());
+    return { pat: metro ? 'r20' : 'r30', n: 0, src: '자료 없음 - ' + (metro ? '수도권 20%' : '지방 30%') + ' 기본값' };
+}
+// 지금 최저가에서 k번 더 유찰되면 최저가가 얼마가 되는지(만원). 현재 몇 번째 계단인지 알면 그 다음 저감률부터 적용
+function nextMinBidAfterFails(a, minBid, k) {
+    var pr = bidReductionPatternFor(a), seq = BID_REDUCTION_PATTERNS[pr.pat].seq;
+    var appraisal = parseFloat(a.appraisal) || 0;
+    var ratio = appraisal ? minBid / appraisal : null;
+    var n;
+    if (ratio && ratio >= 0.995) n = 0;
+    else {
+        var m = matchReductionStep(ratio);
+        n = m.n != null && m.pats.indexOf(pr.pat) !== -1 ? m.n : (parseInt(a.failCount) || 1);
+    }
+    var v = minBid, rates = [];
+    for (var i = 0; i < k; i++) { var d = seq[Math.min(n + i, seq.length - 1)]; rates.push(d); v = v * (1 - d); }
+    return { min: Math.round(v), rates: rates, pattern: pr };
+}
+var BID_RESULT_WAIT_DAYS = 45; // 입찰일이 이만큼 넘게 지났는데 결과를 안 넣은 물건은 기본 화면에서 숨김
 function isBidBoardCandidate(a) {
     if (!a || a.isBacktest || parseFloat(a.actualBid) > 0) return false;
+    if (a.courtResult) return false; // 매각·취하 등 결과가 나온 물건
     if (a.isBidTarget) return true;
     var dd = a.bidDate ? calcAuctionDday(a.bidDate) : null;
     return !!(dd && dd.diffDays >= 0);
@@ -14468,6 +14623,18 @@ function computeBidBoardRow(a) {
         dday: a.bidDate ? calcAuctionDday(a.bidDate) : null, reasons: [], warns: []
     };
     row.loaded = !!(lawd && dataCache[lawd]);
+    // 입찰일이 지났는데 결과(다시 붙여넣기)가 아직 없으면 → 유찰됐다고 가정하고 다음 최저가로 판정(추정)
+    row.assumedFail = null;
+    if (row.dday && row.dday.diffDays < 0 && minBid) {
+        var nx = nextMinBidAfterFails(a, minBid, 1);
+        var nd = new Date(a.bidDate + 'T00:00:00'); nd.setDate(nd.getDate() + 35);
+        row.assumedFail = { prevMin: minBid, rate: nx.rates[0], pattern: nx.pattern, nextDate: nd.toISOString().slice(0, 10) };
+        minBid = nx.min; row.minBid = minBid;
+    }
+    if (Array.isArray(a.bidHistory) && a.bidHistory.length) {
+        var fails = a.bidHistory.filter(function(h) { return h.result === '유찰'; });
+        if (fails.length) row.historyNote = '유찰 ' + fails.length + '회 반영됨(최저가 ' + toEok(String(fails[0].minBid)) + ' → ' + toEok(String(parseInt(a.minBid))) + ')';
+    }
     var est = type && a.lat && a.lon ? getAuctionWonEstimates(a) : null;
     row.sale = est && est.predictedSale ? est.predictedSale : null;
     row.saleSaved = !!(est && est.predictedSaleSource === 'saved');
@@ -14504,8 +14671,15 @@ function computeBidBoardRow(a) {
     else if (!minBid) { row.verdict = 'nodata'; row.reasons.push('최저가가 없어요'); }
     else if (row.recBid < minBid) {
         row.verdict = 'no'; row.reasons.push('최저가로 사도 목표마진이 안 남아요');
-        // 유찰되면 최저가가 보통 20~30% 내려감 - 20%만 내려가도 되는지 알려 줌
-        if (row.recBid >= minBid * 0.8) row.reasons.push('한 번 유찰되면(약 20%↓) 입찰 가능');
+        // 이 법원 저감 규칙으로 몇 번 더 유찰되면 들어갈 만한지
+        for (var k = 1; k <= 3; k++) {
+            var nk = nextMinBidAfterFails(a, minBid, k);
+            if (row.recBid >= nk.min) {
+                row.nextFail = { k: k, min: nk.min };
+                row.reasons.push((k === 1 ? '한 번' : k + '번') + ' 더 유찰되면 입찰 가능(최저가 약 ' + toEok(String(nk.min)) + ', ' + BID_REDUCTION_PATTERNS[nk.pattern.pat].label + ')');
+                break;
+            }
+        }
     }
     else {
         var ok = true;
@@ -14530,8 +14704,10 @@ function openBidBoard(opts) {
     opts = opts || {};
     var el = document.getElementById('bid-board');
     el.style.display = 'flex';
-    bidBoardState.highlight = {};
+    bidBoardState.highlight = {}; bidBoardState.updated = {};
+    bidBoardState.prevVerdicts = opts.prevVerdicts || {};
     (opts.highlightIds || []).forEach(function(id) { bidBoardState.highlight[id] = true; });
+    (opts.updatedIds || []).forEach(function(id) { bidBoardState.updated[id] = true; });
     refreshBidBoard();
 }
 function closeBidBoard() { document.getElementById('bid-board').style.display = 'none'; }
@@ -14539,14 +14715,15 @@ async function refreshBidBoard() {
     if (bidBoardRunning) return;
     bidBoardRunning = true;
     var cands = auctionList.filter(isBidBoardCandidate);
+    bidReductionTable = null; // 새로 쌓인 경매·낙찰사례로 저감 규칙 다시 계산
     var rowsById = {};
     bidBoardRows.forEach(function(r) { rowsById[r.id] = r; });
     bidBoardRows = cands.map(function(a) { return rowsById[a.id] || { id: a.id, a: a, pending: true, region: bidBoardRegionLabel(a.addr), name: cleanField(a.name) || cleanField(a.addr) || '', dday: a.bidDate ? calcAuctionDday(a.bidDate) : null, verdict: 'nodata', reasons: ['계산 중...'], warns: [] }; });
     renderBidBoard();
-    var isPast = function(a) { var d = a.bidDate ? calcAuctionDday(a.bidDate) : null; return !!(d && d.diffDays < 0); };
+    var isPast = function(a) { var d = a.bidDate ? calcAuctionDday(a.bidDate) : null; return !!(d && d.diffDays < -BID_RESULT_WAIT_DAYS); };
     var work = bidBoardState.showPast ? cands : cands.filter(function(a) { return !isPast(a); });
     bidBoardRows = bidBoardRows.map(function(r) {
-        if (!bidBoardState.showPast && r.pending && isPast(r.a)) return Object.assign({}, r, { pending: false, skippedPast: true, reasons: ['지난 입찰이라 계산 안 함'] });
+        if (!bidBoardState.showPast && r.pending && isPast(r.a)) return Object.assign({}, r, { pending: false, skippedPast: true, reasons: ['입찰일이 ' + BID_RESULT_WAIT_DAYS + '일 넘게 지나 계산 안 함'] });
         return r;
     });
     var noCode = work.filter(function(a) { return !a.bCode && !a._lawd && a.lat && a.lon; });
@@ -14615,7 +14792,7 @@ function setBidBoardFilter(key, val) {
 function bidBoardVisibleRows() {
     var s = bidBoardState;
     return bidBoardRows.filter(function(r) {
-        if (!s.showPast && r.dday && r.dday.diffDays < 0) return false;
+        if (!s.showPast && r.dday && r.dday.diffDays < -BID_RESULT_WAIT_DAYS) return false;
         if (s.region && r.region !== s.region) return false;
         if (s.type && r.a.propType !== s.type) return false;
         return true;
@@ -14638,6 +14815,13 @@ function renderBidBoard() {
         return '<option value="' + bbEsc(k) + '"' + (s.region === k ? ' selected' : '') + '>' + bbEsc(k) + ' (' + regions[k] + ')</option>';
     }).join('');
     var rows = base.filter(function(r) { return s.verdict === 'all' || r.verdict === s.verdict; });
+    var assumed = base.filter(function(r) { return r.assumedFail; }).length;
+    var fn = document.getElementById('bb-fail-note');
+    if (fn) {
+        fn.style.display = assumed ? '' : 'none';
+        fn.innerHTML = '⏳ 입찰일이 지났는데 결과를 아직 안 넣은 <b>' + assumed + '건</b>은 <b>유찰됐다고 가정</b>하고, 그 법원의 저감 규칙으로 낮춘 다음 최저가로 판정했어요(추정). '
+            + '법원 검색 목록을 <b>📋 입찰희망</b>에 다시 붙여넣으면 실제 결과(유찰·매각·취하, 새 최저가·입찰일)로 바뀌어요.';
+    }
     rows.sort(function(x, y) {
         if (s.sort === 'date') {
             var dx = x.dday ? x.dday.diffDays : 9999, dy = y.dday ? y.dday.diffDays : 9999;
@@ -14666,7 +14850,8 @@ function renderBidBoardRow(r) {
     var idJs = String(r.id).replace(/\\/g, '\\\\').replace(/'/g, "\\'");
     var a = r.a;
     var sub = [r.type === 'villa' ? '빌라' : (r.type === 'apt' ? '아파트' : (a.propType || '')), r.pyung ? r.pyung + '평' : '', r.floor ? r.floor + '층' : ''].filter(Boolean).join(' · ');
-    var dd = r.dday ? '<span class="bb-dday' + (r.dday.diffDays <= 3 && r.dday.diffDays >= 0 ? ' soon' : '') + '">' + r.dday.label + '</span><div class="bb-sub">' + bbEsc(a.bidDate || '') + '</div>' : '<span class="bb-sub">미정</span>';
+    var dd = r.assumedFail ? '<span class="bb-dday" style="color:#ef6c00;">결과 확인 필요</span><div class="bb-sub">' + bbEsc(a.bidDate || '') + ' 지남 · 유찰이면 다음 기일 약 ' + r.assumedFail.nextDate.slice(5) + '</div>'
+        : r.dday ? '<span class="bb-dday' + (r.dday.diffDays <= 3 && r.dday.diffDays >= 0 ? ' soon' : '') + '">' + r.dday.label + '</span><div class="bb-sub">' + bbEsc(a.bidDate || '') + '</div>' : '<span class="bb-sub">미정</span>';
     var saleCell = r.pending ? '<span class="bb-sub">계산 중…</span>'
         : (r.sale ? '<b>' + toEok(String(r.sale)) + '</b><div class="bb-sub">' + (r.saleSaved ? '내가 저장한 값' : '이 단지 같은 평형 ' + r.own + '건') + (r.salePerMin != null ? ' · 최저가는 ' + r.salePerMin + '%' : '') + '</div>' : '<span class="bb-sub">-</span>');
     var recCell = r.recBid ? '<b>' + toEok(String(r.recBid)) + '</b><div class="bb-sub">마진 ' + toEok(String(r.margin)) + (r.marginUser ? '(내가 정함)' : '(추천)') + '</div>' : '<span class="bb-sub">-</span>';
@@ -14678,14 +14863,19 @@ function renderBidBoardRow(r) {
     var riskCell = r.pending ? '' : (r.risk ? (r.risk.level === '높음' ? '<span class="bb-pill bad">하락위험 높음</span><div class="bb-sub">' + bbEsc((r.risk.negative || []).join(', ')) + '</div>' : '<span class="bb-pill good">낮음</span>') : '<span class="bb-sub">-</span>');
     var cuCell = r.catchup == null ? '<span class="bb-sub">-</span>'
         : (r.catchup >= 0.5 ? '<span style="color:#2e7d32;font-weight:bold;">+' + r.catchup + '% 여지</span>' : (r.catchup <= -0.5 ? '<span style="color:#c62828;">' + Math.abs(r.catchup) + '% 덜 오를 수도</span>' : '<span class="bb-sub">대장과 비슷</span>'));
-    var notes = r.reasons.concat(r.warns).map(function(t) { return '<span>' + bbEsc(t) + '</span>'; }).join('');
-    return '<tr class="bb-row' + (bidBoardState.highlight[r.id] ? ' new' : '') + '" onclick="bidBoardGo(\'' + idJs + '\')">'
-        + '<td data-l="판정"><span class="bb-verdict" style="color:' + v.color + ';background:' + v.bg + ';">' + v.label + '</span></td>'
+    var notes = (r.historyNote ? [r.historyNote] : []).concat(r.reasons, r.warns).map(function(t) { return '<span>' + bbEsc(t) + '</span>'; }).join('');
+    return '<tr class="bb-row' + (bidBoardState.highlight[r.id] || bidBoardState.updated[r.id] ? ' new' : '') + '" onclick="bidBoardGo(\'' + idJs + '\')">'
+        + '<td data-l="판정">' + (r.assumedFail && !r.pending ? '<div class="bb-sub" style="color:#ef6c00;">유찰되면</div>' : '')
+            + '<span class="bb-verdict" style="color:' + v.color + ';background:' + v.bg + ';">' + v.label + '</span>'
+            + (bidBoardState.prevVerdicts[r.id] && bidBoardState.prevVerdicts[r.id] !== r.verdict ? '<div class="bb-sub">이전 ' + BID_BOARD_VERDICT[bidBoardState.prevVerdicts[r.id]].label + ' → 바뀜</div>' : '') + '</td>'
         + '<td data-l="입찰일">' + dd + '</td>'
-        + '<td data-l="물건" class="bb-name"><b>' + bbEsc(r.name) + '</b>' + (bidBoardState.highlight[r.id] ? ' <span class="bb-pill new">새로 등록</span>' : '')
+        + '<td data-l="물건" class="bb-name"><b>' + bbEsc(r.name) + '</b>' + (bidBoardState.highlight[r.id] ? ' <span class="bb-pill new">새로 등록</span>' : '') + (bidBoardState.updated[r.id] ? ' <span class="bb-pill new">결과 반영</span>' : '')
             + '<div class="bb-sub">' + bbEsc(r.region) + (sub ? ' · ' + bbEsc(sub) : '') + (a.caseNo ? ' · ' + bbEsc(a.caseNo) : '') + '</div>'
             + (notes ? '<div class="bb-notes">' + notes + '</div>' : '') + '</td>'
-        + '<td data-l="최저가" class="r">' + (r.minBid ? toEok(String(r.minBid)) : '-') + (r.appraisal && r.minBid ? '<div class="bb-sub">감정가의 ' + Math.round(r.minBid / r.appraisal * 100) + '%</div>' : '') + '</td>'
+        + '<td data-l="최저가" class="r">' + (r.minBid ? toEok(String(r.minBid)) : '-')
+            + (r.assumedFail ? '<div class="bb-sub" style="color:#ef6c00;">유찰 가정: ' + toEok(String(r.assumedFail.prevMin)) + '에서 ' + Math.round(r.assumedFail.rate * 100) + '%↓</div>'
+                + '<div class="bb-sub" title="' + bbEsc(r.assumedFail.pattern.src) + '">' + BID_REDUCTION_PATTERNS[r.assumedFail.pattern.pat].label + ' 법원</div>' : '')
+            + (r.appraisal && r.minBid ? '<div class="bb-sub">감정가의 ' + Math.round(r.minBid / r.appraisal * 100) + '%</div>' : '') + '</td>'
         + '<td data-l="예상매도가" class="r">' + saleCell + '</td>'
         + '<td data-l="추천 입찰가" class="r">' + recCell + '</td>'
         + '<td data-l="최저가 대비" class="r">' + roomCell + '</td>'
