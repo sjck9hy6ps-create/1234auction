@@ -15846,18 +15846,22 @@ async function refreshBidBoard() {
     // 지역 자료를 다시 불러오지 않고 그대로 씀(세금·마진 단계만 지금 내 자산 기준으로 다시). 🔄 다시 계산을 누르면 전부 새로.
     var boardCache = bidBoardState.forceFresh ? {} : ((await listIdbOp('readonly', function(st) { return st.get(BOARD_CACHE_KEY); })) || {});
     bidBoardState.forceFresh = false;
-    var nowMs = Date.now(), reused = {};
+    var nowMs = Date.now(), reused = {}, stale = {};
     work.forEach(function(a) {
         var c = boardCache[a.id];
-        if (!c || c.sig !== boardBaseSig(a) || nowMs - c.at > BOARD_CACHE_MAX_AGE) return;
+        if (!c || !c.row) return;
+        var fresh = c.sig === boardBaseSig(a) && nowMs - c.at <= BOARD_CACHE_MAX_AGE;
         try {
-            var row = Object.assign({}, c.row, { a: a, dday: a.bidDate ? calcAuctionDday(a.bidDate) : null, fromCache: c.at });
-            reused[a.id] = finalizeBidBoardRow(row);
-            bidVerdictCache[a.id] = bidVerdictCache[a.id] || { sig: '', row: reused[a.id] };
+            var row = Object.assign({}, c.row, { a: a, dday: a.bidDate ? calcAuctionDday(a.bidDate) : null, fromCache: c.at, stale: !fresh });
+            row = finalizeBidBoardRow(row);
+            if (fresh) { reused[a.id] = row; bidVerdictCache[a.id] = bidVerdictCache[a.id] || { sig: '', row: row }; }
+            // 2026-10(사용자: "입찰후보 로딩이 아직도 느려") - 하루가 지났거나 계산 방식이 바뀐 저장본도 일단 바로 보여주고
+            // (회색 "업데이트 중" 표시), 뒤에서 새로 계산되는 대로 하나씩 바꿔 끼움 - 빈 화면으로 기다리지 않게.
+            else stale[a.id] = row;
         } catch (e) {}
     });
-    if (Object.keys(reused).length) {
-        bidBoardRows = bidBoardRows.map(function(r) { return reused[r.id] || r; });
+    if (Object.keys(reused).length || Object.keys(stale).length) {
+        bidBoardRows = bidBoardRows.map(function(r) { return reused[r.id] || stale[r.id] || r; });
         work = work.filter(function(a) { return !reused[a.id]; });
         renderBidBoard();
     }
@@ -15989,7 +15993,9 @@ function renderBidBoard() {
         var cached = bidBoardRows.filter(function(r) { return r.fromCache; });
         var oldest = cached.reduce(function(m, r) { return Math.min(m, r.fromCache); }, Date.now());
         var sim = myAssetsSimCount();
-        cn.innerHTML = (cached.length ? '⚡ ' + cached.length + '건은 저장된 시세 계산 사용(' + Math.max(1, Math.round((Date.now() - oldest) / 3600000)) + '시간 이내) · 세금·마진은 지금 내 자산 기준 ' : '')
+        var staleN = bidBoardRows.filter(function(r) { return r.stale; }).length;
+        cn.innerHTML = (staleN ? '⏳ ' + staleN + '건은 이전 계산을 먼저 보여주는 중 - 새로 계산되는 대로 바뀌어요 · ' : '')
+            + (cached.length - staleN > 0 ? '⚡ ' + (cached.length - staleN) + '건은 저장된 시세 계산 사용(' + Math.max(1, Math.round((Date.now() - oldest) / 3600000)) + '시간 이내) · 세금·마진은 지금 내 자산 기준 ' : '')
             + '<a href="#" onclick="forceRefreshBidBoard();return false;">🔄 전부 다시 계산</a>'
             + (sim ? ' · <b style="color:#6a1b9a;">🧪 시뮬레이션 중: ' + sim + '건 매도 가정</b>' : '');
     }
@@ -16106,7 +16112,7 @@ function renderBidBoardRow(r) {
     var cuCell = r.catchup == null ? '<span class="bb-sub">-</span>'
         : (r.catchup >= 0.5 ? '<span style="color:#2e7d32;font-weight:bold;">+' + r.catchup + '% 여지</span>' : (r.catchup <= -0.5 ? '<span style="color:#c62828;">' + Math.abs(r.catchup) + '% 덜 오를 수도</span>' : '<span class="bb-sub">대장과 비슷</span>'));
     var notes = (r.historyNote ? [r.historyNote] : []).concat(r.notes || [], r.reasons, r.warns).map(function(t) { return '<span>' + bbEsc(t) + '</span>'; }).join('');
-    return '<tr class="bb-row' + (bidBoardState.highlight[r.id] || bidBoardState.updated[r.id] ? ' new' : '') + '" onclick="bidBoardGo(\'' + idJs + '\')">'
+    return '<tr class="bb-row' + (bidBoardState.highlight[r.id] || bidBoardState.updated[r.id] ? ' new' : '') + '"' + (r.stale ? ' style="opacity:0.55;" title="이전 계산 - 새로 계산 중"' : '') + ' onclick="bidBoardGo(\'' + idJs + '\')">'
         + '<td data-l="판정">' + (r.assumedFail && !r.pending ? '<div class="bb-sub" style="color:#ef6c00;">유찰되면</div>' : '')
             + '<span class="bb-verdict" style="color:' + v.color + ';background:' + v.bg + ';">' + v.label + '</span>'
             + (r.opportunity ? '<div style="margin-top:3px;"><span class="bb-pill" style="background:#fff8e1;color:#e65100;border:1px solid #ffb300;">🎯 기회</span></div>' : '')
