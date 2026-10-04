@@ -15235,7 +15235,8 @@ var LOW_POP_EXTRA_RATE = 0.02;
 var MIN_MARGIN_MANWON = 1000;
 function riskMarginFor(predictedSale, ownTrades, downRisk, popInfo) {
     if (!predictedSale) return null;
-    var rate = ownTrades >= 3 ? 0.05 : 0.09;
+    // 2026-10 백테스트(앱 계산 그대로, 낙찰사례 2,156건): 같은 평형 거래 0~2건이면 낙찰받은 물건의 예상매도가가 평균 28% 높았음 → 10%
+    var rate = ownTrades >= 3 ? 0.05 : 0.10;
     // 2026-10: 지역 "6개월 하락 위험 높음"이면 그 등급의 과거 평균 6개월 하락폭(수도권 3.8%·지방 2.1%)만큼 더 얹음
     var extra = (downRisk && downRisk.level === '높음' && downRisk.avgDropPct > 0) ? downRisk.avgDropPct / 100 : 0;
     var popExtra = popInfo && popInfo.tier === '하위40%' ? LOW_POP_EXTRA_RATE : 0;
@@ -15583,6 +15584,12 @@ function computeBidBoardRow(a) {
         if (a.landType === '토지') { ok = false; row.warns.push('⚠️ 대지권 아님(토지로 매각) - 대지권 미등기 여부 확인'); }
         else if (a.landType === 'none') { ok = false; row.warns.push('⚠️ 대지권 없음(건물만 매각) - 대출·매도 불리'); }
         if (minBid < row.sale * 0.5) { ok = false; row.warns.push('최저가가 예상매도가의 절반도 안 돼요 - 지분·특수물건이거나 입력값 오류인지 확인'); }
+        // 2026-10 백테스트(앱 계산 그대로, 낙찰사례 2,156건 · 낙찰 후 되판 65건): 추천가가 최저가보다 30% 이상 높으면
+        // 그 물건의 예상매도가가 실제보다 평균 22% 높았고 낙찰자 53%가 손해 - 여러 번 유찰됐다는 건 시장이 그 값을 안 믿었다는 뜻.
+        // 추천가가 최저가 +5~30%일 때는 1,000만 원 이상 남긴 비율 55~83%, 손해 17~20%(성공 구간).
+        var roomR = row.recBid / minBid;
+        if (roomR >= 1.3) { ok = false; row.overshoot = true; row.warns.push('⚠️ 추천가가 최저가보다 ' + Math.round((roomR - 1) * 100) + '% 높아요 - 예상매도가가 높게 잡혔을 수 있어요(과거 이런 경우 낙찰자 53% 손해). 같은 단지 최근 거래·호가로 확인'); }
+        else if (roomR >= 1.05) row.sweet = true;
         row.verdict = ok ? 'yes' : 'check';
     }
     // ── 유찰 횟수별 기회/주의 (2026-10 전남·광주 낙찰 968건 실측) ──
@@ -15709,7 +15716,7 @@ function getBidVerdictForMarker(a) {
 }
 function bidVerdictKey(a) {
     var r = getBidVerdictForMarker(a);
-    return r ? r.verdict + (r.assumedFail ? 'A' : '') + (r.opportunity ? 'O' : '') + (r.niche ? 'N' + r.niche.score : '') + (r.roomPct != null ? r.roomPct : '') + (r.liv ? 'L' + r.liv.rank + '/' + r.liv.of : '') : '';
+    return r ? r.verdict + (r.assumedFail ? 'A' : '') + (r.opportunity ? 'O' : '') + (r.niche ? 'N' + r.niche.score : '') + (r.sweet ? 'S' : '') + (r.overshoot ? 'X' : '') + (r.roomPct != null ? r.roomPct : '') + (r.liv ? 'L' + r.liv.rank + '/' + r.liv.of : '') : '';
 }
 function bidVerdictShort(r) {
     if (!r) return null;
@@ -15961,6 +15968,8 @@ function renderBidBoardRow(r) {
         + '<td data-l="판정">' + (r.assumedFail && !r.pending ? '<div class="bb-sub" style="color:#ef6c00;">유찰되면</div>' : '')
             + '<span class="bb-verdict" style="color:' + v.color + ';background:' + v.bg + ';">' + v.label + '</span>'
             + (r.opportunity ? '<div style="margin-top:3px;"><span class="bb-pill" style="background:#fff8e1;color:#e65100;border:1px solid #ffb300;">🎯 기회</span></div>' : '')
+            + (r.sweet ? '<div style="margin-top:3px;"><span class="bb-pill" style="background:#e8f5e9;color:#2e7d32;border:1px solid #81c784;" title="추천가가 최저가 +5~30% - 과거 낙찰사례에서 1,000만 원 이상 남긴 비율 55~83%, 손해 17~20%">📈 성공 구간</span></div>' : '')
+            + (r.overshoot ? '<div style="margin-top:3px;"><span class="bb-pill" style="background:#fff3e0;color:#e65100;border:1px solid #ffb74d;" title="추천가가 최저가보다 30% 이상 높음 - 과거 이런 경우 예상매도가가 평균 22% 높았고 낙찰자 53%가 손해">⚠️ 시세 과대 의심</span></div>' : '')
             + (r.niche ? '<div style="margin-top:3px;"><span class="bb-pill" style="background:#e0f2f1;color:#00695c;border:1px solid #4db6ac;" title="' + bbEsc(r.niche.why.join(' · ')) + '">🧭 틈새' + (r.niche.score >= 2 ? ' ' + '★'.repeat(Math.min(3, r.niche.score - 1)) : '') + '</span></div>' : '')
             + (bidBoardState.prevVerdicts[r.id] && bidBoardState.prevVerdicts[r.id] !== r.verdict ? '<div class="bb-sub">이전 ' + BID_BOARD_VERDICT[bidBoardState.prevVerdicts[r.id]].label + ' → 바뀜</div>' : '') + '</td>'
         + '<td data-l="입찰일">' + dd + '</td>'
