@@ -15570,7 +15570,7 @@ function computeBidBoardRow(a) {
     // 단지 거래가 섞여 올라감 - 자기 단지 거래가 적을수록). 입찰 추천 구간은 둘 다보다 낮았음(0.97·0.90).
     // → 아파트 예상매도가가 자기 단지 같은 평형(±3㎡) 최근 1년(없으면 3년) 중개거래 중앙값을 넘지 않게 함(감정가는 1년 전 값이라 안 씀).
     // 효과(되판 값 ÷ 예상매도가): 손해 주의 구간 0.81 → 0.95, 전체 오차 10% → 8.2%, 예상보다 10% 이상 싸게 팔린 비율 28.7% → 17.3%.
-    if (type === 'apt' && !row.salePresale) row.ownStats = aptOwnTradeStats(a, bunjiFull, pyung);
+    if (type === 'apt' && !row.salePresale) { a._lawdForRent = lawd; row.ownStats = aptOwnTradeStats(a, bunjiFull, pyung); }
     // 2026-10(사용자: 가락타운처럼 거래 많은 인기 단지는 층 섞인 보수값이라 낙찰 가능성이 너무 낮음) - 같은 평형·비슷한 층(±3층)
     // 최근 6개월 거래가 5건 이상이면 그 중간값을 예상매도가로 씀. 지방 아파트 백테스트(이 조건 해당 1,171건): 지금 방식 대비
     // 예상매도가 중간 +2.2%, 낙찰 45→50건, 순이익 중앙(수리 전) 1,761→1,951만, 손해 16→12%. 3건 이상·1년치로 넓히면 오히려 나빠짐.
@@ -15614,11 +15614,16 @@ function computeBidBoardRow(a) {
 function aptOwnTradeStats(a, bunjiFull, pyung) {
     var area = (parseFloat(pyung) || 0) * 3.305785;
     if (!area) return null;
-    var now = Date.now(), p12 = [], p36 = [], n6 = 0, last = null, all = [], sim6 = [], maxF = 0, f36 = [];
+    var now = Date.now(), p12 = [], p36 = [], n6 = 0, last = null, all = [], sim6 = [], maxF = 0, f36 = [], v6 = 0, vPrev6 = 0;
     var tf = parseInt(a.floor);
     (aptIndexByDongBunji.get(dongKey(a.dong) + '|' + bunjiFull) || []).forEach(function(ap) {
         if ((ap.buildingType || 'apt') !== 'apt') return;
-        (ap.trades || []).forEach(function(t) { var ff = parseInt(t.floor); if (ff > maxF) maxF = ff; });
+        (ap.trades || []).forEach(function(t) {
+            var ff = parseInt(t.floor); if (ff > maxF) maxF = ff;
+            if (t.dealing_type === '직거래') return;
+            var ag = (now - tradeDate(t).getTime()) / 86400000 / 30.4;
+            if (ag <= 6) v6++; else if (ag <= 12) vPrev6++;
+        });
         (ap.trades || []).forEach(function(t) {
             if (!(t.area > 0) || Math.abs(t.area - area) > 3 || t.dealing_type === '직거래') return;
             var td = tradeDate(t).getTime(), age = (now - td) / 86400000 / 30.4;
@@ -15661,7 +15666,19 @@ function aptOwnTradeStats(a, bunjiFull, pyung) {
             lowF = { factor: rh || 1.015, fromComplex: !!rh, n: gh.length, label: '고층(' + tf + '층/' + maxF + '층)' };
         }
     }
-    return { recent: recent, lowF: lowF, maxF: maxF, sim6n: sim6.length, sim6med: med(sim6), n12: p12.length, n6: n6, n36: p36.length, med12: med(p12), med36: med(p36), lastAgeM: last === null ? null : Math.round((now - last) / 86400000 / 30.4 * 10) / 10 };
+    // 전세가율: 같은 단지·같은 평형 최근 1년 전세(월세 0) 보증금 중간값 ÷ 매매 1년 중간값
+    var jeonse = null, rl = (typeof rentCacheByLawd !== 'undefined' && a._lawdForRent) ? rentCacheByLawd[a._lawdForRent] : null;
+    if (rl && rl.length && p12.length) {
+        var dk = dongKey(a.dong), bj = String(bunjiFull || '').trim(), deps = [];
+        rl.forEach(function(r) {
+            if (Number(r.monthly_rent) > 0 || dongKey(r.dong) !== dk || String(r.bunji || '').trim() !== bj || Math.abs(Number(r.size) - area) > 3) return;
+            var ds = String(r.deal_date || ''); if (ds.length < 8) return;
+            var t = new Date(+ds.slice(0, 4), +ds.slice(4, 6) - 1, +ds.slice(6, 8)).getTime();
+            if (t < now && (now - t) / 86400000 / 30.4 <= 12) deps.push(Number(r.deposit));
+        });
+        if (deps.length >= 2) jeonse = { ratio: med(deps) / med(p12), n: deps.length };
+    }
+    return { jeonse: jeonse, v6: v6, vPrev6: vPrev6, recent: recent, lowF: lowF, maxF: maxF, sim6n: sim6.length, sim6med: med(sim6), n12: p12.length, n6: n6, n36: p36.length, med12: med(p12), med36: med(p36), lastAgeM: last === null ? null : Math.round((now - last) / 86400000 / 30.4 * 10) / 10 };
 }
 // 예상매도가 상한: 자기 단지 같은 평형 최근 실거래 중앙값(1년, 없으면 3년). 감정가는 1년 전 값이라 안 씀
 function aptSaleCapInfo(a, bunjiFull, pyung, st) {
@@ -15673,7 +15690,7 @@ function aptSaleCapInfo(a, bunjiFull, pyung, st) {
 }
 function finalizeBidBoardRow(row) {
     var a = row.a, type = row.type, minBid = row.minBid, pyung = row.pyung;
-    row.reasons = []; row.warns = []; row.nextFail = null; row.overshoot = false; row.sweet = false; row.recBidRaw = null; row.recCapped = null; row.safetyExtra = null; row.safetyPct = null;
+    row.reasons = []; row.warns = []; row.nextFail = null; row.overshoot = false; row.sweet = false; row.volDown = false; row.sturdy = false; row.recBidRaw = null; row.recCapped = null; row.safetyExtra = null; row.safetyPct = null;
     row.assetVer = myAssetsVer;
     // 목표마진: 모달에서 직접 정해 저장한 값이 있으면 그걸, 없으면 추천 목표마진
     var userMargin = parseInt(a.compTargetMargin);
@@ -15759,6 +15776,12 @@ function finalizeBidBoardRow(row) {
                 : '⚠️ 손해 주의: 계산상 최저가보다 많이 남아 보이는 물건이에요. 과거 이런 물건은 예상보다 싸게 팔린 경우가 많았어요. 같은 단지 최근 거래·호가를 꼭 확인하세요');
         }
         else if (osApt ? aptRich : true) row.sweet = true;
+        // 2026-10 백테스트(지방 아파트 4,978건, 앱 추천가로 낙찰 시 수리 전): 단지 거래가 최근 6개월에 직전 6개월의 70% 미만으로 줄면
+        // 순이익 중앙 −1,284만·손해 64%(비슷하면 +1,666만·26%) → 거래 감소 경고(추천→검토). 전세가율 80% 이상은 +1,993만·손해 3%·매도 3.4개월 → 🛡️ 버팀.
+        var osx = row.ownStats;
+        row.volDown = !!(type === 'apt' && osx && osx.vPrev6 >= 4 && osx.v6 < osx.vPrev6 * 0.7);
+        row.sturdy = !!(type === 'apt' && osx && osx.jeonse && osx.jeonse.ratio >= 0.8);
+        if (row.volDown) { ok = false; row.warns.push('📉 거래 감소: 이 단지 최근 6개월 거래 ' + osx.v6 + '건 - 직전 6개월(' + osx.vPrev6 + '건)의 ' + Math.round(osx.v6 / osx.vPrev6 * 100) + '% (과거 이런 경우 손해 64%)'); }
         if (type === 'apt' && row.ownStats && row.ownStats.maxF && parseInt(a.floor) >= row.ownStats.maxF && row.ownStats.maxF >= 5) row.warns.push('꼭대기층 - 과거 꼭대기층 낙찰은 28%가 예상보다 10% 넘게 싸게 팔렸어요(누수·단열 확인)');
         row.verdict = ok ? 'yes' : 'check';
         // 손해 주의로 다시 계산한 입찰가가 최저가보다 낮으면 지금은 입찰 불가
@@ -16024,7 +16047,7 @@ function overshootSaleFactor(type, ratio) {
 }
 var BOARD_CACHE_KEY = 'bidBoardCache:v1', BOARD_CACHE_MAX_AGE = 24 * 3600 * 1000;
 // 저장 계산을 다시 써도 되는지 - 물건 입력값(시세 계산에 쓰는 것)과 입찰일 지남 여부. 계산 방식이 바뀌면 BOARD_CALC_VER을 올림
-var BOARD_CALC_VER = 13;
+var BOARD_CALC_VER = 14;
 function boardBaseSig(a) {
     var d = a.bidDate ? calcAuctionDday(a.bidDate) : null;
     return [BOARD_CALC_VER, auctionWonEstSignature(a), a.minBid, a.appraisal, a.bidDate, a.court, a.failCount, a.landType, String(a.memo || '').length,
@@ -16207,6 +16230,8 @@ function renderBidBoardRow(r) {
             + '<span class="bb-verdict" style="color:' + v.color + ';background:' + v.bg + ';">' + v.label + '</span>'
             + (r.opportunity ? '<div style="margin-top:3px;"><span class="bb-pill" style="background:#fff8e1;color:#e65100;border:1px solid #ffb300;">🎯 기회</span></div>' : '')
             + (r.a && r.a.fieldCheck ? (function() { var ev = fieldCheckEval(r.a, r.sale); return ev.grade ? '<div style="margin-top:3px;"><span class="bb-pill" style="background:#f3f4f6;color:' + ev.grade.c + ';">📝 ' + ev.score + '점</span></div>' : ''; })() : '')
+            + (r.sturdy ? '<div style="margin-top:3px;"><span class="bb-pill" style="background:#ecfeff;color:#0e7490;border:1px solid #67e8f9;" title="전세가율 ' + Math.round(r.ownStats.jeonse.ratio * 100) + '% - 안 팔려도 전세로 버티기 쉬움(과거 이런 단지 손해 3%, 매도 3.4개월)">🛡️ 버팀 ' + Math.round(r.ownStats.jeonse.ratio * 100) + '%</span></div>' : '')
+            + (r.volDown ? '<div style="margin-top:3px;"><span class="bb-pill" style="background:#fef2f2;color:#b91c1c;border:1px solid #fca5a5;">📉 거래 감소</span></div>' : '')
             + (r.sweet ? '<div style="margin-top:3px;"><span class="bb-pill" style="background:#e8f5e9;color:#2e7d32;border:1px solid #81c784;" title="추천가가 최저가 +15%(빌라 +30%) 미만 - 과거 낙찰사례 검증에서 이 구간에 앱 추천가로 입찰했을 때 손해가 적었음">👍 입찰 추천 구간</span></div>' : '')
             + (r.overshoot ? '<div style="margin-top:3px;"><span class="bb-pill" style="background:#fff3e0;color:#e65100;border:1px solid #ffb74d;" title="아파트: 이 단지 같은 평형 거래가 최근 1년 없거나 마지막 거래가 6개월 넘음 - 예상매도가 근거가 약해 과거 절반이 예상보다 10% 넘게 싸게 팔림. 빌라: 추천가가 최저가 +30% 이상">⚠️ 손해 주의</span></div>' : '')
             + (r.niche ? '<div style="margin-top:3px;"><span class="bb-pill" style="background:#e0f2f1;color:#00695c;border:1px solid #4db6ac;" title="' + bbEsc(r.niche.why.join(' · ')) + '">🧭 틈새' + (r.niche.score >= 2 ? ' ' + '★'.repeat(Math.min(3, r.niche.score - 1)) : '') + '</span></div>' : '')
@@ -16236,7 +16261,9 @@ var BB_CHIPS = [
     { k: 'soon', label: '⏰ 7일 이내', f: function(r) { return r.dday && r.dday.diffDays >= 0 && r.dday.diffDays <= 7 && r.verdict !== 'no'; } },
     { k: 'niche', label: '🧭 틈새', f: function(r) { return !!r.niche; } },
     { k: 'opp', label: '🎯 기회', f: function(r) { return !!r.opportunity; } },
+    { k: 'sturdy', label: '🛡️ 버팀(전세가율 80%+)', f: function(r) { return !!r.sturdy && r.verdict !== 'no'; } },
     { k: 'caution', label: '⚠️ 손해 주의', f: function(r) { return !!r.overshoot; } },
+    { k: 'voldown', label: '📉 거래 감소', f: function(r) { return !!r.volDown; } },
     { k: 'check', label: '🟡 검토', f: function(r) { return r.verdict === 'check'; } },
     { k: 'no', label: '❌ 제외', f: function(r) { return r.verdict === 'no'; } }
 ];
@@ -16316,7 +16343,7 @@ async function renderBidDrawer() {
         + '<div class="dr-sub">' + bbEsc(row.region) + ' · ' + (row.pyung ? row.pyung + '평 · ' : '') + (row.floor ? row.floor + '층 · ' : '') + bbEsc(a.caseNo || '') + (row.dday ? ' · <b>' + row.dday.label + '</b> (' + bbEsc(a.bidDate) + ')' : '') + '</div>'
         + '<div style="margin-top:6px;"><span class="bb-verdict" style="color:' + v.color + ';background:' + v.bg + ';">' + v.label + '</span>'
         + (row.sweet ? ' <span class="bb-pill" style="background:#e8f5e9;color:#2e7d32;">👍 입찰 추천 구간</span>' : '') + (row.overshoot ? ' <span class="bb-pill" style="background:#fff3e0;color:#e65100;">⚠️ 손해 주의</span>' : '')
-        + (row.niche ? ' <span class="bb-pill" style="background:#e0f2f1;color:#00695c;">🧭 틈새</span>' : '') + (row.opportunity ? ' <span class="bb-pill" style="background:#fff8e1;color:#e65100;">🎯 기회</span>' : '') + '</div>'
+        + (row.niche ? ' <span class="bb-pill" style="background:#e0f2f1;color:#00695c;">🧭 틈새</span>' : '') + (row.sturdy ? ' <span class="bb-pill" style="background:#ecfeff;color:#0e7490;">🛡️ 버팀 ' + Math.round(row.ownStats.jeonse.ratio * 100) + '%</span>' : '') + (row.opportunity ? ' <span class="bb-pill" style="background:#fff8e1;color:#e65100;">🎯 기회</span>' : '') + '</div>'
         + '<div class="dr-big"><div><span>예상매도가</span><b>' + fmt(row.sale) + '</b></div><div><span>추천 입찰가</span><b style="color:#16a34a;">' + fmt(row.recBid) + '</b></div><div><span>최저가</span><b>' + fmt(row.minBid) + '</b></div></div>';
     // 근거
     var basis = row.saleSaved ? '내가 저장한 값' : (row.salePresale ? '분양권·입주권 거래' : (row.saleSimBy || row.saleCapBy || ('이 단지 같은 평형 ' + (row.own || 0) + '건 + 주변 비슷한 단지')));
