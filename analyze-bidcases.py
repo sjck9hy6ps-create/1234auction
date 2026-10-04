@@ -158,6 +158,8 @@ def main():
         return v if v is not None and np.isfinite(v) else None
 
     groups = {k: g for k, g in tr.groupby(["region_n", "dk", "bunji_s"])}
+    # 동 전체 거래 날짜(정렬) - 입찰 전 3년 동 거래량(거래가 되는 동네인지)
+    dong_dates = {k: np.sort(g["deal_date"].to_numpy()) for k, g in tr.groupby(["region_n", "dk"])}
     # 인기 등급(현재 기준 - 약간의 미래 정보가 섞임): pop|<시군구>
     pop = {}
     try:
@@ -186,7 +188,13 @@ def main():
         rec = {"region": c.region, "sido": c.sido, "sale": c.sale_int, "actual": c.actual, "second": c.second, "bidders": c.bidders,
                "appraisal": c.appraisal, "minbid": c.minbid, "fails": c.fails, "est": None, "own": 0, "resale": None, "resale_m": None, "tier": None,
                "area": c.area, "floor": c.floor_n, "cx3y": 0, "age": None, "bandTier": None,
-               "notes": str(getattr(c, "specialConditions", "") or ""), "land": str(getattr(c, "landType", "") or "")}
+               "notes": str(getattr(c, "specialConditions", "") or ""), "land": str(getattr(c, "landType", "") or ""),
+               "dk": c.dk, "dongName": str(c.dong), "cx": None, "dong3y": 0}
+        dd = dong_dates.get((c.region, c.dk))
+        if dd is not None:
+            _sd = int_to_date(c.sale_int)
+            _cut = ymd_int(_sd - timedelta(days=30))
+            rec["dong3y"] = int(np.searchsorted(dd, _cut) - np.searchsorted(dd, ymd_int(_sd - timedelta(days=30 + 1095))))
         if g is not None and len(g):
             same = g[(g["size"] - c.area).abs() <= 2]
             sale_d = int_to_date(c.sale_int)
@@ -231,6 +239,7 @@ def main():
                         rec["resale_m"] = round((int_to_date(int(t0["deal_date"])) - sale_d).days / 30.4, 1)
             nm = avm.normalize_complex_name(g["danji"].mode().iloc[0]) if len(g) else None
             rec["tier"] = pop.get((c.region, c.dk, nm))
+            rec["cx"] = nm
             band = "소형" if c.area < 60 else ("중형" if c.area <= 85 else "대형")
             rec["bandTier"] = pop.get((c.region, c.dk, nm, band))
             # 단지 전체 최근 3년 거래(입찰 전 기준) - 거래 활발도
@@ -342,12 +351,90 @@ def main():
     summary["nicheTop"] = {sd: [c for c in combos if c["sido"] == sd and c["profitPct"] >= 70 and c["netMedManwon"] >= 1000][:15] for sd in ["전체"] + sorted(R["sido"].dropna().unique())}
     summary["crowdedWorst"] = sorted([c for c in combos if c["sido"] == "전체"], key=lambda x: x["netMedPct"])[:10]
 
+    # ── 관심도: 거래는 되는데 입찰자가 덜 몰리는 곳(사용자 정의 틈새) ──
+    # 유찰 단계마다 입찰자 수가 달라서(신건<1회<2회+) 같은 시도·같은 유찰 단계의 보통 입찰자 수로 나눠 비교.
+    summary.update(attention_analysis(R, seg_stats, med))
+
     print(json.dumps(summary, ensure_ascii=False, indent=1))
     cyc.upsert_rows([{"id": "bidcase|__validation__", "payload": cyc.clean_json(summary), "fetched_at": now}])
     print("✅ 저장 완료")
     if os.environ.get("GITHUB_STEP_SUMMARY"):
         with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as fh:
             fh.write("## 낙찰사례 검증\n\n```\n" + json.dumps(summary, ensure_ascii=False, indent=1) + "\n```\n")
+
+
+def attention_analysis(R, seg_stats, med):
+    R = R.copy()
+    R = R[R["fails_b"].notna()]
+    norm = R.dropna(subset=["bidders"]).groupby(["sido", "fails_b"])["bidders"].median().to_dict()
+    R["att"] = [b / norm[(sd, f)] if pd.notna(b) and norm.get((sd, f)) else np.nan for b, sd, f in zip(R["bidders"], R["sido"], R["fails_b"])]
+    R["att_b"] = R["att"].map(lambda a: None if pd.isna(a) else ("관심 적음" if a <= 0.6 else ("보통" if a < 1.4 else "관심 많음")))
+    R["trad_b"] = R["cx3y"].map(lambda n: "단지 3년 거래 6건+" if n >= 6 else "단지 거래 드묾")
+    R["dong_b"] = R["dong3y"].map(lambda n: "동 3년 거래 0~60건" if n <= 60 else ("61~300건" if n <= 300 else "301건+"))
+    out = {"attentionNorm": {f"{k[0]}|{k[1]}": v for k, v in norm.items()}}
+
+    # 1) 관심도 × 거래 가능 → 실현 수익
+    t1 = {}
+    for sd, GS in [("전체", R)] + list(R.groupby("sido")):
+        t1[sd] = {}
+        for (ab, tb), G in GS.dropna(subset=["att_b"]).groupby(["att_b", "trad_b"]):
+            st = seg_stats(G)
+            if st:
+                st["winVsEstMed"] = med(G["ratio"])
+                t1[sd][f"{ab}|{tb}"] = st
+    out["attentionProfit"] = t1
+
+    # 2) 같은 동의 과거 관심도가 이어지는지(입찰 전 정보만): 이 사건 이전 같은 동 사례 2건+의 관심도 중앙값
+    R = R.sort_values("sale")
+    prev_att = []
+    hist = {}
+    for r in R.itertuples():
+        k = (r.region, r.dk)
+        h = hist.get(k, [])
+        prev_att.append(float(np.median(h)) if len(h) >= 2 else np.nan)
+        if pd.notna(r.att):
+            hist.setdefault(k, []).append(r.att)
+    R["prev_att"] = prev_att
+    R["prev_b"] = R["prev_att"].map(lambda a: None if pd.isna(a) else ("과거 관심 적던 동" if a <= 0.7 else ("과거 보통" if a < 1.3 else "과거 관심 많던 동")))
+    t2 = {}
+    for sd, GS in [("전체", R)] + list(R.groupby("sido")):
+        t2[sd] = {}
+        for (pb, tb), G in GS.dropna(subset=["prev_b"]).groupby(["prev_b", "trad_b"]):
+            st = seg_stats(G) or {"n": int(len(G)), "resold": 0}
+            st["attNowMed"] = med(G["att"])
+            st["biddersMed"] = med(G["bidders"])
+            st["winVsEstMed"] = med(G["ratio"])
+            t2[sd][f"{pb}|{tb}"] = st
+    out["dongAttentionPersistence"] = t2
+
+    # 3) 입찰 전에 알 수 있는 조건 중 '관심 적음'과 이어지는 것(거래 되는 단지만)
+    T = R[(R["trad_b"] == "단지 3년 거래 6건+") & R["att"].notna()]
+    t3 = {}
+    for f in ["tier_b", "bandTier_b", "band", "floor_b", "age_b", "price_b", "liq_b", "dong_b", "appr_b", "note_b"]:
+        t3[f] = {}
+        for k, G in T.groupby(f):
+            if len(G) < 30:
+                continue
+            st = seg_stats(G) or {"n": int(len(G))}
+            st["attMed"] = med(G["att"])
+            st["lowAttPct"] = round(float((G["att"] <= 0.6).mean()) * 100, 1)
+            t3[f][str(k)] = st
+    out["attentionPredictors"] = t3
+
+    # 4) 동 목록: 거래는 되는데(동 3년 거래 60건+ 또는 단지 6건+) 입찰자가 적은 동 - 앱 표시용
+    D = []
+    for (rg, dk), G in R[R["att"].notna()].groupby(["region", "dk"]):
+        if len(G) < 3:
+            continue
+        res = G[G["resale"].notna()]
+        D.append({"region": rg, "dong": G["dongName"].mode().iloc[0], "dk": dk, "cases": int(len(G)),
+                  "attMed": round(float(G["att"].median()), 2), "biddersMed": med(G["bidders"]),
+                  "dong3yMed": int(G["dong3y"].median()), "tradableShare": round(float((G["cx3y"] >= 6).mean()), 2),
+                  "resold": int(len(res)), "netMedManwon": int(res["net_abs"].median()) if len(res) else None,
+                  "profitPct": round(float((res["net"] > 0).mean()) * 100, 1) if len(res) else None,
+                  "winVsEstMed": med(G["ratio"])})
+    out["dongAttention"] = sorted(D, key=lambda x: x["attMed"])
+    return out
 
 
 if __name__ == "__main__":
