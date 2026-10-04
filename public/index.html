@@ -15532,7 +15532,7 @@ function computeBidBoardRow(a) {
    값만으로 돌아서, 💼 내 자산(주택 수·올해 소득)이 바뀌면 모든 물건을 순식간에 다시 계산할 수 있음. */
 function finalizeBidBoardRow(row) {
     var a = row.a, type = row.type, minBid = row.minBid, pyung = row.pyung;
-    row.reasons = []; row.warns = []; row.nextFail = null; row.overshoot = false; row.sweet = false; row.recBidRaw = null; row.recCapped = null;
+    row.reasons = []; row.warns = []; row.nextFail = null; row.overshoot = false; row.sweet = false; row.recBidRaw = null; row.recCapped = null; row.saleAdj = null; row.saleAdjPct = null;
     row.assetVer = myAssetsVer;
     // 목표마진: 모달에서 직접 정해 저장한 값이 있으면 그걸, 없으면 추천 목표마진
     var userMargin = parseInt(a.compTargetMargin);
@@ -15606,18 +15606,27 @@ function finalizeBidBoardRow(row) {
         var roomR = row.recBid / minBid, overLimit = type === 'villa' ? 1.3 : 1.15;
         if (roomR >= overLimit) {
             ok = false; row.overshoot = true;
-            // 2026-10 백테스트(손해 주의 물건 아파트 1,197·빌라 97건): 계산된 추천가 그대로면 손해 76%(아파트)지만,
-            // 입찰가를 최저가 근처로 낮추면 오히려 잘 남았음 - 아파트 최저가 +5%까지: 순이익 중앙 1,433만·손해 12%(수리 전),
-            // 빌라 최저가 +15%까지: 2,814만·손해 9%. 그래서 손해 주의 물건은 추천가를 그 상한으로 낮춰 보여줌.
-            var capR = type === 'villa' ? 1.15 : 1.05;
+            // 2026-10(사용자 기준: "최저가에 맞추기보다 순이익을 확보할 수 있는 만큼만 낮춰야"): 손해 주의 물건은 예상매도가가
+            // 실제 되판 값보다 체계적으로 높았음(백테스트 5,521건, 되판 값 ÷ 예상매도가 하위 40% 지점). 그 비율로 예상매도가를
+            // 낮춘 뒤 같은 마진(최소 1,000만)을 확보하는 입찰가를 다시 계산. 결과(수리 전): 아파트 순이익 중앙 1,229만·손해 31%,
+            // 빌라 3,006만·손해 14% (계산 그대로면 아파트 −2,964만·손해 76%).
+            var adjF = overshootSaleFactor(type, roomR);
+            var saleAdj = Math.round(row.sale * adjF);
+            var mAdj = row.marginUser ? row.margin : (riskMarginFor(saleAdj, row.own, row.risk, row.popEff) || {}).margin;
+            var recAdj = solveAuctionBidFromRecord(Object.assign({}, a, { target: saleAdj, compTargetMargin: mAdj,
+                repair: parseInt(a.repair) || calcRepairFee(type, pyung || 0, a.buildYear || row.estBuildYear || null) || 0 }));
             row.recBidRaw = row.recBid;
-            row.recBid = Math.round(minBid * capR);
-            row.recCapped = capR;
-            row.roomPct = Math.round((row.recBid - minBid) / minBid * 1000) / 10;
-            row.warns.push('⚠️ 손해 주의: 계산상 많이 남아 보이지만(원래 계산 ' + toEok(String(row.recBidRaw)) + '), 이런 물건은 과거에 앱 예상보다 싸게 팔린 경우가 많았어요. 그래서 추천 입찰가를 최저가 +' + Math.round((capR - 1) * 100) + '%까지로 낮췄어요(과거 이렇게 낮추면 손해 ' + (type === 'villa' ? '9%' : '12%') + '). 호가도 꼭 확인하세요');
+            row.recBid = recAdj ? recAdj.bid : null;
+            row.saleAdj = saleAdj; row.saleAdjPct = Math.round((1 - adjF) * 100); row.marginAdj = mAdj;
+            row.roomPct = row.recBid && minBid ? Math.round((row.recBid - minBid) / minBid * 1000) / 10 : null;
+            row.warns.push('⚠️ 손해 주의: 이런 물건은 과거에 앱 예상보다 싸게 팔린 경우가 많아, 예상매도가를 ' + row.saleAdjPct + '% 낮춘 '
+                + toEok(String(saleAdj)) + ' 기준으로 마진 ' + toEok(String(mAdj)) + '을 남기는 입찰가로 다시 계산했어요(원래 계산 ' + toEok(String(row.recBidRaw)) + ')'
+                + (row.recBid && row.recBid < minBid ? ' - 지금 최저가로는 마진이 안 남아요' : '') + '. 호가도 꼭 확인하세요');
         }
         else row.sweet = true;
         row.verdict = ok ? 'yes' : 'check';
+        // 손해 주의로 다시 계산한 입찰가가 최저가보다 낮으면 지금은 입찰 불가
+        if (row.overshoot && (!row.recBid || row.recBid < minBid)) { row.verdict = 'no'; row.reasons.push('예상매도가를 낮춰 다시 계산하면 최저가로도 마진이 안 남아요'); }
     }
     // ── 유찰 횟수별 기회/주의 (2026-10 전남·광주 낙찰 968건 실측) ──
     // 인기 상위 20% 단지 · 2회+ 유찰: 낙찰가 = 예상매도가의 74.5%, 낙찰자 손해 2%(41건 중), 순이익 중앙 1,312만 → 기회
@@ -15751,7 +15760,7 @@ function bidVerdictShort(r) {
     var room = r.roomPct == null ? '' : (r.roomPct >= 0 ? '여유 ' + r.roomPct + '%' : '부족 ' + Math.abs(r.roomPct) + '%');
     // 2026-10: 📈 성공 구간 / ⚠️ 손해 주의(앱 예상보다 싸게 팔릴 가능성 큼 - 예전 이름 '시세 과대 의심')도 지도 배지·목록에 같이
     return { label: (r.opportunity ? '🎯' : '') + (r.niche ? '🧭' : '') + (r.sweet ? '👍' : '') + (r.overshoot ? '⚠️' : '') + (r.assumedFail ? '유찰되면 ' : '') + v.label,
-        room: room + (r.overshoot ? ' · 손해 주의(최저가 근처만)' : (r.sweet ? ' · 입찰 추천 구간' : '')), color: v.color, bg: v.bg, opportunity: r.opportunity };
+        room: room + (r.overshoot ? ' · 손해 주의(입찰가 낮춤)' : (r.sweet ? ' · 입찰 추천 구간' : '')), color: v.color, bg: v.bg, opportunity: r.opportunity };
 }
 var BID_BOARD_VERDICT = {
     yes:    { label: '✅ 추천', color: '#2e7d32', bg: '#e8f5e9', order: 0 },
@@ -15866,9 +15875,16 @@ async function refreshBidBoard() {
     bidBoardRunning = false;
     try { redrawMarkers(); } catch (e) {}
 }
+// 손해 주의 물건의 예상매도가 보정 비율 - 추천가÷최저가가 클수록 실제 되판 값이 예상보다 더 낮았음(2026-10 백테스트, 하위 40% 지점)
+var OVERSHOOT_SALE_FACTORS = { apt: [[1.3, 0.90], [1.5, 0.76], [2, 0.61], [Infinity, 0.51]], villa: [[1.5, 0.82], [2, 0.76], [Infinity, 0.60]] };
+function overshootSaleFactor(type, ratio) {
+    var t = OVERSHOOT_SALE_FACTORS[type === 'villa' ? 'villa' : 'apt'];
+    for (var i = 0; i < t.length; i++) if (ratio < t[i][0]) return t[i][1];
+    return t[t.length - 1][1];
+}
 var BOARD_CACHE_KEY = 'bidBoardCache:v1', BOARD_CACHE_MAX_AGE = 24 * 3600 * 1000;
 // 저장 계산을 다시 써도 되는지 - 물건 입력값(시세 계산에 쓰는 것)과 입찰일 지남 여부. 계산 방식이 바뀌면 BOARD_CALC_VER을 올림
-var BOARD_CALC_VER = 2;
+var BOARD_CALC_VER = 3;
 function boardBaseSig(a) {
     var d = a.bidDate ? calcAuctionDday(a.bidDate) : null;
     return [BOARD_CALC_VER, auctionWonEstSignature(a), a.minBid, a.appraisal, a.bidDate, a.court, a.failCount, a.landType, String(a.memo || '').length,
@@ -16017,7 +16033,7 @@ function renderBidBoardRow(r) {
         : r.dday ? '<span class="bb-dday' + (r.dday.diffDays <= 3 && r.dday.diffDays >= 0 ? ' soon' : '') + '">' + r.dday.label + '</span><div class="bb-sub">' + bbEsc(a.bidDate || '') + '</div>' : '<span class="bb-sub">미정</span>';
     var saleCell = r.pending ? '<span class="bb-sub">계산 중…</span>'
         : (r.sale ? '<b>' + toEok(String(r.sale)) + '</b><div class="bb-sub">' + (r.saleSaved ? '내가 저장한 값' : (r.salePresale ? '분양권·입주권 거래 ' + r.salePresale.n + '건(분양가+웃돈)' : '이 단지 같은 평형 ' + r.own + '건')) + (r.salePerMin != null ? ' · 최저가는 ' + r.salePerMin + '%' : '') + '</div>' : '<span class="bb-sub">-</span>');
-    var recCell = r.recBid ? '<b>' + toEok(String(r.recBid)) + '</b>' + (r.recCapped ? '<div class="bb-sub" style="color:#e65100;">최저가 +' + Math.round((r.recCapped - 1) * 100) + '%까지로 낮춤 (계산상 ' + toEok(String(r.recBidRaw)) + ')</div>' : '') + (r.resaleVat ? '<div class="bb-sub" style="color:#c2410c;">부가세 ' + toEok(String(r.resaleVat)) + (r.vatEstimated ? '(추정)' : '') + ' 반영</div>' : '') + '<div class="bb-sub">마진 ' + toEok(String(r.margin)) + (r.marginUser ? '(내가 정함)' : '(추천' + (r.popEff && r.popEff.tier === '하위40%' ? ', 거래 드묾 +2%' : '') + ')') + '</div>' : '<span class="bb-sub">-</span>';
+    var recCell = r.recBid ? '<b>' + toEok(String(r.recBid)) + '</b>' + (r.saleAdj ? '<div class="bb-sub" style="color:#e65100;">예상매도가 ' + r.saleAdjPct + '% 낮춰 재계산 (원래 ' + toEok(String(r.recBidRaw)) + ')</div>' : '') + (r.resaleVat ? '<div class="bb-sub" style="color:#c2410c;">부가세 ' + toEok(String(r.resaleVat)) + (r.vatEstimated ? '(추정)' : '') + ' 반영</div>' : '') + '<div class="bb-sub">마진 ' + toEok(String(r.margin)) + (r.marginUser ? '(내가 정함)' : '(추천' + (r.popEff && r.popEff.tier === '하위40%' ? ', 거래 드묾 +2%' : '') + ')') + '</div>' : '<span class="bb-sub">-</span>';
     var roomCell = r.roomPct == null ? '<span class="bb-sub">-</span>'
         : '<b style="color:' + (r.roomPct >= 0 ? '#2e7d32' : '#c62828') + ';">' + (r.roomPct >= 0 ? r.roomPct + '% 여유' : Math.abs(r.roomPct) + '% 부족') + '</b>'
           + '<div class="bb-sub">' + (r.roomPct >= 0 ? '최저가보다 ' + toEok(String(r.recBid - r.minBid)) + ' 더 써도 됨' : '한 번 더 떨어지면 다시 보기') + '</div>';
@@ -16047,7 +16063,7 @@ function renderBidBoardRow(r) {
             + '<span class="bb-verdict" style="color:' + v.color + ';background:' + v.bg + ';">' + v.label + '</span>'
             + (r.opportunity ? '<div style="margin-top:3px;"><span class="bb-pill" style="background:#fff8e1;color:#e65100;border:1px solid #ffb300;">🎯 기회</span></div>' : '')
             + (r.sweet ? '<div style="margin-top:3px;"><span class="bb-pill" style="background:#e8f5e9;color:#2e7d32;border:1px solid #81c784;" title="추천가가 최저가 +15%(빌라 +30%) 미만 - 과거 낙찰사례 검증에서 이 구간에 앱 추천가로 입찰했을 때 손해가 적었음">👍 입찰 추천 구간</span></div>' : '')
-            + (r.overshoot ? '<div style="margin-top:3px;"><span class="bb-pill" style="background:#fff3e0;color:#e65100;border:1px solid #ffb74d;" title="앱 계산으로는 많이 남아 보이지만, 과거 비슷한 물건은 앱 예상보다 싸게 팔려 계산대로 입찰하면 대부분 손해였음. 그래서 추천 입찰가를 최저가 근처(아파트 +5%, 빌라 +15%)로 낮춰 보여줘요">⚠️ 손해 주의 · 최저가 근처만</span></div>' : '')
+            + (r.overshoot ? '<div style="margin-top:3px;"><span class="bb-pill" style="background:#fff3e0;color:#e65100;border:1px solid #ffb74d;" title="앱 계산으로는 많이 남아 보이지만, 과거 비슷한 물건은 앱 예상보다 싸게 팔려 계산대로 입찰하면 대부분 손해였음. 그래서 예상매도가를 과거 실제 수준으로 낮춘 뒤, 마진이 남는 만큼만 입찰가를 낮춰 보여줘요">⚠️ 손해 주의 · 입찰가 낮춤</span></div>' : '')
             + (r.niche ? '<div style="margin-top:3px;"><span class="bb-pill" style="background:#e0f2f1;color:#00695c;border:1px solid #4db6ac;" title="' + bbEsc(r.niche.why.join(' · ')) + '">🧭 틈새' + (r.niche.score >= 2 ? ' ' + '★'.repeat(Math.min(3, r.niche.score - 1)) : '') + '</span></div>' : '')
             + (bidBoardState.prevVerdicts[r.id] && bidBoardState.prevVerdicts[r.id] !== r.verdict ? '<div class="bb-sub">이전 ' + BID_BOARD_VERDICT[bidBoardState.prevVerdicts[r.id]].label + ' → 바뀜</div>' : '') + '</td>'
         + '<td data-l="입찰일">' + dd + '</td>'
