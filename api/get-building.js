@@ -139,7 +139,10 @@ export default async function handler(req, res) {
       && !((cached.title_json.hhldCnt || 0) > 0 || /공동주택|아파트|다세대|연립/.test(cached.title_json.mainPurps || ''));
     // 단지 전체 값(총괄표제부)을 붙이기 전에 저장된 아파트 캐시는 한 번 다시 조회(이후엔 siteChecked로 표시돼 반복 안 함)
     const cachedNeedsSite = cached && cached.title_json && (cached.title_json.hhldCnt || 0) > 0 && !cached.title_json.site && !cached.title_json.siteChecked;
-    if (cached && !cachedNonResidential && !cachedNeedsSite && (Date.now() - new Date(cached.fetched_at).getTime()) < FRESH_MS) {
+    // 층별 자료가 여러 동 것이 섞인 채 저장된 캐시(층 수보다 훨씬 많은 줄)도 다시 조회
+    const cachedMixedFloors = cached && cached.title_json && Array.isArray(cached.floor_json)
+      && (cached.title_json.grndFlrCnt || 0) > 0 && cached.floor_json.length > (cached.title_json.grndFlrCnt + (cached.title_json.ugrndFlrCnt || 0)) * 2 + 4;
+    if (cached && !cachedNonResidential && !cachedNeedsSite && !cachedMixedFloors && (Date.now() - new Date(cached.fetched_at).getTime()) < FRESH_MS) {
       // 무료 Vercel 사용량 절약: 건축물대장 데이터는 몇 달 단위로만 바뀌므로 엣지에서
       // 6시간 동안 재사용 - 같은 건물을 반복 조회해도 함수를 다시 실행하지 않음.
       res.setHeader('Cache-Control', 'public, s-maxage=21600, stale-while-revalidate=604800');
@@ -221,7 +224,10 @@ export default async function handler(req, res) {
       return f.length ? f : items;
     };
     const floorItems = onlyChosen(floorResult.items), exposItems = onlyChosen(exposResult.items);
-    const floors = floorItems.length
+    // 고른 동의 층별 자료가 지상층수의 절반도 안 되면(건축HUB 자료 누락 - 치평동 1331: 19층 동에 6·11층 2건뿐) 오해를 막기 위해 숨김
+    const grndN = titleItem ? (parseInt(titleItem.get('grndFlrCnt'), 10) || 0) : 0;
+    const floorsIncomplete = titleItems.length > 1 && grndN > 3 && floorItems.length < grndN * 0.5;
+    const floors = floorItems.length && !floorsIncomplete
       ? floorItems.map(normalizeFloor).sort((a, b) => floorSortKey(a) - floorSortKey(b))
       : null;
     const exposAreas = exposItems.length
