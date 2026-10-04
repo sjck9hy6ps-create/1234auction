@@ -16321,6 +16321,8 @@ function renderBidBoardRow(r) {
             + (bidBoardState.prevVerdicts[r.id] && bidBoardState.prevVerdicts[r.id] !== r.verdict ? '<div class="bb-sub">이전 ' + BID_BOARD_VERDICT[bidBoardState.prevVerdicts[r.id]].label + ' → 바뀜</div>' : '') + '</td>'
         + '<td data-l="입찰일">' + dd + '</td>'
         + '<td data-l="물건" class="bb-name"><b>' + bbEsc(r.name) + '</b> <span title="지도에서 보기" style="cursor:pointer;" onclick="event.stopPropagation();bidBoardGo(\'' + idJs + '\')">🗺️</span>' + (bidBoardState.highlight[r.id] ? ' <span class="bb-pill new">새로 등록</span>' : '') + (bidBoardState.updated[r.id] ? ' <span class="bb-pill new">결과 반영</span>' : '')
+            // 2026-10(사용자: "거래량 순위가 소형 인기단지라고 하는데 물건이 어느 평형대인지 직접 알아내야 해서 번거로움") - 물건 이름 옆에 평형대 표시
+            + (r.type === 'apt' && sizeBandOf(r.pyung) ? ' <span class="bb-pill" style="background:#eef2ff;color:#3730a3;border:1px solid #c7d2fe;" title="평형대 기준: 소형 60㎡ 미만 · 중형 60~85㎡ · 대형 85㎡ 초과">' + sizeBandOf(r.pyung) + ' ' + Math.round(r.pyung * 3.305785) + '㎡</span>' : '')
             + '<div class="bb-sub">' + bbEsc(r.region) + (sub ? ' · ' + bbEsc(sub) : '') + (a.caseNo ? ' · ' + bbEsc(a.caseNo) : '') + '</div>'
             + (notes ? '<div class="bb-notes">' + notes + '</div>' : '') + '</td>'
         + '<td data-l="거래량 순위">' + popCell + '</td>'
@@ -16438,7 +16440,7 @@ async function renderBidDrawer() {
     // 2026-10(사용자: "목록 옆 좁은 창 안에 지도/상세 버튼") - 맨 위 이름 옆에 바로 보이게
     var h = '<div class="dr-h"><h3>' + bbEsc(row.name) + '</h3><button class="dr-x" onclick="closeBidDrawer()">✕</button></div>'
         + '<div class="dr-top-btns"><button onclick="bidBoardGo(\'' + idJs + '\')">🗺️ 지도</button><button onclick="closeBidBoard();openAuctionModal(\'' + idJs + '\')">📝 상세</button></div>'
-        + '<div class="dr-sub">' + bbEsc(row.region) + ' · ' + (row.pyung ? row.pyung + '평 · ' : '') + (row.floor ? row.floor + '층 · ' : '') + bbEsc(a.caseNo || '') + (row.dday ? ' · <b>' + row.dday.label + '</b> (' + bbEsc(a.bidDate) + ')' : '') + '</div>'
+        + '<div class="dr-sub">' + bbEsc(row.region) + ' · ' + (row.pyung ? row.pyung + '평' + (row.type === 'apt' && sizeBandOf(row.pyung) ? '(' + sizeBandOf(row.pyung) + ' ' + Math.round(row.pyung * 3.305785) + '㎡)' : '') + ' · ' : '') + (row.floor ? row.floor + '층 · ' : '') + bbEsc(a.caseNo || '') + (row.dday ? ' · <b>' + row.dday.label + '</b> (' + bbEsc(a.bidDate) + ')' : '') + '</div>'
         + '<div style="margin-top:6px;"><span class="bb-verdict" style="color:' + v.color + ';background:' + v.bg + ';">' + v.label + '</span>'
         + (row.sweet ? ' <span class="bb-pill" style="background:#e8f5e9;color:#2e7d32;">👍 입찰 추천 구간</span>' : '') + (row.overshoot ? ' <span class="bb-pill" style="background:#fff3e0;color:#e65100;">⚠️ 손해 주의</span>' : '') + (row.bulk ? ' <span class="bb-pill" style="background:#fee2e2;color:#b91c1c;">🏢 대량 경매 ' + row.bulkN + '건</span>' : '')
         + (row.niche ? ' <span class="bb-pill" style="background:#e0f2f1;color:#00695c;">🧭 틈새</span>' : '') + (row.sturdy ? ' <span class="bb-pill" style="background:#ecfeff;color:#0e7490;">🛡️ 버팀 ' + Math.round(row.ownStats.jeonse.ratio * 100) + '%</span>' : '') + (row.hardHold ? ' <span class="bb-pill" style="background:#fffbeb;color:#92400e;">⏳ 버티기 어려움 ' + Math.round(row.ownStats.jeonse.ratio * 100) + '%</span>' : '') + (row.opportunity ? ' <span class="bb-pill" style="background:#fff8e1;color:#e65100;">🎯 기회</span>' : '') + '</div>'
