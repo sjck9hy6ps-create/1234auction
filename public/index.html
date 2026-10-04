@@ -5897,7 +5897,8 @@ function buildPanelSummaryHtml(all, chartPy) {
         + stat('평단가', apt.ppp > 0 ? (Math.round(apt.ppp / 100) / 10) + '천만' : '-')
         + stat('3년 거래', n3 + '건')
         + stat('입주', by ? String(by).slice(0, 4) + '년' : '-')
-        + stat('세대수', hh ? Number(hh).toLocaleString() : (currentBuildingLoading ? '…' : '-'))
+        // 세대수는 건축물대장이 동(棟) 하나 기준으로 오는 경우가 많아 틀리기 쉬워 빼고, 최근 1년 거래 건수로
+        + stat('1년 거래', all.filter(function(t) { return pnTradeDate(t) >= daysAgo(365); }).length + '건')
         + stat('동 거래량', lf ? (lf.isLeader ? (lf.only ? '단독' : '👑 대장') : lf.rank + '위') : '-')
         + stat('생활권', liv && liv.rank ? liv.rank + '위/' + liv.of : '-', liv ? (liv.radius / 1000) + 'km' : '')
         + '</div></div>';
