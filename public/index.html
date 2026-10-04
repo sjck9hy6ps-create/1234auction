@@ -15735,7 +15735,9 @@ function bidVerdictShort(r) {
     if (!r) return null;
     var v = BID_BOARD_VERDICT[r.verdict];
     var room = r.roomPct == null ? '' : (r.roomPct >= 0 ? '여유 ' + r.roomPct + '%' : '부족 ' + Math.abs(r.roomPct) + '%');
-    return { label: (r.opportunity ? '🎯' : '') + (r.niche ? '🧭' : '') + (r.assumedFail ? '유찰되면 ' : '') + v.label, room: room, color: v.color, bg: v.bg, opportunity: r.opportunity };
+    // 2026-10: 📈 성공 구간(추천가 = 최저가 +5~30%) / ⚠️ 시세 과대 의심(+30% 이상)도 지도 배지·목록에 같이
+    return { label: (r.opportunity ? '🎯' : '') + (r.niche ? '🧭' : '') + (r.sweet ? '📈' : '') + (r.overshoot ? '⚠️' : '') + (r.assumedFail ? '유찰되면 ' : '') + v.label,
+        room: room + (r.overshoot ? ' · 시세 과대 의심' : (r.sweet ? ' · 성공 구간' : '')), color: v.color, bg: v.bg, opportunity: r.opportunity };
 }
 var BID_BOARD_VERDICT = {
     yes:    { label: '✅ 추천', color: '#2e7d32', bg: '#e8f5e9', order: 0 },
