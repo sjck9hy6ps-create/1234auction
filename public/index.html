@@ -15541,7 +15541,7 @@ function computeBidBoardRow(a) {
     }
     // 저층 보정 - 지방 아파트 낙찰사례 백테스트(저층 919건): 되판 값 ÷ 예상매도가 0.964 → 1.010, 예상보다 10% 넘게 싸게 팔린 비율 27% → 17%,
     // 앱 추천가 낙찰 시 순이익 중앙(수리 전) 443 → 711만. (1층 0.954, 2~3층 0.971로 체계적으로 높게 잡히고 있었음 - 상한·주변단지 값이 층을 섞어서)
-    if (row.sale && type === 'apt' && !row.saleSaved && !row.salePresale && !simApplied && row.ownStats && row.ownStats.lowF && row.ownStats.lowF.factor < 0.999) {
+    if (row.sale && type === 'apt' && !row.saleSaved && !row.salePresale && !simApplied && row.ownStats && row.ownStats.lowF && Math.abs(row.ownStats.lowF.factor - 1) > 0.001) {
         if (!row.saleBase) row.saleBase = row.sale;
         row.sale = Math.round(row.sale * row.ownStats.lowF.factor);
         row.saleFloorAdj = row.ownStats.lowF;
@@ -15604,6 +15604,16 @@ function aptOwnTradeStats(a, bunjiFull, pyung) {
             var allP = f36.map(function(x) { return x.p; });
             var ratio = (g.length >= 3 && allP.length >= 6) ? Math.min(1, med(g) / med(allP)) : null;
             lowF = { factor: ratio || (tf <= 1 ? 0.95 : 0.97), fromComplex: !!ratio, n: g.length, label: tf <= 1 ? '1층' : '저층(' + tf + '층/' + maxF + '층)' };
+        }
+        // 고층 보정(2026-10): 단지 최고층의 상위 20%(최소 4층, 꼭대기층 제외)는 예상매도가가 1.7% 낮게 잡혔음 → 같은 단지 3년 거래
+        // "그 층대 ÷ 전체"(3건 이상, 최대 +8%) 또는 기본 +1.5%. 백테스트(408건): 되판÷예상 1.023→1.000, 낙찰 37→50건, 순이익(수리 전) 195→618만, 손해 43→36%.
+        // 꼭대기층은 올리지 않음 - 예상보다 10% 넘게 싸게 팔린 비율이 28%로 편차가 커서(누수·단열 등), 경고만.
+        var hiLim = Math.max(4, Math.ceil(maxF * 0.8));
+        if (!lowF && tf >= hiLim && tf < maxF) {
+            var gh = f36.filter(function(x) { return x.f >= hiLim && x.f < maxF; }).map(function(x) { return x.p; });
+            var allH = f36.map(function(x) { return x.p; });
+            var rh = (gh.length >= 3 && allH.length >= 6) ? Math.max(1, Math.min(1.08, med(gh) / med(allH))) : null;
+            lowF = { factor: rh || 1.015, fromComplex: !!rh, n: gh.length, label: '고층(' + tf + '층/' + maxF + '층)' };
         }
     }
     return { recent: recent, lowF: lowF, maxF: maxF, sim6n: sim6.length, sim6med: med(sim6), n12: p12.length, n6: n6, n36: p36.length, med12: med(p12), med36: med(p36), lastAgeM: last === null ? null : Math.round((now - last) / 86400000 / 30.4 * 10) / 10 };
@@ -15704,6 +15714,7 @@ function finalizeBidBoardRow(row) {
                 : '⚠️ 손해 주의: 계산상 최저가보다 많이 남아 보이는 물건이에요. 과거 이런 물건은 예상보다 싸게 팔린 경우가 많았어요. 같은 단지 최근 거래·호가를 꼭 확인하세요');
         }
         else if (osApt ? aptRich : true) row.sweet = true;
+        if (type === 'apt' && row.ownStats && row.ownStats.maxF && parseInt(a.floor) >= row.ownStats.maxF && row.ownStats.maxF >= 5) row.warns.push('꼭대기층 - 과거 꼭대기층 낙찰은 28%가 예상보다 10% 넘게 싸게 팔렸어요(누수·단열 확인)');
         row.verdict = ok ? 'yes' : 'check';
         // 손해 주의로 다시 계산한 입찰가가 최저가보다 낮으면 지금은 입찰 불가
         if (row.overshoot && (!row.recBid || row.recBid < minBid)) { row.verdict = 'no'; row.reasons.push('예상매도가를 낮춰 다시 계산하면 최저가로도 마진이 안 남아요'); }
@@ -15968,7 +15979,7 @@ function overshootSaleFactor(type, ratio) {
 }
 var BOARD_CACHE_KEY = 'bidBoardCache:v1', BOARD_CACHE_MAX_AGE = 24 * 3600 * 1000;
 // 저장 계산을 다시 써도 되는지 - 물건 입력값(시세 계산에 쓰는 것)과 입찰일 지남 여부. 계산 방식이 바뀌면 BOARD_CALC_VER을 올림
-var BOARD_CALC_VER = 12;
+var BOARD_CALC_VER = 13;
 function boardBaseSig(a) {
     var d = a.bidDate ? calcAuctionDday(a.bidDate) : null;
     return [BOARD_CALC_VER, auctionWonEstSignature(a), a.minBid, a.appraisal, a.bidDate, a.court, a.failCount, a.landType, String(a.memo || '').length,
@@ -16118,7 +16129,7 @@ function renderBidBoardRow(r) {
     var dd = r.assumedFail ? '<span class="bb-dday" style="color:#ef6c00;">결과 확인 필요</span><div class="bb-sub">' + bbEsc(a.bidDate || '') + ' 지남 · 유찰이면 다음 기일 약 ' + r.assumedFail.nextDate.slice(5) + '</div>'
         : r.dday ? '<span class="bb-dday' + (r.dday.diffDays <= 3 && r.dday.diffDays >= 0 ? ' soon' : '') + '">' + r.dday.label + '</span><div class="bb-sub">' + bbEsc(a.bidDate || '') + '</div>' : '<span class="bb-sub">미정</span>';
     var saleCell = r.pending ? '<span class="bb-sub">계산 중…</span>'
-        : (r.sale ? '<b>' + toEok(String(r.sale)) + '</b><div class="bb-sub">' + (r.saleSaved ? '내가 저장한 값' : (r.salePresale ? '분양권·입주권 거래 ' + r.salePresale.n + '건(분양가+웃돈)' : '이 단지 같은 평형 ' + r.own + '건')) + (r.ownStats && r.ownStats.recent ? '<br><span style="color:#374151;" title="이 단지·같은 평형' + (r.ownStats.recent.similarFloor ? '·비슷한 층(±3층)' : '(비슷한 층 거래가 없어 층 상관없이)') + '의 가장 최근 실거래">최근 ' + r.ownStats.recent.date.slice(2, 7).replace('-', '.') + ' · ' + r.ownStats.recent.floor + '층 · <b>' + toEok(String(r.ownStats.recent.price)) + '</b>' + (r.ownStats.recent.similarFloor ? '' : ' (다른 층)') + '</span>' : '') + (r.saleFloorAdj ? ' · <span style="color:#7c3aed;" title="' + bbEsc(r.saleFloorAdj.label) + ' - ' + (r.saleFloorAdj.fromComplex ? '이 단지 3년 거래에서 이 층대가 평균의 ' + Math.round(r.saleFloorAdj.factor * 100) + '%(' + r.saleFloorAdj.n + '건)' : '이 단지 저층 거래가 적어 기본 보정 ' + Math.round(r.saleFloorAdj.factor * 100) + '%') + '">' + bbEsc(r.saleFloorAdj.label.replace(/\(.*\)/, '')) + ' ' + Math.round((1 - r.saleFloorAdj.factor) * 1000) / 10 + '% 낮춤</span>' : '') + (r.saleSimBy ? ' · <span style="color:#1e5eff;" title="' + bbEsc(r.saleSimBy) + ' (층 섞어 계산한 값 ' + toEok(String(r.saleBase)) + ')">비슷한 층 최근 ' + r.ownStats.sim6n + '건 기준</span>' : '') + (r.saleCapBy ? ' · <span style="color:#00695c;" title="주변 단지 거래로 계산한 값(' + toEok(String(r.saleBase)) + ')이 이 기준보다 높아서 낮춤">' + '단지 실거래' + ' 기준으로 맞춤</span>' : '') + '</div>' : '<span class="bb-sub">-</span>');
+        : (r.sale ? '<b>' + toEok(String(r.sale)) + '</b><div class="bb-sub">' + (r.saleSaved ? '내가 저장한 값' : (r.salePresale ? '분양권·입주권 거래 ' + r.salePresale.n + '건(분양가+웃돈)' : '이 단지 같은 평형 ' + r.own + '건')) + (r.ownStats && r.ownStats.recent ? '<br><span style="color:#374151;" title="이 단지·같은 평형' + (r.ownStats.recent.similarFloor ? '·비슷한 층(±3층)' : '(비슷한 층 거래가 없어 층 상관없이)') + '의 가장 최근 실거래">최근 ' + r.ownStats.recent.date.slice(2, 7).replace('-', '.') + ' · ' + r.ownStats.recent.floor + '층 · <b>' + toEok(String(r.ownStats.recent.price)) + '</b>' + (r.ownStats.recent.similarFloor ? '' : ' (다른 층)') + '</span>' : '') + (r.saleFloorAdj ? ' · <span style="color:#7c3aed;" title="' + bbEsc(r.saleFloorAdj.label) + ' - ' + (r.saleFloorAdj.fromComplex ? '이 단지 3년 거래에서 이 층대가 평균의 ' + Math.round(r.saleFloorAdj.factor * 100) + '%(' + r.saleFloorAdj.n + '건)' : '이 단지 저층 거래가 적어 기본 보정 ' + Math.round(r.saleFloorAdj.factor * 100) + '%') + '">' + bbEsc(r.saleFloorAdj.label.replace(/\(.*\)/, '')) + ' ' + Math.round(Math.abs(1 - r.saleFloorAdj.factor) * 1000) / 10 + '% ' + (r.saleFloorAdj.factor < 1 ? '낮춤' : '높임') + '</span>' : '') + (r.saleSimBy ? ' · <span style="color:#1e5eff;" title="' + bbEsc(r.saleSimBy) + ' (층 섞어 계산한 값 ' + toEok(String(r.saleBase)) + ')">비슷한 층 최근 ' + r.ownStats.sim6n + '건 기준</span>' : '') + (r.saleCapBy ? ' · <span style="color:#00695c;" title="주변 단지 거래로 계산한 값(' + toEok(String(r.saleBase)) + ')이 이 기준보다 높아서 낮춤">' + '단지 실거래' + ' 기준으로 맞춤</span>' : '') + '</div>' : '<span class="bb-sub">-</span>');
     var recCell = r.recBid ? '<b>' + toEok(String(r.recBid)) + '</b>' + (r.safetyExtra ? '<div class="bb-sub" style="color:#e65100;">손해 주의 여유: ' + toEok(String(r.safetyExtra)) + ' 더 낮춤 (원래 ' + toEok(String(r.recBidRaw)) + ')</div>' : '') + (r.resaleVat ? '<div class="bb-sub" style="color:#c2410c;">부가세 ' + toEok(String(r.resaleVat)) + (r.vatEstimated ? '(추정)' : '') + ' 반영</div>' : '') + '<div class="bb-sub">마진 ' + toEok(String(r.margin)) + (r.marginUser ? '(내가 정함)' : '(추천' + (r.popEff && r.popEff.tier === '하위40%' ? ', 거래 드묾 +2%' : '') + ')') + '</div>' : '<span class="bb-sub">-</span>';
     var roomCell = r.roomPct == null ? '<span class="bb-sub">-</span>'
         : '<b style="color:' + (r.roomPct >= 0 ? '#2e7d32' : '#c62828') + ';">' + (r.roomPct >= 0 ? r.roomPct + '% 여유' : Math.abs(r.roomPct) + '% 부족') + '</b>'
