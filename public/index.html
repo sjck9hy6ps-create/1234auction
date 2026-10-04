@@ -16634,8 +16634,34 @@ function parseNaverListings(text) {
 function summarizeNaverListings(list, targetArea, targetFloor, sale) {
     var q = function(a, p) { if (!a.length) return null; a = a.slice().sort(function(m, n) { return m - n; }); var i = (a.length - 1) * p, l = Math.floor(i), h = Math.ceil(i); return Math.round(a[l] + (a[h] - a[l]) * (i - l)); };
     var same = targetArea ? list.filter(function(x) { return !x.area || Math.abs(x.area - targetArea) <= 3; }) : list;
-    var seen = {}, uniq = [];
-    same.forEach(function(x) { var k = x.dong + '|' + x.floorRaw + '|' + x.price; if (seen[k]) return; seen[k] = true; uniq.push(x); });
+    // 중복 제거(2026-10, 사용자: "같은 매물을 여러 부동산에 올리는 게 가장 걱정") - 같은 집을 중개사마다 조금씩 다르게 올림:
+    //  가격 범위(1억~1억 1,500 vs 1억 1,500)·몇 % 차이(8,800 vs 9,000)·층 숨김(중/20층) → 같은 동이고 층이 맞고(숨긴 층은 저/중/고 구간)
+    //  가격 범위가 겹치거나 5% 안이면 같은 집. 단 방향이 다르거나(동향 vs 남향) 한쪽은 공실·즉시입주, 다른 쪽은 세 안고면 다른 집.
+    var band = function(f, maxF) { if (!maxF) return null; var r = f / maxF; return r <= 1 / 3 ? '저' : (r <= 2 / 3 ? '중' : '고'); };
+    var dirOk = function(a, b) { a = String(a || '').replace('향', ''); b = String(b || '').replace('향', ''); return !a || !b || a === b || a.indexOf(b) >= 0 || b.indexOf(a) >= 0; };
+    var vacantTxt = /공실|즉시\s*입주|즉입|바로\s*입주/;
+    var sameUnit = function(x, y) {
+        if (x.dong !== y.dong) return false;
+        if (x.floor != null && y.floor != null) { if (x.floor !== y.floor) return false; }
+        else if (x.floor != null || y.floor != null) { var n = x.floor != null ? x : y, h = x.floor != null ? y : x; if (h.floorRaw && band(n.floor, n.maxF || h.maxF) !== h.floorRaw) return false; }
+        else if (x.floorRaw !== y.floorRaw) return false;
+        var lo1 = x.price, hi1 = x.priceHigh || x.price, lo2 = y.price, hi2 = y.priceHigh || y.price;
+        var overlap = lo1 <= hi2 * 1.0 && lo2 <= hi1 * 1.0;
+        var near = Math.abs(lo1 - lo2) / Math.min(lo1, lo2) <= 0.05;
+        if (!overlap && !near) return false;
+        if (!dirOk(x.dir, y.dir)) return false;
+        if ((x.tenant && vacantTxt.test(y.text)) || (y.tenant && vacantTxt.test(x.text))) return false;
+        return true;
+    };
+    var uniq = [];
+    same.forEach(function(x) {
+        var hit = uniq.filter(function(u) { return sameUnit(u, x); })[0];
+        if (!hit) { uniq.push(Object.assign({}, x, { dups: 1, prices: [x.price] })); return; }
+        hit.dups++; hit.prices.push(x.price);
+        if (x.price < hit.price) { hit.price = x.price; } // 같은 집이면 가장 낮게 올라온 값을 호가로
+        if (hit.floor == null && x.floor != null) { hit.floor = x.floor; hit.floorRaw = x.floorRaw; }
+        hit.tenant = hit.tenant || x.tenant; hit.urgent = hit.urgent || x.urgent; if (!hit.repair) hit.repair = x.repair;
+    });
     var P = function(arr) { return arr.map(function(x) { return x.price; }); };
     var tf = parseInt(targetFloor, 10);
     // 비슷한 층: 1층은 1~2층끼리(1층은 따로 싸게 거래됨), 그 외는 ±3층
@@ -16644,7 +16670,8 @@ function summarizeNaverListings(list, targetArea, targetFloor, sale) {
     var byRep = { full: [], part: [], need: [], '': [] }; uniq.forEach(function(x) { byRep[x.repair].push(x.price); });
     var dates = uniq.map(function(x) { return x.date; }).filter(Boolean).sort();
     var res = {
-        at: new Date().toISOString().slice(0, 10), rawN: list.length, n: uniq.length, otherSize: list.length - same.length,
+        at: new Date().toISOString().slice(0, 10), rawN: list.length, n: uniq.length, otherSize: list.length - same.length, dupRemoved: same.length - uniq.length,
+        dupGroups: uniq.filter(function(x) { return x.dups > 1; }).map(function(x) { return x.dong + '동 ' + x.floorRaw + '층 ' + x.prices.map(function(p) { return toEok(String(p)); }).join('/'); }).slice(0, 12),
         min: q(P(uniq), 0), q25: q(P(uniq), 0.25), med: q(P(uniq), 0.5), max: q(P(uniq), 1),
         simN: simF.length, simMin: q(P(simF), 0), simMed: q(P(simF), 0.5),
         vacantMin: q(P(vacant), 0), tenantN: uniq.length - vacant.length, urgentN: uniq.filter(function(x) { return x.urgent; }).length,
@@ -16677,12 +16704,13 @@ function naverListingHtml(row, idJs) {
     var h = '<div style="margin-top:8px;border-top:1px dashed #e3e6ea;padding-top:8px;"><div class="dr-sub" style="margin-bottom:4px;"><b>📋 네이버 매물 붙여넣기</b> - 단지 매물 목록을 통째로 복사해 붙이면 같은 평형만 골라 정리하고 위 호가·매물 수를 채워요</div>';
     if (sm) {
         h += '<div style="background:#f6f8fb;border-radius:8px;padding:8px;font-size:12px;line-height:1.6;">'
-            + '<b>같은 평형 매물 ' + sm.n + '건</b> <span class="dr-sub">(원문 ' + sm.rawN + '건 · 중복·다른 평형 뺌 · 가격 범위는 낮은 값 · ' + sm.at + ' 기준' + (sm.dateTo ? ', 확인 ' + sm.dateFrom.slice(5) + '~' + sm.dateTo.slice(5) : '') + ')</span><br>'
+            + '<b>같은 평형 매물 ' + sm.n + '건</b> <span class="dr-sub">(원문 ' + sm.rawN + '건' + (sm.dupRemoved != null ? ' · 같은 집 중복 ' + sm.dupRemoved + '건' : '') + (sm.otherSize ? ' · 다른 평형 ' + sm.otherSize + '건' : '') + ' 뺌 · 가격 범위는 낮은 값 · ' + sm.at + ' 기준' + (sm.dateTo ? ', 확인 ' + sm.dateFrom.slice(5) + '~' + sm.dateTo.slice(5) : '') + ')</span><br>'
             + '호가: 최저 <b>' + f(sm.min) + '</b> · 하위25% ' + f(sm.q25) + ' · 중간 <b>' + f(sm.med) + '</b> · 최고 ' + f(sm.max) + '<br>'
             + (sm.simN ? '비슷한 층(' + (parseInt(a.floor, 10) <= 1 ? '1~2층' : '±3층') + ') ' + sm.simN + '건: 최저 <b>' + f(sm.simMin) + '</b> · 중간 ' + f(sm.simMed) + '<br>' : '')
             + (sm.repFullN && sm.repNeedN ? '수리 상태별 중간: 올수리 ' + f(sm.repFull) + '(' + sm.repFullN + '건) · 그 외 ' + f(sm.repNeed) + '(' + sm.repNeedN + '건) → 차이 ' + f(sm.repFull - sm.repNeed) + '<br>' : '')
             + '세 안고 매물 ' + sm.tenantN + '건 · 급매 ' + sm.urgentN + '건 · 바로 입주 가능 최저 ' + f(sm.vacantMin)
             + (row.sale && sm.saleRankPct != null ? '<br><b style="color:' + (sm.saleRankPct <= 25 ? '#16a34a' : (sm.saleRankPct >= 60 ? '#dc2626' : '#374151')) + ';">예상매도가 ' + f(row.sale) + '보다 싼 매물이 ' + sm.saleRankPct + '%</b>' + (sm.saleRankPct >= 60 ? ' - 팔 때 더 싼 매물들과 경쟁해야 해요' : (sm.saleRankPct <= 25 ? ' - 매물들 중 싼 편이라 팔기 수월한 가격' : '')) : '')
+            + (sm.dupGroups && sm.dupGroups.length ? '<details style="margin-top:4px;"><summary class="dr-sub" style="cursor:pointer;">같은 집으로 묶은 매물 보기(' + sm.dupGroups.length + '묶음)</summary><div class="dr-sub">' + sm.dupGroups.map(bbEsc).join('<br>') + '</div></details>' : '')
             + '<div class="dr-sub" style="margin-top:4px;">가장 싼 매물: ' + sm.lowest.map(function(x) { return f(x.p) + '(' + x.dong + '동 ' + x.f + (x.t ? ' ' + x.t.trim() : '') + ')'; }).join(' · ') + '</div></div>';
     }
     h += '<textarea id="nv-paste-' + bbEsc(String(row.id)) + '" placeholder="네이버 부동산 → 단지 → 매물 목록을 전체 선택해 복사 후 여기에 붙여넣기" style="width:100%;height:' + (sm ? 40 : 70) + 'px;margin-top:6px;font-size:11.5px;border:1px solid #d1d5db;border-radius:6px;padding:6px;box-sizing:border-box;"></textarea>'
