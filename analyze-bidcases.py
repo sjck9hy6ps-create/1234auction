@@ -12,7 +12,7 @@ house_trades 2017~ 전체를 써서 사건마다 "입찰일 30일 전까지의 �
   같은 단지 거래가 없으면 예상매도가 없음(앱은 주변 단지를 쓰지만 여기선 제외 - 커버리지로 따로 보고).
 재매도: 같은 단지·같은 면적·같은 층, 낙찰 14일 이후 첫 거래(직거래 제외), 낙찰가×1.02 이하인 건은 이상치로 제외.
 낙찰 확률: 낙찰가 ÷ 예상매도가가 r 이하인 사건 비율 = "예상매도가의 r로 썼다면 낙찰됐을 비율"(1등보다 높게 쓰면 낙찰).
-손해(근사): 재매도가 < 낙찰가 × 1.07 (취득세·등기·명도·이사·중개·이자 등 7% 가정 - 앱의 정밀 비용 계산은 아님).
+손해(근사): 재매도가 < 낙찰가 × 1.05 + 400만(비율 비용 5% + 명도·이사·청소·법무 고정 400만 가정 - 앱의 정밀 비용 계산은 아님).
 ⚠️ 2026-10 사용자 기준: "경매의 핵심은 낙찰될 가격이 아니라 낙찰·매도 후 수익을 구현할 수 있는지", "누구나 1등으로 보는
 인기 물건보다 객관적 지표로 틈새를 찾는 게 중요" - 그래서 핵심 결과는 낙찰 확률이 아니라 "입찰 전에 알 수 있는 조건별로
 낙찰자가 실제로 번 돈(실현 수익률)과 경쟁(입찰자 수)"이고, 수익은 높은데 입찰자가 적은 조건(틈새)을 찾아 순위를 매김.
@@ -37,7 +37,8 @@ avm = cyc.avm
 
 SITE_URL = (os.environ.get("SITE_URL") or "https://1234auction.vercel.app").rstrip("/")
 GROUND_RATIO = 0.915
-COST_RATIO = 1.07
+COST_RATIO = 1.05          # 비율 비용(취득세·등기·중개·이자 등)
+FIXED_COST = 400           # 고정 비용(만원: 명도·이사·청소·법무 등) - 저가 물건에서 비중이 커서 따로 둠
 
 
 def sido_norm(s):
@@ -223,7 +224,9 @@ def main():
                 after = same[(same["deal_date"] >= ymd_int(sale_d + timedelta(days=14))) & (same["floor"] == c.floor_n)]
                 if len(after):
                     t0 = after.sort_values("deal_date").iloc[0]
-                    if t0["price"] > c.actual * 1.02:
+                    # 낙찰가 이하 매도도 포함(예전엔 이상치로 보고 뺐는데, 그러면 실제 손해 매도가 빠져 수익이 부풀려짐).
+                    # 낙찰가의 70% 미만처럼 같은 집으로 보기 어려운 경우만 제외.
+                    if t0["price"] >= c.actual * 0.7:
                         rec["resale"] = float(t0["price"])
                         rec["resale_m"] = round((int_to_date(int(t0["deal_date"])) - sale_d).days / 30.4, 1)
             nm = avm.normalize_complex_name(g["danji"].mode().iloc[0]) if len(g) else None
@@ -240,7 +243,7 @@ def main():
     R["ratio"] = R["actual"] / R["est"]
     R["err"] = (R["est"] - R["resale"]) / R["resale"]
     R["second_gap"] = (R["actual"] - R["second"]) / R["est"]
-    R["loss"] = R["resale"] < R["actual"] * COST_RATIO
+    R["loss"] = R["resale"] < R["actual"] * COST_RATIO + FIXED_COST
     obs_cut = ymd_int(datetime.now() - timedelta(days=270))  # 낙찰 후 9개월 이상 지난 건만 재매도 비율 계산
 
     def med(s):
@@ -284,7 +287,8 @@ def main():
         summary["byTierFails"][f"{t}|{f}"] = block(G)
 
     # ── 틈새 찾기: 입찰 전에 알 수 있는 조건별 실현 수익 ──
-    R["net"] = (R["resale"] - R["actual"] * COST_RATIO) / R["actual"]
+    R["net"] = (R["resale"] - R["actual"] * COST_RATIO - FIXED_COST) / R["actual"]
+    R["net_abs"] = R["resale"] - R["actual"] * COST_RATIO - FIXED_COST   # 실현 순이익(만원)
     R["band"] = R["area"].map(lambda a: "소형" if a < 60 else ("중형" if a <= 85 else "대형"))
     R["floor_b"] = R["floor"].map(lambda f: None if pd.isna(f) else ("1층" if f <= 1 else ("2~3층" if f <= 3 else "4층+")))
     R["age_b"] = R["age"].map(lambda a: None if a is None or pd.isna(a) else ("10년 이하" if a <= 10 else ("11~20년" if a <= 20 else ("21~30년" if a <= 30 else "30년 초과"))))
@@ -306,6 +310,7 @@ def main():
             return None
         return {"n": int(len(G)), "resold": int(len(res)),
                 "netMedPct": round(float(res["net"].median()) * 100, 1),
+                "netMedManwon": int(res["net_abs"].median()),
                 "profitPct": round(float((res["net"] > 0).mean()) * 100, 1),
                 "bigLossPct": round(float((res["net"] < -0.05).mean()) * 100, 1),
                 "biddersMed": med(G["bidders"]),
@@ -334,7 +339,7 @@ def main():
                                "nicheScore": round(st["netMedPct"] - 0.3 * (st["biddersMed"] or 0), 1)})
                     combos.append(st)
     combos.sort(key=lambda x: -x["nicheScore"])
-    summary["nicheTop"] = {sd: [c for c in combos if c["sido"] == sd and c["profitPct"] >= 70][:15] for sd in ["전체"] + sorted(R["sido"].dropna().unique())}
+    summary["nicheTop"] = {sd: [c for c in combos if c["sido"] == sd and c["profitPct"] >= 70 and c["netMedManwon"] >= 1000][:15] for sd in ["전체"] + sorted(R["sido"].dropna().unique())}
     summary["crowdedWorst"] = sorted([c for c in combos if c["sido"] == "전체"], key=lambda x: x["netMedPct"])[:10]
 
     print(json.dumps(summary, ensure_ascii=False, indent=1))
