@@ -16638,7 +16638,8 @@ function summarizeNaverListings(list, targetArea, targetFloor, sale) {
     same.forEach(function(x) { var k = x.dong + '|' + x.floorRaw + '|' + x.price; if (seen[k]) return; seen[k] = true; uniq.push(x); });
     var P = function(arr) { return arr.map(function(x) { return x.price; }); };
     var tf = parseInt(targetFloor, 10);
-    var simF = !isNaN(tf) ? uniq.filter(function(x) { return x.floor != null ? Math.abs(x.floor - tf) <= 3 : (x.floorRaw === '저' ? tf <= 5 : (x.floorRaw === '고' ? tf >= 10 : tf > 3)); }) : [];
+    // 비슷한 층: 1층은 1~2층끼리(1층은 따로 싸게 거래됨), 그 외는 ±3층
+    var simF = !isNaN(tf) ? uniq.filter(function(x) { if (tf <= 1) return x.floor != null ? x.floor <= 2 : x.floorRaw === '저'; return x.floor != null ? Math.abs(x.floor - tf) <= 3 : (x.floorRaw === '저' ? tf <= 5 : (x.floorRaw === '고' ? tf >= 10 : tf > 3)); }) : [];
     var vacant = uniq.filter(function(x) { return !x.tenant; });
     var byRep = { full: [], part: [], need: [], '': [] }; uniq.forEach(function(x) { byRep[x.repair].push(x.price); });
     var dates = uniq.map(function(x) { return x.date; }).filter(Boolean).sort();
@@ -16678,7 +16679,7 @@ function naverListingHtml(row, idJs) {
         h += '<div style="background:#f6f8fb;border-radius:8px;padding:8px;font-size:12px;line-height:1.6;">'
             + '<b>같은 평형 매물 ' + sm.n + '건</b> <span class="dr-sub">(원문 ' + sm.rawN + '건 · 중복·다른 평형 뺌 · 가격 범위는 낮은 값 · ' + sm.at + ' 기준' + (sm.dateTo ? ', 확인 ' + sm.dateFrom.slice(5) + '~' + sm.dateTo.slice(5) : '') + ')</span><br>'
             + '호가: 최저 <b>' + f(sm.min) + '</b> · 하위25% ' + f(sm.q25) + ' · 중간 <b>' + f(sm.med) + '</b> · 최고 ' + f(sm.max) + '<br>'
-            + (sm.simN ? '비슷한 층(±3층) ' + sm.simN + '건: 최저 <b>' + f(sm.simMin) + '</b> · 중간 ' + f(sm.simMed) + '<br>' : '')
+            + (sm.simN ? '비슷한 층(' + (parseInt(a.floor, 10) <= 1 ? '1~2층' : '±3층') + ') ' + sm.simN + '건: 최저 <b>' + f(sm.simMin) + '</b> · 중간 ' + f(sm.simMed) + '<br>' : '')
             + (sm.repFullN && sm.repNeedN ? '수리 상태별 중간: 올수리 ' + f(sm.repFull) + '(' + sm.repFullN + '건) · 그 외 ' + f(sm.repNeed) + '(' + sm.repNeedN + '건) → 차이 ' + f(sm.repFull - sm.repNeed) + '<br>' : '')
             + '세 안고 매물 ' + sm.tenantN + '건 · 급매 ' + sm.urgentN + '건 · 바로 입주 가능 최저 ' + f(sm.vacantMin)
             + (row.sale && sm.saleRankPct != null ? '<br><b style="color:' + (sm.saleRankPct <= 25 ? '#16a34a' : (sm.saleRankPct >= 60 ? '#dc2626' : '#374151')) + ';">예상매도가 ' + f(row.sale) + '보다 싼 매물이 ' + sm.saleRankPct + '%</b>' + (sm.saleRankPct >= 60 ? ' - 팔 때 더 싼 매물들과 경쟁해야 해요' : (sm.saleRankPct <= 25 ? ' - 매물들 중 싼 편이라 팔기 수월한 가격' : '')) : '')
