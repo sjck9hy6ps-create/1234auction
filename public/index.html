@@ -6457,6 +6457,9 @@ function parseTankAuctionCsv(text) {
         var cur = col(r, '경매현황'), ar = parseAuctionAreaText(cur);
         var notes = cur.split('/').slice(1).map(function(x) { return x.trim(); }).filter(Boolean);
         var extra = col(r, '외 건수'); if (extra && !/^0\s/.test(extra)) notes.unshift('외 ' + extra);
+        // "외 18개호"처럼 여러 호실을 한꺼번에 파는 물건 - 한 집 시세로 판단할 수 없음
+        var bulkM = addrLine.match(/외\s*(\d+)\s*개호/);
+        if (bulkM) notes.unshift('여러 호실 일괄매각(외 ' + bulkM[1] + '개호) - 한 집 시세로 판단 불가');
         var appraisal = num(col(r, '감정가')), minBid = num(col(r, '최저가')), final = num(col(r, '매각가'));
         var second = num(col(r, '차순위')), bidders = num(col(r, '입찰자수'));
         var status = col(r, '진행상태').replace(/\(.*\)/, '').trim();
@@ -6472,6 +6475,8 @@ function parseTankAuctionCsv(text) {
             minBidRate: appraisal && minBid ? Math.round(minBid / appraisal * 10000) / 100 : null,
             status: status || null, saleDate: /^\d{4}-\d{2}-\d{2}$/.test(d) ? d : null,
             bidders: bidders, secondBidPrice: second, _fromCsv: true,
+            failCount: (function(m) { return m ? parseInt(m[1], 10) : (/신건/.test(status) ? 0 : null); })(status.match(/유찰\s*(\d+)\s*회/)),
+            bulkUnits: bulkM ? parseInt(bulkM[1], 10) : null,
         });
     });
     return { cases: cases, skipped: skipped };
@@ -6508,6 +6513,7 @@ async function onTankCsvFile(input, target) {
             // 이미 등록된 물건은 등록 때 결과 반영(유찰·기일변경·매각)으로 처리되고, 새 물건인데 이미 매각·취하된 건 처음부터 선택 해제.
             list.forEach(function(c) {
                 var st = String(c.status || '');
+                if (c.bulkUnits && !findExistingBidTarget(c)) c._selected = false;
                 if (!findExistingBidTarget(c) && ((/매각/.test(st) && !/불허/.test(st)) || /취하|기각|정지|종결|각하|취소/.test(st))) c._selected = false;
             });
             pendingBidTargetExtraction = list; renderBidTargetPreview(); analyzeBidTargetPopularity();
@@ -6517,7 +6523,7 @@ async function onTankCsvFile(input, target) {
         if (target === 'bt') {
             var unsel = list.filter(function(c) { return !c._selected; }).length;
             statusBox.innerText = '📄 CSV ' + files.length + '개 파일, ' + res.cases.length + '건 읽음'
-                + (unsel ? ' (이미 매각·취하된 새 물건 ' + unsel + '건은 선택 해제)' : '') + (dup ? ' · 파일 사이 중복 ' + dup + '건 제외' : '')
+                + (unsel ? ' (이미 매각·취하됐거나 여러 호실 일괄매각인 새 물건 ' + unsel + '건은 선택 해제)' : '') + (dup ? ' · 파일 사이 중복 ' + dup + '건 제외' : '')
                 + (badFiles ? ' · 형식이 다른 파일 ' + badFiles + '개 건너뜀' : '') + ' - 아래에서 확인 후 등록하세요.';
             return;
         }
@@ -7204,6 +7210,7 @@ async function saveSelectedBidTargets() {
             aptDong: '', floor: c.floor || '', unitNo: c.unitNo || '',
             caseNo: c.caseNo || null, court: c.court || null, pyung: pyung, bidDate: c.saleDate || '',
             landM2: c.landM2 || null, landType: c.landType || null,
+            failCount: c.failCount != null ? c.failCount : undefined,
             status: '검토중',
             appraisal: c.appraisalPrice ? Math.round(c.appraisalPrice / 10000) : '',
             minBid: c.minBidPrice ? Math.round(c.minBidPrice / 10000) : '',
