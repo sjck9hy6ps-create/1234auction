@@ -891,6 +891,52 @@ body.ui2 .al-opts input[type=checkbox] { margin:0; }
         left:8px; right:8px; width:auto; top:100px; max-height:calc(100vh - 160px); }
 }
 </style>
+<style>
+/* ════ 2026-10 단지 상세 패널(다방 느낌) ════ */
+body.ui2 #panel { width:380px; background:#f5f6f8; }
+body.ui2 #panel-header { background:#fff !important; border-bottom:1px solid #e9ebee; font-size:16px; }
+body.ui2 #sort-bar { display:none; }
+body.ui2 #pyung-bar { background:#fff; flex-wrap:nowrap; overflow-x:auto; gap:0; padding:0 8px; border-bottom:1px solid #e9ebee; }
+body.ui2 #pyung-bar > span { display:none; }
+body.ui2 .pyung-btn { border:none; border-radius:0; background:none; color:#8a9099; font-weight:700; font-size:13px; padding:10px 10px 8px; border-bottom:2px solid transparent; white-space:nowrap; }
+body.ui2 .pyung-btn.active { background:none; color:#111; border-bottom-color:#111; }
+body.ui2 #panel-body { padding:10px; }
+.pn-card { background:#fff; border-radius:12px; padding:12px 14px; margin-bottom:10px; box-shadow:0 1px 2px rgba(0,0,0,0.04); }
+.pn-card-h { font-size:14px; font-weight:800; margin-bottom:8px; display:flex; align-items:center; gap:6px; }
+.pn-muted { color:#9aa0a6; font-size:11.5px; font-weight:500; }
+.pn-hero-k { color:#6b7280; font-size:12px; }
+.pn-hero-v { font-size:26px; font-weight:800; letter-spacing:-0.5px; margin:2px 0; }
+.pn-hero-s { color:#6b7280; font-size:12px; }
+.pn-stats { display:grid; grid-template-columns:repeat(3,1fr); gap:8px; margin-top:12px; border-top:1px solid #f0f1f3; padding-top:10px; }
+.pn-stat .k { color:#9aa0a6; font-size:11px; }
+.pn-stat .v { font-size:14px; font-weight:700; }
+.pn-stat .s { color:#b0b5bb; font-size:10px; }
+.pn-pill { display:inline-block; border-radius:10px; padding:1px 7px; font-size:11px; font-weight:700; }
+.pn-pill.hot { background:#fff1e6; color:#ea580c; }
+.pn-seg { margin-left:auto; display:inline-flex; background:#f1f3f5; border-radius:8px; padding:2px; }
+.pn-seg button { border:none; background:none; font-size:11.5px; padding:3px 9px; border-radius:6px; color:#6b7280; cursor:pointer; }
+.pn-seg button.on { background:#fff; color:#111; font-weight:700; box-shadow:0 1px 2px rgba(0,0,0,0.08); }
+.pn-chart { width:100%; height:auto; display:block; }
+.pn-table { width:100%; border-collapse:collapse; font-size:12.5px; }
+.pn-table th { color:#9aa0a6; font-weight:600; font-size:11.5px; text-align:left; padding:6px 4px; border-bottom:1px solid #eef0f3; cursor:pointer; white-space:nowrap; background:none; }
+.pn-table td { padding:7px 4px; border-bottom:1px solid #f5f6f8; }
+.pn-table .r { text-align:right; }
+.pn-table tr.nh td { background:#fff7ed; }
+.pn-more-btn { width:100%; margin-top:8px; border:1px solid #e5e7eb; background:#fff; border-radius:8px; padding:7px; font-size:12px; cursor:pointer; }
+.pn-empty { color:#9aa0a6; text-align:center; padding:18px 0; font-size:12px; }
+.pn-note { background:#fff7ed; color:#c2410c; border-radius:10px; padding:8px 12px; font-size:12px; margin-bottom:10px; }
+.pn-det { border-top:1px solid #f0f1f3; }
+.pn-det:first-of-type { border-top:none; }
+.pn-det summary { list-style:none; cursor:pointer; padding:10px 0; font-size:13px; font-weight:600; display:flex; justify-content:space-between; }
+.pn-det summary::after { content:'›'; color:#b0b5bb; transform:rotate(90deg); }
+.pn-det[open] summary::after { transform:rotate(-90deg); }
+.pn-det summary::-webkit-details-marker { display:none; }
+.pn-det-b { padding-bottom:10px; }
+.pn-det-b .indicator-box { box-shadow:none; border:1px solid #f0f1f3; margin-bottom:6px; }
+body.ui2 .panel-tabs { background:#fff; border-radius:12px; padding:4px; border:none; margin-bottom:10px; }
+body.ui2 .panel-tab-btn { border-radius:8px; border-bottom:none; margin:0; color:#6b7280; }
+body.ui2 .panel-tab-btn.active { background:#111; color:#fff; }
+</style>
 </head>
 <body>
 <div id="topbar">
@@ -5763,8 +5809,126 @@ function setPyung(pyung, btn) {
     btn.classList.add('active');
     renderTable();
 }
+/* ════ 2026-10 단지 상세 패널 개편 (사용자: "세부탭 UI는 가시성이 좋지 않아 - 텍스트는 최소화하고 표·그래프 위주로, 다방 상세 같은 느낌")
+   구성: 핵심 지표 카드 → 시세 그래프(거래가 점·월별 선 + 거래량 막대, 1년/3년/전체) → 실거래 표 → 자세한 분석(접힘).
+   예전 설명형 섹션(임장메모·가치진단·건축물대장·공시가격·평단가/거래량 분석)은 지우지 않고 "자세한 분석" 안에 제목만 보이게 접어 둠. ════ */
+var currentChartRange = '3y', currentTradeShowAll = false;
+function pnTradeDate(t) { return new Date(t.year, t.month - 1, t.day); }
+function pnFmtEok(v) { v = parseInt(v); if (!v) return '-'; return v >= 10000 ? (Math.round(v / 1000) / 10) + '억' : v.toLocaleString() + '만'; }
+function setChartRange(r) { currentChartRange = r; renderTable(); }
+function toggleTradeShowAll() { currentTradeShowAll = !currentTradeShowAll; renderTable(); }
+function setTradeSort(key) {
+    currentSort = key === 'amount' ? (currentSort === 'amount_desc' ? 'amount_asc' : 'amount_desc')
+        : key === 'area' ? (currentSort === 'area_desc' ? 'area_asc' : 'area_desc') : 'date';
+    renderTable();
+}
+// 그래프에 쓸 평형: 평형을 골랐으면 그 평형, '전체'면 거래가 가장 많은 평형(평형이 섞이면 가격 선이 의미 없음)
+function pnChartPyung(all) {
+    if (currentPyung !== 'all') return currentPyung;
+    var cnt = {};
+    all.forEach(function(t) { if (t.area > 0) { var p = String(toPyung(t.area)); cnt[p] = (cnt[p] || 0) + 1; } });
+    var best = null;
+    Object.keys(cnt).forEach(function(p) { if (!best || cnt[p] > cnt[best]) best = p; });
+    return best;
+}
+function buildPriceChartSvg(trades, range) {
+    var now = new Date(), from = new Date(now);
+    if (range === '1y') from.setFullYear(now.getFullYear() - 1);
+    else if (range === '3y') from.setFullYear(now.getFullYear() - 3);
+    else from = trades.length ? trades.reduce(function(m, t) { var d = pnTradeDate(t); return d < m ? d : m; }, now) : new Date(now.getFullYear() - 3, 0, 1);
+    var pts = trades.filter(function(t) { return parseInt(t.amount) > 0 && pnTradeDate(t) >= from; })
+        .map(function(t) { return { d: pnTradeDate(t), v: parseInt(t.amount), f: t.floor }; }).sort(function(a, b) { return a.d - b.d; });
+    if (pts.length < 2) return '<div class="pn-empty">이 기간 거래가 ' + pts.length + '건이라 그래프를 그릴 수 없어요</div>';
+    var W = 330, H = 170, L = 38, R = 8, T = 10, B = 40, VH = 24;
+    var t0 = from.getTime(), t1 = now.getTime();
+    var vs = pts.map(function(p) { return p.v; }), lo = Math.min.apply(null, vs), hi = Math.max.apply(null, vs);
+    var pad = Math.max((hi - lo) * 0.12, hi * 0.03); lo = Math.max(0, lo - pad); hi = hi + pad;
+    var X = function(d) { return L + (d.getTime() - t0) / (t1 - t0) * (W - L - R); };
+    var Y = function(v) { return T + (1 - (v - lo) / (hi - lo)) * (H - T - B - VH); };
+    var svg = '<svg viewBox="0 0 ' + W + ' ' + H + '" class="pn-chart">';
+    for (var i = 0; i <= 3; i++) {
+        var v = lo + (hi - lo) * i / 3, y = Y(v);
+        svg += '<line x1="' + L + '" x2="' + (W - R) + '" y1="' + y + '" y2="' + y + '" stroke="#eef0f3"/>'
+            + '<text x="' + (L - 4) + '" y="' + (y + 3) + '" text-anchor="end" font-size="9" fill="#9aa0a6">' + pnFmtEok(v) + '</text>';
+    }
+    // 월별 중앙값 선 + 거래량 막대
+    var byM = {};
+    pts.forEach(function(p) { var k = p.d.getFullYear() * 12 + p.d.getMonth(); (byM[k] = byM[k] || []).push(p.v); });
+    var keys = Object.keys(byM).map(Number).sort(function(a, b) { return a - b; });
+    var maxN = Math.max.apply(null, keys.map(function(k) { return byM[k].length; }));
+    var line = [];
+    keys.forEach(function(k) {
+        var arr = byM[k].slice().sort(function(a, b) { return a - b; }), m = arr[Math.floor(arr.length / 2)];
+        var d = new Date(Math.floor(k / 12), k % 12, 15);
+        line.push(X(d).toFixed(1) + ',' + Y(m).toFixed(1));
+        var bh = byM[k].length / maxN * VH, bx = X(d);
+        svg += '<rect x="' + (bx - 2) + '" y="' + (H - B + 4 + (VH - bh)) + '" width="4" height="' + bh.toFixed(1) + '" fill="#c9d6ff"/>';
+    });
+    svg += '<polyline points="' + line.join(' ') + '" fill="none" stroke="var(--ui-blue,#1e5eff)" stroke-width="2"/>';
+    pts.forEach(function(p) { svg += '<circle cx="' + X(p.d).toFixed(1) + '" cy="' + Y(p.v).toFixed(1) + '" r="2.2" fill="var(--ui-blue,#1e5eff)" opacity="0.35"><title>' + p.d.getFullYear() + '.' + (p.d.getMonth() + 1) + ' · ' + p.f + '층 · ' + pnFmtEok(p.v) + '</title></circle>'; });
+    // x축 연도
+    for (var yy = from.getFullYear() + (from.getMonth() > 0 ? 1 : 0); yy <= now.getFullYear(); yy++) {
+        var xd = X(new Date(yy, 0, 1));
+        if (xd < L || xd > W - R) continue;
+        svg += '<line x1="' + xd + '" x2="' + xd + '" y1="' + T + '" y2="' + (H - B + VH + 4) + '" stroke="#f3f4f6"/>'
+            + '<text x="' + xd + '" y="' + (H - 4) + '" text-anchor="middle" font-size="9" fill="#9aa0a6">' + String(yy).slice(2) + '년</text>';
+    }
+    svg += '<text x="' + (L - 4) + '" y="' + (H - B + VH) + '" text-anchor="end" font-size="8" fill="#9aa0a6">거래량</text>';
+    return svg + '</svg>';
+}
+function buildPanelSummaryHtml(all, chartPy) {
+    var apt = currentPanelApt || {}, l = apt.latest || {}, ind = currentIndicators || {};
+    var pyTrades = all.filter(function(t) { return String(toPyung(t.area)) === String(chartPy) && parseInt(t.amount) > 0; })
+        .sort(function(a, b) { return pnTradeDate(b) - pnTradeDate(a); });
+    var last = pyTrades[0];
+    var cut3 = daysAgo(1095), n3 = all.filter(function(t) { return pnTradeDate(t) >= cut3; }).length;
+    var by = l.build_year || (all[0] && all[0].build_year);
+    var hh = currentBuildingInfo && currentBuildingInfo.title && currentBuildingInfo.title.hhldCnt;
+    var lf = l.dong ? resolveLfInfo(l.dong, l.name, l.bunji, apt.buildingType || 'apt') : null;
+    var liv = (apt.buildingType || 'apt') === 'apt' ? livingAreaRank(l.dong, l.bunji, currentPanelLat, currentPanelLon) : null;
+    var op = currentOfficialPrice && currentOfficialPrice.success ? (currentOfficialPrice.price || currentOfficialPrice.officialPrice || null) : null;
+    var stat = function(k, v, sub) { return '<div class="pn-stat"><div class="k">' + k + '</div><div class="v">' + v + '</div>' + (sub ? '<div class="s">' + sub + '</div>' : '') + '</div>'; };
+    var h = '<div class="pn-card pn-hero">'
+        + '<div class="pn-hero-k">' + (chartPy ? chartPy + '평 ' : '') + '최근 거래가</div>'
+        + '<div class="pn-hero-v">' + (last ? pnFmtEok(last.amount) : '-') + '</div>'
+        + '<div class="pn-hero-s">' + (last ? last.year + '.' + String(last.month).padStart(2, '0') + ' · ' + last.floor + '층' : '거래 없음')
+        + (apt.hasNewHigh ? ' <span class="pn-pill hot">★ 신고가</span>' : '') + '</div>'
+        + '<div class="pn-stats">'
+        + stat('평단가', apt.ppp > 0 ? (Math.round(apt.ppp / 100) / 10) + '천만' : '-')
+        + stat('3년 거래', n3 + '건')
+        + stat('입주', by ? String(by).slice(0, 4) + '년' : '-')
+        + stat('세대수', hh ? Number(hh).toLocaleString() : (currentBuildingLoading ? '…' : '-'))
+        + stat('동 거래량', lf ? (lf.isLeader ? (lf.only ? '단독' : '👑 대장') : lf.rank + '위') : '-')
+        + stat('생활권', liv && liv.rank ? liv.rank + '위/' + liv.of : '-', liv ? (liv.radius / 1000) + 'km' : '')
+        + '</div></div>';
+    return h;
+}
+function buildTradeTableHtml(trades, newHighAmountByPy) {
+    var rows = currentTradeShowAll ? trades : trades.slice(0, 15);
+    var arrow = function(k) { return (currentSort.indexOf(k) === 0) ? (/desc/.test(currentSort) ? ' ▼' : (/asc/.test(currentSort) ? ' ▲' : ' ▼')) : ''; };
+    var h = '<div class="pn-card"><div class="pn-card-h">실거래 <span class="pn-muted">' + trades.length + '건</span></div>'
+        + '<table class="pn-table"><thead><tr>'
+        + '<th onclick="setTradeSort(\'date\')">계약일' + (currentSort === 'date' ? ' ▼' : '') + '</th>'
+        + '<th onclick="setTradeSort(\'area\')">평형' + arrow('area') + '</th><th>층</th>'
+        + '<th class="r" onclick="setTradeSort(\'amount\')">금액' + arrow('amount') + '</th></tr></thead><tbody>';
+    rows.forEach(function(t) {
+        var py = Math.round(toPyung(t.area));
+        var isNH = newHighAmountByPy[py] !== undefined && parseInt(t.amount) === newHighAmountByPy[py];
+        h += '<tr' + (isNH ? ' class="nh"' : '') + '><td>' + String(t.year).slice(2) + '.' + String(t.month).padStart(2, '0') + '.' + String(t.day).padStart(2, '0') + '</td>'
+            + '<td>' + (t.area > 0 ? toPyung(t.area) + '평' : '-') + '</td><td>' + t.floor + '</td>'
+            + '<td class="r"><b>' + toEok(t.amount) + '</b>' + (isNH ? ' ★' : '') + (t.dealing_type === '직거래' ? ' <span class="pn-muted">직</span>' : '') + '</td></tr>';
+    });
+    h += '</tbody></table>';
+    if (trades.length > 15) h += '<button class="pn-more-btn" onclick="toggleTradeShowAll()">' + (currentTradeShowAll ? '접기' : '전체 ' + trades.length + '건 보기') + '</button>';
+    return h + '</div>';
+}
+function pnDetails(title, inner, open) {
+    if (!inner) return '';
+    return '<details class="pn-det"' + (open ? ' open' : '') + '><summary>' + title + '</summary><div class="pn-det-b">' + inner + '</div></details>';
+}
 function renderTable() {
-    var trades = currentTrades.slice();
+    var all = currentTrades.slice();
+    var trades = all.slice();
     if (currentPyung !== 'all') {
         trades = trades.filter(function(t) { return String(toPyung(t.area)) === currentPyung; });
     }
@@ -5773,116 +5937,53 @@ function renderTable() {
     else if (currentSort === 'amount_asc')  trades.sort(function(a,b) { return parseInt(a.amount)-parseInt(b.amount); });
     else if (currentSort === 'area_desc')   trades.sort(function(a,b) { return b.area-a.area; });
     else if (currentSort === 'area_asc')    trades.sort(function(a,b) { return a.area-b.area; });
-    var thisYear = today.getFullYear();
-    var html = '';
     var ind  = currentIndicators;
-    html += buildNaverLinkHtml(currentPanelLat, currentPanelLon, ind && ind._aptName, ind && ind._aptDong);
-    // 이 물건 주소와 매칭되는 경매물건이 등록돼 있으면(=경매등록을 이미 해둔 물건이면)
-    // 탱크옥션/법원경매정보/인터넷등기소 바로가기도 같이 보여줌 (배지에서 바로 시세조사 →
-    // 경매 원본자료 확인까지 이어지도록)
+    var html = '';
+    var chartPy = pnChartPyung(all);
+    // ① 핵심 지표
+    html += buildPanelSummaryHtml(all, chartPy);
+    if (currentPanelApt && currentPanelApt.rentOnly) html += '<div class="pn-note">매매 기록이 없어 전세 거래로 추정한 단지예요</div>';
+    // ② 시세 그래프(그 평형)
+    var chartTrades = all.filter(function(t) { return String(toPyung(t.area)) === String(chartPy); });
+    html += '<div class="pn-card"><div class="pn-card-h">시세 <span class="pn-muted">' + (chartPy ? chartPy + '평' : '') + '</span>'
+        + '<span class="pn-seg">' + [['1y', '1년'], ['3y', '3년'], ['all', '전체']].map(function(r) { return '<button class="' + (currentChartRange === r[0] ? 'on' : '') + '" onclick="setChartRange(\'' + r[0] + '\')">' + r[1] + '</button>'; }).join('') + '</span></div>'
+        + buildPriceChartSvg(chartTrades, currentChartRange) + '</div>';
+    // ③ 바로가기
+    var links = buildNaverLinkHtml(currentPanelLat, currentPanelLon, ind && ind._aptName, ind && ind._aptDong);
     if (currentPanelApt && currentPanelApt.latest) {
         var pl = currentPanelApt.latest;
         var panelMatchedAuction = auctionList.find(function(a) { return matchesAuctionKey(a, pl.name, pl.dong, pl.bunji); });
-        if (panelMatchedAuction) {
-            html += buildCourtAuctionLinkHtml(panelMatchedAuction.caseNo, panelMatchedAuction.addr);
-        }
+        if (panelMatchedAuction) links += buildCourtAuctionLinkHtml(panelMatchedAuction.caseNo, panelMatchedAuction.addr);
     }
-    // 임장메모 - 경매 사건과 무관하게 건물 단위로 영구 보관되어, 이 건물을 나중에
-    // 다시 볼 때(다른 경매 건이든 그냥 시세 확인이든) 항상 이 자리에서 확인할 수 있음
-    if (ind && (ind._aptName || ind._aptDong)) {
-        html += buildSiteNoteSectionHtml(ind._aptName, ind._aptDong, '', currentPanelLat, currentPanelLon);
+    // ④ 실거래 표
+    var newHighAmountByPy = {};
+    if (ind && ind._newHighPyungs) ind._newHighPyungs.forEach(function(item) { newHighAmountByPy[item.py] = item.recentMax; });
+    html += trades.length ? buildTradeTableHtml(trades, newHighAmountByPy) : '<div class="pn-empty">거래 내역 없음</div>';
+    // ⑤ 자세한 분석 - 제목만 보이고 눌러서 펼침
+    var more = '';
+    more += pnDetails('🔗 바로가기 (네이버·법원경매)', links);
+    if (ind && (ind._aptName || ind._aptDong)) more += pnDetails('📝 임장메모', buildSiteNoteSectionHtml(ind._aptName, ind._aptDong, '', currentPanelLat, currentPanelLon));
+    if (ind && ind._newHighPyungs && ind._newHighPyungs.length > 0) {
+        more += pnDetails('★ 신고가 (6개월 전 대비)', '<table class="pn-table"><thead><tr><th>평형</th><th class="r">이전 최고</th><th class="r">신고가</th></tr></thead><tbody>'
+            + ind._newHighPyungs.map(function(it) { return '<tr><td>' + it.py + '평</td><td class="r">' + toEok(String(it.beforeMax)) + '</td><td class="r"><b style="color:#e53935;">' + toEok(String(it.recentMax)) + '</b></td></tr>'; }).join('') + '</tbody></table>');
     }
-    // 빌라 연식단계별 평단가 추이 그래프
+    if (currentPanelApt) more += pnDetails('🔍 저평가 · 저가치 진단', buildValueDiagnosisHtml(currentPanelApt, currentVolumeIndicators, currentBuildingInfo, currentOfficialPrice, currentPanelDevNews));
+    if (currentPppTimeline) more += pnDetails('📊 평단가 분석', buildPppAnalysisHtml(currentPppTimeline));
+    if (currentVolumeIndicators) more += pnDetails('📈 거래량 분석', buildVolumeAnalysisHtml(currentVolumeIndicators));
+    if (currentJeonseEstimate) more += pnDetails('🏠 전세가 기반 추정', buildJeonseEstimateHtml(currentJeonseEstimate));
     if (currentPanelApt && currentPanelApt.buildingType === 'villa' && currentPanelApt.ageTier) {
-        html += buildTierTrendChartHtml(currentPanelApt.ageTier);
+        more += pnDetails('📉 연식단계 평단가 추이', buildTierTrendChartHtml(currentPanelApt.ageTier));
+        more += pnDetails('⚖️ 같은 조건 낙찰사례', buildVillaBucketStatsHtml(currentPanelApt.latest && currentPanelApt.latest.dong, currentPanelApt.latest && currentPanelApt.latest.area, currentPanelApt.ageTier));
     }
-    // 저평가 vs 저가치 진단 - 건축물대장/공시가격이 아직 로딩 중이어도 일단 계산해서 보여주고
-    // (해당 데이터가 필요한 ⑤ 환금성만 그만큼 보수적으로 나옴), 두 개가 다 도착하면
-    // loadBuildingInfo()/loadOfficialPrice()의 .then()이 renderTable()을 다시 불러 자동 갱신됨.
-    if (currentPanelApt) {
-        html += buildValueDiagnosisHtml(currentPanelApt, currentVolumeIndicators, currentBuildingInfo, currentOfficialPrice, currentPanelDevNews);
-    }
-
-   // 건축물대장 정보
-    if (currentBuildingLoading) {
-        html += '<div class="indicator-box"><div class="indicator-title">🏢 건축물대장 정보</div><div style="font-size:11px;color:#999;">불러오는 중...</div></div>';
-    } else if (currentBuildingInfo) {
-        html += buildBuildingInfoHtml(currentBuildingInfo);
-    }
-    // 국토부 공시가격 (실시간 조회)
-    if (currentOfficialPriceLoading) {
-        html += '<div class="indicator-box"><div class="indicator-title">🏛️ 국토부 공시가격</div><div style="font-size:11px;color:#999;">조회 중...</div></div>';
-    } else if (currentOfficialPrice) {
-        html += buildOfficialPriceHtml(currentOfficialPrice);
-    } else {
-        html += '<div class="indicator-box"><div class="indicator-title">🏢 건축물대장 정보</div><div style="font-size:11px;color:#e53935;">정보를 불러오지 못했습니다. (카카오 API 오류이거나, 건축HUB에 등록된 정보가 없을 수 있어요)</div></div>';
-    }
-    // 경매 패널 - 같은 건물의 일반 거래탭과 뒤섞이지 않도록 별도로 뽑아뒀다가
-    // 아래에서 탭으로 분리해서 붙임 (동일 주소에 마커가 두 개 겹치는 문제 방지)
+    more += pnDetails('🏢 건축물대장', currentBuildingLoading ? '<div class="pn-muted">불러오는 중…</div>' : (currentBuildingInfo ? buildBuildingInfoHtml(currentBuildingInfo) : '<div class="pn-muted">정보 없음</div>'));
+    more += pnDetails('🏛️ 공시가격', currentOfficialPriceLoading ? '<div class="pn-muted">조회 중…</div>' : (currentOfficialPrice ? buildOfficialPriceHtml(currentOfficialPrice) : '<div class="pn-muted">정보 없음</div>'));
+    html += '<div class="pn-card pn-more"><div class="pn-card-h">자세한 분석</div>' + more + '</div>';
+    // 경매 탭(같은 건물 경매·낙찰사례)
     var auctionHtml = '';
     if (ind && (ind._aptName || (ind._aptDong && ind._aptBunji))) {
-        // 내가 등록한 경매물건(auctionList)과 붙여넣기로 가져온 낙찰사례(bidCaseList)를 같은
-        // "🔨 경매정보" 탭에 이어붙임 - 이 건물에 내 경매물건은 없어도 낙찰사례만 매칭될 수 있어서,
-        // auctionHtml이 비어있어도 낙찰사례가 있으면 탭이 뜨도록 함께 판단해야 함(아래 if(auctionHtml)).
         auctionHtml = buildAuctionPanelHtml(ind._aptName, ind._aptDong, ind._aptBunji)
             + buildBidCasePanelHtml(ind._aptName, ind._aptDong, ind._aptBunji);
     }
-    // 신고가
-    if (ind && ind._newHighPyungs && ind._newHighPyungs.length > 0) {
-        html += '<div style="background:#fff8e1;border:1.5px solid #ff6f00;border-radius:10px;padding:10px 12px;margin-bottom:12px;">';
-        html += '<div style="font-size:12px;font-weight:bold;color:#ff6f00;margin-bottom:6px;">★ 신고가 경신 (6개월 전 대비)</div>';
-        ind._newHighPyungs.forEach(function(item) {
-            html += '<div style="font-size:11px;color:#555;margin-bottom:3px;"><b>' + item.py + '평</b> 이전최고 '
-                + toEok(String(item.beforeMax)) + ' → <span style="color:#e53935;font-weight:bold;">신고가 ' + toEok(String(item.recentMax)) + '</span></div>';
-        });
-        html += '</div>';
-    }
-    // 투자점수
-    if (currentPanelApt && currentPanelApt.rentOnly) {
-        html += '<div style="background:#fff3e0;border:1px solid #ffcc80;border-radius:8px;padding:8px 10px;margin-bottom:12px;font-size:11px;color:#e65100;">'
-            + 'ℹ️ 이 건물은 매매 거래 기록이 없습니다. 아래 등급·예상 거래가는 전세 거래를 바탕으로 추정한 값입니다.</div>';
-    }
-    if (currentPppTimeline) html += buildPppAnalysisHtml(currentPppTimeline);
-    if (currentVolumeIndicators) html += buildVolumeAnalysisHtml(currentVolumeIndicators);
-    if (currentJeonseEstimate) html += buildJeonseEstimateHtml(currentJeonseEstimate);
-    // 2026-08(사용자 요청): 이 건물과 같은 법정동+평형대+연식단계의 낙찰사례 기준 3종
-    // 중위값(낙찰가/역산매도가/실매칭매도가, 표본수 포함) - 빌라만 표시.
-    if (currentPanelApt && currentPanelApt.buildingType === 'villa' && currentPanelApt.ageTier) {
-        html += buildVillaBucketStatsHtml(
-            currentPanelApt.latest && currentPanelApt.latest.dong,
-            currentPanelApt.latest && currentPanelApt.latest.area,
-            currentPanelApt.ageTier
-        );
-    }
-
-    // 거래 테이블
-    var newHighAmountByPy = {};
-    if (ind && ind._newHighPyungs) {
-        ind._newHighPyungs.forEach(function(item) { newHighAmountByPy[item.py] = item.recentMax; });
-    }
-    var byYear = {};
-    trades.forEach(function(t) { if (!byYear[t.year]) byYear[t.year] = []; byYear[t.year].push(t); });
-    Object.keys(byYear).sort(function(a,b) { return b-a; }).forEach(function(yr) {
-        html += '<div style="margin-bottom:14px;">';
-        html += '<div class="year-label' + (parseInt(yr) === thisYear ? ' recent' : '') + '">' + yr + '년 (' + byYear[yr].length + '건)</div>';
-        html += '<table><thead><tr><th>날짜</th><th>평형</th><th>층</th><th>건축</th><th>거래금액</th></tr></thead><tbody>';
-        byYear[yr].forEach(function(t) {
-            var dateStr = yr + '.' + String(t.month).padStart(2,'0') + '.' + String(t.day).padStart(2,'0');
-            var py = Math.round(toPyung(t.area));
-            var isNH = newHighAmountByPy[py] !== undefined && parseInt(t.amount) === newHighAmountByPy[py];
-            var pppStr = (t.area > 0 && parseInt(t.amount) > 0)
-                ? '<br><span style="color:#795548;font-size:10px;">' + Math.round(parseInt(t.amount) / toPyung(t.area) / 100) / 10 + '천만/평</span>'
-                : '';
-            html += '<tr style="' + (isNH ? 'background:#fff3e0;' : '') + '">'
-                + '<td>' + dateStr + '</td>'
-                + '<td>' + (t.area > 0 ? toPyung(t.area) + '평' : '-') + '</td>'
-                + '<td>' + t.floor + '층</td>'
-                + '<td style="font-size:10px;color:#888;">' + (t.build_year || '-') + '년</td>'
-                + '<td style="color:#e53935;font-weight:bold;">' + toEok(t.amount) + (isNH ? ' ★' : '') + pppStr + '</td>'
-                + '</tr>';
-        });
-        html += '</tbody></table></div>';
-    });
     var priceHtml = html || '<div style="padding:20px;text-align:center;color:#aaa;">거래 내역 없음</div>';
     if (auctionHtml) {
         if (currentPanelTab !== 'price' && currentPanelTab !== 'auction') currentPanelTab = 'auction';
