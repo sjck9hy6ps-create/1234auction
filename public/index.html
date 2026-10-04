@@ -1348,9 +1348,10 @@ body.ui2 #bid-case-panel td, body.ui2 #surge-panel td, body.ui2 #panel-tab-aucti
                 <option value="">아파트·빌라</option><option value="apt">아파트만</option><option value="villa">빌라만</option>
             </select>
             <select id="bb-sort" onchange="bidBoardState.sortCol = null; setBidBoardFilter('sort', this.value)">
-                <option value="verdict">판정 → 여유 큰 순</option><option value="date">입찰일 빠른 순</option><option value="room">여유 큰 순</option><option value="pop">거래량 순위 높은 순</option>
+                <option value="verdict">판정 → 여유 큰 순</option><option value="date">입찰일 빠른 순</option><option value="room">여유 큰 순</option><option value="pop">거래량 순위 높은 순</option><option value="niche">🧭 틈새 우선</option>
             </select>
             <label class="bb-chk"><input type="checkbox" onchange="setBidBoardFilter('popOnly', this.checked)"> 🔥 인기 단지만(동·평형·생활권 모두 상위)</label>
+            <label class="bb-chk" title="팔리긴 하는데(단지 3년 거래 6~20건) 입찰자가 덜 몰리는 단지 - 과거 낙찰사례에서 예상매도가의 83% 안팎에 낙찰, 이익 80%"><input type="checkbox" onchange="setBidBoardFilter('nicheOnly', this.checked)"> 🧭 틈새만</label>
             <label class="bb-chk" title="인기 상위 20% 단지인데 2번 이상 유찰된 물건 - 과거 낙찰자 손해 2%"><input type="checkbox" onchange="setBidBoardFilter('oppOnly', this.checked)"> 🎯 기회만(인기 단지 2회+ 유찰)</label>
             <label class="bb-chk"><input type="checkbox" onchange="setBidBoardFilter('showPast', this.checked)"> 오래 지난 입찰(45일+)도 보기</label>
         </div>
@@ -15562,7 +15563,76 @@ function computeBidBoardRow(a) {
             row.notes.push('⚠️ 신건: 시세보다 높게 낙찰되는 구간(과거 낙찰자 40%가 손해)');
         }
     }
+    row.niche = type === 'apt' && row.verdict !== 'nodata' ? bidBoardNiche(row, a, bunjiFull) : null;
+    if (row.niche) row.notes.unshift('🧭 틈새: ' + row.niche.why.join(' · '));
     return row;
+}
+/* ════ 🧭 틈새 (2026-10, 사용자 정의: "거래가 가능한 지역인데 사람들 시선이 안 가는 곳" - 유찰 횟수와는 무관)
+   낙찰사례 7,089건 검증(analyze-bidcases.py attentionPredictors): 같은 지역·같은 유찰 단계의 보통 입찰자 수 대비로
+   관심도를 재면, 단지 3년 거래 6~20건인 단지가 "팔리긴 하는데 눈에 덜 띄는" 곳 - 관심 적은 물건 43%(61건+ 단지는 24%),
+   낙찰자 순이익 중앙 1,263만·이익 80%(61건+ 단지 649만·67%). 관심 적은 물건은 예상매도가의 82.6%에 낙찰(많은 물건 89.8%).
+   더하는 조건(관심 적은 비율이 높았던 것): 대형 40%, 평형 거래량 하위 40% 44%, 토지별도등기 44%(크게 손해 6.5%).
+   빼는 조건: 1억 미만(관심은 가장 적지만 크게 손해 25%), 3년 거래 5건 이하(되판 기록이 적어 수익이 부풀려 보일 수 있음),
+   최저가가 예상매도가의 90% 이상(낙찰자 손해 구간). 과거에 입찰자가 적던 동은 참고로만(다음에도 적은 편이지만 수익 차이는 지역마다 다름).
+   목표 마진은 바꾸지 않음 - 틈새는 "같은 마진의 입찰가로 낙찰받을 가능성이 높은 곳"이라는 뜻. ════ */
+function bidBoardNiche(row, a, bunjiFull) {
+    var c3 = row.complex3y || 0;
+    if (c3 < 6 || c3 > 20) return null;
+    if (row.sale && row.sale < 10000) return null;
+    if (row.salePerMin != null && row.salePerMin >= 90) return null;
+    var why = ['3년 거래 ' + c3 + '건(팔리지만 눈에 덜 띄는 단지)'], score = 1;
+    var area = (parseFloat(a.pyung) || 0) * 3.305785;
+    if (area > 85) { score++; why.push('대형'); }
+    var bandP = row.pop && row.pop.band;
+    if ((bandP && bandP.tier === '하위40%') || (!bandP && row.popEff && row.popEff.tier === '하위40%')) { score++; why.push((bandP ? bandP.name + ' 평형' : '동') + ' 거래량 하위권'); }
+    if (/토지\s*별도/.test(String(a.memo || '') + ' ' + String(a.specialConditions || ''))) { score++; why.push('토지별도등기(입찰자 적은 편)'); }
+    var da = dongAttentionFor(a);
+    var dongNote = null;
+    if (da && da.n >= 3 && da.att <= 0.7) dongNote = '이 동은 보통 입찰자가 적어요(과거 ' + da.n + '건, 평소의 ' + Math.round(da.att * 100) + '%)';
+    else if (da && da.n >= 3 && da.att >= 1.3) dongNote = '이 동은 보통 입찰자가 많아요(과거 ' + da.n + '건, 평소의 ' + Math.round(da.att * 100) + '%)';
+    if (dongNote) why.push(dongNote);
+    return { score: score, why: why, dong: da };
+}
+// 동별 관심도 - 쌓아 둔 낙찰사례의 입찰자 수를 같은 시도·같은 유찰 단계(신건/1회/2회+)의 보통 입찰자 수로 나눈 값의 중앙값
+var dongAttentionMap = null, dongAttentionN = -1;
+function nicheSidoNorm(addr) {
+    var t = String(addr || '').trim().split(/\s+/);
+    var sd = t[0] || '';
+    if (/^(전남광주|광주|전남|전라남)/.test(sd)) sd = '전남광주';
+    else if (/^(전북|전라북)/.test(sd)) sd = '전북';
+    else if (/^(경남|경상남)/.test(sd)) sd = '경남';
+    else if (/^(경북|경상북)/.test(sd)) sd = '경북';
+    else if (/^(충남|충청남)/.test(sd)) sd = '충남';
+    else if (/^(충북|충청북)/.test(sd)) sd = '충북';
+    else sd = sd.slice(0, 2);
+    return { sido: sd, gu: t[1] || '' };
+}
+function dongAttentionFor(a) {
+    if (!Array.isArray(bidCaseList) || !bidCaseList.length) return null;
+    if (dongAttentionN !== bidCaseList.length) {
+        dongAttentionN = bidCaseList.length;
+        var rows = [], byNorm = {};
+        bidCaseList.forEach(function(c) {
+            var b = parseInt(c.bidders);
+            if (!(b > 0) || !c.dong) return;
+            var ap = parseFloat(c.appraisalPrice) || 0, mb = parseFloat(c.minBidPrice) || 0;
+            if (!ap || !mb) return;
+            var r = mb / ap, st = r >= 0.995 ? 0 : ((matchReductionStep(r).n || 1) >= 2 ? 2 : 1);
+            var rg = nicheSidoNorm(c.addrJibun);
+            var nk = rg.sido + '|' + st;
+            (byNorm[nk] = byNorm[nk] || []).push(b);
+            rows.push({ k: rg.sido + '|' + rg.gu + '|' + c.dong, nk: nk, b: b });
+        });
+        var med = function(arr) { arr = arr.slice().sort(function(x, y) { return x - y; }); var m = arr.length >> 1; return arr.length % 2 ? arr[m] : (arr[m - 1] + arr[m]) / 2; };
+        var norm = {};
+        Object.keys(byNorm).forEach(function(k) { if (byNorm[k].length >= 10) norm[k] = med(byNorm[k]); });
+        var byDong = {};
+        rows.forEach(function(x) { if (norm[x.nk]) (byDong[x.k] = byDong[x.k] || []).push(x.b / norm[x.nk]); });
+        dongAttentionMap = {};
+        Object.keys(byDong).forEach(function(k) { dongAttentionMap[k] = { n: byDong[k].length, att: Math.round(med(byDong[k]) * 100) / 100 }; });
+    }
+    var rg = nicheSidoNorm(a.addr);
+    return dongAttentionMap[rg.sido + '|' + rg.gu + '|' + (a.dong || '')] || null;
 }
 // ── 지도 배지에도 판정 표시(2026-10 사용자 요청) - 물건마다 판정을 기억해 두고, 입력값·지역 자료가 바뀔 때만 다시 계산 ──
 var bidVerdictCache = {};
@@ -15598,13 +15668,13 @@ function getBidVerdictForMarker(a) {
 }
 function bidVerdictKey(a) {
     var r = getBidVerdictForMarker(a);
-    return r ? r.verdict + (r.assumedFail ? 'A' : '') + (r.opportunity ? 'O' : '') + (r.roomPct != null ? r.roomPct : '') + (r.liv ? 'L' + r.liv.rank + '/' + r.liv.of : '') : '';
+    return r ? r.verdict + (r.assumedFail ? 'A' : '') + (r.opportunity ? 'O' : '') + (r.niche ? 'N' + r.niche.score : '') + (r.roomPct != null ? r.roomPct : '') + (r.liv ? 'L' + r.liv.rank + '/' + r.liv.of : '') : '';
 }
 function bidVerdictShort(r) {
     if (!r) return null;
     var v = BID_BOARD_VERDICT[r.verdict];
     var room = r.roomPct == null ? '' : (r.roomPct >= 0 ? '여유 ' + r.roomPct + '%' : '부족 ' + Math.abs(r.roomPct) + '%');
-    return { label: (r.opportunity ? '🎯' : '') + (r.assumedFail ? '유찰되면 ' : '') + v.label, room: room, color: v.color, bg: v.bg, opportunity: r.opportunity };
+    return { label: (r.opportunity ? '🎯' : '') + (r.niche ? '🧭' : '') + (r.assumedFail ? '유찰되면 ' : '') + v.label, room: room, color: v.color, bg: v.bg, opportunity: r.opportunity };
 }
 var BID_BOARD_VERDICT = {
     yes:    { label: '✅ 추천', color: '#2e7d32', bg: '#e8f5e9', order: 0 },
@@ -15711,6 +15781,7 @@ function bidBoardVisibleRows() {
         if (s.region && r.region !== s.region) return false;
         if (s.type && r.a.propType !== s.type) return false;
         if (s.popOnly && !r.popular) return false;
+        if (s.nicheOnly && !r.niche) return false;
         if (s.oppOnly && !r.opportunity) return false; // 평형대 등급이 있으면 그 평형대 기준 상위 20%
         return true;
     });
@@ -15757,6 +15828,12 @@ function renderBidBoard() {
             return c * s.sortDir;
         });
     } else rows.sort(function(x, y) {
+        if (s.sort === 'niche') {
+            var nx = x.niche ? x.niche.score : 0, ny = y.niche ? y.niche.score : 0;
+            if (nx !== ny) return ny - nx;
+            var vx0 = BID_BOARD_VERDICT[x.verdict].order, vy0 = BID_BOARD_VERDICT[y.verdict].order;
+            if (vx0 !== vy0) return vx0 - vy0;
+        }
         if (s.sort === 'pop') {
             var px = popRankOf(x), py = popRankOf(y);
             if (px !== py) return px - py;
@@ -15843,6 +15920,7 @@ function renderBidBoardRow(r) {
         + '<td data-l="판정">' + (r.assumedFail && !r.pending ? '<div class="bb-sub" style="color:#ef6c00;">유찰되면</div>' : '')
             + '<span class="bb-verdict" style="color:' + v.color + ';background:' + v.bg + ';">' + v.label + '</span>'
             + (r.opportunity ? '<div style="margin-top:3px;"><span class="bb-pill" style="background:#fff8e1;color:#e65100;border:1px solid #ffb300;">🎯 기회</span></div>' : '')
+            + (r.niche ? '<div style="margin-top:3px;"><span class="bb-pill" style="background:#e0f2f1;color:#00695c;border:1px solid #4db6ac;" title="' + bbEsc(r.niche.why.join(' · ')) + '">🧭 틈새' + (r.niche.score >= 2 ? ' ' + '★'.repeat(Math.min(3, r.niche.score - 1)) : '') + '</span></div>' : '')
             + (bidBoardState.prevVerdicts[r.id] && bidBoardState.prevVerdicts[r.id] !== r.verdict ? '<div class="bb-sub">이전 ' + BID_BOARD_VERDICT[bidBoardState.prevVerdicts[r.id]].label + ' → 바뀜</div>' : '') + '</td>'
         + '<td data-l="입찰일">' + dd + '</td>'
         + '<td data-l="물건" class="bb-name"><b>' + bbEsc(r.name) + '</b>' + (bidBoardState.highlight[r.id] ? ' <span class="bb-pill new">새로 등록</span>' : '') + (bidBoardState.updated[r.id] ? ' <span class="bb-pill new">결과 반영</span>' : '')
