@@ -1,0 +1,30 @@
+# 급등·돈되는지역 신호 적중률 검증(2026-10, analyze-surge-signals.py 상단 설명 참고)
+name: Analyze surge signals
+
+on:
+  workflow_dispatch:
+    inputs:
+      sidos:
+        description: '시도 목록(쉼표)'
+        required: false
+        default: '부산,광주,전남,대전,대구,울산,경남'
+  schedule:
+    - cron: '0 21 1 * *'   # 매월 1일 KST 06:00
+
+jobs:
+  analyze:
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install pandas numpy requests
+      - env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          SITE_URL: ${{ secrets.SITE_URL }}
+          SIDOS: ${{ github.event.inputs.sidos || '부산,광주,전남,대전,대구,울산,경남' }}
+          PYTHONUNBUFFERED: '1'
+        run: python analyze-surge-signals.py
