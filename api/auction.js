@@ -21,7 +21,8 @@
       - 기존 배열 키는 처음 접근할 때 자동으로 해시로 옮기고, 원본은 '<kind>:legacy_backup'으로 남겨둠
       응답 형식은 예전과 같음(?withVer=1을 안 붙이면 배열 그대로) - dashboard.html·match-bid-cases.mjs 호환.
 ════════════════════════════════════ */
-const KINDS = { auctions: 'auctions', siteNotes: 'siteNotes', bidCases: 'bidCases' };
+// myAssets(2026-10): 💼 내 자산 탭 - 보유 부동산·올해 소득(몇 건뿐이라 저장량 부담 없음)
+const KINDS = { auctions: 'auctions', siteNotes: 'siteNotes', bidCases: 'bidCases', myAssets: 'myAssets' };
 
 export default async function handler(req, res) {
     const REDIS_URL = process.env.UPSTASH_REDIS_URL;
