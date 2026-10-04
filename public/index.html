@@ -511,6 +511,37 @@ tr:hover td { background:#fffde7; }
 /* 🎯 입찰후보 보드 */
 #bid-board { position:fixed; top:52px; left:0; right:0; bottom:0; z-index:70; background:#f6f7f9; display:none; flex-direction:column; font-size:12.5px; color:#222; }
 #bid-board .bb-head { background:white; border-bottom:1px solid #e3e6ea; padding:10px 16px 8px; }
+#bid-board .bb-csv { border:none; background:var(--ui-blue,#1e5eff); color:#fff; border-radius:16px; padding:5px 12px; font-size:12px; font-weight:700; cursor:pointer; }
+#bid-board .bb-help { color:#6b7280; font-size:11.5px; cursor:pointer; }
+#bb-chips { display:flex; flex-wrap:wrap; gap:6px; margin-top:8px; }
+#bb-chips .chip { border:1px solid #e3e6ea; background:#fff; border-radius:16px; padding:4px 11px; font-size:12px; cursor:pointer; white-space:nowrap; }
+#bb-chips .chip b { margin-left:3px; }
+#bb-chips .chip.on { background:#111827; color:#fff; border-color:#111827; }
+#bb-csv-bar { margin-top:8px; background:#eef4ff; border:1px solid #c7d7fe; border-radius:10px; padding:8px 12px; font-size:12.5px; }
+#bb-csv-bar button { border:none; border-radius:14px; padding:5px 12px; font-size:12px; cursor:pointer; margin-left:6px; }
+#bb-main { flex:1; display:flex; min-height:0; }
+#bb-main #bb-body { flex:1; overflow:auto; }
+#bb-drawer { width:440px; flex-shrink:0; background:#fff; border-left:1px solid #e3e6ea; overflow:auto; padding:14px 16px 30px; }
+#bb-drawer .dr-h { display:flex; align-items:flex-start; gap:8px; }
+#bb-drawer .dr-h h3 { margin:0; font-size:16px; flex:1; }
+#bb-drawer .dr-x { border:none; background:#f3f4f6; border-radius:14px; padding:4px 10px; cursor:pointer; }
+#bb-drawer .dr-sub { color:#6b7280; font-size:11.5px; margin-top:3px; }
+#bb-drawer .dr-big { display:grid; grid-template-columns:repeat(3,1fr); gap:8px; margin:12px 0; }
+#bb-drawer .dr-big div { background:#f6f8fb; border-radius:10px; padding:8px; }
+#bb-drawer .dr-big span { display:block; color:#6b7280; font-size:10.5px; }
+#bb-drawer .dr-big b { font-size:16px; }
+#bb-drawer .dr-sec { margin-top:14px; }
+#bb-drawer .dr-sec h4 { margin:0 0 6px; font-size:12.5px; }
+#bb-drawer table { width:100%; border-collapse:collapse; font-size:12px; }
+#bb-drawer td, #bb-drawer th { padding:4px 4px; border-bottom:1px solid #f1f3f5; text-align:left; }
+#bb-drawer td.r, #bb-drawer th.r { text-align:right; }
+#bb-drawer tr.sim td { background:#eef4ff; }
+#bb-drawer .dr-in { display:grid; grid-template-columns:1fr 120px; gap:6px 8px; align-items:center; font-size:12px; }
+#bb-drawer .dr-in input { width:100%; padding:5px 7px; border:1px solid #d1d5db; border-radius:6px; font-size:12px; box-sizing:border-box; text-align:right; }
+#bb-drawer .dr-btns button { border:1px solid #e3e6ea; background:#fff; border-radius:14px; padding:5px 11px; font-size:12px; cursor:pointer; margin:0 4px 4px 0; }
+#bb-drawer .dr-warn { background:#fff7ed; color:#9a3412; border-radius:8px; padding:6px 8px; font-size:11.5px; margin-top:6px; }
+#bid-board .bb-row.sel td { background:#eef4ff !important; }
+@media (max-width: 900px) { #bb-drawer { position:fixed; inset:52px 0 0 0; width:auto; z-index:80; } }
 #bid-board .bb-title { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
 #bid-board .bb-title h2 { font-size:16px; margin:0; }
 #bid-board .bb-title .bb-x { margin-left:auto; border:none; background:#eee; border-radius:16px; padding:5px 12px; cursor:pointer; font-size:12px; }
@@ -1006,16 +1037,20 @@ body.ui2 #bid-case-panel td, body.ui2 #surge-panel td, body.ui2 #panel-tab-aucti
     <div id="tb-brand">🏠 경매 시세지도</div>
     <div id="tb-search-slot"></div>
     <nav id="tb-menu">
-        <button onclick="openAuctionList(); closeTbMenus();">🔨 경매관리</button>
+        <!-- 2026-10 UI 개편(사용자: "지금 쓰는 기능 위주로, 최소한의 동작으로 결과를") - 자주 쓰는 4개만 위에, 나머지는 더보기 -->
         <button onclick="openBidBoard(); closeTbMenus();" style="font-weight:bold;">🎯 입찰후보</button>
-        <button onclick="openBidTargetPanel(); closeTbMenus();">📋 입찰희망</button>
-        <button onclick="openBidCasePanel(); closeTbMenus();">⚖️ 낙찰사례</button>
-        <button onclick="openSurgePanel(); closeTbMenus();">🔥 급등·돈되는지역</button>
-        <button onclick="openCyclePanel(); closeTbMenus();">📈 사이클</button>
+        <button onclick="document.getElementById('bb-csv-input').click(); closeTbMenus();">📄 물건 등록(CSV)</button>
         <button onclick="openMyAssetsPanel(); closeTbMenus();">💼 내 자산</button>
+        <button onclick="closeBidBoard(); closeTbMenus();">🗺️ 지도</button>
         <div id="tb-more">
             <button onclick="toggleTbMore(event)">더보기 ▾</button>
             <div id="tb-more-menu">
+                <button onclick="openSurgePanel(); closeTbMenus();">🔥 급등·돈되는지역</button>
+                <button onclick="openCyclePanel(); closeTbMenus();">📈 사이클</button>
+                <button onclick="openBidCasePanel(); closeTbMenus();">⚖️ 낙찰사례(올리기·통계)</button>
+                <button onclick="openBidTargetPanel(); closeTbMenus();">📋 입찰희망(붙여넣기 등록)</button>
+                <button onclick="openAuctionList(); closeTbMenus();">🔨 경매관리(빌라·직접 등록)</button>
+                <label style="display:block;padding:8px 14px;font-size:12.5px;cursor:pointer;"><input type="checkbox" id="pref-home-board" style="margin-right:6px;" onchange="setHomeBoardPref(this.checked)">앱을 열면 입찰후보부터</label>
                 <a href="/backup.html">📦 데이터 백업</a>
                 <a href="/dashboard.html">📊 누적 투자 리포트</a>
                 <button onclick="openBacktestPanel(); closeTbMenus();">📐 낙찰가 백테스트 일괄등록</button>
@@ -1349,11 +1384,14 @@ body.ui2 #bid-case-panel td, body.ui2 #surge-panel td, body.ui2 #panel-tab-aucti
     <div class="bb-head">
         <div class="bb-title">
             <h2>🎯 입찰후보</h2>
-            <span style="color:#888;font-size:11.5px;">등록한 입찰희망·입찰예정 물건을 한 번에 비교해요</span>
-            <button class="bb-x" onclick="refreshBidBoard()">↻ 다시 계산</button>
-            <button class="bb-x" style="margin-left:0;" onclick="closeBidBoard()">✕ 닫기</button>
+            <button class="bb-csv" onclick="document.getElementById('bb-csv-input').click()">📄 CSV 올리기</button>
+            <input type="file" id="bb-csv-input" multiple accept=".csv,text/csv" style="display:none;" onchange="onBoardCsvFile(this)">
+            <span class="bb-help" onclick="var g=document.getElementById('bb-guide-box');g.style.display=g.style.display==='none'?'':'none'">ⓘ 보는 법</span>
+            <button class="bb-x" onclick="closeBidBoard()">🗺️ 지도로</button>
         </div>
-        <div class="bb-guide">
+        <div id="bb-csv-bar" style="display:none;"></div>
+        <div id="bb-chips"></div>
+        <div class="bb-guide" id="bb-guide-box" style="display:none;">
             <b>추천 입찰가</b> = 예상매도가(이 단지 최근 실거래 기준)에서 세금·비용과 <b>추천 목표마진</b>(예측 오차·지역 하락위험만큼)을 뺀 값이에요.
             <b style="color:#2e7d32;">✅ 추천</b>: 최저가로 사도 마진이 남고, 거래가 활발한 아파트, 예상매도가 믿을 만함, 지역 위험 낮음 ·
             <b style="color:#ef6c00;">🟡 검토</b>: 마진은 남지만 걸리는 점이 있음 ·
@@ -1370,16 +1408,15 @@ body.ui2 #bid-case-panel td, body.ui2 #surge-panel td, body.ui2 #panel-tab-aucti
             <select id="bb-sort" onchange="bidBoardState.sortCol = null; setBidBoardFilter('sort', this.value)">
                 <option value="verdict">판정 → 여유 큰 순</option><option value="date">입찰일 빠른 순</option><option value="room">여유 큰 순</option><option value="pop">거래량 순위 높은 순</option><option value="niche">🧭 틈새 우선</option>
             </select>
-            <label class="bb-chk"><input type="checkbox" onchange="setBidBoardFilter('popOnly', this.checked)"> 🔥 인기 단지만(동·평형·생활권 모두 상위)</label>
-            <label class="bb-chk" title="팔리긴 하는데(단지 3년 거래 6~20건) 입찰자가 덜 몰리는 단지 - 과거 낙찰사례에서 예상매도가의 83% 안팎에 낙찰, 이익 80%"><input type="checkbox" onchange="setBidBoardFilter('nicheOnly', this.checked)"> 🧭 틈새만</label>
-            <label class="bb-chk" title="인기 상위 20% 단지인데 2번 이상 유찰된 물건 - 과거 낙찰자 손해 2%"><input type="checkbox" onchange="setBidBoardFilter('oppOnly', this.checked)"> 🎯 기회만(인기 단지 2회+ 유찰)</label>
+            <label class="bb-chk" style="display:none;"><input type="checkbox" onchange="setBidBoardFilter('popOnly', this.checked)"> 🔥 인기 단지만</label>
+
             <label class="bb-chk"><input type="checkbox" onchange="setBidBoardFilter('showPast', this.checked)"> 오래 지난 입찰(45일+)도 보기</label>
         </div>
         <div id="bb-cache-note" style="font-size:11px;color:#888;padding:2px 0;"></div>
         <div id="bb-progress" style="display:none;"></div>
         <div id="bb-fail-note" class="bb-guide" style="display:none;"></div>
     </div>
-    <div id="bb-body"></div>
+    <div id="bb-main"><div id="bb-body"></div><div id="bb-drawer" style="display:none;"></div></div>
 </div>
 <div id="my-assets-panel">
     <div class="auction-list-header">
@@ -16030,7 +16067,9 @@ function renderBidBoard() {
     sel.innerHTML = '<option value="">지역 전체</option>' + Object.keys(regions).sort().map(function(k) {
         return '<option value="' + bbEsc(k) + '"' + (s.region === k ? ' selected' : '') + '>' + bbEsc(k) + ' (' + regions[k] + ')</option>';
     }).join('');
-    var rows = base.filter(function(r) { return s.verdict === 'all' || r.verdict === s.verdict; });
+    renderBidBoardChips(base);
+    tabs.style.display = 'none';
+    var rows = base.filter(function(r) { return (s.verdict === 'all' || r.verdict === s.verdict) && bidBoardChipFilter(r); });
     var cn = document.getElementById('bb-cache-note');
     if (cn) {
         var cached = bidBoardRows.filter(function(r) { return r.fromCache; });
@@ -16155,7 +16194,7 @@ function renderBidBoardRow(r) {
     var cuCell = r.catchup == null ? '<span class="bb-sub">-</span>'
         : (r.catchup >= 0.5 ? '<span style="color:#2e7d32;font-weight:bold;">+' + r.catchup + '% 여지</span>' : (r.catchup <= -0.5 ? '<span style="color:#c62828;">' + Math.abs(r.catchup) + '% 덜 오를 수도</span>' : '<span class="bb-sub">대장과 비슷</span>'));
     var notes = (r.historyNote ? [r.historyNote] : []).concat(r.notes || [], r.reasons, r.warns).map(function(t) { return '<span>' + bbEsc(t) + '</span>'; }).join('');
-    return '<tr class="bb-row' + (bidBoardState.highlight[r.id] || bidBoardState.updated[r.id] ? ' new' : '') + '"' + (r.stale ? ' style="opacity:0.55;" title="이전 계산 - 새로 계산 중"' : '') + ' onclick="bidBoardGo(\'' + idJs + '\')">'
+    return '<tr class="bb-row' + (bidBoardState.highlight[r.id] || bidBoardState.updated[r.id] ? ' new' : '') + (bidDrawerId === r.id ? ' sel' : '') + '"' + (r.stale ? ' style="opacity:0.55;" title="이전 계산 - 새로 계산 중"' : '') + ' onclick="openBidDrawer(\'' + idJs + '\')">'
         + '<td data-l="판정">' + (r.assumedFail && !r.pending ? '<div class="bb-sub" style="color:#ef6c00;">유찰되면</div>' : '')
             + '<span class="bb-verdict" style="color:' + v.color + ';background:' + v.bg + ';">' + v.label + '</span>'
             + (r.opportunity ? '<div style="margin-top:3px;"><span class="bb-pill" style="background:#fff8e1;color:#e65100;border:1px solid #ffb300;">🎯 기회</span></div>' : '')
@@ -16180,6 +16219,161 @@ function renderBidBoardRow(r) {
         + '<td class="bb-act"><button onclick="event.stopPropagation();closeBidBoard();openAuctionModal(\'' + idJs + '\')">상세</button></td>'
         + '</tr>';
 }
+/* ════ 2026-10 UI 개편: 입찰후보 = 첫 화면, 요약 칩 한 번 누르면 걸러짐, 물건 누르면 오른쪽 상세(근거 거래·비용·인수금액 입력) ════ */
+var BB_CHIPS = [
+    { k: 'all', label: '전체', f: function() { return true; } },
+    { k: 'sweet', label: '👍 입찰 추천 구간', f: function(r) { return r.sweet && r.verdict !== 'no'; } },
+    { k: 'yes', label: '✅ 추천 판정', f: function(r) { return r.verdict === 'yes'; } },
+    { k: 'soon', label: '⏰ 7일 이내', f: function(r) { return r.dday && r.dday.diffDays >= 0 && r.dday.diffDays <= 7 && r.verdict !== 'no'; } },
+    { k: 'niche', label: '🧭 틈새', f: function(r) { return !!r.niche; } },
+    { k: 'opp', label: '🎯 기회', f: function(r) { return !!r.opportunity; } },
+    { k: 'caution', label: '⚠️ 손해 주의', f: function(r) { return !!r.overshoot; } },
+    { k: 'check', label: '🟡 검토', f: function(r) { return r.verdict === 'check'; } },
+    { k: 'no', label: '❌ 제외', f: function(r) { return r.verdict === 'no'; } }
+];
+function renderBidBoardChips(base) {
+    var el = document.getElementById('bb-chips'); if (!el) return;
+    var cur = bidBoardState.chip || 'all';
+    el.innerHTML = BB_CHIPS.map(function(c) {
+        var n = base.filter(c.f).length;
+        if (!n && c.k !== 'all' && c.k !== cur) return '';
+        return '<span class="chip' + (cur === c.k ? ' on' : '') + '" onclick="bidBoardState.chip=\'' + c.k + '\';renderBidBoard()">' + c.label + '<b>' + n + '</b></span>';
+    }).join('');
+}
+function bidBoardChipFilter(r) { var c = BB_CHIPS.filter(function(x) { return x.k === (bidBoardState.chip || 'all'); })[0]; return c ? c.f(r) : true; }
+// ── 상세 창 ──
+var bidDrawerId = null;
+function openBidDrawer(id) { bidDrawerId = id; renderBidDrawer(); renderBidBoard(); }
+function closeBidDrawer() { bidDrawerId = null; var d = document.getElementById('bb-drawer'); if (d) d.style.display = 'none'; renderBidBoard(); }
+function bidCostLines(row) {
+    var a = row.a, type = row.type, sale = row.sale, bid = row.recBid;
+    if (!sale || !bid) return null;
+    var pyung = parseFloat(a.pyung) || 0, addr = a.addr || '', appraisal = parseInt(a.appraisal) || 0;
+    var rank = myHouseRankFor(a), adj = !!a.isAdjusted, cheap = effLocalCheap(a, sale);
+    var loan = calcRegionAwareLoan('dealer', addr, bid, appraisal, sale);
+    var repairAuto = calcRepairFee(type, pyung, a.buildYear || row.estBuildYear || null) || 0;
+    var L = [
+        ['취득세' + (rank >= 2 ? ' (' + rank + '번째 주택)' : ''), calcAcquisitionTaxDetailed(bid, type, pyung, rank, adj, cheap)],
+        ['등기비', calcRegistryFee(bid)],
+        ['대출이자 (' + DEFAULT_INTEREST_HOLD_MONTHS + '개월, ' + loan.rate + '%)', calcLoanInterest(loan.amount, loan.rate, DEFAULT_INTEREST_HOLD_MONTHS)],
+        ['중도상환수수료', calcLoanPrepayFee(loan.amount, DEFAULT_LOAN_PREPAY_FEE_RATE)],
+        ['중개수수료(매도)', calcAgentFee(sale, type)],
+        ['명도비', calcEvictionFee(pyung)],
+        ['수리비' + (parseInt(a.repair) ? ' (직접 입력)' : ' (연식 기준)'), parseInt(a.repair) || repairAuto],
+        ['이사·청소', (calcMovingFee(pyung) || 0) + (calcCleaningFee(pyung) || 0)],
+        ['매도 부가세 (85㎡ 초과)', row.resaleVat || 0],
+        ['인수 금액 (권리)', parseInt(a.assumedDeposit) || 0],
+        ['미납 관리비', parseInt(a.unpaidMgmtFee) || 0]
+    ].filter(function(x) { return x[1] > 0; });
+    var cost = L.reduce(function(s, x) { return s + x[1]; }, 0);
+    var pre = sale - bid - cost;
+    var tax = calcResaleIncomeTax('dealer', pre, 0, adj, rank).totalTax;
+    return { lines: L, cost: cost, pre: pre, tax: tax, net: pre - tax, loan: loan.amount, cash: bid - loan.amount, repairAuto: repairAuto };
+}
+function drawerTrades(row) {
+    var a = row.a, area = (parseFloat(a.pyung) || 0) * 3.305785, tf = parseInt(a.floor), out = [];
+    var bunjiFull = row.bunjiFull || fullBunjiFromAddr(a.addr, a.dong, a.bunji);
+    (aptIndexByDongBunji.get(dongKey(a.dong) + '|' + bunjiFull) || []).forEach(function(ap) {
+        if ((ap.buildingType || 'apt') !== (row.type === 'villa' ? 'villa' : 'apt')) return;
+        (ap.trades || []).forEach(function(t) {
+            if (!(t.area > 0) || Math.abs(t.area - area) > 3) return;
+            out.push({ d: tradeDate(t), f: parseInt(t.floor), p: parseInt(t.amount), direct: t.dealing_type === '직거래' });
+        });
+    });
+    out.sort(function(x, y) { return y.d - x.d; });
+    return out.map(function(t) { t.sim = !isNaN(tf) && Math.abs(t.f - tf) <= 3; return t; });
+}
+async function renderBidDrawer() {
+    var d = document.getElementById('bb-drawer'); if (!d) return;
+    var row = bidBoardRows.filter(function(r) { return r.id === bidDrawerId; })[0];
+    if (!row) { d.style.display = 'none'; return; }
+    d.style.display = '';
+    var a = row.a, lawd = row.lawd || bidBoardLawdOf(a);
+    if (lawd && !dataCache[lawd] && !row._drawerLoading) {
+        row._drawerLoading = true;
+        d.innerHTML = '<div class="dr-sub">이 지역 실거래 불러오는 중…</div>';
+        try { var dd = await fetchHouseDataCached(lawd); if (dd && !dd.error && Array.isArray(dd.apt)) await ingestRegionHouseData(dd, '', lawd); } catch (e) {}
+        row._drawerLoading = false;
+        if (bidDrawerId !== row.id) return;
+    }
+    var v = BID_BOARD_VERDICT[row.verdict] || BID_BOARD_VERDICT.nodata;
+    var idJs = String(row.id).replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+    var cl = bidCostLines(row);
+    var tr = (row.type === 'apt' || row.type === 'villa') ? drawerTrades(row) : [];
+    var fmt = function(x) { return x ? toEok(String(Math.round(x))) : '-'; };
+    var h = '<div class="dr-h"><h3>' + bbEsc(row.name) + '</h3><button class="dr-x" onclick="closeBidDrawer()">✕</button></div>'
+        + '<div class="dr-sub">' + bbEsc(row.region) + ' · ' + (row.pyung ? row.pyung + '평 · ' : '') + (row.floor ? row.floor + '층 · ' : '') + bbEsc(a.caseNo || '') + (row.dday ? ' · <b>' + row.dday.label + '</b> (' + bbEsc(a.bidDate) + ')' : '') + '</div>'
+        + '<div style="margin-top:6px;"><span class="bb-verdict" style="color:' + v.color + ';background:' + v.bg + ';">' + v.label + '</span>'
+        + (row.sweet ? ' <span class="bb-pill" style="background:#e8f5e9;color:#2e7d32;">👍 입찰 추천 구간</span>' : '') + (row.overshoot ? ' <span class="bb-pill" style="background:#fff3e0;color:#e65100;">⚠️ 손해 주의</span>' : '')
+        + (row.niche ? ' <span class="bb-pill" style="background:#e0f2f1;color:#00695c;">🧭 틈새</span>' : '') + (row.opportunity ? ' <span class="bb-pill" style="background:#fff8e1;color:#e65100;">🎯 기회</span>' : '') + '</div>'
+        + '<div class="dr-big"><div><span>예상매도가</span><b>' + fmt(row.sale) + '</b></div><div><span>추천 입찰가</span><b style="color:#16a34a;">' + fmt(row.recBid) + '</b></div><div><span>최저가</span><b>' + fmt(row.minBid) + '</b></div></div>';
+    // 근거
+    var basis = row.saleSaved ? '내가 저장한 값' : (row.salePresale ? '분양권·입주권 거래' : (row.saleSimBy || row.saleCapBy || ('이 단지 같은 평형 ' + (row.own || 0) + '건 + 주변 비슷한 단지')));
+    if (row.saleFloorAdj) basis += ' · ' + row.saleFloorAdj.label + ' ' + Math.round(Math.abs(1 - row.saleFloorAdj.factor) * 1000) / 10 + '% ' + (row.saleFloorAdj.factor < 1 ? '낮춤' : '높임');
+    h += '<div class="dr-sub">예상매도가 근거: ' + bbEsc(basis) + '</div>';
+    (row.warns || []).concat(row.reasons || []).forEach(function(w) { h += '<div class="dr-warn">' + bbEsc(w) + '</div>'; });
+    // 최근 거래
+    if (tr.length) {
+        h += '<div class="dr-sec"><h4>같은 평형 실거래 (파란 줄 = 비슷한 층 ±3)</h4><table><tr><th>거래일</th><th>층</th><th class="r">가격</th></tr>'
+            + tr.slice(0, 12).map(function(t) { return '<tr class="' + (t.sim ? 'sim' : '') + '"><td>' + t.d.toISOString().slice(0, 10) + (t.direct ? ' <span style="color:#9ca3af;">직거래</span>' : '') + '</td><td>' + (isNaN(t.f) ? '-' : t.f + '층') + '</td><td class="r">' + toEok(String(t.p)) + '</td></tr>'; }).join('')
+            + '</table>' + (tr.length > 12 ? '<div class="dr-sub">최근 12건만 · 전체 ' + tr.length + '건</div>' : '') + '</div>';
+    } else h += '<div class="dr-sec dr-sub">같은 평형 실거래가 없어요</div>';
+    // 비용
+    if (cl) {
+        h += '<div class="dr-sec"><h4>추천 입찰가로 샀을 때</h4><table>'
+            + '<tr><td>예상매도가</td><td class="r">' + fmt(row.sale) + '</td></tr><tr><td>− 입찰가</td><td class="r">' + fmt(row.recBid) + '</td></tr>'
+            + cl.lines.map(function(x) { return '<tr><td>− ' + x[0] + '</td><td class="r">' + toEok(String(x[1])) + '</td></tr>'; }).join('')
+            + '<tr><td>− 종합소득세·지방세</td><td class="r">' + toEok(String(cl.tax)) + '</td></tr>'
+            + '<tr><td><b>남는 돈(세후)</b></td><td class="r"><b style="color:' + (cl.net >= 1000 ? '#16a34a' : '#dc2626') + ';">' + toEok(String(Math.round(cl.net))) + '</b></td></tr>'
+            + '<tr><td class="dr-sub">필요 현금(대출 ' + fmt(cl.loan) + ' 제외, 비용 별도)</td><td class="r dr-sub">' + fmt(cl.cash) + '</td></tr></table></div>';
+    }
+    // 직접 입력
+    h += '<div class="dr-sec"><h4>직접 확인한 금액 (만원) - 넣으면 추천 입찰가가 바로 바뀌어요</h4><div class="dr-in">'
+        + '<label>인수 금액 (매각물건명세서 권리)</label><input type="number" value="' + (parseInt(a.assumedDeposit) || '') + '" placeholder="0" onchange="updateDrawerField(\'' + idJs + '\',\'assumedDeposit\',this.value)">'
+        + '<label>미납 관리비 (공용부분)</label><input type="number" value="' + (parseInt(a.unpaidMgmtFee) || '') + '" placeholder="0" onchange="updateDrawerField(\'' + idJs + '\',\'unpaidMgmtFee\',this.value)">'
+        + '<label>수리비 (비우면 연식 기준 ' + (cl ? toEok(String(cl.repairAuto)) : '-') + ')</label><input type="number" value="' + (parseInt(a.repair) || '') + '" placeholder="자동" onchange="updateDrawerField(\'' + idJs + '\',\'repair\',this.value)">'
+        + '</div></div>';
+    h += '<div class="dr-sec dr-btns"><button onclick="bidBoardGo(\'' + idJs + '\')">🗺️ 지도에서 보기</button><button onclick="closeBidBoard();openAuctionModal(\'' + idJs + '\')">📝 전체 상세</button>'
+        + (a.caseNo ? '<button onclick="copyAuctionCaseNo(\'' + String(a.caseNo).replace(/'/g, "\\'") + '\')">📋 사건번호 복사·법원경매</button>' : '') + '</div>';
+    d.innerHTML = h;
+}
+async function updateDrawerField(id, field, val) {
+    var a = auctionList.filter(function(x) { return String(x.id) === String(id); })[0];
+    if (!a) return;
+    var n = parseInt(val);
+    a[field] = n > 0 ? String(n) : '';
+    try { await saveAuctionAPI(a); } catch (e) { alert('저장 실패: ' + e.message); }
+    bidBoardRows = bidBoardRows.map(function(r) { if (String(r.id) !== String(id)) return r; r.a = a; try { return finalizeBidBoardRow(r); } catch (e) { return r; } });
+    renderBidBoard(); renderBidDrawer();
+}
+// ── 입찰후보 화면에서 바로 CSV 올리기 ──
+async function onBoardCsvFile(input) {
+    if (document.getElementById('bid-board').style.display !== 'flex') openBidBoard();
+    var bar = document.getElementById('bb-csv-bar');
+    bar.style.display = ''; bar.innerHTML = '📄 CSV 읽는 중…';
+    await onTankCsvFile(input, 'bt');
+    var list = pendingBidTargetExtraction || [];
+    if (!list.length) { bar.innerHTML = '읽을 수 있는 탱크옥션 CSV가 없어요. <button onclick="document.getElementById(\'bb-csv-bar\').style.display=\'none\'">닫기</button>'; return; }
+    var exist = list.filter(function(c) { return findExistingBidTarget(c); }).length;
+    var sel = list.filter(function(c) { return c._selected; }).length;
+    bar.innerHTML = '📄 <b>' + list.length + '건</b> 읽음 · 새 물건 ' + (list.length - exist) + '건 · 이미 등록된 물건 ' + exist + '건(유찰·매각 결과 반영)'
+        + (list.length - sel ? ' · 이미 매각/취하·일괄매각 ' + (list.length - sel) + '건 제외' : '')
+        + '<button style="background:var(--ui-blue,#1e5eff);color:#fff;" onclick="this.disabled=true;this.innerText=\'등록 중…\';saveSelectedBidTargets().then(function(){document.getElementById(\'bb-csv-bar\').style.display=\'none\';})">등록·반영하기</button>'
+        + '<button onclick="pendingBidTargetExtraction=[];document.getElementById(\'bb-csv-bar\').style.display=\'none\'">취소</button>';
+}
+// ── 앱을 열면 입찰후보부터 ──
+function setHomeBoardPref(on) { try { localStorage.setItem('homeView', on ? 'board' : 'map'); } catch (e) {} }
+function homeBoardPref() { try { return localStorage.getItem('homeView') !== 'map'; } catch (e) { return true; } }
+(function() {
+    var orig = fetchAuctions, opened = false;
+    fetchAuctions = async function() {
+        var r = await orig.apply(this, arguments);
+        if (!opened && homeBoardPref()) { opened = true; setTimeout(function() { try { openBidBoard(); } catch (e) {} }, 300); }
+        return r;
+    };
+    setTimeout(function() { var c = document.getElementById('pref-home-board'); if (c) c.checked = homeBoardPref(); }, 500);
+})();
+
 function bidBoardGo(id) {
     closeBidBoard();
     panToAuction(id);
