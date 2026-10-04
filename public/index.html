@@ -15517,7 +15517,8 @@ function computeBidBoardRow(a) {
     // → 아파트 예상매도가가 자기 단지 같은 평형(±3㎡) 최근 1년(없으면 3년) 중개거래 중앙값을 넘지 않게 함(감정가는 1년 전 값이라 안 씀).
     // 효과(되판 값 ÷ 예상매도가): 손해 주의 구간 0.81 → 0.95, 전체 오차 10% → 8.2%, 예상보다 10% 이상 싸게 팔린 비율 28.7% → 17.3%.
     if (row.sale && type === 'apt' && !row.saleSaved && !row.salePresale) {
-        var cap = aptSaleCapInfo(a, bunjiFull, pyung);
+        row.ownStats = aptOwnTradeStats(a, bunjiFull, pyung);
+        var cap = aptSaleCapInfo(a, bunjiFull, pyung, row.ownStats);
         if (cap && cap.value && cap.value < row.sale) { row.saleBase = row.sale; row.sale = Math.round(cap.value); row.saleCapBy = cap.by; }
     }
     row.lf = type ? resolveLfInfo(a.dong, a.name, bunjiFull, type, altName) : null;
@@ -15539,25 +15540,33 @@ function computeBidBoardRow(a) {
 /* 세금·마진·판정 단계(2026-10, 사용자 요청: "자산이 바뀌면 입찰가가 바로 바뀌어야 하는데 다시 계산하느라 로딩이 오래 걸림")
    - 위 computeBidBoardRow의 무거운 부분(지역 자료로 예상매도가·인기·생활권 찾기)과 분리. 이 단계는 지역 자료 없이 행에 저장된
    값만으로 돌아서, 💼 내 자산(주택 수·올해 소득)이 바뀌면 모든 물건을 순식간에 다시 계산할 수 있음. */
-// 예상매도가 상한: 자기 단지 같은 평형 최근 실거래 중앙값(1년, 없으면 3년)
-function aptSaleCapInfo(a, bunjiFull, pyung) {
+// 자기 단지 같은 평형(±3㎡) 중개거래 통계 - 예상매도가 상한과 "근거가 충분한가" 판정에 씀
+function aptOwnTradeStats(a, bunjiFull, pyung) {
     var area = (parseFloat(pyung) || 0) * 3.305785;
     if (!area) return null;
-    var now = Date.now(), p12 = [], p36 = [];
+    var now = Date.now(), p12 = [], p36 = [], n6 = 0, last = null;
     (aptIndexByDongBunji.get(dongKey(a.dong) + '|' + bunjiFull) || []).forEach(function(ap) {
         if ((ap.buildingType || 'apt') !== 'apt') return;
         (ap.trades || []).forEach(function(t) {
             if (!(t.area > 0) || Math.abs(t.area - area) > 3 || t.dealing_type === '직거래') return;
-            var age = (now - tradeDate(t).getTime()) / 86400000 / 30.4;
+            var td = tradeDate(t).getTime(), age = (now - td) / 86400000 / 30.4;
             var p = parseInt(t.amount); if (!p) return;
+            if (age <= 6) n6++;
             if (age <= 12) p12.push(p);
             if (age <= 36) p36.push(p);
+            if (last === null || td > last) last = td;
         });
     });
-    var med = function(x) { x = x.slice().sort(function(m, n) { return m - n; }); var k = x.length >> 1; return x.length % 2 ? x[k] : (x[k - 1] + x[k]) / 2; };
-    var own = p12.length ? { v: med(p12), by: '이 단지 같은 평형 최근 1년 실거래 ' + p12.length + '건 중간값' } : (p36.length ? { v: med(p36), by: '이 단지 같은 평형 최근 3년 실거래 ' + p36.length + '건 중간값' } : null);
-    // 감정가는 상한으로 쓰지 않음(사용자: "감정가는 최대 1년 전 금액이라 시세 판단에 무의미")
-    return own ? { value: own.v, by: own.by } : null;
+    var med = function(x) { if (!x.length) return null; x = x.slice().sort(function(m, n) { return m - n; }); var k = x.length >> 1; return x.length % 2 ? x[k] : (x[k - 1] + x[k]) / 2; };
+    return { n12: p12.length, n6: n6, n36: p36.length, med12: med(p12), med36: med(p36), lastAgeM: last === null ? null : Math.round((now - last) / 86400000 / 30.4 * 10) / 10 };
+}
+// 예상매도가 상한: 자기 단지 같은 평형 최근 실거래 중앙값(1년, 없으면 3년). 감정가는 1년 전 값이라 안 씀
+function aptSaleCapInfo(a, bunjiFull, pyung, st) {
+    st = st || aptOwnTradeStats(a, bunjiFull, pyung);
+    if (!st) return null;
+    if (st.med12) return { value: st.med12, by: '이 단지 같은 평형 최근 1년 실거래 ' + st.n12 + '건 중간값' };
+    if (st.med36) return { value: st.med36, by: '이 단지 같은 평형 최근 3년 실거래 ' + st.n36 + '건 중간값' };
+    return null;
 }
 function finalizeBidBoardRow(row) {
     var a = row.a, type = row.type, minBid = row.minBid, pyung = row.pyung;
@@ -15633,11 +15642,21 @@ function finalizeBidBoardRow(row) {
         // 빌라(2022~2026 인천·경기 1,884건 · 낙찰 후 되판 117건): 유찰이 많아 최저가가 시세의 61% 안팎까지 내려가므로 기준이 다름 -
         // 최저가 +30% 미만은 손해 0~10%, +30% 이상부터 22~57%(사례 적음, 참고). 그래서 빌라는 +30%를 경계로 씀.
         var roomR = row.recBid / minBid, overLimit = type === 'villa' ? 1.3 : 1.15;
-        if (roomR >= overLimit) {
+        // 2026-10(사용자: "감정가·최저가는 무의미 - 그 대비 비율로 역산하지 말고 다른 기준을") - 아파트는 "예상매도가 근거가 충분한가"로 판단.
+        // 지방 아파트 낙찰사례 4,914건(되판 기록 있는 것) 검증, 같은 단지·같은 평형 중개거래 기준:
+        //  최근 1년 12건+ 그리고 6개월 3건+ → 되판 값 ÷ 예상매도가 1.02, 10% 넘게 싸게 팔린 비율 12%, 앱 추천가 낙찰 시 순이익 +1,585만·손해 23%(수리 전)
+        //  최근 1년 0건 또는 마지막 거래 6개월+ → 0.90, 50%, −2,761만·손해 68% / 그 사이 → +98만·손해 48%
+        // 빌라는 따로 손볼 예정이라 당분간 예전 기준(추천가÷최저가) 유지.
+        var osApt = type === 'apt' && row.ownStats;
+        var aptThin = osApt && (row.ownStats.n12 === 0 || row.ownStats.lastAgeM === null || row.ownStats.lastAgeM >= 6);
+        var aptRich = osApt && row.ownStats.n12 >= 12 && row.ownStats.n6 >= 3;
+        if (osApt ? aptThin : roomR >= overLimit) {
             ok = false; row.overshoot = true;
-            row.warns.push('⚠️ 손해 주의: 계산상 최저가보다 많이 남아 보이는 물건이에요. 과거 이런 물건은 예상보다 싸게 팔린 경우가 많았어요. 같은 단지 최근 거래·호가를 꼭 확인하세요');
+            row.warns.push(osApt
+                ? '⚠️ 손해 주의: 이 단지 같은 평형 거래가 ' + (row.ownStats.n12 === 0 ? '최근 1년 동안 없어요' : '마지막 거래 후 ' + Math.round(row.ownStats.lastAgeM) + '개월 지났어요') + ' - 예상매도가 근거가 약해요(과거 이런 물건은 절반이 예상보다 10% 넘게 싸게 팔림). 호가·급매 시세를 꼭 확인하세요'
+                : '⚠️ 손해 주의: 계산상 최저가보다 많이 남아 보이는 물건이에요. 과거 이런 물건은 예상보다 싸게 팔린 경우가 많았어요. 같은 단지 최근 거래·호가를 꼭 확인하세요');
         }
-        else row.sweet = true;
+        else if (osApt ? aptRich : true) row.sweet = true;
         row.verdict = ok ? 'yes' : 'check';
         // 손해 주의로 다시 계산한 입찰가가 최저가보다 낮으면 지금은 입찰 불가
         if (row.overshoot && (!row.recBid || row.recBid < minBid)) { row.verdict = 'no'; row.reasons.push('예상매도가를 낮춰 다시 계산하면 최저가로도 마진이 안 남아요'); }
@@ -15898,7 +15917,7 @@ function overshootSaleFactor(type, ratio) {
 }
 var BOARD_CACHE_KEY = 'bidBoardCache:v1', BOARD_CACHE_MAX_AGE = 24 * 3600 * 1000;
 // 저장 계산을 다시 써도 되는지 - 물건 입력값(시세 계산에 쓰는 것)과 입찰일 지남 여부. 계산 방식이 바뀌면 BOARD_CALC_VER을 올림
-var BOARD_CALC_VER = 7;
+var BOARD_CALC_VER = 8;
 function boardBaseSig(a) {
     var d = a.bidDate ? calcAuctionDday(a.bidDate) : null;
     return [BOARD_CALC_VER, auctionWonEstSignature(a), a.minBid, a.appraisal, a.bidDate, a.court, a.failCount, a.landType, String(a.memo || '').length,
@@ -16077,7 +16096,7 @@ function renderBidBoardRow(r) {
             + '<span class="bb-verdict" style="color:' + v.color + ';background:' + v.bg + ';">' + v.label + '</span>'
             + (r.opportunity ? '<div style="margin-top:3px;"><span class="bb-pill" style="background:#fff8e1;color:#e65100;border:1px solid #ffb300;">🎯 기회</span></div>' : '')
             + (r.sweet ? '<div style="margin-top:3px;"><span class="bb-pill" style="background:#e8f5e9;color:#2e7d32;border:1px solid #81c784;" title="추천가가 최저가 +15%(빌라 +30%) 미만 - 과거 낙찰사례 검증에서 이 구간에 앱 추천가로 입찰했을 때 손해가 적었음">👍 입찰 추천 구간</span></div>' : '')
-            + (r.overshoot ? '<div style="margin-top:3px;"><span class="bb-pill" style="background:#fff3e0;color:#e65100;border:1px solid #ffb74d;" title="추천가가 최저가보다 15%(빌라 30%) 이상 높은 물건 - 과거 이런 물건은 앱 예상보다 싸게 팔린 경우가 많았어요. 같은 단지 최근 거래·호가를 꼭 확인하세요">⚠️ 손해 주의</span></div>' : '')
+            + (r.overshoot ? '<div style="margin-top:3px;"><span class="bb-pill" style="background:#fff3e0;color:#e65100;border:1px solid #ffb74d;" title="아파트: 이 단지 같은 평형 거래가 최근 1년 없거나 마지막 거래가 6개월 넘음 - 예상매도가 근거가 약해 과거 절반이 예상보다 10% 넘게 싸게 팔림. 빌라: 추천가가 최저가 +30% 이상">⚠️ 손해 주의</span></div>' : '')
             + (r.niche ? '<div style="margin-top:3px;"><span class="bb-pill" style="background:#e0f2f1;color:#00695c;border:1px solid #4db6ac;" title="' + bbEsc(r.niche.why.join(' · ')) + '">🧭 틈새' + (r.niche.score >= 2 ? ' ' + '★'.repeat(Math.min(3, r.niche.score - 1)) : '') + '</span></div>' : '')
             + (bidBoardState.prevVerdicts[r.id] && bidBoardState.prevVerdicts[r.id] !== r.verdict ? '<div class="bb-sub">이전 ' + BID_BOARD_VERDICT[bidBoardState.prevVerdicts[r.id]].label + ' → 바뀜</div>' : '') + '</td>'
         + '<td data-l="입찰일">' + dd + '</td>'
