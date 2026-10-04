@@ -5883,6 +5883,42 @@ function pnChartHide(svg) { var g = svg.querySelector('.pn-hov'); if (g) g.style
 function pnTradeDate(t) { return new Date(t.year, t.month - 1, t.day); }
 function pnFmtEok(v) { v = parseInt(v); if (!v) return '-'; return v >= 10000 ? (Math.round(v / 1000) / 10) + '억' : v.toLocaleString() + '만'; }
 function setChartRange(r) { currentChartRange = r; renderTable(); }
+// 시세 그래프 10년 보기 - 지도 자료는 최근 2년치뿐이라 단지 하나의 10년 매매를 따로 받아(api/get-house action=history) 합침.
+// 같은 지번에 다른 단지가 섞이지 않게 이름이 서로 포함되는 거래만 씀(예전 신고는 '용봉동' 같은 접두어가 빠진 경우가 있음).
+var pnHistoryCache = {};
+function pnHistoryFor(apt, recent) {
+    var l = apt && apt.latest;
+    if (!l || !l.region || !l.dong || !l.bunji) return null;
+    var type = (apt.buildingType || l.buildingType) === 'villa' ? 'villa' : 'apt';
+    var key = [l.region, l.dong, l.bunji, type].join('|');
+    var c = pnHistoryCache[key];
+    if (c === 'loading') return 'loading';
+    if (c) {
+        var norm = function(n) { return String(n || '').replace(/\s|\(.*?\)/g, '').replace(new RegExp('^' + String(l.dong).replace(/[.*+?^${}()|[\]\\]/g, '')), ''); };
+        var names = {};
+        recent.forEach(function(t) { names[norm(t.name)] = 1; });
+        var nl = Object.keys(names);
+        var same = function(n) { n = norm(n); return !nl.length || nl.some(function(m) { return m && n && (m.indexOf(n) >= 0 || n.indexOf(m) >= 0); }); };
+        var seen = {}, out = [];
+        recent.concat(c.filter(function(t) { return same(t.name); })).forEach(function(t) {
+            var k = t.year + '-' + t.month + '-' + t.day + '|' + parseInt(t.amount) + '|' + t.floor;
+            if (seen[k]) return; seen[k] = 1; out.push(t);
+        });
+        return out;
+    }
+    pnHistoryCache[key] = 'loading';
+    fetch('/api/get-house?action=history&type=' + type + '&region=' + encodeURIComponent(l.region) + '&dong=' + encodeURIComponent(l.dong) + '&bunji=' + encodeURIComponent(l.bunji))
+        .then(function(r) { return r.json(); })
+        .then(function(d) {
+            pnHistoryCache[key] = ((d && d.trades) || []).map(function(r) {
+                var ds = String(r[0]);
+                return { year: +ds.slice(0, 4), month: +ds.slice(4, 6), day: +ds.slice(6, 8), amount: String(r[1]), area: +r[2], floor: String(r[3]), name: r[4], dealing_type: r[5] };
+            });
+        })
+        .catch(function() { pnHistoryCache[key] = []; })
+        .then(function() { if (currentPanelApt === apt && currentChartRange === '10y') renderTable(); });
+    return 'loading';
+}
 function toggleTradeShowAll() { currentTradeShowAll = !currentTradeShowAll; renderTable(); }
 function setTradeSort(key) {
     currentSort = key === 'amount' ? (currentSort === 'amount_desc' ? 'amount_asc' : 'amount_desc')
@@ -6029,10 +6065,16 @@ function renderTable() {
     html += buildPanelSummaryHtml(all, chartPy);
     if (currentPanelApt && currentPanelApt.rentOnly) html += '<div class="pn-note">매매 기록이 없어 전세 거래로 추정한 단지예요</div>';
     // ② 시세 그래프(그 평형)
-    var chartTrades = all.filter(function(t) { return String(toPyung(t.area)) === String(chartPy); });
+    var chartSrc = all, histNote = '';
+    if (currentChartRange === '10y' && currentPanelApt) {
+        var hist = pnHistoryFor(currentPanelApt, all);
+        if (hist === 'loading') histNote = '<div class="pn-muted" style="font-size:11px;padding:2px 4px;">10년치 거래 불러오는 중…</div>';
+        else if (hist) chartSrc = hist;
+    }
+    var chartTrades = chartSrc.filter(function(t) { return String(toPyung(t.area)) === String(chartPy); });
     html += '<div class="pn-card"><div class="pn-card-h">시세 <span class="pn-muted">' + (chartPy ? chartPy + '평' : '') + '</span>'
         + '<span class="pn-seg">' + [['1y', '1년'], ['3y', '3년'], ['10y', '10년']].map(function(r) { return '<button class="' + (currentChartRange === r[0] ? 'on' : '') + '" onclick="setChartRange(\'' + r[0] + '\')">' + r[1] + '</button>'; }).join('') + '</span></div>'
-        + buildPriceChartSvg(chartTrades, currentChartRange) + '</div>';
+        + histNote + buildPriceChartSvg(chartTrades, currentChartRange) + '</div>';
     // ③ 바로가기
     var links = buildNaverLinkHtml(currentPanelLat, currentPanelLon, ind && ind._aptName, ind && ind._aptDong);
     if (currentPanelApt && currentPanelApt.latest) {

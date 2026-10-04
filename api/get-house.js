@@ -237,6 +237,37 @@ async function handleMolitProxy(req, res) {
   }
 }
 
+async function handleComplexHistory(req, res) {
+  const region = String(req.query.region || '').trim();
+  const dong = String(req.query.dong || '').trim();
+  const bunji = String(req.query.bunji || '').trim();
+  const table = req.query.type === 'villa' ? 'villa_trades' : 'house_trades';
+  const years = Math.min(10, Math.max(1, parseInt(req.query.years, 10) || 10));
+  if (!region || !dong || !bunji) return res.status(400).json({ error: 'region, dong, bunji required' });
+  // 2026-07 광주·전남 통합 이전 자료는 '광주 ○구'·'전남 ○○군'으로 저장돼 있어 옛 이름도 함께 찾음
+  const parts = region.split(' ');
+  const names = [region];
+  if (parts[0] === '전남광주' && parts[1]) names.push('광주 ' + parts.slice(1).join(' '), '전남 ' + parts.slice(1).join(' '));
+  try {
+    const rows = [];
+    for (let from = 0; from < 5000; from += FETCH_PAGE_SIZE) {
+      const { data, error } = await supabase.from(table)
+        .select('deal_date,price,size,floor,danji,dealing_type')
+        .in('region', names).eq('dong', dong).eq('bunji', bunji)
+        .gte('deal_date', recentCutoffDateStr(years))
+        .order('deal_date', { ascending: false })
+        .range(from, from + FETCH_PAGE_SIZE - 1);
+      if (error) return res.status(500).json({ error: error.message });
+      rows.push(...(data || []));
+      if (!data || data.length < FETCH_PAGE_SIZE) break;
+    }
+    res.setHeader('Cache-Control', 'public, s-maxage=86400');
+    return res.status(200).json({ trades: rows.map(r => [String(r.deal_date), r.price, r.size, r.floor, r.danji, r.dealing_type || null]) });
+  } catch (e) {
+    return res.status(500).json({ error: e.message });
+  }
+}
+
 export default async function handler(req, res) {
   res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
   res.setHeader('Pragma', 'no-cache');
@@ -256,6 +287,12 @@ export default async function handler(req, res) {
     } catch (e) {
       return res.status(500).json({ error: e.message });
     }
+  }
+
+  // 2026-10(사용자 요청: 시세 그래프 1년·3년·10년) - 지도용 응답은 최근 2년치만 내려주므로(위 RECENT_WINDOW_YEARS),
+  // 그래프의 10년 보기는 단지 하나의 매매만 따로 10년치 조회. 단지 하나라 수백 건 수준.
+  if (req.query.action === 'history') {
+    return handleComplexHistory(req, res);
   }
 
   const lawdCd = req.query.lawdCd;
