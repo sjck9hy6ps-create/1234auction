@@ -193,6 +193,22 @@ export default async function handler(req, res) {
     const priceItem = pickLatestPrice(priceItems);
 
     const title = titleItem ? normalizeTitle(titleItem) : null;
+    // 동이 여러 개인 단지: 표제부의 건폐율·용적률은 "이 동 하나 ÷ 단지 전체 대지"라 실제 단지 값과 다름(치평동 1331: 2.5%/30.9%) -
+    // 총괄표제부(단지 전체)의 건폐율·용적률·세대수·주차를 따로 붙임
+    if (title && titleItems.length > 1) {
+      try {
+        const usedSgg = legacyFallbackUsed && LEGACY_SIGUNGU_MAP[sigunguCd] ? LEGACY_SIGUNGU_MAP[sigunguCd] : sigunguCd;
+        const recap = await fetchBld('getBrRecapTitleInfo', { sigunguCd: usedSgg, bjdongCd, platGbCd: gbCd, bun, ji: jiParam });
+        const rc = recap && recap.items && recap.items[0];
+        if (rc) {
+          title.site = {
+            bcRat: toFloat(rc.get('bcRat')), vlRat: toFloat(rc.get('vlRat')),
+            hhldCnt: toInt(rc.get('hhldCnt')), totPkngCnt: toInt(rc.get('totPkngCnt')),
+            mainBldCnt: toInt(rc.get('mainBldCnt')), platArea: toFloat(rc.get('platArea')), totArea: toFloat(rc.get('totArea')),
+          };
+        }
+      } catch (e) { /* 총괄표제부가 없으면 동 기준 값 그대로 */ }
+    }
     const price = priceItem ? normalizePrice(priceItem) : null;
     // 층별개요·전유공용면적은 같은 지번의 모든 건물 것이 섞여 옴(예: "총 100층") - 고른 건물(관리번호 같은 것)만 남김
     const pk = titleItem ? titleItem.get('mgmBldrgstPk') : null;

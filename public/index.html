@@ -19582,11 +19582,15 @@ function buildBuildingInfoHtml(info, opts) {
         html += item('주용도', t.mainPurps);
         html += item('주구조', t.strct);
         html += item('총 층수', (t.grndFlrCnt || '-') + '층' + (t.ugrndFlrCnt ? ' (지하' + t.ugrndFlrCnt + ')' : ''));
-        html += item('세대수', t.hhldCnt ? t.hhldCnt + '세대' : '');
-        html += item('연면적', t.totArea ? Math.round(t.totArea).toLocaleString() + '㎡' : '');
-        html += item('건폐율/용적률', (t.bcRat !== null && t.vlRat !== null) ? t.bcRat + '% / ' + t.vlRat + '%' : '');
+        // 2026-10: 여러 동 단지는 단지 전체(총괄표제부) 값을 우선 - 동 하나의 건폐율·용적률은 단지 대지 기준이라 실제와 다름
+        var site = t.site || null;
+        var r2 = function(v) { return v === null || v === undefined ? null : Math.round(v * 10) / 10; };
+        html += item('세대수', site && site.hhldCnt ? site.hhldCnt.toLocaleString() + '세대 (단지 ' + (site.mainBldCnt || '') + '개 동)' + (t.hhldCnt ? ' · 이 동 ' + t.hhldCnt : '') : (t.hhldCnt ? t.hhldCnt + '세대' : ''));
+        html += item('연면적', t.totArea ? Math.round(t.totArea).toLocaleString() + '㎡' + (site && site.totArea ? ' (단지 ' + Math.round(site.totArea).toLocaleString() + '㎡)' : '') : '');
+        html += item('건폐율/용적률', site && site.bcRat !== null && site.vlRat !== null ? r2(site.bcRat) + '% / ' + r2(site.vlRat) + '% (단지)'
+            : ((t.bcRat !== null && t.vlRat !== null) ? r2(t.bcRat) + '% / ' + r2(t.vlRat) + '%' : ''));
         html += item('승강기', elvtTotal ? elvtTotal + '대' : '');
-        html += item('주차대수', parkTotal ? parkTotal + '대' : '');
+        html += item('주차대수', site && site.totPkngCnt ? site.totPkngCnt.toLocaleString() + '대 (단지)' + (site.hhldCnt ? ' · 세대당 ' + Math.round(site.totPkngCnt / site.hhldCnt * 100) / 100 + '대' : '') : (parkTotal ? parkTotal + '대' : ''));
         html += item('사용승인일', formatDate8(t.useAprDay));
         if (t.engrGrade) html += item('에너지효율등급', t.engrGrade);
         html += '</div>';
