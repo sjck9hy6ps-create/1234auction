@@ -313,10 +313,12 @@ export default async function handler(req, res) {
   const longYears = Math.min(6, parseInt(req.query.years, 10) || 0);
   if (longYears > 2 && regionName) {
     try {
-      const [ar, vr] = await Promise.all([fetchAllRows('house_trades', regionName, longYears), fetchAllRows('villa_trades', regionName, longYears)]);
+      const [ar, vr, rr] = await Promise.all([fetchAllRows('house_trades', regionName, longYears), fetchAllRows('villa_trades', regionName, longYears),
+        req.query.rent === '1' ? fetchAllRows('house_rent', regionName, Math.min(longYears, 4)) : Promise.resolve({ data: [] })]);
       if (ar.error || vr.error) return res.status(500).json({ error: (ar.error || vr.error).message });
       const apt = dedup([...(ar.data || []).map(r => normalizeRow(r, 'apt')), ...(vr.data || []).map(r => normalizeRow(r, 'villa'))]);
-      return res.status(200).json({ apt, rent: [], years: longYears });
+      const rent = (rr && rr.data || []).map(r => normalizeRentRow(r, 'apt'));
+      return res.status(200).json({ apt, rent, years: longYears });
     } catch (e) { return res.status(500).json({ error: e.message }); }
   }
 
