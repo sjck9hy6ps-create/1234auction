@@ -16031,6 +16031,7 @@ async function refreshBidBoard() {
     // 지도에서 보던 지역이 목록에서 빠졌으면 되살림
     if (keepLawd && dataCache[keepLawd]) { mergedLawdCds.add(keepLawd); touchLawdCd(keepLawd); } else rebuildMergedLists();
     setBidBoardProgress('');
+    setTimeout(fillHouseholdsInBackground, 2000); // 회전율용 세대수를 뒤에서 천천히 채움
     // 계산 결과 저장(다음에 열 때 바로 보이게) - 등록에서 빠진 물건은 지움
     try {
         var keep = {}; cands.forEach(function(a) { if (boardCache[a.id]) keep[a.id] = boardCache[a.id]; });
@@ -16207,7 +16208,8 @@ function renderBidBoardRow(r) {
           + '<div class="bb-sub">' + (r.roomPct >= 0 ? '최저가보다 ' + toEok(String(r.recBid - r.minBid)) + ' 더 써도 됨' : '한 번 더 떨어지면 다시 보기') + '</div>';
     var tierPill = function(t, prefix) { return '<span class="bb-pill ' + (t === '상위20%' ? 'good' : (t === '하위40%' ? 'bad' : '')) + '">' + (prefix || '') + (t === '상위20%' ? '🔥 인기 상위 20%' : (t === '하위40%' ? '거래 드묾(하위 40%)' : '인기 중간')) + '</span>'; };
     var livHtml = r.liv ? '<div style="font-weight:bold;font-size:12px;margin-bottom:2px;">생활권 거래량 <span style="color:' + (r.liv.tier === '상위20%' ? '#2e7d32' : (r.liv.tier === '하위40%' ? '#c62828' : '#ef6c00')) + ';">' + (r.liv.rank ? r.liv.rank + '위' : '-') + '</span><span style="color:#888;font-weight:normal;font-size:11px;"> / ' + (r.liv.radius >= 1000 ? (r.liv.radius / 1000) + 'km' : r.liv.radius + 'm') + ' 안 ' + r.liv.of + '단지</span></div>' : '';
-    var popCell = r.pending ? '' : livHtml + (r.pop
+    var toR = turnoverOf(r);
+    var popCell = r.pending ? '' : (toR ? '<div style="font-size:11.5px;margin-bottom:2px;">회전율 <b style="color:' + toR.grade.c + ';">' + toR.rate + '%</b> <span style="color:#888;">(' + toR.grade.t + ')</span></div>' : '') + livHtml + (r.pop
         ? (r.pop.band
             // 2026-10(사용자 요청: "입찰후보 탭 안에 해당 평형에 맞는 인기순위도 표기") - 같은 동·같은 평형대 안 순위를 맨 위에 크게
             ? '<div style="font-weight:bold;font-size:12.5px;">' + r.pop.band.name + ' 거래량 <span style="color:var(--ui-blue,#1e5eff);">' + r.pop.band.rankInBand + '위</span>'
@@ -16349,6 +16351,14 @@ async function renderBidDrawer() {
     var basis = row.saleSaved ? '내가 저장한 값' : (row.salePresale ? '분양권·입주권 거래' : (row.saleSimBy || row.saleCapBy || ('이 단지 같은 평형 ' + (row.own || 0) + '건 + 주변 비슷한 단지')));
     if (row.saleFloorAdj) basis += ' · ' + row.saleFloorAdj.label + ' ' + Math.round(Math.abs(1 - row.saleFloorAdj.factor) * 1000) / 10 + '% ' + (row.saleFloorAdj.factor < 1 ? '낮춤' : '높임');
     h += '<div class="dr-sub">예상매도가 근거: ' + bbEsc(basis) + '</div>';
+    var to = turnoverOf(row);
+    if (to) h += '<div class="dr-sub">회전율 <b style="color:' + to.grade.c + ';">' + to.rate + '% · ' + to.grade.t + '</b> (최근 1년 거래 ' + to.n + '건 ÷ ' + to.hh.toLocaleString() + '세대)'
+        + (row.ownStats && row.ownStats.jeonse ? ' · 전세가율 ' + Math.round(row.ownStats.jeonse.ratio * 100) + '%' : '') + '</div>';
+    else if (row.type === 'apt' && !(a.households) && !row._hhLoading) {
+        row._hhLoading = true;
+        fetchHouseholdsFor(a).then(function(hh) { row._hhLoading = false; a.householdsTried = true; if (hh) { a.households = hh; saveAuctionAPI(a).catch(function() {}); } if (bidDrawerId === row.id) renderBidDrawer(); });
+        h += '<div class="dr-sub">회전율: 세대수 불러오는 중…</div>';
+    }
     (row.warns || []).concat(row.reasons || []).forEach(function(w) { h += '<div class="dr-warn">' + bbEsc(w) + '</div>'; });
     // 최근 거래
     if (tr.length) {
@@ -16479,6 +16489,47 @@ function fieldCheckHtml(row) {
     ev.notes.forEach(function(n) { h += '<div class="dr-warn">' + bbEsc(n) + '</div>'; });
     if (ev.answered) h += '<div class="dr-sub" style="margin-top:4px;">반영: ' + [ev.repairFactor != null ? '수리비 연식 기준의 ' + Math.round(ev.repairFactor * 100) + '%' : '', ev.extra ? '추가 비용 ' + toEok(String(ev.extra)) : '', ev.holdMonths ? '보유 ' + ev.holdMonths + '개월로 이자 계산' : ''].filter(Boolean).join(' · ') + '</div>';
     return h + '</div>';
+}
+
+/* ════ 회전율(세대수 대비 1년 거래) - 2026-10(사용자: "회전율을 가장 효율적으로 활용하고 싶어")
+   단지 세대수가 비어 있어(K-apt 미수집) 건축물대장(단지 총괄표제부 세대수)을 물건마다 한 번 불러와 기록(a.households)에 저장해 둠.
+   회전율 = 이 단지 최근 1년 중개거래(모든 평형) ÷ 세대수. 기준(앱의 기존 단지 상세와 같음): 5%↑ 환금성 높음, 2~5% 보통, 2%↓ 낮음.
+   ⚠️ 아직 과거 낙찰사례로 수익과의 관계를 검증하지 못함(세대수 자료가 쌓이면 검증) - 그래서 판정에는 안 쓰고 참고로만 보여줌. ════ */
+async function fetchHouseholdsFor(a) {
+    if (!a || !a.bCode || !a.bunji) return null;
+    var parts = bCodeToSigunguBjdong(a.bCode), bj = deriveBunJi({ bunji: a.bunji });
+    if (!parts || !bj) return null;
+    try {
+        var url = '/api/get-building?sigunguCd=' + parts.sigunguCd + '&bjdongCd=' + parts.bjdongCd + '&bun=' + bj.bun + '&ji=' + bj.ji + '&bldNm=' + encodeURIComponent(a.name || '');
+        var info = await Promise.race([fetch(url).then(function(r) { return r.json(); }), new Promise(function(res) { setTimeout(function() { res(null); }, 12000); })]);
+        var t = info && info.title;
+        var hh = t && ((t.site && t.site.hhldCnt) || t.hhldCnt);
+        return hh > 0 ? parseInt(hh) : null;
+    } catch (e) { return null; }
+}
+function turnoverOf(row) {
+    var hh = parseInt(row.a && row.a.households) || 0, os = row.ownStats;
+    if (!hh || !os) return null;
+    var n = (os.v6 || 0) + (os.vPrev6 || 0);
+    var rate = Math.round(n / hh * 1000) / 10;
+    return { rate: rate, n: n, hh: hh, grade: rate >= 5 ? { t: '환금성 높음', c: '#16a34a' } : (rate >= 2 ? { t: '보통', c: '#6b7280' } : { t: '환금성 낮음', c: '#dc2626' }) };
+}
+var householdFillRunning = false;
+async function fillHouseholdsInBackground() {
+    if (householdFillRunning) return; householdFillRunning = true;
+    try {
+        var todo = bidBoardRows.filter(function(r) { return r.type === 'apt' && r.a && !r.a.households && !r.a.householdsTried && r.a.bCode && r.verdict !== 'nodata'; });
+        for (var i = 0; i < todo.length; i++) {
+            if (document.getElementById('bid-board').style.display !== 'flex') break;
+            var a = todo[i].a;
+            var hh = await fetchHouseholdsFor(a);
+            a.householdsTried = true;
+            if (hh) { a.households = hh; try { await saveAuctionAPI(a); } catch (e) {} }
+            if (i % 10 === 9) renderBidBoard();
+            await new Promise(function(r) { setTimeout(r, 1200); });
+        }
+        renderBidBoard();
+    } finally { householdFillRunning = false; }
 }
 
 function bidBoardGo(id) {
