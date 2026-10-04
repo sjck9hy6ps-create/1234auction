@@ -5902,7 +5902,12 @@ function buildPriceChartSvg(trades, range) {
     var now = new Date(), from = new Date(now);
     if (range === '1y') from.setFullYear(now.getFullYear() - 1);
     else if (range === '3y') from.setFullYear(now.getFullYear() - 3);
-    else from = trades.length ? trades.reduce(function(m, t) { var d = pnTradeDate(t); return d < m ? d : m; }, now) : new Date(now.getFullYear() - 3, 0, 1);
+    else {
+        // 10년(사용자 요청: 1년·3년·10년) - 거래 기록이 10년보다 짧으면 첫 거래부터 그려 왼쪽이 비지 않게
+        from.setFullYear(now.getFullYear() - 10);
+        var first = trades.length ? trades.reduce(function(m, t) { var d = pnTradeDate(t); return d < m ? d : m; }, now) : null;
+        if (first && first > from) from = first;
+    }
     var pts = trades.filter(function(t) { return parseInt(t.amount) > 0 && pnTradeDate(t) >= from; })
         .map(function(t) { return { d: pnTradeDate(t), v: parseInt(t.amount), f: t.floor }; }).sort(function(a, b) { return a.d - b.d; });
     if (pts.length < 2) return '<div class="pn-empty">이 기간 거래가 ' + pts.length + '건이라 그래프를 그릴 수 없어요</div>';
@@ -6026,7 +6031,7 @@ function renderTable() {
     // ② 시세 그래프(그 평형)
     var chartTrades = all.filter(function(t) { return String(toPyung(t.area)) === String(chartPy); });
     html += '<div class="pn-card"><div class="pn-card-h">시세 <span class="pn-muted">' + (chartPy ? chartPy + '평' : '') + '</span>'
-        + '<span class="pn-seg">' + [['1y', '1년'], ['3y', '3년'], ['all', '전체']].map(function(r) { return '<button class="' + (currentChartRange === r[0] ? 'on' : '') + '" onclick="setChartRange(\'' + r[0] + '\')">' + r[1] + '</button>'; }).join('') + '</span></div>'
+        + '<span class="pn-seg">' + [['1y', '1년'], ['3y', '3년'], ['10y', '10년']].map(function(r) { return '<button class="' + (currentChartRange === r[0] ? 'on' : '') + '" onclick="setChartRange(\'' + r[0] + '\')">' + r[1] + '</button>'; }).join('') + '</span></div>'
         + buildPriceChartSvg(chartTrades, currentChartRange) + '</div>';
     // ③ 바로가기
     var links = buildNaverLinkHtml(currentPanelLat, currentPanelLon, ind && ind._aptName, ind && ind._aptDong);
