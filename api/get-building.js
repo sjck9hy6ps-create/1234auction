@@ -137,7 +137,9 @@ export default async function handler(req, res) {
 
     const cachedNonResidential = cached && cached.title_json && LEGACY_SIGUNGU_MAP[sigunguCd]
       && !((cached.title_json.hhldCnt || 0) > 0 || /공동주택|아파트|다세대|연립/.test(cached.title_json.mainPurps || ''));
-    if (cached && !cachedNonResidential && (Date.now() - new Date(cached.fetched_at).getTime()) < FRESH_MS) {
+    // 단지 전체 값(총괄표제부)을 붙이기 전에 저장된 아파트 캐시는 한 번 다시 조회(이후엔 siteChecked로 표시돼 반복 안 함)
+    const cachedNeedsSite = cached && cached.title_json && (cached.title_json.hhldCnt || 0) > 0 && !cached.title_json.site && !cached.title_json.siteChecked;
+    if (cached && !cachedNonResidential && !cachedNeedsSite && (Date.now() - new Date(cached.fetched_at).getTime()) < FRESH_MS) {
       // 무료 Vercel 사용량 절약: 건축물대장 데이터는 몇 달 단위로만 바뀌므로 엣지에서
       // 6시간 동안 재사용 - 같은 건물을 반복 조회해도 함수를 다시 실행하지 않음.
       res.setHeader('Cache-Control', 'public, s-maxage=21600, stale-while-revalidate=604800');
@@ -195,6 +197,7 @@ export default async function handler(req, res) {
     const title = titleItem ? normalizeTitle(titleItem) : null;
     // 동이 여러 개인 단지: 표제부의 건폐율·용적률은 "이 동 하나 ÷ 단지 전체 대지"라 실제 단지 값과 다름(치평동 1331: 2.5%/30.9%) -
     // 총괄표제부(단지 전체)의 건폐율·용적률·세대수·주차를 따로 붙임
+    if (title && (title.hhldCnt || 0) > 0) title.siteChecked = true;
     if (title && titleItems.length > 1) {
       try {
         const usedSgg = legacyFallbackUsed && LEGACY_SIGUNGU_MAP[sigunguCd] ? LEGACY_SIGUNGU_MAP[sigunguCd] : sigunguCd;
