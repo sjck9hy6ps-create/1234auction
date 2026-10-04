@@ -15826,7 +15826,7 @@ async function refreshBidBoard() {
             catch (e) { console.error('입찰후보 계산 실패:', a.id, e); }
         });
         bidBoardRows = bidBoardRows.map(function(r) { return fresh[r.id] || r; });
-        Object.keys(fresh).forEach(function(id) { var f = fresh[id]; if (f && f.a && f.verdict !== 'nodata') boardCache[id] = { sig: boardBaseSig(f.a), at: Date.now(), row: boardRowForCache(f) }; });
+        Object.keys(fresh).forEach(function(id) { var f = fresh[id]; if (f && f.a && !(f.verdict === 'nodata' && !f.loaded && f.type && f.a.lat)) boardCache[id] = { sig: boardBaseSig(f.a), at: Date.now(), row: boardRowForCache(f) }; });
         renderBidBoard();
         // 보드 때문에 새로 불러온 지역은 계산이 끝나면 메모리에서 내림(지역당 수 MB - 다시 필요하면 브라우저 저장본에서 금방 불러옴)
         if (lawd !== '_' && boardOnly && lawd !== keepLawd && dataCache[lawd]) {
