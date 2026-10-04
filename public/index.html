@@ -16396,7 +16396,7 @@ async function renderBidDrawer() {
     var to = turnoverOf(row);
     if (to) h += '<div class="dr-sub">회전율 <b style="color:' + to.grade.c + ';">' + to.rate + '% · ' + to.grade.t + '</b> (최근 1년 거래 ' + to.n + '건 ÷ ' + to.hh.toLocaleString() + '세대)'
         + (row.ownStats && row.ownStats.jeonse ? ' · 전세가율 ' + Math.round(row.ownStats.jeonse.ratio * 100) + '%' : '') + '</div>';
-    else if (row.type === 'apt' && !(a.households) && !row._hhLoading) {
+    else if (row.type === 'apt' && !(a.households) && !a.householdsTried && !row._hhLoading) {  // 세대수를 못 찾으면 다시 묻지 않음(못 찾을 때마다 다시 그려 입력·닫기가 막히던 문제)
         row._hhLoading = true;
         fetchHouseholdsFor(a).then(function(hh) { row._hhLoading = false; a.householdsTried = true; if (hh) { a.households = hh; saveAuctionAPI(a).catch(function() {}); } if (bidDrawerId === row.id) renderBidDrawer(); });
         h += '<div class="dr-sub">회전율: 세대수 불러오는 중…</div>';
