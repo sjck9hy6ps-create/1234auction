@@ -6169,6 +6169,18 @@ function clExtractBuildingName(line) {
    열: 사건번호, 종별, 주소(시군구동), 외 건수, 경매현황(건물/대지권 면적·특이사항), 감정가, 최저가, 매각가, 차순위, 입찰자수, 진행상태, 입찰일자
    붙여넣기 목록에는 없는 입찰자수·차순위(2등 가격)가 들어 있어 "얼마면 낙찰되는지"를 볼 수 있음 - 둘 다 그대로 저장함.
    파싱 결과는 붙여넣기(parseCaseListTextLocally)와 같은 모양이라 이후 미리보기·저장 흐름을 그대로 탐. ════ */
+// 경매현황 면적 문구 해석 - 건물(전용)면적은 예상매도가 계산용, 대지권은 따로 보관.
+// "대지권"이 아니라 "토지"로 잡혀 있거나(대지권 미등기·별도 토지 매각) 대지권이 아예 없으면(건물만 매각) 대출·매도에 불리해 경고로 남김.
+function parseAuctionAreaText(t) {
+    t = String(t || '');
+    var b = t.match(/건물\s*([\d.]+)\s*㎡/), l = t.match(/대지권\s*([\d.]+)\s*㎡/), g = t.match(/토지\s*([\d.]+)\s*㎡/);
+    var landType = l ? '대지권' : (g ? '토지' : (b ? 'none' : null)); // 'none' = 건물 면적은 읽었는데 대지권·토지가 없음
+    var warn = null;
+    if (b && !l && g) warn = '대지권 아님(토지로 매각) - 대지권 미등기 여부 확인';
+    else if (b && !l && !g) warn = '대지권 없음(건물만 매각) - 대출·매도 불리';
+    if (/대지권\s*미등기/.test(t)) warn = '대지권 미등기 - 대출·매도 불리';
+    return { buildingM2: b ? parseFloat(b[1]) : null, landM2: l ? parseFloat(l[1]) : (g ? parseFloat(g[1]) : null), landType: landType, landWarn: warn };
+}
 function parseCsvRows(text) {
     var rows = [], row = [], field = '', q = false;
     for (var i = 0; i < text.length; i++) {
@@ -6207,7 +6219,7 @@ function parseTankAuctionCsv(text) {
         if (floor == null && unitNo) { var un = parseInt(unitNo.replace(/\D/g, ''), 10); if (un >= 101) floor = Math.floor(un / 100); } // "103동 702호"처럼 층 표기가 없으면 호수로
         var nameM = addrLine.match(/\(([^)]*)\)/);
         var buildingName = nameM ? (nameM[1].split(',').pop().trim() || null) : null;
-        var cur = col(r, '경매현황'), am = cur.match(/건물\s*([\d.]+)\s*㎡/);
+        var cur = col(r, '경매현황'), ar = parseAuctionAreaText(cur);
         var notes = cur.split('/').slice(1).map(function(x) { return x.trim(); }).filter(Boolean);
         var extra = col(r, '외 건수'); if (extra && !/^0\s/.test(extra)) notes.unshift('외 ' + extra);
         var appraisal = num(col(r, '감정가')), minBid = num(col(r, '최저가')), final = num(col(r, '매각가'));
@@ -6217,8 +6229,9 @@ function parseTankAuctionCsv(text) {
         cases.push({
             caseNo: caseNo, court: null, propertyType: col(r, '종별') || null,
             addrJibun: addrJibun, dong: db.dong, bunji: db.bunji, buildingName: buildingName,
-            areaM2: am ? parseFloat(am[1]) : null, floor: floor, unitNo: unitNo,
-            specialConditions: notes.length ? notes.join(' · ') : null,
+            areaM2: ar.buildingM2, landM2: ar.landM2, landType: ar.landType, landWarn: ar.landWarn,
+            floor: floor, unitNo: unitNo,
+            specialConditions: (ar.landWarn ? [ar.landWarn] : []).concat(notes).join(' · ') || null,
             appraisalPrice: appraisal, minBidPrice: minBid, finalBidPrice: final,
             bidRate: appraisal && final ? Math.round(final / appraisal * 10000) / 100 : null,
             minBidRate: appraisal && minBid ? Math.round(minBid / appraisal * 10000) / 100 : null,
@@ -6307,10 +6320,10 @@ function parseCaseListTextLocally(text) {
         var floor = clExtractFloor(addrLine);
         var unitNo = clExtractUnit(addrLine);
         var buildingName = clExtractBuildingName(addrLine);
-        var areaM2 = null;
+        var areaM2 = null, landInfo = { landM2: null, landType: null, landWarn: null };
         if (areaLine) {
-            var am = areaLine.match(/건물\s*([\d.]+)\s*㎡/);
-            if (am) areaM2 = parseFloat(am[1]);
+            landInfo = parseAuctionAreaText(areaLine);
+            areaM2 = landInfo.buildingM2;
         }
         var appraisalPrice = nums.length >= 1 ? nums[0] : null;
         var minBidPrice = nums.length >= 2 ? nums[1] : null;
@@ -6322,7 +6335,8 @@ function parseCaseListTextLocally(text) {
             caseNo: caseNo, court: court, propertyType: propertyType,
             addrJibun: addrJibun, dong: dongBunji.dong, bunji: dongBunji.bunji,
             buildingName: buildingName, areaM2: areaM2, floor: floor, unitNo: unitNo,
-            specialConditions: extraLines.length ? extraLines.join(' ') : null,
+            specialConditions: (landInfo.landWarn ? [landInfo.landWarn] : []).concat(extraLines).join(' ') || null,
+            landM2: landInfo.landM2, landType: landInfo.landType, landWarn: landInfo.landWarn,
             appraisalPrice: appraisalPrice, minBidPrice: minBidPrice, finalBidPrice: finalBidPrice,
             bidRate: bidRate, minBidRate: minBidRate, status: normStatus, saleDate: saleDate,
         });
@@ -6512,6 +6526,7 @@ async function saveSelectedCases() {
             finalBidPrice: c.finalBidPrice || null, bidRate: c.bidRate || null, minBidRate: c.minBidRate || null,
             status: c.status || null, saleDate: c.saleDate || null,
             bidders: c.bidders || null, secondBidPrice: c.secondBidPrice || null,
+            landM2: c.landM2 || null, landType: c.landType || null,
             importedAt: Date.now(),
         };
         try {
@@ -6913,6 +6928,7 @@ async function saveSelectedBidTargets() {
             propType: bidTargetPropTypeFromText(c.propertyType),
             aptDong: '', floor: c.floor || '', unitNo: c.unitNo || '',
             caseNo: c.caseNo || null, court: c.court || null, pyung: pyung, bidDate: c.saleDate || '',
+            landM2: c.landM2 || null, landType: c.landType || null,
             status: '검토중',
             appraisal: c.appraisalPrice ? Math.round(c.appraisalPrice / 10000) : '',
             minBid: c.minBidPrice ? Math.round(c.minBidPrice / 10000) : '',
@@ -7096,6 +7112,8 @@ function renderBacktestPreview() {
             + (c.finalBidPrice ? ' · 낙찰가 ' + toEok(String(Math.round(c.finalBidPrice / 10000))) : '')
             + (rate ? ' · ' + rate + '%' : '')
             + '</div>'
+            + '<div style="color:#666;">건물 ' + (c.areaM2 ? c.areaM2 + '㎡' : '-') + ' · ' + (c.landType && c.landType !== 'none' ? c.landType + ' ' + c.landM2 + '㎡' : (c.landType === 'none' ? '대지권 없음' : '대지권 정보 없음')) + '</div>'
+            + (c.landWarn ? '<div style="color:#c62828;font-weight:bold;">⚠️ ' + c.landWarn + '</div>' : '')
             + (c.bidders ? '<div style="color:#1565c0;">입찰자 ' + c.bidders + '명' + (c.secondBidPrice ? ' · 2등 ' + toEok(String(Math.round(c.secondBidPrice / 10000))) : ' · 단독 입찰') + '</div>' : '')
             + (c._noBid ? '<div style="color:#e65100;font-size:10px;margin-top:2px;">⚠️ 낙찰가가 확인되지 않아 백테스트에서 제외됨</div>' : '')
             + '</div></div>';
@@ -7471,6 +7489,7 @@ async function runBacktestPipeline() {
             actualBid: Math.round(c.finalBidPrice / 10000), // finalBidPrice가 있는 항목만 selected됐으므로 항상 존재
             memo: c.specialConditions || '',
             bidders: c.bidders || null, secondBid: c.secondBidPrice ? Math.round(c.secondBidPrice / 10000) : null,
+            landM2: c.landM2 || null, landType: c.landType || null,
             target: target, compTargetMargin: margin,
             comparables: compRecords,
             isBacktest: true, isBidTarget: false,
@@ -15222,6 +15241,9 @@ function computeBidBoardRow(a) {
         else if (pe && !popular && pe.activeQuarterPct < 70) { ok = false; row.warns.push('인기 중간 단지 - 최근 3년 중 거래 있던 분기 ' + pe.activeQuarterPct + '%'); }
         if (row.risk && row.risk.level === '높음') { ok = false; row.warns.push('지역 6개월 하락 위험 높음'); }
         if (row.guarantee && row.guarantee.level) { ok = false; row.warns.push('🚨 인수 보증금 의심 - 권리 확인 필요'); }
+        // 대지권 구분(2026-10): 등록 때 면적 문구에서 읽어 둔 값 - 대지권이 아니라 토지로 잡혔거나 대지권이 없으면 대출·매도 불리
+        if (a.landType === '토지') { ok = false; row.warns.push('⚠️ 대지권 아님(토지로 매각) - 대지권 미등기 여부 확인'); }
+        else if (a.landType === 'none') { ok = false; row.warns.push('⚠️ 대지권 없음(건물만 매각) - 대출·매도 불리'); }
         if (minBid < row.sale * 0.5) { ok = false; row.warns.push('최저가가 예상매도가의 절반도 안 돼요 - 지분·특수물건이거나 입력값 오류인지 확인'); }
         row.verdict = ok ? 'yes' : 'check';
     }
