@@ -11763,22 +11763,13 @@ var CALC_INFO_TEXT = {
         + '  임차인이 있는 물건이면 이 가능성도 염두에 두세요.\n\n'
         + '⚠️ 이 설명은 참고용 요약이며 법률 자문이 아닙니다. 실제 입찰 전 반드시 법무사·변호사의\n'
         + '권리분석을 받으세요.',
-    vat: '부가세(건물분)는 전용면적이 국민주택규모(85㎡)를 초과하는 주택을 "매매사업자" 입찰방법으로\n'
-        + '낙찰받을 때만 대상이 됩니다(개인명의 입찰이거나 85㎡ 이하면 대상 아님).\n\n'
-        + '계산 방법(경락금액 중 건물가액을 구해 그 10%를 부가세로 봄) - 건물:토지 안분 비율은\n'
-        + '아래 두 가지 방식 중 입력된 값이 있는 쪽을 우선 사용합니다(둘 다 국세청 예규상 인정되는 방식):\n\n'
-        + '① 공시가격 기준(1순위): 공동주택가격을 전유면적:대지권면적 비율로 건물가액/토지가액으로 나눔\n'
-        + '   (건물·토지 각각의 기준시가가 따로 없어, 면적비율로 안분)\n'
-        + '   예) 경락금액 1억2,600만, 공동주택가격 6,300만, 전유면적 55㎡, 대지권면적 44㎡라면\n'
-        + '   건물가액 비율 55/99 → 경락금액 중 건물가액 7,000만 → 부가세 700만\n\n'
-        + '② 감정평가서 기준(공시가격·대지권면적을 못 구했을 때 자동 대체): 감정평가서에 이미\n'
-        + '   토지가격/건물가격이 별도 산정돼 있으면(AI가 자동 추출), 그 비율을 그대로 씀\n'
-        + '   예) 감정평가서상 토지 8,960만 : 건물 13,440만(비율 40:60)이면, 경락금액의 60%를\n'
-        + '   건물가액으로 보고 그 10%를 부가세로 계산\n\n'
-        + '두 값 모두 없으면(공시가격·대지권면적도 없고, 감정평가서 토지/건물가격도 못 뽑았으면)\n'
-        + '자동계산이 안 되고 "확인필요"로 표시됩니다. 대지권 면적은 매각물건명세서나 등기부등본\n'
-        + '(대지권의 표시)에서, 개별공시지가는 부동산공시가격 알리미에서 직접 확인할 수 있습니다.\n'
-        + '⚠️ 참고용 추정치입니다. 실제 입찰 전 세무사를 통해 한 번 더 확인하는 것을 권장합니다.',
+    vat: '부가세(건물분)는 "매매사업자"가 전용 85㎡(수도권 밖 읍·면은 100㎡)를 초과하는 주택을 팔 때 생깁니다.\n'
+        + '경매로 취득할 때는 부가세법상 재화의 공급으로 보지 않아 부가세가 없습니다(개인명의·85㎡ 이하는 대상 아님).\n\n'
+        + '계산: 매도가 중 건물분 × 10/110 (개인 매수자에게 따로 받지 못하는 게 보통이라 매도가에 포함된 것으로 봄)\n'
+        + '건물분 비율(우선순위): ① 공시가격을 전유:대지권 면적으로 안분 ② 감정평가서 토지·건물가격\n'
+        + '③ 대지권 면적만 있어도 전유 ÷ (전유+대지권) ④ 정보가 없으면 아파트 일반값 65%로 추정\n'
+        + '예) 매도가 4억, 전유 101㎡·대지권 46㎡ → 건물분 69% → 2.75억 × 10/110 = 약 2,500만\n\n'
+        + '⚠️ 참고용 계산입니다. 실제 신고는 세무사와 확인하세요.',
     assumedDeposit: '인수보증금이란, 선순위(말소기준권리보다 먼저) 대항력을 갖춘 임차인의 보증금 중\n'
         + '배당으로 회수되지 못한 잔액을 낙찰자가 그대로 떠안아야 하는 돈입니다(낙찰가와 별도 지출).\n\n'
         + '"최악가정 제안" 버튼을 누르면, AI가 경매정보에서 뽑아둔 임차인 중 대항력 있음(hasStanding)으로\n'
@@ -12087,7 +12078,7 @@ function calcMargin() {
     var loanPrepayFeeRateInput = parseFloat(document.getElementById('a-loan-prepay-fee-rate').value);
     var loanPrepayFeeRate = (loanPrepayFeeRateInput > 0) ? loanPrepayFeeRateInput : DEFAULT_LOAN_PREPAY_FEE_RATE;
     var prepayFee = calcLoanPrepayFee(loanAmount, loanPrepayFeeRate);
-    var vatInfo = calcAuctionVat(useBid);
+    var vatInfo = calcAuctionVat(useSell); // 2026-10: 매도가 기준(팔 때 건물분 과세)
     var vat = vatInfo.computable ? vatInfo.vat : 0;
     var feesSum   = tax + registryFee + evictionFee + repair + agent + moving + cleaning + interestCost + prepayFee + etc + vat + assumedDeposit + unpaidMgmtFee + propertyTax + compTax;
     var totalCost = useBid + feesSum;
@@ -13608,7 +13599,7 @@ function buildMarginSummaryHtml(a) {
     var prepayFee = calcLoanPrepayFee(loanAmount, loanPrepayFeeRate);
     // ⚠️ 2026-09(석삼말로 175-1 사례): 매매사업자+전용 85㎡초과 건물분 부가세가 이 "저장된 값
     // 기준" 요약에서 통째로 빠져 있었음 - calcMargin()(라이브 모달)에는 있는데 여기엔 없었음.
-    var vatInfo = calcAuctionVatFromRecord(a, useBid);
+    var vatInfo = calcAuctionVatFromRecord(a, useSell); // 2026-10: 매도가 기준
     var vat = vatInfo.computable ? vatInfo.vat : 0;
     var feesSum = tax + registryFee + evictionFee + repair + agent + moving + cleaning + interestCost + prepayFee + etc + vat + propertyTax + compTax;
     var totalCost = useBid + feesSum;
@@ -14749,6 +14740,22 @@ function parseAreaM2FromText(str) {
     var m = String(str).match(/([\d.]+)\s*㎡/);
     return m ? parseFloat(m[1]) : null;
 }
+/* ⚠️ 2026-10 정정(사용자: "개인 부동산매매사업자라 85㎡ 초과는 건물분 부가세를 내야 하니 마진에 반영"): 아래 계산은 원래
+   "낙찰가(취득) 기준"이었는데, 부가세법상 경매에 의한 인도는 재화의 공급으로 보지 않아 취득 때는 부가세가 없고,
+   매매사업자가 국민주택규모 초과 주택을 "팔 때" 건물분이 과세됨 → 기준을 매도가로 바꿈. 개인 매수자에게 별도로
+   받지 못하는 게 보통이라 매도가에 부가세가 포함된 것으로 보고 건물분 × 10/110.
+   국민주택규모: 전용 85㎡(수도권 밖 도시지역이 아닌 읍·면은 100㎡).
+   건물분 비율: ①공시가격 전유:대지권 면적 안분(공시가격은 상쇄되므로 사실상 전유 ÷ (전유+대지권)) ②감정평가서 토지·건물가격
+   ③대지권 면적만 있어도 ①과 같은 비율 ④아무것도 없으면 아파트 일반값 65%로 추정(표시에 "추정"). */
+var VAT_DEFAULT_BUILDING_RATIO = 0.65;
+function vatHousingLimitM2(addr) {
+    var a = String(addr || '');
+    var metro = /^(서울|경기|인천)/.test(a.trim());
+    return (!metro && /\s[가-힣]+(읍|면)\s/.test(' ' + a + ' ')) ? 100 : TAX_CONFIG.vat.nationalHousingAreaM2;
+}
+function vatOnSale(saleAmount, ratio) {
+    return Math.round((saleAmount || 0) * ratio * TAX_CONFIG.vat.rate / (1 + TAX_CONFIG.vat.rate));
+}
 /* 국민주택규모(전용 85㎡) 초과 주택을 매매사업자로 낙찰받으면, 나중에 되팔지 않고 낙찰 자체로도
    건물분에 대한 부가세가 별도로 발생할 수 있음(부가가치세법상 국민주택규모 이하만 면제) - 그래서
    "입찰가 역산" 과정 자체에 비용으로 포함시켜야 함(사용자 요청). "경락금액 중 건물가액"을 구하는
@@ -14761,14 +14768,14 @@ function parseAreaM2FromText(str) {
    3) 그 금액의 10%가 부가세
    개인명의 입찰이거나 전용 85㎡ 이하면 애초에 대상이 아님(applicable=false).
    대상이지만 공시가격·대지권면적 데이터가 없으면 computable=false로 이유만 알려줌(자동계산 불가). */
-function calcAuctionVat(bidAmount) {
+function calcAuctionVat(saleAmount) {
     var bidMethod = document.getElementById('a-bid-method').value;
     if (bidMethod !== 'dealer') {
         return { applicable: false, reason: '개인명의 입찰은 부가세 과세사업자가 아니므로 대상이 아닙니다.' };
     }
     var pyung = parseFloat(document.getElementById('a-pyung').value) || 0;
     var areaM2 = pyung > 0 ? Math.round(pyung * 3.305785 * 100) / 100 : 0;
-    var housingAreaM2 = TAX_CONFIG.vat.nationalHousingAreaM2;
+    var housingAreaM2 = vatHousingLimitM2((document.getElementById('a-addr') || {}).value);
     if (!areaM2) {
         return { applicable: false, reason: '평형을 입력하면 국민주택규모(' + housingAreaM2 + '㎡) 초과 여부를 판단합니다.' };
     }
@@ -14802,26 +14809,25 @@ function calcAuctionVat(bidAmount) {
         }
     }
 
-    if (buildingRatio === null) {
-        var missing = [];
-        if (!officialPriceWon) missing.push('공시가격');
-        if (!siteRightsAreaM2) missing.push('대지권 면적');
-        return {
-            applicable: true, computable: false, areaM2: areaM2,
-            reason: '전용 ' + areaM2 + '㎡로 국민주택규모 초과 - 부가세 대상이지만, ' + missing.join('·')
-                + '(또는 감정평가서상 토지가격·건물가격) 정보가 없어 자동계산이 안 됩니다.',
-        };
+    if (buildingRatio === null && siteRightsAreaM2) {
+        buildingRatio = areaM2 / (areaM2 + siteRightsAreaM2);
+        ratioSource = '전유 ' + areaM2 + '㎡ : 대지권 ' + siteRightsAreaM2 + '㎡ 면적비율';
     }
-    var buildingValueOfBid = (bidAmount || 0) * buildingRatio;
+    var estimated = false;
+    if (buildingRatio === null) {
+        buildingRatio = VAT_DEFAULT_BUILDING_RATIO; estimated = true;
+        ratioSource = '대지권 면적·감정평가서 정보가 없어 아파트 일반값 ' + Math.round(VAT_DEFAULT_BUILDING_RATIO * 100) + '%로 추정 - 대지권 면적을 입력하면 정확해져요';
+    }
+    var buildingValueOfSale = (saleAmount || 0) * buildingRatio;
     return {
-        applicable: true, computable: true, areaM2: areaM2, siteRightsAreaM2: siteRightsAreaM2,
+        applicable: true, computable: true, estimated: estimated, areaM2: areaM2, siteRightsAreaM2: siteRightsAreaM2,
         officialPriceWon: officialPriceWon,
         buildingValueOfOfficialPrice: buildingValueOfOfficialPrice !== null ? Math.round(buildingValueOfOfficialPrice) : null,
         landValueOfOfficialPrice: landValueOfOfficialPrice !== null ? Math.round(landValueOfOfficialPrice) : null,
         buildingRatio: buildingRatio,
-        ratioSource: ratioSource,
-        buildingValueOfBid: Math.round(buildingValueOfBid),
-        vat: Math.round(buildingValueOfBid * TAX_CONFIG.vat.rate),
+        ratioSource: ratioSource + ' · 매도가 중 건물분 × 10/110(매도가에 부가세 포함으로 봄)',
+        buildingValueOfBid: Math.round(buildingValueOfSale),
+        vat: vatOnSale(saleAmount, buildingRatio),
     };
 }
 /* calcAuctionVat()의 "저장된 값 기준" 트윈 - buildMarginSummaryHtml(경매관리 목록의 "저장된 값
@@ -14832,14 +14838,14 @@ function calcAuctionVat(bidAmount) {
    그대로 저장돼 있어(AI 추출) DOM 없이도 재현 가능함 - 그래서 생략할 이유가 없었음. DOM(모달
    입력칸)이 없는 목록 화면에서도 동작해야 해서 calcAuctionVat과 동일한 안분 우선순위(①공시가격
    전유:대지권 면적비율 → ②감정평가서상 토지/건물가격 비율)를 저장된 필드만으로 재현함. */
-function calcAuctionVatFromRecord(a, bidAmount) {
+function calcAuctionVatFromRecord(a, saleAmount) {
     var bidMethod = a.bidMethod || 'dealer';
     if (bidMethod !== 'dealer') {
         return { applicable: false, reason: '개인명의 입찰은 부가세 과세사업자가 아니므로 대상이 아닙니다.' };
     }
     var pyung = parseFloat(a.pyung) || 0;
     var areaM2 = pyung > 0 ? Math.round(pyung * 3.305785 * 100) / 100 : 0;
-    var housingAreaM2 = TAX_CONFIG.vat.nationalHousingAreaM2;
+    var housingAreaM2 = vatHousingLimitM2(a.addr);
     if (!areaM2) {
         return { applicable: false, reason: '평형을 입력하면 국민주택규모(' + housingAreaM2 + '㎡) 초과 여부를 판단합니다.' };
     }
@@ -14847,7 +14853,7 @@ function calcAuctionVatFromRecord(a, bidAmount) {
         return { applicable: false, areaM2: areaM2, reason: '전용면적 약 ' + areaM2 + '㎡ (국민주택규모 ' + housingAreaM2 + '㎡ 이하 - 부가세 면제 대상)' };
     }
     var officialPriceWon = parseInt(a.officialPriceWon) || 0;
-    var siteRightsAreaM2 = parseFloat(a.siteRightsAreaM2) || 0;
+    var siteRightsAreaM2 = parseFloat(a.siteRightsAreaM2) || (a.landType === '대지권' ? parseFloat(a.landM2) || 0 : 0);
     var buildingRatio = null, ratioSource = null;
 
     if (officialPriceWon && siteRightsAreaM2) {
@@ -14866,24 +14872,20 @@ function calcAuctionVatFromRecord(a, bidAmount) {
         }
     }
 
-    if (buildingRatio === null) {
-        var missing = [];
-        if (!officialPriceWon) missing.push('공시가격');
-        if (!siteRightsAreaM2) missing.push('대지권 면적');
-        return {
-            applicable: true, computable: false, areaM2: areaM2,
-            reason: '전용 ' + areaM2 + '㎡로 국민주택규모 초과 - 부가세 대상이지만, ' + missing.join('·')
-                + '(또는 감정평가서상 토지가격·건물가격) 정보가 없어 자동계산이 안 됩니다.',
-        };
+    if (buildingRatio === null && siteRightsAreaM2) {
+        buildingRatio = areaM2 / (areaM2 + siteRightsAreaM2);
+        ratioSource = '전유 ' + areaM2 + '㎡ : 대지권 ' + siteRightsAreaM2 + '㎡ 면적비율';
     }
-    var buildingValueOfBid = (bidAmount || 0) * buildingRatio;
+    var estimated = false;
+    if (buildingRatio === null) { buildingRatio = VAT_DEFAULT_BUILDING_RATIO; estimated = true; ratioSource = '아파트 일반값 ' + Math.round(VAT_DEFAULT_BUILDING_RATIO * 100) + '%로 추정'; }
+    var buildingValueOfSale = (saleAmount || 0) * buildingRatio;
     return {
-        applicable: true, computable: true, areaM2: areaM2, siteRightsAreaM2: siteRightsAreaM2,
+        applicable: true, computable: true, estimated: estimated, areaM2: areaM2, siteRightsAreaM2: siteRightsAreaM2,
         officialPriceWon: officialPriceWon,
         buildingRatio: buildingRatio,
         ratioSource: ratioSource,
-        buildingValueOfBid: Math.round(buildingValueOfBid),
-        vat: Math.round(buildingValueOfBid * TAX_CONFIG.vat.rate),
+        buildingValueOfBid: Math.round(buildingValueOfSale),
+        vat: vatOnSale(saleAmount, buildingRatio),
     };
 }
 /* 목표마진(a-comp-target-margin)을 만족하는 적정입찰가를 이분탐색으로 역산.
@@ -14943,7 +14945,7 @@ function solveAuctionBid(estValue, marginOverride) {
         var loanAmount = calcRegionAwareLoan(bidMethod, addr, mid, appraisal, estValue).amount;
         var interestCost = calcLoanInterest(loanAmount, loanRate, interestHoldMonths);
         var prepayFee = calcLoanPrepayFee(loanAmount, loanPrepayFeeRate);
-        var vat = vatInfo.computable ? Math.round(mid * vatInfo.buildingRatio * TAX_CONFIG.vat.rate) : 0;
+        var vat = vatInfo.computable ? vatOnSale(estValue, vatInfo.buildingRatio) : 0; // 매도가(estValue) 기준 - 입찰가와 무관
         var preTaxCost = mid + acqTax + registryFee + evictionFee + agentFee + repair + etc + moving + cleaning + interestCost + prepayFee + vat + assumedDeposit + unpaidMgmtFee + propertyTax + compTax;
         var preTaxProfit = estValue - preTaxCost;
         var taxResult = calcResaleIncomeTax(bidMethod, preTaxProfit, holdMonths, c.isAdjusted, c.houseRank);
@@ -15007,6 +15009,9 @@ function solveAuctionBidFromRecord(a) {
     var loanPrepayFeeRate = (loanPrepayFeeRateInput > 0) ? loanPrepayFeeRateInput : DEFAULT_LOAN_PREPAY_FEE_RATE;
     var agentFee = calcAgentFee(saleValue, propType);
     var evictionFee = calcEvictionFee(pyung);
+    // 2026-10: 매매사업자 85㎡ 초과 매도 시 건물분 부가세(매도가 기준, 입찰가와 무관) - 입찰후보 보드·배지·입찰 판단 카드에도 반영
+    var vatRec = bidMethod === 'dealer' ? calcAuctionVatFromRecord(Object.assign({}, a, { bidMethod: bidMethod }), saleValue) : null;
+    var resaleVat = vatRec && vatRec.applicable && vatRec.computable ? vatRec.vat : 0;
     var lo = 0, hi = saleValue;
     for (var i = 0; i < 45; i++) {
         var mid = (lo + hi) / 2;
@@ -15015,13 +15020,13 @@ function solveAuctionBidFromRecord(a) {
         var loanAmount = calcRegionAwareLoan(bidMethod, addr, mid, appraisal, saleValue).amount;
         var interestCost = calcLoanInterest(loanAmount, loanRate, interestHoldMonths);
         var prepayFee = calcLoanPrepayFee(loanAmount, loanPrepayFeeRate);
-        var preTaxCost = mid + acqTax + registryFee + evictionFee + agentFee + repair + etc + moving + cleaning + interestCost + prepayFee + assumedDeposit + unpaidMgmtFee + propertyTax + compTax;
+        var preTaxCost = mid + acqTax + registryFee + evictionFee + agentFee + repair + etc + moving + cleaning + interestCost + prepayFee + assumedDeposit + unpaidMgmtFee + propertyTax + compTax + resaleVat;
         var preTaxProfit = saleValue - preTaxCost;
         var taxResult = calcResaleIncomeTax(bidMethod, preTaxProfit, holdMonths, isAdjusted, houseRank);
         var netProfit = preTaxProfit - taxResult.totalTax;
         if (netProfit > marginValue) lo = mid; else hi = mid;
     }
-    return { bid: Math.round(lo) };
+    return { bid: Math.round(lo), resaleVat: resaleVat, vatEstimated: !!(vatRec && vatRec.estimated) };
 }
 /* 🔄 solveAuctionBidFromRecord()의 역함수(2026-08, 사용자 요청: "낙찰가 기준으로 낙찰자가
    얼마에 팔 생각이었는지 추론해서 시세를 검증하고 싶다") - 실제낙찰가(actualBid)는 고정하고,
@@ -15074,6 +15079,8 @@ function solveImpliedTargetFromBid(a, marginValue) {
     // 조합(예: 1억 목표+2천만 마진처럼 마진 비중이 큰 경우) 낙찰가가 목표가 대비 극단적으로
     // 낮게 나올 수 있어 3배로는 탐색범위가 모자라 상한에 값이 눌리는(클리핑) 사례를 발견함 -
     // 10배로 넉넉히 늘림(이진탐색 45회 반복이면 10배든 3배든 정밀도엔 차이가 없어 손해 없음).
+    var vatRatioRec = bidMethod === 'dealer' ? calcAuctionVatFromRecord(Object.assign({}, a, { bidMethod: bidMethod }), 1) : null;
+    var vatRatio = vatRatioRec && vatRatioRec.applicable && vatRatioRec.computable ? vatRatioRec.buildingRatio : 0;
     var lo = actualBid, hi = actualBid * 10; // 매도가가 낙찰가보다 낮을 이유는 없다고 가정(하한=낙찰가)
     for (var i = 0; i < 45; i++) {
         var mid = (lo + hi) / 2; // mid = 후보 매도가(target)
@@ -15081,7 +15088,8 @@ function solveImpliedTargetFromBid(a, marginValue) {
         var interestCost = calcLoanInterest(loanAmount, loanRate, interestHoldMonths);
         var prepayFee = calcLoanPrepayFee(loanAmount, loanPrepayFeeRate);
         var agentFee = calcAgentFee(mid, propType);
-        var preTaxCost = actualBid + acqTax + registryFee + evictionFee + agentFee + repair + etc + moving + cleaning + interestCost + prepayFee + assumedDeposit + unpaidMgmtFee + propertyTax + compTax;
+        var resaleVatI = vatRatio ? vatOnSale(mid, vatRatio) : 0;
+        var preTaxCost = resaleVatI + actualBid + acqTax + registryFee + evictionFee + agentFee + repair + etc + moving + cleaning + interestCost + prepayFee + assumedDeposit + unpaidMgmtFee + propertyTax + compTax;
         var preTaxProfit = mid - preTaxCost;
         var taxResult = calcResaleIncomeTax(bidMethod, preTaxProfit, holdMonths, isAdjusted, houseRank);
         var netProfit = preTaxProfit - taxResult.totalTax;
@@ -15405,6 +15413,8 @@ function computeBidBoardRow(a) {
             repair: parseInt(a.repair) || calcRepairFee(type, pyung || 0, buildYear) || 0
         }));
         row.recBid = rec ? rec.bid : null;
+        row.resaleVat = rec ? rec.resaleVat || 0 : 0;
+        row.vatEstimated = rec ? !!rec.vatEstimated : false;
     } else row.recBid = null;
     row.roomPct = row.recBid && minBid ? Math.round((row.recBid - minBid) / minBid * 1000) / 10 : null;
     row.salePerMin = row.sale && minBid ? Math.round(minBid / row.sale * 1000) / 10 : null;
@@ -15695,7 +15705,7 @@ function renderBidBoardRow(r) {
         : r.dday ? '<span class="bb-dday' + (r.dday.diffDays <= 3 && r.dday.diffDays >= 0 ? ' soon' : '') + '">' + r.dday.label + '</span><div class="bb-sub">' + bbEsc(a.bidDate || '') + '</div>' : '<span class="bb-sub">미정</span>';
     var saleCell = r.pending ? '<span class="bb-sub">계산 중…</span>'
         : (r.sale ? '<b>' + toEok(String(r.sale)) + '</b><div class="bb-sub">' + (r.saleSaved ? '내가 저장한 값' : (r.salePresale ? '분양권·입주권 거래 ' + r.salePresale.n + '건(분양가+웃돈)' : '이 단지 같은 평형 ' + r.own + '건')) + (r.salePerMin != null ? ' · 최저가는 ' + r.salePerMin + '%' : '') + '</div>' : '<span class="bb-sub">-</span>');
-    var recCell = r.recBid ? '<b>' + toEok(String(r.recBid)) + '</b><div class="bb-sub">마진 ' + toEok(String(r.margin)) + (r.marginUser ? '(내가 정함)' : '(추천' + (r.popEff && r.popEff.tier === '하위40%' ? ', 거래 드묾 +2%' : '') + ')') + '</div>' : '<span class="bb-sub">-</span>';
+    var recCell = r.recBid ? '<b>' + toEok(String(r.recBid)) + '</b>' + (r.resaleVat ? '<div class="bb-sub" style="color:#c2410c;">부가세 ' + toEok(String(r.resaleVat)) + (r.vatEstimated ? '(추정)' : '') + ' 반영</div>' : '') + '<div class="bb-sub">마진 ' + toEok(String(r.margin)) + (r.marginUser ? '(내가 정함)' : '(추천' + (r.popEff && r.popEff.tier === '하위40%' ? ', 거래 드묾 +2%' : '') + ')') + '</div>' : '<span class="bb-sub">-</span>';
     var roomCell = r.roomPct == null ? '<span class="bb-sub">-</span>'
         : '<b style="color:' + (r.roomPct >= 0 ? '#2e7d32' : '#c62828') + ';">' + (r.roomPct >= 0 ? r.roomPct + '% 여유' : Math.abs(r.roomPct) + '% 부족') + '</b>'
           + '<div class="bb-sub">' + (r.roomPct >= 0 ? '최저가보다 ' + toEok(String(r.recBid - r.minBid)) + ' 더 써도 됨' : '한 번 더 떨어지면 다시 보기') + '</div>';
