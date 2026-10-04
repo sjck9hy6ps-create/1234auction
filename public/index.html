@@ -1375,6 +1375,7 @@ body.ui2 #bid-case-panel td, body.ui2 #surge-panel td, body.ui2 #panel-tab-aucti
             placeholder="검색결과 목록 화면을 통째로 복사해서 여기 붙여넣으세요"
             style="resize:vertical;width:100%;"></textarea>
         <div style="margin-top:6px;text-align:right;">
+            <label class="modal-btn btn-gray" style="cursor:pointer;margin-right:4px;" title="탱크옥션 검색결과 → 엑셀(CSV) 내려받기 파일. 여러 개를 한 번에 골라도 돼요">📄 탱크옥션 CSV 올리기<input type="file" multiple accept=".csv,text/csv" style="display:none;" onchange="onTankCsvFile(this,'bt')"></label>
             <button class="modal-btn btn-purple" id="bt-extract-btn" onclick="extractBidTargetList()">목록 일괄 추출</button>
         </div>
         <div id="bt-extract-status" style="font-size:11px;color:#999;margin-top:4px;"></div>
@@ -6486,7 +6487,7 @@ function readCsvFileText(file) {
 async function onTankCsvFile(input, target) {
     var files = Array.prototype.slice.call(input.files || []);
     if (!files.length) return;
-    var statusBox = document.getElementById(target === 'bx' ? 'bx-extract-status' : 'bc-extract-status');
+    var statusBox = document.getElementById(target === 'bx' ? 'bx-extract-status' : (target === 'bt' ? 'bt-extract-status' : 'bc-extract-status'));
     try {
         // 여러 파일을 한 번에(탱크옥션 내보내기는 파일당 100건) - 합치면서 같은 사건(사건번호+동+지번)은 하나만
         var res = { cases: [], skipped: 0 }, seen = {}, badFiles = 0, dup = 0;
@@ -6502,8 +6503,24 @@ async function onTankCsvFile(input, target) {
         var withBidders = res.cases.filter(function(c) { return c.bidders; }).length;
         var list = res.cases.map(function(c) { return Object.assign({ _selected: true }, c); });
         if (target === 'bx') { pendingBacktestExtraction = list; renderBacktestPreview(); }
+        else if (target === 'bt') {
+            // 2026-10(사용자 요청: 입찰예정물건도 CSV로 대량 등록) - 붙여넣기와 같은 흐름(미리보기 → 평형별 인기 확인 → 등록).
+            // 이미 등록된 물건은 등록 때 결과 반영(유찰·기일변경·매각)으로 처리되고, 새 물건인데 이미 매각·취하된 건 처음부터 선택 해제.
+            list.forEach(function(c) {
+                var st = String(c.status || '');
+                if (!findExistingBidTarget(c) && ((/매각/.test(st) && !/불허/.test(st)) || /취하|기각|정지|종결|각하|취소/.test(st))) c._selected = false;
+            });
+            pendingBidTargetExtraction = list; renderBidTargetPreview(); analyzeBidTargetPopularity();
+        }
         else { pendingCaseListExtraction = list; renderCaseListPreview(); }
         statusBox.style.color = '#2e7d32';
+        if (target === 'bt') {
+            var unsel = list.filter(function(c) { return !c._selected; }).length;
+            statusBox.innerText = '📄 CSV ' + files.length + '개 파일, ' + res.cases.length + '건 읽음'
+                + (unsel ? ' (이미 매각·취하된 새 물건 ' + unsel + '건은 선택 해제)' : '') + (dup ? ' · 파일 사이 중복 ' + dup + '건 제외' : '')
+                + (badFiles ? ' · 형식이 다른 파일 ' + badFiles + '개 건너뜀' : '') + ' - 아래에서 확인 후 등록하세요.';
+            return;
+        }
         statusBox.innerText = '📄 CSV ' + files.length + '개 파일, ' + res.cases.length + '건 읽음 (낙찰가 있음 ' + withBid + '건 · 입찰자수 있음 ' + withBidders + '건'
             + (dup ? ' · 파일 사이 중복 ' + dup + '건 제외' : '') + (badFiles ? ' · 형식이 다른 파일 ' + badFiles + '개 건너뜀' : '')
             + (res.skipped ? ' · 형식이 달라 건너뜀 ' + res.skipped + '건' : '') + ') - 아래에서 확인 후 등록하세요.';
