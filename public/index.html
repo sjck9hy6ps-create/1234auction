@@ -15538,6 +15538,37 @@ function livingAreaRank(dong, bunji, lat, lon) {
     livingRankCache[ck0] = res;
     return res;
 }
+// 🏢 같은 건물 대량 경매(2026-10, 대전 석봉동 353-33 등): 같은 건물(같은 동·지번)에서 입찰일 앞 6개월~뒤 2개월 사이 경매가
+// 몇 건 나왔는지 - 등록한 입찰물건 + 낙찰사례에서 셈(사건번호·호수 기준 중복 제거). 백테스트(지방 아파트 9,142건):
+//  10건 이상: 되판 값 ÷ 예상매도가 중간 0.93, 41%가 예상보다 10% 넘게 싸게 팔림, 앱 추천가 낙찰 시 손해 90%
+//  5건 이상 + 같은 단지 최근 거래가 적어 상한·주변 단지로 계산한 경우: 0.81, 68%, 손해 93% (1~2건은 1.00, 손해 57~61%)
+//  대전 이런 물건 81건: 0.68 · 손해 100% / 부산 435건: 0.81 · 손해 91%. 전세사기·부도 임대처럼 한 건물이 한꺼번에 경매로 나오면
+//  그 건물 예전 거래(분양가 등)가 더는 시세가 아니었음.
+var sameBldIdx = null, sameBldIdxSig = '';
+function sameBuildingAuctionCount(a, bunjiFull) {
+    var sig = (typeof auctionList !== 'undefined' ? auctionList.length : 0) + '|' + (typeof bidCaseList !== 'undefined' ? bidCaseList.length : 0);
+    if (!sameBldIdx || sig !== sameBldIdxSig) {
+        sameBldIdx = {}; sameBldIdxSig = sig;
+        var add = function(dong, bj, date, uniq) {
+            if (!dong || !bj || !/^\d{4}-\d\d-\d\d/.test(date || '')) return;
+            var k = dongKey(dong) + '|' + bj;
+            var o = sameBldIdx[k] = sameBldIdx[k] || { seen: {}, list: [] };
+            if (o.seen[uniq]) return; o.seen[uniq] = true;
+            o.list.push(new Date(String(date).slice(0, 10) + 'T00:00:00').getTime());
+        };
+        (typeof bidCaseList !== 'undefined' ? bidCaseList : []).forEach(function(c) {
+            add(c.dong, fullBunjiFromAddr(c.addrJibun, c.dong, c.bunji), c.saleDate, (c.caseNo || c.id) + '|' + (c.unitNo || c.floor || ''));
+        });
+        (typeof auctionList !== 'undefined' ? auctionList : []).forEach(function(x) {
+            if (x.isBacktest) return;
+            add(x.dong, fullBunjiFromAddr(x.addr, x.dong, x.bunji), x.bidDate, (x.caseNo || x.id) + '|' + (x.unitNo || x.floor || ''));
+        });
+    }
+    var o = sameBldIdx[dongKey(a.dong) + '|' + bunjiFull];
+    if (!o || !a.bidDate) return 0;
+    var t = new Date(String(a.bidDate).slice(0, 10) + 'T00:00:00').getTime(), D = 86400000;
+    return o.list.filter(function(x) { return x >= t - 180 * D && x <= t + 60 * D; }).length;
+}
 function computeBidBoardRow(a) {
     var type = (a.propType === 'apt' || a.propType === 'villa') ? a.propType : null;
     var lawd = bidBoardLawdOf(a);
@@ -15622,6 +15653,7 @@ function computeBidBoardRow(a) {
     row.liv = type === 'apt' ? livingAreaRank(a.dong, bunjiFull, a.lat, a.lon) : null;
     row.estBuildYear = est && est.inferredBuildYear || null;
     row.bunjiFull = bunjiFull;
+    row.bulkN = type === 'apt' ? sameBuildingAuctionCount(a, bunjiFull) : 0;
     return finalizeBidBoardRow(row);
 }
 /* 세금·마진·판정 단계(2026-10, 사용자 요청: "자산이 바뀌면 입찰가가 바로 바뀌어야 하는데 다시 계산하느라 로딩이 오래 걸림")
@@ -15709,7 +15741,7 @@ function aptSaleCapInfo(a, bunjiFull, pyung, st) {
 }
 function finalizeBidBoardRow(row) {
     var a = row.a, type = row.type, minBid = row.minBid, pyung = row.pyung;
-    row.reasons = []; row.warns = []; row.nextFail = null; row.overshoot = false; row.sweet = false; row.volDown = false; row.sturdy = false; row.hardHold = false; row.recBidRaw = null; row.recCapped = null; row.safetyExtra = null; row.safetyPct = null;
+    row.reasons = []; row.warns = []; row.nextFail = null; row.overshoot = false; row.bulk = false; row.sweet = false; row.volDown = false; row.sturdy = false; row.hardHold = false; row.recBidRaw = null; row.recCapped = null; row.safetyExtra = null; row.safetyPct = null;
     row.assetVer = myAssetsVer;
     // 목표마진: 모달에서 직접 정해 저장한 값이 있으면 그걸, 없으면 추천 목표마진
     var userMargin = parseInt(a.compTargetMargin);
@@ -15795,6 +15827,14 @@ function finalizeBidBoardRow(row) {
                 : '⚠️ 손해 주의: 계산상 최저가보다 많이 남아 보이는 물건이에요. 과거 이런 물건은 예상보다 싸게 팔린 경우가 많았어요. 같은 단지 최근 거래·호가를 꼭 확인하세요');
         }
         else if (osApt ? aptRich : true) row.sweet = true;
+        // 🏢 같은 건물 대량 경매 - 위 sameBuildingAuctionCount 주석의 백테스트 근거
+        row.bulk = !!(type === 'apt' && row.bulkN && (row.bulkN >= 10 || (row.bulkN >= 5 && !row.saleSimBy)));
+        if (row.bulk) {
+            ok = false; row.sweet = false; row.overshoot = true;
+            row.warns.push('🏢 같은 건물 대량 경매: 이 건물에서 최근 ' + row.bulkN + '건이 경매로 나왔어요 - 과거 이런 건물은 되판 값이 예상매도가보다 '
+                + (row.bulkN >= 10 ? '중간 7% 낮았고 41%가 10% 넘게 싸게 팔렸어요(낙찰자 90% 손해)' : '중간 19% 낮았고 68%가 10% 넘게 싸게 팔렸어요(낙찰자 93% 손해)')
+                + '. 전세사기·부도 임대 건물인지, 먼저 낙찰된 호실이 실제 얼마에 팔렸는지 꼭 확인하세요');
+        }
         // 2026-10 백테스트(지방 아파트 4,978건, 앱 추천가로 낙찰 시 수리 전): 단지 거래가 최근 6개월에 직전 6개월의 70% 미만으로 줄면
         // 순이익 중앙 −1,284만·손해 64%(비슷하면 +1,666만·26%) → 거래 감소 경고(추천→검토). 전세가율 80% 이상은 +1,993만·손해 3%·매도 3.4개월 → 🛡️ 버팀.
         var osx = row.ownStats;
@@ -15834,7 +15874,7 @@ function finalizeBidBoardRow(row) {
     // 근거(지방 아파트 백테스트, 2등 가격 있는 기회·버팀 503건): 2등에게 진 경우 필요한 인상폭 하위 10%가 +3.9% → +3%면 2등을 새로 이기는 34건, 실제 낙찰 22→42건.
     // 마진을 포기하고 높게 쓴 1등(2등보다 5% 이상 높게 쓴 경우가 28%)까지 쫓지는 않음.
     row.recAggr = null;
-    if ((row.opportunity || row.sturdy) && row.recBid && row.verdict !== 'no' && row.verdict !== 'nodata') {
+    if ((row.opportunity || row.sturdy) && !row.bulk && row.recBid && row.verdict !== 'no' && row.verdict !== 'nodata') {
         var solMin = solveAuctionBidFromRecord(Object.assign({}, a, { target: row.sale, compTargetMargin: MIN_MARGIN_MANWON,
             repair: parseInt(a.repair) || calcRepairFee(type, pyung || 0, a.buildYear || row.estBuildYear || null) || 0 }));
         var cap3 = Math.round(row.recBid * 1.03);
@@ -16085,7 +16125,7 @@ function overshootSaleFactor(type, ratio) {
 }
 var BOARD_CACHE_KEY = 'bidBoardCache:v1', BOARD_CACHE_MAX_AGE = 24 * 3600 * 1000;
 // 저장 계산을 다시 써도 되는지 - 물건 입력값(시세 계산에 쓰는 것)과 입찰일 지남 여부. 계산 방식이 바뀌면 BOARD_CALC_VER을 올림
-var BOARD_CALC_VER = 21;
+var BOARD_CALC_VER = 22;
 function boardBaseSig(a) {
     var d = a.bidDate ? calcAuctionDday(a.bidDate) : null;
     return [BOARD_CALC_VER, auctionWonEstSignature(a), a.minBid, a.appraisal, a.bidDate, a.court, a.failCount, a.landType, String(a.memo || '').length,
@@ -16273,6 +16313,7 @@ function renderBidBoardRow(r) {
             + (r.volDown ? '<div style="margin-top:3px;"><span class="bb-pill" style="background:#fef2f2;color:#b91c1c;border:1px solid #fca5a5;">📉 거래 감소</span></div>' : '')
             + (r.hardHold ? '<div style="margin-top:3px;"><span class="bb-pill" style="background:#fffbeb;color:#92400e;border:1px solid #fcd34d;" title="전세가율 ' + Math.round(r.ownStats.jeonse.ratio * 100) + '% - 안 팔리면 전세로 회수가 적어 버티기 어려움(과거 손해 45%, 매도 5.9개월)">⏳ 버티기 어려움 ' + Math.round(r.ownStats.jeonse.ratio * 100) + '%</span></div>' : '')
             + (r.sweet ? '<div style="margin-top:3px;"><span class="bb-pill" style="background:#e8f5e9;color:#2e7d32;border:1px solid #81c784;" title="추천가가 최저가 +15%(빌라 +30%) 미만 - 과거 낙찰사례 검증에서 이 구간에 앱 추천가로 입찰했을 때 손해가 적었음">👍 입찰 추천 구간</span></div>' : '')
+            + (r.bulk ? '<div style="margin-top:3px;"><span class="bb-pill" style="background:#fee2e2;color:#b91c1c;border:1px solid #fca5a5;" title="같은 건물에서 ' + r.bulkN + '건이 한꺼번에 경매로 나옴 - 과거 이런 건물은 예상보다 싸게 팔렸어요">🏢 대량 경매 ' + r.bulkN + '건</span></div>' : '')
             + (r.overshoot ? '<div style="margin-top:3px;"><span class="bb-pill" style="background:#fff3e0;color:#e65100;border:1px solid #ffb74d;" title="아파트: 이 단지 같은 평형 거래가 최근 1년 없거나 마지막 거래가 6개월 넘음 - 예상매도가 근거가 약해 과거 절반이 예상보다 10% 넘게 싸게 팔림. 빌라: 추천가가 최저가 +30% 이상">⚠️ 손해 주의</span></div>' : '')
             + (r.niche ? '<div style="margin-top:3px;"><span class="bb-pill" style="background:#e0f2f1;color:#00695c;border:1px solid #4db6ac;" title="' + bbEsc(r.niche.why.join(' · ')) + '">🧭 틈새' + (r.niche.score >= 2 ? ' ' + '★'.repeat(Math.min(3, r.niche.score - 1)) : '') + '</span></div>' : '')
             + (bidBoardState.prevVerdicts[r.id] && bidBoardState.prevVerdicts[r.id] !== r.verdict ? '<div class="bb-sub">이전 ' + BID_BOARD_VERDICT[bidBoardState.prevVerdicts[r.id]].label + ' → 바뀜</div>' : '') + '</td>'
@@ -16395,7 +16436,7 @@ async function renderBidDrawer() {
     var h = '<div class="dr-h"><h3>' + bbEsc(row.name) + '</h3><button class="dr-x" onclick="closeBidDrawer()">✕</button></div>'
         + '<div class="dr-sub">' + bbEsc(row.region) + ' · ' + (row.pyung ? row.pyung + '평 · ' : '') + (row.floor ? row.floor + '층 · ' : '') + bbEsc(a.caseNo || '') + (row.dday ? ' · <b>' + row.dday.label + '</b> (' + bbEsc(a.bidDate) + ')' : '') + '</div>'
         + '<div style="margin-top:6px;"><span class="bb-verdict" style="color:' + v.color + ';background:' + v.bg + ';">' + v.label + '</span>'
-        + (row.sweet ? ' <span class="bb-pill" style="background:#e8f5e9;color:#2e7d32;">👍 입찰 추천 구간</span>' : '') + (row.overshoot ? ' <span class="bb-pill" style="background:#fff3e0;color:#e65100;">⚠️ 손해 주의</span>' : '')
+        + (row.sweet ? ' <span class="bb-pill" style="background:#e8f5e9;color:#2e7d32;">👍 입찰 추천 구간</span>' : '') + (row.overshoot ? ' <span class="bb-pill" style="background:#fff3e0;color:#e65100;">⚠️ 손해 주의</span>' : '') + (row.bulk ? ' <span class="bb-pill" style="background:#fee2e2;color:#b91c1c;">🏢 대량 경매 ' + row.bulkN + '건</span>' : '')
         + (row.niche ? ' <span class="bb-pill" style="background:#e0f2f1;color:#00695c;">🧭 틈새</span>' : '') + (row.sturdy ? ' <span class="bb-pill" style="background:#ecfeff;color:#0e7490;">🛡️ 버팀 ' + Math.round(row.ownStats.jeonse.ratio * 100) + '%</span>' : '') + (row.hardHold ? ' <span class="bb-pill" style="background:#fffbeb;color:#92400e;">⏳ 버티기 어려움 ' + Math.round(row.ownStats.jeonse.ratio * 100) + '%</span>' : '') + (row.opportunity ? ' <span class="bb-pill" style="background:#fff8e1;color:#e65100;">🎯 기회</span>' : '') + '</div>'
         + '<div class="dr-big"><div><span>예상매도가</span><b>' + fmt(row.sale) + '</b></div><div><span>추천 입찰가</span><b style="color:#16a34a;">' + fmt(row.recBid) + '</b>' + (row.recAggr ? '<span style="color:#7c3aed;margin-top:2px;">적극 ' + fmt(row.recAggr) + '</span>' : '') + '</div><div><span>최저가</span><b>' + fmt(row.minBid) + '</b></div></div>';
     // 근거
