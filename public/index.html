@@ -7197,6 +7197,13 @@ function bidTargetDedupKey(c) {
 // result[0] 폴백).
 function pickBestGeocodeResult(list, addrText) {
     if (!list || !list.length) return null;
+    // 2026-10(대전 낙찰사례 343건 좌표 오류): "대흥동 22-7"처럼 같은 동 이름이 다른 시도에도 있으면 엉뚱한 도시(서울 마포 대흥동)
+    // 좌표가 잡혀 주변 비교 단지를 그 도시에서 가져왔음(대전 현대아파트 예상 11억 vs 실제 2억). 주소 첫 단어(시도)와 같은 결과를 우선.
+    var sd = String(addrText || '').trim().split(/\s+/)[0].slice(0, 2);
+    if (sd && !/^\d/.test(sd)) {
+        var same = list.filter(function(r) { var n = String(r.address_name || ''); return n.slice(0, 2) === sd || ((sd === '광주' || sd === '전남' || sd === '전라') && /^전남광주/.test(n)); });
+        if (same.length) list = same;
+    }
     var m = /(\d+)\s*-\s*(\d+)/.exec(addrText || '');
     if (m) {
         var expectedMain = m[1], expectedSub = m[2];
@@ -13376,7 +13383,9 @@ function computeAuctionWonCandidates(a) {
     // ⚠️ 2026-09(본오동 844-5 사례): a.buildYear가 없을 때 곧장 null로 넘기면 findSimilarComps의
     // 연식±3년 필터가 아예 안 걸려 엉뚱한 연식대 건물이 섞여 들어옴 - resolveOwnBuildYear로
     // 그 주소 자체의 건물 연식을 먼저 확인함(위 getAuctionBuildYear 주석 참고).
-    var targetYear = a.buildYear || resolveOwnBuildYear(a.name, a.dong, a.bunji) || null;
+    // 2026-10: CSV 물건은 이름이 비어 있고 지번이 "22"처럼 본번만인 경우가 있어 자기 단지를 못 찾았음 - 주소의 전체 지번·건물명으로도 찾음
+    var targetYear = a.buildYear || resolveOwnBuildYear(a.name, a.dong, a.bunji)
+        || resolveOwnBuildYear(a.name || buildingNameFromAddr(a.addr, a.dong), a.dong, fullBunjiFromAddr(a.addr, a.dong, a.bunji)) || null;
     var candidates = findSimilarComps(a.lat, a.lon, targetYear, floor, pyung, buildingType, a.name, a.dong, a.bunji, buildingType === 'villa' ? 500 : 2000);
     return { buildingType: buildingType, pyung: pyung, floor: floor, candidates: candidates, targetYear: targetYear };
 }
@@ -13466,7 +13475,7 @@ function getAuctionWonEstimates(a) {
     // ⚠️ 2026-09(본오동 844-5 사례): a.buildYear가 없을 때 곧장 "비교물건 중앙값"으로
     // 넘어가기 전에, 그 주소 자체의 건물이 allAptList에 이미 있는지 먼저 확인함 - 있으면
     // 훨씬 정확함(위 resolveOwnBuildYear/getAuctionBuildYear 주석 참고).
-    var inferredBuildYear = a.buildYear || resolveOwnBuildYear(a.name, a.dong, a.bunji) || computeBidCaseInferredBuildYear(cands);
+    var inferredBuildYear = a.buildYear || (cands && cands.targetYear) || resolveOwnBuildYear(a.name, a.dong, a.bunji) || computeBidCaseInferredBuildYear(cands);
     var result = {
         sig: sig,
         predictedSale: savedTarget > 0 ? savedTarget : computeAuctionWonPredictedSale(cands, a),
@@ -16076,7 +16085,7 @@ function overshootSaleFactor(type, ratio) {
 }
 var BOARD_CACHE_KEY = 'bidBoardCache:v1', BOARD_CACHE_MAX_AGE = 24 * 3600 * 1000;
 // 저장 계산을 다시 써도 되는지 - 물건 입력값(시세 계산에 쓰는 것)과 입찰일 지남 여부. 계산 방식이 바뀌면 BOARD_CALC_VER을 올림
-var BOARD_CALC_VER = 20;
+var BOARD_CALC_VER = 21;
 function boardBaseSig(a) {
     var d = a.bidDate ? calcAuctionDday(a.bidDate) : null;
     return [BOARD_CALC_VER, auctionWonEstSignature(a), a.minBid, a.appraisal, a.bidDate, a.court, a.failCount, a.landType, String(a.memo || '').length,
@@ -16398,7 +16407,8 @@ async function renderBidDrawer() {
         + (row.ownStats && row.ownStats.jeonse ? ' · 전세가율 ' + Math.round(row.ownStats.jeonse.ratio * 100) + '%' : '') + '</div>';
     else if (row.type === 'apt' && !(a.households) && !a.householdsTried && !row._hhLoading) {  // 세대수를 못 찾으면 다시 묻지 않음(못 찾을 때마다 다시 그려 입력·닫기가 막히던 문제)
         row._hhLoading = true;
-        fetchHouseholdsFor(a).then(function(hh) { row._hhLoading = false; a.householdsTried = true; if (hh) { a.households = hh; saveAuctionAPI(a).catch(function() {}); } if (bidDrawerId === row.id) renderBidDrawer(); });
+        var hadY = a.buildYear;
+        fetchHouseholdsFor(a).then(function(hh) { row._hhLoading = false; a.householdsTried = true; a.buildYearTried = true; if (hh) a.households = hh; if (hh || (a.buildYear && !hadY)) saveAuctionAPI(a).catch(function() {}); if (bidDrawerId === row.id) renderBidDrawer(); });
         h += '<div class="dr-sub">회전율: 세대수 불러오는 중…</div>';
     }
     if (row.recAggr) h += '<div class="dr-sub" style="color:#7c3aed;">적극 입찰가 ' + fmt(row.recAggr) + ': 마진 포기한 1등은 쫓지 않고, 2등과 아깝게 지는 경우까지만 잡는 가격(추천가 +3% 한도, 마진 1,000만 이상). 과거 기회·버팀 물건에서 실제 낙찰 약 2배</div>';
@@ -16547,6 +16557,10 @@ async function fetchHouseholdsFor(a) {
         var url = '/api/get-building?sigunguCd=' + parts.sigunguCd + '&bjdongCd=' + parts.bjdongCd + '&bun=' + bj.bun + '&ji=' + bj.ji + '&bldNm=' + encodeURIComponent(a.name || '');
         var info = await Promise.race([fetch(url).then(function(r) { return r.json(); }), new Promise(function(res) { setTimeout(function() { res(null); }, 12000); })]);
         var t = info && info.title;
+        // 2026-10(사용자: "연식은 API로 자동 수집됐어야 하는데") - 같은 건축물대장 응답에 사용승인일이 있는데 버리고 있었음.
+        // CSV로 대량 등록한 물건은 연식 조회를 안 거쳐 절반(201건 중 101건)이 연식 없이 계산됐음 → 여기서 함께 채움.
+        var ym = t && String(t.useAprDay || (t.site && t.site.useAprDay) || '').match(/(\d{4})/);
+        if (ym && !a.buildYear) { var y = parseInt(ym[1], 10); if (y > 1950 && y <= new Date().getFullYear()) { a.buildYear = y; a.buildYearSource = '건축물대장'; } }
         var hh = t && ((t.site && t.site.hhldCnt) || t.hhldCnt);
         return hh > 0 ? parseInt(hh) : null;
     } catch (e) { return null; }
@@ -16562,13 +16576,16 @@ var householdFillRunning = false;
 async function fillHouseholdsInBackground() {
     if (householdFillRunning) return; householdFillRunning = true;
     try {
-        var todo = bidBoardRows.filter(function(r) { return r.type === 'apt' && r.a && !r.a.households && !r.a.householdsTried && r.a.bCode && r.verdict !== 'nodata'; });
+        var todo = bidBoardRows.filter(function(r) { return r.type === 'apt' && r.a && r.a.bCode && ((!r.a.households && !r.a.householdsTried) || (!r.a.buildYear && !r.a.buildYearTried)); });
         for (var i = 0; i < todo.length; i++) {
             if (document.getElementById('bid-board').style.display !== 'flex') break;
             var a = todo[i].a;
+            var hadYear = a.buildYear;
             var hh = await fetchHouseholdsFor(a);
-            a.householdsTried = true;
-            if (hh) { a.households = hh; try { await saveAuctionAPI(a); } catch (e) {} }
+            a.householdsTried = true; a.buildYearTried = true;
+            if (hh) a.households = hh;
+            if (hh || (a.buildYear && !hadYear)) { try { await saveAuctionAPI(a); } catch (e) {} }
+            if (a.buildYear && !hadYear) { try { bidBoardRows = bidBoardRows.map(function(r) { return r.a === a ? computeBidBoardRow(a) : r; }); } catch (e) {} }
             if (i % 10 === 9) renderBidBoard();
             await new Promise(function(r) { setTimeout(r, 1200); });
         }
