@@ -16257,28 +16257,41 @@ function renderBidBoardRow(r) {
         + '</tr>';
 }
 /* ════ 2026-10 UI 개편: 입찰후보 = 첫 화면, 요약 칩 한 번 누르면 걸러짐, 물건 누르면 오른쪽 상세(근거 거래·비용·인수금액 입력) ════ */
+// 2026-10(사용자: "중복 선택 가능하게") - 칩을 여러 개 고를 수 있음. 같은 묶음 안에서는 "또는", 다른 묶음끼리는 "그리고"
+// (예: 🎯 기회 + 👍 입찰 추천 구간 → 둘 중 하나, 거기에 ⏰ 7일 이내까지 고르면 그중 7일 이내만)
 var BB_CHIPS = [
     { k: 'all', label: '전체', f: function() { return true; } },
-    { k: 'opp', label: '🎯 기회', f: function(r) { return !!r.opportunity; } },
-    { k: 'sweet', label: '👍 입찰 추천 구간', f: function(r) { return r.sweet && r.verdict !== 'no'; } },
-    { k: 'yes', label: '✅ 추천 판정', f: function(r) { return r.verdict === 'yes'; } },
-    { k: 'soon', label: '⏰ 7일 이내', f: function(r) { return r.dday && r.dday.diffDays >= 0 && r.dday.diffDays <= 7 && r.verdict !== 'no'; } },
-    { k: 'sturdy', label: '🛡️ 버팀(전세가율 80%+)', f: function(r) { return !!r.sturdy && r.verdict !== 'no'; } },
-    { k: 'caution', label: '⚠️ 손해 주의', f: function(r) { return !!r.overshoot; } },
-    { k: 'voldown', label: '📉 거래 감소', f: function(r) { return !!r.volDown; } },
-    { k: 'check', label: '🟡 검토', f: function(r) { return r.verdict === 'check'; } },
-    { k: 'no', label: '❌ 제외', f: function(r) { return r.verdict === 'no'; } }
+    { k: 'opp', g: 'sig', label: '🎯 기회', f: function(r) { return !!r.opportunity; } },
+    { k: 'sweet', g: 'sig', label: '👍 입찰 추천 구간', f: function(r) { return r.sweet && r.verdict !== 'no'; } },
+    { k: 'yes', g: 'verdict', label: '✅ 추천 판정', f: function(r) { return r.verdict === 'yes'; } },
+    { k: 'soon', g: 'time', label: '⏰ 7일 이내', f: function(r) { return r.dday && r.dday.diffDays >= 0 && r.dday.diffDays <= 7 && r.verdict !== 'no'; } },
+    { k: 'sturdy', g: 'sig', label: '🛡️ 버팀(전세가율 80%+)', f: function(r) { return !!r.sturdy && r.verdict !== 'no'; } },
+    { k: 'caution', g: 'risk', label: '⚠️ 손해 주의', f: function(r) { return !!r.overshoot; } },
+    { k: 'voldown', g: 'risk', label: '📉 거래 감소', f: function(r) { return !!r.volDown; } },
+    { k: 'check', g: 'verdict', label: '🟡 검토', f: function(r) { return r.verdict === 'check'; } },
+    { k: 'no', g: 'verdict', label: '❌ 제외', f: function(r) { return r.verdict === 'no'; } }
 ];
+function bbSelChips() { return bidBoardState.chips || (bidBoardState.chips = {}); }
+function toggleBbChip(k) {
+    var sel = bbSelChips();
+    if (k === 'all') bidBoardState.chips = {};
+    else if (sel[k]) delete sel[k]; else sel[k] = true;
+    renderBidBoard();
+}
 function renderBidBoardChips(base) {
     var el = document.getElementById('bb-chips'); if (!el) return;
-    var cur = bidBoardState.chip || 'all';
+    var sel = bbSelChips(), any = Object.keys(sel).length > 0;
     el.innerHTML = BB_CHIPS.map(function(c) {
-        var n = base.filter(c.f).length;
-        if (!n && c.k !== 'all' && c.k !== cur) return '';
-        return '<span class="chip' + (cur === c.k ? ' on' : '') + '" onclick="bidBoardState.chip=\'' + c.k + '\';renderBidBoard()">' + c.label + '<b>' + n + '</b></span>';
-    }).join('');
+        var n = base.filter(c.f).length, on = c.k === 'all' ? !any : !!sel[c.k];
+        if (!n && c.k !== 'all' && !on) return '';
+        return '<span class="chip' + (on ? ' on' : '') + '" onclick="toggleBbChip(\'' + c.k + '\')">' + (on && c.k !== 'all' ? '✓ ' : '') + c.label + '<b>' + n + '</b></span>';
+    }).join('') + (any ? '<span class="chip" style="border-style:dashed;" onclick="toggleBbChip(\'all\')">선택 해제</span>' : '');
 }
-function bidBoardChipFilter(r) { var c = BB_CHIPS.filter(function(x) { return x.k === (bidBoardState.chip || 'all'); })[0]; return c ? c.f(r) : true; }
+function bidBoardChipFilter(r) {
+    var sel = bbSelChips(), groups = {};
+    BB_CHIPS.forEach(function(c) { if (sel[c.k]) (groups[c.g] = groups[c.g] || []).push(c); });
+    return Object.keys(groups).every(function(g) { return groups[g].some(function(c) { return c.f(r); }); });
+}
 // ── 상세 창 ──
 var bidDrawerId = null;
 function openBidDrawer(id) { bidDrawerId = id; document.getElementById('bid-board').classList.add('with-drawer'); renderBidDrawer(); renderBidBoard(); }
@@ -16412,7 +16425,8 @@ async function onBoardCsvFile(input) {
 }
 // ── 앱을 열면 입찰후보부터 ──
 function setHomeBoardPref(on) { try { localStorage.setItem('homeView', on ? 'board' : 'map'); } catch (e) {} }
-function homeBoardPref() { try { return localStorage.getItem('homeView') !== 'map'; } catch (e) { return true; } }
+// 2026-10(사용자: "지도를 먼저 보는 기존 화면이 더 좋아") - 기본은 지도, 더보기에서 켠 경우만 입찰후보부터
+function homeBoardPref() { try { return localStorage.getItem('homeView') === 'board'; } catch (e) { return false; } }
 (function() {
     var orig = fetchAuctions, opened = false;
     fetchAuctions = async function() {
