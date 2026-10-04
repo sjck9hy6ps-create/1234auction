@@ -549,6 +549,12 @@ tr:hover td { background:#fffde7; }
 #bid-board.with-drawer .bb-table th:nth-child(10), #bid-board.with-drawer .bb-table td:nth-child(10),
 #bid-board.with-drawer .bb-table th:nth-child(11), #bid-board.with-drawer .bb-table td:nth-child(11) { display:none; }
 #bid-board.with-drawer .bb-notes { display:none; }
+/* 2026-10(사용자: "물건을 클릭하면 상세페이지 → 내용 확인 후 지도") - 상세는 목록 옆 좁은 창이 아니라 한 화면 전체로 */
+#bid-board.with-drawer .bb-head, #bid-board.with-drawer #bb-body { display:none; }
+#bid-board.with-drawer #bb-drawer { width:auto; flex:1; border-left:none; padding:16px max(16px, calc((100% - 820px) / 2)) 40px; }
+#bb-drawer .dr-top { display:flex; align-items:center; gap:8px; position:sticky; top:-16px; background:#fff; padding:10px 0 10px; margin:-6px 0 8px; z-index:2; border-bottom:1px solid #f1f3f5; }
+#bb-drawer .dr-top .dr-back { border:none; background:#f3f4f6; border-radius:16px; padding:7px 13px; font-size:13px; font-weight:700; cursor:pointer; }
+#bb-drawer .dr-top .dr-map { margin-left:auto; border:none; background:var(--ui-blue,#1e5eff); color:#fff; border-radius:16px; padding:7px 15px; font-size:13px; font-weight:700; cursor:pointer; }
 @media (max-width: 900px) { #bb-drawer { position:fixed; inset:52px 0 0 0; width:auto; z-index:80; } }
 #bid-board .bb-title { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
 #bid-board .bb-title h2 { font-size:16px; margin:0; }
@@ -16318,7 +16324,7 @@ function renderBidBoardRow(r) {
             + (r.niche ? '<div style="margin-top:3px;"><span class="bb-pill" style="background:#e0f2f1;color:#00695c;border:1px solid #4db6ac;" title="' + bbEsc(r.niche.why.join(' · ')) + '">🧭 틈새' + (r.niche.score >= 2 ? ' ' + '★'.repeat(Math.min(3, r.niche.score - 1)) : '') + '</span></div>' : '')
             + (bidBoardState.prevVerdicts[r.id] && bidBoardState.prevVerdicts[r.id] !== r.verdict ? '<div class="bb-sub">이전 ' + BID_BOARD_VERDICT[bidBoardState.prevVerdicts[r.id]].label + ' → 바뀜</div>' : '') + '</td>'
         + '<td data-l="입찰일">' + dd + '</td>'
-        + '<td data-l="물건" class="bb-name"><b>' + bbEsc(r.name) + '</b> <span title="지도에서 보기" style="cursor:pointer;" onclick="event.stopPropagation();bidBoardGo(\'' + idJs + '\')">🗺️</span>' + (bidBoardState.highlight[r.id] ? ' <span class="bb-pill new">새로 등록</span>' : '') + (bidBoardState.updated[r.id] ? ' <span class="bb-pill new">결과 반영</span>' : '')
+        + '<td data-l="물건" class="bb-name"><b>' + bbEsc(r.name) + '</b> ' + (bidBoardState.highlight[r.id] ? ' <span class="bb-pill new">새로 등록</span>' : '') + (bidBoardState.updated[r.id] ? ' <span class="bb-pill new">결과 반영</span>' : '')
             + '<div class="bb-sub">' + bbEsc(r.region) + (sub ? ' · ' + bbEsc(sub) : '') + (a.caseNo ? ' · ' + bbEsc(a.caseNo) : '') + '</div>'
             + (notes ? '<div class="bb-notes">' + notes + '</div>' : '') + '</td>'
         + '<td data-l="거래량 순위">' + popCell + '</td>'
@@ -16331,7 +16337,7 @@ function renderBidBoardRow(r) {
         + '<td data-l="최저가 대비" class="r">' + roomCell + '</td>'
         + '<td data-l="지역 위험">' + riskCell + '</td>'
         + '<td data-l="대장 따라잡기">' + cuCell + '</td>'
-        + '<td class="bb-act"><button onclick="event.stopPropagation();bidBoardGo(\'' + idJs + '\')" title="지도에서 이 물건 위치 보기">🗺️ 지도</button> <button onclick="event.stopPropagation();closeBidBoard();openAuctionModal(\'' + idJs + '\')">상세</button></td>'
+        + '<td class="bb-act"><button onclick="event.stopPropagation();openBidDrawer(\'' + idJs + '\')">상세 ›</button></td>'
         + '</tr>';
 }
 /* ════ 2026-10 UI 개편: 입찰후보 = 첫 화면, 요약 칩 한 번 누르면 걸러짐, 물건 누르면 오른쪽 상세(근거 거래·비용·인수금액 입력) ════ */
@@ -16373,8 +16379,16 @@ function bidBoardChipFilter(r) {
 }
 // ── 상세 창 ──
 var bidDrawerId = null;
-function openBidDrawer(id) { bidDrawerId = id; document.getElementById('bid-board').classList.add('with-drawer'); renderBidDrawer(); renderBidBoard(); }
-function closeBidDrawer() { bidDrawerId = null; document.getElementById('bid-board').classList.remove('with-drawer'); var d = document.getElementById('bb-drawer'); if (d) d.style.display = 'none'; renderBidBoard(); }
+var bidBoardListScroll = 0;
+function openBidDrawer(id) {
+    var body = document.getElementById('bb-body'); if (body && !bidDrawerId) bidBoardListScroll = body.scrollTop;
+    bidDrawerId = id; document.getElementById('bid-board').classList.add('with-drawer'); renderBidDrawer(); renderBidBoard();
+    var d = document.getElementById('bb-drawer'); if (d) d.scrollTop = 0;
+}
+function closeBidDrawer() {
+    bidDrawerId = null; document.getElementById('bid-board').classList.remove('with-drawer'); var d = document.getElementById('bb-drawer'); if (d) d.style.display = 'none'; renderBidBoard();
+    var body = document.getElementById('bb-body'); if (body) body.scrollTop = bidBoardListScroll; // 목록으로 돌아오면 보던 위치 그대로
+}
 function bidCostLines(row) {
     var a = row.a, type = row.type, sale = row.sale, bid = row.recBid;
     if (!sale || !bid) return null;
@@ -16433,7 +16447,8 @@ async function renderBidDrawer() {
     var cl = bidCostLines(row);
     var tr = (row.type === 'apt' || row.type === 'villa') ? drawerTrades(row) : [];
     var fmt = function(x) { return x ? toEok(String(Math.round(x))) : '-'; };
-    var h = '<div class="dr-h"><h3>' + bbEsc(row.name) + '</h3><button class="dr-x" onclick="closeBidDrawer()">✕</button></div>'
+    var h = '<div class="dr-top"><button class="dr-back" onclick="closeBidDrawer()">◀ 목록</button><button class="dr-map" onclick="bidBoardGo(\'' + idJs + '\')">🗺️ 지도에서 보기</button></div>'
+        + '<div class="dr-h"><h3>' + bbEsc(row.name) + '</h3></div>'
         + '<div class="dr-sub">' + bbEsc(row.region) + ' · ' + (row.pyung ? row.pyung + '평 · ' : '') + (row.floor ? row.floor + '층 · ' : '') + bbEsc(a.caseNo || '') + (row.dday ? ' · <b>' + row.dday.label + '</b> (' + bbEsc(a.bidDate) + ')' : '') + '</div>'
         + '<div style="margin-top:6px;"><span class="bb-verdict" style="color:' + v.color + ';background:' + v.bg + ';">' + v.label + '</span>'
         + (row.sweet ? ' <span class="bb-pill" style="background:#e8f5e9;color:#2e7d32;">👍 입찰 추천 구간</span>' : '') + (row.overshoot ? ' <span class="bb-pill" style="background:#fff3e0;color:#e65100;">⚠️ 손해 주의</span>' : '') + (row.bulk ? ' <span class="bb-pill" style="background:#fee2e2;color:#b91c1c;">🏢 대량 경매 ' + row.bulkN + '건</span>' : '')
@@ -16476,7 +16491,7 @@ async function renderBidDrawer() {
         + '<label>미납 관리비 (공용부분)</label><input type="number" value="' + (parseInt(a.unpaidMgmtFee) || '') + '" placeholder="0" onchange="updateDrawerField(\'' + idJs + '\',\'unpaidMgmtFee\',this.value)">'
         + '<label>수리비 (비우면 연식 기준 ' + (cl ? toEok(String(cl.repairAuto)) : '-') + ')</label><input type="number" value="' + (parseInt(a.repair) || '') + '" placeholder="자동" onchange="updateDrawerField(\'' + idJs + '\',\'repair\',this.value)">'
         + '</div></div>';
-    h += '<div class="dr-sec dr-btns"><button onclick="bidBoardGo(\'' + idJs + '\')">🗺️ 지도에서 보기</button><button onclick="closeBidBoard();openAuctionModal(\'' + idJs + '\')">📝 전체 상세</button>'
+    h += '<div class="dr-sec dr-btns"><button onclick="bidBoardGo(\'' + idJs + '\')">🗺️ 지도에서 보기</button><button onclick="closeBidBoard();openAuctionModal(\'' + idJs + '\')">📝 수정·전체 계산</button>'
         + (a.caseNo ? '<button onclick="copyAuctionCaseNo(\'' + String(a.caseNo).replace(/'/g, "\\'") + '\')">📋 사건번호 복사·법원경매</button>' : '') + '</div>';
     d.innerHTML = h;
 }
@@ -16637,15 +16652,17 @@ async function fillHouseholdsInBackground() {
 function bidBoardGo(id) {
     closeBidBoard();
     panToAuction(id);
+    // 지도에서 이 단지의 실거래·경매 정보 창까지 바로 열어 줌(배지를 눌렀을 때와 같은 화면)
+    setTimeout(function() { try { var a = auctionList.find(function(x) { return x.id === id; }); if (a && findMatchedApt(a)) openMatchedApt(id); } catch (e) {} }, 400);
     // 2026-10(사용자: "입찰후보에서 지도로 이동") - 지도로 간 뒤 한 번에 돌아올 수 있게 떠 있는 버튼
     var b = document.getElementById('bb-return-btn');
     if (!b) {
         b = document.createElement('button'); b.id = 'bb-return-btn';
         b.style.cssText = 'position:fixed;left:50%;bottom:24px;transform:translateX(-50%);z-index:60;border:none;background:#111827;color:#fff;border-radius:22px;padding:10px 18px;font-size:13px;font-weight:700;box-shadow:0 4px 14px rgba(0,0,0,0.25);cursor:pointer;';
-        b.innerText = '◀ 입찰후보로 돌아가기';
         b.onclick = function() { b.style.display = 'none'; document.getElementById('bid-board').style.display = 'flex'; if (bidDrawerId) renderBidDrawer(); };
         document.body.appendChild(b);
     }
+    b.innerText = bidDrawerId ? '◀ 상세로 돌아가기' : '◀ 입찰후보로 돌아가기';
     b.style.display = '';
 }
 /* ════ 📈 시장 사이클 패널 (2026-10, 사용자 요청: "과거 자료로 상승기·하락기를 파악해 지금 5년 주기 중 어디쯤인지,
