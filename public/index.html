@@ -940,6 +940,8 @@ body.ui2 .panel-tab-btn.active { background:#111; color:#fff; }
 <style>
 /* ════ 2026-10 세부 화면 공통 개편 ════ */
 details.ui-info { margin:2px 0; }
+.ui5-fold { background:#fff; margin:8px; border-radius:12px; padding:0 12px; }
+.ui5-fold > summary { font-size:13px; }
 details.ui-info > summary { list-style:none; cursor:pointer; color:#9aa0a6; font-size:11px; display:inline-block; padding:1px 6px; border-radius:8px; background:#f3f4f6; }
 details.ui-info > summary::-webkit-details-marker { display:none; }
 details.ui-info[open] > summary { margin-bottom:4px; }
@@ -21301,6 +21303,46 @@ function renderAuctionSummaryCard(a) {
         return r;
     };
 })();
+// 낙찰사례 패널: 추가(붙여넣기·CSV)와 관리 도구는 접고, 맨 위엔 요약 숫자 카드
+function setupBidCasePanelLayout() {
+    var p = document.getElementById('bid-case-panel');
+    if (!p || p.dataset.ui5) return;
+    p.dataset.ui5 = '1';
+    var imp = document.getElementById('bc-paste-text') && document.getElementById('bc-paste-text').parentElement;
+    var tools = document.getElementById('bc-match-btn') && document.getElementById('bc-match-btn').closest('div');
+    var wrap = function(el, title) {
+        if (!el) return null;
+        var d = document.createElement('details'); d.className = 'pn-det ui5-fold';
+        d.innerHTML = '<summary>' + title + '</summary>';
+        el.parentNode.insertBefore(d, el); d.appendChild(el);
+        return d;
+    };
+    wrap(imp, '＋ 낙찰사례 추가 (붙여넣기 · CSV)');
+    wrap(tools, '🛠 관리 도구 (매도사례 매칭 · 중복 정리 · 연식 조회)');
+    var sum = document.createElement('div'); sum.id = 'bc-summary'; sum.className = 'pn-card'; sum.style.margin = '8px';
+    var hdr = p.querySelector('.auction-list-header'); hdr.after(sum);
+    renderBidCaseSummary();
+}
+function renderBidCaseSummary() {
+    var box = document.getElementById('bc-summary');
+    if (!box || typeof bidCaseList === 'undefined') return;
+    var n = bidCaseList.length, sold = 0, bid = 0, res = 0, reg = {};
+    bidCaseList.forEach(function(c) {
+        if (c.finalBidPrice) sold++;
+        if (c.bidders) bid++;
+        if (c.resaleMatch && c.resaleMatch.amount) res++;
+        var t = String(c.addrJibun || '').split(/\s+/); if (t[0]) reg[bbSidoKey(c.addrJibun).sido] = (reg[bbSidoKey(c.addrJibun).sido] || 0) + 1;
+    });
+    var st = function(k, v) { return '<div class="pn-stat"><div class="k">' + k + '</div><div class="v">' + v + '</div></div>'; };
+    var top = Object.keys(reg).sort(function(a, b) { return reg[b] - reg[a]; }).slice(0, 6);
+    box.innerHTML = '<div class="pn-stats" style="margin-top:0;border-top:none;padding-top:0;">' + st('낙찰사례', n.toLocaleString() + '건') + st('낙찰가 있음', sold.toLocaleString()) + st('재매도 확인', res.toLocaleString()) + '</div>'
+        + '<div class="am-legend" style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px;">' + top.map(function(k) { return '<span class="pn-pill" style="background:#f3f4f6;color:#374151;">' + k + ' ' + reg[k].toLocaleString() + '</span>'; }).join('') + '</div>';
+}
+(function hookBidCasePanel() {
+    var orig = window.openBidCasePanel;
+    if (typeof orig !== 'function') return;
+    window.openBidCasePanel = function() { setupBidCasePanelLayout(); var r = orig.apply(this, arguments); renderBidCaseSummary(); ui5Schedule(); return r; };
+})();
 window.addEventListener('load', function() {
     setTimeout(function() {
         try {
@@ -21308,7 +21350,8 @@ window.addEventListener('load', function() {
             var mo = new MutationObserver(function() { ui5Schedule(); });
             var watched = {};
             var watchAll = function() {
-                UI5_TARGETS.forEach(function(id) { var el = document.getElementById(id); if (el && !watched[id]) { watched[id] = true; mo.observe(el, { childList: true, subtree: true }); } });
+                // 패널이 열릴 때는 내용이 아니라 style(보이기)만 바뀌므로 attributes도 감시
+                UI5_TARGETS.forEach(function(id) { var el = document.getElementById(id); if (el && !watched[id]) { watched[id] = true; mo.observe(el, { childList: true, subtree: true, attributes: true, attributeFilter: ['style', 'class'] }); } });
             };
             watchAll();
             new MutationObserver(function() { watchAll(); ui5Schedule(); }).observe(document.body, { childList: true });
