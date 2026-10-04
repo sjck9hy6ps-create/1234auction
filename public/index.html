@@ -527,6 +527,11 @@ tr:hover td { background:#fffde7; }
 #bid-board .bb-table th { position:sticky; top:0; background:#fafbfc; color:#666; font-weight:600; font-size:11px; text-align:left; padding:8px; border-bottom:1px solid #e3e6ea; white-space:nowrap; z-index:1; }
 #bid-board .bb-table td { padding:8px; border-bottom:1px solid #f0f2f4; vertical-align:top; text-align:left; }
 #bid-board .bb-table .r { text-align:right; white-space:nowrap; }
+#bid-board .bb-table th.bb-sortable { cursor:pointer; user-select:none; }
+#bid-board .bb-table th.bb-sortable:hover { background:#eef2f7; color:#333; }
+#bid-board .bb-table th.bb-sortable.on { color:var(--ui-blue,#1e5eff); }
+#bid-board .bb-table th .bb-arrow { margin-left:3px; font-size:10px; color:#bbb; }
+#bid-board .bb-table th.on .bb-arrow { color:var(--ui-blue,#1e5eff); }
 #bid-board .bb-row { cursor:pointer; }
 #bid-board .bb-row:hover td { background:#f5f9ff; }
 #bid-board .bb-row.new td { background:#fffde7; }
@@ -1342,7 +1347,7 @@ body.ui2 #bid-case-panel td, body.ui2 #surge-panel td, body.ui2 #panel-tab-aucti
             <select onchange="setBidBoardFilter('type', this.value)">
                 <option value="">아파트·빌라</option><option value="apt">아파트만</option><option value="villa">빌라만</option>
             </select>
-            <select onchange="setBidBoardFilter('sort', this.value)">
+            <select id="bb-sort" onchange="bidBoardState.sortCol = null; setBidBoardFilter('sort', this.value)">
                 <option value="verdict">판정 → 여유 큰 순</option><option value="date">입찰일 빠른 순</option><option value="room">여유 큰 순</option><option value="pop">거래량 순위 높은 순</option>
             </select>
             <label class="bb-chk"><input type="checkbox" onchange="setBidBoardFilter('popOnly', this.checked)"> 🔥 인기 단지만(동·평형·생활권 모두 상위)</label>
@@ -15175,7 +15180,7 @@ function renderRiskMarginSuggestion(predictedSale) {
    지도를 옮기지 않고 필요한 지역 자료를 차례로 불러온 뒤 그 지역 물건을 바로 계산함
    (지역이 8개를 넘으면 화면 목록에서 오래된 지역이 빠지므로 "불러오고 바로 계산" 순서를 지킴). ════ */
 var bidBoardRows = [];
-var bidBoardState = { verdict: 'all', region: '', type: '', sort: 'verdict', showPast: false, highlight: {}, updated: {}, prevVerdicts: {} };
+var bidBoardState = { verdict: 'all', region: '', type: '', sort: 'verdict', sortCol: null, sortDir: 1, showPast: false, highlight: {}, updated: {}, prevVerdicts: {} };
 var bidBoardRunning = false;
 function bbEsc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function(c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
 function bidBoardRegionLabel(addr) {
@@ -15668,7 +15673,19 @@ function renderBidBoard() {
         if (r.pop.band) return r.pop.band.rankInBand / Math.max(1, r.pop.band.complexesInBand);
         return r.pop.noRecent ? 2 : (r.pop.rankInDong / Math.max(1, r.pop.complexesInDong) + 0.001);
     };
-    rows.sort(function(x, y) {
+    // 2026-10(사용자 요청) 표 머리글을 누르면 그 항목으로 오름차순 ↔ 내림차순 - 값이 없는 물건은 방향과 상관없이 맨 아래
+    var colVal = s.sortCol ? BID_BOARD_COLS.filter(function(c) { return c.key === s.sortCol; })[0] : null;
+    if (colVal && colVal.val) {
+        var vOf = function(r) { var v = r.pending ? null : colVal.val(r, popRankOf); return (v == null || v === '' || (typeof v === 'number' && !isFinite(v))) ? null : v; };
+        rows.sort(function(x, y) {
+            var vx = vOf(x), vy = vOf(y);
+            if (vx == null && vy == null) return 0;
+            if (vx == null) return 1;
+            if (vy == null) return -1;
+            var c = typeof vx === 'string' ? vx.localeCompare(vy, 'ko') : vx - vy;
+            return c * s.sortDir;
+        });
+    } else rows.sort(function(x, y) {
         if (s.sort === 'pop') {
             var px = popRankOf(x), py = popRankOf(y);
             if (px !== py) return px - py;
@@ -15692,9 +15709,30 @@ function renderBidBoard() {
     }
     if (!rows.length) { body.innerHTML = '<div class="bb-empty">조건에 맞는 물건이 없어요.</div>'; return; }
     body.innerHTML = '<table class="bb-table"><thead><tr>'
-        + '<th>판정</th><th>입찰일</th><th>물건</th><th>거래량 순위</th><th class="r">최저가</th><th class="r">예상매도가</th>'
-        + '<th class="r">추천 입찰가</th><th class="r">최저가 대비</th><th>지역 위험</th><th>대장 따라잡기</th><th></th>'
+        + BID_BOARD_COLS.map(function(c) {
+            var on = s.sortCol === c.key;
+            return '<th class="bb-sortable' + (c.right ? ' r' : '') + (on ? ' on' : '') + '" title="눌러서 ' + (on && s.sortDir === 1 ? '내림차순' : '오름차순') + ' 정렬" onclick="setBidBoardSortCol(\'' + c.key + '\')">'
+                + c.label + '<span class="bb-arrow">' + (on ? (s.sortDir === 1 ? '▲' : '▼') : '↕') + '</span></th>';
+        }).join('') + '<th></th>'
         + '</tr></thead><tbody>' + rows.map(renderBidBoardRow).join('') + '</tbody></table>';
+}
+// 표 머리글 정렬 - val이 숫자면 작은 값이 오름차순 위쪽
+var BID_BOARD_COLS = [
+    { key: 'verdict', label: '판정', val: function(r) { return BID_BOARD_VERDICT[r.verdict] ? BID_BOARD_VERDICT[r.verdict].order : null; } },
+    { key: 'date', label: '입찰일', val: function(r) { return r.dday ? r.dday.diffDays : null; } },
+    { key: 'name', label: '물건', val: function(r) { return r.name || null; } },
+    { key: 'pop', label: '거래량 순위', val: function(r, popRankOf) { var v = popRankOf(r); return v >= 9999 ? null : v; } },
+    { key: 'minBid', label: '최저가', right: true, val: function(r) { return r.minBid || null; } },
+    { key: 'sale', label: '예상매도가', right: true, val: function(r) { return r.sale || null; } },
+    { key: 'rec', label: '추천 입찰가', right: true, val: function(r) { return r.recBid || null; } },
+    { key: 'room', label: '최저가 대비', right: true, val: function(r) { return r.roomPct; } },
+    { key: 'risk', label: '지역 위험', val: function(r) { return r.risk ? (r.risk.level === '높음' ? 1 : 0) : null; } },
+    { key: 'catchup', label: '대장 따라잡기', right: true, val: function(r) { return r.catchup; } }
+];
+function setBidBoardSortCol(key) {
+    var s = bidBoardState;
+    if (s.sortCol === key) s.sortDir = -s.sortDir; else { s.sortCol = key; s.sortDir = 1; }
+    renderBidBoard();
 }
 function renderBidBoardRow(r) {
     var v = BID_BOARD_VERDICT[r.verdict];
