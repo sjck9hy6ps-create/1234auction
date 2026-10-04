@@ -1375,6 +1375,7 @@ body.ui2 #bid-case-panel td, body.ui2 #surge-panel td, body.ui2 #panel-tab-aucti
             <label class="bb-chk" title="인기 상위 20% 단지인데 2번 이상 유찰된 물건 - 과거 낙찰자 손해 2%"><input type="checkbox" onchange="setBidBoardFilter('oppOnly', this.checked)"> 🎯 기회만(인기 단지 2회+ 유찰)</label>
             <label class="bb-chk"><input type="checkbox" onchange="setBidBoardFilter('showPast', this.checked)"> 오래 지난 입찰(45일+)도 보기</label>
         </div>
+        <div id="bb-cache-note" style="font-size:11px;color:#888;padding:2px 0;"></div>
         <div id="bb-progress" style="display:none;"></div>
         <div id="bb-fail-note" class="bb-guide" style="display:none;"></div>
     </div>
@@ -15520,13 +15521,25 @@ function computeBidBoardRow(a) {
     // 그래서 마진(+2%)·거래 드묾 판단은 단지 전체 등급으로, 인기 판단은 셋 다 상위일 때만.
     row.popEff = row.pop ? { tier: row.pop.noRecent ? '하위40%' : row.pop.tier, activeQuarterPct: row.pop.activeQuarterPct, noRecent: row.pop.noRecent } : null;
     row.guarantee = a._guaranteeRisk || detectNumericAuctionRisk(a);
+    row.liv = type === 'apt' ? livingAreaRank(a.dong, bunjiFull, a.lat, a.lon) : null;
+    row.estBuildYear = est && est.inferredBuildYear || null;
+    row.bunjiFull = bunjiFull;
+    return finalizeBidBoardRow(row);
+}
+/* 세금·마진·판정 단계(2026-10, 사용자 요청: "자산이 바뀌면 입찰가가 바로 바뀌어야 하는데 다시 계산하느라 로딩이 오래 걸림")
+   - 위 computeBidBoardRow의 무거운 부분(지역 자료로 예상매도가·인기·생활권 찾기)과 분리. 이 단계는 지역 자료 없이 행에 저장된
+   값만으로 돌아서, 💼 내 자산(주택 수·올해 소득)이 바뀌면 모든 물건을 순식간에 다시 계산할 수 있음. */
+function finalizeBidBoardRow(row) {
+    var a = row.a, type = row.type, minBid = row.minBid, pyung = row.pyung;
+    row.reasons = []; row.warns = []; row.nextFail = null; row.overshoot = false; row.sweet = false;
+    row.assetVer = myAssetsVer;
     // 목표마진: 모달에서 직접 정해 저장한 값이 있으면 그걸, 없으면 추천 목표마진
     var userMargin = parseInt(a.compTargetMargin);
     var rm = row.sale ? riskMarginFor(row.sale, row.own, row.risk, row.popEff) : null;
     row.marginUser = !isNaN(userMargin) && parseInt(a.target) > 0;
     row.margin = row.marginUser ? userMargin : (rm ? rm.margin : null);
     if (row.sale && row.margin != null) {
-        var buildYear = a.buildYear || (est && est.inferredBuildYear) || null;
+        var buildYear = a.buildYear || row.estBuildYear || null;
         var rec = solveAuctionBidFromRecord(Object.assign({}, a, {
             target: row.sale, compTargetMargin: row.margin,
             repair: parseInt(a.repair) || calcRepairFee(type, pyung || 0, buildYear) || 0
@@ -15540,7 +15553,6 @@ function computeBidBoardRow(a) {
     // ── 판정 ──
     // 인기 단지 분석(row.pop)이 있으면 그 등급으로, 없으면 예전 기준(동 순위·3년 거래 건수)으로
     var pe = row.popEff;
-    row.liv = type === 'apt' ? livingAreaRank(a.dong, bunjiFull, a.lat, a.lon) : null;
     // 인기 단지 = 동(평형대) 순위와 생활권 순위가 모두 상위 20%(생활권 자료가 없으면 동 기준만)
     var bandP = row.pop && row.pop.band;
     var popular = pe ? (pe.tier === '상위20%' && (!bandP || bandP.tier === '상위20%') && (!row.liv || row.liv.tier === '상위20%')) : (row.lf && ((row.lf.isLeader && !row.lf.only) || (row.lf.rank && row.lf.rank <= 5)));
@@ -15611,7 +15623,7 @@ function computeBidBoardRow(a) {
             row.notes.push('⚠️ 신건: 시세보다 높게 낙찰되는 구간(과거 낙찰자 40%가 손해)');
         }
     }
-    row.niche = type === 'apt' && row.verdict !== 'nodata' ? bidBoardNiche(row, a, bunjiFull) : null;
+    row.niche = type === 'apt' && row.verdict !== 'nodata' ? bidBoardNiche(row, a, row.bunjiFull) : null;
     if (row.niche) row.notes.unshift('🧭 틈새: ' + row.niche.why.join(' · '));
     return row;
 }
@@ -15688,7 +15700,7 @@ var bidVerdictLawdPending = false;
 function bidVerdictSig(a) {
     var lawd = bidBoardLawdOf(a);
     return [auctionWonEstSignature(a), a.minBid, a.bidDate, a.court, a.failCount, lawd, lawd && dataCache[lawd] ? 1 : 0,
-        Object.keys(popularMap).length, lawd && cycleDataByLawd[lawd] ? 1 : 0, Object.keys(leaderFollowerRankMap).length, myAssetsVer].join('|');
+        Object.keys(popularMap).length, lawd && cycleDataByLawd[lawd] ? 1 : 0, Object.keys(leaderFollowerRankMap).length].join('|');
 }
 function getBidVerdictForMarker(a) {
     if (!isBidBoardCandidate(a) || (a.propType !== 'apt' && a.propType !== 'villa')) return null;
@@ -15708,7 +15720,7 @@ function getBidVerdictForMarker(a) {
     var cached = bidVerdictCache[a.id];
     if (!dataCache[lawd]) return cached ? cached.row : null; // 지역 자료가 내려가 있으면 마지막 판정 유지
     var sig = bidVerdictSig(a);
-    if (cached && cached.sig === sig) return cached.row;
+    if (cached && cached.sig === sig) { if (cached.row && cached.row.type && cached.row.assetVer !== myAssetsVer) finalizeBidBoardRow(cached.row); return cached.row; }
     var row = null;
     try { row = computeBidBoardRow(a); } catch (e) { row = null; }
     bidVerdictCache[a.id] = { sig: sig, row: row };
@@ -15756,6 +15768,25 @@ async function refreshBidBoard() {
         if (!bidBoardState.showPast && r.pending && isPast(r.a)) return Object.assign({}, r, { pending: false, skippedPast: true, reasons: ['입찰일이 ' + BID_RESULT_WAIT_DAYS + '일 넘게 지나 계산 안 함'] });
         return r;
     });
+    // 저장해 둔 계산 재사용(2026-10, 사용자 요청: "입찰후보 탭 로딩 시 딜레이 없이") - 물건 입력값이 같고 하루가 안 지났으면
+    // 지역 자료를 다시 불러오지 않고 그대로 씀(세금·마진 단계만 지금 내 자산 기준으로 다시). 🔄 다시 계산을 누르면 전부 새로.
+    var boardCache = bidBoardState.forceFresh ? {} : ((await listIdbOp('readonly', function(st) { return st.get(BOARD_CACHE_KEY); })) || {});
+    bidBoardState.forceFresh = false;
+    var nowMs = Date.now(), reused = {};
+    work.forEach(function(a) {
+        var c = boardCache[a.id];
+        if (!c || c.sig !== boardBaseSig(a) || nowMs - c.at > BOARD_CACHE_MAX_AGE) return;
+        try {
+            var row = Object.assign({}, c.row, { a: a, dday: a.bidDate ? calcAuctionDday(a.bidDate) : null, fromCache: c.at });
+            reused[a.id] = finalizeBidBoardRow(row);
+            bidVerdictCache[a.id] = bidVerdictCache[a.id] || { sig: '', row: reused[a.id] };
+        } catch (e) {}
+    });
+    if (Object.keys(reused).length) {
+        bidBoardRows = bidBoardRows.map(function(r) { return reused[r.id] || r; });
+        work = work.filter(function(a) { return !reused[a.id]; });
+        renderBidBoard();
+    }
     var noCode = work.filter(function(a) { return !a.bCode && !a._lawd && a.lat && a.lon; });
     for (var j = 0; j < noCode.length; j += 8) {
         setBidBoardProgress('물건 위치 확인 중 ' + Math.min(j + 8, noCode.length) + '/' + noCode.length);
@@ -15795,6 +15826,7 @@ async function refreshBidBoard() {
             catch (e) { console.error('입찰후보 계산 실패:', a.id, e); }
         });
         bidBoardRows = bidBoardRows.map(function(r) { return fresh[r.id] || r; });
+        Object.keys(fresh).forEach(function(id) { var f = fresh[id]; if (f && f.a && f.verdict !== 'nodata') boardCache[id] = { sig: boardBaseSig(f.a), at: Date.now(), row: boardRowForCache(f) }; });
         renderBidBoard();
         // 보드 때문에 새로 불러온 지역은 계산이 끝나면 메모리에서 내림(지역당 수 MB - 다시 필요하면 브라우저 저장본에서 금방 불러옴)
         if (lawd !== '_' && boardOnly && lawd !== keepLawd && dataCache[lawd]) {
@@ -15809,9 +15841,29 @@ async function refreshBidBoard() {
     // 지도에서 보던 지역이 목록에서 빠졌으면 되살림
     if (keepLawd && dataCache[keepLawd]) { mergedLawdCds.add(keepLawd); touchLawdCd(keepLawd); } else rebuildMergedLists();
     setBidBoardProgress('');
+    // 계산 결과 저장(다음에 열 때 바로 보이게) - 등록에서 빠진 물건은 지움
+    try {
+        var keep = {}; cands.forEach(function(a) { if (boardCache[a.id]) keep[a.id] = boardCache[a.id]; });
+        await listIdbOp('readwrite', function(st) { return st.put(keep, BOARD_CACHE_KEY); });
+    } catch (e) {}
     bidBoardRunning = false;
     try { redrawMarkers(); } catch (e) {}
 }
+var BOARD_CACHE_KEY = 'bidBoardCache:v1', BOARD_CACHE_MAX_AGE = 24 * 3600 * 1000;
+// 저장 계산을 다시 써도 되는지 - 물건 입력값(시세 계산에 쓰는 것)과 입찰일 지남 여부. 계산 방식이 바뀌면 BOARD_CALC_VER을 올림
+var BOARD_CALC_VER = 1;
+function boardBaseSig(a) {
+    var d = a.bidDate ? calcAuctionDday(a.bidDate) : null;
+    return [BOARD_CALC_VER, auctionWonEstSignature(a), a.minBid, a.appraisal, a.bidDate, a.court, a.failCount, a.landType, String(a.memo || '').length,
+        Array.isArray(a.bidHistory) ? a.bidHistory.length : 0, a.courtResult || '', a.target || '', a.compTargetMargin || '', a.repair || '', a.buildYear || '',
+        d && d.diffDays < 0 ? 'P' : 'F'].join('|');
+}
+function boardRowForCache(r) {
+    var o = {};
+    Object.keys(r).forEach(function(k) { if (k !== 'a' && k !== 'dday') o[k] = r[k]; });
+    try { return JSON.parse(JSON.stringify(o)); } catch (e) { return null; }
+}
+function forceRefreshBidBoard() { bidBoardState.forceFresh = true; bidBoardRows = []; refreshBidBoard(); }
 function setBidBoardProgress(t) {
     var p = document.getElementById('bb-progress');
     if (p) { p.innerText = t; p.style.display = t ? '' : 'none'; }
@@ -15851,6 +15903,15 @@ function renderBidBoard() {
         return '<option value="' + bbEsc(k) + '"' + (s.region === k ? ' selected' : '') + '>' + bbEsc(k) + ' (' + regions[k] + ')</option>';
     }).join('');
     var rows = base.filter(function(r) { return s.verdict === 'all' || r.verdict === s.verdict; });
+    var cn = document.getElementById('bb-cache-note');
+    if (cn) {
+        var cached = bidBoardRows.filter(function(r) { return r.fromCache; });
+        var oldest = cached.reduce(function(m, r) { return Math.min(m, r.fromCache); }, Date.now());
+        var sim = myAssetsSimCount();
+        cn.innerHTML = (cached.length ? '⚡ ' + cached.length + '건은 저장된 시세 계산 사용(' + Math.max(1, Math.round((Date.now() - oldest) / 3600000)) + '시간 이내) · 세금·마진은 지금 내 자산 기준 ' : '')
+            + '<a href="#" onclick="forceRefreshBidBoard();return false;">🔄 전부 다시 계산</a>'
+            + (sim ? ' · <b style="color:#6a1b9a;">🧪 시뮬레이션 중: ' + sim + '건 매도 가정</b>' : '');
+    }
     var assumed = base.filter(function(r) { return r.assumedFail; }).length;
     var fn = document.getElementById('bb-fail-note');
     if (fn) {
@@ -21561,14 +21622,25 @@ async function deleteMyAssetItem(id) {
 function myAssetsChanged() {
     myAssetsVer++;
     try { auctionWonEstCache = {}; } catch (e) {}
-    try { if (document.getElementById('bid-board') && document.getElementById('bid-board').style.display !== 'none' && bidBoardRows.length) { bidBoardRows = bidBoardRows.map(function(r) { try { return computeBidBoardRow(r.a); } catch (e) { return r; } }); renderBidBoard(); } } catch (e) {}
+    // 지역 자료 없이 세금·마진 단계만 다시(순식간) - 무거운 시세 계산은 그대로 재사용
+    try { bidBoardRows = bidBoardRows.map(function(r) { if (r.pending || r.skippedPast || !r.type) return r; try { return finalizeBidBoardRow(r); } catch (e) { return r; } }); if (document.getElementById('bid-board').style.display !== 'none') renderBidBoard(); } catch (e) {}
+    try { Object.keys(bidVerdictCache).forEach(function(id) { var c = bidVerdictCache[id]; if (c && c.row && c.row.type) { try { finalizeBidBoardRow(c.row); } catch (e) {} } }); } catch (e) {}
     try { if (document.getElementById('auction-modal-bg').style.display === 'flex' && document.getElementById('a-house-rank').dataset.manual !== '1') { document.getElementById('a-house-rank').value = String(myHouseRankFor(null)); updateHouseRankNote(); autoCalcTaxSilent(); calcMargin(); } } catch (e) {}
     try { redrawMarkers(); } catch (e) {}
     if (document.getElementById('my-assets-panel').style.display === 'block') renderMyAssets();
 }
 // 이 자산이 취득세 주택 수에 들어가는지 + 이유
+var myAssetsSim = (function() { try { return JSON.parse(localStorage.getItem('myAssetsSim') || '{}') || {}; } catch (e) { return {}; } })();
+function myAssetsSimCount() { return myAssets.items.filter(function(x) { return myAssetsSim[x.id]; }).length; }
+// 시뮬레이션: 매도했다고 가정(서버에 저장하지 않음, 이 브라우저에만 기억) - 입찰가가 바로 다시 계산됨
+function maToggleSim(id, on) {
+    if (on) myAssetsSim[id] = true; else delete myAssetsSim[id];
+    try { localStorage.setItem('myAssetsSim', JSON.stringify(myAssetsSim)); } catch (e) {}
+    myAssetsChanged();
+}
 function myAssetCountsForAcq(x) {
     var p = myAssets.profile || {};
+    if (myAssetsSim[x.id]) return { yes: false, why: '🧪 매도 가정(시뮬레이션)' };
     if (x.status === 'sold') return { yes: false, why: '매도 완료' };
     if (x.status === 'planned' && p.includePlanned === false) return { yes: false, why: '취득 예정(설정에서 빼 둠)' };
     var pre = x.status === 'planned' ? '취득 예정 · ' : '';
@@ -21596,7 +21668,7 @@ function myAssetSummary() {
     myAssets.items.forEach(function(x) {
         if (myAssetCountsForAcq(x).yes) cnt++;
         // 종부세: 주택·주거용 오피스텔의 공시가격(분양권은 아직 주택이 아니라 제외)
-        if (x.status === 'holding' && (x.type === 'house' || (x.type === 'officetel' && x.residential))) officialSum += parseInt(x.officialPrice) || 0;
+        if (x.status === 'holding' && !myAssetsSim[x.id] && (x.type === 'house' || (x.type === 'officetel' && x.residential))) officialSum += parseInt(x.officialPrice) || 0;
         if (x.status === 'sold' && x.use === 'inventory' && String(x.soldDate || '').slice(0, 4) === y) {
             bizIncome += (parseInt(x.soldPrice) || 0) - (parseInt(x.acquiredPrice) || 0) - (parseInt(x.expenses) || 0);
         }
@@ -21658,7 +21730,9 @@ function renderMyAssets() {
     var taxOf = function(x) { if (x <= 0) return 0; var b = lookupIncomeTaxBracket(x); return Math.max(Math.round(x * b.rate - b.dedManwon), 0); };
     var marg1000 = Math.round((taxOf(s.incomeBase + 1000) - taxOf(s.incomeBase)) * 1.1);
     var brNow = lookupIncomeTaxBracket(Math.max(1, s.incomeBase));
-    var html = '<div class="ma-sec"><div class="ma-h">지금 내 상태로 다음 낙찰을 받으면</div><div class="ma-grid">'
+    var simN = myAssetsSimCount();
+    var html = (simN ? '<div class="ma-sec" style="background:#f3e5f5;color:#6a1b9a;">🧪 <b>시뮬레이션 중</b> - ' + simN + '건을 매도했다고 가정해 계산하고 있어요(저장 안 됨). 입찰후보·물건 상세에도 바로 반영돼요. <a href="#" onclick="myAssetsSim={};try{localStorage.removeItem(\'myAssetsSim\')}catch(e){};myAssetsChanged();return false;">모두 해제</a></div>' : '')
+        + '<div class="ma-sec"><div class="ma-h">' + (simN ? '매도 가정 상태로' : '지금 내 상태로') + ' 다음 낙찰을 받으면</div><div class="ma-grid">'
         + '<div class="ma-stat"><span>취득세 주택 수</span><b>' + s.count + '채</b><span>이번이 ' + next + '번째</span></div>'
         + '<div class="ma-stat"><span>취득세(비조정 지역)</span><b style="color:' + (acqRate(false) > 4 ? '#c62828' : '#2e7d32') + ';">' + acqRate(false) + '%</b><span>조정 지역 ' + acqRate(true) + '%</span></div>'
         + '<div class="ma-stat"><span>매도 이익 1천만 원당 세금</span><b>' + marg1000 + '만</b><span>지금 구간 ' + Math.round(brNow.rate * 100) + '% · 지방세 포함</span></div>'
@@ -21673,7 +21747,8 @@ function renderMyAssets() {
             return '<tr><td><b>' + maEsc(x.name || '(이름 없음)') + '</b><div class="ma-sub">' + MY_ASSET_TYPES[x.type || 'house'] + (x.use === 'inventory' ? ' · 재고자산' : ' · 개인 보유') + (x.via ? ' · ' + maEsc(x.via) : '') + '</div></td>'
                 + '<td>' + (MY_ASSET_STATUS[x.status] || '') + '</td>'
                 + '<td><span class="ma-pill" style="background:' + (c.yes ? '#ffebee;color:#c62828' : '#eef2f7;color:#666') + ';">' + (c.yes ? '포함' : '제외') + '</span><div class="ma-sub">' + maEsc(c.why) + '</div></td>'
-                + '<td style="white-space:nowrap;"><a href="#" onclick="maEdit(\'' + x.id + '\');return false;">수정</a></td></tr>';
+                + '<td style="white-space:nowrap;"><a href="#" onclick="maEdit(\'' + x.id + '\');return false;">수정</a>'
+                + (x.status !== 'sold' ? '<div><label class="ma-sub" title="저장하지 않고 입찰가만 바로 다시 계산"><input type="checkbox" style="width:auto;margin:0 2px 0 0;" ' + (myAssetsSim[x.id] ? 'checked' : '') + ' onchange="maToggleSim(\'' + x.id + '\', this.checked)">매도 가정</label></div>' : '') + '</td></tr>';
         }).join('') : '<tr><td colspan="4" class="ma-sub">등록된 부동산이 없어요</td></tr>')
         + '</tbody></table>' + (maEditId ? maEditForm() : '') + '</div>';
     // 올해 소득
