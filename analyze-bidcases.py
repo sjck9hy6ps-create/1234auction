@@ -434,6 +434,39 @@ def attention_analysis(R, seg_stats, med):
                   "profitPct": round(float((res["net"] > 0).mean()) * 100, 1) if len(res) else None,
                   "winVsEstMed": med(G["ratio"])})
     out["dongAttention"] = sorted(D, key=lambda x: x["attMed"])
+
+    # 5) "순수익 1천만 원 목표"로 입찰했다면 - 사용자가 실제로 쓰는 기준(지방 아파트 1천만 원)으로 조건별 결과를 봄.
+    #    입찰가 = (예상매도가 − 고정비 − 매도 부가세 − 1천만) ÷ 비율비용. 실제 낙찰가 이상이면 낙찰로 보고,
+    #    되판 기록이 있으면 그 가격으로 실현 순이익 계산. 85㎡ 초과는 매매사업자 건물분 부가세(매도가×65%×10/110) 포함.
+    TARGET = 1000
+    vat = lambda sale, area: sale * 0.65 * 0.1 / 1.1 if area and area > 85 else 0.0
+    S = R[R["est"].notna()].copy()
+    S["myBid"] = [(e - FIXED_COST - vat(e, a) - TARGET) / COST_RATIO for e, a in zip(S["est"], S["area"])]
+    S["win"] = S["myBid"] >= S["actual"]
+    S["myNet"] = [(rs - b * COST_RATIO - FIXED_COST - vat(rs, a)) if pd.notna(rs) else np.nan for rs, b, a in zip(S["resale"], S["myBid"], S["area"])]
+    S["winnerNetVat"] = [(rs - ac * COST_RATIO - FIXED_COST - vat(rs, a)) if pd.notna(rs) else np.nan for rs, ac, a in zip(S["resale"], S["actual"], S["area"])]
+
+    def sim(G):
+        W = G[G["win"]]
+        WR = W[W["myNet"].notna()]
+        GR = G[G["winnerNetVat"].notna()]
+        return {"n": int(len(G)), "winPct": round(float(G["win"].mean()) * 100, 1) if len(G) else None,
+                "wins": int(len(W)), "winsResold": int(len(WR)),
+                "myNetMed": int(WR["myNet"].median()) if len(WR) else None,
+                "myHit1000Pct": round(float((WR["myNet"] >= TARGET).mean()) * 100, 1) if len(WR) else None,
+                "myLossPct": round(float((WR["myNet"] < 0).mean()) * 100, 1) if len(WR) else None,
+                "winnerNetVatMed": int(GR["winnerNetVat"].median()) if len(GR) else None}
+    t5 = {}
+    for sd, GS in [("전체", S)] + list(S.groupby("sido")):
+        t5[sd] = {"전체": sim(GS)}
+        for f in ["att_b", "liq_b", "band", "tier_b", "bandTier_b", "price_b", "note_b", "fails_b", "prev_b"]:
+            for k, G in GS.groupby(f):
+                if len(G) >= 30:
+                    t5[sd][f + "=" + str(k)] = sim(G)
+        for (k1, k2), G in GS.groupby(["liq_b", "band"]):
+            if len(G) >= 30:
+                t5[sd]["liq_b=" + str(k1) + " & band=" + str(k2)] = sim(G)
+    out["target1000"] = t5
     return out
 
 
