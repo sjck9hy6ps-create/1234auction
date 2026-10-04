@@ -3,6 +3,9 @@ name: Analyze bid cases
 
 on:
   workflow_dispatch: {}
+  # 2026-10: 낙찰사례 매도 매칭(전체 실거래 기준)도 여기서 저장 - 매주 금요일 KST 05:00
+  schedule:
+    - cron: '0 20 * * 4'
 
 jobs:
   analyze:

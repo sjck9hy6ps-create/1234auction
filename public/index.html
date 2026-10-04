@@ -8031,7 +8031,8 @@ async function autoFillMissingBidCaseMargins() {
         c.estMargin = margin.preTaxMargin;
         c.estRoi = margin.roi;
         c.estTotalCost = margin.totalCost;
-        try { await saveBidCaseAPI(c); } catch (e) { console.error('낙찰사례 마진 자동계산 저장 실패:', e.message); }
+        // 2026-10: 서버 매칭(analyze-bidcases.py)이 수천 건을 한 번에 채우므로, 여기서 한 건씩 다시 저장하면 앱을 열 때마다
+        // 수천 번 저장 요청이 나감 - 마진은 세금 로직으로 언제든 다시 계산되는 값이라 화면용으로만 채우고 저장하지 않음.
     }
     renderBidCaseList(); renderBidCaseMarkers();
 }

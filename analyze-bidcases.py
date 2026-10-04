@@ -185,7 +185,7 @@ def main():
     out = []
     for c in df.itertuples():
         g = groups.get((c.region, c.dk, c.bunji_s))
-        rec = {"region": c.region, "sido": c.sido, "sale": c.sale_int, "actual": c.actual, "second": c.second, "bidders": c.bidders,
+        rec = {"id": getattr(c, "id", None), "region": c.region, "sido": c.sido, "resale_date": None, "resale_floor": None, "resale_size": None, "sale": c.sale_int, "actual": c.actual, "second": c.second, "bidders": c.bidders,
                "appraisal": c.appraisal, "minbid": c.minbid, "fails": c.fails, "est": None, "own": 0, "resale": None, "resale_m": None, "tier": None,
                "area": c.area, "floor": c.floor_n, "cx3y": 0, "age": None, "bandTier": None,
                "notes": str(getattr(c, "specialConditions", "") or ""), "land": str(getattr(c, "landType", "") or ""),
@@ -236,6 +236,9 @@ def main():
                     # 낙찰가의 70% 미만처럼 같은 집으로 보기 어려운 경우만 제외.
                     if t0["price"] >= c.actual * 0.7:
                         rec["resale"] = float(t0["price"])
+                        rec["resale_date"] = str(int(t0["deal_date"]))
+                        rec["resale_floor"] = int(t0["floor"]) if pd.notna(t0["floor"]) else None
+                        rec["resale_size"] = float(t0["size"])
                         rec["resale_m"] = round((int_to_date(int(t0["deal_date"])) - sale_d).days / 30.4, 1)
             nm = avm.normalize_complex_name(g["danji"].mode().iloc[0]) if len(g) else None
             rec["tier"] = pop.get((c.region, c.dk, nm))
@@ -356,11 +359,57 @@ def main():
     summary.update(attention_analysis(R, seg_stats, med))
 
     print(json.dumps(summary, ensure_ascii=False, indent=1))
+    write_back_resale_matches(cases, out)
     cyc.upsert_rows([{"id": "bidcase|__validation__", "payload": cyc.clean_json(summary), "fetched_at": now}])
     print("✅ 저장 완료")
     if os.environ.get("GITHUB_STEP_SUMMARY"):
         with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as fh:
             fh.write("## 낙찰사례 검증\n\n```\n" + json.dumps(summary, ensure_ascii=False, indent=1) + "\n```\n")
+
+
+def write_back_resale_matches(cases, out):
+    """2026-10: 낙찰사례의 "매도 매칭"을 2017년 이후 전체 실거래로 채워 저장. 예전 매칭(scripts/match-bid-cases.mjs)은
+    주 120건씩·최근 2년 실거래만 봐서, CSV로 올린 7천 건 중 6,852건이 시도조차 안 된 상태였음.
+    기준: 같은 시군구·동·지번, 전용 ±2㎡, 같은 층, 낙찰 14일 뒤 첫 중개거래(직거래 제외), 낙찰가의 70% 이상."""
+    if os.environ.get("WRITE_BACK", "1") != "1":
+        return
+    by_id = {str(c.get("id")): c for c in cases if c.get("id") is not None}
+    now_s = datetime.now().strftime("%Y-%m-%d")
+    changed = []
+    for r in out:
+        c = by_id.get(str(r.get("id")))
+        if not c:
+            continue
+        if r.get("resale"):
+            m = {"date": r["resale_date"], "amount": int(r["resale"]), "floor": r["resale_floor"], "area": r["resale_size"],
+                 "approx": False, "source": "db-full"}
+            old = c.get("resaleMatch") or {}
+            if str(old.get("date")) == m["date"] and int(old.get("amount") or 0) == m["amount"]:
+                continue
+            c2 = dict(c); c2["resaleMatch"] = m; c2["matchFailReason"] = None
+        else:
+            if c.get("resaleMatch") and (c.get("resaleMatch") or {}).get("source") != "db-full":
+                continue  # 예전 방식으로 찾은 매칭(층 ±1 등)은 지우지 않음
+            reason = "낙찰 후 같은 층·평형 매매 없음(" + now_s + " 기준)"
+            if c.get("matchAttempted") and c.get("matchFailReason") == reason:
+                continue
+            c2 = dict(c); c2["resaleMatch"] = None; c2["matchFailReason"] = reason
+        c2["matchAttempted"] = True
+        c2["estMargin"] = None; c2["estRoi"] = None; c2["estTotalCost"] = None
+        changed.append(c2)
+    print(f"  매도 매칭 저장: 바뀐 {len(changed):,}건 (매칭됨 {sum(1 for x in changed if x.get('resaleMatch')):,})")
+    for i in range(0, len(changed), 300):
+        part = changed[i:i + 300]
+        for attempt in range(3):
+            try:
+                r = requests.post(f"{SITE_URL}/api/auction?kind=bidCases", json=part, timeout=120)
+                if r.status_code == 200:
+                    break
+                print("   저장 실패", r.status_code, r.text[:200])
+            except Exception as e:
+                print("   저장 오류", e)
+        else:
+            print("   ⚠️ 이 묶음은 건너뜀", i)
 
 
 def attention_analysis(R, seg_stats, med):

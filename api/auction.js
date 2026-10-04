@@ -102,6 +102,27 @@ export default async function handler(req, res) {
             }
             return res.status(200).json(await readAll());
         }
+        // 2026-10: 배열로 보내면 여러 건을 한 번에 저장(낙찰사례 매도 매칭 결과처럼 수천 건을 고칠 때 요청 수·전송량 절약).
+        // 각 항목의 _ord(목록 순서)는 그대로 유지, 목록 버전은 한 번만 올림.
+        if (req.method === 'POST' && Array.isArray(req.body)) {
+            const items = req.body.filter((it) => it && it.id != null);
+            if (!items.length) return res.status(400).json({ error: 'id가 있는 항목이 없습니다.' });
+            const CH = 200;
+            for (let i = 0; i < items.length; i += CH) {
+                const part = items.slice(i, i + CH);
+                const prevs = await cmd(['HMGET', hashKey, ...part.map((it) => String(it.id))]);
+                const args = ['HSET', hashKey];
+                part.forEach((it, k) => {
+                    let ord = null;
+                    try { ord = prevs && prevs[k] ? JSON.parse(prevs[k])._ord : null; } catch (e) { ord = null; }
+                    args.push(String(it.id), JSON.stringify(ord != null ? { ...it, _ord: ord } : it));
+                });
+                await cmd(args);
+            }
+            const newVer = await cmd(['INCR', verKey]);
+            res.setHeader('X-List-Version', String(newVer));
+            return res.status(200).json({ ok: true, saved: items.length });
+        }
         if (req.method === 'POST') {
             const newItem = req.body;
             if (!newItem || newItem.id == null) return res.status(400).json({ error: 'id가 있는 항목이어야 합니다.' });
