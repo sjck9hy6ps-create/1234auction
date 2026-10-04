@@ -15,6 +15,7 @@ const SITE_URL = process.env.SITE_URL?.trim();
 const PROXY_SECRET = process.env.COLLECT_PROXY_SECRET?.trim();
 const ONLY = (process.env.PRESALE_ONLY || '').trim(); // 시군구 코드 하나만(시험용)
 
+let debugShown = false;
 function tag(block, t) {
   const m = block.match(new RegExp(`<${t}>([^<]*)</${t}>`));
   return m ? m[1].trim() : '';
@@ -43,7 +44,11 @@ async function fetchMonth(code, ym) {
   for (let i = 1; i <= 3; i++) {
     try {
       const r = await fetch(url, { signal: AbortSignal.timeout(20000) });
-      return parse(await r.text());
+      const text = await r.text();
+      const out = parse(text);
+      if (!out.rows.length && !debugShown) { debugShown = true; console.log(`  (응답 확인 ${code}/${ym}, HTTP ${r.status}): ${text.slice(0, 400).replace(/\s+/g, ' ')}`); }
+      if (!out.error && !/<item>|<items\s*\/>|<items><\/items>|totalCount>0</.test(text) && !/<response>/.test(text)) out.error = 'unexpected response: ' + text.slice(0, 120);
+      return out;
     } catch (e) { if (i < 3) await sleep(1500 * i); else return { rows: [], error: e.message }; }
   }
 }
