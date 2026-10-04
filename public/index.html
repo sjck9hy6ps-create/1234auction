@@ -8336,6 +8336,10 @@ function buildBidCaseDetailHtml(c) {
         + item('최저입찰가', c.minBidPrice ? toEok(String(Math.round(c.minBidPrice / 10000))) : '-')
         + item('낙찰가' + (c.bidRate ? '(' + c.bidRate + '%)' : ''), c.finalBidPrice ? toEok(String(Math.round(c.finalBidPrice / 10000))) : '-', '#e65100')
         + item('매각기일', c.saleDate || '-')
+        // 2026-10 CSV로 들어온 입찰자수·2등 가격·대지권
+        + (c.bidders ? item('입찰자', c.bidders + '명') : '')
+        + (c.bidders ? item('2등 가격', c.secondBidPrice ? toEok(String(Math.round(c.secondBidPrice / 10000))) + (c.finalBidPrice ? ' (−' + toEok(String(Math.round((c.finalBidPrice - c.secondBidPrice) / 10000))) + ')' : '') : '단독 입찰') : '')
+        + (c.landType ? item('대지권', c.landType === 'none' ? '없음' : (c.landType + (c.landM2 ? ' ' + c.landM2 + '㎡' : '')), c.landType === '대지권' ? null : '#c62828') : '')
         + '</div>';
     if (c.specialConditions) html += '<div style="font-size:11px;color:#e65100;margin-top:6px;">⚠️ ' + c.specialConditions + '</div>';
     html += '</div>';
