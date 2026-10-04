@@ -525,6 +525,9 @@ tr:hover td { background:#fffde7; }
 #bb-drawer .dr-h { display:flex; align-items:flex-start; gap:8px; }
 #bb-drawer .dr-h h3 { margin:0; font-size:16px; flex:1; }
 #bb-drawer .dr-x { border:none; background:#f3f4f6; border-radius:14px; padding:4px 10px; cursor:pointer; }
+#bb-drawer .dr-top-btns { display:flex; gap:6px; margin-top:8px; }
+#bb-drawer .dr-top-btns button { flex:1; border:1px solid #d6dbe1; background:#fff; border-radius:8px; padding:7px 0; font-size:13px; font-weight:700; cursor:pointer; }
+#bb-drawer .dr-top-btns button:first-child { background:var(--ui-blue,#1e5eff); border-color:var(--ui-blue,#1e5eff); color:#fff; }
 #bb-drawer .dr-sub { color:#6b7280; font-size:11.5px; margin-top:3px; }
 #bb-drawer .dr-big { display:grid; grid-template-columns:repeat(3,1fr); gap:8px; margin:12px 0; }
 #bb-drawer .dr-big div { background:#f6f8fb; border-radius:10px; padding:8px; }
@@ -16433,7 +16436,9 @@ async function renderBidDrawer() {
     var cl = bidCostLines(row);
     var tr = (row.type === 'apt' || row.type === 'villa') ? drawerTrades(row) : [];
     var fmt = function(x) { return x ? toEok(String(Math.round(x))) : '-'; };
+    // 2026-10(사용자: "목록 옆 좁은 창 안에 지도/상세 버튼") - 맨 위 이름 옆에 바로 보이게
     var h = '<div class="dr-h"><h3>' + bbEsc(row.name) + '</h3><button class="dr-x" onclick="closeBidDrawer()">✕</button></div>'
+        + '<div class="dr-top-btns"><button onclick="bidBoardGo(\'' + idJs + '\')">🗺️ 지도</button><button onclick="closeBidBoard();openAuctionModal(\'' + idJs + '\')">📝 상세</button></div>'
         + '<div class="dr-sub">' + bbEsc(row.region) + ' · ' + (row.pyung ? row.pyung + '평 · ' : '') + (row.floor ? row.floor + '층 · ' : '') + bbEsc(a.caseNo || '') + (row.dday ? ' · <b>' + row.dday.label + '</b> (' + bbEsc(a.bidDate) + ')' : '') + '</div>'
         + '<div style="margin-top:6px;"><span class="bb-verdict" style="color:' + v.color + ';background:' + v.bg + ';">' + v.label + '</span>'
         + (row.sweet ? ' <span class="bb-pill" style="background:#e8f5e9;color:#2e7d32;">👍 입찰 추천 구간</span>' : '') + (row.overshoot ? ' <span class="bb-pill" style="background:#fff3e0;color:#e65100;">⚠️ 손해 주의</span>' : '') + (row.bulk ? ' <span class="bb-pill" style="background:#fee2e2;color:#b91c1c;">🏢 대량 경매 ' + row.bulkN + '건</span>' : '')
