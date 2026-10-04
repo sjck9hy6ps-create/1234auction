@@ -21452,21 +21452,22 @@ async function renderSurgeHitRow() {
     var el = document.getElementById('surge-hit-row'); if (!el) return;
     var sigKey = { hot: 'hot', money: 'money', newhigh: 'newhigh' }[surgePanelTab];
     if (!sigKey) { el.style.display = 'none'; return; }
-    if (!surgeBacktestData) { try { surgeBacktestData = await fetch('/api/data-coverage?mode=surgeBacktest').then(function(r) { return r.json(); }); } catch (e) { surgeBacktestData = {}; } }
+    if (!surgeBacktestData) { try { surgeBacktestData = await fetch('/api/data-coverage?mode=surgeBacktest&villa=1').then(function(r) { return r.json(); }); } catch (e) { surgeBacktestData = {}; } }
     var bs = surgeBacktestData && surgeBacktestData.bySignal && surgeBacktestData.bySignal[sigKey];
     var y = bs && (bs['12m'] || bs['6m']);
     if (!y) { el.style.display = 'none'; return; }
     var sidoSel = (document.getElementById('surge-sido-select') || {}).value || '';
     var sk = /광주|전남/.test(sidoSel) ? '전남광주' : sidoSel.replace(/(특별시|광역시|특별자치시|특별자치도|도)$/, '').slice(0, 2);
     var r = (sk && y[sk]) || y['전체'];
-    var label = r === y['전체'] ? '지방 6개 시도' : sk;
+    var label = '빌라 · ' + (r === y['전체'] ? '서울·인천·경기' : sk);
     var good = r.hitPct >= 58, bad = r.hitPct < 52;
     var yrs = y.byYear ? Object.keys(y.byYear).map(function(k) { return k + ' ' + Math.round(y.byYear[k].hitPct) + '%'; }).join(' · ') : '';
     el.style.display = '';
-    el.style.background = good ? '#ecfdf5' : (bad ? '#fef2f2' : '#f3f4f6');
+    el.style.background = good ? '#ecfdf5' : (bad ? '#fff7ed' : '#f3f4f6');
     el.innerHTML = '<b>과거 적중률(' + label + '): ' + r.hitPct + '%</b> - 매달 이 탭 상위 20개 동이 이후 1년 같은 시도 중간보다 더 오른 비율(50%면 동전 던지기 수준), 평균 ' + (r.excessPctp >= 0 ? '+' : '') + r.excessPctp + '%p'
+        + (r.excessPctp >= 2 ? '<br><span style="color:#065f46;">빌라는 맞는 비율은 반반이지만, 맞을 때 크게 올라(일부 동이 재개발 등으로 급등) 평균이 높아요 - 동네 이슈를 직접 확인하는 출발점으로 쓰세요</span>' : '')
         + (yrs ? '<br><span style="color:#6b7280;">연도별: ' + yrs + '</span>' : '')
-        + (sigKey === 'newhigh' ? '<br><span style="color:#6b7280;">신고가는 상승기(2024~25년 60~66%)엔 맞고 하락기(2021~22년 38~40%)엔 반대로 움직였어요 - 📈 사이클이 상승기일 때만 참고</span>' : '')
+        + '<br><span style="color:#6b7280;">2022~23년 하락기엔 45~48%로 안 맞았고, 2024~25년엔 53~57%로 맞았어요 - 📈 사이클이 상승기일 때 참고</span>'
         + (bad ? '<br><span style="color:#b91c1c;">이 지역에선 신호만 믿고 고르기 어려워요 - 입찰후보 판정(실거래·전세가율·거래 흐름)을 우선</span>' : '');
 }
 function loadSurgePanelData() {
@@ -21518,8 +21519,9 @@ function renderSurgeHotBody() {
     statusBox.style.color = '#999';
     statusBox.innerText = '최근 6개월 거래량 기준' + (sido ? ' · ' + sido : ' · 전국')
         + (surgeRegAreaFilter === 'unregulated' ? ' · 비규제지역만' : ' · 규제지역 포함');
-    body.innerHTML = renderRankSection('🏢 아파트', filterByRegArea(data.apt), '건', function(r) { return r.count + '건'; }, 'apt')
-        + renderRankSection('🏘️ 연립다세대·단독', filterByRegArea(data.villa), '건', function(r) { return r.count + '건'; }, 'villa');
+    // 2026-10(사용자: "거래급등/돈되는지역은 빌라에서만 본다") - 빌라를 먼저, 아파트는 접어 둠(아파트 적중률 52~54%)
+    body.innerHTML = renderRankSection('🏘️ 연립다세대·단독', filterByRegArea(data.villa), '건', function(r) { return r.count + '건'; }, 'villa')
+        + '<details style="margin-top:10px;"><summary style="font-size:11.5px;color:#6b7280;cursor:pointer;">🏢 아파트 (접어 둠 - 과거 적중률 52~54%로 예측력이 낮아 입찰후보 판정을 우선)</summary>' + renderRankSection('🏢 아파트', filterByRegArea(data.apt), '건', function(r) { return r.count + '건'; }, 'apt') + '</details>';
 }
 /* ⭐ 신고가 지역 - 2026-08(사용자 요청: "돈되는 지역으로 확인될 즈음이면 이미 진입시점이
    늦다. 조금 더 빠르게 진입하기 위해 신고가 갱신이 많은 지역 순위를 알고 싶다") - 급등지역
@@ -21604,8 +21606,8 @@ function renderSurgeNewHighBody() {
     body.innerHTML = failBanner
         + '<div style="font-size:10px;color:#e65100;background:#fff8e1;border-radius:6px;padding:5px 8px;margin-top:6px;">'
         + 'ℹ️ "신고가"는 같은 단지(danji)의 역대 최고 평당가를 넘어선 거래를 뜻해요. 첫 거래뿐인 단지·전고점 이력이 없는 단지, 신축 초기 거래는 집계에서 빠집니다. 순위는 6구간 합계 기준, 건수 흐름은 오래된→최근 순입니다.</div>'
-        + renderNewHighRankSection('🏢 아파트', filterByRegArea(data.apt), 'apt')
-        + renderNewHighRankSection('🏘️ 연립다세대·단독', filterByRegArea(data.villa), 'villa');
+        + renderNewHighRankSection('🏘️ 연립다세대·단독', filterByRegArea(data.villa), 'villa')
+        + '<details style="margin-top:10px;"><summary style="font-size:11.5px;color:#6b7280;cursor:pointer;">🏢 아파트 (접어 둠 - 과거 적중률 52~54%로 예측력이 낮아 입찰후보 판정을 우선)</summary>' + renderNewHighRankSection('🏢 아파트', filterByRegArea(data.apt), 'apt') + '</details>';
 }
 // ⭐ 지방 우량아파트 스크리닝(2026-09, 사용자 요청 "미분양·거래량·가격모멘텀 지표를 종합해
 // 지방 유망 지역을 자동 추천") - "돈되는지역" 순위(momentumPct=가격모멘텀, countTrend·
@@ -21761,8 +21763,8 @@ function renderSurgeMoneyBody() {
     body.innerHTML = '<div style="font-size:10px;color:#e65100;background:#fff8e1;border-radius:6px;padding:5px 8px;margin-top:6px;">'
         + 'ℹ️ 실거래 신고기한(30일)상 가장 최근 구간은 아직 신고가 덜 끝난 거래가 있어 거래량이 낮게 보일 수 있어요.<br>'
         + '🏗️ 미분양 배지(전년 동월 대비)는 KOSIS 시/군/구 통계 기준 참고용이며, 잠시 후 순위와 별개로 채워집니다.</div>'
-        + renderMoneyRankSection('🏢 아파트', aptList, 'apt')
-        + renderMoneyRankSection('🏘️ 연립다세대·단독', villaList, 'villa');
+        + renderMoneyRankSection('🏘️ 연립다세대·단독', villaList, 'villa')
+        + '<details style="margin-top:10px;"><summary style="font-size:11.5px;color:#6b7280;cursor:pointer;">🏢 아파트 (접어 둠 - 과거 적중률 52~54%로 예측력이 낮아 입찰후보 판정을 우선)</summary>' + renderMoneyRankSection('🏢 아파트', aptList, 'apt') + '</details>';
     enrichMoneyRankUnsoldBadges(aptList, 'apt');
     enrichMoneyRankUnsoldBadges(villaList, 'villa');
 }

@@ -3406,7 +3406,7 @@ export default async function handler(req, res) {
   if (req.query.mode === 'surgeBacktest') {
     res.setHeader('Cache-Control', 's-maxage=3600, stale-while-revalidate=86400');
     try {
-      const { data, error } = await supabase.from('leader_follower_cache').select('payload').eq('id', 'signal|__surge_backtest__').maybeSingle();
+      const { data, error } = await supabase.from('leader_follower_cache').select('payload').eq('id', 'signal|__surge_backtest__' + (req.query.villa === '1' ? '_villa' : '')).maybeSingle();
       if (error) return res.status(500).json({ error: error.message });
       return res.status(200).json((data && data.payload) || {});
     } catch (err) {
