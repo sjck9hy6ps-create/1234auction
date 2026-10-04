@@ -1206,6 +1206,7 @@ body.ui2 .al-opts input[type=checkbox] { margin:0; }
             placeholder="검색결과 목록 화면을 통째로 복사해서 여기 붙여넣으세요"
             style="resize:vertical;width:100%;"></textarea>
         <div style="margin-top:6px;text-align:right;">
+            <label class="modal-btn btn-gray" style="cursor:pointer;margin-right:4px;">📄 탱크옥션 CSV 올리기<input type="file" accept=".csv,text/csv" style="display:none;" onchange="onTankCsvFile(this,'bc')"></label>
             <button class="modal-btn btn-purple" id="bc-extract-btn" onclick="extractCaseList()">목록 일괄 추출</button>
         </div>
         <div id="bc-extract-status" style="font-size:11px;color:#999;margin-top:4px;"></div>
@@ -1343,6 +1344,7 @@ body.ui2 .al-opts input[type=checkbox] { margin:0; }
             placeholder="낙찰가가 나온 검색결과 목록 화면을 통째로 복사해서 여기 붙여넣으세요"
             style="resize:vertical;width:100%;"></textarea>
         <div style="margin-top:6px;text-align:right;">
+            <label class="modal-btn btn-gray" style="cursor:pointer;margin-right:4px;">📄 탱크옥션 CSV 올리기<input type="file" accept=".csv,text/csv" style="display:none;" onchange="onTankCsvFile(this,'bx')"></label>
             <button class="modal-btn btn-purple" id="bx-extract-btn" onclick="extractBacktestList()">목록 일괄 추출</button>
         </div>
         <div id="bx-extract-status" style="font-size:11px;color:#999;margin-top:4px;"></div>
@@ -6163,6 +6165,96 @@ function clExtractBuildingName(line) {
     var last = parts[parts.length - 1].trim();
     return last || null;
 }
+/* ════ 탱크옥션 CSV 업로드 (2026-10, 사용자 요청: "낙찰사례 csv 내용을 분석해서 업로드할 수 있는 로직")
+   열: 사건번호, 종별, 주소(시군구동), 외 건수, 경매현황(건물/대지권 면적·특이사항), 감정가, 최저가, 매각가, 차순위, 입찰자수, 진행상태, 입찰일자
+   붙여넣기 목록에는 없는 입찰자수·차순위(2등 가격)가 들어 있어 "얼마면 낙찰되는지"를 볼 수 있음 - 둘 다 그대로 저장함.
+   파싱 결과는 붙여넣기(parseCaseListTextLocally)와 같은 모양이라 이후 미리보기·저장 흐름을 그대로 탐. ════ */
+function parseCsvRows(text) {
+    var rows = [], row = [], field = '', q = false;
+    for (var i = 0; i < text.length; i++) {
+        var ch = text[i];
+        if (q) {
+            if (ch === '"') { if (text[i + 1] === '"') { field += '"'; i++; } else q = false; }
+            else field += ch;
+        } else if (ch === '"') q = true;
+        else if (ch === ',') { row.push(field); field = ''; }
+        else if (ch === '\n' || ch === '\r') {
+            if (ch === '\r' && text[i + 1] === '\n') i++;
+            row.push(field); field = '';
+            if (row.some(function(x) { return x !== ''; })) rows.push(row);
+            row = [];
+        } else field += ch;
+    }
+    if (field !== '' || row.length) { row.push(field); if (row.some(function(x) { return x !== ''; })) rows.push(row); }
+    return rows;
+}
+function parseTankAuctionCsv(text) {
+    text = String(text || '').replace(/^﻿/, '');
+    var rows = parseCsvRows(text);
+    var hi = rows.findIndex(function(r) { return r.indexOf('사건번호') >= 0 && r.indexOf('주소(시군구동)') >= 0; });
+    if (hi < 0) return { cases: [], error: '탱크옥션 CSV 형식이 아니에요("사건번호", "주소(시군구동)" 열이 없음).' };
+    var H = rows[hi], col = function(r, name) { var k = H.indexOf(name); return k >= 0 ? String(r[k] || '').trim() : ''; };
+    var num = function(v) { var n = parseInt(String(v).replace(/[^\d]/g, ''), 10); return n > 0 ? n : null; };
+    var cases = [], skipped = 0;
+    rows.slice(hi + 1).forEach(function(r) {
+        var caseNo = col(r, '사건번호'), addrRaw = col(r, '주소(시군구동)');
+        if (!caseNo || !addrRaw) { skipped++; return; }
+        // 맨 끝 괄호의 도로명주소 "(대전 유성구 죽동로 251)"는 떼어냄 - 남겨두면 단지명이 없는 주소에서 도로명을 단지명으로 오인
+        var addrLine = addrRaw.replace(/\s*\([^()]*(?:로|길)\s*\d[^()]*\)\s*$/, '').trim();
+        var addrJibun = clExtractAddrJibun(addrLine);
+        var db = clExtractDongBunji(addrJibun);
+        var floor = clExtractFloor(addrLine), unitNo = clExtractUnit(addrLine);
+        if (floor == null && unitNo) { var un = parseInt(unitNo.replace(/\D/g, ''), 10); if (un >= 101) floor = Math.floor(un / 100); } // "103동 702호"처럼 층 표기가 없으면 호수로
+        var nameM = addrLine.match(/\(([^)]*)\)/);
+        var buildingName = nameM ? (nameM[1].split(',').pop().trim() || null) : null;
+        var cur = col(r, '경매현황'), am = cur.match(/건물\s*([\d.]+)\s*㎡/);
+        var notes = cur.split('/').slice(1).map(function(x) { return x.trim(); }).filter(Boolean);
+        var extra = col(r, '외 건수'); if (extra && !/^0\s/.test(extra)) notes.unshift('외 ' + extra);
+        var appraisal = num(col(r, '감정가')), minBid = num(col(r, '최저가')), final = num(col(r, '매각가'));
+        var second = num(col(r, '차순위')), bidders = num(col(r, '입찰자수'));
+        var status = col(r, '진행상태').replace(/\(.*\)/, '').trim();
+        var d = col(r, '입찰일자').replace(/\./g, '-');
+        cases.push({
+            caseNo: caseNo, court: null, propertyType: col(r, '종별') || null,
+            addrJibun: addrJibun, dong: db.dong, bunji: db.bunji, buildingName: buildingName,
+            areaM2: am ? parseFloat(am[1]) : null, floor: floor, unitNo: unitNo,
+            specialConditions: notes.length ? notes.join(' · ') : null,
+            appraisalPrice: appraisal, minBidPrice: minBid, finalBidPrice: final,
+            bidRate: appraisal && final ? Math.round(final / appraisal * 10000) / 100 : null,
+            minBidRate: appraisal && minBid ? Math.round(minBid / appraisal * 10000) / 100 : null,
+            status: status || null, saleDate: /^\d{4}-\d{2}-\d{2}$/.test(d) ? d : null,
+            bidders: bidders, secondBidPrice: second, _fromCsv: true,
+        });
+    });
+    return { cases: cases, skipped: skipped };
+}
+// 파일 읽기 - 보통 UTF-8, 깨지면(엑셀에서 다시 저장한 파일 등) EUC-KR로 다시 읽음
+function readCsvFileText(file) {
+    return file.arrayBuffer().then(function(buf) {
+        var t = new TextDecoder('utf-8').decode(buf);
+        if (t.indexOf('사건번호') < 0) { try { t = new TextDecoder('euc-kr').decode(buf); } catch (e) {} }
+        return t;
+    });
+}
+async function onTankCsvFile(input, target) {
+    var file = input.files && input.files[0];
+    if (!file) return;
+    var statusBox = document.getElementById(target === 'bx' ? 'bx-extract-status' : 'bc-extract-status');
+    try {
+        var res = parseTankAuctionCsv(await readCsvFileText(file));
+        if (res.error) { statusBox.style.color = '#e53935'; statusBox.innerText = res.error; return; }
+        var withBid = res.cases.filter(function(c) { return c.finalBidPrice; }).length;
+        var withBidders = res.cases.filter(function(c) { return c.bidders; }).length;
+        var list = res.cases.map(function(c) { return Object.assign({ _selected: true }, c); });
+        if (target === 'bx') { pendingBacktestExtraction = list; renderBacktestPreview(); }
+        else { pendingCaseListExtraction = list; renderCaseListPreview(); }
+        statusBox.style.color = '#2e7d32';
+        statusBox.innerText = '📄 CSV ' + res.cases.length + '건 읽음 (낙찰가 있음 ' + withBid + '건 · 입찰자수 있음 ' + withBidders + '건'
+            + (res.skipped ? ' · 형식이 달라 건너뜀 ' + res.skipped + '건' : '') + ') - 아래에서 확인 후 등록하세요.';
+    } catch (e) {
+        statusBox.style.color = '#e53935'; statusBox.innerText = 'CSV 읽기 실패: ' + e.message;
+    } finally { input.value = ''; }
+}
 function parseCaseListTextLocally(text) {
     var lines = String(text).split('\n').map(function(l) { return l.trim(); }).filter(Boolean);
     var caseNoIdx = [];
@@ -6314,6 +6406,7 @@ function renderCaseListPreview() {
             + '<div style="color:#999;">'
             + (c.appraisalPrice ? '감정가 ' + toEok(String(Math.round(c.appraisalPrice / 10000))) : '')
             + (c.finalBidPrice ? ' · 낙찰가 ' + toEok(String(Math.round(c.finalBidPrice / 10000))) : (c.minBidPrice ? ' · 최저가 ' + toEok(String(Math.round(c.minBidPrice / 10000))) : ''))
+            + (c.bidders ? ' · 입찰자 ' + c.bidders + '명' + (c.secondBidPrice ? '(2등 ' + toEok(String(Math.round(c.secondBidPrice / 10000))) + ')' : '(단독)') : '')
             + (rate ? ' · ' + rate + '%' : '')
             + '</div>'
             + (c._dateBlocked ? '<div style="color:#e65100;font-size:10px;margin-top:2px;">⚠️ 이 법정동에 이미 등록된 최근 낙찰사례(' + latest + ')보다 이전이라 제외됨</div>' : '')
@@ -6418,6 +6511,7 @@ async function saveSelectedCases() {
             appraisalPrice: c.appraisalPrice || null, minBidPrice: c.minBidPrice || null,
             finalBidPrice: c.finalBidPrice || null, bidRate: c.bidRate || null, minBidRate: c.minBidRate || null,
             status: c.status || null, saleDate: c.saleDate || null,
+            bidders: c.bidders || null, secondBidPrice: c.secondBidPrice || null,
             importedAt: Date.now(),
         };
         try {
@@ -7002,6 +7096,7 @@ function renderBacktestPreview() {
             + (c.finalBidPrice ? ' · 낙찰가 ' + toEok(String(Math.round(c.finalBidPrice / 10000))) : '')
             + (rate ? ' · ' + rate + '%' : '')
             + '</div>'
+            + (c.bidders ? '<div style="color:#1565c0;">입찰자 ' + c.bidders + '명' + (c.secondBidPrice ? ' · 2등 ' + toEok(String(Math.round(c.secondBidPrice / 10000))) : ' · 단독 입찰') + '</div>' : '')
             + (c._noBid ? '<div style="color:#e65100;font-size:10px;margin-top:2px;">⚠️ 낙찰가가 확인되지 않아 백테스트에서 제외됨</div>' : '')
             + '</div></div>';
     });
@@ -7375,6 +7470,7 @@ async function runBacktestPipeline() {
             minBid: c.minBidPrice ? Math.round(c.minBidPrice / 10000) : '',
             actualBid: Math.round(c.finalBidPrice / 10000), // finalBidPrice가 있는 항목만 selected됐으므로 항상 존재
             memo: c.specialConditions || '',
+            bidders: c.bidders || null, secondBid: c.secondBidPrice ? Math.round(c.secondBidPrice / 10000) : null,
             target: target, compTargetMargin: margin,
             comparables: compRecords,
             isBacktest: true, isBidTarget: false,
