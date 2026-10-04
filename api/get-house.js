@@ -156,8 +156,8 @@ function recentCutoffDateStr(years) {
   d.setFullYear(d.getFullYear() - (years || RECENT_WINDOW_YEARS));
   return String(d.getFullYear()) + String(d.getMonth() + 1).padStart(2, '0') + String(d.getDate()).padStart(2, '0');
 }
-async function fetchAllRows(table, regionName) {
-  const cutoff = recentCutoffDateStr(table === 'villa_trades' ? RECENT_WINDOW_YEARS_VILLA : RECENT_WINDOW_YEARS);
+async function fetchAllRows(table, regionName, yearsOverride) {
+  const cutoff = recentCutoffDateStr(yearsOverride || (table === 'villa_trades' ? RECENT_WINDOW_YEARS_VILLA : RECENT_WINDOW_YEARS));
   const { count, error: countError } = await supabase
     .from(table)
     .select('id', { count: 'exact', head: true })
@@ -307,6 +307,18 @@ export default async function handler(req, res) {
   const regionName = regionInfo ? regionInfo.name : '';
 
   console.log('lawdCd:', lawdCd, '/ regionName:', regionName || '(매칭 실패)', '/ skipRealtime:', skipRealtime);
+
+  // 2026-10: 백테스트 전용 - ?years=3~6이면 매매(아파트·빌라)만 그 기간만큼 길게(캐시 안 씀, 전세 생략).
+  // 과거 낙찰사례를 "그 당시 시점"으로 다시 판정하려면 입찰 전 1~2년 거래가 필요해서.
+  const longYears = Math.min(6, parseInt(req.query.years, 10) || 0);
+  if (longYears > 2 && regionName) {
+    try {
+      const [ar, vr] = await Promise.all([fetchAllRows('house_trades', regionName, longYears), fetchAllRows('villa_trades', regionName, longYears)]);
+      if (ar.error || vr.error) return res.status(500).json({ error: (ar.error || vr.error).message });
+      const apt = dedup([...(ar.data || []).map(r => normalizeRow(r, 'apt')), ...(vr.data || []).map(r => normalizeRow(r, 'villa'))]);
+      return res.status(200).json({ apt, rent: [], years: longYears });
+    } catch (e) { return res.status(500).json({ error: e.message }); }
+  }
 
   try {
     // ── 1. DB 배치 수집분(apt/villa/전세)은 캐시가 있으면 그대로 재사용 ──
