@@ -135,7 +135,9 @@ export default async function handler(req, res) {
       cached = cachedRow;
     }
 
-    const cachedNonResidential = cached && cached.title_json && LEGACY_SIGUNGU_MAP[sigunguCd]
+    // 주거동이 아닌 건물(상가동 등)이 저장돼 있으면 전국 어디서든 한 번 다시 조회 - 주거동 우선 선택 규칙(pickBestItem)이 생기기 전에
+    // 저장된 잘못된 자료를 바로잡기 위함. 다시 조회해도 주거동이 없는 진짜 상가 건물은 residentialChecked로 표시해 반복 조회 안 함.
+    const cachedNonResidential = cached && cached.title_json && !cached.title_json.residentialChecked
       && !((cached.title_json.hhldCnt || 0) > 0 || /공동주택|아파트|다세대|연립/.test(cached.title_json.mainPurps || ''));
     // 단지 전체 값(총괄표제부)을 붙이기 전에 저장된 아파트 캐시는 한 번 다시 조회(이후엔 siteChecked로 표시돼 반복 안 함)
     const cachedNeedsSite = cached && cached.title_json && (cached.title_json.hhldCnt || 0) > 0 && !cached.title_json.site && !cached.title_json.siteChecked;
@@ -201,6 +203,7 @@ export default async function handler(req, res) {
     // 동이 여러 개인 단지: 표제부의 건폐율·용적률은 "이 동 하나 ÷ 단지 전체 대지"라 실제 단지 값과 다름(치평동 1331: 2.5%/30.9%) -
     // 총괄표제부(단지 전체)의 건폐율·용적률·세대수·주차를 따로 붙임
     if (title && (title.hhldCnt || 0) > 0) title.siteChecked = true;
+    if (title) title.residentialChecked = true;
     if (title && titleItems.length > 1) {
       try {
         const usedSgg = legacyFallbackUsed && LEGACY_SIGUNGU_MAP[sigunguCd] ? LEGACY_SIGUNGU_MAP[sigunguCd] : sigunguCd;
