@@ -953,6 +953,8 @@ body.ui2 #auction-modal .modal-section.am-collapsed > *:not(.modal-section-title
 body.ui2 #auction-modal .modal-section.am-collapsed > .modal-section-title::after { content:' ›'; color:#b0b5bb; }
 body.ui2 #auction-modal .modal-input, body.ui2 #auction-modal .modal-select { border-radius:8px; border:1px solid #e5e7eb; }
 #am-summary .am-sum { margin-bottom:10px; }
+#am-summary .am-legend { display:flex; gap:10px; flex-wrap:wrap; font-size:11.5px; color:#4b5563; margin-top:2px; }
+#am-summary .am-legend i { display:inline-block; width:8px; height:8px; border-radius:2px; margin-right:3px; vertical-align:middle; }
 #am-summary .am-chips { display:flex; flex-wrap:wrap; gap:4px; margin-top:8px; }
 #am-summary .am-chips span { background:#f3f4f6; color:#4b5563; border-radius:6px; padding:2px 7px; font-size:11px; }
 @media (max-width: 640px) { body.ui2 #auction-modal { width:96vw; } }
@@ -21243,15 +21245,13 @@ function buildPriceLadderSvg(minBid, rec, sale) {
     if (vals.length < 2) return '';
     var lo = Math.min.apply(null, vals) * 0.95, hi = Math.max.apply(null, vals) * 1.03, W = 300;
     var X = function(v) { return 10 + (v - lo) / (hi - lo) * (W - 20); };
-    var mark = function(v, color, label, up) {
-        if (!(v > 0)) return '';
-        var x = X(v);
-        return '<line x1="' + x + '" x2="' + x + '" y1="20" y2="34" stroke="' + color + '" stroke-width="3"/>'
-            + '<text x="' + x + '" y="' + (up ? 14 : 48) + '" text-anchor="middle" font-size="10" fill="' + color + '" font-weight="700">' + label + ' ' + pnFmtEok(v) + '</text>';
-    };
-    var zone = rec > 0 && minBid > 0 && rec > minBid ? '<rect x="' + X(minBid) + '" y="22" width="' + (X(rec) - X(minBid)) + '" height="10" fill="#bbf7d0"/>' : '';
-    return '<svg viewBox="0 0 ' + W + ' 54" class="pn-chart"><rect x="10" y="24" width="' + (W - 20) + '" height="6" rx="3" fill="#eef0f3"/>' + zone
-        + mark(minBid, '#6b7280', '최저', true) + mark(rec, '#16a34a', '추천', false) + mark(sale, 'var(--ui-blue,#1e5eff)', '예상매도', true) + '</svg>';
+    var tick = function(v, color) { return v > 0 ? '<rect x="' + (X(v) - 2) + '" y="6" width="4" height="18" rx="2" fill="' + color + '"/>' : ''; };
+    // 추천 입찰가가 최저가보다 높으면 그 사이(입찰 가능 구간)를 초록으로
+    var zone = rec > 0 && minBid > 0 && rec > minBid ? '<rect x="' + X(minBid) + '" y="11" width="' + (X(rec) - X(minBid)) + '" height="8" fill="#bbf7d0"/>' : '';
+    var leg = function(color, label, v) { return v > 0 ? '<span><i style="background:' + color + '"></i>' + label + ' <b>' + pnFmtEok(v) + '</b></span>' : ''; };
+    return '<svg viewBox="0 0 ' + W + ' 30" class="pn-chart"><rect x="10" y="12" width="' + (W - 20) + '" height="6" rx="3" fill="#eef0f3"/>' + zone
+        + tick(minBid, '#6b7280') + tick(rec, '#16a34a') + tick(sale, '#1e5eff') + '</svg>'
+        + '<div class="am-legend">' + leg('#6b7280', '최저가', minBid) + leg('#16a34a', '추천 입찰가', rec) + leg('#1e5eff', '예상매도가', sale) + '</div>';
 }
 function renderAuctionSummaryCard(a) {
     var body = document.querySelector('#auction-modal .modal-body');
