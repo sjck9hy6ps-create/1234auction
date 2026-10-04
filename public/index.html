@@ -937,6 +937,41 @@ body.ui2 .panel-tabs { background:#fff; border-radius:12px; padding:4px; border:
 body.ui2 .panel-tab-btn { border-radius:8px; border-bottom:none; margin:0; color:#6b7280; }
 body.ui2 .panel-tab-btn.active { background:#111; color:#fff; }
 </style>
+<style>
+/* ════ 2026-10 세부 화면 공통 개편 ════ */
+details.ui-info { margin:2px 0; }
+details.ui-info > summary { list-style:none; cursor:pointer; color:#9aa0a6; font-size:11px; display:inline-block; padding:1px 6px; border-radius:8px; background:#f3f4f6; }
+details.ui-info > summary::-webkit-details-marker { display:none; }
+details.ui-info[open] > summary { margin-bottom:4px; }
+/* 경매 등록·수정 화면 */
+body.ui2 #auction-modal { width:560px; background:#f5f6f8; border-radius:16px; }
+body.ui2 #auction-modal .modal-header { background:#fff; border-bottom:1px solid #e9ebee; position:sticky; top:0; z-index:3; }
+body.ui2 #auction-modal .modal-body { padding:12px; }
+body.ui2 #auction-modal .modal-section, body.ui2 #auction-modal .modal-group { background:#fff; border-radius:12px; border:none; padding:12px 14px; margin-bottom:10px; box-shadow:0 1px 2px rgba(0,0,0,0.04); }
+body.ui2 #auction-modal .modal-section-title, body.ui2 #auction-modal .modal-group-header { font-size:14px; font-weight:800; color:#111; }
+body.ui2 #auction-modal .modal-section.am-collapsed > *:not(.modal-section-title) { display:none !important; }
+body.ui2 #auction-modal .modal-section.am-collapsed > .modal-section-title::after { content:' ›'; color:#b0b5bb; }
+body.ui2 #auction-modal .modal-input, body.ui2 #auction-modal .modal-select { border-radius:8px; border:1px solid #e5e7eb; }
+#am-summary .am-sum { margin-bottom:10px; }
+#am-summary .am-chips { display:flex; flex-wrap:wrap; gap:4px; margin-top:8px; }
+#am-summary .am-chips span { background:#f3f4f6; color:#4b5563; border-radius:6px; padding:2px 7px; font-size:11px; }
+@media (max-width: 640px) { body.ui2 #auction-modal { width:96vw; } }
+/* 패널 안 경매·낙찰사례 카드, 목록 패널 */
+body.ui2 #panel-tab-auction > div, body.ui2 #panel-tab-auction .indicator-box { background:#fff; border-radius:12px; border:none !important; box-shadow:0 1px 2px rgba(0,0,0,0.04); }
+body.ui2 .indicator-box { border-radius:12px; border:1px solid #eef0f3; box-shadow:none; }
+body.ui2 .indicator-title { font-size:13.5px; font-weight:800; color:#111; }
+body.ui2 #bid-case-panel, body.ui2 #surge-panel, body.ui2 #bid-target-panel, body.ui2 #backtest-panel, body.ui2 #auction-list-panel { background:#f8f9fb; }
+body.ui2 .auction-list-item { background:#fff; margin:6px 8px; border-radius:10px; border:1px solid #eef0f3; }
+body.ui2 .surge-item { background:#fff; margin:6px 8px; border-radius:10px; border:1px solid #eef0f3; display:grid; grid-template-columns:auto 1fr; gap:2px 8px; align-items:center; }
+body.ui2 .surge-rank { grid-row:span 2; font-size:15px; color:var(--ui-blue,#1e5eff); min-width:24px; text-align:center; }
+body.ui2 .surge-dong { font-size:13.5px; }
+body.ui2 .surge-metric { font-size:12px; color:#4b5563; }
+body.ui2 #cycle-panel { background:#f8f9fb !important; border-radius:14px !important; }
+body.ui2 #cycle-panel > div { background:#fff; border-radius:12px; padding:10px 12px; margin-bottom:8px; }
+body.ui2 #bid-case-panel table, body.ui2 #surge-panel table, body.ui2 #panel-tab-auction table { width:100%; border-collapse:collapse; font-size:12px; }
+body.ui2 #bid-case-panel th, body.ui2 #surge-panel th, body.ui2 #panel-tab-auction th { color:#9aa0a6; font-weight:600; text-align:left; border-bottom:1px solid #eef0f3; padding:5px 4px; background:none; }
+body.ui2 #bid-case-panel td, body.ui2 #surge-panel td, body.ui2 #panel-tab-auction td { border-bottom:1px solid #f5f6f8; padding:6px 4px; }
+</style>
 </head>
 <body>
 <div id="topbar">
@@ -21163,6 +21198,124 @@ function setupUiV3() {
     syncFilterUi();
 }
 window.addEventListener('load', function() { setTimeout(setupUiV3, 0); });
+/* ════ 2026-10 세부 화면 공통 개편(사용자: "세부 UI는 텍스트 최소화, 표·그래프 위주로 - 모두 변경")
+   ① 긴 설명 글(회색 작은 글씨, 70자 이상) → "ⓘ 설명" 한 줄로 접음(내용은 그대로, 눌러서 펼침)
+   ② 경매 등록·수정 화면 맨 위에 "입찰 판단" 요약 카드(보드와 같은 계산) + 가격 막대(최저가·추천 입찰가·예상매도가 위치)
+   ③ 이미 등록된 물건은 AI 자동 채우기 영역을 접어 둠 ════ */
+function isGrayish(color) {
+    var m = String(color).match(/\d+/g);
+    if (!m || m.length < 3) return false;
+    var r = +m[0], g = +m[1], b = +m[2];
+    return Math.min(r, g, b) >= 90 && Math.max(r, g, b) - Math.min(r, g, b) < 40;
+}
+function compactLongNotes(root) {
+    if (!root) return;
+    root.querySelectorAll('div, p, span').forEach(function(el) {
+        if (el.dataset.compacted || el.closest('.ui-info, .pn-det summary, .bb-table, #bid-board, #sidebar, .simple-badge, table, summary')) return;
+        if (el.querySelector('input, button, select, textarea, a, table, svg, canvas, img, details')) return;
+        var txt = (el.textContent || '').trim();
+        if (txt.length < 70) return;
+        if (el.children.length > 4) return;
+        var cs = getComputedStyle(el);
+        if (parseFloat(cs.fontSize) > 11.6 || !isGrayish(cs.color)) return;
+        if (el.parentElement && el.parentElement.dataset && el.parentElement.dataset.compacted) return;
+        var d = document.createElement('details');
+        d.className = 'ui-info';
+        d.dataset.compacted = '1';
+        var sm = document.createElement('summary');
+        sm.textContent = 'ⓘ 설명';
+        el.parentNode.insertBefore(d, el);
+        d.appendChild(sm);
+        d.appendChild(el);
+        el.dataset.compacted = '1';
+    });
+}
+var UI5_TARGETS = ['panel-body', 'auction-modal', 'bid-case-panel', 'surge-panel', 'auction-list-panel', 'bid-target-panel', 'backtest-panel', 'cycle-panel', 'legend'];
+var ui5Pending = false;
+function ui5Sweep() {
+    ui5Pending = false;
+    UI5_TARGETS.forEach(function(id) { var el = document.getElementById(id); if (el && el.offsetParent !== null) compactLongNotes(el); });
+}
+function ui5Schedule() { if (!ui5Pending) { ui5Pending = true; setTimeout(ui5Sweep, 120); } }
+// ── 경매 화면 요약 카드 ──
+function buildPriceLadderSvg(minBid, rec, sale) {
+    var vals = [minBid, rec, sale].filter(function(v) { return v > 0; });
+    if (vals.length < 2) return '';
+    var lo = Math.min.apply(null, vals) * 0.95, hi = Math.max.apply(null, vals) * 1.03, W = 300;
+    var X = function(v) { return 10 + (v - lo) / (hi - lo) * (W - 20); };
+    var mark = function(v, color, label, up) {
+        if (!(v > 0)) return '';
+        var x = X(v);
+        return '<line x1="' + x + '" x2="' + x + '" y1="20" y2="34" stroke="' + color + '" stroke-width="3"/>'
+            + '<text x="' + x + '" y="' + (up ? 14 : 48) + '" text-anchor="middle" font-size="10" fill="' + color + '" font-weight="700">' + label + ' ' + pnFmtEok(v) + '</text>';
+    };
+    var zone = rec > 0 && minBid > 0 && rec > minBid ? '<rect x="' + X(minBid) + '" y="22" width="' + (X(rec) - X(minBid)) + '" height="10" fill="#bbf7d0"/>' : '';
+    return '<svg viewBox="0 0 ' + W + ' 54" class="pn-chart"><rect x="10" y="24" width="' + (W - 20) + '" height="6" rx="3" fill="#eef0f3"/>' + zone
+        + mark(minBid, '#6b7280', '최저', true) + mark(rec, '#16a34a', '추천', false) + mark(sale, 'var(--ui-blue,#1e5eff)', '예상매도', true) + '</svg>';
+}
+function renderAuctionSummaryCard(a) {
+    var body = document.querySelector('#auction-modal .modal-body');
+    if (!body) return;
+    var box = document.getElementById('am-summary');
+    if (!box) { box = document.createElement('div'); box.id = 'am-summary'; var n = document.getElementById('bid-target-notice'); (n ? n : body.firstChild).after ? (n || body.firstChild).after(box) : body.prepend(box); }
+    if (!a || !(a.propType === 'apt' || a.propType === 'villa')) { box.innerHTML = ''; return; }
+    var r = null;
+    try { r = computeBidBoardRow(a); } catch (e) { r = null; }
+    if (!r) { box.innerHTML = ''; return; }
+    var v = BID_BOARD_VERDICT[r.verdict];
+    var st = function(k, val, sub) { return '<div class="pn-stat"><div class="k">' + k + '</div><div class="v">' + val + '</div>' + (sub ? '<div class="s">' + sub + '</div>' : '') + '</div>'; };
+    var room = r.roomPct == null ? '-' : (r.roomPct >= 0 ? '<span style="color:#16a34a;">+' + r.roomPct + '%</span>' : '<span style="color:#dc2626;">' + r.roomPct + '%</span>');
+    box.innerHTML = '<div class="pn-card am-sum">'
+        + '<div style="display:flex;align-items:center;gap:6px;margin-bottom:6px;"><b style="font-size:14px;">입찰 판단</b>'
+        + '<span class="bb-verdict" style="color:' + v.color + ';background:' + v.bg + ';font-weight:700;border-radius:10px;padding:1px 8px;font-size:12px;">' + (r.opportunity ? '🎯 ' : '') + (r.assumedFail ? '유찰되면 ' : '') + v.label + '</span>'
+        + (r.dday ? '<span class="pn-muted" style="margin-left:auto;">' + r.dday.label + '</span>' : '') + '</div>'
+        + buildPriceLadderSvg(r.minBid, r.recBid, r.sale)
+        + '<div class="pn-stats">'
+        + st('예상매도가', r.sale ? pnFmtEok(r.sale) : '-', r.salePresale ? '분양권 ' + r.salePresale.n + '건' : (r.own ? '같은 단지 ' + r.own + '건' : ''))
+        + st('추천 입찰가', r.recBid ? pnFmtEok(r.recBid) : '-', r.margin ? '마진 ' + pnFmtEok(r.margin) : '')
+        + st('최저가 대비', room, r.minBid ? '최저 ' + pnFmtEok(r.minBid) : '')
+        + st('생활권 거래량', r.liv && r.liv.rank ? r.liv.rank + '위/' + r.liv.of : '-', r.liv ? (r.liv.radius / 1000) + 'km' : '')
+        + st('동 거래량', r.pop && !r.pop.noRecent ? r.pop.rankInDong + '위/' + r.pop.complexesInDong : (r.lf && r.lf.isLeader ? (r.lf.only ? '단독' : '대장') : '-'), r.popular ? '🔥 인기' : '')
+        + st('유찰', r.fails == null ? '-' : (r.fails === 0 ? '신건' : r.fails + '회'), r.risk ? '지역위험 ' + r.risk.level : '')
+        + '</div>'
+        + ((r.notes || []).concat(r.warns).length ? '<div class="am-chips">' + (r.notes || []).concat(r.warns).map(function(t) { return '<span>' + bbEsc(t) + '</span>'; }).join('') + '</div>' : '')
+        + '</div>';
+}
+(function hookAuctionModal() {
+    var orig = window.openAuctionModal;
+    if (typeof orig !== 'function') return;
+    window.openAuctionModal = function(id) {
+        var r = orig.apply(this, arguments);
+        setTimeout(function() {
+            var a = id ? auctionList.find(function(x) { return x.id === id; }) : null;
+            renderAuctionSummaryCard(a);
+            // 이미 등록된 물건이면 AI 자동 채우기 영역은 접어 둠(제목을 누르면 펼침)
+            var sec = document.querySelector('#auction-modal .modal-body > .modal-section');
+            if (sec) {
+                var t = sec.querySelector('.modal-section-title');
+                sec.classList.toggle('am-collapsed', !!a);
+                if (t && !t.dataset.hooked) { t.dataset.hooked = '1'; t.style.cursor = 'pointer'; t.addEventListener('click', function() { sec.classList.toggle('am-collapsed'); }); }
+            }
+            ui5Schedule();
+        }, 150);
+        return r;
+    };
+})();
+window.addEventListener('load', function() {
+    setTimeout(function() {
+        try {
+            // 지도 배지가 바뀔 때마다 돌지 않도록 세부 화면 요소들만 지켜봄(사이클 패널은 나중에 생기므로 body 직속 추가만 따로 감시)
+            var mo = new MutationObserver(function() { ui5Schedule(); });
+            var watched = {};
+            var watchAll = function() {
+                UI5_TARGETS.forEach(function(id) { var el = document.getElementById(id); if (el && !watched[id]) { watched[id] = true; mo.observe(el, { childList: true, subtree: true }); } });
+            };
+            watchAll();
+            new MutationObserver(function() { watchAll(); ui5Schedule(); }).observe(document.body, { childList: true });
+        } catch (e) {}
+        ui5Schedule();
+    }, 500);
+});
 </script>
 
 </body>
