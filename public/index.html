@@ -19603,11 +19603,27 @@ function buildBuildingInfoHtml(info, opts) {
     if (!t && !p) html += '<div style="font-size:11px;color:#999;">조회된 건축물대장 정보가 없습니다.</div>';
     html += '</div>';
  
+    // 2026-10 안전장치(치평동 1331 "100층" 사례): 층 목록 "줄 수"는 층수가 아님 - 여러 건물 자료가 섞이면 줄이 층보다 훨씬 많아짐.
+    // 층 번호가 겹치는 줄(같은 층이 여러 번)이 많거나 지상 최고층이 80층을 넘으면 믿을 수 없는 자료로 보고 표를 숨김.
+    var floorSummary = null;
+    if (floors && floors.length) {
+        var seenF = {}, dupF = 0, maxUp = 0, maxDown = 0;
+        floors.forEach(function(f) {
+            var n = parseInt(String(f.flrNo || '').replace(/[^0-9]/g, ''), 10) || 0;
+            var under = /지하/.test(f.flrGbNm || '');
+            var k = (under ? 'B' : 'F') + n;
+            if (seenF[k]) dupF++; seenF[k] = true;
+            if (under) maxDown = Math.max(maxDown, n); else maxUp = Math.max(maxUp, n);
+        });
+        if (maxUp > 80 || dupF > floors.length * 0.3) { floors = null; floorSummary = '여러 건물 자료가 섞여 있어 층별 현황을 표시하지 않아요'; }
+        else floorSummary = '지상 ' + maxUp + '층' + (maxDown ? ' · 지하 ' + maxDown + '층' : '');
+    }
+    if (!floors && floorSummary) html += '<div class="pn-muted" style="margin:4px 0;">📐 ' + floorSummary + '</div>';
     if (floors && floors.length) {
         var floorsBodyId = idPrefix + '-floors-body', floorsBtnId = idPrefix + '-floors-btn';
         html += '<div class="indicator-box">';
         html += '<div class="indicator-title" style="display:flex;justify-content:space-between;align-items:center;">'
-            + '<span>📐 층별 현황 (' + floors.length + '개 층)</span>'
+            + '<span>📐 층별 현황 (' + floorSummary + ')</span>'
             + '<span id="' + floorsBtnId + '" onclick="toggleBuildingTable(\'' + floorsBodyId + '\',\'' + floorsBtnId + '\')" '
             + 'style="font-size:10px;color:#888;font-weight:bold;cursor:pointer;white-space:nowrap;margin-left:8px;">보이기 ▸</span></div>';
         html += '<div id="' + floorsBodyId + '" style="display:none;">';
