@@ -13,6 +13,10 @@ house_trades 2017~ 전체를 써서 사건마다 "입찰일 30일 전까지의 �
 재매도: 같은 단지·같은 면적·같은 층, 낙찰 14일 이후 첫 거래(직거래 제외), 낙찰가×1.02 이하인 건은 이상치로 제외.
 낙찰 확률: 낙찰가 ÷ 예상매도가가 r 이하인 사건 비율 = "예상매도가의 r로 썼다면 낙찰됐을 비율"(1등보다 높게 쓰면 낙찰).
 손해(근사): 재매도가 < 낙찰가 × 1.07 (취득세·등기·명도·이사·중개·이자 등 7% 가정 - 앱의 정밀 비용 계산은 아님).
+⚠️ 2026-10 사용자 기준: "경매의 핵심은 낙찰될 가격이 아니라 낙찰·매도 후 수익을 구현할 수 있는지", "누구나 1등으로 보는
+인기 물건보다 객관적 지표로 틈새를 찾는 게 중요" - 그래서 핵심 결과는 낙찰 확률이 아니라 "입찰 전에 알 수 있는 조건별로
+낙찰자가 실제로 번 돈(실현 수익률)과 경쟁(입찰자 수)"이고, 수익은 높은데 입찰자가 적은 조건(틈새)을 찾아 순위를 매김.
+실현 수익률(근사) = (재매도가 − 낙찰가 × 1.07) ÷ 낙찰가. 재매도 안 된 건은 수익을 알 수 없어 "재매도 비율"로 따로 봄.
 결과: leader_follower_cache 'bidcase|__validation__' + GitHub 요약.
 """
 import os
@@ -119,10 +123,10 @@ def main():
         for alias in ({"전남광주": ["전남광주", "광주", "전남"]}.get(sd, [sd])):
             names.add(f"{alias} {gu}")
     flt = "&region=in.(" + ",".join('"' + n + '"' for n in sorted(names)) + ")"
-    tr = avm.fetch_all_rows("house_trades", cols="region,dong,danji,bunji,price,size,floor,deal_date,dealing_type",
+    tr = avm.fetch_all_rows("house_trades", cols="region,dong,danji,bunji,price,size,floor,deal_date,dealing_type,build_year",
                             extra_filter=f"&deal_date=gte.{cyc.START_DATE}{flt}")
     tr = tr[tr["dealing_type"] != "직거래"].copy() if "dealing_type" in tr.columns else tr
-    for c in ("price", "size", "floor", "deal_date"):
+    for c in ("price", "size", "floor", "deal_date", "build_year"):
         tr[c] = pd.to_numeric(tr[c], errors="coerce")
     tr = tr.dropna(subset=["price", "size", "deal_date"])
     tr = tr[(tr["price"] > 0) & (tr["size"] > 10)]
@@ -168,6 +172,10 @@ def main():
                 for dg, lst in (p.get("byDong") or {}).items():
                     for x in lst:
                         pop[(rg, dong_key(dg), avm.normalize_complex_name(x.get("danji")))] = x.get("tier")
+                for dg, bands in (p.get("byDongBand") or {}).items():
+                    for bn, lst in (bands or {}).items():
+                        for x in lst:
+                            pop[(rg, dong_key(dg), avm.normalize_complex_name(x.get("danji")), bn)] = x.get("tier")
     except Exception as e:
         print("  인기 등급 불러오기 실패(건너뜀):", e)
 
@@ -175,7 +183,9 @@ def main():
     for c in df.itertuples():
         g = groups.get((c.region, c.dk, c.bunji_s))
         rec = {"region": c.region, "sido": c.sido, "sale": c.sale_int, "actual": c.actual, "second": c.second, "bidders": c.bidders,
-               "appraisal": c.appraisal, "minbid": c.minbid, "fails": c.fails, "est": None, "own": 0, "resale": None, "resale_m": None, "tier": None}
+               "appraisal": c.appraisal, "minbid": c.minbid, "fails": c.fails, "est": None, "own": 0, "resale": None, "resale_m": None, "tier": None,
+               "area": c.area, "floor": c.floor_n, "cx3y": 0, "age": None, "bandTier": None,
+               "notes": str(getattr(c, "specialConditions", "") or ""), "land": str(getattr(c, "landType", "") or "")}
         if g is not None and len(g):
             same = g[(g["size"] - c.area).abs() <= 2]
             sale_d = int_to_date(c.sale_int)
@@ -218,6 +228,13 @@ def main():
                         rec["resale_m"] = round((int_to_date(int(t0["deal_date"])) - sale_d).days / 30.4, 1)
             nm = avm.normalize_complex_name(g["danji"].mode().iloc[0]) if len(g) else None
             rec["tier"] = pop.get((c.region, c.dk, nm))
+            band = "소형" if c.area < 60 else ("중형" if c.area <= 85 else "대형")
+            rec["bandTier"] = pop.get((c.region, c.dk, nm, band))
+            # 단지 전체 최근 3년 거래(입찰 전 기준) - 거래 활발도
+            rec["cx3y"] = int(((g["deal_date"] < cut) & (g["deal_date"] >= ymd_int(sale_d - timedelta(days=30 + 1095)))).sum())
+            by = pd.to_numeric(g["build_year"], errors="coerce").dropna()
+            if len(by):
+                rec["age"] = int(sale_d.year - int(by.mode().iloc[0]))
         out.append(rec)
     R = pd.DataFrame(out)
     R["ratio"] = R["actual"] / R["est"]
@@ -265,6 +282,60 @@ def main():
         summary["byOwn"][k] = block(G)
     for (t, f), G in R.dropna(subset=["tier", "fails_b"]).groupby(["tier", "fails_b"]):
         summary["byTierFails"][f"{t}|{f}"] = block(G)
+
+    # ── 틈새 찾기: 입찰 전에 알 수 있는 조건별 실현 수익 ──
+    R["net"] = (R["resale"] - R["actual"] * COST_RATIO) / R["actual"]
+    R["band"] = R["area"].map(lambda a: "소형" if a < 60 else ("중형" if a <= 85 else "대형"))
+    R["floor_b"] = R["floor"].map(lambda f: None if pd.isna(f) else ("1층" if f <= 1 else ("2~3층" if f <= 3 else "4층+")))
+    R["age_b"] = R["age"].map(lambda a: None if a is None or pd.isna(a) else ("10년 이하" if a <= 10 else ("11~20년" if a <= 20 else ("21~30년" if a <= 30 else "30년 초과"))))
+    R["price_b"] = R["actual"].map(lambda v: "1억 미만" if v < 10000 else ("1~2억" if v < 20000 else ("2~3억" if v < 30000 else ("3~5억" if v < 50000 else "5억+"))))
+    R["liq_b"] = R["cx3y"].map(lambda n: "3년 거래 0~5건" if n <= 5 else ("6~20건" if n <= 20 else ("21~60건" if n <= 60 else "61건+")))
+    R["disc"] = R["minbid"] / R["est"]
+    R["disc_b"] = R["disc"].map(lambda d: None if pd.isna(d) else ("최저가 시세 70% 미만" if d < 0.7 else ("70~80%" if d < 0.8 else ("80~90%" if d < 0.9 else "90%+"))))
+    R["appr_b"] = (R["appraisal"] / R["est"]).map(lambda d: None if pd.isna(d) else ("감정가<시세 90%" if d < 0.9 else ("감정가≈시세" if d <= 1.1 else "감정가>시세 110%")))
+    R["note_b"] = R["notes"].map(lambda t: "토지별도등기" if "토지별도" in t else ("외 필지" if "필지" in t else "특이사항 없음"))
+    R["tier_b"] = R["tier"].fillna("자료없음")
+    R["bandTier_b"] = R["bandTier"].fillna("자료없음")
+    R = R[R["land"] != "none"]
+    OLD = R[R["sale"] <= obs_cut]
+
+    def seg_stats(G):
+        res = G[G["resale"].notna()]
+        old = G[G["sale"] <= obs_cut]
+        if len(res) == 0:
+            return None
+        return {"n": int(len(G)), "resold": int(len(res)),
+                "netMedPct": round(float(res["net"].median()) * 100, 1),
+                "profitPct": round(float((res["net"] > 0).mean()) * 100, 1),
+                "bigLossPct": round(float((res["net"] < -0.05).mean()) * 100, 1),
+                "biddersMed": med(G["bidders"]),
+                "resaleRateOld": round(float(old["resale"].notna().mean()) * 100, 1) if len(old) >= 10 else None,
+                "monthsMed": med(res["resale_m"])}
+
+    FEATS = ["fails_b", "tier_b", "bandTier_b", "band", "floor_b", "age_b", "price_b", "liq_b", "disc_b", "appr_b", "note_b"]
+    single = {}
+    for sd, GS in [("전체", R)] + list(R.groupby("sido")):
+        single[sd] = {}
+        for f in FEATS:
+            single[sd][f] = {str(k): seg_stats(G) for k, G in GS.groupby(f) if seg_stats(G)}
+    summary["profitBySingleFeature"] = single
+    # 두 조건 조합 - 재매도 확인 30건 이상만, 수익률 높고 입찰자 적은 순(틈새 점수 = 수익률 중앙값 − 입찰자 1명당 0.3%p)
+    combos = []
+    for sd, GS in [("전체", R)] + list(R.groupby("sido")):
+        for i, f1 in enumerate(FEATS):
+            for f2 in FEATS[i + 1:]:
+                for (k1, k2), G in GS.groupby([f1, f2]):
+                    st = seg_stats(G)
+                    if not st or st["resold"] < 30:
+                        continue
+                    base = GS[GS["resale"].notna()]["net"].median()
+                    st.update({"sido": sd, "cond": f"{f1}={k1} & {f2}={k2}",
+                               "vsRegionPctp": round((st["netMedPct"] / 100 - float(base)) * 100, 1),
+                               "nicheScore": round(st["netMedPct"] - 0.3 * (st["biddersMed"] or 0), 1)})
+                    combos.append(st)
+    combos.sort(key=lambda x: -x["nicheScore"])
+    summary["nicheTop"] = {sd: [c for c in combos if c["sido"] == sd and c["profitPct"] >= 70][:15] for sd in ["전체"] + sorted(R["sido"].dropna().unique())}
+    summary["crowdedWorst"] = sorted([c for c in combos if c["sido"] == "전체"], key=lambda x: x["netMedPct"])[:10]
 
     print(json.dumps(summary, ensure_ascii=False, indent=1))
     cyc.upsert_rows([{"id": "bidcase|__validation__", "payload": cyc.clean_json(summary), "fetched_at": now}])
