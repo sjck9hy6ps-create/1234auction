@@ -430,6 +430,9 @@ function pickBestItem(items, bldNm, dongNo) {
   // 이름 일치만 보면 상가동이 뽑혔음 - 같은 지번에 주거동이 있으면 주거동들 안에서만 고름.
   const residential = items.filter(it => (parseInt(it.get('hhldCnt'), 10) || 0) > 0 || /공동주택|아파트|다세대|연립/.test(it.get('mainPurpsCdNm') || ''));
   if (residential.length && residential.length < items.length) items = residential;
+  // 경비실·부속동도 "공동주택"으로 등록되는 경우가 있어(세대 0, 1층) 세대수가 있는 동이 있으면 그 안에서만
+  const withHh = items.filter(it => (parseInt(it.get('hhldCnt'), 10) || 0) > 0);
+  if (withHh.length && withHh.length < items.length) items = withHh;
 
   if (dongNo) {
     const dongDigits = String(dongNo).replace(/[^0-9]/g, '');
