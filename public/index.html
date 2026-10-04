@@ -8153,7 +8153,8 @@ function renderDongMarginStatsInModal() {
     // 매도사례 매칭 표본이 3건 미만이면(감정가 기준보다 표본이 항상 더 적음) 기존
     // 낙찰가율로 자동 폴백함(2026-08, 사용자 확인).
     var useCaptureRate = captureStats && !captureStats.lowSample;
-    var rateStats = (!useCaptureRate && dong) ? calcDongBidRateStats(dong) : null;
+    // 2026-10(사용자: "감정가는 최대 1년 전 금액, 최저가는 감정가×비율이라 금액 산정에 무의미") - 감정가 기준 낙찰가율 폴백(감정가×낙찰가율 = 예상낙찰가) 제거
+    var rateStats = null;
     if (!marginStats && !useCaptureRate && !rateStats) { box.innerHTML = ''; renderEstimateSummary(); return; }
     var html = '';
     if (useCaptureRate) {
@@ -8673,21 +8674,22 @@ function renderBidCaseList() {
                 + '<span>📍 ' + dong + ' (' + items.length + '건)' + (latestDate ? ' <span style="color:#aaa;font-size:9.5px;">· 최근 낙찰일 ' + latestDate + '</span>' : '') + '</span>'
                 + '<span style="color:#999;">' + (isDongOpen ? '▾' : '▸') + '</span></div>';
             if (!isDongOpen) return;
-            var soldItems = items.filter(function(c) { return c.appraisalPrice && c.finalBidPrice; });
-            var rates = soldItems.map(function(c) { return Math.round(c.finalBidPrice / c.appraisalPrice * 1000) / 10; });
+            var soldItems = items.filter(function(c) { return c.finalBidPrice; });
+            // 2026-10(사용자: "감정가는 최대 1년 전 금액, 최저가는 감정가×비율이라 금액 산정에 무의미") - 감정가 대비 낙찰가율 대신 실제 매도가 대비 매입가율(매도 매칭된 건만)
+            var rates = items.filter(function(c) { return c.finalBidPrice && c.resaleMatch && c.resaleMatch.amount > 0; }).map(function(c) { return Math.round((c.finalBidPrice / 10000) / c.resaleMatch.amount * 1000) / 10; });
             var matchedItems = items.filter(function(c) { return c.resaleMatch && c.estMargin !== null && c.estMargin !== undefined; });
             var margins = matchedItems.map(function(c) { return c.estMargin; });
             statsHtml += '<div style="padding:4px 14px 4px 26px;font-size:10px;color:#999;">낙찰 ' + soldItems.length + '건 · 매도사례 매칭 ' + matchedItems.length + '건</div>';
             if (rates.length) {
                 statsHtml += '<div style="padding:2px 14px 6px 26px;">'
-                    + '<div style="font-size:10px;color:#999;margin-bottom:2px;">낙찰가율(감정가 대비, %) - 중간값 / 최소 / 최대</div>'
+                    + '<div style="font-size:10px;color:#999;margin-bottom:2px;">낙찰가 ÷ 나중에 실제 팔린 가격(%) - 중간값 / 최소 / 최대</div>'
                     + '<div class="bc-stat-grid">'
                     + '<div class="bc-stat-item"><div class="bc-stat-label">보통</div><div class="bc-stat-value">' + median(rates).toFixed(1) + '%</div></div>'
                     + '<div class="bc-stat-item"><div class="bc-stat-label">가장 낮게</div><div class="bc-stat-value">' + Math.min.apply(null, rates).toFixed(1) + '%</div></div>'
                     + '<div class="bc-stat-item"><div class="bc-stat-label">가장 높게</div><div class="bc-stat-value">' + Math.max.apply(null, rates).toFixed(1) + '%</div></div>'
                     + '</div></div>';
             } else {
-                statsHtml += '<div style="padding:0 14px 6px 26px;font-size:10.5px;color:#aaa;">낙찰 완료된 건이 없어 낙찰가율 통계를 낼 수 없습니다.</div>';
+                statsHtml += '<div style="padding:0 14px 6px 26px;font-size:10.5px;color:#aaa;">매도까지 확인된 건이 없어 통계를 낼 수 없습니다.</div>';
             }
             if (margins.length) {
                 statsHtml += '<div style="padding:0 14px 8px 26px;">'
@@ -8707,7 +8709,7 @@ function renderBidCaseList() {
                 + (displayItems.length === items.length ? '개별 목록 (' + items.length + '건)' : '검색결과 (' + displayItems.length + '/' + items.length + '건)')
                 + ' <span style="font-weight:normal;color:#999;font-size:9.5px;">- 클릭하면 그 물건 위치로 지도 이동</span></div>';
             displayItems.forEach(function(c) {
-                var rate = (c.appraisalPrice && c.finalBidPrice) ? Math.round(c.finalBidPrice / c.appraisalPrice * 1000) / 10 : null;
+                var rate = (c.finalBidPrice && c.resaleMatch && c.resaleMatch.amount > 0) ? Math.round((c.finalBidPrice / 10000) / c.resaleMatch.amount * 1000) / 10 : null; // 실제 매도가 대비
                 // 낙찰 후 매도까지 보통 3~4개월씩 걸리므로, 매칭에 실패했든(아직 매도 전) 아예 시도를
                 // 안 했든 상관없이 "상시" 다시 조회할 수 있게 버튼을 항상 노출함(한 번 실패했다고
                 // 숨기지 않음) - 매칭에 이미 성공한 건만 재조회 버튼 없이 결과를 그대로 보여줌.
@@ -8809,8 +8811,10 @@ function detectNumericAuctionRisk(a) {
     var depositWon = extractGuaranteeDepositWon(a);
     if (!depositWon) return { level: null, reasons: [] };
     var officialPriceWon = parseFloat(a && a.officialPriceWon) || 0;
-    // 감정가(AI 추출, 원 단위) 우선, 없으면 모달에 입력된 감정가(만원 단위 → 원 환산)로 폴백
-    var saleValueWon = parseFloat(d.appraisalPrice) || (parseFloat(a && a.appraisal) ? parseFloat(a.appraisal) * 10000 : 0);
+    // 2026-10(사용자: "감정가는 최대 1년 전 금액, 최저가는 감정가×비율이라 금액 산정에 무의미") - 보증금 ÷ 감정가 대신 보증금 ÷ 예상매도가(실거래 기반)
+    var saleManwon = (a && a._saleManwon) || parseInt(a && a.target) || 0;
+    if (!saleManwon && a && a.lat && (a.propType === 'apt' || a.propType === 'villa')) { try { var _e = getAuctionWonEstimates(a); saleManwon = _e && _e.predictedSale || 0; } catch (e) {} }
+    var saleValueWon = saleManwon * 10000;
     var ratioOfficial = officialPriceWon > 0 ? depositWon / officialPriceWon : null;
     var ratioSale = saleValueWon > 0 ? depositWon / saleValueWon : null;
     var level = null;
@@ -8827,10 +8831,10 @@ function detectNumericAuctionRisk(a) {
     if (ratioSale !== null) {
         if (ratioSale >= GUARANTEE_RATIO_SALE_HIGH) {
             level = 'high';
-            reasons.push('전세가율(보증금÷감정가) ' + Math.round(ratioSale * 100) + '% (90%↑ - 낙찰가가 보증금보다 낮아질 위험)');
+            reasons.push('보증금이 예상매도가의 ' + Math.round(ratioSale * 100) + '% (90%↑ - 낙찰가가 보증금보다 낮아질 위험)');
         } else if (ratioSale >= GUARANTEE_RATIO_SALE_MEDIUM && level !== 'high') {
             level = 'medium';
-            reasons.push('전세가율(보증금÷감정가) ' + Math.round(ratioSale * 100) + '% (80%↑)');
+            reasons.push('보증금이 예상매도가의 ' + Math.round(ratioSale * 100) + '% (80%↑)');
         }
     }
     return { level: level, reasons: reasons, ratioOfficial: ratioOfficial, ratioSale: ratioSale, depositWon: depositWon };
@@ -12239,7 +12243,7 @@ function calcMargin() {
     if (captureStatsForBidRate && !captureStatsForBidRate.lowSample) bidRateSubParts.push('동네 매도가율(낙찰사례 ' + captureStatsForBidRate.count + '건 중간값) ' + captureStatsForBidRate.median.toFixed(1) + '%');
     var bidRateSub = bidRateSubParts.join(' · ');
     document.getElementById('margin-grid').innerHTML =
-        mItem('최저입찰가', minBid > 0 ? toEok(String(minBid)) + (minBidRatioToAppraisal !== null ? ' <span style="font-size:10px;font-weight:normal;color:#999;">(최초감정가대비 ' + minBidRatioToAppraisal + '%)</span>' : '') : '—', '#616161')
+        mItem('최저입찰가', minBid > 0 ? toEok(String(minBid)) : '—', '#616161')
       + mItem(actBid ? '실제 낙찰가' : '내 입찰가', useBid > 0 ? toEok(String(useBid)) : '—', '#1a237e', bidRateSub)
       + mItem('총 투자비용',    totalCost > 0 ? toEok(String(totalCost)) : '—', '#555')
       + mItem('총 부대비용',    feesSum > 0 ? toEok(String(feesSum)) : '—', '#888')
@@ -12247,7 +12251,7 @@ function calcMargin() {
       + mItem(taxLabel + ' (지방세포함)', (useSell > 0 && taxResult.totalTax > 0) ? toEok(String(taxResult.totalTax)) : '—', '#9c27b0')
       + mItem(actSell ? '세후 실제수익' : '세후 예상수익', useSell > 0 ? toEok(String(margin)) : '—', margin > 0 ? '#2e7d32' : margin < 0 ? '#e53935' : '#555')
       + mItem('세후 수익률',    useSell > 0 ? roi + '%' : '—', roi > 10 ? '#2e7d32' : roi > 0 ? '#ff7043' : '#e53935')
-      + mItem('낙찰률',         apprRate > 0 ? apprRate + '%' : '—', apprRate < 80 ? '#2e7d32' : apprRate < 90 ? '#ff7043' : '#e53935')
+      + mItem('예상매도가 대비', (useSell > 0 && useBid > 0) ? Math.round(useBid / useSell * 1000) / 10 + '%' : '—', '#616161')
       + mItem('손익분기 매도가(세전)', totalCost > 0 ? toEok(String(totalCost)) : '—', '#1565c0')
       + mItem('보증금(' + (depositRate > 0 ? depositRate : 10) + '%)', deposit > 0 ? toEok(String(deposit)) : '—', '#6a1b9a')
       + mItem('대출금액(' + loanCategoryLabel(loanPlan.category) + ' · ' + loanTypeLabel(loanPlan.loanType) + ')', loanAmount > 0 ? toEok(String(loanAmount)) : (useBid > 0 ? '대출불가' : '—'), loanPlan.loanType === 'manual' ? '#1565c0' : '#00695c', loanPlan.note)
@@ -12311,7 +12315,9 @@ function calcMargin() {
     var bidRateBox = document.getElementById('bid-rate-context-box');
     if (bidRateBox) {
         var ctx = getAuctionAddressContext();
-        var rateStats = ctx.dong ? calcDongBidRateStats(ctx.dong) : null;
+        // 2026-10(사용자: "감정가는 최대 1년 전 금액, 최저가는 감정가×비율이라 금액 산정에 무의미") - 감정가 대비 낙찰가율 대신 '실제 매도가 대비 매입가율'과 '내 입찰가 ÷ 예상매도가'를 비교
+        var rateStats = ctx.dong ? calcDongCaptureRateStats(ctx.dong) : null;
+        var myCapRate = (useSell > 0 && useBid > 0) ? Math.round(useBid / useSell * 1000) / 10 : 0;
         var failCount = 0;
         if (pendingAuctionDetail && Array.isArray(pendingAuctionDetail.rounds)) {
             failCount = pendingAuctionDetail.rounds.filter(function(r) {
@@ -12323,13 +12329,13 @@ function calcMargin() {
             pieces.push('<span style="color:#e53935;font-weight:bold;">이 물건 유찰 ' + failCount + '회</span>');
         }
         if (rateStats) {
-            pieces.push((ctx.dong || '이 지역') + ' 낙찰가율 중간값 <b>' + rateStats.median.toFixed(1) + '%</b>'
+            pieces.push((ctx.dong || '이 지역') + ' 낙찰가 ÷ 실제 매도가 중간값 <b>' + rateStats.median.toFixed(1) + '%</b>'
                 + (rateStats.lowSample ? '(표본 ' + rateStats.count + '건, 참고용)' : '(표본 ' + rateStats.count + '건)'));
-            if (apprRate > 0) {
-                if (apprRate < rateStats.median - 5) {
-                    pieces.push('<span style="color:#e65100;">⚠️ 내 입찰가(감정가대비 ' + apprRate + '%)가 시장 낙찰가율보다 낮음 - 유찰 가능성 유의</span>');
+            if (myCapRate > 0) {
+                if (myCapRate < rateStats.median - 5) {
+                    pieces.push('<span style="color:#e65100;">⚠️ 내 입찰가(예상매도가의 ' + myCapRate + '%)가 이 동 낙찰자들보다 낮음 - 낙찰 못 받을 수 있음</span>');
                 } else {
-                    pieces.push('<span style="color:#2e7d32;">내 입찰가(감정가대비 ' + apprRate + '%)가 시장 낙찰가율 수준 이상</span>');
+                    pieces.push('<span style="color:#2e7d32;">내 입찰가(예상매도가의 ' + myCapRate + '%)가 이 동 낙찰 수준 이상</span>');
                 }
             }
         }
@@ -12884,7 +12890,7 @@ function placeAuctionMarker(a) {
             : '';
         var awHb = awEst.highBidFlag;
         var awHighBidNote = awHb
-            ? '이 동 낙찰사례 ' + awHb.count + '건 낙찰가율 중앙값 ' + awHb.dongMedian + '% 대비 이 건 ' + awHb.myRate + '%(+' + awHb.gap + '%p) - 고가낙찰 의심(실수/주택보증공사/실거주 등), 역산매도가가 과대추정됐을 수 있으니 직접 확인 필요'
+            ? '이 동 낙찰사례 ' + awHb.count + '건 낙찰가÷실제매도가 중간값 ' + awHb.dongMedian + '% 대비 이 건 낙찰가÷예상매도가 ' + awHb.myRate + '%(+' + awHb.gap + '%p) - 고가낙찰 의심(실수/주택보증공사/실거주 등), 역산매도가가 과대추정됐을 수 있으니 직접 확인 필요'
             : '';
         impliedLine = '<div style="color:#6a1b9a;font-size:10.5px;" title="' + (awHb ? awHighBidNote : awImpliedNote) + '">' + (awHb ? '⚠️ ' : '') + '↩️ 역산매도가 ' + (awImplied ? toEok(String(awImplied.target)) : '계산 불가') + '</div>';
     }
@@ -13240,11 +13246,12 @@ function computeBidCaseImpliedTarget(c) {
    이상 높으면 "고가낙찰 의심"으로 표시함. 표본이 너무 적으면(calcDongBidRateStats.lowSample)
    비교 자체가 불안정하므로 경고를 내지 않음. */
 var BC_HIGH_BID_RATE_GAP = 15; // %p - 휴리스틱, 통계적으로 검증된 값 아님
-function computeBidCaseHighBidFlag(c) {
-    if (!c.appraisalPrice || !c.finalBidPrice || !c.dong) return null;
-    var stats = calcDongBidRateStats(c.dong);
+function computeBidCaseHighBidFlag(c, predictedSale) {
+    // 2026-10(사용자: "감정가는 최대 1년 전 금액, 최저가는 감정가×비율이라 금액 산정에 무의미") - 낙찰가÷감정가 대신 낙찰가÷예상매도가를 이 동 '낙찰가÷실제 매도가' 중간값과 비교
+    if (!c.finalBidPrice || !c.dong || !predictedSale) return null;
+    var stats = calcDongCaptureRateStats(c.dong);
     if (!stats || stats.lowSample) return null;
-    var myRate = Math.round(c.finalBidPrice / c.appraisalPrice * 1000) / 10;
+    var myRate = Math.round((c.finalBidPrice / 10000) / predictedSale * 1000) / 10;
     var gap = Math.round((myRate - stats.median) * 10) / 10;
     if (gap < BC_HIGH_BID_RATE_GAP) return null;
     return { myRate: myRate, dongMedian: stats.median, gap: gap, count: stats.count };
@@ -13290,8 +13297,9 @@ function getBidCaseEstimates(c) {
         inferredBuildYear: inferredBuildYear,
         buildYearConfirmed: buildYearConfirmed,
         ageTier: inferredBuildYear ? getAgeTierByYear(inferredBuildYear) : null,
-        highBidFlag: computeBidCaseHighBidFlag(c),
+        highBidFlag: null,
     };
+    result.highBidFlag = computeBidCaseHighBidFlag(c, result.predictedSale);
     bidCaseEstCache[c.id] = result;
     return result;
 }
@@ -13367,12 +13375,12 @@ function computeAuctionWonImpliedTarget(a) {
     if (!result) return null;
     return { target: result.target, marginUsed: marginInfo.margin, marginSource: marginInfo.source, regionAvg: marginInfo.regionAvg, count: marginInfo.count };
 }
-function computeAuctionWonHighBidFlag(a) {
-    var bid = parseFloat(a.actualBid), appraisal = parseFloat(a.appraisal);
-    if (!bid || !appraisal || !a.dong) return null;
-    var stats = calcDongBidRateStats(a.dong);
+function computeAuctionWonHighBidFlag(a, predictedSale) {
+    var bid = parseFloat(a.actualBid);
+    if (!bid || !a.dong || !predictedSale) return null;
+    var stats = calcDongCaptureRateStats(a.dong);
     if (!stats || stats.lowSample) return null;
-    var myRate = Math.round(bid / appraisal * 1000) / 10;
+    var myRate = Math.round(bid / predictedSale * 1000) / 10;
     var gap = Math.round((myRate - stats.median) * 10) / 10;
     if (gap < BC_HIGH_BID_RATE_GAP) return null;
     return { myRate: myRate, dongMedian: stats.median, gap: gap, count: stats.count };
@@ -13422,8 +13430,9 @@ function getAuctionWonEstimates(a) {
         inferredBuildYear: inferredBuildYear,
         buildYearConfirmed: !!a.buildYear,
         ageTier: inferredBuildYear ? getAgeTierByYear(inferredBuildYear) : null,
-        highBidFlag: computeAuctionWonHighBidFlag(a),
+        highBidFlag: null,
     };
+    result.highBidFlag = computeAuctionWonHighBidFlag(a, result.predictedSale);
     auctionWonEstCache[a.id] = result;
     return result;
 }
@@ -13447,7 +13456,7 @@ function placeBidCaseMarker(c) {
     // ⚠️ 경고만 덧붙임. 후보에서 제외/필터링하지 않음(계산은 그대로 진행).
     var hb = bcEst.highBidFlag; // {myRate, dongMedian, gap, count} 또는 null
     var highBidNote = hb
-        ? '이 동 낙찰사례 ' + hb.count + '건 낙찰가율 중앙값 ' + hb.dongMedian + '% 대비 이 건 ' + hb.myRate + '%(+' + hb.gap + '%p) - 고가낙찰 의심(실수/주택보증공사/실거주 등), 역산매도가가 과대추정됐을 수 있으니 직접 확인 필요'
+        ? '이 동 낙찰사례 ' + hb.count + '건 낙찰가÷실제매도가 중간값 ' + hb.dongMedian + '% 대비 이 건 낙찰가÷예상매도가 ' + hb.myRate + '%(+' + hb.gap + '%p) - 고가낙찰 의심(실수/주택보증공사/실거주 등), 역산매도가가 과대추정됐을 수 있으니 직접 확인 필요'
         : '';
     var impliedLine = c.finalBidPrice
         ? '<div style="color:#6a1b9a;font-size:10.5px;" title="' + (hb ? highBidNote : impliedMarginNote) + '">' + (hb ? '⚠️ ' : '') + '↩️ 역산매도가 ' + (implied ? toEok(String(implied.target)) : '계산 불가') + '</div>' : '';
@@ -13751,7 +13760,7 @@ function buildMarginSummaryHtml(a) {
         + mItem(taxLabel + ' (지방세포함)', (useSell > 0 && taxResult.totalTax > 0) ? toEok(String(taxResult.totalTax)) : '—', '#9c27b0')
         + mItem(actSell ? '세후 실제수익' : '세후 예상수익', useSell > 0 ? toEok(String(margin)) : '—', margin > 0 ? '#2e7d32' : margin < 0 ? '#e53935' : '#555')
         + mItem('세후 수익률', useSell > 0 ? roi + '%' : '—', roi > 10 ? '#2e7d32' : roi > 0 ? '#ff7043' : '#e53935')
-        + mItem('낙찰률', apprRate > 0 ? apprRate + '%' : '—', apprRate < 80 ? '#2e7d32' : apprRate < 90 ? '#ff7043' : '#e53935')
+        + mItem('예상매도가 대비', (useSell > 0 && useBid > 0) ? Math.round(useBid / useSell * 1000) / 10 + '%' : '—', '#616161')
         + mItem('손익분기 매도가(세전)', totalCost > 0 ? toEok(String(totalCost)) : '—', '#1565c0')
         + mItem('보증금(' + (depositRate > 0 ? depositRate : 10) + '%)', deposit > 0 ? toEok(String(deposit)) : '—', '#6a1b9a')
         + mItem('대출금액(' + loanCategoryLabel(loanPlan.category) + ' · ' + loanTypeLabel(loanPlan.loanType) + ')', loanAmount > 0 ? toEok(String(loanAmount)) : (useBid > 0 ? '대출불가' : '—'), loanPlan.loanType === 'manual' ? '#1565c0' : '#00695c', loanPlan.note)
@@ -15531,7 +15540,7 @@ function computeBidBoardRow(a) {
     // 평형대·생활권은 "진짜 인기"를 가리는 데 씀 - 단지·평형·생활권 셋 다 상위면 67%, 단지만 상위면 42%(낙찰자 27% 손해).
     // 그래서 마진(+2%)·거래 드묾 판단은 단지 전체 등급으로, 인기 판단은 셋 다 상위일 때만.
     row.popEff = row.pop ? { tier: row.pop.noRecent ? '하위40%' : row.pop.tier, activeQuarterPct: row.pop.activeQuarterPct, noRecent: row.pop.noRecent } : null;
-    row.guarantee = a._guaranteeRisk || detectNumericAuctionRisk(a);
+    row.guarantee = detectNumericAuctionRisk(Object.assign({}, a, { _saleManwon: row.sale }));
     row.liv = type === 'apt' ? livingAreaRank(a.dong, bunjiFull, a.lat, a.lon) : null;
     row.estBuildYear = est && est.inferredBuildYear || null;
     row.bunjiFull = bunjiFull;
@@ -15634,7 +15643,6 @@ function finalizeBidBoardRow(row) {
         // 대지권 구분(2026-10): 등록 때 면적 문구에서 읽어 둔 값 - 대지권이 아니라 토지로 잡혔거나 대지권이 없으면 대출·매도 불리
         if (a.landType === '토지') { ok = false; row.warns.push('⚠️ 대지권 아님(토지로 매각) - 대지권 미등기 여부 확인'); }
         else if (a.landType === 'none') { ok = false; row.warns.push('⚠️ 대지권 없음(건물만 매각) - 대출·매도 불리'); }
-        if (minBid < row.sale * 0.5) { ok = false; row.warns.push('최저가가 예상매도가의 절반도 안 돼요 - 지분·특수물건이거나 입력값 오류인지 확인'); }
         // 2026-10 백테스트 2차(앱 계산 그대로, 2022~2026 아파트 낙찰사례 9,366건 · 앱 추천가로 낙찰받고 되판 기록 964건):
         // 추천가가 최저가보다 15% 이상 높으면 예상매도가가 실제 되판 값보다 19~66% 높았고 손해 51~89%(수리비 빼고도).
         // 최저가 +15% 미만이면 오차 13~16%, 순이익 중앙 약 950만(수리비 제외), 손해 21~36% → 이 구간만 "입찰 추천 구간"(예전 이름 성공 구간).
@@ -15917,7 +15925,7 @@ function overshootSaleFactor(type, ratio) {
 }
 var BOARD_CACHE_KEY = 'bidBoardCache:v1', BOARD_CACHE_MAX_AGE = 24 * 3600 * 1000;
 // 저장 계산을 다시 써도 되는지 - 물건 입력값(시세 계산에 쓰는 것)과 입찰일 지남 여부. 계산 방식이 바뀌면 BOARD_CALC_VER을 올림
-var BOARD_CALC_VER = 8;
+var BOARD_CALC_VER = 9;
 function boardBaseSig(a) {
     var d = a.bidDate ? calcAuctionDday(a.bidDate) : null;
     return [BOARD_CALC_VER, auctionWonEstSignature(a), a.minBid, a.appraisal, a.bidDate, a.court, a.failCount, a.landType, String(a.memo || '').length,
@@ -16107,7 +16115,7 @@ function renderBidBoardRow(r) {
         + '<td data-l="최저가" class="r">' + (r.minBid ? toEok(String(r.minBid)) : '-')
             + (r.assumedFail ? '<div class="bb-sub" style="color:#ef6c00;">유찰 가정: ' + toEok(String(r.assumedFail.prevMin)) + '에서 ' + Math.round(r.assumedFail.rate * 100) + '%↓</div>'
                 + '<div class="bb-sub" title="' + bbEsc(r.assumedFail.pattern.src) + '">' + BID_REDUCTION_PATTERNS[r.assumedFail.pattern.pat].label + ' 법원</div>' : '')
-            + (r.appraisal && r.minBid ? '<div class="bb-sub">감정가의 ' + Math.round(r.minBid / r.appraisal * 100) + '%</div>' : '') + '</td>'
+            + '</td>'
         + '<td data-l="예상매도가" class="r">' + saleCell + '</td>'
         + '<td data-l="추천 입찰가" class="r">' + recCell + '</td>'
         + '<td data-l="최저가 대비" class="r">' + roomCell + '</td>'
@@ -18628,7 +18636,7 @@ function buildAuctionDetailHtml(detail, officialPriceWon, fallbackAppraisalManwo
     // 🚨 2026-08: 목록(renderAuctionList)에 붙인 수치 기반 위험 판정(공시가격 126%/140%,
     // 전세가율 80%/90%)을 모달에도 반영 - 목록을 안 거치고 바로 모달을 열어 확인하는 경로
     // (예: 지도 배지 클릭)도 있어서 필요함.
-    var numericRisk = detectNumericAuctionRisk({ detail: detail, officialPriceWon: officialPriceWon, appraisal: fallbackAppraisalManwon });
+    var numericRisk = detectNumericAuctionRisk({ detail: detail, officialPriceWon: officialPriceWon, _saleManwon: parseInt((document.getElementById('a-target') || {}).value) || window.__predictedSaleValue || 0 });
     if (numericRisk.level === 'high') {
         warnLines.unshift('🚨 깡통전세/보증기관 개입 의심(수치 기준) - ' + numericRisk.reasons.join(', ') + '. 일반 입찰자 낙찰확률이 낮을 수 있습니다(참고용 수치이며 최종 판단은 등기부·매각물건명세서로 확인 필요).');
     } else if (numericRisk.level === 'medium') {
