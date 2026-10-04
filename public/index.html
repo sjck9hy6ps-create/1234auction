@@ -16693,8 +16693,9 @@ async function applyNaverListings(id) {
     if (!list.length) { alert('매매 매물을 찾지 못했어요. 네이버 부동산 단지 매물 목록을 그대로 복사해 주세요'); return; }
     var area = (parseFloat(a.pyung) || 0) * 3.305785;
     var sm = summarizeNaverListings(list, area, a.floor, row && row.sale);
-    var bm = /(\d{1,4})\s*동(?:\s*(\d{3,4})\s*호)?/.exec([a.unitNo, a.aptDong, a.addr].filter(Boolean).join(' '));
-    sm.targetDong = bm ? bm[1] : null; sm.targetHo = bm && bm[2] ? bm[2] : null;
+    var bTxt = [a.unitNo, a.aptDong, a.addr].filter(Boolean).join(' ');
+    var bm = /(\d{1,4})\s*동(?![가-힣])/.exec(bTxt), hm = /(\d{3,4})\s*호/.exec(bTxt);
+    sm.targetDong = bm ? bm[1] : null; sm.targetHo = hm ? hm[1] : null;
     a.listingParse = sm;
     // 임장 문답·전체 상세의 같은 칸에도 채움 - 최저 호가는 비슷한 층(±3층) 최저, 없으면 같은 평형 최저
     a.fieldCheck = Object.assign({}, a.fieldCheck || {}, { ask: String(sm.simMin || sm.min || ''), listings: String(sm.n) });
