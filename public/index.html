@@ -15795,18 +15795,19 @@ function finalizeBidBoardRow(row) {
     var f0 = r0 == null ? null : (r0 >= 0.995 ? 0 : (matchReductionStep(r0).n || parseInt(a.failCount) || 1));
     row.fails = f0 == null ? null : f0 + (row.assumedFail ? 1 : 0);
     row.notes = [];
+    // 2026-10 재검증(지방 아파트 5,002건, 오늘 바꾼 예상매도가·앱 추천가로 낙찰 시, 수리 전):
+    //  예전 🎯 기회(인기 단지 2회+ 유찰): 순이익 중앙 −1,889만·손해 69% / 예전 🧭 틈새(단지 3년 거래 6~20건): −2,188만·손해 70% → 둘 다 폐기.
+    //  인기 단지 1회 유찰은 +1,095만·손해 18%라 예전 "경쟁 치열" 경고도 맞지 않아 삭제.
+    //  새 🎯 기회 = 👍 입찰 추천 구간 + (🛡️ 전세가율 80%+ 또는 거래 꾸준): +1,982~2,003만·손해 0~9%·매도 3~3.6개월.
     row.opportunity = false;
-    if (row.fails != null && type === 'apt' && row.verdict !== 'nodata') {
-        if (popular && row.fails >= 2) {
-            row.opportunity = true;
-            row.notes.push('🎯 기회: 인기 단지 ' + row.fails + '회 유찰 - 과거 같은 경우 낙찰자 손해 2%, 예상매도가의 75% 안팎에 낙찰');
-        } else if (popular && row.fails === 1) {
-            row.notes.push('⚔️ 경쟁 치열: 인기 단지 1회 유찰은 과거 낙찰자 26%가 손해 - 한 번 더 유찰되면 기회');
-        } else if (row.fails === 0) {
-            row.notes.push('⚠️ 신건: 시세보다 높게 낙찰되는 구간(과거 낙찰자 40%가 손해)');
-        }
+    var osy = row.ownStats;
+    var volSteady = !!(osy && osy.vPrev6 >= 4 && osy.v6 >= osy.vPrev6 * 0.7 && osy.v6 <= osy.vPrev6 * 1.3);
+    if (type === 'apt' && row.sweet && row.verdict !== 'no' && row.verdict !== 'nodata' && (row.sturdy || volSteady)) {
+        row.opportunity = true;
+        row.notes.push('🎯 기회: 같은 평형 거래가 충분하고 ' + (row.sturdy ? '전세가율 ' + Math.round(osy.jeonse.ratio * 100) + '%' : '거래가 꾸준') + ' - 과거 이런 물건은 앱 추천가로 낙찰 시 손해 0~9%, 순이익 약 2,000만(수리 전), 매도 3~4개월');
     }
-    row.niche = type === 'apt' && row.verdict !== 'nodata' ? bidBoardNiche(row, a, row.bunjiFull) : null;
+    if (row.fails === 0 && type === 'apt' && row.verdict !== 'nodata') row.notes.push('⚠️ 신건: 시세보다 높게 낙찰되는 구간(과거 낙찰자 40%가 손해)');
+    row.niche = null; // 🧭 틈새는 재설계 중(위 재검증 참고) - 입찰자가 덜 몰리는 동·단지 기준으로 다시 만들 예정
     if (row.niche) row.notes.unshift('🧭 틈새: ' + row.niche.why.join(' · '));
     return row;
 }
@@ -16047,7 +16048,7 @@ function overshootSaleFactor(type, ratio) {
 }
 var BOARD_CACHE_KEY = 'bidBoardCache:v1', BOARD_CACHE_MAX_AGE = 24 * 3600 * 1000;
 // 저장 계산을 다시 써도 되는지 - 물건 입력값(시세 계산에 쓰는 것)과 입찰일 지남 여부. 계산 방식이 바뀌면 BOARD_CALC_VER을 올림
-var BOARD_CALC_VER = 14;
+var BOARD_CALC_VER = 15;
 function boardBaseSig(a) {
     var d = a.bidDate ? calcAuctionDday(a.bidDate) : null;
     return [BOARD_CALC_VER, auctionWonEstSignature(a), a.minBid, a.appraisal, a.bidDate, a.court, a.failCount, a.landType, String(a.memo || '').length,
@@ -16256,11 +16257,10 @@ function renderBidBoardRow(r) {
 /* ════ 2026-10 UI 개편: 입찰후보 = 첫 화면, 요약 칩 한 번 누르면 걸러짐, 물건 누르면 오른쪽 상세(근거 거래·비용·인수금액 입력) ════ */
 var BB_CHIPS = [
     { k: 'all', label: '전체', f: function() { return true; } },
+    { k: 'opp', label: '🎯 기회', f: function(r) { return !!r.opportunity; } },
     { k: 'sweet', label: '👍 입찰 추천 구간', f: function(r) { return r.sweet && r.verdict !== 'no'; } },
     { k: 'yes', label: '✅ 추천 판정', f: function(r) { return r.verdict === 'yes'; } },
     { k: 'soon', label: '⏰ 7일 이내', f: function(r) { return r.dday && r.dday.diffDays >= 0 && r.dday.diffDays <= 7 && r.verdict !== 'no'; } },
-    { k: 'niche', label: '🧭 틈새', f: function(r) { return !!r.niche; } },
-    { k: 'opp', label: '🎯 기회', f: function(r) { return !!r.opportunity; } },
     { k: 'sturdy', label: '🛡️ 버팀(전세가율 80%+)', f: function(r) { return !!r.sturdy && r.verdict !== 'no'; } },
     { k: 'caution', label: '⚠️ 손해 주의', f: function(r) { return !!r.overshoot; } },
     { k: 'voldown', label: '📉 거래 감소', f: function(r) { return !!r.volDown; } },
