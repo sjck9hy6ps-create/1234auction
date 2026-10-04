@@ -15830,8 +15830,9 @@ async function openCyclePanel() {
    ⚠️ 호가·매물 자료는 과거 기록이 없어 이 규칙은 검증 전(판단 보조용) - 단계별 값을 표로 보여줘 근거를 확인할 수 있게 함. ════ */
 var VILLA_ASK_NEGOTIATION = 0.03;
 function villaAutoBaseEstimate() {
-    var est = getCompEstValue();
-    if (est && est.estValue) return { value: est.estValue, n: (pendingAuctionComparables || []).length, source: '등록한 비교물건' };
+    var nReg = (pendingAuctionComparables || []).length;
+    var est = nReg ? getCompEstValue() : null; // 등록한 비교물건이 없으면(동네 평균 대체값 대신) 아래 자동 주변 거래로
+    if (est && est.estValue) return { value: est.estValue, n: nReg, source: '등록한 비교물건' };
     var ctx = getAuctionAddressContext();
     var pyung = parseFloat(document.getElementById('a-pyung').value) || null;
     var floor = parseFloat((document.getElementById('a-floor') || {}).value);
