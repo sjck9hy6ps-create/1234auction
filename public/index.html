@@ -1206,7 +1206,7 @@ body.ui2 .al-opts input[type=checkbox] { margin:0; }
             placeholder="검색결과 목록 화면을 통째로 복사해서 여기 붙여넣으세요"
             style="resize:vertical;width:100%;"></textarea>
         <div style="margin-top:6px;text-align:right;">
-            <label class="modal-btn btn-gray" style="cursor:pointer;margin-right:4px;">📄 탱크옥션 CSV 올리기<input type="file" accept=".csv,text/csv" style="display:none;" onchange="onTankCsvFile(this,'bc')"></label>
+            <label class="modal-btn btn-gray" style="cursor:pointer;margin-right:4px;">📄 탱크옥션 CSV 올리기<input type="file" multiple accept=".csv,text/csv" style="display:none;" onchange="onTankCsvFile(this,'bc')"></label>
             <button class="modal-btn btn-purple" id="bc-extract-btn" onclick="extractCaseList()">목록 일괄 추출</button>
         </div>
         <div id="bc-extract-status" style="font-size:11px;color:#999;margin-top:4px;"></div>
@@ -1344,7 +1344,7 @@ body.ui2 .al-opts input[type=checkbox] { margin:0; }
             placeholder="낙찰가가 나온 검색결과 목록 화면을 통째로 복사해서 여기 붙여넣으세요"
             style="resize:vertical;width:100%;"></textarea>
         <div style="margin-top:6px;text-align:right;">
-            <label class="modal-btn btn-gray" style="cursor:pointer;margin-right:4px;">📄 탱크옥션 CSV 올리기<input type="file" accept=".csv,text/csv" style="display:none;" onchange="onTankCsvFile(this,'bx')"></label>
+            <label class="modal-btn btn-gray" style="cursor:pointer;margin-right:4px;">📄 탱크옥션 CSV 올리기<input type="file" multiple accept=".csv,text/csv" style="display:none;" onchange="onTankCsvFile(this,'bx')"></label>
             <button class="modal-btn btn-purple" id="bx-extract-btn" onclick="extractBacktestList()">목록 일괄 추출</button>
         </div>
         <div id="bx-extract-status" style="font-size:11px;color:#999;margin-top:4px;"></div>
@@ -6250,19 +6250,28 @@ function readCsvFileText(file) {
     });
 }
 async function onTankCsvFile(input, target) {
-    var file = input.files && input.files[0];
-    if (!file) return;
+    var files = Array.prototype.slice.call(input.files || []);
+    if (!files.length) return;
     var statusBox = document.getElementById(target === 'bx' ? 'bx-extract-status' : 'bc-extract-status');
     try {
-        var res = parseTankAuctionCsv(await readCsvFileText(file));
-        if (res.error) { statusBox.style.color = '#e53935'; statusBox.innerText = res.error; return; }
+        // 여러 파일을 한 번에(탱크옥션 내보내기는 파일당 100건) - 합치면서 같은 사건(사건번호+동+지번)은 하나만
+        var res = { cases: [], skipped: 0 }, seen = {}, badFiles = 0, dup = 0;
+        for (var fi = 0; fi < files.length; fi++) {
+            statusBox.style.color = '#999'; statusBox.innerText = 'CSV 읽는 중 ' + (fi + 1) + '/' + files.length;
+            var one = parseTankAuctionCsv(await readCsvFileText(files[fi]));
+            if (one.error) { badFiles++; continue; }
+            res.skipped += one.skipped;
+            one.cases.forEach(function(c) { var k = bidCaseAddrKey(c) || c.caseNo; if (seen[k]) { dup++; return; } seen[k] = true; res.cases.push(c); });
+        }
+        if (!res.cases.length) { statusBox.style.color = '#e53935'; statusBox.innerText = '읽을 수 있는 탱크옥션 CSV가 없어요.'; return; }
         var withBid = res.cases.filter(function(c) { return c.finalBidPrice; }).length;
         var withBidders = res.cases.filter(function(c) { return c.bidders; }).length;
         var list = res.cases.map(function(c) { return Object.assign({ _selected: true }, c); });
         if (target === 'bx') { pendingBacktestExtraction = list; renderBacktestPreview(); }
         else { pendingCaseListExtraction = list; renderCaseListPreview(); }
         statusBox.style.color = '#2e7d32';
-        statusBox.innerText = '📄 CSV ' + res.cases.length + '건 읽음 (낙찰가 있음 ' + withBid + '건 · 입찰자수 있음 ' + withBidders + '건'
+        statusBox.innerText = '📄 CSV ' + files.length + '개 파일, ' + res.cases.length + '건 읽음 (낙찰가 있음 ' + withBid + '건 · 입찰자수 있음 ' + withBidders + '건'
+            + (dup ? ' · 파일 사이 중복 ' + dup + '건 제외' : '') + (badFiles ? ' · 형식이 다른 파일 ' + badFiles + '개 건너뜀' : '')
             + (res.skipped ? ' · 형식이 달라 건너뜀 ' + res.skipped + '건' : '') + ') - 아래에서 확인 후 등록하세요.';
     } catch (e) {
         statusBox.style.color = '#e53935'; statusBox.innerText = 'CSV 읽기 실패: ' + e.message;
@@ -6400,6 +6409,8 @@ function renderCaseListPreview() {
     // 낙찰사례 신선도 유지(2026-08 추가): 법정동별로 이미 등록된 사례 중 가장 최근 매각기일보다
     // 같거나 이전인 사례는 이미 반영됐을 가능성이 높은 과거 데이터라 등록을 막고 자동으로 선택해제함.
     pendingCaseListExtraction.forEach(function(c) {
+        // CSV로 올린 과거 낙찰은 일부러 모으는 자료라 신선도 제한을 적용하지 않음(중복은 저장할 때 사건번호+주소로 거름)
+        if (c._fromCsv) { c._dateBlocked = false; return; }
         var latest = getBcDongLatestDate(c.dong);
         c._dateBlocked = !!(latest && c.saleDate && c.saleDate <= latest);
         if (c._dateBlocked) c._selected = false;
@@ -6409,9 +6420,11 @@ function renderCaseListPreview() {
     var html = '<div style="padding:8px 14px;background:#fff8e1;border-bottom:1px solid #eee;">'
         + '<div style="font-size:11px;font-weight:bold;color:#e65100;margin-bottom:6px;">추출 미리보기 (' + selectedCount + '/' + pendingCaseListExtraction.length + '건 선택됨'
         + (blockedCount ? ', 최신 아님 ' + blockedCount + '건 자동제외' : '') + ')</div>';
+    if (pendingCaseListExtraction.length > 200) html += '<div style="font-size:10.5px;color:#888;margin-bottom:4px;">건수가 많아 앞 200건만 보여줘요 - 등록은 선택된 ' + selectedCount + '건 전부 돼요.</div>';
     pendingCaseListExtraction.forEach(function(c, idx) {
+        if (idx >= 200) return;
         var rate = (c.appraisalPrice && c.finalBidPrice) ? Math.round(c.finalBidPrice / c.appraisalPrice * 1000) / 10 : (c.bidRate || null);
-        var latest = getBcDongLatestDate(c.dong);
+        var latest = c._fromCsv ? null : getBcDongLatestDate(c.dong);
         html += '<div style="display:flex;align-items:flex-start;gap:6px;padding:4px 0;border-bottom:1px solid #ffe9b3;' + (c._dateBlocked ? 'opacity:0.5;' : '') + '">'
             + '<input type="checkbox" ' + (c._selected ? 'checked' : '') + (c._dateBlocked ? ' disabled' : '') + ' onchange="toggleCasePreviewItem(' + idx + ')" style="margin-top:3px;">'
             + '<div style="flex:1;min-width:0;font-size:11px;">'
@@ -6448,6 +6461,11 @@ function normalizeCaseNoForCompare(str) {
 function bidCaseDedupKey(c) {
     if (!c || !c.caseNo) return null;
     return normalizeCaseNoForCompare(c.caseNo) + '|' + String(c.court || '').trim();
+}
+// CSV에는 담당계(법원)가 없어 사건번호만으론 다른 법원의 같은 번호 사건과 구분이 안 됨(6,800건 중 23쌍) - 사건번호+동+지번으로도 확인
+function bidCaseAddrKey(c) {
+    if (!c || !c.caseNo || !c.dong) return null;
+    return normalizeCaseNoForCompare(c.caseNo) + '|' + dongKey(c.dong) + '|' + String(c.bunji || '').trim();
 }
 // 법정동(dong) 안에 이미 저장된 낙찰사례 중 가장 최근 매각기일(saleDate)을 반환 - 신규 등록 시
 // 이 날짜보다 같거나 이전인 사례는 이미 반영된 과거 데이터일 가능성이 높아 등록을 막는 기준으로 씀
@@ -6508,13 +6526,17 @@ async function saveSelectedCases() {
     // 이미 저장돼 있는 사건 + 이번 배치 안에서 먼저 처리된 사건을 함께 추적해서, 같은 목록을
     // 실수로 다시 붙여넣었거나 붙여넣은 텍스트 안에 같은 사건이 중복으로 들어있어도 한 번만 저장함
     // (2026-08 - 같은 사건이 3번씩 저장되는 버그를 이 함수에 dedup 체크가 없어서 발견함).
-    var existingKeys = {};
-    bidCaseList.forEach(function(c) { var k = bidCaseDedupKey(c); if (k) existingKeys[k] = true; });
-    var savedCount = 0, skippedCount = 0;
+    var existingKeys = {}, existingAddrKeys = {};
+    bidCaseList.forEach(function(c) { var k = bidCaseDedupKey(c); if (k) existingKeys[k] = true; var k2 = bidCaseAddrKey(c); if (k2) existingAddrKeys[k2] = true; });
+    var savedCount = 0, skippedCount = 0, failCount = 0;
+    // 많이 올릴 때(CSV 수천 건) 한 건씩 기다리면 오래 걸려 6건씩 동시에 저장
+    var queue = [];
     for (var i = 0; i < selected.length; i++) {
         var c = selected[i];
-        var dedupKey = bidCaseDedupKey(c);
-        if (dedupKey && existingKeys[dedupKey]) { skippedCount++; continue; }
+        var dedupKey = c._fromCsv ? null : bidCaseDedupKey(c), addrKey = bidCaseAddrKey(c);
+        if ((dedupKey && existingKeys[dedupKey]) || (addrKey && existingAddrKeys[addrKey])) { skippedCount++; continue; }
+        if (dedupKey) existingKeys[dedupKey] = true;
+        if (addrKey) existingAddrKeys[addrKey] = true;
         var data = {
             id: Date.now().toString() + '_' + i,
             caseNo: c.caseNo || null, court: c.court || null, propertyType: c.propertyType || null,
@@ -6529,18 +6551,20 @@ async function saveSelectedCases() {
             landM2: c.landM2 || null, landType: c.landType || null,
             importedAt: Date.now(),
         };
-        try {
-            var saved = await saveBidCaseAPI(data);
-            bidCaseList.push(saved);
-            if (dedupKey) existingKeys[dedupKey] = true;
-            savedCount++;
-        } catch (e) { console.error('낙찰사례 저장 실패:', e.message); }
+        queue.push(data);
+    }
+    for (var qi = 0; qi < queue.length; qi += 6) {
+        statusBox.innerText = '저장 중... ' + Math.min(qi + 6, queue.length) + '/' + queue.length;
+        await Promise.all(queue.slice(qi, qi + 6).map(function(d) {
+            return saveBidCaseAPI(d).then(function(saved) { bidCaseList.push(saved); savedCount++; })
+                .catch(function(e) { failCount++; console.error('낙찰사례 저장 실패:', e.message); });
+        }));
     }
     pendingCaseListExtraction = [];
     document.getElementById('bc-paste-text').value = '';
     document.getElementById('bc-preview-box').innerHTML = '';
     statusBox.style.color = '#2e7d32';
-    statusBox.innerText = savedCount + '건 저장 완료.' + (skippedCount ? ' (이미 저장된 사건 ' + skippedCount + '건은 중복이라 건너뜀)' : '');
+    statusBox.innerText = savedCount + '건 저장 완료.' + (skippedCount ? ' (이미 저장된 사건 ' + skippedCount + '건은 중복이라 건너뜀)' : '') + (failCount ? ' ⚠️ ' + failCount + '건 저장 실패 - 다시 올리면 빠진 것만 저장돼요.' : '');
     renderBidCaseList(); renderBidCaseMarkers();
 }
 async function deleteBidCase(id) {
