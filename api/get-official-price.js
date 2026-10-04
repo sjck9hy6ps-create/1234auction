@@ -205,14 +205,22 @@ async function findPnuWithRegionRetry(address, key, domain) {
   return primary; // 옛 지명 치환도 실패하면 원래(실패) 결과 그대로 반환
 }
 
+// 2026-10(치평동 1331 실측): 대단지는 한 번에 받는 100건이 전부 옛 연도(2017년)여서 최신 공시가격까지 못 갔음 -
+// 기준연도를 올해부터 거꾸로 지정해 조회하고, 그래도 없으면 연도 없이 조회(예전 방식).
 async function getApartPrice(pnu, dongNm, floorNm, hoNm, key, domain) {
-  const params = new URLSearchParams({ pnu, format: 'json', numOfRows: '100', pageNo: '1', key });
-  if (domain) params.set('domain', domain);
-  if (dongNm) params.set('dongNm', dongNm);
-  if (floorNm) params.set('floorNm', floorNm);
-  if (hoNm) params.set('hoNm', hoNm);
-  const { data } = await vworldFetch(`${VWORLD_APT_PRICE_URL}?${params.toString()}`);
-  return extractFieldList(data);
+  const thisYear = new Date().getFullYear();
+  for (const yr of [thisYear, thisYear - 1, thisYear - 2, null]) {
+    const params = new URLSearchParams({ pnu, format: 'json', numOfRows: '100', pageNo: '1', key });
+    if (domain) params.set('domain', domain);
+    if (dongNm) params.set('dongNm', dongNm);
+    if (floorNm) params.set('floorNm', floorNm);
+    if (hoNm) params.set('hoNm', hoNm);
+    if (yr) params.set('stdrYear', String(yr));
+    const { data } = await vworldFetch(`${VWORLD_APT_PRICE_URL}?${params.toString()}`);
+    const rows = extractFieldList(data);
+    if (rows.length) return rows;
+  }
+  return [];
 }
 
 async function getLandPrice(pnu, key, domain) {
