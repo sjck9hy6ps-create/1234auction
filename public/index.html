@@ -1223,6 +1223,7 @@ body.ui2 #bid-case-panel td, body.ui2 #surge-panel td, body.ui2 #panel-tab-aucti
         <span class="reg-area-btn" id="reg-area-btn-unreg" onclick="setSurgeRegAreaFilter('unregulated')">비규제지역만</span>
         <span onclick="showCalcInfo('regAreaRank')" title="규제지역 기준 안내" style="cursor:pointer;color:#1976d2;font-size:11px;">ⓘ</span>
     </div>
+    <div id="surge-hit-row" style="display:none;margin:8px 14px 0;padding:7px 10px;border-radius:8px;font-size:11.5px;line-height:1.5;"></div>
     <!-- ⭐ 2026-09(후발주자 예측, 사용자 요청: "대장아파트가 오르면 따라 오르는 아파트들의
          순서를 알아내 곧 오를 후보를 미리 예측하고 싶다") - 시/도만으로는 범위가 너무 넓어
          (법정동 기준 대장 산정 + 100위 랭킹이 시/군/구 단위로 계산됨) 기존 시/도 select와
@@ -21446,7 +21447,31 @@ function moveToDanji(region, dong, danjiName) {
         }
     });
 }
+// 2026-10: 지금 탭 신호가 과거에 얼마나 맞았는지(analyze-surge-signals.py) - 매달 그 시점 상위 20개 동이 이후 1년 같은 시도 중간보다 더 오른 비율
+var surgeBacktestData = null;
+async function renderSurgeHitRow() {
+    var el = document.getElementById('surge-hit-row'); if (!el) return;
+    var sigKey = { hot: 'hot', money: 'money', newhigh: 'newhigh' }[surgePanelTab];
+    if (!sigKey) { el.style.display = 'none'; return; }
+    if (!surgeBacktestData) { try { surgeBacktestData = await fetch('/api/data-coverage?mode=surgeBacktest').then(function(r) { return r.json(); }); } catch (e) { surgeBacktestData = {}; } }
+    var bs = surgeBacktestData && surgeBacktestData.bySignal && surgeBacktestData.bySignal[sigKey];
+    var y = bs && (bs['12m'] || bs['6m']);
+    if (!y) { el.style.display = 'none'; return; }
+    var sidoSel = (document.getElementById('surge-sido-select') || {}).value || '';
+    var sk = /광주|전남/.test(sidoSel) ? '전남광주' : sidoSel.replace(/(특별시|광역시|특별자치시|특별자치도|도)$/, '').slice(0, 2);
+    var r = (sk && y[sk]) || y['전체'];
+    var label = r === y['전체'] ? '지방 6개 시도' : sk;
+    var good = r.hitPct >= 58, bad = r.hitPct < 52;
+    var yrs = y.byYear ? Object.keys(y.byYear).map(function(k) { return k + ' ' + Math.round(y.byYear[k].hitPct) + '%'; }).join(' · ') : '';
+    el.style.display = '';
+    el.style.background = good ? '#ecfdf5' : (bad ? '#fef2f2' : '#f3f4f6');
+    el.innerHTML = '<b>과거 적중률(' + label + '): ' + r.hitPct + '%</b> - 매달 이 탭 상위 20개 동이 이후 1년 같은 시도 중간보다 더 오른 비율(50%면 동전 던지기 수준), 평균 ' + (r.excessPctp >= 0 ? '+' : '') + r.excessPctp + '%p'
+        + (yrs ? '<br><span style="color:#6b7280;">연도별: ' + yrs + '</span>' : '')
+        + (sigKey === 'newhigh' ? '<br><span style="color:#6b7280;">신고가는 상승기(2024~25년 60~66%)엔 맞고 하락기(2021~22년 38~40%)엔 반대로 움직였어요 - 📈 사이클이 상승기일 때만 참고</span>' : '')
+        + (bad ? '<br><span style="color:#b91c1c;">이 지역에선 신호만 믿고 고르기 어려워요 - 입찰후보 판정(실거래·전세가율·거래 흐름)을 우선</span>' : '');
+}
 function loadSurgePanelData() {
+    renderSurgeHitRow();
     if (surgePanelTab === 'leader') return; // 후발주자 탭은 시/도+시/군/구를 고른 뒤 loadLeaderFollowerData()로 직접 조회함
     if (surgePanelTab === 'money') loadSurgeMoneyData();
     else if (surgePanelTab === 'newhigh') loadSurgeNewHighData();

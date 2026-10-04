@@ -3402,6 +3402,17 @@ export default async function handler(req, res) {
       return res.status(500).json({ error: err.message });
     }
   }
+  // 2026-10: 급등·돈되는지역·신고가 신호의 과거 적중률(analyze-surge-signals.py 결과)
+  if (req.query.mode === 'surgeBacktest') {
+    res.setHeader('Cache-Control', 's-maxage=3600, stale-while-revalidate=86400');
+    try {
+      const { data, error } = await supabase.from('leader_follower_cache').select('payload').eq('id', 'signal|__surge_backtest__').maybeSingle();
+      if (error) return res.status(500).json({ error: error.message });
+      return res.status(200).json((data && data.payload) || {});
+    } catch (err) {
+      return res.status(500).json({ error: err.message });
+    }
+  }
   if (req.query.mode === 'signalBacktestStats') {
     res.setHeader('Cache-Control', 's-maxage=3600, stale-while-revalidate=86400');
     try {
