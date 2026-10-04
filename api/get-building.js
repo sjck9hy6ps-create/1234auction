@@ -426,6 +426,10 @@ function getAny(it, tags) {
 function pickBestItem(items, bldNm, dongNo) {
   if (!items.length) return null;
   const norm = s => (s || '').replace(/\s/g, '');
+  // 2026-10(치평동 1331 상무에스케이뷰): 단지명이 그대로 붙은 건 부속 상가동이고 아파트 동은 "101동"처럼 등록돼 있어,
+  // 이름 일치만 보면 상가동이 뽑혔음 - 같은 지번에 주거동이 있으면 주거동들 안에서만 고름.
+  const residential = items.filter(it => (parseInt(it.get('hhldCnt'), 10) || 0) > 0 || /공동주택|아파트|다세대|연립/.test(it.get('mainPurpsCdNm') || ''));
+  if (residential.length && residential.length < items.length) items = residential;
 
   if (dongNo) {
     const dongDigits = String(dongNo).replace(/[^0-9]/g, '');
