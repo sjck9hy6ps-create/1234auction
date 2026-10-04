@@ -179,6 +179,11 @@ async function findPnu(address, key, domain) {
 // 찾으면 그 결과를 사용함. 확인된 지역만 등록, 필요시 계속 추가.
 const RENAMED_REGION_CANDIDATES = [
   { pattern: /인천\s*(광역시)?\s*서구/, replacements: ['인천광역시 서해구', '인천광역시 검단구'] },
+  // 2026-10: 전남광주통합특별시 - 공시가격 쪽(VWorld)은 아직 옛 지명(광주광역시 구 / 전라남도 시·군)으로 찾아야 함
+  { pattern: /전남광주(?:통합특별시)?\s*(동구|서구|남구|북구|광산구)/, replacements: ['광주광역시 $1'] },
+  { pattern: /전남광주(?:통합특별시)?\s*([가-힣]+[시군])/, replacements: ['전라남도 $1'] },
+  { pattern: /강원(?:특별자치도)?\s/, replacements: ['강원도 '] },
+  { pattern: /전북(?:특별자치도)?\s/, replacements: ['전라북도 '] },
 ];
 
 async function findPnuWithRegionRetry(address, key, domain) {

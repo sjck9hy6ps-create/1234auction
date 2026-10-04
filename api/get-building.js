@@ -78,6 +78,15 @@ const LEGACY_REGION_MAP = {
   '28275|10400': { sigunguCd: '28260', bjdongCd: '10600' }, // 서해구 연희동 → (구)인천 서구 연희동
 };
 
+// 2026-10(광주 치평동 1331 상무에스케이뷰 사례): 전남광주 통합·강원·전북 특별자치도 출범으로 시군구 코드가 바뀌었는데,
+// 건축HUB에는 아파트 동들이 아직 옛 코드로 남아 있고 새 코드로는 부속 상가동만 잡히는 경우가 있었음(→ 주용도 근린생활시설,
+// 1층, 건폐율/용적률 0.99%, 주차는 단지 전체 700대가 섞여 보임). 새 코드 결과에 주거동이 없으면 옛 코드로도 조회해 주거동을 씀.
+// (scripts/lawd-codes.mjs 새 코드 ↔ lawd_codes_py.py LEGACY_CODES_BY_NAME 옛 코드, 법정동 코드 뒷자리는 같음)
+const LEGACY_SIGUNGU_MAP = {"51150": "42150", "51820": "42820", "51170": "42170", "51230": "42230", "51210": "42210", "51800": "42800", "51830": "42830", "51750": "42750", "51130": "42130", "51810": "42810", "51770": "42770", "51780": "42780", "51110": "42110", "51190": "42190", "51760": "42760", "51720": "42720", "51790": "42790", "51730": "42730", "12780": "46810", "12740": "46770", "12720": "46720", "12330": "29200", "12190": "46230", "12730": "46730", "12170": "46170", "12270": "29155", "12710": "46710", "12210": "29110", "12110": "46110", "12810": "46840", "12750": "46780", "12300": "29170", "12240": "29140", "12150": "46150", "12870": "46910", "12130": "46130", "12830": "46870", "12800": "46830", "12850": "46890", "12840": "46880", "12770": "46800", "12860": "46900", "12820": "46860", "12790": "46820", "12760": "46790", "52790": "45790", "52130": "45130", "52210": "45210", "52190": "45190", "52730": "45730", "52800": "45800", "52770": "45770", "52710": "45710", "52140": "45140", "52750": "45750", "52740": "45740", "52113": "45113", "52111": "45111", "52180": "45180", "52720": "45720"};
+function hasResidentialTitle(items) {
+  return items.some(it => (parseInt(it.get('hhldCnt'), 10) || 0) > 0 || /공동주택|아파트|다세대|연립/.test(it.get('mainPurpsCdNm') || ''));
+}
+
 export default async function handler(req, res) {
   res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
 
@@ -126,7 +135,9 @@ export default async function handler(req, res) {
       cached = cachedRow;
     }
 
-    if (cached && (Date.now() - new Date(cached.fetched_at).getTime()) < FRESH_MS) {
+    const cachedNonResidential = cached && cached.title_json && LEGACY_SIGUNGU_MAP[sigunguCd]
+      && !((cached.title_json.hhldCnt || 0) > 0 || /공동주택|아파트|다세대|연립/.test(cached.title_json.mainPurps || ''));
+    if (cached && !cachedNonResidential && (Date.now() - new Date(cached.fetched_at).getTime()) < FRESH_MS) {
       // 무료 Vercel 사용량 절약: 건축물대장 데이터는 몇 달 단위로만 바뀌므로 엣지에서
       // 6시간 동안 재사용 - 같은 건물을 반복 조회해도 함수를 다시 실행하지 않음.
       res.setHeader('Cache-Control', 'public, s-maxage=21600, stale-while-revalidate=604800');
@@ -161,6 +172,16 @@ export default async function handler(req, res) {
     // ⚠️ 2026-09: 4개 하위 API 중 하나라도 fetch 자체가 실패(타임아웃/네트워크 예외 -
     // httpStatus===null)했으면 "이 주소엔 건물이 없다"가 아니라 "지금 물어보질 못했다"는
     // 뜻이므로, 아래에서 이 경우엔 캐시 저장을 건너뛰고 응답도 no-store로 내려보냄.
+    // 통합·특별자치도로 코드가 바뀐 지역: 새 코드 결과에 주거동이 없으면 옛 시군구 코드로 다시 조회
+    const legacySgg = LEGACY_SIGUNGU_MAP[sigunguCd];
+    if (legacySgg && !hasResidentialTitle(titleResult.items)) {
+      const lf = await fetchAllBld(legacySgg, bjdongCd, bun, jiParam, gbCd);
+      if (lf.titleResult.items.length && (hasResidentialTitle(lf.titleResult.items) || !titleResult.items.length)) {
+        ({ titleResult, priceResult, floorResult, exposResult } = lf);
+        legacyFallbackUsed = true;
+      }
+    }
+
     const hadFetchError = [titleResult, priceResult, floorResult, exposResult]
       .some(r => r.httpStatus === null);
     const quotaExceeded = [titleResult, priceResult, floorResult, exposResult].some(r => r.quotaExceeded);
@@ -173,11 +194,19 @@ export default async function handler(req, res) {
 
     const title = titleItem ? normalizeTitle(titleItem) : null;
     const price = priceItem ? normalizePrice(priceItem) : null;
-    const floors = floorResult.items.length
-      ? floorResult.items.map(normalizeFloor).sort((a, b) => floorSortKey(a) - floorSortKey(b))
+    // 층별개요·전유공용면적은 같은 지번의 모든 건물 것이 섞여 옴(예: "총 100층") - 고른 건물(관리번호 같은 것)만 남김
+    const pk = titleItem ? titleItem.get('mgmBldrgstPk') : null;
+    const onlyChosen = (items) => {
+      if (!pk) return items;
+      const f = items.filter(it => it.get('mgmBldrgstPk') === pk);
+      return f.length ? f : items;
+    };
+    const floorItems = onlyChosen(floorResult.items), exposItems = onlyChosen(exposResult.items);
+    const floors = floorItems.length
+      ? floorItems.map(normalizeFloor).sort((a, b) => floorSortKey(a) - floorSortKey(b))
       : null;
-    const exposAreas = exposResult.items.length
-      ? exposResult.items.map(normalizeExposArea)
+    const exposAreas = exposItems.length
+      ? exposItems.map(normalizeExposArea)
       : null;
 
     // title이 없거나, price가 "빈 껍데기"(year/month/price 전부 비어있음)이거나,
@@ -252,7 +281,7 @@ async function fetchAllBld(sigunguCd, bjdongCd, bun, jiParam, gbCd) {
     // 경우가 있어(안산 고잔주공9단지 실측으로 확인) numOfRows를 넉넉히 늘림
     fetchBld('getBrTitleInfo', { ...commonParams, numOfRows: '100' }),
     fetchBld('getBrHsprcInfo', commonParams),
-    fetchBld('getBrFlrOulnInfo', { ...commonParams, numOfRows: '100' }),
+    fetchBld('getBrFlrOulnInfo', { ...commonParams, numOfRows: '500' }),
     fetchBld('getBrExposPubuseAreaInfo', { ...commonParams, numOfRows: '200' }),
   ]);
   return { titleResult, priceResult, floorResult, exposResult };
