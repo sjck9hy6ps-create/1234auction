@@ -541,6 +541,14 @@ tr:hover td { background:#fffde7; }
 #bb-drawer .dr-btns button { border:1px solid #e3e6ea; background:#fff; border-radius:14px; padding:5px 11px; font-size:12px; cursor:pointer; margin:0 4px 4px 0; }
 #bb-drawer .dr-warn { background:#fff7ed; color:#9a3412; border-radius:8px; padding:6px 8px; font-size:11.5px; margin-top:6px; }
 #bid-board .bb-row.sel td { background:#eef4ff !important; }
+/* 상세 창이 열려 있으면 표는 핵심 칸만(판정·입찰일·물건·예상매도가·추천 입찰가) */
+#bid-board.with-drawer .bb-table th:nth-child(4), #bid-board.with-drawer .bb-table td:nth-child(4),
+#bid-board.with-drawer .bb-table th:nth-child(5), #bid-board.with-drawer .bb-table td:nth-child(5),
+#bid-board.with-drawer .bb-table th:nth-child(8), #bid-board.with-drawer .bb-table td:nth-child(8),
+#bid-board.with-drawer .bb-table th:nth-child(9), #bid-board.with-drawer .bb-table td:nth-child(9),
+#bid-board.with-drawer .bb-table th:nth-child(10), #bid-board.with-drawer .bb-table td:nth-child(10),
+#bid-board.with-drawer .bb-table th:nth-child(11), #bid-board.with-drawer .bb-table td:nth-child(11) { display:none; }
+#bid-board.with-drawer .bb-notes { display:none; }
 @media (max-width: 900px) { #bb-drawer { position:fixed; inset:52px 0 0 0; width:auto; z-index:80; } }
 #bid-board .bb-title { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
 #bid-board .bb-title h2 { font-size:16px; margin:0; }
@@ -16243,8 +16251,8 @@ function renderBidBoardChips(base) {
 function bidBoardChipFilter(r) { var c = BB_CHIPS.filter(function(x) { return x.k === (bidBoardState.chip || 'all'); })[0]; return c ? c.f(r) : true; }
 // ── 상세 창 ──
 var bidDrawerId = null;
-function openBidDrawer(id) { bidDrawerId = id; renderBidDrawer(); renderBidBoard(); }
-function closeBidDrawer() { bidDrawerId = null; var d = document.getElementById('bb-drawer'); if (d) d.style.display = 'none'; renderBidBoard(); }
+function openBidDrawer(id) { bidDrawerId = id; document.getElementById('bid-board').classList.add('with-drawer'); renderBidDrawer(); renderBidBoard(); }
+function closeBidDrawer() { bidDrawerId = null; document.getElementById('bid-board').classList.remove('with-drawer'); var d = document.getElementById('bb-drawer'); if (d) d.style.display = 'none'; renderBidBoard(); }
 function bidCostLines(row) {
     var a = row.a, type = row.type, sale = row.sale, bid = row.recBid;
     if (!sale || !bid) return null;
