@@ -15822,6 +15822,64 @@ async function openCyclePanel() {
     }
     box.innerHTML = html;
 }
+/* ════ 2026-10 빌라 예상매도가 3단계(사용자: "빌라는 주변거래를 시세로 파악해 예상매도가를 정하고, 호가와 매물재고를 추가 반영해 더 정밀하게")
+   ① 주변 실거래 시세: 등록한 비교물건이 있으면 그것, 없으면 반경 500m 비슷한 빌라 실거래 자동(평형 ±4평·연식 ±3년, 40% 지점)
+   ② 호가 반영: 팔 때 경쟁 상대는 가장 싼 매물 - 최저 호가(없으면 중간값)에서 흥정분 3%를 뺀 값을 섞음.
+      주변 실거래가 적을수록 호가 비중을 높임(5건↑ 30% · 3~4건 45% · 2건↓ 60% - 예전 상한 60% 유지)
+   ③ 매물재고 반영: 재고 개월수(매물 수 ÷ 월 거래량) 3개월↓ +1% · 3~6개월 0 · 6~12개월 −2% · 12개월↑ −4%
+   ⚠️ 호가·매물 자료는 과거 기록이 없어 이 규칙은 검증 전(판단 보조용) - 단계별 값을 표로 보여줘 근거를 확인할 수 있게 함. ════ */
+var VILLA_ASK_NEGOTIATION = 0.03;
+function villaAutoBaseEstimate() {
+    var est = getCompEstValue();
+    if (est && est.estValue) return { value: est.estValue, n: (pendingAuctionComparables || []).length, source: '등록한 비교물건' };
+    var ctx = getAuctionAddressContext();
+    var pyung = parseFloat(document.getElementById('a-pyung').value) || null;
+    var floor = parseFloat((document.getElementById('a-floor') || {}).value);
+    if (!ctx.lat || !ctx.lon || !pyung) return null;
+    var by = getAuctionBuildYear ? getAuctionBuildYear() : null;
+    var cands = findSimilarComps(ctx.lat, ctx.lon, by || null, isNaN(floor) ? null : floor, pyung, 'villa', ctx.name, ctx.dong, ctx.bunji, 500);
+    if (!cands || !cands.length) return null;
+    var recs = cands.map(convertCandidateToCompRecordHeadless);
+    var r = getCompEstValueHeadless(recs, pyung, isNaN(floor) ? null : floor, by || null, { lat: ctx.lat, lon: ctx.lon, name: ctx.name, dong: ctx.dong, buildingType: 'villa' });
+    return r && r.estValue ? { value: r.estValue, n: recs.length, source: '반경 500m 비슷한 빌라 실거래(자동)' } : null;
+}
+function calcVillaSaleEstimate() {
+    var base = villaAutoBaseEstimate();
+    if (!base) return null;
+    var steps = [{ k: '① 주변 실거래 시세', v: base.value, why: base.source + ' ' + base.n + '건' }];
+    var val = base.value;
+    var askMin = parseFloat(document.getElementById('a-ask-price-min').value) || null;
+    var askMax = parseFloat(document.getElementById('a-ask-price-max').value) || null;
+    if (askMin || askMax) {
+        var anchor = (askMin || (askMin && askMax ? (askMin + askMax) / 2 : askMax)) * (1 - VILLA_ASK_NEGOTIATION);
+        var w = base.n >= 5 ? 0.3 : (base.n >= 3 ? 0.45 : 0.6);
+        val = Math.round(val * (1 - w) + anchor * w);
+        steps.push({ k: '② 호가 반영', v: val, why: (askMin ? '최저 호가 ' : '호가 ') + pnFmtEok(askMin || askMax) + ' −흥정 3% → ' + pnFmtEok(anchor) + ', 비중 ' + Math.round(w * 100) + '%' });
+    } else steps.push({ k: '② 호가 반영', v: null, why: '호가를 입력하면 반영돼요' });
+    var listing = parseFloat(document.getElementById('a-listing-count').value);
+    var monthly = null;
+    if (villaRadiusSaleCache && villaRadiusSaleCache.count) monthly = villaRadiusSaleCache.count / 12;
+    else if (base.n >= 3) monthly = null;
+    if (!isNaN(listing) && monthly > 0) {
+        var mos = listing / monthly;
+        var adj = mos <= 3 ? 0.01 : (mos <= 6 ? 0 : (mos <= 12 ? -0.02 : -0.04));
+        val = Math.round(val * (1 + adj));
+        steps.push({ k: '③ 매물재고 반영', v: val, why: '매물 ' + listing + '건 ÷ 월 ' + (Math.round(monthly * 10) / 10) + '건 = 재고 ' + (Math.round(mos * 10) / 10) + '개월치 → ' + (adj > 0 ? '+' : '') + Math.round(adj * 100) + '%' });
+    } else steps.push({ k: '③ 매물재고 반영', v: null, why: isNaN(listing) ? '매물 건수를 입력하면 반영돼요' : '"🔮 예측 적용"으로 반경 거래량을 불러오면 반영돼요' });
+    return { value: val, base: base, steps: steps };
+}
+function renderVillaEstimateSteps(res) {
+    var anchor = document.getElementById('est-row-1-value');
+    if (!anchor) return;
+    var row = anchor.closest('.est-row'), sub = row && row.nextElementSibling;
+    var box = document.getElementById('villa-est-steps');
+    if (!box) { box = document.createElement('div'); box.id = 'villa-est-steps'; (sub || row).after(box); }
+    if (!res) { box.innerHTML = ''; return; }
+    box.innerHTML = '<table class="pn-table" style="margin:4px 0 8px;"><tbody>' + res.steps.map(function(s) {
+        return '<tr><td style="white-space:nowrap;">' + s.k + '</td><td class="r"><b>' + (s.v ? pnFmtEok(s.v) : '-') + '</b></td></tr>'
+            + '<tr><td colspan="2" class="pn-muted" style="border-bottom:1px solid #eef0f3;padding-top:0;">' + bbEsc(s.why) + '</td></tr>';
+    }).join('') + '</tbody></table>';
+}
 function renderEstimateSummary() {
     // ① 예상매도가 = 호가·매물재고 반영값(있으면) 우선, 없으면 비교물건 실거래 기반값
     var marketAdj = calcMarketAdjustedSalePrice();
@@ -15842,9 +15900,16 @@ function renderEstimateSummary() {
                 if (row1Sub && row1Sub.classList.contains('est-sub')) row1Sub.textContent = '같은 단지 실거래 ' + (boardRow.own || 0) + '건 기준 (입찰 판단 카드와 같은 계산) · 호가·매물재고는 아래 참고';
             }
         } catch (e) { /* 실패하면 기존 계산 그대로 */ }
+    } else if (curPropType === 'villa') {
+        var vEst = null;
+        try { vEst = calcVillaSaleEstimate(); } catch (e) { vEst = null; }
+        if (vEst && vEst.value) predictedSale = vEst.value;
+        renderVillaEstimateSteps(vEst);
+        if (row1Sub && row1Sub.classList.contains('est-sub')) row1Sub.textContent = '주변 실거래 → 호가 → 매물재고 순서로 반영 (빌라는 이 값으로 입찰 판단)';
     } else if (row1Sub && row1Sub.classList.contains('est-sub')) {
-        row1Sub.textContent = '호가·매물재고·유사물건·비교물건 반영' + (curPropType === 'villa' ? ' (빌라는 이 값으로 입찰 판단)' : '');
+        row1Sub.textContent = '호가·매물재고·유사물건·비교물건 반영';
     }
+    if (curPropType !== 'villa') renderVillaEstimateSteps(null);
     window.__predictedSaleValue = predictedSale;
     if (curPropType === 'villa' && curAuction && typeof renderAuctionSummaryCard === 'function') setTimeout(function() { renderAuctionSummaryCard(curAuction); }, 0);
     renderRiskMarginSuggestion(predictedSale);
