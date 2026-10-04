@@ -140,7 +140,8 @@ export default async function handler(req, res) {
     const cachedNonResidential = cached && cached.title_json && !cached.title_json.residentialChecked
       && !((cached.title_json.hhldCnt || 0) > 0 || /공동주택|아파트|다세대|연립/.test(cached.title_json.mainPurps || ''));
     // 단지 전체 값(총괄표제부)을 붙이기 전에 저장된 아파트 캐시는 한 번 다시 조회(이후엔 siteChecked로 표시돼 반복 안 함)
-    const cachedNeedsSite = cached && cached.title_json && (cached.title_json.hhldCnt || 0) > 0 && !cached.title_json.site && !cached.title_json.siteChecked;
+    const cachedNeedsSite = cached && cached.title_json && (cached.title_json.hhldCnt || 0) > 0
+      && ((!cached.title_json.site && !cached.title_json.siteChecked) || cached.title_json.hhVer !== 2); // hhVer 2: 동별 세대수 합계(hhldSum) 추가
     // 층별 자료가 여러 동 것이 섞인 채 저장된 캐시(층 수보다 훨씬 많은 줄)도 다시 조회
     const cachedMixedFloors = cached && cached.title_json && Array.isArray(cached.floor_json)
       && (cached.title_json.grndFlrCnt || 0) > 0 && cached.floor_json.length > (cached.title_json.grndFlrCnt + (cached.title_json.ugrndFlrCnt || 0)) * 2 + 4;
@@ -203,6 +204,14 @@ export default async function handler(req, res) {
     // 동이 여러 개인 단지: 표제부의 건폐율·용적률은 "이 동 하나 ÷ 단지 전체 대지"라 실제 단지 값과 다름(치평동 1331: 2.5%/30.9%) -
     // 총괄표제부(단지 전체)의 건폐율·용적률·세대수·주차를 따로 붙임
     if (title && (title.hhldCnt || 0) > 0) title.siteChecked = true;
+    // 2026-10(회전율 오류: 빛가람코오롱하늘채 "104세대" = 101동 하나): 표제부 세대수는 동 하나 값 - 같은 지번 모든 동의 세대수 합계를 함께 줌.
+    // 총괄표제부가 없거나 세대수가 0으로 등록된 단지(두암3단지 등)가 많아서 이 합계가 단지 전체 세대수의 대체값이 됨.
+    if (title) {
+      const hhItems = titleItems.filter(it => (parseInt(it.get('hhldCnt'), 10) || 0) > 0);
+      title.hhldSum = hhItems.reduce((sum, it) => sum + (parseInt(it.get('hhldCnt'), 10) || 0), 0);
+      title.hhldBldCnt = hhItems.length;
+      title.hhVer = 2;
+    }
     if (title) title.residentialChecked = true;
     if (title && titleItems.length > 1) {
       try {
