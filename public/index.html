@@ -15601,8 +15601,10 @@ function finalizeBidBoardRow(row) {
         // 추천가가 최저가보다 15% 이상 높으면 예상매도가가 실제 되판 값보다 19~66% 높았고 손해 51~89%(수리비 빼고도).
         // 최저가 +15% 미만이면 오차 13~16%, 순이익 중앙 약 950만(수리비 제외), 손해 21~36% → 이 구간만 "성공 구간".
         // (1차 2,156건 기준은 30%였으나 사례를 늘리니 15%부터 손해가 급증)
-        var roomR = row.recBid / minBid;
-        if (roomR >= 1.15) { ok = false; row.overshoot = true; row.warns.push('⚠️ 추천가가 최저가보다 ' + Math.round((roomR - 1) * 100) + '% 높아요 - 예상매도가가 높게 잡혔을 가능성이 커요(과거 이런 경우 낙찰자 51~89% 손해). 같은 단지 최근 거래·호가로 확인 후 입찰'); }
+        // 빌라(2022~2026 인천·경기 1,884건 · 낙찰 후 되판 117건): 유찰이 많아 최저가가 시세의 61% 안팎까지 내려가므로 기준이 다름 -
+        // 최저가 +30% 미만은 손해 0~10%, +30% 이상부터 22~57%(사례 적음, 참고). 그래서 빌라는 +30%를 경계로 씀.
+        var roomR = row.recBid / minBid, overLimit = type === 'villa' ? 1.3 : 1.15;
+        if (roomR >= overLimit) { ok = false; row.overshoot = true; row.warns.push('⚠️ 추천가가 최저가보다 ' + Math.round((roomR - 1) * 100) + '% 높아요 - 예상매도가가 높게 잡혔을 가능성이 커요(과거 이런 경우 낙찰자 ' + (type === 'villa' ? '22~57%' : '51~89%') + ' 손해). 같은 단지 최근 거래·호가로 확인 후 입찰'); }
         else row.sweet = true;
         row.verdict = ok ? 'yes' : 'check';
     }
@@ -16033,8 +16035,8 @@ function renderBidBoardRow(r) {
         + '<td data-l="판정">' + (r.assumedFail && !r.pending ? '<div class="bb-sub" style="color:#ef6c00;">유찰되면</div>' : '')
             + '<span class="bb-verdict" style="color:' + v.color + ';background:' + v.bg + ';">' + v.label + '</span>'
             + (r.opportunity ? '<div style="margin-top:3px;"><span class="bb-pill" style="background:#fff8e1;color:#e65100;border:1px solid #ffb300;">🎯 기회</span></div>' : '')
-            + (r.sweet ? '<div style="margin-top:3px;"><span class="bb-pill" style="background:#e8f5e9;color:#2e7d32;border:1px solid #81c784;" title="추천가가 최저가 +15% 미만 - 과거 낙찰사례 9,366건 검증에서 이 구간만 손해 비율이 21~36%로 낮았음">📈 성공 구간</span></div>' : '')
-            + (r.overshoot ? '<div style="margin-top:3px;"><span class="bb-pill" style="background:#fff3e0;color:#e65100;border:1px solid #ffb74d;" title="추천가가 최저가보다 15% 이상 높음 - 과거 이런 경우 예상매도가가 19~66% 높았고 낙찰자 51~89%가 손해">⚠️ 시세 과대 의심</span></div>' : '')
+            + (r.sweet ? '<div style="margin-top:3px;"><span class="bb-pill" style="background:#e8f5e9;color:#2e7d32;border:1px solid #81c784;" title="추천가가 최저가 +15%(빌라 +30%) 미만 - 과거 낙찰사례 검증에서 손해 비율이 낮았던 구간(아파트 21~36%, 빌라 0~10%)">📈 성공 구간</span></div>' : '')
+            + (r.overshoot ? '<div style="margin-top:3px;"><span class="bb-pill" style="background:#fff3e0;color:#e65100;border:1px solid #ffb74d;" title="추천가가 최저가보다 15%(빌라 30%) 이상 높음 - 과거 이런 경우 예상매도가가 크게 높았고 손해가 많았음(아파트 51~89%, 빌라 22~57%)">⚠️ 시세 과대 의심</span></div>' : '')
             + (r.niche ? '<div style="margin-top:3px;"><span class="bb-pill" style="background:#e0f2f1;color:#00695c;border:1px solid #4db6ac;" title="' + bbEsc(r.niche.why.join(' · ')) + '">🧭 틈새' + (r.niche.score >= 2 ? ' ' + '★'.repeat(Math.min(3, r.niche.score - 1)) : '') + '</span></div>' : '')
             + (bidBoardState.prevVerdicts[r.id] && bidBoardState.prevVerdicts[r.id] !== r.verdict ? '<div class="bb-sub">이전 ' + BID_BOARD_VERDICT[bidBoardState.prevVerdicts[r.id]].label + ' → 바뀜</div>' : '') + '</td>'
         + '<td data-l="입찰일">' + dd + '</td>'
