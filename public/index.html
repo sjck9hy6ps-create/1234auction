@@ -5852,6 +5852,29 @@ function setPyung(pyung, btn) {
    구성: 핵심 지표 카드 → 시세 그래프(거래가 점·월별 선 + 거래량 막대, 1년/3년/전체) → 실거래 표 → 자세한 분석(접힘).
    예전 설명형 섹션(임장메모·가치진단·건축물대장·공시가격·평단가/거래량 분석)은 지우지 않고 "자세한 분석" 안에 제목만 보이게 접어 둠. ════ */
 var currentChartRange = '3y', currentTradeShowAll = false;
+var pnChartSeq = 0, pnChartData = {};
+function pnChartHover(e, svg) {
+    var d = pnChartData[svg.id];
+    if (!d || !d.months.length) return;
+    var pt = e.touches && e.touches[0] ? e.touches[0] : e;
+    var rc = svg.getBoundingClientRect();
+    var x = (pt.clientX - rc.left) / rc.width * d.W;
+    var best = d.months[0];
+    d.months.forEach(function(m) { if (Math.abs(m.x - x) < Math.abs(best.x - x)) best = m; });
+    var g = svg.querySelector('.pn-hov');
+    g.style.display = '';
+    var ln = g.querySelector('line'), c = g.querySelector('circle'), r = g.querySelector('rect'), t = g.querySelectorAll('text');
+    ln.setAttribute('x1', best.x); ln.setAttribute('x2', best.x);
+    if (best.y != null) { c.style.display = ''; c.setAttribute('cx', best.x); c.setAttribute('cy', best.y); } else c.style.display = 'none';
+    var l1 = best.ym, l2 = best.n ? pnFmtEok(best.med) + ' · ' + best.n + '건' : '거래 없음';
+    var w = Math.max(l1.length * 6 + 14, l2.length * 7 + 10, 64);
+    var bx = best.x + 8; if (bx + w > d.W - 2) bx = best.x - 8 - w;
+    r.setAttribute('x', bx); r.setAttribute('y', d.T); r.setAttribute('width', w);
+    t[0].setAttribute('x', bx + 6); t[0].setAttribute('y', d.T + 12); t[0].textContent = l1;
+    t[1].setAttribute('x', bx + 6); t[1].setAttribute('y', d.T + 25); t[1].textContent = l2;
+    if (e.touches) e.preventDefault();
+}
+function pnChartHide(svg) { var g = svg.querySelector('.pn-hov'); if (g) g.style.display = 'none'; }
 function pnTradeDate(t) { return new Date(t.year, t.month - 1, t.day); }
 function pnFmtEok(v) { v = parseInt(v); if (!v) return '-'; return v >= 10000 ? (Math.round(v / 1000) / 10) + '억' : v.toLocaleString() + '만'; }
 function setChartRange(r) { currentChartRange = r; renderTable(); }
@@ -5884,7 +5907,11 @@ function buildPriceChartSvg(trades, range) {
     var pad = Math.max((hi - lo) * 0.12, hi * 0.03); lo = Math.max(0, lo - pad); hi = hi + pad;
     var X = function(d) { return L + (d.getTime() - t0) / (t1 - t0) * (W - L - R); };
     var Y = function(v) { return T + (1 - (v - lo) / (hi - lo)) * (H - T - B - VH); };
-    var svg = '<svg viewBox="0 0 ' + W + ' ' + H + '" class="pn-chart">';
+    // 마우스(손가락)를 올리면 그 달의 연월·시세·거래 건수를 보여주는 용도로 달마다 위치를 저장해 둠
+    var cid = 'pnc' + (++pnChartSeq);
+    var mlist = [];
+    for (var md = new Date(from.getFullYear(), from.getMonth(), 1); md <= now; md = new Date(md.getFullYear(), md.getMonth() + 1, 1)) mlist.push(md.getFullYear() * 12 + md.getMonth());
+    var svg = '<svg viewBox="0 0 ' + W + ' ' + H + '" class="pn-chart" id="' + cid + '" onmousemove="pnChartHover(event,this)" ontouchmove="pnChartHover(event,this)" ontouchstart="pnChartHover(event,this)" onmouseleave="pnChartHide(this)">';
     for (var i = 0; i <= 3; i++) {
         var v = lo + (hi - lo) * i / 3, y = Y(v);
         svg += '<line x1="' + L + '" x2="' + (W - R) + '" y1="' + y + '" y2="' + y + '" stroke="#eef0f3"/>'
@@ -5913,6 +5940,14 @@ function buildPriceChartSvg(trades, range) {
             + '<text x="' + xd + '" y="' + (H - 4) + '" text-anchor="middle" font-size="9" fill="#9aa0a6">' + String(yy).slice(2) + '년</text>';
     }
     svg += '<text x="' + (L - 4) + '" y="' + (H - B + VH) + '" text-anchor="end" font-size="8" fill="#9aa0a6">거래량</text>';
+    pnChartData[cid] = { W: W, L: L, R: R, T: T, H: H, B: B, VH: VH, months: mlist.map(function(k) {
+        var arr = (byM[k] || []).slice().sort(function(a, b) { return a - b; });
+        var d = new Date(Math.floor(k / 12), k % 12, 15);
+        return { x: X(d), ym: Math.floor(k / 12) + '.' + String(k % 12 + 1).padStart(2, '0'), n: arr.length, med: arr.length ? arr[Math.floor(arr.length / 2)] : null, y: arr.length ? Y(arr[Math.floor(arr.length / 2)]) : null };
+    }) };
+    svg += '<g class="pn-hov" style="display:none;pointer-events:none;"><line x1="0" x2="0" y1="' + T + '" y2="' + (H - B + VH + 4) + '" stroke="#111" stroke-dasharray="2 2" stroke-width="0.8"/>'
+        + '<circle r="3.5" fill="#fff" stroke="var(--ui-blue,#1e5eff)" stroke-width="2"/>'
+        + '<rect rx="5" height="30" fill="#111" opacity="0.85"/><text font-size="10" fill="#fff" font-weight="700"></text><text font-size="9" fill="#d1d5db"></text></g>';
     return svg + '</svg>';
 }
 function buildPanelSummaryHtml(all, chartPy) {
