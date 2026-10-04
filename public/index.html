@@ -6219,6 +6219,12 @@ function parseTankAuctionCsv(text) {
         if (floor == null && unitNo) { var un = parseInt(unitNo.replace(/\D/g, ''), 10); if (un >= 101) floor = Math.floor(un / 100); } // "103동 702호"처럼 층 표기가 없으면 호수로
         var nameM = addrLine.match(/\(([^)]*)\)/);
         var buildingName = nameM ? (nameM[1].split(',').pop().trim() || null) : null;
+        // 괄호 없이 "중동 1665 성호2차아파트 212동 23층2307호"처럼 지번 바로 뒤에 단지명이 붙는 형식(전남 일부)
+        if (!buildingName && db.bunji) {
+            var after = addrLine.slice(addrLine.indexOf(db.bunji) + db.bunji.length).replace(/^[\s,]+/, '').split(/\s+/);
+            var tok = after[0] || '';
+            if (tok && !/^(제?[0-9A-Za-z가-힣]{0,3}동|[0-9]+층|지?[0-9]*층|[0-9]+호|외)$/.test(tok) && !/[0-9]+층/.test(tok) && /[가-힣]/.test(tok)) buildingName = tok;
+        }
         var cur = col(r, '경매현황'), ar = parseAuctionAreaText(cur);
         var notes = cur.split('/').slice(1).map(function(x) { return x.trim(); }).filter(Boolean);
         var extra = col(r, '외 건수'); if (extra && !/^0\s/.test(extra)) notes.unshift('외 ' + extra);
