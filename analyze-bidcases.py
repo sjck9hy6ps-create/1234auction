@@ -360,6 +360,10 @@ def main():
 
     print(json.dumps(summary, ensure_ascii=False, indent=1))
     write_back_resale_matches(cases, out)
+    try:
+        write_back_villa_matches(cases)
+    except Exception as e:
+        print("  빌라 매칭 실패(건너뜀):", e)
     cyc.upsert_rows([{"id": "bidcase|__validation__", "payload": cyc.clean_json(summary), "fetched_at": now}])
     print("✅ 저장 완료")
     if os.environ.get("GITHUB_STEP_SUMMARY"):
@@ -410,6 +414,60 @@ def write_back_resale_matches(cases, out):
                 print("   저장 오류", e)
         else:
             print("   ⚠️ 이 묶음은 건너뜀", i)
+
+
+def write_back_villa_matches(cases):
+    """2026-10: 빌라(연립·다세대) 낙찰사례도 같은 기준으로 되판 기록을 찾아 저장 - 빌라 판정 검증용.
+    villa_trades(2017~)에서 같은 시군구·동·지번, 전용 ±2㎡, 같은 층, 낙찰 14일 뒤 첫 매매(직거래 제외), 낙찰가의 70% 이상."""
+    V = pd.DataFrame([c for c in cases if c.get("id") is not None])
+    if V.empty:
+        return
+    V = V[~V["propertyType"].astype(str).str.contains("아파트|오피스텔|상가|토지|근린|공장|숙박|임야|대지|전|답", na=False, regex=True)]
+    V = V[pd.to_numeric(V["finalBidPrice"], errors="coerce") > 0]
+    V = V[V["saleDate"].astype(str).str.match(r"^\d{4}-\d{2}-\d{2}$", na=False)].copy()
+    if V.empty:
+        return
+    V["actual"] = pd.to_numeric(V["finalBidPrice"]) / 10000.0
+    V["area"] = pd.to_numeric(V["areaM2"], errors="coerce")
+    V["floor_n"] = pd.to_numeric(V["floor"], errors="coerce")
+    V["region"] = V["addrJibun"].map(region_norm)
+    V["dk"] = V["dong"].map(dong_key)
+    V["bunji_s"] = V["bunji"].astype(str).str.strip()
+    V["sale_int"] = V["saleDate"].str.replace("-", "").astype(int)
+    V = V.dropna(subset=["region", "area", "dk", "floor_n"])
+    print(f"  빌라 낙찰사례 {len(V):,}건 매칭 시작")
+    names = set()
+    for r in V["region"].unique():
+        sd, gu = r.split(" ", 1)
+        for alias in ({"전남광주": ["전남광주", "광주", "전남"]}.get(sd, [sd])):
+            names.add(f"{alias} {gu}")
+    flt = "&region=in.(" + ",".join('"' + n + '"' for n in sorted(names)) + ")"
+    tr = avm.fetch_all_rows("villa_trades", cols="region,dong,bunji,price,size,floor,deal_date,dealing_type",
+                            extra_filter=f"&deal_date=gte.{cyc.START_DATE}{flt}")
+    if tr is None or len(tr) == 0:
+        return
+    tr = tr[tr["dealing_type"] != "직거래"].copy() if "dealing_type" in tr.columns else tr
+    for c in ("price", "size", "floor", "deal_date"):
+        tr[c] = pd.to_numeric(tr[c], errors="coerce")
+    tr = tr.dropna(subset=["price", "size", "deal_date"])
+    tr["region_n"] = tr["region"].map(region_norm)
+    tr["dk"] = tr["dong"].map(dong_key)
+    tr["bunji_s"] = tr["bunji"].astype(str).str.strip()
+    groups = {k: g for k, g in tr.groupby(["region_n", "dk", "bunji_s"])}
+    out = []
+    for c in V.itertuples():
+        rec = {"id": c.id, "resale": None}
+        g = groups.get((c.region, c.dk, c.bunji_s))
+        if g is not None:
+            sale_d = int_to_date(c.sale_int)
+            after = g[((g["size"] - c.area).abs() <= 2) & (g["floor"] == c.floor_n) & (g["deal_date"] >= ymd_int(sale_d + timedelta(days=14)))]
+            if len(after):
+                t0 = after.sort_values("deal_date").iloc[0]
+                if t0["price"] >= c.actual * 0.7:
+                    rec.update({"resale": float(t0["price"]), "resale_date": str(int(t0["deal_date"])), "resale_floor": int(t0["floor"]), "resale_size": float(t0["size"])})
+        out.append(rec)
+    print(f"  빌라 되판 기록 {sum(1 for r in out if r['resale']):,}건")
+    write_back_resale_matches(cases, out)
 
 
 def attention_analysis(R, seg_stats, med):
