@@ -27,7 +27,8 @@ avm = cyc.avm
 
 SIDOS = [s.strip() for s in os.environ.get("SIDOS", "부산,광주,전남,대전,대구,울산,경남").split(",") if s.strip()]
 TOP_N = int(os.environ.get("TOP_N", "20"))
-BUCKET_DAYS = 40
+TABLE = os.environ.get("TABLE", "house_trades")
+BUCKET_DAYS = int(os.environ.get("BUCKET_DAYS", "60" if TABLE == "villa_trades" else "40"))  # 앱과 같게: 아파트 40일, 빌라 60일 × 6구간
 
 
 def sido_of(region):
@@ -39,7 +40,7 @@ def sido_of(region):
 
 def load(sido):
     # region은 "부산 해운대구"처럼 시도 접두어로 시작 - 전남은 통합 이후 "전남광주 ..."도 함께 잡힘
-    return avm.fetch_all_rows("house_trades", cols="id,region,dong,danji,price,size,deal_date,dealing_type",
+    return avm.fetch_all_rows(TABLE, cols="id,region,dong,danji,price,size,deal_date,dealing_type",
                               extra_filter=f"&deal_date=gte.20170101&region=like.{sido}*")
 
 
@@ -84,7 +85,7 @@ def main():
         W["rel"] = W["ppm"] / W["dk"].map(base)
         W["b"] = ((T - W["d"]).dt.days // BUCKET_DAYS).clip(0, 5)
         g = W.groupby(["key", "b"])["rel"].agg(["mean", "size"]).reset_index()
-        g.loc[g["size"] < 3, "mean"] = np.nan
+        g.loc[g["size"] < (2 if TABLE == "villa_trades" else 3), "mean"] = np.nan
         P = g.pivot(index="key", columns="b", values="mean").reindex(columns=range(6))
         P = P[[5, 4, 3, 2, 1, 0]]  # 오래된 → 최근
         P = P.ffill(axis=1).bfill(axis=1)
@@ -98,7 +99,7 @@ def main():
         money = M.sort_values("mom", ascending=False).groupby("sido").head(TOP_N)
         # ── 거래 급등: 최근 6개월 건수 ──
         V = tr[(tr["d"] >= T - pd.Timedelta(days=182)) & (tr["d"] < T)].groupby("key").size().rename("n").to_frame()
-        V = V[V["n"] >= 10]
+        V = V[V["n"] >= (5 if TABLE == "villa_trades" else 10)]
         V["sido"] = V.index.str.split("|").str[0]
         hot = V.sort_values("n", ascending=False).groupby("sido").head(TOP_N)
         # ── 신고가 ──
@@ -129,7 +130,7 @@ def main():
                              "excess": float(G["excess"].mean()), "hit": float((G["excess"] > 0).mean())})
         print("  ", T.strftime("%Y-%m"), "돈되는", len(money), "급등", len(hot), "신고가", len(newh))
     R = pd.DataFrame(recs)
-    out = {"generatedAt": now, "sidos": SIDOS, "topN": TOP_N, "months": len(cutoffs), "bySignal": {}}
+    out = {"generatedAt": now, "table": TABLE, "sidos": SIDOS, "topN": TOP_N, "months": len(cutoffs), "bySignal": {}}
     S = R[R["sig"] != "all"]
     for (sig, h), G in S.groupby(["sig", "h"]):
         res = {"전체": {"n": int(len(G)), "hitPct": round(float(G["hit"].mean()) * 100, 1), "excessPctp": round(float(G["excess"].mean()) * 100, 2),
@@ -141,7 +142,7 @@ def main():
         res["byYear"] = {y: {"n": int(len(H)), "hitPct": round(float(H["hit"].mean()) * 100, 1), "excessPctp": round(float(H["excess"].mean()) * 100, 2)} for y, H in G2.groupby("y")}
         out["bySignal"].setdefault(sig, {})[h] = res
     print(json.dumps(out, ensure_ascii=False, indent=1))
-    cyc.upsert_rows([{"id": "signal|__surge_backtest__", "payload": cyc.clean_json(out), "fetched_at": now}])
+    cyc.upsert_rows([{"id": "signal|__surge_backtest__" + ("_villa" if TABLE == "villa_trades" else ""), "payload": cyc.clean_json(out), "fetched_at": now}])
     print("✅ 저장 완료")
     if os.environ.get("GITHUB_STEP_SUMMARY"):
         with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as fh:
