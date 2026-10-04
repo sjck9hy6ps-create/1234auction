@@ -15727,7 +15727,14 @@ function cyclePhaseText(ph) {
         var r = ph.monthsInPhase / half;
         cyc = ' · 5년 주기 기준 ' + ph.phase + ' ' + (r < 0.34 ? '초반' : (r < 0.67 ? '중반' : (r <= 1.1 ? '후반' : '예상보다 긴 편')));
     }
-    return t + cyc + '<div style="color:#666;font-size:11px;margin-top:2px;">' + parts.join(' · ') + '</div>';
+    // 2026-10 세부 화면 개편: 문장 대신 숫자 칸
+    var cell = function(k, v) { var c = v == null ? '#9aa0a6' : (v > 0 ? '#dc2626' : (v < 0 ? '#2563eb' : '#374151')); return '<div class="pn-stat"><div class="k">' + k + '</div><div class="v" style="color:' + c + ';">' + sign(v) + '</div></div>'; };
+    var grid = '<div class="pn-stats" style="grid-template-columns:repeat(4,1fr);margin-top:6px;">'
+        + cell('3개월', ph.mom3) + cell('6개월', ph.mom6) + cell('12개월', ph.mom12)
+        + cell('거래량', ph.volume6mVsPrior12mPct)
+        + '</div>'
+        + '<div class="pn-muted" style="margin-top:4px;">' + (ph.fromLastTroughPct != null ? '바닥 대비 ' + sign(ph.fromLastTroughPct) : '') + (ph.fromLastPeakPct != null ? ' · 고점 대비 ' + sign(ph.fromLastPeakPct) : '') + '</div>';
+    return t + cyc + grid;
 }
 function cycleSparkSvg(series, turning, color) {
     if (!series || series.length < 2) return '';
