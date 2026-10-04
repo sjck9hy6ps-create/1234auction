@@ -16679,6 +16679,9 @@ function summarizeNaverListings(list, targetArea, targetFloor, sale) {
         dateFrom: dates[0] || null, dateTo: dates[dates.length - 1] || null,
         lowest: uniq.slice().sort(function(m, n) { return m.price - n.price; }).slice(0, 5).map(function(x) { return { p: x.price, f: x.floorRaw + '/' + x.maxF, dong: x.dong, t: (x.urgent ? '급매 ' : '') + (x.tenant ? '세안고 ' : '') + (x.repair === 'full' ? '올수리' : (x.repair === 'need' ? '수리필요' : (x.repair === 'part' ? '일부수리' : ''))) }; })
     };
+    // 동별 방향(2026-10, 사용자: "향까지 추론 가능?") - 매물에 호수가 없어 라인까진 모르고, 같은 동 매물들의 방향 분포만 알 수 있음
+    res.dirByDong = {};
+    uniq.forEach(function(x) { if (!x.dir) return; var o = res.dirByDong[x.dong] = res.dirByDong[x.dong] || {}; o[x.dir] = (o[x.dir] || 0) + 1; });
     if (sale && uniq.length) res.saleRankPct = Math.round(uniq.filter(function(x) { return x.price < sale; }).length / uniq.length * 100);
     return res;
 }
@@ -16690,6 +16693,8 @@ async function applyNaverListings(id) {
     if (!list.length) { alert('매매 매물을 찾지 못했어요. 네이버 부동산 단지 매물 목록을 그대로 복사해 주세요'); return; }
     var area = (parseFloat(a.pyung) || 0) * 3.305785;
     var sm = summarizeNaverListings(list, area, a.floor, row && row.sale);
+    var bm = /(\d{1,4})\s*동(?:\s*(\d{3,4})\s*호)?/.exec([a.unitNo, a.aptDong, a.addr].filter(Boolean).join(' '));
+    sm.targetDong = bm ? bm[1] : null; sm.targetHo = bm && bm[2] ? bm[2] : null;
     a.listingParse = sm;
     // 임장 문답·전체 상세의 같은 칸에도 채움 - 최저 호가는 비슷한 층(±3층) 최저, 없으면 같은 평형 최저
     a.fieldCheck = Object.assign({}, a.fieldCheck || {}, { ask: String(sm.simMin || sm.min || ''), listings: String(sm.n) });
@@ -16708,6 +16713,17 @@ function naverListingHtml(row, idJs) {
             + '호가: 최저 <b>' + f(sm.min) + '</b> · 하위25% ' + f(sm.q25) + ' · 중간 <b>' + f(sm.med) + '</b> · 최고 ' + f(sm.max) + '<br>'
             + (sm.simN ? '비슷한 층(' + (parseInt(a.floor, 10) <= 1 ? '1~2층' : '±3층') + ') ' + sm.simN + '건: 최저 <b>' + f(sm.simMin) + '</b> · 중간 ' + f(sm.simMed) + '<br>' : '')
             + (sm.repFullN && sm.repNeedN ? '수리 상태별 중간: 올수리 ' + f(sm.repFull) + '(' + sm.repFullN + '건) · 그 외 ' + f(sm.repNeed) + '(' + sm.repNeedN + '건) → 차이 ' + f(sm.repFull - sm.repNeed) + '<br>' : '')
+            + (function() {
+                var td = sm.targetDong, d = td && sm.dirByDong ? sm.dirByDong[td] : null;
+                if (!td) return '';
+                if (!d) return '이 물건 ' + td + '동은 매물이 없어 방향을 알 수 없어요<br>';
+                var tot = 0, arr = Object.keys(d).map(function(k) { tot += d[k]; return [k, d[k]]; }).sort(function(m, n) { return n[1] - m[1]; });
+                var top = arr[0], pct = Math.round(top[1] / tot * 100);
+                return '<b>' + td + '동 방향</b>: ' + arr.map(function(x) { return x[0] + ' ' + x[1] + '건'; }).join(' · ')
+                    + (arr.length === 1 ? (tot >= 3 ? ' → <b>' + top[0] + '</b>일 가능성 높음' : ' → ' + top[0] + '로 보이지만 매물이 적어요')
+                        : ' → 같은 동에 방향이 섞여 있어 라인(호수)에 따라 달라요(' + top[0] + ' ' + pct + '%)' + (sm.targetHo ? ' - ' + sm.targetHo + '호 라인은 감정평가서·지도 위성사진으로 확인' : ''))
+                    + '<br>';
+            })()
             + '세 안고 매물 ' + sm.tenantN + '건 · 급매 ' + sm.urgentN + '건 · 바로 입주 가능 최저 ' + f(sm.vacantMin)
             + (row.sale && sm.saleRankPct != null ? '<br><b style="color:' + (sm.saleRankPct <= 25 ? '#16a34a' : (sm.saleRankPct >= 60 ? '#dc2626' : '#374151')) + ';">예상매도가 ' + f(row.sale) + '보다 싼 매물이 ' + sm.saleRankPct + '%</b>' + (sm.saleRankPct >= 60 ? ' - 팔 때 더 싼 매물들과 경쟁해야 해요' : (sm.saleRankPct <= 25 ? ' - 매물들 중 싼 편이라 팔기 수월한 가격' : '')) : '')
             + (sm.dupGroups && sm.dupGroups.length ? '<details style="margin-top:4px;"><summary class="dr-sub" style="cursor:pointer;">같은 집으로 묶은 매물 보기(' + sm.dupGroups.length + '묶음)</summary><div class="dr-sub">' + sm.dupGroups.map(bbEsc).join('<br>') + '</div></details>' : '')
