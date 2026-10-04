@@ -15827,7 +15827,26 @@ function renderEstimateSummary() {
     var marketAdj = calcMarketAdjustedSalePrice();
     var est = getCompEstValue();
     var predictedSale = (marketAdj && marketAdj.blendedValue) ? marketAdj.blendedValue : (est ? est.estValue : null);
+    // 2026-10(사용자 결정): 아파트는 같은 단지 실거래가 충분해 ①을 입찰 판단 카드·입찰후보 보드와 같은 계산(같은 단지 실거래)으로 통일하고
+    // 호가·매물재고는 아래 참고 정보로만 둠. 빌라는 같은 건물 거래가 드물어 호가·매물재고가 실제 시세 판단에 중요 - 기존 ① 그대로 쓰고
+    // 입찰 판단 카드가 이 값을 따라감(renderAuctionSummaryCard 참고).
+    var row1Sub = document.querySelector('#est-row-1-value') && document.querySelector('#est-row-1-value').parentElement.nextElementSibling;
+    var curAuctionId = (document.getElementById('auction-id') || {}).value;
+    var curAuction = curAuctionId ? auctionList.find(function(x) { return x.id === curAuctionId; }) : null;
+    var curPropType = (document.getElementById('a-prop-type') || {}).value;
+    if (curPropType === 'apt' && curAuction) {
+        try {
+            var boardRow = computeBidBoardRow(Object.assign({}, curAuction, { target: '' }));
+            if (boardRow && boardRow.sale) {
+                predictedSale = boardRow.sale;
+                if (row1Sub && row1Sub.classList.contains('est-sub')) row1Sub.textContent = '같은 단지 실거래 ' + (boardRow.own || 0) + '건 기준 (입찰 판단 카드와 같은 계산) · 호가·매물재고는 아래 참고';
+            }
+        } catch (e) { /* 실패하면 기존 계산 그대로 */ }
+    } else if (row1Sub && row1Sub.classList.contains('est-sub')) {
+        row1Sub.textContent = '호가·매물재고·유사물건·비교물건 반영' + (curPropType === 'villa' ? ' (빌라는 이 값으로 입찰 판단)' : '');
+    }
     window.__predictedSaleValue = predictedSale;
+    if (curPropType === 'villa' && curAuction && typeof renderAuctionSummaryCard === 'function') setTimeout(function() { renderAuctionSummaryCard(curAuction); }, 0);
     renderRiskMarginSuggestion(predictedSale);
     var row1El = document.getElementById('est-row-1-value');
     if (row1El) row1El.innerText = predictedSale ? toEok(String(predictedSale)) : '데이터 부족';
@@ -21275,6 +21294,18 @@ function renderAuctionSummaryCard(a) {
     var r = null;
     try { r = computeBidBoardRow(a); } catch (e) { r = null; }
     if (!r) { box.innerHTML = ''; return; }
+    // 빌라: 등록 화면의 ①(호가·매물재고 반영) 값으로 추천 입찰가·여유를 다시 계산
+    var modalSale = window.__predictedSaleValue;
+    if (a.propType === 'villa' && modalSale > 0) {
+        try {
+            var rm = riskMarginFor(modalSale, r.own, r.risk, r.popEff);
+            var rec = solveAuctionBidFromRecord(Object.assign({}, a, { target: modalSale, compTargetMargin: rm ? rm.margin : 2000,
+                repair: parseInt(a.repair) || calcRepairFee('villa', parseFloat(a.pyung) || 0, a.buildYear || null) || 0 }));
+            r = Object.assign({}, r, { sale: modalSale, margin: rm ? rm.margin : null, recBid: rec ? rec.bid : null, saleFromListing: true });
+            r.roomPct = r.recBid && r.minBid ? Math.round((r.recBid - r.minBid) / r.minBid * 1000) / 10 : null;
+            if (r.verdict !== 'nodata' && r.recBid && r.minBid) r.verdict = r.recBid < r.minBid ? 'no' : (r.verdict === 'no' ? 'check' : r.verdict);
+        } catch (e) {}
+    }
     var v = BID_BOARD_VERDICT[r.verdict];
     var st = function(k, val, sub) { return '<div class="pn-stat"><div class="k">' + k + '</div><div class="v">' + val + '</div>' + (sub ? '<div class="s">' + sub + '</div>' : '') + '</div>'; };
     var room = r.roomPct == null ? '-' : (r.roomPct >= 0 ? '<span style="color:#16a34a;">+' + r.roomPct + '%</span>' : '<span style="color:#dc2626;">' + r.roomPct + '%</span>');
@@ -21284,7 +21315,7 @@ function renderAuctionSummaryCard(a) {
         + (r.dday ? '<span class="pn-muted" style="margin-left:auto;">' + r.dday.label + '</span>' : '') + '</div>'
         + buildPriceLadderSvg(r.minBid, r.recBid, r.sale)
         + '<div class="pn-stats">'
-        + st('예상매도가', r.sale ? pnFmtEok(r.sale) : '-', r.salePresale ? '분양권 ' + r.salePresale.n + '건' : (r.own ? '같은 단지 ' + r.own + '건' : ''))
+        + st('예상매도가', r.sale ? pnFmtEok(r.sale) : '-', r.saleFromListing ? '호가·매물 반영' : (r.salePresale ? '분양권 ' + r.salePresale.n + '건' : (r.own ? '같은 단지 ' + r.own + '건' : '')))
         + st('추천 입찰가', r.recBid ? pnFmtEok(r.recBid) : '-', r.margin ? '마진 ' + pnFmtEok(r.margin) : '')
         + st('최저가 대비', room, r.minBid ? '최저 ' + pnFmtEok(r.minBid) : '')
         + st('생활권 거래량', r.liv && r.liv.rank ? r.liv.rank + '위/' + r.liv.of : '-', r.liv ? (r.liv.radius / 1000) + 'km' : '')
