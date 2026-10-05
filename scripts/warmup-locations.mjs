@@ -394,6 +394,21 @@ async function main() {
     const bKey = buildBuildingKey(coord.sigunguCd, coord.bjdongCd, bunJi.bun, bunJi.ji, row.danji);
     return !existingBuildingKeys.has(bKey);
   });
+  // 2026-10(사용자: "입찰희망 지역 우선으로") - 등록한 입찰물건이 있는 시군구 → 같은 시도 → 나머지 순으로 처리
+  try {
+    const auctions = await fetch(`${SITE_URL}/api/auction`).then((r) => r.json());
+    const sgg = new Set(), sido = new Set();
+    (Array.isArray(auctions) ? auctions : []).forEach((a) => {
+      if (!a || a.isBacktest) return;
+      const code = String(a.bCode || a._lawd || '').slice(0, 5);
+      if (code.length === 5) { sgg.add(code); sido.add(code.slice(0, 2)); }
+    });
+    const rank = (sc) => (sc && sgg.has(sc) ? 0 : (sc && sido.has(String(sc).slice(0, 2)) ? 1 : 2));
+    const coordOf = ([key, row]) => existingCoords.get(key) || existingCoords.get(legacyKeyOf(row)) || {};
+    buildingOnlyTargets.sort((x, y) => rank(coordOf(x).sigunguCd) - rank(coordOf(y).sigunguCd));
+    const n0 = buildingOnlyTargets.filter((x) => rank(coordOf(x).sigunguCd) === 0).length, n1 = buildingOnlyTargets.filter((x) => rank(coordOf(x).sigunguCd) === 1).length;
+    console.log(`📦 입찰희망 지역 우선: 입찰물건 시군구 ${sgg.size}곳의 단지 ${n0}개 → 같은 시도 ${n1}개 → 나머지 순`);
+  } catch (e) { console.log('⚠️ 입찰물건 목록을 못 불러와 기본 순서로 진행:', e.message); }
   console.log(`📦 신규 좌표 웜업 대상: ${coordTargets.length}개`);
   console.log(`📦 건축물대장만 재시도 대상: ${buildingOnlyTargets.length}개\n`);
 
