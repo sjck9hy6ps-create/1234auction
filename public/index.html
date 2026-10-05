@@ -15884,6 +15884,8 @@ function computeBidBoardRow(a) {
     row.sale = est && est.predictedSale ? est.predictedSale : null;
     row.saleSaved = !!(est && est.predictedSaleSource === 'saved');
     row.own = type ? countOwnComplexTrades(a.dong, bunjiFull, type, pyung) : 0;
+    // 🎲 예상 낙찰가용 시세(모델이 배운 방식) - 지역 실거래가 있을 때 계산해 두고 저장 계산(캐시)에 함께 보관
+    try { row.wbBase = type === 'apt' ? winbidBaseEst(a, pyung) : null; } catch (e) { row.wbBase = null; }
     row.complex3y = type ? countComplexTrades3y(a.dong, bunjiFull, type) : 0;
     // 일반 매매 거래가 없는 신축 단지 - 분양권·입주권 전매 거래로 예상매도가(분양가+웃돈 총액 기준)
     if (!row.sale && type === 'apt' && lawd && dataCache[lawd]) {
@@ -16189,7 +16191,8 @@ function winbidProbAt(wb, bid) {
 function winbidFor(row) {
     var a = row.a;
     if (!winbidModel || row.type !== 'apt' || !row.minBid) return null;
-    var b = winbidBaseEst(a, row.pyung);
+    var b = row.wbBase || null;
+    if (!b && row.lawd && dataCache[row.lawd]) { try { b = winbidBaseEst(a, row.pyung); } catch (e) { b = null; } }
     if (!b || !b.est) return null;
     var lmin = Math.log(row.minBid / b.est);
     if (!isFinite(lmin)) return null;
@@ -16615,7 +16618,7 @@ function overshootSaleFactor(type, ratio) {
 }
 var BOARD_CACHE_KEY = 'bidBoardCache:v1', BOARD_CACHE_MAX_AGE = 24 * 3600 * 1000;
 // 저장 계산을 다시 써도 되는지 - 물건 입력값(시세 계산에 쓰는 것)과 입찰일 지남 여부. 계산 방식이 바뀌면 BOARD_CALC_VER을 올림
-var BOARD_CALC_VER = 26;
+var BOARD_CALC_VER = 27; // 27: 🎲 예상 낙찰가용 시세(wbBase) 추가
 function boardBaseSig(a) {
     var d = a.bidDate ? calcAuctionDday(a.bidDate) : null;
     return [BOARD_CALC_VER, auctionWonEstSignature(a), a.minBid, a.appraisal, a.bidDate, a.court, a.failCount, a.landType, String(a.memo || '').length,
