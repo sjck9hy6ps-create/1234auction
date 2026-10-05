@@ -17459,7 +17459,8 @@ function makePanelDraggable(box, handleSel, onMove) {
         if (!drag) return;
         var x = Math.min(Math.max(0, e.clientX - drag.dx), window.innerWidth - 80);
         var y = Math.min(Math.max(52, e.clientY - drag.dy), window.innerHeight - 120);
-        box.style.left = x + 'px'; box.style.top = y + 'px'; box.style.right = 'auto';
+        // 사이클 창은 CSS에 top/right가 !important로 걸려 있어 인라인도 important로 덮어씀
+        box.style.setProperty('left', x + 'px', 'important'); box.style.setProperty('top', y + 'px', 'important'); box.style.setProperty('right', 'auto', 'important');
         if (onMove) onMove(x, y);
     });
     var end = function() { if (drag) { try { box.releasePointerCapture(drag.pid); } catch (er) {} } drag = null; };
@@ -17478,7 +17479,7 @@ async function openCyclePanel() {
         box.id = 'cycle-panel';
         box.style.cssText = 'position:fixed;top:60px;right:10px;width:min(380px,calc(100vw - 20px));max-height:calc(100vh - 80px);overflow:auto;background:#fff;border-radius:10px;box-shadow:0 4px 16px rgba(0,0,0,.25);z-index:9000;padding:12px 14px;font-size:12px;line-height:1.5;';
         document.body.appendChild(box);
-        if (cycPanelPos) { box.style.left = Math.min(cycPanelPos.x, window.innerWidth - 80) + 'px'; box.style.top = Math.min(cycPanelPos.y, window.innerHeight - 120) + 'px'; box.style.right = 'auto'; }
+        if (cycPanelPos) { box.style.setProperty('left', Math.min(cycPanelPos.x, window.innerWidth - 80) + 'px', 'important'); box.style.setProperty('top', Math.min(cycPanelPos.y, window.innerHeight - 120) + 'px', 'important'); box.style.setProperty('right', 'auto', 'important'); }
         makePanelDraggable(box, '.cyc-head', function(x, y) { cycPanelPos = { x: x, y: y }; });
     }
     box.innerHTML = '<div style="text-align:right;"><button onclick="document.getElementById(\'cycle-panel\').remove()" style="border:none;background:none;font-size:18px;cursor:pointer;">×</button></div>불러오는 중...';
