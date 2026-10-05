@@ -15775,10 +15775,54 @@ function aptSaleCapInfo(a, bunjiFull, pyung, st) {
     if (st.med36) return { value: st.med36, by: '이 단지 같은 평형 최근 3년 실거래 ' + st.n36 + '건 중간값' };
     return null;
 }
+/* 수리비 최소(2026-10, 사용자: "수리비 0원은 있을 수 없어 - 낙찰 후 도배·장판·입주청소는 기본") - 입주청소는 '이사·청소'로 따로 들어가므로
+   여기선 도배·장판만: 평당 15만원(최소 200만원, 시세 확인 전 가정값). 직접 입력·연식 기준·임장 문답 값이 이보다 작으면 이 값으로 올림. */
+function basicRepairFee(pyung) { return Math.max(200, Math.round((parseFloat(pyung) || 0) * 15)); }
+function effRepairFee(a, type, pyung, buildYear) {
+    var v = parseInt(a.repair) || calcRepairFee(type, pyung || 0, buildYear) || 0;
+    return Math.max(v, basicRepairFee(pyung));
+}
+// 낙찰 후 이 집을 어느 수준으로 고쳐서 파나 → 비교할 매물의 수리 상태. 임장 문답 "집 내부 상태"가 양호·도배장판이면 기본 수리, 그 외(연식 기준 수리비 포함)는 올수리
+function plannedRepairLevel(a) { var c = (a.fieldCheck || {}).cond; return (c === 'good' || c === 'paper') ? 'basic' : 'full'; }
+/* 💡 매물 기반 상한(2026-10, 사용자: "매물 정보는 가격에 반영해야 해. 다만 호가는 실거래가 아니고, 수리 여부에 따라 가격이 반드시 달라") -
+   네이버 호가로 예상매도가를 대신하지 않고 "넘을 수 없는 상한"으로만 씀(호가가 실거래보다 높으면 무시, 낮으면 그 매물들과 경쟁하므로 낮춤).
+   비교 매물: 같은 평형·같은 층대(1층은 1~2층, 그 외 ±3층)·세 안고 제외(급매는 포함)·수리 상태를 낙찰 후 계획과 맞춤(올수리 계획 → 올수리 매물,
+   기본 수리 → 일부수리·표시 없는 매물). 3건 이상일 때만, 8건 이상이면 하위 25% 지점·그보다 적으면 가장 싼 2건 평균, 흥정분 3% 뺌(가정값 -
+   붙여넣은 매물을 저장해 두고 나중 실거래와 비교해 실측값으로 바꿀 예정). 붙여넣은 지 60일 넘으면 적용 안 함. */
+var LISTING_NEGO_PCT = 0.03;
+function listingCapFor(a) {
+    var lp = a.listingParse;
+    if (!lp || !Array.isArray(lp.items) || !lp.at) return null;
+    var ageD = Math.floor((Date.now() - new Date(lp.at + 'T00:00:00').getTime()) / 86400000);
+    if (ageD > 60) return { stale: true, ageD: ageD };
+    var tf = parseInt(a.floor, 10), lvl = plannedRepairLevel(a);
+    var cand = lp.items.filter(function(x) {
+        if (x.tenant) return false;
+        if (lvl === 'full' ? x.repair !== 'full' : (x.repair === 'full' || x.repair === 'need')) return false;
+        if (isNaN(tf)) return true;
+        if (tf <= 1) return x.floor != null ? x.floor <= 2 : x.floorRaw === '저';
+        return x.floor != null ? Math.abs(x.floor - tf) <= 3 : (x.floorRaw === '저' ? tf <= 5 : (x.floorRaw === '고' ? tf >= 10 : tf > 3));
+    }).map(function(x) { return x.price; }).sort(function(m, n) { return m - n; });
+    var res = { n: cand.length, lvl: lvl, ageD: ageD, at: lp.at };
+    if (cand.length < 3) return res;
+    var ref;
+    if (cand.length >= 8) { var i = (cand.length - 1) * 0.25, lo = Math.floor(i), hi = Math.ceil(i); ref = cand[lo] + (cand[hi] - cand[lo]) * (i - lo); res.how = '하위 25%'; }
+    else { ref = (cand[0] + cand[1]) / 2; res.how = '가장 싼 2건 평균'; }
+    res.ref = Math.round(ref); res.cap = Math.round(ref * (1 - LISTING_NEGO_PCT));
+    res.desc = (isNaN(tf) ? '' : (tf <= 1 ? '1~2층 ' : '비슷한 층 ')) + (lvl === 'full' ? '올수리' : '기본 상태') + ' 매물 ' + cand.length + '건 ' + res.how + ' ' + toEok(String(res.ref)) + ' − 흥정 ' + Math.round(LISTING_NEGO_PCT * 100) + '%';
+    return res;
+}
 function finalizeBidBoardRow(row) {
     var a = row.a, type = row.type, minBid = row.minBid, pyung = row.pyung;
     row.reasons = []; row.warns = []; row.nextFail = null; row.overshoot = false; row.bulk = false; row.sweet = false; row.volDown = false; row.sturdy = false; row.hardHold = false; row.recBidRaw = null; row.recCapped = null; row.safetyExtra = null; row.safetyPct = null;
     row.assetVer = myAssetsVer;
+    // 매물 기반 상한 - 실거래 기반 값(saleTrade)은 그대로 두고, 매물이 더 싸면 그만큼만 낮춤
+    if (row.saleTrade === undefined) row.saleTrade = row.sale;
+    row.sale = row.saleTrade; row.listingCap = null;
+    if (row.sale && (type === 'apt' || type === 'villa') && !row.saleSaved) {
+        var lc = listingCapFor(a);
+        if (lc) { row.listingCap = lc; if (lc.cap && lc.cap < row.sale) row.sale = lc.cap; }
+    }
     // 목표마진: 모달에서 직접 정해 저장한 값이 있으면 그걸, 없으면 추천 목표마진
     var userMargin = parseInt(a.compTargetMargin);
     var rm = row.sale ? riskMarginFor(row.sale, row.own, row.risk, row.popEff) : null;
@@ -15788,7 +15832,7 @@ function finalizeBidBoardRow(row) {
         var buildYear = a.buildYear || row.estBuildYear || null;
         var rec = solveAuctionBidFromRecord(Object.assign({}, a, {
             target: row.sale, compTargetMargin: row.margin,
-            repair: parseInt(a.repair) || calcRepairFee(type, pyung || 0, buildYear) || 0
+            repair: effRepairFee(a, type, pyung, buildYear)
         }));
         row.recBid = rec ? rec.bid : null;
         row.resaleVat = rec ? rec.resaleVat || 0 : 0;
@@ -15912,7 +15956,7 @@ function finalizeBidBoardRow(row) {
     row.recAggr = null;
     if ((row.opportunity || row.sturdy) && !row.bulk && row.recBid && row.verdict !== 'no' && row.verdict !== 'nodata') {
         var solMin = solveAuctionBidFromRecord(Object.assign({}, a, { target: row.sale, compTargetMargin: MIN_MARGIN_MANWON,
-            repair: parseInt(a.repair) || calcRepairFee(type, pyung || 0, a.buildYear || row.estBuildYear || null) || 0 }));
+            repair: effRepairFee(a, type, pyung, a.buildYear || row.estBuildYear || null) }));
         var cap3 = Math.round(row.recBid * 1.03);
         var aggr = solMin ? Math.min(cap3, solMin.bid) : null;
         if (aggr && aggr > row.recBid) row.recAggr = aggr;
@@ -16161,11 +16205,11 @@ function overshootSaleFactor(type, ratio) {
 }
 var BOARD_CACHE_KEY = 'bidBoardCache:v1', BOARD_CACHE_MAX_AGE = 24 * 3600 * 1000;
 // 저장 계산을 다시 써도 되는지 - 물건 입력값(시세 계산에 쓰는 것)과 입찰일 지남 여부. 계산 방식이 바뀌면 BOARD_CALC_VER을 올림
-var BOARD_CALC_VER = 24;
+var BOARD_CALC_VER = 25;
 function boardBaseSig(a) {
     var d = a.bidDate ? calcAuctionDday(a.bidDate) : null;
     return [BOARD_CALC_VER, auctionWonEstSignature(a), a.minBid, a.appraisal, a.bidDate, a.court, a.failCount, a.landType, String(a.memo || '').length,
-        Array.isArray(a.bidHistory) ? a.bidHistory.length : 0, a.courtResult || '', a.target || '', a.compTargetMargin || '', a.repair || '', a.buildYear || '', a.elevatorCnt == null ? '' : a.elevatorCnt,
+        Array.isArray(a.bidHistory) ? a.bidHistory.length : 0, a.courtResult || '', a.target || '', a.compTargetMargin || '', a.repair || '', a.buildYear || '', a.elevatorCnt == null ? '' : a.elevatorCnt, a.listingParse ? a.listingParse.at + '/' + a.listingParse.n : '', (a.fieldCheck || {}).cond || '',
         d && d.diffDays < 0 ? 'P' : 'F'].join('|');
 }
 function boardRowForCache(r) {
@@ -16313,7 +16357,7 @@ function renderBidBoardRow(r) {
     var dd = r.assumedFail ? '<span class="bb-dday" style="color:#ef6c00;">결과 확인 필요</span><div class="bb-sub">' + bbEsc(a.bidDate || '') + ' 지남 · 유찰이면 다음 기일 약 ' + r.assumedFail.nextDate.slice(5) + '</div>'
         : r.dday ? '<span class="bb-dday' + (r.dday.diffDays <= 3 && r.dday.diffDays >= 0 ? ' soon' : '') + '">' + r.dday.label + '</span><div class="bb-sub">' + bbEsc(a.bidDate || '') + '</div>' : '<span class="bb-sub">미정</span>';
     var saleCell = r.pending ? '<span class="bb-sub">계산 중…</span>'
-        : (r.sale ? '<b>' + toEok(String(r.sale)) + '</b><div class="bb-sub">' + (r.saleSaved ? '내가 저장한 값' : (r.salePresale ? '분양권·입주권 거래 ' + r.salePresale.n + '건(분양가+웃돈)' : '이 단지 같은 평형 ' + r.own + '건')) + (r.ownStats && r.ownStats.recent ? '<br><span style="color:#374151;" title="이 단지·같은 평형' + (r.ownStats.recent.similarFloor ? '·비슷한 층(±3층)' : '(비슷한 층 거래가 없어 층 상관없이)') + '의 가장 최근 실거래">최근 ' + r.ownStats.recent.date.slice(2, 7).replace('-', '.') + ' · ' + r.ownStats.recent.floor + '층 · <b>' + toEok(String(r.ownStats.recent.price)) + '</b>' + (r.ownStats.recent.similarFloor ? '' : ' (다른 층)') + '</span>' : '') + (r.saleFloorAdj ? ' · <span style="color:#7c3aed;" title="' + bbEsc(r.saleFloorAdj.label) + ' - ' + (r.saleFloorAdj.ownRatio != null ? '이 단지 5년 거래에서 이 층대 ㎡당 가격이 같은 시기 다른 층의 ' + Math.round(r.saleFloorAdj.ownRatio * 100) + '%(' + r.saleFloorAdj.n + '건) - 단지 유형 기본값 ' + Math.round(r.saleFloorAdj.base * 100) + '%와 거래 수만큼 섞어 ' + Math.round(r.saleFloorAdj.factor * 1000) / 10 + '%' : (r.saleFloorAdj.base != null ? '이 단지 저층 거래가 없어 단지 유형(승강기·층수) 기본값 ' + Math.round(r.saleFloorAdj.factor * 1000) / 10 + '%' : '평균의 ' + Math.round(r.saleFloorAdj.factor * 100) + '%')) + '">' + bbEsc(r.saleFloorAdj.label.replace(/\(.*\)/, '')) + ' ' + Math.round(Math.abs(1 - r.saleFloorAdj.factor) * 1000) / 10 + '% ' + (r.saleFloorAdj.factor < 1 ? '낮춤' : '높임') + '</span>' : '') + (r.saleSimBy ? ' · <span style="color:#1e5eff;" title="' + bbEsc(r.saleSimBy) + ' (주변 단지 포함 계산값 ' + toEok(String(r.saleBase)) + ')">' + (/3개월/.test(r.saleSimBy) ? '최근 3개월 ' : '최근 6개월 ') + r.saleSimN + '건 기준</span>' : '') + (r.saleCapBy ? ' · <span style="color:#00695c;" title="주변 단지 거래로 계산한 값(' + toEok(String(r.saleBase)) + ')이 이 기준보다 높아서 낮춤">' + '단지 실거래' + ' 기준으로 맞춤</span>' : '') + (r.saleBlendBy ? ' · <span style="color:#00695c;" title="' + bbEsc(r.saleBlendBy) + ' (주변 단지만으로 계산한 값 ' + toEok(String(r.saleBase)) + ' - 이 단지 거래가 적을 때 과거 이렇게 섞는 게 더 정확했음)">주변+단지 실거래 섞음</span>' : '') + '</div>' : '<span class="bb-sub">-</span>');
+        : (r.sale ? '<b>' + toEok(String(r.sale)) + '</b><div class="bb-sub">' + (r.saleSaved ? '내가 저장한 값' : (r.salePresale ? '분양권·입주권 거래 ' + r.salePresale.n + '건(분양가+웃돈)' : '이 단지 같은 평형 ' + r.own + '건')) + (r.ownStats && r.ownStats.recent ? '<br><span style="color:#374151;" title="이 단지·같은 평형' + (r.ownStats.recent.similarFloor ? '·비슷한 층(±3층)' : '(비슷한 층 거래가 없어 층 상관없이)') + '의 가장 최근 실거래">최근 ' + r.ownStats.recent.date.slice(2, 7).replace('-', '.') + ' · ' + r.ownStats.recent.floor + '층 · <b>' + toEok(String(r.ownStats.recent.price)) + '</b>' + (r.ownStats.recent.similarFloor ? '' : ' (다른 층)') + '</span>' : '') + (r.saleFloorAdj ? ' · <span style="color:#7c3aed;" title="' + bbEsc(r.saleFloorAdj.label) + ' - ' + (r.saleFloorAdj.ownRatio != null ? '이 단지 5년 거래에서 이 층대 ㎡당 가격이 같은 시기 다른 층의 ' + Math.round(r.saleFloorAdj.ownRatio * 100) + '%(' + r.saleFloorAdj.n + '건) - 단지 유형 기본값 ' + Math.round(r.saleFloorAdj.base * 100) + '%와 거래 수만큼 섞어 ' + Math.round(r.saleFloorAdj.factor * 1000) / 10 + '%' : (r.saleFloorAdj.base != null ? '이 단지 저층 거래가 없어 단지 유형(승강기·층수) 기본값 ' + Math.round(r.saleFloorAdj.factor * 1000) / 10 + '%' : '평균의 ' + Math.round(r.saleFloorAdj.factor * 100) + '%')) + '">' + bbEsc(r.saleFloorAdj.label.replace(/\(.*\)/, '')) + ' ' + Math.round(Math.abs(1 - r.saleFloorAdj.factor) * 1000) / 10 + '% ' + (r.saleFloorAdj.factor < 1 ? '낮춤' : '높임') + '</span>' : '') + (r.saleSimBy ? ' · <span style="color:#1e5eff;" title="' + bbEsc(r.saleSimBy) + ' (주변 단지 포함 계산값 ' + toEok(String(r.saleBase)) + ')">' + (/3개월/.test(r.saleSimBy) ? '최근 3개월 ' : '최근 6개월 ') + r.saleSimN + '건 기준</span>' : '') + (r.saleCapBy ? ' · <span style="color:#00695c;" title="주변 단지 거래로 계산한 값(' + toEok(String(r.saleBase)) + ')이 이 기준보다 높아서 낮춤">' + '단지 실거래' + ' 기준으로 맞춤</span>' : '') + (r.listingCap && r.listingCap.cap && r.listingCap.cap < r.saleTrade ? ' · <span style="color:#7c3aed;" title="' + bbEsc(r.listingCap.desc) + ' (실거래 기반 ' + toEok(String(r.saleTrade)) + ')">매물 기준으로 낮춤</span>' : '') + (r.saleBlendBy ? ' · <span style="color:#00695c;" title="' + bbEsc(r.saleBlendBy) + ' (주변 단지만으로 계산한 값 ' + toEok(String(r.saleBase)) + ' - 이 단지 거래가 적을 때 과거 이렇게 섞는 게 더 정확했음)">주변+단지 실거래 섞음</span>' : '') + '</div>' : '<span class="bb-sub">-</span>');
     var recCell = r.recBid ? '<b>' + toEok(String(r.recBid)) + '</b>' + (r.recAggr ? '<div class="bb-sub" style="color:#7c3aed;" title="2등과 아깝게 지는 경우까지만 잡는 가격(추천가 +3% 한도, 마진 1,000만 이상 유지). 과거 기회·버팀 물건에서 실제 낙찰이 약 2배(22→42건)">적극 ' + toEok(String(r.recAggr)) + '</div>' : '') + (r.safetyExtra ? '<div class="bb-sub" style="color:#e65100;">손해 주의 여유: ' + toEok(String(r.safetyExtra)) + ' 더 낮춤 (원래 ' + toEok(String(r.recBidRaw)) + ')</div>' : '') + (r.resaleVat ? '<div class="bb-sub" style="color:#c2410c;">부가세 ' + toEok(String(r.resaleVat)) + (r.vatEstimated ? '(추정)' : '') + ' 반영</div>' : '') + '<div class="bb-sub">마진 ' + toEok(String(r.margin)) + (r.marginUser ? '(내가 정함)' : '(추천' + (r.popEff && r.popEff.tier === '하위40%' ? ', 거래 드묾 +2%' : '') + ')') + '</div>' : '<span class="bb-sub">-</span>';
     var roomCell = r.roomPct == null ? '<span class="bb-sub">-</span>'
         : '<b style="color:' + (r.roomPct >= 0 ? '#2e7d32' : '#c62828') + ';">' + (r.roomPct >= 0 ? r.roomPct + '% 여유' : Math.abs(r.roomPct) + '% 부족') + '</b>'
@@ -16428,7 +16472,7 @@ function bidCostLines(row) {
         ['중도상환수수료', calcLoanPrepayFee(loan.amount, DEFAULT_LOAN_PREPAY_FEE_RATE)],
         ['중개수수료(매도)', calcAgentFee(sale, type)],
         ['명도비', calcEvictionFee(pyung)],
-        ['수리비' + (parseInt(a.repair) ? ' (직접 입력)' : ' (연식 기준)'), parseInt(a.repair) || repairAuto],
+        ['수리비' + ((parseInt(a.repair) || repairAuto) < basicRepairFee(pyung) ? ' (최소: 도배·장판)' : (parseInt(a.repair) ? ' (직접 입력)' : ' (연식 기준)')), Math.max(parseInt(a.repair) || repairAuto, basicRepairFee(pyung))],
         ['이사·청소', (calcMovingFee(pyung) || 0) + (calcCleaningFee(pyung) || 0)],
         ['매도 부가세 (85㎡ 초과)', row.resaleVat || 0],
         ['인수 금액 (권리)', parseInt(a.assumedDeposit) || 0],
@@ -16481,6 +16525,7 @@ async function renderBidDrawer() {
         + '<div class="dr-big"><div><span>예상매도가</span><b>' + fmt(row.sale) + '</b></div><div><span>추천 입찰가</span><b style="color:#16a34a;">' + fmt(row.recBid) + '</b>' + (row.recAggr ? '<span style="color:#7c3aed;margin-top:2px;">적극 ' + fmt(row.recAggr) + '</span>' : '') + '</div><div><span>최저가</span><b>' + fmt(row.minBid) + '</b></div></div>';
     // 근거
     var basis = row.saleSaved ? '내가 저장한 값' : (row.salePresale ? '분양권·입주권 거래' : (row.saleSimBy || row.saleCapBy || row.saleBlendBy || ('이 단지 같은 평형 ' + (row.own || 0) + '건 + 주변 비슷한 단지')));
+    if (row.listingCap && row.listingCap.cap && row.listingCap.cap < row.saleTrade) basis = '매물 상한(' + row.listingCap.desc + ') - 실거래 기반 ' + toEok(String(row.saleTrade)) + ' · ' + basis;
     if (row.saleFloorAdj) basis += ' · ' + row.saleFloorAdj.label + ' ' + Math.round(Math.abs(1 - row.saleFloorAdj.factor) * 1000) / 10 + '% ' + (row.saleFloorAdj.factor < 1 ? '낮춤' : '높임');
     h += '<div class="dr-sub">예상매도가 근거: ' + bbEsc(basis) + '</div>';
     var to = turnoverOf(row);
@@ -16689,6 +16734,7 @@ function summarizeNaverListings(list, targetArea, targetFloor, sale) {
     var byRep = { full: [], part: [], need: [], '': [] }; uniq.forEach(function(x) { byRep[x.repair].push(x.price); });
     var dates = uniq.map(function(x) { return x.date; }).filter(Boolean).sort();
     var res = {
+        items: uniq.map(function(x) { return { price: x.price, floor: x.floor, floorRaw: x.floorRaw, maxF: x.maxF, repair: x.repair, tenant: !!x.tenant, urgent: !!x.urgent, dir: x.dir || '', dong: x.dong }; }),
         at: new Date().toISOString().slice(0, 10), rawN: list.length, n: uniq.length, otherSize: list.length - same.length, dupRemoved: same.length - uniq.length,
         dupGroups: uniq.filter(function(x) { return x.dups > 1; }).map(function(x) { return x.dong + '동 ' + x.floorRaw + '층 ' + x.prices.map(function(p) { return toEok(String(p)); }).join('/'); }).slice(0, 12),
         min: q(P(uniq), 0), q25: q(P(uniq), 0.25), med: q(P(uniq), 0.5), max: q(P(uniq), 1),
@@ -16716,6 +16762,8 @@ async function applyNaverListings(id) {
     var bm = /(\d{1,4})\s*동(?![가-힣])/.exec(bTxt), hm = /(\d{3,4})\s*호/.exec(bTxt);
     sm.targetDong = bm ? bm[1] : null; sm.targetHo = hm ? hm[1] : null;
     a.listingParse = sm;
+    // 나중에 실거래와 비교해 "호가 → 실제 거래가" 차이를 실측하려고 붙여넣은 기록을 남겨 둠(최근 10회)
+    a.listingHistory = (Array.isArray(a.listingHistory) ? a.listingHistory : []).concat([{ at: sm.at, n: sm.n, min: sm.min, q25: sm.q25, med: sm.med, simMin: sm.simMin, repFull: sm.repFull, repNeed: sm.repNeed }]).slice(-10);
     // 임장 문답·전체 상세의 같은 칸에도 채움 - 최저 호가는 비슷한 층(±3층) 최저, 없으면 같은 평형 최저
     a.fieldCheck = Object.assign({}, a.fieldCheck || {}, { ask: String(sm.simMin || sm.min || ''), listings: String(sm.n) });
     a.listingCount = String(sm.n); a.askPriceMin = sm.min ? String(sm.min) : ''; a.askPriceMax = sm.max ? String(sm.max) : ''; a.listingCheckedDate = sm.at;
@@ -16745,6 +16793,9 @@ function naverListingHtml(row, idJs) {
                     + '<br>';
             })()
             + '세 안고 매물 ' + sm.tenantN + '건 · 급매 ' + sm.urgentN + '건 · 바로 입주 가능 최저 ' + f(sm.vacantMin)
+            + (row.listingCap ? (row.listingCap.stale ? '<span style="color:#9ca3af;">붙여넣은 지 ' + row.listingCap.ageD + '일 지나 예상매도가에 반영 안 함 - 다시 붙여넣어 주세요</span><br>'
+                : (row.listingCap.cap ? '<b style="color:#7c3aed;">예상매도가 상한: ' + f(row.listingCap.cap) + '</b> (' + bbEsc(row.listingCap.desc) + ')' + (row.listingCap.cap < row.saleTrade ? ' → 실거래 기반 ' + f(row.saleTrade) + '에서 낮춤' : ' → 실거래 기반 값이 더 낮아 그대로') + '<br>'
+                : '<span class="dr-sub">' + (row.listingCap.lvl === 'full' ? '올수리' : '기본 상태') + ' 비교 매물이 ' + row.listingCap.n + '건뿐이라(3건 미만) 가격엔 반영 안 함</span><br>')) : (sm.items ? '' : '<span class="dr-sub">예전 방식으로 정리된 매물이에요 - 다시 분석하면 예상매도가 상한에 반영돼요</span><br>'))
             + (row.sale && sm.saleRankPct != null ? '<br><b style="color:' + (sm.saleRankPct <= 25 ? '#16a34a' : (sm.saleRankPct >= 60 ? '#dc2626' : '#374151')) + ';">예상매도가 ' + f(row.sale) + '보다 싼 매물이 ' + sm.saleRankPct + '%</b>' + (sm.saleRankPct >= 60 ? ' - 팔 때 더 싼 매물들과 경쟁해야 해요' : (sm.saleRankPct <= 25 ? ' - 매물들 중 싼 편이라 팔기 수월한 가격' : '')) : '')
             + (sm.dupGroups && sm.dupGroups.length ? '<details style="margin-top:4px;"><summary class="dr-sub" style="cursor:pointer;">같은 집으로 묶은 매물 보기(' + sm.dupGroups.length + '묶음)</summary><div class="dr-sub">' + sm.dupGroups.map(bbEsc).join('<br>') + '</div></details>' : '')
             + '<div class="dr-sub" style="margin-top:4px;">가장 싼 매물: ' + sm.lowest.map(function(x) { return f(x.p) + '(' + x.dong + '동 ' + x.f + (x.t ? ' ' + x.t.trim() : '') + ')'; }).join(' · ') + '</div></div>';
