@@ -15679,6 +15679,7 @@ function computeBidBoardRow(a) {
 function aptOwnTradeStats(a, bunjiFull, pyung) {
     var area = (parseFloat(pyung) || 0) * 3.305785;
     if (!area) return null;
+    var allPpm = [];
     var now = Date.now(), p12 = [], p36 = [], n6 = 0, last = null, all = [], sim6 = [], maxF = 0, f36 = [], v6 = 0, vPrev6 = 0, p3 = [], p6 = [];
     var tf = parseInt(a.floor);
     (aptIndexByDongBunji.get(dongKey(a.dong) + '|' + bunjiFull) || []).forEach(function(ap) {
@@ -15688,6 +15689,8 @@ function aptOwnTradeStats(a, bunjiFull, pyung) {
             if (t.dealing_type === '직거래') return;
             var ag = (now - tradeDate(t).getTime()) / 86400000 / 30.4;
             if (ag <= 6) v6++; else if (ag <= 12) vPrev6++;
+            var pp = parseInt(t.amount), ar = parseFloat(t.area);
+            if (ag <= 60 && pp > 0 && ar > 0 && ff > 0) allPpm.push({ td: tradeDate(t).getTime(), f: ff, ppm: pp / ar });
         });
         (ap.trades || []).forEach(function(t) {
             if (!(t.area > 0) || Math.abs(t.area - area) > 3 || t.dealing_type === '직거래') return;
@@ -15717,10 +15720,26 @@ function aptOwnTradeStats(a, bunjiFull, pyung) {
     if (!isNaN(tf) && maxF > 0) {
         var lim = Math.max(3, Math.floor(maxF * 0.2));
         if (tf <= lim) {
-            var g = f36.filter(function(x) { return tf <= 1 ? x.f <= 1 : (x.f >= 2 && x.f <= lim); }).map(function(x) { return x.p; });
-            var allP = f36.map(function(x) { return x.p; });
-            var ratio = (g.length >= 3 && allP.length >= 6) ? Math.min(1, med(g) / med(allP)) : null;
-            lowF = { factor: ratio || (tf <= 1 ? 0.95 : 0.97), fromComplex: !!ratio, n: g.length, label: tf <= 1 ? '1층' : '저층(' + tf + '층/' + maxF + '층)' };
+            // 2026-10(사용자: "저층은 생활권·승강기 유무에 따라 프리미엄일지 마이너스일지 달라 - 일괄 적용은 무의미, 과거 거래로 알아내야")
+            // 지방 아파트 1~3층 낙찰 후 되판 1,037건 검증: 예전(1층 −5%·저층 −3% 일괄, 같은 평형 3건+일 때만 단지 비율) 오차 중앙 6.97%·10%+ 높게 잡힘 19%
+            //  → 승강기 구분 기본값 + 이 단지 5년 모든 평형 거래(㎡당, 같은 시기 ±6개월 다른 층과 비교)를 거래 수만큼 섞음: 6.66%·16%, 되판÷예상 0.986→1.001.
+            //  실측 기본값(이 단지 거래가 없을 때): 승강기 없음(5층 이하) 1층 −1%·저층 −3% / 6~10층 단지 −2%·−2% / 11층 이상 −8.5%·−6%.
+            //  반경 1km 같은 유형 단지 평균을 더 섞는 것도 시험했으나 나아지지 않아 안 씀. 1층이 더 비싼 단지(정원·필로티 등)는 최대 +5%까지 반영.
+            var inB = function(f) { return tf <= 1 ? f <= 1 : (f >= 2 && f <= lim); };
+            var rs = [];
+            allPpm.forEach(function(t) {
+                if (!inB(t.f)) return;
+                var ref = allPpm.filter(function(u) { return !inB(u.f) && Math.abs(u.td - t.td) <= 180 * 86400000; }).map(function(u) { return u.ppm; });
+                if (ref.length >= 3) rs.push(t.ppm / med(ref));
+            });
+            var elv = a.elevatorCnt != null && a.elevatorCnt !== '' ? parseInt(a.elevatorCnt) : null;
+            var cls = elv === 0 ? 'noE' : (elv > 0 ? (maxF <= 10 ? 'mid' : 'tall') : (maxF <= 5 ? 'noE' : (maxF <= 10 ? 'mid' : 'tall')));
+            var dft = { noE: [0.99, 0.97], mid: [0.98, 0.98], tall: [0.915, 0.94] }[cls][tf <= 1 ? 0 : 1];
+            var nR = rs.length, ownR = nR ? Math.min(1.05, med(rs)) : null;
+            var fac = nR ? (nR * ownR + 10 * dft) / (nR + 10) : dft;
+            var clsTxt = cls === 'noE' ? (elv === 0 ? '승강기 없음' : '승강기 없음 추정·' + maxF + '층 단지') : (maxF + '층 단지' + (elv > 0 ? '·승강기 있음' : ''));
+            lowF = { factor: fac, fromComplex: nR > 0, n: nR, ownRatio: ownR, base: dft, cls: cls,
+                label: (tf <= 1 ? '1층' : '저층(' + tf + '층)') + '(' + clsTxt + (nR ? ' · 이 단지 저층 거래 ' + nR + '건 반영' : '') + ')' };
         }
         // 고층 보정(2026-10): 단지 최고층의 상위 20%(최소 4층, 꼭대기층 제외)는 예상매도가가 1.7% 낮게 잡혔음 → 같은 단지 3년 거래
         // "그 층대 ÷ 전체"(3건 이상, 최대 +8%) 또는 기본 +1.5%. 백테스트(408건): 되판÷예상 1.023→1.000, 낙찰 37→50건, 순이익(수리 전) 195→618만, 손해 43→36%.
@@ -16142,11 +16161,11 @@ function overshootSaleFactor(type, ratio) {
 }
 var BOARD_CACHE_KEY = 'bidBoardCache:v1', BOARD_CACHE_MAX_AGE = 24 * 3600 * 1000;
 // 저장 계산을 다시 써도 되는지 - 물건 입력값(시세 계산에 쓰는 것)과 입찰일 지남 여부. 계산 방식이 바뀌면 BOARD_CALC_VER을 올림
-var BOARD_CALC_VER = 23;
+var BOARD_CALC_VER = 24;
 function boardBaseSig(a) {
     var d = a.bidDate ? calcAuctionDday(a.bidDate) : null;
     return [BOARD_CALC_VER, auctionWonEstSignature(a), a.minBid, a.appraisal, a.bidDate, a.court, a.failCount, a.landType, String(a.memo || '').length,
-        Array.isArray(a.bidHistory) ? a.bidHistory.length : 0, a.courtResult || '', a.target || '', a.compTargetMargin || '', a.repair || '', a.buildYear || '',
+        Array.isArray(a.bidHistory) ? a.bidHistory.length : 0, a.courtResult || '', a.target || '', a.compTargetMargin || '', a.repair || '', a.buildYear || '', a.elevatorCnt == null ? '' : a.elevatorCnt,
         d && d.diffDays < 0 ? 'P' : 'F'].join('|');
 }
 function boardRowForCache(r) {
@@ -16294,7 +16313,7 @@ function renderBidBoardRow(r) {
     var dd = r.assumedFail ? '<span class="bb-dday" style="color:#ef6c00;">결과 확인 필요</span><div class="bb-sub">' + bbEsc(a.bidDate || '') + ' 지남 · 유찰이면 다음 기일 약 ' + r.assumedFail.nextDate.slice(5) + '</div>'
         : r.dday ? '<span class="bb-dday' + (r.dday.diffDays <= 3 && r.dday.diffDays >= 0 ? ' soon' : '') + '">' + r.dday.label + '</span><div class="bb-sub">' + bbEsc(a.bidDate || '') + '</div>' : '<span class="bb-sub">미정</span>';
     var saleCell = r.pending ? '<span class="bb-sub">계산 중…</span>'
-        : (r.sale ? '<b>' + toEok(String(r.sale)) + '</b><div class="bb-sub">' + (r.saleSaved ? '내가 저장한 값' : (r.salePresale ? '분양권·입주권 거래 ' + r.salePresale.n + '건(분양가+웃돈)' : '이 단지 같은 평형 ' + r.own + '건')) + (r.ownStats && r.ownStats.recent ? '<br><span style="color:#374151;" title="이 단지·같은 평형' + (r.ownStats.recent.similarFloor ? '·비슷한 층(±3층)' : '(비슷한 층 거래가 없어 층 상관없이)') + '의 가장 최근 실거래">최근 ' + r.ownStats.recent.date.slice(2, 7).replace('-', '.') + ' · ' + r.ownStats.recent.floor + '층 · <b>' + toEok(String(r.ownStats.recent.price)) + '</b>' + (r.ownStats.recent.similarFloor ? '' : ' (다른 층)') + '</span>' : '') + (r.saleFloorAdj ? ' · <span style="color:#7c3aed;" title="' + bbEsc(r.saleFloorAdj.label) + ' - ' + (r.saleFloorAdj.fromComplex ? '이 단지 3년 거래에서 이 층대가 평균의 ' + Math.round(r.saleFloorAdj.factor * 100) + '%(' + r.saleFloorAdj.n + '건)' : '이 단지 저층 거래가 적어 기본 보정 ' + Math.round(r.saleFloorAdj.factor * 100) + '%') + '">' + bbEsc(r.saleFloorAdj.label.replace(/\(.*\)/, '')) + ' ' + Math.round(Math.abs(1 - r.saleFloorAdj.factor) * 1000) / 10 + '% ' + (r.saleFloorAdj.factor < 1 ? '낮춤' : '높임') + '</span>' : '') + (r.saleSimBy ? ' · <span style="color:#1e5eff;" title="' + bbEsc(r.saleSimBy) + ' (주변 단지 포함 계산값 ' + toEok(String(r.saleBase)) + ')">' + (/3개월/.test(r.saleSimBy) ? '최근 3개월 ' : '최근 6개월 ') + r.saleSimN + '건 기준</span>' : '') + (r.saleCapBy ? ' · <span style="color:#00695c;" title="주변 단지 거래로 계산한 값(' + toEok(String(r.saleBase)) + ')이 이 기준보다 높아서 낮춤">' + '단지 실거래' + ' 기준으로 맞춤</span>' : '') + (r.saleBlendBy ? ' · <span style="color:#00695c;" title="' + bbEsc(r.saleBlendBy) + ' (주변 단지만으로 계산한 값 ' + toEok(String(r.saleBase)) + ' - 이 단지 거래가 적을 때 과거 이렇게 섞는 게 더 정확했음)">주변+단지 실거래 섞음</span>' : '') + '</div>' : '<span class="bb-sub">-</span>');
+        : (r.sale ? '<b>' + toEok(String(r.sale)) + '</b><div class="bb-sub">' + (r.saleSaved ? '내가 저장한 값' : (r.salePresale ? '분양권·입주권 거래 ' + r.salePresale.n + '건(분양가+웃돈)' : '이 단지 같은 평형 ' + r.own + '건')) + (r.ownStats && r.ownStats.recent ? '<br><span style="color:#374151;" title="이 단지·같은 평형' + (r.ownStats.recent.similarFloor ? '·비슷한 층(±3층)' : '(비슷한 층 거래가 없어 층 상관없이)') + '의 가장 최근 실거래">최근 ' + r.ownStats.recent.date.slice(2, 7).replace('-', '.') + ' · ' + r.ownStats.recent.floor + '층 · <b>' + toEok(String(r.ownStats.recent.price)) + '</b>' + (r.ownStats.recent.similarFloor ? '' : ' (다른 층)') + '</span>' : '') + (r.saleFloorAdj ? ' · <span style="color:#7c3aed;" title="' + bbEsc(r.saleFloorAdj.label) + ' - ' + (r.saleFloorAdj.ownRatio != null ? '이 단지 5년 거래에서 이 층대 ㎡당 가격이 같은 시기 다른 층의 ' + Math.round(r.saleFloorAdj.ownRatio * 100) + '%(' + r.saleFloorAdj.n + '건) - 단지 유형 기본값 ' + Math.round(r.saleFloorAdj.base * 100) + '%와 거래 수만큼 섞어 ' + Math.round(r.saleFloorAdj.factor * 1000) / 10 + '%' : (r.saleFloorAdj.base != null ? '이 단지 저층 거래가 없어 단지 유형(승강기·층수) 기본값 ' + Math.round(r.saleFloorAdj.factor * 1000) / 10 + '%' : '평균의 ' + Math.round(r.saleFloorAdj.factor * 100) + '%')) + '">' + bbEsc(r.saleFloorAdj.label.replace(/\(.*\)/, '')) + ' ' + Math.round(Math.abs(1 - r.saleFloorAdj.factor) * 1000) / 10 + '% ' + (r.saleFloorAdj.factor < 1 ? '낮춤' : '높임') + '</span>' : '') + (r.saleSimBy ? ' · <span style="color:#1e5eff;" title="' + bbEsc(r.saleSimBy) + ' (주변 단지 포함 계산값 ' + toEok(String(r.saleBase)) + ')">' + (/3개월/.test(r.saleSimBy) ? '최근 3개월 ' : '최근 6개월 ') + r.saleSimN + '건 기준</span>' : '') + (r.saleCapBy ? ' · <span style="color:#00695c;" title="주변 단지 거래로 계산한 값(' + toEok(String(r.saleBase)) + ')이 이 기준보다 높아서 낮춤">' + '단지 실거래' + ' 기준으로 맞춤</span>' : '') + (r.saleBlendBy ? ' · <span style="color:#00695c;" title="' + bbEsc(r.saleBlendBy) + ' (주변 단지만으로 계산한 값 ' + toEok(String(r.saleBase)) + ' - 이 단지 거래가 적을 때 과거 이렇게 섞는 게 더 정확했음)">주변+단지 실거래 섞음</span>' : '') + '</div>' : '<span class="bb-sub">-</span>');
     var recCell = r.recBid ? '<b>' + toEok(String(r.recBid)) + '</b>' + (r.recAggr ? '<div class="bb-sub" style="color:#7c3aed;" title="2등과 아깝게 지는 경우까지만 잡는 가격(추천가 +3% 한도, 마진 1,000만 이상 유지). 과거 기회·버팀 물건에서 실제 낙찰이 약 2배(22→42건)">적극 ' + toEok(String(r.recAggr)) + '</div>' : '') + (r.safetyExtra ? '<div class="bb-sub" style="color:#e65100;">손해 주의 여유: ' + toEok(String(r.safetyExtra)) + ' 더 낮춤 (원래 ' + toEok(String(r.recBidRaw)) + ')</div>' : '') + (r.resaleVat ? '<div class="bb-sub" style="color:#c2410c;">부가세 ' + toEok(String(r.resaleVat)) + (r.vatEstimated ? '(추정)' : '') + ' 반영</div>' : '') + '<div class="bb-sub">마진 ' + toEok(String(r.margin)) + (r.marginUser ? '(내가 정함)' : '(추천' + (r.popEff && r.popEff.tier === '하위40%' ? ', 거래 드묾 +2%' : '') + ')') + '</div>' : '<span class="bb-sub">-</span>';
     var roomCell = r.roomPct == null ? '<span class="bb-sub">-</span>'
         : '<b style="color:' + (r.roomPct >= 0 ? '#2e7d32' : '#c62828') + ';">' + (r.roomPct >= 0 ? r.roomPct + '% 여유' : Math.abs(r.roomPct) + '% 부족') + '</b>'
@@ -16770,6 +16789,7 @@ async function fetchHouseholdsFor(a) {
         if (ym && !a.buildYear) { var y = parseInt(ym[1], 10); if (y > 1950 && y <= new Date().getFullYear()) { a.buildYear = y; a.buildYearSource = '건축물대장'; } }
         // 세대수는 단지 전체 기준: 총괄표제부 → 같은 지번 모든 동 합계(hhldSum) → 동이 하나뿐일 때만 그 동 값.
         // (2026-10: 예전엔 동 하나 값이 들어가 빛가람코오롱하늘채 회전율이 111%로 나왔음)
+        if (t && a.elevatorCnt == null && (t.rideElvtCnt != null || t.emgenElvtCnt != null)) a.elevatorCnt = (t.rideElvtCnt || 0) + (t.emgenElvtCnt || 0); // 저층 보정의 승강기 구분용(이 동 기준)
         if (!t || t.hhVer !== 2) return null;
         var hh = (t.site && t.site.hhldCnt > 0) ? t.site.hhldCnt : (t.hhldSum > 0 ? t.hhldSum : (t.hhldBldCnt <= 1 ? t.hhldCnt : null));
         if (hh > 0) a.householdsVer = 2;
@@ -16787,16 +16807,17 @@ var householdFillRunning = false;
 async function fillHouseholdsInBackground() {
     if (householdFillRunning) return; householdFillRunning = true;
     try {
-        var todo = bidBoardRows.filter(function(r) { return r.type === 'apt' && r.a && r.a.bCode && (((!r.a.households || r.a.householdsVer !== 2) && !r.a.householdsTried2) || (!r.a.buildYear && !r.a.buildYearTried)); });
+        var todo = bidBoardRows.filter(function(r) { return r.type === 'apt' && r.a && r.a.bCode && (((!r.a.households || r.a.householdsVer !== 2) && !r.a.householdsTried2) || (!r.a.buildYear && !r.a.buildYearTried) || (r.a.elevatorCnt == null && !r.a.elevatorTried)); });
         for (var i = 0; i < todo.length; i++) {
             if (document.getElementById('bid-board').style.display !== 'flex') break;
             var a = todo[i].a;
-            var hadYear = a.buildYear;
+            var hadYear = a.buildYear, hadElv = a.elevatorCnt;
             var hh = await fetchHouseholdsFor(a);
-            a.householdsTried2 = true; a.buildYearTried = true;
+            a.householdsTried2 = true; a.buildYearTried = true; a.elevatorTried = true;
             if (hh) a.households = hh;
-            if (hh || (a.buildYear && !hadYear)) { try { await saveAuctionAPI(a); } catch (e) {} }
-            if (a.buildYear && !hadYear) { try { bidBoardRows = bidBoardRows.map(function(r) { return r.a === a ? computeBidBoardRow(a) : r; }); } catch (e) {} }
+            var gotNew = (a.buildYear && !hadYear) || (a.elevatorCnt != null && hadElv == null);
+            if (hh || gotNew) { try { await saveAuctionAPI(a); } catch (e) {} }
+            if (gotNew) { try { bidBoardRows = bidBoardRows.map(function(r) { return r.a === a ? computeBidBoardRow(a) : r; }); } catch (e) {} }
             if (i % 10 === 9) renderBidBoard();
             await new Promise(function(r) { setTimeout(r, 1200); });
         }
