@@ -1,0 +1,40 @@
+name: 1회용 - 2023년 실거래 재수집 후 낙찰사례 재매칭 (2026-10-06 새벽)
+
+# 2026-10-05: 2023년 4~12월 재수집이 국토부 하루 한도에 걸려 동(棟) 정보가 비어 있음 → 한도가 풀린 직후(KST 10/6 00:40)
+# 2023년을 다시 받고, 끝나면 낙찰사례 되팔기 매칭(analyze-bidcases)을 이어서 실행. 노트북이 꺼져 있어도 GitHub에서 돌아감.
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '40 15 5 10 *'
+
+permissions:
+  actions: write
+  contents: read
+
+jobs:
+  chain:
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+    steps:
+      - name: 2026년에만 실행
+        run: |
+          if [ "$(date -u +%Y)" != "2026" ]; then echo "1회용 작업 - 건너뜀"; exit 1; fi
+      - name: 2023년 재수집 실행 후 끝날 때까지 대기
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          gh workflow run collect-history.yml -f target_year=2023
+          sleep 20
+          id=$(gh run list --workflow=collect-history.yml -L 1 --json databaseId -q '.[0].databaseId')
+          echo "재수집 run $id"
+          gh run watch "$id" --interval 60 || true
+      - name: 낙찰사례 되팔기 매칭 실행
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          gh workflow run analyze-bidcases.yml
+          sleep 20
+          id=$(gh run list --workflow=analyze-bidcases.yml -L 1 --json databaseId -q '.[0].databaseId')
+          gh run watch "$id" --interval 60 || true
