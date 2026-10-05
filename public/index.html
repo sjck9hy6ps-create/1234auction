@@ -1215,6 +1215,32 @@ body.ui2 #my-assets-panel { position:fixed; top:104px; right:64px; left:auto; bo
     #bid-board .bb-table td[data-l]:not(.bb-name)::before { font-size:9.5px; }
 }
 </style>
+<style>
+/* ════ 2026-10 상세(경매 물건) 화면 - 입찰후보 창과 같은 모양(흰 카드·큰 숫자·얇은 구분선) ════ */
+#auction-modal.am4 .am4-hide { display:none !important; }
+#auction-modal.am4[data-ptype="apt"] .am4-villa { display:none !important; }
+body.ui2 #auction-modal.am4 { width:620px; }
+#auction-modal.am4 .modal-group { background:#fff; border:1px solid #eef0f3; border-radius:12px; margin:0 0 10px; overflow:hidden; box-shadow:none; }
+#auction-modal.am4 .modal-group-header { background:#fff; font-size:14px; font-weight:800; color:#111827; padding:12px 14px; border-bottom:1px solid transparent; }
+#auction-modal.am4 .modal-group.open > .modal-group-header { border-bottom-color:#f1f3f5; }
+#auction-modal.am4 .modal-group-chevron { color:#9aa0a6; }
+#auction-modal.am4 .modal-group-body { padding:10px 14px 4px; }
+#auction-modal.am4 .modal-group-body .modal-section { box-shadow:none !important; border:none !important; padding:4px 0 8px !important; margin:0 0 6px !important; border-bottom:1px solid #f3f4f6 !important; border-radius:0 !important; background:#fff !important; }
+#auction-modal.am4 .modal-section-title { font-size:12.5px !important; font-weight:700 !important; color:#374151 !important; border:none !important; margin-bottom:6px; }
+#auction-modal.am4 .modal-label { font-size:12px; color:#6b7280; min-width:96px; }
+#auction-modal.am4 .modal-input, #auction-modal.am4 .modal-select { padding:7px 9px; font-size:13px; border:1px solid #e5e7eb; border-radius:8px; }
+#auction-modal.am4 .am4-money .est-row { display:flex; justify-content:space-between; align-items:center; padding:8px 0 4px; margin:0; border-top:1px solid #f3f4f6; }
+#auction-modal.am4 .am4-money .est-row:first-of-type { border-top:none; }
+#auction-modal.am4 .am4-money .est-label { font-size:13px; color:#374151; min-width:0; }
+#auction-modal.am4 .am4-money .est-value { font-size:18px; font-weight:800; text-align:right; color:#111827; }
+#auction-modal.am4 .am4-money .est-input { max-width:170px; text-align:right; font-size:15px; font-weight:700; padding:7px 10px; }
+#auction-modal.am4 .am4-money .est-sub { font-size:10.5px; color:#9aa0a6; margin:0 0 6px; }
+#auction-modal.am4 .am4-money div[style*="e5dbf5"] { border-color:#eef0f3 !important; background:#fafbfc !important; }
+#auction-modal.am4 #est-row-5-value { font-size:22px !important; color:#1e5eff !important; }
+#auction-modal.am4 .margin-result { background:#fafbfc; border:1px solid #eef0f3; border-radius:10px; }
+#auction-modal.am4 .est-radio-row label { font-size:12px; }
+@media (max-width: 640px) { body.ui2 #auction-modal.am4 { width:96vw; } #auction-modal.am4 .modal-label { min-width:80px; } }
+</style>
 </head>
 <body>
 <div id="topbar">
@@ -23124,6 +23150,63 @@ function openMyAssetsPanel() {
     // 경매 기록(매도완료 거래)이 아직 안 불러와졌으면 잠시 뒤 다시 그림
     if (!auctionList || !auctionList.length) setTimeout(function() { if (p.style.display === 'block') renderMyAssets(); }, 3000);
 }
+/* ════ 2026-10 상세(경매 물건) 화면 개편 - 사용자: "상세 메뉴 UI가 이번에 바꾼 디자인이 아니다. 비슷하게 바꾸고,
+   지금 진행하는 방향과 다른 내용은 과감하게 삭제하고 필요한 내용만 남겨줘"
+   지금 방향 = 예상매도가(아파트는 입찰후보와 같은 같은 단지 실거래 계산) − 비용 − 최소 마진 = 추천 입찰가, 감정가·최저가는 가격에 안 씀.
+   그래서 화면에서 뺀 것(저장 값·계산 함수는 그대로 두고 화면에만 안 보임):
+   - 🤖 AI 자동 채우기(유료 AI 추출 - 이제 CSV·붙여넣기로 등록), 🤖 AI 투자 브리핑, 🏗️ 주변 개발호재 AI 검색
+   - ② 예상마진(동네 낙찰사례 매입가율 기반)·낙찰사례 매입가율 적용·입찰가율 참고 - "낙찰가율 통계가 아니라 매도가 기준" 방향과 다름
+   - AVM 추정가(오차 17.8%로 진단돼 교체됨), 공시가격 참고 매도가, 전세가 기반 재계산·🔧 상세 도구 묶음
+   - 아파트: 네이버 매물 건수·호가 입력, 비교물건 목록·자동추천, 🔮 예측 적용(아파트 예상매도가는 같은 단지 실거래로 통일 - 매물은 입찰후보 창의 붙여넣기로)
+     → 빌라는 이 세 가지가 예상매도가 3단계(주변 실거래→호가→매물재고)에 그대로 쓰여서 빌라에서만 보임
+   남긴 것: 입찰 판단 요약 · 금액(예상매도가→목표마진→추천 입찰가, 비용 내역) · 물건 정보 · 세금·대출 조건 · 입찰가·낙찰가·매도 결과 · 비용 · 권리 서류 분석 · 임장 체크리스트·메모 */
+function setupAuctionModalV4() {
+    var m = document.getElementById('auction-modal'); if (!m) return;
+    var q = function(sel) { return m.querySelector(sel); };
+    var hide = function(el) { if (el) el.classList.add('am4-hide'); };
+    var villaOnly = function(el) { if (el) el.classList.add('am4-villa'); };
+    var rowOf = function(id) { var v = document.getElementById(id); return v ? v.closest('.est-row') : null; };
+    if (!m.classList.contains('am4')) {
+        m.classList.add('am4');
+        hide(q('#a-parse-btn') && q('#a-parse-btn').closest('.modal-section'));
+        hide(q('#ai-briefing-btn') && q('#ai-briefing-btn').closest('.modal-section'));
+        hide(q('#dev-news-btn') && q('#dev-news-btn').parentElement);
+        ['est-row-3-value', 'est-avm-value', 'est-official-price-value'].forEach(function(id) { hide(rowOf(id)); });
+        ['est-row-3-sub', 'est-avm-sub', 'est-official-price-sub', 'a-dong-margin-stats', 'bid-rate-context-box', 'jeonse-analysis-box', 'tax-update-report-box'].forEach(function(id) { hide(document.getElementById(id)); });
+        // 마진 기준 라디오(② 예상마진/④ 목표마진) - ②를 뺐으니 목표마진 고정
+        var mb = q('input[name="bid-margin-basis"][value="target"]');
+        if (mb) { mb.checked = true; var rr = mb.closest('.est-radio-row'); hide(rr); if (rr && rr.previousElementSibling) hide(rr.previousElementSibling); }
+        var sb = q('input[name="bid-sale-basis"]'); if (sb) { var sr = sb.closest('.est-radio-row'); if (sr && sr.previousElementSibling && /기준/.test(sr.previousElementSibling.textContent)) sr.previousElementSibling.textContent = '입찰가 계산에 쓸 매도가'; }
+        m.querySelectorAll('.est-radio-row label').forEach(function(l) { l.childNodes.forEach(function(n) { if (n.nodeType === 3) n.textContent = n.textContent.replace(/[①③]\s*/, ''); }); });
+        // 빌라 전용(예상매도가 3단계 입력): 매물 건수·호가 / 비교물건 / 예측 적용, 비교물건 평단가 매도가 줄
+        ['#a-listing-count', '#comp-list-box', '#listing-apply-btn'].forEach(function(sel) { var e = q(sel); villaOnly(e && e.closest('div[style*="e5dbf5"]')); });
+        villaOnly(rowOf('est-comp-value')); var ecv = rowOf('est-comp-value'); if (ecv && ecv.nextElementSibling && ecv.nextElementSibling.classList.contains('est-sub')) villaOnly(ecv.nextElementSibling);
+        villaOnly(document.getElementById('market-adjusted-price-box'));
+        // 실제 매도가·매도일을 🔧 상세 도구에서 입찰가·낙찰가 칸 아래로 옮기고, 상세 도구 묶음은 숨김
+        var asr = document.getElementById('actual-sell-row'), ab = document.getElementById('actual-bid-row');
+        if (asr && ab) ab.closest('.modal-section').appendChild(asr);
+        hide(document.getElementById('mg-estimate-detail'));
+        // 금액 칸·묶음 이름 정리
+        var money = q('#est-row-1-value') && q('#est-row-1-value').closest('.modal-section'); if (money) money.classList.add('am4-money');
+        var mt = money && money.querySelector('.modal-section-title'); if (mt) mt.textContent = '예상매도가 → 추천 입찰가 (만원)';
+        m.querySelectorAll('.am4-money .est-num').forEach(function(n) { n.style.display = 'none'; });
+        var rename = { 'mg-estimate': '💰 금액 · 추천 입찰가', 'mg-property': '📍 물건 정보 · 세금 조건', 'mg-cost': '🧾 입찰가 · 낙찰 결과 · 비용', 'mg-registry': '📚 권리 서류 분석', 'mg-fieldvisit': '🔍 임장 체크리스트 · 메모' };
+        Object.keys(rename).forEach(function(id) { var h = document.querySelector('#' + id + ' > .modal-group-header > span'); if (h) h.textContent = rename[id]; });
+        var mtb = document.getElementById('margin-result-box'); var mtt = mtb && mtb.querySelector('.margin-result-title'); if (mtt) mtt.textContent = '비용·남는 돈 계산';
+        var pt = document.getElementById('a-prop-type'); if (pt) pt.addEventListener('change', function() { m.dataset.ptype = pt.value === 'villa' ? 'villa' : 'apt'; });
+    }
+    var pt2 = document.getElementById('a-prop-type');
+    m.dataset.ptype = pt2 && pt2.value === 'villa' ? 'villa' : 'apt';
+}
+window.addEventListener('load', function() {
+    setTimeout(function() {
+        var orig = window.openAuctionModal;
+        if (typeof orig !== 'function' || orig._am4) return;
+        var wrapped = function() { var r = orig.apply(this, arguments); try { setupAuctionModalV4(); } catch (e) {} setTimeout(function() { try { setupAuctionModalV4(); } catch (e) {} }, 300); return r; };
+        wrapped._am4 = true;
+        window.openAuctionModal = wrapped;
+    }, 200);
+});
 // 예전 누적 투자 리포트 주소(/dashboard.html → /#assets)로 들어오면 내 자산 화면을 바로 엶
 window.addEventListener('load', function() { if (location.hash === '#assets') setTimeout(function() { openMyAssetsPanel(); }, 1500); });
 function closeMyAssetsPanel() { document.getElementById('my-assets-panel').style.display = 'none'; }
