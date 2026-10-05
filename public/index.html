@@ -10001,8 +10001,21 @@ function openAuctionModal(id) {
 }
 /* 배경(모달 바깥) 클릭으로 닫히던 동작 제거됨 - 입력 중이던 내용이 실수로 날아가는 문제가 있어
    ✕ 버튼/취소 버튼으로만 닫히도록 변경. */
+// 2026-10(사용자: "입찰후보 → 물건 거래내역 → 상세를 닫으면 첫 화면이 아니라 거래내역 화면이 유지되게"):
+// 입찰후보에서 상세를 열 때 돌아올 곳(열려 있던 물건 창)을 기억했다가, 상세를 닫으면 입찰후보와 그 창을 다시 엶
+var bbReturnAfterModal = null;
+function bbOpenDetail(id) {
+    bbReturnAfterModal = { drawerId: bidDrawerId };
+    closeBidBoard();
+    openAuctionModal(id);
+}
 function closeAuctionModal() {
     document.getElementById('auction-modal-bg').style.display = 'none';
+    if (bbReturnAfterModal) {
+        var ret = bbReturnAfterModal; bbReturnAfterModal = null;
+        openBidBoard();
+        if (ret.drawerId && auctionList.some(function(a) { return a.id === ret.drawerId; })) openBidDrawer(ret.drawerId);
+    }
     clearUnsoldMarkers(); // 모달 닫으면 이 물건 전용으로 찍었던 미분양 단지 마커도 같이 지움
 }
 function updateStatusUI() {
@@ -16676,7 +16689,7 @@ function renderBidBoardRow(r) {
         + '<td data-l="최저가 대비" class="r">' + roomCell + '</td>'
         + '<td data-l="지역 위험">' + riskCell + '</td>'
         + '<td data-l="대장 따라잡기">' + cuCell + '</td>'
-        + '<td class="bb-act"><button onclick="event.stopPropagation();bidBoardGo(\'' + idJs + '\')" title="지도에서 이 물건 위치 보기">🗺️ 지도</button> <button onclick="event.stopPropagation();closeBidBoard();openAuctionModal(\'' + idJs + '\')">상세</button></td>'
+        + '<td class="bb-act"><button onclick="event.stopPropagation();bidBoardGo(\'' + idJs + '\')" title="지도에서 이 물건 위치 보기">🗺️ 지도</button> <button onclick="event.stopPropagation();bbOpenDetail(\'' + idJs + '\')">상세</button></td>'
         + '</tr>';
 }
 /* ════ 2026-10 UI 개편: 입찰후보 = 첫 화면, 요약 칩 한 번 누르면 걸러짐, 물건 누르면 오른쪽 상세(근거 거래·비용·인수금액 입력) ════ */
@@ -16809,7 +16822,7 @@ async function renderBidDrawer() {
     var fmt = function(x) { return x ? toEok(String(Math.round(x))) : '-'; };
     // 2026-10(사용자: "목록 옆 좁은 창 안에 지도/상세 버튼") - 맨 위 이름 옆에 바로 보이게
     var h = '<div class="dr-h"><h3>' + bbEsc(row.name) + '</h3><button class="dr-x" onclick="closeBidDrawer()">✕</button></div>'
-        + '<div class="dr-top-btns"><button onclick="bidBoardGo(\'' + idJs + '\')">🗺️ 지도</button><button onclick="closeBidBoard();openAuctionModal(\'' + idJs + '\')">📝 상세</button><button onclick="openCyclePanel()">📈 사이클</button></div>'
+        + '<div class="dr-top-btns"><button onclick="bidBoardGo(\'' + idJs + '\')">🗺️ 지도</button><button onclick="bbOpenDetail(\'' + idJs + '\')">📝 상세</button><button onclick="openCyclePanel()">📈 사이클</button></div>'
         + '<div class="dr-sub">' + bbEsc(row.region) + ' · ' + (row.pyung ? row.pyung + '평' + (row.type === 'apt' && sizeBandOf(row.pyung) ? '(' + sizeBandOf(row.pyung) + ' ' + Math.round(row.pyung * 3.305785) + '㎡)' : '') + ' · ' : '') + (row.floor ? row.floor + '층 · ' : '') + bbEsc(a.caseNo || '') + (row.dday ? ' · <b>' + row.dday.label + '</b> (' + bbEsc(a.bidDate) + ')' : '') + '</div>'
         + '<div style="margin-top:6px;"><span class="bb-verdict" style="color:' + v.color + ';background:' + v.bg + ';">' + v.label + '</span>'
         + (row.sweet ? ' <span class="bb-pill" style="background:#e8f5e9;color:#2e7d32;">👍 입찰 추천 구간</span>' : '') + (row.overshoot ? ' <span class="bb-pill" style="background:#fff3e0;color:#e65100;">⚠️ 손해 주의</span>' : '') + (row.bulk ? ' <span class="bb-pill" style="background:#fee2e2;color:#b91c1c;">🏢 대량 경매 ' + row.bulkN + '건</span>' : '')
@@ -16854,7 +16867,7 @@ async function renderBidDrawer() {
         + '<label>미납 관리비 (공용부분)</label><input type="number" value="' + (parseInt(a.unpaidMgmtFee) || '') + '" placeholder="0" onchange="updateDrawerField(\'' + idJs + '\',\'unpaidMgmtFee\',this.value)">'
         + '<label>수리비 (비우면 연식 기준 ' + (cl ? toEok(String(cl.repairAuto)) : '-') + ')</label><input type="number" value="' + (parseInt(a.repair) || '') + '" placeholder="자동" onchange="updateDrawerField(\'' + idJs + '\',\'repair\',this.value)">'
         + '</div></div>';
-    h += '<div class="dr-sec dr-btns"><button onclick="bidBoardGo(\'' + idJs + '\')">🗺️ 지도에서 보기</button><button onclick="closeBidBoard();openAuctionModal(\'' + idJs + '\')">📝 전체 상세</button>'
+    h += '<div class="dr-sec dr-btns"><button onclick="bidBoardGo(\'' + idJs + '\')">🗺️ 지도에서 보기</button><button onclick="bbOpenDetail(\'' + idJs + '\')">📝 전체 상세</button>'
         + (a.caseNo ? '<button onclick="copyAuctionCaseNo(\'' + String(a.caseNo).replace(/'/g, "\\'") + '\')">📋 사건번호 복사·법원경매</button>' : '') + '</div>';
     d.innerHTML = h;
 }
@@ -17430,6 +17443,28 @@ async function fillComplexCycleBlock(target, region) {
     el.innerHTML = title + '<div>' + cyclePhaseText(c.phase) + '</div>' + cmp + cycleSparkSvg(c.index, c.turningPoints, '#ef6c00')
         + '<div class="pn-muted">' + c.from + '~ 실거래 ' + c.n + '건(평형 차이 보정, 3개월 묶음) · 마지막 거래 ' + c.lastTradeYm + ' · 고점·바닥은 8% 넘게 꺾인 곳 · 거래가 적은 단지는 흔들림이 커요</div>';
 }
+// 떠 있는 창 끌어 옮기기(마우스·손가락 공통) - handleSel에 맞는 머리글을 잡고 이동, 그 안의 버튼은 그대로 눌림
+var cycPanelPos = null;
+function makePanelDraggable(box, handleSel, onMove) {
+    var drag = null;
+    box.addEventListener('pointerdown', function(e) {
+        var h = e.target.closest && e.target.closest(handleSel);
+        if (!h || !box.contains(h) || e.target.closest('button,a,input,select')) return;
+        var rc = box.getBoundingClientRect();
+        drag = { dx: e.clientX - rc.left, dy: e.clientY - rc.top, pid: e.pointerId };
+        try { box.setPointerCapture(e.pointerId); } catch (er) {}
+        e.preventDefault();
+    });
+    box.addEventListener('pointermove', function(e) {
+        if (!drag) return;
+        var x = Math.min(Math.max(0, e.clientX - drag.dx), window.innerWidth - 80);
+        var y = Math.min(Math.max(52, e.clientY - drag.dy), window.innerHeight - 120);
+        box.style.left = x + 'px'; box.style.top = y + 'px'; box.style.right = 'auto';
+        if (onMove) onMove(x, y);
+    });
+    var end = function() { if (drag) { try { box.releasePointerCapture(drag.pid); } catch (er) {} } drag = null; };
+    box.addEventListener('pointerup', end); box.addEventListener('pointercancel', end);
+}
 // 상단 메뉴 📈 사이클: 다른 메뉴처럼 한 번 더 누르면 닫힘(2026-10 사용자)
 function toggleCyclePanel() {
     var box = document.getElementById('cycle-panel');
@@ -17443,6 +17478,8 @@ async function openCyclePanel() {
         box.id = 'cycle-panel';
         box.style.cssText = 'position:fixed;top:60px;right:10px;width:min(380px,calc(100vw - 20px));max-height:calc(100vh - 80px);overflow:auto;background:#fff;border-radius:10px;box-shadow:0 4px 16px rgba(0,0,0,.25);z-index:9000;padding:12px 14px;font-size:12px;line-height:1.5;';
         document.body.appendChild(box);
+        if (cycPanelPos) { box.style.left = Math.min(cycPanelPos.x, window.innerWidth - 80) + 'px'; box.style.top = Math.min(cycPanelPos.y, window.innerHeight - 120) + 'px'; box.style.right = 'auto'; }
+        makePanelDraggable(box, '.cyc-head', function(x, y) { cycPanelPos = { x: x, y: y }; });
     }
     box.innerHTML = '<div style="text-align:right;"><button onclick="document.getElementById(\'cycle-panel\').remove()" style="border:none;background:none;font-size:18px;cursor:pointer;">×</button></div>불러오는 중...';
     var target = cycleTargetApt();
@@ -17451,7 +17488,7 @@ async function openCyclePanel() {
         try { d = await (await fetch('/api/data-coverage?mode=marketCycle')).json(); } catch (e) { d = null; }
     }
     if (!d || !d.national) { box.innerHTML = '<div>사이클 분석 결과를 불러오지 못했어요.</div>'; return; }
-    var html = '<div style="display:flex;justify-content:space-between;align-items:center;"><b style="font-size:14px;">📈 부동산 사이클(아파트)</b>'
+    var html = '<div class="cyc-head" title="잡고 끌면 창을 옮길 수 있어요" style="display:flex;justify-content:space-between;align-items:center;cursor:move;touch-action:none;position:sticky;top:-12px;background:#fff;z-index:2;margin:-12px -14px 0;padding:12px 14px 4px;"><b style="font-size:14px;">⠿ 📈 부동산 사이클(아파트)</b>'
         + '<button onclick="document.getElementById(\'cycle-panel\').remove()" style="border:none;background:none;font-size:18px;cursor:pointer;">×</button></div>'
         + '<div style="color:#999;font-size:10px;">' + d.dataFrom + '~' + d.dataTo + ' 실거래(같은 단지·평형끼리 비교한 가격지수) · 매주 갱신</div>';
     var block = function(title, obj, color) {
