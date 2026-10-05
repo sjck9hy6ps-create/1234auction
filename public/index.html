@@ -566,7 +566,16 @@ tr:hover td { background:#fffde7; }
 #bid-board.with-drawer .bb-table th:nth-child(10), #bid-board.with-drawer .bb-table td:nth-child(10),
 #bid-board.with-drawer .bb-table th:nth-child(11), #bid-board.with-drawer .bb-table td:nth-child(11) { display:none; }
 #bid-board.with-drawer .bb-notes { display:none; }
-@media (max-width: 900px) { #bb-drawer { position:fixed; inset:52px 0 0 0; width:auto; z-index:80; } }
+/* 2026-10(사용자: "아이패드 세로에서 물건을 누르면 큰 화면 전환이 아니라 새 창으로 - 뒤로 목록이 보이고, 창은 옮길 수 있게"):
+   900px 이하에선 상세를 떠 있는 창으로(머리글을 잡고 끌어 옮김, 위치는 기억) */
+@media (max-width: 900px) {
+    #bb-drawer { position:fixed; top:150px; left:auto; right:10px; width:min(440px, calc(100vw - 20px)); height:min(70vh, calc(100vh - 170px)); z-index:80;
+        border:1px solid #d6dbe1; border-radius:14px; box-shadow:0 12px 36px rgba(0,0,0,0.28); padding-top:0; }
+    #bb-drawer .dr-h { position:sticky; top:0; z-index:3; background:#fff; margin:0 -16px; padding:10px 16px 8px; cursor:move; touch-action:none; border-bottom:1px solid #f1f3f5; }
+    #bb-drawer .dr-h::before { content:''; position:absolute; left:50%; top:4px; width:36px; height:4px; margin-left:-18px; border-radius:2px; background:#d1d5db; }
+    #bid-board.with-drawer .bb-table td:nth-child(5), #bid-board.with-drawer .bb-table td:nth-child(8) { display:block; }
+    #bid-board.with-drawer .bb-notes { display:none; }
+}
 #bid-board .bb-title { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
 #bid-board .bb-title h2 { font-size:16px; margin:0; }
 #bid-board .bb-title .bb-x { margin-left:auto; border:none; background:#eee; border-radius:16px; padding:5px 12px; cursor:pointer; font-size:12px; }
@@ -16710,6 +16719,34 @@ function bidBoardChipFilter(r) {
 // ── 상세 창 ──
 var bidDrawerId = null;
 function openBidDrawer(id) { bidDrawerId = id; document.getElementById('bid-board').classList.add('with-drawer'); renderBidDrawer(); renderBidBoard(); }
+// 떠 있는 상세 창 끌어 옮기기(900px 이하에서만) - 머리글(이름 줄)을 잡고 이동, 버튼·✕는 그대로 눌림
+var bbDrawerPos = null;
+(function() {
+    var drag = null;
+    document.addEventListener('pointerdown', function(e) {
+        if (window.innerWidth > 900) return;
+        var h = e.target.closest && e.target.closest('#bb-drawer .dr-h');
+        if (!h || e.target.closest('button')) return;
+        var d = document.getElementById('bb-drawer'), rc = d.getBoundingClientRect();
+        drag = { dx: e.clientX - rc.left, dy: e.clientY - rc.top, w: rc.width, h: rc.height };
+        e.preventDefault();
+    });
+    document.addEventListener('pointermove', function(e) {
+        if (!drag) return;
+        var d = document.getElementById('bb-drawer');
+        var x = Math.min(Math.max(0, e.clientX - drag.dx), window.innerWidth - 60);
+        var y = Math.min(Math.max(52, e.clientY - drag.dy), window.innerHeight - 50);
+        d.style.left = x + 'px'; d.style.top = y + 'px'; d.style.right = 'auto';
+        bbDrawerPos = { x: x, y: y };
+    });
+    var end = function() { drag = null; };
+    document.addEventListener('pointerup', end); document.addEventListener('pointercancel', end);
+    window.addEventListener('resize', function() {
+        var d = document.getElementById('bb-drawer'); if (!d) return;
+        if (window.innerWidth > 900) { d.style.left = ''; d.style.top = ''; d.style.right = ''; }
+        else if (bbDrawerPos) { d.style.left = Math.min(bbDrawerPos.x, window.innerWidth - 60) + 'px'; d.style.top = Math.min(bbDrawerPos.y, window.innerHeight - 50) + 'px'; d.style.right = 'auto'; }
+    });
+})();
 function closeBidDrawer() { bidDrawerId = null; document.getElementById('bid-board').classList.remove('with-drawer'); var d = document.getElementById('bb-drawer'); if (d) d.style.display = 'none'; renderBidBoard(); }
 function bidCostLines(row) {
     var a = row.a, type = row.type, sale = row.sale, bid = row.recBid;
@@ -17215,6 +17252,9 @@ function cyclePhaseText(ph) {
         + '<div class="pn-muted" style="margin-top:4px;">' + (ph.fromLastTroughPct != null ? '바닥 대비 ' + sign(ph.fromLastTroughPct) : '') + (ph.fromLastPeakPct != null ? ' · 고점 대비 ' + sign(ph.fromLastPeakPct) : '') + '</div>';
     return t + cyc + grid;
 }
+// 2026-10(사용자: "사이클 그래프에서 마우스 위치의 시점을 알려주는 기능이 사라졌다 - 맥북·아이패드 모두"):
+// 그래프 위에 마우스를 올리거나 손가락을 대고 움직이면 세로선 + 그 달(연월)·지금 대비 몇 %인지·고점/바닥 여부를 보여줌
+var cycSparkSeq = 0, cycSparkData = {};
 function cycleSparkSvg(series, turning, color) {
     if (!series || series.length < 2) return '';
     var W = 320, H = 80, vals = series.map(function(x) { return x[1]; });
@@ -17223,12 +17263,44 @@ function cycleSparkSvg(series, turning, color) {
     var py = function(v) { return Math.round(H - 8 - (v - mn) / rng * (H - 16)); };
     var d = series.map(function(x, i) { return (i ? 'L' : 'M') + px(i) + ' ' + py(x[1]); }).join(' ');
     var idx = {}; series.forEach(function(x, i) { idx[x[0]] = i; });
+    var tpOf = {};
     var marks = (turning || []).filter(function(t) { return idx[t.ym] != null; }).map(function(t) {
-        var i = idx[t.ym];
+        var i = idx[t.ym]; tpOf[t.ym] = t.type;
         return '<circle cx="' + px(i) + '" cy="' + py(series[i][1]) + '" r="3" fill="' + (t.type === 'peak' ? '#c62828' : '#1565c0') + '"><title>' + t.ym + (t.type === 'peak' ? ' 고점' : ' 바닥') + '</title></circle>';
     }).join('');
-    return '<svg viewBox="0 0 ' + W + ' ' + H + '" style="width:100%;height:80px;"><path d="' + d + '" fill="none" stroke="' + color + '" stroke-width="1.6"/>' + marks
-        + '<text x="5" y="10" font-size="9" fill="#999">' + series[0][0] + '</text><text x="' + (W - 5) + '" y="10" font-size="9" fill="#999" text-anchor="end">' + series[series.length - 1][0] + '</text></svg>';
+    var id = 'cycsp' + (++cycSparkSeq), last = series[series.length - 1][1];
+    cycSparkData[id] = { W: W, H: H, last: last, pts: series.map(function(x, i) { return { x: px(i), y: py(x[1]), ym: x[0], v: x[1], tp: tpOf[x[0]] }; }) };
+    return '<svg id="' + id + '" viewBox="0 0 ' + W + ' ' + H + '" style="width:100%;height:80px;touch-action:pan-y;cursor:crosshair;" onmousemove="cycSparkHover(event,this)" ontouchstart="cycSparkHover(event,this)" ontouchmove="cycSparkHover(event,this)" onmouseleave="cycSparkHide(this)" ontouchend="cycSparkHide(this,1500)">'
+        + '<path d="' + d + '" fill="none" stroke="' + color + '" stroke-width="1.6"/>' + marks
+        + '<text x="5" y="10" font-size="9" fill="#999">' + series[0][0] + '</text><text x="' + (W - 5) + '" y="10" font-size="9" fill="#999" text-anchor="end">' + series[series.length - 1][0] + '</text>'
+        + '<g class="cyc-hov" style="display:none;pointer-events:none;"><line y1="2" y2="' + H + '" stroke="#111" stroke-dasharray="2 2" stroke-width="0.8"/><circle r="3.2" fill="#fff" stroke="#111" stroke-width="1.2"/>'
+        + '<rect y="12" height="28" rx="4" fill="#111827" opacity="0.9"/><text font-size="9.5" fill="#fff" font-weight="700"></text><text font-size="9" fill="#e5e7eb"></text></g></svg>';
+}
+function cycSparkHover(e, svg) {
+    var d = cycSparkData[svg.id]; if (!d) return;
+    var pt = e.touches && e.touches[0] ? e.touches[0] : e;
+    var rc = svg.getBoundingClientRect();
+    var x = (pt.clientX - rc.left) / rc.width * d.W;
+    var best = d.pts[0];
+    d.pts.forEach(function(p) { if (Math.abs(p.x - x) < Math.abs(best.x - x)) best = p; });
+    var g = svg.querySelector('.cyc-hov'); g.style.display = '';
+    if (svg._hideT) { clearTimeout(svg._hideT); svg._hideT = null; }
+    var ln = g.querySelector('line'), c = g.querySelector('circle'), r = g.querySelector('rect'), t = g.querySelectorAll('text');
+    ln.setAttribute('x1', best.x); ln.setAttribute('x2', best.x);
+    c.setAttribute('cx', best.x); c.setAttribute('cy', best.y);
+    var diff = d.last ? Math.round((best.v / d.last - 1) * 1000) / 10 : null;
+    var l1 = best.ym + (best.tp ? (best.tp === 'peak' ? ' 고점' : ' 바닥') : '');
+    var l2 = diff == null ? '' : (Math.abs(diff) < 0.05 ? '지금과 같은 수준' : '지금보다 ' + (diff > 0 ? diff + '% 높음' : Math.abs(diff) + '% 낮음'));
+    var w = Math.max(l1.length * 6.2 + 12, l2.length * 7.2 + 10, 60);
+    var bx = best.x + 7; if (bx + w > d.W - 2) bx = best.x - 7 - w;
+    r.setAttribute('x', bx); r.setAttribute('width', w);
+    t[0].setAttribute('x', bx + 6); t[0].setAttribute('y', 24); t[0].textContent = l1;
+    t[1].setAttribute('x', bx + 6); t[1].setAttribute('y', 36); t[1].textContent = l2;
+}
+function cycSparkHide(svg, delay) {
+    var g = svg.querySelector('.cyc-hov'); if (!g) return;
+    if (delay) { svg._hideT = setTimeout(function() { g.style.display = 'none'; }, delay); return; }
+    g.style.display = 'none';
 }
 // 2026-10(사용자 기준 "수도권: 전세가율·대장그룹 선행 / 지방: 전세가율·미분양 / 거래량은 공통"으로 검증한 결과):
 // 지표 구간별 "6개월 뒤 2%+ 하락 비율"이 뚜렷이 갈린 조건만 모아 만든 규칙(analyze-cycle-forecast.py risk_flags).
