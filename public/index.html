@@ -23406,7 +23406,7 @@ var REMIND_FIXED = [
 var REMIND_RECUR = [
     { key: 'm-assets', every: 'month', from: 1, to: 10, icon: '💼', title: '이번 달 내 자산 점검', sub: '보유·매도 상태와 올해 다른 소득을 최신으로 - 주택 수·취득세율·종소세 구간이 입찰가에 바로 반영돼요', btn: '💼 내 자산', act: 'openMyAssetsPanel()' },
     { key: 'm-won', every: 'month', from: 1, to: 10, icon: '🔨', title: '낙찰 물건 진행 확인', sub: '팔렸으면 상태를 "매도완료"로 바꾸고 실제 매도가·매도일 입력 → 내 자산 수익·세금·예정신고 마감에 반영돼요',
-      btn: '🔨 낙찰 물건 목록', act: 'openAuctionList()', cond: function() { var n = (auctionList || []).filter(function(a) { return !a.isBacktest && a.status === '낙찰'; }).length; return n ? '(' + n + '건)' : false; } },
+      btn: '🔨 낙찰 물건 목록', act: 'openAuctionList()', cond: function() { var n = myWonAuctions().length; return n ? '(' + n + '건)' : false; } },
     { key: 'm-backup', every: 'month', from: 1, to: 10, icon: '📦', title: '자료 백업 내려받기', sub: '등록한 경매 물건·낙찰사례·내 자산을 파일로 받아 두기(혹시 모를 서버 문제 대비)', btn: '📦 백업', act: "location.href='/backup.html'" },
     { key: 'q-verify', every: 'quarter', months: [1, 4, 7, 10], from: 1, to: 10, icon: '🔁', title: '분기 점검: 판정 기준 재검증', sub: '낙찰·되팔기 기록이 쌓였으니 예상매도가·예상 낙찰가·판정 기준이 아직 맞는지 Claude에게 백테스트로 다시 확인 요청하기' },
     { key: 'y-income', every: 'year', months: [5], from: 1, to: 31, pri: 1, icon: '🧾', title: '종합소득세 신고(5월 말까지)', sub: '매매사업자 - 작년 매도 이익 신고. 💼 내 자산의 작년 매도 내역을 참고하고 세무사 확인 권장', btn: '💼 내 자산', act: 'openMyAssetsPanel()' },
@@ -23415,6 +23415,15 @@ var REMIND_RECUR = [
     { key: 'y-ptax9', every: 'year', months: [9], from: 16, to: 30, pri: 1, icon: '💳', title: '재산세 2기 납부(9/16~9/30)', sub: '6/1 기준 보유 주택(토지분·주택분 나머지 절반)' },
     { key: 'y-ctax', every: 'year', months: [12], from: 1, to: 15, pri: 1, icon: '💳', title: '종합부동산세 확인·납부(12/1~12/15)', sub: '보유 주택 공시가격 합계가 기준을 넘으면 고지돼요(💼 내 자산의 공시가격 합계 참고)' }
 ];
+// 내가 실제로 낙찰받은 물건만(2026-10 사용자: "낙찰 상태 10건은 내가 받은 게 아니라 테스트용"):
+// 상태가 "낙찰"이고, 내 입찰가가 있고, 실제 낙찰가 = 내 입찰가인 것. 백테스트·일괄등록 테스트(_bx_) 기록은 제외
+function myWonAuctions() {
+    return (auctionList || []).filter(function(a) {
+        if (a.isBacktest || /_bx_/.test(String(a.id)) || a.status !== '낙찰') return false;
+        var my = parseInt(a.myBid) || 0, act = parseInt(a.actualBid) || 0;
+        return my > 0 && act > 0 && Math.abs(act - my) <= 1;
+    });
+}
 async function remindMarkDone(key, pk) {
     try {
         var prof = Object.assign({ id: 'profile', year: new Date().getFullYear() }, myAssets.profile || {});
