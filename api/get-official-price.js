@@ -223,6 +223,25 @@ async function getApartPrice(pnu, dongNm, floorNm, hoNm, key, domain) {
   return [];
 }
 
+// 2026-10(호별 공시가격으로 "그 집만의 가격 차이" 검증): 같은 필지·같은 동의 모든 호 공시가격(최신 연도)을 페이지를 넘겨 가며 받음
+async function getApartPeers(pnu, dongNm, key, domain) {
+  const thisYear = new Date().getFullYear();
+  for (const yr of [thisYear, thisYear - 1, thisYear - 2]) {
+    const all = [];
+    for (let page = 1; page <= 10; page++) {
+      const params = new URLSearchParams({ pnu, format: 'json', numOfRows: '1000', pageNo: String(page), key, stdrYear: String(yr) });
+      if (domain) params.set('domain', domain);
+      if (dongNm) params.set('dongNm', dongNm);
+      const { data } = await vworldFetch(`${VWORLD_APT_PRICE_URL}?${params.toString()}`);
+      const rows = extractFieldList(data);
+      all.push(...rows);
+      if (rows.length < 1000) break;
+    }
+    if (all.length) return { year: yr, rows: all };
+  }
+  return { year: null, rows: [] };
+}
+
 async function getLandPrice(pnu, key, domain) {
   const params = new URLSearchParams({ pnu, format: 'json', key });
   if (domain) params.set('domain', domain);
@@ -330,6 +349,13 @@ export default async function handler(req, res) {
 
     const hoNm = digitsOnly(unitNo);
     const floorNm = digitsOnly(unitFloor || floor);
+    if (body.peers) {
+      // 같은 동 모든 호(검증·호별 차이 계산용): [층, 호, 전용면적, 공시가격(원)]
+      let pr = await getApartPeers(pnu, digitsOnly(dong), VWORLD_API_KEY, VWORLD_DOMAIN);
+      if (!pr.rows.length && dong) pr = await getApartPeers(pnu, '', VWORLD_API_KEY, VWORLD_DOMAIN);
+      return res.status(200).json({ success: !!pr.rows.length, pnu, year: pr.year,
+        units: pr.rows.map((r) => [r.dongNm || '', r.floorNm || '', r.hoNm || '', r.prvuseAr ? Number(r.prvuseAr) : null, r.pblntfPc ? Number(r.pblntfPc) : null]) });
+    }
     // ⚠️ dong은 unitNo/floor와 달리 digitsOnly()를 안 거치고 그대로 VWorld dongNm 파라미터로
     // 넘어가고 있었음 - 경매 모달의 "동" 입력칸 placeholder가 "예) 101동"이라 사용자가 "101동"처럼
     // "동" 글자를 붙여 입력하는 게 자연스러운데, VWorld의 dongNm 값은 "29"/"104"처럼 숫자만
