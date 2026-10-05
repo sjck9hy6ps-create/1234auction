@@ -1056,6 +1056,82 @@ body.ui2 #bid-case-panel table, body.ui2 #surge-panel table, body.ui2 #panel-tab
 body.ui2 #bid-case-panel th, body.ui2 #surge-panel th, body.ui2 #panel-tab-auction th { color:#9aa0a6; font-weight:600; text-align:left; border-bottom:1px solid #eef0f3; padding:5px 4px; background:none; }
 body.ui2 #bid-case-panel td, body.ui2 #surge-panel td, body.ui2 #panel-tab-auction td { border-bottom:1px solid #f5f6f8; padding:6px 4px; }
 </style>
+<style>
+/* ════ 2026-10 아이패드 미니7(세로 744 · 가로 1133) · 맥북 13인치(1440~1470) 최적화 ════
+   사용자: "아이패드 미니7을 사용 중 - 이 해상도에 맞는 최적의 UI" + "맥북 13인치에서도 사용"
+   ① 입찰후보 표가 1,600px로 넘쳐 맥북·아이패드 가로에서 추천 입찰가가 잘림 → 예상매도가 설명 줄바꿈 + 좁은 화면에서 덜 중요한 칸 숨김
+   ② 아이패드 가로: 머리글(안내문·칩)이 화면 높이의 1/4 → 칩 한 줄 가로 스크롤, 안내문 한 줄(누르면 펼침)
+   ③ 아이패드 세로: 지도 옆 목록(320px)이 화면 절반 → 휴대폰처럼 아래에서 올라오는 목록, 입찰후보 카드는 4칸 배치
+   ④ 손가락 터치: 버튼·칩 높이를 키움(마우스 쓰는 맥북은 그대로) */
+#bid-board .bb-table td.r .bb-sub { white-space:normal; }
+#bid-board .bb-table td.r { max-width:200px; }
+#bid-board .bb-table td[data-l="거래량 순위"] { min-width:150px; max-width:190px; }
+#bb-fail-note.open { -webkit-line-clamp:unset !important; }
+@media (max-width: 1500px) {
+    #bid-board .bb-table th, #bid-board .bb-table td { padding:7px 6px; }
+    #bid-board .bb-name { min-width:150px; max-width:210px; }
+    #bid-board .bb-notes span { display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; }
+}
+@media (min-width: 901px) and (max-width: 1240px) {
+    /* 아이패드 가로: 지역 위험·대장 따라잡기·버튼 칸은 상세 창에서 보이므로 표에선 숨김(줄을 누르면 상세 창) */
+    #bid-board .bb-table th:nth-child(9), #bid-board .bb-table td:nth-child(9),
+    #bid-board .bb-table th:nth-child(10), #bid-board .bb-table td:nth-child(10),
+    #bid-board .bb-table th:nth-child(11), #bid-board .bb-table td:nth-child(11) { display:none; }
+    #bid-board .bb-table { font-size:12px; }
+    #bb-drawer { width:400px; }
+    #bid-board.with-drawer .bb-table td[data-l="거래량 순위"] { min-width:120px; }
+    #bid-board.with-drawer .bb-name { min-width:120px; }
+    #bid-board.with-drawer .bb-notes { display:none; }
+}
+@media (max-width: 1240px) {
+    #bid-board .bb-head { padding:8px 12px 6px; }
+    #bb-chips { flex-wrap:nowrap; overflow-x:auto; -webkit-overflow-scrolling:touch; padding-bottom:2px; scrollbar-width:none; }
+    #bb-chips::-webkit-scrollbar { display:none; }
+    #bb-chips .chip { flex-shrink:0; }
+    #bb-fail-note { display:-webkit-box; -webkit-line-clamp:1; -webkit-box-orient:vertical; overflow:hidden; cursor:pointer; }
+    #bb-fail-note::after { content:''; }
+}
+@media (min-width: 641px) and (max-width: 900px) {
+    /* 아이패드 세로 - 지도: 목록을 아래 시트로, 지도는 가로 전체 */
+    body.ui2 #map { margin-left:0; width:100%; height:calc(100vh - 96px - 46px); }
+    #sidebar { top:auto; bottom:0; left:0; right:0; width:auto; height:46px; border-right:none; border-top:1px solid var(--ui-line);
+        border-radius:14px 14px 0 0; box-shadow:0 -3px 12px rgba(0,0,0,.12); transition:height .2s; }
+    body.sb-mobile-open #sidebar { height:55vh; }
+    body.sb-closed #sidebar { transform:none; }
+    #sb-toggle { display:none; }
+    #sb-handle { display:block; text-align:center; font-size:14px; font-weight:bold; color:var(--ui-text); padding:13px 0 8px; cursor:pointer; }
+    #tb-brand { display:none; }
+    #tb-search-slot { flex:1 1 260px; }
+    /* 입찰후보 카드: 2칸 → 4칸(한 화면에 2~3건) */
+    #bid-board .bb-table tr { grid-template-columns:repeat(4, 1fr); gap:4px 12px; padding:12px 14px; }
+    #bid-board .bb-table td[data-l="거래량 순위"], #bid-board .bb-table td[data-l="예상매도가"] { grid-column:span 2; max-width:none; }
+    #bid-board .bb-table td.r { max-width:none; }
+    #bid-board .bb-table td[data-l="판정"] > div { display:inline-block; margin-right:3px; }
+    #bid-board .bb-notes span { display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; }
+    body.ui2 #auction-list-panel, body.ui2 #bid-target-panel, body.ui2 #bid-case-panel, body.ui2 #backtest-panel, body.ui2 #surge-panel {
+        right:60px; width:min(420px, calc(100vw - 80px)); }
+    body.ui2 #filter-panel { left:10px; right:60px; width:auto; max-width:none; }
+    body.ui2 #panel { width:min(420px, 100vw); }
+}
+@media (pointer: coarse) {
+    /* 손가락 터치(아이패드): 누르기 쉬운 크기 */
+    .chip, body.ui2 .type-btn { padding:7px 14px; font-size:13px; }
+    #bb-chips .chip, #bid-board .bb-tab { padding:7px 13px; font-size:13px; }
+    #bid-board select, #bid-board .bb-chk { padding:7px 8px; font-size:13px; }
+    #bid-board .bb-act button, #bb-drawer .dr-btns button { padding:7px 12px; font-size:12.5px; }
+    #bb-drawer .dr-top-btns button { padding:10px 0; font-size:14px; }
+    #bb-drawer .dr-x, #bid-board .bb-title .bb-x { padding:8px 14px; font-size:13px; }
+    #bb-drawer .dr-in input { padding:8px 9px; font-size:14px; }
+    #sb-sort span { padding:7px 9px; font-size:13px; }
+    .sb-item { padding:12px 14px; }
+    #tb-menu > button, #tb-more > button { padding:10px 10px; }
+    #tb-more-menu a, #tb-more-menu button { padding:11px 12px; font-size:14px; }
+    body.ui2 .geo-tool-btn, .rt-btn { width:44px; height:44px; }
+    .fp-head .fp-reset, .fp-head .fp-close { padding:7px 12px; }
+    body.ui2 .filter-tab { padding:7px 12px; }
+    .pn-seg button { padding:6px 11px; }
+}
+</style>
 </head>
 <body>
 <div id="topbar">
@@ -1442,7 +1518,7 @@ body.ui2 #bid-case-panel td, body.ui2 #surge-panel td, body.ui2 #panel-tab-aucti
         </div>
         <div id="bb-cache-note" style="font-size:11px;color:#888;padding:2px 0;"></div>
         <div id="bb-progress" style="display:none;"></div>
-        <div id="bb-fail-note" class="bb-guide" style="display:none;"></div>
+        <div id="bb-fail-note" class="bb-guide" style="display:none;" onclick="this.classList.toggle('open')"></div>
     </div>
     <div id="bb-main"><div id="bb-body"></div><div id="bb-drawer" style="display:none;"></div></div>
 </div>
@@ -22336,7 +22412,7 @@ function relocateUiV2() {
             renderSidebarList();
         });
     });
-    if (window.innerWidth <= 640) document.body.classList.remove('sb-closed');
+    if (window.innerWidth <= 900) document.body.classList.remove('sb-closed');
     else { try { if (localStorage.getItem('sbClosed') === '1') document.body.classList.add('sb-closed'); } catch (e) {} }
     updateBadgeModeChip();
     syncProxyChips();
@@ -22370,7 +22446,7 @@ function toggleLegendPanel() {
     if (on && lg && lg.classList.contains('collapsed')) toggleLegend();
 }
 function toggleSidebar() {
-    if (window.innerWidth <= 640) {
+    if (window.innerWidth <= 900) {
         var open = document.body.classList.toggle('sb-mobile-open');
         document.getElementById('sb-handle').innerText = (open ? '▼ ' : '▲ ') + '이 지역 단지 목록' + (lastSidebarCount ? ' (' + lastSidebarCount + ')' : '');
         return;
@@ -22490,7 +22566,7 @@ function pickSidebarItem(i) {
     var g = (window.__sbItems || [])[i]; if (!g) return;
     var apt = (g.last && g.last.apt) || g.apts[0];
     map.panTo(new kakao.maps.LatLng(g.lat, g.lon));
-    if (window.innerWidth <= 640) document.body.classList.remove('sb-mobile-open');
+    if (window.innerWidth <= 900) document.body.classList.remove('sb-mobile-open');
     if (typeof showRadiusCircle === 'function') showRadiusCircle(g.lat, g.lon);
     openPanel(apt, g.lat, g.lon);
 }
