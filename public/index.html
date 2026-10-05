@@ -4521,7 +4521,7 @@ function initMap(lat, lon) {
 // 이번 달 실시간분이라 6시간 지연은 체감 차이가 없음. 저장소가 막혀 있거나(사생활 보호 모드 등)
 // 오류가 나면 조용히 예전처럼 서버에서 받음. 용량 보호를 위해 최근 본 12개 지역만 보관.
 var HOUSE_IDB_TTL_MS = 6 * 60 * 60 * 1000;
-var HOUSE_IDB_MAX_REGIONS = 12;
+var HOUSE_IDB_MAX_REGIONS = 40; // 2026-10: 입찰후보가 지역 30여 곳을 쓰는데 12곳만 보관해 매번 서버에서 다시 받았음 → 40곳
 var _houseIdbPromise = null;
 function houseIdb() {
     if (_houseIdbPromise) return _houseIdbPromise;
@@ -16600,20 +16600,33 @@ async function refreshBidBoard() {
     // 화면이 멈춤 - 보드 계산 중에는 다시 그리기를 미뤘다가 끝나고 한 번만 그림.
     var origDraw = { r: window.redrawMarkers, a: window.renderAuctionMarkers, b: window.renderBidCaseMarkers };
     window.redrawMarkers = window.renderAuctionMarkers = window.renderBidCaseMarkers = function() {};
+    // 2026-10 속도 개선(사용자: "입찰후보 불러오는 과정이 너무 느려" - 실측 74초, 지역 32곳을 한 곳씩 받느라 받기만 34초):
+    // 지역 실거래·사이클 자료를 앞으로 4곳까지 미리 동시에 받아 두고, 계산·화면 반영만 차례로. 화면 다시 그리기도 1.5초에 한 번으로.
+    var PREFETCH_AHEAD = 4, prefetched = {};
+    var prefetch = function(k) {
+        if (!k || k === '_' || prefetched[k]) return;
+        prefetched[k] = {
+            data: dataCache[k] ? Promise.resolve(null) : fetchHouseDataCached(k).catch(function() { return null; }),
+            cyc: loadMarketCycle(k).catch(function() { return null; })
+        };
+    };
+    var lastRender = 0;
     try {
     for (var i = 0; i < order.length; i++) {
         var lawd = order[i];
+        for (var pf = i; pf < Math.min(order.length, i + PREFETCH_AHEAD); pf++) prefetch(order[pf]);
         setBidBoardProgress('지역 자료 불러오는 중 ' + (i + 1) + '/' + order.length + ' · ' + bidBoardRegionLabel(byLawd[lawd][0].addr));
         if (lawd !== '_') {
             var boardOnly = !dataCache[lawd];
             try {
                 if (boardOnly) {
-                    var dbData = await fetchHouseDataCached(lawd);
+                    var dbData = await prefetched[lawd].data;
                     if (dbData && !dbData.error && Array.isArray(dbData.apt)) await ingestRegionHouseData(dbData, '', lawd);
                 } else { mergedLawdCds.add(lawd); touchLawdCd(lawd); }
                 await waitForLeaderFollowerOrTimeout(autoLoadLeaderFollowerForRegion('', lawd), 8000);
-                await loadMarketCycle(lawd);
+                await prefetched[lawd].cyc;
             } catch (e) { console.error('입찰후보 지역 자료 실패:', lawd, e && e.message); }
+            delete prefetched[lawd].data; // 받은 자료(지역당 수 MB)를 붙잡고 있지 않게
         }
         var fresh = {};
         byLawd[lawd].forEach(function(a) {
@@ -16622,7 +16635,7 @@ async function refreshBidBoard() {
         });
         bidBoardRows = bidBoardRows.map(function(r) { return fresh[r.id] || r; });
         Object.keys(fresh).forEach(function(id) { var f = fresh[id]; if (f && f.a && !(f.verdict === 'nodata' && !f.loaded && f.type && f.a.lat)) boardCache[id] = { sig: boardBaseSig(f.a), at: Date.now(), row: boardRowForCache(f) }; });
-        renderBidBoard();
+        if (Date.now() - lastRender > 1500 || i === order.length - 1) { renderBidBoard(); lastRender = Date.now(); }
         // 보드 때문에 새로 불러온 지역은 계산이 끝나면 메모리에서 내림(지역당 수 MB - 다시 필요하면 브라우저 저장본에서 금방 불러옴)
         if (lawd !== '_' && boardOnly && lawd !== keepLawd && dataCache[lawd]) {
             delete dataCache[lawd]; delete rentCacheByLawd[lawd]; mergedLawdCds.delete(lawd);
