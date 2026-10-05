@@ -1,0 +1,18 @@
+name: 진단 - 실거래 동(aptDong) 채움 비율
+
+on:
+  workflow_dispatch:
+
+jobs:
+  diag:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - run: node scripts/diag-aptdong.mjs
+        env:
+          SITE_URL: https://1234auction.vercel.app
+          COLLECT_PROXY_SECRET: ${{ secrets.COLLECT_PROXY_SECRET }}
