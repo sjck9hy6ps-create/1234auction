@@ -22853,7 +22853,8 @@ async function saveMyAssetItem(item) {
 }
 async function deleteMyAssetItem(id) {
     var r = await fetch('/api/auction?kind=myAssets&id=' + encodeURIComponent(id), { method: 'DELETE' });
-    if (r.ok) applyStoredListChange('myAssets', r.headers.get('X-List-Version'), removeById(id));
+    if (!r.ok) throw new Error('서버 응답 ' + r.status);
+    applyStoredListChange('myAssets', r.headers.get('X-List-Version'), removeById(id));
     myAssets.items = myAssets.items.filter(function(x) { return x.id !== id; });
 }
 // 자산이 바뀌면 판정 캐시를 비우고 보드·모달을 다시 계산
@@ -23091,6 +23092,7 @@ function renderMyAssets() {
             + '<td>' + (MY_ASSET_STATUS[x.status] || '') + '</td><td class="r">' + maFmt(parseInt(x.acquiredPrice) || null) + '</td><td class="r">-</td><td class="r">-</td>'
             + '<td><span class="ma-pill" style="background:' + (c.yes ? '#ffebee;color:#c62828' : '#eef2f7;color:#666') + ';" title="' + maEsc(c.why) + '">주택 수 ' + (c.yes ? '포함' : '제외') + '</span></td>'
             + '<td style="white-space:nowrap;"><a href="#" onclick="maEdit(\'' + x.id + '\');return false;">수정</a>'
+            + ' · <a href="#" style="color:#c62828;" onclick="maDeleteItem(\'' + x.id + '\');return false;">삭제</a>'
             + '<div><label class="ma-sub" title="저장하지 않고 입찰가만 바로 다시 계산"><input type="checkbox" style="width:auto;margin:0 2px 0 0;" ' + (myAssetsSim[x.id] ? 'checked' : '') + ' onchange="maToggleSim(\'' + x.id + '\', this.checked)">매도 가정</label></div></td></tr>';
     };
     holding.concat(planned).forEach(function(x) { rows += assetRow(x); });
@@ -23099,7 +23101,7 @@ function renderMyAssets() {
         rows += '<tr class="ma2-click" onclick="maToggleRow(\'' + d.key + '\')"><td><b>' + maEsc(d.name) + '</b><div class="ma-sub">' + maEsc(d.region) + (d.src === 'auction' ? ' · 경매 기록' : ' · 내 자산') + (d.holdM != null ? ' · ' + d.holdM + '개월 보유' : '') + '</div></td>'
             + '<td>매도 완료<div class="ma-sub">' + (d.sellDate || '') + '</div></td><td class="r">' + maFmt(d.buy) + '</td><td class="r">' + maFmt(d.sell) + '</td>'
             + '<td class="r" style="color:' + pc(d.profit) + ';font-weight:700;">' + maFmt(d.profit) + '<div class="ma-sub">' + d.roi.toFixed(1) + '%</div></td><td></td>'
-            + '<td style="white-space:nowrap;">' + (d.assetId ? '<a href="#" onclick="event.stopPropagation();maEdit(\'' + d.assetId + '\');return false;">수정</a>' : (d.auctionId ? '<a href="#" onclick="event.stopPropagation();closeMyAssetsPanel();openAuctionModal(\'' + d.auctionId + '\');return false;">상세</a>' : '')) + ' ' + (open ? '▲' : '▼') + '</td></tr>';
+            + '<td style="white-space:nowrap;">' + (d.assetId ? '<a href="#" onclick="event.stopPropagation();maEdit(\'' + d.assetId + '\');return false;">수정</a> · <a href="#" style="color:#c62828;" onclick="event.stopPropagation();maDeleteItem(\'' + d.assetId + '\');return false;">삭제</a>' : (d.auctionId ? '<a href="#" onclick="event.stopPropagation();closeMyAssetsPanel();openAuctionModal(\'' + d.auctionId + '\');return false;">상세</a>' : '')) + ' ' + (open ? '▲' : '▼') + '</td></tr>';
         if (open) {
             rows += '<tr><td colspan="7" style="background:#fafbfc;"><div class="ma2-cost">' + Object.keys(d.costs).filter(function(k) { return d.costs[k]; }).map(function(k) { return '<div><span>' + k + '</span><b>' + maFmt(d.costs[k]) + '</b></div>'; }).join('')
                 + '<div><span>총비용</span><b>' + maFmt(d.total) + '</b></div><div><span>매도가</span><b>' + maFmt(d.sell) + '</b></div>'
@@ -23172,6 +23174,18 @@ async function maSave() {
     base.residential = document.getElementById('ma-f-residential').checked;
     try { await saveMyAssetItem(base); maEditId = null; myAssetsChanged(); renderMyAssets(); }
     catch (e) { alert('저장 실패: ' + e.message); }
+}
+// 2026-10 사용자: "매도가 아니라 기록에서 삭제할 수 있게 삭제 버튼" - 목록에서 바로 지움(확인 후)
+async function maDeleteItem(id) {
+    var x = (myAssets.items || []).filter(function(i) { return i.id === id; })[0];
+    if (!x) return;
+    if (!confirm('"' + (x.name || '이름 없음') + '"을(를) 내 자산 기록에서 지울까요?\n매도 처리가 아니라 기록 자체가 없어지고, 주택 수·세금 계산에서도 빠져요.')) return;
+    try {
+        await deleteMyAssetItem(id);
+        if (myAssetsSim[id]) { delete myAssetsSim[id]; try { localStorage.setItem('myAssetsSim', JSON.stringify(myAssetsSim)); } catch (e) {} }
+        if (maEditId === id) maEditId = null;
+        myAssetsChanged(); renderMyAssets();
+    } catch (e) { alert('삭제 실패: ' + e.message); }
 }
 async function maDelete() {
     if (!confirm('이 부동산을 목록에서 지울까요?')) return;
