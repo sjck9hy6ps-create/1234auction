@@ -513,6 +513,21 @@ tr:hover td { background:#fffde7; }
 #bid-board .bb-head { background:white; border-bottom:1px solid #e3e6ea; padding:10px 16px 8px; }
 #bid-board .bb-csv { border:none; background:var(--ui-blue,#1e5eff); color:#fff; border-radius:16px; padding:5px 12px; font-size:12px; font-weight:700; cursor:pointer; }
 #bid-board .bb-help { color:#6b7280; font-size:11.5px; cursor:pointer; }
+/* 📘 사용법(2026-10, 사용자: "공지사항처럼 언제나 볼 수 있게, 심플하게 1페이지") */
+#guide-modal { position:fixed; inset:0; background:rgba(17,24,39,0.45); z-index:3000; display:none; align-items:flex-start; justify-content:center; padding:28px 16px; overflow:auto; }
+#guide-modal .gd { background:#fff; width:100%; max-width:720px; border-radius:16px; box-shadow:0 12px 40px rgba(0,0,0,0.2); padding:22px 24px 18px; color:#111827; }
+#guide-modal .gd-h { display:flex; align-items:center; gap:8px; margin-bottom:4px; }
+#guide-modal .gd-h h2 { margin:0; font-size:19px; flex:1; }
+#guide-modal .gd-x { border:none; background:#f3f4f6; border-radius:16px; padding:6px 12px; cursor:pointer; font-size:13px; }
+#guide-modal .gd-one { background:#eef4ff; color:#1e3a8a; border-radius:10px; padding:10px 12px; font-size:13.5px; font-weight:700; margin:10px 0 14px; line-height:1.5; }
+#guide-modal .gd-step { display:grid; grid-template-columns:28px 1fr; gap:10px; padding:10px 0; border-top:1px solid #f1f3f5; }
+#guide-modal .gd-n { width:26px; height:26px; border-radius:50%; background:#111827; color:#fff; font-size:13px; font-weight:700; display:flex; align-items:center; justify-content:center; }
+#guide-modal .gd-t { font-weight:700; font-size:14px; margin-bottom:3px; }
+#guide-modal .gd-d { font-size:12.5px; color:#374151; line-height:1.6; }
+#guide-modal .gd-d b { color:#111827; }
+#guide-modal .ok { color:#15803d; font-weight:700; } #guide-modal .no { color:#b91c1c; font-weight:700; }
+#guide-modal .gd-foot { margin-top:10px; padding-top:10px; border-top:1px solid #f1f3f5; font-size:11.5px; color:#6b7280; line-height:1.6; }
+
 #bb-chips { display:flex; flex-wrap:wrap; gap:6px; margin-top:8px; }
 #bb-chips .chip { border:1px solid #e3e6ea; background:#fff; border-radius:16px; padding:4px 11px; font-size:12px; cursor:pointer; white-space:nowrap; }
 #bb-chips .chip b { margin-left:3px; }
@@ -1052,6 +1067,7 @@ body.ui2 #bid-case-panel td, body.ui2 #surge-panel td, body.ui2 #panel-tab-aucti
         <button onclick="document.getElementById('bb-csv-input').click(); closeTbMenus();">📄 물건 등록(CSV)</button>
         <button onclick="openMyAssetsPanel(); closeTbMenus();">💼 내 자산</button>
         <button onclick="closeBidBoard(); closeTbMenus();">🗺️ 지도</button>
+        <button onclick="openGuide(); closeTbMenus();">📘 사용법</button>
         <div id="tb-more">
             <button onclick="toggleTbMore(event)">더보기 ▾</button>
             <div id="tb-more-menu">
@@ -1398,6 +1414,7 @@ body.ui2 #bid-case-panel td, body.ui2 #surge-panel td, body.ui2 #panel-tab-aucti
             <button class="bb-csv" onclick="document.getElementById('bb-csv-input').click()">📄 CSV 올리기</button>
             <input type="file" id="bb-csv-input" multiple accept=".csv,text/csv" style="display:none;" onchange="onBoardCsvFile(this)">
             <span class="bb-help" onclick="var g=document.getElementById('bb-guide-box');g.style.display=g.style.display==='none'?'':'none'">ⓘ 보는 법</span>
+            <span class="bb-help" onclick="openGuide()">📘 사용법</span>
             <button class="bb-x" onclick="closeBidBoard()">🗺️ 지도로</button>
         </div>
         <div id="bb-csv-bar" style="display:none;"></div>
@@ -1428,6 +1445,35 @@ body.ui2 #bid-case-panel td, body.ui2 #surge-panel td, body.ui2 #panel-tab-aucti
         <div id="bb-fail-note" class="bb-guide" style="display:none;"></div>
     </div>
     <div id="bb-main"><div id="bb-body"></div><div id="bb-drawer" style="display:none;"></div></div>
+</div>
+<div id="guide-modal" onclick="if(event.target===this)closeGuide()">
+  <div class="gd">
+    <div class="gd-h"><h2>📘 이 앱 제대로 쓰는 법</h2><button class="gd-x" onclick="closeGuide()">닫기 ✕</button></div>
+    <div class="gd-one">겨울에 → 틈새 지역에서 → 🛡️버팀·🎯기회 물건을 골라 → 매물·서류를 확인하고 → 추천 입찰가로 여러 번 입찰</div>
+    <div class="gd-step"><div class="gd-n">1</div><div><div class="gd-t">어디서 · 언제</div><div class="gd-d">
+      <span class="ok">우선 지역</span> 목포 · 익산 · 당진 · 광주 북구 · 광양 · 여수 · 무안 · 부산 북구 <span style="color:#9ca3af;">(경쟁 약하고 잘 팔림)</span><br>
+      <span class="no">피할 지역</span> 대전 · 전주 · 춘천 · 부산 수영·동래·해운대 <span style="color:#9ca3af;">(응찰자 6~8명 또는 잘 안 팔림)</span><br>
+      <b>겨울(12~2월)</b>에 입찰을 늘리세요 - 1등 가격이 낮아 낙찰률이 약 2배였어요</div></div></div>
+    <div class="gd-step"><div class="gd-n">2</div><div><div class="gd-t">입찰후보 목록에서 거르기</div><div class="gd-d">
+      <span class="no">제외</span> ⚠️ 손해 주의 · 🏢 대량 경매 · ❌ 제외<br>
+      <span class="ok">우선</span> 🛡️ 버팀 · 🎯 기회 <span style="color:#9ca3af;">(과거 60~74%가 팔림)</span> → 👍 입찰 추천 구간 → ✅ 추천<br>
+      ⏳ 버티기 어려움 · 📉 거래 감소가 있으면 한 단계 낮춰 보기</div></div></div>
+    <div class="gd-step"><div class="gd-n">3</div><div><div class="gd-t">상세 창에서 확인</div><div class="gd-d">
+      <b>🏁 지역 경쟁 강도</b> "약함"인지 · <b>예상매도가 근거</b>가 "최근 3·6개월 ○건"인지<br>
+      <b>📋 네이버 매물 붙여넣기는 꼭</b> - 비슷한 집이 더 싸게 나와 있으면 예상매도가가 자동으로 낮아져요<br>
+      <b>📝 임장 문답</b> - 집 상태·점유자·누수를 답하면 수리비·비용에 반영</div></div></div>
+    <div class="gd-step"><div class="gd-n">4</div><div><div class="gd-t">직접 확인한 금액 넣기</div><div class="gd-d">
+      <b>인수 금액</b>(매각물건명세서 권리) · <b>미납 관리비</b>(관리사무소) · <b>수리비</b>(견적) → 추천 입찰가가 바로 바뀜<br>
+      권리가 애매하면 <span class="no">입찰하지 않기</span></div></div></div>
+    <div class="gd-step"><div class="gd-n">5</div><div><div class="gd-t">입찰가 정하기</div><div class="gd-d">
+      <b>추천 입찰가</b> = 최소 순이익 1,000만이 남는 상한 · <b>적극 입찰가</b>(기회·버팀만) = 2등을 아깝게 놓친 경우까지 +3%<br>
+      <span class="no">추천가보다 높게 쓰지 않기</span> - 1등은 보통 시세의 86~90%를 써서 비용을 빼면 남는 게 거의 없어요</div></div></div>
+    <div class="gd-step"><div class="gd-n">6</div><div><div class="gd-t">기대치</div><div class="gd-d">
+      좋은 물건도 <b>10번 안팎 입찰에 1번 낙찰</b> - 떨어지는 게 정상이에요<br>
+      낙찰 후 보통 <b>5~8개월</b>에 팔림 · 안 팔릴 수도 있으니 첫 낙찰은 <b>전세가율 높은 곳(🛡️ 버팀)</b>이 가장 안전</div></div></div>
+    <div class="gd-foot">근거: 지방 아파트 낙찰사례 약 2만 4천 건·실거래 약 295만 건 백테스트(2026-10). 지역 순위·경쟁 강도는 매주·매월 자동으로 다시 계산돼요.<br>
+      참고만 할 것: 회전율 등급 · 급등/돈되는 지역(아파트) · 대장 따라잡기 · 시장 사이클</div>
+  </div>
 </div>
 <div id="my-assets-panel">
     <div class="auction-list-header">
@@ -16963,6 +17009,9 @@ async function fillHouseholdsInBackground() {
     } finally { householdFillRunning = false; }
 }
 
+function openGuide() { var m = document.getElementById('guide-modal'); if (m) m.style.display = 'flex'; }
+function closeGuide() { var m = document.getElementById('guide-modal'); if (m) m.style.display = 'none'; }
+document.addEventListener('keydown', function(e) { if (e.key === 'Escape') closeGuide(); });
 function bidBoardGo(id) {
     closeBidBoard();
     panToAuction(id);
