@@ -316,7 +316,7 @@ export default async function handler(req, res) {
       const [ar, vr, rr] = await Promise.all([fetchAllRows('house_trades', regionName, longYears), fetchAllRows('villa_trades', regionName, longYears),
         req.query.rent === '1' ? fetchAllRows('house_rent', regionName, Math.min(longYears, 4)) : Promise.resolve({ data: [] })]);
       if (ar.error || vr.error) return res.status(500).json({ error: (ar.error || vr.error).message });
-      const apt = dedup([...(ar.data || []).map(r => normalizeRow(r, 'apt')), ...(vr.data || []).map(r => normalizeRow(r, 'villa'))]);
+      const apt = dedup([...(ar.data || []).filter(notCancelled).map(r => normalizeRow(r, 'apt')), ...(vr.data || []).filter(notCancelled).map(r => normalizeRow(r, 'villa'))]);
       const rent = (rr && rr.data || []).map(r => normalizeRentRow(r, 'apt'));
       return res.status(200).json({ apt, rent, years: longYears });
     } catch (e) { return res.status(500).json({ error: e.message }); }
@@ -391,8 +391,8 @@ export default async function handler(req, res) {
       console.log('전세가 조회 완료. 아파트=' + aptRentData.length + '건 연립다세대=' + villaRentData.length + '건');
 
       // ── 정규화 ──
-      const aptNormalized      = aptData.map(row => normalizeRow(row, 'apt'));
-      const villaNormalized    = villaData.map(row => normalizeRow(row, 'villa'));
+      const aptNormalized      = aptData.filter(notCancelled).map(row => normalizeRow(row, 'apt'));
+      const villaNormalized    = villaData.filter(notCancelled).map(row => normalizeRow(row, 'villa'));
       const aptRentNormalized   = aptRentData.map(row => normalizeRentRow(row, 'apt'));
       const villaRentNormalized = villaRentData.map(row => normalizeRentRow(row, 'villa'));
 
@@ -525,8 +525,12 @@ function normalizeRow(row, buildingType) {
     sub_num:    row.sub_num   || null,
     source:     'db',
     buildingType,
+    // 2026-10: 직거래는 표시만(앱이 시세 계산에서 뺌) - 예전엔 이 칸을 안 내려줘서 앱의 직거래 제외가 동작하지 않았음
+    ...(row.dealing_type === '직거래' ? { dealing_type: '직거래' } : {}),
   };
 }
+// 2026-10: 해제(취소)된 실거래(cdeal_type 'O', 응답의 3~8%)는 시세에서 뺌
+function notCancelled(row) { return !(row && row.cdeal_type && String(row.cdeal_type).trim()); }
 
 /* ── house_rent / villa_rent 공통 정규화 (스키마 동일, price 대신 deposit/monthly_rent) ── */
 function normalizeRentRow(row, buildingType) {

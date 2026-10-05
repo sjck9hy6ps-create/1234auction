@@ -20,6 +20,7 @@ house_trades 2017~ 전체를 써서 사건마다 "입찰일 30일 전까지의 �
 결과: leader_follower_cache 'bidcase|__validation__' + GitHub 요약.
 """
 import os
+import re
 import json
 import math
 from datetime import datetime, timezone, timedelta
@@ -110,7 +111,23 @@ def main():
     df["region"] = df["addrJibun"].map(region_norm)
     df["sido"] = df["region"].map(lambda r: r.split()[0] if r else None)
     df["dk"] = df["dong"].map(dong_key)
-    df["bunji_s"] = df["bunji"].astype(str).str.strip()
+    # 2026-10: CSV 사례는 지번이 본번만("22") 있는 경우가 있어 주소의 "동 22-7"을 먼저 씀
+    def full_bunji(row):
+        d = str(row.get("dong") or "")
+        m = re.search(re.escape(d) + r"\s+(산?\d+(?:-\d+)?)", str(row.get("addrJibun") or "")) if d else None
+        return m.group(1).replace("산", "").strip() if m else str(row.get("bunji") or "").strip()
+    df["bunji_s"] = df.apply(full_bunji, axis=1)
+    # 낙찰된 집의 동(棟) - 주소 끝("… 절영아파트 215동")이나 호수 칸("215동 102호")
+    def case_adong(row):
+        txt = str(row.get("addrJibun") or "")
+        b = str(row.get("bunji") or "")
+        tail = txt.split(b, 1)[1] if b and b in txt else txt
+        for t in (tail, str(row.get("unitNo") or "")):
+            m = re.search(r"(\d{1,4})\s*동(?![가-힣])", t)
+            if m:
+                return str(int(m.group(1)))
+        return None
+    df["adong"] = df.apply(case_adong, axis=1)
     df["sale_int"] = df["saleDate"].str.replace("-", "").astype(int)
     df["fails"] = (df["minbid"] / df["appraisal"]).map(fails_from_ratio)
     df = df.dropna(subset=["region", "area", "dk"]).reset_index(drop=True)
@@ -124,8 +141,13 @@ def main():
         for alias in ({"전남광주": ["전남광주", "광주", "전남"]}.get(sd, [sd])):
             names.add(f"{alias} {gu}")
     flt = "&region=in.(" + ",".join('"' + n + '"' for n in sorted(names)) + ")"
-    tr = avm.fetch_all_rows("house_trades", cols="region,dong,danji,bunji,price,size,floor,deal_date,dealing_type,build_year",
+    tr = avm.fetch_all_rows("house_trades", cols="region,dong,danji,bunji,price,size,floor,deal_date,dealing_type,build_year,apt_dong,cdeal_type",
                             extra_filter=f"&deal_date=gte.{cyc.START_DATE}{flt}")
+    # 2026-10: 해제(취소)된 거래는 시세·되팔기 모두에서 뺌(응답의 3~8%)
+    if "cdeal_type" in tr.columns:
+        tr = tr[tr["cdeal_type"].fillna("").astype(str).str.strip() == ""].copy()
+    # 되팔기 매칭용 직거래 포함본(가족·지인 간 매도도 "팔았다"에 해당) - 시세 추정은 직거래 제외본으로
+    tr_all = tr.copy()
     tr = tr[tr["dealing_type"] != "직거래"].copy() if "dealing_type" in tr.columns else tr
     for c in ("price", "size", "floor", "deal_date", "build_year"):
         tr[c] = pd.to_numeric(tr[c], errors="coerce")
@@ -137,6 +159,18 @@ def main():
     tr["ppm"] = tr["price"] / tr["size"]
     tr["ym"] = (tr["deal_date"] // 100).astype(int)
     print(f"  실거래 {len(tr):,}건")
+    def norm_adong(v):
+        m = re.search(r"(\d{1,4})", str(v or ""))
+        return str(int(m.group(1))) if m else ""
+    for c_ in ("price", "size", "floor", "deal_date"):
+        tr_all[c_] = pd.to_numeric(tr_all[c_], errors="coerce")
+    tr_all = tr_all.dropna(subset=["price", "size", "deal_date"])
+    tr_all["dk"] = tr_all["dong"].map(dong_key)
+    tr_all["region_n"] = tr_all["region"].map(region_norm)
+    tr_all["bunji_s"] = tr_all["bunji"].astype(str).str.strip()
+    tr_all["adong"] = tr_all["apt_dong"].map(norm_adong) if "apt_dong" in tr_all.columns else ""
+    groups_all = {k: g for k, g in tr_all.groupby(["region_n", "dk", "bunji_s"])}
+    print(f"  되팔기 매칭용(직거래 포함·해제 제외) {len(tr_all):,}건, 동 정보 있는 거래 {int((tr_all['adong'] != '').sum()):,}건")
 
     # 시군구 월별 지수(평당가 중앙값, 3개월 이동평균) - 3년 창을 쓸 때 입찰 시점 가격으로 맞추는 데 씀
     idx = tr.groupby(["region_n", "ym"])["ppm"].median().rename("m").reset_index()
@@ -227,11 +261,21 @@ def main():
                     own = len(use)
                     break
             rec["est"] = est; rec["own"] = own
-            # 재매도
-            if pd.notna(c.floor_n):
-                after = same[(same["deal_date"] >= ymd_int(sale_d + timedelta(days=14))) & (same["floor"] == c.floor_n)]
+            # 재매도 - 2026-10 정확도 개선: 큰 단지는 같은 층에 같은 평형이 여러 채라 "같은 층 첫 거래"의 절반 이상이 다른 집이었음
+            # (낙찰 12개월 안 같은 층 거래 56% vs 2층 위·아래 층 43%). 2023년부터 실거래에 동(棟)이 있어 같은 동·같은 층으로 좁힘:
+            #  ① 낙찰 물건의 동을 알고 거래에도 동이 있으면 같은 동만(conf=dong) ② 거래에 동이 없으면(2023년 이전·등기 전) 층만 맞춤(conf=floor, 확신 낮음)
+            #  ③ 같은 층 거래가 전부 다른 동이면 되판 것으로 보지 않음. 직거래(가족·지인 매도)도 "팔았다"에 포함.
+            g_all = groups_all.get((c.region, c.dk, c.bunji_s))
+            if pd.notna(c.floor_n) and g_all is not None:
+                after = g_all[((g_all["size"] - c.area).abs() <= 2) & (g_all["deal_date"] >= ymd_int(sale_d + timedelta(days=14))) & (g_all["floor"] == c.floor_n)].sort_values("deal_date")
+                conf = "floor"
+                if len(after) and c.adong:
+                    after = after[(after["adong"] == c.adong) | (after["adong"] == "")]
+                    if len(after) and after.iloc[0]["adong"] == c.adong:
+                        conf = "dong"
                 if len(after):
-                    t0 = after.sort_values("deal_date").iloc[0]
+                    t0 = after.iloc[0]
+                    rec["resale_conf"] = conf
                     # 낙찰가 이하 매도도 포함(예전엔 이상치로 보고 뺐는데, 그러면 실제 손해 매도가 빠져 수익이 부풀려짐).
                     # 낙찰가의 70% 미만처럼 같은 집으로 보기 어려운 경우만 제외.
                     if t0["price"] >= c.actual * 0.7:
@@ -386,9 +430,9 @@ def write_back_resale_matches(cases, out):
             continue
         if r.get("resale"):
             m = {"date": r["resale_date"], "amount": int(r["resale"]), "floor": r["resale_floor"], "area": r["resale_size"],
-                 "approx": False, "source": "db-full"}
+                 "approx": False, "source": "db-full", "conf": r.get("resale_conf") or "floor"}
             old = c.get("resaleMatch") or {}
-            if str(old.get("date")) == m["date"] and int(old.get("amount") or 0) == m["amount"]:
+            if str(old.get("date")) == m["date"] and int(old.get("amount") or 0) == m["amount"] and old.get("conf") == m["conf"]:
                 continue
             c2 = dict(c); c2["resaleMatch"] = m; c2["matchFailReason"] = None
         else:
