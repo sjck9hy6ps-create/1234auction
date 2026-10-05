@@ -1229,7 +1229,7 @@ body.ui2 #my-assets-panel { position:fixed; top:104px; right:64px; left:auto; bo
         <button onclick="openBidTargetPanel(); closeTbMenus();">📝 경매물건 등록</button>
         <button onclick="openBidCasePanel(); closeTbMenus();">⚖️ 낙찰사례</button>
         <button onclick="openMoneyRegionPanel(); closeTbMenus();">💰 돈되는 지역</button>
-        <button onclick="openCyclePanel(); closeTbMenus();">📈 사이클</button>
+        <button onclick="toggleCyclePanel(); closeTbMenus();">📈 사이클</button>
         <button onclick="openGuide(); closeTbMenus();">📘 사용법</button>
         <a class="tb-link" href="/backup.html">📦 백업</a>
     </nav>
@@ -17429,6 +17429,12 @@ async function fillComplexCycleBlock(target, region) {
     }
     el.innerHTML = title + '<div>' + cyclePhaseText(c.phase) + '</div>' + cmp + cycleSparkSvg(c.index, c.turningPoints, '#ef6c00')
         + '<div class="pn-muted">' + c.from + '~ 실거래 ' + c.n + '건(평형 차이 보정, 3개월 묶음) · 마지막 거래 ' + c.lastTradeYm + ' · 고점·바닥은 8% 넘게 꺾인 곳 · 거래가 적은 단지는 흔들림이 커요</div>';
+}
+// 상단 메뉴 📈 사이클: 다른 메뉴처럼 한 번 더 누르면 닫힘(2026-10 사용자)
+function toggleCyclePanel() {
+    var box = document.getElementById('cycle-panel');
+    if (box) { box.remove(); return; }
+    openCyclePanel();
 }
 async function openCyclePanel() {
     var box = document.getElementById('cycle-panel');
