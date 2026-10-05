@@ -1169,9 +1169,7 @@ body.ui2 #bid-case-panel td, body.ui2 #surge-panel td, body.ui2 #panel-tab-aucti
 <div id="chipbar">
     <div id="chip-type-slot"></div>
     <span class="chip-sep"></span>
-    <button class="chip" data-proxy="newhighonly-toggle-btn">⭐ 신고가만</button>
-    <button class="chip" data-proxy-onclick="toggleRecentYearOnly">🕒 최근 6개월 거래만</button>
-    <button class="chip" data-proxy="bidcaseonly-toggle-btn">⚖️ 낙찰사례만</button>
+    <!-- 2026-10 사용자: 신고가만·최근 6개월만·낙찰사례만은 더 이상 안 씀 → 칩 삭제(기능 자체는 꺼진 상태로 남음) -->
     <button class="chip" onclick="openFilterPanelTab('attr')">📐 평형·연식·등급 ▾</button>
     <button class="chip" onclick="openFilterPanelTab('display')">⚙️ 필터 전체 ▾</button>
     <span class="chip-sep"></span>
@@ -4833,6 +4831,11 @@ function isAptVisibleUnderCurrentFilters(apt) {
         if (apt.buildingType !== 'apt') return false;
         if (recentYearOnly && !hasRecentYearTrade(apt)) return false;
         if (activeGrades.size > 0 && !(apt.grade && activeGrades.has(String(apt.grade)))) return false;
+        // 2026-10: 연식단계 필터가 연립다세대에만 걸려 아파트에선 눌러도 아무 변화가 없었음 → 아파트도 건축연도로 판정
+        if (activeVillaTiers.size > 0) {
+            if (apt.ageTier === undefined) apt.ageTier = getVillaAgeTier(apt);
+            if (!(apt.ageTier && activeVillaTiers.has(apt.ageTier))) return false;
+        }
     } else {
         if (apt.buildingType !== 'villa') return false;
         if (recentYearOnly && !hasRecentYearTrade(apt)) return false;
@@ -13287,6 +13290,11 @@ function passesFiltersForBidCase(c) {
         var bcEst = getBidCaseEstimates(c);
         if (!bcEst.ageTier || !activeVillaTiers.has(bcEst.ageTier)) return false;
     }
+    if (bt === 'apt' && activeVillaTiers.size > 0) {
+        var bcY = c.buildYear || resolveOwnBuildYear(c.buildingName, c.dong, c.bunji);
+        var bcT = bcY ? getAgeTierByYear(bcY) : null;
+        if (!bcT || !activeVillaTiers.has(bcT)) return false;
+    }
     return true;
 }
 /* 등록된 경매물건(낙찰 포함)이 지금 활성화된 속성 필터(타입탭·평형대·연식단계)를 통과하는지
@@ -13318,8 +13326,10 @@ function passesFiltersForAuction(a) {
         var tier = areaM2 ? getPyeongTier(areaM2) : null;
         if (!tier || !activePyeongTiers.has(tier)) return false;
     }
-    if (a.propType === 'villa' && activeVillaTiers.size > 0) {
+    if (activeVillaTiers.size > 0) {
+        // 2026-10: 아파트 경매물건도 연식단계 적용 - 건축연도가 없으면 같은 주소 실거래 단지의 건축연도로
         var ageTier = a.buildYear ? getAgeTierByYear(a.buildYear) : null;
+        if (!ageTier && a.propType === 'apt') { var _m = findMatchedApt(a); if (_m) ageTier = getVillaAgeTier(_m); }
         if (!ageTier || !activeVillaTiers.has(ageTier)) return false;
     }
     // 2026-08(사용자 확인 - "매칭된 건물이 신고가일 때만 표시"): "신고가만 보기"를 켜면
@@ -22954,7 +22964,7 @@ function setupUiV3() {
         p.insertBefore(head, p.firstChild);
         var note = document.createElement('div');
         note.className = 'fp-note';
-        note.textContent = '신고가만·최근 6개월·낙찰사례만은 위 칩에서, 경계선·낙찰사례 배지는 오른쪽 도구 버튼에서 켜고 꺼요.';
+        note.textContent = '경계선·낙찰사례 배지는 오른쪽 도구 버튼에서 켜고 꺼요.';
         head.after(note);
         ['#newhighonly-toggle-btn', '#fp-group-display [onclick^="toggleRecentYearOnly"]', '#bidcaseonly-toggle-btn', '#boundary-toggle-btn', '#bidcasebadge-toggle-btn'].forEach(function(sel) {
             var b = document.querySelector(sel); if (b) b.classList.add('fp-dup');
