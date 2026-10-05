@@ -2,6 +2,13 @@ name: 진단 - 실거래 동(aptDong) 채움 비율
 
 on:
   workflow_dispatch:
+    inputs:
+      codes:
+        description: '시군구 코드(쉼표)'
+        default: '26200,30110,26350'
+      yms:
+        description: '연월(쉼표)'
+        default: '202201,202204,202207,202210,202212,202301,202302,202303,202306'
 
 jobs:
   diag:
@@ -16,3 +23,5 @@ jobs:
         env:
           SITE_URL: https://1234auction.vercel.app
           COLLECT_PROXY_SECRET: ${{ secrets.COLLECT_PROXY_SECRET }}
+          CODES: ${{ github.event.inputs.codes }}
+          YMS: ${{ github.event.inputs.yms }}
