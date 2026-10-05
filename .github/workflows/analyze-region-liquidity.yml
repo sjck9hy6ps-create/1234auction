@@ -1,0 +1,23 @@
+name: 지방 시군구 팔리는 곳 후보 순위
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 21 2 * *'   # 매월 2일 KST 06:00
+
+jobs:
+  analyze:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install pandas numpy requests
+      - env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          SITE_URL: https://1234auction.vercel.app
+          PYTHONUNBUFFERED: '1'
+        run: python analyze-region-liquidity.py
