@@ -1245,6 +1245,13 @@ body.ui2 #auction-modal.am4 { width:620px; }
 /* 2026-10 정리: 입찰후보 표의 [🗺️ 지도][상세] 버튼 칸은 줄을 누르면 열리는 창 맨 위 버튼과 같아서 숨김 */
 #bid-board .bb-table th:nth-child(11), #bid-board .bb-act { display:none !important; }
 </style>
+<style>
+/* 🎲 예상 낙찰가(2026-10) */
+#bid-board .bb-wb { font-size:11px; color:#4b5563; margin-top:2px; white-space:nowrap; }
+#bb-drawer .dr-wb { background:#f8fafc; border:1px solid #e5e7eb; border-radius:10px; padding:8px 10px; margin:-4px 0 10px; font-size:12px; line-height:1.55; }
+#bb-drawer .dr-wb-h { font-size:12.5px; }
+#bb-drawer .dr-wb-h b { font-size:15px; }
+</style>
 </head>
 <body>
 <div id="topbar">
@@ -16117,6 +16124,102 @@ function listingCapFor(a) {
     res.cap = Math.round(res.ref * (1 - LISTING_NEGO_PCT));
     return res;
 }
+/* ════ 🎲 예상 낙찰가 (2026-10, 사용자: "실제로 낙찰받을 수 있는 가격과 마진이 남는 판매가를 확인하고 싶다" → 검증 후 "넣어줘")
+   analyze-bidcases.py가 낙찰사례 2만여 건으로 매주 만드는 덧셈형 표(signal|__winbid__, 없으면 /winbid-model.json)로
+   "비슷한 물건이 보통 낙찰되는 가격"과 "이 가격으로 쓰면 낙찰될 가능성"을 계산. 검증: 학습에 안 쓴 최근 사례에서 보통 오차 5~6%.
+   ⚠️ 모델이 배운 "시세"와 똑같이 맞추려고 여기서 시세를 따로 구함: 입찰 30일 전(지난 입찰은 그때, 앞으로 입찰은 오늘) 기준
+      같은 단지·면적 ±2㎡·직거래 제외, 1층/그 외를 나눠 최근 1년 3건 이상(없으면 3년 1건 이상)의 ㎡당 가격 40% 지점 × 면적.
+   최저가는 이 예측에만 씀(예상매도가·추천 입찰가 계산엔 그대로 안 씀). 아파트만. ════ */
+var winbidModel = null, winbidLoading = false;
+function loadWinbidModel() {
+    if (winbidModel || winbidLoading) return;
+    winbidLoading = true;
+    var use = function(d) {
+        if (!d || !d.eff || !d.resQ) return false;
+        winbidModel = d; winbidLoading = false;
+        try {
+            bidBoardRows = bidBoardRows.map(function(r) { if (r.pending || r.skippedPast || !r.type) return r; try { return finalizeBidBoardRow(r); } catch (e) { return r; } });
+            if (document.getElementById('bid-board').style.display !== 'none') renderBidBoard();
+            if (typeof bidDrawerId !== 'undefined' && bidDrawerId) renderBidDrawer();
+        } catch (e) {}
+        return true;
+    };
+    fetch('/api/data-coverage?mode=winbid').then(function(r) { return r.json(); }).then(function(d) {
+        if (use(d)) return;
+        return fetch('/winbid-model.json').then(function(r) { return r.json(); }).then(function(d2) { if (!use(d2)) winbidLoading = false; });
+    }).catch(function() {
+        fetch('/winbid-model.json').then(function(r) { return r.json(); }).then(function(d2) { if (!use(d2)) winbidLoading = false; }).catch(function() { winbidLoading = false; });
+    });
+}
+setTimeout(loadWinbidModel, 2500);
+function winbidBaseEst(a, pyung) {
+    var area = (parseFloat(pyung) || 0) * 3.305785;
+    if (!area) return null;
+    var bunjiFull = fullBunjiFromAddr(a.addr, a.dong, a.bunji);
+    var ref = Date.now();
+    if (a.bidDate) { var bd = new Date(a.bidDate + 'T00:00:00').getTime() - 30 * 86400000; if (bd < ref) ref = bd; }
+    var ground = parseInt(a.floor) === 1;
+    var same = [], other = [];
+    ownComplexEntries(a, bunjiFull, 'apt').forEach(function(ap) {
+        (ap.trades || []).forEach(function(t) {
+            if (t.dealing_type === '직거래' || !(t.area > 0) || Math.abs(t.area - area) > 2) return;
+            var td = tradeDate(t).getTime(), p = parseInt(t.amount);
+            if (!p || td >= ref) return;
+            var f = parseInt(t.floor);
+            ((f === 1) === ground ? same : other).push({ td: td, ppm: p / t.area });
+        });
+    });
+    var q40 = function(v) { v = v.slice().sort(function(x, y) { return x - y; }); var i = (v.length - 1) * 0.4, lo = Math.floor(i), hi = Math.ceil(i); return v[lo] + (v[hi] - v[lo]) * (i - lo); };
+    var windows = [365, 1095];
+    for (var w = 0; w < windows.length; w++) {
+        var lo = ref - windows[w] * 86400000, adj = 1, use = same.filter(function(x) { return x.td >= lo; });
+        if (!use.length) { use = other.filter(function(x) { return x.td >= lo; }); adj = ground ? 0.915 : 1 / 0.915; }
+        if (use.length >= 3 || (w === 1 && use.length >= 1)) return { est: q40(use.map(function(x) { return x.ppm * adj; })) * area, own: use.length };
+    }
+    return null;
+}
+function winbidProbAt(wb, bid) {
+    if (!wb || !bid) return null;
+    var thr = Math.log(bid / wb.est) - wb.pred, q = winbidModel.resQ;
+    if (thr <= q[0]) return 0.01;
+    if (thr >= q[q.length - 1]) return 0.99;
+    for (var i = 1; i < q.length; i++) if (thr <= q[i]) return (i + (thr - q[i - 1]) / ((q[i] - q[i - 1]) || 1)) / 100;
+    return 0.99;
+}
+function winbidFor(row) {
+    var a = row.a;
+    if (!winbidModel || row.type !== 'apt' || !row.minBid) return null;
+    var b = winbidBaseEst(a, row.pyung);
+    if (!b || !b.est) return null;
+    var lmin = Math.log(row.minBid / b.est);
+    if (!isFinite(lmin)) return null;
+    var e = winbidModel.eff, mm = a.bidDate ? parseInt(a.bidDate.slice(5, 7), 10) : (new Date().getMonth() + 1);
+    var fl = parseInt(a.floor), area = (parseFloat(row.pyung) || 0) * 3.305785;
+    var keys = {
+        lb: String(Math.max(-24, Math.min(9, Math.floor(lmin / 0.05)))),
+        fails: row.fails == null ? '?' : String(Math.min(3, row.fails)),
+        region: competitionRegionKey(a.addr) || '?',
+        tier: row.pop && !row.pop.noRecent && row.pop.tier ? row.pop.tier : '없음',
+        season: (mm === 12 || mm <= 2) ? '겨울' : (mm <= 5 ? '봄' : (mm <= 8 ? '여름' : '가을')),
+        floor: fl === 1 ? '1층' : ((fl === 2 || fl === 3) ? '2~3층' : '4층+'),
+        size: area < 60 ? '소형' : (area <= 85 ? '중형' : '대형'),
+        own: b.own <= 2 ? '1~2' : (b.own <= 5 ? '3~5' : (b.own <= 10 ? '6~10' : '11+'))
+    };
+    var pred = winbidModel.base;
+    Object.keys(keys).forEach(function(f) { var v = (e[f] || {})[keys[f]]; if (typeof v === 'number') pred += v; });
+    var wb = { est: b.est, own: b.own, pred: pred, price: Math.round(b.est * Math.exp(pred)) };
+    wb.probRec = row.recBid ? winbidProbAt(wb, row.recBid) : null;
+    wb.probAggr = row.recAggr ? winbidProbAt(wb, row.recAggr) : null;
+    wb.gapPct = row.recBid ? Math.round((row.recBid / wb.price - 1) * 1000) / 10 : null;
+    return wb;
+}
+function winbidLineHtml(wb, compact) {
+    if (!wb) return '';
+    var p = wb.probRec, pc = p == null ? null : Math.round(p * 100);
+    var col = pc == null ? '#6b7280' : (pc >= 60 ? '#15803d' : (pc >= 35 ? '#b45309' : '#b91c1c'));
+    if (compact) return '<div class="bb-wb" title="비슷한 물건이 보통 낙찰되는 가격(낙찰사례 2만여 건 기준, 보통 오차 5~6%)">예상 낙찰 ' + toEok(String(wb.price)) + (pc != null ? ' · <b style="color:' + col + ';">낙찰 ' + pc + '%</b>' : '') + '</div>';
+    return pc;
+}
 function finalizeBidBoardRow(row) {
     var a = row.a, type = row.type, minBid = row.minBid, pyung = row.pyung;
     row.reasons = []; row.warns = []; row.nextFail = null; row.overshoot = false; row.bulk = false; row.sweet = false; row.volDown = false; row.sturdy = false; row.hardHold = false; row.recBidRaw = null; row.recCapped = null; row.safetyExtra = null; row.safetyPct = null;
@@ -16267,6 +16370,7 @@ function finalizeBidBoardRow(row) {
         if (aggr && aggr > row.recBid) row.recAggr = aggr;
     }
     if (row.fails === 0 && type === 'apt' && row.verdict !== 'nodata') row.notes.push('⚠️ 신건: 시세보다 높게 낙찰되는 구간(과거 낙찰자 40%가 손해)');
+    try { row.winbid = winbidFor(row); } catch (e) { row.winbid = null; }
     row.niche = null; // 🧭 틈새는 재설계 중(위 재검증 참고) - 입찰자가 덜 몰리는 동·단지 기준으로 다시 만들 예정
     if (row.niche) row.notes.unshift('🧭 틈새: ' + row.niche.why.join(' · '));
     return row;
@@ -16664,7 +16768,7 @@ function renderBidBoardRow(r) {
         : r.dday ? '<span class="bb-dday' + (r.dday.diffDays <= 3 && r.dday.diffDays >= 0 ? ' soon' : '') + '">' + r.dday.label + '</span><div class="bb-sub">' + bbEsc(a.bidDate || '') + '</div>' : '<span class="bb-sub">미정</span>';
     var saleCell = r.pending ? '<span class="bb-sub">계산 중…</span>'
         : (r.sale ? '<b>' + toEok(String(r.sale)) + '</b><div class="bb-sub">' + (r.saleSaved ? '내가 저장한 값' : (r.salePresale ? '분양권·입주권 거래 ' + r.salePresale.n + '건(분양가+웃돈)' : '이 단지 같은 평형 ' + r.own + '건')) + (r.ownStats && r.ownStats.recent ? '<br><span style="color:#374151;" title="이 단지·같은 평형' + (r.ownStats.recent.similarFloor ? '·비슷한 층(±3층)' : '(비슷한 층 거래가 없어 층 상관없이)') + '의 가장 최근 실거래">최근 ' + r.ownStats.recent.date.slice(2, 7).replace('-', '.') + ' · ' + r.ownStats.recent.floor + '층 · <b>' + toEok(String(r.ownStats.recent.price)) + '</b>' + (r.ownStats.recent.similarFloor ? '' : ' (다른 층)') + '</span>' : '') + (r.saleFloorAdj ? ' · <span style="color:#7c3aed;" title="' + bbEsc(r.saleFloorAdj.label) + ' - ' + (r.saleFloorAdj.ownRatio != null ? '이 단지 5년 거래에서 이 층대 ㎡당 가격이 같은 시기 다른 층의 ' + Math.round(r.saleFloorAdj.ownRatio * 100) + '%(' + r.saleFloorAdj.n + '건) - 단지 유형 기본값 ' + Math.round(r.saleFloorAdj.base * 100) + '%와 거래 수만큼 섞어 ' + Math.round(r.saleFloorAdj.factor * 1000) / 10 + '%' : (r.saleFloorAdj.base != null ? '이 단지 저층 거래가 없어 단지 유형(승강기·층수) 기본값 ' + Math.round(r.saleFloorAdj.factor * 1000) / 10 + '%' : '평균의 ' + Math.round(r.saleFloorAdj.factor * 100) + '%')) + '">' + bbEsc(r.saleFloorAdj.label.replace(/\(.*\)/, '')) + ' ' + Math.round(Math.abs(1 - r.saleFloorAdj.factor) * 1000) / 10 + '% ' + (r.saleFloorAdj.factor < 1 ? '낮춤' : '높임') + '</span>' : '') + (r.saleSimBy ? ' · <span style="color:#1e5eff;" title="' + bbEsc(r.saleSimBy) + ' (주변 단지 포함 계산값 ' + toEok(String(r.saleBase)) + ')">' + (/3개월/.test(r.saleSimBy) ? '최근 3개월 ' : '최근 6개월 ') + r.saleSimN + '건 기준</span>' : '') + (r.saleCapBy ? ' · <span style="color:#00695c;" title="주변 단지 거래로 계산한 값(' + toEok(String(r.saleBase)) + ')이 이 기준보다 높아서 낮춤">' + '단지 실거래' + ' 기준으로 맞춤</span>' : '') + (r.listingCap && r.listingCap.cap && r.listingCap.cap < r.saleTrade ? ' · <span style="color:#7c3aed;" title="' + bbEsc(r.listingCap.desc) + ' (실거래 기반 ' + toEok(String(r.saleTrade)) + ')">매물 기준으로 낮춤</span>' : '') + (r.saleBlendBy ? ' · <span style="color:#00695c;" title="' + bbEsc(r.saleBlendBy) + ' (주변 단지만으로 계산한 값 ' + toEok(String(r.saleBase)) + ' - 이 단지 거래가 적을 때 과거 이렇게 섞는 게 더 정확했음)">주변+단지 실거래 섞음</span>' : '') + '</div>' : '<span class="bb-sub">-</span>');
-    var recCell = r.recBid ? '<b>' + toEok(String(r.recBid)) + '</b>' + (r.recAggr ? '<div class="bb-sub" style="color:#7c3aed;" title="2등과 아깝게 지는 경우까지만 잡는 가격(추천가 +3% 한도, 마진 1,000만 이상 유지). 과거 기회·버팀 물건에서 실제 낙찰이 약 2배(22→42건)">적극 ' + toEok(String(r.recAggr)) + '</div>' : '') + (r.safetyExtra ? '<div class="bb-sub" style="color:#e65100;">손해 주의 여유: ' + toEok(String(r.safetyExtra)) + ' 더 낮춤 (원래 ' + toEok(String(r.recBidRaw)) + ')</div>' : '') + (r.resaleVat ? '<div class="bb-sub" style="color:#c2410c;">부가세 ' + toEok(String(r.resaleVat)) + (r.vatEstimated ? '(추정)' : '') + ' 반영</div>' : '') + '<div class="bb-sub">마진 ' + toEok(String(r.margin)) + (r.marginUser ? '(내가 정함)' : '(추천' + (r.popEff && r.popEff.tier === '하위40%' ? ', 거래 드묾 +2%' : '') + ')') + '</div>' : '<span class="bb-sub">-</span>';
+    var recCell = r.recBid ? '<b>' + toEok(String(r.recBid)) + '</b>' + (r.recAggr ? '<div class="bb-sub" style="color:#7c3aed;" title="2등과 아깝게 지는 경우까지만 잡는 가격(추천가 +3% 한도, 마진 1,000만 이상 유지). 과거 기회·버팀 물건에서 실제 낙찰이 약 2배(22→42건)">적극 ' + toEok(String(r.recAggr)) + '</div>' : '') + (r.safetyExtra ? '<div class="bb-sub" style="color:#e65100;">손해 주의 여유: ' + toEok(String(r.safetyExtra)) + ' 더 낮춤 (원래 ' + toEok(String(r.recBidRaw)) + ')</div>' : '') + (r.resaleVat ? '<div class="bb-sub" style="color:#c2410c;">부가세 ' + toEok(String(r.resaleVat)) + (r.vatEstimated ? '(추정)' : '') + ' 반영</div>' : '') + '<div class="bb-sub">마진 ' + toEok(String(r.margin)) + (r.marginUser ? '(내가 정함)' : '(추천' + (r.popEff && r.popEff.tier === '하위40%' ? ', 거래 드묾 +2%' : '') + ')') + '</div>' + winbidLineHtml(r.winbid, true) : '<span class="bb-sub">-</span>';
     var roomCell = r.roomPct == null ? '<span class="bb-sub">-</span>'
         : '<b style="color:' + (r.roomPct >= 0 ? '#2e7d32' : '#c62828') + ';">' + (r.roomPct >= 0 ? r.roomPct + '% 여유' : Math.abs(r.roomPct) + '% 부족') + '</b>'
           + '<div class="bb-sub">' + (r.roomPct >= 0 ? '최저가보다 ' + toEok(String(r.recBid - r.minBid)) + ' 더 써도 됨' : '한 번 더 떨어지면 다시 보기') + '</div>';
@@ -16858,6 +16962,17 @@ async function renderBidDrawer() {
         + (row.sweet ? ' <span class="bb-pill" style="background:#e8f5e9;color:#2e7d32;">👍 입찰 추천 구간</span>' : '') + (row.overshoot ? ' <span class="bb-pill" style="background:#fff3e0;color:#e65100;">⚠️ 손해 주의</span>' : '') + (row.bulk ? ' <span class="bb-pill" style="background:#fee2e2;color:#b91c1c;">🏢 대량 경매 ' + row.bulkN + '건</span>' : '')
         + (row.niche ? ' <span class="bb-pill" style="background:#e0f2f1;color:#00695c;">🧭 틈새</span>' : '') + (row.sturdy ? ' <span class="bb-pill" style="background:#ecfeff;color:#0e7490;">🛡️ 버팀 ' + Math.round(row.ownStats.jeonse.ratio * 100) + '%</span>' : '') + (row.hardHold ? ' <span class="bb-pill" style="background:#fffbeb;color:#92400e;">⏳ 버티기 어려움 ' + Math.round(row.ownStats.jeonse.ratio * 100) + '%</span>' : '') + (row.opportunity ? ' <span class="bb-pill" style="background:#fff8e1;color:#e65100;">🎯 기회</span>' : '') + '</div>'
         + '<div class="dr-big"><div><span>예상매도가</span><b>' + fmt(row.sale) + '</b></div><div><span>추천 입찰가</span><b style="color:#16a34a;">' + fmt(row.recBid) + '</b>' + (row.recAggr ? '<span style="color:#7c3aed;margin-top:2px;">적극 ' + fmt(row.recAggr) + '</span>' : '') + '</div><div><span>최저가</span><b>' + fmt(row.minBid) + '</b></div></div>';
+    // 🎲 예상 낙찰가(2026-10) - 추천 입찰가(마진 확보 상한)와 나란히: 상한이 예상 낙찰가보다 높으면 낙찰 가능성도 있고 마진도 남음
+    if (row.winbid) {
+        var wbp = winbidLineHtml(row.winbid, false), wbg = row.winbid.gapPct;
+        var wcol = wbp == null ? '#6b7280' : (wbp >= 60 ? '#15803d' : (wbp >= 35 ? '#b45309' : '#b91c1c'));
+        h += '<div class="dr-wb"><div class="dr-wb-h">🎲 예상 낙찰가 <b>' + fmt(row.winbid.price) + '</b><span class="dr-sub" style="margin:0 0 0 6px;">비슷한 물건이 보통 낙찰되는 가격</span></div>'
+            + (wbp != null ? '<div>추천 입찰가로 쓰면 <b style="color:' + wcol + ';">낙찰 가능성 약 ' + wbp + '%</b> · 예상 낙찰가보다 ' + (wbg >= 0 ? '<b>+' + wbg + '%</b> 높음' : '<b>' + wbg + '%</b> 낮음')
+                + (row.winbid.probAggr != null ? ' · 적극 입찰가면 약 ' + Math.round(row.winbid.probAggr * 100) + '%' : '') + '</div>' : '')
+            + (wbp != null && wbp < 35 ? '<div style="color:#b91c1c;">마진을 지키는 상한이 보통 낙찰 가격보다 낮아요 - 써도 질 가능성이 커요(무리해서 올리면 마진이 줄어요)</div>' : '')
+            + '<div class="dr-sub">낙찰사례 2만여 건 기준(학습에 안 쓴 최근 1년 검증 보통 오차 ' + ((winbidModel.oos && winbidModel.oos.medAbsErrPct) || '5~6') + '%) · 최저가는 이 예측에만 쓰고 예상매도가엔 안 써요'
+            + ' · 시세(같은 단지·평형 ' + row.winbid.own + '건 40% 지점) ' + fmt(row.winbid.est) + '</div></div>';
+    }
     // 근거
     var basis = row.saleSaved ? '내가 저장한 값' : (row.salePresale ? '분양권·입주권 거래' : (row.saleSimBy || row.saleCapBy || row.saleBlendBy || ('이 단지 같은 평형 ' + (row.own || 0) + '건 + 주변 비슷한 단지')));
     if (row.listingCap && row.listingCap.cap && row.listingCap.cap < row.saleTrade) basis = '매물 상한(' + row.listingCap.desc + ') - 실거래 기반 ' + toEok(String(row.saleTrade)) + ' · ' + basis;

@@ -422,6 +422,10 @@ def main():
     print(json.dumps(summary, ensure_ascii=False, indent=1))
     try:
         competition_stats(R, now)
+        try:
+            winbid_model(R, now)
+        except Exception as e:
+            print('  예상 낙찰가 모델 실패(건너뜀):', e)
     except Exception as e:
         print("  지역 경쟁 강도 계산 실패(건너뜀):", e)
     write_back_resale_matches(cases, out)
@@ -672,6 +676,71 @@ def competition_stats(R, now):
         out["bySeason"][se] = stat(G)
     print(f"  지역 경쟁 강도: 시군구 {len(out['byRegion'])}곳, 기준 {out['base']}")
     cyc.upsert_rows([{"id": "signal|__competition__", "payload": cyc.clean_json(out), "fetched_at": now}])
+
+
+# ════ 🎲 예상 낙찰가 모델 (2026-10, 사용자: "실제로 낙찰받을 수 있는 가격을 알고 싶다" → 검증 후 "넣어줘")
+# 낙찰가 ÷ 입찰 30일 전 시세(같은 단지·평형 실거래 40% 지점)를 덧셈형 표로 예측: 최저가÷시세 구간(0.05 단위)·유찰 횟수·지역·인기 등급·계절·층·평형대·시세 근거 거래 수.
+# 검증(2025-07 이후 6,781건, 학습엔 안 씀): 보통 오차 5.6%(지역 평균만 쓸 때 7.5%). 이길 확률은 "최근 1년을 빼고 만든 모델의 최근 1년 오차 분포"로 계산(시장 변화 반영).
+# 앱(입찰후보·상세 창)이 같은 방식으로 시세를 구해 이 표로 예상 낙찰가와 "이 가격이면 낙찰 가능성"을 보여줌. 최저가는 낙찰가 예측에만 쓰고 예상매도가엔 안 씀.
+WB_FACTORS = [("lb", 5), ("fails", 30), ("region", 30), ("tier", 50), ("season", 50), ("floor", 50), ("size", 50), ("own", 50)]
+
+
+def wb_features(D):
+    X = pd.DataFrame(index=D.index)
+    lmin = np.log(D["minbid"] / D["est"])
+    X["lb"] = np.clip(np.floor(lmin / 0.05), -24, 9).fillna(-99).astype(int).astype(str)
+    X["fails"] = D["fails"].map(lambda v: "?" if v is None or (isinstance(v, float) and np.isnan(v)) else str(min(int(v), 3)))
+    X["region"] = D["region"].fillna("?")
+    X["tier"] = D["tier"].fillna("없음")
+    m = (D["sale"] // 100) % 100
+    X["season"] = m.map(lambda v: "겨울" if v in (12, 1, 2) else ("봄" if v <= 5 else ("여름" if v <= 8 else "가을")))
+    X["floor"] = D["floor"].map(lambda f: "1층" if f == 1 else ("2~3층" if f in (2, 3) else "4층+"))
+    X["size"] = D["area"].map(lambda a: "소형" if a < 60 else ("중형" if a <= 85 else "대형"))
+    X["own"] = D["own"].map(lambda n: "1~2" if n <= 2 else ("3~5" if n <= 5 else ("6~10" if n <= 10 else "11+")))
+    return X
+
+
+def wb_fit(D, iters=6):
+    X = wb_features(D)
+    y = np.log(D["actual"] / D["est"]).values
+    base = float(np.median(y))
+    eff = {f: {} for f, _ in WB_FACTORS}
+    pred = np.full(len(y), base)
+    for _ in range(iters):
+        for f, k in WB_FACTORS:
+            cur = X[f].map(eff[f]).fillna(0).values
+            r = y - (pred - cur)
+            g = pd.DataFrame({"k": X[f].values, "r": r}).groupby("k")["r"].agg(["median", "count"])
+            new = (g["median"] * g["count"] / (g["count"] + k)).to_dict()
+            eff[f] = new
+            pred = pred - cur + X[f].map(new).fillna(0).values
+    return {"base": base, "eff": {f: {str(k): round(float(v), 4) for k, v in d.items()} for f, d in eff.items()}, "n": int(len(y))}
+
+
+def wb_predict(model, D):
+    X = wb_features(D)
+    p = np.full(len(D), model["base"])
+    for f, _ in WB_FACTORS:
+        p = p + X[f].map(model["eff"][f]).fillna(0).values
+    return p
+
+
+def winbid_model(R, now):
+    D = R[R["est"].notna() & (R["est"] > 0) & R["actual"].notna() & R["minbid"].notna() & (R["minbid"] > 0) & (R["sale"] >= 20200101)].copy()
+    D = D[np.log(D["actual"] / D["est"]).between(np.log(0.4), np.log(1.6))]
+    if len(D) < 3000:
+        print("  예상 낙찰가 모델: 사례 부족, 건너뜀"); return
+    last = pd.to_datetime(str(int(D["sale"].max())), format="%Y%m%d")
+    cut = int((last - pd.DateOffset(months=12)).strftime("%Y%m%d"))
+    tr, te = D[D["sale"] < cut], D[D["sale"] >= cut]
+    p = wb_predict(wb_fit(tr), te)
+    res = np.log(te["actual"] / te["est"]).values - p
+    full = wb_fit(D)
+    full["resQ"] = [round(float(np.quantile(res, q / 100)), 4) for q in range(1, 100)]
+    full["oos"] = {"from": cut, "n": int(len(te)), "medAbsErrPct": round(float(np.median(np.abs(np.exp(p) * te["est"] / te["actual"] - 1))) * 100, 1)}
+    full["generatedAt"] = now; full["dataTo"] = int(D["sale"].max())
+    print(f"  예상 낙찰가 모델: 사례 {len(D):,}건, 최근 1년 검증 {full['oos']}")
+    cyc.upsert_rows([{"id": "signal|__winbid__", "payload": cyc.clean_json(full), "fetched_at": now}])
 
 
 if __name__ == "__main__":
