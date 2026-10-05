@@ -1,0 +1,19 @@
+name: 진단 - 실거래 단지 좌표 매칭 점검
+
+on:
+  workflow_dispatch:
+
+jobs:
+  diag:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - run: npm install @supabase/supabase-js ws
+      - run: node scripts/diag-coords.mjs
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
