@@ -1169,6 +1169,43 @@ body.ui2 #my-assets-panel { position:fixed; top:104px; right:64px; left:auto; bo
     .pn-seg button { padding:6px 11px; }
 }
 </style>
+<style>
+/* ════ 2026-10 메뉴 한 줄 + 아이패드 입찰후보 압축(사용자: "아이패드 미니에서 한 페이지에 경매물건이 2개만 보인다") ════ */
+#tb-menu > a.tb-link { color:#fff; font-size:13px; font-weight:bold; padding:8px 10px; border-radius:6px; text-decoration:none; white-space:nowrap; }
+#tb-menu > a.tb-link:hover { background:rgba(255,255,255,.16); }
+#tb-menu { min-width:0; overflow-x:auto; scrollbar-width:none; }
+#tb-menu::-webkit-scrollbar { display:none; }
+@media (max-width: 1240px) {
+    #tb-search-slot { flex:0 1 240px; }
+    #tb-menu > button, #tb-menu > a.tb-link { padding:8px 7px; font-size:12.5px; }
+}
+@media (min-width: 641px) and (max-width: 900px) {
+    #tb-search-slot { flex:0 0 150px; }
+    #topbar { gap:6px; padding:0 8px; }
+    #tb-menu > button, #tb-menu > a.tb-link { padding:8px 5px; font-size:12px; }
+}
+@media (max-width: 640px) { #tb-menu > a.tb-link { display:block; padding:10px; font-size:14px; } }
+/* 입찰후보 압축 보기(1240px 이하 = 아이패드 가로·세로): 줄마다 보조 설명을 줄이고, 자세한 건 줄을 눌러 옆 창에서 */
+@media (max-width: 1240px) {
+    #bid-board .bb-table td[data-l="판정"] > div { display:inline-block; margin:2px 3px 0 0 !important; }
+    #bid-board .bb-table td[data-l="판정"] .bb-pill { font-size:10.5px; }
+    #bid-board .bb-notes { display:none; }
+    #bid-board .bb-table td[data-l="거래량 순위"] .bb-sub, #bid-board .bb-table td[data-l="거래량 순위"] .bb-pill { display:none; }
+    #bid-board .bb-table td[data-l="거래량 순위"] > div { font-size:11.5px !important; }
+    #bid-board .bb-table td.r .bb-sub { display:none; }
+    #bid-board .bb-name .bb-sub { white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:240px; }
+    #bid-board .bb-table td { padding-top:6px; padding-bottom:6px; }
+}
+@media (max-width: 900px) {
+    /* 세로: 카드 = 이름 한 줄 + 숫자 칸 두 줄(판정·입찰일·거래량·최저가 / 예상매도가·추천 입찰가·최저가 대비) */
+    #bid-board .bb-table tr { grid-template-columns:repeat(4, 1fr); gap:2px 10px; padding:8px 12px; margin-bottom:6px; }
+    #bid-board .bb-table td[data-l="거래량 순위"], #bid-board .bb-table td[data-l="예상매도가"] { grid-column:auto; }
+    #bid-board .bb-table td[data-l="지역 위험"], #bid-board .bb-table td[data-l="대장 따라잡기"], #bid-board .bb-act { display:none; }
+    #bid-board .bb-table td { padding:1px 0; }
+    #bid-board .bb-name .bb-sub { max-width:none; }
+    #bid-board .bb-table td[data-l]:not(.bb-name)::before { font-size:9.5px; }
+}
+</style>
 </head>
 <body>
 <div id="topbar">
@@ -1176,26 +1213,16 @@ body.ui2 #my-assets-panel { position:fixed; top:104px; right:64px; left:auto; bo
     <div id="tb-search-slot"></div>
     <nav id="tb-menu">
         <!-- 2026-10 UI 개편(사용자: "지금 쓰는 기능 위주로, 최소한의 동작으로 결과를") - 자주 쓰는 4개만 위에, 나머지는 더보기 -->
-        <button onclick="openBidBoard(); closeTbMenus();" style="font-weight:bold;">🎯 입찰후보</button>
-        <button onclick="document.getElementById('bb-csv-input').click(); closeTbMenus();">📄 물건 등록(CSV)</button>
+        <!-- 2026-10 사용자 메뉴 개편: "더보기"를 없애고 남길 메뉴만 첫 줄에. 물건 등록(CSV)은 📝 경매물건 등록 안으로,
+             🗺️ 지도는 입찰후보 버튼이 토글(입찰후보 화면이 열리면 같은 자리가 🗺️ 지도로 바뀜). 앱을 열면 입찰후보부터는 입찰후보 화면 머리글로 옮김 -->
+        <button id="tb-board-btn" onclick="toggleBoardFromTop(); closeTbMenus();" style="font-weight:bold;">🎯 입찰후보</button>
         <button onclick="openMyAssetsPanel(); closeTbMenus();">💼 내 자산</button>
-        <button onclick="closeBidBoard(); closeTbMenus();">🗺️ 지도</button>
+        <button onclick="openBidTargetPanel(); closeTbMenus();">📝 경매물건 등록</button>
+        <button onclick="openBidCasePanel(); closeTbMenus();">⚖️ 낙찰사례</button>
+        <button onclick="openMoneyRegionPanel(); closeTbMenus();">💰 돈되는 지역</button>
+        <button onclick="openCyclePanel(); closeTbMenus();">📈 사이클</button>
         <button onclick="openGuide(); closeTbMenus();">📘 사용법</button>
-        <div id="tb-more">
-            <button onclick="toggleTbMore(event)">더보기 ▾</button>
-            <div id="tb-more-menu">
-                <button onclick="openSurgePanel(); closeTbMenus();">🔥 급등·돈되는지역</button>
-                <button onclick="openCyclePanel(); closeTbMenus();">📈 사이클</button>
-                <button onclick="openBidCasePanel(); closeTbMenus();">⚖️ 낙찰사례(올리기·통계)</button>
-                <button onclick="openBidTargetPanel(); closeTbMenus();">📋 입찰희망(붙여넣기 등록)</button>
-                <button onclick="openAuctionList(); closeTbMenus();">🔨 경매관리(빌라·직접 등록)</button>
-                <label style="display:block;padding:8px 14px;font-size:12.5px;cursor:pointer;"><input type="checkbox" id="pref-home-board" style="margin-right:6px;" onchange="setHomeBoardPref(this.checked)">앱을 열면 입찰후보부터</label>
-                <a href="/backup.html">📦 데이터 백업</a>
-                <a href="#" onclick="closeTbMenus();openMyAssetsPanel();return false;">💼 내 자산 · 투자 리포트</a>
-                <button onclick="openBacktestPanel(); closeTbMenus();">📐 낙찰가 백테스트 일괄등록</button>
-                <button onclick="reloadBadges(); closeTbMenus();">🔄 배지 재로딩</button>
-            </div>
-        </div>
+        <a class="tb-link" href="/backup.html">📦 백업</a>
     </nav>
     <button id="tb-hamburger" onclick="toggleTbMenuMobile()" aria-label="메뉴">☰</button>
 </div>
@@ -1334,8 +1361,8 @@ body.ui2 #my-assets-panel { position:fixed; top:104px; right:64px; left:auto; bo
 <div id="autocomplete"></div>
 <div id="surge-panel">
     <div class="surge-panel-header">
-        <span class="surge-tab-btn active" id="surge-tab-hot" onclick="switchSurgeTab('hot')">🔥 급등지역</span>
-        <span class="surge-tab-btn" id="surge-tab-money" onclick="switchSurgeTab('money')">💰 돈되는 지역</span>
+        <span class="surge-tab-btn" id="surge-tab-hot" style="display:none;" onclick="switchSurgeTab('hot')">🔥 급등지역</span>
+        <span class="surge-tab-btn active" id="surge-tab-money" onclick="switchSurgeTab('money')">💰 돈되는 지역</span>
         <span class="surge-tab-btn" id="surge-tab-newhigh" onclick="switchSurgeTab('newhigh')">⭐ 신고가 지역</span>
         <span class="surge-tab-btn" id="surge-tab-leader" onclick="switchSurgeTab('leader')">🏆 후발주자</span>
         <span onclick="closeSurgePanel()" style="float:right;cursor:pointer;">✕</span>
@@ -1526,7 +1553,7 @@ body.ui2 #my-assets-panel { position:fixed; top:104px; right:64px; left:auto; bo
             <input type="file" id="bb-csv-input" multiple accept=".csv,text/csv" style="display:none;" onchange="onBoardCsvFile(this)">
             <span class="bb-help" onclick="var g=document.getElementById('bb-guide-box');g.style.display=g.style.display==='none'?'':'none'">ⓘ 보는 법</span>
             <span class="bb-help" onclick="openGuide()">📘 사용법</span>
-            <button class="bb-x" onclick="closeBidBoard()">🗺️ 지도로</button>
+            <label class="bb-help" style="margin-left:auto;cursor:pointer;"><input type="checkbox" id="pref-home-board" style="margin:0 4px 0 0;vertical-align:middle;" onchange="setHomeBoardPref(this.checked)">앱을 열면 입찰후보부터</label>
         </div>
         <div id="bb-csv-bar" style="display:none;"></div>
         <div id="bb-chips"></div>
@@ -1595,7 +1622,7 @@ body.ui2 #my-assets-panel { position:fixed; top:104px; right:64px; left:auto; bo
 </div>
 <div id="bid-target-panel">
     <div class="auction-list-header">
-        📋 입찰예정물건 일괄등록
+        📝 경매물건 등록
         <span onclick="closeBidTargetPanel()" style="float:right;cursor:pointer;">✕</span>
     </div>
     <div style="padding:10px 14px;border-bottom:1px solid #eee;">
@@ -1609,7 +1636,7 @@ body.ui2 #my-assets-panel { position:fixed; top:104px; right:64px; left:auto; bo
             placeholder="검색결과 목록 화면을 통째로 복사해서 여기 붙여넣으세요"
             style="resize:vertical;width:100%;"></textarea>
         <div style="margin-top:6px;text-align:right;">
-            <label class="modal-btn btn-gray" style="cursor:pointer;margin-right:4px;" title="탱크옥션 검색결과 → 엑셀(CSV) 내려받기 파일. 여러 개를 한 번에 골라도 돼요">📄 탱크옥션 CSV 올리기<input type="file" multiple accept=".csv,text/csv" style="display:none;" onchange="onTankCsvFile(this,'bt')"></label>
+            <button class="modal-btn btn-purple" style="margin-right:4px;" title="탱크옥션 검색결과 → 엑셀(CSV) 내려받기 파일. 여러 개를 한 번에 골라도 돼요 - 올리면 입찰후보에서 바로 판정" onclick="closeBidTargetPanel();document.getElementById('bb-csv-input').click()">📄 CSV 파일 올리기</button>
             <button class="modal-btn btn-purple" id="bt-extract-btn" onclick="extractBidTargetList()">목록 일괄 추출</button>
         </div>
         <div id="bt-extract-status" style="font-size:11px;color:#999;margin-top:4px;"></div>
@@ -16319,8 +16346,9 @@ function openBidBoard(opts) {
     (opts.highlightIds || []).forEach(function(id) { bidBoardState.highlight[id] = true; });
     (opts.updatedIds || []).forEach(function(id) { bidBoardState.updated[id] = true; });
     refreshBidBoard();
+    syncBoardBtn();
 }
-function closeBidBoard() { document.getElementById('bid-board').style.display = 'none'; }
+function closeBidBoard() { document.getElementById('bid-board').style.display = 'none'; syncBoardBtn(); }
 async function refreshBidBoard() {
     if (bidBoardRunning) return;
     bidBoardRunning = true;
@@ -16501,7 +16529,7 @@ function renderBidBoard() {
     if (fn) {
         fn.style.display = assumed ? '' : 'none';
         fn.innerHTML = '⏳ 입찰일이 지났는데 결과를 아직 안 넣은 <b>' + assumed + '건</b>은 <b>유찰됐다고 가정</b>하고, 그 법원의 저감 규칙으로 낮춘 다음 최저가로 판정했어요(추정). '
-            + '법원 검색 목록을 <b>📋 입찰희망</b>에 다시 붙여넣으면 실제 결과(유찰·매각·취하, 새 최저가·입찰일)로 바뀌어요.';
+            + '<b>📝 경매물건 등록</b>에서 CSV를 다시 올리거나 목록을 붙여넣으면 실제 결과(유찰·매각·취하, 새 최저가·입찰일)로 바뀌어요.';
     }
     var popRankOf = function(r) {
         if (!r.pop) return 9999;
@@ -17153,7 +17181,7 @@ function bidBoardGo(id) {
         b = document.createElement('button'); b.id = 'bb-return-btn';
         b.style.cssText = 'position:fixed;left:50%;bottom:24px;transform:translateX(-50%);z-index:60;border:none;background:#111827;color:#fff;border-radius:22px;padding:10px 18px;font-size:13px;font-weight:700;box-shadow:0 4px 14px rgba(0,0,0,0.25);cursor:pointer;';
         b.innerText = '◀ 입찰후보로 돌아가기';
-        b.onclick = function() { b.style.display = 'none'; document.getElementById('bid-board').style.display = 'flex'; if (bidDrawerId) renderBidDrawer(); };
+        b.onclick = function() { b.style.display = 'none'; document.getElementById('bid-board').style.display = 'flex'; syncBoardBtn(); if (bidDrawerId) renderBidDrawer(); };
         document.body.appendChild(b);
     }
     b.style.display = '';
@@ -21577,7 +21605,7 @@ function resetPyeongTierFilter() {
    교체함 - 그래서 지금은 🔥N위 배지를 보고 필터로 좁혀볼 수는 없고, 참고용 배지로만 남음.
 ════════════════════════════════════ */
 var RANK_SIDO_LIST = ['서울','부산','대구','인천','광주','대전','울산','세종','경기','강원','충북','충남','전북','전남','경북','경남','제주'];
-var surgePanelTab = 'hot';
+var surgePanelTab = 'money'; // 2026-10: 급등지역 탭 삭제(사용자) → 돈되는 지역이 기본
 // ⚠️ 2026-08(사용자 요청: "돈되는 지역/급등지역 서치를 규제지역/비규제지역으로 나눠서 보고
 // 싶다") - 서버(getTopDongs/getPriceMomentum)는 이미 20→50개로 넉넉히 받아오고
 // (limit 상향은 SQL 연산량과 무관 - 어차피 전체를 계산한 뒤 마지막에 slice만 하는
@@ -22562,7 +22590,7 @@ function relocateUiV2() {
     syncProxyChips();
     document.addEventListener('click', function(e) {
         var more = document.getElementById('tb-more');
-        if (more && !more.contains(e.target)) document.getElementById('tb-more-menu').classList.remove('open');
+        if (more && !more.contains(e.target) && document.getElementById('tb-more-menu')) document.getElementById('tb-more-menu').classList.remove('open');
     });
 }
 function syncProxyChips() {
@@ -22574,9 +22602,25 @@ function syncProxyChips() {
         });
     }, 50);
 }
-function toggleTbMore(e) { if (e) e.stopPropagation(); document.getElementById('tb-more-menu').classList.toggle('open'); }
+function toggleTbMore(e) { if (e) e.stopPropagation(); var m = document.getElementById('tb-more-menu'); if (m) m.classList.toggle('open'); }
 function toggleTbMenuMobile() { document.getElementById('tb-menu').classList.toggle('open'); }
-function closeTbMenus() { document.getElementById('tb-more-menu').classList.remove('open'); document.getElementById('tb-menu').classList.remove('open'); }
+function closeTbMenus() { var m = document.getElementById('tb-more-menu'); if (m) m.classList.remove('open'); document.getElementById('tb-menu').classList.remove('open'); }
+// 입찰후보 ↔ 지도 토글(상단 첫 버튼) - 입찰후보 화면이 떠 있으면 "🗺️ 지도", 아니면 "🎯 입찰후보"
+function syncBoardBtn() {
+    var b = document.getElementById('tb-board-btn'), bb = document.getElementById('bid-board');
+    if (b && bb) b.innerHTML = bb.style.display === 'flex' ? '🗺️ 지도' : '🎯 입찰후보';
+}
+function toggleBoardFromTop() {
+    var bb = document.getElementById('bid-board');
+    if (bb && bb.style.display === 'flex') closeBidBoard(); else openBidBoard();
+}
+// 💰 돈되는 지역(급등지역 탭은 사용자 요청으로 뺌) - 패널을 열고 돈되는 지역 탭으로
+function openMoneyRegionPanel() {
+    var p = document.getElementById('surge-panel');
+    if (p && p.style.display === 'block' && surgePanelTab === 'money') { p.style.display = 'none'; return; }
+    if (!p || p.style.display !== 'block') openSurgePanel();
+    if (surgePanelTab !== 'money') switchSurgeTab('money');
+}
 function openFilterPanelTab(tab) {
     var panel = document.getElementById('filter-panel');
     var isOpen = panel && getComputedStyle(panel).display !== 'none';
