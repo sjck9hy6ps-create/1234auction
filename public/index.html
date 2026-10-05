@@ -1261,7 +1261,7 @@ body.ui2 #auction-modal.am4 { width:620px; }
 #remind-panel .rm-x { cursor:pointer; color:#6b7280; font-weight:400; }
 #remind-panel .rm-item { border-top:1px solid #f1f3f5; padding:9px 0; }
 #remind-panel .rm-t { font-weight:700; }
-#remind-panel .rm-s { color:#4b5563; font-size:11.5px; margin-top:2px; line-height:1.5; }
+#remind-panel .rm-s { color:#4b5563; font-size:11.5px; margin-top:2px; line-height:1.5; white-space:pre-line; }
 #remind-panel .rm-b { margin-top:6px; display:flex; gap:6px; }
 #remind-panel .rm-b button { border:1px solid #d6dbe1; background:#fff; border-radius:14px; padding:5px 11px; font-size:12px; cursor:pointer; }
 #remind-panel .rm-b .rm-go { background:var(--ui-blue,#1e5eff); border-color:var(--ui-blue,#1e5eff); color:#fff; font-weight:700; }
@@ -23462,10 +23462,15 @@ function computeReminders() {
         var soon = real.filter(function(a) { var d = calcAuctionDday(a.bidDate); return d && d.diffDays >= 0 && d.diffDays <= 3; }).length;
         var past = real.filter(function(a) { var d = calcAuctionDday(a.bidDate); return d && d.diffDays < 0 && d.diffDays >= -BID_RESULT_WAIT_DAYS; }).length;
         var since = lastCsvAt() ? Math.floor((now - lastCsvAt()) / day) : null;
+        // 2026-10(사용자: "자료 업로드가 필요하면 언제부터의 자료가 필요한지도"): 결과 없는 지난 입찰 중 가장 이른 날 ~ 4주 뒤
+        var ymd = function(t) { var d = new Date(t); return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0'); };
+        var pastDates = real.filter(function(a) { var d = calcAuctionDday(a.bidDate); return d && d.diffDays < 0 && d.diffDays >= -BID_RESULT_WAIT_DAYS; }).map(function(a) { return a.bidDate; }).sort();
+        var csvFrom = pastDates.length ? pastDates[0] : ymd(now), csvTo = ymd(now + 28 * day);
         if ((soon || past) && (since == null || since >= 1)) {
             out.push({ key: 'csv', pri: 1, icon: '📄', title: '경매 CSV 다시 올리기',
                 sub: (soon ? '3일 안 입찰 ' + soon + '건' : '') + (soon && past ? ' · ' : '') + (past ? '입찰일 지났는데 결과 없는 물건 ' + past + '건(유찰 가정으로 계산 중)' : '')
-                    + ' - 올리면 최저가·유찰·매각 결과와 낙찰 가능성이 바로 다시 계산돼요' + (since != null ? ' (마지막 ' + since + '일 전)' : ''),
+                    + ' - 올리면 최저가·유찰·매각 결과와 낙찰 가능성이 바로 다시 계산돼요' + (since != null ? ' (마지막 ' + since + '일 전)' : '')
+                    + '\n📅 필요한 자료: 탱크옥션에서 입찰일 ' + csvFrom + ' ~ ' + csvTo + ' 범위(진행·매각·유찰 모두)로 검색해 CSV 받기',
                 btn: '📝 경매물건 등록', act: 'openBidTargetPanel()' });
         }
     } catch (e) {}
@@ -23478,9 +23483,18 @@ function computeReminders() {
             bidCaseList.forEach(function(c) { if (/아파트/.test(c.propertyType || '') && c.saleDate >= cut) { var k = competitionRegionKey(c.addrJibun); y1[k] = (y1[k] || 0) + 1; } });
             (bidBoardRows || []).forEach(function(r) { if (r.type === 'apt' && r.a) { var k = competitionRegionKey(r.a.addr); if (k) cand[k] = 1; } });
             var thin = Object.keys(cand).filter(function(k) { return (y1[k] || 0) < 30; }).sort(function(a, b) { return (y1[a] || 0) - (y1[b] || 0); });
+            // 시도별로 올린 낙찰사례의 마지막 매각일 → 그다음 날부터 어제까지가 필요한 자료
+            var lastBySido = {}, candSido = {};
+            bidCaseList.forEach(function(c) { if (!/아파트/.test(c.propertyType || '') || !c.saleDate) return; var k = competitionRegionKey(c.addrJibun); if (!k) return; var sd = k.split(' ')[0]; if (!lastBySido[sd] || c.saleDate > lastBySido[sd]) lastBySido[sd] = c.saleDate; });
+            Object.keys(cand).forEach(function(k) { candSido[k.split(' ')[0]] = 1; });
+            var nextDay = function(d) { var t = new Date(d + 'T00:00:00'); t.setDate(t.getDate() + 1); return (t.getMonth() + 1) + '/' + t.getDate(); };
+            var yst = new Date(now - day), ystS = (yst.getMonth() + 1) + '/' + yst.getDate();
+            var need = Object.keys(candSido).map(function(sd) { return sd + ' ' + (lastBySido[sd] ? nextDay(lastBySido[sd]) : '최근 1년') + '~' + ystS; });
             out.push({ key: 'bidcase', pri: 2, icon: '⚖️', title: '이번 주 낙찰사례 올리기',
                 sub: '금요일 새벽 주간 분석(예상 낙찰가·경쟁 강도)에 반영돼요' + (dsi != null ? ' (마지막 업로드 ' + dsi + '일 전)' : '')
-                    + (thin.length ? ' · 사례가 적은 입찰 지역 우선: ' + thin.slice(0, 6).map(function(k) { return k + '(' + (y1[k] || 0) + '건)'; }).join(', ') : ''),
+                    + (thin.length ? ' · 사례가 적은 입찰 지역 우선: ' + thin.slice(0, 6).map(function(k) { return k + '(' + (y1[k] || 0) + '건)'; }).join(', ') : '')
+                    + (need.length ? '\n📅 필요한 자료(매각일 기준, 아파트 낙찰 결과): ' + need.join(' · ') : '')
+                    + (thin.length ? ' · 사례 적은 지역은 최근 1년치' : ''),
                 btn: '⚖️ 낙찰사례', act: 'openBidCasePanel()' });
         }
     } catch (e) {}
