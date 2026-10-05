@@ -22911,6 +22911,14 @@ function myAssetSummary() {
             bizIncome += (parseInt(x.soldPrice) || 0) - (parseInt(x.acquiredPrice) || 0) - (parseInt(x.expenses) || 0);
         }
     });
+    // 2026-10 내 자산·투자 리포트 통합: 경매 기록에만 있는 올해 "매도완료" 거래(내 자산 항목과 같은 집이 아닌 것)도 올해 사업소득에 포함
+    try {
+        (auctionList || []).forEach(function(a) {
+            if (!a || a.status !== '매도완료' || String(a.sellDate || '').slice(0, 4) !== y) return;
+            if (myAssets.items.some(function(i) { return i.status === 'sold' && maSameHome(a, i); })) return;
+            bizIncome += maDealFromAuction(a).profit;
+        });
+    } catch (e) {}
     var p = myAssets.profile || {};
     var extra = parseInt(p.extraBizIncome) || 0, other = parseInt(p.otherIncome) || 0;
     return { count: cnt, officialSum: officialSum, bizIncome: bizIncome + extra, otherIncome: other, incomeBase: Math.max(0, bizIncome + extra + other), isDealer: p.isDealer !== false };
@@ -23120,7 +23128,7 @@ function renderMyAssets() {
     }).join('') + '</tbody></table>' : '<div class="ma-sub">매도 건이 생기면 나와요</div>';
     var right = '<div class="ma-sec"><div class="ma-h">올해(' + new Date().getFullYear() + ') 소득 · 세금 상태</div><div class="ma-in">'
         + '<label>매매사업자</label><label><input type="checkbox" style="width:auto;" ' + (p.isDealer !== false ? 'checked' : '') + ' onchange="maSetProfile(\'isDealer\', this.checked)"> 개인 부동산매매사업자</label>'
-        + '<label>매도 이익(자동)</label><div><b>' + (s.bizIncome - (parseInt(p.extraBizIncome) || 0)).toLocaleString() + '만</b> <span class="ma-sub">올해 매도한 재고자산</span></div>'
+        + '<label>매도 이익(자동)</label><div><b>' + (s.bizIncome - (parseInt(p.extraBizIncome) || 0)).toLocaleString() + '만</b> <span class="ma-sub">올해 매도한 재고자산·경매 매도완료</span></div>'
         + '<label>추가 사업소득</label><input type="number" value="' + maEsc(p.extraBizIncome || '') + '" placeholder="만원" onchange="maSetProfile(\'extraBizIncome\', this.value)">'
         + '<label>다른 종합소득</label><input type="number" value="' + maEsc(p.otherIncome || '') + '" placeholder="만원(근로·사업 등)" onchange="maSetProfile(\'otherIncome\', this.value)">'
         + '<label>취득 예정 자산</label><label><input type="checkbox" style="width:auto;" ' + (p.includePlanned !== false ? 'checked' : '') + ' onchange="maSetProfile(\'includePlanned\', this.checked)"> 주택 수에 미리 포함</label>'
