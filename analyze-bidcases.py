@@ -312,6 +312,11 @@ def main():
     R["err"] = (R["est"] - R["resale"]) / R["resale"]
     R["second_gap"] = (R["actual"] - R["second"]) / R["est"]
     R["loss"] = R["resale"] < R["actual"] * COST_RATIO + FIXED_COST
+    # 2026-10: 낙찰가 예측 검증용 - 사례별 표를 파일로 남김(Actions 아티팩트로 내려받아 분석)
+    try:
+        R.drop(columns=["notes"], errors="ignore").to_csv("bidcases-R.csv.gz", index=False, compression="gzip")
+    except Exception as e:
+        print("  사례표 저장 실패(건너뜀):", e)
     obs_cut = ymd_int(datetime.now() - timedelta(days=270))  # 낙찰 후 9개월 이상 지난 건만 재매도 비율 계산
 
     def med(s):
