@@ -69,7 +69,7 @@ const supabase = createClient(
 
 const API_KEY = process.env.PUBLIC_DATA_API_KEY;
 const BASE = 'https://apis.data.go.kr/1613000/BldRgstHubService';
-const FRESH_MS = 1000 * 60 * 60 * 24 * 180; // 180일
+const FRESH_MS = 1000 * 60 * 60 * 24 * 365; // 1년 - 2026-10(사용자: "건축물대장은 한 번 정확히 불러오면 변하지 않으니 자주 부를 필요 없음"). 공시가격만 해마다 바뀜
 
 // 2026-07 인천 서구→서해구/검단구 분구로 법정동코드가 바뀐 지역 중, 건축HUB가 아직
 // 새 코드를 인식하지 못해 구코드로 재시도해야 하는 것으로 "확인된" 매핑만 등록.

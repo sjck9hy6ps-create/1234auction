@@ -1,0 +1,30 @@
+name: 입찰물건 건축물대장 수집
+
+# 2026-10(사용자: "입찰후보 탭을 열지 않아도 건축물대장 정보를 수집해줘 - 한 번 정확히 불러오면 변하지 않으니 자주 부를 필요 없음")
+# 연식·세대수(단지 전체)·승강기 수가 빈 입찰물건만 한 번씩 채움. 이미 채워진 물건은 다시 부르지 않음.
+on:
+  workflow_dispatch:
+    inputs:
+      max_items:
+        description: '이번 실행에서 조회할 최대 물건 수'
+        required: false
+        default: '300'
+  schedule:
+    # 매일 UTC 16:30(KST 01:30) - 건축HUB 하루 한도가 자정에 풀린 직후, 앱 사용 전에 실행
+    - cron: '30 16 * * *'
+
+jobs:
+  collect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: 건축물대장 수집
+        env:
+          KAKAO_REST_API_KEY: ${{ secrets.KAKAO_REST_API_KEY }}
+          SITE_URL: https://1234auction.vercel.app
+          MAX_ITEMS: ${{ github.event.inputs.max_items || '300' }}
+        run: node scripts/collect-building-info.mjs

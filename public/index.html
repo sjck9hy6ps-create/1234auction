@@ -16870,7 +16870,7 @@ var householdFillRunning = false;
 async function fillHouseholdsInBackground() {
     if (householdFillRunning) return; householdFillRunning = true;
     try {
-        var todo = bidBoardRows.filter(function(r) { return r.type === 'apt' && r.a && r.a.bCode && (((!r.a.households || r.a.householdsVer !== 2) && !r.a.householdsTried2) || (!r.a.buildYear && !r.a.buildYearTried) || (r.a.elevatorCnt == null && !r.a.elevatorTried)); });
+        var todo = bidBoardRows.filter(function(r) { return r.type === 'apt' && r.a && r.a.bCode && (((!r.a.households || r.a.householdsVer !== 2) && !r.a.householdsTried2) || (!r.a.buildYear && !r.a.buildYearTried) || (r.a.elevatorCnt == null && !r.a.elevatorTried && !r.a.bldgTriedAt)); });
         for (var i = 0; i < todo.length; i++) {
             if (document.getElementById('bid-board').style.display !== 'flex') break;
             var a = todo[i].a;
