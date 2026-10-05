@@ -130,6 +130,12 @@ def main():
     lo = D1[D1["rel"] <= D1["regMed"]]
     out["withinRegion"] = {"평소보다 많을 때": stat(hi), "평소 이하": stat(lo)}
     D1["yr"] = D1["sale"] // 10000
+    # 2023은 되판 거래에 동 정보가 없던 시기(층만 일치 비율 높음)라 섞이면 착시 → 2024~25만 따로, 같은 지역 안 비교
+    E = D1[D1["yr"] >= 2024].copy()
+    E["regMed"] = E.groupby("region")["rel"].transform("median")
+    out["withinRegion2425"] = {"평소보다 많을 때": stat(E[E["rel"] > E["regMed"] * 1.5 + 0.05]), "평소 이하": stat(E[E["rel"] <= E["regMed"]])}
+    E["regMed6"] = E.groupby("region")["rel6"].transform("median")
+    out["withinRegion2425_6m"] = {"평소보다 많을 때": stat(E[E["rel6"] > E["regMed6"] * 1.5 + 0.05]), "평소 이하": stat(E[E["rel6"] <= E["regMed6"]])}
     out["byYear"] = {int(y): {lab: stat(G[(G["rel"] > lo_) & (G["rel"] <= hi_)]) if lo_ >= 0 else stat(G[G["rel"] <= hi_]) for lo_, hi_, lab in [(-1, 0.0001, "입주 없음"), (0.0001, 0.5, "50% 미만"), (0.5, 99, "50% 이상")]} for y, G in D1.groupby("yr")}
     print(json.dumps(out, ensure_ascii=False, indent=1))
     # 앱 표시용: 시군구별 월별 입주 물량(2026-01 이후)
