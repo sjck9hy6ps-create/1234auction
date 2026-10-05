@@ -352,7 +352,9 @@ export default async function handler(req, res) {
     if (body.peers) {
       // 같은 동 모든 호(검증·호별 차이 계산용): [층, 호, 전용면적, 공시가격(원)]
       let pr = await getApartPeers(pnu, digitsOnly(dong), VWORLD_API_KEY, VWORLD_DOMAIN);
-      if (!pr.rows.length && dong) pr = await getApartPeers(pnu, '', VWORLD_API_KEY, VWORLD_DOMAIN);
+      const legacyP = buildLegacyPnu(pnu); // 전남광주·전북·강원 코드 개편 - 공시가격 자료는 옛 코드로 남아 있음
+      if (!pr.rows.length && legacyP) pr = await getApartPeers(legacyP, digitsOnly(dong), VWORLD_API_KEY, VWORLD_DOMAIN);
+      if (!pr.rows.length && dong) pr = await getApartPeers(legacyP || pnu, '', VWORLD_API_KEY, VWORLD_DOMAIN);
       return res.status(200).json({ success: !!pr.rows.length, pnu, year: pr.year,
         units: pr.rows.map((r) => [r.dongNm || '', r.floorNm || '', r.hoNm || '', r.prvuseAr ? Number(r.prvuseAr) : null, r.pblntfPc ? Number(r.pblntfPc) : null]) });
     }
