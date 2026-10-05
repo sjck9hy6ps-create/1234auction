@@ -16735,15 +16735,17 @@ var bbDrawerPos = null;
         if (!drag) return;
         var d = document.getElementById('bb-drawer');
         var x = Math.min(Math.max(0, e.clientX - drag.dx), window.innerWidth - 60);
-        var y = Math.min(Math.max(52, e.clientY - drag.dy), window.innerHeight - 50);
+        var y = Math.min(Math.max(52, e.clientY - drag.dy), window.innerHeight - 220);
         d.style.left = x + 'px'; d.style.top = y + 'px'; d.style.right = 'auto';
+        // 아래로 내려도 창이 화면 밖으로 잘리지 않게 높이를 줄임(안에서 스크롤)
+        d.style.height = Math.min(window.innerHeight * 0.7, window.innerHeight - y - 10) + 'px';
         bbDrawerPos = { x: x, y: y };
     });
     var end = function() { drag = null; };
     document.addEventListener('pointerup', end); document.addEventListener('pointercancel', end);
     window.addEventListener('resize', function() {
         var d = document.getElementById('bb-drawer'); if (!d) return;
-        if (window.innerWidth > 900) { d.style.left = ''; d.style.top = ''; d.style.right = ''; }
+        if (window.innerWidth > 900) { d.style.left = ''; d.style.top = ''; d.style.right = ''; d.style.height = ''; }
         else if (bbDrawerPos) { d.style.left = Math.min(bbDrawerPos.x, window.innerWidth - 60) + 'px'; d.style.top = Math.min(bbDrawerPos.y, window.innerHeight - 50) + 'px'; d.style.right = 'auto'; }
     });
 })();
