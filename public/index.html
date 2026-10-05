@@ -23529,16 +23529,17 @@ function toggleRemindPanel() {
     p = document.createElement('div'); p.id = 'remind-panel'; document.body.appendChild(p);
     renderRemindUi();
 }
-// 하루 한 번(이 기기 기준) 앱을 열 때 할 일이 있으면 짧게 알림
-setTimeout(function() {
-    var list = renderRemindUi();
-    try { if (!list.length || localStorage.getItem('remindToastDay') === remindTodayStr()) return; localStorage.setItem('remindToastDay', remindTodayStr()); } catch (e) { return; }
-    var t = document.createElement('div'); t.id = 'remind-toast';
-    t.innerHTML = '🔔 오늘 할 일 <b>' + list.length + '개</b> - ' + bbEsc(list[0].title) + (list.length > 1 ? ' 외' : '') + ' <span>보기 ›</span>';
-    t.onclick = function() { t.remove(); toggleRemindPanel(); };
-    document.body.appendChild(t);
-    setTimeout(function() { if (t.parentNode) t.remove(); }, 9000);
-}, 9000);
+// 2026-10(사용자: "알람은 공지사항처럼 먼저 띄워줘 - 앱을 쓸 때 늘 먼저 확인할 수 있게"): 앱을 열 때마다 자료(경매·낙찰사례·내 자산)가
+// 다 불러와지면 할 일 창을 자동으로 띄움(할 일이 없으면 안 띄움). "오늘은 숨기기"·"완료"한 항목은 빠짐.
+(function() {
+    var t0 = Date.now();
+    (function wait() {
+        var ready = (auctionList && auctionList.length) && (typeof bidCaseList !== 'undefined' && bidCaseList && bidCaseList.length) && (myAssets && myAssets.loaded);
+        if (!ready && Date.now() - t0 < 25000) { setTimeout(wait, 700); return; }
+        var list = renderRemindUi();
+        if (list.length && !document.getElementById('remind-panel')) toggleRemindPanel();
+    })();
+})();
 setInterval(function() { try { renderRemindUi(); } catch (e) {} }, 10 * 60 * 1000);
 // CSV를 등록·반영하면 마지막 업로드 시각 기록(알림 ①)
 window.addEventListener('load', function() {
