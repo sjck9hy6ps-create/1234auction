@@ -6293,8 +6293,36 @@ function listIdbOp(mode, fn) {
     });
 }
 function listCacheKey(kind) { return 'list:' + (kind || 'auctions'); }
+// 2026-10: 낙찰사례가 2만 건을 넘어 한 번에 받으면 저장소 한도(10MB)를 넘음 → 낙찰사례는 여러 번 나눠 받음
+async function fetchStoredListPaged(kind, cached) {
+    var base = '/api/auction?withVer=1' + (kind ? '&kind=' + kind : '');
+    var first = true, cursor = '0', ver = null, all = [], seen = {};
+    for (var guard = 0; guard < 200; guard++) {
+        var url = base + '&cursor=' + encodeURIComponent(cursor) + (first && cached && cached.ver ? '&since=' + encodeURIComponent(cached.ver) : '');
+        var r, data;
+        try { r = await fetch(url); data = await r.json(); } catch (e) { r = { ok: false }; data = { error: e.message }; }
+        if (!r.ok || !data) { showStorageErrorBanner(data && data.error); return cached && Array.isArray(cached.list) ? cached.list : []; }
+        if (first && data.unchanged && cached && Array.isArray(cached.list)) return cached.list;
+        first = false;
+        if (!Array.isArray(data.list)) { showStorageErrorBanner(data && data.error); return cached && Array.isArray(cached.list) ? cached.list : []; }
+        if (ver && data.ver !== ver) { ver = null; all = []; seen = {}; cursor = '0'; continue; } // 받는 도중 목록이 바뀌면 처음부터
+        ver = data.ver;
+        data.list.forEach(function(it) { var k = String(it && it.id); if (!seen[k]) { seen[k] = 1; all.push(it); } });
+        if (!data.next) break;
+        cursor = data.next;
+    }
+    all.sort(function(a, b) {
+        var oa = a._ord != null ? a._ord : Infinity, ob = b._ord != null ? b._ord : Infinity;
+        if (oa !== ob) return oa - ob;
+        return String(a.id).localeCompare(String(b.id), undefined, { numeric: true });
+    });
+    all = all.map(function(x) { var y = Object.assign({}, x); delete y._ord; return y; });
+    listIdbOp('readwrite', function(st) { return st.put({ ver: ver, list: all }, listCacheKey(kind)); });
+    return all;
+}
 async function fetchStoredList(kind) {
     var cached = await listIdbOp('readonly', function(st) { return st.get(listCacheKey(kind)); });
+    if (kind === 'bidCases') return fetchStoredListPaged(kind, cached);
     var url = '/api/auction?withVer=1' + (kind ? '&kind=' + kind : '') + (cached && cached.ver ? '&since=' + encodeURIComponent(cached.ver) : '');
     var r, data;
     try { r = await fetch(url); data = await r.json(); } catch (e) { r = { ok: false }; data = { error: e.message }; }

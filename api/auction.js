@@ -70,12 +70,24 @@ export default async function handler(req, res) {
         // 원본 배열은 지우지 않고 이름만 바꿔 보관(동시에 두 요청이 이전하면 두 번째 RENAME은 실패해도 무방)
         if (legacy) { try { await cmd(['RENAME', kind, `${kind}:legacy_backup`]); } catch (e) { /* 이미 옮겨짐 */ } }
     }
-    async function readAll() {
-        const flat = (await cmd(['HGETALL', hashKey])) || [];
-        const list = [];
+    // 2026-10: 낙찰사례가 2만 건을 넘자 HGETALL 응답(16MB)이 Upstash 무료 플랜 한 번 요청 한도(10MB)를 넘어 목록을 못 읽었음
+    // → HSCAN으로 나눠 읽음(한 번에 약 1~2MB). 데이터는 그대로이고 읽는 방식만 바뀜.
+    async function scanPage(cursor, count) {
+        const r = (await cmd(['HSCAN', hashKey, String(cursor || '0'), 'COUNT', String(count || 1500)])) || ['0', []];
+        const flat = r[1] || [], items = [];
         for (let i = 0; i + 1 < flat.length; i += 2) {
-            try { list.push(JSON.parse(flat[i + 1])); } catch (e) { /* 깨진 항목은 건너뜀 */ }
+            try { items.push(JSON.parse(flat[i + 1])); } catch (e) { /* 깨진 항목은 건너뜀 */ }
         }
+        return { next: String(r[0]) === '0' ? null : String(r[0]), items };
+    }
+    async function readAll() {
+        const seen = new Set(), list = [];
+        let cursor = '0';
+        do {
+            const pg = await scanPage(cursor, 1500);
+            pg.items.forEach((it) => { const k = String(it && it.id); if (!seen.has(k)) { seen.add(k); list.push(it); } });
+            cursor = pg.next;
+        } while (cursor);
         // 예전 배열 순서(_ord) → 그 뒤 새로 추가된 건 id(생성시각) 순
         list.sort((a, b) => {
             const oa = a._ord != null ? a._ord : Infinity, ob = b._ord != null ? b._ord : Infinity;
@@ -92,6 +104,14 @@ export default async function handler(req, res) {
             // 진단 전용(읽기만 함) - 값 자체/비밀값은 노출하지 않음
             const [hlen, ver, dbsize] = await pipeline([['HLEN', hashKey], ['GET', verKey], ['DBSIZE']]);
             return res.status(200).json({ kind, items: hlen, ver, dbsize });
+        }
+        if (req.method === 'GET' && req.query.cursor !== undefined) {
+            // 나눠 받기(2026-10): 앱이 큰 목록을 여러 번에 나눠 받음 - 응답 하나가 너무 커지지 않게. _ord(순서)는 앱에서 정렬 후 지움
+            res.setHeader('Cache-Control', 'no-store');
+            const ver = String((await cmd(['GET', verKey])) || '0');
+            if (req.query.since && String(req.query.since) === ver && String(req.query.cursor || '0') === '0') return res.status(200).json({ unchanged: true, ver });
+            const pg = await scanPage(req.query.cursor || '0', Math.min(3000, parseInt(req.query.count || '2000', 10) || 2000));
+            return res.status(200).json({ ver, list: pg.items, next: pg.next });
         }
         if (req.method === 'GET') {
             const ver = String((await cmd(['GET', verKey])) || '0');
