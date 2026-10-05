@@ -23584,7 +23584,10 @@ function floatWin(el, key, handleSel) {
     };
     el.addEventListener('pointerdown', function(e) {
         var h = e.target.closest && e.target.closest(w.handleSel);
-        if (!h || !el.contains(h) || e.target.closest('button,a,input,select,textarea,label,summary,[onclick]:not(' + w.handleSel + ')')) return;
+        if (!h || !el.contains(h)) return;
+        // 머리글 안의 버튼·닫기(✕) 등은 그대로 눌리게 - 머리글 바깥(창 전체를 감싼 배경의 onclick 등)은 따지지 않음
+        var ctl = e.target.closest('button,a,input,select,textarea,label,summary,[onclick]');
+        if (ctl && ctl !== h && h.contains(ctl)) return;
         start(e, 'move');
     });
     el.addEventListener('dblclick', function(e) { var h = e.target.closest && e.target.closest(w.handleSel); if (h && el.contains(h) && !e.target.closest('button,a,input,select')) { fwReset(w); w.applied = false; } });
