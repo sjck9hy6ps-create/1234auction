@@ -91,11 +91,13 @@ def main():
         if k:
             cov[k] = cov.get(k, 0) + 1
     comp = {}
+    comp_base = {}
     try:
         url = os.environ["SUPABASE_URL"].rstrip("/") + "/rest/v1/leader_follower_cache"
         hdr = {"apikey": os.environ["SUPABASE_SERVICE_ROLE_KEY"], "Authorization": "Bearer " + os.environ["SUPABASE_SERVICE_ROLE_KEY"]}
         r = requests.get(url, headers=hdr, params={"select": "payload", "id": "eq.signal|__competition__"}, timeout=60).json()
         comp = (r[0]["payload"] or {}).get("byRegion", {}) if r else {}
+        comp_base = (r[0]["payload"] or {}).get("base", {}) if r else {}
     except Exception as e:
         print("  경쟁 강도 못 불러옴:", e)
 
@@ -129,7 +131,8 @@ def main():
                      "steadyPct": round(steady * 100) if steady is not None else None, "complexes1y": int(len(cq)),
                      "priceMed": int(g1["price"].median()), "trendPct": round(trend * 100, 1) if trend is not None else None,
                      "jeonsePct": round(jeonse * 100) if jeonse is not None else None,
-                     "auctionCases": int(cov.get(rg, 0)), "compMed": c.get("compMed"), "biddersMed": c.get("biddersMed"), "soldPct": c.get("soldPct")})
+                     "auctionCases": int(cov.get(rg, 0)), "compMed": c.get("compMed"), "biddersMed": c.get("biddersMed"), "soldPct": c.get("soldPct"),
+                     "holdMed": c.get("holdMed"), "compN": c.get("n")})
     R = pd.DataFrame(rows)
     # 점수: 꾸준함(분기 흔들림 작을수록·꾸준한 단지 비율 높을수록) + 거래량 + 전세가율, 최근 1년 5% 넘게 하락하면 감점, 가격대(0.8~4억) 밖이면 제외 표시
     def z(s):
@@ -139,9 +142,31 @@ def main():
                   + 0.5 * z(np.log(R["trades1y"])) + z(R["jeonsePct"].fillna(R["jeonsePct"].median()))
                   - (R["trendPct"].fillna(0) < -5) * 1.0).round(2)
     R["priceFit"] = R["priceMed"].between(8000, 40000)
+    # ── 틈새 순위(2026-10, 사용자: "잘 팔리는 곳에 더 비중을 줘") ──
+    # 잘 팔리는가 70%(실거래 팔리는 곳 점수 40% + 낙찰 후 되판 비율 30%) + 경쟁이 약한가 30%(1등가÷시세가 낮을수록).
+    # 틈새 조건: 낙찰사례 15건 이상(경쟁 강도 있음) · 1등가÷시세 ≤ 전체 기준 · 되판 비율 ≥ 전체 기준 · 팔리는 곳 점수 ≥ 중간.
+    base_comp = comp_base.get("compMed") if comp_base else None
+    base_sold = comp_base.get("soldPct") if comp_base else None
+    has = R["compMed"].notna()
+    R["nicheScore"] = None
+    if has.sum() >= 3:
+        H = R[has]
+        sold = H["soldPct"].fillna(H["soldPct"].median())
+        R.loc[has, "nicheScore"] = (0.4 * z(H["score"]) + 0.3 * z(sold) + 0.3 * z(-H["compMed"])).round(2)
+    med_score = float(R["score"].median())
+    R["niche"] = has & (R["score"] >= med_score) & (R["compMed"] <= (base_comp if base_comp else 9)) & (R["soldPct"].fillna(0) >= (base_sold or 0))
     R = R.sort_values("score", ascending=False)
-    out = {"generatedAt": now.isoformat(), "note": "지방 아파트 최근 1년 300건 이상 시군구. 점수 = 거래 꾸준함 + 거래량 + 전세가율 - 급락",
-           "regions": R.to_dict("records")}
+    niche = R[R["niche"]].sort_values("nicheScore", ascending=False)
+    print(f"\n🏁 틈새 지역(경쟁 ≤ 전체 {base_comp}, 되판 ≥ {base_sold}%, 팔리는 곳 점수 ≥ 중간): {len(niche)}곳")
+    ncols = ["region", "nicheScore", "score", "compMed", "biddersMed", "soldPct", "holdMed", "jeonsePct", "trendPct", "priceMed", "auctionCases"]
+    if len(niche):
+        print(niche[ncols].to_string(index=False))
+    print("\n(경쟁 강도가 있는 지역 전체 - 틈새 점수 순)")
+    print(R[has].sort_values("nicheScore", ascending=False)[ncols + ["niche"]].to_string(index=False))
+    print("\n(팔리는 곳 상위인데 낙찰사례가 15건 미만 - 더 올리면 좋은 지역)")
+    print(R[~has].head(25)[["region", "score", "trades1y", "jeonsePct", "trendPct", "priceMed", "auctionCases"]].to_string(index=False))
+    out = {"generatedAt": now.isoformat(), "note": "지방 아파트 최근 1년 300건 이상 시군구. 점수 = 거래 꾸준함 + 거래량 + 전세가율 - 급락. 틈새 점수 = 팔리는 곳 40% + 되판 30% + 경쟁 약함 30%",
+           "base": comp_base, "regions": R.to_dict("records")}
     cyc.upsert_rows([{"id": "signal|__region_liquidity__", "payload": cyc.clean_json(out), "fetched_at": now.isoformat()}])
     cols = ["region", "score", "trades1y", "steadyPct", "quarterCv", "jeonsePct", "trendPct", "priceMed", "auctionCases", "compMed", "biddersMed", "soldPct"]
     print(R[cols].head(60).to_string(index=False))
