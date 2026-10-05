@@ -16712,7 +16712,7 @@ async function renderBidDrawer() {
     var fmt = function(x) { return x ? toEok(String(Math.round(x))) : '-'; };
     // 2026-10(사용자: "목록 옆 좁은 창 안에 지도/상세 버튼") - 맨 위 이름 옆에 바로 보이게
     var h = '<div class="dr-h"><h3>' + bbEsc(row.name) + '</h3><button class="dr-x" onclick="closeBidDrawer()">✕</button></div>'
-        + '<div class="dr-top-btns"><button onclick="bidBoardGo(\'' + idJs + '\')">🗺️ 지도</button><button onclick="closeBidBoard();openAuctionModal(\'' + idJs + '\')">📝 상세</button></div>'
+        + '<div class="dr-top-btns"><button onclick="bidBoardGo(\'' + idJs + '\')">🗺️ 지도</button><button onclick="closeBidBoard();openAuctionModal(\'' + idJs + '\')">📝 상세</button><button onclick="openCyclePanel()">📈 사이클</button></div>'
         + '<div class="dr-sub">' + bbEsc(row.region) + ' · ' + (row.pyung ? row.pyung + '평' + (row.type === 'apt' && sizeBandOf(row.pyung) ? '(' + sizeBandOf(row.pyung) + ' ' + Math.round(row.pyung * 3.305785) + '㎡)' : '') + ' · ' : '') + (row.floor ? row.floor + '층 · ' : '') + bbEsc(a.caseNo || '') + (row.dday ? ' · <b>' + row.dday.label + '</b> (' + bbEsc(a.bidDate) + ')' : '') + '</div>'
         + '<div style="margin-top:6px;"><span class="bb-verdict" style="color:' + v.color + ';background:' + v.bg + ';">' + v.label + '</span>'
         + (row.sweet ? ' <span class="bb-pill" style="background:#e8f5e9;color:#2e7d32;">👍 입찰 추천 구간</span>' : '') + (row.overshoot ? ' <span class="bb-pill" style="background:#fff3e0;color:#e65100;">⚠️ 손해 주의</span>' : '') + (row.bulk ? ' <span class="bb-pill" style="background:#fee2e2;color:#b91c1c;">🏢 대량 경매 ' + row.bulkN + '건</span>' : '')
@@ -17194,6 +17194,110 @@ function buildRiskBlockHtml(risk, regionName) {
         + (lvStat.avgFwd6mPct > 0 ? '+' : '') + lvStat.avgFwd6mPct + '%) · 전체 평균 ' + all.dropOver2PctShare + '%</div>';
     return html + '</div>';
 }
+/* ════ 🏢 단지 사이클 (2026-10 사용자: "사이클을 보면 전국·시·구까지 나오는데 해당 단지 사이클도 표기해줘") ════
+   대상 단지 = 입찰후보 상세 창에 열린 물건의 단지 → 없으면 지금 열린 단지 상세 패널.
+   단지 10년 실거래(api/get-house action=history)로 월별 가격 흐름을 만듦:
+   ① 평형(㎡ 반올림)마다 전체 기간 ㎡당 가격 중간값으로 나눠 "평형 차이"를 없앰(0.5~2배 밖은 이상치로 뺌)
+   ② 최근 3개월(그 달 포함) 거래의 중간값 = 그 달 값(거래 없는 달은 직전 값 유지)
+   ③ 고점·바닥은 8% 넘게 꺾인 곳(단지는 거래가 적어 시군구 5%보다 크게 잡음)
+   ⚠️ 한 단지 거래는 몇 건 안 돼 흔들림이 큼 - 참고용(시·구 사이클과 같은 이유로 예상매도가엔 반영 안 함) */
+function cycleTargetApt() {
+    var bb = document.getElementById('bid-board');
+    if (bb && bb.style.display !== 'none' && getComputedStyle(bb).display !== 'none' && bidDrawerId) {
+        var row = bidBoardRows.filter(function(r) { return r.id === bidDrawerId; })[0];
+        if (row && row.a) {
+            var m = null; try { m = findMatchedApt(row.a); } catch (e) {}
+            if (m) return { apt: m, lawd: row.lawd || m.lawdCd, label: row.name };
+        }
+    }
+    var pn = document.getElementById('panel');
+    if (currentPanelApt && pn && getComputedStyle(pn).display !== 'none') {
+        var l = currentPanelApt.latest || {};
+        return { apt: currentPanelApt, lawd: currentPanelApt.lawdCd, label: (l.dong ? l.dong + ' ' : '') + (l.name || '') };
+    }
+    return null;
+}
+function waitComplexHistory(apt) {
+    return new Promise(function(resolve) {
+        var tries = 0;
+        (function poll() {
+            var h = pnHistoryFor(apt, apt.trades || []);
+            if (h && h !== 'loading') return resolve(h);
+            if (!h || ++tries > 40) return resolve(apt.trades || []);
+            setTimeout(poll, 300);
+        })();
+    });
+}
+function calcComplexCycle(trades) {
+    var rows = [];
+    (trades || []).forEach(function(t) {
+        var amt = parseInt(String(t.amount).replace(/,/g, ''), 10), area = parseFloat(t.area);
+        if (!amt || !area || !t.year || !t.month) return;
+        rows.push({ m: t.year * 12 + (t.month - 1), ppm: amt / area, b: Math.round(area) });
+    });
+    if (rows.length < 20) return { error: '거래가 ' + rows.length + '건뿐이라 단지 사이클을 만들기 어려워요' };
+    var med = function(a) { a = a.slice().sort(function(x, y) { return x - y; }); var n = a.length; return n ? (n % 2 ? a[(n - 1) / 2] : (a[n / 2 - 1] + a[n / 2]) / 2) : null; };
+    var byB = {};
+    rows.forEach(function(r) { (byB[r.b] = byB[r.b] || []).push(r.ppm); });
+    var bMed = {}; Object.keys(byB).forEach(function(b) { bMed[b] = med(byB[b]); });
+    rows.forEach(function(r) { r.rel = r.ppm / bMed[r.b]; });
+    rows = rows.filter(function(r) { return r.rel >= 0.5 && r.rel <= 2; });
+    var m0 = Math.min.apply(null, rows.map(function(r) { return r.m; }));
+    var now = new Date(), mEnd = now.getFullYear() * 12 + now.getMonth() - 1; // 신고 지연 - 지난달까지
+    if (mEnd - m0 < 36) return { error: '거래 기간이 3년이 안 돼 단지 사이클을 만들기 어려워요' };
+    var byM = {}; rows.forEach(function(r) { (byM[r.m] = byM[r.m] || []).push(r.rel); });
+    var ymOf = function(m) { return Math.floor(m / 12) + '-' + String(m % 12 + 1).padStart(2, '0'); };
+    var series = [], prev = null;
+    for (var m = m0; m <= mEnd; m++) {
+        var w = (byM[m] || []).concat(byM[m - 1] || [], byM[m - 2] || []);
+        var v = w.length ? med(w) * 100 : prev;
+        if (v != null) { series.push([ymOf(m), Math.round(v * 10) / 10, m]); prev = v; }
+    }
+    // 고점·바닥(8% 지그재그)
+    var TH = 0.08, tps = [], dir = 0, hi = 0, lo = 0;
+    for (var i = 1; i < series.length; i++) {
+        var v = series[i][1];
+        if (dir >= 0 && v > series[hi][1]) hi = i;
+        if (dir <= 0 && v < series[lo][1]) lo = i;
+        if (dir >= 0 && v <= series[hi][1] * (1 - TH)) { if (hi > 0) tps.push({ ym: series[hi][0], type: 'peak', i: hi }); dir = -1; lo = i; }
+        else if (dir <= 0 && v >= series[lo][1] * (1 + TH)) { if (lo > 0) tps.push({ ym: series[lo][0], type: 'trough', i: lo }); dir = 1; hi = i; }
+    }
+    var last = series[series.length - 1], lv = last[1];
+    var at = function(k) { var j = series.length - 1 - k; return j >= 0 ? series[j][1] : null; };
+    var pct = function(a, b) { return a && b ? Math.round((a / b - 1) * 1000) / 10 : null; };
+    var lastT = tps.filter(function(t) { return t.type === 'trough'; }).pop(), lastP = tps.filter(function(t) { return t.type === 'peak'; }).pop();
+    var lastTp = tps[tps.length - 1];
+    var phase = lastTp ? (lastTp.type === 'trough' ? '상승기' : '하락기') : (pct(lv, at(12)) >= 0 ? '상승기' : '하락기');
+    var cnt = function(a, b) { return rows.filter(function(r) { return r.m > mEnd - a && r.m <= mEnd - b; }).length; };
+    var n6 = cnt(6, 0), n12 = cnt(18, 6);
+    return {
+        n: rows.length, from: series[0][0], lastTradeYm: ymOf(Math.max.apply(null, rows.map(function(r) { return r.m; }))),
+        index: series.map(function(x) { return [x[0], x[1]]; }), turningPoints: tps,
+        phase: {
+            phase: phase, monthsInPhase: lastTp ? mEnd - series[lastTp.i][2] : null, since: lastTp ? lastTp.ym : null,
+            lastTrough: lastT ? lastT.ym : null, lastPeak: lastP ? lastP.ym : null,
+            fromLastTroughPct: lastT ? pct(lv, series[lastT.i][1]) : null, fromLastPeakPct: lastP ? pct(lv, series[lastP.i][1]) : null,
+            mom3: pct(lv, at(3)), mom6: pct(lv, at(6)), mom12: pct(lv, at(12)),
+            volume6mVsPrior12mPct: n12 ? Math.round((n6 * 2 / n12 - 1) * 100) : null
+        }
+    };
+}
+async function fillComplexCycleBlock(target, region) {
+    var el = document.getElementById('cycle-complex-block'); if (!el) return;
+    var hist = await waitComplexHistory(target.apt);
+    var c = calcComplexCycle(hist);
+    el = document.getElementById('cycle-complex-block'); if (!el) return;
+    var title = '<div style="font-weight:bold;">🏢 ' + bbEsc(target.label || '이 단지') + ' <span class="pn-muted">(단지)</span></div>';
+    if (c.error) { el.innerHTML = title + '<div class="pn-muted">' + c.error + '</div>'; return; }
+    var cmp = '';
+    if (region && region.phase && region.phase.mom12 != null && c.phase.mom12 != null) {
+        var diff = Math.round((c.phase.mom12 - region.phase.mom12) * 10) / 10;
+        cmp = '<div style="margin-top:4px;font-size:11.5px;">최근 1년: 이 단지 <b>' + (c.phase.mom12 > 0 ? '+' : '') + c.phase.mom12 + '%</b> · ' + bbEsc(region.region) + ' ' + (region.phase.mom12 > 0 ? '+' : '') + region.phase.mom12 + '% → '
+            + (Math.abs(diff) < 1 ? '구와 비슷하게 움직임' : (diff > 0 ? '구보다 <b style="color:#dc2626;">' + diff + '%p 더 오름</b>' : '구보다 <b style="color:#2563eb;">' + Math.abs(diff) + '%p 덜 오름</b>')) + '</div>';
+    }
+    el.innerHTML = title + '<div>' + cyclePhaseText(c.phase) + '</div>' + cmp + cycleSparkSvg(c.index, c.turningPoints, '#ef6c00')
+        + '<div class="pn-muted">' + c.from + '~ 실거래 ' + c.n + '건(평형 차이 보정, 3개월 묶음) · 마지막 거래 ' + c.lastTradeYm + ' · 고점·바닥은 8% 넘게 꺾인 곳 · 거래가 적은 단지는 흔들림이 커요</div>';
+}
 async function openCyclePanel() {
     var box = document.getElementById('cycle-panel');
     if (!box) {
@@ -17203,7 +17307,8 @@ async function openCyclePanel() {
         document.body.appendChild(box);
     }
     box.innerHTML = '<div style="text-align:right;"><button onclick="document.getElementById(\'cycle-panel\').remove()" style="border:none;background:none;font-size:18px;cursor:pointer;">×</button></div>불러오는 중...';
-    var d = await loadMarketCycle(lastLawdCd || '');
+    var target = cycleTargetApt();
+    var d = await loadMarketCycle((target && target.lawd) || lastLawdCd || '');
     if (!d) {
         try { d = await (await fetch('/api/data-coverage?mode=marketCycle')).json(); } catch (e) { d = null; }
     }
@@ -17219,6 +17324,8 @@ async function openCyclePanel() {
     html += block('전국', d.national, '#424242');
     if (d.sido) html += block(d.sido.name + ' 전체', d.sido, '#6a1b9a');
     if (d.region) html += block(d.region.region, d.region, '#00897b');
+    if (target) html += '<div id="cycle-complex-block" style="margin-top:10px;border-top:1px solid #eee;padding-top:8px;"><b>🏢 ' + bbEsc(target.label || '이 단지') + '</b><div class="pn-muted">단지 10년 실거래 불러오는 중…</div></div>';
+    else html += '<div class="pn-muted" style="margin-top:8px;">🏢 단지 사이클은 단지 상세나 입찰후보 상세 창을 연 상태에서 📈 사이클을 누르면 보여요</div>';
     html += buildRiskBlockHtml(d.risk, d.region && d.region.region);
     html += '<div style="margin-top:8px;background:#fff8e1;color:#8a6d00;border-radius:6px;padding:6px 8px;font-size:11px;">ℹ️ 사이클 위치는 참고용이에요. 과거 자료로 "지금 위치 → 6~12개월 뒤 가격"을 맞혀 봤더니 "변화 없음"으로 보는 것보다 정확하지 않아서, 예상매도가에는 반영하지 않아요.</div>';
     var fol = (d.region && d.region.followers) || [];
@@ -17238,6 +17345,7 @@ async function openCyclePanel() {
         html += '</div>';
     }
     box.innerHTML = html;
+    if (target) fillComplexCycleBlock(target, d.region);
 }
 /* ════ 2026-10 빌라 예상매도가 3단계(사용자: "빌라는 주변거래를 시세로 파악해 예상매도가를 정하고, 호가와 매물재고를 추가 반영해 더 정밀하게")
    ① 주변 실거래 시세: 등록한 비교물건이 있으면 그것, 없으면 반경 500m 비슷한 빌라 실거래 자동(평형 ±4평·연식 ±3년, 40% 지점)
