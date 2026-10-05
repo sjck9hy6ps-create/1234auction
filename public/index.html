@@ -1083,6 +1083,10 @@ body.ui2 #bid-case-panel td, body.ui2 #surge-panel td, body.ui2 #panel-tab-aucti
     #bid-board.with-drawer .bb-name { min-width:120px; }
     #bid-board.with-drawer .bb-notes { display:none; }
 }
+@media (max-width: 900px) {
+    #bid-board .bb-name { max-width:none; min-width:0; }
+    #bid-board .bb-table td.r, #bid-board .bb-table td[data-l="거래량 순위"] { max-width:none; min-width:0; }
+}
 @media (max-width: 1240px) {
     #bid-board .bb-head { padding:8px 12px 6px; }
     #bb-chips { flex-wrap:nowrap; overflow-x:auto; -webkit-overflow-scrolling:touch; padding-bottom:2px; scrollbar-width:none; }
