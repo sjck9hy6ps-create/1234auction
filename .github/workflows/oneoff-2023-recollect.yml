@@ -38,3 +38,12 @@ jobs:
           sleep 20
           id=$(gh run list --workflow=analyze-bidcases.yml -L 1 --json databaseId -q '.[0].databaseId')
           gh run watch "$id" --interval 60 || true
+      - name: 지방 시군구 틈새 순위 다시 계산(동 번호 보충 반영)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          gh workflow run analyze-region-liquidity.yml
+          sleep 20
+          id=$(gh run list --workflow=analyze-region-liquidity.yml -L 1 --json databaseId -q '.[0].databaseId')
+          gh run watch "$id" --interval 60 || true
