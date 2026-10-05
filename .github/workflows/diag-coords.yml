@@ -2,6 +2,10 @@ name: 진단 - 실거래 단지 좌표 매칭 점검
 
 on:
   workflow_dispatch:
+    inputs:
+      fix:
+        description: '1이면 틀린 좌표를 다시 찾아 고침'
+        default: '0'
 
 jobs:
   diag:
@@ -17,3 +21,5 @@ jobs:
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          KAKAO_REST_API_KEY: ${{ secrets.KAKAO_REST_API_KEY }}
+          FIX: ${{ github.event.inputs.fix || '0' }}

@@ -292,17 +292,31 @@ function buildCandidates(row, buildingType) {
   }
   return candidates;
 }
+// 2026-10(좌표 점검: 김해 단지가 부산에, 김포 단지가 인천·서울에 찍힘): 주소·키워드 검색 첫 결과를 확인 없이 쓰던 것을
+// 좌표의 법정동코드 시도가 그 단지 지역(시도)과 같을 때만 쓰도록 바꿈. 다르면 다음 후보로.
+const SIDO_BY_CODE = { '11': '서울', '26': '부산', '27': '대구', '28': '인천', '29': '광주', '30': '대전', '31': '울산', '36': '세종', '41': '경기', '42': '강원', '51': '강원', '43': '충북', '44': '충남', '45': '전북', '52': '전북', '46': '전남', '12': '전남광주', '47': '경북', '48': '경남', '50': '제주' };
+function sameSidoAsRegion(regionName, sigunguCd) {
+  const s = String(regionName || '').trim().split(' ')[0];
+  const want = s.startsWith('전남광주') ? '전남광주' : s.slice(0, 2);
+  const got = SIDO_BY_CODE[String(sigunguCd || '').slice(0, 2)];
+  if (!got) return true; // 모르는 코드면 막지 않음
+  if (want === got) return true;
+  const gj = (x) => x === '광주' || x === '전남' || x === '전남광주';
+  return gj(want) && gj(got);
+}
 async function geocodeComplex(row, buildingType) {
   const candidates = buildCandidates(row, buildingType);
   for (const q of candidates) {
     if (!q || q.length < 2) continue;
-    let coord = await kakaoAddressSearch(q);
-    await sleep(DELAY_MS);
-    if (!coord) {
-      coord = await kakaoKeywordSearch(q);
+    for (const finder of [kakaoAddressSearch, kakaoKeywordSearch]) {
+      const coord = await finder(q);
       await sleep(DELAY_MS);
+      if (!coord) continue;
+      const region = await kakaoCoordToRegionCode(coord.lat, coord.lon);
+      await sleep(DELAY_MS);
+      if (region && !sameSidoAsRegion(row.region, region.sigunguCd)) continue; // 다른 시도 결과는 버림
+      return { ...coord, region };
     }
-    if (coord) return coord;
   }
   return null;
 }
@@ -460,8 +474,7 @@ async function main() {
   await processQueue(coordTargets, async ([cacheKey, row, type]) => {
     const coord = await geocodeComplex(row, type);
     if (!coord) { fail++; return; }
-    const region = await kakaoCoordToRegionCode(coord.lat, coord.lon);
-    await sleep(DELAY_MS);
+    const region = coord.region || await kakaoCoordToRegionCode(coord.lat, coord.lon);
     await saveCoord(cacheKey, coord.lat, coord.lon, region?.sigunguCd, region?.bjdongCd);
     success++;
     if (region) {
