@@ -2449,12 +2449,15 @@ function dongKey(d) {
     var t = String(d || '').trim().split(/\s+/);
     return t[t.length - 1] || '';
 }
+var aptIndexByDong = new Map();
 function buildAptMatchIndex() {
     aptIndexByDongBunji = new Map();
     aptIndexByName = new Map();
+    aptIndexByDong = new Map();
     allAptList.forEach(function(apt) {
         var l = apt.latest || {};
         var dong = dongKey(l.dong);
+        if (dong) { var ad = aptIndexByDong.get(dong); if (!ad) { ad = []; aptIndexByDong.set(dong, ad); } ad.push(apt); }
         var bunji = (l.bunji || '').trim();
         if (dong && bunji) {
             var key = dong + '|' + bunji;
@@ -15757,14 +15760,32 @@ function computeBidBoardRow(a) {
    - 위 computeBidBoardRow의 무거운 부분(지역 자료로 예상매도가·인기·생활권 찾기)과 분리. 이 단계는 지역 자료 없이 행에 저장된
    값만으로 돌아서, 💼 내 자산(주택 수·올해 소득)이 바뀌면 모든 물건을 순식간에 다시 계산할 수 있음. */
 // 자기 단지 같은 평형(±3㎡) 중개거래 통계 - 예상매도가 상한과 "근거가 충분한가" 판정에 씀
+/* 자기 단지 찾기(2026-10 주소 매칭 점검): 여러 필지에 걸친 단지는 경매 주소 지번과 실거래 대표 지번이 다름
+   (도나우270 1475↔1492, 현대그린맨션 1405-33↔1411-10, 새한센시빌 11-24↔11-21). 지번으로 못 찾으면 같은 동 안에서
+   단지 이름이 서로 포함되고 본번 차이가 50 이내인 단지를 씀(아름베스트빌1차↔6차처럼 숫자가 다르면 안 맞춤). */
+function ownComplexEntries(a, bunjiFull, type) {
+    var bt = type === 'villa' ? 'villa' : 'apt';
+    var arr = (aptIndexByDongBunji.get(dongKey(a.dong) + '|' + bunjiFull) || []).filter(function(ap) { return (ap.buildingType || 'apt') === bt; });
+    if (arr.length) return arr;
+    var core = function(n) { return matchNormName(String(n || '').replace(/(아파트|맨션|빌라)$/, '')).replace(new RegExp('^' + dongKey(a.dong).replace(/[.*+?^${}()|[\]\\]/g, '')), ''); };
+    var nm = core(a.name || buildingNameFromAddr(a.addr, a.dong));
+    if (!nm || nm.length < 3) return [];
+    var main = parseInt(String(bunjiFull || '').split('-')[0], 10);
+    return (aptIndexByDong.get(dongKey(a.dong)) || []).filter(function(ap) {
+        if ((ap.buildingType || 'apt') !== bt) return false;
+        var l = ap.latest || {}, n2 = core(l.name);
+        if (!n2 || n2.length < 3 || !(n2.indexOf(nm) >= 0 || nm.indexOf(n2) >= 0)) return false;
+        var m2 = parseInt(String(l.bunji || '').split('-')[0], 10);
+        return isNaN(main) || isNaN(m2) || Math.abs(m2 - main) <= 50;
+    });
+}
 function aptOwnTradeStats(a, bunjiFull, pyung) {
     var area = (parseFloat(pyung) || 0) * 3.305785;
     if (!area) return null;
     var allPpm = [];
     var now = Date.now(), p12 = [], p36 = [], n6 = 0, last = null, all = [], sim6 = [], maxF = 0, f36 = [], v6 = 0, vPrev6 = 0, p3 = [], p6 = [];
     var tf = parseInt(a.floor);
-    (aptIndexByDongBunji.get(dongKey(a.dong) + '|' + bunjiFull) || []).forEach(function(ap) {
-        if ((ap.buildingType || 'apt') !== 'apt') return;
+    ownComplexEntries(a, bunjiFull, 'apt').forEach(function(ap) {
         (ap.trades || []).forEach(function(t) {
             var ff = parseInt(t.floor); if (ff > maxF) maxF = ff;
             if (t.dealing_type === '직거래') return;
@@ -16298,7 +16319,7 @@ function overshootSaleFactor(type, ratio) {
 }
 var BOARD_CACHE_KEY = 'bidBoardCache:v1', BOARD_CACHE_MAX_AGE = 24 * 3600 * 1000;
 // 저장 계산을 다시 써도 되는지 - 물건 입력값(시세 계산에 쓰는 것)과 입찰일 지남 여부. 계산 방식이 바뀌면 BOARD_CALC_VER을 올림
-var BOARD_CALC_VER = 25;
+var BOARD_CALC_VER = 26;
 function boardBaseSig(a) {
     var d = a.bidDate ? calcAuctionDday(a.bidDate) : null;
     return [BOARD_CALC_VER, auctionWonEstSignature(a), a.minBid, a.appraisal, a.bidDate, a.court, a.failCount, a.landType, String(a.memo || '').length,
@@ -16580,8 +16601,7 @@ function bidCostLines(row) {
 function drawerTrades(row) {
     var a = row.a, area = (parseFloat(a.pyung) || 0) * 3.305785, tf = parseInt(a.floor), out = [];
     var bunjiFull = row.bunjiFull || fullBunjiFromAddr(a.addr, a.dong, a.bunji);
-    (aptIndexByDongBunji.get(dongKey(a.dong) + '|' + bunjiFull) || []).forEach(function(ap) {
-        if ((ap.buildingType || 'apt') !== (row.type === 'villa' ? 'villa' : 'apt')) return;
+    ownComplexEntries(a, bunjiFull, row.type).forEach(function(ap) {
         (ap.trades || []).forEach(function(t) {
             if (!(t.area > 0) || Math.abs(t.area - area) > 3) return;
             out.push({ d: tradeDate(t), f: parseInt(t.floor), p: parseInt(t.amount), direct: t.dealing_type === '직거래' });
