@@ -22605,8 +22605,9 @@ var MY_ASSET_STATUS = { holding: '보유 중', planned: '취득 예정', sold: '
 async function loadMyAssets() {
     try {
         var list = await fetchStoredList('myAssets');
-        myAssets.items = (list || []).filter(function(x) { return x && x.id !== 'profile'; });
+        myAssets.items = (list || []).filter(function(x) { return x && x.id !== 'profile' && x.id !== 'retirement'; });
         myAssets.profile = (list || []).filter(function(x) { return x && x.id === 'profile'; })[0] || null;
+        myAssets.retirement = (list || []).filter(function(x) { return x && x.id === 'retirement'; })[0] || null;
         myAssets.loaded = true;
         if (!myAssets.profile && !myAssets.items.length) await seedMyAssets();
         myAssetsChanged();
@@ -22626,6 +22627,7 @@ async function saveMyAssetItem(item) {
     if (!r.ok) throw new Error('저장 실패(' + r.status + ')');
     applyStoredListChange('myAssets', r.headers.get('X-List-Version'), upsertById(item));
     if (item.id === 'profile') myAssets.profile = item;
+    else if (item.id === 'retirement') myAssets.retirement = item;
     else {
         var i = myAssets.items.findIndex(function(x) { return x.id === item.id; });
         if (i >= 0) myAssets.items[i] = item; else myAssets.items.push(item);
@@ -22778,7 +22780,70 @@ function renderMyAssets() {
         + '<label>취득 예정 자산</label><label><input type="checkbox" style="width:auto;" ' + (p.includePlanned !== false ? 'checked' : '') + ' onchange="maSetProfile(\'includePlanned\', this.checked)"> 주택 수에 미리 포함(보수적으로)</label>'
         + '</div><div class="ma-sub" style="margin-top:6px;">올해 합계 ' + s.incomeBase.toLocaleString() + '만 원 위에 다음 매도 이익이 얹혀 계산돼요. 종부세 기준 주택 공시가격 합계: ' + (s.officialSum ? toEok(String(s.officialSum)) : '입력 없음') + '.</div>'
         + '<div class="ma-sub" style="margin-top:4px;color:#b26a00;">⚠️ 세법 해석은 참고용 근사예요(분양권·오피스텔 주택 수, 매매사업자 비교과세 등). 실제 신고 전 세무사 확인이 필요해요.</div></div>';
+    html += retirementHtml();
     body.innerHTML = html;
+}
+/* 💰 퇴직금 운용(2026-10, 사용자: "내 자산에 퇴직금 운영 계획과 현황을 표기하고 싶어") - 직접 입력하는 기록용.
+   받은 퇴직금 · 지금 어디에 얼마 있는지(보관처) · 경매 투자 계획(쓸 돈·남길 돈·목표) · 진행 기록. 저장: myAssets 'retirement' 한 항목.
+   투자 판단·추천은 하지 않고, 입력한 숫자를 합쳐 보여주기만 함. */
+var RET_KINDS = { pension: 'IRP·연금계좌', deposit: '예금·적금', invest: '주식·펀드', auction: '경매 투자금(묶인 돈)', cash: '현금·생활비', other: '기타' };
+function retData() { return Object.assign({ id: 'retirement', total: '', receivedDate: '', buckets: [], plan: {}, log: [] }, myAssets.retirement || {}); }
+async function retSave(d) { try { await saveMyAssetItem(d); renderMyAssets(); } catch (e) { alert('저장 실패: ' + e.message); } }
+function retSet(k, v) { var d = retData(); d[k] = v; retSave(d); }
+function retSetPlan(k, v) { var d = retData(); d.plan = Object.assign({}, d.plan, (function(o) { o[k] = v; return o; })({})); retSave(d); }
+function retSetBucket(i, k, v) { var d = retData(); d.buckets = d.buckets.slice(); d.buckets[i] = Object.assign({}, d.buckets[i]); d.buckets[i][k] = v; retSave(d); }
+function retAddBucket() { var d = retData(); d.buckets = d.buckets.concat([{ name: '', kind: 'deposit', amount: '', memo: '' }]); retSave(d); }
+function retDelBucket(i) { if (!confirm('이 보관처를 지울까요?')) return; var d = retData(); d.buckets = d.buckets.filter(function(_, j) { return j !== i; }); retSave(d); }
+function retAddLog() {
+    var el = document.getElementById('ret-log-in'); var t = el ? el.value.trim() : ''; if (!t) return;
+    var d = retData(); d.log = [{ date: new Date().toISOString().slice(0, 10), text: t }].concat(d.log || []).slice(0, 50); retSave(d);
+}
+function retDelLog(i) { var d = retData(); d.log = (d.log || []).filter(function(_, j) { return j !== i; }); retSave(d); }
+function retirementHtml() {
+    var d = retData(), pl = d.plan || {}, n = function(v) { return parseInt(v) || 0; }, fm = function(v) { return v ? toEok(String(v)) : '0'; };
+    var sum = d.buckets.reduce(function(a, b) { return a + n(b.amount); }, 0);
+    var tied = d.buckets.filter(function(b) { return b.kind === 'auction'; }).reduce(function(a, b) { return a + n(b.amount); }, 0);
+    var liquid = d.buckets.filter(function(b) { return b.kind === 'deposit' || b.kind === 'cash'; }).reduce(function(a, b) { return a + n(b.amount); }, 0);
+    var budget = n(pl.auctionBudget), reserve = n(pl.reserve);
+    var usable = Math.max(0, Math.min(budget ? budget - tied : Infinity, liquid - reserve));
+    var diff = sum - n(d.total);
+    var opt = function(v) { return Object.keys(RET_KINDS).map(function(k) { return '<option value="' + k + '"' + (k === v ? ' selected' : '') + '>' + RET_KINDS[k] + '</option>'; }).join(''); };
+    var h = '<div class="ma-sec"><div class="ma-h">💰 퇴직금 운용 <span class="ma-sub" style="font-weight:normal;">· 계획과 현황 기록</span></div>';
+    // 요약
+    h += '<div class="ma-grid">'
+        + '<div class="ma-stat"><span>받은 퇴직금</span><b>' + fm(n(d.total)) + '</b><span>' + (d.receivedDate || '받은 날 미입력') + '</span></div>'
+        + '<div class="ma-stat"><span>지금 합계</span><b style="color:' + (diff >= 0 ? '#2e7d32' : '#c62828') + ';">' + fm(sum) + '</b><span>' + (n(d.total) ? (diff >= 0 ? '+' : '−') + fm(Math.abs(diff)) + ' (받은 금액 대비)' : '보관처 합계') + '</span></div>'
+        + '<div class="ma-stat"><span>경매에 묶인 돈</span><b>' + fm(tied) + '</b><span>' + (budget ? '계획 ' + fm(budget) + '의 ' + Math.round(tied / budget * 100) + '%' : '계획 미입력') + '</span></div>'
+        + '<div class="ma-stat"><span>지금 경매에 더 쓸 수 있는 돈</span><b style="color:#1e5eff;">' + (usable === Infinity ? '-' : fm(usable)) + '</b><span>예금·현금 − 남길 돈' + (budget ? ', 계획 한도 안' : '') + '</span></div>'
+        + '</div>';
+    // 받은 금액
+    h += '<div class="ma-in" style="margin-top:8px;"><label>받은 퇴직금(세후, 만)</label><input type="number" value="' + maEsc(d.total) + '" onchange="retSet(\'total\', this.value)">'
+        + '<label>받은 날</label><input type="date" value="' + maEsc(d.receivedDate) + '" onchange="retSet(\'receivedDate\', this.value)"></div>';
+    // 보관처
+    h += '<div class="ma-sub" style="margin:10px 0 4px;font-weight:700;color:#374151;">지금 어디에 얼마 <button class="modal-btn btn-gray" style="float:right;font-size:11px;padding:2px 8px;" onclick="retAddBucket()">+ 보관처</button></div>'
+        + '<table><thead><tr><th>이름</th><th>종류</th><th>금액(만)</th><th>메모</th><th></th></tr></thead><tbody>'
+        + (d.buckets.length ? d.buckets.map(function(b, i) {
+            return '<tr><td><input value="' + maEsc(b.name) + '" placeholder="예: IRP, ○○은행 예금" onchange="retSetBucket(' + i + ',\'name\',this.value)"></td>'
+                + '<td><select onchange="retSetBucket(' + i + ',\'kind\',this.value)">' + opt(b.kind) + '</select></td>'
+                + '<td><input type="number" value="' + maEsc(b.amount) + '" onchange="retSetBucket(' + i + ',\'amount\',this.value)"></td>'
+                + '<td><input value="' + maEsc(b.memo) + '" placeholder="만기·금리·담보 등" onchange="retSetBucket(' + i + ',\'memo\',this.value)"></td>'
+                + '<td><a href="#" onclick="retDelBucket(' + i + ');return false;" style="color:#c62828;">삭제</a></td></tr>';
+        }).join('') : '<tr><td colspan="5" class="ma-sub">"+ 보관처"로 IRP·예금·경매 투자금 등을 추가하세요</td></tr>')
+        + '</tbody></table>';
+    // 계획
+    h += '<div class="ma-sub" style="margin:10px 0 4px;font-weight:700;color:#374151;">경매 투자 계획</div><div class="ma-in">'
+        + '<label>경매에 쓸 돈(최대, 만)</label><input type="number" value="' + maEsc(pl.auctionBudget) + '" onchange="retSetPlan(\'auctionBudget\', this.value)">'
+        + '<label>반드시 남길 돈(만)</label><input type="number" value="' + maEsc(pl.reserve) + '" placeholder="생활비·비상금" onchange="retSetPlan(\'reserve\', this.value)">'
+        + '<label>첫 낙찰 목표 시기</label><input type="month" value="' + maEsc(pl.targetMonth) + '" onchange="retSetPlan(\'targetMonth\', this.value)">'
+        + '<label>첫 매도 목표 순이익(만)</label><input type="number" value="' + maEsc(pl.targetProfit) + '" onchange="retSetPlan(\'targetProfit\', this.value)">'
+        + '<label>계획 메모</label><input value="' + maEsc(pl.memo) + '" placeholder="예: 겨울에 틈새 지역 위주로 입찰" onchange="retSetPlan(\'memo\', this.value)">'
+        + '</div>';
+    // 기록
+    h += '<div class="ma-sub" style="margin:10px 0 4px;font-weight:700;color:#374151;">진행 기록</div>'
+        + '<div style="display:flex;gap:6px;"><input id="ret-log-in" placeholder="예: 목포 ○○아파트 입찰 - 2등으로 떨어짐" style="flex:1;" onkeydown="if(event.key===\'Enter\')retAddLog()"><button class="modal-btn btn-purple" style="font-size:11px;" onclick="retAddLog()">기록</button></div>'
+        + ((d.log || []).length ? '<div style="margin-top:6px;font-size:12px;line-height:1.7;">' + d.log.map(function(l, i) { return '<div><span class="ma-sub">' + maEsc(l.date) + '</span> ' + maEsc(l.text) + ' <a href="#" onclick="retDelLog(' + i + ');return false;" class="ma-sub">✕</a></div>'; }).join('') + '</div>' : '')
+        + '<div class="ma-sub" style="margin-top:8px;">입력한 숫자를 합쳐 보여주기만 해요. IRP·연금계좌 인출은 세금·제한이 있으니 실제로 옮기기 전에 금융기관에 확인하세요.</div></div>';
+    return h;
 }
 function maEditForm() {
     var x = maEditId === 'new' ? { type: 'house', status: 'holding', use: 'inventory' } : (myAssets.items.filter(function(i) { return i.id === maEditId; })[0] || {});
