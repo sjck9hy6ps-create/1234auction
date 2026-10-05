@@ -1617,7 +1617,11 @@ body.ui2 #auction-modal.am4 { width:620px; }
                 <option value="">아파트·빌라</option><option value="apt">아파트만</option><option value="villa">빌라만</option>
             </select>
             <select id="bb-sort" onchange="bidBoardState.sortCol = null; setBidBoardFilter('sort', this.value)">
-                <option value="verdict">판정 → 여유 큰 순</option><option value="date">입찰일 빠른 순</option><option value="room">여유 큰 순</option><option value="pop">거래량 순위 높은 순</option><option value="niche">🧭 틈새 우선</option>
+                <option value="verdict">판정 → 여유 큰 순</option><option value="date">입찰일 빠른 순</option><option value="room">여유 큰 순</option><option value="pop">거래량 순위 높은 순</option><option value="niche">🧭 틈새 우선</option><option value="win">🎲 낙찰 가능성 높은 순</option>
+            </select>
+            <!-- 2026-10(사용자: "가능성에 따라 확인할 수 있는 필터") - 추천 입찰가로 썼을 때의 낙찰 가능성(🎲 예상 낙찰가 모델) -->
+            <select id="bb-win" onchange="setBidBoardFilter('win', this.value)" title="추천 입찰가로 썼을 때 낙찰될 가능성(아파트, 낙찰사례 2만여 건 기준)">
+                <option value="">🎲 낙찰 가능성 전체</option><option value="hi">🎲 60% 이상</option><option value="mid">🎲 35% 이상</option><option value="lo">🎲 35% 미만</option>
             </select>
             <label class="bb-chk" style="display:none;"><input type="checkbox" onchange="setBidBoardFilter('popOnly', this.checked)"> 🔥 인기 단지만</label>
 
@@ -16651,13 +16655,33 @@ function bidBoardVisibleRows() {
         if (s.type && r.a.propType !== s.type) return false;
         if (s.popOnly && !r.popular) return false;
         if (s.nicheOnly && !r.niche) return false;
-        if (s.oppOnly && !r.opportunity) return false; // 평형대 등급이 있으면 그 평형대 기준 상위 20%
+        if (s.oppOnly && !r.opportunity) return false;
+        if (s.win) {
+            var wp = r.winbid && r.winbid.probRec != null ? r.winbid.probRec : null;
+            if (wp == null) return false;
+            if (s.win === 'hi' && wp < 0.6) return false;
+            if (s.win === 'mid' && wp < 0.35) return false;
+            if (s.win === 'lo' && wp >= 0.35) return false;
+        } // 평형대 등급이 있으면 그 평형대 기준 상위 20%
         return true;
     });
 }
 function renderBidBoard() {
     var s = bidBoardState;
     var base = bidBoardVisibleRows();
+    try {
+        var wsel = document.getElementById('bb-win');
+        if (wsel) {
+            var keep = s.win; s.win = '';
+            var pool = bidBoardVisibleRows().map(function(r) { return r.winbid && r.winbid.probRec != null ? r.winbid.probRec : null; });
+            s.win = keep;
+            var cnt = { '': pool.length, hi: 0, mid: 0, lo: 0 };
+            pool.forEach(function(p) { if (p == null) return; if (p >= 0.6) cnt.hi++; if (p >= 0.35) cnt.mid++; else cnt.lo++; });
+            var lab = { '': '🎲 낙찰 가능성 전체', hi: '🎲 60% 이상', mid: '🎲 35% 이상', lo: '🎲 35% 미만' };
+            Array.prototype.forEach.call(wsel.options, function(o) { o.text = lab[o.value] + (o.value ? ' (' + cnt[o.value] + ')' : ''); });
+            wsel.value = s.win || '';
+        }
+    } catch (e) {}
     var counts = { all: base.length, yes: 0, check: 0, no: 0, nodata: 0 };
     base.forEach(function(r) { counts[r.verdict]++; });
     var tabs = document.getElementById('bb-tabs');
@@ -16715,6 +16739,10 @@ function renderBidBoard() {
             if (nx !== ny) return ny - nx;
             var vx0 = BID_BOARD_VERDICT[x.verdict].order, vy0 = BID_BOARD_VERDICT[y.verdict].order;
             if (vx0 !== vy0) return vx0 - vy0;
+        }
+        if (s.sort === 'win') {
+            var wx = x.winbid && x.winbid.probRec != null ? x.winbid.probRec : -1, wy = y.winbid && y.winbid.probRec != null ? y.winbid.probRec : -1;
+            if (wx !== wy) return wy - wx;
         }
         if (s.sort === 'pop') {
             var px = popRankOf(x), py = popRankOf(y);
