@@ -930,6 +930,9 @@ body.ui2 #filter-panel .filter-panel-tabs { display:none; }
 body.ui2 #filter-panel #fp-group-display, body.ui2 #filter-panel #fp-group-attr { display:block !important; padding:4px 14px 10px; }
 body.ui2 #filter-panel .filter-row { padding:8px 0; border-bottom:1px solid #f2f3f5; align-items:flex-start; gap:6px; }
 body.ui2 #filter-panel .filter-row:last-child { border-bottom:none; }
+/* 2026-10(아이패드에서 등급 1~7 등 버튼이 안 보임): 900px 이하의 옛 규칙(.filter-row 한 줄+가로 스크롤)이
+   제목 줄(width 100%)과 겹쳐 버튼이 오른쪽 밖으로 밀려났음 → 새 패널에선 항상 줄바꿈 */
+body.ui2 #filter-panel .filter-row { flex-wrap:wrap !important; overflow:visible !important; }
 body.ui2 #filter-panel .filter-row-label { width:100%; min-width:0; text-align:left; font-size:11.5px; color:#333; padding:0 0 2px; }
 body.ui2 .fp-dup { display:none !important; }
 body.ui2 .fp-villa-only { display:none !important; }
@@ -4831,11 +4834,6 @@ function isAptVisibleUnderCurrentFilters(apt) {
         if (apt.buildingType !== 'apt') return false;
         if (recentYearOnly && !hasRecentYearTrade(apt)) return false;
         if (activeGrades.size > 0 && !(apt.grade && activeGrades.has(String(apt.grade)))) return false;
-        // 2026-10: 연식단계 필터가 연립다세대에만 걸려 아파트에선 눌러도 아무 변화가 없었음 → 아파트도 건축연도로 판정
-        if (activeVillaTiers.size > 0) {
-            if (apt.ageTier === undefined) apt.ageTier = getVillaAgeTier(apt);
-            if (!(apt.ageTier && activeVillaTiers.has(apt.ageTier))) return false;
-        }
     } else {
         if (apt.buildingType !== 'villa') return false;
         if (recentYearOnly && !hasRecentYearTrade(apt)) return false;
@@ -13290,11 +13288,7 @@ function passesFiltersForBidCase(c) {
         var bcEst = getBidCaseEstimates(c);
         if (!bcEst.ageTier || !activeVillaTiers.has(bcEst.ageTier)) return false;
     }
-    if (bt === 'apt' && activeVillaTiers.size > 0) {
-        var bcY = c.buildYear || resolveOwnBuildYear(c.buildingName, c.dong, c.bunji);
-        var bcT = bcY ? getAgeTierByYear(bcY) : null;
-        if (!bcT || !activeVillaTiers.has(bcT)) return false;
-    }
+
     return true;
 }
 /* 등록된 경매물건(낙찰 포함)이 지금 활성화된 속성 필터(타입탭·평형대·연식단계)를 통과하는지
@@ -13326,10 +13320,8 @@ function passesFiltersForAuction(a) {
         var tier = areaM2 ? getPyeongTier(areaM2) : null;
         if (!tier || !activePyeongTiers.has(tier)) return false;
     }
-    if (activeVillaTiers.size > 0) {
-        // 2026-10: 아파트 경매물건도 연식단계 적용 - 건축연도가 없으면 같은 주소 실거래 단지의 건축연도로
+    if (a.propType === 'villa' && activeVillaTiers.size > 0) {
         var ageTier = a.buildYear ? getAgeTierByYear(a.buildYear) : null;
-        if (!ageTier && a.propType === 'apt') { var _m = findMatchedApt(a); if (_m) ageTier = getVillaAgeTier(_m); }
         if (!ageTier || !activeVillaTiers.has(ageTier)) return false;
     }
     // 2026-08(사용자 확인 - "매칭된 건물이 신고가일 때만 표시"): "신고가만 보기"를 켜면
@@ -22974,6 +22966,8 @@ function setupUiV3() {
         document.querySelectorAll('#fp-group-attr .filter-row').forEach(function(row) {
             var l = row.querySelector('.filter-row-label');
             if (l && /연립다세대/.test(l.textContent)) { row.classList.add('fp-villa-only'); l.textContent = '빌라 승강기·주차'; }
+            // 2026-10 사용자: "연식별 필터는 빌라에만 적용하는 게 맞다" → 아파트 화면에선 줄 자체를 숨김
+            else if (l && /연식단계/.test(l.textContent)) { row.classList.add('fp-villa-only'); l.textContent = '빌라 연식'; }
         });
     }
     // 3) 경매 목록 위 옵션(깡통전세 숨김·백테스트 표시·통계 2개)을 한 줄 버튼으로 모음
