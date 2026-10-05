@@ -1241,6 +1241,10 @@ body.ui2 #auction-modal.am4 { width:620px; }
 #auction-modal.am4 .est-radio-row label { font-size:12px; }
 @media (max-width: 640px) { body.ui2 #auction-modal.am4 { width:96vw; } #auction-modal.am4 .modal-label { min-width:80px; } }
 </style>
+<style>
+/* 2026-10 정리: 입찰후보 표의 [🗺️ 지도][상세] 버튼 칸은 줄을 누르면 열리는 창 맨 위 버튼과 같아서 숨김 */
+#bid-board .bb-table th:nth-child(11), #bid-board .bb-act { display:none !important; }
+</style>
 </head>
 <body>
 <div id="topbar">
@@ -1584,10 +1588,9 @@ body.ui2 #auction-modal.am4 { width:620px; }
     <div class="bb-head">
         <div class="bb-title">
             <h2>🎯 입찰후보</h2>
-            <button class="bb-csv" onclick="document.getElementById('bb-csv-input').click()">📄 CSV 올리기</button>
+            <!-- 2026-10 정리: CSV 올리기는 상단 📝 경매물건 등록으로 통일(파일 선택 칸은 그대로 씀) -->
             <input type="file" id="bb-csv-input" multiple accept=".csv,text/csv" style="display:none;" onchange="onBoardCsvFile(this)">
             <span class="bb-help" onclick="var g=document.getElementById('bb-guide-box');g.style.display=g.style.display==='none'?'':'none'">ⓘ 보는 법</span>
-            <span class="bb-help" onclick="openGuide()">📘 사용법</span>
             <label class="bb-help" style="margin-left:auto;cursor:pointer;"><input type="checkbox" id="pref-home-board" style="margin:0 4px 0 0;vertical-align:middle;" onchange="setHomeBoardPref(this.checked)">앱을 열면 입찰후보부터</label>
         </div>
         <div id="bb-csv-bar" style="display:none;"></div>
@@ -1645,7 +1648,7 @@ body.ui2 #auction-modal.am4 { width:620px; }
       좋은 물건도 <b>10번 안팎 입찰에 1번 낙찰</b> - 떨어지는 게 정상이에요<br>
       낙찰 후 보통 <b>5~8개월</b>에 팔림 · 안 팔릴 수도 있으니 첫 낙찰은 <b>전세가율 높은 곳(🛡️ 버팀)</b>이 가장 안전</div></div></div>
     <div class="gd-foot">근거: 지방 아파트 낙찰사례 약 2만 4천 건·실거래 약 295만 건 백테스트(2026-10). 지역 순위·경쟁 강도는 매주·매월 자동으로 다시 계산돼요.<br>
-      참고만 할 것: 회전율 등급 · 급등/돈되는 지역(아파트) · 대장 따라잡기 · 시장 사이클</div>
+      참고만 할 것: 회전율 등급 · 돈되는 지역(아파트) · 대장 따라잡기 · 시장 사이클</div>
   </div>
 </div>
 <div id="my-assets-panel">
@@ -1796,7 +1799,7 @@ body.ui2 #auction-modal.am4 { width:620px; }
             <div class="est-row">
                 <span class="est-num">①</span><span class="est-label">예상매도가</span>
                 <span class="est-value" id="est-row-1-value">-</span>
-                <button type="button" class="modal-btn btn-purple est-apply-btn" onclick="applyEstRow1()">③에 적용</button>
+                <button type="button" class="modal-btn btn-purple est-apply-btn" onclick="applyEstRow1()">목표매도가로</button>
             </div>
             <div class="est-sub">호가·매물재고·유사물건·비교물건 반영</div>
 
@@ -1876,7 +1879,7 @@ body.ui2 #auction-modal.am4 { width:620px; }
             <div class="est-row" style="margin-top:2px;">
                 <span style="font-size:11px;color:#888;min-width:76px;flex-shrink:0;">📊 비교물건 매도가</span>
                 <span class="est-value" id="est-comp-value" style="font-size:13px;">-</span>
-                <button type="button" class="modal-btn btn-gray est-apply-btn" onclick="applyEstCompValue()">③에 적용</button>
+                <button type="button" class="modal-btn btn-gray est-apply-btn" onclick="applyEstCompValue()">목표매도가로</button>
             </div>
             <div class="est-sub">등록된 비교물건(실거래) 평단가 기반 - 호가·매물재고는 미반영</div>
 
@@ -6391,12 +6394,13 @@ function renderTable() {
     // ⑤ 자세한 분석 - 제목만 보이고 눌러서 펼침
     var more = '';
     more += pnDetails('🔗 바로가기 (네이버·법원경매)', links);
-    if (ind && (ind._aptName || ind._aptDong)) more += pnDetails('📝 임장메모', buildSiteNoteSectionHtml(ind._aptName, ind._aptDong, '', currentPanelLat, currentPanelLon));
+    // 2026-10 정리: 임장 기록은 입찰후보 창의 "임장 문답"으로 옮겨감 - 예전 임장메모는 남아 있는 단지에서만 보여줌
+    if (ind && (ind._aptName || ind._aptDong) && getSiteNotesForBuilding(ind._aptName, ind._aptDong).length) more += pnDetails('📝 임장메모(예전 기록)', buildSiteNoteSectionHtml(ind._aptName, ind._aptDong, '', currentPanelLat, currentPanelLon));
     if (ind && ind._newHighPyungs && ind._newHighPyungs.length > 0) {
         more += pnDetails('★ 신고가 (6개월 전 대비)', '<table class="pn-table"><thead><tr><th>평형</th><th class="r">이전 최고</th><th class="r">신고가</th></tr></thead><tbody>'
             + ind._newHighPyungs.map(function(it) { return '<tr><td>' + it.py + '평</td><td class="r">' + toEok(String(it.beforeMax)) + '</td><td class="r"><b style="color:#e53935;">' + toEok(String(it.recentMax)) + '</b></td></tr>'; }).join('') + '</tbody></table>');
     }
-    if (currentPanelApt) more += pnDetails('🔍 저평가 · 저가치 진단', buildValueDiagnosisHtml(currentPanelApt, currentVolumeIndicators, currentBuildingInfo, currentOfficialPrice, currentPanelDevNews));
+    // 2026-10 정리: 🔍 저평가·저가치 진단(옛 투자점수 방식)은 지금 판단 기준(같은 단지 실거래·인기·거래량)과 겹쳐 뺌
     if (currentPppTimeline) more += pnDetails('📊 평단가 분석', buildPppAnalysisHtml(currentPppTimeline));
     if (currentVolumeIndicators) more += pnDetails('📈 거래량 분석', buildVolumeAnalysisHtml(currentVolumeIndicators));
     if (currentJeonseEstimate) more += pnDetails('🏠 전세가 기반 추정', buildJeonseEstimateHtml(currentJeonseEstimate));
@@ -15620,7 +15624,7 @@ function renderRiskMarginSuggestion(predictedSale) {
         + (own >= 3 ? '이 단지 같은 평형 거래 ' + own + '건이라 예측이 비교적 정확' : '이 단지 비교 거래가 적어 예측 오차가 큼')
         + (r.extra > 0 ? ' + 지역 하락위험 높음 ' + Math.round(r.extra * 1000) / 10 + '%' : '')
         + (r.popExtra > 0 ? ' + 거래 드문 단지 ' + Math.round(r.popExtra * 100) + '%(팔릴 때까지 오래 보유)' : '') + ')</span></span> '
-        + '<button type="button" class="modal-btn btn-gray" style="font-size:10px;padding:2px 6px;" onclick="document.getElementById(\'a-comp-target-margin\').value=' + r.margin + ';applyEstRow4();">④에 적용</button>'
+        + '<button type="button" class="modal-btn btn-gray" style="font-size:10px;padding:2px 6px;" onclick="document.getElementById(\'a-comp-target-margin\').value=' + r.margin + ';applyEstRow4();">목표마진으로</button>'
         + (r.extra > 0 ? '<div style="color:#c62828;font-size:10.5px;">⚠️ 이 지역 6개월 뒤 하락 위험 높음(' + (dr.negative || []).join(', ') + ') - 과거 같은 조건에서 '
             + (dr.dropShare != null ? dr.dropShare + '%가 6개월 뒤 2%+ 하락, ' : '') + '평균 −' + dr.avgDropPct + '% → 그만큼 마진을 더 잡았어요</div>' : '')
         + '<div style="color:#999;font-size:10px;">낙찰되는 물건은 대체로 시세를 높게 본 경우라, 마진이 예측 오차를 덮도록 잡은 값이에요(전남·광주 낙찰물건 281건 검증: 고정 2천만 대비 낙찰 1.5배·총 순이익 1.7배, 손실 비율은 비슷).</div>';
@@ -16893,7 +16897,8 @@ async function renderBidDrawer() {
         + '<label>미납 관리비 (공용부분)</label><input type="number" value="' + (parseInt(a.unpaidMgmtFee) || '') + '" placeholder="0" onchange="updateDrawerField(\'' + idJs + '\',\'unpaidMgmtFee\',this.value)">'
         + '<label>수리비 (비우면 연식 기준 ' + (cl ? toEok(String(cl.repairAuto)) : '-') + ')</label><input type="number" value="' + (parseInt(a.repair) || '') + '" placeholder="자동" onchange="updateDrawerField(\'' + idJs + '\',\'repair\',this.value)">'
         + '</div></div>';
-    h += '<div class="dr-sec dr-btns"><button onclick="bidBoardGo(\'' + idJs + '\')">🗺️ 지도에서 보기</button><button onclick="bbOpenDetail(\'' + idJs + '\')">📝 전체 상세</button>'
+    // 2026-10 정리: 지도·상세 버튼은 창 맨 위에 이미 있어 아래쪽 중복 버튼은 뺌
+    h += '<div class="dr-sec dr-btns">'
         + (a.caseNo ? '<button onclick="copyAuctionCaseNo(\'' + String(a.caseNo).replace(/'/g, "\\'") + '\')">📋 사건번호 복사·법원경매</button>' : '') + '</div>';
     d.innerHTML = h;
 }
@@ -23190,8 +23195,11 @@ function setupAuctionModalV4() {
         var money = q('#est-row-1-value') && q('#est-row-1-value').closest('.modal-section'); if (money) money.classList.add('am4-money');
         var mt = money && money.querySelector('.modal-section-title'); if (mt) mt.textContent = '예상매도가 → 추천 입찰가 (만원)';
         m.querySelectorAll('.am4-money .est-num').forEach(function(n) { n.style.display = 'none'; });
-        var rename = { 'mg-estimate': '💰 금액 · 추천 입찰가', 'mg-property': '📍 물건 정보 · 세금 조건', 'mg-cost': '🧾 입찰가 · 낙찰 결과 · 비용', 'mg-registry': '📚 권리 서류 분석', 'mg-fieldvisit': '🔍 임장 체크리스트 · 메모' };
+        var rename = { 'mg-estimate': '💰 금액 · 추천 입찰가', 'mg-property': '📍 물건 정보 · 세금 조건', 'mg-cost': '🧾 입찰가 · 낙찰 결과 · 비용', 'mg-registry': '📚 권리 서류 분석', 'mg-fieldvisit': '📝 메모 · 입찰 기록' };
         Object.keys(rename).forEach(function(id) { var h = document.querySelector('#' + id + ' > .modal-group-header > span'); if (h) h.textContent = rename[id]; });
+        // 사용 기록 0건(2026-10 확인): 📚 경매서류 교차분석, ✅ 체크리스트 → 숨김. 메모·입찰 기록은 유지
+        hide(document.getElementById('mg-registry'));
+        var clp = document.getElementById('checklist-progress'); hide(clp && clp.closest('.modal-section'));
         var mtb = document.getElementById('margin-result-box'); var mtt = mtb && mtb.querySelector('.margin-result-title'); if (mtt) mtt.textContent = '비용·남는 돈 계산';
         var pt = document.getElementById('a-prop-type'); if (pt) pt.addEventListener('change', function() { m.dataset.ptype = pt.value === 'villa' ? 'villa' : 'apt'; });
     }
@@ -23662,7 +23670,9 @@ function setupBidCasePanelLayout() {
         return d;
     };
     wrap(imp, '＋ 낙찰사례 추가 (붙여넣기 · CSV)');
-    wrap(tools, '🛠 관리 도구 (매도사례 매칭 · 중복 정리 · 연식 조회)');
+    // 2026-10 정리: 매도사례 매칭(매주 자동 - analyze-bidcases)·건물연식 조회(매일 자동 - 건축물대장 수집)는 서버가 하므로 버튼 숨김
+    ['bc-match-btn', 'bc-retry-failed-btn', 'bc-buildyear-btn'].forEach(function(id) { var b = document.getElementById(id); if (b) b.style.display = 'none'; });
+    wrap(tools, '🛠 관리 도구 (중복 정리)');
     var sum = document.createElement('div'); sum.id = 'bc-summary'; sum.className = 'pn-card'; sum.style.margin = '8px';
     var hdr = p.querySelector('.auction-list-header'); hdr.after(sum);
     renderBidCaseSummary();
