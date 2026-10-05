@@ -63,7 +63,11 @@ def region_norm(addr_or_region):
     t = str(addr_or_region or "").split()
     if len(t) < 2:
         return None
-    return sido_norm(t[0]) + " " + t[1]
+    # 2026-10: 구가 있는 시는 실거래가 "전북 전주 완산구", 낙찰사례 주소가 "전북 전주시 완산구"라 서로 못 맞췄음 → 뒤에 구가 오면 "시"를 뗌
+    city = t[1]
+    if len(t) >= 3 and city.endswith("시") and t[2].endswith("구"):
+        city = city[:-1]
+    return sido_norm(t[0]) + " " + city
 
 
 def dong_key(d):
@@ -143,7 +147,8 @@ def main():
         sd, gu = r.split(" ", 1)
         for alias in ({"전남광주": ["전남광주", "광주", "전남"]}.get(sd, [sd])):
             names.add(f"{alias} {gu}")
-    flt = "&region=in.(" + ",".join('"' + n + '"' for n in sorted(names)) + ")"
+    # 실거래 지역명은 "전북 전주 완산구"처럼 구까지 붙어 있어 정확히 같은 이름(in)으로는 못 찾음 → 앞부분 일치(like)로
+    flt = "&or=(" + ",".join('region.like."' + n + '*"' for n in sorted(names)) + ")"
     tr = avm.fetch_all_rows("house_trades", cols="region,dong,danji,bunji,price,size,floor,deal_date,dealing_type,build_year,apt_dong,cdeal_type",
                             extra_filter=f"&deal_date=gte.{cyc.START_DATE}{flt}")
     # 2026-10: 해제(취소)된 거래는 시세·되팔기 모두에서 뺌(응답의 3~8%)
@@ -496,7 +501,8 @@ def write_back_villa_matches(cases):
         sd, gu = r.split(" ", 1)
         for alias in ({"전남광주": ["전남광주", "광주", "전남"]}.get(sd, [sd])):
             names.add(f"{alias} {gu}")
-    flt = "&region=in.(" + ",".join('"' + n + '"' for n in sorted(names)) + ")"
+    # 실거래 지역명은 "전북 전주 완산구"처럼 구까지 붙어 있어 정확히 같은 이름(in)으로는 못 찾음 → 앞부분 일치(like)로
+    flt = "&or=(" + ",".join('region.like."' + n + '*"' for n in sorted(names)) + ")"
     tr = avm.fetch_all_rows("villa_trades", cols="region,dong,bunji,price,size,floor,deal_date,dealing_type",
                             extra_filter=f"&deal_date=gte.{cyc.START_DATE}{flt}")
     if tr is None or len(tr) == 0:

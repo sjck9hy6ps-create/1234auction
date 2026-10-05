@@ -38,7 +38,12 @@ def sido_norm(s):
 
 def region_key(r):
     t = str(r or "").split()
-    return (sido_norm(t[0]) + " " + t[1]) if len(t) >= 2 else None
+    if len(t) < 2:
+        return None
+    city = t[1]
+    if len(t) >= 3 and city.endswith("시") and t[2].endswith("구"):
+        city = city[:-1]  # "전주시 완산구"(낙찰사례) ↔ "전주 완산구"(실거래)
+    return sido_norm(t[0]) + " " + city
 
 
 def main():

@@ -16869,7 +16869,9 @@ function competitionRegionKey(addr) {
     if (/^(전남광주|광주|전남|전라남)/.test(s)) sd = '전남광주';
     else if (/^(전북|전라북)/.test(s)) sd = '전북'; else if (/^(경남|경상남)/.test(s)) sd = '경남'; else if (/^(경북|경상북)/.test(s)) sd = '경북';
     else if (/^(충남|충청남)/.test(s)) sd = '충남'; else if (/^(충북|충청북)/.test(s)) sd = '충북'; else sd = s.slice(0, 2);
-    return sd + ' ' + t[1];
+    var city = t[1];
+    if (t.length >= 3 && /시$/.test(city) && /구$/.test(t[2])) city = city.slice(0, -1); // "전주시 완산구" ↔ 실거래 "전주 완산구"
+    return sd + ' ' + city;
 }
 function competitionHtml(row) {
     if (row.type !== 'apt') return '';
