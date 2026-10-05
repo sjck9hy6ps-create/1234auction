@@ -1252,6 +1252,24 @@ body.ui2 #auction-modal.am4 { width:620px; }
 #bb-drawer .dr-wb-h { font-size:12.5px; }
 #bb-drawer .dr-wb-h b { font-size:15px; }
 </style>
+<style>
+/* 🔔 할 일 알림(2026-10) */
+#tb-remind-btn { position:relative; }
+#tb-remind-count { position:absolute; top:2px; right:0; min-width:16px; height:16px; border-radius:8px; background:#ef4444; color:#fff; font-size:10px; line-height:16px; text-align:center; padding:0 4px; }
+#remind-panel { position:fixed; top:58px; right:10px; width:min(380px, calc(100vw - 20px)); max-height:calc(100vh - 80px); overflow:auto; background:#fff; border:1px solid #e5e7eb; border-radius:12px; box-shadow:0 10px 30px rgba(0,0,0,.2); z-index:9100; padding:10px 12px; font-size:12.5px; }
+#remind-panel .rm-h { font-weight:800; font-size:14px; margin-bottom:6px; display:flex; justify-content:space-between; }
+#remind-panel .rm-x { cursor:pointer; color:#6b7280; font-weight:400; }
+#remind-panel .rm-item { border-top:1px solid #f1f3f5; padding:9px 0; }
+#remind-panel .rm-t { font-weight:700; }
+#remind-panel .rm-s { color:#4b5563; font-size:11.5px; margin-top:2px; line-height:1.5; }
+#remind-panel .rm-b { margin-top:6px; display:flex; gap:6px; }
+#remind-panel .rm-b button { border:1px solid #d6dbe1; background:#fff; border-radius:14px; padding:5px 11px; font-size:12px; cursor:pointer; }
+#remind-panel .rm-b .rm-go { background:var(--ui-blue,#1e5eff); border-color:var(--ui-blue,#1e5eff); color:#fff; font-weight:700; }
+#remind-panel .rm-empty { color:#6b7280; padding:14px 0; text-align:center; }
+#remind-toast { position:fixed; top:60px; right:12px; z-index:9100; background:#111827; color:#fff; border-radius:12px; padding:10px 14px; font-size:13px; box-shadow:0 8px 24px rgba(0,0,0,.25); cursor:pointer; max-width:calc(100vw - 24px); }
+#remind-toast span { color:#93c5fd; margin-left:6px; }
+@media (pointer: coarse) { #remind-panel .rm-b button { padding:8px 13px; font-size:13px; } }
+</style>
 </head>
 <body>
 <div id="topbar">
@@ -1269,6 +1287,7 @@ body.ui2 #auction-modal.am4 { width:620px; }
         <button onclick="toggleCyclePanel(); closeTbMenus();">📈 사이클</button>
         <button onclick="openGuide(); closeTbMenus();">📘 사용법</button>
         <a class="tb-link" href="/backup.html">📦 백업</a>
+        <button id="tb-remind-btn" onclick="toggleRemindPanel(); closeTbMenus();" title="지금 해야 할 일">🔔<span id="tb-remind-count" style="display:none;"></span></button>
     </nav>
     <button id="tb-hamburger" onclick="toggleTbMenuMobile()" aria-label="메뉴">☰</button>
 </div>
@@ -23362,6 +23381,116 @@ window.addEventListener('load', function() {
         wrapped._am4 = true;
         window.openAuctionModal = wrapped;
     }, 200);
+});
+/* ════ 🔔 할 일 알림 (2026-10, 사용자: "필요한 작업을 해야 할 시기에 앱 안에 알림") ════
+   앱이 가진 자료로 "지금 할 일"을 계산해 상단 🔔에 개수 표시, 누르면 목록(바로가기 버튼 포함). 하루 한 번 앱을 열 때 짧게 알려줌.
+   항목별 "오늘은 숨기기"는 이 기기에만 저장(localStorage).
+   ① 입찰 임박·결과 미반영: 3일 안 입찰 물건이 있거나 입찰일 지난 물건 결과가 없는데 CSV를 하루 넘게 안 올림 → CSV 다시 올리기
+   ② 낙찰사례: 마지막 업로드 6일 이상(또는 목요일인데 3일 이상) → 금요일 새벽 주간 분석 전에 올리기 + 입찰후보 지역 중 최근 1년 사례 30건 미만 지역
+   ③ 매매차익 예정신고 마감 30일 안(내 자산·경매 매도완료)  ④ 보유 자산 취득가 비어 있음(수익·세금 계산에 필요)
+   ⑤ 날짜가 정해진 일정(무료화 준비 등) */
+var REMIND_FIXED = [
+    { key: 'cf-signup', from: '2026-10-12', to: '2026-10-16', icon: '☁️', title: '무료화 준비: Cloudflare 가입', sub: '10/17~18에 실거래 자료를 Cloudflare로 옮겨요(Supabase 결제일 10/19 전). 가입만 해두면 나머지는 Claude가 해요.' }
+];
+function remindTodayStr() { var d = new Date(); return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0'); }
+function remindHidden(key) { try { return localStorage.getItem('remindHide:' + key) === remindTodayStr(); } catch (e) { return false; } }
+function remindHide(key) { try { localStorage.setItem('remindHide:' + key, remindTodayStr()); } catch (e) {} renderRemindUi(); }
+function lastCsvAt() {
+    var t = 0;
+    try { t = parseInt(localStorage.getItem('lastBoardCsvAt')) || 0; } catch (e) {}
+    (auctionList || []).forEach(function(a) { var m = String(a.id || '').match(/^(\d{13})/); if (m && !a.isBacktest) t = Math.max(t, parseInt(m[1])); });
+    return t;
+}
+function computeReminders() {
+    var out = [], now = Date.now(), day = 86400000, today = remindTodayStr();
+    // ① CSV 다시 올리기
+    try {
+        var real = (auctionList || []).filter(function(a) { return !a.isBacktest && a.status === '검토중' && a.bidDate; });
+        var soon = real.filter(function(a) { var d = calcAuctionDday(a.bidDate); return d && d.diffDays >= 0 && d.diffDays <= 3; }).length;
+        var past = real.filter(function(a) { var d = calcAuctionDday(a.bidDate); return d && d.diffDays < 0 && d.diffDays >= -BID_RESULT_WAIT_DAYS; }).length;
+        var since = lastCsvAt() ? Math.floor((now - lastCsvAt()) / day) : null;
+        if ((soon || past) && (since == null || since >= 1)) {
+            out.push({ key: 'csv', pri: 1, icon: '📄', title: '경매 CSV 다시 올리기',
+                sub: (soon ? '3일 안 입찰 ' + soon + '건' : '') + (soon && past ? ' · ' : '') + (past ? '입찰일 지났는데 결과 없는 물건 ' + past + '건(유찰 가정으로 계산 중)' : '')
+                    + ' - 올리면 최저가·유찰·매각 결과와 낙찰 가능성이 바로 다시 계산돼요' + (since != null ? ' (마지막 ' + since + '일 전)' : ''),
+                btn: '📝 경매물건 등록', act: 'openBidTargetPanel()' });
+        }
+    } catch (e) {}
+    // ② 낙찰사례 주간 업로드
+    try {
+        var lastImp = 0; (bidCaseList || []).forEach(function(c) { var t = parseInt(c.importedAt) || 0; if (t > lastImp) lastImp = t; });
+        var dsi = lastImp ? Math.floor((now - lastImp) / day) : null, dow = new Date().getDay();
+        if (bidCaseList && bidCaseList.length && (dsi == null || dsi >= 6 || (dow === 4 && dsi >= 3))) {
+            var cut = new Date(now - 365 * day).toISOString().slice(0, 10), y1 = {}, cand = {};
+            bidCaseList.forEach(function(c) { if (/아파트/.test(c.propertyType || '') && c.saleDate >= cut) { var k = competitionRegionKey(c.addrJibun); y1[k] = (y1[k] || 0) + 1; } });
+            (bidBoardRows || []).forEach(function(r) { if (r.type === 'apt' && r.a) { var k = competitionRegionKey(r.a.addr); if (k) cand[k] = 1; } });
+            var thin = Object.keys(cand).filter(function(k) { return (y1[k] || 0) < 30; }).sort(function(a, b) { return (y1[a] || 0) - (y1[b] || 0); });
+            out.push({ key: 'bidcase', pri: 2, icon: '⚖️', title: '이번 주 낙찰사례 올리기',
+                sub: '금요일 새벽 주간 분석(예상 낙찰가·경쟁 강도)에 반영돼요' + (dsi != null ? ' (마지막 업로드 ' + dsi + '일 전)' : '')
+                    + (thin.length ? ' · 사례가 적은 입찰 지역 우선: ' + thin.slice(0, 6).map(function(k) { return k + '(' + (y1[k] || 0) + '건)'; }).join(', ') : ''),
+                btn: '⚖️ 낙찰사례', act: 'openBidCasePanel()' });
+        }
+    } catch (e) {}
+    // ③ 매매차익 예정신고 마감
+    try {
+        if (myAssets && myAssets.loaded) maBuildDeals().forEach(function(d) {
+            if (d.filing && d.filing.diffDays <= 30 && d.filing.diffDays >= -30) out.push({ key: 'filing:' + d.key, pri: d.filing.diffDays <= 14 ? 0 : 1, icon: '📅',
+                title: '매매차익 예정신고 ' + (d.filing.diffDays < 0 ? '마감 지남' : 'D-' + d.filing.diffDays), sub: d.name + ' · 마감 ' + d.filing.deadlineStr + ' (양도월 말일부터 2개월 안)', btn: '💼 내 자산', act: 'openMyAssetsPanel()' });
+        });
+    } catch (e) {}
+    // ④ 보유 자산 취득가 비어 있음
+    try {
+        var noPrice = ((myAssets && myAssets.items) || []).filter(function(x) { return x.status === 'holding' && !(parseInt(x.acquiredPrice) > 0); });
+        if (noPrice.length) out.push({ key: 'asset-price', pri: 3, icon: '💼', title: '보유 자산 취득가 넣기', sub: noPrice.map(function(x) { return x.name || '이름 없음'; }).join(', ') + ' - 취득가가 있어야 매도 이익·세금이 계산돼요', btn: '💼 내 자산', act: 'openMyAssetsPanel()' });
+    } catch (e) {}
+    // ⑤ 날짜가 정해진 일정
+    REMIND_FIXED.forEach(function(f) { if (today >= f.from && today <= f.to) out.push({ key: f.key, pri: 1, icon: f.icon, title: f.title, sub: f.sub }); });
+    return out.filter(function(r) { return !remindHidden(r.key); }).sort(function(a, b) { return a.pri - b.pri; });
+}
+function renderRemindUi() {
+    var list = computeReminders();
+    var c = document.getElementById('tb-remind-count');
+    if (c) { c.textContent = list.length; c.style.display = list.length ? '' : 'none'; }
+    var p = document.getElementById('remind-panel');
+    if (p) {
+        p.innerHTML = '<div class="rm-h">🔔 지금 할 일 <span class="rm-x" onclick="toggleRemindPanel()">✕</span></div>'
+            + (list.length ? list.map(function(r) {
+                return '<div class="rm-item"><div class="rm-t">' + r.icon + ' ' + bbEsc(r.title) + '</div><div class="rm-s">' + bbEsc(r.sub) + '</div><div class="rm-b">'
+                    + (r.act ? '<button class="rm-go" onclick="toggleRemindPanel();' + r.act + '">' + r.btn + '</button>' : '')
+                    + '<button onclick="remindHide(\'' + r.key.replace(/'/g, "\\'") + '\')">오늘은 숨기기</button></div></div>';
+            }).join('') : '<div class="rm-empty">지금은 할 일이 없어요 👍</div>');
+    }
+    return list;
+}
+function toggleRemindPanel() {
+    var p = document.getElementById('remind-panel');
+    if (p) { p.remove(); return; }
+    p = document.createElement('div'); p.id = 'remind-panel'; document.body.appendChild(p);
+    renderRemindUi();
+}
+// 하루 한 번(이 기기 기준) 앱을 열 때 할 일이 있으면 짧게 알림
+setTimeout(function() {
+    var list = renderRemindUi();
+    try { if (!list.length || localStorage.getItem('remindToastDay') === remindTodayStr()) return; localStorage.setItem('remindToastDay', remindTodayStr()); } catch (e) { return; }
+    var t = document.createElement('div'); t.id = 'remind-toast';
+    t.innerHTML = '🔔 오늘 할 일 <b>' + list.length + '개</b> - ' + bbEsc(list[0].title) + (list.length > 1 ? ' 외' : '') + ' <span>보기 ›</span>';
+    t.onclick = function() { t.remove(); toggleRemindPanel(); };
+    document.body.appendChild(t);
+    setTimeout(function() { if (t.parentNode) t.remove(); }, 9000);
+}, 9000);
+setInterval(function() { try { renderRemindUi(); } catch (e) {} }, 10 * 60 * 1000);
+// CSV를 등록·반영하면 마지막 업로드 시각 기록(알림 ①)
+window.addEventListener('load', function() {
+    setTimeout(function() {
+        var orig = window.saveSelectedBidTargets;
+        if (typeof orig !== 'function' || orig._rm) return;
+        var w = function() {
+            var r = orig.apply(this, arguments);
+            Promise.resolve(r).then(function() { try { localStorage.setItem('lastBoardCsvAt', String(Date.now())); } catch (e) {} renderRemindUi(); });
+            return r;
+        };
+        w._rm = true; window.saveSelectedBidTargets = w;
+    }, 300);
 });
 // 예전 누적 투자 리포트 주소(/dashboard.html → /#assets)로 들어오면 내 자산 화면을 바로 엶
 window.addEventListener('load', function() { if (location.hash === '#assets') setTimeout(function() { openMyAssetsPanel(); }, 1500); });
