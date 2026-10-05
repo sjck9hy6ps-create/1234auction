@@ -632,9 +632,6 @@ def attention_analysis(R, seg_stats, med):
     return out
 
 
-if __name__ == "__main__":
-    main()
-
 
 def competition_stats(R, now):
     """2026-10(사용자: "틈새시장의 큰 틀 - 실제로 낙찰 가능성이 있고 낙찰 후 매도까지 잘되는 지역"): 시군구별 경쟁 강도.
@@ -664,3 +661,7 @@ def competition_stats(R, now):
         out["bySeason"][se] = stat(G)
     print(f"  지역 경쟁 강도: 시군구 {len(out['byRegion'])}곳, 기준 {out['base']}")
     cyc.upsert_rows([{"id": "signal|__competition__", "payload": cyc.clean_json(out), "fetched_at": now}])
+
+
+if __name__ == "__main__":
+    main()
