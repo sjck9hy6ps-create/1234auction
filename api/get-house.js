@@ -225,7 +225,7 @@ async function handleMolitProxy(req, res) {
 
   try {
     const url = `https://apis.data.go.kr/1613000/${endpoint}/get${endpoint}`
-      + `?serviceKey=${encodeURIComponent(APT_API_KEY)}&LAWD_CD=${code}&DEAL_YMD=${ym}&numOfRows=1000&pageNo=1`;
+      + `?serviceKey=${encodeURIComponent(APT_API_KEY)}&LAWD_CD=${code}&DEAL_YMD=${ym}&numOfRows=1000&pageNo=${Math.max(1, parseInt(req.query.page || '1', 10) || 1)}`; // 2026-10: 한 달 1,000건 넘는 지역은 page로 이어 받기
     const response = await fetch(url, { signal: AbortSignal.timeout(15000) });
     const text = await response.text();
     res.setHeader('Content-Type', 'text/xml; charset=utf-8');

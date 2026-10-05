@@ -353,7 +353,14 @@ export function parseXML(xml, regionName) {
       // 2026-09 추가: 직거래/중개거래 구분(dealingGbn) - RTMSDataSvcAptTradeDev 응답에
       // 원래부터 있던 필드인데 지금까지 안 읽고 버리고 있었음. 값이 없으면 null(구버전
       // API 응답이나 파싱 실패 등 - "직거래 아님"이 아니라 "알 수 없음"으로 취급해야 함).
-      dealing_type: getTag(b, 'dealingGbn') || null
+      dealing_type: getTag(b, 'dealingGbn') || null,
+      // 2026-10(낙찰 후 되팔기 매칭 정확도): 2023년부터 응답에 동(棟)·등기일자, 2024년부터 거래 당사자 구분이 채워져 옴(80~90%).
+      // 같은 층 다른 집 거래를 "되팔기"로 잘못 잡던 문제를 동으로 좁히고, 해제(취소)된 거래를 시세에서 빼기 위해 저장.
+      apt_dong: getTag(b, 'aptDong').trim() || null,
+      rgst_date: getTag(b, 'rgstDate').trim() || null,
+      cdeal_type: getTag(b, 'cdealType').trim() || null,
+      buyer_gbn: getTag(b, 'buyerGbn').trim() || null,
+      sler_gbn: getTag(b, 'slerGbn').trim() || null
     });
   }
   return rows;
@@ -379,7 +386,15 @@ export async function fetchMonth(code, name, ym) {
     try {
       const res = await fetch(proxyUrl || directUrl, { signal: AbortSignal.timeout(20000) });
       const text = await res.text();
-      return parseXML(text, name);
+      const rows = parseXML(text, name);
+      // 2026-10: 한 달 거래가 1,000건을 넘으면 첫 페이지만 받고 나머지가 버려지고 있었음 → totalCount만큼 다음 페이지도 받음
+      const tc = parseInt((text.match(/<totalCount>(\d+)<\/totalCount>/) || [])[1] || '0', 10);
+      for (let pg = 2; pg <= Math.min(10, Math.ceil(tc / 1000)); pg++) {
+        const u = proxyUrl ? `${proxyUrl}&page=${pg}` : directUrl.replace('pageNo=1', `pageNo=${pg}`);
+        try { const t2 = await fetch(u, { signal: AbortSignal.timeout(20000) }).then((r) => r.text()); rows.push(...parseXML(t2, name)); } catch (e2) { console.error(`❌ ${code}/${ym} ${pg}쪽 실패: ${e2.message}`); }
+      }
+      if (tc > 1000) console.log(`   ${code}/${ym}: ${tc}건 - 여러 쪽으로 받음(${rows.length}건)`);
+      return rows;
     } catch (e) {
       const causeInfo = e.cause ? ` / cause: ${e.cause.code || e.cause.message || e.cause}` : '';
       console.error(`❌ ${code}/${ym} 실패(시도 ${attempt}/${MAX_ATTEMPTS}, ${proxyUrl ? 'proxy' : 'direct'}): ${e.message}${causeInfo}`);
