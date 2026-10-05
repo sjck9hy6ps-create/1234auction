@@ -1060,6 +1060,36 @@ body.ui2 #bid-case-panel th, body.ui2 #surge-panel th, body.ui2 #panel-tab-aucti
 body.ui2 #bid-case-panel td, body.ui2 #surge-panel td, body.ui2 #panel-tab-auction td { border-bottom:1px solid #f5f6f8; padding:6px 4px; }
 </style>
 <style>
+/* ════ 💼 내 자산 + 투자 리포트 통합 화면(2026-10) - 넓은 창, 위에 종합 수치 6칸, 아래 왼쪽 표·오른쪽 세금/비용/지역/추이 ════ */
+body.ui2 #my-assets-panel { position:fixed; top:104px; right:64px; left:auto; bottom:auto; width:min(1080px, calc(100vw - 90px)); max-height:calc(100vh - 116px);
+    z-index:57; border:1px solid #e3e6ea; border-radius:12px; box-shadow:0 8px 24px rgba(0,0,0,0.14); background:#f8f9fb; }
+.ma2-kpis { display:grid; grid-template-columns:repeat(6, 1fr); gap:8px; padding:10px 12px 4px; }
+.ma2-kpi { background:#fff; border:1px solid #eef0f3; border-radius:10px; padding:9px 11px; min-width:0; }
+.ma2-kpi span { display:block; color:#6b7280; font-size:11px; }
+.ma2-kpi b { display:block; font-size:18px; margin:2px 0 1px; letter-spacing:-0.3px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.ma2-kpi em { display:block; font-style:normal; color:#9aa0a6; font-size:10.5px; line-height:1.35; }
+.ma2-banner { margin:6px 12px 0; padding:7px 10px; border-radius:8px; background:#f3e5f5; color:#6a1b9a; font-size:12px; }
+.ma2-cols { display:grid; grid-template-columns:minmax(0, 1.65fr) minmax(280px, 1fr); gap:10px; padding:8px 12px 12px; align-items:start; }
+.ma2-cols .ma-sec { background:#fff; border:1px solid #eef0f3; border-radius:10px; margin-bottom:10px; border-bottom:1px solid #eef0f3; }
+.ma2-table { width:100%; border-collapse:collapse; font-size:12px; }
+.ma2-table th { color:#9aa0a6; font-weight:600; font-size:10.5px; text-align:left; padding:5px 4px; border-bottom:1px solid #eef0f3; white-space:nowrap; }
+.ma2-table td { padding:6px 4px; border-bottom:1px solid #f3f4f6; vertical-align:top; }
+.ma2-table .r { text-align:right; white-space:nowrap; }
+.ma2-click { cursor:pointer; } .ma2-click:hover td { background:#f5f9ff; }
+.ma2-cost { display:grid; grid-template-columns:repeat(auto-fill, minmax(110px, 1fr)); gap:6px; }
+.ma2-cost div { background:#fff; border:1px solid #eef0f3; border-radius:7px; padding:5px 8px; }
+.ma2-cost span { display:block; color:#9aa0a6; font-size:10px; } .ma2-cost b { font-size:12.5px; }
+.ma2-bar { display:grid; grid-template-columns:86px 1fr 44px; gap:6px; align-items:center; font-size:11.5px; margin-bottom:4px; }
+.ma2-bar i { background:#f1f3f5; border-radius:4px; height:8px; overflow:hidden; } .ma2-bar u { display:block; height:100%; background:#8e24aa; }
+.ma2-bar b { text-align:right; font-weight:600; }
+@media (max-width: 1240px) { .ma2-kpis { grid-template-columns:repeat(3, 1fr); } }
+@media (max-width: 900px) {
+    body.ui2 #my-assets-panel { left:8px; right:8px; width:auto; top:100px; max-height:calc(100vh - 160px); }
+    .ma2-cols { grid-template-columns:1fr; }
+}
+@media (max-width: 640px) { .ma2-kpis { grid-template-columns:repeat(2, 1fr); } }
+</style>
+<style>
 /* ════ 2026-10 아이패드 미니7(세로 744 · 가로 1133) · 맥북 13인치(1440~1470) 최적화 ════
    사용자: "아이패드 미니7을 사용 중 - 이 해상도에 맞는 최적의 UI" + "맥북 13인치에서도 사용"
    ① 입찰후보 표가 1,600px로 넘쳐 맥북·아이패드 가로에서 추천 입찰가가 잘림 → 예상매도가 설명 줄바꿈 + 좁은 화면에서 덜 중요한 칸 숨김
@@ -1161,7 +1191,7 @@ body.ui2 #bid-case-panel td, body.ui2 #surge-panel td, body.ui2 #panel-tab-aucti
                 <button onclick="openAuctionList(); closeTbMenus();">🔨 경매관리(빌라·직접 등록)</button>
                 <label style="display:block;padding:8px 14px;font-size:12.5px;cursor:pointer;"><input type="checkbox" id="pref-home-board" style="margin-right:6px;" onchange="setHomeBoardPref(this.checked)">앱을 열면 입찰후보부터</label>
                 <a href="/backup.html">📦 데이터 백업</a>
-                <a href="/dashboard.html">📊 누적 투자 리포트</a>
+                <a href="#" onclick="closeTbMenus();openMyAssetsPanel();return false;">💼 내 자산 · 투자 리포트</a>
                 <button onclick="openBacktestPanel(); closeTbMenus();">📐 낙찰가 백테스트 일괄등록</button>
                 <button onclick="reloadBadges(); closeTbMenus();">🔄 배지 재로딩</button>
             </div>
@@ -1397,7 +1427,7 @@ body.ui2 #bid-case-panel td, body.ui2 #surge-panel td, body.ui2 #panel-tab-aucti
     </div>
     <div style="font-size:11px;color:#888;margin-top:4px;">핀 숫자 = 기간 내 거래건수</div>
     <div style="margin-top:4px;"><a href="/backup.html" style="font-size:11px;color:#6a1b9a;font-weight:bold;">📦 데이터 백업</a></div>
-    <div style="margin-top:4px;"><a href="/dashboard.html" style="font-size:11px;color:#2e7d32;font-weight:bold;">📊 누적 투자 리포트</a></div>
+    <div style="margin-top:4px;"><a href="#" onclick="openMyAssetsPanel();return false;" style="font-size:11px;color:#2e7d32;font-weight:bold;">💼 내 자산 · 투자 리포트</a></div>
     <div style="margin-top:4px;"><span onclick="openBidCasePanel()" style="font-size:11px;color:#e65100;font-weight:bold;cursor:pointer;">📈 낙찰사례 통계</span></div>
     <div style="margin-top:4px;"><span onclick="openBidTargetPanel()" style="font-size:11px;color:#f57f17;font-weight:bold;cursor:pointer;">📋 입찰예정물건 일괄등록</span></div>
     <div style="margin-top:4px;"><span onclick="openBacktestPanel()" style="font-size:11px;color:#6a1b9a;font-weight:bold;cursor:pointer;">📐 낙찰가 백테스트 일괄등록</span></div>
@@ -1558,7 +1588,7 @@ body.ui2 #bid-case-panel td, body.ui2 #surge-panel td, body.ui2 #panel-tab-aucti
 </div>
 <div id="my-assets-panel">
     <div class="auction-list-header">
-        💼 내 자산 · 세금 상태
+        💼 내 자산 · 투자 리포트
         <span onclick="closeMyAssetsPanel()" style="float:right;cursor:pointer;">✕</span>
     </div>
     <div id="ma-body"><div class="ma-sec ma-sub">불러오는 중…</div></div>
@@ -22920,17 +22950,98 @@ function openMyAssetsPanel() {
     if (p.style.display === 'block') { p.style.display = 'none'; return; }
     p.style.display = 'block';
     if (!myAssets.loaded) loadMyAssets().then(renderMyAssets); else renderMyAssets();
+    // 경매 기록(매도완료 거래)이 아직 안 불러와졌으면 잠시 뒤 다시 그림
+    if (!auctionList || !auctionList.length) setTimeout(function() { if (p.style.display === 'block') renderMyAssets(); }, 3000);
 }
+// 예전 누적 투자 리포트 주소(/dashboard.html → /#assets)로 들어오면 내 자산 화면을 바로 엶
+window.addEventListener('load', function() { if (location.hash === '#assets') setTimeout(function() { openMyAssetsPanel(); }, 1500); });
 function closeMyAssetsPanel() { document.getElementById('my-assets-panel').style.display = 'none'; }
 var maEditId = null;
 function maEsc(t) { return String(t == null ? '' : t).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }
+/* ════ 💼 내 자산 + 누적 투자 리포트 통합 (2026-10 사용자: "내 자산 탭과 누적 투자 리포트가 겹친다 - 내 자산에 병합,
+   한눈에 보이게, 종합 수치가 보이도록") ════
+   - 매도 거래 = 경매 관리의 "매도완료" 물건(비용 항목·대출이자까지 자세함) + 내 자산의 "매도 완료" 항목.
+     같은 집이 양쪽에 있으면(주소의 동·지번 또는 이름이 겹침) 경매 쪽 상세 비용으로 한 번만 셈.
+   - 계산식은 예전 누적 리포트(dashboard.html computeDeal)와 같음: 총비용 = 낙찰가+취득세+등기+명도+수리+중개+기타+재산세+종부세+대출이자+중도상환수수료 */
+function maFmt(v) {
+    if (v == null || isNaN(v)) return '-';
+    var n = Math.round(v), neg = n < 0; n = Math.abs(n);
+    var e = Math.floor(n / 10000), r = n % 10000;
+    return (neg ? '−' : '') + (e ? e + '억' + (r ? ' ' + r.toLocaleString() + '만' : '') : n.toLocaleString() + '만');
+}
+function maDealFromAuction(a) {
+    var n = function(k) { return parseInt(a[k]) || 0; };
+    var bid = n('actualBid') || n('myBid');
+    var bidMethod = a.bidMethod || 'dealer';
+    var loanRate = parseFloat(a.loanRate) > 0 ? parseFloat(a.loanRate) : DEFAULT_LOAN_RATE[bidMethod === 'dealer' ? 'dealer' : 'individual'];
+    var loan = n('loanAmountManual') || calcLoanAmount(bidMethod, bid, n('appraisal'));
+    var interest = calcLoanInterest(loan, loanRate, n('holdMonths'));
+    var prepay = calcLoanPrepayFee(loan, parseFloat(a.loanPrepayFeeRate) > 0 ? parseFloat(a.loanPrepayFeeRate) : DEFAULT_LOAN_PREPAY_FEE_RATE);
+    var costs = { '낙찰가': bid, '취득세': n('tax'), '등기비용': n('registryFee'), '명도비용': n('evictionFee'), '수리비': n('repair'), '중개수수료': n('agent'),
+        '재산세': n('propertyTax'), '종부세': n('compTax'), '대출이자': interest, '중도상환수수료': prepay, '기타': n('etc') };
+    var total = Object.keys(costs).reduce(function(s, k) { return s + costs[k]; }, 0);
+    var sell = n('actualSell') || n('target');
+    var addr = a.addr || a.addrLabel || '';
+    var rg = addr.match(/^(\S+)\s+(\S+?(?:시|군|구))/);
+    return { key: 'au_' + a.id, src: 'auction', auctionId: a.id, name: (a.name && a.name.trim()) || a.addrLabel || addr || '(이름 없음)', addr: addr,
+        region: rg ? rg[1].replace(/(특별시|광역시|특별자치시|특별자치도|도)$/, '') + ' ' + rg[2] : '주소 미상',
+        type: a.propType || 'house', buy: bid, sell: sell, costs: costs, total: total, profit: sell - total, roi: total ? (sell - total) / total * 100 : 0,
+        buyDate: a.bidDate || '', sellDate: a.sellDate || '', filing: calcFilingDeadline(a.sellDate || ''), memo: a.memo || '' };
+}
+function maDealFromAsset(x) {
+    var buy = parseInt(x.acquiredPrice) || 0, sell = parseInt(x.soldPrice) || 0, exp = parseInt(x.expenses) || 0;
+    var rg = String(x.addr || '').match(/^(\S+)\s+(\S+?(?:시|군|구))/);
+    return { key: 'ma_' + x.id, src: 'asset', assetId: x.id, name: x.name || '(이름 없음)', addr: x.addr || '',
+        region: rg ? rg[1].replace(/(특별시|광역시|특별자치시|특별자치도|도)$/, '') + ' ' + rg[2] : '주소 미상',
+        type: x.type === 'officetel' ? 'officetel' : (x.type === 'house' ? 'house' : 'other'), buy: buy, sell: sell,
+        costs: { '취득가': buy, '경비(취득세·수리·중개 등)': exp }, total: buy + exp, profit: sell - buy - exp, roi: (buy + exp) ? (sell - buy - exp) / (buy + exp) * 100 : 0,
+        buyDate: x.acquiredDate || '', sellDate: x.soldDate || '', filing: x.use === 'inventory' ? calcFilingDeadline(x.soldDate || '') : null, memo: x.memo || '' };
+}
+// 경매 기록과 내 자산 항목이 같은 집인지(동 + 지번이 같거나 이름이 서로 포함)
+function maSameHome(a, x) {
+    var norm = function(s) { return String(s || '').replace(/\s|\(.*?\)/g, ''); };
+    var key = function(addr) { var m = String(addr || '').match(/(\S+[동리가로])\s+(산?\d+(?:-\d+)?)/); return m ? m[1] + m[2] : ''; };
+    var ka = key(a.addr || a.addrLabel), kx = key(x.addr);
+    if (ka && kx && ka === kx) return true;
+    var na = norm(a.name), nx = norm(x.name);
+    return !!(na && nx && na.length >= 3 && nx.length >= 3 && (na.indexOf(nx) >= 0 || nx.indexOf(na) >= 0));
+}
+function maBuildDeals() {
+    var sold = (auctionList || []).filter(function(a) { return a && a.status === '매도완료'; });
+    var used = {}, deals = [];
+    sold.forEach(function(a) {
+        var d = maDealFromAuction(a);
+        var x = (myAssets.items || []).filter(function(i) { return i.status === 'sold' && !used[i.id] && maSameHome(a, i); })[0];
+        if (x) { used[x.id] = 1; d.assetId = x.id; }
+        deals.push(d);
+    });
+    (myAssets.items || []).forEach(function(x) { if (x.status === 'sold' && !used[x.id]) deals.push(maDealFromAsset(x)); });
+    deals.forEach(function(d) {
+        var b = new Date(d.buyDate), s = new Date(d.sellDate);
+        d.holdM = (!isNaN(b) && !isNaN(s) && s > b) ? Math.round((s - b) / 86400000 / 30.4 * 10) / 10 : null;
+    });
+    deals.sort(function(p, q) { return String(q.sellDate || q.buyDate).localeCompare(String(p.sellDate || p.buyDate)); });
+    return deals;
+}
+var maOpenKey = null;
+function maToggleRow(k) { maOpenKey = maOpenKey === k ? null : k; renderMyAssets(); }
+function maRoiSvg(deals) {
+    var pts = deals.filter(function(d) { return d.sellDate; }).slice().reverse();
+    if (pts.length < 2) return '<div class="ma-sub">매도 2건 이상부터 그래프가 나와요</div>';
+    var W = 320, H = 90, rs = pts.map(function(d) { return d.roi; }), mx = Math.max.apply(null, rs.concat([0])), mn = Math.min.apply(null, rs.concat([0]));
+    if (mx === mn) { mx += 1; mn -= 1; }
+    var x = function(i) { return 8 + i / (pts.length - 1) * (W - 16); }, y = function(v) { return 8 + (mx - v) / (mx - mn) * (H - 22); };
+    return '<svg viewBox="0 0 ' + W + ' ' + H + '" style="width:100%;height:90px;"><line x1="8" x2="' + (W - 8) + '" y1="' + y(0) + '" y2="' + y(0) + '" stroke="#ddd" stroke-dasharray="3,3"/>'
+        + '<polyline fill="none" stroke="#6a1b9a" stroke-width="1.8" points="' + pts.map(function(d, i) { return x(i).toFixed(1) + ',' + y(d.roi).toFixed(1); }).join(' ') + '"/>'
+        + pts.map(function(d, i) { return '<circle cx="' + x(i).toFixed(1) + '" cy="' + y(d.roi).toFixed(1) + '" r="3" fill="' + (d.roi >= 0 ? '#2e7d32' : '#c62828') + '"><title>' + maEsc(d.name) + ' · ' + d.sellDate + ' · ' + d.roi.toFixed(1) + '%</title></circle>'; }).join('')
+        + '<text x="8" y="' + (H - 2) + '" font-size="9" fill="#999">' + pts[0].sellDate + '</text><text x="' + (W - 8) + '" y="' + (H - 2) + '" font-size="9" fill="#999" text-anchor="end">' + pts[pts.length - 1].sellDate + '</text></svg>';
+}
 function renderMyAssets() {
     var body = document.getElementById('ma-body');
     if (!myAssets.loaded) { body.innerHTML = '<div class="ma-sec ma-sub">불러오는 중…</div>'; return; }
     var s = myAssetSummary() || { count: 0, officialSum: 0, bizIncome: 0, otherIncome: 0, incomeBase: 0, isDealer: true };
     var p = myAssets.profile || {};
     var next = s.count + 1;
-    // 다음 낙찰 취득세율(공시가격 1억 초과·지방 2억 초과 일반 주택, 85㎡ 이하 기준)
     var acqRate = function(adjusted) {
         var t = calcAcquisitionTaxDetailed(30000, 'apt', 25, Math.min(4, next), adjusted, false);
         return Math.round(t / 30000 * 1000) / 10;
@@ -22938,36 +23049,87 @@ function renderMyAssets() {
     var taxOf = function(x) { if (x <= 0) return 0; var b = lookupIncomeTaxBracket(x); return Math.max(Math.round(x * b.rate - b.dedManwon), 0); };
     var marg1000 = Math.round((taxOf(s.incomeBase + 1000) - taxOf(s.incomeBase)) * 1.1);
     var brNow = lookupIncomeTaxBracket(Math.max(1, s.incomeBase));
+    var taxYear = Math.round(taxOf(s.incomeBase) * 1.1);
     var simN = myAssetsSimCount();
-    var html = (simN ? '<div class="ma-sec" style="background:#f3e5f5;color:#6a1b9a;">🧪 <b>시뮬레이션 중</b> - ' + simN + '건을 매도했다고 가정해 계산하고 있어요(저장 안 됨). 입찰후보·물건 상세에도 바로 반영돼요. <a href="#" onclick="myAssetsSim={};try{localStorage.removeItem(\'myAssetsSim\')}catch(e){};myAssetsChanged();return false;">모두 해제</a></div>' : '')
-        + '<div class="ma-sec"><div class="ma-h">' + (simN ? '매도 가정 상태로' : '지금 내 상태로') + ' 다음 낙찰을 받으면</div><div class="ma-grid">'
-        + '<div class="ma-stat"><span>취득세 주택 수</span><b>' + s.count + '채</b><span>이번이 ' + next + '번째</span></div>'
-        + '<div class="ma-stat"><span>취득세(비조정 지역)</span><b style="color:' + (acqRate(false) > 4 ? '#c62828' : '#2e7d32') + ';">' + acqRate(false) + '%</b><span>조정 지역 ' + acqRate(true) + '%</span></div>'
-        + '<div class="ma-stat"><span>매도 이익 1천만 원당 세금</span><b>' + marg1000 + '만</b><span>지금 구간 ' + Math.round(brNow.rate * 100) + '% · 지방세 포함</span></div>'
-        + '</div><div class="ma-sub" style="margin-top:6px;">공시가격 1억 이하(지방은 2억 이하) 집은 몇 번째든 1.1%(85㎡ 이하). 입찰후보·물건 상세의 추천 입찰가에 자동 반영돼요.'
-        + (next >= 3 ? ' <b style="color:#c62828;">' + next + '번째 주택부터는 비조정 지역도 중과(8~12%)라, 공시가격이 낮은 지방 물건이 유리해요.</b>' : '') + '</div></div>';
-    // 보유 목록
-    html += '<div class="ma-sec"><div class="ma-h">보유 부동산 <span class="ma-sub" style="font-weight:normal;">· 주택 수 판정</span>'
+    var deals = maBuildDeals();
+    var holding = (myAssets.items || []).filter(function(x) { return x.status === 'holding'; });
+    var planned = (myAssets.items || []).filter(function(x) { return x.status === 'planned'; });
+    var holdBuy = holding.reduce(function(t, x) { return t + (parseInt(x.acquiredPrice) || 0); }, 0);
+    var sumTotal = deals.reduce(function(t, d) { return t + d.total; }, 0), sumProfit = deals.reduce(function(t, d) { return t + d.profit; }, 0);
+    var wins = deals.filter(function(d) { return d.profit > 0; }).length;
+    var avgRoi = sumTotal ? sumProfit / sumTotal * 100 : null;
+    var holds = deals.map(function(d) { return d.holdM; }).filter(function(v) { return v != null; });
+    var avgHold = holds.length ? Math.round(holds.reduce(function(a, b) { return a + b; }, 0) / holds.length * 10) / 10 : null;
+    var kpi = function(label, value, sub, color) { return '<div class="ma2-kpi"><span>' + label + '</span><b' + (color ? ' style="color:' + color + ';"' : '') + '>' + value + '</b><em>' + (sub || '') + '</em></div>'; };
+    var pc = function(v) { return v > 0 ? '#c62828' : (v < 0 ? '#1565c0' : '#374151'); };
+    var html = (simN ? '<div class="ma2-banner">🧪 <b>시뮬레이션 중</b> - ' + simN + '건을 매도했다고 가정해 계산하고 있어요(저장 안 됨). <a href="#" onclick="myAssetsSim={};try{localStorage.removeItem(\'myAssetsSim\')}catch(e){};myAssetsChanged();return false;">모두 해제</a></div>' : '');
+    // ① 종합 수치
+    html += '<div class="ma2-kpis">'
+        + kpi('보유 중', holding.length + '건', '취득가 합계 ' + maFmt(holdBuy) + (planned.length ? ' · 취득 예정 ' + planned.length + '건' : ''))
+        + kpi('주택 수 → 다음 낙찰', s.count + '채 → ' + next + '번째', '취득세 ' + acqRate(false) + '% (조정 지역 ' + acqRate(true) + '%)', acqRate(false) > 4 ? '#c62828' : null)
+        + kpi('올해 매도 이익', maFmt(s.bizIncome), '예상 세금 ' + maFmt(taxYear) + ' · 구간 ' + Math.round(brNow.rate * 100) + '%')
+        + kpi('다음 매도 1천만당 세금', marg1000 + '만', '지방세 포함')
+        + kpi('누적 매도', deals.length + '건', '투자 합계 ' + maFmt(sumTotal) + (avgHold != null ? ' · 평균 보유 ' + avgHold + '개월' : ''))
+        + kpi('누적 순이익', maFmt(sumProfit), (avgRoi != null ? '수익률 ' + avgRoi.toFixed(1) + '% · ' : '') + '이익 ' + wins + '/' + deals.length + '건', deals.length ? pc(sumProfit) : null)
+        + '</div>';
+    var soon = deals.filter(function(d) { return d.filing && d.filing.diffDays >= -30 && d.filing.diffDays <= 30; });
+    if (soon.length) html += '<div class="ma2-banner" style="background:#fff3e0;color:#e65100;">📅 매매차익 예정신고 ' + soon.map(function(d) { return '<b>' + maEsc(d.name) + '</b> ' + d.filing.deadlineStr + (d.filing.diffDays < 0 ? ' (지남)' : ' (D-' + d.filing.diffDays + ')'); }).join(' · ') + '</div>';
+    if (next >= 3) html += '<div class="ma2-banner" style="background:#ffebee;color:#c62828;">' + next + '번째 주택부터는 비조정 지역도 취득세 중과(8~12%) - 공시가격 1억 이하(지방 2억 이하) 물건은 1.1%라 유리해요.</div>';
+    // ② 왼쪽: 보유·매도 한 표 / 오른쪽: 세금 상태·비용 구성·지역별·추이
+    var rows = '';
+    var assetRow = function(x) {
+        var c = myAssetCountsForAcq(x);
+        return '<tr><td><b>' + maEsc(x.name || '(이름 없음)') + '</b><div class="ma-sub">' + MY_ASSET_TYPES[x.type || 'house'] + (x.use === 'inventory' ? ' · 재고자산' : ' · 개인 보유') + (x.via ? ' · ' + maEsc(x.via) : '') + '</div></td>'
+            + '<td>' + (MY_ASSET_STATUS[x.status] || '') + '</td><td class="r">' + maFmt(parseInt(x.acquiredPrice) || null) + '</td><td class="r">-</td><td class="r">-</td>'
+            + '<td><span class="ma-pill" style="background:' + (c.yes ? '#ffebee;color:#c62828' : '#eef2f7;color:#666') + ';" title="' + maEsc(c.why) + '">주택 수 ' + (c.yes ? '포함' : '제외') + '</span></td>'
+            + '<td style="white-space:nowrap;"><a href="#" onclick="maEdit(\'' + x.id + '\');return false;">수정</a>'
+            + '<div><label class="ma-sub" title="저장하지 않고 입찰가만 바로 다시 계산"><input type="checkbox" style="width:auto;margin:0 2px 0 0;" ' + (myAssetsSim[x.id] ? 'checked' : '') + ' onchange="maToggleSim(\'' + x.id + '\', this.checked)">매도 가정</label></div></td></tr>';
+    };
+    holding.concat(planned).forEach(function(x) { rows += assetRow(x); });
+    deals.forEach(function(d) {
+        var open = maOpenKey === d.key;
+        rows += '<tr class="ma2-click" onclick="maToggleRow(\'' + d.key + '\')"><td><b>' + maEsc(d.name) + '</b><div class="ma-sub">' + maEsc(d.region) + (d.src === 'auction' ? ' · 경매 기록' : ' · 내 자산') + (d.holdM != null ? ' · ' + d.holdM + '개월 보유' : '') + '</div></td>'
+            + '<td>매도 완료<div class="ma-sub">' + (d.sellDate || '') + '</div></td><td class="r">' + maFmt(d.buy) + '</td><td class="r">' + maFmt(d.sell) + '</td>'
+            + '<td class="r" style="color:' + pc(d.profit) + ';font-weight:700;">' + maFmt(d.profit) + '<div class="ma-sub">' + d.roi.toFixed(1) + '%</div></td><td></td>'
+            + '<td style="white-space:nowrap;">' + (d.assetId ? '<a href="#" onclick="event.stopPropagation();maEdit(\'' + d.assetId + '\');return false;">수정</a>' : (d.auctionId ? '<a href="#" onclick="event.stopPropagation();closeMyAssetsPanel();openAuctionModal(\'' + d.auctionId + '\');return false;">상세</a>' : '')) + ' ' + (open ? '▲' : '▼') + '</td></tr>';
+        if (open) {
+            rows += '<tr><td colspan="7" style="background:#fafbfc;"><div class="ma2-cost">' + Object.keys(d.costs).filter(function(k) { return d.costs[k]; }).map(function(k) { return '<div><span>' + k + '</span><b>' + maFmt(d.costs[k]) + '</b></div>'; }).join('')
+                + '<div><span>총비용</span><b>' + maFmt(d.total) + '</b></div><div><span>매도가</span><b>' + maFmt(d.sell) + '</b></div>'
+                + (d.buyDate ? '<div><span>취득(입찰)일</span><b>' + d.buyDate + '</b></div>' : '') + (d.filing ? '<div><span>예정신고 마감</span><b>' + d.filing.deadlineStr + '</b></div>' : '') + '</div>'
+                + (d.addr ? '<div class="ma-sub" style="margin-top:4px;">' + maEsc(d.addr) + '</div>' : '') + (d.memo ? '<div class="ma-sub">메모: ' + maEsc(d.memo) + '</div>' : '') + '</td></tr>';
+        }
+    });
+    if (!rows) rows = '<tr><td colspan="7" class="ma-sub">등록된 부동산이 없어요. + 추가로 보유 중인 집을 넣거나, 경매 물건 상태를 "매도완료"로 바꾸면 여기 모여요.</td></tr>';
+    var left = '<div class="ma-sec"><div class="ma-h">보유 · 매도 내역 <span class="ma-sub" style="font-weight:normal;">· 매도한 줄을 누르면 비용 내역</span>'
         + '<button class="modal-btn btn-gray" style="float:right;font-size:11px;padding:2px 8px;" onclick="maEdit(\'new\')">+ 추가</button></div>'
-        + '<table><thead><tr><th>이름</th><th>상태</th><th>주택 수</th><th></th></tr></thead><tbody>'
-        + (myAssets.items.length ? myAssets.items.map(function(x) {
-            var c = myAssetCountsForAcq(x);
-            return '<tr><td><b>' + maEsc(x.name || '(이름 없음)') + '</b><div class="ma-sub">' + MY_ASSET_TYPES[x.type || 'house'] + (x.use === 'inventory' ? ' · 재고자산' : ' · 개인 보유') + (x.via ? ' · ' + maEsc(x.via) : '') + '</div></td>'
-                + '<td>' + (MY_ASSET_STATUS[x.status] || '') + '</td>'
-                + '<td><span class="ma-pill" style="background:' + (c.yes ? '#ffebee;color:#c62828' : '#eef2f7;color:#666') + ';">' + (c.yes ? '포함' : '제외') + '</span><div class="ma-sub">' + maEsc(c.why) + '</div></td>'
-                + '<td style="white-space:nowrap;"><a href="#" onclick="maEdit(\'' + x.id + '\');return false;">수정</a>'
-                + (x.status !== 'sold' ? '<div><label class="ma-sub" title="저장하지 않고 입찰가만 바로 다시 계산"><input type="checkbox" style="width:auto;margin:0 2px 0 0;" ' + (myAssetsSim[x.id] ? 'checked' : '') + ' onchange="maToggleSim(\'' + x.id + '\', this.checked)">매도 가정</label></div>' : '') + '</td></tr>';
-        }).join('') : '<tr><td colspan="4" class="ma-sub">등록된 부동산이 없어요</td></tr>')
-        + '</tbody></table>' + (maEditId ? maEditForm() : '') + '</div>';
-    // 올해 소득
-    html += '<div class="ma-sec"><div class="ma-h">올해(' + new Date().getFullYear() + ') 소득 <span class="ma-sub" style="font-weight:normal;">· 종합소득세는 1년치를 합쳐 누진</span></div><div class="ma-in">'
-        + '<label>매매사업자</label><label><input type="checkbox" style="width:auto;" ' + (p.isDealer !== false ? 'checked' : '') + ' onchange="maSetProfile(\'isDealer\', this.checked)"> 개인 부동산매매사업자로 진행</label>'
-        + '<label>매도 이익(자동)</label><div><b>' + (s.bizIncome - (parseInt(p.extraBizIncome) || 0)).toLocaleString() + '만</b> <span class="ma-sub">올해 매도 완료한 재고자산(매도가 − 취득가 − 경비)</span></div>'
-        + '<label>추가 사업소득</label><input type="number" value="' + maEsc(p.extraBizIncome || '') + '" placeholder="만원 (위 목록에 없는 확정 이익)" onchange="maSetProfile(\'extraBizIncome\', this.value)">'
-        + '<label>다른 종합소득</label><input type="number" value="' + maEsc(p.otherIncome || '') + '" placeholder="만원 (근로·사업 등 과세표준 근사)" onchange="maSetProfile(\'otherIncome\', this.value)">'
-        + '<label>취득 예정 자산</label><label><input type="checkbox" style="width:auto;" ' + (p.includePlanned !== false ? 'checked' : '') + ' onchange="maSetProfile(\'includePlanned\', this.checked)"> 주택 수에 미리 포함(보수적으로)</label>'
-        + '</div><div class="ma-sub" style="margin-top:6px;">올해 합계 ' + s.incomeBase.toLocaleString() + '만 원 위에 다음 매도 이익이 얹혀 계산돼요. 종부세 기준 주택 공시가격 합계: ' + (s.officialSum ? toEok(String(s.officialSum)) : '입력 없음') + '.</div>'
-        + '<div class="ma-sub" style="margin-top:4px;color:#b26a00;">⚠️ 세법 해석은 참고용 근사예요(분양권·오피스텔 주택 수, 매매사업자 비교과세 등). 실제 신고 전 세무사 확인이 필요해요.</div></div>';
+        + '<div style="overflow-x:auto;"><table class="ma2-table"><thead><tr><th>이름</th><th>상태</th><th class="r">취득가</th><th class="r">매도가</th><th class="r">순이익</th><th>주택 수</th><th></th></tr></thead><tbody>' + rows + '</tbody></table></div>'
+        + (maEditId ? maEditForm() : '') + '</div>';
+    // 비용 구성(경매 기록 기준)
+    var costSum = {};
+    deals.filter(function(d) { return d.src === 'auction'; }).forEach(function(d) { Object.keys(d.costs).forEach(function(k) { costSum[k] = (costSum[k] || 0) + d.costs[k]; }); });
+    var cTotal = Object.keys(costSum).reduce(function(t, k) { return t + costSum[k]; }, 0);
+    var costHtml = cTotal ? Object.keys(costSum).filter(function(k) { return costSum[k] > 0 && k !== '낙찰가'; }).sort(function(a, b) { return costSum[b] - costSum[a]; }).map(function(k) {
+        var pct = costSum[k] / cTotal * 100;
+        return '<div class="ma2-bar"><span>' + k + '</span><i><u style="width:' + Math.min(100, pct * 4) + '%;"></u></i><b>' + pct.toFixed(1) + '%</b></div>';
+    }).join('') + '<div class="ma-sub">총비용 대비 비율(낙찰가 ' + (costSum['낙찰가'] / cTotal * 100).toFixed(1) + '% 제외)</div>' : '<div class="ma-sub">경매 기록의 매도 건이 생기면 나와요</div>';
+    // 지역별
+    var byR = {};
+    deals.forEach(function(d) { var g = byR[d.region] = byR[d.region] || { n: 0, p: 0, t: 0 }; g.n++; g.p += d.profit; g.t += d.total; });
+    var regHtml = Object.keys(byR).length ? '<table class="ma2-table"><tbody>' + Object.keys(byR).sort(function(a, b) { return byR[b].n - byR[a].n; }).map(function(r) {
+        var g = byR[r]; return '<tr><td>' + maEsc(r) + '</td><td class="r">' + g.n + '건</td><td class="r" style="color:' + pc(g.p) + ';">' + maFmt(g.p) + '</td><td class="r">' + (g.t ? (g.p / g.t * 100).toFixed(1) : '-') + '%</td></tr>';
+    }).join('') + '</tbody></table>' : '<div class="ma-sub">매도 건이 생기면 나와요</div>';
+    var right = '<div class="ma-sec"><div class="ma-h">올해(' + new Date().getFullYear() + ') 소득 · 세금 상태</div><div class="ma-in">'
+        + '<label>매매사업자</label><label><input type="checkbox" style="width:auto;" ' + (p.isDealer !== false ? 'checked' : '') + ' onchange="maSetProfile(\'isDealer\', this.checked)"> 개인 부동산매매사업자</label>'
+        + '<label>매도 이익(자동)</label><div><b>' + (s.bizIncome - (parseInt(p.extraBizIncome) || 0)).toLocaleString() + '만</b> <span class="ma-sub">올해 매도한 재고자산</span></div>'
+        + '<label>추가 사업소득</label><input type="number" value="' + maEsc(p.extraBizIncome || '') + '" placeholder="만원" onchange="maSetProfile(\'extraBizIncome\', this.value)">'
+        + '<label>다른 종합소득</label><input type="number" value="' + maEsc(p.otherIncome || '') + '" placeholder="만원(근로·사업 등)" onchange="maSetProfile(\'otherIncome\', this.value)">'
+        + '<label>취득 예정 자산</label><label><input type="checkbox" style="width:auto;" ' + (p.includePlanned !== false ? 'checked' : '') + ' onchange="maSetProfile(\'includePlanned\', this.checked)"> 주택 수에 미리 포함</label>'
+        + '</div><div class="ma-sub" style="margin-top:6px;">올해 합계 ' + s.incomeBase.toLocaleString() + '만 위에 다음 매도 이익이 얹혀 계산돼요 · 종부세용 공시가격 합계 ' + (s.officialSum ? maFmt(s.officialSum) : '입력 없음') + '</div>'
+        + '<div class="ma-sub" style="margin-top:4px;color:#b26a00;">⚠️ 세법 해석은 참고용 근사예요. 실제 신고 전 세무사 확인이 필요해요.</div></div>'
+        + '<div class="ma-sec"><div class="ma-h">비용 구성</div>' + costHtml + '</div>'
+        + '<div class="ma-sec"><div class="ma-h">지역별 수익</div>' + regHtml + '</div>'
+        + '<div class="ma-sec"><div class="ma-h">수익률 추이 <span class="ma-sub" style="font-weight:normal;">(매도일 순)</span></div>' + maRoiSvg(deals) + '</div>';
+    html += '<div class="ma2-cols"><div class="ma2-left">' + left + '</div><div class="ma2-right">' + right + '</div></div>';
     body.innerHTML = html;
 }
 function maEditForm() {
