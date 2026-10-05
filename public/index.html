@@ -16573,6 +16573,7 @@ async function renderBidDrawer() {
             + '<tr><td><b>남는 돈(세후)</b></td><td class="r"><b style="color:' + (cl.net >= 1000 ? '#16a34a' : '#dc2626') + ';">' + toEok(String(Math.round(cl.net))) + '</b></td></tr>'
             + '<tr><td class="dr-sub">필요 현금(대출 ' + fmt(cl.loan) + ' 제외, 비용 별도)</td><td class="r dr-sub">' + fmt(cl.cash) + '</td></tr></table></div>';
     }
+    h += competitionHtml(row);
     h += fieldCheckHtml(row);
     // 직접 입력
     h += '<div class="dr-sec"><h4>직접 확인한 금액 (만원) - 넣으면 추천 입찰가가 바로 바뀌어요</h4><div class="dr-in">'
@@ -16821,6 +16822,43 @@ function naverListingHtml(row, idJs) {
     }
     h += '<textarea id="nv-paste-' + bbEsc(String(row.id)) + '" placeholder="네이버 부동산 → 단지 → 매물 목록을 전체 선택해 복사 후 여기에 붙여넣기" style="width:100%;height:' + (sm ? 40 : 70) + 'px;margin-top:6px;font-size:11.5px;border:1px solid #d1d5db;border-radius:6px;padding:6px;box-sizing:border-box;"></textarea>'
         + '<button style="margin-top:4px;border:none;background:var(--ui-blue,#1e5eff);color:#fff;border-radius:8px;padding:6px 12px;font-size:12px;font-weight:700;cursor:pointer;" onclick="applyNaverListings(\'' + idJs + '\')">' + (sm ? '다시 분석' : '분석해서 채우기') + '</button></div>';
+    return h;
+}
+/* 🏁 지역 경쟁 강도(2026-10, 사용자: "틈새시장의 큰 틀 - 실제로 낙찰 가능성이 있고 낙찰 후 매도까지 잘되는 지역") -
+   analyze-bidcases.py가 매주 최근 3년 낙찰사례로 시군구별 "1등 낙찰가 ÷ 입찰 당시 시세", 응찰자 수, 되판 비율(동까지 확인)을 계산해 둔 값.
+   2024~2025 백테스트: 1등가÷시세가 낮은 곳(전남 광양·여수·목포 0.87~0.88)은 응찰자 2~5명·되판 61~65%, 대전은 0.91~0.93·응찰자 6~8명.
+   겨울(12~2월)은 두 해 모두 경쟁이 약했음(앱 추천가 낙찰률 약 2배). */
+var competitionData = null, competitionLoading = false;
+function loadCompetitionData() {
+    if (competitionData || competitionLoading) return;
+    competitionLoading = true;
+    fetch('/api/data-coverage?mode=competition').then(function(r) { return r.json(); }).then(function(d) { competitionData = d || {}; competitionLoading = false; if (typeof bidDrawerId !== 'undefined' && bidDrawerId) renderBidDrawer(); }).catch(function() { competitionLoading = false; });
+}
+function competitionRegionKey(addr) {
+    var t = String(addr || '').trim().split(/\s+/);
+    if (t.length < 2) return null;
+    var s = t[0], sd;
+    if (/^(전남광주|광주|전남|전라남)/.test(s)) sd = '전남광주';
+    else if (/^(전북|전라북)/.test(s)) sd = '전북'; else if (/^(경남|경상남)/.test(s)) sd = '경남'; else if (/^(경북|경상북)/.test(s)) sd = '경북';
+    else if (/^(충남|충청남)/.test(s)) sd = '충남'; else if (/^(충북|충청북)/.test(s)) sd = '충북'; else sd = s.slice(0, 2);
+    return sd + ' ' + t[1];
+}
+function competitionHtml(row) {
+    if (row.type !== 'apt') return '';
+    if (!competitionData) { loadCompetitionData(); return ''; }
+    var key = competitionRegionKey(row.a && row.a.addr), r = competitionData.byRegion && competitionData.byRegion[key], base = competitionData.base;
+    if (!r || !base) return '<div class="dr-sec dr-sub">🏁 이 지역 경쟁 강도: 최근 3년 낙찰사례가 부족해 아직 몰라요</div>';
+    var diff = r.compMed - base.compMed;
+    var lvl = diff <= -0.015 ? { t: '약함', c: '#16a34a', d: '1등이 시세보다 낮게 낙찰받는 곳 - 추천가로도 낙찰 가능성이 상대적으로 높아요' }
+        : (diff >= 0.015 ? { t: '치열', c: '#dc2626', d: '1등이 시세에 가깝게 써서 남는 게 적은 곳' } : { t: '보통', c: '#6b7280', d: '' });
+    var m = new Date().getMonth() + 1, winter = m === 12 || m <= 2, ss = competitionData.bySeason || {};
+    var h = '<div class="dr-sec"><h4>🏁 이 지역 경쟁 강도 <span style="color:' + lvl.c + ';">' + lvl.t + '</span> <span class="dr-sub">(' + bbEsc(key) + ' · 최근 3년 낙찰 ' + r.n + '건)</span></h4><div style="font-size:12px;line-height:1.6;">'
+        + '1등 낙찰가 = 당시 시세의 <b>' + Math.round(r.compMed * 1000) / 10 + '%</b> <span class="dr-sub">(전체 ' + Math.round(base.compMed * 1000) / 10 + '%)</span>'
+        + (r.biddersMed != null ? ' · 응찰자 보통 <b>' + r.biddersMed + '명</b> <span class="dr-sub">(전체 ' + base.biddersMed + '명)</span>' : '')
+        + (r.soldPct != null ? '<br>낙찰 후 되판 비율 <b>' + r.soldPct + '%</b> <span class="dr-sub">(전체 ' + base.soldPct + '% · 낙찰 1년 지난 ' + r.soldN + '건, 같은 동·층 거래로 확인)</span>' + (r.holdMed != null ? ' · 보통 ' + r.holdMed + '개월 만에 팔림' : '') : '')
+        + (lvl.d ? '<div class="dr-sub" style="margin-top:2px;">' + lvl.d + '</div>' : '')
+        + (ss['겨울'] && ss['여름'] ? '<div class="dr-sub" style="margin-top:2px;">' + (winter ? '❄️ 지금은 겨울 - ' : '') + '계절: 겨울(12~2월) 1등가 ' + Math.round(ss['겨울'].compMed * 1000) / 10 + '% · 여름 ' + Math.round(ss['여름'].compMed * 1000) / 10 + '% - 겨울에 경쟁이 약한 편</div>' : '')
+        + '</div></div>';
     return h;
 }
 function fieldCheckHtml(row) {

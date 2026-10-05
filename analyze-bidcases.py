@@ -226,7 +226,8 @@ def main():
                "appraisal": c.appraisal, "minbid": c.minbid, "fails": c.fails, "est": None, "own": 0, "resale": None, "resale_m": None, "tier": None,
                "area": c.area, "floor": c.floor_n, "cx3y": 0, "age": None, "bandTier": None,
                "notes": str(getattr(c, "specialConditions", "") or ""), "land": str(getattr(c, "landType", "") or ""),
-               "dk": c.dk, "dongName": str(c.dong), "cx": None, "dong3y": 0}
+               "dk": c.dk, "dongName": str(c.dong), "cx": None, "dong3y": 0,
+               "adong": c.adong if isinstance(c.adong, str) and c.adong else None}
         dd = dong_dates.get((c.region, c.dk))
         if dd is not None:
             _sd = int_to_date(c.sale_int)
@@ -409,6 +410,10 @@ def main():
     summary.update(attention_analysis(R, seg_stats, med))
 
     print(json.dumps(summary, ensure_ascii=False, indent=1))
+    try:
+        competition_stats(R, now)
+    except Exception as e:
+        print("  지역 경쟁 강도 계산 실패(건너뜀):", e)
     write_back_resale_matches(cases, out)
     try:
         write_back_villa_matches(cases)
@@ -629,3 +634,33 @@ def attention_analysis(R, seg_stats, med):
 
 if __name__ == "__main__":
     main()
+
+
+def competition_stats(R, now):
+    """2026-10(사용자: "틈새시장의 큰 틀 - 실제로 낙찰 가능성이 있고 낙찰 후 매도까지 잘되는 지역"): 시군구별 경쟁 강도.
+    최근 3년(2023~) 낙찰사례로 ① 1등 낙찰가 ÷ 입찰 당시 시세(같은 단지·평형 실거래 기반 추정) 중간값 - 낮을수록 경쟁 약함
+    ② 응찰자 수 중간값 ③ 되판 비율·보유 기간(동까지 확인된 매칭, 낙찰 후 12개월 넘은 사례만) ④ 계절별(전체).
+    2024~2025 앱 백테스트에서 겨울(12~2월) 1등가÷예상매도가 0.88~0.90·앱 낙찰률 약 2배, 전남 중소도시(광양·여수·목포) 0.87~0.88로 확인됨."""
+    D = R[(R["sale"] >= 20230101) & R["est"].notna() & (R["est"] > 0)].copy()
+    D["comp"] = D["actual"] / D["est"]
+    D = D[(D["comp"] > 0.4) & (D["comp"] < 1.6)]
+    cut12 = int((datetime.now() - timedelta(days=365)).strftime("%Y%m%d"))
+    def stat(G):
+        old = G[(G["sale"] <= cut12) & G["adong"].notna()]
+        sold = old[old["resale_conf"] == "dong"] if "resale_conf" in old.columns else old.iloc[0:0]
+        return {"n": int(len(G)), "compMed": round(float(G["comp"].median()), 3),
+                "biddersMed": (float(G["bidders"].median()) if G["bidders"].notna().any() else None),
+                "soldN": int(len(old)), "soldPct": (round(len(sold) / len(old) * 100) if len(old) >= 10 else None),
+                "holdMed": (round(float(sold["resale_m"].median()), 1) if len(sold) >= 5 else None)}
+    out = {"generatedAt": now, "base": stat(D), "bySido": {}, "byRegion": {}, "bySeason": {}}
+    for sd, G in D.groupby("sido"):
+        if len(G) >= 30:
+            out["bySido"][sd] = stat(G)
+    for rg, G in D.groupby("region"):
+        if len(G) >= 15:
+            out["byRegion"][rg] = stat(G)
+    D["season"] = ((D["sale"] // 100) % 100).map(lambda m: "겨울" if m in (12, 1, 2) else ("봄" if m <= 5 else ("여름" if m <= 8 else "가을")))
+    for se, G in D.groupby("season"):
+        out["bySeason"][se] = stat(G)
+    print(f"  지역 경쟁 강도: 시군구 {len(out['byRegion'])}곳, 기준 {out['base']}")
+    cyc.upsert_rows([{"id": "signal|__competition__", "payload": cyc.clean_json(out), "fetched_at": now}])
