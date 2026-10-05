@@ -15796,20 +15796,32 @@ function listingCapFor(a) {
     var ageD = Math.floor((Date.now() - new Date(lp.at + 'T00:00:00').getTime()) / 86400000);
     if (ageD > 60) return { stale: true, ageD: ageD };
     var tf = parseInt(a.floor, 10), lvl = plannedRepairLevel(a);
-    var cand = lp.items.filter(function(x) {
-        if (x.tenant) return false;
-        if (lvl === 'full' ? x.repair !== 'full' : (x.repair === 'full' || x.repair === 'need')) return false;
+    var inBand = function(x) {
         if (isNaN(tf)) return true;
         if (tf <= 1) return x.floor != null ? x.floor <= 2 : x.floorRaw === '저';
         return x.floor != null ? Math.abs(x.floor - tf) <= 3 : (x.floorRaw === '저' ? tf <= 5 : (x.floorRaw === '고' ? tf >= 10 : tf > 3));
-    }).map(function(x) { return x.price; }).sort(function(m, n) { return m - n; });
+    };
+    var okRep = function(x) { return lvl === 'full' ? x.repair === 'full' : (x.repair !== 'full' && x.repair !== 'need'); };
+    var sortP = function(arr) { return arr.map(function(x) { return x.price; }).sort(function(m, n) { return m - n; }); };
+    var refOf = function(c) { if (c.length >= 8) { var i = (c.length - 1) * 0.25, lo = Math.floor(i), hi = Math.ceil(i); return { v: c[lo] + (c[hi] - c[lo]) * (i - lo), how: '하위 25%' }; } return { v: (c[0] + c[1]) / 2, how: '가장 싼 2건 평균' }; };
+    var live = lp.items.filter(function(x) { return !x.tenant && inBand(x); });
+    var cand = sortP(live.filter(okRep));
     var res = { n: cand.length, lvl: lvl, ageD: ageD, at: lp.at };
-    if (cand.length < 3) return res;
-    var ref;
-    if (cand.length >= 8) { var i = (cand.length - 1) * 0.25, lo = Math.floor(i), hi = Math.ceil(i); ref = cand[lo] + (cand[hi] - cand[lo]) * (i - lo); res.how = '하위 25%'; }
-    else { ref = (cand[0] + cand[1]) / 2; res.how = '가장 싼 2건 평균'; }
-    res.ref = Math.round(ref); res.cap = Math.round(ref * (1 - LISTING_NEGO_PCT));
-    res.desc = (isNaN(tf) ? '' : (tf <= 1 ? '1~2층 ' : '비슷한 층 ')) + (lvl === 'full' ? '올수리' : '기본 상태') + ' 매물 ' + cand.length + '건 ' + res.how + ' ' + toEok(String(res.ref)) + ' − 흥정 ' + Math.round(LISTING_NEGO_PCT * 100) + '%';
+    var bandTxt = isNaN(tf) ? '' : (tf <= 1 ? '1~2층 ' : '비슷한 층 '), negoTxt = ' − 흥정 ' + Math.round(LISTING_NEGO_PCT * 100) + '%';
+    if (cand.length >= 3) {
+        var r0 = refOf(cand); res.ref = Math.round(r0.v); res.how = r0.how;
+        res.desc = bandTxt + (lvl === 'full' ? '올수리' : '기본 상태') + ' 매물 ' + cand.length + '건 ' + r0.how + ' ' + toEok(String(res.ref)) + negoTxt;
+    } else {
+        // 수리 상태가 같은 매물이 3건 미만: 같은 층대의 다른 상태 매물 + 이 단지 매물의 "올수리 − 그 외" 가격 차이(양쪽 3건 이상일 때)로 대신 계산
+        var full = sortP(lp.items.filter(function(x) { return !x.tenant && x.repair === 'full'; })), oth = sortP(lp.items.filter(function(x) { return !x.tenant && x.repair !== 'full' && x.repair !== 'need'; }));
+        var mid = function(c) { var k = c.length >> 1; return c.length % 2 ? c[k] : (c[k - 1] + c[k]) / 2; };
+        var gap = full.length >= 3 && oth.length >= 3 ? mid(full) - mid(oth) : null;
+        var alt = sortP(live.filter(function(x) { return lvl === 'full' ? (x.repair !== 'full' && x.repair !== 'need') : x.repair === 'full'; }));
+        if (gap == null || gap <= 0 || alt.length < 3) return res;
+        var r1 = refOf(alt); res.ref = Math.round(r1.v + (lvl === 'full' ? gap : -gap)); res.how = r1.how; res.viaGap = Math.round(gap);
+        res.desc = bandTxt + (lvl === 'full' ? '기본 상태' : '올수리') + ' 매물 ' + alt.length + '건 ' + r1.how + ' ' + toEok(String(Math.round(r1.v))) + (lvl === 'full' ? ' + ' : ' − ') + '이 단지 올수리 차이 ' + toEok(String(Math.round(gap))) + negoTxt;
+    }
+    res.cap = Math.round(res.ref * (1 - LISTING_NEGO_PCT));
     return res;
 }
 function finalizeBidBoardRow(row) {
@@ -16795,7 +16807,7 @@ function naverListingHtml(row, idJs) {
             + '세 안고 매물 ' + sm.tenantN + '건 · 급매 ' + sm.urgentN + '건 · 바로 입주 가능 최저 ' + f(sm.vacantMin)
             + (row.listingCap ? (row.listingCap.stale ? '<span style="color:#9ca3af;">붙여넣은 지 ' + row.listingCap.ageD + '일 지나 예상매도가에 반영 안 함 - 다시 붙여넣어 주세요</span><br>'
                 : (row.listingCap.cap ? '<b style="color:#7c3aed;">예상매도가 상한: ' + f(row.listingCap.cap) + '</b> (' + bbEsc(row.listingCap.desc) + ')' + (row.listingCap.cap < row.saleTrade ? ' → 실거래 기반 ' + f(row.saleTrade) + '에서 낮춤' : ' → 실거래 기반 값이 더 낮아 그대로') + '<br>'
-                : '<span class="dr-sub">' + (row.listingCap.lvl === 'full' ? '올수리' : '기본 상태') + ' 비교 매물이 ' + row.listingCap.n + '건뿐이라(3건 미만) 가격엔 반영 안 함</span><br>')) : (sm.items ? '' : '<span class="dr-sub">예전 방식으로 정리된 매물이에요 - 다시 분석하면 예상매도가 상한에 반영돼요</span><br>'))
+                : '<span class="dr-sub">' + (row.listingCap.lvl === 'full' ? '올수리' : '기본 상태') + ' 비교 매물이 ' + row.listingCap.n + '건뿐이고 수리 차이로 대신 계산할 매물도 부족해 가격엔 반영 안 함</span><br>')) : (sm.items ? '' : '<span class="dr-sub">예전 방식으로 정리된 매물이에요 - 다시 분석하면 예상매도가 상한에 반영돼요</span><br>'))
             + (row.sale && sm.saleRankPct != null ? '<br><b style="color:' + (sm.saleRankPct <= 25 ? '#16a34a' : (sm.saleRankPct >= 60 ? '#dc2626' : '#374151')) + ';">예상매도가 ' + f(row.sale) + '보다 싼 매물이 ' + sm.saleRankPct + '%</b>' + (sm.saleRankPct >= 60 ? ' - 팔 때 더 싼 매물들과 경쟁해야 해요' : (sm.saleRankPct <= 25 ? ' - 매물들 중 싼 편이라 팔기 수월한 가격' : '')) : '')
             + (sm.dupGroups && sm.dupGroups.length ? '<details style="margin-top:4px;"><summary class="dr-sub" style="cursor:pointer;">같은 집으로 묶은 매물 보기(' + sm.dupGroups.length + '묶음)</summary><div class="dr-sub">' + sm.dupGroups.map(bbEsc).join('<br>') + '</div></details>' : '')
             + '<div class="dr-sub" style="margin-top:4px;">가장 싼 매물: ' + sm.lowest.map(function(x) { return f(x.p) + '(' + x.dong + '동 ' + x.f + (x.t ? ' ' + x.t.trim() : '') + ')'; }).join(' · ') + '</div></div>';
