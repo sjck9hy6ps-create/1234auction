@@ -269,9 +269,12 @@ def main():
             if pd.notna(c.floor_n) and g_all is not None:
                 after = g_all[((g_all["size"] - c.area).abs() <= 2) & (g_all["deal_date"] >= ymd_int(sale_d + timedelta(days=14))) & (g_all["floor"] == c.floor_n)].sort_values("deal_date")
                 conf = "floor"
-                if len(after) and c.adong:
-                    after = after[(after["adong"] == c.adong) | (after["adong"] == "")]
-                    if len(after) and after.iloc[0]["adong"] == c.adong:
+                # 낙찰가의 70% 미만 거래(가족 간 직거래·다른 집 등)는 후보에서 빼고 그다음 거래를 봄
+                after = after[after["price"] >= c.actual * 0.7]
+                case_dong = c.adong if isinstance(c.adong, str) and c.adong else None  # ⚠️ 동이 없는 사례는 NaN(참으로 판정됨) - 문자열일 때만
+                if len(after) and case_dong:
+                    after = after[(after["adong"] == case_dong) | (after["adong"] == "")]
+                    if len(after) and after.iloc[0]["adong"] == case_dong:
                         conf = "dong"
                 if len(after):
                     t0 = after.iloc[0]
