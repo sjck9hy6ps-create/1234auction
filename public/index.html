@@ -6453,6 +6453,13 @@ function clExtractFloor(line) {
     if (m) return parseInt(m[1], 10);
     return null;
 }
+// 아파트 동(棟) 번호 - "청솔아파트 101동 8층810호"의 101. 2026-10: 예전엔 호수만 남기고 동을 버려 실거래(2023년부터 동 정보 있음)와 같은 동으로 맞출 수 없었음
+function clExtractAptDong(line, bunji) {
+    var s = String(line || ''), k = bunji ? s.indexOf(bunji) : -1;
+    if (k >= 0) s = s.slice(k + bunji.length);
+    var m = s.match(/(?:^|[\s,(])제?(\d{1,4})\s*동(?![가-힣])/);
+    return m ? String(parseInt(m[1], 10)) : null;
+}
 function clExtractUnit(line) {
     // "3층302호"처럼 층수 뒤에 붙는 호수 표기. 지하 유닛의 "비03호"같은 한글 접두 한 글자도
     // 그대로 포함해서 담음(건축물대장 전유부 hoNm과 자릿수 비교 시 숫자만 뽑아 대조하므로
@@ -6547,7 +6554,7 @@ function parseTankAuctionCsv(text) {
             caseNo: caseNo, court: null, propertyType: col(r, '종별') || null,
             addrJibun: addrJibun, dong: db.dong, bunji: db.bunji, buildingName: buildingName,
             areaM2: ar.buildingM2, landM2: ar.landM2, landType: ar.landType, landWarn: ar.landWarn,
-            floor: floor, unitNo: unitNo,
+            floor: floor, unitNo: unitNo, aptDong: clExtractAptDong(addrLine, db.bunji),
             specialConditions: (ar.landWarn ? [ar.landWarn] : []).concat(notes).join(' · ') || null,
             appraisalPrice: appraisal, minBidPrice: minBid, finalBidPrice: final,
             bidRate: appraisal && final ? Math.round(final / appraisal * 10000) / 100 : null,
@@ -6679,7 +6686,7 @@ function parseCaseListTextLocally(text) {
         cases.push({
             caseNo: caseNo, court: court, propertyType: propertyType,
             addrJibun: addrJibun, dong: dongBunji.dong, bunji: dongBunji.bunji,
-            buildingName: buildingName, areaM2: areaM2, floor: floor, unitNo: unitNo,
+            buildingName: buildingName, areaM2: areaM2, floor: floor, unitNo: unitNo, aptDong: clExtractAptDong(addrLine, dongBunji.bunji),
             specialConditions: (landInfo.landWarn ? [landInfo.landWarn] : []).concat(extraLines).join(' ') || null,
             landM2: landInfo.landM2, landType: landInfo.landType, landWarn: landInfo.landWarn,
             appraisalPrice: appraisalPrice, minBidPrice: minBidPrice, finalBidPrice: finalBidPrice,
@@ -6878,7 +6885,7 @@ async function saveSelectedCases() {
             caseNo: c.caseNo || null, court: c.court || null, propertyType: c.propertyType || null,
             addrJibun: c.addrJibun || null, dong: c.dong || null, bunji: c.bunji || null,
             buildingName: c.buildingName || null, areaM2: c.areaM2 || null, floor: c.floor || null,
-            unitNo: c.unitNo || null,
+            unitNo: c.unitNo || null, aptDong: c.aptDong || null,
             specialConditions: c.specialConditions || null,
             appraisalPrice: c.appraisalPrice || null, minBidPrice: c.minBidPrice || null,
             finalBidPrice: c.finalBidPrice || null, bidRate: c.bidRate || null, minBidRate: c.minBidRate || null,

@@ -119,6 +119,9 @@ def main():
     df["bunji_s"] = df.apply(full_bunji, axis=1)
     # 낙찰된 집의 동(棟) - 주소 끝("… 절영아파트 215동")이나 호수 칸("215동 102호")
     def case_adong(row):
+        ad = row.get("aptDong")
+        if isinstance(ad, str) and ad.strip().isdigit():
+            return str(int(ad.strip()))
         txt = str(row.get("addrJibun") or "")
         b = str(row.get("bunji") or "")
         tail = txt.split(b, 1)[1] if b and b in txt else txt
