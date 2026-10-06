@@ -152,6 +152,36 @@ def main():
     print("연도별 찾은 비율:", R.groupby("year")["why"].apply(lambda s: round(s.isin(["found_dong", "found_floor"]).mean() * 100, 1)).to_dict())
     ex = [i for i in A["info"] if i][:15]
     print("② 예시:", json.dumps(ex[:15], ensure_ascii=False, default=float)[:1500])
+    # ── 면적 비교 방식 3가지(2026-10 발견: house_trades.size는 소수점을 버린 정수 → 84.97㎡·84.32㎡가 둘 다 84) ──
+    #   T2 = 지금 방식(CSV 면적 ±2㎡), T1 = 정수로 내린 CSV 면적 ±1, T0 = 정수로 내린 CSV 면적과 정확히 같음
+    import math
+    def variant(tol, floor_csv):
+        out = []
+        for c in df.itertuples():
+            g = groups.get((c.region, c.dk, c.bunji_s))
+            if g is None or not len(g):
+                out.append((None, None)); continue
+            a = math.floor(c.area) if floor_csv else c.area
+            why, hit = find(g, c, a, tol=tol)
+            out.append((why, None if hit is None else (float(hit["price"]), int(hit["deal_date"]), float(hit["size"]))))
+        return out
+    V = {"T2 지금(±2㎡)": variant(2.0, False), "T1 정수±1": variant(1.0, True), "T0 정수 일치": variant(0.0, True)}
+    print("\n=== 면적 비교 방식별 '찾음' 건수 ===")
+    base = V["T2 지금(±2㎡)"]
+    for k, v in V.items():
+        fd = sum(1 for w, h in v if w == "found_dong"); ff = sum(1 for w, h in v if w == "found_floor"); ar = sum(1 for w, h in v if w == "area")
+        diff = sum(1 for (w1, h1), (w2, h2) in zip(base, v) if (w1 in ("found_dong", "found_floor")) and (h1 != h2))
+        print(f"  {k}: 찾음(동) {fd:,} · 찾음(층만) {ff:,} · 면적 불일치 {ar:,} · 지금 방식과 다른 거래가 잡힌/사라진 건 {diff:,}")
+    # 지금 방식에선 찾았는데 정수 일치 방식에선 못 찾는 사례 = 이웃 평형(59·61㎡ 등)을 같은 것으로 본 의심 건
+    lost = [(c, base[i][1], V["T0 정수 일치"][i][0]) for i, c in enumerate(df.itertuples()) if base[i][0] in ("found_dong", "found_floor") and V["T0 정수 일치"][i][0] not in ("found_dong", "found_floor")]
+    print(f"\n지금은 찾았는데 정수 일치로는 못 찾는 건: {len(lost):,}건 (이웃 평형을 같은 집으로 본 의심)")
+    if lost:
+        sz = [(round(c.area, 1), h[2]) for c, h, w in lost[:12] if h]
+        print("   예시(CSV 면적, 잡힌 거래 면적):", sz)
+    # 층만 찾은 건: 동 정보가 어디서 빠졌는지
+    ff = [(c, w) for c, (w, h) in zip(df.itertuples(), base) if w == "found_floor"]
+    no_case = sum(1 for c, w in ff if not (isinstance(c.adong, str) and c.adong))
+    print(f"\n'층만 찾음' {len(ff):,}건 중 낙찰사례에 동 번호가 없는 건 {no_case:,}건, 있는데 거래 쪽 동 정보가 없는 건 {len(ff) - no_case:,}건")
     summ = {"n": n, "counts": cnt, "supplyLikeInArea": sl, "remap": pd.Series(rm).value_counts().to_dict()}
     if os.environ.get("GITHUB_STEP_SUMMARY"):
         with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as fh:
