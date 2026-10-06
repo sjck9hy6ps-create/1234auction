@@ -17449,6 +17449,7 @@ function loadPriorityRegions() {
     fetch('/api/data-coverage?mode=priorityRegions').then(function(r) { return r.json(); }).then(function(d) {
         if (!d || !d.priority || !d.priority.length) return;
         priorityRegionsLoaded = d;
+        try { renderRemindUi(); } catch (e) {}
         var el = document.getElementById('gd-regions'); if (!el) return;
         var names = function(a) { return a.map(function(x) { return bbEsc(x.name); }).join(' · '); };
         var tip = function(a) { return a.map(function(x) { return x.name + ': 응찰자 ' + (x.biddersMed != null ? x.biddersMed + '명' : '-') + ' · 되판 ' + (x.soldPct != null ? x.soldPct + '%' : '-') + ' · 사례 ' + x.cases + '건'; }).join('\n'); };
@@ -23453,6 +23454,15 @@ function myWonAuctions() {
         return my > 0 && act > 0 && Math.abs(act - my) <= 1;
     });
 }
+async function remindSavePrio(cur, silent) {
+    try {
+        var prof = Object.assign({ id: 'profile', year: new Date().getFullYear() }, myAssets.profile || {});
+        prof.prioSeen = { p: cur.p, a: cur.a, asOf: cur.asOf };
+        await saveMyAssetItem(prof);
+    } catch (e) { if (!silent) alert('저장 실패: ' + e.message); }
+    if (!silent) renderRemindUi();
+}
+function remindPrioAck() { var pr = priorityRegionsLoaded; if (!pr) return; var nm = function(a) { return (a || []).map(function(x) { return x.name; }); }; remindSavePrio({ p: nm(pr.priority), a: nm(pr.avoid), asOf: pr.asOf }); }
 async function remindMarkDone(key, pk) {
     try {
         var prof = Object.assign({ id: 'profile', year: new Date().getFullYear() }, myAssets.profile || {});
@@ -23527,6 +23537,26 @@ function computeReminders() {
         var noPrice = ((myAssets && myAssets.items) || []).filter(function(x) { return x.status === 'holding' && !(parseInt(x.acquiredPrice) > 0); });
         if (noPrice.length) out.push({ key: 'asset-price', pri: 3, icon: '💼', title: '보유 자산 취득가 넣기', sub: noPrice.map(function(x) { return x.name || '이름 없음'; }).join(', ') + ' - 취득가가 있어야 매도 이익·세금이 계산돼요', btn: '💼 내 자산', act: 'openMyAssetsPanel()' });
     } catch (e) {}
+    // ⑦ 우선 지역이 바뀐 날(2026-10 사용자 요청): 매주 새로 계산되는 우선·피할 지역을 마지막으로 확인한 목록과 비교 - 처음엔 기준만 조용히 저장
+    try {
+        var pr = priorityRegionsLoaded, seen = ((myAssets && myAssets.profile) || {}).prioSeen;
+        if (pr && pr.priority && pr.priority.length && myAssets && myAssets.loaded) {
+            var nm = function(a) { return (a || []).map(function(x) { return x.name; }); };
+            var cur = { p: nm(pr.priority), a: nm(pr.avoid), asOf: pr.asOf };
+            if (!seen) { if (!window._prioBaseSaved) { window._prioBaseSaved = true; remindSavePrio(cur, true); } }
+            else {
+                var addP = cur.p.filter(function(x) { return seen.p.indexOf(x) < 0; }), delP = seen.p.filter(function(x) { return cur.p.indexOf(x) < 0; });
+                var addA = cur.a.filter(function(x) { return seen.a.indexOf(x) < 0; });
+                if (addP.length || delP.length || addA.length) {
+                    out.push({ key: 'prio-' + cur.asOf, pri: 2, icon: '🧭', title: '우선 지역이 바뀌었어요 (' + cur.asOf + ' 기준)',
+                        sub: (addP.length ? '➕ 새로 우선: ' + addP.join(' · ') : '') + (addP.length && (delP.length || addA.length) ? '\n' : '') + (delP.length ? '➖ 우선에서 빠짐: ' + delP.join(' · ') : '')
+                            + ((addP.length || delP.length) && addA.length ? '\n' : '') + (addA.length ? '⚠️ 새로 피할 지역: ' + addA.join(' · ') : '')
+                            + '\n매주 금요일 새벽 낙찰사례·실거래로 다시 계산한 결과예요(📘 사용법에서 전체 목록)',
+                        btn: '📘 사용법', act: 'openGuide()', prio: cur });
+                }
+            }
+        }
+    } catch (e) {}
     // ⑥ 주기적으로 하는 일(매월·분기·매년) - "완료"를 누르면 그 기간엔 다시 안 뜸(내 자산 저장소에 기록 → 맥북·아이패드 같이)
     try {
         var dn = new Date(), mo = dn.getMonth() + 1, dd = dn.getDate(), yr = dn.getFullYear();
@@ -23555,6 +23585,7 @@ function renderRemindUi() {
             + (list.length ? list.map(function(r) {
                 return '<div class="rm-item"><div class="rm-t">' + r.icon + ' ' + bbEsc(r.title) + '</div><div class="rm-s">' + bbEsc(r.sub) + '</div><div class="rm-b">'
                     + (r.act ? '<button class="rm-go" onclick="toggleRemindPanel();' + r.act + '">' + r.btn + '</button>' : '')
+                    + (r.prio ? '<button onclick="remindPrioAck()">✓ 확인했어요</button>' : '')
                     + (r.recur ? '<button onclick="remindMarkDone(\'' + r.key + '\',\'' + r.recur + '\')">✓ 완료</button>' : '')
                     + '<button onclick="remindHide(\'' + r.key.replace(/'/g, "\\'") + '\')">오늘은 숨기기</button></div></div>';
             }).join('') : '<div class="rm-empty">지금은 할 일이 없어요 👍</div>')
@@ -23578,7 +23609,7 @@ function toggleRemindPanel() {
 (function() {
     var t0 = Date.now();
     (function wait() {
-        var ready = (auctionList && auctionList.length) && (typeof bidCaseList !== 'undefined' && bidCaseList && bidCaseList.length) && (myAssets && myAssets.loaded);
+        var ready = (auctionList && auctionList.length) && (typeof bidCaseList !== 'undefined' && bidCaseList && bidCaseList.length) && (myAssets && myAssets.loaded) && (priorityRegionsLoaded || Date.now() - t0 > 12000);
         if (!ready && Date.now() - t0 < 25000) { setTimeout(wait, 700); return; }
         var list = renderRemindUi();
         if (list.length && !document.getElementById('remind-panel')) toggleRemindPanel();
