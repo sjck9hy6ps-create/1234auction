@@ -17065,7 +17065,7 @@ async function renderBidDrawer() {
     if (sbw) {
         h += '<div class="dr-band"><div>예상매도가 <b>' + fmt(row.sale) + '</b> → 보통 <b>' + fmt(sbw.lo) + ' ~ ' + fmt(sbw.hi) + '</b> <span class="dr-sub" style="margin:0;">(' + sbw.loPct + '% ~ +' + sbw.hiPct + '%)</span></div>'
             + '<div class="dr-sub">낙찰 후 6개월 안 실제 매도가가 이 범위에 든 비율 80% · 같은 단지 같은 평형 거래 ' + sbw.n + '건' + (sbw.n < 3 ? ' <b style="color:#b45309;">(거래가 적어 범위가 넓고 불확실해요)</b>' : '') + '</div>'
-            + (sbw.netLow != null ? '<div class="dr-sub">10% 확률로 범위 아래쪽(' + fmt(sbw.lo) + ')에 팔리면 추천 입찰가로 산 경우 대략 <b style="color:' + (sbw.netLow >= 0 ? '#15803d' : '#b91c1c') + ';">' + (sbw.netLow >= 0 ? '+' : '−') + fmt(Math.abs(sbw.netLow)) + '</b> 남아요(세금 변동 미반영) · 집 내부 상태·6개월 뒤 시세 변화는 포함 안 됨</div>' : '')
+            + (sbw.netLow != null ? '<div class="dr-sub">10% 확률로 범위 아래쪽(' + fmt(sbw.lo) + ')에 팔리면 추천 입찰가로 산 경우 대략 <b style="color:' + (sbw.netLow >= 0 ? '#15803d' : '#b91c1c') + ';">' + fmt(Math.abs(sbw.netLow)) + (sbw.netLow >= 0 ? ' 이익' : ' 손실') + '</b>(세금 변동 미반영) · 집 내부 상태·6개월 뒤 시세 변화는 포함 안 됨</div>' : '')
             + '</div>';
     }
     // 🎲 예상 낙찰가(2026-10) - 추천 입찰가(마진 확보 상한)와 나란히: 상한이 예상 낙찰가보다 높으면 낙찰 가능성도 있고 마진도 남음
