@@ -87,7 +87,7 @@ def main():
         if not len(fl):
             return "otherfloor", None
         fl = fl.sort_values("deal_date")
-        ok = fl[fl["price"] / 10000.0 >= c.actual * 0.7] if fl["price"].max() > 100000 else fl[fl["price"] >= c.actual * 0.7]
+        ok = fl[fl["price"] >= c.actual * 0.7]  # 실거래 price·낙찰가 모두 만원 단위
         if not len(ok):
             return "lowprice", None
         ad = c.adong
