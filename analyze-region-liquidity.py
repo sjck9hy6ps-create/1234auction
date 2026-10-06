@@ -167,14 +167,14 @@ def main():
     print(R[~has].head(25)[["region", "score", "trades1y", "jeonsePct", "trendPct", "priceMed", "auctionCases"]].to_string(index=False))
     # ── 우선 지역 목록(2026-10, 사용자: "우선 지역을 매주 새롭게 로딩해줘") - 📘 사용법의 지역 안내를 매주 이 결과로 자동 갱신 ──
     # 우선 = 틈새 조건을 통과한 곳(niche) · 경계 = 통과는 못 했지만 틈새 점수 0.5 이상 · 피할 곳 = 낙찰사례 100건 이상인데 응찰자 7명 이상이거나 되판 비율 50% 미만
-    METRO = ("부산", "대구", "대전", "울산", "인천", "광주")
+    BIG_CITY = ("부산", "대구", "대전", "울산", "인천", "광주")
     def disp(rg):
         sido, _, rest = rg.partition(" ")
         rest = rest.strip() or sido
         nm = rest[:-1] if len(rest) > 2 and rest[-1] in "시군" else rest
         if sido == "전남광주":
             return ("광주 " + rest) if rest.endswith("구") else nm
-        if rest.endswith("구") and sido in METRO:
+        if rest.endswith("구") and sido in BIG_CITY:
             return sido + " " + rest
         return nm
     H2 = R[has]
