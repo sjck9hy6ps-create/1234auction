@@ -165,7 +165,28 @@ def main():
     print(R[has].sort_values("nicheScore", ascending=False)[ncols + ["niche"]].to_string(index=False))
     print("\n(팔리는 곳 상위인데 낙찰사례가 15건 미만 - 더 올리면 좋은 지역)")
     print(R[~has].head(25)[["region", "score", "trades1y", "jeonsePct", "trendPct", "priceMed", "auctionCases"]].to_string(index=False))
-    out = {"generatedAt": now.isoformat(), "note": "지방 아파트 최근 1년 300건 이상 시군구. 점수 = 거래 꾸준함 + 거래량 + 전세가율 - 급락. 틈새 점수 = 팔리는 곳 40% + 되판 30% + 경쟁 약함 30%",
+    # ── 우선 지역 목록(2026-10, 사용자: "우선 지역을 매주 새롭게 로딩해줘") - 📘 사용법의 지역 안내를 매주 이 결과로 자동 갱신 ──
+    # 우선 = 틈새 조건을 통과한 곳(niche) · 경계 = 통과는 못 했지만 틈새 점수 0.5 이상 · 피할 곳 = 낙찰사례 100건 이상인데 응찰자 7명 이상이거나 되판 비율 50% 미만
+    METRO = ("부산", "대구", "대전", "울산", "인천", "광주")
+    def disp(rg):
+        sido, _, rest = rg.partition(" ")
+        rest = rest.strip() or sido
+        nm = rest[:-1] if len(rest) > 2 and rest[-1] in "시군" else rest
+        if sido == "전남광주":
+            return ("광주 " + rest) if rest.endswith("구") else nm
+        if rest.endswith("구") and sido in METRO:
+            return sido + " " + rest
+        return nm
+    H2 = R[has]
+    pri = H2[H2["niche"]].sort_values("nicheScore", ascending=False)
+    bor = H2[(~H2["niche"]) & (H2["nicheScore"].astype(float) >= 0.5) & (H2["auctionCases"] >= 100)].sort_values("nicheScore", ascending=False)
+    avd = H2[(H2["auctionCases"] >= 100) & ((H2["biddersMed"].fillna(0) >= 7) | (H2["soldPct"].fillna(100) < 50))].sort_values("auctionCases", ascending=False)
+    pick = lambda D: [{"region": r.region, "name": disp(r.region), "compMed": r.compMed, "biddersMed": r.biddersMed, "soldPct": r.soldPct, "holdMed": r.holdMed, "cases": int(r.auctionCases)} for r in D.itertuples()]
+    priority = {"asOf": now.strftime("%Y-%m-%d"), "priority": pick(pri), "border": pick(bor), "avoid": pick(avd)}
+    print("\n🏁 우선 지역:", ", ".join(x["name"] for x in priority["priority"]))
+    print("   경계:", ", ".join(x["name"] for x in priority["border"]))
+    print("   피할 지역:", ", ".join(x["name"] for x in priority["avoid"]))
+    out = {"generatedAt": now.isoformat(), "priorityRegions": priority, "note": "지방 아파트 최근 1년 300건 이상 시군구. 점수 = 거래 꾸준함 + 거래량 + 전세가율 - 급락. 틈새 점수 = 팔리는 곳 40% + 되판 30% + 경쟁 약함 30%",
            "base": comp_base, "regions": R.to_dict("records")}
     cyc.upsert_rows([{"id": "signal|__region_liquidity__", "payload": cyc.clean_json(out), "fetched_at": now.isoformat()}])
     cols = ["region", "score", "trades1y", "steadyPct", "quarterCv", "jeonsePct", "trendPct", "priceMed", "auctionCases", "compMed", "biddersMed", "soldPct"]

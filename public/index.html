@@ -1668,8 +1668,8 @@ body.ui2 #auction-modal.am4 { width:620px; }
     <div class="gd-h"><h2>📘 이 앱 제대로 쓰는 법</h2><button class="gd-x" onclick="closeGuide()">닫기 ✕</button></div>
     <div class="gd-one">겨울에 → 틈새 지역에서 → 🛡️버팀·🎯기회 물건을 골라 → 매물·서류를 확인하고 → 추천 입찰가로 여러 번 입찰</div>
     <div class="gd-step"><div class="gd-n">1</div><div><div class="gd-t">어디서 · 언제</div><div class="gd-d">
-      <span class="ok">우선 지역</span> 목포 · 익산 · 당진 · 광주 북구 · 광양 · 여수 · 무안 · 부산 북구 <span style="color:#9ca3af;">(경쟁 약하고 잘 팔림)</span><br>
-      <span class="no">피할 지역</span> 대전 · 전주 · 춘천 · 부산 수영·동래·해운대 <span style="color:#9ca3af;">(응찰자 6~8명 또는 잘 안 팔림)</span><br>
+      <span id="gd-regions"><span class="ok">우선 지역</span> 목포 · 익산 · 당진 · 광주 북구 · 광양 · 여수 · 무안 · 부산 북구 <span style="color:#9ca3af;">(경쟁 약하고 잘 팔림)</span><br>
+      <span class="no">피할 지역</span> 대전 · 전주 · 춘천 · 부산 수영·동래·해운대 <span style="color:#9ca3af;">(응찰자 6~8명 또는 잘 안 팔림)</span><br></span>
       <b>겨울(12~2월)</b>에 입찰을 늘리세요 - 1등 가격이 낮아 낙찰률이 약 2배였어요</div></div></div>
     <div class="gd-step"><div class="gd-n">2</div><div><div class="gd-t">입찰후보 목록에서 거르기</div><div class="gd-d">
       <span class="no">제외</span> ⚠️ 손해 주의 · 🏢 대량 경매 · ❌ 제외<br>
@@ -17443,7 +17443,23 @@ async function fillHouseholdsInBackground() {
     } finally { householdFillRunning = false; }
 }
 
-function openGuide() { var m = document.getElementById('guide-modal'); if (m) m.style.display = 'flex'; }
+// 📘 사용법의 우선·경계·피할 지역은 매주(금요일 새벽) 새로 계산된 값으로 채움(2026-10 사용자 요청). 못 불러오면 위 기본 문구 그대로.
+var priorityRegionsLoaded = null;
+function loadPriorityRegions() {
+    fetch('/api/data-coverage?mode=priorityRegions').then(function(r) { return r.json(); }).then(function(d) {
+        if (!d || !d.priority || !d.priority.length) return;
+        priorityRegionsLoaded = d;
+        var el = document.getElementById('gd-regions'); if (!el) return;
+        var names = function(a) { return a.map(function(x) { return bbEsc(x.name); }).join(' · '); };
+        var tip = function(a) { return a.map(function(x) { return x.name + ': 응찰자 ' + (x.biddersMed != null ? x.biddersMed + '명' : '-') + ' · 되판 ' + (x.soldPct != null ? x.soldPct + '%' : '-') + ' · 사례 ' + x.cases + '건'; }).join('\n'); };
+        el.innerHTML = '<span class="ok" title="' + bbEsc(tip(d.priority)) + '">우선 지역</span> ' + names(d.priority) + ' <span style="color:#9ca3af;">(경쟁 약하고 잘 팔림)</span><br>'
+            + (d.border && d.border.length ? '<span style="color:#b45309;font-weight:700;" title="' + bbEsc(tip(d.border)) + '">경계</span> ' + names(d.border) + ' <span style="color:#9ca3af;">(조건에 조금 못 미침)</span><br>' : '')
+            + (d.avoid && d.avoid.length ? '<span class="no" title="' + bbEsc(tip(d.avoid)) + '">피할 지역</span> ' + names(d.avoid) + ' <span style="color:#9ca3af;">(응찰자 7명 이상 또는 되판 비율 50% 미만)</span><br>' : '')
+            + '<span style="color:#9ca3af;font-size:11px;">' + bbEsc(d.asOf) + ' 기준 · 매주 금요일 새벽 자동 갱신 · 이름에 마우스(손가락)를 올리면 숫자</span><br>';
+    }).catch(function() {});
+}
+setTimeout(loadPriorityRegions, 3500);
+function openGuide() { var m = document.getElementById('guide-modal'); if (m) m.style.display = 'flex'; if (!priorityRegionsLoaded) loadPriorityRegions(); }
 function closeGuide() { var m = document.getElementById('guide-modal'); if (m) m.style.display = 'none'; }
 document.addEventListener('keydown', function(e) { if (e.key === 'Escape') closeGuide(); });
 function bidBoardGo(id) {

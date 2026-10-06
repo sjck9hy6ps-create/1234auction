@@ -3405,6 +3405,17 @@ export default async function handler(req, res) {
   // 2026-10: 급등·돈되는지역·신고가 신호의 과거 적중률(analyze-surge-signals.py 결과)
   // 2026-10: 지역 경쟁 강도(analyze-bidcases.py가 매주 계산) - 입찰후보 상세 창에 표시
   // 2026-10: 예상 낙찰가 모델(analyze-bidcases.py가 매주 계산) - 입찰후보·상세 창의 예상 낙찰가·낙찰 가능성
+  // 2026-10: 📘 사용법의 우선·피할 지역(analyze-region-liquidity.py가 매주 계산)
+  if (req.query.mode === 'priorityRegions') {
+    res.setHeader('Cache-Control', 's-maxage=1800, stale-while-revalidate=86400');
+    try {
+      const { data, error } = await supabase.from('leader_follower_cache').select('payload').eq('id', 'signal|__region_liquidity__').maybeSingle();
+      if (error) return res.status(500).json({ error: error.message });
+      return res.status(200).json(((data && data.payload) || {}).priorityRegions || {});
+    } catch (err) {
+      return res.status(500).json({ error: err.message });
+    }
+  }
   if (req.query.mode === 'winbid') {
     res.setHeader('Cache-Control', 's-maxage=3600, stale-while-revalidate=86400');
     try {
