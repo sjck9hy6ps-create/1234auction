@@ -174,7 +174,7 @@ def main():
         nm = rest[:-1] if len(rest) > 2 and rest[-1] in "시군" else rest
         if sido == "전남광주":
             return ("광주 " + rest) if rest.endswith("구") else nm
-        if rest.endswith("구") and sido in BIG_CITY:
+        if rest[-1:] in ("구", "군") and sido in BIG_CITY:  # 대구 달성군·부산 기장군처럼 시도 이름이 없으면 헷갈림
             return sido + " " + rest
         return nm
     H2 = R[has]
