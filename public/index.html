@@ -1294,6 +1294,18 @@ body.ui2 #auction-modal.am4 { width:620px; }
 #bb-drawer .dr-issue.high { background:#fef2f2; border:1px solid #fecaca; color:#7f1d1d; }
 #bb-drawer .dr-issue.mid { background:#fff7ed; border:1px solid #fed7aa; color:#7c2d12; }
 </style>
+<style>
+/* 📊 주간 리포트(2026-10) */
+#weekly-panel { position:fixed; top:70px; right:70px; width:min(560px, calc(100vw - 90px)); height:min(640px, calc(100vh - 100px)); overflow:auto; background:#f8f9fb; border:1px solid #e5e7eb; border-radius:12px; box-shadow:0 10px 30px rgba(0,0,0,.2); z-index:9050; font-size:12.5px; }
+#weekly-panel .wr-h { position:sticky; top:0; background:#fff; padding:11px 14px; font-weight:800; font-size:14px; border-bottom:1px solid #eef0f3; display:flex; justify-content:space-between; z-index:2; }
+#weekly-panel .wr-b { padding:10px 14px 16px; }
+#weekly-panel .wr-kpis { display:grid; grid-template-columns:repeat(auto-fit, minmax(100px, 1fr)); gap:8px; margin:8px 0; }
+#weekly-panel .wr-kpis div { background:#fff; border:1px solid #eef0f3; border-radius:10px; padding:8px 10px; }
+#weekly-panel .wr-kpis span { display:block; color:#6b7280; font-size:10.5px; } #weekly-panel .wr-kpis b { display:block; font-size:18px; margin:2px 0; } #weekly-panel .wr-kpis em { display:block; font-style:normal; color:#9aa0a6; font-size:10px; }
+#weekly-panel .wr-sec { background:#fff; border:1px solid #eef0f3; border-radius:10px; padding:9px 11px; margin-top:8px; line-height:1.6; }
+#weekly-panel .wr-sec table { margin-top:6px; }
+@media (max-width: 900px) { #weekly-panel { right:8px; left:8px; width:auto; } }
+</style>
 </head>
 <body>
 <div id="topbar">
@@ -16701,6 +16713,7 @@ async function refreshBidBoard() {
     } catch (e) {}
     bidBoardRunning = false;
     try { redrawMarkers(); } catch (e) {}
+    setTimeout(function() { try { savePredSnapshots(); } catch (e) {} }, 3000);
 }
 // 손해 주의 물건이 과거에 실제로 받은 값 ÷ 예상매도가(2026-10 백테스트, 하위 40% 지점) - 추천가÷최저가가 클수록 낮음. 예상매도가가 아니라 마진의 추가 여유 계산에 씀
 var OVERSHOOT_SALE_FACTORS = { apt: [[1.3, 0.90], [1.5, 0.76], [2, 0.61], [Infinity, 0.51]], villa: [[1.5, 0.82], [2, 0.76], [Infinity, 0.60]] };
@@ -23515,6 +23528,15 @@ function myWonAuctions() {
         return my > 0 && act > 0 && Math.abs(act - my) <= 1;
     });
 }
+async function remindReportAck() {
+    try {
+        var wr = weeklyReportData; if (!wr) return;
+        var prof = Object.assign({ id: 'profile', year: new Date().getFullYear() }, myAssets.profile || {});
+        prof.reportSeen = String(wr.generatedAt).slice(0, 10);
+        await saveMyAssetItem(prof);
+    } catch (e) {}
+    renderRemindUi();
+}
 async function remindSavePrio(cur, silent) {
     try {
         var prof = Object.assign({ id: 'profile', year: new Date().getFullYear() }, myAssets.profile || {});
@@ -23621,6 +23643,16 @@ function computeReminders() {
                         btn: '📘 사용법', act: 'openGuide()', prio: cur });
                 }
             }
+        }
+    } catch (e) {}
+    // ⑧ 새 주간 리포트(2026-10): 서버가 새로 만든 리포트를 아직 안 봤으면 알림
+    try {
+        var wr = weeklyReportData, seenW = ((myAssets && myAssets.profile) || {}).reportSeen;
+        if (wr && wr.generatedAt && myAssets && myAssets.loaded && String(wr.generatedAt).slice(0, 10) !== seenW) {
+            var aa = wr.accuracy;
+            out.push({ key: 'weekly-' + String(wr.generatedAt).slice(0, 10), pri: 1, icon: '📊', title: '새 주간 리포트가 나왔어요',
+                sub: (wr.n ? '지난주 낙찰 ' + wr.n + '건' : '') + (aa ? ' · 예상 낙찰가 보통 오차 ' + aa.medAbsErrPct + '%(평소 5.7%)' : '') + (wr.tracked && wr.tracked.n ? ' · 내가 추적하던 물건 ' + wr.tracked.n + '건 낙찰' : ''),
+                btn: '📊 리포트 보기', act: 'openWeeklyReport();remindReportAck()', weeklyAck: true });
         }
     } catch (e) {}
     // ⑥ 주기적으로 하는 일(매월·분기·매년) - "완료"를 누르면 그 기간엔 다시 안 뜸(내 자산 저장소에 기록 → 맥북·아이패드 같이)
@@ -23780,6 +23812,99 @@ window.addEventListener('load', function() {
         var gd = document.querySelector('#guide-modal .gd'); if (gd) floatWin(gd, 'guide', '.gd-h');
     }, 1500);
 });
+/* ════ 📊 주간 리포트 (2026-10, 사용자: "매주 낙찰사례·경매사례를 올릴 건데, 지난 1주일 낙찰 사례의 예상 입찰가·낙찰가·매칭 리포트를 보여줘") ════
+   ① 서버(analyze-bidcases.py, 매주 월요일 새벽)가 최근 낙찰 사례를 "그 주 이전 사례로만 만든 예상 낙찰가 모델"로 맞혀 보는 진짜 시험 결과를 만들어 둠
+   ② 앱은 입찰 직전 물건의 예측(추천 입찰가·예상 낙찰가·낙찰 가능성)을 물건 기록에 저장(predSnap) → 결과가 올라오면 사건번호로 맞춰 "내 추천가로 이겼나"를 비교
+   ③ 이 패널은 그 결과를 보여주고, 🔔로 새 리포트를 알려줌 */
+var weeklyReportData = null, weeklyReportLoading = false;
+function loadWeeklyReport(cb) {
+    if (weeklyReportData && !cb) return;
+    if (weeklyReportLoading) return;
+    weeklyReportLoading = true;
+    fetch('/api/data-coverage?mode=weeklyReport').then(function(r) { return r.json(); }).then(function(d) {
+        weeklyReportLoading = false;
+        if (d && d.generatedAt) { weeklyReportData = d; try { renderRemindUi(); } catch (e) {} }
+        if (cb) cb(weeklyReportData);
+    }).catch(function() { weeklyReportLoading = false; if (cb) cb(null); });
+}
+setTimeout(function() { loadWeeklyReport(); }, 4500);
+function wrYmd(n) { var s = String(n || ''); return s.length === 8 ? s.slice(4, 6) + '/' + s.slice(6, 8) : s; }
+function openWeeklyReport() {
+    var p = document.getElementById('weekly-panel');
+    if (p) { p.remove(); return; }
+    p = document.createElement('div'); p.id = 'weekly-panel'; document.body.appendChild(p);
+    p.innerHTML = '<div class="wr-h">📊 주간 리포트 <span class="rm-x" onclick="document.getElementById(\'weekly-panel\').remove()">✕</span></div><div class="wr-b">불러오는 중…</div>';
+    try { floatWin(p, 'weekly', '.wr-h'); } catch (e) {}
+    loadWeeklyReport(function(d) {
+        var b = p.querySelector('.wr-b'); if (!b) return;
+        if (!d || !d.generatedAt) { b.innerHTML = '<div class="pn-muted">아직 리포트가 없어요. 매주 월요일 새벽 분석이 끝나면 만들어져요.</div>'; return; }
+        var f = function(v) { return v == null ? '-' : toEok(String(Math.round(v))); };
+        var pc = function(v, plus) { return v == null ? '-' : (plus && v > 0 ? '+' : '') + v + '%'; };
+        var h = '<div class="pn-muted">' + wrYmd(d.windowFrom) + ' ~ ' + wrYmd(d.windowTo) + ' 낙찰 ' + d.n + '건 (아파트) · ' + String(d.generatedAt).slice(0, 10) + ' 계산 · 이 주 이전 사례만으로 만든 모델로 맞혀 본 결과(학습에 안 쓴 사례)</div>';
+        var a = d.accuracy;
+        if (a) {
+            h += '<div class="wr-kpis">'
+                + '<div><span>예상 낙찰가 보통 오차</span><b>' + pc(a.medAbsErrPct) + '</b><em>평소(검증) ' + pc(d.benchmark && d.benchmark.medAbsErrPct) + '</em></div>'
+                + '<div><span>±10% 안에 든 비율</span><b>' + pc(a.within10Pct) + '</b><em>평소 76~79%</em></div>'
+                + '<div><span>예상가로 썼다면 낙찰</span><b>' + pc(a.winAtPredPct) + '</b><em>기대 약 50%</em></div>'
+                + '<div><span>+5%로 썼다면 낙찰</span><b>' + pc(a.winAtPlus5Pct) + '</b><em>기대 약 70%</em></div>'
+                + '<div><span>예측 쏠림(예측−실제)</span><b>' + pc(a.biasPct, true) + '</b><em>+면 예측이 높음</em></div></div>';
+        }
+        var m = d.market;
+        if (m) {
+            var up = m.actualOverEstMed - m.baseActualOverEstMed;
+            h += '<div class="wr-sec"><b>시장 분위기</b> - 이번 주 낙찰가는 시세의 <b>' + Math.round(m.actualOverEstMed * 100) + '%</b> (최근 1년 ' + Math.round(m.baseActualOverEstMed * 100) + '%) → '
+                + (Math.abs(up) < 0.015 ? '평소와 비슷' : (up > 0 ? '<b style="color:#b91c1c;">경쟁이 평소보다 센 편</b>' : '<b style="color:#15803d;">평소보다 싸게 낙찰</b>'))
+                + ' · 응찰자 보통 ' + (m.biddersMed != null ? m.biddersMed + '명' : '-') + '(평소 ' + (m.baseBiddersMed != null ? m.baseBiddersMed + '명' : '-') + ') · 1명뿐 ' + pc(m.oneBidderPct) + '(평소 ' + pc(m.baseOneBidderPct) + ')</div>';
+        }
+        var t = d.tracked;
+        if (t) {
+            h += '<div class="wr-sec"><b>내가 추적하던 물건(사건번호 일치)</b> ' + t.n + '건 낙찰'
+                + (t.recKnown ? ' · 입찰 전 저장해 둔 추천 입찰가로 썼다면 <b>' + t.recWon + '/' + t.recKnown + '건</b> 낙찰' : (t.n ? ' <span class="pn-muted">(입찰 전 예측 저장본이 아직 없어 비교는 다음 주부터)</span>' : ''));
+            if (t.items && t.items.length) {
+                h += '<table class="pn-table"><thead><tr><th>사건·물건</th><th class="r">최저가</th><th class="r">저장한 추천가</th><th class="r">낙찰가</th><th class="r">응찰</th><th></th></tr></thead><tbody>' + t.items.map(function(x) {
+                    var sn = x.snap || {};
+                    return '<tr><td>' + bbEsc(x.name || x.caseNo) + '<div class="pn-muted">' + bbEsc(x.caseNo) + '</div></td><td class="r">' + f(x.minbid) + '</td><td class="r">' + f(sn.rec) + '</td><td class="r"><b>' + f(x.actual) + '</b></td><td class="r">' + (x.bidders != null ? x.bidders + '명' : '-') + '</td>'
+                        + '<td>' + (x.recWon === true ? '<span style="color:#15803d;">추천가로 낙찰</span>' : (x.recWon === false ? '<span style="color:#b91c1c;">추천가의 ' + Math.round(x.actualOverRec * 100) + '%에 낙찰</span>' : '')) + '</td></tr>';
+                }).join('') + '</tbody></table>';
+            }
+            h += '</div>';
+        }
+        if (d.byRegion && d.byRegion.length) {
+            h += '<div class="wr-sec"><b>지역별</b> (3건 이상)<table class="pn-table"><thead><tr><th>지역</th><th class="r">건수</th><th class="r">낙찰가÷시세</th><th class="r">응찰자</th><th class="r">예측 오차</th><th class="r">쏠림</th></tr></thead><tbody>'
+                + d.byRegion.map(function(x) { return '<tr><td>' + bbEsc(x.region) + '</td><td class="r">' + x.n + '</td><td class="r">' + Math.round(x.actualOverEst * 100) + '%</td><td class="r">' + (x.bidders != null ? x.bidders : '-') + '</td><td class="r">' + pc(x.medAbsErrPct) + '</td><td class="r">' + pc(x.biasPct, true) + '</td></tr>'; }).join('') + '</tbody></table></div>';
+        }
+        if (d.misses && d.misses.length) {
+            h += '<div class="wr-sec"><b>가장 크게 빗나간 사례</b><table class="pn-table"><thead><tr><th>물건</th><th class="r">유찰</th><th class="r">최저가</th><th class="r">예측</th><th class="r">실제</th><th class="r">차이</th><th class="r">응찰</th></tr></thead><tbody>'
+                + d.misses.map(function(x) { return '<tr><td>' + bbEsc(x.name || x.caseNo) + '<div class="pn-muted">' + bbEsc(x.region) + '</div></td><td class="r">' + (x.fails != null ? x.fails + '회' : '-') + '</td><td class="r">' + f(x.minbid) + '</td><td class="r">' + f(x.pred) + '</td><td class="r"><b>' + f(x.actual) + '</b></td><td class="r" style="color:' + (x.errPct > 0 ? '#b91c1c' : '#1d4ed8') + ';">' + pc(x.errPct, true) + '</td><td class="r">' + (x.bidders != null ? x.bidders + '명' : '-') + '</td></tr>'; }).join('')
+                + '</tbody></table><div class="pn-muted">응찰자가 아주 많거나 1명뿐이면 크게 빗나가기 쉬워요. 이런 사례는 입찰 전 알 수 없는 변수예요.</div></div>';
+        }
+        var tr = d.trace6m;
+        if (tr) {
+            h += '<div class="wr-sec"><b>6개월 전 낙찰 사례의 되팔기 흔적</b> (' + wrYmd(tr.from) + '~' + wrYmd(tr.to) + ' 낙찰 ' + tr.n + '건) - 같은 동·층 거래 확인(동 번호 있는 ' + tr.dongKnown + '건 중) <b>' + tr.dongConfirmed + '건</b> · 층만 맞음 ' + tr.floorOnly + '건'
+                + '<div class="pn-muted">호수를 몰라 옆집 거래일 수 있어요(우연 수준 약 7%). 참고용 지표예요.</div></div>';
+        }
+        b.innerHTML = h;
+    });
+}
+// 입찰 직전 물건의 예측을 물건 기록에 저장(predSnap) - 결과가 올라오면 주간 리포트가 "내 추천가로 이겼나"를 비교. 3일마다·최저가가 바뀌면 갱신
+var predSnapSaving = false;
+async function savePredSnapshots() {
+    if (predSnapSaving) return;
+    predSnapSaving = true;
+    try {
+        var today = remindTodayStr(), upd = [];
+        (bidBoardRows || []).forEach(function(r) {
+            if (r.type !== 'apt' || r.pending || r.skippedPast || !r.a || !r.winbid || !r.recBid || !r.dday || r.dday.diffDays < 0 || r.dday.diffDays > 21) return;
+            var sn = r.a.predSnap, age = sn && sn.at ? (Date.now() - new Date(sn.at + 'T00:00:00').getTime()) / 86400000 : 99;
+            if (sn && age < 3 && sn.minBid === r.minBid) return;
+            upd.push(Object.assign({}, r.a, { predSnap: { at: today, minBid: r.minBid, fails: r.fails, sale: Math.round(r.sale), recBid: Math.round(r.recBid), aggr: r.recAggr ? Math.round(r.recAggr) : null,
+                win: Math.round(r.winbid.price), prob: r.winbid.probRec != null ? Math.round(r.winbid.probRec * 100) / 100 : null, own: r.own } }));
+        });
+        for (var i = 0; i < upd.length && i < 400; i += 50) await saveAuctionAPI(upd.slice(i, i + 50));
+    } catch (e) { console.error('예측 저장 실패:', e && e.message); }
+    predSnapSaving = false;
+}
 // 예전 누적 투자 리포트 주소(/dashboard.html → /#assets)로 들어오면 내 자산 화면을 바로 엶
 window.addEventListener('load', function() { if (location.hash === '#assets') setTimeout(function() { openMyAssetsPanel(); }, 1500); });
 function closeMyAssetsPanel() { document.getElementById('my-assets-panel').style.display = 'none'; }
@@ -24240,6 +24365,7 @@ function setupBidCasePanelLayout() {
     wrap(tools, '🛠 관리 도구 (중복 정리)');
     var sum = document.createElement('div'); sum.id = 'bc-summary'; sum.className = 'pn-card'; sum.style.margin = '8px';
     var hdr = p.querySelector('.auction-list-header'); hdr.after(sum);
+    hdr.insertAdjacentHTML('beforeend', ' <button class="bb-csv" style="margin-left:8px;font-size:11px;padding:3px 10px;" onclick="openWeeklyReport()">📊 주간 리포트</button>');
     renderBidCaseSummary();
 }
 function renderBidCaseSummary() {

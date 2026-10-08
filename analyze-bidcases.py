@@ -232,6 +232,7 @@ def main():
                "area": c.area, "floor": c.floor_n, "cx3y": 0, "age": None, "bandTier": None,
                "notes": str(getattr(c, "specialConditions", "") or ""), "land": str(getattr(c, "landType", "") or ""),
                "dk": c.dk, "dongName": str(c.dong), "cx": None, "dong3y": 0,
+               "caseNo": str(getattr(c, "caseNo", "") or ""), "bname": str(getattr(c, "buildingName", "") or ""),
                "adong": c.adong if isinstance(c.adong, str) and c.adong else None}
         dd = dong_dates.get((c.region, c.dk))
         if dd is not None:
@@ -426,6 +427,10 @@ def main():
             winbid_model(R, now)
         except Exception as e:
             print('  예상 낙찰가 모델 실패(건너뜀):', e)
+        try:
+            weekly_report(R, datetime.now(), now)
+        except Exception as e:
+            print('  주간 리포트 실패(건너뜀):', e)
     except Exception as e:
         print("  지역 경쟁 강도 계산 실패(건너뜀):", e)
     write_back_resale_matches(cases, out)
@@ -741,6 +746,84 @@ def winbid_model(R, now):
     full["generatedAt"] = now; full["dataTo"] = int(D["sale"].max())
     print(f"  예상 낙찰가 모델: 사례 {len(D):,}건, 최근 1년 검증 {full['oos']}")
     cyc.upsert_rows([{"id": "signal|__winbid__", "payload": cyc.clean_json(full), "fetched_at": now}])
+
+
+# ════ 📊 주간 리포트 (2026-10, 사용자: "매주 낙찰사례·경매사례를 올릴 건데 지난 1주일 사이 낙찰된 사례의 예상 입찰가·낙찰가·매칭 리포트를 보여줘") ════
+# 최근 낙찰 사례(분석일 기준 9일 이내, 20건 미만이면 16일)를 "그 주 이전 사례만으로 만든 예상 낙찰가 모델"에 넣어 실제 낙찰가와 비교 - 학습에 안 쓴 사례라 진짜 시험.
+# + 시장 분위기(낙찰가÷시세·응찰자 수가 평소보다 센지) + 가장 크게 빗나간 사례 + 입찰후보로 추적하던 물건(사건번호 일치, 앱이 입찰 전에 저장한 예측 predSnap 있으면 비교)
+# + 6개월 전 낙찰 사례의 "같은 동·층 거래 흔적"(되팔기 매칭) 현황. 결과: leader_follower_cache 'signal|__weekly_report__'
+def norm_case(s):
+    return re.sub(r"\(\d+\)$", "", str(s or "").replace(" ", "")).replace("타경", "-")
+
+
+def weekly_report(R, now_dt, now_iso):
+    D = R[R["est"].notna() & (R["est"] > 0) & R["actual"].notna() & R["minbid"].notna() & (R["minbid"] > 0) & (R["sale"] >= 20200101)].copy()
+    D = D[np.log(D["actual"] / D["est"]).between(np.log(0.4), np.log(1.6))]
+    if len(D) < 3000:
+        print("  주간 리포트: 사례 부족, 건너뜀"); return
+    ymd = lambda d: int(d.strftime("%Y%m%d"))
+    start = ymd(now_dt - timedelta(days=9))
+    W = D[D["sale"] >= start]
+    if len(W) < 20:
+        start = ymd(now_dt - timedelta(days=16)); W = D[D["sale"] >= start]
+    train = D[D["sale"] < start]
+    model = wb_fit(train)
+    out = {"generatedAt": now_iso, "windowFrom": int(start), "windowTo": int(W["sale"].max()) if len(W) else None, "n": int(len(W))}
+    if len(W):
+        W = W.copy()
+        W["pred"] = np.exp(wb_predict(model, W)) * W["est"]
+        W["err"] = (W["pred"] - W["actual"]) / W["actual"]
+        a = W["err"].abs()
+        out["accuracy"] = {"medAbsErrPct": round(float(a.median()) * 100, 1), "within10Pct": round(float((a <= 0.10).mean()) * 100, 1), "biasPct": round(float(W["err"].median()) * 100, 1),
+                           "winAtPredPct": round(float((W["actual"] <= W["pred"]).mean()) * 100, 1), "winAtPlus5Pct": round(float((W["actual"] <= W["pred"] * 1.05).mean()) * 100, 1)}
+        out["benchmark"] = {"medAbsErrPct": 5.7, "note": "학습에 안 쓴 최근 1년 검증 기준"}
+        base = D[(D["sale"] < start) & (D["sale"] >= ymd(now_dt - timedelta(days=380)))]
+        out["market"] = {"actualOverEstMed": round(float((W["actual"] / W["est"]).median()), 3), "baseActualOverEstMed": round(float((base["actual"] / base["est"]).median()), 3),
+                         "biddersMed": float(W["bidders"].median()) if W["bidders"].notna().any() else None, "baseBiddersMed": float(base["bidders"].median()) if base["bidders"].notna().any() else None,
+                         "oneBidderPct": round(float((W["bidders"] == 1).mean()) * 100, 1), "baseOneBidderPct": round(float((base["bidders"] == 1).mean()) * 100, 1)}
+        reg = []
+        for rg, G in W.groupby("region"):
+            if len(G) >= 3:
+                reg.append({"region": rg, "n": int(len(G)), "medAbsErrPct": round(float(G["err"].abs().median()) * 100, 1), "biasPct": round(float(G["err"].median()) * 100, 1),
+                            "actualOverEst": round(float((G["actual"] / G["est"]).median()), 3), "bidders": float(G["bidders"].median()) if G["bidders"].notna().any() else None})
+        out["byRegion"] = sorted(reg, key=lambda x: -x["n"])[:15]
+        top = W.reindex(W["err"].abs().sort_values(ascending=False).index).head(6)
+        out["misses"] = [{"region": r.region, "name": r.bname, "caseNo": r.caseNo, "fails": None if pd.isna(r.fails) else int(r.fails), "minbid": round(float(r.minbid)), "pred": round(float(r.pred)), "actual": round(float(r.actual)),
+                          "errPct": round(float(r.err) * 100, 1), "bidders": None if pd.isna(r.bidders) else int(r.bidders)} for r in top.itertuples()]
+        # 입찰후보로 추적하던 물건(사건번호 일치) - 앱이 입찰 전에 저장한 예측(predSnap)과 비교
+        try:
+            au = requests.get(f"{SITE_URL}/api/auction", timeout=180).json()
+            amap = {norm_case(x.get("caseNo")): x for x in au if isinstance(x, dict) and x.get("caseNo") and not x.get("isBacktest")}
+        except Exception as e:
+            print("  경매 목록 불러오기 실패(건너뜀):", e); amap = {}
+        tr = []
+        for r in W.itertuples():
+            x = amap.get(norm_case(r.caseNo))
+            if not x:
+                continue
+            sn = x.get("predSnap") or {}
+            row = {"caseNo": r.caseNo, "name": r.bname or x.get("name") or "", "region": r.region, "actual": round(float(r.actual)), "bidders": None if pd.isna(r.bidders) else int(r.bidders),
+                   "second": None if pd.isna(r.second) else round(float(r.second)), "minbid": round(float(r.minbid)), "modelPred": round(float(r.pred))}
+            if sn:
+                row["snap"] = {"at": sn.get("at"), "rec": sn.get("recBid"), "aggr": sn.get("aggr"), "win": sn.get("win"), "prob": sn.get("prob"), "sale": sn.get("sale")}
+                if sn.get("recBid"):
+                    row["recWon"] = bool(r.actual <= sn["recBid"]); row["actualOverRec"] = round(float(r.actual) / sn["recBid"], 3)
+                if sn.get("win"):
+                    row["snapErrPct"] = round((sn["win"] - float(r.actual)) / float(r.actual) * 100, 1)
+            tr.append(row)
+        out["tracked"] = {"n": len(tr), "withSnap": sum(1 for t in tr if t.get("snap")), "items": tr[:30],
+                          "recWon": sum(1 for t in tr if t.get("recWon")), "recKnown": sum(1 for t in tr if "recWon" in t)}
+    # 6개월 전(5.5~6.5개월) 낙찰 사례의 같은 동·층 거래 흔적 - 동 확인(동 번호 있는 사례) 기준
+    lo, hi = ymd(now_dt - timedelta(days=200)), ymd(now_dt - timedelta(days=165))
+    S = R[(R["sale"] >= lo) & (R["sale"] <= hi)]
+    if len(S):
+        has_dong = S["adong"].notna()
+        conf = S["resale_conf"].fillna("")
+        out["trace6m"] = {"from": int(lo), "to": int(hi), "n": int(len(S)), "dongKnown": int(has_dong.sum()),
+                          "dongConfirmed": int(((conf == "dong") & (S["resale_m"] <= 6.2)).sum()), "floorOnly": int(((conf == "floor") & (S["resale_m"] <= 6.2)).sum()),
+                          "note": "같은 동·층 거래가 6개월 안에 있었는지(참고 - 호수를 몰라 옆집 거래일 수 있음, 우연 수준 약 7%)"}
+    print(f"  주간 리포트: 기간 {start}~, 사례 {len(W)}건, 정확도 {out.get('accuracy')}")
+    cyc.upsert_rows([{"id": "signal|__weekly_report__", "payload": cyc.clean_json(out), "fetched_at": now_iso}])
 
 
 if __name__ == "__main__":
