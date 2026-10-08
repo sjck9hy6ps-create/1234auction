@@ -16270,6 +16270,10 @@ function winbidFor(row) {
         size: area < 60 ? '소형' : (area <= 85 ? '중형' : '대형'),
         own: b.own <= 2 ? '1~2' : (b.own <= 5 ? '3~5' : (b.own <= 10 ? '6~10' : '11+'))
     };
+    // 2026-10-08 감정가 요인(서버 모델과 같은 구간): lab = 감정가÷시세 구간(0~6), lbl = 최저가×감정가 교호, labf = 감정가×유찰 교호
+    var apr = parseFloat(row.appraisal) || parseFloat(a.appraisal) || 0, labV = '?';
+    if (apr > 0) { var la = Math.log(apr / b.est); labV = String([-0.2, -0.1, 0, 0.1, 0.2, 0.35].filter(function(e2) { return la > e2; }).length); }
+    keys.lab = labV; keys.lbl = keys.lb + '|' + labV; keys.labf = labV + '|' + keys.fails;
     // 앱 보정 +1.8%(2026-10 실측): 앱에서 구한 시세가 서버 계산보다 약간 높게 나와(해제 거래 포함·3년 지수 보정 없음) 예상 낙찰가가 1.8% 낮게 나왔음.
     // 지방 5개 시군구 2026년 낙찰 770건으로 맞춘 뒤: 보통 오차 5.6%, 예상 낙찰가로 쓰면 49.7% 낙찰(목표 50%), +5%면 실제 70.5%·계산 67%.
     var pred = winbidModel.base + 0.018;

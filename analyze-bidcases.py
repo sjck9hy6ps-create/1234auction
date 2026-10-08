@@ -687,7 +687,12 @@ def competition_stats(R, now):
 # 낙찰가 ÷ 입찰 30일 전 시세(같은 단지·평형 실거래 40% 지점)를 덧셈형 표로 예측: 최저가÷시세 구간(0.05 단위)·유찰 횟수·지역·인기 등급·계절·층·평형대·시세 근거 거래 수.
 # 검증(2025-07 이후 6,781건, 학습엔 안 씀): 보통 오차 5.6%(지역 평균만 쓸 때 7.5%). 이길 확률은 "최근 1년을 빼고 만든 모델의 최근 1년 오차 분포"로 계산(시장 변화 반영).
 # 앱(입찰후보·상세 창)이 같은 방식으로 시세를 구해 이 표로 예상 낙찰가와 "이 가격이면 낙찰 가능성"을 보여줌. 최저가는 낙찰가 예측에만 쓰고 예상매도가엔 안 씀.
-WB_FACTORS = [("lb", 5), ("fails", 30), ("region", 30), ("tier", 50), ("season", 50), ("floor", 50), ("size", 50), ("own", 50)]
+# 2026-10-08 비중(축소 k) 조정 + 감정가 요인 추가(사용자: "예측과 차이나는 오차를 찾아 점수 반영 비율을 맞춰줘"): 3개 시험 구간(2025상·하반기·2026) 평균
+#  보통 오차 5.46% → 5.22%, ±10% 77.1% → 78.6%, 예측 쏠림 −0.93% → 0%(예측가로 쓸 때 낙찰 45% → 50%).
+#  k는 클수록 그 요인의 영향을 줄임(표본 적은 칸을 전체 평균 쪽으로 당김). 최근 사례 가중·지역 시장 분위기·준공연도 등은 시험했으나 효과 없거나 미미해 제외.
+#  lab = 감정가÷시세 구간, lbl = 최저가×감정가 교호, labf = 감정가×유찰 교호(감정가는 최저가가 어떤 규칙으로 정해졌는지 알려 줌 - 낙찰가 예측에만 사용, 시세·예상매도가에는 안 씀)
+WB_FACTORS = [("lb", 10), ("fails", 120), ("region", 120), ("tier", 5), ("season", 300), ("floor", 5), ("size", 30), ("own", 120), ("lab", 30), ("lbl", 40), ("labf", 40)]
+WB_LAB_EDGES = (-0.2, -0.1, 0.0, 0.1, 0.2, 0.35)
 
 
 def wb_features(D):
@@ -702,6 +707,10 @@ def wb_features(D):
     X["floor"] = D["floor"].map(lambda f: "1층" if f == 1 else ("2~3층" if f in (2, 3) else "4층+"))
     X["size"] = D["area"].map(lambda a: "소형" if a < 60 else ("중형" if a <= 85 else "대형"))
     X["own"] = D["own"].map(lambda n: "1~2" if n <= 2 else ("3~5" if n <= 5 else ("6~10" if n <= 10 else "11+")))
+    la = np.log(D["appraisal"].astype(float) / D["est"].astype(float))
+    X["lab"] = la.map(lambda v: "?" if v is None or not np.isfinite(v) else str(sum(1 for e in WB_LAB_EDGES if v > e)))
+    X["lbl"] = X["lb"] + "|" + X["lab"]
+    X["labf"] = X["lab"] + "|" + X["fails"]
     return X
 
 
