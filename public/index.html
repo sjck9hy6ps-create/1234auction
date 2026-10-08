@@ -16274,9 +16274,10 @@ function winbidFor(row) {
     var apr = parseFloat(row.appraisal) || parseFloat(a.appraisal) || 0, labV = '?';
     if (apr > 0) { var la = Math.log(apr / b.est); labV = String([-0.2, -0.1, 0, 0.1, 0.2, 0.35].filter(function(e2) { return la > e2; }).length); }
     keys.lab = labV; keys.lbl = keys.lb + '|' + labV; keys.labf = labV + '|' + keys.fails;
-    // 앱 보정 +1.8%(2026-10 실측): 앱에서 구한 시세가 서버 계산보다 약간 높게 나와(해제 거래 포함·3년 지수 보정 없음) 예상 낙찰가가 1.8% 낮게 나왔음.
+    // (예전 앱 보정 +1.8% - 2026-10-08 새 모델부터 0) 앱 보정 +1.8%(2026-10 실측): 앱에서 구한 시세가 서버 계산보다 약간 높게 나와(해제 거래 포함·3년 지수 보정 없음) 예상 낙찰가가 1.8% 낮게 나왔음.
     // 지방 5개 시군구 2026년 낙찰 770건으로 맞춘 뒤: 보통 오차 5.6%, 예상 낙찰가로 쓰면 49.7% 낙찰(목표 50%), +5%면 실제 70.5%·계산 67%.
-    var pred = winbidModel.base + 0.018;
+    // 2026-10-08: 비중 조정·감정가 요인을 넣은 새 모델은 앱 시세와 맞춘 상태(지방 826건 시험: 앱 계산 쏠림 +1.9% = 예전 보정 +1.8%를 빼면 ≈0%) → 보정 0
+    var pred = winbidModel.base;
     Object.keys(keys).forEach(function(f) { var v = (e[f] || {})[keys[f]]; if (typeof v === 'number') pred += v; });
     var wb = { est: b.est, own: b.own, pred: pred, price: Math.round(b.est * Math.exp(pred)) };
     wb.probRec = row.recBid ? winbidProbAt(wb, row.recBid) : null;
