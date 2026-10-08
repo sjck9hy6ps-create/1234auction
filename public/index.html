@@ -16209,7 +16209,8 @@ function loadWinbidModel() {
         return true;
     };
     fetch('/api/data-coverage?mode=winbid').then(function(r) { return r.json(); }).then(function(d) {
-        if (use(d)) return;
+        // 감정가 요인(lab)이 없는 옛 서버 모델이면 새 요인이 들어 있는 기본 파일을 먼저 씀(서버 계산이 새 모델로 바뀔 때까지)
+        if (d && d.eff && d.eff.lab && use(d)) return;
         return fetch('/winbid-model.json').then(function(r) { return r.json(); }).then(function(d2) { if (!use(d2)) winbidLoading = false; });
     }).catch(function() {
         fetch('/winbid-model.json').then(function(r) { return r.json(); }).then(function(d2) { if (!use(d2)) winbidLoading = false; }).catch(function() { winbidLoading = false; });
