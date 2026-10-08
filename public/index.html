@@ -1288,6 +1288,12 @@ body.ui2 #auction-modal.am4 { width:620px; }
 #bb-drawer .dr-band b { font-size:13px; }
 @media (max-width: 1240px) { #bid-board .bb-table td.r .bb-band { display:block !important; } }
 </style>
+<style>
+/* 🚩 이슈 의심(2026-10) */
+#bb-drawer .dr-issue { border-radius:10px; padding:8px 10px; margin:-4px 0 10px; font-size:12px; line-height:1.55; }
+#bb-drawer .dr-issue.high { background:#fef2f2; border:1px solid #fecaca; color:#7f1d1d; }
+#bb-drawer .dr-issue.mid { background:#fff7ed; border:1px solid #fed7aa; color:#7c2d12; }
+</style>
 </head>
 <body>
 <div id="topbar">
@@ -1657,6 +1663,9 @@ body.ui2 #auction-modal.am4 { width:620px; }
                 <option value="verdict">판정 → 여유 큰 순</option><option value="date">입찰일 빠른 순</option><option value="room">여유 큰 순</option><option value="pop">거래량 순위 높은 순</option><option value="niche">🧭 틈새 우선</option><option value="win">🎲 낙찰 가능성 높은 순</option>
             </select>
             <!-- 2026-10(사용자: "가능성에 따라 확인할 수 있는 필터") - 추천 입찰가로 썼을 때의 낙찰 가능성(🎲 예상 낙찰가 모델) -->
+            <select id="bb-issue" onchange="setBidBoardFilter('issue', this.value)" title="3회 이상 유찰이거나 최저가가 시세보다 지나치게 낮은 물건(보증금 등 인수할 권리가 있을 가능성)">
+                <option value="">🚩 이슈 의심 전체</option><option value="hide">🚩 의심 물건 숨기기</option><option value="only">🚩 의심 물건만</option>
+            </select>
             <select id="bb-win" onchange="setBidBoardFilter('win', this.value)" title="추천 입찰가로 썼을 때 낙찰될 가능성(아파트, 낙찰사례 2만여 건 기준)">
                 <option value="">🎲 낙찰 가능성 전체</option><option value="hi">🎲 60% 이상</option><option value="mid">🎲 35% 이상</option><option value="lo">🎲 35% 미만</option>
             </select>
@@ -16430,6 +16439,21 @@ function finalizeBidBoardRow(row) {
     }
     if (row.fails === 0 && type === 'apt' && row.verdict !== 'nodata') row.notes.push('⚠️ 신건: 시세보다 높게 낙찰되는 구간(과거 낙찰자 40%가 손해)');
     try { row.winbid = winbidFor(row); } catch (e) { row.winbid = null; }
+    // 🚩 이슈 의심(2026-10 사용자: "최저가가 시세보다 지나치게 낮고 3회 이상 유찰된 물건은 인수할 보증금이 많을 가능성이 높다 - 걸러낼 수 있을까")
+    // 임차인·인수 금액 자료가 없어 "손해"를 직접 확인할 순 없고, 과거 낙찰사례에서 이런 물건은 입찰자가 1~2명뿐(보통 5명)이고 낙찰가가 시세의 34~55%였음 -
+    // 시장이 가격에 문제(권리·보증금 등)를 반영했다는 신호. 기준: 최저가÷시세 40% 미만, 또는 3회 이상 유찰 + 50% 미만 → 강한 의심 / 3회 이상 유찰 또는 45% 미만 → 의심
+    row.issueSuspect = null;
+    try {
+        var _ref = row.saleTrade || row.sale;
+        if (type === 'apt' && _ref && row.minBid && row.verdict !== 'nodata') {
+            var _mr = row.minBid / _ref, _f = row.fails || 0;
+            var _why = [];
+            if (_f >= 3) _why.push(_f + '회 유찰');
+            if (_mr < 0.5) _why.push('최저가가 시세의 ' + Math.round(_mr * 100) + '%');
+            if (_mr < 0.4 || (_f >= 3 && _mr < 0.5)) row.issueSuspect = { level: 'high', why: _why };
+            else if (_f >= 3 || _mr < 0.45) row.issueSuspect = { level: 'mid', why: _why.length ? _why : ['최저가가 시세의 ' + Math.round(_mr * 100) + '%'] };
+        }
+    } catch (e) { row.issueSuspect = null; }
     row.niche = null; // 🧭 틈새는 재설계 중(위 재검증 참고) - 입찰자가 덜 몰리는 동·단지 기준으로 다시 만들 예정
     if (row.niche) row.notes.unshift('🧭 틈새: ' + row.niche.why.join(' · '));
     return row;
@@ -16719,6 +16743,8 @@ function bidBoardVisibleRows() {
         if (s.popOnly && !r.popular) return false;
         if (s.nicheOnly && !r.niche) return false;
         if (s.oppOnly && !r.opportunity) return false;
+        if (s.issue === 'hide' && r.issueSuspect) return false;
+        if (s.issue === 'only' && !r.issueSuspect) return false;
         if (s.win) {
             var wp = r.winbid && r.winbid.probRec != null ? r.winbid.probRec : null;
             if (wp == null) return false;
@@ -16866,6 +16892,7 @@ function renderBidBoardRow(r) {
         : (r.sale ? '<b>' + toEok(String(r.sale)) + '</b><div class="bb-sub">' + (r.saleSaved ? '내가 저장한 값' : (r.salePresale ? '분양권·입주권 거래 ' + r.salePresale.n + '건(분양가+웃돈)' : '이 단지 같은 평형 ' + r.own + '건')) + (r.ownStats && r.ownStats.recent ? '<br><span style="color:#374151;" title="이 단지·같은 평형' + (r.ownStats.recent.similarFloor ? '·비슷한 층(±3층)' : '(비슷한 층 거래가 없어 층 상관없이)') + '의 가장 최근 실거래">최근 ' + r.ownStats.recent.date.slice(2, 7).replace('-', '.') + ' · ' + r.ownStats.recent.floor + '층 · <b>' + toEok(String(r.ownStats.recent.price)) + '</b>' + (r.ownStats.recent.similarFloor ? '' : ' (다른 층)') + '</span>' : '') + (r.saleFloorAdj ? ' · <span style="color:#7c3aed;" title="' + bbEsc(r.saleFloorAdj.label) + ' - ' + (r.saleFloorAdj.ownRatio != null ? '이 단지 5년 거래에서 이 층대 ㎡당 가격이 같은 시기 다른 층의 ' + Math.round(r.saleFloorAdj.ownRatio * 100) + '%(' + r.saleFloorAdj.n + '건) - 단지 유형 기본값 ' + Math.round(r.saleFloorAdj.base * 100) + '%와 거래 수만큼 섞어 ' + Math.round(r.saleFloorAdj.factor * 1000) / 10 + '%' : (r.saleFloorAdj.base != null ? '이 단지 저층 거래가 없어 단지 유형(승강기·층수) 기본값 ' + Math.round(r.saleFloorAdj.factor * 1000) / 10 + '%' : '평균의 ' + Math.round(r.saleFloorAdj.factor * 100) + '%')) + '">' + bbEsc(r.saleFloorAdj.label.replace(/\(.*\)/, '')) + ' ' + Math.round(Math.abs(1 - r.saleFloorAdj.factor) * 1000) / 10 + '% ' + (r.saleFloorAdj.factor < 1 ? '낮춤' : '높임') + '</span>' : '') + (r.saleSimBy ? ' · <span style="color:#1e5eff;" title="' + bbEsc(r.saleSimBy) + ' (주변 단지 포함 계산값 ' + toEok(String(r.saleBase)) + ')">' + (/3개월/.test(r.saleSimBy) ? '최근 3개월 ' : '최근 6개월 ') + r.saleSimN + '건 기준</span>' : '') + (r.saleCapBy ? ' · <span style="color:#00695c;" title="주변 단지 거래로 계산한 값(' + toEok(String(r.saleBase)) + ')이 이 기준보다 높아서 낮춤">' + '단지 실거래' + ' 기준으로 맞춤</span>' : '') + (r.listingCap && r.listingCap.cap && r.listingCap.cap < r.saleTrade ? ' · <span style="color:#7c3aed;" title="' + bbEsc(r.listingCap.desc) + ' (실거래 기반 ' + toEok(String(r.saleTrade)) + ')">매물 기준으로 낮춤</span>' : '') + (r.saleBlendBy ? ' · <span style="color:#00695c;" title="' + bbEsc(r.saleBlendBy) + ' (주변 단지만으로 계산한 값 ' + toEok(String(r.saleBase)) + ' - 이 단지 거래가 적을 때 과거 이렇게 섞는 게 더 정확했음)">주변+단지 실거래 섞음</span>' : '') + '</div>' : '<span class="bb-sub">-</span>');
     var sbd = r.pending ? null : saleBandFor(r);
     if (sbd) saleCell += '<div class="bb-band" title="낙찰 후 6개월 안에 실제 팔린 가격이 예상매도가의 이 범위(10~90%)에 들었어요. 같은 단지 같은 평형 거래가 ' + sbd.n + '건이라 이 폭이에요">범위 ' + toEok(String(sbd.lo)) + ' ~ ' + toEok(String(sbd.hi)) + '</div>';
+    var issuePill = r.issueSuspect ? '<div style="margin-top:3px;"><span class="bb-pill" style="background:' + (r.issueSuspect.level === 'high' ? '#fee2e2;color:#b91c1c' : '#ffedd5;color:#c2410c') + ';" title="' + bbEsc(r.issueSuspect.why.join(' · ')) + ' - 보증금 등 인수할 권리가 있을 가능성이 높아요. 매각물건명세서 확인 필요">🚩 이슈 ' + (r.issueSuspect.level === 'high' ? '강한 의심' : '의심') + '</span></div>' : '';
     var recCell = r.recBid ? '<b>' + toEok(String(r.recBid)) + '</b>' + (r.recAggr ? '<div class="bb-sub" style="color:#7c3aed;" title="2등과 아깝게 지는 경우까지만 잡는 가격(추천가 +3% 한도, 마진 1,000만 이상 유지). 과거 기회·버팀 물건에서 실제 낙찰이 약 2배(22→42건)">적극 ' + toEok(String(r.recAggr)) + '</div>' : '') + (r.safetyExtra ? '<div class="bb-sub" style="color:#e65100;">손해 주의 여유: ' + toEok(String(r.safetyExtra)) + ' 더 낮춤 (원래 ' + toEok(String(r.recBidRaw)) + ')</div>' : '') + (r.resaleVat ? '<div class="bb-sub" style="color:#c2410c;">부가세 ' + toEok(String(r.resaleVat)) + (r.vatEstimated ? '(추정)' : '') + ' 반영</div>' : '') + '<div class="bb-sub">마진 ' + toEok(String(r.margin)) + (r.marginUser ? '(내가 정함)' : '(추천' + (r.popEff && r.popEff.tier === '하위40%' ? ', 거래 드묾 +2%' : '') + ')') + '</div>' + winbidLineHtml(r.winbid, true) : '<span class="bb-sub">-</span>';
     var roomCell = r.roomPct == null ? '<span class="bb-sub">-</span>'
         : '<b style="color:' + (r.roomPct >= 0 ? '#2e7d32' : '#c62828') + ';">' + (r.roomPct >= 0 ? r.roomPct + '% 여유' : Math.abs(r.roomPct) + '% 부족') + '</b>'
@@ -16917,7 +16944,7 @@ function renderBidBoardRow(r) {
                 + '<div class="bb-sub" title="' + bbEsc(r.assumedFail.pattern.src) + '">' + BID_REDUCTION_PATTERNS[r.assumedFail.pattern.pat].label + ' 법원</div>' : '')
             + '</td>'
         + '<td data-l="예상매도가" class="r">' + saleCell + '</td>'
-        + '<td data-l="추천 입찰가" class="r">' + recCell + '</td>'
+        + '<td data-l="추천 입찰가" class="r">' + recCell + issuePill + '</td>'
         + '<td data-l="최저가 대비" class="r">' + roomCell + '</td>'
         + '<td data-l="지역 위험">' + riskCell + '</td>'
         + '<td data-l="대장 따라잡기">' + cuCell + '</td>'
@@ -17060,6 +17087,10 @@ async function renderBidDrawer() {
         + (row.sweet ? ' <span class="bb-pill" style="background:#e8f5e9;color:#2e7d32;">👍 입찰 추천 구간</span>' : '') + (row.overshoot ? ' <span class="bb-pill" style="background:#fff3e0;color:#e65100;">⚠️ 손해 주의</span>' : '') + (row.bulk ? ' <span class="bb-pill" style="background:#fee2e2;color:#b91c1c;">🏢 대량 경매 ' + row.bulkN + '건</span>' : '')
         + (row.niche ? ' <span class="bb-pill" style="background:#e0f2f1;color:#00695c;">🧭 틈새</span>' : '') + (row.sturdy ? ' <span class="bb-pill" style="background:#ecfeff;color:#0e7490;">🛡️ 버팀 ' + Math.round(row.ownStats.jeonse.ratio * 100) + '%</span>' : '') + (row.hardHold ? ' <span class="bb-pill" style="background:#fffbeb;color:#92400e;">⏳ 버티기 어려움 ' + Math.round(row.ownStats.jeonse.ratio * 100) + '%</span>' : '') + (row.opportunity ? ' <span class="bb-pill" style="background:#fff8e1;color:#e65100;">🎯 기회</span>' : '') + '</div>'
         + '<div class="dr-big"><div><span>예상매도가</span><b>' + fmt(row.sale) + '</b></div><div><span>추천 입찰가</span><b style="color:#16a34a;">' + fmt(row.recBid) + '</b>' + (row.recAggr ? '<span style="color:#7c3aed;margin-top:2px;">적극 ' + fmt(row.recAggr) + '</span>' : '') + '</div><div><span>최저가</span><b>' + fmt(row.minBid) + '</b></div></div>';
+    if (row.issueSuspect) {
+        h += '<div class="dr-issue ' + row.issueSuspect.level + '"><b>🚩 이슈 ' + (row.issueSuspect.level === 'high' ? '강한 의심' : '의심') + '</b> - ' + bbEsc(row.issueSuspect.why.join(' · '))
+            + '<div class="dr-sub" style="margin:2px 0 0;">과거 낙찰사례에서 이런 물건은 입찰자가 1~2명뿐(보통 5명)이고 낙찰가가 시세의 34~55%였어요. 시장이 가격에 문제를 반영한 신호로, <b>임차인 보증금 등 인수할 권리</b>가 있을 가능성이 높아요. 매각물건명세서로 확인하고, 인수 금액을 아래 "직접 확인한 금액"에 넣으면 추천 입찰가에서 바로 빠져요. (낙찰사례에는 인수 금액이 없어 손해 여부는 확인하지 못했어요.)</div></div>';
+    }
     // 예상매도가 오차 범위(2026-10)
     var sbw = saleBandFor(row);
     if (sbw) {
@@ -17473,7 +17504,7 @@ async function fillHouseholdsInBackground() {
     } finally { householdFillRunning = false; }
 }
 
-// 📘 사용법의 우선·경계·피할 지역은 매주(금요일 새벽) 새로 계산된 값으로 채움(2026-10 사용자 요청). 못 불러오면 위 기본 문구 그대로.
+// 📘 사용법의 우선·경계·피할 지역은 매주(월요일 새벽) 새로 계산된 값으로 채움(2026-10 사용자 요청). 못 불러오면 위 기본 문구 그대로.
 var priorityRegionsLoaded = null;
 function loadPriorityRegions() {
     fetch('/api/data-coverage?mode=priorityRegions').then(function(r) { return r.json(); }).then(function(d) {
@@ -17486,7 +17517,7 @@ function loadPriorityRegions() {
         el.innerHTML = '<span class="ok" title="' + bbEsc(tip(d.priority)) + '">우선 지역</span> ' + names(d.priority) + ' <span style="color:#9ca3af;">(경쟁 약하고 잘 팔림)</span><br>'
             + (d.border && d.border.length ? '<span style="color:#b45309;font-weight:700;" title="' + bbEsc(tip(d.border)) + '">경계</span> ' + names(d.border) + ' <span style="color:#9ca3af;">(조건에 조금 못 미침)</span><br>' : '')
             + (d.avoid && d.avoid.length ? '<span class="no" title="' + bbEsc(tip(d.avoid)) + '">피할 지역</span> ' + names(d.avoid) + ' <span style="color:#9ca3af;">(응찰자 7명 이상 또는 되판 비율 50% 미만)</span><br>' : '')
-            + '<span style="color:#9ca3af;font-size:11px;">' + bbEsc(d.asOf) + ' 기준 · 매주 금요일 새벽 자동 갱신 · 이름에 마우스(손가락)를 올리면 숫자</span><br>';
+            + '<span style="color:#9ca3af;font-size:11px;">' + bbEsc(d.asOf) + ' 기준 · 매주 월요일 새벽 자동 갱신 · 이름에 마우스(손가락)를 올리면 숫자</span><br>';
     }).catch(function() {});
 }
 setTimeout(loadPriorityRegions, 3500);
@@ -23456,7 +23487,7 @@ window.addEventListener('load', function() {
    앱이 가진 자료로 "지금 할 일"을 계산해 상단 🔔에 개수 표시, 누르면 목록(바로가기 버튼 포함). 하루 한 번 앱을 열 때 짧게 알려줌.
    항목별 "오늘은 숨기기"는 이 기기에만 저장(localStorage).
    ① 입찰 임박·결과 미반영: 3일 안 입찰 물건이 있거나 입찰일 지난 물건 결과가 없는데 CSV를 하루 넘게 안 올림 → CSV 다시 올리기
-   ② 낙찰사례: 마지막 업로드 6일 이상(또는 목요일인데 3일 이상) → 금요일 새벽 주간 분석 전에 올리기 + 입찰후보 지역 중 최근 1년 사례 30건 미만 지역
+   ② 낙찰사례: 주말(토·일)에 마지막 업로드 3일 이상(평일은 8일 이상) → 월요일 새벽 주간 분석 전에 올리기 + 입찰후보 지역 중 최근 1년 사례 30건 미만 지역
    ③ 매매차익 예정신고 마감 30일 안(내 자산·경매 매도완료)  ④ 보유 자산 취득가 비어 있음(수익·세금 계산에 필요)
    ⑤ 날짜가 정해진 일정(무료화 준비 등) */
 var REMIND_FIXED = [
@@ -23522,8 +23553,12 @@ function computeReminders() {
         var ymd = function(t) { var d = new Date(t); return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0'); };
         var pastDates = real.filter(function(a) { var d = calcAuctionDday(a.bidDate); return d && d.diffDays < 0 && d.diffDays >= -BID_RESULT_WAIT_DAYS; }).map(function(a) { return a.bidDate; }).sort();
         var csvFrom = pastDates.length ? pastDates[0] : ymd(now), csvTo = ymd(now + 28 * day);
-        if ((soon || past) && (since == null || since >= 1)) {
-            out.push({ key: 'csv', pri: 1, icon: '📄', title: '경매 CSV 다시 올리기',
+        // 2026-10(사용자: "낙찰사례 업로드와 신규 경매건은 토요일부터 - 평일에 진행된 사건을 주말에 종합해 새 물건을 준비") →
+        // 주말(토·일)에 주 1회 알림, 평일엔 오늘·내일 입찰이 있는데 4일 넘게 안 올린 급한 경우만
+        var dowc = new Date().getDay(), weekend = (dowc === 6 || dowc === 0);
+        var urgent = real.some(function(a) { var d = calcAuctionDday(a.bidDate); return d && d.diffDays >= 0 && d.diffDays <= 1; }) && (since == null || since >= 4);
+        if ((weekend && (since == null || since >= 3)) || urgent) {
+            out.push({ key: 'csv', pri: urgent && !weekend ? 0 : 1, icon: '📄', title: weekend ? '주말 준비: 새 경매 물건·결과 CSV 올리기' : '급한 경매 CSV 올리기',
                 sub: (soon ? '3일 안 입찰 ' + soon + '건' : '') + (soon && past ? ' · ' : '') + (past ? '입찰일 지났는데 결과 없는 물건 ' + past + '건(유찰 가정으로 계산 중)' : '')
                     + ' - 올리면 최저가·유찰·매각 결과와 낙찰 가능성이 바로 다시 계산돼요' + (since != null ? ' (마지막 ' + since + '일 전)' : '')
                     + '\n📅 필요한 자료: 탱크옥션에서 입찰일 ' + csvFrom + ' ~ ' + csvTo + ' 범위(진행·매각·유찰 모두)로 검색해 CSV 받기',
@@ -23534,7 +23569,8 @@ function computeReminders() {
     try {
         var lastImp = 0; (bidCaseList || []).forEach(function(c) { var t = parseInt(c.importedAt) || 0; if (t > lastImp) lastImp = t; });
         var dsi = lastImp ? Math.floor((now - lastImp) / day) : null, dow = new Date().getDay();
-        if (bidCaseList && bidCaseList.length && (dsi == null || dsi >= 6 || (dow === 4 && dsi >= 3))) {
+        // 주말(토·일)에 마지막 업로드가 3일 넘었거나, 평일이라도 8일 넘게 안 올렸으면 알림
+        if (bidCaseList && bidCaseList.length && (dsi == null || dsi >= 8 || ((dow === 6 || dow === 0) && dsi >= 3))) {
             var cut = new Date(now - 365 * day).toISOString().slice(0, 10), y1 = {}, cand = {};
             bidCaseList.forEach(function(c) { if (/아파트/.test(c.propertyType || '') && c.saleDate >= cut) { var k = competitionRegionKey(c.addrJibun); y1[k] = (y1[k] || 0) + 1; } });
             // 입찰후보 화면을 안 열어도 되게 등록된 경매 물건(아파트·검토중)에서 지역을 모음
@@ -23548,7 +23584,7 @@ function computeReminders() {
             var yst = new Date(now - day), ystS = (yst.getMonth() + 1) + '/' + yst.getDate();
             var need = Object.keys(candSido).map(function(sd) { return sd + ' ' + (lastBySido[sd] ? nextDay(lastBySido[sd]) : '최근 1년') + '~' + ystS; });
             out.push({ key: 'bidcase', pri: 2, icon: '⚖️', title: '이번 주 낙찰사례 올리기',
-                sub: '금요일 새벽 주간 분석(예상 낙찰가·경쟁 강도)에 반영돼요' + (dsi != null ? ' (마지막 업로드 ' + dsi + '일 전)' : '')
+                sub: '주말에 올리면 월요일 새벽 주간 분석(예상 낙찰가·경쟁 강도·우선 지역)에 반영돼요' + (dsi != null ? ' (마지막 업로드 ' + dsi + '일 전)' : '')
                     + (thin.length ? ' · 사례가 적은 입찰 지역 우선: ' + thin.slice(0, 6).map(function(k) { return k + '(' + (y1[k] || 0) + '건)'; }).join(', ') : '')
                     + (need.length ? '\n📅 필요한 자료(매각일 기준, 아파트 낙찰 결과): ' + need.join(' · ') : '')
                     + (thin.length ? ' · 사례 적은 지역은 최근 1년치' : ''),
@@ -23581,7 +23617,7 @@ function computeReminders() {
                     out.push({ key: 'prio-' + cur.asOf, pri: 2, icon: '🧭', title: '우선 지역이 바뀌었어요 (' + cur.asOf + ' 기준)',
                         sub: (addP.length ? '➕ 새로 우선: ' + addP.join(' · ') : '') + (addP.length && (delP.length || addA.length) ? '\n' : '') + (delP.length ? '➖ 우선에서 빠짐: ' + delP.join(' · ') : '')
                             + ((addP.length || delP.length) && addA.length ? '\n' : '') + (addA.length ? '⚠️ 새로 피할 지역: ' + addA.join(' · ') : '')
-                            + '\n매주 금요일 새벽 낙찰사례·실거래로 다시 계산한 결과예요(📘 사용법에서 전체 목록)',
+                            + '\n매주 월요일 새벽 낙찰사례·실거래로 다시 계산한 결과예요(📘 사용법에서 전체 목록)',
                         btn: '📘 사용법', act: 'openGuide()', prio: cur });
                 }
             }
@@ -23622,7 +23658,7 @@ function renderRemindUi() {
             + '<details class="rm-sched"><summary>📆 정기 일정 보기</summary>' + REMIND_RECUR.map(function(rc) {
                 var when = rc.every === 'month' ? '매월 ' + rc.from + '~' + rc.to + '일' : (rc.every === 'quarter' ? rc.months.join('·') + '월 ' + rc.from + '~' + rc.to + '일' : rc.months.join('·') + '월 ' + rc.from + '~' + rc.to + '일');
                 return '<div class="rm-sc"><b>' + when + '</b> ' + rc.icon + ' ' + bbEsc(rc.title) + '</div>';
-            }).join('') + '<div class="rm-sc"><b>매일</b> 📄 입찰 임박·결과 없는 물건이 있으면 CSV 다시 올리기</div><div class="rm-sc"><b>매주 목요일</b> ⚖️ 낙찰사례 올리기(금요일 새벽 분석 전)</div>'
+            }).join('') + '<div class="rm-sc"><b>매주 토·일</b> 📄 새 경매 물건·결과 CSV + ⚖️ 낙찰사례 올리기(월요일 새벽 분석 전)</div><div class="rm-sc"><b>평일</b> 📄 오늘·내일 입찰인데 4일 넘게 안 올렸을 때만</div>'
             + '<div class="rm-sc"><b>매도 후</b> 📅 매매차익 예정신고(양도월 말일부터 2개월 안)</div></details>';
         try { floatWin(p, 'remind', '.rm-h'); } catch (e) {}
     }

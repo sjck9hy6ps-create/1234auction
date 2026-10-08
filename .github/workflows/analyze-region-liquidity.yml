@@ -3,7 +3,7 @@ name: 지방 시군구 팔리는 곳 후보 순위
 on:
   workflow_dispatch:
   schedule:
-    - cron: '30 22 * * 4'   # 매주 금요일 KST 07:30 (analyze-bidcases 주간 분석이 끝난 뒤 - 우선 지역을 매주 새로 계산, 2026-10 사용자 요청)
+    - cron: '30 22 * * 0'   # 매주 월요일 KST 07:30 (analyze-bidcases 주간 분석이 끝난 뒤 - 우선 지역을 매주 새로 계산, 2026-10 사용자 요청)
 
 jobs:
   analyze:
