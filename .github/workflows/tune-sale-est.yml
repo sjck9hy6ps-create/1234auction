@@ -18,4 +18,12 @@ jobs:
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
           SITE_URL: https://1234auction.vercel.app
           PYTHONUNBUFFERED: '1'
+          KEEP_PKL: '1'
         run: python tune-sale-est.py
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: tune-sale-est
+          path: tune-sale-est.pkl
+          if-no-files-found: ignore
+          retention-days: 14
