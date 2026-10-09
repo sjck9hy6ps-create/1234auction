@@ -16456,6 +16456,7 @@ function winbidFor(row) {
     var apr = parseFloat(row.appraisal) || parseFloat(a.appraisal) || 0, labV = '?';
     if (apr > 0) { var la = Math.log(apr / b.est); labV = String([-0.2, -0.1, 0, 0.1, 0.2, 0.35].filter(function(e2) { return la > e2; }).length); }
     keys.lab = labV; keys.lbl = keys.lb + '|' + labV; keys.labf = labV + '|' + keys.fails;
+    keys.dong = keys.region + '|' + dongKey(a.dong); // 2026-10-09 법정동 보정(서버 모델에 dong 요인이 있을 때만 적용됨)
     // (예전 앱 보정 +1.8% - 2026-10-08 새 모델부터 0) 앱 보정 +1.8%(2026-10 실측): 앱에서 구한 시세가 서버 계산보다 약간 높게 나와(해제 거래 포함·3년 지수 보정 없음) 예상 낙찰가가 1.8% 낮게 나왔음.
     // 지방 5개 시군구 2026년 낙찰 770건으로 맞춘 뒤: 보통 오차 5.6%, 예상 낙찰가로 쓰면 49.7% 낙찰(목표 50%), +5%면 실제 70.5%·계산 67%.
     // 2026-10-08: 비중 조정·감정가 요인을 넣은 새 모델은 앱 시세와 맞춘 상태(지방 826건 시험: 앱 계산 쏠림 +1.9% = 예전 보정 +1.8%를 빼면 ≈0%) → 보정 0
@@ -16495,20 +16496,35 @@ function marginBandStats() {
             var ln = calcRegionAwareLoan('dealer', c.addrJibun || '', bid, Math.round((c.appraisalPrice || 0) / 10000), resale);
             mg = c.estMargin - basicRepairFee(pyg) - calcLoanInterest(ln.amount, ln.rate, Math.max(3, mo + 1)) - calcLoanPrepayFee(ln.amount, DEFAULT_LOAN_PREPAY_FEE_RATE);
         } catch (e) { return; }
-        rows.push({ resale: resale, rate: mg / resale * 100, mg: mg, mo: mo });
+        rows.push({ resale: resale, rate: mg / resale * 100, mg: mg, mo: mo, rg: competitionRegionKey(c.addrJibun) || '', dk: dongKey(c.dong) });
     });
-    var q = function(a, p) { a = a.slice().sort(function(x, y) { return x - y; }); return a[Math.floor((a.length - 1) * p)]; };
     var defs = [['5천 미만', 0, 5000], ['5천~7천', 5000, 7000], ['7천~1억', 7000, 10000], ['1억~1.5억', 10000, 15000], ['1.5~2억', 15000, 20000], ['2~3억', 20000, 30000], ['3~4억', 30000, 40000], ['4~5억', 40000, 50000], ['5억 이상', 50000, 1e9]];
-    var bands = defs.map(function(d) {
-        var G = rows.filter(function(r) { return r.resale >= d[1] && r.resale < d[2]; });
-        if (G.length < 15) return { label: d[0], lo: d[1], hi: d[2], n: G.length };
-        var rt = G.map(function(r) { return r.rate; });
-        return { label: d[0], lo: d[1], hi: d[2], n: G.length, med: q(rt, .5), p25: q(rt, .25), p75: q(rt, .75), loss: G.filter(function(r) { return r.mg < 0; }).length / G.length * 100, mgMed: q(G.map(function(r) { return r.mg; }), .5), hold: q(G.map(function(r) { return r.mo; }), .5) };
-    });
-    marginBandCache = { len: (bidCaseList || []).length, bands: bands };
+    var bands = defs.map(function(d) { return marginBandOf(rows, d); });
+    marginBandCache = { len: (bidCaseList || []).length, bands: bands, rows: rows, defs: defs };
     return bands;
 }
-function marginBandFor(sale) { var b = marginBandStats().filter(function(x) { return sale >= x.lo && sale < x.hi; })[0]; return b && b.med != null ? b : null; }
+function marginBandOf(rows, d) {
+    var q = function(a, p) { a = a.slice().sort(function(x, y) { return x - y; }); return a[Math.floor((a.length - 1) * p)]; };
+    var G = rows.filter(function(r) { return r.resale >= d[1] && r.resale < d[2]; });
+    if (G.length < 15) return { label: d[0], lo: d[1], hi: d[2], n: G.length };
+    var rt = G.map(function(r) { return r.rate; });
+    return { label: d[0], lo: d[1], hi: d[2], n: G.length, med: q(rt, .5), p25: q(rt, .25), p75: q(rt, .75), loss: G.filter(function(r) { return r.mg < 0; }).length / G.length * 100, mgMed: q(G.map(function(r) { return r.mg; }), .5), hold: q(G.map(function(r) { return r.mo; }), .5) };
+}
+/* 2026-10-09(사용자: "거래건수가 부족해 불가피한 경우를 빼면 모든 값은 해당 단지·법정동 기준") - 같은 동 → 같은 시군구 → 전국 순으로, 그 가격대 사례가 15건 이상인 가장 좁은 범위를 씀 */
+function marginBandFor(sale, row) {
+    var base = marginBandStats(), nat = base.filter(function(x) { return sale >= x.lo && sale < x.hi; })[0];
+    var c = marginBandCache, d = c && c.defs.filter(function(x) { return sale >= x[1] && sale < x[2]; })[0];
+    if (row && row.a && c && d) {
+        var rg = competitionRegionKey(row.a.addr) || '', dk = dongKey(row.a.dong);
+        var scopes = [['이 동(' + dk + ')', rg && dk ? c.rows.filter(function(r) { return r.rg === rg && r.dk === dk; }) : []], ['이 시군구(' + rg.replace(/^\S+\s/, '') + ')', rg ? c.rows.filter(function(r) { return r.rg === rg; }) : []]];
+        for (var i = 0; i < scopes.length; i++) {
+            var bd = marginBandOf(scopes[i][1], d);
+            if (bd.med != null) { bd.scope = scopes[i][0]; return bd; }
+        }
+    }
+    if (nat && nat.med != null) { nat.scope = '전국'; return nat; }
+    return null;
+}
 function bidPlanFor(row, fast) {
     var wb = row.winbid;
     if (!wb || !row.sale || !row.minBid || row.type !== 'apt') return null;
@@ -16538,7 +16554,7 @@ function bidPlanFor(row, fast) {
         if (!p70 && x.p >= 0.7) p70 = x;
     }
     var out = { max: at(bMax), ev: best, p70: p70, rec: (!fast && row.recBid) ? at(row.recBid) : null, sale: row.sale };
-    if (!fast) out.band = marginBandFor(row.sale);
+    if (!fast) out.band = marginBandFor(row.sale, row);
     return out;
 }
 function interpBidForNet(pts, net) {
@@ -16563,7 +16579,7 @@ function bidPlanHtml(row, fmt) {
         + (pl.p70 && (!pl.ev || Math.abs(pl.p70.bid - pl.ev.bid) > 1) ? line('낙찰 70%', pl.p70, false, '낙찰 가능성이 70%가 되는 가장 낮은 입찰가') : '')
         + line('추천 입찰가', pl.rec, false, '목표 마진(500만 + 시세의 5~9%)을 지키는 입찰가')
         + '</tbody></table>'
-        + (bd ? '<div class="dr-sub">이 가격대(' + bd.label + ')에서 낙찰 후 6개월 안에 같은 동·층 거래가 있던 사례 ' + bd.n + '건의 마진율(세전, 같은 기준: 최소 수리비·대출이자 포함) 중앙 <b>' + bd.med.toFixed(1) + '%</b> (아래 25% ' + bd.p25.toFixed(1) + '% ~ 위 25% ' + bd.p75.toFixed(1) + '%) · 손해 ' + Math.round(bd.loss) + '%</div>' : '')
+        + (bd ? '<div class="dr-sub">' + (bd.scope || '전국') + (bd.scope === '전국' ? '(이 지역은 사례가 모자라요)' : '') + ' · 이 가격대(' + bd.label + ')에서 낙찰 후 6개월 안에 같은 동·층 거래가 있던 사례 ' + bd.n + '건의 마진율(세전, 같은 기준: 최소 수리비·대출이자 포함) 중앙 <b>' + bd.med.toFixed(1) + '%</b> (아래 25% ' + bd.p25.toFixed(1) + '% ~ 위 25% ' + bd.p75.toFixed(1) + '%) · 손해 ' + Math.round(bd.loss) + '%</div>' : '')
         + '<div class="dr-sub">예상매도가 ' + fmt(pl.sale) + ' 기준(시장 일반가보다 약간 낮게 잡은 값). 낙찰 가능성은 🎲 예상 낙찰가 모델, 순이익은 앱 비용·세금 계산. 되팔기 사례는 옆집 거래가 섞일 수 있어 참고용이에요.</div></div>';
 }
 /* ════ 예상매도가 오차 범위 (2026-10, 사용자: "예상매도가를 점이 아니라 범위로") ════
@@ -17604,7 +17620,7 @@ async function renderBidDrawer() {
             + (wbp != null ? '<div>추천 입찰가로 쓰면 <b style="color:' + wcol + ';">낙찰 가능성 약 ' + wbp + '%</b> · 예상 낙찰가보다 ' + (wbg >= 0 ? '<b>' + wbg + '%</b> 높음' : '<b>' + Math.abs(wbg) + '%</b> 낮음')
                 + (row.winbid.probAggr != null ? ' · 적극 입찰가면 약 ' + Math.round(row.winbid.probAggr * 100) + '%' : '') + '</div>' : '')
             + (wbp != null && wbp < 35 ? '<div style="color:#b91c1c;">마진을 지키는 상한이 보통 낙찰 가격보다 낮아요 - 써도 질 가능성이 커요(무리해서 올리면 마진이 줄어요)</div>' : '')
-            + '<div class="dr-sub">낙찰사례 2만여 건 기준(학습에 안 쓴 최근 1년 검증 보통 오차 ' + ((winbidModel.oos && winbidModel.oos.medAbsErrPct) || '5~6') + '%) · 최저가는 이 예측에만 쓰고 예상매도가엔 안 써요'
+            + '<div class="dr-sub">낙찰사례 2만여 건 전국 모델에 이 시군구·법정동 사례를 덧반영(사례가 적은 곳은 전국 평균 쪽으로 당김) · 시세는 이 단지 거래 기준(학습에 안 쓴 최근 1년 검증 보통 오차 ' + ((winbidModel.oos && winbidModel.oos.medAbsErrPct) || '5~6') + '%) · 최저가는 이 예측에만 쓰고 예상매도가엔 안 써요'
             + ' · 시세(같은 단지·평형 ' + row.winbid.own + '건 40% 지점) ' + fmt(row.winbid.est) + '</div></div>';
     }
     // 근거

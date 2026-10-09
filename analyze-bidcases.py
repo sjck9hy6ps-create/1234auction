@@ -691,7 +691,7 @@ def competition_stats(R, now):
 #  보통 오차 5.46% → 5.22%, ±10% 77.1% → 78.6%, 예측 쏠림 −0.93% → 0%(예측가로 쓸 때 낙찰 45% → 50%).
 #  k는 클수록 그 요인의 영향을 줄임(표본 적은 칸을 전체 평균 쪽으로 당김). 최근 사례 가중·지역 시장 분위기·준공연도 등은 시험했으나 효과 없거나 미미해 제외.
 #  lab = 감정가÷시세 구간, lbl = 최저가×감정가 교호, labf = 감정가×유찰 교호(감정가는 최저가가 어떤 규칙으로 정해졌는지 알려 줌 - 낙찰가 예측에만 사용, 시세·예상매도가에는 안 씀)
-WB_FACTORS = [("lb", 10), ("fails", 120), ("region", 120), ("tier", 5), ("season", 300), ("floor", 5), ("size", 30), ("own", 120), ("lab", 30), ("lbl", 40), ("labf", 40)]
+WB_FACTORS = [("lb", 10), ("fails", 120), ("region", 120), ("tier", 5), ("season", 300), ("floor", 5), ("size", 30), ("own", 120), ("lab", 30), ("lbl", 40), ("labf", 40), ("dong", 40)]
 WB_LAB_EDGES = (-0.2, -0.1, 0.0, 0.1, 0.2, 0.35)
 
 
@@ -701,6 +701,7 @@ def wb_features(D):
     X["lb"] = np.clip(np.floor(lmin / 0.05), -24, 9).fillna(-99).astype(int).astype(str)
     X["fails"] = D["fails"].map(lambda v: "?" if v is None or (isinstance(v, float) and np.isnan(v)) else str(min(int(v), 3)))
     X["region"] = D["region"].fillna("?")
+    X["dong"] = D["region"].fillna("?") + "|" + D["dk"].fillna("").astype(str)  # 2026-10-09 법정동 보정(백테스트 보통 오차 5.23→5.15%, 전국 평균 쪽으로 k=40만큼 당김)
     X["tier"] = D["tier"].fillna("없음")
     m = (D["sale"] // 100) % 100
     X["season"] = m.map(lambda v: "겨울" if v in (12, 1, 2) else ("봄" if v <= 5 else ("여름" if v <= 8 else "가을")))
