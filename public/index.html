@@ -1327,7 +1327,7 @@ body.ui2 #auction-modal.am4 { width:620px; }
 .bb2-pass { display:inline-block; background:#f3f4f6; color:#6b7280; font-weight:700; border-radius:12px; padding:2px 9px; }
 .bb2-rec { font-size:14px; color:#1e5eff; }
 .bb2-name { min-width:150px; max-width:260px; }
-#bid-board.with-drawer .bb2-table th:nth-child(4), #bid-board.with-drawer .bb2-table td:nth-child(4), #bid-board.with-drawer .bb2-table th:nth-child(6), #bid-board.with-drawer .bb2-table td:nth-child(6), #bid-board.with-drawer .bb2-table th:nth-child(7), #bid-board.with-drawer .bb2-table td:nth-child(7), #bid-board.with-drawer .bb2-table th:nth-child(10), #bid-board.with-drawer .bb2-table td:nth-child(10), #bid-board.with-drawer .bb2-table th:nth-child(11), #bid-board.with-drawer .bb2-table td:nth-child(11) { display:none; }
+#bid-board.with-drawer .bb2-table th:nth-child(4), #bid-board.with-drawer .bb2-table td:nth-child(4), #bid-board.with-drawer .bb2-table th:nth-child(7), #bid-board.with-drawer .bb2-table td:nth-child(7), #bid-board.with-drawer .bb2-table th:nth-child(8), #bid-board.with-drawer .bb2-table td:nth-child(8), #bid-board.with-drawer .bb2-table th:nth-child(11), #bid-board.with-drawer .bb2-table td:nth-child(11), #bid-board.with-drawer .bb2-table th:nth-child(12), #bid-board.with-drawer .bb2-table td:nth-child(12) { display:none; }
 .bb2-sortlink { cursor:pointer; user-select:none; white-space:nowrap; } .bb2-sortlink:hover { color:#111; } .bb2-sortlink.on { color:var(--ui-blue,#1e5eff); font-weight:800; }
 .bb2-sortlink .bb-arrow { margin-left:2px; font-size:10px; color:#bbb; } .bb2-sortlink.on .bb-arrow { color:var(--ui-blue,#1e5eff); }
 .bb2-subsort { display:flex; gap:8px; margin-top:3px; font-weight:500; font-size:10.5px; }
@@ -1342,7 +1342,7 @@ body.ui2 #auction-modal.am4 { width:620px; }
     .bb2-table .bb2-name { grid-column:1 / -1; order:-1; max-width:none; }
     .bb2-table td[data-l="판정"] { grid-column:1; } .bb2-table td[data-l="입찰일"] { grid-column:2 / 4; text-align:right; }
     .bb2-table td.bb2-rank { grid-column:1 / -1; }
-    #bid-board.with-drawer .bb2-table td:nth-child(4), #bid-board.with-drawer .bb2-table td:nth-child(6), #bid-board.with-drawer .bb2-table td:nth-child(7), #bid-board.with-drawer .bb2-table td:nth-child(10), #bid-board.with-drawer .bb2-table td:nth-child(11) { display:block; }
+    #bid-board.with-drawer .bb2-table td:nth-child(4), #bid-board.with-drawer .bb2-table td:nth-child(7), #bid-board.with-drawer .bb2-table td:nth-child(8), #bid-board.with-drawer .bb2-table td:nth-child(11), #bid-board.with-drawer .bb2-table td:nth-child(12) { display:block; }
 }
 /* 상세 창 맨 위 추천가 카드 */
 #bb-drawer .dr-pickcard { border-radius:12px; padding:10px 12px; margin:8px 0 10px; }
@@ -16140,7 +16140,7 @@ function aptOwnTradeStats(a, bunjiFull, pyung) {
     var area = (parseFloat(pyung) || 0) * 3.305785;
     if (!area) return null;
     var allPpm = [];
-    var now = Date.now(), p12 = [], p36 = [], n6 = 0, last = null, all = [], sim6 = [], maxF = 0, f36 = [], v6 = 0, vPrev6 = 0, p3 = [], p6 = [];
+    var now = Date.now(), nYear = 0, p12 = [], p36 = [], n6 = 0, last = null, all = [], sim6 = [], maxF = 0, f36 = [], v6 = 0, vPrev6 = 0, p3 = [], p6 = [];
     var tf = parseInt(a.floor);
     ownComplexEntries(a, bunjiFull, 'apt').forEach(function(ap) {
         (ap.trades || []).forEach(function(t) {
@@ -16156,6 +16156,7 @@ function aptOwnTradeStats(a, bunjiFull, pyung) {
             var td = tradeDate(t).getTime(), age = (now - td) / 86400000 / 30.4;
             var p = parseInt(t.amount); if (!p) return;
             if (age <= 6) { n6++; p6.push(p); }
+            if (new Date(td).getFullYear() === new Date(now).getFullYear()) nYear++;
             if (age <= 3) p3.push(p);
             if (age <= 12) p12.push(p);
             if (age <= 36) p36.push(p);
@@ -16224,7 +16225,7 @@ function aptOwnTradeStats(a, bunjiFull, pyung) {
         if (deps.length >= 2) jeonse = { ratio: med(deps) / med(p12), n: deps.length };
     }
     var qtile = function(x, q) { if (!x.length) return null; x = x.slice().sort(function(m, n) { return m - n; }); var i = (x.length - 1) * q, lo = Math.floor(i), hi = Math.ceil(i); return x[lo] + (x[hi] - x[lo]) * (i - lo); };
-    return { lastP: lastP, p3med: qtile(p3, 0.5), n3: p3.length, p6q40: qtile(p6, 0.4), jeonse: jeonse, v6: v6, vPrev6: vPrev6, recent: recent, lowF: lowF, maxF: maxF, sim6n: sim6.length, sim6med: med(sim6), n12: p12.length, n6: n6, n36: p36.length, med12: med(p12), med36: med(p36), lastAgeM: last === null ? null : Math.round((now - last) / 86400000 / 30.4 * 10) / 10 };
+    return { lastP: lastP, p3med: qtile(p3, 0.5), n3: p3.length, p6q40: qtile(p6, 0.4), jeonse: jeonse, v6: v6, vPrev6: vPrev6, recent: recent, lowF: lowF, maxF: maxF, sim6n: sim6.length, sim6med: med(sim6), n12: p12.length, n6: n6, nYear: nYear, n36: p36.length, med12: med(p12), med36: med(p36), lastAgeM: last === null ? null : Math.round((now - last) / 86400000 / 30.4 * 10) / 10 };
 }
 // 예상매도가 상한: 자기 단지 같은 평형 최근 실거래 중앙값(1년, 없으면 3년). 감정가는 1년 전 값이라 안 씀
 function aptSaleCapInfo(a, bunjiFull, pyung, st) {
@@ -16497,6 +16498,7 @@ function saleBandFor(row) {
    추천가 = 순이익(세후) 1천만 이상이 남는 구간 안에서 "낙찰 가능성 × 순이익"이 가장 큰 입찰가(아파트 전체 같은 계산).
    임장 후보 = 추천가가 있고(최저가로도 1천만이 안 남으면 패스) · 추천가의 낙찰 가능성이 VISIT_MIN_P 이상 · 🚩 강한 의심·🏢 대량 경매가 아닌 것. 나머지는 패스(이유 한 줄).
    임장에서 확인한 인수 금액·수리비 등을 넣으면 같은 계산이 다시 돌아 추천가가 바뀜. */
+var VISIT_MIN_N12 = 3; // 같은 단지 같은 평형 최근 12개월 거래 최소 건수
 var VISIT_MIN_P = 0.20; // 임장은 비용이 작아 낙찰 가능성 20% 이상이면 후보(2026-10-09 이번 주 324건 중 28건). 추천가는 낙찰 가능성 × 순이익이 가장 큰 가격
 function computePick(row) {
     row.pick = null; row.visit = { go: false, why: '' };
@@ -16519,6 +16521,9 @@ function computePick(row) {
     if (!pk.ev) { row.visit.why = '순이익이 남는 입찰가가 없어요'; return; }
     if (row.issueSuspect && row.issueSuspect.level === 'high') { row.visit.why = '🚩 이슈 강한 의심(' + row.issueSuspect.why.join('·') + ') - 인수 보증금 확인 필요'; return; }
     if (row.bulk) { row.visit.why = '🏢 같은 건물 대량 경매'; return; }
+    // 2026-10-09(사용자: 당리형제 - 낙찰 가능성은 높은데 같은 평형 올해 거래 0건): 시세 근거가 약하면 임장 후보에서 제외. 같은 단지 같은 평형 최근 1년 3건 이상 필요
+    var os0 = row.ownStats, n12 = os0 ? (os0.n12 || 0) : 0;
+    if (n12 < VISIT_MIN_N12) { row.visit.why = '같은 단지 같은 평형 최근 1년 거래가 ' + n12 + '건뿐이에요' + (os0 && os0.lastAgeM != null ? '(마지막 거래 ' + os0.lastAgeM + '개월 전)' : '') + ' - 시세 근거가 약해요'; return; }
     if (pk.ev.p < VISIT_MIN_P) { row.visit.why = '추천가에서도 낙찰 가능성이 ' + Math.round(pk.ev.p * 100) + '%로 낮아요'; return; }
     row.visit.go = true;
     // 임장 순위(2026-10, 사용자: "입찰후보를 순위로 나눌 수 있어?") - 추천가에서의 낙찰 가능성: 50% 이상 1순위 · 30~50% 2순위 · 20~30% 3순위
@@ -17009,6 +17014,9 @@ var LITE_COLS = {
     date: { label: '입찰일', first: 1, val: function(r) { return r.dday ? r.dday.diffDays : null; } },
     name: { label: '물건', first: 1, val: function(r) { return r.name || null; } },
     fails: { label: '유찰', first: 1, val: function(r) { return r.fails; } },
+    n12: { label: '최근 1년 거래', first: -1, val: function(r) { return r.ownStats ? (r.ownStats.n12 || 0) : null; } },
+    nYear: { label: '올해 거래', first: -1, val: function(r) { return r.ownStats ? (r.ownStats.nYear || 0) : null; } },
+    last: { label: '마지막 거래', first: 1, val: function(r) { return r.ownStats && r.ownStats.lastAgeM != null ? r.ownStats.lastAgeM : null; } },
     turn: { label: '회전율', first: -1, val: function(r) { var t = turnoverOf(r); return t ? t.rate : null; } },
     liv: { label: '생활권 순위', first: 1, val: function(r) { return r.liv && r.liv.rank ? r.liv.rank : null; } },
     band: { label: '평형 순위', first: 1, val: function(r) { return r.pop && r.pop.band ? r.pop.band.rankInBand : null; } },
@@ -17035,7 +17043,7 @@ var INFO_POP = {
         '<b>순이익(세후)이 1천만 원 이상 남는 입찰가</b> 가운데 <b>"낙찰 가능성 × 순이익"이 가장 큰 가격</b> 하나예요. 모든 아파트에 같은 방식이에요.<ul>'
         + '<li><b>순이익</b> = 예상매도가 − 입찰가 − 취득세·등기·명도·수리비·이사·청소·중개수수료·대출이자(보유 3개월 기본) − 인수 보증금·미납 관리비 − 종합소득세(내 자산의 주택 수·올해 소득 반영)</li>'
         + '<li><b>낙찰 가능성</b> = 낙찰사례 2만여 건으로 만든 모델(최저가·감정가·유찰 횟수·지역·계절·인기·시세 대비 최저가)이 추정해요. 보통 오차 5~6%예요.</li></ul>'
-        + '최저가로 사도 순이익 1천만이 안 남으면 추천가가 없고 <b>패스</b>예요. 낙찰 가능성이 20% 미만이거나 🚩 강한 의심·🏢 대량 경매도 패스예요.<br>'
+        + '최저가로 사도 순이익 1천만이 안 남으면 추천가가 없고 <b>패스</b>예요. 낙찰 가능성이 20% 미만이거나, <b>같은 단지 같은 평형 최근 1년 거래가 3건 미만</b>(시세 근거 약함)이거나, 🚩 강한 의심·🏢 대량 경매도 패스예요.<br>'
         + '<span class="ip-muted">임장에서 확인한 인수 금액·미납 관리비·수리비를 넣으면 같은 계산이 다시 돌아 추천가가 바뀌어요. 마진 1천만이 남는 가장 높은 가격(상한)은 상세 창에 따로 보여요.</span>' }
 };
 function showInfoPop(key, el, ev) {
@@ -17064,6 +17072,14 @@ function liteTh(k, label, right) {
     return '<span class="bb2-sortlink' + (on ? ' on' : '') + '" title="눌러서 ' + (on ? (s.liteDir === 1 ? '내림차순' : '오름차순') : (c.first === 1 ? '오름차순' : '내림차순')) + ' 정렬" onclick="event.stopPropagation();setLiteCol(\'' + k + '\')">' + (label || c.label) + '<span class="bb-arrow">' + (on ? (s.liteDir === 1 ? '▲' : '▼') : '↕') + '</span></span>';
 }
 function toggleLitePast() { bidBoardState.pastLite = !bidBoardState.pastLite; renderBidBoard(); }
+// 단지 내 동일 평형(±3㎡) 최근 거래 건수(2026-10, 사용자: "시세 근거가 되는 거래가 몇 건인지 보여줘")
+function liteTradesHtml(r) {
+    var o = r.ownStats; if (!o) return '<span class="bb-sub">-</span>';
+    var n12 = o.n12 || 0, col = n12 >= 6 ? '#15803d' : (n12 >= 3 ? '#b45309' : '#b91c1c');
+    return '<div title="이 단지·같은 평형(±3㎡) 중개거래(직거래 제외)">1년 <b style="color:' + col + ';">' + n12 + '건</b></div>'
+        + '<div class="bb-sub">3개월 ' + (o.n3 || 0) + ' · 6개월 ' + (o.n6 || 0) + '</div>'
+        + '<div class="bb-sub">올해 ' + (o.nYear || 0) + '건' + (o.lastAgeM != null ? ' · 마지막 ' + o.lastAgeM + '개월 전' : ' · 3년 안 거래 없음') + '</div>';
+}
 // 임장 후보 표의 거래량 순위·회전율(2026-10, 사용자: "물건정보에 순위가 빠졌어 - 회전율, 생활권 순위, 동별 단지 순위 표기") - 예전 표의 순위 칸과 같은 값을 3줄로
 function liteRankHtml(r) {
     var out = [];
@@ -17122,6 +17138,7 @@ function renderBidBoardLite() {
     var money = function(v) { return v ? toEok(String(Math.round(v))) : '-'; };
     body.innerHTML = '<table class="bb2-table"><thead><tr>'
         + '<th>' + liteTh('verdict') + '</th><th>' + liteTh('date') + '</th><th>' + liteTh('name') + '</th><th class="r">' + liteTh('fails') + '</th>'
+        + '<th class="r">동일평형 거래<div class="bb2-subsort" style="justify-content:flex-end;">' + liteTh('n12', '1년') + liteTh('nYear', '올해') + liteTh('last', '마지막') + '</div></th>'
         + '<th>거래량 순위·회전율<div class="bb2-subsort">' + liteTh('turn', '회전율') + liteTh('liv', '생활권') + liteTh('band', '평형') + liteTh('dong', '동') + '</div></th>'
         + '<th class="r">' + liteTh('minBid') + '</th><th class="r">' + liteTh('sale') + infoI('sale') + '</th><th class="r">' + liteTh('rec') + infoI('rec') + '<div class="bb2-subsort" style="justify-content:flex-end;">' + liteTh('recPct', '시세 대비 %') + '</div></th><th class="r">' + liteTh('p') + '</th><th class="r">' + liteTh('net') + '</th><th class="r">' + liteTh('rate') + '</th>'
         + '</tr></thead><tbody>'
@@ -17134,6 +17151,7 @@ function renderBidBoardLite() {
                 + '<td data-l="입찰일">' + (r.dday ? '<span class="bb-dday' + (r.dday.diffDays >= 0 && r.dday.diffDays <= 3 ? ' soon' : '') + '">' + bbEsc(r.dday.label) + '</span>' : '-') + '<div class="bb-sub">' + bbEsc(r.a.bidDate || '') + '</div></td>'
                 + '<td data-l="물건" class="bb2-name"><b>' + bbEsc(r.name) + '</b><div class="bb-sub">' + bbEsc(r.region) + (r.pyung ? ' · ' + r.pyung + '평' : '') + (r.floor ? ' · ' + r.floor + '층' : '') + (r.issueSuspect ? ' · <span style="color:#b91c1c;">🚩</span>' : '') + '</div></td>'
                 + '<td data-l="유찰" class="r">' + (r.fails == null ? '-' : (r.fails === 0 ? '신건' : r.fails + '회')) + '</td>'
+                + '<td data-l="동일평형 거래" class="r bb2-n">' + liteTradesHtml(r) + '</td>'
                 + '<td data-l="거래량 순위" class="bb2-rank">' + liteRankHtml(r) + '</td>'
                 + '<td data-l="최저가" class="r">' + money(r.minBid) + '</td>'
                 + '<td data-l="예상매도가" class="r">' + money(r.sale) + '</td>'
@@ -17555,7 +17573,7 @@ async function renderBidDrawer() {
             var rt = pe && row.sale ? (pe.pre / row.sale * 100).toFixed(1) + '%' : '-';
             card = '<div class="dr-pickcard ' + (go ? 'go' : 'pass') + '"><div class="pk-v">' + (go ? '🚶 임장 추천' : '패스') + (row.visit && row.visit.why ? ' · ' + bbEsc(row.visit.why) : '') + '</div>'
                 + (pe ? '<div class="pk-big"><span>추천 입찰가 ' + infoI('rec') + '</span><b>' + fmt(pe.bid) + '</b>' + (row.sale ? '<span title="추천가 ÷ 예상매도가(시세)">시세의 <b style="font-size:15px;color:#374151;">' + Math.round(pe.bid / row.sale * 100) + '%</b></span>' : '') + '</div>'
-                    + '<div class="pk-sub">낙찰 가능성 <b>' + pcc + '%</b> · 예상 순이익(세후) <b>' + fmt(pe.net) + '</b> · 마진율(세전) ' + rt + '<br>예상매도가 ' + fmt(row.sale) + ' ' + infoI('sale') + ' · 최저가 ' + fmt(row.minBid) + (row.pick.max ? ' · 마진 1천만 남는 상한 ' + fmt(row.pick.max.bid) : '') + '</div>'
+                    + '<div class="pk-sub">낙찰 가능성 <b>' + pcc + '%</b> · 예상 순이익(세후) <b>' + fmt(pe.net) + '</b> · 마진율(세전) ' + rt + '<br>예상매도가 ' + fmt(row.sale) + ' ' + infoI('sale') + ' · 최저가 ' + fmt(row.minBid) + (row.pick.max ? ' · 마진 1천만 남는 상한 ' + fmt(row.pick.max.bid) : '') + (row.ownStats ? '<br>같은 단지 같은 평형 거래: 최근 1년 <b>' + (row.ownStats.n12 || 0) + '건</b> · 올해 ' + (row.ownStats.nYear || 0) + '건' + (row.ownStats.lastAgeM != null ? ' · 마지막 ' + row.ownStats.lastAgeM + '개월 전' : '') : '') + '</div>'
                     : '<div class="pk-sub">추천가가 없어요 · 예상매도가 ' + fmt(row.sale) + ' · 최저가 ' + fmt(row.minBid) + '</div>')
                 + '</div>';
             h = h.slice(0, i1) + card + issueHtml + '<details class="dr-more"><summary>자세히 (근거·범위·실거래·비용)</summary>' + h.slice(i1, i2) + '</details>' + h.slice(i2);
