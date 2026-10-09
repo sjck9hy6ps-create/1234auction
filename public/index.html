@@ -5789,7 +5789,8 @@ function openPanel(apt, lat, lon) {
     currentStandaloneBidCaseId = null; // 낙찰사례 독자 상세뷰가 열려있던 상태를 벗어남
     currentPanelLat = (typeof lat === 'number') ? lat : null;
     currentPanelLon = (typeof lon === 'number') ? lon : null;
-    currentTrades  = apt.trades || [];
+    // 거래 면적이 DB에 소수점 버림(59㎡)으로 저장된 건과 정확한 값(59.78㎡)으로 저장된 건이 섞여 같은 평형이 17.8평/18.1평 두 탭으로 갈라짐 → 버림 기준으로 통일
+    currentTrades  = (apt.trades || []).map(function(t) { var ar = parseFloat(t.area); return (ar > 0 && ar !== Math.floor(ar)) ? Object.assign({}, t, { area: Math.floor(ar) }) : t; });
     currentPanelApt = apt;
     currentSort    = 'date';
     currentPyung   = 'all';
