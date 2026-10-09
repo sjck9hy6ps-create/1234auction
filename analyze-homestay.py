@@ -8,8 +8,10 @@
 """
 import os, re, json, importlib.util
 from datetime import datetime, timezone, timedelta
+import numpy as np
 import pandas as pd
 import requests
+from pyproj import Transformer
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 _spec = importlib.util.spec_from_file_location("cyc", os.path.join(HERE, "analyze-cycle.py"))
@@ -83,10 +85,44 @@ def main():
     y1, y2 = today - pd.Timedelta(days=365), today - pd.Timedelta(days=730)
     print(f"  주소 해석 성공 {len(df):,}건, 영업중 {int(df['open'].sum()):,}건, 허가일 {df['lic'].min()} ~ {df['lic'].max()}")
 
+    # 좌표: 인허가 좌표는 TM(EPSG:5174, 중부원점 구 Bessel) → WGS84. 부산 남구 대연동 샘플로 확인(35.13N 129.10E)
+    tf = Transformer.from_crs("EPSG:5174", "EPSG:4326", always_xy=True)
+    x = pd.to_numeric(df["CRD_INFO_X"], errors="coerce"); y = pd.to_numeric(df["CRD_INFO_Y"], errors="coerce")
+    ok = x.notna() & y.notna() & (x > 0) & (y > 0)
+    lon = pd.Series(np.nan, index=df.index); lat = pd.Series(np.nan, index=df.index)
+    lo_, la_ = tf.transform(x[ok].values, y[ok].values)
+    lon[ok] = lo_; lat[ok] = la_
+    ok2 = lat.between(33, 39) & lon.between(124, 132)
+    df["lat"] = lat.where(ok2); df["lon"] = lon.where(ok2)
+    print(f"  좌표 변환 성공 {int(ok2.sum()):,}건 / {len(df):,}건")
+
+    def activity(open_n, new1, new2, clo1, clo2):
+        """증가/감소로 활성화 여부 판단(2026-10-09, 사용자: '증가와 감소를 측정해서 활성화되는지 여부 판단'):
+        순증 = 최근 1년 신규 허가 − 최근 1년 폐업. 순증률 = 순증 ÷ 1년 전 영업 수.
+         활성화: 순증 ≥3 이고 순증률 ≥10% (신규가 폐업을 크게 앞섬)
+         위축: 순증 < 0, 또는 전년 신규가 6건 이상이었는데 올해 신규가 절반 이하
+         그 외 안정, 업소 5곳 미만이고 신규 3건 미만이면 표본 적음"""
+        net = new1 - clo1
+        base = max(1, open_n - net)
+        if open_n < 5 and new1 < 3:
+            return "표본적음", net
+        if net < 0 or (new2 >= 6 and new1 <= new2 * 0.5):
+            return "위축", net
+        if net >= 3 and net / base >= 0.10:
+            return "활성화", net
+        return "안정", net
+
     def agg(G):
         o = G[G["open"]]
-        return {"open": int(len(o)), "rooms": int(o["rooms"].sum()) if o["rooms"].notna().any() else None, "total": int(len(G)),
-                "new1y": int((G["lic"] >= y1).sum()), "new2y": int(((G["lic"] >= y2) & (G["lic"] < y1)).sum()), "closed1y": int((G["clo"] >= y1).sum())}
+        new1, new2 = int((G["lic"] >= y1).sum()), int(((G["lic"] >= y2) & (G["lic"] < y1)).sum())
+        clo1, clo2 = int((G["clo"] >= y1).sum()), int(((G["clo"] >= y2) & (G["clo"] < y1)).sum())
+        st, net = activity(int(len(o)), new1, new2, clo1, clo2)
+        r = {"open": int(len(o)), "rooms": int(o["rooms"].sum()) if o["rooms"].notna().any() else None, "total": int(len(G)),
+             "new1y": new1, "new2y": new2, "closed1y": clo1, "closed2y": clo2, "net1y": net, "state": st}
+        oo = o.dropna(subset=["lat"])
+        if len(oo):
+            r["lat"] = round(float(oo["lat"].median()), 5); r["lon"] = round(float(oo["lon"].median()), 5)
+        return r
     by_dong, by_region = {}, {}
     for (rg, dg), G in df.groupby(["region", "dong"]):
         by_dong[f"{rg}|{dg}"] = agg(G)
@@ -102,11 +138,25 @@ def main():
     print("== 영업중 상위 법정동 40 ==")
     for k, v in top[:40]:
         print(f"  {k}: 영업 {v['open']} · 신규1년 {v['new1y']} · 신규전년 {v['new2y']} · 폐업1년 {v['closed1y']} · 객실 {v['rooms']}")
+    from collections import Counter
+    print("활성도 분포(동, 영업 5곳 이상):", dict(Counter(v["state"] for v in by_dong.values() if v["open"] >= 5)))
+    print("== 활성화 판정 동(영업 많은 순 25) ==")
+    for k, v in [kv for kv in top if kv[1]["state"] == "활성화"][:25]:
+        print(f"  {k}: 영업 {v['open']} · 신규 {v['new1y']} · 폐업 {v['closed1y']} · 순증 {v['net1y']}")
+    print("== 위축 판정 동(영업 많은 순 15) ==")
+    for k, v in [kv for kv in top if kv[1]["state"] == "위축"][:15]:
+        print(f"  {k}: 영업 {v['open']} · 신규 {v['new1y']}(전년 {v['new2y']}) · 폐업 {v['closed1y']} · 순증 {v['net1y']}")
     print("== 영업중 상위 시군구 25 ==")
     for k, v in sorted(by_region.items(), key=lambda kv: -kv[1]["open"])[:25]:
         print(f"  {k}: 영업 {v['open']} · 신규1년 {v['new1y']} · 폐업1년 {v['closed1y']}")
     payload = {"generatedAt": now.isoformat(), "n": int(len(df)), "open": int(df["open"].sum()), "trend": trend, "byRegion": by_region, "byDong": by_dong}
     cyc.upsert_rows([{"id": "signal|__homestay__", "payload": cyc.clean_json(payload), "fetched_at": now.isoformat()}])
+    # 지도 배지용 점(영업중 + 좌표 있음): [위도, 경도, 업소명, 허가연도, 동키]
+    pts = df[df["open"] & df["lat"].notna()]
+    arr = [[round(float(a), 5), round(float(b), 5), str(n or "")[:16], (int(l.year) if pd.notna(l) else None), f"{rg}|{dg}"]
+           for a, b, n, l, rg, dg in zip(pts["lat"], pts["lon"], pts["BPLC_NM"], pts["lic"], pts["region"], pts["dong"])]
+    cyc.upsert_rows([{"id": "signal|__homestay_pts__", "payload": {"generatedAt": now.isoformat(), "pts": arr}, "fetched_at": now.isoformat()}])
+    print(f"  지도용 점 {len(arr):,}건 저장")
     print("✅ 저장 완료")
 
 
