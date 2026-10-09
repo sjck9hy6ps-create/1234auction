@@ -1326,7 +1326,8 @@ body.ui2 #auction-modal.am4 { width:620px; }
 .bb2-pass { display:inline-block; background:#f3f4f6; color:#6b7280; font-weight:700; border-radius:12px; padding:2px 9px; }
 .bb2-rec { font-size:14px; color:#1e5eff; }
 .bb2-name { min-width:150px; max-width:260px; }
-#bid-board.with-drawer .bb2-table th:nth-child(4), #bid-board.with-drawer .bb2-table td:nth-child(4), #bid-board.with-drawer .bb2-table th:nth-child(5), #bid-board.with-drawer .bb2-table td:nth-child(5), #bid-board.with-drawer .bb2-table th:nth-child(8), #bid-board.with-drawer .bb2-table td:nth-child(8) { display:none; }
+#bid-board.with-drawer .bb2-table th:nth-child(5), #bid-board.with-drawer .bb2-table td:nth-child(5), #bid-board.with-drawer .bb2-table th:nth-child(6), #bid-board.with-drawer .bb2-table td:nth-child(6), #bid-board.with-drawer .bb2-table th:nth-child(9), #bid-board.with-drawer .bb2-table td:nth-child(9) { display:none; }
+.bb2-rank { min-width:150px; font-size:11.5px; line-height:1.55; } .bb2-rank > div { white-space:nowrap; }
 @media (max-width: 900px) {
     .bb2-table, .bb2-table tbody { display:block; background:none; box-shadow:none; }
     .bb2-table thead { display:none; }
@@ -1336,7 +1337,8 @@ body.ui2 #auction-modal.am4 { width:620px; }
     .bb2-table td[data-l]:not(.bb2-name):not([data-l="판정"]):not([data-l="입찰일"])::before { content:attr(data-l); display:block; color:#999; font-size:10px; }
     .bb2-table .bb2-name { grid-column:1 / -1; order:-1; max-width:none; }
     .bb2-table td[data-l="판정"] { grid-column:1; } .bb2-table td[data-l="입찰일"] { grid-column:2 / 4; text-align:right; }
-    #bid-board.with-drawer .bb2-table th:nth-child(4), #bid-board.with-drawer .bb2-table td:nth-child(4), #bid-board.with-drawer .bb2-table td:nth-child(5), #bid-board.with-drawer .bb2-table td:nth-child(8) { display:block; }
+    .bb2-table td.bb2-rank { grid-column:1 / -1; }
+    #bid-board.with-drawer .bb2-table td:nth-child(5), #bid-board.with-drawer .bb2-table td:nth-child(6), #bid-board.with-drawer .bb2-table td:nth-child(9) { display:block; }
 }
 /* 상세 창 맨 위 추천가 카드 */
 #bb-drawer .dr-pickcard { border-radius:12px; padding:10px 12px; margin:8px 0 10px; }
@@ -16989,6 +16991,23 @@ function bidBoardVisibleRows() {
 function setLiteVisit(v) { bidBoardState.visit = v; renderBidBoard(); }
 function setLiteSort(v) { bidBoardState.liteSort = v; renderBidBoard(); }
 function toggleLitePast() { bidBoardState.pastLite = !bidBoardState.pastLite; renderBidBoard(); }
+// 임장 후보 표의 거래량 순위·회전율(2026-10, 사용자: "물건정보에 순위가 빠졌어 - 회전율, 생활권 순위, 동별 단지 순위 표기") - 예전 표의 순위 칸과 같은 값을 3줄로
+function liteRankHtml(r) {
+    var out = [];
+    var to = turnoverOf(r);
+    if (to) out.push('<div>회전율 <b style="color:' + to.grade.c + ';">' + to.rate + '%</b> <span class="bb-sub" style="display:inline;">' + to.grade.t + '</span></div>');
+    if (r.liv) {
+        var lc = r.liv.tier === '상위20%' ? '#2e7d32' : (r.liv.tier === '하위40%' ? '#c62828' : '#ef6c00');
+        out.push('<div>생활권 <b style="color:' + lc + ';">' + (r.liv.rank ? r.liv.rank + '위' : '-') + '</b><span class="bb-sub" style="display:inline;"> / ' + (r.liv.radius >= 1000 ? (r.liv.radius / 1000) + 'km' : r.liv.radius + 'm') + ' 안 ' + r.liv.of + '단지</span></div>');
+    }
+    if (r.pop) {
+        if (r.pop.band) out.push('<div>' + bbEsc(r.pop.band.name) + ' 평형 <b style="color:var(--ui-blue,#1e5eff);">' + r.pop.band.rankInBand + '위</b><span class="bb-sub" style="display:inline;"> / ' + r.pop.band.complexesInBand + '단지</span></div>');
+        if (r.pop.rankInDong) out.push('<div>동 <b>' + r.pop.rankInDong + '위</b><span class="bb-sub" style="display:inline;"> / ' + r.pop.complexesInDong + '단지' + (r.pop.band ? ' (단지 전체)' : '') + '</span></div>');
+        else if (r.pop.noRecent) out.push('<div class="bb-sub">' + (r.complex3y ? '최근 3년 거래 ' + r.complex3y + '건뿐' : '최근 3년 거래 없음') + '</div>');
+    } else if (r.lf) out.push('<div>' + (r.lf.isLeader ? (r.lf.only ? '동에 아파트 단독' : '👑 대장') : '동 ' + r.lf.rank + '위') + '</div>');
+    var pills = (r.lf && r.lf.isLeader && !r.lf.only ? '<span class="bb-pill lead">👑 대장</span> ' : '') + (r.popular ? '<span class="bb-pill good" title="동·같은 평형·생활권 거래량이 모두 상위 20%">🔥 인기 단지</span>' : '');
+    return (out.join('') || '<span class="bb-sub">-</span>') + (pills ? '<div style="margin-top:2px;">' + pills + '</div>' : '');
+}
 function renderBidBoardLite() {
     var s = bidBoardState;
     var el = document.getElementById('bid-board'); if (el) el.classList.add('lite');
@@ -17025,7 +17044,7 @@ function renderBidBoardLite() {
     if (!bidBoardRows.length) { body.innerHTML = '<div class="bb-empty">등록된 경매 물건이 없어요.<br>상단 <b>📝 경매물건 등록</b>에서 CSV를 올리면 여기에 모여요.</div>'; return; }
     if (!rows.length) { body.innerHTML = '<div class="bb-empty">' + (pend ? '계산 중이에요…' : (s.visit === 'go' ? '지금은 임장할 만한 물건이 없어요.<br>패스 목록에서 이유를 확인하거나 새 CSV를 올려 보세요.' : '조건에 맞는 물건이 없어요.')) + '</div>'; return; }
     var money = function(v) { return v ? toEok(String(Math.round(v))) : '-'; };
-    body.innerHTML = '<table class="bb2-table"><thead><tr><th>판정</th><th>입찰일</th><th>물건</th><th class="r">최저가</th><th class="r">예상매도가</th><th class="r">추천가</th><th class="r">낙찰 가능성</th><th class="r">예상 순이익</th></tr></thead><tbody>'
+    body.innerHTML = '<table class="bb2-table"><thead><tr><th>판정</th><th>입찰일</th><th>물건</th><th>거래량 순위·회전율</th><th class="r">최저가</th><th class="r">예상매도가</th><th class="r">추천가</th><th class="r">낙찰 가능성</th><th class="r">예상 순이익</th></tr></thead><tbody>'
         + rows.map(function(r) {
             var go = r.visit.go, e = r.pick && r.pick.ev, idJs = String(r.id).replace(/\\/g, '\\\\').replace(/'/g, "\\'");
             var pc = e ? Math.round(e.p * 100) : null, col = pc == null ? '#6b7280' : (pc >= 60 ? '#15803d' : (pc >= 35 ? '#b45309' : '#b91c1c'));
@@ -17033,6 +17052,7 @@ function renderBidBoardLite() {
                 + '<td data-l="판정">' + (go ? '<span class="bb2-go">🚶 임장</span>' : '<span class="bb2-pass">패스</span>') + (r.visit.why ? '<div class="bb-sub">' + bbEsc(r.visit.why) + '</div>' : '') + '</td>'
                 + '<td data-l="입찰일">' + (r.dday ? '<span class="bb-dday' + (r.dday.diffDays >= 0 && r.dday.diffDays <= 3 ? ' soon' : '') + '">' + bbEsc(r.dday.label) + '</span>' : '-') + '<div class="bb-sub">' + bbEsc(r.a.bidDate || '') + '</div></td>'
                 + '<td data-l="물건" class="bb2-name"><b>' + bbEsc(r.name) + '</b><div class="bb-sub">' + bbEsc(r.region) + (r.pyung ? ' · ' + r.pyung + '평' : '') + (r.floor ? ' · ' + r.floor + '층' : '') + (r.fails != null ? ' · ' + (r.fails === 0 ? '신건' : '유찰 ' + r.fails + '회') : '') + (r.issueSuspect ? ' · <span style="color:#b91c1c;">🚩</span>' : '') + '</div></td>'
+                + '<td data-l="거래량 순위" class="bb2-rank">' + liteRankHtml(r) + '</td>'
                 + '<td data-l="최저가" class="r">' + money(r.minBid) + '</td>'
                 + '<td data-l="예상매도가" class="r">' + money(r.sale) + '</td>'
                 + '<td data-l="추천가" class="r">' + (e ? '<b class="bb2-rec">' + money(e.bid) + '</b>' : '<span class="bb-sub">-</span>') + '</td>'
