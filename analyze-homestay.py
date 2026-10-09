@@ -6,7 +6,7 @@
 ※ 합법 등록분만 잡혀 실제보다 적음(미등록 영업이 많다는 보도). 지역 간 상대 비교용.
 결과: leader_follower_cache 'signal|__homestay__' (앱 표시용) + 로그에 상위 지역 출력
 """
-import os, re, json, importlib.util
+import os, re, json, time, importlib.util
 from datetime import datetime, timezone, timedelta
 import numpy as np
 import pandas as pd
@@ -24,13 +24,15 @@ EP = "https://apis.data.go.kr/1741000/foreigner_city_homestays/info"
 def fetch_all():
     rows, page, total = [], 1, None
     while True:
-        for attempt in range(4):
+        for attempt in range(10):  # 공공 API는 가끔 연결이 끊김 - 오래 기다리며 재시도(키 값은 로그에 안 찍음)
             try:
-                r = requests.get(EP, params={"serviceKey": K, "pageNo": page, "numOfRows": 1000, "returnType": "json"}, timeout=120)
+                r = requests.get(EP, params={"serviceKey": K, "pageNo": page, "numOfRows": 1000, "returnType": "json"}, timeout=(30, 120))
                 b = r.json()["response"]["body"]
                 break
             except Exception as e:
-                if attempt == 3:
+                print(f"  재시도 {attempt + 1}/10 ({type(e).__name__})", flush=True)
+                time.sleep(min(60, 5 * (attempt + 1)))
+                if attempt == 9:
                     raise
         total = int(b.get("totalCount") or total or 0)
         items = (b.get("items") or {}).get("item") or []

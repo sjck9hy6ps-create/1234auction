@@ -1428,6 +1428,7 @@ body.ui2 #auction-modal.am4 { width:620px; }
          필터패널 안의 기존 bidcasebadge-toggle-btn과 toggleShowBidCaseBadges()가 그대로
          동기화해줌(둘 중 아무거나 눌러도 서로 같이 바뀜). -->
     <button class="geo-tool-btn" id="bidcasebadge-quick-btn" onclick="toggleShowBidCaseBadges()" title="⚖️ 낙찰사례 배지 표시/숨김">⚖️</button>
+    <button class="geo-tool-btn" id="homestay-quick-btn" onclick="toggleHomestayLayer()" title="🏠 도시민박(공간대여) 배지 표시/숨김 - 증가·감소로 활성도 표시">🏠</button>
 </div>
 <div id="compass-hud">
     <div id="compass-pointer"></div>
@@ -1516,6 +1517,7 @@ body.ui2 #auction-modal.am4 { width:620px; }
         </div>
     </div>
 </div>
+<div id="hs-hint" style="display:none;position:absolute;top:100px;left:50%;transform:translateX(-50%);z-index:50;background:rgba(0,0,0,0.75);color:white;font-size:12px;padding:5px 12px;border-radius:14px;pointer-events:none;"></div>
 <div id="dong-boundary-info" style="display:none;position:absolute;top:60px;left:50%;transform:translateX(-50%);z-index:50;background:rgba(0,0,0,0.75);color:white;font-size:12px;font-weight:bold;padding:5px 12px;border-radius:14px;pointer-events:none;"></div>
 <div id="autocomplete"></div>
 <div id="surge-panel">
@@ -3352,6 +3354,75 @@ function toggleNewHighOnlyFilter(btn) {
    ⚠️ 2026-08: 이 토글을 누르는 버튼이 필터패널 안(bidcasebadge-toggle-btn)과 지도 좌상단
    퀵아이콘(bidcasebadge-quick-btn) 두 곳으로 늘어나서, 클릭된 버튼(this)만 바꾸던 예전
    방식 대신 두 버튼을 id로 직접 찾아 항상 같이 동기화함 - 어느 쪽을 눌러도 둘 다 바뀜. */
+/* ════ 🏠 도시민박(공간대여) 배지 (2026-10-09, 사용자: 공간대여업이 많은 지역 위주로 빌라 입찰 / 증가·감소로 활성화 여부 판단) ════
+   행안부 외국인관광 도시민박업 인허가(합법 등록분) - analyze-homestay.py가 매주 집계(signal|__homestay__ 동별 집계, signal|__homestay_pts__ 업소 위치).
+   지도를 넓게 볼 땐(레벨 5~8) 법정동별 배지(영업 수·순증), 가까이 볼 땐(레벨 ≤4) 업소 하나하나를 작은 핀으로 표시. 순증 = 최근 1년 신규 허가 − 폐업. */
+var showHomestay = false, homestayAgg = null, homestayPts = null, homestayLoading = false, homestayOverlays = [];
+var HS_STATE = { '활성화': { c: '#e11d48', t: '활성화 ▲' }, '안정': { c: '#0d9488', t: '안정' }, '위축': { c: '#64748b', t: '위축 ▼' }, '표본적음': { c: '#9ca3af', t: '표본 적음' } };
+function toggleHomestayLayer() {
+    showHomestay = !showHomestay;
+    var b = document.getElementById('homestay-quick-btn'); if (b) b.classList.toggle('active', showHomestay);
+    renderHomestayLayer();
+}
+function clearHomestayOverlays() { homestayOverlays.forEach(function(o) { o.setMap(null); }); homestayOverlays = []; }
+function renderHomestayLayer() {
+    clearHomestayOverlays();
+    var pop = document.getElementById('hs-pop'); if (pop && !showHomestay) pop.style.display = 'none';
+    if (!showHomestay || !map) return;
+    if (!homestayAgg) {
+        if (homestayLoading) return;
+        homestayLoading = true;
+        fetch('/api/data-coverage?mode=homestay').then(function(r) { return r.json(); }).then(function(d) { homestayAgg = (d && d.byDong) ? d : { byDong: {}, empty: true }; homestayLoading = false; renderHomestayLayer(); })
+            .catch(function() { homestayLoading = false; });
+        return;
+    }
+    var lv = map.getLevel(), bnd = map.getBounds(), sw = bnd.getSouthWest(), ne = bnd.getNorthEast();
+    var inB = function(la, lo) { return la >= sw.getLat() && la <= ne.getLat() && lo >= sw.getLng() && lo <= ne.getLng(); };
+    var hint = document.getElementById('hs-hint');
+    if (lv > 8) { if (hint) { hint.style.display = 'block'; hint.textContent = '🏠 도시민박 배지는 지도를 더 확대하면(동 단위) 보여요'; } return; }
+    if (hint) hint.style.display = 'none';
+    var add = function(la, lo, html, z, onclick) {
+        var el = document.createElement('div'); el.innerHTML = html; el.style.cursor = 'pointer';
+        if (onclick) el.addEventListener('click', function(e) { e.stopPropagation(); onclick(); });
+        var ov = new kakao.maps.CustomOverlay({ position: new kakao.maps.LatLng(la, lo), content: el, yAnchor: 0.5, xAnchor: 0.5, zIndex: z, clickable: true });
+        ov.setMap(map); homestayOverlays.push(ov);
+    };
+    if (lv <= 4) {
+        if (!homestayPts) {
+            if (!homestayLoading) { homestayLoading = true; fetch('/api/data-coverage?mode=homestayPts').then(function(r) { return r.json(); }).then(function(d) { homestayPts = (d && d.pts) || []; homestayLoading = false; renderHomestayLayer(); }).catch(function() { homestayLoading = false; }); }
+            return;
+        }
+        var n = 0;
+        for (var i = 0; i < homestayPts.length && n < 500; i++) {
+            var p = homestayPts[i]; if (!inB(p[0], p[1])) continue;
+            var st = (homestayAgg.byDong[p[4]] || {}).state || '안정', col = (HS_STATE[st] || HS_STATE['안정']).c;
+            add(p[0], p[1], '<div title="' + bbEsc(p[2]) + (p[3] ? ' · ' + p[3] + '년 허가' : '') + ' · 도시민박업(합법 등록)" style="width:20px;height:20px;border-radius:50%;background:#fff;border:2px solid ' + col + ';font-size:11px;line-height:16px;text-align:center;box-shadow:0 1px 3px rgba(0,0,0,.35);">🏠</div>', 50, (function(k) { return function() { showHomestayPop(k); }; })(p[4]));
+            n++;
+        }
+    } else {
+        Object.keys(homestayAgg.byDong).forEach(function(k) {
+            var v = homestayAgg.byDong[k];
+            if (v.lat == null || !inB(v.lat, v.lon) || v.open < 3) return;
+            var s = HS_STATE[v.state] || HS_STATE['안정'], dn = k.split('|')[1];
+            add(v.lat, v.lon, '<div style="background:#fff;border:2px solid ' + s.c + ';border-radius:8px;padding:0;text-align:center;box-shadow:0 2px 6px rgba(0,0,0,.3);white-space:nowrap;line-height:1.25;">'
+                + '<div style="background:' + s.c + ';color:#fff;font-size:10px;font-weight:bold;padding:1px 6px;border-radius:5px 5px 0 0;">🏠 ' + bbEsc(dn) + ' ' + s.t + '</div>'
+                + '<div style="font-size:11px;font-weight:bold;color:#1f2937;padding:1px 6px;">' + v.open + '곳 <span style="color:' + (v.net1y > 0 ? '#e11d48' : (v.net1y < 0 ? '#64748b' : '#6b7280')) + ';">' + (v.net1y > 0 ? '+' : '') + v.net1y + '/년</span></div></div>', 60, function() { showHomestayPop(k); });
+        });
+    }
+    if (homestayAgg.empty) { var h = document.getElementById('hs-hint'); if (h) { h.style.display = 'block'; h.textContent = '🏠 도시민박 집계 데이터가 아직 없어요(주간 분석 후 표시)'; } }
+}
+function showHomestayPop(key) {
+    var v = (homestayAgg && homestayAgg.byDong[key]) || null; if (!v) return;
+    var el = document.getElementById('hs-pop');
+    if (!el) { el = document.createElement('div'); el.id = 'hs-pop'; el.style.cssText = 'position:fixed;left:50%;bottom:24px;transform:translateX(-50%);z-index:140;background:#fff;border-radius:12px;box-shadow:0 6px 24px rgba(0,0,0,.3);padding:12px 14px;max-width:340px;font-size:12.5px;line-height:1.5;'; document.body.appendChild(el); }
+    var s = HS_STATE[v.state] || HS_STATE['안정'], parts = key.split('|');
+    el.innerHTML = '<div style="display:flex;justify-content:space-between;gap:10px;"><b>🏠 ' + bbEsc(parts[0] + ' ' + parts[1]) + ' · 도시민박업</b><span style="cursor:pointer;" onclick="document.getElementById(\'hs-pop\').style.display=\'none\'">✕</span></div>'
+        + '<div style="margin:4px 0;"><span style="background:' + s.c + ';color:#fff;border-radius:6px;padding:1px 7px;font-weight:bold;">' + s.t + '</span> 영업 중 <b>' + v.open + '곳</b>' + (v.rooms ? ' · 객실 ' + v.rooms + '개' : '') + '</div>'
+        + '<div>최근 1년: 신규 허가 <b>' + v.new1y + '</b> · 폐업 <b>' + v.closed1y + '</b> → 순증 <b style="color:' + (v.net1y > 0 ? '#e11d48' : '#64748b') + ';">' + (v.net1y > 0 ? '+' : '') + v.net1y + '</b></div>'
+        + '<div>그 전 1년: 신규 ' + v.new2y + ' · 폐업 ' + (v.closed2y == null ? '-' : v.closed2y) + '</div>'
+        + '<div style="color:#6b7280;font-size:11px;margin-top:4px;">활성화 = 순증 3곳 이상이고 1년 전보다 10% 이상 늘 때 · 위축 = 순증이 마이너스이거나 신규가 전년의 절반 이하일 때. 합법 등록분만 잡혀 실제보다 적어요.</div>';
+    el.style.display = 'block';
+}
 function toggleShowBidCaseBadges() {
     showBidCaseBadges = !showBidCaseBadges;
     var panelBtn = document.getElementById('bidcasebadge-toggle-btn');
@@ -4613,7 +4684,7 @@ function initMap(lat, lon) {
     // 한 번에 처리함. map이 막 생성된 시점이라야 리스너 등록이 되므로 여기(initMap)에서 호출.
     toggleDongBoundaryMode(document.getElementById('boundary-toggle-btn'));
     updateBadgeScale();
-    kakao.maps.event.addListener(map, 'zoom_changed', function() { updateBadgeScale(); scheduleOverlapResolve(); });
+    kakao.maps.event.addListener(map, 'zoom_changed', function() { updateBadgeScale(); scheduleOverlapResolve(); if (showHomestay) renderHomestayLayer(); });
     // 경매 등록 물건은 지역 데이터를 기다리지 않고 가장 먼저 불러와서 표시
     // (비교물건 배지 반영을 위해 아파트/빌라 마커도 함께 다시 그림)
     fetchAuctions().then(function() { renderAuctionMarkers(); redrawMarkers(); });
@@ -4633,6 +4704,7 @@ function initMap(lat, lon) {
         moveTimer = setTimeout(function() {
             loadAllData(c.getLat(), c.getLng()).then(function() { renderAuctionMarkers(); renderBidCaseMarkers(); });
             updateCurrentDongArea(c.getLat(), c.getLng());
+            if (showHomestay) renderHomestayLayer();
         }, 600); // 2026-10(로딩속도 개선): 지도가 멈춘 뒤 1.2초 기다리던 것을 0.6초로 줄임(같은 지역 안 이동은 캐시로 즉시 처리됨)
     });
 }
