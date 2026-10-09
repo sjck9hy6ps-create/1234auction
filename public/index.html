@@ -6578,7 +6578,17 @@ function renderTable() {
     var chartTrades = chartSrc.filter(function(t) { return String(toPyung(t.area)) === String(chartPy); });
     html += '<div class="pn-card"><div class="pn-card-h">시세 <span class="pn-muted">' + (chartPy ? chartPy + '평' : '') + '</span>'
         + '<span class="pn-seg">' + [['1y', '1년'], ['3y', '3년'], ['10y', '10년']].map(function(r) { return '<button class="' + (currentChartRange === r[0] ? 'on' : '') + '" onclick="setChartRange(\'' + r[0] + '\')">' + r[1] + '</button>'; }).join('') + '</span></div>'
-        + histNote + buildPriceChartSvg(chartTrades, currentChartRange) + '</div>';
+        + histNote + (function() {
+            var svg = buildPriceChartSvg(chartTrades, currentChartRange);
+            if (svg.indexOf('pn-empty') < 0 || !chartPy) return svg;
+            // 이 평형 거래가 모자라 그래프를 못 그리면, 같은 단지 다른 평형 거래를 이 평형 면적으로 환산(평단가×면적)해서 대신 그림
+            var ar = parseFloat(chartPy) * 3.305785;
+            var conv = chartSrc.filter(function(t) { return t.area > 0 && parseInt(t.amount) > 0 && String(toPyung(t.area)) !== String(chartPy); })
+                .map(function(t) { return Object.assign({}, t, { amount: String(Math.round(parseInt(t.amount) / t.area * ar)) }); });
+            var svg2 = buildPriceChartSvg(chartTrades.concat(conv), currentChartRange);
+            if (svg2.indexOf('pn-empty') >= 0) return svg;
+            return '<div class="pn-muted" style="font-size:11px;padding:2px 4px;">이 평형 거래가 ' + chartTrades.length + '건뿐이라, 같은 단지 다른 평형 거래를 ' + chartPy + '평 기준(평단가×면적)으로 환산해 그렸어요</div>' + svg2;
+        })() + '</div>';
     // ③ 바로가기
     var links = buildNaverLinkHtml(currentPanelLat, currentPanelLon, ind && ind._aptName, ind && ind._aptDong);
     if (currentPanelApt && currentPanelApt.latest) {
