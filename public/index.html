@@ -17016,6 +17016,7 @@ var LITE_COLS = {
     minBid: { label: '최저가', first: 1, val: function(r) { return r.minBid || null; } },
     sale: { label: '예상매도가', first: 1, val: function(r) { return r.sale || null; } },
     rec: { label: '추천가', first: 1, val: function(r) { return r.pick && r.pick.ev ? r.pick.ev.bid : null; } },
+    recPct: { label: '시세 대비', first: 1, val: function(r) { return r.pick && r.pick.ev && r.sale ? r.pick.ev.bid / r.sale : null; } },
     p: { label: '낙찰 가능성', first: -1, val: function(r) { return r.pick && r.pick.ev ? r.pick.ev.p : null; } },
     net: { label: '예상 순이익', first: -1, val: function(r) { return r.pick && r.pick.ev ? r.pick.ev.net : null; } },
     rate: { label: '마진율', first: -1, val: function(r) { return r.pick && r.pick.ev && r.sale ? r.pick.ev.pre / r.sale : null; } },
@@ -17122,7 +17123,7 @@ function renderBidBoardLite() {
     body.innerHTML = '<table class="bb2-table"><thead><tr>'
         + '<th>' + liteTh('verdict') + '</th><th>' + liteTh('date') + '</th><th>' + liteTh('name') + '</th><th class="r">' + liteTh('fails') + '</th>'
         + '<th>거래량 순위·회전율<div class="bb2-subsort">' + liteTh('turn', '회전율') + liteTh('liv', '생활권') + liteTh('band', '평형') + liteTh('dong', '동') + '</div></th>'
-        + '<th class="r">' + liteTh('minBid') + '</th><th class="r">' + liteTh('sale') + infoI('sale') + '</th><th class="r">' + liteTh('rec') + infoI('rec') + '</th><th class="r">' + liteTh('p') + '</th><th class="r">' + liteTh('net') + '</th><th class="r">' + liteTh('rate') + '</th>'
+        + '<th class="r">' + liteTh('minBid') + '</th><th class="r">' + liteTh('sale') + infoI('sale') + '</th><th class="r">' + liteTh('rec') + infoI('rec') + '<div class="bb2-subsort" style="justify-content:flex-end;">' + liteTh('recPct', '시세 대비 %') + '</div></th><th class="r">' + liteTh('p') + '</th><th class="r">' + liteTh('net') + '</th><th class="r">' + liteTh('rate') + '</th>'
         + '</tr></thead><tbody>'
         + rows.map(function(r) {
             var go = r.visit.go, e = r.pick && r.pick.ev, idJs = String(r.id).replace(/\\/g, '\\\\').replace(/'/g, "\\'");
@@ -17136,7 +17137,7 @@ function renderBidBoardLite() {
                 + '<td data-l="거래량 순위" class="bb2-rank">' + liteRankHtml(r) + '</td>'
                 + '<td data-l="최저가" class="r">' + money(r.minBid) + '</td>'
                 + '<td data-l="예상매도가" class="r">' + money(r.sale) + '</td>'
-                + '<td data-l="추천가" class="r">' + (e ? '<b class="bb2-rec">' + money(e.bid) + '</b>' : '<span class="bb-sub">-</span>') + '</td>'
+                + '<td data-l="추천가" class="r">' + (e ? '<b class="bb2-rec">' + money(e.bid) + '</b>' + (r.sale ? '<div class="bb-sub" title="추천가 ÷ 예상매도가(시세)">시세의 <b>' + Math.round(e.bid / r.sale * 100) + '%</b></div>' : '') : '<span class="bb-sub">-</span>') + '</td>'
                 + '<td data-l="낙찰 가능성" class="r">' + (pc != null ? '<b style="color:' + col + ';">' + pc + '%</b>' : '-') + '</td>'
                 + '<td data-l="순이익" class="r">' + (e ? money(e.net) : '-') + '</td>'
                 + '<td data-l="마진율" class="r">' + (mr != null ? mr.toFixed(1) + '%' : '-') + '</td></tr>';
@@ -17553,7 +17554,7 @@ async function renderBidDrawer() {
             var pe = row.pick && row.pick.ev, go = row.visit && row.visit.go, pcc = pe ? Math.round(pe.p * 100) : null;
             var rt = pe && row.sale ? (pe.pre / row.sale * 100).toFixed(1) + '%' : '-';
             card = '<div class="dr-pickcard ' + (go ? 'go' : 'pass') + '"><div class="pk-v">' + (go ? '🚶 임장 추천' : '패스') + (row.visit && row.visit.why ? ' · ' + bbEsc(row.visit.why) : '') + '</div>'
-                + (pe ? '<div class="pk-big"><span>추천 입찰가 ' + infoI('rec') + '</span><b>' + fmt(pe.bid) + '</b></div>'
+                + (pe ? '<div class="pk-big"><span>추천 입찰가 ' + infoI('rec') + '</span><b>' + fmt(pe.bid) + '</b>' + (row.sale ? '<span title="추천가 ÷ 예상매도가(시세)">시세의 <b style="font-size:15px;color:#374151;">' + Math.round(pe.bid / row.sale * 100) + '%</b></span>' : '') + '</div>'
                     + '<div class="pk-sub">낙찰 가능성 <b>' + pcc + '%</b> · 예상 순이익(세후) <b>' + fmt(pe.net) + '</b> · 마진율(세전) ' + rt + '<br>예상매도가 ' + fmt(row.sale) + ' ' + infoI('sale') + ' · 최저가 ' + fmt(row.minBid) + (row.pick.max ? ' · 마진 1천만 남는 상한 ' + fmt(row.pick.max.bid) : '') + '</div>'
                     : '<div class="pk-sub">추천가가 없어요 · 예상매도가 ' + fmt(row.sale) + ' · 최저가 ' + fmt(row.minBid) + '</div>')
                 + '</div>';
