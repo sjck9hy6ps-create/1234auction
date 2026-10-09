@@ -1,0 +1,22 @@
+name: 지역별 거래 캐시 웜업(전체 재생성)
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '30 18 * * 1'   # 매주 화요일 KST 03:30 (일주일에 한 번 전체를 새로 만들어 일시 오류로 굳은 불완전 캐시를 바로잡음)
+
+jobs:
+  warm:
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - run: npm install @supabase/supabase-js ws
+      - env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          SITE_URL: https://1234auction.vercel.app
+        run: node scripts/warmup-house-cache.mjs
