@@ -22684,10 +22684,16 @@ async function prefetchCoordsFromDB(aptList) {
         var mains = [l.main_num], subs = [l.sub_num];
         if (l.main_num === 0 || l.main_num === '0') mains.push('');
         if (l.sub_num === null || l.sub_num === undefined || l.sub_num === '' || l.sub_num === 0) subs.push('0');
-        mains.forEach(function(m) {
-            subs.forEach(function(sb) {
-                var alt = [l.dong, l.name, l.bunji, l.road_name, m, sb].join('|').toLowerCase();
-                if (!wanted[alt]) wanted[alt] = key;
+        // 2026-10-09(빌라 배지가 아파트보다 훨씬 느림 - 좌표가 DB에 있어도 못 찾아 건물마다 카카오 지오코딩을 다시 함): 이름 없는 빌라는 앱이 "(1585-6)"처럼 지번을 괄호로 감싼 이름을 쓰지만
+        // 웜업은 DB 원본(빈 이름)으로 저장했음 → 이름 빈 값 버전도 함께 조회
+        var names = [l.name];
+        if (/^\(.+\)$/.test(String(l.name || ''))) names.push('');
+        names.forEach(function(nm) {
+            mains.forEach(function(m) {
+                subs.forEach(function(sb) {
+                    var alt = [l.dong, nm, l.bunji, l.road_name, m, sb].join('|').toLowerCase();
+                    if (!wanted[alt]) wanted[alt] = key;
+                });
             });
         });
     });
