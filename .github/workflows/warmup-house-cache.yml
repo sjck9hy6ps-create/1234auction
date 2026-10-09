@@ -2,8 +2,6 @@ name: 지역별 거래 캐시 웜업(전체 재생성)
 
 on:
   workflow_dispatch:
-  schedule:
-    - cron: '30 18 * * 1'   # 매주 화요일 KST 03:30 (일주일에 한 번 전체를 새로 만들어 일시 오류로 굳은 불완전 캐시를 바로잡음)
 
 jobs:
   warm:
