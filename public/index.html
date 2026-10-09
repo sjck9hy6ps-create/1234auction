@@ -3408,9 +3408,10 @@ function renderHomestayLayer() {
             var v = homestayAgg.byDong[k];
             if (v.lat == null || !inB(v.lat, v.lon) || v.open < 3) return;
             var s = HS_STATE[v.state] || HS_STATE['안정'], dn = k.split('|')[1];
-            add(v.lat, v.lon, '<div style="background:#fff;border:2px solid ' + s.c + ';border-radius:8px;padding:0;text-align:center;box-shadow:0 2px 6px rgba(0,0,0,.3);white-space:nowrap;line-height:1.25;">'
-                + '<div style="background:' + s.c + ';color:#fff;font-size:10px;font-weight:bold;padding:1px 6px;border-radius:5px 5px 0 0;">🏠 ' + bbEsc(dn) + ' ' + s.t + '</div>'
-                + '<div style="font-size:11px;font-weight:bold;color:#1f2937;padding:1px 6px;">' + v.open + '곳 <span style="color:' + (v.net1y > 0 ? '#e11d48' : (v.net1y < 0 ? '#64748b' : '#6b7280')) + ';">' + (v.net1y > 0 ? '+' : '') + v.net1y + '/년</span></div></div>', 60, function() { openHomestayDetail(k, null); });
+            // 거래 배지(흰색·빨강·파랑·회색)와 확실히 구분되도록 보라색 큰 배지 + 활성도는 오른쪽 색 칩으로 표시
+            add(v.lat, v.lon, '<div style="display:flex;align-items:stretch;background:#7c3aed;color:#fff;border:3px solid #fff;border-radius:12px;box-shadow:0 0 0 2px #7c3aed,0 3px 10px rgba(0,0,0,.5);white-space:nowrap;font-weight:800;line-height:1.2;">'
+                + '<div style="padding:4px 8px;text-align:center;"><div style="font-size:11px;">🏠 도시민박 · ' + bbEsc(dn) + '</div><div style="font-size:15px;">' + v.open + '곳</div></div>'
+                + '<div style="background:' + s.c + ';padding:4px 8px;display:flex;flex-direction:column;justify-content:center;text-align:center;border-radius:0 8px 8px 0;font-size:12px;"><div>' + s.t + '</div><div style="font-size:12px;">' + (v.net1y > 0 ? '+' : '') + v.net1y + '/년</div></div></div>', 90, function() { openHomestayDetail(k, null); });
         });
     }
     if (homestayAgg.empty) { var h = document.getElementById('hs-hint'); if (h) { h.style.display = 'block'; h.textContent = '🏠 도시민박 집계 데이터가 아직 없어요(주간 분석 후 표시)'; } }

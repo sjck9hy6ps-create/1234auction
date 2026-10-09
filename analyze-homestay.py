@@ -69,6 +69,18 @@ def parse_addr(a):
     return f"{sido} {city}", dong
 
 
+def upsert_retry(rows):
+    """Supabase가 다른 작업으로 바쁠 때 statement timeout(500)이 나므로 몇 번 다시 시도"""
+    for attempt in range(6):
+        try:
+            cyc.upsert_rows(rows)
+            return
+        except Exception as e:
+            print(f"  저장 재시도 {attempt + 1}/6 ({type(e).__name__})", flush=True)
+            time.sleep(20 * (attempt + 1))
+    raise RuntimeError("저장 실패")
+
+
 def main():
     now = datetime.now(timezone.utc)
     items = fetch_all()
@@ -152,12 +164,12 @@ def main():
     for k, v in sorted(by_region.items(), key=lambda kv: -kv[1]["open"])[:25]:
         print(f"  {k}: 영업 {v['open']} · 신규1년 {v['new1y']} · 폐업1년 {v['closed1y']}")
     payload = {"generatedAt": now.isoformat(), "n": int(len(df)), "open": int(df["open"].sum()), "trend": trend, "byRegion": by_region, "byDong": by_dong}
-    cyc.upsert_rows([{"id": "signal|__homestay__", "payload": cyc.clean_json(payload), "fetched_at": now.isoformat()}])
+    upsert_retry([{"id": "signal|__homestay__", "payload": cyc.clean_json(payload), "fetched_at": now.isoformat()}])
     # 지도 배지용 점(영업중 + 좌표 있음): [위도, 경도, 업소명, 허가연도, 동키]
     pts = df[df["open"] & df["lat"].notna()]
     arr = [[round(float(a), 5), round(float(b), 5), str(n or "")[:16], (int(l.year) if pd.notna(l) else None), f"{rg}|{dg}"]
            for a, b, n, l, rg, dg in zip(pts["lat"], pts["lon"], pts["BPLC_NM"], pts["lic"], pts["region"], pts["dong"])]
-    cyc.upsert_rows([{"id": "signal|__homestay_pts__", "payload": {"generatedAt": now.isoformat(), "pts": arr}, "fetched_at": now.isoformat()}])
+    upsert_retry([{"id": "signal|__homestay_pts__", "payload": {"generatedAt": now.isoformat(), "pts": arr}, "fetched_at": now.isoformat()}])
     print(f"  지도용 점 {len(arr):,}건 저장")
     # 상세 패널용: 동별 업소 목록(영업중) - [업소명, 지번주소, 허가일(YYYYMMDD), 객실수, 위도, 경도, 도로명주소]
     lst = {}
@@ -166,7 +178,7 @@ def main():
         lst.setdefault(key, []).append([str(r["BPLC_NM"] or "")[:30], str(r["LOTNO_ADDR"] or ""), (int(r["lic"].strftime("%Y%m%d")) if pd.notna(r["lic"]) else None),
                                         (int(r["rooms"]) if pd.notna(r["rooms"]) else None), (round(float(r["lat"]), 5) if pd.notna(r["lat"]) else None),
                                         (round(float(r["lon"]), 5) if pd.notna(r["lon"]) else None), str(r["ROAD_NM_ADDR"] or "")])
-    cyc.upsert_rows([{"id": "signal|__homestay_list__", "payload": {"generatedAt": now.isoformat(), "byDong": lst}, "fetched_at": now.isoformat()}])
+    upsert_retry([{"id": "signal|__homestay_list__", "payload": {"generatedAt": now.isoformat(), "byDong": lst}, "fetched_at": now.isoformat()}])
     print(f"  동별 업소 목록 저장 ({len(lst):,}개 동)")
     print("✅ 저장 완료")
 
