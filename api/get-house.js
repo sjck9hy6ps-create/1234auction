@@ -156,14 +156,24 @@ function recentCutoffDateStr(years) {
   d.setFullYear(d.getFullYear() - (years || RECENT_WINDOW_YEARS));
   return String(d.getFullYear()) + String(d.getMonth() + 1).padStart(2, '0') + String(d.getDate()).padStart(2, '0');
 }
+const _sleepMs = (ms) => new Promise((r) => setTimeout(r, ms));
+/* 2026-10-09(인천 서해구 빌라 1,419곳이 거래기록 0건으로 나온 원인): 건수 조회가 일시적으로 null/0을 돌려주거나 DB가 순간 실패해도
+   "데이터 없음"으로 받아들이고 그 불완전한 결과를 8일 캐시에 저장했음 → 건수 조회·페이지 조회를 재시도하고, 0건은 한 번 더 확인함 */
 async function fetchAllRows(table, regionName, yearsOverride) {
   const cutoff = recentCutoffDateStr(yearsOverride || (table === 'villa_trades' ? RECENT_WINDOW_YEARS_VILLA : RECENT_WINDOW_YEARS));
-  const { count, error: countError } = await supabase
-    .from(table)
-    .select('id', { count: 'exact', head: true })
-    .eq('region', regionName)
-    .gte('deal_date', cutoff);
+  let count = null, countError = null;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const r = await supabase
+      .from(table)
+      .select('id', { count: 'exact', head: true })
+      .eq('region', regionName)
+      .gte('deal_date', cutoff);
+    countError = r.error; count = r.count;
+    if (!r.error && r.count != null && (r.count > 0 || attempt >= 1)) break; // 0건이면 한 번 더 확인
+    await _sleepMs(400 * (attempt + 1));
+  }
   if (countError) return { data: null, error: countError };
+  if (count == null) return { data: null, error: new Error('건수 조회 결과 없음(' + table + ' ' + regionName + ')') };
   if (!count) return { data: [], error: null };
 
   const pageCount = Math.ceil(count / FETCH_PAGE_SIZE);
@@ -180,7 +190,14 @@ async function fetchAllRows(table, regionName, yearsOverride) {
         .range(from, from + FETCH_PAGE_SIZE - 1)
     );
   }
-  const results = await Promise.all(pagePromises);
+  let results = await Promise.all(pagePromises);
+  for (let i = 0; i < results.length; i++) {
+    for (let attempt = 0; results[i].error && attempt < 2; attempt++) {  // 페이지 하나가 일시적으로 실패해도 다시 시도
+      await _sleepMs(500 * (attempt + 1));
+      results[i] = await supabase.from(table).select('*').eq('region', regionName).gte('deal_date', cutoff)
+        .order('id', { ascending: true }).range(i * FETCH_PAGE_SIZE, (i + 1) * FETCH_PAGE_SIZE - 1);
+    }
+  }
   for (const r of results) {
     if (r.error) return { data: null, error: r.error };
   }
@@ -324,7 +341,7 @@ export default async function handler(req, res) {
 
   try {
     // ── 1. DB 배치 수집분(apt/villa/전세)은 캐시가 있으면 그대로 재사용 ──
-    let dbPayload = null;
+    let dbPayload = null, partialPayload = false;
     // 실시간(이번달 신규 신고건) 조회는 캐시/DB 조회와 무관하므로 미리 출발시켜 둠(직렬 대기 ~1초 제거)
     const now    = new Date();
     const thisYm = String(now.getFullYear()) + String(now.getMonth() + 1).padStart(2, '0');
@@ -405,8 +422,10 @@ export default async function handler(req, res) {
       );
 
       dbPayload = { apt: merged, rent: rentMerged };
+      // 빌라·전세 조회가 하나라도 실패했으면 불완전한 결과이므로 캐시(서버·엣지·브라우저)에 저장하지 않음
+      partialPayload = !!(villaResult.error || aptRentResult.error || villaRentResult.error);
       // 다음 조회(다른 기기 포함)를 위해 DB분만 캐시에 저장 (실시간은 절대 캐시하지 않음)
-      await setCachedHouseData(lawdCd, dbPayload);
+      if (!partialPayload) await setCachedHouseData(lawdCd, dbPayload);
     }
 
     // 새벽 웜업 요청은 캐시만 채우면 끝 - 실시간 API는 호출하지 않고 바로 응답
@@ -423,8 +442,8 @@ export default async function handler(req, res) {
     // 무료 Vercel 사용량 절약: 같은 지역(lawdCd)을 5분 안에 다시 조회하면(지도 패닝/재방문
     // 등) 함수를 다시 실행하지 않고 Vercel 엣지 캐시에서 바로 응답. 실시간 신고건은 어차피
     // 하루에도 자주 바뀌지 않으므로 5분 지연은 체감상 무의미하고, 함수 호출 수를 크게 줄여줌.
-    res.setHeader('Cache-Control', 'public, s-maxage=300, stale-while-revalidate=1800');
-    return res.status(200).json({ apt: finalApt, rent: dbPayload.rent });
+    res.setHeader('Cache-Control', partialPayload ? 'no-store' : 'public, s-maxage=300, stale-while-revalidate=1800');
+    return res.status(200).json({ apt: finalApt, rent: dbPayload.rent, partial: partialPayload || undefined });
   } catch (err) {
     console.error('핸들러 에러:', err.message);
     console.error('스택:', err.stack);
