@@ -1306,6 +1306,11 @@ body.ui2 #auction-modal.am4 { width:620px; }
 #weekly-panel .wr-sec table { margin-top:6px; }
 @media (max-width: 900px) { #weekly-panel { right:8px; left:8px; width:auto; } }
 </style>
+<style>
+/* 💡 입찰가 고르기(2026-10) */
+#bb-drawer .dr-plan { background:#f0f9ff; border:1px solid #bae6fd; border-radius:10px; padding:8px 10px; margin:-4px 0 10px; font-size:12px; line-height:1.55; }
+#bb-drawer .dr-plan table { margin:6px 0 4px; } #bb-drawer .dr-plan tr.ev td { background:#e0f2fe; }
+</style>
 </head>
 <body>
 <div id="topbar">
@@ -15539,7 +15544,7 @@ function solveAuctionBidFromRecord(a) {
     // 2026-10: 매매사업자 85㎡ 초과 매도 시 건물분 부가세(매도가 기준, 입찰가와 무관) - 입찰후보 보드·배지·입찰 판단 카드에도 반영
     var vatRec = bidMethod === 'dealer' ? calcAuctionVatFromRecord(Object.assign({}, a, { bidMethod: bidMethod }), saleValue) : null;
     var resaleVat = vatRec && vatRec.applicable && vatRec.computable ? vatRec.vat : 0;
-    var lo = 0, hi = saleValue;
+    var lo = 0, hi = saleValue, loPre = null, loNet = null;
     for (var i = 0; i < 45; i++) {
         var mid = (lo + hi) / 2;
         var acqTax = calcAcquisitionTaxDetailed(mid, propType, pyung, houseRank, isAdjusted, isLocalCheap);
@@ -15551,9 +15556,9 @@ function solveAuctionBidFromRecord(a) {
         var preTaxProfit = saleValue - preTaxCost;
         var taxResult = calcResaleIncomeTax(bidMethod, preTaxProfit, holdMonths, isAdjusted, houseRank);
         var netProfit = preTaxProfit - taxResult.totalTax;
-        if (netProfit > marginValue) lo = mid; else hi = mid;
+        if (netProfit > marginValue) { lo = mid; loPre = preTaxProfit; loNet = netProfit; } else hi = mid;
     }
-    return { bid: Math.round(lo), resaleVat: resaleVat, vatEstimated: !!(vatRec && vatRec.estimated) };
+    return { bid: Math.round(lo), resaleVat: resaleVat, vatEstimated: !!(vatRec && vatRec.estimated), preTax: loPre, net: loNet };
 }
 /* 🔄 solveAuctionBidFromRecord()의 역함수(2026-08, 사용자 요청: "낙찰가 기준으로 낙찰자가
    얼마에 팔 생각이었는지 추론해서 시세를 검증하고 싶다") - 실제낙찰가(actualBid)는 고정하고,
@@ -16292,6 +16297,91 @@ function winbidLineHtml(wb, compact) {
     var col = pc == null ? '#6b7280' : (pc >= 60 ? '#15803d' : (pc >= 35 ? '#b45309' : '#b91c1c'));
     if (compact) return '<div class="bb-wb" title="비슷한 물건이 보통 낙찰되는 가격(낙찰사례 2만여 건 기준, 보통 오차 5~6%)">예상 낙찰 ' + toEok(String(wb.price)) + (pc != null ? ' · <b style="color:' + col + ';">낙찰 ' + pc + '%</b>' : '') + '</div>';
     return pc;
+}
+/* ════ 💡 입찰가 고르기 (2026-10, 사용자: "마진을 형성할 수 있는 구간 안에서 최적의 낙찰가를 선정하고, 가격대별 마진율도 확인") ════
+   마진 확보 상한(최소 순이익 1천만) 이하에서 "낙찰 가능성 × 순이익"이 가장 큰 입찰가를 찾음.
+   순이익(세후)은 앱 비용 계산(solveAuctionBidFromRecord)으로 여러 마진 값에 대한 입찰가를 구해 이어 붙인 곡선으로 계산.
+   마진율 비교표: 낙찰 후 6개월 안 같은 동·층 거래가 있던 낙찰사례(되팔기 흔적)의 앱 비용 기준 세전 마진 ÷ 매도가를 매도가 구간별로 집계. */
+var marginBandCache = null;
+function marginBandStats() {
+    if (marginBandCache && marginBandCache.len === (bidCaseList || []).length) return marginBandCache.bands;
+    var ymdT = function(v) { v = String(v); return new Date(+v.slice(0, 4), +v.slice(4, 6) - 1, +v.slice(6, 8)).getTime(); };
+    var rows = [];
+    (bidCaseList || []).forEach(function(c) {
+        if (!/아파트/.test(c.propertyType || '') || c.estMargin == null || !c.resaleMatch || !c.resaleMatch.amount || c.resaleMatch.conf !== 'dong') return;
+        var sd = new Date(c.saleDate + 'T00:00:00').getTime(), mo = (ymdT(c.resaleMatch.date) - sd) / 86400000 / 30.4;
+        var bid = c.finalBidPrice / 10000, resale = c.resaleMatch.amount;
+        if (!(mo >= 0.45 && mo <= 6.1) || resale < bid * 0.7) return;
+        rows.push({ resale: resale, rate: c.estMargin / resale * 100, mg: c.estMargin, mo: mo });
+    });
+    var q = function(a, p) { a = a.slice().sort(function(x, y) { return x - y; }); return a[Math.floor((a.length - 1) * p)]; };
+    var defs = [['5천 미만', 0, 5000], ['5천~7천', 5000, 7000], ['7천~1억', 7000, 10000], ['1억~1.5억', 10000, 15000], ['1.5~2억', 15000, 20000], ['2~3억', 20000, 30000], ['3~4억', 30000, 40000], ['4~5억', 40000, 50000], ['5억 이상', 50000, 1e9]];
+    var bands = defs.map(function(d) {
+        var G = rows.filter(function(r) { return r.resale >= d[1] && r.resale < d[2]; });
+        if (G.length < 15) return { label: d[0], lo: d[1], hi: d[2], n: G.length };
+        var rt = G.map(function(r) { return r.rate; });
+        return { label: d[0], lo: d[1], hi: d[2], n: G.length, med: q(rt, .5), p25: q(rt, .25), p75: q(rt, .75), loss: G.filter(function(r) { return r.mg < 0; }).length / G.length * 100, mgMed: q(G.map(function(r) { return r.mg; }), .5), hold: q(G.map(function(r) { return r.mo; }), .5) };
+    });
+    marginBandCache = { len: (bidCaseList || []).length, bands: bands };
+    return bands;
+}
+function marginBandFor(sale) { var b = marginBandStats().filter(function(x) { return sale >= x.lo && sale < x.hi; })[0]; return b && b.med != null ? b : null; }
+function bidPlanFor(row) {
+    var wb = row.winbid;
+    if (!wb || !row.sale || !row.minBid || row.type !== 'apt') return null;
+    var a = row.a;
+    var base = Object.assign({}, a, { target: row.sale, repair: effRepairFee(a, row.type, row.pyung, a.buildYear || row.estBuildYear || null) });
+    var pts = [];
+    [0, 500, 1000, 1500, 2000, 3000, 4000].concat(row.margin != null ? [Math.round(row.margin)] : []).forEach(function(m) {
+        var r = solveAuctionBidFromRecord(Object.assign({}, base, { compTargetMargin: m }));
+        if (r && r.bid > 0) pts.push({ bid: r.bid, net: m, pre: r.preTax });
+    });
+    pts.sort(function(x, y) { return x.bid - y.bid; });
+    if (pts.length < 3) return null;
+    var interp = function(b, key) {
+        if (b <= pts[0].bid) { var s0 = (pts[1][key] - pts[0][key]) / ((pts[1].bid - pts[0].bid) || 1); return pts[0][key] + s0 * (b - pts[0].bid); }
+        for (var i = 1; i < pts.length; i++) if (b <= pts[i].bid) { var t = (b - pts[i - 1].bid) / ((pts[i].bid - pts[i - 1].bid) || 1); return pts[i - 1][key] + t * (pts[i][key] - pts[i - 1][key]); }
+        var sl = (pts[pts.length - 1][key] - pts[pts.length - 2][key]) / ((pts[pts.length - 1].bid - pts[pts.length - 2].bid) || 1);
+        return pts[pts.length - 1][key] + sl * (b - pts[pts.length - 1].bid);
+    };
+    var at = function(b) { return { bid: Math.round(b), p: winbidProbAt(wb, b), net: Math.round(interp(b, 'net')), pre: Math.round(interp(b, 'pre')) }; };
+    var maxP = pts.filter(function(x) { return x.net === MIN_MARGIN_MANWON; })[0];
+    var bMax = maxP ? maxP.bid : interpBidForNet(pts, MIN_MARGIN_MANWON);
+    if (!bMax || bMax < row.minBid) return { infeasible: true, bMax: bMax, minBid: row.minBid };
+    var best = null, p70 = null, step = Math.max(1, bMax * 0.0025);
+    for (var b = row.minBid; b <= bMax + 0.5; b += step) {
+        var x = at(b), ev = x.p * x.net;
+        if (x.net > 0 && (!best || ev > best.ev)) best = Object.assign({ ev: ev }, x);
+        if (!p70 && x.p >= 0.7) p70 = x;
+    }
+    var out = { max: at(bMax), ev: best, p70: p70, rec: row.recBid ? at(row.recBid) : null, sale: row.sale };
+    out.band = marginBandFor(row.sale);
+    return out;
+}
+function interpBidForNet(pts, net) {
+    for (var i = 1; i < pts.length; i++) if (pts[i - 1].net >= net && pts[i].net <= net) { var t = (pts[i - 1].net - net) / ((pts[i - 1].net - pts[i].net) || 1); return pts[i - 1].bid + t * (pts[i].bid - pts[i - 1].bid); }
+    return null;
+}
+function bidPlanHtml(row, fmt) {
+    var pl; try { pl = bidPlanFor(row); } catch (e) { pl = null; }
+    if (!pl) return '';
+    if (pl.infeasible) return '<div class="dr-plan"><b>💡 입찰가 고르기</b><div class="dr-sub">최저가(' + fmt(pl.minBid) + ')로 사도 순이익 1천만이 안 남아서 입찰할 구간이 없어요.</div></div>';
+    var rate = function(x) { return x && pl.sale ? (x.pre / pl.sale * 100).toFixed(1) + '%' : '-'; };
+    var line = function(label, x, strong, tip) {
+        if (!x) return '';
+        var pc = Math.round(x.p * 100), col = pc >= 60 ? '#15803d' : (pc >= 35 ? '#b45309' : '#b91c1c');
+        return '<tr' + (strong ? ' class="ev"' : '') + '><td title="' + bbEsc(tip || '') + '">' + label + '</td><td class="r"><b>' + fmt(x.bid) + '</b></td><td class="r" style="color:' + col + ';">' + pc + '%</td><td class="r">' + fmt(x.net) + '</td><td class="r">' + rate(x) + '</td></tr>';
+    };
+    var bd = pl.band;
+    return '<div class="dr-plan"><b>💡 입찰가 고르기</b> <span class="dr-sub" style="margin:0;">마진이 나는 구간(순이익 1천만 이상) 안에서</span>'
+        + '<table class="pn-table"><thead><tr><th></th><th class="r">입찰가</th><th class="r">낙찰 가능성</th><th class="r">순이익(세후)</th><th class="r">마진율(세전)</th></tr></thead><tbody>'
+        + line('마진 확보 상한', pl.max, false, '순이익이 1천만 남는 가장 높은 입찰가 - 이보다 높게 쓰면 마진이 1천만 아래')
+        + line('<b>기대수익 최대</b>', pl.ev, true, '낙찰 가능성 × 순이익이 가장 큰 입찰가')
+        + (pl.p70 && (!pl.ev || Math.abs(pl.p70.bid - pl.ev.bid) > 1) ? line('낙찰 70%', pl.p70, false, '낙찰 가능성이 70%가 되는 가장 낮은 입찰가') : '')
+        + line('추천 입찰가', pl.rec, false, '목표 마진(500만 + 시세의 5~9%)을 지키는 입찰가')
+        + '</tbody></table>'
+        + (bd ? '<div class="dr-sub">이 가격대(' + bd.label + ')에서 낙찰 후 6개월 안에 같은 동·층 거래가 있던 사례 ' + bd.n + '건의 마진율(세전) 중앙 <b>' + bd.med.toFixed(1) + '%</b> (아래 25% ' + bd.p25.toFixed(1) + '% ~ 위 25% ' + bd.p75.toFixed(1) + '%) · 손해 ' + Math.round(bd.loss) + '%</div>' : '')
+        + '<div class="dr-sub">예상매도가 ' + fmt(pl.sale) + ' 기준(시장 일반가보다 약간 낮게 잡은 값). 낙찰 가능성은 🎲 예상 낙찰가 모델, 순이익은 앱 비용·세금 계산. 되팔기 사례는 옆집 거래가 섞일 수 있어 참고용이에요.</div></div>';
 }
 /* ════ 예상매도가 오차 범위 (2026-10, 사용자: "예상매도가를 점이 아니라 범위로") ════
    근거: 낙찰 후 6개월 안에 같은 동·층에서 되판 것으로 확인된 4,558건(2023~)에서 "실제 매도가 ÷ 예상매도가"의 10~90% 구간을
@@ -17118,6 +17208,7 @@ async function renderBidDrawer() {
             + (sbw.netLow != null ? '<div class="dr-sub">10% 확률로 범위 아래쪽(' + fmt(sbw.lo) + ')에 팔리면 추천 입찰가로 산 경우 대략 <b style="color:' + (sbw.netLow >= 0 ? '#15803d' : '#b91c1c') + ';">' + fmt(Math.abs(sbw.netLow)) + (sbw.netLow >= 0 ? ' 이익' : ' 손실') + '</b>(세금 변동 미반영) · 집 내부 상태·6개월 뒤 시세 변화는 포함 안 됨</div>' : '')
             + '</div>';
     }
+    h += bidPlanHtml(row, fmt);
     // 🎲 예상 낙찰가(2026-10) - 추천 입찰가(마진 확보 상한)와 나란히: 상한이 예상 낙찰가보다 높으면 낙찰 가능성도 있고 마진도 남음
     if (row.winbid) {
         var wbp = winbidLineHtml(row.winbid, false), wbg = row.winbid.gapPct;
@@ -23884,6 +23975,11 @@ function openWeeklyReport() {
             h += '<div class="wr-sec"><b>가장 크게 빗나간 사례</b><table class="pn-table"><thead><tr><th>물건</th><th class="r">유찰</th><th class="r">최저가</th><th class="r">예측</th><th class="r">실제</th><th class="r">차이</th><th class="r">응찰</th></tr></thead><tbody>'
                 + d.misses.map(function(x) { return '<tr><td>' + bbEsc(x.name || x.caseNo) + '<div class="pn-muted">' + bbEsc(x.region) + '</div></td><td class="r">' + (x.fails != null ? x.fails + '회' : '-') + '</td><td class="r">' + f(x.minbid) + '</td><td class="r">' + f(x.pred) + '</td><td class="r"><b>' + f(x.actual) + '</b></td><td class="r" style="color:' + (x.errPct > 0 ? '#b91c1c' : '#1d4ed8') + ';">' + pc(x.errPct, true) + '</td><td class="r">' + (x.bidders != null ? x.bidders + '명' : '-') + '</td></tr>'; }).join('')
                 + '</tbody></table><div class="pn-muted">응찰자가 아주 많거나 1명뿐이면 크게 빗나가기 쉬워요. 이런 사례는 입찰 전 알 수 없는 변수예요.</div></div>';
+        }
+        var mbs = marginBandStats().filter(function(x) { return x.med != null; });
+        if (mbs.length) {
+            h += '<div class="wr-sec"><b>매도가 구간별 마진율</b> (낙찰 후 6개월 안 같은 동·층 거래가 있던 사례, 세전) <table class="pn-table"><thead><tr><th>매도가</th><th class="r">건수</th><th class="r">마진율 중앙</th><th class="r">아래25%~위25%</th><th class="r">손해</th><th class="r">마진 중앙</th></tr></thead><tbody>'
+                + mbs.map(function(x) { return '<tr><td>' + x.label + '</td><td class="r">' + x.n + '</td><td class="r"><b>' + x.med.toFixed(1) + '%</b></td><td class="r">' + x.p25.toFixed(1) + '~' + x.p75.toFixed(1) + '%</td><td class="r">' + Math.round(x.loss) + '%</td><td class="r">' + toEok(String(Math.round(x.mgMed))) + '</td></tr>'; }).join('') + '</tbody></table><div class="pn-muted">팔린 것으로 확인된 건만 본 값이라 실제 평균은 더 낮을 수 있어요(옆집 거래 섞임·미매도 제외). 낙찰사례가 쌓이면 매주 갱신돼요.</div></div>';
         }
         var tr = d.trace6m;
         if (tr) {
