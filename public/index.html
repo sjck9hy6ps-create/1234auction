@@ -1356,6 +1356,14 @@ body.ui2 #auction-modal.am4 { width:620px; }
 #link-toast { position:fixed; left:50%; bottom:28px; transform:translateX(-50%); z-index:9200; background:#111827; color:#fff; border-radius:12px; padding:10px 16px; font-size:13px; box-shadow:0 8px 24px rgba(0,0,0,.3); max-width:calc(100vw - 32px); text-align:center; }
 #bb-drawer .dr-btns button { margin-right:4px; }
 </style>
+<style>
+/* ⓘ 계산 방식 설명(2026-10) */
+.bb2-i { display:inline-block; margin-left:3px; color:#9aa0a6; font-size:12px; cursor:pointer; font-weight:400; } .bb2-i:hover { color:var(--ui-blue,#1e5eff); }
+#info-pop { position:fixed; z-index:9300; background:#fff; border:1px solid #d6dbe1; border-radius:12px; box-shadow:0 10px 30px rgba(0,0,0,.25); font-size:12px; line-height:1.6; color:#374151; text-align:left; }
+#info-pop .ip-h { display:flex; justify-content:space-between; align-items:center; font-weight:800; font-size:13px; padding:10px 12px 4px; color:#111827; }
+#info-pop .ip-x { cursor:pointer; color:#6b7280; font-weight:400; padding:0 2px; }
+#info-pop .ip-b { padding:2px 12px 12px; max-height:min(60vh, 420px); overflow:auto; } #info-pop ul { margin:4px 0 6px 16px; padding:0; } #info-pop .ip-muted { color:#6b7280; font-size:11.5px; }
+</style>
 </head>
 <body>
 <div id="topbar">
@@ -17013,6 +17021,38 @@ var LITE_COLS = {
     rate: { label: '마진율', first: -1, val: function(r) { return r.pick && r.pick.ev && r.sale ? r.pick.ev.pre / r.sale : null; } },
     ev: { label: '기대수익', first: -1, val: function(r) { return r.pick && r.pick.ev ? r.pick.ev.p * r.pick.ev.net : null; } }
 };
+/* ⓘ 계산 방식 설명 (2026-10, 사용자: "추천가와 예상매도가는 계산방식 설명을 볼 수 있게 ⓘ를 넣어줘") - 누르면 그 자리에 설명이 뜨고, 다른 곳을 누르면 닫힘(손가락·마우스 모두) */
+var INFO_POP = {
+    sale: { t: '예상매도가는 어떻게 계산하나요?', h:
+        '<b>① 같은 단지·같은 평형(±3㎡) 실거래</b>(직거래·해제 제외)로 계산해요.<ul><li>최근 3개월 거래가 5건 이상이면 그 <b>중위값</b></li><li>아니면 최근 6개월 3건 이상의 <b>하위 40% 지점</b></li></ul>'
+        + '<b>② 층 보정</b>: 1층·저층·고층은 이 단지의 층별 가격 차이와 승강기 유무(건축물대장)로 올리거나 내려요.<br>'
+        + '<b>③ 거래가 적으면</b> 주변 비슷한 단지 거래로 보완하되, 이 단지 최근 거래가를 넘지 않게 해요.<br>'
+        + '<b>④ 네이버 매물</b>을 붙여넣었으면 더 싼 비슷한 매물(호가)이 상한이 돼요.<br>'
+        + '<b>⑤ 시장 일반 가격보다 살짝 낮게</b> 잡아요. 과거 되판 가격과 비교하면 평균 약 2% 낮고, 실제 매도가는 보통 이 값의 −12% ~ +13%(거래가 많은 단지 기준) 안에 들어와요.<br>'
+        + '<span class="ip-muted">수리 후 매도는 이보다 높고, 급매·직거래는 더 낮을 수 있어요. 집 안 상태는 반영되지 않아요.</span>' },
+    rec: { t: '추천가는 어떻게 계산하나요?', h:
+        '<b>순이익(세후)이 1천만 원 이상 남는 입찰가</b> 가운데 <b>"낙찰 가능성 × 순이익"이 가장 큰 가격</b> 하나예요. 모든 아파트에 같은 방식이에요.<ul>'
+        + '<li><b>순이익</b> = 예상매도가 − 입찰가 − 취득세·등기·명도·수리비·이사·청소·중개수수료·대출이자(보유 3개월 기본) − 인수 보증금·미납 관리비 − 종합소득세(내 자산의 주택 수·올해 소득 반영)</li>'
+        + '<li><b>낙찰 가능성</b> = 낙찰사례 2만여 건으로 만든 모델(최저가·감정가·유찰 횟수·지역·계절·인기·시세 대비 최저가)이 추정해요. 보통 오차 5~6%예요.</li></ul>'
+        + '최저가로 사도 순이익 1천만이 안 남으면 추천가가 없고 <b>패스</b>예요. 낙찰 가능성이 20% 미만이거나 🚩 강한 의심·🏢 대량 경매도 패스예요.<br>'
+        + '<span class="ip-muted">임장에서 확인한 인수 금액·미납 관리비·수리비를 넣으면 같은 계산이 다시 돌아 추천가가 바뀌어요. 마진 1천만이 남는 가장 높은 가격(상한)은 상세 창에 따로 보여요.</span>' }
+};
+function showInfoPop(key, el, ev) {
+    if (ev) ev.stopPropagation();
+    var old = document.getElementById('info-pop'); var same = old && old.dataset.key === key; if (old) old.remove();
+    if (same) return;
+    var d = INFO_POP[key]; if (!d) return;
+    var pop = document.createElement('div'); pop.id = 'info-pop'; pop.dataset.key = key;
+    pop.innerHTML = '<div class="ip-h">' + d.t + '<span class="ip-x" onclick="document.getElementById(\'info-pop\').remove()">✕</span></div><div class="ip-b">' + d.h + '</div>';
+    document.body.appendChild(pop);
+    var r = el.getBoundingClientRect(), w = Math.min(340, window.innerWidth - 20);
+    pop.style.width = w + 'px';
+    pop.style.left = Math.max(10, Math.min(r.left, window.innerWidth - w - 10)) + 'px';
+    var top = r.bottom + 6; if (top + 260 > window.innerHeight) top = Math.max(10, r.top - pop.offsetHeight - 6);
+    pop.style.top = top + 'px';
+}
+document.addEventListener('click', function(e) { var p = document.getElementById('info-pop'); if (p && !p.contains(e.target) && !(e.target.classList && e.target.classList.contains('bb2-i'))) p.remove(); });
+function infoI(key) { return '<span class="bb2-i" title="계산 방식 보기" onclick="showInfoPop(\'' + key + '\', this, event)">ⓘ</span>'; }
 function setLiteCol(k) {
     var s = bidBoardState;
     if (s.liteCol === k) s.liteDir = -s.liteDir; else { s.liteCol = k; s.liteDir = LITE_COLS[k].first; }
@@ -17082,7 +17122,7 @@ function renderBidBoardLite() {
     body.innerHTML = '<table class="bb2-table"><thead><tr>'
         + '<th>' + liteTh('verdict') + '</th><th>' + liteTh('date') + '</th><th>' + liteTh('name') + '</th><th class="r">' + liteTh('fails') + '</th>'
         + '<th>거래량 순위·회전율<div class="bb2-subsort">' + liteTh('turn', '회전율') + liteTh('liv', '생활권') + liteTh('band', '평형') + liteTh('dong', '동') + '</div></th>'
-        + '<th class="r">' + liteTh('minBid') + '</th><th class="r">' + liteTh('sale') + '</th><th class="r">' + liteTh('rec') + '</th><th class="r">' + liteTh('p') + '</th><th class="r">' + liteTh('net') + '</th><th class="r">' + liteTh('rate') + '</th>'
+        + '<th class="r">' + liteTh('minBid') + '</th><th class="r">' + liteTh('sale') + infoI('sale') + '</th><th class="r">' + liteTh('rec') + infoI('rec') + '</th><th class="r">' + liteTh('p') + '</th><th class="r">' + liteTh('net') + '</th><th class="r">' + liteTh('rate') + '</th>'
         + '</tr></thead><tbody>'
         + rows.map(function(r) {
             var go = r.visit.go, e = r.pick && r.pick.ev, idJs = String(r.id).replace(/\\/g, '\\\\').replace(/'/g, "\\'");
@@ -17513,8 +17553,8 @@ async function renderBidDrawer() {
             var pe = row.pick && row.pick.ev, go = row.visit && row.visit.go, pcc = pe ? Math.round(pe.p * 100) : null;
             var rt = pe && row.sale ? (pe.pre / row.sale * 100).toFixed(1) + '%' : '-';
             card = '<div class="dr-pickcard ' + (go ? 'go' : 'pass') + '"><div class="pk-v">' + (go ? '🚶 임장 추천' : '패스') + (row.visit && row.visit.why ? ' · ' + bbEsc(row.visit.why) : '') + '</div>'
-                + (pe ? '<div class="pk-big"><span>추천 입찰가</span><b>' + fmt(pe.bid) + '</b></div>'
-                    + '<div class="pk-sub">낙찰 가능성 <b>' + pcc + '%</b> · 예상 순이익(세후) <b>' + fmt(pe.net) + '</b> · 마진율(세전) ' + rt + '<br>예상매도가 ' + fmt(row.sale) + ' · 최저가 ' + fmt(row.minBid) + (row.pick.max ? ' · 마진 1천만 남는 상한 ' + fmt(row.pick.max.bid) : '') + '</div>'
+                + (pe ? '<div class="pk-big"><span>추천 입찰가 ' + infoI('rec') + '</span><b>' + fmt(pe.bid) + '</b></div>'
+                    + '<div class="pk-sub">낙찰 가능성 <b>' + pcc + '%</b> · 예상 순이익(세후) <b>' + fmt(pe.net) + '</b> · 마진율(세전) ' + rt + '<br>예상매도가 ' + fmt(row.sale) + ' ' + infoI('sale') + ' · 최저가 ' + fmt(row.minBid) + (row.pick.max ? ' · 마진 1천만 남는 상한 ' + fmt(row.pick.max.bid) : '') + '</div>'
                     : '<div class="pk-sub">추천가가 없어요 · 예상매도가 ' + fmt(row.sale) + ' · 최저가 ' + fmt(row.minBid) + '</div>')
                 + '</div>';
             h = h.slice(0, i1) + card + issueHtml + '<details class="dr-more"><summary>자세히 (근거·범위·실거래·비용)</summary>' + h.slice(i1, i2) + '</details>' + h.slice(i2);
