@@ -3442,7 +3442,7 @@ function openHomestayDetail(dongKey, pt) {
         var card = function(t, inner) { return '<div class="pn-card"><div class="pn-card-h">' + t + '</div>' + inner + '</div>'; };
         var row = function(k, v) { return v == null || v === '' ? '' : '<tr><td style="color:#6b7280;white-space:nowrap;padding:3px 8px 3px 0;">' + k + '</td><td>' + v + '</td></tr>'; };
         if (biz) {
-            var bunji = ((biz[1] || '').match(/(산?\d+(?:-\d+)?)\s*$/) || [])[1] || '';
+            var bunji = ((biz[1] || '').match(new RegExp(dongName + '\\s+(산?\\d+(?:-\\d+)?)')) || [])[1] || '';
             h += card('업소 정보', '<table>' + row('업소명', bbEsc(biz[0])) + row('영업상태', '영업중') + row('인허가일', hsYmd(biz[2])) + row('객실 수', biz[3] ? biz[3] + '개' : '미등록') + row('지번주소', bbEsc(biz[1])) + row('도로명주소', bbEsc(biz[6])) + '</table>');
             h += '<div id="hs-bld-box"></div><div id="hs-trade-box"></div>';
             // 같은 번지 거래기록(앱이 이미 불러온 지역 데이터에서)
@@ -3472,7 +3472,7 @@ function openHomestayDetail(dongKey, pt) {
         body.innerHTML = h || '<div class="pn-muted" style="padding:10px;">상세 정보가 아직 없어요(집계 갱신 후 표시)</div>';
         // 건축물대장(비동기)
         if (biz && biz[4]) {
-            var bunji2 = ((biz[1] || '').match(/(산?\d+(?:-\d+)?)\s*$/) || [])[1] || '';
+            var bunji2 = ((biz[1] || '').match(new RegExp(dongName + '\\s+(산?\\d+(?:-\\d+)?)')) || [])[1] || '';
             var box = document.getElementById('hs-bld-box');
             if (box && bunji2) {
                 box.innerHTML = '<div class="pn-card"><div class="pn-card-h">🏢 건축물대장</div><div class="pn-muted">불러오는 중…</div></div>';
