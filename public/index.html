@@ -4397,6 +4397,7 @@ function updateBadgeScale() {
 function attachBadgeHoverEnlarge(div, overlay, baseZIndex) {
     if (!div || !overlay) return;
     div.classList.add('map-badge');
+    div.__ov = overlay;
     div.addEventListener('mouseenter', function() {
         div.classList.add('map-badge-hover-enlarge');
         if (overlay.setZIndex) overlay.setZIndex(100000);
@@ -4459,7 +4460,7 @@ var BADGE_OVERLAP_MAX_ITER = 14;
 var BADGE_PUSH_MAX_OFFSET = 45;
 var pushedBadgeEls = [];
 function clearBadgePushOffsets() {
-    pushedBadgeEls.forEach(function(el) { el.style.transform = ''; });
+    pushedBadgeEls.forEach(function(el) { el.style.translate = ''; el.__sx = 0; el.__sy = 0; });
     pushedBadgeEls = [];
 }
 /* ⚠️ 2026-08: 처음엔 겹친 두 배지를 서로 반대 방향으로 절반씩 미는 물리 시뮬레이션 방식으로
@@ -4511,10 +4512,46 @@ function pushApartOverlaps(scale, divs) {
     });
     items.forEach(function(it) {
         if (Math.abs(it.dx) > 0.5 || Math.abs(it.dy) > 0.5) {
-            it.div.style.transform = 'translate(' + it.dx.toFixed(1) + 'px,' + it.dy.toFixed(1) + 'px) scale(' + scale + ')';
-            pushedBadgeEls.push(it.div);
+            it.div.style.translate = ((it.div.__sx || 0) + it.dx).toFixed(1) + 'px ' + ((it.div.__sy || 0) + it.dy).toFixed(1) + 'px';
+            if (pushedBadgeEls.indexOf(it.div) < 0) pushedBadgeEls.push(it.div);
         }
     });
+}
+/* 같은 주소(건물 좌표가 사실상 같은) 배지들은 축소/45px 밀기로는 못 풀려서 클릭이 안 됐음 →
+   겹친 그룹 중 기준점(앵커)이 25px 안에 모여 있는 것들은 원래 위치 근처에 세로로 펼쳐서 전부 따로 보이고 눌리게 함.
+   translate 속성(transform과 별개)을 써서 hover 확대(transform:scale !important)가 와도 위치가 되돌아가지 않음 */
+function spreadSameAddress(divs) {
+    if (!map || divs.length < 2) return;
+    var proj = map.getProjection && map.getProjection();
+    if (!proj) return;
+    var items = divs.map(function(d) {
+        var pt = d.__ov && d.__ov.getPosition ? proj.containerPointFromCoords(d.__ov.getPosition()) : null;
+        return { div: d, rect: d.getBoundingClientRect(), pt: pt };
+    });
+    var seen = items.map(function() { return false; });
+    for (var i = 0; i < items.length; i++) {
+        if (seen[i] || !items[i].pt) continue;
+        var g = [items[i]]; seen[i] = true;
+        for (var j = i + 1; j < items.length; j++) {
+            if (seen[j] || !items[j].pt) continue;
+            if (Math.abs(items[j].pt.x - items[i].pt.x) <= 25 && Math.abs(items[j].pt.y - items[i].pt.y) <= 25) { g.push(items[j]); seen[j] = true; }
+        }
+        if (g.length < 2) continue;
+        var overl = g.some(function(a, ai) { return g.some(function(b, bi) { return bi > ai && rectsOverlap(a.rect, b.rect); }); });
+        if (!overl) continue;
+        g.sort(function(a, b) { return a.rect.top - b.rect.top; });
+        var totalH = 0, cx = 0, cy = 0;
+        g.forEach(function(it) { totalH += it.rect.height; cx += it.rect.left + it.rect.width / 2; cy += it.rect.top + it.rect.height / 2; });
+        totalH += 4 * (g.length - 1); cx /= g.length; cy /= g.length;
+        var top = cy - totalH / 2;
+        g.forEach(function(it) {
+            var dx = cx - (it.rect.left + it.rect.width / 2), dy = top - it.rect.top;
+            it.div.__sx = dx; it.div.__sy = dy;
+            it.div.style.translate = dx.toFixed(1) + 'px ' + dy.toFixed(1) + 'px';
+            if (pushedBadgeEls.indexOf(it.div) < 0) pushedBadgeEls.push(it.div);
+            top += it.rect.height + 4;
+        });
+    }
 }
 function resolveBadgeOverlaps() {
     var mapEl = document.getElementById('map');
@@ -4538,6 +4575,7 @@ function resolveBadgeOverlaps() {
     // 실제 화면에 보이는 배지 수에 비례하게 함).
     var divs = collectVisibleBadgeDivs();
     if (divs.length < 2) return;
+    spreadSameAddress(divs);
     var stillOverlapped = false;
     for (var iter = 0; iter < BADGE_OVERLAP_MAX_ITER; iter++) {
         var rects = divs.map(function(d) { return d.getBoundingClientRect(); });
