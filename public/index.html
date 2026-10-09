@@ -16379,7 +16379,7 @@ function bidPlanFor(row, fast) {
         if (r && r.bid > 0) pts.push({ bid: r.bid, net: m, pre: r.preTax });
     });
     pts.sort(function(x, y) { return x.bid - y.bid; });
-    if (pts.length < 3) return null;
+    if (pts.length < 2) return null;  // 저가 물건은 높은 마진 지점의 입찰가가 0 이하라 점이 2개만 남을 수 있음
     var interp = function(b, key) {
         if (b <= pts[0].bid) { var s0 = (pts[1][key] - pts[0][key]) / ((pts[1].bid - pts[0].bid) || 1); return pts[0][key] + s0 * (b - pts[0].bid); }
         for (var i = 1; i < pts.length; i++) if (b <= pts[i].bid) { var t = (b - pts[i - 1].bid) / ((pts[i].bid - pts[i - 1].bid) || 1); return pts[i - 1][key] + t * (pts[i][key] - pts[i - 1][key]); }
@@ -16442,13 +16442,13 @@ function saleBandFor(row) {
    추천가 = 순이익(세후) 1천만 이상이 남는 구간 안에서 "낙찰 가능성 × 순이익"이 가장 큰 입찰가(아파트 전체 같은 계산).
    임장 후보 = 추천가가 있고(최저가로도 1천만이 안 남으면 패스) · 추천가의 낙찰 가능성이 VISIT_MIN_P 이상 · 🚩 강한 의심·🏢 대량 경매가 아닌 것. 나머지는 패스(이유 한 줄).
    임장에서 확인한 인수 금액·수리비 등을 넣으면 같은 계산이 다시 돌아 추천가가 바뀜. */
-var VISIT_MIN_P = 0.35;
+var VISIT_MIN_P = 0.20; // 임장은 비용이 작아 낙찰 가능성 20% 이상이면 후보(2026-10-09 이번 주 324건 중 28건). 추천가는 낙찰 가능성 × 순이익이 가장 큰 가격
 function computePick(row) {
     row.pick = null; row.visit = { go: false, why: '' };
     var t = row.type;
     if (t !== 'apt') { row.visit.why = '빌라는 아직 계산하지 않아요'; return; }
     if (!row.sale) { row.visit.why = '같은 단지 실거래 자료가 부족해요'; return; }
-    if (!row.winbid) { row.visit.why = '낙찰 가능성을 계산하지 못했어요(감정가·최저가·시세 확인)'; return; }
+    if (!row.winbid) { row.visit.why = row.wbBase ? '낙찰 가능성을 계산하지 못했어요(감정가·최저가 확인)' : '같은 단지 같은 평형 거래가 부족해서 낙찰 가능성을 계산할 수 없어요'; return; }
     var a = row.a;
     var sig = [row.sale, row.minBid, row.winbid.price, a.repair, a.assumedDeposit, a.unpaidMgmtFee, a.holdMonths, a.etc, myAssetsVer, row.fails].join('|');
     if (row._pickSig === sig && row._pickCache) { row.pick = row._pickCache; }
