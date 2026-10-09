@@ -129,7 +129,8 @@ def main():
                          m12=med(p12), factor=float(factor), resale=resale, resale_m=float(resale_m), actual=float(c.actual), dk=c.dk, nm=str(getattr(c, "buildingName", "") or "")))
     D = pd.DataFrame(rows)
     print(f"  앱 방식 재현 가능 사례 {len(D):,}건 (동 확인 6개월 내 되팔기 있음)")
-    D.to_pickle("tune-sale-est.pkl") if os.environ.get("KEEP_PKL") else None
+    if os.environ.get("KEEP_PKL"):
+        D.to_json("tune-sale-est.json", orient="records", force_ascii=False)
     run_tuning(D)
 
 

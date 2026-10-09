@@ -24,6 +24,6 @@ jobs:
         if: always()
         with:
           name: tune-sale-est
-          path: tune-sale-est.pkl
+          path: tune-sale-est.json
           if-no-files-found: ignore
           retention-days: 14
