@@ -3437,6 +3437,19 @@ export default async function handler(req, res) {
       return res.status(500).json({ error: err.message });
     }
   }
+  if (req.query.mode === 'homestayDong') {
+    res.setHeader('Cache-Control', 's-maxage=3600, stale-while-revalidate=86400');
+    try {
+      const key = String(req.query.key || '');
+      if (!key) return res.status(400).json({ error: 'key required' });
+      const { data, error } = await supabase.from('leader_follower_cache').select('payload').eq('id', 'signal|__homestay_list__').maybeSingle();
+      if (error) return res.status(500).json({ error: error.message });
+      const by = (data && data.payload && data.payload.byDong) || {};
+      return res.status(200).json({ list: by[key] || [] });
+    } catch (err) {
+      return res.status(500).json({ error: err.message });
+    }
+  }
   if (req.query.mode === 'homestay' || req.query.mode === 'homestayPts') {
     res.setHeader('Cache-Control', 's-maxage=3600, stale-while-revalidate=86400');
     try {

@@ -159,6 +159,15 @@ def main():
            for a, b, n, l, rg, dg in zip(pts["lat"], pts["lon"], pts["BPLC_NM"], pts["lic"], pts["region"], pts["dong"])]
     cyc.upsert_rows([{"id": "signal|__homestay_pts__", "payload": {"generatedAt": now.isoformat(), "pts": arr}, "fetched_at": now.isoformat()}])
     print(f"  지도용 점 {len(arr):,}건 저장")
+    # 상세 패널용: 동별 업소 목록(영업중) - [업소명, 지번주소, 허가일(YYYYMMDD), 객실수, 위도, 경도, 도로명주소]
+    lst = {}
+    for _, r in df[df["open"]].iterrows():
+        key = f"{r['region']}|{r['dong']}"
+        lst.setdefault(key, []).append([str(r["BPLC_NM"] or "")[:30], str(r["LOTNO_ADDR"] or ""), (int(r["lic"].strftime("%Y%m%d")) if pd.notna(r["lic"]) else None),
+                                        (int(r["rooms"]) if pd.notna(r["rooms"]) else None), (round(float(r["lat"]), 5) if pd.notna(r["lat"]) else None),
+                                        (round(float(r["lon"]), 5) if pd.notna(r["lon"]) else None), str(r["ROAD_NM_ADDR"] or "")])
+    cyc.upsert_rows([{"id": "signal|__homestay_list__", "payload": {"generatedAt": now.isoformat(), "byDong": lst}, "fetched_at": now.isoformat()}])
+    print(f"  동별 업소 목록 저장 ({len(lst):,}개 동)")
     print("✅ 저장 완료")
 
 

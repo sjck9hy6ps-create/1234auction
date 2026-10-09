@@ -3400,7 +3400,7 @@ function renderHomestayLayer() {
         for (var i = 0; i < homestayPts.length && n < 500; i++) {
             var p = homestayPts[i]; if (!inB(p[0], p[1])) continue;
             var st = (homestayAgg.byDong[p[4]] || {}).state || '안정', col = (HS_STATE[st] || HS_STATE['안정']).c;
-            add(p[0], p[1], '<div title="' + bbEsc(p[2]) + (p[3] ? ' · ' + p[3] + '년 허가' : '') + ' · 도시민박업(합법 등록)" style="display:flex;align-items:center;gap:2px;background:#7c3aed;color:#fff;border:2px solid #fff;border-radius:14px;padding:1px 7px 1px 4px;font-size:11px;font-weight:800;white-space:nowrap;box-shadow:0 0 0 2px #7c3aed,0 2px 6px rgba(0,0,0,.45);">🏠<span>민박</span></div>', 80, (function(k) { return function() { showHomestayPop(k); }; })(p[4]));
+            add(p[0], p[1], '<div title="' + bbEsc(p[2]) + (p[3] ? ' · ' + p[3] + '년 허가' : '') + ' · 도시민박업(합법 등록)" style="display:flex;align-items:center;gap:2px;background:#7c3aed;color:#fff;border:2px solid #fff;border-radius:14px;padding:1px 7px 1px 4px;font-size:11px;font-weight:800;white-space:nowrap;box-shadow:0 0 0 2px #7c3aed,0 2px 6px rgba(0,0,0,.45);">🏠<span>민박</span></div>', 80, (function(k, pp) { return function() { openHomestayDetail(k, pp); }; })(p[4], p));
             n++;
         }
     } else {
@@ -3410,10 +3410,78 @@ function renderHomestayLayer() {
             var s = HS_STATE[v.state] || HS_STATE['안정'], dn = k.split('|')[1];
             add(v.lat, v.lon, '<div style="background:#fff;border:2px solid ' + s.c + ';border-radius:8px;padding:0;text-align:center;box-shadow:0 2px 6px rgba(0,0,0,.3);white-space:nowrap;line-height:1.25;">'
                 + '<div style="background:' + s.c + ';color:#fff;font-size:10px;font-weight:bold;padding:1px 6px;border-radius:5px 5px 0 0;">🏠 ' + bbEsc(dn) + ' ' + s.t + '</div>'
-                + '<div style="font-size:11px;font-weight:bold;color:#1f2937;padding:1px 6px;">' + v.open + '곳 <span style="color:' + (v.net1y > 0 ? '#e11d48' : (v.net1y < 0 ? '#64748b' : '#6b7280')) + ';">' + (v.net1y > 0 ? '+' : '') + v.net1y + '/년</span></div></div>', 60, function() { showHomestayPop(k); });
+                + '<div style="font-size:11px;font-weight:bold;color:#1f2937;padding:1px 6px;">' + v.open + '곳 <span style="color:' + (v.net1y > 0 ? '#e11d48' : (v.net1y < 0 ? '#64748b' : '#6b7280')) + ';">' + (v.net1y > 0 ? '+' : '') + v.net1y + '/년</span></div></div>', 60, function() { openHomestayDetail(k, null); });
         });
     }
     if (homestayAgg.empty) { var h = document.getElementById('hs-hint'); if (h) { h.style.display = 'block'; h.textContent = '🏠 도시민박 집계 데이터가 아직 없어요(주간 분석 후 표시)'; } }
+}
+
+/* 🏠 도시민박 상세 패널 (2026-10-09, 사용자: 도시민박업 배지 클릭 시 거래내역 배지처럼 상세내역) - 거래 배지와 같은 오른쪽 패널에 표시
+   업소 핀 → 그 업소(허가일·객실·주소·건축물대장·같은 번지 거래기록·이 동 활성도), 동 배지 → 그 동 요약과 업소 목록 */
+function hsYmd(n) { var s = String(n || ''); return s.length === 8 ? s.slice(0, 4) + '.' + s.slice(4, 6) + '.' + s.slice(6) : '-'; }
+function hsOpenPanelShell(title, color) {
+    currentStandaloneBidCaseId = null; currentPanelApt = null; currentTrades = [];
+    document.getElementById('panel-title').innerHTML = title;
+    document.getElementById('panel-header').style.background = color || '#ede9fe';
+    document.getElementById('panel').style.display = 'flex';
+    var pb = document.getElementById('pyung-bar'); if (pb) pb.innerHTML = '';
+    return document.getElementById('panel-body');
+}
+function hsStatePill(st) { var s = HS_STATE[st] || HS_STATE['안정']; return '<span class="hs-pill" style="background:' + s.c + ';">' + s.t + '</span>'; }
+function openHomestayDetail(dongKey, pt) {
+    var ag = homestayAgg && homestayAgg.byDong ? homestayAgg.byDong[dongKey] : null, parts = dongKey.split('|');
+    var dongName = parts[1] || '', regionName = parts[0] || '';
+    var body = hsOpenPanelShell('🏠 ' + bbEsc(pt ? pt[2] : dongName + ' 도시민박') + ' <span class="hs-pill" style="background:#7c3aed;">도시민박업</span>', '#ede9fe');
+    body.innerHTML = '<div class="pn-muted" style="padding:10px;">불러오는 중…</div>';
+    if (map && pt) { try { map.panTo(new kakao.maps.LatLng(pt[0], pt[1])); } catch (e) {} }
+    fetch('/api/data-coverage?mode=homestayDong&key=' + encodeURIComponent(dongKey)).then(function(r) { return r.json(); }).then(function(d) {
+        var list = (d && d.list) || [];
+        var biz = pt ? list.filter(function(x) { return x[4] === pt[0] && x[5] === pt[1] && x[0].slice(0, 8) === String(pt[2] || '').slice(0, 8); })[0] || list.filter(function(x) { return x[4] === pt[0] && x[5] === pt[1]; })[0] : null;
+        var h = '';
+        var card = function(t, inner) { return '<div class="pn-card"><div class="pn-card-h">' + t + '</div>' + inner + '</div>'; };
+        var row = function(k, v) { return v == null || v === '' ? '' : '<tr><td style="color:#6b7280;white-space:nowrap;padding:3px 8px 3px 0;">' + k + '</td><td>' + v + '</td></tr>'; };
+        if (biz) {
+            var bunji = ((biz[1] || '').match(/(산?\d+(?:-\d+)?)\s*$/) || [])[1] || '';
+            h += card('업소 정보', '<table>' + row('업소명', bbEsc(biz[0])) + row('영업상태', '영업중') + row('인허가일', hsYmd(biz[2])) + row('객실 수', biz[3] ? biz[3] + '개' : '미등록') + row('지번주소', bbEsc(biz[1])) + row('도로명주소', bbEsc(biz[6])) + '</table>');
+            h += '<div id="hs-bld-box"></div><div id="hs-trade-box"></div>';
+            // 같은 번지 거래기록(앱이 이미 불러온 지역 데이터에서)
+            var same = bunji ? allAptList.filter(function(a) { var l = a.latest || {}; return l.dong === dongName && l.bunji === bunji && (a.trades || []).length; }) : [];
+            if (same.length) {
+                var rowsT = [];
+                same.forEach(function(a) { (a.trades || []).slice().sort(function(x, y) { return (y.year * 10000 + y.month * 100 + (y.day || 0)) - (x.year * 10000 + x.month * 100 + (x.day || 0)); }).slice(0, 6).forEach(function(t) { rowsT.push('<tr><td>' + String(t.year).slice(2) + '.' + String(t.month).padStart(2, '0') + '</td><td>' + (t.area > 0 ? toPyung(t.area) + '평' : '-') + '</td><td>' + t.floor + '층</td><td class="r"><b>' + toEok(t.amount) + '</b></td></tr>'); });
+                });
+                h += card('이 번지 최근 거래 <span class="pn-muted">' + same.length + '개 건물</span>', '<table class="pn-table"><thead><tr><th>계약</th><th>평형</th><th>층</th><th class="r">금액</th></tr></thead><tbody>' + rowsT.slice(0, 8).join('') + '</tbody></table>'
+                    + '<button class="pn-more-btn" onclick="openPanel(allAptList.filter(function(a){var l=a.latest||{};return l.dong===\'' + dongName.replace(/'/g, "\\'") + '\'&&l.bunji===\'' + bunji + '\'&&(a.trades||[]).length;})[0],' + pt[0] + ',' + pt[1] + ')">거래내역 상세 열기</button>');
+            }
+        }
+        if (ag) {
+            h += card('📍 ' + bbEsc(regionName + ' ' + dongName) + ' ' + hsStatePill(ag.state),
+                '<div>영업 중 <b>' + ag.open + '곳</b>' + (ag.rooms ? ' · 객실 ' + ag.rooms + '개' : '') + '</div>'
+                + '<div>최근 1년: 신규 허가 <b>' + ag.new1y + '</b> · 폐업 <b>' + ag.closed1y + '</b> → 순증 <b style="color:' + (ag.net1y > 0 ? '#e11d48' : '#64748b') + ';">' + (ag.net1y > 0 ? '+' : '') + ag.net1y + '</b></div>'
+                + '<div class="pn-muted">그 전 1년: 신규 ' + ag.new2y + ' · 폐업 ' + (ag.closed2y == null ? '-' : ag.closed2y) + '</div>'
+                + '<div class="pn-muted" style="font-size:11px;margin-top:4px;">활성화 = 순증 3곳 이상이고 10% 이상 늘 때 · 위축 = 순증 마이너스 또는 신규가 전년의 절반 이하. 합법 등록분만 집계돼 실제보다 적어요.</div>');
+        }
+        if (list.length) {
+            var sorted = list.slice().sort(function(x, y) { return (y[2] || 0) - (x[2] || 0); });
+            h += card('이 동 도시민박 업소 <span class="pn-muted">' + list.length + '곳 · 최근 허가순</span>', '<table class="pn-table"><thead><tr><th>업소</th><th>허가일</th><th class="r">객실</th></tr></thead><tbody>' + sorted.slice(0, 40).map(function(x) {
+                var ptJs = JSON.stringify([x[4], x[5], x[0]]).replace(/"/g, '&quot;');
+                return '<tr style="cursor:pointer;" onclick="openHomestayDetail(\'' + dongKey.replace(/'/g, "\\'") + '\',' + ptJs + ')"><td>' + bbEsc(x[0]) + '</td><td>' + hsYmd(x[2]) + '</td><td class="r">' + (x[3] || '-') + '</td></tr>';
+            }).join('') + '</tbody></table>' + (list.length > 40 ? '<div class="pn-muted">나머지 ' + (list.length - 40) + '곳은 지도를 확대해 핀으로 확인하세요</div>' : ''));
+        }
+        body.innerHTML = h || '<div class="pn-muted" style="padding:10px;">상세 정보가 아직 없어요(집계 갱신 후 표시)</div>';
+        // 건축물대장(비동기)
+        if (biz && biz[4]) {
+            var bunji2 = ((biz[1] || '').match(/(산?\d+(?:-\d+)?)\s*$/) || [])[1] || '';
+            var box = document.getElementById('hs-bld-box');
+            if (box && bunji2) {
+                box.innerHTML = '<div class="pn-card"><div class="pn-card-h">🏢 건축물대장</div><div class="pn-muted">불러오는 중…</div></div>';
+                loadBuildingInfo({ latest: { dong: dongName, name: '', bunji: bunji2 } }, biz[4], biz[5]).then(function(info) {
+                    var b2 = document.getElementById('hs-bld-box'); if (!b2) return;
+                    b2.innerHTML = info ? buildBuildingInfoHtml(info, { idPrefix: 'hs' }) : '<div class="pn-card"><div class="pn-card-h">🏢 건축물대장</div><div class="pn-muted">' + (loadBuildingInfo.lastFailed ? '조회가 몰려 일시적으로 못 가져왔어요 - 잠시 뒤 다시 눌러 보세요' : '정보 없음') + '</div></div>';
+                });
+            }
+        }
+    }).catch(function() { body.innerHTML = '<div class="pn-muted" style="padding:10px;">불러오지 못했어요. 잠시 뒤 다시 눌러 주세요.</div>'; });
 }
 function showHomestayPop(key) {
     var v = (homestayAgg && homestayAgg.byDong[key]) || null; if (!v) return;
