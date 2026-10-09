@@ -716,8 +716,11 @@ def wb_features(D):
 
 
 def wb_fit(D, iters=6):
+    return wb_fit_y(D, np.log(D["actual"] / D["est"]).values, iters)
+
+
+def wb_fit_y(D, y, iters=6):
     X = wb_features(D)
-    y = np.log(D["actual"] / D["est"]).values
     base = float(np.median(y))
     eff = {f: {} for f, _ in WB_FACTORS}
     pred = np.full(len(y), base)
@@ -751,6 +754,16 @@ def winbid_model(R, now):
     p = wb_predict(wb_fit(tr), te)
     res = np.log(te["actual"] / te["est"]).values - p
     full = wb_fit(D)
+    # 경쟁 예상(2026-10-10): 같은 요인으로 로그 응찰자 수를 맞추는 모델 - 앱이 하위 25%(낮음)·상위 25%(높음)로 표시
+    try:
+        Db = D[D["bidders"].notna() & (D["bidders"] > 0) & (D["sale"] >= 20230101)].copy()
+        if len(Db) >= 3000:
+            yb = np.log(Db["bidders"].astype(float)).values
+            mb = wb_fit_y(Db, yb)
+            pbv = wb_predict(mb, Db)
+            full["bid"] = {"base": mb["base"], "eff": mb["eff"], "q25": round(float(np.quantile(pbv, 0.25)), 4), "q75": round(float(np.quantile(pbv, 0.75)), 4), "n": int(len(Db)), "from": 20230101}
+    except Exception as e:
+        print("  경쟁 예상 모델 건너뜀:", e)
     full["resQ"] = [round(float(np.quantile(res, q / 100)), 4) for q in range(1, 100)]
     full["oos"] = {"from": cut, "n": int(len(te)), "medAbsErrPct": round(float(np.median(np.abs(np.exp(p) * te["est"] / te["actual"] - 1))) * 100, 1)}
     full["generatedAt"] = now; full["dataTo"] = int(D["sale"].max())
