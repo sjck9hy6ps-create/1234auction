@@ -16312,7 +16312,14 @@ function marginBandStats() {
         var sd = new Date(c.saleDate + 'T00:00:00').getTime(), mo = (ymdT(c.resaleMatch.date) - sd) / 86400000 / 30.4;
         var bid = c.finalBidPrice / 10000, resale = c.resaleMatch.amount;
         if (!(mo >= 0.45 && mo <= 6.1) || resale < bid * 0.7) return;
-        rows.push({ resale: resale, rate: c.estMargin / resale * 100, mg: c.estMargin, mo: mo });
+        // 2026-10-09 정정: 낙찰사례에 저장된 추정마진(estMargin)은 수리비·대출이자·중도상환수수료를 뺀 값이라 입찰가 고르기의 마진(수리·이자 포함)과 비교할 수 없었음
+        // → 같은 기준으로 맞춤: 도배·장판 최소 수리비 + 보유 기간(최소 3개월) 대출이자·중도상환수수료를 추가로 뺌(세금·보유세·인수 보증금은 미반영)
+        var pyg = c.areaM2 ? toPyung(c.areaM2) : 0, mg = c.estMargin;
+        try {
+            var ln = calcRegionAwareLoan('dealer', c.addrJibun || '', bid, Math.round((c.appraisalPrice || 0) / 10000), resale);
+            mg = c.estMargin - basicRepairFee(pyg) - calcLoanInterest(ln.amount, ln.rate, Math.max(3, mo + 1)) - calcLoanPrepayFee(ln.amount, DEFAULT_LOAN_PREPAY_FEE_RATE);
+        } catch (e) { return; }
+        rows.push({ resale: resale, rate: mg / resale * 100, mg: mg, mo: mo });
     });
     var q = function(a, p) { a = a.slice().sort(function(x, y) { return x - y; }); return a[Math.floor((a.length - 1) * p)]; };
     var defs = [['5천 미만', 0, 5000], ['5천~7천', 5000, 7000], ['7천~1억', 7000, 10000], ['1억~1.5억', 10000, 15000], ['1.5~2억', 15000, 20000], ['2~3억', 20000, 30000], ['3~4억', 30000, 40000], ['4~5억', 40000, 50000], ['5억 이상', 50000, 1e9]];
@@ -16380,7 +16387,7 @@ function bidPlanHtml(row, fmt) {
         + (pl.p70 && (!pl.ev || Math.abs(pl.p70.bid - pl.ev.bid) > 1) ? line('낙찰 70%', pl.p70, false, '낙찰 가능성이 70%가 되는 가장 낮은 입찰가') : '')
         + line('추천 입찰가', pl.rec, false, '목표 마진(500만 + 시세의 5~9%)을 지키는 입찰가')
         + '</tbody></table>'
-        + (bd ? '<div class="dr-sub">이 가격대(' + bd.label + ')에서 낙찰 후 6개월 안에 같은 동·층 거래가 있던 사례 ' + bd.n + '건의 마진율(세전) 중앙 <b>' + bd.med.toFixed(1) + '%</b> (아래 25% ' + bd.p25.toFixed(1) + '% ~ 위 25% ' + bd.p75.toFixed(1) + '%) · 손해 ' + Math.round(bd.loss) + '%</div>' : '')
+        + (bd ? '<div class="dr-sub">이 가격대(' + bd.label + ')에서 낙찰 후 6개월 안에 같은 동·층 거래가 있던 사례 ' + bd.n + '건의 마진율(세전, 같은 기준: 최소 수리비·대출이자 포함) 중앙 <b>' + bd.med.toFixed(1) + '%</b> (아래 25% ' + bd.p25.toFixed(1) + '% ~ 위 25% ' + bd.p75.toFixed(1) + '%) · 손해 ' + Math.round(bd.loss) + '%</div>' : '')
         + '<div class="dr-sub">예상매도가 ' + fmt(pl.sale) + ' 기준(시장 일반가보다 약간 낮게 잡은 값). 낙찰 가능성은 🎲 예상 낙찰가 모델, 순이익은 앱 비용·세금 계산. 되팔기 사례는 옆집 거래가 섞일 수 있어 참고용이에요.</div></div>';
 }
 /* ════ 예상매도가 오차 범위 (2026-10, 사용자: "예상매도가를 점이 아니라 범위로") ════
@@ -23978,7 +23985,7 @@ function openWeeklyReport() {
         }
         var mbs = marginBandStats().filter(function(x) { return x.med != null; });
         if (mbs.length) {
-            h += '<div class="wr-sec"><b>매도가 구간별 마진율</b> (낙찰 후 6개월 안 같은 동·층 거래가 있던 사례, 세전) <table class="pn-table"><thead><tr><th>매도가</th><th class="r">건수</th><th class="r">마진율 중앙</th><th class="r">아래25%~위25%</th><th class="r">손해</th><th class="r">마진 중앙</th></tr></thead><tbody>'
+            h += '<div class="wr-sec"><b>매도가 구간별 마진율</b> (낙찰 후 6개월 안 같은 동·층 거래가 있던 사례, 세전·최소 수리비와 대출이자 포함) <table class="pn-table"><thead><tr><th>매도가</th><th class="r">건수</th><th class="r">마진율 중앙</th><th class="r">아래25%~위25%</th><th class="r">손해</th><th class="r">마진 중앙</th></tr></thead><tbody>'
                 + mbs.map(function(x) { return '<tr><td>' + x.label + '</td><td class="r">' + x.n + '</td><td class="r"><b>' + x.med.toFixed(1) + '%</b></td><td class="r">' + x.p25.toFixed(1) + '~' + x.p75.toFixed(1) + '%</td><td class="r">' + Math.round(x.loss) + '%</td><td class="r">' + toEok(String(Math.round(x.mgMed))) + '</td></tr>'; }).join('') + '</tbody></table><div class="pn-muted">팔린 것으로 확인된 건만 본 값이라 실제 평균은 더 낮을 수 있어요(옆집 거래 섞임·미매도 제외). 낙찰사례가 쌓이면 매주 갱신돼요.</div></div>';
         }
         var tr = d.trace6m;
