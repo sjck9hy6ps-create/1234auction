@@ -1,0 +1,23 @@
+name: 공간대여(도시민박업) 밀집 지역 집계
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 21 * * 0'   # 매주 월요일 KST 06:00 (낙찰사례 분석 직후)
+
+jobs:
+  analyze:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install pandas numpy requests
+      - env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          PUBLIC_DATA_API_KEY: ${{ secrets.PUBLIC_DATA_API_KEY }}
+          PYTHONUNBUFFERED: '1'
+        run: python analyze-homestay.py
