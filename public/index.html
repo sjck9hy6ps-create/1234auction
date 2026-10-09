@@ -1297,6 +1297,10 @@ body.ui2 #auction-modal.am4 { width:620px; }
 <style>
 /* 📊 주간 리포트(2026-10) */
 #weekly-panel { position:fixed; top:70px; right:70px; width:min(560px, calc(100vw - 90px)); height:min(640px, calc(100vh - 100px)); overflow:auto; background:#f8f9fb; border:1px solid #e5e7eb; border-radius:12px; box-shadow:0 10px 30px rgba(0,0,0,.2); z-index:9050; font-size:12.5px; }
+#bld-panel { position:fixed; top:70px; left:80px; width:min(620px, calc(100vw - 100px)); height:min(700px, calc(100vh - 100px)); overflow:auto; background:#f8f9fb; border:1px solid #e5e7eb; border-radius:12px; box-shadow:0 10px 30px rgba(0,0,0,.25); z-index:135; font-size:12.5px; }
+#bld-panel .wr-h { position:sticky; top:0; background:#fff; padding:11px 14px; font-weight:800; font-size:14px; border-bottom:1px solid #eef0f3; display:flex; justify-content:space-between; z-index:2; }
+#bld-panel .wr-b { padding:10px 14px 16px; } #bld-panel table { width:100%; border-collapse:collapse; } #bld-panel td, #bld-panel th { padding:4px 6px; border-bottom:1px solid #eef0f3; text-align:left; vertical-align:top; }
+.hs-pill { display:inline-block; border-radius:8px; padding:1px 8px; font-weight:700; font-size:11px; color:#fff; } .hs-ok { background:#0d9488; } .hs-check { background:#d97706; } .hs-no { background:#b91c1c; } .hs-load { background:#9ca3af; }
 #weekly-panel .wr-h { position:sticky; top:0; background:#fff; padding:11px 14px; font-weight:800; font-size:14px; border-bottom:1px solid #eef0f3; display:flex; justify-content:space-between; z-index:2; }
 #weekly-panel .wr-b { padding:10px 14px 16px; }
 #weekly-panel .wr-kpis { display:grid; grid-template-columns:repeat(auto-fit, minmax(100px, 1fr)); gap:8px; margin:8px 0; }
@@ -3422,6 +3426,184 @@ function showHomestayPop(key) {
         + '<div>그 전 1년: 신규 ' + v.new2y + ' · 폐업 ' + (v.closed2y == null ? '-' : v.closed2y) + '</div>'
         + '<div style="color:#6b7280;font-size:11px;margin-top:4px;">활성화 = 순증 3곳 이상이고 1년 전보다 10% 이상 늘 때 · 위축 = 순증이 마이너스이거나 신규가 전년의 절반 이하일 때. 합법 등록분만 잡혀 실제보다 적어요.</div>';
     el.style.display = 'block';
+}
+
+/* ════ 🏠 빌라 도시민박업 가능성 점검 + 건물 상세 (2026-10-09, 사용자: 건축물대장 정밀 분석 · 건물 상세내역 · 빌라 입찰후보 중 도시민박 가능 건물 별도 표기) ════
+   외국인관광 도시민박업(관광진흥법)의 건물 쪽 요건을 건축물대장으로 점검: ① 주택(다세대·연립·다가구·단독·아파트)일 것 ② 주택 연면적 230㎡ 미만 ③ 도시지역(읍·면·리 아님)
+   ④ 지하·반지하 아닌지 ⑤ 위반건축물 아닌지(대장 API는 표시를 안 줘서 경매 메모의 '위반' 문구로만 감지, 아니면 열람 필요) + 참고(공동주택 입주민 동의, 신고자 실거주, 소방설비, 노후도, 승강기).
+   '검토 가능' = 건물 요건에서 걸리는 게 없다는 뜻이지 영업이 가능하다는 보장이 아님(실거주·동의·용도지역은 관할 확인 필요). */
+var hsBld = {}, hsQueue = [], hsRunning = 0, hsRenderT = null;
+function hsDongKey(addr) {
+    var t = String(addr || '').trim().split(/\s+/); if (t.length < 3) return null;
+    var sd = (function(s) { var m = [['전남광주', '전남광주'], ['광주', '전남광주'], ['전라남', '전남광주'], ['전남', '전남광주'], ['전북', '전북'], ['전라북', '전북'], ['경상남', '경남'], ['경남', '경남'], ['경상북', '경북'], ['경북', '경북'], ['충청남', '충남'], ['충남', '충남'], ['충청북', '충북'], ['충북', '충북'], ['강원', '강원'], ['제주', '제주'], ['세종', '세종']]; for (var i = 0; i < m.length; i++) if (s.indexOf(m[i][0]) === 0) return m[i][1]; return s.slice(0, 2); })(t[0]);
+    var city = t[1], rest;
+    if (t.length >= 4 && /시$/.test(city) && /구$/.test(t[2])) { city = city.slice(0, -1); rest = t.slice(3); } else rest = t.slice(2);
+    var dong = null; for (var i = 0; i < rest.length; i++) { if (/(동|가|읍|면|리)$/.test(rest[i]) && !/^\d/.test(rest[i])) { dong = rest[i]; break; } }
+    return dong ? sd + ' ' + city + '|' + dong : null;
+}
+function loadHomestayAgg(cb) {
+    if (homestayAgg) { cb && cb(); return; }
+    if (homestayLoading) { setTimeout(function() { loadHomestayAgg(cb); }, 800); return; }
+    homestayLoading = true;
+    fetch('/api/data-coverage?mode=homestay').then(function(r) { return r.json(); }).then(function(d) { homestayAgg = (d && d.byDong) ? d : { byDong: {}, empty: true }; homestayLoading = false; cb && cb(); }).catch(function() { homestayLoading = false; homestayAgg = { byDong: {}, empty: true }; cb && cb(); });
+}
+function hsFindUnit(info, a) {
+    var ex = (info && info.exposAreas) || []; if (!ex.length) return null;
+    var target = (parseFloat(a.pyung) || 0) * 3.305785, fl = parseInt(a.floor, 10), digits = String(a.unitNo || '').replace(/\D/g, '');
+    var c = ex.filter(function(e) { return /전유/.test(e.esUseNm || '') && e.area > 0; });
+    if (digits) { var m = c.filter(function(e) { return String(e.hoNm || '').replace(/\D/g, '') === digits; }); if (m.length) return m[0]; }
+    var best = null;
+    c.forEach(function(e) {
+        var fn = parseInt(String(e.flrNo || '').replace(/\D/g, ''), 10), under = /지하/.test(e.flrGbNm || '');
+        if (!isNaN(fl) && fl > 0 && (under || fn !== fl)) return;
+        var d = target ? Math.abs(e.area - target) : 0; if (target && d > 4) return;
+        if (!best || d < best.d) best = { e: e, d: d };
+    });
+    return best ? best.e : null;
+}
+function homestayCheck(a, info) {
+    var t = info && info.title, items = [], unit = hsFindUnit(info, a), memo = String((a.memo || '') + ' ' + (a.specialConditions || '') + ' ' + (a.notes || ''));
+    var add = function(k, st, note) { items.push({ k: k, st: st, note: note }); };
+    var HOUSE = /(다세대|연립|다가구|단독|아파트|도시형|공동주택|다중주택|주택)/, NOT = /(근린|사무|업무|판매|숙박|창고|공장|오피스텔|교육|의료|종교|위락|노유자)/;
+    var apt = t ? (t.mainPurps || '') : '', up = unit ? (unit.mainPurps || '') : '';
+    var purpose = up || apt;
+    if (!t) add('주택 여부', 'unknown', '건축물대장을 못 찾았어요(주소·지번 확인 후 다시 조회)');
+    else if (NOT.test(purpose) && !HOUSE.test(purpose)) add('주택 여부', 'no', '대장상 용도가 "' + purpose + '" - 주택이 아니면 도시민박업 신고 대상이 아니에요');
+    else if (HOUSE.test(purpose)) add('주택 여부', 'ok', '대장상 용도 "' + purpose + '"' + (up && apt && up !== apt ? ' (건물 전체 "' + apt + '")' : ''));
+    else add('주택 여부', 'unknown', '용도 "' + (purpose || '표시 없음') + '" - 직접 확인');
+    var isApt = /(다세대|연립|아파트|공동주택|도시형)/.test(purpose || apt);
+    var area = isApt ? (unit ? unit.area : ((parseFloat(a.pyung) || 0) * 3.305785 || null)) : (t ? t.totArea : null);
+    if (area == null) add('연면적 230㎡ 미만', 'unknown', '면적을 알 수 없어요');
+    else add('연면적 230㎡ 미만', area < 230 ? 'ok' : 'no', (isApt ? (unit ? '이 호 전유 ' : '경매 표기 ') : '건물 연면적 ') + Math.round(area * 10) / 10 + '㎡');
+    var tk = String(a.addr || '').split(/\s+/);
+    var rural = tk.slice(2).some(function(x) { return /(읍|면|리)$/.test(x) && !/^\d/.test(x); });
+    add('도시지역', rural ? 'warn' : 'ok', rural ? '읍·면·리 주소 - 농어촌 지역이면 이 업종(도시민박)이 아닌 농어촌민박 대상' : '동 지역(용도지역이 도시지역인지는 토지이용계획으로 최종 확인)');
+    var under = (unit && /지하/.test(unit.flrGbNm || '')) || parseInt(a.floor, 10) < 0 || /(반지하|지하)/.test(String(a.floor || '') + ' ' + memo);
+    add('지하·반지하', under ? 'warn' : 'ok', under ? '지하/반지하 가능성 - 소방·피난·관할 허가 확인' : '지상층' + (a.floor ? ' (' + a.floor + '층)' : ''));
+    var vio = /(위반건축|불법\s?증축|무허가|용도\s?변경|불법\s?개조|불법\s?쪼개)/.exec(memo);
+    add('위반건축물', vio ? 'no' : 'unknown', vio ? '경매 메모에 "' + vio[0] + '" 표시 - 위반건축물이면 영업신고가 막히거나 이행강제금 대상' : '대장 API는 위반 표시를 주지 않아요 → 정부24 건축물대장(PDF) 상단의 "위반건축물" 표기와 매각물건명세서를 확인');
+    if (isApt) add('입주민 동의', 'warn', '다세대·연립 등 공동주택은 같은 건물 입주민 동의서가 필요한 경우가 많아요(관할 확인)');
+    add('신고자 실거주', 'warn', '신고 요건에 신고자 본인 거주가 포함돼 있어, 직접 운영/전대차 방식은 법률·세무 전문가 확인이 필요해요');
+    if (t) {
+        var elv = (t.rideElvtCnt || 0) + (t.emgenElvtCnt || 0), yr = t.useAprDay ? parseInt(String(t.useAprDay).slice(0, 4), 10) : null;
+        add('건물 규모', 'info', (t.grndFlrCnt || '-') + '층' + (t.ugrndFlrCnt ? ' (지하' + t.ugrndFlrCnt + ')' : '') + ' · 세대 ' + (t.hhldCnt || '-') + ' · 승강기 ' + (elv ? elv + '대' : '없음') + (!elv && (t.grndFlrCnt || 0) >= 4 ? ' → 고층부 접근성 낮음' : ''));
+        add('사용승인', 'info', (yr ? yr + '년' + (new Date().getFullYear() - yr >= 30 ? ' (30년 이상 - 노후, 수리·소방 부담 큼)' : '') : '-') + (t.strct ? ' · ' + t.strct : ''));
+    }
+    var verdict = items.some(function(i) { return i.st === 'no'; }) ? 'no' : (items.filter(function(i) { return i.k === '주택 여부' || i.k === '연면적 230㎡ 미만'; }).every(function(i) { return i.st === 'ok'; }) && !items.some(function(i) { return i.k === '지하·반지하' && i.st === 'warn'; }) && !rural ? 'ok' : 'check');
+    return { verdict: verdict, items: items, unit: unit };
+}
+function hsPill(v) {
+    if (!v) return '<span class="hs-pill hs-load">조회 중…</span>';
+    return v === 'ok' ? '<span class="hs-pill hs-ok" title="건물 요건(주택·230㎡ 미만·지상·도시지역)에서 걸리는 게 없어요. 실거주·동의·위반건축물은 따로 확인">🏠 도시민박 검토 가능</span>'
+        : (v === 'no' ? '<span class="hs-pill hs-no" title="건물 요건에서 막히는 항목이 있어요">🚫 요건 불가</span>' : '<span class="hs-pill hs-check" title="일부 항목을 직접 확인해야 해요">🏠 확인 필요</span>');
+}
+function ensureHomestayCheck(row) {
+    var id = row.id; if (hsBld[id]) return;
+    hsBld[id] = { loading: true }; hsQueue.push(row); hsPump();
+}
+function hsPump() {
+    while (hsRunning < 3 && hsQueue.length) {
+        (function(row) {
+            hsRunning++;
+            var a = row.a, ctx = { dong: a.dong, bunji: a.bunji, name: a.name || row.name, aptDong: a.aptDong };
+            var done = function(info) {
+                try { hsBld[row.id] = { info: info, chk: homestayCheck(a, info) }; } catch (e) { hsBld[row.id] = { info: info, chk: { verdict: 'check', items: [], unit: null } }; }
+                hsRunning--; hsPump(); clearTimeout(hsRenderT); hsRenderT = setTimeout(function() { if (bidBoardState.visit === 'villa') renderBidBoard(); }, 400);
+            };
+            if (!a.lat || !a.lon || !a.bunji) { done(null); return; }
+            loadBuildingInfo({ latest: { dong: ctx.dong, name: ctx.name, bunji: ctx.bunji, aptDong: ctx.aptDong } }, a.lat, a.lon, false, a.bCode || null).then(done).catch(function() { done(null); });
+        })(hsQueue.shift());
+    }
+}
+function hsNearby(a, radiusM) {
+    if (!homestayPts || !a.lat || !a.lon) return null;
+    var n = 0, R = 6371000, la0 = a.lat * Math.PI / 180;
+    for (var i = 0; i < homestayPts.length; i++) {
+        var p = homestayPts[i], dy = (p[0] - a.lat) * Math.PI / 180 * R, dx = (p[1] - a.lon) * Math.PI / 180 * R * Math.cos(la0);
+        if (dx * dx + dy * dy <= radiusM * radiusM) n++;
+    }
+    return n;
+}
+function villaMetroRows() { return bidBoardRows.filter(function(r) { return r.type === 'villa' && r.metro && !(r.dday && r.dday.diffDays < 0); }); }
+function renderVillaLite(body) {
+    var rows = villaMetroRows(), s = bidBoardState;
+    loadHomestayAgg(function() { if (bidBoardState.visit === 'villa') renderBidBoard(); });
+    rows.forEach(ensureHomestayCheck);
+    var rank = { ok: 0, check: 1, no: 2 };
+    rows = rows.slice().sort(function(x, y) {
+        var vx = hsBld[x.id] && hsBld[x.id].chk ? rank[hsBld[x.id].chk.verdict] : 1.5, vy = hsBld[y.id] && hsBld[y.id].chk ? rank[hsBld[y.id].chk.verdict] : 1.5;
+        if (vx !== vy) return vx - vy;
+        return (x.dday ? x.dday.diffDays : 9999) - (y.dday ? y.dday.diffDays : 9999);
+    });
+    var okN = rows.filter(function(r) { return hsBld[r.id] && hsBld[r.id].chk && hsBld[r.id].chk.verdict === 'ok'; }).length;
+    var money = function(v) { return v ? toEok(String(Math.round(v))) : '-'; };
+    var h = '<div class="bb-sub" style="padding:6px 4px;">수도권 빌라 ' + rows.length + '건 · 🏠 도시민박 검토 가능 <b>' + okN + '건</b> (건축물대장으로 건물 요건 점검 · 가격 계산은 아직 안 해요 · 행을 누르면 건물 상세) '
+        + (homestayAgg && !homestayAgg.empty ? '' : '· 도시민박 지역 집계 불러오는 중…') + '</div>';
+    if (!rows.length) { body.innerHTML = h + '<div class="bb-empty">수도권 빌라 입찰후보가 없어요.</div>'; return; }
+    h += '<table class="bb2-table"><thead><tr><th>도시민박</th><th>입찰일</th><th>물건</th><th class="r">최저가</th><th class="r">감정가</th><th>건물(대장)</th><th>이 동의 도시민박</th></tr></thead><tbody>';
+    rows.forEach(function(r) {
+        var st = hsBld[r.id] || {}, chk = st.chk, t = st.info && st.info.title, idJs = String(r.id).replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+        var dk = hsDongKey(r.a.addr), ag = dk && homestayAgg && homestayAgg.byDong ? homestayAgg.byDong[dk] : null, sc = ag ? (HS_STATE[ag.state] || HS_STATE['안정']) : null;
+        var elv = t ? (t.rideElvtCnt || 0) + (t.emgenElvtCnt || 0) : 0;
+        h += '<tr class="bb2-row ' + (chk && chk.verdict === 'ok' ? 'go' : 'pass') + '" onclick="openBuildingDetail(\'' + idJs + '\')">'
+            + '<td>' + hsPill(chk && chk.verdict) + '</td>'
+            + '<td>' + (r.dday ? '<span class="bb-dday' + (r.dday.diffDays >= 0 && r.dday.diffDays <= 3 ? ' soon' : '') + '">' + bbEsc(r.dday.label) + '</span>' : '-') + '<div class="bb-sub">' + bbEsc(r.a.bidDate || '') + '</div></td>'
+            + '<td class="bb2-name"><b>' + bbEsc(r.name) + '</b><div class="bb-sub">' + bbEsc(r.region) + (r.pyung ? ' · ' + r.pyung + '평' : '') + (r.floor ? ' · ' + r.floor + '층' : '') + '</div></td>'
+            + '<td class="r">' + money(r.minBid) + '</td><td class="r">' + money(r.appraisal) + '</td>'
+            + '<td>' + (t ? bbEsc(t.mainPurps || '') + '<div class="bb-sub">' + (t.grndFlrCnt || '-') + '층 · ' + (t.useAprDay ? String(t.useAprDay).slice(0, 4) + '년' : '-') + ' · 승강기 ' + (elv ? elv + '대' : '없음') + '</div>' : (st.loading ? '<span class="bb-sub">조회 중…</span>' : '<span class="bb-sub">대장 없음</span>')) + '</td>'
+            + '<td>' + (ag ? '<span class="hs-pill" style="background:' + sc.c + ';">' + sc.t + '</span><div class="bb-sub">영업 ' + ag.open + '곳 · 순증 ' + (ag.net1y > 0 ? '+' : '') + ag.net1y + '/년</div>' : '<span class="bb-sub">' + (homestayAgg ? '등록 업소 거의 없음' : '-') + '</span>') + '</td></tr>';
+    });
+    body.innerHTML = h + '</tbody></table>';
+}
+function openBuildingDetail(id) {
+    var row = bidBoardRows.filter(function(r) { return String(r.id) === String(id); })[0]; if (!row) return;
+    var p = document.getElementById('bld-panel'); if (p) p.remove();
+    p = document.createElement('div'); p.id = 'bld-panel'; document.body.appendChild(p);
+    p.innerHTML = '<div class="wr-h">🏘️ 건물 상세 · ' + bbEsc(row.name) + ' <span class="rm-x" onclick="document.getElementById(\'bld-panel\').remove()">✕</span></div><div class="wr-b">건축물대장 불러오는 중…</div>';
+    try { floatWin(p, 'bld', '.wr-h'); } catch (e) {}
+    var a = row.a;
+    var render = function() {
+        var st = hsBld[row.id]; if (!st || st.loading) { setTimeout(render, 700); return; }
+        var b = p.querySelector('.wr-b'); if (!b) return;
+        var info = st.info, t = info && info.title, chk = st.chk, f = function(v, u) { return v == null || v === '' ? '-' : v + (u || ''); };
+        var h = '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">' + hsPill(chk.verdict) + '<span class="bb-sub">' + bbEsc(a.addr || '') + (a.floor ? ' · ' + a.floor + '층' : '') + (a.pyung ? ' · ' + a.pyung + '평' : '') + '</span></div>';
+        h += '<h4 style="margin:10px 0 4px;">🏠 도시민박업 건물 요건 점검</h4><table>';
+        var icon = { ok: '✅', no: '❌', warn: '⚠️', unknown: '❔', info: 'ℹ️' };
+        chk.items.forEach(function(i) { h += '<tr><td style="white-space:nowrap;">' + icon[i.st] + ' <b>' + bbEsc(i.k) + '</b></td><td>' + bbEsc(i.note) + '</td></tr>'; });
+        h += '</table><div class="bb-sub" style="margin-top:4px;">✅ 걸리는 것 없음 · ⚠️ 확인 필요 · ❌ 요건 미충족 · ❔ 자료로는 알 수 없음. "검토 가능"은 영업 가능 보장이 아니에요(실거주·입주민 동의·소방·세무는 관할·전문가 확인).</div>';
+        var dk = hsDongKey(a.addr), ag = dk && homestayAgg && homestayAgg.byDong ? homestayAgg.byDong[dk] : null, near = hsNearby(a, 200);
+        h += '<h4 style="margin:12px 0 4px;">📍 이 지역 도시민박 현황</h4>';
+        h += ag ? '<div><span class="hs-pill" style="background:' + (HS_STATE[ag.state] || HS_STATE['안정']).c + ';">' + (HS_STATE[ag.state] || HS_STATE['안정']).t + '</span> ' + bbEsc(dk.replace('|', ' ')) + ' 영업 <b>' + ag.open + '곳</b> · 최근 1년 신규 ' + ag.new1y + ' · 폐업 ' + ag.closed1y + ' → 순증 <b>' + (ag.net1y > 0 ? '+' : '') + ag.net1y + '</b> (그 전 1년 신규 ' + ag.new2y + ')</div>' : '<div class="bb-sub">이 동은 등록된 도시민박 업소가 거의 없거나 집계에 없어요.</div>';
+        h += '<div>반경 200m 등록 업소: ' + (near == null ? '<span class="bb-sub">불러오는 중…</span>' : '<b>' + near + '곳</b>') + '</div>';
+        if (t) {
+            var elv = (t.rideElvtCnt || 0) + (t.emgenElvtCnt || 0), park = (t.indrAutoUtcnt || 0) + (t.oudrAutoUtcnt || 0) + (t.indrMechUtcnt || 0) + (t.oudrMechUtcnt || 0);
+            h += '<h4 style="margin:12px 0 4px;">🏢 건축물대장 표제부</h4><table>'
+                + '<tr><td>도로명주소</td><td>' + bbEsc(f(t.newPlatPlc)) + '</td></tr><tr><td>지번주소</td><td>' + bbEsc(f(t.platPlc)) + '</td></tr>'
+                + '<tr><td>주용도 / 구조</td><td>' + bbEsc(f(t.mainPurps)) + ' / ' + bbEsc(f(t.strct)) + (t.roofCd ? ' / ' + bbEsc(t.roofCd) : '') + '</td></tr>'
+                + '<tr><td>층수 · 높이</td><td>지상 ' + f(t.grndFlrCnt) + '층' + (t.ugrndFlrCnt ? ' · 지하 ' + t.ugrndFlrCnt + '층' : '') + (t.heit ? ' · ' + t.heit + 'm' : '') + '</td></tr>'
+                + '<tr><td>세대·가구·호</td><td>세대 ' + f(t.hhldCnt) + ' · 가구 ' + f(t.fmlyCnt) + '</td></tr>'
+                + '<tr><td>대지·건축·연면적</td><td>' + f(t.platArea && Math.round(t.platArea), '㎡') + ' · ' + f(t.archArea && Math.round(t.archArea), '㎡') + ' · ' + f(t.totArea && Math.round(t.totArea), '㎡') + '</td></tr>'
+                + '<tr><td>건폐율 / 용적률</td><td>' + f(t.bcRat, '%') + ' / ' + f(t.vlRat, '%') + '</td></tr>'
+                + '<tr><td>승강기 · 주차</td><td>승강기 ' + (elv ? elv + '대' : '없음') + ' · 주차 ' + (park || '-') + '대</td></tr>'
+                + '<tr><td>허가 · 사용승인</td><td>' + bbEsc(formatDate8(t.pmsDay) || '-') + ' · ' + bbEsc(formatDate8(t.useAprDay) || '-') + '</td></tr>'
+                + (t.engrGrade ? '<tr><td>에너지효율등급</td><td>' + bbEsc(t.engrGrade) + '</td></tr>' : '') + '</table>';
+        }
+        if (chk.unit) {
+            var u = chk.unit;
+            h += '<h4 style="margin:12px 0 4px;">🚪 경매 물건 호실(전유부 추정)</h4><div>' + bbEsc(u.hoNm || '-') + ' · ' + bbEsc((u.flrGbNm || '') + ' ' + (u.flrNo || '')) + ' · 전용 ' + (u.area ? Math.round(u.area * 10) / 10 + '㎡(' + toPyung(u.area) + '평)' : '-') + ' · ' + bbEsc(u.mainPurps || '') + '</div>';
+        }
+        var ex = (info && info.exposAreas || []).filter(function(e) { return /전유/.test(e.esUseNm || '') && e.area > 0; });
+        if (ex.length) {
+            var byFl = {}; ex.forEach(function(e) { var k = (e.flrGbNm || '') + (e.flrNo || ''); (byFl[k] = byFl[k] || []).push(e); });
+            h += '<details style="margin-top:8px;"><summary><b>호실별 전유면적 (' + ex.length + '호)</b></summary><table>' + Object.keys(byFl).slice(0, 30).map(function(k) { return '<tr><td style="white-space:nowrap;">' + bbEsc(k) + '</td><td>' + byFl[k].map(function(e) { return bbEsc(e.hoNm || '') + ' ' + Math.round(e.area * 10) / 10 + '㎡(' + bbEsc(e.mainPurps || '') + ')'; }).join(' · ') + '</td></tr>'; }).join('') + '</table></details>';
+        }
+        if (info && info.price && info.price.price) h += '<div class="bb-sub" style="margin-top:8px;">공시가격(' + info.price.year + '): ' + toEok(String(Math.round(info.price.price / 10000))) + '</div>';
+        b.innerHTML = h;
+    };
+    ensureHomestayCheck(row);
+    loadHomestayAgg(render);
+    if (!homestayPts) fetch('/api/data-coverage?mode=homestayPts').then(function(r) { return r.json(); }).then(function(d) { homestayPts = (d && d.pts) || []; if (document.getElementById('bld-panel')) render(); }).catch(function() {});
+    render();
 }
 function toggleShowBidCaseBadges() {
     showBidCaseBadges = !showBidCaseBadges;
@@ -17287,12 +17469,14 @@ function renderBidBoardLite() {
     if (sel) sel.innerHTML = '<option value="">지역 전체</option>' + Object.keys(regions).sort().map(function(k) { return '<option value="' + bbEsc(k) + '"' + (s.region === k ? ' selected' : '') + '>' + bbEsc(k) + ' (' + regions[k] + ')</option>'; }).join('');
     var bar = document.getElementById('bb2-tabs');
     if (!bar) { bar = document.createElement('span'); bar.id = 'bb2-tabs'; var tools = document.querySelector('#bid-board .bb-tools'); tools.insertBefore(bar, tools.firstChild); }
-    bar.innerHTML = [['go', '🚶 임장 후보', goN], ['pass', '패스', passN], ['all', '전체', goN + passN]].map(function(t) {
+    var villaMetroN = villaMetroRows().length;
+    bar.innerHTML = [['go', '🚶 임장 후보', goN], ['pass', '패스', passN], ['all', '전체', goN + passN], ['villa', '🏘️ 빌라(수도권)', villaMetroN]].map(function(t) {
         return '<button class="bb-tab' + (s.visit === t[0] ? ' on' : '') + '" onclick="setLiteVisit(\'' + t[0] + '\')">' + t[1] + ' <b>' + t[2] + '</b></button>';
     }).join('')
         + ' <span class="bb-sub">열 이름을 누르면 오름차순·내림차순으로 정렬돼요</span>'
         + ' <a href="#" class="bb2-link" onclick="toggleLitePast();return false;">' + (s.pastLite ? '지난 입찰 숨기기' : '지난 입찰 ' + pastN + '건 보기') + '</a>'
         + (villaN ? ' <span class="bb-sub">빌라 ' + villaN + '건은 아직 계산하지 않아요</span>' : '') + (pend ? ' <span class="bb-sub">⏳ ' + pend + '건 계산 중</span>' : '');
+    if (s.visit === 'villa') { renderVillaLite(document.getElementById('bb-body')); var cn0 = document.getElementById('bb-cache-note'); if (cn0) cn0.style.display = 'none'; return; }
     var rows = cur.filter(function(r) { return !r.pending && r.visit && (s.visit === 'all' || (s.visit === 'go') === r.visit.go); });
     var colDef = LITE_COLS[s.liteCol] || LITE_COLS.verdict;
     rows.sort(function(x, y) {
