@@ -4775,34 +4775,43 @@ function pushApartOverlaps(scale, divs) {
    translate 속성(transform과 별개)을 써서 hover 확대(transform:scale !important)가 와도 위치가 되돌아가지 않음 */
 function spreadSameAddress(divs) {
     if (!map || divs.length < 2) return;
-    var proj = map.getProjection && map.getProjection();
-    if (!proj) return;
+    // 지도를 넓게 볼 땐(레벨 6 이상) 펼치지 않음 - 같은 화면 픽셀 안에 서로 다른 건물이 몰려 거대한 세로 줄이 생김(겹친 배지는 클릭하면 전체 목록이 뜸)
+    if (map.getLevel() > 5) return;
     var items = divs.map(function(d) {
-        var pt = d.__ov && d.__ov.getPosition ? proj.containerPointFromCoords(d.__ov.getPosition()) : null;
-        return { div: d, rect: d.getBoundingClientRect(), pt: pt };
+        var pos = d.__ov && d.__ov.getPosition ? d.__ov.getPosition() : null;
+        return { div: d, rect: d.getBoundingClientRect(), la: pos ? pos.getLat() : null, lo: pos ? pos.getLng() : null };
     });
+    // 같은 주소 = 실제 좌표 차이가 약 15m 이내(위도 1도≈111km). 화면 픽셀이 아니라 지리 좌표로 비교해야 줌과 무관하게 같은 건물만 묶임
+    var near = function(a, b) { return Math.abs(a.la - b.la) * 111000 <= 15 && Math.abs(a.lo - b.lo) * 91000 <= 15; };
     var seen = items.map(function() { return false; });
     for (var i = 0; i < items.length; i++) {
-        if (seen[i] || !items[i].pt) continue;
+        if (seen[i] || items[i].la == null) continue;
         var g = [items[i]]; seen[i] = true;
         for (var j = i + 1; j < items.length; j++) {
-            if (seen[j] || !items[j].pt) continue;
-            if (Math.abs(items[j].pt.x - items[i].pt.x) <= 25 && Math.abs(items[j].pt.y - items[i].pt.y) <= 25) { g.push(items[j]); seen[j] = true; }
+            if (seen[j] || items[j].la == null) continue;
+            if (near(items[i], items[j])) { g.push(items[j]); seen[j] = true; }
         }
         if (g.length < 2) continue;
         var overl = g.some(function(a, ai) { return g.some(function(b, bi) { return bi > ai && rectsOverlap(a.rect, b.rect); }); });
         if (!overl) continue;
         g.sort(function(a, b) { return a.rect.top - b.rect.top; });
-        var totalH = 0, cx = 0, cy = 0;
-        g.forEach(function(it) { totalH += it.rect.height; cx += it.rect.left + it.rect.width / 2; cy += it.rect.top + it.rect.height / 2; });
-        totalH += 4 * (g.length - 1); cx /= g.length; cy /= g.length;
-        var top = cy - totalH / 2;
-        g.forEach(function(it) {
-            var dx = cx - (it.rect.left + it.rect.width / 2), dy = top - it.rect.top;
+        // 한 줄에 최대 4개, 넘으면 옆으로 열을 늘려 배치(한 건물에 경매가 많아도 세로로 끝없이 늘어나지 않게)
+        var PER_COL = 4, cols = Math.ceil(g.length / PER_COL), colW = 0, cx = 0, cy = 0;
+        g.forEach(function(it) { colW = Math.max(colW, it.rect.width); cx += it.rect.left + it.rect.width / 2; cy += it.rect.top + it.rect.height / 2; });
+        cx /= g.length; cy /= g.length;
+        var colH = [];
+        for (var c = 0; c < cols; c++) {
+            var h = 0, cnt = 0; g.slice(c * PER_COL, (c + 1) * PER_COL).forEach(function(it) { h += it.rect.height; cnt++; });
+            colH.push(h + 4 * (cnt - 1));
+        }
+        g.forEach(function(it, idx) {
+            var c = Math.floor(idx / PER_COL), r = idx % PER_COL;
+            var top = cy - colH[c] / 2 + g.slice(c * PER_COL, c * PER_COL + r).reduce(function(sum, x) { return sum + x.rect.height + 4; }, 0);
+            var colCx = cx + (c - (cols - 1) / 2) * (colW + 6);
+            var dx = colCx - (it.rect.left + it.rect.width / 2), dy = top - it.rect.top;
             it.div.__sx = dx; it.div.__sy = dy;
             it.div.style.translate = dx.toFixed(1) + 'px ' + dy.toFixed(1) + 'px';
             if (pushedBadgeEls.indexOf(it.div) < 0) pushedBadgeEls.push(it.div);
-            top += it.rect.height + 4;
         });
     }
 }
