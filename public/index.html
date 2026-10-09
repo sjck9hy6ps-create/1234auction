@@ -1323,6 +1323,7 @@ body.ui2 #auction-modal.am4 { width:620px; }
 .bb2-row { cursor:pointer; } .bb2-row:hover td { background:#f5f9ff; } .bb2-row.sel td { background:#eef4ff !important; }
 .bb2-row.pass td { color:#6b7280; }
 .bb2-go { display:inline-block; background:#e8f5e9; color:#15803d; font-weight:800; border-radius:12px; padding:2px 9px; white-space:nowrap; }
+.bb2-r1 { background:#dcfce7 !important; color:#166534 !important; } .bb2-r2 { background:#e0f2fe !important; color:#075985 !important; } .bb2-r3 { background:#fef9c3 !important; color:#854d0e !important; }
 .bb2-pass { display:inline-block; background:#f3f4f6; color:#6b7280; font-weight:700; border-radius:12px; padding:2px 9px; }
 .bb2-rec { font-size:14px; color:#1e5eff; }
 .bb2-name { min-width:150px; max-width:260px; }
@@ -15789,7 +15790,7 @@ function renderRiskMarginSuggestion(predictedSale) {
    지도를 옮기지 않고 필요한 지역 자료를 차례로 불러온 뒤 그 지역 물건을 바로 계산함
    (지역이 8개를 넘으면 화면 목록에서 오래된 지역이 빠지므로 "불러오고 바로 계산" 순서를 지킴). ════ */
 var bidBoardRows = [];
-var bidBoardState = { verdict: 'all', region: '', type: '', sort: 'verdict', sortCol: null, sortDir: 1, showPast: false, highlight: {}, updated: {}, prevVerdicts: {}, lite: true, visit: 'go', liteSort: 'date', pastLite: false };
+var bidBoardState = { verdict: 'all', region: '', type: '', sort: 'verdict', sortCol: null, sortDir: 1, showPast: false, highlight: {}, updated: {}, prevVerdicts: {}, lite: true, visit: 'go', liteSort: 'rank', pastLite: false };
 var bidBoardRunning = false;
 function bbEsc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function(c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
 function bidBoardRegionLabel(addr) {
@@ -16509,6 +16510,8 @@ function computePick(row) {
     if (row.bulk) { row.visit.why = '🏢 같은 건물 대량 경매'; return; }
     if (pk.ev.p < VISIT_MIN_P) { row.visit.why = '추천가에서도 낙찰 가능성이 ' + Math.round(pk.ev.p * 100) + '%로 낮아요'; return; }
     row.visit.go = true;
+    // 임장 순위(2026-10, 사용자: "입찰후보를 순위로 나눌 수 있어?") - 추천가에서의 낙찰 가능성: 50% 이상 1순위 · 30~50% 2순위 · 20~30% 3순위
+    row.visit.rank = pk.ev.p >= 0.5 ? 1 : (pk.ev.p >= 0.3 ? 2 : 3);
     row.visit.why = row.issueSuspect ? '🚩 이슈 의심 - 인수 보증금 확인' : '';
 }
 function applyPickToRow(row) {
@@ -17024,10 +17027,13 @@ function renderBidBoardLite() {
     if (sel) sel.innerHTML = '<option value="">지역 전체</option>' + Object.keys(regions).sort().map(function(k) { return '<option value="' + bbEsc(k) + '"' + (s.region === k ? ' selected' : '') + '>' + bbEsc(k) + ' (' + regions[k] + ')</option>'; }).join('');
     var bar = document.getElementById('bb2-tabs');
     if (!bar) { bar = document.createElement('span'); bar.id = 'bb2-tabs'; var tools = document.querySelector('#bid-board .bb-tools'); tools.insertBefore(bar, tools.firstChild); }
+    var rk = [0, 0, 0, 0];
+    cur.forEach(function(r) { if (!r.pending && r.visit && r.visit.go && r.visit.rank) rk[r.visit.rank]++; });
     bar.innerHTML = [['go', '🚶 임장 후보', goN], ['pass', '패스', passN], ['all', '전체', goN + passN]].map(function(t) {
         return '<button class="bb-tab' + (s.visit === t[0] ? ' on' : '') + '" onclick="setLiteVisit(\'' + t[0] + '\')">' + t[1] + ' <b>' + t[2] + '</b></button>';
     }).join('')
-        + ' <select id="bb2-sort" onchange="setLiteSort(this.value)"><option value="date"' + (s.liteSort === 'date' ? ' selected' : '') + '>입찰일 빠른 순</option><option value="ev"' + (s.liteSort === 'ev' ? ' selected' : '') + '>기대수익 큰 순</option><option value="p"' + (s.liteSort === 'p' ? ' selected' : '') + '>낙찰 가능성 높은 순</option></select>'
+        + ' <span class="bb-sub" title="추천가에서의 낙찰 가능성: 50% 이상 1순위 · 30~50% 2순위 · 20~30% 3순위">1순위 <b>' + rk[1] + '</b> · 2순위 <b>' + rk[2] + '</b> · 3순위 <b>' + rk[3] + '</b></span>'
+        + ' <select id="bb2-sort" onchange="setLiteSort(this.value)"><option value="rank"' + (s.liteSort === 'rank' ? ' selected' : '') + '>순위순(1순위 먼저)</option><option value="date"' + (s.liteSort === 'date' ? ' selected' : '') + '>입찰일 빠른 순</option><option value="ev"' + (s.liteSort === 'ev' ? ' selected' : '') + '>기대수익 큰 순</option><option value="p"' + (s.liteSort === 'p' ? ' selected' : '') + '>낙찰 가능성 높은 순</option></select>'
         + ' <a href="#" class="bb2-link" onclick="toggleLitePast();return false;">' + (s.pastLite ? '지난 입찰 숨기기' : '지난 입찰 ' + pastN + '건 보기') + '</a>'
         + (villaN ? ' <span class="bb-sub">빌라 ' + villaN + '건은 아직 계산하지 않아요</span>' : '') + (pend ? ' <span class="bb-sub">⏳ ' + pend + '건 계산 중</span>' : '');
     var rows = cur.filter(function(r) { return !r.pending && r.visit && (s.visit === 'all' || (s.visit === 'go') === r.visit.go); });
@@ -17036,6 +17042,7 @@ function renderBidBoardLite() {
     var pp = function(r) { return r.pick && r.pick.ev ? r.pick.ev.p : -1; };
     rows.sort(function(x, y) {
         if (s.visit === 'all' && x.visit.go !== y.visit.go) return x.visit.go ? -1 : 1;
+        if (s.liteSort === 'rank') { var rx = x.visit.go ? x.visit.rank : 9, ry = y.visit.go ? y.visit.rank : 9; return rx - ry || dd(x) - dd(y) || ev(y) - ev(x); }
         if (s.liteSort === 'ev') return ev(y) - ev(x);
         if (s.liteSort === 'p') return pp(y) - pp(x);
         return dd(x) - dd(y) || ev(y) - ev(x);
@@ -17049,7 +17056,7 @@ function renderBidBoardLite() {
             var go = r.visit.go, e = r.pick && r.pick.ev, idJs = String(r.id).replace(/\\/g, '\\\\').replace(/'/g, "\\'");
             var pc = e ? Math.round(e.p * 100) : null, col = pc == null ? '#6b7280' : (pc >= 60 ? '#15803d' : (pc >= 35 ? '#b45309' : '#b91c1c'));
             return '<tr class="bb2-row ' + (go ? 'go' : 'pass') + (String(bidDrawerId) === String(r.id) ? ' sel' : '') + '" onclick="openBidDrawer(\'' + idJs + '\')">'
-                + '<td data-l="판정">' + (go ? '<span class="bb2-go">🚶 임장</span>' : '<span class="bb2-pass">패스</span>') + (r.visit.why ? '<div class="bb-sub">' + bbEsc(r.visit.why) + '</div>' : '') + '</td>'
+                + '<td data-l="판정">' + (go ? '<span class="bb2-go bb2-r' + r.visit.rank + '">🚶 ' + r.visit.rank + '순위</span>' : '<span class="bb2-pass">패스</span>') + (r.visit.why ? '<div class="bb-sub">' + bbEsc(r.visit.why) + '</div>' : '') + '</td>'
                 + '<td data-l="입찰일">' + (r.dday ? '<span class="bb-dday' + (r.dday.diffDays >= 0 && r.dday.diffDays <= 3 ? ' soon' : '') + '">' + bbEsc(r.dday.label) + '</span>' : '-') + '<div class="bb-sub">' + bbEsc(r.a.bidDate || '') + '</div></td>'
                 + '<td data-l="물건" class="bb2-name"><b>' + bbEsc(r.name) + '</b><div class="bb-sub">' + bbEsc(r.region) + (r.pyung ? ' · ' + r.pyung + '평' : '') + (r.floor ? ' · ' + r.floor + '층' : '') + (r.fails != null ? ' · ' + (r.fails === 0 ? '신건' : '유찰 ' + r.fails + '회') : '') + (r.issueSuspect ? ' · <span style="color:#b91c1c;">🚩</span>' : '') + '</div></td>'
                 + '<td data-l="거래량 순위" class="bb2-rank">' + liteRankHtml(r) + '</td>'
@@ -17470,7 +17477,7 @@ async function renderBidDrawer() {
         if (bidBoardState.lite && row.type === 'apt') {
             var pe = row.pick && row.pick.ev, go = row.visit && row.visit.go, pcc = pe ? Math.round(pe.p * 100) : null;
             var rt = pe && row.sale ? (pe.pre / row.sale * 100).toFixed(1) + '%' : '-';
-            card = '<div class="dr-pickcard ' + (go ? 'go' : 'pass') + '"><div class="pk-v">' + (go ? '🚶 임장 추천' : '패스') + (row.visit && row.visit.why ? ' · ' + bbEsc(row.visit.why) : '') + '</div>'
+            card = '<div class="dr-pickcard ' + (go ? 'go' : 'pass') + '"><div class="pk-v">' + (go ? '🚶 임장 ' + row.visit.rank + '순위' : '패스') + (row.visit && row.visit.why ? ' · ' + bbEsc(row.visit.why) : '') + '</div>'
                 + (pe ? '<div class="pk-big"><span>추천 입찰가</span><b>' + fmt(pe.bid) + '</b></div>'
                     + '<div class="pk-sub">낙찰 가능성 <b>' + pcc + '%</b> · 예상 순이익(세후) <b>' + fmt(pe.net) + '</b> · 마진율(세전) ' + rt + '<br>예상매도가 ' + fmt(row.sale) + ' · 최저가 ' + fmt(row.minBid) + (row.pick.max ? ' · 마진 1천만 남는 상한 ' + fmt(row.pick.max.bid) : '') + '</div>'
                     : '<div class="pk-sub">추천가가 없어요 · 예상매도가 ' + fmt(row.sale) + ' · 최저가 ' + fmt(row.minBid) + '</div>')
