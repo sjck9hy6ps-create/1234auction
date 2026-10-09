@@ -17058,6 +17058,7 @@ var LITE_COLS = {
     band: { label: '평형 순위', first: 1, val: function(r) { return r.pop && r.pop.band ? r.pop.band.rankInBand : null; } },
     dong: { label: '동 순위', first: 1, val: function(r) { return r.pop && r.pop.rankInDong ? r.pop.rankInDong : (r.lf && r.lf.rank ? r.lf.rank : null); } },
     minBid: { label: '최저가', first: 1, val: function(r) { return r.minBid || null; } },
+    wbp: { label: '예상 낙찰가', first: 1, val: function(r) { return r.winbid && r.winbid.price ? r.winbid.price : null; } },
     sale: { label: '예상매도가', first: 1, val: function(r) { return r.sale || null; } },
     rec: { label: '추천가', first: 1, val: function(r) { return r.pick && r.pick.ev ? r.pick.ev.bid : null; } },
     recPct: { label: '시세 대비', first: 1, val: function(r) { return r.pick && r.pick.ev && r.sale ? r.pick.ev.bid / r.sale : null; } },
@@ -17176,7 +17177,7 @@ function renderBidBoardLite() {
         + '<th>' + liteTh('verdict') + '</th><th>' + liteTh('date') + '</th><th>' + liteTh('name') + '</th><th class="r">' + liteTh('fails') + '</th>'
         + '<th class="r">동일평형 거래<div class="bb2-subsort" style="justify-content:flex-end;">' + liteTh('n12', '1년') + liteTh('nYear', '올해') + liteTh('last', '마지막') + '</div></th>'
         + '<th>거래량 순위·회전율<div class="bb2-subsort">' + liteTh('turn', '회전율') + liteTh('liv', '생활권') + liteTh('band', '평형') + liteTh('dong', '동') + '</div></th>'
-        + '<th class="r">' + liteTh('minBid') + '</th><th class="r">' + liteTh('sale') + infoI('sale') + '</th><th class="r">' + liteTh('rec') + infoI('rec') + '<div class="bb2-subsort" style="justify-content:flex-end;">' + liteTh('recPct', '시세 대비 %') + '</div></th><th class="r">' + liteTh('p') + '</th><th class="r">' + liteTh('net') + '</th><th class="r">' + liteTh('rate') + '</th>'
+        + '<th class="r">' + liteTh('minBid') + '</th><th class="r">' + liteTh('wbp') + '</th><th class="r">' + liteTh('sale') + infoI('sale') + '</th><th class="r">' + liteTh('rec') + infoI('rec') + '<div class="bb2-subsort" style="justify-content:flex-end;">' + liteTh('recPct', '시세 대비 %') + '</div></th><th class="r">' + liteTh('p') + '</th><th class="r">' + liteTh('net') + '</th><th class="r">' + liteTh('rate') + '</th>'
         + '</tr></thead><tbody>'
         + rows.map(function(r) {
             var go = r.visit.go, e = r.pick && r.pick.ev, idJs = String(r.id).replace(/\\/g, '\\\\').replace(/'/g, "\\'");
@@ -17190,6 +17191,7 @@ function renderBidBoardLite() {
                 + '<td data-l="동일평형 거래" class="r bb2-n">' + liteTradesHtml(r) + '</td>'
                 + '<td data-l="거래량 순위" class="bb2-rank">' + liteRankHtml(r) + '</td>'
                 + '<td data-l="최저가" class="r">' + money(r.minBid) + '</td>'
+                + '<td data-l="예상 낙찰가" class="r">' + (r.winbid && r.winbid.price ? '<b>' + money(r.winbid.price) + '</b>' + (r.minBid ? '<div class="bb-sub" title="예상 낙찰가 ÷ 최저가">최저가의 ' + Math.round(r.winbid.price / r.minBid * 100) + '%</div>' : '') : '<span class="bb-sub">-</span>') + '</td>'
                 + '<td data-l="예상매도가" class="r">' + money(r.sale) + '</td>'
                 + '<td data-l="추천가" class="r">' + (e ? '<b class="bb2-rec">' + money(e.bid) + '</b>' + (r.sale ? '<div class="bb-sub" title="추천가 ÷ 예상매도가(시세)">시세의 <b>' + Math.round(e.bid / r.sale * 100) + '%</b></div>' : '') : '<span class="bb-sub">-</span>') + '</td>'
                 + '<td data-l="낙찰 가능성" class="r">' + (pc != null ? '<b style="color:' + col + ';">' + pc + '%</b>' : '-') + '</td>'
