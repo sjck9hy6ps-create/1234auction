@@ -5482,19 +5482,45 @@ function findOverlappingMarkers(key) {
     var result = [];
     Object.keys(markerDataRegistry).forEach(function(k) {
         var d = markerDataRegistry[k];
-        if (!d || !d.div) return;
+        if (!d || !d.div || !d.div.isConnected) return;
         var r = d.div.getBoundingClientRect();
         if (r.width === 0 && r.height === 0) return; // 화면 밖(지도 범위 밖)으로 밀려난 마커는 제외
-        if (rectsOverlap(tRect, r)) result.push({ key: k, data: d });
+        if (k === key || rectsOverlap(tRect, r)) result.push({ key: k, data: d });
     });
+    // 위에 있는 배지부터(=화면에서 눈에 띄는 순서) 보이도록 경매 → 낙찰사례 → 거래 순으로 정렬
+    var rank = { auction: 0, bidcase: 1 };
+    result.sort(function(x, y) { return (rank[x.data.type] != null ? rank[x.data.type] : 2) - (rank[y.data.type] != null ? rank[y.data.type] : 2); });
     return result;
 }
+/* 겹친 배지 클릭 가로채기: 배지마다 붙은 개별 onclick은 "맨 위 배지"에만 전달되고, 낙찰사례(⚖️) 배지는
+   겹침 목록 대상에도 아니었음. 지도 안의 어떤 배지를 클릭하든 캡처 단계에서 먼저 겹침을 확인해서
+   2개 이상이면 개별 동작 대신 전체 목록을 띄움. */
+(function() {
+    function init() {
+        var mapEl = document.getElementById('map');
+        if (!mapEl) return setTimeout(init, 500);
+        mapEl.addEventListener('click', function(e) {
+            var t = e.target;
+            if (!t || !t.closest) return;
+            if (t.closest('.bc-rematch-badge,.bc-delete-badge,button')) return;
+            var badge = t.closest('.map-badge');
+            if (!badge) return;
+            var key = null;
+            Object.keys(markerDataRegistry).some(function(k) { if (markerDataRegistry[k] && markerDataRegistry[k].div === badge) { key = k; return true; } });
+            if (!key) return;
+            var list = findOverlappingMarkers(key);
+            if (list.length > 1) { e.stopPropagation(); e.preventDefault(); openMarkerStackPicker(list); }
+        }, true);
+    }
+    init();
+})();
 // markerDataRegistry 항목을 실제로 "여는" 동작을 타입별로 분기 - 일반 거래 마커(type
 // 없음/apt)는 상세패널(openPanel), 경매/입찰희망 마커(type:'auction', placeAuctionMarker에서
 // 등록)는 매칭된 거래가 있으면 매매기록까지 함께 보이는 전체 상세패널(openMatchedApt), 없으면
 // 경매 수정 모달을 엶. handleAptMarkerClick/pickMarkerFromStack이 겹침 유무와 무관하게 공통 사용.
 function openMarkerItemDirect(d) {
     if (!d) return;
+    if (d.type === 'bidcase') { openBidCaseDetail(d.c.id); return; }
     if (d.type === 'auction') {
         if (d.matchedApt) { openMatchedApt(d.a.id); } else { openAuctionModal(d.a.id); }
         return;
@@ -5518,6 +5544,14 @@ function openMarkerStackPicker(list) {
     var body = document.getElementById('marker-stack-body');
     body.innerHTML = list.map(function(item) {
         var d = item.data;
+        var badgeTxt = ((d.div && d.div.innerText) || '').replace(/\s*\n\s*/g, ' · ').replace(/📊 클릭하면.*$/, '').trim();
+        if (d.type === 'bidcase') {
+            var bc = d.c;
+            return '<div class="comp-item" style="align-items:flex-start;gap:6px;">'
+                + '<div style="cursor:pointer;flex:1;min-width:0;" onclick="pickMarkerFromStack(\'' + item.key + '\')">'
+                + '<div style="font-weight:bold;">⚖️ ' + (bc.status || '낙찰사례') + ' · ' + (bc.caseNo || '(사건번호 미상)') + '</div>'
+                + '<div style="font-size:11px;color:#888;">' + badgeTxt.slice(0, 120) + '</div></div></div>';
+        }
         // 경매(🔨)/입찰희망(📋) 항목은 apt 항목과 데이터 모양이 달라서(latest 트레이드가 아니라
         // 경매물건 필드) 별도 렌더링 분기가 필요함 - "비교등록" 버튼은 매매기록에만 의미가 있어
         // 경매/입찰희망 항목에는 붙이지 않음.
@@ -5532,6 +5566,7 @@ function openMarkerStackPicker(list) {
                 + '<div style="cursor:pointer;flex:1;min-width:0;" onclick="pickMarkerFromStack(\'' + item.key + '\')">'
                 + '<div style="font-weight:bold;">' + label + ' · ' + ((a.name && a.name.trim()) || a.addrLabel || a.addr || '(이름없음)') + '</div>'
                 + '<div style="font-size:11px;color:#888;">' + [a.caseNo, priceStr].filter(Boolean).join(' · ') + '</div>'
+                + (badgeTxt ? '<div style="font-size:11px;color:#555;margin-top:2px;">' + badgeTxt.slice(0, 140) + '</div>' : '')
                 + '</div>'
                 + '</div>';
         }
@@ -14010,6 +14045,7 @@ function placeBidCaseMarker(c) {
     overlay.setMap(map);
     attachBadgeHoverEnlarge(div, overlay, 9998);
     bidCaseMarkers[c.id] = { overlay: overlay };
+    markerDataRegistry['bc' + c.id] = { type: 'bidcase', c: c, lat: c.lat, lon: c.lon, div: div };
 }
 function upsertBidCaseMarker(c) {
     // 억제 여부(=매도사례가 매칭되고 건물배지가 지금 화면에 보이는지)는 c 자신의 필드가 아니라
