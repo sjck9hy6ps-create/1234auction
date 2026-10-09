@@ -3420,9 +3420,21 @@ export default async function handler(req, res) {
   if (req.query.mode === 'weeklyReport') {
     res.setHeader('Cache-Control', 's-maxage=600, stale-while-revalidate=3600');
     try {
-      const { data, error } = await supabase.from('leader_follower_cache').select('payload').eq('id', 'signal|__weekly_report__').maybeSingle();
+      const wk = String(req.query.week || '').replace(/[^0-9]/g, '');
+      const id = wk ? 'signal|__weekly_report__|' + wk : 'signal|__weekly_report__';
+      const { data, error } = await supabase.from('leader_follower_cache').select('payload').eq('id', id).maybeSingle();
       if (error) return res.status(500).json({ error: error.message });
       return res.status(200).json((data && data.payload) || {});
+    } catch (err) {
+      return res.status(500).json({ error: err.message });
+    }
+  }
+  if (req.query.mode === 'weeklyHistory') {
+    res.setHeader('Cache-Control', req.query.nocache ? 'no-store' : 's-maxage=300, stale-while-revalidate=3600');
+    try {
+      const { data, error } = await supabase.from('leader_follower_cache').select('payload').eq('id', 'signal|__weekly_history__').maybeSingle();
+      if (error) return res.status(500).json({ error: error.message });
+      return res.status(200).json((data && data.payload) || { items: [] });
     } catch (err) {
       return res.status(500).json({ error: err.message });
     }

@@ -1302,6 +1302,7 @@ body.ui2 #auction-modal.am4 { width:620px; }
 #bld-panel .wr-b { padding:10px 14px 16px; } #bld-panel table { width:100%; border-collapse:collapse; } #bld-panel td, #bld-panel th { padding:4px 6px; border-bottom:1px solid #eef0f3; text-align:left; vertical-align:top; }
 .hs-pill { display:inline-block; border-radius:8px; padding:1px 8px; font-weight:700; font-size:11px; color:#fff; } .hs-ok { background:#0d9488; } .hs-check { background:#d97706; } .hs-no { background:#b91c1c; } .hs-load { background:#9ca3af; }
 #weekly-panel .wr-h { position:sticky; top:0; background:#fff; padding:11px 14px; font-weight:800; font-size:14px; border-bottom:1px solid #eef0f3; display:flex; justify-content:space-between; z-index:2; }
+#weekly-panel .wr-tabs { display:flex; gap:6px; margin:0 0 8px; flex-wrap:wrap; } #weekly-panel .wr-tabs button { border:1px solid #d1d5db; background:#fff; border-radius:8px; padding:5px 10px; font-size:12px; font-weight:700; cursor:pointer; } #weekly-panel .wr-tabs button.on { background:#1e5eff; color:#fff; border-color:#1e5eff; }
 #weekly-panel .wr-b { padding:10px 14px 16px; }
 #weekly-panel .wr-kpis { display:grid; grid-template-columns:repeat(auto-fit, minmax(100px, 1fr)); gap:8px; margin:8px 0; }
 #weekly-panel .wr-kpis div { background:#fff; border:1px solid #eef0f3; border-radius:10px; padding:8px 10px; }
@@ -1383,6 +1384,7 @@ body.ui2 #auction-modal.am4 { width:620px; }
         <button onclick="openBidCasePanel(); closeTbMenus();">⚖️ 낙찰사례</button>
         <button onclick="openMoneyRegionPanel(); closeTbMenus();">💰 돈되는 지역</button>
         <button onclick="toggleCyclePanel(); closeTbMenus();">📈 사이클</button>
+        <button onclick="openWeeklyReport(); closeTbMenus();" title="매주 리포트·추천가 성적표·지난 리포트 누적 목록 (알림에서 확인한 뒤에도 언제든 열어요)">📊 리포트</button>
         <button onclick="openGuide(); closeTbMenus();">📘 사용법</button>
         <a class="tb-link" href="/backup.html">📦 백업</a>
         <button id="tb-remind-btn" onclick="toggleRemindPanel(); closeTbMenus();" title="지금 해야 할 일">🔔<span id="tb-remind-count" style="display:none;"></span></button>
@@ -24693,13 +24695,48 @@ function loadWeeklyReport(cb) {
 }
 setTimeout(function() { loadWeeklyReport(); }, 4500);
 function wrYmd(n) { var s = String(n || ''); return s.length === 8 ? s.slice(4, 6) + '/' + s.slice(6, 8) : s; }
-function openWeeklyReport() {
+/* 주간 리포트 창 - 탭: 이번 주(또는 고른 주) / 추천가 성적표(누적) / 지난 리포트(누적 목록). week가 있으면 그 주 리포트를 엶 */
+function wrTab(k) {
+    ['now', 'score', 'hist'].forEach(function(t) {
+        var el = document.getElementById('wr-t-' + t), bt = document.getElementById('wr-tb-' + t);
+        if (el) el.style.display = t === k ? '' : 'none'; if (bt) bt.classList.toggle('on', t === k);
+    });
+}
+function wrRenderScore(sc) {
+    var f = function(v) { return v == null ? '-' : toEok(String(Math.round(v))); };
+    if (!sc || !sc.n) return '<div class="pn-muted" style="padding:8px 0;">아직 비교할 수 있는 저장본이 없어요. 앱이 입찰 3주 전부터 추천가를 저장하고(2026-10-08부터), 낙찰 결과가 올라오면 여기에 누적돼요.</div>';
+    var h = '<div class="pn-muted">입찰 전에 저장해 둔 추천가와 실제 낙찰 결과를 비교한 누적 성적(지금까지 ' + sc.n + '건)</div><div class="wr-kpis">'
+        + '<div><span>추천가로 썼다면 낙찰</span><b>' + sc.recWon + '/' + sc.n + '건</b><em>' + sc.recWonPct + '%</em></div>'
+        + '<div><span>실제 낙찰가 ÷ 추천가</span><b>' + Math.round(sc.actualOverRecMed * 100) + '%</b><em>중앙값 · 100% 넘으면 못 이김</em></div>'
+        + (sc.winPredN ? '<div><span>예상 낙찰가 오차</span><b>' + sc.winPredMedAbsErrPct + '%</b><em>입찰 전 저장한 값 · ' + sc.winPredN + '건 · 쏠림 ' + (sc.winPredBiasPct > 0 ? '+' : '') + sc.winPredBiasPct + '%</em></div>' : '') + '</div>';
+    if (sc.calibration && sc.calibration.length) {
+        h += '<div class="wr-sec"><b>낙찰 가능성 맞았나</b> (예측한 낙찰 가능성 구간별로 실제 낙찰 비율)<table class="pn-table"><thead><tr><th>예측 구간</th><th class="r">건수</th><th class="r">예측 평균</th><th class="r">실제 낙찰</th></tr></thead><tbody>'
+            + sc.calibration.map(function(c) { return '<tr><td>' + c.label + '</td><td class="r">' + c.n + '</td><td class="r">' + c.predPct + '%</td><td class="r"><b>' + c.actualPct + '%</b></td></tr>'; }).join('') + '</tbody></table>'
+            + '<div class="pn-muted">전체로 보면 실제가 예측보다 ' + (sc.probGapPct > 0 ? '+' : '') + sc.probGapPct + '%p · ' + (sc.needAdjust ? '<b style="color:#b91c1c;">⚠️ 15%p 넘게 어긋나 조정이 필요해요</b>' : (sc.n < 30 ? '표본이 30건 미만이라 아직 조정하지 않아요' : '조정이 필요할 만큼은 아니에요')) + '</div></div>';
+    }
+    if (sc.items && sc.items.length) {
+        h += '<div class="wr-sec"><b>건별 비교</b> (최근순)<table class="pn-table"><thead><tr><th>물건</th><th class="r">저장한 추천가</th><th class="r">낙찰가</th><th class="r">예측 가능성</th><th></th></tr></thead><tbody>'
+            + sc.items.map(function(x) { return '<tr><td>' + bbEsc(x.name || x.case) + '<div class="pn-muted">' + bbEsc(x.region) + ' · ' + bbEsc(x.case) + '</div></td><td class="r">' + f(x.rec) + '</td><td class="r"><b>' + f(x.actual) + '</b></td><td class="r">' + (x.prob != null ? Math.round(x.prob * 100) + '%' : '-') + '</td><td>' + (x.won ? '<span style="color:#15803d;">낙찰</span>' : '<span style="color:#b91c1c;">못 이김</span>') + '</td></tr>'; }).join('') + '</tbody></table></div>';
+    }
+    return h;
+}
+function wrRenderHistory(items, cur) {
+    if (!items || !items.length) return '<div class="pn-muted" style="padding:8px 0;">아직 누적된 지난 리포트가 없어요. 이번 주 분석부터 매주 쌓여요.</div>';
+    var pc = function(v) { return v == null ? '-' : v + '%'; };
+    return '<div class="pn-muted">매주 월요일 분석 결과가 쌓여요. 행을 누르면 그 주 리포트를 열어요.</div><table class="pn-table"><thead><tr><th>낙찰 기간</th><th class="r">건수</th><th class="r">오차</th><th class="r">±10%</th><th class="r">쏠림</th><th class="r">추천가 낙찰</th></tr></thead><tbody>'
+        + items.slice().reverse().map(function(h) {
+            return '<tr style="cursor:pointer;' + (String(h.week) === String(cur) ? 'background:#eef2ff;' : '') + '" onclick="openWeeklyReport(\'' + h.week + '\')"><td>' + wrYmd(h.windowFrom) + '~' + wrYmd(h.windowTo) + '<div class="pn-muted">' + String(h.generatedAt || '').slice(0, 10) + ' 계산</div></td><td class="r">' + (h.n == null ? '-' : h.n) + '</td><td class="r"><b>' + pc(h.medAbsErrPct) + '</b></td><td class="r">' + pc(h.within10Pct) + '</td><td class="r">' + (h.biasPct == null ? '-' : (h.biasPct > 0 ? '+' : '') + h.biasPct + '%') + '</td><td class="r">' + (h.recKnown ? h.recWon + '/' + h.recKnown : '-') + '</td></tr>';
+        }).join('') + '</tbody></table>';
+}
+function openWeeklyReport(week) {
     var p = document.getElementById('weekly-panel');
-    if (p) { p.remove(); return; }
+    if (p && !week) { p.remove(); return; }
+    if (p) p.remove();
     p = document.createElement('div'); p.id = 'weekly-panel'; document.body.appendChild(p);
-    p.innerHTML = '<div class="wr-h">📊 주간 리포트 <span class="rm-x" onclick="document.getElementById(\'weekly-panel\').remove()">✕</span></div><div class="wr-b">불러오는 중…</div>';
+    p.innerHTML = '<div class="wr-h">📊 주간 리포트' + (week ? ' · ' + wrYmd(week) + ' 주' : '') + ' <span class="rm-x" onclick="document.getElementById(\'weekly-panel\').remove()">✕</span></div><div class="wr-b">불러오는 중…</div>';
     try { floatWin(p, 'weekly', '.wr-h'); } catch (e) {}
-    loadWeeklyReport(function(d) {
+    var loader = week ? function(cb) { fetch('/api/data-coverage?mode=weeklyReport&week=' + encodeURIComponent(week)).then(function(r) { return r.json(); }).then(cb).catch(function() { cb(null); }); } : loadWeeklyReport;
+    loader(function(d) {
         var b = p.querySelector('.wr-b'); if (!b) return;
         if (!d || !d.generatedAt) { b.innerHTML = '<div class="pn-muted">아직 리포트가 없어요. 매주 월요일 새벽 분석이 끝나면 만들어져요.</div>'; return; }
         var f = function(v) { return v == null ? '-' : toEok(String(Math.round(v))); };
@@ -24753,7 +24790,11 @@ function openWeeklyReport() {
             h += '<div class="wr-sec"><b>6개월 전 낙찰 사례의 되팔기 흔적</b> (' + wrYmd(tr.from) + '~' + wrYmd(tr.to) + ' 낙찰 ' + tr.n + '건) - 같은 동·층 거래 확인(동 번호 있는 ' + tr.dongKnown + '건 중) <b>' + tr.dongConfirmed + '건</b> · 층만 맞음 ' + tr.floorOnly + '건'
                 + '<div class="pn-muted">호수를 몰라 옆집 거래일 수 있어요(우연 수준 약 7%). 참고용 지표예요.</div></div>';
         }
-        b.innerHTML = h;
+        b.innerHTML = '<div class="wr-tabs"><button id="wr-tb-now" class="on" onclick="wrTab(\'now\')">이번 리포트</button><button id="wr-tb-score" onclick="wrTab(\'score\')">📈 추천가 성적표(누적)</button><button id="wr-tb-hist" onclick="wrTab(\'hist\')">🗂️ 지난 리포트</button></div>'
+            + '<div id="wr-t-now">' + h + '</div><div id="wr-t-score" style="display:none;">' + wrRenderScore(d.scorecard) + '</div><div id="wr-t-hist" style="display:none;"><div class="pn-muted">불러오는 중…</div></div>';
+        fetch('/api/data-coverage?mode=weeklyHistory').then(function(r) { return r.json(); }).then(function(hd) {
+            var el = document.getElementById('wr-t-hist'); if (el) el.innerHTML = wrRenderHistory((hd && hd.items) || [], week || d.windowTo);
+        }).catch(function() { var el = document.getElementById('wr-t-hist'); if (el) el.innerHTML = '<div class="pn-muted">목록을 불러오지 못했어요.</div>'; });
     });
 }
 // 입찰 직전 물건의 예측을 물건 기록에 저장(predSnap) - 결과가 올라오면 주간 리포트가 "내 추천가로 이겼나"를 비교. 3일마다·최저가가 바뀌면 갱신
@@ -24767,8 +24808,12 @@ async function savePredSnapshots() {
             if (r.type !== 'apt' || r.pending || r.skippedPast || !r.a || !r.winbid || !r.recBid || !r.dday || r.dday.diffDays < 0 || r.dday.diffDays > 21) return;
             var sn = r.a.predSnap, age = sn && sn.at ? (Date.now() - new Date(sn.at + 'T00:00:00').getTime()) / 86400000 : 99;
             if (sn && age < 3 && sn.minBid === r.minBid) return;
-            upd.push(Object.assign({}, r.a, { predSnap: { at: today, minBid: r.minBid, fails: r.fails, sale: Math.round(r.sale), recBid: Math.round(r.recBid), aggr: r.recAggr ? Math.round(r.recAggr) : null,
-                win: Math.round(r.winbid.price), prob: r.winbid.probRec != null ? Math.round(r.winbid.probRec * 100) / 100 : null, own: r.own } }));
+            var snapNew = { at: today, minBid: r.minBid, fails: r.fails, sale: Math.round(r.sale), recBid: Math.round(r.recBid), aggr: r.recAggr ? Math.round(r.recAggr) : null,
+                win: Math.round(r.winbid.price), prob: r.winbid.probRec != null ? Math.round(r.winbid.probRec * 100) / 100 : null, own: r.own };
+            // 2026-10-09 누적 이력: 덮어쓰지 않고 날짜별로 쌓음(같은 날 다시 저장하면 그날 것만 교체, 최대 25개) - 주간 리포트가 "입찰 직전 마지막 예측"을 골라 비교
+            var hist = Array.isArray(r.a.predHist) ? r.a.predHist.slice() : (sn ? [sn] : []);
+            hist = hist.filter(function(h) { return h && h.at !== today; }); hist.push(snapNew);
+            upd.push(Object.assign({}, r.a, { predSnap: snapNew, predHist: hist.slice(-25) }));
         });
         for (var i = 0; i < upd.length && i < 400; i += 50) await saveAuctionAPI(upd.slice(i, i + 50));
     } catch (e) { console.error('예측 저장 실패:', e && e.message); }

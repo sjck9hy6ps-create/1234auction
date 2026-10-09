@@ -766,6 +766,58 @@ def norm_case(s):
     return re.sub(r"\(\d+\)$", "", str(s or "").replace(" ", "")).replace("타경", "-")
 
 
+def pick_snap(x, sale_int):
+    """낙찰일 이전에 저장된 예측 중 가장 늦은(=입찰에 가장 가까운) 것. 누적 이력(predHist)이 없으면 마지막 저장본(predSnap)"""
+    hist = [h for h in (x.get("predHist") or []) if isinstance(h, dict) and h.get("at")]
+    if not hist and x.get("predSnap"):
+        hist = [x["predSnap"]]
+    ok = [h for h in hist if str(h.get("at", "")).replace("-", "") <= str(int(sale_int))]
+    return (sorted(ok, key=lambda h: h["at"])[-1] if ok else None)
+
+
+def scorecard(D, amap):
+    """2026-10-09 추천가 성적표 - 지금까지 저장된 예측(입찰 전) 전체를 실제 낙찰 결과와 비교(주 단위가 아니라 누적).
+    낙찰 가능성 구간별 '예측 vs 실제 낙찰 비율', 추천가 대비 실제 낙찰가, 낙찰가 예측 오차"""
+    rows = []
+    for r in D.itertuples():
+        x = amap.get((norm_case(r.caseNo), r.region))
+        if not x:
+            continue
+        sn = pick_snap(x, r.sale)
+        if not sn or not sn.get("recBid"):
+            continue
+        rows.append({"case": r.caseNo, "name": r.bname or x.get("name") or "", "region": r.region, "sale": int(r.sale), "actual": float(r.actual), "rec": float(sn["recBid"]),
+                     "prob": sn.get("prob"), "win": sn.get("win"), "minbid": float(r.minbid), "at": sn.get("at")})
+    out = {"n": len(rows)}
+    if not rows:
+        return out
+    X = pd.DataFrame(rows)
+    X["won"] = X["actual"] <= X["rec"]
+    X["ratio"] = X["actual"] / X["rec"]
+    out["recWon"] = int(X["won"].sum()); out["recWonPct"] = round(float(X["won"].mean()) * 100, 1)
+    out["actualOverRecMed"] = round(float(X["ratio"].median()), 3)
+    W = X[X["win"].notna() & (X["win"] > 0)]
+    if len(W):
+        e = (W["win"] - W["actual"]) / W["actual"]
+        out["winPredN"] = int(len(W)); out["winPredMedAbsErrPct"] = round(float(e.abs().median()) * 100, 1); out["winPredBiasPct"] = round(float(e.median()) * 100, 1)
+    P = X[X["prob"].notna()]
+    bins = [(0, 0.10, "10% 미만"), (0.10, 0.25, "10~25%"), (0.25, 0.50, "25~50%"), (0.50, 1.01, "50% 이상")]
+    cal = []
+    for lo, hi, lab in bins:
+        G = P[(P["prob"] >= lo) & (P["prob"] < hi)]
+        if len(G):
+            cal.append({"label": lab, "n": int(len(G)), "predPct": round(float(G["prob"].mean()) * 100, 1), "actualPct": round(float(G["won"].mean()) * 100, 1)})
+    out["calibration"] = cal
+    # 조정 필요 신호: 구간 합계가 30건 이상이고 예측 평균과 실제 비율이 15%p 넘게 다르면
+    tot = int(P["won"].count())
+    gap = (float(P["won"].mean()) - float(P["prob"].mean())) * 100 if tot else 0
+    out["probGapPct"] = round(gap, 1)
+    out["needAdjust"] = bool(tot >= 30 and abs(gap) >= 15)
+    out["items"] = [{"case": r["case"], "name": r["name"], "region": r["region"], "sale": r["sale"], "rec": round(r["rec"]), "actual": round(r["actual"]), "won": bool(r["won"]),
+                     "prob": r["prob"], "win": r["win"]} for r in sorted(rows, key=lambda z: -z["sale"])[:60]]
+    return out
+
+
 def weekly_report(R, now_dt, now_iso):
     D = R[R["est"].notna() & (R["est"] > 0) & R["actual"].notna() & R["minbid"].notna() & (R["minbid"] > 0) & (R["sale"] >= 20200101)].copy()
     D = D[np.log(D["actual"] / D["est"]).between(np.log(0.4), np.log(1.6))]
@@ -803,15 +855,17 @@ def weekly_report(R, now_dt, now_iso):
         # 입찰후보로 추적하던 물건(사건번호 일치) - 앱이 입찰 전에 저장한 예측(predSnap)과 비교
         try:
             au = requests.get(f"{SITE_URL}/api/auction", timeout=180).json()
-            amap = {norm_case(x.get("caseNo")): x for x in au if isinstance(x, dict) and x.get("caseNo") and not x.get("isBacktest")}
+            # 2026-10-09 정정: 사건번호는 법원마다 따로 매겨져(예: 2025-577이 군산·김해에 모두 있음) 사건번호만으로 맞추면 엉뚱한 물건끼리 비교됐음
+            # (장유경동리인하이스트 ↔ 군산 소룡동제이파크) → (사건번호, 시군구)가 모두 같을 때만 같은 물건으로 봄
+            amap = {(norm_case(x.get("caseNo")), region_norm(x.get("addr"))): x for x in au if isinstance(x, dict) and x.get("caseNo") and not x.get("isBacktest")}
         except Exception as e:
             print("  경매 목록 불러오기 실패(건너뜀):", e); amap = {}
         tr = []
         for r in W.itertuples():
-            x = amap.get(norm_case(r.caseNo))
+            x = amap.get((norm_case(r.caseNo), r.region))
             if not x:
                 continue
-            sn = x.get("predSnap") or {}
+            sn = pick_snap(x, r.sale) or {}
             row = {"caseNo": r.caseNo, "name": r.bname or x.get("name") or "", "region": r.region, "actual": round(float(r.actual)), "bidders": None if pd.isna(r.bidders) else int(r.bidders),
                    "second": None if pd.isna(r.second) else round(float(r.second)), "minbid": round(float(r.minbid)), "modelPred": round(float(r.pred))}
             if sn:
@@ -832,8 +886,31 @@ def weekly_report(R, now_dt, now_iso):
         out["trace6m"] = {"from": int(lo), "to": int(hi), "n": int(len(S)), "dongKnown": int(has_dong.sum()),
                           "dongConfirmed": int(((conf == "dong") & (S["resale_m"] <= 6.2)).sum()), "floorOnly": int(((conf == "floor") & (S["resale_m"] <= 6.2)).sum()),
                           "note": "같은 동·층 거래가 6개월 안에 있었는지(참고 - 호수를 몰라 옆집 거래일 수 있음, 우연 수준 약 7%)"}
+    try:
+        out["scorecard"] = scorecard(D, amap)
+        print("  추천가 성적표:", {k: v for k, v in out["scorecard"].items() if k != "items"})
+    except Exception as e:
+        print("  성적표 건너뜀:", e)
     print(f"  주간 리포트: 기간 {start}~, 사례 {len(W)}건, 정확도 {out.get('accuracy')}")
     cyc.upsert_rows([{"id": "signal|__weekly_report__", "payload": cyc.clean_json(out), "fetched_at": now_iso}])
+    # 지난 리포트 누적(사용자: 알림에서 확인한 뒤에도 계속 볼 수 있게 누적 목록) - 주마다 따로 저장 + 목록 갱신
+    try:
+        wk = str(out.get("windowTo") or ymd(now_dt))
+        cyc.upsert_rows([{"id": f"signal|__weekly_report__|{wk}", "payload": cyc.clean_json(out), "fetched_at": now_iso}])
+        try:
+            hist = (requests.get(f"{SITE_URL}/api/data-coverage?mode=weeklyHistory&nocache={int(now_dt.timestamp())}", timeout=60).json() or {}).get("items") or []
+        except Exception:
+            hist = []
+        acc, tk, sc = out.get("accuracy") or {}, out.get("tracked") or {}, out.get("scorecard") or {}
+        item = {"week": wk, "windowFrom": out.get("windowFrom"), "windowTo": out.get("windowTo"), "n": out.get("n"), "generatedAt": now_iso,
+                "medAbsErrPct": acc.get("medAbsErrPct"), "within10Pct": acc.get("within10Pct"), "biasPct": acc.get("biasPct"), "winAtPredPct": acc.get("winAtPredPct"),
+                "trackedN": tk.get("n"), "recWon": tk.get("recWon"), "recKnown": tk.get("recKnown"), "scoreN": sc.get("n"), "scoreRecWonPct": sc.get("recWonPct")}
+        hist = [h for h in hist if h.get("week") != wk] + [item]
+        hist.sort(key=lambda h: h.get("week") or "")
+        cyc.upsert_rows([{"id": "signal|__weekly_history__", "payload": cyc.clean_json({"items": hist[-120:]}), "fetched_at": now_iso}])
+        print(f"  지난 리포트 목록 {len(hist)}건")
+    except Exception as e:
+        print("  지난 리포트 누적 저장 실패(건너뜀):", e)
 
 
 if __name__ == "__main__":
