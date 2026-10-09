@@ -405,8 +405,14 @@ async function fetchBld(op, params) {
   });
   const url = `${BASE}/${op}?${qs.toString()}`;
   try {
-    const r = await fetch(url, { signal: AbortSignal.timeout(8000) });
-    const text = await r.text();
+    let r, text;
+    // 2026-10-09: 초당 요청 제한(코드 23) 에러는 잠깐 쉬었다 다시 부르면 되는데 바로 실패로 돌려, 빌라를 연달아 열면 "정보 없음"이 계속 났음 → 최대 4번(0.5·1.0·1.6초 간격) 재시도
+    for (let attempt = 0; attempt < 4; attempt++) {
+      r = await fetch(url, { signal: AbortSignal.timeout(8000) });
+      text = await r.text();
+      if (!/LIMITED_NUMBER_OF_SERVICE_REQUESTS_PER_SECOND|<returnReasonCode>23</.test(text)) break;
+      await new Promise((res) => setTimeout(res, [500, 1000, 1600][attempt] || 1600));
+    }
     if (text.includes('SERVICE_KEY_IS_NOT_REGISTERED_ERROR') || text.includes('<errMsg>') || text.includes('<returnAuthMsg>')) {
       console.warn(op, '건축HUB 에러:', text.slice(0, 300));
       // ⚠️ 2026-10(사용자 리포트 "건축물대장 누락이 많다"): 일일 요청한도 초과(returnReasonCode 22,

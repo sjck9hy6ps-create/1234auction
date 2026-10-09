@@ -2816,7 +2816,7 @@ var currentPppTimeline = null;
 var currentVolumeIndicators = null;
 var currentJeonseEstimate = null;
 var currentBuildingInfo = null;
-var currentBuildingLoading = false;
+var currentBuildingLoading = false, currentBuildingFailed = false;
 var currentOfficialPrice = null;
 var currentOfficialPriceLoading = false;
 var currentPanelLat = null;
@@ -3400,7 +3400,7 @@ function renderHomestayLayer() {
         for (var i = 0; i < homestayPts.length && n < 500; i++) {
             var p = homestayPts[i]; if (!inB(p[0], p[1])) continue;
             var st = (homestayAgg.byDong[p[4]] || {}).state || '안정', col = (HS_STATE[st] || HS_STATE['안정']).c;
-            add(p[0], p[1], '<div title="' + bbEsc(p[2]) + (p[3] ? ' · ' + p[3] + '년 허가' : '') + ' · 도시민박업(합법 등록)" style="width:20px;height:20px;border-radius:50%;background:#fff;border:2px solid ' + col + ';font-size:11px;line-height:16px;text-align:center;box-shadow:0 1px 3px rgba(0,0,0,.35);">🏠</div>', 50, (function(k) { return function() { showHomestayPop(k); }; })(p[4]));
+            add(p[0], p[1], '<div title="' + bbEsc(p[2]) + (p[3] ? ' · ' + p[3] + '년 허가' : '') + ' · 도시민박업(합법 등록)" style="display:flex;align-items:center;gap:2px;background:#7c3aed;color:#fff;border:2px solid #fff;border-radius:14px;padding:1px 7px 1px 4px;font-size:11px;font-weight:800;white-space:nowrap;box-shadow:0 0 0 2px #7c3aed,0 2px 6px rgba(0,0,0,.45);">🏠<span>민박</span></div>', 80, (function(k) { return function() { showHomestayPop(k); }; })(p[4]));
             n++;
         }
     } else {
@@ -6165,6 +6165,7 @@ function openPanel(apt, lat, lon) {
     renderTable();
     loadBuildingInfo(apt, lat, lon).then(function(info) {
         currentBuildingInfo = info;
+        currentBuildingFailed = !info && !!loadBuildingInfo.lastFailed;
         currentBuildingLoading = false;
         var realUnits = info && info.title && info.title.hhldCnt ? info.title.hhldCnt : null;
         if (realUnits) {
@@ -6919,7 +6920,7 @@ function renderTable() {
         more += pnDetails('📉 연식단계 평단가 추이', buildTierTrendChartHtml(currentPanelApt.ageTier));
         more += pnDetails('⚖️ 같은 조건 낙찰사례', buildVillaBucketStatsHtml(currentPanelApt.latest && currentPanelApt.latest.dong, currentPanelApt.latest && currentPanelApt.latest.area, currentPanelApt.ageTier));
     }
-    more += pnDetails('🏢 건축물대장', currentBuildingLoading ? '<div class="pn-muted">불러오는 중…</div>' : (currentBuildingInfo ? buildBuildingInfoHtml(currentBuildingInfo) : '<div class="pn-muted">정보 없음</div>'));
+    more += pnDetails('🏢 건축물대장', currentBuildingLoading ? '<div class="pn-muted">불러오는 중…</div>' : (currentBuildingInfo ? buildBuildingInfoHtml(currentBuildingInfo) : (currentBuildingFailed ? '<div class="pn-muted">조회가 몰려 일시적으로 못 가져왔어요 - 잠시 뒤 이 단지를 다시 열어 보세요(없는 게 아니에요)</div>' : '<div class="pn-muted">정보 없음(건축HUB에 등록되지 않은 건물)</div>')));
     more += pnDetails('🏛️ 공시가격', currentOfficialPriceLoading ? '<div class="pn-muted">조회 중…</div>' : (currentOfficialPrice ? buildOfficialPriceHtml(currentOfficialPrice) : '<div class="pn-muted">정보 없음</div>'));
     html += '<div class="pn-card pn-more"><div class="pn-card-h">자세한 분석</div>' + more + '</div>';
     // 경매 탭(같은 건물 경매·낙찰사례)
@@ -22295,6 +22296,12 @@ async function loadBuildingInfo(apt, lat, lon, force, knownBCode) {
             + (force ? '&force=1' : '');
         var res  = await fetch(url);
         var data = await res.json();
+        // 건축HUB 초당 제한 등으로 조회 자체가 실패(fetchFailed)한 경우는 "정보 없음"이 아님 - 한 번 더 시도하고, 그래도 안 되면 실패로 표시
+        if (data && data.fetchFailed && !data.title) {
+            await new Promise(function(r) { setTimeout(r, 1500); });
+            res = await fetch(url); data = await res.json();
+        }
+        loadBuildingInfo.lastFailed = !!(data && data.fetchFailed && !data.title);
         if (!data || (!data.title && !data.price)) return null;
         return data;
     } catch (e) {
