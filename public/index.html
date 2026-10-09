@@ -1346,6 +1346,10 @@ body.ui2 #auction-modal.am4 { width:620px; }
 #bb-drawer .pk-sub { font-size:12px; color:#374151; line-height:1.6; }
 #bb-drawer details.dr-more { margin:6px 0; } #bb-drawer details.dr-more > summary { cursor:pointer; font-weight:700; font-size:12.5px; color:#374151; padding:6px 0; }
 </style>
+<style>
+#link-toast { position:fixed; left:50%; bottom:28px; transform:translateX(-50%); z-index:9200; background:#111827; color:#fff; border-radius:12px; padding:10px 16px; font-size:13px; box-shadow:0 8px 24px rgba(0,0,0,.3); max-width:calc(100vw - 32px); text-align:center; }
+#bb-drawer .dr-btns button { margin-right:4px; }
+</style>
 </head>
 <body>
 <div id="topbar">
@@ -6153,7 +6157,44 @@ function buildCourtAuctionLinkHtml(caseNo, addr) {
         + '<a href="javascript:void(0)" onclick="openIrosRegistry(\'' + addrJs + '\')" '
         + 'style="display:inline-flex;align-items:center;gap:5px;font-size:12px;font-weight:bold;color:#6a1b9a;'
         + 'border:1.5px solid #6a1b9a;border-radius:20px;padding:6px 14px;text-decoration:none;background:#f3e5f5;cursor:pointer;">'
-        + '🔏 인터넷등기소 등기기록 열람 (주소 자동복사)</a></div>';
+        + '🔏 인터넷등기소 등기기록 열람 (주소 자동복사)</a>'
+        + '<a href="javascript:void(0)" onclick="openBatoner(\'' + caseNoJs + '\')" '
+        + 'style="display:inline-flex;align-items:center;gap:5px;font-size:12px;font-weight:bold;color:#b45309;'
+        + 'border:1.5px solid #b45309;border-radius:20px;padding:6px 14px;text-decoration:none;background:#fef3c7;cursor:pointer;">'
+        + '🙋 바토너 대리입찰 신청 (사건번호 자동복사)</a></div>';
+}
+/* ════ 🙋 바토너(법원경매 대리입찰) · 🟦 탱크옥션 바로가기 (2026-10, 사용자: "법원 연결 링크가 좋다 - 탱크옥션·바토너 링크도")
+   바토너(https://batoner.kr)는 로그인 후 "대리입찰 신청" 화면에서 사건을 검색해 신청하는 방식이고, 사건번호를 주소(URL)로 미리 채우는 방법은 공개돼 있지 않아
+   법원·탱크옥션과 같은 방식으로 "사건번호(2025타경12345 형식)를 복사해 신청 화면을 새 탭으로 열기"만 함. 로그인·신청은 직접 해야 함(이 앱이 대신하지 않음). */
+function caseNoForSearch(caseNo) {
+    var m = String(caseNo || '').match(/(\d{4})\D+(\d+)/);
+    return m ? m[1] + '타경' + m[2] : String(caseNo || '').trim();
+}
+function linkToast(msg) {
+    var t = document.getElementById('link-toast'); if (t) t.remove();
+    t = document.createElement('div'); t.id = 'link-toast'; t.textContent = msg; document.body.appendChild(t);
+    setTimeout(function() { if (t.parentNode) t.remove(); }, 5000);
+}
+function copyText(txt) {
+    if (navigator.clipboard && navigator.clipboard.writeText) return navigator.clipboard.writeText(txt).then(function() { return true; }).catch(function() { return false; });
+    return Promise.resolve(false);
+}
+function openBatoner(caseNo) {
+    var cn = caseNoForSearch(caseNo);
+    window.open('https://batoner.kr/mypage/apply', '_blank', 'noopener');
+    if (!cn) { linkToast('바토너 대리입찰 신청 화면을 열었어요. 사건번호가 등록돼 있지 않아 직접 검색해 주세요.'); return; }
+    copyText(cn).then(function(ok) { linkToast(ok ? '사건번호 ' + cn + ' 복사됨 → 바토너 "경매 사건을 검색하세요" 칸에 붙여넣기 (로그인 필요)' : '사건번호: ' + cn + ' (자동 복사 실패 - 직접 입력해 주세요)'); });
+}
+function openTankQuick(caseNo) {
+    var cn = caseNoForSearch(caseNo), m = cn.match(/(\d{4})타경(\d+)/);
+    window.open('https://www.tankauction.com/ca/caList.php', '_blank', 'noopener');
+    if (!m) { linkToast('탱크옥션을 열었어요. 사건번호가 없어 직접 검색해 주세요.'); return; }
+    copyText(m[2]).then(function(ok) { linkToast(ok ? '사건번호 ' + m[2] + ' 복사됨 → 탱크옥션 우측 상단 연도 ' + m[1] + '년 선택 후 "타경" 칸에 붙여넣기 (로그인 필요)' : '사건번호: ' + m[2] + ' (자동 복사 실패)'); });
+}
+function openCourtQuick(caseNo) {
+    window.open('https://www.courtauction.go.kr/pgj/index.on?w2xPath=%2Fpgj%2Fui%2Fpgj100%2FPGJ159M00.xml', '_blank', 'noopener');
+    if (!caseNo) { linkToast('법원경매정보를 열었어요. 사건번호가 없어 직접 입력해 주세요.'); return; }
+    copyText(String(caseNo)).then(function(ok) { linkToast(ok ? '사건번호 ' + caseNo + ' 복사됨 → 법원 선택 후 사건번호 칸에 붙여넣기' : '사건번호: ' + caseNo + ' (자동 복사 실패)'); });
 }
 /* 탱크옥션(유료 경매정보지)도 법원경매정보와 마찬가지로 세션 기반 화면전환 방식이라,
    URL만으로 특정 사건 상세화면에 바로 딥링크할 수 있는 공식 방법이 없음(실제로 브라우저에서
@@ -17399,7 +17440,9 @@ async function renderBidDrawer() {
         + '</div></div>';
     // 2026-10 정리: 지도·상세 버튼은 창 맨 위에 이미 있어 아래쪽 중복 버튼은 뺌
     h += '<div class="dr-sec dr-btns">'
-        + (a.caseNo ? '<button onclick="copyAuctionCaseNo(\'' + String(a.caseNo).replace(/'/g, "\\'") + '\')">📋 사건번호 복사·법원경매</button>' : '') + '</div>';
+        + '<button onclick="openCourtQuick(\'' + String(a.caseNo || '').replace(/'/g, "\\'") + '\')">🏛️ 법원경매</button>'
+        + '<button onclick="openTankQuick(\'' + String(a.caseNo || '').replace(/'/g, "\\'") + '\')">🟦 탱크옥션</button>'
+        + '<button onclick="openBatoner(\'' + String(a.caseNo || '').replace(/'/g, "\\'") + '\')">🙋 바토너 대리입찰</button></div>';
     // 임장 후보 화면(2026-10): 맨 위에 판정 + 추천가 1개, 근거·범위·실거래·비용은 "자세히"로 접고, 직접 확인한 금액 입력칸은 항상 보이게
     var i1 = h.indexOf('<div style="margin-top:6px;"><span class="bb-verdict"'), i2 = h.indexOf('<div class="dr-sec"><h4>직접 확인한 금액');
     if (i1 > 0 && i2 > i1) {
