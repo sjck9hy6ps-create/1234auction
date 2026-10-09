@@ -3445,6 +3445,7 @@ export default async function handler(req, res) {
       const { data, error } = await supabase.from('leader_follower_cache').select('payload').eq('id', 'signal|__homestay_list__').maybeSingle();
       if (error) return res.status(500).json({ error: error.message });
       const by = (data && data.payload && data.payload.byDong) || {};
+      if (!(by[key] || []).length) res.setHeader('Cache-Control', 'no-store');  // 빈 결과는 캐시하지 않음(집계 갱신 직후 빈 응답이 1시간 굳는 것 방지)
       return res.status(200).json({ list: by[key] || [] });
     } catch (err) {
       return res.status(500).json({ error: err.message });
