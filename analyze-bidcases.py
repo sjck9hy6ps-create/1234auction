@@ -899,6 +899,25 @@ def weekly_report(R, now_dt, now_iso):
         out["trace6m"] = {"from": int(lo), "to": int(hi), "n": int(len(S)), "dongKnown": int(has_dong.sum()),
                           "dongConfirmed": int(((conf == "dong") & (S["resale_m"] <= 6.2)).sum()), "floorOnly": int(((conf == "floor") & (S["resale_m"] <= 6.2)).sum()),
                           "note": "같은 동·층 거래가 6개월 안에 있었는지(참고 - 호수를 몰라 옆집 거래일 수 있음, 우연 수준 약 7%)"}
+    # 2026-10-10(사용자: "낙찰자가 추천가 마진 구간보다 마진을 줄여서 낙찰받는 이유를 알아야") - 낙찰 후 6개월 안에 되팔린 사례(동 확인)에서 낙찰자가 실제로 남긴 비율
+    # 되판가÷낙찰가를 낙찰가÷시세 구간별·응찰자 수별로 집계. 비용 전 단순 비율(취득세·등기·중개·수리·이자로 보통 6~10%가 나가므로 1.06 미만이면 손해 위험이 큼)
+    try:
+        Aw = D[(D["resale_conf"] == "dong") & D["resale"].notna() & D["resale_m"].between(0.45, 6.2) & (D["sale"] >= 20230101) & (D["actual"] > 0)].copy()
+        Aw["rr"] = Aw["resale"] / Aw["actual"]; Aw["r_est"] = Aw["actual"] / Aw["est"]
+        def wm(G):
+            return {"n": int(len(G)), "medRatio": round(float(G["rr"].median()), 3), "p25": round(float(G["rr"].quantile(.25)), 3), "p75": round(float(G["rr"].quantile(.75)), 3),
+                    "lt106Pct": round(float((G["rr"] < 1.06).mean()) * 100, 1), "lt110Pct": round(float((G["rr"] < 1.10).mean()) * 100, 1)}
+        wmo = {"n": int(len(Aw)), "overall": wm(Aw) if len(Aw) else None, "byPrice": [], "byBidders": []}
+        for lo, hi, lab in ((0, .7, "시세의 70% 미만"), (.7, .8, "70~80%"), (.8, .9, "80~90%"), (.9, 1.0, "90~100%"), (1.0, 9, "시세 이상")):
+            G = Aw[(Aw["r_est"] >= lo) & (Aw["r_est"] < hi)]
+            if len(G) >= 30: wmo["byPrice"].append(dict(label=lab, **wm(G)))
+        for lo, hi, lab in ((1, 1, "1명"), (2, 3, "2~3명"), (4, 5, "4~5명"), (6, 8, "6~8명"), (9, 999, "9명 이상")):
+            G = Aw[Aw["bidders"].between(lo, hi)]
+            if len(G) >= 30: wmo["byBidders"].append(dict(label=lab, **wm(G)))
+        out["winnerMargin"] = wmo
+        print("  낙찰자 실제 비율:", wmo["overall"])
+    except Exception as e:
+        print("  낙찰자 마진 건너뜀:", e)
     try:
         out["scorecard"] = scorecard(D, amap)
         print("  추천가 성적표:", {k: v for k, v in out["scorecard"].items() if k != "items"})

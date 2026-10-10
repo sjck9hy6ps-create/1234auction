@@ -24806,6 +24806,16 @@ function openWeeklyReport(week) {
                 + d.misses.map(function(x) { return '<tr><td>' + bbEsc(x.name || x.caseNo) + '<div class="pn-muted">' + bbEsc(x.region) + '</div></td><td class="r">' + (x.fails != null ? x.fails + '회' : '-') + '</td><td class="r">' + f(x.minbid) + '</td><td class="r">' + f(x.pred) + '</td><td class="r"><b>' + f(x.actual) + '</b></td><td class="r" style="color:' + (x.errPct > 0 ? '#b91c1c' : '#1d4ed8') + ';">' + pc(x.errPct, true) + '</td><td class="r">' + (x.bidders != null ? x.bidders + '명' : '-') + '</td></tr>'; }).join('')
                 + '</tbody></table><div class="pn-muted">응찰자가 아주 많거나 1명뿐이면 크게 빗나가기 쉬워요. 이런 사례는 입찰 전 알 수 없는 변수예요.</div></div>';
         }
+        var wmg = d.winnerMargin;
+        if (wmg && wmg.overall) {
+            var wrow = function(x) { return '<tr><td>' + x.label + '</td><td class="r">' + x.n + '</td><td class="r"><b>' + x.medRatio.toFixed(2) + '배</b></td><td class="r">' + x.p25.toFixed(2) + '~' + x.p75.toFixed(2) + '</td><td class="r" style="color:' + (x.lt106Pct >= 25 ? '#b91c1c' : '#374151') + ';">' + x.lt106Pct + '%</td><td class="r">' + x.lt110Pct + '%</td></tr>'; };
+            var wth = '<thead><tr><th></th><th class="r">건수</th><th class="r">되판가÷낙찰가</th><th class="r">아래25%~위25%</th><th class="r">1.06배 미만</th><th class="r">1.10배 미만</th></tr></thead>';
+            h += '<div class="wr-sec"><b>낙찰자는 실제로 얼마 남겼나</b> (낙찰 후 6개월 안 같은 동·층 거래가 있던 ' + wmg.n + '건, 2023년~) - 전체 중앙 <b>' + wmg.overall.medRatio.toFixed(2) + '배</b>, 1.06배 미만 ' + wmg.overall.lt106Pct + '%'
+                + '<div class="pn-muted">비용(취득세·등기·중개·수리·이자)이 보통 6~10%라 되판가÷낙찰가가 1.06배 미만이면 손해이거나 거의 남지 않아요. 비용 반영 전 단순 비율이에요.</div>'
+                + '<table class="pn-table">' + wth + '<tbody><tr><td colspan="6" class="pn-muted">낙찰가가 시세(예상매도가)의 몇 %였나</td></tr>' + (wmg.byPrice || []).map(wrow).join('')
+                + '<tr><td colspan="6" class="pn-muted">응찰자 수</td></tr>' + (wmg.byBidders || []).map(wrow).join('') + '</tbody></table>'
+                + '<div class="pn-muted">우리 추천가(마진 확보)는 시세의 약 70~85%예요. 낙찰가가 시세의 90%를 넘는 구간에서 손해 비율이 급격히 늘어요 - 마진을 줄여 낙찰받은 사례의 결과예요.</div></div>';
+        }
         var mbs = marginBandStats().filter(function(x) { return x.med != null; });
         if (mbs.length) {
             h += '<div class="wr-sec"><b>매도가 구간별 마진율</b> (낙찰 후 6개월 안 같은 동·층 거래가 있던 사례, 세전·최소 수리비와 대출이자 포함) <table class="pn-table"><thead><tr><th>매도가</th><th class="r">건수</th><th class="r">마진율 중앙</th><th class="r">아래25%~위25%</th><th class="r">손해</th><th class="r">마진 중앙</th></tr></thead><tbody>'
