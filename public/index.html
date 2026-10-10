@@ -3612,7 +3612,7 @@ function hsNearby(a, radiusM) {
    백테스트(수도권 빌라 거래 39,959건, 각 거래 30일 전 자료만 사용): 보통 오차 12.5%(아파트 4~5%의 약 2.5~3배), ±10% 안 42%, ±20% 안 68%.
    순서: ① 같은 건물(번지) 24개월·면적 ±6㎡ → ② 같은 법정동 12개월·면적 ±8㎡·준공 ±5년 → ③ 같은 시군구 12개월·면적 ±8㎡.  ㎡당 가격을 최신 거래에 더 큰 비중(1년 반감)·비슷한 면적에 더 큰 비중으로 중앙값을 내고 면적을 곱함.
    범위는 단계별 실제 오차(백테스트 10~90%) - 같은 건물 3건 이상일 때만 오차 8%대로 쓸 만하고, 거래가 적을수록 범위가 넓어져 "참고용". */
-var VILLA_EST_RANGE = { '건물3+': [-18.9, 17.9, 8.1], '건물1~2+동': [-21.1, 25.9, 10.9], '건물1~2': [-17.6, 38.7, 12.7], '동5+': [-25.9, 41.8, 15.0], '동1~4': [-28.6, 56.3, 19.1], '시군구': [-44.7, 104.5, 33.2] };
+var VILLA_EST_RANGE = { '건물5+': [-18.4, 8.0, 6.2], '건물1~2+동': [-22.9, 20.7, 10.1], '건물1~2': [-17.6, 38.7, 12.7], '동5+': [-25.9, 41.8, 15.0], '동1~4': [-28.6, 56.3, 19.1], '시군구': [-44.7, 104.5, 33.2] };
 function villaSaleEst(a, ref) {
     var area = (parseFloat(a.pyung) || 0) * 3.305785; if (!area) return null;
     var bunjiFull = fullBunjiFromAddr(a.addr, a.dong, a.bunji);
@@ -3627,10 +3627,14 @@ function villaSaleEst(a, ref) {
                 var td = tradeDate(t).getTime(), p = parseInt(t.amount); if (!p || td > ref || td < lo) return;
                 var ds = Math.abs(t.area - area); if (ds > tol) return;
                 if (byTol && by) { var yb = parseInt(t.build_year || (ap.latest && ap.latest.build_year), 10); if (yb && Math.abs(yb - by) > byTol) return; }
-                out.push({ v: p / t.area, w: Math.exp(-(ref - td) / 86400000 / 365) * Math.exp(-ds / 10) });
+                out.push({ v: p / t.area, w: Math.exp(-(ref - td) / 86400000 / 365) * Math.exp(-ds / 10), f: parseInt(t.floor, 10), a: t.area, p: p, td: td });
             });
         });
-        return out;
+        // 같은 집 중복 정리(2026-10-10, 사용자: 미영팰리스 - 같은 호실이 8일 간격 같은 값으로 두 번 잡혀 시세가 높게 나옴): 같은 층·같은 면적·가격 3% 이내·45일 안이면 1건
+        out.sort(function(x, y) { return x.td - y.td; });
+        var kept = [];
+        out.forEach(function(x) { if (kept.some(function(k) { return k.f === x.f && Math.abs(k.a - x.a) < 1 && Math.abs(k.p - x.p) / Math.min(k.p, x.p) <= 0.03 && Math.abs(k.td - x.td) <= 45 * 86400000; })) return; kept.push(x); });
+        return kept;
     };
     var wq = function(arr, q) {
         if (!arr.length) return null; arr = arr.slice().sort(function(x, y) { return x.v - y.v; });
@@ -3648,7 +3652,7 @@ function villaSaleEst(a, ref) {
         allAptList.forEach(function(ap) { if ((ap.buildingType || 'apt') === 'villa' && (!lawd || ap.lawdCd === lawd)) all.push(ap); });
         v3 = wq(coll(all, 365, 8, 0), .5);
     }
-    if (n1 >= 3) { p = v1; lvl = '건물3+'; }
+    if (n1 >= 5) { p = v1; lvl = '건물5+'; } // 2026-10-10 백테스트: 건물 거래 5건 이상일 때만 건물 값 그대로(보통 오차 6.2%·과대 상위10% +8%), 1~4건은 같은 동 값과 50:50
     else if (n1 >= 1 && v2 != null) { p = 0.5 * v1 + 0.5 * v2; lvl = '건물1~2+동'; }
     else if (n1 >= 1) { p = v1; lvl = '건물1~2'; }
     else if (n2 >= 5) { p = v2; lvl = '동5+'; }
@@ -3667,10 +3671,10 @@ function villaSaleEst(a, ref) {
    승강기 있음(4층 이상 건물)은 ×0.7, 없음은 ×1.15 (실측: 승강기 있음 오차 9.6%·상위10% +15% / 없음 13.5%·+39%).
    연식 오차: 10년 이내 9.7%, 11~20년 11.0%, 21~30년 13.6%, 31년+ 17.3% → 구축일수록 마진이 커짐. 입찰 상한 = 이 마진이 남는 최고 입찰가(앱 비용·세금 계산). */
 var VILLA_MARGIN_MIN = 2000;
-var VILLA_P90 = { a10: { '건물3+': 7.4, '건물1~2+동': 12.3, '건물1~2': 20, '동5+': 21.6, '동1~4': 21.8, '시군구': 25 },
-                  a20: { '건물3+': 10.1, '건물1~2+동': 17.8, '건물1~2': 25, '동5+': 37.2, '동1~4': 47.9, '시군구': 60 },
-                  a30: { '건물3+': 15.5, '건물1~2+동': 25.3, '건물1~2': 35, '동5+': 39.9, '동1~4': 60.4, '시군구': 100 },
-                  a31: { '건물3+': 16.2, '건물1~2+동': 36.9, '건물1~2': 45, '동5+': 59.7, '동1~4': 73.1, '시군구': 110 } };
+var VILLA_P90 = { a10: { '건물5+': 7.4, '건물1~2+동': 12.3, '건물1~2': 20, '동5+': 21.6, '동1~4': 21.8, '시군구': 25 },
+                  a20: { '건물5+': 10.1, '건물1~2+동': 17.8, '건물1~2': 25, '동5+': 37.2, '동1~4': 47.9, '시군구': 60 },
+                  a30: { '건물5+': 15.5, '건물1~2+동': 25.3, '건물1~2': 35, '동5+': 39.9, '동1~4': 60.4, '시군구': 100 },
+                  a31: { '건물5+': 16.2, '건물1~2+동': 36.9, '건물1~2': 45, '동5+': 59.7, '동1~4': 73.1, '시군구': 110 } };
 function villaMarginPlan(row, ve, title) {
     if (!ve) return null;
     var yr = title && title.useAprDay ? parseInt(String(title.useAprDay).slice(0, 4), 10) : (parseInt(row.a.buildYear, 10) || ve.by || null), ageFromTrades = !(title && title.useAprDay) && !parseInt(row.a.buildYear, 10) && !!ve.by;
@@ -3842,7 +3846,7 @@ function villaListingHtml(row) {
             + (ve && sm.estRankPct != null ? '<br>예상매도가 ' + f(ve.est) + '보다 싼 매물 ' + sm.estRankPct + '%' : '') + '</div>';
     }
     h += '<textarea id="vl-paste-' + bbEsc(String(row.id)) + '" placeholder="네이버 부동산 매물 목록 붙여넣기" style="width:100%;height:' + (sm ? 40 : 70) + 'px;margin-top:6px;font-size:11.5px;border:1px solid #d1d5db;border-radius:6px;padding:6px;box-sizing:border-box;"></textarea>'
-        + '<button style="margin-top:4px;border:none;background:var(--ui-blue,#1e5eff);color:#fff;border-radius:8px;padding:6px 12px;font-size:12px;font-weight:700;cursor:pointer;" onclick="applyVillaListings(\'' + idJs + '\')">' + (sm ? '다시 분석' : '분석해서 반영') + '</button> <button style="margin-top:4px;border:1px solid #d1d5db;background:#fff;color:#374151;border-radius:8px;padding:6px 10px;font-size:12px;cursor:pointer;" onclick="recordNoListings(\'' + idJs + '\')">매물 없음으로 기록</button>';
+        + '<button style="margin-top:4px;border:none;background:var(--ui-blue,#1e5eff);color:#fff;border-radius:8px;padding:6px 12px;font-size:12px;font-weight:700;cursor:pointer;" onclick="applyVillaListings(\'' + idJs + '\')">' + (sm ? '다시 분석' : '분석해서 반영') + '</button> <button style="margin-top:4px;border:1px solid #1e5eff;background:#eef3ff;color:#1e5eff;border-radius:8px;padding:6px 10px;font-size:12px;font-weight:700;cursor:pointer;" title="네이버 매물 목록을 복사한 뒤 누르면 바로 분석" onclick="pasteListingsFromClipboard(\'' + idJs + '\',\'villa\')">📋 복사한 내용 바로 분석</button> <button style="margin-top:4px;border:1px solid #d1d5db;background:#fff;color:#374151;border-radius:8px;padding:6px 10px;font-size:12px;cursor:pointer;" onclick="recordNoListings(\'' + idJs + '\')">매물 없음으로 기록</button>';
     return h;
 }
 /* 빌라 표 정렬(2026-10-10, 사용자: 빌라에도 오름·내림차순) - 열 이름을 누르면 오름↔내림, 값이 없는 물건은 방향과 상관없이 맨 아래 */
@@ -3976,7 +3980,7 @@ function villaSaveCalcSoon() {
     villaSaveT = setTimeout(function() { var snap = villaCalcSnapshot(); listIdbOp('readwrite', function(st) { return st.put(snap, VILLA_CALC_KEY); }); }, 4000);
 }
 var villaVeCache = {}, villaLoadBusy = false;
-function villaVeSig(a) { return ['v2', a.pyung, a.addr, a.dong, a.bunji, a.bidDate, a.buildYear || '', a.estBuildYear || ''].join('|'); }
+function villaVeSig(a) { return ['v3', a.pyung, a.addr, a.dong, a.bunji, a.bidDate, a.buildYear || '', a.estBuildYear || ''].join('|'); }
 async function villaLoadRegions() {
     if (villaLoadBusy) return; villaLoadBusy = true;
     try {
@@ -4084,7 +4088,7 @@ function renderVillaLite(body) {
         var ev = evs[r.id], st = hsBld[r.id] || {}, chk = st.chk, t = ev.t, idJs = String(r.id).replace(/\\/g, '\\\\').replace(/'/g, "\\'"), ve = ev.ve, mp = ev.mp, wb = ev.wb, pn = ev.pn;
         var dk = hsDongKey(r.a.addr), ag = dk && homestayAgg && homestayAgg.byDong ? homestayAgg.byDong[dk] : null, sc = ag ? (HS_STATE[ag.state] || HS_STATE['안정']) : null;
         var elv = t ? (t.rideElvtCnt || 0) + (t.emgenElvtCnt || 0) : 0;
-        var estCell = ve ? (function() { var cl = ve.lvl === '건물3+' ? '#15803d' : (ve.lvl === '건물1~2+동' || ve.lvl === '건물1~2' ? '#b45309' : '#b91c1c'); return '<b title="실제 값이 ' + money(ve.lo) + '~' + money(ve.hi) + ' 사이였던 비율이 80% (백테스트)">' + money(ve.est) + '</b><div class="bb-sub" style="color:' + cl + ';">보통 오차 ±' + ve.errPct + '%</div><div class="bb-sub">' + ve.lvl + ' · 거래 ' + (ve.n1 || ve.n2) + '건</div>' + (ve.capped ? '<div class="bb-sub" style="color:#7c3aed;" title="' + bbEsc(ve.capped.desc) + '">📋 호가 상한 적용(실거래 ' + money(ve.estTrade) + ')</div>' : ''); })() : '<span class="bb-sub">-</span>';
+        var estCell = ve ? (function() { var cl = ve.lvl === '건물5+' ? '#15803d' : (ve.lvl === '건물1~2+동' || ve.lvl === '건물1~2' ? '#b45309' : '#b91c1c'); return '<b title="실제 값이 ' + money(ve.lo) + '~' + money(ve.hi) + ' 사이였던 비율이 80% (백테스트)">' + money(ve.est) + '</b><div class="bb-sub" style="color:' + cl + ';">보통 오차 ±' + ve.errPct + '%</div><div class="bb-sub">' + ve.lvl + ' · 거래 ' + (ve.n1 || ve.n2) + '건</div>' + (ve.capped ? '<div class="bb-sub" style="color:#7c3aed;" title="' + bbEsc(ve.capped.desc) + '">📋 호가 상한 적용(실거래 ' + money(ve.estTrade) + ')</div>' : ''); })() : '<span class="bb-sub">-</span>';
         var marCell = mp ? (function() { var why = (mp.age != null ? '연식 ' + mp.age + '년' : '연식 모름') + (mp.elv != null ? ' · 승강기 ' + (mp.elv > 0 ? '있음' : '없음') : '') + ' · ' + ve.lvl;
             return '<b>마진 ' + toEok(String(mp.margin)) + '</b>' + (mp.first ? '<div class="bb-sub" style="color:#b45309;">' + (mp.elv === 0 ? '승강기 없는 고층' : '1층') + ' +20%</div>' : (mp.floorMin ? '' : '<div class="bb-sub">매도가의 ' + mp.buf + '%</div>')) + (mp.bid ? '<div style="color:' + (mp.feasible ? '#15803d' : '#b91c1c') + ';font-weight:700;">' + (mp.feasible ? '입찰 상한 ' + money(mp.bid) : '최저가로도 마진 부족') + '</div>' : '') + '<div class="bb-sub" title="필요 마진 근거">' + why + '</div>'; })() : '<span class="bb-sub">-</span>';
         var winCell = wb ? '<b>' + money(wb.price) + '</b><div class="bb-sub" title="낙찰사례 약 6천 건 모델, 보통 오차 약 9%">예상 낙찰가</div>' + (pn && pn.ev ? '<div style="color:#15803d;font-weight:700;">추천 ' + money(pn.ev.bid) + '</div><div class="bb-sub">낙찰 가능성 ' + Math.round(pn.ev.p * 100) + '% · 순이익 ' + money(pn.ev.net) + '</div>' : '<div class="bb-sub" style="color:#b91c1c;">' + (pn && pn.infeasible ? '최저가로도 마진 부족' : '추천가 없음') + '</div>') : '<span class="bb-sub">-</span>';
@@ -11302,6 +11306,13 @@ function listingPillHtml(a) {
     if (l.st === 'yes') return '<span class="bb-pill" style="background:#e8f5e9;color:#15803d;border:1px solid #86efac;" title="네이버 매물 ' + l.n + '건 (확인 ' + bbEsc(l.at || '') + ')">📋 매물 ' + l.n + '건' + old + '</span>';
     if (l.st === 'none') return '<span class="bb-pill" style="background:#f3f4f6;color:#6b7280;border:1px solid #d1d5db;" title="네이버에서 매물이 없는 것으로 확인함 (' + bbEsc(l.at || '') + ')">📋 매물 없음' + old + '</span>';
     return '<span class="bb-sub" style="font-size:10.5px;color:#9ca3af;" title="네이버 매물 목록을 붙여넣으면 등록 여부가 표시돼요">📋 미확인</span>';
+}
+// 네이버에서 목록을 복사(Ctrl+A → Ctrl+C)한 뒤 이 버튼 한 번으로 분석(2026-10-10: 붙여넣기 칸을 누르고 붙이는 단계를 줄임). 앱이 네이버를 직접 읽지는 않음
+async function pasteListingsFromClipboard(id, kind) {
+    var txt = ''; try { txt = await navigator.clipboard.readText(); } catch (e) { alert('클립보드를 읽지 못했어요. 네이버 화면에서 복사한 뒤 아래 칸에 직접 붙여넣어 주세요(브라우저가 클립보드 허용을 물으면 허용해 주세요).'); return; }
+    var ta = document.getElementById((kind === 'villa' ? 'vl-paste-' : 'nv-paste-') + id); if (!ta) return;
+    ta.value = txt;
+    return kind === 'villa' ? applyVillaListings(id) : applyNaverListings(id);
 }
 async function recordNoListings(id) {
     var a = auctionList.filter(function(x) { return String(x.id) === String(id); })[0]; if (!a) return;
@@ -19134,7 +19145,7 @@ function naverListingHtml(row, idJs) {
             + '<div class="dr-sub" style="margin-top:4px;">가장 싼 매물: ' + sm.lowest.map(function(x) { return f(x.p) + '(' + x.dong + '동 ' + x.f + (x.t ? ' ' + x.t.trim() : '') + ')'; }).join(' · ') + '</div></div>';
     }
     h += '<textarea id="nv-paste-' + bbEsc(String(row.id)) + '" placeholder="네이버 부동산 → 단지 → 매물 목록을 전체 선택해 복사 후 여기에 붙여넣기" style="width:100%;height:' + (sm ? 40 : 70) + 'px;margin-top:6px;font-size:11.5px;border:1px solid #d1d5db;border-radius:6px;padding:6px;box-sizing:border-box;"></textarea>'
-        + '<button style="margin-top:4px;border:none;background:var(--ui-blue,#1e5eff);color:#fff;border-radius:8px;padding:6px 12px;font-size:12px;font-weight:700;cursor:pointer;" onclick="applyNaverListings(\'' + idJs + '\')">' + (sm ? '다시 분석' : '분석해서 채우기') + '</button> <button style="margin-top:4px;border:1px solid #d1d5db;background:#fff;color:#374151;border-radius:8px;padding:6px 10px;font-size:12px;cursor:pointer;" onclick="recordNoListings(\'' + idJs + '\')">매물 없음으로 기록</button></div>';
+        + '<button style="margin-top:4px;border:none;background:var(--ui-blue,#1e5eff);color:#fff;border-radius:8px;padding:6px 12px;font-size:12px;font-weight:700;cursor:pointer;" onclick="applyNaverListings(\'' + idJs + '\')">' + (sm ? '다시 분석' : '분석해서 채우기') + '</button> <button style="margin-top:4px;border:1px solid #1e5eff;background:#eef3ff;color:#1e5eff;border-radius:8px;padding:6px 10px;font-size:12px;font-weight:700;cursor:pointer;" title="네이버 매물 목록을 복사한 뒤 누르면 바로 분석" onclick="pasteListingsFromClipboard(\'' + idJs + '\',\'apt\')">📋 복사한 내용 바로 분석</button> <button style="margin-top:4px;border:1px solid #d1d5db;background:#fff;color:#374151;border-radius:8px;padding:6px 10px;font-size:12px;cursor:pointer;" onclick="recordNoListings(\'' + idJs + '\')">매물 없음으로 기록</button></div>';
     return h;
 }
 /* 🏁 지역 경쟁 강도(2026-10, 사용자: "틈새시장의 큰 틀 - 실제로 낙찰 가능성이 있고 낙찰 후 매도까지 잘되는 지역") -
