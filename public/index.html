@@ -1545,7 +1545,6 @@ body.ui2 #auction-modal.am4 { width:620px; }
             <button class="filter-tab ft-common" onclick="toggleRecentYearOnly(this)">최근6개월 거래만</button>
             <button class="filter-tab ft-common" onclick="toggleCompOnlyFilter(this)">📌 비교대상만</button>
             <button class="filter-tab ft-common" id="boundary-toggle-btn" onclick="toggleDongBoundaryMode(this)">🗺️ 법정동 경계선</button>
-            <button class="filter-tab ft-common" id="rentonly-toggle-btn" onclick="toggleShowRentOnly(this)">🏠 전세거래만 있는 주소</button>
             <button class="filter-tab ft-common" id="bidcaseonly-toggle-btn" onclick="toggleBidCaseOnlyFilter(this)">⚖️ 낙찰사례만 보기</button>
             <button class="filter-tab ft-common" id="bidcasebadge-toggle-btn" onclick="toggleShowBidCaseBadges()">⚖️ 낙찰사례 배지 숨김</button>
             <button class="filter-tab ft-common" id="newhighonly-toggle-btn" onclick="toggleNewHighOnlyFilter(this)">⭐ 신고가만 보기</button>
@@ -1591,10 +1590,10 @@ body.ui2 #auction-modal.am4 { width:620px; }
             <button class="filter-tab ft-reset" onclick="resetVillaTierFilter()">초기화</button>
         </div>
         <div class="filter-row">
-            <div class="filter-row-label">경매건</div>
-            <button class="filter-tab ft-adate" data-adate="past" onclick="toggleAuctionDateFilter('past',this)">지난 경매건</button>
-            <button class="filter-tab ft-adate" data-adate="today" onclick="toggleAuctionDateFilter('today',this)">오늘 경매건</button>
-            <button class="filter-tab ft-adate" data-adate="other" onclick="toggleAuctionDateFilter('other',this)">그외 경매건</button>
+            <div class="filter-row-label" title="입찰후보로 판정된 경매물건을 단계별로 골라 봐요(여러 개 고르면 하나라도 맞는 것)">입찰후보 단계</div>
+            <button class="filter-tab ft-adate" data-adate="go" onclick="toggleAuctionDateFilter('go',this)">🚶 임장 후보</button>
+            <button class="filter-tab ft-adate" data-adate="pass" onclick="toggleAuctionDateFilter('pass',this)">패스</button>
+            <button class="filter-tab ft-adate" data-adate="wait" onclick="toggleAuctionDateFilter('wait',this)">⏳ 계산 전</button>
             <button class="filter-tab ft-reset" onclick="resetAuctionDateFilter()">초기화</button>
         </div>
     </div>
@@ -4145,7 +4144,7 @@ async function villaLoadRegions() {
             if (bidBoardState.visit === 'villa' && Date.now() - bbLastInteract > 2000) renderBidBoard();
             await new Promise(function(r) { setTimeout(r, 60); });
         }
-    } finally { try { if (Object.keys(villaPts).length) { await villaLiqCompute(); villaLiqFinal = true; } } catch (e) { console.error('빌라 생활권 계산 실패', e); } villaLoadBusy = false; if (bidBoardState.visit === 'villa') renderBidBoard(); villaSaveCalcSoon(); }
+    } finally { try { if (Object.keys(villaPts).length) { await villaLiqCompute(); villaLiqFinal = true; } } catch (e) { console.error('빌라 생활권 계산 실패', e); } villaLoadBusy = false; if (bidBoardState.visit === 'villa') renderBidBoard(); villaSaveCalcSoon(); try { if (activeAuctionDateFilters.size) renderAuctionMarkers(); } catch (e) {} }
 }
 /* 🚩 빌라 이슈 의심(2026-10-10, 사용자: "유찰 3회 이상이거나 최저가가 현저히 낮으면 권리상 문제 있는 경우가 대부분 - 걸러내줘") - 아파트와 같은 기준 + 감정가 대비 극단적으로 낮은 최저가.
    기준: 최저가÷예상매도가 40% 미만, 또는 3회+ 유찰이면서 50% 미만, 또는 최저가가 감정가의 20% 미만 → 강한 의심 / 3회+ 유찰 또는 45% 미만 → 의심. 둘 다 임장 후보에서 뺌(패스에 사유 표시).
@@ -4506,12 +4505,16 @@ function calcAuctionDday(bidDateStr) {
 // "경매건" 필터용 버킷 분류 - calcAuctionDday와 동일한 기준(diffDays)을 재사용해서
 // D-day 배지 표기와 필터 결과가 항상 일치하도록 함. 입찰일이 없거나 미래(D-N)인 경우는
 // "그외 경매건"으로 묶임.
+// 2026-10-10(사용자 요청): 경매건 필터를 '입찰후보 단계'(임장 후보 / 패스 / 계산 전)로 바꿈 - 입찰후보 목록·배지와 같은 판정을 씀. 낙찰 확정 건은 어느 단계에도 안 넣음
 function classifyAuctionDateBucket(a) {
-    var dd = a && a.bidDate ? calcAuctionDday(a.bidDate) : null;
-    if (!dd) return 'other';
-    if (dd.diffDays < 0) return 'past';
-    if (dd.diffDays === 0) return 'today';
-    return 'other';
+    if (a && parseFloat(a.actualBid)) return 'done';
+    var r = null; try { r = getBidVerdictForMarker(a); } catch (e) { r = null; }
+    if (!r || r.pending) return 'wait';
+    var why = '';
+    if (r.type === 'villa') { var ev = null; try { ev = villaEval(r); } catch (e) {} if (!ev) return 'wait'; if (ev.visit.go) return 'go'; why = String(ev.visit.why || ''); }
+    else if (r.type === 'apt' && r.visit) { if (r.visit.go) return 'go'; why = String(r.visit.why || ''); }
+    else return 'wait';
+    return /자료가 부족|계산할 수 없|계산하지 못|계산 중|불러오는|계산 오류/.test(why) ? 'wait' : 'pass';
 }
 function toPyung(area) { return Math.round(area / 3.305785 * 10) / 10; }
 // apt.ppp는 "만원/평" 단위로 저장돼 있음(calcPriceGrades 참고). 등급은 색상으로 이미
@@ -6092,7 +6095,7 @@ function isAptVisibleUnderCurrentFilters(apt) {
     // 단독/다가구는 placeMarkers가 지오코딩 자체를 시도하지 않아 지도에 마커가 만들어지지 않음
     if (apt.buildingType === 'single') return false;
     // 매매기록 없이 전세거래만 있던 주소지는 "전세거래만 있는 주소" 필터를 켰을 때만 보여줌
-    if (apt.rentOnly && !showRentOnlyFilter) return false;
+    if (apt.rentOnly) return false; // 2026-10-10: '전세거래만 있는 주소' 필터를 없애고 항상 숨김
     if (currentTypeFilter === 'apt') {
         if (apt.buildingType !== 'apt') return false;
         if (recentYearOnly && !hasRecentYearTrade(apt)) return false;
@@ -6994,7 +6997,7 @@ function buildNaverLinkHtml(lat, lon, name, dong, opts) {
    확인됨. */
 function copyAuctionCaseNo(caseNo) {
     var url = 'https://www.courtauction.go.kr/pgj/index.on?w2xPath=%2Fpgj%2Fui%2Fpgj100%2FPGJ159M00.xml';
-    window.open(url, '_blank', 'noopener');
+    openLinkWindow(url, 'win-court');
     if (!caseNo) {
         alert('등록된 사건번호가 없습니다.\n새로 열린 "경매사건검색" 화면에서 법원과 사건번호를 직접 입력해 조회해주세요.');
         return;
@@ -7256,6 +7259,14 @@ function buildCourtAuctionLinkHtml(caseNo, addr) {
 /* ════ 🙋 바토너(법원경매 대리입찰) · 🟦 탱크옥션 바로가기 (2026-10, 사용자: "법원 연결 링크가 좋다 - 탱크옥션·바토너 링크도")
    바토너(https://batoner.kr)는 로그인 후 "대리입찰 신청" 화면에서 사건을 검색해 신청하는 방식이고, 사건번호를 주소(URL)로 미리 채우는 방법은 공개돼 있지 않아
    법원·탱크옥션과 같은 방식으로 "사건번호(2025타경12345 형식)를 복사해 신청 화면을 새 탭으로 열기"만 함. 로그인·신청은 직접 해야 함(이 앱이 대신하지 않음). */
+/* 🔗 입찰후보에서 여는 외부 링크(법원경매·탱크옥션·네이버부동산·바토너)는 사이트마다 이름 붙은 별도 새 창으로 열어 앱 화면을 바꾸지 않고, 다시 누르면 같은 창을 재사용(2026-10-10, 사용자 요청) */
+function openLinkWindow(url, name) {
+    var w = null;
+    try { w = window.open(url, name, 'popup=yes,width=1280,height=900,left=60,top=40,resizable=yes,scrollbars=yes'); } catch (e) { w = null; }
+    if (!w) { try { w = window.open(url, '_blank'); } catch (e) {} } // 팝업이 막혔거나 태블릿이면 새 탭
+    try { if (w) { w.opener = null; w.focus(); } } catch (e) {}
+    return w;
+}
 function caseNoForSearch(caseNo) {
     var m = String(caseNo || '').match(/(\d{4})\D+(\d+)/);
     return m ? m[1] + '타경' + m[2] : String(caseNo || '').trim();
@@ -7271,18 +7282,18 @@ function copyText(txt) {
 }
 function openBatoner(caseNo) {
     var cn = caseNoForSearch(caseNo);
-    window.open('https://batoner.kr/mypage/apply', '_blank', 'noopener');
+    openLinkWindow('https://batoner.kr/mypage/apply', 'win-batoner');
     if (!cn) { linkToast('바토너 대리입찰 신청 화면을 열었어요. 사건번호가 등록돼 있지 않아 직접 검색해 주세요.'); return; }
     copyText(cn).then(function(ok) { linkToast(ok ? '사건번호 ' + cn + ' 복사됨 → 바토너 "경매 사건을 검색하세요" 칸에 붙여넣기 (로그인 필요)' : '사건번호: ' + cn + ' (자동 복사 실패 - 직접 입력해 주세요)'); });
 }
 function openTankQuick(caseNo) {
     var cn = caseNoForSearch(caseNo), m = cn.match(/(\d{4})타경(\d+)/);
-    window.open('https://www.tankauction.com/ca/caList.php', '_blank', 'noopener');
+    openLinkWindow('https://www.tankauction.com/ca/caList.php', 'win-tank');
     if (!m) { linkToast('탱크옥션을 열었어요. 사건번호가 없어 직접 검색해 주세요.'); return; }
     copyText(m[2]).then(function(ok) { linkToast(ok ? '사건번호 ' + m[2] + ' 복사됨 → 탱크옥션 우측 상단 연도 ' + m[1] + '년 선택 후 "타경" 칸에 붙여넣기 (로그인 필요)' : '사건번호: ' + m[2] + ' (자동 복사 실패)'); });
 }
 function openCourtQuick(caseNo) {
-    window.open('https://www.courtauction.go.kr/pgj/index.on?w2xPath=%2Fpgj%2Fui%2Fpgj100%2FPGJ159M00.xml', '_blank', 'noopener');
+    openLinkWindow('https://www.courtauction.go.kr/pgj/index.on?w2xPath=%2Fpgj%2Fui%2Fpgj100%2FPGJ159M00.xml', 'win-court');
     if (!caseNo) { linkToast('법원경매정보를 열었어요. 사건번호가 없어 직접 입력해 주세요.'); return; }
     copyText(String(caseNo)).then(function(ok) { linkToast(ok ? '사건번호 ' + caseNo + ' 복사됨 → 법원 선택 후 사건번호 칸에 붙여넣기' : '사건번호: ' + caseNo + ' (자동 복사 실패)'); });
 }
@@ -7296,7 +7307,7 @@ function openCourtQuick(caseNo) {
    그대로 사용하거나 직접 로그인해야 함. */
 function openTankAuctionSearch(caseNo) {
     var url = 'https://www.tankauction.com/ca/caList.php';
-    window.open(url, '_blank', 'noopener');
+    openLinkWindow(url, 'win-tank');
     if (!caseNo) {
         alert('등록된 사건번호가 없습니다. 탱크옥션에서 직접 검색해주세요.');
         return;
@@ -11520,7 +11531,7 @@ function openNaverForRow(id) {
     var by = a.buildYear || row.estBuildYear || (title && title.useAprDay ? parseInt(String(title.useAprDay).slice(0, 4), 10) : null) || (m && m.latest && m.latest.build_year) || null;
     var r = naverLandUrl({ propType: row.type || a.propType, title: title, buildingType: m && m.buildingType, name: cleanBldgName(a.name) || row.name, addr: a.addr, dong: a.dong, pyung: row.pyung || a.pyung, buildYear: by, lat: a.lat, lon: a.lon });
     if (!r) { alert('주소가 없어 네이버부동산을 열 수 없어요.'); return; }
-    window.open(r.url, '_blank', 'noopener');
+    openLinkWindow(r.url, 'win-naver');
 }
 function openNaverLandForModal() {
     var ctx = getAuctionAddressContext();
@@ -11553,7 +11564,7 @@ function openNaverLandForModal() {
         if (!q) { alert('주소를 먼저 입력해 주세요.'); return; }
         url = 'https://search.naver.com/search.naver?query=' + encodeURIComponent(q + ' 네이버부동산');
     }
-    window.open(url, '_blank', 'noopener');
+    openLinkWindow(url, 'win-naver');
 }
 // 유사 매물 건수·호가 중 하나라도 입력/수정한 시점을 "확인일"로 자동 기록 - 나중에 며칠 지났는지(신선도) 보여주기 위함.
 // ⚠️ 예전엔 이 함수가 oninput마다 바로 renderMarketAdjustedPrice()까지 호출해서 재계산했는데,
@@ -18175,6 +18186,11 @@ function villaBadgeShort(r) {
 function bidVerdictShort(r) {
     if (!r) return null;
     if (r.type === 'villa') { var vb = villaBadgeShort(r); if (vb) return vb; }
+    if (r.type === 'apt' && r.visit && !r.pending && r.verdict !== 'nodata') { // 아파트 배지도 입찰후보 목록과 같은 임장/패스로(2026-10-10)
+        var pe0 = r.pick && r.pick.ev, w0 = String(r.visit.why || '');
+        var sh = r.visit.go ? (pe0 ? '추천 ' + toEok(String(pe0.bid)) + ' · 낙찰 ' + Math.round(pe0.p * 100) + '%' : '') : (/이슈/.test(w0) ? '이슈 의심' : (/대량/.test(w0) ? '건물 대량 경매' : (/1년 거래/.test(w0) ? '시세 근거 약함' : (/낙찰 가능성/.test(w0) ? '낙찰 가능성 낮음' : (/순이익|마진/.test(w0) ? '마진 부족' : w0.slice(0, 12))))));
+        return { label: r.visit.go ? '🚶 임장' : '패스', room: sh, color: r.visit.go ? '#2e7d32' : '#c62828', bg: r.visit.go ? '#e8f5e9' : '#ffebee', opportunity: false };
+    }
     var v = BID_BOARD_VERDICT[r.verdict];
     var room = r.roomPct == null ? '' : (r.roomPct >= 0 ? '여유 ' + r.roomPct + '%' : '부족 ' + Math.abs(r.roomPct) + '%');
     // 2026-10: 📈 성공 구간 / ⚠️ 손해 주의(앱 예상보다 싸게 팔릴 가능성 큼 - 예전 이름 '시세 과대 의심')도 지도 배지·목록에 같이
@@ -25270,8 +25286,7 @@ var FILTER_FLAG_DEFS = [
     { v: 'newHighOnlyFilter', sel: '#newhighonly-toggle-btn', label: '신고가만' },
     { v: 'recentYearOnly', sel: '#fp-group-display [onclick^="toggleRecentYearOnly"]', label: '최근 6개월 거래만' },
     { v: 'bidCaseOnlyFilter', sel: '#bidcaseonly-toggle-btn', label: '낙찰사례만' },
-    { v: 'compOnlyFilter', sel: '#fp-group-display [onclick^="toggleCompOnlyFilter"]', label: '비교대상만' },
-    { v: 'showRentOnlyFilter', sel: '#rentonly-toggle-btn', label: '전세거래만 있는 주소' }
+    { v: 'compOnlyFilter', sel: '#fp-group-display [onclick^="toggleCompOnlyFilter"]', label: '비교대상만' }
 ];
 var FILTER_SET_DEFS = [
     { set: function() { return activeGrades; }, cls: '.ft-g', attr: 'g', reset: 'resetGradeFilter' },
