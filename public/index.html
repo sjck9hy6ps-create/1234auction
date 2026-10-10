@@ -1309,6 +1309,7 @@ body.ui2 #auction-modal.am4 { width:620px; }
 #weekly-panel .wr-kpis span { display:block; color:#4b5563; font-size:13px; font-weight:600; } #weekly-panel .wr-kpis b { display:block; font-size:28px; margin:4px 0; letter-spacing:-.5px; } #weekly-panel .wr-kpis em b { display:inline; font-size:inherit; margin:0; letter-spacing:0; color:#111827; } #weekly-panel .wr-kpis em { display:block; font-style:normal; color:#6b7280; font-size:12.5px; line-height:1.4; }
 #weekly-panel .wr-sec { background:#fff; border:1px solid #e5e7eb; border-radius:14px; padding:16px 18px; margin-top:14px; line-height:1.65; } #weekly-panel .wr-sec > b:first-child { font-size:15.5px; }
 #weekly-panel .pn-table { width:100%; border-collapse:collapse; margin-top:10px; table-layout:auto; } #weekly-panel .pn-table th { background:#f9fafb; color:#374151; font-size:12.5px; font-weight:700; padding:10px 12px; border-bottom:2px solid #e5e7eb; text-align:left; white-space:nowrap; } #weekly-panel .pn-table td { padding:11px 12px; border-bottom:1px solid #eef0f3; font-size:14px; vertical-align:middle; } #weekly-panel .pn-table td.r, #weekly-panel .pn-table th.r { text-align:right; white-space:nowrap; font-variant-numeric:tabular-nums; } #weekly-panel .pn-table td:first-child { min-width:170px; text-align:left; } #weekly-panel .pn-table td { text-align:left; } #weekly-panel .pn-table td.r { text-align:right; } #weekly-panel .pn-table tbody tr:nth-child(even) { background:#fafbfc; } #weekly-panel .pn-table td .pn-muted { font-size:12px; }
+#weekly-panel .wr-btn { border:1px solid #d1d5db; background:#fff; border-radius:10px; padding:8px 14px; font-size:14px; font-weight:700; cursor:pointer; } #weekly-panel .wr-btn:hover { background:#f3f4f6; }
 #weekly-panel .wr-pill { display:inline-block; white-space:nowrap; border-radius:999px; padding:3px 11px; font-size:12.5px; font-weight:700; } #weekly-panel .wr-pill.win { background:#dcfce7; color:#15803d; } #weekly-panel .wr-pill.lose { background:#fee2e2; color:#b91c1c; } #weekly-panel .wr-fresh { display:inline-block; margin-left:4px; font-size:11px; font-weight:600; color:#7c3aed; background:#f3e8ff; border-radius:6px; padding:1px 6px; vertical-align:middle; }
 #weekly-panel .wr-sec table { margin-top:6px; }
 @media (max-width: 1100px) { #weekly-panel { right:12px; left:12px; width:auto; top:48px; height:calc(100vh - 64px); } #weekly-panel .wr-kpis { grid-template-columns:repeat(2, 1fr); } }
@@ -24913,6 +24914,90 @@ function wrGo(caseNo, region) {
     }
     b.style.display = '';
 }
+
+/* 📋 리포트 물건 상세 (2026-10-10, 사용자: "리포트에서 물건을 누르면 입찰 전 확인했던 추천금액·예상낙찰가 등 입찰후보 탭 내용을 보고 싶다, 수리비 3가지 모두") -
+   결과(실제 낙찰) + 입찰 전 저장값 vs 지금 계산 + 수리비 3가지(전체/중간/도배·장판)별 입찰 상한·추천가 + 입찰가 고르기·비용 구성·같은 평형 거래(층 표시) */
+var wrItemMap = {};
+function wrRegisterItem(it) { var k = wrNormCase(it.caseNo) + '|' + (it.region || ''); wrItemMap[k] = Object.assign(wrItemMap[k] || {}, it); return k; }
+function wrNetAt(a2, sale, repair, bid) {
+    var base = Object.assign({}, a2, { target: sale, repair: repair }), lo = -4000, hi = 8000;
+    for (var i = 0; i < 40; i++) {
+        var m = (lo + hi) / 2, r = solveAuctionBidFromRecord(Object.assign({}, base, { compTargetMargin: m }));
+        if (!r) { hi = m; continue; }
+        if (r.bid > bid) lo = m; else hi = m;
+    }
+    return Math.round((lo + hi) / 2);
+}
+async function wrDetail(caseNo, region) {
+    var it = wrItemMap[wrNormCase(caseNo) + '|' + (region || '')] || { caseNo: caseNo, region: region };
+    var b = document.querySelector('#weekly-panel .wr-b'); if (!b) return;
+    if (!window.__wrBackHtml) window.__wrBackHtml = b.innerHTML;
+    var f = function(v) { return v == null || isNaN(v) ? '-' : toEok(String(Math.round(v))); };
+    var esc = bbEsc;
+    var top = '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px;"><button class="wr-btn" onclick="wrBack()">◀ 리포트로</button><button class="wr-btn" onclick="wrGo(\'' + String(caseNo).replace(/'/g, '') + '\',\'' + String(region || '').replace(/'/g, '') + '\')">🗺️ 지도에서 위치 보기</button></div>';
+    b.innerHTML = top + '<div class="pn-muted">불러오는 중… (지역 실거래를 받아 다시 계산해요)</div>';
+    var a = (auctionList || []).filter(function(x) { return !x.isBacktest && x.caseNo && wrNormCase(x.caseNo) === wrNormCase(caseNo) && wrRegionOf(x.addr) === region; })[0];
+    var sn = it.snap || {};
+    var h = top + '<h3 style="margin:4px 0 2px;">' + esc(it.name && it.name !== 'nan' ? it.name : (a && (a.name || a.addr)) || caseNo) + '</h3><div class="pn-muted">' + esc(region || '') + ' · ' + esc(caseNo) + (a ? ' · ' + esc(a.addr || '') : '') + (a && a.pyung ? ' · ' + a.pyung + '평' : '') + (a && a.floor ? ' · ' + a.floor + '층' : '') + '</div>';
+    // 결과
+    var rec0 = sn.rec || sn.recBid || null;
+    h += '<div class="wr-sec"><b>실제 결과</b><div class="wr-kpis"><div><span>실제 낙찰가</span><b>' + f(it.actual) + '</b><em>응찰 ' + (it.bidders != null ? it.bidders + '명' : '-') + (it.second ? ' · 2등 ' + f(it.second) : '') + '</em></div>'
+        + '<div><span>최저가</span><b>' + f(it.minbid || (a && a.minBid)) + '</b><em>낙찰가는 최저가의 ' + (it.actual && (it.minbid || (a && a.minBid)) ? Math.round(it.actual / (it.minbid || a.minBid) * 100) + '%' : '-') + '</em></div>'
+        + '<div><span>입찰 전 저장한 추천가</span><b>' + f(rec0) + '</b><em>' + (rec0 && it.actual ? wrResultPill(it.actual, rec0) : (sn.at ? '' : '저장본 없음')) + '</em></div></div></div>';
+    if (!a || a.propType !== 'apt') {
+        h += '<div class="wr-sec"><b>다시 계산</b><div class="pn-muted">' + (!a ? '이 물건이 경매물건으로 등록돼 있지 않아 다시 계산은 못 해요.' : '아파트가 아니라 지금은 계산을 지원하지 않아요.') + '</div></div>';
+        if (sn.at) h += '<div class="wr-sec"><b>입찰 전 저장한 값 (' + esc(sn.at) + ')</b><table class="pn-table"><tbody><tr><td>예상매도가</td><td class="r">' + f(sn.sale) + '</td></tr><tr><td>추천 입찰가</td><td class="r">' + f(sn.rec || sn.recBid) + '</td></tr><tr><td>예상 낙찰가</td><td class="r">' + f(sn.win) + '</td></tr><tr><td>낙찰 가능성</td><td class="r">' + (sn.prob != null ? Math.round(sn.prob * 100) + '%' : '-') + '</td></tr></tbody></table></div>';
+        b.innerHTML = h; return;
+    }
+    var tm = new Date(Date.now() + 86400000), a2 = Object.assign({}, a, { bidDate: tm.getFullYear() + '-' + String(tm.getMonth() + 1).padStart(2, '0') + '-' + String(tm.getDate()).padStart(2, '0'), predSnap: undefined, predHist: undefined });
+    var lawd = bidBoardLawdOf(a2); if (!lawd) { await resolveBidBoardLawd(a2); lawd = bidBoardLawdOf(a2); }
+    var cleanup = lawd ? await wrEnsureRegion(lawd) : function() {};
+    try {
+        var by = a2.buildYear || null, pyung = parseFloat(a2.pyung) || 0;
+        var rowD = computeBidBoardRow(a2);
+        var full = effRepairFee(a2, 'apt', rowD.pyung, by || rowD.estBuildYear || null), basic = basicRepairFee(rowD.pyung), half = Math.round((full + basic) / 2);
+        var userRep = !!parseInt(a.repair);
+        var levels = [['전체 수리' + (userRep ? ' (직접 입력)' : ' (앱 기본 · 연식 기준)'), full], ['중간 수리', half], ['도배·장판만', basic]];
+        var rows3 = levels.map(function(lv) {
+            var a3 = Object.assign({}, a2, { repair: lv[1] }), r3 = computeBidBoardRow(a3), pl = null;
+            try { pl = bidPlanFor(r3, false); } catch (e) {}
+            var net = it.actual && r3.sale ? wrNetAt(a3, r3.sale, lv[1], it.actual) : null;
+            return { label: lv[0], rep: lv[1], row: r3, pl: pl, net: net };
+        });
+        // 입찰 전 저장 vs 지금
+        h += '<div class="wr-sec"><b>입찰 전 저장한 값 vs 지금 다시 계산한 값</b>' + (sn.at ? '<div class="pn-muted">저장일 ' + esc(sn.at) + '</div>' : '<div class="pn-muted">입찰 전 저장본이 없어 지금 앱 계산(전체 수리 기준)만 보여요</div>')
+            + '<table class="pn-table"><thead><tr><th></th><th class="r">입찰 전 저장</th><th class="r">지금 계산(전체 수리)</th></tr></thead><tbody>'
+            + '<tr><td>예상매도가</td><td class="r">' + f(sn.sale) + '</td><td class="r">' + f(rowD.sale) + '</td></tr>'
+            + '<tr><td>추천 입찰가</td><td class="r">' + f(sn.rec || sn.recBid) + '</td><td class="r"><b>' + f(rowD.recBid) + '</b></td></tr>'
+            + '<tr><td>예상 낙찰가</td><td class="r">' + f(sn.win) + '</td><td class="r">' + f(rowD.winbid && rowD.winbid.price) + '</td></tr>'
+            + '<tr><td>낙찰 가능성(추천가로)</td><td class="r">' + (sn.prob != null ? Math.round(sn.prob * 100) + '%' : '-') + '</td><td class="r">' + (rowD.winbid && rowD.winbid.probRec != null ? Math.round(rowD.winbid.probRec * 100) + '%' : '-') + '</td></tr>'
+            + '<tr><td>최저가</td><td class="r">' + f(sn.minBid) + '</td><td class="r">' + f(rowD.minBid) + '</td></tr></tbody></table></div>';
+        // 수리비 3가지
+        h += '<div class="wr-sec"><b>수리비 가정 3가지에 따른 입찰 가이드</b><div class="pn-muted">같은 물건·같은 예상매도가인데 수리를 얼마나 하느냐에 따라 입찰 상한이 달라져요. 마지막 칸은 실제 낙찰가로 샀을 때 남는 순이익이에요.</div>'
+            + '<table class="pn-table"><thead><tr><th>수리 가정</th><th class="r">수리비</th><th class="r">예상매도가</th><th class="r">마진 확보 상한<br><span class="pn-muted">순이익 1천만</span></th><th class="r">추천 입찰가</th><th class="r">낙찰 가능성</th><th class="r">실제 낙찰가에서 순이익</th></tr></thead><tbody>'
+            + rows3.map(function(r) {
+                return '<tr><td>' + esc(r.label) + '</td><td class="r">' + f(r.rep) + '</td><td class="r">' + f(r.row.sale) + '</td><td class="r">' + (r.pl && r.pl.max ? '<b>' + f(r.pl.max.bid) + '</b>' : '-') + '</td><td class="r"><b>' + f(r.row.recBid) + '</b></td><td class="r">' + (r.row.winbid && r.row.winbid.probRec != null ? Math.round(r.row.winbid.probRec * 100) + '%' : '-') + '</td><td class="r" style="color:' + (r.net != null && r.net < 1000 ? '#b91c1c' : '#15803d') + ';"><b>' + (r.net != null ? f(r.net) : '-') + '</b></td></tr>';
+            }).join('') + '</tbody></table></div>';
+        // 입찰가 고르기 + 비용 구성
+        try { h += '<div class="wr-sec">' + bidPlanHtml(rowD, function(x) { return x ? toEok(String(Math.round(x))) : '-'; }) + '</div>'; } catch (e) {}
+        var cl = null; try { cl = bidCostLines(rowD); } catch (e) {}
+        if (cl) h += '<div class="wr-sec"><b>비용 구성</b> <span class="pn-muted">(추천가 ' + f(rowD.recBid) + ' · 전체 수리 기준)</span><table class="pn-table"><tbody>' + cl.lines.map(function(x) { return '<tr><td>' + esc(x[0]) + '</td><td class="r">' + f(x[1]) + '</td></tr>'; }).join('') + '<tr><td><b>비용 합계</b></td><td class="r"><b>' + f(cl.cost) + '</b></td></tr><tr><td>세전 이익 (매도가 − 입찰가 − 비용)</td><td class="r">' + f(cl.pre) + '</td></tr><tr><td>세금</td><td class="r">' + f(cl.tax) + '</td></tr><tr><td><b>순이익(세후)</b></td><td class="r"><b>' + f(cl.net) + '</b></td></tr></tbody></table></div>';
+        // 시세 근거: 같은 평형 거래(층 표시)
+        var os = rowD.ownStats || {}, trs = drawerTrades(rowD);
+        h += '<div class="wr-sec"><b>예상매도가 근거: 같은 단지·같은 평형 최근 거래</b> <span class="pn-muted">(이 물건은 ' + (a.floor ? a.floor + '층' : '층 미상') + ' · 층 ±3 거래에 ★)</span>'
+            + '<div class="pn-muted">최근 3개월 ' + (os.n3 || 0) + '건 · 1년 ' + (os.n12 || 0) + '건 · 3개월 중앙값 ' + f(os.p3med) + ' · 가장 최근 거래 ' + f(os.lastP) + (rowD.saleFloorAdj ? ' · 층 보정 ' + esc(rowD.saleFloorAdj.label || '') + ' ×' + (Math.round(rowD.saleFloorAdj.factor * 1000) / 1000) : ' · 층 보정 없음(저층·고층이 아님)') + '</div>'
+            + '<table class="pn-table"><thead><tr><th>계약일</th><th class="r">층</th><th class="r">거래가</th><th></th></tr></thead><tbody>' + trs.slice(0, 12).map(function(t) { return '<tr><td>' + t.d.getFullYear() + '.' + String(t.d.getMonth() + 1).padStart(2, '0') + '.' + String(t.d.getDate()).padStart(2, '0') + '</td><td class="r">' + t.f + '층</td><td class="r">' + f(t.p) + '</td><td>' + (t.sim ? '★ 비슷한 층' : '') + (t.direct ? ' 직거래' : '') + '</td></tr>'; }).join('') + '</tbody></table></div>';
+    } catch (e) {
+        h += '<div class="wr-sec"><div class="pn-muted">다시 계산 중 오류가 났어요: ' + esc(e && e.message || e) + '</div></div>';
+    } finally { cleanup(); }
+    b.innerHTML = h;
+    b.scrollTop = 0; var pnl = document.getElementById('weekly-panel'); if (pnl) pnl.scrollTop = 0;
+}
+function wrBack() {
+    var b = document.querySelector('#weekly-panel .wr-b'); if (!b || !window.__wrBackHtml) return;
+    b.innerHTML = window.__wrBackHtml; window.__wrBackHtml = null;
+    var pnl = document.getElementById('weekly-panel'); if (pnl) pnl.scrollTop = 0;
+}
 function wrResultPill(actual, rec) {
     if (!rec) return '';
     return actual <= rec ? '<span class="wr-pill win">추천가 이하로 낙찰</span>' : '<span class="wr-pill lose">추천가의 ' + Math.round(actual / rec * 100) + '%에 낙찰</span>';
@@ -24927,6 +25012,15 @@ async function wrFreshRec(item) {
     var tm = new Date(Date.now() + 86400000), a2 = Object.assign({}, a, { bidDate: tm.getFullYear() + '-' + String(tm.getMonth() + 1).padStart(2, '0') + '-' + String(tm.getDate()).padStart(2, '0'), predSnap: undefined, predHist: undefined });
     var lawd = bidBoardLawdOf(a2); if (!lawd) { await resolveBidBoardLawd(a2); lawd = bidBoardLawdOf(a2); }
     if (!lawd) return null;
+    var cleanup = await wrEnsureRegion(lawd);
+    try {
+        var row = computeBidBoardRow(a2);
+        if (!row || !row.recBid) return null;
+        return { rec: Math.round(row.recBid), win: row.winbid ? row.winbid.price : null };
+    } finally { cleanup(); }
+}
+// 지역 자료를 (없으면) 받아 두고, 끝나면 이 함수가 새로 받은 것만 메모리에서 내리는 정리 함수를 돌려줌
+async function wrEnsureRegion(lawd) {
     var loadedHere = false, od = { r: window.redrawMarkers, a: window.renderAuctionMarkers, b: window.renderBidCaseMarkers };
     try {
         if (!dataCache[lawd]) {
@@ -24936,16 +25030,13 @@ async function wrFreshRec(item) {
             loadedHere = !!dataCache[lawd];
             try { await waitForLeaderFollowerOrTimeout(autoLoadLeaderFollowerForRegion('', lawd), 8000); await loadMarketCycle(lawd); } catch (e) {}
         }
-        var row = computeBidBoardRow(a2);
-        if (!row || !row.recBid) return null;
-        return { rec: Math.round(row.recBid), win: row.winbid ? row.winbid.price : null };
-    } finally {
-        window.redrawMarkers = od.r; window.renderAuctionMarkers = od.a; window.renderBidCaseMarkers = od.b;
+    } finally { window.redrawMarkers = od.r; window.renderAuctionMarkers = od.a; window.renderBidCaseMarkers = od.b; }
+    return function() {
         if (loadedHere && dataCache[lawd] && lawd !== (typeof lastLawdCd !== 'undefined' ? lastLawdCd : null)) {
             delete dataCache[lawd]; delete rentCacheByLawd[lawd]; mergedLawdCds.delete(lawd);
             var vi = lawdCdVisitOrder.indexOf(lawd); if (vi !== -1) lawdCdVisitOrder.splice(vi, 1);
         }
-    }
+    };
 }
 var wrFillRunning = false;
 async function wrFillMissingRec() {
@@ -24995,7 +25086,7 @@ function wrRenderScore(sc) {
     }
     if (sc.items && sc.items.length) {
         h += '<div class="wr-sec"><b>건별 비교</b> (최근순)<table class="pn-table"><thead><tr><th>물건</th><th class="r">저장한 추천가</th><th class="r">낙찰가</th><th class="r">예측 가능성</th><th></th></tr></thead><tbody>'
-            + sc.items.map(function(x) { return '<tr style="cursor:pointer;" title="누르면 지도에서 이 물건 위치를 보여줘요" onclick="wrGo(\'' + String(x.case).replace(/'/g, '') + '\',\'' + String(x.region || '').replace(/'/g, '') + '\')"><td>📍 ' + bbEsc(x.name || x.case) + '<div class="pn-muted">' + bbEsc(x.region) + ' · ' + bbEsc(x.case) + '</div></td><td class="r">' + f(x.rec) + '</td><td class="r"><b>' + f(x.actual) + '</b></td><td class="r">' + (x.prob != null ? Math.round(x.prob * 100) + '%' : '-') + '</td><td>' + (x.won ? '<span style="color:#15803d;">낙찰</span>' : '<span style="color:#b91c1c;">못 이김</span>') + '</td></tr>'; }).join('') + '</tbody></table></div>';
+            + sc.items.map(function(x) { wrRegisterItem({ caseNo: x.case, region: x.region, name: x.name, actual: x.actual, snap: { rec: x.rec, win: x.win, prob: x.prob } }); return '<tr style="cursor:pointer;" title="누르면 입찰 전 값·수리비 3가지 등 상세를 보여줘요" onclick="wrDetail(\'' + String(x.case).replace(/'/g, '') + '\',\'' + String(x.region || '').replace(/'/g, '') + '\')"><td>📋 ' + bbEsc(x.name || x.case) + '<div class="pn-muted">' + bbEsc(x.region) + ' · ' + bbEsc(x.case) + '</div></td><td class="r">' + f(x.rec) + '</td><td class="r"><b>' + f(x.actual) + '</b></td><td class="r">' + (x.prob != null ? Math.round(x.prob * 100) + '%' : '-') + '</td><td>' + (x.won ? '<span style="color:#15803d;">낙찰</span>' : '<span style="color:#b91c1c;">못 이김</span>') + '</td></tr>'; }).join('') + '</tbody></table></div>';
     }
     return h;
 }
@@ -25039,12 +25130,12 @@ function openWeeklyReport(week) {
         }
         var t = d.tracked;
         if (t) {
-            h += '<div class="wr-sec"><b>내가 추적하던 물건(사건번호 일치)</b> ' + t.n + '건 낙찰 <span class="pn-muted">· 행을 누르면 지도에서 위치를 봐요</span>'
+            h += '<div class="wr-sec"><b>내가 추적하던 물건(사건번호 일치)</b> ' + t.n + '건 낙찰 <span class="pn-muted">· 행을 누르면 입찰 전 추천가·수리비 3가지 등 상세를 봐요</span>'
                 + (t.recKnown ? ' · 입찰 전 저장해 둔 추천 입찰가로 썼다면 <b>' + t.recWon + '/' + t.recKnown + '건</b> 낙찰' : (t.n ? ' <span class="pn-muted">(입찰 전 예측 저장본이 아직 없어 비교는 다음 주부터)</span>' : ''));
             if (t.items && t.items.length) {
                 h += '<table class="pn-table" id="wr-tracked"><thead><tr><th>사건·물건</th><th class="r">최저가</th><th class="r">추천가</th><th class="r">낙찰가</th><th class="r">응찰</th><th>결과</th></tr></thead><tbody>' + t.items.map(function(x, ix) {
                     var sn = x.snap || {};
-                    return '<tr data-ix="' + ix + '" style="cursor:pointer;" title="누르면 지도에서 이 물건 위치를 보여줘요" onclick="wrGo(\'' + String(x.caseNo).replace(/'/g, '') + '\',\'' + String(x.region || '').replace(/'/g, '') + '\')"><td>📍 ' + bbEsc(x.name || x.caseNo) + '<div class="pn-muted">' + bbEsc(x.region || '') + ' · ' + bbEsc(x.caseNo) + '</div></td><td class="r">' + f(x.minbid) + '</td>'
+                    return '<tr data-ix="' + ix + '" style="cursor:pointer;" title="누르면 지도에서 이 물건 위치를 보여줘요" onclick="wrDetail(\'' + String(x.caseNo).replace(/'/g, '') + '\',\'' + String(x.region || '').replace(/'/g, '') + '\')"><td>📋 ' + (wrRegisterItem(x) && '') + bbEsc(x.name || x.caseNo) + '<div class="pn-muted">' + bbEsc(x.region || '') + ' · ' + bbEsc(x.caseNo) + '</div></td><td class="r">' + f(x.minbid) + '</td>'
                         + '<td class="r wr-rec">' + (sn.rec ? f(sn.rec) + '<div class="pn-muted">입찰 전 저장</div>' : '<span class="pn-muted">계산 중…</span>') + '</td>'
                         + '<td class="r"><b>' + f(x.actual) + '</b></td><td class="r">' + (x.bidders != null ? x.bidders + '명' : '-') + '</td>'
                         + '<td class="wr-res">' + (sn.rec ? wrResultPill(x.actual, sn.rec) : '') + '</td></tr>';
@@ -25060,7 +25151,7 @@ function openWeeklyReport(week) {
         }
         if (d.misses && d.misses.length) {
             h += '<div class="wr-sec"><b>가장 크게 빗나간 사례</b><table class="pn-table"><thead><tr><th>물건</th><th class="r">유찰</th><th class="r">최저가</th><th class="r">예측</th><th class="r">실제</th><th class="r">차이</th><th class="r">응찰</th></tr></thead><tbody>'
-                + d.misses.map(function(x) { return '<tr style="cursor:pointer;" title="누르면 지도에서 이 물건 위치를 보여줘요" onclick="wrGo(\'' + String(x.caseNo).replace(/'/g, '') + '\',\'' + String(x.region || '').replace(/'/g, '') + '\')"><td>📍 ' + bbEsc(x.name || x.caseNo) + '<div class="pn-muted">' + bbEsc(x.region) + '</div></td><td class="r">' + (x.fails != null ? x.fails + '회' : '-') + '</td><td class="r">' + f(x.minbid) + '</td><td class="r">' + f(x.pred) + '</td><td class="r"><b>' + f(x.actual) + '</b></td><td class="r" style="color:' + (x.errPct > 0 ? '#b91c1c' : '#1d4ed8') + ';">' + pc(x.errPct, true) + '</td><td class="r">' + (x.bidders != null ? x.bidders + '명' : '-') + '</td></tr>'; }).join('')
+                + d.misses.map(function(x) { wrRegisterItem({ caseNo: x.caseNo, region: x.region, name: x.name, actual: x.actual, minbid: x.minbid, bidders: x.bidders }); return '<tr style="cursor:pointer;" title="누르면 입찰 전 값·수리비 3가지 등 상세를 보여줘요" onclick="wrDetail(\'' + String(x.caseNo).replace(/'/g, '') + '\',\'' + String(x.region || '').replace(/'/g, '') + '\')"><td>📋 ' + bbEsc(x.name || x.caseNo) + '<div class="pn-muted">' + bbEsc(x.region) + '</div></td><td class="r">' + (x.fails != null ? x.fails + '회' : '-') + '</td><td class="r">' + f(x.minbid) + '</td><td class="r">' + f(x.pred) + '</td><td class="r"><b>' + f(x.actual) + '</b></td><td class="r" style="color:' + (x.errPct > 0 ? '#b91c1c' : '#1d4ed8') + ';">' + pc(x.errPct, true) + '</td><td class="r">' + (x.bidders != null ? x.bidders + '명' : '-') + '</td></tr>'; }).join('')
                 + '</tbody></table><div class="pn-muted">응찰자가 아주 많거나 1명뿐이면 크게 빗나가기 쉬워요. 이런 사례는 입찰 전 알 수 없는 변수예요.</div></div>';
         }
         var wmg = d.winnerMargin;
