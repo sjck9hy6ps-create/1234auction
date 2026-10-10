@@ -4296,6 +4296,11 @@ function toEokCompact(manwon) {
    "undefined")을 그대로 돌려주는 경우가 있어서, 화면에 값이 없으면 그냥 빈칸이어야 하는데
    "null"이라는 글자가 그대로 찍혀 오류처럼 보이는 문제가 있었음. 값을 표시하기 전에는
    항상 이 함수로 한번 걸러서 "null"/"undefined"/빈문자열을 전부 빈 값('')으로 통일함. */
+// 주소에 붙는 '주건축물 제1동'은 건축물대장의 건물 구분이지 건물 이름이 아님(2026-10-10, 사용자: "주건축물제1동이라는 빌라는 없다") → 이름에서 뗌
+function cleanBldgName(v) {
+    var s = cleanField(v).replace(/\s*주\s*건축물\s*(제\s*)?\d*\s*동?$/, '').replace(/^주\s*건축물\s*(제\s*)?\d*\s*동?$/, '').replace(/\s*(제\s*)?\d+\s*동$/, function(m) { return /^\s*제/.test(m) ? '' : m; }).trim();
+    return s;
+}
 function cleanField(v) {
     if (v === null || v === undefined) return '';
     var s = String(v).trim();
@@ -10448,7 +10453,7 @@ function renderAuctionList() {
             + '<span onclick="event.stopPropagation();openAuctionModal(\'' + a.id + '\')" '
             + 'style="position:absolute;top:8px;right:8px;font-size:10px;color:#1976d2;font-weight:bold;cursor:pointer;">✏️ 수정</span>'
             // 2026-10(사용자: "중복 표기가 많다") - 제목은 단지명(없으면 주소에서 뽑은 건물명·동+지번), 주소는 아래 한 줄만
-            + '<div class="auction-list-name">' + (cleanField(a.name) || buildingNameFromAddr(a.addr, a.dong)
+            + '<div class="auction-list-name">' + (cleanBldgName(a.name) || buildingNameFromAddr(a.addr, a.dong)
                 || ((dongKey(a.dong) || '') + ' ' + (fullBunjiFromAddr(a.addr, a.dong, a.bunji) || '')).trim() || cleanField(a.addrLabel) || '(이름없음)')
             // 🚨 2026-08(사용자 요청): 수치 기반 깡통전세 의심 판정을 "입찰희망" 배지 자체에 바로
             // 표기함(별도 줄이 아니라 배지 색상·아이콘으로) - 많은 물건을 훑어보는 상황에서 이
@@ -14455,7 +14460,7 @@ function placeAuctionMarker(a) {
         var predTxt = (awEst && awEst.predictedSale) ? '예상 ' + toEok(String(awEst.predictedSale)) : '';
         // 빌라는 빌라 탭과 같은 예상매도가(같은 건물→동→시군구 거래, 호가 상한 반영)로 표시 - 아파트식 옛 추정과 숫자가 달라 헷갈렸음(2026-10-10)
         if (bvRow && bvRow.type === 'villa') { var vev = null; try { vev = villaEval(bvRow); } catch (e) {} predTxt = vev && vev.ve ? '예상 ' + toEok(String(vev.ve.est)) : ''; }
-        var shortName = (a.name && a.name.trim()) || buildingNameFromAddr(a.addr, a.dong)
+        var shortName = cleanBldgName(a.name) || buildingNameFromAddr(a.addr, a.dong)
             || ((dongKey(a.dong) || '') + ' ' + (fullBunjiFromAddr(a.addr, a.dong, a.bunji) || '')).trim() || a.addrLabel || '(이름없음)';
         applySimpleAuctionBadge(div, headBg, headLabel, shortName, [predTxt, priceLine].filter(Boolean).join(' · '), lfBadge);
     }
@@ -17001,7 +17006,7 @@ function computeBidBoardRow(a) {
     var row = {
         id: a.id, a: a, type: type, lawd: lawd, region: bidBoardRegionLabel(a.addr),
         metro: /^(서울|경기|인천)/.test(String(a.addr || '').trim()),
-        name: cleanField(a.name) || altName || ((a.dong || '') + ' ' + (a.bunji || '')).trim() || cleanField(a.addr) || '(이름없음)',
+        name: cleanBldgName(a.name) || altName || ((a.dong || '') + ' ' + (a.bunji || '')).trim() || cleanField(a.addr) || '(이름없음)',
         pyung: pyung, floor: cleanField(a.floor), minBid: minBid, appraisal: parseInt(a.appraisal) || 0,
         dday: a.bidDate ? calcAuctionDday(a.bidDate) : null, reasons: [], warns: []
     };
@@ -24003,8 +24008,8 @@ function buildingNameFromAddr(addr, dong) {
     if (i < 0) return '';
     var rest = toks.slice(i + 1);
     if (rest.length && /^(산)?\d+(-\d+)?(번지)?$/.test(rest[0])) rest = rest.slice(1);
-    return rest.filter(function(t) {
-        return t !== dk && !/^(제)?[\dA-Za-z가-힣]{0,3}\d+(동|호|층)$/.test(t) && !/^(외|필지|지하층.*|.*필지)$/.test(t) && !/^[가-힣]동$/.test(t);
+    return rest.map(function(t) { return t.replace(/주건축물(제?\d+동)?$/, ''); }).filter(function(t) {
+        return t && t !== dk && !/^(제)?[\dA-Za-z가-힣]{0,3}\d+(동|호|층)$/.test(t) && !/^(외|필지|지하층.*|.*필지|주건축물)$/.test(t) && !/^[가-힣]동$/.test(t);
     }).join('');
 }
 function resolveLfInfo(dong, name, bunji, type, altName) {
