@@ -3591,7 +3591,7 @@ function hsPump() {
                     return;
                 }
                 try { hsBld[row.id] = { info: info, chk: homestayCheck(a, info) }; } catch (e) { hsBld[row.id] = { info: info, chk: { verdict: 'check', items: [], unit: null } }; }
-                hsRunning--; hsPump(); clearTimeout(hsRenderT); hsRenderT = setTimeout(function() { if (bidBoardState.visit === 'villa') { renderBidBoard(); var dr0 = bidDrawerId && bidBoardRows.filter(function(r) { return r.id === bidDrawerId; })[0]; if (dr0 && dr0.type === 'villa') renderBidDrawer(); } }, 400);
+                hsRunning--; hsPump(); villaSaveCalcSoon(); clearTimeout(hsRenderT); hsRenderT = setTimeout(function() { if (bidBoardState.visit === 'villa') { renderBidBoard(); var dr0 = bidDrawerId && bidBoardRows.filter(function(r) { return r.id === bidDrawerId; })[0]; if (dr0 && dr0.type === 'villa') renderBidDrawer(); } }, 400);
             };
             if (!a.lat || !a.lon || !a.bunji) { done(null); return; }
             loadBuildingInfo({ latest: { dong: ctx.dong, name: ctx.name, bunji: ctx.bunji, aptDong: ctx.aptDong } }, a.lat, a.lon, false, a.bCode || null).then(done).catch(function() { done(null); });
@@ -3915,13 +3915,48 @@ function villaLiqHtml(liq) {
     return '<div style="font-weight:700;color:' + (z ? '#b91c1c' : '#111827') + ';" title="반경 500m 안 최근 6개월 빌라 매매 건수">최근 6개월 ' + liq.r500.a6 + '건</div>'
         + '<div class="bb-sub">6~12개월 ' + liq.r500.a12 + ' · 1~2년 ' + liq.r500.a24 + '</div><div class="bb-sub" title="반경 1km">1km: ' + liq.r1000.a6 + ' / ' + liq.r1000.a12 + ' / ' + liq.r1000.a24 + '</div>';
 }
+/* 💾 빌라 계산 결과 보관(2026-10-10, 사용자: "빌라 입찰후보 창이 매번 새로 불러오는 것 같아 느려") - 예상매도가·생활권 거래·건축물대장 요약을 브라우저에 24시간 저장해 두고
+   다시 열면 바로 보여줌(지역 실거래 68곳을 다시 받지 않음). 건물 상세(전유부 등 큰 자료)는 열 때 다시 받음. */
+var VILLA_CALC_KEY = 'villaCalc:v1', VILLA_CALC_TTL = 24 * 3600 * 1000, villaRestoreState = 0, villaSaveT = null;
+async function villaRestoreCalc() {
+    if (villaRestoreState) return; villaRestoreState = 1;
+    try {
+        var d = await listIdbOp('readonly', function(st) { return st.get(VILLA_CALC_KEY); });
+        if (d && d.at && Date.now() - d.at < VILLA_CALC_TTL) {
+            Object.keys(d.ve || {}).forEach(function(id) { if (!villaVeCache[id]) villaVeCache[id] = d.ve[id]; });
+            var nl = 0; Object.keys(d.liq || {}).forEach(function(id) { if (!villaLiqCache[id]) { villaLiqCache[id] = d.liq[id]; nl++; } });
+            if (nl) villaLiqFinal = true;
+            var byId = {}; villaMetroRows(true).forEach(function(r) { byId[r.id] = r; });
+            Object.keys(d.hs || {}).forEach(function(id) {
+                var r = byId[id]; if (!r || hsBld[id]) return;
+                var info = { title: d.hs[id].title, price: d.hs[id].price, partial: true }, chk = null;
+                try { chk = homestayCheck(r.a, info); } catch (e) { return; }
+                hsBld[id] = { info: info, chk: chk, partial: true };
+            });
+        }
+    } catch (e) {}
+    villaRestoreState = 2;
+    if (bidBoardState.visit === 'villa') renderBidBoard();
+}
+function villaSaveCalcSoon() {
+    clearTimeout(villaSaveT);
+    villaSaveT = setTimeout(function() {
+        var ve = {}, liq = {}, hs = {};
+        villaMetroRows(true).forEach(function(r) {
+            var c = villaVeCache[r.id]; if (c && c.sig === villaVeSig(r.a)) ve[r.id] = c;
+            if (villaLiqCache[r.id]) liq[r.id] = villaLiqCache[r.id];
+            var st = hsBld[r.id]; if (st && st.info && st.info.title) hs[r.id] = { title: st.info.title, price: st.info.price || null };
+        });
+        listIdbOp('readwrite', function(st) { return st.put({ at: Date.now(), ve: ve, liq: liq, hs: hs }, VILLA_CALC_KEY); });
+    }, 4000);
+}
 var villaVeCache = {}, villaLoadBusy = false;
 function villaVeSig(a) { return [a.pyung, a.addr, a.dong, a.bunji, a.bidDate, a.buildYear || '', a.estBuildYear || ''].join('|'); }
 async function villaLoadRegions() {
     if (villaLoadBusy) return; villaLoadBusy = true;
     try {
         while (typeof bidBoardRunning !== 'undefined' && bidBoardRunning) await new Promise(function(r) { setTimeout(r, 1000); }); // 입찰후보 계산이 끝나길 기다림
-        var rows = villaMetroRows(true).filter(function(r) { var c = villaVeCache[r.id]; return !(c && c.sig === villaVeSig(r.a)) || (bidBoardLawdOf(r.a) && !villaPts[bidBoardLawdOf(r.a)]); });
+        var rows = villaMetroRows(true).filter(function(r) { var c = villaVeCache[r.id]; return !(c && c.sig === villaVeSig(r.a)) || (bidBoardLawdOf(r.a) && !villaLiqCache[r.id] && !villaPts[bidBoardLawdOf(r.a)]); });
         var byL = {}; rows.forEach(function(r) { var k = bidBoardLawdOf(r.a); if (k) (byL[k] = byL[k] || []).push(r); else villaVeCache[r.id] = { sig: villaVeSig(r.a), ve: null }; });
         var soon = function(k) { var m = 9999; byL[k].forEach(function(r) { if (r.dday && r.dday.diffDays < m) m = r.dday.diffDays; }); return m; };
         var order = Object.keys(byL).sort(function(x, y) { return soon(x) - soon(y); });
@@ -3940,7 +3975,7 @@ async function villaLoadRegions() {
             if (bidBoardState.visit === 'villa' && Date.now() - bbLastInteract > 2000) renderBidBoard();
             await new Promise(function(r) { setTimeout(r, 60); });
         }
-    } finally { villaLoadBusy = false; try { if (Object.keys(villaPts).length) { villaLiqCompute(); villaLiqFinal = true; } } catch (e) { console.error('빌라 생활권 계산 실패', e); } if (bidBoardState.visit === 'villa') renderBidBoard(); }
+    } finally { villaLoadBusy = false; try { if (Object.keys(villaPts).length) { villaLiqCompute(); villaLiqFinal = true; } } catch (e) { console.error('빌라 생활권 계산 실패', e); } if (bidBoardState.visit === 'villa') renderBidBoard(); villaSaveCalcSoon(); }
 }
 /* 🚩 빌라 이슈 의심(2026-10-10, 사용자: "유찰 3회 이상이거나 최저가가 현저히 낮으면 권리상 문제 있는 경우가 대부분 - 걸러내줘") - 아파트와 같은 기준 + 감정가 대비 극단적으로 낮은 최저가.
    기준: 최저가÷예상매도가 40% 미만, 또는 3회+ 유찰이면서 50% 미만, 또는 최저가가 감정가의 20% 미만 → 강한 의심 / 3회+ 유찰 또는 45% 미만 → 의심. 둘 다 임장 후보에서 뺌(패스에 사유 표시).
@@ -3990,11 +4025,12 @@ function villaEval(row) {
 function setVillaVisit(v) { bidBoardState.villaVisit = v; bidBoardState.villaLimit = 120; renderBidBoard(); }
 function villaMore() { bidBoardState.villaLimit = (bidBoardState.villaLimit || 120) + 300; renderBidBoard(); }
 function renderVillaLite(body) {
+    if (villaRestoreState < 2) { if (!villaRestoreState) villaRestoreCalc(); body.innerHTML = '<div class="bb-empty">저장된 계산을 불러오는 중…</div>'; return; }
     var all = villaMetroRows(), s = bidBoardState, vv = s.villaVisit || 'go';
     if (!homestayAgg) loadHomestayAgg(function() { if (bidBoardState.visit === 'villa') renderBidBoard(); }); // 이미 받았으면 콜백이 바로 불려 무한 반복되므로 처음 한 번만
     all.slice().sort(function(x, y) { return (x.dday ? x.dday.diffDays : 9999) - (y.dday ? y.dday.diffDays : 9999); }).forEach(ensureHomestayCheck); // 입찰이 가까운 물건부터 조회
     var evs = {}; all.forEach(function(r) { evs[r.id] = villaEval(r); });
-    if (!villaLoadBusy && all.some(function(r) { var c = villaVeCache[r.id]; return !(c && c.sig === villaVeSig(r.a)) || (bidBoardLawdOf(r.a) && !villaPts[bidBoardLawdOf(r.a)] && !villaPtsTried[bidBoardLawdOf(r.a)]); })) setTimeout(villaLoadRegions, 50);
+    if (!villaLoadBusy && all.some(function(r) { var c = villaVeCache[r.id]; return !(c && c.sig === villaVeSig(r.a)) || (bidBoardLawdOf(r.a) && !villaLiqCache[r.id] && !villaPts[bidBoardLawdOf(r.a)] && !villaPtsTried[bidBoardLawdOf(r.a)]); })) setTimeout(villaLoadRegions, 50);
     var goN = all.filter(function(r) { return evs[r.id].visit.go; }).length, passN = all.length - goN;
     var rank = { ok: 0, check: 1, no: 2 };
     var vcol = s.villaCol || 'verdict', vdir = s.villaDir || 1, vdef = VILLA_COLS[vcol] || VILLA_COLS.verdict;
@@ -18682,6 +18718,7 @@ async function renderVillaDrawer(d, row) {
         row._drawerLoading = false;
         if (bidDrawerId !== row.id) return;
     }
+    if (hsBld[row.id] && hsBld[row.id].partial) delete hsBld[row.id]; // 저장본은 요약뿐이라 상세를 열면 전체를 다시 받음
     ensureHomestayCheck(row);
     var hq = hsQueue.findIndex(function(q) { return q.id === row.id; }); if (hq > 0) hsQueue.unshift(hsQueue.splice(hq, 1)[0]);
     var ev = villaEval(row), ve = ev.ve, mp = ev.mp, wb = ev.wb, pn = ev.pn, st = hsBld[row.id] || { loading: true };
