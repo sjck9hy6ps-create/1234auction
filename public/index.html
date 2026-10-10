@@ -10751,6 +10751,9 @@ function auctionListGoToPage(page) {
 var destPinOverlay = null;
 var destPinTimer = null;
 var destPinDragListenerAdded = false;
+// 입찰후보에서 지도로 이동했을 때(2026-10-10, 사용자: 확대해서 볼 때 핀이 금방 사라져 위치를 알기 어려움)는 '입찰후보로 돌아가기'를 누르기 전까지 핀을 유지
+var destPinSticky = false;
+function clearStickyDestPin() { destPinSticky = false; if (destPinOverlay) { destPinOverlay.setMap(null); destPinOverlay = null; } if (destPinTimer) { clearTimeout(destPinTimer); destPinTimer = null; } }
 function dropDestinationPin(lat, lon) {
     if (destPinOverlay) { destPinOverlay.setMap(null); destPinOverlay = null; }
     if (destPinTimer) { clearTimeout(destPinTimer); destPinTimer = null; }
@@ -10762,13 +10765,14 @@ function dropDestinationPin(lat, lon) {
         content: div, yAnchor: 1, xAnchor: 0.5, zIndex: 10001, clickable: false
     });
     destPinOverlay.setMap(map);
-    destPinTimer = setTimeout(function() {
+    if (!destPinSticky) destPinTimer = setTimeout(function() {
         if (destPinOverlay) { destPinOverlay.setMap(null); destPinOverlay = null; }
         destPinTimer = null;
     }, 5000);
     if (!destPinDragListenerAdded) {
         destPinDragListenerAdded = true;
         kakao.maps.event.addListener(map, 'dragstart', function() {
+            if (destPinSticky) return;
             if (destPinOverlay) { destPinOverlay.setMap(null); destPinOverlay = null; }
             if (destPinTimer) { clearTimeout(destPinTimer); destPinTimer = null; }
         });
@@ -17755,6 +17759,7 @@ var BID_BOARD_VERDICT = {
 };
 function openBidBoard(opts) {
     opts = opts || {};
+    clearStickyDestPin();
     var rb = document.getElementById('bb-return-btn'); if (rb) rb.style.display = 'none';
     var el = document.getElementById('bid-board');
     el.style.display = 'flex';
@@ -19041,6 +19046,7 @@ function closeGuide() { var m = document.getElementById('guide-modal'); if (m) m
 document.addEventListener('keydown', function(e) { if (e.key === 'Escape') closeGuide(); });
 function bidBoardGo(id) {
     closeBidBoard();
+    destPinSticky = true; // 돌아가기를 누를 때까지 핀 유지
     panToAuction(id);
     // 2026-10(사용자: "입찰후보에서 지도로 이동") - 지도로 간 뒤 한 번에 돌아올 수 있게 떠 있는 버튼
     var b = document.getElementById('bb-return-btn');
@@ -19048,7 +19054,7 @@ function bidBoardGo(id) {
         b = document.createElement('button'); b.id = 'bb-return-btn';
         b.style.cssText = 'position:fixed;left:50%;bottom:24px;transform:translateX(-50%);z-index:60;border:none;background:#111827;color:#fff;border-radius:22px;padding:10px 18px;font-size:13px;font-weight:700;box-shadow:0 4px 14px rgba(0,0,0,0.25);cursor:pointer;';
         b.innerText = '◀ 입찰후보로 돌아가기';
-        b.onclick = function() { b.style.display = 'none'; document.getElementById('bid-board').style.display = 'flex'; syncBoardBtn(); if (bidDrawerId) renderBidDrawer(); };
+        b.onclick = function() { clearStickyDestPin(); b.style.display = 'none'; document.getElementById('bid-board').style.display = 'flex'; syncBoardBtn(); if (bidDrawerId) renderBidDrawer(); };
         document.body.appendChild(b);
     }
     b.style.display = '';
