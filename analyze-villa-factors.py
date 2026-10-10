@@ -127,8 +127,10 @@ def main():
     fp = {}
     for ec, lab in ((1, "승강기 있음"), (-1, "승강기 없음")):
         S = W[W["elvc"] == ec]
-        r = S.groupby("flg")["dev"].agg(["size", "median"])
-        fp[lab] = {str(k): {"n": int(v["size"]), "pct": round((float(np.exp(v["median"])) - 1) * 100, 1)} for k, v in r.iterrows() if v["size"] >= 200}
+        S = S.assign(dc=S["dev"].clip(-0.5, 0.5))
+        r = S.groupby("flg")["dc"].agg(["size", "mean", "median", lambda x: x.quantile(.25), lambda x: x.quantile(.75)])
+        r.columns = ["size", "mean", "median", "p25", "p75"]
+        fp[lab] = {str(k): {"n": int(v["size"]), "meanPct": round((float(np.exp(v["mean"])) - 1) * 100, 1), "medPct": round((float(np.exp(v["median"])) - 1) * 100, 1), "p25": round((float(np.exp(v["p25"])) - 1) * 100, 1), "p75": round((float(np.exp(v["p75"])) - 1) * 100, 1)} for k, v in r.iterrows() if v["size"] >= 150}
     out["withinBuildingFloor"] = fp
     out["withinBuildingFloorN"] = int(len(W))
     print("건물 안 층별 차이:", json.dumps(fp, ensure_ascii=False, indent=1))
@@ -137,8 +139,8 @@ def main():
     mult = {}
     for ec in (1, -1):
         S = Wtr[Wtr["elvc"] == ec]
-        g = S.groupby(S["floor"].clip(lower=0, upper=5).astype(int))["dev"].agg(["size", "median"])
-        mult[ec] = {int(k): float(np.exp(v["median"])) for k, v in g.iterrows() if v["size"] >= 150}
+        g = S.groupby(S["floor"].clip(lower=0, upper=5).astype(int))["dev"].agg(["size", "mean"])
+        mult[ec] = {int(k): float(np.exp(v["mean"])) for k, v in g.iterrows() if v["size"] >= 150}
     def floor_adj(ec, f):
         m = mult.get(ec) or {}
         k = int(min(max(f, 0), 5))
