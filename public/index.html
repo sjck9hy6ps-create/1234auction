@@ -3829,7 +3829,7 @@ function regionMatch(r, reg) { return !reg || (reg.indexOf('g:') === 0 ? String(
    상세 창은 목록 옆에 붙여서(왼쪽 목록 / 오른쪽 상세) 보여주고 상세 맨 위에 구역 이동 탭을 둠 */
 (function() { try { var mq = window.matchMedia('(min-width:641px) and (max-width:1240px)'); var f = function() { var b = document.getElementById('bid-board'); if (b && b.style.display !== 'none' && typeof renderBidBoard === 'function') { try { renderBidBoard(); } catch (e) {} } }; if (mq.addEventListener) mq.addEventListener('change', f); else if (mq.addListener) mq.addListener(f); } catch (e) {} })();
 function bbCardMode() { return !!(window.matchMedia && window.matchMedia('(min-width:641px) and (max-width:1240px)').matches); }
-var NV_SORTS = [['verdict', '판정순'], ['date', '입찰일순'], ['p', '낙찰 가능성'], ['net', '순이익'], ['rec', '추천가 낮은순']];
+var NV_SORTS = [['verdict', '판정순'], ['date', '입찰일순'], ['p', '낙찰확률'], ['net', '순이익'], ['rec', '추천가순']];
 function nvSortBar(kind) {
     var s = bidBoardState, cur = kind === 'villa' ? (s.villaCol || 'verdict') : (s.liteCol || 'verdict');
     return '<div class="nv-sort">' + NV_SORTS.map(function(x, i) {
@@ -5590,7 +5590,7 @@ function initMap(lat, lon) {
     kakao.maps.event.addListener(map, 'zoom_changed', function() { updateBadgeScale(); scheduleOverlapResolve(); if (showHomestay) renderHomestayLayer(); });
     // 경매 등록 물건은 지역 데이터를 기다리지 않고 가장 먼저 불러와서 표시
     // (비교물건 배지 반영을 위해 아파트/빌라 마커도 함께 다시 그림)
-    fetchAuctions().then(function() { renderAuctionMarkers(); redrawMarkers(); });
+    fetchAuctions().then(function() { renderAuctionMarkers(); redrawMarkers(); try { var bb0 = document.getElementById('bid-board'); if (bb0 && bb0.style.display === 'flex' && !bidBoardRows.length && !bidBoardRunning) refreshBidBoard(); } catch (e) {} }); // 입찰후보를 경매 목록보다 먼저 열었으면 목록이 오는 대로 다시 계산
     fetchSiteNotes(); // 임장메모 - 마커 클릭 시 즉시 보여줄 수 있도록 초기에 함께 로딩
     fetchBidCases().then(function() { renderBidCaseMarkers(); autoFillMissingBidCaseMargins(); }); // 낙찰사례 지도 배지 + 자동매칭된 마진 채우기
     // ⚠️ 2026-09(일동 560 사례로 발견): 이 최초 loadAllData 호출에 재렌더 콜백이 없었음.
