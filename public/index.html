@@ -18778,6 +18778,16 @@ function bbLiteMore() { bidBoardState.liteLimit = (bidBoardState.liteLimit || 12
 var bbLastInteract = 0;
 document.addEventListener('pointerdown', function(e) { if (e.target.closest && e.target.closest('#bid-board')) bbLastInteract = Date.now(); }, true);
 document.addEventListener('keydown', function(e) { if (document.getElementById('bid-board') && document.getElementById('bid-board').style.display !== 'none') bbLastInteract = Date.now(); }, true);
+/* 2026-10-11(사용자: "입찰후보 탭에서 행 클릭이 안 될 때가 있어"): 손가락·마우스를 누른 사이에 표가 다시 그려지면 누른 행이 사라져 클릭이 취소됨
+   (건물 조회·지역 계산이 끝날 때마다 표를 다시 그림) → 누르고 있는 동안은 다시 그리기를 미뤘다가 손을 떼면 한 번만 그림. 3초 넘게 눌린 채면 무시(떼는 신호를 놓친 경우 대비) */
+var bbPtrDownAt = 0, bbRenderPending = false;
+document.addEventListener('pointerdown', function(e) { if (e.target.closest && e.target.closest('#bid-board')) bbPtrDownAt = Date.now(); }, true);
+['pointerup', 'pointercancel'].forEach(function(ev) { document.addEventListener(ev, function() { if (!bbPtrDownAt) return; bbPtrDownAt = 0; if (bbRenderPending) setTimeout(function() { if (bbRenderPending && !bbPtrDownAt) { bbRenderPending = false; renderBidBoard(); } }, 60); }, true); });
+var renderBidBoardNow = renderBidBoard;
+renderBidBoard = function() {
+    if (bbPtrDownAt && Date.now() - bbPtrDownAt < 3000) { bbRenderPending = true; return; }
+    bbRenderPending = false; return renderBidBoardNow.apply(this, arguments);
+};
 function renderBidBoard() {
     if (bidBoardState.lite) return renderBidBoardLite();
     var s = bidBoardState;
