@@ -784,6 +784,23 @@ def winbid_model(R, now):
             full["bid"] = {"base": mb["base"], "eff": mb["eff"], "q25": round(float(np.quantile(pbv, 0.25)), 4), "q75": round(float(np.quantile(pbv, 0.75)), 4), "n": int(len(Db)), "from": 20230101}
     except Exception as e:
         print("  경쟁 예상 모델 건너뜀:", e)
+    # 🧭 경쟁 예상별 낙찰가 보정(2026-10-10, 사용자: "틈새라면 입찰가를 낮춰 수익을 확보") - 응찰자 수를 입찰 전 정보로 맞추는 모델(학습 구간 데이터만)로 검증 구간을 낮음/보통/높음으로 나눠,
+    # 각 그룹에서 '실제 낙찰가 ÷ 가격 모델 예상'의 로그 잔차 중앙값을 구함 → 앱이 경쟁 예상이 낮음/높음이면 예상 낙찰가를 그만큼 조정
+    try:
+        Dtr = tr[tr["bidders"].notna() & (tr["bidders"] > 0) & (tr["sale"] >= 20230101)]
+        tb = te[te["bidders"].notna() & (te["bidders"] > 0)]
+        if len(Dtr) >= 3000 and len(tb) >= 300:
+            mb2 = wb_fit_y(Dtr, np.log(Dtr["bidders"].astype(float)).values)
+            ptr = wb_predict(mb2, Dtr); q25c, q75c = float(np.quantile(ptr, 0.25)), float(np.quantile(ptr, 0.75))
+            pte = wb_predict(mb2, tb)
+            rs = pd.Series(res, index=te.index).loc[tb.index].values
+            ca = {}
+            for nm, msk in (("낮음", pte <= q25c), ("보통", (pte > q25c) & (pte < q75c)), ("높음", pte >= q75c)):
+                if msk.sum() >= 100: ca[nm] = {"adj": round(float(np.median(rs[msk])), 4), "n": int(msk.sum()), "q25": round(float(np.quantile(rs[msk], .25)), 4), "q75": round(float(np.quantile(rs[msk], .75)), 4)}
+            full["compAdj"] = ca
+            print("  🧭 경쟁 예상별 낙찰가 잔차:", json.dumps(ca, ensure_ascii=False))
+    except Exception as e:
+        print("  경쟁 예상별 보정 건너뜀:", e)
     full["resQ"] = [round(float(np.quantile(res, q / 100)), 4) for q in range(1, 100)]
     full["oos"] = {"from": cut, "n": int(len(te)), "medAbsErrPct": round(float(np.median(np.abs(np.exp(p) * te["est"] / te["actual"] - 1))) * 100, 1)}
     full["generatedAt"] = now; full["dataTo"] = int(D["sale"].max())
