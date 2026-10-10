@@ -58,17 +58,21 @@ def estimate(df, T):
     for key_col in ("bld", "dk", "region"):
         g = {}
         for k, G in df.groupby(key_col):
-            g[k] = (G["day"].values, G["size"].values, G["ppm"].values, G["build_year"].values, G["ym"].values)
+            g[k] = (G["day"].values, G["size"].values, G["ppm"].values, G["build_year"].values, G["ym"].values, G["floor"].values)
         groups[key_col] = g
 
     def wq(vals, w, q):
         o = np.argsort(vals); v = vals[o]; ww = w[o]; c = np.cumsum(ww) / ww.sum()
         return float(v[min(np.searchsorted(c, q), len(v) - 1)])
 
-    def cands(key_col, key, day_c, days, size, tol, by=None, byy=None, reg=None, ym_c=None, tadj=True):
+    def fmult(f):  # 같은 동·분기 평균 대비 ㎡당 가격(층별 실측: 지하 -38%, 1층 -6%, 2~4층 약 0%, 5층+ +16%)
+        f = np.where(np.isnan(f), 3, f)
+        return np.where(f <= 0, 0.616, np.where(f == 1, 0.942, np.where(f <= 4, 1.005, 1.162)))
+
+    def cands(key_col, key, day_c, days, size, tol, by=None, byy=None, reg=None, ym_c=None, tadj=True, tfl=None):
         t = groups[key_col].get(key)
         if t is None: return None
-        d, sz, pp, yb, ym = t
+        d, sz, pp, yb, ym, fl = t
         hi = np.searchsorted(d, day_c, side="right"); lo = np.searchsorted(d, day_c - days, side="left")
         if hi <= lo: return None
         m = np.abs(sz[lo:hi] - size) <= tol
@@ -76,8 +80,8 @@ def estimate(df, T):
             ok = np.isnan(yb[lo:hi]) | (np.abs(yb[lo:hi] - by) <= byy); m &= ok
         if not m.any(): return None
         ppm = pp[lo:hi][m]; age = day_c - d[lo:hi][m]; ymm = ym[lo:hi][m]
-        if tadj and reg is not None:
-            ppm = ppm * np.array([adj(reg, int(x), ym_c) for x in ymm])
+        if tadj and tfl is not None:  # 이 변형의 tadj=True는 '층 보정'(지역 지수 시점 보정은 효과가 없어 뺌)
+            ppm = ppm * (float(fmult(np.array([tfl], dtype=float))[0]) / fmult(fl[lo:hi][m].astype(float)))
         w = np.exp(-age / 365.0) * np.exp(-np.abs(sz[lo:hi][m] - size) / 10.0)
         return ppm, w
 
@@ -86,9 +90,10 @@ def estimate(df, T):
         day_c = r.day - 30; ym_c = int((pd.Timestamp("2020-01-01") + pd.Timedelta(days=int(day_c))).strftime("%Y%m"))
         by = r.build_year if np.isfinite(r.build_year) else None
         for tadj in (False, True):
-            c1 = cands("bld", r.bld, day_c, 730, r.size, 6, reg=r.region, ym_c=ym_c, tadj=tadj)
-            c2 = cands("dk", r.dk, day_c, 365, r.size, 8, by, 5, reg=r.region, ym_c=ym_c, tadj=tadj)
-            c3 = cands("region", r.region, day_c, 365, r.size, 8, reg=r.region, ym_c=ym_c, tadj=tadj)
+            tfl = r.floor if np.isfinite(r.floor) else 3.0
+            c1 = cands("bld", r.bld, day_c, 730, r.size, 6, reg=r.region, ym_c=ym_c, tadj=tadj, tfl=tfl)
+            c2 = cands("dk", r.dk, day_c, 365, r.size, 8, by, 5, reg=r.region, ym_c=ym_c, tadj=tadj, tfl=tfl)
+            c3 = cands("region", r.region, day_c, 365, r.size, 8, reg=r.region, ym_c=ym_c, tadj=tadj, tfl=tfl)
             n1 = 0 if c1 is None else len(c1[0]); n2 = 0 if c2 is None else len(c2[0])
             for q in (0.4, 0.5):
                 v1 = wq(c1[0], c1[1], q) if c1 else None; v2 = wq(c2[0], c2[1], q) if c2 else None; v3 = wq(c3[0], c3[1], q) if c3 else None
@@ -120,7 +125,7 @@ def main():
     summ = {}
     for (tadj, q), G in R.groupby(["tadj", "q"]):
         a = G["err"].abs()
-        summ[f"시점보정{tadj}_분위{q}"] = {"n": int(len(G)), "medAbsErrPct": round(float(a.median()) * 100, 2), "within10Pct": round(float((a <= .10).mean()) * 100, 1), "within20Pct": round(float((a <= .20).mean()) * 100, 1),
+        summ[f"층보정{tadj}_분위{q}"] = {"n": int(len(G)), "medAbsErrPct": round(float(a.median()) * 100, 2), "within10Pct": round(float((a <= .10).mean()) * 100, 1), "within20Pct": round(float((a <= .20).mean()) * 100, 1),
                                        "biasPct": round(float(G["err"].median()) * 100, 2)}
     print(json.dumps(summ, ensure_ascii=False, indent=1))
     best = R[(R["tadj"] == 0) & (R["q"] == 0.5)]
