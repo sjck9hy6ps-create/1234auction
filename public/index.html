@@ -17307,13 +17307,17 @@ function winbidFor(row) {
     // 2026-10-08: 비중 조정·감정가 요인을 넣은 새 모델은 앱 시세와 맞춘 상태(지방 826건 시험: 앱 계산 쏠림 +1.9% = 예전 보정 +1.8%를 빼면 ≈0%) → 보정 0
     var pred = winbidModel.base;
     Object.keys(keys).forEach(function(f) { var v = (e[f] || {})[keys[f]]; if (typeof v === 'number') pred += v; });
-    var wb = { est: b.est, own: b.own, pred: pred, price: Math.round(b.est * Math.exp(pred)) };
-    // 경쟁 예상(2026-10-10): 입찰 전 정보로 본 예상 응찰자 수 - 하위 25% 낮음 / 상위 25% 높음 (검증: 학습에 안 쓴 최근 12개월 5,322건에서 상위 25%는 실제 응찰 중앙 9명·9명 이상 54%, 하위 25%는 중앙 2명·1명뿐 39%)
+    // 경쟁 예상(2026-10-10): 입찰 전 정보로 본 예상 응찰자 수 - 하위 25% 낮음 / 상위 25% 높음 (검증: 학습에 안 쓴 최근 12개월 5,322건에서 상위 25%는 실제 응찰 중앙 9명·9명 이상 54%, 하위 25%는 실제 중앙 2명)
+    // 2026-10-10(사용자: "틈새라면 입찰가를 낮춰 수익을 확보"): 경쟁 예상이 낮음/높음인 물건은 실제 낙찰가가 가격 모델 예상과 체계적으로 달랐음(서버 모델 compAdj - 학습에 안 쓴 최근 12개월 잔차 중앙값) → 그만큼 예상 낙찰가를 조정(±8% 한도, 표본 300건 이상일 때만)
+    var bidN = null, comp = null, compShift = 0;
     if (winbidModel.bid && winbidModel.bid.eff) {
         var bm = winbidModel.bid, pbv = bm.base;
         Object.keys(keys).forEach(function(f) { var v = (bm.eff[f] || {})[keys[f]]; if (typeof v === 'number') pbv += v; });
-        wb.bidN = Math.exp(pbv); wb.comp = pbv <= bm.q25 ? '낮음' : (pbv >= bm.q75 ? '높음' : '보통');
+        bidN = Math.exp(pbv); comp = pbv <= bm.q25 ? '낮음' : (pbv >= bm.q75 ? '높음' : '보통');
+        var ca = winbidModel.compAdj && winbidModel.compAdj[comp];
+        if (ca && ca.n >= 300 && typeof ca.adj === 'number') { compShift = Math.max(-0.08, Math.min(0.08, ca.adj)); pred += compShift; }
     }
+    var wb = { est: b.est, own: b.own, pred: pred, price: Math.round(b.est * Math.exp(pred)), bidN: bidN, comp: comp, compShift: compShift };
     wb.probRec = row.recBid ? winbidProbAt(wb, row.recBid) : null;
     wb.probAggr = row.recAggr ? winbidProbAt(wb, row.recAggr) : null;
     wb.gapPct = row.recBid ? Math.round((row.recBid / wb.price - 1) * 1000) / 10 : null;
@@ -18600,7 +18604,7 @@ async function renderBidDrawer() {
             + (wbp != null ? '<div>추천 입찰가로 쓰면 <b style="color:' + wcol + ';">낙찰 가능성 약 ' + wbp + '%</b> · 예상 낙찰가보다 ' + (wbg >= 0 ? '<b>' + wbg + '%</b> 높음' : '<b>' + Math.abs(wbg) + '%</b> 낮음')
                 + (row.winbid.probAggr != null ? ' · 적극 입찰가면 약 ' + Math.round(row.winbid.probAggr * 100) + '%' : '') + '</div>' : '')
             + (wbp != null && wbp < 35 ? '<div style="color:#b91c1c;">마진을 지키는 상한이 보통 낙찰 가격보다 낮아요 - 써도 질 가능성이 커요(무리해서 올리면 마진이 줄어요)</div>' : '')
-            + compNote
+            + compNote + (row.winbid.compShift ? '<div class="dr-sub" style="color:#7c3aed;">경쟁 예상이 ' + row.winbid.comp + '이라 예상 낙찰가를 ' + (row.winbid.compShift > 0 ? '+' : '') + (Math.round(row.winbid.compShift * 1000) / 10) + '% 조정했어요(과거 같은 경쟁 예상 물건의 실제 낙찰가 기준)</div>' : '')
             + '<div class="dr-sub">낙찰사례 2만여 건 전국 모델에 이 시군구·법정동 사례를 덧반영(사례가 적은 곳은 전국 평균 쪽으로 당김) · 시세는 이 단지 거래 기준(학습에 안 쓴 최근 1년 검증 보통 오차 ' + ((winbidModel.oos && winbidModel.oos.medAbsErrPct) || '5~6') + '%) · 최저가는 이 예측에만 쓰고 예상매도가엔 안 써요'
             + ' · 시세(같은 단지·평형 ' + row.winbid.own + '건 40% 지점) ' + fmt(row.winbid.est) + '</div></div>';
     }
