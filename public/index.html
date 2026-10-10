@@ -25782,10 +25782,10 @@ function computeReminders() {
         var csvFrom = pastDates.length ? pastDates[0] : ymd(now), csvTo = ymd(now + 28 * day);
         // 2026-10(사용자: "낙찰사례 업로드와 신규 경매건은 토요일부터 - 평일에 진행된 사건을 주말에 종합해 새 물건을 준비") →
         // 주말(토·일)에 주 1회 알림, 평일엔 오늘·내일 입찰이 있는데 4일 넘게 안 올린 급한 경우만
-        var dowc = new Date().getDay(), weekend = (dowc === 5 || dowc === 6 || dowc === 0); // 2026-10-11: 미리 계산이 토요일 03시라 금요일부터 알림(금요일 안에 올려야 그 주 계산에 반영)
+        var dowc = new Date().getDay(), weekend = (dowc === 6 || dowc === 0); // 2026-10-11: 주말에 업로드 → 월요일 아침 미리 계산
         var urgent = real.some(function(a) { var d = calcAuctionDday(a.bidDate); return d && d.diffDays >= 0 && d.diffDays <= 1; }) && (since == null || since >= 4);
         if ((weekend && (since == null || since >= 3)) || urgent) {
-            out.push({ key: 'csv', pri: urgent && !weekend ? 0 : 1, icon: '📄', title: weekend ? (dowc === 5 ? '금요일 준비: 새 경매 물건·결과 CSV 올리기 (토 03시 계산 전)' : '주말 준비: 새 경매 물건·결과 CSV 올리기') : '급한 경매 CSV 올리기',
+            out.push({ key: 'csv', pri: urgent && !weekend ? 0 : 1, icon: '📄', title: weekend ? '주말 준비: 새 경매 물건·결과 CSV 올리기 (월요일 아침 계산 전)' : '급한 경매 CSV 올리기',
                 sub: (soon ? '3일 안 입찰 ' + soon + '건' : '') + (soon && past ? ' · ' : '') + (past ? '입찰일 지났는데 결과 없는 물건 ' + past + '건(유찰 가정으로 계산 중)' : '')
                     + ' - 올리면 최저가·유찰·매각 결과와 낙찰 가능성이 바로 다시 계산돼요' + (since != null ? ' (마지막 ' + since + '일 전)' : '')
                     + '\n📅 필요한 자료: 탱크옥션에서 입찰일 ' + csvFrom + ' ~ ' + csvTo + ' 범위(진행·매각·유찰 모두)로 검색해 CSV 받기',
@@ -25797,7 +25797,7 @@ function computeReminders() {
         var lastImp = 0; (bidCaseList || []).forEach(function(c) { var t = parseInt(c.importedAt) || 0; if (t > lastImp) lastImp = t; });
         var dsi = lastImp ? Math.floor((now - lastImp) / day) : null, dow = new Date().getDay();
         // 주말(토·일)에 마지막 업로드가 3일 넘었거나, 평일이라도 8일 넘게 안 올렸으면 알림
-        if (bidCaseList && bidCaseList.length && (dsi == null || dsi >= 8 || ((dow === 5 || dow === 6 || dow === 0) && dsi >= 3))) {
+        if (bidCaseList && bidCaseList.length && (dsi == null || dsi >= 8 || ((dow === 6 || dow === 0) && dsi >= 3))) {
             var cut = new Date(now - 365 * day).toISOString().slice(0, 10), y1 = {}, cand = {};
             bidCaseList.forEach(function(c) { if (/아파트/.test(c.propertyType || '') && c.saleDate >= cut) { var k = competitionRegionKey(c.addrJibun); y1[k] = (y1[k] || 0) + 1; } });
             // 입찰후보 화면을 안 열어도 되게 등록된 경매 물건(아파트·검토중)에서 지역을 모음
@@ -25811,7 +25811,7 @@ function computeReminders() {
             var yst = new Date(now - day), ystS = (yst.getMonth() + 1) + '/' + yst.getDate();
             var need = Object.keys(candSido).map(function(sd) { return sd + ' ' + (lastBySido[sd] ? nextDay(lastBySido[sd]) : '최근 1년') + '~' + ystS; });
             out.push({ key: 'bidcase', pri: 2, icon: '⚖️', title: '이번 주 낙찰사례 올리기',
-                sub: '금요일에 올리면 토요일 새벽 입찰후보 계산에, 월요일 새벽 주간 분석(예상 낙찰가·경쟁 강도·우선 지역)에 반영돼요' + (dsi != null ? ' (마지막 업로드 ' + dsi + '일 전)' : '')
+                sub: '주말에 올리면 월요일 새벽 주간 분석(예상 낙찰가·경쟁 강도·우선 지역)과 월요일 아침 입찰후보 계산에 반영돼요' + (dsi != null ? ' (마지막 업로드 ' + dsi + '일 전)' : '')
                     + (thin.length ? ' · 사례가 적은 입찰 지역 우선: ' + thin.slice(0, 6).map(function(k) { return k + '(' + (y1[k] || 0) + '건)'; }).join(', ') : '')
                     + (need.length ? '\n📅 필요한 자료(매각일 기준, 아파트 낙찰 결과): ' + need.join(' · ') : '')
                     + (thin.length ? ' · 사례 적은 지역은 최근 1년치' : ''),
