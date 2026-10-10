@@ -11577,6 +11577,17 @@ function naverLandUrl(o) {
     if (!qq) return null;
     return { url: 'https://search.naver.com/search.naver?query=' + encodeURIComponent(qq + ' 네이버부동산'), type: type };
 }
+// 네이버 지도에서 이 물건 주소를 검색해 핀이 꽂힌 위치로 열기(2026-10-10, 사용자 요청 - 네이버부동산 페이지엔 핀을 꽂을 수 없어 별도 버튼)
+function naverMapQueryFor(a) {
+    var toks = String(a.addr || '').split(/\s+/), dg = dongKey(a.dong), i = toks.indexOf(dg), bn = String(a.bunji || '').trim();
+    if (i > 0 && bn) return toks.slice(0, i + 1).join(' ') + ' ' + bn;
+    return String(a.addr || '').replace(/\s*주\s*건축물.*$/, '').trim();
+}
+function openNaverMapForRow(id) {
+    var row = bidBoardRows.filter(function(r) { return String(r.id) === String(id); })[0]; if (!row) return;
+    var q = naverMapQueryFor(row.a); if (!q) { alert('주소가 없어 네이버 지도를 열 수 없어요.'); return; }
+    openLinkWindow('https://map.naver.com/p/search/' + encodeURIComponent(q), 'win-navermap');
+}
 function openNaverForRow(id) {
     var row = bidBoardRows.filter(function(r) { return String(r.id) === String(id); })[0]; if (!row) return;
     var a = row.a, st = hsBld[row.id], title = st && st.info && st.info.title, m = null; try { m = findMatchedApt(a); } catch (e) {}
@@ -19172,7 +19183,7 @@ async function renderBidDrawer() {
     h += '<div class="dr-sec dr-btns">'
         + '<button onclick="openCourtQuick(\'' + String(a.caseNo || '').replace(/'/g, "\\'") + '\')">🏛️ 법원경매</button>'
         + '<button onclick="openTankQuick(\'' + String(a.caseNo || '').replace(/'/g, "\\'") + '\')">🟦 탱크옥션</button>'
-        + '<button onclick="openNaverForRow(\'' + idJs + '\')" title="이 물건 위치·종류·평형(±5평)·연식(−5~+10년)을 맞춘 네이버부동산 매물 지도">🟢 네이버부동산</button>' + '<button onclick="openBatoner(\'' + String(a.caseNo || '').replace(/'/g, "\\'") + '\')">🙋 바토너 대리입찰</button></div>';
+        + '<button onclick="openNaverForRow(\'' + idJs + '\')" title="이 물건 위치·종류·평형(±5평)·연식(−5~+10년)을 맞춘 네이버부동산 매물 지도">🟢 네이버부동산</button><button onclick="openNaverMapForRow(\'' + idJs + '\')" title="네이버 지도에서 이 주소를 검색해 핀이 꽂힌 위치로 열어요">📍 네이버 지도</button>' + '<button onclick="openBatoner(\'' + String(a.caseNo || '').replace(/'/g, "\\'") + '\')">🙋 바토너 대리입찰</button></div>';
     // 임장 후보 화면(2026-10): 맨 위에 판정 + 추천가 1개, 근거·범위·실거래·비용은 "자세히"로 접고, 직접 확인한 금액 입력칸은 항상 보이게
     var i1 = h.indexOf('<div style="margin-top:6px;"><span class="bb-verdict"'), i2 = h.indexOf('<div class="dr-sec"><h4>직접 확인한 금액');
     if (i1 > 0 && i2 > i1) {
@@ -19255,7 +19266,7 @@ async function renderVillaDrawer(d, row) {
         + '<label>인수 금액 (매각물건명세서 권리)</label><input type="number" value="' + (parseInt(a.assumedDeposit) || '') + '" placeholder="0" onchange="updateDrawerField(\'' + idJs + '\',\'assumedDeposit\',this.value)">'
         + '<label>미납 관리비</label><input type="number" value="' + (parseInt(a.unpaidMgmtFee) || '') + '" placeholder="0" onchange="updateDrawerField(\'' + idJs + '\',\'unpaidMgmtFee\',this.value)">'
         + '<label>수리비 (비우면 연식 기준 자동)</label><input type="number" value="' + (parseInt(a.repair) || '') + '" placeholder="자동" onchange="updateDrawerField(\'' + idJs + '\',\'repair\',this.value)"></div></div>';
-    h += '<div class="dr-sec dr-btns"><button onclick="openCourtQuick(\'' + String(a.caseNo || '').replace(/'/g, "\\'") + '\')">🏛️ 법원경매</button><button onclick="openTankQuick(\'' + String(a.caseNo || '').replace(/'/g, "\\'") + '\')">🟦 탱크옥션</button><button onclick="openNaverForRow(\'' + idJs + '\')" title="이 물건 위치·종류·평형(±5평)·연식(−5~+10년)을 맞춘 네이버부동산 매물 지도">🟢 네이버부동산</button><button onclick="openBatoner(\'' + String(a.caseNo || '').replace(/'/g, "\\'") + '\')">🙋 바토너 대리입찰</button></div>';
+    h += '<div class="dr-sec dr-btns"><button onclick="openCourtQuick(\'' + String(a.caseNo || '').replace(/'/g, "\\'") + '\')">🏛️ 법원경매</button><button onclick="openTankQuick(\'' + String(a.caseNo || '').replace(/'/g, "\\'") + '\')">🟦 탱크옥션</button><button onclick="openNaverForRow(\'' + idJs + '\')" title="이 물건 위치·종류·평형(±5평)·연식(−5~+10년)을 맞춘 네이버부동산 매물 지도">🟢 네이버부동산</button><button onclick="openNaverMapForRow(\'' + idJs + '\')" title="네이버 지도에서 이 주소를 검색해 핀이 꽂힌 위치로 열어요">📍 네이버 지도</button><button onclick="openBatoner(\'' + String(a.caseNo || '').replace(/'/g, "\\'") + '\')">🙋 바토너 대리입찰</button></div>';
     d.innerHTML = h; drawerNavInit(d);
     // 지역 사이클 채우기
     if (lawd) loadMarketCycle(lawd).then(function(cd) {
