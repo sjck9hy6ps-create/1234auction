@@ -16,7 +16,7 @@ page.on('pageerror', (e) => console.log('페이지 오류:', String(e).slice(0, 
 console.log('앱 여는 중…');
 await page.goto(SITE, { waitUntil: 'load' });
 await page.waitForTimeout(10000);
-await page.evaluate(() => { try { document.getElementById('remind-panel').style.display = 'none'; } catch (e) {} forceRefreshBidBoard(); });
+await page.evaluate(() => { try { document.getElementById('remind-panel').style.display = 'none'; document.getElementById('bid-board').style.display = 'flex'; } catch (e) {} forceRefreshBidBoard(); });
 const t0 = Date.now();
 let last = '';
 for (;;) {
@@ -28,6 +28,28 @@ for (;;) {
   if (!st.running && !st.prog && st.rows > 0 && st.pending === 0) break;
   if (Date.now() - t0 > 80 * 60 * 1000) { console.log('시간 초과'); break; }
 }
+// 연식·승강기·세대수 채우기(앱이 입찰후보 계산 직후 배경에서 하는 일)가 끝나길 기다린 뒤 저장 계산에 반영 - 안 그러면 사용자 앱의 물건 값(연식 등)과 서버 계산의 식별값이 달라 일부 물건을 다시 계산하게 됨(2026-10-11)
+await page.waitForTimeout(6000);
+{
+  const tf = Date.now();
+  while (Date.now() - tf < 25 * 60 * 1000) {
+    const busy = await page.evaluate(() => !!householdFillRunning);
+    if (!busy) break;
+    await page.waitForTimeout(10000);
+  }
+  console.log(`연식·세대수 채우기 대기 ${Math.round((Date.now() - tf) / 1000)}s`);
+}
+const fixed = await page.evaluate(async () => {
+  const cache = (await listIdbOp('readonly', function (st) { return st.get(BOARD_CACHE_KEY); })) || {};
+  let n = 0;
+  bidBoardRows.forEach(function (r) {
+    const c = cache[r.id];
+    if (c && r.a && !r.pending && !r.skippedPast && c.sig !== boardBaseSig(r.a)) { const row = boardRowForCache(r); if (row) { cache[r.id] = { sig: boardBaseSig(r.a), at: Date.now(), row: row }; n++; } }
+  });
+  if (n) await listIdbOp('readwrite', function (st) { return st.put(cache, BOARD_CACHE_KEY); });
+  return n;
+});
+console.log(`채운 연식 등을 반영해 다시 저장한 물건 ${fixed}건`);
 const cache = await page.evaluate(async () => await listIdbOp('readonly', function (st) { return st.get(BOARD_CACHE_KEY); }));
 // ── 빌라 탭 미리 계산(2026-10-10, 사용자: 빌라 입찰후보 창이 매번 느림 → 실사용 전에 웜업) ──
 let villa = null;
