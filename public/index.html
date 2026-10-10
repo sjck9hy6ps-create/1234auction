@@ -17493,7 +17493,9 @@ async function refreshBidBoard() {
         byLawd[k].push(a);
     });
     // 이미 불러온 지역부터 - 첫 화면이 빨리 채워지게
-    order.sort(function(x, y) { return (dataCache[y] ? 1 : 0) - (dataCache[x] ? 1 : 0); });
+    // 입찰이 가까운 물건이 있는 지역부터(2026-10-10) - 지금 볼 물건이 먼저 채워지고 나머지는 뒤에서
+    var soon = function(k) { var m = 9999; (byLawd[k] || []).forEach(function(a) { var dd = a.bidDate ? calcAuctionDday(a.bidDate) : null; if (dd && dd.diffDays < m) m = dd.diffDays; }); return m; };
+    order.sort(function(x, y) { return ((dataCache[y] ? 1 : 0) - (dataCache[x] ? 1 : 0)) || (soon(x) - soon(y)); });
     var keepLawd = typeof lastLawdCd !== 'undefined' ? lastLawdCd : null;
     // 지역을 하나 불러올 때마다 지도 배지를 다시 그리면(순위·사이클 도착 시 자동으로 다시 그림) 지역 수십 곳에서
     // 화면이 멈춤 - 보드 계산 중에는 다시 그리기를 미뤘다가 끝나고 한 번만 그림.
@@ -17534,13 +17536,14 @@ async function refreshBidBoard() {
         });
         bidBoardRows = bidBoardRows.map(function(r) { return fresh[r.id] || r; });
         Object.keys(fresh).forEach(function(id) { var f = fresh[id]; if (f && f.a && !(f.verdict === 'nodata' && !f.loaded && f.type && f.a.lat)) boardCache[id] = { sig: boardBaseSig(f.a), at: Date.now(), row: boardRowForCache(f) }; });
-        if (Date.now() - lastRender > 1500 || i === order.length - 1) { renderBidBoard(); lastRender = Date.now(); }
+        // 입찰후보 계산 중 화면 다시 그리기: 5초에 한 번, 사용자가 방금 누른 직후(2초 안)에는 미룸(클릭이 씹히지 않게)
+        if ((Date.now() - lastRender > 5000 && Date.now() - bbLastInteract > 2000) || i === order.length - 1) { renderBidBoard(); lastRender = Date.now(); }
         // 보드 때문에 새로 불러온 지역은 계산이 끝나면 메모리에서 내림(지역당 수 MB - 다시 필요하면 브라우저 저장본에서 금방 불러옴)
         if (lawd !== '_' && boardOnly && lawd !== keepLawd && dataCache[lawd]) {
             delete dataCache[lawd]; delete rentCacheByLawd[lawd]; mergedLawdCds.delete(lawd);
             var vi = lawdCdVisitOrder.indexOf(lawd); if (vi !== -1) lawdCdVisitOrder.splice(vi, 1);
         }
-        await new Promise(function(r) { setTimeout(r, 0); }); // 화면이 숨 쉴 틈
+        await new Promise(function(r) { setTimeout(r, Date.now() - bbLastInteract < 3000 ? 300 : 0); }); // 화면이 숨 쉴 틈(사용자가 누른 직후엔 더 길게)
     }
     } finally {
         window.redrawMarkers = origDraw.r; window.renderAuctionMarkers = origDraw.a; window.renderBidCaseMarkers = origDraw.b;
@@ -17612,7 +17615,7 @@ function bidBoardVisibleRows() {
     });
 }
 /* ════ 임장 후보 화면(2026-10, 사용자: "선택사항이 너무 많다 - 매주 수백 건 중 임장할 물건을 빠르게, 추천가 1개만") ════ */
-function setLiteVisit(v) { bidBoardState.visit = v; renderBidBoard(); }
+function setLiteVisit(v) { bidBoardState.visit = v; bidBoardState.liteLimit = 120; renderBidBoard(); }
 // 열 머리글을 누르면 그 값으로 오름차순 ↔ 내림차순(2026-10, 사용자: "순위 표기보다 항목별 오름·내림차순 정렬을 직접 고르게"). 값이 없는 물건은 방향과 상관없이 맨 아래
 var LITE_COLS = {
     verdict: { label: '판정', first: 1, val: function(r) { return r.visit.go ? 0 : 1; } },
@@ -17681,7 +17684,7 @@ function liteTh(k, label, right) {
     var s = bidBoardState, on = s.liteCol === k, c = LITE_COLS[k];
     return '<span class="bb2-sortlink' + (on ? ' on' : '') + '" title="눌러서 ' + (on ? (s.liteDir === 1 ? '내림차순' : '오름차순') : (c.first === 1 ? '오름차순' : '내림차순')) + ' 정렬" onclick="event.stopPropagation();setLiteCol(\'' + k + '\')">' + (label || c.label) + '<span class="bb-arrow">' + (on ? (s.liteDir === 1 ? '▲' : '▼') : '↕') + '</span></span>';
 }
-function toggleLitePast() { bidBoardState.pastLite = !bidBoardState.pastLite; renderBidBoard(); }
+function toggleLitePast() { bidBoardState.pastLite = !bidBoardState.pastLite; bidBoardState.liteLimit = 120; renderBidBoard(); }
 // 단지 내 동일 평형(±3㎡) 최근 거래 건수(2026-10, 사용자: "시세 근거가 되는 거래가 몇 건인지 보여줘")
 function compCellHtml(r) {
     var w = r.winbid; if (!w || !w.comp) return '<span class="bb-sub">-</span>';
@@ -17759,11 +17762,11 @@ function renderBidBoardLite() {
         + '<th>거래량 순위·회전율<div class="bb2-subsort">' + liteTh('turn', '회전율') + liteTh('liv', '생활권') + liteTh('band', '평형') + liteTh('dong', '동') + '</div></th>'
         + '<th class="r">' + liteTh('minBid') + '</th><th class="r">' + liteTh('wbp') + '</th><th class="r">' + liteTh('sale') + infoI('sale') + '</th><th class="r">' + liteTh('rec') + infoI('rec') + '<div class="bb2-subsort" style="justify-content:flex-end;">' + liteTh('recPct', '시세 대비 %') + '</div></th><th class="r">' + liteTh('p') + '</th><th class="r">' + liteTh('comp') + infoI('comp') + '</th><th class="r">' + liteTh('net') + '</th><th class="r">' + liteTh('rate') + '</th>'
         + '</tr></thead><tbody>'
-        + rows.map(function(r) {
+        + rows.slice(0, bidBoardState.liteLimit || 120).map(function(r) {
             var go = r.visit.go, e = r.pick && r.pick.ev, idJs = String(r.id).replace(/\\/g, '\\\\').replace(/'/g, "\\'");
             var pc = e ? Math.round(e.p * 100) : null, col = pc == null ? '#6b7280' : (pc >= 60 ? '#15803d' : (pc >= 35 ? '#b45309' : '#b91c1c'));
             var mr = e && r.sale ? e.pre / r.sale * 100 : null;
-            return '<tr class="bb2-row ' + (go ? 'go' : 'pass') + (String(bidDrawerId) === String(r.id) ? ' sel' : '') + '" onclick="openBidDrawer(\'' + idJs + '\')">'
+            return '<tr data-rid="' + bbEsc(r.id) + '" class="bb2-row ' + (go ? 'go' : 'pass') + (String(bidDrawerId) === String(r.id) ? ' sel' : '') + '" onclick="openBidDrawer(\'' + idJs + '\')">'
                 + '<td data-l="판정">' + (go ? '<span class="bb2-go">🚶 임장</span>' : '<span class="bb2-pass">패스</span>') + (r.visit.why ? '<div class="bb-sub">' + bbEsc(r.visit.why) + '</div>' : '') + '</td>'
                 + '<td data-l="입찰일">' + (r.dday ? '<span class="bb-dday' + (r.dday.diffDays >= 0 && r.dday.diffDays <= 3 ? ' soon' : '') + '">' + bbEsc(r.dday.label) + '</span>' : '-') + '<div class="bb-sub">' + bbEsc(r.a.bidDate || '') + '</div></td>'
                 + '<td data-l="물건" class="bb2-name"><b>' + bbEsc(r.name) + '</b><div class="bb-sub">' + bbEsc(r.region) + (r.pyung ? ' · ' + r.pyung + '평' : '') + (r.floor ? ' · ' + r.floor + '층' : '') + (r.issueSuspect ? ' · <span style="color:#b91c1c;">🚩</span>' : '') + '</div></td>'
@@ -17778,9 +17781,15 @@ function renderBidBoardLite() {
                 + '<td data-l="경쟁 예상" class="r">' + compCellHtml(r) + '</td>'
                 + '<td data-l="순이익" class="r">' + (e ? money(e.net) : '-') + '</td>'
                 + '<td data-l="마진율" class="r">' + (mr != null ? mr.toFixed(1) + '%' : '-') + '</td></tr>';
-        }).join('') + '</tbody></table>';
+        }).join('') + '</tbody></table>'
+        + (rows.length > (bidBoardState.liteLimit || 120) ? '<div style="text-align:center;padding:14px;"><button class="bb-csv" style="font-size:13px;padding:8px 18px;" onclick="bbLiteMore()">+ 더 보기 (남은 ' + (rows.length - (bidBoardState.liteLimit || 120)) + '건 · 지금 ' + (bidBoardState.liteLimit || 120) + '건 표시)</button></div>' : '');
     var cn = document.getElementById('bb-cache-note'); if (cn) cn.style.display = 'none';
 }
+// 2026-10-10(사용자: 입찰후보 로딩 중·탭 이동·닫기에서 반응이 느림): 표를 한 번에 1천 건 넘게 그리던 걸 120건으로 줄이고 더 보기로 늘림(정렬·필터는 전체에 그대로 적용)
+function bbLiteMore() { bidBoardState.liteLimit = (bidBoardState.liteLimit || 120) + 300; renderBidBoard(); }
+var bbLastInteract = 0;
+document.addEventListener('pointerdown', function(e) { if (e.target.closest && e.target.closest('#bid-board')) bbLastInteract = Date.now(); }, true);
+document.addEventListener('keydown', function(e) { if (document.getElementById('bid-board') && document.getElementById('bid-board').style.display !== 'none') bbLastInteract = Date.now(); }, true);
 function renderBidBoard() {
     if (bidBoardState.lite) return renderBidBoardLite();
     var s = bidBoardState;
@@ -18017,7 +18026,13 @@ function bidBoardChipFilter(r) {
 }
 // ── 상세 창 ──
 var bidDrawerId = null;
-function openBidDrawer(id) { bidDrawerId = id; document.getElementById('bid-board').classList.add('with-drawer'); renderBidDrawer(); renderBidBoard(); }
+function openBidDrawer(id) {
+    bidDrawerId = id; document.getElementById('bid-board').classList.add('with-drawer'); renderBidDrawer();
+    if (bidBoardState.lite) { // 표 전체를 다시 그리지 않고 선택 표시만 바꿈(2026-10-10)
+        document.querySelectorAll('#bid-board tr.bb2-row.sel').forEach(function(t) { t.classList.remove('sel'); });
+        var tr = document.querySelector('#bid-board tr.bb2-row[data-rid="' + String(id).replace(/"/g, '') + '"]'); if (tr) tr.classList.add('sel');
+    } else renderBidBoard();
+}
 // 떠 있는 상세 창 끌어 옮기기(900px 이하에서만) - 머리글(이름 줄)을 잡고 이동, 버튼·✕는 그대로 눌림
 var bbDrawerPos = null;
 (function() {
