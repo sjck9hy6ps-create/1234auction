@@ -3744,7 +3744,9 @@ function villaBidPlan(row, ve, mp, wb) {
     for (var b = row.minBid; b <= bMax + 0.5; b += step) { var p = villaProbAt(wb, b), net = netAt(b); if (net > 0 && (!best || p * net > best.ev)) best = { bid: Math.round(b), p: p, net: Math.round(net), ev: p * net }; }
     return { max: bMax, ev: best, pMax: villaProbAt(wb, bMax) };
 }
-function villaMetroRows(ignoreRegion) { var s = bidBoardState; return bidBoardRows.filter(function(r) { return r.type === 'villa' && r.metro && (s.pastLite || !(r.dday && r.dday.diffDays < 0)) && (ignoreRegion || !s.region || r.region === s.region); }); }
+// 지역 선택(2026-10-10, 사용자: 대도시는 시별로) - 'g:서울'처럼 앞에 g:가 붙으면 그 시 전체(서울·인천은 구 묶음)
+function regionMatch(r, reg) { return !reg || (reg.indexOf('g:') === 0 ? String(r.region).indexOf(reg.slice(2) + ' ') === 0 : r.region === reg); }
+function villaMetroRows(ignoreRegion) { var s = bidBoardState; return bidBoardRows.filter(function(r) { return r.type === 'villa' && r.metro && (s.pastLite || !(r.dday && r.dday.diffDays < 0)) && (ignoreRegion || regionMatch(r, s.region)); }); }
 /* 🏘️ 빌라 임장 후보 판정 (2026-10-10) - 아파트와 같은 방식: 필요 마진(최소 2,000만+연식·근거·승강기 여유)이 남는 입찰가가 있고, 그 추천가의 낙찰 가능성이 20% 이상이며, 시세 근거가 같은 건물·같은 동 5건 이상이고, 지하가 아니면 임장 후보 */
 /* ════ 🏘️ 빌라 매물(호가) 붙여넣기 (2026-10-10, 사용자: "아파트처럼 호가로 매도인·부동산업자의 생각이 어느 정도 반영될 것") ════
    네이버 부동산 빌라 매물 목록을 통째로 붙이면 매매 매물만 골라(전세·월세 제외) 면적 ±8㎡ 안의 같은 집 중복을 묶고,
@@ -3894,6 +3896,19 @@ async function villaLoadRegions() {
         }
     } finally { villaLoadBusy = false; if (bidBoardState.visit === 'villa') renderBidBoard(); }
 }
+/* 🚩 빌라 이슈 의심(2026-10-10, 사용자: "유찰 3회 이상이거나 최저가가 현저히 낮으면 권리상 문제 있는 경우가 대부분 - 걸러내줘") - 아파트와 같은 기준 + 감정가 대비 극단적으로 낮은 최저가.
+   기준: 최저가÷예상매도가 40% 미만, 또는 3회+ 유찰이면서 50% 미만, 또는 최저가가 감정가의 20% 미만 → 강한 의심 / 3회+ 유찰 또는 45% 미만 → 의심. 둘 다 임장 후보에서 뺌(패스에 사유 표시).
+   참고(빌라 낙찰사례 수도권 8.6천 건): 최저가율 30% 이하는 낙찰가가 감정가의 25%이고 43%가 단독 낙찰 - 시장이 가격에 문제를 반영한 신호. */
+function villaIssueFor(row, ve) {
+    var minb = row.minBid, ref = ve && (ve.estTrade || ve.est); if (!minb || !ref) return null;
+    var appr = parseFloat(row.appraisal) || 0, mr = minb / ref, f = parseInt(villaFailsFromRatio(minb, appr), 10), why = [];
+    if (!isNaN(f) && f >= 3) why.push(f + '회 이상 유찰');
+    if (mr < 0.5) why.push('최저가가 시세의 ' + Math.round(mr * 100) + '%');
+    var ar = appr ? minb / appr : null; if (ar != null && ar < 0.2) why.push('최저가가 감정가의 ' + Math.round(ar * 100) + '%');
+    if (mr < 0.4 || (!isNaN(f) && f >= 3 && mr < 0.5) || (ar != null && ar < 0.2)) return { level: 'high', why: why };
+    if ((!isNaN(f) && f >= 3) || mr < 0.45) return { level: 'mid', why: why.length ? why : ['최저가가 시세의 ' + Math.round(mr * 100) + '%'] };
+    return null;
+}
 function villaEval(row) {
     var st = hsBld[row.id] || {}, t = st.info && st.info.title, lawd = bidBoardLawdOf(row.a);
     var vc = villaVeCache[row.id], vcOk = vc && vc.sig === villaVeSig(row.a);
@@ -3916,6 +3931,7 @@ function villaEval(row) {
     var v = ev.visit, fl = parseInt(row.a.floor, 10);
     if (!ev.ve) v.why = (vcOk || (lawd && dataCache[lawd])) ? '시세 근거 거래가 없어요' : '지역 자료 불러오는 중';
     else if (!ev.wb) v.why = '계산 중';
+    else if ((ev.issue = villaIssueFor(row, ev.ve))) v.why = '🚩 이슈 ' + (ev.issue.level === 'high' ? '강한 의심' : '의심') + '(' + ev.issue.why.join('·') + ') - 권리 문제·인수 보증금 확인 필요';
     else if (!ev.pn || ev.pn.infeasible || !ev.pn.ev) v.why = '최저가로도 필요 마진 ' + (ev.mp ? toEok(String(ev.mp.margin)) : '') + '이 안 남아요';
     else if (ev.ve.lvl === '동1~4' || ev.ve.lvl === '시군구') v.why = '시세 근거 약함(' + ev.ve.lvl + ')';
     else if (!isNaN(fl) && fl <= 0) v.why = '지하·반지하';
@@ -3964,7 +3980,7 @@ function renderVillaLite(body) {
             return '<b>마진 ' + toEok(String(mp.margin)) + '</b>' + (mp.first ? '<div class="bb-sub" style="color:#b45309;">' + (mp.elv === 0 ? '승강기 없는 고층' : '1층') + ' +20%</div>' : (mp.floorMin ? '' : '<div class="bb-sub">매도가의 ' + mp.buf + '%</div>')) + (mp.bid ? '<div style="color:' + (mp.feasible ? '#15803d' : '#b91c1c') + ';font-weight:700;">' + (mp.feasible ? '입찰 상한 ' + money(mp.bid) : '최저가로도 마진 부족') + '</div>' : '') + '<div class="bb-sub" title="필요 마진 근거">' + why + '</div>'; })() : '<span class="bb-sub">-</span>';
         var winCell = wb ? '<b>' + money(wb.price) + '</b><div class="bb-sub" title="낙찰사례 약 6천 건 모델, 보통 오차 약 9%">예상 낙찰가</div>' + (pn && pn.ev ? '<div style="color:#15803d;font-weight:700;">추천 ' + money(pn.ev.bid) + '</div><div class="bb-sub">낙찰 가능성 ' + Math.round(pn.ev.p * 100) + '% · 순이익 ' + money(pn.ev.net) + '</div>' : '<div class="bb-sub" style="color:#b91c1c;">' + (pn && pn.infeasible ? '최저가로도 마진 부족' : '추천가 없음') + '</div>') : '<span class="bb-sub">-</span>';
         h += '<tr data-rid="' + bbEsc(r.id) + '" class="bb2-row ' + (ev.visit.go ? 'go' : 'pass') + '" onclick="openBidDrawer(\'' + idJs + '\')">'
-            + '<td>' + (ev.visit.go ? '<span class="bb2-go">🚶 임장</span>' : '<span class="bb2-pass">패스</span>') + (ev.visit.why ? '<div class="bb-sub">' + bbEsc(ev.visit.why) + '</div>' : '') + '</td>'
+            + '<td>' + (ev.visit.go ? '<span class="bb2-go">🚶 임장</span>' : '<span class="bb2-pass">패스</span>') + (ev.visit.why ? '<div class="bb-sub"' + (ev.issue ? ' style="color:#b91c1c;"' : '') + '>' + bbEsc(ev.visit.why) + '</div>' : '') + '</td>'
             + '<td>' + (r.dday ? '<span class="bb-dday' + (r.dday.diffDays >= 0 && r.dday.diffDays <= 3 ? ' soon' : '') + '">' + bbEsc(r.dday.label) + '</span>' : '-') + '<div class="bb-sub">' + bbEsc(r.a.bidDate || '') + '</div></td>'
             + '<td class="bb2-name"><b>' + bbEsc(r.name) + '</b><div class="bb-sub">' + bbEsc(r.region) + (r.pyung ? ' · ' + r.pyung + '평' : '') + (r.floor ? ' · ' + r.floor + '층' : '') + '</div></td>'
             + '<td class="r">' + money(r.minBid) + '</td><td class="r">' + money(r.appraisal) + '</td>'
@@ -17940,7 +17956,8 @@ function bidBoardVisibleRows() {
 }
 /* ════ 임장 후보 화면(2026-10, 사용자: "선택사항이 너무 많다 - 매주 수백 건 중 임장할 물건을 빠르게, 추천가 1개만") ════ */
 function setLiteVisit(v) { var s0 = bidBoardState, wasVilla = s0.visit === 'villa'; if (v !== 'villa') s0.aptVisit = v; s0.visit = v;
-    if (s0.region && (wasVilla !== (v === 'villa')) && !bidBoardRows.some(function(r) { return (r.type === 'villa') === (v === 'villa') && r.region === s0.region; })) s0.region = '';  bidBoardState.liteLimit = 120; renderBidBoard(); }
+    if (v !== 'villa' && String(s0.region || '').indexOf('g:') === 0) s0.region = '';
+    if (s0.region && (wasVilla !== (v === 'villa')) && !bidBoardRows.some(function(r) { return (r.type === 'villa') === (v === 'villa') && regionMatch(r, s0.region); })) s0.region = '';  bidBoardState.liteLimit = 120; renderBidBoard(); }
 // 열 머리글을 누르면 그 값으로 오름차순 ↔ 내림차순(2026-10, 사용자: "순위 표기보다 항목별 오름·내림차순 정렬을 직접 고르게"). 값이 없는 물건은 방향과 상관없이 맨 아래
 var LITE_COLS = {
     verdict: { label: '판정', first: 1, val: function(r) { return r.visit.go ? 0 : 1; } },
@@ -18043,19 +18060,30 @@ function liteRankHtml(r) {
 function renderBidBoardLite() {
     var s = bidBoardState;
     var el = document.getElementById('bid-board'); if (el) el.classList.add('lite');
-    var all = bidBoardRows.filter(function(r) { return r.type === 'apt' && !r.skippedPast && (!s.region || r.region === s.region); });
+    var all = bidBoardRows.filter(function(r) { return r.type === 'apt' && !r.skippedPast && regionMatch(r, s.region); });
     all.forEach(function(r) { try { r.niche = regionNicheFor(r); } catch (e) {} });
     var isPast = function(r) { return r.dday && r.dday.diffDays < 0; };
     var cur = all.filter(function(r) { return s.pastLite || !isPast(r); });
     var isVillaTab = s.visit === 'villa';
-    var pastN = isVillaTab ? bidBoardRows.filter(function(r) { return r.type === 'villa' && r.metro && isPast(r) && (!s.region || r.region === s.region); }).length : all.filter(isPast).length;
+    var pastN = isVillaTab ? bidBoardRows.filter(function(r) { return r.type === 'villa' && r.metro && isPast(r) && regionMatch(r, s.region); }).length : all.filter(isPast).length;
     var pend = cur.filter(function(r) { return r.pending; }).length;
     var goN = cur.filter(function(r) { return !r.pending && r.visit && r.visit.go; }).length, passN = cur.filter(function(r) { return !r.pending && r.visit && !r.visit.go; }).length;
     // 지역 선택지
     var regions = {};
     bidBoardRows.forEach(function(r) { if (isVillaTab ? (r.type === 'villa' && r.metro) : r.type === 'apt') regions[r.region] = (regions[r.region] || 0) + 1; });
     var sel = document.getElementById('bb-region');
-    if (sel) sel.innerHTML = '<option value="">지역 전체</option>' + Object.keys(regions).sort().map(function(k) { return '<option value="' + bbEsc(k) + '"' + (s.region === k ? ' selected' : '') + '>' + bbEsc(k) + ' (' + regions[k] + ')</option>'; }).join('');
+    if (sel) {
+        if (isVillaTab) { // 서울·인천은 시 전체 + 구별, 경기는 시별
+            var grp = {}; Object.keys(regions).forEach(function(k) { var c = k.split(' ')[0]; (grp[c] = grp[c] || []).push(k); });
+            var opts = '<option value="">지역 전체</option>';
+            ['서울', '인천', '경기'].forEach(function(c) {
+                var ks = (grp[c] || []).sort(); if (!ks.length) return; var tot = ks.reduce(function(n, k) { return n + regions[k]; }, 0);
+                if (c === '경기') opts += '<optgroup label="경기 시별">' + ks.map(function(k) { return '<option value="' + bbEsc(k) + '"' + (s.region === k ? ' selected' : '') + '>' + bbEsc(k) + ' (' + regions[k] + ')</option>'; }).join('') + '</optgroup>';
+                else opts += '<optgroup label="' + c + '"><option value="g:' + c + '"' + (s.region === 'g:' + c ? ' selected' : '') + '>' + c + ' 전체 (' + tot + ')</option>' + ks.map(function(k) { return '<option value="' + bbEsc(k) + '"' + (s.region === k ? ' selected' : '') + '>　' + bbEsc(k.slice(c.length + 1)) + ' (' + regions[k] + ')</option>'; }).join('') + '</optgroup>';
+            });
+            sel.innerHTML = opts;
+        } else sel.innerHTML = '<option value="">지역 전체</option>' + Object.keys(regions).sort().map(function(k) { return '<option value="' + bbEsc(k) + '"' + (s.region === k ? ' selected' : '') + '>' + bbEsc(k) + ' (' + regions[k] + ')</option>'; }).join('');
+    }
     var bar = document.getElementById('bb2-tabs');
     if (!bar) { bar = document.createElement('span'); bar.id = 'bb2-tabs'; var tools = document.querySelector('#bid-board .bb-tools'); tools.insertBefore(bar, tools.firstChild); }
     var villaMetroN = villaMetroRows().length, aptTotal = goN + passN;
