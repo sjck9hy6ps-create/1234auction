@@ -1,0 +1,34 @@
+name: 전체 백업 (Supabase → 산출물)
+
+# 2026-10-10: 사용자 요청 - 예비 차원의 전체 백업을 사용자 PC로. 실행 후 `gh run download <run-id>`로 PC에 내려받고, 내려받은 뒤 산출물은 삭제(저장 용량 한도).
+on:
+  workflow_dispatch: {}
+
+jobs:
+  backup:
+    runs-on: ubuntu-latest
+    timeout-minutes: 340
+    strategy:
+      fail-fast: false
+      matrix:
+        group: [house_trades, villa_trades, others]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install requests
+      - env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          TABLES: ${{ matrix.group }}
+          OUT: backup
+          PYTHONUNBUFFERED: '1'
+        run: python scripts/backup-full.py
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: backup-${{ matrix.group }}
+          path: backup
+          retention-days: 7
+          compression-level: 0

@@ -1,0 +1,36 @@
+- [Deliver full files](deliver-full-files.md) — always give complete modified files, never find/replace patches
+- [Auction app workflow](auction-app-workflow.md) — local clone + gh CLI; Claude commits/pushes/runs Actions itself
+- [Bidding targets](bidding-targets.md) — 전국 아파트 + 수도권 빌라; per-segment lens (대장·인기순·돈되는 지역)
+- [App purpose: sale price](app-purpose-sale-price.md) — bid = 예상매도가 − 비용 − 마진; focus on resale price & future trend, not bid-rate stats
+- [Sale-price backtest baseline](sale-price-backtest-baseline.md) — step-1 as-of accuracy on real auction resales + method
+- [Region code issues](region-code-issues.md) — all LAWD code/label fixes done 2026-10-02; how they were found and verified
+- [Plain-language UI](plain-language-ui.md) — app text must avoid stats jargon; wording patterns used
+- [Data health auto-fix](data-health-autofix.md) — weekly check recollects gaps, writes data-health.json → app banner
+- [Map loading speed](map-loading-speed.md) — causes/fixes/measurements for badge load time (Redis gzip, IDB cache, warmup)
+- [AVM accuracy diagnosis](avm-accuracy-diagnosis.md) — AVM 17.8% apt error from time-trend design; fixes proposed 2026-10-03
+- [Redis limit incident](redis-limit-incident.md) — 2026-10-03 Upstash plan limit blocked auctions; never bulk-cache in that DB
+- [Building info cache](building-info-cache.md) — 건축물대장 quota errors were cached as empty (fixed 2026-10-03); backlog ~89k
+- [Market cycle analysis](market-cycle-analysis.md) — cycle phase/forecast validation/follower-history signal + 📈 사이클 UI
+- [Reply in Korean](reply-in-korean.md) — every user-facing reply must be Korean (user insisted twice)
+- [UI redesign (아실 style)](ui-redesign-asil.md) — topbar/chipbar/sidebar/right-tools + simple badges; how it's wired
+- [Court reduction rules](court-reduction-rules.md) — 유찰 저감률 법원별 실측(서울20/인천·경기30/광주전남 30→20); user believed 수도권20·지방30
+- [Goal: realized profit & niche](goal-realized-profit-niche.md) — judge by profit after resale, not win odds; seek overlooked niche segments, not obvious #1 picks
+- [My assets & tax profile](my-assets-tax-profile.md) — 매매사업자; 오피스텔 재고 + 중랑 분양권 예정 → 3번째 주택; 💼 내 자산 tab drives tax calcs
+- [User app usage flow](user-app-usage-flow.md) — CSV 등록 → 입찰후보 판정 → 상세 확인 → 최소순익 1천 입찰; 내 자산·낙찰사례 업로드
+- [First deal = risk first](first-deal-risk-priority.md) — one win/resale builds starting capital; focus on accuracy+reliability of amounts, not extra conservatism
+- [Bulk auction & geocode fix](bulk-auction-geocode-fix.md) — 대전 원인: 같은 건물 대량경매(🏢 rule) + 343 wrong-city coords; buildYear from 건축물대장
+- [Listing cap & low floor](listing-cap-low-floor.md) — 네이버 매물 붙여넣기·상한 규칙, 승강기별 저층 보정, 수리비 최소
+- [Free-tier migration plan](free-tier-migration-plan.md) — Supabase Pro $25 → move trades to static files (Cloudflare Pages) after collection finishes
+- [Supply pipeline test](supply-pipeline-test.md) — 입주 예정 물량 검증 2026-10-05: 효과 일관성 없음, 미적용
+- [No fake data in live app](no-fake-data-live.md) — never inject test records into live lists; background saves persist them
+- [UI cleanup 2026-10-05](ui-cleanup-2026-10-05.md) — menus/modal items hidden or removed; how to restore
+- [Villa market logic](villa-market-logic.md) — 빌라는 신고가 동네·평단가(등급)·평형대 수요로 판단; 관련 도구 유지
+- [Winbid model](winbid-model.md) — 🎲 예상 낙찰가: 검증 5~6% 오차, 주간 갱신, 앱 보정 +1.8%, 대부분 추천가 낙찰 35% 미만
+- [Resale detection limits](resale-detection-limits.md) — 되팔기 매칭 신뢰도 검증(동·층·6개월·플라시보), 6개월 흔적 지표로 쓰기로 결정, 미적용
+- [One price + 임장 screening](one-price-visit-screening.md) — 추천가 1개(기대수익 최대)·임장/패스 단순 화면, 마진율 비교 정정
+- [Local-first basis](local-first-basis.md) — 값은 단지·법정동 기준, 표본 부족 때만 전국; 2026-10-09 적용 내역
+- [Space rental × villa plan](space-rental-villa-plan.md) — 도시민박업 밀집 동 집계(signal|__homestay__), 빌라 수도권·전국수집 계획
+- [Weekly report tracking](weekly-report-tracking.md) — 추천가↔낙찰 누적 비교·사건번호 충돌 정정·성적표·지난 리포트 (2026-10-09)
+- [Villa estimation rules](villa-estimation-rules.md) — 빌라 예상매도가·최소마진 2,000만+연식/승강기 여유, 요인 실측(2026-10-10)
+- [Board precompute](board-precompute.md) — 입찰후보 사전 계산(가상 브라우저)·화면 반응 개선, 운영 방법
+- [Villa estimation experiments](villa-estimation-experiments.md) — 반경·전세가 방식 백테스트(기존보다 나쁨), 대장 기준 비교 결과
