@@ -4506,9 +4506,11 @@ function calcAuctionDday(bidDateStr) {
 // D-day 배지 표기와 필터 결과가 항상 일치하도록 함. 입찰일이 없거나 미래(D-N)인 경우는
 // "그외 경매건"으로 묶임.
 // 2026-10-10(사용자 요청): 경매건 필터를 '입찰후보 단계'(임장 후보 / 패스 / 계산 전)로 바꿈 - 입찰후보 목록·배지와 같은 판정을 씀. 낙찰 확정 건은 어느 단계에도 안 넣음
+var bidRowById = {}, bidRowByIdRef = null;
 function classifyAuctionDateBucket(a) {
     if (a && parseFloat(a.actualBid)) return 'done';
-    var r = null; try { r = getBidVerdictForMarker(a); } catch (e) { r = null; }
+    if (bidRowByIdRef !== bidBoardRows) { bidRowByIdRef = bidBoardRows; bidRowById = {}; bidBoardRows.forEach(function(x) { bidRowById[x.id] = x; }); } // 입찰후보 목록에서 바로 찾음(경매물건마다 다시 계산하면 수 초 걸림)
+    var r = bidRowById[a.id] || null;
     if (!r || r.pending) return 'wait';
     var why = '';
     if (r.type === 'villa') { var ev = null; try { ev = villaEval(r); } catch (e) {} if (!ev) return 'wait'; if (ev.visit.go) return 'go'; why = String(ev.visit.why || ''); }
