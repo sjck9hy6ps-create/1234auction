@@ -3868,7 +3868,15 @@ function villaNameFor(row) {
     if (!nm) { var st = hsBld[row.id], t = st && st.info && st.info.title, bn = t && String(t.bldNm || '').trim(); if (bn && !isPlaceholderBldName(bn) && !/^\d+동?$/.test(bn)) nm = bn; }
     return nm ? nm + ' · ' + base : base; // 예: '미영팰리스 · 호계동 923-4'
 }
-function villaMetroRows(ignoreRegion) { var s = bidBoardState; return bidBoardRows.filter(function(r) { return r.type === 'villa' && r.metro && (s.pastLite || !(r.dday && r.dday.diffDays < 0)) && (ignoreRegion || regionMatch(r, s.region)); }); }
+var villaRowsMemo = null;
+function villaMetroRows(ignoreRegion) {
+    var s = bidBoardState, ig = !!ignoreRegion, m = villaRowsMemo;
+    // 한 번 그릴 때 여러 번 불리므로(2026-10-10 탭 딜레이) 같은 조건이면 직전 결과를 재사용 - 목록 배열이 바뀌면(계산 갱신) 자동으로 다시 만듦
+    if (m && m.ref === bidBoardRows && m.len === bidBoardRows.length && m.past === !!s.pastLite && m.reg === (s.region || '') && m.ig === ig && Date.now() - m.at < 1500) return m.out;
+    var out = bidBoardRows.filter(function(r) { return r.type === 'villa' && r.metro && (s.pastLite || !(r.dday && r.dday.diffDays < 0)) && (ig || regionMatch(r, s.region)); });
+    villaRowsMemo = { ref: bidBoardRows, len: bidBoardRows.length, past: !!s.pastLite, reg: s.region || '', ig: ig, at: Date.now(), out: out };
+    return out;
+}
 /* 🏘️ 빌라 임장 후보 판정 (2026-10-10) - 아파트와 같은 방식: 필요 마진(최소 2,000만+연식·근거·승강기 여유)이 남는 입찰가가 있고, 그 추천가의 낙찰 가능성이 20% 이상이며, 시세 근거가 같은 건물·같은 동 5건 이상이고, 지하가 아니면 임장 후보 */
 /* ════ 🏘️ 빌라 매물(호가) 붙여넣기 (2026-10-10, 사용자: "아파트처럼 호가로 매도인·부동산업자의 생각이 어느 정도 반영될 것") ════
    네이버 부동산 빌라 매물 목록을 통째로 붙이면 매매 매물만 골라(전세·월세 제외) 면적 ±8㎡ 안의 같은 집 중복을 묶고,
@@ -4190,7 +4198,7 @@ function renderVillaLite(body) {
     if (villaRestoreState < 2) { if (!villaRestoreState) villaRestoreCalc(); body.innerHTML = '<div class="bb-empty">저장된 계산을 불러오는 중…</div>'; return; }
     var all = villaMetroRows(), s = bidBoardState, vv = s.villaVisit || 'go';
     if (!homestayAgg) loadHomestayAgg(function() { if (bidBoardState.visit === 'villa') renderBidBoard(); }); // 이미 받았으면 콜백이 바로 불려 무한 반복되므로 처음 한 번만
-    all.slice().sort(function(x, y) { return (x.dday ? x.dday.diffDays : 9999) - (y.dday ? y.dday.diffDays : 9999); }).forEach(ensureHomestayCheck); // 입찰이 가까운 물건부터 조회
+    if (all.some(function(r) { return !hsBld[r.id]; })) all.slice().sort(function(x, y) { return (x.dday ? x.dday.diffDays : 9999) - (y.dday ? y.dday.diffDays : 9999); }).forEach(ensureHomestayCheck); // 입찰이 가까운 물건부터 조회(이미 다 조회했으면 건너뜀)
     var evs = {}; all.forEach(function(r) { evs[r.id] = villaEval(r); });
     if (!villaLoadBusy && all.some(function(r) { var c = villaVeCache[r.id]; return !(c && c.sig === villaVeSig(r.a)) || (bidBoardLawdOf(r.a) && !villaLiqCache[r.id] && !villaPts[bidBoardLawdOf(r.a)] && !villaPtsTried[bidBoardLawdOf(r.a)]); })) setTimeout(villaLoadRegions, 50);
     var goN = all.filter(function(r) { return evs[r.id].visit.go; }).length, passN = all.length - goN;
@@ -4258,7 +4266,7 @@ function buildingDetailHtml(row, st) {
     var a = row.a;
         var info = st.info, t = info && info.title, chk = st.chk, f = function(v, u) { return v == null || v === '' ? '-' : v + (u || ''); };
         var h = '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">' + hsPill(chk.verdict, st.quota) + '<span class="bb-sub">' + bbEsc(a.addr || '') + (a.floor ? ' · ' + a.floor + '층' : '') + (a.pyung ? ' · ' + a.pyung + '평' : '') + '</span></div>';
-        var ve = null; try { ve = villaSaleEst(a); } catch (e) {}
+        var ve = null, vc0 = villaVeCache[row.id]; if (vc0 && vc0.ve) ve = vc0.ve; else { try { ve = villaSaleEst(a); } catch (e) {} } // 저장된 계산 우선(지역 자료가 내려가 있어도 바로)
         if (ve) h += '<div style="margin-top:8px;background:#fff;border:1px solid #e5e7eb;border-radius:8px;padding:6px 10px;"><b>예상매도가(참고)</b> ' + toEok(String(ve.est)) + ' <span class="bb-sub" style="display:inline;">실제 10~90% 범위 ' + toEok(String(ve.lo)) + ' ~ ' + toEok(String(ve.hi)) + '</span><div class="bb-sub">근거: ' + ve.lvl + '(' + (ve.n1 || ve.n2) + '건) · 같은 방식 백테스트 보통 오차 약 ' + ve.errPct + '% (아파트는 4~5%) - 빌라는 호별 차이가 커서 현장 확인 값으로 다시 판단하세요</div></div>';
         if (ve) { var vp = villaMarginPlan(row, ve, t); if (vp) h += '<div style="margin-top:6px;background:#f5f3ff;border:1px solid #ddd6fe;border-radius:8px;padding:6px 10px;"><b>필요 마진 ' + toEok(String(vp.margin)) + '</b>' + (vp.floorMin ? ' (빌라 최소 2,000만)' : ' (예상매도가의 ' + vp.buf + '%)') + (vp.bid ? ' → <b style="color:' + (vp.feasible ? '#15803d' : '#b91c1c') + ';">' + (vp.feasible ? '입찰 상한 ' + toEok(String(vp.bid)) : '최저가로도 마진 부족') + '</b>' : '') + '<div class="bb-sub">' + (vp.age != null ? '연식 ' + vp.age + '년(구축일수록 여유를 더 둠)' : '연식을 몰라 20~30년으로 가정') + (vp.elv != null ? ' · 승강기 ' + (vp.elv > 0 ? '있음(오차 작음)' : '없음(오차 큼)') : '') + ' · 근거 ' + ve.lvl + '. 빌라는 예상 오차가 아파트의 약 3배라 마진 기준을 높였어요.</div></div>'; }
 
@@ -19073,12 +19081,15 @@ async function renderBidDrawer() {
    아파트와 같은 오른쪽 상세 창을 쓰되, 빌라 계산(예상매도가·필요 마진·예상 낙찰가·추천가)과 건물 상세(대장·도시민박·매물 붙여넣기)로 채움 */
 async function renderVillaDrawer(d, row) {
     var a = row.a, lawd = row.lawd || bidBoardLawdOf(a);
+    // 2026-10-10(사용자: 빌라 상세·지도 로딩 딜레이): 지역 실거래(수 MB)를 다 받을 때까지 상세를 비워 두지 않음 - 저장된 계산(예상매도가·마진·생활권)으로 바로 그리고,
+    // 같은 건물 실거래 표는 지역 자료가 도착하는 대로 다시 그림
     if (lawd && !dataCache[lawd] && !row._drawerLoading) {
         row._drawerLoading = true;
-        d.innerHTML = '<div class="dr-sub">이 지역 실거래 불러오는 중…</div>';
-        try { var dd = await fetchHouseDataCached(lawd); if (dd && !dd.error && Array.isArray(dd.apt)) await ingestRegionHouseData(dd, '', lawd); } catch (e) {}
-        row._drawerLoading = false;
-        if (bidDrawerId !== row.id) return;
+        (async function() {
+            try { var dd = await fetchHouseDataCached(lawd); if (dd && !dd.error && Array.isArray(dd.apt)) await ingestRegionHouseData(dd, '', lawd); } catch (e) {}
+            row._drawerLoading = false;
+            if (bidDrawerId === row.id && bidBoardState.visit === 'villa') renderBidDrawer();
+        })();
     }
     if (hsBld[row.id] && hsBld[row.id].partial) delete hsBld[row.id]; // 저장본은 요약뿐이라 상세를 열면 전체를 다시 받음
     ensureHomestayCheck(row);
@@ -19117,7 +19128,7 @@ async function renderVillaDrawer(d, row) {
     if (tr.length) {
         h += '<div class="dr-sec"><h4>같은 건물 비슷한 면적 실거래</h4><table><tr><th>거래일</th><th>층</th><th class="r">가격</th></tr>'
             + tr.slice(0, 10).map(function(t) { return '<tr><td>' + t.d.toISOString().slice(0, 10) + (t.direct ? ' <span style="color:#9ca3af;">직거래</span>' : '') + '</td><td>' + (isNaN(t.f) ? '-' : t.f + '층') + '</td><td class="r">' + toEok(String(t.p)) + '</td></tr>'; }).join('') + '</table></div>';
-    } else h += '<div class="dr-sec dr-sub">같은 건물 비슷한 면적 실거래는 없어요(같은 동·시군구 거래로 계산)</div>';
+    } else h += '<div class="dr-sec dr-sub">' + (lawd && !dataCache[lawd] ? '같은 건물 실거래를 불러오는 중…' : '같은 건물 비슷한 면적 실거래는 없어요(같은 동·시군구 거래로 계산)') + '</div>';
     // 시군구 사이클(아파트 기준) - 빌라는 단지 사이클이 없어 지역 흐름만 참고
     h += '<div class="dr-sec"><h4>📈 지역 사이클 <span class="dr-sub" style="display:inline;">(아파트 기준·참고)</span></h4><div id="vd-cycle" class="dr-sub">불러오는 중…</div></div>';
     // 건물 상세(대장·도시민박·매물 붙여넣기)
