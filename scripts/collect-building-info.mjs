@@ -8,7 +8,7 @@
 // 앱의 fetchHouseholdsFor와 같은 규칙: 세대수는 총괄표제부 → 같은 지번 모든 동 합계 → 동이 하나뿐일 때만 그 동 값.
 const SITE = process.env.SITE_URL || 'https://1234auction.vercel.app';
 const KAKAO = process.env.KAKAO_REST_API_KEY || '';
-const MAX = parseInt(process.env.MAX_ITEMS || '300', 10);
+const MAX = parseInt(process.env.MAX_ITEMS || '1500', 10);
 const RETRY_DAYS = 30;
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -47,7 +47,9 @@ async function bCodeOf(a) {
 
 async function main() {
   const list = await fetch(`${SITE}/api/auction`).then((r) => r.json());
-  const todo = list.filter(needs).slice(0, MAX);
+  // 입찰이 가까운 물건부터, 이미 지난 입찰은 맨 뒤(2026-10-10: 하루 한도 10,000건을 실제로 볼 물건에 먼저 쓰게)
+  const dd = (a) => { const d = String(a.bidDate || '').slice(0, 10); return /^\d{4}-\d\d-\d\d$/.test(d) ? (d >= today ? d : '9' + d) : '9999'; };
+  const todo = list.filter(needs).sort((x, y) => dd(x).localeCompare(dd(y))).slice(0, MAX);
   console.log(`입찰물건 ${list.length}건 중 건축물대장 수집 대상 ${list.filter(needs).length}건 (이번 실행 최대 ${MAX}건)`);
   const updates = {};
   let quota = false, ok = 0, miss = 0;

@@ -8,15 +8,15 @@ on:
       max_items:
         description: '이번 실행에서 조회할 최대 물건 수'
         required: false
-        default: '300'
+        default: '1500'
   schedule:
-    # 매일 UTC 16:30(KST 01:30) - 건축HUB 하루 한도가 자정에 풀린 직후, 앱 사용 전에 실행
-    - cron: '30 16 * * *'
+    # 매일 UTC 15:10(KST 00:10) - 건축HUB 하루 한도가 자정에 풀린 직후, 전국 웜업(03:00)보다 먼저 입찰물건에 한도를 씀
+    - cron: '10 15 * * *'
 
 jobs:
   collect:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -26,5 +26,5 @@ jobs:
         env:
           KAKAO_REST_API_KEY: ${{ secrets.KAKAO_REST_API_KEY }}
           SITE_URL: https://1234auction.vercel.app
-          MAX_ITEMS: ${{ github.event.inputs.max_items || '300' }}
+          MAX_ITEMS: ${{ github.event.inputs.max_items || '1500' }}
         run: node scripts/collect-building-info.mjs
