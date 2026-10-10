@@ -18525,11 +18525,13 @@ async function mergeServerBoardCache(local) {
 }
 setTimeout(function() { try { srvBoardParts(); window.villaSrvP = villaFetchServerCalc(); } catch (e) {} }, 2500); // 앱을 켜고 2.5초 뒤 배경에서 미리 받기
 // 저장 계산을 다시 써도 되는지 - 물건 입력값(시세 계산에 쓰는 것)과 입찰일 지남 여부. 계산 방식이 바뀌면 BOARD_CALC_VER을 올림
-var BOARD_CALC_VER = 31; // 29: nYear 저장 추가 - // 27: 🎲 예상 낙찰가용 시세(wbBase) 추가 (범위 표시는 화면에서 바로 계산 - 버전 변경 없음)
+var BOARD_CALC_VER = 32; // 29: nYear 저장 추가 - // 27: 🎲 예상 낙찰가용 시세(wbBase) 추가 (범위 표시는 화면에서 바로 계산 - 버전 변경 없음)
 function boardBaseSig(a) {
     var d = a.bidDate ? calcAuctionDday(a.bidDate) : null;
+    // 2026-10-11: 건축물대장에서 자동으로 채운 연식·승강기는 재사용 판단에서 뺌 - 새로 알게 돼도 다음 월요일 미리 계산에 반영(직접 입력한 연식은 그대로 비교)
+    var auto = a.buildYearSource === '건축물대장';
     return [BOARD_CALC_VER, auctionWonEstSignature(a), a.minBid, a.appraisal, a.bidDate, a.court, a.failCount, a.landType, String(a.memo || '').length,
-        Array.isArray(a.bidHistory) ? a.bidHistory.length : 0, a.courtResult || '', a.target || '', a.compTargetMargin || '', a.repair || '', a.buildYear || '', a.elevatorCnt == null ? '' : a.elevatorCnt, a.listingParse ? a.listingParse.at + '/' + a.listingParse.n : '', (a.fieldCheck || {}).cond || '',
+        Array.isArray(a.bidHistory) ? a.bidHistory.length : 0, a.courtResult || '', a.target || '', a.compTargetMargin || '', a.repair || '', auto ? '' : (a.buildYear || ''), auto || a.elevatorCnt == null ? '' : a.elevatorCnt, a.listingParse ? a.listingParse.at + '/' + a.listingParse.n : '', (a.fieldCheck || {}).cond || '',
         d && d.diffDays < 0 ? 'P' : 'F'].join('|');
 }
 function boardRowForCache(r) {
