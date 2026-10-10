@@ -342,12 +342,15 @@ export default async function handler(req, res) {
   try {
     // ── 1. DB 배치 수집분(apt/villa/전세)은 캐시가 있으면 그대로 재사용 ──
     let dbPayload = null, partialPayload = false;
+    const _t0 = Date.now(), _tm = {};  // 단계별 소요시간(Server-Timing 헤더로 내려보내 느린 구간을 바로 확인 - 2026-10-10 로딩 지연 조사)
     // 실시간(이번달 신규 신고건) 조회는 캐시/DB 조회와 무관하므로 미리 출발시켜 둠(직렬 대기 ~1초 제거)
     const now    = new Date();
     const thisYm = String(now.getFullYear()) + String(now.getMonth() + 1).padStart(2, '0');
     const realtimePromise = skipRealtime ? Promise.resolve([]) : fetchRealtimeApt(lawdCd, thisYm);
     if (!skipRealtime) {
+      const _c0 = Date.now();
       dbPayload = await getCachedHouseData(lawdCd);
+      _tm.redis = Date.now() - _c0; _tm.hit = dbPayload ? 1 : 0;
       if (dbPayload) console.log('get-house DB캐시 히트:', lawdCd);
     }
 
@@ -434,16 +437,25 @@ export default async function handler(req, res) {
     }
 
     // ── 실시간(이번달 신규 신고건)은 캐시 여부와 무관하게 방문할 때마다 항상 새로 불러와서 합침 ──
+    const _r0 = Date.now();
     const realtimeItems = await realtimePromise;
+    _tm.rtwait = Date.now() - _r0;
+    const _d0 = Date.now();
     const realtimeNormalized = realtimeItems.map(item => normalizeXMLItem(item, regionName));
     const finalApt = dedup([...realtimeNormalized, ...dbPayload.apt]);
+    _tm.dedup = Date.now() - _d0;
     console.log(`실시간 반영: +${realtimeNormalized.length}건 (최종 ${finalApt.length}건)`);
 
     // 무료 Vercel 사용량 절약: 같은 지역(lawdCd)을 5분 안에 다시 조회하면(지도 패닝/재방문
     // 등) 함수를 다시 실행하지 않고 Vercel 엣지 캐시에서 바로 응답. 실시간 신고건은 어차피
     // 하루에도 자주 바뀌지 않으므로 5분 지연은 체감상 무의미하고, 함수 호출 수를 크게 줄여줌.
     res.setHeader('Cache-Control', partialPayload ? 'no-store' : 'public, s-maxage=300, stale-while-revalidate=1800');
-    return res.status(200).json({ apt: finalApt, rent: dbPayload.rent, partial: partialPayload || undefined });
+    const _s0 = Date.now();
+    const _body = JSON.stringify({ apt: finalApt, rent: dbPayload.rent, partial: partialPayload || undefined });
+    _tm.stringify = Date.now() - _s0;
+    res.setHeader('Server-Timing', Object.keys(_tm).map(k => `${k};dur=${_tm[k]}`).join(', ') + `, total;dur=${Date.now() - _t0}`);
+    res.setHeader('Content-Type', 'application/json; charset=utf-8');
+    return res.status(200).send(_body);
   } catch (err) {
     console.error('핸들러 에러:', err.message);
     console.error('스택:', err.stack);
