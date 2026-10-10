@@ -17561,6 +17561,7 @@ function applyPickToRow(row) {
 }
 function finalizeBidBoardRow(row) {
     var a = row.a, type = row.type, minBid = row.minBid, pyung = row.pyung;
+    if (/주\s*건축물/.test(row.name || '')) row.name = cleanBldgName(row.name) || buildingNameFromAddr(a.addr, a.dong) || ((a.dong || '') + ' ' + (a.bunji || '')).trim() || row.name; // 저장된 계산에 남은 옛 이름 정리
     row.reasons = []; row.warns = []; row.nextFail = null; row.overshoot = false; row.bulk = false; row.sweet = false; row.volDown = false; row.sturdy = false; row.hardHold = false; row.recBidRaw = null; row.recCapped = null; row.safetyExtra = null; row.safetyPct = null;
     row.assetVer = myAssetsVer;
     // 매물 기반 상한 - 실거래 기반 값(saleTrade)은 그대로 두고, 매물이 더 싸면 그만큼만 낮춤
