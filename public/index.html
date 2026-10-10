@@ -3952,7 +3952,7 @@ async function villaRestoreCalc() {
         if (fresh) villaApplyCalc(d);
         // 브라우저 저장본이 없거나 하루 지났으면 서버가 미리 계산해 둔 것을 받음(없는 물건만 채움)
         if (!fresh || villaMetroRows(true).some(function(r) { return !villaVeCache[r.id]; })) {
-            var sd = await villaFetchServerCalc();
+            var sd = await (window.villaSrvP || villaFetchServerCalc()); window.villaSrvP = null;
             if (sd) { villaApplyCalc(sd); villaSaveCalcSoon(); }
         }
     } catch (e) {}
@@ -18021,18 +18021,30 @@ function overshootSaleFactor(type, ratio) {
     return t[t.length - 1][1];
 }
 var BOARD_CACHE_KEY = 'bidBoardCache:v1', BOARD_CACHE_MAX_AGE = 24 * 3600 * 1000, BOARD_SRV_MAX_AGE = 48 * 3600 * 1000;
+/* 서버가 미리 계산해 둔 입찰후보 받기(2026-10-10 속도: 입찰후보 창을 열기 전, 앱을 켠 직후 배경에서 미리 받아 둠 - 열 때는 이미 도착해 있음) */
+function srvBoardParts() {
+    if (window.__srvBoardP) return window.__srvBoardP;
+    window.__srvBoardP = (async function() {
+        var withTimeout = function(p, ms) { return Promise.race([p, new Promise(function(_, rej) { setTimeout(function() { rej(new Error('시간 초과')); }, ms); })]); };
+        try {
+            var meta = await withTimeout(fetch('/api/data-coverage?mode=boardCacheMeta').then(function(r) { return r.json(); }), 6000);
+            if (!meta || !meta.n || !meta.at || Date.now() - meta.at > BOARD_SRV_MAX_AGE) return null;
+            return await withTimeout(Promise.all(Array.from({ length: meta.n }, function(_, i) { return fetch('/api/data-coverage?mode=boardCacheChunk&i=' + i).then(function(r) { return r.json(); }); })), 40000);
+        } catch (e) { console.warn('미리 계산 결과 못 받음(직접 계산):', e && e.message); return null; }
+    })();
+    return window.__srvBoardP;
+}
 async function mergeServerBoardCache(local) {
     try {
-        var withTimeout = function(p, ms) { return Promise.race([p, new Promise(function(_, rej) { setTimeout(function() { rej(new Error('시간 초과')); }, ms); })]); };
-        var meta = await withTimeout(fetch('/api/data-coverage?mode=boardCacheMeta').then(function(r) { return r.json(); }), 4000);
-        if (!meta || !meta.n || !meta.at || Date.now() - meta.at > BOARD_SRV_MAX_AGE) return local;
-        var parts = await withTimeout(Promise.all(Array.from({ length: meta.n }, function(_, i) { return fetch('/api/data-coverage?mode=boardCacheChunk&i=' + i).then(function(r) { return r.json(); }); })), 20000);
+        var parts = await srvBoardParts(); window.__srvBoardP = null;
+        if (!parts) return local;
         var merged = 0;
         parts.forEach(function(p) { Object.keys((p && p.items) || {}).forEach(function(id) { var sv = p.items[id], lc = local[id]; if (!lc || !lc.row || (sv.at || 0) > (lc.at || 0)) { local[id] = sv; merged++; } }); });
         console.log('미리 계산된 입찰후보 ' + merged + '건 받음');
     } catch (e) { console.warn('미리 계산 결과 못 받음(직접 계산):', e && e.message); }
     return local;
 }
+setTimeout(function() { try { srvBoardParts(); window.villaSrvP = villaFetchServerCalc(); } catch (e) {} }, 2500); // 앱을 켜고 2.5초 뒤 배경에서 미리 받기
 // 저장 계산을 다시 써도 되는지 - 물건 입력값(시세 계산에 쓰는 것)과 입찰일 지남 여부. 계산 방식이 바뀌면 BOARD_CALC_VER을 올림
 var BOARD_CALC_VER = 31; // 29: nYear 저장 추가 - // 27: 🎲 예상 낙찰가용 시세(wbBase) 추가 (범위 표시는 화면에서 바로 계산 - 버전 변경 없음)
 function boardBaseSig(a) {
