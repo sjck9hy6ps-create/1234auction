@@ -1422,6 +1422,9 @@ body.ui2 #auction-modal.am4 { width:620px; }
 @media (min-width: 901px) and (max-width: 1240px) { #bid-board.with-drawer #bb-body { min-width:0; } #bb-drawer { width:46%; } }
 .dr-nav { position:sticky; top:-14px; z-index:4; background:#fff; display:flex; gap:16px; border-bottom:1px solid #e5e7eb; padding:9px 2px 0; margin:10px -16px 4px; padding-left:16px; padding-right:16px; overflow-x:auto; white-space:nowrap; }
 .dr-nav a { font-size:13.5px; font-weight:700; color:#8b95a1; padding-bottom:7px; border-bottom:2px solid transparent; cursor:pointer; } .dr-nav a.on { color:#03c75a; border-bottom-color:#03c75a; }
+#bb-drawer .dr-h { position:sticky !important; top:-14px; z-index:6; background:#fff; margin:-14px -16px 0 !important; padding:12px 16px 0 !important; flex-wrap:wrap; align-items:center; cursor:default; }
+#bb-drawer .dr-h h3 { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+#bb-drawer .dr-h .dr-nav { position:static; flex:0 0 100%; margin:8px -16px 0; top:auto; }
 /* 상세 창 맨 위 추천가 카드 */
 #bb-drawer .dr-pickcard { border-radius:12px; padding:10px 12px; margin:8px 0 10px; }
 #bb-drawer .dr-pickcard.go { background:#f0fdf4; border:1px solid #bbf7d0; } #bb-drawer .dr-pickcard.pass { background:#f9fafb; border:1px solid #e5e7eb; }
@@ -4181,7 +4184,7 @@ function villaEval(row) {
     else v.go = true;
     row._vev = ev; return ev;
 }
-function setVillaVisit(v) { bidBoardState.villaVisit = v; bidBoardState.villaLimit = 120; renderBidBoard(); }
+function setVillaVisit(v) { bbResetDrawer(); bidBoardState.villaVisit = v; bidBoardState.villaLimit = 120; renderBidBoard(); }
 function villaMore() { bidBoardState.villaLimit = (bidBoardState.villaLimit || 120) + 300; renderBidBoard(); }
 function renderVillaLite(body) {
     if (villaRestoreState < 2) { if (!villaRestoreState) villaRestoreCalc(); body.innerHTML = '<div class="bb-empty">저장된 계산을 불러오는 중…</div>'; return; }
@@ -18391,7 +18394,13 @@ function bidBoardVisibleRows() {
     });
 }
 /* ════ 임장 후보 화면(2026-10, 사용자: "선택사항이 너무 많다 - 매주 수백 건 중 임장할 물건을 빠르게, 추천가 1개만") ════ */
-function setLiteVisit(v) { var s0 = bidBoardState, wasVilla = s0.visit === 'villa'; if (v !== 'villa') s0.aptVisit = v; s0.visit = v;
+// 탭(아파트/빌라·임장/패스/전체)을 바꾸면 열려 있던 상세 창을 닫음(2026-10-10, 사용자: 빌라 탭으로 넘어가도 아파트 상세가 남아 있음)
+function bbResetDrawer() {
+    bidDrawerId = null;
+    var b = document.getElementById('bid-board'); if (b) b.classList.remove('with-drawer');
+    var d = document.getElementById('bb-drawer'); if (d) { d.style.display = 'none'; d.innerHTML = ''; }
+}
+function setLiteVisit(v) { bbResetDrawer(); var s0 = bidBoardState, wasVilla = s0.visit === 'villa'; if (v !== 'villa') s0.aptVisit = v; s0.visit = v;
     if (v !== 'villa' && String(s0.region || '').indexOf('g:') === 0) s0.region = '';
     if (s0.region && (wasVilla !== (v === 'villa')) && !bidBoardRows.some(function(r) { return (r.type === 'villa') === (v === 'villa') && regionMatch(r, s0.region); })) s0.region = '';  bidBoardState.liteLimit = 120; renderBidBoard(); }
 // 열 머리글을 누르면 그 값으로 오름차순 ↔ 내림차순(2026-10, 사용자: "순위 표기보다 항목별 오름·내림차순 정렬을 직접 고르게"). 값이 없는 물건은 방향과 상관없이 맨 아래
@@ -18851,7 +18860,7 @@ var bbDrawerPos = null;
 (function() {
     var drag = null;
     document.addEventListener('pointerdown', function(e) {
-        if (window.innerWidth > 900) return;
+        if (window.innerWidth > 640) return; // 641px 이상(아이패드)은 상세 창이 목록 옆에 붙어 있어 끌지 않음
         var h = e.target.closest && e.target.closest('#bb-drawer .dr-h');
         if (!h || e.target.closest('button')) return;
         var d = document.getElementById('bb-drawer'), rc = d.getBoundingClientRect();
@@ -19146,7 +19155,7 @@ function drawerNavInit(d) {
             };
             nav.appendChild(a);
         });
-        var tb = d.querySelector('.dr-top-btns'); if (tb && tb.parentNode) tb.parentNode.insertBefore(nav, tb.nextSibling);
+        var hd = d.querySelector('.dr-h'); if (hd) hd.appendChild(nav); else { var tb = d.querySelector('.dr-top-btns'); if (tb && tb.parentNode) tb.parentNode.insertBefore(nav, tb.nextSibling); }
     } catch (e) {}
 }
 async function updateDrawerField(id, field, val) {
