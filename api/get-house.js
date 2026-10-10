@@ -224,6 +224,7 @@ const PROXY_ENDPOINTS = {
   aptRent:  'RTMSDataSvcAptRent',     // 아파트 전월세 (house_rent)
   rhTrade:  'RTMSDataSvcRHTrade',     // 연립다세대 매매 (villa_trades)
   shTrade:  'RTMSDataSvcSHTrade',     // 단독/다가구 매매 (single_trades)
+  rhRent:   'RTMSDataSvcRHRent',      // 연립다세대 전월세 (villa_rent, 2026-10-10 빌라 전세 이력 수집용)
   presale:  'RTMSDataSvcSilvTrade',   // 아파트 분양권·입주권 전매 (2026-10, leader_follower_cache 'presale|<시군구>')
 };
 
@@ -233,7 +234,7 @@ async function handleMolitProxy(req, res) {
   }
   const endpoint = PROXY_ENDPOINTS[req.query.endpoint];
   if (!endpoint) {
-    return res.status(400).json({ error: 'invalid endpoint (use aptTrade/aptRent/rhTrade/shTrade/presale)' });
+    return res.status(400).json({ error: 'invalid endpoint (use aptTrade/aptRent/rhTrade/rhRent/shTrade/presale)' });
   }
   const code = req.query.code;
   const ym   = req.query.ym;

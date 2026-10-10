@@ -1,0 +1,48 @@
+name: 빌라 전월세 수집 (수도권)
+
+# 2026-10-10: 빌라 전세가 이력(건물 단위 전세로 매매가 추정 재시험용). 수동은 years 입력(예: 2025,2024,2023,2022,2021), 정기는 올해만 매주.
+on:
+  workflow_dispatch:
+    inputs:
+      years:
+        description: '수집할 연도들(콤마, 한 해씩 차례로)'
+        required: true
+        default: '2024,2023,2022,2021'
+  schedule:
+    - cron: '0 20 * * 2'   # 매주 수요일 KST 05:00 - 올해(이번 달까지)
+
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    outputs:
+      years: ${{ steps.p.outputs.years }}
+    steps:
+      - id: p
+        run: |
+          Y="${{ github.event.inputs.years }}"
+          [ -z "$Y" ] && Y="$(date +%Y)"
+          echo "years=$(echo "$Y" | tr -d ' ' | jq -R -c 'split(",")')" >> "$GITHUB_OUTPUT"
+  collect:
+    needs: plan
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    strategy:
+      max-parallel: 1
+      fail-fast: false
+      matrix:
+        year: ${{ fromJSON(needs.plan.outputs.years) }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: npm install @supabase/supabase-js ws
+      - name: ${{ matrix.year }}년 수도권 연립다세대 전월세 수집
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          PUBLIC_DATA_API_KEY: ${{ secrets.PUBLIC_DATA_API_KEY }}
+          SITE_URL: https://1234auction.vercel.app
+          COLLECT_PROXY_SECRET: ${{ secrets.COLLECT_PROXY_SECRET }}
+          YEARS: ${{ matrix.year }}
+        run: node scripts/collect-villa-rent.mjs
