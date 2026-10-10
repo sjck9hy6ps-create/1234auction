@@ -753,6 +753,26 @@ def winbid_model(R, now):
     tr, te = D[D["sale"] < cut], D[D["sale"] >= cut]
     p = wb_predict(wb_fit(tr), te)
     res = np.log(te["actual"] / te["est"]).values - p
+    # 🧭 틈새 진단(2026-10-10, 사용자: "틈새라면 입찰가를 낮춰 수익을 키워야"): 틈새 시군구에서 낙찰가가 모델 예상보다 낮게 나오는지(잔차) 확인 - 최근 12개월 검증 표본
+    try:
+        NICHE = {"충남 당진시", "충남 서산시", "전북 군산시", "전북 남원시", "경남 창녕군", "경남 함안군"}
+        tt = te.copy(); tt["res"] = res; tt["lowb"] = tt["bidders"].map(lambda b: np.nan if pd.isna(b) else float(b <= 3))
+        def rs(G):
+            return {"n": int(len(G)), "medResPct": round(float(np.median(G["res"])) * 100, 1), "q25": round(float(np.quantile(G["res"], .25)) * 100, 1), "q75": round(float(np.quantile(G["res"], .75)) * 100, 1)}
+        tn = tt[tt["region"].isin(NICHE)]; to = tt[~tt["region"].isin(NICHE)]
+        diag = {"전체": rs(tt), "틈새 시군구": rs(tn) if len(tn) >= 20 else {"n": int(len(tn))}, "그 외": rs(to)}
+        for lowb, nm in ((1.0, "입찰 3명 이하"), (0.0, "입찰 4명+")):
+            g1 = tt[tt["lowb"] == lowb]
+            if len(g1) >= 30: diag[nm] = rs(g1)
+        byr = {}
+        for rg, G in tt.groupby("region"):
+            if len(G) >= 25: byr[rg] = rs(G)
+        diag["시군구별 잔차(실제÷예상-1, 음수=예상보다 싸게 낙찰)"] = dict(sorted(byr.items(), key=lambda kv: kv[1]["medResPct"])[:12])
+        print("  🧭 틈새 진단:", json.dumps(diag, ensure_ascii=False))
+        if os.environ.get("GITHUB_STEP_SUMMARY"):
+            open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8").write("### 틈새 진단\n```json\n" + json.dumps(diag, ensure_ascii=False, indent=1) + "\n```\n")
+    except Exception as e:
+        print("  틈새 진단 건너뜀:", e)
     full = wb_fit(D)
     # 경쟁 예상(2026-10-10): 같은 요인으로 로그 응찰자 수를 맞추는 모델 - 앱이 하위 25%(낮음)·상위 25%(높음)로 표시
     try:
