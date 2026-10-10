@@ -7243,6 +7243,19 @@ async function saveBidCaseAPI(data) {
     if (r.ok) applyStoredListChange('bidCases', r.headers.get('X-List-Version'), upsertById(data));
     return body;
 }
+// 2026-10-10(낙찰사례 업로드 중 페이지가 멈춤): 한 건 저장할 때마다 보관본(낙찰사례 2.6만 건, 수십 MB)을 통째로 읽고 다시 쓰던 게 수백 번 반복돼 화면이 멈췄음 →
+// 여러 건을 배열로 한 번에 저장하고(서버가 이미 지원), 보관본 갱신도 묶음당 한 번만 함
+async function saveBidCaseBatch(items) {
+    var r = await fetch('/api/auction?kind=bidCases', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(items) });
+    var body = await r.json().catch(function() { return null; });
+    if (!r.ok) throw new Error((body && body.error) || ('저장 실패 (HTTP ' + r.status + ')'));
+    applyStoredListChange('bidCases', r.headers.get('X-List-Version'), function(list) {
+        var pos = {}; list.forEach(function(x, i) { if (x && x.id != null) pos[x.id] = i; });
+        items.forEach(function(it) { if (pos[it.id] != null) list[pos[it.id]] = it; else list.push(it); });
+        return list;
+    });
+    return body;
+}
 async function deleteBidCaseAPI(id) {
     var r = await fetch('/api/auction?kind=bidCases&id=' + id, { method:'DELETE' });
     if (r.ok) applyStoredListChange('bidCases', r.headers.get('X-List-Version'), removeById(id));
@@ -7750,12 +7763,14 @@ async function saveSelectedCases() {
         };
         queue.push(data);
     }
-    for (var qi = 0; qi < queue.length; qi += 6) {
-        statusBox.innerText = '저장 중... ' + Math.min(qi + 6, queue.length) + '/' + queue.length;
-        await Promise.all(queue.slice(qi, qi + 6).map(function(d) {
-            return saveBidCaseAPI(d).then(function(saved) { bidCaseList.push(saved); savedCount++; })
-                .catch(function(e) { failCount++; console.error('낙찰사례 저장 실패:', e.message); });
-        }));
+    for (var qi = 0; qi < queue.length; qi += 200) {
+        var chunk = queue.slice(qi, qi + 200);
+        statusBox.innerText = '저장 중... ' + Math.min(qi + 200, queue.length) + '/' + queue.length;
+        try {
+            await saveBidCaseBatch(chunk);
+            chunk.forEach(function(d) { bidCaseList.push(d); savedCount++; });
+        } catch (e) { failCount += chunk.length; console.error('낙찰사례 저장 실패:', e.message); }
+        await new Promise(function(r) { setTimeout(r, 30); }); // 화면이 숨 쉴 틈
     }
     pendingCaseListExtraction = [];
     document.getElementById('bc-paste-text').value = '';
