@@ -1,0 +1,25 @@
+name: 백테스트 - 빌라 건축물대장 보정 모델
+on:
+  workflow_dispatch:
+jobs:
+  bt:
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install pandas numpy requests scikit-learn
+      - env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          PYTHONUNBUFFERED: '1'
+        run: python backtest-villa-hedonic.py
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: backtest-villa-hedonic
+          path: backtest-villa-hedonic.json
+          if-no-files-found: ignore
+          retention-days: 14
