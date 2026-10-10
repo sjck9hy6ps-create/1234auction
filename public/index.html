@@ -3839,7 +3839,7 @@ function villaListingHtml(row) {
             + (ve && sm.estRankPct != null ? '<br>예상매도가 ' + f(ve.est) + '보다 싼 매물 ' + sm.estRankPct + '%' : '') + '</div>';
     }
     h += '<textarea id="vl-paste-' + bbEsc(String(row.id)) + '" placeholder="네이버 부동산 매물 목록 붙여넣기" style="width:100%;height:' + (sm ? 40 : 70) + 'px;margin-top:6px;font-size:11.5px;border:1px solid #d1d5db;border-radius:6px;padding:6px;box-sizing:border-box;"></textarea>'
-        + '<button style="margin-top:4px;border:none;background:var(--ui-blue,#1e5eff);color:#fff;border-radius:8px;padding:6px 12px;font-size:12px;font-weight:700;cursor:pointer;" onclick="applyVillaListings(\'' + idJs + '\')">' + (sm ? '다시 분석' : '분석해서 반영') + '</button>';
+        + '<button style="margin-top:4px;border:none;background:var(--ui-blue,#1e5eff);color:#fff;border-radius:8px;padding:6px 12px;font-size:12px;font-weight:700;cursor:pointer;" onclick="applyVillaListings(\'' + idJs + '\')">' + (sm ? '다시 분석' : '분석해서 반영') + '</button> <button style="margin-top:4px;border:1px solid #d1d5db;background:#fff;color:#374151;border-radius:8px;padding:6px 10px;font-size:12px;cursor:pointer;" onclick="recordNoListings(\'' + idJs + '\')">매물 없음으로 기록</button>';
     return h;
 }
 /* 빌라 표 정렬(2026-10-10, 사용자: 빌라에도 오름·내림차순) - 열 이름을 누르면 오름↔내림, 값이 없는 물건은 방향과 상관없이 맨 아래 */
@@ -4056,7 +4056,7 @@ function renderVillaLite(body) {
     var goN = all.filter(function(r) { return evs[r.id].visit.go; }).length, passN = all.length - goN;
     var rank = { ok: 0, check: 1, no: 2 };
     var vcol = s.villaCol || 'verdict', vdir = s.villaDir || 1, vdef = VILLA_COLS[vcol] || VILLA_COLS.verdict;
-    var rows = all.filter(function(r) { return vv === 'all' || (vv === 'go') === evs[r.id].visit.go; }).sort(function(x, y) {
+    var rows = all.filter(function(r) { return (vv === 'all' || (vv === 'go') === evs[r.id].visit.go) && (!s.listLite || listingStatus(r.a).st === 'yes'); }).sort(function(x, y) {
         var ex = evs[x.id], ey = evs[y.id];
         if (vcol !== 'verdict' && vdef.val) {
             var ax = vdef.val(x, ex), ay = vdef.val(y, ey), nx = ax == null || (typeof ax === 'number' && !isFinite(ax)), ny = ay == null || (typeof ay === 'number' && !isFinite(ay));
@@ -4088,7 +4088,7 @@ function renderVillaLite(body) {
         h += '<tr data-rid="' + bbEsc(r.id) + '" class="bb2-row ' + (ev.visit.go ? 'go' : 'pass') + '" onclick="openBidDrawer(\'' + idJs + '\')">'
             + '<td>' + (ev.visit.go ? '<span class="bb2-go">🚶 임장</span>' : '<span class="bb2-pass">패스</span>') + (ev.visit.why ? '<div class="bb-sub"' + (ev.issue ? ' style="color:#b91c1c;"' : '') + '>' + bbEsc(ev.visit.why) + '</div>' : '') + '</td>'
             + '<td>' + (r.dday ? '<span class="bb-dday' + (r.dday.diffDays >= 0 && r.dday.diffDays <= 3 ? ' soon' : '') + '">' + bbEsc(r.dday.label) + '</span>' : '-') + '<div class="bb-sub">' + bbEsc(r.a.bidDate || '') + '</div></td>'
-            + '<td class="bb2-name"><b>' + bbEsc(r.name) + '</b><div class="bb-sub">' + bbEsc(r.region) + (r.pyung ? ' · ' + r.pyung + '평' : '') + (r.floor ? ' · ' + r.floor + '층' : '') + '</div></td>'
+            + '<td class="bb2-name"><b>' + bbEsc(r.name) + '</b><div class="bb-sub">' + bbEsc(r.region) + (r.pyung ? ' · ' + r.pyung + '평' : '') + (r.floor ? ' · ' + r.floor + '층' : '') + '</div><div>' + listingPillHtml(r.a) + '</div></td>'
             + '<td class="r">' + money(r.minBid) + '</td><td class="r">' + money(r.appraisal) + '</td>'
             + '<td class="r">' + estCell + '</td><td class="r">' + marCell + '</td><td class="r">' + winCell + '</td><td class="r">' + villaLiqHtml(ev.liq) + '</td>'
             + '<td>' + (t ? bbEsc(t.mainPurps || '') + '<div class="bb-sub">' + (t.grndFlrCnt || '-') + '층 · ' + (t.useAprDay ? String(t.useAprDay).slice(0, 4) + '년' : '-') + ' · 승강기 ' + (elv ? elv + '대' : '없음') + '</div>' : (st.quota ? '<span class="bb-sub" title="연식·승강기·층수를 아직 못 가져왔어요">⏸ 한도 초과(내일 자동 조회)</span>' : (st.loading ? '<span class="bb-sub">조회 중…</span>' : '<span class="bb-sub">대장 없음</span>'))) + '</td>'
@@ -11284,6 +11284,34 @@ function getAuctionAddressContext() {
    비대칭 지정(사용자 지정값) - 사용승인연도 기준으로 [Y-5년, Y+10년] 범위이므로, 연차로
    환산하면 더 오래된 쪽(연차+5)부터 더 최근인 쪽(연차-10)까지의 범위가 됨. */
 var NAVER_PROP_TYPE_CODE = { apt: 'APT', villa: 'VL', officetel: 'OPST' };
+/* 📋 네이버 매물 등록 여부 표기·모아 보기 (2026-10-10, 사용자: "네이버 매물이 등록 여부를 표기하고 등록된 물건을 따로 볼 수 있어야 해")
+   네이버부동산은 자동으로 긁지 않으므로(이용약관) 사용자가 붙여넣은 매물 목록(또는 직접 입력한 매물 수)을 기준으로 표기: 있음(N건·확인일) / 없음(확인함) / 미확인 */
+function listingStatus(a) {
+    var lp = a.listingParse, at = (lp && lp.at) || a.listingCheckedDate || null, n = null;
+    if (lp && Array.isArray(lp.items)) n = lp.n;
+    else if (a.listingCount !== undefined && a.listingCount !== null && String(a.listingCount) !== '') n = parseInt(a.listingCount, 10);
+    if (n == null || isNaN(n)) return { st: 'unknown' };
+    var age = at ? Math.floor((Date.now() - new Date(at + 'T00:00:00').getTime()) / 86400000) : null;
+    return { st: n > 0 ? 'yes' : 'none', n: n, at: at, age: age };
+}
+function listingPillHtml(a) {
+    var l = listingStatus(a), old = l.age != null && l.age > 14 ? ' · ' + l.age + '일 전' : '';
+    if (l.st === 'yes') return '<span class="bb-pill" style="background:#e8f5e9;color:#15803d;border:1px solid #86efac;" title="네이버 매물 ' + l.n + '건 (확인 ' + bbEsc(l.at || '') + ')">📋 매물 ' + l.n + '건' + old + '</span>';
+    if (l.st === 'none') return '<span class="bb-pill" style="background:#f3f4f6;color:#6b7280;border:1px solid #d1d5db;" title="네이버에서 매물이 없는 것으로 확인함 (' + bbEsc(l.at || '') + ')">📋 매물 없음' + old + '</span>';
+    return '<span class="bb-sub" style="font-size:10.5px;color:#9ca3af;" title="네이버 매물 목록을 붙여넣으면 등록 여부가 표시돼요">📋 미확인</span>';
+}
+async function recordNoListings(id) {
+    var a = auctionList.filter(function(x) { return String(x.id) === String(id); })[0]; if (!a) return;
+    if (!confirm('네이버부동산에 이 물건과 비슷한 매물이 없는 것을 직접 확인하셨나요? "매물 없음"으로 기록합니다.')) return;
+    var at = new Date().toISOString().slice(0, 10);
+    a.listingParse = { items: [], n: 0, rawN: 0, at: at, otherSize: 0, dupRemoved: 0, dupGroups: [], lowest: [], dirByDong: {}, min: null, q25: null, med: null, max: null, simN: 0, simMin: null, simMed: null, vacantMin: null, tenantN: 0, urgentN: 0, repFull: null, repFullN: 0, repNeed: null, repNeedN: 0, dateFrom: null, dateTo: null };
+    if (a.propType === 'villa') a.listingParse.kind = 'villa';
+    a.listingCount = '0'; a.listingCheckedDate = at;
+    try { await saveAuctionAPI(a); } catch (e) { alert('저장 실패: ' + e.message); }
+    bidBoardRows = bidBoardRows.map(function(r) { if (String(r.id) === String(id)) { r.a = a; delete r._vev; if (r.type !== 'villa') { try { return finalizeBidBoardRow(r); } catch (e) { return r; } } } return r; });
+    renderBidBoard(); if (String(bidDrawerId) === String(id)) renderBidDrawer();
+}
+function setListFilter() { bidBoardState.listLite = !bidBoardState.listLite; bidBoardState.liteLimit = 120; bidBoardState.villaLimit = 120; renderBidBoard(); }
 /* 🟢 네이버부동산 링크 공통 만들기 (2026-10-10, 사용자: "입찰후보 상세에도 네이버 링크 - 기존 링크 로직은 빌라/아파트 구분·비슷한 연식·평형 조절 상태, 구분이 안 되는 경우가 있었어 보완")
    종류 판단 순서(예전엔 입력칸 하나만 봐서 비어 있거나 틀리면 필터가 빠졌음): ① 건축물대장 주용도(아파트/다세대·연립/오피스텔) ② 지도 거래자료의 건물 종류(buildingType)
    ③ 물건에 저장된 종류(단, 이름·주소에 '빌라·다세대·연립'만 있고 '아파트'가 없으면 빌라, 반대면 아파트로 바로잡음) ④ 이름·주소 글자. 알 수 없으면 종류 필터를 걸지 않음(잘못 걸면 0건).
@@ -18284,12 +18312,14 @@ function renderBidBoardLite() {
     var sub = isVillaTab ? '' : ' <span style="color:#cbd5e1;">|</span> ' + [['go', '🚶 임장 후보', goN], ['pass', '패스', passN], ['all', '전체', aptTotal]].map(function(t) {
         return '<button class="bb-tab' + (s.visit === t[0] ? ' on' : '') + '" onclick="setLiteVisit(\'' + t[0] + '\')">' + t[1] + ' <b>' + t[2] + '</b></button>';
     }).join('') + (isVillaTab ? '' : ' <button class="bb-tab' + (s.nicheLite ? ' on' : '') + '" title="입찰자가 적으면서 되팔림도 좋은 시군구의 물건" onclick="bidBoardState.nicheLite=!bidBoardState.nicheLite;bidBoardState.liteLimit=120;renderBidBoard();">🧭 틈새만 <b>' + cur.filter(function(r) { return r.niche && !r.pending; }).length + '</b></button>');
+    var listN = isVillaTab ? villaMetroRows().filter(function(r) { return listingStatus(r.a).st === 'yes'; }).length : cur.filter(function(r) { return !r.pending && listingStatus(r.a).st === 'yes'; }).length;
+    sub += ' <button class="bb-tab' + (s.listLite ? ' on' : '') + '" title="네이버 매물 목록을 붙여넣어 매물이 있는 것으로 확인한 물건만" onclick="setListFilter()">📋 매물 등록 <b>' + listN + '</b></button>';
     bar.innerHTML = grp + sub
         + ' <span class="bb-sub">열 이름을 누르면 오름차순·내림차순으로 정렬돼요</span>'
         + ' <a href="#" class="bb2-link" onclick="toggleLitePast();return false;">' + (s.pastLite ? '지난 입찰 숨기기' : '지난 입찰 ' + pastN + '건 보기') + '</a>'
         + (pend && !isVillaTab ? ' <span class="bb-sub">⏳ ' + pend + '건 계산 중</span>' : '');
     if (s.visit === 'villa') { renderVillaLite(document.getElementById('bb-body')); var cn0 = document.getElementById('bb-cache-note'); if (cn0) cn0.style.display = 'none'; return; }
-    var rows = cur.filter(function(r) { return !r.pending && r.visit && (s.visit === 'all' || (s.visit === 'go') === r.visit.go) && (!s.nicheLite || r.niche); });
+    var rows = cur.filter(function(r) { return !r.pending && r.visit && (s.visit === 'all' || (s.visit === 'go') === r.visit.go) && (!s.nicheLite || r.niche) && (!s.listLite || listingStatus(r.a).st === 'yes'); });
     var colDef = LITE_COLS[s.liteCol] || LITE_COLS.verdict;
     rows.sort(function(x, y) {
         var vx = colDef.val(x), vy = colDef.val(y);
@@ -18319,7 +18349,7 @@ function renderBidBoardLite() {
             return '<tr data-rid="' + bbEsc(r.id) + '" class="bb2-row ' + (go ? 'go' : 'pass') + (String(bidDrawerId) === String(r.id) ? ' sel' : '') + '" onclick="openBidDrawer(\'' + idJs + '\')">'
                 + '<td data-l="판정">' + (go ? '<span class="bb2-go">🚶 임장</span>' : '<span class="bb2-pass">패스</span>') + (r.visit.why ? '<div class="bb-sub">' + bbEsc(r.visit.why) + '</div>' : '') + '</td>'
                 + '<td data-l="입찰일">' + (r.dday ? '<span class="bb-dday' + (r.dday.diffDays >= 0 && r.dday.diffDays <= 3 ? ' soon' : '') + '">' + bbEsc(r.dday.label) + '</span>' : '-') + '<div class="bb-sub">' + bbEsc(r.a.bidDate || '') + '</div></td>'
-                + '<td data-l="물건" class="bb2-name"><b>' + bbEsc(r.name) + '</b><div class="bb-sub">' + bbEsc(r.region) + (r.pyung ? ' · ' + r.pyung + '평' : '') + (r.floor ? ' · ' + r.floor + '층' : '') + (r.issueSuspect ? ' · <span style="color:#b91c1c;">🚩</span>' : '') + '</div>' + (r.niche ? '<div><span class="bb-pill" style="background:#e0f2f1;color:#00695c;border:1px solid #4db6ac;" title="' + bbEsc(r.niche.why.join(' · ')) + '">🧭 틈새</span></div>' : '') + '</td>'
+                + '<td data-l="물건" class="bb2-name"><b>' + bbEsc(r.name) + '</b><div class="bb-sub">' + bbEsc(r.region) + (r.pyung ? ' · ' + r.pyung + '평' : '') + (r.floor ? ' · ' + r.floor + '층' : '') + (r.issueSuspect ? ' · <span style="color:#b91c1c;">🚩</span>' : '') + '</div><div>' + listingPillHtml(r.a) + '</div>' + (r.niche ? '<div><span class="bb-pill" style="background:#e0f2f1;color:#00695c;border:1px solid #4db6ac;" title="' + bbEsc(r.niche.why.join(' · ')) + '">🧭 틈새</span></div>' : '') + '</td>'
                 + '<td data-l="유찰" class="r">' + (r.fails == null ? '-' : (r.fails === 0 ? '신건' : r.fails + '회')) + '</td>'
                 + '<td data-l="동일평형 거래" class="r bb2-n">' + liteTradesHtml(r) + '</td>'
                 + '<td data-l="거래량 순위" class="bb2-rank">' + liteRankHtml(r) + '</td>'
@@ -19101,7 +19131,7 @@ function naverListingHtml(row, idJs) {
             + '<div class="dr-sub" style="margin-top:4px;">가장 싼 매물: ' + sm.lowest.map(function(x) { return f(x.p) + '(' + x.dong + '동 ' + x.f + (x.t ? ' ' + x.t.trim() : '') + ')'; }).join(' · ') + '</div></div>';
     }
     h += '<textarea id="nv-paste-' + bbEsc(String(row.id)) + '" placeholder="네이버 부동산 → 단지 → 매물 목록을 전체 선택해 복사 후 여기에 붙여넣기" style="width:100%;height:' + (sm ? 40 : 70) + 'px;margin-top:6px;font-size:11.5px;border:1px solid #d1d5db;border-radius:6px;padding:6px;box-sizing:border-box;"></textarea>'
-        + '<button style="margin-top:4px;border:none;background:var(--ui-blue,#1e5eff);color:#fff;border-radius:8px;padding:6px 12px;font-size:12px;font-weight:700;cursor:pointer;" onclick="applyNaverListings(\'' + idJs + '\')">' + (sm ? '다시 분석' : '분석해서 채우기') + '</button></div>';
+        + '<button style="margin-top:4px;border:none;background:var(--ui-blue,#1e5eff);color:#fff;border-radius:8px;padding:6px 12px;font-size:12px;font-weight:700;cursor:pointer;" onclick="applyNaverListings(\'' + idJs + '\')">' + (sm ? '다시 분석' : '분석해서 채우기') + '</button> <button style="margin-top:4px;border:1px solid #d1d5db;background:#fff;color:#374151;border-radius:8px;padding:6px 10px;font-size:12px;cursor:pointer;" onclick="recordNoListings(\'' + idJs + '\')">매물 없음으로 기록</button></div>';
     return h;
 }
 /* 🏁 지역 경쟁 강도(2026-10, 사용자: "틈새시장의 큰 틀 - 실제로 낙찰 가능성이 있고 낙찰 후 매도까지 잘되는 지역") -
