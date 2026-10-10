@@ -359,28 +359,36 @@ async function handleBatchCacheCheck(req, res) {
   if (!pairs.length) return res.status(200).json({ results: {} });
 
   try {
-    const orExpr = pairs
-      .map(p => `and(sigungu_cd.eq.${p.sigunguCd},bjdong_cd.eq.${p.bjdongCd})`)
-      .join(',');
-
+    // 2026-10-11 속도: 시군구·법정동 전체(수천 건)를 읽던 방식 → 요청한 본번만 골라 읽음(50건 요청이 13초 걸렸음). 같은 시군구·법정동끼리 묶어 본번 목록으로 조회
+    const bunsByPair = new Map();
+    items.forEach(it => {
+      if (!it.sigunguCd || !it.bjdongCd || !it.bun) return;
+      const k = `${it.sigunguCd}|${it.bjdongCd}`;
+      if (!bunsByPair.has(k)) bunsByPair.set(k, new Set());
+      bunsByPair.get(k).add(String(it.bun));
+    });
     const rowMap = {};
-    const PAGE_SIZE = 1000;
-    let from = 0;
-    while (true) {
-      const { data, error } = await supabase
-        .from('building_info')
-        .select('*')
-        .or(orExpr)
-        .range(from, from + PAGE_SIZE - 1);
-      if (error) throw error;
-      (data || []).forEach(row => {
-        const k = [row.sigungu_cd, row.bjdong_cd, row.bun, row.ji, row.bld_nm].join('|');
-        rowMap[k] = row;
-      });
-      if (!data || data.length < PAGE_SIZE) break;
-      from += PAGE_SIZE;
-    }
-
+    await Promise.all([...bunsByPair.entries()].map(async ([k, set]) => {
+      const [sg, bj] = k.split('|');
+      const buns = [...set];
+      for (let c = 0; c < buns.length; c += 80) {
+        const part = buns.slice(c, c + 80);
+        let from = 0;
+        while (true) {
+          const { data, error } = await supabase
+            .from('building_info')
+            .select('*')
+            .eq('sigungu_cd', sg).eq('bjdong_cd', bj).in('bun', part)
+            .range(from, from + 999);
+          if (error) throw error;
+          (data || []).forEach(row => {
+            rowMap[[row.sigungu_cd, row.bjdong_cd, row.bun, row.ji, row.bld_nm].join('|')] = row;
+          });
+          if (!data || data.length < 1000) break;
+          from += 1000;
+        }
+      }
+    }));
     const lotIndex = {};
     Object.keys(rowMap).forEach(k => { const r = rowMap[k]; if (r.title_json && !String(r.bld_nm || '').includes('__d')) { const lk = [r.sigungu_cd, r.bjdong_cd, r.bun, r.ji].join('|') + '|'; if (!lotIndex[lk] || new Date(r.fetched_at) > new Date(lotIndex[lk].fetched_at)) lotIndex[lk] = r; } });
     const results = {};

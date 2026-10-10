@@ -3583,6 +3583,42 @@ function showHomestayPop(key) {
    외국인관광 도시민박업(관광진흥법)의 건물 쪽 요건을 건축물대장으로 점검: ① 주택(다세대·연립·다가구·단독·아파트)일 것 ② 주택 연면적 230㎡ 미만 ③ 도시지역(읍·면·리 아님)
    ④ 지하·반지하 아닌지 ⑤ 위반건축물 아닌지(대장 API는 표시를 안 줘서 경매 메모의 '위반' 문구로만 감지, 아니면 열람 필요) + 참고(공동주택 입주민 동의, 신고자 실거주, 소방설비, 노후도, 승강기).
    '검토 가능' = 건물 요건에서 걸리는 게 없다는 뜻이지 영업이 가능하다는 보장이 아님(실거주·동의·용도지역은 관할 확인 필요). */
+/* 🗂️ 이미 저장된 건축물대장은 한도와 상관없이 바로 채움 (2026-10-11, 사용자: 대장이 6할 받아졌는데 연식 모름이 왜 이렇게 많냐) - 하루 한도가 차면 조회를 멈추고 남은 물건을 전부 '한도 초과'로 표시했는데,
+   실제로는 대부분 서버에 이미 저장돼 있었음(빌라 50건 중 45건). 저장본만 읽는 묶음 조회(외부 API 안 씀)로 먼저 채우고, 정말 없는 물건만 한도 초과로 둠 */
+var hsFillBusy = false, hsFillDone = {};
+function hsItemOf(r) {
+    var a = r.a; if (!a.bCode || !a.bunji) return null;
+    var am = String(a.addr || '').match(new RegExp((a.dong || '[가-힣0-9]+[동리가]') + '\\s+(산?\\d+(?:-\\d+)?)'));
+    var bj = String(am ? am[1] : a.bunji).replace(/^산\s*/, '').split('-');
+    return { sigunguCd: String(a.bCode).slice(0, 5), bjdongCd: String(a.bCode).slice(5, 10), bun: String(parseInt(bj[0], 10) || 0).padStart(4, '0'), ji: String(parseInt(bj[1] || '0', 10) || 0).padStart(4, '0'), bldNm: (a.name || '').trim(), key: String(r.id) };
+}
+async function hsFillFromCache(rows) {
+    if (hsFillBusy) return; hsFillBusy = true;
+    try {
+        var todo = rows.filter(function(r) { var h0 = hsBld[r.id]; return !(h0 && h0.info && h0.info.title) && !hsFillDone[r.id]; });
+        var items = todo.map(hsItemOf).filter(Boolean), byId = {}; todo.forEach(function(r) { byId[String(r.id)] = r; });
+        var chunks = []; for (var i = 0; i < items.length; i += 100) chunks.push(items.slice(i, i + 100));
+        var next = 0, got = 0;
+        var worker = async function() {
+            while (next < chunks.length) {
+                var ch = chunks[next++];
+                try {
+                    var res = await fetch('/api/get-building', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ items: ch }) }).then(function(x) { return x.json(); });
+                    Object.keys((res && res.results) || {}).forEach(function(k) {
+                        var v = res.results[k], r = byId[k]; hsFillDone[k] = true;
+                        if (!(v && v.title) || !r) return;
+                        var info = { title: v.title, price: v.price || null, floors: v.floors || null, exposAreas: v.exposAreas || null }, chk = null;
+                        try { chk = homestayCheck(r.a, info); } catch (e) { return; }
+                        hsBld[r.id] = { info: info, chk: chk }; got++;
+                    });
+                } catch (e) {}
+                if (bidBoardState.visit === 'villa' && Date.now() - bbLastInteract > 2000) renderBidBoard();
+            }
+        };
+        await Promise.all([worker(), worker(), worker()]);
+        if (got) villaSaveCalcSoon();
+    } finally { hsFillBusy = false; if (bidBoardState.visit === 'villa') renderBidBoard(); }
+}
 var hsBld = {}, hsQueue = [], hsRunning = 0, hsRenderT = null, hsQuotaUntil = 0; // hsQuotaUntil: 건축HUB 하루 한도를 넘으면 그 시각까지 조회를 멈춤(한도가 풀릴 때까지 계속 두드리지 않게)
 function hsDongKey(addr) {
     var t = String(addr || '').trim().split(/\s+/); if (t.length < 3) return null;
@@ -3663,7 +3699,8 @@ function hsPump() {
                 if (!info && loadBuildingInfo.lastFailed) { // 건축HUB 하루 요청 한도 초과 → '없음'이 아니라 '나중에 다시'로 두고 대기열을 비움
                     hsQuotaUntil = Date.now() + 30 * 60 * 1000;
                     hsBld[row.id] = { quota: true };
-                    hsQueue.splice(0).forEach(function(q) { hsBld[q.id] = { quota: true }; });
+                    var qd = hsQueue.splice(0); qd.forEach(function(q) { hsBld[q.id] = { quota: true }; });
+                    hsFillFromCache(qd); // 저장본이 있는 물건은 한도와 상관없이 바로 채움
                     hsRunning--; clearTimeout(hsRenderT); hsRenderT = setTimeout(function() { if (bidBoardState.visit === 'villa') renderBidBoard(); }, 400);
                     return;
                 }
@@ -4261,6 +4298,7 @@ function renderVillaLite(body) {
     if (!homestayAgg) loadHomestayAgg(function() { if (bidBoardState.visit === 'villa') renderBidBoard(); }); // 이미 받았으면 콜백이 바로 불려 무한 반복되므로 처음 한 번만
     if (all.some(function(r) { return !hsBld[r.id]; })) all.slice().sort(function(x, y) { return (x.dday ? x.dday.diffDays : 9999) - (y.dday ? y.dday.diffDays : 9999); }).forEach(ensureHomestayCheck); // 입찰이 가까운 물건부터 조회(이미 다 조회했으면 건너뜀)
     var evs = {}; all.forEach(function(r) { evs[r.id] = villaEval(r); });
+    if (!hsFillBusy && all.some(function(r) { var h0 = hsBld[r.id]; return (!h0 || !h0.info || !h0.info.title) && !hsFillDone[r.id]; })) setTimeout(function() { hsFillFromCache(villaMetroRows(true)); }, 100);
     if (!villaLoadBusy && all.some(function(r) { var c = villaVeCache[r.id]; return !(c && c.sig === villaVeSig(r.a)) || (bidBoardLawdOf(r.a) && !villaLiqCache[r.id] && !villaPts[bidBoardLawdOf(r.a)] && !villaPtsTried[bidBoardLawdOf(r.a)]); })) setTimeout(villaLoadRegions, 50);
     var goN = all.filter(function(r) { return evs[r.id].visit.go; }).length, passN = all.length - goN;
     var rank = { ok: 0, check: 1, no: 2 };
