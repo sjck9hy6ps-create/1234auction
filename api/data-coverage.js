@@ -3466,7 +3466,8 @@ export default async function handler(req, res) {
   if (req.query.mode === 'boardCacheMeta' || req.query.mode === 'boardCacheChunk') {
     res.setHeader('Cache-Control', 's-maxage=300, stale-while-revalidate=3600');
     try {
-      const id = req.query.mode === 'boardCacheMeta' ? 'board|cache|meta' : 'board|cache|' + String(parseInt(req.query.i, 10) || 0);
+      const pre = req.query.kind === 'villa' ? 'board|villa|' : 'board|cache|'; // villa: 빌라 탭 미리 계산(2026-10-10)
+      const id = req.query.mode === 'boardCacheMeta' ? pre + 'meta' : pre + String(parseInt(req.query.i, 10) || 0);
       const { data, error } = await supabase.from('leader_follower_cache').select('payload').eq('id', id).maybeSingle();
       if (error) return res.status(500).json({ error: error.message });
       return res.status(200).json((data && data.payload) || {});

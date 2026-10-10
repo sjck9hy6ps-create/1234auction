@@ -29,6 +29,21 @@ for (;;) {
   if (Date.now() - t0 > 80 * 60 * 1000) { console.log('시간 초과'); break; }
 }
 const cache = await page.evaluate(async () => await listIdbOp('readonly', function (st) { return st.get(BOARD_CACHE_KEY); }));
+// ── 빌라 탭 미리 계산(2026-10-10, 사용자: 빌라 입찰후보 창이 매번 느림 → 실사용 전에 웜업) ──
+let villa = null;
+try {
+  await page.evaluate(() => { setLiteVisit('villa'); setVillaVisit('all'); });
+  const tv = Date.now();
+  for (;;) {
+    await page.waitForTimeout(15000);
+    const st = await page.evaluate(() => ({ busy: !!villaLoadBusy, final: !!villaLiqFinal, rows: villaMetroRows(true).length, ve: villaMetroRows(true).filter((r) => villaVeCache[r.id]).length, hsq: hsQueue.length, hsr: hsRunning }));
+    console.log(`빌라 ${Math.round((Date.now() - tv) / 1000)}s · 행 ${st.rows} · 예상매도가 ${st.ve} · 생활권 ${st.final} · 대장 대기 ${st.hsq}/${st.hsr}`);
+    if (!st.busy && st.final && st.ve >= st.rows && st.hsq === 0 && st.hsr === 0) break;
+    if (!st.busy && st.final && st.ve >= st.rows && Date.now() - tv > 15 * 60 * 1000) break; // 대장 조회는 최대 15분만 기다림
+    if (Date.now() - tv > 40 * 60 * 1000) { console.log('빌라 시간 초과'); break; }
+  }
+  villa = await page.evaluate(() => villaCalcSnapshot());
+} catch (e) { console.log('빌라 미리 계산 실패:', String(e).slice(0, 200)); }
 await browser.close();
 const ids = Object.keys(cache || {});
 console.log(`저장 계산 ${ids.length}건`);
@@ -50,3 +65,21 @@ for (const r of rows) {
 }
 await supabase.from('leader_follower_cache').upsert({ id: 'board|cache|meta', payload: { n: rows.length, count: ids.length, at: Date.now() }, fetched_at: now }, { onConflict: 'id' });
 console.log(`✅ 올림: ${rows.length}묶음 / ${ids.length}건`);
+if (villa && Object.keys(villa.ve || {}).length >= 50) {
+  const vids = Object.keys(villa.ve), VC = 100, vrows = [];
+  for (let i = 0; i * VC < vids.length; i++) {
+    const part = { ve: {}, liq: {}, hs: {} };
+    vids.slice(i * VC, (i + 1) * VC).forEach((id) => { part.ve[id] = villa.ve[id]; if (villa.liq[id]) part.liq[id] = villa.liq[id]; if (villa.hs[id]) part.hs[id] = villa.hs[id]; });
+    vrows.push({ id: `board|villa|${i}`, payload: part, fetched_at: now });
+  }
+  for (const r of vrows) {
+    for (let a = 0; a < 4; a++) {
+      const { error } = await supabase.from('leader_follower_cache').upsert(r, { onConflict: 'id' });
+      if (!error) break;
+      console.log('빌라 저장 재시도', r.id, error.message);
+      await new Promise((res) => setTimeout(res, 3000 * (a + 1)));
+    }
+  }
+  await supabase.from('leader_follower_cache').upsert({ id: 'board|villa|meta', payload: { n: vrows.length, count: vids.length, at: Date.now() }, fetched_at: now }, { onConflict: 'id' });
+  console.log(`✅ 빌라 올림: ${vrows.length}묶음 / ${vids.length}건 (생활권 ${Object.keys(villa.liq).length}, 대장 ${Object.keys(villa.hs).length})`);
+} else console.log('빌라 계산이 너무 적어 올리지 않음');
