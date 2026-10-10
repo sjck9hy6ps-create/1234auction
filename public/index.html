@@ -16759,7 +16759,8 @@ function aptOwnTradeStats(a, bunjiFull, pyung) {
             });
             var elv = a.elevatorCnt != null && a.elevatorCnt !== '' ? parseInt(a.elevatorCnt) : null;
             var cls = elv === 0 ? 'noE' : (elv > 0 ? (maxF <= 10 ? 'mid' : 'tall') : (maxF <= 5 ? 'noE' : (maxF <= 10 ? 'mid' : 'tall')));
-            var dft = { noE: [0.99, 0.97], mid: [0.98, 0.98], tall: [0.915, 0.94] }[cls][tf <= 1 ? 0 : 1];
+            // 2026-10-10 층별 실거래 실측(같은 단지·평형·분기 중층 대비, 수도권·지방 2025년~): 6~10층 단지 1층 −6.1%(283건)·2~3층 −3.0%/−0.7% → 중간 규모 기본값 1층 0.98→0.94, 저층 0.98→0.975. 11층+ 단지는 1층 −8.6~−9.7%·2층 −5~−7%·3층 −3~−5%로 기존 값(0.915/0.94)과 일치(낙찰 후 되판 877건: 1층 되판÷보정전 0.919 vs 적용 0.915)해서 그대로
+            var dft = { noE: [0.99, 0.97], mid: [0.94, 0.975], tall: [0.915, 0.94] }[cls][tf <= 1 ? 0 : 1];
             var nR = rs.length, ownR = nR ? Math.min(1.05, med(rs)) : null;
             var fac = nR ? (nR * ownR + 10 * dft) / (nR + 10) : dft;
             var clsTxt = cls === 'noE' ? (elv === 0 ? '승강기 없음' : '승강기 없음 추정·' + maxF + '층 단지') : (maxF + '층 단지' + (elv > 0 ? '·승강기 있음' : ''));
@@ -17557,7 +17558,7 @@ function overshootSaleFactor(type, ratio) {
 }
 var BOARD_CACHE_KEY = 'bidBoardCache:v1', BOARD_CACHE_MAX_AGE = 24 * 3600 * 1000;
 // 저장 계산을 다시 써도 되는지 - 물건 입력값(시세 계산에 쓰는 것)과 입찰일 지남 여부. 계산 방식이 바뀌면 BOARD_CALC_VER을 올림
-var BOARD_CALC_VER = 29; // 29: nYear 저장 추가 - // 27: 🎲 예상 낙찰가용 시세(wbBase) 추가 (범위 표시는 화면에서 바로 계산 - 버전 변경 없음)
+var BOARD_CALC_VER = 30; // 29: nYear 저장 추가 - // 27: 🎲 예상 낙찰가용 시세(wbBase) 추가 (범위 표시는 화면에서 바로 계산 - 버전 변경 없음)
 function boardBaseSig(a) {
     var d = a.bidDate ? calcAuctionDday(a.bidDate) : null;
     return [BOARD_CALC_VER, auctionWonEstSignature(a), a.minBid, a.appraisal, a.bidDate, a.court, a.failCount, a.landType, String(a.memo || '').length,
