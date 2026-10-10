@@ -17865,6 +17865,7 @@ function bidVerdictKey(a) {
 }
 // 빌라 지도 배지(2026-10-10, 사용자: 배지가 이상해 - 빌라도 예전 아파트식 '❌ 제외 부족 65%'가 떠서 빌라 탭의 임장/패스 판정과 달랐음) → 빌라는 빌라 탭과 같은 판정으로 표시
 function villaBadgeShort(r) {
+    if (!villaRestoreState) { villaRestoreCalc().then(function() { try { renderAuctionMarkers(); } catch (e) {} }); } // 입찰후보 창을 안 열었어도 저장된 빌라 계산을 먼저 불러옴
     var ev = null; try { ev = villaEval(r); } catch (e) { ev = null; }
     if (!ev) return null;
     var w = String(ev.visit.why || ''), pe = ev.pn && ev.pn.ev, short;
