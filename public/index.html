@@ -17512,7 +17512,7 @@ function finalizeBidBoardRow(row) {
             else if (_f >= 3 || _mr < 0.45) row.issueSuspect = { level: 'mid', why: _why.length ? _why : ['최저가가 시세의 ' + Math.round(_mr * 100) + '%'] };
         }
     } catch (e) { row.issueSuspect = null; }
-    row.niche = null; // 🧭 틈새는 재설계 중(위 재검증 참고) - 입찰자가 덜 몰리는 동·단지 기준으로 다시 만들 예정
+    row.niche = null; try { row.niche = regionNicheFor(row); } catch (e) { row.niche = null; }
     if (row.niche) row.notes.unshift('🧭 틈새: ' + row.niche.why.join(' · '));
     try { computePick(row); applyPickToRow(row); } catch (e) { row.pick = null; row.visit = { go: false, why: '계산 오류' }; }
     return row;
@@ -17525,6 +17525,42 @@ function finalizeBidBoardRow(row) {
    빼는 조건: 1억 미만(관심은 가장 적지만 크게 손해 25%), 3년 거래 5건 이하(되판 기록이 적어 수익이 부풀려 보일 수 있음),
    최저가가 예상매도가의 90% 이상(낙찰자 손해 구간). 과거에 입찰자가 적던 동은 참고로만(다음에도 적은 편이지만 수익 차이는 지역마다 다름).
    목표 마진은 바꾸지 않음 - 틈새는 "같은 마진의 입찰가로 낙찰받을 가능성이 높은 곳"이라는 뜻. ════ */
+/* ════ 🧭 틈새 (2026-10-10 재설계, 사용자: "단독낙찰·입찰자 2~3명인 인기 없는 매물의 특징 → 틈새 표기")
+   낙찰사례 아파트 2.4만 건 분석: 입찰자 3명 이하 46%(단독 24%)인데, 소수 입찰 물건은 대체로 되팔기도 어려움(되판 비율 52% vs 4명+ 62%).
+   그래서 '입찰자가 적으면서 되팔림도 좋은' 시군구만 틈새로 봄 - 시군구 기준(그 시군구 낙찰사례 40건+): ① 소수 입찰(≤3명) 비율 40% 이상
+   ② 소수 입찰로 낙찰된 건 중 낙찰 후 되팔린 비율 60% 이상(매칭 시도 25건+). + 물건 조건: 전용 85㎡ 이하, 감정가 5억 미만, 최저가가 감정가의 40% 초과·95% 미만(신건·유찰 4회+ 제외).
+   시간 분리 검증(과거 자료로 지역을 정하고 이후 낙찰 채점, 3가지 분할): 틈새 되판 62~63% vs 그 외 47~52%, 소수 입찰이지만 틈새 아님 39~46%. 마진 중앙은 비슷(틈새 1.0~1.2천만 vs 1.2~1.4천만) → '환금성' 표시. ════ */
+var nicheRegionMap = null, nicheRegionN = -1;
+function nicheRegionStats() {
+    if (!Array.isArray(bidCaseList) || !bidCaseList.length) return null;
+    if (nicheRegionN === bidCaseList.length && nicheRegionMap) return nicheRegionMap;
+    nicheRegionN = bidCaseList.length;
+    var g = {};
+    bidCaseList.forEach(function(c) {
+        if (!/아파트/.test(String(c.propertyType || '')) || (c.status && c.status !== '매각')) return;
+        var b = parseFloat(c.bidders); if (!(b >= 1)) return;
+        var rg = nicheSidoNorm(c.addrJibun), k = rg.sido + '|' + rg.gu; if (!rg.gu) return;
+        var o = g[k] = g[k] || { n: 0, low: 0, lowTried: 0, lowSold: 0 };
+        o.n++;
+        if (b <= 3) { o.low++; if (c.matchAttempted) { o.lowTried++; if (c.resaleMatch && c.resaleMatch.amount) o.lowSold++; } }
+    });
+    nicheRegionMap = {};
+    Object.keys(g).forEach(function(k) {
+        var o = g[k]; if (o.n < 40 || o.lowTried < 25) return;
+        var ls = o.low / o.n, rs = o.lowSold / o.lowTried;
+        if (ls >= 0.40 && rs >= 0.60) nicheRegionMap[k] = { n: o.n, lowPct: Math.round(ls * 100), soldPct: Math.round(rs * 100), tried: o.lowTried };
+    });
+    return nicheRegionMap;
+}
+function regionNicheFor(row) {
+    if (row.type !== 'apt' || row.pending || row.skippedPast) return null;
+    var a = row.a, m = nicheRegionStats(); if (!m) return null;
+    var rg = nicheSidoNorm(a.addr), st = m[rg.sido + '|' + rg.gu]; if (!st) return null;
+    var area = (parseFloat(a.pyung) || 0) * 3.305785, ap = parseFloat(a.appraisal) || 0, mb = parseFloat(row.minBid || a.minBid) || 0;
+    if (area > 85 || (ap && ap >= 50000)) return null;
+    var r = ap && mb ? mb / ap : null; if (r != null && (r <= 0.40 || r >= 0.95)) return null;
+    return { score: 1, why: [rg.gu + ': 입찰자 3명 이하가 ' + st.lowPct + '%, 소수 입찰로 낙찰돼도 ' + st.soldPct + '%가 되팔렸어요(과거 ' + st.tried + '건)', '85㎡ 이하·감정가 5억 미만'], region: st };
+}
 function bidBoardNiche(row, a, bunjiFull) {
     var c3 = row.complex3y || 0;
     if (c3 < 6 || c3 > 20) return null;
@@ -17941,6 +17977,7 @@ function renderBidBoardLite() {
     var s = bidBoardState;
     var el = document.getElementById('bid-board'); if (el) el.classList.add('lite');
     var all = bidBoardRows.filter(function(r) { return r.type === 'apt' && !r.skippedPast && (!s.region || r.region === s.region); });
+    all.forEach(function(r) { try { r.niche = regionNicheFor(r); } catch (e) {} });
     var isPast = function(r) { return r.dday && r.dday.diffDays < 0; };
     var cur = all.filter(function(r) { return s.pastLite || !isPast(r); });
     var isVillaTab = s.visit === 'villa';
@@ -17960,13 +17997,13 @@ function renderBidBoardLite() {
     }).join('');
     var sub = isVillaTab ? '' : ' <span style="color:#cbd5e1;">|</span> ' + [['go', '🚶 임장 후보', goN], ['pass', '패스', passN], ['all', '전체', aptTotal]].map(function(t) {
         return '<button class="bb-tab' + (s.visit === t[0] ? ' on' : '') + '" onclick="setLiteVisit(\'' + t[0] + '\')">' + t[1] + ' <b>' + t[2] + '</b></button>';
-    }).join('');
+    }).join('') + (isVillaTab ? '' : ' <button class="bb-tab' + (s.nicheLite ? ' on' : '') + '" title="입찰자가 적으면서 되팔림도 좋은 시군구의 물건" onclick="bidBoardState.nicheLite=!bidBoardState.nicheLite;bidBoardState.liteLimit=120;renderBidBoard();">🧭 틈새만 <b>' + cur.filter(function(r) { return r.niche && !r.pending; }).length + '</b></button>');
     bar.innerHTML = grp + sub
         + ' <span class="bb-sub">열 이름을 누르면 오름차순·내림차순으로 정렬돼요</span>'
         + ' <a href="#" class="bb2-link" onclick="toggleLitePast();return false;">' + (s.pastLite ? '지난 입찰 숨기기' : '지난 입찰 ' + pastN + '건 보기') + '</a>'
         + (pend && !isVillaTab ? ' <span class="bb-sub">⏳ ' + pend + '건 계산 중</span>' : '');
     if (s.visit === 'villa') { renderVillaLite(document.getElementById('bb-body')); var cn0 = document.getElementById('bb-cache-note'); if (cn0) cn0.style.display = 'none'; return; }
-    var rows = cur.filter(function(r) { return !r.pending && r.visit && (s.visit === 'all' || (s.visit === 'go') === r.visit.go); });
+    var rows = cur.filter(function(r) { return !r.pending && r.visit && (s.visit === 'all' || (s.visit === 'go') === r.visit.go) && (!s.nicheLite || r.niche); });
     var colDef = LITE_COLS[s.liteCol] || LITE_COLS.verdict;
     rows.sort(function(x, y) {
         var vx = colDef.val(x), vy = colDef.val(y);
@@ -17996,7 +18033,7 @@ function renderBidBoardLite() {
             return '<tr data-rid="' + bbEsc(r.id) + '" class="bb2-row ' + (go ? 'go' : 'pass') + (String(bidDrawerId) === String(r.id) ? ' sel' : '') + '" onclick="openBidDrawer(\'' + idJs + '\')">'
                 + '<td data-l="판정">' + (go ? '<span class="bb2-go">🚶 임장</span>' : '<span class="bb2-pass">패스</span>') + (r.visit.why ? '<div class="bb-sub">' + bbEsc(r.visit.why) + '</div>' : '') + '</td>'
                 + '<td data-l="입찰일">' + (r.dday ? '<span class="bb-dday' + (r.dday.diffDays >= 0 && r.dday.diffDays <= 3 ? ' soon' : '') + '">' + bbEsc(r.dday.label) + '</span>' : '-') + '<div class="bb-sub">' + bbEsc(r.a.bidDate || '') + '</div></td>'
-                + '<td data-l="물건" class="bb2-name"><b>' + bbEsc(r.name) + '</b><div class="bb-sub">' + bbEsc(r.region) + (r.pyung ? ' · ' + r.pyung + '평' : '') + (r.floor ? ' · ' + r.floor + '층' : '') + (r.issueSuspect ? ' · <span style="color:#b91c1c;">🚩</span>' : '') + '</div></td>'
+                + '<td data-l="물건" class="bb2-name"><b>' + bbEsc(r.name) + '</b><div class="bb-sub">' + bbEsc(r.region) + (r.pyung ? ' · ' + r.pyung + '평' : '') + (r.floor ? ' · ' + r.floor + '층' : '') + (r.issueSuspect ? ' · <span style="color:#b91c1c;">🚩</span>' : '') + '</div>' + (r.niche ? '<div><span class="bb-pill" style="background:#e0f2f1;color:#00695c;border:1px solid #4db6ac;" title="' + bbEsc(r.niche.why.join(' · ')) + '">🧭 틈새</span></div>' : '') + '</td>'
                 + '<td data-l="유찰" class="r">' + (r.fails == null ? '-' : (r.fails === 0 ? '신건' : r.fails + '회')) + '</td>'
                 + '<td data-l="동일평형 거래" class="r bb2-n">' + liteTradesHtml(r) + '</td>'
                 + '<td data-l="거래량 순위" class="bb2-rank">' + liteRankHtml(r) + '</td>'
