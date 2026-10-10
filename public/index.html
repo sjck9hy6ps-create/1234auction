@@ -1375,6 +1375,30 @@ body.ui2 #auction-modal.am4 { width:620px; }
     .bb2-vtable .bb-sub { margin-top:0; }
     .bb2-vtable .vt-hide, .bb2-vtable .lp-unk { display:none; }
 }
+/* 🏢 아파트 표 태블릿 보기(2026-10-10, 사용자: 많은 목록을 한 화면에) */
+@media (min-width: 901px) and (max-width: 1240px) {
+    .bb2-atable { font-size:11.5px; } .bb2-atable th, .bb2-atable td { padding:6px 5px; }
+    #bid-board .bb2-atable th:nth-child(6), #bid-board .bb2-atable td:nth-child(6), #bid-board .bb2-atable th:nth-child(12), #bid-board .bb2-atable td:nth-child(12), #bid-board .bb2-atable th:nth-child(14), #bid-board .bb2-atable td:nth-child(14) { display:none !important; }
+    .bb2-atable .bb2-name { min-width:110px; max-width:170px; }
+}
+@media (max-width: 900px) {
+    .bb2-atable tr { grid-template-columns:1fr 1fr 1.1fr 1.2fr; gap:1px 8px; padding:7px 10px; margin-bottom:5px; align-items:start; }
+    .bb2-atable td { font-size:11.5px; line-height:1.3; }
+    .bb2-atable td[data-l]:not(.bb2-name):not([data-l="판정"]):not([data-l="입찰일"])::before { font-size:9.5px; line-height:1.2; }
+    #bid-board .bb2-atable td[data-l="동일평형 거래"], #bid-board .bb2-atable td[data-l="거래량 순위"], #bid-board .bb2-atable td[data-l="경쟁 예상"], #bid-board .bb2-atable td[data-l="마진율"] { display:none !important; }
+    #bid-board .bb2-atable .bb2-name { grid-column:1 / 4; grid-row:1; order:0; }
+    #bid-board .bb2-atable td[data-l="판정"] { grid-column:4; grid-row:1; text-align:right; }
+    #bid-board .bb2-atable td[data-l="입찰일"] { grid-column:1; grid-row:2; text-align:left; display:block; }
+    #bid-board .bb2-atable td[data-l="최저가"] { grid-column:2; grid-row:2; display:block; }
+    #bid-board .bb2-atable td[data-l="예상매도가"] { grid-column:3; grid-row:2; display:block; }
+    #bid-board .bb2-atable td[data-l="추천가"] { grid-column:4; grid-row:2; display:block; }
+    #bid-board .bb2-atable td[data-l="낙찰 가능성"] { grid-column:1; grid-row:3; display:block; }
+    #bid-board .bb2-atable td[data-l="순이익"] { grid-column:2; grid-row:3; display:block; }
+    #bid-board .bb2-atable td[data-l="예상 낙찰가"] { grid-column:3; grid-row:3; display:block; }
+    #bid-board .bb2-atable td[data-l="유찰"] { grid-column:4; grid-row:3; display:block; }
+    .bb2-atable .bb-sub { margin-top:0; }
+    .bb2-atable .vt-hide, .bb2-atable .lp-unk { display:none; }
+}
 /* 상세 창 맨 위 추천가 카드 */
 #bb-drawer .dr-pickcard { border-radius:12px; padding:10px 12px; margin:8px 0 10px; }
 #bb-drawer .dr-pickcard.go { background:#f0fdf4; border:1px solid #bbf7d0; } #bb-drawer .dr-pickcard.pass { background:#f9fafb; border:1px solid #e5e7eb; }
@@ -18462,7 +18486,7 @@ function renderBidBoardLite() {
     if (!bidBoardRows.length) { body.innerHTML = '<div class="bb-empty">등록된 경매 물건이 없어요.<br>상단 <b>📝 경매물건 등록</b>에서 CSV를 올리면 여기에 모여요.</div>'; return; }
     if (!rows.length) { body.innerHTML = '<div class="bb-empty">' + (pend ? '계산 중이에요…' : (s.visit === 'go' ? '지금은 임장할 만한 물건이 없어요.<br>패스 목록에서 이유를 확인하거나 새 CSV를 올려 보세요.' : '조건에 맞는 물건이 없어요.')) + '</div>'; return; }
     var money = function(v) { return v ? toEok(String(Math.round(v))) : '-'; };
-    body.innerHTML = '<table class="bb2-table"><thead><tr>'
+    body.innerHTML = '<table class="bb2-table bb2-atable"><thead><tr>'
         + '<th>' + liteTh('verdict') + '</th><th>' + liteTh('date') + '</th><th>' + liteTh('name') + '</th><th class="r">' + liteTh('fails') + '</th>'
         + '<th class="r">동일평형 거래<div class="bb2-subsort" style="justify-content:flex-end;">' + liteTh('n12', '1년') + liteTh('nYear', '올해') + liteTh('last', '마지막') + '</div></th>'
         + '<th>거래량 순위·회전율<div class="bb2-subsort">' + liteTh('turn', '회전율') + liteTh('liv', '생활권') + liteTh('band', '평형') + liteTh('dong', '동') + '</div></th>'
@@ -18480,7 +18504,7 @@ function renderBidBoardLite() {
                 + '<td data-l="동일평형 거래" class="r bb2-n">' + liteTradesHtml(r) + '</td>'
                 + '<td data-l="거래량 순위" class="bb2-rank">' + liteRankHtml(r) + '</td>'
                 + '<td data-l="최저가" class="r">' + money(r.minBid) + '</td>'
-                + '<td data-l="예상 낙찰가" class="r">' + (r.winbid && r.winbid.price ? '<b>' + money(r.winbid.price) + '</b>' + (r.minBid ? '<div class="bb-sub" title="예상 낙찰가 ÷ 최저가">최저가의 ' + Math.round(r.winbid.price / r.minBid * 100) + '%</div>' : '') : '<span class="bb-sub">-</span>') + '</td>'
+                + '<td data-l="예상 낙찰가" class="r">' + (r.winbid && r.winbid.price ? '<b>' + money(r.winbid.price) + '</b>' + (r.minBid ? '<div class="bb-sub vt-hide" title="예상 낙찰가 ÷ 최저가">최저가의 ' + Math.round(r.winbid.price / r.minBid * 100) + '%</div>' : '') : '<span class="bb-sub">-</span>') + '</td>'
                 + '<td data-l="예상매도가" class="r">' + money(r.sale) + '</td>'
                 + '<td data-l="추천가" class="r">' + (e ? '<b class="bb2-rec">' + money(e.bid) + '</b>' + (r.sale ? '<div class="bb-sub" title="추천가 ÷ 예상매도가(시세)">시세의 <b>' + Math.round(e.bid / r.sale * 100) + '%</b></div>' : '') : '<span class="bb-sub">-</span>') + '</td>'
                 + '<td data-l="낙찰 가능성" class="r">' + (pc != null ? '<b style="color:' + col + ';">' + pc + '%</b>' : '-') + '</td>'
