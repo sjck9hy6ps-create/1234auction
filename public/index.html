@@ -18965,7 +18965,7 @@ async function renderBidDrawer() {
     if (!row) { d.style.display = 'none'; return; }
     d.style.display = '';
     var a = row.a, lawd = row.lawd || bidBoardLawdOf(a);
-    if (lawd && !dataCache[lawd] && !row._drawerLoading) {
+    if (row.type !== 'villa' && lawd && !dataCache[lawd] && !row._drawerLoading) { // 빌라는 renderVillaDrawer가 자료를 기다리지 않고 바로 그림
         row._drawerLoading = true;
         d.innerHTML = '<div class="dr-sub">이 지역 실거래 불러오는 중…</div>';
         try { var dd = await fetchHouseDataCached(lawd); if (dd && !dd.error && Array.isArray(dd.apt)) await ingestRegionHouseData(dd, '', lawd); } catch (e) {}
