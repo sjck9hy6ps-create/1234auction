@@ -17461,6 +17461,8 @@ async function refreshBidBoard() {
     // 저장해 둔 계산 재사용(2026-10, 사용자 요청: "입찰후보 탭 로딩 시 딜레이 없이") - 물건 입력값이 같고 하루가 안 지났으면
     // 지역 자료를 다시 불러오지 않고 그대로 씀(세금·마진 단계만 지금 내 자산 기준으로 다시). 🔄 다시 계산을 누르면 전부 새로.
     var boardCache = bidBoardState.forceFresh ? {} : ((await listIdbOp('readonly', function(st) { return st.get(BOARD_CACHE_KEY); })) || {});
+    // 매일 새벽 가상 브라우저가 미리 계산해 서버에 올려 둔 결과를 받아 합침(2026-10-10) - 처음 열 때 지역 수백 곳을 받아 계산하던 걸 건너뜀(실패해도 예전처럼 직접 계산)
+    if (!bidBoardState.forceFresh) boardCache = await mergeServerBoardCache(boardCache);
     bidBoardState.forceFresh = false;
     var nowMs = Date.now(), reused = {}, stale = {}, sliceT = Date.now();
     for (var wi = 0; wi < work.length; wi++) {
@@ -17469,7 +17471,7 @@ async function refreshBidBoard() {
         var wa = work[wi];
         var c = boardCache[wa.id];
         if (!c || !c.row) continue;
-        var fresh = c.sig === boardBaseSig(wa) && nowMs - c.at <= BOARD_CACHE_MAX_AGE;
+        var fresh = c.sig === boardBaseSig(wa) && nowMs - c.at <= (c.srv ? BOARD_SRV_MAX_AGE : BOARD_CACHE_MAX_AGE);
         try {
             var row = Object.assign({}, c.row, { a: wa, dday: wa.bidDate ? calcAuctionDday(wa.bidDate) : null, fromCache: c.at, stale: !fresh });
             row = finalizeBidBoardRow(row);
@@ -17571,7 +17573,19 @@ function overshootSaleFactor(type, ratio) {
     for (var i = 0; i < t.length; i++) if (ratio < t[i][0]) return t[i][1];
     return t[t.length - 1][1];
 }
-var BOARD_CACHE_KEY = 'bidBoardCache:v1', BOARD_CACHE_MAX_AGE = 24 * 3600 * 1000;
+var BOARD_CACHE_KEY = 'bidBoardCache:v1', BOARD_CACHE_MAX_AGE = 24 * 3600 * 1000, BOARD_SRV_MAX_AGE = 48 * 3600 * 1000;
+async function mergeServerBoardCache(local) {
+    try {
+        var withTimeout = function(p, ms) { return Promise.race([p, new Promise(function(_, rej) { setTimeout(function() { rej(new Error('시간 초과')); }, ms); })]); };
+        var meta = await withTimeout(fetch('/api/data-coverage?mode=boardCacheMeta').then(function(r) { return r.json(); }), 4000);
+        if (!meta || !meta.n || !meta.at || Date.now() - meta.at > BOARD_SRV_MAX_AGE) return local;
+        var parts = await withTimeout(Promise.all(Array.from({ length: meta.n }, function(_, i) { return fetch('/api/data-coverage?mode=boardCacheChunk&i=' + i).then(function(r) { return r.json(); }); })), 20000);
+        var merged = 0;
+        parts.forEach(function(p) { Object.keys((p && p.items) || {}).forEach(function(id) { var sv = p.items[id], lc = local[id]; if (!lc || !lc.row || (sv.at || 0) > (lc.at || 0)) { local[id] = sv; merged++; } }); });
+        console.log('미리 계산된 입찰후보 ' + merged + '건 받음');
+    } catch (e) { console.warn('미리 계산 결과 못 받음(직접 계산):', e && e.message); }
+    return local;
+}
 // 저장 계산을 다시 써도 되는지 - 물건 입력값(시세 계산에 쓰는 것)과 입찰일 지남 여부. 계산 방식이 바뀌면 BOARD_CALC_VER을 올림
 var BOARD_CALC_VER = 31; // 29: nYear 저장 추가 - // 27: 🎲 예상 낙찰가용 시세(wbBase) 추가 (범위 표시는 화면에서 바로 계산 - 버전 변경 없음)
 function boardBaseSig(a) {

@@ -1,0 +1,23 @@
+name: 입찰후보 계산 미리 해 두기
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '30 20 * * *'   # 매일 KST 05:30 (월요일 05:00 낙찰사례 분석 직후는 07:00 이후 한 번 더 돌리고 싶으면 수동 실행)
+
+jobs:
+  precompute:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - run: npm install @supabase/supabase-js ws playwright
+      - run: npx playwright install --with-deps chromium
+      - env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          SITE_URL: https://1234auction.vercel.app
+        run: node scripts/precompute-board.mjs
