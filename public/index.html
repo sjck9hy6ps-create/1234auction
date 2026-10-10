@@ -3506,7 +3506,7 @@ function showHomestayPop(key) {
    외국인관광 도시민박업(관광진흥법)의 건물 쪽 요건을 건축물대장으로 점검: ① 주택(다세대·연립·다가구·단독·아파트)일 것 ② 주택 연면적 230㎡ 미만 ③ 도시지역(읍·면·리 아님)
    ④ 지하·반지하 아닌지 ⑤ 위반건축물 아닌지(대장 API는 표시를 안 줘서 경매 메모의 '위반' 문구로만 감지, 아니면 열람 필요) + 참고(공동주택 입주민 동의, 신고자 실거주, 소방설비, 노후도, 승강기).
    '검토 가능' = 건물 요건에서 걸리는 게 없다는 뜻이지 영업이 가능하다는 보장이 아님(실거주·동의·용도지역은 관할 확인 필요). */
-var hsBld = {}, hsQueue = [], hsRunning = 0, hsRenderT = null;
+var hsBld = {}, hsQueue = [], hsRunning = 0, hsRenderT = null, hsQuotaUntil = 0; // hsQuotaUntil: 건축HUB 하루 한도를 넘으면 그 시각까지 조회를 멈춤(한도가 풀릴 때까지 계속 두드리지 않게)
 function hsDongKey(addr) {
     var t = String(addr || '').trim().split(/\s+/); if (t.length < 3) return null;
     var sd = (function(s) { var m = [['전남광주', '전남광주'], ['광주', '전남광주'], ['전라남', '전남광주'], ['전남', '전남광주'], ['전북', '전북'], ['전라북', '전북'], ['경상남', '경남'], ['경남', '경남'], ['경상북', '경북'], ['경북', '경북'], ['충청남', '충남'], ['충남', '충남'], ['충청북', '충북'], ['충북', '충북'], ['강원', '강원'], ['제주', '제주'], ['세종', '세종']]; for (var i = 0; i < m.length; i++) if (s.indexOf(m[i][0]) === 0) return m[i][1]; return s.slice(0, 2); })(t[0]);
@@ -3566,13 +3566,15 @@ function homestayCheck(a, info) {
     var verdict = items.some(function(i) { return i.st === 'no'; }) ? 'no' : (items.filter(function(i) { return i.k === '주택 여부' || i.k === '연면적 230㎡ 미만'; }).every(function(i) { return i.st === 'ok'; }) && !items.some(function(i) { return i.k === '지하·반지하' && i.st === 'warn'; }) && !rural ? 'ok' : 'check');
     return { verdict: verdict, items: items, unit: unit };
 }
-function hsPill(v) {
+function hsPill(v, quota) {
+    if (quota) return '<span class="hs-pill hs-load" title="건축물대장 조회 서비스의 하루 요청 한도를 넘었어요. 한도가 풀리면(보통 다음 날) 자동으로 다시 조회해요">⏸ 대장 조회 한도 초과</span>';
     if (!v) return '<span class="hs-pill hs-load">조회 중…</span>';
     return v === 'ok' ? '<span class="hs-pill hs-ok" title="건물 요건(주택·230㎡ 미만·지상·도시지역)에서 걸리는 게 없어요. 실거주·동의·위반건축물은 따로 확인">🏠 도시민박 검토 가능</span>'
         : (v === 'no' ? '<span class="hs-pill hs-no" title="건물 요건에서 막히는 항목이 있어요">🚫 요건 불가</span>' : '<span class="hs-pill hs-check" title="일부 항목을 직접 확인해야 해요">🏠 확인 필요</span>');
 }
 function ensureHomestayCheck(row) {
-    var id = row.id; if (hsBld[id]) return;
+    var id = row.id; if (hsBld[id] && !(hsBld[id].quota && Date.now() > hsQuotaUntil)) return;
+    if (Date.now() < hsQuotaUntil) { hsBld[id] = { quota: true }; return; }
     hsBld[id] = { loading: true }; hsQueue.push(row); hsPump();
 }
 function hsPump() {
@@ -3581,6 +3583,13 @@ function hsPump() {
             hsRunning++;
             var a = row.a, ctx = { dong: a.dong, bunji: a.bunji, name: a.name || row.name, aptDong: a.aptDong };
             var done = function(info) {
+                if (!info && loadBuildingInfo.lastFailed) { // 건축HUB 하루 요청 한도 초과 → '없음'이 아니라 '나중에 다시'로 두고 대기열을 비움
+                    hsQuotaUntil = Date.now() + 30 * 60 * 1000;
+                    hsBld[row.id] = { quota: true };
+                    hsQueue.splice(0).forEach(function(q) { hsBld[q.id] = { quota: true }; });
+                    hsRunning--; clearTimeout(hsRenderT); hsRenderT = setTimeout(function() { if (bidBoardState.visit === 'villa') renderBidBoard(); }, 400);
+                    return;
+                }
                 try { hsBld[row.id] = { info: info, chk: homestayCheck(a, info) }; } catch (e) { hsBld[row.id] = { info: info, chk: { verdict: 'check', items: [], unit: null } }; }
                 hsRunning--; hsPump(); clearTimeout(hsRenderT); hsRenderT = setTimeout(function() { if (bidBoardState.visit === 'villa') renderBidBoard(); }, 400);
             };
@@ -3764,7 +3773,7 @@ function villaMore() { bidBoardState.villaLimit = (bidBoardState.villaLimit || 1
 function renderVillaLite(body) {
     var all = villaMetroRows(), s = bidBoardState, vv = s.villaVisit || 'go';
     if (!homestayAgg) loadHomestayAgg(function() { if (bidBoardState.visit === 'villa') renderBidBoard(); }); // 이미 받았으면 콜백이 바로 불려 무한 반복되므로 처음 한 번만
-    all.forEach(ensureHomestayCheck);
+    all.slice().sort(function(x, y) { return (x.dday ? x.dday.diffDays : 9999) - (y.dday ? y.dday.diffDays : 9999); }).forEach(ensureHomestayCheck); // 입찰이 가까운 물건부터 조회
     var evs = {}; all.forEach(function(r) { evs[r.id] = villaEval(r); });
     var goN = all.filter(function(r) { return evs[r.id].visit.go; }).length, passN = all.length - goN;
     var rank = { ok: 0, check: 1, no: 2 };
@@ -3798,8 +3807,8 @@ function renderVillaLite(body) {
             + '<td class="bb2-name"><b>' + bbEsc(r.name) + '</b><div class="bb-sub">' + bbEsc(r.region) + (r.pyung ? ' · ' + r.pyung + '평' : '') + (r.floor ? ' · ' + r.floor + '층' : '') + '</div></td>'
             + '<td class="r">' + money(r.minBid) + '</td><td class="r">' + money(r.appraisal) + '</td>'
             + '<td class="r">' + estCell + '</td><td class="r">' + marCell + '</td><td class="r">' + winCell + '</td>'
-            + '<td>' + (t ? bbEsc(t.mainPurps || '') + '<div class="bb-sub">' + (t.grndFlrCnt || '-') + '층 · ' + (t.useAprDay ? String(t.useAprDay).slice(0, 4) + '년' : '-') + ' · 승강기 ' + (elv ? elv + '대' : '없음') + '</div>' : (st.loading ? '<span class="bb-sub">조회 중…</span>' : '<span class="bb-sub">대장 없음</span>')) + '</td>'
-            + '<td>' + hsPill(chk && chk.verdict) + '</td>'
+            + '<td>' + (t ? bbEsc(t.mainPurps || '') + '<div class="bb-sub">' + (t.grndFlrCnt || '-') + '층 · ' + (t.useAprDay ? String(t.useAprDay).slice(0, 4) + '년' : '-') + ' · 승강기 ' + (elv ? elv + '대' : '없음') + '</div>' : (st.quota ? '<span class="bb-sub" title="연식·승강기·층수를 아직 못 가져왔어요">⏸ 한도 초과(내일 자동 조회)</span>' : (st.loading ? '<span class="bb-sub">조회 중…</span>' : '<span class="bb-sub">대장 없음</span>'))) + '</td>'
+            + '<td>' + hsPill(chk && chk.verdict, st.quota) + '</td>'
             + '<td>' + (ag ? '<span class="hs-pill" style="background:' + sc.c + ';">' + sc.t + '</span><div class="bb-sub">영업 ' + ag.open + '곳 · 순증 ' + (ag.net1y > 0 ? '+' : '') + ag.net1y + '/년</div>' : '<span class="bb-sub">' + (homestayAgg ? '등록 업소 거의 없음' : '-') + '</span>') + '</td></tr>';
     });
     h += '</tbody></table>' + (rows.length > lim ? '<div style="text-align:center;padding:14px;"><button class="bb-csv" style="font-size:13px;padding:8px 18px;" onclick="villaMore()">+ 더 보기 (남은 ' + (rows.length - lim) + '건)</button></div>' : '');
