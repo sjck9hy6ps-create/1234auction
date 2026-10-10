@@ -52,11 +52,18 @@ def main():
     cc = avm.fetch_all_rows("complex_coords", cols="cache_key,sigungu_cd,bjdong_cd", order_col="id", extra_filter="&or=(sigungu_cd.like.11*,sigungu_cd.like.28*,sigungu_cd.like.41*)")
     cmap = {r.cache_key: (r.sigungu_cd, r.bjdong_cd) for r in cc.itertuples()}
     print(f"좌표 캐시 {len(cmap):,}건")
-    mn = pd.to_numeric(df["main_num"], errors="coerce").fillna(0).astype(int)
-    sn = df["sub_num"].astype(str).replace({"nan": "", "None": "", "<NA>": ""})
-    sn = sn.where(~sn.str.fullmatch(r"\d+\.0"), sn.str.replace(r"\.0$", "", regex=True))
-    ck = (df["dong"].fillna("").astype(str) + "|" + df["danji"].fillna("").astype(str) + "|" + df["bunji"].fillna("").astype(str) + "|" + df["road_name"].fillna("").astype(str) + "|" + mn.astype(str) + "|" + sn).str.lower()
-    cc2 = ck.map(cmap)
+    mnum = pd.to_numeric(df["main_num"], errors="coerce")
+    snum = pd.to_numeric(df["sub_num"], errors="coerce")
+    base = df["dong"].fillna("").astype(str) + "|" + df["danji"].fillna("").astype(str) + "|" + df["bunji"].fillna("").astype(str) + "|" + df["road_name"].fillna("").astype(str) + "|"
+    # 앱·웜업이 쓰는 키 두 가지: 본번 빈 값→0(buildCacheKey) / 원본 그대로(legacy, 빈 값은 그대로 빈 문자열)
+    k_new = (base + mnum.fillna(0).astype(int).astype(str) + "|" + snum.fillna(0).astype(int).astype(str).where(snum.fillna(0) > 0, "")).str.lower()
+    k_leg = (base + mnum.map(lambda v: "" if pd.isna(v) else str(int(v))) + "|" + snum.map(lambda v: "" if pd.isna(v) else str(int(v)))).str.lower()
+    k_leg0 = (base + mnum.map(lambda v: "" if pd.isna(v) else str(int(v))) + "|" + snum.map(lambda v: "0" if pd.isna(v) else str(int(v)))).str.lower()
+    cc2 = k_new.map(cmap)
+    for alt in (k_leg, k_leg0):
+        miss = cc2.isna()
+        cc2 = cc2.where(~miss, alt.map(cmap))
+    print("키 일치 샘플(좌표 캐시 키):", list(cmap.keys())[:3])
     df["sg"] = cc2.map(lambda x: x[0] if isinstance(x, tuple) else None); df["bj"] = cc2.map(lambda x: x[1] if isinstance(x, tuple) else None)
     bb = df["bunji"].map(bunji_to_bunji)
     df["bun"] = bb.map(lambda x: x[0] if x else None); df["ji"] = bb.map(lambda x: x[1] if x else None)
