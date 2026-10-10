@@ -69,7 +69,7 @@ const supabase = createClient(
 
 const API_KEY = process.env.PUBLIC_DATA_API_KEY;
 const BASE = 'https://apis.data.go.kr/1613000/BldRgstHubService';
-const FRESH_MS = 1000 * 60 * 60 * 24 * 365; // 1년 - 2026-10(사용자: "건축물대장은 한 번 정확히 불러오면 변하지 않으니 자주 부를 필요 없음"). 공시가격만 해마다 바뀜
+const FRESH_MS = 1000 * 60 * 60 * 24 * 365 * 5; // 5년(2026-10-10 1년→5년: 표제부·층·전유면적은 사실상 안 변함. 이전: 1년 - 2026-10(사용자: "건축물대장은 한 번 정확히 불러오면 변하지 않으니 자주 부를 필요 없음"). 공시가격만 해마다 바뀜
 
 // 2026-07 인천 서구→서해구/검단구 분구로 법정동코드가 바뀐 지역 중, 건축HUB가 아직
 // 새 코드를 인식하지 못해 구코드로 재시도해야 하는 것으로 "확인된" 매핑만 등록.
@@ -133,6 +133,18 @@ export default async function handler(req, res) {
         .maybeSingle();
       if (cacheErr) console.error('building_info 캐시 조회 에러:', cacheErr.message);
       cached = cachedRow;
+      // 2026-10-10(사용자: "건축물대장은 거의 안 변하니 재수집 낭비가 없게"): 캐시 키에 이름이 들어 있어서 같은 지번인데 이름만 다르게(경매 '이동 530-21' vs 실거래 단지명)
+      // 조회하면 이미 받은 건물을 또 외부 API로 받고 있었음 → 정확한 키가 없으면 같은 지번의 저장본(동 번호 없이 저장된 것)을 그대로 씀.
+      if (!cached && !dongNoDigits) {
+        const { data: lotRows } = await supabase
+          .from('building_info')
+          .select('*')
+          .eq('sigungu_cd', sigunguCd).eq('bjdong_cd', bjdongCd).eq('bun', bun).eq('ji', jiParam)
+          .not('title_json', 'is', null)
+          .order('fetched_at', { ascending: false })
+          .limit(5);
+        cached = (lotRows || []).find(r => !String(r.bld_nm || '').includes('__d')) || null;
+      }
     }
 
     // 주거동이 아닌 건물(상가동 등)이 저장돼 있으면 전국 어디서든 한 번 다시 조회 - 주거동 우선 선택 규칙(pickBestItem)이 생기기 전에
@@ -369,13 +381,19 @@ async function handleBatchCacheCheck(req, res) {
       from += PAGE_SIZE;
     }
 
+    const lotIndex = {};
+    Object.keys(rowMap).forEach(k => { const r = rowMap[k]; if (r.title_json && !String(r.bld_nm || '').includes('__d')) { const lk = [r.sigungu_cd, r.bjdong_cd, r.bun, r.ji].join('|') + '|'; if (!lotIndex[lk] || new Date(r.fetched_at) > new Date(lotIndex[lk].fetched_at)) lotIndex[lk] = r; } });
     const results = {};
     items.forEach(it => {
       const jiParam = it.ji || '0000';
       const bldNmKey = (it.bldNm || '').trim();
       const rowKey = [it.sigunguCd, it.bjdongCd, it.bun, jiParam, bldNmKey].join('|');
       const key = it.key || rowKey;
-      const row = rowMap[rowKey];
+      let row = rowMap[rowKey];
+      if (!row && !it.dongNo) { // 같은 지번의 다른 이름 저장본(동 번호 없는 것) 재사용
+        const pre = [it.sigunguCd, it.bjdongCd, it.bun, jiParam].join('|') + '|';
+        row = lotIndex[pre] || null;
+      }
       if (row && (Date.now() - new Date(row.fetched_at).getTime()) < FRESH_MS) {
         results[key] = {
           title: row.title_json,
