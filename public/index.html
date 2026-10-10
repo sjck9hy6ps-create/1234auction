@@ -3858,6 +3858,7 @@ var VILLA_COLS = {
     p: { label: '낙찰 가능성', first: -1, val: function(r, e) { return e.pn && e.pn.ev ? e.pn.ev.p : null; } },
     net: { label: '순이익', first: -1, val: function(r, e) { return e.pn && e.pn.ev ? e.pn.ev.net : null; } },
     evv: { label: '기대수익', first: -1, val: function(r, e) { return e.pn && e.pn.ev ? e.pn.ev.p * e.pn.ev.net : null; } },
+    liq: { label: '생활권 거래', first: -1, val: function(r, e) { return e.liq ? e.liq.r500.a6 : null; } },
     age: { label: '연식', first: 1, val: function(r, e) { return e.mp && e.mp.age != null ? e.mp.age : null; } },
     hs: { label: '도시민박', first: 1, val: function(r) { var st = hsBld[r.id]; return st && st.chk ? ({ ok: 0, check: 1, no: 2 })[st.chk.verdict] : null; } },
     net1y: { label: '순증', first: -1, val: function(r) { var dk = hsDongKey(r.a.addr), ag = dk && homestayAgg && homestayAgg.byDong ? homestayAgg.byDong[dk] : null; return ag ? ag.net1y : null; } }
@@ -3870,13 +3871,57 @@ function villaTh(k, label) {
 var VILLA_VISIT_MIN_P = 0.20;
 /* 빌라 예상매도가 계산 결과 보관(2026-10-10, 사용자: 빌라 표에 금액이 없음) - 입찰후보 계산은 지역 실거래를 계산 직후 메모리에서 내려서
    표를 그릴 때는 지역 자료가 없었음 → 빌라 탭이 필요한 지역을 하나씩 불러 예상매도가만 계산해 두고 자료는 다시 내림 */
+/* 📍 빌라 생활권 거래 활발도 (2026-10-10, 사용자: "빌라는 지역이 중요 - 법정동이 아니라 생활권 기준으로 최근 6개월·1년·1년 이전 거래를 나눠 보고, 최근 거래가 없는 지역은 낙찰받아도 매도가 어렵다")
+   물건 위치 기준 반경 500m·1km 안 빌라 매매(직거래 제외)를 최근 6개월 / 6~12개월 / 1~2년으로 셈(법정동·시군구 경계를 넘어서 셈).
+   근거(수도권 빌라 낙찰사례 1,225건, 낙찰 후 12개월 안 같은 건물·층·면적 되팔림 흔적): 반경 500m 최근 6개월 거래 0건 → 10.3%(n=39), 있으면 26.7%; 반경 1km 최근 6개월 0건 → 0%(n=17).
+   그 외 구간(1~5건 등)은 뚜렷한 차이가 없어 '반경 500m 최근 6개월 0건'만 임장 후보에서 뺌(표본이 작아 참고 근거). 지역 자료를 불러올 때 거래 좌표를 모아 두고, 전부 불러온 뒤에 계산. */
+var villaPts = {}, villaLiqCache = {}, villaLiqFinal = false, villaPtsTried = {};
+function villaCollectPts(lawd) {
+    var list = dataCache[lawd]; if (!list) return;
+    var lat = [], lon = [], t = [], cut = Date.now() - 740 * 86400000;
+    list.forEach(function(ap) {
+        if ((ap.buildingType || 'apt') !== 'villa') return;
+        var l = ap.latest || {}, c = coordCache[[l.dong, l.name, l.bunji, l.road_name, l.main_num, l.sub_num].join('|').toLowerCase()];
+        if (!c || !c.lat) return;
+        (ap.trades || []).forEach(function(tr) {
+            if (tr.dealing_type === '직거래') return;
+            var ts = tradeDate(tr).getTime(); if (!(ts >= cut)) return;
+            lat.push(c.lat); lon.push(c.lon); t.push(ts);
+        });
+    });
+    villaPts[lawd] = { lat: lat, lon: lon, t: t };
+}
+function villaLiqCompute() {
+    var grid = {}, CA = 0.005, CB = 0.0063;
+    Object.keys(villaPts).forEach(function(k) { var P = villaPts[k]; for (var i = 0; i < P.t.length; i++) { var key = Math.floor(P.lat[i] / CA) * 100000 + Math.floor(P.lon[i] / CB); (grid[key] = grid[key] || []).push(P.lat[i], P.lon[i], P.t[i]); } });
+    var now = Date.now(), D = 86400000;
+    villaMetroRows(true).forEach(function(r) {
+        var a = r.a; if (!(a.lat && a.lon) || !villaPts[bidBoardLawdOf(a)]) return;
+        var ia = Math.floor(a.lat / CA), ib = Math.floor(a.lon / CB), o = { r500: { a6: 0, a12: 0, a24: 0 }, r1000: { a6: 0, a12: 0, a24: 0 } };
+        for (var da = -2; da <= 2; da++) for (var db = -2; db <= 2; db++) {
+            var cell = grid[(ia + da) * 100000 + (ib + db)]; if (!cell) continue;
+            for (var i = 0; i < cell.length; i += 3) {
+                var dy = (cell[i] - a.lat) * 111000, dx = (cell[i + 1] - a.lon) * 88000, d2 = dx * dx + dy * dy; if (d2 > 1000000) continue;
+                var age = (now - cell[i + 2]) / D, bk = age < 183 ? 'a6' : (age < 365 ? 'a12' : (age < 730 ? 'a24' : null)); if (!bk) continue;
+                o.r1000[bk]++; if (d2 <= 250000) o.r500[bk]++;
+            }
+        }
+        villaLiqCache[r.id] = o; delete r._vev;
+    });
+}
+function villaLiqHtml(liq) {
+    if (!liq) return '<span class="bb-sub">계산 중…</span>';
+    var z = liq.r500.a6 === 0;
+    return '<div style="font-weight:700;color:' + (z ? '#b91c1c' : '#111827') + ';" title="반경 500m 안 최근 6개월 빌라 매매 건수">최근 6개월 ' + liq.r500.a6 + '건</div>'
+        + '<div class="bb-sub">6~12개월 ' + liq.r500.a12 + ' · 1~2년 ' + liq.r500.a24 + '</div><div class="bb-sub" title="반경 1km">1km: ' + liq.r1000.a6 + ' / ' + liq.r1000.a12 + ' / ' + liq.r1000.a24 + '</div>';
+}
 var villaVeCache = {}, villaLoadBusy = false;
 function villaVeSig(a) { return [a.pyung, a.addr, a.dong, a.bunji, a.bidDate, a.buildYear || '', a.estBuildYear || ''].join('|'); }
 async function villaLoadRegions() {
     if (villaLoadBusy) return; villaLoadBusy = true;
     try {
         while (typeof bidBoardRunning !== 'undefined' && bidBoardRunning) await new Promise(function(r) { setTimeout(r, 1000); }); // 입찰후보 계산이 끝나길 기다림
-        var rows = villaMetroRows(true).filter(function(r) { var c = villaVeCache[r.id]; return !(c && c.sig === villaVeSig(r.a)); });
+        var rows = villaMetroRows(true).filter(function(r) { var c = villaVeCache[r.id]; return !(c && c.sig === villaVeSig(r.a)) || (bidBoardLawdOf(r.a) && !villaPts[bidBoardLawdOf(r.a)]); });
         var byL = {}; rows.forEach(function(r) { var k = bidBoardLawdOf(r.a); if (k) (byL[k] = byL[k] || []).push(r); else villaVeCache[r.id] = { sig: villaVeSig(r.a), ve: null }; });
         var soon = function(k) { var m = 9999; byL[k].forEach(function(r) { if (r.dday && r.dday.diffDays < m) m = r.dday.diffDays; }); return m; };
         var order = Object.keys(byL).sort(function(x, y) { return soon(x) - soon(y); });
@@ -3884,8 +3929,9 @@ async function villaLoadRegions() {
             var lawd = order[i], had = !!dataCache[lawd];
             try {
                 if (!had) { var dd = await fetchHouseDataCached(lawd); if (dd && !dd.error && Array.isArray(dd.apt)) await ingestRegionHouseData(dd, '', lawd); }
-                if (dataCache[lawd]) byL[lawd].forEach(function(r) { var ve = null; try { ve = villaSaleEst(r.a); } catch (e) {} villaVeCache[r.id] = { sig: villaVeSig(r.a), ve: ve }; delete r._vev; });
+                if (dataCache[lawd]) { villaCollectPts(lawd); byL[lawd].forEach(function(r) { var c0 = villaVeCache[r.id]; if (c0 && c0.sig === villaVeSig(r.a)) return; var ve = null; try { ve = villaSaleEst(r.a); } catch (e) {} villaVeCache[r.id] = { sig: villaVeSig(r.a), ve: ve }; delete r._vev; }); }
             } catch (e) { console.error('빌라 지역 계산 실패:', lawd, e && e.message); }
+            villaPtsTried[lawd] = true;
             byL[lawd].forEach(function(r) { var c = villaVeCache[r.id]; if (!(c && c.sig === villaVeSig(r.a))) villaVeCache[r.id] = { sig: villaVeSig(r.a), ve: null }; }); // 못 불러온 지역도 다시 두드리지 않음(새로고침하면 다시 시도)
             if (!had && dataCache[lawd] && lawd !== (typeof lastLawdCd !== 'undefined' ? lastLawdCd : null) && !(bidDrawerId && (bidBoardRows.filter(function(r) { return r.id === bidDrawerId; })[0] || {}).lawd === lawd)) {
                 delete dataCache[lawd]; delete rentCacheByLawd[lawd]; mergedLawdCds.delete(lawd);
@@ -3894,7 +3940,7 @@ async function villaLoadRegions() {
             if (bidBoardState.visit === 'villa' && Date.now() - bbLastInteract > 2000) renderBidBoard();
             await new Promise(function(r) { setTimeout(r, 60); });
         }
-    } finally { villaLoadBusy = false; if (bidBoardState.visit === 'villa') renderBidBoard(); }
+    } finally { villaLoadBusy = false; try { if (Object.keys(villaPts).length) { villaLiqCompute(); villaLiqFinal = true; } } catch (e) { console.error('빌라 생활권 계산 실패', e); } if (bidBoardState.visit === 'villa') renderBidBoard(); }
 }
 /* 🚩 빌라 이슈 의심(2026-10-10, 사용자: "유찰 3회 이상이거나 최저가가 현저히 낮으면 권리상 문제 있는 경우가 대부분 - 걸러내줘") - 아파트와 같은 기준 + 감정가 대비 극단적으로 낮은 최저가.
    기준: 최저가÷예상매도가 40% 미만, 또는 3회+ 유찰이면서 50% 미만, 또는 최저가가 감정가의 20% 미만 → 강한 의심 / 3회+ 유찰 또는 45% 미만 → 의심. 둘 다 임장 후보에서 뺌(패스에 사유 표시).
@@ -3912,9 +3958,10 @@ function villaIssueFor(row, ve) {
 function villaEval(row) {
     var st = hsBld[row.id] || {}, t = st.info && st.info.title, lawd = bidBoardLawdOf(row.a);
     var vc = villaVeCache[row.id], vcOk = vc && vc.sig === villaVeSig(row.a);
-    var sig = [vcOk ? 1 : 0, t ? 1 : 0, villaWinModel ? 1 : 0, row.minBid, row.a.floor, row.a.pyung, row.a.buildYear || '', row.a.bidDate || '', row.a.appraisal || '', st.loading ? 1 : 0, (row.a.listingParse && row.a.listingParse.at) || '', (row.a.listingParse && row.a.listingParse.n) || 0, row.a.repair || '', row.a.assumedDeposit || '', row.a.unpaidMgmtFee || '', row.a.etc || ''].join('|');
+    var lq = villaLiqFinal ? villaLiqCache[row.id] : null;
+    var sig = [vcOk ? 1 : 0, lq ? 1 + lq.r500.a6 : 0, t ? 1 : 0, villaWinModel ? 1 : 0, row.minBid, row.a.floor, row.a.pyung, row.a.buildYear || '', row.a.bidDate || '', row.a.appraisal || '', st.loading ? 1 : 0, (row.a.listingParse && row.a.listingParse.at) || '', (row.a.listingParse && row.a.listingParse.n) || 0, row.a.repair || '', row.a.assumedDeposit || '', row.a.unpaidMgmtFee || '', row.a.etc || ''].join('|');
     if (row._vev && row._vev.sig === sig) return row._vev;
-    var ev = { sig: sig, t: t, ve: null, mp: null, wb: null, pn: null, visit: { go: false, why: '' } };
+    var ev = { sig: sig, t: t, liq: lq, ve: null, mp: null, wb: null, pn: null, visit: { go: false, why: '' } };
     if (vcOk) ev.ve = vc.ve;
     else if (lawd && dataCache[lawd]) { try { ev.ve = villaSaleEst(row.a); } catch (e) {} villaVeCache[row.id] = { sig: villaVeSig(row.a), ve: ev.ve }; }
     if (ev.ve) { // 호가 상한: 비슷한 면적·층의 싼 매물이 더 낮으면 예상매도가를 그 값으로 낮춤
@@ -3931,6 +3978,7 @@ function villaEval(row) {
     var v = ev.visit, fl = parseInt(row.a.floor, 10);
     if (!ev.ve) v.why = (vcOk || (lawd && dataCache[lawd])) ? '시세 근거 거래가 없어요' : '지역 자료 불러오는 중';
     else if (!ev.wb) v.why = '계산 중';
+    else if (ev.liq && ev.liq.r500.a6 === 0) v.why = '📍 생활권(반경 500m) 최근 6개월 거래 0건 - 팔릴 지역인지 근거가 부족해요(최근 1년 ' + (ev.liq.r500.a12) + '건·6~12개월, 1~2년 ' + ev.liq.r500.a24 + '건)';
     else if ((ev.issue = villaIssueFor(row, ev.ve))) v.why = '🚩 이슈 ' + (ev.issue.level === 'high' ? '강한 의심' : '의심') + '(' + ev.issue.why.join('·') + ') - 권리 문제·인수 보증금 확인 필요';
     else if (!ev.pn || ev.pn.infeasible || !ev.pn.ev) v.why = '최저가로도 필요 마진 ' + (ev.mp ? toEok(String(ev.mp.margin)) : '') + '이 안 남아요';
     else if (ev.ve.lvl === '동1~4' || ev.ve.lvl === '시군구') v.why = '시세 근거 약함(' + ev.ve.lvl + ')';
@@ -3946,7 +3994,7 @@ function renderVillaLite(body) {
     if (!homestayAgg) loadHomestayAgg(function() { if (bidBoardState.visit === 'villa') renderBidBoard(); }); // 이미 받았으면 콜백이 바로 불려 무한 반복되므로 처음 한 번만
     all.slice().sort(function(x, y) { return (x.dday ? x.dday.diffDays : 9999) - (y.dday ? y.dday.diffDays : 9999); }).forEach(ensureHomestayCheck); // 입찰이 가까운 물건부터 조회
     var evs = {}; all.forEach(function(r) { evs[r.id] = villaEval(r); });
-    if (!villaLoadBusy && all.some(function(r) { var c = villaVeCache[r.id]; return !(c && c.sig === villaVeSig(r.a)); })) setTimeout(villaLoadRegions, 50);
+    if (!villaLoadBusy && all.some(function(r) { var c = villaVeCache[r.id]; return !(c && c.sig === villaVeSig(r.a)) || (bidBoardLawdOf(r.a) && !villaPts[bidBoardLawdOf(r.a)] && !villaPtsTried[bidBoardLawdOf(r.a)]); })) setTimeout(villaLoadRegions, 50);
     var goN = all.filter(function(r) { return evs[r.id].visit.go; }).length, passN = all.length - goN;
     var rank = { ok: 0, check: 1, no: 2 };
     var vcol = s.villaCol || 'verdict', vdir = s.villaDir || 1, vdef = VILLA_COLS[vcol] || VILLA_COLS.verdict;
@@ -3970,7 +4018,7 @@ function renderVillaLite(body) {
         + (homestayAgg && !homestayAgg.empty ? '' : ' · 도시민박 지역 집계 불러오는 중…') + '</span></div>';
     if (!rows.length) { body.innerHTML = h + '<div class="bb-empty">' + (all.length ? '이 목록에는 물건이 없어요.' : '수도권 빌라 입찰후보가 없어요.') + '</div>'; return; }
     var lim = s.villaLimit || 120;
-    h += '<table class="bb2-table"><thead><tr><th>' + villaTh('verdict') + '</th><th>' + villaTh('date') + '</th><th>' + villaTh('name') + '</th><th class="r">' + villaTh('minBid') + '</th><th class="r">' + villaTh('appr') + '</th><th class="r">' + villaTh('est') + '<div class="bb2-subsort" style="justify-content:flex-end;">' + villaTh('err', '오차') + '</div></th><th class="r">필요 마진 · 입찰 상한<div class="bb2-subsort" style="justify-content:flex-end;">' + villaTh('margin', '마진') + villaTh('cap', '상한') + '</div></th><th class="r">예상 낙찰가 · 추천가<div class="bb2-subsort" style="justify-content:flex-end;">' + villaTh('win', '낙찰가') + villaTh('rec', '추천가') + villaTh('p', '가능성') + villaTh('net', '순이익') + villaTh('evv', '기대수익') + '</div></th><th>건물(대장)<div class="bb2-subsort">' + villaTh('age', '연식') + '</div></th><th>' + villaTh('hs') + '</th><th>이 동의 도시민박<div class="bb2-subsort">' + villaTh('net1y', '순증') + '</div></th></tr></thead><tbody>';
+    h += '<table class="bb2-table"><thead><tr><th>' + villaTh('verdict') + '</th><th>' + villaTh('date') + '</th><th>' + villaTh('name') + '</th><th class="r">' + villaTh('minBid') + '</th><th class="r">' + villaTh('appr') + '</th><th class="r">' + villaTh('est') + '<div class="bb2-subsort" style="justify-content:flex-end;">' + villaTh('err', '오차') + '</div></th><th class="r">필요 마진 · 입찰 상한<div class="bb2-subsort" style="justify-content:flex-end;">' + villaTh('margin', '마진') + villaTh('cap', '상한') + '</div></th><th class="r">예상 낙찰가 · 추천가<div class="bb2-subsort" style="justify-content:flex-end;">' + villaTh('win', '낙찰가') + villaTh('rec', '추천가') + villaTh('p', '가능성') + villaTh('net', '순이익') + villaTh('evv', '기대수익') + '</div></th><th class="r">생활권 거래<div class="bb-sub" style="display:block;">반경 500m (1km)</div><div class="bb2-subsort" style="justify-content:flex-end;">' + villaTh('liq', '6개월') + '</div></th><th>건물(대장)<div class="bb2-subsort">' + villaTh('age', '연식') + '</div></th><th>' + villaTh('hs') + '</th><th>이 동의 도시민박<div class="bb2-subsort">' + villaTh('net1y', '순증') + '</div></th></tr></thead><tbody>';
     rows.slice(0, lim).forEach(function(r) {
         var ev = evs[r.id], st = hsBld[r.id] || {}, chk = st.chk, t = ev.t, idJs = String(r.id).replace(/\\/g, '\\\\').replace(/'/g, "\\'"), ve = ev.ve, mp = ev.mp, wb = ev.wb, pn = ev.pn;
         var dk = hsDongKey(r.a.addr), ag = dk && homestayAgg && homestayAgg.byDong ? homestayAgg.byDong[dk] : null, sc = ag ? (HS_STATE[ag.state] || HS_STATE['안정']) : null;
@@ -3984,7 +4032,7 @@ function renderVillaLite(body) {
             + '<td>' + (r.dday ? '<span class="bb-dday' + (r.dday.diffDays >= 0 && r.dday.diffDays <= 3 ? ' soon' : '') + '">' + bbEsc(r.dday.label) + '</span>' : '-') + '<div class="bb-sub">' + bbEsc(r.a.bidDate || '') + '</div></td>'
             + '<td class="bb2-name"><b>' + bbEsc(r.name) + '</b><div class="bb-sub">' + bbEsc(r.region) + (r.pyung ? ' · ' + r.pyung + '평' : '') + (r.floor ? ' · ' + r.floor + '층' : '') + '</div></td>'
             + '<td class="r">' + money(r.minBid) + '</td><td class="r">' + money(r.appraisal) + '</td>'
-            + '<td class="r">' + estCell + '</td><td class="r">' + marCell + '</td><td class="r">' + winCell + '</td>'
+            + '<td class="r">' + estCell + '</td><td class="r">' + marCell + '</td><td class="r">' + winCell + '</td><td class="r">' + villaLiqHtml(ev.liq) + '</td>'
             + '<td>' + (t ? bbEsc(t.mainPurps || '') + '<div class="bb-sub">' + (t.grndFlrCnt || '-') + '층 · ' + (t.useAprDay ? String(t.useAprDay).slice(0, 4) + '년' : '-') + ' · 승강기 ' + (elv ? elv + '대' : '없음') + '</div>' : (st.quota ? '<span class="bb-sub" title="연식·승강기·층수를 아직 못 가져왔어요">⏸ 한도 초과(내일 자동 조회)</span>' : (st.loading ? '<span class="bb-sub">조회 중…</span>' : '<span class="bb-sub">대장 없음</span>'))) + '</td>'
             + '<td>' + hsPill(chk && chk.verdict, st.quota) + '</td>'
             + '<td>' + (ag ? '<span class="hs-pill" style="background:' + sc.c + ';">' + sc.t + '</span><div class="bb-sub">영업 ' + ag.open + '곳 · 순증 ' + (ag.net1y > 0 ? '+' : '') + ag.net1y + '/년</div>' : '<span class="bb-sub">' + (homestayAgg ? '등록 업소 거의 없음' : '-') + '</span>') + '</td></tr>';
@@ -18657,6 +18705,10 @@ async function renderVillaDrawer(d, row) {
         h += '<div class="dr-wb"><div class="dr-wb-h">🎲 예상 낙찰가 <b>' + fmt(wb.price) + '</b><span class="dr-sub" style="margin:0 0 0 6px;">비슷한 빌라가 보통 낙찰되는 가격(낙찰사례 약 6천 건, 보통 오차 약 9%)</span></div>'
             + (pn && pn.pMax != null ? '<div>입찰 상한 ' + fmt(pn.max) + '으로 쓰면 낙찰 가능성 약 <b>' + Math.round(pn.pMax * 100) + '%</b></div>' : '') + '</div>';
     }
+    h += '<div class="dr-sec"><h4>📍 생활권 거래 활발도 <span class="dr-sub" style="display:inline;">(법정동이 아니라 이 물건 위치 기준 반경)</span></h4>'
+        + (ev.liq ? '<table><tr><th></th><th class="r">최근 6개월</th><th class="r">6~12개월</th><th class="r">1~2년 전</th></tr><tr><td>반경 500m</td><td class="r"><b style="color:' + (ev.liq.r500.a6 === 0 ? '#b91c1c' : '#111827') + ';">' + ev.liq.r500.a6 + '건</b></td><td class="r">' + ev.liq.r500.a12 + '건</td><td class="r">' + ev.liq.r500.a24 + '건</td></tr><tr><td>반경 1km</td><td class="r">' + ev.liq.r1000.a6 + '건</td><td class="r">' + ev.liq.r1000.a12 + '건</td><td class="r">' + ev.liq.r1000.a24 + '건</td></tr></table>'
+            + '<div class="dr-sub">반경 500m 안 최근 6개월 거래가 0건이면 임장 후보에서 빼요. 근거: 수도권 빌라 낙찰사례 1,225건 중 이런 지역 낙찰은 12개월 안 되팔림 흔적이 10%(그 외 27%), 반경 1km 6개월 0건은 0%(표본 17건)예요. 직거래 제외·같은 시군구 자료만 보므로 경계 근처는 실제보다 적게 나올 수 있어요.</div>'
+            : '<div class="dr-sub">지역 자료를 모두 불러온 뒤 계산돼요…</div>') + '</div>';
     // 같은 건물·같은 동 비슷한 면적 실거래
     var tr = []; try { tr = drawerTrades(row); } catch (e) {}
     if (tr.length) {
