@@ -11566,8 +11566,9 @@ function inferNaverType(o) {
     return null;
 }
 function naverLandUrl(o) {
-    var type = o.type || inferNaverType(o), code = type ? NAVER_PROP_TYPE_CODE[type] : null, q = code ? ('&a=' + code + '&b=A1&e=RETAIL') : '';
+    var type = o.type || inferNaverType(o), code = type ? NAVER_PROP_TYPE_CODE[type] : null, q = code ? ('&a=' + code + '&b=A1' + (type === 'apt' ? '' : '&e=RETAIL')) : '';
     var py = parseFloat(o.pyung);
+    if (type === 'apt') py = 0, o.buildYear = null; // 아파트는 종류·매매만 걸고 평형·연식 조건은 걸지 않음(2026-10-10 사용자 요청)
     if (code && py > 0) q += '&h=' + Math.max(Math.round((py - 5) * 3.305785), 0) + '&i=' + Math.round((py + 5) * 3.305785);
     var by = parseInt(o.buildYear, 10);
     if (code && by > 1900) { var age = new Date().getFullYear() - by; q += '&j=' + (age + 5) + '&k=' + Math.max(age - 10, 0); }
@@ -11589,9 +11590,10 @@ function openNaverLandForModal() {
     var propType = document.getElementById('a-prop-type').value;
     var nvType = inferNaverType({ propType: propType, name: ctx.name, addr: document.getElementById('a-addr').value, buildingType: null });
     var naverCode = nvType ? NAVER_PROP_TYPE_CODE[nvType] : NAVER_PROP_TYPE_CODE[propType];
-    var filterQuery = naverCode ? ('&a=' + naverCode + '&b=A1&e=RETAIL') : '';
+    var isAptNv = (nvType || propType) === 'apt';
+    var filterQuery = naverCode ? ('&a=' + naverCode + '&b=A1' + (isAptNv ? '' : '&e=RETAIL')) : '';
     // 평형(전용면적) 전후 ±5평 - 이 물건의 평형을 알고 있으면 ㎡로 환산해 범위로 걸어줌
-    var pyung = parseFloat(document.getElementById('a-pyung').value);
+    var pyung = isAptNv ? 0 : parseFloat(document.getElementById('a-pyung').value);
     if (naverCode && pyung > 0) {
         var minM2 = Math.max(Math.round((pyung - 5) * 3.305785), 0);
         var maxM2 = Math.round((pyung + 5) * 3.305785);
@@ -11599,7 +11601,7 @@ function openNaverLandForModal() {
     }
     // 사용승인일(연식) 전 5년~후 10년 - 건축HUB/AI추출로 확인된 사용승인연도가 있으면
     // 연차 범위로 걸어줌. 사용승인연도가 Y라면 [Y-5, Y+10] 범위 → 연차로는 [연차-10, 연차+5]
-    var buildYear = getAuctionBuildYear();
+    var buildYear = isAptNv ? null : getAuctionBuildYear();
     if (naverCode && buildYear) {
         var age = new Date().getFullYear() - buildYear;
         var minAge = Math.max(age - 10, 0);
