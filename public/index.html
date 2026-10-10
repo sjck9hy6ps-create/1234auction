@@ -3646,6 +3646,33 @@ function villaSaleEst(a, ref) {
     var est = Math.round(p * area), r = VILLA_EST_RANGE[lvl];
     return { est: est, lvl: lvl, n1: n1, n2: n2, lo: Math.round(est / (1 + r[1] / 100)), hi: Math.round(est / (1 + r[0] / 100)), errPct: r[2] };
 }
+
+/* ════ 🏘️ 빌라 최소 마진 규칙 (2026-10-10, 사용자: "빌라는 예측 신뢰도가 아파트보다 낮아 마진폭을 늘려야 - 최소 2,000만원 유지, 구축일수록 마진이 커져야, 연식·평형·승강기가 가격 형성의 핵심") ════
+   필요 순이익 = max(2,000만, 예상매도가 × 여유%)  여유% = 그 칸(연식 × 거래 근거)의 '예상이 실제보다 높게 빗나간 정도(백테스트 상위 10%)'의 절반(최대 25%),
+   승강기 있음(4층 이상 건물)은 ×0.7, 없음은 ×1.15 (실측: 승강기 있음 오차 9.6%·상위10% +15% / 없음 13.5%·+39%).
+   연식 오차: 10년 이내 9.7%, 11~20년 11.0%, 21~30년 13.6%, 31년+ 17.3% → 구축일수록 마진이 커짐. 입찰 상한 = 이 마진이 남는 최고 입찰가(앱 비용·세금 계산). */
+var VILLA_MARGIN_MIN = 2000;
+var VILLA_P90 = { a10: { '건물3+': 7.4, '건물1~2+동': 12.3, '건물1~2': 20, '동5+': 21.6, '동1~4': 21.8, '시군구': 25 },
+                  a20: { '건물3+': 10.1, '건물1~2+동': 17.8, '건물1~2': 25, '동5+': 37.2, '동1~4': 47.9, '시군구': 60 },
+                  a30: { '건물3+': 15.5, '건물1~2+동': 25.3, '건물1~2': 35, '동5+': 39.9, '동1~4': 60.4, '시군구': 100 },
+                  a31: { '건물3+': 16.2, '건물1~2+동': 36.9, '건물1~2': 45, '동5+': 59.7, '동1~4': 73.1, '시군구': 110 } };
+function villaMarginPlan(row, ve, title) {
+    if (!ve) return null;
+    var yr = title && title.useAprDay ? parseInt(String(title.useAprDay).slice(0, 4), 10) : (parseInt(row.a.buildYear, 10) || null);
+    var age = yr ? new Date().getFullYear() - yr : null;
+    var band = age == null ? 'a30' : (age <= 10 ? 'a10' : (age <= 20 ? 'a20' : (age <= 30 ? 'a30' : 'a31')));
+    var p90 = (VILLA_P90[band] || {})[ve.lvl] || 40;
+    var elv = title ? (title.rideElvtCnt || 0) + (title.emgenElvtCnt || 0) : null, fl = title ? title.grndFlrCnt : null;
+    var ef = (elv != null && fl >= 4) ? (elv > 0 ? 0.7 : 1.15) : 1;
+    var buf = Math.min(25, 0.5 * p90 * ef), margin = Math.max(VILLA_MARGIN_MIN, Math.round(ve.est * buf / 100 / 100) * 100);
+    var out = { margin: margin, buf: Math.round(buf * 10) / 10, age: age, ageBand: band, elv: elv, ef: ef, floorMin: margin === VILLA_MARGIN_MIN };
+    try {
+        var a = row.a, base = Object.assign({}, a, { target: ve.est, repair: effRepairFee(a, 'villa', row.pyung, yr || null), compTargetMargin: margin });
+        var r = solveAuctionBidFromRecord(base);
+        if (r && r.bid > 0) { out.bid = r.bid; out.net = r.net; out.feasible = !(row.minBid && r.bid < row.minBid); }
+    } catch (e) {}
+    return out;
+}
 function villaMetroRows() { return bidBoardRows.filter(function(r) { return r.type === 'villa' && r.metro && !(r.dday && r.dday.diffDays < 0); }); }
 function renderVillaLite(body) {
     var rows = villaMetroRows(), s = bidBoardState;
@@ -3662,7 +3689,7 @@ function renderVillaLite(body) {
     var h = '<div class="bb-sub" style="padding:6px 4px;">수도권 빌라 ' + rows.length + '건 · 🏠 도시민박 검토 가능 <b>' + okN + '건</b> (건축물대장으로 건물 요건 점검 · 가격 계산은 아직 안 해요 · 행을 누르면 건물 상세) '
         + (homestayAgg && !homestayAgg.empty ? '' : '· 도시민박 지역 집계 불러오는 중…') + '</div>';
     if (!rows.length) { body.innerHTML = h + '<div class="bb-empty">수도권 빌라 입찰후보가 없어요.</div>'; return; }
-    h += '<table class="bb2-table"><thead><tr><th>도시민박</th><th>입찰일</th><th>물건</th><th class="r">최저가</th><th class="r">감정가</th><th class="r">예상매도가 <span class="bb-sub" style="display:inline;">참고</span></th><th>건물(대장)</th><th>이 동의 도시민박</th></tr></thead><tbody>';
+    h += '<table class="bb2-table"><thead><tr><th>도시민박</th><th>입찰일</th><th>물건</th><th class="r">최저가</th><th class="r">감정가</th><th class="r">예상매도가 <span class="bb-sub" style="display:inline;">참고</span></th><th class="r">필요 마진 · 입찰 상한</th><th>건물(대장)</th><th>이 동의 도시민박</th></tr></thead><tbody>';
     rows.forEach(function(r) {
         var st = hsBld[r.id] || {}, chk = st.chk, t = st.info && st.info.title, idJs = String(r.id).replace(/\\/g, '\\\\').replace(/'/g, "\\'");
         var dk = hsDongKey(r.a.addr), ag = dk && homestayAgg && homestayAgg.byDong ? homestayAgg.byDong[dk] : null, sc = ag ? (HS_STATE[ag.state] || HS_STATE['안정']) : null;
@@ -3675,6 +3702,9 @@ function renderVillaLite(body) {
             + '<td class="r">' + (function() { var ve; try { ve = villaSaleEst(r.a); } catch (e) { ve = null; } if (!ve) return '<span class="bb-sub">-</span>';
                 var cl = ve.lvl === '건물3+' ? '#15803d' : (ve.lvl === '건물1~2+동' || ve.lvl === '건물1~2' ? '#b45309' : '#b91c1c');
                 return '<b>' + money(ve.est) + '</b><div class="bb-sub" title="이 단계 백테스트의 실제 10~90% 범위">' + money(ve.lo) + '~' + money(ve.hi) + '</div><div class="bb-sub" style="color:' + cl + ';" title="보통 오차 약 ' + ve.errPct + '%">' + ve.lvl + ' · ' + (ve.n1 || ve.n2) + '건</div>'; })() + '</td>'
+            + '<td class="r">' + (function() { var ve; try { ve = villaSaleEst(r.a); } catch (e) { ve = null; } var pl = ve ? villaMarginPlan(r, ve, t) : null; if (!pl) return '<span class="bb-sub">-</span>';
+                var why = (pl.age != null ? '연식 ' + pl.age + '년' : '연식 모름') + (pl.elv != null ? ' · 승강기 ' + (pl.elv > 0 ? '있음' : '없음') : '') + ' · ' + ve.lvl;
+                return '<b>마진 ' + toEok(String(pl.margin)) + '</b>' + (pl.floorMin ? '' : '<div class="bb-sub">매도가의 ' + pl.buf + '%</div>') + (pl.bid ? '<div style="color:' + (pl.feasible ? '#15803d' : '#b91c1c') + ';font-weight:700;">' + (pl.feasible ? '입찰 상한 ' + money(pl.bid) : '최저가로도 마진 부족') + '</div>' : '') + '<div class="bb-sub" title="필요 마진 근거">' + why + '</div>'; })() + '</td>'
             + '<td>' + (t ? bbEsc(t.mainPurps || '') + '<div class="bb-sub">' + (t.grndFlrCnt || '-') + '층 · ' + (t.useAprDay ? String(t.useAprDay).slice(0, 4) + '년' : '-') + ' · 승강기 ' + (elv ? elv + '대' : '없음') + '</div>' : (st.loading ? '<span class="bb-sub">조회 중…</span>' : '<span class="bb-sub">대장 없음</span>')) + '</td>'
             + '<td>' + (ag ? '<span class="hs-pill" style="background:' + sc.c + ';">' + sc.t + '</span><div class="bb-sub">영업 ' + ag.open + '곳 · 순증 ' + (ag.net1y > 0 ? '+' : '') + ag.net1y + '/년</div>' : '<span class="bb-sub">' + (homestayAgg ? '등록 업소 거의 없음' : '-') + '</span>') + '</td></tr>';
     });
@@ -3694,6 +3724,8 @@ function openBuildingDetail(id) {
         var h = '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">' + hsPill(chk.verdict) + '<span class="bb-sub">' + bbEsc(a.addr || '') + (a.floor ? ' · ' + a.floor + '층' : '') + (a.pyung ? ' · ' + a.pyung + '평' : '') + '</span></div>';
         var ve = null; try { ve = villaSaleEst(a); } catch (e) {}
         if (ve) h += '<div style="margin-top:8px;background:#fff;border:1px solid #e5e7eb;border-radius:8px;padding:6px 10px;"><b>예상매도가(참고)</b> ' + toEok(String(ve.est)) + ' <span class="bb-sub" style="display:inline;">실제 10~90% 범위 ' + toEok(String(ve.lo)) + ' ~ ' + toEok(String(ve.hi)) + '</span><div class="bb-sub">근거: ' + ve.lvl + '(' + (ve.n1 || ve.n2) + '건) · 같은 방식 백테스트 보통 오차 약 ' + ve.errPct + '% (아파트는 4~5%) - 빌라는 호별 차이가 커서 현장 확인 값으로 다시 판단하세요</div></div>';
+        if (ve) { var vp = villaMarginPlan(row, ve, t); if (vp) h += '<div style="margin-top:6px;background:#f5f3ff;border:1px solid #ddd6fe;border-radius:8px;padding:6px 10px;"><b>필요 마진 ' + toEok(String(vp.margin)) + '</b>' + (vp.floorMin ? ' (빌라 최소 2,000만)' : ' (예상매도가의 ' + vp.buf + '%)') + (vp.bid ? ' → <b style="color:' + (vp.feasible ? '#15803d' : '#b91c1c') + ';">' + (vp.feasible ? '입찰 상한 ' + toEok(String(vp.bid)) : '최저가로도 마진 부족') + '</b>' : '') + '<div class="bb-sub">' + (vp.age != null ? '연식 ' + vp.age + '년(구축일수록 여유를 더 둠)' : '연식을 몰라 20~30년으로 가정') + (vp.elv != null ? ' · 승강기 ' + (vp.elv > 0 ? '있음(오차 작음)' : '없음(오차 큼)') : '') + ' · 근거 ' + ve.lvl + '. 빌라는 예상 오차가 아파트의 약 3배라 마진 기준을 높였어요.</div></div>'; }
+
         h += '<h4 style="margin:10px 0 4px;">🏠 도시민박업 건물 요건 점검</h4><table>';
         var icon = { ok: '✅', no: '❌', warn: '⚠️', unknown: '❔', info: 'ℹ️' };
         chk.items.forEach(function(i) { h += '<tr><td style="white-space:nowrap;">' + icon[i.st] + ' <b>' + bbEsc(i.k) + '</b></td><td>' + bbEsc(i.note) + '</td></tr>'; });
