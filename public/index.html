@@ -17462,20 +17462,23 @@ async function refreshBidBoard() {
     // 지역 자료를 다시 불러오지 않고 그대로 씀(세금·마진 단계만 지금 내 자산 기준으로 다시). 🔄 다시 계산을 누르면 전부 새로.
     var boardCache = bidBoardState.forceFresh ? {} : ((await listIdbOp('readonly', function(st) { return st.get(BOARD_CACHE_KEY); })) || {});
     bidBoardState.forceFresh = false;
-    var nowMs = Date.now(), reused = {}, stale = {};
-    work.forEach(function(a) {
-        var c = boardCache[a.id];
-        if (!c || !c.row) return;
-        var fresh = c.sig === boardBaseSig(a) && nowMs - c.at <= BOARD_CACHE_MAX_AGE;
+    var nowMs = Date.now(), reused = {}, stale = {}, sliceT = Date.now();
+    for (var wi = 0; wi < work.length; wi++) {
+        // 저장본 1천 건 넘게를 한꺼번에 다시 계산하면 7초 가까이 화면이 멈췄음(2026-10-10) → 40ms마다 숨 쉴 틈을 줌
+        if (Date.now() - sliceT > 40) { await new Promise(function(r) { setTimeout(r, 0); }); sliceT = Date.now(); }
+        var wa = work[wi];
+        var c = boardCache[wa.id];
+        if (!c || !c.row) continue;
+        var fresh = c.sig === boardBaseSig(wa) && nowMs - c.at <= BOARD_CACHE_MAX_AGE;
         try {
-            var row = Object.assign({}, c.row, { a: a, dday: a.bidDate ? calcAuctionDday(a.bidDate) : null, fromCache: c.at, stale: !fresh });
+            var row = Object.assign({}, c.row, { a: wa, dday: wa.bidDate ? calcAuctionDday(wa.bidDate) : null, fromCache: c.at, stale: !fresh });
             row = finalizeBidBoardRow(row);
-            if (fresh) { reused[a.id] = row; bidVerdictCache[a.id] = bidVerdictCache[a.id] || { sig: '', row: row }; }
+            if (fresh) { reused[wa.id] = row; bidVerdictCache[wa.id] = bidVerdictCache[wa.id] || { sig: '', row: row }; }
             // 2026-10(사용자: "입찰후보 로딩이 아직도 느려") - 하루가 지났거나 계산 방식이 바뀐 저장본도 일단 바로 보여주고
             // (회색 "업데이트 중" 표시), 뒤에서 새로 계산되는 대로 하나씩 바꿔 끼움 - 빈 화면으로 기다리지 않게.
-            else stale[a.id] = row;
+            else stale[wa.id] = row;
         } catch (e) {}
-    });
+    }
     if (Object.keys(reused).length || Object.keys(stale).length) {
         bidBoardRows = bidBoardRows.map(function(r) { return reused[r.id] || stale[r.id] || r; });
         work = work.filter(function(a) { return !reused[a.id]; });
