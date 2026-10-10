@@ -6063,7 +6063,8 @@ function createMarker(cacheKey, lat, lon, apt) {
     // ⚠️ 2026-09(사용자 피드백: "대장아파트가 눈에 띄지 않아 찾기 어려워"): 위에서 카드 내부
     // 순위 pill을 없앤 대신, 대장만큼은 이 corner 배지 글씨를 훨씬 크게 키워서 지도에서
     // 한눈에 띄도록 함(대장이 아닌 일반 순위 숫자는 기존 크기 그대로 유지).
-    var popRankBadge = lfInfo
+    // 2026-10-10(사용자: "빌라배지에 붙은 순위 번호는 의미 없음"): 빌라 배지에는 대장·순위 번호를 달지 않음
+    var popRankBadge = (lfInfo && apt.buildingType !== 'villa')
         ? (lfInfo.isLeader && lfInfo.only ? ''
             : lfInfo.isLeader
             ? '<div class="grade-rank-badge" style="background:#4a148c;font-size:16px;font-weight:900;padding:3px 10px;top:-14px;left:-10px;box-shadow:0 2px 6px rgba(0,0,0,0.5);">👑대장</div>'
