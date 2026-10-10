@@ -2,7 +2,7 @@
 <html>
 <head>
     <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=5, user-scalable=yes">
     <title>부동산 실거래가 지도</title>
     <link rel="icon" href="data:,">
 <style>
@@ -509,6 +509,7 @@ tr:hover td { background:#fffde7; }
    흐름에 끼어 있게 되어, openBidTargetPanel()이 style.display를 토글해도 이미 보이는 상태라
    "block"↔"none" 전환이 눈에 띄는 변화 없이 동작하는 것처럼 보이는(사실상 안 열리는) 버그가 있었음. */
 /* 🎯 입찰후보 보드 */
+#map { touch-action:none; } /* 지도 위 두 손가락은 지도 확대/축소로, 그 밖의 화면은 브라우저 확대로(2026-10-10) */
 #bid-board { position:fixed; top:52px; left:0; right:0; bottom:0; z-index:70; background:#f6f7f9; display:none; flex-direction:column; font-size:12.5px; color:#222; }
 #bid-board .bb-head { background:white; border-bottom:1px solid #e3e6ea; padding:10px 16px 8px; }
 #bid-board .bb-csv { border:none; background:var(--ui-blue,#1e5eff); color:#fff; border-radius:16px; padding:5px 12px; font-size:12px; font-weight:700; cursor:pointer; }
@@ -1510,7 +1511,6 @@ body.ui2 #auction-modal.am4 { width:620px; }
          버튼(나침반·내위치)과 같은 자리에 아이콘 하나만 추가해 바로 누를 수 있게 함 - 상태는
          필터패널 안의 기존 bidcasebadge-toggle-btn과 toggleShowBidCaseBadges()가 그대로
          동기화해줌(둘 중 아무거나 눌러도 서로 같이 바뀜). -->
-    <button class="geo-tool-btn" id="bidcasebadge-quick-btn" onclick="toggleShowBidCaseBadges()" title="⚖️ 낙찰사례 배지 표시/숨김">⚖️</button>
     <button class="geo-tool-btn" id="homestay-quick-btn" onclick="toggleHomestayLayer()" title="🏠 도시민박(공간대여) 배지 표시/숨김 - 증가·감소로 활성도 표시">🏠</button>
 </div>
 <div id="compass-hud">
@@ -1546,8 +1546,6 @@ body.ui2 #auction-modal.am4 { width:620px; }
             <button class="filter-tab ft-common" onclick="toggleRecentYearOnly(this)">최근6개월 거래만</button>
             <button class="filter-tab ft-common" onclick="toggleCompOnlyFilter(this)">📌 비교대상만</button>
             <button class="filter-tab ft-common" id="boundary-toggle-btn" onclick="toggleDongBoundaryMode(this)">🗺️ 법정동 경계선</button>
-            <button class="filter-tab ft-common" id="bidcaseonly-toggle-btn" onclick="toggleBidCaseOnlyFilter(this)">⚖️ 낙찰사례만 보기</button>
-            <button class="filter-tab ft-common" id="bidcasebadge-toggle-btn" onclick="toggleShowBidCaseBadges()">⚖️ 낙찰사례 배지 숨김</button>
             <button class="filter-tab ft-common" id="newhighonly-toggle-btn" onclick="toggleNewHighOnlyFilter(this)">⭐ 신고가만 보기</button>
         </div>
     </div>
@@ -6124,7 +6122,6 @@ function isAptVisibleUnderCurrentFilters(apt) {
     // "낙찰사례만 보기"는 다른 필터들과 동일하게 AND 조건으로 결합됨 - 이 apt 주소지에
     // 매칭되는 낙찰사례가 하나도 없으면 숨김(경매/낙찰사례 배지 자체는 이 필터와 무관하게
     // 항상 표시되므로 여기서는 일반 거래 마커만 대상으로 함)
-    if (bidCaseOnlyFilter && !aptHasMatchingBidCase(apt)) return false;
     // "신고가만 보기" - hasNewHigh는 calcNewHigh()가 이미 계산해둔 값(같은 건물+평형에서
     // 최근 6개월 최고가가 그 이전 최고가를 넘었는지)을 그대로 씀 - 별도 계산 없이 필터링만 함
     if (newHighOnlyFilter && !apt.hasNewHigh) return false;
@@ -6437,7 +6434,7 @@ function createMarker(cacheKey, lat, lon, apt) {
     var compBadge = buildComparableBadgeHtml(apt);
     // 이 주소에 등록된 경매물건이 있으면(=이미 이 자리에 일반 거래 마커가 있어서 별도 경매 마커를
     // 만들지 않은 경우) 지도에서도 바로 알아볼 수 있도록 이 마커 자체를 강조 표시함
-    var matchedAuction = auctionList.find(function(a) { return matchesAuctionKey(a, l.name, l.dong, l.bunji); });
+    var matchedAuction = auctionList.find(function(a) { return auctionBadgeWorthy(a) && matchesAuctionKey(a, l.name, l.dong, l.bunji); });
     // 매매기록 배지 안에 흡수된 경매물건도 입찰일 D-day를 놓치면 안 되므로 리본 바로 아래 한 줄로 표시
     var matchedAuctionDday = matchedAuction && matchedAuction.bidDate ? calcAuctionDday(matchedAuction.bidDate) : null;
     var auctionRibbon = matchedAuction
@@ -6449,9 +6446,7 @@ function createMarker(cacheKey, lat, lon, apt) {
     // 억제 여부를 똑같은 기준(matchedApt && isAptVisibleUnderCurrentFilters)으로 판단하므로
     // 여기서 리본이 뜨는 조건과 항상 일치함). 클릭 시 열리는 상세패널에는 buildBidCasePanelHtml로
     // 낙찰사례 섹션이 이미 포함돼 있어 정보 손실은 없음.
-    var matchedBidCase = bidCaseList.find(function(c) {
-        return c.resaleMatch && matchesAuctionKey({ name: c.buildingName, dong: c.dong, bunji: c.bunji }, l.name, l.dong, l.bunji);
-    });
+    var matchedBidCase = null; // 낙찰사례 리본 폐지(2026-10-10): 건물 배지를 만들 때마다 낙찰사례 3만여 건을 훑던 비용 제거
     var bidCaseRibbon = matchedBidCase
         ? '<div class="auction-badge" style="background:#00695c;">⚖️ 낙찰사례 · ' + (matchedBidCase.status || '매각') + '</div>'
         : '';
@@ -14455,7 +14450,7 @@ function renderAuctionMarkers() {
     // 한 건물에 경매가 몰린 곳(2026-10-10, 사용자 요청): 같은 위치(약 1m)에 4건 이상이면 배지를 하나로 묶고 누르면 전체 목록
     var clusterOf = {}, cgroups = {};
     auctionList.forEach(function(a) {
-        if (!(a.lat && a.lon)) return;
+        if (!(a.lat && a.lon) || !auctionBadgeWorthy(a)) return;
         if (activeAuctionDateFilters.size && !activeAuctionDateFilters.has(classifyAuctionDateBucket(a))) return;
         if (a.isBacktest && hideBacktestAuctions) return;
         var ck = a.lat.toFixed(5) + ',' + a.lon.toFixed(5); (cgroups[ck] = cgroups[ck] || []).push(a);
@@ -14467,6 +14462,7 @@ function renderAuctionMarkers() {
         clusterList.push({ key: ck, members: g });
     });
     auctionList.forEach(function(a) {
+        if (!auctionBadgeWorthy(a)) return; // 입찰후보·내 재산 외 경매물건은 배지를 만들지 않음(아래 정리 루프가 기존 마커도 제거)
         // "경매건" 필터(지난/오늘/그외)에 걸리면 이 경매물건은 지도에서 제외 - neededIds에
         // 안 넣으면 아래 정리 루프에서 기존 마커도 함께 제거됨.
         // ⚠️ 2026-08: 입찰예정물건 일괄등록(📋, isBidTarget:true)도 이 필터에 포함되는지
@@ -14518,6 +14514,7 @@ function renderAuctionMarkers() {
 function refreshMatchedAuctionMarkers() {
     // 1) 경매와 매칭됐는데 아직 강조 리본이 없는 마커 → 다시 그려서 리본을 붙임
     auctionList.forEach(function(a) {
+        if (!auctionBadgeWorthy(a)) return;
         var matched = findMatchedApt(a);
         if (!matched) return;
         var l = matched.latest || {};
@@ -14539,13 +14536,19 @@ function refreshMatchedAuctionMarkers() {
         var data = markerDataRegistry[existing.mKey];
         if (!data || !data.apt) return;
         var l = data.apt.latest || {};
-        var stillMatched = auctionList.some(function(a) { return matchesAuctionKey(a, l.name, l.dong, l.bunji); });
+        var stillMatched = auctionList.some(function(a) { return auctionBadgeWorthy(a) && matchesAuctionKey(a, l.name, l.dong, l.bunji); });
         if (stillMatched) return;
         existing.overlay.setMap(null);
         delete markerDataRegistry[existing.mKey];
         delete markers[cacheKey];
         createMarker(cacheKey, data.lat, data.lon, data.apt);
     });
+}
+// 지도에 배지로 보일 경매물건은 두 가지뿐(2026-10-10, 사용자 요청): ① 입찰후보 ② 내가 낙찰받아 내 재산이 된 기록(낙찰·매도완료). 나머지(지난 경매·검토중·유찰 등)는 배지 없음
+function auctionBadgeWorthy(a) {
+    if (!a || a.isBacktest || /_bx_/.test(String(a.id))) return false;
+    if (a.status === '낙찰' || a.status === '매도완료') return true;
+    return isBidBoardCandidate(a);
 }
 function placeAuctionMarker(a, hidden) {
     var sc = STATUS_COLOR[a.status] || '#9e9e9e';
@@ -15336,6 +15339,7 @@ function buildBidCaseGeocodeCandidates(c) {
    반영되지 않음). "낙찰사례 배지 표시" 토글과 무관하게 항상 최신화함 - 리본은 그 토글이 꺼져
    있어도(=독자 배지는 안 보여도) 건물배지 자체의 정보이므로 계속 보여야 함. */
 function refreshMatchedBidCaseMarkers() {
+    return; // 2026-10-10: 낙찰사례 지도 배지·리본 폐지(33,000건을 매번 훑어 로딩만 늘렸음)
     bidCaseList.forEach(function(c) {
         if (!c.resaleMatch) return;
         var matched = findMatchedAptForBidCase(c);
@@ -15368,6 +15372,7 @@ function refreshMatchedBidCaseMarkers() {
     });
 }
 function renderBidCaseMarkers() {
+    clearBidCaseMarkers(); return; // 2026-10-10: 낙찰사례 지도 배지 폐지 - 낙찰사례 목록·분석에는 그대로 쓰임
     refreshMatchedBidCaseMarkers();
     // "낙찰사례 배지 표시" 마스터 스위치가 꺼져 있으면 배지를 전부 지우고 지오코딩도 돌지 않음
     if (!showBidCaseBadges) { clearBidCaseMarkers(); return; }
@@ -18229,10 +18234,7 @@ function bbSetZoom(dir) {
     try { localStorage.setItem('bbZoom', String(BB_ZOOMS[i])); } catch (e) {}
     bbApplyZoom();
 }
-function bbPinchZoom(on) {
-    var m = document.querySelector('meta[name="viewport"]'); if (!m) return;
-    m.setAttribute('content', on ? 'width=device-width, initial-scale=1, maximum-scale=5, user-scalable=yes' : 'width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no');
-}
+function bbPinchZoom(on) { /* 2026-10-10: 두 손가락 확대는 앱 전체에서 항상 허용(지도 위는 지도가 처리) - 더 이상 켜고 끄지 않음 */ }
 function openBidBoard(opts) {
     opts = opts || {};
     clearStickyDestPin(); bbApplyZoom(); bbPinchZoom(true);
@@ -25316,7 +25318,6 @@ window.addEventListener('load', function() {
 var FILTER_FLAG_DEFS = [
     { v: 'newHighOnlyFilter', sel: '#newhighonly-toggle-btn', label: '신고가만' },
     { v: 'recentYearOnly', sel: '#fp-group-display [onclick^="toggleRecentYearOnly"]', label: '최근 6개월 거래만' },
-    { v: 'bidCaseOnlyFilter', sel: '#bidcaseonly-toggle-btn', label: '낙찰사례만' },
     { v: 'compOnlyFilter', sel: '#fp-group-display [onclick^="toggleCompOnlyFilter"]', label: '비교대상만' }
 ];
 var FILTER_SET_DEFS = [
@@ -26515,7 +26516,7 @@ function setupUiV3() {
         p.insertBefore(head, p.firstChild);
         var note = document.createElement('div');
         note.className = 'fp-note';
-        note.textContent = '경계선·낙찰사례 배지는 오른쪽 도구 버튼에서 켜고 꺼요.';
+        note.textContent = '경계선은 오른쪽 도구 버튼에서 켜고 꺼요.';
         head.after(note);
         ['#newhighonly-toggle-btn', '#fp-group-display [onclick^="toggleRecentYearOnly"]', '#bidcaseonly-toggle-btn', '#boundary-toggle-btn', '#bidcasebadge-toggle-btn'].forEach(function(sel) {
             var b = document.querySelector(sel); if (b) b.classList.add('fp-dup');
