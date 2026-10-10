@@ -3735,7 +3735,7 @@ function villaBidPlan(row, ve, mp, wb) {
     for (var b = row.minBid; b <= bMax + 0.5; b += step) { var p = villaProbAt(wb, b), net = netAt(b); if (net > 0 && (!best || p * net > best.ev)) best = { bid: Math.round(b), p: p, net: Math.round(net), ev: p * net }; }
     return { max: bMax, ev: best, pMax: villaProbAt(wb, bMax) };
 }
-function villaMetroRows() { return bidBoardRows.filter(function(r) { return r.type === 'villa' && r.metro && !(r.dday && r.dday.diffDays < 0); }); }
+function villaMetroRows(ignoreRegion) { var s = bidBoardState; return bidBoardRows.filter(function(r) { return r.type === 'villa' && r.metro && (s.pastLite || !(r.dday && r.dday.diffDays < 0)) && (ignoreRegion || !s.region || r.region === s.region); }); }
 /* 🏘️ 빌라 임장 후보 판정 (2026-10-10) - 아파트와 같은 방식: 필요 마진(최소 2,000만+연식·근거·승강기 여유)이 남는 입찰가가 있고, 그 추천가의 낙찰 가능성이 20% 이상이며, 시세 근거가 같은 건물·같은 동 5건 이상이고, 지하가 아니면 임장 후보 */
 var VILLA_VISIT_MIN_P = 0.20;
 function villaEval(row) {
@@ -17724,7 +17724,8 @@ function bidBoardVisibleRows() {
     });
 }
 /* ════ 임장 후보 화면(2026-10, 사용자: "선택사항이 너무 많다 - 매주 수백 건 중 임장할 물건을 빠르게, 추천가 1개만") ════ */
-function setLiteVisit(v) { bidBoardState.visit = v; bidBoardState.liteLimit = 120; renderBidBoard(); }
+function setLiteVisit(v) { var s0 = bidBoardState, wasVilla = s0.visit === 'villa'; if (v !== 'villa') s0.aptVisit = v; s0.visit = v;
+    if (s0.region && (wasVilla !== (v === 'villa')) && !bidBoardRows.some(function(r) { return (r.type === 'villa') === (v === 'villa') && r.region === s0.region; })) s0.region = '';  bidBoardState.liteLimit = 120; renderBidBoard(); }
 // 열 머리글을 누르면 그 값으로 오름차순 ↔ 내림차순(2026-10, 사용자: "순위 표기보다 항목별 오름·내림차순 정렬을 직접 고르게"). 값이 없는 물건은 방향과 상관없이 맨 아래
 var LITE_COLS = {
     verdict: { label: '판정', first: 1, val: function(r) { return r.visit.go ? 0 : 1; } },
@@ -17830,23 +17831,28 @@ function renderBidBoardLite() {
     var all = bidBoardRows.filter(function(r) { return r.type === 'apt' && !r.skippedPast && (!s.region || r.region === s.region); });
     var isPast = function(r) { return r.dday && r.dday.diffDays < 0; };
     var cur = all.filter(function(r) { return s.pastLite || !isPast(r); });
-    var pastN = all.filter(isPast).length, villaN = bidBoardRows.filter(function(r) { return r.type === 'villa' && !(r.dday && r.dday.diffDays < 0); }).length;
+    var isVillaTab = s.visit === 'villa';
+    var pastN = isVillaTab ? bidBoardRows.filter(function(r) { return r.type === 'villa' && r.metro && isPast(r) && (!s.region || r.region === s.region); }).length : all.filter(isPast).length;
     var pend = cur.filter(function(r) { return r.pending; }).length;
     var goN = cur.filter(function(r) { return !r.pending && r.visit && r.visit.go; }).length, passN = cur.filter(function(r) { return !r.pending && r.visit && !r.visit.go; }).length;
     // 지역 선택지
     var regions = {};
-    bidBoardRows.forEach(function(r) { if (r.type === 'apt') regions[r.region] = (regions[r.region] || 0) + 1; });
+    bidBoardRows.forEach(function(r) { if (isVillaTab ? (r.type === 'villa' && r.metro) : r.type === 'apt') regions[r.region] = (regions[r.region] || 0) + 1; });
     var sel = document.getElementById('bb-region');
     if (sel) sel.innerHTML = '<option value="">지역 전체</option>' + Object.keys(regions).sort().map(function(k) { return '<option value="' + bbEsc(k) + '"' + (s.region === k ? ' selected' : '') + '>' + bbEsc(k) + ' (' + regions[k] + ')</option>'; }).join('');
     var bar = document.getElementById('bb2-tabs');
     if (!bar) { bar = document.createElement('span'); bar.id = 'bb2-tabs'; var tools = document.querySelector('#bid-board .bb-tools'); tools.insertBefore(bar, tools.firstChild); }
-    var villaMetroN = villaMetroRows().length;
-    bar.innerHTML = [['go', '🚶 임장 후보', goN], ['pass', '패스', passN], ['all', '전체', goN + passN], ['villa', '🏘️ 빌라(수도권)', villaMetroN]].map(function(t) {
+    var villaMetroN = villaMetroRows().length, aptTotal = goN + passN;
+    var grp = [['apt', '🏢 아파트', aptTotal], ['villa', '🏘️ 빌라(수도권)', villaMetroN]].map(function(t) {
+        return '<button class="bb-tab' + ((t[0] === 'villa') === isVillaTab ? ' on' : '') + '" style="font-weight:700;" onclick="setLiteVisit(\'' + (t[0] === 'villa' ? 'villa' : (s.aptVisit || 'go')) + '\')">' + t[1] + ' <b>' + t[2] + '</b></button>';
+    }).join('');
+    var sub = isVillaTab ? '' : ' <span style="color:#cbd5e1;">|</span> ' + [['go', '🚶 임장 후보', goN], ['pass', '패스', passN], ['all', '전체', aptTotal]].map(function(t) {
         return '<button class="bb-tab' + (s.visit === t[0] ? ' on' : '') + '" onclick="setLiteVisit(\'' + t[0] + '\')">' + t[1] + ' <b>' + t[2] + '</b></button>';
-    }).join('')
+    }).join('');
+    bar.innerHTML = grp + sub
         + ' <span class="bb-sub">열 이름을 누르면 오름차순·내림차순으로 정렬돼요</span>'
         + ' <a href="#" class="bb2-link" onclick="toggleLitePast();return false;">' + (s.pastLite ? '지난 입찰 숨기기' : '지난 입찰 ' + pastN + '건 보기') + '</a>'
-        + (villaN ? ' <span class="bb-sub">빌라 ' + villaN + '건은 아직 계산하지 않아요</span>' : '') + (pend ? ' <span class="bb-sub">⏳ ' + pend + '건 계산 중</span>' : '');
+        + (pend && !isVillaTab ? ' <span class="bb-sub">⏳ ' + pend + '건 계산 중</span>' : '');
     if (s.visit === 'villa') { renderVillaLite(document.getElementById('bb-body')); var cn0 = document.getElementById('bb-cache-note'); if (cn0) cn0.style.display = 'none'; return; }
     var rows = cur.filter(function(r) { return !r.pending && r.visit && (s.visit === 'all' || (s.visit === 'go') === r.visit.go); });
     var colDef = LITE_COLS[s.liteCol] || LITE_COLS.verdict;
