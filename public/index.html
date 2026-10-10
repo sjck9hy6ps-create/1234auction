@@ -3923,9 +3923,10 @@ function openBuildingDetail(id) {
     var a = row.a;
     var render = function() {
         var st = hsBld[row.id]; if (!st || st.loading) { setTimeout(render, 700); return; }
+        if (st.quota) st = { info: null, chk: { verdict: null, items: [], unit: null }, quota: true }; // 건축HUB 한도 초과 중에도 상세·호가 칸은 보이게
         var b = p.querySelector('.wr-b'); if (!b) return;
         var info = st.info, t = info && info.title, chk = st.chk, f = function(v, u) { return v == null || v === '' ? '-' : v + (u || ''); };
-        var h = '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">' + hsPill(chk.verdict) + '<span class="bb-sub">' + bbEsc(a.addr || '') + (a.floor ? ' · ' + a.floor + '층' : '') + (a.pyung ? ' · ' + a.pyung + '평' : '') + '</span></div>';
+        var h = '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">' + hsPill(chk.verdict, st.quota) + '<span class="bb-sub">' + bbEsc(a.addr || '') + (a.floor ? ' · ' + a.floor + '층' : '') + (a.pyung ? ' · ' + a.pyung + '평' : '') + '</span></div>';
         var ve = null; try { ve = villaSaleEst(a); } catch (e) {}
         if (ve) h += '<div style="margin-top:8px;background:#fff;border:1px solid #e5e7eb;border-radius:8px;padding:6px 10px;"><b>예상매도가(참고)</b> ' + toEok(String(ve.est)) + ' <span class="bb-sub" style="display:inline;">실제 10~90% 범위 ' + toEok(String(ve.lo)) + ' ~ ' + toEok(String(ve.hi)) + '</span><div class="bb-sub">근거: ' + ve.lvl + '(' + (ve.n1 || ve.n2) + '건) · 같은 방식 백테스트 보통 오차 약 ' + ve.errPct + '% (아파트는 4~5%) - 빌라는 호별 차이가 커서 현장 확인 값으로 다시 판단하세요</div></div>';
         if (ve) { var vp = villaMarginPlan(row, ve, t); if (vp) h += '<div style="margin-top:6px;background:#f5f3ff;border:1px solid #ddd6fe;border-radius:8px;padding:6px 10px;"><b>필요 마진 ' + toEok(String(vp.margin)) + '</b>' + (vp.floorMin ? ' (빌라 최소 2,000만)' : ' (예상매도가의 ' + vp.buf + '%)') + (vp.bid ? ' → <b style="color:' + (vp.feasible ? '#15803d' : '#b91c1c') + ';">' + (vp.feasible ? '입찰 상한 ' + toEok(String(vp.bid)) : '최저가로도 마진 부족') + '</b>' : '') + '<div class="bb-sub">' + (vp.age != null ? '연식 ' + vp.age + '년(구축일수록 여유를 더 둠)' : '연식을 몰라 20~30년으로 가정') + (vp.elv != null ? ' · 승강기 ' + (vp.elv > 0 ? '있음(오차 작음)' : '없음(오차 큼)') : '') + ' · 근거 ' + ve.lvl + '. 빌라는 예상 오차가 아파트의 약 3배라 마진 기준을 높였어요.</div></div>'; }
@@ -3965,6 +3966,7 @@ function openBuildingDetail(id) {
         b.innerHTML = h;
     };
     ensureHomestayCheck(row);
+    (function() { var qi = hsQueue.findIndex(function(q) { return q.id === row.id; }); if (qi > 0) hsQueue.unshift(hsQueue.splice(qi, 1)[0]); })(); // 지금 연 건물은 대기열 맨 앞으로
     loadHomestayAgg(render);
     if (!homestayPts) fetch('/api/data-coverage?mode=homestayPts').then(function(r) { return r.json(); }).then(function(d) { homestayPts = (d && d.pts) || []; if (document.getElementById('bld-panel')) render(); }).catch(function() {});
     render();
