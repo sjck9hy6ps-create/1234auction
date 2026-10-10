@@ -4338,6 +4338,7 @@ function toggleShowBidCaseBadges() {
 function toggleAuctionDateFilter(val, btn) {
     if (activeAuctionDateFilters.has(val)) { activeAuctionDateFilters.delete(val); btn.classList.remove('active'); }
     else { activeAuctionDateFilters.add(val); btn.classList.add('active'); }
+    if (!bidBoardRows.length && !bidBoardRunning) { try { linkToast('입찰후보 판정을 불러오는 중이에요(처음 한 번, 잠시 후 지도에 반영돼요)'); refreshBidBoard(); } catch (e) {} } // 판정은 입찰후보 계산을 쓰므로 아직 안 불렀으면 배경에서 계산
     renderAuctionMarkers();
 }
 function resetAuctionDateFilter() {
@@ -18340,6 +18341,7 @@ async function refreshBidBoard() {
     } catch (e) {}
     bidBoardRunning = false;
     try { redrawMarkers(); } catch (e) {}
+    try { if (activeAuctionDateFilters.size) renderAuctionMarkers(); } catch (e) {} // 입찰후보 단계 필터가 켜져 있으면 판정이 도착한 뒤 다시 거름
     setTimeout(function() { try { savePredSnapshots(); } catch (e) {} }, 3000);
 }
 // 손해 주의 물건이 과거에 실제로 받은 값 ÷ 예상매도가(2026-10 백테스트, 하위 40% 지점) - 추천가÷최저가가 클수록 낮음. 예상매도가가 아니라 마진의 추가 여유 계산에 씀
