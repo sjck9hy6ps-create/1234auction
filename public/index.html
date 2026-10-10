@@ -24894,6 +24894,25 @@ function loadWeeklyReport(cb) {
 setTimeout(function() { loadWeeklyReport(); }, 4500);
 function wrYmd(n) { var s = String(n || ''); return s.length === 8 ? s.slice(4, 6) + '/' + s.slice(6, 8) : s; }
 /* 주간 리포트 창 - 탭: 이번 주(또는 고른 주) / 추천가 성적표(누적) / 지난 리포트(누적 목록). week가 있으면 그 주 리포트를 엶 */
+/* 리포트의 물건 행을 누르면 그 물건 주소로 지도 이동(2026-10-10, 사용자 요청) - 낙찰사례(주소 좌표) 우선, 없으면 등록한 경매물건. 리포트는 잠시 숨기고 "리포트로 돌아가기" 버튼을 띄움 */
+function wrGo(caseNo, region) {
+    var nc = wrNormCase(caseNo);
+    var c = (bidCaseList || []).filter(function(x) { return x.caseNo && wrNormCase(x.caseNo) === nc && wrRegionOf(x.addrJibun) === region; })[0];
+    var a = (auctionList || []).filter(function(x) { return !x.isBacktest && x.caseNo && wrNormCase(x.caseNo) === nc && wrRegionOf(x.addr) === region; })[0];
+    if (!c && !a) { alert('이 물건의 주소 정보를 찾지 못했어요(낙찰사례·경매물건에 등록돼 있지 않아요).'); return; }
+    var wp = document.getElementById('weekly-panel'); if (wp) wp.style.display = 'none';
+    try { if (document.getElementById('bid-board').style.display !== 'none') closeBidBoard(); } catch (e) {}
+    if (c) panToBidCase(c.id); else panToAuction(a.id);
+    var b = document.getElementById('wr-return-btn');
+    if (!b) {
+        b = document.createElement('button'); b.id = 'wr-return-btn';
+        b.style.cssText = 'position:fixed;left:50%;bottom:24px;transform:translateX(-50%);z-index:9060;border:none;background:#111827;color:#fff;border-radius:22px;padding:11px 20px;font-size:14px;font-weight:700;box-shadow:0 4px 16px rgba(0,0,0,.35);cursor:pointer;';
+        b.innerText = '◀ 리포트로 돌아가기';
+        b.onclick = function() { b.style.display = 'none'; var w = document.getElementById('weekly-panel'); if (w) w.style.display = ''; else openWeeklyReport(); };
+        document.body.appendChild(b);
+    }
+    b.style.display = '';
+}
 function wrResultPill(actual, rec) {
     if (!rec) return '';
     return actual <= rec ? '<span class="wr-pill win">추천가 이하로 낙찰</span>' : '<span class="wr-pill lose">추천가의 ' + Math.round(actual / rec * 100) + '%에 낙찰</span>';
@@ -24976,7 +24995,7 @@ function wrRenderScore(sc) {
     }
     if (sc.items && sc.items.length) {
         h += '<div class="wr-sec"><b>건별 비교</b> (최근순)<table class="pn-table"><thead><tr><th>물건</th><th class="r">저장한 추천가</th><th class="r">낙찰가</th><th class="r">예측 가능성</th><th></th></tr></thead><tbody>'
-            + sc.items.map(function(x) { return '<tr><td>' + bbEsc(x.name || x.case) + '<div class="pn-muted">' + bbEsc(x.region) + ' · ' + bbEsc(x.case) + '</div></td><td class="r">' + f(x.rec) + '</td><td class="r"><b>' + f(x.actual) + '</b></td><td class="r">' + (x.prob != null ? Math.round(x.prob * 100) + '%' : '-') + '</td><td>' + (x.won ? '<span style="color:#15803d;">낙찰</span>' : '<span style="color:#b91c1c;">못 이김</span>') + '</td></tr>'; }).join('') + '</tbody></table></div>';
+            + sc.items.map(function(x) { return '<tr style="cursor:pointer;" title="누르면 지도에서 이 물건 위치를 보여줘요" onclick="wrGo(\'' + String(x.case).replace(/'/g, '') + '\',\'' + String(x.region || '').replace(/'/g, '') + '\')"><td>📍 ' + bbEsc(x.name || x.case) + '<div class="pn-muted">' + bbEsc(x.region) + ' · ' + bbEsc(x.case) + '</div></td><td class="r">' + f(x.rec) + '</td><td class="r"><b>' + f(x.actual) + '</b></td><td class="r">' + (x.prob != null ? Math.round(x.prob * 100) + '%' : '-') + '</td><td>' + (x.won ? '<span style="color:#15803d;">낙찰</span>' : '<span style="color:#b91c1c;">못 이김</span>') + '</td></tr>'; }).join('') + '</tbody></table></div>';
     }
     return h;
 }
@@ -25020,12 +25039,12 @@ function openWeeklyReport(week) {
         }
         var t = d.tracked;
         if (t) {
-            h += '<div class="wr-sec"><b>내가 추적하던 물건(사건번호 일치)</b> ' + t.n + '건 낙찰'
+            h += '<div class="wr-sec"><b>내가 추적하던 물건(사건번호 일치)</b> ' + t.n + '건 낙찰 <span class="pn-muted">· 행을 누르면 지도에서 위치를 봐요</span>'
                 + (t.recKnown ? ' · 입찰 전 저장해 둔 추천 입찰가로 썼다면 <b>' + t.recWon + '/' + t.recKnown + '건</b> 낙찰' : (t.n ? ' <span class="pn-muted">(입찰 전 예측 저장본이 아직 없어 비교는 다음 주부터)</span>' : ''));
             if (t.items && t.items.length) {
                 h += '<table class="pn-table" id="wr-tracked"><thead><tr><th>사건·물건</th><th class="r">최저가</th><th class="r">추천가</th><th class="r">낙찰가</th><th class="r">응찰</th><th>결과</th></tr></thead><tbody>' + t.items.map(function(x, ix) {
                     var sn = x.snap || {};
-                    return '<tr data-ix="' + ix + '"><td>' + bbEsc(x.name || x.caseNo) + '<div class="pn-muted">' + bbEsc(x.region || '') + ' · ' + bbEsc(x.caseNo) + '</div></td><td class="r">' + f(x.minbid) + '</td>'
+                    return '<tr data-ix="' + ix + '" style="cursor:pointer;" title="누르면 지도에서 이 물건 위치를 보여줘요" onclick="wrGo(\'' + String(x.caseNo).replace(/'/g, '') + '\',\'' + String(x.region || '').replace(/'/g, '') + '\')"><td>📍 ' + bbEsc(x.name || x.caseNo) + '<div class="pn-muted">' + bbEsc(x.region || '') + ' · ' + bbEsc(x.caseNo) + '</div></td><td class="r">' + f(x.minbid) + '</td>'
                         + '<td class="r wr-rec">' + (sn.rec ? f(sn.rec) + '<div class="pn-muted">입찰 전 저장</div>' : '<span class="pn-muted">계산 중…</span>') + '</td>'
                         + '<td class="r"><b>' + f(x.actual) + '</b></td><td class="r">' + (x.bidders != null ? x.bidders + '명' : '-') + '</td>'
                         + '<td class="wr-res">' + (sn.rec ? wrResultPill(x.actual, sn.rec) : '') + '</td></tr>';
@@ -25041,7 +25060,7 @@ function openWeeklyReport(week) {
         }
         if (d.misses && d.misses.length) {
             h += '<div class="wr-sec"><b>가장 크게 빗나간 사례</b><table class="pn-table"><thead><tr><th>물건</th><th class="r">유찰</th><th class="r">최저가</th><th class="r">예측</th><th class="r">실제</th><th class="r">차이</th><th class="r">응찰</th></tr></thead><tbody>'
-                + d.misses.map(function(x) { return '<tr><td>' + bbEsc(x.name || x.caseNo) + '<div class="pn-muted">' + bbEsc(x.region) + '</div></td><td class="r">' + (x.fails != null ? x.fails + '회' : '-') + '</td><td class="r">' + f(x.minbid) + '</td><td class="r">' + f(x.pred) + '</td><td class="r"><b>' + f(x.actual) + '</b></td><td class="r" style="color:' + (x.errPct > 0 ? '#b91c1c' : '#1d4ed8') + ';">' + pc(x.errPct, true) + '</td><td class="r">' + (x.bidders != null ? x.bidders + '명' : '-') + '</td></tr>'; }).join('')
+                + d.misses.map(function(x) { return '<tr style="cursor:pointer;" title="누르면 지도에서 이 물건 위치를 보여줘요" onclick="wrGo(\'' + String(x.caseNo).replace(/'/g, '') + '\',\'' + String(x.region || '').replace(/'/g, '') + '\')"><td>📍 ' + bbEsc(x.name || x.caseNo) + '<div class="pn-muted">' + bbEsc(x.region) + '</div></td><td class="r">' + (x.fails != null ? x.fails + '회' : '-') + '</td><td class="r">' + f(x.minbid) + '</td><td class="r">' + f(x.pred) + '</td><td class="r"><b>' + f(x.actual) + '</b></td><td class="r" style="color:' + (x.errPct > 0 ? '#b91c1c' : '#1d4ed8') + ';">' + pc(x.errPct, true) + '</td><td class="r">' + (x.bidders != null ? x.bidders + '명' : '-') + '</td></tr>'; }).join('')
                 + '</tbody></table><div class="pn-muted">응찰자가 아주 많거나 1명뿐이면 크게 빗나가기 쉬워요. 이런 사례는 입찰 전 알 수 없는 변수예요.</div></div>';
         }
         var wmg = d.winnerMargin;
