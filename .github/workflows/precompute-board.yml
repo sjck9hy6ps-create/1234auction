@@ -3,8 +3,7 @@ name: 입찰후보 계산 미리 해 두기
 on:
   workflow_dispatch:
   schedule:
-    - cron: '30 20 * * *'   # 매일 KST 05:30
-    - cron: '0 23 * * 0'    # 월요일 KST 08:00 (낙찰사례 분석·지역 분석이 끝난 뒤 새 모델로 한 번 더)
+    - cron: '0 18 * * 5'   # 매주 토요일 KST 03:00 (입찰후보 전체를 미리 계산해 1주일간 앱에서 사용)
 
 jobs:
   precompute:

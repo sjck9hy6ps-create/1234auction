@@ -4154,12 +4154,12 @@ function villaLiqHtml(liq) {
 }
 /* 💾 빌라 계산 결과 보관(2026-10-10, 사용자: "빌라 입찰후보 창이 매번 새로 불러오는 것 같아 느려") - 예상매도가·생활권 거래·건축물대장 요약을 브라우저에 24시간 저장해 두고
    다시 열면 바로 보여줌(지역 실거래 68곳을 다시 받지 않음). 건물 상세(전유부 등 큰 자료)는 열 때 다시 받음. */
-var VILLA_CALC_KEY = 'villaCalc:v1', VILLA_CALC_TTL = 24 * 3600 * 1000, villaRestoreState = 0, villaSaveT = null;
-function villaApplyCalc(d) {
+var VILLA_CALC_KEY = 'villaCalc:v1', VILLA_CALC_TTL = 8 * 24 * 3600 * 1000, villaRestoreState = 0, villaSaveT = null;
+function villaApplyCalc(d, force) {
     if (!d) return 0;
     var n = 0;
-    Object.keys(d.ve || {}).forEach(function(id) { if (!villaVeCache[id]) { villaVeCache[id] = d.ve[id]; n++; } });
-    var nl = 0; Object.keys(d.liq || {}).forEach(function(id) { if (!villaLiqCache[id]) { villaLiqCache[id] = d.liq[id]; nl++; } });
+    Object.keys(d.ve || {}).forEach(function(id) { if (force || !villaVeCache[id]) { villaVeCache[id] = d.ve[id]; n++; } });
+    var nl = 0; Object.keys(d.liq || {}).forEach(function(id) { if (force || !villaLiqCache[id]) { villaLiqCache[id] = d.liq[id]; nl++; } });
     if (nl) villaLiqFinal = true;
     var byId = {}; villaMetroRows(true).forEach(function(r) { byId[r.id] = r; });
     Object.keys(d.hs || {}).forEach(function(id) {
@@ -4174,11 +4174,11 @@ async function villaFetchServerCalc() { // 서버가 미리 계산해 둔 빌라
     try {
         var withT = function(p, ms) { return Promise.race([p, new Promise(function(_, rej) { setTimeout(function() { rej(new Error('시간 초과')); }, ms); })]); };
         var meta = await withT(fetch('/api/data-coverage?mode=boardCacheMeta&kind=villa').then(function(r) { return r.json(); }), 4000);
-        if (!meta || !meta.n || !meta.at || Date.now() - meta.at > 36 * 3600 * 1000) return null;
+        if (!meta || !meta.n || !meta.at || Date.now() - meta.at > 9 * 24 * 3600 * 1000) return null;
         var parts = await withT(Promise.all(Array.from({ length: meta.n }, function(_, i) { return fetch('/api/data-coverage?mode=boardCacheChunk&kind=villa&i=' + i).then(function(r) { return r.json(); }); })), 25000);
         var d = { ve: {}, liq: {}, hs: {} };
         parts.forEach(function(p) { ['ve', 'liq', 'hs'].forEach(function(k) { Object.assign(d[k], (p && p[k]) || {}); }); });
-        return d;
+        d.at = meta.at; return d;
     } catch (e) { return null; }
 }
 async function villaRestoreCalc() {
@@ -4187,11 +4187,9 @@ async function villaRestoreCalc() {
         var d = await listIdbOp('readonly', function(st) { return st.get(VILLA_CALC_KEY); });
         var fresh = d && d.at && Date.now() - d.at < VILLA_CALC_TTL;
         if (fresh) villaApplyCalc(d);
-        // 브라우저 저장본이 없거나 하루 지났으면 서버가 미리 계산해 둔 것을 받음(없는 물건만 채움)
-        if (!fresh || villaMetroRows(true).some(function(r) { return !villaVeCache[r.id]; })) {
-            var sd = await (window.villaSrvP || villaFetchServerCalc()); window.villaSrvP = null;
-            if (sd) { villaApplyCalc(sd); villaSaveCalcSoon(); }
-        }
+        // 서버가 매주 토요일 새벽에 계산해 둔 것이 브라우저 저장본보다 새로우면 그것으로 바꿔 씀(저장본이 없거나 없는 물건은 채움)
+        var sd = await (window.villaSrvP || villaFetchServerCalc()); window.villaSrvP = null;
+        if (sd) { villaApplyCalc(sd, !(d && d.at >= sd.at)); villaSaveCalcSoon(); }
     } catch (e) {}
     villaRestoreState = 2;
     if (bidBoardState.visit === 'villa') renderBidBoard();
@@ -18501,7 +18499,7 @@ function overshootSaleFactor(type, ratio) {
     for (var i = 0; i < t.length; i++) if (ratio < t[i][0]) return t[i][1];
     return t[t.length - 1][1];
 }
-var BOARD_CACHE_KEY = 'bidBoardCache:v1', BOARD_CACHE_MAX_AGE = 24 * 3600 * 1000, BOARD_SRV_MAX_AGE = 48 * 3600 * 1000;
+var BOARD_CACHE_KEY = 'bidBoardCache:v1', BOARD_CACHE_MAX_AGE = 8 * 24 * 3600 * 1000, BOARD_SRV_MAX_AGE = 9 * 24 * 3600 * 1000; // 2026-10-11: 서버 미리 계산이 매주 토요일 03시 1회 → 일주일(+여유)간 그대로 사용
 /* 서버가 미리 계산해 둔 입찰후보 받기(2026-10-10 속도: 입찰후보 창을 열기 전, 앱을 켠 직후 배경에서 미리 받아 둠 - 열 때는 이미 도착해 있음) */
 function srvBoardParts() {
     if (window.__srvBoardP) return window.__srvBoardP;
