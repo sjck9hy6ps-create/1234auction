@@ -6808,15 +6808,11 @@ function buildOfficialPriceHtml(data) {
     return html;
 }
  
-function buildNaverLinkHtml(lat, lon, name, dong) {
-    var url;
-    if (lat && lon) {
-        url = 'https://new.land.naver.com/complexes?ms=' + lat + ',' + lon + ',17';
-    } else {
-        var q = [name, dong].filter(Boolean).join(' ').trim();
-        if (!q) return '';
-        url = 'https://search.naver.com/search.naver?query=' + encodeURIComponent(q + ' 네이버부동산');
-    }
+function buildNaverLinkHtml(lat, lon, name, dong, opts) {
+    opts = opts || {};
+    var r = naverLandUrl({ lat: lat, lon: lon, name: name, dong: dong, buildingType: opts.buildingType, propType: opts.propType, pyung: opts.pyung, buildYear: opts.buildYear, addr: opts.addr });
+    if (!r) return '';
+    var url = r.url;
     return '<div style="margin-bottom:10px;">'
         + '<a href="' + url + '" target="_blank" rel="noopener" '
         + 'style="display:inline-flex;align-items:center;gap:5px;font-size:12px;font-weight:bold;color:#03c75a;'
@@ -7470,7 +7466,7 @@ function renderTable() {
             return '<div class="pn-muted" style="font-size:11px;padding:2px 4px;">이 평형 거래가 ' + chartTrades.length + '건뿐이라, 같은 단지 다른 평형 거래를 ' + chartPy + '평 기준(평단가×면적)으로 환산해 그렸어요</div>' + svg2;
         })() + '</div>';
     // ③ 바로가기
-    var links = buildNaverLinkHtml(currentPanelLat, currentPanelLon, ind && ind._aptName, ind && ind._aptDong);
+    var links = buildNaverLinkHtml(currentPanelLat, currentPanelLon, ind && ind._aptName, ind && ind._aptDong, currentPanelApt ? { buildingType: currentPanelApt.buildingType || 'apt', pyung: currentPanelApt.latest && currentPanelApt.latest.area ? currentPanelApt.latest.area / 3.305785 : null, buildYear: currentPanelApt.latest && currentPanelApt.latest.build_year, addr: currentPanelApt.latest && currentPanelApt.latest.dong } : {});
     if (currentPanelApt && currentPanelApt.latest) {
         var pl = currentPanelApt.latest;
         var panelMatchedAuction = auctionList.find(function(a) { return matchesAuctionKey(a, pl.name, pl.dong, pl.bunji); });
@@ -11288,10 +11284,49 @@ function getAuctionAddressContext() {
    비대칭 지정(사용자 지정값) - 사용승인연도 기준으로 [Y-5년, Y+10년] 범위이므로, 연차로
    환산하면 더 오래된 쪽(연차+5)부터 더 최근인 쪽(연차-10)까지의 범위가 됨. */
 var NAVER_PROP_TYPE_CODE = { apt: 'APT', villa: 'VL', officetel: 'OPST' };
+/* 🟢 네이버부동산 링크 공통 만들기 (2026-10-10, 사용자: "입찰후보 상세에도 네이버 링크 - 기존 링크 로직은 빌라/아파트 구분·비슷한 연식·평형 조절 상태, 구분이 안 되는 경우가 있었어 보완")
+   종류 판단 순서(예전엔 입력칸 하나만 봐서 비어 있거나 틀리면 필터가 빠졌음): ① 건축물대장 주용도(아파트/다세대·연립/오피스텔) ② 지도 거래자료의 건물 종류(buildingType)
+   ③ 물건에 저장된 종류(단, 이름·주소에 '빌라·다세대·연립'만 있고 '아파트'가 없으면 빌라, 반대면 아파트로 바로잡음) ④ 이름·주소 글자. 알 수 없으면 종류 필터를 걸지 않음(잘못 걸면 0건).
+   평형은 전용 ±5평, 연식은 사용승인연도 기준 [Y-5, Y+10](연차 범위), 거래는 매매·일반매물만. */
+function inferNaverType(o) {
+    var txt = String((o.name || '') + ' ' + (o.addr || ''));
+    var tp = o.title && o.title.mainPurps ? String(o.title.mainPurps) : '';
+    if (/아파트/.test(tp)) return 'apt'; if (/다세대|연립/.test(tp)) return 'villa'; if (/오피스텔/.test(tp)) return 'officetel';
+    if (o.buildingType === 'apt' || o.buildingType === 'villa') return o.buildingType;
+    var villaTxt = /빌라|다세대|연립|맨션|아트빌|하이츠|빌리지|팰리스|[가-힣]빌(\s|$)|[가-힣]타운(\s|$)/.test(txt), aptTxt = /아파트|APT/i.test(txt) || /\d+\s*단지/.test(txt);
+    if (o.propType === 'apt' || o.propType === 'villa' || o.propType === 'officetel') {
+        if (o.propType === 'apt' && villaTxt && !aptTxt) return 'villa';
+        if (o.propType === 'villa' && aptTxt && !villaTxt) return 'apt';
+        return o.propType;
+    }
+    if (/오피스텔/.test(txt)) return 'officetel';
+    if (aptTxt && !villaTxt) return 'apt'; if (villaTxt && !aptTxt) return 'villa';
+    return null;
+}
+function naverLandUrl(o) {
+    var type = o.type || inferNaverType(o), code = type ? NAVER_PROP_TYPE_CODE[type] : null, q = code ? ('&a=' + code + '&b=A1&e=RETAIL') : '';
+    var py = parseFloat(o.pyung);
+    if (code && py > 0) q += '&h=' + Math.max(Math.round((py - 5) * 3.305785), 0) + '&i=' + Math.round((py + 5) * 3.305785);
+    var by = parseInt(o.buildYear, 10);
+    if (code && by > 1900) { var age = new Date().getFullYear() - by; q += '&j=' + (age + 5) + '&k=' + Math.max(age - 10, 0); }
+    if (o.lat && o.lon) return { url: 'https://new.land.naver.com/houses?ms=' + o.lat + ',' + o.lon + ',17' + q, type: type };
+    var qq = [o.name, o.addr || o.dong].filter(Boolean).join(' ').trim();
+    if (!qq) return null;
+    return { url: 'https://search.naver.com/search.naver?query=' + encodeURIComponent(qq + ' 네이버부동산'), type: type };
+}
+function openNaverForRow(id) {
+    var row = bidBoardRows.filter(function(r) { return String(r.id) === String(id); })[0]; if (!row) return;
+    var a = row.a, st = hsBld[row.id], title = st && st.info && st.info.title, m = null; try { m = findMatchedApt(a); } catch (e) {}
+    var by = a.buildYear || row.estBuildYear || (title && title.useAprDay ? parseInt(String(title.useAprDay).slice(0, 4), 10) : null) || (m && m.latest && m.latest.build_year) || null;
+    var r = naverLandUrl({ propType: row.type || a.propType, title: title, buildingType: m && m.buildingType, name: cleanBldgName(a.name) || row.name, addr: a.addr, dong: a.dong, pyung: row.pyung || a.pyung, buildYear: by, lat: a.lat, lon: a.lon });
+    if (!r) { alert('주소가 없어 네이버부동산을 열 수 없어요.'); return; }
+    window.open(r.url, '_blank', 'noopener');
+}
 function openNaverLandForModal() {
     var ctx = getAuctionAddressContext();
     var propType = document.getElementById('a-prop-type').value;
-    var naverCode = NAVER_PROP_TYPE_CODE[propType];
+    var nvType = inferNaverType({ propType: propType, name: ctx.name, addr: document.getElementById('a-addr').value, buildingType: null });
+    var naverCode = nvType ? NAVER_PROP_TYPE_CODE[nvType] : NAVER_PROP_TYPE_CODE[propType];
     var filterQuery = naverCode ? ('&a=' + naverCode + '&b=A1&e=RETAIL') : '';
     // 평형(전용면적) 전후 ±5평 - 이 물건의 평형을 알고 있으면 ㎡로 환산해 범위로 걸어줌
     var pyung = parseFloat(document.getElementById('a-pyung').value);
@@ -18743,7 +18778,7 @@ async function renderBidDrawer() {
     h += '<div class="dr-sec dr-btns">'
         + '<button onclick="openCourtQuick(\'' + String(a.caseNo || '').replace(/'/g, "\\'") + '\')">🏛️ 법원경매</button>'
         + '<button onclick="openTankQuick(\'' + String(a.caseNo || '').replace(/'/g, "\\'") + '\')">🟦 탱크옥션</button>'
-        + '<button onclick="openBatoner(\'' + String(a.caseNo || '').replace(/'/g, "\\'") + '\')">🙋 바토너 대리입찰</button></div>';
+        + '<button onclick="openNaverForRow(\'' + idJs + '\')" title="이 물건 위치·종류·평형(±5평)·연식(−5~+10년)을 맞춘 네이버부동산 매물 지도">🟢 네이버부동산</button>' + '<button onclick="openBatoner(\'' + String(a.caseNo || '').replace(/'/g, "\\'") + '\')">🙋 바토너 대리입찰</button></div>';
     // 임장 후보 화면(2026-10): 맨 위에 판정 + 추천가 1개, 근거·범위·실거래·비용은 "자세히"로 접고, 직접 확인한 금액 입력칸은 항상 보이게
     var i1 = h.indexOf('<div style="margin-top:6px;"><span class="bb-verdict"'), i2 = h.indexOf('<div class="dr-sec"><h4>직접 확인한 금액');
     if (i1 > 0 && i2 > i1) {
@@ -18822,7 +18857,7 @@ async function renderVillaDrawer(d, row) {
         + '<label>인수 금액 (매각물건명세서 권리)</label><input type="number" value="' + (parseInt(a.assumedDeposit) || '') + '" placeholder="0" onchange="updateDrawerField(\'' + idJs + '\',\'assumedDeposit\',this.value)">'
         + '<label>미납 관리비</label><input type="number" value="' + (parseInt(a.unpaidMgmtFee) || '') + '" placeholder="0" onchange="updateDrawerField(\'' + idJs + '\',\'unpaidMgmtFee\',this.value)">'
         + '<label>수리비 (비우면 연식 기준 자동)</label><input type="number" value="' + (parseInt(a.repair) || '') + '" placeholder="자동" onchange="updateDrawerField(\'' + idJs + '\',\'repair\',this.value)"></div></div>';
-    h += '<div class="dr-sec dr-btns"><button onclick="openCourtQuick(\'' + String(a.caseNo || '').replace(/'/g, "\\'") + '\')">🏛️ 법원경매</button><button onclick="openTankQuick(\'' + String(a.caseNo || '').replace(/'/g, "\\'") + '\')">🟦 탱크옥션</button><button onclick="openBatoner(\'' + String(a.caseNo || '').replace(/'/g, "\\'") + '\')">🙋 바토너 대리입찰</button></div>';
+    h += '<div class="dr-sec dr-btns"><button onclick="openCourtQuick(\'' + String(a.caseNo || '').replace(/'/g, "\\'") + '\')">🏛️ 법원경매</button><button onclick="openTankQuick(\'' + String(a.caseNo || '').replace(/'/g, "\\'") + '\')">🟦 탱크옥션</button><button onclick="openNaverForRow(\'' + idJs + '\')" title="이 물건 위치·종류·평형(±5평)·연식(−5~+10년)을 맞춘 네이버부동산 매물 지도">🟢 네이버부동산</button><button onclick="openBatoner(\'' + String(a.caseNo || '').replace(/'/g, "\\'") + '\')">🙋 바토너 대리입찰</button></div>';
     d.innerHTML = h;
     // 지역 사이클 채우기
     if (lawd) loadMarketCycle(lawd).then(function(cd) {
