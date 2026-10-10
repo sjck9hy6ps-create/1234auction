@@ -1,0 +1,19 @@
+# 대장아파트 판별 기준 비교 (analyze-leader-criteria.py 상단 설명 참고) - 수동 실행
+name: Analyze leader criteria
+on:
+  workflow_dispatch: {}
+jobs:
+  analyze:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install pandas numpy requests
+      - env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          PYTHONUNBUFFERED: '1'
+        run: python analyze-leader-criteria.py
