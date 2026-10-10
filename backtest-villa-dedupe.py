@@ -16,7 +16,9 @@ def make_estimate(n_strong):
     code = src.replace("if n1 >= 3: p, lvl = v1, \"건물3+\"", f"if n1 >= {n_strong}: p, lvl = v1, \"건물3+\"")
     code = code.replace("elif n1 >= 1 and v2 is not None: p, lvl = 0.5 * v1 + 0.5 * v2, \"건물1~2+동\"", "elif n1 >= 1 and v2 is not None: p, lvl = 0.5 * v1 + 0.5 * v2, \"건물1~2+동\"")
     ns = {}
-    exec(compile(code.split("def main():")[0], "bvmod", "exec"), {"__name__": "bvmod", "__file__": os.path.join(HERE, "backtest-villa.py")}, ns)
+    g = {"__name__": "bvmod", "__file__": os.path.join(HERE, "backtest-villa.py"), "np": np, "pd": pd, "os": os, "json": json, "importlib": importlib}
+    exec(compile(code.split("def main():")[0], "bvmod", "exec"), g, g)
+    ns = g
     return ns["estimate"]
 
 FLT = "&or=(" + ",".join('region.like."' + n + '*"' for n in ("서울", "인천", "경기")) + ")"
