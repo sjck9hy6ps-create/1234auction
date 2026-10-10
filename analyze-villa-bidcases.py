@@ -129,10 +129,13 @@ def main():
     # 층별 낙찰가÷예상매도가 중앙값(원자료) - 층 효과가 낙찰가에서도 보이나
     flr = {k: {"n": int(len(G)), "ratioMed": round(float(G["ratio"].median()), 3)} for k, G in D.assign(fl2=X["floor"]).groupby("fl2") if len(G) >= 80}
     print("층별 낙찰가÷예상매도가:", json.dumps(flr, ensure_ascii=False))
-    resid_q = [round(float(np.quantile(y[te] - p, q / 100)), 4) for q in range(1, 100)]
-    full = fit_additive(X, y, FAC)
+    FIN = [f for f in FAC if f[0] != "dong"]   # 동 요인은 시험에서 개선이 없어 뺌
+    mfin = fit_additive(X[tr], y[tr], FIN); pfin = predict(mfin, X[te], FIN)
+    resid_q = [round(float(np.quantile(y[te] - pfin, q / 100)), 4) for q in range(1, 100)]
+    full = fit_additive(X, y, FIN)
+    FAC = FIN
     out = {"n": int(len(D)), "oos": res, "byLevel": bylvl, "byAge": byage, "byFloor": byfl, "floorRatio": flr, "ratioMed": round(float(D["ratio"].median()), 3), "resQ": resid_q,
-           "base": full[0], "eff": {f: {str(k): round(float(v), 4) for k, v in d.items()} for f, d in full[1].items()}}
+           "factors": [f for f, _ in FIN], "base": full[0], "eff": {f: {str(k): round(float(v), 4) for k, v in d.items()} for f, d in full[1].items()}}
     json.dump(out, open("villa-winbid.json", "w"), ensure_ascii=False)
     print("저장 villa-winbid.json")
 
