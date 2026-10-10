@@ -5018,8 +5018,19 @@ async function fetchHouseDataCached(lawdCd, forceNet) {
         }
         if (!forceNet) return cached.v;
     }
-    var res = await fetch('/api/get-house?lawdCd=' + lawdCd);
-    var data = await res.json();
+    // 매매·전세를 나눠 동시에 받음(큰 지역도 엣지 캐시가 되도록 각각 10MB 아래로) - 공통 값(region·source)은 아래에서 다시 채움
+    var rs = await Promise.all([fetch('/api/get-house?lawdCd=' + lawdCd + '&compact=1'), fetch('/api/get-house?lawdCd=' + lawdCd + '&compact=1&part=rent')]);
+    var dA = await rs[0].json(), dR = await rs[1].json();
+    var data;
+    if (dA && Array.isArray(dA.apt) && dR && Array.isArray(dR.rent)) {
+        var rg = dA.region || dR.region || '';
+        dA.apt.forEach(function(r) { if (r.region === undefined) r.region = rg; if (r.source === undefined) r.source = 'db'; });
+        dR.rent.forEach(function(r) { if (r.region === undefined) r.region = rg; if (r.source === undefined) r.source = 'db'; });
+        data = { apt: dA.apt, rent: dR.rent };
+        if (dA.partial || dR.partial) data.partial = true;
+    } else {
+        data = (dA && dA.error) ? dA : { error: (dR && dR.error) || 'get-house 응답 형식 오류' };
+    }
     if (data && !data.error && !data.partial && Array.isArray(data.apt)) {  // 일부 조회가 실패한 불완전 응답은 브라우저에 저장하지 않음
         // 저장은 화면 그리기를 막지 않도록 뒤에서(실패해도 무시)
         // ⚠️ 2026-10(입찰후보 보드가 지역 수십 곳을 연달아 불러오다 페이지가 멈춤): 예전엔 저장할 때마다

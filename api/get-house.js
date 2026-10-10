@@ -317,6 +317,9 @@ export default async function handler(req, res) {
 
   // 새벽 자동 예열 요청만 이 플래그를 붙여서 호출합니다 (실시간 API 할당량 절약용)
   const skipRealtime = req.query.skipRealtime === '1' || req.query.skipRealtime === 'true';
+  // 2026-10-10(지역 이동이 느림): 응답이 약 10MB를 넘으면 엣지 캐시가 안 돼(마포 10.0MB·강남 10.5MB·부천 13MB는 매번 1.5~5초) → 지도가 쓰는 compact=1은
+  // ① 매매(apt)와 전세(rent)를 따로 받게 나누고(part=rent) ② 모든 행에 똑같이 들어 있는 region·source('db')를 빼서 줄임(클라이언트가 다시 채움)
+  const compact = req.query.compact === '1', partRent = req.query.part === 'rent';
 
   // house_trades / villa_trades 모두 lawd_cd 컬럼이 없고 region 텍스트로 저장되어 있어
   // LAWD_CODES로 lawdCd → 지역명 변환이 필요합니다.
@@ -362,13 +365,17 @@ export default async function handler(req, res) {
       let villaRentQuery = Promise.resolve({ data: [], error: null });
 
       if (regionName) {
-        aptQuery = fetchAllRows('house_trades', regionName);
-        villaQuery = fetchAllRows('villa_trades', regionName);
+        if (!(compact && partRent)) {
+          aptQuery = fetchAllRows('house_trades', regionName);
+          villaQuery = fetchAllRows('villa_trades', regionName);
+        }
         // 단독/다가구(single_trades)는 지도에 표시하지 않기로 했으므로 조회하지 않음
 
         // 전세가(house_rent/villa_rent) - 전세가 기반 시세추정(연립다세대) 등에 사용
-        aptRentQuery = fetchAllRows('house_rent', regionName);
-        villaRentQuery = fetchAllRows('villa_rent', regionName);
+        if (!compact || partRent) {
+          aptRentQuery = fetchAllRows('house_rent', regionName);
+          villaRentQuery = fetchAllRows('villa_rent', regionName);
+        }
       } else {
         console.warn('LAWD_CODES에서 lawdCd(' + lawdCd + ')에 매칭되는 지역명을 찾지 못해 DB 조회를 건너뜁니다.');
       }
@@ -452,7 +459,11 @@ export default async function handler(req, res) {
     // 2026-10-10(지역 이동 시 배지가 5초 가까이 늦음 - 지역 캐시가 Redis 대신 엣지뿐이라 5분마다 DB를 다시 긁음): 엣지에 30분 보관하고, 그 뒤에도 하루 동안은 이전 응답을 즉시 주면서 뒤에서 갱신(stale-while-revalidate)
     res.setHeader('Cache-Control', partialPayload ? 'no-store' : 'public, s-maxage=1800, stale-while-revalidate=86400');
     const _s0 = Date.now();
-    const _body = JSON.stringify({ apt: finalApt, rent: dbPayload.rent, partial: partialPayload || undefined });
+    let _out;
+    if (compact && partRent) _out = { rent: dbPayload.rent.map(r => { const { region, source, ...rest } = r; return source && source !== 'db' ? { ...rest, source } : rest; }), region: regionName, partial: partialPayload || undefined };
+    else if (compact) _out = { apt: finalApt.map(r => { const { region, source, ...rest } = r; return source && source !== 'db' ? { ...rest, source } : rest; }), region: regionName, compact: 1, partial: partialPayload || undefined };
+    else _out = { apt: finalApt, rent: dbPayload.rent, partial: partialPayload || undefined };
+    const _body = JSON.stringify(_out);
     _tm.stringify = Date.now() - _s0;
     res.setHeader('Server-Timing', Object.keys(_tm).map(k => `${k};dur=${_tm[k]}`).join(', ') + `, total;dur=${Date.now() - _t0}`);
     res.setHeader('Content-Type', 'application/json; charset=utf-8');
