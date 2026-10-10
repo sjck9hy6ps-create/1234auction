@@ -17860,10 +17860,22 @@ function getBidVerdictForMarker(a) {
 }
 function bidVerdictKey(a) {
     var r = getBidVerdictForMarker(a);
+    if (r && r.type === 'villa') { var vb = villaBadgeShort(r); if (vb) return 'V' + vb.label + vb.room; }
     return r ? r.verdict + (r.assumedFail ? 'A' : '') + (r.opportunity ? 'O' : '') + (r.niche ? 'N' + r.niche.score : '') + (r.sweet ? 'S' : '') + (r.overshoot ? 'X' : '') + (r.roomPct != null ? r.roomPct : '') + (r.liv ? 'L' + r.liv.rank + '/' + r.liv.of : '') : '';
+}
+// 빌라 지도 배지(2026-10-10, 사용자: 배지가 이상해 - 빌라도 예전 아파트식 '❌ 제외 부족 65%'가 떠서 빌라 탭의 임장/패스 판정과 달랐음) → 빌라는 빌라 탭과 같은 판정으로 표시
+function villaBadgeShort(r) {
+    var ev = null; try { ev = villaEval(r); } catch (e) { ev = null; }
+    if (!ev) return null;
+    var w = String(ev.visit.why || ''), pe = ev.pn && ev.pn.ev, short;
+    if (ev.visit.go) short = pe ? '추천 ' + toEok(String(pe.bid)) + ' · 낙찰 ' + Math.round(pe.p * 100) + '%' : '';
+    else short = /이슈/.test(w) ? '이슈 의심' : (/생활권/.test(w) ? '생활권 거래 없음' : (/마진/.test(w) ? '마진 부족' : (/근거/.test(w) ? '시세 근거 약함' : (/지하/.test(w) ? '지하·반지하' : (/낙찰 가능성/.test(w) ? '낙찰 가능성 낮음' : (/불러오는|계산/.test(w) ? '계산 중' : w.slice(0, 12)))))));
+    var calc = /불러오는|계산/.test(w);
+    return { label: calc ? '⏳ 계산 중' : (ev.visit.go ? '🚶 임장' : '패스'), room: short, color: calc ? '#757575' : (ev.visit.go ? '#2e7d32' : '#c62828'), bg: calc ? '#f5f5f5' : (ev.visit.go ? '#e8f5e9' : '#ffebee'), opportunity: false };
 }
 function bidVerdictShort(r) {
     if (!r) return null;
+    if (r.type === 'villa') { var vb = villaBadgeShort(r); if (vb) return vb; }
     var v = BID_BOARD_VERDICT[r.verdict];
     var room = r.roomPct == null ? '' : (r.roomPct >= 0 ? '여유 ' + r.roomPct + '%' : '부족 ' + Math.abs(r.roomPct) + '%');
     // 2026-10: 📈 성공 구간 / ⚠️ 손해 주의(앱 예상보다 싸게 팔릴 가능성 큼 - 예전 이름 '시세 과대 의심')도 지도 배지·목록에 같이
