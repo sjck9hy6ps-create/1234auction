@@ -1,0 +1,6 @@
+
+# 비밀값·로컬 백업
+.env
+.env.local
+backups/
+full-backup/

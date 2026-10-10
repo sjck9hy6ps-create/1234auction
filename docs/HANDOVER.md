@@ -19,7 +19,7 @@
 | 캐시 | Upstash Redis | 일부 응답 캐시. **이곳에 대량 저장 금지**(메모 `redis-limit-incident`) |
 | 외부 API | 국토부 실거래(data.go.kr), 건축HUB 건축물대장, 카카오(지도·지오코딩·좌표→법정동), K-apt, 나이스(학군), 한국은행 ECOS, 청약홈 등 | 키는 GitHub 비밀값/Vercel 환경변수 |
 
-## 3. 비밀값·환경변수 (이름만)
+## 3. 비밀값·환경변수 (이름만) — **전체 목록과 발급처는 [`docs/SECRETS.md`](SECRETS.md)**, 입력 양식은 `.env.example`
 - **GitHub Actions 비밀값(Settings → Secrets):** `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `PUBLIC_DATA_API_KEY`(국토부·건축HUB 공용), `KAKAO_REST_API_KEY`, `NEIS_API_KEY`, `UPSTASH_REDIS_REST_URL`, `UPSTASH_REDIS_REST_TOKEN`, `COLLECT_PROXY_SECRET`, `SITE_URL`
 - **Vercel 환경변수:** 위와 같은 이름들 + `COLLECT_PROXY_SECRET`(Actions가 국토부 API를 Vercel 프록시로 부르게 하는 공유 비밀), 선택: `ANTHROPIC_API_KEY`, `GEMINI_API_KEY`, `ECOS_API_KEY`, `RONE_API_KEY`, `NAVER_CLIENT_ID/SECRET`, `VWORLD_API_KEY`
 - 값 자체는 이 저장소에 없어요. 새로 만들 때: Supabase 대시보드(Project Settings → API), data.go.kr 마이페이지, 카카오 개발자 콘솔.
