@@ -3763,7 +3763,7 @@ function setVillaVisit(v) { bidBoardState.villaVisit = v; bidBoardState.villaLim
 function villaMore() { bidBoardState.villaLimit = (bidBoardState.villaLimit || 120) + 300; renderBidBoard(); }
 function renderVillaLite(body) {
     var all = villaMetroRows(), s = bidBoardState, vv = s.villaVisit || 'go';
-    loadHomestayAgg(function() { if (bidBoardState.visit === 'villa') renderBidBoard(); });
+    if (!homestayAgg) loadHomestayAgg(function() { if (bidBoardState.visit === 'villa') renderBidBoard(); }); // 이미 받았으면 콜백이 바로 불려 무한 반복되므로 처음 한 번만
     all.forEach(ensureHomestayCheck);
     var evs = {}; all.forEach(function(r) { evs[r.id] = villaEval(r); });
     var goN = all.filter(function(r) { return evs[r.id].visit.go; }).length, passN = all.length - goN;
