@@ -18083,8 +18083,7 @@ function renderBidBoardLite() {
             var opts = '<option value="">지역 전체</option>';
             ['서울', '인천', '경기'].forEach(function(c) {
                 var ks = (grp[c] || []).sort(); if (!ks.length) return; var tot = ks.reduce(function(n, k) { return n + regions[k]; }, 0);
-                if (c === '경기') opts += '<optgroup label="경기 시별">' + ks.map(function(k) { return '<option value="' + bbEsc(k) + '"' + (s.region === k ? ' selected' : '') + '>' + bbEsc(k) + ' (' + regions[k] + ')</option>'; }).join('') + '</optgroup>';
-                else opts += '<optgroup label="' + c + '"><option value="g:' + c + '"' + (s.region === 'g:' + c ? ' selected' : '') + '>' + c + ' 전체 (' + tot + ')</option>' + ks.map(function(k) { return '<option value="' + bbEsc(k) + '"' + (s.region === k ? ' selected' : '') + '>　' + bbEsc(k.slice(c.length + 1)) + ' (' + regions[k] + ')</option>'; }).join('') + '</optgroup>';
+                if (false) {} else opts += '<optgroup label="' + c + '"><option value="g:' + c + '"' + (s.region === 'g:' + c ? ' selected' : '') + '>' + c + ' 전체 (' + tot + ')</option>' + ks.map(function(k) { return '<option value="' + bbEsc(k) + '"' + (s.region === k ? ' selected' : '') + '>　' + bbEsc(k.slice(c.length + 1)) + ' (' + regions[k] + ')</option>'; }).join('') + '</optgroup>';
             });
             sel.innerHTML = opts;
         } else sel.innerHTML = '<option value="">지역 전체</option>' + Object.keys(regions).sort().map(function(k) { return '<option value="' + bbEsc(k) + '"' + (s.region === k ? ' selected' : '') + '>' + bbEsc(k) + ' (' + regions[k] + ')</option>'; }).join('');
