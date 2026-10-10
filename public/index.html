@@ -18740,7 +18740,7 @@ function renderBidBoardLite() {
     });
     var body = document.getElementById('bb-body');
     if (!bidBoardRows.length) { body.innerHTML = '<div class="bb-empty">등록된 경매 물건이 없어요.<br>상단 <b>📝 경매물건 등록</b>에서 CSV를 올리면 여기에 모여요.</div>'; return; }
-    if (!rows.length) { body.innerHTML = '<div class="bb-empty">' + (pend ? '계산 중이에요…' : (s.visit === 'go' ? '지금은 임장할 만한 물건이 없어요.<br>패스 목록에서 이유를 확인하거나 새 CSV를 올려 보세요.' : '조건에 맞는 물건이 없어요.')) + '</div>'; return; }
+    if (!rows.length) { body.innerHTML = '<div class="bb-empty">' + (pend || bidBoardRunning || bidBoardRows.some(function(r) { return r.pending; }) ? '저장된 계산을 불러오는 중이에요…' : (s.visit === 'go' ? '지금은 임장할 만한 물건이 없어요.<br>패스 목록에서 이유를 확인하거나 새 CSV를 올려 보세요.' : '조건에 맞는 물건이 없어요.')) + '</div>'; return; }
     var money = function(v) { return v ? toEok(String(Math.round(v))) : '-'; };
     if (bbCardMode()) {
         body.innerHTML = nvSortBar('apt') + '<div class="nv-list">' + rows.slice(0, bidBoardState.liteLimit || 120).map(function(r) { return nvAptCard(r); }).join('') + '</div>' + (rows.length > (bidBoardState.liteLimit || 120) ? '<div style="text-align:center;padding:14px;"><button class="bb-csv" style="font-size:13px;padding:8px 18px;" onclick="bbLiteMore()">+ 더 보기 (남은 ' + (rows.length - (bidBoardState.liteLimit || 120)) + '건)</button></div>' : '');
