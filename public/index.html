@@ -1373,6 +1373,7 @@ body.ui2 #auction-modal.am4 { width:620px; }
     #bid-board .bb2-vtable td[data-l="생활권 거래(반경 500m)"] { grid-column:3; grid-row:3; display:block; }
     #bid-board .bb2-vtable td[data-l="도시민박"] { grid-column:4; grid-row:3; display:block; }
     .bb2-vtable .bb-sub { margin-top:0; }
+    .bb2-vtable .vt-hide, .bb2-vtable .lp-unk { display:none; }
 }
 /* 상세 창 맨 위 추천가 카드 */
 #bb-drawer .dr-pickcard { border-radius:12px; padding:10px 12px; margin:8px 0 10px; }
@@ -3966,7 +3967,7 @@ function villaLiqHtml(liq) {
     if (!liq) return '<span class="bb-sub">계산 중…</span>';
     var z = liq.r500.a6 === 0;
     return '<div style="font-weight:700;color:' + (z ? '#b91c1c' : '#111827') + ';" title="반경 500m 안 최근 6개월 빌라 매매 건수">최근 6개월 ' + liq.r500.a6 + '건</div>'
-        + '<div class="bb-sub">6~12개월 ' + liq.r500.a12 + ' · 1~2년 ' + liq.r500.a24 + '</div><div class="bb-sub" title="반경 1km">1km: ' + liq.r1000.a6 + ' / ' + liq.r1000.a12 + ' / ' + liq.r1000.a24 + '</div>';
+        + '<div class="bb-sub">6~12개월 ' + liq.r500.a12 + ' · 1~2년 ' + liq.r500.a24 + '</div><div class="bb-sub vt-hide" title="반경 1km">1km: ' + liq.r1000.a6 + ' / ' + liq.r1000.a12 + ' / ' + liq.r1000.a24 + '</div>';
 }
 /* 💾 빌라 계산 결과 보관(2026-10-10, 사용자: "빌라 입찰후보 창이 매번 새로 불러오는 것 같아 느려") - 예상매도가·생활권 거래·건축물대장 요약을 브라우저에 24시간 저장해 두고
    다시 열면 바로 보여줌(지역 실거래 68곳을 다시 받지 않음). 건물 상세(전유부 등 큰 자료)는 열 때 다시 받음. */
@@ -4145,7 +4146,7 @@ function renderVillaLite(body) {
         var elv = t ? (t.rideElvtCnt || 0) + (t.emgenElvtCnt || 0) : 0;
         var estCell = ve ? (function() { var cl = ve.lvl === '건물5+' ? '#15803d' : (ve.lvl === '건물1~2+동' || ve.lvl === '건물1~2' ? '#b45309' : '#b91c1c'); return '<b title="실제 값이 ' + money(ve.lo) + '~' + money(ve.hi) + ' 사이였던 비율이 80% (백테스트)">' + money(ve.est) + '</b><div class="bb-sub" style="color:' + cl + ';">보통 오차 ±' + ve.errPct + '%</div><div class="bb-sub">' + ve.lvl + ' · 거래 ' + (ve.n1 || ve.n2) + '건</div>' + (ve.capped ? '<div class="bb-sub" style="color:#7c3aed;" title="' + bbEsc(ve.capped.desc) + '">📋 호가 상한 적용(실거래 ' + money(ve.estTrade) + ')</div>' : ''); })() : '<span class="bb-sub">-</span>';
         var marCell = mp ? (function() { var why = (mp.age != null ? '연식 ' + mp.age + '년' : '연식 모름') + (mp.elv != null ? ' · 승강기 ' + (mp.elv > 0 ? '있음' : '없음') : '') + ' · ' + ve.lvl;
-            return '<b>마진 ' + toEok(String(mp.margin)) + '</b>' + (mp.first ? '<div class="bb-sub" style="color:#b45309;">' + (mp.elv === 0 ? '승강기 없는 고층' : '1층') + ' +20%</div>' : (mp.floorMin ? '' : '<div class="bb-sub">매도가의 ' + mp.buf + '%</div>')) + (mp.bid ? '<div style="color:' + (mp.feasible ? '#15803d' : '#b91c1c') + ';font-weight:700;">' + (mp.feasible ? '입찰 상한 ' + money(mp.bid) : '최저가로도 마진 부족') + '</div>' : '') + '<div class="bb-sub" title="필요 마진 근거">' + why + '</div>'; })() : '<span class="bb-sub">-</span>';
+            return '<b>마진 ' + toEok(String(mp.margin)) + '</b>' + (mp.first ? '<div class="bb-sub" style="color:#b45309;">' + (mp.elv === 0 ? '승강기 없는 고층' : '1층') + ' +20%</div>' : (mp.floorMin ? '' : '<div class="bb-sub vt-hide">매도가의 ' + mp.buf + '%</div>')) + (mp.bid ? '<div style="color:' + (mp.feasible ? '#15803d' : '#b91c1c') + ';font-weight:700;">' + (mp.feasible ? '입찰 상한 ' + money(mp.bid) : '최저가로도 마진 부족') + '</div>' : '') + '<div class="bb-sub" title="필요 마진 근거">' + why + '</div>'; })() : '<span class="bb-sub">-</span>';
         var winCell = wb ? '<b>' + money(wb.price) + '</b><div class="bb-sub" title="낙찰사례 약 6천 건 모델, 보통 오차 약 9%">예상 낙찰가</div>' + (pn && pn.ev ? '<div style="color:#15803d;font-weight:700;">추천 ' + money(pn.ev.bid) + '</div><div class="bb-sub">낙찰 가능성 ' + Math.round(pn.ev.p * 100) + '% · 순이익 ' + money(pn.ev.net) + '</div>' : '<div class="bb-sub" style="color:#b91c1c;">' + (pn && pn.infeasible ? '최저가로도 마진 부족' : '추천가 없음') + '</div>') : '<span class="bb-sub">-</span>';
         h += '<tr data-rid="' + bbEsc(r.id) + '" class="bb2-row ' + (ev.visit.go ? 'go' : 'pass') + '" onclick="openBidDrawer(\'' + idJs + '\')">'
             + '<td data-l="판정">' + (ev.visit.go ? '<span class="bb2-go">🚶 임장</span>' : '<span class="bb2-pass">패스</span>') + (ev.visit.why ? '<div class="bb-sub"' + (ev.issue ? ' style="color:#b91c1c;"' : '') + '>' + bbEsc(ev.visit.why) + '</div>' : '') + '</td>'
@@ -11361,7 +11362,7 @@ function listingPillHtml(a) {
     var l = listingStatus(a), old = l.age != null && l.age > 14 ? ' · ' + l.age + '일 전' : '';
     if (l.st === 'yes') return '<span class="bb-pill" style="background:#e8f5e9;color:#15803d;border:1px solid #86efac;" title="네이버 매물 ' + l.n + '건 (확인 ' + bbEsc(l.at || '') + ')">📋 매물 ' + l.n + '건' + old + '</span>';
     if (l.st === 'none') return '<span class="bb-pill" style="background:#f3f4f6;color:#6b7280;border:1px solid #d1d5db;" title="네이버에서 매물이 없는 것으로 확인함 (' + bbEsc(l.at || '') + ')">📋 매물 없음' + old + '</span>';
-    return '<span class="bb-sub" style="font-size:10.5px;color:#9ca3af;" title="네이버 매물 목록을 붙여넣으면 등록 여부가 표시돼요">📋 미확인</span>';
+    return '<span class="bb-sub lp-unk" style="font-size:10.5px;color:#9ca3af;" title="네이버 매물 목록을 붙여넣으면 등록 여부가 표시돼요">📋 미확인</span>';
 }
 // 네이버에서 목록을 복사(Ctrl+A → Ctrl+C)한 뒤 이 버튼 한 번으로 분석(2026-10-10: 붙여넣기 칸을 누르고 붙이는 단계를 줄임). 앱이 네이버를 직접 읽지는 않음
 async function pasteListingsFromClipboard(id, kind) {
