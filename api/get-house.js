@@ -449,7 +449,8 @@ export default async function handler(req, res) {
     // 무료 Vercel 사용량 절약: 같은 지역(lawdCd)을 5분 안에 다시 조회하면(지도 패닝/재방문
     // 등) 함수를 다시 실행하지 않고 Vercel 엣지 캐시에서 바로 응답. 실시간 신고건은 어차피
     // 하루에도 자주 바뀌지 않으므로 5분 지연은 체감상 무의미하고, 함수 호출 수를 크게 줄여줌.
-    res.setHeader('Cache-Control', partialPayload ? 'no-store' : 'public, s-maxage=300, stale-while-revalidate=1800');
+    // 2026-10-10(지역 이동 시 배지가 5초 가까이 늦음 - 지역 캐시가 Redis 대신 엣지뿐이라 5분마다 DB를 다시 긁음): 엣지에 30분 보관하고, 그 뒤에도 하루 동안은 이전 응답을 즉시 주면서 뒤에서 갱신(stale-while-revalidate)
+    res.setHeader('Cache-Control', partialPayload ? 'no-store' : 'public, s-maxage=1800, stale-while-revalidate=86400');
     const _s0 = Date.now();
     const _body = JSON.stringify({ apt: finalApt, rent: dbPayload.rent, partial: partialPayload || undefined });
     _tm.stringify = Date.now() - _s0;

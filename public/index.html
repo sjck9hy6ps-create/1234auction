@@ -4978,7 +4978,9 @@ function initMap(lat, lon) {
 // 오면(새로고침·다음 방문 포함) 서버를 거치지 않고 바로 씀. 거래 데이터는 매주 월요일 수집 +
 // 이번 달 실시간분이라 6시간 지연은 체감 차이가 없음. 저장소가 막혀 있거나(사생활 보호 모드 등)
 // 오류가 나면 조용히 예전처럼 서버에서 받음. 용량 보호를 위해 최근 본 12개 지역만 보관.
-var HOUSE_IDB_TTL_MS = 6 * 60 * 60 * 1000;
+var HOUSE_IDB_TTL_MS = 24 * 60 * 60 * 1000;   // 2026-10-10: 6시간 → 24시간(지역 이동 시 서버를 기다리지 않고 바로 그림)
+var HOUSE_IDB_REFRESH_MS = 3 * 60 * 60 * 1000; // 3시간이 지난 보관본은 바로 쓰되 뒤에서 새로 받아 보관(다음 방문은 최신)
+var houseBgRefreshing = {};
 var HOUSE_IDB_MAX_REGIONS = 40; // 2026-10: 입찰후보가 지역 30여 곳을 쓰는데 12곳만 보관해 매번 서버에서 다시 받았음 → 40곳
 var _houseIdbPromise = null;
 function houseIdb() {
@@ -5007,10 +5009,14 @@ function houseIdbReq(mode, fn) {
         });
     });
 }
-async function fetchHouseDataCached(lawdCd) {
+async function fetchHouseDataCached(lawdCd, forceNet) {
     var cached = await houseIdbReq('readonly', function(st) { return st.get(lawdCd); });
     if (cached && cached.v && Array.isArray(cached.v.apt) && Date.now() - cached.t < HOUSE_IDB_TTL_MS) {
-        return cached.v;
+        if (Date.now() - cached.t > HOUSE_IDB_REFRESH_MS && !houseBgRefreshing[lawdCd]) {
+            houseBgRefreshing[lawdCd] = true;
+            setTimeout(function() { fetchHouseDataCached(lawdCd, true).catch(function() {}).then(function() { houseBgRefreshing[lawdCd] = false; }); }, 4000);
+        }
+        if (!forceNet) return cached.v;
     }
     var res = await fetch('/api/get-house?lawdCd=' + lawdCd);
     var data = await res.json();
