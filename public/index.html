@@ -18215,7 +18215,11 @@ var BID_BOARD_VERDICT = {
 var BB_ZOOMS = [0.9, 1, 1.15, 1.3, 1.5, 1.75, 2];
 function bbApplyZoom() {
     var z = 1; try { z = parseFloat(localStorage.getItem('bbZoom')) || 1; } catch (e) {}
-    var el = document.getElementById('bid-board'); if (el) el.style.zoom = z === 1 ? '' : String(z);
+    var el = document.getElementById('bid-board');
+    if (el) {
+        el.style.zoom = z === 1 ? '' : String(z); el.style.top = '';
+        if (z !== 1) { var bt = parseFloat(getComputedStyle(el).top) || 52; el.style.top = (bt / z) + 'px'; } // zoom이 위쪽 여백도 키워 지도 위 메뉴가 비치지 않게 보정
+    }
     var lab = document.getElementById('bb-zoom-lab'); if (lab) lab.textContent = Math.round(z * 100) + '%';
 }
 function bbSetZoom(dir) {
