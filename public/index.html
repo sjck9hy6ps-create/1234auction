@@ -1427,6 +1427,11 @@ body.ui2 #auction-modal.am4 { width:620px; }
 #bb-drawer .dr-h h3 { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 #bb-drawer .dr-h .dr-nav { position:static; flex:0 0 100%; margin:8px -16px 0; top:auto; }
 .bb-zoom { display:inline-flex; align-items:center; gap:4px; margin-left:8px; } .bb-zoom button { border:1px solid #d1d5db; background:#fff; border-radius:8px; padding:3px 9px; font-size:14px; font-weight:800; cursor:pointer; color:#111827; } .bb-zoom b { font-size:11.5px; color:#6b7280; min-width:36px; text-align:center; }
+.fav-star { cursor:pointer; font-size:18px; line-height:1; margin-right:5px; vertical-align:middle; user-select:none; } .fav-star.off { color:#cbd5e1; } .fav-star.on { color:#f59e0b; } .fav-star:hover { transform:scale(1.15); }
+.bb-tab.fav.on { background:#f59e0b !important; border-color:#f59e0b !important; color:#fff !important; }
+.fav-btn { border:1px solid #fcd34d; background:#fffbeb; color:#92400e; border-radius:8px; padding:6px 12px; font-size:12.5px; font-weight:700; cursor:pointer; } .fav-btn.on { background:#f59e0b; color:#fff; border-color:#f59e0b; }
+.fav-note { display:block; width:100%; margin-top:8px; min-height:62px; border:1px solid #fde68a; background:#fffdf5; border-radius:8px; padding:7px 9px; font-size:12.5px; box-sizing:border-box; }
+.nv-note { margin-top:6px; background:#fffbeb; border:1px solid #fde68a; color:#92400e; border-radius:6px; padding:4px 8px; font-size:12px; white-space:pre-wrap; }
 /* 상세 창 맨 위 추천가 카드 */
 #bb-drawer .dr-pickcard { border-radius:12px; padding:10px 12px; margin:8px 0 10px; }
 #bb-drawer .dr-pickcard.go { background:#f0fdf4; border:1px solid #bbf7d0; } #bb-drawer .dr-pickcard.pass { background:#f9fafb; border:1px solid #e5e7eb; }
@@ -3832,6 +3837,62 @@ function regionMatch(r, reg) { return !reg || (reg.indexOf('g:') === 0 ? String(
 (function() { try { var mq = window.matchMedia('(min-width:641px) and (max-width:1240px)'); var f = function() { var b = document.getElementById('bid-board'); if (b && b.style.display !== 'none' && typeof renderBidBoard === 'function') { try { renderBidBoard(); } catch (e) {} } }; if (mq.addEventListener) mq.addEventListener('change', f); else if (mq.addListener) mq.addListener(f); } catch (e) {} })();
 function bbCardMode() { return !!(window.matchMedia && window.matchMedia('(min-width:641px) and (max-width:1240px)').matches); }
 var NV_SORTS = [['verdict', '판정순'], ['date', '입찰일순'], ['p', '낙찰확률'], ['net', '순이익'], ['rec', '추천가순']];
+/* ⭐ 즐겨찾기 (2026-10-10, 사용자 요청) - 입찰후보를 보다가 '진짜 참여를 고려해 볼' 물건을 골라 따로 모아 보기. 경매 기록(a.fav)에 저장돼 기기를 바꿔도 유지, 메모(a.favNote)도 남길 수 있음 */
+function favStar(a, idJs) {
+    var on = !!(a && a.fav);
+    return '<span class="fav-star ' + (on ? 'on' : 'off') + '" title="' + (on ? '즐겨찾기 해제' : '즐겨찾기에 담기') + '" onclick="event.stopPropagation();favToggle(\'' + idJs + '\')">' + (on ? '★' : '☆') + '</span>';
+}
+async function favToggle(id) {
+    var a = auctionList.filter(function(x) { return String(x.id) === String(id); })[0]; if (!a) return;
+    a.fav = !a.fav; a.favAt = a.fav ? new Date().toISOString().slice(0, 10) : null;
+    bidBoardRows = bidBoardRows.map(function(r) { if (String(r.id) === String(id)) { r.a = a; delete r._vev; } return r; });
+    renderBidBoard(); if (String(bidDrawerId) === String(id)) renderBidDrawer();
+    try { renderAuctionMarkers(); } catch (e) {}
+    try { await saveAuctionAPI(a); } catch (e) { alert('저장 실패: ' + e.message); }
+}
+async function favSaveNote(id, txt) {
+    var a = auctionList.filter(function(x) { return String(x.id) === String(id); })[0]; if (!a) return;
+    a.favNote = String(txt || '').slice(0, 500);
+    try { await saveAuctionAPI(a); } catch (e) { alert('저장 실패: ' + e.message); }
+}
+function favRows() { return bidBoardRows.filter(function(r) { return (r.type === 'apt' || r.type === 'villa') && !r.pending && r.a && r.a.fav; }); }
+function favNoteHtml(row) {
+    var idJs = String(row.id).replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+    return '<div class="dr-sec"><h4>⭐ 즐겨찾기 ' + (row.a.fav ? '<span class="dr-sub" style="display:inline;">(' + bbEsc(row.a.favAt || '') + ' 담음)</span>' : '') + '</h4>'
+        + '<button class="fav-btn ' + (row.a.fav ? 'on' : '') + '" onclick="favToggle(\'' + idJs + '\')">' + (row.a.fav ? '★ 즐겨찾기 해제' : '☆ 즐겨찾기에 담기') + '</button>'
+        + (row.a.fav ? '<textarea class="fav-note" placeholder="메모 (임장 계획·마음에 든 점·확인할 것)" onchange="favSaveNote(\'' + idJs + '\',this.value)">' + bbEsc(row.a.favNote || '') + '</textarea>' : '') + '</div>';
+}
+function nvVillaCard(r, ev) {
+    var vm = function(v) { return v ? toEok(String(Math.round(v))) : '-'; };
+    var pe = ev.pn && ev.pn.ev, ve = ev.ve, mp = ev.mp, st = hsBld[r.id] || {}, idJs = String(r.id).replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+    var l = listingStatus(r.a), hv = st.chk && st.chk.verdict;
+    return nvCard({ id: r.id, idJs: idJs, a: r.a, sel: String(bidDrawerId) === String(r.id), go: ev.visit.go, why: ev.visit.why, bad: !!ev.issue, name: villaNameFor(r),
+        dday: r.dday ? r.dday.label : '', soon: r.dday && r.dday.diffDays >= 0 && r.dday.diffDays <= 3,
+        rec: pe ? vm(pe.bid) : '', recPct: pe && ve ? Math.round(pe.bid / ve.est * 100) : null,
+        spec: bbEsc(r.region) + (r.pyung ? ' · 빌라 ' + r.pyung + '평(' + Math.round(r.pyung * 3.305785) + '㎡)' : '') + (r.floor ? ' · ' + r.floor + '층' : '') + (mp && mp.age != null ? ' · ' + mp.age + '년차' : ''),
+        sum: '예상매도가 <b>' + vm(ve && ve.est) + '</b>' + (ve ? ' <small>±' + ve.errPct + '%</small>' : '') + ' · 최저가 ' + vm(r.minBid) + (mp ? ' · 필요 마진 ' + vm(mp.margin) : ''),
+        chips: [pe ? { t: '낙찰 ' + Math.round(pe.p * 100) + '%', cls: pe.p >= 0.6 ? 'g' : (pe.p >= 0.35 ? 'o' : 'r') } : null, pe ? { t: '순이익 ' + vm(pe.net) } : null,
+            ev.liq ? { t: '생활권 6개월 ' + ev.liq.r500.a6 + '건', cls: ev.liq.r500.a6 === 0 ? 'r' : '' } : null, l.st === 'yes' ? { t: '📋 매물 ' + l.n + '건', cls: 'g' } : (l.st === 'none' ? { t: '📋 매물 없음' } : null),
+            hv === 'ok' ? { t: '🏠 도시민박 검토 가능', cls: 'g' } : null, ev.issue ? { t: '🚩 이슈 의심', cls: 'r' } : null], note: r.a.fav ? r.a.favNote : '' });
+}
+function nvAptCard(r) {
+    var am = function(v) { return v ? toEok(String(Math.round(v))) : '-'; };
+    var e = r.pick && r.pick.ev, idJs = String(r.id).replace(/\\/g, '\\\\').replace(/'/g, "\\'"), l = listingStatus(r.a), os = r.ownStats;
+    return nvCard({ id: r.id, idJs: idJs, a: r.a, sel: String(bidDrawerId) === String(r.id), go: r.visit.go, why: r.visit.why, bad: !!(r.issueSuspect && /🚩/.test(r.visit.why || '')), name: r.name,
+        dday: r.dday ? r.dday.label : '', soon: r.dday && r.dday.diffDays >= 0 && r.dday.diffDays <= 3,
+        rec: e ? am(e.bid) : '', recPct: e && r.sale ? Math.round(e.bid / r.sale * 100) : null,
+        spec: bbEsc(r.region) + (r.pyung ? ' · 아파트 ' + r.pyung + '평(' + Math.round(r.pyung * 3.305785) + '㎡)' : '') + (r.floor ? ' · ' + r.floor + '층' : '') + ' · ' + (r.fails == null ? '' : (r.fails === 0 ? '신건' : r.fails + '회 유찰')),
+        sum: '예상매도가 <b>' + am(r.sale) + '</b> · 최저가 ' + am(r.minBid) + (r.winbid && r.winbid.price ? ' · 예상 낙찰가 ' + am(r.winbid.price) : ''),
+        chips: [e ? { t: '낙찰 ' + Math.round(e.p * 100) + '%', cls: e.p >= 0.6 ? 'g' : (e.p >= 0.35 ? 'o' : 'r') } : null, e ? { t: '순이익 ' + am(e.net) } : null,
+            os ? { t: '1년 거래 ' + (os.n12 || 0) + '건', cls: (os.n12 || 0) >= 6 ? 'g' : ((os.n12 || 0) >= 3 ? '' : 'r') } : null, r.niche ? { t: '🧭 틈새', cls: 'g' } : null, r.issueSuspect ? { t: '🚩 이슈 의심', cls: 'r' } : null,
+            l.st === 'yes' ? { t: '📋 매물 ' + l.n + '건', cls: 'g' } : (l.st === 'none' ? { t: '📋 매물 없음' } : null)], note: r.a.fav ? r.a.favNote : '' });
+}
+function renderFavLite(body) {
+    var rows = favRows().sort(function(x, y) { return (x.dday ? x.dday.diffDays : 9999) - (y.dday ? y.dday.diffDays : 9999); });
+    var h = '<div class="nv-sort"><b style="color:#111;">⭐ 즐겨찾기 ' + rows.length + '건</b> <span style="color:#9ca3af;">입찰일이 가까운 순 · 별(★)을 다시 누르면 목록에서 빠져요</span></div>';
+    if (!rows.length) { body.innerHTML = h + '<div class="bb-empty">아직 담은 물건이 없어요.<br>입찰후보 목록의 ☆ 별을 누르거나 상세 창의 "즐겨찾기에 담기"를 눌러 보세요.</div>'; return; }
+    body.innerHTML = h + '<div class="nv-list">' + rows.map(function(r) { return r.type === 'villa' ? nvVillaCard(r, villaEval(r)) : nvAptCard(r); }).join('') + '</div>';
+}
 function nvSortBar(kind) {
     var s = bidBoardState, cur = kind === 'villa' ? (s.villaCol || 'verdict') : (s.liteCol || 'verdict');
     return '<div class="nv-sort">' + NV_SORTS.map(function(x, i) {
@@ -3847,12 +3908,13 @@ function nvSort(kind, k) {
 function nvCard(o) {
     var chips = (o.chips || []).filter(Boolean).map(function(c) { return '<span class="nv-chip' + (c.cls ? ' ' + c.cls : '') + '">' + c.t + '</span>'; }).join('');
     return '<div class="nv-card' + (o.sel ? ' sel' : '') + (o.go ? ' go' : ' pass') + '" data-rid="' + bbEsc(String(o.id)) + '" onclick="openBidDrawer(\'' + o.idJs + '\')">'
-        + '<div class="nv-top"><span class="nv-v ' + (o.go ? 'go' : 'pass') + '">' + (o.go ? '🚶 임장' : '패스') + '</span><span class="nv-name">' + bbEsc(o.name) + '</span>' + (o.dday ? '<span class="nv-dday' + (o.soon ? ' soon' : '') + '">' + bbEsc(o.dday) + '</span>' : '') + '</div>'
+        + '<div class="nv-top">' + (o.a ? favStar(o.a, o.idJs) : '') + '<span class="nv-v ' + (o.go ? 'go' : 'pass') + '">' + (o.go ? '🚶 임장' : '패스') + '</span><span class="nv-name">' + bbEsc(o.name) + '</span>' + (o.dday ? '<span class="nv-dday' + (o.soon ? ' soon' : '') + '">' + bbEsc(o.dday) + '</span>' : '') + '</div>'
         + (o.rec ? '<div class="nv-price"><span>추천</span> ' + o.rec + (o.recPct != null ? ' <small>시세의 ' + o.recPct + '%</small>' : '') + '</div>' : '<div class="nv-price none">추천가 없음</div>')
         + '<div class="nv-spec">' + o.spec + '</div>'
         + (o.why ? '<div class="nv-why' + (o.bad ? ' bad' : '') + '">' + bbEsc(o.why) + '</div>' : '')
         + '<div class="nv-sum">' + o.sum + '</div>'
-        + (chips ? '<div class="nv-chips">' + chips + '</div>' : '') + '</div>';
+        + (chips ? '<div class="nv-chips">' + chips + '</div>' : '')
+        + (o.note ? '<div class="nv-note">📝 ' + bbEsc(o.note) + '</div>' : '') + '</div>';
 }
 /* 🏷️ 이름 없는 빌라 건물명 채우기 (2026-10-10, 사용자 요청) - 경매 주소에 건물명이 없어 '장수동 781-3'처럼 지번으로만 보이는 물건은
    ① 같은 건물 실거래의 건물명(거래 자료) → ② 건축물대장 건물명(bldNm) 순으로 채워서 보여줌. 대장·거래 자료에 이름이 없으면 지번 그대로. */
@@ -4224,19 +4286,7 @@ function renderVillaLite(body) {
     if (!rows.length) { body.innerHTML = h + '<div class="bb-empty">' + (all.length ? '이 목록에는 물건이 없어요.' : '수도권 빌라 입찰후보가 없어요.') + '</div>'; return; }
     var lim = s.villaLimit || 120;
     if (bbCardMode()) {
-        var vm = function(v) { return v ? toEok(String(Math.round(v))) : '-'; };
-        h += nvSortBar('villa') + '<div class="nv-list">' + rows.slice(0, lim).map(function(r) {
-            var ev = evs[r.id], pe = ev.pn && ev.pn.ev, ve = ev.ve, mp = ev.mp, st = hsBld[r.id] || {}, idJs = String(r.id).replace(/\\/g, '\\\\').replace(/'/g, "\\'");
-            var l = listingStatus(r.a), hv = st.chk && st.chk.verdict;
-            return nvCard({ id: r.id, idJs: idJs, sel: String(bidDrawerId) === String(r.id), go: ev.visit.go, why: ev.visit.why, bad: !!ev.issue, name: villaNameFor(r),
-                dday: r.dday ? r.dday.label : '', soon: r.dday && r.dday.diffDays >= 0 && r.dday.diffDays <= 3,
-                rec: pe ? vm(pe.bid) : '', recPct: pe && ve ? Math.round(pe.bid / ve.est * 100) : null,
-                spec: bbEsc(r.region) + (r.pyung ? ' · 빌라 ' + r.pyung + '평(' + Math.round(r.pyung * 3.305785) + '㎡)' : '') + (r.floor ? ' · ' + r.floor + '층' : '') + (mp && mp.age != null ? ' · ' + mp.age + '년차' : ''),
-                sum: '예상매도가 <b>' + vm(ve && ve.est) + '</b>' + (ve ? ' <small>±' + ve.errPct + '%</small>' : '') + ' · 최저가 ' + vm(r.minBid) + (mp ? ' · 필요 마진 ' + vm(mp.margin) : ''),
-                chips: [pe ? { t: '낙찰 ' + Math.round(pe.p * 100) + '%', cls: pe.p >= 0.6 ? 'g' : (pe.p >= 0.35 ? 'o' : 'r') } : null, pe ? { t: '순이익 ' + vm(pe.net) } : null,
-                    ev.liq ? { t: '생활권 6개월 ' + ev.liq.r500.a6 + '건', cls: ev.liq.r500.a6 === 0 ? 'r' : '' } : null, l.st === 'yes' ? { t: '📋 매물 ' + l.n + '건', cls: 'g' } : (l.st === 'none' ? { t: '📋 매물 없음' } : null),
-                    hv === 'ok' ? { t: '🏠 도시민박 검토 가능', cls: 'g' } : null, ev.issue ? { t: '🚩 이슈 의심', cls: 'r' } : null] });
-        }).join('') + '</div>' + (rows.length > lim ? '<div style="text-align:center;padding:14px;"><button class="bb-csv" style="font-size:13px;padding:8px 18px;" onclick="villaMore()">+ 더 보기 (남은 ' + (rows.length - lim) + '건)</button></div>' : '');
+        h += nvSortBar('villa') + '<div class="nv-list">' + rows.slice(0, lim).map(function(r) { return nvVillaCard(r, evs[r.id]); }).join('') + '</div>' + (rows.length > lim ? '<div style="text-align:center;padding:14px;"><button class="bb-csv" style="font-size:13px;padding:8px 18px;" onclick="villaMore()">+ 더 보기 (남은 ' + (rows.length - lim) + '건)</button></div>' : '');
         body.innerHTML = h; return;
     }
     h += '<table class="bb2-table bb2-vtable"><thead><tr><th>' + villaTh('verdict') + '</th><th>' + villaTh('date') + '</th><th>' + villaTh('name') + '</th><th class="r">' + villaTh('minBid') + '</th><th class="r">' + villaTh('appr') + '</th><th class="r">' + villaTh('est') + '<div class="bb2-subsort" style="justify-content:flex-end;">' + villaTh('err', '오차') + '</div></th><th class="r">필요 마진 · 입찰 상한<div class="bb2-subsort" style="justify-content:flex-end;">' + villaTh('margin', '마진') + villaTh('cap', '상한') + '</div></th><th class="r">예상 낙찰가 · 추천가<div class="bb2-subsort" style="justify-content:flex-end;">' + villaTh('win', '낙찰가') + villaTh('rec', '추천가') + villaTh('p', '가능성') + villaTh('net', '순이익') + villaTh('evv', '기대수익') + '</div></th><th class="r">생활권 거래<div class="bb-sub" style="display:block;">반경 500m (1km)</div><div class="bb2-subsort" style="justify-content:flex-end;">' + villaTh('liq', '6개월') + '</div></th><th>건물(대장)<div class="bb2-subsort">' + villaTh('age', '연식') + '</div></th><th>' + villaTh('hs') + '</th><th>이 동의 도시민박<div class="bb2-subsort">' + villaTh('net1y', '순증') + '</div></th></tr></thead><tbody>';
@@ -4251,7 +4301,7 @@ function renderVillaLite(body) {
         h += '<tr data-rid="' + bbEsc(r.id) + '" class="bb2-row ' + (ev.visit.go ? 'go' : 'pass') + '" onclick="openBidDrawer(\'' + idJs + '\')">'
             + '<td data-l="판정">' + (ev.visit.go ? '<span class="bb2-go">🚶 임장</span>' : '<span class="bb2-pass">패스</span>') + (ev.visit.why ? '<div class="bb-sub"' + (ev.issue ? ' style="color:#b91c1c;"' : '') + '>' + bbEsc(ev.visit.why) + '</div>' : '') + '</td>'
             + '<td data-l="입찰일">' + (r.dday ? '<span class="bb-dday' + (r.dday.diffDays >= 0 && r.dday.diffDays <= 3 ? ' soon' : '') + '">' + bbEsc(r.dday.label) + '</span>' : '-') + '<div class="bb-sub">' + bbEsc(r.a.bidDate || '') + '</div></td>'
-            + '<td class="bb2-name"><b>' + bbEsc(villaNameFor(r)) + '</b><div class="bb-sub">' + bbEsc(r.region) + (r.pyung ? ' · ' + r.pyung + '평' : '') + (r.floor ? ' · ' + r.floor + '층' : '') + '</div><div>' + listingPillHtml(r.a) + '</div></td>'
+            + '<td class="bb2-name">' + favStar(r.a, idJs) + '<b>' + bbEsc(villaNameFor(r)) + '</b><div class="bb-sub">' + bbEsc(r.region) + (r.pyung ? ' · ' + r.pyung + '평' : '') + (r.floor ? ' · ' + r.floor + '층' : '') + '</div><div>' + listingPillHtml(r.a) + '</div></td>'
             + '<td class="r" data-l="최저가">' + money(r.minBid) + '</td><td class="r" data-l="감정가">' + money(r.appraisal) + '</td>'
             + '<td class="r" data-l="예상매도가">' + estCell + '</td><td class="r" data-l="필요 마진 · 입찰 상한">' + marCell + '</td><td class="r" data-l="예상 낙찰가 · 추천가">' + winCell + '</td><td class="r" data-l="생활권 거래(반경 500m)">' + villaLiqHtml(ev.liq) + '</td>'
             + '<td data-l="건물(대장)">' + (t ? bbEsc(t.mainPurps || '') + '<div class="bb-sub">' + (t.grndFlrCnt || '-') + '층 · ' + (t.useAprDay ? String(t.useAprDay).slice(0, 4) + '년' : '-') + ' · 승강기 ' + (elv ? elv + '대' : '없음') + '</div>' : (st.quota ? '<span class="bb-sub" title="연식·승강기·층수를 아직 못 가져왔어요">⏸ 한도 초과(내일 자동 조회)</span>' : (st.loading ? '<span class="bb-sub">조회 중…</span>' : '<span class="bb-sub">대장 없음</span>'))) + '</td>'
@@ -14324,7 +14374,7 @@ function findMatchedApt(a) {
 function auctionMarkerSignature(a) {
     var matched = findMatchedApt(a);
     return JSON.stringify({
-        status: a.status, name: a.name, addrLabel: a.addrLabel, addr: a.addr,
+        fav: a.fav ? 1 : 0, status: a.status, name: a.name, addrLabel: a.addrLabel, addr: a.addr,
         myBid: a.myBid, appraisal: a.appraisal, pyung: a.pyung, bidDate: a.bidDate,
         lat: a.lat, lon: a.lon,
         grade: matched ? matched.grade : null,
@@ -14784,7 +14834,7 @@ function placeAuctionMarker(a, hidden) {
         // 2026-10 화면 개편: 간단 배지 모드에선 경매 배지도 3줄(종류·D-day / 단지명 / 예상매도가·가격)로 - 자세한 건 클릭·마우스 올리기로
         var headBg = numRisk.level === 'high' ? '#c62828' : (numRisk.level === 'medium' ? '#ef6c00'
             : (isWon ? '#00695c' : (bvS ? bvS.color : (isBidTarget ? btStyle.border : sc))));
-        var headLabel = (numRisk.level ? '🚨' : '') + (isWon ? '⚖️낙찰' : (bvS ? bvS.label : (isBidTarget ? btStyle.icon + '입찰희망' : '🔨' + a.status)))
+        var headLabel = (a.fav ? '⭐' : '') + (numRisk.level ? '🚨' : '') + (isWon ? '⚖️낙찰' : (bvS ? bvS.label : (isBidTarget ? btStyle.icon + '입찰희망' : '🔨' + a.status)))
             + (bvS && bvS.room ? ' ' + bvS.room : '')
             + (dDayInfo ? ' · ' + (bvS && bvRow.assumedFail ? '결과 확인' : dDayInfo.label) : '');
         var predTxt = (awEst && awEst.predictedSale) ? '예상 ' + toEok(String(awEst.predictedSale)) : '';
@@ -18475,8 +18525,9 @@ function bbResetDrawer() {
     var b = document.getElementById('bid-board'); if (b) b.classList.remove('with-drawer');
     var d = document.getElementById('bb-drawer'); if (d) { d.style.display = 'none'; d.innerHTML = ''; }
 }
-function setLiteVisit(v) { bbResetDrawer(); var s0 = bidBoardState, wasVilla = s0.visit === 'villa'; if (v !== 'villa') s0.aptVisit = v; s0.visit = v;
+function setLiteVisit(v) { bbResetDrawer(); var s0 = bidBoardState, wasVilla = s0.visit === 'villa'; if (v !== 'villa' && v !== 'fav') s0.aptVisit = v; s0.visit = v;
     if (v !== 'villa' && String(s0.region || '').indexOf('g:') === 0) s0.region = '';
+    if (v === 'fav') s0.region = '';
     if (s0.region && (wasVilla !== (v === 'villa')) && !bidBoardRows.some(function(r) { return (r.type === 'villa') === (v === 'villa') && regionMatch(r, s0.region); })) s0.region = '';  bidBoardState.liteLimit = 120; renderBidBoard(); }
 // 열 머리글을 누르면 그 값으로 오름차순 ↔ 내림차순(2026-10, 사용자: "순위 표기보다 항목별 오름·내림차순 정렬을 직접 고르게"). 값이 없는 물건은 방향과 상관없이 맨 아래
 var LITE_COLS = {
@@ -18606,14 +18657,16 @@ function renderBidBoardLite() {
     var bar = document.getElementById('bb2-tabs');
     if (!bar) { bar = document.createElement('span'); bar.id = 'bb2-tabs'; var tools = document.querySelector('#bid-board .bb-tools'); tools.insertBefore(bar, tools.firstChild); }
     var villaMetroN = villaMetroRows().length, aptTotal = goN + passN;
+    var isFavTab = s.visit === 'fav', favN = favRows().length;
     var grp = [['apt', '🏢 아파트', aptTotal], ['villa', '🏘️ 빌라(수도권)', villaMetroN]].map(function(t) {
-        return '<button class="bb-tab' + ((t[0] === 'villa') === isVillaTab ? ' on' : '') + '" style="font-weight:700;" onclick="setLiteVisit(\'' + (t[0] === 'villa' ? 'villa' : (s.aptVisit || 'go')) + '\')">' + t[1] + ' <b>' + t[2] + '</b></button>';
-    }).join('');
-    var sub = isVillaTab ? '' : ' <span style="color:#cbd5e1;">|</span> ' + [['go', '🚶 임장 후보', goN], ['pass', '패스', passN], ['all', '전체', aptTotal]].map(function(t) {
+        return '<button class="bb-tab' + (!isFavTab && (t[0] === 'villa') === isVillaTab ? ' on' : '') + '" style="font-weight:700;" onclick="setLiteVisit(\'' + (t[0] === 'villa' ? 'villa' : (s.aptVisit || 'go')) + '\')">' + t[1] + ' <b>' + t[2] + '</b></button>';
+    }).join('') + ' <button class="bb-tab fav' + (isFavTab ? ' on' : '') + '" style="font-weight:700;" onclick="setLiteVisit(\'fav\')">⭐ 즐겨찾기 <b>' + favN + '</b></button>';
+    var sub = (isVillaTab || isFavTab) ? '' : ' <span style="color:#cbd5e1;">|</span> ' + [['go', '🚶 임장 후보', goN], ['pass', '패스', passN], ['all', '전체', aptTotal]].map(function(t) {
         return '<button class="bb-tab' + (s.visit === t[0] ? ' on' : '') + '" onclick="setLiteVisit(\'' + t[0] + '\')">' + t[1] + ' <b>' + t[2] + '</b></button>';
     }).join('') + (isVillaTab ? '' : ' <button class="bb-tab' + (s.nicheLite ? ' on' : '') + '" title="입찰자가 적으면서 되팔림도 좋은 시군구의 물건" onclick="bidBoardState.nicheLite=!bidBoardState.nicheLite;bidBoardState.liteLimit=120;renderBidBoard();">🧭 틈새만 <b>' + cur.filter(function(r) { return r.niche && !r.pending; }).length + '</b></button>');
     var listN = isVillaTab ? villaMetroRows().filter(function(r) { return listingStatus(r.a).st === 'yes'; }).length : cur.filter(function(r) { return !r.pending && listingStatus(r.a).st === 'yes'; }).length;
     sub += ' <button class="bb-tab' + (s.listLite ? ' on' : '') + '" title="네이버 매물 목록을 붙여넣어 매물이 있는 것으로 확인한 물건만" onclick="setListFilter()">📋 매물 등록 <b>' + listN + '</b></button>';
+    if (isFavTab) { bar.innerHTML = grp; renderFavLite(document.getElementById('bb-body')); var cn1 = document.getElementById('bb-cache-note'); if (cn1) cn1.style.display = 'none'; return; }
     bar.innerHTML = grp + sub
         + ' <span class="bb-sub">열 이름을 누르면 오름차순·내림차순으로 정렬돼요</span>'
         + ' <a href="#" class="bb2-link" onclick="toggleLitePast();return false;">' + (s.pastLite ? '지난 입찰 숨기기' : '지난 입찰 ' + pastN + '건 보기') + '</a>'
@@ -18637,18 +18690,7 @@ function renderBidBoardLite() {
     if (!rows.length) { body.innerHTML = '<div class="bb-empty">' + (pend ? '계산 중이에요…' : (s.visit === 'go' ? '지금은 임장할 만한 물건이 없어요.<br>패스 목록에서 이유를 확인하거나 새 CSV를 올려 보세요.' : '조건에 맞는 물건이 없어요.')) + '</div>'; return; }
     var money = function(v) { return v ? toEok(String(Math.round(v))) : '-'; };
     if (bbCardMode()) {
-        var am = function(v) { return v ? toEok(String(Math.round(v))) : '-'; };
-        body.innerHTML = nvSortBar('apt') + '<div class="nv-list">' + rows.slice(0, bidBoardState.liteLimit || 120).map(function(r) {
-            var e = r.pick && r.pick.ev, idJs = String(r.id).replace(/\\/g, '\\\\').replace(/'/g, "\\'"), l = listingStatus(r.a), os = r.ownStats;
-            return nvCard({ id: r.id, idJs: idJs, sel: String(bidDrawerId) === String(r.id), go: r.visit.go, why: r.visit.why, bad: !!(r.issueSuspect && /🚩/.test(r.visit.why || '')), name: r.name,
-                dday: r.dday ? r.dday.label : '', soon: r.dday && r.dday.diffDays >= 0 && r.dday.diffDays <= 3,
-                rec: e ? am(e.bid) : '', recPct: e && r.sale ? Math.round(e.bid / r.sale * 100) : null,
-                spec: bbEsc(r.region) + (r.pyung ? ' · 아파트 ' + r.pyung + '평(' + Math.round(r.pyung * 3.305785) + '㎡)' : '') + (r.floor ? ' · ' + r.floor + '층' : '') + ' · ' + (r.fails == null ? '' : (r.fails === 0 ? '신건' : r.fails + '회 유찰')),
-                sum: '예상매도가 <b>' + am(r.sale) + '</b> · 최저가 ' + am(r.minBid) + (r.winbid && r.winbid.price ? ' · 예상 낙찰가 ' + am(r.winbid.price) : ''),
-                chips: [e ? { t: '낙찰 ' + Math.round(e.p * 100) + '%', cls: e.p >= 0.6 ? 'g' : (e.p >= 0.35 ? 'o' : 'r') } : null, e ? { t: '순이익 ' + am(e.net) } : null,
-                    os ? { t: '1년 거래 ' + (os.n12 || 0) + '건', cls: (os.n12 || 0) >= 6 ? 'g' : ((os.n12 || 0) >= 3 ? '' : 'r') } : null, r.niche ? { t: '🧭 틈새', cls: 'g' } : null, r.issueSuspect ? { t: '🚩 이슈 의심', cls: 'r' } : null,
-                    l.st === 'yes' ? { t: '📋 매물 ' + l.n + '건', cls: 'g' } : (l.st === 'none' ? { t: '📋 매물 없음' } : null)] });
-        }).join('') + '</div>' + (rows.length > (bidBoardState.liteLimit || 120) ? '<div style="text-align:center;padding:14px;"><button class="bb-csv" style="font-size:13px;padding:8px 18px;" onclick="bbLiteMore()">+ 더 보기 (남은 ' + (rows.length - (bidBoardState.liteLimit || 120)) + '건)</button></div>' : '');
+        body.innerHTML = nvSortBar('apt') + '<div class="nv-list">' + rows.slice(0, bidBoardState.liteLimit || 120).map(function(r) { return nvAptCard(r); }).join('') + '</div>' + (rows.length > (bidBoardState.liteLimit || 120) ? '<div style="text-align:center;padding:14px;"><button class="bb-csv" style="font-size:13px;padding:8px 18px;" onclick="bbLiteMore()">+ 더 보기 (남은 ' + (rows.length - (bidBoardState.liteLimit || 120)) + '건)</button></div>' : '');
         return;
     }
     body.innerHTML = '<table class="bb2-table bb2-atable"><thead><tr>'
@@ -18664,7 +18706,7 @@ function renderBidBoardLite() {
             return '<tr data-rid="' + bbEsc(r.id) + '" class="bb2-row ' + (go ? 'go' : 'pass') + (String(bidDrawerId) === String(r.id) ? ' sel' : '') + '" onclick="openBidDrawer(\'' + idJs + '\')">'
                 + '<td data-l="판정">' + (go ? '<span class="bb2-go">🚶 임장</span>' : '<span class="bb2-pass">패스</span>') + (r.visit.why ? '<div class="bb-sub">' + bbEsc(r.visit.why) + '</div>' : '') + '</td>'
                 + '<td data-l="입찰일">' + (r.dday ? '<span class="bb-dday' + (r.dday.diffDays >= 0 && r.dday.diffDays <= 3 ? ' soon' : '') + '">' + bbEsc(r.dday.label) + '</span>' : '-') + '<div class="bb-sub">' + bbEsc(r.a.bidDate || '') + '</div></td>'
-                + '<td data-l="물건" class="bb2-name"><b>' + bbEsc(r.name) + '</b><div class="bb-sub">' + bbEsc(r.region) + (r.pyung ? ' · ' + r.pyung + '평' : '') + (r.floor ? ' · ' + r.floor + '층' : '') + (r.issueSuspect ? ' · <span style="color:#b91c1c;">🚩</span>' : '') + '</div><div>' + listingPillHtml(r.a) + '</div>' + (r.niche ? '<div><span class="bb-pill" style="background:#e0f2f1;color:#00695c;border:1px solid #4db6ac;" title="' + bbEsc(r.niche.why.join(' · ')) + '">🧭 틈새</span></div>' : '') + '</td>'
+                + '<td data-l="물건" class="bb2-name">' + favStar(r.a, idJs) + '<b>' + bbEsc(r.name) + '</b><div class="bb-sub">' + bbEsc(r.region) + (r.pyung ? ' · ' + r.pyung + '평' : '') + (r.floor ? ' · ' + r.floor + '층' : '') + (r.issueSuspect ? ' · <span style="color:#b91c1c;">🚩</span>' : '') + '</div><div>' + listingPillHtml(r.a) + '</div>' + (r.niche ? '<div><span class="bb-pill" style="background:#e0f2f1;color:#00695c;border:1px solid #4db6ac;" title="' + bbEsc(r.niche.why.join(' · ')) + '">🧭 틈새</span></div>' : '') + '</td>'
                 + '<td data-l="유찰" class="r">' + (r.fails == null ? '-' : (r.fails === 0 ? '신건' : r.fails + '회')) + '</td>'
                 + '<td data-l="동일평형 거래" class="r bb2-n">' + liteTradesHtml(r) + '</td>'
                 + '<td data-l="거래량 순위" class="bb2-rank">' + liteRankHtml(r) + '</td>'
@@ -19046,7 +19088,7 @@ async function renderBidDrawer() {
     var tr = (row.type === 'apt' || row.type === 'villa') ? drawerTrades(row) : [];
     var fmt = function(x) { return x ? toEok(String(Math.round(x))) : '-'; };
     // 2026-10(사용자: "목록 옆 좁은 창 안에 지도/상세 버튼") - 맨 위 이름 옆에 바로 보이게
-    var h = '<div class="dr-h"><h3>' + bbEsc(row.name) + '</h3><button class="dr-x" onclick="closeBidDrawer()">✕</button></div>'
+    var h = '<div class="dr-h"><h3>' + favStar(a, idJs) + bbEsc(row.name) + '</h3><button class="dr-x" onclick="closeBidDrawer()">✕</button></div>'
         + '<div class="dr-top-btns"><button onclick="bidBoardGo(\'' + idJs + '\')">🗺️ 지도</button><button onclick="bbOpenDetail(\'' + idJs + '\')">📝 상세</button><button onclick="openCyclePanel()">📈 사이클</button></div>'
         + '<div class="dr-sub">' + bbEsc(row.region) + ' · ' + (row.pyung ? row.pyung + '평' + (row.type === 'apt' && sizeBandOf(row.pyung) ? '(' + sizeBandOf(row.pyung) + ' ' + Math.round(row.pyung * 3.305785) + '㎡)' : '') + ' · ' : '') + (row.floor ? row.floor + '층 · ' : '') + bbEsc(a.caseNo || '') + (row.dday ? ' · <b>' + row.dday.label + '</b> (' + bbEsc(a.bidDate) + ')' : '') + '</div>'
         + '<div style="margin-top:6px;"><span class="bb-verdict" style="color:' + v.color + ';background:' + v.bg + ';">' + v.label + '</span>'
@@ -19116,6 +19158,7 @@ async function renderBidDrawer() {
     h += competitionHtml(row);
     h += fieldCheckHtml(row);
     // 직접 입력
+    h += favNoteHtml(row);
     h += '<div class="dr-sec"><h4>직접 확인한 금액 (만원) - 넣으면 추천 입찰가가 바로 바뀌어요</h4><div class="dr-in">'
         + '<label>인수 금액 (매각물건명세서 권리)</label><input type="number" value="' + (parseInt(a.assumedDeposit) || '') + '" placeholder="0" onchange="updateDrawerField(\'' + idJs + '\',\'assumedDeposit\',this.value)">'
         + '<label>미납 관리비 (공용부분)</label><input type="number" value="' + (parseInt(a.unpaidMgmtFee) || '') + '" placeholder="0" onchange="updateDrawerField(\'' + idJs + '\',\'unpaidMgmtFee\',this.value)">'
@@ -19165,7 +19208,7 @@ async function renderVillaDrawer(d, row) {
     var idJs = String(row.id).replace(/\\/g, '\\\\').replace(/'/g, "\\'");
     var fmt = function(x) { return x ? toEok(String(Math.round(x))) : '-'; };
     var go = ev.visit.go, pe = pn && pn.ev;
-    var h = '<div class="dr-h"><h3>' + bbEsc(villaNameFor(row)) + '</h3><button class="dr-x" onclick="closeBidDrawer()">✕</button></div>'
+    var h = '<div class="dr-h"><h3>' + favStar(a, idJs) + bbEsc(villaNameFor(row)) + '</h3><button class="dr-x" onclick="closeBidDrawer()">✕</button></div>'
         + '<div class="dr-top-btns"><button onclick="bidBoardGo(\'' + idJs + '\')">🗺️ 지도</button><button onclick="bbOpenDetail(\'' + idJs + '\')">📝 상세</button><button onclick="openCyclePanel()">📈 사이클</button></div>'
         + '<div class="dr-sub">' + bbEsc(row.region) + (row.pyung ? ' · ' + row.pyung + '평(' + Math.round(row.pyung * 3.305785) + '㎡)' : '') + (row.floor ? ' · ' + row.floor + '층' : '') + (a.buildYear ? ' · ' + a.buildYear + '년' : '') + (row.dday ? ' · 입찰 ' + bbEsc(row.dday.label) + ' ' + bbEsc(a.bidDate || '') : '') + '</div>'
         + '<div class="dr-pickcard ' + (go ? 'go' : 'pass') + '"><div class="pk-v">' + (go ? '🚶 임장 추천' : '패스') + (ev.visit.why ? ' · ' + bbEsc(ev.visit.why) : '') + '</div>'
@@ -19203,6 +19246,7 @@ async function renderVillaDrawer(d, row) {
     if (st.loading) h += '<div class="dr-sub">건축물대장 불러오는 중…</div>';
     else h += buildingDetailHtml(row, st.quota ? { info: null, chk: { verdict: null, items: [], unit: null }, quota: true } : st);
     h += '</div>';
+    h += favNoteHtml(row);
     h += '<div class="dr-sec"><h4>직접 확인한 금액 (만원) - 넣으면 추천가가 바로 바뀌어요</h4><div class="dr-in">'
         + '<label>인수 금액 (매각물건명세서 권리)</label><input type="number" value="' + (parseInt(a.assumedDeposit) || '') + '" placeholder="0" onchange="updateDrawerField(\'' + idJs + '\',\'assumedDeposit\',this.value)">'
         + '<label>미납 관리비</label><input type="number" value="' + (parseInt(a.unpaidMgmtFee) || '') + '" placeholder="0" onchange="updateDrawerField(\'' + idJs + '\',\'unpaidMgmtFee\',this.value)">'
