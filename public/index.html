@@ -7119,6 +7119,18 @@ async function saveAuctionAPI(data) {
     if (r.ok) applyStoredListChange('', r.headers.get('X-List-Version'), upsertById(data));
     return body;
 }
+// 2026-10-10(입찰후보 CSV 1,071건 등록 중 페이지 멈춤): 건마다 저장하면서 경매물건 보관본(예측 이력까지 포함해 수 MB)을 통째로 읽고 다시 쓰는 일이 천 번 넘게 반복됐음 → 묶어서 저장
+async function saveAuctionBatch(items) {
+    var r = await fetch('/api/auction', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(items) });
+    var body = await r.json().catch(function() { return null; });
+    if (!r.ok) throw new Error((body && body.error) || ('저장 실패 (HTTP ' + r.status + ')'));
+    applyStoredListChange('', r.headers.get('X-List-Version'), function(list) {
+        var pos = {}; list.forEach(function(x, i) { if (x && x.id != null) pos[x.id] = i; });
+        items.forEach(function(it) { if (pos[it.id] != null) list[pos[it.id]] = it; else list.push(it); });
+        return list;
+    });
+    return body;
+}
 async function deleteAuctionAPI(id) {
     var r = await fetch('/api/auction?id=' + id, { method:'DELETE' });
     if (r.ok) applyStoredListChange('', r.headers.get('X-List-Version'), removeById(id));
@@ -8199,7 +8211,9 @@ async function saveSelectedBidTargets() {
     var upCount = { fail: 0, reschedule: 0, sold: 0, closed: 0 }, prevVerdicts = {}, updatedIds = [], newIds = [];
     var prevRowById = {};
     bidBoardRows.forEach(function(r) { prevRowById[r.id] = r; });
+    var pendingSaves = [];
     for (var i = 0; i < selected.length; i++) {
+        if (i % 20 === 0) { statusBox.innerText = '등록 중... ' + i + '/' + selected.length + ' (주소 좌표·건물 연식을 찾는 중이라 시간이 걸릴 수 있어요)'; await new Promise(function(r) { setTimeout(r, 0); }); }
         var c = selected[i];
         var dedupKey = bidTargetDedupKey(c);
         var existing = findExistingBidTarget(c);
@@ -8207,7 +8221,8 @@ async function saveSelectedBidTargets() {
             var upd = classifyBidTargetUpdate(existing, c);
             if (upd.kind === 'same') { skippedCount++; continue; }
             try {
-                var updated = await saveAuctionAPI(applyBidTargetUpdate(existing, c, upd));
+                var updated = applyBidTargetUpdate(existing, c, upd);
+                pendingSaves.push(updated);
                 var ix = auctionList.indexOf(existing);
                 if (ix !== -1) auctionList[ix] = updated;
                 delete auctionWonEstCache[existing.id];
@@ -8293,13 +8308,19 @@ async function saveSelectedBidTargets() {
                 }
             } catch (e) { /* 건축HUB 조회 실패해도 나머지 정보로 등록 진행 */ }
         }
-        try {
-            var saved = await saveAuctionAPI(data);
-            auctionList.push(saved);
-            if (dedupKey) existingKeys[dedupKey] = true;
-            savedCount++;
-            newIds.push(saved.id);
-        } catch (e) { console.error('입찰예정물건 등록 실패:', e.message); }
+        pendingSaves.push(data);
+        auctionList.push(data);
+        if (dedupKey) existingKeys[dedupKey] = true;
+        savedCount++;
+        newIds.push(data.id);
+    }
+    // 모아 둔 것을 100건씩 한 번에 저장
+    var saveFail = 0;
+    for (var qi = 0; qi < pendingSaves.length; qi += 100) {
+        var chunkS = pendingSaves.slice(qi, qi + 100);
+        statusBox.innerText = '저장 중... ' + Math.min(qi + 100, pendingSaves.length) + '/' + pendingSaves.length;
+        try { await saveAuctionBatch(chunkS); } catch (e) { saveFail += chunkS.length; console.error('입찰예정물건 저장 실패:', e.message); }
+        await new Promise(function(r) { setTimeout(r, 30); });
     }
     pendingBidTargetExtraction = [];
     document.getElementById('bt-paste-text').value = '';
@@ -8309,7 +8330,8 @@ async function saveSelectedBidTargets() {
     statusBox.innerText = savedCount + '건 등록 완료.'
         + (upTotal ? ' 이미 등록된 물건 ' + upTotal + '건 결과 반영(' + [upCount.fail ? '유찰 ' + upCount.fail : '', upCount.reschedule ? '기일변경 ' + upCount.reschedule : '', upCount.sold ? '매각 ' + upCount.sold : '', upCount.closed ? '취하 등 ' + upCount.closed : ''].filter(Boolean).join('·') + ').' : '')
         + (skippedCount ? ' (변동 없는 사건 ' + skippedCount + '건은 건너뜀)' : '')
-        + (noPinCount ? ' ⚠️ ' + noPinCount + '건은 주소 좌표를 찾지 못해 지도에는 안 뜨니 목록에서 주소를 확인해 주세요.' : '');
+        + (noPinCount ? ' ⚠️ ' + noPinCount + '건은 주소 좌표를 찾지 못해 지도에는 안 뜨니 목록에서 주소를 확인해 주세요.' : '')
+        + (saveFail ? ' ⚠️ ' + saveFail + '건은 서버 저장에 실패했어요(화면에는 보이지만 새로고침하면 사라져요) - 다시 등록해 주세요.' : '');
     renderAuctionList(); redrawMarkers();
     // 등록이 끝나면 입찰후보 보드를 바로 열어 방금 등록한 물건을 표시함
     if (savedCount || upTotal) openBidBoard({ highlightIds: newIds, updatedIds: updatedIds, prevVerdicts: prevVerdicts });

@@ -23,11 +23,7 @@ def to_dt(s):
     return pd.to_datetime(s.astype(int).astype(str), format="%Y%m%d", errors="coerce")
 
 
-def main():
-    flt = "&or=(" + ",".join('region.like."' + n + '*"' for n in ("서울", "인천", "경기")) + ")"
-    raw = avm.fetch_all_rows("villa_trades", cols="region,dong,danji,bunji,price,size,floor,deal_date,dealing_type,build_year",
-                             extra_filter=f"&deal_date=gte.{START}{flt}")
-    print(f"받은 빌라 거래 {len(raw):,}건")
+def prep(raw):
     df = raw.copy()
     if "cdeal_type" in df.columns:
         df = df[df["cdeal_type"].fillna("").astype(str).str.strip() == ""]
@@ -42,10 +38,12 @@ def main():
     df["bld"] = df["region"].astype(str) + "|" + df["dong"].astype(str) + "|" + df["bunji"].astype(str)
     df["dk"] = df["region"].astype(str) + "|" + df["dong"].astype(str)
     df = df.sort_values("day").reset_index(drop=True)
-    print(f"분석 대상 {len(df):,}건 ({df['deal_date'].min()} ~ {df['deal_date'].max()}), 건물 {df['bld'].nunique():,}곳, 동 {df['dk'].nunique():,}곳")
-
-    # 지역 월별 지수(㎡당 가격 중앙값의 로그, 3개월 이동평균) - 시점 보정용
     df["ym"] = (df["deal_date"] // 100).astype(int)
+    return df
+
+
+def estimate(df, T):
+    """T의 각 거래를 '그 거래 30일 전까지의 자료만'으로 예측 → [{idx(df 행 번호), tadj, q, lvl, est, actual}]"""
     mi = df.groupby(["region", "ym"])["ppm"].median().apply(np.log).unstack("ym")
     mi = mi.T.sort_index().rolling(3, min_periods=1).mean().T
     idx = {r: mi.loc[r].dropna().to_dict() for r in mi.index}
@@ -83,20 +81,15 @@ def main():
         w = np.exp(-age / 365.0) * np.exp(-np.abs(sz[lo:hi][m] - size) / 10.0)
         return ppm, w
 
-    T = df[df["deal_date"] >= TEST_FROM]
-    if len(T) > N_TEST: T = T.sample(N_TEST, random_state=7)
-    print(f"시험 {len(T):,}건 ({TEST_FROM}~)")
-    rows = []
+    out = []
     for r in T.itertuples():
         day_c = r.day - 30; ym_c = int((pd.Timestamp("2020-01-01") + pd.Timedelta(days=int(day_c))).strftime("%Y%m"))
         by = r.build_year if np.isfinite(r.build_year) else None
-        out = {"actual": r.price, "size": r.size, "region": r.region, "price": r.price}
         for tadj in (False, True):
             c1 = cands("bld", r.bld, day_c, 730, r.size, 6, reg=r.region, ym_c=ym_c, tadj=tadj)
             c2 = cands("dk", r.dk, day_c, 365, r.size, 8, by, 5, reg=r.region, ym_c=ym_c, tadj=tadj)
             c3 = cands("region", r.region, day_c, 365, r.size, 8, reg=r.region, ym_c=ym_c, tadj=tadj)
             n1 = 0 if c1 is None else len(c1[0]); n2 = 0 if c2 is None else len(c2[0])
-            est = {}
             for q in (0.4, 0.5):
                 v1 = wq(c1[0], c1[1], q) if c1 else None; v2 = wq(c2[0], c2[1], q) if c2 else None; v3 = wq(c3[0], c3[1], q) if c3 else None
                 if n1 >= 3: p, lvl = v1, "건물3+"
@@ -106,41 +99,38 @@ def main():
                 elif v2 is not None: p, lvl = 0.6 * v2 + 0.4 * (v3 if v3 else v2), "동1~4"
                 elif v3 is not None: p, lvl = v3, "시군구"
                 else: p, lvl = None, "없음"
-                est[q] = (None if p is None else p * r.size, lvl)
-            out[f"t{int(tadj)}"] = est
-        rows.append(out)
-    res = []
-    for o in rows:
-        for tadj in (0, 1):
-            for q in (0.4, 0.5):
-                e, lvl = o[f"t{tadj}"][q]
-                if e: res.append({"tadj": tadj, "q": q, "lvl": lvl, "err": e / o["actual"] - 1, "price": o["actual"], "region": o["region"].split()[0]})
-    R = pd.DataFrame(res)
+                if p: out.append({"i": r.Index, "tadj": int(tadj), "q": q, "lvl": lvl, "est": p * r.size, "actual": r.price})
+    return pd.DataFrame(out)
+
+
+def main():
+    flt = "&or=(" + ",".join('region.like."' + n + '*"' for n in ("서울", "인천", "경기")) + ")"
+    raw = avm.fetch_all_rows("villa_trades", cols="region,dong,danji,bunji,price,size,floor,deal_date,dealing_type,build_year",
+                             extra_filter=f"&deal_date=gte.{START}{flt}")
+    print(f"받은 빌라 거래 {len(raw):,}건")
+    df = prep(raw)
+    print(f"분석 대상 {len(df):,}건 ({df['deal_date'].min()} ~ {df['deal_date'].max()}), 건물 {df['bld'].nunique():,}곳, 동 {df['dk'].nunique():,}곳")
+    T = df[df["deal_date"] >= TEST_FROM]
+    if len(T) > N_TEST: T = T.sample(N_TEST, random_state=7)
+    print(f"시험 {len(T):,}건 ({TEST_FROM}~)")
+    E = estimate(df, T)
+    E["err"] = E["est"] / E["actual"] - 1
+    E["price"] = E["actual"]; E["region"] = df.loc[E["i"].values, "region"].str.split().str[0].values
+    R = E
     summ = {}
     for (tadj, q), G in R.groupby(["tadj", "q"]):
         a = G["err"].abs()
         summ[f"시점보정{tadj}_분위{q}"] = {"n": int(len(G)), "medAbsErrPct": round(float(a.median()) * 100, 2), "within10Pct": round(float((a <= .10).mean()) * 100, 1), "within20Pct": round(float((a <= .20).mean()) * 100, 1),
                                        "biasPct": round(float(G["err"].median()) * 100, 2)}
     print(json.dumps(summ, ensure_ascii=False, indent=1))
-    best = R[(R["tadj"] == 1) & (R["q"] == 0.5)]
+    best = R[(R["tadj"] == 0) & (R["q"] == 0.5)]
     bylvl = {}
     for lvl, G in best.groupby("lvl"):
         a = G["err"].abs()
         bylvl[lvl] = {"n": int(len(G)), "share": round(len(G) / len(best) * 100, 1), "medAbsErrPct": round(float(a.median()) * 100, 2), "within10Pct": round(float((a <= .10).mean()) * 100, 1),
                       "p10": round(float(G["err"].quantile(.10)) * 100, 1), "p90": round(float(G["err"].quantile(.90)) * 100, 1), "biasPct": round(float(G["err"].median()) * 100, 2)}
-    print("단계별(시점보정·중앙값):", json.dumps(bylvl, ensure_ascii=False, indent=1))
-    bands = [(0, 10000, "1억 미만"), (10000, 20000, "1~2억"), (20000, 30000, "2~3억"), (30000, 50000, "3~5억"), (50000, 1e9, "5억+")]
-    byb = {}
-    for lo, hi, lab in bands:
-        G = best[(best["price"] >= lo) & (best["price"] < hi)]
-        if len(G) >= 100:
-            a = G["err"].abs(); byb[lab] = {"n": int(len(G)), "medAbsErrPct": round(float(a.median()) * 100, 2), "within10Pct": round(float((a <= .10).mean()) * 100, 1), "biasPct": round(float(G["err"].median()) * 100, 2)}
-    print("가격대별:", json.dumps(byb, ensure_ascii=False, indent=1))
-    byr = {}
-    for sd, G in best.groupby("region"):
-        a = G["err"].abs(); byr[sd] = {"n": int(len(G)), "medAbsErrPct": round(float(a.median()) * 100, 2), "within10Pct": round(float((a <= .10).mean()) * 100, 1), "biasPct": round(float(G["err"].median()) * 100, 2)}
-    print("시도별:", json.dumps(byr, ensure_ascii=False, indent=1))
-    json.dump({"summary": summ, "byLevel": bylvl, "byBand": byb, "bySido": byr}, open("backtest-villa.json", "w"), ensure_ascii=False, indent=1)
+    print("단계별(시점보정 없음·중앙값):", json.dumps(bylvl, ensure_ascii=False, indent=1))
+    json.dump({"summary": summ, "byLevel": bylvl}, open("backtest-villa.json", "w"), ensure_ascii=False, indent=1)
 
 
 if __name__ == "__main__":
