@@ -18078,6 +18078,32 @@ function drawerTrades(row) {
     out.sort(function(x, y) { return y.d - x.d; });
     return out.map(function(t) { t.sim = !isNaN(tf) && Math.abs(t.f - tf) <= 3; return t; });
 }
+
+/* 🔧 수리 가정 3가지별 입찰 상한 (2026-10-10, 사용자: "입찰후보 상세에도 도배·장판만 할 경우를 표기") - 같은 예상매도가·같은 비용 계산에서 수리비만 전체/중간/도배·장판으로 바꿔 입찰 상한·추천가를 다시 구함 */
+function repairScenarios(row) {
+    if (!row || row.type !== 'apt' || !row.sale || !row.minBid) return null;
+    var a = row.a, sig = [boardBaseSig(a), a.repair || '', JSON.stringify(a.fieldCheck || {}), row.sale].join('|');
+    if (row._repSc && row._repSc.sig === sig) return row._repSc.list;
+    var by = a.buildYear || row.estBuildYear || null;
+    var full = effRepairFee(a, 'apt', row.pyung, by), basic = basicRepairFee(row.pyung), half = Math.round((full + basic) / 2);
+    var userRep = !!parseInt(a.repair);
+    var levels = [['전체 수리' + (userRep ? ' (직접 입력)' : ' (앱 기본)'), full], ['중간 수리', half], ['도배·장판만', basic]];
+    var list = levels.map(function(lv) {
+        var r3 = null, pl = null;
+        try { r3 = computeBidBoardRow(Object.assign({}, a, { repair: lv[1] })); pl = bidPlanFor(r3, false); } catch (e) {}
+        return { label: lv[0], rep: lv[1], rec: r3 && r3.recBid, max: pl && pl.max ? pl.max.bid : null, p: r3 && r3.winbid ? r3.winbid.probRec : null };
+    });
+    row._repSc = { sig: sig, list: list };
+    return list;
+}
+function repairScenarioHtml(row, fmt) {
+    var list = null; try { list = repairScenarios(row); } catch (e) { list = null; }
+    if (!list) return '';
+    return '<div class="dr-plan"><b>🔧 수리를 얼마나 하느냐에 따라</b> <span class="dr-sub" style="margin:0;">같은 예상매도가·같은 비용 계산에서 수리비만 바꾼 입찰 가이드</span>'
+        + '<table class="pn-table"><thead><tr><th></th><th class="r">수리비</th><th class="r">마진 확보 상한</th><th class="r">추천 입찰가</th><th class="r">낙찰 가능성</th></tr></thead><tbody>'
+        + list.map(function(x, i) { return '<tr' + (i === 0 ? ' class="ev"' : '') + '><td>' + x.label + '</td><td class="r">' + fmt(x.rep) + '</td><td class="r"><b>' + fmt(x.max) + '</b></td><td class="r">' + fmt(x.rec) + '</td><td class="r">' + (x.p != null ? Math.round(x.p * 100) + '%' : '-') + '</td></tr>'; }).join('')
+        + '</tbody></table><div class="dr-sub">상태를 모르면 앱은 연식 기준 전체 수리를 가정해요. 임장에서 "집 내부 상태"를 입력하면 그 수준으로 바로 계산돼요. 마진 확보 상한 = 순이익 1천만이 남는 최고 입찰가.</div></div>';
+}
 async function renderBidDrawer() {
     var d = document.getElementById('bb-drawer'); if (!d) return;
     var row = bidBoardRows.filter(function(r) { return r.id === bidDrawerId; })[0];
@@ -18118,6 +18144,7 @@ async function renderBidDrawer() {
             + '</div>';
     }
     h += bidPlanHtml(row, fmt);
+    h += repairScenarioHtml(row, fmt);
     // 🎲 예상 낙찰가(2026-10) - 추천 입찰가(마진 확보 상한)와 나란히: 상한이 예상 낙찰가보다 높으면 낙찰 가능성도 있고 마진도 남음
     if (row.winbid) {
         var wbp = winbidLineHtml(row.winbid, false), wbg = row.winbid.gapPct;
