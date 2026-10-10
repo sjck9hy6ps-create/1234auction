@@ -3667,7 +3667,13 @@ function villaMarginPlan(row, ve, title) {
     var p90 = (VILLA_P90[band] || {})[ve.lvl] || 40;
     var elv = title ? (title.rideElvtCnt || 0) + (title.emgenElvtCnt || 0) : null, fl = title ? title.grndFlrCnt : null;
     var ef = (elv != null && fl >= 4) ? (elv > 0 ? 0.7 : 1.15) : 1;
-    var buf = Math.min(25, 0.5 * p90 * ef), fx = isFirstFloor(row.a) ? FIRST_FLOOR_MARGIN_X : 1, margin = Math.round(Math.max(VILLA_MARGIN_MIN, Math.round(ve.est * buf / 100 / 100) * 100) * fx / 100) * 100;
+    var buf = Math.min(25, 0.5 * p90 * ef), fx = (function() {
+        // 2026-10-10(사용자: 빌라는 승강기 있으면 1층이 비인기, 없으면 2~3층이 로열 → 1층 → 고층) + 건물 안 층별 실측(승강기 있음 1층 평균 −2.6%·하위 25% −8.5% / 없음 4층 이상 하위 25% −6.4%, 2~3층 +1%):
+        // 승강기 있음 → 1층만 +20%, 승강기 없음 → 4층 이상만 +20%(1층은 추가 없음), 모르면 1층 +20%
+        var fl = parseInt(row.a.floor, 10); if (isNaN(fl)) return 1;
+        if (elv != null && fl >= 0) { if (elv > 0) return fl === 1 ? FIRST_FLOOR_MARGIN_X : 1; return fl >= 4 ? FIRST_FLOOR_MARGIN_X : 1; }
+        return fl === 1 ? FIRST_FLOOR_MARGIN_X : 1;
+    })(), margin = Math.round(Math.max(VILLA_MARGIN_MIN, Math.round(ve.est * buf / 100 / 100) * 100) * fx / 100) * 100;
     var out = { margin: margin, buf: Math.round(buf * 10) / 10, age: age, ageBand: band, elv: elv, ef: ef, floorMin: margin === VILLA_MARGIN_MIN * fx, first: fx > 1 };
     try {
         var a = row.a, base = Object.assign({}, a, { target: ve.est, repair: effRepairFee(a, 'villa', row.pyung, yr || null), compTargetMargin: margin });
