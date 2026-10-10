@@ -2,7 +2,12 @@ name: 전체 백업 (Supabase → 산출물)
 
 # 2026-10-10: 사용자 요청 - 예비 차원의 전체 백업을 사용자 PC로. 실행 후 `gh run download <run-id>`로 PC에 내려받고, 내려받은 뒤 산출물은 삭제(저장 용량 한도).
 on:
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      groups:
+        description: '백업할 묶음(JSON 배열)'
+        required: false
+        default: '["house_trades","villa_trades","others"]'
 
 jobs:
   backup:
@@ -11,7 +16,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        group: [house_trades, villa_trades, others]
+        group: ${{ fromJSON(github.event.inputs.groups || '["house_trades","villa_trades","others"]') }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5

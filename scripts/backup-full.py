@@ -78,7 +78,14 @@ def main():
     for t in sel:
         total = count_rows(t)
         print(f"▶ {t} (서버 행 수 {total if total is not None else '?'})", flush=True)
-        n, sz = dump(t, defs[t].get("properties", {}))
+        try:
+            n, sz = dump(t, defs[t].get("properties", {}))
+        except Exception as e:  # 권한 없음 등으로 읽을 수 없는 표는 건너뛰고 기록(전체가 멈추지 않게)
+            print(f"  ⚠️ {t} 건너뜀: {str(e)[:160]}", flush=True)
+            man["tables"][t] = {"skipped": str(e)[:200]}
+            try: os.remove(os.path.join(OUT, f"{t}.ndjson.gz"))
+            except Exception: pass
+            continue
         man["tables"][t] = {"rows": n, "serverRows": total, "bytes": sz}
         print(f"  ✅ {t}: {n:,}행 · {sz / 1e6:.1f}MB", flush=True)
     json.dump(man, open(os.path.join(OUT, "manifest.json"), "w"), ensure_ascii=False, indent=1)
