@@ -21582,6 +21582,8 @@ function bucketSortValue(k) {
    부족해 시점보정을 못할 때 이 지역 추세로 폴백하기 위함(두 버킷 체계가 같아야 from/now
    버킷을 그대로 비교할 수 있음). */
 function calcTierHalfyearlyTrend(tier) {
+    var _m = villaMemo();
+    if (_m.half[tier]) return _m.half[tier];
     var buckets = {};
     allAptList.forEach(function(apt) {
         if (apt.buildingType !== 'villa' || apt.ageTier !== tier) return;
@@ -21600,6 +21602,7 @@ function calcTierHalfyearlyTrend(tier) {
         var sum = arr.reduce(function(a, b) { return a + b; }, 0);
         result[k] = { avgPpp: Math.round(sum / arr.length), count: arr.length };
     });
+    _m.half[tier] = result;
     return result; // { '2025_H1': {avgPpp, count}, ... }
 }
 function nearestBucketKey(bucketAvgMap, targetKey) {
@@ -21674,14 +21677,32 @@ function calcVillaPppMomentum(trades, fromDate, ageTier) {
 // (매매기록 없는 물건 등급 추정, 전세가 기반 예상거래가, 경매 예상전세가 계산 등).
 // 도로명은 매매 테이블과 전세 테이블의 수집 출처가 달라 표기가 어긋나는 경우가 흔해서(공백/약칭 차이 등)
 // 매칭 기준에서 뺐습니다. 동이 같고, 단지명이 일치하거나(우선) 지번이 일치하면 같은 건물로 봅니다.
+/* 2026-10-10(입찰후보 등록 후 부천 처리에서 페이지가 몇 분씩 멈춤 - 사용자 스크린샷 "응답 없는 페이지", 실측으로 calcPriceGrades 안에서 정지 확인):
+   매매기록이 없는 빌라마다 전세 전체·모든 빌라 매매를 처음부터 다시 훑고(그 안에서 배열을 계속 이어 붙임) 연식단계 추세도 매번 다시 계산해서
+   빌라가 수천 곳인 지역은 계산량이 제곱으로 늘었음 → 지역 자료가 바뀔 때만 한 번 만들어 두고 재사용(결과는 같음). */
+var _villaMemo = { sig: '' };
+function villaMemo() {
+    var sig = allAptList.length + '|' + allRentList.length;
+    if (_villaMemo.sig !== sig) _villaMemo = { sig: sig, rentIdx: null, rentsAll: null, tier: {}, allStats: undefined, half: {} };
+    return _villaMemo;
+}
 function getVillaOwnRents(name, dong, bunji) {
-    return allRentList.filter(function(r) {
-        if (r.buildingType !== 'villa' || (r.monthly_rent > 0)) return false;
-        if ((r.dong || '') !== (dong || '')) return false;
-        if (name && (r.danji || '') === name) return true;
-        if (bunji && (r.bunji || '') === bunji) return true;
-        return false;
-    });
+    var m = villaMemo();
+    if (!m.rentIdx) {
+        var idx = {};
+        allRentList.forEach(function(r) {
+            if (r.buildingType !== 'villa' || (r.monthly_rent > 0)) return;
+            var d = r.dong || '';
+            if (r.danji) (idx[d + '|n|' + r.danji] = idx[d + '|n|' + r.danji] || []).push(r);
+            if (r.bunji) (idx[d + '|b|' + r.bunji] = idx[d + '|b|' + r.bunji] || []).push(r);
+        });
+        m.rentIdx = idx;
+    }
+    var d2 = dong || '', out = [], seen = new Set();
+    var add = function(arr) { (arr || []).forEach(function(r) { if (!seen.has(r)) { seen.add(r); out.push(r); } }); };
+    if (name) add(m.rentIdx[d2 + '|n|' + name]);
+    if (bunji) add(m.rentIdx[d2 + '|b|' + bunji]);
+    return out;
 }
 /* 아파트판 calcTierHalfyearlyTrend - 연립다세대는 ageTier(연식단계)로 나눠 풀을 만들었지만,
    아파트는 등급(grade)이 평단가 자체에서 파생되는 값이라 그걸로 나누면 순환참조가 되므로
@@ -21802,12 +21823,16 @@ function calcVillaJeonseEstimate(apt) {
         // 건물 자체 매매·전세 쌍이 없으면 지역 전체로 폴백하되, 연식단계를 알면 같은 연식단계
         // 건물들의 매매기록만 모아 비교물건 정확도를 높임 - 노후/신축이 뒤섞이면 매매/전세 비율
         // 자체가 왜곡되기 때문(신축일수록 전세가율이 낮게 나오는 경향이 있음).
-        var allVillaRents = [];
-        allRentList.forEach(function(r) { if (r.buildingType === 'villa') allVillaRents.push(r); });
+        var vm = villaMemo();
+        if (!vm.rentsAll) { vm.rentsAll = []; allRentList.forEach(function(r) { if (r.buildingType === 'villa') vm.rentsAll.push(r); }); }
+        var allVillaRents = vm.rentsAll;
         if (apt.ageTier) {
-            var tierSales = [];
-            allAptList.forEach(function(a) { if (a.buildingType === 'villa' && a.ageTier === apt.ageTier) tierSales = tierSales.concat(a.trades); });
-            var tierStats = getSaleRentRatioStats(allVillaRents, tierSales);
+            if (vm.tier[apt.ageTier] === undefined) {
+                var tierSales = [];
+                allAptList.forEach(function(a) { if (a.buildingType === 'villa' && a.ageTier === apt.ageTier) (a.trades || []).forEach(function(t) { tierSales.push(t); }); });
+                vm.tier[apt.ageTier] = getSaleRentRatioStats(allVillaRents, tierSales);
+            }
+            var tierStats = vm.tier[apt.ageTier];
             if (tierStats && tierStats.count >= 3) {
                 ratioStats = tierStats;
                 ratioSource = (getVillaTierLabel(apt.ageTier) || '연식단계') + ' 연립다세대 평균 비율';
@@ -21816,9 +21841,12 @@ function calcVillaJeonseEstimate(apt) {
         if (!ratioStats) {
             // 연식단계 필터로는 표본이 너무 적거나(3건 미만) 연식단계를 몰라서 못 걸렀을 때 -
             // 지역 전체(연식단계 무관)로 다시 시도해 표본을 확보함
-            var allVillaSales = [];
-            allAptList.forEach(function(a) { if (a.buildingType === 'villa') allVillaSales = allVillaSales.concat(a.trades); });
-            ratioStats = getSaleRentRatioStats(allVillaRents, allVillaSales);
+            if (vm.allStats === undefined) {
+                var allVillaSales = [];
+                allAptList.forEach(function(a) { if (a.buildingType === 'villa') (a.trades || []).forEach(function(t) { allVillaSales.push(t); }); });
+                vm.allStats = getSaleRentRatioStats(allVillaRents, allVillaSales);
+            }
+            ratioStats = vm.allStats;
             ratioSource = '지역 전체 연립다세대 평균 비율' + (apt.ageTier ? ' (연식단계 구분 표본 부족으로 확장)' : '');
         }
     }
