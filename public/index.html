@@ -11509,6 +11509,8 @@ function getAuctionAddressContext() {
    비대칭 지정(사용자 지정값) - 사용승인연도 기준으로 [Y-5년, Y+10년] 범위이므로, 연차로
    환산하면 더 오래된 쪽(연차+5)부터 더 최근인 쪽(연차-10)까지의 범위가 됨. */
 var NAVER_PROP_TYPE_CODE = { apt: 'APT', villa: 'VL', officetel: 'OPST' };
+// 2026-10-10(사용자: 아파트 링크에서 아파트 필터가 안 걸림): 네이버부동산은 아파트·오피스텔은 /complexes, 빌라·주택은 /houses 화면이라 아파트를 /houses로 열면 종류 필터(a=APT)가 무시됨 → 종류별로 화면을 나눔
+var NAVER_ROUTE = { apt: 'complexes', officetel: 'complexes', villa: 'houses' };
 /* 📋 네이버 매물 등록 여부 표기·모아 보기 (2026-10-10, 사용자: "네이버 매물이 등록 여부를 표기하고 등록된 물건을 따로 볼 수 있어야 해")
    네이버부동산은 자동으로 긁지 않으므로(이용약관) 사용자가 붙여넣은 매물 목록(또는 직접 입력한 매물 수)을 기준으로 표기: 있음(N건·확인일) / 없음(확인함) / 미확인 */
 function listingStatus(a) {
@@ -11569,7 +11571,7 @@ function naverLandUrl(o) {
     if (code && py > 0) q += '&h=' + Math.max(Math.round((py - 5) * 3.305785), 0) + '&i=' + Math.round((py + 5) * 3.305785);
     var by = parseInt(o.buildYear, 10);
     if (code && by > 1900) { var age = new Date().getFullYear() - by; q += '&j=' + (age + 5) + '&k=' + Math.max(age - 10, 0); }
-    if (o.lat && o.lon) return { url: 'https://new.land.naver.com/houses?ms=' + o.lat + ',' + o.lon + ',17' + q, type: type };
+    if (o.lat && o.lon) return { url: 'https://new.land.naver.com/' + (NAVER_ROUTE[type] || 'houses') + '?ms=' + o.lat + ',' + o.lon + ',17' + q, type: type };
     var qq = [o.name, o.addr || o.dong].filter(Boolean).join(' ').trim();
     if (!qq) return null;
     return { url: 'https://search.naver.com/search.naver?query=' + encodeURIComponent(qq + ' 네이버부동산'), type: type };
@@ -11606,7 +11608,7 @@ function openNaverLandForModal() {
     }
     var url;
     if (ctx.lat && ctx.lon) {
-        url = 'https://new.land.naver.com/houses?ms=' + ctx.lat + ',' + ctx.lon + ',17' + filterQuery;
+        url = 'https://new.land.naver.com/' + (NAVER_ROUTE[nvType || propType] || 'houses') + '?ms=' + ctx.lat + ',' + ctx.lon + ',17' + filterQuery;
     } else {
         var addr = document.getElementById('a-addr').value.trim();
         var q = [ctx.name, addr || ctx.dong].filter(Boolean).join(' ').trim();
