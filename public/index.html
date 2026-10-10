@@ -14453,6 +14453,8 @@ function placeAuctionMarker(a) {
             + (bvS && bvS.room ? ' ' + bvS.room : '')
             + (dDayInfo ? ' · ' + (bvS && bvRow.assumedFail ? '결과 확인' : dDayInfo.label) : '');
         var predTxt = (awEst && awEst.predictedSale) ? '예상 ' + toEok(String(awEst.predictedSale)) : '';
+        // 빌라는 빌라 탭과 같은 예상매도가(같은 건물→동→시군구 거래, 호가 상한 반영)로 표시 - 아파트식 옛 추정과 숫자가 달라 헷갈렸음(2026-10-10)
+        if (bvRow && bvRow.type === 'villa') { var vev = null; try { vev = villaEval(bvRow); } catch (e) {} predTxt = vev && vev.ve ? '예상 ' + toEok(String(vev.ve.est)) : ''; }
         var shortName = (a.name && a.name.trim()) || buildingNameFromAddr(a.addr, a.dong)
             || ((dongKey(a.dong) || '') + ' ' + (fullBunjiFromAddr(a.addr, a.dong, a.bunji) || '')).trim() || a.addrLabel || '(이름없음)';
         applySimpleAuctionBadge(div, headBg, headLabel, shortName, [predTxt, priceLine].filter(Boolean).join(' · '), lfBadge);
