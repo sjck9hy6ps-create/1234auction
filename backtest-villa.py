@@ -25,7 +25,7 @@ def to_dt(s):
 
 def main():
     flt = "&or=(" + ",".join('region.like."' + n + '*"' for n in ("서울", "인천", "경기")) + ")"
-    raw = avm.fetch_all_rows("villa_trades", cols="region,dong,danji,bunji,price,size,floor,deal_date,dealing_type,build_year,cdeal_type",
+    raw = avm.fetch_all_rows("villa_trades", cols="region,dong,danji,bunji,price,size,floor,deal_date,dealing_type,build_year",
                              extra_filter=f"&deal_date=gte.{START}{flt}")
     print(f"받은 빌라 거래 {len(raw):,}건")
     df = raw.copy()
