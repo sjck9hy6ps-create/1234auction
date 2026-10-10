@@ -3667,8 +3667,8 @@ function villaMarginPlan(row, ve, title) {
     var p90 = (VILLA_P90[band] || {})[ve.lvl] || 40;
     var elv = title ? (title.rideElvtCnt || 0) + (title.emgenElvtCnt || 0) : null, fl = title ? title.grndFlrCnt : null;
     var ef = (elv != null && fl >= 4) ? (elv > 0 ? 0.7 : 1.15) : 1;
-    var buf = Math.min(25, 0.5 * p90 * ef), margin = Math.max(VILLA_MARGIN_MIN, Math.round(ve.est * buf / 100 / 100) * 100);
-    var out = { margin: margin, buf: Math.round(buf * 10) / 10, age: age, ageBand: band, elv: elv, ef: ef, floorMin: margin === VILLA_MARGIN_MIN };
+    var buf = Math.min(25, 0.5 * p90 * ef), fx = isFirstFloor(row.a) ? FIRST_FLOOR_MARGIN_X : 1, margin = Math.round(Math.max(VILLA_MARGIN_MIN, Math.round(ve.est * buf / 100 / 100) * 100) * fx / 100) * 100;
+    var out = { margin: margin, buf: Math.round(buf * 10) / 10, age: age, ageBand: band, elv: elv, ef: ef, floorMin: margin === VILLA_MARGIN_MIN * fx, first: fx > 1 };
     try {
         var a = row.a, base = Object.assign({}, a, { target: ve.est, repair: effRepairFee(a, 'villa', row.pyung, yr || null), compTargetMargin: margin });
         var r = solveAuctionBidFromRecord(base);
@@ -16305,6 +16305,14 @@ function solveImpliedTargetFromBid(a, marginValue) {
 // 1년간 지역보다 평균 0.9%(지방)~1.75%(수도권) 덜 올랐음 → 보유기간 비용(이자·관리비 약 1%)과 합쳐 예상매도가의 2%를 더 얹음.
 var LOW_POP_EXTRA_RATE = 0.02;
 var MIN_MARGIN_MANWON = 1000;
+// 2026-10-10(사용자: "1층 마진은 20% 추가") - 1층은 같은 단지 중층보다 평균 8.7% 싸고(2025년~ 실거래, 하위 25%는 -13%) 편차가 커서 필요 마진을 20% 더 둠(1,000만 → 1,200만)
+var FIRST_FLOOR_MARGIN_X = 1.2;
+function isFirstFloor(a) { var f = parseInt(a && a.floor, 10); return f === 1; }
+function minMarginOf(row) {
+    if (typeof window !== 'undefined' && window.__mmo) return window.__mmo;
+    return (row && row.type === 'apt' && isFirstFloor(row.a)) ? Math.round(MIN_MARGIN_MANWON * FIRST_FLOOR_MARGIN_X) : MIN_MARGIN_MANWON;
+}
+function minMarginTxt(row) { var m = minMarginOf(row); return m === 1000 ? '1천만' : m.toLocaleString() + '만'; }
 function riskMarginFor(predictedSale, ownTrades, downRisk, popInfo) {
     if (!predictedSale) return null;
     // 2026-10 백테스트(앱 계산 그대로, 낙찰사례 2,156건): 같은 평형 거래 0~2건이면 낙찰받은 물건의 예상매도가가 평균 28% 높았음 → 10%
@@ -17026,7 +17034,8 @@ function bidPlanFor(row, fast) {
     var a = row.a;
     var base = Object.assign({}, a, { target: row.sale, repair: effRepairFee(a, row.type, row.pyung, a.buildYear || row.estBuildYear || null) });
     var pts = [];
-    (fast ? [0, 1000, 2000, 3500] : [0, 500, 1000, 1500, 2000, 3000, 4000].concat(row.margin != null ? [Math.round(row.margin)] : [])).forEach(function(m) {
+    var MINM = minMarginOf(row);
+    (fast ? [0, 1000, 2000, 3500, MINM] : [0, 500, 1000, 1500, 2000, 3000, 4000, MINM].concat(row.margin != null ? [Math.round(row.margin)] : [])).filter(function(m, i, arr) { return arr.indexOf(m) === i; }).forEach(function(m) {
         var r = solveAuctionBidFromRecord(Object.assign({}, base, { compTargetMargin: m }));
         if (r && r.bid > 0) pts.push({ bid: r.bid, net: m, pre: r.preTax });
     });
@@ -17039,8 +17048,8 @@ function bidPlanFor(row, fast) {
         return pts[pts.length - 1][key] + sl * (b - pts[pts.length - 1].bid);
     };
     var at = function(b) { return { bid: Math.round(b), p: winbidProbAt(wb, b), net: Math.round(interp(b, 'net')), pre: Math.round(interp(b, 'pre')) }; };
-    var maxP = pts.filter(function(x) { return x.net === MIN_MARGIN_MANWON; })[0];
-    var bMax = maxP ? maxP.bid : interpBidForNet(pts, MIN_MARGIN_MANWON);
+    var maxP = pts.filter(function(x) { return x.net === MINM; })[0];
+    var bMax = maxP ? maxP.bid : interpBidForNet(pts, MINM);
     if (!bMax || bMax < row.minBid) return { infeasible: true, bMax: bMax, minBid: row.minBid };
     var best = null, p70 = null, step = Math.max(1, bMax * 0.0025);
     for (var b = row.minBid; b <= bMax + 0.5; b += step) {
@@ -17059,7 +17068,7 @@ function interpBidForNet(pts, net) {
 function bidPlanHtml(row, fmt) {
     var pl; try { pl = bidPlanFor(row); } catch (e) { pl = null; }
     if (!pl) return '';
-    if (pl.infeasible) return '<div class="dr-plan"><b>💡 입찰가 고르기</b><div class="dr-sub">최저가(' + fmt(pl.minBid) + ')로 사도 순이익 1천만이 안 남아서 입찰할 구간이 없어요.</div></div>';
+    if (pl.infeasible) return '<div class="dr-plan"><b>💡 입찰가 고르기</b><div class="dr-sub">최저가(' + fmt(pl.minBid) + ')로 사도 순이익 ' + minMarginTxt(row) + '이 안 남아서 입찰할 구간이 없어요.</div></div>';
     var rate = function(x) { return x && pl.sale ? (x.pre / pl.sale * 100).toFixed(1) + '%' : '-'; };
     var line = function(label, x, strong, tip) {
         if (!x) return '';
@@ -17067,9 +17076,9 @@ function bidPlanHtml(row, fmt) {
         return '<tr' + (strong ? ' class="ev"' : '') + '><td title="' + bbEsc(tip || '') + '">' + label + '</td><td class="r"><b>' + fmt(x.bid) + '</b></td><td class="r" style="color:' + col + ';">' + pc + '%</td><td class="r">' + fmt(x.net) + '</td><td class="r">' + rate(x) + '</td></tr>';
     };
     var bd = pl.band;
-    return '<div class="dr-plan"><b>💡 입찰가 고르기</b> <span class="dr-sub" style="margin:0;">마진이 나는 구간(순이익 1천만 이상) 안에서</span>'
+    return '<div class="dr-plan"><b>💡 입찰가 고르기</b> <span class="dr-sub" style="margin:0;">마진이 나는 구간(순이익 ' + minMarginTxt(row) + ' 이상' + (isFirstFloor(row.a) ? ' · 1층이라 20% 더' : '') + ') 안에서</span>'
         + '<table class="pn-table"><thead><tr><th></th><th class="r">입찰가</th><th class="r">낙찰 가능성</th><th class="r">순이익(세후)</th><th class="r">마진율(세전)</th></tr></thead><tbody>'
-        + line('마진 확보 상한', pl.max, false, '순이익이 1천만 남는 가장 높은 입찰가 - 이보다 높게 쓰면 마진이 1천만 아래')
+        + line('마진 확보 상한', pl.max, false, '순이익이 ' + minMarginTxt(row) + ' 남는 가장 높은 입찰가 - 이보다 높게 쓰면 마진이 그 아래')
         + line('<b>기대수익 최대</b>', pl.ev, true, '낙찰 가능성 × 순이익이 가장 큰 입찰가')
         + (pl.p70 && (!pl.ev || Math.abs(pl.p70.bid - pl.ev.bid) > 1) ? line('낙찰 70%', pl.p70, false, '낙찰 가능성이 70%가 되는 가장 낮은 입찰가') : '')
         + line('추천 입찰가', pl.rec, false, '목표 마진(500만 + 시세의 5~9%)을 지키는 입찰가')
@@ -17113,7 +17122,7 @@ function computePick(row) {
     }
     var pk = row.pick;
     if (!pk) { row.visit.why = '추천가를 계산하지 못했어요'; return; }
-    if (pk.infeasible) { row.visit.why = '최저가로 사도 순이익 1천만이 안 남아요'; return; }
+    if (pk.infeasible) { row.visit.why = '최저가로 사도 순이익 ' + minMarginTxt(row) + '이 안 남아요'; return; }
     if (!pk.ev) { row.visit.why = '순이익이 남는 입찰가가 없어요'; return; }
     if (row.issueSuspect && row.issueSuspect.level === 'high') { row.visit.why = '🚩 이슈 강한 의심(' + row.issueSuspect.why.join('·') + ') - 인수 보증금 확인 필요'; return; }
     if (row.bulk) { row.visit.why = '🏢 같은 건물 대량 경매'; return; }
@@ -17276,7 +17285,7 @@ function finalizeBidBoardRow(row) {
     // 마진을 포기하고 높게 쓴 1등(2등보다 5% 이상 높게 쓴 경우가 28%)까지 쫓지는 않음.
     row.recAggr = null;
     if ((row.opportunity || row.sturdy) && !row.bulk && row.recBid && row.verdict !== 'no' && row.verdict !== 'nodata') {
-        var solMin = solveAuctionBidFromRecord(Object.assign({}, a, { target: row.sale, compTargetMargin: MIN_MARGIN_MANWON,
+        var solMin = solveAuctionBidFromRecord(Object.assign({}, a, { target: row.sale, compTargetMargin: minMarginOf(row),
             repair: effRepairFee(a, type, pyung, a.buildYear || row.estBuildYear || null) }));
         var cap3 = Math.round(row.recBid * 1.03);
         var aggr = solMin ? Math.min(cap3, solMin.bid) : null;
@@ -17558,7 +17567,7 @@ function overshootSaleFactor(type, ratio) {
 }
 var BOARD_CACHE_KEY = 'bidBoardCache:v1', BOARD_CACHE_MAX_AGE = 24 * 3600 * 1000;
 // 저장 계산을 다시 써도 되는지 - 물건 입력값(시세 계산에 쓰는 것)과 입찰일 지남 여부. 계산 방식이 바뀌면 BOARD_CALC_VER을 올림
-var BOARD_CALC_VER = 30; // 29: nYear 저장 추가 - // 27: 🎲 예상 낙찰가용 시세(wbBase) 추가 (범위 표시는 화면에서 바로 계산 - 버전 변경 없음)
+var BOARD_CALC_VER = 31; // 29: nYear 저장 추가 - // 27: 🎲 예상 낙찰가용 시세(wbBase) 추가 (범위 표시는 화면에서 바로 계산 - 버전 변경 없음)
 function boardBaseSig(a) {
     var d = a.bidDate ? calcAuctionDday(a.bidDate) : null;
     return [BOARD_CALC_VER, auctionWonEstSignature(a), a.minBid, a.appraisal, a.bidDate, a.court, a.failCount, a.landType, String(a.memo || '').length,
@@ -18103,7 +18112,7 @@ function repairScenarioHtml(row, fmt) {
     return '<div class="dr-plan"><b>🔧 수리를 얼마나 하느냐에 따라</b> <span class="dr-sub" style="margin:0;">같은 예상매도가·같은 비용 계산에서 수리비만 바꾼 입찰 가이드</span>'
         + '<table class="pn-table"><thead><tr><th></th><th class="r">수리비</th><th class="r">마진 확보 상한</th><th class="r">추천 입찰가</th><th class="r">낙찰 가능성</th></tr></thead><tbody>'
         + list.map(function(x, i) { return '<tr' + (i === 0 ? ' class="ev"' : '') + '><td>' + x.label + '</td><td class="r">' + fmt(x.rep) + '</td><td class="r"><b>' + fmt(x.max) + '</b></td><td class="r">' + fmt(x.rec) + '</td><td class="r">' + (x.p != null ? Math.round(x.p * 100) + '%' : '-') + '</td></tr>'; }).join('')
-        + '</tbody></table><div class="dr-sub">상태를 모르면 앱은 연식 기준 전체 수리를 가정해요. 임장에서 "집 내부 상태"를 입력하면 그 수준으로 바로 계산돼요. 마진 확보 상한 = 순이익 1천만이 남는 최고 입찰가.</div></div>';
+        + '</tbody></table><div class="dr-sub">상태를 모르면 앱은 연식 기준 전체 수리를 가정해요. 임장에서 "집 내부 상태"를 입력하면 그 수준으로 바로 계산돼요. 마진 확보 상한 = 순이익 ' + minMarginTxt(row) + '이 남는 최고 입찰가.</div></div>';
 }
 async function renderBidDrawer() {
     var d = document.getElementById('bb-drawer'); if (!d) return;
@@ -18174,7 +18183,8 @@ async function renderBidDrawer() {
         h += '<div class="dr-sub">회전율: 세대수 불러오는 중…</div>';
     }
     if (row.recAggr) h += '<div class="dr-sub" style="color:#7c3aed;">적극 입찰가 ' + fmt(row.recAggr) + ': 마진 포기한 1등은 쫓지 않고, 2등과 아깝게 지는 경우까지만 잡는 가격(추천가 +3% 한도, 마진 1,000만 이상). 과거 기회·버팀 물건에서 실제 낙찰 약 2배</div>';
-    (row.warns || []).concat(row.reasons || []).forEach(function(w) { h += '<div class="dr-warn">' + bbEsc(w) + '</div>'; });
+    // 2026-10-10: 임장 후보 화면에선 예전 판정("최저가로 사도 목표마진이 안 남아요" - 시세의 5~9% 목표 마진 기준)이 새 기준(순이익 1천만 + 낙찰 가능성)과 달라 '임장 추천'과 '제외'가 같이 보였음 → 예전 판정 이유는 숨김
+    (row.warns || []).concat(bidBoardState.lite ? [] : (row.reasons || [])).forEach(function(w) { h += '<div class="dr-warn">' + bbEsc(w) + '</div>'; });
     // 최근 거래
     if (tr.length) {
         h += '<div class="dr-sec"><h4>같은 평형 실거래 (파란 줄 = 비슷한 층 ±3)</h4><table><tr><th>거래일</th><th>층</th><th class="r">가격</th></tr>'
@@ -18212,10 +18222,11 @@ async function renderBidDrawer() {
             var rt = pe && row.sale ? (pe.pre / row.sale * 100).toFixed(1) + '%' : '-';
             card = '<div class="dr-pickcard ' + (go ? 'go' : 'pass') + '"><div class="pk-v">' + (go ? '🚶 임장 추천' : '패스') + (row.visit && row.visit.why ? ' · ' + bbEsc(row.visit.why) : '') + '</div>'
                 + (pe ? '<div class="pk-big"><span>추천 입찰가 ' + infoI('rec') + '</span><b>' + fmt(pe.bid) + '</b>' + (row.sale ? '<span title="추천가 ÷ 예상매도가(시세)">시세의 <b style="font-size:15px;color:#374151;">' + Math.round(pe.bid / row.sale * 100) + '%</b></span>' : '') + '</div>'
-                    + '<div class="pk-sub">낙찰 가능성 <b>' + pcc + '%</b> · 예상 순이익(세후) <b>' + fmt(pe.net) + '</b> · 마진율(세전) ' + rt + '<br>예상매도가 ' + fmt(row.sale) + ' ' + infoI('sale') + ' · 최저가 ' + fmt(row.minBid) + (row.pick.max ? ' · 마진 1천만 남는 상한 ' + fmt(row.pick.max.bid) : '') + (function() { var rl = null; try { rl = repairScenarios(row); } catch (e) {} return rl ? '<br>🔧 수리별 마진 1천만 남는 상한 · 전체 ' + fmt(rl[0].max) + ' · 중간 ' + fmt(rl[1].max) + ' · <b>도배·장판만 ' + fmt(rl[2].max) + '</b>' : ''; })() + (row.ownStats ? '<br>같은 단지 같은 평형 거래: 최근 1년 <b>' + (row.ownStats.n12 || 0) + '건</b> · 올해 ' + (row.ownStats.nYear || 0) + '건' + (row.ownStats.lastAgeM != null ? ' · 마지막 ' + row.ownStats.lastAgeM + '개월 전' : '') : '') + '</div>'
+                    + '<div class="pk-sub">낙찰 가능성 <b>' + pcc + '%</b> · 예상 순이익(세후) <b>' + fmt(pe.net) + '</b> · 마진율(세전) ' + rt + '<br>예상매도가 ' + fmt(row.sale) + ' ' + infoI('sale') + ' · 최저가 ' + fmt(row.minBid) + (row.pick.max ? ' · 마진 ' + minMarginTxt(row) + ' 남는 상한 ' + fmt(row.pick.max.bid) + (isFirstFloor(row.a) ? ' <span title="1층은 중층보다 평균 8.7% 싸고 편차가 커서 필요 마진을 20% 더 둬요" style="color:#b45309;">(1층 +20%)</span>' : '') : '') + (function() { var rl = null; try { rl = repairScenarios(row); } catch (e) {} return rl ? '<br>🔧 수리별 마진 ' + minMarginTxt(row) + ' 남는 상한 · 전체 ' + fmt(rl[0].max) + ' · 중간 ' + fmt(rl[1].max) + ' · <b>도배·장판만 ' + fmt(rl[2].max) + '</b>' : ''; })() + (row.ownStats ? '<br>같은 단지 같은 평형 거래: 최근 1년 <b>' + (row.ownStats.n12 || 0) + '건</b> · 올해 ' + (row.ownStats.nYear || 0) + '건' + (row.ownStats.lastAgeM != null ? ' · 마지막 ' + row.ownStats.lastAgeM + '개월 전' : '') : '') + '</div>'
                     : '<div class="pk-sub">추천가가 없어요 · 예상매도가 ' + fmt(row.sale) + ' · 최저가 ' + fmt(row.minBid) + '</div>')
                 + '</div>';
-            h = h.slice(0, i1) + card + issueHtml + '<details class="dr-more"><summary>자세히 (근거·범위·실거래·비용)</summary>' + h.slice(i1, i2) + '</details>' + h.slice(i2);
+            var legacy = h.slice(i1, i2); legacy = legacy.slice(legacy.indexOf('</div>') + 6); // 예전 판정 알약(❌ 제외 등)은 새 판정(맨 위 카드)과 충돌해서 뺌
+            h = h.slice(0, i1) + card + issueHtml + '<details class="dr-more"><summary>자세히 (근거·범위·실거래·비용)</summary>' + legacy + '</details>' + h.slice(i2);
         } else h = h.slice(0, i1) + issueHtml + h.slice(i1);
     } else h += issueHtml;
     d.innerHTML = h;
