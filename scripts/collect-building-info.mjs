@@ -49,11 +49,16 @@ async function main() {
   const list = await fetch(`${SITE}/api/auction`).then((r) => r.json());
   // 입찰이 가까운 물건부터, 이미 지난 입찰은 맨 뒤(2026-10-10: 하루 한도 10,000건을 실제로 볼 물건에 먼저 쓰게)
   const dd = (a) => { const d = String(a.bidDate || '').slice(0, 10); return /^\d{4}-\d\d-\d\d$/.test(d) ? (d >= today ? d : '9' + d) : '9999'; };
-  const todo = list.filter(needs).sort((x, y) => dd(x).localeCompare(dd(y))).slice(0, MAX);
+  // 2026-10-11: 빌라(연식·승강기가 시세·마진의 핵심)를 먼저, 그 안에서 입찰 임박순
+  const todo = list.filter(needs).sort((x, y) => ((x.propType === 'villa' ? 0 : 1) - (y.propType === 'villa' ? 0 : 1)) || dd(x).localeCompare(dd(y))).slice(0, MAX);
+  const T0 = Date.now(), WALL_MS = parseInt(process.env.WALL_MINUTES || '50', 10) * 60000;
   console.log(`입찰물건 ${list.length}건 중 건축물대장 수집 대상 ${list.filter(needs).length}건 (이번 실행 최대 ${MAX}건)`);
   const updates = {};
   let quota = false, ok = 0, miss = 0;
+  let cnt = 0;
   for (const a of todo) {
+    if (Date.now() - T0 > WALL_MS) { console.log(`시간 제한(${WALL_MS / 60000}분)에 도달 - 여기까지 저장하고 마침`); break; }
+    if (++cnt % 100 === 0) console.log(`진행 ${cnt}/${todo.length} (성공 ${ok}, 못 찾음 ${miss}, ${Math.round((Date.now() - T0) / 60000)}분)`);
     const upd = { bldgTriedAt: today };
     try {
       const code = await bCodeOf(a);
