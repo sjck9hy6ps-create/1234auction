@@ -113,6 +113,54 @@ def main():
     out["elevator_by_age_4F+"] = {str(k): v for k, v in E.groupby("ageb").apply(lambda G: {"n": int(len(G)), "elvPremiumPct": round((float(np.exp(G[G["elv"].astype(bool)]["dev"].median() - G[~G["elv"].astype(bool)]["dev"].median())) - 1) * 100, 1) if G["elv"].astype(bool).sum() > 150 and (~G["elv"].astype(bool)).sum() > 150 else None}).items()}
     out["elevatorShareOfTrades"] = round(float(df[df["grnd"] >= 4]["elv"].astype(bool).mean()) * 100, 1) if (df["grnd"] >= 4).any() else None
     print(json.dumps(out, ensure_ascii=False, indent=1))
+    # B2) 같은 건물 안에서 본 층별 가격 차이(건물 중앙값 대비) - 승강기 있음/없음 따로 (사용자: 승강기 없으면 2~3층이 로열 → 1층 → 고층, 있으면 1층이 비인기)
+    W = df[(df["deal_date"] >= 20230101) & df["elv"].notna() & (df["grnd"] >= 3)].copy()
+    W["elvc"] = np.where(W["elv"].astype(bool), 1, -1)
+    W["sb"] = (W["size"] / 6).round()
+    W["lp"] = np.log(W["ppm"])
+    W["bkey"] = W["bld"] + "|" + W["sb"].astype(str)
+    cnt = W.groupby("bkey")["lp"].transform("size")
+    nfl = W.groupby("bkey")["floor"].transform("nunique")
+    W = W[(cnt >= 6) & (nfl >= 3)]
+    W["dev"] = W["lp"] - W.groupby("bkey")["lp"].transform("median")
+    W["flg"] = pd.cut(W["floor"], [-9, 0, 1, 2, 3, 4, 99], labels=["지하", "1층", "2층", "3층", "4층", "5층+"])
+    fp = {}
+    for ec, lab in ((1, "승강기 있음"), (-1, "승강기 없음")):
+        S = W[W["elvc"] == ec]
+        r = S.groupby("flg")["dev"].agg(["size", "median"])
+        fp[lab] = {str(k): {"n": int(v["size"]), "pct": round((float(np.exp(v["median"])) - 1) * 100, 1)} for k, v in r.iterrows() if v["size"] >= 200}
+    out["withinBuildingFloor"] = fp
+    out["withinBuildingFloorN"] = int(len(W))
+    print("건물 안 층별 차이:", json.dumps(fp, ensure_ascii=False, indent=1))
+    # 층 보정 승수(건물 중앙값 대비) - 학습 구간(2025 이전)으로 만들어 2025~ 시험에서 같은 건물 거래 보정 효과 확인
+    Wtr = W[W["deal_date"] < 20250101]
+    mult = {}
+    for ec in (1, -1):
+        S = Wtr[Wtr["elvc"] == ec]
+        g = S.groupby(S["floor"].clip(lower=0, upper=5).astype(int))["dev"].agg(["size", "median"])
+        mult[ec] = {int(k): float(np.exp(v["median"])) for k, v in g.iterrows() if v["size"] >= 150}
+    def floor_adj(ec, f):
+        m = mult.get(ec) or {}
+        k = int(min(max(f, 0), 5))
+        return m.get(k, 1.0)
+    df["elvc"] = np.where(df["elv"].isna(), 0, np.where(df["elv"].astype(bool), 1, -1))
+    T0 = df[df["deal_date"] >= bv.TEST_FROM]
+    if len(T0) > 25000: T0 = T0.sample(25000, random_state=11)
+    Eb = bv.estimate(df, T0)
+    Ef = bv.estimate(df, T0, floor_adj=floor_adj)
+    def ev(E, tadj):
+        X = E[(E["q"] == 0.5) & (E["tadj"] == tadj)].copy(); X["err"] = X["est"] / X["actual"] - 1
+        return X
+    Xb, Xf = ev(Eb, 0), ev(Ef, 1)
+    both = Xb.merge(Xf, on="i", suffixes=("_b", "_f"))
+    own = both[both["lvl_b"].isin(["건물3+", "건물1~2+동", "건물1~2"])]
+    el = df.loc[own["i"].values, "elvc"].values
+    for lab, msk in (("같은 건물 거래 있음 전체", np.ones(len(own), bool)), ("승강기 있음", el == 1), ("승강기 없음", el == -1)):
+        o = own[msk]
+        if len(o) > 200:
+            print(f"층 보정(같은 건물) {lab} n={len(o)}: 보통 오차 {o['err_b'].abs().median()*100:.2f}% → {o['err_f'].abs().median()*100:.2f}%  ±10% {100*(o['err_b'].abs()<=.1).mean():.1f}% → {100*(o['err_f'].abs()<=.1).mean():.1f}%")
+            out.setdefault("floorAdjTest", {})[lab] = {"n": int(len(o)), "before": round(float(o['err_b'].abs().median()) * 100, 2), "after": round(float(o['err_f'].abs().median()) * 100, 2)}
+    out["floorMult"] = {str(k): {str(a): round(b, 3) for a, b in v.items()} for k, v in mult.items()}
     # C) 오차 - 연식·평형·승강기별
     T = df[df["deal_date"] >= bv.TEST_FROM]
     if len(T) > bv.N_TEST: T = T.sample(bv.N_TEST, random_state=7)

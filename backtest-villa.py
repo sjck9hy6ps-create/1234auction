@@ -42,7 +42,7 @@ def prep(raw):
     return df
 
 
-def estimate(df, T):
+def estimate(df, T, floor_adj=None):
     """T의 각 거래를 '그 거래 30일 전까지의 자료만'으로 예측 → [{idx(df 행 번호), tadj, q, lvl, est, actual}]"""
     mi = df.groupby(["region", "ym"])["ppm"].median().apply(np.log).unstack("ym")
     mi = mi.T.sort_index().rolling(3, min_periods=1).mean().T
@@ -58,7 +58,7 @@ def estimate(df, T):
     for key_col in ("bld", "dk", "region"):
         g = {}
         for k, G in df.groupby(key_col):
-            g[k] = (G["day"].values, G["size"].values, G["ppm"].values, G["build_year"].values, G["ym"].values, G["floor"].values)
+            g[k] = (G["day"].values, G["size"].values, G["ppm"].values, G["build_year"].values, G["ym"].values, G["floor"].values, (G["elvc"].values if "elvc" in G.columns else np.zeros(len(G))))
         groups[key_col] = g
 
     def wq(vals, w, q):
@@ -72,7 +72,7 @@ def estimate(df, T):
     def cands(key_col, key, day_c, days, size, tol, by=None, byy=None, reg=None, ym_c=None, tadj=True, tfl=None):
         t = groups[key_col].get(key)
         if t is None: return None
-        d, sz, pp, yb, ym, fl = t
+        d, sz, pp, yb, ym, fl, ec = t
         hi = np.searchsorted(d, day_c, side="right"); lo = np.searchsorted(d, day_c - days, side="left")
         if hi <= lo: return None
         m = np.abs(sz[lo:hi] - size) <= tol
@@ -80,7 +80,10 @@ def estimate(df, T):
             ok = np.isnan(yb[lo:hi]) | (np.abs(yb[lo:hi] - by) <= byy); m &= ok
         if not m.any(): return None
         ppm = pp[lo:hi][m]; age = day_c - d[lo:hi][m]; ymm = ym[lo:hi][m]
-        if tadj and tfl is not None:  # 이 변형의 tadj=True는 '층 보정'(지역 지수 시점 보정은 효과가 없어 뺌)
+        if tadj and tfl is not None and floor_adj is not None and key_col == "bld":  # 같은 건물 거래만 층 보정(승강기 구분 - 건물 안에서는 승강기가 같음)
+            ecls = int(ec[lo:hi][m][0]) if len(ec[lo:hi][m]) else 0
+            ppm = ppm * (floor_adj(ecls, float(tfl)) / np.array([floor_adj(ecls, float(f)) for f in fl[lo:hi][m]]))
+        elif tadj and tfl is not None and floor_adj is None:
             ppm = ppm * (float(fmult(np.array([tfl], dtype=float))[0]) / fmult(fl[lo:hi][m].astype(float)))
         w = np.exp(-age / 365.0) * np.exp(-np.abs(sz[lo:hi][m] - size) / 10.0)
         return ppm, w
