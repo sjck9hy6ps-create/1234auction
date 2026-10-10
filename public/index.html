@@ -10782,9 +10782,17 @@ function dropDestinationPin(lat, lon) {
    주소로 이동시킴 - 여러 물건을 훑어보며 주변 시세(일반 거래 배지)를 같이 보고 싶을 때
    모달이 지도를 가리지 않도록 함. 수정하려면 우측 상단 "✏️ 수정"을 누르거나, 이동 후
    드러난 지도 위의 마커를 클릭하면 됨(마커 클릭은 기존과 동일하게 모달을 엶). */
+// 지도로 이동할 때 그 물건 종류에 맞는 배지로 바꿈(2026-10-10, 사용자: 빌라로 이동했는데 아파트 배지가 먼저 뜸) - 입찰후보뿐 아니라 경매목록·낙찰사례 등 모든 이동 공통
+function selectMapTypeFor(kind) {
+    var type = (kind === 'villa' || /다세대|연립|빌라|도시형/.test(String(kind || ''))) ? 'villa' : (kind === 'apt' || /아파트/.test(String(kind || '')) ? 'apt' : null);
+    if (!type || currentTypeFilter === type) return;
+    var btn = Array.prototype.filter.call(document.querySelectorAll('#type-filter .type-btn'), function(b) { return (b.getAttribute('onclick') || '').indexOf("'" + type + "'") !== -1; })[0];
+    if (btn) setTypeFilter(type, btn);
+}
 function panToAuction(id) {
     var a = auctionList.find(function(x) { return x.id === id; });
     if (!a) return;
+    selectMapTypeFor(a.propType);
     document.getElementById('auction-list-panel').style.display = 'none';
     if (a.lat && a.lon) {
         map.setCenter(new kakao.maps.LatLng(a.lat, a.lon));
@@ -10813,6 +10821,7 @@ function panToAuction(id) {
 function panToBidCase(id) {
     var c = bidCaseList.find(function(x) { return x.id === id; });
     if (!c) return;
+    selectMapTypeFor(c.propertyType);
     if (c.lat && c.lon) {
         closeBidCasePanel();
         map.setCenter(new kakao.maps.LatLng(c.lat, c.lon));
