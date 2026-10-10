@@ -3655,8 +3655,11 @@ function villaSaleEst(a, ref) {
     else if (v2 != null) { p = 0.6 * v2 + 0.4 * (v3 != null ? v3 : v2); lvl = '동1~4'; }
     else if (v3 != null) { p = v3; lvl = '시군구'; }
     else return null;
+    // 연식(2026-10-10): 건축물대장을 못 받았어도 같은 건물 실거래에 준공연도(build_year)가 있으면 그걸로 연식을 앎
+    var byCnt = {}; own.forEach(function(ap) { (ap.trades || []).forEach(function(t) { var yb = parseInt(t.build_year || (ap.latest && ap.latest.build_year), 10); if (yb > 1950 && yb <= new Date().getFullYear()) byCnt[yb] = (byCnt[yb] || 0) + 1; }); });
+    var byOwn = Object.keys(byCnt).sort(function(x, y) { return byCnt[y] - byCnt[x]; })[0]; byOwn = byOwn ? parseInt(byOwn, 10) : null;
     var est = Math.round(p * area), r = VILLA_EST_RANGE[lvl];
-    return { est: est, lvl: lvl, n1: n1, n2: n2, lo: Math.round(est / (1 + r[1] / 100)), hi: Math.round(est / (1 + r[0] / 100)), errPct: r[2] };
+    return { by: byOwn, est: est, lvl: lvl, n1: n1, n2: n2, lo: Math.round(est / (1 + r[1] / 100)), hi: Math.round(est / (1 + r[0] / 100)), errPct: r[2] };
 }
 
 /* ════ 🏘️ 빌라 최소 마진 규칙 (2026-10-10, 사용자: "빌라는 예측 신뢰도가 아파트보다 낮아 마진폭을 늘려야 - 최소 2,000만원 유지, 구축일수록 마진이 커져야, 연식·평형·승강기가 가격 형성의 핵심") ════
@@ -3670,7 +3673,7 @@ var VILLA_P90 = { a10: { '건물3+': 7.4, '건물1~2+동': 12.3, '건물1~2': 20
                   a31: { '건물3+': 16.2, '건물1~2+동': 36.9, '건물1~2': 45, '동5+': 59.7, '동1~4': 73.1, '시군구': 110 } };
 function villaMarginPlan(row, ve, title) {
     if (!ve) return null;
-    var yr = title && title.useAprDay ? parseInt(String(title.useAprDay).slice(0, 4), 10) : (parseInt(row.a.buildYear, 10) || null);
+    var yr = title && title.useAprDay ? parseInt(String(title.useAprDay).slice(0, 4), 10) : (parseInt(row.a.buildYear, 10) || ve.by || null), ageFromTrades = !(title && title.useAprDay) && !parseInt(row.a.buildYear, 10) && !!ve.by;
     var age = yr ? new Date().getFullYear() - yr : null;
     var band = age == null ? 'a30' : (age <= 10 ? 'a10' : (age <= 20 ? 'a20' : (age <= 30 ? 'a30' : 'a31')));
     var p90 = (VILLA_P90[band] || {})[ve.lvl] || 40;
@@ -3683,7 +3686,7 @@ function villaMarginPlan(row, ve, title) {
         if (elv != null && fl >= 0) { if (elv > 0) return fl === 1 ? FIRST_FLOOR_MARGIN_X : 1; return fl >= 4 ? FIRST_FLOOR_MARGIN_X : 1; }
         return fl === 1 ? FIRST_FLOOR_MARGIN_X : 1;
     })(), margin = Math.round(Math.max(VILLA_MARGIN_MIN, Math.round(ve.est * buf / 100 / 100) * 100) * fx / 100) * 100;
-    var out = { margin: margin, buf: Math.round(buf * 10) / 10, age: age, ageBand: band, elv: elv, ef: ef, floorMin: margin === VILLA_MARGIN_MIN * fx, first: fx > 1 };
+    var out = { ageFromTrades: ageFromTrades, margin: margin, buf: Math.round(buf * 10) / 10, age: age, ageBand: band, elv: elv, ef: ef, floorMin: margin === VILLA_MARGIN_MIN * fx, first: fx > 1 };
     try {
         var a = row.a, base = Object.assign({}, a, { target: ve.est, repair: effRepairFee(a, 'villa', row.pyung, yr || null), compTargetMargin: margin });
         var r = solveAuctionBidFromRecord(base);
@@ -3711,7 +3714,7 @@ function villaFailsFromRatio(minb, appr) {
 function villaWinbid(row, ve, title) {
     var m = villaWinModel; if (!m || !ve || !row.minBid) return null;
     var a = row.a, area = (parseFloat(a.pyung) || 0) * 3.305785, f = parseInt(a.floor, 10);
-    var yr = title && title.useAprDay ? parseInt(String(title.useAprDay).slice(0, 4), 10) : (parseInt(a.buildYear, 10) || null), age = yr ? new Date().getFullYear() - yr : null;
+    var yr = title && title.useAprDay ? parseInt(String(title.useAprDay).slice(0, 4), 10) : (parseInt(a.buildYear, 10) || ve.by || null), age = yr ? new Date().getFullYear() - yr : null;
     var mm = a.bidDate ? parseInt(a.bidDate.slice(5, 7), 10) : (new Date().getMonth() + 1);
     var keys = {
         lb: String(Math.max(-24, Math.min(9, Math.floor(Math.log(row.minBid / ve.est) / 0.05)))),
@@ -3973,7 +3976,7 @@ function villaSaveCalcSoon() {
     villaSaveT = setTimeout(function() { var snap = villaCalcSnapshot(); listIdbOp('readwrite', function(st) { return st.put(snap, VILLA_CALC_KEY); }); }, 4000);
 }
 var villaVeCache = {}, villaLoadBusy = false;
-function villaVeSig(a) { return [a.pyung, a.addr, a.dong, a.bunji, a.bidDate, a.buildYear || '', a.estBuildYear || ''].join('|'); }
+function villaVeSig(a) { return ['v2', a.pyung, a.addr, a.dong, a.bunji, a.bidDate, a.buildYear || '', a.estBuildYear || ''].join('|'); }
 async function villaLoadRegions() {
     if (villaLoadBusy) return; villaLoadBusy = true;
     try {
@@ -18860,7 +18863,7 @@ async function renderVillaDrawer(d, row) {
     }
     if (mp) {
         h += '<div class="dr-sec"><h4>필요 마진 · 입찰 상한</h4><div>필요 순이익 <b>' + fmt(mp.margin) + '</b>' + (mp.bid ? ' → 입찰 상한 <b style="color:' + (mp.feasible ? '#15803d' : '#b91c1c') + ';">' + (mp.feasible ? fmt(mp.bid) : '최저가로도 마진 부족(' + fmt(mp.bid) + ')') + '</b>' : '') + '</div>'
-            + '<div class="dr-sub">' + (mp.age != null ? '연식 ' + mp.age + '년' : '연식 모름(보수적으로 계산)') + (mp.elv != null ? ' · 승강기 ' + (mp.elv > 0 ? '있음' : '없음') : ' · 승강기 모름') + ' · 시세 근거 ' + bbEsc(ve ? ve.lvl : '-') + (mp.first ? ' · ' + (mp.elv === 0 ? '승강기 없는 고층' : '1층') + ' +20%' : '') + ' → 최소 2,000만 또는 예상매도가의 ' + mp.buf + '% 중 큰 값</div></div>';
+            + '<div class="dr-sub">' + (mp.age != null ? '연식 ' + mp.age + '년' + (mp.ageFromTrades ? '(실거래 준공연도)' : '') : '연식 모름(보수적으로 계산)') + (mp.elv != null ? ' · 승강기 ' + (mp.elv > 0 ? '있음' : '없음') : ' · 승강기 모름') + ' · 시세 근거 ' + bbEsc(ve ? ve.lvl : '-') + (mp.first ? ' · ' + (mp.elv === 0 ? '승강기 없는 고층' : '1층') + ' +20%' : '') + ' → 최소 2,000만 또는 예상매도가의 ' + mp.buf + '% 중 큰 값</div></div>';
     }
     if (wb) {
         h += '<div class="dr-wb"><div class="dr-wb-h">🎲 예상 낙찰가 <b>' + fmt(wb.price) + '</b><span class="dr-sub" style="margin:0 0 0 6px;">비슷한 빌라가 보통 낙찰되는 가격(낙찰사례 약 6천 건, 보통 오차 약 9%)</span></div>'
