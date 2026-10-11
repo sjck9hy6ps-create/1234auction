@@ -1,9 +1,8 @@
 name: 입찰후보 계산 미리 해 두기
 
 on:
+  workflow_call:       # 주간 파이프라인(weekly-pipeline.yml)이 순서대로 부름 - 단독 일정은 없앰(2026-10-11)
   workflow_dispatch:
-  schedule:
-    - cron: '0 23 * * 0'   # 매주 월요일 KST 08:00 (주말 업로드 + 월요일 새벽 낙찰사례·지역 분석이 끝난 뒤 입찰후보 전체를 미리 계산, 1주일간 앱에서 사용)
 
 jobs:
   precompute:

@@ -2,10 +2,8 @@
 name: Analyze bid cases
 
 on:
+  workflow_call:       # 주간 파이프라인(weekly-pipeline.yml)이 순서대로 부름 - 단독 일정은 없앰(2026-10-11)
   workflow_dispatch: {}
-  # 2026-10: 낙찰사례 매도 매칭(전체 실거래 기준)도 여기서 저장 - 매주 금요일 KST 05:00
-  schedule:
-    - cron: '0 20 * * 0'   # 매주 월요일 KST 05:00 (2026-10 사용자: 주말에 낙찰사례·신규 경매를 올리고 월요일에 분석)
 
 jobs:
   analyze:

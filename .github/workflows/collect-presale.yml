@@ -2,6 +2,7 @@
 name: Collect presale trades
 
 on:
+  workflow_call:       # 주간 파이프라인(weekly-pipeline.yml)이 순서대로 부름 - 단독 일정은 없앰(2026-10-11)
   workflow_dispatch:
     inputs:
       months:
@@ -12,8 +13,6 @@ on:
         description: '시군구 코드 하나만(시험용, 비우면 전국)'
         required: false
         default: ''
-  schedule:
-    - cron: '30 2 * * 1'
 
 jobs:
   collect:

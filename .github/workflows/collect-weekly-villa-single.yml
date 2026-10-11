@@ -1,8 +1,7 @@
 name: 주간 연립다세대·단독다가구 데이터 수집
 
 on:
-  schedule:
-    - cron: '30 1 * * 1'  # 매주 월요일 오전 10시 30분 (KST) - 아파트 수집(weekly.yml)과 시간차
+  workflow_call:       # 주간 파이프라인(weekly-pipeline.yml)이 순서대로 부름 - 단독 일정은 없앰(2026-10-11)
   workflow_dispatch:      # 수동 실행도 가능
 
 jobs:

@@ -1,8 +1,7 @@
 name: 주간 아파트 전월세 데이터 수집
 
 on:
-  schedule:
-    - cron: '0 2 * * 1'  # 매주 월요일 오전 11시 (KST) - 기존 아파트/연립다세대 수집과 시간차
+  workflow_call:       # 주간 파이프라인(weekly-pipeline.yml)이 순서대로 부름 - 단독 일정은 없앰(2026-10-11)
   workflow_dispatch:
 
 jobs:

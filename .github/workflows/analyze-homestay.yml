@@ -1,9 +1,8 @@
 name: 공간대여(도시민박업) 밀집 지역 집계
 
 on:
+  workflow_call:       # 주간 파이프라인(weekly-pipeline.yml)이 순서대로 부름 - 단독 일정은 없앰(2026-10-11)
   workflow_dispatch:
-  schedule:
-    - cron: '0 21 * * 0'   # 매주 월요일 KST 06:00 (낙찰사례 분석 직후)
 
 jobs:
   analyze:

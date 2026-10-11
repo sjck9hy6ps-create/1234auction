@@ -2,14 +2,13 @@
 name: Analyze popular complexes
 
 on:
+  workflow_call:       # 주간 파이프라인(weekly-pipeline.yml)이 순서대로 부름 - 단독 일정은 없앰(2026-10-11)
   workflow_dispatch:
     inputs:
       current_only:
         description: '현재 인기 목록만 갱신(검증 생략)'
         required: false
         default: '0'
-  schedule:
-    - cron: '0 20 * * 1'
 
 jobs:
   analyze:

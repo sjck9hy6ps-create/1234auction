@@ -27,6 +27,8 @@
 - 공공데이터 API는 GitHub Actions에서 직접 막혀서 `api/get-house?action=molitProxy`(Vercel 경유)로 호출해요.
 
 ## 4. 자동 작업 일정(UTC cron, KST = +9시간)
+
+> **주간 파이프라인(2026-10-11)**: 아래 표의 수집·분석·미리 계산 11개(`weekly`, `collect-weekly-villa-single`, `collect-weekly-rent`, `collect-presale`, `train-avm`, `analyze-cycle`, `analyze-liquidity`, `analyze-bidcases`, `analyze-homestay`, `analyze-region-liquidity`, `precompute-board`)는 단독 일정이 없고 `weekly-pipeline.yml`이 **매주 일요일 20:00 KST**에 시작해 이 순서대로 한 단계씩 실행해요(앞이 실패해도 계속). 총 약 6시간 → 월요일 새벽~아침에 끝나고 그 값을 일주일간 앱이 씀. 각 파일의 수동 실행은 그대로 가능. 대장 수집(`collect-building-info`)·좌표 웜업 등 매일 도는 작업은 그대로.
 | 파일 | 이름 | cron(UTC) |
 |---|---|---|
 | `analyze-bidcases.yml` | Analyze bid cases | 0 20 * * 0 |

@@ -16,8 +16,7 @@
 name: Train AVM model
 
 on:
-  schedule:
-    - cron: '0 4 * * 1'
+  workflow_call:       # 주간 파이프라인(weekly-pipeline.yml)이 순서대로 부름 - 단독 일정은 없앰(2026-10-11)
   workflow_dispatch: {}
 
 jobs:
