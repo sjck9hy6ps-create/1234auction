@@ -4169,6 +4169,7 @@ function villaLiqHtml(liq) {
 /* 💾 빌라 계산 결과 보관(2026-10-10, 사용자: "빌라 입찰후보 창이 매번 새로 불러오는 것 같아 느려") - 예상매도가·생활권 거래·건축물대장 요약을 브라우저에 24시간 저장해 두고
    다시 열면 바로 보여줌(지역 실거래 68곳을 다시 받지 않음). 건물 상세(전유부 등 큰 자료)는 열 때 다시 받음. */
 var VILLA_CALC_KEY = 'villaCalc:v1', VILLA_CALC_TTL = 8 * 24 * 3600 * 1000, villaRestoreState = 0, villaSaveT = null;
+var villaEvPend = {}; // 서버·브라우저 저장본의 판정 요약(식별값이 맞을 때만 씀)
 var villaHsPend = {}; // 서버 저장본의 대장 연식 - 물건 목록이 아직 없을 때 받아도 잃지 않게 보관(식별값이 연식을 포함하므로 없으면 전부 다시 계산됨)
 function villaFlushHsPend() {
     var ids = Object.keys(villaHsPend); if (!ids.length) return;
@@ -4179,6 +4180,7 @@ function villaApplyCalc(d, force) {
     if (!d) return 0;
     var n = 0;
     Object.keys(d.ve || {}).forEach(function(id) { if (force || !villaVeCache[id]) { villaVeCache[id] = d.ve[id]; n++; } });
+    Object.keys(d.ev || {}).forEach(function(id) { if (force || !villaEvPend[id]) villaEvPend[id] = d.ev[id]; });
     var nl = 0; Object.keys(d.liq || {}).forEach(function(id) { if (force || !villaLiqCache[id]) { villaLiqCache[id] = d.liq[id]; nl++; } });
     if (nl) villaLiqFinal = true;
     var byId = {}; villaMetroRows(true).forEach(function(r) { byId[r.id] = r; });
@@ -4196,8 +4198,8 @@ async function villaFetchServerCalc() { // 서버가 미리 계산해 둔 빌라
         var meta = await withT(fetch('/api/data-coverage?mode=boardCacheMeta&kind=villa').then(function(r) { return r.json(); }), 4000);
         if (!meta || !meta.n || !meta.at || Date.now() - meta.at > 9 * 24 * 3600 * 1000) return null;
         var parts = await withT(Promise.all(Array.from({ length: meta.n }, function(_, i) { return fetch('/api/data-coverage?mode=boardCacheChunk&kind=villa&i=' + i).then(function(r) { return r.json(); }); })), 25000);
-        var d = { ve: {}, liq: {}, hs: {} };
-        parts.forEach(function(p) { ['ve', 'liq', 'hs'].forEach(function(k) { Object.assign(d[k], (p && p[k]) || {}); }); });
+        var d = { ve: {}, liq: {}, hs: {}, ev: {} };
+        parts.forEach(function(p) { ['ve', 'liq', 'hs', 'ev'].forEach(function(k) { Object.assign(d[k], (p && p[k]) || {}); }); });
         d.at = meta.at; return d;
     } catch (e) { return null; }
 }
@@ -4215,13 +4217,14 @@ async function villaRestoreCalc() {
     if (bidBoardState.visit === 'villa') renderBidBoard();
 }
 function villaCalcSnapshot() {
-    var ve = {}, liq = {}, hs = {};
+    var ve = {}, liq = {}, hs = {}, ev = {};
     villaMetroRows(true).forEach(function(r) {
         var c = villaVeCache[r.id]; if (c && c.sig === villaVeSig(r.a)) ve[r.id] = c;
+        var e0 = r._vev; if (e0 && e0.sig && !e0.pending) ev[r.id] = { sig: e0.sig, ve: e0.ve, mp: e0.mp, wb: e0.wb, pn: e0.pn, visit: e0.visit, cap: e0.cap, issue: e0.issue }; // 판정 요약도 같이 보관 - 처음 빌라 탭을 열 때 1,100여 건을 다시 풀지 않게(건당 18ms ≈ 21초였음)
         if (villaLiqCache[r.id]) liq[r.id] = villaLiqCache[r.id];
         var st = hsBld[r.id]; if (st && st.info && st.info.title) hs[r.id] = { title: st.info.title, price: st.info.price || null };
     });
-    return { at: Date.now(), ve: ve, liq: liq, hs: hs };
+    return { at: Date.now(), ve: ve, liq: liq, hs: hs, ev: ev };
 }
 function villaSaveCalcSoon() {
     clearTimeout(villaSaveT);
@@ -4282,6 +4285,9 @@ function villaEval(row) {
     var lq = villaLiqFinal ? villaLiqCache[row.id] : null;
     var sig = [vcOk ? 1 : 0, lq ? 1 + lq.r500.a6 : 0, t ? 1 : 0, villaWinModel ? 1 : 0, row.minBid, row.a.floor, row.a.pyung, row.a.buildYear || '', row.a.bidDate || '', row.a.appraisal || '', st.loading ? 1 : 0, (row.a.listingParse && row.a.listingParse.at) || '', (row.a.listingParse && row.a.listingParse.n) || 0, row.a.repair || '', row.a.assumedDeposit || '', row.a.assumedFixed || '', row.a.assumedPrior || '', row.a.rights ? (row.a.rights.pastedAt || 1) + ':' + (row.a.rights.editedAt || 0) : '', row.a.unpaidMgmtFee || '', row.a.etc || ''].join('|');
     if (row._vev && row._vev.sig === sig) return row._vev;
+    var pe0 = villaEvPend[row.id];
+    if (pe0) { delete villaEvPend[row.id]; if (pe0.sig === sig) { var re0 = Object.assign({}, pe0, { t: t, liq: lq }); row._vev = re0; return re0; } }
+    if (window.__villaEvDeadline && performance.now() > window.__villaEvDeadline) return { sig: 'pending', pending: true, t: t, liq: lq, ve: null, mp: null, wb: null, pn: null, visit: { go: false, why: '계산 중' } }; // 한 번에 몰아 계산해 화면이 멈추지 않게 14ms씩 나눔
     var ev = { sig: sig, t: t, liq: lq, ve: null, mp: null, wb: null, pn: null, visit: { go: false, why: '' } };
     if (vcOk) ev.ve = vc.ve;
     else if (lawd && dataCache[lawd]) { try { ev.ve = villaSaleEst(row.a); } catch (e) {} villaVeCache[row.id] = { sig: villaVeSig(row.a), ve: ev.ve }; }
@@ -4316,7 +4322,9 @@ function renderVillaLite(body) {
     var all = villaMetroRows(), s = bidBoardState, vv = s.villaVisit || 'go';
     if (!homestayAgg) loadHomestayAgg(function() { if (bidBoardState.visit === 'villa') renderBidBoard(); }); // 이미 받았으면 콜백이 바로 불려 무한 반복되므로 처음 한 번만
     if (all.some(function(r) { return !hsBld[r.id]; })) all.slice().sort(function(x, y) { return (x.dday ? x.dday.diffDays : 9999) - (y.dday ? y.dday.diffDays : 9999); }).forEach(ensureHomestayCheck); // 입찰이 가까운 물건부터 조회(이미 다 조회했으면 건너뜀)
-    var evs = {}; all.forEach(function(r) { evs[r.id] = villaEval(r); });
+    var evs = {}; window.__villaEvDeadline = performance.now() + 14; all.forEach(function(r) { evs[r.id] = villaEval(r); }); window.__villaEvDeadline = 0;
+    var evPendN = all.filter(function(r) { return evs[r.id].pending; }).length;
+    if (evPendN) { all = all.filter(function(r) { return !evs[r.id].pending; }); clearTimeout(window.__villaEvT); window.__villaEvT = setTimeout(function() { if (bidBoardState.visit === 'villa') renderBidBoard(); }, 30); }
     if (!hsFillBusy && all.some(function(r) { var h0 = hsBld[r.id]; return (!h0 || !h0.info || !h0.info.title) && !hsFillDone[r.id]; })) setTimeout(function() { hsFillFromCache(villaMetroRows(true)); }, 100);
     if (!villaLoadBusy && all.some(function(r) { var c = villaVeCache[r.id]; return !(c && c.sig === villaVeSig(r.a)) || (bidBoardLawdOf(r.a) && !villaLiqCache[r.id] && !villaPts[bidBoardLawdOf(r.a)] && !villaPtsTried[bidBoardLawdOf(r.a)]); })) setTimeout(villaLoadRegions, 50);
     var goN = all.filter(function(r) { return evs[r.id].visit.go; }).length, passN = all.length - goN;

@@ -97,8 +97,8 @@ console.log(`✅ 올림: ${rows.length}묶음 / ${ids.length}건`);
 if (villa && Object.keys(villa.ve || {}).length >= 50) {
   const vids = Object.keys(villa.ve), VC = 100, vrows = [];
   for (let i = 0; i * VC < vids.length; i++) {
-    const part = { ve: {}, liq: {}, hs: {} };
-    vids.slice(i * VC, (i + 1) * VC).forEach((id) => { part.ve[id] = villa.ve[id]; if (villa.liq[id]) part.liq[id] = villa.liq[id]; if (villa.hs[id]) part.hs[id] = villa.hs[id]; });
+    const part = { ve: {}, liq: {}, hs: {}, ev: {} };
+    vids.slice(i * VC, (i + 1) * VC).forEach((id) => { part.ve[id] = villa.ve[id]; if (villa.liq[id]) part.liq[id] = villa.liq[id]; if (villa.hs[id]) part.hs[id] = villa.hs[id]; if (villa.ev && villa.ev[id]) part.ev[id] = villa.ev[id]; });
     vrows.push({ id: `board|villa|${i}`, payload: part, fetched_at: now });
   }
   for (const r of vrows) {
