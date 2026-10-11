@@ -4213,6 +4213,7 @@ async function villaRestoreCalc() {
         var sd = await (window.villaSrvP || villaFetchServerCalc()); window.villaSrvP = null;
         if (sd) { villaApplyCalc(sd, !(d && d.at >= sd.at)); villaSaveCalcSoon(); }
     } catch (e) {}
+    try { villaFlushHsPend(); } catch (e) {}
     villaRestoreState = 2;
     if (bidBoardState.visit === 'villa') renderBidBoard();
 }
@@ -14018,7 +14019,11 @@ function rightsNeeded(r, go) { return !!(go && r && r.a && !r.a.rights); }
 function rightsNeedPill() { return '<span class="bb-pill" style="background:#fff7ed;color:#c2410c;border:1px solid #fdba74;" title="임장 후보인데 탱크옥션 임차인·등기 분석이 없어요 - 상세에서 붙여넣기 또는 상단 ⚖️ 일괄 붙여넣기">⚖️ 권리분석 필요</span>'; }
 function rightsNeedCount(isVilla, cur) {
     try {
-        if (isVilla) return villaMetroRows().filter(function(r) { var ev = villaEval(r); return ev && ev.visit && ev.visit.go && !r.a.rights; }).length;
+        if (isVilla) { // 이미 계산된 판정만 셈(여기서 1,100여 건을 새로 풀면 첫 진입이 20초 멈춤) - 저장본 판정 반영 후, 4ms 안에서만 새로 계산
+            if (villaRestoreState < 2) return 0;
+            villaFlushHsPend(); window.__villaEvDeadline = performance.now() + 4;
+            try { return villaMetroRows().filter(function(r) { var ev = villaEval(r); return ev && !ev.pending && ev.visit && ev.visit.go && !r.a.rights; }).length; } finally { window.__villaEvDeadline = 0; }
+        }
         return cur.filter(function(r) { return !r.pending && r.visit && r.visit.go && !r.a.rights; }).length;
     } catch (e) { return 0; }
 }
