@@ -69,7 +69,7 @@ async function main() {
       if (!a.bCode) upd.bCode = code;
       const useCode = a.bldgBCode || code;
       const url = `${SITE}/api/get-building?sigunguCd=${useCode.slice(0, 5)}&bjdongCd=${useCode.slice(5, 10)}&bun=${bj.bun}&ji=${bj.ji}&bldNm=${encodeURIComponent(a.name || '')}`;
-      const info = await fetch(url).then((r) => r.json());
+      const info = a.bldgTitle ? { title: a.bldgTitle } : await fetch(url).then((r) => r.json()); // 도로명으로 찾아 저장해 둔 대장이 있으면 그걸 씀
       const raw = JSON.stringify((info && info.debug) || {});
       if (/LIMITED_NUMBER_OF_SERVICE_REQUESTS_EXCEEDS|일일 서비스 요청제한/.test(raw)) { quota = true; console.log('건축HUB 하루 한도 초과 - 여기서 멈춤(다음 실행 때 이어서)'); break; }
       const t = info && info.title;

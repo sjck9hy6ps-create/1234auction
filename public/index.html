@@ -3716,10 +3716,12 @@ function hsPump() {
                 hsRunning--; hsPump(); villaSaveCalcSoon(); clearTimeout(hsRenderT); hsRenderT = setTimeout(function() { if (bidBoardState.visit === 'villa') { renderBidBoard(); var dr0 = bidDrawerId && bidBoardRows.filter(function(r) { return r.id === bidDrawerId; })[0]; if (dr0 && dr0.type === 'villa') renderBidDrawer(); } }, Date.now() - bbLastInteract < 2000 ? 2500 : 1500); // 건물 조회가 하나 끝날 때마다 다시 그리면 클릭이 밀림 → 1.5초(방금 누른 직후엔 2.5초)에 한 번
             };
             if (!a.lat || !a.lon || !a.bunji) { done(null); return; }
+            if (a.bldgTitle) { done({ title: a.bldgTitle, price: null, floors: null, exposAreas: null, cached: true }); return; } // 도로명으로 찾아 저장해 둔 대장
             loadBuildingInfo({ latest: { dong: ctx.dong, name: ctx.name, bunji: a.bldgBunji || ctx.bunji, aptDong: ctx.aptDong } }, a.lat, a.lon, false, a.bldgBCode || a.bCode || null).then(function(info) {
                 if (info || loadBuildingInfo.lastFailed) { done(info); return; }
                 findBuildingLot(a).then(function(f) { // 번지로 못 찾으면 도로명 기준 대표 번지·인접 번지로 다시
                     if (!f) { done(null); return; }
+                    if (f.scan) { done({ title: f.title, price: null, floors: null, exposAreas: null, cached: true }); return; }
                     loadBuildingInfo({ latest: { dong: ctx.dong, name: ctx.name, bunji: f.bunji, aptDong: ctx.aptDong } }, a.lat, a.lon, false, f.bCode).then(done).catch(function() { done(null); });
                 }).catch(function() { done(null); });
             }).catch(function() { done(null); });
@@ -3737,34 +3739,74 @@ async function titleOnlyAt(bCode, bunji) {
     if (!parts || !bj) return null;
     try { var r = await fetch('/api/get-building?titleOnly=1&sigunguCd=' + parts.sigunguCd + '&bjdongCd=' + parts.bjdongCd + '&bun=' + bj.bun + '&ji=' + bj.ji).then(function(x) { return x.json(); }); return r && !r.quotaExceeded && !r.failed ? (r.title || null) : null; } catch (e) { return null; }
 }
-async function findBuildingLot(a) {
+/* 대장 조회 우선순위(2026-10-11, 사용자: "하나씩 찾지 말고 우선순위를 정해 최후의 수단으로"):
+   ⓐ 경매 주소의 번지로 바로 조회(기본)  ⓑ 도로명 주소 → 카카오 대표 지번으로 조회  ⓒ 같은 본번의 부번 1~40을 훑어 대장 도로명이 같은 건물  ⓓ 【최후】 법정동 전체 표제부를 훑어 도로명이 같은 건물(roadScan, 요청 수십 건 - 세션당 5건까지)
+   ⓔ 그래도 못 찾으면 상세 화면에서 도로명 주소를 직접 입력(수동). 찾은 방법은 물건에 a.bldgMethod로 남김. 못 찾은 날짜(a.bldgLotTried)는 6일 동안 다시 시도하지 않음. */
+async function findBuildingLot(a, roadText) {
     var today = new Date().toISOString().slice(0, 10);
-    if (!a || !a.lat || !a.bCode || !a.bunji || a.bldgBunji) return null;
-    if (a.bldgLotTried && (Date.now() - new Date(a.bldgLotTried + 'T00:00:00').getTime()) < 6 * 86400000) return null;
-    var road = roadTokenOf(a.addrLabel), roadFull = null;
-    if (!road) { var g0 = await geocodeFromAddr(addrForGeocode(a.addr) || a.addr); if (g0 && g0.addrLabel) { road = roadTokenOf(g0.addrLabel); roadFull = g0.addrLabel; } } else roadFull = a.addrLabel;
-    var found = null;
+    if (!a) return null;
+    if (!roadText) {
+        if (a.bldgBunji || a.bldgTitle) return null;
+        if (a.bldgLotTried && (Date.now() - new Date(a.bldgLotTried + 'T00:00:00').getTime()) < 6 * 86400000) return null;
+    }
+    if (roadText) { // 직접 입력한 도로명으로 좌표·법정동부터 채움
+        var g0 = await geocodeFromAddr(roadText);
+        if (!g0 || !g0.lat) return null;
+        a.lat = g0.lat; a.lon = g0.lon; a.addrLabel = roadText; a.dong = a.dong || g0.dong; a.bCode = g0.bCode || a.bCode;
+    }
+    if (!a.lat || !a.bCode) { a.bldgLotTried = today; try { await saveAuctionAPI(a); } catch (e) {} return null; }
+    var road = roadTokenOf(roadText || a.addrLabel), roadFull = roadText || a.addrLabel;
+    if (!road) { var g1 = await geocodeFromAddr(addrForGeocode(a.addr) || a.addr); if (g1 && g1.addrLabel) { road = roadTokenOf(g1.addrLabel); roadFull = g1.addrLabel; } }
+    var found = null, method = null, bj0 = a.bunji ? deriveBunJi({ bunji: a.bunji }) : null;
     if (road) {
-        // ① 도로명 → 대표 지번
-        var g1 = roadFull ? await geocodeFromAddr(roadFull) : null;
-        if (g1 && g1.bunji && g1.bunji !== a.bunji) {
-            var bc1 = g1.bCode || a.bCode, t1 = await titleOnlyAt(bc1, g1.bunji);
-            if (t1) found = { bunji: g1.bunji, bCode: bc1, title: t1 };
+        // ⓑ 도로명 → 대표 지번
+        var g2 = roadFull ? await geocodeFromAddr(roadFull) : null;
+        if (g2 && g2.bunji && g2.bunji !== a.bunji && !/^0(-0)?$/.test(g2.bunji)) {
+            var bc1 = g2.bCode || a.bCode, t1 = await titleOnlyAt(bc1, g2.bunji);
+            if (t1) { found = { bunji: g2.bunji, bCode: bc1, title: t1 }; method = 'road-lot'; }
         }
-        // ② 같은 본번 부번 훑기(도로명이 같은 건물)
-        if (!found) {
-            var bj0 = deriveBunJi({ bunji: a.bunji }), tries = [];
-            if (bj0) for (var ji = 1; ji <= 40; ji++) if (ji !== parseInt(bj0.ji, 10)) tries.push(parseInt(bj0.bun, 10) + '-' + ji);
+        // ⓒ 같은 본번 부번 훑기
+        if (!found && bj0) {
+            var tries = []; for (var ji = 1; ji <= 40; ji++) if (ji !== parseInt(bj0.ji, 10)) tries.push(parseInt(bj0.bun, 10) + '-' + ji);
             for (var k = 0; k < tries.length && !found; k += 5) {
                 var part = tries.slice(k, k + 5), res = await Promise.all(part.map(function(b) { return titleOnlyAt(a.bCode, b); }));
-                for (var q = 0; q < part.length; q++) if (res[q] && String(res[q].newPlatPlc || '').indexOf(road) >= 0) { found = { bunji: part[q], bCode: a.bCode, title: res[q] }; break; }
+                for (var q = 0; q < part.length; q++) if (res[q] && String(res[q].newPlatPlc || '').indexOf(road) >= 0) { found = { bunji: part[q], bCode: a.bCode, title: res[q] }; method = 'near-lot'; break; }
+            }
+        }
+        // ⓓ 최후: 법정동 전체 훑기(지번이 없는 도시개발구역 건물 등)
+        window.__roadScans = window.__roadScans || 0;
+        if (!found && window.__roadScans < 5) {
+            window.__roadScans++;
+            var bc = bCodeToSigunguBjdong(a.bCode);
+            if (bc) {
+                var sr = await fetch('/api/get-building?roadScan=' + encodeURIComponent(road) + '&sigunguCd=' + bc.sigunguCd + '&bjdongCd=' + bc.bjdongCd + '&bun=0001').then(function(x) { return x.json(); }).catch(function() { return null; });
+                if (sr && sr.hits && sr.hits.length) { found = { bunji: null, bCode: a.bCode, title: sr.hits[0], scan: true }; method = 'road-scan'; }
             }
         }
     }
     a.bldgLotTried = today;
-    if (found) { a.bldgBunji = found.bunji; if (found.bCode !== a.bCode) a.bldgBCode = found.bCode; }
+    if (found) {
+        a.bldgMethod = method;
+        if (found.scan) {
+            a.bldgTitle = found.title; var t0 = found.title, yr = String(t0.useAprDay || '').match(/(\d{4})/);
+            if (yr && !a.buildYear) { a.buildYear = parseInt(yr[1], 10); a.buildYearSource = '건축물대장'; }
+            if (a.elevatorCnt == null && (t0.grndFlrCnt || 0) > 0) a.elevatorCnt = (t0.rideElvtCnt || 0) + (t0.emgenElvtCnt || 0);
+        } else { a.bldgBunji = found.bunji; if (found.bCode !== a.bCode) a.bldgBCode = found.bCode; }
+    }
     try { await saveAuctionAPI(a); } catch (e) {}
     return found;
+}
+async function bldgFindByRoad(id) {
+    var a = auctionList.filter(function(x) { return String(x.id) === String(id); })[0], inp = document.getElementById('bld-road-input');
+    if (!a || !inp || !inp.value.trim()) return;
+    var btn = document.getElementById('bld-road-btn'); if (btn) { btn.disabled = true; btn.innerText = '찾는 중…'; }
+    var f = await findBuildingLot(a, inp.value.trim());
+    if (btn) { btn.disabled = false; btn.innerText = '찾기'; }
+    if (!f) { alert('이 도로명 주소로는 건축물대장을 찾지 못했어요. 도로명(예: 문학길 102-2)과 건물 번호가 맞는지 확인해 주세요.'); renderBidDrawer(); return; }
+    delete hsBld[a.id]; delete a._vev; try { villaVeCache[a.id] = null; delete villaVeCache[a.id]; } catch (e) {}
+    bidBoardRows = bidBoardRows.map(function(r) { if (String(r.id) === String(id)) { r.a = a; delete r._vev; } return r; });
+    var row = bidBoardRows.filter(function(r) { return String(r.id) === String(id); })[0]; if (row) { try { ensureHomestayCheck(row); } catch (e) {} }
+    renderBidBoard(); renderBidDrawer();
 }
 // 대장 용도가 주택이 아니면(근린생활시설·업무시설 등) 주택 시세·마진 계산과 다를 수 있다는 경고
 function bldUseWarn(t) {
@@ -4432,7 +4474,7 @@ function renderVillaLite(body) {
 function buildingDetailHtml(row, st) {
     var a = row.a;
         var info = st.info, t = info && info.title, chk = st.chk, f = function(v, u) { return v == null || v === '' ? '-' : v + (u || ''); };
-        var h = (bldUseWarn(t) ? '<div class="dr-warn" style="margin-bottom:6px;">⚠️ ' + bbEsc(bldUseWarn(t)) + (a.bldgBunji ? '' : '') + '</div>' : '') + (a.bldgBunji ? '<div class="dr-sub">대장 번지: ' + bbEsc(a.bldgBunji) + ' (경매 주소 번지 ' + bbEsc(a.bunji || '') + ' → 도로명 주소로 찾은 대표 번지)</div>' : '') + '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">' + hsPill(chk.verdict, st.quota) + '<span class="bb-sub">' + bbEsc(a.addr || '') + (a.floor ? ' · ' + a.floor + '층' : '') + (a.pyung ? ' · ' + a.pyung + '평' : '') + '</span></div>';
+        var h = (!t ? '<div class="dr-warn" style="margin-bottom:6px;">건축물대장을 못 찾았어요. 도로명 주소(예: 문학길 102-2)를 넣으면 찾아 연식·승강기를 채워요 <input id="bld-road-input" style="width:60%;font-size:12px;" placeholder="인천 미추홀구 문학길 102-2"> <button id="bld-road-btn" class="modal-btn btn-gray" onclick="bldgFindByRoad(\'' + String(row.id).replace(/'/g, "\\'") + '\')">찾기</button></div>' : '') + (a.bldgMethod ? '<div class="dr-sub">대장 찾은 방법: ' + ({ 'road-lot': '도로명 → 대표 지번', 'near-lot': '같은 본번의 인접 부번', 'road-scan': '법정동 전체 도로명 검색(최후 수단)' }[a.bldgMethod] || a.bldgMethod) + '</div>' : '') + (bldUseWarn(t) ? '<div class="dr-warn" style="margin-bottom:6px;">⚠️ ' + bbEsc(bldUseWarn(t)) + (a.bldgBunji ? '' : '') + '</div>' : '') + (a.bldgBunji ? '<div class="dr-sub">대장 번지: ' + bbEsc(a.bldgBunji) + ' (경매 주소 번지 ' + bbEsc(a.bunji || '') + ' → 도로명 주소로 찾은 대표 번지)</div>' : '') + '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">' + hsPill(chk.verdict, st.quota) + '<span class="bb-sub">' + bbEsc(a.addr || '') + (a.floor ? ' · ' + a.floor + '층' : '') + (a.pyung ? ' · ' + a.pyung + '평' : '') + '</span></div>';
         var ve = null, vc0 = villaVeCache[row.id]; if (vc0 && vc0.ve) ve = vc0.ve; else { try { ve = villaSaleEst(a); } catch (e) {} } // 저장된 계산 우선(지역 자료가 내려가 있어도 바로)
         if (ve) h += '<div style="margin-top:8px;background:#fff;border:1px solid #e5e7eb;border-radius:8px;padding:6px 10px;"><b>예상매도가(참고)</b> ' + toEok(String(ve.est)) + ' <span class="bb-sub" style="display:inline;">실제 10~90% 범위 ' + toEok(String(ve.lo)) + ' ~ ' + toEok(String(ve.hi)) + '</span><div class="bb-sub">근거: ' + ve.lvl + '(' + (ve.n1 || ve.n2) + '건) · 같은 방식 백테스트 보통 오차 약 ' + ve.errPct + '% (아파트는 4~5%) - 빌라는 호별 차이가 커서 현장 확인 값으로 다시 판단하세요</div></div>';
         if (ve) { var vp = villaMarginPlan(row, ve, t); if (vp) h += '<div style="margin-top:6px;background:#f5f3ff;border:1px solid #ddd6fe;border-radius:8px;padding:6px 10px;"><b>필요 마진 ' + toEok(String(vp.margin)) + '</b>' + (vp.floorMin ? ' (빌라 최소 2,000만)' : ' (예상매도가의 ' + vp.buf + '%)') + (vp.bid ? ' → <b style="color:' + (vp.feasible ? '#15803d' : '#b91c1c') + ';">' + (vp.feasible ? '입찰 상한 ' + toEok(String(vp.bid)) : '최저가로도 마진 부족') + '</b>' : '') + '<div class="bb-sub">' + (vp.age != null ? '연식 ' + vp.age + '년(구축일수록 여유를 더 둠)' : '연식을 몰라 20~30년으로 가정') + (vp.elv != null ? ' · 승강기 ' + (vp.elv > 0 ? '있음(오차 작음)' : '없음(오차 큼)') : '') + ' · 근거 ' + ve.lvl + '. 빌라는 예상 오차가 아파트의 약 3배라 마진 기준을 높였어요.</div></div>'; }
@@ -20102,10 +20144,11 @@ async function fetchHouseholdsFor(a) {
     try {
         var mkUrl = function(pp, bb) { return '/api/get-building?sigunguCd=' + pp.sigunguCd + '&bjdongCd=' + pp.bjdongCd + '&bun=' + bb.bun + '&ji=' + bb.ji + '&bldNm=' + encodeURIComponent(a.name || ''); };
         var url = mkUrl(parts, bj);
-        var info = await Promise.race([fetch(url).then(function(r) { return r.json(); }), new Promise(function(res) { setTimeout(function() { res(null); }, 12000); })]);
+        var info = a.bldgTitle ? { title: a.bldgTitle } : await Promise.race([fetch(url).then(function(r) { return r.json(); }), new Promise(function(res) { setTimeout(function() { res(null); }, 12000); })]);
         if (info && !info.title && !info.quotaExceeded && !info.error && !a.bldgBunji) { // 표제부가 비면 도로명 기준으로 다시
             var f = await findBuildingLot(a);
-            if (f) { var p2 = bCodeToSigunguBjdong(f.bCode), b2 = deriveBunJi({ bunji: f.bunji }); if (p2 && b2) info = await fetch(mkUrl(p2, b2)).then(function(r) { return r.json(); }).catch(function() { return info; }); }
+            if (f && f.scan) info = { title: f.title };
+            else if (f) { var p2 = bCodeToSigunguBjdong(f.bCode), b2 = deriveBunJi({ bunji: f.bunji }); if (p2 && b2) info = await fetch(mkUrl(p2, b2)).then(function(r) { return r.json(); }).catch(function() { return info; }); }
         }
         if (!info || info.quotaExceeded || info.error) fetchHouseholdsFor.lastFailed = true; // 한도 초과·통신 실패는 '못 찾음'이 아니라 다음에 다시
         var t = info && info.title;
