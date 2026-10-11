@@ -4223,7 +4223,7 @@ var VILLA_CALC_KEY = 'villaCalc:v1', VILLA_CALC_TTL = 8 * 24 * 3600 * 1000, vill
 var villaEvPend = {}; // 서버·브라우저 저장본의 판정 요약(식별값이 맞을 때만 씀)
 var villaHsPend = {}; // 서버 저장본의 대장 연식 - 물건 목록이 아직 없을 때 받아도 잃지 않게 보관(식별값이 연식을 포함하므로 없으면 전부 다시 계산됨)
 function villaFlushHsPend() { // 대장 연식만 먼저 들어간 물건(도시민박 판정 비어 있음)의 판정을 채움
-    villaMetroRows(true).forEach(function(r) { var h = hsBld[r.id]; if (h && h.partial && !h.chk && (h.none || (h.info && h.info.title))) { try { h.chk = homestayCheck(r.a, h.info); } catch (e) { h.chk = { verdict: 'check', items: [], unit: null }; } } });
+    villaMetroRows(true).forEach(function(r) { var h = hsBld[r.id]; if (h && h.none && r.a.bldgBunji) { delete hsBld[r.id]; return; } /* 도로명으로 대장 번지를 찾아 둔 물건은 '없음' 기록을 버리고 다시 조회 */ if (h && h.partial && !h.chk && (h.none || (h.info && h.info.title))) { try { h.chk = homestayCheck(r.a, h.info); } catch (e) { h.chk = { verdict: 'check', items: [], unit: null }; } } });
 }
 function villaApplyCalc(d, force) {
     if (!d) return 0;
