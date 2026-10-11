@@ -157,7 +157,9 @@ export default async function handler(req, res) {
     // 층별 자료가 여러 동 것이 섞인 채 저장된 캐시(층 수보다 훨씬 많은 줄)도 다시 조회
     const cachedMixedFloors = cached && cached.title_json && Array.isArray(cached.floor_json)
       && (cached.title_json.grndFlrCnt || 0) > 0 && cached.floor_json.length > (cached.title_json.grndFlrCnt + (cached.title_json.ugrndFlrCnt || 0)) * 2 + 4;
-    if (cached && !cachedNonResidential && !cachedNeedsSite && !cachedMixedFloors && (Date.now() - new Date(cached.fetched_at).getTime()) < FRESH_MS) {
+    // 2026-10-11(사용자: "대장을 못 찾은 원인"): '표제부 없음'으로 저장된 캐시는 일시적 응답 실패로 굳은 경우가 있었음(다시 조회하면 8/12건이 나옴) → 6일이 지나면 다시 조회(매주 재시도). 정상 자료는 계속 5년 재사용.
+    const cachedEmptyStale = cached && !cached.title_json && (Date.now() - new Date(cached.fetched_at).getTime()) > 6 * 86400000;
+    if (cached && !cachedEmptyStale && !cachedNonResidential && !cachedNeedsSite && !cachedMixedFloors && (Date.now() - new Date(cached.fetched_at).getTime()) < FRESH_MS) {
       // 무료 Vercel 사용량 절약: 건축물대장 데이터는 몇 달 단위로만 바뀌므로 엣지에서
       // 6시간 동안 재사용 - 같은 건물을 반복 조회해도 함수를 다시 실행하지 않음.
       res.setHeader('Cache-Control', 'public, s-maxage=21600, stale-while-revalidate=604800');
@@ -202,6 +204,12 @@ export default async function handler(req, res) {
       }
     }
 
+    // 표제부가 비어 있고 오류도 없으면 한 번 더 물어봄(공공 API가 바쁠 때 정상 응답처럼 빈 결과를 주는 경우가 있어, 그대로 저장하면 '없음'으로 굳음)
+    if (!titleResult.items.length && [titleResult, priceResult, floorResult, exposResult].every(r => r.httpStatus !== null)) {
+      await new Promise(r => setTimeout(r, 1200));
+      const again = await fetchAllBld(sigunguCd, bjdongCd, bun, jiParam, gbCd);
+      if (again.titleResult.items.length) ({ titleResult, priceResult, floorResult, exposResult } = again);
+    }
     const hadFetchError = [titleResult, priceResult, floorResult, exposResult]
       .some(r => r.httpStatus === null);
     const quotaExceeded = [titleResult, priceResult, floorResult, exposResult].some(r => r.quotaExceeded);

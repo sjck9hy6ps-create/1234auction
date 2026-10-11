@@ -4224,7 +4224,7 @@ function villaCalcSnapshot() {
         var e0 = r._vev; if (e0 && e0.sig && !e0.pending) ev[r.id] = { sig: e0.sig, ve: e0.ve, mp: e0.mp, wb: e0.wb, pn: e0.pn, visit: e0.visit, cap: e0.cap, issue: e0.issue }; // 판정 요약도 같이 보관 - 처음 빌라 탭을 열 때 1,100여 건을 다시 풀지 않게(건당 18ms ≈ 21초였음)
         if (villaLiqCache[r.id]) liq[r.id] = villaLiqCache[r.id];
         var st = hsBld[r.id]; if (st && st.info && st.info.title) hs[r.id] = { title: st.info.title, price: st.info.price || null };
-        else if (st && st.info === null && st.chk && !st.quota && !st.loading) hs[r.id] = { none: true }; // 대장에서 못 찾은 물건도 기억(없으면 열 때마다 다시 조회하고 판정이 다시 계산됨)
+        else if (st && st.info === null && st.chk && !st.quota && !st.loading && r.a.lat) hs[r.id] = { none: true }; // 대장에서 못 찾은 물건도 기억(없으면 열 때마다 다시 조회하고 판정이 다시 계산됨)
     });
     return { at: Date.now(), ve: ve, liq: liq, hs: hs, ev: ev };
 }
@@ -8609,6 +8609,38 @@ function bidTargetPropTypeFromText(propertyType) {
    더 좋은 낙찰기회가 나올 것") - ① 붙여넣은 목록을 바로 평형대별 인기 등급으로 분류해 인기 단지만 골라 등록할 수 있게 하고,
    ② 시군구·평형대를 고르면 그 평형에서 거래가 활발한 단지 목록을 보여줘(법원 경매 검색할 단지 고르기용). ════ */
 var btPopRunToken = 0;
+/* 📍 좌표를 못 찾은 물건(2026-10-11, 사용자: "대장을 못 찾은 원인"): 경매 주소에 호실·"외 N필지"·"제" 같은 꼬리가 붙으면 카카오가 주소를 못 알아봄
+   ("서울 구로구 구로동 112-40 삼성에비뉴40 제" → 못 찾음, "…구로동 112-40" → 찾음) → 지번까지만 잘라 다시 찾아 좌표·법정동·번지를 채움(대장 조회도 이게 있어야 가능). 지번이 없는 주소(도시개발구역 블록 등)는 그대로 못 찾음. */
+function addrForGeocode(addr) {
+    var m = String(addr || '').match(/^(.+?[동리가읍면]\s+산?\d+(?:-\d+)?)(?=\s|$)/);
+    return m ? m[1] : null;
+}
+function geocodeFromAddr(addr) {
+    return new Promise(function(resolve) {
+        try {
+            var g = (typeof geocoder !== 'undefined' && geocoder) ? geocoder : new kakao.maps.services.Geocoder();
+            g.addressSearch(addr, function(result, status) {
+                if (status !== kakao.maps.services.Status.OK || !result || !result.length) { resolve(null); return; }
+                var best = result[0]; try { best = pickBestGeocodeResult(result, addr); } catch (e) {}
+                resolve({ lat: parseFloat(best.y), lon: parseFloat(best.x), addrLabel: best.road_address ? best.road_address.address_name : best.address_name,
+                    dong: best.address ? (best.address.region_3depth_name || '') : '', bunji: best.address ? ((best.address.main_address_no || '') + (best.address.sub_address_no ? '-' + best.address.sub_address_no : '')) : '', bCode: best.address ? best.address.b_code : null });
+            });
+        } catch (e) { resolve(null); }
+    });
+}
+async function repairMissingCoords() {
+    if (window.__coordRepairRun) return; window.__coordRepairRun = true;
+    var today = new Date().toISOString().slice(0, 10), fixed = 0;
+    var todo = (auctionList || []).filter(function(a) { return !a.isBacktest && !a.lat && a.addr && a.geoTriedAt !== today; });
+    for (var i = 0; i < todo.length; i++) {
+        var a = todo[i], q = addrForGeocode(a.addr), g = q ? await geocodeFromAddr(q) : null;
+        a.geoTriedAt = today;
+        if (g && g.lat) { a.lat = g.lat; a.lon = g.lon; a.addrLabel = a.addrLabel || g.addrLabel; a.dong = a.dong || g.dong; a.bunji = a.bunji || g.bunji; a.bCode = a.bCode || g.bCode; fixed++; }
+        try { await saveAuctionAPI(a); } catch (e) {}
+    }
+    if (fixed) console.log('좌표를 새로 찾은 물건 ' + fixed + '건');
+    return fixed;
+}
 function geocodeBidTargetCase(c) {
     return new Promise(function(resolve) {
         if (c._geo !== undefined || !c.addrJibun) { resolve(); return; }
@@ -8980,7 +9012,11 @@ async function saveSelectedBidTargets() {
             data.dong = c._geo.dong; data.bunji = c._geo.bunji; data.bCode = c._geo.bCode;
         } else if (addr) {
             await new Promise(function(resolve) {
-                geocoder.addressSearch(addr, function(result, status) {
+                geocoder.addressSearch(addr, async function(result, status) {
+                    if (status !== kakao.maps.services.Status.OK) { // 호실·외 N필지 꼬리 때문에 못 찾으면 지번까지만 잘라 다시 찾음
+                        var q2 = addrForGeocode(addr); var g2 = q2 && q2 !== addr ? await geocodeFromAddr(q2) : null;
+                        if (g2 && g2.lat) { data.lat = g2.lat; data.lon = g2.lon; data.addrLabel = g2.addrLabel; data.dong = g2.dong; data.bunji = g2.bunji; data.bCode = g2.bCode; }
+                    }
                     if (status === kakao.maps.services.Status.OK) {
                         var best = pickBestGeocodeResult(result, addr);
                         data.lat = parseFloat(best.y); data.lon = parseFloat(best.x);
@@ -18734,6 +18770,7 @@ async function refreshBidBoard() {
     if (!bidBoardState.forceFresh) boardCache = await mergeServerBoardCache(boardCache);
     bidBoardState.forceFresh = false;
     await boardInputsReady(2500);
+    try { var fx0 = await Promise.race([repairMissingCoords(), new Promise(function(r) { setTimeout(function() { r(0); }, 6000); })]); if (fx0) { bidBoardRows = bidBoardRows.map(function(r0) { return r0; }); } } catch (e) {}
     var fsigNow = boardFinalSig();
     var nowMs = Date.now(), reused = {}, stale = {}, sliceT = Date.now();
     for (var wi = 0; wi < work.length; wi++) {
