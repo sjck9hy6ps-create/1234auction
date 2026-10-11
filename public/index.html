@@ -14194,6 +14194,81 @@ async function rightsBatchRun() {
     bidBoardRows = bidBoardRows.map(function(r) { var a = auctionList.filter(function(x) { return String(x.id) === String(r.id); })[0]; if (!a || !a.rights || r.a === a) return r; r.a = a; delete r._vev; if (r.type === 'villa') return r; try { return finalizeBidBoardRow(r); } catch (e) { return r; } });
     renderBidBoard();
 }
+
+/* 🛠 수정 요청(2026-10-11, 사용자: 아이패드로 임장·매물 확인하다 문제를 발견하면 앱에서 바로 요청) - 오른쪽 아래 버튼 → 종류·내용만 적으면 보고 있던 화면 정보(탭·선택한 물건·화면 크기·최근 오류)가 자동으로 같이 저장됨.
+   저장: /api/auction?kind=feedback(맥북의 Claude가 "요청 목록 처리해줘"를 들으면 scripts/feedback.py로 읽고 고친 뒤 상태·답변을 남김). 앱의 "내 요청"에서 처리 상태와 답변을 볼 수 있음. */
+window.__fbErrors = window.__fbErrors || [];
+(function() {
+    var push = function(m) { try { window.__fbErrors.push(String(new Date().toTimeString().slice(0, 8)) + ' ' + String(m).slice(0, 220)); if (window.__fbErrors.length > 15) window.__fbErrors.shift(); } catch (e) {} };
+    window.addEventListener('error', function(e) { push('오류: ' + (e.message || '') + ' @' + String(e.filename || '').split('/').pop() + ':' + (e.lineno || '')); });
+    window.addEventListener('unhandledrejection', function(e) { push('약속 오류: ' + (e.reason && (e.reason.message || e.reason))); });
+    var ce = console.error; console.error = function() { try { push('console.error: ' + Array.prototype.slice.call(arguments).map(function(x) { return x && x.message ? x.message : (typeof x === 'object' ? JSON.stringify(x).slice(0, 120) : x); }).join(' ')); } catch (e) {} return ce.apply(console, arguments); };
+})();
+var FB_KINDS = [['bug', '🐞 오류·멈춤'], ['slow', '🐢 느림'], ['wrong', '🔢 숫자·표시 이상'], ['feature', '✨ 기능 요청'], ['etc', '💬 기타']];
+function fbContext() {
+    var c = { at: new Date().toISOString(), w: window.innerWidth, h: window.innerHeight, dpr: window.devicePixelRatio, touch: navigator.maxTouchPoints || 0, ua: navigator.userAgent, url: location.href, errors: (window.__fbErrors || []).slice(-10) };
+    try { c.device = (/iPad/.test(navigator.userAgent) || (/Macintosh/.test(navigator.userAgent) && navigator.maxTouchPoints > 1)) ? 'iPad' : (/iPhone/.test(navigator.userAgent) ? 'iPhone' : 'PC'); } catch (e) {}
+    try {
+        var bd = document.getElementById('bid-board'), open = bd && bd.style.display !== 'none';
+        c.boardOpen = !!open;
+        if (open) {
+            var s = bidBoardState; c.tab = s.visit; c.aptVisit = s.aptVisit; c.region = s.region || ''; c.villaVisit = s.villaVisit; c.rightsNeed = !!s.rightsNeed; c.listLite = !!s.listLite; c.card = bbCardMode();
+            c.rows = bidBoardRows.length; c.pending = bidBoardRows.filter(function(r) { return r.pending; }).length; c.running = !!bidBoardRunning;
+            if (typeof bidDrawerId !== 'undefined' && bidDrawerId) { var r = bidBoardRows.filter(function(x) { return String(x.id) === String(bidDrawerId); })[0]; if (r) c.row = { id: r.id, caseNo: r.a && r.a.caseNo, addr: r.a && r.a.addr, type: r.type, recBid: r.recBid || null, sale: r.sale || null, verdict: r.verdict }; }
+        }
+        c.calcVer = typeof BOARD_CALC_VER !== 'undefined' ? BOARD_CALC_VER : null;
+    } catch (e) {}
+    return c;
+}
+function fbOpen() {
+    var old = document.getElementById('fb-modal'); if (old) old.remove();
+    var d = document.createElement('div'); d.id = 'fb-modal';
+    d.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.45);z-index:100001;display:flex;align-items:flex-end;justify-content:center;padding:10px;';
+    d.innerHTML = '<div style="background:#fff;border-radius:14px;padding:14px;width:min(640px,100%);max-height:92vh;overflow:auto;display:flex;flex-direction:column;gap:10px;">'
+        + '<div style="display:flex;align-items:center;justify-content:space-between;"><b style="font-size:16px;">🛠 수정 요청</b><span><a href="#" onclick="fbList();return false;" style="font-size:13px;margin-right:12px;">내 요청 보기</a><a href="#" onclick="document.getElementById(\'fb-modal\').remove();return false;" style="font-size:18px;text-decoration:none;">✕</a></span></div>'
+        + '<div id="fb-kinds" style="display:flex;flex-wrap:wrap;gap:6px;">' + FB_KINDS.map(function(k, i) { return '<button data-k="' + k[0] + '" onclick="fbPick(this)" style="padding:8px 12px;border-radius:18px;border:1px solid #d1d5db;background:' + (i === 0 ? '#e0e7ff' : '#fff') + ';font-size:14px;">' + k[1] + '</button>'; }).join('') + '</div>'
+        + '<textarea id="fb-text" rows="5" placeholder="무엇이 문제인지 / 어떻게 바꾸고 싶은지 적어 주세요 (어느 물건인지는 화면 정보가 자동으로 같이 가요)" style="width:100%;box-sizing:border-box;font-size:16px;padding:10px;border:1px solid #d1d5db;border-radius:10px;"></textarea>'
+        + '<div style="font-size:12px;color:#6b7280;">자동으로 같이 저장돼요: 지금 보던 탭·지역 필터·열어 둔 물건, 화면 크기, 기기, 최근 오류. <a href="#" onclick="var e=document.getElementById(\'fb-ctx\');e.style.display=e.style.display?\'\':\'none\';return false;">자세히</a></div><pre id="fb-ctx" style="display:none;font-size:11px;background:#f3f4f6;padding:8px;border-radius:8px;white-space:pre-wrap;max-height:160px;overflow:auto;"></pre>'
+        + '<div style="display:flex;gap:10px;justify-content:flex-end;align-items:center;"><span id="fb-msg" style="font-size:13px;color:#16a34a;"></span><button id="fb-send" onclick="fbSend()" style="padding:10px 22px;border-radius:10px;border:0;background:#2563eb;color:#fff;font-size:16px;font-weight:700;">보내기</button></div></div>';
+    document.body.appendChild(d);
+    document.getElementById('fb-ctx').innerText = JSON.stringify(fbContext(), null, 1);
+    d.addEventListener('click', function(e) { if (e.target === d) d.remove(); });
+}
+function fbPick(b) { Array.prototype.forEach.call(document.querySelectorAll('#fb-kinds button'), function(x) { x.style.background = '#fff'; x.removeAttribute('data-on'); }); b.style.background = '#e0e7ff'; b.setAttribute('data-on', '1'); }
+async function fbSend() {
+    var txt = (document.getElementById('fb-text').value || '').trim(), msg = document.getElementById('fb-msg'), btn = document.getElementById('fb-send');
+    if (!txt) { msg.style.color = '#dc2626'; msg.innerText = '내용을 적어 주세요.'; return; }
+    var kb = document.querySelector('#fb-kinds button[data-on="1"]') || document.querySelector('#fb-kinds button'), kind = kb ? kb.getAttribute('data-k') : 'etc';
+    btn.disabled = true; msg.style.color = '#6b7280'; msg.innerText = '보내는 중…';
+    var item = { id: 'fb' + Date.now().toString(36) + Math.random().toString(36).slice(2, 5), at: new Date().toISOString(), kind: kind, text: txt, status: 'new', ctx: fbContext() };
+    try {
+        var r = await fetch('/api/auction?kind=feedback', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(item) });
+        if (!r.ok) throw new Error('저장 실패 ' + r.status);
+        msg.style.color = '#16a34a'; msg.innerText = '✅ 접수됐어요'; document.getElementById('fb-text').value = '';
+        setTimeout(function() { var m = document.getElementById('fb-modal'); if (m) m.remove(); }, 900);
+    } catch (e) { msg.style.color = '#dc2626'; msg.innerText = '보내지 못했어요(' + e.message + '). 다시 눌러 주세요.'; btn.disabled = false; }
+}
+async function fbList() {
+    var box = document.querySelector('#fb-modal > div'); if (!box) return; box.innerHTML = '<b>🛠 내 요청</b> <a href="#" onclick="fbOpen();return false;" style="float:right;">← 새 요청</a><div id="fb-items" style="margin-top:8px;font-size:14px;">불러오는 중…</div>';
+    try {
+        var list = await fetch('/api/auction?kind=feedback', { cache: 'no-store' }).then(function(r) { return r.json(); });
+        list = (Array.isArray(list) ? list : []).sort(function(a, b) { return String(b.at).localeCompare(String(a.at)); }).slice(0, 30);
+        var kn = {}; FB_KINDS.forEach(function(k) { kn[k[0]] = k[1]; });
+        var st = { new: '⏳ 접수', doing: '🔧 처리 중', done: '✅ 완료', hold: '⏸ 보류' };
+        document.getElementById('fb-items').innerHTML = list.length ? list.map(function(x) {
+            return '<div style="border:1px solid #e5e7eb;border-radius:10px;padding:8px 10px;margin-bottom:8px;"><div style="font-size:12px;color:#6b7280;">' + bbEsc(String(x.at).slice(0, 16).replace('T', ' ')) + ' · ' + (kn[x.kind] || '') + ' · <b>' + (st[x.status] || x.status) + '</b>' + (x.ctx && x.ctx.row && x.ctx.row.caseNo ? ' · ' + bbEsc(x.ctx.row.caseNo) : '') + '</div><div style="margin-top:3px;white-space:pre-wrap;">' + bbEsc(x.text) + '</div>' + (x.reply ? '<div style="margin-top:6px;padding:6px 8px;background:#f0fdf4;border-radius:8px;font-size:13px;white-space:pre-wrap;">💬 ' + bbEsc(x.reply) + '</div>' : '') + '</div>';
+        }).join('') : '<div style="color:#6b7280;">아직 보낸 요청이 없어요.</div>';
+    } catch (e) { document.getElementById('fb-items').innerText = '불러오지 못했어요: ' + e.message; }
+}
+(function() {
+    var mk = function() {
+        if (document.getElementById('fb-fab')) return;
+        var b = document.createElement('button'); b.id = 'fb-fab'; b.type = 'button'; b.innerText = '🛠 수정 요청';
+        b.style.cssText = 'position:fixed;right:12px;bottom:calc(12px + env(safe-area-inset-bottom));z-index:99990;padding:11px 15px;border-radius:24px;border:1px solid #c7d2fe;background:#4f46e5;color:#fff;font-size:14px;font-weight:700;box-shadow:0 2px 8px rgba(0,0,0,0.25);opacity:0.92;';
+        b.onclick = fbOpen; document.body.appendChild(b);
+    };
+    if (document.body) mk(); else document.addEventListener('DOMContentLoaded', mk);
+})();
 function rightsPanelHtml(row) {
     var a = row.a, R = a.rights, id = String(a.id).replace(/'/g, "\\'"), h = '<div class="dr-sec"><h4>⚖️ 권리분석 <span class="dr-sub" style="font-weight:400;">탱크옥션 상세 페이지를 붙여넣으면 임차인·등기로 인수 금액을 계산해요</span></h4>';
     var eok = function(won) { return toEok(String(Math.round(won / 10000))); };
