@@ -4029,7 +4029,7 @@ function nvVillaCard(r, ev) {
         spec: bbEsc(r.region) + (r.pyung ? ' · 빌라 ' + r.pyung + '평(' + Math.round(r.pyung * 3.305785) + '㎡)' : '') + (r.floor ? ' · ' + r.floor + '층' : '') + (mp && mp.age != null ? ' · ' + mp.age + '년차' : ''),
         sum: '예상매도가 <b>' + vm(ve && ve.est) + '</b>' + (ve ? ' <small>±' + ve.errPct + '%</small>' : '') + ' · 최저가 ' + vm(r.minBid) + (mp ? ' · 필요 마진 ' + vm(mp.margin) : ''),
         chips: [pe ? { t: '낙찰 ' + Math.round(pe.p * 100) + '%', cls: pe.p >= 0.6 ? 'g' : (pe.p >= 0.35 ? 'o' : 'r') } : null, pe ? { t: '순이익 ' + vm(pe.net) } : null,
-            ev.liq ? { t: '생활권 6개월 ' + ev.liq.r500.a6 + '건', cls: ev.liq.r500.a6 === 0 ? 'r' : '' } : null, l.st === 'yes' ? { t: '📋 매물 ' + l.n + '건', cls: 'g' } : (l.st === 'none' ? { t: '📋 매물 없음' } : null),
+            ev.liq ? { t: '생활권 6개월 ' + ev.liq.r500.a6 + '건', cls: ev.liq.r500.a6 === 0 ? 'r' : '' } : null, (function(c) { return c ? { t: '💰 월세 ' + (c.cf >= 0 ? '+' : '') + Math.round(c.cf) + '만/월', cls: c.ok ? 'g' : (c.cf >= 0 ? 'o' : 'r') } : null; })(villaRentCash(r, ev)), l.st === 'yes' ? { t: '📋 매물 ' + l.n + '건', cls: 'g' } : (l.st === 'none' ? { t: '📋 매물 없음' } : null),
             hv === 'ok' ? { t: '🏠 도시민박 검토 가능', cls: 'g' } : null, ev.issue ? { t: '🚩 이슈 의심', cls: 'r' } : null, rightsNeeded(r, ev.visit.go) ? { t: '⚖️ 권리분석 필요', cls: 'o' } : null, (hsBld[r.id] && hsBld[r.id].info && bldUseWarn(hsBld[r.id].info.title)) ? { t: '⚠️ 비주택 용도', cls: 'r' } : null], note: r.a.fav ? r.a.favNote : '' });
 }
 function nvAptCard(r) {
@@ -4052,7 +4052,7 @@ function renderFavLite(body) {
 }
 function nvSortBar(kind) {
     var s = bidBoardState, cur = kind === 'villa' ? (s.villaCol || 'verdict') : (s.liteCol || 'verdict');
-    var list = kind === 'villa' ? NV_SORTS.concat([['liq', '생활권 거래']]) : NV_SORTS; // 빌라: 반경 500m 6개월 거래 많은 순 = 빨리 팔릴 물건 찾기(2026-10-11). 표 화면에 이미 있던 '생활권 거래' 정렬을 카드 화면에도 노출 - 1km 정렬은 500m와 거의 같아(상관 0.91, 상위 100건 77% 겹침) 만들지 않음
+    var list = kind === 'villa' ? NV_SORTS.concat([['liq', '생활권 거래'], ['cash', '월세 현금흐름']]) : NV_SORTS; // 빌라: 반경 500m 6개월 거래 많은 순 = 빨리 팔릴 물건 찾기(2026-10-11). 표 화면에 이미 있던 '생활권 거래' 정렬을 카드 화면에도 노출 - 1km 정렬은 500m와 거의 같아(상관 0.91, 상위 100건 77% 겹침) 만들지 않음
     return '<div class="nv-sort">' + list.map(function(x, i) {
         return (i ? '<span class="nv-sep">|</span>' : '') + '<a class="' + (cur === x[0] ? 'on' : '') + '" onclick="nvSort(\'' + kind + '\',\'' + x[0] + '\')">' + x[1] + '</a>';
     }).join('') + '</div>';
@@ -4208,6 +4208,7 @@ var VILLA_COLS = {
     net: { label: '순이익', first: -1, val: function(r, e) { return e.pn && e.pn.ev ? e.pn.ev.net : null; } },
     evv: { label: '기대수익', first: -1, val: function(r, e) { return e.pn && e.pn.ev ? e.pn.ev.p * e.pn.ev.net : null; } },
     liq: { label: '생활권 거래', first: -1, val: function(r, e) { return e.liq ? e.liq.r500.a6 : null; } },
+    cash: { label: '월세 현금흐름', first: -1, val: function(r, e) { var c = villaRentCash(r, e); return c ? c.cf : null; } },
     age: { label: '연식', first: 1, val: function(r, e) { return e.mp && e.mp.age != null ? e.mp.age : null; } },
     hs: { label: '도시민박', first: 1, val: function(r) { var st = hsBld[r.id]; return st && st.chk ? ({ ok: 0, check: 1, no: 2 })[st.chk.verdict] : null; } },
     net1y: { label: '순증', first: -1, val: function(r) { var dk = hsDongKey(r.a.addr), ag = dk && homestayAgg && homestayAgg.byDong ? homestayAgg.byDong[dk] : null; return ag ? ag.net1y : null; } }
@@ -4273,6 +4274,93 @@ function villaLiqHtml(liq) {
     return '<div style="font-weight:700;color:' + (z ? '#b91c1c' : '#111827') + ';" title="반경 500m 안 최근 6개월 빌라 매매 건수">최근 6개월 ' + liq.r500.a6 + '건</div>'
         + '<div class="bb-sub">6~12개월 ' + liq.r500.a12 + ' · 1~2년 ' + liq.r500.a24 + '</div><div class="bb-sub vt-hide" title="반경 1km">1km: ' + liq.r1000.a6 + ' / ' + liq.r1000.a12 + ' / ' + liq.r1000.a24 + '</div>';
 }
+/* 💰 빌라 월세 현금흐름 (2026-10-11, 사용자: "빌라를 바로 못 팔면 월세로 현금흐름을 만들겠다 - 대출을 받고 세입자에게 보증금·월세를 받아 이자를 감당하고 월 20만원 이상 남는 물건에 입찰하고 싶다. 월세는 동네 생활권 거래가 중요")
+   월세 시세 = 같은 건물(3건+) → 반경 500m(5건+, 좌표를 아는 월세 신고만) → 같은 동 6개월(5건+) → 같은 동 1년 → 시군구(10건+) 순으로, 전용면적 ±5㎡ 월세 신고의 중간값.
+   보증금이 다른 계약은 전월세 전환율 6%로 같은 보증금(그 묶음의 중간값) 기준 월세로 맞춰서 비교(월세 = 월세 + (보증금 − 기준 보증금) × 6% ÷ 12).
+   현금흐름 = 월세 − 대출이자(대출은 앱의 대출 계산 그대로, 금리 5%) - 보증금을 대출 상환에 쓰지 않는 보수적 기준. 보증금으로 대출을 갚으면 얼마가 더 남는지도 같이 보여줌.
+   기준 입찰가 = 추천가(없으면 최저가). 현금흐름 20만원 이상이 되는 입찰 상한도 계산. 관리비·공실·수선·세금은 반영 안 함(참고용).
+   과거 참고(수도권 빌라 낙찰사례 2,242건, 낙찰가 기준): 월세 중앙 55만·이자 중앙 35만 → 20만원 이상 남는 비율 60%(보증금으로 대출을 갚으면 72%). */
+var VILLA_RENT_CONV = 0.06, VILLA_CASH_MIN = 20; // 만원/월
+var villaRcCache = {}, villaRentIdx = {}, villaRcFresh = {};
+function villaRentPrep(lawd) {
+    if (villaRentIdx[lawd]) return villaRentIdx[lawd];
+    var rl = rentCacheByLawd[lawd] || [], list = dataCache[lawd] || [], cidx = {}, byDong = {}, all = [], now = Date.now();
+    list.forEach(function(ap) {
+        if ((ap.buildingType || 'apt') !== 'villa') return;
+        var l = ap.latest || {}, c = coordCache[[l.dong, l.name, l.bunji, l.road_name, l.main_num, l.sub_num].join('|').toLowerCase()];
+        if (c && c.lat) cidx[(l.dong || '') + '|' + (l.bunji || '')] = c;
+    });
+    rl.forEach(function(r) {
+        if (r.buildingType !== 'villa' || !(r.monthly_rent > 0) || !(r.size > 0)) return;
+        var ds = String(r.deal_date || ''), t = new Date(parseInt(ds.slice(0, 4), 10), parseInt(ds.slice(4, 6), 10) - 1, parseInt(ds.slice(6, 8), 10) || 1).getTime();
+        var age = (now - t) / 86400000; if (!(age >= 0 && age <= 400)) return;
+        var c = cidx[(r.dong || '') + '|' + (r.bunji || '')];
+        var o = { m: r.monthly_rent, d: r.deposit || 0, s: r.size, age: age, dong: r.dong || '', bunji: r.bunji || '', lat: c ? c.lat : null, lon: c ? c.lon : null };
+        all.push(o); (byDong[o.dong] = byDong[o.dong] || []).push(o);
+    });
+    return (villaRentIdx[lawd] = { all: all, byDong: byDong });
+}
+function villaRentStats(a, lawd) {
+    var P = villaRentPrep(lawd), area = (parseFloat(a.pyung) || 0) * 3.305785; if (!area) return null;
+    var bj = fullBunjiFromAddr(a.addr, a.dong, a.bunji), dong = a.dong || '', hasXY = !!(a.lat && a.lon);
+    var near = function(o, tol) { return Math.abs(o.s - area) <= tol; };
+    var q = function(v, p) { v = v.slice().sort(function(x, y) { return x - y; }); return v.length ? v[Math.floor((v.length - 1) * p)] : null; };
+    var within = function(o, m) { if (o.lat == null || !hasXY) return false; var dy = (o.lat - a.lat) * 111000, dx = (o.lon - a.lon) * 88000; return dx * dx + dy * dy <= m * m; };
+    var mk = function(arr, lvl) {
+        var d0 = q(arr.map(function(o) { return o.d; }), 0.5), meq = arr.map(function(o) { return o.m + (o.d - d0) * VILLA_RENT_CONV / 12; });
+        return { m: Math.round(q(meq, 0.5)), d: Math.round(d0), n: arr.length, lvl: lvl, lo: Math.round(q(meq, 0.25)), hi: Math.round(q(meq, 0.75)) };
+    };
+    var dl = (P.byDong[dong] || []), out = null, t;
+    t = dl.filter(function(o) { return o.bunji === bj && near(o, 5); });
+    if (t.length >= 3) out = mk(t, '같은 건물');
+    if (!out && hasXY) { t = P.all.filter(function(o) { return within(o, 500) && near(o, 5) && o.age <= 365; }); if (t.length >= 5) out = mk(t, '반경 500m'); }
+    if (!out) { t = dl.filter(function(o) { return near(o, 5) && o.age <= 183; }); if (t.length >= 5) out = mk(t, '같은 동 6개월'); }
+    if (!out) { t = dl.filter(function(o) { return near(o, 5); }); if (t.length >= 5) out = mk(t, '같은 동 1년'); }
+    if (!out) { t = P.all.filter(function(o) { return near(o, 5); }); if (t.length >= 10) out = mk(t, '시군구'); }
+    var r6 = hasXY ? P.all.filter(function(o) { return o.age <= 183 && near(o, 10) && within(o, 500); }).length : null, d6 = dl.filter(function(o) { return o.age <= 183 && near(o, 10); }).length;
+    out = out || { none: true };
+    out.r6 = r6; out.d6 = d6; out.at = Date.now();
+    return out;
+}
+function villaCashAt(rc, a, bid, est) {
+    var ln = calcRegionAwareLoan('individual', a.addr, bid, parseFloat(a.appraisal) || 0, est || 0), L = ln.amount || 0, mr = (ln.rate || DEFAULT_LOAN_RATE.individual) / 100 / 12;
+    return { loan: L, rate: ln.rate, int: L * mr, cf: rc.m - L * mr, cfDep: rc.m - Math.max(0, L - rc.d) * mr };
+}
+function villaRentCash(row, ev) {
+    var rc = villaRcCache[row.id]; if (!rc || !rc.m || !ev || !ev.ve) return null;
+    var pe = ev.pn && ev.pn.ev, bid = pe ? pe.bid : row.minBid; if (!bid) return null;
+    var key = [rc.m, rc.d, bid, row.minBid, ev.ve.est, row.a.addr, row.a.appraisal].join('|');
+    if (row._rcash && row._rcash.key === key) return row._rcash;
+    var c = villaCashAt(rc, row.a, bid, ev.ve.est), lo = 0, hi = ev.ve.est, cap = 0; // 예상매도가보다 비싸게 사는 경우는 보지 않음
+    if (villaCashAt(rc, row.a, 1, ev.ve.est).cf >= VILLA_CASH_MIN) { for (var i = 0; i < 24; i++) { var mid = (lo + hi) / 2; if (villaCashAt(rc, row.a, mid, ev.ve.est).cf >= VILLA_CASH_MIN) lo = mid; else hi = mid; } cap = Math.round(lo); }
+    var o = { key: key, rc: rc, bid: bid, basis: pe ? '추천가' : '최저가', loan: c.loan, rate: c.rate, int: c.int, cf: c.cf, cfDep: c.cfDep, cap: cap, capOk: cap >= (row.minBid || 0), ok: c.cf >= VILLA_CASH_MIN };
+    row._rcash = o; return o;
+}
+function villaCashCell(c) {
+    if (!c) return '<span class="bb-sub">-</span>';
+    var col = c.ok ? '#15803d' : (c.cf >= 0 ? '#b45309' : '#b91c1c'), sg = function(v) { return (v >= 0 ? '+' : '') + Math.round(v) + '만'; };
+    return '<div style="font-weight:700;color:' + col + ';" title="월세 ' + c.rc.m + '만 − 대출이자 ' + Math.round(c.int) + '만 (' + c.basis + ' ' + toEok(String(Math.round(c.bid))) + ' 기준, 보증금으로 대출을 갚지 않는 기준)">' + sg(c.cf) + '/월</div>'
+        + '<div class="bb-sub">월세 ' + c.rc.m + ' · 이자 ' + Math.round(c.int) + ' <span class="vt-hide">(' + c.basis + ')</span></div>'
+        + '<div class="bb-sub vt-hide">' + (c.capOk ? '20만 상한 ' + toEok(String(c.cap)) : (c.cap ? '20만 상한 ' + toEok(String(c.cap)) + ' < 최저가' : '최저가로도 20만 안 남음')) + '</div>';
+}
+function villaRentDrawerHtml(row, ev, fmt) {
+    var rc = villaRcCache[row.id], h = '<div class="dr-sec"><h4>💰 월세 현금흐름 <span class="dr-sub" style="display:inline;">(못 팔면 월세로 버틸 수 있는지)</span></h4>';
+    if (!rc) return h + '<div class="dr-sub">월세 자료를 아직 계산하지 못했어요(서버가 매주 계산해 두면 보여요).</div></div>';
+    if (rc.none || !rc.m) return h + '<div class="dr-sub">이 동·평형의 최근 월세 신고가 너무 적어(같은 건물 3건·반경 500m 5건·같은 동 5건·시군구 10건 미만) 월세 시세를 못 잡았어요.</div>' + villaRentDemandHtml(rc) + '</div>';
+    var c = villaRentCash(row, ev), sg = function(v) { return (v >= 0 ? '+' : '') + Math.round(v) + '만'; };
+    h += '<div>예상 월세 <b>' + rc.m + '만</b> <span class="dr-sub" style="display:inline;">(보증금 ' + fmt(rc.d) + ' 기준 · 보통 ' + rc.lo + '~' + rc.hi + '만 · ' + bbEsc(rc.lvl) + ' 월세 신고 ' + rc.n + '건 중간값)</span></div>';
+    if (c) {
+        h += '<div style="margin-top:4px;">' + c.basis + ' <b>' + fmt(c.bid) + '</b>으로 사고 대출 ' + fmt(c.loan) + '(금리 ' + c.rate + '%) → 월 이자 <b>' + Math.round(c.int) + '만</b></div>'
+            + '<div style="margin-top:4px;font-size:15px;">월 현금흐름 <b style="color:' + (c.ok ? '#15803d' : (c.cf >= 0 ? '#b45309' : '#b91c1c')) + ';">' + sg(c.cf) + '</b> ' + (c.ok ? '✅ 20만 이상' : '⚠️ 20만 미만') + '</div>'
+            + '<div class="dr-sub">보증금 ' + fmt(rc.d) + '으로 대출을 갚는다면 이자가 줄어 <b>' + sg(c.cfDep) + '</b>/월. 관리비·공실·수선·세금은 뺀 값이에요.</div>'
+            + '<div style="margin-top:4px;">월 20만원 이상 남는 입찰 상한: <b style="color:' + (c.capOk ? '#15803d' : '#b91c1c') + ';">' + (c.cap ? fmt(c.cap) : '없음') + '</b>' + (c.capOk ? '' : ' <span class="dr-sub" style="display:inline;">(최저가 ' + fmt(row.minBid) + '보다 낮아 이 물건은 월세로는 20만이 안 남아요)</span>') + '</div>';
+    }
+    return h + villaRentDemandHtml(rc) + '</div>';
+}
+function villaRentDemandHtml(rc) {
+    return '<div class="dr-sub" style="margin-top:4px;">월세 거래 활발도(전용 ±10㎡, 최근 6개월): 같은 동 <b>' + (rc.d6 != null ? rc.d6 : '-') + '건</b>' + (rc.r6 != null ? ' · 반경 500m <b>' + rc.r6 + '건</b>(좌표를 아는 신고만 세서 실제보다 적어요)' : '') + ' - 세입자 구하기 쉬운 동네인지 보는 값이에요.</div>';
+}
+function setVillaCash() { bidBoardState.villaCash = !bidBoardState.villaCash; bidBoardState.villaLimit = 120; renderBidBoard(); }
 /* 💾 빌라 계산 결과 보관(2026-10-10, 사용자: "빌라 입찰후보 창이 매번 새로 불러오는 것 같아 느려") - 예상매도가·생활권 거래·건축물대장 요약을 브라우저에 24시간 저장해 두고
    다시 열면 바로 보여줌(지역 실거래 68곳을 다시 받지 않음). 건물 상세(전유부 등 큰 자료)는 열 때 다시 받음. */
 var VILLA_CALC_KEY = 'villaCalc:v1', VILLA_CALC_TTL = 8 * 24 * 3600 * 1000, villaRestoreState = 0, villaSaveT = null;
@@ -4286,6 +4374,7 @@ function villaApplyCalc(d, force) {
     var n = 0;
     Object.keys(d.ve || {}).forEach(function(id) { if (force || !villaVeCache[id]) { villaVeCache[id] = d.ve[id]; n++; } });
     Object.keys(d.ev || {}).forEach(function(id) { if (force || !villaEvPend[id]) villaEvPend[id] = d.ev[id]; });
+    Object.keys(d.rc || {}).forEach(function(id) { if (force || !villaRcCache[id]) villaRcCache[id] = d.rc[id]; });
     var nl = 0; Object.keys(d.liq || {}).forEach(function(id) { if (force || !villaLiqCache[id]) { villaLiqCache[id] = d.liq[id]; nl++; } });
     if (nl) villaLiqFinal = true;
     var byId = {}; villaMetroRows(true).forEach(function(r) { byId[r.id] = r; });
@@ -4305,8 +4394,8 @@ async function villaFetchServerCalc() { // 서버가 미리 계산해 둔 빌라
         var meta = await withT(fetch('/api/data-coverage?mode=boardCacheMeta&kind=villa').then(function(r) { return r.json(); }), 4000);
         if (!meta || !meta.n || !meta.at || Date.now() - meta.at > 9 * 24 * 3600 * 1000) return null;
         var parts = await withT(Promise.all(Array.from({ length: meta.n }, function(_, i) { return fetch('/api/data-coverage?mode=boardCacheChunk&kind=villa&i=' + i).then(function(r) { return r.json(); }); })), 25000);
-        var d = { ve: {}, liq: {}, hs: {}, ev: {} };
-        parts.forEach(function(p) { ['ve', 'liq', 'hs', 'ev'].forEach(function(k) { Object.assign(d[k], (p && p[k]) || {}); }); });
+        var d = { ve: {}, liq: {}, hs: {}, ev: {}, rc: {} };
+        parts.forEach(function(p) { ['ve', 'liq', 'hs', 'ev', 'rc'].forEach(function(k) { Object.assign(d[k], (p && p[k]) || {}); }); });
         d.at = meta.at; return d;
     } catch (e) { return null; }
 }
@@ -4325,15 +4414,16 @@ async function villaRestoreCalc() {
     if (bidBoardState.visit === 'villa') renderBidBoard();
 }
 function villaCalcSnapshot() {
-    var ve = {}, liq = {}, hs = {}, ev = {};
+    var ve = {}, liq = {}, hs = {}, ev = {}, rc = {};
     villaMetroRows(true).forEach(function(r) {
+        if (villaRcCache[r.id]) rc[r.id] = villaRcCache[r.id];
         var c = villaVeCache[r.id]; if (c && c.sig === villaVeSig(r.a)) ve[r.id] = c;
         var e0 = r._vev; if (e0 && e0.sig && !e0.pending) ev[r.id] = { sig: e0.sig, ve: e0.ve, mp: e0.mp, wb: e0.wb, pn: e0.pn, visit: e0.visit, cap: e0.cap, issue: e0.issue }; // 판정 요약도 같이 보관 - 처음 빌라 탭을 열 때 1,100여 건을 다시 풀지 않게(건당 18ms ≈ 21초였음)
         if (villaLiqCache[r.id]) liq[r.id] = villaLiqCache[r.id];
         var st = hsBld[r.id]; if (st && st.info && st.info.title) hs[r.id] = { title: st.info.title, price: st.info.price || null };
         else if (st && st.info === null && st.chk && !st.quota && !st.loading && r.a.lat) hs[r.id] = { none: true }; // 대장에서 못 찾은 물건도 기억(없으면 열 때마다 다시 조회하고 판정이 다시 계산됨)
     });
-    return { at: Date.now(), ve: ve, liq: liq, hs: hs, ev: ev };
+    return { at: Date.now(), ve: ve, liq: liq, hs: hs, ev: ev, rc: rc };
 }
 function villaSaveCalcSoon() {
     clearTimeout(villaSaveT);
@@ -4345,7 +4435,7 @@ async function villaLoadRegions() {
     if (villaLoadBusy) return; villaLoadBusy = true;
     try {
         while (typeof bidBoardRunning !== 'undefined' && bidBoardRunning) await new Promise(function(r) { setTimeout(r, 1000); }); // 입찰후보 계산이 끝나길 기다림
-        var rows = villaMetroRows(true).filter(function(r) { var c = villaVeCache[r.id]; return !(c && c.sig === villaVeSig(r.a)) || (bidBoardLawdOf(r.a) && !villaLiqCache[r.id] && !villaPts[bidBoardLawdOf(r.a)]); });
+        var rows = villaMetroRows(true).filter(function(r) { var c = villaVeCache[r.id]; return !(c && c.sig === villaVeSig(r.a)) || (window.__rcForce && !villaRcFresh[r.id]) || (bidBoardLawdOf(r.a) && !villaLiqCache[r.id] && !villaPts[bidBoardLawdOf(r.a)]); });
         var byL = {}; rows.forEach(function(r) { var k = bidBoardLawdOf(r.a); if (k) (byL[k] = byL[k] || []).push(r); else villaVeCache[r.id] = { sig: villaVeSig(r.a), ve: null }; });
         var soon = function(k) { var m = 9999; byL[k].forEach(function(r) { if (r.dday && r.dday.diffDays < m) m = r.dday.diffDays; }); return m; };
         var order = Object.keys(byL).sort(function(x, y) { return soon(x) - soon(y); });
@@ -4356,6 +4446,7 @@ async function villaLoadRegions() {
                 if (dataCache[lawd]) {
                     await villaCollectPts(lawd);
                     var stv = { t: Date.now() }, rl = byL[lawd];
+                    for (var rci = 0; rci < rl.length; rci++) { try { var rcs = villaRentStats(rl[rci].a, lawd); if (rcs) { villaRcCache[rl[rci].id] = rcs; villaRcFresh[rl[rci].id] = 1; } } catch (e) {} } delete villaRentIdx[lawd]; // 월세 시세(지역 자료가 있을 때 한 번)
                     for (var ri = 0; ri < rl.length; ri++) {
                         var r = rl[ri], c0 = villaVeCache[r.id]; if (c0 && c0.sig === villaVeSig(r.a)) continue;
                         var ve = null; try { ve = villaSaleEst(r.a); } catch (e) {}
@@ -4365,6 +4456,7 @@ async function villaLoadRegions() {
                 }
             } catch (e) { console.error('빌라 지역 계산 실패:', lawd, e && e.message); }
             villaPtsTried[lawd] = true;
+            byL[lawd].forEach(function(r) { if (!villaRcCache[r.id]) villaRcCache[r.id] = { none: true, at: Date.now() }; villaRcFresh[r.id] = 1; });
             byL[lawd].forEach(function(r) { var c = villaVeCache[r.id]; if (!(c && c.sig === villaVeSig(r.a))) villaVeCache[r.id] = { sig: villaVeSig(r.a), ve: null }; }); // 못 불러온 지역도 다시 두드리지 않음(새로고침하면 다시 시도)
             if (!had && dataCache[lawd] && lawd !== (typeof lastLawdCd !== 'undefined' ? lastLawdCd : null) && !(bidDrawerId && (bidBoardRows.filter(function(r) { return r.id === bidDrawerId; })[0] || {}).lawd === lawd)) {
                 delete dataCache[lawd]; delete rentCacheByLawd[lawd]; mergedLawdCds.delete(lawd);
@@ -4435,11 +4527,11 @@ function renderVillaLite(body) {
     var evPendN = all.filter(function(r) { return evs[r.id].pending; }).length;
     if (evPendN) { clearTimeout(window.__villaEvT); window.__villaEvT = setTimeout(function() { if (bidBoardState.visit === 'villa') renderBidBoard(); }, 20); body.innerHTML = '<div class="bb-empty">빌라 ' + (all.length - evPendN) + '/' + all.length + '건 판정 계산 중…</div>'; return; } // 계산이 끝나기 전 일부만 보여주지 않고 다 끝난 뒤 한 번에 표시
     if (!hsFillBusy && all.some(function(r) { var h0 = hsBld[r.id]; return (!h0 || !h0.info || !h0.info.title) && !hsFillDone[r.id]; })) setTimeout(function() { hsFillFromCache(villaMetroRows(true)); }, 100);
-    if (!villaLoadBusy && all.some(function(r) { var c = villaVeCache[r.id]; return !(c && c.sig === villaVeSig(r.a)) || (bidBoardLawdOf(r.a) && !villaLiqCache[r.id] && !villaPts[bidBoardLawdOf(r.a)] && !villaPtsTried[bidBoardLawdOf(r.a)]); })) setTimeout(villaLoadRegions, 50);
+    if (!villaLoadBusy && all.some(function(r) { var c = villaVeCache[r.id]; return !(c && c.sig === villaVeSig(r.a)) || (window.__rcForce && !villaRcFresh[r.id]) || (bidBoardLawdOf(r.a) && !villaLiqCache[r.id] && !villaPts[bidBoardLawdOf(r.a)] && !villaPtsTried[bidBoardLawdOf(r.a)]); })) setTimeout(villaLoadRegions, 50);
     var goN = all.filter(function(r) { return evs[r.id].visit.go; }).length, passN = all.length - goN;
     var rank = { ok: 0, check: 1, no: 2 };
     var vcol = s.villaCol || 'verdict', vdir = s.villaDir || 1, vdef = VILLA_COLS[vcol] || VILLA_COLS.verdict;
-    var rows = all.filter(function(r) { return (vv === 'all' || (vv === 'go') === evs[r.id].visit.go) && (!s.listLite || listingStatus(r.a).st === 'yes') && (!s.rightsNeed || rightsNeeded(r, evs[r.id].visit.go)); }).sort(function(x, y) {
+    var rows = all.filter(function(r) { return (vv === 'all' || (vv === 'go') === evs[r.id].visit.go) && (!s.listLite || listingStatus(r.a).st === 'yes') && (!s.rightsNeed || rightsNeeded(r, evs[r.id].visit.go)) && (!s.villaCash || (function(c) { return c && c.ok; })(villaRentCash(r, evs[r.id]))); }).sort(function(x, y) {
         var ex = evs[x.id], ey = evs[y.id];
         if (vcol !== 'verdict' && vdef.val) {
             var ax = vdef.val(x, ex), ay = vdef.val(y, ey), nx = ax == null || (typeof ax === 'number' && !isFinite(ax)), ny = ay == null || (typeof ay === 'number' && !isFinite(ay));
@@ -4455,7 +4547,7 @@ function renderVillaLite(body) {
     var okN = all.filter(function(r) { return hsBld[r.id] && hsBld[r.id].chk && hsBld[r.id].chk.verdict === 'ok'; }).length;
     var money = function(v) { return v ? toEok(String(Math.round(v))) : '-'; };
     var tabs = [['go', '🚶 임장 후보', goN], ['pass', '패스', passN], ['all', '전체', all.length]].map(function(t) { return '<button class="bb-tab' + (vv === t[0] ? ' on' : '') + '" onclick="setVillaVisit(\'' + t[0] + '\')">' + t[1] + ' <b>' + t[2] + '</b></button>'; }).join(' ');
-    var h = '<div style="padding:6px 4px;">' + tabs + ' <span class="bb-sub">수도권 빌라 · 🏠 도시민박 검토 가능 <b>' + okN + '건</b> · 행을 누르면 건물 상세(대장·도시민박·수리 가정)'
+    var h = '<div style="padding:6px 4px;">' + tabs + ' <button class="bb-tab' + (s.villaCash ? ' on' : '') + '" title="추천가(없으면 최저가)로 사서 대출을 받고 월세를 놓았을 때 월세 − 이자가 월 20만원 이상 남는 물건만" onclick="setVillaCash()">💰 월세 20만+ <b>' + all.filter(function(r) { var c = villaRentCash(r, evs[r.id]); return c && c.ok; }).length + '</b></button>' + ' <span class="bb-sub">수도권 빌라 · 🏠 도시민박 검토 가능 <b>' + okN + '건</b> · 행을 누르면 건물 상세(대장·도시민박·수리 가정)'
         + (homestayAgg && !homestayAgg.empty ? '' : ' · 도시민박 지역 집계 불러오는 중…') + '</span></div>';
     if (!rows.length) { body.innerHTML = h + '<div class="bb-empty">' + (all.length ? '이 목록에는 물건이 없어요.' : '수도권 빌라 입찰후보가 없어요.') + '</div>'; return; }
     var lim = s.villaLimit || 120;
@@ -4463,7 +4555,7 @@ function renderVillaLite(body) {
         h += nvSortBar('villa') + '<div class="nv-list">' + rows.slice(0, lim).map(function(r) { return nvVillaCard(r, evs[r.id]); }).join('') + '</div>' + (rows.length > lim ? '<div style="text-align:center;padding:14px;"><button class="bb-csv" style="font-size:13px;padding:8px 18px;" onclick="villaMore()">+ 더 보기 (남은 ' + (rows.length - lim) + '건)</button></div>' : '');
         body.innerHTML = h; return;
     }
-    h += '<table class="bb2-table bb2-vtable"><thead><tr><th>' + villaTh('verdict') + '</th><th>' + villaTh('date') + '</th><th>' + villaTh('name') + '</th><th class="r">' + villaTh('minBid') + '</th><th class="r">' + villaTh('appr') + '</th><th class="r">' + villaTh('est') + '<div class="bb2-subsort" style="justify-content:flex-end;">' + villaTh('err', '오차') + '</div></th><th class="r">필요 마진 · 입찰 상한<div class="bb2-subsort" style="justify-content:flex-end;">' + villaTh('margin', '마진') + villaTh('cap', '상한') + '</div></th><th class="r">예상 낙찰가 · 추천가<div class="bb2-subsort" style="justify-content:flex-end;">' + villaTh('win', '낙찰가') + villaTh('rec', '추천가') + villaTh('p', '가능성') + villaTh('net', '순이익') + villaTh('evv', '기대수익') + '</div></th><th class="r">생활권 거래<div class="bb-sub" style="display:block;">반경 500m (1km)</div><div class="bb2-subsort" style="justify-content:flex-end;">' + villaTh('liq', '6개월') + '</div></th><th>건물(대장)<div class="bb2-subsort">' + villaTh('age', '연식') + '</div></th><th>' + villaTh('hs') + '</th><th>이 동의 도시민박<div class="bb2-subsort">' + villaTh('net1y', '순증') + '</div></th></tr></thead><tbody>';
+    h += '<table class="bb2-table bb2-vtable"><thead><tr><th>' + villaTh('verdict') + '</th><th>' + villaTh('date') + '</th><th>' + villaTh('name') + '</th><th class="r">' + villaTh('minBid') + '</th><th class="r">' + villaTh('appr') + '</th><th class="r">' + villaTh('est') + '<div class="bb2-subsort" style="justify-content:flex-end;">' + villaTh('err', '오차') + '</div></th><th class="r">필요 마진 · 입찰 상한<div class="bb2-subsort" style="justify-content:flex-end;">' + villaTh('margin', '마진') + villaTh('cap', '상한') + '</div></th><th class="r">예상 낙찰가 · 추천가<div class="bb2-subsort" style="justify-content:flex-end;">' + villaTh('win', '낙찰가') + villaTh('rec', '추천가') + villaTh('p', '가능성') + villaTh('net', '순이익') + villaTh('evv', '기대수익') + '</div></th><th class="r">생활권 거래<div class="bb-sub" style="display:block;">반경 500m (1km)</div><div class="bb2-subsort" style="justify-content:flex-end;">' + villaTh('liq', '6개월') + '</div></th><th class="r">월세 현금흐름<div class="bb-sub" style="display:block;">월세 − 대출이자</div><div class="bb2-subsort" style="justify-content:flex-end;">' + villaTh('cash', '현금흐름') + '</div></th><th>건물(대장)<div class="bb2-subsort">' + villaTh('age', '연식') + '</div></th><th>' + villaTh('hs') + '</th><th>이 동의 도시민박<div class="bb2-subsort">' + villaTh('net1y', '순증') + '</div></th></tr></thead><tbody>';
     rows.slice(0, lim).forEach(function(r) {
         var ev = evs[r.id], st = hsBld[r.id] || {}, chk = st.chk, t = ev.t, idJs = String(r.id).replace(/\\/g, '\\\\').replace(/'/g, "\\'"), ve = ev.ve, mp = ev.mp, wb = ev.wb, pn = ev.pn;
         var dk = hsDongKey(r.a.addr), ag = dk && homestayAgg && homestayAgg.byDong ? homestayAgg.byDong[dk] : null, sc = ag ? (HS_STATE[ag.state] || HS_STATE['안정']) : null;
@@ -4477,7 +4569,7 @@ function renderVillaLite(body) {
             + '<td data-l="입찰일">' + (r.dday ? '<span class="bb-dday' + (r.dday.diffDays >= 0 && r.dday.diffDays <= 3 ? ' soon' : '') + '">' + bbEsc(r.dday.label) + '</span>' : '-') + '<div class="bb-sub">' + bbEsc(r.a.bidDate || '') + '</div></td>'
             + '<td class="bb2-name">' + favStar(r.a, idJs) + '<b>' + bbEsc(villaNameFor(r)) + '</b>' + (rightsNeeded(r, ev.visit.go) ? ' ' + rightsNeedPill() : '') + (bldUseWarn(st.info && st.info.title) ? ' <span class="bb-pill" style="background:#fef2f2;color:#b91c1c;border:1px solid #fca5a5;" title="' + bbEsc(bldUseWarn(st.info.title)) + '">⚠️ 비주택 용도</span>' : '') + '<div class="bb-sub">' + bbEsc(r.region) + (r.pyung ? ' · ' + r.pyung + '평' : '') + (r.floor ? ' · ' + r.floor + '층' : '') + '</div><div>' + listingPillHtml(r.a) + '</div></td>'
             + '<td class="r" data-l="최저가">' + money(r.minBid) + '</td><td class="r" data-l="감정가">' + money(r.appraisal) + '</td>'
-            + '<td class="r" data-l="예상매도가">' + estCell + '</td><td class="r" data-l="필요 마진 · 입찰 상한">' + marCell + '</td><td class="r" data-l="예상 낙찰가 · 추천가">' + winCell + '</td><td class="r" data-l="생활권 거래(반경 500m)">' + villaLiqHtml(ev.liq) + '</td>'
+            + '<td class="r" data-l="예상매도가">' + estCell + '</td><td class="r" data-l="필요 마진 · 입찰 상한">' + marCell + '</td><td class="r" data-l="예상 낙찰가 · 추천가">' + winCell + '</td><td class="r" data-l="생활권 거래(반경 500m)">' + villaLiqHtml(ev.liq) + '</td><td class="r" data-l="월세 현금흐름">' + villaCashCell(villaRentCash(r, ev)) + '</td>'
             + '<td data-l="건물(대장)">' + (t ? bbEsc(t.mainPurps || '') + '<div class="bb-sub">' + (t.grndFlrCnt || '-') + '층 · ' + (t.useAprDay ? String(t.useAprDay).slice(0, 4) + '년' : '-') + ' · 승강기 ' + (elv ? elv + '대' : '없음') + '</div>' : (st.quota ? '<span class="bb-sub" title="연식·승강기·층수를 아직 못 가져왔어요">⏸ 한도 초과(내일 자동 조회)</span>' : (st.loading ? '<span class="bb-sub">조회 중…</span>' : '<span class="bb-sub">대장 없음</span>'))) + '</td>'
             + '<td data-l="도시민박">' + hsPill(chk && chk.verdict, st.quota) + '</td>'
             + '<td data-l="이 동의 도시민박">' + (ag ? '<span class="hs-pill" style="background:' + sc.c + ';">' + sc.t + '</span><div class="bb-sub">영업 ' + ag.open + '곳 · 순증 ' + (ag.net1y > 0 ? '+' : '') + ag.net1y + '/년</div>' : '<span class="bb-sub">' + (homestayAgg ? '등록 업소 거의 없음' : '-') + '</span>') + '</td></tr>';
@@ -19932,6 +20024,7 @@ async function renderVillaDrawer(d, row) {
         h += '<div class="dr-wb"><div class="dr-wb-h">🎲 예상 낙찰가 <b>' + fmt(wb.price) + '</b><span class="dr-sub" style="margin:0 0 0 6px;">비슷한 빌라가 보통 낙찰되는 가격(낙찰사례 약 6천 건, 보통 오차 약 9%)</span></div>'
             + (pn && pn.pMax != null ? '<div>입찰 상한 ' + fmt(pn.max) + '으로 쓰면 낙찰 가능성 약 <b>' + Math.round(pn.pMax * 100) + '%</b></div>' : '') + '</div>';
     }
+    h += villaRentDrawerHtml(row, ev, fmt);
     h += '<div class="dr-sec"><h4>📍 생활권 거래 활발도 <span class="dr-sub" style="display:inline;">(법정동이 아니라 이 물건 위치 기준 반경)</span></h4>'
         + (ev.liq ? '<table><tr><th></th><th class="r">최근 6개월</th><th class="r">6~12개월</th><th class="r">1~2년 전</th></tr><tr><td>반경 500m</td><td class="r"><b style="color:' + (ev.liq.r500.a6 === 0 ? '#b91c1c' : '#111827') + ';">' + ev.liq.r500.a6 + '건</b></td><td class="r">' + ev.liq.r500.a12 + '건</td><td class="r">' + ev.liq.r500.a24 + '건</td></tr><tr><td>반경 1km</td><td class="r">' + ev.liq.r1000.a6 + '건</td><td class="r">' + ev.liq.r1000.a12 + '건</td><td class="r">' + ev.liq.r1000.a24 + '건</td></tr></table>'
             + '<div class="dr-sub">반경 500m 안 최근 6개월 거래가 0건이면 임장 후보에서 빼요. 근거: 수도권 빌라 낙찰사례 1,225건 중 이런 지역 낙찰은 12개월 안 되팔림 흔적이 10%(그 외 27%), 반경 1km 6개월 0건은 0%(표본 17건)예요. 직거래 제외·같은 시군구 자료만 보므로 경계 근처는 실제보다 적게 나올 수 있어요.</div>'

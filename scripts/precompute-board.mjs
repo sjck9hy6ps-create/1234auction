@@ -11,6 +11,7 @@ const supabase = createClient(process.env.SUPABASE_URL?.trim(), process.env.SUPA
 
 const browser = await chromium.launch();
 const page = await browser.newPage({ viewport: { width: 1400, height: 900 } });
+await page.addInitScript(() => { window.__rcForce = true; }); // 빌라 월세 시세는 매주 새 신고로 다시 계산(2026-10-11)
 page.setDefaultTimeout(60000);
 page.on('pageerror', (e) => console.log('페이지 오류:', String(e).slice(0, 200)));
 console.log('앱 여는 중…');
@@ -60,9 +61,9 @@ try {
   const tv = Date.now();
   for (;;) {
     await page.waitForTimeout(15000);
-    const st = await page.evaluate(() => ({ busy: !!villaLoadBusy, final: !!villaLiqFinal, rows: villaMetroRows(true).length, ve: villaMetroRows(true).filter((r) => villaVeCache[r.id]).length, hsq: hsQueue.length, hsr: hsRunning }));
-    console.log(`빌라 ${Math.round((Date.now() - tv) / 1000)}s · 행 ${st.rows} · 예상매도가 ${st.ve} · 생활권 ${st.final} · 대장 대기 ${st.hsq}/${st.hsr}`);
-    if (!st.busy && st.final && st.ve >= st.rows && st.hsq === 0 && st.hsr === 0) break;
+    const st = await page.evaluate(() => ({ busy: !!villaLoadBusy, final: !!villaLiqFinal, rows: villaMetroRows(true).length, ve: villaMetroRows(true).filter((r) => villaVeCache[r.id]).length, rcf: villaMetroRows(true).filter((r) => villaRcFresh[r.id]).length, hsq: hsQueue.length, hsr: hsRunning }));
+    console.log(`빌라 ${Math.round((Date.now() - tv) / 1000)}s · 행 ${st.rows} · 예상매도가 ${st.ve} · 생활권 ${st.final} · 월세 ${st.rcf} · 대장 대기 ${st.hsq}/${st.hsr}`);
+    if (!st.busy && st.final && st.ve >= st.rows && st.rcf >= st.rows && st.hsq === 0 && st.hsr === 0) break;
     if (!st.busy && st.final && st.ve >= st.rows && Date.now() - tv > 15 * 60 * 1000) break; // 대장 조회는 최대 15분만 기다림
     if (Date.now() - tv > 40 * 60 * 1000) { console.log('빌라 시간 초과'); break; }
   }
@@ -99,8 +100,8 @@ console.log(`✅ 올림: ${rows.length}묶음 / ${ids.length}건`);
 if (villa && Object.keys(villa.ve || {}).length >= 50) {
   const vids = Object.keys(villa.ve), VC = 100, vrows = [];
   for (let i = 0; i * VC < vids.length; i++) {
-    const part = { ve: {}, liq: {}, hs: {}, ev: {} };
-    vids.slice(i * VC, (i + 1) * VC).forEach((id) => { part.ve[id] = villa.ve[id]; if (villa.liq[id]) part.liq[id] = villa.liq[id]; if (villa.hs[id]) part.hs[id] = villa.hs[id]; if (villa.ev && villa.ev[id]) part.ev[id] = villa.ev[id]; });
+    const part = { ve: {}, liq: {}, hs: {}, ev: {}, rc: {} };
+    vids.slice(i * VC, (i + 1) * VC).forEach((id) => { part.ve[id] = villa.ve[id]; if (villa.liq[id]) part.liq[id] = villa.liq[id]; if (villa.hs[id]) part.hs[id] = villa.hs[id]; if (villa.ev && villa.ev[id]) part.ev[id] = villa.ev[id]; if (villa.rc && villa.rc[id]) part.rc[id] = villa.rc[id]; });
     vrows.push({ id: `board|villa|${i}`, payload: part, fetched_at: now });
   }
   for (const r of vrows) {
