@@ -124,11 +124,12 @@ export default async function handler(req, res) {
       const tr = await fetchBld('getBrTitleInfo', { sigunguCd, bjdongCd, numOfRows: '500', pageNo: String(pg) });
       pages++; if (tr.httpStatus === null) return res.status(200).json({ error: 'fetch 실패', quotaExceeded: tr.quotaExceeded || undefined, pages });
       if (total == null) total = parseInt((String(tr.raw || '').match(/<totalCount>(\d+)/) || [])[1], 10) || null;
+      if (pg === 1) var rawHead = String(tr.raw || '').slice(0, 300), n1 = tr.items.length;
       tr.items.forEach(it => { if (String(it.get('newPlatPlc')).includes(token)) hits.push(normalizeTitle(it)); });
       if (!tr.items.length || tr.items.length < 500) break;
     }
     res.setHeader('Cache-Control', 'no-store');
-    return res.status(200).json({ token, pages, total, hits });
+    return res.status(200).json({ token, pages, total, hits, rawHead: typeof rawHead === 'undefined' ? null : rawHead, firstPageItems: typeof n1 === 'undefined' ? null : n1 });
   }
   // 2026-10-11 titleOnly=1: 표제부만 한 번 조회(저장 안 함) - 경매 주소 번지와 대장 대표 번지가 달라 못 찾을 때 인접 번지를 훑어 도로명이 맞는 건물을 찾는 용도(요청 1건)
   if (req.query.titleOnly === '1') {
