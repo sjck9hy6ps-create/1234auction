@@ -18128,7 +18128,7 @@ function aptOwnTradeStats(a, bunjiFull, pyung) {
     // "그 층대 ÷ 전체" 가격 비율(3건 이상일 때), 자료가 부족하면 기본값(1층 0.95, 저층 0.97)
     var lowF = null;
     if (!isNaN(tf) && maxF > 0) {
-        var lim = Math.max(3, Math.floor(maxF * 0.2));
+        var lim = maxF >= 11 ? 4 : Math.max(3, Math.floor(maxF * 0.2)); // 2026-10-11 되판 사례: 11층+ 건물은 1~4층이 −5~7%, 5층 −2.6%·6층 −1.7%·7층 이상은 거의 같음 → 높은 건물에서 저층 범위를 단지 높이에 비례해 늘리지 않고 4층까지만
         if (tf <= lim) {
             // 2026-10(사용자: "저층은 생활권·승강기 유무에 따라 프리미엄일지 마이너스일지 달라 - 일괄 적용은 무의미, 과거 거래로 알아내야")
             // 지방 아파트 1~3층 낙찰 후 되판 1,037건 검증: 예전(1층 −5%·저층 −3% 일괄, 같은 평형 3건+일 때만 단지 비율) 오차 중앙 6.97%·10%+ 높게 잡힘 19%
@@ -18161,7 +18161,10 @@ function aptOwnTradeStats(a, bunjiFull, pyung) {
             var gh = f36.filter(function(x) { return x.f >= hiLim && x.f < maxF; }).map(function(x) { return x.p; });
             var allH = f36.map(function(x) { return x.p; });
             var rh = (gh.length >= 3 && allH.length >= 6) ? Math.max(1, Math.min(1.08, med(gh) / med(allH))) : null;
-            lowF = { factor: rh || 1.015, fromComplex: !!rh, n: gh.length, label: '고층(' + tf + '층/' + maxF + '층)' };
+            // 2026-10-11(대능더에스티지 사례: 고층 거래 3건만으로 +7% → 예상매도가 2.35억→2.51억): 3년 거래를 시점 보정 없이 "고층 ÷ 전체"로 나누면 최근 고층 거래가 오른 가격이 섞여 과대해짐.
+            // 되판 5,409건 검증(층 보정 전 예상 대비 되판가: 고층 1.004·중간 0.982·탑층 0.999, 고층에 ×1.018을 곱하면 오차 6.31→6.70%, ×1.07은 8.25%) → 이 단지 비율은 기본 +1.5% 쪽으로 30건 가중으로 당김(표본이 적을수록 기본값에 가깝게).
+            var nH = gh.length, shrunk = rh ? (nH * rh + 30 * 1.015) / (nH + 30) : 1.015;
+            lowF = { factor: Math.max(1, Math.min(1.03, shrunk)), fromComplex: !!rh, n: gh.length, ownRatio: rh, label: '고층(' + tf + '층/' + maxF + '층)' };
         }
     }
     // 전세가율: 같은 단지·같은 평형 최근 1년 전세(월세 0) 보증금 중간값 ÷ 매매 1년 중간값
