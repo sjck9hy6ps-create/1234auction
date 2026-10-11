@@ -13817,35 +13817,35 @@ var RIGHTS_MINOR_TABLES = [ // 소액임차인 [서울, 수도권 과밀억제�
     { from: '2016-03-31', t: [[10000, 3400], [8000, 2700], [6000, 2000], [5000, 1700]] }
 ];
 function rightsNum(s) { var n = parseInt(String(s || '').replace(/[^\d]/g, ''), 10); return isNaN(n) ? 0 : n; }
-function rightsDate(s) { var m = String(s || '').match(/(\d{4})[-.\s]+(\d{1,2})[-.\s]+(\d{1,2})/); return m ? m[1] + '-' + String(m[2]).padStart(2, '0') + '-' + String(m[3]).padStart(2, '0') : ''; }
+function rightsDate(s) { var m = String(s || '').match(/(\d{4}|\d{2})[-.\s]+(\d{1,2})[-.\s]+(\d{1,2})/); return m ? (m[1].length === 2 ? '20' + m[1] : m[1]) + '-' + String(m[2]).padStart(2, '0') + '-' + String(m[3]).padStart(2, '0') : ''; }
 function parseTankRights(text) {
     text = String(text || '').replace(/\r/g, '');
     var out = { tenants: [], registry: [], baseDate: '', distDeadline: '', tankAssumeWon: null, minBidWon: 0, appraisalWon: 0, warnings: [] };
     var m;
-    if ((m = text.match(/말소기준일[^:\n]*:\s*([\d.\-]+)/))) out.baseDate = rightsDate(m[1]);
-    if ((m = text.match(/배당요구종기일\s*:\s*([\d.\-]+)/))) out.distDeadline = rightsDate(m[1]);
-    if ((m = text.match(/최저가\s*\(\d+%\)\s*([\d,]+)/))) out.minBidWon = rightsNum(m[1]);
-    if ((m = text.match(/감정가\s+([\d,]{7,})/))) out.appraisalWon = rightsNum(m[1]);
+    if ((m = text.match(/말소(?:기준일)?\s*(?:\([^)]*\))?\s*:\s*([\d.\-]+)/))) out.baseDate = rightsDate(m[1]);
+    if ((m = text.match(/배당(?:요구)?종기(?:일)?\s*:\s*([\d.\-]+)/))) out.distDeadline = rightsDate(m[1]);
+    if ((m = text.match(/최저가(?:격)?\s*\(\d+%\)\s*([\d,]+)/))) out.minBidWon = rightsNum(m[1]);
+    if ((m = text.match(/감정가(?:격)?\s+([\d,]{7,})/))) out.appraisalWon = rightsNum(m[1]);
     if ((m = text.match(/([\d,]+)원이\s*매수인\s*인수\s*대상/))) out.tankAssumeWon = rightsNum(m[1]);
-    // 임차인 현황: 표 머리글 다음부터 '계'/'기타사항'까지. 행은 "번호<탭>이름<탭>..."로 시작
-    var ti = text.indexOf('임차인 현황'), tb = ti >= 0 ? text.slice(ti) : '';
+    // 임차인 현황. 두 가지 모양: (PC) "번호<탭>이름<탭>..." 행 / (모바일·아이패드) "이름<탭>전입:..." 행(번호 없음, 날짜가 2자리 연도)
+    var ti = text.search(/임차인\s?현황/), tb = ti >= 0 ? text.slice(ti) : '';
     var te = tb.search(/\n계\s*\n|\n기타사항|\n건물등기|\n임차인:\s*\d+\s*건/);
     if (te > 0) tb = tb.slice(0, te);
-    var hdrEnd = tb.search(/\n목록\??\s*\t/); if (hdrEnd >= 0) { var nl = tb.indexOf('\n', hdrEnd + 1); tb = nl >= 0 ? tb.slice(nl) : ''; }
     var starts = [], re = /(?:^|\n)(\d{1,2})\t([^\t\n]+)\t/g, mm;
     while ((mm = re.exec(tb))) starts.push({ i: mm.index + (tb[mm.index] === '\n' ? 1 : 0), name: mm[2].trim() });
+    if (!starts.length) { var re2 = /(?:^|\n)([^\t\n]{1,30})\t전입\s*:/g; while ((mm = re2.exec(tb))) starts.push({ i: mm.index + (tb[mm.index] === '\n' ? 1 : 0), name: mm[1].trim() }); }
     starts.forEach(function(st, k) {
         var chunk = tb.slice(st.i, k + 1 < starts.length ? starts[k + 1].i : tb.length);
-        var mv = chunk.match(/전입\s*:\s*([\d.\-]+|미상)/), fx = chunk.match(/확정\s*:\s*([\d.\-]+|미상)/), ds = chunk.match(/배당\s*:\s*([\d.\-]+|미상|없음)/), dp = chunk.match(/보\s*:\s*([\d,]+)\s*원(?:\s*\/\s*월?\s*:?\s*([\d,]+)\s*원?)?/), sd = chunk.match(/원\s*\t\s*(있음|없음|미상|[^\t\n]{1,6})\t/);
+        var mv = chunk.match(/전입\s*:\s*([\d.\-]+|미상)/), fx = chunk.match(/확정\s*:\s*([\d.\-]+|미상)/), ds = chunk.match(/배당\s*:\s*([\d.\-]+|미상|없음)/), dp = chunk.match(/보\s*:\s*([\d,]+)\s*원(?:\s*\/\s*월?\s*:?\s*([\d,]+)\s*원?)?/), sd = chunk.match(/원\s*\t\s*(있음|없음|미상)(?:\t|\n|$)/);
         if (!dp) return;
-        var roles = (chunk.match(/(임차권등기자|경매신청인|임차인|소유자|채무자)[^\t\n]*$/m) || [''])[0];
+        var roleM = chunk.match(/(임차권등기자|경매신청인|소유자|채무자)[^\t\n]*/g), roles = roleM ? roleM.join(' ') : '';
         out.tenants.push({ name: st.name, moveIn: mv && /\d/.test(mv[1]) ? rightsDate(mv[1]) : '', fixed: fx && /\d/.test(fx[1]) ? rightsDate(fx[1]) : '', distDate: ds && /\d/.test(ds[1]) ? rightsDate(ds[1]) : '',
             deposit: rightsNum(dp[1]), rent: dp[2] ? rightsNum(dp[2]) : 0, tankStanding: sd ? (sd[1] === '있음' ? true : (sd[1] === '없음' ? false : null)) : null,
-            rankedDist: /순위배당\s*있음/.test(chunk), tankAssumeNote: /미배당\s*보증금\s*매수인\s*인수/.test(chunk), role: roles.replace(/\s+/g, ' ').trim(), selfOccupied: /소유자|채무자/.test(roles), _txt: chunk.replace(/\s+/g, ' ') });
+            rankedDist: /순위배당\s*있음/.test(chunk), tankAssumeNote: /미배당\s*보증금\s*매수인\s*인수/.test(chunk), role: roles.replace(/\s+/g, ' ').trim(), selfOccupied: /소유자|채무자/.test(roles) && !/경매신청인|임차권등기자/.test(roles), _txt: chunk.replace(/\s+/g, ' ') });
     });
-    // 건물등기: "갑(4)<탭>2023-11-09<줄바꿈>가압류<탭>권리자<탭>금액<탭>비고..."
+    // 건물등기. (PC) "갑(4)<탭>2023-11-09<줄바꿈>가압류<탭>권리자<탭>금액<탭>비고" / (모바일) "2023.11.09<줄>갑(4)<줄>가압류<줄>금액<줄>권리자<줄>소멸"
     var ri = text.search(/건물등기\s*\n/), rb = ri >= 0 ? text.slice(ri) : '';
-    var rf = rb.search(/\n참고\/주의|\n권리분석요약|\n주요변동/); if (rf > 0) rb = rb.slice(0, rf);
+    var rf = rb.search(/\n참고\/주의|\n주의사항|\n권리분석요약|\n주요변동/); if (rf > 0) rb = rb.slice(0, rf);
     var rre = /(갑|을)\((\d+)\)\s+(\d{4}-\d{2}-\d{2})\s*\n([^\t\n]+)\t([^\t\n]*)\t([^\t\n]*)\t?([^\n]*)/g, rm, rstarts = [];
     while ((rm = rre.exec(rb))) rstarts.push({ at: rm.index, seq: rm[1] + '(' + rm[2] + ')', date: rm[3], type: rm[4].trim(), holder: rm[5].trim(), amountRaw: rm[6].trim(), rest: rm[7] });
     rstarts.forEach(function(r, k) {
@@ -13855,6 +13855,21 @@ function parseTankRights(text) {
         var tail = chunk.split('\n').slice(1).join(' ');
         out.registry.push({ seq: r.seq, date: r.date, type: r.type, holder: r.holder, amount: amt, base: /말소기준등기/.test(chunk), extinguished: /소멸/.test(chunk.split('\n')[1] + ' ' + r.rest) && !/잔액인수|인수/.test(r.rest), assumed: /잔액인수|매수인.{0,6}인수/.test(chunk), note: tail.replace(/\s+/g, ' ').trim().slice(0, 120) });
     });
+    if (!out.registry.length) {
+        var mre = /(?:^|\n)(\d{4})\.(\d{2})\.(\d{2})\n(갑|을)\((\d+)\)\n/g, ms = [], mx;
+        while ((mx = mre.exec(rb))) ms.push({ at: mx.index + (rb[mx.index] === '\n' ? 1 : 0), end: mre.lastIndex, date: mx[1] + '-' + mx[2] + '-' + mx[3], seq: mx[4] + '(' + mx[5] + ')' });
+        ms.forEach(function(r, k) {
+            var body = rb.slice(r.end, k + 1 < ms.length ? ms[k + 1].at : rb.length).split('\n').map(function(x) { return x.trim(); }).filter(Boolean);
+            var type = body[0] || '', rest = body.slice(1), amt = 0, holder = '';
+            rest.forEach(function(ln) {
+                if (/^[\d,]{5,}$/.test(ln) && !amt) { amt = rightsNum(ln); return; }
+                var cl = ln.match(/^청구\s*:\s*([\d,]+)/); if (cl) { if (!amt) amt = rightsNum(cl[1]); return; }
+                if (!holder && !/^(소멸|인수|말소기준등기|매매|상속|증여|거래가액|범위|\d{4}[가-힣])/.test(ln) && !/^\d{4}타/.test(ln)) holder = ln;
+            });
+            var all = rest.join(' '), ext = /(^|\s)소멸(\s|$)/.test(all);
+            out.registry.push({ seq: r.seq, date: r.date, type: type, holder: holder, amount: amt, base: /말소기준등기/.test(all), extinguished: ext, assumed: /잔액인수|매수인.{0,6}인수/.test(all) || (!ext && /임차권|전세권|지상권|가처분/.test(type)), note: all.slice(0, 120) });
+        });
+    }
     // 탱크옥션이 보여 준 '매수인 인수 대상 금액'과 최저가로 집행비용을 거꾸로 계산(임차인이 한 건이고 최저가 기준 금액일 때만): 집행비용 = 최저가 − (보증금 − 인수액)
     var mt = rightsMergeTenants(out.tenants).filter(function(t) { return t.tankStanding === true || t.tankAssumeNote; });
     if (out.tankAssumeWon && out.minBidWon && mt.length === 1) { var ex = out.minBidWon - (mt[0].deposit - out.tankAssumeWon); if (ex > 0 && ex <= out.minBidWon * 0.04) out.execWon = ex; }
@@ -13868,7 +13883,7 @@ function parseTankRights(text) {
 function rightsMergeTenants(ts) {
     var res = [];
     ts.forEach(function(t) {
-        var dup = res.filter(function(x) { return x.deposit === t.deposit && x.deposit > 0 && ((x._txt || '').indexOf(t.name) >= 0 || (t._txt || '').indexOf(x.name) >= 0); })[0];
+        var dup = res.filter(function(x) { return x.deposit === t.deposit && x.deposit > 0 && ((x._txt || '').indexOf(t.name) >= 0 || (t._txt || '').indexOf(x.name) >= 0 || /양도인|양수인|승계/.test((x._txt || '') + ' ' + (t._txt || '')) && /경매신청인/.test((x._txt || '') + ' ' + (t._txt || '')) && /임차권등기자|양도인/.test((x._txt || '') + ' ' + (t._txt || ''))); })[0];
         if (!dup) { res.push(Object.assign({}, t, { merged: [t.name] })); return; }
         ['moveIn', 'fixed', 'distDate'].forEach(function(k) { if (!dup[k] && t[k]) dup[k] = t[k]; });
         dup.rankedDist = dup.rankedDist || t.rankedDist; dup.tankAssumeNote = dup.tankAssumeNote || t.tankAssumeNote; dup.merged.push(t.name);
