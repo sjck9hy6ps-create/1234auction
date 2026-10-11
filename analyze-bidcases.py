@@ -248,7 +248,7 @@ def main():
             tier_same = hist[(hist["floor"] == 1) == ground] if pd.notna(c.floor_n) else hist
             other = hist[(hist["floor"] == 1) != ground] if pd.notna(c.floor_n) else hist.iloc[0:0]
             cut_ym = cut // 100
-            est = None; own = 0
+            est = None; own = 0; rec_est = {}
             for days in (365, 1095):
                 lo = ymd_int(sale_d - timedelta(days=30 + days))
                 use = tier_same[tier_same["deal_date"] >= lo]
@@ -269,8 +269,26 @@ def main():
                     vals = np.sort(np.array(vals))
                     est = float(np.quantile(vals, 0.4)) * c.area
                     own = len(use)
+                    # 2026-10-11 예상매도가 변형 시험(사용자: "오차를 더 줄일 방법") - 같은 거래 묶음으로 계산 방식만 바꿔 est_* 열로 저장(앱 계산엔 영향 없음)
+                    try:
+                        ages = np.array([(sale_d - int_to_date(int(x))).days - 30 for x in use["deal_date"].values], dtype=float)
+                        raw = use["ppm"].values.astype(float) * adj
+                        base0 = idx_at(c.region, cut_ym)
+                        fi = np.array([max(0.7, min(1.4, base0 / idx_at(c.region, int(y)))) if base0 and idx_at(c.region, int(y)) else 1.0 for y in use["ym"].values])
+                        def wq(v, w, q):
+                            o = np.argsort(v); v2 = v[o]; w2 = w[o]; cs = np.cumsum(w2) / w2.sum(); return float(v2[min(np.searchsorted(cs, q), len(v2) - 1)])
+                        w90 = 0.5 ** (np.maximum(ages, 0) / 90.0); w180 = 0.5 ** (np.maximum(ages, 0) / 180.0)
+                        rec_est = {"est_q50": float(np.quantile(raw if days == 1095 and False else np.array(vals), 0.5)) * c.area,
+                                   "est_w90_q50": wq(np.array(vals), w90, 0.5) * c.area, "est_w90_q40": wq(np.array(vals), w90, 0.4) * c.area, "est_w180_q40": wq(np.array(vals), w180, 0.4) * c.area,
+                                   "est_idx_q40": float(np.quantile(raw * fi, 0.4)) * c.area, "est_idx_w180_q50": wq(raw * fi, w180, 0.5) * c.area, "est_idx_w90_q50": wq(raw * fi, w90, 0.5) * c.area}
+                        o3 = np.argsort(ages)[:3]
+                        rec_est["est_last3"] = float(np.median(raw[o3] * fi[o3])) * c.area if len(use) >= 3 else est
+                        rec_est["est_n"] = len(use); rec_est["est_days"] = days
+                    except Exception:
+                        rec_est = {}
                     break
             rec["est"] = est; rec["own"] = own
+            rec.update(rec_est)
             # 재매도 - 2026-10 정확도 개선: 큰 단지는 같은 층에 같은 평형이 여러 채라 "같은 층 첫 거래"의 절반 이상이 다른 집이었음
             # (낙찰 12개월 안 같은 층 거래 56% vs 2층 위·아래 층 43%). 2023년부터 실거래에 동(棟)이 있어 같은 동·같은 층으로 좁힘:
             #  ① 낙찰 물건의 동을 알고 거래에도 동이 있으면 같은 동만(conf=dong) ② 거래에 동이 없으면(2023년 이전·등기 전) 층만 맞춤(conf=floor, 확신 낮음)
