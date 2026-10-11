@@ -22,4 +22,6 @@ python3 scripts/restore-from-backup.py backups/full-날짜 house_trades villa_tr
 ## 4. 백업에 없는 것
 - 비밀값(키) - 각 서비스에서 다시 발급.
 - Vercel/GitHub 설정은 저장소(`vercel.json`, `.github/workflows`)에 있어요.
-- Upstash Redis 캐시는 복구 대상이 아니에요(다시 채워져요).
+- ⚠️ **앱에 직접 올린 자료는 Supabase가 아니라 Upstash Redis에 있어요** - 경매물건(`auctions`, 즐겨찾기·인수금액·권리분석 포함), 낙찰사례(`bidCases`), 임장메모(`siteNotes`), 내 자산(`myAssets`). 이건 다시 채워지지 않으니 따로 백업해야 해요: `sh scripts/backup-app-data.sh`(키 필요 없음). 복구: `python3 scripts/restore-app-data.py 백업폴더`.
+- 그 밖의 Redis 내용은 일부 응답 캐시라 다시 채워져요.
+- Supabase 표 `building_info_cache`, `dong_boundaries`는 서비스 키로 읽을 권한이 없어 백업에서 빠졌어요(2026-10-11 확인, 필요하면 Supabase에서 권한을 열어야 함).
