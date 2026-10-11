@@ -14236,21 +14236,31 @@ function rightsRegDates(r) {
     var D = /(\d{4}[.\-]\d{1,2}[.\-]\d{1,2})/, n = r.note || '', mv = n.match(/전입\s*:\s*(\d{4}[.\-]\d{1,2}[.\-]\d{1,2})/), fx = n.match(/확정\s*:\s*(\d{4}[.\-]\d{1,2}[.\-]\d{1,2})/);
     return { moveIn: r.moveIn || (mv ? rightsDate(mv[1]) : ''), fixed: r.fixed || (fx ? rightsDate(fx[1]) : '') };
 }
-function rightsSyntheticTenants(rights) {
-    var ts = rights.tenants || [], out = [];
+/* 임차인 표의 임차인과 등기부의 임차권등기자가 '같은 보증금'이지만 사람·전입일이 다를 때(2026-10-11, 사용자: 별개 임차인으로 볼지, 동일인의 갱신·승계로 볼지 고르게)
+   - 별개(sep): 각자 자기 전입일·확정일자로 대항력·배당을 따로 계산(임차권등기자는 배당요구한 것으로 봄)
+   - 같은 임차권(same): 갱신·임차권 양수(승계)·대위변제 등으로 한 임차권이 이어진 것으로 보고 한 명으로 합침 - 대항력·우선변제권은 앞선 전입일·확정일자를 이어받음(보증금은 한 번만 셈)
+   기본값: 같은 보증금이고 전입일이 같거나 이름이 겹치면 same, 아니면 sep. rights.ovr['link:'+순번]으로 바꿈 */
+function rightsTenantLinks(rights) {
+    var base = rightsMergeTenants(rights.tenants || []).map(function(t) { return Object.assign({}, t); }), ovr = rights.ovr || {}, synth = [], pairs = [];
     (rights.registry || []).forEach(function(r) {
-        var dts = rightsRegDates(r);
-        if (!/임차권/.test(r.type || '') || !(r.amount > 0) || !dts.moveIn) return;
-        var same = ts.some(function(t) { return t.deposit === r.amount && (t.moveIn === dts.moveIn || (r.holder && (t.name || '').indexOf(r.holder) >= 0)); });
-        if (same) return;
-        out.push({ name: r.holder + '(임차권등기)', deposit: r.amount, rent: 0, moveIn: dts.moveIn, fixed: dts.fixed, distDate: '', rankedDist: true, tankStanding: null, tankAssumeNote: false, role: '임차권등기자', synthetic: true, merged: [r.holder] });
+        var d = rightsRegDates(r);
+        if (!/임차권/.test(r.type || '') || !(r.amount > 0) || !d.moveIn) return;
+        var cand = base.filter(function(t) { return t.deposit === r.amount && !t.synthetic; })[0];
+        var auto = cand && (cand.moveIn === d.moveIn || (r.holder && (cand.name || '').indexOf(r.holder) >= 0)) ? 'same' : 'sep', mode = ovr['link:' + r.seq] || (cand ? auto : 'sep');
+        if (cand && cand.moveIn !== d.moveIn) pairs.push({ seq: r.seq, holder: r.holder, regMoveIn: d.moveIn, regFixed: d.fixed, tenant: cand.name, tenantMoveIn: cand.moveIn, mode: mode, auto: auto });
+        if (cand && mode === 'same') {
+            if (d.moveIn && (!cand.moveIn || d.moveIn < cand.moveIn)) cand.moveIn = d.moveIn;
+            if (d.fixed && (!cand.fixed || d.fixed < cand.fixed)) cand.fixed = d.fixed;
+            cand.rankedDist = true; cand.linkNote = '임차권등기 ' + r.holder + '와 같은 임차권(갱신·승계)으로 봄 - 앞선 전입일·확정일자 기준';
+        } else synth.push({ name: r.holder + '(임차권등기)', deposit: r.amount, rent: 0, moveIn: d.moveIn, fixed: d.fixed, distDate: '', rankedDist: true, tankStanding: null, tankAssumeNote: false, role: '임차권등기자', synthetic: true, merged: [r.holder] });
     });
-    return out;
+    return { tenants: base.concat(synth), pairs: pairs };
 }
+// 등기부 줄의 전입·확정일자: 새로 붙여넣은 것은 필드로, 이전에 저장한 것은 비고 글에서 읽음 (아래 rightsRegDates 참고)
 /* 낙찰가(원) → 배당 흉내. opts: { addr, execWon, extraPriorWon(당해세·임금채권·확정일자 앞선 선순위 등 직접 입력), } */
 function rightsWaterfall(rights, bidWon, opts) {
     opts = opts || {};
-    var ts = rightsMergeTenants(rights.tenants || []).concat(rightsSyntheticTenants(rights)), reg = rights.registry || [], base = rights.baseDate || '';
+    var ts = rightsTenantLinks(rights).tenants, reg = rights.registry || [], base = rights.baseDate || '';
     var exec = opts.execWon != null ? opts.execWon : (rights.execWon != null ? rights.execWon : RIGHTS_EXEC_DEFAULT_WON), extra = opts.extraPriorWon != null ? opts.extraPriorWon : (rights.extraPriorWon || 0);
     var steps = [], pool = bidWon;
     var take = function(label, amt) { var p = Math.min(Math.max(pool, 0), amt); pool -= p; steps.push({ label: label, claim: amt, paid: p }); return p; };
@@ -14486,9 +14496,14 @@ function rightsPanelHtml(row) {
     if (R.unpaidMgmt) h += '<div class="dr-sub">미납 관리비(탱크옥션 체납내역) ' + eok(R.unpaidMgmt.won) + (R.unpaidMgmt.date ? ' · 조사 ' + R.unpaidMgmt.date : '') + (R.unpaidMgmt.note ? ' · ' + bbEsc(R.unpaidMgmt.note) : '') + ' → ' + ((parseInt(a.unpaidMgmtFee) || 0) === Math.ceil(R.unpaidMgmt.won / 10000) ? '비용에 반영됨' : '이미 입력한 미납 관리비 ' + eok((parseInt(a.unpaidMgmtFee) || 0) * 10000) + ' 사용 중') + ' (낙찰자는 공용부분만 인수하므로 전기·수도 등이 섞였으면 실제 부담은 더 적을 수 있어요)</div>';
     if (w0) {
         h += '<table class="dr-tbl" style="margin-top:6px;"><tr><td class="dr-sub">임차인</td><td class="dr-sub">보증금</td><td class="dr-sub">대항력·배당</td></tr>';
-        w0.tenants.forEach(function(t) { h += '<tr><td>' + bbEsc(t.name) + '<div class="dr-sub">전입 ' + (t.moveIn || '미상') + (t.effDate ? '(대항력 ' + t.effDate + ' 0시~)' : '') + ' · 확정 ' + (t.fixed || '미상') + (t.prioDate ? ' → 배당 순위 ' + t.prioDate + (t.viaFixed ? ' 당일' : ' 0시') + ' 기준' : '') + ' · 배당요구 ' + (t.distDate || (t.rankedDist ? '있음' : '미확인')) + '</div></td><td class="r">' + eok(t.deposit) + '</td><td class="dr-sub">' + (t.standing ? '대항력 있음' : '대항력 없음') + (t.minor ? ' · 소액' : '') + '<br>' + bbEsc(t.status) + '</td></tr>'; });
+        w0.tenants.forEach(function(t) { h += '<tr><td>' + bbEsc(t.name) + '<div class="dr-sub">전입 ' + (t.moveIn || '미상') + (t.effDate ? '(대항력 ' + t.effDate + ' 0시~)' : '') + ' · 확정 ' + (t.fixed || '미상') + (t.prioDate ? ' → 배당 순위 ' + t.prioDate + (t.viaFixed ? ' 당일' : ' 0시') + ' 기준' : '') + ' · 배당요구 ' + (t.distDate || (t.rankedDist ? '있음' : '미확인')) + '</div></td><td class="r">' + eok(t.deposit) + '</td><td class="dr-sub">' + (t.standing ? '대항력 있음' : '대항력 없음') + (t.minor ? ' · 소액' : '') + '<br>' + bbEsc(t.status) + (t.linkNote ? '<br><span class="dr-sub">' + bbEsc(t.linkNote) + '</span>' : '') + '</td></tr>'; });
         h += '</table>';
     }
+    rightsTenantLinks(R).pairs.forEach(function(pr) {
+        h += '<div class="dr-warn" style="margin-top:4px;">임차인 표의 <b>' + bbEsc(pr.tenant) + '</b>(전입 ' + (pr.tenantMoveIn || '미상') + ')과 등기부 임차권 <b>' + bbEsc(pr.holder) + '</b>(전입 ' + pr.regMoveIn + ')의 보증금이 같아요. 어떻게 볼까요? '
+            + '<select onchange="rightsSetOvr(\'' + id + '\',\'link:' + pr.seq + '\',this.value)" style="font-size:12px;"><option value="sep"' + (pr.mode === 'sep' ? ' selected' : '') + '>별개 임차인(각자 전입일 기준)</option><option value="same"' + (pr.mode === 'same' ? ' selected' : '') + '>같은 임차권(갱신·승계 - 앞선 전입일 기준)</option></select>'
+            + '<div class="dr-sub">별개: 각자 전입일로 대항력을 따로 판단 · 같은 임차권: 양수·갱신·대위변제로 이어진 한 건이라 앞선 전입일·확정일자를 이어받음(탱크옥션이 "양도인·양수인"으로 적은 경우)</div></div>';
+    });
     var ri = w0 ? (w0.regItems || []) : rightsRegItems(R), rm = ri.filter(function(x) { return x.kind === 'money'; }), rk = ri.filter(function(x) { return x.kind === 'risk'; });
     if (rm.length || rk.length || (R.flags && R.flags.length)) {
         h += '<div class="dr-sub" style="margin-top:6px;"><b>등기부의 인수 권리</b> (말소기준일보다 앞선 권리)</div><table class="dr-tbl">';
@@ -19338,7 +19353,7 @@ async function mergeServerBoardCache(local) {
 }
 setTimeout(function() { try { srvBoardParts(); window.villaSrvP = villaFetchServerCalc(); } catch (e) {} }, 2500); // 앱을 켜고 2.5초 뒤 배경에서 미리 받기
 // 저장 계산을 다시 써도 되는지 - 물건 입력값(시세 계산에 쓰는 것)과 입찰일 지남 여부. 계산 방식이 바뀌면 BOARD_CALC_VER을 올림
-var BOARD_CALC_VER = 39; // 39: 임차권등기를 임차인으로 계산(전입·확정일자 기준)·경매신청인 전세권 안내(2026-10-11) - // 38: 38: 권리분석 날짜 선후 규칙 정리(전입 다음 날 0시·동순위 안분, 2026-10-11) - // 37: 37: 권리분석에 말소기준일보다 앞선 전세권·임차권 등 등기부 인수 권리 반영(2026-10-11) - // 36: 저가 아파트 순이익률 10% 추천가 규칙 되돌림(2026-10-11, 백테스트 손해 30~42%) - // 34: 33: 아파트 고층 보정 축소·저층 범위(2026-10-11) - // 29: nYear 저장 추가 - // 27: 🎲 예상 낙찰가용 시세(wbBase) 추가 (범위 표시는 화면에서 바로 계산 - 버전 변경 없음)
+var BOARD_CALC_VER = 40; // 40: 임차인 둘로 읽힌 경우 별개/같은 임차권(갱신·승계) 선택(2026-10-11) - // 39: 39: 임차권등기를 임차인으로 계산(전입·확정일자 기준)·경매신청인 전세권 안내(2026-10-11) - // 38: 38: 권리분석 날짜 선후 규칙 정리(전입 다음 날 0시·동순위 안분, 2026-10-11) - // 37: 37: 권리분석에 말소기준일보다 앞선 전세권·임차권 등 등기부 인수 권리 반영(2026-10-11) - // 36: 저가 아파트 순이익률 10% 추천가 규칙 되돌림(2026-10-11, 백테스트 손해 30~42%) - // 34: 33: 아파트 고층 보정 축소·저층 범위(2026-10-11) - // 29: nYear 저장 추가 - // 27: 🎲 예상 낙찰가용 시세(wbBase) 추가 (범위 표시는 화면에서 바로 계산 - 버전 변경 없음)
 function boardBaseSig(a) {
     var d = a.bidDate ? calcAuctionDday(a.bidDate) : null;
     // 2026-10-11: 건축물대장에서 자동으로 채운 연식·승강기는 재사용 판단에서 뺌 - 새로 알게 돼도 다음 월요일 미리 계산에 반영(직접 입력한 연식은 그대로 비교)
