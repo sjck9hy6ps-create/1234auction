@@ -16,7 +16,7 @@ page.on('pageerror', (e) => console.log('페이지 오류:', String(e).slice(0, 
 console.log('앱 여는 중…');
 await page.goto(SITE, { waitUntil: 'load' });
 await page.waitForTimeout(10000);
-await page.evaluate(() => { try { document.getElementById('remind-panel').style.display = 'none'; document.getElementById('bid-board').style.display = 'flex'; } catch (e) {} forceRefreshBidBoard(); });
+await page.evaluate(() => { try { const rp = document.getElementById('remind-panel'); if (rp) rp.style.display = 'none'; } catch (e) {} try { document.getElementById('bid-board').style.display = 'flex'; } catch (e) {} forceRefreshBidBoard(); });
 const t0 = Date.now();
 let last = '';
 for (;;) {
@@ -29,7 +29,9 @@ for (;;) {
   if (Date.now() - t0 > 80 * 60 * 1000) { console.log('시간 초과'); break; }
 }
 // 연식·승강기·세대수 채우기(앱이 입찰후보 계산 직후 배경에서 하는 일)가 끝나길 기다린 뒤 저장 계산에 반영 - 안 그러면 사용자 앱의 물건 값(연식 등)과 서버 계산의 식별값이 달라 일부 물건을 다시 계산하게 됨(2026-10-11)
-await page.waitForTimeout(6000);
+// 연식·세대수 채우기를 직접 시작해 끝까지 기다림(앱이 계산 직후 2초 뒤 배경에서 하는 일 - 서버 계산이 이걸 건너뛰면 사용자 앱이 열 때마다 같은 물건을 다시 조회함)
+await page.evaluate(() => { try { document.getElementById('bid-board').style.display = 'flex'; } catch (e) {} fillHouseholdsInBackground(); });
+await page.waitForTimeout(3000);
 {
   const tf = Date.now();
   while (Date.now() - tf < 25 * 60 * 1000) {
@@ -44,7 +46,7 @@ const fixed = await page.evaluate(async () => {
   let n = 0;
   bidBoardRows.forEach(function (r) {
     const c = cache[r.id];
-    if (c && r.a && !r.pending && !r.skippedPast && c.sig !== boardBaseSig(r.a)) { const row = boardRowForCache(r); if (row) { cache[r.id] = { sig: boardBaseSig(r.a), at: Date.now(), row: row }; n++; } }
+    if (c && r.a && !r.pending && !r.skippedPast && r.type && !(r.verdict === 'nodata' && !r.loaded && r.a.lat)) { const row = boardRowForCache(r); if (row) { cache[r.id] = { sig: boardBaseSig(r.a), at: Date.now(), row: row }; n++; } }
   });
   if (n) await listIdbOp('readwrite', function (st) { return st.put(cache, BOARD_CACHE_KEY); });
   return n;
