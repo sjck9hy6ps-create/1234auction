@@ -17852,6 +17852,7 @@ function aptOwnTradeStats(a, bunjiFull, pyung) {
                 if (ref.length >= 3) rs.push(t.ppm / med(ref));
             });
             var elv = a.elevatorCnt != null && a.elevatorCnt !== '' ? parseInt(a.elevatorCnt) : null;
+            if (elv === 0 && maxF >= 6) elv = null; // 2026-10-11: 단지 총괄표제부는 승강기 수가 0으로 오므로(원주 에듀파크 20층 단지가 '승강기 없음'으로 잡혀 1층 감액이 1.7%뿐이었음) 6층 이상 단지의 0은 '모름'으로 봄
             var cls = elv === 0 ? 'noE' : (elv > 0 ? (maxF <= 10 ? 'mid' : 'tall') : (maxF <= 5 ? 'noE' : (maxF <= 10 ? 'mid' : 'tall')));
             // 2026-10-10 층별 실거래 실측(같은 단지·평형·분기 중층 대비, 수도권·지방 2025년~): 6~10층 단지 1층 −6.1%(283건)·2~3층 −3.0%/−0.7% → 중간 규모 기본값 1층 0.98→0.94, 저층 0.98→0.975. 11층+ 단지는 1층 −8.6~−9.7%·2층 −5~−7%·3층 −3~−5%로 기존 값(0.915/0.94)과 일치(낙찰 후 되판 877건: 1층 되판÷보정전 0.919 vs 적용 0.915)해서 그대로
             var dft = { noE: [0.99, 0.97], mid: [0.94, 0.975], tall: [0.915, 0.94] }[cls][tf <= 1 ? 0 : 1];
@@ -18770,10 +18771,11 @@ function boardBaseSig(a) {
     var d = a.bidDate ? calcAuctionDday(a.bidDate) : null;
     // 2026-10-11: 건축물대장에서 자동으로 채운 연식·승강기는 재사용 판단에서 뺌 - 새로 알게 돼도 다음 월요일 미리 계산에 반영(직접 입력한 연식은 그대로 비교)
     var auto = a.buildYearSource === '건축물대장';
+    var e0 = (a.propType === 'apt' && (a.elevatorCnt === 0 || a.elevatorCnt === '0')) ? 'E0v2' : ''; // 승강기 0(총괄표제부 오류) 물건은 새 판정으로 다시 계산
     var asm = (a.assumedDeposit || a.assumedFixed || a.assumedPrior || a.rights) ? 'A2:' + (a.assumedDeposit || '') + ':' + (a.assumedFixed || '') + ':' + (a.assumedPrior || '') + (a.rights ? ':R' + (a.rights.pastedAt || 0) + ':' + (a.rights.editedAt || 0) : '') : ''; // 인수금액 입력이 있는 물건만(새 계산식 v2)
     return [BOARD_CALC_VER, auctionWonEstSignature(a), a.minBid, a.appraisal, a.bidDate, a.court, a.failCount, a.landType, String(a.memo || '').length,
         Array.isArray(a.bidHistory) ? a.bidHistory.length : 0, a.courtResult || '', a.target || '', a.compTargetMargin || '', a.repair || '', auto ? '' : (a.buildYear || ''), auto || a.elevatorCnt == null ? '' : a.elevatorCnt, a.listingParse ? a.listingParse.at + '/' + a.listingParse.n : '', (a.fieldCheck || {}).cond || '',
-        d && d.diffDays < 0 ? 'P' : 'F'].concat(asm ? [asm] : []).join('|');
+        d && d.diffDays < 0 ? 'P' : 'F'].concat(asm ? [asm] : [], e0 ? [e0] : []).join('|');
 }
 function boardRowForCache(r) {
     var o = {};
@@ -19904,7 +19906,7 @@ async function fetchHouseholdsFor(a) {
         if (ym && !a.buildYear) { var y = parseInt(ym[1], 10); if (y > 1950 && y <= new Date().getFullYear()) { a.buildYear = y; a.buildYearSource = '건축물대장'; } }
         // 세대수는 단지 전체 기준: 총괄표제부 → 같은 지번 모든 동 합계(hhldSum) → 동이 하나뿐일 때만 그 동 값.
         // (2026-10: 예전엔 동 하나 값이 들어가 빛가람코오롱하늘채 회전율이 111%로 나왔음)
-        if (t && a.elevatorCnt == null && (t.rideElvtCnt != null || t.emgenElvtCnt != null)) a.elevatorCnt = (t.rideElvtCnt || 0) + (t.emgenElvtCnt || 0); // 저층 보정의 승강기 구분용(이 동 기준)
+        if (t && a.elevatorCnt == null && (t.grndFlrCnt || 0) > 0 && (t.rideElvtCnt != null || t.emgenElvtCnt != null)) a.elevatorCnt = (t.rideElvtCnt || 0) + (t.emgenElvtCnt || 0); // 저층 보정의 승강기 구분용(이 동 기준)
         if (!t || t.hhVer !== 2) return null;
         var hh = (t.site && t.site.hhldCnt > 0) ? t.site.hhldCnt : (t.hhldSum > 0 ? t.hhldSum : (t.hhldBldCnt <= 1 ? t.hhldCnt : null));
         if (hh > 0) a.householdsVer = 2;

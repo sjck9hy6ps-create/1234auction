@@ -75,7 +75,7 @@ async function main() {
       if (t) {
         const ym = String(t.useAprDay || (t.site && t.site.useAprDay) || '').match(/(\d{4})/);
         if (ym && !a.buildYear) { const y = parseInt(ym[1], 10); if (y > 1950 && y <= new Date().getFullYear()) { upd.buildYear = y; upd.buildYearSource = '건축물대장'; } }
-        if (a.elevatorCnt == null && (t.rideElvtCnt != null || t.emgenElvtCnt != null)) upd.elevatorCnt = (t.rideElvtCnt || 0) + (t.emgenElvtCnt || 0);
+        if (a.elevatorCnt == null && (t.grndFlrCnt || 0) > 0 && (t.rideElvtCnt != null || t.emgenElvtCnt != null)) upd.elevatorCnt = (t.rideElvtCnt || 0) + (t.emgenElvtCnt || 0);
         if (t.hhVer === 2 && !(a.households && a.householdsVer === 2)) {
           const hh = (t.site && t.site.hhldCnt > 0) ? t.site.hhldCnt : (t.hhldSum > 0 ? t.hhldSum : (t.hhldBldCnt <= 1 ? t.hhldCnt : null));
           if (hh > 0) { upd.households = parseInt(hh, 10); upd.householdsVer = 2; }
