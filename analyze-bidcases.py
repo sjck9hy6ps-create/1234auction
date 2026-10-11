@@ -200,6 +200,8 @@ def main():
         return v if v is not None and np.isfinite(v) else None
 
     groups = {k: g for k, g in tr.groupby(["region_n", "dk", "bunji_s"])}
+    # 2026-10-11 같은 단지 거래가 0~2건일 때를 위한 같은 동 시세(변형 시험): 동별 거래 배열
+    dgroups = {k: (g["deal_date"].to_numpy(), g["size"].to_numpy(dtype=float), g["ppm"].to_numpy(dtype=float), pd.to_numeric(g["build_year"], errors="coerce").to_numpy(dtype=float)) for k, g in tr.sort_values("deal_date").groupby(["region_n", "dk"])}
     # 동 전체 거래 날짜(정렬) - 입찰 전 3년 동 거래량(거래가 되는 동네인지)
     dong_dates = {k: np.sort(g["deal_date"].to_numpy()) for k, g in tr.groupby(["region_n", "dk"])}
     # 인기 등급(현재 기준 - 약간의 미래 정보가 섞임): pop|<시군구>
@@ -325,6 +327,26 @@ def main():
             by = pd.to_numeric(g["build_year"], errors="coerce").dropna()
             if len(by):
                 rec["age"] = int(sale_d.year - int(by.mode().iloc[0]))
+        try:
+            if rec.get("own", 0) <= 2:
+                dg = dgroups.get((c.region, c.dk))
+                if dg is not None:
+                    dd_, sz_, pp_, yb_ = dg; sd_ = int_to_date(c.sale_int); cut_ = ymd_int(sd_ - timedelta(days=30)); lo_ = ymd_int(sd_ - timedelta(days=30 + 365))
+                    i0, i1 = np.searchsorted(dd_, lo_), np.searchsorted(dd_, cut_)
+                    m_ = np.abs(sz_[i0:i1] - c.area) <= 8
+                    by_ = (sd_.year - rec["age"]) if rec.get("age") is not None else None
+                    mb_ = m_ & (np.isnan(yb_[i0:i1]) | (np.abs(yb_[i0:i1] - by_) <= 5)) if by_ else m_
+                    for tag, mm_ in (("", m_), ("_by", mb_)):
+                        v_ = pp_[i0:i1][mm_]
+                        if len(v_) >= 3:
+                            rec["est_dong" + tag] = float(np.quantile(v_, 0.4)) * c.area; rec["n_dong" + tag] = int(len(v_))
+                    for tag in ("", "_by"):
+                        ed = rec.get("est_dong" + tag)
+                        if ed:
+                            rec["est_blend" + tag] = ed if not rec.get("est") else 0.5 * rec["est"] + 0.5 * ed
+                            rec["est_blend70" + tag] = ed if not rec.get("est") else 0.7 * rec["est"] + 0.3 * ed
+        except Exception:
+            pass
         out.append(rec)
     R = pd.DataFrame(out)
     R["ratio"] = R["actual"] / R["est"]
