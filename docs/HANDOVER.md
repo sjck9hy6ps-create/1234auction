@@ -165,3 +165,11 @@
 - [Board precompute](board-precompute.md) — 입찰후보 사전 계산(가상 브라우저)·화면 반응 개선, 운영 방법
 - [Villa estimation experiments](villa-estimation-experiments.md) — 반경·전세가 방식 백테스트(기존보다 나쁨), 대장 기준 비교 결과
 
+## 건축물대장 조회 우선순위 (2026-10-11)
+번지로 대장을 못 찾는 물건(경매 주소 번지 ≠ 대장 대표 번지, 지번 없는 도시개발구역 등)은 아래 순서로 찾고, 앞 단계에서 찾으면 멈춰요(`public/index.html`의 `findBuildingLot`).
+1. **경매 주소 번지**로 바로 조회(기본, `/api/get-building`)
+2. **도로명 주소 → 카카오 대표 지번**으로 조회
+3. 같은 본번의 **부번 1~40**을 훑어 대장 도로명(`newPlatPlc`)이 같은 건물 (`titleOnly=1`, 요청 1건씩)
+4. **【최후】 법정동 전체 표제부를 훑어** 도로명이 같은 건물(`roadScan`, 요청 수십 건, 세션당 5건까지)
+5. 그래도 못 찾으면 상세 화면에서 **도로명 주소를 직접 입력**(수동)
+결과는 물건에 저장: `bldgBunji`(찾은 번지)·`bldgBCode`·`bldgTitle`(4단계 결과 전체)·`bldgMethod`·`bldgLotTried`(못 찾은 날짜, 6일 뒤 재시도). 서버 건축물대장 수집(`scripts/collect-building-info.mjs`)도 저장된 번지·대장을 먼저 씀. 좌표를 못 찾은 주소는 지번까지 잘라 다시 찾음(`repairMissingCoords`). 대장상 용도가 주택이 아니면 경고(`bldUseWarn`).
