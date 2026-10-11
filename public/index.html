@@ -13805,6 +13805,201 @@ function findLeaseDepositEstimate(tenant) {
         monthsDiff: Math.round(best.days / 30.44 * 10) / 10, sampleCount: candidates.length,
     };
 }
+/* ════ ⚖️ 권리분석(2026-10-11, 사용자: 탱크옥션 상세에서 임차인·등기 정보를 받아 더 정교하게) ════
+   탱크옥션 상세 페이지 글(임차인 현황·건물등기·권리분석요약)을 붙여넣으면 규칙으로 읽어(AI 아님) a.rights에 저장하고,
+   입찰가가 정해지면 낙찰대금 배당(집행비용 → 소액임차인 최우선변제 → 당해세 등 직접 입력분 → 담보물권·확정일자 임차인 날짜순)을 흉내 내
+   대항력 임차인이 배당에서 못 받는 보증금 = 낙찰자 인수액을 계산함(주택임대차보호법 제3조의5). 금액 단위: 원(앱 비용 계산에는 만원으로 바꿔 씀). */
+var RIGHTS_EXEC_DEFAULT_WON = 3100000; // 경매집행비용 가정 310만(탱크옥션 권리분석 인수액에서 거꾸로 계산한 값: 최저가 1.841억 사건에서 약 310만) - 사건마다 다름
+var RIGHTS_MINOR_TABLES = [ // 소액임차인 [서울, 수도권 과밀억제권역·용인·화성·세종·김포, 광역시·안산·광주·파주·이천·평택, 그 밖] × [보증금 한도, 최우선변제액] (만원) - 말소기준일(담보물권 설정일) 기준
+    { from: '2023-02-21', t: [[16500, 5500], [14500, 4800], [8500, 2800], [7500, 2500]] },
+    { from: '2021-05-11', t: [[15000, 5000], [13000, 4300], [7000, 2300], [6000, 2000]] },
+    { from: '2018-09-18', t: [[11000, 3700], [10000, 3400], [6000, 2000], [5000, 1700]] },
+    { from: '2016-03-31', t: [[10000, 3400], [8000, 2700], [6000, 2000], [5000, 1700]] }
+];
+function rightsNum(s) { var n = parseInt(String(s || '').replace(/[^\d]/g, ''), 10); return isNaN(n) ? 0 : n; }
+function rightsDate(s) { var m = String(s || '').match(/(\d{4})[-.\s]+(\d{1,2})[-.\s]+(\d{1,2})/); return m ? m[1] + '-' + String(m[2]).padStart(2, '0') + '-' + String(m[3]).padStart(2, '0') : ''; }
+function parseTankRights(text) {
+    text = String(text || '').replace(/\r/g, '');
+    var out = { tenants: [], registry: [], baseDate: '', distDeadline: '', tankAssumeWon: null, minBidWon: 0, appraisalWon: 0, warnings: [] };
+    var m;
+    if ((m = text.match(/말소기준일[^:\n]*:\s*([\d.\-]+)/))) out.baseDate = rightsDate(m[1]);
+    if ((m = text.match(/배당요구종기일\s*:\s*([\d.\-]+)/))) out.distDeadline = rightsDate(m[1]);
+    if ((m = text.match(/최저가\s*\(\d+%\)\s*([\d,]+)/))) out.minBidWon = rightsNum(m[1]);
+    if ((m = text.match(/감정가\s+([\d,]{7,})/))) out.appraisalWon = rightsNum(m[1]);
+    if ((m = text.match(/([\d,]+)원이\s*매수인\s*인수\s*대상/))) out.tankAssumeWon = rightsNum(m[1]);
+    // 임차인 현황: 표 머리글 다음부터 '계'/'기타사항'까지. 행은 "번호<탭>이름<탭>..."로 시작
+    var ti = text.indexOf('임차인 현황'), tb = ti >= 0 ? text.slice(ti) : '';
+    var te = tb.search(/\n계\s*\n|\n기타사항|\n건물등기|\n임차인:\s*\d+\s*건/);
+    if (te > 0) tb = tb.slice(0, te);
+    var hdrEnd = tb.search(/\n목록\??\s*\t/); if (hdrEnd >= 0) { var nl = tb.indexOf('\n', hdrEnd + 1); tb = nl >= 0 ? tb.slice(nl) : ''; }
+    var starts = [], re = /(?:^|\n)(\d{1,2})\t([^\t\n]+)\t/g, mm;
+    while ((mm = re.exec(tb))) starts.push({ i: mm.index + (tb[mm.index] === '\n' ? 1 : 0), name: mm[2].trim() });
+    starts.forEach(function(st, k) {
+        var chunk = tb.slice(st.i, k + 1 < starts.length ? starts[k + 1].i : tb.length);
+        var mv = chunk.match(/전입\s*:\s*([\d.\-]+|미상)/), fx = chunk.match(/확정\s*:\s*([\d.\-]+|미상)/), ds = chunk.match(/배당\s*:\s*([\d.\-]+|미상|없음)/), dp = chunk.match(/보\s*:\s*([\d,]+)\s*원(?:\s*\/\s*월?\s*:?\s*([\d,]+)\s*원?)?/), sd = chunk.match(/원\s*\t\s*(있음|없음|미상|[^\t\n]{1,6})\t/);
+        if (!dp) return;
+        var roles = (chunk.match(/(임차권등기자|경매신청인|임차인|소유자|채무자)[^\t\n]*$/m) || [''])[0];
+        out.tenants.push({ name: st.name, moveIn: mv && /\d/.test(mv[1]) ? rightsDate(mv[1]) : '', fixed: fx && /\d/.test(fx[1]) ? rightsDate(fx[1]) : '', distDate: ds && /\d/.test(ds[1]) ? rightsDate(ds[1]) : '',
+            deposit: rightsNum(dp[1]), rent: dp[2] ? rightsNum(dp[2]) : 0, tankStanding: sd ? (sd[1] === '있음' ? true : (sd[1] === '없음' ? false : null)) : null,
+            rankedDist: /순위배당\s*있음/.test(chunk), tankAssumeNote: /미배당\s*보증금\s*매수인\s*인수/.test(chunk), role: roles.replace(/\s+/g, ' ').trim(), selfOccupied: /소유자|채무자/.test(roles), _txt: chunk.replace(/\s+/g, ' ') });
+    });
+    // 건물등기: "갑(4)<탭>2023-11-09<줄바꿈>가압류<탭>권리자<탭>금액<탭>비고..."
+    var ri = text.search(/건물등기\s*\n/), rb = ri >= 0 ? text.slice(ri) : '';
+    var rf = rb.search(/\n참고\/주의|\n권리분석요약|\n주요변동/); if (rf > 0) rb = rb.slice(0, rf);
+    var rre = /(갑|을)\((\d+)\)\s+(\d{4}-\d{2}-\d{2})\s*\n([^\t\n]+)\t([^\t\n]*)\t([^\t\n]*)\t?([^\n]*)/g, rm, rstarts = [];
+    while ((rm = rre.exec(rb))) rstarts.push({ at: rm.index, seq: rm[1] + '(' + rm[2] + ')', date: rm[3], type: rm[4].trim(), holder: rm[5].trim(), amountRaw: rm[6].trim(), rest: rm[7] });
+    rstarts.forEach(function(r, k) {
+        var chunk = rb.slice(r.at, k + 1 < rstarts.length ? rstarts[k + 1].at : rb.length);
+        var amt = /^[\d,]+$/.test(r.amountRaw) ? rightsNum(r.amountRaw) : 0;
+        if (!amt && (/청구금액/.test(chunk))) { var cm = chunk.match(/청구금액\s*\n?\s*([\d,]+)/); if (cm) amt = rightsNum(cm[1]); }
+        var tail = chunk.split('\n').slice(1).join(' ');
+        out.registry.push({ seq: r.seq, date: r.date, type: r.type, holder: r.holder, amount: amt, base: /말소기준등기/.test(chunk), extinguished: /소멸/.test(chunk.split('\n')[1] + ' ' + r.rest) && !/잔액인수|인수/.test(r.rest), assumed: /잔액인수|매수인.{0,6}인수/.test(chunk), note: tail.replace(/\s+/g, ' ').trim().slice(0, 120) });
+    });
+    // 탱크옥션이 보여 준 '매수인 인수 대상 금액'과 최저가로 집행비용을 거꾸로 계산(임차인이 한 건이고 최저가 기준 금액일 때만): 집행비용 = 최저가 − (보증금 − 인수액)
+    var mt = rightsMergeTenants(out.tenants).filter(function(t) { return t.tankStanding === true || t.tankAssumeNote; });
+    if (out.tankAssumeWon && out.minBidWon && mt.length === 1) { var ex = out.minBidWon - (mt[0].deposit - out.tankAssumeWon); if (ex > 0 && ex <= out.minBidWon * 0.04) out.execWon = ex; }
+    out.tenants = rightsMergeTenants(out.tenants); out.tenants.forEach(function(t) { delete t._txt; });
+    if (!out.baseDate) { var b = out.registry.filter(function(r) { return r.base; })[0]; if (b) out.baseDate = b.date; }
+    if (!out.tenants.length) out.warnings.push('임차인 현황을 찾지 못했어요(전입세대 없음이면 정상) - 상세 페이지의 "임차인 현황" 부분까지 같이 붙여넣었는지 확인');
+    if (!out.registry.length) out.warnings.push('건물등기(권리 목록)를 찾지 못했어요');
+    return out;
+}
+// 같은 임차권을 승계한 임차인(대위변제 후 양수인 표기 등)은 한 건으로: 보증금이 같고 한쪽 설명에 다른 쪽 이름이 들어 있으면 합침(날짜가 있는 쪽을 대표로)
+function rightsMergeTenants(ts) {
+    var res = [];
+    ts.forEach(function(t) {
+        var dup = res.filter(function(x) { return x.deposit === t.deposit && x.deposit > 0 && ((x._txt || '').indexOf(t.name) >= 0 || (t._txt || '').indexOf(x.name) >= 0); })[0];
+        if (!dup) { res.push(Object.assign({}, t, { merged: [t.name] })); return; }
+        ['moveIn', 'fixed', 'distDate'].forEach(function(k) { if (!dup[k] && t[k]) dup[k] = t[k]; });
+        dup.rankedDist = dup.rankedDist || t.rankedDist; dup.tankAssumeNote = dup.tankAssumeNote || t.tankAssumeNote; dup.merged.push(t.name);
+        if (t.tankStanding === true) dup.tankStanding = true;
+        dup.name = dup.name + ' · ' + t.name;
+    });
+    return res;
+}
+function rightsMinorTier(addr) {
+    var a = String(addr || '');
+    if (/^서울/.test(a)) return 0;
+    if (/^세종|용인시|화성시|김포시/.test(a.replace(/^\S+\s*/, '').length ? a : a) || /(세종특별자치시|용인시|화성시|김포시)/.test(a)) return 1;
+    if (/^인천/.test(a) || /(의정부|구리|남양주|하남|고양|수원|성남|안양|부천|광명|과천|의왕|군포|시흥)시/.test(a)) return 1; // 과밀억제권역(일부 동은 제외돼 근사)
+    if (/^(부산|대구|대전|광주|울산)/.test(a) || /(안산|광주|파주|이천|평택)시/.test(a)) return 2;
+    return 3;
+}
+function rightsMinorLimit(baseDate, addr) {
+    var tb = null; for (var i = 0; i < RIGHTS_MINOR_TABLES.length; i++) if (!baseDate || baseDate >= RIGHTS_MINOR_TABLES[i].from) { tb = RIGHTS_MINOR_TABLES[i]; break; }
+    if (!tb) return null; var r = tb.t[rightsMinorTier(addr)]; return { limit: r[0] * 10000, pay: r[1] * 10000, from: tb.from };
+}
+/* 낙찰가(원) → 배당 흉내. opts: { addr, execWon, extraPriorWon(당해세·임금채권·확정일자 앞선 선순위 등 직접 입력), } */
+function rightsWaterfall(rights, bidWon, opts) {
+    opts = opts || {};
+    var ts = rightsMergeTenants(rights.tenants || []), reg = rights.registry || [], base = rights.baseDate || '';
+    var exec = opts.execWon != null ? opts.execWon : (rights.execWon != null ? rights.execWon : RIGHTS_EXEC_DEFAULT_WON), extra = opts.extraPriorWon != null ? opts.extraPriorWon : (rights.extraPriorWon || 0);
+    var steps = [], pool = bidWon;
+    var take = function(label, amt) { var p = Math.min(Math.max(pool, 0), amt); pool -= p; steps.push({ label: label, claim: amt, paid: p }); return p; };
+    take('경매집행비용(가정)', exec);
+    if (extra > 0) take('당해세·임금채권 등 먼저 빠지는 돈(직접 입력)', extra);
+    // 개시결정 등기일(대항요건 기준일): 강제경매/임의경매 접수일, 없으면 말소기준일
+    var startReg = reg.filter(function(r) { return /경매개시|강제경매|임의경매/.test(r.type); })[0], startDate = startReg ? startReg.date : base;
+    var ml = rightsMinorLimit(base, opts.addr), minorTotalCap = Math.floor(bidWon / 2);
+    // 임차인별 대항력·배당 자격
+    ts.forEach(function(t) {
+        t.standing = t.tankStanding === true || (!!t.moveIn && !!base && t.moveIn < base);
+        t.hasPriority = !!t.fixed && !!t.moveIn;
+        t.requested = !!(t.distDate || t.rankedDist) && (!rights.distDeadline || !t.distDate || t.distDate <= rights.distDeadline);
+        t.prioDate = t.hasPriority ? (t.moveIn >= t.fixed ? t.moveIn : t.fixed) : '';  // 대항요건·확정일자 중 늦은 날(전입은 다음 날 0시부터 효력이라 같은 날은 이후로 봄)
+        t.minor = !!(ml && t.deposit > 0 && t.deposit <= ml.limit && t.moveIn && startDate && t.moveIn < startDate && t.requested);
+    });
+    var minorPaid = 0;
+    ts.filter(function(t) { return t.minor; }).forEach(function(t) {
+        var amt = Math.min(ml.pay, t.deposit); amt = Math.min(amt, Math.max(0, minorTotalCap - minorPaid)); var p = take('소액임차인 최우선변제 - ' + t.name, amt); t.minorPaid = p; minorPaid += p;
+    });
+    // 담보물권(근저당·전세권·담보가등기)과 확정일자 임차인을 날짜순으로
+    var queue = [];
+    reg.filter(function(r) { return /근저당|전세권|담보가등기/.test(r.type) && r.amount > 0 && !/주택임차권/.test(r.type); }).forEach(function(r) { queue.push({ date: r.date, kind: 'sec', label: r.type + ' ' + r.holder, claim: r.amount }); });
+    ts.forEach(function(t) { if (t.requested && t.hasPriority && (t.standing || t.minor)) queue.push({ date: t.prioDate, kind: 'ten', label: '임차인 ' + t.name + ' 보증금', claim: Math.max(0, t.deposit - (t.minorPaid || 0)), t: t }); });
+    queue.sort(function(a, b) { return a.date < b.date ? -1 : (a.date > b.date ? 1 : (a.kind === 'ten' ? -1 : 1)); });
+    queue.forEach(function(q) { var p = take(q.label + ' (' + q.date + ')', q.claim); if (q.t) q.t.received = (q.t.received || 0) + p; });
+    var assumed = 0, fixed = 0, lines = [];
+    ts.forEach(function(t) {
+        if (!t.standing) { t.shortfall = 0; t.status = '대항력 없음 - 낙찰로 소멸(인수 없음)'; return; }
+        var got = (t.minorPaid || 0) + (t.received || 0), sf = Math.max(0, t.deposit - got);
+        t.shortfall = sf;
+        if (!(t.requested && t.hasPriority)) { t.status = (!t.requested ? '배당요구 안 함/미확인' : '확정일자 없음') + ' → 입찰대금에서 못 받아 전액 인수'; fixed += t.deposit; t.shortfall = t.deposit; }
+        else { t.status = sf > 0 ? '배당받고 모자란 ' + sf.toLocaleString() + '원 인수' : '배당으로 전액 변제 → 인수 없음'; assumed += sf; }
+    });
+    var taxSeizures = reg.filter(function(r) { return /압류/.test(r.type) && /(세무서|시|군|구|공단|청)/.test(r.holder); }).length;
+    return { bidWon: bidWon, execWon: exec, steps: steps, tenants: ts, assumedWon: assumed + fixed, fixedWon: fixed, taxSeizures: taxSeizures, minor: ml, startDate: startDate, leftWon: Math.max(0, pool) };
+}
+
+/* 인수 비용 선택: 직접 넣은 인수 금액 칸이 있으면 그 값(assumedCostAt), 없고 권리분석(a.rights)이 있으면 배당 흉내 결과(만원) */
+function assumedCostRec(a, bidManwon) {
+    var hasManual = (parseInt(a.assumedDeposit) || 0) > 0 || (parseInt(a.assumedFixed) || 0) > 0;
+    if (!hasManual && a.rights && a.rights.tenants && a.rights.tenants.length) {
+        try { var w = rightsWaterfall(a.rights, Math.round((bidManwon || 0) * 10000), { addr: a.addr, extraPriorWon: (parseInt(a.assumedPrior) || 0) * 10000 + (a.rights.extraPriorWon || 0) }); return Math.round(w.assumedWon / 10000); } catch (e) { console.error('권리분석 계산 실패', e); }
+    }
+    return assumedCostAt(a.assumedDeposit, a.assumedFixed, a.assumedPrior, bidManwon);
+}
+// 등록 창(입력 칸 기준) 버전: 칸이 비어 있고 수정 중인 물건에 권리분석이 있으면 그걸 씀
+function assumedCostDom(gross, fixed, prior, bidManwon) {
+    if (!(parseInt(gross) > 0) && !(parseInt(fixed) > 0)) {
+        try { var el = document.getElementById('auction-id'), id = el && el.value, a = id && auctionList.filter(function(x) { return String(x.id) === String(id); })[0]; if (a && a.rights && a.rights.tenants && a.rights.tenants.length) return assumedCostRec(Object.assign({}, a, { assumedPrior: prior }), bidManwon); } catch (e) {}
+    }
+    return assumedCostAt(gross, fixed, prior, bidManwon);
+}
+async function rightsApplyPaste(idJs) {
+    var ta = document.getElementById('rights-paste'); if (!ta || !ta.value.trim()) { alert('탱크옥션 상세 페이지 글(임차인 현황·건물등기 부분이 들어 있게)을 붙여넣어 주세요.'); return; }
+    var a = auctionList.filter(function(x) { return String(x.id) === String(idJs); })[0]; if (!a) return;
+    var R = parseTankRights(ta.value);
+    if (!R.tenants.length && !R.registry.length) { alert('임차인 현황도 건물등기도 찾지 못했어요. 상세 페이지 전체를 복사해 붙여넣어 주세요.'); return; }
+    R.pastedAt = Date.now(); a.rights = R;
+    try { await saveAuctionAPI(a); } catch (e) { alert('저장 실패: ' + e.message); }
+    rightsRefreshRow(a);
+}
+async function rightsClear(idJs) {
+    var a = auctionList.filter(function(x) { return String(x.id) === String(idJs); })[0]; if (!a || !confirm('이 물건의 권리분석 자료를 지울까요?')) return;
+    delete a.rights; try { await saveAuctionAPI(a); } catch (e) {} rightsRefreshRow(a);
+}
+async function rightsSetField(idJs, key, manwon) {
+    var a = auctionList.filter(function(x) { return String(x.id) === String(idJs); })[0]; if (!a || !a.rights) return;
+    var n = parseInt(manwon); if (n > 0) a.rights[key] = n * 10000; else delete a.rights[key];
+    a.rights.pastedAt = a.rights.pastedAt || Date.now(); a.rights.editedAt = Date.now();
+    try { await saveAuctionAPI(a); } catch (e) { alert('저장 실패: ' + e.message); }
+    rightsRefreshRow(a);
+}
+function rightsRefreshRow(a) {
+    bidBoardRows = bidBoardRows.map(function(r) { if (String(r.id) !== String(a.id)) return r; r.a = a; delete r._vev; if (r.type === 'villa') return r; try { return finalizeBidBoardRow(r); } catch (e) { return r; } });
+    renderBidBoard(); renderBidDrawer();
+}
+function rightsPanelHtml(row) {
+    var a = row.a, R = a.rights, id = String(a.id).replace(/'/g, "\\'"), h = '<div class="dr-sec"><h4>⚖️ 권리분석 <span class="dr-sub" style="font-weight:400;">탱크옥션 상세 페이지를 붙여넣으면 임차인·등기로 인수 금액을 계산해요</span></h4>';
+    var eok = function(won) { return toEok(String(Math.round(won / 10000))); };
+    if (!R || (!R.tenants.length && !R.registry.length)) {
+        return h + '<textarea id="rights-paste" rows="4" style="width:100%;box-sizing:border-box;font-size:12px;" placeholder="탱크옥션 물건 상세 페이지 전체(임차인 현황·건물등기 포함)를 복사해 붙여넣기"></textarea>'
+            + '<button class="modal-btn btn-gray" style="margin-top:4px;" onclick="rightsApplyPaste(\'' + id + '\')">⚖️ 분석하기</button></div>';
+    }
+    var minWon = (parseInt(row.minBid) || parseInt(a.minBid) || 0) * 10000, recWon = row.recBid ? Math.round(row.recBid * 10000) : 0, opts = { addr: a.addr, extraPriorWon: (parseInt(a.assumedPrior) || 0) * 10000 + (R.extraPriorWon || 0) };
+    var wMin = minWon ? rightsWaterfall(R, minWon, opts) : null, wRec = recWon ? rightsWaterfall(R, recWon, opts) : null, w0 = wRec || wMin;
+    h += '<div class="dr-sub">말소기준일 ' + (R.baseDate || '-') + ' · 배당요구종기 ' + (R.distDeadline || '-') + (w0 && w0.startDate ? ' · 경매개시 ' + w0.startDate : '') + (R.pastedAt ? ' · ' + new Date(R.pastedAt).toISOString().slice(0, 10) + ' 붙여넣음' : '') + '</div>';
+    if (w0) {
+        h += '<table class="dr-tbl" style="margin-top:6px;"><tr><td class="dr-sub">임차인</td><td class="dr-sub">보증금</td><td class="dr-sub">대항력·배당</td></tr>';
+        w0.tenants.forEach(function(t) { h += '<tr><td>' + bbEsc(t.name) + '<div class="dr-sub">전입 ' + (t.moveIn || '미상') + ' · 확정 ' + (t.fixed || '미상') + ' · 배당요구 ' + (t.distDate || (t.rankedDist ? '있음' : '미확인')) + '</div></td><td class="r">' + eok(t.deposit) + '</td><td class="dr-sub">' + (t.standing ? '대항력 있음' : '대항력 없음') + (t.minor ? ' · 소액' : '') + '<br>' + bbEsc(t.status) + '</td></tr>'; });
+        h += '</table>';
+    }
+    var line = function(lb, w) { return w ? '<tr><td>' + lb + ' ' + eok(w.bidWon) + '</td><td class="r"><b style="color:' + (w.assumedWon > 0 ? '#dc2626' : '#16a34a') + ';">' + (w.assumedWon > 0 ? '인수 ' + eok(w.assumedWon) : '인수 0') + '</b></td></tr>' : ''; };
+    h += '<table class="dr-tbl" style="margin-top:6px;">' + line('추천 입찰가', wRec) + line('최저가로 낙찰 시', wMin) + '</table>';
+    if (w0) { h += '<div class="dr-sub" style="margin-top:4px;">배당 순서(' + eok(w0.bidWon) + ' 기준): ' + w0.steps.filter(function(x) { return x.claim > 0; }).map(function(x) { return bbEsc(x.label) + ' ' + eok(x.paid); }).join(' → ') + '</div>'; }
+    if (R.tankAssumeWon != null && wMin) h += '<div class="dr-sub">탱크옥션 표시 인수액 ' + eok(R.tankAssumeWon) + ' ↔ 이 계산(최저가) ' + eok(wMin.assumedWon) + (Math.abs(R.tankAssumeWon - wMin.assumedWon) < 10000 ? ' ✔ 일치' : ' (차이는 집행비용·선행채권 가정 차이)') + '</div>';
+    var warns = [];
+    if (w0 && w0.taxSeizures) warns.push('세무서·지자체 압류 ' + w0.taxSeizures + '건 - 체납 세금의 금액·법정기일을 몰라 계산에는 안 넣었어요. 당해세이거나 법정기일이 임차인 확정일자보다 빠르면 임차인 몫이 줄어 인수가 늘어요 → 아래에 합계를 넣으세요');
+    (R.registry || []).forEach(function(r) { if (r.assumed) warns.push(r.type + ' ' + r.holder + ' - 소멸되지 않고 인수되는 권리로 표시돼 있어요'); });
+    warns.push('유치권·법정지상권 등 특수 권리는 이 계산에 없어요(매각물건명세서·현황조사서 직접 확인)');
+    h += '<div class="dr-warn" style="margin-top:4px;">' + warns.map(bbEsc).join('<br>') + '</div>';
+    h += '<div class="dr-in" style="margin-top:6px;"><label>경매집행비용 (만원' + (R.execWon && R.tankAssumeWon != null ? ', 탱크옥션 인수액으로 역산' : ', 가정 310') + ')</label><input type="number" value="' + (R.execWon ? Math.round(R.execWon / 10000) : '') + '" placeholder="310" onchange="rightsSetField(\'' + id + '\',\'execWon\',this.value)">'
+        + '<label>당해세·임금 등 먼저 빠지는 돈 (만원)</label><input type="number" value="' + (R.extraPriorWon ? Math.round(R.extraPriorWon / 10000) : '') + '" placeholder="0" onchange="rightsSetField(\'' + id + '\',\'extraPriorWon\',this.value)"></div>';
+    h += '<div class="dr-sub" style="margin-top:4px;">' + ((parseInt(a.assumedDeposit) || parseInt(a.assumedFixed)) ? '⚠️ 아래 "인수 금액" 칸에 직접 넣은 값이 있어 그 값이 우선돼요(비우면 이 권리분석으로 계산) · ' : '') + '<a href="#" onclick="rightsClear(\'' + id + '\');return false;">권리분석 지우기</a> · <a href="#" onclick="var t=document.getElementById(\'rights-again\');t.style.display=t.style.display?\'\':\'none\';return false;">다시 붙여넣기</a></div>'
+        + '<div id="rights-again" style="display:none;"><textarea id="rights-paste" rows="3" style="width:100%;box-sizing:border-box;font-size:12px;" placeholder="새로 붙여넣기"></textarea><button class="modal-btn btn-gray" onclick="rightsApplyPaste(\'' + id + '\')">⚖️ 분석하기</button></div>';
+    return h + '</div>';
+}
 /* 인수 금액 계산(2026-10-11, 사용자 지적): 경매는 낙찰대금에서 ① 경매집행비용·체납세금 등을 먼저 떼고 ② 남은 돈으로 인수 대상 금액(선순위 임차인 보증금 등)을 먼저 갚아줌 →
    갚고도 모자란 차액만 낙찰자가 떠안음. 그래서 입찰가가 높을수록 낙찰자 부담은 줄어듦(입찰가 + 부담 = 일정, 입찰가가 '인수금액 + 선행비용'을 넘으면 부담 0).
    gross = 낙찰대금에서 갚아주는 인수 금액(만원) / fixed = 배당요구를 안 해 갚아주지 않는 확정 인수액(만원) / prior = 인수금액보다 먼저 빠지는 집행비용·세금(만원, 비우면 기본값)
@@ -14005,7 +14200,7 @@ function calcMargin() {
     // 참고). useSell(목표매도가/실제매도가)을 saleValueEstimate로 넘겨 규제지역 한도 산정 기준값으로 씀.
     var loanPlan = getEffectiveLoanPlan(bidMethod, addr, useBid, appraisal, loanAmountManual, useSell);
     var loanAmount = loanPlan.amount;
-    var cashNeeded = useBid > 0 ? Math.max(useBid - deposit - loanAmount, 0) + assumedCostAt(assumedDeposit, assumedFixed, assumedPrior, useBid) : 0; // 변제 안 되는 인수금 차액도 현금으로 준비
+    var cashNeeded = useBid > 0 ? Math.max(useBid - deposit - loanAmount, 0) + assumedCostDom(assumedDeposit, assumedFixed, assumedPrior, useBid) : 0; // 변제 안 되는 인수금 차액도 현금으로 준비
     var loanRateInput = parseFloat(document.getElementById('a-loan-rate').value);
     var loanRate = (loanRateInput > 0) ? loanRateInput : loanPlan.rate;
     var loanRegionStatusEl = document.getElementById('loan-region-status');
@@ -14031,7 +14226,7 @@ function calcMargin() {
     var prepayFee = calcLoanPrepayFee(loanAmount, loanPrepayFeeRate);
     var vatInfo = calcAuctionVat(useSell); // 2026-10: 매도가 기준(팔 때 건물분 과세)
     var vat = vatInfo.computable ? vatInfo.vat : 0;
-    var feesSum   = tax + registryFee + evictionFee + repair + agent + moving + cleaning + interestCost + prepayFee + etc + vat + assumedCostAt(assumedDeposit, assumedFixed, assumedPrior, useBid) + unpaidMgmtFee + propertyTax + compTax;
+    var feesSum   = tax + registryFee + evictionFee + repair + agent + moving + cleaning + interestCost + prepayFee + etc + vat + assumedCostDom(assumedDeposit, assumedFixed, assumedPrior, useBid) + unpaidMgmtFee + propertyTax + compTax;
     var totalCost = useBid + feesSum;
     var taxYears = (holdMonths || 0) > 12 ? Math.ceil(holdMonths / 12) : 1;
     var preTaxMargin = useSell > 0 ? useSell - totalCost : 0;
@@ -14095,7 +14290,7 @@ function calcMargin() {
           ? mItem('부가세(건물분,85㎡초과) <span onclick="showCalcInfo(\'vat\')" title="계산기준 보기" style="cursor:pointer;">ⓘ</span>', vatInfo.computable ? toEok(String(vat)) : '확인필요', vatInfo.computable ? '#c62828' : '#e65100')
           : '')
       + (assumedDeposit > 0
-          ? mItem('인수보증금(선순위 임차인) <span onclick="showCalcInfo(\'assumedDeposit\')" title="계산기준 보기" style="cursor:pointer;">ⓘ</span>', toEok(String(assumedCostAt(assumedDeposit, assumedFixed, assumedPrior, useBid))) + (assumedDeposit > 0 ? ' (인수 ' + toEok(String(assumedDeposit)) + ' 중 입찰대금으로 갚고 남는 차액)' : ''), '#c62828')
+          ? mItem('인수보증금(선순위 임차인) <span onclick="showCalcInfo(\'assumedDeposit\')" title="계산기준 보기" style="cursor:pointer;">ⓘ</span>', toEok(String(assumedCostDom(assumedDeposit, assumedFixed, assumedPrior, useBid))) + (assumedDeposit > 0 ? ' (인수 ' + toEok(String(assumedDeposit)) + ' 중 입찰대금으로 갚고 남는 차액)' : ''), '#c62828')
           : '')
       + (unpaidMgmtFee > 0
           ? mItem('미납관리비(인수비용) <span onclick="showCalcInfo(\'evictionRisk\')" title="계산기준 보기" style="cursor:pointer;">ⓘ</span>', toEok(String(unpaidMgmtFee)), '#c62828')
@@ -15640,7 +15835,7 @@ function buildMarginSummaryHtml(a) {
     // 규제지역=LTV40%+매도금액 기준 가격구간별 한도).
     var loanPlan = getEffectiveLoanPlan(bidMethod, a.addr || '', useBid, appraisal, loanAmountManual, useSell);
     var loanAmount = loanPlan.amount;
-    var cashNeeded = useBid > 0 ? Math.max(useBid - deposit - loanAmount, 0) + assumedCostAt(a.assumedDeposit, a.assumedFixed, a.assumedPrior, useBid) : 0; // 변제 안 되는 인수금 차액도 현금으로 준비
+    var cashNeeded = useBid > 0 ? Math.max(useBid - deposit - loanAmount, 0) + assumedCostRec(a, useBid) : 0; // 변제 안 되는 인수금 차액도 현금으로 준비
     var loanRateSaved = parseFloat(a.loanRate);
     var loanRate = (loanRateSaved > 0) ? loanRateSaved : loanPlan.rate;
     // calcMargin()과 동일 - 보유기간 미입력(holdMonths=0) 시 대출이자만 3개월 기본가정 적용.
@@ -16998,13 +17193,13 @@ function solveAuctionBid(estValue, marginOverride) {
         var interestCost = calcLoanInterest(loanAmount, loanRate, interestHoldMonths);
         var prepayFee = calcLoanPrepayFee(loanAmount, loanPrepayFeeRate);
         var vat = vatInfo.computable ? vatOnSale(estValue, vatInfo.buildingRatio) : 0; // 매도가(estValue) 기준 - 입찰가와 무관
-        var preTaxCost = mid + acqTax + registryFee + evictionFee + agentFee + repair + etc + moving + cleaning + interestCost + prepayFee + vat + assumedCostAt(assumedDeposit, assumedFixed, assumedPrior, mid) + unpaidMgmtFee + propertyTax + compTax;
+        var preTaxCost = mid + acqTax + registryFee + evictionFee + agentFee + repair + etc + moving + cleaning + interestCost + prepayFee + vat + assumedCostDom(assumedDeposit, assumedFixed, assumedPrior, mid) + unpaidMgmtFee + propertyTax + compTax;
         var preTaxProfit = estValue - preTaxCost;
         var taxResult = calcResaleIncomeTax(bidMethod, preTaxProfit, holdMonths, c.isAdjusted, c.houseRank);
         var netProfit = preTaxProfit - taxResult.totalTax;
         result = { bid: mid, acqTax: acqTax, registryFee: registryFee, evictionFee: evictionFee, agentFee: agentFee,
             moving: moving, cleaning: cleaning, interestCost: interestCost, loanRate: loanRate, prepayFee: prepayFee, loanPrepayFeeRate: loanPrepayFeeRate, vat: vat, vatInfo: vatInfo,
-            assumedDeposit: assumedCostAt(assumedDeposit, assumedFixed, assumedPrior, mid), unpaidMgmtFee: unpaidMgmtFee, propertyTax: propertyTax, compTax: compTax,
+            assumedDeposit: assumedCostDom(assumedDeposit, assumedFixed, assumedPrior, mid), unpaidMgmtFee: unpaidMgmtFee, propertyTax: propertyTax, compTax: compTax,
             preTaxProfit: preTaxProfit, resaleTax: taxResult.totalTax, netProfit: netProfit };
         if (netProfit > targetMargin) lo = mid; else hi = mid;
     }
@@ -17072,7 +17267,7 @@ function solveAuctionBidFromRecord(a) {
         var loanAmount = calcRegionAwareLoan(bidMethod, addr, mid, appraisal, saleValue).amount;
         var interestCost = calcLoanInterest(loanAmount, loanRate, interestHoldMonths);
         var prepayFee = calcLoanPrepayFee(loanAmount, loanPrepayFeeRate);
-        var preTaxCost = mid + acqTax + registryFee + evictionFee + agentFee + repair + etc + moving + cleaning + interestCost + prepayFee + assumedCostAt(assumedDeposit, a.assumedFixed, a.assumedPrior, mid) + unpaidMgmtFee + propertyTax + compTax + resaleVat;
+        var preTaxCost = mid + acqTax + registryFee + evictionFee + agentFee + repair + etc + moving + cleaning + interestCost + prepayFee + assumedCostRec(a, mid) + unpaidMgmtFee + propertyTax + compTax + resaleVat;
         var preTaxProfit = saleValue - preTaxCost;
         var taxResult = calcResaleIncomeTax(bidMethod, preTaxProfit, holdMonths, isAdjusted, houseRank);
         var netProfit = preTaxProfit - taxResult.totalTax;
@@ -17141,7 +17336,7 @@ function solveImpliedTargetFromBid(a, marginValue) {
         var prepayFee = calcLoanPrepayFee(loanAmount, loanPrepayFeeRate);
         var agentFee = calcAgentFee(mid, propType);
         var resaleVatI = vatRatio ? vatOnSale(mid, vatRatio) : 0;
-        var preTaxCost = resaleVatI + actualBid + acqTax + registryFee + evictionFee + agentFee + repair + etc + moving + cleaning + interestCost + prepayFee + assumedCostAt(assumedDeposit, a.assumedFixed, a.assumedPrior, actualBid) + unpaidMgmtFee + propertyTax + compTax;
+        var preTaxCost = resaleVatI + actualBid + acqTax + registryFee + evictionFee + agentFee + repair + etc + moving + cleaning + interestCost + prepayFee + assumedCostRec(a, actualBid) + unpaidMgmtFee + propertyTax + compTax;
         var preTaxProfit = mid - preTaxCost;
         var taxResult = calcResaleIncomeTax(bidMethod, preTaxProfit, holdMonths, isAdjusted, houseRank);
         var netProfit = preTaxProfit - taxResult.totalTax;
@@ -17981,7 +18176,7 @@ function computePick(row) {
     if (!row.sale) { row.visit.why = '같은 단지 실거래 자료가 부족해요'; return; }
     if (!row.winbid) { row.visit.why = row.wbBase ? '낙찰 가능성을 계산하지 못했어요(감정가·최저가 확인)' : '같은 단지 같은 평형 거래가 부족해서 낙찰 가능성을 계산할 수 없어요'; return; }
     var a = row.a;
-    var sig = [row.sale, row.minBid, row.winbid.price, a.repair, a.assumedDeposit, a.assumedFixed, a.assumedPrior, a.unpaidMgmtFee, a.holdMonths, a.etc, myAssetsVer, row.fails].join('|');
+    var sig = [row.sale, row.minBid, row.winbid.price, a.repair, a.assumedDeposit, a.assumedFixed, a.assumedPrior, a.rights ? (a.rights.pastedAt || 1) + ':' + (a.rights.editedAt || 0) : '', a.unpaidMgmtFee, a.holdMonths, a.etc, myAssetsVer, row.fails].join('|');
     if (row._pickSig === sig && row._pickCache) { row.pick = row._pickCache; }
     else {
         var pl = null;
@@ -18549,7 +18744,7 @@ function boardBaseSig(a) {
     var d = a.bidDate ? calcAuctionDday(a.bidDate) : null;
     // 2026-10-11: 건축물대장에서 자동으로 채운 연식·승강기는 재사용 판단에서 뺌 - 새로 알게 돼도 다음 월요일 미리 계산에 반영(직접 입력한 연식은 그대로 비교)
     var auto = a.buildYearSource === '건축물대장';
-    var asm = (a.assumedDeposit || a.assumedFixed || a.assumedPrior) ? 'A2:' + (a.assumedDeposit || '') + ':' + (a.assumedFixed || '') + ':' + (a.assumedPrior || '') : ''; // 인수금액 입력이 있는 물건만(새 계산식 v2)
+    var asm = (a.assumedDeposit || a.assumedFixed || a.assumedPrior || a.rights) ? 'A2:' + (a.assumedDeposit || '') + ':' + (a.assumedFixed || '') + ':' + (a.assumedPrior || '') + (a.rights ? ':R' + (a.rights.pastedAt || 0) + ':' + (a.rights.editedAt || 0) : '') : ''; // 인수금액 입력이 있는 물건만(새 계산식 v2)
     return [BOARD_CALC_VER, auctionWonEstSignature(a), a.minBid, a.appraisal, a.bidDate, a.court, a.failCount, a.landType, String(a.memo || '').length,
         Array.isArray(a.bidHistory) ? a.bidHistory.length : 0, a.courtResult || '', a.target || '', a.compTargetMargin || '', a.repair || '', auto ? '' : (a.buildYear || ''), auto || a.elevatorCnt == null ? '' : a.elevatorCnt, a.listingParse ? a.listingParse.at + '/' + a.listingParse.n : '', (a.fieldCheck || {}).cond || '',
         d && d.diffDays < 0 ? 'P' : 'F'].concat(asm ? [asm] : []).join('|');
@@ -19104,7 +19299,7 @@ function bidCostLines(row) {
         ['수리비' + ((parseInt(a.repair) || repairAuto) < basicRepairFee(pyung) ? ' (최소: 도배·장판)' : (parseInt(a.repair) ? ' (직접 입력)' : ' (연식 기준)')), Math.max(parseInt(a.repair) || repairAuto, basicRepairFee(pyung))],
         ['이사·청소', (calcMovingFee(pyung) || 0) + (calcCleaningFee(pyung) || 0)],
         ['매도 부가세 (85㎡ 초과)', row.resaleVat || 0],
-        ['인수 금액 중 입찰대금으로 못 갚는 차액' + (parseInt(a.assumedDeposit) ? ' (인수 ' + toEok(String(parseInt(a.assumedDeposit))) + ')' : ''), assumedCostAt(a.assumedDeposit, a.assumedFixed, a.assumedPrior, bid)],
+        ['인수 금액 중 입찰대금으로 못 갚는 차액' + (parseInt(a.assumedDeposit) ? ' (인수 ' + toEok(String(parseInt(a.assumedDeposit))) + ')' : (a.rights ? ' (권리분석)' : '')), assumedCostRec(a, bid)],
         ['미납 관리비', parseInt(a.unpaidMgmtFee) || 0],
         ['임장 추가 비용 (명도·누수)', parseInt(a.etc) || 0]
     ].filter(function(x) { return x[1] > 0; });
@@ -19240,6 +19435,7 @@ async function renderBidDrawer() {
     }
     h += competitionHtml(row);
     h += fieldCheckHtml(row);
+    h += rightsPanelHtml(row);
     // 직접 입력
     h += favNoteHtml(row);
     h += '<div class="dr-sec"><h4>직접 확인한 금액 (만원) - 넣으면 추천 입찰가가 바로 바뀌어요</h4><div class="dr-in">'
