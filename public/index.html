@@ -4052,7 +4052,8 @@ function renderFavLite(body) {
 }
 function nvSortBar(kind) {
     var s = bidBoardState, cur = kind === 'villa' ? (s.villaCol || 'verdict') : (s.liteCol || 'verdict');
-    return '<div class="nv-sort">' + NV_SORTS.map(function(x, i) {
+    var list = kind === 'villa' ? NV_SORTS.concat([['liq', '🔄 생활권 거래(500m)'], ['liq1k', '1km 거래']]) : NV_SORTS; // 빌라: 반경 거래 많은 순 = 빨리 팔릴 물건 찾기(2026-10-11 사용자 요청)
+    return '<div class="nv-sort">' + list.map(function(x, i) {
         return (i ? '<span class="nv-sep">|</span>' : '') + '<a class="' + (cur === x[0] ? 'on' : '') + '" onclick="nvSort(\'' + kind + '\',\'' + x[0] + '\')">' + x[1] + '</a>';
     }).join('') + '</div>';
 }
@@ -4207,6 +4208,7 @@ var VILLA_COLS = {
     net: { label: '순이익', first: -1, val: function(r, e) { return e.pn && e.pn.ev ? e.pn.ev.net : null; } },
     evv: { label: '기대수익', first: -1, val: function(r, e) { return e.pn && e.pn.ev ? e.pn.ev.p * e.pn.ev.net : null; } },
     liq: { label: '생활권 거래', first: -1, val: function(r, e) { return e.liq ? e.liq.r500.a6 : null; } },
+    liq1k: { label: '반경 1km 거래', first: -1, val: function(r, e) { return e.liq ? e.liq.r1000.a6 : null; } },
     age: { label: '연식', first: 1, val: function(r, e) { return e.mp && e.mp.age != null ? e.mp.age : null; } },
     hs: { label: '도시민박', first: 1, val: function(r) { var st = hsBld[r.id]; return st && st.chk ? ({ ok: 0, check: 1, no: 2 })[st.chk.verdict] : null; } },
     net1y: { label: '순증', first: -1, val: function(r) { var dk = hsDongKey(r.a.addr), ag = dk && homestayAgg && homestayAgg.byDong ? homestayAgg.byDong[dk] : null; return ag ? ag.net1y : null; } }
