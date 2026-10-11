@@ -4171,10 +4171,8 @@ function villaLiqHtml(liq) {
 var VILLA_CALC_KEY = 'villaCalc:v1', VILLA_CALC_TTL = 8 * 24 * 3600 * 1000, villaRestoreState = 0, villaSaveT = null;
 var villaEvPend = {}; // 서버·브라우저 저장본의 판정 요약(식별값이 맞을 때만 씀)
 var villaHsPend = {}; // 서버 저장본의 대장 연식 - 물건 목록이 아직 없을 때 받아도 잃지 않게 보관(식별값이 연식을 포함하므로 없으면 전부 다시 계산됨)
-function villaFlushHsPend() {
-    var ids = Object.keys(villaHsPend); if (!ids.length) return;
-    var byId = {}; villaMetroRows(true).forEach(function(r) { byId[r.id] = r; });
-    ids.forEach(function(id) { var r = byId[id]; if (!r) return; var d0 = villaHsPend[id]; delete villaHsPend[id]; if (hsBld[id]) return; var info = { title: d0.title, price: d0.price, partial: true }, chk = null; try { chk = homestayCheck(r.a, info); } catch (e) { return; } hsBld[id] = { info: info, chk: chk, partial: true }; });
+function villaFlushHsPend() { // 대장 연식만 먼저 들어간 물건(도시민박 판정 비어 있음)의 판정을 채움
+    villaMetroRows(true).forEach(function(r) { var h = hsBld[r.id]; if (h && h.partial && !h.chk && h.info && h.info.title) { try { h.chk = homestayCheck(r.a, h.info); } catch (e) {} } });
 }
 function villaApplyCalc(d, force) {
     if (!d) return 0;
@@ -4185,7 +4183,8 @@ function villaApplyCalc(d, force) {
     if (nl) villaLiqFinal = true;
     var byId = {}; villaMetroRows(true).forEach(function(r) { byId[r.id] = r; });
     Object.keys(d.hs || {}).forEach(function(id) {
-        var r = byId[id]; if (!r) { if (!hsBld[id]) villaHsPend[id] = d.hs[id]; return; } if (hsBld[id]) return;
+        var r = byId[id]; if (hsBld[id]) return;
+        if (!r) { hsBld[id] = { info: { title: d.hs[id].title, price: d.hs[id].price, partial: true }, chk: null, partial: true }; return; } // 물건 목록이 아직 없어도 연식·대장은 바로 넣어 둠(도시민박 판정은 목록이 생긴 뒤 채움) - 늦게 들어오면 판정이 줄줄이 다시 계산돼 개수가 올라갔음
         var info = { title: d.hs[id].title, price: d.hs[id].price, partial: true }, chk = null;
         try { chk = homestayCheck(r.a, info); } catch (e) { return; }
         hsBld[id] = { info: info, chk: chk, partial: true };
