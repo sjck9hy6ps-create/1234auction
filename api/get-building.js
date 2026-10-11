@@ -116,17 +116,17 @@ export default async function handler(req, res) {
   const cacheBldNm = bldNmKey + (dongNoDigits ? ('__d' + dongNoDigits) : '');
   const forceRefresh = force === '1' || force === 'true';
 
-  // 2026-10-11 roadScan=<도로명+번호>: 법정동 전체 표제부를 쪽 단위로 훑어 도로명이 같은 건물을 찾음(지번이 없는 도시개발구역 건물용 - 최대 15쪽, 저장 안 함)
+  // 2026-10-11 roadScan=<도로명+번호>: 법정동 전체 표제부를 쪽 단위로 훑어 도로명이 같은 건물을 찾음(지번이 없는 도시개발구역 건물용 - 최대 80쪽(쪽당 100건), 저장 안 함)
   if (req.query.roadScan) {
     if (!API_KEY) return res.status(500).json({ error: 'PUBLIC_DATA_API_KEY 없음' });
     const token = String(req.query.roadScan).trim(), hits = []; let pages = 0, total = null;
-    for (let pg = 1; pg <= 15; pg++) {
-      const tr = await fetchBld('getBrTitleInfo', { sigunguCd, bjdongCd, numOfRows: '500', pageNo: String(pg) });
+    for (let pg = 1; pg <= 80; pg++) {
+      const tr = await fetchBld('getBrTitleInfo', { sigunguCd, bjdongCd, numOfRows: '100', pageNo: String(pg) });
       pages++; if (tr.httpStatus === null) return res.status(200).json({ error: 'fetch 실패', quotaExceeded: tr.quotaExceeded || undefined, pages });
       if (total == null) total = parseInt((String(tr.raw || '').match(/<totalCount>(\d+)/) || [])[1], 10) || null;
       if (pg === 1) var rawHead = String(tr.raw || '').slice(0, 300), n1 = tr.items.length;
       tr.items.forEach(it => { if (String(it.get('newPlatPlc')).includes(token)) hits.push(normalizeTitle(it)); });
-      if (!tr.items.length || tr.items.length < 500) break;
+      if (!tr.items.length || tr.items.length < 100) break;
     }
     res.setHeader('Cache-Control', 'no-store');
     return res.status(200).json({ token, pages, total, hits, rawHead: typeof rawHead === 'undefined' ? null : rawHead, firstPageItems: typeof n1 === 'undefined' ? null : n1 });
