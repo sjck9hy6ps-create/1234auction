@@ -14137,7 +14137,7 @@ function parseTankRights(text) {
         if (!amt && (/청구금액/.test(chunk))) { var cm = chunk.match(/청구금액\s*\n?\s*([\d,]+)/); if (cm) amt = rightsNum(cm[1]); }
         var tail = chunk.split('\n').slice(1).join(' ');
         var rmv = chunk.match(/전입\s*:\s*(\d{4}[.\-]\d{1,2}[.\-]\d{1,2})/), rfx = chunk.match(/확정\s*:\s*(\d{4}[.\-]\d{1,2}[.\-]\d{1,2})/);
-        out.registry.push({ moveIn: rmv ? rightsDate(rmv[1]) : '', fixed: rfx ? rightsDate(rfx[1]) : '', seq: r.seq, date: r.date, type: r.type, holder: r.holder, amount: amt, base: /말소기준등기/.test(chunk), extinguished: /소멸/.test(chunk.split('\n')[1] + ' ' + r.rest) && !/잔액인수|인수/.test(r.rest), assumed: /잔액인수|매수인.{0,6}인수/.test(chunk), note: tail.replace(/\s+/g, ' ').trim().slice(0, 120) });
+        out.registry.push({ moveIn: rmv ? rightsDate(rmv[1]) : '', fixed: rfx ? rightsDate(rfx[1]) : '', seq: r.seq, date: r.date, type: r.type, holder: r.holder, amount: amt, base: /말소기준등기/.test(chunk), extinguished: /소멸/.test(chunk.split('\n')[1] + ' ' + r.rest) && !/잔액인수|인수/.test(r.rest), assumed: /잔액인수|매수인.{0,6}인수/.test(chunk), note: tail.replace(/\s+/g, ' ').trim().slice(0, 260) });
     });
     if (!out.registry.length) {
         var mre = /(?:^|\n)(\d{4})\.(\d{2})\.(\d{2})\n(갑|을)\((\d+)\)\n/g, ms = [], mx;
@@ -14210,16 +14210,18 @@ function rightsRegItems(rights) {
         if (r.base || !r.date) return;
         var ty = r.type || '', lease = /임차권/.test(ty);
         // 임차권등기는 전입일(없으면 접수일)이 기준 - 등기는 대항력을 유지해 줄 뿐. 나머지는 등기 접수일이 기준(같은 날이면 접수번호로 선후가 갈리는데 자료에 없어 탱크옥션 표시를 따르되 소멸 표시가 없으면 보수적으로 인수)
-        var ref = lease && r.moveIn ? r.moveIn : r.date;
+        var ref = lease && rightsRegDates(r).moveIn ? rightsRegDates(r).moveIn : r.date;
         if (ref > base || (ref === base && (lease || r.extinguished))) return;
         var tie = ref === base; mk = function(kind, mode, why) { items.push({ seq: r.seq, type: ty, holder: r.holder, date: r.date, amount: r.amount || 0, kind: kind, mode: mode, auto: !ovr[r.seq], why: (tie ? '⚠️ 말소기준일과 같은 날 접수 - 접수번호 순서를 확인하세요. ' : '') + why }); };
         if (/전세권/.test(ty)) {
             var m1 = ovr[r.seq] || (r.extinguished ? 'ext' : 'asm');
-            mk('money', m1, m1 === 'asm' ? '말소기준일보다 앞선 전세권 - 배당요구를 안 하면 전세금 전액 낙찰자 인수' : '배당요구한 것으로 보고 소멸(배당 순위에 참여, 모자란 돈은 인수 안 함)');
+            var applicant = reg.some(function(x) { return /강제경매|임의경매/.test(x.type) && x.holder && x.holder === r.holder; });
+            mk('money', m1, m1 === 'asm' ? '말소기준일보다 앞선 전세권 - 배당요구를 안 하면 전세금 전액 낙찰자 인수' + (applicant ? '(⚠️ 이 전세권자가 경매신청인이라 배당요구한 것으로 볼 수 있으면 소멸 - 탱크옥션 표시와 함께 확인해 "소멸"로 바꿀 수 있어요)' : '') : '배당요구한 것으로 보고 소멸(배당 순위에 참여, 모자란 돈은 인수 안 함)');
         } else if (/임차권/.test(ty)) {
+            if (rightsRegDates(r).moveIn) return; // 전입일을 읽은 임차권등기는 임차인으로 만들어 배당 계산에 넣음(rightsSyntheticTenants)
             if (r.amount > 0 && ts.some(function(t) { return t.deposit === r.amount; })) return;
             var m2 = ovr[r.seq] || (r.extinguished ? 'ext' : 'asm');
-            mk('money', m2, '등기된 임차권 - 전입일(' + (r.moveIn || r.date) + ')이 말소기준일보다 앞서 대항력이 있어 배당으로 못 받은 보증금은 낙찰자 인수');
+            mk('money', m2, '등기된 임차권 - 전입일(' + (rightsRegDates(r).moveIn || r.date) + ')이 말소기준일보다 앞서 대항력이 있어 배당으로 못 받은 보증금은 낙찰자 인수');
         } else if (/가등기/.test(ty) && !/담보/.test((r.note || '') + ty)) mk('risk', 'asm', '선순위 소유권이전청구권 가등기 - 본등기가 되면 낙찰자가 소유권을 잃음(금액 아님)');
         else if (/가처분|처분금지/.test(ty)) mk('risk', 'asm', '선순위 가처분 - 본안 승소 시 낙찰자가 소유권을 잃거나 건물 철거 가능(금액 아님)');
         else if (/지상권|지역권/.test(ty)) mk('risk', 'asm', '선순위 ' + (/지역권/.test(ty) ? '지역권' : '지상권') + ' - 낙찰자가 그대로 인수(토지 사용 제한·건물 철거 불가)');
@@ -14227,10 +14229,28 @@ function rightsRegItems(rights) {
     });
     return items;
 }
+// 임차인 표에 없는 등기된 임차권(주택임차권등기)을 임차인으로 만들어 대항력·배당 계산에 넣음 - 등기부 줄에 적힌 전입·확정일자 기준(임차권등기자는 배당요구한 것으로 봄).
+// 임차인 표에 같은 보증금·같은 전입일(또는 같은 이름)이 있으면 같은 사람이라 만들지 않음
+// 등기부 줄의 전입·확정일자: 새로 붙여넣은 것은 필드로, 이전에 저장한 것은 비고 글(120자로 잘려 확정일자가 없을 수 있음)에서 읽음
+function rightsRegDates(r) {
+    var D = /(\d{4}[.\-]\d{1,2}[.\-]\d{1,2})/, n = r.note || '', mv = n.match(/전입\s*:\s*(\d{4}[.\-]\d{1,2}[.\-]\d{1,2})/), fx = n.match(/확정\s*:\s*(\d{4}[.\-]\d{1,2}[.\-]\d{1,2})/);
+    return { moveIn: r.moveIn || (mv ? rightsDate(mv[1]) : ''), fixed: r.fixed || (fx ? rightsDate(fx[1]) : '') };
+}
+function rightsSyntheticTenants(rights) {
+    var ts = rights.tenants || [], out = [];
+    (rights.registry || []).forEach(function(r) {
+        var dts = rightsRegDates(r);
+        if (!/임차권/.test(r.type || '') || !(r.amount > 0) || !dts.moveIn) return;
+        var same = ts.some(function(t) { return t.deposit === r.amount && (t.moveIn === dts.moveIn || (r.holder && (t.name || '').indexOf(r.holder) >= 0)); });
+        if (same) return;
+        out.push({ name: r.holder + '(임차권등기)', deposit: r.amount, rent: 0, moveIn: dts.moveIn, fixed: dts.fixed, distDate: '', rankedDist: true, tankStanding: null, tankAssumeNote: false, role: '임차권등기자', synthetic: true, merged: [r.holder] });
+    });
+    return out;
+}
 /* 낙찰가(원) → 배당 흉내. opts: { addr, execWon, extraPriorWon(당해세·임금채권·확정일자 앞선 선순위 등 직접 입력), } */
 function rightsWaterfall(rights, bidWon, opts) {
     opts = opts || {};
-    var ts = rightsMergeTenants(rights.tenants || []), reg = rights.registry || [], base = rights.baseDate || '';
+    var ts = rightsMergeTenants(rights.tenants || []).concat(rightsSyntheticTenants(rights)), reg = rights.registry || [], base = rights.baseDate || '';
     var exec = opts.execWon != null ? opts.execWon : (rights.execWon != null ? rights.execWon : RIGHTS_EXEC_DEFAULT_WON), extra = opts.extraPriorWon != null ? opts.extraPriorWon : (rights.extraPriorWon || 0);
     var steps = [], pool = bidWon;
     var take = function(label, amt) { var p = Math.min(Math.max(pool, 0), amt); pool -= p; steps.push({ label: label, claim: amt, paid: p }); return p; };
@@ -19318,7 +19338,7 @@ async function mergeServerBoardCache(local) {
 }
 setTimeout(function() { try { srvBoardParts(); window.villaSrvP = villaFetchServerCalc(); } catch (e) {} }, 2500); // 앱을 켜고 2.5초 뒤 배경에서 미리 받기
 // 저장 계산을 다시 써도 되는지 - 물건 입력값(시세 계산에 쓰는 것)과 입찰일 지남 여부. 계산 방식이 바뀌면 BOARD_CALC_VER을 올림
-var BOARD_CALC_VER = 38; // 38: 권리분석 날짜 선후 규칙 정리(전입 다음 날 0시·동순위 안분, 2026-10-11) - // 37: 37: 권리분석에 말소기준일보다 앞선 전세권·임차권 등 등기부 인수 권리 반영(2026-10-11) - // 36: 저가 아파트 순이익률 10% 추천가 규칙 되돌림(2026-10-11, 백테스트 손해 30~42%) - // 34: 33: 아파트 고층 보정 축소·저층 범위(2026-10-11) - // 29: nYear 저장 추가 - // 27: 🎲 예상 낙찰가용 시세(wbBase) 추가 (범위 표시는 화면에서 바로 계산 - 버전 변경 없음)
+var BOARD_CALC_VER = 39; // 39: 임차권등기를 임차인으로 계산(전입·확정일자 기준)·경매신청인 전세권 안내(2026-10-11) - // 38: 38: 권리분석 날짜 선후 규칙 정리(전입 다음 날 0시·동순위 안분, 2026-10-11) - // 37: 37: 권리분석에 말소기준일보다 앞선 전세권·임차권 등 등기부 인수 권리 반영(2026-10-11) - // 36: 저가 아파트 순이익률 10% 추천가 규칙 되돌림(2026-10-11, 백테스트 손해 30~42%) - // 34: 33: 아파트 고층 보정 축소·저층 범위(2026-10-11) - // 29: nYear 저장 추가 - // 27: 🎲 예상 낙찰가용 시세(wbBase) 추가 (범위 표시는 화면에서 바로 계산 - 버전 변경 없음)
 function boardBaseSig(a) {
     var d = a.bidDate ? calcAuctionDday(a.bidDate) : null;
     // 2026-10-11: 건축물대장에서 자동으로 채운 연식·승강기는 재사용 판단에서 뺌 - 새로 알게 돼도 다음 월요일 미리 계산에 반영(직접 입력한 연식은 그대로 비교)
