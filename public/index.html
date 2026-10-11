@@ -3735,12 +3735,13 @@ function hsNearby(a, radiusM) {
    순서: ① 같은 건물(번지) 24개월·면적 ±6㎡ → ② 같은 법정동 12개월·면적 ±8㎡·준공 ±5년 → ③ 같은 시군구 12개월·면적 ±8㎡.  ㎡당 가격을 최신 거래에 더 큰 비중(1년 반감)·비슷한 면적에 더 큰 비중으로 중앙값을 내고 면적을 곱함.
    범위는 단계별 실제 오차(백테스트 10~90%) - 같은 건물 3건 이상일 때만 오차 8%대로 쓸 만하고, 거래가 적을수록 범위가 넓어져 "참고용". */
 var VILLA_EST_RANGE = { '건물5+': [-18.4, 8.0, 6.2], '건물1~2+동': [-22.9, 20.7, 10.1], '건물1~2': [-17.6, 38.7, 12.7], '동5+': [-25.9, 41.8, 15.0], '동1~4': [-28.6, 56.3, 19.1], '시군구': [-44.7, 104.5, 33.2] };
+function villaHsYear(a) { try { var h = hsBld[a.id], t = h && h.info && h.info.title, y = t && t.useAprDay ? parseInt(String(t.useAprDay).slice(0, 4), 10) : null; return y > 1950 && y <= new Date().getFullYear() ? y : null; } catch (e) { return null; } }
 function villaSaleEst(a, ref) {
     var area = (parseFloat(a.pyung) || 0) * 3.305785; if (!area) return null;
     var bunjiFull = fullBunjiFromAddr(a.addr, a.dong, a.bunji);
     ref = ref || Date.now();
     if (a.bidDate) { var bd = new Date(a.bidDate + 'T00:00:00').getTime() - 30 * 86400000; if (bd < ref) ref = bd; }
-    var by = parseInt(a.buildYear || a.estBuildYear, 10) || null;
+    var by = parseInt(a.buildYear || a.estBuildYear, 10) || villaHsYear(a) || null; // 2026-10-11: 건축물대장 사용승인연도도 씀(안 넘기면 '준공 ±5년' 비교가 꺼진 채 신축 거래가 섞였음 - 노량진 사례)
     var coll = function(entries, days, tol, byTol) {
         var out = [], lo = ref - days * 86400000;
         entries.forEach(function(ap) {
@@ -4216,7 +4217,7 @@ function villaSaveCalcSoon() {
     villaSaveT = setTimeout(function() { var snap = villaCalcSnapshot(); listIdbOp('readwrite', function(st) { return st.put(snap, VILLA_CALC_KEY); }); }, 4000);
 }
 var villaVeCache = {}, villaLoadBusy = false;
-function villaVeSig(a) { return ['v4', a.pyung, a.addr, a.dong, a.bunji, a.bidDate, a.buildYear || '', a.estBuildYear || ''].join('|'); }
+function villaVeSig(a) { return ['v4', a.pyung, a.addr, a.dong, a.bunji, a.bidDate, a.buildYear || '', a.estBuildYear || '', a.buildYear || a.estBuildYear ? '' : (villaHsYear(a) || '')].join('|'); }
 async function villaLoadRegions() {
     if (villaLoadBusy) return; villaLoadBusy = true;
     try {

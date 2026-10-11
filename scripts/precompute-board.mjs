@@ -64,6 +64,13 @@ try {
     if (!st.busy && st.final && st.ve >= st.rows && Date.now() - tv > 15 * 60 * 1000) break; // 대장 조회는 최대 15분만 기다림
     if (Date.now() - tv > 40 * 60 * 1000) { console.log('빌라 시간 초과'); break; }
   }
+  // 대장 연식이 채워진 뒤 예상매도가가 새 연식으로 다시 계산돼야 하므로(식별값에 연식 포함) 다 맞을 때까지 기다림(최대 20분)
+  const tw = Date.now();
+  for (;;) {
+    const ok = await page.evaluate(() => !villaLoadBusy && villaMetroRows(true).every((r) => { const c = villaVeCache[r.id]; return c && c.sig === villaVeSig(r.a); }));
+    if (ok || Date.now() - tw > 20 * 60 * 1000) { console.log(`빌라 연식 반영 재계산 대기 ${Math.round((Date.now() - tw) / 1000)}s · ${ok ? '완료' : '시간 초과'}`); break; }
+    await page.waitForTimeout(10000);
+  }
   villa = await page.evaluate(() => villaCalcSnapshot());
 } catch (e) { console.log('빌라 미리 계산 실패:', String(e).slice(0, 200)); }
 await browser.close();
