@@ -15448,6 +15448,7 @@ function openMatchedApt(auctionId) {
     if (!matched) { openAuctionModal(auctionId); return; }
     if (a.lat && a.lon) showRadiusCircle(a.lat, a.lon);
     openPanel(matched, a.lat, a.lon);
+    try { switchPanelTab('price'); } catch (e) {} // 경매 배지를 눌렀을 땐 매매 히스토리를 먼저(경매정보 탭은 바로 옆) - 🛠 수정 요청 fbmv3id5exwt9
 }
 /* ════════════════════════════════════
    낙찰사례(bidCaseList) 지도 배지 - 내가 등록한 경매물건(auctionList, 🔨)과는 별개로,
