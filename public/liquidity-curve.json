@@ -1,0 +1,82 @@
+{
+ "generatedAt": "2026-10-11",
+ "basis": "입찰 30일 전 기준 같은 단지·같은 평형(±3㎡) 최근 1년 중개거래 수(n12) - 낙찰사례 2023~ 기준",
+ "note": "p6/p12 = 낙찰 후 6/12개월 안에 같은 동·같은 층 되팔림 흔적(낙찰 1년 이상 지난 사례), p18·medMonths = 18개월+ 지난 사례",
+ "bins": [
+  {
+   "lo": 0,
+   "hi": 2,
+   "label": "2건 이하",
+   "n": 3601,
+   "p6": 13.1,
+   "p12": 20.9,
+   "p18": 24.9,
+   "medMonths": 5.6,
+   "meanMonths": 6.8,
+   "p75Months": 10.0,
+   "lossPct": 32.6,
+   "bidRatio": 0.76,
+   "holdMonths": 10
+  },
+  {
+   "lo": 3,
+   "hi": 5,
+   "label": "3~5건",
+   "n": 1916,
+   "p6": 20.9,
+   "p12": 33.7,
+   "p18": 39.7,
+   "medMonths": 5.7,
+   "meanMonths": 6.8,
+   "p75Months": 9.8,
+   "lossPct": 27.8,
+   "bidRatio": 0.851,
+   "holdMonths": 7
+  },
+  {
+   "lo": 6,
+   "hi": 10,
+   "label": "6~10건",
+   "n": 2177,
+   "p6": 28.5,
+   "p12": 42.2,
+   "p18": 47.1,
+   "medMonths": 5.0,
+   "meanMonths": 6.2,
+   "p75Months": 8.6,
+   "lossPct": 31.1,
+   "bidRatio": 0.871,
+   "holdMonths": 6
+  },
+  {
+   "lo": 11,
+   "hi": 20,
+   "label": "11~20건",
+   "n": 2310,
+   "p6": 32.6,
+   "p12": 48.0,
+   "p18": 52.2,
+   "medMonths": 4.9,
+   "meanMonths": 6.1,
+   "p75Months": 8.5,
+   "lossPct": 30.4,
+   "bidRatio": 0.885,
+   "holdMonths": 6
+  },
+  {
+   "lo": 21,
+   "hi": null,
+   "label": "21건 이상",
+   "n": 3142,
+   "p6": 41.4,
+   "p12": 57.2,
+   "p18": 63.2,
+   "medMonths": 4.7,
+   "meanMonths": 5.8,
+   "p75Months": 8.1,
+   "lossPct": 36.4,
+   "bidRatio": 0.892,
+   "holdMonths": 6
+  }
+ ]
+}

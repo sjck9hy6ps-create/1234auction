@@ -3449,6 +3449,16 @@ export default async function handler(req, res) {
       return res.status(500).json({ error: err.message });
     }
   }
+  if (req.query.mode === 'liqcurve') { // 2026-10-11 환금성 곡선(같은 평형 최근 1년 거래 수별 되팔림·보유 기간) - analyze-bidcases가 매주 갱신
+    res.setHeader('Cache-Control', 's-maxage=3600, stale-while-revalidate=86400');
+    try {
+      const { data, error } = await supabase.from('leader_follower_cache').select('payload').eq('id', 'signal|__liqcurve__').maybeSingle();
+      if (error) return res.status(500).json({ error: error.message });
+      return res.status(200).json((data && data.payload) || {});
+    } catch (err) {
+      return res.status(500).json({ error: err.message });
+    }
+  }
   if (req.query.mode === 'homestayDong') {
     res.setHeader('Cache-Control', 's-maxage=3600, stale-while-revalidate=86400');
     try {

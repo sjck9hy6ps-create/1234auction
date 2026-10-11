@@ -290,6 +290,8 @@ def main():
                         rec_est = {}
                     break
             rec["est"] = est; rec["own"] = own
+            # 2026-10-11 환금성: 입찰 30일 전 기준 같은 단지·같은 평형(±3㎡) 최근 1년 중개거래 수 - 앱의 "최근 1년 같은 평형 거래"와 같은 정의
+            rec["n12"] = int(((g["deal_date"] >= ymd_int(sale_d - timedelta(days=30 + 365))) & (g["deal_date"] < cut) & ((g["size"] - c.area).abs() <= 3)).sum())
             rec.update(rec_est)
             # 재매도 - 2026-10 정확도 개선: 큰 단지는 같은 층에 같은 평형이 여러 채라 "같은 층 첫 거래"의 절반 이상이 다른 집이었음
             # (낙찰 12개월 안 같은 층 거래 56% vs 2층 위·아래 층 43%). 2023년부터 실거래에 동(棟)이 있어 같은 동·같은 층으로 좁힘:
@@ -465,6 +467,8 @@ def main():
         competition_stats(R, now)
         try:
             winbid_model(R, now)
+            try: liquidity_curve(R, now)
+            except Exception as e: print('  환금성 곡선 실패(건너뜀):', e)
         except Exception as e:
             print('  예상 낙찰가 모델 실패(건너뜀):', e)
         try:
@@ -781,6 +785,33 @@ def wb_predict(model, D):
     for f, _ in WB_FACTORS:
         p = p + X[f].map(model["eff"][f]).fillna(0).values
     return p
+
+
+def liquidity_curve(R, now_iso):
+    """2026-10-11 환금성 곡선(사용자: 회전율·호가 매물을 활용) - 같은 평형 최근 1년 거래 수(n12)별로 낙찰 후 6/12개월 안 같은 동·층 되팔림 흔적 비율, 되판 기간, 손실률, 낙찰가÷예상매도가.
+    보유 기간(이자 가정): 18개월 안 되팔림이 25% 미만이면 되판 기간 상위 25% 값, 아니면 평균(3~12개월로 제한). 낙찰 1년(18개월) 이상 지난 2023년~ 사례만 씀."""
+    D = R[(R["sale"] >= 20230101) & R["n12"].notna() & R["est"].notna()].copy()
+    if len(D) < 3000:
+        print("  환금성 곡선: 사례 부족, 건너뜀"); return
+    D["dt"] = pd.to_datetime(D["sale"].astype(int).astype(str), format="%Y%m%d", errors="coerce")
+    now = pd.Timestamp(now_iso[:10])
+    O12 = D[D["dt"] <= now - pd.Timedelta(days=365)]; O18 = D[D["dt"] <= now - pd.Timedelta(days=548)]
+    bins = []
+    for lo, hi, lab in ((0, 2, "2건 이하"), (3, 5, "3~5건"), (6, 10, "6~10건"), (11, 20, "11~20건"), (21, 10 ** 9, "21건 이상")):
+        a = O12[(O12["n12"] >= lo) & (O12["n12"] <= hi)]; b = O18[(O18["n12"] >= lo) & (O18["n12"] <= hi)]
+        if len(a) < 100 or len(b) < 100: continue
+        w = b[(b["resale_conf"] == "dong") & (b["resale_m"] <= 18)]
+        if len(w) < 30: continue
+        p18 = len(w) / len(b); s = a[(a["resale_conf"] == "dong") & a["resale"].notna()]; allc = D[(D["n12"] >= lo) & (D["n12"] <= hi)]
+        hold = round(float(w["resale_m"].quantile(.75))) if p18 < 0.25 else round(float(w["resale_m"].mean()))
+        bins.append({"lo": lo, "hi": hi if hi < 10 ** 9 else None, "label": lab, "n": int(len(a)),
+                     "p6": round(float(((a["resale_conf"] == "dong") & (a["resale_m"] <= 6)).mean()) * 100, 1), "p12": round(float(((a["resale_conf"] == "dong") & (a["resale_m"] <= 12)).mean()) * 100, 1),
+                     "p18": round(p18 * 100, 1), "medMonths": round(float(w["resale_m"].median()), 1), "meanMonths": round(float(w["resale_m"].mean()), 1), "p75Months": round(float(w["resale_m"].quantile(.75)), 1),
+                     "lossPct": round(float(s["loss"].mean()) * 100, 1) if len(s) else None, "bidRatio": round(float((allc["actual"] / allc["est"]).median()), 3), "holdMonths": int(max(3, min(12, hold)))})
+    if len(bins) < 4: return
+    payload = {"generatedAt": now_iso, "basis": "입찰 30일 전 기준 같은 단지·같은 평형(±3㎡) 최근 1년 중개거래 수(n12) - 낙찰사례 2023~", "note": "p6/p12 = 낙찰 후 6/12개월 안 같은 동·같은 층 되팔림 흔적(낙찰 1년 이상 지난 사례), p18·medMonths = 18개월+ 지난 사례", "bins": bins}
+    print("  환금성 곡선:", json.dumps([(b["label"], b["p6"], b["holdMonths"]) for b in bins], ensure_ascii=False))
+    cyc.upsert_rows([{"id": "signal|__liqcurve__", "payload": cyc.clean_json(payload), "fetched_at": now_iso}])
 
 
 def winbid_model(R, now):

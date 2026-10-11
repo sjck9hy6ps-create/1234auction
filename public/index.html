@@ -4028,7 +4028,7 @@ function nvAptCard(r) {
         spec: bbEsc(r.region) + (r.pyung ? ' · 아파트 ' + r.pyung + '평(' + Math.round(r.pyung * 3.305785) + '㎡)' : '') + (r.floor ? ' · ' + r.floor + '층' : '') + ' · ' + (r.fails == null ? '' : (r.fails === 0 ? '신건' : r.fails + '회 유찰')),
         sum: '예상매도가 <b>' + am(r.sale) + '</b> · 최저가 ' + am(r.minBid) + (r.winbid && r.winbid.price ? ' · 예상 낙찰가 ' + am(r.winbid.price) : ''),
         chips: [e ? { t: '낙찰 ' + Math.round(e.p * 100) + '%', cls: e.p >= 0.6 ? 'g' : (e.p >= 0.35 ? 'o' : 'r') } : null, e ? { t: '순이익 ' + am(e.net) } : null,
-            os ? { t: '1년 거래 ' + (os.n12 || 0) + '건', cls: (os.n12 || 0) >= 6 ? 'g' : ((os.n12 || 0) >= 3 ? '' : 'r') } : null, r.niche ? { t: '🧭 틈새', cls: 'g' } : null, r.issueSuspect ? { t: '🚩 이슈 의심', cls: 'r' } : null,
+            os ? { t: '1년 거래 ' + (os.n12 || 0) + '건', cls: (os.n12 || 0) >= 6 ? 'g' : ((os.n12 || 0) >= 3 ? '' : 'r') } : null, r.liq ? { t: '💧 6개월 내 되팔림 ' + Math.round(r.liq.p6) + '%' + (r.holdFromSupply ? ' · 매물 많음' : ''), cls: r.liq.p6 >= 30 ? 'g' : (r.liq.p6 < 18 ? 'r' : '') } : null, r.niche ? { t: '🧭 틈새', cls: 'g' } : null, r.issueSuspect ? { t: '🚩 이슈 의심', cls: 'r' } : null,
             l.st === 'yes' ? { t: '📋 매물 ' + l.n + '건', cls: 'g' } : (l.st === 'none' ? { t: '📋 매물 없음' } : null), rightsNeeded(r, r.visit.go) ? { t: '⚖️ 권리분석 필요', cls: 'o' } : null], note: r.a.fav ? r.a.favNote : '' });
 }
 function renderFavLite(body) {
@@ -4154,7 +4154,7 @@ async function applyVillaListings(id) {
     try { ev = row && villaSaleEst(a); } catch (e) {}
     var sm = summarizeVillaListings(list, (parseFloat(a.pyung) || 0) * 3.305785, a.floor, ev && ev.est);
     sm.kind = 'villa'; a.listingParse = sm;
-    a.listingHistory = (Array.isArray(a.listingHistory) ? a.listingHistory : []).concat([{ at: sm.at, n: sm.n, min: sm.min, q25: sm.q25, med: sm.med }]).slice(-10);
+    a.listingHistory = (Array.isArray(a.listingHistory) ? a.listingHistory : []).concat([{ at: sm.at, n: sm.n, n12: (typeof row !== 'undefined' && row && row.ownStats) ? row.ownStats.n12 : null, min: sm.min, q25: sm.q25, med: sm.med }]).slice(-10);
     try { await saveAuctionAPI(a); } catch (e) { alert('저장 실패: ' + e.message); }
     bidBoardRows = bidBoardRows.map(function(r) { if (String(r.id) === String(id)) { r.a = a; delete r._vev; } return r; });
     if (document.getElementById('bld-panel')) openBuildingDetail(id);
@@ -17558,8 +17558,8 @@ function solveAuctionBidFromRecord(a) {
     var holdsJune1 = !!a.holdsJune1;
     var totalOfficialPriceManwon = parseInt(a.totalOfficialPriceManwon) || myTotalOfficialWith(officialPriceWon);
     var holdMonths = parseInt(a.holdMonths) || 0;
-    // calcMargin()·buildMarginSummaryHtml()과 동일 - 보유기간 미입력 시 대출이자만 3개월 기본가정
-    var interestHoldMonths = holdMonths > 0 ? holdMonths : DEFAULT_INTEREST_HOLD_MONTHS;
+    // calcMargin()·buildMarginSummaryHtml()과 동일 - 보유기간 미입력 시 대출이자만 3개월 기본가정 (아파트 입찰후보는 환금성 곡선 기준 holdAuto 우선)
+    var interestHoldMonths = holdMonths > 0 ? holdMonths : (parseInt(a.holdAuto) > 0 ? parseInt(a.holdAuto) : DEFAULT_INTEREST_HOLD_MONTHS);
     var propertyTax = calcPropertyTax(officialPriceWon, houseRank, holdsJune1, holdMonths);
     var compTax = calcCompTax(totalOfficialPriceManwon, officialPriceWon, houseRank, holdsJune1, holdMonths);
     var moving = parseInt(a.moving) || calcMovingFee(pyung) || 0;
@@ -18411,7 +18411,7 @@ function bidPlanFor(row, fast) {
     var wb = row.winbid;
     if (!wb || !row.sale || !row.minBid || row.type !== 'apt') return null;
     var a = row.a;
-    var base = Object.assign({}, a, { target: row.sale, repair: effRepairFee(a, row.type, row.pyung, a.buildYear || row.estBuildYear || null) });
+    var base = Object.assign({}, a, { target: row.sale, holdAuto: row.holdAuto, repair: effRepairFee(a, row.type, row.pyung, a.buildYear || row.estBuildYear || null) });
     var pts = [];
     var MINM = minMarginOf(row);
     (fast ? [0, 1000, 2000, 3500, MINM] : [0, 500, 1000, 1500, 2000, 3000, 4000, MINM].concat(row.margin != null ? [Math.round(row.margin)] : [])).filter(function(m, i, arr) { return arr.indexOf(m) === i; }).forEach(function(m) {
@@ -18524,13 +18524,67 @@ function applyPickToRow(row) {
 /* ⚡ 입찰후보 열기 속도(2026-10-11, 사용자: "아직도 불러오는 중·빈 화면") - 저장된 행(서버가 미리 계산)을 열 때마다 2,900건 모두 finalize(세금·마진·판정 다시, 건당 1.6ms ≈ 5초)하고,
    내 자산 로딩·낙찰가 모델 로딩 때도 전체를 다시 finalize하느라 화면이 멈췄음. 행에 '그때의 내 자산·낙찰가 모델 지문'(finalSig)을 남기고, 같으면 다시 계산하지 않음.
    지문이 다르면(내 자산을 바꿈·모델 새로 받음) 화면을 막지 않게 12ms씩 나눠 뒤에서 다시 계산. */
+/* 💧 환금성 곡선 · 보유 기간 · 소진 예상 기간 (2026-10-11, 사용자: "아파트는 회전율을 적극 활용 - 호가 매물 수량과 회전율을 적용할 방법")
+   A) 환금성: 입찰 30일 전 기준 '같은 단지·같은 평형(±3㎡) 최근 1년 중개거래 수(n12)'별로 낙찰 후 6·12개월 안 같은 동·층 되팔림 흔적 비율(낙찰사례 2023~, 매주 서버가 갱신 - signal|__liqcurve__).
+      같은 평형 거래 2건 이하는 6개월 내 13%, 21건 이상은 41%(세대수 대비 회전율은 2% 미만만 구분되고 상관도 낮아 보조로만 씀).
+   B) 보유 기간(대출이자) 가정: 예전엔 늘 3개월이었으나 실제 되판 기간은 중앙 5~6개월(평균 6~7개월) - 곡선의 holdMonths(2건 이하 10개월·3~5건 7개월·그 외 6개월)를 기본 보유 기간으로 씀.
+      직접 입력한 보유 기간(a.holdMonths)이 있으면 그 값이 우선.
+   C) 소진 예상 기간: (같은 평형 호가 매물 수 + 1) ÷ 월 거래 수(n12÷12) - 지금 속도로 매물이 다 팔리는 데 걸리는 개월(재고월수). 호가 매물은 붙여넣은 지 30일 이내만. 과거 호가 기록이 없어 백테스트는 못 했고(검증 전),
+      곡선 기반 보유 기간보다 길면 그 값(최대 12개월)으로 보유 기간을 늘림(보수적 방향). 붙여넣을 때마다 listingHistory에 쌓아 3~6개월 뒤 검증. */
+var liqCurve = null;
+function loadLiqCurve() {
+    var ok = function(d) { return d && Array.isArray(d.bins) && d.bins.length >= 4; };
+    fetch('/api/data-coverage?mode=liqcurve').then(function(r) { return r.json(); }).then(function(d) { if (!ok(d)) throw new Error('empty'); liqCurve = d; finalizeStaleRows(); })
+        .catch(function() { return fetch('/liquidity-curve.json').then(function(r) { return r.json(); }).then(function(d) { if (ok(d)) { liqCurve = d; finalizeStaleRows(); } }); }).catch(function() {});
+}
+setTimeout(loadLiqCurve, 800);
+function liqBinFor(n) {
+    if (!liqCurve || n == null || isNaN(n)) return null;
+    var bs = liqCurve.bins; for (var i = 0; i < bs.length; i++) if (n >= bs[i].lo && (bs[i].hi == null || n <= bs[i].hi)) return bs[i];
+    return bs[bs.length - 1];
+}
+function supplyMonthsFor(row) { // C: 소진 예상 기간
+    var l = listingStatus(row.a), os = row.ownStats; if (!os || l.st !== 'yes' || l.age == null || l.age > 30) return null;
+    var rate = (os.n12 || 0) / 12, months = rate > 0 ? (l.n + 1) / rate : 24;
+    return { months: Math.min(24, Math.round(months * 10) / 10), n: l.n, n12: os.n12 || 0, age: l.age };
+}
+function aptLiqApply(row) {
+    row.n12 = null; row.liq = null; row.supply = null; row.holdAuto = null; row.holdFromSupply = false;
+    if (row.type !== 'apt' || !row.ownStats) return;
+    row.n12 = row.ownStats.n12 || 0; row.liq = liqBinFor(row.n12); row.supply = supplyMonthsFor(row);
+    if (!row.liq) return;
+    var hold = row.liq.holdMonths;
+    if (row.supply && row.supply.months > hold) { hold = Math.min(12, Math.ceil(row.supply.months)); row.holdFromSupply = hold > row.liq.holdMonths; }
+    row.holdAuto = hold;
+}
+function liqShortHtml(r) { // 목록 칸·카드용 한 줄
+    if (!r.liq) return '';
+    return '<div style="font-size:11.5px;margin-bottom:2px;" title="같은 단지 같은 평형 최근 1년 거래 ' + r.n12 + '건 - 과거 낙찰사례 ' + r.liq.n + '건 기준">💧 같은 평형 1년 <b>' + r.n12 + '건</b> · 6개월 내 되팔림 <b style="color:' + (r.liq.p6 >= 30 ? '#2e7d32' : (r.liq.p6 < 18 ? '#c62828' : '#ef6c00')) + ';">' + Math.round(r.liq.p6) + '%</b></div>';
+}
+function liqDrawerHtml(row) {
+    if (row.type !== 'apt' || !row.liq) return '';
+    var q = row.liq, h = '<div class="dr-sec"><h4>💧 환금성 · 보유 기간</h4>';
+    h += '<div>같은 단지·같은 평형 최근 1년 거래 <b>' + row.n12 + '건</b> (' + bbEsc(q.label) + ')</div>';
+    h += '<div class="dr-sub">비슷한 낙찰 물건(' + q.n.toLocaleString() + '건)은 6개월 안에 <b>' + Math.round(q.p6) + '%</b>, 12개월 안에 <b>' + Math.round(q.p12) + '%</b>가 같은 동·층에서 되팔린 흔적이 있어요(되팔림 확인된 것만 센 값 - 실제 매도보다 낮게 잡힐 수 있어요). 되판 경우 보통 ' + q.medMonths + '개월(평균 ' + q.meanMonths + '개월) 걸렸어요.</div>';
+    h += '<div class="dr-sub">이런 물건의 낙찰가는 예상매도가의 약 ' + Math.round(q.bidRatio * 100) + '%, 되판 사례의 손실 비율 ' + (q.lossPct != null ? Math.round(q.lossPct) + '%' : '-') + ' - 거래가 많을수록 팔기는 쉽지만 경쟁이 세서 남는 돈은 줄어요.</div>';
+    var a = row.a, hm = parseInt(a.holdMonths) || 0;
+    h += '<div style="margin-top:4px;">대출이자 보유 기간 가정: <b>' + (hm > 0 ? hm + '개월 (직접 입력)' : row.holdAuto + '개월') + '</b>' + (hm > 0 ? '' : (row.holdFromSupply ? ' <span class="dr-sub" style="display:inline;">(호가 매물이 많아 환금성 기준 ' + q.holdMonths + '개월에서 늘림)</span>' : ' <span class="dr-sub" style="display:inline;">(예전 기본 3개월 → 실제 되판 기간 기준)</span>')) + '</div>';
+    if (row.supply) {
+        var sp = row.supply, tone = sp.months <= 3 ? '#2e7d32' : (sp.months <= 6 ? '#ef6c00' : '#c62828');
+        h += '<div style="margin-top:4px;">소진 예상 기간: <b style="color:' + tone + ';">약 ' + sp.months + '개월</b> <span class="dr-sub" style="display:inline;">(같은 평형 호가 매물 ' + sp.n + '건 ÷ 월 거래 ' + (Math.round(sp.n12 / 12 * 10) / 10) + '건 · 호가 확인 ' + sp.age + '일 전)</span></div>';
+        h += '<div class="dr-sub">' + (sp.months <= 3 ? '매물이 빨리 소진되는 편이에요.' : (sp.months <= 6 ? '보통 속도예요.' : '⚠️ 매물이 쌓여 있어 팔리기까지 오래 걸릴 수 있어요.')) + ' (재고월수 계산 - 아직 과거 자료로 검증하지 못해 참고·보유 기간 보수적 조정에만 써요)</div>';
+    } else {
+        h += '<div class="dr-sub" style="margin-top:4px;">네이버 매물 목록을 붙여넣으면(30일 안) 소진 예상 기간도 계산돼요.</div>';
+    }
+    return h + '</div>';
+}
 var _fsigMemo = { v: -1, m: null, sig: '' };
 function boardFinalSig() {
-    if (_fsigMemo.v === myAssetsVer && _fsigMemo.m === winbidModel && _fsigMemo.l === myAssets.loaded) return _fsigMemo.sig;
+    if (_fsigMemo.v === myAssetsVer && _fsigMemo.m === winbidModel && _fsigMemo.l === myAssets.loaded && _fsigMemo.c === liqCurve) return _fsigMemo.sig;
     var h = 5381, js = ''; try { js = JSON.stringify({ i: myAssets.items, p: myAssets.profile }); } catch (e) {}
     for (var i = 0; i < js.length; i++) h = ((h << 5) + h + js.charCodeAt(i)) | 0;
-    var sig = BOARD_CALC_VER + '|' + (myAssets.loaded ? h : 'na') + '|' + (winbidModel ? (winbidModel.generatedAt || '1') + (winbidModel.bid ? 'b' : '') : '0');
-    _fsigMemo = { v: myAssetsVer, m: winbidModel, l: myAssets.loaded, sig: sig }; return sig;
+    var sig = BOARD_CALC_VER + '|' + (myAssets.loaded ? h : 'na') + '|' + (winbidModel ? (winbidModel.generatedAt || '1') + (winbidModel.bid ? 'b' : '') : '0') + '|' + (liqCurve ? (liqCurve.generatedAt || '1') : '0');
+    _fsigMemo = { v: myAssetsVer, m: winbidModel, l: myAssets.loaded, c: liqCurve, sig: sig }; return sig;
 }
 var _fsrBusy = false, _fsrAgain = false;
 function finalizeStaleRows(cb) {
@@ -18558,6 +18612,7 @@ function finalizeBidBoardRow(row) {
     if (/주\s*건축물/.test(row.name || '')) row.name = cleanBldgName(row.name) || buildingNameFromAddr(a.addr, a.dong) || ((a.dong || '') + ' ' + (a.bunji || '')).trim() || row.name; // 저장된 계산에 남은 옛 이름 정리
     row.reasons = []; row.warns = []; row.nextFail = null; row.overshoot = false; row.bulk = false; row.sweet = false; row.volDown = false; row.sturdy = false; row.hardHold = false; row.recBidRaw = null; row.recCapped = null; row.safetyExtra = null; row.safetyPct = null;
     row.assetVer = myAssetsVer; row.finalSig = boardFinalSig();
+    try { aptLiqApply(row); } catch (e) {}
     // 매물 기반 상한 - 실거래 기반 값(saleTrade)은 그대로 두고, 매물이 더 싸면 그만큼만 낮춤
     if (row.saleTrade === undefined) row.saleTrade = row.sale;
     row.sale = row.saleTrade; row.listingCap = null;
@@ -18573,7 +18628,7 @@ function finalizeBidBoardRow(row) {
     if (row.sale && row.margin != null) {
         var buildYear = a.buildYear || row.estBuildYear || null;
         var rec = solveAuctionBidFromRecord(Object.assign({}, a, {
-            target: row.sale, compTargetMargin: row.margin,
+            target: row.sale, compTargetMargin: row.margin, holdAuto: row.holdAuto,
             repair: effRepairFee(a, type, pyung, buildYear)
         }));
         row.recBid = rec ? rec.bid : null;
@@ -18697,7 +18752,7 @@ function finalizeBidBoardRow(row) {
     // 마진을 포기하고 높게 쓴 1등(2등보다 5% 이상 높게 쓴 경우가 28%)까지 쫓지는 않음.
     row.recAggr = null;
     if ((row.opportunity || row.sturdy) && !row.bulk && row.recBid && row.verdict !== 'no' && row.verdict !== 'nodata') {
-        var solMin = solveAuctionBidFromRecord(Object.assign({}, a, { target: row.sale, compTargetMargin: minMarginOf(row),
+        var solMin = solveAuctionBidFromRecord(Object.assign({}, a, { target: row.sale, holdAuto: row.holdAuto, compTargetMargin: minMarginOf(row),
             repair: effRepairFee(a, type, pyung, a.buildYear || row.estBuildYear || null) }));
         var cap3 = Math.round(row.recBid * 1.03);
         var aggr = solMin ? Math.min(cap3, solMin.bid) : null;
@@ -19233,6 +19288,7 @@ function liteTradesHtml(r) {
 // 임장 후보 표의 거래량 순위·회전율(2026-10, 사용자: "물건정보에 순위가 빠졌어 - 회전율, 생활권 순위, 동별 단지 순위 표기") - 예전 표의 순위 칸과 같은 값을 3줄로
 function liteRankHtml(r) {
     var out = [];
+    if (r.liq) out.push(liqShortHtml(r));
     var to = turnoverOf(r);
     if (to) out.push('<div>회전율 <b style="color:' + to.grade.c + ';">' + to.rate + '%</b> <span class="bb-sub" style="display:inline;">' + to.grade.t + '</span></div>');
     if (r.liv) {
@@ -19510,7 +19566,7 @@ function renderBidBoardRow(r) {
     var tierPill = function(t, prefix) { return '<span class="bb-pill ' + (t === '상위20%' ? 'good' : (t === '하위40%' ? 'bad' : '')) + '">' + (prefix || '') + (t === '상위20%' ? '🔥 인기 상위 20%' : (t === '하위40%' ? '거래 드묾(하위 40%)' : '인기 중간')) + '</span>'; };
     var livHtml = r.liv ? '<div style="font-weight:bold;font-size:12px;margin-bottom:2px;">생활권 거래량 <span style="color:' + (r.liv.tier === '상위20%' ? '#2e7d32' : (r.liv.tier === '하위40%' ? '#c62828' : '#ef6c00')) + ';">' + (r.liv.rank ? r.liv.rank + '위' : '-') + '</span><span style="color:#888;font-weight:normal;font-size:11px;"> / ' + (r.liv.radius >= 1000 ? (r.liv.radius / 1000) + 'km' : r.liv.radius + 'm') + ' 안 ' + r.liv.of + '단지</span></div>' : '';
     var toR = turnoverOf(r);
-    var popCell = r.pending ? '' : (toR ? '<div style="font-size:11.5px;margin-bottom:2px;">회전율 <b style="color:' + toR.grade.c + ';">' + toR.rate + '%</b> <span style="color:#888;">(' + toR.grade.t + ')</span></div>' : '') + livHtml + (r.pop
+    var popCell = r.pending ? '' : liqShortHtml(r) + (toR ? '<div style="font-size:11.5px;margin-bottom:2px;">회전율 <b style="color:' + toR.grade.c + ';">' + toR.rate + '%</b> <span style="color:#888;">(' + toR.grade.t + ')</span></div>' : '') + livHtml + (r.pop
         ? (r.pop.band
             // 2026-10(사용자 요청: "입찰후보 탭 안에 해당 평형에 맞는 인기순위도 표기") - 같은 동·같은 평형대 안 순위를 맨 위에 크게
             ? '<div style="font-weight:bold;font-size:12.5px;">' + r.pop.band.name + ' 거래량 <span style="color:var(--ui-blue,#1e5eff);">' + r.pop.band.rankInBand + '위</span>'
@@ -19646,7 +19702,7 @@ function bidCostLines(row) {
     var pyung = parseFloat(a.pyung) || 0, addr = a.addr || '', appraisal = parseInt(a.appraisal) || 0;
     var rank = myHouseRankFor(a), adj = !!a.isAdjusted, cheap = effLocalCheap(a, sale);
     var loan = calcRegionAwareLoan('dealer', addr, bid, appraisal, sale);
-    var holdM = parseInt(a.holdMonths) || DEFAULT_INTEREST_HOLD_MONTHS;
+    var holdM = parseInt(a.holdMonths) || row.holdAuto || DEFAULT_INTEREST_HOLD_MONTHS;
     var repairAuto = calcRepairFee(type, pyung, a.buildYear || row.estBuildYear || null) || 0;
     var L = [
         ['취득세' + (rank >= 2 ? ' (' + rank + '번째 주택)' : ''), calcAcquisitionTaxDetailed(bid, type, pyung, rank, adj, cheap)],
@@ -19765,6 +19821,7 @@ async function renderBidDrawer() {
     if (row.listingCap && row.listingCap.cap && row.listingCap.cap < row.saleTrade) basis = '매물 상한(' + row.listingCap.desc + ') - 실거래 기반 ' + toEok(String(row.saleTrade)) + ' · ' + basis;
     if (row.saleFloorAdj) basis += ' · ' + row.saleFloorAdj.label + ' ' + Math.round(Math.abs(1 - row.saleFloorAdj.factor) * 1000) / 10 + '% ' + (row.saleFloorAdj.factor < 1 ? '낮춤' : '높임');
     h += '<div class="dr-sub">예상매도가 근거: ' + bbEsc(basis) + '</div>';
+    h += liqDrawerHtml(row);
     var to = turnoverOf(row);
     if (to) h += '<div class="dr-sub">회전율 <b style="color:' + to.grade.c + ';">' + to.rate + '% · ' + to.grade.t + '</b> (최근 1년 거래 ' + to.n + '건 ÷ ' + to.hh.toLocaleString() + '세대)'
         + (row.ownStats && row.ownStats.jeonse ? ' · 전세가율 ' + Math.round(row.ownStats.jeonse.ratio * 100) + '%' : '') + '</div>';
@@ -20122,7 +20179,7 @@ async function applyNaverListings(id) {
     sm.targetDong = bm ? bm[1] : null; sm.targetHo = hm ? hm[1] : null;
     a.listingParse = sm;
     // 나중에 실거래와 비교해 "호가 → 실제 거래가" 차이를 실측하려고 붙여넣은 기록을 남겨 둠(최근 10회)
-    a.listingHistory = (Array.isArray(a.listingHistory) ? a.listingHistory : []).concat([{ at: sm.at, n: sm.n, min: sm.min, q25: sm.q25, med: sm.med, simMin: sm.simMin, repFull: sm.repFull, repNeed: sm.repNeed }]).slice(-10);
+    a.listingHistory = (Array.isArray(a.listingHistory) ? a.listingHistory : []).concat([{ at: sm.at, n: sm.n, n12: (typeof row !== 'undefined' && row && row.ownStats) ? row.ownStats.n12 : null, min: sm.min, q25: sm.q25, med: sm.med, simMin: sm.simMin, repFull: sm.repFull, repNeed: sm.repNeed }]).slice(-10);
     // 임장 문답·전체 상세의 같은 칸에도 채움 - 최저 호가는 비슷한 층(±3층) 최저, 없으면 같은 평형 최저
     a.fieldCheck = Object.assign({}, a.fieldCheck || {}, { ask: String(sm.simMin || sm.min || ''), listings: String(sm.n) });
     a.listingCount = String(sm.n); a.askPriceMin = sm.min ? String(sm.min) : ''; a.askPriceMax = sm.max ? String(sm.max) : ''; a.listingCheckedDate = sm.at;
