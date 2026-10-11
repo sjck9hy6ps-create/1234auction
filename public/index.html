@@ -3898,6 +3898,25 @@ var VILLA_P90 = { a10: { '건물5+': 7.4, '건물1~2+동': 12.3, '건물1~2': 20
                   a20: { '건물5+': 10.1, '건물1~2+동': 17.8, '건물1~2': 25, '동5+': 37.2, '동1~4': 47.9, '시군구': 60 },
                   a30: { '건물5+': 15.5, '건물1~2+동': 25.3, '건물1~2': 35, '동5+': 39.9, '동1~4': 60.4, '시군구': 100 },
                   a31: { '건물5+': 16.2, '건물1~2+동': 36.9, '건물1~2': 45, '동5+': 59.7, '동1~4': 73.1, '시군구': 110 } };
+/* 🏘️ 빌라 층별 필요 마진 배수(2026-10-11, 사용자: 승강기 없는 5층 빌라 4층이 +20%는 과하다 - 빌라 로열층은 2·3 → 1 → 4 → 5, 지하·탑층은 더 비선호).
+   수도권 빌라 거래 12,000건(대장 연결, 입찰 30일 전 자료로 예측)에서 '예상이 실제보다 높게 빗나간 정도'(상위 10%) 층별 비교 - 마진 완충의 근거:
+     승강기 없음: 2층 +27%·3층 +28%(기준) · 4층 +30%(×1.1) · 1층 +35%(×1.25) · 탑층 +44%(×1.5, 5층 건물 5층은 +46%·쏠림 +10%) · 지하 +134%(지하 보정 후에도 +46% → ×1.5로 제한)
+     승강기 있음: 2~5층·탑층 모두 +14~15%로 같음(배수 1) · 1층만 +18.6%(×1.25, 표본 121건)
+   승강기를 모르면 1층만 ×1.2(예전 값). 탑층은 대장 지상 층수와 같은 층. */
+function villaFloorMx(a, elv, grnd) {
+    var fl = parseInt(a.floor, 10);
+    if (villaIsBasement(a) || fl <= 0) return { x: 1.5, why: '지하' };
+    if (isNaN(fl)) return { x: 1, why: '' };
+    var top = grnd >= 3 && fl >= grnd;
+    if (elv != null) {
+        if (elv > 0) return fl === 1 ? { x: 1.25, why: '1층' } : { x: 1, why: '' };
+        if (top) return { x: 1.5, why: '탑층(승강기 없음)' };
+        if (fl === 1) return { x: 1.25, why: '1층(승강기 없음)' };
+        if (fl >= 4) return { x: 1.1, why: '4층 이상(승강기 없음)' };
+        return { x: 1, why: '' };
+    }
+    return fl === 1 ? { x: 1.2, why: '1층' } : { x: 1, why: '' };
+}
 function villaMarginPlan(row, ve, title) {
     if (!ve) return null;
     var yr = title && title.useAprDay ? parseInt(String(title.useAprDay).slice(0, 4), 10) : (parseInt(row.a.buildYear, 10) || ve.by || null), ageFromTrades = !(title && title.useAprDay) && !parseInt(row.a.buildYear, 10) && !!ve.by;
@@ -3906,14 +3925,8 @@ function villaMarginPlan(row, ve, title) {
     var p90 = (VILLA_P90[band] || {})[ve.lvl] || 40;
     var elv = title ? (title.rideElvtCnt || 0) + (title.emgenElvtCnt || 0) : null, fl = title ? title.grndFlrCnt : null;
     var ef = (elv != null && fl >= 4) ? (elv > 0 ? 0.7 : 1.15) : 1;
-    var buf = Math.min(25, 0.5 * p90 * ef), fx = (function() {
-        // 2026-10-10(사용자: 빌라는 승강기 있으면 1층이 비인기, 없으면 2~3층이 로열 → 1층 → 고층) + 건물 안 층별 실측(승강기 있음 1층 평균 −2.6%·하위 25% −8.5% / 없음 4층 이상 하위 25% −6.4%, 2~3층 +1%):
-        // 승강기 있음 → 1층만 +20%, 승강기 없음 → 4층 이상만 +20%(1층은 추가 없음), 모르면 1층 +20%
-        var fl = parseInt(row.a.floor, 10); if (isNaN(fl)) return 1;
-        if (elv != null && fl >= 0) { if (elv > 0) return fl === 1 ? FIRST_FLOOR_MARGIN_X : 1; return fl >= 4 ? FIRST_FLOOR_MARGIN_X : 1; }
-        return fl === 1 ? FIRST_FLOOR_MARGIN_X : 1;
-    })(), margin = Math.round(Math.max(VILLA_MARGIN_MIN, Math.round(ve.est * buf / 100 / 100) * 100) * fx / 100) * 100;
-    var out = { ageFromTrades: ageFromTrades, margin: margin, buf: Math.round(buf * 10) / 10, age: age, ageBand: band, elv: elv, ef: ef, floorMin: margin === VILLA_MARGIN_MIN * fx, first: fx > 1 };
+    var mx = villaFloorMx(row.a, elv, fl), fx = mx.x, buf = Math.min(25, 0.5 * p90 * ef), margin = Math.round(Math.max(VILLA_MARGIN_MIN, Math.round(ve.est * buf / 100 / 100) * 100) * fx / 100) * 100;
+    var out = { ageFromTrades: ageFromTrades, margin: margin, buf: Math.round(buf * 10) / 10, age: age, ageBand: band, elv: elv, ef: ef, floorMin: margin === VILLA_MARGIN_MIN * fx, first: fx > 1, fx: fx, fxWhy: mx.why };
     try {
         var a = row.a, base = Object.assign({}, a, { target: ve.est, repair: effRepairFee(a, 'villa', row.pyung, yr || null), compTargetMargin: margin });
         var r = solveAuctionBidFromRecord(base);
@@ -4378,7 +4391,7 @@ function villaEval(row) {
     var st = hsBld[row.id] || {}, t = st.info && st.info.title, lawd = bidBoardLawdOf(row.a);
     var vc = villaVeCache[row.id], vcOk = vc && vc.sig === villaVeSig(row.a);
     var lq = villaLiqFinal ? villaLiqCache[row.id] : null;
-    var sig = [vcOk ? 1 : 0, lq ? 1 + lq.r500.a6 : 0, t ? 1 : 0, villaWinModel ? 1 : 0, row.minBid, row.a.floor, row.a.pyung, row.a.buildYear || '', row.a.bidDate || '', row.a.appraisal || '', st.loading ? 1 : 0, (row.a.listingParse && row.a.listingParse.at) || '', (row.a.listingParse && row.a.listingParse.n) || 0, row.a.repair || '', row.a.assumedDeposit || '', row.a.assumedFixed || '', row.a.assumedPrior || '', row.a.rights ? (row.a.rights.pastedAt || 1) + ':' + (row.a.rights.editedAt || 0) : '', row.a.unpaidMgmtFee || '', row.a.etc || ''].join('|');
+    var sig = [vcOk ? 1 : 0, lq ? 1 + lq.r500.a6 : 0, t ? 1 : 0, villaWinModel ? 1 : 0, row.minBid, row.a.floor, row.a.pyung, row.a.buildYear || '', row.a.bidDate || '', row.a.appraisal || '', st.loading ? 1 : 0, (row.a.listingParse && row.a.listingParse.at) || '', (row.a.listingParse && row.a.listingParse.n) || 0, row.a.repair || '', row.a.assumedDeposit || '', row.a.assumedFixed || '', row.a.assumedPrior || '', row.a.rights ? (row.a.rights.pastedAt || 1) + ':' + (row.a.rights.editedAt || 0) : '', row.a.unpaidMgmtFee || '', row.a.etc || '', 'fx2'].join('|');
     if (row._vev && row._vev.sig === sig) return row._vev;
     var pe0 = villaEvPend[row.id];
     if (pe0) { delete villaEvPend[row.id]; if (pe0.sig === sig) { var re0 = Object.assign({}, pe0, { t: t, liq: lq }); row._vev = re0; return re0; } }
@@ -4456,7 +4469,7 @@ function renderVillaLite(body) {
         var elv = t ? (t.rideElvtCnt || 0) + (t.emgenElvtCnt || 0) : 0;
         var estCell = ve ? (function() { var cl = ve.lvl === '건물5+' ? '#15803d' : (ve.lvl === '건물1~2+동' || ve.lvl === '건물1~2' ? '#b45309' : '#b91c1c'); return '<b title="실제 값이 ' + money(ve.lo) + '~' + money(ve.hi) + ' 사이였던 비율이 80% (백테스트)">' + money(ve.est) + '</b><div class="bb-sub" style="color:' + cl + ';">보통 오차 ±' + ve.errPct + '%</div><div class="bb-sub">' + ve.lvl + ' · 거래 ' + (ve.n1 || ve.n2) + '건</div>' + (ve.capped ? '<div class="bb-sub" style="color:#7c3aed;" title="' + bbEsc(ve.capped.desc) + '">📋 호가 상한 적용(실거래 ' + money(ve.estTrade) + ')</div>' : ''); })() : '<span class="bb-sub">-</span>';
         var marCell = mp ? (function() { var why = (mp.age != null ? '연식 ' + mp.age + '년' : '연식 모름') + (mp.elv != null ? ' · 승강기 ' + (mp.elv > 0 ? '있음' : '없음') : '') + ' · ' + ve.lvl;
-            return '<b>마진 ' + toEok(String(mp.margin)) + '</b>' + (mp.first ? '<div class="bb-sub" style="color:#b45309;">' + (mp.elv === 0 ? '승강기 없는 고층' : '1층') + ' +20%</div>' : (mp.floorMin ? '' : '<div class="bb-sub vt-hide">매도가의 ' + mp.buf + '%</div>')) + (mp.bid ? '<div style="color:' + (mp.feasible ? '#15803d' : '#b91c1c') + ';font-weight:700;">' + (mp.feasible ? '입찰 상한 ' + money(mp.bid) : '최저가로도 마진 부족') + '</div>' : '') + '<div class="bb-sub" title="필요 마진 근거">' + why + '</div>'; })() : '<span class="bb-sub">-</span>';
+            return '<b>마진 ' + toEok(String(mp.margin)) + '</b>' + (mp.first ? '<div class="bb-sub" style="color:#b45309;">' + bbEsc(mp.fxWhy) + ' +' + Math.round((mp.fx - 1) * 100) + '%</div>' : (mp.floorMin ? '' : '<div class="bb-sub vt-hide">매도가의 ' + mp.buf + '%</div>')) + (mp.bid ? '<div style="color:' + (mp.feasible ? '#15803d' : '#b91c1c') + ';font-weight:700;">' + (mp.feasible ? '입찰 상한 ' + money(mp.bid) : '최저가로도 마진 부족') + '</div>' : '') + '<div class="bb-sub" title="필요 마진 근거">' + why + '</div>'; })() : '<span class="bb-sub">-</span>';
         var winCell = wb ? '<b>' + money(wb.price) + '</b><div class="bb-sub" title="낙찰사례 약 6천 건 모델, 보통 오차 약 9%">예상 낙찰가</div>' + (pn && pn.ev ? '<div style="color:#15803d;font-weight:700;">추천 ' + money(pn.ev.bid) + '</div><div class="bb-sub">낙찰 가능성 ' + Math.round(pn.ev.p * 100) + '% · 순이익 ' + money(pn.ev.net) + '</div>' : '<div class="bb-sub" style="color:#b91c1c;">' + (pn && pn.infeasible ? '최저가로도 마진 부족' : '추천가 없음') + '</div>') : '<span class="bb-sub">-</span>';
         h += '<tr data-rid="' + bbEsc(r.id) + '" class="bb2-row ' + (ev.visit.go ? 'go' : 'pass') + '" onclick="openBidDrawer(\'' + idJs + '\')">'
             + '<td data-l="판정">' + (ev.visit.go ? '<span class="bb2-go">🚶 임장</span>' : '<span class="bb2-pass">패스</span>') + (ev.visit.why ? '<div class="bb-sub"' + (ev.issue ? ' style="color:#b91c1c;"' : '') + '>' + bbEsc(ev.visit.why) + '</div>' : '') + '</td>'
@@ -19912,7 +19925,7 @@ async function renderVillaDrawer(d, row) {
     }
     if (mp) {
         h += '<div class="dr-sec"><h4>필요 마진 · 입찰 상한</h4><div>필요 순이익 <b>' + fmt(mp.margin) + '</b>' + (mp.bid ? ' → 입찰 상한 <b style="color:' + (mp.feasible ? '#15803d' : '#b91c1c') + ';">' + (mp.feasible ? fmt(mp.bid) : '최저가로도 마진 부족(' + fmt(mp.bid) + ')') + '</b>' : '') + '</div>'
-            + '<div class="dr-sub">' + (mp.age != null ? '연식 ' + mp.age + '년' + (mp.ageFromTrades ? '(실거래 준공연도)' : '') : '연식 모름(보수적으로 계산)') + (mp.elv != null ? ' · 승강기 ' + (mp.elv > 0 ? '있음' : '없음') : ' · 승강기 모름') + ' · 시세 근거 ' + bbEsc(ve ? ve.lvl : '-') + (mp.first ? ' · ' + (mp.elv === 0 ? '승강기 없는 고층' : '1층') + ' +20%' : '') + ' → 최소 2,000만 또는 예상매도가의 ' + mp.buf + '% 중 큰 값</div></div>';
+            + '<div class="dr-sub">' + (mp.age != null ? '연식 ' + mp.age + '년' + (mp.ageFromTrades ? '(실거래 준공연도)' : '') : '연식 모름(보수적으로 계산)') + (mp.elv != null ? ' · 승강기 ' + (mp.elv > 0 ? '있음' : '없음') : ' · 승강기 모름') + ' · 시세 근거 ' + bbEsc(ve ? ve.lvl : '-') + (mp.first ? ' · ' + mp.fxWhy + ' +' + Math.round((mp.fx - 1) * 100) + '%' : '') + ' → 최소 2,000만 또는 예상매도가의 ' + mp.buf + '% 중 큰 값</div></div>';
     }
     if (wb) {
         h += '<div class="dr-wb"><div class="dr-wb-h">🎲 예상 낙찰가 <b>' + fmt(wb.price) + '</b><span class="dr-sub" style="margin:0 0 0 6px;">비슷한 빌라가 보통 낙찰되는 가격(낙찰사례 약 6천 건, 보통 오차 약 9%)</span></div>'
