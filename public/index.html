@@ -7084,7 +7084,7 @@ function openPanel(apt, lat, lon) {
         gradeHtml += ' <span style="background:#6a1b9a;color:white;font-size:11px;font-weight:bold;padding:2px 7px;border-radius:10px;">🔨 경매</span>';
     }
     // 이 건물에 경매물건이 있으면 패널을 열자마자 경매탭을 먼저 보여줌 (일반 거래탭은 옆에서 바로 전환 가능)
-    currentPanelTab = hasAuction ? 'auction' : 'price';
+    currentPanelTab = window.__panelOpenTab || (hasAuction ? 'auction' : 'price'); window.__panelOpenTab = null; // 경매 배지에서 열면 시세정보(매매 히스토리)를 먼저
     document.getElementById('panel-title').innerHTML = (apt.latest && apt.latest.name || '') + gradeHtml;
     document.getElementById('panel-header').style.background = '#f9e000';
     document.getElementById('panel').style.display = 'flex';
@@ -15447,8 +15447,8 @@ function openMatchedApt(auctionId) {
     var matched = findMatchedApt(a);
     if (!matched) { openAuctionModal(auctionId); return; }
     if (a.lat && a.lon) showRadiusCircle(a.lat, a.lon);
+    window.__panelOpenTab = 'price'; // 경매 배지를 눌렀을 땐 매매 히스토리(📈 시세정보)를 먼저, 🔨 경매정보 탭은 바로 옆 - 🛠 수정 요청 fbmv3id5exwt9
     openPanel(matched, a.lat, a.lon);
-    try { switchPanelTab('price'); } catch (e) {} // 경매 배지를 눌렀을 땐 매매 히스토리를 먼저(경매정보 탭은 바로 옆) - 🛠 수정 요청 fbmv3id5exwt9
 }
 /* ════════════════════════════════════
    낙찰사례(bidCaseList) 지도 배지 - 내가 등록한 경매물건(auctionList, 🔨)과는 별개로,
