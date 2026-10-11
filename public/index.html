@@ -14009,7 +14009,7 @@ function rightsPanelHtml(row) {
     }
     if (R.tankAssumeWon != null && wMin) h += '<div class="dr-sub">탱크옥션 표시 인수액 ' + eok(R.tankAssumeWon) + ' ↔ 이 계산(최저가) ' + eok(wMin.assumedWon) + (Math.abs(R.tankAssumeWon - wMin.assumedWon) < 10000 ? ' ✔ 일치' : ' (차이는 집행비용·선행채권 가정 차이)') + '</div>';
     var warns = [];
-    if (w0 && w0.taxSeizures) warns.push('세무서·지자체 압류 ' + w0.taxSeizures + '건 - 체납 세금의 금액·법정기일을 몰라 계산에는 안 넣었어요. 당해세이거나 법정기일이 임차인 확정일자보다 빠르면 임차인 몫이 줄어 인수가 늘어요 → 아래에 합계를 넣으세요');
+    if (w0 && w0.taxSeizures) warns.push('세무서·지자체 압류 ' + w0.taxSeizures + '건 - 체납 세금의 금액·법정기일을 몰라 계산에는 안 넣었어요. 당해세이거나 법정기일이 임차인 확정일자보다 빠르면 임차인 몫이 줄어 인수가 늘어요(금액을 알 수 없으면 아래 여유 금액과 비교해 위험 정도만 판단하세요)');
     (R.registry || []).forEach(function(r) { if (r.assumed) warns.push(r.type + ' ' + r.holder + ' - 소멸되지 않고 인수되는 권리로 표시돼 있어요'); });
     warns.push('유치권·법정지상권 등 특수 권리는 이 계산에 없어요(매각물건명세서·현황조사서 직접 확인)');
     h += '<div class="dr-warn" style="margin-top:4px;">' + warns.map(bbEsc).join('<br>') + '</div>';
