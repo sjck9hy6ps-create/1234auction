@@ -13827,6 +13827,11 @@ function parseTankRights(text) {
     if ((m = text.match(/최저가(?:격)?\s*\(\d+%\)\s*([\d,]+)/))) out.minBidWon = rightsNum(m[1]);
     if ((m = text.match(/감정가(?:격)?\s+([\d,]{7,})/))) out.appraisalWon = rightsNum(m[1]);
     if ((m = text.match(/([\d,]+)원이\s*매수인\s*인수\s*대상/))) out.tankAssumeWon = rightsNum(m[1]);
+    // 체납내역 = 미납 관리비(탱크옥션 표시, 전기·수도 등 포함 안내가 비고에 있음)
+    if ((m = text.match(/체납금액\s+([\d,]+)/)) && rightsNum(m[1]) > 0) {
+        var md = text.match(/체납조사\s*(?:\([^)]*\))?\s+([\d.\-]+)/) || text.match(/조사일\s+([\d.\-]+)/), mn = text.match(/체납금액[\s\S]{0,100}?비고\s+([^\n]+)/);
+        out.unpaidMgmt = { won: rightsNum(m[1]), date: md ? rightsDate(md[1]) : '', note: mn ? mn[1].trim() : '' };
+    }
     // 임차인 현황. 두 가지 모양: (PC) "번호<탭>이름<탭>..." 행 / (모바일·아이패드) "이름<탭>전입:..." 행(번호 없음, 날짜가 2자리 연도)
     var ti = text.search(/임차인\s?현황/), tb = ti >= 0 ? text.slice(ti) : '';
     var te = tb.search(/\n계\s*\n|\n기타사항|\n건물등기|\n임차인:\s*\d+\s*건/);
@@ -13967,6 +13972,7 @@ async function rightsApplyPaste(idJs) {
     var R = parseTankRights(ta.value);
     if (!R.tenants.length && !R.registry.length) { alert('임차인 현황도 건물등기도 찾지 못했어요. 상세 페이지 전체를 복사해 붙여넣어 주세요.'); return; }
     R.pastedAt = Date.now(); a.rights = R;
+    if (R.unpaidMgmt && !(parseInt(a.unpaidMgmtFee) > 0)) { a.unpaidMgmtFee = String(Math.ceil(R.unpaidMgmt.won / 10000)); R.unpaidMgmtApplied = true; } // 탱크옥션 '체납내역' = 미납 관리비 → 비용에 반영(이미 넣은 값이 있으면 그대로 둠)
     try { await saveAuctionAPI(a); } catch (e) { alert('저장 실패: ' + e.message); }
     rightsRefreshRow(a);
 }
@@ -13995,6 +14001,7 @@ function rightsPanelHtml(row) {
     var minWon = (parseInt(row.minBid) || parseInt(a.minBid) || 0) * 10000, recWon = row.recBid ? Math.round(row.recBid * 10000) : 0, opts = { addr: a.addr, extraPriorWon: (parseInt(a.assumedPrior) || 0) * 10000 + (R.extraPriorWon || 0) };
     var wMin = minWon ? rightsWaterfall(R, minWon, opts) : null, wRec = recWon ? rightsWaterfall(R, recWon, opts) : null, w0 = wRec || wMin;
     h += '<div class="dr-sub">말소기준일 ' + (R.baseDate || '-') + ' · 배당요구종기 ' + (R.distDeadline || '-') + (w0 && w0.startDate ? ' · 경매개시 ' + w0.startDate : '') + (R.pastedAt ? ' · ' + new Date(R.pastedAt).toISOString().slice(0, 10) + ' 붙여넣음' : '') + '</div>';
+    if (R.unpaidMgmt) h += '<div class="dr-sub">미납 관리비(탱크옥션 체납내역) ' + eok(R.unpaidMgmt.won) + (R.unpaidMgmt.date ? ' · 조사 ' + R.unpaidMgmt.date : '') + (R.unpaidMgmt.note ? ' · ' + bbEsc(R.unpaidMgmt.note) : '') + ' → ' + ((parseInt(a.unpaidMgmtFee) || 0) === Math.ceil(R.unpaidMgmt.won / 10000) ? '비용에 반영됨' : '이미 입력한 미납 관리비 ' + eok((parseInt(a.unpaidMgmtFee) || 0) * 10000) + ' 사용 중') + ' (낙찰자는 공용부분만 인수하므로 전기·수도 등이 섞였으면 실제 부담은 더 적을 수 있어요)</div>';
     if (w0) {
         h += '<table class="dr-tbl" style="margin-top:6px;"><tr><td class="dr-sub">임차인</td><td class="dr-sub">보증금</td><td class="dr-sub">대항력·배당</td></tr>';
         w0.tenants.forEach(function(t) { h += '<tr><td>' + bbEsc(t.name) + '<div class="dr-sub">전입 ' + (t.moveIn || '미상') + ' · 확정 ' + (t.fixed || '미상') + ' · 배당요구 ' + (t.distDate || (t.rankedDist ? '있음' : '미확인')) + '</div></td><td class="r">' + eok(t.deposit) + '</td><td class="dr-sub">' + (t.standing ? '대항력 있음' : '대항력 없음') + (t.minor ? ' · 소액' : '') + '<br>' + bbEsc(t.status) + '</td></tr>'; });
