@@ -116,6 +116,15 @@ export default async function handler(req, res) {
   const cacheBldNm = bldNmKey + (dongNoDigits ? ('__d' + dongNoDigits) : '');
   const forceRefresh = force === '1' || force === 'true';
 
+  // 2026-10-11 titleOnly=1: 표제부만 한 번 조회(저장 안 함) - 경매 주소 번지와 대장 대표 번지가 달라 못 찾을 때 인접 번지를 훑어 도로명이 맞는 건물을 찾는 용도(요청 1건)
+  if (req.query.titleOnly === '1') {
+    if (!API_KEY) return res.status(500).json({ error: 'PUBLIC_DATA_API_KEY 없음' });
+    const tr = await fetchBld('getBrTitleInfo', { sigunguCd, bjdongCd, platGbCd: gbCd, bun, ji: jiParam, numOfRows: '100' });
+    const it = pickBestItem(tr.items, bldNmKey, dongNoDigits);
+    res.setHeader('Cache-Control', 'no-store');
+    return res.status(200).json({ title: it ? normalizeTitle(it) : null, quotaExceeded: tr.quotaExceeded || undefined, failed: tr.httpStatus === null || undefined, titleOnly: true });
+  }
+
   try {
     // ── 1. 캐시 조회 (force=1이면 건너뛰고 바로 재조회) ──
     // 항상 "요청받은(새) 코드" 기준으로 캐시를 찾음 - 아래에서 구코드 폴백이 성공해도

@@ -64,10 +64,11 @@ async function main() {
       const code = await bCodeOf(a);
       // CSV 물건은 지번이 본번만("22") 있는 경우가 있어 주소의 "동 22-7"을 먼저 씀
       const am = String(a.addr || '').match(new RegExp((a.dong || '[가-힣0-9]+[동리가]') + '\\s+(산?\\d+(?:-\\d+)?)'));
-      const bj = bunJi(am ? am[1] : a.bunji);
+      const bj = bunJi(a.bldgBunji || (am ? am[1] : a.bunji)); // 도로명으로 찾아 둔 대장 번지가 있으면 그걸 씀
       if (!code || !bj) { miss++; updates[a.id] = upd; continue; }
       if (!a.bCode) upd.bCode = code;
-      const url = `${SITE}/api/get-building?sigunguCd=${code.slice(0, 5)}&bjdongCd=${code.slice(5, 10)}&bun=${bj.bun}&ji=${bj.ji}&bldNm=${encodeURIComponent(a.name || '')}`;
+      const useCode = a.bldgBCode || code;
+      const url = `${SITE}/api/get-building?sigunguCd=${useCode.slice(0, 5)}&bjdongCd=${useCode.slice(5, 10)}&bun=${bj.bun}&ji=${bj.ji}&bldNm=${encodeURIComponent(a.name || '')}`;
       const info = await fetch(url).then((r) => r.json());
       const raw = JSON.stringify((info && info.debug) || {});
       if (/LIMITED_NUMBER_OF_SERVICE_REQUESTS_EXCEEDS|일일 서비스 요청제한/.test(raw)) { quota = true; console.log('건축HUB 하루 한도 초과 - 여기서 멈춤(다음 실행 때 이어서)'); break; }
