@@ -6774,7 +6774,19 @@ function openMarkerItemDirect(d) {
     if (!d) return;
     if (d.type === 'bidcase') { openBidCaseDetail(d.c.id); return; }
     if (d.type === 'auction') {
-        if (d.matchedApt) { openMatchedApt(d.a.id); } else { openAuctionModal(d.a.id); }
+        // 2026-10-11(🛠 수정 요청: "경매배지 클릭시 매매히스토리 상세창이 안뜸"): 입찰희망(📋) 배지는 일부러 건물 배지에 합치지 않아 d.matchedApt가 비어 있어서
+        // 눌러도 '경매 수정 창'만 열리고 매매 히스토리가 안 보였음 → 누르는 순간 같은 건물의 매매기록을 다시 찾고(지역 자료가 아직 없으면 불러온 뒤) 있으면 매매 히스토리 상세창을 엶.
+        var ma = d.matchedApt || null; try { ma = ma || findMatchedApt(d.a); } catch (e) {}
+        if (ma) { openMatchedApt(d.a.id); return; }
+        var lw = null; try { lw = bidBoardLawdOf(d.a); } catch (e) {}
+        if (lw && !dataCache[lw] && typeof fetchHouseDataCached === 'function') {
+            fetchHouseDataCached(lw).then(function(dd) { return (dd && !dd.error && Array.isArray(dd.apt)) ? ingestRegionHouseData(dd, '', lw) : null; }).then(function() {
+                var m2 = null; try { m2 = findMatchedApt(d.a); } catch (e) {}
+                if (m2) openMatchedApt(d.a.id); else openAuctionModal(d.a.id);
+            }).catch(function() { openAuctionModal(d.a.id); });
+            return;
+        }
+        openAuctionModal(d.a.id);
         return;
     }
     showRadiusCircle(d.lat, d.lon);
@@ -15416,7 +15428,7 @@ function placeAuctionMarker(a, hidden) {
     }
     var aMKey = 'mk' + (markerDataSeq++);
     markerDataRegistry[aMKey] = { type: 'auction', a: a, matchedApt: matchedApt, lat: a.lat, lon: a.lon, div: div };
-    div.setAttribute('onclick', 'handleAptMarkerClick(\'' + aMKey + '\')');
+    div.setAttribute('onclick', 'handleAptMarkerClick(\'' + aMKey + '\')'); div.style.cursor = 'pointer'; // iOS(아이패드) Safari는 cursor:pointer가 없는 요소의 onclick을 무시하는 경우가 있음
     var overlay = new kakao.maps.CustomOverlay({
         position: new kakao.maps.LatLng(a.lat, a.lon),
         content: div, yAnchor: 1.2, zIndex: 9999,
