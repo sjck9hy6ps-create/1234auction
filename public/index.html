@@ -3739,7 +3739,7 @@ var VILLA_EST_RANGE = { '건물5+': [-18.4, 8.0, 6.2], '건물1~2+동': [-22.9, 
    수도권 빌라 15,000건 백테스트: 지하 물건 중앙 오차 43.1%(예상이 40% 높게 쏠림) → 22.5%, 전체 12.66 → 12.12%, ±20% 67.2 → 69.0%, 과대 상위10% +35 → +31%(1층·2층+도 같이 좋아짐 - 지하 거래가 섞이지 않아서).
    보정은 지하 ↔ 일반층만(1층·저층 보정은 효과 없어 안 씀). 비교 거래의 층이 0 이하면 지하로 봄. */
 function villaIsBasement(a) { var s = String(a.addr || '') + ' ' + String(a.unit || '') + ' ' + String(a.name || ''); if (/지하\s*층|지하\s*\d|반지하|(^|\s)지층|(^|\s)B\d/.test(s)) return true; var f = parseInt(a.floor, 10); return !isNaN(f) && f <= 0; }
-function villaHsYear(a) { try { var h = hsBld[a.id], t = h && h.info && h.info.title, y = t && t.useAprDay ? parseInt(String(t.useAprDay).slice(0, 4), 10) : null; return y > 1950 && y <= new Date().getFullYear() ? y : null; } catch (e) { return null; } }
+function villaHsYear(a) { try { var h = hsBld[a.id], t = (h && h.info && h.info.title) || (villaHsPend[a.id] && villaHsPend[a.id].title), y = t && t.useAprDay ? parseInt(String(t.useAprDay).slice(0, 4), 10) : null; return y > 1950 && y <= new Date().getFullYear() ? y : null; } catch (e) { return null; } }
 function villaSaleEst(a, ref) {
     var area = (parseFloat(a.pyung) || 0) * 3.305785; if (!area) return null;
     var bunjiFull = fullBunjiFromAddr(a.addr, a.dong, a.bunji);
@@ -4169,6 +4169,12 @@ function villaLiqHtml(liq) {
 /* 💾 빌라 계산 결과 보관(2026-10-10, 사용자: "빌라 입찰후보 창이 매번 새로 불러오는 것 같아 느려") - 예상매도가·생활권 거래·건축물대장 요약을 브라우저에 24시간 저장해 두고
    다시 열면 바로 보여줌(지역 실거래 68곳을 다시 받지 않음). 건물 상세(전유부 등 큰 자료)는 열 때 다시 받음. */
 var VILLA_CALC_KEY = 'villaCalc:v1', VILLA_CALC_TTL = 8 * 24 * 3600 * 1000, villaRestoreState = 0, villaSaveT = null;
+var villaHsPend = {}; // 서버 저장본의 대장 연식 - 물건 목록이 아직 없을 때 받아도 잃지 않게 보관(식별값이 연식을 포함하므로 없으면 전부 다시 계산됨)
+function villaFlushHsPend() {
+    var ids = Object.keys(villaHsPend); if (!ids.length) return;
+    var byId = {}; villaMetroRows(true).forEach(function(r) { byId[r.id] = r; });
+    ids.forEach(function(id) { var r = byId[id]; if (!r) return; var d0 = villaHsPend[id]; delete villaHsPend[id]; if (hsBld[id]) return; var info = { title: d0.title, price: d0.price, partial: true }, chk = null; try { chk = homestayCheck(r.a, info); } catch (e) { return; } hsBld[id] = { info: info, chk: chk, partial: true }; });
+}
 function villaApplyCalc(d, force) {
     if (!d) return 0;
     var n = 0;
@@ -4177,7 +4183,7 @@ function villaApplyCalc(d, force) {
     if (nl) villaLiqFinal = true;
     var byId = {}; villaMetroRows(true).forEach(function(r) { byId[r.id] = r; });
     Object.keys(d.hs || {}).forEach(function(id) {
-        var r = byId[id]; if (!r || hsBld[id]) return;
+        var r = byId[id]; if (!r) { if (!hsBld[id]) villaHsPend[id] = d.hs[id]; return; } if (hsBld[id]) return;
         var info = { title: d.hs[id].title, price: d.hs[id].price, partial: true }, chk = null;
         try { chk = homestayCheck(r.a, info); } catch (e) { return; }
         hsBld[id] = { info: info, chk: chk, partial: true };
@@ -4306,6 +4312,7 @@ function setVillaVisit(v) { bbResetDrawer(); bidBoardState.villaVisit = v; bidBo
 function villaMore() { bidBoardState.villaLimit = (bidBoardState.villaLimit || 120) + 300; renderBidBoard(); }
 function renderVillaLite(body) {
     if (villaRestoreState < 2) { if (!villaRestoreState) villaRestoreCalc(); body.innerHTML = '<div class="bb-empty">저장된 계산을 불러오는 중…</div>'; return; }
+    villaFlushHsPend();
     var all = villaMetroRows(), s = bidBoardState, vv = s.villaVisit || 'go';
     if (!homestayAgg) loadHomestayAgg(function() { if (bidBoardState.visit === 'villa') renderBidBoard(); }); // 이미 받았으면 콜백이 바로 불려 무한 반복되므로 처음 한 번만
     if (all.some(function(r) { return !hsBld[r.id]; })) all.slice().sort(function(x, y) { return (x.dday ? x.dday.diffDays : 9999) - (y.dday ? y.dday.diffDays : 9999); }).forEach(ensureHomestayCheck); // 입찰이 가까운 물건부터 조회(이미 다 조회했으면 건너뜀)
@@ -18015,14 +18022,11 @@ function loadWinbidModel() {
             fetch('/winbid-model.json').then(function(r) { return r.json(); }).then(function(f) {
                 if (!f || !f.bid || !winbidModel || winbidModel.bid) return;
                 winbidModel.bid = f.bid;
-                bidBoardRows = bidBoardRows.map(function(r) { if (r.pending || r.skippedPast || !r.type) return r; try { return finalizeBidBoardRow(r); } catch (e) { return r; } });
-                if (document.getElementById('bid-board').style.display !== 'none') renderBidBoard();
+                finalizeStaleRows();
             }).catch(function() {});
         }
         try {
-            bidBoardRows = bidBoardRows.map(function(r) { if (r.pending || r.skippedPast || !r.type) return r; try { return finalizeBidBoardRow(r); } catch (e) { return r; } });
-            if (document.getElementById('bid-board').style.display !== 'none') renderBidBoard();
-            if (typeof bidDrawerId !== 'undefined' && bidDrawerId) renderBidDrawer();
+            finalizeStaleRows();
         } catch (e) {}
         return true;
     };
@@ -18286,11 +18290,43 @@ function applyPickToRow(row) {
         row.recBid = row.pick.ev.bid; row.margin = row.pick.ev.net; row.marginUser = false; row.recAggr = null; row.safetyExtra = null;
     }
 }
+/* ⚡ 입찰후보 열기 속도(2026-10-11, 사용자: "아직도 불러오는 중·빈 화면") - 저장된 행(서버가 미리 계산)을 열 때마다 2,900건 모두 finalize(세금·마진·판정 다시, 건당 1.6ms ≈ 5초)하고,
+   내 자산 로딩·낙찰가 모델 로딩 때도 전체를 다시 finalize하느라 화면이 멈췄음. 행에 '그때의 내 자산·낙찰가 모델 지문'(finalSig)을 남기고, 같으면 다시 계산하지 않음.
+   지문이 다르면(내 자산을 바꿈·모델 새로 받음) 화면을 막지 않게 12ms씩 나눠 뒤에서 다시 계산. */
+var _fsigMemo = { v: -1, m: null, sig: '' };
+function boardFinalSig() {
+    if (_fsigMemo.v === myAssetsVer && _fsigMemo.m === winbidModel && _fsigMemo.l === myAssets.loaded) return _fsigMemo.sig;
+    var h = 5381, js = ''; try { js = JSON.stringify({ i: myAssets.items, p: myAssets.profile }); } catch (e) {}
+    for (var i = 0; i < js.length; i++) h = ((h << 5) + h + js.charCodeAt(i)) | 0;
+    var sig = BOARD_CALC_VER + '|' + (myAssets.loaded ? h : 'na') + '|' + (winbidModel ? (winbidModel.generatedAt || '1') + (winbidModel.bid ? 'b' : '') : '0');
+    _fsigMemo = { v: myAssetsVer, m: winbidModel, l: myAssets.loaded, sig: sig }; return sig;
+}
+var _fsrBusy = false, _fsrAgain = false;
+function finalizeStaleRows(cb) {
+    if (_fsrBusy) { _fsrAgain = true; return; }
+    var sig = boardFinalSig(), todo = bidBoardRows.filter(function(r) { return !r.pending && !r.skippedPast && r.type && r.finalSig !== sig; });
+    Object.keys(bidVerdictCache).forEach(function(id) { var c = bidVerdictCache[id]; if (c && c.row && c.row.type && c.row.finalSig !== sig && todo.indexOf(c.row) < 0) todo.push(c.row); });
+    if (!todo.length) { if (cb) cb(); return; }
+    _fsrBusy = true; var i = 0;
+    (function step() {
+        var t = performance.now();
+        while (i < todo.length && performance.now() - t < 12) { try { finalizeBidBoardRow(todo[i]); } catch (e) {} i++; }
+        if (i < todo.length) { setTimeout(step, 16); return; }
+        _fsrBusy = false;
+        try { if (document.getElementById('bid-board').style.display !== 'none') renderBidBoard(); if (typeof bidDrawerId !== 'undefined' && bidDrawerId) renderBidDrawer(); } catch (e) {}
+        if (cb) cb();
+        if (_fsrAgain) { _fsrAgain = false; finalizeStaleRows(); }
+    })();
+}
+async function boardInputsReady(ms) { // 내 자산·낙찰가 모델이 도착하길 잠깐 기다림(지문을 맞춰 다시 계산을 건너뛰려고)
+    try { loadWinbidModel(); } catch (e) {}
+    var t = Date.now(); while (Date.now() - t < ms && (!winbidModel || !myAssets.loaded)) await new Promise(function(r) { setTimeout(r, 50); });
+}
 function finalizeBidBoardRow(row) {
     var a = row.a, type = row.type, minBid = row.minBid, pyung = row.pyung;
     if (/주\s*건축물/.test(row.name || '')) row.name = cleanBldgName(row.name) || buildingNameFromAddr(a.addr, a.dong) || ((a.dong || '') + ' ' + (a.bunji || '')).trim() || row.name; // 저장된 계산에 남은 옛 이름 정리
     row.reasons = []; row.warns = []; row.nextFail = null; row.overshoot = false; row.bulk = false; row.sweet = false; row.volDown = false; row.sturdy = false; row.hardHold = false; row.recBidRaw = null; row.recCapped = null; row.safetyExtra = null; row.safetyPct = null;
-    row.assetVer = myAssetsVer;
+    row.assetVer = myAssetsVer; row.finalSig = boardFinalSig();
     // 매물 기반 상한 - 실거래 기반 값(saleTrade)은 그대로 두고, 매물이 더 싸면 그만큼만 낮춤
     if (row.saleTrade === undefined) row.saleTrade = row.sale;
     row.sale = row.saleTrade; row.listingCap = null;
@@ -18683,6 +18719,8 @@ async function refreshBidBoard() {
     // 매일 새벽 가상 브라우저가 미리 계산해 서버에 올려 둔 결과를 받아 합침(2026-10-10) - 처음 열 때 지역 수백 곳을 받아 계산하던 걸 건너뜀(실패해도 예전처럼 직접 계산)
     if (!bidBoardState.forceFresh) boardCache = await mergeServerBoardCache(boardCache);
     bidBoardState.forceFresh = false;
+    await boardInputsReady(2500);
+    var fsigNow = boardFinalSig();
     var nowMs = Date.now(), reused = {}, stale = {}, sliceT = Date.now();
     for (var wi = 0; wi < work.length; wi++) {
         // 저장본 1천 건 넘게를 한꺼번에 다시 계산하면 7초 가까이 화면이 멈췄음(2026-10-10) → 40ms마다 숨 쉴 틈을 줌
@@ -18693,7 +18731,7 @@ async function refreshBidBoard() {
         var fresh = c.sig === boardBaseSig(wa) && nowMs - c.at <= (c.srv ? BOARD_SRV_MAX_AGE : BOARD_CACHE_MAX_AGE);
         try {
             var row = Object.assign({}, c.row, { a: wa, dday: wa.bidDate ? calcAuctionDday(wa.bidDate) : null, fromCache: c.at, stale: !fresh });
-            row = finalizeBidBoardRow(row);
+            if (!(fresh && row.finalSig === fsigNow)) { row = finalizeBidBoardRow(row); if (fresh) { try { var cr0 = boardRowForCache(row); if (cr0) c.row = cr0; } catch (e) {} } } // 지문이 없던 저장본은 한 번 계산한 결과(지문 포함)로 바꿔 두어 다음부터 건너뜀
             if (fresh) { reused[wa.id] = row; bidVerdictCache[wa.id] = bidVerdictCache[wa.id] || { sig: '', row: row }; }
             // 2026-10(사용자: "입찰후보 로딩이 아직도 느려") - 하루가 지났거나 계산 방식이 바뀐 저장본도 일단 바로 보여주고
             // (회색 "업데이트 중" 표시), 뒤에서 새로 계산되는 대로 하나씩 바꿔 끼움 - 빈 화면으로 기다리지 않게.
@@ -18977,6 +19015,13 @@ function liteRankHtml(r) {
     var pills = (r.lf && r.lf.isLeader && !r.lf.only ? '<span class="bb-pill lead">👑 대장</span> ' : '') + (r.popular ? '<span class="bb-pill good" title="동·같은 평형·생활권 거래량이 모두 상위 20%">🔥 인기 단지</span>' : '');
     return (out.join('') || '<span class="bb-sub">-</span>') + (pills ? '<div style="margin-top:2px;">' + pills + '</div>' : '');
 }
+/* 지역 선택 칸(2026-10-11, 사용자: 빌라 지역 필터를 누르면 깜빡여서 고를 수 없음): 표를 다시 그릴 때마다 옵션을 통째로 바꿔 펼친 목록이 닫혔음 → 내용이 같거나 선택 칸이 열려 있으면 건드리지 않음 */
+function bbSetSelOpts(sel, html) {
+    if (!sel) return;
+    if (sel.dataset.optSig === html) return;
+    if (document.activeElement === sel && sel.dataset.optSig) return; // 사용자가 고르는 중
+    sel.innerHTML = html; sel.dataset.optSig = html;
+}
 function renderBidBoardLite() {
     var s = bidBoardState;
     var el = document.getElementById('bid-board'); if (el) el.classList.add('lite');
@@ -19000,8 +19045,8 @@ function renderBidBoardLite() {
                 var ks = (grp[c] || []).sort(); if (!ks.length) return; var tot = ks.reduce(function(n, k) { return n + regions[k]; }, 0);
                 if (false) {} else opts += '<optgroup label="' + c + '"><option value="g:' + c + '"' + (s.region === 'g:' + c ? ' selected' : '') + '>' + c + ' 전체 (' + tot + ')</option>' + ks.map(function(k) { return '<option value="' + bbEsc(k) + '"' + (s.region === k ? ' selected' : '') + '>　' + bbEsc(k.slice(c.length + 1)) + ' (' + regions[k] + ')</option>'; }).join('') + '</optgroup>';
             });
-            sel.innerHTML = opts;
-        } else sel.innerHTML = '<option value="">지역 전체</option>' + Object.keys(regions).sort().map(function(k) { return '<option value="' + bbEsc(k) + '"' + (s.region === k ? ' selected' : '') + '>' + bbEsc(k) + ' (' + regions[k] + ')</option>'; }).join('');
+            bbSetSelOpts(sel, opts);
+        } else bbSetSelOpts(sel, '<option value="">지역 전체</option>' + Object.keys(regions).sort().map(function(k) { return '<option value="' + bbEsc(k) + '"' + (s.region === k ? ' selected' : '') + '>' + bbEsc(k) + ' (' + regions[k] + ')</option>'; }).join(''));
     }
     var bar = document.getElementById('bb2-tabs');
     if (!bar) { bar = document.createElement('span'); bar.id = 'bb2-tabs'; var tools = document.querySelector('#bid-board .bb-tools'); tools.insertBefore(bar, tools.firstChild); }
@@ -19114,9 +19159,9 @@ function renderBidBoard() {
     var regions = {};
     bidBoardRows.forEach(function(r) { regions[r.region] = (regions[r.region] || 0) + 1; });
     var sel = document.getElementById('bb-region');
-    sel.innerHTML = '<option value="">지역 전체</option>' + Object.keys(regions).sort().map(function(k) {
+    bbSetSelOpts(sel, '<option value="">지역 전체</option>' + Object.keys(regions).sort().map(function(k) {
         return '<option value="' + bbEsc(k) + '"' + (s.region === k ? ' selected' : '') + '>' + bbEsc(k) + ' (' + regions[k] + ')</option>';
-    }).join('');
+    }).join(''));
     renderBidBoardChips(base);
     tabs.style.display = 'none';
     var rows = base.filter(function(r) { return (s.verdict === 'all' || r.verdict === s.verdict) && bidBoardChipFilter(r); });
@@ -25857,8 +25902,7 @@ function myAssetsChanged() {
     myAssetsVer++;
     try { auctionWonEstCache = {}; } catch (e) {}
     // 지역 자료 없이 세금·마진 단계만 다시(순식간) - 무거운 시세 계산은 그대로 재사용
-    try { bidBoardRows = bidBoardRows.map(function(r) { if (r.pending || r.skippedPast || !r.type) return r; try { return finalizeBidBoardRow(r); } catch (e) { return r; } }); if (document.getElementById('bid-board').style.display !== 'none') renderBidBoard(); } catch (e) {}
-    try { Object.keys(bidVerdictCache).forEach(function(id) { var c = bidVerdictCache[id]; if (c && c.row && c.row.type) { try { finalizeBidBoardRow(c.row); } catch (e) {} } }); } catch (e) {}
+    try { finalizeStaleRows(); } catch (e) {} // 내 자산이 실제로 달라졌을 때만(지문 비교) 12ms씩 나눠 다시 계산
     try { if (document.getElementById('auction-modal-bg').style.display === 'flex' && document.getElementById('a-house-rank').dataset.manual !== '1') { document.getElementById('a-house-rank').value = String(myHouseRankFor(null)); updateHouseRankNote(); autoCalcTaxSilent(); calcMargin(); } } catch (e) {}
     try { redrawMarkers(); } catch (e) {}
     if (document.getElementById('my-assets-panel').style.display === 'block') renderMyAssets();
