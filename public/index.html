@@ -20007,12 +20007,14 @@ function fieldCheckHtml(row) {
    회전율 = 이 단지 최근 1년 중개거래(모든 평형) ÷ 세대수. 기준(앱의 기존 단지 상세와 같음): 5%↑ 환금성 높음, 2~5% 보통, 2%↓ 낮음.
    ⚠️ 아직 과거 낙찰사례로 수익과의 관계를 검증하지 못함(세대수 자료가 쌓이면 검증) - 그래서 판정에는 안 쓰고 참고로만 보여줌. ════ */
 async function fetchHouseholdsFor(a) {
+    fetchHouseholdsFor.lastFailed = false;
     if (!a || !a.bCode || !a.bunji) return null;
     var parts = bCodeToSigunguBjdong(a.bCode), bj = deriveBunJi({ bunji: a.bunji });
     if (!parts || !bj) return null;
     try {
         var url = '/api/get-building?sigunguCd=' + parts.sigunguCd + '&bjdongCd=' + parts.bjdongCd + '&bun=' + bj.bun + '&ji=' + bj.ji + '&bldNm=' + encodeURIComponent(a.name || '');
         var info = await Promise.race([fetch(url).then(function(r) { return r.json(); }), new Promise(function(res) { setTimeout(function() { res(null); }, 12000); })]);
+        if (!info || info.quotaExceeded || info.error) fetchHouseholdsFor.lastFailed = true; // 한도 초과·통신 실패는 '못 찾음'이 아니라 다음에 다시
         var t = info && info.title;
         // 2026-10(사용자: "연식은 API로 자동 수집됐어야 하는데") - 같은 건축물대장 응답에 사용승인일이 있는데 버리고 있었음.
         // CSV로 대량 등록한 물건은 연식 조회를 안 거쳐 절반(201건 중 101건)이 연식 없이 계산됐음 → 여기서 함께 채움.
@@ -20025,7 +20027,7 @@ async function fetchHouseholdsFor(a) {
         var hh = (t.site && t.site.hhldCnt > 0) ? t.site.hhldCnt : (t.hhldSum > 0 ? t.hhldSum : (t.hhldBldCnt <= 1 ? t.hhldCnt : null));
         if (hh > 0) a.householdsVer = 2;
         return hh > 0 ? parseInt(hh) : null;
-    } catch (e) { return null; }
+    } catch (e) { fetchHouseholdsFor.lastFailed = true; return null; }
 }
 function turnoverOf(row) {
     var hh = (row.a && row.a.householdsVer === 2) ? (parseInt(row.a.households) || 0) : 0, os = row.ownStats; // 예전(동 하나 기준) 세대수는 안 씀
@@ -20038,7 +20040,7 @@ var householdFillRunning = false;
 async function fillHouseholdsInBackground() {
     if (householdFillRunning) return; householdFillRunning = true;
     try {
-        var todayS = new Date().toISOString().slice(0, 10), recentTry = function(a) { return a.bldgTriedAt && (Date.now() - new Date(a.bldgTriedAt + 'T00:00:00').getTime()) < 30 * 86400000; }; // 못 찾은 물건도 시도 날짜를 저장해 30일 동안 다시 조회하지 않음(열 때마다 같은 물건을 계속 조회하던 문제)
+        var todayS = new Date().toISOString().slice(0, 10), recentTry = function(a) { return a.bldgTriedAt && (Date.now() - new Date(a.bldgTriedAt + 'T00:00:00').getTime()) < 6 * 86400000; }; // 못 찾은 물건도 시도 날짜를 저장해 그 주에는 다시 조회하지 않음(다음 주 서버 계산 때 새 자료와 함께 다시 시도). 한도 초과·통신 실패는 시도로 치지 않음
         var todo = bidBoardRows.filter(function(r) { return r.type === 'apt' && r.a && r.a.bCode && !recentTry(r.a) && (((!r.a.households || r.a.householdsVer !== 2) && !r.a.householdsTried2) || (!r.a.buildYear && !r.a.buildYearTried) || (r.a.elevatorCnt == null && !r.a.elevatorTried && !r.a.bldgTriedAt)); });
         for (var i = 0; i < todo.length; i++) {
             if (document.getElementById('bid-board').style.display !== 'flex') break;
@@ -20046,9 +20048,10 @@ async function fillHouseholdsInBackground() {
             var hadYear = a.buildYear, hadElv = a.elevatorCnt;
             var hh = await fetchHouseholdsFor(a);
             a.householdsTried2 = true; a.buildYearTried = true; a.elevatorTried = true;
+            var apiFailed = !!fetchHouseholdsFor.lastFailed;
             if (hh) a.households = hh;
             var gotNew = (a.buildYear && !hadYear) || (a.elevatorCnt != null && hadElv == null);
-            var firstTry = a.bldgTriedAt !== todayS; a.bldgTriedAt = todayS;
+            var firstTry = !apiFailed && a.bldgTriedAt !== todayS; if (!apiFailed) a.bldgTriedAt = todayS;
             if (hh || gotNew || firstTry) { try { await saveAuctionAPI(a); } catch (e) {} }
             if (gotNew) { try { bidBoardRows = bidBoardRows.map(function(r) { return r.a === a ? computeBidBoardRow(a) : r; }); } catch (e) {} }
             if (i % 10 === 9) renderBidBoard();

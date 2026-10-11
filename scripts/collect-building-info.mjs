@@ -9,7 +9,7 @@
 const SITE = process.env.SITE_URL || 'https://1234auction.vercel.app';
 const KAKAO = process.env.KAKAO_REST_API_KEY || '';
 const MAX = parseInt(process.env.MAX_ITEMS || '1500', 10);
-const RETRY_DAYS = 30;
+const RETRY_DAYS = 6; // 못 찾은 물건은 다음 주 실행 때 새 자료와 함께 다시(한도 초과로 못 한 것은 시도로 치지 않음)
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const today = new Date().toISOString().slice(0, 10);
