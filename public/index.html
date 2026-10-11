@@ -4268,7 +4268,7 @@ function villaEval(row) {
     var st = hsBld[row.id] || {}, t = st.info && st.info.title, lawd = bidBoardLawdOf(row.a);
     var vc = villaVeCache[row.id], vcOk = vc && vc.sig === villaVeSig(row.a);
     var lq = villaLiqFinal ? villaLiqCache[row.id] : null;
-    var sig = [vcOk ? 1 : 0, lq ? 1 + lq.r500.a6 : 0, t ? 1 : 0, villaWinModel ? 1 : 0, row.minBid, row.a.floor, row.a.pyung, row.a.buildYear || '', row.a.bidDate || '', row.a.appraisal || '', st.loading ? 1 : 0, (row.a.listingParse && row.a.listingParse.at) || '', (row.a.listingParse && row.a.listingParse.n) || 0, row.a.repair || '', row.a.assumedDeposit || '', row.a.unpaidMgmtFee || '', row.a.etc || ''].join('|');
+    var sig = [vcOk ? 1 : 0, lq ? 1 + lq.r500.a6 : 0, t ? 1 : 0, villaWinModel ? 1 : 0, row.minBid, row.a.floor, row.a.pyung, row.a.buildYear || '', row.a.bidDate || '', row.a.appraisal || '', st.loading ? 1 : 0, (row.a.listingParse && row.a.listingParse.at) || '', (row.a.listingParse && row.a.listingParse.n) || 0, row.a.repair || '', row.a.assumedDeposit || '', row.a.assumedFixed || '', row.a.assumedPrior || '', row.a.rights ? (row.a.rights.pastedAt || 1) + ':' + (row.a.rights.editedAt || 0) : '', row.a.unpaidMgmtFee || '', row.a.etc || ''].join('|');
     if (row._vev && row._vev.sig === sig) return row._vev;
     var ev = { sig: sig, t: t, liq: lq, ve: null, mp: null, wb: null, pn: null, visit: { go: false, why: '' } };
     if (vcOk) ev.ve = vc.ve;
@@ -14003,6 +14003,10 @@ function rightsPanelHtml(row) {
     var line = function(lb, w) { return w ? '<tr><td>' + lb + ' ' + eok(w.bidWon) + '</td><td class="r"><b style="color:' + (w.assumedWon > 0 ? '#dc2626' : '#16a34a') + ';">' + (w.assumedWon > 0 ? '인수 ' + eok(w.assumedWon) : '인수 0') + '</b></td></tr>' : ''; };
     h += '<table class="dr-tbl" style="margin-top:6px;">' + line('추천 입찰가', wRec) + line('최저가로 낙찰 시', wMin) + '</table>';
     if (w0) { h += '<div class="dr-sub" style="margin-top:4px;">배당 순서(' + eok(w0.bidWon) + ' 기준): ' + w0.steps.filter(function(x) { return x.claim > 0; }).map(function(x) { return bbEsc(x.label) + ' ' + eok(x.paid); }).join(' → ') + '</div>'; }
+    if (wRec && w0 === wRec && wRec.assumedWon === 0) { // 세금처럼 알 수 없는 선순위 금액이 얼마까지 빠져도 인수가 0인지(추천가 기준)
+        var lo = 0, hi = wRec.bidWon; for (var bi = 0; bi < 30; bi++) { var md = (lo + hi) / 2, ww = rightsWaterfall(R, wRec.bidWon, { addr: a.addr, extraPriorWon: (opts.extraPriorWon || 0) + md }); if (ww.assumedWon === 0) lo = md; else hi = md; }
+        h += '<div class="dr-sub" style="margin-top:4px;">여유: 추천가에서 체납 세금 등이 <b>' + eok(lo) + '</b>까지 먼저 빠져도 인수는 0이에요' + (w0.taxSeizures ? ' (세무서·지자체 압류 ' + w0.taxSeizures + '건 - 금액을 알 수 없으니 이 여유와 비교해 보세요)' : '') + '</div>';
+    }
     if (R.tankAssumeWon != null && wMin) h += '<div class="dr-sub">탱크옥션 표시 인수액 ' + eok(R.tankAssumeWon) + ' ↔ 이 계산(최저가) ' + eok(wMin.assumedWon) + (Math.abs(R.tankAssumeWon - wMin.assumedWon) < 10000 ? ' ✔ 일치' : ' (차이는 집행비용·선행채권 가정 차이)') + '</div>';
     var warns = [];
     if (w0 && w0.taxSeizures) warns.push('세무서·지자체 압류 ' + w0.taxSeizures + '건 - 체납 세금의 금액·법정기일을 몰라 계산에는 안 넣었어요. 당해세이거나 법정기일이 임차인 확정일자보다 빠르면 임차인 몫이 줄어 인수가 늘어요 → 아래에 합계를 넣으세요');
@@ -19542,6 +19546,7 @@ async function renderVillaDrawer(d, row) {
     if (st.loading) h += '<div class="dr-sub">건축물대장 불러오는 중…</div>';
     else h += buildingDetailHtml(row, st.quota ? { info: null, chk: { verdict: null, items: [], unit: null }, quota: true } : st);
     h += '</div>';
+    h += rightsPanelHtml(row);
     h += favNoteHtml(row);
     h += '<div class="dr-sec"><h4>직접 확인한 금액 (만원) - 넣으면 추천가가 바로 바뀌어요</h4><div class="dr-in">'
         + '<label>인수 금액 (매각물건명세서 권리)</label><input type="number" value="' + (parseInt(a.assumedDeposit) || '') + '" placeholder="0" onchange="updateDrawerField(\'' + idJs + '\',\'assumedDeposit\',this.value)">'
