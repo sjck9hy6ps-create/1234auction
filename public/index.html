@@ -18434,16 +18434,27 @@ function bidPlanFor(row, fast) {
     var at = function(b) { return { bid: Math.round(b), p: winbidProbAt(wb, b), net: Math.round(interp(b, 'net')), pre: Math.round(interp(b, 'pre')) }; };
     var maxP = pts.filter(function(x) { return x.net === MINM; })[0];
     var bMax = maxP ? maxP.bid : interpBidForNet(pts, MINM);
-    if (!bMax || bMax < row.minBid) return { infeasible: true, bMax: bMax, minBid: row.minBid };
+    // 2026-10-11(사용자): 순이익 1천만이 안 남아도 세전 마진율 10% 이상이 남는 가격으로 입찰할 수 있으면 그 범위에서 추천가를 냄(저가 물건용 - 시세 1억 미만이면 10%가 1천만보다 작음)
+    var rateMode = false;
+    if (!bMax || bMax < row.minBid) {
+        var bR = row.sale > 0 ? interpBidForKey(pts, 'pre', row.sale * MIN_MARGIN_RATE) : null;
+        if (bR && bR >= row.minBid) { bMax = bR; rateMode = true; }
+        else return { infeasible: true, bMax: bMax, minBid: row.minBid };
+    }
     var best = null, p70 = null, step = Math.max(1, bMax * 0.0025);
     for (var b = row.minBid; b <= bMax + 0.5; b += step) {
         var x = at(b), ev = x.p * x.net;
         if (x.net > 0 && (!best || ev > best.ev)) best = Object.assign({ ev: ev }, x);
         if (!p70 && x.p >= 0.7) p70 = x;
     }
-    var out = { max: at(bMax), ev: best, p70: p70, rec: (!fast && row.recBid) ? at(row.recBid) : null, sale: row.sale };
+    var out = { rateMode: rateMode, max: at(bMax), ev: best, p70: p70, rec: (!fast && row.recBid) ? at(row.recBid) : null, sale: row.sale };
     if (!fast) out.band = marginBandFor(row.sale, row);
     return out;
+}
+var MIN_MARGIN_RATE = 0.10; // 순이익 1천만이 안 될 때 대신 쓰는 최소 마진율(세전, 예상매도가 대비)
+function interpBidForKey(pts, key, val) {
+    for (var i = 1; i < pts.length; i++) if (pts[i - 1][key] >= val && pts[i][key] <= val) { var t = (pts[i - 1][key] - val) / ((pts[i - 1][key] - pts[i][key]) || 1); return pts[i - 1].bid + t * (pts[i].bid - pts[i - 1].bid); }
+    return null;
 }
 function interpBidForNet(pts, net) {
     for (var i = 1; i < pts.length; i++) if (pts[i - 1].net >= net && pts[i].net <= net) { var t = (pts[i - 1].net - net) / ((pts[i - 1].net - pts[i].net) || 1); return pts[i - 1].bid + t * (pts[i].bid - pts[i - 1].bid); }
@@ -18452,7 +18463,7 @@ function interpBidForNet(pts, net) {
 function bidPlanHtml(row, fmt) {
     var pl; try { pl = bidPlanFor(row); } catch (e) { pl = null; }
     if (!pl) return '';
-    if (pl.infeasible) return '<div class="dr-plan"><b>💡 입찰가 고르기</b><div class="dr-sub">최저가(' + fmt(pl.minBid) + ')로 사도 순이익 ' + minMarginTxt(row) + '이 안 남아서 입찰할 구간이 없어요.</div></div>';
+    if (pl.infeasible) return '<div class="dr-plan"><b>💡 입찰가 고르기</b><div class="dr-sub">최저가(' + fmt(pl.minBid) + ')로 사도 순이익 ' + minMarginTxt(row) + '이 안 남고 마진율 ' + Math.round(MIN_MARGIN_RATE * 100) + '%도 안 나와서 입찰할 구간이 없어요.</div></div>';
     var rate = function(x) { return x && pl.sale ? (x.pre / pl.sale * 100).toFixed(1) + '%' : '-'; };
     var line = function(label, x, strong, tip) {
         if (!x) return '';
@@ -18460,7 +18471,7 @@ function bidPlanHtml(row, fmt) {
         return '<tr' + (strong ? ' class="ev"' : '') + '><td title="' + bbEsc(tip || '') + '">' + label + '</td><td class="r"><b>' + fmt(x.bid) + '</b></td><td class="r" style="color:' + col + ';">' + pc + '%</td><td class="r">' + fmt(x.net) + '</td><td class="r">' + rate(x) + '</td></tr>';
     };
     var bd = pl.band;
-    return '<div class="dr-plan"><b>💡 입찰가 고르기</b> <span class="dr-sub" style="margin:0;">마진이 나는 구간(순이익 ' + minMarginTxt(row) + ' 이상' + (isFirstFloor(row.a) ? ' · 1층이라 20% 더' : '') + ') 안에서</span>'
+    return '<div class="dr-plan"><b>💡 입찰가 고르기</b> <span class="dr-sub" style="margin:0;">' + (pl.rateMode ? '순이익 ' + minMarginTxt(row) + '은 안 남지만 세전 마진율 ' + Math.round(MIN_MARGIN_RATE * 100) + '% 이상 남는 구간(저가 물건) 안에서' : '마진이 나는 구간(순이익 ' + minMarginTxt(row) + ' 이상' + (isFirstFloor(row.a) ? ' · 1층이라 20% 더' : '') + ') 안에서') + '</span>'
         + '<table class="pn-table"><thead><tr><th></th><th class="r">입찰가</th><th class="r">낙찰 가능성</th><th class="r">순이익(세후)</th><th class="r">마진율(세전)</th></tr></thead><tbody>'
         + line('마진 확보 상한', pl.max, false, '순이익이 ' + minMarginTxt(row) + ' 남는 가장 높은 입찰가 - 이보다 높게 쓰면 마진이 그 아래')
         + line('<b>기대수익 최대</b>', pl.ev, true, '낙찰 가능성 × 순이익이 가장 큰 입찰가')
@@ -18506,7 +18517,7 @@ function computePick(row) {
     }
     var pk = row.pick;
     if (!pk) { row.visit.why = '추천가를 계산하지 못했어요'; return; }
-    if (pk.infeasible) { row.visit.why = '최저가로 사도 순이익 ' + minMarginTxt(row) + '이 안 남아요'; return; }
+    if (pk.infeasible) { row.visit.why = '최저가로 사도 순이익 ' + minMarginTxt(row) + '이 안 남고, 마진율 ' + Math.round(MIN_MARGIN_RATE * 100) + '%도 안 나와요'; return; }
     if (!pk.ev) { row.visit.why = '순이익이 남는 입찰가가 없어요'; return; }
     if (row.issueSuspect && row.issueSuspect.level === 'high') { row.visit.why = '🚩 이슈 강한 의심(' + row.issueSuspect.why.join('·') + ') - 인수 보증금 확인 필요'; return; }
     if (row.bulk) { row.visit.why = '🏢 같은 건물 대량 경매'; return; }
@@ -18518,6 +18529,7 @@ function computePick(row) {
     // 임장 순위(2026-10, 사용자: "입찰후보를 순위로 나눌 수 있어?") - 추천가에서의 낙찰 가능성: 50% 이상 1순위 · 30~50% 2순위 · 20~30% 3순위
     row.visit.rank = pk.ev.p >= 0.5 ? 1 : (pk.ev.p >= 0.3 ? 2 : 3);
     row.visit.why = row.issueSuspect ? '🚩 이슈 의심 - 인수 보증금 확인' : '';
+    if (pk.rateMode) row.visit.why = (row.visit.why ? row.visit.why + ' · ' : '') + '순이익 ' + minMarginTxt(row) + '은 안 되고 마진율 ' + Math.round(MIN_MARGIN_RATE * 100) + '% 가격 범위에서 추천';
 }
 function applyPickToRow(row) {
     // 앱 전체(입찰 판단 카드·비용표 등)가 같은 추천가를 쓰도록 맨 마지막에 덮어씀. 옛 추천가는 recBidOld에 보관
@@ -19149,7 +19161,7 @@ async function mergeServerBoardCache(local) {
 }
 setTimeout(function() { try { srvBoardParts(); window.villaSrvP = villaFetchServerCalc(); } catch (e) {} }, 2500); // 앱을 켜고 2.5초 뒤 배경에서 미리 받기
 // 저장 계산을 다시 써도 되는지 - 물건 입력값(시세 계산에 쓰는 것)과 입찰일 지남 여부. 계산 방식이 바뀌면 BOARD_CALC_VER을 올림
-var BOARD_CALC_VER = 34; // 33: 아파트 고층 보정 축소·저층 범위(2026-10-11) - // 29: nYear 저장 추가 - // 27: 🎲 예상 낙찰가용 시세(wbBase) 추가 (범위 표시는 화면에서 바로 계산 - 버전 변경 없음)
+var BOARD_CALC_VER = 35; // 35: 순이익 1천만이 안 되면 마진율 10% 가격으로 추천가(2026-10-11) - // // 33: 아파트 고층 보정 축소·저층 범위(2026-10-11) - // 29: nYear 저장 추가 - // 27: 🎲 예상 낙찰가용 시세(wbBase) 추가 (범위 표시는 화면에서 바로 계산 - 버전 변경 없음)
 function boardBaseSig(a) {
     var d = a.bidDate ? calcAuctionDday(a.bidDate) : null;
     // 2026-10-11: 건축물대장에서 자동으로 채운 연식·승강기는 재사용 판단에서 뺌 - 새로 알게 돼도 다음 월요일 미리 계산에 반영(직접 입력한 연식은 그대로 비교)
@@ -19248,7 +19260,7 @@ var INFO_POP = {
         '<b>순이익(세후)이 1천만 원 이상 남는 입찰가</b> 가운데 <b>"낙찰 가능성 × 순이익"이 가장 큰 가격</b> 하나예요. 모든 아파트에 같은 방식이에요.<ul>'
         + '<li><b>순이익</b> = 예상매도가 − 입찰가 − 취득세·등기·명도·수리비·이사·청소·중개수수료·대출이자(보유 3개월 기본) − 인수 보증금·미납 관리비 − 종합소득세(내 자산의 주택 수·올해 소득 반영)</li>'
         + '<li><b>낙찰 가능성</b> = 낙찰사례 2만여 건으로 만든 모델(최저가·감정가·유찰 횟수·지역·계절·인기·시세 대비 최저가)이 추정해요. 보통 오차 5~6%예요.</li></ul>'
-        + '최저가로 사도 순이익 1천만이 안 남으면 추천가가 없고 <b>패스</b>예요. 낙찰 가능성이 20% 미만이거나, <b>같은 단지 같은 평형 최근 1년 거래가 3건 미만</b>(시세 근거 약함)이거나, 🚩 강한 의심·🏢 대량 경매도 패스예요.<br>'
+        + '최저가로 사도 순이익 1천만이 안 남아도 <b>세전 마진율 10% 이상</b> 남는 가격이 있으면 그 범위에서 추천가를 내고(저가 물건), 마진율 10%도 안 나오면 추천가가 없고 <b>패스</b>예요. 낙찰 가능성이 20% 미만이거나, <b>같은 단지 같은 평형 최근 1년 거래가 3건 미만</b>(시세 근거 약함)이거나, 🚩 강한 의심·🏢 대량 경매도 패스예요.<br>'
         + '<span class="ip-muted">임장에서 확인한 인수 금액·미납 관리비·수리비를 넣으면 같은 계산이 다시 돌아 추천가가 바뀌어요. 마진 1천만이 남는 가장 높은 가격(상한)은 상세 창에 따로 보여요.</span>' }
 };
 function showInfoPop(key, el, ev) {
