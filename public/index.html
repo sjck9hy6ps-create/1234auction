@@ -14149,6 +14149,15 @@ function parseTankRights(text) {
     var mt = rightsMergeTenants(out.tenants).filter(function(t) { return t.tankStanding === true || t.tankAssumeNote; });
     if (out.tankAssumeWon && out.minBidWon && mt.length === 1) { var ex = out.minBidWon - (mt[0].deposit - out.tankAssumeWon); if (ex > 0 && ex <= out.minBidWon * 0.04) out.execWon = ex; }
     out.tenants = rightsMergeTenants(out.tenants); out.tenants.forEach(function(t) { delete t._txt; });
+    // 등기·임차인 표에 안 나오는 인수 위험(2026-10-11, 사용자: 권리분석의 핵심은 낙찰자 인수 조건): 붙여넣은 글에 언급된 특수 권리를 찾아 알림(유치권은 신고 금액이 있으면 같이)
+    out.flags = [];
+    [['유치권', /유치권/], ['법정지상권', /법정지상권/], ['분묘기지권', /분묘기지권/], ['토지별도등기', /토지\s*별도\s*등기/], ['대지권 미등기', /대지권\s*미등기/], ['대지권 없음', /대지권\s*(?:없음|이\s*없)/],
+     ['선순위 가처분', /선순위[^\n]{0,10}가처분/], ['선순위 가등기', /선순위[^\n]{0,10}가등기/], ['지분 매각', /지분\s*(?:매각|경매)/], ['예고등기', /예고등기/]].forEach(function(f) {
+        var mm = text.match(f[1]); if (!mm) return;
+        var ln = text.slice(Math.max(0, mm.index - 40), mm.index + 90).replace(/\s+/g, ' ').trim(), fl = { k: f[0], note: ln };
+        if (f[0] === '유치권') { var am = text.match(/유치권[^\n]{0,80}?([\d,]{7,})\s*원/); if (am) fl.won = rightsNum(am[1]); }
+        out.flags.push(fl);
+    });
     if (!out.baseDate) { var b = out.registry.filter(function(r) { return r.base; })[0]; if (b) out.baseDate = b.date; }
     if (!out.tenants.length) out.warnings.push('임차인 현황을 찾지 못했어요(전입세대 없음이면 정상) - 상세 페이지의 "임차인 현황" 부분까지 같이 붙여넣었는지 확인');
     if (!out.registry.length) out.warnings.push('건물등기(권리 목록)를 찾지 못했어요');
@@ -14179,6 +14188,31 @@ function rightsMinorLimit(baseDate, addr) {
     var tb = null; for (var i = 0; i < RIGHTS_MINOR_TABLES.length; i++) if (!baseDate || baseDate >= RIGHTS_MINOR_TABLES[i].from) { tb = RIGHTS_MINOR_TABLES[i]; break; }
     if (!tb) return null; var r = tb.t[rightsMinorTier(addr)]; return { limit: r[0] * 10000, pay: r[1] * 10000, from: tb.from };
 }
+/* ⚖️ 등기부에 올라 있는 인수 권리(2026-10-11, 사용자: "권리설정일이 말소기준일보다 앞선 전세권 금액은 낙찰자 인수") - 말소기준일보다 앞선 권리만 대상(말소기준일과 같거나 뒤는 매각으로 소멸).
+   근거(민사집행법 제91조 제3·4항, 주택임대차보호법 제3조의5·제3조의3): 지상권·지역권·전세권·등기된 임차권은 저당권·압류·가압류보다 앞서면 매각으로 소멸하지 않고 낙찰자가 인수함.
+   다만 앞선 전세권은 전세권자가 배당요구를 하면 매각으로 소멸(배당받고 모자란 돈은 인수하지 않음). 그래서 기본은 '인수'(보수적), 탱크옥션이 '소멸'로 표시했거나 사용자가 '배당요구함'으로 바꾸면 소멸(배당 순위에 참여).
+   금액이 있는 것(전세권·임차권등기)은 인수액에 더하고, 금액이 없는 것(지상권·지역권·가처분·소유권이전청구권 가등기·환매·예고등기)은 위험 표시만 함(소유권 상실·사용 제한 등 - 입찰 전 전문가 확인).
+   주택임차권등기는 임차인 표에 같은 보증금의 임차인이 있으면 임차인 계산에서 처리(이중 계산 방지). rights.ovr[순번] = 'asm'(인수)|'ext'(소멸·배당요구함)으로 직접 바꿈. */
+function rightsRegItems(rights) {
+    var reg = (rights && rights.registry) || [], base = (rights && rights.baseDate) || '', ts = (rights && rights.tenants) || [], ovr = (rights && rights.ovr) || {}, items = [];
+    if (!base) return items;
+    reg.forEach(function(r) {
+        if (r.base || !r.date || !(r.date < base)) return;
+        var ty = r.type || '', mk = function(kind, mode, why) { items.push({ seq: r.seq, type: ty, holder: r.holder, date: r.date, amount: r.amount || 0, kind: kind, mode: mode, auto: !ovr[r.seq], why: why }); };
+        if (/전세권/.test(ty)) {
+            var m1 = ovr[r.seq] || (r.extinguished ? 'ext' : 'asm');
+            mk('money', m1, m1 === 'asm' ? '말소기준일보다 앞선 전세권 - 배당요구를 안 하면 전세금 전액 낙찰자 인수' : '배당요구한 것으로 보고 소멸(배당 순위에 참여, 모자란 돈은 인수 안 함)');
+        } else if (/임차권/.test(ty)) {
+            if (r.amount > 0 && ts.some(function(t) { return t.deposit === r.amount; })) return;
+            var m2 = ovr[r.seq] || (r.extinguished ? 'ext' : 'asm');
+            mk('money', m2, '말소기준일보다 앞선 등기된 임차권 - 대항력이 있어 배당으로 못 받은 보증금은 낙찰자 인수');
+        } else if (/가등기/.test(ty) && !/담보/.test((r.note || '') + ty)) mk('risk', 'asm', '선순위 소유권이전청구권 가등기 - 본등기가 되면 낙찰자가 소유권을 잃음(금액 아님)');
+        else if (/가처분|처분금지/.test(ty)) mk('risk', 'asm', '선순위 가처분 - 본안 승소 시 낙찰자가 소유권을 잃거나 건물 철거 가능(금액 아님)');
+        else if (/지상권|지역권/.test(ty)) mk('risk', 'asm', '선순위 ' + (/지역권/.test(ty) ? '지역권' : '지상권') + ' - 낙찰자가 그대로 인수(토지 사용 제한·건물 철거 불가)');
+        else if (/환매|예고등기/.test(ty)) mk('risk', 'asm', ty + ' - 소유권 상실 위험(금액 아님)');
+    });
+    return items;
+}
 /* 낙찰가(원) → 배당 흉내. opts: { addr, execWon, extraPriorWon(당해세·임금채권·확정일자 앞선 선순위 등 직접 입력), } */
 function rightsWaterfall(rights, bidWon, opts) {
     opts = opts || {};
@@ -14204,8 +14238,9 @@ function rightsWaterfall(rights, bidWon, opts) {
         var amt = Math.min(ml.pay, t.deposit); amt = Math.min(amt, Math.max(0, minorTotalCap - minorPaid)); var p = take('소액임차인 최우선변제 - ' + t.name, amt); t.minorPaid = p; minorPaid += p;
     });
     // 담보물권(근저당·전세권·담보가등기)과 확정일자 임차인을 날짜순으로
-    var queue = [];
-    reg.filter(function(r) { return /근저당|전세권|담보가등기/.test(r.type) && r.amount > 0 && !/주택임차권/.test(r.type); }).forEach(function(r) { queue.push({ date: r.date, kind: 'sec', label: r.type + ' ' + r.holder, claim: r.amount }); });
+    var queue = [], regItems = rightsRegItems(rights), asmSeq = {};
+    regItems.forEach(function(it) { if (it.kind === 'money' && it.mode === 'asm') asmSeq[it.seq] = true; });
+    reg.filter(function(r) { return /근저당|전세권|담보가등기/.test(r.type) && r.amount > 0 && !/주택임차권/.test(r.type) && !asmSeq[r.seq]; }).forEach(function(r) { queue.push({ date: r.date, kind: 'sec', label: r.type + ' ' + r.holder, claim: r.amount }); });
     ts.forEach(function(t) { if (t.requested && t.hasPriority && (t.standing || t.minor)) queue.push({ date: t.prioDate, kind: 'ten', label: '임차인 ' + t.name + ' 보증금', claim: Math.max(0, t.deposit - (t.minorPaid || 0)), t: t }); });
     queue.sort(function(a, b) { return a.date < b.date ? -1 : (a.date > b.date ? 1 : (a.kind === 'ten' ? -1 : 1)); });
     queue.forEach(function(q) { var p = take(q.label + ' (' + q.date + ')', q.claim); if (q.t) q.t.received = (q.t.received || 0) + p; });
@@ -14217,14 +14252,15 @@ function rightsWaterfall(rights, bidWon, opts) {
         if (!(t.requested && t.hasPriority)) { t.status = (!t.requested ? '배당요구 안 함/미확인' : '확정일자 없음') + ' → 입찰대금에서 못 받아 전액 인수'; fixed += t.deposit; t.shortfall = t.deposit; }
         else { t.status = sf > 0 ? '배당받고 모자란 ' + sf.toLocaleString() + '원 인수' : '배당으로 전액 변제 → 인수 없음'; assumed += sf; }
     });
+    var regAssumed = 0; regItems.forEach(function(it) { if (it.kind === 'money' && it.mode === 'asm') regAssumed += it.amount; });
     var taxSeizures = reg.filter(function(r) { return /압류/.test(r.type) && /(세무서|시|군|구|공단|청)/.test(r.holder); }).length;
-    return { bidWon: bidWon, execWon: exec, steps: steps, tenants: ts, assumedWon: assumed + fixed, fixedWon: fixed, taxSeizures: taxSeizures, minor: ml, startDate: startDate, leftWon: Math.max(0, pool) };
+    return { bidWon: bidWon, execWon: exec, steps: steps, tenants: ts, assumedWon: assumed + fixed + regAssumed, fixedWon: fixed + regAssumed, regItems: regItems, regAssumedWon: regAssumed, taxSeizures: taxSeizures, minor: ml, startDate: startDate, leftWon: Math.max(0, pool) };
 }
 
 /* 인수 비용 선택: 직접 넣은 인수 금액 칸이 있으면 그 값(assumedCostAt), 없고 권리분석(a.rights)이 있으면 배당 흉내 결과(만원) */
 function assumedCostRec(a, bidManwon) {
     var hasManual = (parseInt(a.assumedDeposit) || 0) > 0 || (parseInt(a.assumedFixed) || 0) > 0;
-    if (!hasManual && a.rights && a.rights.tenants && a.rights.tenants.length) {
+    if (!hasManual && a.rights && ((a.rights.tenants && a.rights.tenants.length) || (a.rights.registry && a.rights.registry.length))) {
         try { var w = rightsWaterfall(a.rights, Math.round((bidManwon || 0) * 10000), { addr: a.addr, extraPriorWon: (parseInt(a.assumedPrior) || 0) * 10000 + (a.rights.extraPriorWon || 0) }); return Math.round(w.assumedWon / 10000); } catch (e) { console.error('권리분석 계산 실패', e); }
     }
     return assumedCostAt(a.assumedDeposit, a.assumedFixed, a.assumedPrior, bidManwon);
@@ -14232,7 +14268,7 @@ function assumedCostRec(a, bidManwon) {
 // 등록 창(입력 칸 기준) 버전: 칸이 비어 있고 수정 중인 물건에 권리분석이 있으면 그걸 씀
 function assumedCostDom(gross, fixed, prior, bidManwon) {
     if (!(parseInt(gross) > 0) && !(parseInt(fixed) > 0)) {
-        try { var el = document.getElementById('auction-id'), id = el && el.value, a = id && auctionList.filter(function(x) { return String(x.id) === String(id); })[0]; if (a && a.rights && a.rights.tenants && a.rights.tenants.length) return assumedCostRec(Object.assign({}, a, { assumedPrior: prior }), bidManwon); } catch (e) {}
+        try { var el = document.getElementById('auction-id'), id = el && el.value, a = id && auctionList.filter(function(x) { return String(x.id) === String(id); })[0]; if (a && a.rights && ((a.rights.tenants && a.rights.tenants.length) || (a.rights.registry && a.rights.registry.length))) return assumedCostRec(Object.assign({}, a, { assumedPrior: prior }), bidManwon); } catch (e) {}
     }
     return assumedCostAt(gross, fixed, prior, bidManwon);
 }
@@ -14249,6 +14285,12 @@ async function rightsApplyPaste(idJs) {
 async function rightsClear(idJs) {
     var a = auctionList.filter(function(x) { return String(x.id) === String(idJs); })[0]; if (!a || !confirm('이 물건의 권리분석 자료를 지울까요?')) return;
     delete a.rights; try { await saveAuctionAPI(a); } catch (e) {} rightsRefreshRow(a);
+}
+async function rightsSetOvr(idJs, seq, mode) {
+    var a = auctionList.filter(function(x) { return String(x.id) === String(idJs); })[0]; if (!a || !a.rights) return;
+    a.rights.ovr = a.rights.ovr || {}; a.rights.ovr[seq] = mode; a.rights.pastedAt = a.rights.pastedAt || Date.now(); a.rights.editedAt = Date.now();
+    try { await saveAuctionAPI(a); } catch (e) { alert('저장 실패: ' + e.message); }
+    rightsRefreshRow(a);
 }
 async function rightsSetField(idJs, key, manwon) {
     var a = auctionList.filter(function(x) { return String(x.id) === String(idJs); })[0]; if (!a || !a.rights) return;
@@ -14403,6 +14445,16 @@ function rightsPanelHtml(row) {
         w0.tenants.forEach(function(t) { h += '<tr><td>' + bbEsc(t.name) + '<div class="dr-sub">전입 ' + (t.moveIn || '미상') + ' · 확정 ' + (t.fixed || '미상') + ' · 배당요구 ' + (t.distDate || (t.rankedDist ? '있음' : '미확인')) + '</div></td><td class="r">' + eok(t.deposit) + '</td><td class="dr-sub">' + (t.standing ? '대항력 있음' : '대항력 없음') + (t.minor ? ' · 소액' : '') + '<br>' + bbEsc(t.status) + '</td></tr>'; });
         h += '</table>';
     }
+    var ri = w0 ? (w0.regItems || []) : rightsRegItems(R), rm = ri.filter(function(x) { return x.kind === 'money'; }), rk = ri.filter(function(x) { return x.kind === 'risk'; });
+    if (rm.length || rk.length || (R.flags && R.flags.length)) {
+        h += '<div class="dr-sub" style="margin-top:6px;"><b>등기부의 인수 권리</b> (말소기준일보다 앞선 권리)</div><table class="dr-tbl">';
+        rm.forEach(function(x) {
+            h += '<tr><td>' + bbEsc(x.type) + ' ' + bbEsc(x.holder) + '<div class="dr-sub">' + x.date + ' 설정 · ' + bbEsc(x.why) + '</div></td><td class="r">' + eok(x.amount) + '</td><td><select onchange="rightsSetOvr(\'' + id + '\',\'' + x.seq + '\',this.value)" style="font-size:12px;"><option value="asm"' + (x.mode === 'asm' ? ' selected' : '') + '>인수</option><option value="ext"' + (x.mode === 'ext' ? ' selected' : '') + '>소멸(배당요구함)</option></select></td></tr>';
+        });
+        h += '</table>';
+        rk.forEach(function(x) { h += '<div class="dr-warn" style="margin-top:3px;">⛔ ' + bbEsc(x.type) + ' ' + bbEsc(x.holder) + ' (' + x.date + ') - ' + bbEsc(x.why) + '</div>'; });
+        (R.flags || []).forEach(function(f) { h += '<div class="dr-warn" style="margin-top:3px;">⚠️ ' + bbEsc(f.k) + (f.won ? ' 신고 ' + eok(f.won) : '') + ' - 붙여넣은 글에 언급: "' + bbEsc(f.note) + '" (성립 여부 따라 낙찰자 인수·금액은 계산에 안 넣음)</div>'; });
+    }
     var line = function(lb, w) { return w ? '<tr><td>' + lb + ' ' + eok(w.bidWon) + '</td><td class="r"><b style="color:' + (w.assumedWon > 0 ? '#dc2626' : '#16a34a') + ';">' + (w.assumedWon > 0 ? '인수 ' + eok(w.assumedWon) : '인수 0') + '</b></td></tr>' : ''; };
     h += '<table class="dr-tbl" style="margin-top:6px;">' + line('추천 입찰가', wRec) + line('최저가로 낙찰 시', wMin) + '</table>';
     if (w0) { h += '<div class="dr-sub" style="margin-top:4px;">배당 순서(' + eok(w0.bidWon) + ' 기준): ' + w0.steps.filter(function(x) { return x.claim > 0; }).map(function(x) { return bbEsc(x.label) + ' ' + eok(x.paid); }).join(' → ') + '</div>'; }
@@ -14413,8 +14465,8 @@ function rightsPanelHtml(row) {
     if (R.tankAssumeWon != null && wMin) h += '<div class="dr-sub">탱크옥션 표시 인수액 ' + eok(R.tankAssumeWon) + ' ↔ 이 계산(최저가) ' + eok(wMin.assumedWon) + (Math.abs(R.tankAssumeWon - wMin.assumedWon) < 10000 ? ' ✔ 일치' : ' (차이는 집행비용·선행채권 가정 차이)') + '</div>';
     var warns = [];
     if (w0 && w0.taxSeizures) warns.push('세무서·지자체 압류 ' + w0.taxSeizures + '건 - 체납 세금의 금액·법정기일을 몰라 계산에는 안 넣었어요. 당해세이거나 법정기일이 임차인 확정일자보다 빠르면 임차인 몫이 줄어 인수가 늘어요(금액을 알 수 없으면 아래 여유 금액과 비교해 위험 정도만 판단하세요)');
-    (R.registry || []).forEach(function(r) { if (r.assumed) warns.push(r.type + ' ' + r.holder + ' - 소멸되지 않고 인수되는 권리로 표시돼 있어요'); });
-    warns.push('유치권·법정지상권 등 특수 권리는 이 계산에 없어요(매각물건명세서·현황조사서 직접 확인)');
+    (R.registry || []).forEach(function(r) { if (r.assumed && !ri.some(function(x) { return x.seq === r.seq; }) && !/임차권/.test(r.type)) warns.push(r.type + ' ' + r.holder + ' - 탱크옥션에서 소멸되지 않고 인수되는 권리로 표시돼 있어요(위 계산에 없는 종류 - 직접 확인)'); });
+    warns.push('유치권·법정지상권·분묘기지권은 등기부에 안 나올 수 있어 금액을 계산에 넣지 않았어요(매각물건명세서·현황조사서·현장 확인)');
     h += '<div class="dr-warn" style="margin-top:4px;">' + warns.map(bbEsc).join('<br>') + '</div>';
     h += '<div class="dr-in" style="margin-top:6px;"><label>경매집행비용 (만원' + (R.execWon && R.tankAssumeWon != null ? ', 탱크옥션 인수액으로 역산' : ', 가정 310') + ')</label><input type="number" value="' + (R.execWon ? Math.round(R.execWon / 10000) : '') + '" placeholder="310" onchange="rightsSetField(\'' + id + '\',\'execWon\',this.value)">'
         + '<label>당해세·임금 등 먼저 빠지는 돈 (만원)</label><input type="number" value="' + (R.extraPriorWon ? Math.round(R.extraPriorWon / 10000) : '') + '" placeholder="0" onchange="rightsSetField(\'' + id + '\',\'extraPriorWon\',this.value)"></div>';
@@ -19241,7 +19293,7 @@ async function mergeServerBoardCache(local) {
 }
 setTimeout(function() { try { srvBoardParts(); window.villaSrvP = villaFetchServerCalc(); } catch (e) {} }, 2500); // 앱을 켜고 2.5초 뒤 배경에서 미리 받기
 // 저장 계산을 다시 써도 되는지 - 물건 입력값(시세 계산에 쓰는 것)과 입찰일 지남 여부. 계산 방식이 바뀌면 BOARD_CALC_VER을 올림
-var BOARD_CALC_VER = 36; // 36: 저가 아파트 순이익률 10% 추천가 규칙 되돌림(2026-10-11, 백테스트 손해 30~42%) - // 34: 33: 아파트 고층 보정 축소·저층 범위(2026-10-11) - // 29: nYear 저장 추가 - // 27: 🎲 예상 낙찰가용 시세(wbBase) 추가 (범위 표시는 화면에서 바로 계산 - 버전 변경 없음)
+var BOARD_CALC_VER = 37; // 37: 권리분석에 말소기준일보다 앞선 전세권·임차권 등 등기부 인수 권리 반영(2026-10-11) - // 36: 저가 아파트 순이익률 10% 추천가 규칙 되돌림(2026-10-11, 백테스트 손해 30~42%) - // 34: 33: 아파트 고층 보정 축소·저층 범위(2026-10-11) - // 29: nYear 저장 추가 - // 27: 🎲 예상 낙찰가용 시세(wbBase) 추가 (범위 표시는 화면에서 바로 계산 - 버전 변경 없음)
 function boardBaseSig(a) {
     var d = a.bidDate ? calcAuctionDday(a.bidDate) : null;
     // 2026-10-11: 건축물대장에서 자동으로 채운 연식·승강기는 재사용 판단에서 뺌 - 새로 알게 돼도 다음 월요일 미리 계산에 반영(직접 입력한 연식은 그대로 비교)
