@@ -129,12 +129,32 @@ def main():
     # 층별 낙찰가÷예상매도가 중앙값(원자료) - 층 효과가 낙찰가에서도 보이나
     flr = {k: {"n": int(len(G)), "ratioMed": round(float(G["ratio"].median()), 3)} for k, G in D.assign(fl2=X["floor"]).groupby("fl2") if len(G) >= 80}
     print("층별 낙찰가÷예상매도가:", json.dumps(flr, ensure_ascii=False))
+    # 층별 낙찰 후 되팔림 흔적(2026-10-12, 앱 빌라 상세에 표시) - 낙찰 후 1년 이상 지난 사례 중 같은 동·층 되팔림이 6·12개월 안에 있었던 비율
+    try:
+        from datetime import datetime, timedelta
+        cut = int((datetime.now() - timedelta(days=365)).strftime("%Y%m%d"))
+        bk = lambda f: "지하" if f <= 0 else ("1층" if f == 1 else ("2층" if f == 2 else ("3층" if f == 3 else ("4층" if f == 4 else "5층+"))))
+        acc = {}
+        for r in c.itertuples():
+            if not (r.sale <= cut) or r.fl != r.fl: continue
+            m = r.resaleMatch if isinstance(r.resaleMatch, dict) else {}
+            o = acc.setdefault(bk(r.fl), [0, 0, 0]); o[0] += 1
+            if m.get("conf") == "dong" and m.get("date"):
+                try:
+                    mo = (pd.to_datetime(str(m["date"]), format="%Y%m%d") - pd.to_datetime(str(r.sale), format="%Y%m%d")).days / 30.4
+                except Exception: continue
+                if mo <= 12: o[1] += 1
+                if mo <= 6: o[2] += 1
+        floor_resale = {k: {"n": v[0], "p12": round(v[1] / v[0] * 100, 1), "p6": round(v[2] / v[0] * 100, 1)} for k, v in acc.items() if v[0] >= 40}
+        print("층별 되팔림 흔적:", json.dumps(floor_resale, ensure_ascii=False))
+    except Exception as e:
+        floor_resale = {}; print("층별 되팔림 계산 실패:", e)
     FIN = [f for f in FAC if f[0] != "dong"]   # 동 요인은 시험에서 개선이 없어 뺌
     mfin = fit_additive(X[tr], y[tr], FIN); pfin = predict(mfin, X[te], FIN)
     resid_q = [round(float(np.quantile(y[te] - pfin, q / 100)), 4) for q in range(1, 100)]
     full = fit_additive(X, y, FIN)
     FAC = FIN
-    out = {"n": int(len(D)), "oos": res, "byLevel": bylvl, "byAge": byage, "byFloor": byfl, "floorRatio": flr, "ratioMed": round(float(D["ratio"].median()), 3), "resQ": resid_q,
+    out = {"n": int(len(D)), "oos": res, "byLevel": bylvl, "byAge": byage, "byFloor": byfl, "floorRatio": flr, "floorResale": floor_resale, "ratioMed": round(float(D["ratio"].median()), 3), "resQ": resid_q,
            "factors": [f for f, _ in FIN], "base": full[0], "eff": {f: {str(k): round(float(v), 4) for k, v in d.items()} for f, d in full[1].items()}}
     json.dump(out, open("villa-winbid.json", "w"), ensure_ascii=False)
     print("저장 villa-winbid.json")
