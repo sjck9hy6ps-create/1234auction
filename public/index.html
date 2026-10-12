@@ -14371,12 +14371,26 @@ function rightsNeedCount(isVilla, cur) {
         return cur.filter(function(r) { return !r.pending && r.visit && r.visit.go && !r.a.rights; }).length;
     } catch (e) { return 0; }
 }
+/* 붙여넣을 순서(2026-10-12, 사용자: 권리분석 입력 부담) - 임장 후보인데 권리분석이 없는 물건을 입찰이 가까운 순으로(같으면 기대수익 큰 순). 일괄 붙여넣기 창에 사건번호와 함께 보여주고 복사 가능 */
+function rightsNeedList() {
+    var out = [];
+    try {
+        (bidBoardRows || []).forEach(function(r) { if (r.type === 'apt' && !r.pending && r.visit && r.visit.go && r.a && !r.a.rights && r.dday && r.dday.diffDays >= 0) out.push({ r: r, apt: true, ev: r.pick && r.pick.ev ? r.pick.ev.p * r.pick.ev.net : 0 }); });
+        if (villaRestoreState >= 2) { villaFlushHsPend(); window.__villaEvDeadline = performance.now() + 6; try { villaMetroRows().forEach(function(r) { var ev = villaEval(r); if (ev && !ev.pending && ev.visit && ev.visit.go && !r.a.rights && r.dday && r.dday.diffDays >= 0) out.push({ r: r, apt: false, ev: ev.pn && ev.pn.ev ? ev.pn.ev.p * ev.pn.ev.net : 0 }); }); } finally { window.__villaEvDeadline = 0; } }
+    } catch (e) {}
+    out.sort(function(x, y) { return (x.r.dday.diffDays - y.r.dday.diffDays) || (y.ev - x.ev); });
+    return out;
+}
+function rightsNeedText() { return rightsNeedList().map(function(x, i) { return (i + 1) + '. ' + (x.r.a.caseNo || '') + ' ' + (x.apt ? x.r.name : villaNameFor(x.r)) + ' (' + (x.r.region || '') + ') ' + (x.r.dday ? x.r.dday.label : ''); }).join('\n'); }
+function rightsNeedCopy() { var t = rightsNeedText(); try { navigator.clipboard.writeText(t).then(function() { alert('붙여넣을 사건 목록을 복사했어요.'); }, function() { prompt('복사해서 쓰세요', t); }); } catch (e) { prompt('복사해서 쓰세요', t); } }
+function toggleRightsNeed() { var s = bidBoardState; s.rightsNeed = !s.rightsNeed; if (s.rightsNeed) { s.liteCol = 'date'; s.liteDir = 1; s.villaCol = 'date'; s.villaDir = 1; } s.liteLimit = 120; s.villaLimit = 120; renderBidBoard(); }
 function rightsBatchOpen() {
     var old = document.getElementById('rights-batch-modal'); if (old) old.remove();
     var d = document.createElement('div'); d.id = 'rights-batch-modal';
     d.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.45);z-index:100000;display:flex;align-items:center;justify-content:center;padding:12px;';
     d.innerHTML = '<div style="background:#fff;border-radius:10px;padding:14px;width:min(680px,100%);max-height:90vh;display:flex;flex-direction:column;gap:8px;">'
         + '<b>⚖️ 권리분석 일괄 붙여넣기</b><div style="font-size:12px;color:#6b7280;">탱크옥션 상세 페이지 글을 여러 건 이어서 붙여넣으세요. 각 글은 "경매 2025타경1234"로 시작해야 하고, 사건번호로 목록의 물건에 맞춰 저장해요(이미 있는 권리분석은 새 내용으로 바뀌어요).</div>'
+        + (function() { var L = rightsNeedList(); return L.length ? '<details open style="font-size:12px;"><summary><b>붙여넣을 순서</b> (임장 후보 중 권리분석 없는 ' + L.length + '건, 입찰 가까운 순) <a href="#" onclick="rightsNeedCopy();return false;">목록 복사</a></summary><div style="max-height:22vh;overflow:auto;white-space:pre-wrap;color:#374151;">' + bbEsc(rightsNeedText()) + '</div></details>' : ''; })()
         + '<textarea id="rights-batch-text" rows="12" style="width:100%;box-sizing:border-box;font-size:12px;flex:1;"></textarea><div id="rights-batch-result" style="font-size:12px;white-space:pre-wrap;max-height:30vh;overflow:auto;"></div>'
         + '<div style="display:flex;gap:8px;justify-content:flex-end;"><button class="modal-btn btn-gray" onclick="document.getElementById(\'rights-batch-modal\').remove()">닫기</button><button class="modal-btn btn-green" id="rights-batch-run" onclick="rightsBatchRun()">분석해서 저장</button></div></div>';
     document.body.appendChild(d);
@@ -19557,7 +19571,7 @@ function renderBidBoardLite() {
     }).join('') + (isVillaTab ? '' : ' <button class="bb-tab' + (s.nicheLite ? ' on' : '') + '" title="입찰자가 적으면서 되팔림도 좋은 시군구의 물건" onclick="bidBoardState.nicheLite=!bidBoardState.nicheLite;bidBoardState.liteLimit=120;renderBidBoard();">🧭 틈새만 <b>' + cur.filter(function(r) { return r.niche && !r.pending; }).length + '</b></button>');
     var listN = isVillaTab ? villaMetroRows().filter(function(r) { return listingStatus(r.a).st === 'yes'; }).length : cur.filter(function(r) { return !r.pending && listingStatus(r.a).st === 'yes'; }).length;
     sub += ' <button class="bb-tab' + (s.listLite ? ' on' : '') + '" title="네이버 매물 목록을 붙여넣어 매물이 있는 것으로 확인한 물건만" onclick="setListFilter()">📋 매물 등록 <b>' + listN + '</b></button>';
-    sub += ' <button class="bb-tab' + (s.rightsNeed ? ' on' : '') + '" title="임장 후보인데 권리분석이 없는 물건만" onclick="bidBoardState.rightsNeed=!bidBoardState.rightsNeed;bidBoardState.liteLimit=120;bidBoardState.villaLimit=120;renderBidBoard();">⚖️ 권리분석 필요 <b>' + rightsNeedCount(isVillaTab, cur) + '</b></button> <button class="bb-tab" title="탱크옥션 상세 글 여러 건을 한 번에 붙여넣기" onclick="rightsBatchOpen()">⚖️ 일괄 붙여넣기</button>';
+    sub += ' <button class="bb-tab' + (s.rightsNeed ? ' on' : '') + '" title="임장 후보인데 권리분석이 없는 물건만" onclick="toggleRightsNeed();">⚖️ 권리분석 필요 <b>' + rightsNeedCount(isVillaTab, cur) + '</b></button> <button class="bb-tab" title="탱크옥션 상세 글 여러 건을 한 번에 붙여넣기" onclick="rightsBatchOpen()">⚖️ 일괄 붙여넣기</button>';
     if (isFavTab) { bar.innerHTML = grp; renderFavLite(document.getElementById('bb-body')); var cn1 = document.getElementById('bb-cache-note'); if (cn1) cn1.style.display = 'none'; return; }
     bar.innerHTML = grp + sub
         + ' <span class="bb-sub">열 이름을 누르면 오름차순·내림차순으로 정렬돼요</span>'
