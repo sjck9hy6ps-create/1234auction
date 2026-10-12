@@ -100,6 +100,15 @@ export default async function handler(req, res) {
     try {
         await ensureMigrated();
 
+        if (req.method === 'GET' && req.query.diag === 'usage') {
+            // 저장소 사용량(2026-10-12, 사용자: Redis 한도 사고 재발 방지) - 읽기 전용. Upstash INFO의 사용 메모리 ÷ 한도(REDIS_MAX_BYTES 환경변수, 없으면 알려진 값 못 구함)
+            res.setHeader('Cache-Control', 's-maxage=1800');
+            let used = null, dbsize = null;
+            try { const info = String((await cmd(['INFO', 'memory'])) || ''); const m = info.match(/used_memory:(\d+)/); if (m) used = parseInt(m[1], 10); } catch (e) {}
+            try { dbsize = await cmd(['DBSIZE']); } catch (e) {}
+            const max = parseInt(process.env.REDIS_MAX_BYTES || '0', 10) || null;
+            return res.status(200).json({ usedBytes: used, maxBytes: max, ratio: used != null && max ? Math.round(used / max * 1000) / 1000 : null, dbsize });
+        }
         if (req.method === 'GET' && req.query.diag === '1') {
             // 진단 전용(읽기만 함) - 값 자체/비밀값은 노출하지 않음
             const [hlen, ver, dbsize] = await pipeline([['HLEN', hashKey], ['GET', verKey], ['DBSIZE']]);

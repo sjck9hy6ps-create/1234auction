@@ -25,3 +25,16 @@ python3 scripts/restore-from-backup.py backups/full-날짜 house_trades villa_tr
 - ⚠️ **앱에 직접 올린 자료는 Supabase가 아니라 Upstash Redis에 있어요** - 경매물건(`auctions`, 즐겨찾기·인수금액·권리분석 포함), 낙찰사례(`bidCases`), 임장메모(`siteNotes`), 내 자산(`myAssets`). 이건 다시 채워지지 않으니 따로 백업해야 해요: `sh scripts/backup-app-data.sh`(키 필요 없음). 복구: `python3 scripts/restore-app-data.py 백업폴더`.
 - 그 밖의 Redis 내용은 일부 응답 캐시라 다시 채워져요.
 - Supabase 표 `building_info_cache`, `dong_boundaries`는 서비스 키로 읽을 권한이 없어 백업에서 빠졌어요(2026-10-11 확인, 필요하면 Supabase에서 권한을 열어야 함).
+
+## 5. 백업을 한 곳에 모으는 방법 (2026-10-12)
+
+백업은 두 종류라 따로 받아야 하지만, **PC의 `backups/` 한 폴더**에 날짜별로 모아 두면 됩니다.
+
+| 종류 | 받는 방법 | 폴더 |
+|---|---|---|
+| Supabase 거래·분석 자료 | Actions "전체 백업" 실행 → `gh run download <번호> -D backups/full-YYYYMMDD` | `backups/full-YYYYMMDD/part-*` |
+| 앱 자료(경매물건·낙찰사례·메모·내 자산, Redis) | `sh scripts/backup-app-data.sh backups/full-YYYYMMDD/part-app-data` | 위 폴더 안 `part-app-data` |
+
+- 권장 주기: 한 달에 한 번(또는 큰 규칙 변경 전). GitHub 산출물은 7일 뒤 자동 삭제되므로 받은 뒤엔 PC 백업만 남음 — 산출물을 직접 지우지 않아도 됨.
+- **받은 직후 복구 가능 검사**: `python scripts/verify-backup.py backups/full-YYYYMMDD` (모든 파일이 끝까지 읽히고 건수가 manifest와 맞는지 확인. 큰 폴더는 `--sample`로 빠르게).
+- 복구 연습: 위 1~3단계를 새 무료 Supabase 프로젝트에 한 번 해 보면 실제 절차를 검증할 수 있음(분기 1회 권장).

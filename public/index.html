@@ -5618,6 +5618,18 @@ function showDataHealthBanner() {
         .catch(function() {});
 }
 window.addEventListener('load', showDataHealthBanner);
+/* 💾 저장소 사용량 경고(2026-10-12) - 경매물건·낙찰사례 저장소(Redis)가 한도의 80%를 넘으면 띠를 띄움(2026-10-03 한도 초과로 목록이 비어 보였던 사고 재발 방지). 한도(REDIS_MAX_BYTES)를 모르면 아무것도 안 함 */
+function showStorageBanner() {
+    fetch('/api/auction?diag=usage').then(function(r) { return r.ok ? r.json() : null; }).then(function(u) {
+        if (!u || u.ratio == null || u.ratio < 0.8 || document.getElementById('storage-banner')) return;
+        var b = document.createElement('div'); b.id = 'storage-banner';
+        b.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:99999;background:#fef2f2;color:#991b1b;border-bottom:2px solid #f87171;padding:8px 36px 8px 14px;font-size:13px;';
+        b.innerHTML = '<b>💾 경매물건·낙찰사례 저장소 사용량 ' + Math.round(u.ratio * 100) + '%</b> - 한도에 가까워요. 한도에 닿으면 목록이 비어 보이고 저장이 막혀요. Claude에게 "저장소 정리해줘"라고 말해 주세요.<button aria-label="닫기" style="position:absolute;top:4px;right:8px;border:none;background:none;font-size:20px;cursor:pointer;color:#991b1b">×</button>';
+        b.querySelector('button').onclick = function() { b.remove(); };
+        document.body.appendChild(b);
+    }).catch(function() {});
+}
+window.addEventListener('load', function() { setTimeout(showStorageBanner, 6000); });
 function initKakao() {
     geocoder = new kakao.maps.services.Geocoder();
     places   = new kakao.maps.services.Places();
