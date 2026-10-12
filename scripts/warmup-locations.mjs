@@ -43,6 +43,7 @@
 ════════════════════════════════════ */
 import { createClient } from '@supabase/supabase-js';
 import ws from 'ws';
+import { LAWD_CODES } from './shared.mjs';
 const supabase = createClient(
   process.env.SUPABASE_URL?.trim(),
   process.env.SUPABASE_SERVICE_ROLE_KEY?.trim(),
@@ -379,6 +380,20 @@ async function main() {
   const existingBuildingKeys = await fetchExistingBuildingKeys();
   console.log(`   → 이미 건축물대장 캐시된 조합 ${existingBuildingKeys.size}개`);
   console.log(`📦 건축물대장 웜업 실행당 상한: ${MAX_BUILDING_WARMUP_PER_RUN}건 (낮 시간 실사용 할당량 보호용)`);
+  /* 🔗 대장 연결을 지도(좌표) 변환과 분리(2026-10-13, 사용자: "지도매칭은 지도 기능 빼면 상관없지만 대장과 거래내역 연결은 어떤 작업에도 필요")
+     대장 조회에 필요한 건 좌표가 아니라 시군구코드+법정동코드+번지뿐. 시군구코드는 거래 지역명으로, 법정동코드는 이미 좌표 변환이 끝난 같은 시군구·같은 동 이름의 건물들에서 알아냄
+     (한 동 이름에 코드가 둘 이상 나오고 90% 미만이면 틀릴 수 있어 쓰지 않음). 그래서 좌표 변환이 실패한 건물도 대장 연결 대상이 됨. */
+  const sggOfRegion = new Map(LAWD_CODES.map((x) => [x.name, x.code]));
+  const dongVotes = new Map();
+  for (const [ck, c] of existingCoords) {
+    if (!c || !c.sigunguCd || !c.bjdongCd) continue;
+    const dk = c.sigunguCd + '|' + String(ck).split('|')[0];
+    const m = dongVotes.get(dk) || new Map(); m.set(c.bjdongCd, (m.get(c.bjdongCd) || 0) + 1); dongVotes.set(dk, m);
+  }
+  const dongCode = new Map();
+  for (const [dk, m] of dongVotes) { let tot = 0, best = null, bn = 0; for (const [cd, n] of m) { tot += n; if (n > bn) { bn = n; best = cd; } } if (bn / tot >= 0.9) dongCode.set(dk, best); }
+  const derivedCoord = (row) => { const sg = sggOfRegion.get(row.region); const bj = sg && dongCode.get(sg + '|' + (row.dong || '')); return bj ? { sigunguCd: sg, bjdongCd: bj, derived: true } : null; };
+  console.log(`📦 법정동코드 추정표: ${dongCode.size}개 동 (좌표 변환 없이 대장 연결에 씀)`);
   // 단독/다가구(single_trades)는 원래 앱에서도 지오코딩·건축물대장 대상이 아니므로 웜업에서도 제외
   const tableTypes = [
     { table: 'house_trades', type: 'apt' },
@@ -401,8 +416,7 @@ async function main() {
   const coordTargets = allEntries.filter(([key, row]) => !existingCoords.has(key) && !existingCoords.has(legacyKeyOf(row)));
   // 좌표는 있지만 건축물대장이 아직 캐시 안 된 단지 → 건축물대장만 재시도 대상
   const buildingOnlyTargets = allEntries.filter(([key, row]) => {
-    const coord = existingCoords.get(key) || existingCoords.get(legacyKeyOf(row));
-    if (!coord) return false; // 좌표 없는 건 위에서 이미 처리
+    const coord = existingCoords.get(key) || existingCoords.get(legacyKeyOf(row)) || derivedCoord(row); // 좌표가 없어도 코드를 추정할 수 있으면 대장 대상
     if (!coord.sigunguCd || !coord.bjdongCd) return false; // 법정동코드 자체가 없으면 재시도 불가
     const bunJi = computeBunJi(row);
     if (!bunJi) return false;
@@ -419,7 +433,7 @@ async function main() {
       if (code.length === 5) { sgg.add(code); sido.add(code.slice(0, 2)); }
     });
     const rank = (sc) => (sc && sgg.has(sc) ? 0 : (sc && sido.has(String(sc).slice(0, 2)) ? 1 : 2));
-    const coordOf = ([key, row]) => existingCoords.get(key) || existingCoords.get(legacyKeyOf(row)) || {};
+    const coordOf = ([key, row]) => existingCoords.get(key) || existingCoords.get(legacyKeyOf(row)) || derivedCoord(row) || {};
     buildingOnlyTargets.sort((x, y) => (rank(coordOf(x).sigunguCd) - rank(coordOf(y).sigunguCd)) || ((y[1]._n || 0) - (x[1]._n || 0))); // 같은 우선순위 안에서는 거래 많은 건물 먼저(2026-10-13)
     const n0 = buildingOnlyTargets.filter((x) => rank(coordOf(x).sigunguCd) === 0).length, n1 = buildingOnlyTargets.filter((x) => rank(coordOf(x).sigunguCd) === 1).length;
     console.log(`📦 입찰희망 지역 우선: 입찰물건 시군구 ${sgg.size}곳의 단지 ${n0}개 → 같은 시도 ${n1}개 → 나머지 순`);
@@ -448,7 +462,7 @@ async function main() {
       while (idx < targets.length && buildingWarmupCount < budgetCap) {
         const [, row] = targets[idx++];
         const key = buildCacheKey(row.dong, row.danji, row.bunji, row.road_name, row.main_num, row.sub_num);
-        const coord = existingCoords.get(key) || existingCoords.get(legacyKeyOf(row));
+        const coord = existingCoords.get(key) || existingCoords.get(legacyKeyOf(row)) || derivedCoord(row);
         if (coord && coord.sigunguCd && coord.bjdongCd) {
           await warmBuildingInfo(row, coord.sigunguCd, coord.bjdongCd);
           success++;
