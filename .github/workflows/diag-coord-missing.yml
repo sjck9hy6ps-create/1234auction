@@ -1,0 +1,25 @@
+name: 진단 - 좌표 없는 건물 특징
+on:
+  workflow_dispatch:
+jobs:
+  diag:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install pandas numpy requests
+      - env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          PYTHONUNBUFFERED: '1'
+        run: python diag-coord-missing.py
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: coord-missing
+          path: coord-missing.csv
+          if-no-files-found: ignore
+          retention-days: 7
