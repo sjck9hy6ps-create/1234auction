@@ -193,7 +193,7 @@ BACKFIT_ITERS = 4
 TIME_SPLIT_TEST_MONTHS = 3  # 이보다 적으면 홀드아웃 지표 자체가 불안정해 계산을 건너뜀(null)
 
 
-def fetch_all_rows(table: str, cols: str = "region,dong,danji,price,size,floor,deal_date,build_year",
+def fetch_all_rows_seq(table: str, cols: str = "region,dong,danji,price,size,floor,deal_date,build_year",
                     order_col: str = "id", extra_filter: str = "") -> pd.DataFrame:
     """Supabase REST API에서 페이지네이션으로 전체 행을 가져옴. cols 기본값은 house_trades류
     테이블 기준이고, kapt_complex_info처럼 스키마가 다른 테이블은 호출부에서 cols를 넘겨씀.
@@ -260,6 +260,71 @@ def fetch_all_rows(table: str, cols: str = "region,dong,danji,price,size,floor,d
         df = df.drop(columns=[order_col])
     print(f"  {table}: {len(df)}행 로드")
     return df
+
+
+def _fetch_id_range(table, select_cols, order_col, lo, hi, extra_filter):
+    """id가 [lo, hi) 인 행을 키셋 방식으로 순서대로 받음(한 구간 안은 순차) - 병렬 받기의 한 조각"""
+    rows, last_val = [], None
+    while True:
+        cur = f"&{order_col}=gt.{last_val}" if last_val is not None else f"&{order_col}=gte.{lo}"
+        url = f"{SUPABASE_URL}/rest/v1/{table}?select={select_cols}&order={order_col}.asc{cur}&{order_col}=lt.{hi}{extra_filter}&limit={PAGE_SIZE}"
+        batch, last_err = None, None
+        for attempt in range(1, 5):
+            try:
+                r = requests.get(url, headers=HEADERS, timeout=90)
+                r.raise_for_status()
+                batch = r.json(); break
+            except requests.exceptions.RequestException as e:
+                last_err = e; time.sleep(2 * attempt)
+        if batch is None:
+            raise last_err
+        if not batch:
+            break
+        rows.extend(batch); last_val = batch[-1][order_col]
+        if len(batch) < PAGE_SIZE:
+            break
+    return rows
+
+
+def fetch_all_rows(table: str, cols: str = "region,dong,danji,price,size,floor,deal_date,build_year",
+                   order_col: str = "id", extra_filter: str = "") -> pd.DataFrame:
+    """전체 행 받기. id가 숫자인 큰 테이블은 id 구간을 나눠 여러 줄(FETCH_THREADS, 기본 8)로 동시에 받음(2026-10-12 -
+    주간 분석 단계마다 거래 420만 건을 순차로 받느라 40~60분씩 걸렸음. 한 줄 키셋 방식은 그대로 두고 구간만 병렬화). 실패하거나 숫자 id가
+    아니면 기존 순차 방식(fetch_all_rows_seq)으로 받음."""
+    threads = int(os.environ.get("FETCH_THREADS", "8") or 0)
+    if threads > 1 and order_col == "id":
+        try:
+            from concurrent.futures import ThreadPoolExecutor
+            col_list = [c.strip() for c in cols.split(",")]
+            select_cols = cols if order_col in col_list else f"{cols},{order_col}"
+            ends = {}
+            for d in ("asc", "desc"):
+                r = requests.get(f"{SUPABASE_URL}/rest/v1/{table}?select={order_col}&order={order_col}.{d}&limit=1", headers=HEADERS, timeout=90)
+                r.raise_for_status(); j = r.json()
+                if not j or not isinstance(j[0][order_col], int):
+                    raise ValueError("숫자 id 아님")
+                ends[d] = j[0][order_col]
+            lo0, hi0 = ends["asc"], ends["desc"] + 1
+            step = max(50000, (hi0 - lo0) // (threads * 6))
+            ranges = [(a, min(a + step, hi0)) for a in range(lo0, hi0, step)]
+            t0 = time.time(); done = [0]
+            def work(rg):
+                out = _fetch_id_range(table, select_cols, order_col, rg[0], rg[1], extra_filter)
+                done[0] += 1
+                if done[0] % 5 == 0:
+                    print(f"  {table}: 구간 {done[0]}/{len(ranges)} 완료 ({int(time.time() - t0)}초)")
+                return out
+            with ThreadPoolExecutor(max_workers=threads) as ex:
+                parts = list(ex.map(work, ranges))
+            rows = [x for p in parts for x in p]
+            df = pd.DataFrame(rows)
+            if not df.empty and order_col not in col_list and order_col in df.columns:
+                df = df.drop(columns=[order_col])
+            print(f"  {table}: {len(df)}행 로드 (병렬 {threads}줄, {int(time.time() - t0)}초)")
+            return df
+        except Exception as e:
+            print(f"  ⚠️ 병렬 받기 실패 - 순차 방식으로 다시 받음: {e}")
+    return fetch_all_rows_seq(table, cols=cols, order_col=order_col, extra_filter=extra_filter)
 
 
 def normalize_complex_name(name) -> str:

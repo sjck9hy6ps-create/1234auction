@@ -1,0 +1,28 @@
+name: 시험 - 거래 받기 속도(병렬 vs 순차)
+on:
+  workflow_dispatch:
+jobs:
+  bench:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install pandas numpy requests
+      - env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          PYTHONUNBUFFERED: '1'
+        run: |
+          python - <<'PY'
+          import importlib.util, time
+          spec = importlib.util.spec_from_file_location("avm", "train-avm.py"); avm = importlib.util.module_from_spec(spec); spec.loader.exec_module(avm)
+          flt = "&deal_date=gte.20260301"
+          t = time.time(); a = avm.fetch_all_rows_seq("house_trades", cols="region,dong,danji,price,size,floor,deal_date", extra_filter=flt); ts = time.time() - t
+          t = time.time(); b = avm.fetch_all_rows("house_trades", cols="region,dong,danji,price,size,floor,deal_date", extra_filter=flt); tp = time.time() - t
+          print(f"순차 {len(a)}행 {ts:.0f}초 / 병렬 {len(b)}행 {tp:.0f}초 / 속도 {ts/max(tp,0.1):.1f}배")
+          ka = a.sort_values(list(a.columns)).reset_index(drop=True); kb = b.sort_values(list(b.columns)).reset_index(drop=True)
+          print("내용 동일:", ka.equals(kb))
+          PY
