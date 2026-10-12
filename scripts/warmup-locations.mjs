@@ -201,7 +201,8 @@ async function fetchDistinctComplexes(table) {
     if (!data || data.length === 0) break;
     for (const row of data) {
       const key = buildCacheKey(row.dong, row.danji, row.bunji, row.road_name, row.main_num, row.sub_num);
-      if (!map.has(key)) map.set(key, row);
+      const ex0 = map.get(key);
+      if (!ex0) { row._n = 1; map.set(key, row); } else ex0._n++; // 거래 건수(2026-10-13: 거래 많은 건물부터 대장 연결)
       lastId = row.id;
     }
     if (data.length < attemptSize) break;
@@ -419,7 +420,7 @@ async function main() {
     });
     const rank = (sc) => (sc && sgg.has(sc) ? 0 : (sc && sido.has(String(sc).slice(0, 2)) ? 1 : 2));
     const coordOf = ([key, row]) => existingCoords.get(key) || existingCoords.get(legacyKeyOf(row)) || {};
-    buildingOnlyTargets.sort((x, y) => rank(coordOf(x).sigunguCd) - rank(coordOf(y).sigunguCd));
+    buildingOnlyTargets.sort((x, y) => (rank(coordOf(x).sigunguCd) - rank(coordOf(y).sigunguCd)) || ((y[1]._n || 0) - (x[1]._n || 0))); // 같은 우선순위 안에서는 거래 많은 건물 먼저(2026-10-13)
     const n0 = buildingOnlyTargets.filter((x) => rank(coordOf(x).sigunguCd) === 0).length, n1 = buildingOnlyTargets.filter((x) => rank(coordOf(x).sigunguCd) === 1).length;
     console.log(`📦 입찰희망 지역 우선: 입찰물건 시군구 ${sgg.size}곳의 단지 ${n0}개 → 같은 시도 ${n1}개 → 나머지 순`);
   } catch (e) { console.log('⚠️ 입찰물건 목록을 못 불러와 기본 순서로 진행:', e.message); }

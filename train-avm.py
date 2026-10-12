@@ -288,10 +288,10 @@ def _fetch_id_range(table, select_cols, order_col, lo, hi, extra_filter):
 
 def fetch_all_rows(table: str, cols: str = "region,dong,danji,price,size,floor,deal_date,build_year",
                    order_col: str = "id", extra_filter: str = "") -> pd.DataFrame:
-    """전체 행 받기. id가 숫자인 큰 테이블은 id 구간을 나눠 여러 줄(FETCH_THREADS, 기본 8)로 동시에 받음(2026-10-12 -
+    """전체 행 받기. id가 숫자인 큰 테이블은 id 구간을 나눠 여러 줄(FETCH_THREADS, 기본 16)로 동시에 받음(2026-10-12 -
     주간 분석 단계마다 거래 420만 건을 순차로 받느라 40~60분씩 걸렸음. 한 줄 키셋 방식은 그대로 두고 구간만 병렬화). 실패하거나 숫자 id가
     아니면 기존 순차 방식(fetch_all_rows_seq)으로 받음."""
-    threads = int(os.environ.get("FETCH_THREADS", "8") or 0)
+    threads = int(os.environ.get("FETCH_THREADS", "16") or 0)  # 2026-10-12 시험: 빌라 110만 건 8줄 72초·16줄 45초(순차 약 12분)
     if threads > 1 and order_col == "id":
         try:
             from concurrent.futures import ThreadPoolExecutor
