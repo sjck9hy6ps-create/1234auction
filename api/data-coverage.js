@@ -3473,6 +3473,14 @@ export default async function handler(req, res) {
       return res.status(500).json({ error: err.message });
     }
   }
+  if (req.query.mode === 'boardDiff') { // 이번 주 변동(precompute-board.mjs가 저장, 2026-10-12)
+    res.setHeader('Cache-Control', 's-maxage=300, stale-while-revalidate=3600');
+    try {
+      const { data, error } = await supabase.from('leader_follower_cache').select('payload').eq('id', 'board|diff|latest').maybeSingle();
+      if (error) return res.status(500).json({ error: error.message });
+      return res.status(200).json((data && data.payload) || {});
+    } catch (err) { return res.status(500).json({ error: err.message }); }
+  }
   if (req.query.mode === 'boardCacheMeta' || req.query.mode === 'boardCacheChunk') {
     res.setHeader('Cache-Control', 's-maxage=300, stale-while-revalidate=3600');
     try {

@@ -76,6 +76,24 @@ try {
   }
   villa = await page.evaluate(() => villaCalcSnapshot());
 } catch (e) { console.log('빌라 미리 계산 실패:', String(e).slice(0, 200)); }
+// ── 이번 주 변동 비교용 요약(2026-10-12, 사용자: 파이프라인 전후로 달라진 값 확인) - 물건별 핵심 값만 뽑아 두고, 아래에서 지난 기준 저장본과 비교 ──
+let summary = null;
+try {
+  summary = await page.evaluate(() => {
+    const out = {};
+    (bidBoardRows || []).forEach((r) => {
+      if (r.type !== 'apt' || r.pending || r.skippedPast || !r.a) return;
+      const pe = r.pick && r.pick.ev;
+      out[r.id] = ['a', r.a.caseNo || '', r.name || '', r.region || '', r.minBid || 0, r.a.bidDate || '', Math.round(r.sale || 0), pe ? Math.round(pe.bid) : 0, r.visit && r.visit.go ? 1 : 0, pe ? Math.round(pe.p * 100) : 0, pe ? Math.round(pe.net) : 0, (r.visit && r.visit.why) || ''];
+    });
+    villaMetroRows(true).forEach((r) => {
+      const ev = villaEval(r); if (!ev || ev.pending) return;
+      const pe = ev.pn && ev.pn.ev;
+      out[r.id] = ['v', r.a.caseNo || '', (typeof villaNameFor === 'function' ? villaNameFor(r) : r.name) || '', r.region || '', r.minBid || 0, r.a.bidDate || '', ev.ve ? Math.round(ev.ve.est) : 0, pe ? Math.round(pe.bid) : 0, ev.visit && ev.visit.go ? 1 : 0, pe ? Math.round(pe.p * 100) : 0, pe ? Math.round(pe.net) : 0, (ev.visit && ev.visit.why) || ''];
+    });
+    return out;
+  });
+} catch (e) { console.log('변동 요약 만들기 실패:', String(e).slice(0, 200)); }
 await browser.close();
 const ids = Object.keys(cache || {});
 console.log(`저장 계산 ${ids.length}건`);
@@ -115,3 +133,38 @@ if (villa && Object.keys(villa.ve || {}).length >= 50) {
   await supabase.from('leader_follower_cache').upsert({ id: 'board|villa|meta', payload: { n: vrows.length, count: vids.length, at: Date.now() }, fetched_at: now }, { onConflict: 'id' });
   console.log(`✅ 빌라 올림: ${vrows.length}묶음 / ${vids.length}건 (생활권 ${Object.keys(villa.liq).length}, 대장 ${Object.keys(villa.hs).length})`);
 } else console.log('빌라 계산이 너무 적어 올리지 않음');
+
+// ── 이번 주 변동(2026-10-12): 지난 기준 저장본(board|snap|base)과 비교해 board|diff|latest에 저장. 기준은 5일 넘게 지났을 때만 새로 교체(한 주에 여러 번 돌려도 주 단위로 비교) ──
+try {
+  if (summary && Object.keys(summary).length >= 100) {
+    const nowIso = new Date().toISOString();
+    const { data: bs } = await supabase.from('leader_follower_cache').select('payload').eq('id', 'board|snap|base').maybeSingle();
+    const base = bs && bs.payload && bs.payload.items ? bs.payload : null;
+    if (base) {
+      const A = base.items, B = summary, today = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+      const rec = (x) => ({ id: null, t: x[0], caseNo: x[1], name: x[2], region: x[3], minBid: x[4], bidDate: x[5] });
+      const goIn = [], goOut = [], recChg = [], estChg = [], added = [];
+      let removed = 0, same = 0;
+      Object.keys(B).forEach((id) => {
+        const n = B[id], o = A[id];
+        if (!o) { if (!n[5] || n[5].replace(/-/g, '') >= today) added.push({ ...rec(n), est: n[6], rec: n[7], go: n[8] }); return; }
+        const base0 = rec(n); let moved = false;
+        if (o[8] !== n[8]) { (n[8] ? goIn : goOut).push({ ...base0, rec: n[7], recOld: o[7], why: n[11], whyOld: o[11], p: n[9] }); moved = true; }
+        if (o[7] && n[7] && Math.abs(n[7] - o[7]) / o[7] >= 0.03 && Math.abs(n[7] - o[7]) >= 100) { recChg.push({ ...base0, rec: n[7], recOld: o[7], go: n[8] }); moved = true; }
+        if (o[6] && n[6] && Math.abs(n[6] - o[6]) / o[6] >= 0.03) { estChg.push({ ...base0, est: n[6], estOld: o[6], rec: n[7], recOld: o[7] }); moved = true; }
+        if (!moved) same++;
+      });
+      Object.keys(A).forEach((id) => { if (!B[id]) removed++; });
+      const byAbs = (k, ko) => (x, y) => Math.abs(y[k] - y[ko]) - Math.abs(x[k] - x[ko]);
+      recChg.sort(byAbs('rec', 'recOld')); estChg.sort(byAbs('est', 'estOld'));
+      const diff = { at: nowIso, baseAt: base.at, counts: { now: Object.keys(B).length, base: Object.keys(A).length, same, added: added.length, removed, goIn: goIn.length, goOut: goOut.length, recChg: recChg.length, estChg: estChg.length },
+        goIn: goIn.slice(0, 100), goOut: goOut.slice(0, 100), recChg: recChg.slice(0, 120), estChg: estChg.slice(0, 80), added: added.slice(0, 80) };
+      await supabase.from('leader_follower_cache').upsert({ id: 'board|diff|latest', payload: diff, fetched_at: nowIso }, { onConflict: 'id' });
+      console.log(`✅ 변동 저장: 임장 후보 신규 ${goIn.length}·제외 ${goOut.length}, 추천가 변동 ${recChg.length}, 예상매도가 변동 ${estChg.length}, 새 물건 ${added.length}, 사라진 ${removed}`);
+    } else console.log('변동 비교 기준이 아직 없어 이번 값을 기준으로 저장해 둠');
+    if (!base || Date.now() - new Date(base.at).getTime() >= 5 * 86400000) {
+      await supabase.from('leader_follower_cache').upsert({ id: 'board|snap|base', payload: { at: nowIso, items: summary }, fetched_at: nowIso }, { onConflict: 'id' });
+      console.log(`변동 비교 기준 저장: ${Object.keys(summary).length}건`);
+    }
+  } else console.log('변동 요약이 너무 적어 비교 건너뜀');
+} catch (e) { console.log('변동 비교 실패:', String(e).slice(0, 200)); }

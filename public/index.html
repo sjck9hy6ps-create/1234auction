@@ -27077,10 +27077,30 @@ function wrBiasText(b) {
 }
 function wrBiasShort(b) { return b == null ? '-' : (Math.abs(b) < 0.5 ? '거의 정확' : Math.abs(b) + '% ' + (b > 0 ? '높게' : '낮게')); }
 function wrTab(k) {
-    ['now', 'score', 'hist'].forEach(function(t) {
+    ['now', 'score', 'hist', 'chg'].forEach(function(t) {
         var el = document.getElementById('wr-t-' + t), bt = document.getElementById('wr-tb-' + t);
         if (el) el.style.display = t === k ? '' : 'none'; if (bt) bt.classList.toggle('on', t === k);
     });
+}
+/* 🔄 이번 주 변동(2026-10-12, 사용자: 파이프라인으로 달라진 값 확인) - 서버가 매주 계산 후 지난 기준과 비교해 저장(임장 후보 신규·제외, 추천가·예상매도가 3% 이상 변동, 새 물건) */
+function wrLoadChg() {
+    var el = document.getElementById('wr-t-chg'); if (!el || el.dataset.done) return;
+    fetch('/api/data-coverage?mode=boardDiff').then(function(r) { return r.json(); }).then(function(d) {
+        el.dataset.done = '1';
+        if (!d || !d.at) { el.innerHTML = '<div class="pn-muted" style="padding:8px 0;">아직 비교할 기준이 없어요. 이번 계산을 기준으로 저장했고, 다음 주 계산부터 달라진 값이 여기에 나와요.</div>'; return; }
+        var f = function(v) { return v ? toEok(String(Math.round(v))) : '-'; }, c = d.counts || {}, ds = function(s) { return String(s || '').slice(5, 10).replace('-', '/'); };
+        var nm = function(x) { return '<td>' + (x.t === 'v' ? '🏘️ ' : '') + bbEsc(x.name || '') + '<div class="pn-muted">' + bbEsc(x.region || '') + ' · ' + bbEsc(x.caseNo || '') + (x.bidDate ? ' · 입찰 ' + bbEsc(String(x.bidDate).slice(5)) : '') + '</div></td>'; };
+        var chg = function(n, o) { if (!o || !n) return '-'; var pc = Math.round((n - o) / o * 1000) / 10; return '<span style="color:' + (pc > 0 ? '#b91c1c' : '#15803d') + ';">' + (pc > 0 ? '+' : '') + pc + '%</span>'; };
+        var h = '<div class="pn-muted">' + ds(d.baseAt) + ' 기준 → ' + ds(d.at) + ' 비교 · 물건 ' + c.base + ' → ' + c.now + '건 (변동 없음 ' + c.same + '건)</div>'
+            + '<div class="wr-kpis"><div><span>임장 후보 새로 포함</span><b>' + c.goIn + '</b></div><div><span>임장 후보에서 빠짐</span><b>' + c.goOut + '</b></div><div><span>추천가 3%+ 변동</span><b>' + c.recChg + '</b></div><div><span>예상매도가 3%+ 변동</span><b>' + c.estChg + '</b></div><div><span>새 물건 / 사라진</span><b>' + c.added + ' / ' + c.removed + '</b></div></div>';
+        var tbl = function(title, arr, cols, row) { return arr && arr.length ? '<div class="wr-sec"><b>' + title + '</b> (' + arr.length + '건 표시)<table class="pn-table"><thead><tr><th>물건</th>' + cols.map(function(x) { return '<th class="r">' + x + '</th>'; }).join('') + '</tr></thead><tbody>' + arr.map(row).join('') + '</tbody></table></div>' : ''; };
+        h += tbl('🚶 임장 후보로 새로 들어온 물건', d.goIn, ['추천가', '이전 사유'], function(x) { return '<tr>' + nm(x) + '<td class="r"><b>' + f(x.rec) + '</b></td><td class="r pn-muted">' + bbEsc((x.whyOld || '').slice(0, 40)) + '</td></tr>'; });
+        h += tbl('임장 후보에서 빠진 물건', d.goOut, ['이전 추천가', '이유'], function(x) { return '<tr>' + nm(x) + '<td class="r">' + f(x.recOld) + '</td><td class="r pn-muted">' + bbEsc((x.why || '').slice(0, 40)) + '</td></tr>'; });
+        h += tbl('추천가가 3% 이상 바뀐 물건', d.recChg, ['이전', '지금', '변동'], function(x) { return '<tr>' + nm(x) + '<td class="r">' + f(x.recOld) + '</td><td class="r"><b>' + f(x.rec) + '</b></td><td class="r">' + chg(x.rec, x.recOld) + '</td></tr>'; });
+        h += tbl('예상매도가가 3% 이상 바뀐 물건', d.estChg, ['이전', '지금', '변동'], function(x) { return '<tr>' + nm(x) + '<td class="r">' + f(x.estOld) + '</td><td class="r"><b>' + f(x.est) + '</b></td><td class="r">' + chg(x.est, x.estOld) + '</td></tr>'; });
+        h += tbl('새로 들어온 물건(입찰일 전)', d.added, ['예상매도가', '추천가'], function(x) { return '<tr>' + nm(x) + '<td class="r">' + f(x.est) + '</td><td class="r">' + f(x.rec) + '</td></tr>'; });
+        el.innerHTML = h;
+    }).catch(function() { el.innerHTML = '<div class="pn-muted">불러오지 못했어요.</div>'; });
 }
 function wrRenderScore(sc) {
     var f = function(v) { return v == null ? '-' : toEok(String(Math.round(v))); };
@@ -27184,8 +27204,8 @@ function openWeeklyReport(week) {
             h += '<div class="wr-sec"><b>6개월 전 낙찰 사례의 되팔기 흔적</b> (' + wrYmd(tr.from) + '~' + wrYmd(tr.to) + ' 낙찰 ' + tr.n + '건) - 같은 동·층 거래 확인(동 번호 있는 ' + tr.dongKnown + '건 중) <b>' + tr.dongConfirmed + '건</b> · 층만 맞음 ' + tr.floorOnly + '건'
                 + '<div class="pn-muted">호수를 몰라 옆집 거래일 수 있어요(우연 수준 약 7%). 참고용 지표예요.</div></div>';
         }
-        b.innerHTML = '<div class="wr-tabs"><button id="wr-tb-now" class="on" onclick="wrTab(\'now\')">이번 리포트</button><button id="wr-tb-score" onclick="wrTab(\'score\')">📈 추천가 성적표(누적)</button><button id="wr-tb-hist" onclick="wrTab(\'hist\')">🗂️ 지난 리포트</button></div>'
-            + '<div id="wr-t-now">' + h + '</div><div id="wr-t-score" style="display:none;">' + wrRenderScore(d.scorecard) + '</div><div id="wr-t-hist" style="display:none;"><div class="pn-muted">불러오는 중…</div></div>';
+        b.innerHTML = '<div class="wr-tabs"><button id="wr-tb-now" class="on" onclick="wrTab(\'now\')">이번 리포트</button><button id="wr-tb-score" onclick="wrTab(\'score\')">📈 추천가 성적표(누적)</button><button id="wr-tb-hist" onclick="wrTab(\'hist\')">🗂️ 지난 리포트</button><button id="wr-tb-chg" onclick="wrTab(\'chg\');wrLoadChg()">🔄 이번 주 변동</button></div>'
+            + '<div id="wr-t-now">' + h + '</div><div id="wr-t-score" style="display:none;">' + wrRenderScore(d.scorecard) + '</div><div id="wr-t-hist" style="display:none;"><div class="pn-muted">불러오는 중…</div></div><div id="wr-t-chg" style="display:none;"><div class="pn-muted">불러오는 중…</div></div>';
         fetch('/api/data-coverage?mode=weeklyHistory').then(function(r) { return r.json(); }).then(function(hd) {
             var el = document.getElementById('wr-t-hist'); if (el) el.innerHTML = wrRenderHistory((hd && hd.items) || [], week || d.windowTo);
         }).catch(function() { var el = document.getElementById('wr-t-hist'); if (el) el.innerHTML = '<div class="pn-muted">목록을 불러오지 못했어요.</div>'; });
