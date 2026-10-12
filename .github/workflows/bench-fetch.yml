@@ -17,12 +17,11 @@ jobs:
           PYTHONUNBUFFERED: '1'
         run: |
           python - <<'PY'
-          import importlib.util, time
+          import importlib.util, time, os
           spec = importlib.util.spec_from_file_location("avm", "train-avm.py"); avm = importlib.util.module_from_spec(spec); spec.loader.exec_module(avm)
-          flt = "&deal_date=gte.20260301"
-          t = time.time(); a = avm.fetch_all_rows_seq("house_trades", cols="region,dong,danji,price,size,floor,deal_date", extra_filter=flt); ts = time.time() - t
-          t = time.time(); b = avm.fetch_all_rows("house_trades", cols="region,dong,danji,price,size,floor,deal_date", extra_filter=flt); tp = time.time() - t
-          print(f"순차 {len(a)}행 {ts:.0f}초 / 병렬 {len(b)}행 {tp:.0f}초 / 속도 {ts/max(tp,0.1):.1f}배")
-          ka = a.sort_values(list(a.columns)).reset_index(drop=True); kb = b.sort_values(list(b.columns)).reset_index(drop=True)
-          print("내용 동일:", ka.equals(kb))
+          cols = "region,dong,danji,price,size,floor,deal_date"
+          for th in ("8", "16"):
+              os.environ["FETCH_THREADS"] = th
+              t = time.time(); b = avm.fetch_all_rows("villa_trades", cols=cols); tp = time.time() - t
+              print(f"villa_trades 전체 {len(b)}행 · {th}줄 {tp:.0f}초 · 초당 {len(b)/max(tp,1):.0f}행 (순차 기준 약 1,490행/초)")
           PY
