@@ -10,8 +10,10 @@ def trade_keys(pattern):
     for f in sorted(glob.glob(os.path.join(root, pattern))):
         for l in gzip.open(f, "rt", encoding="utf-8"):
             r = json.loads(l)
-            k = "|".join(str(x if x is not None else "") for x in [r.get("dong"), r.get("danji"), r.get("bunji"), r.get("road_name"), r.get("main_num"), r.get("sub_num")]).lower()
-            c[(k, r.get("region") or "")] += 1
+            # warmup-locations.mjs buildCacheKey와 같은 규칙: 주번은 없으면 0, 부번은 없으면 빈 칸
+            k = "|".join(str(x) for x in [r.get("dong") or "", r.get("danji") or "", r.get("bunji") or "", r.get("road_name") or "", r.get("main_num") or 0, r.get("sub_num") or ""]).lower()
+            lk = "|".join(str(x if x is not None else "") for x in [r.get("dong"), r.get("danji"), r.get("bunji"), r.get("road_name"), r.get("main_num"), r.get("sub_num")]).lower()  # 예전 형식(없으면 빈 칸) - complex_coords에는 두 형식이 섞여 있음
+            c[(k, lk, r.get("region") or "")] += 1
     return c
 H = trade_keys("part-house_trades/*.ndjson.gz"); V = trade_keys("part-villa_trades/*.ndjson.gz")
 oth = glob.glob(os.path.join(root, "part-others*"))[0]
@@ -26,8 +28,8 @@ cov, miss = {}, []
 with gzip.open(os.path.join(out_dir, "trade_building_link.ndjson.gz"), "wt", encoding="utf-8") as fo:
     for kind, C in (("apt", H), ("villa", V)):
         tot = sum(C.values()); n = len(C); m = b = 0; mt = bt = 0
-        for (k, region), cnt in C.items():
-            s = cc.get(k); bid = None; has = False; bun = ji = ""
+        for (k, lk, region), cnt in C.items():
+            s = cc.get(k) or cc.get(lk); bid = None; has = False; bun = ji = ""
             if s:
                 p = k.split("|")[2].split("-")
                 try: bun = p[0].zfill(4); ji = (p[1] if len(p) > 1 else "0").zfill(4)
