@@ -3198,12 +3198,6 @@ function computeBidCaseAptIndex() {
 }
 /* 이 apt 주소지에 매칭되는 낙찰사례가 하나라도 있는지 - findMatchedAptForBidCase의 반대 방향
    조회를 인덱스 기반으로 빠르게 수행함 */
-function aptHasMatchingBidCase(apt) {
-    var l = (apt && apt.latest) || {};
-    if (l.name && bidCaseAptIndex.byName[l.name]) return true;
-    if (l.dong && l.bunji && bidCaseAptIndex.byDongBunji[l.dong + '|' + l.bunji]) return true;
-    return false;
-}
 /* ⚠️ 2026-08(사용자 피드백: "데이터가 많아지니 점점 느려진다") - dongTypeMarginStats/
    bidCaseAptIndex는 원래 지도를 팬/줌할 때마다(redrawMarkers, 'idle' 이벤트) bidCaseList
    전체를 매번 처음부터 다시 훑어 재계산했음. 낙찰사례가 쌓일수록(현재 2000건대) 지도를
@@ -3573,18 +3567,6 @@ function openHomestayDetail(dongKey, pt) {
             }
         }
     }).catch(function() { body.innerHTML = '<div class="pn-muted" style="padding:10px;">불러오지 못했어요. 잠시 뒤 다시 눌러 주세요.</div>'; });
-}
-function showHomestayPop(key) {
-    var v = (homestayAgg && homestayAgg.byDong[key]) || null; if (!v) return;
-    var el = document.getElementById('hs-pop');
-    if (!el) { el = document.createElement('div'); el.id = 'hs-pop'; el.style.cssText = 'position:fixed;left:50%;bottom:24px;transform:translateX(-50%);z-index:140;background:#fff;border-radius:12px;box-shadow:0 6px 24px rgba(0,0,0,.3);padding:12px 14px;max-width:340px;font-size:12.5px;line-height:1.5;'; document.body.appendChild(el); }
-    var s = HS_STATE[v.state] || HS_STATE['안정'], parts = key.split('|');
-    el.innerHTML = '<div style="display:flex;justify-content:space-between;gap:10px;"><b>🏠 ' + bbEsc(parts[0] + ' ' + parts[1]) + ' · 도시민박업</b><span style="cursor:pointer;" onclick="document.getElementById(\'hs-pop\').style.display=\'none\'">✕</span></div>'
-        + '<div style="margin:4px 0;"><span style="background:' + s.c + ';color:#fff;border-radius:6px;padding:1px 7px;font-weight:bold;">' + s.t + '</span> 영업 중 <b>' + v.open + '곳</b>' + (v.rooms ? ' · 객실 ' + v.rooms + '개' : '') + '</div>'
-        + '<div>최근 1년: 신규 허가 <b>' + v.new1y + '</b> · 폐업 <b>' + v.closed1y + '</b> → 순증 <b style="color:' + (v.net1y > 0 ? '#e11d48' : '#64748b') + ';">' + (v.net1y > 0 ? '+' : '') + v.net1y + '</b></div>'
-        + '<div>그 전 1년: 신규 ' + v.new2y + ' · 폐업 ' + (v.closed2y == null ? '-' : v.closed2y) + '</div>'
-        + '<div style="color:#6b7280;font-size:11px;margin-top:4px;">활성화 = 순증 3곳 이상이고 1년 전보다 10% 이상 늘 때 · 위축 = 순증이 마이너스이거나 신규가 전년의 절반 이하일 때. 합법 등록분만 잡혀 실제보다 적어요.</div>';
-    el.style.display = 'block';
 }
 
 /* ════ 🏠 빌라 도시민박업 가능성 점검 + 건물 상세 (2026-10-09, 사용자: 건축물대장 정밀 분석 · 건물 상세내역 · 빌라 입찰후보 중 도시민박 가능 건물 별도 표기) ════
@@ -4767,11 +4749,6 @@ function toEok(manwon) {
 // 억 단위 소수점 2자리 축약 표기(예: 12500만 → "1.25억") - 좁은 공간에 여러 값을 나란히
 // 보여줘야 할 때 toEok보다 훨씬 짧아서 쓰는 범용 유틸(현재 돈되는 지역은 평당가라 만원
 // 단위를 그대로 쓰지만, 다른 화면에서 필요할 수 있어 남겨둠).
-function toEokCompact(manwon) {
-    var val = parseInt(manwon);
-    if (isNaN(val)) return '-';
-    return (val / 10000).toFixed(2) + '억';
-}
 /* ⚠️ 2026-08: AI 추출(parse-auction.js)이 값이 없을 때 JS null 대신 문자열 "null"(또는
    "undefined")을 그대로 돌려주는 경우가 있어서, 화면에 값이 없으면 그냥 빈칸이어야 하는데
    "null"이라는 글자가 그대로 찍혀 오류처럼 보이는 문제가 있었음. 값을 표시하기 전에는
@@ -19059,24 +19036,6 @@ function regionNicheFor(row) {
     var r = ap && mb ? mb / ap : null; if (r != null && (r <= 0.40 || r >= 0.95)) return null;
     return { score: 1, why: [rg.gu + ': 입찰자 3명 이하가 ' + st.lowPct + '%, 소수 입찰로 낙찰돼도 ' + st.soldPct + '%가 되팔렸어요(과거 ' + st.tried + '건)', '85㎡ 이하·감정가 5억 미만'], region: st };
 }
-function bidBoardNiche(row, a, bunjiFull) {
-    var c3 = row.complex3y || 0;
-    if (c3 < 6 || c3 > 20) return null;
-    if (row.sale && row.sale < 10000) return null;
-    if (row.salePerMin != null && row.salePerMin >= 90) return null;
-    var why = ['3년 거래 ' + c3 + '건(팔리지만 눈에 덜 띄는 단지)'], score = 1;
-    var area = (parseFloat(a.pyung) || 0) * 3.305785;
-    if (area > 85) { score++; why.push('대형'); }
-    var bandP = row.pop && row.pop.band;
-    if ((bandP && bandP.tier === '하위40%') || (!bandP && row.popEff && row.popEff.tier === '하위40%')) { score++; why.push((bandP ? bandP.name + ' 평형' : '동') + ' 거래량 하위권'); }
-    if (/토지\s*별도/.test(String(a.memo || '') + ' ' + String(a.specialConditions || ''))) { score++; why.push('토지별도등기(입찰자 적은 편)'); }
-    var da = dongAttentionFor(a);
-    var dongNote = null;
-    if (da && da.n >= 3 && da.att <= 0.7) dongNote = '이 동은 보통 입찰자가 적어요(과거 ' + da.n + '건, 평소의 ' + Math.round(da.att * 100) + '%)';
-    else if (da && da.n >= 3 && da.att >= 1.3) dongNote = '이 동은 보통 입찰자가 많아요(과거 ' + da.n + '건, 평소의 ' + Math.round(da.att * 100) + '%)';
-    if (dongNote) why.push(dongNote);
-    return { score: score, why: why, dong: da };
-}
 // 동별 관심도 - 쌓아 둔 낙찰사례의 입찰자 수를 같은 시도·같은 유찰 단계(신건/1회/2회+)의 보통 입찰자 수로 나눈 값의 중앙값
 var dongAttentionMap = null, dongAttentionN = -1;
 function nicheSidoNorm(addr) {
@@ -19348,11 +19307,6 @@ async function refreshBidBoard() {
 }
 // 손해 주의 물건이 과거에 실제로 받은 값 ÷ 예상매도가(2026-10 백테스트, 하위 40% 지점) - 추천가÷최저가가 클수록 낮음. 예상매도가가 아니라 마진의 추가 여유 계산에 씀
 var OVERSHOOT_SALE_FACTORS = { apt: [[1.3, 0.90], [1.5, 0.76], [2, 0.61], [Infinity, 0.51]], villa: [[1.5, 0.82], [2, 0.76], [Infinity, 0.60]] };
-function overshootSaleFactor(type, ratio) {
-    var t = OVERSHOOT_SALE_FACTORS[type === 'villa' ? 'villa' : 'apt'];
-    for (var i = 0; i < t.length; i++) if (ratio < t[i][0]) return t[i][1];
-    return t[t.length - 1][1];
-}
 var BOARD_CACHE_KEY = 'bidBoardCache:v1', BOARD_CACHE_MAX_AGE = 8 * 24 * 3600 * 1000, BOARD_SRV_MAX_AGE = 9 * 24 * 3600 * 1000; // 2026-10-11: 서버 미리 계산이 매주 토요일 03시 1회 → 일주일(+여유)간 그대로 사용
 /* 서버가 미리 계산해 둔 입찰후보 받기(2026-10-10 속도: 입찰후보 창을 열기 전, 앱을 켠 직후 배경에서 미리 받아 둠 - 열 때는 이미 도착해 있음) */
 function srvBoardParts() {
@@ -20846,27 +20800,6 @@ async function fillComplexCycleBlock(target, region) {
 }
 // 떠 있는 창 끌어 옮기기(마우스·손가락 공통) - handleSel에 맞는 머리글을 잡고 이동, 그 안의 버튼은 그대로 눌림
 var cycPanelPos = null;
-function makePanelDraggable(box, handleSel, onMove) {
-    var drag = null;
-    box.addEventListener('pointerdown', function(e) {
-        var h = e.target.closest && e.target.closest(handleSel);
-        if (!h || !box.contains(h) || e.target.closest('button,a,input,select')) return;
-        var rc = box.getBoundingClientRect();
-        drag = { dx: e.clientX - rc.left, dy: e.clientY - rc.top, pid: e.pointerId };
-        try { box.setPointerCapture(e.pointerId); } catch (er) {}
-        e.preventDefault();
-    });
-    box.addEventListener('pointermove', function(e) {
-        if (!drag) return;
-        var x = Math.min(Math.max(0, e.clientX - drag.dx), window.innerWidth - 80);
-        var y = Math.min(Math.max(52, e.clientY - drag.dy), window.innerHeight - 120);
-        // 사이클 창은 CSS에 top/right가 !important로 걸려 있어 인라인도 important로 덮어씀
-        box.style.setProperty('left', x + 'px', 'important'); box.style.setProperty('top', y + 'px', 'important'); box.style.setProperty('right', 'auto', 'important');
-        if (onMove) onMove(x, y);
-    });
-    var end = function() { if (drag) { try { box.releasePointerCapture(drag.pid); } catch (er) {} } drag = null; };
-    box.addEventListener('pointerup', end); box.addEventListener('pointercancel', end);
-}
 // 상단 메뉴 📈 사이클: 다른 메뉴처럼 한 번 더 누르면 닫힘(2026-10 사용자)
 function toggleCyclePanel() {
     var box = document.getElementById('cycle-panel');
@@ -24413,40 +24346,6 @@ function diagOverallVerdict(baseline, evidence) {
     if (evidence < 10) return { label: '저평가 근거 부족 · 우량 단지', color: '#1565c0', bg: '#e3f2fd', detail: '기초체력(생활권·유동성)은 좋지만, 가격이 이미 지역과 비슷하게 움직였거나 저평가라고 볼 구체적 근거가 없습니다. "싸다"기보다 "비싼 값을 하는" 단지에 가깝습니다.' };
     return { label: '판단 보류 · 직접 확인 필요', color: '#f57f17', bg: '#fff8e1', detail: '신호가 뒤섞여 있어 임장으로 직접 확인이 필요합니다.' };
 }
-function buildValueDiagnosisHtml(apt, vi, buildingInfo, officialPrice, devNews) {
-    if (!apt) return '';
-    var q1 = diagQ1Location(apt);
-    var q2 = diagQ2PriceStall(apt);
-    var q3 = diagQ3VolumeReason(vi);
-    var q4 = diagQ4FutureValue(apt, devNews, apt.indicators && apt.indicators.momentum);
-    var q5 = diagQ5Liquidity(apt, vi, buildingInfo, officialPrice);
-    var baseline = q1.score + q3.score + q5.score;
-    var evidence = q2.evidenceScore + q4.evidenceScore;
-    var overall = diagOverallVerdict(baseline, evidence);
-    var html = '<div class="indicator-box" style="border-color:' + overall.color + ';background:' + overall.bg + ';">';
-    html += '<div class="indicator-title" style="color:' + overall.color + ';">🔍 저평가 vs 저가치 진단</div>';
-    html += '<div style="display:flex;align-items:center;gap:10px;margin-bottom:4px;flex-wrap:wrap;">'
-        + '<div style="font-size:14px;font-weight:bold;color:' + overall.color + ';">' + overall.label + '</div></div>';
-    html += '<div style="font-size:10px;color:#666;margin-bottom:6px;">기초체력(①③⑤) ' + baseline + '/60 · 저평가 근거(②④) ' + evidence + '/40</div>';
-    html += '<div style="font-size:9.5px;color:#999;margin-bottom:8px;">' + overall.detail + ' 실거래가·건축물대장·공시가격·개발호재 검색 데이터로 자동 계산한 근사치이며, 최종 판단은 반드시 임장·중개사 확인을 거치세요.</div>';
-    function qRow(no, title, q) {
-        return '<div style="background:white;border-radius:6px;padding:6px 8px;margin-bottom:5px;border-left:3px solid ' + q.color + ';">'
-            + '<div style="display:flex;justify-content:space-between;align-items:center;gap:6px;"><span style="font-size:11px;font-weight:bold;color:#333;flex-shrink:0;">' + no + ' ' + title + '</span>'
-            + '<span style="font-size:10.5px;font-weight:bold;color:' + q.color + ';text-align:right;">' + q.label + '</span></div>'
-            + (q.detail ? '<div style="font-size:10.5px;color:#777;margin-top:2px;">' + q.detail + '</div>' : '')
-            + '</div>';
-    }
-    html += qRow('①', '생활권 등급', q1);
-    html += qRow('②', '가격 정체 원인', q2);
-    html += qRow('③', '거래량 원인', q3);
-    html += qRow('④', '미래가치·호재', q4);
-    if (q4.needsCheck) {
-        html += '<div style="text-align:center;margin:2px 0 6px;"><button type="button" class="modal-btn btn-purple" style="font-size:10.5px;padding:4px 12px;" onclick="searchPanelDevNews()">🏗️ 개발호재 확인</button></div>';
-    }
-    html += qRow('⑤', '환금성', q5);
-    html += '</div>';
-    return html;
-}
 /* 일반 매물 패널(경매 아닌 지도 마커)에서 쓰는 개발호재 검색 - 경매 모달의
    searchDevelopmentNews()와 같은 백엔드(mode:'devNews')를 재사용하되, 주소 대신
    현재 패널의 apt.latest(region/dong/bunji)로 검색어를 만듦. 버튼을 눌러야만
@@ -26160,14 +26059,6 @@ function syncProxyChips() {
             chip.classList.toggle('on', !!(target && target.classList.contains('active')));
         });
     }, 50);
-}
-function toggleTbMore(e) { if (e) e.stopPropagation(); var m = document.getElementById('tb-more-menu'); if (m) m.classList.toggle('open'); }
-function toggleTbMenuMobile() { document.getElementById('tb-menu').classList.toggle('open'); }
-function closeTbMenus() { var m = document.getElementById('tb-more-menu'); if (m) m.classList.remove('open'); document.getElementById('tb-menu').classList.remove('open'); }
-// 입찰후보 ↔ 지도 토글(상단 첫 버튼) - 입찰후보 화면이 떠 있으면 "🗺️ 지도", 아니면 "🎯 입찰후보"
-function syncBoardBtn() {
-    var b = document.getElementById('tb-board-btn'), bb = document.getElementById('bid-board');
-    if (b && bb) b.innerHTML = bb.style.display === 'flex' ? '🗺️ 지도' : '🎯 입찰후보';
 }
 function toggleBoardFromTop() {
     var bb = document.getElementById('bid-board');
