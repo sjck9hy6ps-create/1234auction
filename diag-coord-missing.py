@@ -10,13 +10,17 @@ cols = "region,dong,danji,bunji,road_name,main_num,sub_num,deal_date,price,size,
 rows = []
 for kind, table in (("apt", "house_trades"), ("villa", "villa_trades")):
     df = avm.fetch_all_rows(table, cols=cols)
+    # 예전 형식 키(없는 값은 빈 칸 - warmup-locations.mjs buildLegacyCacheKey)도 같이 만들어 둘 중 하나라도 있으면 좌표 있음으로 봄
+    _s = lambda v: "" if v is None or v != v or v == "" else (str(int(float(v))) if str(v).replace(".", "", 1).isdigit() else str(v))
+    lk = (df["dong"].fillna("") + "|" + df["danji"].fillna("") + "|" + df["bunji"].fillna("") + "|" + df["road_name"].fillna("") + "|" + df["main_num"].map(_s) + "|" + df["sub_num"].map(_s)).str.lower()
     for c in ("dong", "danji", "bunji", "road_name"): df[c] = df[c].fillna("")
     # JSON 숫자가 소수(1.0)로 읽히지 않게 정수 문자열로 맞춤(앱 buildCacheKey와 같은 규칙: 주번 없으면 0, 부번 없으면 빈 칸)
     df["main_num"] = df["main_num"].map(lambda v: 0 if v is None or v != v or v == "" else int(float(v)))
     df["sub_num"] = df["sub_num"].map(lambda v: "" if v is None or v != v or v == "" else (str(int(float(v))) if str(v).replace(".", "", 1).isdigit() else str(v)))
     df["k"] = (df["dong"] + "|" + df["danji"] + "|" + df["bunji"] + "|" + df["road_name"] + "|" + df["main_num"].astype(str) + "|" + df["sub_num"].astype(str)).str.lower()
-    g = df.groupby("k").agg(n=("price", "size"), last=("deal_date", "max"), by=("build_year", "max"), region=("region", "first"), dong=("dong", "first"), danji=("danji", "first"), bunji=("bunji", "first"), road=("road_name", "first"), size=("size", "median")).reset_index()
-    g["kind"] = kind; g["has"] = g["k"].isin(keys)
+    df["lk"] = lk
+    g = df.groupby("k").agg(lk=("lk", "first"), n=("price", "size"), last=("deal_date", "max"), by=("build_year", "max"), region=("region", "first"), dong=("dong", "first"), danji=("danji", "first"), bunji=("bunji", "first"), road=("road_name", "first"), size=("size", "median")).reset_index()
+    g["kind"] = kind; g["has"] = g["k"].isin(keys) | g["lk"].isin(keys)
     rows.append(g)
 G = pd.concat(rows, ignore_index=True)
 def feat(r):
