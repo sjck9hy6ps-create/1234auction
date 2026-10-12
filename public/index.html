@@ -4335,9 +4335,18 @@ function villaRentDrawerHtml(row, ev, fmt) {
         h += '<div style="margin-top:4px;">' + c.basis + ' <b>' + fmt(c.bid) + '</b>으로 사고 대출 ' + fmt(c.loan) + '(금리 ' + c.rate + '%) → 월 이자 <b>' + Math.round(c.int) + '만</b></div>'
             + '<div style="margin-top:4px;font-size:15px;">월 현금흐름 <b style="color:' + (c.ok ? '#15803d' : (c.cf >= 0 ? '#b45309' : '#b91c1c')) + ';">' + sg(c.cf) + '</b> ' + (c.ok ? '✅ 20만 이상' : '⚠️ 20만 미만') + '</div>'
             + '<div class="dr-sub">보증금 ' + fmt(rc.d) + '으로 대출을 갚는다면 이자가 줄어 <b>' + sg(c.cfDep) + '</b>/월. 관리비·공실·수선·세금은 뺀 값이에요.</div>'
+            + '<div class="dr-warn" style="margin-top:4px;">⚠️ 대출 확인: 월세를 놓으려면 이 대출이 임대 목적·전입 없는 보유를 허용하는지(수도권 주택담보대출 규제) 은행에 먼저 확인하세요. 앱은 이 제한을 반영하지 않아요.</div>'
             + '<div style="margin-top:4px;">월 20만원 이상 남는 입찰 상한: <b style="color:' + (c.capOk ? '#15803d' : '#b91c1c') + ';">' + (c.cap ? fmt(c.cap) : '없음') + '</b>' + (c.capOk ? '' : ' <span class="dr-sub" style="display:inline;">(최저가 ' + fmt(row.minBid) + '보다 낮아 이 물건은 월세로는 20만이 안 남아요)</span>') + '</div>';
     }
     return h + villaRentDemandHtml(rc) + '</div>';
+}
+/* 🪜 빌라 층별 되팔림 흔적(2026-10-12) - 수도권 빌라 낙찰사례(낙찰 후 1년 지난 것)에서 같은 동·층 되팔림이 6·12개월 안에 확인된 비율. 서버 분석이 villa-winbid.json에 floorResale로 저장. 가격 보정이 아니라 환금성 참고 */
+function villaFloorResaleHtml(row) {
+    var m = typeof villaWinModel !== 'undefined' && villaWinModel && villaWinModel.floorResale; if (!m) return '';
+    var f = parseInt(row.a && row.a.floor, 10), cur = isNaN(f) ? '' : (f <= 0 ? '지하' : (f >= 5 ? '5층+' : f + '층')), order = ['지하', '1층', '2층', '3층', '4층', '5층+'];
+    var rows = order.filter(function(k) { return m[k]; }).map(function(k) { var x = m[k], on = k === cur; return '<tr' + (on ? ' style="background:#eff6ff;font-weight:700;"' : '') + '><td>' + k + (on ? ' ◀ 이 물건' : '') + '</td><td class="r">' + x.n + '건</td><td class="r">' + x.p6 + '%</td><td class="r">' + x.p12 + '%</td></tr>'; }).join('');
+    if (!rows) return '';
+    return '<div class="dr-sec"><h4>🪜 층별 되팔림 흔적 <span class="dr-sub" style="display:inline;">(낙찰 후 같은 동·층 거래가 확인된 비율)</span></h4><table class="dr-tbl"><tr><td class="dr-sub">층</td><td class="dr-sub r">사례</td><td class="dr-sub r">6개월 내</td><td class="dr-sub r">12개월 내</td></tr>' + rows + '</table><div class="dr-sub">낙찰 후 1년 지난 수도권 빌라 기준. 승강기 없는 저층 건물 영향이 섞였을 수 있고 층별 가격 보정과는 별개예요(참고용).</div></div>';
 }
 function villaRentDemandHtml(rc) {
     return '<div class="dr-sub" style="margin-top:4px;">월세 거래 활발도(전용 ±10㎡, 최근 6개월): 같은 동 <b>' + (rc.d6 != null ? rc.d6 : '-') + '건</b>' + (rc.r6 != null ? ' · 반경 500m <b>' + rc.r6 + '건</b>(좌표를 아는 신고만 세서 실제보다 적어요)' : '') + ' - 세입자 구하기 쉬운 동네인지 보는 값이에요.</div>';
@@ -20142,6 +20151,7 @@ async function renderVillaDrawer(d, row) {
             + (pn && pn.pMax != null ? '<div>입찰 상한 ' + fmt(pn.max) + '으로 쓰면 낙찰 가능성 약 <b>' + Math.round(pn.pMax * 100) + '%</b></div>' : '') + '</div>';
     }
     h += villaRentDrawerHtml(row, ev, fmt);
+    h += villaFloorResaleHtml(row);
     h += '<div class="dr-sec"><h4>📍 생활권 거래 활발도 <span class="dr-sub" style="display:inline;">(법정동이 아니라 이 물건 위치 기준 반경)</span></h4>'
         + (ev.liq ? '<table><tr><th></th><th class="r">최근 6개월</th><th class="r">6~12개월</th><th class="r">1~2년 전</th></tr><tr><td>반경 500m</td><td class="r"><b style="color:' + (ev.liq.r500.a6 === 0 ? '#b91c1c' : '#111827') + ';">' + ev.liq.r500.a6 + '건</b></td><td class="r">' + ev.liq.r500.a12 + '건</td><td class="r">' + ev.liq.r500.a24 + '건</td></tr><tr><td>반경 1km</td><td class="r">' + ev.liq.r1000.a6 + '건</td><td class="r">' + ev.liq.r1000.a12 + '건</td><td class="r">' + ev.liq.r1000.a24 + '건</td></tr></table>'
             + '<div class="dr-sub">반경 500m 안 최근 6개월 거래가 0건이면 임장 후보에서 빼요. 근거: 수도권 빌라 낙찰사례 1,225건 중 이런 지역 낙찰은 12개월 안 되팔림 흔적이 10%(그 외 27%), 반경 1km 6개월 0건은 0%(표본 17건)예요. 직거래 제외·같은 시군구 자료만 보므로 경계 근처는 실제보다 적게 나올 수 있어요.</div>'
