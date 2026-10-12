@@ -11,7 +11,9 @@ rows = []
 for kind, table in (("apt", "house_trades"), ("villa", "villa_trades")):
     df = avm.fetch_all_rows(table, cols=cols)
     for c in ("dong", "danji", "bunji", "road_name"): df[c] = df[c].fillna("")
-    df["main_num"] = df["main_num"].fillna(0).astype(int); df["sub_num"] = df["sub_num"].fillna("")
+    # JSON 숫자가 소수(1.0)로 읽히지 않게 정수 문자열로 맞춤(앱 buildCacheKey와 같은 규칙: 주번 없으면 0, 부번 없으면 빈 칸)
+    df["main_num"] = df["main_num"].map(lambda v: 0 if v is None or v != v or v == "" else int(float(v)))
+    df["sub_num"] = df["sub_num"].map(lambda v: "" if v is None or v != v or v == "" else (str(int(float(v))) if str(v).replace(".", "", 1).isdigit() else str(v)))
     df["k"] = (df["dong"] + "|" + df["danji"] + "|" + df["bunji"] + "|" + df["road_name"] + "|" + df["main_num"].astype(str) + "|" + df["sub_num"].astype(str)).str.lower()
     g = df.groupby("k").agg(n=("price", "size"), last=("deal_date", "max"), by=("build_year", "max"), region=("region", "first"), dong=("dong", "first"), danji=("danji", "first"), bunji=("bunji", "first"), road=("road_name", "first"), size=("size", "median")).reset_index()
     g["kind"] = kind; g["has"] = g["k"].isin(keys)
