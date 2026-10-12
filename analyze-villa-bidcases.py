@@ -139,7 +139,7 @@ def main():
             if not (r.sale <= cut) or r.fl != r.fl: continue
             m = r.resaleMatch if isinstance(r.resaleMatch, dict) else {}
             o = acc.setdefault(bk(r.fl), [0, 0, 0]); o[0] += 1
-            if m.get("conf") == "dong" and m.get("date"):
+            if m.get("conf") in ("dong", "floor") and m.get("date"):  # 빌라 되판 기록은 같은 번지·같은 층 기준이라 conf가 floor로 저장됨
                 try:
                     mo = (pd.to_datetime(str(m["date"]), format="%Y%m%d") - pd.to_datetime(str(r.sale), format="%Y%m%d")).days / 30.4
                 except Exception: continue
