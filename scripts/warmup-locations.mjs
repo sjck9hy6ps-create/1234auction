@@ -68,7 +68,11 @@ const PAGE_SIZE = 1000;        // Supabase 페이지네이션 단위
 // 알고 나니 너무 낮았음 - 낮 시간 실사용(개인 앱이라 하루 수십~수백 건 수준으로 추정)에
 // 넉넉한 여유(10,000건 중 6,000건 이상)를 남기면서도 19,623건 백로그를 며칠 안에 털어낼 수
 // 있도록 4,000건으로 올림. 그래도 환경변수로 조절 가능하게 유지함(필요시 낮추거나 더 올릴 수 있음).
-const MAX_BUILDING_WARMUP_PER_RUN = parseInt(process.env.MAX_BUILDING_WARMUP_PER_RUN || '3000', 10); // 2026-10-11: 5000→3000(하루 한도가 오전에 바닥나 입찰물건 수집·낮 사용분이 부족했음). 2026-10-10: 7000→5000(00:10 입찰물건 수집이 최대 1500건 먼저 씀 → 낮 사용분 약 3,500건 남김). 이전 2026-10: 4000→7000(한도 초과 시 자동 중단되므로 새벽 3시 실행이 그날 할당량 대부분을 쓰고, 낮 사용분 약 3천 건 남김)
+// 2026-10-13(사용자: 평일은 출퇴근으로 빌라를 볼 수 없고 주말에만 확인) - 평일(한국 시각 월~금)에는 낮 사용 몫이 거의 필요 없어 상한을 최대로(8,000건: 하루 한도 1만 건 중 입찰물건 대장 수집 최대 1,500건 + 여유 500건을 남김),
+// 주말(토·일)은 낮에 앱을 쓰므로 예전처럼 3,000건. 건축HUB 한도 초과 응답이 오면 어느 경우든 그 자리에서 멈춤. 한도는 한국 시각 자정에 새로 시작하므로 실행 시각의 한국 요일로 정함.
+const KST_DOW = new Date(Date.now() + 9 * 3600 * 1000).getUTCDay(); // 0 일 ~ 6 토
+const IS_WEEKDAY_KST = KST_DOW >= 1 && KST_DOW <= 5;
+const MAX_BUILDING_WARMUP_PER_RUN = parseInt(process.env.MAX_BUILDING_WARMUP_PER_RUN || (IS_WEEKDAY_KST ? '8000' : '3000'), 10); // 2026-10-11: 5000→3000(하루 한도가 오전에 바닥나 입찰물건 수집·낮 사용분이 부족했음). 2026-10-10: 7000→5000(00:10 입찰물건 수집이 최대 1500건 먼저 씀 → 낮 사용분 약 3,500건 남김). 이전 2026-10: 4000→7000(한도 초과 시 자동 중단되므로 새벽 3시 실행이 그날 할당량 대부분을 쓰고, 낮 사용분 약 3천 건 남김)
 let buildingWarmupCount = 0;
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 /* ── 호출 제한 대응 ──
@@ -378,7 +382,7 @@ async function main() {
   console.log('📦 기존 캐시된 건축물대장 목록 불러오는 중...');
   const existingBuildingKeys = await fetchExistingBuildingKeys();
   console.log(`   → 이미 건축물대장 캐시된 조합 ${existingBuildingKeys.size}개`);
-  console.log(`📦 건축물대장 웜업 실행당 상한: ${MAX_BUILDING_WARMUP_PER_RUN}건 (낮 시간 실사용 할당량 보호용)`);
+  console.log(`📦 건축물대장 웜업 실행당 상한: ${MAX_BUILDING_WARMUP_PER_RUN}건 (${IS_WEEKDAY_KST ? '평일 - 최대치' : '주말 - 낮 사용 몫 보호'})`);
   // 단독/다가구(single_trades)는 원래 앱에서도 지오코딩·건축물대장 대상이 아니므로 웜업에서도 제외
   const tableTypes = [
     { table: 'house_trades', type: 'apt' },
