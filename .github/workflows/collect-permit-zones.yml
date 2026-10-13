@@ -1,0 +1,27 @@
+name: 토지거래허가구역 판정 (새 물건 매주, 전체는 90일마다)
+on:
+  workflow_dispatch:
+    inputs:
+      force_full:
+        description: '전체 다시 조회(1)'
+        required: false
+        default: ''
+  schedule:
+    - cron: '30 20 * * 2'   # 매주 화요일 KST 수요일 새벽 - 새 물건 판정, 전체 갱신 90일 넘으면 자동 전체
+jobs:
+  permit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - run: npm install @supabase/supabase-js ws
+      - env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          COLLECT_PROXY_SECRET: ${{ secrets.COLLECT_PROXY_SECRET }}
+          SITE_URL: https://1234auction.vercel.app
+          FORCE_FULL: ${{ github.event.inputs.force_full }}
+        run: node scripts/collect-permit-zones.mjs

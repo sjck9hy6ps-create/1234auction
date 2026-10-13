@@ -3473,6 +3473,15 @@ export default async function handler(req, res) {
       return res.status(500).json({ error: err.message });
     }
   }
+  if (req.query.mode === 'permit') { // 토지거래허가구역 판정(scripts/collect-permit-zones.mjs, 2026-10-13)
+    res.setHeader('Cache-Control', 's-maxage=3600, stale-while-revalidate=86400');
+    try {
+      const { data, error } = await supabase.from('leader_follower_cache').select('payload').eq('id', 'signal|__permit__').maybeSingle();
+      if (error) return res.status(500).json({ error: error.message });
+      const p = (data && data.payload) || {};
+      return res.status(200).json({ refreshedAt: p.refreshedAt || null, checkedAt: p.checkedAt || null, n: p.n || 0, flagged: p.flagged || {} });
+    } catch (err) { return res.status(500).json({ error: err.message }); }
+  }
   if (req.query.mode === 'boardDiff') { // 이번 주 변동(precompute-board.mjs가 저장, 2026-10-12)
     res.setHeader('Cache-Control', 's-maxage=300, stale-while-revalidate=3600');
     try {
