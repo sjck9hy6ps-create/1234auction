@@ -46,6 +46,34 @@ def main():
     print(f"거래 {len(df):,}건, 대장 연결 {df['elv'].notna().mean() * 100:.1f}%")
     tr_all = df[(df["deal_date"] >= 20230101) & (df["deal_date"] < 20250101)]; te_all = df[df["deal_date"] >= 20250101]
     TR = tr_all.sample(min(N_TRAIN, len(tr_all)), random_state=3); TE = te_all.sample(min(N_TEST, len(te_all)), random_state=7)
+    # 개별공시지가(2026-10-13, 사용자: 대지지분·공시지가) - 시험·학습 거래의 필지 공시지가(원/㎡, 2025년)를 앱 서버 프록시(VWorld)로 받아 특성에 추가. 위치별 땅값이 건물·동 시세로 못 잡는 차이를 설명하는지 확인
+    import requests as _rq
+    from concurrent.futures import ThreadPoolExecutor
+    SITE = os.environ.get("SITE_URL", "https://1234auction.vercel.app"); SEC = os.environ.get("COLLECT_PROXY_SECRET", "").strip()
+    both0 = pd.concat([TR, TE]); both0 = both0[both0["sg"].notna() & both0["bj"].notna() & both0["bun"].notna()]
+    pnu_of = lambda D_: D_["sg"].astype(str) + D_["bj"].astype(str) + "1" + D_["bun"].astype(str).str.zfill(4) + D_["ji"].fillna("0").astype(str).str.zfill(4)
+    pnus = sorted(set(pnu_of(both0).tolist()))
+    print(f"공시지가 조회 필지 {len(pnus):,}곳")
+    def land(pnu):
+        for _ in range(3):
+            try:
+                r = _rq.get(SITE + "/api/get-house", params={"action": "vworldProxy", "secret": SEC, "kind": "land", "pnu": pnu, "stdrYear": "2025", "format": "json", "numOfRows": "3"}, timeout=60).json()
+                j = json.loads(r.get("body", "{}")); f = ((j.get("indvdLandPrices") or {}).get("field")) or []
+                for x in f:
+                    if str(x.get("stdrYear")) == "2025" and x.get("pblntfPclnd"): return pnu, float(x["pblntfPclnd"])
+                return pnu, None
+            except Exception: pass
+        return pnu, None
+    LP = {}
+    if SEC and pnus:
+        with ThreadPoolExecutor(max_workers=8) as ex:
+            for i, (k, v) in enumerate(ex.map(land, pnus)):
+                LP[k] = v
+                if (i + 1) % 2000 == 0: print(f"  공시지가 {i + 1:,}/{len(pnus):,}", flush=True)
+    print(f"공시지가 확보 {sum(1 for v in LP.values() if v):,}곳")
+    TR = TR.copy(); TE = TE.copy()
+    for D_ in (TR, TE):
+        D_["lp"] = pnu_of(D_).map(LP)
     both = pd.concat([TR, TE]); E = bv.estimate(df, both); E = E[(E["tadj"] == 0) & (E["q"] == 0.5)].set_index("i")
     lv = {"건물3+": 0, "건물1~2+동": 1, "건물1~2": 2, "동5+": 3, "동1~4": 4, "시군구": 5}
     # 그 동의 최근 시세(30일 전까지 12개월 ㎡당 중앙값) - 시점 보정용 특성
@@ -60,6 +88,7 @@ def main():
         D["reg"] = D["region"].astype("category").cat.codes
         # 토지 특성(2026-10-13, 사용자: 대지지분): 대지면적÷연면적(용적률의 역수 - 건물 면적당 토지가 얼마나 넓은지)·세대당 대지면적·건폐율
         D["land_ratio"] = D["plat"] / D["tot"].where(D["tot"] > 0); D["land_hh"] = D["plat"] / D["hh"].where(D["hh"] > 0); D["unit_land"] = D["size"] * D["land_ratio"]
+        D["llp"] = np.log(D["lp"].where(D["lp"] > 0))  # 공시지가(로그, 원/㎡)
         D["y"] = np.log(D["price"] / D["base"])
         return D
     Ftr, Fte = feats(TR), feats(TE)
@@ -76,6 +105,12 @@ def main():
                 "p10": round(float(e.quantile(.1)) * 100, 1), "p90": round(float(e.quantile(.9)) * 100, 1), "biasPct": round(float(e.median()) * 100, 1)}
     out = {"학습 n": int(len(Ftr)), "시험 n": int(len(Fte)), "대장 정보 있는 시험 비율%": round(float(Fte["elv"].notna().mean()) * 100, 1)}
     out["기존"] = stat(Fte, "base"); out["보정"] = stat(Fte, "est2"); out["보정+토지"] = stat(Fte, "est3")
+    cols_lp = cols_land + ["llp"]
+    m3 = HistGradientBoostingRegressor(max_iter=300, learning_rate=0.05, max_depth=5, min_samples_leaf=40, l2_regularization=1.0, random_state=1)
+    m3.fit(Ftr[cols_lp], Ftr["y"]); Fte["est4"] = Fte["base"] * np.exp(m3.predict(Fte[cols_lp]))
+    out["보정+토지+공시지가"] = stat(Fte, "est4"); hp = Fte[Fte["llp"].notna()]
+    out["공시지가 있는 시험 비율%"] = round(float(Fte["llp"].notna().mean()) * 100, 1)
+    out["공시지가 있음 - 기존"] = stat(hp, "base"); out["공시지가 있음 - 보정"] = stat(hp, "est2"); out["공시지가 있음 - 보정+토지+공시지가"] = stat(hp, "est4")
     out["토지 값 있는 시험 비율%"] = round(float(Fte["land_ratio"].notna().mean()) * 100, 1)
     hl = Fte[Fte["land_ratio"].notna()]; out["토지 값 있음 - 기존"] = stat(hl, "base"); out["토지 값 있음 - 보정"] = stat(hl, "est2"); out["토지 값 있음 - 보정+토지"] = stat(hl, "est3")
     has = Fte[Fte["elv"].notna()]; no = Fte[Fte["elv"].isna()]
