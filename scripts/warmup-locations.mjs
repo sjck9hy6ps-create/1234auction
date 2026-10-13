@@ -412,20 +412,32 @@ async function main() {
   // 2026-10(사용자: "입찰희망 지역 우선으로") - 등록한 입찰물건이 있는 시군구 → 같은 시도 → 나머지 순으로 처리
   try {
     const auctions = await fetch(`${SITE_URL}/api/auction`).then((r) => r.json());
-    const sgg = new Set(), sido = new Set();
+    const sgg = new Set(), sido = new Set(), dong = new Set();
     (Array.isArray(auctions) ? auctions : []).forEach((a) => {
       if (!a || a.isBacktest) return;
-      const code = String(a.bCode || a._lawd || '').slice(0, 5);
+      const full = String(a.bCode || a._lawd || '');
+      const code = full.slice(0, 5);
       if (code.length === 5) { sgg.add(code); sido.add(code.slice(0, 2)); }
+      if (full.length === 10) dong.add(full); // 법정동 단위(시군구 5 + 법정동 5)
     });
-    const rank = (sc) => (sc && sgg.has(sc) ? 0 : (sc && sido.has(String(sc).slice(0, 2)) ? 1 : 2));
+    // 2026-10-13(사용자: 빌라 대장 연결을 입찰 후보 지역 위주로 앞당기고 70~80%에서 보정 모델 재검증): 입찰물건과 같은 법정동 → 같은 시군구 → 같은 시도 → 나머지.
+    // 시군구만 보면 191곳이 전체의 대부분(8만 단지)이라 우선순위가 거의 안 갈렸음. 같은 우선순위 안에서는 빌라 먼저(아파트는 이미 95% 연결), 그다음 거래 많은 건물 순.
     const coordOf = ([key, row]) => existingCoords.get(key) || existingCoords.get(legacyKeyOf(row)) || {};
-    buildingOnlyTargets.sort((x, y) => (rank(coordOf(x).sigunguCd) - rank(coordOf(y).sigunguCd)) || ((y[1]._n || 0) - (x[1]._n || 0))); // 같은 우선순위 안에서는 거래 많은 건물 먼저(2026-10-13)
-    const n0 = buildingOnlyTargets.filter((x) => rank(coordOf(x).sigunguCd) === 0).length, n1 = buildingOnlyTargets.filter((x) => rank(coordOf(x).sigunguCd) === 1).length;
-    console.log(`📦 입찰희망 지역 우선: 입찰물건 시군구 ${sgg.size}곳의 단지 ${n0}개 → 같은 시도 ${n1}개 → 나머지 순`);
+    const rank = (c) => (c.sigunguCd && c.bjdongCd && dong.has(c.sigunguCd + c.bjdongCd) ? 0 : (c.sigunguCd && sgg.has(c.sigunguCd) ? 1 : (c.sigunguCd && sido.has(String(c.sigunguCd).slice(0, 2)) ? 2 : 3)));
+    const typeOf = new Map(allEntries.map(([k, , t]) => [k, t]));
+    const vr = (x) => (typeOf.get(x[0]) === 'villa' ? 0 : 1);
+    buildingOnlyTargets.sort((x, y) => (rank(coordOf(x)) - rank(coordOf(y))) || (vr(x) - vr(y)) || ((y[1]._n || 0) - (x[1]._n || 0)));
+    const cnt = [0, 0, 0, 0]; buildingOnlyTargets.forEach((x) => { cnt[rank(coordOf(x))]++; });
+    console.log(`📦 입찰희망 지역 우선: 입찰물건 같은 법정동 ${dong.size}곳의 단지 ${cnt[0]}개 → 같은 시군구 ${cnt[1]}개 → 같은 시도 ${cnt[2]}개 → 나머지 ${cnt[3]}개 (같은 순위 안에서는 빌라·거래 많은 순)`);
   } catch (e) { console.log('⚠️ 입찰물건 목록을 못 불러와 기본 순서로 진행:', e.message); }
   console.log(`📦 신규 좌표 웜업 대상: ${coordTargets.length}개`);
   console.log(`📦 건축물대장만 재시도 대상: ${buildingOnlyTargets.length}개\n`);
+  { // 대장 연결률 진행 상황(좌표가 있는 건물 기준) - 빌라 70~80%에 닿으면 보정 모델 재검증(2026-10-13)
+    const tot = { apt: 0, villa: 0 }, pend = { apt: 0, villa: 0 };
+    const pendSet = new Set(buildingOnlyTargets.map((x) => x[0]));
+    for (const [key, row, type] of allEntries) { const c = existingCoords.get(key) || existingCoords.get(legacyKeyOf(row)); if (!c || !c.sigunguCd || !c.bjdongCd) continue; tot[type]++; if (pendSet.has(key)) pend[type]++; }
+    console.log(`📊 대장 연결률(좌표·법정동코드가 있는 건물 기준): 아파트 ${((1 - pend.apt / Math.max(1, tot.apt)) * 100).toFixed(1)}% (${tot.apt - pend.apt}/${tot.apt}) · 빌라 ${((1 - pend.villa / Math.max(1, tot.villa)) * 100).toFixed(1)}% (${tot.villa - pend.villa}/${tot.villa})`);
+  }
 
   // ⚠️ 2026-09(사용자 요청: "건축물대장도 같이 웜업할 수 있게 해줘"): 원래는 좌표 웜업
   // (coordTargets) 단계에서 새로 지오코딩에 성공할 때마다 그 자리에서 warmBuildingInfo를
