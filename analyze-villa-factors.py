@@ -28,7 +28,7 @@ def bunji_to_bunji(b):
 
 def fetch_buildings():
     rows, off = [], 0
-    sel = "sigungu_cd,bjdong_cd,bun,ji,elv:title_json->rideElvtCnt,emg:title_json->emgenElvtCnt,grnd:title_json->grndFlrCnt,hh:title_json->hhldCnt,apr:title_json->>useAprDay,purp:title_json->>mainPurps"
+    sel = "sigungu_cd,bjdong_cd,bun,ji,elv:title_json->rideElvtCnt,emg:title_json->emgenElvtCnt,grnd:title_json->grndFlrCnt,hh:title_json->hhldCnt,apr:title_json->>useAprDay,purp:title_json->>mainPurps,plat:title_json->platArea,tot:title_json->totArea,vl:title_json->vlRat,bc:title_json->bcRat"
     flt = "&or=(sigungu_cd.like.11*,sigungu_cd.like.28*,sigungu_cd.like.41*)"
     while True:
         r = requests.get(f"{URL}/rest/v1/building_info?select={sel}{flt}", headers={**HDR, "Range-Unit": "items", "Range": f"{off}-{off + 999}"}, timeout=120)

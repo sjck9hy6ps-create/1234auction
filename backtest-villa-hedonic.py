@@ -35,13 +35,13 @@ def main():
     bb = df["bunji"].map(vf.bunji_to_bunji); df["bun"] = bb.map(lambda x: x[0] if x else None); df["ji"] = bb.map(lambda x: x[1] if x else None)
     B = vf.fetch_buildings()
     if len(B):
-        for c in ("elv", "emg", "grnd", "hh"): B[c] = pd.to_numeric(B[c], errors="coerce")
+        for c in ("elv", "emg", "grnd", "hh", "plat", "tot", "vl", "bc"): B[c] = pd.to_numeric(B.get(c), errors="coerce")
         B["apr"] = pd.to_numeric(B["apr"].astype(str).str[:4], errors="coerce")
         B["elvAny"] = ((B["elv"].fillna(0) + B["emg"].fillna(0)) > 0).astype(float)
-        Bg = B.groupby(["sigungu_cd", "bjdong_cd", "bun", "ji"]).agg(elv=("elvAny", "max"), grnd=("grnd", "max"), hh=("hh", "max"), apr=("apr", "min")).reset_index()
+        Bg = B.groupby(["sigungu_cd", "bjdong_cd", "bun", "ji"]).agg(elv=("elvAny", "max"), grnd=("grnd", "max"), hh=("hh", "max"), apr=("apr", "min"), plat=("plat", "max"), tot=("tot", "max"), vl=("vl", "max"), bc=("bc", "max")).reset_index()
         df = df.merge(Bg, how="left", left_on=["sg", "bj", "bun", "ji"], right_on=["sigungu_cd", "bjdong_cd", "bun", "ji"], suffixes=("", "_b"))
     else:
-        for c in ("elv", "grnd", "hh", "apr"): df[c] = np.nan
+        for c in ("elv", "grnd", "hh", "apr", "plat", "tot", "vl", "bc"): df[c] = np.nan
     df = df.reset_index(drop=True)
     print(f"거래 {len(df):,}건, 대장 연결 {df['elv'].notna().mean() * 100:.1f}%")
     tr_all = df[(df["deal_date"] >= 20230101) & (df["deal_date"] < 20250101)]; te_all = df[df["deal_date"] >= 20250101]
@@ -58,6 +58,8 @@ def main():
         D["age_b"] = (D["deal_date"] // 10000) - D["apr"]
         D["ls"] = np.log(D["size"]); D["t"] = D["day"] / 365.0
         D["reg"] = D["region"].astype("category").cat.codes
+        # 토지 특성(2026-10-13, 사용자: 대지지분): 대지면적÷연면적(용적률의 역수 - 건물 면적당 토지가 얼마나 넓은지)·세대당 대지면적·건폐율
+        D["land_ratio"] = D["plat"] / D["tot"].where(D["tot"] > 0); D["land_hh"] = D["plat"] / D["hh"].where(D["hh"] > 0); D["unit_land"] = D["size"] * D["land_ratio"]
         D["y"] = np.log(D["price"] / D["base"])
         return D
     Ftr, Fte = feats(TR), feats(TE)
@@ -65,18 +67,25 @@ def main():
     m = HistGradientBoostingRegressor(max_iter=300, learning_rate=0.05, max_depth=5, min_samples_leaf=40, l2_regularization=1.0, random_state=1)
     m.fit(Ftr[cols], Ftr["y"])
     pred = m.predict(Fte[cols]); Fte["est2"] = Fte["base"] * np.exp(pred)
+    cols_land = cols + ["land_ratio", "land_hh", "unit_land", "vl", "bc"]
+    m2 = HistGradientBoostingRegressor(max_iter=300, learning_rate=0.05, max_depth=5, min_samples_leaf=40, l2_regularization=1.0, random_state=1)
+    m2.fit(Ftr[cols_land], Ftr["y"]); Fte["est3"] = Fte["base"] * np.exp(m2.predict(Fte[cols_land]))
     def stat(G, col):
         e = G[col] / G["price"] - 1; a = e.abs()
         return {"n": int(len(G)), "medAbsErrPct": round(float(a.median()) * 100, 1), "within10Pct": round(float((a <= .1).mean()) * 100, 1), "within20Pct": round(float((a <= .2).mean()) * 100, 1),
                 "p10": round(float(e.quantile(.1)) * 100, 1), "p90": round(float(e.quantile(.9)) * 100, 1), "biasPct": round(float(e.median()) * 100, 1)}
     out = {"학습 n": int(len(Ftr)), "시험 n": int(len(Fte)), "대장 정보 있는 시험 비율%": round(float(Fte["elv"].notna().mean()) * 100, 1)}
-    out["기존"] = stat(Fte, "base"); out["보정"] = stat(Fte, "est2")
+    out["기존"] = stat(Fte, "base"); out["보정"] = stat(Fte, "est2"); out["보정+토지"] = stat(Fte, "est3")
+    out["토지 값 있는 시험 비율%"] = round(float(Fte["land_ratio"].notna().mean()) * 100, 1)
+    hl = Fte[Fte["land_ratio"].notna()]; out["토지 값 있음 - 기존"] = stat(hl, "base"); out["토지 값 있음 - 보정"] = stat(hl, "est2"); out["토지 값 있음 - 보정+토지"] = stat(hl, "est3")
     has = Fte[Fte["elv"].notna()]; no = Fte[Fte["elv"].isna()]
     out["대장 있음 - 기존"] = stat(has, "base"); out["대장 있음 - 보정"] = stat(has, "est2")
     out["대장 없음 - 기존"] = stat(no, "base"); out["대장 없음 - 보정"] = stat(no, "est2")
     for l, G in Fte.groupby("lvl"):
         nm = [k for k, v in lv.items() if v == l][0]
         if len(G) >= 50: out["단계 " + nm] = {"기존": stat(G, "base"), "보정": stat(G, "est2")}
+    pi2 = permutation_importance(m2, Fte[cols_land], Fte["y"], n_repeats=3, random_state=1, scoring="neg_mean_absolute_error")
+    out["변수 중요도(토지 포함)"] = {c: round(float(v), 4) for c, v in sorted(zip(cols_land, pi2.importances_mean), key=lambda x: -x[1])}
     pi = permutation_importance(m, Fte[cols], Fte["y"], n_repeats=3, random_state=1, scoring="neg_mean_absolute_error")
     out["변수 중요도(오차 증가)"] = {c: round(float(v), 4) for c, v in sorted(zip(cols, pi.importances_mean), key=lambda x: -x[1])}
     txt = json.dumps(out, ensure_ascii=False, indent=1); print(txt)
