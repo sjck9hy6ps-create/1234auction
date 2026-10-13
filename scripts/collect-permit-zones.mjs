@@ -34,9 +34,12 @@ async function zoneAt(lat, lon) {
       const j = JSON.parse(r.body || '{}'); const st = j.response && j.response.status;
       if (st === 'NOT_FOUND') return { ok: true, z: null };
       if (st !== 'OK') { await sleep(1500 * (t + 1)); continue; }
-      const f = ((((j.response || {}).result || {}).featureCollection || {}).features || [])[0];
-      const p = (f && f.properties) || {};
-      return { ok: true, z: [p.uname || '토지거래허가구역', p.dyear || '', p.dnum || '', [p.sido_name, p.sigg_name].filter(Boolean).join(' ')] };
+      // 이 레이어(LT_C_UQ141)는 허가구역 외에 지구단위계획구역·개발행위허가제한지역·성장관리방안 수립지역 등도 함께 돌려줌(2026-10-14 실측) → '토지거래계약에관한허가구역'만 인정. 지정 연도 0000은 연도 미상
+      const fs = (((j.response || {}).result || {}).featureCollection || {}).features || [];
+      const f = fs.find((x) => /토지거래/.test(((x && x.properties) || {}).uname || ''));
+      if (!f) return { ok: true, z: null };
+      const p = f.properties || {};
+      return { ok: true, z: [p.uname, p.dyear && p.dyear !== '0000' ? p.dyear : '', p.dnum && p.dnum !== '0000' ? p.dnum : '', [p.sido_name, p.sigg_name].filter(Boolean).join(' ')] };
     } catch (e) { await sleep(1500 * (t + 1)); }
   }
   return { ok: false };
