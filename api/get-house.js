@@ -255,6 +255,25 @@ async function handleMolitProxy(req, res) {
   }
 }
 
+/* VWorld 프록시(2026-10-13) - GitHub Actions가 VWorld를 직접 부르면 502로 막혀(개별공시지가 실측) 앱 서버를 거쳐 호출. 공유 비밀값으로 우리 작업만 허용(키 한도 보호).
+   kind=data → 공간 데이터(정비구역 등 레이어, /req/data) · kind=land → 개별공시지가(/ned/data/getIndvdLandPriceAttr). 나머지 쿼리는 그대로 전달하고 키·도메인만 서버 값으로 채움. */
+async function handleVworldProxy(req, res) {
+  if (!PROXY_SECRET || req.query.secret !== PROXY_SECRET) return res.status(401).json({ error: 'unauthorized' });
+  const key = process.env.VWORLD_API_KEY;
+  if (!key) return res.status(500).json({ error: 'VWORLD_API_KEY not configured' });
+  const base = req.query.kind === 'data' ? 'https://api.vworld.kr/req/data' : (req.query.kind === 'land' ? 'https://api.vworld.kr/ned/data/getIndvdLandPriceAttr' : null);
+  if (!base) return res.status(400).json({ error: 'kind=data|land' });
+  const p = new URLSearchParams();
+  Object.keys(req.query).forEach((k) => { if (!['secret', 'kind', 'action', 'key', 'domain'].includes(k)) p.set(k, String(req.query[k])); });
+  p.set('key', key); p.set('domain', process.env.VWORLD_DOMAIN || '1234auction.vercel.app');
+  try {
+    const r = await fetch(base + '?' + p.toString(), { signal: AbortSignal.timeout(20000) });
+    const text = await r.text();
+    res.setHeader('Content-Type', 'application/json; charset=utf-8');
+    return res.status(200).send(JSON.stringify({ status: r.status, body: text.slice(0, 200000) }));
+  } catch (e) { return res.status(502).json({ error: e.message }); }
+}
+
 async function handleComplexHistory(req, res) {
   const region = String(req.query.region || '').trim();
   const dong = String(req.query.dong || '').trim();
@@ -292,6 +311,7 @@ export default async function handler(req, res) {
 
   // GitHub Actions 주간 수집 스크립트 전용 - 국토부 API를 대신 호출해서 XML을 그대로 돌려줌
   // (위 handleMolitProxy 설명 참고). lawdCd 파라미터 흐름과 무관하니 가장 먼저 분기.
+  if (req.query.action === 'vworldProxy') return handleVworldProxy(req, res);
   if (req.query.action === 'molitProxy') {
     return handleMolitProxy(req, res);
   }

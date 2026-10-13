@@ -12,6 +12,7 @@ jobs:
           python-version: '3.11'
       - run: pip install requests
       - env:
-          VWORLD_API_KEY: ${{ secrets.VWORLD_API_KEY }}
+          COLLECT_PROXY_SECRET: ${{ secrets.COLLECT_PROXY_SECRET }}
+          SITE_URL: https://1234auction.vercel.app
           PYTHONUNBUFFERED: '1'
         run: python diag-vworld.py
