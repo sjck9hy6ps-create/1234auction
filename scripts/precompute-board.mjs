@@ -74,6 +74,9 @@ try {
     if (ok || Date.now() - tw > 20 * 60 * 1000) { console.log(`빌라 연식 반영 재계산 대기 ${Math.round((Date.now() - tw) / 1000)}s · ${ok ? '완료' : '시간 초과'}`); break; }
     await page.waitForTimeout(10000);
   }
+  // 판정(ev)은 화면을 그릴 때 14ms씩 나눠 계산하므로 헤드리스에선 일부만 끝나 있음 → 저장 전에 전부 한 번에 계산(기준값을 올려 저장본이 무효가 된 날에도 완전하게)
+  const evDone = await page.evaluate(() => { window.__villaEvDeadline = 0; let n = 0; villaMetroRows(true).forEach((r) => { try { const e = villaEval(r); if (e && !e.pending) n++; } catch (e) {} }); return n; });
+  console.log(`빌라 판정 계산 ${evDone}건`);
   villa = await page.evaluate(() => villaCalcSnapshot());
 } catch (e) { console.log('빌라 미리 계산 실패:', String(e).slice(0, 200)); }
 // ── 이번 주 변동 비교용 요약(2026-10-12, 사용자: 파이프라인 전후로 달라진 값 확인) - 물건별 핵심 값만 뽑아 두고, 아래에서 지난 기준 저장본과 비교 ──
