@@ -10,7 +10,7 @@ def load(name, fn):
     s = importlib.util.spec_from_file_location(name, os.path.join(HERE, fn)); m = importlib.util.module_from_spec(s); s.loader.exec_module(m); return m
 bv = load("bv", "backtest-villa.py"); avm = bv.avm
 FLT = "&or=(" + ",".join('region.like."' + n + '*"' for n in ("서울", "인천", "경기")) + ")"
-N_TEST = int(os.environ.get("N_TEST", "14000"))
+N_TEST = int(os.environ.get("N_TEST", "8000"))
 
 def stat(E):
     if E is None or not len(E): return None
@@ -29,10 +29,14 @@ def main():
     samples = {k: (G.sample(min(N_TEST, len(G)), random_state=7) if len(G) > N_TEST else G) for k, G in groups.items()}
     pools = {"기존(신축 포함)": df}
     for n in (3, 4, 5): pools[f"신축 {n}년 이하 제외"] = df[~(df["age"] <= n)]
+    print({k: len(v) for k, v in samples.items()}, flush=True)
     for gname, T in samples.items():
         out[gname] = {}
         for pname, pool in pools.items():
-            E = bv.estimate(pool, T); E = E[(E["tadj"] == 0) & (E["q"] == 0.5)]
+            if len(T) == 0: continue
+            E = bv.estimate(pool, T)
+            if E is None or len(E) == 0 or "tadj" not in E.columns: print(f"[{gname}] {pname}: 예상 결과 없음(대상 {len(T)}건)", flush=True); continue
+            E = E[(E["tadj"] == 0) & (E["q"] == 0.5)]
             r = {"전체": stat(E)}
             for lvl, G in E.groupby("lvl"):
                 if len(G) >= 80: r["단계 " + lvl] = stat(G)
