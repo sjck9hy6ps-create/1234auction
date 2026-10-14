@@ -271,7 +271,8 @@ def main():
                     if len(S2) >= 20: item["r2"] = round(float(((S2.sr <= rr) & (S2.rr > rr)).mean()), 3)
                 tab.append(item)
             kexp = float(sum(p[i] * v for i, v in enumerate([1, 2.5, 5, 8.5, 14])))
-            rec = {"t": "a" if ty == "apt" else "v", "ref": round(ref), "refKind": "est" if ty == "apt" else "min", "kexp": round(kexp, 1), "tab": tab}
+            kmed = int(np.searchsorted(np.cumsum(p), 0.5)); kmed = min(kmed, 4)  # 확률을 쌓아 50%가 넘는 첫 구간(중앙 구간) - 평균은 꼬리(11명+)에 끌려 높게 나와서 따로 둠
+            rec = {"t": "a" if ty == "apt" else "v", "ref": round(ref), "refKind": "est" if ty == "apt" else "min", "kexp": round(kexp, 1), "kmed": kmed, "tab": tab}
             if row.rec and row.rec > 0:
                 ws = [t["win"] * t["p"] for t in tab if t and "win" in t]; ps = [t["p"] for t in tab if t and "win" in t]
                 if ps: rec["rec"] = round(float(row.rec)); rec["win"] = round(sum(ws) / sum(ps), 3)

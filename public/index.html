@@ -20113,7 +20113,7 @@ function bidScoreHtml(row) {
     }
     var lc = sc.loc || {}, tab = sc.tab || [], names = ['1명', '2~3명', '4~6명', '7~10명', '11명+'];
     h += '<div class="dr-sec"><h4>🎲 예상 입찰자 수 · 구간별 낙찰가</h4>';
-    h += '<div>예상 입찰자 <b>약 ' + sc.kexp + '명</b> <span class="dr-sub" style="display:inline;">반경 1.5km 최근 1년 낙찰 ' + (lc.n || 0) + '건' + (lc.med != null ? '(입찰자 중앙 ' + lc.med + '명, 단독 낙찰 ' + (lc.one != null ? Math.round(lc.one * 100) + '%' : '-') + ')' : '') + ' · 4km ' + (lc.n4 || 0) + '건</span></div>';
+    h += '<div>예상 입찰자 중앙 구간 <b>' + (sc.kmed != null ? names[sc.kmed] : '약 ' + sc.kexp + '명') + '</b> <span class="dr-sub" style="display:inline;">(평균 약 ' + sc.kexp + '명 - 많이 몰리는 경우가 평균을 끌어올려요) · 반경 1.5km 최근 1년 낙찰 ' + (lc.n || 0) + '건' + (lc.med != null ? '(입찰자 중앙 ' + lc.med + '명, 단독 낙찰 ' + (lc.one != null ? Math.round(lc.one * 100) + '%' : '-') + ')' : '') + ' · 4km ' + (lc.n4 || 0) + '건</span></div>';
     if (sc.win != null) h += '<div style="font-size:15px;margin-top:2px;">추천가 ' + fmt(sc.rec) + '로 입찰하면 <b>1등 확률 약 ' + pc(sc.win) + '</b></div>';
     h += '<table class="dr-tbl" style="margin-top:6px;"><tr><td class="dr-sub">입찰자 수</td><td class="dr-sub r">가능성</td><td class="dr-sub r">낙찰가 중앙</td><td class="dr-sub r">70%가 이하</td><td class="dr-sub r">90%가 이하</td>' + (sc.rec ? '<td class="dr-sub r">추천가 1등</td><td class="dr-sub r">2등</td><td class="dr-sub r">졌을 때 격차</td>' : '') + '</tr>';
     tab.forEach(function(t, i) {
