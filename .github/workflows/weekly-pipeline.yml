@@ -74,3 +74,9 @@ jobs:
     secrets: inherit
     needs: analyze-region-liquidity
     if: ${{ !cancelled() }}
+  score-bid-objects:
+    name: 12 입찰 경쟁·등수·환금성 점수
+    uses: ./.github/workflows/score-bid-objects.yml
+    secrets: inherit
+    needs: precompute-board
+    if: ${{ !cancelled() }}

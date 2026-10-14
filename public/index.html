@@ -20077,10 +20077,53 @@ async function renderBidDrawer() {
                     : '<div class="pk-sub">추천가가 없어요 · 예상매도가 ' + fmt(row.sale) + ' · 최저가 ' + fmt(row.minBid) + '</div>')
                 + '</div>';
             var legacy = h.slice(i1, i2); legacy = legacy.slice(legacy.indexOf('</div>') + 6); // 예전 판정 알약(❌ 제외 등)은 새 판정(맨 위 카드)과 충돌해서 뺌
-            h = h.slice(0, i1) + card + issueHtml + permitDrawerHtml(row) + (row.visit && row.visit.go ? fieldChecklistHtml(row) : '') + '<details class="dr-more"><summary>자세히 (근거·범위·실거래·비용)</summary>' + legacy + '</details>' + h.slice(i2);
+            h = h.slice(0, i1) + card + issueHtml + bidScoreHtml(row) + permitDrawerHtml(row) + (row.visit && row.visit.go ? fieldChecklistHtml(row) : '') + '<details class="dr-more"><summary>자세히 (근거·범위·실거래·비용)</summary>' + legacy + '</details>' + h.slice(i2);
         } else h = h.slice(0, i1) + issueHtml + h.slice(i1);
     } else h += issueHtml;
     d.innerHTML = h; drawerNavInit(d);
+}
+/* 🎯 입찰 경쟁·등수·환금성(2026-10-14, 사용자: 모든 입찰건 상세에 ① 생활반경 기준 잘 팔리는 평형인지 추천/비추천 ② 생활반경 기준 최근 입찰 인원으로 예상 입찰자 수 → 구간별 낙찰가 ③ 입찰자 수 구간별 낙찰가·1등 확률·격차)
+   서버(score-bid-objects.py)가 매주 계산해 저장 → 앱은 물건 상세를 열 때 그 물건이 든 묶음만 받아서 표시. 시험으로 확인한 한계(아파트: 입찰자 수는 반경 정보보다 가격 매력·유찰이 더 크게 좌우, 빌라: 사전 예측이 거의 안 돼 유찰별 평균)도 화면에 적음 */
+var bidScoreMeta = null, bidScoreChunks = {}, bidScorePend = {};
+function bidScoreFor(id) {
+    id = String(id);
+    if (bidScoreMeta && bidScoreMeta.idx) { var ci = bidScoreMeta.idx[id]; if (ci == null) return null; var ch = bidScoreChunks[ci]; return ch && ch.items ? ch.items[id] || null : undefined; }
+    return undefined;
+}
+function bidScoreLoad(id, cb) {
+    id = String(id);
+    var after = function() { var ci = bidScoreMeta && bidScoreMeta.idx ? bidScoreMeta.idx[id] : null; if (ci == null) { if (cb) cb(); return; } if (bidScoreChunks[ci]) { if (cb) cb(); return; }
+        if (bidScorePend[ci]) return; bidScorePend[ci] = 1;
+        fetch('/api/data-coverage?mode=bidScoreChunk&i=' + ci).then(function(r) { return r.json(); }).then(function(d) { bidScoreChunks[ci] = d || {}; bidScorePend[ci] = 0; if (cb) cb(); }).catch(function() { bidScorePend[ci] = 0; }); };
+    if (bidScoreMeta) { after(); return; }
+    if (bidScorePend.meta) return; bidScorePend.meta = 1;
+    fetch('/api/data-coverage?mode=bidScoreMeta').then(function(r) { return r.json(); }).then(function(d) { bidScoreMeta = d && d.idx ? d : { idx: {} }; bidScorePend.meta = 0; after(); }).catch(function() { bidScorePend.meta = 0; });
+}
+function bidScoreHtml(row) {
+    var sc = bidScoreFor(row.id), fmt = function(v) { return v ? toEok(String(Math.round(v))) : '-'; }, pc = function(v) { return v == null ? '-' : Math.round(v * 100) + '%'; };
+    if (sc === undefined) { bidScoreLoad(row.id, function() { try { if (typeof bidDrawerId !== 'undefined' && String(bidDrawerId) === String(row.id)) renderBidDrawer(); } catch (e) {} }); return '<div class="dr-sec"><h4>🎯 입찰 경쟁·팔리는 정도</h4><div class="dr-sub">불러오는 중…</div></div>'; }
+    if (!sc) return '';
+    var h = '', b = sc.band, isApt = sc.t === 'a';
+    if (b) {
+        var vt = { good: ['✅ 추천', '#15803d', '#f0fdf4'], mid: ['➖ 보통', '#b45309', '#fffbeb'], bad: ['⚠️ 비추천', '#b91c1c', '#fef2f2'] }[b.v] || ['', '#374151', '#f3f4f6'];
+        h += '<div class="dr-sec"><h4>🏘️ 이 평형, 생활반경에서 잘 팔리나?</h4><div style="background:' + vt[2] + ';border:1px solid ' + vt[1] + '33;border-radius:8px;padding:6px 10px;"><b style="color:' + vt[1] + ';font-size:15px;">' + vt[0] + '</b> <span class="dr-sub" style="display:inline;">' + bbEsc(b.label) + ' · 반경 4km 낙찰사례 ' + b.n + '건</span>'
+            + '<div style="margin-top:4px;">낙찰 후 12개월 안 되팔림 <b>' + pc(b.sold) + '</b> <span class="dr-sub" style="display:inline;">(' + (isApt ? '아파트' : '빌라') + ' 평균 ' + pc(b.base) + ', 사례가 적으면 평균 쪽으로 보정한 값 ' + pc(b.soldS) + ')</span></div>'
+            + '<div>되팔았을 때 손해 <b>' + (b.loss == null ? '자료 부족' : pc(b.loss)) + '</b> <span class="dr-sub" style="display:inline;">(평균 ' + pc(b.baseLoss) + ', ' + b.nl + '건)</span>' + (b.hold != null ? ' · 보유 중앙 ' + b.hold + '개월' : '') + '</div></div>'
+            + '<div class="dr-sub">기준: 되팔림이 평균보다 5%p 이상 높고 손해가 평균+3%p 이내면 추천, 되팔림이 5%p 이상 낮거나 손해가 +10%p 이상이면 비추천. 과거 시점에 같은 규칙을 적용해 본 결과는 주간 리포트 "🔬 입찰 경쟁 검증"에 있어요. 낙찰 후 되팔림은 같은 동·층 거래 흔적이라 실제보다 적게/옆집이 섞여 나올 수 있어요.</div></div>';
+    }
+    var lc = sc.loc || {}, tab = sc.tab || [], names = ['1명', '2~3명', '4~6명', '7~10명', '11명+'];
+    h += '<div class="dr-sec"><h4>🎲 예상 입찰자 수 · 구간별 낙찰가</h4>';
+    h += '<div>예상 입찰자 <b>약 ' + sc.kexp + '명</b> <span class="dr-sub" style="display:inline;">반경 1.5km 최근 1년 낙찰 ' + (lc.n || 0) + '건' + (lc.med != null ? '(입찰자 중앙 ' + lc.med + '명, 단독 낙찰 ' + (lc.one != null ? Math.round(lc.one * 100) + '%' : '-') + ')' : '') + ' · 4km ' + (lc.n4 || 0) + '건</span></div>';
+    if (sc.win != null) h += '<div style="font-size:15px;margin-top:2px;">추천가 ' + fmt(sc.rec) + '로 입찰하면 <b>1등 확률 약 ' + pc(sc.win) + '</b></div>';
+    h += '<table class="dr-tbl" style="margin-top:6px;"><tr><td class="dr-sub">입찰자 수</td><td class="dr-sub r">가능성</td><td class="dr-sub r">낙찰가 중앙</td><td class="dr-sub r">70%가 이하</td><td class="dr-sub r">90%가 이하</td>' + (sc.rec ? '<td class="dr-sub r">추천가 1등</td><td class="dr-sub r">2등</td><td class="dr-sub r">졌을 때 격차</td>' : '') + '</tr>';
+    tab.forEach(function(t, i) {
+        if (!t) return;
+        h += '<tr><td>' + names[i] + '</td><td class="r">' + pc(t.p) + '</td><td class="r"><b>' + fmt(t.q50) + '</b><div class="dr-sub" style="margin:0;">' + Math.round(t.q50 / sc.ref * 100) + '%</div></td><td class="r">' + fmt(t.q70) + '</td><td class="r">' + fmt(t.q90) + '</td>'
+            + (sc.rec ? '<td class="r"><b style="color:' + (t.win >= 0.6 ? '#15803d' : (t.win >= 0.35 ? '#b45309' : '#b91c1c')) + ';">' + pc(t.win) + '</b></td><td class="r">' + (t.r2 != null ? pc(t.r2) : '-') + '</td><td class="r">' + (t.gap ? '+' + fmt(t.gap) : '-') + '</td>' : '') + '</tr>';
+    });
+    h += '</table><div class="dr-sub">낙찰가의 %는 ' + (isApt ? '예상매도가' : '최저가') + '(' + fmt(sc.ref) + ') 대비예요. 같은 구간·비슷한 유찰 횟수의 최근 18개월 낙찰사례 분포로 계산했고, 격차는 이 구간에서 추천가로 졌을 때 1등과의 차이 중앙값이에요.<br>'
+        + (isApt ? '⚠️ 시험 결과 아파트의 입찰자 수는 반경 정보보다 <b>최저가÷시세·유찰·면적</b>이 더 크게 좌우해요(반경 정보를 더해도 예측 개선은 작았어요). 그래서 구간 확률은 넓게 퍼져 있어요 - 한 구간만 믿지 말고 표 전체를 보세요.' : '⚠️ 빌라는 시험에서 입찰자 수를 사전 정보로 거의 예측하지 못해 유찰 횟수별 평균을 썼어요(물건마다 확률이 비슷하게 나와요).') + '</div></div>';
+    return h;
 }
 /* 🚧 토지거래허가구역(2026-10-13, 사용자: 허가구역을 앱에 적용, 정부 정책이 수시로 바뀌니 3개월마다 갱신) - 서버(collect-permit-zones.mjs)가 경매물건 좌표를 VWorld 허가구역 레이어와 대조해 저장, 전체 갱신은 90일마다 자동.
    법적 의미(2026-10 확인): 경매 낙찰은 허가·실거주 의무 대상이 아님. 하지만 낙찰 후 되팔 때 매수인이 허가를 받아야 하고 주거용은 2년 실거주(임대·갭투자 불가)라 살 사람이 줄어 환금성이 떨어짐 → 예상매도가·추천가는 바꾸지 않고 표시·경고만(허가구역 매매의 가격·기간 영향은 아직 검증 전). */
@@ -20160,6 +20203,7 @@ async function renderVillaDrawer(d, row) {
         + (pe ? '<div class="pk-big"><span>추천 입찰가</span><b>' + fmt(pe.bid) + '</b>' + (ve ? '<span>시세의 <b style="font-size:15px;color:#374151;">' + Math.round(pe.bid / ve.est * 100) + '%</b></span>' : '') + '</div>'
             + '<div class="pk-sub">낙찰 가능성 <b>' + Math.round(pe.p * 100) + '%</b> · 예상 순이익(세후) <b>' + fmt(pe.net) + '</b><br>예상매도가 ' + fmt(ve && ve.est) + ' · 최저가 ' + fmt(row.minBid) + '</div>'
             : '<div class="pk-sub">추천가가 없어요 · 예상매도가 ' + fmt(ve && ve.est) + ' · 최저가 ' + fmt(row.minBid) + '</div>') + '</div>';
+    h += bidScoreHtml(row);
     h += permitDrawerHtml(row);
     if (go) h += fieldChecklistHtml(row);
     if (ve) {
@@ -27056,7 +27100,7 @@ function wrBiasText(b) {
 }
 function wrBiasShort(b) { return b == null ? '-' : (Math.abs(b) < 0.5 ? '거의 정확' : Math.abs(b) + '% ' + (b > 0 ? '높게' : '낮게')); }
 function wrTab(k) {
-    ['now', 'score', 'hist', 'chg'].forEach(function(t) {
+    ['now', 'score', 'hist', 'chg', 'bv'].forEach(function(t) {
         var el = document.getElementById('wr-t-' + t), bt = document.getElementById('wr-tb-' + t);
         if (el) el.style.display = t === k ? '' : 'none'; if (bt) bt.classList.toggle('on', t === k);
     });
@@ -27078,6 +27122,43 @@ function wrLoadChg() {
         h += tbl('추천가가 3% 이상 바뀐 물건', d.recChg, ['이전', '지금', '변동'], function(x) { return '<tr>' + nm(x) + '<td class="r">' + f(x.recOld) + '</td><td class="r"><b>' + f(x.rec) + '</b></td><td class="r">' + chg(x.rec, x.recOld) + '</td></tr>'; });
         h += tbl('예상매도가가 3% 이상 바뀐 물건', d.estChg, ['이전', '지금', '변동'], function(x) { return '<tr>' + nm(x) + '<td class="r">' + f(x.estOld) + '</td><td class="r"><b>' + f(x.est) + '</b></td><td class="r">' + chg(x.est, x.estOld) + '</td></tr>'; });
         h += tbl('새로 들어온 물건(입찰일 전)', d.added, ['예상매도가', '추천가'], function(x) { return '<tr>' + nm(x) + '<td class="r">' + f(x.est) + '</td><td class="r">' + f(x.rec) + '</td></tr>'; });
+        el.innerHTML = h;
+    }).catch(function() { el.innerHTML = '<div class="pn-muted">불러오지 못했어요.</div>'; });
+}
+/* 🔬 입찰 경쟁 검증(2026-10-14, 사용자: 예상 입찰자 수·구간별 낙찰가·등수·팔리는 평형 추천을 매주 검증) - 서버(score-bid-objects.py)가 계산해 저장한 표를 보여줌 */
+function wrLoadBv() {
+    var el = document.getElementById('wr-t-bv'); if (!el || el.dataset.done) return;
+    fetch('/api/data-coverage?mode=bidval').then(function(r) { return r.json(); }).then(function(d) {
+        el.dataset.done = '1';
+        if (!d || !d.types) { el.innerHTML = '<div class="pn-muted" style="padding:8px 0;">아직 계산된 검증 결과가 없어요. 다음 주간 분석(일요일 밤)부터 쌓여요.</div>'; return; }
+        var nm = { apt: '아파트', villa: '빌라' }, h = '<div class="pn-muted">' + String(d.generatedAt || '').slice(0, 10) + ' 계산 · 모든 값은 입찰 전에 알 수 있는 자료로 과거 시점에 적용해 본 결과(시간 순서 분리)</div>';
+        ['apt', 'villa'].forEach(function(ty) {
+            var t = d.types[ty]; if (!t) return;
+            h += '<div class="wr-sec"><b>' + nm[ty] + '</b> · 낙찰사례 ' + t.n + '건 (시험 ' + t.test + '건)';
+            var pr = t['입찰자수 구간 예측(시험)'];
+            if (pr) { h += '<div class="pn-muted">입찰자 수 구간(1명·2~3·4~6·7~10·11명+) 예측 - 선택한 방법 <b>' + bbEsc(t['선택한 방법'] || '') + '</b> (로그손실이 낮을수록 좋음)</div><table class="pn-table"><thead><tr><th>방법</th><th class="r">로그손실</th><th class="r">구간 적중</th><th class="r">±1구간</th></tr></thead><tbody>' + Object.keys(pr).map(function(k) { var x = pr[k]; return '<tr><td>' + bbEsc(k) + '</td><td class="r">' + x.logLoss + '</td><td class="r">' + (x['구간 적중%'] != null ? x['구간 적중%'] + '%' : '-') + '</td><td class="r">' + (x['±1구간 이내%'] != null ? x['±1구간 이내%'] + '%' : '-') + '</td></tr>'; }).join('') + '</tbody></table>'; }
+            var tb = t['구간별 낙찰가÷기준가'];
+            if (tb) h += '<div class="pn-muted" style="margin-top:6px;">입찰자 수 구간별 낙찰가 (기준가=' + bbEsc(t['기준가']) + ', 최근 18개월)</div><table class="pn-table"><thead><tr><th>입찰자 수</th><th class="r">사례</th><th class="r">중앙</th><th class="r">70%</th><th class="r">90%</th><th class="r">2등÷1등</th></tr></thead><tbody>' + tb.map(function(x) { return '<tr><td>' + bbEsc(x.bin) + '</td><td class="r">' + x.n + '</td><td class="r"><b>' + Math.round(x.p50 * 100) + '%</b></td><td class="r">' + Math.round(x.p70 * 100) + '%</td><td class="r">' + Math.round(x.p90 * 100) + '%</td><td class="r">' + (x['second/1st'] != null ? Math.round(x['second/1st'] * 1000) / 10 + '%' : '-') + '</td></tr>'; }).join('') + '</tbody></table>';
+            var lv = t['가격수준별 등수'];
+            if (lv) h += '<div class="pn-muted" style="margin-top:6px;">가격 수준별 등수 (' + bbEsc(t['배수 기준']) + ' · 시험 기간)</div><table class="pn-table"><thead><tr><th>가격</th><th class="r">입찰 가능</th><th class="r">1등</th><th class="r">2등</th><th class="r">3등 이하</th><th class="r">졌을 때 격차</th></tr></thead><tbody>' + lv.map(function(x) { return '<tr><td>×' + x['배수'] + '</td><td class="r">' + x['입찰가능%'] + '%</td><td class="r"><b>' + x['1등%'] + '%</b></td><td class="r">' + (x['2등%'] != null ? x['2등%'] + '%' : '-') + '</td><td class="r">' + (x['3등이하%'] != null ? x['3등이하%'] + '%' : '-') + '</td><td class="r">' + (x['졌을때 격차%'] != null ? x['졌을때 격차%'] + '%' : '-') + '</td></tr>'; }).join('') + '</tbody></table><div class="pn-muted">1등%는 최저가 이상으로 입찰 가능한 건 중 비율, 2·3등은 2등 가격이 확인된 건 기준이에요.</div>';
+            h += '</div>';
+        });
+        var bc = d.bandCheck;
+        if (bc) {
+            h += '<div class="wr-sec"><b>🏘️ "잘 팔리는 평형" 추천 규칙 적중 확인</b> <span class="pn-muted">(2024-07~2025-04 낙찰 물건에 그 시점까지의 이웃 사례로 추천/보통/비추천을 매기고 실제 결과 비교)</span><table class="pn-table"><thead><tr><th></th><th>판정</th><th class="r">물건</th><th class="r">12개월 내 되팔림</th><th class="r">손해</th></tr></thead><tbody>';
+            Object.keys(bc).forEach(function(ty) { var g = bc[ty].결과 || {}; ['good', 'mid', 'bad'].forEach(function(v) { var x = g[v]; if (!x) return; h += '<tr><td>' + nm[ty] + '</td><td>' + ({ good: '✅ 추천', mid: '➖ 보통', bad: '⚠️ 비추천' })[v] + '</td><td class="r">' + x.n + '</td><td class="r"><b>' + x['되팔림12개월%'] + '%</b></td><td class="r">' + (x['손해%'] != null ? x['손해%'] + '%' : '-') + '</td></tr>'; }); h += '<tr><td colspan="5" class="pn-muted">' + nm[ty] + ' 기준선: 되팔림 ' + bc[ty]['기준선 되팔림%'] + '% · 손해 ' + bc[ty]['기준선 손해%'] + '%</td></tr>'; });
+            h += '</tbody></table><div class="pn-muted">추천 물건이 실제로 더 잘 팔렸는지(되팔림 차이)를 봐요. 손해 비율이 비슷하면 "팔기는 쉽지만 경쟁이 세서 마진은 같다"는 뜻이에요.</div></div>';
+        }
+        var cal = d.calibration;
+        if (cal) {
+            h += '<div class="wr-sec"><b>🎯 지난 예측은 맞았나</b>';
+            if (cal.note) h += '<div class="pn-muted">' + bbEsc(cal.note) + '</div>';
+            else {
+                h += '<div class="pn-muted">결과가 확인된 물건 누적 ' + cal['누적 검증 물건'] + '건(이번에 새로 ' + cal['이번에 새로 확인'] + '건)' + (cal['입찰자수 구간 적중%'] != null ? ' · 입찰자 수 구간 적중 ' + cal['입찰자수 구간 적중%'] + '%, 평균 로그손실 ' + cal['입찰자수 구간 평균 로그손실'] : '') + '</div>';
+                var w = cal['추천가 1등 확률 - 예측 vs 실제']; if (w) h += '<table class="pn-table"><thead><tr><th>예측한 1등 확률</th><th class="r">물건</th><th class="r">예측 평균</th><th class="r">실제 1등</th></tr></thead><tbody>' + w.map(function(x) { return '<tr><td>' + bbEsc(x['예측구간']) + '</td><td class="r">' + x['건수'] + '</td><td class="r">' + x['예측 평균%'] + '%</td><td class="r"><b>' + x['실제 1등%'] + '%</b></td></tr>'; }).join('') + '</tbody></table><div class="pn-muted">예측 평균과 실제 1등이 비슷하면 확률이 믿을 만하다는 뜻이에요.</div>';
+            }
+            h += '</div>';
+        }
         el.innerHTML = h;
     }).catch(function() { el.innerHTML = '<div class="pn-muted">불러오지 못했어요.</div>'; });
 }
@@ -27183,8 +27264,8 @@ function openWeeklyReport(week) {
             h += '<div class="wr-sec"><b>6개월 전 낙찰 사례의 되팔기 흔적</b> (' + wrYmd(tr.from) + '~' + wrYmd(tr.to) + ' 낙찰 ' + tr.n + '건) - 같은 동·층 거래 확인(동 번호 있는 ' + tr.dongKnown + '건 중) <b>' + tr.dongConfirmed + '건</b> · 층만 맞음 ' + tr.floorOnly + '건'
                 + '<div class="pn-muted">호수를 몰라 옆집 거래일 수 있어요(우연 수준 약 7%). 참고용 지표예요.</div></div>';
         }
-        b.innerHTML = '<div class="wr-tabs"><button id="wr-tb-now" class="on" onclick="wrTab(\'now\')">이번 리포트</button><button id="wr-tb-score" onclick="wrTab(\'score\')">📈 추천가 성적표(누적)</button><button id="wr-tb-hist" onclick="wrTab(\'hist\')">🗂️ 지난 리포트</button><button id="wr-tb-chg" onclick="wrTab(\'chg\');wrLoadChg()">🔄 이번 주 변동</button></div>'
-            + '<div id="wr-t-now">' + h + '</div><div id="wr-t-score" style="display:none;">' + wrRenderScore(d.scorecard) + '</div><div id="wr-t-hist" style="display:none;"><div class="pn-muted">불러오는 중…</div></div><div id="wr-t-chg" style="display:none;"><div class="pn-muted">불러오는 중…</div></div>';
+        b.innerHTML = '<div class="wr-tabs"><button id="wr-tb-now" class="on" onclick="wrTab(\'now\')">이번 리포트</button><button id="wr-tb-score" onclick="wrTab(\'score\')">📈 추천가 성적표(누적)</button><button id="wr-tb-hist" onclick="wrTab(\'hist\')">🗂️ 지난 리포트</button><button id="wr-tb-chg" onclick="wrTab(\'chg\');wrLoadChg()">🔄 이번 주 변동</button><button id="wr-tb-bv" onclick="wrTab(\'bv\');wrLoadBv()">🔬 입찰 경쟁 검증</button></div>'
+            + '<div id="wr-t-now">' + h + '</div><div id="wr-t-score" style="display:none;">' + wrRenderScore(d.scorecard) + '</div><div id="wr-t-hist" style="display:none;"><div class="pn-muted">불러오는 중…</div></div><div id="wr-t-chg" style="display:none;"><div class="pn-muted">불러오는 중…</div></div><div id="wr-t-bv" style="display:none;"><div class="pn-muted">불러오는 중…</div></div>';
         fetch('/api/data-coverage?mode=weeklyHistory').then(function(r) { return r.json(); }).then(function(hd) {
             var el = document.getElementById('wr-t-hist'); if (el) el.innerHTML = wrRenderHistory((hd && hd.items) || [], week || d.windowTo);
         }).catch(function() { var el = document.getElementById('wr-t-hist'); if (el) el.innerHTML = '<div class="pn-muted">목록을 불러오지 못했어요.</div>'; });

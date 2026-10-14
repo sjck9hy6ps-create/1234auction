@@ -3473,6 +3473,15 @@ export default async function handler(req, res) {
       return res.status(500).json({ error: err.message });
     }
   }
+  if (req.query.mode === 'bidScoreMeta' || req.query.mode === 'bidScoreChunk' || req.query.mode === 'bidval') { // 입찰 경쟁·등수·환금성 점수(score-bid-objects.py, 2026-10-14)
+    res.setHeader('Cache-Control', 's-maxage=1800, stale-while-revalidate=86400');
+    try {
+      const id = req.query.mode === 'bidval' ? 'signal|__bidval__' : (req.query.mode === 'bidScoreMeta' ? 'bidscore|meta' : 'bidscore|' + String(parseInt(req.query.i, 10) || 0));
+      const { data, error } = await supabase.from('leader_follower_cache').select('payload').eq('id', id).maybeSingle();
+      if (error) return res.status(500).json({ error: error.message });
+      return res.status(200).json((data && data.payload) || {});
+    } catch (err) { return res.status(500).json({ error: err.message }); }
+  }
   if (req.query.mode === 'permit') { // 토지거래허가구역 판정(scripts/collect-permit-zones.mjs, 2026-10-13)
     res.setHeader('Cache-Control', 's-maxage=3600, stale-while-revalidate=86400');
     try {

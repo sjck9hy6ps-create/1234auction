@@ -1,0 +1,43 @@
+name: 입찰 경쟁·등수·환금성 점수 (모든 입찰건)
+
+on:
+  workflow_call:       # 주간 파이프라인(weekly-pipeline.yml)이 입찰후보 계산 뒤에 부름
+  workflow_dispatch:
+
+jobs:
+  score:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install pandas numpy requests scikit-learn
+      # 아파트 사례의 '입찰 30일 전 예상매도가'는 주간 분석(analyze-bidcases) 산출물에서 가져옴 - 같은 주간 실행의 산출물, 없으면 가장 최근 것
+      - uses: actions/download-artifact@v4
+        continue-on-error: true
+        with:
+          name: bidcases-R
+      - name: 산출물 없으면 최근 것 내려받기
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if [ ! -f bidcases-R.csv.gz ]; then
+            ID=$(gh api "repos/${{ github.repository }}/actions/artifacts?name=bidcases-R&per_page=1" --jq '.artifacts[0].id')
+            curl -sL -H "Authorization: Bearer $GH_TOKEN" -o a.zip "https://api.github.com/repos/${{ github.repository }}/actions/artifacts/$ID/zip" && unzip -o a.zip
+          fi
+          ls -la bidcases-R.csv.gz
+      - env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          SITE_URL: https://1234auction.vercel.app
+          PYTHONUNBUFFERED: '1'
+        run: python score-bid-objects.py
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: bidscore-out
+          path: bidscore-out.json
+          if-no-files-found: ignore
+          retention-days: 7
