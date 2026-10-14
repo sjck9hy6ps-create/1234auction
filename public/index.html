@@ -27118,7 +27118,7 @@ function wrBiasText(b) {
 }
 function wrBiasShort(b) { return b == null ? '-' : (Math.abs(b) < 0.5 ? '거의 정확' : Math.abs(b) + '% ' + (b > 0 ? '높게' : '낮게')); }
 function wrTab(k) {
-    ['now', 'score', 'hist', 'chg', 'bv'].forEach(function(t) {
+    ['now', 'score', 'hist', 'chg', 'bv', 'pl'].forEach(function(t) {
         var el = document.getElementById('wr-t-' + t), bt = document.getElementById('wr-tb-' + t);
         if (el) el.style.display = t === k ? '' : 'none'; if (bt) bt.classList.toggle('on', t === k);
     });
@@ -27178,6 +27178,29 @@ function wrLoadBv() {
             }
             h += '</div>';
         }
+        el.innerHTML = h;
+    }).catch(function() { el.innerHTML = '<div class="pn-muted">불러오지 못했어요.</div>'; });
+}
+/* 🛠 주간 파이프라인 결과(2026-10-15, 사용자: 파이프라인 확인 결과도 주간 리포트에) - 서버(pipeline-summary.mjs)가 파이프라인 끝에 저장한 단계별 성공·소요 시간·결과물 갱신 시각 */
+function wrLoadPl() {
+    var el = document.getElementById('wr-t-pl'); if (!el || el.dataset.done) return;
+    fetch('/api/data-coverage?mode=pipeline').then(function(r) { return r.json(); }).then(function(d) {
+        el.dataset.done = '1';
+        if (!d || !d.runId) { el.innerHTML = '<div class="pn-muted" style="padding:8px 0;">아직 요약이 없어요. 다음 주간 파이프라인(일요일 밤)이 끝나면 여기에 단계별 결과가 나와요.</div>'; return; }
+        var kst = function(iso) { if (!iso) return '-'; var t = new Date(new Date(iso).getTime() + 9 * 3600000).toISOString(); return t.slice(5, 10).replace('-', '/') + ' ' + t.slice(11, 16); };
+        var dur = function(m) { return m == null ? '-' : (m >= 60 ? Math.floor(m / 60) + '시간 ' + (m % 60) + '분' : m + '분'); };
+        var okAll = d.ok;
+        var h = '<div class="wr-sec"><b>' + (okAll ? '✅ 이번 파이프라인 모든 단계 성공' : '⚠️ 실패한 단계가 있어요: ' + bbEsc((d.failedStages || []).join(', '))) + '</b><div class="pn-muted">시작 ' + kst(d.startedAt) + ' → 끝 ' + kst(d.finishedAt) + ' (KST) · 총 ' + dur(d.totalMinutes) + (d.event === 'schedule' ? ' · 예약 실행' : ' · 수동 실행') + (d.url ? ' · <a href="' + bbEsc(d.url) + '" target="_blank" rel="noopener">GitHub에서 보기</a>' : '') + '</div></div>';
+        h += '<div class="wr-sec"><b>단계별 결과</b><table class="pn-table"><thead><tr><th>단계</th><th>결과</th><th class="r">소요</th><th class="r">끝난 시각</th></tr></thead><tbody>' + (d.stages || []).map(function(s2) {
+            var st = s2.status !== 'completed' ? '⏳ 진행 중' : (s2.conclusion === 'success' ? '✅ 성공' : (s2.conclusion === 'skipped' ? '⏭️ 건너뜀' : (s2.conclusion === 'cancelled' ? '🚫 취소' : '❌ 실패')));
+            return '<tr' + (s2.conclusion && s2.conclusion !== 'success' && s2.conclusion !== 'skipped' ? ' style="background:#fef2f2;"' : '') + '><td>' + bbEsc(s2.name) + (s2.failedSteps && s2.failedSteps.length ? '<div class="pn-muted" style="color:#b91c1c;">실패한 작업: ' + bbEsc(s2.failedSteps.join(', ')) + '</div>' : '') + '</td><td>' + st + '</td><td class="r">' + dur(s2.minutes) + '</td><td class="r">' + kst(s2.end) + '</td></tr>';
+        }).join('') + '</tbody></table></div>';
+        var t0 = d.startedAt ? new Date(d.startedAt).getTime() : 0;
+        h += '<div class="wr-sec"><b>결과물이 이번 실행에서 갱신됐나</b><table class="pn-table"><thead><tr><th>결과물</th><th>내용</th><th class="r">갱신 시각</th><th>상태</th></tr></thead><tbody>' + (d.outputs || []).map(function(o) {
+            var t = o.at ? new Date(o.at).getTime() : 0, fresh = t >= t0 - 3600000;
+            return '<tr><td>' + bbEsc(o.name) + '</td><td class="pn-muted">' + bbEsc(o.detail || '') + '</td><td class="r">' + kst(o.at) + '</td><td>' + (!t ? '❔ 없음' : (fresh ? '✅ 이번 실행' : '⚠️ 이전 값(이번에 안 바뀜)')) + '</td></tr>';
+        }).join('') + '</tbody></table><div class="pn-muted">"이전 값"은 이번 파이프라인이 그 결과물을 새로 만들지 못했다는 뜻이에요(단계 실패·건너뜀 확인). 토지거래허가구역은 90일마다 전체 갱신이라 며칠 전 값도 정상이에요.</div></div>';
+        if (d.history && d.history.length > 1) h += '<div class="wr-sec"><b>최근 실행 이력</b><table class="pn-table"><tbody>' + d.history.map(function(x) { return '<tr><td>' + kst(x.startedAt) + '</td><td>' + (x.ok ? '✅ 성공' : '⚠️ 실패 ' + bbEsc((x.failedStages || []).join(', '))) + '</td><td class="r">' + dur(x.totalMinutes) + '</td></tr>'; }).join('') + '</tbody></table></div>';
         el.innerHTML = h;
     }).catch(function() { el.innerHTML = '<div class="pn-muted">불러오지 못했어요.</div>'; });
 }
@@ -27283,8 +27306,8 @@ function openWeeklyReport(week) {
             h += '<div class="wr-sec"><b>6개월 전 낙찰 사례의 되팔기 흔적</b> (' + wrYmd(tr.from) + '~' + wrYmd(tr.to) + ' 낙찰 ' + tr.n + '건) - 같은 동·층 거래 확인(동 번호 있는 ' + tr.dongKnown + '건 중) <b>' + tr.dongConfirmed + '건</b> · 층만 맞음 ' + tr.floorOnly + '건'
                 + '<div class="pn-muted">호수를 몰라 옆집 거래일 수 있어요(우연 수준 약 7%). 참고용 지표예요.</div></div>';
         }
-        b.innerHTML = '<div class="wr-tabs"><button id="wr-tb-now" class="on" onclick="wrTab(\'now\')">이번 리포트</button><button id="wr-tb-score" onclick="wrTab(\'score\')">📈 추천가 성적표(누적)</button><button id="wr-tb-hist" onclick="wrTab(\'hist\')">🗂️ 지난 리포트</button><button id="wr-tb-chg" onclick="wrTab(\'chg\');wrLoadChg()">🔄 이번 주 변동</button><button id="wr-tb-bv" onclick="wrTab(\'bv\');wrLoadBv()">🔬 입찰 경쟁 검증</button></div>'
-            + '<div id="wr-t-now">' + h + '</div><div id="wr-t-score" style="display:none;">' + wrRenderScore(d.scorecard) + '</div><div id="wr-t-hist" style="display:none;"><div class="pn-muted">불러오는 중…</div></div><div id="wr-t-chg" style="display:none;"><div class="pn-muted">불러오는 중…</div></div><div id="wr-t-bv" style="display:none;"><div class="pn-muted">불러오는 중…</div></div>';
+        b.innerHTML = '<div class="wr-tabs"><button id="wr-tb-now" class="on" onclick="wrTab(\'now\')">이번 리포트</button><button id="wr-tb-score" onclick="wrTab(\'score\')">📈 추천가 성적표(누적)</button><button id="wr-tb-hist" onclick="wrTab(\'hist\')">🗂️ 지난 리포트</button><button id="wr-tb-chg" onclick="wrTab(\'chg\');wrLoadChg()">🔄 이번 주 변동</button><button id="wr-tb-bv" onclick="wrTab(\'bv\');wrLoadBv()">🔬 입찰 경쟁 검증</button><button id="wr-tb-pl" onclick="wrTab(\'pl\');wrLoadPl()">🛠 파이프라인</button></div>'
+            + '<div id="wr-t-now">' + h + '</div><div id="wr-t-score" style="display:none;">' + wrRenderScore(d.scorecard) + '</div><div id="wr-t-hist" style="display:none;"><div class="pn-muted">불러오는 중…</div></div><div id="wr-t-chg" style="display:none;"><div class="pn-muted">불러오는 중…</div></div><div id="wr-t-bv" style="display:none;"><div class="pn-muted">불러오는 중…</div></div><div id="wr-t-pl" style="display:none;"><div class="pn-muted">불러오는 중…</div></div>';
         fetch('/api/data-coverage?mode=weeklyHistory').then(function(r) { return r.json(); }).then(function(hd) {
             var el = document.getElementById('wr-t-hist'); if (el) el.innerHTML = wrRenderHistory((hd && hd.items) || [], week || d.windowTo);
         }).catch(function() { var el = document.getElementById('wr-t-hist'); if (el) el.innerHTML = '<div class="pn-muted">목록을 불러오지 못했어요.</div>'; });

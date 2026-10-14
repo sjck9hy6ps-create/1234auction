@@ -1,0 +1,30 @@
+name: 주간 파이프라인 결과 요약 저장
+
+on:
+  workflow_call:       # 주간 파이프라인(weekly-pipeline.yml) 마지막에 부름
+  workflow_dispatch:
+    inputs:
+      run_id:
+        description: '요약할 실행 번호(비우면 이 실행)'
+        required: false
+        default: ''
+
+jobs:
+  summary:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - run: npm install @supabase/supabase-js ws
+      - env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          GH_TOKEN: ${{ github.token }}
+          RUN_ID: ${{ github.event.inputs.run_id }}
+        run: node scripts/pipeline-summary.mjs

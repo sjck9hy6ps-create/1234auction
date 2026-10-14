@@ -80,3 +80,10 @@ jobs:
     secrets: inherit
     needs: precompute-board
     if: ${{ !cancelled() }}
+  pipeline-summary:
+    name: 13 결과 요약 저장
+    uses: ./.github/workflows/pipeline-summary.yml
+    secrets: inherit
+    needs: score-bid-objects
+    if: ${{ always() }}
+
