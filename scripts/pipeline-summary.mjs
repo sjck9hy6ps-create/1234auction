@@ -43,7 +43,7 @@ const outputs = [
   { name: '도시민박 집계', at: ts(g['signal|__homestay__'], 'generatedAt'), detail: null },
   { name: '인기·환금성 분석', at: ts(g['cycle|__liquidity__'], 'generatedAt'), detail: null },
 ];
-const startedAt = run.run_started_at || run.created_at, now = new Date().toISOString();
+const startedAt = run.run_started_at || run.created_at, now = run.status === 'completed' ? run.updated_at : new Date().toISOString(); // 이미 끝난 실행을 나중에 요약할 땐 그 실행의 끝난 시각
 const failed = stages.filter((s) => s.conclusion && s.conclusion !== 'success');
 const cur = { runId: Number(RUN), url: run.html_url, event: run.event, startedAt, finishedAt: now, totalMinutes: Math.round((new Date(now) - new Date(startedAt)) / 60000), stages, outputs, ok: failed.length === 0 && stages.length > 0, failedStages: failed.map((s) => s.name) };
 const { data: prevRow } = await supabase.from('leader_follower_cache').select('payload').eq('id', 'signal|__pipeline__').maybeSingle();
