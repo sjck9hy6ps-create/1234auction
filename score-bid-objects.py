@@ -3,6 +3,8 @@
 🎯 입찰 경쟁·등수·환금성 점수 (2026-10-14, 사용자: 모든 입찰건 상세에 ① 생활반경 기준 잘 팔리는 평형인지 추천/비추천 ② 생활반경 기준 최근 입찰 인원으로 예상 입찰자 수 → 구간별 낙찰가
 ③ 입찰자 수 구간별 낙찰가(시세 대비)·1등 확률·격차 표. 지역통계가 아니라 물건 위치 기준 반경으로)
 ════════════════════════════════════════════════════════════
+⚠️ 2026-10-14 사용자 결정: 아파트는 변화가 작아 의미가 없으니 **빌라에 집중**. '잘 팔리나'는 낙찰 후 되팔림이 아니라 **생활반경 매매 기록**(어떤 평형·어떤 금액대의 거래가 활발한가)으로 판단하고,
+입찰자 수는 인기 여부와 '예상 입찰자가 적으면 마진폭을 크게' 용도로 구간별 낙찰가를 보여줌.
 입력: 낙찰사례(/api/auction?kind=bidCases: 좌표·입찰자수·2등가·낙찰가·되팔기 매칭), 등록 경매물건(/api/auction), 입찰후보 계산 결과(board|cache 아파트 시세·추천가, board|villa 빌라 시세·추천가).
 방법(모두 '그 사례 낙찰일 이전 자료'만 사용 - 시간 순서 분리 검증):
  - 반경 특징: 같은 종류(아파트/빌라) 낙찰사례 중 반경 1.5km·4km 안, 최근 365일의 사례 수·입찰자 수 중앙값·1명 단독 비율·낙찰가/기준가 중앙값
@@ -24,6 +26,7 @@ SITE = os.environ.get("SITE_URL", "https://1234auction.vercel.app")
 DRY = "--dry" in sys.argv
 SB = (os.environ.get("SUPABASE_URL") or "").rstrip("/"); SK = os.environ.get("SUPABASE_SERVICE_ROLE_KEY") or ""
 HDR = {"apikey": SK, "Authorization": "Bearer " + SK}
+TYPES = ("villa",)
 BINS = [(1, 1, "1명"), (2, 3, "2~3명"), (4, 6, "4~6명"), (7, 10, "7~10명"), (11, 999, "11명+")]
 COST_RATIO, FIXED_COST = 1.05, 400
 NOW = datetime.now(timezone.utc); TODAY = pd.Timestamp(NOW.date())
@@ -161,7 +164,7 @@ def main():
     print(f"낙찰사례 {len(D):,}건 (아파트 {int((D.type == 'apt').sum()):,} · 빌라 {int((D.type == 'villa').sum()):,}), 입찰자 수 있음 {D.bidders.notna().mean() * 100:.1f}%")
     out_val = {"generatedAt": NOW.isoformat(), "types": {}}
     models, tabs = {}, {}
-    for ty in ("apt", "villa"):
+    for ty in TYPES:
         T = D[(D.type == ty) & D.bidders.notna() & D.ref.notna() & D.appr.notna()].copy()
         if len(T) < 800: print(f"  {ty}: 사례 부족"); continue
         T["bin"] = T.bidders.map(binof)
@@ -209,7 +212,7 @@ def main():
         out_val["types"][ty] = rep
     # ── 물건별 점수 ──
     auc = get_json(f"{SITE}/api/auction")
-    A = pd.DataFrame([a for a in auc if a and not a.get("isBacktest") and a.get("lat") and a.get("lon") and a.get("propType") in ("apt", "villa") and (a.get("bidDate") or "") >= str(TODAY.date())])
+    A = pd.DataFrame([a for a in auc if a and not a.get("isBacktest") and a.get("lat") and a.get("lon") and a.get("propType") in TYPES and (a.get("bidDate") or "") >= str(TODAY.date())])
     print(f"점수 대상 입찰물건 {len(A):,}건")
     # 입찰후보 계산 결과(시세·추천가) 읽기
     est, recp = {}, {}
@@ -235,13 +238,12 @@ def main():
     A["lat"] = pd.to_numeric(A.lat); A["lon"] = pd.to_numeric(A.lon); A["dt"] = TODAY
     A["ref"] = np.where(A.type == "apt", A.est, A.minbid)
     A = A[A.minbid.gt(0) & A.appr.gt(0) & A.area.gt(5) & A.ref.gt(0)].copy()
-    # 환금성(잘 팔리는 평형) 기준선: 종류·시도별 되팔림/손해
-    S = D[(D.dt <= TODAY - pd.Timedelta(days=365)) & (D.dt >= "2023-01-01")].copy(); S["sido"] = S.addrJibun.astype(str).str[:2]
-    base_sold = S.groupby("type").sold12.mean().to_dict(); base_loss = S.groupby("type").loss.mean().to_dict()
     # 시험: 같은 규칙을 과거 시점에 적용했을 때 추천/비추천 적중
-    out_val["bandCheck"] = band_backtest(D)
+    TR_ = load_villa_trades(); out_val["activityCheck"] = activity_backtest(D, TR_) if TR_ is not None else None
+    out_val["activityPersist"] = activity_persistence(TR_) if TR_ is not None else None
+    ACT = activity_for(A[A.type == "villa"], TR_, TODAY) if TR_ is not None else {}
     recs = {}
-    for ty in ("apt", "villa"):
+    for ty in TYPES:
         if ty not in models: continue
         Q = A[A.type == ty].copy()
         if Q.empty: continue
@@ -251,9 +253,6 @@ def main():
         XB["lb"] = np.log(Q.minbid / np.where(ty == "apt", Q.est, Q.appr))
         XQ = pd.concat([XB, LF], axis=1)[models[ty][1]]; XQ = XQ.assign(fails=Q.fails.values) if "fails" not in XQ else XQ
         P = models[ty][0].predict_proba(XQ); W = tabs[ty]
-        # 밴드(생활반경 4km, 같은 평형대) 환금성
-        Sv = S[S.type == ty]; tree = BallTree(np.radians(Sv[["lat", "lon"]].values), metric="haversine"); ind = tree.query_radius(np.radians(Q[["lat", "lon"]].values), r=4.0 / 6371.0)
-        aband = pd.cut(Q.area, [0, 40, 50, 60, 85, 135, 1e9], labels=["~40㎡", "40~50㎡", "50~60㎡", "60~85㎡", "85~135㎡", "135㎡~"]).astype(str)
         for qi, (idx_q, row) in enumerate(Q.iterrows()):
             p = P[qi]; ref = float(row.ref); fg = int(min(row.fails, 3))
             tab = []
@@ -278,14 +277,7 @@ def main():
                 if ps: rec["rec"] = round(float(row.rec)); rec["win"] = round(sum(ws) / sum(ps), 3)
             # 반경 정보
             lf = LF.iloc[qi]; rec["loc"] = {"n": int(lf["n1.5"]), "med": None if pd.isna(lf["med1.5"]) else float(lf["med1.5"]), "one": None if pd.isna(lf["one1.5"]) else round(float(lf["one1.5"]), 2), "n4": int(lf["n4"]), "med4": None if pd.isna(lf["med4"]) else float(lf["med4"])}
-            # 잘 팔리는 평형
-            sel = Sv.iloc[ind[qi]] if len(ind[qi]) else Sv.iloc[0:0]; sel = sel[sel.aband == aband.iloc[qi]]
-            n = len(sel); k0 = 20.0; bs, bl = base_sold.get(ty, 0.3), base_loss.get(ty, 0.3)
-            sold = float(sel.sold12.mean()) if n else bs; sh = (n * sold + k0 * bs) / (n + k0)
-            nl = int(sel.loss.notna().sum()); lossr = float(sel.loss.mean()) if nl else bl; lh = (nl * lossr + k0 * bl) / (nl + k0)
-            hold = float(sel[sel.sold12 == 1].rs_m.median()) if (sel.sold12 == 1).sum() >= 5 else None
-            verdict = "good" if (sh >= bs + 0.05 and lh <= bl + 0.03) else ("bad" if (sh <= bs - 0.05 or lh >= bl + 0.10) else "mid")
-            rec["band"] = {"label": aband.iloc[qi], "n": n, "sold": round(sold, 3), "soldS": round(sh, 3), "loss": round(lossr, 3) if nl else None, "lossS": round(lh, 3), "nl": nl, "hold": None if hold is None else round(hold, 1), "base": round(bs, 3), "baseLoss": round(bl, 3), "v": verdict}
+            if row.id in ACT: rec["act"] = ACT[row.id]
             recs[row.id] = rec
     # 지난주 예측 적중
     out_val["calibration"] = calibration(D, A, recs)
@@ -302,28 +294,119 @@ def main():
     sb_put(rows); print("✅ 저장" if not DRY else "(dry) bidscore-out.json 저장")
 
 
-def band_backtest(D):
-    """잘 팔리는 평형 규칙을 과거 시점에 적용: 2024-07~2025-04 낙찰 사례마다 '그 시점 1년 전까지 확정된 이웃 사례'로 추천/보통/비추천을 정하고, 실제 그 물건의 되팔림·손해를 비교"""
-    res = {}
-    for ty in ("apt", "villa"):
-        T = D[(D.type == ty)].copy()
-        Q = T[(T.dt >= "2024-07-01") & (T.dt < "2025-05-01") & T.sold12.notna()]
-        K = T[T.dt < "2024-05-01"]
-        if len(Q) < 300 or len(K) < 500: continue
-        bs, bl = K.sold12.mean(), K.loss.mean()
-        tree = BallTree(np.radians(K[["lat", "lon"]].values), metric="haversine"); ind = tree.query_radius(np.radians(Q[["lat", "lon"]].values), r=4.0 / 6371.0)
-        vs = []
-        for qi, (_, r) in enumerate(Q.iterrows()):
-            sel = K.iloc[ind[qi]]; sel = sel[(sel.aband == r['aband']) & (sel.dt <= r['dt'] - pd.Timedelta(days=365))] if len(ind[qi]) else K.iloc[0:0]
-            n = len(sel); nl = int(sel.loss.notna().sum()); k0 = 20.0
-            sh = (n * (sel.sold12.mean() if n else bs) + k0 * bs) / (n + k0); lh = (nl * (sel.loss.mean() if nl else bl) + k0 * bl) / (nl + k0)
-            vs.append("good" if (sh >= bs + 0.05 and lh <= bl + 0.03) else ("bad" if (sh <= bs - 0.05 or lh >= bl + 0.10) else "mid"))
-        Q = Q.assign(v=vs); g = {}
-        for v, G in Q.groupby("v"):
-            g[v] = {"n": int(len(G)), "되팔림12개월%": round(float(G.sold12.mean()) * 100, 1), "손해%": round(float(G.loss.mean()) * 100, 1) if G.loss.notna().sum() >= 10 else None}
-        res[ty] = {"기준선 되팔림%": round(float(bs) * 100, 1), "기준선 손해%": round(float(bl) * 100, 1), "결과": g}
-        print("  환금성 규칙 시험", ty, json.dumps(g, ensure_ascii=False))
-    return res
+SZ_EDGES = [0, 25, 35, 45, 55, 65, 85, 1e9]; SZ_LAB = ["~25㎡", "25~35㎡", "35~45㎡", "45~55㎡", "55~65㎡", "65~85㎡", "85㎡~"]
+PR_EDGES = [0, 8000, 12000, 16000, 20000, 30000, 40000, 1e9]; PR_LAB = ["~8천만", "8천~1.2억", "1.2~1.6억", "1.6~2억", "2~3억", "3~4억", "4억~"]
+
+
+def load_villa_trades():
+    """빌라 매매기록(최근 4년) + 건물 좌표. 서버면 Supabase(병렬 받기), 로컬 시험이면 백업 파일(VILLA_TRADES_FILE·COMPLEX_COORDS_FILE)"""
+    import gzip, importlib.util
+    cols = "region,dong,danji,bunji,road_name,main_num,sub_num,price,size,floor,deal_date,dealing_type"
+    try:
+        if os.environ.get("VILLA_TRADES_FILE"):
+            rows = [json.loads(l) for l in gzip.open(os.environ["VILLA_TRADES_FILE"], "rt", encoding="utf-8") if l.strip()]
+            T = pd.DataFrame(rows); T = T[T.deal_date >= 20211001]
+            cc = pd.DataFrame([json.loads(l) for l in gzip.open(os.environ["COMPLEX_COORDS_FILE"], "rt", encoding="utf-8") if l.strip()])
+        else:
+            sp = importlib.util.spec_from_file_location("avm", os.path.join(os.path.dirname(os.path.abspath(__file__)), "train-avm.py")); avm = importlib.util.module_from_spec(sp); sp.loader.exec_module(avm)
+            flt = "&or=(" + ",".join('region.like."' + n + '*"' for n in ("서울", "인천", "경기")) + ")"
+            T = avm.fetch_all_rows("villa_trades", cols=cols, extra_filter=f"&deal_date=gte.20211001{flt}")
+            cc = avm.fetch_all_rows("complex_coords", cols="cache_key,lat,lon")
+    except Exception as e:
+        print("  ⚠️ 빌라 매매기록 불러오기 실패 - 매매 활발도 판정 건너뜀:", str(e)[:120]); return None
+    sg = lambda v: "" if v is None or v != v or v == "" else (str(int(float(v))) if str(v).replace(".", "", 1).isdigit() else str(v))
+    for c in ("dong", "danji", "bunji", "road_name"): T[c] = T[c].fillna("")
+    k_new = (T.dong + "|" + T.danji + "|" + T.bunji + "|" + T.road_name + "|" + T.main_num.map(lambda v: 0 if v is None or v != v or v == "" else int(float(v))).astype(str) + "|" + T.sub_num.map(sg)).str.lower()
+    k_leg = (T.dong + "|" + T.danji + "|" + T.bunji + "|" + T.road_name + "|" + T.main_num.map(sg) + "|" + T.sub_num.map(sg)).str.lower()
+    cm = cc.assign(k=cc.cache_key.str.lower()).drop_duplicates("k").set_index("k")[["lat", "lon"]]
+    lat = k_new.map(cm.lat); lon = k_new.map(cm.lon)
+    m = lat.isna(); lat[m] = k_leg[m].map(cm.lat); lon[m] = k_leg[m].map(cm.lon)
+    T = T.assign(lat=lat.values, lon=lon.values); T = T[T.lat.notna() & T.price.gt(0) & T["size"].gt(5)].copy()
+    T = T[T.dealing_type.fillna("") != "직거래"]
+    T["dt"] = pd.to_datetime(T.deal_date.astype(int).astype(str), format="%Y%m%d", errors="coerce"); T = T[T.dt.notna()].sort_values("dt").reset_index(drop=True)
+    T["sb"] = pd.cut(T["size"], SZ_EDGES, labels=False); T["pb"] = pd.cut(T.price, PR_EDGES, labels=False)
+    print(f"  빌라 매매기록 {len(T):,}건(좌표 있음)")
+    return T
+
+
+def activity_one(sel, size_m2, est):
+    """반경 안 최근 12개월 매매(sel)로 '이 평형·이 금액대가 얼마나 활발한가'(2026-10-14, 사용자: 낙찰 후 매도가 아니라 매매 기록 기준)"""
+    n = len(sel)
+    if n == 0: return None
+    sb_obj = int(pd.cut([size_m2], SZ_EDGES, labels=False)[0])
+    cnt = sel.groupby("sb").size()
+    bands = []
+    for b, c in cnt.sort_values(ascending=False).head(5).items():
+        G = sel[sel.sb == b]; bands.append([SZ_LAB[int(b)], int(c), round(c / n, 3), round(float(G.price.median()))])
+    rank = int((cnt > cnt.get(sb_obj, 0)).sum()) + 1 if cnt.get(sb_obj, 0) > 0 else len(cnt) + 1
+    Gb = sel[sel.sb == sb_obj]; nb = len(Gb)
+    obj = {"band": SZ_LAB[sb_obj], "n": nb, "share": round(nb / n, 3), "rank": rank, "of": int(len(cnt))}
+    pct = None
+    if nb >= 4:
+        obj.update({"med": round(float(Gb.price.median())), "p25": round(float(Gb.price.quantile(.25))), "p75": round(float(Gb.price.quantile(.75))), "p90": round(float(Gb.price.quantile(.9)))})
+        if est: pct = round(float((Gb.price <= est).mean()), 3); obj["pct"] = pct
+    pc = sel.groupby("pb").size().sort_values(ascending=False)
+    pr = [[PR_LAB[int(b)], int(c), round(c / n, 3)] for b, c in pc.head(3).items()]
+    if est:
+        eb = int(pd.cut([est], PR_EDGES, labels=False)[0]); obj["priceBand"] = PR_LAB[eb]; obj["priceShare"] = round(float((sel.pb == eb).mean()), 3)
+    # 판정
+    share = nb / n; why = []
+    if n < 20: v = "mid"; why.append("반경 안 최근 1년 매매가 " + str(n) + "건뿐이라 판단 근거가 약해요")
+    else:
+        if nb < 4 or share < 0.07: v = "bad"; why.append("이 평형대 매매가 거의 없어요(" + str(nb) + "건, 비중 " + str(round(share * 100)) + "%)")
+        elif pct is not None and pct > 0.9: v = "bad"; why.append("예상매도가가 이 평형 매매가 상위 10% 이상이라 팔기 어려운 가격대예요")
+        elif (share >= 0.18 or rank <= 2) and (pct is None or pct <= 0.75): v = "good"; why.append("이 평형대가 반경에서 " + str(rank) + "번째로 활발(비중 " + str(round(share * 100)) + "%)하고 가격도 무리 없는 수준이에요")
+        else: v = "mid"; why.append("거래는 있지만(비중 " + str(round(share * 100)) + "%, " + str(rank) + "위) 특별히 활발하진 않아요" + ("" if pct is None or pct <= 0.75 else " · 예상매도가가 이 평형 상위권이에요"))
+    return {"r": 1.0, "n": int(n), "n6": int((sel.dt >= sel.dt.max() - pd.Timedelta(days=183)).sum()), "bands": bands, "obj": obj, "price": pr, "v": v, "why": why}
+
+
+def activity_for(Q, T, asof):
+    """등록 빌라 물건마다 반경 1km·최근 12개월 매매로 활발도 판정"""
+    out = {}
+    if T is None or Q.empty: return out
+    tree = BallTree(np.radians(T[["lat", "lon"]].values), metric="haversine"); ind = tree.query_radius(np.radians(Q[["lat", "lon"]].values.astype(float)), r=1.0 / 6371.0)
+    cut0 = asof - pd.Timedelta(days=365)
+    for qi, (_, row) in enumerate(Q.iterrows()):
+        sel = T.iloc[ind[qi]]; sel = sel[(sel.dt >= cut0) & (sel.dt < asof + pd.Timedelta(days=1))]
+        est = float(row.est) if row.est == row.est and row.est else None
+        r = activity_one(sel, float(row.area), est)
+        if r: out[row["id"]] = r
+    return out
+
+
+def activity_backtest(D, T):
+    """같은 판정을 과거 시점에 적용: 2024-07~2025-04 낙찰 빌라마다 그 시점 직전 12개월 매매로 판정(예상매도가 대신 감정가를 가격 위치로 사용)하고, 낙찰 후 실제 되팔림·손해와 비교(참고)"""
+    Q = D[(D.type == "villa") & (D.dt >= "2024-07-01") & (D.dt < "2025-05-01") & D.sold12.notna() & D.appr.notna()].copy()
+    if len(Q) < 300: return None
+    tree = BallTree(np.radians(T[["lat", "lon"]].values), metric="haversine"); ind = tree.query_radius(np.radians(Q[["lat", "lon"]].values), r=1.0 / 6371.0)
+    vs = []
+    for qi, (_, r) in enumerate(Q.iterrows()):
+        sel = T.iloc[ind[qi]]; sel = sel[(sel.dt >= r["dt"] - pd.Timedelta(days=365)) & (sel.dt < r["dt"])]
+        a = activity_one(sel, float(r["area"]), float(r["appr"])) if len(sel) else None
+        vs.append(a["v"] if a else "none")
+    Q["v"] = vs; g = {}
+    for v, G in Q.groupby("v"):
+        g[v] = {"n": int(len(G)), "되팔림12개월%": round(float(G.sold12.mean()) * 100, 1), "손해%": round(float(G.loss.mean()) * 100, 1) if G.loss.notna().sum() >= 10 else None}
+    print("  매매 활발도 규칙 시험(빌라)", json.dumps(g, ensure_ascii=False))
+    return {"전체 되팔림%": round(float(Q.sold12.mean()) * 100, 1), "결과": g, "n": int(len(Q))}
+
+
+def activity_persistence(T, n=4000):
+    """판정의 근거 확인(2026-10-14): 직전 12개월 매매로 '활발'이라 본 평형대가 그 뒤 12개월(그 시점 이후 실제 매매)에도 거래가 더 많았나 - 낙찰 후 되팔림 흔적 대신 '매매 기록'으로 본 검증"""
+    pool = T[(T.dt >= "2023-01-01") & (T.dt <= T.dt.max() - pd.Timedelta(days=365))]
+    if len(pool) < 1000: return None
+    Q = pool.sample(min(n, len(pool)), random_state=5).reset_index(drop=True)
+    tree = BallTree(np.radians(T[["lat", "lon"]].values), metric="haversine"); ind = tree.query_radius(np.radians(Q[["lat", "lon"]].values), r=1.0 / 6371.0)
+    rows = []
+    for qi, r in Q.iterrows():
+        sel = T.iloc[ind[qi]]; pre = sel[(sel.dt >= r["dt"] - pd.Timedelta(days=365)) & (sel.dt < r["dt"])]; post = sel[(sel.dt >= r["dt"]) & (sel.dt < r["dt"] + pd.Timedelta(days=365))]
+        a = activity_one(pre, float(r["size"]), float(r["price"])) if len(pre) else None
+        if not a: continue
+        sb = int(pd.cut([float(r["size"])], SZ_EDGES, labels=False)[0])
+        rows.append((a["v"], int((post.sb == sb).sum()), float((post.sb == sb).mean()) if len(post) else np.nan, int(len(pre))))
+    D_ = pd.DataFrame(rows, columns=["v", "after", "afterShare", "pre"]); g = {}
+    for v, G in D_.groupby("v"): g[v] = {"n": int(len(G)), "이후 12개월 같은 평형 매매(중앙)": round(float(G.after.median()), 1), "이후 비중%": round(float(G.afterShare.mean()) * 100, 1)}
+    print("  활발도 판정 vs 이후 12개월 같은 평형 매매", json.dumps(g, ensure_ascii=False)); return {"결과": g, "n": int(len(D_))}
 
 
 def norm_case(c):
