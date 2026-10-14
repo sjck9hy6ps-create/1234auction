@@ -301,7 +301,7 @@ PR_EDGES = [0, 8000, 12000, 16000, 20000, 30000, 40000, 1e9]; PR_LAB = ["~8천�
 def load_villa_trades():
     """빌라 매매기록(최근 4년) + 건물 좌표. 서버면 Supabase(병렬 받기), 로컬 시험이면 백업 파일(VILLA_TRADES_FILE·COMPLEX_COORDS_FILE)"""
     import gzip, importlib.util
-    cols = "region,dong,danji,bunji,road_name,main_num,sub_num,price,size,floor,deal_date,dealing_type"
+    cols = "region,dong,danji,bunji,road_name,main_num,sub_num,price,size,floor,deal_date,dealing_type,build_year"
     try:
         if os.environ.get("VILLA_TRADES_FILE"):
             rows = [json.loads(l) for l in gzip.open(os.environ["VILLA_TRADES_FILE"], "rt", encoding="utf-8") if l.strip()]
@@ -323,6 +323,9 @@ def load_villa_trades():
     m = lat.isna(); lat[m] = k_leg[m].map(cm.lat); lon[m] = k_leg[m].map(cm.lon)
     T = T.assign(lat=lat.values, lon=lon.values); T = T[T.lat.notna() & T.price.gt(0) & T["size"].gt(5)].copy()
     T = T[T.dealing_type.fillna("") != "직거래"]
+    # 신축 제외(2026-10-14, 사용자: 4년 이내는 신축 - 입찰 대상 아님·분양 거래가 섞이면 활발도·가격대가 왜곡): 거래 시점 건물 나이(사용승인연도 기준) 4년 이하 거래는 뺌
+    by = pd.to_numeric(T.get("build_year"), errors="coerce"); age = (T.deal_date // 10000) - by.where(by.between(1960, 2027))
+    n0 = len(T); T = T[~(age <= 4)].copy(); print(f"  신축(4년 이하) 거래 {n0 - len(T):,}건 제외")
     T["dt"] = pd.to_datetime(T.deal_date.astype(int).astype(str), format="%Y%m%d", errors="coerce"); T = T[T.dt.notna()].sort_values("dt").reset_index(drop=True)
     T["sb"] = pd.cut(T["size"], SZ_EDGES, labels=False); T["pb"] = pd.cut(T.price, PR_EDGES, labels=False)
     print(f"  빌라 매매기록 {len(T):,}건(좌표 있음)")
@@ -361,7 +364,7 @@ def activity_one(sel, size_m2, est):
 
 
 def activity_for(Q, T, asof):
-    """등록 빌라 물건마다 반경 1km·최근 12개월 매매로 활발도 판정"""
+    """등록 빌라 물건마다 반경 1km·최근 12개월 매매(신축 4년 이하 제외)로 활발도 판정"""
     out = {}
     if T is None or Q.empty: return out
     tree = BallTree(np.radians(T[["lat", "lon"]].values), metric="haversine"); ind = tree.query_radius(np.radians(Q[["lat", "lon"]].values.astype(float)), r=1.0 / 6371.0)
