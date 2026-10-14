@@ -40,6 +40,8 @@ def main():
             r = {"전체": stat(E)}
             for lvl, G in E.groupby("lvl"):
                 if len(G) >= 80: r["단계 " + lvl] = stat(G)
+            for k, v in r.items():
+                if k != "전체" and v: print(f"   [{gname}|{pname}] {k}: n={v['n']} 오차 {v['medAbsErrPct']}% ±10% {v['within10Pct']}% 편향 {v['biasPct']}%", flush=True)
             out[gname][pname] = r
             print(f"[{gname}] {pname}: {json.dumps(r['전체'], ensure_ascii=False)}", flush=True)
     txt = json.dumps(out, ensure_ascii=False, indent=1); json.dump(out, open("backtest-villa-newbuild.json", "w"), ensure_ascii=False, indent=1)
