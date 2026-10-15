@@ -480,10 +480,13 @@ export default async function handler(req, res) {
     // 2026-10-10(지역 이동 시 배지가 5초 가까이 늦음 - 지역 캐시가 Redis 대신 엣지뿐이라 5분마다 DB를 다시 긁음): 엣지에 30분 보관하고, 그 뒤에도 하루 동안은 이전 응답을 즉시 주면서 뒤에서 갱신(stale-while-revalidate)
     res.setHeader('Cache-Control', partialPayload ? 'no-store' : 'public, s-maxage=1800, stale-while-revalidate=86400');
     const _s0 = Date.now();
+    // 월세 거래 줄이기(2026-10-15, 사용자: 빌라 배지가 늦음 - 강서구 전월세 7.9MB 중 월세가 절반): 앱이 쓰는 건 ① 전세(월세 0) ② 빌라 월세 현금흐름용 최근 400일 빌라 월세뿐 → 아파트 월세와 오래된 빌라 월세는 보내지 않음
+    const _cut = new Date(Date.now() - 400 * 86400000), _cutN = _cut.getFullYear() * 10000 + (_cut.getMonth() + 1) * 100 + _cut.getDate();
+    const _rentOut = dbPayload.rent.filter(r => !(r.monthly_rent > 0) || (r.buildingType === 'villa' && parseInt(r.deal_date, 10) >= _cutN));
     let _out;
-    if (compact && partRent) _out = { rent: dbPayload.rent.map(r => { const { region, source, ...rest } = r; return source && source !== 'db' ? { ...rest, source } : rest; }), region: regionName, partial: partialPayload || undefined };
+    if (compact && partRent) _out = { rent: _rentOut.map(r => { const { region, source, ...rest } = r; return source && source !== 'db' ? { ...rest, source } : rest; }), region: regionName, partial: partialPayload || undefined };
     else if (compact) _out = { apt: finalApt.map(r => { const { region, source, ...rest } = r; return source && source !== 'db' ? { ...rest, source } : rest; }), region: regionName, compact: 1, partial: partialPayload || undefined };
-    else _out = { apt: finalApt, rent: dbPayload.rent, partial: partialPayload || undefined };
+    else _out = { apt: finalApt, rent: _rentOut, partial: partialPayload || undefined };
     const _body = JSON.stringify(_out);
     _tm.stringify = Date.now() - _s0;
     res.setHeader('Server-Timing', Object.keys(_tm).map(k => `${k};dur=${_tm[k]}`).join(', ') + `, total;dur=${Date.now() - _t0}`);
