@@ -15221,8 +15221,10 @@ function upsertAuctionMarker(a, hidden) {
         if (auctionMarkers[a.id].mKey) delete markerDataRegistry[auctionMarkers[a.id].mKey];
         delete auctionMarkers[a.id];
     }
+    awPending = false;
     placeAuctionMarker(a, hidden);
-    auctionMarkerSigs[a.id] = sig;
+    auctionMarkerSigs[a.id] = sig + (awPending ? '|pend' : '');
+    if (awPending) awNeedMore = true;
 }
 // 지도 중심 기준 뷰포트(+50% 여유) 범위를 반환 - filterAptListToViewport와 같은 여유폭을 씀.
 // 경매/낙찰사례 마커의 화면 밖 항목을 걸러낼 때도 동일 기준을 재사용하기 위해 분리함.
@@ -15328,6 +15330,7 @@ function renderAuctionMarkers() {
     // 오면 즉시 재생성됨) SDK가 매 줌 프레임마다 다뤄야 하는 오버레이 개수를 줄임.
     var vp = getPaddedViewportBounds();
     var neededIds = {};
+    awBudgetUntil = performance.now() + 250; awNeedMore = false;
     // 한 건물에 경매가 몰린 곳(2026-10-10, 사용자 요청): 같은 위치(약 1m)에 4건 이상이면 배지를 하나로 묶고 누르면 전체 목록
     var bk0 = {};
     auctionList.forEach(function(a) { if (a.lat && a.lon && auctionBadgeWorthy(a)) { var k0 = auctionBuildingKey(a); if (k0) bk0[k0] = true; } });
@@ -15393,6 +15396,7 @@ function renderAuctionMarkers() {
     // 경매 강조 리본이 안 붙은 채로 남아있을 수 있음 - 매칭된 건물의 마커만 골라 새로 그려서 갱신함
     refreshMatchedAuctionMarkers();
     scheduleOverlapResolve();
+    if (awNeedMore) setTimeout(renderAuctionMarkers, 40); // 추정값 계산이 남은 배지는 화면을 먼저 그린 뒤 이어서 채움
 }
 /* 경매물건과 매칭된 일반 거래 마커를 강제로 다시 그려서(캐시 무효화) 🔨 강조 리본이
    항상 최신 상태로 보이도록 함 - 등록/수정/삭제 직후에도 지도를 다시 움직이지 않고 바로 반영됨 */
@@ -15486,7 +15490,7 @@ function placeAuctionMarker(a, hidden) {
         auctionMarkers[a.id] = { overlay: null, suppressed: true };
         return;
     }
-    awEst = (isWon || isBidTarget) ? getAuctionWonEstimates(a) : null;
+    awEst = (isWon || isBidTarget) ? getAuctionWonEstimates(a, true) : null;
     var surgeRank = a.dong ? surgeRankMap[a.dong] : null;
     var surgeBadge = '' && surgeRank
         ? '<span style="background:#e53935;color:white;font-size:9px;font-weight:bold;padding:1px 5px;border-radius:3px;margin-left:3px;">🔥' + surgeRank + '위</span>'
@@ -16073,7 +16077,8 @@ function auctionWonEstSignature(a) {
 // 이미 갖고 있던 좋은 값을 버리고 "데이터 부족"으로 후퇴해버리는 문제였음. a.target(저장된
 // 목표매도가)이 있으면 그걸 최우선으로 쓰고, 없을 때만(주로 아직 상세정보를 안 채운 순수
 // 입찰희망 일괄등록 건) findSimilarComps 재계산으로 폴백함.
-function getAuctionWonEstimates(a) {
+var awBudgetUntil = 0, awPending = false, awNeedMore = false; // 지도 배지 그릴 때 추정값 계산 시간 예산(첫 지역 로딩 때 수천 건을 한 번에 계산해 20초 멈추던 문제)
+function getAuctionWonEstimates(a, budgeted) {
     var sig = auctionWonEstSignature(a);
     var cached = auctionWonEstCache[a.id];
     // ⚠️ 2026-09(본오동 830-16 vs 776-2 사례로 발견 - getBidCaseEstimates와 동일한 버그):
@@ -16087,6 +16092,7 @@ function getAuctionWonEstimates(a) {
     var _gen = (typeof allAptList !== 'undefined' && allAptList) ? allAptList.length : 0;
     // 값이 없음(null)도 비교 데이터 수(_gen)가 그대로면 같은 결과이므로 재사용 - 데이터가 늘었을 때만 다시 계산
     if (cached && cached.sig === sig && (cached.predictedSale !== null || cached.gen === _gen)) return cached;
+    if (budgeted && performance.now() > awBudgetUntil) { awPending = true; return null; }
     var savedTarget = parseInt(a.target) || 0;
     // cands는 predictedSale이 savedTarget으로 대체되는 경우에도 inferredBuildYear 폴백(연식
     // 미확정 시 유사물건 중앙값 근사)에 계속 쓰이므로 항상 계산해둠 - 캐싱 레이어가 있어
