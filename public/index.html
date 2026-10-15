@@ -26159,6 +26159,13 @@ function syncProxyChips() {
         });
     }, 50);
 }
+function toggleTbMenuMobile() { document.getElementById('tb-menu').classList.toggle('open'); }
+function closeTbMenus() { var m = document.getElementById('tb-more-menu'); if (m) m.classList.remove('open'); document.getElementById('tb-menu').classList.remove('open'); }
+// 입찰후보 ↔ 지도 토글(상단 첫 버튼) - 입찰후보 화면이 떠 있으면 "🗺️ 지도", 아니면 "🎯 입찰후보"
+function syncBoardBtn() {
+    var b = document.getElementById('tb-board-btn'), bb = document.getElementById('bid-board');
+    if (b && bb) b.innerHTML = bb.style.display === 'flex' ? '🗺️ 지도' : '🎯 입찰후보';
+}
 function toggleBoardFromTop() {
     var bb = document.getElementById('bid-board');
     if (bb && bb.style.display === 'flex') closeBidBoard(); else openBidBoard();
