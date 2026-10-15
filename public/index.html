@@ -15950,7 +15950,9 @@ function getBidCaseEstimates(c) {
     // null인 캐시는 "진짜 없음"이 아니라 "그때는 몰랐음"일 수 있으므로 신뢰하지 않고
     // 매번 재계산 시도함 - 실제로 비교물건이 없는 지역이면 재계산해도 다시 null일 뿐이라
     // 비용 부담은 findSimilarComps 재호출 한 번뿐임.
-    if (cached && cached.sig === sig && cached.predictedSale !== null) return cached;
+    var _gen = (typeof allAptList !== 'undefined' && allAptList) ? allAptList.length : 0;
+    // 값이 없음(null)도 비교 데이터 수(_gen)가 그대로면 같은 결과이므로 재사용 - 데이터가 늘었을 때만 다시 계산
+    if (cached && cached.sig === sig && (cached.predictedSale !== null || cached.gen === _gen)) return cached;
     var cands = computeBidCaseCandidates(c);
     // c.buildYear(건축HUB로 확정 조회된 값)가 있으면 그걸 우선 쓰고, 없으면 그 다음으로
     // 그 주소 자체의 건물을 allAptList에서 직접 찾아보고(resolveOwnBuildYear), 그마저
@@ -16082,7 +16084,9 @@ function getAuctionWonEstimates(a) {
     // 이 물건(830-16)만 영구히 "데이터 부족"으로 굳어있는 것처럼 보임. predictedSale이
     // null인 캐시는 "진짜 없음"이 아니라 "그때는 몰랐음"일 수 있으므로 신뢰하지 않고 매번
     // 재계산 시도함(savedTarget이 있으면 그 값을 그대로 쓰므로 이 경우엔 재계산 비용도 없음).
-    if (cached && cached.sig === sig && cached.predictedSale !== null) return cached;
+    var _gen = (typeof allAptList !== 'undefined' && allAptList) ? allAptList.length : 0;
+    // 값이 없음(null)도 비교 데이터 수(_gen)가 그대로면 같은 결과이므로 재사용 - 데이터가 늘었을 때만 다시 계산
+    if (cached && cached.sig === sig && (cached.predictedSale !== null || cached.gen === _gen)) return cached;
     var savedTarget = parseInt(a.target) || 0;
     // cands는 predictedSale이 savedTarget으로 대체되는 경우에도 inferredBuildYear 폴백(연식
     // 미확정 시 유사물건 중앙값 근사)에 계속 쓰이므로 항상 계산해둠 - 캐싱 레이어가 있어
@@ -16094,6 +16098,7 @@ function getAuctionWonEstimates(a) {
     var inferredBuildYear = a.buildYear || (cands && cands.targetYear) || resolveOwnBuildYear(a.name, a.dong, a.bunji) || computeBidCaseInferredBuildYear(cands);
     var result = {
         sig: sig,
+        gen: _gen,
         predictedSale: savedTarget > 0 ? savedTarget : computeAuctionWonPredictedSale(cands, a),
         predictedSaleSource: savedTarget > 0 ? 'saved' : 'recalc',
         impliedTarget: computeAuctionWonImpliedTarget(a),
