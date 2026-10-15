@@ -19224,7 +19224,7 @@ async function refreshBidBoard() {
         var wa = work[wi];
         var c = boardCache[wa.id];
         if (!c || !c.row) continue;
-        var fresh = c.sig === boardBaseSig(wa) && nowMs - c.at <= (c.srv ? BOARD_SRV_MAX_AGE : BOARD_CACHE_MAX_AGE);
+        var fresh = (c.sig === boardBaseSig(wa) || c.sig === boardBaseSig(wa, true)) && nowMs - c.at <= (c.srv ? BOARD_SRV_MAX_AGE : BOARD_CACHE_MAX_AGE);
         try {
             var row = Object.assign({}, c.row, { a: wa, dday: wa.bidDate ? calcAuctionDday(wa.bidDate) : null, fromCache: c.at, stale: !fresh });
             if (!(fresh && row.finalSig === fsigNow)) { row = finalizeBidBoardRow(row); if (fresh) { try { var cr0 = boardRowForCache(row); if (cr0) c.row = cr0; } catch (e) {} } } // 지문이 없던 저장본은 한 번 계산한 결과(지문 포함)로 바꿔 두어 다음부터 건너뜀
@@ -19349,15 +19349,17 @@ async function mergeServerBoardCache(local) {
 setTimeout(function() { try { srvBoardParts(); window.villaSrvP = villaFetchServerCalc(); } catch (e) {} }, 2500); // 앱을 켜고 2.5초 뒤 배경에서 미리 받기
 // 저장 계산을 다시 써도 되는지 - 물건 입력값(시세 계산에 쓰는 것)과 입찰일 지남 여부. 계산 방식이 바뀌면 BOARD_CALC_VER을 올림
 var BOARD_CALC_VER = 40; // 40: 임차인 둘로 읽힌 경우 별개/같은 임차권(갱신·승계) 선택(2026-10-11) - // 39: 39: 임차권등기를 임차인으로 계산(전입·확정일자 기준)·경매신청인 전세권 안내(2026-10-11) - // 38: 38: 권리분석 날짜 선후 규칙 정리(전입 다음 날 0시·동순위 안분, 2026-10-11) - // 37: 37: 권리분석에 말소기준일보다 앞선 전세권·임차권 등 등기부 인수 권리 반영(2026-10-11) - // 36: 저가 아파트 순이익률 10% 추천가 규칙 되돌림(2026-10-11, 백테스트 손해 30~42%) - // 34: 33: 아파트 고층 보정 축소·저층 범위(2026-10-11) - // 29: nYear 저장 추가 - // 27: 🎲 예상 낙찰가용 시세(wbBase) 추가 (범위 표시는 화면에서 바로 계산 - 버전 변경 없음)
-function boardBaseSig(a) {
-    var d = a.bidDate ? calcAuctionDday(a.bidDate) : null;
+/* 2026-10-15(사용자: 입찰후보 로딩이 느림 - 원인 실측): 식별값 끝의 'P/F'(입찰일 지남 여부)가 한국 시각 자정에 바뀌어, 서버 미리 계산이 돈 뒤 어제 입찰이던 물건(하루 약 350건)이 전부 '다른 물건'이 돼
+   지역 자료 86곳(곳당 9~13MB)을 새로 받아 다시 계산했음. 계산 결과는 입찰일 지남 여부와 무관하므로(날짜 표시는 열 때 다시 계산) 저장본의 P/F가 반대여도 같은 것으로 봄(flip). */
+function boardBaseSig(a, flip) {
+    var d = a.bidDate ? calcAuctionDday(a.bidDate) : null, pf = d && d.diffDays < 0 ? 'P' : 'F'; if (flip) pf = pf === 'P' ? 'F' : 'P';
     // 2026-10-11: 건축물대장에서 자동으로 채운 연식·승강기는 재사용 판단에서 뺌 - 새로 알게 돼도 다음 월요일 미리 계산에 반영(직접 입력한 연식은 그대로 비교)
     var auto = a.buildYearSource === '건축물대장';
     var e0 = (a.propType === 'apt' && (a.elevatorCnt === 0 || a.elevatorCnt === '0')) ? 'E0v2' : ''; // 승강기 0(총괄표제부 오류) 물건은 새 판정으로 다시 계산
     var asm = (a.assumedDeposit || a.assumedFixed || a.assumedPrior || a.rights) ? 'A2:' + (a.assumedDeposit || '') + ':' + (a.assumedFixed || '') + ':' + (a.assumedPrior || '') + (a.rights ? ':R' + (a.rights.pastedAt || 0) + ':' + (a.rights.editedAt || 0) : '') : ''; // 인수금액 입력이 있는 물건만(새 계산식 v2)
     return [BOARD_CALC_VER, auctionWonEstSignature(a), a.minBid, a.appraisal, a.bidDate, a.court, a.failCount, a.landType, String(a.memo || '').length,
         Array.isArray(a.bidHistory) ? a.bidHistory.length : 0, a.courtResult || '', a.target || '', a.compTargetMargin || '', a.repair || '', auto ? '' : (a.buildYear || ''), auto || a.elevatorCnt == null ? '' : a.elevatorCnt, a.listingParse ? a.listingParse.at + '/' + a.listingParse.n : '', (a.fieldCheck || {}).cond || '',
-        d && d.diffDays < 0 ? 'P' : 'F'].concat(asm ? [asm] : [], e0 ? [e0] : []).join('|');
+        pf].concat(asm ? [asm] : [], e0 ? [e0] : []).join('|');
 }
 function boardRowForCache(r) {
     var o = {};

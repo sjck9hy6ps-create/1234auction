@@ -10,7 +10,7 @@ const SITE = process.env.SITE_URL || 'https://1234auction.vercel.app';
 const supabase = createClient(process.env.SUPABASE_URL?.trim(), process.env.SUPABASE_SERVICE_ROLE_KEY?.trim(), { auth: { persistSession: false }, realtime: { transport: ws } });
 
 const browser = await chromium.launch();
-const page = await browser.newPage({ viewport: { width: 1400, height: 900 } });
+const page = await browser.newPage({ viewport: { width: 1400, height: 900 }, timezoneId: 'Asia/Seoul', locale: 'ko-KR' }); // 한국 시각 기준(입찰일 지남 여부·남은 일수가 사용자 화면과 같게, 2026-10-15)
 await page.addInitScript(() => { window.__rcForce = true; }); // 빌라 월세 시세는 매주 새 신고로 다시 계산(2026-10-11)
 page.setDefaultTimeout(60000);
 page.on('pageerror', (e) => console.log('페이지 오류:', String(e).slice(0, 200)));
