@@ -19227,7 +19227,10 @@ async function refreshBidBoard() {
         var fresh = (c.sig === boardBaseSig(wa) || c.sig === boardBaseSig(wa, true)) && nowMs - c.at <= (c.srv ? BOARD_SRV_MAX_AGE : BOARD_CACHE_MAX_AGE);
         try {
             var row = Object.assign({}, c.row, { a: wa, dday: wa.bidDate ? calcAuctionDday(wa.bidDate) : null, fromCache: c.at, stale: !fresh });
-            if (!(fresh && row.finalSig === fsigNow)) { row = finalizeBidBoardRow(row); if (fresh) { try { var cr0 = boardRowForCache(row); if (cr0) c.row = cr0; } catch (e) {} } } // 지문이 없던 저장본은 한 번 계산한 결과(지문 포함)로 바꿔 두어 다음부터 건너뜀
+            /* 2026-10-15(사용자: 입찰후보 로딩이 느림 - 실측): 저장본의 지문(내 자산·모델 상태)이 지금과 다르면 2,900건을 여기서 한꺼번에 다시 계산해 화면이 1분 넘게 비었음(건당 30~50ms).
+               입력값이 같은 저장본은 지문이 달라도 일단 그대로 보여주고, 아래 finalizeStaleRows가 12ms씩 나눠 뒤에서 다시 계산(화면은 즉시). 입력값이 바뀐 것(fresh 아님)은 어차피 지역 자료로 새로 계산하므로 여기서 계산하지 않음. */
+            if (!fresh) continue;
+            if (!row.finalSig) { row = finalizeBidBoardRow(row); try { var cr0 = boardRowForCache(row); if (cr0) c.row = cr0; } catch (e) {} } // 지문이 없던 저장본은 한 번 계산한 결과(지문 포함)로 바꿔 둠꿔 두어 다음부터 건너뜀
             if (fresh) { reused[wa.id] = row; bidVerdictCache[wa.id] = bidVerdictCache[wa.id] || { sig: '', row: row }; }
             // 2026-10(사용자: "입찰후보 로딩이 아직도 느려") - 하루가 지났거나 계산 방식이 바뀐 저장본도 일단 바로 보여주고
             // (회색 "업데이트 중" 표시), 뒤에서 새로 계산되는 대로 하나씩 바꿔 끼움 - 빈 화면으로 기다리지 않게.
@@ -19238,6 +19241,7 @@ async function refreshBidBoard() {
         bidBoardRows = bidBoardRows.map(function(r) { return reused[r.id] || stale[r.id] || r; });
         work = work.filter(function(a) { return !reused[a.id]; });
         renderBidBoard();
+        setTimeout(function() { try { finalizeStaleRows(); } catch (e) {} }, 0); // 지문이 다른 저장본은 뒤에서 나눠 다시 계산
     }
     var noCode = work.filter(function(a) { return !a.bCode && !a._lawd && a.lat && a.lon; });
     for (var j = 0; j < noCode.length; j += 8) {
