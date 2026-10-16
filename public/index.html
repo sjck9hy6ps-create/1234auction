@@ -9168,6 +9168,68 @@ function applyBidTargetUpdate(a, c, upd) {
     }
     return b;
 }
+async function enrichBidTargetData(data, c, addr) {
+        // saveAuction()과 동일한 방식(카카오 지도 클라이언트 지오코더)으로 주소→좌표 변환.
+        // 실패해도 저장은 계속 진행하고(목록에서 "좌표를 찾지 못함" 경고로 안내), 다음 항목으로 넘어감.
+        if (c._geo) {
+            // 평형별 인기 확인 때 이미 찾은 좌표·법정동을 그대로 씀(카카오 재호출 없음)
+            data.lat = c._geo.lat; data.lon = c._geo.lon; data.addrLabel = c._geo.addrLabel;
+            data.dong = c._geo.dong; data.bunji = c._geo.bunji; data.bCode = c._geo.bCode;
+        } else if (addr) {
+            await new Promise(function(resolve) {
+                geocoder.addressSearch(addr, async function(result, status) {
+                    if (status !== kakao.maps.services.Status.OK) { // 호실·외 N필지 꼬리 때문에 못 찾으면 지번까지만 잘라 다시 찾음
+                        var q2 = addrForGeocode(addr); var g2 = q2 && q2 !== addr ? await geocodeFromAddr(q2) : null;
+                        if (g2 && g2.lat) { data.lat = g2.lat; data.lon = g2.lon; data.addrLabel = g2.addrLabel; data.dong = g2.dong; data.bunji = g2.bunji; data.bCode = g2.bCode; }
+                    }
+                    if (status === kakao.maps.services.Status.OK) {
+                        var best = pickBestGeocodeResult(result, addr);
+                        data.lat = parseFloat(best.y); data.lon = parseFloat(best.x);
+                        data.addrLabel = best.road_address ? best.road_address.address_name : best.address_name;
+                        data.dong = best.address ? (best.address.region_3depth_name || '') : '';
+                        data.bunji = best.address
+                            ? ((best.address.main_address_no || '') + (best.address.sub_address_no ? '-' + best.address.sub_address_no : ''))
+                            : '';
+                        // ⚠️ 2026-09 - 주소검색 응답에 이미 법정동코드(b_code)가 들어있어 바로
+                        // 아래에서 재사용함(위 loadBuildingInfo 주석 참고) - 카카오
+                        // coord2RegionCode(regionCodeAt)를 또 부를 필요가 없어짐.
+                        data.bCode = best.address ? best.address.b_code : null;
+                    }
+                    resolve();
+                });
+            });
+        }
+        // ⚠️ 2026-08(사용자 요청): 일괄등록은 caseNo/appraisalPrice 등 AI 추출 텍스트에 있는
+        // 정보만 채우고 건물 연식(buildYear)은 비워둔 채 저장했음 - 그러면 이 물건이 정식
+        // 모달에서 열리기 전까지는 연식 배지·수리비 자동계산·비교물건 연식±3년 필터 등이
+        // 전부 동작하지 않음. 좌표를 찾았으면 loadBuildingInfo()와 동일한 방식(좌표→법정동코드
+        // →건축HUB 조회)으로 사용승인일을 가져와 채워둠 - 실패해도(건축HUB 응답 없음/타임아웃)
+        // 조용히 넘어가고 나머지 필드로 등록은 계속 진행함.
+        // ⚠️ 2026-09(장제로1025번길 29-5 사례) - 예전엔 여기서 regionCodeAt(좌표→법정동코드,
+        // 카카오 coord2RegionCode 재호출)를 또 불렀는데, 바로 위 주소검색 결과에 이미 b_code가
+        // 있으므로 그걸 직접 슬라이스해서 씀 - coord2RegionCode 쿼터가 소진된 상태에서도
+        // 건축HUB 조회가 막히지 않게 됨.
+        if (data.lat && data.lon && data.bunji) {
+            try {
+                var bCodeParts = bCodeToSigunguBjdong(data.bCode);
+                var bj = deriveBunJi({ bunji: data.bunji });
+                if (bCodeParts && bj) {
+                    var bSigunguCd = bCodeParts.sigunguCd;
+                    var bBjdongCd  = bCodeParts.bjdongCd;
+                    var bUrl = '/api/get-building?sigunguCd=' + bSigunguCd + '&bjdongCd=' + bBjdongCd
+                        + '&bun=' + bj.bun + '&ji=' + bj.ji + '&bldNm=' + encodeURIComponent(data.name || '');
+                    var bInfo = await Promise.race([
+                        fetch(bUrl).then(function(r) { return r.json(); }),
+                        new Promise(function(resolve) { setTimeout(function() { resolve(null); }, 10000); })
+                    ]);
+                    if (bInfo && bInfo.title && bInfo.title.useAprDay) {
+                        var ym = String(bInfo.title.useAprDay).match(/(\d{4})/);
+                        if (ym) data.buildYear = parseInt(ym[1], 10);
+                    }
+                }
+            } catch (e) { /* 건축HUB 조회 실패해도 나머지 정보로 등록 진행 */ }
+        }
+}
 async function saveSelectedBidTargets() {
     var selected = pendingBidTargetExtraction.filter(function(c) { return c._selected; });
     if (!selected.length) { alert('등록할 항목을 하나 이상 선택해 주세요.'); return; }
@@ -9179,7 +9241,17 @@ async function saveSelectedBidTargets() {
     var upCount = { fail: 0, reschedule: 0, sold: 0, closed: 0 }, prevVerdicts = {}, updatedIds = [], newIds = [];
     var prevRowById = {};
     bidBoardRows.forEach(function(r) { prevRowById[r.id] = r; });
-    var pendingSaves = [];
+    var pendingSaves = [], readySaves = [], jobs = [], saveFail = 0, savedSoFar = 0;
+    var flushReady = async function(force) {
+        var all = pendingSaves.splice(0).concat(readySaves.splice(0));
+        while (all.length >= 100 || (force && all.length)) {
+            var chunkS = all.splice(0, 100);
+            statusBox.innerText = '저장 중... ' + (savedSoFar + chunkS.length) + '건째 (창을 닫지 마세요)';
+            try { await saveAuctionBatch(chunkS); } catch (e) { saveFail += chunkS.length; console.error('입찰예정물건 저장 실패:', e.message); }
+            savedSoFar += chunkS.length;
+        }
+        pendingSaves = all; // 100건이 안 찬 나머지는 다음 번에 함께 저장
+    };
     for (var i = 0; i < selected.length; i++) {
         if (i % 20 === 0) { statusBox.innerText = '등록 중... ' + i + '/' + selected.length + ' (주소 좌표·건물 연식을 찾는 중이라 시간이 걸릴 수 있어요)'; await new Promise(function(r) { setTimeout(r, 0); }); }
         var c = selected[i];
@@ -9219,81 +9291,16 @@ async function saveSelectedBidTargets() {
             isBidTarget: true,
             lat: null, lon: null, dong: '', bunji: '', buildYear: null, bCode: null,
         };
-        // saveAuction()과 동일한 방식(카카오 지도 클라이언트 지오코더)으로 주소→좌표 변환.
-        // 실패해도 저장은 계속 진행하고(목록에서 "좌표를 찾지 못함" 경고로 안내), 다음 항목으로 넘어감.
-        if (c._geo) {
-            // 평형별 인기 확인 때 이미 찾은 좌표·법정동을 그대로 씀(카카오 재호출 없음)
-            data.lat = c._geo.lat; data.lon = c._geo.lon; data.addrLabel = c._geo.addrLabel;
-            data.dong = c._geo.dong; data.bunji = c._geo.bunji; data.bCode = c._geo.bCode;
-        } else if (addr) {
-            await new Promise(function(resolve) {
-                geocoder.addressSearch(addr, async function(result, status) {
-                    if (status !== kakao.maps.services.Status.OK) { // 호실·외 N필지 꼬리 때문에 못 찾으면 지번까지만 잘라 다시 찾음
-                        var q2 = addrForGeocode(addr); var g2 = q2 && q2 !== addr ? await geocodeFromAddr(q2) : null;
-                        if (g2 && g2.lat) { data.lat = g2.lat; data.lon = g2.lon; data.addrLabel = g2.addrLabel; data.dong = g2.dong; data.bunji = g2.bunji; data.bCode = g2.bCode; }
-                    }
-                    if (status === kakao.maps.services.Status.OK) {
-                        var best = pickBestGeocodeResult(result, addr);
-                        data.lat = parseFloat(best.y); data.lon = parseFloat(best.x);
-                        data.addrLabel = best.road_address ? best.road_address.address_name : best.address_name;
-                        data.dong = best.address ? (best.address.region_3depth_name || '') : '';
-                        data.bunji = best.address
-                            ? ((best.address.main_address_no || '') + (best.address.sub_address_no ? '-' + best.address.sub_address_no : ''))
-                            : '';
-                        // ⚠️ 2026-09 - 주소검색 응답에 이미 법정동코드(b_code)가 들어있어 바로
-                        // 아래에서 재사용함(위 loadBuildingInfo 주석 참고) - 카카오
-                        // coord2RegionCode(regionCodeAt)를 또 부를 필요가 없어짐.
-                        data.bCode = best.address ? best.address.b_code : null;
-                    }
-                    resolve();
-                });
-            });
-        }
-        if (!data.lat || !data.lon) noPinCount++;
-        // ⚠️ 2026-08(사용자 요청): 일괄등록은 caseNo/appraisalPrice 등 AI 추출 텍스트에 있는
-        // 정보만 채우고 건물 연식(buildYear)은 비워둔 채 저장했음 - 그러면 이 물건이 정식
-        // 모달에서 열리기 전까지는 연식 배지·수리비 자동계산·비교물건 연식±3년 필터 등이
-        // 전부 동작하지 않음. 좌표를 찾았으면 loadBuildingInfo()와 동일한 방식(좌표→법정동코드
-        // →건축HUB 조회)으로 사용승인일을 가져와 채워둠 - 실패해도(건축HUB 응답 없음/타임아웃)
-        // 조용히 넘어가고 나머지 필드로 등록은 계속 진행함.
-        // ⚠️ 2026-09(장제로1025번길 29-5 사례) - 예전엔 여기서 regionCodeAt(좌표→법정동코드,
-        // 카카오 coord2RegionCode 재호출)를 또 불렀는데, 바로 위 주소검색 결과에 이미 b_code가
-        // 있으므로 그걸 직접 슬라이스해서 씀 - coord2RegionCode 쿼터가 소진된 상태에서도
-        // 건축HUB 조회가 막히지 않게 됨.
-        if (data.lat && data.lon && data.bunji) {
-            try {
-                var bCodeParts = bCodeToSigunguBjdong(data.bCode);
-                var bj = deriveBunJi({ bunji: data.bunji });
-                if (bCodeParts && bj) {
-                    var bSigunguCd = bCodeParts.sigunguCd;
-                    var bBjdongCd  = bCodeParts.bjdongCd;
-                    var bUrl = '/api/get-building?sigunguCd=' + bSigunguCd + '&bjdongCd=' + bBjdongCd
-                        + '&bun=' + bj.bun + '&ji=' + bj.ji + '&bldNm=' + encodeURIComponent(data.name || '');
-                    var bInfo = await Promise.race([
-                        fetch(bUrl).then(function(r) { return r.json(); }),
-                        new Promise(function(resolve) { setTimeout(function() { resolve(null); }, 10000); })
-                    ]);
-                    if (bInfo && bInfo.title && bInfo.title.useAprDay) {
-                        var ym = String(bInfo.title.useAprDay).match(/(\d{4})/);
-                        if (ym) data.buildYear = parseInt(ym[1], 10);
-                    }
-                }
-            } catch (e) { /* 건축HUB 조회 실패해도 나머지 정보로 등록 진행 */ }
-        }
-        pendingSaves.push(data);
+        // 좌표·연식 조회는 4건씩 동시에 진행하고, 끝난 건은 100건씩 바로 서버에 저장(중간에 창을 닫아도 그때까지는 남음)
         auctionList.push(data);
         if (dedupKey) existingKeys[dedupKey] = true;
         savedCount++;
         newIds.push(data.id);
+        (function(d, cc, ad) { jobs.push(enrichBidTargetData(d, cc, ad).then(function() { if (!d.lat || !d.lon) noPinCount++; readySaves.push(d); })); })(data, c, addr);
+        if (jobs.length >= 4) { await Promise.all(jobs); jobs = []; await flushReady(false); }
     }
-    // 모아 둔 것을 100건씩 한 번에 저장
-    var saveFail = 0;
-    for (var qi = 0; qi < pendingSaves.length; qi += 100) {
-        var chunkS = pendingSaves.slice(qi, qi + 100);
-        statusBox.innerText = '저장 중... ' + Math.min(qi + 100, pendingSaves.length) + '/' + pendingSaves.length;
-        try { await saveAuctionBatch(chunkS); } catch (e) { saveFail += chunkS.length; console.error('입찰예정물건 저장 실패:', e.message); }
-        await new Promise(function(r) { setTimeout(r, 30); });
-    }
+    await Promise.all(jobs); jobs = [];
+    await flushReady(true);
     pendingBidTargetExtraction = [];
     document.getElementById('bt-paste-text').value = '';
     document.getElementById('bt-preview-box').innerHTML = '';
