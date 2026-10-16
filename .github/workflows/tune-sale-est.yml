@@ -2,6 +2,10 @@ name: 조정 - 예상매도가 반영 비율 재조정
 
 on:
   workflow_dispatch:
+    inputs:
+      skip_tuning:
+        description: '1이면 기존 보정표 계산을 건너뛰고 자료(JSON)만 저장'
+        default: ''
 
 jobs:
   diag:
@@ -19,6 +23,7 @@ jobs:
           SITE_URL: https://1234auction.vercel.app
           PYTHONUNBUFFERED: '1'
           KEEP_PKL: '1'
+          SKIP_TUNING: '${{ github.event.inputs.skip_tuning }}'
         run: python tune-sale-est.py
       - uses: actions/upload-artifact@v4
         if: always()

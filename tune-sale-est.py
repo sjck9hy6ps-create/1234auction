@@ -126,11 +126,13 @@ def main():
         base3, base6 = qtile(p3, 0.5), qtile(p6, 0.4)
         rows.append(dict(region=c.region, sale=int(c.sale_int), area=float(c.area), fl=tf, maxF=maxF, n3=len(p3), n6=len(p6), n12=len(p12),
                          p3q=[qtile(p3, q) if len(p3) else None for q in (0.3, 0.4, 0.5, 0.6, 0.7)], p6q=[qtile(p6, q) if len(p6) else None for q in (0.3, 0.4, 0.5, 0.6, 0.7)],
-                         m12=med(p12), factor=float(factor), resale=resale, resale_m=float(resale_m), actual=float(c.actual), dk=c.dk, nm=str(getattr(c, "buildingName", "") or "")))
+                         m12=med(p12), p12l=[[round(float(x), 2), float(y)] for x, y in sorted(zip(age_m[age_m <= 12], S['price'].values[age_m <= 12]))], factor=float(factor), resale=resale, resale_m=float(resale_m), actual=float(c.actual), dk=c.dk, nm=str(getattr(c, "buildingName", "") or "")))
     D = pd.DataFrame(rows)
     print(f"  앱 방식 재현 가능 사례 {len(D):,}건 (동 확인 6개월 내 되팔기 있음)")
     if os.environ.get("KEEP_PKL"):
         D.to_json("tune-sale-est.json", orient="records", force_ascii=False)
+    if os.environ.get('SKIP_TUNING'):
+        return
     run_tuning(D)
 
 
