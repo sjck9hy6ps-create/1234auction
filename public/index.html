@@ -8795,6 +8795,7 @@ async function saveSelectedCases() {
     for (var qi = 0; qi < queue.length; qi += 200) {
         var chunk = queue.slice(qi, qi + 200);
         statusBox.innerText = '저장 중... ' + Math.min(qi + 200, queue.length) + '/' + queue.length;
+        csvProg(Math.min(qi + 200, queue.length) / queue.length, '낙찰사례 저장');
         try {
             await saveBidCaseBatch(chunk);
             chunk.forEach(function(d) { bidCaseList.push(d); savedCount++; });
@@ -9158,10 +9159,19 @@ function pickBestGeocodeResult(list, addrText) {
 /* ⚠️ 2026-10(사용자 요청: "유찰될 경우 다시 판단해 주는 로직이 필요해"): 예전엔 같은 사건번호를 다시 붙여넣으면
    "이미 등록됨"으로 건너뛰어 법원 목록에 담긴 결과(유찰·매각·취하, 새 최저가·새 기일)가 버려졌음 - 이제 기존 물건을 찾아
    결과를 반영함. 유찰이면 최저가·입찰일을 바꾸고 이력을 남겨 🎯입찰후보 보드에서 새 최저가로 다시 판정함. */
+// 2026-10-16: 1만 건 CSV를 올릴 때 건마다 경매물건 전체(4천여 건)의 키를 다시 계산해 화면이 멈췄음 → 키→위치 색인을 한 번 만들어 재사용(목록 길이가 바뀌거나 위치가 어긋나면 다시 만듦)
+var btIndex = null, btIndexLen = -1;
 function findExistingBidTarget(c) {
     var k = bidTargetDedupKey(c);
     if (!k) return null;
-    return auctionList.find(function(a) { return bidTargetDedupKey(a) === k && !a.isBacktest; }) || null;
+    if (!btIndex || btIndexLen !== auctionList.length) {
+        btIndex = {}; btIndexLen = auctionList.length;
+        for (var i = 0; i < auctionList.length; i++) { var a0 = auctionList[i]; if (a0 && !a0.isBacktest) { var k0 = bidTargetDedupKey(a0); if (k0 && btIndex[k0] == null) btIndex[k0] = i; } }
+    }
+    var ix = btIndex[k], a = ix != null ? auctionList[ix] : null;
+    if (a && !a.isBacktest && bidTargetDedupKey(a) === k) return a;
+    if (ix != null) { btIndex = null; return auctionList.find(function(x) { return bidTargetDedupKey(x) === k && !x.isBacktest; }) || null; }
+    return null;
 }
 function classifyBidTargetUpdate(a, c) {
     var st = String(c.status || '').replace(/\s+/g, '');
@@ -9278,7 +9288,7 @@ async function saveSelectedBidTargets() {
         pendingSaves = all; // 100건이 안 찬 나머지는 다음 번에 함께 저장
     };
     for (var i = 0; i < selected.length; i++) {
-        if (i % 20 === 0) { statusBox.innerText = '등록 중... ' + Math.floor(i / selected.length * 100) + '% (' + i + '/' + selected.length + '건) · 주소 좌표·건물 연식을 찾는 중이라 시간이 걸릴 수 있어요 - 창을 닫지 마세요'; await new Promise(function(r) { setTimeout(r, 0); }); }
+        if (i % 20 === 0) { csvProg(i / selected.length * 0.95, '입찰예정 ' + i + '/' + selected.length + '건'); statusBox.innerText = '등록 중... ' + Math.floor(i / selected.length * 100) + '% (' + i + '/' + selected.length + '건) · 주소 좌표·건물 연식을 찾는 중이라 시간이 걸릴 수 있어요 - 창을 닫지 마세요'; await new Promise(function(r) { setTimeout(r, 0); }); }
         var c = selected[i];
         var dedupKey = bidTargetDedupKey(c);
         var existing = findExistingBidTarget(c);
@@ -9338,7 +9348,7 @@ async function saveSelectedBidTargets() {
         + (saveFail ? ' ⚠️ ' + saveFail + '건은 서버 저장에 실패했어요(화면에는 보이지만 새로고침하면 사라져요) - 다시 등록해 주세요.' : '');
     renderAuctionList(); redrawMarkers();
     // 등록이 끝나면 입찰후보 보드를 바로 열어 방금 등록한 물건을 표시함
-    if (savedCount || upTotal) openBidBoard({ highlightIds: newIds, updatedIds: updatedIds, prevVerdicts: prevVerdicts });
+    if (!csvJob.active && (savedCount || upTotal)) openBidBoard({ highlightIds: newIds, updatedIds: updatedIds, prevVerdicts: prevVerdicts }); // CSV 일괄 등록 중이면 화면을 가로채지 않음(완료 표시줄에서 열기)
 }
 /* ════════════════════════════════════
    📐 낙찰가 백테스트 일괄등록 (2026-08 추가)
@@ -20403,17 +20413,43 @@ async function onBoardCsvFile(input) {
             + ' · 🔨 <b>입찰예정 새 물건 ' + tNew + '건</b> 등록 · 이미 등록된 물건 ' + tExist + '건 결과 반영'
             + (tSkip ? ' · 제외 ' + tSkip + '건(이미 끝난 새 물건·일괄매각)' : '')
             + (dup ? ' · 파일 사이 중복 ' + dup + '건' : '') + (badFiles ? ' · 형식이 다른 파일 ' + badFiles + '개 건너뜀' : '') + (noDate ? ' · 입찰일 없는 ' + noDate + '건은 매각 여부로 구분' : '')
-            + '<br><button style="background:var(--ui-blue,#1e5eff);color:#fff;" onclick="this.disabled=true;this.innerText=\'등록 중…\';registerBoardCsv().then(function(){document.getElementById(\'bb-csv-bar\').style.display=\'none\';})">등록·반영하기</button>'
+            + '<br><button id="bb-csv-go" style="background:var(--ui-blue,#1e5eff);color:#fff;" onclick="this.disabled=true;this.innerText=\'등록 중 0%\';registerBoardCsv().then(function(){document.getElementById(\'bb-csv-bar\').style.display=\'none\';})">등록·반영하기</button>'
             + '<button onclick="pendingBidTargetExtraction=[];pendingCaseListExtraction=[];document.getElementById(\'bb-csv-bar\').style.display=\'none\'">취소</button>';
     } catch (e) {
         bar.innerHTML = 'CSV 읽기 실패: ' + e.message + ' <button onclick="document.getElementById(\'bb-csv-bar\').style.display=\'none\'">닫기</button>';
     } finally { input.value = ''; }
 }
+// 등록 진행률(%) - 입찰후보 창을 닫고 다른 작업을 해도 오른쪽 아래 표시줄로 계속 보임
+var csvJob = { active: false, base: 0, span: 1 };
+function csvProg(frac, label) {
+    if (!csvJob.active) return;
+    var pct = Math.max(0, Math.min(100, Math.floor((csvJob.base + csvJob.span * Math.max(0, Math.min(1, frac))) * 100)));
+    var pill = document.getElementById('csv-progress');
+    if (!pill) {
+        pill = document.createElement('div'); pill.id = 'csv-progress';
+        pill.style.cssText = 'position:fixed;right:14px;bottom:14px;z-index:99999;background:#1e5eff;color:#fff;border-radius:18px;padding:8px 14px;font-size:13px;box-shadow:0 2px 10px rgba(0,0,0,.3);cursor:pointer;max-width:80vw;';
+        pill.onclick = function() { if (!csvJob.active) { pill.style.display = 'none'; try { openBidBoard(); } catch (e) {} } };
+        document.body.appendChild(pill);
+    }
+    pill.style.display = ''; pill.style.background = '#1e5eff';
+    pill.innerText = '📄 CSV 등록 ' + pct + '% · ' + label + ' (다른 작업을 하셔도 돼요)';
+    var b = document.getElementById('bb-csv-go'); if (b) b.innerText = '등록 중 ' + pct + '%';
+}
 async function registerBoardCsv() {
-    var hasCases = pendingCaseListExtraction.some(function(c) { return c._selected; });
-    if (hasCases) await saveSelectedCases(); // 낙찰사례 먼저(서버에 100~200건씩 저장)
-    var hasTargets = pendingBidTargetExtraction.some(function(c) { return c._selected; });
-    if (hasTargets) await saveSelectedBidTargets();
+    var nC = pendingCaseListExtraction.filter(function(c) { return c._selected; }).length;
+    var nT = pendingBidTargetExtraction.filter(function(c) { return c._selected; }).length;
+    var tot = Math.max(1, nC + nT);
+    csvJob = { active: true, base: 0, span: nC / tot };
+    csvProg(0, '시작');
+    try {
+        if (nC) await saveSelectedCases(); // 낙찰사례 먼저(서버에 200건씩 저장)
+        csvJob = { active: true, base: nC / tot, span: nT / tot };
+        if (nT) await saveSelectedBidTargets();
+    } finally {
+        csvJob.active = false;
+        var pill = document.getElementById('csv-progress');
+        if (pill) { pill.style.display = ''; pill.style.background = '#2e7d32'; pill.innerText = '✅ CSV 등록 완료 (100%) - 눌러서 입찰후보 보기'; setTimeout(function() { if (!csvJob.active && pill) pill.style.display = 'none'; }, 60000); }
+    }
 }
 // ── 앱을 열면 입찰후보부터 ──
 function setHomeBoardPref(on) { try { localStorage.setItem('homeView', on ? 'board' : 'map'); } catch (e) {} }
