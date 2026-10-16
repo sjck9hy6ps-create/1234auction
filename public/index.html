@@ -9246,14 +9246,14 @@ async function saveSelectedBidTargets() {
         var all = pendingSaves.splice(0).concat(readySaves.splice(0));
         while (all.length >= 100 || (force && all.length)) {
             var chunkS = all.splice(0, 100);
-            statusBox.innerText = '저장 중... ' + (savedSoFar + chunkS.length) + '건째 (창을 닫지 마세요)';
+            statusBox.innerText = '저장 중... ' + Math.floor(Math.min(i, selected.length) / selected.length * 100) + '% 처리 · 서버에 ' + (savedSoFar + chunkS.length) + '건 저장 (창을 닫지 마세요)';
             try { await saveAuctionBatch(chunkS); } catch (e) { saveFail += chunkS.length; console.error('입찰예정물건 저장 실패:', e.message); }
             savedSoFar += chunkS.length;
         }
         pendingSaves = all; // 100건이 안 찬 나머지는 다음 번에 함께 저장
     };
     for (var i = 0; i < selected.length; i++) {
-        if (i % 20 === 0) { statusBox.innerText = '등록 중... ' + i + '/' + selected.length + ' (주소 좌표·건물 연식을 찾는 중이라 시간이 걸릴 수 있어요)'; await new Promise(function(r) { setTimeout(r, 0); }); }
+        if (i % 20 === 0) { statusBox.innerText = '등록 중... ' + Math.floor(i / selected.length * 100) + '% (' + i + '/' + selected.length + '건) · 주소 좌표·건물 연식을 찾는 중이라 시간이 걸릴 수 있어요 - 창을 닫지 마세요'; await new Promise(function(r) { setTimeout(r, 0); }); }
         var c = selected[i];
         var dedupKey = bidTargetDedupKey(c);
         var existing = findExistingBidTarget(c);
