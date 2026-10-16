@@ -8464,6 +8464,24 @@ async function onTankCsvFile(input, target) {
         var withBid = res.cases.filter(function(c) { return c.finalBidPrice; }).length;
         var withBidders = res.cases.filter(function(c) { return c.bidders; }).length;
         var list = res.cases.map(function(c) { return Object.assign({ _selected: true }, c); });
+        // 🛡️ 파일 종류 확인(2026-10-16, 사용자: 입찰예정 파일을 낙찰사례에 잘못 올림) - 매각가가 있는 건의 비율로 낙찰 결과 파일 / 입찰예정 파일을 구분해 잘못된 자리면 막음
+        var soldN = list.filter(function(c) { return c.finalBidPrice && /매각/.test(String(c.status || '')) && !/불허/.test(String(c.status || '')); }).length;
+        var soldRatio = soldN / list.length;
+        if (target !== 'bt' && soldRatio < 0.5) {
+            statusBox.style.color = '#e53935';
+            statusBox.innerText = '⛔ 이 파일은 낙찰(매각) 결과 파일이 아니라 입찰예정 파일로 보여요 - 매각가가 있는 건이 ' + list.length + '건 중 ' + soldN + '건(' + Math.round(soldRatio * 100) + '%)뿐이에요. 낙찰사례에는 등록하지 않았어요. 입찰예정 물건은 🔨 입찰후보의 "CSV 올리기"로 올려 주세요.';
+            return;
+        }
+        if (target === 'bt' && list.length >= 20 && soldRatio >= 0.9) {
+            statusBox.style.color = '#e53935';
+            statusBox.innerText = '⛔ 이 파일은 입찰예정 파일이 아니라 낙찰(매각) 결과 파일로 보여요 - ' + list.length + '건 중 ' + soldN + '건(' + Math.round(soldRatio * 100) + '%)이 이미 매각됐어요. 입찰예정으로는 등록하지 않았어요. 낙찰 결과는 🏆 낙찰사례의 "CSV 올리기"로 올려 주세요.';
+            pendingBidTargetExtraction = [];
+            return;
+        }
+        if (target !== 'bt') {
+            // 낙찰사례·백테스트에는 매각가가 있는 건만 등록 - 섞여 들어온 유찰·진행 건은 자동 제외
+            list.forEach(function(c) { if (!(c.finalBidPrice && /매각/.test(String(c.status || '')) && !/불허/.test(String(c.status || '')))) { c._selected = false; c._notSold = true; } });
+        }
         if (target === 'bx') { pendingBacktestExtraction = list; renderBacktestPreview(); }
         else if (target === 'bt') {
             // 2026-10(사용자 요청: 입찰예정물건도 CSV로 대량 등록) - 붙여넣기와 같은 흐름(미리보기 → 평형별 인기 확인 → 등록).
@@ -8484,7 +8502,8 @@ async function onTankCsvFile(input, target) {
                 + (badFiles ? ' · 형식이 다른 파일 ' + badFiles + '개 건너뜀' : '') + ' - 아래에서 확인 후 등록하세요.';
             return;
         }
-        statusBox.innerText = '📄 CSV ' + files.length + '개 파일, ' + res.cases.length + '건 읽음 (낙찰가 있음 ' + withBid + '건 · 입찰자수 있음 ' + withBidders + '건'
+        var notSoldN = list.filter(function(c) { return c._notSold; }).length;
+        statusBox.innerText = '📄 CSV ' + files.length + '개 파일, ' + res.cases.length + '건 읽음' + (notSoldN ? ' · 매각 전/유찰 ' + notSoldN + '건은 자동 제외' : '') + ' (낙찰가 있음 ' + withBid + '건 · 입찰자수 있음 ' + withBidders + '건'
             + (dup ? ' · 파일 사이 중복 ' + dup + '건 제외' : '') + (badFiles ? ' · 형식이 다른 파일 ' + badFiles + '개 건너뜀' : '')
             + (res.skipped ? ' · 형식이 달라 건너뜀 ' + res.skipped + '건' : '') + ') - 아래에서 확인 후 등록하세요.';
     } catch (e) {
@@ -20335,7 +20354,7 @@ async function onBoardCsvFile(input) {
     bar.style.display = ''; bar.innerHTML = '📄 CSV 읽는 중…';
     await onTankCsvFile(input, 'bt');
     var list = pendingBidTargetExtraction || [];
-    if (!list.length) { bar.innerHTML = '읽을 수 있는 탱크옥션 CSV가 없어요. <button onclick="document.getElementById(\'bb-csv-bar\').style.display=\'none\'">닫기</button>'; return; }
+    if (!list.length) { var _why = (document.getElementById('bt-extract-status') || {}).innerText || ''; bar.innerHTML = (/^⛔/.test(_why) ? _why : '읽을 수 있는 탱크옥션 CSV가 없어요.') + ' <button onclick="document.getElementById(\'bb-csv-bar\').style.display=\'none\'">닫기</button>'; return; }
     var exist = list.filter(function(c) { return findExistingBidTarget(c); }).length;
     var sel = list.filter(function(c) { return c._selected; }).length;
     bar.innerHTML = '📄 <b>' + list.length + '건</b> 읽음 · 새 물건 ' + (list.length - exist) + '건 · 이미 등록된 물건 ' + exist + '건(유찰·매각 결과 반영)'
