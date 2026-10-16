@@ -8464,23 +8464,29 @@ async function onTankCsvFile(input, target) {
         var withBid = res.cases.filter(function(c) { return c.finalBidPrice; }).length;
         var withBidders = res.cases.filter(function(c) { return c.bidders; }).length;
         var list = res.cases.map(function(c) { return Object.assign({ _selected: true }, c); });
-        // 🛡️ 파일 종류 확인(2026-10-16, 사용자: 입찰예정 파일을 낙찰사례에 잘못 올림) - 매각가가 있는 건의 비율로 낙찰 결과 파일 / 입찰예정 파일을 구분해 잘못된 자리면 막음
-        var soldN = list.filter(function(c) { return c.finalBidPrice && /매각/.test(String(c.status || '')) && !/불허/.test(String(c.status || '')); }).length;
-        var soldRatio = soldN / list.length;
-        if (target !== 'bt' && soldRatio < 0.5) {
+        // 🛡️ 파일 종류 확인(2026-10-16, 사용자: "낙찰과 입찰의 가장 큰 차이는 입찰일 - 과거는 낙찰사례, 당일·미래는 입찰예정, 한국시간 기준")
+        var todayKst = new Date(Date.now() + 9 * 3600000).toISOString().slice(0, 10);
+        var isPast = function(c) { return c.saleDate ? c.saleDate < todayKst : null; }; // 입찰일 없으면 판단 안 함(null)
+        var isSoldRow = function(c) { return !!(c.finalBidPrice && /매각/.test(String(c.status || '')) && !/불허/.test(String(c.status || ''))); };
+        var dated = list.filter(function(c) { return c.saleDate; });
+        var pastN = dated.filter(isPast).length, pastRatio = dated.length ? pastN / dated.length : null;
+        if (target !== 'bt' && pastRatio != null && pastRatio < 0.5) {
             statusBox.style.color = '#e53935';
-            statusBox.innerText = '⛔ 이 파일은 낙찰(매각) 결과 파일이 아니라 입찰예정 파일로 보여요 - 매각가가 있는 건이 ' + list.length + '건 중 ' + soldN + '건(' + Math.round(soldRatio * 100) + '%)뿐이에요. 낙찰사례에는 등록하지 않았어요. 입찰예정 물건은 🔨 입찰후보의 "CSV 올리기"로 올려 주세요.';
+            statusBox.innerText = '⛔ 입찰일이 오늘(' + todayKst + ', 한국시간) 이후인 건이 ' + (dated.length - pastN) + '건/' + dated.length + '건이에요 - 입찰예정 파일로 보여서 낙찰사례에는 등록하지 않았어요. 입찰예정 물건은 🔨 입찰후보의 "CSV 올리기"로 올려 주세요.';
             return;
         }
-        if (target === 'bt' && list.length >= 20 && soldRatio >= 0.9) {
+        if (target === 'bt' && dated.length >= 20 && pastRatio >= 0.9) {
             statusBox.style.color = '#e53935';
-            statusBox.innerText = '⛔ 이 파일은 입찰예정 파일이 아니라 낙찰(매각) 결과 파일로 보여요 - ' + list.length + '건 중 ' + soldN + '건(' + Math.round(soldRatio * 100) + '%)이 이미 매각됐어요. 입찰예정으로는 등록하지 않았어요. 낙찰 결과는 🏆 낙찰사례의 "CSV 올리기"로 올려 주세요.';
+            statusBox.innerText = '⛔ 입찰일이 모두 오늘(' + todayKst + ', 한국시간)보다 이전이에요(' + pastN + '/' + dated.length + '건) - 낙찰 결과 파일로 보여서 입찰예정으로는 등록하지 않았어요. 낙찰 결과는 🏆 낙찰사례의 "CSV 올리기"로 올려 주세요.';
             pendingBidTargetExtraction = [];
             return;
         }
         if (target !== 'bt') {
-            // 낙찰사례·백테스트에는 매각가가 있는 건만 등록 - 섞여 들어온 유찰·진행 건은 자동 제외
-            list.forEach(function(c) { if (!(c.finalBidPrice && /매각/.test(String(c.status || '')) && !/불허/.test(String(c.status || '')))) { c._selected = false; c._notSold = true; } });
+            // 낙찰사례·백테스트: 입찰일이 오늘 이전이고 매각가가 있는 건만 등록 - 당일·미래 입찰, 유찰·진행 건은 자동 제외
+            list.forEach(function(c) { if (isPast(c) === false || !isSoldRow(c)) { c._selected = false; c._notSold = true; } });
+        } else {
+            // 입찰예정: 새 물건 중 입찰일이 이미 지난 건은 입찰예정이 아니므로 선택 해제(이미 등록된 물건의 지난 결과 반영은 그대로)
+            list.forEach(function(c) { if (isPast(c) === true && !findExistingBidTarget(c)) c._selected = false; });
         }
         if (target === 'bx') { pendingBacktestExtraction = list; renderBacktestPreview(); }
         else if (target === 'bt') {
@@ -8503,7 +8509,7 @@ async function onTankCsvFile(input, target) {
             return;
         }
         var notSoldN = list.filter(function(c) { return c._notSold; }).length;
-        statusBox.innerText = '📄 CSV ' + files.length + '개 파일, ' + res.cases.length + '건 읽음' + (notSoldN ? ' · 매각 전/유찰 ' + notSoldN + '건은 자동 제외' : '') + ' (낙찰가 있음 ' + withBid + '건 · 입찰자수 있음 ' + withBidders + '건'
+        statusBox.innerText = '📄 CSV ' + files.length + '개 파일, ' + res.cases.length + '건 읽음' + (notSoldN ? ' · 입찰일 당일·미래/매각 전 ' + notSoldN + '건은 자동 제외' : '') + ' (낙찰가 있음 ' + withBid + '건 · 입찰자수 있음 ' + withBidders + '건'
             + (dup ? ' · 파일 사이 중복 ' + dup + '건 제외' : '') + (badFiles ? ' · 형식이 다른 파일 ' + badFiles + '개 건너뜀' : '')
             + (res.skipped ? ' · 형식이 달라 건너뜀 ' + res.skipped + '건' : '') + ') - 아래에서 확인 후 등록하세요.';
     } catch (e) {
