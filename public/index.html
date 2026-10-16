@@ -9211,8 +9211,10 @@ async function enrichBidTargetData(data, c, addr) {
             data.lat = c._geo.lat; data.lon = c._geo.lon; data.addrLabel = c._geo.addrLabel;
             data.dong = c._geo.dong; data.bunji = c._geo.bunji; data.bCode = c._geo.bCode;
         } else if (addr) {
-            await new Promise(function(resolve) {
+            // 좌표 조회가 응답 없이 멈추거나 오류가 나도 그 건만 좌표 없이 넘어가게 함(10초 제한) - 한 건이 막혀 일괄 등록 전체가 멈추던 문제
+            await Promise.race([new Promise(function(resolve) {
                 geocoder.addressSearch(addr, async function(result, status) {
+                  try {
                     if (status !== kakao.maps.services.Status.OK) { // 호실·외 N필지 꼬리 때문에 못 찾으면 지번까지만 잘라 다시 찾음
                         var q2 = addrForGeocode(addr); var g2 = q2 && q2 !== addr ? await geocodeFromAddr(q2) : null;
                         if (g2 && g2.lat) { data.lat = g2.lat; data.lon = g2.lon; data.addrLabel = g2.addrLabel; data.dong = g2.dong; data.bunji = g2.bunji; data.bCode = g2.bCode; }
@@ -9230,9 +9232,10 @@ async function enrichBidTargetData(data, c, addr) {
                         // coord2RegionCode(regionCodeAt)를 또 부를 필요가 없어짐.
                         data.bCode = best.address ? best.address.b_code : null;
                     }
+                  } catch (e) { /* 이 건은 좌표 없이 진행 */ }
                     resolve();
                 });
-            });
+            }), new Promise(function(resolve) { setTimeout(resolve, 10000); })]);
         }
         // ⚠️ 2026-08(사용자 요청): 일괄등록은 caseNo/appraisalPrice 등 AI 추출 텍스트에 있는
         // 정보만 채우고 건물 연식(buildYear)은 비워둔 채 저장했음 - 그러면 이 물건이 정식
@@ -9331,7 +9334,7 @@ async function saveSelectedBidTargets() {
         if (dedupKey) existingKeys[dedupKey] = true;
         savedCount++;
         newIds.push(data.id);
-        (function(d, cc, ad) { jobs.push(enrichBidTargetData(d, cc, ad).then(function() { if (!d.lat || !d.lon) noPinCount++; readySaves.push(d); })); })(data, c, addr);
+        (function(d, cc, ad) { jobs.push(Promise.race([enrichBidTargetData(d, cc, ad).catch(function() {}), new Promise(function(r) { setTimeout(r, 25000); })]).then(function() { if (!d.lat || !d.lon) noPinCount++; readySaves.push(d); })); })(data, c, addr);
         if (jobs.length >= 4) { await Promise.all(jobs); jobs = []; await flushReady(false); }
     }
     await Promise.all(jobs); jobs = [];
