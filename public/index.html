@@ -26723,7 +26723,7 @@ function computeReminders() {
             out.push({ key: 'csv', pri: urgent && !weekend ? 0 : 1, icon: '📄', title: weekend ? '주말 준비: 새 경매 물건·결과 CSV 올리기 (일요일 저녁 8시 전)' : '급한 경매 CSV 올리기',
                 sub: (soon ? '3일 안 입찰 ' + soon + '건' : '') + (soon && past ? ' · ' : '') + (past ? '입찰일 지났는데 결과 없는 물건 ' + past + '건(유찰 가정으로 계산 중)' : '')
                     + ' - 올리면 최저가·유찰·매각 결과와 낙찰 가능성이 바로 다시 계산돼요' + (since != null ? ' (마지막 ' + since + '일 전)' : '')
-                    + '\n📅 필요한 자료: 탱크옥션에서 입찰일 ' + csvFrom + ' ~ ' + csvTo + ' 범위(진행·매각·유찰 모두)로 검색해 CSV 받기',
+                    + '\n📅 필요한 자료(탱크옥션 CSV): ① 지난 결과 - 입찰일 ' + csvFrom + ' ~ ' + ymd(now) + ' (매각·유찰 결과)' + ' ② 앞으로 입찰 - 입찰일 ' + ymd(now) + ' ~ ' + csvTo + ' (아직 진행 중인 새 물건)',
                 btn: '📝 경매물건 등록', act: 'openBidTargetPanel()' });
         }
     } catch (e) {}
