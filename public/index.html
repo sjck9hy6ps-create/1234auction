@@ -18004,7 +18004,7 @@ function riskMarginFor(predictedSale, ownTrades, downRisk, popInfo, regionInfo) 
     if (regionInfo && regionInfo.cls) {
         carry = regionInfo.cls === '서울' ? 0.015 : (regionInfo.cls === '경기·인천' ? 0.005 : 0);
         if (regionInfo.cls !== '서울' && regionInfo.n6 != null && regionInfo.n6 <= 4) volX = 0.01;
-        if (regionInfo.fb) volX = (regionInfo.cls === '서울' ? 0 : (regionInfo.cls === '경기·인천' ? 0.01 : 0.02)) + (regionInfo.fb.one ? 0.02 : 0) + (regionInfo.fb.weak ? 0.05 : 0); // 6개월 거래 부족 추론: 하방 25% 지점 서울 -5%·경기인천 -9%·지방 -11%(1건뿐이면 -10~-18%) → 기본 10% 위에 더 얹음
+        if (regionInfo.fb) volX = regionInfo.fb.rec ? (regionInfo.cls === '지방' ? 0.01 : 0) + (regionInfo.fb.weak ? 0.05 : 0) : (regionInfo.cls === '서울' ? 0 : (regionInfo.cls === '경기·인천' ? 0.01 : 0.02)) + (regionInfo.fb.one ? 0.02 : 0) + (regionInfo.fb.weak ? 0.05 : 0); // 6개월 거래 부족 추론: 하방 25% 지점 서울 -5%·경기인천 -9%·지방 -11%(1건뿐이면 -10~-18%) → 기본 10% 위에 더 얹음
     }
     rate += carry + volX;
     // 2026-10: 지역 "6개월 하락 위험 높음"이면 그 등급의 과거 평균 6개월 하락폭(수도권 3.8%·지방 2.1%)만큼 더 얹음
@@ -18412,7 +18412,7 @@ function ownComplexEntries(a, bunjiFull, type) {
 
 /* 🔎 최근 6개월 같은 평형 거래가 3건 미만일 때의 예상매도가 추론(2026-10-17, 사용자: "6개월 이전 거래·단지 내 다른 평형·생활권 거래로 보수적으로 추론, 자료가 부족해도 추론 가능해야")
    전국 아파트 실거래 3.9만 건(2025년~, 직전 정보만으로 다음 거래가 맞히기) 백테스트로 정한 단계:
-   ① 같은 단지·같은 평형 6~36개월 전 거래를 시군구 ㎡당 시세 지수로 지금 시점에 맞춘 최근가중 평균(반감 6개월) - 서울 오차 7.2%·경기·인천 6.9%·지방 8.7%
+   ① 같은 단지·같은 평형 36개월 이내 거래 - 최근 6개월 거래는 그대로, 더 오래된 거래는 시군구 ㎡당 시세 지수로 지금 시점에 맞춘 최근가중 평균(반감 3개월) - 6개월 안 1~2건일 때 서울 오차 4.5%·경기·인천 4.4%·지방 5.8%, 0건이면 7.8·7.5·9.9%
    ② 같은 단지 다른 평형 최근 12개월 ㎡당 가격 × 이 평형(평형이 클수록 ㎡당 가격이 낮아지는 정도 -0.285 반영) - 오차 9% 안팎, 치우침 거의 없음
    ①②가 모두 있으면 6:4로 섞음(오차 6.9%) / ③ 같은 동 다른 단지의 같은 평형 최근 6개월 × 이 단지 상대 수준 / ④ 같은 동 전체 12개월 ㎡당 가격 - ③④는 오차 13~30%로 약해서 20~22% 낮춰 잡고 '근거 약함' 표시
    거래가 뜸한 단지는 실제 거래가 예상보다 낮게 나왔음(경기·인천 -2.5~-4%, 지방 -2.6~-4.4%) → 그만큼 보정 계수를 곱함(서울은 높게 나와 보정 없음). 위험은 목표마진(riskMarginFor)에서 추가 반영. */
@@ -18465,12 +18465,15 @@ function aptSaleFallback(a, bunjiFull, pyung, lawd) {
     var own = ownComplexEntries(a, bunjiFull, 'apt'), ownTr = [];
     own.forEach(function(ap) { (ap.trades || []).forEach(function(t) { if (good(t)) ownTr.push(t); }); });
     var out = null;
-    // ① 같은 평형 6~36개월
-    var num = 0, den = 0, n2 = 0;
+    // ① 같은 평형 36개월 이내 전부 - 최근 6개월 거래는 보정 없이 그대로(가장 큰 비중), 6개월보다 오래된 거래만 시세 지수로 지금 시점에 맞춤. 비중은 3개월마다 절반
+    //    (백테스트 6개월 안 1~2건: 서울 오차 7.0→4.5%·경기·인천 6.5→4.4%·지방 8.3→5.8%, 이전 거래만 쓸 때보다 정확)
+    var num = 0, den = 0, n2 = 0, nrec = 0;
     ownTr.forEach(function(t) {
         if (Math.abs(parseFloat(t.area) - area) > 3) return;
-        var ag = ageOf(t), ad = adjOf(t); if (ag <= 6 || ag > 36 || !ad) return;
-        var w = Math.pow(0.5, ag / 6); num += parseInt(t.amount) * ad * w; den += w; n2++;
+        var ag = ageOf(t); if (ag > 36) return;
+        var v = parseInt(t.amount);
+        if (ag > 6) { var ad = adjOf(t); if (!ad) return; v = v * ad; } else nrec++;
+        var w = Math.pow(0.5, ag / 3); num += v * w; den += w; n2++;
     });
     var t2 = n2 ? num / den : null;
     // ② 다른 평형 12개월
@@ -18482,9 +18485,11 @@ function aptSaleFallback(a, bunjiFull, pyung, lawd) {
     });
     var med = function(x) { x = x.slice().sort(function(m, n) { return m - n; }); var k = x.length >> 1; return x.length % 2 ? x[k] : (x[k - 1] + x[k]) / 2; };
     var t3 = ppms.length >= 2 ? med(ppms) * area * Math.exp(-0.285 * Math.log(area / med(szs))) : null;
-    var BIAS = { 서울: { t2: 1.0, blend: 1.0, t3: 1.0 }, '경기·인천': { t2: 0.965, blend: 0.975, t3: 1.0 }, '지방': { t2: 0.955, blend: 0.975, t3: 1.0 } }[cls];
-    if (t2 && t3) out = { sale: (0.6 * t2 + 0.4 * t3) * BIAS.blend, tier: '단지 6개월 이전 거래+다른 평형', n: n2 + ppms.length, weak: false };
-    else if (t2) out = { sale: t2 * BIAS.t2, tier: '같은 단지 같은 평형 6개월 이전 거래(시세 변화 보정)', n: n2, weak: false, one: n2 === 1 };
+    // 보정 계수: 최근 6개월 거래가 1~2건 있으면 거의 맞음(경기·인천 -0.6%·지방 -0.9% → 0.995·0.99), 하나도 없으면 실제가 예상보다 낮게 나옴(경기·인천 -4.2%·지방 -4.6% → 0.965·0.955)
+    var BIAS = nrec ? { 서울: { t2: 1.0, blend: 1.0, t3: 1.0 }, '경기·인천': { t2: 0.995, blend: 0.995, t3: 1.0 }, '지방': { t2: 0.99, blend: 0.99, t3: 1.0 } }[cls]
+                    : { 서울: { t2: 1.0, blend: 1.0, t3: 1.0 }, '경기·인천': { t2: 0.965, blend: 0.975, t3: 1.0 }, '지방': { t2: 0.955, blend: 0.975, t3: 1.0 } }[cls];
+    if (t2 && t3 && !nrec) out = { sale: (0.6 * t2 + 0.4 * t3) * BIAS.blend, tier: '같은 단지 6개월 이전 거래+다른 평형', n: n2 + ppms.length, weak: false };
+    else if (t2) out = { sale: t2 * BIAS.t2, tier: nrec ? '같은 단지 같은 평형 최근 ' + nrec + '건(6개월 안)+이전 거래(시세 변화 보정)' : '같은 단지 같은 평형 6개월 이전 거래(시세 변화 보정)', n: n2, weak: false, one: n2 === 1, rec: nrec };
     else if (t3) out = { sale: t3 * BIAS.t3, tier: '같은 단지 다른 평형 거래(㎡당 가격 환산)', n: ppms.length, weak: false };
     if (!out) {
         // ③ 같은 동 다른 단지 같은 평형 6개월 × 이 단지 상대 수준 / ④ 같은 동 전체 12개월
@@ -19548,7 +19553,7 @@ async function mergeServerBoardCache(local) {
 }
 setTimeout(function() { try { srvBoardParts(); window.villaSrvP = villaFetchServerCalc(); } catch (e) {} }, 2500); // 앱을 켜고 2.5초 뒤 배경에서 미리 받기
 // 저장 계산을 다시 써도 되는지 - 물건 입력값(시세 계산에 쓰는 것)과 입찰일 지남 여부. 계산 방식이 바뀌면 BOARD_CALC_VER을 올림
-var BOARD_CALC_VER = 43; // 43: 6개월 거래 부족 시 단계별 추론(2026-10-17) - // 42: 지역별 예상매도가(서울 최근3건·경기인천 반감1개월·지방 반감2개월)와 위험 여유(2026-10-17) - // 41: 아파트 예상매도가를 최근 6개월 같은 평형 거래의 최근가중 중위값으로(전국 백테스트, 2026-10-17) - // 40: 임차인 둘로 읽힌 경우 별개/같은 임차권(갱신·승계) 선택(2026-10-11) - // 39: 39: 임차권등기를 임차인으로 계산(전입·확정일자 기준)·경매신청인 전세권 안내(2026-10-11) - // 38: 38: 권리분석 날짜 선후 규칙 정리(전입 다음 날 0시·동순위 안분, 2026-10-11) - // 37: 37: 권리분석에 말소기준일보다 앞선 전세권·임차권 등 등기부 인수 권리 반영(2026-10-11) - // 36: 저가 아파트 순이익률 10% 추천가 규칙 되돌림(2026-10-11, 백테스트 손해 30~42%) - // 34: 33: 아파트 고층 보정 축소·저층 범위(2026-10-11) - // 29: nYear 저장 추가 - // 27: 🎲 예상 낙찰가용 시세(wbBase) 추가 (범위 표시는 화면에서 바로 계산 - 버전 변경 없음)
+var BOARD_CALC_VER = 44; // 44: 추론에 최근 6개월 1~2건 포함 - // 43: 6개월 거래 부족 시 단계별 추론(2026-10-17) - // 42: 지역별 예상매도가(서울 최근3건·경기인천 반감1개월·지방 반감2개월)와 위험 여유(2026-10-17) - // 41: 아파트 예상매도가를 최근 6개월 같은 평형 거래의 최근가중 중위값으로(전국 백테스트, 2026-10-17) - // 40: 임차인 둘로 읽힌 경우 별개/같은 임차권(갱신·승계) 선택(2026-10-11) - // 39: 39: 임차권등기를 임차인으로 계산(전입·확정일자 기준)·경매신청인 전세권 안내(2026-10-11) - // 38: 38: 권리분석 날짜 선후 규칙 정리(전입 다음 날 0시·동순위 안분, 2026-10-11) - // 37: 37: 권리분석에 말소기준일보다 앞선 전세권·임차권 등 등기부 인수 권리 반영(2026-10-11) - // 36: 저가 아파트 순이익률 10% 추천가 규칙 되돌림(2026-10-11, 백테스트 손해 30~42%) - // 34: 33: 아파트 고층 보정 축소·저층 범위(2026-10-11) - // 29: nYear 저장 추가 - // 27: 🎲 예상 낙찰가용 시세(wbBase) 추가 (범위 표시는 화면에서 바로 계산 - 버전 변경 없음)
 /* 2026-10-15(사용자: 입찰후보 로딩이 느림 - 원인 실측): 식별값 끝의 'P/F'(입찰일 지남 여부)가 한국 시각 자정에 바뀌어, 서버 미리 계산이 돈 뒤 어제 입찰이던 물건(하루 약 350건)이 전부 '다른 물건'이 돼
    지역 자료 86곳(곳당 9~13MB)을 새로 받아 다시 계산했음. 계산 결과는 입찰일 지남 여부와 무관하므로(날짜 표시는 열 때 다시 계산) 저장본의 P/F가 반대여도 같은 것으로 봄(flip). */
 function boardBaseSig(a, flip) {
