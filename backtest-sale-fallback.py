@@ -90,6 +90,18 @@ def main():
             if len(s2) >= 1:
                 a2 = adj(s2); a2 = a2[~np.isnan(a2)] * float(T["size"])
                 if len(a2): rec["T2"] = float(np.median(a2[-5:] if False else a2)); rec["T2n"] = len(a2)
+            # T2all: 6개월 안 최근 거래(보정 없음)까지 포함한 36개월 전체, 최근일수록 비중↑ (반감 3·6개월)
+            sa = same[age <= 36]
+            if len(sa) >= 1:
+                aa = adj(sa) * float(T["size"]); ag_a = (T["t"] - sa["t"].values) / 30.4
+                for hl in (3.0, 6.0):
+                    w = 0.5 ** (ag_a / hl); ok = ~np.isnan(aa)
+                    if ok.any(): rec[f"T2all{int(hl)}"] = float(np.average(aa[ok], weights=w[ok]))
+                # 최근(6개월 안) 거래는 시세 보정 없이 그대로 쓰는 변형
+                raw = sa["price"].values.astype(float); use = np.where(ag_a <= 6, raw, aa)
+                for hl in (3.0, 6.0):
+                    w = 0.5 ** (ag_a / hl); ok = ~np.isnan(use)
+                    if ok.any(): rec[f"T2raw{int(hl)}"] = float(np.average(use[ok], weights=w[ok]))
             # T2 최근가중 (반감 6개월)
             if len(s2) >= 1:
                 a2 = adj(s2) * float(T["size"]); w = 0.5 ** ((T["t"] - s2["t"].values) / 30.4 / 6.0); ok = ~np.isnan(a2)
@@ -150,6 +162,16 @@ def report(D):
             if c in d.columns:
                 s = stat(d, c)
                 if s: print(f"   {c:4} {s}")
+    print("\n==== 6개월 안 거래 수별: T2(이전 거래만) vs T2all(최근 포함) vs T2raw(최근 무보정 포함) ====")
+    for nm, lo, hi in (("6개월 안 0건", 0, 1), ("6개월 안 1~2건", 1, 3)):
+        for cls in ("서울", "경기·인천", "지방"):
+            d = D[(D.cls == cls) & (D.n6 >= lo) & (D.n6 < hi)]
+            if len(d) < 100: continue
+            print(f"[{cls}·{nm}] n{len(d):,}")
+            for c in ("T2w", "T2all3", "T2all6", "T2raw3", "T2raw6"):
+                if c in d.columns:
+                    s_ = stat(d, c)
+                    if s_: print(f"   {c:7} {s_}")
     # 우선순위 조합: T2(≥2건) → T3 → T4(상대수준 있음) → T5
     def pick(r):
         if r.get("T2n", 0) >= 2 and pd.notna(r.get("T2w")): return r["T2w"], "T2"
