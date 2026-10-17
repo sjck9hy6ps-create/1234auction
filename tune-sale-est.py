@@ -77,6 +77,17 @@ def main():
     tr["tday"] = (tr["ts"] - pd.Timestamp("2000-01-01")).dt.days.astype(float)
     groups = {k: g.sort_values("tday").reset_index(drop=True) for k, g in tr.groupby(["region_n", "dk", "bunji_s"])}
     print(f"  대상 사례 {len(df):,}건(동 번호 있음), 실거래 {len(tr):,}건, 단지 {len(groups):,}곳")
+    # 세대수(회전율용): kapt_complex_info를 (법정동 마지막 단어, 정규화한 단지명)으로 연결
+    def nrm(x): return re.sub(r"[^0-9A-Za-z가-힣]", "", str(x or "")).replace("아파트", "")
+    hh_map = {}
+    try:
+        kp = avm.fetch_all_rows("kapt_complex_info", cols="kapt_name,as3,households", extra_filter="&households=gt.0")
+        for r in kp.itertuples():
+            k = (ab.dong_key(str(r.as3).strip().split()[-1] if r.as3 else ""), nrm(r.kapt_name))
+            hh_map[k] = max(hh_map.get(k, 0), int(r.households))
+    except Exception as e:
+        print("  세대수 조회 실패:", e)
+    print(f"  세대수 자료 {len(hh_map):,}단지")
 
     rows = []
     for c in df.itertuples():
@@ -124,9 +135,13 @@ def main():
                 rh = max(1.0, min(1.08, np.median(gh) / np.median(allH))) if (len(gh) >= 3 and len(allH) >= 6) else None
                 factor = rh or 1.015
         base3, base6 = qtile(p3, 0.5), qtile(p6, 0.4)
+        hh = None
+        for nmx in {nrm(getattr(c, "buildingName", "")), nrm(g["danji"].mode().iloc[0]) if "danji" in g.columns and len(g) else ""}:
+            if nmx and (c.dk, nmx) in hh_map: hh = hh_map[(c.dk, nmx)]; break
+        tr12 = int((((H["tday"] >= asof - 365) & (~H["is_direct"]))).sum())
         rows.append(dict(region=c.region, sale=int(c.sale_int), area=float(c.area), fl=tf, maxF=maxF, n3=len(p3), n6=len(p6), n12=len(p12),
                          p3q=[qtile(p3, q) if len(p3) else None for q in (0.3, 0.4, 0.5, 0.6, 0.7)], p6q=[qtile(p6, q) if len(p6) else None for q in (0.3, 0.4, 0.5, 0.6, 0.7)],
-                         m12=med(p12), p12l=[[round(float(x), 2), float(y)] for x, y in sorted(zip(age_m[age_m <= 12], S['price'].values[age_m <= 12]))], factor=float(factor), resale=resale, resale_m=float(resale_m), actual=float(c.actual), dk=c.dk, nm=str(getattr(c, "buildingName", "") or "")))
+                         hh=hh, tr12=tr12, m12=med(p12), p12l=[[round(float(x), 2), float(y)] for x, y in sorted(zip(age_m[age_m <= 12], S['price'].values[age_m <= 12]))], factor=float(factor), resale=resale, resale_m=float(resale_m), actual=float(c.actual), dk=c.dk, nm=str(getattr(c, "buildingName", "") or "")))
     D = pd.DataFrame(rows)
     print(f"  앱 방식 재현 가능 사례 {len(D):,}건 (동 확인 6개월 내 되팔기 있음)")
     if os.environ.get("KEEP_PKL"):
