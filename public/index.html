@@ -4557,7 +4557,7 @@ function renderVillaLite(body) {
     var tabs = [['go', '🚶 임장 후보', goN], ['pass', '패스', passN], ['all', '전체', all.length]].map(function(t) { return '<button class="bb-tab' + (vv === t[0] ? ' on' : '') + '" onclick="setVillaVisit(\'' + t[0] + '\')">' + t[1] + ' <b>' + t[2] + '</b></button>'; }).join(' ');
     var h = '<div style="padding:6px 4px;">' + tabs + ' <button class="bb-tab' + (s.villaCash ? ' on' : '') + '" title="추천가(없으면 최저가)로 사서 대출을 받고 월세를 놓았을 때 월세 − 이자가 월 20만원 이상 남는 물건만" onclick="setVillaCash()">💰 월세 20만+ <b>' + all.filter(function(r) { var c = villaRentCash(r, evs[r.id]); return c && c.ok; }).length + '</b></button>' + ' <span class="bb-sub">수도권 빌라 · 🏠 도시민박 검토 가능 <b>' + okN + '건</b> · 행을 누르면 건물 상세(대장·도시민박·수리 가정)'
         + (homestayAgg && !homestayAgg.empty ? '' : ' · 도시민박 지역 집계 불러오는 중…') + '</span></div>';
-    if (!rows.length) { body.innerHTML = h + '<div class="bb-empty">' + (all.length ? '이 목록에는 물건이 없어요.' : '수도권 빌라 입찰후보가 없어요.') + '</div>'; return; }
+    if (!rows.length) { h += '<div class="bb-empty">' + (all.length ? '이 목록에는 물건이 없어요.' : '수도권 빌라 입찰후보가 없어요.') + '</div>'; window.__villaLastHtml = h; window.__villaLastKey = vKey; body.innerHTML = h; return; }
     var lim = s.villaLimit || 120;
     if (bbCardMode()) {
         h += nvSortBar('villa') + '<div class="nv-list">' + rows.slice(0, lim).map(function(r) { return nvVillaCard(r, evs[r.id]); }).join('') + '</div>' + (rows.length > lim ? '<div style="text-align:center;padding:14px;"><button class="bb-csv" style="font-size:13px;padding:8px 18px;" onclick="villaMore()">+ 더 보기 (남은 ' + (rows.length - lim) + '건)</button></div>' : '');
