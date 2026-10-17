@@ -4522,7 +4522,18 @@ function renderVillaLite(body) {
     if (all.some(function(r) { return !hsBld[r.id]; })) all.slice().sort(function(x, y) { return (x.dday ? x.dday.diffDays : 9999) - (y.dday ? y.dday.diffDays : 9999); }).forEach(ensureHomestayCheck); // 입찰이 가까운 물건부터 조회(이미 다 조회했으면 건너뜀)
     var evs = {}; window.__villaEvDeadline = performance.now() + 14; all.forEach(function(r) { evs[r.id] = villaEval(r); }); window.__villaEvDeadline = 0;
     var evPendN = all.filter(function(r) { return evs[r.id].pending; }).length;
-    if (evPendN) { clearTimeout(window.__villaEvT); window.__villaEvT = setTimeout(function() { if (bidBoardState.visit === 'villa') renderBidBoard(); }, 20); body.innerHTML = '<div class="bb-empty">빌라 ' + (all.length - evPendN) + '/' + all.length + '건 판정 계산 중…</div>'; return; } // 계산이 끝나기 전 일부만 보여주지 않고 다 끝난 뒤 한 번에 표시
+    var vKey = [vv, s.villaCol || '', s.villaDir || '', s.villaCash ? 1 : 0, s.listLite ? 1 : 0, s.rightsNeed ? 1 : 0, bbCardMode() ? 'c' : 't'].join('|');
+    if (evPendN) {
+        clearTimeout(window.__villaEvT); window.__villaEvT = setTimeout(function() { if (bidBoardState.visit === 'villa') renderBidBoard(); }, 20);
+        var pTxt = '⏳ 빌라 ' + (all.length - evPendN) + '/' + all.length + '건 새로 계산 중 (' + Math.floor((all.length - evPendN) / all.length * 100) + '%) - 끝나면 아래 목록이 갱신돼요';
+        // 2026-10-17(사용자: 리스트가 잠깐 보였다가 다시 계산중이 반복) - 지역 자료가 도착할 때마다 일부 판정이 다시 계산돼 목록이 사라지던 문제 → 이전 목록을 그대로 두고 위에 진행 표시만 갱신(스크롤·클릭 유지)
+        if (window.__villaLastHtml && window.__villaLastKey === vKey) {
+            var bn = document.getElementById('villa-pend-banner');
+            if (bn && body.contains(bn)) bn.textContent = pTxt;
+            else body.innerHTML = '<div id="villa-pend-banner" style="position:sticky;top:0;z-index:5;background:#eef4ff;border:1px solid #c7d7fe;border-radius:8px;padding:6px 12px;font-size:12.5px;margin:4px;">' + pTxt + '</div>' + window.__villaLastHtml;
+        } else body.innerHTML = '<div class="bb-empty">빌라 ' + (all.length - evPendN) + '/' + all.length + '건 판정 계산 중… (' + Math.floor((all.length - evPendN) / all.length * 100) + '%)</div>';
+        return;
+    } // 계산이 끝나기 전엔 새 목록을 만들지 않음(이전 목록이 있으면 그대로 유지)
     if (!hsFillBusy && all.some(function(r) { var h0 = hsBld[r.id]; return (!h0 || !h0.info || !h0.info.title) && !hsFillDone[r.id]; })) setTimeout(function() { hsFillFromCache(villaMetroRows(true)); }, 100);
     if (!villaLoadBusy && all.some(function(r) { var c = villaVeCache[r.id]; return !(c && c.sig === villaVeSig(r.a)) || (window.__rcForce && !villaRcFresh[r.id]) || (bidBoardLawdOf(r.a) && !villaLiqCache[r.id] && !villaPts[bidBoardLawdOf(r.a)] && !villaPtsTried[bidBoardLawdOf(r.a)]); })) setTimeout(villaLoadRegions, 50);
     var goN = all.filter(function(r) { return evs[r.id].visit.go; }).length, passN = all.length - goN;
@@ -4550,7 +4561,7 @@ function renderVillaLite(body) {
     var lim = s.villaLimit || 120;
     if (bbCardMode()) {
         h += nvSortBar('villa') + '<div class="nv-list">' + rows.slice(0, lim).map(function(r) { return nvVillaCard(r, evs[r.id]); }).join('') + '</div>' + (rows.length > lim ? '<div style="text-align:center;padding:14px;"><button class="bb-csv" style="font-size:13px;padding:8px 18px;" onclick="villaMore()">+ 더 보기 (남은 ' + (rows.length - lim) + '건)</button></div>' : '');
-        body.innerHTML = h; return;
+        window.__villaLastHtml = h; window.__villaLastKey = vKey; body.innerHTML = h; return;
     }
     h += '<table class="bb2-table bb2-vtable"><thead><tr><th>' + villaTh('verdict') + '</th><th>' + villaTh('date') + '</th><th>' + villaTh('name') + '</th><th class="r">' + villaTh('minBid') + '</th><th class="r">' + villaTh('appr') + '</th><th class="r">' + villaTh('est') + '<div class="bb2-subsort" style="justify-content:flex-end;">' + villaTh('err', '오차') + '</div></th><th class="r">필요 마진 · 입찰 상한<div class="bb2-subsort" style="justify-content:flex-end;">' + villaTh('margin', '마진') + villaTh('cap', '상한') + '</div></th><th class="r">예상 낙찰가 · 추천가<div class="bb2-subsort" style="justify-content:flex-end;">' + villaTh('win', '낙찰가') + villaTh('rec', '추천가') + villaTh('p', '가능성') + villaTh('net', '순이익') + villaTh('evv', '기대수익') + '</div></th><th class="r">생활권 거래<div class="bb-sub" style="display:block;">반경 500m (1km)</div><div class="bb2-subsort" style="justify-content:flex-end;">' + villaTh('liq', '6개월') + '</div></th><th class="r">월세 현금흐름<div class="bb-sub" style="display:block;">월세 − 대출이자</div><div class="bb2-subsort" style="justify-content:flex-end;">' + villaTh('cash', '현금흐름') + '</div></th><th>건물(대장)<div class="bb2-subsort">' + villaTh('age', '연식') + '</div></th><th>' + villaTh('hs') + '</th><th>이 동의 도시민박<div class="bb2-subsort">' + villaTh('net1y', '순증') + '</div></th></tr></thead><tbody>';
     rows.slice(0, lim).forEach(function(r) {
@@ -4572,6 +4583,7 @@ function renderVillaLite(body) {
             + '<td data-l="이 동의 도시민박">' + (ag ? '<span class="hs-pill" style="background:' + sc.c + ';">' + sc.t + '</span><div class="bb-sub">영업 ' + ag.open + '곳 · 순증 ' + (ag.net1y > 0 ? '+' : '') + ag.net1y + '/년</div>' : '<span class="bb-sub">' + (homestayAgg ? '등록 업소 거의 없음' : '-') + '</span>') + '</td></tr>';
     });
     h += '</tbody></table>' + (rows.length > lim ? '<div style="text-align:center;padding:14px;"><button class="bb-csv" style="font-size:13px;padding:8px 18px;" onclick="villaMore()">+ 더 보기 (남은 ' + (rows.length - lim) + '건)</button></div>' : '');
+    window.__villaLastHtml = h; window.__villaLastKey = vKey;
     body.innerHTML = h;
 }
 function buildingDetailHtml(row, st) {
