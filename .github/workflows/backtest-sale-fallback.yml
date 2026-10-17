@@ -1,0 +1,28 @@
+name: 검증 - 예상매도가 추론 규칙(6개월 거래 부족)
+
+on:
+  workflow_dispatch:
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install pandas numpy requests
+      - env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          SITE_URL: https://1234auction.vercel.app
+          PYTHONUNBUFFERED: '1'
+        run: python backtest-sale-fallback.py
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: backtest-sale-fallback
+          path: backtest-sale-fallback.json
+          if-no-files-found: ignore
+          retention-days: 14
