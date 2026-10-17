@@ -57,6 +57,16 @@ def main():
         out = float(np.median(np.concatenate(vals))) if vals and sum(len(v) for v in vals) >= 8 else None
         idx_cache[k] = out; return out
 
+    def nrm(x): return re.sub(r"[^0-9A-Za-z가-힣]", "", str(x or "")).replace("아파트", "")
+    hh_map = {}
+    try:
+        kp = avm.fetch_all_rows("kapt_complex_info", cols="kapt_name,as3,households", order_col="kapt_code", extra_filter="&households=gt.0")
+        for r in kp.itertuples():
+            k = (ab.dong_key(str(r.as3).strip().split()[-1] if r.as3 else ""), nrm(r.kapt_name))
+            hh_map[k] = max(hh_map.get(k, 0), int(r.households))
+    except Exception as e:
+        print("  세대수 조회 실패:", e)
+    print(f"  세대수 자료 {len(hh_map):,}단지")
     groups = {k: g.sort_values("t").reset_index(drop=True) for k, g in tr.groupby(["rg", "dk", "bj"])}
     dong_groups = {k: g.sort_values("t").reset_index(drop=True) for k, g in tr.groupby(["rg", "dk"])}
     t_start = (pd.Timestamp("2025-01-01") - pd.Timestamp("2000-01-01")).days
@@ -84,7 +94,13 @@ def main():
                     ii = idx(rg, int(ym))
                     out.append(ppm * i0 / ii if ii else np.nan)
                 return np.array(out)
-            rec = dict(cls=cls, actual=float(T["price"]), n6=int((age <= 6).sum()), nsame=len(same))
+            hh = None
+            try:
+                nm = nrm(g["danji"].mode().iloc[0]) if "danji" in g.columns else ""
+                hh = hh_map.get((k[1], nm))
+            except Exception: pass
+            tr12 = int((((T["t"] - H["t"].values) <= 365)).sum())
+            rec = dict(cls=cls, actual=float(T["price"]), n6=int((age <= 6).sum()), nsame=len(same), hh=hh, tr12=tr12)
             # T2
             s2 = same[(age > 6) & (age <= 36)]
             if len(s2) >= 1:
@@ -172,6 +188,23 @@ def report(D):
                 if c in d.columns:
                     s_ = stat(d, c)
                     if s_: print(f"   {c:7} {s_}")
+    X = D[D.hh.notna() & (D.hh > 0)].copy(); X["turn"] = X.tr12 / X.hh * 100
+    print(f"\n==== 회전율(직전 1년 단지 전체 거래수÷세대수) 구간별 - 세대수 연결 {len(X):,}건({len(X) / max(len(D), 1) * 100:.0f}%) ====")
+    if len(X) > 300:
+        qs = X.turn.quantile([1 / 3, 2 / 3]).values; print(f"회전율 3분위 경계 {qs.round(1)}%")
+        X["tb"] = pd.cut(X.turn, [-1, qs[0], qs[1], 1e9], labels=["낮음", "중간", "높음"])
+        X["hb"] = pd.cut(X.hh, [0, 300, 1000, 1e9], labels=["~300세대", "300~1000세대", "1000세대+"])
+        for nm, lo, hi in (("6개월 안 0건", 0, 1), ("6개월 안 1~2건", 1, 3)):
+            col = "T2w" if lo == 0 else "T2raw3"
+            for cls in ("서울", "경기·인천", "지방"):
+                for b in ("낮음", "중간", "높음"):
+                    d = X[(X.cls == cls) & (X.n6 >= lo) & (X.n6 < hi) & (X.tb == b)]
+                    s_ = stat(d, col) if len(d) >= 80 else None
+                    if s_: print(f"[{cls}·{nm}·회전율 {b}] {col} {s_}")
+            for b in ("~300세대", "300~1000세대", "1000세대+"):
+                d = X[(X.n6 >= lo) & (X.n6 < hi) & (X.hb == b)]
+                s_ = stat(d, col) if len(d) >= 80 else None
+                if s_: print(f"[전체·{nm}·{b}] {col} {s_}")
     # 우선순위 조합: T2(≥2건) → T3 → T4(상대수준 있음) → T5
     def pick(r):
         if r.get("T2n", 0) >= 2 and pd.notna(r.get("T2w")): return r["T2w"], "T2"
