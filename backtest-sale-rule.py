@@ -106,6 +106,7 @@ def main():
     D.to_json("backtest-sale-rule.json", orient="records", force_ascii=False)
     print(f"  시험 가능 {len(D):,}건, 세대수 연결 {D['hh'].notna().sum():,}건({D['hh'].notna().mean() * 100:.0f}%)")
     report(D)
+    write_params(D)
 
 
 def report(D):
@@ -140,6 +141,39 @@ def report(D):
                 if len(d) < 200: continue
                 print(f"\n[{cls}·회전율 {b}] n{len(d):,} (평균 {d.turn.mean():.1f}%, 6개월 거래 중앙 {d.n6.median():.0f}건)")
                 for l in line(d): print("  ", l)
+
+
+MAIN_RULE = {"서울": "e_최근3건중위", "경기·인천": "e_최근가중(반감1m)중위", "지방": "e_최근가중(반감2m)중위"}
+
+
+def build_params(D):
+    """6개월 같은 평형 3건 이상일 때: 지역별 규칙(서울 최근3건·경기인천 반감1개월·지방 반감2개월)의 회전율 구간별 치우침·하방"""
+    X = D[D.hh.notna() & (D.hh > 0)].copy()
+    if len(X) < 1500: return None
+    X["turn"] = X.tr12 / X.hh * 100
+    qs = X.turn.quantile([1 / 3, 2 / 3]).values
+    X["tb"] = pd.cut(X.turn, [-1, qs[0], qs[1], 1e9], labels=["낮음", "중간", "높음"])
+    out = {"cuts": [round(float(qs[0]), 2), round(float(qs[1]), 2)], "n": int(len(X)), "table": {}}
+    for cls, col in MAIN_RULE.items():
+        out["table"][cls] = {}
+        for b in ("낮음", "중간", "높음"):
+            d = X[(X.cls == cls) & (X.tb == b) & X[col].notna()]
+            if len(d) < 200: continue
+            r = (d["actual"] / d[col]).replace([np.inf, -np.inf], np.nan).dropna()
+            out["table"][cls][b] = {"bias": round(float(np.median(r) - 1), 4), "p25": round(float(r.quantile(.25) - 1), 4), "n": int(len(r))}
+    return out
+
+
+def write_params(D):
+    if not os.environ.get("WRITE_PARAMS"): return
+    from datetime import datetime, timezone
+    P = build_params(D)
+    if not P:
+        print("  보정 표 만들기엔 세대수 연결 표본이 부족해요 - 저장 안 함"); return
+    P["generatedAt"] = datetime.now(timezone.utc).isoformat()
+    P["basis"] = "지역별 최근 거래 규칙 예상 대비 실제 거래가(회전율 3분위) - 직전 정보만으로 2025년~ 아파트 거래 검증"
+    ab.cyc.upsert_rows([{"id": "signal|__salerule_main__", "payload": ab.cyc.clean_json(P), "fetched_at": P["generatedAt"]}])
+    print("  보정 표 저장:", P["cuts"], {c: list(v.keys()) for c, v in P["table"].items()})
 
 
 if __name__ == "__main__":

@@ -68,20 +68,32 @@ jobs:
     secrets: inherit
     needs: analyze-homestay
     if: ${{ !cancelled() }}
-  precompute-board:
-    name: 11 입찰후보 전체 미리 계산
-    uses: ./.github/workflows/precompute-board.yml
+  refit-sale-rule:
+    name: 11 예상매도가 보정 갱신(지역·회전율)
+    uses: ./.github/workflows/backtest-sale-rule.yml
     secrets: inherit
     needs: analyze-region-liquidity
     if: ${{ !cancelled() }}
+  refit-sale-fallback:
+    name: 11 거래 부족 추론 보정 갱신
+    uses: ./.github/workflows/backtest-sale-fallback.yml
+    secrets: inherit
+    needs: analyze-region-liquidity
+    if: ${{ !cancelled() }}
+  precompute-board:
+    name: 12 입찰후보 전체 미리 계산
+    uses: ./.github/workflows/precompute-board.yml
+    secrets: inherit
+    needs: [refit-sale-rule, refit-sale-fallback]
+    if: ${{ !cancelled() }}
   score-bid-objects:
-    name: 12 입찰 경쟁·등수·환금성 점수
+    name: 13 입찰 경쟁·등수·환금성 점수
     uses: ./.github/workflows/score-bid-objects.yml
     secrets: inherit
     needs: precompute-board
     if: ${{ !cancelled() }}
   pipeline-summary:
-    name: 13 결과 요약 저장
+    name: 14 결과 요약 저장
     uses: ./.github/workflows/pipeline-summary.yml
     secrets: inherit
     needs: score-bid-objects

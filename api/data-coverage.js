@@ -3449,6 +3449,18 @@ export default async function handler(req, res) {
       return res.status(500).json({ error: err.message });
     }
   }
+  if (req.query.mode === 'salerule') { // 2026-10-17 예상매도가 회전율·지역 보정 표(backtest-sale-rule/fallback이 매주 갱신)
+    res.setHeader('Cache-Control', 's-maxage=3600, stale-while-revalidate=86400');
+    try {
+      const { data, error } = await supabase.from('leader_follower_cache').select('id,payload').in('id', ['signal|__salerule_main__', 'signal|__salerule_fb__']);
+      if (error) return res.status(500).json({ error: error.message });
+      const out = {};
+      (data || []).forEach((r) => { out[r.id.endsWith('main__') ? 'main' : 'fb'] = r.payload; });
+      return res.status(200).json(out);
+    } catch (err) {
+      return res.status(500).json({ error: err.message });
+    }
+  }
   if (req.query.mode === 'liqcurve') { // 2026-10-11 환금성 곡선(같은 평형 최근 1년 거래 수별 되팔림·보유 기간) - analyze-bidcases가 매주 갱신
     res.setHeader('Cache-Control', 's-maxage=3600, stale-while-revalidate=86400');
     try {

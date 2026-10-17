@@ -1,6 +1,7 @@
 name: 검증 - 예상매도가 규칙 비교(지역·회전율·거래량)
 
 on:
+  workflow_call:
   workflow_dispatch:
 
 jobs:
@@ -18,6 +19,7 @@ jobs:
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
           SITE_URL: https://1234auction.vercel.app
           PYTHONUNBUFFERED: '1'
+          WRITE_PARAMS: '1'
         run: python backtest-sale-rule.py
       - uses: actions/upload-artifact@v4
         if: always()

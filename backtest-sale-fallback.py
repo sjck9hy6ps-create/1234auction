@@ -155,6 +155,7 @@ def main():
     D = pd.DataFrame(rows)
     D.to_json("backtest-sale-fallback.json", orient="records", force_ascii=False)
     report(D)
+    write_params(D)
 
 
 def stat(d, c):
@@ -226,6 +227,39 @@ def report(D):
             if len(dd) >= 50:
                 r = dd["actual"] / dd["est"]
                 print(f"   └ {t:6} n{len(dd):6,} 오차{np.median(np.abs(r - 1)) * 100:5.1f}% 치우침{(np.median(r) - 1) * 100:+6.1f}% 하방p10 {(r.quantile(.10) - 1) * 100:+6.1f}% p25 {(r.quantile(.25) - 1) * 100:+6.1f}% p75 {(r.quantile(.75) - 1) * 100:+6.1f}%")
+
+
+def build_params(D):
+    """회전율 구간(직전 1년 단지 전체 거래수÷세대수의 3분위)별 보정 표 - 앱이 예상매도가 보정 계수와 위험 여유에 씀(주마다 갱신)"""
+    X = D[D.hh.notna() & (D.hh > 0)].copy()
+    if len(X) < 600: return None
+    X["turn"] = X.tr12 / X.hh * 100
+    qs = X.turn.quantile([1 / 3, 2 / 3]).values
+    X["tb"] = pd.cut(X.turn, [-1, qs[0], qs[1], 1e9], labels=["낮음", "중간", "높음"])
+    out = {"cuts": [round(float(qs[0]), 2), round(float(qs[1]), 2)], "n": int(len(X)), "tables": {}}
+    for key, lo, hi, col in (("0", 0, 1, "T2w"), ("12", 1, 3, "T2raw3")):
+        tab = {}
+        for cls in ("서울", "경기·인천", "지방"):
+            tab[cls] = {}
+            for b in ("낮음", "중간", "높음"):
+                d = X[(X.cls == cls) & (X.n6 >= lo) & (X.n6 < hi) & (X.tb == b) & X[col].notna()]
+                if len(d) < 80: continue
+                r = (d["actual"] / d[col]).replace([np.inf, -np.inf], np.nan).dropna()
+                tab[cls][b] = {"bias": round(float(np.median(r) - 1), 4), "p25": round(float(r.quantile(.25) - 1), 4), "n": int(len(r))}
+        out["tables"][key] = tab
+    return out
+
+
+def write_params(D):
+    if not os.environ.get("WRITE_PARAMS"): return
+    from datetime import datetime, timezone
+    P = build_params(D)
+    if not P:
+        print("  보정 표 만들기엔 세대수 연결 표본이 부족해요 - 저장 안 함"); return
+    P["generatedAt"] = datetime.now(timezone.utc).isoformat()
+    P["basis"] = "6개월 같은 평형 거래 0건(T2w)·1~2건(T2raw3) 추론 값 대비 실제 거래가 - 직전 정보만으로 2025년~ 아파트 거래 검증"
+    ab.cyc.upsert_rows([{"id": "signal|__salerule_fb__", "payload": ab.cyc.clean_json(P), "fetched_at": P["generatedAt"]}])
+    print("  보정 표 저장:", P["cuts"], {k: {c: list(v.keys()) for c, v in t.items()} for k, t in P["tables"].items()})
 
 
 if __name__ == "__main__":
