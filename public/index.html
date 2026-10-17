@@ -18315,14 +18315,14 @@ function computeBidBoardRow(a) {
     //  결과: 예상매도가 오차 중앙 8.2% → 7.2%, 앱 추천가 낙찰 시 순이익 중앙(수리 전) −259 → −82만(전체 사례 기준).
     var simApplied = false;
     var osr = row.ownStats;
-    if (row.sale && type === 'apt' && !row.saleSaved && !row.salePresale && osr && ((osr.n3 >= 5 && osr.p3med) || (osr.n6 >= 3 && osr.p6q40))) {
+    if (row.sale && type === 'apt' && !row.saleSaved && !row.salePresale && osr && osr.n6 >= 3 && osr.pw6) {
         simApplied = true;
-        var useP3 = osr.n3 >= 5 && osr.p3med;
+        var useP3 = false;
         var fl = osr.lowF && Math.abs(osr.lowF.factor - 1) > 0.001 ? osr.lowF : null;
         row.saleBase = row.sale;
-        row.sale = Math.round((useP3 ? osr.p3med : osr.p6q40) * (fl ? fl.factor : 1));
-        row.saleSimBy = useP3 ? '이 단지 같은 평형 최근 3개월 ' + osr.n3 + '건 중위값' : '이 단지 같은 평형 최근 6개월 ' + osr.n6 + '건 하위 40% 지점';
-        row.saleSimN = useP3 ? osr.n3 : osr.n6;
+        row.sale = Math.round(osr.pw6 * (fl ? fl.factor : 1));
+        row.saleSimBy = '이 단지 같은 평형 최근 6개월 ' + osr.n6 + '건 (최근 거래일수록 비중↑) 가중 중위값';
+        row.saleSimN = osr.n6;
         if (fl) row.saleFloorAdj = fl;
     }
     else if (row.sale && type === 'apt' && !row.saleSaved && !row.salePresale) {
@@ -18390,11 +18390,20 @@ function ownComplexEntries(a, bunjiFull, type) {
         return isNaN(main) || isNaN(m2) || Math.abs(m2 - main) <= 50;
     });
 }
+// 2026-10-17 최근 거래일수록 비중을 크게 둔 중위값 - 거래 나이(개월)마다 비중이 반감기만큼 절반씩 줄어듦(백테스트 전국 아파트 9.4만 건: 서울 오차 4.1→3.5%·치우침 +2.9→+1.9%, 경기·인천 3.4→3.3%, 지방 4.2→4.3%로 같음)
+function weightedMedianByAge(items, halfLifeMonths) {
+    if (!items || !items.length) return null;
+    var it = items.map(function(x) { return { p: x.p, w: Math.pow(0.5, x.age / halfLifeMonths) }; }).sort(function(a, b) { return a.p - b.p; });
+    var W = it.reduce(function(s, x) { return s + x.w; }, 0), c = 0, pos = it.map(function(x) { c += x.w; return (c - 0.5 * x.w) / W; });
+    if (pos[0] >= 0.5) return it[0].p;
+    for (var i = 1; i < it.length; i++) if (pos[i] >= 0.5) return it[i - 1].p + (it[i].p - it[i - 1].p) * (0.5 - pos[i - 1]) / ((pos[i] - pos[i - 1]) || 1);
+    return it[it.length - 1].p;
+}
 function aptOwnTradeStats(a, bunjiFull, pyung) {
     var area = (parseFloat(pyung) || 0) * 3.305785;
     if (!area) return null;
     var allPpm = [];
-    var now = Date.now(), nYear = 0, p12 = [], p36 = [], n6 = 0, last = null, all = [], sim6 = [], maxF = 0, f36 = [], v6 = 0, vPrev6 = 0, p3 = [], p6 = [];
+    var now = Date.now(), nYear = 0, p6a = [], p12 = [], p36 = [], n6 = 0, last = null, all = [], sim6 = [], maxF = 0, f36 = [], v6 = 0, vPrev6 = 0, p3 = [], p6 = [];
     var tf = parseInt(a.floor);
     ownComplexEntries(a, bunjiFull, 'apt').forEach(function(ap) {
         (ap.trades || []).forEach(function(t) {
@@ -18409,7 +18418,7 @@ function aptOwnTradeStats(a, bunjiFull, pyung) {
             if (!(t.area > 0) || Math.abs(t.area - area) > 3 || t.dealing_type === '직거래') return;
             var td = tradeDate(t).getTime(), age = (now - td) / 86400000 / 30.4;
             var p = parseInt(t.amount); if (!p) return;
-            if (age <= 6) { n6++; p6.push(p); }
+            if (age <= 6) { n6++; p6.push(p); p6a.push({ p: p, age: age }); }
             if (new Date(td).getFullYear() === new Date(now).getFullYear()) nYear++;
             if (age <= 3) p3.push(p);
             if (age <= 12) p12.push(p);
@@ -18472,7 +18481,7 @@ function aptOwnTradeStats(a, bunjiFull, pyung) {
         if (deps.length >= 2) jeonse = { ratio: med(deps) / med(p12), n: deps.length };
     }
     var qtile = function(x, q) { if (!x.length) return null; x = x.slice().sort(function(m, n) { return m - n; }); var i = (x.length - 1) * q, lo = Math.floor(i), hi = Math.ceil(i); return x[lo] + (x[hi] - x[lo]) * (i - lo); };
-    return { lastP: lastP, p3med: qtile(p3, 0.5), n3: p3.length, p6q40: qtile(p6, 0.4), jeonse: jeonse, v6: v6, vPrev6: vPrev6, recent: recent, lowF: lowF, maxF: maxF, sim6n: sim6.length, sim6med: med(sim6), n12: p12.length, n6: n6, nYear: nYear, n36: p36.length, med12: med(p12), med36: med(p36), lastAgeM: last === null ? null : Math.round((now - last) / 86400000 / 30.4 * 10) / 10 };
+    return { lastP: lastP, p3med: qtile(p3, 0.5), n3: p3.length, p6q40: qtile(p6, 0.4), pw6: weightedMedianByAge(p6a, 1), jeonse: jeonse, v6: v6, vPrev6: vPrev6, recent: recent, lowF: lowF, maxF: maxF, sim6n: sim6.length, sim6med: med(sim6), n12: p12.length, n6: n6, nYear: nYear, n36: p36.length, med12: med(p12), med36: med(p36), lastAgeM: last === null ? null : Math.round((now - last) / 86400000 / 30.4 * 10) / 10 };
 }
 // 예상매도가 상한: 자기 단지 같은 평형 최근 실거래 중앙값(1년, 없으면 3년). 감정가는 1년 전 값이라 안 씀
 function aptSaleCapInfo(a, bunjiFull, pyung, st) {
@@ -19420,7 +19429,7 @@ async function mergeServerBoardCache(local) {
 }
 setTimeout(function() { try { srvBoardParts(); window.villaSrvP = villaFetchServerCalc(); } catch (e) {} }, 2500); // 앱을 켜고 2.5초 뒤 배경에서 미리 받기
 // 저장 계산을 다시 써도 되는지 - 물건 입력값(시세 계산에 쓰는 것)과 입찰일 지남 여부. 계산 방식이 바뀌면 BOARD_CALC_VER을 올림
-var BOARD_CALC_VER = 40; // 40: 임차인 둘로 읽힌 경우 별개/같은 임차권(갱신·승계) 선택(2026-10-11) - // 39: 39: 임차권등기를 임차인으로 계산(전입·확정일자 기준)·경매신청인 전세권 안내(2026-10-11) - // 38: 38: 권리분석 날짜 선후 규칙 정리(전입 다음 날 0시·동순위 안분, 2026-10-11) - // 37: 37: 권리분석에 말소기준일보다 앞선 전세권·임차권 등 등기부 인수 권리 반영(2026-10-11) - // 36: 저가 아파트 순이익률 10% 추천가 규칙 되돌림(2026-10-11, 백테스트 손해 30~42%) - // 34: 33: 아파트 고층 보정 축소·저층 범위(2026-10-11) - // 29: nYear 저장 추가 - // 27: 🎲 예상 낙찰가용 시세(wbBase) 추가 (범위 표시는 화면에서 바로 계산 - 버전 변경 없음)
+var BOARD_CALC_VER = 41; // 41: 아파트 예상매도가를 최근 6개월 같은 평형 거래의 최근가중 중위값으로(전국 백테스트, 2026-10-17) - // 40: 임차인 둘로 읽힌 경우 별개/같은 임차권(갱신·승계) 선택(2026-10-11) - // 39: 39: 임차권등기를 임차인으로 계산(전입·확정일자 기준)·경매신청인 전세권 안내(2026-10-11) - // 38: 38: 권리분석 날짜 선후 규칙 정리(전입 다음 날 0시·동순위 안분, 2026-10-11) - // 37: 37: 권리분석에 말소기준일보다 앞선 전세권·임차권 등 등기부 인수 권리 반영(2026-10-11) - // 36: 저가 아파트 순이익률 10% 추천가 규칙 되돌림(2026-10-11, 백테스트 손해 30~42%) - // 34: 33: 아파트 고층 보정 축소·저층 범위(2026-10-11) - // 29: nYear 저장 추가 - // 27: 🎲 예상 낙찰가용 시세(wbBase) 추가 (범위 표시는 화면에서 바로 계산 - 버전 변경 없음)
 /* 2026-10-15(사용자: 입찰후보 로딩이 느림 - 원인 실측): 식별값 끝의 'P/F'(입찰일 지남 여부)가 한국 시각 자정에 바뀌어, 서버 미리 계산이 돈 뒤 어제 입찰이던 물건(하루 약 350건)이 전부 '다른 물건'이 돼
    지역 자료 86곳(곳당 9~13MB)을 새로 받아 다시 계산했음. 계산 결과는 입찰일 지남 여부와 무관하므로(날짜 표시는 열 때 다시 계산) 저장본의 P/F가 반대여도 같은 것으로 봄(flip). */
 function boardBaseSig(a, flip) {
@@ -19511,7 +19520,7 @@ var INFO_POP = {
         '입찰 <b>전에 알 수 있는 정보</b>(최저가÷시세, 유찰 횟수, 지역·법정동, 인기 단지, 평형·층, 감정가 비율 등)로 <b>응찰자가 몇 명쯤 몰릴지</b> 가늠한 값이에요.<ul><li><b>🔥 높음</b>(상위 25%): 실제로 중앙 9명, 9명 이상이 절반 넘게 몰렸어요 → 낙찰가가 예상보다 <b>위로</b> 흩어질 수 있어요(추천가로는 이기기 더 어려워요)</li><li><b>낮음</b>(하위 25%): 실제 중앙 2명, 1명뿐인 경우가 39% → 낙찰가가 예상보다 <b>낮게</b> 나올 수 있어요</li></ul>'
         + '검증: 학습에 안 쓴 최근 12개월 5,322건에서 방향은 분명히 나뉘었지만 정확한 인원을 맞히진 못해요(구간 정확도 39%). 낙찰가 예측 정확도를 올리는 값은 아니고, 판단을 돕는 참고 신호예요.' },
     sale: { t: '예상매도가는 어떻게 계산하나요?', h:
-        '<b>① 같은 단지·같은 평형(±3㎡) 실거래</b>(직거래·해제 제외)로 계산해요.<ul><li>최근 3개월 거래가 5건 이상이면 그 <b>중위값</b></li><li>아니면 최근 6개월 3건 이상의 <b>하위 40% 지점</b></li></ul>'
+        '<b>① 같은 단지·같은 평형(±3㎡) 실거래</b>(직거래·해제 제외)로 계산해요.<ul><li>최근 6개월 3건 이상이면 <b>최근 거래일수록 비중을 크게 둔 중위값</b>(한 달 지날 때마다 비중 절반)</li><li>전국 아파트 실거래 9.4만 건으로 비교: 서울 오차 4.1→3.5%, 경기·인천 3.4→3.3%, 지방은 4.2%로 같음</li></ul>'
         + '<b>② 층 보정</b>: 1층·저층·고층은 이 단지의 층별 가격 차이와 승강기 유무(건축물대장)로 올리거나 내려요.<br>'
         + '<b>③ 거래가 적으면</b> 주변 비슷한 단지 거래로 보완하되, 이 단지 최근 거래가를 넘지 않게 해요.<br>'
         + '<b>④ 네이버 매물</b>을 붙여넣었으면 더 싼 비슷한 매물(호가)이 상한이 돼요.<br>'
