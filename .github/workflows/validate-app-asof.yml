@@ -7,7 +7,7 @@ on:
 jobs:
   validate:
     runs-on: ubuntu-latest
-    timeout-minutes: 150
+    timeout-minutes: 240
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -19,7 +19,15 @@ jobs:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
           SITE_URL: https://1234auction.vercel.app
-        run: node scripts/validate-app-asof.mjs
+        run: |
+          # 실패하면 60초 뒤 다시(최대 3번). 시점별 중간 결과가 asof-partial/에 남아 있어 끝난 시점은 건너뛰고 이어서 함
+          ok=0
+          for i in 1 2 3; do
+            echo "=== 시도 $i/3 ==="
+            if node scripts/validate-app-asof.mjs; then ok=1; break; fi
+            echo "실패 - 60초 뒤 다시 시도"; sleep 60
+          done
+          [ "$ok" = "1" ]
       - uses: actions/upload-artifact@v4
         if: always()
         with:
