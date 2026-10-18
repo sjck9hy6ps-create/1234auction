@@ -37,7 +37,7 @@ def main():
     cases = pd.DataFrame(requests.get(f"{SITE}/api/auction?kind=bidCases", timeout=240).json())
     cases = cases[cases["propertyType"].astype(str).str.contains("아파트", na=False)].copy()
     cases["final"] = pd.to_numeric(cases["finalBidPrice"], errors="coerce"); cases["appr"] = pd.to_numeric(cases["appraisalPrice"], errors="coerce")
-    cases = cases[(cases["final"] > 0) & (cases["appr"] > 0) & cases["saleDate"].astype(str).str.match(r"^\\d{4}-\\d{2}-\\d{2}$", na=False)].copy()
+    cases = cases[(cases["final"] > 0) & (cases["appr"] > 0) & cases["saleDate"].astype(str).str.match(r"^\d{4}-\d{2}-\d{2}$", na=False)].copy()
     cases["rate"] = cases["final"] / cases["appr"]
     cases = cases[(cases["rate"] > 0.3) & (cases["rate"] < 1.6)]
     cases["rg"] = cases["addrJibun"].map(ab.region_norm); cases = cases.dropna(subset=["rg"])
