@@ -11,6 +11,23 @@ const PARTIAL_DIR = 'asof-partial';   // 시점별 중간 저장 - 재시도할 
 fs.mkdirSync(PARTIAL_DIR, { recursive: true });
 const partialFile = (c) => `${PARTIAL_DIR}/${c}.json`;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+// ── 실패 기록(2026-10-19): 어느 단계·어느 시점에서 어떤 오류가 났는지와 그때 페이지의 오류를 파일·서버 저장소에 남겨 바로 고쳐서 이어 돌릴 수 있게 함 ──
+const FAIL_FILE = 'validate-app-asof-failures.json';
+const failureLog = fs.existsSync(FAIL_FILE) ? JSON.parse(fs.readFileSync(FAIL_FILE, 'utf8')) : [];
+const pageErrors = [];
+let currentStage = '시작';
+const supa0 = process.env.SUPABASE_URL ? createClient(process.env.SUPABASE_URL.trim(), process.env.SUPABASE_SERVICE_ROLE_KEY.trim(), { auth: { persistSession: false }, realtime: { transport: ws } }) : null;
+async function recordFailure(stage, cutoff, err, extra) {
+  const e = err instanceof Error ? err : new Error(String(err));
+  const rec = { at: new Date().toISOString(), runId: process.env.GITHUB_RUN_ID || null, attempt: parseInt(process.env.ATTEMPT || '1', 10), stage, cutoff: cutoff || null,
+    message: String(e.message || e).slice(0, 400), stack: String(e.stack || '').split('\n').slice(0, 6).join(' | ').slice(0, 800), pageErrors: pageErrors.slice(-8), ...(extra || {}) };
+  failureLog.push(rec);
+  try { fs.writeFileSync(FAIL_FILE, JSON.stringify(failureLog, null, 1)); } catch (x) {}
+  console.log(`❌ 실패 기록: [${stage}${cutoff ? ' · ' + cutoff : ''}] ${rec.message}`);
+  if (supa0) { try { await supa0.from('leader_follower_cache').upsert({ id: 'signal|__asof_val_log__', payload: { updatedAt: rec.at, runId: rec.runId, entries: failureLog.slice(-30) }, fetched_at: rec.at }, { onConflict: 'id' }); } catch (x) {} }
+}
+process.on('unhandledRejection', async (e) => { await recordFailure(currentStage, null, e, { uncaught: true }); process.exit(1); });
+process.on('uncaughtException', async (e) => { await recordFailure(currentStage, null, e, { uncaught: true }); process.exit(1); });
 
 const SITE = process.env.SITE_URL || 'https://1234auction.vercel.app';
 const CUTOFFS = (process.env.CUTOFFS || '2026-04-01,2026-05-15,2026-07-01,2026-08-15').split(',');
@@ -21,24 +38,26 @@ const supabase = process.env.SUPABASE_URL ? createClient(process.env.SUPABASE_UR
 const browser = await chromium.launch();
 const page = await browser.newPage({ viewport: { width: 1400, height: 900 }, timezoneId: 'Asia/Seoul', locale: 'ko-KR' });
 let pageCrashed = false;
-page.on('pageerror', (e) => console.log('페이지 오류:', String(e).slice(0, 160)));
+page.on('pageerror', (e) => { const t = String(e).slice(0, 200); pageErrors.push(t); console.log('페이지 오류:', t.slice(0, 160)); });
+  page.on('console', (m) => { if (m.type() === 'error') pageErrors.push('console: ' + m.text().slice(0, 160)); });
 page.on('crash', () => { pageCrashed = true; console.log('페이지가 멈췄어요(crash)'); });
 const needBrowser = CUTOFFS.some((c) => !fs.existsSync(partialFile(c))); // 모든 시점이 이전 시도에서 끝났으면 앱을 다시 열지 않음
 if (needBrowser) {
-  console.log('앱 여는 중…');
+  currentStage = '앱 열기'; console.log('앱 여는 중…');
   await page.goto(SITE, { waitUntil: 'load' });
   await page.waitForTimeout(10000);
   // 1) 모든 지역 거래 자료를 메모리에 올림(입찰후보 계산과 같은 방식)
   await page.evaluate(() => { try { document.getElementById('remind-panel').style.display = 'none'; } catch (e) {} try { document.getElementById('bid-board').style.display = 'flex'; } catch (e) {} forceRefreshBidBoard(); });
-  const t0 = Date.now();
+  currentStage = '지역 자료 불러오기'; const t0 = Date.now();
   for (;;) {
     await page.waitForTimeout(15000);
     const st = await page.evaluate(() => ({ prog: (document.getElementById('bb-progress') || {}).innerText || '', running: !!window.bidBoardRunning, rows: bidBoardRows.length, pending: bidBoardRows.filter((r) => r.pending).length }));
     console.log(`${Math.round((Date.now() - t0) / 1000)}s · ${st.prog || '(표시 없음)'} · 행 ${st.rows} · 대기 ${st.pending}`);
     if (!st.running && !st.prog && st.rows > 0 && st.pending === 0) break;
-    if (Date.now() - t0 > 60 * 60 * 1000) { console.log('시간 초과'); break; }
+    if (Date.now() - t0 > 60 * 60 * 1000) { console.log('시간 초과'); await recordFailure('지역 자료 불러오기', null, new Error('60분 안에 지역 자료를 다 못 불러옴'), { rows: st.rows, pending: st.pending }); break; }
   }
   await page.waitForTimeout(20000); // 배경 작업이 가라앉도록
+  currentStage = '검증 도구 심기';
   // 2) 되돌리기·검증 도구를 페이지에 심음
   await page.evaluate(() => {
     const RD = Date;
@@ -97,15 +116,17 @@ if (needBrowser) {
 
 // 3) 시점별 실행 - 시점마다 중간 저장, 일부 묶음이 실패하면 그 묶음만 다시 시도(최대 3번), 시점 전체가 실패하면 다음 시점으로 넘어가고 마지막에 실패 시점을 알림(→ 작업 전체 재시도 때 그 시점만 다시)
 const rows = [], failedCutoffs = [];
+let currentCutoff = null;
 async function withRetry(label, fn, tries = 3) {
   let last;
   for (let i = 1; i <= tries; i++) {
     try { if (pageCrashed) throw new Error('페이지 crash'); return await fn(); }
-    catch (e) { last = e; console.log(`  ${label} 실패(${i}/${tries}): ${String(e.message || e).slice(0, 120)}`); await sleep(3000 * i); }
+    catch (e) { last = e; console.log(`  ${label} 실패(${i}/${tries}): ${String(e.message || e).slice(0, 120)}`); await recordFailure(label, currentCutoff, e, { retry: `${i}/${tries}` }); await sleep(3000 * i); }
   }
   throw last;
 }
 for (const c of CUTOFFS) {
+  currentCutoff = c; currentStage = `시점 ${c}`;
   if (fs.existsSync(partialFile(c))) { const prev = JSON.parse(fs.readFileSync(partialFile(c), 'utf8')); prev.forEach((r) => rows.push(r)); console.log(`cutoff ${c}: 이전 시도의 결과 ${prev.length}건 사용(건너뜀)`); continue; }
   try {
     const info = await withRetry('준비', () => page.evaluate(([c, w, m]) => __v.prepare(c, w, m), [c, WINDOW_DAYS, MAX_SUBJECTS]));
@@ -123,6 +144,7 @@ for (const c of CUTOFFS) {
     part.forEach((r) => rows.push(r));
   } catch (e) {
     console.log(`cutoff ${c} 실패: ${String(e.message || e).slice(0, 160)}`);
+    await recordFailure('시점 실패', c, e);
     failedCutoffs.push(c);
     try { await page.evaluate(() => __v.restore()); } catch (e2) {}
     if (pageCrashed) break; // 페이지가 죽었으면 이 실행은 여기까지(작업 전체 재시도가 새 브라우저로 이어서 함)
@@ -140,7 +162,7 @@ const stat = (list) => {
   if (!e.length) return null;
   return { n: e.length, 오차중앙: +(med(e.map(Math.abs)) * 100).toFixed(2), 치우침: +(med(e) * 100).toFixed(2), 하방10: +(q(e, 0.1) * 100).toFixed(1), 하방25: +(q(e, 0.25) * 100).toFixed(1), 첫거래오차중앙: +(med(f.map(Math.abs)) * 100).toFixed(2), 첫거래치우침: +(med(f) * 100).toFixed(2) };
 };
-const summary = { at: new Date().toISOString(), failedCutoffs, cutoffs: CUTOFFS, windowDays: WINDOW_DAYS, total: rows.length, errors: rows.filter((r) => r.err).length, noValue: rows.filter((r) => r.sale == null).length, byClass: {}, byTier: {}, byClassTier: {} };
+const summary = { at: new Date().toISOString(), failures: failureLog.length, failedCutoffs, cutoffs: CUTOFFS, windowDays: WINDOW_DAYS, total: rows.length, errors: rows.filter((r) => r.err).length, noValue: rows.filter((r) => r.sale == null).length, byClass: {}, byTier: {}, byClassTier: {} };
 for (const cls of ['서울', '경기·인천', '지방']) summary.byClass[cls] = stat(rows.filter((r) => r.cls === cls));
 for (const t of [...new Set(rows.map(tierOf))].sort()) { summary.byTier[t] = stat(rows.filter((r) => tierOf(r) === t)); for (const cls of ['서울', '경기·인천', '지방']) { const s = stat(rows.filter((r) => tierOf(r) === t && r.cls === cls)); if (s && s.n >= 30) summary.byClassTier[cls + ' · ' + t] = s; } }
 summary.all = stat(rows);

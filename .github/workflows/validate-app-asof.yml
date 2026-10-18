@@ -3,6 +3,20 @@ name: 검증 - 앱 실제 출력 종단 검증(과거 시점으로 되돌려 예
 on:
   workflow_call:
   workflow_dispatch:
+    inputs:
+      resume_run_id:
+        description: '이어서 하기: 이전 실행 번호(실패한 실행의 중간 결과를 가져와 끝난 시점은 건너뜀). 비우면 처음부터'
+        default: ''
+      cutoffs:
+        description: '시점(쉼표로 구분, 비우면 기본 4개). 예: 2026-04-01,2026-07-01'
+        default: ''
+      max_subjects:
+        description: '시점마다 최대 물건 수(기본 2500)'
+        default: ''
+
+permissions:
+  contents: read
+  actions: read
 
 jobs:
   validate:
@@ -13,25 +27,68 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
+      - name: 이전 실행의 중간 결과 가져오기(이어서 하기)
+        if: ${{ github.event.inputs.resume_run_id != '' }}
+        uses: actions/download-artifact@v4
+        continue-on-error: true
+        with:
+          name: validate-app-asof-partial
+          path: asof-partial
+          run-id: ${{ github.event.inputs.resume_run_id }}
+          github-token: ${{ github.token }}
       - run: npm install @supabase/supabase-js ws playwright
       - run: npx playwright install --with-deps chromium
-      - env:
+      - name: 검증 실행(실패하면 60초 뒤 다시, 최대 3번)
+        env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
           SITE_URL: https://1234auction.vercel.app
+          CUTOFFS: ${{ github.event.inputs.cutoffs }}
+          MAX_SUBJECTS: ${{ github.event.inputs.max_subjects }}
         run: |
-          # 실패하면 60초 뒤 다시(최대 3번). 시점별 중간 결과가 asof-partial/에 남아 있어 끝난 시점은 건너뛰고 이어서 함
+          # 시점별 중간 결과가 asof-partial/에 남아 있어 끝난 시점은 건너뛰고 이어서 함. 실패 원인은 validate-app-asof-failures.json과 서버(signal|__asof_val_log__)에 남음
           ok=0
           for i in 1 2 3; do
             echo "=== 시도 $i/3 ==="
-            if node scripts/validate-app-asof.mjs; then ok=1; break; fi
+            if ATTEMPT=$i node scripts/validate-app-asof.mjs; then ok=1; break; fi
             echo "실패 - 60초 뒤 다시 시도"; sleep 60
           done
           [ "$ok" = "1" ]
+      - name: 실패 요약(GitHub 화면에 표시)
+        if: ${{ always() }}
+        run: |
+          {
+            echo "## 앱 종단 검증 실행 요약"
+            echo "실행 번호: \`${{ github.run_id }}\`"
+            if [ -f validate-app-asof-failures.json ]; then
+              echo ""
+              echo "### 실패 기록"
+              echo "| 시도 | 단계 | 시점 | 원인 |"
+              echo "| --- | --- | --- | --- |"
+              node -e "const f=require('./validate-app-asof-failures.json');f.slice(-20).forEach(x=>console.log('| '+x.attempt+' | '+x.stage+' | '+(x.cutoff||'-')+' | '+String(x.message).replace(/\|/g,'/').slice(0,160)+' |'))"
+              echo ""
+              echo "페이지 오류(마지막 기록):"
+              node -e "const f=require('./validate-app-asof-failures.json');const l=f[f.length-1];console.log('\`\`\`');console.log((l.pageErrors||[]).join('\n')||'(없음)');console.log('\`\`\`')"
+              echo ""
+              echo "### 고친 뒤 이어서 다시 돌리기"
+              echo "\`gh workflow run validate-app-asof.yml -f resume_run_id=${{ github.run_id }}\` (끝난 시점은 건너뛰고 실패한 시점부터 이어서 합니다)"
+            else
+              echo "실패 기록 없음(정상 완료)"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@v4
-        if: always()
+        if: ${{ always() }}
+        with:
+          name: validate-app-asof-partial
+          path: asof-partial
+          if-no-files-found: ignore
+          retention-days: 30
+      - uses: actions/upload-artifact@v4
+        if: ${{ always() }}
         with:
           name: validate-app-asof
-          path: validate-app-asof.json
+          path: |
+            validate-app-asof.json
+            validate-app-asof-failures.json
           if-no-files-found: ignore
-          retention-days: 14
+          retention-days: 30
