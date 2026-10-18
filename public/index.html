@@ -1798,6 +1798,7 @@ body.ui2 #auction-modal.am4 { width:620px; }
             <!-- 2026-10 정리: CSV 올리기는 상단 📝 경매물건 등록으로 통일(파일 선택 칸은 그대로 씀) -->
             <input type="file" id="bb-csv-input" multiple accept=".csv,text/csv" style="display:none;" onchange="onBoardCsvFile(this)">
             <span class="bb-help" onclick="var g=document.getElementById('bb-guide-box');g.style.display=g.style.display==='none'?'':'none'">ⓘ 보는 법</span>
+            <span class="bb-help" style="cursor:pointer;" title="임장 후보 단지의 네이버 매물 목록을 모아 입찰물건에 반영" onclick="openListingBulk()">📋 호가 모으기</span>
             <span class="bb-zoom" title="입찰후보 창 글자·화면 크기 (두 손가락으로 벌려도 확대돼요)"><button onclick="bbSetZoom(-1)" aria-label="작게">A−</button><b id="bb-zoom-lab">100%</b><button onclick="bbSetZoom(1)" aria-label="크게">A+</button></span>
             <label class="bb-help" style="margin-left:auto;cursor:pointer;"><input type="checkbox" id="pref-home-board" style="margin:0 4px 0 0;vertical-align:middle;" onchange="setHomeBoardPref(this.checked)">앱을 열면 입찰후보부터</label>
         </div>
@@ -20844,6 +20845,12 @@ async function applyNaverListings(id) {
     var row = bidBoardRows.filter(function(r) { return String(r.id) === String(id); })[0];
     var list = parseNaverListings(ta.value);
     if (!list.length) { alert('매매 매물을 찾지 못했어요. 네이버 부동산 단지 매물 목록을 그대로 복사해 주세요'); return; }
+    await applyListingList(a, row, list);
+    renderBidBoard(); renderBidDrawer();
+}
+// 매물 목록(파싱된 것)을 한 물건에 반영 - 상세 붙여넣기와 호가 일괄 붙여넣기가 같이 씀(2026-10-18)
+async function applyListingList(a, row, list) {
+    var id = a.id;
     var area = (parseFloat(a.pyung) || 0) * 3.305785;
     var sm = summarizeNaverListings(list, area, a.floor, row && row.sale);
     var bTxt = [a.unitNo, a.aptDong, a.addr].filter(Boolean).join(' ');
@@ -20858,7 +20865,58 @@ async function applyNaverListings(id) {
     applyFieldCheckToRecord(a, row);
     try { await saveAuctionAPI(a); } catch (e) { alert('저장 실패: ' + e.message); }
     bidBoardRows = bidBoardRows.map(function(r) { if (String(r.id) !== String(id)) return r; r.a = a; try { return finalizeBidBoardRow(r); } catch (e) { return r; } });
-    renderBidBoard(); renderBidDrawer();
+}
+/* 📋 호가 모으기(2026-10-18, 사용자: 호가를 모으는 방법) - ① 호가 확인 순서(임장 후보 단지를 입찰일 가까운 순, 네이버 검색 링크·마지막 수집일) ② 여러 단지 매물을 한 번에 붙여넣으면 단지 이름·평형으로 알아서 입찰물건에 나눠 저장.
+   네이버 부동산은 자동 수집을 약관으로 제한하므로 열기·복사는 사용자가 직접 하고(앱은 링크와 정리만), 대량 자동 수집은 만들지 않음. */
+function listingBulkTargets() {
+    return bidBoardRows.filter(function(r) { return r.type === 'apt' && r.a && !r.skippedPast && r.visit && r.visit.go; }).sort(function(x, y) { return (x.dday ? x.dday.diffDays : 9999) - (y.dday ? y.dday.diffDays : 9999); });
+}
+function listingAgeDays(a) { var at = a.listingParse && a.listingParse.at; return at ? Math.floor((Date.now() - new Date(at + 'T00:00:00').getTime()) / 86400000) : null; }
+function openListingBulk() {
+    var box = document.getElementById('lb-modal');
+    if (!box) {
+        box = document.createElement('div'); box.id = 'lb-modal';
+        box.style.cssText = 'position:fixed;inset:0;z-index:100000;background:rgba(0,0,0,.45);display:flex;align-items:center;justify-content:center;';
+        box.onclick = function(e) { if (e.target === box) box.style.display = 'none'; };
+        document.body.appendChild(box);
+    }
+    var T = listingBulkTargets(), seen = {}, rows = [];
+    T.forEach(function(r) { var k = matchNormName(r.name) + '|' + (r.a.dong || ''); if (seen[k]) { seen[k].n++; return; } seen[k] = { r: r, n: 1 }; rows.push(seen[k]); });
+    var need = rows.filter(function(x) { var d = listingAgeDays(x.r.a); return d == null || d > 7; });
+    var h = '<div style="background:#fff;border-radius:14px;max-width:760px;width:94vw;max-height:90vh;overflow:auto;padding:16px 18px;font-size:13px;">'
+        + '<div style="display:flex;align-items:center;"><b style="font-size:16px;">📋 호가 모으기</b><span style="margin-left:auto;cursor:pointer;font-size:18px;" onclick="document.getElementById(\'lb-modal\').style.display=\'none\'">✕</span></div>'
+        + '<div class="bb-sub" style="margin:6px 0 10px;">① 아래 단지를 위에서부터 열어 네이버 부동산 매물 목록(매매)을 복사 → ② 여러 단지 것을 이어서 아래 칸에 붙여넣고 [반영]. 어느 물건 것인지는 단지 이름·평형으로 앱이 찾아요. 네이버 열기·복사는 직접 하시고, 자동 수집은 하지 않아요(약관).</div>'
+        + '<textarea id="lb-text" placeholder="네이버 부동산 매물 목록을 여기에 붙여넣기 (여러 단지 이어서 붙여도 돼요)" style="width:100%;height:120px;font-size:12px;border:1px solid #d0d7de;border-radius:8px;padding:8px;box-sizing:border-box;"></textarea>'
+        + '<div style="margin:8px 0;"><button class="modal-btn btn-purple" onclick="applyListingBulk()">반영</button> <span id="lb-msg" class="bb-sub"></span></div>'
+        + '<div style="font-weight:700;margin:10px 0 4px;">호가 확인 순서 <span class="bb-sub">(임장 후보 아파트 ' + T.length + '건 · 단지 ' + rows.length + '곳 · 7일 넘게 안 모은 단지 ' + need.length + '곳)</span></div>'
+        + '<table style="width:100%;border-collapse:collapse;font-size:12px;"><thead><tr style="text-align:left;color:#666;"><th>입찰</th><th>단지 · 평형</th><th>마지막 수집</th><th>열기</th></tr></thead><tbody>'
+        + rows.slice(0, 150).map(function(x) {
+            var r = x.r, a = r.a, d = listingAgeDays(a), fresh = d != null && d <= 7, q = encodeURIComponent((r.name || '') + ' ' + (a.dong || ''));
+            return '<tr style="border-top:1px solid #eee;' + (fresh ? 'opacity:.5;' : '') + '"><td>' + (r.dday ? r.dday.label : '-') + '</td><td><b>' + bbEsc(r.name) + '</b> <span class="bb-sub">' + bbEsc(r.region || '') + ' · ' + (r.pyung || '') + '평' + (x.n > 1 ? ' · 물건 ' + x.n + '건' : '') + '</span></td><td>' + (d == null ? '<span style="color:#c62828;">없음</span>' : d + '일 전') + '</td><td><a href="https://new.land.naver.com/search?sk=' + q + '" target="_blank" rel="noopener">네이버 열기</a></td></tr>';
+        }).join('') + '</tbody></table>' + (rows.length > 150 ? '<div class="bb-sub">앞의 150곳만 보여요.</div>' : '') + '</div>';
+    box.innerHTML = h; box.style.display = 'flex';
+}
+async function applyListingBulk() {
+    var ta = document.getElementById('lb-text'), msg = document.getElementById('lb-msg'); if (!ta || !ta.value.trim()) { if (msg) msg.innerText = '붙여넣은 내용이 없어요'; return; }
+    var list = parseNaverListings(ta.value);
+    if (!list.length) { msg.style.color = '#c62828'; msg.innerText = '매매 매물을 찾지 못했어요. 네이버 부동산 단지 매물 목록을 그대로 복사해 주세요'; return; }
+    msg.style.color = '#999'; msg.innerText = '정리 중…';
+    var byName = {}; list.forEach(function(x) { var k = matchNormName(x.complex); (byName[k] = byName[k] || []).push(x); });
+    var done = 0, noSize = [], used = {};
+    var T = listingBulkTargets();
+    for (var i = 0; i < T.length; i++) {
+        var r = T[i], k = matchNormName(r.name);
+        var items = byName[k]; if (!items) { var kk = Object.keys(byName).filter(function(n) { return k.length >= 3 && n.length >= 3 && (n.indexOf(k) >= 0 || k.indexOf(n) >= 0); })[0]; items = kk ? byName[kk] : null; if (kk) used[kk] = 1; } else used[k] = 1;
+        if (!items) continue;
+        var area = (parseFloat(r.a.pyung) || 0) * 3.305785, same = items.filter(function(x) { return !x.area || Math.abs(x.area - area) <= 3; });
+        if (!same.length) { noSize.push(r.name + ' ' + r.pyung + '평'); continue; }
+        try { await applyListingList(r.a, r, items); done++; } catch (e) { console.error('호가 반영 실패', e); }
+    }
+    var unmatched = Object.keys(byName).filter(function(n) { return !used[n]; }).map(function(n) { return byName[n][0].complex; });
+    renderBidBoard();
+    msg.style.color = done ? '#2e7d32' : '#e65100';
+    msg.innerText = '입찰물건 ' + done + '건에 반영' + (noSize.length ? ' · 같은 평형 매물 없음 ' + noSize.length + '건(' + noSize.slice(0, 3).join(', ') + (noSize.length > 3 ? ' 외' : '') + ')' : '') + (unmatched.length ? ' · 임장 후보에 없는 단지 ' + unmatched.length + '곳(' + unmatched.slice(0, 3).join(', ') + ')' : '');
+    if (done) { ta.value = ''; setTimeout(function() { try { openListingBulk(); document.getElementById('lb-msg').innerText = msg.innerText; } catch (e) {} }, 300); }
 }
 function naverListingHtml(row, idJs) {
     var a = row.a, sm = a.listingParse, f = function(v) { return v ? toEok(String(v)) : '-'; };
