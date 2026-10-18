@@ -70,6 +70,13 @@ def main():
         n6 = int((ag <= 6).sum())
         rec = dict(cls=T["cls"], n6=n6, actual=float(T["price"]))
         rec["E0"] = wmed(price[m36], 0.5 ** (ag[m36] / 3.0))
+        # 앱의 현재 규칙(6개월 3건+): 서울 최근 3건 중위 / 경기·인천 반감 1개월 / 지방 반감 2개월 가중 중위
+        m6 = ag <= 6
+        if m6.sum() >= 3:
+            p6 = price[m6]; a6 = ag[m6]
+            if T["cls"] == "서울": rec["EA"] = float(np.median(p6[np.argsort(a6)[:3]]))
+            elif T["cls"] == "경기·인천": rec["EA"] = wmed(p6, 0.5 ** (a6 / 1.0))
+            else: rec["EA"] = wmed(p6, 0.5 ** (a6 / 2.0))
         rt_t, rt_s, rt_d = rent_g[k]
         keep = (np.abs(rt_s - T["size"]) <= 3) & (rt_t < T["t"])
         rag = (T["t"] - rt_t[keep]) / 30.4; rd = rt_d[keep]
