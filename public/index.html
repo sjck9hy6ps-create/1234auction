@@ -20912,7 +20912,7 @@ async function applyListingBulk() {
 // 파싱된 매물 목록(여러 단지 섞여도 됨)을 임장 후보 아파트의 단지 이름·평형으로 찾아 반영 - 붙여넣기와 확장 수신함이 같이 씀
 async function applyListingListsAuto(list) {
     var byName = {}; list.forEach(function(x) { var k = matchNormName(x.complex); (byName[k] = byName[k] || []).push(x); });
-    var done = 0, noSize = [], used = {}, ambiguous = [];
+    var done = 0, noSize = [], used = {}, ambiguous = [], applied = [];
     var T = listingBulkTargets();
     var cx = function(r) { return (r.region || '') + '|' + (r.a.dong || ''); }; // 같은 단지 = 같은 지역·동
     // 이름이 같으면 맞는 것으로 보되, 이름이 흔해서 임장 후보 중 서로 다른 단지 여러 곳과 맞으면(주공아파트 등) 엉뚱한 곳에 저장될 수 있어 건너뜀 → 상세에서 직접 붙여넣기
@@ -20930,32 +20930,58 @@ async function applyListingListsAuto(list) {
         var r = T[i], items = r.__lbItems; if (!items) continue; delete r.__lbItems;
         var area = (parseFloat(r.a.pyung) || 0) * 3.305785, same = items.filter(function(x) { return !x.area || Math.abs(x.area - area) <= 3; });
         if (!same.length) { noSize.push(r.name + ' ' + r.pyung + '평'); continue; }
-        try { await applyListingList(r.a, r, items); done++; } catch (e) { console.error('호가 반영 실패', e); }
+        try { await applyListingList(r.a, r, items); done++; var lq = r.a.listingParse || {}; applied.push({ name: r.name, pyung: r.pyung, n: lq.n, min: lq.min, med: lq.med, max: lq.max }); } catch (e) { console.error('호가 반영 실패', e); }
     }
     var unmatched = Object.keys(byName).filter(function(n) { return !used[n]; }).map(function(n) { return byName[n][0].complex; });
     var text = '입찰물건 ' + done + '건에 반영' + (noSize.length ? ' · 같은 평형 매물 없음 ' + noSize.length + '건(' + noSize.slice(0, 3).join(', ') + (noSize.length > 3 ? ' 외' : '') + ')' : '') + (unmatched.length ? ' · 대상이 아닌 단지 ' + unmatched.length + '곳(' + unmatched.slice(0, 3).join(', ') + ')' : '') + (ambiguous.length ? ' · 이름이 같은 단지가 여러 곳이라 건너뜀 ' + ambiguous.length + '곳(' + ambiguous.slice(0, 3).join(', ') + ') - 상세에서 직접 붙여넣어 주세요' : '');
-    return { done: done, text: text };
+    return { done: done, text: text, applied: applied };
 }
 /* 📥 호가 수신함(2026-10-18): 크롬 확장(tools/listing-extension)이 사용자가 열어 둔 네이버 단지 페이지의 매물 목록을 보내면(버튼 한 번) 여기서 받아 자동으로 반영 - 붙여넣기 단계 없음 */
-var listingInboxBusy = false;
+var listingInboxBusy = false, listingInboxVer = null;
+function listingToast(html, ok) {
+    var t = document.getElementById('lb-toast');
+    if (!t) { t = document.createElement('div'); t.id = 'lb-toast'; t.style.cssText = 'position:fixed;left:50%;top:14px;transform:translateX(-50%);z-index:100001;color:#fff;border-radius:12px;padding:10px 16px;font-size:13px;box-shadow:0 2px 12px rgba(0,0,0,.3);max-width:92vw;'; document.body.appendChild(t); }
+    t.style.background = ok === false ? '#c62828' : '#2e7d32'; t.innerHTML = html; t.style.display = '';
+    clearTimeout(t._h); t._h = setTimeout(function() { t.style.display = 'none'; }, 7000);
+}
 async function processListingInbox() {
     if (listingInboxBusy) return; listingInboxBusy = true;
     try {
         var items = await fetch('/api/auction?kind=listingRaw', { cache: 'no-store' }).then(function(r) { return r.json(); });
-        if (!Array.isArray(items) || !items.length) return;
-        var got = 0, txt = [];
-        // 반영 대상은 판정이 끝난 임장 후보여야 하므로 보드 계산이 끝난 뒤에만(안 끝났으면 다음에)
-        if (!bidBoardRows.length || bidBoardRows.some(function(r) { return r.pending; })) return;
-        var prevAll = lbAll; lbAll = true; // 수신함은 대상을 좁히지 않음(이미 사용자가 고른 단지를 보낸 것)
-        for (var i = 0; i < items.length; i++) {
-            var it = items[i], list = parseNaverListings(it.text || '');
-            if (list.length) { var r = await applyListingListsAuto(list); got += r.done; txt.push(r.text); }
-            try { await fetch('/api/auction?kind=listingRaw&id=' + encodeURIComponent(it.id), { method: 'DELETE' }); } catch (e) {}
+        if (!Array.isArray(items)) return;
+        // 처리된 지 10분 넘은 기록은 정리
+        items.filter(function(x) { return x.done && Date.now() - new Date(x.appliedAt || 0).getTime() > 600000; }).forEach(function(x) { fetch('/api/auction?kind=listingRaw&id=' + encodeURIComponent(x.id), { method: 'DELETE' }).catch(function() {}); });
+        var pending = items.filter(function(x) { return !x.done; });
+        if (!pending.length) return;
+        // 보드 계산이 안 된 상태(지도 화면)면 조용히 계산부터 - 새로고침 없이 지금 열린 앱에서 바로 반영
+        if (!bidBoardRows.length && typeof refreshBidBoard === 'function') { try { await refreshBidBoard(); } catch (e) {} }
+        for (var w = 0; w < 40 && (!bidBoardRows.length || bidBoardRows.some(function(r) { return r.pending; })); w++) await new Promise(function(r) { setTimeout(r, 1500); });
+        if (!bidBoardRows.length) return;
+        var got = 0, names = [], prevAll = lbAll; lbAll = true; // 수신함은 대상을 좁히지 않음(이미 사용자가 고른 단지를 보낸 것)
+        for (var i = 0; i < pending.length; i++) {
+            var it = pending[i], list = parseNaverListings(it.text || ''), res = { done: 0, text: '매매 매물을 찾지 못했어요', applied: [] };
+            if (list.length) res = await applyListingListsAuto(list);
+            got += res.done; res.applied.forEach(function(x) { names.push(x); });
+            // 확장이 결과를 볼 수 있게 처리 기록을 남김(원문은 지움)
+            try { await fetch('/api/auction?kind=listingRaw', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: it.id, at: it.at, url: it.url, text: '', done: true, appliedAt: new Date().toISOString(), result: { done: res.done, text: res.text, applied: res.applied } }) }); } catch (e) {}
         }
         lbAll = prevAll;
-        if (got) { renderBidBoard(); setStatus('📥 호가 ' + got + '건 자동 반영'); setTimeout(function() { setStatus(''); }, 4000); }
+        renderBidBoard(); try { renderBidDrawer(); } catch (e) {}
+        var fm = function(v) { return v ? toEok(String(v)) : '-'; };
+        if (got) listingToast('📥 호가 반영됨: ' + names.slice(0, 3).map(function(x) { return '<b>' + bbEsc(x.name) + ' ' + x.pyung + '평</b> 매물 ' + x.n + '건 (' + fm(x.min) + '~' + fm(x.max) + ')'; }).join(' · ') + (names.length > 3 ? ' 외 ' + (names.length - 3) + '건' : ''));
+        else listingToast('📥 호가를 받았지만 반영된 물건이 없어요 - 대상 단지가 아니거나 같은 평형 매물이 없어요', false);
     } catch (e) { /* 수신함이 없거나 네트워크 오류면 조용히 넘어감 */ } finally { listingInboxBusy = false; }
 }
+// 실시간: ① 확장이 앱 탭에 직접 신호를 보내면 즉시 ② 열려 있는 동안 30초마다 목록이 바뀌었는지만 가볍게 확인(바뀌었을 때만 처리)
+window.addEventListener('message', function(e) { if (e.data && e.data.source === 'hg-ext' && e.data.type === 'inbox') setTimeout(processListingInbox, 200); });
+setInterval(function() {
+    if (document.visibilityState !== 'visible') return;
+    fetch('/api/auction?kind=listingRaw&withVer=1' + (listingInboxVer ? '&since=' + encodeURIComponent(listingInboxVer) : ''), { cache: 'no-store' }).then(function(r) { return r.json(); }).then(function(d) {
+        if (!d || d.unchanged) return;
+        listingInboxVer = d.ver;
+        if (Array.isArray(d.list) && d.list.some(function(x) { return !x.done; })) processListingInbox();
+    }).catch(function() {});
+}, 30000);
 function naverListingHtml(row, idJs) {
     var a = row.a, sm = a.listingParse, f = function(v) { return v ? toEok(String(v)) : '-'; };
     var h = '<div style="margin-top:8px;border-top:1px dashed #e3e6ea;padding-top:8px;"><div class="dr-sub" style="margin-bottom:4px;"><b>📋 네이버 매물 붙여넣기</b> - 단지 매물 목록을 통째로 복사해 붙이면 같은 평형만 골라 정리하고 위 호가·매물 수를 채워요</div>';

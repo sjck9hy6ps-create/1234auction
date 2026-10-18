@@ -6,7 +6,7 @@
   btn.textContent = '📤 호가 보내기';
   btn.style.cssText = 'position:fixed;right:16px;bottom:16px;z-index:2147483647;background:#1e5eff;color:#fff;border:none;border-radius:20px;padding:10px 16px;font-size:14px;font-weight:700;cursor:pointer;box-shadow:0 2px 10px rgba(0,0,0,.3);';
   document.body.appendChild(btn);
-  const toast = (t, ok) => { btn.textContent = t; btn.style.background = ok === false ? '#c62828' : (ok ? '#2e7d32' : '#1e5eff'); };
+  const toast = (t, ok) => { btn.textContent = t; btn.style.background = ok === false ? '#c62828' : (ok ? '#2e7d32' : (ok === null ? '#ef6c00' : '#1e5eff')); };
   const count = (el) => ((el.innerText || '').match(/(^|\n)매매\s*\d/g) || []).length; // '매매5억 9,800' 같은 가격 줄(머리글 '매매 전체면적'은 제외)
   // 매물 목록이 들어 있는 스크롤 영역 찾기: 내용이 화면보다 긴 요소 중 '매매 가격' 줄이 있는 것 가운데 가장 안쪽(가장 작은) 요소.
   // overflow 속성이 자바스크립트로 정해지는 경우도 있어서 속성은 보지 않고 실제로 스크롤이 되는지로 판단
@@ -55,10 +55,15 @@
       const text = blocks.size ? [...blocks.keys()].join('\n\n') : (document.body.innerText || '');
       const n = (text.match(/(^|\n)매매\s*\d/g) || []).length;
       if (!n) { toast('매매 매물을 못 찾았어요', false); return; }
+      toast('보내는 중… (' + n + '건)');
       chrome.runtime.sendMessage({ type: 'send', text, url: location.href }, (res) => {
-        if (res && res.ok) toast('✅ 보냈어요 (매매 ' + n + '건)', true);
-        else toast('❌ 보내기 실패', false);
-        setTimeout(() => { btn.textContent = '📤 호가 보내기'; btn.style.background = '#1e5eff'; btn.disabled = false; }, 4000);
+        if (!res || !res.ok) toast('❌ 보내기 실패', false);
+        else if (res.applied) {
+          const a = (res.result && res.result.applied) || [];
+          if (a.length) toast('✅ 앱에 반영됨: ' + a.slice(0, 2).map((x) => x.name + ' ' + x.pyung + '평 매물 ' + x.n + '건').join(' · '), true);
+          else toast('⚠️ 받았지만 반영된 물건이 없어요 (' + ((res.result && res.result.text) || '대상 단지가 아니거나 같은 평형 없음') + ')', false);
+        } else toast(res.noApp ? '⏳ 앱 탭이 안 열려 있어요 - 앱을 열면 자동 반영돼요' : '⏳ 앱이 아직 처리 중이에요 - 앱 화면에서 확인하세요', null);
+        setTimeout(() => { btn.textContent = '📤 호가 보내기'; btn.style.background = '#1e5eff'; btn.disabled = false; }, 8000);
       });
       return;
     } catch (e) { toast('오류: ' + e.message, false); }
