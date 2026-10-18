@@ -20911,7 +20911,9 @@ async function applyListingBulk() {
 }
 // 파싱된 매물 목록(여러 단지 섞여도 됨)을 임장 후보 아파트의 단지 이름·평형으로 찾아 반영 - 붙여넣기와 확장 수신함이 같이 씀
 async function applyListingListsAuto(list) {
-    var byName = {}; list.forEach(function(x) { var k = matchNormName(x.complex); (byName[k] = byName[k] || []).push(x); });
+    // 단지 이름 비교용: 괄호 안 설명('(주상복합)' 등)과 끝의 '아파트'를 뺌(네이버는 '두산위브더제니스(주상복합)', 앱은 '두산위브더제니스'처럼 다르게 적는 경우가 있음, 2026-10-18)
+    var nameKey = function(n) { return matchNormName(String(n || '').replace(/\([^)]*\)|（[^）]*）/g, '').replace(/아파트\s*$/, '')); };
+    var byName = {}; list.forEach(function(x) { var k = nameKey(x.complex); (byName[k] = byName[k] || []).push(x); });
     var done = 0, noSize = [], used = {}, ambiguous = [], applied = [];
     var T = listingBulkTargets();
     var cx = function(r) { return (r.region || '') + '|' + (r.a.dong || ''); }; // 같은 단지 = 같은 지역·동
@@ -20919,7 +20921,7 @@ async function applyListingListsAuto(list) {
     // 한쪽 이름이 다른 쪽에 포함되는 경우는 짧은 쪽이 5글자 이상이고 긴 쪽의 70% 이상일 때만 같은 단지로 봄
     var sameName = function(a, b) { if (a === b) return true; var sh = a.length < b.length ? a : b, lg = a.length < b.length ? b : a; return sh.length >= 5 && sh.length / lg.length >= 0.7 && lg.indexOf(sh) >= 0; };
     Object.keys(byName).forEach(function(n) {
-        var cands = T.filter(function(r) { return sameName(matchNormName(r.name), n); });
+        var cands = T.filter(function(r) { return sameName(nameKey(r.name), n); });
         if (!cands.length) return;
         var kinds = {}; cands.forEach(function(r) { kinds[cx(r)] = 1; });
         if (Object.keys(kinds).length > 1) { used[n] = 1; ambiguous.push(byName[n][0].complex + '(' + Object.keys(kinds).length + '곳)'); return; }
