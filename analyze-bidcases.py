@@ -939,6 +939,67 @@ def scorecard(D, amap):
     return out
 
 
+def is_go(sn):
+    """임장 후보 여부 - 앱이 저장한 go 값(2026-10-19~)이 있으면 그것, 없으면 추정(추천가 있고 낙찰 가능성 20% 이상: 앱의 후보 기준과 같지만 권리·시세근거 제외 조건은 몰라 약간 넉넉함)"""
+    if "go" in sn:
+        return bool(sn["go"]), "saved"
+    return bool(sn.get("recBid") and (sn.get("prob") or 0) >= 0.20), "estimated"
+
+
+def cand_review(W, tr, amap, start, end, now_dt):
+    from collections import Counter
+    won_keys = {(norm_case(r.caseNo), r.region) for r in W.itertuples()}
+    wrow = {(norm_case(r.caseNo), r.region): r for r in W.itertuples()}
+    d_iso = lambda i: f"{str(i)[:4]}-{str(i)[4:6]}-{str(i)[6:]}"
+    lo, hi = d_iso(start), d_iso(end)
+    goWon, nonWon, goNot, nonNot = [], [], [], []
+    basis = Counter()
+    for (cn, rg), x in amap.items():
+        bd = str(x.get("bidDate") or "")[:10]
+        if not (lo <= bd <= hi):
+            continue
+        sn = pick_snap(x, int(bd.replace("-", "")))
+        if not sn:
+            continue
+        go, bs = is_go(sn); basis[bs] += 1
+        item = {"caseNo": x.get("caseNo"), "name": x.get("name") or "", "region": rg, "bidDate": bd, "minbid": sn.get("minBid"), "rec": sn.get("recBid"), "prob": sn.get("prob"), "win": sn.get("win"), "sale": sn.get("sale"), "fails": sn.get("fails"), "why": sn.get("why")}
+        if (cn, rg) in won_keys:
+            r = wrow[(cn, rg)]
+            item["actual"] = round(float(r.actual)); item["bidders"] = None if pd.isna(r.bidders) else int(r.bidders)
+            item["why2"] = won_reason(item, go)
+            (goWon if go else nonWon).append(item)
+        else:
+            item["why2"] = unsold_reason(x, bd, item, go)
+            (goNot if go else nonNot).append(item)
+    def rc(L):
+        return [{"label": k, "n": v} for k, v in Counter(i["why2"] for i in L).most_common(8)]
+    return {"from": lo, "to": hi, "basis": dict(basis), "goWon": len(goWon), "nonWon": len(nonWon), "goNot": len(goNot), "nonNot": len(nonNot),
+            "goWonReasons": rc(goWon), "nonWonReasons": rc(nonWon), "goNotReasons": rc(goNot), "nonNotReasons": rc(nonNot),
+            "items": {"goNot": sorted(goNot, key=lambda i: -(i.get("prob") or 0))[:25], "nonWon": sorted(nonWon, key=lambda i: -((i.get("rec") or 0) and i["actual"] / i["rec"] or 0))[:25], "goWon": goWon[:25]}}
+
+
+def won_reason(it, go):
+    rec, act, prob = it.get("rec"), it.get("actual"), it.get("prob")
+    if go:
+        return "추천가 이하로 낙찰(후보 적중)" if rec and act <= rec else "후보였지만 낙찰가가 추천가보다 높았음"
+    if it.get("why"):
+        return "후보 제외: " + str(it["why"])[:40]
+    if not rec:
+        return "추천가 없음(남는 마진이 없다고 계산)"
+    if prob is not None and prob < 0.20:
+        return ("낙찰 가능성 %d%%라 제외됐지만 추천가 근처에서 낙찰" % round(prob * 100)) if act <= rec * 1.1 else ("낙찰 가능성 %d%%라 제외, 낙찰가는 추천가보다 %d%% 높음" % (round(prob * 100), round((act / rec - 1) * 100)))
+    return "그 밖의 제외 조건(시세 근거 부족·의심·대량경매 등)"
+
+
+def unsold_reason(x, bd, it, go):
+    for h in (x.get("bidHistory") or []):
+        if str(h.get("date", ""))[:10] == bd:
+            return "입찰일 결과: " + str(h.get("result") or "기록 있음")
+    if str(x.get("courtResult") or "") == "매각":
+        return "매각 기록은 있으나 낙찰사례 미등록"
+    return "결과 미확인(취하·연기·변경 또는 낙찰사례 미등록)"
+
+
 def weekly_report(R, now_dt, now_iso):
     D = R[R["est"].notna() & (R["est"] > 0) & R["actual"].notna() & R["minbid"].notna() & (R["minbid"] > 0) & (R["sale"] >= 20200101)].copy()
     D = D[np.log(D["actual"] / D["est"]).between(np.log(0.4), np.log(1.6))]
@@ -998,6 +1059,12 @@ def weekly_report(R, now_dt, now_iso):
             tr.append(row)
         out["tracked"] = {"n": len(tr), "withSnap": sum(1 for t in tr if t.get("snap")), "items": tr[:30],
                           "recWon": sum(1 for t in tr if t.get("recWon")), "recKnown": sum(1 for t in tr if "recWon" in t)}
+        # 2026-10-19(사용자: 후보인데 안 낙찰·후보 아닌데 낙찰된 이유를 알아 후보군 정확도를 높이고 싶다) - 후보/비후보 × 낙찰/미낙찰 4칸 + 이유
+        try:
+            out["candReview"] = cand_review(W, tr, amap, int(start), int(W["sale"].max()), now_dt)
+            cr_ = out["candReview"]; print("  후보 검토:", {k: cr_[k] for k in ("goWon", "goNot", "nonWon", "nonNot")})
+        except Exception as e:
+            print("  후보 검토 건너뜀:", e)
     # 6개월 전(5.5~6.5개월) 낙찰 사례의 같은 동·층 거래 흔적 - 동 확인(동 번호 있는 사례) 기준
     lo, hi = ymd(now_dt - timedelta(days=200)), ymd(now_dt - timedelta(days=165))
     S = R[(R["sale"] >= lo) & (R["sale"] <= hi)]

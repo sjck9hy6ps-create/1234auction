@@ -27257,7 +27257,7 @@ function computeReminders() {
         if (wr && wr.generatedAt && myAssets && myAssets.loaded && String(wr.generatedAt).slice(0, 10) !== seenW) {
             var aa = wr.accuracy;
             out.push({ key: 'weekly-' + String(wr.generatedAt).slice(0, 10), pri: 1, icon: '📊', title: '새 주간 리포트가 나왔어요',
-                sub: (wr.n ? '지난주 낙찰 ' + wr.n + '건' : '') + (aa ? ' · 예상 낙찰가 보통 오차 ' + aa.medAbsErrPct + '%(평소 5.7%)' : '') + (wr.tracked && wr.tracked.n ? ' · 내가 추적하던 물건 ' + wr.tracked.n + '건 낙찰' : ''),
+                sub: (wr.n ? '지난주 낙찰 ' + wr.n + '건' : '') + (aa ? ' · 예상 낙찰가 보통 오차 ' + aa.medAbsErrPct + '%(평소 5.7%)' : '') + (wr.candReview ? ' · 임장후보 ' + wr.candReview.goWon + '건 낙찰(후보 외 ' + wr.candReview.nonWon + '건)' : (wr.tracked && wr.tracked.n ? ' · 앱에 등록한 물건 ' + wr.tracked.n + '건 낙찰' : '')),
                 btn: '📊 리포트 보기', act: 'openWeeklyReport();remindReportAck()', weeklyAck: true });
         }
     } catch (e) {}
@@ -27712,6 +27712,24 @@ function wrRenderScore(sc) {
     }
     return h;
 }
+function wrRenderCandReview(c) {
+    if (!c) return '';
+    var f = function(v) { return v == null ? '-' : toEok(String(Math.round(v))); };
+    var rs = function(L) { return (L || []).map(function(x) { return '<div class="pn-muted">· ' + bbEsc(x.label) + ' <b>' + x.n + '건</b></div>'; }).join('') || '<div class="pn-muted">· 없음</div>'; };
+    var box = function(t, n, L) { return '<div style="flex:1;min-width:220px;border:1px solid #e5e7eb;border-radius:8px;padding:8px;"><b>' + t + '</b> <span style="font-size:18px;font-weight:700;">' + n + '건</span>' + rs(L) + '</div>'; };
+    var h = '<div class="wr-sec"><b>🎯 임장후보 검증</b> - ' + c.from + ' ~ ' + c.to + ' 입찰일 물건을 입찰 전 저장한 판정으로 나눠 봤어요'
+        + (c.basis && c.basis.estimated ? '<div class="pn-muted">후보 표시를 저장하기 전 기록 ' + c.basis.estimated + '건은 "추천가 있고 낙찰 가능성 20%↑"로 추정했어요(저장본 ' + (c.basis.saved || 0) + '건은 정확).</div>' : '')
+        + '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:6px;">'
+        + box('후보 · 낙찰', c.goWon, c.goWonReasons) + box('후보 · 낙찰 안 됨', c.goNot, c.goNotReasons)
+        + box('후보 아님 · 낙찰', c.nonWon, c.nonWonReasons) + box('후보 아님 · 낙찰 안 됨', c.nonNot, c.nonNotReasons) + '</div>';
+    var tb = function(t, L, cols) {
+        if (!L || !L.length) return '';
+        return '<details style="margin-top:6px;"><summary><b>' + t + '</b> (' + L.length + '건)</summary><table class="pn-table"><thead><tr><th>물건</th><th class="r">추천가</th><th class="r">낙찰 가능성</th><th class="r">낙찰가</th><th>이유</th></tr></thead><tbody>'
+            + L.map(function(x) { return '<tr><td>' + bbEsc(x.name || x.caseNo) + '<div class="pn-muted">' + bbEsc(x.region) + ' · ' + bbEsc(x.caseNo) + ' · ' + bbEsc(x.bidDate) + '</div></td><td class="r">' + f(x.rec) + '</td><td class="r">' + (x.prob != null ? Math.round(x.prob * 100) + '%' : '-') + '</td><td class="r">' + (x.actual ? '<b>' + f(x.actual) + '</b>' : '-') + '</td><td>' + bbEsc(x.why2) + '</td></tr>'; }).join('') + '</tbody></table></details>';
+    };
+    var it = c.items || {};
+    return h + tb('후보인데 낙찰 안 된 물건', it.goNot) + tb('후보가 아니었는데 낙찰된 물건', it.nonWon) + '<div class="pn-muted" style="margin-top:4px;">후보 제외 이유를 앱이 저장하기 시작한 건부터 "후보 제외: ○○"로 자세히 나와요. 낙찰 안 된 이유는 법원 입찰 결과(유찰 등)가 있으면 그것을, 없으면 "결과 미확인"으로 표시해요.</div></div>';
+}
 function wrRenderWinScore(ws) {
     if (!ws || !ws.all) return '<div class="pn-muted" style="padding:8px 0;">다음 주간 분석부터 나와요.</div>';
     var pc = function(v) { return v == null ? '-' : v + '%'; }, a = ws.all;
@@ -27764,7 +27782,7 @@ function openWeeklyReport(week) {
         }
         var t = d.tracked;
         if (t) {
-            h += '<div class="wr-sec"><b>내가 추적하던 물건(사건번호 일치)</b> ' + t.n + '건 낙찰 <span class="pn-muted">· 행을 누르면 입찰 전 추천가·수리비 3가지 등 상세를 봐요</span>'
+            h += '<div class="wr-sec"><b>앱에 등록해 둔 물건 중 낙찰</b>(사건번호·시군구 일치) ' + t.n + '건 <span class="pn-muted">· 임장후보만이 아니라 등록한 전체 목록 기준</span> <span class="pn-muted">· 행을 누르면 입찰 전 추천가·수리비 3가지 등 상세를 봐요</span>'
                 + (t.recKnown ? ' · 입찰 전 저장해 둔 추천 입찰가로 썼다면 <b>' + t.recWon + '/' + t.recKnown + '건</b> 낙찰' : (t.n ? ' <span class="pn-muted">(입찰 전 예측 저장본이 아직 없어 비교는 다음 주부터)</span>' : ''));
             if (t.items && t.items.length) {
                 h += '<table class="pn-table" id="wr-tracked"><thead><tr><th>사건·물건</th><th class="r">최저가</th><th class="r">추천가</th><th class="r">낙찰가</th><th class="r">응찰</th><th>결과</th></tr></thead><tbody>' + t.items.map(function(x, ix) {
@@ -27779,6 +27797,7 @@ function openWeeklyReport(week) {
             }
             h += '</div>';
         }
+        h += wrRenderCandReview(d.candReview);
         if (d.byRegion && d.byRegion.length) {
             h += '<div class="wr-sec"><b>지역별</b> (3건 이상)<table class="pn-table"><thead><tr><th>지역</th><th class="r">건수</th><th class="r">낙찰가÷시세</th><th class="r">응찰자</th><th class="r">예측 오차</th><th class="r">예측 방향</th></tr></thead><tbody>'
                 + d.byRegion.map(function(x) { return '<tr><td>' + bbEsc(x.region) + '</td><td class="r">' + x.n + '</td><td class="r">' + Math.round(x.actualOverEst * 100) + '%</td><td class="r">' + (x.bidders != null ? x.bidders : '-') + '</td><td class="r">' + pc(x.medAbsErrPct) + '</td><td class="r">' + wrBiasShort(x.biasPct) + '</td></tr>'; }).join('') + '</tbody></table><div class="pn-muted">예측 방향: 실제 낙찰가보다 평균적으로 얼마나 높게/낮게 예측했는지</div></div>';
@@ -27823,11 +27842,12 @@ async function savePredSnapshots() {
     try {
         var today = remindTodayStr(), upd = [];
         (bidBoardRows || []).forEach(function(r) {
-            if (r.type !== 'apt' || r.pending || r.skippedPast || !r.a || !r.winbid || !r.recBid || !r.dday || r.dday.diffDays < 0 || r.dday.diffDays > 21) return;
+            if (r.type !== 'apt' || r.pending || r.skippedPast || !r.a || !r.winbid || !r.dday || r.dday.diffDays < 0 || r.dday.diffDays > 21) return;
             var sn = r.a.predSnap, age = sn && sn.at ? (Date.now() - new Date(sn.at + 'T00:00:00').getTime()) / 86400000 : 99;
-            if (sn && age < 3 && sn.minBid === r.minBid) return;
-            var snapNew = { at: today, minBid: r.minBid, fails: r.fails, sale: Math.round(r.sale), recBid: Math.round(r.recBid), aggr: r.recAggr ? Math.round(r.recAggr) : null,
-                win: Math.round(r.winbid.price), prob: r.winbid.probRec != null ? Math.round(r.winbid.probRec * 100) / 100 : null, own: r.own };
+            if (sn && age < 3 && sn.minBid === r.minBid && sn.go !== undefined) return;
+            var snapNew = { at: today, minBid: r.minBid, fails: r.fails, sale: Math.round(r.sale), recBid: r.recBid ? Math.round(r.recBid) : null, aggr: r.recAggr ? Math.round(r.recAggr) : null,
+                win: Math.round(r.winbid.price), prob: r.winbid.probRec != null ? Math.round(r.winbid.probRec * 100) / 100 : null, own: r.own,
+                go: !!(r.visit && r.visit.go), why: r.visit && r.visit.go ? '' : String((r.visit && r.visit.why) || '').slice(0, 60) };
             // 2026-10-09 누적 이력: 덮어쓰지 않고 날짜별로 쌓음(같은 날 다시 저장하면 그날 것만 교체, 최대 25개) - 주간 리포트가 "입찰 직전 마지막 예측"을 골라 비교
             var hist = Array.isArray(r.a.predHist) ? r.a.predHist.slice() : (sn ? [sn] : []);
             hist = hist.filter(function(h) { return h && h.at !== today; }); hist.push(snapNew);
