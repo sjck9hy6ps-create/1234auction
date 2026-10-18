@@ -62,17 +62,15 @@ def wmed(vals, w):
 
 
 def main():
-    if not REB_KEY: raise SystemExit("REB_API_KEY가 없어요")
-    raw = fetch_reb("A_2024_00045")
-    print(f"  R-ONE 월간 아파트 매매가격지수 {len(raw):,}행")
-    # 분류 경로 → (시도, 시군구) 키. 시·군 단위(경로 2단계)를 우선, 구 단위만 있으면 같은 시의 구들을 평균
+    # R-ONE 서버가 GitHub 서버(해외) 접속을 끊어서, 지수는 로컬에서 받아 저장소 data/에 둔 파일을 읽음(공개 통계)
+    J = json.load(open(os.path.join(HERE, "data", "reb-apt-index-monthly.json"), encoding="utf-8"))
+    print(f"  R-ONE 월간 아파트 매매가격지수 파일: 분류 {len(J['sale']):,}개, 생성일 {J['generated']}")
     paths = {}
-    for r in raw:
-        full = r["CLS_FULLNM"]; p = full.split(">")
+    for full, ser0 in J["sale"].items():
+        p = full.split(">")
         if len(p) < 2: continue
         if re.search(r"(권|지역)$", p[-1]) and len(p) == 2: continue
-        ym = int(r["WRTTIME_IDTFR_ID"][:4]) * 12 + int(r["WRTTIME_IDTFR_ID"][4:6])
-        paths.setdefault(tuple(p), {})[ym] = float(r["DTA_VAL"])
+        paths[tuple(p)] = {int(k[:4]) * 12 + int(k[4:6]): float(v) for k, v in ser0.items()}
     idx = {}
     for p, ser in paths.items():
         key = (ab.sido_norm(p[0]), norm_city(p[1]))
