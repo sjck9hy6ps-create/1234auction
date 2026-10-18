@@ -1,0 +1,12 @@
+{
+  "manifest_version": 3,
+  "name": "호가 보내기 (경매 앱)",
+  "version": "0.1.0",
+  "description": "열어 둔 네이버 부동산 단지 페이지의 매매 매물 목록을 버튼 한 번으로 경매 앱에 보냅니다. 사용자가 연 페이지에서만 동작하고, 자동으로 페이지를 순회하지 않습니다.",
+  "permissions": [],
+  "host_permissions": ["https://1234auction.vercel.app/*"],
+  "background": { "service_worker": "background.js" },
+  "content_scripts": [
+    { "matches": ["https://new.land.naver.com/*"], "js": ["content.js"], "run_at": "document_idle" }
+  ]
+}
