@@ -99,6 +99,7 @@ def main():
     D.to_json("backtest-sale-jeonse.json", orient="records", force_ascii=False)
     print(f"  시험 {len(D):,}건")
     report(D)
+    write_params(D)
 
 
 def line(d, c, base="E0"):
@@ -120,6 +121,35 @@ def report(D):
             for c in V:
                 s = line(d, c)
                 if s: print(f"   {c:5} {s}")
+
+
+def build_params(D):
+    """앱 현재 규칙(EA) 기준 - 같은 단지·같은 평형 최근 6개월 전세 보증금 중위값 ÷ 예상매도가(전세가율) 구간별 보정(bias)·하방(p25) 표"""
+    X = D[D["J"].notna() & D["EA"].notna()].copy()
+    if len(X) < 3000: return None
+    X["ratio"] = X["J"] / X["EA"] * 100; X["r"] = X["actual"] / X["EA"] - 1
+    cuts = [50, 60, 70, 80]
+    X["rb"] = pd.cut(X["ratio"], [0] + cuts + [1000], labels=["0", "1", "2", "3", "4"])
+    out = {"cuts": cuts, "n": int(len(X)), "table": {}}
+    for cls in ("서울", "경기·인천", "지방"):
+        out["table"][cls] = {}
+        for b in ("0", "1", "2", "3", "4"):
+            d = X[(X.cls == cls) & (X.rb == b)]
+            if len(d) < 150: continue
+            out["table"][cls][b] = {"bias": round(float(np.median(d["r"])), 4), "p25": round(float(d["r"].quantile(.25)), 4), "n": int(len(d))}
+    return out
+
+
+def write_params(D):
+    if not os.environ.get("WRITE_PARAMS"): return
+    from datetime import datetime, timezone
+    P = build_params(D)
+    if not P:
+        print("  전세가율 표 만들기엔 표본이 부족해요 - 저장 안 함"); return
+    P["generatedAt"] = datetime.now(timezone.utc).isoformat()
+    P["basis"] = "앱 규칙 예상 대비 실제 거래가를 전세가율(최근 6개월 전세 보증금 중위값÷예상매도가) 구간별로 - 2025년~ 아파트, 직전 정보만"
+    ab.cyc.upsert_rows([{"id": "signal|__salerule_jr__", "payload": ab.cyc.clean_json(P), "fetched_at": P["generatedAt"]}])
+    print("  전세가율 표 저장:", P["cuts"], {c: list(v.keys()) for c, v in P["table"].items()})
 
 
 if __name__ == "__main__":

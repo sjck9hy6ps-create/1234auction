@@ -80,11 +80,17 @@ jobs:
     secrets: inherit
     needs: analyze-region-liquidity
     if: ${{ !cancelled() }}
+  refit-sale-jeonse:
+    name: 11 전세가율 보정 갱신
+    uses: ./.github/workflows/backtest-sale-jeonse.yml
+    secrets: inherit
+    needs: analyze-region-liquidity
+    if: ${{ !cancelled() }}
   precompute-board:
     name: 12 입찰후보 전체 미리 계산
     uses: ./.github/workflows/precompute-board.yml
     secrets: inherit
-    needs: [refit-sale-rule, refit-sale-fallback]
+    needs: [refit-sale-rule, refit-sale-fallback, refit-sale-jeonse]
     if: ${{ !cancelled() }}
   score-bid-objects:
     name: 13 입찰 경쟁·등수·환금성 점수

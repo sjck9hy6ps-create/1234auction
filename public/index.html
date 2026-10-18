@@ -18004,7 +18004,7 @@ function riskMarginFor(predictedSale, ownTrades, downRisk, popInfo, regionInfo) 
     // 실제가 예상보다 낮게 나오는 폭이 컸음(백테스트 하방 25% 지점: 경기·인천 -3.2% vs 전체 -2.3%, 지방 -4.8% vs -3.8%) → +1%
     var carry = 0, volX = 0;
     if (regionInfo && regionInfo.cls) {
-        carry = (regionInfo.cls === '서울' ? 0.015 : (regionInfo.cls === '경기·인천' ? 0.005 : 0)) + (regionInfo.up || 0); // 회전율 보정으로 예상매도가를 더 올린 만큼도 위험 여유로 흡수
+        carry = (regionInfo.jr || 0) + (regionInfo.cls === '서울' ? 0.015 : (regionInfo.cls === '경기·인천' ? 0.005 : 0)) + (regionInfo.up || 0); // 회전율 보정으로 예상매도가를 더 올린 만큼도 위험 여유로 흡수
         if (regionInfo.cls !== '서울' && regionInfo.n6 != null && regionInfo.n6 <= 4) volX = 0.01;
         if (regionInfo.fb && regionInfo.fb.riskExtra != null && !regionInfo.fb.weak) volX = regionInfo.fb.riskExtra + (regionInfo.fb.one ? 0.02 : 0);
         else if (regionInfo.fb) volX = regionInfo.fb.rec ? (regionInfo.cls === '지방' ? 0.01 : 0) + (regionInfo.fb.weak ? 0.05 : 0) : (regionInfo.cls === '서울' ? 0 : (regionInfo.cls === '경기·인천' ? 0.01 : 0.02)) + (regionInfo.fb.one ? 0.02 : 0) + (regionInfo.fb.weak ? 0.05 : 0); // 6개월 거래 부족 추론: 하방 25% 지점 서울 -5%·경기인천 -9%·지방 -11%(1건뿐이면 -10~-18%) → 기본 10% 위에 더 얹음
@@ -18339,8 +18339,10 @@ function computeBidBoardRow(a) {
         row.saleBase = row.sale;
         var tb0 = saleTurnBucket(a, (osr.v6 || 0) + (osr.vPrev6 || 0), SALE_RULE_PARAMS.main.cuts), tEnt = tb0 && SALE_RULE_PARAMS.main.table[row.regionCls] && SALE_RULE_PARAMS.main.table[row.regionCls][tb0];
         var tFac = tEnt ? saleClamp(1 + tEnt.bias, 0.97, 1.03) : 1; row.saleTurn = tEnt ? { bucket: tb0, factor: tFac } : null;
-        row.sale = Math.round(pickSale * tFac * (fl ? fl.factor : 1));
-        row.saleSimBy = '이 단지 같은 평형 ' + (row.regionCls === '서울' ? '가장 최근 3건 중위값(6개월 안, 총 ' + osr.n6 + '건)' : '최근 6개월 ' + osr.n6 + '건 - 최근 거래일수록 비중↑ (' + (row.regionCls === '경기·인천' ? '1' : '2') + '개월마다 절반) 가중 중위값') + (row.saleTurn ? ' · 회전율 ' + row.saleTurn.bucket + ' 보정 ' + (row.saleTurn.factor >= 1 ? '+' : '') + ((row.saleTurn.factor - 1) * 100).toFixed(1) + '%' : '');
+        var jAdj = saleJeonseAdj(osr, pickSale, row.regionCls); row.saleJr = jAdj;
+        var adjAll = saleClamp(tFac * (jAdj ? jAdj.factor : 1), 0.97, 1.03); row.saleAdjTotal = adjAll; // 회전율·전세가율 보정이 겹쳐 과하지 않게 합쳐서 ±3% 안
+        row.sale = Math.round(pickSale * adjAll * (fl ? fl.factor : 1));
+        row.saleSimBy = '이 단지 같은 평형 ' + (row.regionCls === '서울' ? '가장 최근 3건 중위값(6개월 안, 총 ' + osr.n6 + '건)' : '최근 6개월 ' + osr.n6 + '건 - 최근 거래일수록 비중↑ (' + (row.regionCls === '경기·인천' ? '1' : '2') + '개월마다 절반) 가중 중위값') + (row.saleTurn ? ' · 회전율 ' + row.saleTurn.bucket + ' 보정 ' + (row.saleTurn.factor >= 1 ? '+' : '') + ((row.saleTurn.factor - 1) * 100).toFixed(1) + '%' : '') + (row.saleJr ? ' · 전세가율 ' + row.saleJr.ratio + '% 보정 ' + (row.saleJr.factor >= 1 ? '+' : '') + ((row.saleJr.factor - 1) * 100).toFixed(1) + '%' : '');
         row.saleSimN = osr.n6;
         if (fl) row.saleFloorAdj = fl;
     }
@@ -18444,6 +18446,9 @@ function ownComplexEntries(a, bunjiFull, type) {
 var SALE_RULE_PARAMS = {
     gen: 0,
     main: { cuts: [4.2, 6.0], table: { '서울': { '낮음': { bias: 0.011 }, '중간': { bias: 0.014 }, '높음': { bias: 0.019 } }, '경기·인천': { '낮음': { bias: 0.004 }, '중간': { bias: 0.007 }, '높음': { bias: 0.014 } }, '지방': { '낮음': { bias: 0.0 }, '중간': { bias: 0.003 }, '높음': { bias: 0.006 } } } },
+    jr: { cuts: [50, 60, 70, 80], table: { '서울': { '0': { bias: 0.0142, p25: -0.017 }, '1': { bias: 0.0103, p25: -0.017 }, '2': { bias: 0.0177, p25: -0.012 } },
+        '경기·인천': { '0': { bias: 0.0205, p25: -0.011 }, '1': { bias: 0.0108, p25: -0.017 }, '2': { bias: 0.0074, p25: -0.023 }, '3': { bias: 0.0045, p25: -0.027 }, '4': { bias: 0.0130, p25: -0.029 } },
+        '지방': { '0': { bias: 0.0105, p25: -0.029 }, '1': { bias: 0.0061, p25: -0.025 }, '2': { bias: 0.0007, p25: -0.031 }, '3': { bias: 0.0023, p25: -0.035 }, '4': { bias: 0.0043, p25: -0.041 } } } }, // 전세가율(최근 6개월 전세 보증금 중위값 ÷ 예상매도가) 구간 0~4 = 50% 미만·50~60·60~70·70~80·80% 이상
     fb: { cuts: [2.3, 3.9], tables: {
         '0': { '서울': { '낮음': { bias: 0.001, p25: -0.063 }, '중간': { bias: 0.015, p25: -0.050 }, '높음': { bias: 0.037, p25: -0.027 } }, '경기·인천': { '낮음': { bias: -0.042, p25: -0.105 }, '중간': { bias: -0.045, p25: -0.098 }, '높음': { bias: -0.015, p25: -0.058 } }, '지방': { '낮음': { bias: -0.063, p25: -0.139 }, '중간': { bias: -0.057, p25: -0.122 }, '높음': { bias: -0.020, p25: -0.090 } } },
         '12': { '서울': { '낮음': { bias: 0.014, p25: -0.025 }, '중간': { bias: 0.012, p25: -0.029 }, '높음': { bias: 0.030, p25: -0.008 } }, '경기·인천': { '낮음': { bias: -0.007, p25: -0.046 }, '중간': { bias: -0.009, p25: -0.050 }, '높음': { bias: -0.002, p25: -0.036 } }, '지방': { '낮음': { bias: -0.015, p25: -0.069 }, '중간': { bias: -0.012, p25: -0.065 }, '높음': { bias: -0.003, p25: -0.044 } } } } }
@@ -18454,7 +18459,8 @@ function loadSaleRuleParams() {
     fetch('/api/data-coverage?mode=salerule').then(function(r) { return r.json(); }).then(function(d) {
         if (d && d.main && d.main.table && d.main.cuts) SALE_RULE_PARAMS.main = { cuts: d.main.cuts, table: d.main.table };
         if (d && d.fb && d.fb.tables && d.fb.cuts) SALE_RULE_PARAMS.fb = { cuts: d.fb.cuts, tables: d.fb.tables };
-        SALE_RULE_PARAMS.gen = ((d && d.main && d.main.generatedAt) || '') + ((d && d.fb && d.fb.generatedAt) || '');
+        if (d && d.jr && d.jr.table && d.jr.cuts) SALE_RULE_PARAMS.jr = { cuts: d.jr.cuts, table: d.jr.table };
+        SALE_RULE_PARAMS.gen = ((d && d.main && d.main.generatedAt) || '') + ((d && d.fb && d.fb.generatedAt) || '') + ((d && d.jr && d.jr.generatedAt) || '');
         _fsigMemo = {}; // 보정 표가 바뀌면 저장된 입찰후보 계산을 다시 쓰지 않도록 서명 갱신
     }).catch(function() {});
 }
@@ -18464,6 +18470,15 @@ function saleTurnBucket(a, tr12, cuts) {
     var r = tr12 / hh * 100; return r < cuts[0] ? '낮음' : (r < cuts[1] ? '중간' : '높음');
 }
 function saleClamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
+// 전세가율 구간 보정(2026-10-18): 같은 단지·같은 평형 최근 6개월 전세 보증금 중위값(2건+) ÷ 예상매도가 → 구간별 치우침 보정 계수와 하방(p25). 전세로 매매가를 직접 추정하는 건 오차가 2배라 안 씀(검증)
+function saleJeonseAdj(osr, base, cls) {
+    if (!osr || !osr.jmed6 || !base) return null;
+    var ratio = osr.jmed6 / base * 100, cuts = SALE_RULE_PARAMS.jr.cuts, k = 0; while (k < cuts.length && ratio >= cuts[k]) k++;
+    var ent = SALE_RULE_PARAMS.jr.table[cls] && SALE_RULE_PARAMS.jr.table[cls][String(k)];
+    if (!ent) return null;
+    var mid = SALE_RULE_PARAMS.jr.table[cls]['2'], p25mid = mid ? Math.abs(mid.p25) : Math.abs(ent.p25);
+    return { ratio: Math.round(ratio), bucket: k, factor: saleClamp(1 + ent.bias, 0.97, 1.03), riskExtra: saleClamp(Math.abs(ent.p25) - p25mid, 0, 0.02) };
+}
 var regionPpmIdxCache = {};
 function regionPpmIdx(lawd) {
     var key = lawd + '|' + allAptList.length, c = regionPpmIdxCache[lawd];
@@ -18499,7 +18514,8 @@ function aptRuleSale(a) {
         if (v) {
             var fl = st.lowF && Math.abs(st.lowF.factor - 1) > 0.001 ? st.lowF.factor : 1;
             var tb1 = saleTurnBucket(a, (st.v6 || 0) + (st.vPrev6 || 0), SALE_RULE_PARAMS.main.cuts), te1 = tb1 && SALE_RULE_PARAMS.main.table[cls] && SALE_RULE_PARAMS.main.table[cls][tb1];
-            return { sale: Math.round(v * fl * (te1 ? saleClamp(1 + te1.bias, 0.97, 1.03) : 1)), by: 'recent' };
+            var ja1 = saleJeonseAdj(st, v, cls), tf1 = te1 ? saleClamp(1 + te1.bias, 0.97, 1.03) : 1;
+            return { sale: Math.round(v * fl * saleClamp(tf1 * (ja1 ? ja1.factor : 1), 0.97, 1.03)), by: 'recent' };
         }
     }
     var fb = null; try { fb = aptSaleFallback(a, bunjiFull, pyung, lawd); } catch (e) { fb = null; }
@@ -18650,19 +18666,20 @@ function aptOwnTradeStats(a, bunjiFull, pyung) {
         // 고층 보정은 2026-10-11에 없앰(사용자 결정: 아파트는 1·2층만 보정). 되판 5,409건 검증에서도 고층은 예상 대비 1.004로 보정이 필요 없었음.
     }
     // 전세가율: 같은 단지·같은 평형 최근 1년 전세(월세 0) 보증금 중간값 ÷ 매매 1년 중간값
-    var jeonse = null, rl = (typeof rentCacheByLawd !== 'undefined' && a._lawdForRent) ? rentCacheByLawd[a._lawdForRent] : null;
-    if (rl && rl.length && p12.length) {
+    var dep6 = [], jeonse = null, rl = (typeof rentCacheByLawd !== 'undefined' && a._lawdForRent) ? rentCacheByLawd[a._lawdForRent] : null;
+    if (rl && rl.length) {
         var dk = dongKey(a.dong), bj = String(bunjiFull || '').trim(), deps = [];
         rl.forEach(function(r) {
             if (Number(r.monthly_rent) > 0 || dongKey(r.dong) !== dk || String(r.bunji || '').trim() !== bj || Math.abs(Number(r.size) - area) > 3) return;
             var ds = String(r.deal_date || ''); if (ds.length < 8) return;
             var t = new Date(+ds.slice(0, 4), +ds.slice(4, 6) - 1, +ds.slice(6, 8)).getTime();
             if (t < now && (now - t) / 86400000 / 30.4 <= 12) deps.push(Number(r.deposit));
+            if (t < now && (now - t) / 86400000 / 30.4 <= 6) dep6.push(Number(r.deposit));
         });
-        if (deps.length >= 2) jeonse = { ratio: med(deps) / med(p12), n: deps.length };
+        if (deps.length >= 2 && p12.length) jeonse = { ratio: med(deps) / med(p12), n: deps.length };
     }
     var qtile = function(x, q) { if (!x.length) return null; x = x.slice().sort(function(m, n) { return m - n; }); var i = (x.length - 1) * q, lo = Math.floor(i), hi = Math.ceil(i); return x[lo] + (x[hi] - x[lo]) * (i - lo); };
-    return { lastP: lastP, p3med: qtile(p3, 0.5), n3: p3.length, p6q40: qtile(p6, 0.4), pw1: weightedMedianByAge(p6a, 1), pw2: weightedMedianByAge(p6a, 2), pw2f: weightedMedianByAge(p6a, 2, isNaN(tf) ? null : tf), last3: (function() { var q = p6a.slice().sort(function(x, y) { return x.age - y.age; }).slice(0, 3).map(function(x) { return x.p; }); return q.length >= 3 ? med(q) : null; })(), jeonse: jeonse, v6: v6, vPrev6: vPrev6, recent: recent, lowF: lowF, maxF: maxF, sim6n: sim6.length, sim6med: med(sim6), n12: p12.length, n6: n6, nYear: nYear, n36: p36.length, med12: med(p12), med36: med(p36), lastAgeM: last === null ? null : Math.round((now - last) / 86400000 / 30.4 * 10) / 10 };
+    return { lastP: lastP, p3med: qtile(p3, 0.5), n3: p3.length, p6q40: qtile(p6, 0.4), jmed6: dep6.length >= 2 ? med(dep6) : null, pw1: weightedMedianByAge(p6a, 1), pw2: weightedMedianByAge(p6a, 2), pw2f: weightedMedianByAge(p6a, 2, isNaN(tf) ? null : tf), last3: (function() { var q = p6a.slice().sort(function(x, y) { return x.age - y.age; }).slice(0, 3).map(function(x) { return x.p; }); return q.length >= 3 ? med(q) : null; })(), jeonse: jeonse, v6: v6, vPrev6: vPrev6, recent: recent, lowF: lowF, maxF: maxF, sim6n: sim6.length, sim6med: med(sim6), n12: p12.length, n6: n6, nYear: nYear, n36: p36.length, med12: med(p12), med36: med(p36), lastAgeM: last === null ? null : Math.round((now - last) / 86400000 / 30.4 * 10) / 10 };
 }
 // 예상매도가 상한: 자기 단지 같은 평형 최근 실거래 중앙값(1년, 없으면 3년). 감정가는 1년 전 값이라 안 씀
 function aptSaleCapInfo(a, bunjiFull, pyung, st) {
@@ -19111,7 +19128,7 @@ function finalizeBidBoardRow(row) {
     }
     // 목표마진: 모달에서 직접 정해 저장한 값이 있으면 그걸, 없으면 추천 목표마진
     var userMargin = parseInt(a.compTargetMargin);
-    var rm = row.sale ? riskMarginFor(row.sale, row.own, row.risk, row.popEff, type === 'apt' && !row.saleSaved && !row.salePresale ? { cls: row.regionCls, n6: row.ownStats ? row.ownStats.n6 : null, fb: row.saleFb || null, up: row.saleTurn ? Math.max(0, row.saleTurn.factor - 1) : 0 } : null) : null;
+    var rm = row.sale ? riskMarginFor(row.sale, row.own, row.risk, row.popEff, type === 'apt' && !row.saleSaved && !row.salePresale ? { cls: row.regionCls, n6: row.ownStats ? row.ownStats.n6 : null, fb: row.saleFb || null, up: row.saleAdjTotal ? Math.max(0, row.saleAdjTotal - 1) : 0, jr: row.saleJr ? row.saleJr.riskExtra : 0 } : null) : null;
     row.marginUser = !isNaN(userMargin) && parseInt(a.target) > 0;
     row.margin = row.marginUser ? userMargin : (rm ? rm.margin : null);
     if (row.sale && row.margin != null) {
@@ -19614,7 +19631,7 @@ async function mergeServerBoardCache(local) {
 }
 setTimeout(function() { try { srvBoardParts(); window.villaSrvP = villaFetchServerCalc(); } catch (e) {} }, 2500); // 앱을 켜고 2.5초 뒤 배경에서 미리 받기
 // 저장 계산을 다시 써도 되는지 - 물건 입력값(시세 계산에 쓰는 것)과 입찰일 지남 여부. 계산 방식이 바뀌면 BOARD_CALC_VER을 올림
-var BOARD_CALC_VER = 50; // 50: 지방 최근 거래 비슷한 층 비중·1~2건은 12개월 원값(2026-10-18) - // 49: 근거 약함 경고를 판정 단계에서 다시 붙임 - // 48: 예상매도가-감정가 큰 차이 근거 약함 표시 - // 47: 다른 평형 환산이 같은 평형과 20% 넘게 다르면 섞지 않음 - // 46: 같은 동 추론(③④) 제거·거래 없는 단지는 기존 주변 비교 + 근거 약함(2026-10-18) - // 45: 회전율 구간별 보정 항상 적용(주간 갱신 표, 2026-10-17) - // 44: 추론에 최근 6개월 1~2건 포함 - // 43: 6개월 거래 부족 시 단계별 추론(2026-10-17) - // 42: 지역별 예상매도가(서울 최근3건·경기인천 반감1개월·지방 반감2개월)와 위험 여유(2026-10-17) - // 41: 아파트 예상매도가를 최근 6개월 같은 평형 거래의 최근가중 중위값으로(전국 백테스트, 2026-10-17) - // 40: 임차인 둘로 읽힌 경우 별개/같은 임차권(갱신·승계) 선택(2026-10-11) - // 39: 39: 임차권등기를 임차인으로 계산(전입·확정일자 기준)·경매신청인 전세권 안내(2026-10-11) - // 38: 38: 권리분석 날짜 선후 규칙 정리(전입 다음 날 0시·동순위 안분, 2026-10-11) - // 37: 37: 권리분석에 말소기준일보다 앞선 전세권·임차권 등 등기부 인수 권리 반영(2026-10-11) - // 36: 저가 아파트 순이익률 10% 추천가 규칙 되돌림(2026-10-11, 백테스트 손해 30~42%) - // 34: 33: 아파트 고층 보정 축소·저층 범위(2026-10-11) - // 29: nYear 저장 추가 - // 27: 🎲 예상 낙찰가용 시세(wbBase) 추가 (범위 표시는 화면에서 바로 계산 - 버전 변경 없음)
+var BOARD_CALC_VER = 51; // 51: 전세가율 구간 보정·위험 신호(2026-10-18) - // 50: 지방 최근 거래 비슷한 층 비중·1~2건은 12개월 원값(2026-10-18) - // 49: 근거 약함 경고를 판정 단계에서 다시 붙임 - // 48: 예상매도가-감정가 큰 차이 근거 약함 표시 - // 47: 다른 평형 환산이 같은 평형과 20% 넘게 다르면 섞지 않음 - // 46: 같은 동 추론(③④) 제거·거래 없는 단지는 기존 주변 비교 + 근거 약함(2026-10-18) - // 45: 회전율 구간별 보정 항상 적용(주간 갱신 표, 2026-10-17) - // 44: 추론에 최근 6개월 1~2건 포함 - // 43: 6개월 거래 부족 시 단계별 추론(2026-10-17) - // 42: 지역별 예상매도가(서울 최근3건·경기인천 반감1개월·지방 반감2개월)와 위험 여유(2026-10-17) - // 41: 아파트 예상매도가를 최근 6개월 같은 평형 거래의 최근가중 중위값으로(전국 백테스트, 2026-10-17) - // 40: 임차인 둘로 읽힌 경우 별개/같은 임차권(갱신·승계) 선택(2026-10-11) - // 39: 39: 임차권등기를 임차인으로 계산(전입·확정일자 기준)·경매신청인 전세권 안내(2026-10-11) - // 38: 38: 권리분석 날짜 선후 규칙 정리(전입 다음 날 0시·동순위 안분, 2026-10-11) - // 37: 37: 권리분석에 말소기준일보다 앞선 전세권·임차권 등 등기부 인수 권리 반영(2026-10-11) - // 36: 저가 아파트 순이익률 10% 추천가 규칙 되돌림(2026-10-11, 백테스트 손해 30~42%) - // 34: 33: 아파트 고층 보정 축소·저층 범위(2026-10-11) - // 29: nYear 저장 추가 - // 27: 🎲 예상 낙찰가용 시세(wbBase) 추가 (범위 표시는 화면에서 바로 계산 - 버전 변경 없음)
 /* 2026-10-15(사용자: 입찰후보 로딩이 느림 - 원인 실측): 식별값 끝의 'P/F'(입찰일 지남 여부)가 한국 시각 자정에 바뀌어, 서버 미리 계산이 돈 뒤 어제 입찰이던 물건(하루 약 350건)이 전부 '다른 물건'이 돼
    지역 자료 86곳(곳당 9~13MB)을 새로 받아 다시 계산했음. 계산 결과는 입찰일 지남 여부와 무관하므로(날짜 표시는 열 때 다시 계산) 저장본의 P/F가 반대여도 같은 것으로 봄(flip). */
 function boardBaseSig(a, flip) {
