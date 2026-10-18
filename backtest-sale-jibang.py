@@ -33,7 +33,7 @@ def wmed(vals, w):
 
 
 def main():
-    tr = avm.fetch_all_rows("house_trades", cols="region,dong,danji,bunji,price,size,floor,deal_date,dealing_type,cdeal_type", extra_filter="&deal_date=gte.20220101")
+    tr = avm.fetch_all_rows("house_trades", cols="region,dong,danji,bunji,price,size,floor,deal_date,dealing_type,cdeal_type,apt_dong", extra_filter="&deal_date=gte.20220101")
     if "cdeal_type" in tr.columns: tr = tr[tr["cdeal_type"].fillna("").astype(str).str.strip() == ""].copy()
     for c in ("price", "size", "floor", "deal_date"): tr[c] = pd.to_numeric(tr[c], errors="coerce")
     tr = tr.dropna(subset=["price", "size", "deal_date"]); tr = tr[(tr["price"] > 0) & (tr["size"] > 10) & (tr["dealing_type"] != "직거래")]
@@ -43,6 +43,7 @@ def main():
     tr["t"] = (tr["ts"] - pd.Timestamp("2000-01-01")).dt.days.astype(float)
     tr["ym"] = (tr["ts"].dt.year * 12 + tr["ts"].dt.month).astype(int)
     tr["ppm"] = tr["price"] / tr["size"]
+    tr["adong"] = tr["apt_dong"].map(lambda v: str(int(re.search(r"(\d{1,4})", str(v)).group(1))) if re.search(r"(\d{1,4})", str(v or "")) else "")
     print(f"  지방 거래 {len(tr):,}건")
 
     by = {}
@@ -77,6 +78,18 @@ def main():
         price = same["price"].values.astype(float); fl = same["floor"].values; ymv = same["ym"].values
         adj = np.array([i0 / idx(rg, int(y)) if idx(rg, int(y)) else np.nan for y in ymv])
         rec = dict(n6=n6, n12=int(m12.sum()), actual=float(T["price"]))
+        tfl = T["floor"]; tad = T["adong"]
+        age6 = age[m6]; p6 = price[m6]; f6 = fl[m6]; ad6 = same["adong"].values[m6]
+        if n6 >= 1:
+            w0 = 0.5 ** (age6 / 2.0)
+            wf = w0 * (np.where(np.abs(f6 - tfl) <= 3, 1.5, 1.0) if not np.isnan(tfl) else 1.0)
+            rec["V6"] = wmed(p6, wf)                                  # 비슷한 층(±3) 비중 1.5배
+            wd = w0 * (np.where(ad6 == tad, 2.0, 1.0) if tad else 1.0)
+            rec["V7"] = wmed(p6, wd)                                  # 같은 건물 동 비중 2배
+            rec["V8"] = wmed(p6, wf * (np.where(ad6 == tad, 2.0, 1.0) if tad else 1.0))
+        if m12.sum() >= 1:
+            rec["V9"] = wmed(price[m12], 0.5 ** (age[m12] / 3.0))    # 시세 지수 없이 12개월 원값, 반감 3개월
+            rec["V10"] = wmed(price[m12], 0.5 ** (age[m12] / 2.0))   # 12개월, 반감 2개월(현재와 같은 비중을 12개월로 확장)
         # 추세: 시군구 지수 최근 3개월 변화
         i3 = idx(rg, ym0 - 4)
         rec["trend"] = (i0 / i3 - 1) if i3 else np.nan
@@ -113,7 +126,7 @@ def line(d, c):
 
 
 def report(D):
-    V = ["V0", "V1", "V2", "V3", "V4", "V5"]
+    V = ["V0", "V3", "V6", "V7", "V8", "V9", "V10"]
     D["tr"] = pd.cut(D["trend"], [-9, -0.03, 0.03, 9], labels=["하락(-3%↓)", "보합", "상승(+3%↑)"])
     for nm, m in (("직전 6개월 3건 이상(현재 규칙 구간)", D.n6 >= 3), ("6개월 1~2건", (D.n6 >= 1) & (D.n6 < 3))):
         d = D[m]
