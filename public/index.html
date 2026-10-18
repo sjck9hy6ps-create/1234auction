@@ -20768,7 +20768,7 @@ function parseNaverListings(text) {
             cur.price = parseNaverPriceManwon(parts[0]); cur.priceHigh = parts[1] ? parseNaverPriceManwon(parts[1]) : cur.price;
             return;
         }
-        var am = /([\d.]+)\/([\d.]+)\s*m²\s*,\s*(\d+|저|중|고)\/(\d+)층(?:\s*,\s*(\S+))?/.exec(ln);
+        var am = /([\d.]+)[A-Za-z]*\d*\/([\d.]+)\s*m²\s*,\s*(\d+|저|중|고)\/(\d+)층(?:\s*,\s*(\S+))?/.exec(ln); // 평형 표기가 '112D2/84m²'·'151F/112m²'처럼 타입 문자가 붙는 것도 읽음(2026-10-18, 실제 네이버 목록 확인)
         if (am) { cur.supply = parseFloat(am[1]); cur.area = parseFloat(am[2]); cur.floorRaw = am[3]; cur.floor = /^\d+$/.test(am[3]) ? parseInt(am[3], 10) : null; cur.maxF = parseInt(am[4], 10); cur.dir = am[5] || ''; return; }
         var dm = /(?:확인매물|등록일)\s*(\d\d)\.(\d\d)\.(\d\d)/.exec(ln);
         if (dm) { cur.date = '20' + dm[1] + '-' + dm[2] + '-' + dm[3]; var bm = /중개사(\d+)곳/.exec(ln); if (bm) cur.agents = parseInt(bm[1], 10); return; }
