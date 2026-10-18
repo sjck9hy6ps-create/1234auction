@@ -1,0 +1,29 @@
+name: 검증 - 앱 실제 출력 종단 검증(과거 시점으로 되돌려 예상매도가 비교)
+
+on:
+  workflow_call:
+  workflow_dispatch:
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - run: npm install @supabase/supabase-js ws playwright
+      - run: npx playwright install --with-deps chromium
+      - env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          SITE_URL: https://1234auction.vercel.app
+        run: node scripts/validate-app-asof.mjs
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: validate-app-asof
+          path: validate-app-asof.json
+          if-no-files-found: ignore
+          retention-days: 14
