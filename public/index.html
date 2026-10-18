@@ -20921,7 +20921,8 @@ async function applyListingListsAuto(list) {
     // 한쪽 이름이 다른 쪽에 포함되는 경우는 짧은 쪽이 5글자 이상이고 긴 쪽의 70% 이상일 때만 같은 단지로 봄
     var sameName = function(a, b) { if (a === b) return true; var sh = a.length < b.length ? a : b, lg = a.length < b.length ? b : a; return sh.length >= 5 && sh.length / lg.length >= 0.7 && lg.indexOf(sh) >= 0; };
     Object.keys(byName).forEach(function(n) {
-        var cands = T.filter(function(r) { return sameName(nameKey(r.name), n); });
+        var cands = T.filter(function(r) { return nameKey(r.name) === n; }); // 이름이 정확히 같은 물건이 있으면 그것만(일산·해운대 두산위브더제니스처럼 이름 일부가 겹치는 다른 단지와 섞이지 않게)
+        if (!cands.length) cands = T.filter(function(r) { return sameName(nameKey(r.name), n); });
         if (!cands.length) return;
         var kinds = {}; cands.forEach(function(r) { kinds[cx(r)] = 1; });
         if (Object.keys(kinds).length > 1) { used[n] = 1; ambiguous.push(byName[n][0].complex + '(' + Object.keys(kinds).length + '곳)'); return; }
