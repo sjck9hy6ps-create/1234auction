@@ -11,7 +11,17 @@ const supabase = createClient(process.env.SUPABASE_URL?.trim(), process.env.SUPA
 
 const browser = await chromium.launch();
 const page = await browser.newPage({ viewport: { width: 1400, height: 900 }, timezoneId: 'Asia/Seoul', locale: 'ko-KR' }); // 한국 시각 기준(입찰일 지남 여부·남은 일수가 사용자 화면과 같게, 2026-10-15)
-await page.addInitScript(() => { window.__rcForce = true; }); // 빌라 월세 시세는 매주 새 신고로 다시 계산(2026-10-11)
+// 빌라 월세 시세는 매주 새 신고로 다시 계산(2026-10-11) - 단, 서버에 저장된 빌라 계산이 5일 안이면 다시 계산하지 않음(2026-10-18: 월세 강제 재계산이 빌라 단계 15분 이상의 대부분이었고, 아파트 규칙만 바뀐 재실행에서도 매번 돌았음). RC_FORCE=1이면 항상 강제
+let rcForce = process.env.RC_FORCE === '1';
+if (!rcForce) {
+  try {
+    const { data: vm } = await supabase.from('leader_follower_cache').select('payload').eq('id', 'board|villa|meta').maybeSingle();
+    const at = vm && vm.payload && vm.payload.at;
+    rcForce = !at || Date.now() - at >= 5 * 86400000;
+    console.log(`빌라 월세 재계산 ${rcForce ? '실행(저장본이 오래됐거나 없음)' : '건너뜀(저장본이 5일 안)'}`);
+  } catch (e) { rcForce = true; }
+}
+await page.addInitScript((f) => { window.__rcForce = f; window.__prefetchAhead = 10; }, rcForce); // 지역 자료 미리 받기도 4곳 → 10곳(가상 브라우저는 화면이 없어 더 많이 받아도 됨)
 page.setDefaultTimeout(60000);
 page.on('pageerror', (e) => console.log('페이지 오류:', String(e).slice(0, 200)));
 console.log('앱 여는 중…');
@@ -63,7 +73,7 @@ try {
     await page.waitForTimeout(15000);
     const st = await page.evaluate(() => ({ busy: !!villaLoadBusy, final: !!villaLiqFinal, rows: villaMetroRows(true).length, ve: villaMetroRows(true).filter((r) => villaVeCache[r.id]).length, rcf: villaMetroRows(true).filter((r) => villaRcFresh[r.id]).length, hsq: hsQueue.length, hsr: hsRunning }));
     console.log(`빌라 ${Math.round((Date.now() - tv) / 1000)}s · 행 ${st.rows} · 예상매도가 ${st.ve} · 생활권 ${st.final} · 월세 ${st.rcf} · 대장 대기 ${st.hsq}/${st.hsr}`);
-    if (!st.busy && st.final && st.ve >= st.rows && st.rcf >= st.rows && st.hsq === 0 && st.hsr === 0) break;
+    if (!st.busy && st.final && st.ve >= st.rows && (!rcForce || st.rcf >= st.rows) && st.hsq === 0 && st.hsr === 0) break; // 월세를 다시 계산하지 않는 날엔 월세 완료 수를 기다리지 않음
     if (!st.busy && st.final && st.ve >= st.rows && Date.now() - tv > 15 * 60 * 1000) break; // 대장 조회는 최대 15분만 기다림
     if (Date.now() - tv > 40 * 60 * 1000) { console.log('빌라 시간 초과'); break; }
   }

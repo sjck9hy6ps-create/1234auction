@@ -19502,7 +19502,7 @@ async function refreshBidBoard() {
     window.redrawMarkers = window.renderAuctionMarkers = window.renderBidCaseMarkers = function() {};
     // 2026-10 속도 개선(사용자: "입찰후보 불러오는 과정이 너무 느려" - 실측 74초, 지역 32곳을 한 곳씩 받느라 받기만 34초):
     // 지역 실거래·사이클 자료를 앞으로 4곳까지 미리 동시에 받아 두고, 계산·화면 반영만 차례로. 화면 다시 그리기도 1.5초에 한 번으로.
-    var PREFETCH_AHEAD = 4, prefetched = {};
+    var PREFETCH_AHEAD = window.__prefetchAhead || 4, prefetched = {};
     var prefetch = function(k) {
         if (!k || k === '_' || prefetched[k]) return;
         prefetched[k] = {
