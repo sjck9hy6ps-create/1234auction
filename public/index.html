@@ -15548,6 +15548,8 @@ function placeAuctionMarker(a, hidden) {
         return;
     }
     awEst = (isWon || isBidTarget) ? getAuctionWonEstimates(a, true) : null;
+    // 시간 예산을 넘겨 계산을 미룬 경우(null) 빈 값으로 먼저 그리고 곧 다시 그림 - null을 그대로 쓰면 아래 awEst.predictedSale에서 오류가 났음(2026-10-18 수정)
+    if ((isWon || isBidTarget) && !awEst) awEst = { predictedSale: null, impliedTarget: null, pyung: parseFloat(a.pyung) || null, inferredBuildYear: a.buildYear || null, buildYearConfirmed: !!a.buildYear, ageTier: null, highBidFlag: null, _pending: true };
     var surgeRank = a.dong ? surgeRankMap[a.dong] : null;
     var surgeBadge = '' && surgeRank
         ? '<span style="background:#e53935;color:white;font-size:9px;font-weight:bold;padding:1px 5px;border-radius:3px;margin-left:3px;">🔥' + surgeRank + '위</span>'
@@ -15590,7 +15592,7 @@ function placeAuctionMarker(a, hidden) {
     // actualBid가 있어야 의미가 있으므로 isWon일 때만 별도로 계산해서 붙임.
     if (isWon || isBidTarget) {
         var awPredicted = awEst.predictedSale;
-        predictedLine = '<div style="color:#1976d2;font-size:10.5px;">🤖 예상매도가 ' + (awPredicted ? toEok(String(awPredicted)) : '데이터 부족')
+        predictedLine = '<div style="color:#1976d2;font-size:10.5px;">🤖 예상매도가 ' + (awPredicted ? toEok(String(awPredicted)) : (awEst._pending ? '계산 중…' : '데이터 부족'))
             + ' <span onclick="event.stopPropagation();refreshAuctionWonPredictedSale(\'' + a.id + '\', this)" title="지금 시점 기준으로 다시 계산(연식 미상이면 건축HUB 조회 포함)" style="cursor:pointer;">🔄</span></div>';
         // ⚠️ 위 ageBadge와 동일한 이유로 propType==='villa'일 때만 연식단계 배지를 씀
         var awAgeTierLabel = (a.propType === 'villa' && awEst.ageTier) ? getVillaTierLabel(awEst.ageTier) : null;
