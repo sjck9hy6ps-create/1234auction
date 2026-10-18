@@ -20949,8 +20949,8 @@ async function processListingInbox() {
     try {
         var items = await fetch('/api/auction?kind=listingRaw', { cache: 'no-store' }).then(function(r) { return r.json(); });
         if (!Array.isArray(items)) return;
-        // 처리된 지 10분 넘은 기록은 정리
-        items.filter(function(x) { return x.done && Date.now() - new Date(x.appliedAt || 0).getTime() > 600000; }).forEach(function(x) { fetch('/api/auction?kind=listingRaw&id=' + encodeURIComponent(x.id), { method: 'DELETE' }).catch(function() {}); });
+        // 처리된 기록은 원문과 함께 하루 보관(반영이 이상할 때 원문으로 확인·다시 반영) 후 정리
+        items.filter(function(x) { return x.done && Date.now() - new Date(x.appliedAt || 0).getTime() > 86400000; }).forEach(function(x) { fetch('/api/auction?kind=listingRaw&id=' + encodeURIComponent(x.id), { method: 'DELETE' }).catch(function() {}); });
         var pending = items.filter(function(x) { return !x.done; });
         if (!pending.length) return;
         // 보드 계산이 안 된 상태(지도 화면)면 조용히 계산부터 - 새로고침 없이 지금 열린 앱에서 바로 반영
@@ -20962,8 +20962,8 @@ async function processListingInbox() {
             var it = pending[i], list = parseNaverListings(it.text || ''), res = { done: 0, text: '매매 매물을 찾지 못했어요', applied: [] };
             if (list.length) res = await applyListingListsAuto(list);
             got += res.done; res.applied.forEach(function(x) { names.push(x); });
-            // 확장이 결과를 볼 수 있게 처리 기록을 남김(원문은 지움)
-            try { await fetch('/api/auction?kind=listingRaw', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: it.id, at: it.at, url: it.url, text: '', done: true, appliedAt: new Date().toISOString(), result: { done: res.done, text: res.text, applied: res.applied } }) }); } catch (e) {}
+            // 확장이 결과를 볼 수 있게 처리 기록을 남김(원문도 하루 보관)
+            try { await fetch('/api/auction?kind=listingRaw', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: it.id, at: it.at, url: it.url, text: it.text, done: true, appliedAt: new Date().toISOString(), result: { done: res.done, text: res.text, applied: res.applied } }) }); } catch (e) {}
         }
         lbAll = prevAll;
         renderBidBoard(); try { renderBidDrawer(); } catch (e) {}
