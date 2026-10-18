@@ -10,8 +10,11 @@ on:
       cutoffs:
         description: '시점(쉼표로 구분, 비우면 기본 4개). 예: 2026-04-01,2026-07-01'
         default: ''
-      max_subjects:
-        description: '시점마다 최대 물건 수(기본 2500)'
+      max_per_region:
+        description: '지역·시점마다 최대 물건 수(기본 25)'
+        default: ''
+      region_limit:
+        description: '시험용: 앞의 N개 지역만(비우면 전부)'
         default: ''
 
 permissions:
@@ -44,7 +47,8 @@ jobs:
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
           SITE_URL: https://1234auction.vercel.app
           CUTOFFS: ${{ github.event.inputs.cutoffs }}
-          MAX_SUBJECTS: ${{ github.event.inputs.max_subjects }}
+          MAX_PER_REGION: ${{ github.event.inputs.max_per_region }}
+          REGION_LIMIT: ${{ github.event.inputs.region_limit }}
         run: |
           # 시점별 중간 결과가 asof-partial/에 남아 있어 끝난 시점은 건너뛰고 이어서 함. 실패 원인은 validate-app-asof-failures.json과 서버(signal|__asof_val_log__)에 남음
           ok=0
