@@ -1031,6 +1031,43 @@ def weekly_report(R, now_dt, now_iso):
         print("  추천가 성적표:", {k: v for k, v in out["scorecard"].items() if k != "items"})
     except Exception as e:
         print("  성적표 건너뜀:", e)
+    # 2026-10-19(사용자: "리포트에 예상낙찰가 성적표도") - 최근 12주를 4주 단위로 끊어, 각 구간 이전 사례만으로 만든 모델이 그 구간 낙찰가를 얼마나 맞혔는지(주별·지역별·유찰별)
+    try:
+        ws = {"weeks": [], "byClass": [], "byFails": [], "blocks": 0}
+        cls_f = lambda rg: "서울" if str(rg).startswith("서울") else ("경기·인천" if str(rg)[:2] in ("경기", "인천") else "지방")
+        parts = []
+        for b in range(3):
+            b_to = now_dt - timedelta(days=28 * b); b_from = b_to - timedelta(days=28)
+            lo_i, hi_i = ymd(b_from), ymd(b_to)
+            T = D[(D["sale"] >= lo_i) & (D["sale"] < hi_i)].copy()
+            Tr = D[D["sale"] < lo_i]
+            if len(T) < 30 or len(Tr) < 3000: continue
+            m = wb_fit(Tr); T["pred"] = np.exp(wb_predict(m, T)) * T["est"]; parts.append(T); ws["blocks"] += 1
+        if parts:
+            A = pd.concat(parts); A["err"] = (A["pred"] - A["actual"]) / A["actual"]
+            A["dt"] = pd.to_datetime(A["sale"].astype(int).astype(str), format="%Y%m%d", errors="coerce")
+            A["wk"] = (A["dt"] - pd.to_timedelta(A["dt"].dt.weekday, unit="D")).dt.strftime("%Y%m%d")
+            def sc_stat(G):
+                a = G["err"].abs()
+                return {"n": int(len(G)), "medAbsErrPct": round(float(a.median()) * 100, 1), "within10Pct": round(float((a <= 0.10).mean()) * 100, 1), "biasPct": round(float(G["err"].median()) * 100, 1),
+                        "winAtPredPct": round(float((G["actual"] <= G["pred"]).mean()) * 100, 1), "winAtPlus5Pct": round(float((G["actual"] <= G["pred"] * 1.05).mean()) * 100, 1)}
+            ws["all"] = sc_stat(A)
+            for wk, G in A.groupby("wk"):
+                if len(G) >= 10: ws["weeks"].append(dict(week=wk, **sc_stat(G)))
+            ws["weeks"].sort(key=lambda x: x["week"])
+            A["cls"] = A["region"].map(cls_f)
+            for c in ("서울", "경기·인천", "지방"):
+                G = A[A["cls"] == c]
+                if len(G) >= 30: ws["byClass"].append(dict(label=c, **sc_stat(G)))
+            A["fb"] = A["fails"].map(lambda f: None if f is None or pd.isna(f) else ("신건" if f == 0 else ("1회 유찰" if f == 1 else "2회+ 유찰")))
+            for lab in ("신건", "1회 유찰", "2회+ 유찰"):
+                G = A[A["fb"] == lab]
+                if len(G) >= 30: ws["byFails"].append(dict(label=lab, **sc_stat(G)))
+            ws["from"] = int(A["sale"].min()); ws["to"] = int(A["sale"].max())
+        out["winScore"] = ws
+        print("  예상 낙찰가 성적표:", ws.get("all"), "주", len(ws["weeks"]))
+    except Exception as e:
+        print("  예상 낙찰가 성적표 건너뜀:", e)
     print(f"  주간 리포트: 기간 {start}~, 사례 {len(W)}건, 정확도 {out.get('accuracy')}")
     cyc.upsert_rows([{"id": "signal|__weekly_report__", "payload": cyc.clean_json(out), "fetched_at": now_iso}])
     # 지난 리포트 누적(사용자: 알림에서 확인한 뒤에도 계속 볼 수 있게 누적 목록) - 주마다 따로 저장 + 목록 갱신

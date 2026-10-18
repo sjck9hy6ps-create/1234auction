@@ -27608,7 +27608,7 @@ function wrBiasText(b) {
 }
 function wrBiasShort(b) { return b == null ? '-' : (Math.abs(b) < 0.5 ? '거의 정확' : Math.abs(b) + '% ' + (b > 0 ? '높게' : '낮게')); }
 function wrTab(k) {
-    ['now', 'score', 'hist', 'chg', 'bv', 'pl'].forEach(function(t) {
+    ['now', 'score', 'wsc', 'hist', 'chg', 'bv', 'pl'].forEach(function(t) {
         var el = document.getElementById('wr-t-' + t), bt = document.getElementById('wr-tb-' + t);
         if (el) el.style.display = t === k ? '' : 'none'; if (bt) bt.classList.toggle('on', t === k);
     });
@@ -27712,6 +27712,18 @@ function wrRenderScore(sc) {
     }
     return h;
 }
+function wrRenderWinScore(ws) {
+    if (!ws || !ws.all) return '<div class="pn-muted" style="padding:8px 0;">다음 주간 분석부터 나와요.</div>';
+    var pc = function(v) { return v == null ? '-' : v + '%'; }, a = ws.all;
+    var row = function(x, lab) { return '<tr><td>' + lab + '</td><td class="r">' + x.n + '</td><td class="r"><b>' + pc(x.medAbsErrPct) + '</b></td><td class="r">' + pc(x.within10Pct) + '</td><td class="r">' + wrBiasShort(x.biasPct) + '</td><td class="r">' + pc(x.winAtPredPct) + '</td><td class="r">' + pc(x.winAtPlus5Pct) + '</td></tr>'; };
+    var th = '<thead><tr><th></th><th class="r">건수</th><th class="r">보통 오차</th><th class="r">±10% 안</th><th class="r">방향</th><th class="r">예상가로 낙찰</th><th class="r">+5%로 낙찰</th></tr></thead>';
+    var h = '<div class="pn-muted">최근 12주 낙찰 ' + a.n + '건(아파트)을 "그 구간 이전 사례만으로 만든 모델"로 맞혀 본 누적 성적이에요. 학습에 안 쓴 사례라 실제 입찰 때 기대할 수 있는 수준에 가까워요.</div>'
+        + '<div class="wr-kpis"><div><span>예상 낙찰가 보통 오차</span><b>' + pc(a.medAbsErrPct) + '</b><em>' + wrBiasShort(a.biasPct) + '</em></div><div><span>±10% 안에 든 비율</span><b>' + pc(a.within10Pct) + '</b><em>' + a.n + '건 기준</em></div><div><span>예상가로 썼다면 낙찰</span><b>' + pc(a.winAtPredPct) + '</b><em>+5%면 ' + pc(a.winAtPlus5Pct) + '</em></div></div>';
+    if (ws.weeks && ws.weeks.length) h += '<div class="wr-sec"><b>주별</b><table class="pn-table">' + th.replace('<th></th>', '<th>낙찰 주(월요일)</th>') + '<tbody>' + ws.weeks.slice().reverse().map(function(x) { return row(x, wrYmd(x.week)); }).join('') + '</tbody></table></div>';
+    if (ws.byClass && ws.byClass.length) h += '<div class="wr-sec"><b>지역별</b><table class="pn-table">' + th + '<tbody>' + ws.byClass.map(function(x) { return row(x, x.label); }).join('') + '</tbody></table></div>';
+    if (ws.byFails && ws.byFails.length) h += '<div class="wr-sec"><b>유찰별</b><table class="pn-table">' + th + '<tbody>' + ws.byFails.map(function(x) { return row(x, x.label); }).join('') + '</tbody></table></div>';
+    return h;
+}
 function wrRenderHistory(items, cur) {
     if (!items || !items.length) return '<div class="pn-muted" style="padding:8px 0;">아직 누적된 지난 리포트가 없어요. 이번 주 분석부터 매주 쌓여요.</div>';
     var pc = function(v) { return v == null ? '-' : v + '%'; };
@@ -27796,8 +27808,8 @@ function openWeeklyReport(week) {
             h += '<div class="wr-sec"><b>6개월 전 낙찰 사례의 되팔기 흔적</b> (' + wrYmd(tr.from) + '~' + wrYmd(tr.to) + ' 낙찰 ' + tr.n + '건) - 같은 동·층 거래 확인(동 번호 있는 ' + tr.dongKnown + '건 중) <b>' + tr.dongConfirmed + '건</b> · 층만 맞음 ' + tr.floorOnly + '건'
                 + '<div class="pn-muted">호수를 몰라 옆집 거래일 수 있어요(우연 수준 약 7%). 참고용 지표예요.</div></div>';
         }
-        b.innerHTML = '<div class="wr-tabs"><button id="wr-tb-now" class="on" onclick="wrTab(\'now\')">이번 리포트</button><button id="wr-tb-score" onclick="wrTab(\'score\')">📈 추천가 성적표(누적)</button><button id="wr-tb-hist" onclick="wrTab(\'hist\')">🗂️ 지난 리포트</button><button id="wr-tb-chg" onclick="wrTab(\'chg\');wrLoadChg()">🔄 이번 주 변동</button><button id="wr-tb-bv" onclick="wrTab(\'bv\');wrLoadBv()">🔬 입찰 경쟁 검증</button><button id="wr-tb-pl" onclick="wrTab(\'pl\');wrLoadPl()">🛠 파이프라인</button></div>'
-            + '<div id="wr-t-now">' + h + '</div><div id="wr-t-score" style="display:none;">' + wrRenderScore(d.scorecard) + '</div><div id="wr-t-hist" style="display:none;"><div class="pn-muted">불러오는 중…</div></div><div id="wr-t-chg" style="display:none;"><div class="pn-muted">불러오는 중…</div></div><div id="wr-t-bv" style="display:none;"><div class="pn-muted">불러오는 중…</div></div><div id="wr-t-pl" style="display:none;"><div class="pn-muted">불러오는 중…</div></div>';
+        b.innerHTML = '<div class="wr-tabs"><button id="wr-tb-now" class="on" onclick="wrTab(\'now\')">이번 리포트</button><button id="wr-tb-score" onclick="wrTab(\'score\')">📈 추천가 성적표(누적)</button><button id="wr-tb-wsc" onclick="wrTab(\'wsc\')">🎲 예상 낙찰가 성적표</button><button id="wr-tb-hist" onclick="wrTab(\'hist\')">🗂️ 지난 리포트</button><button id="wr-tb-chg" onclick="wrTab(\'chg\');wrLoadChg()">🔄 이번 주 변동</button><button id="wr-tb-bv" onclick="wrTab(\'bv\');wrLoadBv()">🔬 입찰 경쟁 검증</button><button id="wr-tb-pl" onclick="wrTab(\'pl\');wrLoadPl()">🛠 파이프라인</button></div>'
+            + '<div id="wr-t-now">' + h + '</div><div id="wr-t-score" style="display:none;">' + wrRenderScore(d.scorecard) + '</div><div id="wr-t-wsc" style="display:none;">' + wrRenderWinScore(d.winScore) + '</div><div id="wr-t-hist" style="display:none;"><div class="pn-muted">불러오는 중…</div></div><div id="wr-t-chg" style="display:none;"><div class="pn-muted">불러오는 중…</div></div><div id="wr-t-bv" style="display:none;"><div class="pn-muted">불러오는 중…</div></div><div id="wr-t-pl" style="display:none;"><div class="pn-muted">불러오는 중…</div></div>';
         fetch('/api/data-coverage?mode=weeklyHistory').then(function(r) { return r.json(); }).then(function(hd) {
             var el = document.getElementById('wr-t-hist'); if (el) el.innerHTML = wrRenderHistory((hd && hd.items) || [], week || d.windowTo);
         }).catch(function() { var el = document.getElementById('wr-t-hist'); if (el) el.innerHTML = '<div class="pn-muted">목록을 불러오지 못했어요.</div>'; });
