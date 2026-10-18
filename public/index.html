@@ -20902,12 +20902,22 @@ async function applyListingBulk() {
     if (!list.length) { msg.style.color = '#c62828'; msg.innerText = '매매 매물을 찾지 못했어요. 네이버 부동산 단지 매물 목록을 그대로 복사해 주세요'; return; }
     msg.style.color = '#999'; msg.innerText = '정리 중…';
     var byName = {}; list.forEach(function(x) { var k = matchNormName(x.complex); (byName[k] = byName[k] || []).push(x); });
-    var done = 0, noSize = [], used = {};
+    var done = 0, noSize = [], used = {}, ambiguous = [];
     var T = listingBulkTargets();
+    var cx = function(r) { return (r.region || '') + '|' + (r.a.dong || ''); }; // 같은 단지 = 같은 지역·동
+    // 이름이 같으면 맞는 것으로 보되, 이름이 흔해서 임장 후보 중 서로 다른 단지 여러 곳과 맞으면(주공아파트 등) 엉뚱한 곳에 저장될 수 있어 건너뜀 → 상세에서 직접 붙여넣기
+    // 한쪽 이름이 다른 쪽에 포함되는 경우는 짧은 쪽이 5글자 이상이고 긴 쪽의 70% 이상일 때만 같은 단지로 봄
+    var sameName = function(a, b) { if (a === b) return true; var sh = a.length < b.length ? a : b, lg = a.length < b.length ? b : a; return sh.length >= 5 && sh.length / lg.length >= 0.7 && lg.indexOf(sh) >= 0; };
+    Object.keys(byName).forEach(function(n) {
+        var cands = T.filter(function(r) { return sameName(matchNormName(r.name), n); });
+        if (!cands.length) return;
+        var kinds = {}; cands.forEach(function(r) { kinds[cx(r)] = 1; });
+        if (Object.keys(kinds).length > 1) { used[n] = 1; ambiguous.push(byName[n][0].complex + '(' + Object.keys(kinds).length + '곳)'); return; }
+        used[n] = 1;
+        cands.forEach(function(r) { r.__lbItems = byName[n]; });
+    });
     for (var i = 0; i < T.length; i++) {
-        var r = T[i], k = matchNormName(r.name);
-        var items = byName[k]; if (!items) { var kk = Object.keys(byName).filter(function(n) { return k.length >= 3 && n.length >= 3 && (n.indexOf(k) >= 0 || k.indexOf(n) >= 0); })[0]; items = kk ? byName[kk] : null; if (kk) used[kk] = 1; } else used[k] = 1;
-        if (!items) continue;
+        var r = T[i], items = r.__lbItems; if (!items) continue; delete r.__lbItems;
         var area = (parseFloat(r.a.pyung) || 0) * 3.305785, same = items.filter(function(x) { return !x.area || Math.abs(x.area - area) <= 3; });
         if (!same.length) { noSize.push(r.name + ' ' + r.pyung + '평'); continue; }
         try { await applyListingList(r.a, r, items); done++; } catch (e) { console.error('호가 반영 실패', e); }
@@ -20915,7 +20925,7 @@ async function applyListingBulk() {
     var unmatched = Object.keys(byName).filter(function(n) { return !used[n]; }).map(function(n) { return byName[n][0].complex; });
     renderBidBoard();
     msg.style.color = done ? '#2e7d32' : '#e65100';
-    msg.innerText = '입찰물건 ' + done + '건에 반영' + (noSize.length ? ' · 같은 평형 매물 없음 ' + noSize.length + '건(' + noSize.slice(0, 3).join(', ') + (noSize.length > 3 ? ' 외' : '') + ')' : '') + (unmatched.length ? ' · 임장 후보에 없는 단지 ' + unmatched.length + '곳(' + unmatched.slice(0, 3).join(', ') + ')' : '');
+    msg.innerText = '입찰물건 ' + done + '건에 반영' + (noSize.length ? ' · 같은 평형 매물 없음 ' + noSize.length + '건(' + noSize.slice(0, 3).join(', ') + (noSize.length > 3 ? ' 외' : '') + ')' : '') + (unmatched.length ? ' · 임장 후보에 없는 단지 ' + unmatched.length + '곳(' + unmatched.slice(0, 3).join(', ') + ')' : '') + (ambiguous.length ? ' · 이름이 같은 단지가 여러 곳이라 건너뜀 ' + ambiguous.length + '곳(' + ambiguous.slice(0, 3).join(', ') + ') - 상세에서 직접 붙여넣어 주세요' : '');
     if (done) { ta.value = ''; setTimeout(function() { try { openListingBulk(); document.getElementById('lb-msg').innerText = msg.innerText; } catch (e) {} }, 300); }
 }
 function naverListingHtml(row, idJs) {
