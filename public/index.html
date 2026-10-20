@@ -15370,7 +15370,12 @@ function renderAuctionClusters(list, vp) {
         if (!seen[k]) { auctionClusterMarkers[k].overlay.setMap(null); delete markerDataRegistry[auctionClusterMarkers[k].mKey]; delete auctionClusterMarkers[k]; }
     });
 }
-function renderAuctionMarkers() {
+var _ramTimer = null;
+function renderAuctionMarkers() { // 짧은 시간에 여러 번 불려도 한 번만 그림(지도 이동·자료 도착·판정 갱신이 겹쳐 7~15번씩 전체를 다시 훑던 것, 2026-10-20)
+    if (_ramTimer) return;
+    _ramTimer = setTimeout(function() { _ramTimer = null; renderAuctionMarkersNow(); }, 60);
+}
+function renderAuctionMarkersNow() {
     // 내가 등록한 경매물건(🔨) 배지는 다른 필터(낙찰사례만 보기 포함)와 무관하게 항상 표시됨
     if (!auctionList || !auctionList.length) { clearAuctionMarkers(); return; }
     // ⚠️ 2026-08(소사역 확대/축소 반복 시 프리징 재현 - #394): 일반 매물 마커(markers)는
@@ -19447,6 +19452,17 @@ function getBidVerdictForMarker(a) {
     if (!dataCache[lawd]) return cached ? cached.row : null; // 지역 자료가 내려가 있으면 마지막 판정 유지
     var sig = bidVerdictSig(a);
     if (cached && cached.sig === sig) { if (cached.row && cached.row.type && cached.row.assetVer !== myAssetsVer) finalizeBidBoardRow(cached.row); return cached.row; }
+    // 서버가 미리 계산해 둔 행이 있고 입력값 지문이 같으면 그대로 씀(새 지역으로 이동할 때마다 수백 건을 다시 계산해 지도가 멈추던 문제)
+    var sv = window.__srvBoardById && window.__srvBoardById[a.id];
+    if (sv && sv.row && sv.row.finalSig && Date.now() - (sv.at || 0) <= BOARD_SRV_MAX_AGE) {
+        var bsg = boardBaseSig(a);
+        if (sv.sig === bsg || sv.sig === boardBaseSig(a, true)) {
+            var row0 = Object.assign({}, sv.row, { a: a, dday: a.bidDate ? calcAuctionDday(a.bidDate) : null, fromCache: sv.at });
+            try { if (row0.type && row0.assetVer !== myAssetsVer) finalizeBidBoardRow(row0); } catch (e) {}
+            bidVerdictCache[a.id] = { sig: sig, row: row0 };
+            return row0;
+        }
+    }
     var row = null;
     try { row = computeBidBoardRow(a); } catch (e) { row = null; }
     bidVerdictCache[a.id] = { sig: sig, row: row };
@@ -19664,7 +19680,10 @@ function srvBoardParts() {
         try {
             var meta = await withTimeout(fetch('/api/data-coverage?mode=boardCacheMeta').then(function(r) { return r.json(); }), 6000);
             if (!meta || !meta.n || !meta.at || Date.now() - meta.at > BOARD_SRV_MAX_AGE) return null;
-            return await withTimeout(Promise.all(Array.from({ length: meta.n }, function(_, i) { return fetch('/api/data-coverage?mode=boardCacheChunk&i=' + i).then(function(r) { return r.json(); }); })), 40000);
+            var partsAll = await withTimeout(Promise.all(Array.from({ length: meta.n }, function(_, i) { return fetch('/api/data-coverage?mode=boardCacheChunk&i=' + i).then(function(r) { return r.json(); }); })), 40000);
+            // 2026-10-20(사용자: 지도 이동·입찰후보 불러오기가 느림) - 지도 배지가 서버 계산본을 그대로 쓰도록 id별로 보관(없으면 배지마다 건당 최대 60ms 계산을 다시 했음)
+            try { var byId = {}; partsAll.forEach(function(pp) { Object.keys((pp && pp.items) || {}).forEach(function(id) { byId[id] = pp.items[id]; }); }); window.__srvBoardById = byId; } catch (e) {}
+            return partsAll;
         } catch (e) { console.warn('미리 계산 결과 못 받음(직접 계산):', e && e.message); return null; }
     })();
     return window.__srvBoardP;
@@ -19679,7 +19698,7 @@ async function mergeServerBoardCache(local) {
     } catch (e) { console.warn('미리 계산 결과 못 받음(직접 계산):', e && e.message); }
     return local;
 }
-setTimeout(function() { try { srvBoardParts(); window.villaSrvP = villaFetchServerCalc(); } catch (e) {} }, 2500); // 앱을 켜고 2.5초 뒤 배경에서 미리 받기
+setTimeout(function() { var go = function() { try { srvBoardParts(); setTimeout(function() { try { window.villaSrvP = villaFetchServerCalc(); } catch (e) {} }, 4000); } catch (e) {} }; if (window.requestIdleCallback) requestIdleCallback(go, { timeout: 6000 }); else go(); }, 2500); // 앱을 켜고 2.5초 뒤 한가할 때 배경에서 미리 받기(빌라는 4초 더 뒤)
 // 저장 계산을 다시 써도 되는지 - 물건 입력값(시세 계산에 쓰는 것)과 입찰일 지남 여부. 계산 방식이 바뀌면 BOARD_CALC_VER을 올림
 var BOARD_CALC_VER = 52; // 52: 임장 생략 판정(2026-10-19) - // 51: 전세가율 구간 보정·위험 신호(2026-10-18) - // 50: 지방 최근 거래 비슷한 층 비중·1~2건은 12개월 원값(2026-10-18) - // 49: 근거 약함 경고를 판정 단계에서 다시 붙임 - // 48: 예상매도가-감정가 큰 차이 근거 약함 표시 - // 47: 다른 평형 환산이 같은 평형과 20% 넘게 다르면 섞지 않음 - // 46: 같은 동 추론(③④) 제거·거래 없는 단지는 기존 주변 비교 + 근거 약함(2026-10-18) - // 45: 회전율 구간별 보정 항상 적용(주간 갱신 표, 2026-10-17) - // 44: 추론에 최근 6개월 1~2건 포함 - // 43: 6개월 거래 부족 시 단계별 추론(2026-10-17) - // 42: 지역별 예상매도가(서울 최근3건·경기인천 반감1개월·지방 반감2개월)와 위험 여유(2026-10-17) - // 41: 아파트 예상매도가를 최근 6개월 같은 평형 거래의 최근가중 중위값으로(전국 백테스트, 2026-10-17) - // 40: 임차인 둘로 읽힌 경우 별개/같은 임차권(갱신·승계) 선택(2026-10-11) - // 39: 39: 임차권등기를 임차인으로 계산(전입·확정일자 기준)·경매신청인 전세권 안내(2026-10-11) - // 38: 38: 권리분석 날짜 선후 규칙 정리(전입 다음 날 0시·동순위 안분, 2026-10-11) - // 37: 37: 권리분석에 말소기준일보다 앞선 전세권·임차권 등 등기부 인수 권리 반영(2026-10-11) - // 36: 저가 아파트 순이익률 10% 추천가 규칙 되돌림(2026-10-11, 백테스트 손해 30~42%) - // 34: 33: 아파트 고층 보정 축소·저층 범위(2026-10-11) - // 29: nYear 저장 추가 - // 27: 🎲 예상 낙찰가용 시세(wbBase) 추가 (범위 표시는 화면에서 바로 계산 - 버전 변경 없음)
 /* 2026-10-15(사용자: 입찰후보 로딩이 느림 - 원인 실측): 식별값 끝의 'P/F'(입찰일 지남 여부)가 한국 시각 자정에 바뀌어, 서버 미리 계산이 돈 뒤 어제 입찰이던 물건(하루 약 350건)이 전부 '다른 물건'이 돼
