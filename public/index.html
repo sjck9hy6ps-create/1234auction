@@ -27777,6 +27777,12 @@ function wrRenderWinScore(ws) {
     var th = '<thead><tr><th></th><th class="r">건수</th><th class="r">보통 오차</th><th class="r">±10% 안</th><th class="r">방향</th><th class="r">예상가로 낙찰</th><th class="r">+5%로 낙찰</th></tr></thead>';
     var h = '<div class="pn-muted">최근 12주 낙찰 ' + a.n + '건(아파트)을 "그 구간 이전 사례만으로 만든 모델"로 맞혀 본 누적 성적이에요. 학습에 안 쓴 사례라 실제 입찰 때 기대할 수 있는 수준에 가까워요.</div>'
         + '<div class="wr-kpis"><div><span>예상 낙찰가 보통 오차</span><b>' + pc(a.medAbsErrPct) + '</b><em>' + wrBiasShort(a.biasPct) + '</em></div><div><span>±10% 안에 든 비율</span><b>' + pc(a.within10Pct) + '</b><em>' + a.n + '건 기준</em></div><div><span>예상가로 썼다면 낙찰</span><b>' + pc(a.winAtPredPct) + '</b><em>+5%면 ' + pc(a.winAtPlus5Pct) + '</em></div></div>';
+    if (a.p90AbsPct != null) h += '<div class="wr-sec"><b>예상 낙찰가와 실제 낙찰가는 얼마나 차이 나나</b> (' + a.n + '건)<table class="pn-table"><tbody>'
+        + '<tr><td>5% 안에 든 비율</td><td class="r"><b>' + pc(a.within5Pct) + '</b></td></tr><tr><td>10% 안에 든 비율</td><td class="r"><b>' + pc(a.within10Pct) + '</b></td></tr>'
+        + '<tr><td>보통 차이 (절반은 이 안)</td><td class="r"><b>' + pc(a.medAbsErrPct) + '</b> · ' + toEok(String(a.medAbsAmt)) + '</td></tr>'
+        + '<tr><td>4건 중 3건은 이 안</td><td class="r"><b>' + pc(a.p75AbsPct) + '</b></td></tr><tr><td>10건 중 9건은 이 안</td><td class="r"><b>' + pc(a.p90AbsPct) + '</b> · ' + toEok(String(a.p90AbsAmt)) + '</td></tr>'
+        + '<tr><td>실제보다 10% 넘게 높게 예측</td><td class="r">' + pc(a.overPct) + '</td></tr><tr><td>실제보다 10% 넘게 낮게 예측</td><td class="r">' + pc(a.underPct) + '</td></tr>'
+        + '<tr><td>낙찰가 중앙값(참고)</td><td class="r">' + toEok(String(a.medActual)) + '</td></tr></tbody></table></div>';
     if (ws.weeks && ws.weeks.length) h += '<div class="wr-sec"><b>주별</b><table class="pn-table">' + th.replace('<th></th>', '<th>낙찰 주(월요일)</th>') + '<tbody>' + ws.weeks.slice().reverse().map(function(x) { return row(x, wrYmd(x.week)); }).join('') + '</tbody></table></div>';
     if (ws.byClass && ws.byClass.length) h += '<div class="wr-sec"><b>지역별</b><table class="pn-table">' + th + '<tbody>' + ws.byClass.map(function(x) { return row(x, x.label); }).join('') + '</tbody></table></div>';
     if (ws.byFails && ws.byFails.length) h += '<div class="wr-sec"><b>유찰별</b><table class="pn-table">' + th + '<tbody>' + ws.byFails.map(function(x) { return row(x, x.label); }).join('') + '</tbody></table></div>';

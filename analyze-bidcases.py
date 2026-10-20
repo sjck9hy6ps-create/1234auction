@@ -1117,7 +1117,10 @@ def weekly_report(R, now_dt, now_iso):
             def sc_stat(G):
                 a = G["err"].abs()
                 return {"n": int(len(G)), "medAbsErrPct": round(float(a.median()) * 100, 1), "within10Pct": round(float((a <= 0.10).mean()) * 100, 1), "biasPct": round(float(G["err"].median()) * 100, 1),
-                        "winAtPredPct": round(float((G["actual"] <= G["pred"]).mean()) * 100, 1), "winAtPlus5Pct": round(float((G["actual"] <= G["pred"] * 1.05).mean()) * 100, 1)}
+                        "winAtPredPct": round(float((G["actual"] <= G["pred"]).mean()) * 100, 1), "winAtPlus5Pct": round(float((G["actual"] <= G["pred"] * 1.05).mean()) * 100, 1),
+                        "p75AbsPct": round(float(a.quantile(.75)) * 100, 1), "p90AbsPct": round(float(a.quantile(.90)) * 100, 1), "within5Pct": round(float((a <= 0.05).mean()) * 100, 1),
+                        "overPct": round(float((G["err"] > 0.10).mean()) * 100, 1), "underPct": round(float((G["err"] < -0.10).mean()) * 100, 1),
+                        "medAbsAmt": round(float((G["pred"] - G["actual"]).abs().median())), "p90AbsAmt": round(float((G["pred"] - G["actual"]).abs().quantile(.9))), "medActual": round(float(G["actual"].median()))}
             ws["all"] = sc_stat(A)
             for wk, G in A.groupby("wk"):
                 if len(G) >= 10: ws["weeks"].append(dict(week=wk, **sc_stat(G)))
