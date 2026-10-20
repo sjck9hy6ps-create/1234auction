@@ -15274,6 +15274,8 @@ function auctionMarkerSignature(a) {
 function upsertAuctionMarker(a, hidden) {
     var sig = auctionMarkerSignature(a) + (hidden ? '|h' : '');
     if (auctionMarkers[a.id] && auctionMarkerSigs[a.id] === sig) return; // 변경 없음 - 그대로 유지 (깜빡임 방지)
+    if (awCreateCount >= 80) { awNeedMore = true; return; } // 한 번에 80개까지만 새로 그림 - 물건이 몰린 지역(수백 건)에서 한꺼번에 그리느라 화면이 수 초 멈추던 것을 나눠서(2026-10-20)
+    awCreateCount++;
     if (auctionMarkers[a.id]) {
         if (auctionMarkers[a.id].overlay) auctionMarkers[a.id].overlay.setMap(null);
         if (auctionMarkers[a.id].mKey) delete markerDataRegistry[auctionMarkers[a.id].mKey];
@@ -15393,7 +15395,7 @@ function renderAuctionMarkersNow() {
     // 오면 즉시 재생성됨) SDK가 매 줌 프레임마다 다뤄야 하는 오버레이 개수를 줄임.
     var vp = getPaddedViewportBounds();
     var neededIds = {};
-    awBudgetUntil = performance.now() + 250; awNeedMore = false;
+    awBudgetUntil = performance.now() + 250; awNeedMore = false; awCreateCount = 0;
     // 한 건물에 경매가 몰린 곳(2026-10-10, 사용자 요청): 같은 위치(약 1m)에 4건 이상이면 배지를 하나로 묶고 누르면 전체 목록
     var bk0 = {};
     auctionList.forEach(function(a) { if (a.lat && a.lon && auctionBadgeWorthy(a)) { var k0 = auctionBuildingKey(a); if (k0) bk0[k0] = true; } });
@@ -16142,7 +16144,7 @@ function auctionWonEstSignature(a) {
 // 이미 갖고 있던 좋은 값을 버리고 "데이터 부족"으로 후퇴해버리는 문제였음. a.target(저장된
 // 목표매도가)이 있으면 그걸 최우선으로 쓰고, 없을 때만(주로 아직 상세정보를 안 채운 순수
 // 입찰희망 일괄등록 건) findSimilarComps 재계산으로 폴백함.
-var awBudgetUntil = 0, awPending = false, awNeedMore = false; // 지도 배지 그릴 때 추정값 계산 시간 예산(첫 지역 로딩 때 수천 건을 한 번에 계산해 20초 멈추던 문제)
+var awCreateCount = 0, awBudgetUntil = 0, awPending = false, awNeedMore = false; // 지도 배지 그릴 때 추정값 계산 시간 예산(첫 지역 로딩 때 수천 건을 한 번에 계산해 20초 멈추던 문제)
 function getAuctionWonEstimates(a, budgeted) {
     var sig = auctionWonEstSignature(a);
     var cached = auctionWonEstCache[a.id];
