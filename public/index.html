@@ -18940,7 +18940,12 @@ function bidPlanFor(row, fast) {
         if (!p70 && x.p >= 0.7) p70 = x;
     }
     var out = { max: at(bMax), ev: best, p70: p70, rec: (!fast && row.recBid) ? at(row.recBid) : null, sale: row.sale };
-    if (!fast) out.band = marginBandFor(row.sale, row);
+    if (!fast) {
+        out.band = marginBandFor(row.sale, row);
+        // 2026-10-20(사용자: 예상 낙찰가와 실제 차이를 알아야 마진을 포기하고라도 입찰할지 정함) - 예상 낙찰가 기준 +0·5·10%로 쓰면 낙찰 가능성과 순이익, 순이익 0이 되는 입찰가
+        out.ladder = [0, 0.05, 0.10].map(function(k) { var x = at(wb.price * (1 + k)); x.k = k; return x; }).filter(function(x) { return x.bid >= row.minBid; });
+        var b0 = interpBidForNet(pts, 0); out.zero = b0 && b0 >= row.minBid ? at(b0) : null;
+    }
     return out;
 }
 function interpBidForNet(pts, net) {
@@ -18965,6 +18970,10 @@ function bidPlanHtml(row, fmt) {
         + (pl.p70 && (!pl.ev || Math.abs(pl.p70.bid - pl.ev.bid) > 1) ? line('낙찰 70%', pl.p70, false, '낙찰 가능성이 70%가 되는 가장 낮은 입찰가') : '')
         + line('추천 입찰가', pl.rec, false, '목표 마진(500만 + 시세의 5~9%)을 지키는 입찰가')
         + '</tbody></table>'
+        + (pl.ladder && pl.ladder.length ? '<div class="dr-sub" style="margin-top:6px;"><b>마진을 줄여서라도 낙찰받고 싶다면</b> (예상 낙찰가 ' + fmt(row.winbid.price) + ' 기준, 예상 낙찰가의 보통 오차는 약 5.6%예요)</div><table class="pn-table"><thead><tr><th></th><th class="r">입찰가</th><th class="r">낙찰 가능성</th><th class="r">순이익(세후)</th></tr></thead><tbody>'
+            + pl.ladder.map(function(x) { var pc = Math.round(x.p * 100); return '<tr><td>예상 낙찰가 ' + (x.k ? '+' + Math.round(x.k * 100) + '%' : '그대로') + '</td><td class="r"><b>' + fmt(x.bid) + '</b></td><td class="r">' + pc + '%</td><td class="r" style="color:' + (x.net < 0 ? '#b91c1c' : '#374151') + ';">' + fmt(x.net) + '</td></tr>'; }).join('')
+            + (pl.zero ? '<tr><td title="이보다 높게 쓰면 손해">본전(순이익 0) 입찰가</td><td class="r"><b>' + fmt(pl.zero.bid) + '</b></td><td class="r">' + Math.round(pl.zero.p * 100) + '%</td><td class="r">0</td></tr>' : '')
+            + '</tbody></table><div class="dr-sub">서울·2회 이상 유찰은 예측이 더 빗나가기 쉬워요(서울은 10% 넘게 낮게 예측한 비율이 약 30%). 순이익은 예상매도가가 맞을 때 기준이에요.</div>' : '')
         + (bd ? '<div class="dr-sub">' + (bd.scope || '전국') + (bd.scope === '전국' ? '(이 지역은 사례가 모자라요)' : '') + ' · 이 가격대(' + bd.label + ')에서 낙찰 후 6개월 안에 같은 동·층 거래가 있던 사례 ' + bd.n + '건의 마진율(세전, 같은 기준: 최소 수리비·대출이자 포함) 중앙 <b>' + bd.med.toFixed(1) + '%</b> (아래 25% ' + bd.p25.toFixed(1) + '% ~ 위 25% ' + bd.p75.toFixed(1) + '%) · 손해 ' + Math.round(bd.loss) + '%</div>' : '')
         + '<div class="dr-sub">예상매도가 ' + fmt(pl.sale) + ' 기준(시장 일반가보다 약간 낮게 잡은 값). 낙찰 가능성은 🎲 예상 낙찰가 모델, 순이익은 앱 비용·세금 계산. 되팔기 사례는 옆집 거래가 섞일 수 있어 참고용이에요.</div></div>';
 }
