@@ -290,6 +290,10 @@ def main():
                         rec_est = {}
                     break
             rec["est"] = est; rec["own"] = own
+            try:
+                rec["est_rule"] = est_rule_asof(g, c, sale_d, cut, cut_ym, idx_at)
+            except Exception:
+                rec["est_rule"] = None
             # 2026-10-11 환금성: 입찰 30일 전 기준 같은 단지·같은 평형(±3㎡) 최근 1년 중개거래 수 - 앱의 "최근 1년 같은 평형 거래"와 같은 정의
             rec["n12"] = int(((g["deal_date"] >= ymd_int(sale_d - timedelta(days=30 + 365))) & (g["deal_date"] < cut) & ((g["size"] - c.area).abs() <= 3)).sum())
             rec.update(rec_est)
@@ -814,6 +818,95 @@ def liquidity_curve(R, now_iso):
     cyc.upsert_rows([{"id": "signal|__liqcurve__", "payload": cyc.clean_json(payload), "fetched_at": now_iso}])
 
 
+def _wmed(v, w):
+    o = np.argsort(v); v = np.asarray(v, dtype=float)[o]; w = np.asarray(w, dtype=float)[o]
+    c = (np.cumsum(w) - 0.5 * w) / w.sum()
+    return float(np.interp(0.5, c, v))
+
+
+def est_rule_asof(g, c, sale_d, cut, cut_ym, idx_at):
+    """2026-10-20 앱의 새 예상매도가 규칙을 '입찰 30일 전 시점'으로 재현(사용자: 낙찰가 모델의 시세 기준을 새 규칙으로 바꾸면 오차가 줄까)
+    6개월 같은 평형(±3㎡) 3건+ → 서울 최근3건 중위 / 경기·인천 반감1개월 / 지방 반감2개월 가중 중위. 부족하면 같은 평형 36개월(6개월 밖은 시군구 지수 보정, 반감3개월; 지방 최근 1건+는 12개월 원값),
+    없으면 같은 단지 다른 평형 12개월 ㎡당 가격 환산. 같은 평형 이전 값과 다른 평형 값이 둘 다 있고 6개월 안 거래가 없으면 6:4. (층·회전율·전세 보정은 제외)"""
+    area = float(c.area)
+    cut_d = int_to_date(int(cut))
+    h = g[(g["deal_date"] < cut) & ((g["size"] - area).abs() <= 3)]
+    if len(h):
+        age = np.array([(cut_d - int_to_date(int(x))).days / 30.4 for x in h["deal_date"].values])
+    else:
+        age = np.array([])
+    price = h["price"].values.astype(float) if len(h) else np.array([])
+    sido = str(c.region).split(" ")[0]
+    cls = "서울" if sido.startswith("서울") else ("경기·인천" if sido[:2] in ("경기", "인천") else "지방")
+    m6 = age <= 6; n6 = int(m6.sum())
+    if n6 >= 3:
+        p6, a6 = price[m6], age[m6]
+        if cls == "서울": return float(np.median(p6[np.argsort(a6)[:3]]))
+        return _wmed(p6, 0.5 ** (a6 / (1.0 if cls == "경기·인천" else 2.0)))
+    base = idx_at(c.region, cut_ym)
+    t2 = None
+    m36 = age <= 36
+    if m36.any():
+        if cls == "지방" and n6 >= 1:
+            m12 = age <= 12
+            t2 = _wmed(price[m12], 0.5 ** (age[m12] / 3.0))
+        else:
+            vals, ws = [], []
+            for pr, ag, ym in zip(price[m36], age[m36], h["ym"].values[m36]):
+                v = pr
+                if ag > 6:
+                    b0 = idx_at(c.region, int(ym))
+                    if not (base and b0): continue
+                    v = pr * max(0.7, min(1.4, base / b0))
+                vals.append(v); ws.append(0.5 ** (ag / 3.0))
+            if vals: t2 = _wmed(vals, ws)
+    o = g[(g["deal_date"] < cut) & ((g["size"] - area).abs() > 3)]
+    t3 = None
+    if len(o) and base:
+        oa = np.array([(cut_d - int_to_date(int(x))).days / 30.4 for x in o["deal_date"].values]); k12 = oa <= 12
+        if k12.sum() >= 2:
+            pp, sz = [], []
+            for ppm, ym, z in zip(o["ppm"].values[k12], o["ym"].values[k12], o["size"].values[k12]):
+                b0 = idx_at(c.region, int(ym))
+                if b0: pp.append(ppm * max(0.7, min(1.4, base / b0))); sz.append(z)
+            if len(pp) >= 2:
+                ms = float(np.median(sz)); r = area / ms
+                if 0.6 <= r <= 1.6: t3 = float(np.median(pp)) * area * float(np.exp(-0.285 * np.log(r)))
+    if t2 and t3 and abs(t3 / t2 - 1) > 0.20: t3 = None
+    if t2 and t3 and n6 == 0: return 0.6 * t2 + 0.4 * t3
+    return t2 or t3
+
+
+def est_rule_experiment(R, wb_fit, wb_predict, now):
+    """낙찰가 모델의 시세 기준(est)을 새 규칙(est_rule)으로 바꾸면 예상 낙찰가 오차가 줄어드나 - 같은 사례·같은 검증 구간에서 비교"""
+    print(f"  새 규칙 시세 계산됨: {int(R['est_rule'].notna().sum()):,}/{len(R):,}건")
+    D = R[R["est"].notna() & (R["est"] > 0) & R["est_rule"].notna() & (R["est_rule"] > 0) & R["actual"].notna() & R["minbid"].notna() & (R["minbid"] > 0) & (R["sale"] >= 20200101)].copy()
+    D = D[np.log(D["actual"] / D["est"]).between(np.log(0.4), np.log(1.6)) & np.log(D["actual"] / D["est_rule"]).between(np.log(0.4), np.log(1.6))]
+    if len(D) < 3000:
+        print("  새 시세 기준 실험: 사례 부족"); return
+    last = pd.to_datetime(str(int(D["sale"].max())), format="%Y%m%d")
+    out = {"n": int(len(D)), "folds": []}
+    lines = []
+    for months in (12, 6):
+        cut = int((last - pd.DateOffset(months=months)).strftime("%Y%m%d")); tr, te = D[D["sale"] < cut], D[D["sale"] >= cut]
+        if len(te) < 300: continue
+        res = {}
+        for nm, col in (("기존", "est"), ("새규칙", "est_rule")):
+            T, E = tr.copy(), te.copy(); T["est_o"] = T["est"]; E["est_o"] = E["est"]
+            T["est"] = T[col]; E["est"] = E[col]
+            m = wb_fit(T); pr = np.exp(wb_predict(m, E)) * E["est"]
+            r = pr / E["actual"] - 1
+            res[nm] = (r.values, E["region"].values)
+        for nm, (r, rg) in res.items():
+            for cls, mk in (("전체", np.ones(len(r), bool)), ("서울", np.array([str(x).startswith("서울") for x in rg])), ("경기·인천", np.array([str(x)[:2] in ("경기", "인천") for x in rg])), ("지방", np.array([not (str(x).startswith("서울") or str(x)[:2] in ("경기", "인천")) for x in rg]))):
+                if mk.sum() < 100: continue
+                a = np.abs(r[mk])
+                lines.append({"검증": f"최근 {months}개월", "시세기준": nm, "구분": cls, "n": int(mk.sum()), "보통오차": round(float(np.median(a)) * 100, 2), "방향": round(float(np.median(r[mk])) * 100, 2), "10안": round(float((a <= .1).mean()) * 100, 1), "p90": round(float(np.quantile(a, .9)) * 100, 1)})
+    for l in lines: print("  ", json.dumps(l, ensure_ascii=False))
+    if os.environ.get("GITHUB_STEP_SUMMARY"):
+        open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8").write("### 낙찰가 모델 시세 기준 비교\n```json\n" + json.dumps(lines, ensure_ascii=False, indent=1) + "\n```\n")
+
+
 def winbid_model(R, now):
     D = R[R["est"].notna() & (R["est"] > 0) & R["actual"].notna() & R["minbid"].notna() & (R["minbid"] > 0) & (R["sale"] >= 20200101)].copy()
     D = D[np.log(D["actual"] / D["est"]).between(np.log(0.4), np.log(1.6))]
@@ -844,6 +937,10 @@ def winbid_model(R, now):
             open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8").write("### 틈새 진단\n```json\n" + json.dumps(diag, ensure_ascii=False, indent=1) + "\n```\n")
     except Exception as e:
         print("  틈새 진단 건너뜀:", e)
+    try:
+        est_rule_experiment(R, wb_fit, wb_predict, now)
+    except Exception as e:
+        print("  새 시세 기준 실험 건너뜀:", e)
     full = wb_fit(D)
     # 경쟁 예상(2026-10-10): 같은 요인으로 로그 응찰자 수를 맞추는 모델 - 앱이 하위 25%(낮음)·상위 25%(높음)로 표시
     try:
