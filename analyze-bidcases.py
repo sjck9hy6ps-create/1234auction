@@ -323,6 +323,11 @@ def main():
                         rec["resale_floor"] = int(t0["floor"]) if pd.notna(t0["floor"]) else None
                         rec["resale_size"] = float(t0["size"])
                         rec["resale_m"] = round((int_to_date(int(t0["deal_date"])) - sale_d).days / 30.4, 1)
+                        try:
+                            b_cut, b_res = idx_at(c.region, cut_ym), idx_at(c.region, int(t0["deal_date"]) // 100)
+                            rec["mkt"] = float(b_res / b_cut) if b_cut and b_res else None  # 입찰 30일 전 → 되판 달 사이 시군구 ㎡당 가격 지수 변화
+                        except Exception:
+                            rec["mkt"] = None
             nm = avm.normalize_complex_name(g["danji"].mode().iloc[0]) if len(g) else None
             rec["tier"] = pop.get((c.region, c.dk, nm))
             rec["cx"] = nm
@@ -907,6 +912,32 @@ def est_rule_experiment(R, wb_fit, wb_predict, now):
         open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8").write("### 낙찰가 모델 시세 기준 비교\n```json\n" + json.dumps(lines, ensure_ascii=False, indent=1) + "\n```\n")
 
 
+def resale_gap_report(R, now):
+    """2026-10-20 예상매도가(새 규칙, 입찰 30일 전 시점) ÷ 실제 되판 가격 - 낙찰 후 되판 사례(같은 동·층 확인)에서 보유 기간·지역·거래 수별 간극과 시장 변화 몫
+    gap = 되판가 ÷ 예상매도가 - 1 (양수면 예상보다 비싸게 팔림). mkt 보정 gap = 시장 지수 변화를 뺀 나머지(상태·협상·층/호수 차이 등)"""
+    D = R[(R["resale_conf"] == "dong") & R["resale"].notna() & R["est_rule"].notna() & (R["est_rule"] > 0) & R["resale_m"].between(0.45, 12) & (R["sale"] >= 20230101)].copy()
+    if len(D) < 300:
+        print("  되팔기 간극: 사례 부족"); return
+    D["gap"] = D["resale"] / D["est_rule"] - 1
+    D["gap_old"] = D["resale"] / D["est"] - 1
+    D["gap_mkt"] = D["resale"] / (D["est_rule"] * D["mkt"].clip(0.8, 1.25).fillna(1.0)) - 1
+    D["cls"] = D["region"].map(lambda r: "서울" if str(r).startswith("서울") else ("경기·인천" if str(r)[:2] in ("경기", "인천") else "지방"))
+    D["hold"] = pd.cut(D["resale_m"], [0, 3, 6, 9, 12], labels=["3개월 이내", "3~6개월", "6~9개월", "9~12개월"])
+    D["nb"] = D["n12"].map(lambda n: "1년 거래 0~2건" if n <= 2 else ("3~5건" if n <= 5 else ("6~11건" if n <= 11 else "12건+")))
+    def st(G):
+        g = G["gap"]
+        return {"n": int(len(G)), "중앙": round(float(g.median()) * 100, 1), "보통오차": round(float(g.abs().median()) * 100, 1), "하방10": round(float(g.quantile(.1)) * 100, 1), "하방25": round(float(g.quantile(.25)) * 100, 1),
+                "상방75": round(float(g.quantile(.75)) * 100, 1), "10넘게낮음": round(float((g < -0.10).mean()) * 100, 1), "시장변화중앙": round(float((G["mkt"].clip(0.8, 1.25).fillna(1.0) - 1).median()) * 100, 1), "시장뺀중앙": round(float(G["gap_mkt"].median()) * 100, 1)}
+    out = {"generatedAt": now, "n": int(len(D)), "from": 20230101, "전체": st(D), "예전시세기준_전체": {"중앙": round(float(D["gap_old"].median()) * 100, 1), "보통오차": round(float(D["gap_old"].abs().median()) * 100, 1)}}
+    for key, col in (("지역", "cls"), ("보유기간", "hold"), ("거래수", "nb")):
+        out[key] = {str(k): st(G) for k, G in D.groupby(col, observed=True) if len(G) >= 40}
+    out["지역×보유기간"] = {f"{k[0]}|{k[1]}": st(G) for k, G in D.groupby(["cls", "hold"], observed=True) if len(G) >= 60}
+    print("  되팔기 간극:", json.dumps({k: out[k] for k in ("n", "전체", "예전시세기준_전체", "지역", "보유기간", "거래수")}, ensure_ascii=False))
+    if os.environ.get("GITHUB_STEP_SUMMARY"):
+        open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8").write("### 예상매도가 vs 실제 되판 가격\n```json\n" + json.dumps(out, ensure_ascii=False, indent=1) + "\n```\n")
+    cyc.upsert_rows([{"id": "signal|__resale_gap__", "payload": cyc.clean_json(out), "fetched_at": now}])
+
+
 def winbid_model(R, now):
     D = R[R["est"].notna() & (R["est"] > 0) & R["actual"].notna() & R["minbid"].notna() & (R["minbid"] > 0) & (R["sale"] >= 20200101)].copy()
     D = D[np.log(D["actual"] / D["est"]).between(np.log(0.4), np.log(1.6))]
@@ -937,6 +968,10 @@ def winbid_model(R, now):
             open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8").write("### 틈새 진단\n```json\n" + json.dumps(diag, ensure_ascii=False, indent=1) + "\n```\n")
     except Exception as e:
         print("  틈새 진단 건너뜀:", e)
+    try:
+        resale_gap_report(R, now)
+    except Exception as e:
+        print("  되팔기 간극 건너뜀:", e)
     try:
         est_rule_experiment(R, wb_fit, wb_predict, now)
     except Exception as e:
