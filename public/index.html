@@ -4016,7 +4016,7 @@ function nvVillaCard(r, ev) {
         rec: pe ? vm(pe.bid) : '', recPct: pe && ve ? Math.round(pe.bid / ve.est * 100) : null,
         spec: bbEsc(r.region) + (r.pyung ? ' · 빌라 ' + r.pyung + '평(' + Math.round(r.pyung * 3.305785) + '㎡)' : '') + (r.floor ? ' · ' + r.floor + '층' : '') + (mp && mp.age != null ? ' · ' + mp.age + '년차' : ''),
         sum: '예상매도가 <b>' + vm(ve && ve.est) + '</b>' + (ve ? ' <small>±' + ve.errPct + '%</small>' : '') + ' · 최저가 ' + vm(r.minBid) + (mp ? ' · 필요 마진 ' + vm(mp.margin) : ''),
-        chips: [permitFor(r) ? { t: '🚧 허가구역', cls: 'r' } : null, pe ? { t: '낙찰 ' + Math.round(pe.p * 100) + '%', cls: pe.p >= 0.6 ? 'g' : (pe.p >= 0.35 ? 'o' : 'r') } : null, pe ? { t: '순이익 ' + vm(pe.net) } : null,
+        chips: [r.visit.go ? noVisitPill(r) : null, permitFor(r) ? { t: '🚧 허가구역', cls: 'r' } : null, pe ? { t: '낙찰 ' + Math.round(pe.p * 100) + '%', cls: pe.p >= 0.6 ? 'g' : (pe.p >= 0.35 ? 'o' : 'r') } : null, pe ? { t: '순이익 ' + vm(pe.net) } : null,
             ev.liq ? { t: '생활권 6개월 ' + ev.liq.r500.a6 + '건', cls: ev.liq.r500.a6 === 0 ? 'r' : '' } : null, (function(c) { return c ? { t: '💰 월세 ' + (c.cf >= 0 ? '+' : '') + Math.round(c.cf) + '만/월', cls: c.ok ? 'g' : (c.cf >= 0 ? 'o' : 'r') } : null; })(villaRentCash(r, ev)), l.st === 'yes' ? { t: '📋 매물 ' + l.n + '건', cls: 'g' } : (l.st === 'none' ? { t: '📋 매물 없음' } : null),
             hv === 'ok' ? { t: '🏠 도시민박 검토 가능', cls: 'g' } : null, ev.issue ? { t: '🚩 이슈 의심', cls: 'r' } : null, rightsNeeded(r, ev.visit.go) ? { t: '⚖️ 권리분석 필요', cls: 'o' } : null, (hsBld[r.id] && hsBld[r.id].info && bldUseWarn(hsBld[r.id].info.title)) ? { t: '⚠️ 비주택 용도', cls: 'r' } : null], note: r.a.fav ? r.a.favNote : '' });
 }
@@ -19017,6 +19017,44 @@ function computePick(row) {
     row.visit.rank = pk.ev.p >= 0.5 ? 1 : (pk.ev.p >= 0.3 ? 2 : 3);
     row.visit.why = row.issueSuspect ? '🚩 이슈 의심 - 인수 보증금 확인' : '';
 }
+/* 🚪 임장 생략 가능 판정 (2026-10-19, 사용자: 아파트는 임장 없이 입찰하는 게 목표 - 예상매도가 신뢰도에 따라 단계 표시)
+   근거 = 앱 실제 계산을 과거 시점으로 되돌려 이후 실거래와 맞춰 본 종단 검증(6,332건) + 거래 수 구간별 백테스트(2026년 26,147건, 학습에 안 쓴 구간).
+   같은 단지·같은 평형 최근 6개월 거래 수별 '보통 오차 / 10% 넘게 빗나간 비율' - 거래가 없는 구간은 어떤 방식으로도 줄지 않음(다른 근거를 합쳐도 10%대)
+   단계: ok(6건+, 시세 근거 충분·경고 없음) / check(3~5건 또는 6건+인데 호가·권리 확인 필요) / must(0~2건 - 호가 확인 또는 임장 필수; 최근 호가가 있고 예상매도가를 받쳐주면 한 단계 완화) */
+var NOVISIT_ERR = { '서울': { '0': [12, 56], '1-2': [4.3, 17], '3-5': [3.9, 15], '6+': [3.1, 9] }, '경기·인천': { '0': [8.4, 43], '1-2': [4.5, 18], '3-5': [3.9, 16], '6+': [3.5, 10] }, '지방': { '0': [10.5, 51], '1-2': [5.9, 31], '3-5': [4.8, 22], '6+': [4.1, 17] } };
+function noVisitFor(row) {
+    row.noVisit = null;
+    if (row.type !== 'apt' || row.pending || !row.sale || row.salePresale || row.saleSaved) return;
+    var os = row.ownStats, n6 = os ? (os.n6 || 0) : 0, cls = row.regionCls || '지방';
+    var bk = n6 === 0 ? '0' : (n6 < 3 ? '1-2' : (n6 < 6 ? '3-5' : '6+')), er = (NOVISIT_ERR[cls] || NOVISIT_ERR['지방'])[bk];
+    var lvl = bk === '6+' ? 'ok' : (bk === '3-5' ? 'check' : 'must'), why = [];
+    var weak = (row.saleFb && row.saleFb.weak) || (os && !(os.n12 > 0) && n6 === 0 && !(row.saleFb && row.saleFb.n));
+    if (weak) { lvl = 'must'; why.push('같은 단지 거래 근거가 약해요'); }
+    var l = listingStatus(row.a), fresh = l.st === 'yes' && l.age != null && l.age <= 14, lc = row.listingCap;
+    if (row.issueSuspect && row.issueSuspect.level === 'high') { lvl = 'must'; why.push('이슈 강한 의심'); }
+    else if (row.issueSuspect && lvl === 'ok') { lvl = 'check'; why.push('이슈 의심'); }
+    if (row.bulk) { lvl = 'must'; why.push('같은 건물 대량 경매'); }
+    if (lvl === 'ok' && rightsNeeded(row, true)) { lvl = 'check'; why.push('권리분석 입력 필요'); }
+    var listTxt = '';
+    if (fresh && lc && !lc.stale && row.saleTrade) {
+        var gap = lc.cap ? lc.cap / row.saleTrade - 1 : null;
+        if (gap != null && gap < -0.10) { if (lvl === 'ok') lvl = 'check'; why.push('호가가 실거래 기반보다 ' + Math.round(-gap * 100) + '% 낮아요'); listTxt = '호가가 더 낮음'; }
+        else if (lvl === 'must' && !weak && gap != null && gap >= -0.03) { lvl = 'check'; listTxt = '호가가 예상매도가를 받쳐줌'; why.push('최근 호가(' + l.n + '건)가 예상매도가를 받쳐줘서 한 단계 완화'); }
+        else if (gap != null) listTxt = '호가 확인함';
+    } else if (lvl !== 'ok') { why.push(l.st === 'yes' ? '호가가 오래돼 다시 모아야 해요' : '호가를 아직 못 모았어요'); }
+    row.noVisit = { lvl: lvl, n6: n6, err: er[0], over10: er[1], why: why, listTxt: listTxt, need: lvl !== 'ok' && !fresh };
+}
+function noVisitPill(r) {
+    var v = r.noVisit; if (!v) return null;
+    return v.lvl === 'ok' ? { t: '🟢 임장 생략 가능', cls: 'g' } : (v.lvl === 'check' ? { t: '🟡 호가·권리 확인 후 생략', cls: 'o' } : { t: '🔴 임장·호가 필수', cls: 'r' });
+}
+function noVisitDrawerHtml(row) {
+    var v = row.noVisit; if (!v) return '';
+    var col = v.lvl === 'ok' ? '#15803d' : (v.lvl === 'check' ? '#b45309' : '#b91c1c'), t = v.lvl === 'ok' ? '임장 생략 가능' : (v.lvl === 'check' ? '호가·권리 확인하면 임장 생략 가능' : '임장 또는 호가 확인 필수');
+    return '<div class="dr-sec"><h4>🚪 임장 생략 판정: <span style="color:' + col + ';">' + t + '</span></h4><div>같은 단지·같은 평형 최근 6개월 <b>' + v.n6 + '건</b> → 비슷한 조건의 검증에서 예상매도가 보통 오차 약 <b>' + v.err + '%</b>, 10% 넘게 빗나간 비율 <b>' + v.over10 + '%</b></div>'
+        + (v.why.length ? '<div class="dr-sub">' + v.why.map(bbEsc).join(' · ') + '</div>' : '') + (v.listTxt ? '<div class="dr-sub">호가: ' + bbEsc(v.listTxt) + '</div>' : '')
+        + '<div class="dr-sub">거래가 0~2건이면 근거를 더 섞어도 오차가 줄지 않아요(검증). 이때는 최근 호가나 현장 확인이 새 정보예요. 오차는 과거 검증 값이고 이 물건 자체의 보증은 아니에요.</div></div>';
+}
 function applyPickToRow(row) {
     // 앱 전체(입찰 판단 카드·비용표 등)가 같은 추천가를 쓰도록 맨 마지막에 덮어씀. 옛 추천가는 recBidOld에 보관
     row.recBidOld = row.recBid;
@@ -19285,6 +19323,7 @@ function finalizeBidBoardRow(row) {
     row.niche = null; try { row.niche = regionNicheFor(row); } catch (e) { row.niche = null; }
     if (row.niche) row.notes.unshift('🧭 틈새: ' + row.niche.why.join(' · '));
     try { computePick(row); applyPickToRow(row); } catch (e) { row.pick = null; row.visit = { go: false, why: '계산 오류' }; }
+    try { noVisitFor(row); } catch (e) { row.noVisit = null; }
     return row;
 }
 /* ════ 🧭 틈새 (2026-10, 사용자 정의: "거래가 가능한 지역인데 사람들 시선이 안 가는 곳" - 유찰 횟수와는 무관)
@@ -19633,7 +19672,7 @@ async function mergeServerBoardCache(local) {
 }
 setTimeout(function() { try { srvBoardParts(); window.villaSrvP = villaFetchServerCalc(); } catch (e) {} }, 2500); // 앱을 켜고 2.5초 뒤 배경에서 미리 받기
 // 저장 계산을 다시 써도 되는지 - 물건 입력값(시세 계산에 쓰는 것)과 입찰일 지남 여부. 계산 방식이 바뀌면 BOARD_CALC_VER을 올림
-var BOARD_CALC_VER = 51; // 51: 전세가율 구간 보정·위험 신호(2026-10-18) - // 50: 지방 최근 거래 비슷한 층 비중·1~2건은 12개월 원값(2026-10-18) - // 49: 근거 약함 경고를 판정 단계에서 다시 붙임 - // 48: 예상매도가-감정가 큰 차이 근거 약함 표시 - // 47: 다른 평형 환산이 같은 평형과 20% 넘게 다르면 섞지 않음 - // 46: 같은 동 추론(③④) 제거·거래 없는 단지는 기존 주변 비교 + 근거 약함(2026-10-18) - // 45: 회전율 구간별 보정 항상 적용(주간 갱신 표, 2026-10-17) - // 44: 추론에 최근 6개월 1~2건 포함 - // 43: 6개월 거래 부족 시 단계별 추론(2026-10-17) - // 42: 지역별 예상매도가(서울 최근3건·경기인천 반감1개월·지방 반감2개월)와 위험 여유(2026-10-17) - // 41: 아파트 예상매도가를 최근 6개월 같은 평형 거래의 최근가중 중위값으로(전국 백테스트, 2026-10-17) - // 40: 임차인 둘로 읽힌 경우 별개/같은 임차권(갱신·승계) 선택(2026-10-11) - // 39: 39: 임차권등기를 임차인으로 계산(전입·확정일자 기준)·경매신청인 전세권 안내(2026-10-11) - // 38: 38: 권리분석 날짜 선후 규칙 정리(전입 다음 날 0시·동순위 안분, 2026-10-11) - // 37: 37: 권리분석에 말소기준일보다 앞선 전세권·임차권 등 등기부 인수 권리 반영(2026-10-11) - // 36: 저가 아파트 순이익률 10% 추천가 규칙 되돌림(2026-10-11, 백테스트 손해 30~42%) - // 34: 33: 아파트 고층 보정 축소·저층 범위(2026-10-11) - // 29: nYear 저장 추가 - // 27: 🎲 예상 낙찰가용 시세(wbBase) 추가 (범위 표시는 화면에서 바로 계산 - 버전 변경 없음)
+var BOARD_CALC_VER = 52; // 52: 임장 생략 판정(2026-10-19) - // 51: 전세가율 구간 보정·위험 신호(2026-10-18) - // 50: 지방 최근 거래 비슷한 층 비중·1~2건은 12개월 원값(2026-10-18) - // 49: 근거 약함 경고를 판정 단계에서 다시 붙임 - // 48: 예상매도가-감정가 큰 차이 근거 약함 표시 - // 47: 다른 평형 환산이 같은 평형과 20% 넘게 다르면 섞지 않음 - // 46: 같은 동 추론(③④) 제거·거래 없는 단지는 기존 주변 비교 + 근거 약함(2026-10-18) - // 45: 회전율 구간별 보정 항상 적용(주간 갱신 표, 2026-10-17) - // 44: 추론에 최근 6개월 1~2건 포함 - // 43: 6개월 거래 부족 시 단계별 추론(2026-10-17) - // 42: 지역별 예상매도가(서울 최근3건·경기인천 반감1개월·지방 반감2개월)와 위험 여유(2026-10-17) - // 41: 아파트 예상매도가를 최근 6개월 같은 평형 거래의 최근가중 중위값으로(전국 백테스트, 2026-10-17) - // 40: 임차인 둘로 읽힌 경우 별개/같은 임차권(갱신·승계) 선택(2026-10-11) - // 39: 39: 임차권등기를 임차인으로 계산(전입·확정일자 기준)·경매신청인 전세권 안내(2026-10-11) - // 38: 38: 권리분석 날짜 선후 규칙 정리(전입 다음 날 0시·동순위 안분, 2026-10-11) - // 37: 37: 권리분석에 말소기준일보다 앞선 전세권·임차권 등 등기부 인수 권리 반영(2026-10-11) - // 36: 저가 아파트 순이익률 10% 추천가 규칙 되돌림(2026-10-11, 백테스트 손해 30~42%) - // 34: 33: 아파트 고층 보정 축소·저층 범위(2026-10-11) - // 29: nYear 저장 추가 - // 27: 🎲 예상 낙찰가용 시세(wbBase) 추가 (범위 표시는 화면에서 바로 계산 - 버전 변경 없음)
 /* 2026-10-15(사용자: 입찰후보 로딩이 느림 - 원인 실측): 식별값 끝의 'P/F'(입찰일 지남 여부)가 한국 시각 자정에 바뀌어, 서버 미리 계산이 돈 뒤 어제 입찰이던 물건(하루 약 350건)이 전부 '다른 물건'이 돼
    지역 자료 86곳(곳당 9~13MB)을 새로 받아 다시 계산했음. 계산 결과는 입찰일 지남 여부와 무관하므로(날짜 표시는 열 때 다시 계산) 저장본의 P/F가 반대여도 같은 것으로 봄(flip). */
 function boardBaseSig(a, flip) {
@@ -20312,6 +20351,7 @@ async function renderBidDrawer() {
     if (row.listingCap && row.listingCap.cap && row.listingCap.cap < row.saleTrade) basis = '매물 상한(' + row.listingCap.desc + ') - 실거래 기반 ' + toEok(String(row.saleTrade)) + ' · ' + basis;
     if (row.saleFloorAdj) basis += ' · ' + row.saleFloorAdj.label + ' ' + Math.round(Math.abs(1 - row.saleFloorAdj.factor) * 1000) / 10 + '% ' + (row.saleFloorAdj.factor < 1 ? '낮춤' : '높임');
     h += '<div class="dr-sub">예상매도가 근거: ' + bbEsc(basis) + '</div>';
+    h += noVisitDrawerHtml(row);
     h += liqDrawerHtml(row);
     var to = turnoverOf(row);
     if (to) h += '<div class="dr-sub">회전율 <b style="color:' + to.grade.c + ';">' + to.rate + '% · ' + to.grade.t + '</b> (최근 1년 거래 ' + to.n + '건 ÷ ' + to.hh.toLocaleString() + '세대)'
@@ -20882,7 +20922,7 @@ function openListingBulk() {
         box.onclick = function(e) { if (e.target === box) box.style.display = 'none'; };
         document.body.appendChild(box);
     }
-    var T = listingBulkTargets(), seen = {}, rows = [];
+    var T = listingBulkTargets().sort(function(x, y) { var o = { must: 0, check: 1, ok: 2 }; return (o[x.noVisit ? x.noVisit.lvl : 'ok'] - o[y.noVisit ? y.noVisit.lvl : 'ok']) || ((x.dday ? x.dday.diffDays : 999) - (y.dday ? y.dday.diffDays : 999)); }), seen = {}, rows = [];
     T.forEach(function(r) { var k = matchNormName(r.name) + '|' + (r.a.dong || ''); if (seen[k]) { seen[k].n++; return; } seen[k] = { r: r, n: 1 }; rows.push(seen[k]); });
     var need = rows.filter(function(x) { var d = listingAgeDays(x.r.a); return d == null || d > 7; });
     var h = '<div style="background:#fff;border-radius:14px;max-width:760px;width:94vw;max-height:90vh;overflow:auto;padding:16px 18px;font-size:13px;">'
@@ -27847,7 +27887,7 @@ async function savePredSnapshots() {
             if (sn && age < 3 && sn.minBid === r.minBid && sn.go !== undefined) return;
             var snapNew = { at: today, minBid: r.minBid, fails: r.fails, sale: Math.round(r.sale), recBid: r.recBid ? Math.round(r.recBid) : null, aggr: r.recAggr ? Math.round(r.recAggr) : null,
                 win: Math.round(r.winbid.price), prob: r.winbid.probRec != null ? Math.round(r.winbid.probRec * 100) / 100 : null, own: r.own,
-                go: !!(r.visit && r.visit.go), why: r.visit && r.visit.go ? '' : String((r.visit && r.visit.why) || '').slice(0, 60) };
+                go: !!(r.visit && r.visit.go), nv: r.noVisit ? r.noVisit.lvl : null, why: r.visit && r.visit.go ? '' : String((r.visit && r.visit.why) || '').slice(0, 60) };
             // 2026-10-09 누적 이력: 덮어쓰지 않고 날짜별로 쌓음(같은 날 다시 저장하면 그날 것만 교체, 최대 25개) - 주간 리포트가 "입찰 직전 마지막 예측"을 골라 비교
             var hist = Array.isArray(r.a.predHist) ? r.a.predHist.slice() : (sn ? [sn] : []);
             hist = hist.filter(function(h) { return h && h.at !== today; }); hist.push(snapNew);
