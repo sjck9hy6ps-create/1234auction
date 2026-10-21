@@ -3519,6 +3519,14 @@ export default async function handler(req, res) {
       return res.status(200).json((data && data.payload) || {});
     } catch (err) { return res.status(500).json({ error: err.message }); }
   }
+  if (req.query.mode === 'crowd') { // 입찰자 몰림 분석(주간) - 요인별 몰림 비율·모델 비교·간단 규칙
+    res.setHeader('Cache-Control', 's-maxage=300, stale-while-revalidate=3600');
+    try {
+      const { data, error } = await supabase.from('leader_follower_cache').select('payload').eq('id', 'signal|__crowd__').maybeSingle();
+      if (error) return res.status(500).json({ error: error.message });
+      return res.status(200).json((data && data.payload) || {});
+    } catch (err) { return res.status(500).json({ error: err.message }); }
+  }
   if (req.query.mode === 'corrCheck') { // 예상 낙찰가 자동 보정 검증(아파트·빌라) - 주간 분석이 저장
     res.setHeader('Cache-Control', 's-maxage=300, stale-while-revalidate=3600');
     try {
