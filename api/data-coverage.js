@@ -3520,7 +3520,9 @@ export default async function handler(req, res) {
     } catch (err) { return res.status(500).json({ error: err.message }); }
   }
   if (req.query.mode === 'boardCacheMeta' || req.query.mode === 'boardCacheChunk') {
-    res.setHeader('Cache-Control', 's-maxage=300, stale-while-revalidate=3600');
+    // 묶음은 주소에 저장 시각(v)이 들어가 저장본이 바뀌면 주소도 바뀜 → 오래 보관해도 안전(2026-10-21: 첫 요청이 건당 약 2초 걸려 입찰후보 첫 화면이 늦었음)
+    if (req.query.mode === 'boardCacheChunk' && req.query.v) res.setHeader('Cache-Control', 'public, max-age=86400, s-maxage=31536000, immutable');
+    else res.setHeader('Cache-Control', 's-maxage=300, stale-while-revalidate=3600');
     try {
       const pre = req.query.kind === 'villa' ? 'board|villa|' : 'board|cache|'; // villa: 빌라 탭 미리 계산(2026-10-10)
       const id = req.query.mode === 'boardCacheMeta' ? pre + 'meta' : pre + String(parseInt(req.query.i, 10) || 0);

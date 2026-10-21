@@ -133,6 +133,18 @@ for (const r of rows) {
 }
 await supabase.from('leader_follower_cache').upsert({ id: 'board|cache|meta', payload: { n: rows.length, count: ids.length, at: Date.now(), goN, goChunks: Math.max(1, Math.ceil(goN / CH)) }, fetched_at: now }, { onConflict: 'id' });
 console.log(`✅ 올림: ${rows.length}묶음 / ${ids.length}건`);
+// 서버 캐시 미리 데우기(2026-10-21): 앱이 쓰는 주소(v=저장 시각)로 한 번씩 받아 두면 첫 사용자도 빠름
+try {
+  const { data: mt } = await supabase.from('leader_follower_cache').select('payload').eq('id', 'board|cache|meta').maybeSingle();
+  const at = mt && mt.payload && mt.payload.at;
+  if (at) {
+    let okN = 0;
+    for (let i = 0; i < rows.length; i += 8) {
+      await Promise.all(Array.from({ length: Math.min(8, rows.length - i) }, (_, k) => fetch(`${SITE}/api/data-coverage?mode=boardCacheChunk&i=${i + k}&v=${at}`).then((r) => { if (r.ok) okN++; return r.arrayBuffer(); }).catch(() => {})));
+    }
+    console.log(`캐시 데우기 ${okN}/${rows.length}`);
+  }
+} catch (e) { console.log('캐시 데우기 실패(무시):', String(e).slice(0, 120)); }
 if (villa && Object.keys(villa.ve || {}).length >= 50) {
   const vids = Object.keys(villa.ve), VC = 100, vrows = [];
   for (let i = 0; i * VC < vids.length; i++) {

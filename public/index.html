@@ -19716,7 +19716,7 @@ async function refreshBidBoard() {
 }
 // 손해 주의 물건이 과거에 실제로 받은 값 ÷ 예상매도가(2026-10 백테스트, 하위 40% 지점) - 추천가÷최저가가 클수록 낮음. 예상매도가가 아니라 마진의 추가 여유 계산에 씀
 var OVERSHOOT_SALE_FACTORS = { apt: [[1.3, 0.90], [1.5, 0.76], [2, 0.61], [Infinity, 0.51]], villa: [[1.5, 0.82], [2, 0.76], [Infinity, 0.60]] };
-var BOARD_CACHE_KEY = 'bidBoardCache:v1', BOARD_CACHE_MAX_AGE = 8 * 24 * 3600 * 1000, BOARD_SRV_MAX_AGE = 9 * 24 * 3600 * 1000; // 2026-10-11: 서버 미리 계산이 매주 토요일 03시 1회 → 일주일(+여유)간 그대로 사용
+var BOARD_CACHE_KEY = 'bidBoardCache:v2', BOARD_CACHE_MAX_AGE = 8 * 24 * 3600 * 1000, BOARD_SRV_MAX_AGE = 9 * 24 * 3600 * 1000; // 2026-10-11: 서버 미리 계산이 매주 토요일 03시 1회 → 일주일(+여유)간 그대로 사용
 /* 서버가 미리 계산해 둔 입찰후보 받기(2026-10-10 속도: 입찰후보 창을 열기 전, 앱을 켠 직후 배경에서 미리 받아 둠 - 열 때는 이미 도착해 있음) */
 function srvBoardParts() {
     if (window.__srvBoardP && Date.now() - (window.__srvBoardAt || 0) < 10 * 60 * 1000) return window.__srvBoardP; // 입찰후보↔지도를 오갈 때마다 29MB를 다시 받아 해석하던 것(2026-10-21) - 10분 안이면 받아 둔 것을 씀
@@ -19729,7 +19729,7 @@ function srvBoardParts() {
             if (!meta || !meta.n || !meta.at || Date.now() - meta.at > BOARD_SRV_MAX_AGE) { window.__srvFirstDone = true; resolveFirst(null); return null; }
             // 2026-10-21(사용자: 입찰후보 저장 계산 불러오기가 김) - 서버가 임장 후보를 앞쪽 묶음에 모아 둠(goChunks): 후보 묶음을 먼저 받아 화면을 채우고, 나머지는 8개씩 뒤에서 받음
             var N = meta.n, F = Math.min(N, Math.max(1, meta.goChunks || N));
-            var getChunk = function(i) { return fetch('/api/data-coverage?mode=boardCacheChunk&i=' + i).then(function(r) { return r.json(); }); };
+            var getChunk = function(i) { return fetch('/api/data-coverage?mode=boardCacheChunk&i=' + i + '&v=' + meta.at).then(function(r) { return r.json(); }); }; // v=저장 시각 → 주소가 저장본마다 고정이라 서버·브라우저가 오래 보관(2026-10-21)
             var range = function(a, b) { var o = []; for (var k = a; k < b; k++) o.push(k); return o; };
             var reg = function(parts) { // 지도 배지가 서버 계산본을 그대로 쓰도록 id별로 보관(없으면 배지마다 건당 최대 60ms 계산을 다시 했음)
                 try { var byId = window.__srvBoardById || (window.__srvBoardById = {}); parts.forEach(function(pp) { Object.keys((pp && pp.items) || {}).forEach(function(id) { byId[id] = pp.items[id]; }); }); } catch (e) {}
@@ -19760,6 +19760,7 @@ async function mergeServerBoardCache(local, onlyFirst) {
     } catch (e) { console.warn('미리 계산 결과 못 받음(직접 계산):', e && e.message); }
     return local;
 }
+setTimeout(function() { try { listIdbOp('readwrite', function(st) { return st.delete('bidBoardCache:v1'); }); } catch (e) {} }, 4000); // 예전 큰 로컬 저장본(서버 계산본 포함, 수십 MB)은 읽지 않고 지움(느린 기기에서 열 때 수 초 멈춤, 2026-10-21)
 setTimeout(function() { var go = function() { try { srvBoardParts(); setTimeout(function() { try { window.villaSrvP = villaFetchServerCalc(); } catch (e) {} }, 4000); } catch (e) {} }; if (window.requestIdleCallback) requestIdleCallback(go, { timeout: 6000 }); else go(); }, 2500); // 앱을 켜고 2.5초 뒤 한가할 때 배경에서 미리 받기(빌라는 4초 더 뒤)
 // 저장 계산을 다시 써도 되는지 - 물건 입력값(시세 계산에 쓰는 것)과 입찰일 지남 여부. 계산 방식이 바뀌면 BOARD_CALC_VER을 올림
 var BOARD_CALC_VER = 52; // 52: 임장 생략 판정(2026-10-19) - // 51: 전세가율 구간 보정·위험 신호(2026-10-18) - // 50: 지방 최근 거래 비슷한 층 비중·1~2건은 12개월 원값(2026-10-18) - // 49: 근거 약함 경고를 판정 단계에서 다시 붙임 - // 48: 예상매도가-감정가 큰 차이 근거 약함 표시 - // 47: 다른 평형 환산이 같은 평형과 20% 넘게 다르면 섞지 않음 - // 46: 같은 동 추론(③④) 제거·거래 없는 단지는 기존 주변 비교 + 근거 약함(2026-10-18) - // 45: 회전율 구간별 보정 항상 적용(주간 갱신 표, 2026-10-17) - // 44: 추론에 최근 6개월 1~2건 포함 - // 43: 6개월 거래 부족 시 단계별 추론(2026-10-17) - // 42: 지역별 예상매도가(서울 최근3건·경기인천 반감1개월·지방 반감2개월)와 위험 여유(2026-10-17) - // 41: 아파트 예상매도가를 최근 6개월 같은 평형 거래의 최근가중 중위값으로(전국 백테스트, 2026-10-17) - // 40: 임차인 둘로 읽힌 경우 별개/같은 임차권(갱신·승계) 선택(2026-10-11) - // 39: 39: 임차권등기를 임차인으로 계산(전입·확정일자 기준)·경매신청인 전세권 안내(2026-10-11) - // 38: 38: 권리분석 날짜 선후 규칙 정리(전입 다음 날 0시·동순위 안분, 2026-10-11) - // 37: 37: 권리분석에 말소기준일보다 앞선 전세권·임차권 등 등기부 인수 권리 반영(2026-10-11) - // 36: 저가 아파트 순이익률 10% 추천가 규칙 되돌림(2026-10-11, 백테스트 손해 30~42%) - // 34: 33: 아파트 고층 보정 축소·저층 범위(2026-10-11) - // 29: nYear 저장 추가 - // 27: 🎲 예상 낙찰가용 시세(wbBase) 추가 (범위 표시는 화면에서 바로 계산 - 버전 변경 없음)
