@@ -616,7 +616,11 @@ tr:hover td { background:#fffde7; }
 #bid-board .bb-act button { border:1px solid #d6dbe1; background:white; border-radius:6px; padding:3px 8px; cursor:pointer; font-size:11px; }
 @media (max-width: 900px) {
     #bid-board .bb-table, #bid-board .bb-table tbody { display:block; background:none; box-shadow:none; }
-    #bid-board .bb-table thead { display:none; }
+    /* 2026-10-21(사용자: 좁은 화면에서도 열 이름을 숨기지 말고 반투명으로 보이게) - 열 이름을 가로로 밀어 볼 수 있는 반투명 막대로 위에 고정 */
+    #bid-board .bb-table thead { display:block; position:sticky; top:-10px; z-index:5; margin:0 -12px 6px; padding:0 12px; background:rgba(255,255,255,.82); -webkit-backdrop-filter:blur(8px); backdrop-filter:blur(8px); border-bottom:1px solid rgba(0,0,0,.08); }
+    #bid-board .bb-table thead tr { display:flex; flex-wrap:nowrap; gap:6px; overflow-x:auto; -webkit-overflow-scrolling:touch; scrollbar-width:none; background:none; box-shadow:none; border-radius:0; padding:6px 0; margin:0; }
+    #bid-board .bb-table thead tr::-webkit-scrollbar { display:none; }
+    #bid-board .bb-table thead th { position:static; flex:0 0 auto; background:rgba(255,255,255,.65); border:1px solid #dfe3e8; border-radius:999px; padding:4px 10px; font-size:11px; white-space:nowrap; }
     #bid-board .bb-table tr { display:grid; grid-template-columns:1fr 1fr; gap:2px 10px; background:white; border-radius:10px; padding:10px 12px; margin-bottom:8px; box-shadow:0 1px 3px rgba(0,0,0,0.08); }
     #bid-board .bb-table td { border:none; padding:3px 0; }
     #bid-board .bb-table td.r { text-align:left; }
@@ -1343,7 +1347,12 @@ body.ui2 #auction-modal.am4 { width:620px; }
 .bb2-rank { min-width:150px; font-size:11.5px; line-height:1.55; } .bb2-rank > div { white-space:nowrap; }
 @media (max-width: 900px) {
     .bb2-table, .bb2-table tbody { display:block; background:none; box-shadow:none; }
-    .bb2-table thead { display:none; }
+    /* 좁은 화면: 열 이름을 반투명 막대로 고정(2026-10-21) */
+    .bb2-table thead { display:block; position:sticky; top:-10px; z-index:5; margin:0 -12px 6px; padding:0 12px; background:rgba(255,255,255,.82); -webkit-backdrop-filter:blur(8px); backdrop-filter:blur(8px); border-bottom:1px solid rgba(0,0,0,.08); }
+    .bb2-table thead tr { display:flex; flex-wrap:nowrap; gap:6px; overflow-x:auto; -webkit-overflow-scrolling:touch; scrollbar-width:none; background:none; box-shadow:none; border-radius:0; padding:6px 0; margin:0; }
+    .bb2-table thead tr::-webkit-scrollbar { display:none; }
+    .bb2-table thead th { position:static; flex:0 0 auto; background:rgba(255,255,255,.65); border:1px solid #dfe3e8; border-radius:999px; padding:4px 10px; font-size:11px; white-space:nowrap; }
+    .bb2-table thead .bb2-subsort { display:inline-flex; margin:0 0 0 6px; }
     .bb2-table tr { display:grid; grid-template-columns:repeat(3, 1fr); gap:2px 10px; background:#fff; border-radius:10px; padding:9px 12px; margin-bottom:6px; box-shadow:0 1px 3px rgba(0,0,0,.08); }
     .bb2-table td { border:none; padding:1px 0; }
     .bb2-table td.r { text-align:left; }
