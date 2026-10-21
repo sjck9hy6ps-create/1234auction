@@ -19147,8 +19147,16 @@ var _fsrBusy = false, _fsrAgain = false;
 function finalizeStaleRows(cb) {
     if (_fsrBusy) { _fsrAgain = true; return; }
     var sig = boardFinalSig(), todo = bidBoardRows.filter(function(r) { return !r.pending && !r.skippedPast && r.type && r.finalSig !== sig; });
-    Object.keys(bidVerdictCache).forEach(function(id) { var c = bidVerdictCache[id]; if (c && c.row && c.row.type && c.row.finalSig !== sig && todo.indexOf(c.row) < 0) todo.push(c.row); });
-    if (!todo.length) { if (cb) cb(); return; }
+    var seenRow = new Set(todo);
+    Object.keys(bidVerdictCache).forEach(function(id) { var c = bidVerdictCache[id]; if (c && c.row && c.row.type && c.row.finalSig !== sig && !seenRow.has(c.row)) { todo.push(c.row); seenRow.add(c.row); } });
+    if (!todo.length) { if (cb) cb(); if (_mkRedrawAfterFsr) { _mkRedrawAfterFsr = false; try { renderAuctionMarkers(); } catch (e) {} } return; }
+    // 2026-10-21(사용자: 입찰후보 탭에서 화면이 멈추고 알림창 닫기도 안 눌림) - 서버 저장본은 내 자산 지문이 달라 8천 건 전부(건당 약 30ms ≈ 4분)를 다시 계산했고, 그 사이 화면이 계속 끊겼음.
+    // 지금 화면에 필요한 것(임장 후보·지도 배지)을 먼저 하고, 나머지(패스·계산 전)는 뒤에서 아주 천천히(8ms씩, 80ms 간격) - 패스 목록을 열면 그때 바로 이어서 함
+    var inCache = new Set(); Object.keys(bidVerdictCache).forEach(function(id) { var c = bidVerdictCache[id]; if (c && c.row) inCache.add(c.row); });
+    var hi = [], lo = [];
+    todo.forEach(function(r) { (inCache.has(r) || (r.visit && r.visit.go) ? hi : lo).push(r); });
+    var needAll = bidBoardState.visit !== 'go' && bidBoardState.visit !== 'villa' && document.getElementById('bid-board') && document.getElementById('bid-board').style.display !== 'none';
+    todo = needAll ? hi.concat(lo) : hi; var rest = needAll ? [] : lo;
     _fsrBusy = true; var i = 0;
     (function step() {
         var t = performance.now();
@@ -19158,7 +19166,16 @@ function finalizeStaleRows(cb) {
         try { if (document.getElementById('bid-board').style.display !== 'none') renderBidBoard(); if (typeof bidDrawerId !== 'undefined' && bidDrawerId) renderBidDrawer(); } catch (e) {}
         if (cb) cb();
         if (_mkRedrawAfterFsr) { _mkRedrawAfterFsr = false; try { renderAuctionMarkers(); } catch (e) {} }
-        if (_fsrAgain) { _fsrAgain = false; finalizeStaleRows(); }
+        if (_fsrAgain) { _fsrAgain = false; finalizeStaleRows(); return; }
+        if (rest.length) { // 나머지는 화면이 한가할 때 조금씩 - 사용자가 만지면(입력·클릭) 잠깐 쉼
+            var k = 0, lowStep = function() {
+                if (_fsrBusy) { setTimeout(lowStep, 400); return; }
+                var t2 = performance.now();
+                while (k < rest.length && performance.now() - t2 < 8) { var rr = rest[k++]; try { if (rr.finalSig !== sig) finalizeBidBoardRow(rr); } catch (e) {} }
+                if (k < rest.length) setTimeout(lowStep, 80);
+            };
+            setTimeout(lowStep, 3000);
+        }
     })();
 }
 async function boardInputsReady(ms) { // 내 자산·낙찰가 모델이 도착하길 잠깐 기다림(지문을 맞춰 다시 계산을 건너뛰려고)
@@ -19756,6 +19773,7 @@ function setBidBoardProgress(t) {
 function setBidBoardFilter(key, val) {
     bidBoardState[key] = val;
     renderBidBoard();
+    if (key === 'visit' && val !== 'go' && val !== 'villa') setTimeout(function() { try { finalizeStaleRows(); } catch (e) {} }, 50); // 패스·전체 목록을 열면 뒤로 미뤄 둔 나머지 계산을 이어서
     // 지난 입찰은 평소엔 계산하지 않음 - 보기를 켜면 그때 계산
     if (key === 'showPast' && val && bidBoardRows.some(function(r) { return r.skippedPast; })) refreshBidBoard();
 }
@@ -19790,7 +19808,7 @@ function bbResetDrawer() {
 function setLiteVisit(v) { bbResetDrawer(); var s0 = bidBoardState, wasVilla = s0.visit === 'villa'; if (v !== 'villa' && v !== 'fav') s0.aptVisit = v; s0.visit = v;
     if (v !== 'villa' && String(s0.region || '').indexOf('g:') === 0) s0.region = '';
     if (v === 'fav') s0.region = '';
-    if (s0.region && (wasVilla !== (v === 'villa')) && !bidBoardRows.some(function(r) { return (r.type === 'villa') === (v === 'villa') && regionMatch(r, s0.region); })) s0.region = '';  bidBoardState.liteLimit = 120; renderBidBoard(); }
+    if (s0.region && (wasVilla !== (v === 'villa')) && !bidBoardRows.some(function(r) { return (r.type === 'villa') === (v === 'villa') && regionMatch(r, s0.region); })) s0.region = '';  bidBoardState.liteLimit = 120; renderBidBoard(); if (v === 'pass' || v === 'all' || v === 'fav') setTimeout(function() { try { finalizeStaleRows(); } catch (e) {} }, 50); }
 // 열 머리글을 누르면 그 값으로 오름차순 ↔ 내림차순(2026-10, 사용자: "순위 표기보다 항목별 오름·내림차순 정렬을 직접 고르게"). 값이 없는 물건은 방향과 상관없이 맨 아래
 var LITE_COLS = {
     verdict: { label: '판정', first: 1, val: function(r) { return r.visit.go ? 0 : 1; } },
