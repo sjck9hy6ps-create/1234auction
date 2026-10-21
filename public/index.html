@@ -15277,7 +15277,7 @@ function auctionMarkerSignature(a) {
 function upsertAuctionMarker(a, hidden) {
     var sig = auctionMarkerSignature(a) + (hidden ? '|h' : '');
     if (auctionMarkers[a.id] && auctionMarkerSigs[a.id] === sig) return; // 변경 없음 - 그대로 유지 (깜빡임 방지)
-    if (awCreateCount >= 80) { awNeedMore = true; return; } // 한 번에 80개까지만 새로 그림 - 물건이 몰린 지역(수백 건)에서 한꺼번에 그리느라 화면이 수 초 멈추던 것을 나눠서(2026-10-20)
+    if (awCreateCount >= 40) { awNeedMore = true; return; } // 한 번에 80개까지만 새로 그림 - 물건이 몰린 지역(수백 건)에서 한꺼번에 그리느라 화면이 수 초 멈추던 것을 나눠서(2026-10-20)
     awCreateCount++;
     if (auctionMarkers[a.id]) {
         if (auctionMarkers[a.id].overlay) auctionMarkers[a.id].overlay.setMap(null);
@@ -15407,7 +15407,7 @@ function renderAuctionMarkersNow() {
     var vp = getPaddedViewportBounds();
     var zoomThin = false; try { zoomThin = !!(map && map.getLevel() >= AUCTION_THIN_LEVEL); } catch (e) {}
     var neededIds = {};
-    awBudgetUntil = performance.now() + 250; awNeedMore = false; awCreateCount = 0;
+    awBudgetUntil = performance.now() + 50; awNeedMore = false; awCreateCount = 0; // 한 번에 50ms만 일하고 쉼(예전 250ms: 줌 동안 0.25초씩 계속 막혀 끊겼음, 2026-10-21)
     // 한 건물에 경매가 몰린 곳(2026-10-10, 사용자 요청): 같은 위치(약 1m)에 4건 이상이면 배지를 하나로 묶고 누르면 전체 목록
     var bk0 = {};
     auctionList.forEach(function(a) { if (a.lat && a.lon && auctionBadgeWorthy(a)) { var k0 = auctionBuildingKey(a); if (k0) bk0[k0] = true; } });
