@@ -19157,6 +19157,7 @@ function finalizeStaleRows(cb) {
         _fsrBusy = false;
         try { if (document.getElementById('bid-board').style.display !== 'none') renderBidBoard(); if (typeof bidDrawerId !== 'undefined' && bidDrawerId) renderBidDrawer(); } catch (e) {}
         if (cb) cb();
+        if (_mkRedrawAfterFsr) { _mkRedrawAfterFsr = false; try { renderAuctionMarkers(); } catch (e) {} }
         if (_fsrAgain) { _fsrAgain = false; finalizeStaleRows(); }
     })();
 }
@@ -19435,6 +19436,12 @@ function bidVerdictSig(a) {
     return [auctionWonEstSignature(a), a.minBid, a.bidDate, a.court, a.failCount, lawd, lawd && dataCache[lawd] ? 1 : 0,
         Object.keys(popularMap).length, lawd && cycleDataByLawd[lawd] ? 1 : 0, Object.keys(leaderFollowerRankMap).length].join('|');
 }
+var _mkFinTimer = null, _mkRedrawAfterFsr = false;
+function scheduleMarkerFinalize() { // 지도 배지의 판정을 내 자산 기준으로 다시 계산 - 12ms씩 나눠(finalizeStaleRows) 끝나면 배지를 한 번 다시 그림
+    _mkRedrawAfterFsr = true;
+    if (_mkFinTimer) return;
+    _mkFinTimer = setTimeout(function() { _mkFinTimer = null; try { finalizeStaleRows(); } catch (e) {} }, 120);
+}
 function getBidVerdictForMarker(a) {
     if (!isBidBoardCandidate(a) || (a.propType !== 'apt' && a.propType !== 'villa')) return null;
     var lawd = bidBoardLawdOf(a);
@@ -19453,15 +19460,15 @@ function getBidVerdictForMarker(a) {
     var cached = bidVerdictCache[a.id];
     if (!dataCache[lawd]) return cached ? cached.row : null; // 지역 자료가 내려가 있으면 마지막 판정 유지
     var sig = bidVerdictSig(a);
-    if (cached && cached.sig === sig) { if (cached.row && cached.row.type && cached.row.assetVer !== myAssetsVer) finalizeBidBoardRow(cached.row); return cached.row; }
+    if (cached && cached.sig === sig) { if (cached.row && cached.row.type && cached.row.assetVer !== myAssetsVer) scheduleMarkerFinalize(); return cached.row; }
     // 서버가 미리 계산해 둔 행이 있고 입력값 지문이 같으면 그대로 씀(새 지역으로 이동할 때마다 수백 건을 다시 계산해 지도가 멈추던 문제)
     var sv = window.__srvBoardById && window.__srvBoardById[a.id];
     if (sv && sv.row && sv.row.finalSig && Date.now() - (sv.at || 0) <= BOARD_SRV_MAX_AGE) {
         var bsg = boardBaseSig(a);
         if (sv.sig === bsg || sv.sig === boardBaseSig(a, true)) {
             var row0 = Object.assign({}, sv.row, { a: a, dday: a.bidDate ? calcAuctionDday(a.bidDate) : null, fromCache: sv.at });
-            try { if (row0.type && row0.assetVer !== myAssetsVer) finalizeBidBoardRow(row0); } catch (e) {}
             bidVerdictCache[a.id] = { sig: sig, row: row0 };
+            if (row0.type && row0.assetVer !== myAssetsVer) scheduleMarkerFinalize(); // 내 자산 기준 재계산은 한 건씩 바로 하지 않고 12ms씩 나눠 뒤에서(2026-10-21: 배지 수백 건을 한꺼번에 다시 계산해 화면이 수 초 멈췄음)
             return row0;
         }
     }
