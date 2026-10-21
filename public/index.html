@@ -15375,6 +15375,13 @@ function renderAuctionClusters(list, vp) {
         if (!seen[k]) { auctionClusterMarkers[k].overlay.setMap(null); delete markerDataRegistry[auctionClusterMarkers[k].mKey]; delete auctionClusterMarkers[k]; }
     });
 }
+function auctionIsGoFast(a) { // 임장 후보인가 - 이미 계산된 판정 → 서버 계산본 순으로 조회, 모르면 후보가 아닌 것으로 봄(확대하면 정확히 판정되어 나타남)
+    var c = bidVerdictCache[a.id];
+    if (c && c.row && c.row.visit) return !!c.row.visit.go;
+    var sv = window.__srvBoardById && window.__srvBoardById[a.id];
+    if (sv && sv.row && sv.row.visit) return !!sv.row.visit.go;
+    return false;
+}
 var AUCTION_THIN_LEVEL = 5; // 이 레벨 이상(넓게 볼 때)에서는 임장 후보 배지만
 var _ramTimer = null;
 function renderAuctionMarkers() { // 짧은 시간에 여러 번 불려도 한 번만 그림(지도 이동·자료 도착·판정 갱신이 겹쳐 7~15번씩 전체를 다시 훑던 것, 2026-10-20)
@@ -15438,9 +15445,7 @@ function renderAuctionMarkersNow() {
         // 2026-10-21(사용자: 줌인·줌아웃 때 지연이 심함) - 지도를 넓게 볼 때(레벨 5 이상)는 화면 안 배지가 수백 개라 줌마다 지도가 배지 위치를 다시 계산하느라 느려짐 →
         // 임장 후보와 내가 따로 관리하는 물건(즐겨찾기·내 입찰가·진행 중)만 그리고, 후보가 아닌 배지는 확대(레벨 4 이하)하면 나타남
         if (zoomThin && !(a.fav || a.myBid || (a.status && a.status !== '검토중'))) {
-            var vr0 = null; try { vr0 = getBidVerdictForMarker(a); } catch (e) {}
-            var goV = false; try { goV = !!(vr0 && (vr0.type === 'villa' ? (villaEval(vr0) || {}).visit && villaEval(vr0).visit.go : vr0.visit && vr0.visit.go)); } catch (e) {}
-            if (!goV) return;
+            if (!auctionIsGoFast(a)) return; // 판정을 건마다 새로 만들지 않고 이미 있는 값만 조회(넓게 줌아웃하면 화면 안이 수천 건이라 4초씩 멈췄음)
         }
         neededIds[a.id] = true;
         if (a.lat && a.lon) { upsertAuctionMarker(a, !!(clusterOf[a.id] && !clusterOf[a.id].lead)); }
