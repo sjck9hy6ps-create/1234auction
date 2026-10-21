@@ -5940,7 +5940,7 @@ function initMap(lat, lon) {
     // 한 번에 처리함. map이 막 생성된 시점이라야 리스너 등록이 되므로 여기(initMap)에서 호출.
     toggleDongBoundaryMode(document.getElementById('boundary-toggle-btn'));
     updateBadgeScale();
-    kakao.maps.event.addListener(map, 'zoom_changed', function() { updateBadgeScale(); scheduleOverlapResolve(); if (showHomestay) renderHomestayLayer(); });
+    kakao.maps.event.addListener(map, 'zoom_changed', function() { updateBadgeScale(); scheduleOverlapResolve(); if (showHomestay) renderHomestayLayer(); var th = map.getLevel() >= AUCTION_THIN_LEVEL; if (th !== window.__lastThin) { window.__lastThin = th; try { renderAuctionMarkers(); } catch (e) {} } }); // 후보만 보이는 단계를 넘나들 때 바로 다시 그림
     // 경매 등록 물건은 지역 데이터를 기다리지 않고 가장 먼저 불러와서 표시
     // (비교물건 배지 반영을 위해 아파트/빌라 마커도 함께 다시 그림)
     fetchAuctions().then(function() { renderAuctionMarkers(); redrawMarkers(); try { var bb0 = document.getElementById('bid-board'); if (bb0 && bb0.style.display === 'flex' && !bidBoardRows.length && !bidBoardRunning) refreshBidBoard(); } catch (e) {} }); // 입찰후보를 경매 목록보다 먼저 열었으면 목록이 오는 대로 다시 계산
@@ -15375,6 +15375,7 @@ function renderAuctionClusters(list, vp) {
         if (!seen[k]) { auctionClusterMarkers[k].overlay.setMap(null); delete markerDataRegistry[auctionClusterMarkers[k].mKey]; delete auctionClusterMarkers[k]; }
     });
 }
+var AUCTION_THIN_LEVEL = 5; // 이 레벨 이상(넓게 볼 때)에서는 임장 후보 배지만
 var _ramTimer = null;
 function renderAuctionMarkers() { // 짧은 시간에 여러 번 불려도 한 번만 그림(지도 이동·자료 도착·판정 갱신이 겹쳐 7~15번씩 전체를 다시 훑던 것, 2026-10-20)
     if (_ramTimer) return;
@@ -15397,6 +15398,7 @@ function renderAuctionMarkersNow() {
     // 경매물건은 마커를 떼어두고(데이터는 auctionList에 그대로 남아있어 다시 그 위치로
     // 오면 즉시 재생성됨) SDK가 매 줌 프레임마다 다뤄야 하는 오버레이 개수를 줄임.
     var vp = getPaddedViewportBounds();
+    var zoomThin = false; try { zoomThin = !!(map && map.getLevel() >= AUCTION_THIN_LEVEL); } catch (e) {}
     var neededIds = {};
     awBudgetUntil = performance.now() + 250; awNeedMore = false; awCreateCount = 0;
     // 한 건물에 경매가 몰린 곳(2026-10-10, 사용자 요청): 같은 위치(약 1m)에 4건 이상이면 배지를 하나로 묶고 누르면 전체 목록
@@ -15432,6 +15434,13 @@ function renderAuctionMarkersNow() {
         if (vp && a.lat && a.lon
             && (a.lat < vp.minLat || a.lat > vp.maxLat || a.lon < vp.minLon || a.lon > vp.maxLon)) {
             return; // neededIds에 안 넣음 - 아래 정리 루프가 기존 마커를 떼어냄(데이터는 유지)
+        }
+        // 2026-10-21(사용자: 줌인·줌아웃 때 지연이 심함) - 지도를 넓게 볼 때(레벨 5 이상)는 화면 안 배지가 수백 개라 줌마다 지도가 배지 위치를 다시 계산하느라 느려짐 →
+        // 임장 후보와 내가 따로 관리하는 물건(즐겨찾기·내 입찰가·진행 중)만 그리고, 후보가 아닌 배지는 확대(레벨 4 이하)하면 나타남
+        if (zoomThin && !(a.fav || a.myBid || (a.status && a.status !== '검토중'))) {
+            var vr0 = null; try { vr0 = getBidVerdictForMarker(a); } catch (e) {}
+            var goV = false; try { goV = !!(vr0 && (vr0.type === 'villa' ? (villaEval(vr0) || {}).visit && villaEval(vr0).visit.go : vr0.visit && vr0.visit.go)); } catch (e) {}
+            if (!goV) return;
         }
         neededIds[a.id] = true;
         if (a.lat && a.lon) { upsertAuctionMarker(a, !!(clusterOf[a.id] && !clusterOf[a.id].lead)); }
