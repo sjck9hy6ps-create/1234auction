@@ -1270,6 +1270,19 @@ def weekly_report(R, now_dt, now_iso):
         print("  예상 낙찰가 성적표:", ws.get("all"), "주", len(ws["weeks"]))
     except Exception as e:
         print("  예상 낙찰가 성적표 건너뜀:", e)
+    # 2026-10-22(사용자: 예상 낙찰가로 현재 로직을 맞춰 가는 방향 - 아파트·빌라 모두 매주 확인) 구간별 자동 보정이 다음 구간 오차를 줄였나 과거로 검증
+    try:
+        _sp = importlib.util.spec_from_file_location("wbc", os.path.join(HERE, "winbid_corr.py")); wbc = importlib.util.module_from_spec(_sp); _sp.loader.exec_module(wbc)
+        C = D.copy()
+        C["cls"] = C["region"].map(lambda rg: "서울" if str(rg).startswith("서울") else ("경기·인천" if str(rg)[:2] in ("경기", "인천") else "지방"))
+        C["fb"] = C["fails"].map(lambda f: None if f is None or pd.isna(f) else ("신건" if f == 0 else ("1회 유찰" if f == 1 else "2회+ 유찰")))
+        C = C[C["fb"].notna()]
+        cc = wbc.walk_forward(C, lambda tr: wb_fit(tr), lambda m, te: wb_predict(m, te))
+        cc["segment"] = "아파트"; cc["generatedAt"] = now_iso
+        cyc.upsert_rows([{"id": "signal|__winbid_corr__", "payload": cyc.clean_json(cc), "fetched_at": now_iso}])
+        print("  낙찰가 자동 보정 검증(아파트):", {k: cc.get(k) for k in ("ok", "blocks", "best", "bestGainPct", "recommend")})
+    except Exception as e:
+        print("  낙찰가 자동 보정 검증 건너뜀:", e)
     print(f"  주간 리포트: 기간 {start}~, 사례 {len(W)}건, 정확도 {out.get('accuracy')}")
     cyc.upsert_rows([{"id": "signal|__weekly_report__", "payload": cyc.clean_json(out), "fetched_at": now_iso}])
     # 지난 리포트 누적(사용자: 알림에서 확인한 뒤에도 계속 볼 수 있게 누적 목록) - 주마다 따로 저장 + 목록 갱신

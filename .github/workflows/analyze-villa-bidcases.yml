@@ -1,5 +1,6 @@
 name: 분석 - 수도권 빌라 낙찰가 모델
 on:
+  workflow_call:
   workflow_dispatch:
 jobs:
   an:

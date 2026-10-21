@@ -3519,6 +3519,15 @@ export default async function handler(req, res) {
       return res.status(200).json((data && data.payload) || {});
     } catch (err) { return res.status(500).json({ error: err.message }); }
   }
+  if (req.query.mode === 'corrCheck') { // 예상 낙찰가 자동 보정 검증(아파트·빌라) - 주간 분석이 저장
+    res.setHeader('Cache-Control', 's-maxage=300, stale-while-revalidate=3600');
+    try {
+      const { data, error } = await supabase.from('leader_follower_cache').select('id,payload').in('id', ['signal|__winbid_corr__', 'signal|__winbid_corr_villa__']);
+      if (error) return res.status(500).json({ error: error.message });
+      const out = {}; (data || []).forEach((r) => { out[r.id === 'signal|__winbid_corr__' ? 'apt' : 'villa'] = r.payload; });
+      return res.status(200).json(out);
+    } catch (err) { return res.status(500).json({ error: err.message }); }
+  }
   if (req.query.mode === 'boardCacheMeta' || req.query.mode === 'boardCacheChunk') {
     // 묶음은 주소에 저장 시각(v)이 들어가 저장본이 바뀌면 주소도 바뀜 → 오래 보관해도 안전(2026-10-21: 첫 요청이 건당 약 2초 걸려 입찰후보 첫 화면이 늦었음)
     if (req.query.mode === 'boardCacheChunk' && req.query.v) res.setHeader('Cache-Control', 'public, max-age=86400, s-maxage=31536000, immutable');

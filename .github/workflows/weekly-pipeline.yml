@@ -56,6 +56,12 @@ jobs:
     secrets: inherit
     needs: analyze-liquidity
     if: ${{ !cancelled() }}
+  analyze-villa-bidcases:
+    name: 8b 빌라 낙찰가 모델·자동 보정 검증
+    uses: ./.github/workflows/analyze-villa-bidcases.yml
+    secrets: inherit
+    needs: analyze-bidcases
+    if: ${{ !cancelled() }}
   analyze-homestay:
     name: 9 도시민박 집계
     uses: ./.github/workflows/analyze-homestay.yml

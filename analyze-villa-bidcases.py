@@ -4,6 +4,7 @@
 가산 모델(아파트와 같은 방식)을 만들어 최근 사례(학습에 안 쓴 구간)로 오차를 확인. 결과 JSON → 앱의 빌라 낙찰 가능성·추천가 근거
 """
 import os, json, re, importlib.util
+from datetime import datetime, timezone
 import numpy as np
 import pandas as pd
 import requests
@@ -156,6 +157,26 @@ def main():
     FAC = FIN
     out = {"n": int(len(D)), "oos": res, "byLevel": bylvl, "byAge": byage, "byFloor": byfl, "floorRatio": flr, "floorResale": floor_resale, "ratioMed": round(float(D["ratio"].median()), 3), "resQ": resid_q,
            "factors": [f for f, _ in FIN], "base": full[0], "eff": {f: {str(k): round(float(v), 4) for k, v in d.items()} for f, d in full[1].items()}}
+    # 2026-10-22 구간별 자동 보정 검증(빌라) - 아파트와 같은 방식(winbid_corr.py)
+    try:
+        _sp = importlib.util.spec_from_file_location("wbc", os.path.join(HERE, "winbid_corr.py")); wbc = importlib.util.module_from_spec(_sp); _sp.loader.exec_module(wbc)
+        ys = pd.Series(y, index=D.index)
+        C = D[["sale", "actual", "est", "region", "fails"]].copy()
+        C["cls"] = C["region"].map(lambda r: str(r).split(" ")[0][:2])
+        C["fb"] = C["fails"].map(lambda f: None if f is None or pd.isna(f) else ("신건" if f == 0 else ("1회 유찰" if f == 1 else "2회+ 유찰")))
+        C = C[C["fb"].notna()]
+        def _fit(tr): return fit_additive(X.loc[tr.index], ys.loc[tr.index].values, FIN)
+        def _pred(m, te): return predict(m, X.loc[te.index], FIN)
+        cc = wbc.walk_forward(C, _fit, _pred, min_train=1500)
+        cc["segment"] = "빌라"; cc["generatedAt"] = datetime.now(timezone.utc).isoformat()
+        print("낙찰가 자동 보정 검증(빌라):", {k: cc.get(k) for k in ("ok", "blocks", "best", "bestGainPct", "recommend")})
+        try:
+            _ab = importlib.util.spec_from_file_location("ab", os.path.join(HERE, "analyze-bidcases.py")); ab = importlib.util.module_from_spec(_ab); _ab.loader.exec_module(ab)
+            ab.cyc.upsert_rows([{"id": "signal|__winbid_corr_villa__", "payload": ab.cyc.clean_json(cc), "fetched_at": cc["generatedAt"]}])
+        except Exception as e:
+            print("  빌라 보정 검증 저장 실패:", e)
+    except Exception as e:
+        print("낙찰가 자동 보정 검증(빌라) 건너뜀:", e)
     json.dump(out, open("villa-winbid.json", "w"), ensure_ascii=False)
     print("저장 villa-winbid.json")
 
