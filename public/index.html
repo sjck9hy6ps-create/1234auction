@@ -1815,6 +1815,9 @@ body.ui2 #auction-modal.am4 { width:620px; }
         <div class="bb-tools">
             <span id="bb-tabs"></span>
             <select id="bb-region" onchange="setBidBoardFilter('region', this.value)"></select>
+            <select id="bb-permit" onchange="setBidBoardFilter('permit', this.value)" title="토지거래허가구역 자료 기준(🚧 허가구역 표시가 붙은 물건)">
+                <option value="">규제지역 전체</option><option value="only">🚧 규제지역만</option><option value="exclude">규제지역 제외</option>
+            </select>
             <select onchange="setBidBoardFilter('type', this.value)">
                 <option value="">아파트·빌라</option><option value="apt">아파트만</option><option value="villa">빌라만</option>
             </select>
@@ -3979,7 +3982,9 @@ function villaBidPlan(row, ve, mp, wb) {
     return { max: bMax, ev: best, pMax: villaProbAt(wb, bMax) };
 }
 // 지역 선택(2026-10-10, 사용자: 대도시는 시별로) - 'g:서울'처럼 앞에 g:가 붙으면 그 시 전체(서울·인천은 구 묶음)
-function regionMatch(r, reg) { return !reg || (reg.indexOf('g:') === 0 ? String(r.region).indexOf(reg.slice(2) + ' ') === 0 : r.region === reg); }
+// 규제지역 필터(2026-10-21, 사용자 요청: 지역 필터 옆에) - 토지거래허가구역 자료(permitFor) 기준. 지역 필터를 쓰는 모든 목록·개수에 함께 적용
+function permitMatch(r) { var pf = bidBoardState.permit; if (!pf) return true; var z = !!permitFor(r); return pf === 'only' ? z : !z; }
+function regionMatch(r, reg) { if (!permitMatch(r)) return false; return !reg || (reg.indexOf('g:') === 0 ? String(r.region).indexOf(reg.slice(2) + ' ') === 0 : r.region === reg); }
 /* 📱 네이버부동산식 목록 카드 + 상세 창 (2026-10-10, 사용자: 아이패드에서 네이버부동산 UI를 벤치마킹) - 641~1240px에서 표 대신 카드(이름·큰 추천가·한 줄 요약·칩)와 정렬 줄,
    상세 창은 목록 옆에 붙여서(왼쪽 목록 / 오른쪽 상세) 보여주고 상세 맨 위에 구역 이동 탭을 둠 */
 (function() { try { var mq = window.matchMedia('(min-width:641px) and (max-width:1240px)'); var f = function() { var b = document.getElementById('bid-board'); if (b && b.style.display !== 'none' && typeof renderBidBoard === 'function') { try { renderBidBoard(); } catch (e) {} } }; if (mq.addEventListener) mq.addEventListener('change', f); else if (mq.addListener) mq.addListener(f); } catch (e) {} })();
@@ -4082,9 +4087,9 @@ var villaRowsMemo = null;
 function villaMetroRows(ignoreRegion) {
     var s = bidBoardState, ig = !!ignoreRegion, m = villaRowsMemo;
     // 한 번 그릴 때 여러 번 불리므로(2026-10-10 탭 딜레이) 같은 조건이면 직전 결과를 재사용 - 목록 배열이 바뀌면(계산 갱신) 자동으로 다시 만듦
-    if (m && m.ref === bidBoardRows && m.len === bidBoardRows.length && m.past === !!s.pastLite && m.reg === (s.region || '') && m.ig === ig && Date.now() - m.at < 1500) return m.out;
+    if (m && m.ref === bidBoardRows && m.len === bidBoardRows.length && m.past === !!s.pastLite && m.reg === (s.region || '') && m.pf === (s.permit || '') && m.ig === ig && Date.now() - m.at < 1500) return m.out;
     var out = bidBoardRows.filter(function(r) { return r.type === 'villa' && r.metro && (s.pastLite || !(r.dday && r.dday.diffDays < 0)) && (ig || regionMatch(r, s.region)); });
-    villaRowsMemo = { ref: bidBoardRows, len: bidBoardRows.length, past: !!s.pastLite, reg: s.region || '', ig: ig, at: Date.now(), out: out };
+    villaRowsMemo = { ref: bidBoardRows, len: bidBoardRows.length, past: !!s.pastLite, reg: s.region || '', pf: s.permit || '', ig: ig, at: Date.now(), out: out };
     return out;
 }
 /* 🏘️ 빌라 임장 후보 판정 (2026-10-10) - 아파트와 같은 방식: 필요 마진(최소 2,000만+연식·근거·승강기 여유)이 남는 입찰가가 있고, 그 추천가의 낙찰 가능성이 20% 이상이며, 시세 근거가 같은 건물·같은 동 5건 이상이고, 지하가 아니면 임장 후보 */
@@ -18093,7 +18098,7 @@ function renderRiskMarginSuggestion(predictedSale) {
    지도를 옮기지 않고 필요한 지역 자료를 차례로 불러온 뒤 그 지역 물건을 바로 계산함
    (지역이 8개를 넘으면 화면 목록에서 오래된 지역이 빠지므로 "불러오고 바로 계산" 순서를 지킴). ════ */
 var bidBoardRows = [];
-var bidBoardState = { verdict: 'all', region: '', type: '', sort: 'verdict', sortCol: null, sortDir: 1, showPast: false, highlight: {}, updated: {}, prevVerdicts: {}, lite: true, visit: 'go', liteCol: 'verdict', liteDir: 1, pastLite: false };
+var bidBoardState = { verdict: 'all', region: '', permit: '', type: '', sort: 'verdict', sortCol: null, sortDir: 1, showPast: false, highlight: {}, updated: {}, prevVerdicts: {}, lite: true, visit: 'go', liteCol: 'verdict', liteDir: 1, pastLite: false };
 var bidBoardRunning = false;
 function bbEsc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function(c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
 function bidBoardRegionLabel(addr) {
@@ -19816,6 +19821,7 @@ function bidBoardVisibleRows() {
     return bidBoardRows.filter(function(r) {
         if (!s.showPast && r.dday && r.dday.diffDays < -BID_RESULT_WAIT_DAYS) return false;
         if (s.region && r.region !== s.region) return false;
+        if (!permitMatch(r)) return false;
         if (s.type && r.a.propType !== s.type) return false;
         if (s.popOnly && !r.popular) return false;
         if (s.nicheOnly && !r.niche) return false;
