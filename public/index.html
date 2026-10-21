@@ -4057,7 +4057,7 @@ function renderFavLite(body) {
 }
 function nvSortBar(kind) {
     var s = bidBoardState, cur = kind === 'villa' ? (s.villaCol || 'verdict') : (s.liteCol || 'verdict');
-    var list = kind === 'villa' ? NV_SORTS.concat([['liq', '생활권 거래'], ['cash', '월세 현금흐름']]) : NV_SORTS; // 빌라: 반경 500m 6개월 거래 많은 순 = 빨리 팔릴 물건 찾기(2026-10-11). 표 화면에 이미 있던 '생활권 거래' 정렬을 카드 화면에도 노출 - 1km 정렬은 500m와 거의 같아(상관 0.91, 상위 100건 77% 겹침) 만들지 않음
+    var list = kind === 'villa' ? NV_SORTS.concat([['liq', '생활권 거래'], ['cash', '월세 현금흐름']]) : NV_SORTS.concat([['n12', '거래량순'], ['turn', '회전율순']]); // 아파트: 거래량(같은 평형 최근 1년 거래 수)·회전율(거래÷세대수) 정렬 추가(2026-10-21, 아이패드) // 빌라: 반경 500m 6개월 거래 많은 순 = 빨리 팔릴 물건 찾기(2026-10-11). 표 화면에 이미 있던 '생활권 거래' 정렬을 카드 화면에도 노출 - 1km 정렬은 500m와 거의 같아(상관 0.91, 상위 100건 77% 겹침) 만들지 않음
     return '<div class="nv-sort">' + list.map(function(x, i) {
         return (i ? '<span class="nv-sep">|</span>' : '') + '<a class="' + (cur === x[0] ? 'on' : '') + '" onclick="nvSort(\'' + kind + '\',\'' + x[0] + '\')">' + x[1] + '</a>';
     }).join('') + '</div>';
