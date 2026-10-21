@@ -19735,6 +19735,7 @@ async function refreshBidBoard() {
     var didCompute = order.length > 0;
     if (keepLawd && dataCache[keepLawd]) { mergedLawdCds.add(keepLawd); touchLawdCd(keepLawd); } else if (didCompute) rebuildMergedLists(); // 새로 계산한 게 없으면 지도 자료를 다시 합치지 않음(왕복할 때마다 멈추던 원인 후보, 2026-10-21)
     setBidBoardProgress('');
+    setTimeout(prefetchCandidateRegions, 4000); // 상세 창을 열 때 기다리지 않게 후보 지역 실거래가를 한가할 때 미리 받아 둠(2026-10-21)
     setTimeout(fillHouseholdsInBackground, 2000); // 회전율용 세대수를 뒤에서 천천히 채움
     // 계산 결과 저장(다음에 열 때 바로 보이게) - 등록에서 빠진 물건은 지움
     try {
@@ -21280,6 +21281,25 @@ function turnoverOf(row) {
     return { rate: rate, n: n, hh: hh, grade: rate >= 5 ? { t: '환금성 높음', c: '#16a34a' } : (rate >= 2 ? { t: '보통', c: '#6b7280' } : { t: '환금성 낮음', c: '#dc2626' }) };
 }
 var householdFillRunning = false;
+var prefetchRegionsRunning = false;
+async function prefetchCandidateRegions() {
+    if (prefetchRegionsRunning) return; prefetchRegionsRunning = true;
+    try {
+        var rows = (bidBoardRows || []).filter(function(r) { return r.type === 'apt' && r.visit && r.visit.go && r.a && r.dday && r.dday.diffDays >= 0; }).sort(function(x, y) { return x.dday.diffDays - y.dday.diffDays; });
+        var seen = {}, order = [];
+        rows.forEach(function(r) { var l = bidBoardLawdOf(r.a); if (l && !seen[l]) { seen[l] = true; order.push(l); } });
+        for (var i = 0; i < order.length && i < 40; i++) {
+            var lawd = order[i];
+            if (document.getElementById('bid-board').style.display !== 'flex') break; // 입찰후보를 닫으면 중단
+            while (userBusy()) await new Promise(function(r) { setTimeout(r, 1000); });
+            if (dataCache[lawd]) continue;
+            var has = await houseIdbReq('readonly', function(st) { return st.getKey(lawd); });
+            if (has) continue;
+            try { await fetchHouseDataCached(lawd); } catch (e) {}
+            await new Promise(function(r) { setTimeout(r, 800); });
+        }
+    } finally { prefetchRegionsRunning = false; }
+}
 async function fillHouseholdsInBackground() {
     if (householdFillRunning) return; householdFillRunning = true;
     try {
@@ -25473,11 +25493,23 @@ function buildTierTrendChartHtml(tier) {
    - 마커 배치 때 이미 지오코딩된(coordCache에 있는) 단지만 대상으로 함
    - 동시 2개씩, 사이사이 살짝 쉬어가며 조용히 채움 (사용자 조작 방해 없음)
 ════════════════════════════════════ */
+// 2026-10-21(사용자: 입찰후보에서 물건을 눌러 상세 창을 열 때 실거래가 불러오기가 느림) - 백그라운드 예열이 초당 6건씩 서버를 두드려 상세 창의 지역 실거래가 요청과 겹쳤음 →
+// 최근 3초 안에 사용자가 만졌거나 지역 실거래가를 받는 중이면 잠시 쉼
+(function() {
+    var of = window.fetch; window.__houseInflight = 0;
+    window.fetch = function(u) {
+        if (String(u).indexOf('/api/get-house') < 0) return of.apply(this, arguments);
+        window.__houseInflight++; var p = of.apply(this, arguments); var dec = function() { window.__houseInflight--; }; p.then(dec, dec); return p;
+    };
+    ['pointerdown', 'touchstart', 'keydown', 'wheel'].forEach(function(ev) { window.addEventListener(ev, function() { window.__lastUserAct = Date.now(); }, { passive: true, capture: true }); });
+})();
+function userBusy() { return window.__houseInflight > 0 || Date.now() - (window.__lastUserAct || 0) < 3000; }
 function warmBuildingCache(aptList) {
     var idx = 0;
     var CONCURRENCY = 2;
     var running = 0;
     function next() {
+        if (idx < aptList.length && userBusy()) { setTimeout(next, 1500); return; }
         while (running < CONCURRENCY && idx < aptList.length) {
             var apt = aptList[idx++];
             running++;
