@@ -476,6 +476,10 @@ def main():
         competition_stats(R, now)
         try:
             winbid_model(R, now)
+            try:
+                crowd_analysis(R, now)
+            except Exception as e:
+                print('  몰림 분석 건너뜀:', e)
             try: liquidity_curve(R, now)
             except Exception as e: print('  환금성 곡선 실패(건너뜀):', e)
         except Exception as e:
@@ -704,6 +708,100 @@ def attention_analysis(R, seg_stats, med):
     out["target1000"] = t5
     return out
 
+
+
+def crowd_analysis(R, now):
+    """2026-10-22(사용자: 입찰자가 보통 5명 이하인데 유독 몰리는 물건이 있다 - 지역 평균이 아니라 '몰릴 만한 물건'을 과거 사례로 골라낼 수 있나)
+    목표: 응찰자 8명 이상(몰림). 입찰 전에 알 수 있는 정보만 사용 - 기존 경쟁 예상 요인(최저가÷시세·유찰·지역·인기 등급·계절·층·평형·시세 근거 거래 수·감정가 비율)에
+    + 새 요인(최저가 금액·준공 연차·단지 거래량·특수조건 문구(유치권·지분·선순위 임차인 등)·토지 종류)을 더해 얼마나 더 잘 맞히는지(AUC·상위 10% 적중률) 비교하고,
+    무엇이 몰림을 부르는지(요인별 몰림 비율)와 간단한 규칙(결정나무)을 뽑음. 시험 = 최근 12개월(학습에 안 씀). 결과: leader_follower_cache 'signal|__crowd__'"""
+    from sklearn.ensemble import HistGradientBoostingClassifier
+    from sklearn.metrics import roc_auc_score
+    from sklearn.tree import DecisionTreeClassifier, export_text
+    from sklearn.inspection import permutation_importance
+    D = R[R["bidders"].notna() & (R["bidders"] > 0) & R["est"].notna() & (R["est"] > 0) & R["minbid"].notna() & (R["minbid"] > 0) & (R["sale"] >= 20230101)].copy()
+    if len(D) < 3000:
+        print("  몰림 분석: 사례 부족"); return
+    D["crowd"] = (D["bidders"] >= 8).astype(int)
+    dist = {"n": int(len(D)), "median": float(D["bidders"].median()), "mean": round(float(D["bidders"].mean()), 2), "ge6Pct": round(float((D["bidders"] >= 6).mean()) * 100, 1), "ge8Pct": round(float((D["bidders"] >= 8).mean()) * 100, 1), "ge10Pct": round(float((D["bidders"] >= 10).mean()) * 100, 1), "le5Pct": round(float((D["bidders"] <= 5).mean()) * 100, 1)}
+    print("  응찰자 분포:", dist)
+    notes = D["notes"].fillna("").astype(str)
+    KW = {"유치권": "유치권", "지분": "지분|공유", "선순위임차인": "선순위|대항력|임차인", "법정지상권": "지상권", "위반건축물": "위반", "재매각": "재매각", "대지권": "대지권", "농지": "농지|취득자격", "허가": "토지거래|허가"}
+    for k, pat in KW.items():
+        D["kw_" + k] = notes.str.contains(pat, regex=True).astype(int)
+    D["kw_cnt"] = D[[c for c in D.columns if c.startswith("kw_") and c != "kw_cnt"]].sum(axis=1)
+    D["lb"] = np.log(D["minbid"] / D["est"]); D["lab"] = np.log(D["appraisal"].astype(float) / D["est"]) if "appraisal" in D else np.nan
+    D["fails_n"] = D["fails"].map(lambda f: np.nan if f is None or pd.isna(f) else min(int(f), 4))
+    D["logmin"] = np.log(D["minbid"].astype(float))
+    D["season"] = ((D["sale"] // 100) % 100).astype(int)
+    D["fl"] = pd.to_numeric(D["floor"], errors="coerce"); D["area_n"] = pd.to_numeric(D["area"], errors="coerce")
+    D["age_n"] = pd.to_numeric(D["age"], errors="coerce"); D["cx3y_n"] = pd.to_numeric(D["cx3y"], errors="coerce"); D["dong3y_n"] = pd.to_numeric(D["dong3y"], errors="coerce"); D["own_n"] = pd.to_numeric(D["own"], errors="coerce")
+    D["land_c"] = D["land"].fillna("").astype(str).str[:6]
+    D["tier_c"] = D["tier"].fillna("없음").astype(str)
+    D["region_c"] = D["region"].fillna("?").astype(str)
+    cats = ["region_c", "tier_c", "land_c"]
+    for c in cats:
+        D[c + "_i"] = D[c].astype("category").cat.codes
+    base_f = ["lb", "fails_n", "region_c_i", "tier_c_i", "season", "fl", "area_n", "own_n", "lab"]
+    ext_f = base_f + ["logmin", "age_n", "cx3y_n", "dong3y_n", "land_c_i"] + [c for c in D.columns if c.startswith("kw_")]
+    last = pd.to_datetime(str(int(D["sale"].max())), format="%Y%m%d"); cut = int((last - pd.DateOffset(months=12)).strftime("%Y%m%d"))
+    tr, te = D[D["sale"] < cut], D[D["sale"] >= cut]
+    out = {"generatedAt": now, "dist": dist, "test": {"n": int(len(te)), "crowdPct": round(float(te["crowd"].mean()) * 100, 1)}, "models": {}}
+    def fit(fs):
+        cat_mask = [f in ("region_c_i", "tier_c_i", "land_c_i") for f in fs]
+        m = HistGradientBoostingClassifier(max_depth=5, learning_rate=0.06, max_iter=250, categorical_features=cat_mask, random_state=0)
+        m.fit(tr[fs], tr["crowd"]); return m
+    for nm, fs in (("기존 요인", base_f), ("기존+새 요인", ext_f)):
+        m = fit(fs); pr = m.predict_proba(te[fs])[:, 1]
+        res = {"auc": round(float(roc_auc_score(te["crowd"], pr)), 3)}
+        for top in (0.05, 0.10, 0.20):
+            thr = np.quantile(pr, 1 - top); sel = te[pr >= thr]
+            res[f"top{int(top*100)}"] = {"n": int(len(sel)), "crowdPct": round(float(sel["crowd"].mean()) * 100, 1), "lift": round(float(sel["crowd"].mean() / te["crowd"].mean()), 2), "biddersMed": float(sel["bidders"].median())}
+        out["models"][nm] = res; print("  ", nm, res)
+        if nm == "기존+새 요인":
+            mfin = m; pr_f = pr
+    # 요인 중요도(시험 구간, 순열)
+    try:
+        smp = te.sample(min(4000, len(te)), random_state=1)
+        pi = permutation_importance(mfin, smp[ext_f], smp["crowd"], scoring="roc_auc", n_repeats=3, random_state=0)
+        imp = sorted(zip(ext_f, pi.importances_mean), key=lambda x: -x[1])[:12]
+        NAME = {"lb": "최저가÷시세", "fails_n": "유찰 횟수", "region_c_i": "지역", "tier_c_i": "인기 등급", "season": "입찰 월", "fl": "층", "area_n": "면적", "own_n": "시세 근거 거래 수", "lab": "감정가÷시세", "logmin": "최저가 금액", "age_n": "준공 연차", "cx3y_n": "단지 3년 거래량", "dong3y_n": "동 3년 거래량", "land_c_i": "토지 종류"}
+        out["importance"] = [{"feature": NAME.get(f, f.replace("kw_", "특수조건: ")), "auc_drop": round(float(v), 4)} for f, v in imp]
+        print("  중요도:", out["importance"])
+    except Exception as e:
+        print("  중요도 건너뜀:", e)
+    # 요인별 몰림 비율(전체 사례)
+    base = D["crowd"].mean()
+    def rate(G): return {"n": int(len(G)), "crowdPct": round(float(G["crowd"].mean()) * 100, 1), "biddersMed": float(G["bidders"].median())}
+    tab = {"all": rate(D)}
+    for lab, mask in (("최저가÷시세 0.5 미만", D["lb"] < np.log(0.5)), ("0.5~0.6", D["lb"].between(np.log(0.5), np.log(0.6), inclusive="left")), ("0.6~0.7", D["lb"].between(np.log(0.6), np.log(0.7), inclusive="left")), ("0.7~0.8", D["lb"].between(np.log(0.7), np.log(0.8), inclusive="left")), ("0.8 이상", D["lb"] >= np.log(0.8)),
+                      ("신건", D["fails_n"] == 0), ("1회 유찰", D["fails_n"] == 1), ("2회+ 유찰", D["fails_n"] >= 2),
+                      ("최저가 1억 미만", D["minbid"] < 10000), ("1~2억", D["minbid"].between(10000, 20000, inclusive="left")), ("2~4억", D["minbid"].between(20000, 40000, inclusive="left")), ("4억 이상", D["minbid"] >= 40000),
+                      ("준공 10년 이하", D["age_n"] <= 10), ("11~25년", D["age_n"].between(11, 25)), ("26년 이상", D["age_n"] >= 26),
+                      ("단지 3년 거래 100건+", D["cx3y_n"] >= 100), ("30건 미만", D["cx3y_n"] < 30),
+                      ("특수조건 문구 없음", D["kw_cnt"] == 0), ("특수조건 문구 있음", D["kw_cnt"] >= 1)):
+        G = D[mask]
+        if len(G) >= 100: tab[lab] = rate(G)
+    for k in KW:
+        G = D[D["kw_" + k] == 1]
+        if len(G) >= 80: tab["특수조건: " + k] = rate(G)
+    out["byFactor"] = tab
+    # 간단한 규칙(결정나무) - 앱에서 필터로 쓸 후보
+    try:
+        rf = ["lb", "fails_n", "logmin", "age_n", "cx3y_n", "kw_cnt", "own_n"]
+        dt = DecisionTreeClassifier(max_depth=3, min_samples_leaf=250, random_state=0).fit(tr[rf].fillna(-1), tr["crowd"])
+        out["tree"] = export_text(dt, feature_names=rf, show_weights=True)[:3000]
+        leaves = dt.apply(te[rf].fillna(-1)); L = []
+        for lf in np.unique(leaves):
+            G = te[leaves == lf]
+            L.append({"leaf": int(lf), "n": int(len(G)), "crowdPct": round(float(G["crowd"].mean()) * 100, 1)})
+        out["treeLeavesTest"] = sorted(L, key=lambda x: -x["crowdPct"])
+        print("  규칙(시험 구간 잎별 몰림):", out["treeLeavesTest"]); print(out["tree"])
+    except Exception as e:
+        print("  규칙 건너뜀:", e)
+    if os.environ.get("GITHUB_STEP_SUMMARY"):
+        open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8").write("### 입찰자 몰림 분석\n```json\n" + json.dumps(out, ensure_ascii=False, indent=1)[:9000] + "\n```\n")
+    cyc.upsert_rows([{"id": "signal|__crowd__", "payload": cyc.clean_json(out), "fetched_at": now}])
 
 
 def competition_stats(R, now):
