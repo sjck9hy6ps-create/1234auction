@@ -19489,6 +19489,12 @@ function getBidVerdictForMarker(a) {
             return row0;
         }
     }
+    // 서버 계산본을 받는 중이면 건마다 직접 계산하지 않고 기다림(도착하면 배지를 다시 그림) - 앱을 켠 직후 수백 건을 직접 계산해 화면이 수 초 멈췄음(2026-10-21)
+    if (!window.__srvFirstDone && !window.__srvBoardGiveUp) {
+        if (!window.__srvBoardP) { try { srvBoardParts(); } catch (e) {} }
+        if (!window.__srvBoardGiveUpT) window.__srvBoardGiveUpT = setTimeout(function() { window.__srvBoardGiveUp = true; try { renderAuctionMarkers(); } catch (e) {} }, 8000);
+        return cached ? cached.row : null;
+    }
     var row = null;
     try { row = computeBidBoardRow(a); } catch (e) { row = null; }
     bidVerdictCache[a.id] = { sig: sig, row: row };
@@ -19712,7 +19718,7 @@ function srvBoardParts() {
         var withTimeout = function(p, ms) { return Promise.race([p, new Promise(function(_, rej) { setTimeout(function() { rej(new Error('시간 초과')); }, ms); })]); };
         try {
             var meta = await withTimeout(fetch('/api/data-coverage?mode=boardCacheMeta').then(function(r) { return r.json(); }), 6000);
-            if (!meta || !meta.n || !meta.at || Date.now() - meta.at > BOARD_SRV_MAX_AGE) { resolveFirst(null); return null; }
+            if (!meta || !meta.n || !meta.at || Date.now() - meta.at > BOARD_SRV_MAX_AGE) { window.__srvFirstDone = true; resolveFirst(null); return null; }
             // 2026-10-21(사용자: 입찰후보 저장 계산 불러오기가 김) - 서버가 임장 후보를 앞쪽 묶음에 모아 둠(goChunks): 후보 묶음을 먼저 받아 화면을 채우고, 나머지는 8개씩 뒤에서 받음
             var N = meta.n, F = Math.min(N, Math.max(1, meta.goChunks || N));
             var getChunk = function(i) { return fetch('/api/data-coverage?mode=boardCacheChunk&i=' + i).then(function(r) { return r.json(); }); };
@@ -19721,7 +19727,8 @@ function srvBoardParts() {
                 try { var byId = window.__srvBoardById || (window.__srvBoardById = {}); parts.forEach(function(pp) { Object.keys((pp && pp.items) || {}).forEach(function(id) { byId[id] = pp.items[id]; }); }); } catch (e) {}
             };
             var first = await withTimeout(Promise.all(range(0, F).map(getChunk)), 40000);
-            reg(first); resolveFirst(first);
+            reg(first); window.__srvFirstDone = true; resolveFirst(first);
+            try { renderAuctionMarkers(); } catch (e) {} // 지도 배지가 서버 계산본을 쓰도록 한 번 다시 그림
             var all = first.slice();
             for (var i = F; i < N; i += 8) {
                 var batch = await withTimeout(Promise.all(range(i, Math.min(i + 8, N)).map(getChunk)), 40000);
@@ -19729,7 +19736,7 @@ function srvBoardParts() {
                 await new Promise(function(r) { setTimeout(r, 0); });
             }
             return all;
-        } catch (e) { console.warn('미리 계산 결과 못 받음(직접 계산):', e && e.message); resolveFirst(null); return null; }
+        } catch (e) { console.warn('미리 계산 결과 못 받음(직접 계산):', e && e.message); window.__srvFirstDone = true; resolveFirst(null); return null; }
     })();
     return window.__srvBoardP;
 }
