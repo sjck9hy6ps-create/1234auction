@@ -19700,7 +19700,8 @@ async function refreshBidBoard() {
         window.redrawMarkers = origDraw.r; window.renderAuctionMarkers = origDraw.a; window.renderBidCaseMarkers = origDraw.b;
     }
     // 지도에서 보던 지역이 목록에서 빠졌으면 되살림
-    if (keepLawd && dataCache[keepLawd]) { mergedLawdCds.add(keepLawd); touchLawdCd(keepLawd); } else rebuildMergedLists();
+    var didCompute = order.length > 0;
+    if (keepLawd && dataCache[keepLawd]) { mergedLawdCds.add(keepLawd); touchLawdCd(keepLawd); } else if (didCompute) rebuildMergedLists(); // 새로 계산한 게 없으면 지도 자료를 다시 합치지 않음(왕복할 때마다 멈추던 원인 후보, 2026-10-21)
     setBidBoardProgress('');
     setTimeout(fillHouseholdsInBackground, 2000); // 회전율용 세대수를 뒤에서 천천히 채움
     // 계산 결과 저장(다음에 열 때 바로 보이게) - 등록에서 빠진 물건은 지움
@@ -19709,7 +19710,7 @@ async function refreshBidBoard() {
         await listIdbOp('readwrite', function(st) { return st.put(keep, BOARD_CACHE_KEY); });
     } catch (e) {}
     bidBoardRunning = false;
-    try { redrawMarkers(); } catch (e) {}
+    try { if (didCompute) redrawMarkers(); else renderAuctionMarkers(); } catch (e) {} // 일반 거래 마커 전체를 지우고 다시 만드는 redrawMarkers는 새로 계산한 게 있을 때만
     try { if (activeAuctionDateFilters.size) renderAuctionMarkers(); } catch (e) {} // 입찰후보 단계 필터가 켜져 있으면 판정이 도착한 뒤 다시 거름
     setTimeout(function() { try { savePredSnapshots(); } catch (e) {} }, 3000);
 }
@@ -19718,7 +19719,8 @@ var OVERSHOOT_SALE_FACTORS = { apt: [[1.3, 0.90], [1.5, 0.76], [2, 0.61], [Infin
 var BOARD_CACHE_KEY = 'bidBoardCache:v1', BOARD_CACHE_MAX_AGE = 8 * 24 * 3600 * 1000, BOARD_SRV_MAX_AGE = 9 * 24 * 3600 * 1000; // 2026-10-11: 서버 미리 계산이 매주 토요일 03시 1회 → 일주일(+여유)간 그대로 사용
 /* 서버가 미리 계산해 둔 입찰후보 받기(2026-10-10 속도: 입찰후보 창을 열기 전, 앱을 켠 직후 배경에서 미리 받아 둠 - 열 때는 이미 도착해 있음) */
 function srvBoardParts() {
-    if (window.__srvBoardP) return window.__srvBoardP;
+    if (window.__srvBoardP && Date.now() - (window.__srvBoardAt || 0) < 10 * 60 * 1000) return window.__srvBoardP; // 입찰후보↔지도를 오갈 때마다 29MB를 다시 받아 해석하던 것(2026-10-21) - 10분 안이면 받아 둔 것을 씀
+    window.__srvBoardAt = Date.now();
     var resolveFirst; window.__srvBoardFirstP = new Promise(function(r) { resolveFirst = r; });
     window.__srvBoardP = (async function() {
         var withTimeout = function(p, ms) { return Promise.race([p, new Promise(function(_, rej) { setTimeout(function() { rej(new Error('시간 초과')); }, ms); })]); };
@@ -19750,7 +19752,7 @@ async function mergeServerBoardCache(local, onlyFirst) {
     try {
         var parts;
         if (onlyFirst) { srvBoardParts(); parts = await window.__srvBoardFirstP; }
-        else { parts = await srvBoardParts(); window.__srvBoardP = null; window.__srvBoardFirstP = null; }
+        else { parts = await srvBoardParts(); }
         if (!parts) return local;
         var merged = 0;
         parts.forEach(function(p) { Object.keys((p && p.items) || {}).forEach(function(id) { var sv = p.items[id], lc = local[id]; if (!lc || !lc.row || (sv.at || 0) > (lc.at || 0)) { local[id] = sv; merged++; } }); });
