@@ -108,8 +108,13 @@ try {
   });
 } catch (e) { console.log('변동 요약 만들기 실패:', String(e).slice(0, 200)); }
 await browser.close();
-const ids = Object.keys(cache || {});
-console.log(`저장 계산 ${ids.length}건`);
+// 2026-10-21(사용자: 입찰후보 저장 계산 불러오는 시간이 김) - 임장 후보를 앞쪽 묶음에 모아 앱이 후보부터 받고 화면을 먼저 채우게 함(나머지는 뒤에서)
+const ids = Object.keys(cache || {}).sort((x, y) => {
+  const gx = cache[x] && cache[x].row && cache[x].row.visit && cache[x].row.visit.go ? 0 : 1, gy = cache[y] && cache[y].row && cache[y].row.visit && cache[y].row.visit.go ? 0 : 1;
+  return gx - gy;
+});
+const goN = ids.filter((id) => cache[id] && cache[id].row && cache[id].row.visit && cache[id].row.visit.go).length;
+console.log(`저장 계산 ${ids.length}건 (임장 후보 ${goN}건)`);
 if (ids.length < 50) { console.error('저장 계산이 너무 적어 올리지 않음'); process.exit(1); }
 const CH = 150, now = new Date().toISOString();
 const rows = [];
@@ -126,7 +131,7 @@ for (const r of rows) {
     await new Promise((res) => setTimeout(res, 3000 * (a + 1)));
   }
 }
-await supabase.from('leader_follower_cache').upsert({ id: 'board|cache|meta', payload: { n: rows.length, count: ids.length, at: Date.now() }, fetched_at: now }, { onConflict: 'id' });
+await supabase.from('leader_follower_cache').upsert({ id: 'board|cache|meta', payload: { n: rows.length, count: ids.length, at: Date.now(), goN, goChunks: Math.max(1, Math.ceil(goN / CH)) }, fetched_at: now }, { onConflict: 'id' });
 console.log(`✅ 올림: ${rows.length}묶음 / ${ids.length}건`);
 if (villa && Object.keys(villa.ve || {}).length >= 50) {
   const vids = Object.keys(villa.ve), VC = 100, vrows = [];
