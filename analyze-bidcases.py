@@ -719,6 +719,7 @@ def attention_analysis(R, seg_stats, med):
 
 
 CROWD_FACTORS = [("lb", 10), ("fails", 120), ("tier", 5), ("floor", 5), ("size", 30), ("own", 120), ("lab", 30), ("minb", 30), ("ageb", 60), ("cxb", 30), ("lbcx", 60), ("lbo", 60)]
+CROWD_RC_FACTORS = [("rc", 120), ("rclb", 60)]  # 큰 지역(서울·경기·인천·지방) 요인 - 시군구·법정동 평균이 아니라 3개 권역(2026-10-24 검증 후 쓸지 결정)
 CROWD_LAB_EDGES = [-0.2, -0.1, 0, 0.1, 0.2, 0.35]
 
 
@@ -746,6 +747,8 @@ def crowd_features(D, use_region=False):
     X["minb"] = [b[0] for b in bk]; X["ageb"] = [b[1] for b in bk]; X["cxb"] = [b[2] for b in bk]
     lbc = lm.map(lambda v: "L" if v <= -0.25 else ("M" if v <= -0.10 else "H"))
     X["lbcx"] = lbc.values + "|" + X["cxb"].values; X["lbo"] = lbc.values + "|" + X["own"].values
+    rc = D["region"].map(lambda r: "서울" if str(r).startswith("서울") else ("경기·인천" if str(r)[:2] in ("경기", "인천") else "지방"))
+    X["rc"] = rc.values; X["rclb"] = rc.values + "|" + lbc.values
     if use_region:
         X["region"] = D["region"].fillna("?").astype(str)
     return X
@@ -783,9 +786,29 @@ def crowd_item_model(R, now):
     y = np.log(D["bidders"].astype(float)).values; crowd = (D["bidders"] >= 8).astype(int).values
     last = pd.to_datetime(str(int(D["sale"].max())), format="%Y%m%d"); cut = int((last - pd.DateOffset(months=12)).strftime("%Y%m%d"))
     tr = (D["sale"] < cut).values; te = ~tr
-    m = crowd_fit(X[tr], y[tr], CROWD_FACTORS); p_te = crowd_predict(m, X[te], CROWD_FACTORS)
-    FR = CROWD_FACTORS + [("region", 120)]; mr = crowd_fit(Xr[tr], y[tr], FR); p_r = crowd_predict(mr, Xr[te], FR)
-    auc, auc_r = float(roc_auc_score(crowd[te], p_te)), float(roc_auc_score(crowd[te], p_r))
+    FACT0 = list(CROWD_FACTORS)
+    m0 = crowd_fit(X[tr], y[tr], FACT0); p0 = crowd_predict(m0, X[te], FACT0)
+    FACT1 = FACT0 + CROWD_RC_FACTORS; m1 = crowd_fit(X[tr], y[tr], FACT1); p1 = crowd_predict(m1, X[te], FACT1)
+    FR = FACT0 + [("region", 120)]; mr = crowd_fit(Xr[tr], y[tr], FR); p_r = crowd_predict(mr, Xr[te], FR)
+    a0, a1, a_r = float(roc_auc_score(crowd[te], p0)), float(roc_auc_score(crowd[te], p1)), float(roc_auc_score(crowd[te], p_r))
+    # 권역별 쏠림: 예측값 구간별 실제 몰림 비율로 환산한 '예측 몰림 확률'의 평균 vs 실제 몰림 비율
+    rc_te = X.loc[te, "rc"].values if hasattr(te, "__len__") else None
+    def bias_by_class(pp):
+        bn_ = np.exp(pp); ed = np.quantile(bn_, np.linspace(0, 1, 13)); pr = np.zeros(len(bn_)); Bt = D["bidders"].values[te].astype(float)
+        for i in range(12):
+            mk = (bn_ >= ed[i]) & (bn_ <= ed[i + 1]) if i == 11 else (bn_ >= ed[i]) & (bn_ < ed[i + 1])
+            if mk.sum(): pr[mk] = (Bt[mk] >= 8).mean()
+        out = {}
+        for c in ("서울", "경기·인천", "지방"):
+            mk = rc_te == c
+            if mk.sum() >= 100: out[c] = {"n": int(mk.sum()), "예측 몰림 %": round(float(pr[mk].mean() * 100), 1), "실제 몰림 %": round(float((Bt[mk] >= 8).mean() * 100), 1), "예측 중앙 응찰": round(float(np.median(bn_[mk])), 1), "실제 중앙 응찰": float(np.median(Bt[mk]))}
+        return out
+    print("  🌏 권역 요인 검증: AUC", round(a0, 4), "→ 권역 요인 추가", round(a1, 4), "| 시군구까지", round(a_r, 4))
+    print("     권역별 쏠림(권역 요인 없음):", bias_by_class(p0)); print("     권역별 쏠림(권역 요인 있음):", bias_by_class(p1))
+    use_rc = bool(a1 >= a0 + 0.002)
+    CF = FACT1 if use_rc else FACT0; m = m1 if use_rc else m0; p_te = p1 if use_rc else p0
+    print("  → 권역 요인", "사용" if use_rc else "사용 안 함(효과 작음)")
+    auc, auc_r = (a1 if use_rc else a0), a_r
     print(f"  물건별 응찰자 모델 AUC {auc:.3f} (지역 요인을 넣으면 {auc_r:.3f}), 학습 {tr.sum():,} 시험 {te.sum():,}")
     bn = np.exp(p_te); B = D["bidders"].values[te].astype(float)
     # 보정표: 예측 응찰자 수(bn)를 12분위로 나눠 실제 중앙·평균·몰림(8명+) 비율
@@ -804,8 +827,8 @@ def crowd_item_model(R, now):
     mae = float(np.median(np.abs(bn - B)))
     print("  보정표:", calib); print("  기준:", {"hi": hi, "lo": lo}, levels, "| 예측-실제 중앙 절대 오차", round(mae, 2), "명")
     # 배포용: 전체 데이터로 다시 학습
-    mf = crowd_fit(X, y, CROWD_FACTORS)
-    payload = {"generatedAt": now, "n": int(len(D)), "base": mf["base"], "eff": {f: {str(k): round(float(v), 4) for k, v in d.items()} for f, d in mf["eff"].items()}, "factors": [f for f, _ in CROWD_FACTORS],
+    mf = crowd_fit(X, y, CF)
+    payload = {"generatedAt": now, "n": int(len(D)), "base": mf["base"], "eff": {f: {str(k): round(float(v), 4) for k, v in d.items()} for f, d in mf["eff"].items()}, "factors": [f for f, _ in CF],
                "calib": calib, "hiCut": hi, "loCut": lo, "levels": levels, "metrics": {"auc": round(auc, 3), "aucWithRegion": round(auc_r, 3), "medAbsErrBidders": round(mae, 2), "testN": int(te.sum()), "testCrowdPct": round(float(crowd[te].mean() * 100), 1)}}
     cyc.upsert_rows([{"id": "signal|__crowd_model__", "payload": cyc.clean_json(payload), "fetched_at": now}])
     if os.environ.get("GITHUB_STEP_SUMMARY"):
