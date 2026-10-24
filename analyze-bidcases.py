@@ -825,7 +825,7 @@ def crowd_item_model(R, now):
     for i in range(12):
         msk = (bn >= edges[i]) & (bn < edges[i + 1])
         if msk.sum() < 30: continue
-        calib.append({"lo": round(float(edges[i]), 3), "hi": round(float(min(edges[i + 1], 1e6)), 3), "n": int(msk.sum()), "median": float(np.median(B[msk])), "mean": round(float(B[msk].mean()), 2), "crowdPct": round(float((B[msk] >= 8).mean() * 100), 1), "le3Pct": round(float((B[msk] <= 3).mean() * 100), 1)})
+        calib.append({"lo": round(float(edges[i]), 3), "hi": round(float(min(edges[i + 1], 1e6)), 3), "n": int(msk.sum()), "median": float(np.median(B[msk])), "q25": float(np.quantile(B[msk], .25)), "q75": float(np.quantile(B[msk], .75)), "mean": round(float(B[msk].mean()), 2), "crowdPct": round(float((B[msk] >= 8).mean() * 100), 1), "le3Pct": round(float((B[msk] <= 3).mean() * 100), 1)})
     # 몰림 예상 기준: 몰림 확률 50% 이상이 되는 가장 낮은 예측값, 적게 몰림: 확률 15% 이하
     hi = next((c["lo"] for c in calib if c["crowdPct"] >= 50), None); lo = max([c["hi"] for c in calib if c["crowdPct"] <= 15], default=None)
     def lvl_stat(msk):
@@ -834,10 +834,35 @@ def crowd_item_model(R, now):
     # 개별 예상 오차: 예측 응찰자 수 vs 실제(중앙 절대 오차, 명)
     mae = float(np.median(np.abs(bn - B)))
     print("  보정표:", calib); print("  기준:", {"hi": hi, "lo": lo}, levels, "| 예측-실제 중앙 절대 오차", round(mae, 2), "명")
+    # 2026-10-25(사용자: 입찰자 수는 정답을 찾는 분야가 아니다 - 그날 분위기에 따라 다르고 반대로 갈 수 있다) 얼마나 불확실한가
+    try:
+        Dte = D[te].copy(); Dte["bn"] = bn; Dte["res"] = np.log(Dte["bidders"].astype(float)) - np.log(bn)
+        Dte["day"] = Dte["sale"].astype(int)
+        # 같은 날 낙찰 사례끼리 잔차가 얼마나 같이 움직이나(그날 분위기): 날짜별 평균 잔차의 분산 ÷ 전체 분산
+        g = Dte.groupby("day")["res"]; cnt = g.transform("count"); mean_day = g.transform("mean")
+        # 자기 자신을 뺀 같은 날 평균과의 상관 = 그날 공통 요인
+        loo = (mean_day * cnt - Dte["res"]) / (cnt - 1).replace(0, np.nan)
+        ok = loo.notna() & (cnt >= 5)
+        icc = float(np.corrcoef(Dte.loc[ok, "res"], loo[ok])[0, 1]) if ok.sum() > 500 else None
+        # 같은 날 다른 사례들이 평소보다 많이 몰렸을 때(분위기) 내 사례 잔차 평균
+        hot = Dte[ok & (loo > loo[ok].quantile(.75))]["res"].mean(); cold = Dte[ok & (loo < loo[ok].quantile(.25))]["res"].mean()
+        # 예상이 반대로 간 비율
+        hi_m = bn >= hi if hi else np.zeros(len(bn), bool); lo_m = bn <= lo if lo else np.zeros(len(bn), bool)
+        rev = {"몰림 예상인데 4명 이하": round(float((B[hi_m] <= 4).mean() * 100), 1) if hi_m.sum() else None, "몰림 예상인데 8명 미만": round(float((B[hi_m] < 8).mean() * 100), 1) if hi_m.sum() else None,
+               "적게 예상인데 6명 이상": round(float((B[lo_m] >= 6).mean() * 100), 1) if lo_m.sum() else None, "적게 예상인데 8명 이상": round(float((B[lo_m] >= 8).mean() * 100), 1) if lo_m.sum() else None}
+        within = {"예측±2명 안": round(float((np.abs(bn - B) <= 2).mean() * 100), 1), "예측±3명 안": round(float((np.abs(bn - B) <= 3).mean() * 100), 1), "예측 25~75% 구간 안": None}
+        covered = 0
+        for c in calib:
+            mk = (bn >= c["lo"]) & (bn < c["hi"]); covered += int(((B[mk] >= c["q25"]) & (B[mk] <= c["q75"])).sum())
+        within["예측 25~75% 구간 안"] = round(covered / len(B) * 100, 1)
+        unc = {"dayCommonCorr": None if icc is None else round(icc, 3), "hotDayResid": round(float(hot), 3), "coldDayResid": round(float(cold), 3), "reversal": rev, "hit": within}
+        print("  🎲 불확실성:", unc)
+    except Exception as e:
+        unc = None; print("  불확실성 계산 건너뜀:", e)
     # 배포용: 전체 데이터로 다시 학습
     mf = crowd_fit(X, y, CF)
     payload = {"generatedAt": now, "n": int(len(D)), "base": mf["base"], "eff": {f: {str(k): round(float(v), 4) for k, v in d.items()} for f, d in mf["eff"].items()}, "factors": [f for f, _ in CF],
-               "calib": calib, "hiCut": hi, "loCut": lo, "levels": levels, "variants": res_v, "picked": use_pick, "metrics": {"auc": round(auc, 3), "aucWithRegion": round(auc_r, 3), "medAbsErrBidders": round(mae, 2), "testN": int(te.sum()), "testCrowdPct": round(float(crowd[te].mean() * 100), 1)}}
+               "calib": calib, "hiCut": hi, "loCut": lo, "levels": levels, "variants": res_v, "picked": use_pick, "uncertainty": unc, "metrics": {"auc": round(auc, 3), "aucWithRegion": round(auc_r, 3), "medAbsErrBidders": round(mae, 2), "testN": int(te.sum()), "testCrowdPct": round(float(crowd[te].mean() * 100), 1)}}
     cyc.upsert_rows([{"id": "signal|__crowd_model__", "payload": cyc.clean_json(payload), "fetched_at": now}])
     if os.environ.get("GITHUB_STEP_SUMMARY"):
         open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8").write("### 물건별 예상 응찰자 수 모델\n```json\n" + json.dumps({k: payload[k] for k in ("n", "calib", "hiCut", "loCut", "levels", "metrics")}, ensure_ascii=False, indent=1) + "\n```\n")
