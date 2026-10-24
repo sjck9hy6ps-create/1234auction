@@ -1326,7 +1326,7 @@ body.ui2 #auction-modal.am4 { width:620px; }
 </style>
 <style>
 /* 🚶 임장 후보 화면(2026-10) - 판정 탭·칩·필터를 줄이고 한 줄에 판단 하나 */
-#bid-board.lite #bb-chips, #bid-board.lite #bb-tabs, #bid-board.lite .bb-tools > select:not(#bb-region):not(#bb-permit):not(#bb2-sort), #bid-board.lite .bb-tools > label, #bid-board.lite #bb-fail-note, #bid-board.lite #bb-cache-note, #bid-board.lite .bb-guide { display:none !important; }
+#bid-board.lite #bb-chips, #bid-board.lite #bb-tabs, #bid-board.lite .bb-tools > select:not(#bb-region):not(#bb-permit):not(#bb-crowd):not(#bb2-sort), #bid-board.lite .bb-tools > label, #bid-board.lite #bb-fail-note, #bid-board.lite #bb-cache-note, #bid-board.lite .bb-guide { display:none !important; }
 #bb2-tabs { display:inline-flex; align-items:center; gap:6px; flex-wrap:wrap; }
 #bb2-tabs .bb2-link { font-size:12px; color:var(--ui-blue,#1e5eff); }
 .bb2-table { width:100%; border-collapse:separate; border-spacing:0; background:#fff; border-radius:10px; overflow:clip; /* hidden이면 헤더 고정(sticky)이 안 먹어 스크롤하면 열 이름이 사라졌음(2026-10-21) */ box-shadow:0 1px 3px rgba(0,0,0,.06); font-size:12.5px; }
@@ -1826,6 +1826,9 @@ body.ui2 #auction-modal.am4 { width:620px; }
             <select id="bb-region" onchange="setBidBoardFilter('region', this.value)"></select>
             <select id="bb-permit" onchange="setBidBoardFilter('permit', this.value)" title="토지거래허가구역 자료 기준(🚧 허가구역 표시가 붙은 물건)">
                 <option value="">규제지역 전체</option><option value="only">🚧 규제지역만</option><option value="exclude">규제지역 제외</option>
+            </select>
+            <select id="bb-crowd" onchange="setBidBoardFilter('crowd', this.value)" title="입찰자가 몰릴지 예상 - 지역 평균이 아니라 물건별 조건 기준(과거 낙찰사례 학습)">
+                <option value="">응찰 예상 전체</option><option value="hi">🔥 많이 몰릴 물건</option><option value="lo">적게 몰릴 물건</option>
             </select>
             <select onchange="setBidBoardFilter('type', this.value)">
                 <option value="">아파트·빌라</option><option value="apt">아파트만</option><option value="villa">빌라만</option>
@@ -3991,9 +3994,72 @@ function villaBidPlan(row, ve, mp, wb) {
     return { max: bMax, ev: best, pMax: villaProbAt(wb, bMax) };
 }
 // 지역 선택(2026-10-10, 사용자: 대도시는 시별로) - 'g:서울'처럼 앞에 g:가 붙으면 그 시 전체(서울·인천은 구 묶음)
+/* 👥 물건별 예상 응찰자 수 · "많이 몰릴 물건" 필터 (2026-10-24, 사용자: 입찰자가 유독 몰리는 물건을 과거 사례로 골라내기 - 지역 평균이 아니라 물건별)
+   서버가 매주 학습한 덧셈형 모델(signal|__crowd_model__)을 앱이 한가할 때 받아(약 10KB) 물건마다 계산. 지역·법정동 요인은 쓰지 않고 물건 자신의 조건만:
+   최저가÷시세·유찰·인기 등급·층·평형·시세 근거 거래 수·감정가 비율·최저가 금액·준공 연차·단지 최근 1년 거래(전 평형). 구간 정의는 analyze-bidcases.py crowd_bucket과 같아야 함.
+   값은 이미 계산된 행(wbBase·ownStats)에서만 읽으므로 입찰후보 불러오기 속도에 영향 없음(필터를 켜거나 카드·표에 그릴 때만 계산). */
+var crowdModel = null, crowdLoading = false, crowdGen = 0, crowdTriedAt = 0;
+function loadCrowdModel() {
+    if (crowdModel || crowdLoading || Date.now() - crowdTriedAt < 60000) return; crowdLoading = true; crowdTriedAt = Date.now();
+    fetch('/api/data-coverage?mode=crowdModel').then(function(r) { return r.json(); }).then(function(d) {
+        crowdLoading = false;
+        if (d && d.eff && d.calib && d.calib.length) { crowdModel = d; crowdGen++; try { var bb = document.getElementById('bid-board'); if (bb && bb.style.display === 'flex') renderBidBoard(); } catch (e) {} }
+    }).catch(function() { crowdLoading = false; });
+}
+setTimeout(function() { var go = function() { loadCrowdModel(); }; if (window.requestIdleCallback) requestIdleCallback(go, { timeout: 20000 }); else go(); }, 15000);
+function crowdFor(r) {
+    if (!crowdModel || !r || r.type !== 'apt' || r.pending) return null;
+    if (r._crowdGen === crowdGen) return r._crowd;
+    var out = null;
+    try {
+        var m = crowdModel, b = r.wbBase, os = r.ownStats, a = r.a;
+        if (b && b.est > 0 && r.minBid > 0 && os && a) {
+            var lm = Math.log(r.minBid / b.est), fl = parseInt(a.floor), area = (parseFloat(r.pyung) || 0) * 3.305785;
+            var apr = parseFloat(r.appraisal) || parseFloat(a.appraisal) || 0, labV = '?';
+            if (apr > 0) { var la = Math.log(apr / b.est); labV = String([-0.2, -0.1, 0, 0.1, 0.2, 0.35].filter(function(e) { return la > e; }).length); }
+            var by = parseInt(a.buildYear || r.estBuildYear) || 0, yr = a.bidDate ? parseInt(String(a.bidDate).slice(0, 4), 10) : new Date().getFullYear(), age = by ? yr - by : null;
+            var cx = (os.v6 || 0) + (os.vPrev6 || 0), mb = r.minBid;
+            var minb = mb < 5000 ? '<0.5억' : (mb < 10000 ? '0.5-1억' : (mb < 15000 ? '1-1.5억' : (mb < 20000 ? '1.5-2억' : (mb < 30000 ? '2-3억' : (mb < 40000 ? '3-4억' : '4억+')))));
+            var ageb = age == null ? '?' : (age <= 5 ? '0-5' : (age <= 10 ? '6-10' : (age <= 15 ? '11-15' : (age <= 20 ? '16-20' : (age <= 25 ? '21-25' : (age <= 30 ? '26-30' : '31+'))))));
+            var cxb = cx < 10 ? '0-9' : (cx < 25 ? '10-24' : (cx < 50 ? '25-49' : (cx < 100 ? '50-99' : (cx < 200 ? '100-199' : '200+'))));
+            var own = b.own <= 2 ? '1~2' : (b.own <= 5 ? '3~5' : (b.own <= 10 ? '6~10' : '11+'));
+            var lbc = lm <= -0.25 ? 'L' : (lm <= -0.10 ? 'M' : 'H');
+            var keys = {
+                lb: String(Math.max(-24, Math.min(9, Math.floor(lm / 0.05)))), fails: r.fails == null ? '?' : String(Math.min(3, r.fails)),
+                tier: r.pop && !r.pop.noRecent && r.pop.tier ? r.pop.tier : '없음', floor: isNaN(fl) ? '?' : (fl === 1 ? '1층' : (fl <= 3 ? '2~3층' : '4층+')),
+                size: area < 60 ? '소형' : (area <= 85 ? '중형' : '대형'), own: own, lab: labV, minb: minb, ageb: ageb, cxb: cxb, lbcx: lbc + '|' + cxb, lbo: lbc + '|' + own
+            };
+            var p = m.base; (m.factors || []).forEach(function(f) { var v = (m.eff[f] || {})[keys[f]]; if (typeof v === 'number') p += v; });
+            var bn = Math.exp(p), cal = null;
+            for (var i = 0; i < m.calib.length; i++) { if (bn >= m.calib[i].lo && (bn < m.calib[i].hi || i === m.calib.length - 1)) { cal = m.calib[i]; break; } }
+            if (!cal) cal = bn < m.calib[0].lo ? m.calib[0] : m.calib[m.calib.length - 1];
+            out = { bidN: bn, n: Math.max(1, Math.round(cal.median)), mean: cal.mean, pct: Math.round(cal.crowdPct), lvl: (m.hiCut != null && bn >= m.hiCut) ? 'hi' : ((m.loCut != null && bn <= m.loCut) ? 'lo' : 'mid') };
+        }
+    } catch (e) { out = null; }
+    r._crowd = out; r._crowdGen = crowdGen;
+    return out;
+}
+function crowdMatch(r) {
+    var f = bidBoardState.crowd; if (!f) return true;
+    if (!crowdModel) { loadCrowdModel(); return true; } // 모델이 오기 전에는 거르지 않음(도착하면 다시 그림)
+    var c = crowdFor(r); if (!c) return false;
+    return f === 'hi' ? c.lvl === 'hi' : c.lvl === 'lo';
+}
+function crowdChip(r) {
+    var c = crowdFor(r); if (!c) return null;
+    return { t: '👥 물건별 응찰 약 ' + c.n + '명 · 8명↑ ' + c.pct + '%', cls: c.lvl === 'hi' ? 'r' : (c.lvl === 'lo' ? 'g' : '') };
+}
+function crowdCellHtml(r) {
+    var c = crowdFor(r); if (!c) return '';
+    return '<div class="bb-sub" style="color:' + (c.lvl === 'hi' ? '#b91c1c' : (c.lvl === 'lo' ? '#15803d' : '#6b7280')) + ';" title="지역 평균이 아니라 이 물건 자신의 조건(최저가÷시세·단지 거래량·금액·연차 등)으로 본 예상 응찰자 수와, 8명 이상 몰릴 과거 비율">👥 물건별 약 ' + c.n + '명 · 8명↑ ' + c.pct + '%</div>';
+}
+function crowdNoteHtml(r) {
+    var c = crowdFor(r); if (!c) return '';
+    return '<div>👥 물건 조건만 본 예상 응찰 <b style="color:' + (c.lvl === 'hi' ? '#b91c1c' : (c.lvl === 'lo' ? '#15803d' : '#6b7280')) + ';">약 ' + c.n + '명</b> · 8명 이상 몰릴 과거 비율 ' + c.pct + '%' + (c.lvl === 'hi' ? ' <b style="color:#b91c1c;">🔥 몰릴 물건</b>' : '') + ' <span class="dr-sub" style="display:inline;">(지역·법정동 평균은 쓰지 않음 · 비슷한 조건 물건의 실제 응찰자 수 기준)</span></div>';
+}
 // 규제지역 필터(2026-10-21, 사용자 요청: 지역 필터 옆에) - 토지거래허가구역 자료(permitFor) 기준. 지역 필터를 쓰는 모든 목록·개수에 함께 적용
 function permitMatch(r) { var pf = bidBoardState.permit; if (!pf) return true; var z = !!permitFor(r); return pf === 'only' ? z : !z; }
-function regionMatch(r, reg) { if (!permitMatch(r)) return false; return !reg || (reg.indexOf('g:') === 0 ? String(r.region).indexOf(reg.slice(2) + ' ') === 0 : r.region === reg); }
+function regionMatch(r, reg) { if (!permitMatch(r) || !crowdMatch(r)) return false; return !reg || (reg.indexOf('g:') === 0 ? String(r.region).indexOf(reg.slice(2) + ' ') === 0 : r.region === reg); }
 /* 📱 네이버부동산식 목록 카드 + 상세 창 (2026-10-10, 사용자: 아이패드에서 네이버부동산 UI를 벤치마킹) - 641~1240px에서 표 대신 카드(이름·큰 추천가·한 줄 요약·칩)와 정렬 줄,
    상세 창은 목록 옆에 붙여서(왼쪽 목록 / 오른쪽 상세) 보여주고 상세 맨 위에 구역 이동 탭을 둠 */
 (function() { try { var mq = window.matchMedia('(min-width:641px) and (max-width:1240px)'); var f = function() { var b = document.getElementById('bid-board'); if (b && b.style.display !== 'none' && typeof renderBidBoard === 'function') { try { renderBidBoard(); } catch (e) {} } }; if (mq.addEventListener) mq.addEventListener('change', f); else if (mq.addListener) mq.addListener(f); } catch (e) {} })();
@@ -4033,7 +4099,7 @@ function nvVillaCard(r, ev) {
         rec: pe ? vm(pe.bid) : '', recPct: pe && ve ? Math.round(pe.bid / ve.est * 100) : null,
         spec: bbEsc(r.region) + (r.pyung ? ' · 빌라 ' + r.pyung + '평(' + Math.round(r.pyung * 3.305785) + '㎡)' : '') + (r.floor ? ' · ' + r.floor + '층' : '') + (mp && mp.age != null ? ' · ' + mp.age + '년차' : ''),
         sum: '예상매도가 <b>' + vm(ve && ve.est) + '</b>' + (ve ? ' <small>±' + ve.errPct + '%</small>' : '') + ' · 최저가 ' + vm(r.minBid) + (mp ? ' · 필요 마진 ' + vm(mp.margin) : ''),
-        chips: [r.visit.go ? noVisitPill(r) : null, permitFor(r) ? { t: '🚧 허가구역', cls: 'r' } : null, pe ? { t: '낙찰 ' + Math.round(pe.p * 100) + '%', cls: pe.p >= 0.6 ? 'g' : (pe.p >= 0.35 ? 'o' : 'r') } : null, pe ? { t: '순이익 ' + vm(pe.net) } : null,
+        chips: [r.visit.go ? noVisitPill(r) : null, crowdChip(r), permitFor(r) ? { t: '🚧 허가구역', cls: 'r' } : null, pe ? { t: '낙찰 ' + Math.round(pe.p * 100) + '%', cls: pe.p >= 0.6 ? 'g' : (pe.p >= 0.35 ? 'o' : 'r') } : null, pe ? { t: '순이익 ' + vm(pe.net) } : null,
             ev.liq ? { t: '생활권 6개월 ' + ev.liq.r500.a6 + '건', cls: ev.liq.r500.a6 === 0 ? 'r' : '' } : null, (function(c) { return c ? { t: '💰 월세 ' + (c.cf >= 0 ? '+' : '') + Math.round(c.cf) + '만/월', cls: c.ok ? 'g' : (c.cf >= 0 ? 'o' : 'r') } : null; })(villaRentCash(r, ev)), l.st === 'yes' ? { t: '📋 매물 ' + l.n + '건', cls: 'g' } : (l.st === 'none' ? { t: '📋 매물 없음' } : null),
             hv === 'ok' ? { t: '🏠 도시민박 검토 가능', cls: 'g' } : null, ev.issue ? { t: '🚩 이슈 의심', cls: 'r' } : null, rightsNeeded(r, ev.visit.go) ? { t: '⚖️ 권리분석 필요', cls: 'o' } : null, (hsBld[r.id] && hsBld[r.id].info && bldUseWarn(hsBld[r.id].info.title)) ? { t: '⚠️ 비주택 용도', cls: 'r' } : null], note: r.a.fav ? r.a.favNote : '' });
 }
@@ -4057,13 +4123,13 @@ function renderFavLite(body) {
 }
 function nvSortBar(kind) {
     var s = bidBoardState, cur = kind === 'villa' ? (s.villaCol || 'verdict') : (s.liteCol || 'verdict');
-    var list = kind === 'villa' ? NV_SORTS.concat([['liq', '생활권 거래'], ['cash', '월세 현금흐름']]) : NV_SORTS.concat([['n12', '거래량순'], ['turn', '회전율순']]); // 아파트: 거래량(같은 평형 최근 1년 거래 수)·회전율(거래÷세대수) 정렬 추가(2026-10-21, 아이패드) // 빌라: 반경 500m 6개월 거래 많은 순 = 빨리 팔릴 물건 찾기(2026-10-11). 표 화면에 이미 있던 '생활권 거래' 정렬을 카드 화면에도 노출 - 1km 정렬은 500m와 거의 같아(상관 0.91, 상위 100건 77% 겹침) 만들지 않음
+    var list = kind === 'villa' ? NV_SORTS.concat([['liq', '생활권 거래'], ['cash', '월세 현금흐름']]) : NV_SORTS.concat([['n12', '거래량순'], ['turn', '회전율순'], ['crowd', '응찰 많은순']]); // 아파트: 거래량(같은 평형 최근 1년 거래 수)·회전율(거래÷세대수) 정렬 추가(2026-10-21, 아이패드) // 빌라: 반경 500m 6개월 거래 많은 순 = 빨리 팔릴 물건 찾기(2026-10-11). 표 화면에 이미 있던 '생활권 거래' 정렬을 카드 화면에도 노출 - 1km 정렬은 500m와 거의 같아(상관 0.91, 상위 100건 77% 겹침) 만들지 않음
     return '<div class="nv-sort">' + list.map(function(x, i) {
         return (i ? '<span class="nv-sep">|</span>' : '') + '<a class="' + (cur === x[0] ? 'on' : '') + '" onclick="nvSort(\'' + kind + '\',\'' + x[0] + '\')">' + x[1] + '</a>';
     }).join('') + '</div>';
 }
 function nvSort(kind, k) {
-    var s = bidBoardState;
+    var s = bidBoardState; if (k === 'crowd') loadCrowdModel();
     if (kind === 'villa') { s.villaCol = k; s.villaDir = VILLA_COLS[k] ? VILLA_COLS[k].first : 1; s.villaLimit = 120; }
     else { s.liteCol = k; s.liteDir = LITE_COLS[k] ? LITE_COLS[k].first : 1; s.liteLimit = 120; }
     renderBidBoard();
@@ -18107,7 +18173,7 @@ function renderRiskMarginSuggestion(predictedSale) {
    지도를 옮기지 않고 필요한 지역 자료를 차례로 불러온 뒤 그 지역 물건을 바로 계산함
    (지역이 8개를 넘으면 화면 목록에서 오래된 지역이 빠지므로 "불러오고 바로 계산" 순서를 지킴). ════ */
 var bidBoardRows = [];
-var bidBoardState = { verdict: 'all', region: '', permit: '', type: '', sort: 'verdict', sortCol: null, sortDir: 1, showPast: false, highlight: {}, updated: {}, prevVerdicts: {}, lite: true, visit: 'go', liteCol: 'verdict', liteDir: 1, pastLite: false };
+var bidBoardState = { verdict: 'all', region: '', permit: '', crowd: '', type: '', sort: 'verdict', sortCol: null, sortDir: 1, showPast: false, highlight: {}, updated: {}, prevVerdicts: {}, lite: true, visit: 'go', liteCol: 'verdict', liteDir: 1, pastLite: false };
 var bidBoardRunning = false;
 function bbEsc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function(c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
 function bidBoardRegionLabel(addr) {
@@ -19811,7 +19877,7 @@ function boardBaseSig(a, flip) {
 }
 function boardRowForCache(r) {
     var o = {};
-    Object.keys(r).forEach(function(k) { if (k !== 'a' && k !== 'dday' && k !== '_pickCache' && k !== '_pickSig') o[k] = r[k]; });
+    Object.keys(r).forEach(function(k) { if (k !== 'a' && k !== 'dday' && k !== '_pickCache' && k !== '_pickSig' && k !== '_crowd' && k !== '_crowdGen') o[k] = r[k]; });
     try { return JSON.parse(JSON.stringify(o)); } catch (e) { return null; }
 }
 function forceRefreshBidBoard() { bidBoardState.forceFresh = true; bidBoardRows = []; refreshBidBoard(); }
@@ -19877,6 +19943,7 @@ var LITE_COLS = {
     sale: { label: '예상매도가', first: 1, val: function(r) { return r.sale || null; } },
     rec: { label: '추천가', first: 1, val: function(r) { return r.pick && r.pick.ev ? r.pick.ev.bid : null; } },
     recPct: { label: '시세 대비', first: 1, val: function(r) { return r.pick && r.pick.ev && r.sale ? r.pick.ev.bid / r.sale : null; } },
+    crowd: { label: '물건별 예상 응찰', first: -1, val: function(r) { var c = crowdFor(r); return c ? c.bidN : null; } },
     comp: { label: '경쟁 예상', first: -1, val: function(r) { return r.winbid && r.winbid.bidN != null ? r.winbid.bidN : null; } },
     p: { label: '낙찰 가능성', first: -1, val: function(r) { return r.pick && r.pick.ev ? r.pick.ev.p : null; } },
     net: { label: '예상 순이익', first: -1, val: function(r) { return r.pick && r.pick.ev ? r.pick.ev.net : null; } },
@@ -19932,7 +19999,7 @@ function toggleLitePast() { bidBoardState.pastLite = !bidBoardState.pastLite; bi
 function compCellHtml(r) {
     var w = r.winbid; if (!w || !w.comp) return '<span class="bb-sub">-</span>';
     var col = w.comp === '높음' ? '#b91c1c' : (w.comp === '낮음' ? '#15803d' : '#6b7280');
-    return '<b style="color:' + col + ';">' + (w.comp === '높음' ? '🔥 ' : '') + w.comp + '</b><div class="bb-sub">응찰 약 ' + Math.max(1, Math.round(w.bidN)) + '명</div>';
+    return '<b style="color:' + col + ';">' + (w.comp === '높음' ? '🔥 ' : '') + w.comp + '</b><div class="bb-sub">응찰 약 ' + Math.max(1, Math.round(w.bidN)) + '명</div>' + crowdCellHtml(r);
 }
 function liteTradesHtml(r) {
     var o = r.ownStats; if (!o) return '<span class="bb-sub">-</span>';
@@ -20464,6 +20531,7 @@ async function renderBidDrawer() {
         var wbp = winbidLineHtml(row.winbid, false), wbg = row.winbid.gapPct;
         var wcol = wbp == null ? '#6b7280' : (wbp >= 60 ? '#15803d' : (wbp >= 35 ? '#b45309' : '#b91c1c'));
         var compNote = row.winbid.comp ? '<div>경쟁 예상 <b style="color:' + (row.winbid.comp === '높음' ? '#b91c1c' : (row.winbid.comp === '낮음' ? '#15803d' : '#6b7280')) + ';">' + row.winbid.comp + '</b> (응찰 약 ' + Math.max(1, Math.round(row.winbid.bidN)) + '명) ' + infoI('comp') + (row.winbid.comp === '높음' ? ' · 낙찰가가 예상보다 위로 흩어질 수 있어요' : (row.winbid.comp === '낮음' ? ' · 낙찰가가 예상보다 낮게 나올 수 있어요' : '')) + '</div>' : '';
+        compNote = (compNote || '') + crowdNoteHtml(row);
         h += '<div class="dr-wb"><div class="dr-wb-h">🎲 예상 낙찰가 <b>' + fmt(row.winbid.price) + '</b><span class="dr-sub" style="margin:0 0 0 6px;">비슷한 물건이 보통 낙찰되는 가격</span></div>'
             + (wbp != null ? '<div>추천 입찰가로 쓰면 <b style="color:' + wcol + ';">낙찰 가능성 약 ' + wbp + '%</b> · 예상 낙찰가보다 ' + (wbg >= 0 ? '<b>' + wbg + '%</b> 높음' : '<b>' + Math.abs(wbg) + '%</b> 낮음')
                 + (row.winbid.probAggr != null ? ' · 적극 입찰가면 약 ' + Math.round(row.winbid.probAggr * 100) + '%' : '') + '</div>' : '')
