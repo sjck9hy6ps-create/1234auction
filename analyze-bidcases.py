@@ -747,6 +747,8 @@ def crowd_features(D, use_region=False):
     X["minb"] = [b[0] for b in bk]; X["ageb"] = [b[1] for b in bk]; X["cxb"] = [b[2] for b in bk]
     lbc = lm.map(lambda v: "L" if v <= -0.25 else ("M" if v <= -0.10 else "H"))
     X["lbcx"] = lbc.values + "|" + X["cxb"].values; X["lbo"] = lbc.values + "|" + X["own"].values
+    X["dong"] = D["region"].fillna("?").astype(str).values + "|" + D["dk"].fillna("").astype(str).values  # 법정동(시군구|동) - 사용자: 지방도 인기 동네 쏠림이 두드러짐
+    X["regionf"] = D["region"].fillna("?").astype(str).values
     rc = D["region"].map(lambda r: "서울" if str(r).startswith("서울") else ("경기·인천" if str(r)[:2] in ("경기", "인천") else "지방"))
     X["rc"] = rc.values; X["rclb"] = rc.values + "|" + lbc.values
     if use_region:
@@ -787,28 +789,34 @@ def crowd_item_model(R, now):
     last = pd.to_datetime(str(int(D["sale"].max())), format="%Y%m%d"); cut = int((last - pd.DateOffset(months=12)).strftime("%Y%m%d"))
     tr = (D["sale"] < cut).values; te = ~tr
     FACT0 = list(CROWD_FACTORS)
-    m0 = crowd_fit(X[tr], y[tr], FACT0); p0 = crowd_predict(m0, X[te], FACT0)
-    FACT1 = FACT0 + CROWD_RC_FACTORS; m1 = crowd_fit(X[tr], y[tr], FACT1); p1 = crowd_predict(m1, X[te], FACT1)
-    FR = FACT0 + [("region", 120)]; mr = crowd_fit(Xr[tr], y[tr], FR); p_r = crowd_predict(mr, Xr[te], FR)
-    a0, a1, a_r = float(roc_auc_score(crowd[te], p0)), float(roc_auc_score(crowd[te], p1)), float(roc_auc_score(crowd[te], p_r))
-    # 권역별 쏠림: 예측값 구간별 실제 몰림 비율로 환산한 '예측 몰림 확률'의 평균 vs 실제 몰림 비율
-    rc_te = X.loc[te, "rc"].values if hasattr(te, "__len__") else None
+    VAR = {"물건 조건만": FACT0, "+권역": FACT0 + CROWD_RC_FACTORS, "+법정동": FACT0 + [("dong", 40)], "+시군구+법정동": FACT0 + [("regionf", 120), ("dong", 40)], "+권역+시군구+법정동": FACT0 + CROWD_RC_FACTORS + [("regionf", 120), ("dong", 40)]}
+    rc_te = X.loc[te, "rc"].values
     def bias_by_class(pp):
         bn_ = np.exp(pp); ed = np.quantile(bn_, np.linspace(0, 1, 13)); pr = np.zeros(len(bn_)); Bt = D["bidders"].values[te].astype(float)
-        for i in range(12):
-            mk = (bn_ >= ed[i]) & (bn_ <= ed[i + 1]) if i == 11 else (bn_ >= ed[i]) & (bn_ < ed[i + 1])
+        for i2 in range(12):
+            mk = (bn_ >= ed[i2]) & (bn_ <= ed[i2 + 1]) if i2 == 11 else (bn_ >= ed[i2]) & (bn_ < ed[i2 + 1])
             if mk.sum(): pr[mk] = (Bt[mk] >= 8).mean()
         out = {}
         for c in ("서울", "경기·인천", "지방"):
             mk = rc_te == c
-            if mk.sum() >= 100: out[c] = {"n": int(mk.sum()), "예측 몰림 %": round(float(pr[mk].mean() * 100), 1), "실제 몰림 %": round(float((Bt[mk] >= 8).mean() * 100), 1), "예측 중앙 응찰": round(float(np.median(bn_[mk])), 1), "실제 중앙 응찰": float(np.median(Bt[mk]))}
+            if mk.sum() >= 100: out[c] = {"n": int(mk.sum()), "예측 몰림%": round(float(pr[mk].mean() * 100), 1), "실제 몰림%": round(float((Bt[mk] >= 8).mean() * 100), 1)}
         return out
-    print("  🌏 권역 요인 검증: AUC", round(a0, 4), "→ 권역 요인 추가", round(a1, 4), "| 시군구까지", round(a_r, 4))
-    print("     권역별 쏠림(권역 요인 없음):", bias_by_class(p0)); print("     권역별 쏠림(권역 요인 있음):", bias_by_class(p1))
-    use_rc = bool(a1 >= a0 + 0.002)
-    CF = FACT1 if use_rc else FACT0; m = m1 if use_rc else m0; p_te = p1 if use_rc else p0
-    print("  → 권역 요인", "사용" if use_rc else "사용 안 함(효과 작음)")
-    auc, auc_r = (a1 if use_rc else a0), a_r
+    res_v = {}; preds = {}
+    for nm, fct in VAR.items():
+        mm = crowd_fit(X[tr], y[tr], fct); pp = crowd_predict(mm, X[te], fct); preds[nm] = (mm, pp, fct)
+        auc_all = float(roc_auc_score(crowd[te], pp)); aucs = {}
+        for c in ("서울", "경기·인천", "지방"):
+            mk = rc_te == c
+            if mk.sum() >= 200 and 0 < crowd[te][mk].mean() < 1: aucs[c] = round(float(roc_auc_score(crowd[te][mk], pp[mk])), 3)
+        mae_b = float(np.median(np.abs(np.exp(pp) - D["bidders"].values[te].astype(float))))
+        res_v[nm] = {"auc": round(auc_all, 4), "aucByRc": aucs, "medAbsErrBidders": round(mae_b, 2)}
+        print("  🌏 요인 비교", nm, res_v[nm], "| 권역별 쏠림", bias_by_class(pp))
+    base_auc = res_v["물건 조건만"]["auc"]
+    best_nm = max(res_v, key=lambda k: res_v[k]["auc"])
+    use_pick = best_nm if res_v[best_nm]["auc"] >= base_auc + 0.002 else "물건 조건만"
+    m, p_te, CF = preds[use_pick]
+    print("  → 선택:", use_pick)
+    auc, auc_r = res_v[use_pick]["auc"], res_v["+시군구+법정동"]["auc"]
     print(f"  물건별 응찰자 모델 AUC {auc:.3f} (지역 요인을 넣으면 {auc_r:.3f}), 학습 {tr.sum():,} 시험 {te.sum():,}")
     bn = np.exp(p_te); B = D["bidders"].values[te].astype(float)
     # 보정표: 예측 응찰자 수(bn)를 12분위로 나눠 실제 중앙·평균·몰림(8명+) 비율
@@ -829,7 +837,7 @@ def crowd_item_model(R, now):
     # 배포용: 전체 데이터로 다시 학습
     mf = crowd_fit(X, y, CF)
     payload = {"generatedAt": now, "n": int(len(D)), "base": mf["base"], "eff": {f: {str(k): round(float(v), 4) for k, v in d.items()} for f, d in mf["eff"].items()}, "factors": [f for f, _ in CF],
-               "calib": calib, "hiCut": hi, "loCut": lo, "levels": levels, "metrics": {"auc": round(auc, 3), "aucWithRegion": round(auc_r, 3), "medAbsErrBidders": round(mae, 2), "testN": int(te.sum()), "testCrowdPct": round(float(crowd[te].mean() * 100), 1)}}
+               "calib": calib, "hiCut": hi, "loCut": lo, "levels": levels, "variants": res_v, "picked": use_pick, "metrics": {"auc": round(auc, 3), "aucWithRegion": round(auc_r, 3), "medAbsErrBidders": round(mae, 2), "testN": int(te.sum()), "testCrowdPct": round(float(crowd[te].mean() * 100), 1)}}
     cyc.upsert_rows([{"id": "signal|__crowd_model__", "payload": cyc.clean_json(payload), "fetched_at": now}])
     if os.environ.get("GITHUB_STEP_SUMMARY"):
         open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8").write("### 물건별 예상 응찰자 수 모델\n```json\n" + json.dumps({k: payload[k] for k in ("n", "calib", "hiCut", "loCut", "levels", "metrics")}, ensure_ascii=False, indent=1) + "\n```\n")

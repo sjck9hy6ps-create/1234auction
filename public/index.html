@@ -4034,7 +4034,7 @@ function crowdFor(r) {
                 lb: String(Math.max(-24, Math.min(9, Math.floor(lm / 0.05)))), fails: r.fails == null ? '?' : String(Math.min(3, r.fails)),
                 tier: r.pop && !r.pop.noRecent && r.pop.tier ? r.pop.tier : '없음', floor: isNaN(fl) ? '?' : (fl === 1 ? '1층' : (fl <= 3 ? '2~3층' : '4층+')),
                 size: area < 60 ? '소형' : (area <= 85 ? '중형' : '대형'), own: own, lab: labV, minb: minb, ageb: ageb, cxb: cxb, lbcx: lbc + '|' + cxb, lbo: lbc + '|' + own,
-                rc: r.regionCls || '지방', rclb: (r.regionCls || '지방') + '|' + lbc // 큰 권역(서울·경기인천·지방) - 서버 모델이 검증을 통과해 이 요인을 가졌을 때만 쓰임
+                rc: r.regionCls || '지방', rclb: (r.regionCls || '지방') + '|' + lbc, regionf: competitionRegionKey(a.addr) || '?', dong: (competitionRegionKey(a.addr) || '?') + '|' + dongKey(a.dong) // 큰 권역·시군구·법정동(서버 모델이 검증을 통과해 가졌을 때만 쓰임, 법정동 키는 낙찰가 모델과 같은 형식)(서울·경기인천·지방) - 서버 모델이 검증을 통과해 이 요인을 가졌을 때만 쓰임
             };
             var p = m.base; (m.factors || []).forEach(function(f) { var v = (m.eff[f] || {})[keys[f]]; if (typeof v === 'number') p += v; });
             var bn = Math.exp(p), cal = null;
