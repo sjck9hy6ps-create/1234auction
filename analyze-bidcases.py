@@ -335,6 +335,12 @@ def main():
             rec["bandTier"] = pop.get((c.region, c.dk, nm, band))
             # 단지 전체 최근 3년 거래(입찰 전 기준) - 거래 활발도
             rec["cx3y"] = int(((g["deal_date"] < cut) & (g["deal_date"] >= ymd_int(sale_d - timedelta(days=30 + 1095)))).sum())
+            try:  # 2026-10-24 최근 거래 점프: 입찰 30일 전 기준 같은 평형 최근 90일 가장 최근 중개거래 ÷ 시세(est) - 최근 거래가 시세보다 높으면 낙찰가도 오르는지(낙찰가 모델 요인 jb)
+                _h90 = hist[hist["deal_date"] >= ymd_int(sale_d - timedelta(days=30 + 90))]
+                if len(_h90) and est:
+                    _l = _h90.sort_values("deal_date").iloc[-1]; rec["jb"] = float(np.log(float(_l["ppm"]) * c.area / est))
+            except Exception:
+                pass
             rec["cx12"] = int(((g["deal_date"] < cut) & (g["deal_date"] >= ymd_int(sale_d - timedelta(days=30 + 365)))).sum())  # 2026-10-24 단지 전체 평형 최근 1년 거래 수(몰림 예측 요인 - 앱의 ownStats.v6+vPrev6와 같은 정의)
             by = pd.to_numeric(g["build_year"], errors="coerce").dropna()
             if len(by):
@@ -940,6 +946,7 @@ def competition_stats(R, now):
 #  lab = 감정가÷시세 구간, lbl = 최저가×감정가 교호, labf = 감정가×유찰 교호(감정가는 최저가가 어떤 규칙으로 정해졌는지 알려 줌 - 낙찰가 예측에만 사용, 시세·예상매도가에는 안 씀)
 WB_FACTORS = [("lb", 10), ("fails", 120), ("region", 120), ("tier", 5), ("season", 300), ("floor", 5), ("size", 30), ("own", 120), ("lab", 30), ("lbl", 40), ("labf", 40), ("dong", 40)]
 WB_LAB_EDGES = (-0.2, -0.1, 0.0, 0.1, 0.2, 0.35)
+WB_JB_FACTOR = ("jb", 40)  # 최근 거래 점프 요인 - winbid_model이 검증(학습에 안 쓴 최근 12개월)에서 좋아질 때만 WB_FACTORS에 넣음
 
 
 def wb_features(D):
@@ -959,6 +966,8 @@ def wb_features(D):
     X["lab"] = la.map(lambda v: "?" if v is None or not np.isfinite(v) else str(sum(1 for e in WB_LAB_EDGES if v > e)))
     X["lbl"] = X["lb"] + "|" + X["lab"]
     X["labf"] = X["lab"] + "|" + X["fails"]
+    jbv = pd.to_numeric(D["jb"], errors="coerce") if "jb" in D.columns else pd.Series(np.nan, index=D.index)
+    X["jb"] = jbv.map(lambda v: "?" if v is None or not np.isfinite(v) else ("dn" if v <= -0.05 else ("fl" if v <= 0.05 else ("up1" if v <= 0.12 else ("up2" if v <= 0.20 else "up3")))))
     return X
 
 
@@ -986,7 +995,8 @@ def wb_predict(model, D):
     X = wb_features(D)
     p = np.full(len(D), model["base"])
     for f, _ in WB_FACTORS:
-        p = p + X[f].map(model["eff"][f]).fillna(0).values
+        if f in model["eff"]:
+            p = p + X[f].map(model["eff"][f]).fillna(0).values
     return p
 
 
@@ -1140,7 +1150,16 @@ def winbid_model(R, now):
     last = pd.to_datetime(str(int(D["sale"].max())), format="%Y%m%d")
     cut = int((last - pd.DateOffset(months=12)).strftime("%Y%m%d"))
     tr, te = D[D["sale"] < cut], D[D["sale"] >= cut]
-    p = wb_predict(wb_fit(tr), te)
+    global WB_FACTORS
+    f_base = [f for f in WB_FACTORS if f[0] != "jb"]; f_jb = f_base + [WB_JB_FACTOR]
+    WB_FACTORS = f_base; p0 = wb_predict(wb_fit(tr), te)
+    WB_FACTORS = f_jb; p1 = wb_predict(wb_fit(tr), te)
+    ea = lambda pp: np.abs(np.exp(pp) * te["est"].values / te["actual"].values - 1)
+    e0, e1 = ea(p0), ea(p1); jm = (pd.to_numeric(te["jb"], errors="coerce").abs() > 0.12).values if "jb" in te.columns else np.zeros(len(te), bool)
+    print(f"  🆕 최근 거래 점프 요인(jb) 검증(최근 12개월 {len(te):,}건): 보통 오차 {np.median(e0) * 100:.3f}% → {np.median(e1) * 100:.3f}% | 점프 큰 사례 {int(jm.sum())}건: {np.median(e0[jm]) * 100 if jm.sum() else float('nan'):.2f}% → {np.median(e1[jm]) * 100 if jm.sum() else float('nan'):.2f}%")
+    use_jb = bool(np.median(e1) < np.median(e0) - 0.0002 or (jm.sum() >= 100 and np.median(e1[jm]) < np.median(e0[jm]) - 0.005 and np.median(e1) <= np.median(e0) + 0.0003))
+    WB_FACTORS = f_jb if use_jb else f_base; p = p1 if use_jb else p0
+    print("  → 최근 거래 점프 요인", "사용" if use_jb else "사용 안 함(효과 없음)")
     res = np.log(te["actual"] / te["est"]).values - p
     # 🧭 틈새 진단(2026-10-10, 사용자: "틈새라면 입찰가를 낮춰 수익을 키워야"): 틈새 시군구에서 낙찰가가 모델 예상보다 낮게 나오는지(잔차) 확인 - 최근 12개월 검증 표본
     try:
