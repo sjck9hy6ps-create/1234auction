@@ -1395,7 +1395,7 @@ body.ui2 #auction-modal.am4 { width:620px; }
     .bb2-atable tr { grid-template-columns:1fr 1fr 1.1fr 1.2fr; gap:1px 8px; padding:7px 10px; margin-bottom:5px; align-items:start; }
     .bb2-atable td { font-size:11.5px; line-height:1.3; }
     .bb2-atable td[data-l]:not(.bb2-name):not([data-l="판정"]):not([data-l="입찰일"])::before { font-size:9.5px; line-height:1.2; }
-    #bid-board .bb2-atable td[data-l="동일평형 거래"], #bid-board .bb2-atable td[data-l="거래량 순위"], #bid-board .bb2-atable td[data-l="경쟁 예상"], #bid-board .bb2-atable td[data-l="마진율"] { display:none !important; }
+    #bid-board .bb2-atable td[data-l="동일평형 거래"], #bid-board .bb2-atable td[data-l="거래량 순위"], #bid-board .bb2-atable td[data-l="예상 입찰자"], #bid-board .bb2-atable td[data-l="마진율"] { display:none !important; }
     #bid-board .bb2-atable .bb2-name { grid-column:1 / 4; grid-row:1; order:0; }
     #bid-board .bb2-atable td[data-l="판정"] { grid-column:4; grid-row:1; text-align:right; }
     #bid-board .bb2-atable td[data-l="입찰일"] { grid-column:1; grid-row:2; text-align:left; display:block; }
@@ -4053,7 +4053,7 @@ function crowdMatch(r) {
 }
 function crowdChip(r) {
     var c = crowdFor(r); if (!c) return null;
-    return { t: '👥 물건별 응찰 약 ' + c.n + '명 · 8명↑ ' + c.pct + '%', cls: c.lvl === 'hi' ? 'r' : (c.lvl === 'lo' ? 'g' : '') };
+    return { t: '👥 예상 입찰자 약 ' + c.n + '명' + (c.lvl === 'hi' ? ' · 많이 몰려요' : (c.lvl === 'lo' ? ' · 적게 와요' : '')), cls: c.lvl === 'hi' ? 'r' : (c.lvl === 'lo' ? 'g' : '') };
 }
 function crowdCellHtml(r) {
     var c = crowdFor(r); if (!c) return '';
@@ -4061,7 +4061,7 @@ function crowdCellHtml(r) {
 }
 function crowdNoteHtml(r) {
     var c = crowdFor(r); if (!c) return '';
-    return '<div>👥 물건 조건만 본 예상 응찰 <b style="color:' + (c.lvl === 'hi' ? '#b91c1c' : (c.lvl === 'lo' ? '#15803d' : '#6b7280')) + ';">약 ' + c.n + '명</b> · 8명 이상 몰릴 과거 비율 ' + c.pct + '%' + (c.lvl === 'hi' ? ' <b style="color:#b91c1c;">🔥 몰릴 물건</b>' : '') + ' <span class="dr-sub" style="display:inline;">(지역·법정동 평균은 쓰지 않음 · 비슷한 조건 물건의 실제 응찰자 수 기준)</span></div>';
+    return '<div>👥 예상 입찰자 <b style="color:' + (c.lvl === 'hi' ? '#b91c1c' : (c.lvl === 'lo' ? '#15803d' : '#374151')) + ';">약 ' + c.n + '명</b>' + (c.lvl === 'hi' ? ' <b style="color:#b91c1c;">🔥 많이 몰릴 물건</b>' : (c.lvl === 'lo' ? ' · 입찰자가 적을 물건' : '')) + ' <span class="dr-sub" style="display:inline;">(이 물건 자체의 조건으로 본 값 · 과거 비슷한 물건의 실제 입찰자 수 기준 · 8명 이상 몰린 비율 ' + c.pct + '%)</span></div>';
 }
 // 규제지역 필터(2026-10-21, 사용자 요청: 지역 필터 옆에) - 토지거래허가구역 자료(permitFor) 기준. 지역 필터를 쓰는 모든 목록·개수에 함께 적용
 function permitMatch(r) { var pf = bidBoardState.permit; if (!pf) return true; var z = !!permitFor(r); return pf === 'only' ? z : !z; }
@@ -19982,7 +19982,7 @@ var LITE_COLS = {
     rec: { label: '추천가', first: 1, val: function(r) { return r.pick && r.pick.ev ? r.pick.ev.bid : null; } },
     recPct: { label: '시세 대비', first: 1, val: function(r) { return r.pick && r.pick.ev && r.sale ? r.pick.ev.bid / r.sale : null; } },
     crowd: { label: '물건별 예상 응찰', first: -1, val: function(r) { var c = crowdFor(r); return c ? c.bidN : null; } },
-    comp: { label: '경쟁 예상', first: -1, val: function(r) { return r.winbid && r.winbid.bidN != null ? r.winbid.bidN : null; } },
+    comp: { label: '예상 입찰자', first: -1, val: function(r) { return r.winbid && r.winbid.bidN != null ? r.winbid.bidN : null; } },
     p: { label: '낙찰 가능성', first: -1, val: function(r) { return r.pick && r.pick.ev ? r.pick.ev.p : null; } },
     net: { label: '예상 순이익', first: -1, val: function(r) { return r.pick && r.pick.ev ? r.pick.ev.net : null; } },
     rate: { label: '마진율', first: -1, val: function(r) { return r.pick && r.pick.ev && r.sale ? r.pick.ev.pre / r.sale : null; } },
@@ -19990,9 +19990,9 @@ var LITE_COLS = {
 };
 /* ⓘ 계산 방식 설명 (2026-10, 사용자: "추천가와 예상매도가는 계산방식 설명을 볼 수 있게 ⓘ를 넣어줘") - 누르면 그 자리에 설명이 뜨고, 다른 곳을 누르면 닫힘(손가락·마우스 모두) */
 var INFO_POP = {
-    comp: { t: '경쟁 예상은 어떻게 보나요?', h:
-        '입찰 <b>전에 알 수 있는 정보</b>(최저가÷시세, 유찰 횟수, 지역·법정동, 인기 단지, 평형·층, 감정가 비율 등)로 <b>응찰자가 몇 명쯤 몰릴지</b> 가늠한 값이에요.<ul><li><b>🔥 높음</b>(상위 25%): 실제로 중앙 9명, 9명 이상이 절반 넘게 몰렸어요 → 낙찰가가 예상보다 <b>위로</b> 흩어질 수 있어요(추천가로는 이기기 더 어려워요)</li><li><b>낮음</b>(하위 25%): 실제 중앙 2명, 1명뿐인 경우가 39% → 낙찰가가 예상보다 <b>낮게</b> 나올 수 있어요</li></ul>'
-        + '검증: 학습에 안 쓴 최근 12개월 5,322건에서 방향은 분명히 나뉘었지만 정확한 인원을 맞히진 못해요(구간 정확도 39%). 낙찰가 예측 정확도를 올리는 값은 아니고, 판단을 돕는 참고 신호예요.' },
+    comp: { t: '예상 입찰자는 어떻게 보나요?', h:
+        '입찰 <b>전에 알 수 있는 이 물건의 조건</b>(최저가가 시세의 몇 %인지, 단지 거래가 얼마나 활발한지, 금액, 연식, 유찰 횟수, 층·평형 등)으로 <b>입찰자가 몇 명쯤 올지</b> 가늠한 값이에요. 지역 평균이 아니라 이 물건 자체를 봐요.<ul><li><b>🔥 많이 몰려요</b>: 비슷한 조건 물건에 실제로 8명 넘게 몰린 경우가 절반이 넘어요 → 낙찰가가 예상보다 위로 흩어질 수 있어요(추천가로는 이기기 어려워요)</li><li><b>적게 와요</b>: 비슷한 물건에 실제로 입찰자가 적었어요(중앙 2명) → 낙찰가가 낮게 나올 수 있어요</li></ul>'
+        + '정확히 몇 명인지 맞히는 값은 아니고(보통 2~3명 어긋나요), 몰릴지 적게 올지를 가르는 참고 신호예요.' },
     sale: { t: '예상매도가는 어떻게 계산하나요?', h:
         '<b>① 같은 단지·같은 평형(±3㎡) 실거래</b>(직거래·해제 제외)로 계산해요.<ul><li>서울: 가장 최근 3건의 <b>중위값</b> / 경기·인천: 최근 거래일수록 비중을 크게 둔 중위값(1개월마다 절반) / 지방: 같은 방식(2개월마다 절반) - 최근 6개월 3건 이상일 때</li><li>전국 아파트 실거래 9.4만 건으로 비교한 오차: 서울 4.1→3.3%, 경기·인천 3.4→3.3%, 지방 4.2%로 같음. 위험은 예상매도가를 낮추지 않고 <b>목표마진</b>에서 반영해요.</li></ul>'
         + '<b>② 층 보정</b>: 1층·저층·고층은 이 단지의 층별 가격 차이와 승강기 유무(건축물대장)로 올리거나 내려요.<br>'
@@ -20034,10 +20034,12 @@ function liteTh(k, label, right) {
 }
 function toggleLitePast() { bidBoardState.pastLite = !bidBoardState.pastLite; bidBoardState.liteLimit = 120; renderBidBoard(); }
 // 단지 내 동일 평형(±3㎡) 최근 거래 건수(2026-10, 사용자: "시세 근거가 되는 거래가 몇 건인지 보여줘")
-function compCellHtml(r) {
-    var w = r.winbid; if (!w || !w.comp) return '<span class="bb-sub">-</span>';
-    var col = w.comp === '높음' ? '#b91c1c' : (w.comp === '낮음' ? '#15803d' : '#6b7280');
-    return '<b style="color:' + col + ';">' + (w.comp === '높음' ? '🔥 ' : '') + w.comp + '</b><div class="bb-sub">응찰 약 ' + Math.max(1, Math.round(w.bidN)) + '명</div>' + crowdCellHtml(r);
+function compCellHtml(r) { // 2026-10-24(사용자: 경쟁 예상 표현이 어려움 - 예상 입찰자 수만 쉽게) 입찰자 수 한 가지만: 물건별 예상(없으면 기존 예상)
+    var c = crowdFor(r), n = c ? c.n : (r.winbid && r.winbid.bidN != null ? Math.max(1, Math.round(r.winbid.bidN)) : null);
+    if (n == null) return '<span class="bb-sub">-</span>';
+    var lvl = c ? c.lvl : (r.winbid && r.winbid.comp === '높음' ? 'hi' : (r.winbid && r.winbid.comp === '낮음' ? 'lo' : 'mid'));
+    var col = lvl === 'hi' ? '#b91c1c' : (lvl === 'lo' ? '#15803d' : '#374151');
+    return '<b style="color:' + col + ';" title="이 물건 조건으로 본 예상 입찰자 수(과거 낙찰사례 기준)">' + (lvl === 'hi' ? '🔥 ' : '') + '약 ' + n + '명</b><div class="bb-sub">' + (lvl === 'hi' ? '많이 몰려요' : (lvl === 'lo' ? '적게 와요' : '보통')) + '</div>';
 }
 function liteTradesHtml(r) {
     var o = r.ownStats; if (!o) return '<span class="bb-sub">-</span>';
@@ -20159,7 +20161,7 @@ function renderBidBoardLite() {
                 + '<td data-l="예상매도가" class="r">' + money(r.sale) + '</td>'
                 + '<td data-l="추천가" class="r">' + (e ? '<b class="bb2-rec">' + money(e.bid) + '</b>' + (r.sale ? '<div class="bb-sub" title="추천가 ÷ 예상매도가(시세)">시세의 <b>' + Math.round(e.bid / r.sale * 100) + '%</b></div>' : '') : '<span class="bb-sub">-</span>') + '</td>'
                 + '<td data-l="낙찰 가능성" class="r">' + (pc != null ? '<b style="color:' + col + ';">' + pc + '%</b>' : '-') + '</td>'
-                + '<td data-l="경쟁 예상" class="r">' + compCellHtml(r) + '</td>'
+                + '<td data-l="예상 입찰자" class="r">' + compCellHtml(r) + '</td>'
                 + '<td data-l="순이익" class="r">' + (e ? money(e.net) : '-') + '</td>'
                 + '<td data-l="마진율" class="r">' + (mr != null ? mr.toFixed(1) + '%' : '-') + '</td></tr>';
         }).join('') + '</tbody></table>'
@@ -20569,7 +20571,7 @@ async function renderBidDrawer() {
         var wbp = winbidLineHtml(row.winbid, false), wbg = row.winbid.gapPct;
         var wcol = wbp == null ? '#6b7280' : (wbp >= 60 ? '#15803d' : (wbp >= 35 ? '#b45309' : '#b91c1c'));
         var compNote = row.winbid.comp ? '<div>경쟁 예상 <b style="color:' + (row.winbid.comp === '높음' ? '#b91c1c' : (row.winbid.comp === '낮음' ? '#15803d' : '#6b7280')) + ';">' + row.winbid.comp + '</b> (응찰 약 ' + Math.max(1, Math.round(row.winbid.bidN)) + '명) ' + infoI('comp') + (row.winbid.comp === '높음' ? ' · 낙찰가가 예상보다 위로 흩어질 수 있어요' : (row.winbid.comp === '낮음' ? ' · 낙찰가가 예상보다 낮게 나올 수 있어요' : '')) + '</div>' : '';
-        compNote = (compNote || '') + crowdNoteHtml(row);
+        var cnH = crowdNoteHtml(row); compNote = cnH ? cnH : (compNote || ''); // 입찰자 수는 한 가지만 보여줌
         h += '<div class="dr-wb"><div class="dr-wb-h">🎲 예상 낙찰가 <b>' + fmt(row.winbid.price) + '</b><span class="dr-sub" style="margin:0 0 0 6px;">비슷한 물건이 보통 낙찰되는 가격</span></div>'
             + (wbp != null ? '<div>추천 입찰가로 쓰면 <b style="color:' + wcol + ';">낙찰 가능성 약 ' + wbp + '%</b> · 예상 낙찰가보다 ' + (wbg >= 0 ? '<b>' + wbg + '%</b> 높음' : '<b>' + Math.abs(wbg) + '%</b> 낮음')
                 + (row.winbid.probAggr != null ? ' · 적극 입찰가면 약 ' + Math.round(row.winbid.probAggr * 100) + '%' : '') + '</div>' : '')
