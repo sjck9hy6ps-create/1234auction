@@ -4067,7 +4067,7 @@ function crowdCellHtml(r) {
 }
 function crowdNoteHtml(r) {
     var c = crowdFor(r); if (!c) return '';
-    return '<div>👥 예상 입찰자 <b style="color:' + (c.lvl === 'hi' ? '#b91c1c' : (c.lvl === 'lo' ? '#15803d' : '#374151')) + ';">' + crowdRangeText(c) + '</b>' + (c.lvl === 'hi' ? ' <b style="color:#b91c1c;">🔥 몰릴 가능성 높음</b>' : (c.lvl === 'lo' ? ' · 적을 가능성 높음' : '')) + ' <span class="dr-sub" style="display:inline;">(비슷한 물건에 실제로 왔던 범위 · 8명 이상 몰린 비율 ' + c.pct + '% · 정답이 있는 값이 아니라 그날 분위기에 따라 반대로 갈 수 있는 참고예요)</span></div>';
+    return '<div>👥 예상 입찰자 <b style="color:' + (c.lvl === 'hi' ? '#b91c1c' : (c.lvl === 'lo' ? '#15803d' : '#374151')) + ';">' + crowdRangeText(c) + '</b>' + (c.lvl === 'hi' ? ' <b style="color:#b91c1c;">🔥 몰릴 가능성 높음</b>' : (c.lvl === 'lo' ? ' · 적을 가능성 높음' : '')) + ' <span class="dr-sub" style="display:inline;">(비슷한 물건에 실제로 왔던 범위 · 8명 이상 몰린 비율 ' + c.pct + '% · 과거 검증에서 이 범위 안에 실제 입찰자 수가 들어온 비율은 약 절반(52%)이에요. 그날 분위기에 따라 어긋날 수 있는 참고값입니다)</span></div>';
 }
 // 규제지역 필터(2026-10-21, 사용자 요청: 지역 필터 옆에) - 토지거래허가구역 자료(permitFor) 기준. 지역 필터를 쓰는 모든 목록·개수에 함께 적용
 function permitMatch(r) { var pf = bidBoardState.permit; if (!pf) return true; var z = !!permitFor(r); return pf === 'only' ? z : !z; }
