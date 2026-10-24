@@ -3873,11 +3873,11 @@ function villaSaleEst(a, ref) {
     var c1 = coll(own, 730, 6, 0);
     var dongEnt = (aptIndexByDong.get(dongKey(a.dong)) || []).filter(function(ap) { return (ap.buildingType || 'apt') === 'villa'; });
     var c2 = coll(dongEnt, 365, 8, 5);
-    var v1 = wq(c1, .5), v2 = wq(c2, .5), v3 = null, n1 = c1.length, n2 = c2.length, p, lvl;
+    var v1 = wq(c1, .5), v2 = wq(c2, .5), v3 = null, n1 = c1.length, n2 = c2.length, p, lvl, cAll = null;
     if (n1 < 3 && n2 < 5) {  // 시군구 단위는 이 지역 데이터에 있는 빌라 전체에서
         var lawd = bidBoardLawdOf(a), all = [];
         allAptList.forEach(function(ap) { if ((ap.buildingType || 'apt') === 'villa' && (!lawd || ap.lawdCd === lawd)) all.push(ap); });
-        v3 = wq(coll(all, 365, 8, 0, true), .5);
+        cAll = coll(all, 365, 8, 0, true); v3 = wq(cAll, .5);
     }
     if (n1 >= 5) { p = v1; lvl = '건물5+'; } // 2026-10-10 백테스트: 건물 거래 5건 이상일 때만 건물 값 그대로(보통 오차 6.2%·과대 상위10% +8%), 1~4건은 같은 동 값과 50:50
     else if (n1 >= 1 && v2 != null) { p = 0.5 * v1 + 0.5 * v2; lvl = '건물1~2+동'; }
@@ -3892,7 +3892,11 @@ function villaSaleEst(a, ref) {
     var nmCnt = {}; own.forEach(function(ap) { var nm = ap.latest && ap.latest.name; if (nm && !isPlaceholderBldName(nm)) nmCnt[nm] = (nmCnt[nm] || 0) + ((ap.trades || []).length || 1); });
     var nmOwn = Object.keys(nmCnt).sort(function(x, y) { return nmCnt[y] - nmCnt[x]; })[0] || null;
     var est = Math.round(p * area), r = VILLA_EST_RANGE[lvl];
-    return { bs: bsT, nm: nmOwn, by: byOwn, est: est, lvl: lvl, n1: n1, n2: n2, lo: Math.round(est / (1 + r[1] / 100)), hi: Math.round(est / (1 + r[0] / 100)), errPct: r[2] };
+    /* 비교 거래의 흩어짐(2026-10-24, 사용자: 튀는 가격이 반영되면 큰 손실 - 견고해야) - 값 계산에 쓴 비교 거래 ㎡당 가격의 (75%−25%)÷중앙값(3건 이상).
+       수도권 빌라 4만 건 검증(예상매도가는 그대로): 흩어짐 15% 미만 → 예상이 실제보다 10% 넘게 높은 비율 18%·하위10% -18% / 15~30% 27%·-24% / 30~50% 32%·-34% / 50%↑ 38%·-43%. 마진 계산이 이 값으로 위험 여유를 키움. */
+    var prim = n1 >= 1 ? c1 : (n2 >= 1 ? c2 : cAll), disp = null;
+    if (prim && prim.length >= 3) { var mid = wq(prim, .5); if (mid > 0) disp = (wq(prim, .75) - wq(prim, .25)) / mid; }
+    return { bs: bsT, disp: disp == null ? null : Math.round(disp * 1000) / 1000, nm: nmOwn, by: byOwn, est: est, lvl: lvl, n1: n1, n2: n2, lo: Math.round(est / (1 + r[1] / 100)), hi: Math.round(est / (1 + r[0] / 100)), errPct: r[2] };
 }
 
 /* ════ 🏘️ 빌라 최소 마진 규칙 (2026-10-10, 사용자: "빌라는 예측 신뢰도가 아파트보다 낮아 마진폭을 늘려야 - 최소 2,000만원 유지, 구축일수록 마진이 커져야, 연식·평형·승강기가 가격 형성의 핵심") ════
@@ -3931,8 +3935,10 @@ function villaMarginPlan(row, ve, title) {
     var p90 = (VILLA_P90[band] || {})[ve.lvl] || 40;
     var elv = title ? (title.rideElvtCnt || 0) + (title.emgenElvtCnt || 0) : null, fl = title ? title.grndFlrCnt : null;
     var ef = (elv != null && fl >= 4) ? (elv > 0 ? 0.7 : 1.15) : 1;
-    var mx = villaFloorMx(row.a, elv, fl), fx = mx.x, buf = Math.min(25, 0.5 * p90 * ef), margin = Math.round(Math.max(VILLA_MARGIN_MIN, Math.round(ve.est * buf / 100 / 100) * 100) * fx / 100) * 100;
-    var out = { ageFromTrades: ageFromTrades, margin: margin, buf: Math.round(buf * 10) / 10, age: age, ageBand: band, elv: elv, ef: ef, floorMin: margin === VILLA_MARGIN_MIN * fx, first: fx > 1, fx: fx, fxWhy: mx.why };
+    // 비교 거래가 들쭉날쭉하면(흩어짐 30%↑ ×1.35, 50%↑ ×1.7 = 과거 하위10% 지점 비율) 위험 여유를 키움 - 줄이지는 않음, 상한 25% → 32%
+    var dispX = ve.disp == null ? 1 : (ve.disp >= 0.50 ? 1.7 : (ve.disp >= 0.30 ? 1.35 : 1));
+    var mx = villaFloorMx(row.a, elv, fl), fx = mx.x, buf = Math.min(dispX > 1 ? 32 : 25, 0.5 * p90 * ef * dispX), margin = Math.round(Math.max(VILLA_MARGIN_MIN, Math.round(ve.est * buf / 100 / 100) * 100) * fx / 100) * 100;
+    var out = { dispX: dispX, disp: ve.disp, ageFromTrades: ageFromTrades, margin: margin, buf: Math.round(buf * 10) / 10, age: age, ageBand: band, elv: elv, ef: ef, floorMin: margin === VILLA_MARGIN_MIN * fx, first: fx > 1, fx: fx, fxWhy: mx.why };
     try {
         var a = row.a, base = Object.assign({}, a, { target: ve.est, repair: effRepairFee(a, 'villa', row.pyung, yr || null), compTargetMargin: margin });
         var r = solveAuctionBidFromRecord(base);
@@ -4510,7 +4516,7 @@ function villaSaveCalcSoon() {
     villaSaveT = setTimeout(function() { var snap = villaCalcSnapshot(); listIdbOp('readwrite', function(st) { return st.put(snap, VILLA_CALC_KEY); }); }, 4000);
 }
 var villaVeCache = {}, villaLoadBusy = false;
-function villaVeSig(a) { return ['v6', a.pyung, a.addr, a.dong, a.bunji, a.bidDate, a.buildYear || '', a.estBuildYear || '', a.buildYear || a.estBuildYear ? '' : (villaHsYear(a) || '')].join('|'); }
+function villaVeSig(a) { return ['v7', a.pyung, a.addr, a.dong, a.bunji, a.bidDate, a.buildYear || '', a.estBuildYear || '', a.buildYear || a.estBuildYear ? '' : (villaHsYear(a) || '')].join('|'); }
 async function villaLoadRegions() {
     if (villaLoadBusy) return; villaLoadBusy = true;
     try {
@@ -20786,7 +20792,7 @@ async function renderVillaDrawer(d, row) {
     }
     if (mp) {
         h += '<div class="dr-sec"><h4>필요 마진 · 입찰 상한</h4><div>필요 순이익 <b>' + fmt(mp.margin) + '</b>' + (mp.bid ? ' → 입찰 상한 <b style="color:' + (mp.feasible ? '#15803d' : '#b91c1c') + ';">' + (mp.feasible ? fmt(mp.bid) : '최저가로도 마진 부족(' + fmt(mp.bid) + ')') + '</b>' : '') + '</div>'
-            + '<div class="dr-sub">' + (mp.age != null ? '연식 ' + mp.age + '년' + (mp.ageFromTrades ? '(실거래 준공연도)' : '') : '연식 모름(보수적으로 계산)') + (mp.elv != null ? ' · 승강기 ' + (mp.elv > 0 ? '있음' : '없음') : ' · 승강기 모름') + ' · 시세 근거 ' + bbEsc(ve ? ve.lvl : '-') + (mp.first ? ' · ' + mp.fxWhy + ' +' + Math.round((mp.fx - 1) * 100) + '%' : '') + ' → 최소 2,000만 또는 예상매도가의 ' + mp.buf + '% 중 큰 값</div></div>';
+            + '<div class="dr-sub">' + (mp.age != null ? '연식 ' + mp.age + '년' + (mp.ageFromTrades ? '(실거래 준공연도)' : '') : '연식 모름(보수적으로 계산)') + (mp.elv != null ? ' · 승강기 ' + (mp.elv > 0 ? '있음' : '없음') : ' · 승강기 모름') + ' · 시세 근거 ' + bbEsc(ve ? ve.lvl : '-') + (mp.first ? ' · ' + mp.fxWhy + ' +' + Math.round((mp.fx - 1) * 100) + '%' : '') + (mp.dispX > 1 ? ' · <b style="color:#b91c1c;">비교 거래 가격이 들쭉날쭉(흩어짐 ' + Math.round(mp.disp * 100) + '%) → 위험 여유 ×' + mp.dispX + '</b>' : '') + ' → 최소 2,000만 또는 예상매도가의 ' + mp.buf + '% 중 큰 값</div></div>';
     }
     if (wb) {
         h += '<div class="dr-wb"><div class="dr-wb-h">🎲 예상 낙찰가 <b>' + fmt(wb.price) + '</b><span class="dr-sub" style="margin:0 0 0 6px;">비슷한 빌라가 보통 낙찰되는 가격(낙찰사례 약 6천 건, 보통 오차 약 9%)</span></div>'
