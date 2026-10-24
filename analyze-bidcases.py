@@ -855,7 +855,20 @@ def crowd_item_model(R, now):
         for c in calib:
             mk = (bn >= c["lo"]) & (bn < c["hi"]); covered += int(((B[mk] >= c["q25"]) & (B[mk] <= c["q75"])).sum())
         within["예측 25~75% 구간 안"] = round(covered / len(B) * 100, 1)
-        unc = {"dayCommonCorr": None if icc is None else round(icc, 3), "hotDayResid": round(float(hot), 3), "coldDayResid": round(float(cold), 3), "reversal": rev, "hit": within}
+        # 표시 범위 후보별 적중률: 중앙값 ±1·±2·±3명, 25~75%, 중앙값 ±2와 25~75% 중 좁은 쪽
+        cov = {}
+        meds = np.zeros(len(bn)); q25s = np.zeros(len(bn)); q75s = np.zeros(len(bn))
+        for c in calib:
+            mk = (bn >= c["lo"]) & (bn < c["hi"]); meds[mk] = c["median"]; q25s[mk] = c["q25"]; q75s[mk] = c["q75"]
+        for k in (1, 2, 3):
+            cov[f"중앙값±{k}명"] = round(float((np.abs(B - meds) <= k).mean() * 100), 1)
+        lo2 = np.maximum(q25s, meds - 2); hi2 = np.minimum(q75s, meds + 2)
+        cov["좁은쪽(±2와 25~75% 중)"] = round(float(((B >= lo2) & (B <= hi2)).mean() * 100), 1)
+        cov["넓이(좁은쪽) 평균 명"] = round(float((hi2 - lo2 + 1).mean()), 1)
+        for nm2, mk2 in (("몰림예상", hi_m), ("적게예상", lo_m)):
+            if mk2.sum(): cov[nm2 + " ±2명 적중"] = round(float((np.abs(B[mk2] - meds[mk2]) <= 2).mean() * 100), 1)
+        print("  🎯 표시 범위 적중률:", cov)
+        unc = {"coverage": cov, "dayCommonCorr": None if icc is None else round(icc, 3), "hotDayResid": round(float(hot), 3), "coldDayResid": round(float(cold), 3), "reversal": rev, "hit": within}
         print("  🎲 불확실성:", unc)
     except Exception as e:
         unc = None; print("  불확실성 계산 건너뜀:", e)

@@ -4053,7 +4053,10 @@ function crowdMatch(r) {
     return f === 'hi' ? c.lvl === 'hi' : c.lvl === 'lo';
 }
 // 입찰자 수는 그날 분위기에 따라 달라 정답이 없는 값(2026-10-25 검증: 같은 날 사례끼리 +0.15 상관, 몰림 예상의 37%는 실제 8명 미만, 적게 예상의 17%는 6명 이상) → 한 숫자가 아니라 '비슷한 물건에 실제로 왔던 범위(중간 절반)'로 표시
-function crowdRangeText(c) { return (c.q25 != null && c.q75 != null && c.q75 > c.q25) ? '대략 ' + c.q25 + '~' + c.q75 + '명' : '약 ' + c.n + '명'; }
+function crowdRangeText(c) { // 2026-10-25(사용자: 4~12는 너무 넓음 - 오차는 감안할 테니 좁혀 달라): 중앙값 ±2명과 25~75% 구간 중 좁은 쪽
+    var lo = Math.max(c.q25 != null ? c.q25 : c.n - 2, c.n - 2), hi = Math.min(c.q75 != null ? c.q75 : c.n + 2, c.n + 2); lo = Math.max(1, lo);
+    return hi > lo ? '대략 ' + lo + '~' + hi + '명' : '약 ' + c.n + '명';
+}
 function crowdChip(r) {
     var c = crowdFor(r); if (!c) return null;
     return { t: '👥 예상 입찰자 ' + crowdRangeText(c) + (c.lvl === 'hi' ? ' · 몰릴 가능성 높음' : (c.lvl === 'lo' ? ' · 적을 가능성 높음' : '')), cls: c.lvl === 'hi' ? 'r' : (c.lvl === 'lo' ? 'g' : '') };
