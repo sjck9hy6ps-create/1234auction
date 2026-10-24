@@ -335,6 +335,7 @@ def main():
             rec["bandTier"] = pop.get((c.region, c.dk, nm, band))
             # 단지 전체 최근 3년 거래(입찰 전 기준) - 거래 활발도
             rec["cx3y"] = int(((g["deal_date"] < cut) & (g["deal_date"] >= ymd_int(sale_d - timedelta(days=30 + 1095)))).sum())
+            rec["cx12"] = int(((g["deal_date"] < cut) & (g["deal_date"] >= ymd_int(sale_d - timedelta(days=30 + 365)))).sum())  # 2026-10-24 단지 전체 평형 최근 1년 거래 수(몰림 예측 요인 - 앱의 ownStats.v6+vPrev6와 같은 정의)
             by = pd.to_numeric(g["build_year"], errors="coerce").dropna()
             if len(by):
                 rec["age"] = int(sale_d.year - int(by.mode().iloc[0]))
@@ -478,6 +479,7 @@ def main():
             winbid_model(R, now)
             try:
                 crowd_analysis(R, now)
+                crowd_item_model(R, now)
             except Exception as e:
                 print('  몰림 분석 건너뜀:', e)
             try: liquidity_curve(R, now)
@@ -708,6 +710,100 @@ def attention_analysis(R, seg_stats, med):
     out["target1000"] = t5
     return out
 
+
+
+CROWD_FACTORS = [("lb", 10), ("fails", 120), ("tier", 5), ("floor", 5), ("size", 30), ("own", 120), ("lab", 30), ("minb", 30), ("ageb", 60), ("cxb", 30), ("lbcx", 60), ("lbo", 60)]
+CROWD_LAB_EDGES = [-0.2, -0.1, 0, 0.1, 0.2, 0.35]
+
+
+def crowd_bucket(minb, age, cx):
+    """앱(index.html crowdFor)과 같은 구간 정의 - 바꾸면 양쪽을 같이 바꿔야 함"""
+    mb = "<0.5억" if minb < 5000 else ("0.5-1억" if minb < 10000 else ("1-1.5억" if minb < 15000 else ("1.5-2억" if minb < 20000 else ("2-3억" if minb < 30000 else ("3-4억" if minb < 40000 else "4억+")))))
+    ab = "?" if age is None or not np.isfinite(age) else ("0-5" if age <= 5 else ("6-10" if age <= 10 else ("11-15" if age <= 15 else ("16-20" if age <= 20 else ("21-25" if age <= 25 else ("26-30" if age <= 30 else "31+"))))))
+    cb = "?" if cx is None or not np.isfinite(cx) else ("0-9" if cx < 10 else ("10-24" if cx < 25 else ("25-49" if cx < 50 else ("50-99" if cx < 100 else ("100-199" if cx < 200 else "200+")))))
+    return mb, ab, cb
+
+
+def crowd_features(D, use_region=False):
+    """물건 자신의 정보만 사용(지역·법정동 평균 요인은 쓰지 않음 - 사용자: 전국/법정동 기준이 아니라 물건별 예상 응찰자 수)"""
+    X = pd.DataFrame(index=D.index)
+    lm = np.log(D["minbid"].astype(float) / D["est"].astype(float))
+    X["lb"] = np.clip(np.floor(lm / 0.05), -24, 9).astype(int).astype(str)
+    X["fails"] = D["fails"].map(lambda v: "?" if v is None or pd.isna(v) else str(min(int(v), 3)))
+    X["tier"] = D["tier"].fillna("없음").astype(str)
+    X["floor"] = D["floor"].map(lambda f: "?" if f is None or pd.isna(f) else ("1층" if f == 1 else ("2~3층" if f <= 3 else "4층+")))
+    X["size"] = D["area"].map(lambda a: "소형" if a < 60 else ("중형" if a <= 85 else "대형"))
+    X["own"] = D["own"].map(lambda n: "1~2" if n <= 2 else ("3~5" if n <= 5 else ("6~10" if n <= 10 else "11+")))
+    la = np.log(D["appraisal"].astype(float) / D["est"].astype(float))
+    X["lab"] = la.map(lambda v: "?" if v is None or not np.isfinite(v) else str(sum(1 for e in CROWD_LAB_EDGES if v > e)))
+    bk = [crowd_bucket(m, a, c) for m, a, c in zip(D["minbid"].astype(float), D["age"].astype(float), D["cx12"].astype(float))]
+    X["minb"] = [b[0] for b in bk]; X["ageb"] = [b[1] for b in bk]; X["cxb"] = [b[2] for b in bk]
+    lbc = lm.map(lambda v: "L" if v <= -0.25 else ("M" if v <= -0.10 else "H"))
+    X["lbcx"] = lbc.values + "|" + X["cxb"].values; X["lbo"] = lbc.values + "|" + X["own"].values
+    if use_region:
+        X["region"] = D["region"].fillna("?").astype(str)
+    return X
+
+
+def crowd_fit(X, y, factors, iters=6):
+    base = float(np.median(y)); eff = {f: {} for f, _ in factors}; pred = np.full(len(y), base)
+    for _ in range(iters):
+        for f, k in factors:
+            cur = X[f].map(eff[f]).fillna(0).values
+            r = y - (pred - cur)
+            g = pd.DataFrame({"k": X[f].values, "r": r}).groupby("k")["r"].agg(["median", "count"])
+            new = (g["median"] * g["count"] / (g["count"] + k)).to_dict()
+            eff[f] = new; pred = pred - cur + X[f].map(new).fillna(0).values
+    return {"base": base, "eff": eff}
+
+
+def crowd_predict(m, X, factors):
+    p = np.full(len(X), m["base"])
+    for f, _ in factors:
+        p = p + X[f].map(m["eff"][f]).fillna(0).values
+    return p
+
+
+def crowd_item_model(R, now):
+    """2026-10-24(사용자: 입찰자 몰릴 물건 필터 + 물건별 예상 응찰자 수, 앱 로딩시간 변화 없이) - 앱에서 바로 계산 가능한 덧셈형 모델(로그 응찰자 수).
+    지역·법정동 요인 없이 물건 자신의 조건(최저가÷시세·유찰·인기 등급·층·평형·시세 근거 거래 수·감정가 비율·최저가 금액·준공 연차·단지 거래량)만 사용.
+    예측값을 학습에 안 쓴 최근 12개월에서 실제 응찰자 수(중앙·몰림 확률)로 보정한 표를 함께 저장 → 앱이 '예상 응찰 약 N명 · 8명 이상일 확률 P%'를 보여줌."""
+    from sklearn.metrics import roc_auc_score
+    D = R[R["bidders"].notna() & (R["bidders"] > 0) & R["est"].notna() & (R["est"] > 0) & R["minbid"].notna() & (R["minbid"] > 0) & R["cx12"].notna() & R["area"].notna() & (R["sale"] >= 20230101)].copy()
+    D = D[D["own"].notna()]
+    if len(D) < 3000:
+        print("  물건별 응찰자 모델: 사례 부족"); return
+    X = crowd_features(D); Xr = crowd_features(D, use_region=True)
+    y = np.log(D["bidders"].astype(float)).values; crowd = (D["bidders"] >= 8).astype(int).values
+    last = pd.to_datetime(str(int(D["sale"].max())), format="%Y%m%d"); cut = int((last - pd.DateOffset(months=12)).strftime("%Y%m%d"))
+    tr = (D["sale"] < cut).values; te = ~tr
+    m = crowd_fit(X[tr], y[tr], CROWD_FACTORS); p_te = crowd_predict(m, X[te], CROWD_FACTORS)
+    FR = CROWD_FACTORS + [("region", 120)]; mr = crowd_fit(Xr[tr], y[tr], FR); p_r = crowd_predict(mr, Xr[te], FR)
+    auc, auc_r = float(roc_auc_score(crowd[te], p_te)), float(roc_auc_score(crowd[te], p_r))
+    print(f"  물건별 응찰자 모델 AUC {auc:.3f} (지역 요인을 넣으면 {auc_r:.3f}), 학습 {tr.sum():,} 시험 {te.sum():,}")
+    bn = np.exp(p_te); B = D["bidders"].values[te].astype(float)
+    # 보정표: 예측 응찰자 수(bn)를 12분위로 나눠 실제 중앙·평균·몰림(8명+) 비율
+    edges = np.quantile(bn, np.linspace(0, 1, 13)); edges[0] = 0; edges[-1] = 1e9
+    calib = []
+    for i in range(12):
+        msk = (bn >= edges[i]) & (bn < edges[i + 1])
+        if msk.sum() < 30: continue
+        calib.append({"lo": round(float(edges[i]), 3), "hi": round(float(min(edges[i + 1], 1e6)), 3), "n": int(msk.sum()), "median": float(np.median(B[msk])), "mean": round(float(B[msk].mean()), 2), "crowdPct": round(float((B[msk] >= 8).mean() * 100), 1), "le3Pct": round(float((B[msk] <= 3).mean() * 100), 1)})
+    # 몰림 예상 기준: 몰림 확률 50% 이상이 되는 가장 낮은 예측값, 적게 몰림: 확률 15% 이하
+    hi = next((c["lo"] for c in calib if c["crowdPct"] >= 50), None); lo = max([c["hi"] for c in calib if c["crowdPct"] <= 15], default=None)
+    def lvl_stat(msk):
+        return {"n": int(msk.sum()), "share": round(float(msk.mean() * 100), 1), "crowdPct": round(float((B[msk] >= 8).mean() * 100), 1) if msk.sum() else None, "median": float(np.median(B[msk])) if msk.sum() else None}
+    levels = {"몰림 예상": lvl_stat(bn >= hi) if hi else None, "적게 예상": lvl_stat(bn <= lo) if lo else None}
+    # 개별 예상 오차: 예측 응찰자 수 vs 실제(중앙 절대 오차, 명)
+    mae = float(np.median(np.abs(bn - B)))
+    print("  보정표:", calib); print("  기준:", {"hi": hi, "lo": lo}, levels, "| 예측-실제 중앙 절대 오차", round(mae, 2), "명")
+    # 배포용: 전체 데이터로 다시 학습
+    mf = crowd_fit(X, y, CROWD_FACTORS)
+    payload = {"generatedAt": now, "n": int(len(D)), "base": mf["base"], "eff": {f: {str(k): round(float(v), 4) for k, v in d.items()} for f, d in mf["eff"].items()}, "factors": [f for f, _ in CROWD_FACTORS],
+               "calib": calib, "hiCut": hi, "loCut": lo, "levels": levels, "metrics": {"auc": round(auc, 3), "aucWithRegion": round(auc_r, 3), "medAbsErrBidders": round(mae, 2), "testN": int(te.sum()), "testCrowdPct": round(float(crowd[te].mean() * 100), 1)}}
+    cyc.upsert_rows([{"id": "signal|__crowd_model__", "payload": cyc.clean_json(payload), "fetched_at": now}])
+    if os.environ.get("GITHUB_STEP_SUMMARY"):
+        open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8").write("### 물건별 예상 응찰자 수 모델\n```json\n" + json.dumps({k: payload[k] for k in ("n", "calib", "hiCut", "loCut", "levels", "metrics")}, ensure_ascii=False, indent=1) + "\n```\n")
 
 
 def crowd_analysis(R, now):
