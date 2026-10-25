@@ -6,7 +6,7 @@
  회전율 = (직전 1년 같은 단지 전체 평형 거래 수) ÷ 세대수(kapt_complex_info, 법정동+단지명 연결).
 결과는 로그로 출력.
 """
-import os, re, math, importlib.util
+import os, re, math, json, importlib.util
 import numpy as np
 import pandas as pd
 
@@ -106,13 +106,21 @@ def main():
                 else:
                     hl = 1.0 if cls == "경기·인천" else 2.0
                     ests[f"주규칙{int(qq*100)}"] = wq(p6, [0.5 ** (x / hl) for x in a6], qq)
+            for hl in (0.5, 3.0):
+                ests[f"최근가중(반감{hl:g}m)중위"] = wq(p6, [0.5 ** (x / hl) for x in a6], 0.5)
+            ests["최근5건중위"] = float(np.median(pr[np.argsort(ag)[:5]])) if len(pr) >= 5 else np.nan
+            ests["최근3건평균"] = float(np.mean(pr[np.argsort(ag)[:3]])) if len(pr) >= 3 else np.nan
             ests["최근3건중위"] = float(np.median(pr[np.argsort(ag)[:3]])) if len(pr) >= 3 else np.nan
-            rows.append(dict(cls=cls, n3=len(p3), n6=len(p6), tr12=tr12, hh=h, actual=float(T["price"]), **{"e_" + k2: v for k2, v in ests.items()}))
+            rows.append(dict(cls=cls, t=float(T["t"]), n3=len(p3), n6=len(p6), tr12=tr12, hh=h, actual=float(T["price"]), **{"e_" + k2: v for k2, v in ests.items()}))
     D = pd.DataFrame(rows)
     D.to_json("backtest-sale-rule.json", orient="records", force_ascii=False)
     print(f"  시험 가능 {len(D):,}건, 세대수 연결 {D['hh'].notna().sum():,}건({D['hh'].notna().mean() * 100:.0f}%)")
     report(D)
     write_params(D)
+    try:
+        write_challenger(D)
+    except Exception as e:
+        print("  개선 후보 점검 건너뜀:", e)
 
 
 def report(D):
@@ -161,6 +169,67 @@ def report(D):
 
 
 MAIN_RULE = {"서울": "e_최근3건중위", "경기·인천": "e_최근가중(반감1m)중위", "지방": "e_최근가중(반감2m)중위"}
+
+
+def _stat(d, c):
+    r = (d["actual"] / d[c]).replace([np.inf, -np.inf], np.nan).dropna()
+    return {"n": int(len(r)), "err": round(float(np.median(np.abs(r - 1))) * 100, 3), "bias": round(float(np.median(r) - 1) * 100, 3),
+            "hi10": round(float((r < 0.9).mean()) * 100, 2), "hi15": round(float((r < 0.85).mean()) * 100, 2)}
+
+
+def challenger_check(D):
+    """2026-10-25(사용자: 매주 지금보다 더 나은 계산 방법이 있는지 확인하고 오차를 더 줄일 방법을 찾아야 함)
+    지역별 '현재 규칙'(MAIN_RULE)과 나머지 후보 규칙을 같은 거래로 비교. 교체 후보 조건(모두 만족):
+      ① 시험 기간을 앞·뒤 절반으로 나눈 두 구간 모두에서 보통 오차가 현재보다 0.05%p 이상 작음
+      ② 두 구간 모두에서 '예상이 10%+ 높음' 비율이 현재보다 0.3%p 넘게 늘지 않음(손해 쪽 위험 유지)
+      ③ 15%+ 높음도 0.2%p 넘게 늘지 않음
+    조건을 모두 채워도 자동 적용하지 않음 - 사용자가 확인 후 결정(튀는 가격 원칙)."""
+    out = {}
+    tmid = float(D["t"].median())
+    cols = [c for c in D.columns if c.startswith("e_") and not c.startswith("e_주규칙")]
+    for cls, cur in MAIN_RULE.items():
+        d = D[(D.cls == cls) & D[cur].notna()]
+        if len(d) < 1000: continue
+        halves = (d[d.t < tmid], d[d.t >= tmid])
+        base = [_stat(h, cur) for h in halves]
+        rows = []
+        for c in cols:
+            if c == cur: continue
+            h2 = [h[h[c].notna() & h[cur].notna()] for h in halves]
+            if min(len(x) for x in h2) < 500: continue
+            st = [_stat(x, c) for x in h2]; bs = [_stat(x, cur) for x in h2]
+            dErr = [bs[i]["err"] - st[i]["err"] for i in range(2)]
+            dHi10 = [st[i]["hi10"] - bs[i]["hi10"] for i in range(2)]
+            dHi15 = [st[i]["hi15"] - bs[i]["hi15"] for i in range(2)]
+            ok = all(x >= 0.05 for x in dErr) and all(x <= 0.3 for x in dHi10) and all(x <= 0.2 for x in dHi15)
+            rows.append({"name": c[2:], "errGain": round(sum(dErr) / 2, 3), "hi10Diff": round(sum(dHi10) / 2, 2), "hi15Diff": round(sum(dHi15) / 2, 2), "ok": bool(ok), "n": int(sum(len(x) for x in h2)), "stat": st[1]})
+        rows.sort(key=lambda x: (not x["ok"], -x["errGain"]))
+        out[cls] = {"current": cur[2:], "currentStat": _stat(d, cur), "best": rows[:3], "adoptable": [r["name"] for r in rows if r["ok"]]}
+    return out
+
+
+def write_challenger(D):
+    from datetime import datetime, timezone
+    res = challenger_check(D)
+    for cls, v in res.items():
+        b = v["best"][0] if v["best"] else None
+        print(f"  🔎 개선 후보 점검 [{cls}] 현재 {v['current']} 오차 {v['currentStat']['err']}% · 10%+높음 {v['currentStat']['hi10']}% → " + (f"최선 {b['name']} 오차 {-b['errGain']:+.2f}%p · 손해쪽 {b['hi10Diff']:+.2f}%p · {'✅ 교체 후보' if b['ok'] else '조건 미달'}" if b else "후보 없음"))
+    if os.environ.get("GITHUB_STEP_SUMMARY"):
+        open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8").write("### 예상매도가 개선 후보 점검\n```json\n" + json.dumps(res, ensure_ascii=False, indent=1) + "\n```\n")
+    if not os.environ.get("WRITE_PARAMS"): return
+    now = datetime.now(timezone.utc).isoformat()
+    prev = {}
+    try:
+        import requests
+        rr = requests.get(f"{ab.cyc.SUPABASE_URL}/rest/v1/leader_follower_cache?select=payload&id=eq.signal%7C__challenger_sale__", headers=ab.cyc.HEADERS, timeout=60)
+        if rr.ok and rr.json(): prev = rr.json()[0].get("payload") or {}
+    except Exception:
+        prev = {}
+    hist = [h for h in (prev.get("history") or []) if h.get("at", "")[:10] != now[:10]]
+    hist.insert(0, {"at": now, "adoptable": {c: v["adoptable"] for c, v in res.items()}})
+    P = {"generatedAt": now, "basis": "2025년~ 전국 아파트 실거래, 직전 정보만으로 예측(같은 단지·평형 6개월 3건+)", "result": res, "history": hist[:12]}
+    ab.cyc.upsert_rows([{"id": "signal|__challenger_sale__", "payload": ab.cyc.clean_json(P), "fetched_at": now}])
+    print("  개선 후보 점검 저장")
 
 
 def build_params(D):

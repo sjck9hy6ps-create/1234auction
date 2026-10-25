@@ -27,7 +27,7 @@ for (const j of jobs) {
 for (const e of by.values()) stages.push({ name: e.name, status: e.status, conclusion: e.status === 'completed' ? e.concl : null, start: e.start, end: e.end, minutes: e.start && e.end ? Math.round((new Date(e.end) - new Date(e.start)) / 60000) : null, failedSteps: e.steps.slice(0, 3) });
 stages.sort((a, b) => (a.name.match(/^\d+/) ? parseInt(a.name, 10) : 99) - (b.name.match(/^\d+/) ? parseInt(b.name, 10) : 99));
 // 결과물 갱신 시각
-const ids = ['board|cache|meta', 'board|villa|meta', 'bidscore|meta', 'signal|__winbid__', 'signal|__liqcurve__', 'signal|__weekly_report__', 'signal|__bidval__', 'signal|__permit__', 'signal|__homestay__', 'cycle|__liquidity__'];
+const ids = ['board|cache|meta', 'board|villa|meta', 'bidscore|meta', 'signal|__winbid__', 'signal|__challenger_sale__', 'signal|__liqcurve__', 'signal|__weekly_report__', 'signal|__bidval__', 'signal|__permit__', 'signal|__homestay__', 'cycle|__liquidity__'];
 const { data: rows } = await supabase.from('leader_follower_cache').select('id,payload,fetched_at').in('id', ids);
 const g = Object.fromEntries((rows || []).map((r) => [r.id, r]));
 const ts = (r, ...keys) => { if (!r) return null; const p = r.payload || {}; for (const k of keys) { if (p[k]) return typeof p[k] === 'number' ? new Date(p[k]).toISOString() : p[k]; } return r.fetched_at || null; };
@@ -36,6 +36,7 @@ const outputs = [
   { name: '입찰후보 계산(빌라)', at: ts(g['board|villa|meta'], 'at'), detail: g['board|villa|meta'] ? (g['board|villa|meta'].payload.count || 0) + '건' : null },
   { name: '입찰 경쟁·매매 활발도 점수', at: ts(g['bidscore|meta'], 'at'), detail: g['bidscore|meta'] ? (g['bidscore|meta'].payload.count || 0) + '건' : null },
   { name: '예상 낙찰가 모델', at: ts(g['signal|__winbid__'], 'generatedAt'), detail: g['signal|__winbid__'] ? '학습 ' + (g['signal|__winbid__'].payload.n || '-') + '건' : null },
+  { name: '예상매도가 개선 후보 점검', at: ts(g['signal|__challenger_sale__'], 'generatedAt'), detail: g['signal|__challenger_sale__'] ? (() => { const r = g['signal|__challenger_sale__'].payload.result || {}; const n = Object.values(r).reduce((a, v) => a + ((v.adoptable || []).length), 0); return n ? '교체 후보 ' + n + '개 - 확인 필요' : '현재 방식 유지'; })() : null },
   { name: '환금성 곡선', at: ts(g['signal|__liqcurve__'], 'generatedAt'), detail: null },
   { name: '주간 리포트(낙찰 비교)', at: ts(g['signal|__weekly_report__'], 'generatedAt'), detail: null },
   { name: '입찰 경쟁 검증', at: ts(g['signal|__bidval__'], 'generatedAt'), detail: null },
