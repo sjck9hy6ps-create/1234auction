@@ -100,6 +100,12 @@ def main():
             ests["3m중위(3건+)/없으면중위6m"] = np.median(p3) if len(p3) >= 3 else np.median(p6)
             ests["최근가중(반감2m)중위"] = wq(p6, [0.5 ** (a / 2.0) for a in a6], 0.5)
             ests["최근가중(반감1m)중위"] = wq(p6, [0.5 ** (a / 1.0) for a in a6], 0.5)
+            for qq in (0.4, 0.5, 0.6):  # 2026-10-25 현재 지역별 규칙의 기준 지점(분위) 비교
+                if cls == "서울":
+                    l3 = pr[np.argsort(ag)[:3]]; ests[f"주규칙{int(qq*100)}"] = wq(l3, np.ones(len(l3)), qq)
+                else:
+                    hl = 1.0 if cls == "경기·인천" else 2.0
+                    ests[f"주규칙{int(qq*100)}"] = wq(p6, [0.5 ** (x / hl) for x in a6], qq)
             ests["최근3건중위"] = float(np.median(pr[np.argsort(ag)[:3]])) if len(pr) >= 3 else np.nan
             rows.append(dict(cls=cls, n3=len(p3), n6=len(p6), tr12=tr12, hh=h, actual=float(T["price"]), **{"e_" + k2: v for k2, v in ests.items()}))
     D = pd.DataFrame(rows)
@@ -117,6 +123,17 @@ def report(D):
             r = d["actual"] / d[c]
             out.append(f"{c[2:]:<22} 오차{np.nanmedian(np.abs(r - 1)) * 100:4.1f}% 치우침{(np.nanmedian(r) - 1) * 100:+5.1f}% 과대{(r < 0.9).mean() * 100:3.0f}%")
         return out
+    print("\n==== 🎯 주규칙 기준 지점 40/50/60% ====")
+    def tail(d, c):
+        r = d["actual"] / d[c]
+        return f"오차 {np.nanmedian(np.abs(r - 1)) * 100:5.2f}% 치우침 {(np.nanmedian(r) - 1) * 100:+5.2f}% | 예상이 10%+ 높음 {(r < 0.9).mean() * 100:4.1f}% · 15%+ 높음 {(r < 0.85).mean() * 100:4.1f}% · 하위10% {(np.nanquantile(r, .10) - 1) * 100:+6.1f}% | 10%+ 낮음 {(r > 1.1).mean() * 100:4.1f}%"
+    for cls in ("전체", "서울", "경기·인천", "지방"):
+        d = D if cls == "전체" else D[D.cls == cls]
+        for nm, lo, hi in (("전체", 0, 999), ("6m 3~4건", 3, 5), ("5~9건", 5, 10), ("10건+", 10, 999)):
+            dd = d[(d.n6 >= lo) & (d.n6 < hi)]
+            if len(dd) < 300: continue
+            print(f"[{cls}·{nm}] n{len(dd):,}")
+            for q in (40, 50, 60): print(f"   {q}%", tail(dd, f"e_주규칙{q}"))
     print("\n==== 지역별 ====")
     for cls in ("서울", "경기·인천", "지방"):
         d = D[D.cls == cls]
