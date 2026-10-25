@@ -1,0 +1,22 @@
+name: 주간 시장 요약 (지역별 시세 흐름·사이클 국면·낙찰 현황)
+
+on:
+  workflow_call:
+  workflow_dispatch:
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install pandas numpy requests
+      - env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          SITE_URL: https://1234auction.vercel.app
+          PYTHONUNBUFFERED: '1'
+        run: python market-snapshot.py

@@ -80,6 +80,12 @@ jobs:
     secrets: inherit
     needs: analyze-homestay
     if: ${{ !cancelled() }}
+  market-snapshot:
+    name: 10b 주간 시장 요약(지역별 시세·국면·낙찰 현황)
+    uses: ./.github/workflows/market-snapshot.yml
+    secrets: inherit
+    needs: analyze-region-liquidity
+    if: ${{ !cancelled() }}
   refit-sale-rule:
     name: 11 예상매도가 보정 갱신(지역·회전율)
     uses: ./.github/workflows/backtest-sale-rule.yml
@@ -102,7 +108,7 @@ jobs:
     name: 12 입찰후보 전체 미리 계산
     uses: ./.github/workflows/precompute-board.yml
     secrets: inherit
-    needs: [refit-sale-rule, refit-sale-fallback, refit-sale-jeonse]
+    needs: [refit-sale-rule, refit-sale-fallback, refit-sale-jeonse, market-snapshot]
     if: ${{ !cancelled() }}
   score-bid-objects:
     name: 13 입찰 경쟁·등수·환금성 점수

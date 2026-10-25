@@ -8873,14 +8873,22 @@ async function saveSelectedCases() {
     // 이미 저장돼 있는 사건 + 이번 배치 안에서 먼저 처리된 사건을 함께 추적해서, 같은 목록을
     // 실수로 다시 붙여넣었거나 붙여넣은 텍스트 안에 같은 사건이 중복으로 들어있어도 한 번만 저장함
     // (2026-08 - 같은 사건이 3번씩 저장되는 버그를 이 함수에 dedup 체크가 없어서 발견함).
-    var existingKeys = {}, existingAddrKeys = {};
-    bidCaseList.forEach(function(c) { var k = bidCaseDedupKey(c); if (k) existingKeys[k] = true; var k2 = bidCaseAddrKey(c); if (k2) existingAddrKeys[k2] = true; });
-    var savedCount = 0, skippedCount = 0, failCount = 0;
+    var existingKeys = {}, existingAddrKeys = {}, existingByAddr = {};
+    bidCaseList.forEach(function(c) { var k = bidCaseDedupKey(c); if (k) existingKeys[k] = true; var k2 = bidCaseAddrKey(c); if (k2) { existingAddrKeys[k2] = true; existingByAddr[k2] = c; } });
+    var savedCount = 0, skippedCount = 0, failCount = 0, updatedCount = 0;
     // 많이 올릴 때(CSV 수천 건) 한 건씩 기다리면 오래 걸려 6건씩 동시에 저장
     var queue = [];
     for (var i = 0; i < selected.length; i++) {
         var c = selected[i];
         var dedupKey = c._fromCsv ? null : bidCaseDedupKey(c), addrKey = bidCaseAddrKey(c);
+        // 2026-10-25(사용자: 낙찰사례와 입찰예정을 정확히 구분) - 예전에 매각 결과 없이 저장된 같은 사건(입찰 전 목록)이 있으면 '중복'으로 건너뛰지 않고 그 기록에 매각 결과를 채워 넣음
+        var prev = addrKey ? existingByAddr[addrKey] : null;
+        if (c.finalBidPrice && prev && !prev.finalBidPrice) {
+            var upd = Object.assign({}, prev, {
+                finalBidPrice: c.finalBidPrice, bidRate: c.bidRate || null, minBidRate: c.minBidRate || prev.minBidRate || null, status: c.status || prev.status || null, saleDate: c.saleDate || prev.saleDate || null,
+                bidders: c.bidders || null, secondBidPrice: c.secondBidPrice || null, appraisalPrice: c.appraisalPrice || prev.appraisalPrice || null, minBidPrice: c.minBidPrice || prev.minBidPrice || null, importedAt: Date.now(), _upd: true });
+            queue.push(upd); existingByAddr[addrKey] = upd; continue;
+        }
         if ((dedupKey && existingKeys[dedupKey]) || (addrKey && existingAddrKeys[addrKey])) { skippedCount++; continue; }
         if (dedupKey) existingKeys[dedupKey] = true;
         if (addrKey) existingAddrKeys[addrKey] = true;
@@ -8905,8 +8913,11 @@ async function saveSelectedCases() {
         statusBox.innerText = '저장 중... ' + Math.min(qi + 200, queue.length) + '/' + queue.length;
         csvProg(Math.min(qi + 200, queue.length) / queue.length, '낙찰사례 저장');
         try {
-            await saveBidCaseBatch(chunk);
-            chunk.forEach(function(d) { bidCaseList.push(d); savedCount++; });
+            await saveBidCaseBatch(chunk.map(function(d) { var o = Object.assign({}, d); delete o._upd; return o; }));
+            chunk.forEach(function(d) {
+                if (d._upd) { delete d._upd; var ix = bidCaseList.findIndex(function(x) { return x.id === d.id; }); if (ix >= 0) bidCaseList[ix] = d; else bidCaseList.push(d); updatedCount++; }
+                else { bidCaseList.push(d); savedCount++; }
+            });
         } catch (e) { failCount += chunk.length; console.error('낙찰사례 저장 실패:', e.message); }
         await new Promise(function(r) { setTimeout(r, 30); }); // 화면이 숨 쉴 틈
     }
@@ -8914,7 +8925,7 @@ async function saveSelectedCases() {
     document.getElementById('bc-paste-text').value = '';
     document.getElementById('bc-preview-box').innerHTML = '';
     statusBox.style.color = '#2e7d32';
-    statusBox.innerText = savedCount + '건 저장 완료.' + (skippedCount ? ' (이미 저장된 사건 ' + skippedCount + '건은 중복이라 건너뜀)' : '') + (failCount ? ' ⚠️ ' + failCount + '건 저장 실패 - 다시 올리면 빠진 것만 저장돼요.' : '');
+    statusBox.innerText = savedCount + '건 저장 완료.' + (updatedCount ? ' (입찰 전에 저장돼 있던 ' + updatedCount + '건은 매각 결과로 갱신)' : '') + (skippedCount ? ' (이미 저장된 사건 ' + skippedCount + '건은 중복이라 건너뜀)' : '') + (failCount ? ' ⚠️ ' + failCount + '건 저장 실패 - 다시 올리면 빠진 것만 저장돼요.' : '');
     renderBidCaseList(); renderBidCaseMarkers();
 }
 async function deleteBidCase(id) {
@@ -20893,14 +20904,15 @@ async function onBoardCsvFile(input) {
         var isSold = function(c) { return !!(c.finalBidPrice && /매각/.test(String(c.status || '')) && !/불허/.test(String(c.status || ''))); };
         var caseList = [], targetList = [], addedNew = 0, noDate = 0;
         var existCaseKeys = {};
-        bidCaseList.forEach(function(c) { var k = bidCaseAddrKey(c); if (k) existCaseKeys[k] = true; var k2 = bidCaseDedupKey(c); if (k2) existCaseKeys[k2] = true; });
-        var caseDup = 0;
+        var noResultKeys = {};  // 매각 결과 없이 저장돼 있는 기록 - 같은 사건의 매각 결과가 오면 '중복'이 아니라 결과를 채워 넣음
+        bidCaseList.forEach(function(c) { var k = bidCaseAddrKey(c); if (k) { existCaseKeys[k] = true; if (!c.finalBidPrice) noResultKeys[k] = true; } var k2 = bidCaseDedupKey(c); if (k2) existCaseKeys[k2] = true; });
+        var caseDup = 0, caseFill = 0;
         all.forEach(function(c) {
             if (!c.saleDate) noDate++;
             var past = c.saleDate ? c.saleDate <= todayKst : null; // 입찰일이 오늘이거나 이전 → 결과가 나온 날
             if (past && isSold(c)) {
                 var k = bidCaseAddrKey(c);
-                if (k && existCaseKeys[k]) caseDup++; else caseList.push(Object.assign({ _selected: true }, c));
+                if (k && existCaseKeys[k] && !noResultKeys[k]) caseDup++; else { if (k && noResultKeys[k]) caseFill++; caseList.push(Object.assign({ _selected: true }, c)); }
                 // 이미 입찰후보로 등록해 둔 물건이면 매각 결과도 그쪽에 반영
                 if (findExistingBidTarget(c)) targetList.push(Object.assign({ _selected: true }, c));
                 return;
@@ -20917,7 +20929,7 @@ async function onBoardCsvFile(input) {
         var tNew = targetList.filter(function(c) { return c._selected && !findExistingBidTarget(c); }).length;
         var tSkip = targetList.filter(function(c) { return !c._selected; }).length;
         bar.innerHTML = '📄 <b>' + all.length + '건</b> 읽음 (기준: 입찰일 ' + todayKst + ' 한국시간)'
-            + '<br>🏆 <b>낙찰사례 ' + caseList.length + '건</b> 등록' + (caseDup ? ' (이미 있는 ' + caseDup + '건 제외)' : '')
+            + '<br>🏆 <b>낙찰사례 ' + caseList.length + '건</b> 등록' + (caseFill ? ' (그중 ' + caseFill + '건은 입찰 전에 저장된 기록에 매각 결과를 채움)' : '') + (caseDup ? ' (이미 있는 ' + caseDup + '건 제외)' : '')
             + ' · 🔨 <b>입찰예정 새 물건 ' + tNew + '건</b> 등록 · 이미 등록된 물건 ' + tExist + '건 결과 반영'
             + (tSkip ? ' · 제외 ' + tSkip + '건(이미 끝난 새 물건·일괄매각)' : '')
             + (dup ? ' · 파일 사이 중복 ' + dup + '건' : '') + (badFiles ? ' · 형식이 다른 파일 ' + badFiles + '개 건너뜀' : '') + (noDate ? ' · 입찰일 없는 ' + noDate + '건은 매각 여부로 구분' : '')
@@ -27984,6 +27996,23 @@ function wrLoadBv() {
 }
 /* 🛠 주간 파이프라인 결과(2026-10-15, 사용자: 파이프라인 확인 결과도 주간 리포트에) - 서버(pipeline-summary.mjs)가 파이프라인 끝에 저장한 단계별 성공·소요 시간·결과물 갱신 시각 */
 /* 📈 정확도 추이(2026-10-25, 사용자: 시세·예상낙찰가·예상매도가·추천가가 매주 정확해지도록) - 서버가 매주 각 단계에서 남긴 '학습에 쓰지 않은 최근 사례' 정확도(accuracy_ledger.py)를 표로 */
+/* 🗺️ 주간 시장 요약(2026-10-25, 사용자 요청) - 서버(market-snapshot.py)가 매주 만든 지역별 시세 흐름·사이클 국면·최근 4주 낙찰 현황. 경고는 참고용(계산 규칙은 안 바뀜) */
+function wrMarketHtml(M) {
+    if (!M || !M.rows) return '<div class="wr-sec"><b>🗺️ 주간 시장 요약</b><div class="pn-muted">아직 기록이 없어요. 이번 주 파이프라인이 끝나면 지역별로 나와요.</div></div>';
+    var pc = function(v) { return v == null ? '-' : (v > 0 ? '+' : '') + v + '%'; }, col = function(v) { return v == null ? '#374151' : (v < 0 ? '#b91c1c' : (v > 0 ? '#15803d' : '#374151')); };
+    var order = ['전체', '서울', '경기', '인천', '부산', '대구', '대전', '울산', '세종', '강원', '충북', '충남', '전북', '전남광주', '경북', '경남', '제주'];
+    var body = order.filter(function(k) { return M.rows[k]; }).map(function(k) {
+        var r = M.rows[k], c = r.cycle, n = r.now, p = r.prev, dr = n && p && n.rate != null && p.rate != null ? Math.round((n.rate - p.rate) * 10) / 10 : null;
+        return '<tr' + (r.warn && r.warn.length ? ' style="background:#fff7ed;"' : '') + '><td><b>' + bbEsc(k) + '</b></td>'
+            + '<td class="r" style="color:' + col(c && c.m3) + ';">' + (c ? pc(c.m3) : '-') + '</td><td class="r" style="color:' + col(c && c.m6) + ';">' + (c ? pc(c.m6) : '-') + '</td><td class="r" style="color:' + col(c && c.m12) + ';">' + (c ? pc(c.m12) : '-') + '</td>'
+            + '<td>' + (c ? bbEsc(c.phase || '-') : '지수 없음') + '</td>'
+            + '<td class="r">' + (n ? n.n + '건 · <b>' + n.rate + '%</b>' + (dr != null ? ' <span style="color:' + (dr > 0 ? '#b45309' : '#6b7280') + ';">(' + (dr > 0 ? '+' : '') + dr + '%p)</span>' : '') : '<span class="pn-muted">표본 적음</span>') + '</td>'
+            + '<td class="r">' + (n && n.biddersMed != null ? n.biddersMed + '명' + (n.crowdPct != null ? ' · 8명+ ' + n.crowdPct + '%' : '') : '-') + '</td>'
+            + '<td>' + ((r.warn || []).map(function(w) { return '<div style="color:#c2410c;">⚠️ ' + bbEsc(w) + '</div>'; }).join('') || '') + '</td></tr>';
+    }).join('');
+    return '<div class="wr-sec"><b>🗺️ 주간 시장 요약</b> <span class="pn-muted">(' + bbEsc(M.week || '') + ')</span><div style="overflow-x:auto;"><table class="pn-table"><thead><tr><th>지역</th><th class="r">시세 3개월</th><th class="r">6개월</th><th class="r">12개월</th><th>국면</th><th class="r">최근 4주 낙찰 · 낙찰가율(전 4주 대비)</th><th class="r">입찰자 중앙값</th><th>경고</th></tr></thead><tbody>' + body + '</tbody></table></div>'
+        + '<div class="pn-muted">시세는 아파트 실거래 지수의 변화, 낙찰가율은 감정가 대비 낙찰가(중앙값)예요. 경고는 시세 3·6개월 모두 하락 · 사이클 하락기 · 거래량 급감 · 낙찰가율 급등일 때 참고로 띄우고, 계산 규칙은 자동으로 바뀌지 않아요. 예측이 아니라 지금까지의 흐름이에요.</div></div>';
+}
 function wrLedgerHtml(L) {
     var M = L && L.metrics; if (!M) return '<div class="wr-sec"><b>📈 정확도 추이</b><div class="pn-muted">아직 기록이 없어요. 이번 주 파이프라인이 끝나면 매주 한 줄씩 쌓여요.</div></div>';
     var ORDER = [['sise', '시세(아파트)'], ['winbid', '예상 낙찰가(아파트)'], ['sale_market_seoul', '예상매도가·서울'], ['sale_market_gi', '예상매도가·경기인천'], ['sale_market_local', '예상매도가·지방'], ['sale_resold', '예상매도가 vs 되판 가격'], ['recbid', '추천가 성적표'], ['winbid_villa', '예상 낙찰가(빌라)'], ['recbid_villa', '추천가 성적표(빌라)'], ['sale_market_villa', '시세·예상매도가(빌라)']];
@@ -28008,7 +28037,7 @@ function wrLoadPl() {
             var st = s2.status !== 'completed' ? '⏳ 진행 중' : (s2.conclusion === 'success' ? '✅ 성공' : (s2.conclusion === 'skipped' ? '⏭️ 건너뜀' : (s2.conclusion === 'cancelled' ? '🚫 취소' : '❌ 실패')));
             return '<tr' + (s2.conclusion && s2.conclusion !== 'success' && s2.conclusion !== 'skipped' ? ' style="background:#fef2f2;"' : '') + '><td>' + bbEsc(s2.name) + (s2.failedSteps && s2.failedSteps.length ? '<div class="pn-muted" style="color:#b91c1c;">실패한 작업: ' + bbEsc(s2.failedSteps.join(', ')) + '</div>' : '') + '</td><td>' + st + '</td><td class="r">' + dur(s2.minutes) + '</td><td class="r">' + kst(s2.end) + '</td></tr>';
         }).join('') + '</tbody></table></div>';
-        h += wrLedgerHtml(d.ledger);
+        h += wrLedgerHtml(d.ledger) + wrMarketHtml(d.market);
         var t0 = d.startedAt ? new Date(d.startedAt).getTime() : 0;
         h += '<div class="wr-sec"><b>결과물이 이번 실행에서 갱신됐나</b><table class="pn-table"><thead><tr><th>결과물</th><th>내용</th><th class="r">갱신 시각</th><th>상태</th></tr></thead><tbody>' + (d.outputs || []).map(function(o) {
             var t = o.at ? new Date(o.at).getTime() : 0, fresh = t >= t0 - 3600000;
