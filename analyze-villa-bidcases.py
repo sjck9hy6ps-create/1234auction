@@ -157,6 +157,39 @@ def main():
         print("층별 되팔림 흔적:", json.dumps(floor_resale, ensure_ascii=False))
     except Exception as e:
         floor_resale = {}; print("층별 되팔림 계산 실패:", e)
+    # 2026-10-25 빌라 추천가 정확도(사용자: 빌라 추천가도 포함) - ① 입찰 전 저장한 추천가(predSnap)와 실제 낙찰 비교(앱이 빌라도 저장하기 시작한 뒤부터 쌓임)
+    #  ② 지금 바로 볼 수 있는 근사: 예상매도가에서 비용과 최소마진 2,000만을 뺀 가격으로 입찰했다면 낙찰됐을 비율·실제 낙찰가÷그 가격(최근 12개월)
+    try:
+        _ab1 = importlib.util.spec_from_file_location("ab", os.path.join(HERE, "analyze-bidcases.py")); ab1 = importlib.util.module_from_spec(_ab1); _ab1.loader.exec_module(ab1)
+        _sl = importlib.util.spec_from_file_location("led", os.path.join(HERE, "accuracy_ledger.py")); led1 = importlib.util.module_from_spec(_sl); _sl.loader.exec_module(led1)
+        TARGET_V = 2000
+        last = pd.to_datetime(str(int(D["sale"].max())), format="%Y%m%d"); since = int((last - pd.DateOffset(months=12)).strftime("%Y%m%d"))
+        Q = D[D["sale"] >= since]
+        rec_sim = (Q["est"] - ab1.FIXED_COST - TARGET_V) / ab1.COST_RATIO
+        ok = rec_sim > 0
+        won = (rec_sim[ok] >= Q["actual"][ok])
+        ratio = (Q["actual"][ok] / rec_sim[ok])
+        rb = {"sim": {"n": int(ok.sum()), "recWonPct": round(float(won.mean()) * 100, 1), "actualOverRec": round(float(ratio.median()), 3), "targetManwon": TARGET_V}}
+        rows = []
+        try:
+            au = requests.get(f"{SITE}/api/auction", timeout=180).json()
+            amap = {(ab1.norm_case(x.get("caseNo")), ab1.region_norm(x.get("addr"))): x for x in au if isinstance(x, dict) and x.get("caseNo") and not x.get("isBacktest")}
+            for r in D.itertuples():
+                x = amap.get((ab1.norm_case(r.caseNo), ab1.region_norm(getattr(r, "addrJibun", None))))
+                sn = ab1.pick_snap(x, r.sale) if x else None
+                if sn and sn.get("recBid"): rows.append((float(sn["recBid"]), float(r.actual), sn.get("win")))
+        except Exception as ex:
+            print("  빌라 저장본 비교 건너뜀:", ex)
+        if rows:
+            X = pd.DataFrame(rows, columns=["rec", "actual", "win"]); X["won"] = X["actual"] <= X["rec"]
+            rb["saved"] = {"n": int(len(X)), "recWonPct": round(float(X["won"].mean()) * 100, 1), "actualOverRec": round(float((X["actual"] / X["rec"]).median()), 3)}
+            W = X[X["win"].notna() & (X["win"] > 0)]
+            if len(W): rb["saved"]["winPredErr"] = round(float(((W["win"] - W["actual"]) / W["actual"]).abs().median()) * 100, 1)
+        print("  빌라 추천가 정확도:", json.dumps(rb, ensure_ascii=False))
+        use = rb.get("saved") if rb.get("saved") and rb["saved"]["n"] >= 20 else rb["sim"]
+        led1.record(ab1.cyc, "recbid_villa", {"n": use["n"], "recWonPct": use["recWonPct"], "actualOverRec": use["actualOverRec"], "winPredErr": use.get("winPredErr"), "basis": "saved" if use is rb.get("saved") else "sim"}, "빌라 추천가(저장본 20건+이면 저장본, 아니면 근사)")
+    except Exception as ex:
+        print("  빌라 추천가 정확도 건너뜀:", ex)
     FIN = [f for f in FAC if f[0] != "dong"]   # 동 요인은 시험에서 개선이 없어 뺌
     mfin = fit_additive(X[tr], y[tr], FIN); pfin = predict(mfin, X[te], FIN)
     resid_q = [round(float(np.quantile(y[te] - pfin, q / 100)), 4) for q in range(1, 100)]
