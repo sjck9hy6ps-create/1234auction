@@ -280,7 +280,7 @@ def main():
                         def wq(v, w, q):
                             o = np.argsort(v); v2 = v[o]; w2 = w[o]; cs = np.cumsum(w2) / w2.sum(); return float(v2[min(np.searchsorted(cs, q), len(v2) - 1)])
                         w90 = 0.5 ** (np.maximum(ages, 0) / 90.0); w180 = 0.5 ** (np.maximum(ages, 0) / 180.0)
-                        rec_est = {"est_q50": float(np.quantile(raw if days == 1095 and False else np.array(vals), 0.5)) * c.area,
+                        rec_est = {"est_q60": float(np.quantile(np.array(vals), 0.6)) * c.area, "est_q50": float(np.quantile(raw if days == 1095 and False else np.array(vals), 0.5)) * c.area,
                                    "est_w90_q50": wq(np.array(vals), w90, 0.5) * c.area, "est_w90_q40": wq(np.array(vals), w90, 0.4) * c.area, "est_w180_q40": wq(np.array(vals), w180, 0.4) * c.area,
                                    "est_idx_q40": float(np.quantile(raw * fi, 0.4)) * c.area, "est_idx_w180_q50": wq(raw * fi, w180, 0.5) * c.area, "est_idx_w90_q50": wq(raw * fi, w90, 0.5) * c.area}
                         o3 = np.argsort(ages)[:3]
@@ -1155,11 +1155,13 @@ def est_rule_asof(g, c, sale_d, cut, cut_ym, idx_at):
     return t2 or t3
 
 
-def est_rule_experiment(R, wb_fit, wb_predict, now):
+def est_rule_experiment(R, wb_fit, wb_predict, now, cands=(("기존", "est"), ("새규칙", "est_rule")), title="낙찰가 모델 시세 기준 비교"):
     """낙찰가 모델의 시세 기준(est)을 새 규칙(est_rule)으로 바꾸면 예상 낙찰가 오차가 줄어드나 - 같은 사례·같은 검증 구간에서 비교"""
     print(f"  새 규칙 시세 계산됨: {int(R['est_rule'].notna().sum()):,}/{len(R):,}건")
-    D = R[R["est"].notna() & (R["est"] > 0) & R["est_rule"].notna() & (R["est_rule"] > 0) & R["actual"].notna() & R["minbid"].notna() & (R["minbid"] > 0) & (R["sale"] >= 20200101)].copy()
-    D = D[np.log(D["actual"] / D["est"]).between(np.log(0.4), np.log(1.6)) & np.log(D["actual"] / D["est_rule"]).between(np.log(0.4), np.log(1.6))]
+    D = R[R["actual"].notna() & R["minbid"].notna() & (R["minbid"] > 0) & (R["sale"] >= 20200101)].copy()
+    for _, col in cands:
+        D = D[D[col].notna() & (D[col] > 0)]
+        D = D[np.log(D["actual"] / D[col]).between(np.log(0.4), np.log(1.6))]
     if len(D) < 3000:
         print("  새 시세 기준 실험: 사례 부족"); return
     last = pd.to_datetime(str(int(D["sale"].max())), format="%Y%m%d")
@@ -1169,7 +1171,7 @@ def est_rule_experiment(R, wb_fit, wb_predict, now):
         cut = int((last - pd.DateOffset(months=months)).strftime("%Y%m%d")); tr, te = D[D["sale"] < cut], D[D["sale"] >= cut]
         if len(te) < 300: continue
         res = {}
-        for nm, col in (("기존", "est"), ("새규칙", "est_rule")):
+        for nm, col in cands:
             T, E = tr.copy(), te.copy(); T["est_o"] = T["est"]; E["est_o"] = E["est"]
             T["est"] = T[col]; E["est"] = E[col]
             m = wb_fit(T); pr = np.exp(wb_predict(m, E)) * E["est"]
@@ -1182,7 +1184,7 @@ def est_rule_experiment(R, wb_fit, wb_predict, now):
                 lines.append({"검증": f"최근 {months}개월", "시세기준": nm, "구분": cls, "n": int(mk.sum()), "보통오차": round(float(np.median(a)) * 100, 2), "방향": round(float(np.median(r[mk])) * 100, 2), "10안": round(float((a <= .1).mean()) * 100, 1), "p90": round(float(np.quantile(a, .9)) * 100, 1)})
     for l in lines: print("  ", json.dumps(l, ensure_ascii=False))
     if os.environ.get("GITHUB_STEP_SUMMARY"):
-        open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8").write("### 낙찰가 모델 시세 기준 비교\n```json\n" + json.dumps(lines, ensure_ascii=False, indent=1) + "\n```\n")
+        open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8").write("### " + title + "\n```json\n" + json.dumps(lines, ensure_ascii=False, indent=1) + "\n```\n")
 
 
 def resale_gap_report(R, now):
@@ -1258,6 +1260,11 @@ def winbid_model(R, now):
         est_rule_experiment(R, wb_fit, wb_predict, now)
     except Exception as e:
         print("  새 시세 기준 실험 건너뜀:", e)
+    try:
+        print("  ▶ 시세 기준 지점(40/50/60%) 비교")
+        est_rule_experiment(R, wb_fit, wb_predict, now, (("40%(현재)", "est"), ("50%", "est_q50"), ("60%", "est_q60")), "시세 기준 지점 40/50/60% 비교")
+    except Exception as e:
+        print("  시세 기준 지점 비교 건너뜀:", e)
     full = wb_fit(D)
     # 경쟁 예상(2026-10-10): 같은 요인으로 로그 응찰자 수를 맞추는 모델 - 앱이 하위 25%(낮음)·상위 25%(높음)로 표시
     try:
