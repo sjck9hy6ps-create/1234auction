@@ -115,6 +115,13 @@ def main():
         e = pr / act - 1
         res[name] = {"n": int(te.sum()), "medAbsErrPct": round(float(np.median(np.abs(e))) * 100, 2), "within10Pct": round(float((np.abs(e) <= .10).mean()) * 100, 1), "biasPct": round(float(np.median(e)) * 100, 2)}
         print(name, res[name])
+        if name == "전체":
+            try:
+                _sp0 = importlib.util.spec_from_file_location("led", os.path.join(HERE, "accuracy_ledger.py")); led = importlib.util.module_from_spec(_sp0); _sp0.loader.exec_module(led)
+                _ab0 = importlib.util.spec_from_file_location("ab", os.path.join(HERE, "analyze-bidcases.py")); ab = importlib.util.module_from_spec(_ab0); _ab0.loader.exec_module(ab)
+                led.record(ab.cyc, "winbid_villa", {"n": int(te.sum()), "err": res[name]["medAbsErrPct"], "bias": round(-float(np.median(e)) * 100, 2), "hi10": round(float((e > 0.10).mean()) * 100, 1), "hit10": res[name]["within10Pct"]}, "빌라 예상 낙찰가(학습 제외 최근)")
+            except Exception as ex:
+                print("  원장 기록 건너뜀(빌라 예상낙찰가):", ex)
     # 상수 비율 기준선
     base = np.exp(np.median(y[tr])) * D["est"].values[te]; e0 = base / D["actual"].values[te] - 1
     res["상수 비율(기준선)"] = {"medAbsErrPct": round(float(np.median(np.abs(e0))) * 100, 2), "within10Pct": round(float((np.abs(e0) <= .10).mean()) * 100, 1)}

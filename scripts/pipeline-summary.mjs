@@ -27,7 +27,7 @@ for (const j of jobs) {
 for (const e of by.values()) stages.push({ name: e.name, status: e.status, conclusion: e.status === 'completed' ? e.concl : null, start: e.start, end: e.end, minutes: e.start && e.end ? Math.round((new Date(e.end) - new Date(e.start)) / 60000) : null, failedSteps: e.steps.slice(0, 3) });
 stages.sort((a, b) => (a.name.match(/^\d+/) ? parseInt(a.name, 10) : 99) - (b.name.match(/^\d+/) ? parseInt(b.name, 10) : 99));
 // 결과물 갱신 시각
-const ids = ['board|cache|meta', 'board|villa|meta', 'bidscore|meta', 'signal|__winbid__', 'signal|__challenger_sale__', 'signal|__liqcurve__', 'signal|__weekly_report__', 'signal|__bidval__', 'signal|__permit__', 'signal|__homestay__', 'cycle|__liquidity__'];
+const ids = ['board|cache|meta', 'board|villa|meta', 'bidscore|meta', 'signal|__winbid__', 'signal|__challenger_sale__', 'signal|__accuracy_ledger__', 'signal|__liqcurve__', 'signal|__weekly_report__', 'signal|__bidval__', 'signal|__permit__', 'signal|__homestay__', 'cycle|__liquidity__'];
 const { data: rows } = await supabase.from('leader_follower_cache').select('id,payload,fetched_at').in('id', ids);
 const g = Object.fromEntries((rows || []).map((r) => [r.id, r]));
 const ts = (r, ...keys) => { if (!r) return null; const p = r.payload || {}; for (const k of keys) { if (p[k]) return typeof p[k] === 'number' ? new Date(p[k]).toISOString() : p[k]; } return r.fetched_at || null; };
@@ -46,7 +46,8 @@ const outputs = [
 ];
 const startedAt = run.run_started_at || run.created_at, now = run.status === 'completed' ? run.updated_at : new Date().toISOString(); // 이미 끝난 실행을 나중에 요약할 땐 그 실행의 끝난 시각
 const failed = stages.filter((s) => s.conclusion && s.conclusion !== 'success');
-const cur = { runId: Number(RUN), url: run.html_url, event: run.event, startedAt, finishedAt: now, totalMinutes: Math.round((new Date(now) - new Date(startedAt)) / 60000), stages, outputs, ok: failed.length === 0 && stages.length > 0, failedStages: failed.map((s) => s.name) };
+const ledger = (g['signal|__accuracy_ledger__'] && g['signal|__accuracy_ledger__'].payload) || null;
+const cur = { ledger, runId: Number(RUN), url: run.html_url, event: run.event, startedAt, finishedAt: now, totalMinutes: Math.round((new Date(now) - new Date(startedAt)) / 60000), stages, outputs, ok: failed.length === 0 && stages.length > 0, failedStages: failed.map((s) => s.name) };
 const { data: prevRow } = await supabase.from('leader_follower_cache').select('payload').eq('id', 'signal|__pipeline__').maybeSingle();
 const hist = ((prevRow && prevRow.payload && prevRow.payload.history) || []).filter((h) => h.runId !== cur.runId);
 hist.unshift({ runId: cur.runId, startedAt, totalMinutes: cur.totalMinutes, ok: cur.ok, failedStages: cur.failedStages, stages: stages.length });

@@ -1206,6 +1206,14 @@ def resale_gap_report(R, now):
     out = {"generatedAt": now, "n": int(len(D)), "from": 20230101, "전체": st(D), "예전시세기준_전체": {"중앙": round(float(D["gap_old"].median()) * 100, 1), "보통오차": round(float(D["gap_old"].abs().median()) * 100, 1)}}
     for key, col in (("지역", "cls"), ("보유기간", "hold"), ("거래수", "nb")):
         out[key] = {str(k): st(G) for k, G in D.groupby(col, observed=True) if len(G) >= 40}
+    try:
+        import accuracy_ledger as _led
+        for nm, col, lb in (("sise", "gap_old", "시세(같은 단지 40% 지점) vs 되판 가격"), ("sale_resold", "gap", "예상매도가 vs 되판 가격")):
+            g = D[col].dropna()
+            _led.record(cyc, nm, {"n": int(len(g)), "err": round(float(g.abs().median()) * 100, 2), "bias": round(float(g.median()) * 100, 2),
+                                  "hi10": round(float((g < -0.10).mean()) * 100, 1), "hit10": round(float((g.abs() <= 0.10).mean()) * 100, 1)}, lb)
+    except Exception as e:
+        print("  원장 기록 건너뜀(시세·예상매도가):", e)
     out["지역×보유기간"] = {f"{k[0]}|{k[1]}": st(G) for k, G in D.groupby(["cls", "hold"], observed=True) if len(G) >= 60}
     print("  되팔기 간극:", json.dumps({k: out[k] for k in ("n", "전체", "예전시세기준_전체", "지역", "보유기간", "거래수")}, ensure_ascii=False))
     if os.environ.get("GITHUB_STEP_SUMMARY"):
@@ -1295,6 +1303,13 @@ def winbid_model(R, now):
         print("  경쟁 예상별 보정 건너뜀:", e)
     full["resQ"] = [round(float(np.quantile(res, q / 100)), 4) for q in range(1, 100)]
     full["oos"] = {"from": cut, "n": int(len(te)), "medAbsErrPct": round(float(np.median(np.abs(np.exp(p) * te["est"] / te["actual"] - 1))) * 100, 1)}
+    try:
+        import accuracy_ledger as _led
+        _r = te["actual"].values / (np.exp(p) * te["est"].values) - 1  # 실제 ÷ 예상 - 1 (+면 실제가 더 높음)
+        _led.record(cyc, "winbid", {"n": int(len(_r)), "err": round(float(np.median(np.abs(_r))) * 100, 2), "bias": round(float(np.median(_r)) * 100, 2),
+                                    "hi10": round(float((_r < -0.10).mean()) * 100, 1), "hit10": round(float((np.abs(_r) <= 0.10).mean()) * 100, 1)}, "예상 낙찰가(학습 제외 최근 1년)")
+    except Exception as e:
+        print("  원장 기록 건너뜀(예상낙찰가):", e)
     full["generatedAt"] = now; full["dataTo"] = int(D["sale"].max())
     print(f"  예상 낙찰가 모델: 사례 {len(D):,}건, 최근 1년 검증 {full['oos']}")
     cyc.upsert_rows([{"id": "signal|__winbid__", "payload": cyc.clean_json(full), "fetched_at": now}])
@@ -1517,6 +1532,13 @@ def weekly_report(R, now_dt, now_iso):
     try:
         out["scorecard"] = scorecard(D, amap)
         print("  추천가 성적표:", {k: v for k, v in out["scorecard"].items() if k != "items"})
+        try:
+            import accuracy_ledger as _led
+            _sc = out["scorecard"]
+            if _sc.get("n"):
+                _led.record(cyc, "recbid", {"n": _sc["n"], "recWonPct": _sc.get("recWonPct"), "actualOverRec": _sc.get("actualOverRecMed"), "winPredErr": _sc.get("winPredMedAbsErrPct"), "probGapPct": _sc.get("probGapPct")}, "추천가 성적표(입찰 전 저장분)")
+        except Exception as e:
+            print("  원장 기록 건너뜀(추천가):", e)
     except Exception as e:
         print("  성적표 건너뜀:", e)
     # 2026-10-19(사용자: "리포트에 예상낙찰가 성적표도") - 최근 12주를 4주 단위로 끊어, 각 구간 이전 사례만으로 만든 모델이 그 구간 낙찰가를 얼마나 맞혔는지(주별·지역별·유찰별)

@@ -62,6 +62,12 @@ jobs:
     secrets: inherit
     needs: analyze-bidcases
     if: ${{ !cancelled() }}
+  refit-villa-robust:
+    name: 8c 빌라 시세·예상매도가 정확도 기록
+    uses: ./.github/workflows/backtest-villa-robust.yml
+    secrets: inherit
+    needs: analyze-villa-bidcases
+    if: ${{ !cancelled() }}
   analyze-homestay:
     name: 9 도시민박 집계
     uses: ./.github/workflows/analyze-homestay.yml

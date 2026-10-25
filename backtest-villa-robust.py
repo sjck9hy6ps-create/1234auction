@@ -77,6 +77,14 @@ def main():
         rows.append({"lvl": lvl, "actual": a, "e50": p50 * r.size, "e40": p40 * r.size, "etr": ptr * r.size, "disp": disp, "jump": jump, "n": int(len(prim[0])), "reg": str(r.region).split()[0]})
     D = pd.DataFrame(rows); D.to_json("backtest-villa-robust.json", orient="records", force_ascii=False)
     print(f"  시험 {len(D):,}건"); report(D)
+    try:  # 2026-10-25 정확도 원장 - 빌라 시세·예상매도가(직전 실거래만으로 다음 거래가 맞히기)
+        _s2 = importlib.util.spec_from_file_location("led", os.path.join(HERE, "accuracy_ledger.py")); led = importlib.util.module_from_spec(_s2); _s2.loader.exec_module(led)
+        _s3 = importlib.util.spec_from_file_location("ab", os.path.join(HERE, "analyze-bidcases.py")); ab = importlib.util.module_from_spec(_s3); _s3.loader.exec_module(ab)
+        r = D["actual"] / D["e50"] - 1
+        led.record(ab.cyc, "sale_market_villa", {"n": int(len(r)), "err": round(float(np.median(np.abs(r))) * 100, 2), "bias": round(float(np.median(r)) * 100, 2),
+                                                  "hi10": round(float((r < -0.10).mean()) * 100, 1), "hi15": round(float((r < -0.15).mean()) * 100, 1)}, "빌라 시세·예상매도가 vs 시장 거래")
+    except Exception as e:
+        print("  원장 기록 건너뜀(빌라):", e)
 
 
 def tail(a, e):

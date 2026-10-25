@@ -118,6 +118,15 @@ def main():
     report(D)
     write_params(D)
     try:
+        import accuracy_ledger as _led
+        for cls, cur in MAIN_RULE.items():
+            d = D[(D.cls == cls) & D[cur].notna()]
+            if len(d) >= 1000:
+                st = _stat(d, cur)
+                _led.record(ab.cyc, "sale_market_" + {"서울": "seoul", "경기·인천": "gi", "지방": "local"}[cls], {"n": st["n"], "err": st["err"], "bias": st["bias"], "hi10": st["hi10"], "hi15": st["hi15"]}, f"예상매도가 vs 시장 거래({cls})")
+    except Exception as e:
+        print("  원장 기록 건너뜀:", e)
+    try:
         write_challenger(D)
     except Exception as e:
         print("  개선 후보 점검 건너뜀:", e)
