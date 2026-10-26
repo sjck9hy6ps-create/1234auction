@@ -1338,6 +1338,20 @@ def winbid_model(R, now):
     try:
         import accuracy_ledger as _led
         _r = te["actual"].values / (np.exp(p) * te["est"].values) - 1  # 실제 ÷ 예상 - 1 (+면 실제가 더 높음)
+        try:  # 2026-10-25 규제지역(토지거래허가구역 지정 시군구) 안/밖 정확도 - 앱의 규제지역 필터와 같은 자료(현재 지정 기준 근사: 낙찰 당시 지정 여부는 아님)
+            _pz = requests.get(f"{SITE_URL}/api/data-coverage?mode=permit", timeout=120).json()
+            _zones = {region_norm(v[3]) for v in (_pz.get("flagged") or {}).values() if len(v) > 3 and v[3]}
+            _zones.discard(None)
+            _inz = te["region"].map(lambda r: r in _zones).values
+            _grp = {}
+            for _nm, _mk in (("규제지역(허가구역) 안", _inz), ("비규제지역", ~_inz)):
+                if _mk.sum() >= 100:
+                    _x = _r[_mk]; _grp[_nm] = {"n": int(_mk.sum()), "err": round(float(np.median(np.abs(_x))) * 100, 2), "bias": round(float(np.median(_x)) * 100, 2), "hi10": round(float((_x < -0.10).mean()) * 100, 1), "hit10": round(float((np.abs(_x) <= 0.10).mean()) * 100, 1), "p90": round(float(np.quantile(np.abs(_x), .9)) * 100, 1)}
+            print("  🚧 규제지역 안/밖 예상 낙찰가 정확도:", json.dumps(_grp, ensure_ascii=False), "| 허가구역 시군구", len(_zones))
+            for _nm, _key in (("규제지역(허가구역) 안", "winbid_permit"), ("비규제지역", "winbid_nonpermit")):
+                if _nm in _grp: _led.record(cyc, _key, {k2: v2 for k2, v2 in _grp[_nm].items() if k2 != "p90"}, "예상 낙찰가 - " + _nm)
+        except Exception as _e:
+            print("  규제지역 구분 정확도 건너뜀:", _e)
         _led.record(cyc, "winbid", {"n": int(len(_r)), "err": round(float(np.median(np.abs(_r))) * 100, 2), "bias": round(float(np.median(_r)) * 100, 2),
                                     "hi10": round(float((_r < -0.10).mean()) * 100, 1), "hit10": round(float((np.abs(_r) <= 0.10).mean()) * 100, 1)}, "예상 낙찰가(학습 제외 최근 1년)")
     except Exception as e:
