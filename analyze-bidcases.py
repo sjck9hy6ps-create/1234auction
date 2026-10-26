@@ -1370,8 +1370,8 @@ def scorecard(D, amap):
     gap = (float(P["won"].mean()) - float(P["prob"].mean())) * 100 if tot else 0
     out["probGapPct"] = round(gap, 1)
     out["needAdjust"] = bool(tot >= 30 and abs(gap) >= 15)
-    out["items"] = [{"case": r["case"], "name": r["name"], "region": r["region"], "sale": r["sale"], "rec": round(r["rec"]), "actual": round(r["actual"]), "won": bool(r["won"]),
-                     "prob": r["prob"], "win": r["win"]} for r in sorted(rows, key=lambda z: -z["sale"])[:60]]
+    out["items"] = [{"case": r["case"], "name": r["name"], "region": r["region"], "sale": int(r["sale"]), "rec": round(r["rec"]), "actual": round(r["actual"]), "won": bool(r["won"]),
+                     "prob": None if pd.isna(r["prob"]) else r["prob"], "win": None if pd.isna(r["win"]) else r["win"]} for _, r in X.sort_values("sale", ascending=False).head(60).iterrows()]
     return out
 
 
