@@ -27527,6 +27527,16 @@ async function remindReportAck() {
     } catch (e) {}
     renderRemindUi();
 }
+// 예상 낙찰가 개선안 확인 알림(2026-10-25 사용자 요청: 개선안을 다음 주 알림에 확인용으로) - 확인했다고 누르면 다시 안 뜸
+async function remindImproveAck() {
+    try {
+        var wr = weeklyReportData; if (!wr) return;
+        var prof = Object.assign({ id: 'profile', year: new Date().getFullYear() }, myAssets.profile || {});
+        prof.improveSeen = String(wr.generatedAt).slice(0, 10);
+        await saveMyAssetItem(prof);
+    } catch (e) {}
+    renderRemindUi();
+}
 async function remindSavePrio(cur, silent) {
     try {
         var prof = Object.assign({ id: 'profile', year: new Date().getFullYear() }, myAssets.profile || {});
@@ -27643,6 +27653,17 @@ function computeReminders() {
             out.push({ key: 'weekly-' + String(wr.generatedAt).slice(0, 10), pri: 1, icon: '📊', title: '새 주간 리포트가 나왔어요',
                 sub: (wr.n ? '지난주 낙찰 ' + wr.n + '건' : '') + (aa ? ' · 예상 낙찰가 보통 오차 ' + aa.medAbsErrPct + '%(평소 5.7%)' : '') + (wr.candReview ? ' · 임장후보 ' + wr.candReview.goWon + '건 낙찰(후보 외 ' + wr.candReview.nonWon + '건)' : (wr.tracked && wr.tracked.n ? ' · 앱에 등록한 물건 ' + wr.tracked.n + '건 낙찰' : '')),
                 btn: '📊 리포트 보기', act: 'openWeeklyReport();remindReportAck()', weeklyAck: true });
+        }
+    } catch (e) {}
+    // ⑧b 예상 낙찰가 개선안 확인(2026-10-25): 다음 주(11/1 파이프라인) 리포트부터, 개선안이 또 현재 방식보다 좋았는지 보고 앱에 반영할지 정하라는 알림. 지난주(10/27 리포트) 결과: 보통 오차 5.45% → 5.11%
+    try {
+        var wr2 = weeklyReportData, ws2 = wr2 && wr2.winScore, iv2 = ws2 && ws2.improved && ws2.improved.variants;
+        if (iv2 && iv2['현재'] && iv2['개선안(둘 다)'] && myAssets && myAssets.loaded && String(wr2.generatedAt).slice(0, 10) >= '2026-10-31' && ((myAssets.profile || {}).improveSeen || '') < String(wr2.generatedAt).slice(0, 10)) {
+            var c0 = iv2['현재'], c1 = iv2['개선안(둘 다)'], dErr = Math.round((c1.medAbsErrPct - c0.medAbsErrPct) * 100) / 100;
+            out.push({ key: 'wb-improve-' + String(wr2.generatedAt).slice(0, 10), pri: 1, icon: '🧪', title: '예상 낙찰가 개선안, 이번 주도 좋아졌는지 확인해 주세요',
+                sub: '이번 주: 보통 오차 현재 ' + c0.medAbsErrPct + '% → 개선안 ' + c1.medAbsErrPct + '% (' + (dErr > 0 ? '+' : '') + dErr + '%p) · 10% 이내 ' + c0.within10Pct + '% → ' + c1.within10Pct + '%'
+                    + '\n지난주(10/27 리포트)는 5.45% → 5.11%였어요. 몇 주 연속 같은 방향이면 앱에 반영(시세 기준을 새 규칙으로, 최근 사례 가중, 유찰별 오차 폭)할지 정해 주세요. 지금은 리포트에서만 비교 중이라 앱 계산은 그대로예요.',
+                btn: '📊 개선안 보기', act: 'openWeeklyReport();setTimeout(function(){wrTab(\'wsc\')},900);remindImproveAck()', weeklyAck: true });
         }
     } catch (e) {}
     // ⑥ 주기적으로 하는 일(매월·분기·매년) - "완료"를 누르면 그 기간엔 다시 안 뜸(내 자산 저장소에 기록 → 맥북·아이패드 같이)
