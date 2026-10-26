@@ -1536,6 +1536,54 @@ def unsold_reason(x, bd, it, go):
     return "결과 미확인(취하·연기·변경 또는 낙찰사례 미등록)"
 
 
+def winscore_improved(D, now_dt):
+    """2026-10-25(사용자: 3가지 개선을 이번 주 리포트에만 적용해 리포트에서 확인) - 최근 12주 성적표와 같은 방식(28일 구간마다 그 이전 사례로 학습)으로 현재 방식과 개선안을 같은 사례에서 비교.
+    개선안 = ① 시세를 새 규칙(est_rule)으로 ② 학습에서 최근 12개월 3배 가중 ③ 낙찰 가능성의 오차 폭을 유찰 횟수별로. 앱의 실제 계산은 바꾸지 않음(리포트 숫자만)."""
+    ymd = lambda d: int(d.strftime("%Y%m%d"))
+    DELTAS = (-0.08, -0.04, 0.0, 0.04, 0.08, 0.12)
+    def cdf(res):
+        q = np.sort(res); return lambda d: np.searchsorted(q, d, side="right") / max(len(q), 1)
+    def fb(df): return df["fails"].map(lambda f: "?" if f is None or pd.isna(f) else str(min(int(f), 2)))
+    acc = {"현재": [], "시세 새 규칙": [], "최근 가중": [], "개선안(둘 다)": []}; br = {"현재(오차 폭 하나)": [], "유찰별 오차 폭": []}; ns = 0
+    for b in range(3):
+        b_to = now_dt - timedelta(days=28 * b); b_from = b_to - timedelta(days=28)
+        lo_i, hi_i = ymd(b_from), ymd(b_to)
+        has = D["est_rule"].notna() & (D["est_rule"] > 0) & np.log(D["actual"] / D["est_rule"].where(D["est_rule"] > 0)).between(np.log(0.4), np.log(1.6))
+        Dv = D[has]
+        T = Dv[(Dv["sale"] >= lo_i) & (Dv["sale"] < hi_i)].copy(); Tr = Dv[Dv["sale"] < lo_i]
+        if len(T) < 30 or len(Tr) < 3000: continue
+        ns += len(T)
+        since12 = ymd(b_from - pd.DateOffset(months=12))
+        Tr2 = Tr.copy(); Tr2["est"] = Tr2["est_rule"]; T2 = T.copy(); T2["est"] = T2["est_rule"]
+        Trw = pd.concat([Tr, Tr[Tr["sale"] >= since12], Tr[Tr["sale"] >= since12]]); Trw2 = pd.concat([Tr2, Tr2[Tr2["sale"] >= since12], Tr2[Tr2["sale"] >= since12]])
+        variants = {"현재": (wb_fit(Tr), T, "est"), "시세 새 규칙": (wb_fit(Tr2), T2, "est"), "최근 가중": (wb_fit(Trw), T, "est"), "개선안(둘 다)": (wb_fit(Trw2), T2, "est")}
+        for nm, (m, TT, col) in variants.items():
+            pr = np.exp(wb_predict(m, TT)) * TT[col]; X = TT.copy(); X["pred"] = pr; X["actual_"] = TT["actual"]
+            X["base_est"] = T["est"].values  # 비교용: 같은 사례
+            acc[nm].append(X[["pred", "actual", "region"]])
+        # 낙찰 가능성: 개선안 모델의 시험 잔차를 전체 하나 / 유찰별 분포로 평가(학습 잔차는 4분할)
+        Ts = Trw2.sort_values("sale"); fo = np.array_split(np.arange(len(Ts)), 4); oof = np.zeros(len(Ts))
+        for k in range(4):
+            idx = fo[k]; rest = np.setdiff1d(np.arange(len(Ts)), idx)
+            oof[idx] = wb_predict(wb_fit(Ts.iloc[rest]), Ts.iloc[idx])
+        res_tr = np.log(Ts["actual"].values / Ts["est"].values) - oof
+        res_te = np.log(T2["actual"].values / T2["est"].values) - wb_predict(variants["개선안(둘 다)"][0], T2)
+        glob = cdf(res_tr); g_tr = fb(Ts).values; g_te = fb(T2).values
+        cd = {k: cdf(res_tr[g_tr == k]) for k in set(g_tr) if (g_tr == k).sum() >= 150}
+        for d in DELTAS:
+            ev = (res_te <= d).astype(float)
+            br["현재(오차 폭 하나)"].append(((np.full(len(res_te), glob(d)) - ev) ** 2).tolist())
+            br["유찰별 오차 폭"].append(((np.array([cd[k](d) if k in cd else glob(d) for k in g_te]) - ev) ** 2).tolist())
+    if not acc["현재"]: return None
+    def st(parts):
+        A = pd.concat(parts); e = (A["pred"] - A["actual"]) / A["actual"]; a = e.abs()
+        return {"n": int(len(A)), "medAbsErrPct": round(float(a.median()) * 100, 2), "within10Pct": round(float((a <= 0.10).mean()) * 100, 1), "biasPct": round(float(e.median()) * 100, 2),
+                "overPct": round(float((e > 0.10).mean()) * 100, 1), "p90AbsPct": round(float(a.quantile(.9)) * 100, 1)}
+    out = {"n": ns, "variants": {nm: st(v) for nm, v in acc.items()}, "brier": {nm: round(float(np.mean(np.concatenate([np.array(x) for x in v]))), 5) for nm, v in br.items()},
+           "components": ["시세 새 규칙(est_rule)", "최근 12개월 3배 가중", "낙찰 가능성 오차 폭을 유찰 횟수별로"]}
+    return out
+
+
 def weekly_report(R, now_dt, now_iso):
     D = R[R["est"].notna() & (R["est"] > 0) & R["actual"].notna() & R["minbid"].notna() & (R["minbid"] > 0) & (R["sale"] >= 20200101)].copy()
     D = D[np.log(D["actual"] / D["est"]).between(np.log(0.4), np.log(1.6))]
@@ -1689,6 +1737,15 @@ def weekly_report(R, now_dt, now_iso):
                 G = A[A["fb"] == lab]
                 if len(G) >= 30: ws["byFails"].append(dict(label=lab, **sc_stat(G)))
             ws["from"] = int(A["sale"].min()); ws["to"] = int(A["sale"].max())
+        try:
+            ws["improved"] = winscore_improved(D, now_dt)
+            print("  🆕 예상 낙찰가 개선안 비교:", json.dumps(ws["improved"], ensure_ascii=False))
+            if ws["improved"]:
+                import accuracy_ledger as _led
+                _v = ws["improved"]["variants"]["개선안(둘 다)"]
+                _led.record(cyc, "winbid_v2", {"n": _v["n"], "err": _v["medAbsErrPct"], "bias": _v["biasPct"], "hi10": _v["overPct"], "hit10": _v["within10Pct"]}, "예상 낙찰가 개선안(리포트용, 앱 미적용)")
+        except Exception as e:
+            print("  개선안 비교 건너뜀:", e)
         out["winScore"] = ws
         print("  예상 낙찰가 성적표:", ws.get("all"), "주", len(ws["weeks"]))
     except Exception as e:

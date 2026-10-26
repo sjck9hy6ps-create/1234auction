@@ -28179,6 +28179,15 @@ function wrRenderWinScore(ws) {
         + '<tr><td>4건 중 3건은 이 안</td><td class="r"><b>' + pc(a.p75AbsPct) + '</b></td></tr><tr><td>10건 중 9건은 이 안</td><td class="r"><b>' + pc(a.p90AbsPct) + '</b> · ' + toEok(String(a.p90AbsAmt)) + '</td></tr>'
         + '<tr><td>실제보다 10% 넘게 높게 예측</td><td class="r">' + pc(a.overPct) + '</td></tr><tr><td>실제보다 10% 넘게 낮게 예측</td><td class="r">' + pc(a.underPct) + '</td></tr>'
         + '<tr><td>낙찰가 중앙값(참고)</td><td class="r">' + toEok(String(a.medActual)) + '</td></tr></tbody></table></div>';
+    if (ws.improved && ws.improved.variants) {
+        var iv = ws.improved.variants, base = iv['현재'], bz = ws.improved.brier || {};
+        var dl = function(v, b, low) { if (v == null || b == null) return ''; var d = Math.round((v - b) * 100) / 100; if (Math.abs(d) < 0.005) return ''; var good = low ? d < 0 : d > 0; return ' <span style="color:' + (good ? '#15803d' : '#b91c1c') + ';">(' + (d > 0 ? '+' : '') + d + ')</span>'; };
+        h += '<div class="wr-sec"><b>🆕 개선안 비교</b> <span class="pn-muted">(같은 ' + ws.improved.n + '건으로 비교 · 앱의 실제 계산은 아직 그대로, 리포트에서만 확인)</span><table class="pn-table"><thead><tr><th>방식</th><th class="r">보통 오차</th><th class="r">±10% 안</th><th class="r">10% 넘게 높게 예측</th><th class="r">10건 중 9건은 이 안</th></tr></thead><tbody>'
+            + Object.keys(iv).map(function(k) { var x = iv[k]; return '<tr' + (k === '개선안(둘 다)' ? ' style="background:#f0fdf4;"' : '') + '><td>' + bbEsc(k) + '</td><td class="r"><b>' + x.medAbsErrPct + '%</b>' + (k !== '현재' ? dl(x.medAbsErrPct, base.medAbsErrPct, true) : '') + '</td><td class="r">' + x.within10Pct + '%' + (k !== '현재' ? dl(x.within10Pct, base.within10Pct, false) : '') + '</td><td class="r">' + x.overPct + '%' + (k !== '현재' ? dl(x.overPct, base.overPct, true) : '') + '</td><td class="r">' + x.p90AbsPct + '%</td></tr>'; }).join('')
+            + '</tbody></table>'
+            + (bz['현재(오차 폭 하나)'] != null ? '<div class="pn-muted">낙찰 가능성 점수(낮을수록 좋음): 오차 폭을 하나로 쓰면 <b>' + bz['현재(오차 폭 하나)'] + '</b> → 유찰 횟수별로 나누면 <b>' + bz['유찰별 오차 폭'] + '</b>' + dl(bz['유찰별 오차 폭'], bz['현재(오차 폭 하나)'], true) + '</div>' : '')
+            + '<div class="pn-muted">개선안 = ' + (ws.improved.components || []).map(bbEsc).join(' + ') + '. 괄호는 현재 방식 대비 변화(초록=좋아짐). 새 시세 규칙 값이 있는 사례만 비교해서 위 누적 성적과 건수가 조금 달라요.</div></div>';
+    }
     if (ws.weeks && ws.weeks.length) h += '<div class="wr-sec"><b>주별</b><table class="pn-table">' + th.replace('<th></th>', '<th>낙찰 주(월요일)</th>') + '<tbody>' + ws.weeks.slice().reverse().map(function(x) { return row(x, wrYmd(x.week)); }).join('') + '</tbody></table></div>';
     if (ws.byClass && ws.byClass.length) h += '<div class="wr-sec"><b>지역별</b><table class="pn-table">' + th + '<tbody>' + ws.byClass.map(function(x) { return row(x, x.label); }).join('') + '</tbody></table></div>';
     if (ws.byFails && ws.byFails.length) h += '<div class="wr-sec"><b>유찰별</b><table class="pn-table">' + th + '<tbody>' + ws.byFails.map(function(x) { return row(x, x.label); }).join('') + '</tbody></table></div>';
