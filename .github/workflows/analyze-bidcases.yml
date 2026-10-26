@@ -3,7 +3,12 @@ name: Analyze bid cases
 
 on:
   workflow_call:       # 주간 파이프라인(weekly-pipeline.yml)이 순서대로 부름 - 단독 일정은 없앰(2026-10-11)
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      experiment:
+        description: '예상 낙찰가 개선 실험도 함께 실행(앱 계산은 바뀌지 않음)'
+        required: false
+        default: 'false'
 
 jobs:
   analyze:
@@ -20,6 +25,7 @@ jobs:
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
           SITE_URL: ${{ secrets.SITE_URL }}
           PYTHONUNBUFFERED: '1'
+          WB_EXP: ${{ github.event.inputs.experiment == 'true' && '1' || '' }}
         run: python analyze-bidcases.py
       - uses: actions/upload-artifact@v4
         if: always()

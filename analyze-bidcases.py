@@ -1305,6 +1305,15 @@ def winbid_model(R, now):
         est_rule_experiment(R, wb_fit, wb_predict, now, (("40%(현재)", "est"), ("50%", "est_q50"), ("60%", "est_q60")), "시세 기준 지점 40/50/60% 비교")
     except Exception as e:
         print("  시세 기준 지점 비교 건너뜀:", e)
+    if os.environ.get("WB_EXP"):  # 2026-10-25 예상 낙찰가 개선 실험(수동 실행 때만) - 앱 계산은 바꾸지 않음
+        try:
+            import winbid_experiments as _we
+            _pz = requests.get(f"{SITE_URL}/api/data-coverage?mode=permit", timeout=120).json()
+            _zn = {region_norm(v[3]) for v in (_pz.get("flagged") or {}).values() if len(v) > 3 and v[3]}; _zn.discard(None)
+            print("  R 열:", list(R.columns))
+            _we.run(D, tr, te, wb_fit, wb_predict, _zn, est_rule_experiment, R, now)
+        except Exception as e:
+            import traceback; traceback.print_exc(); print("  개선 실험 건너뜀:", e)
     full = wb_fit(D)
     # 경쟁 예상(2026-10-10): 같은 요인으로 로그 응찰자 수를 맞추는 모델 - 앱이 하위 25%(낮음)·상위 25%(높음)로 표시
     try:
