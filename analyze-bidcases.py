@@ -1415,7 +1415,7 @@ def scorecard(D, amap):
         sn = pick_snap(x, r.sale)
         if not sn or not sn.get("recBid"):
             continue
-        rows.append({"case": r.caseNo, "name": r.bname or x.get("name") or "", "region": r.region, "sale": int(r.sale), "actual": float(r.actual), "rec": float(sn["recBid"]),
+        rows.append({"case": r.caseNo, "name": (r.bname if isinstance(r.bname, str) and r.bname.strip() and r.bname != "nan" else None) or x.get("name") or "", "region": r.region, "sale": int(r.sale), "actual": float(r.actual), "rec": float(sn["recBid"]),
                      "prob": sn.get("prob"), "win": sn.get("win"), "minbid": float(r.minbid), "at": sn.get("at")})
     out = {"n": len(rows)}
     if not rows:
