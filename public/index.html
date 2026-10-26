@@ -9240,9 +9240,17 @@ function renderBidTargetPreview() {
 // 사건번호로 이미 등록된 관심물건(auctionList)과 중복 등록되지 않게 막는 기준(낙찰사례의
 // bidCaseDedupKey와 같은 목적). caseNo가 없는 항목은 식별 불가하므로 dedup 대상에서 제외함.
 // normalizeCaseNoForCompare로 "타경" 유무 등 표기 차이를 흡수함(2026-08 버그수정).
-function bidTargetDedupKey(c) {
+// 2026-10-25(사용자: CSV 금액 추출 오차 없게) - 사건번호는 법원마다 따로 매겨져 서로 다른 물건이 같은 번호를 가짐(2026-50579가 잠실·광양·용인 세 곳) → 사건번호만으로 같은 물건이라 보면
+// 다른 물건의 감정가·최저가가 덮어써짐(잠실 물건에 용인 금액이 들어감). 동·지번이 있으면 함께 비교
+function bidTargetCaseKey(c) {
     if (!c || !c.caseNo) return null;
     return normalizeCaseNoForCompare(c.caseNo);
+}
+function bidTargetDedupKey(c) {
+    var k = bidTargetCaseKey(c);
+    if (!k) return null;
+    var d = c.dong ? dongKey(c.dong) : '', b = String(c.bunji || '').trim();
+    return d && b ? k + '|' + d + '|' + b : k;
 }
 // ⚠️ 2026-09(일동 560-2 금성타운 사례로 발견 - "건축물대장이 안 불러와져") -
 // geocoder.addressSearch가 후보를 여러 개 반환할 때, 입력 주소에 분명히 부번지(-N)가
@@ -9281,16 +9289,44 @@ function pickBestGeocodeResult(list, addrText) {
 // 2026-10-16: 1만 건 CSV를 올릴 때 건마다 경매물건 전체(4천여 건)의 키를 다시 계산해 화면이 멈췄음 → 키→위치 색인을 한 번 만들어 재사용(목록 길이가 바뀌거나 위치가 어긋나면 다시 만듦)
 var btIndex = null, btIndexLen = -1;
 function findExistingBidTarget(c) {
-    var k = bidTargetDedupKey(c);
+    var k = bidTargetDedupKey(c), kc = bidTargetCaseKey(c);
     if (!k) return null;
     if (!btIndex || btIndexLen !== auctionList.length) {
-        btIndex = {}; btIndexLen = auctionList.length;
-        for (var i = 0; i < auctionList.length; i++) { var a0 = auctionList[i]; if (a0 && !a0.isBacktest) { var k0 = bidTargetDedupKey(a0); if (k0 && btIndex[k0] == null) btIndex[k0] = i; } }
+        btIndex = { full: {}, byCase: {} }; btIndexLen = auctionList.length;
+        for (var i = 0; i < auctionList.length; i++) {
+            var a0 = auctionList[i]; if (!a0 || a0.isBacktest) continue;
+            var k0 = bidTargetDedupKey(a0), kc0 = bidTargetCaseKey(a0);
+            if (k0 && btIndex.full[k0] == null) btIndex.full[k0] = i;
+            if (kc0) (btIndex.byCase[kc0] = btIndex.byCase[kc0] || []).push(i);
+        }
     }
-    var ix = btIndex[k], a = ix != null ? auctionList[ix] : null;
-    if (a && !a.isBacktest && bidTargetDedupKey(a) === k) return a;
-    if (ix != null) { btIndex = null; return auctionList.find(function(x) { return bidTargetDedupKey(x) === k && !x.isBacktest; }) || null; }
+    var ix = btIndex.full[k], a = ix != null ? auctionList[ix] : null;
+    if (a && !a.isBacktest) return a;
+    // 주소(동·지번)가 없는 쪽이면 사건번호만으로 찾되, 후보가 여럿이면 주소가 맞는 것만. 주소가 서로 다르면 다른 물건
+    var list = btIndex.byCase[kc] || [];
+    for (var j = 0; j < list.length; j++) {
+        var x = auctionList[list[j]];
+        if (x && !x.isBacktest && bidTargetSameAddr(x, c)) return x;
+    }
     return null;
+}
+// 두 물건이 같은 주소인가: 동·지번이 모두 있으면 둘 다 같아야 함. 한쪽에 없으면 주소 문자열에 그 동·지번이 들어 있는지로 확인. 둘 다 정보가 없으면 같다고 봄(예전 방식)
+function bidTargetSameAddr(a, c) {
+    var cd = c.dong ? dongKey(c.dong) : '', cb = String(c.bunji || '').trim();
+    var ad = a.dong ? dongKey(a.dong) : '', ab = String(a.bunji || '').trim();
+    if (cd && cb && ad && ab) {  // 번지가 같아야 하고, 동은 표기가 달라도(읍·리) 한쪽 주소에 다른 쪽 동이 들어 있으면 같음
+        if (cb !== ab) return false;
+        if (cd === ad) return true;
+        var ta = ' ' + String(a.addr || '') + ' ' + String(a.addrLabel || '') + ' ', tc = ' ' + String(c.addrJibun || '') + ' ';
+        return ta.indexOf(' ' + cd + ' ') >= 0 || tc.indexOf(' ' + ad + ' ') >= 0;
+    }
+    if (cd && cb) { var t = ' ' + String(a.addr || '') + ' ' + String(a.addrLabel || '') + ' '; return t.indexOf(' ' + cd + ' ') >= 0 && new RegExp('[\\s,]' + cb.replace(/[-\\.]/g, '\\$&') + '(?![\\d-])').test(t); }
+    return true;
+}
+// CSV가 정답(법원 자료): 저장된 감정가가 CSV와 2% 넘게 다르면 잘못 저장된 금액(다른 물건 금액이 섞였던 경우 등) - 감정가·최저가를 CSV 값으로 바로잡음
+function bidTargetAmountMismatch(a, c) {
+    var ca = c.appraisalPrice ? Math.round(c.appraisalPrice / 10000) : 0, aa = parseInt(a.appraisal) || 0;
+    return !!(ca && aa && Math.abs(ca / aa - 1) > 0.02);
 }
 function classifyBidTargetUpdate(a, c) {
     var st = String(c.status || '').replace(/\s+/g, '');
@@ -9299,12 +9335,22 @@ function classifyBidTargetUpdate(a, c) {
     if (/매각/.test(st) && !/불허/.test(st)) return { kind: 'sold', label: '매각됨' + (c.finalBidPrice ? '(낙찰 ' + toEok(String(Math.round(c.finalBidPrice / 10000))) + ')' : '') };
     if (/취하|기각|정지|종결|각하|취소/.test(st)) return { kind: 'closed', label: st + ' - 보드에서 뺌' };
     if (newMin && oldMin && newMin < oldMin * 0.99) return { kind: 'fail', label: '유찰 반영: 최저가 ' + toEok(String(oldMin)) + ' → ' + toEok(String(newMin)) + (c.saleDate ? ', 입찰일 ' + c.saleDate : '') };
+    if (bidTargetAmountMismatch(a, c)) return { kind: 'fix', label: '금액 바로잡음: 감정가 ' + toEok(String(parseInt(a.appraisal) || 0)) + ' → ' + toEok(String(Math.round(c.appraisalPrice / 10000))) };
     if (c.saleDate && c.saleDate !== a.bidDate) return { kind: 'reschedule', label: '입찰일 변경: ' + (a.bidDate || '?') + ' → ' + c.saleDate };
     return { kind: 'same', label: '변동 없음' };
 }
 function applyBidTargetUpdate(a, c, upd) {
     var b = Object.assign({}, a);
     b.court = c.court || b.court || null;
+    if (bidTargetAmountMismatch(a, c)) {  // 금액이 어긋난 기록: 감정가·최저가를 CSV 값으로(유찰 횟수·입찰일도 CSV 기준)
+        b.appraisal = Math.round(c.appraisalPrice / 10000);
+        if (c.minBidPrice) b.minBid = Math.round(c.minBidPrice / 10000);
+        if (c.failCount != null) b.failCount = c.failCount;
+        if (c.saleDate) b.bidDate = c.saleDate;
+        b.amountFixedAt = new Date().toISOString().slice(0, 10);
+        delete b.predSnap;  // 잘못된 금액으로 저장된 예전 예측은 비교에서 뺌
+        if (upd.kind === 'fix') return b;
+    }
     b.resultCheckedAt = new Date().toISOString().slice(0, 10);
     if (upd.kind === 'sold' || upd.kind === 'closed') {
         b.courtResult = upd.kind === 'sold' ? '매각' : String(c.status || '').trim();
@@ -9395,7 +9441,7 @@ async function saveSelectedBidTargets() {
     var existingKeys = {};
     auctionList.forEach(function(a) { var k = bidTargetDedupKey(a); if (k) existingKeys[k] = true; });
     var savedCount = 0, skippedCount = 0, noPinCount = 0;
-    var upCount = { fail: 0, reschedule: 0, sold: 0, closed: 0 }, prevVerdicts = {}, updatedIds = [], newIds = [];
+    var upCount = { fail: 0, reschedule: 0, sold: 0, closed: 0, fix: 0 }, prevVerdicts = {}, updatedIds = [], newIds = [];
     var prevRowById = {};
     bidBoardRows.forEach(function(r) { prevRowById[r.id] = r; });
     var pendingSaves = [], readySaves = [], jobs = [], saveFail = 0, savedSoFar = 0;
@@ -9462,7 +9508,7 @@ async function saveSelectedBidTargets() {
     document.getElementById('bt-paste-text').value = '';
     document.getElementById('bt-preview-box').innerHTML = '';
     statusBox.style.color = '#2e7d32';
-    var upTotal = upCount.fail + upCount.reschedule + upCount.sold + upCount.closed;
+    var upTotal = upCount.fail + upCount.reschedule + upCount.sold + upCount.closed + upCount.fix;
     statusBox.innerText = savedCount + '건 등록 완료.'
         + (upTotal ? ' 이미 등록된 물건 ' + upTotal + '건 결과 반영(' + [upCount.fail ? '유찰 ' + upCount.fail : '', upCount.reschedule ? '기일변경 ' + upCount.reschedule : '', upCount.sold ? '매각 ' + upCount.sold : '', upCount.closed ? '취하 등 ' + upCount.closed : ''].filter(Boolean).join('·') + ').' : '')
         + (skippedCount ? ' (변동 없는 사건 ' + skippedCount + '건은 건너뜀)' : '')
@@ -18949,13 +18995,25 @@ function winbidBaseEst(a, pyung) {
     }
     return null;
 }
-function winbidProbAt(wb, bid) {
-    if (!wb || !bid) return null;
+function winbidProbRaw(wb, bid) {
     var thr = Math.log(bid / wb.est) - wb.pred, q = winbidModel.resQ;
     if (thr <= q[0]) return 0.01;
     if (thr >= q[q.length - 1]) return 0.99;
     for (var i = 1; i < q.length; i++) if (thr <= q[i]) return (i + (thr - q[i - 1]) / ((q[i] - q[i - 1]) || 1)) / 100;
     return 0.99;
+}
+/* 2026-10-25 낙찰 가능성 보정(사용자: 추천가 정확도) - 입찰 전 저장한 '낙찰 가능성'과 실제 낙찰 결과 약 540건으로 만든 보정표(서버가 매주 갱신, 시간순 검증을 통과했을 때만 저장됨):
+   높게 나온 구간이 실제보다 크게 높았음(73% 예측 → 16% 실제). 보정값이 원래보다 낮을 때만 깎아서 씀(올리지는 않음). 표가 없으면 원래 값 그대로 */
+function winbidProbAt(wb, bid) {
+    if (!wb || !bid) return null;
+    var p = winbidProbRaw(wb, bid), cal = winbidModel && winbidModel.probCal && winbidModel.probCal.knots;
+    if (cal && cal.length >= 2) {
+        var c;
+        if (p <= cal[0][0]) c = cal[0][1]; else if (p >= cal[cal.length - 1][0]) c = cal[cal.length - 1][1];
+        else { for (var i = 1; i < cal.length; i++) if (p <= cal[i][0]) { c = cal[i - 1][1] + (cal[i][1] - cal[i - 1][1]) * ((p - cal[i - 1][0]) / ((cal[i][0] - cal[i - 1][0]) || 1)); break; } }
+        if (typeof c === 'number' && c < p) p = Math.max(0.01, c);
+    }
+    return p;
 }
 function winbidFor(row) {
     var a = row.a;
@@ -19002,6 +19060,8 @@ function winbidFor(row) {
     var wb = { est: b.est, own: b.own, pred: pred, price: Math.round(b.est * Math.exp(pred)), bidN: bidN, comp: comp, compShift: compShift };
     wb.probRec = row.recBid ? winbidProbAt(wb, row.recBid) : null;
     wb.probAggr = row.recAggr ? winbidProbAt(wb, row.recAggr) : null;
+    // 2026-10-25 입력 금액 점검: 감정가가 시세의 30% 미만·3배 초과이거나 최저가가 감정가보다 높으면 금액이 잘못 들어갔을 가능성(실제로 다른 물건 금액이 섞여 저장된 사례 확인) → 낙찰 가능성을 계산하지 않음
+    if (apr > 0 && (apr / b.est < 0.3 || apr / b.est > 3 || row.minBid > apr * 1.05)) { wb.amountSuspect = true; wb.probRec = null; wb.probAggr = null; }
     wb.gapPct = row.recBid ? Math.round((row.recBid / wb.price - 1) * 1000) / 10 : null;
     return wb;
 }
@@ -19917,7 +19977,7 @@ async function mergeServerBoardCache(local, onlyFirst) {
 setTimeout(function() { try { listIdbOp('readwrite', function(st) { return st.delete('bidBoardCache:v1'); }); } catch (e) {} }, 4000); // 예전 큰 로컬 저장본(서버 계산본 포함, 수십 MB)은 읽지 않고 지움(느린 기기에서 열 때 수 초 멈춤, 2026-10-21)
 setTimeout(function() { var go = function() { try { srvBoardParts(); setTimeout(function() { try { window.villaSrvP = villaFetchServerCalc(); } catch (e) {} }, 4000); } catch (e) {} }; if (window.requestIdleCallback) requestIdleCallback(go, { timeout: 6000 }); else go(); }, 2500); // 앱을 켜고 2.5초 뒤 한가할 때 배경에서 미리 받기(빌라는 4초 더 뒤)
 // 저장 계산을 다시 써도 되는지 - 물건 입력값(시세 계산에 쓰는 것)과 입찰일 지남 여부. 계산 방식이 바뀌면 BOARD_CALC_VER을 올림
-var BOARD_CALC_VER = 54; // 54: 튀는 가격 반영 안 함·경고만(2026-10-24) - // 53: 최근 거래 시세반영/튀는 가격 구별(2026-10-24) - // 52: 임장 생략 판정(2026-10-19) - // 51: 전세가율 구간 보정·위험 신호(2026-10-18) - // 50: 지방 최근 거래 비슷한 층 비중·1~2건은 12개월 원값(2026-10-18) - // 49: 근거 약함 경고를 판정 단계에서 다시 붙임 - // 48: 예상매도가-감정가 큰 차이 근거 약함 표시 - // 47: 다른 평형 환산이 같은 평형과 20% 넘게 다르면 섞지 않음 - // 46: 같은 동 추론(③④) 제거·거래 없는 단지는 기존 주변 비교 + 근거 약함(2026-10-18) - // 45: 회전율 구간별 보정 항상 적용(주간 갱신 표, 2026-10-17) - // 44: 추론에 최근 6개월 1~2건 포함 - // 43: 6개월 거래 부족 시 단계별 추론(2026-10-17) - // 42: 지역별 예상매도가(서울 최근3건·경기인천 반감1개월·지방 반감2개월)와 위험 여유(2026-10-17) - // 41: 아파트 예상매도가를 최근 6개월 같은 평형 거래의 최근가중 중위값으로(전국 백테스트, 2026-10-17) - // 40: 임차인 둘로 읽힌 경우 별개/같은 임차권(갱신·승계) 선택(2026-10-11) - // 39: 39: 임차권등기를 임차인으로 계산(전입·확정일자 기준)·경매신청인 전세권 안내(2026-10-11) - // 38: 38: 권리분석 날짜 선후 규칙 정리(전입 다음 날 0시·동순위 안분, 2026-10-11) - // 37: 37: 권리분석에 말소기준일보다 앞선 전세권·임차권 등 등기부 인수 권리 반영(2026-10-11) - // 36: 저가 아파트 순이익률 10% 추천가 규칙 되돌림(2026-10-11, 백테스트 손해 30~42%) - // 34: 33: 아파트 고층 보정 축소·저층 범위(2026-10-11) - // 29: nYear 저장 추가 - // 27: 🎲 예상 낙찰가용 시세(wbBase) 추가 (범위 표시는 화면에서 바로 계산 - 버전 변경 없음)
+var BOARD_CALC_VER = 55; // 54: 튀는 가격 반영 안 함·경고만(2026-10-24) - // 53: 최근 거래 시세반영/튀는 가격 구별(2026-10-24) - // 52: 임장 생략 판정(2026-10-19) - // 51: 전세가율 구간 보정·위험 신호(2026-10-18) - // 50: 지방 최근 거래 비슷한 층 비중·1~2건은 12개월 원값(2026-10-18) - // 49: 근거 약함 경고를 판정 단계에서 다시 붙임 - // 48: 예상매도가-감정가 큰 차이 근거 약함 표시 - // 47: 다른 평형 환산이 같은 평형과 20% 넘게 다르면 섞지 않음 - // 46: 같은 동 추론(③④) 제거·거래 없는 단지는 기존 주변 비교 + 근거 약함(2026-10-18) - // 45: 회전율 구간별 보정 항상 적용(주간 갱신 표, 2026-10-17) - // 44: 추론에 최근 6개월 1~2건 포함 - // 43: 6개월 거래 부족 시 단계별 추론(2026-10-17) - // 42: 지역별 예상매도가(서울 최근3건·경기인천 반감1개월·지방 반감2개월)와 위험 여유(2026-10-17) - // 41: 아파트 예상매도가를 최근 6개월 같은 평형 거래의 최근가중 중위값으로(전국 백테스트, 2026-10-17) - // 40: 임차인 둘로 읽힌 경우 별개/같은 임차권(갱신·승계) 선택(2026-10-11) - // 39: 39: 임차권등기를 임차인으로 계산(전입·확정일자 기준)·경매신청인 전세권 안내(2026-10-11) - // 38: 38: 권리분석 날짜 선후 규칙 정리(전입 다음 날 0시·동순위 안분, 2026-10-11) - // 37: 37: 권리분석에 말소기준일보다 앞선 전세권·임차권 등 등기부 인수 권리 반영(2026-10-11) - // 36: 저가 아파트 순이익률 10% 추천가 규칙 되돌림(2026-10-11, 백테스트 손해 30~42%) - // 34: 33: 아파트 고층 보정 축소·저층 범위(2026-10-11) - // 29: nYear 저장 추가 - // 27: 🎲 예상 낙찰가용 시세(wbBase) 추가 (범위 표시는 화면에서 바로 계산 - 버전 변경 없음)
 /* 2026-10-15(사용자: 입찰후보 로딩이 느림 - 원인 실측): 식별값 끝의 'P/F'(입찰일 지남 여부)가 한국 시각 자정에 바뀌어, 서버 미리 계산이 돈 뒤 어제 입찰이던 물건(하루 약 350건)이 전부 '다른 물건'이 돼
    지역 자료 86곳(곳당 9~13MB)을 새로 받아 다시 계산했음. 계산 결과는 입찰일 지남 여부와 무관하므로(날짜 표시는 열 때 다시 계산) 저장본의 P/F가 반대여도 같은 것으로 봄(flip). */
 function boardBaseSig(a, flip) {
@@ -20592,6 +20652,7 @@ async function renderBidDrawer() {
         h += '<div class="dr-wb"><div class="dr-wb-h">🎲 예상 낙찰가 <b>' + fmt(row.winbid.price) + '</b><span class="dr-sub" style="margin:0 0 0 6px;">비슷한 물건이 보통 낙찰되는 가격</span></div>'
             + (wbp != null ? '<div>추천 입찰가로 쓰면 <b style="color:' + wcol + ';">낙찰 가능성 약 ' + wbp + '%</b> · 예상 낙찰가보다 ' + (wbg >= 0 ? '<b>' + wbg + '%</b> 높음' : '<b>' + Math.abs(wbg) + '%</b> 낮음')
                 + (row.winbid.probAggr != null ? ' · 적극 입찰가면 약 ' + Math.round(row.winbid.probAggr * 100) + '%' : '') + '</div>' : '')
+            + (row.winbid.amountSuspect ? '<div style="color:#b91c1c;">⚠️ 감정가·최저가가 시세와 너무 달라요 - 입력 금액이 잘못됐을 수 있어 낙찰 가능성은 계산하지 않았어요(CSV를 다시 올리면 바로잡아요)</div>' : '')
             + (wbp != null && wbp < 35 ? '<div style="color:#b91c1c;">마진을 지키는 상한이 보통 낙찰 가격보다 낮아요 - 써도 질 가능성이 커요(무리해서 올리면 마진이 줄어요)</div>' : '')
             + compNote + (row.winbid.compShift ? '<div class="dr-sub" style="color:#7c3aed;">경쟁 예상이 ' + row.winbid.comp + '이라 예상 낙찰가를 ' + (row.winbid.compShift > 0 ? '+' : '') + (Math.round(row.winbid.compShift * 1000) / 10) + '% 조정했어요(과거 같은 경쟁 예상 물건의 실제 낙찰가 기준)</div>' : '')
             + '<div class="dr-sub">낙찰사례 2만여 건 전국 모델에 이 시군구·법정동 사례를 덧반영(사례가 적은 곳은 전국 평균 쪽으로 당김) · 시세는 이 단지 거래 기준(학습에 안 쓴 최근 1년 검증 보통 오차 ' + ((winbidModel.oos && winbidModel.oos.medAbsErrPct) || '5~6') + '%) · 최저가는 이 예측에만 쓰고 예상매도가엔 안 써요'

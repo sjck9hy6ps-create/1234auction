@@ -872,6 +872,38 @@ def crowd_item_model(R, now):
         print("  🎲 불확실성:", unc)
     except Exception as e:
         unc = None; print("  불확실성 계산 건너뜀:", e)
+    # 2026-10-25 (낙찰 가능성 높은 구간 점검) 입찰자가 몰릴 것으로 예상된 물건은 예상 낙찰가보다 비싸게 낙찰되나? - 물건별 몰림 수준(몰림 예상/보통/적게 예상)별 예상 낙찰가 잔차를
+    # 앞 절반으로 구해 뒤 절반에 적용했을 때 오차가 줄면 보정 값을 예상 낙찰가 모델에 저장(앱이 몰림 수준에 따라 예상 낙찰가를 조정). 아니면 저장 안 함
+    crowd_adj = None
+    try:
+        mwb = wb_fit(D[tr]); pw = wb_predict(mwb, D[te])
+        resw = (np.log(D["actual"].astype(float) / D["est"].astype(float)).values[te] - pw)
+        lvl = np.where(hi_m, "높음", np.where(lo_m, "낮음", "보통"))
+        order = np.argsort(D["sale"].values[te], kind="stable"); h = len(order) // 2
+        a_i, b_i = order[:h], order[h:]
+        sh = {}
+        for L in ("높음", "보통", "낮음"):
+            mk = lvl[a_i] == L
+            if mk.sum() >= 150: sh[L] = float(np.median(resw[a_i][mk]))
+        e_before = float(np.median(np.abs(np.exp(resw[b_i]) - 1))); adj = np.array([sh.get(L, 0.0) for L in lvl[b_i]])
+        e_after = float(np.median(np.abs(np.exp(resw[b_i] - adj) - 1)))
+        byl = {L: {"n": int((lvl == L).sum()), "medResid": round(float(np.median(resw[lvl == L])) * 100, 2)} for L in ("높음", "보통", "낮음") if (lvl == L).sum() >= 100}
+        print("  🔥 몰림 수준별 예상 낙찰가 잔차:", byl, "| 시험(뒤 절반) 보통 오차", round(e_before * 100, 3), "→", round(e_after * 100, 3))
+        if e_after < e_before - 0.0005 and "높음" in sh:
+            allm = {L: float(np.median(resw[lvl == L])) for L in ("높음", "보통", "낮음") if (lvl == L).sum() >= 150}
+            crowd_adj = {"adj": {L: round(max(-0.08, min(0.08, v)), 4) for L, v in allm.items()}, "n": int(len(resw)), "errBefore": round(e_before * 100, 3), "errAfter": round(e_after * 100, 3)}
+        else:
+            print("  → 몰림 수준 보정은 효과가 없어 저장하지 않음")
+    except Exception as e:
+        print("  몰림 수준 보정 검증 건너뜀:", e)
+    if crowd_adj:
+        try:
+            _rr = requests.get(f"{cyc.SUPABASE_URL}/rest/v1/leader_follower_cache?select=payload&id=eq.signal%7C__winbid__", headers=cyc.HEADERS, timeout=60)
+            if _rr.ok and _rr.json():
+                _wb = _rr.json()[0].get("payload") or {}; _wb["crowdAdj"] = {**crowd_adj, "generatedAt": now}
+                cyc.upsert_rows([{"id": "signal|__winbid__", "payload": cyc.clean_json(_wb), "fetched_at": now}]); print("  ✅ 몰림 수준 보정표 저장:", crowd_adj)
+        except Exception as e:
+            print("  몰림 수준 보정 저장 건너뜀:", e)
     # 배포용: 전체 데이터로 다시 학습
     mf = crowd_fit(X, y, CF)
     payload = {"generatedAt": now, "n": int(len(D)), "base": mf["base"], "eff": {f: {str(k): round(float(v), 4) for k, v in d.items()} for f, d in mf["eff"].items()}, "factors": [f for f, _ in CF],
@@ -1323,6 +1355,15 @@ def norm_case(s):
     return re.sub(r"\(\d+\)$", "", str(s or "").replace(" ", "")).replace("타경", "-")
 
 
+def amt_ok(x, appraisal_manwon):
+    """2026-10-25 같은 사건번호의 다른 물건이 섞이지 않았나 - 저장된 경매물건의 감정가와 낙찰사례의 감정가(만원)가 5% 안이면 같은 물건으로 봄(한쪽이 비어 있으면 통과)"""
+    try:
+        a, b = float(x.get("appraisal")), float(appraisal_manwon)
+    except (TypeError, ValueError):
+        return True
+    return a <= 0 or b <= 0 or abs(a / b - 1) <= 0.05
+
+
 def pick_snap(x, sale_int):
     """낙찰일 이전에 저장된 예측 중 가장 늦은(=입찰에 가장 가까운) 것. 누적 이력(predHist)이 없으면 마지막 저장본(predSnap)"""
     hist = [h for h in (x.get("predHist") or []) if isinstance(h, dict) and h.get("at")]
@@ -1332,13 +1373,44 @@ def pick_snap(x, sale_int):
     return (sorted(ok, key=lambda h: h["at"])[-1] if ok else None)
 
 
+def prob_calibration(P, won):
+    """2026-10-25 낙찰 가능성 보정표: 앱이 입찰 전 저장한 낙찰 가능성(prob)과 실제 낙찰 여부로 단조 보정(PAVA). 높은 구간이 실제보다 크게 높게 나오던 문제(73% 예측 → 16% 실제).
+    앱은 '깎기만' 함(보정값이 원래보다 낮을 때만 적용). 학습 구간·시험 구간(시간순 60/40)으로 Brier 점수가 좋아졌는지 확인한 뒤에만 저장"""
+    P = np.asarray(P, float); Y = np.asarray(won, float)
+    if len(P) < 150: return None
+    def pava(x, y):
+        o = np.argsort(x, kind="stable"); xs = x[o]; v = list(y[o]); w = [1.0] * len(v); bl = [[xv] for xv in xs]
+        i = 0
+        while i < len(v) - 1:
+            if v[i] > v[i + 1]:
+                t = w[i] + w[i + 1]; v[i] = (v[i] * w[i] + v[i + 1] * w[i + 1]) / t; w[i] = t; bl[i] += bl[i + 1]
+                del v[i + 1], w[i + 1], bl[i + 1]; i = max(i - 1, 0)
+            else: i += 1
+        return [(float(np.mean(b)), float(val), float(ww)) for b, val, ww in zip(bl, v, w)]
+    def ap(kn, p): return float(np.interp(p, [k[0] for k in kn], [k[1] for k in kn]))
+    k = int(len(P) * 0.6); kn = pava(P[:k], Y[:k]); te = slice(k, None)
+    pc = np.minimum(P[te], [ap(kn, x) for x in P[te]])
+    b0 = float(np.mean((P[te] - Y[te]) ** 2)); b1 = float(np.mean((pc - Y[te]) ** 2))
+    full = pava(P, Y)
+    # 앱에 보낼 매듭: 같은 값 합치고 최대 14개로 줄임
+    pts = []
+    for x, y, w in full:
+        if pts and abs(pts[-1][1] - y) < 1e-9: pts[-1] = (x, y)
+        else: pts.append((x, y))
+    if len(pts) > 14:
+        idx = np.unique(np.linspace(0, len(pts) - 1, 14).round().astype(int)); pts = [pts[i] for i in idx]
+    res = {"n": int(len(P)), "brierBefore": round(b0, 4), "brierAfter": round(b1, 4), "knots": [[round(x, 3), round(y, 3)] for x, y in pts], "use": bool(b1 < b0 * 0.98)}
+    print("  🎯 낙찰 가능성 보정(시험 구간):", {k2: v for k2, v in res.items() if k2 != "knots"}, "매듭", res["knots"])
+    return res
+
+
 def scorecard(D, amap):
     """2026-10-09 추천가 성적표 - 지금까지 저장된 예측(입찰 전) 전체를 실제 낙찰 결과와 비교(주 단위가 아니라 누적).
     낙찰 가능성 구간별 '예측 vs 실제 낙찰 비율', 추천가 대비 실제 낙찰가, 낙찰가 예측 오차"""
     rows = []
     for r in D.itertuples():
         x = amap.get((norm_case(r.caseNo), r.region))
-        if not x:
+        if not x or not amt_ok(x, getattr(r, "appraisal", None)):
             continue
         sn = pick_snap(x, r.sale)
         if not sn or not sn.get("recBid"):
@@ -1370,6 +1442,11 @@ def scorecard(D, amap):
     gap = (float(P["won"].mean()) - float(P["prob"].mean())) * 100 if tot else 0
     out["probGapPct"] = round(gap, 1)
     out["needAdjust"] = bool(tot >= 30 and abs(gap) >= 15)
+    try:
+        Xs = P.sort_values("sale")
+        out["probCal"] = prob_calibration(Xs["prob"].values, Xs["won"].values)
+    except Exception as e:
+        print("  낙찰 가능성 보정 건너뜀:", e); out["probCal"] = None
     out["items"] = [{"case": r["case"], "name": r["name"], "region": r["region"], "sale": int(r["sale"]), "rec": round(r["rec"]), "actual": round(r["actual"]), "won": bool(r["won"]),
                      "prob": None if pd.isna(r["prob"]) else r["prob"], "win": None if pd.isna(r["win"]) else r["win"]} for _, r in X.sort_values("sale", ascending=False).head(60).iterrows()]
     return out
@@ -1399,7 +1476,7 @@ def cand_review(W, tr, amap, start, end, now_dt):
             continue
         go, bs = is_go(sn); basis[bs] += 1
         item = {"caseNo": x.get("caseNo"), "name": x.get("name") or "", "region": rg, "bidDate": bd, "minbid": sn.get("minBid"), "rec": sn.get("recBid"), "prob": sn.get("prob"), "win": sn.get("win"), "sale": sn.get("sale"), "fails": sn.get("fails"), "why": sn.get("why")}
-        if (cn, rg) in won_keys:
+        if (cn, rg) in won_keys and amt_ok(x, getattr(wrow[(cn, rg)], "appraisal", None)):
             r = wrow[(cn, rg)]
             item["actual"] = round(float(r.actual)); item["bidders"] = None if pd.isna(r.bidders) else int(r.bidders)
             item["why2"] = won_reason(item, go)
@@ -1481,7 +1558,7 @@ def weekly_report(R, now_dt, now_iso):
         tr = []
         for r in W.itertuples():
             x = amap.get((norm_case(r.caseNo), r.region))
-            if not x:
+            if not x or not amt_ok(x, getattr(r, "appraisal", None)):
                 continue
             sn = pick_snap(x, r.sale) or {}
             row = {"caseNo": r.caseNo, "name": r.bname or x.get("name") or "", "region": r.region, "actual": round(float(r.actual)), "bidders": None if pd.isna(r.bidders) else int(r.bidders),
@@ -1532,6 +1609,18 @@ def weekly_report(R, now_dt, now_iso):
     try:
         out["scorecard"] = scorecard(D, amap)
         print("  추천가 성적표:", {k: v for k, v in out["scorecard"].items() if k != "items"})
+        try:
+            _pc = out["scorecard"].get("probCal")
+            if _pc and _pc.get("use"):
+                import requests as _rq
+                _rr = _rq.get(f"{cyc.SUPABASE_URL}/rest/v1/leader_follower_cache?select=payload&id=eq.signal%7C__winbid__", headers=cyc.HEADERS, timeout=60)
+                if _rr.ok and _rr.json():
+                    _wb = _rr.json()[0].get("payload") or {}
+                    _wb["probCal"] = {"knots": _pc["knots"], "n": _pc["n"], "generatedAt": now_iso}
+                    cyc.upsert_rows([{"id": "signal|__winbid__", "payload": cyc.clean_json(_wb), "fetched_at": now_iso}])
+                    print("  ✅ 낙찰 가능성 보정표를 예상 낙찰가 모델에 저장")
+        except Exception as e:
+            print("  보정표 저장 건너뜀:", e)
         try:
             import accuracy_ledger as _led
             _sc = out["scorecard"]
