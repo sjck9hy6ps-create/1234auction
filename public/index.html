@@ -14383,7 +14383,9 @@ function parseTankRights(text) {
         out.flags.push(fl);
     });
     if (!out.baseDate) { var b = out.registry.filter(function(r) { return r.base; })[0]; if (b) out.baseDate = b.date; }
-    if (!out.tenants.length) out.warnings.push('임차인 현황을 찾지 못했어요(전입세대 없음이면 정상) - 상세 페이지의 "임차인 현황" 부분까지 같이 붙여넣었는지 확인');
+    if (/조사된\s*임차내역\s*없음/.test(text)) out.noTenants = true;  // 탱크옥션이 '조사된 임차내역 없음'으로 표시한 경우 - 경고하지 않음
+    if ((m = text.match(/세대수\s+([\d,]+)\s*세대/))) out.households = rightsNum(m[1]);  // 단지정보의 단지 전체 세대수
+    if (!out.tenants.length && !out.noTenants) out.warnings.push('임차인 현황을 찾지 못했어요(전입세대 없음이면 정상) - 상세 페이지의 "임차인 현황" 부분까지 같이 붙여넣었는지 확인');
     if (!out.registry.length) out.warnings.push('건물등기(권리 목록)를 찾지 못했어요');
     return out;
 }
@@ -14608,6 +14610,37 @@ function rightsBatchOpen() {
         + '<textarea id="rights-batch-text" rows="12" style="width:100%;box-sizing:border-box;font-size:12px;flex:1;"></textarea><div id="rights-batch-result" style="font-size:12px;white-space:pre-wrap;max-height:30vh;overflow:auto;"></div>'
         + '<div style="display:flex;gap:8px;justify-content:flex-end;"><button class="modal-btn btn-gray" onclick="document.getElementById(\'rights-batch-modal\').remove()">닫기</button><button class="modal-btn btn-green" id="rights-batch-run" onclick="rightsBatchRun()">분석해서 저장</button></div></div>';
     document.body.appendChild(d);
+}
+/* 📥 확장(탱크옥션 상세 보내기)에서 온 상세 페이지 글을 읽어 해당 물건의 권리분석에 저장(2026-10-27, 사용자 요청: 호가처럼 탱크옥션 상세내역도 불러오기).
+   사건번호로 물건을 찾고, 같은 사건번호가 여럿이면 글 안의 동·번지로 가림. 못 찾거나 모호하면 저장하지 않고 이유를 돌려줌 */
+async function rightsApplyTankText(text) {
+    var res = { done: 0, text: '', applied: [] };
+    var parts = String(text || '').split(/(?=경매\s*\d{4}\s*타경\s*\d+)/).filter(function(x) { return /경매\s*\d{4}\s*타경\s*\d+/.test(x); });
+    if (!parts.length) { res.text = '상세 페이지의 사건번호(경매 ○○○○타경○○○)를 못 찾았어요'; return res; }
+    var msgs = [];
+    for (var i = 0; i < parts.length; i++) {
+        var part = parts[i], m = part.match(/경매\s*(\d{4})\s*타경\s*(\d+)/), key = normalizeCaseNoForCompare(m[1] + '타경' + m[2]), label = m[1] + '타경' + m[2];
+        var cands = auctionList.filter(function(a) { return !a.isBacktest && normalizeCaseNoForCompare(a.caseNo) === key; });
+        if (cands.length > 1) {
+            var by = cands.filter(function(a) { var dg = String(a.dong || '').trim(), bj = String(a.bunji || '').trim(); return dg && part.indexOf(dg) >= 0 && (!bj || part.indexOf(bj) >= 0); });
+            cands = by.length === 1 ? by : cands;
+        }
+        if (!cands.length) { msgs.push(label + ': 입찰후보 목록에 없는 사건이에요'); continue; }
+        if (cands.length > 1) { msgs.push(label + ': 같은 사건번호 ' + cands.length + '건이라 주소로 가리지 못했어요 - 상세에서 직접 붙여넣어 주세요'); continue; }
+        var a = cands[0], R = parseTankRights(part);
+        if (!R.tenants.length && !R.registry.length && !R.noTenants) { msgs.push(label + ': 임차인·등기를 못 찾았어요 (페이지가 다 열렸는지 확인)'); continue; }
+        R.pastedAt = Date.now(); R.via = 'extension'; a.rights = R;
+        if (R.unpaidMgmt && !(parseInt(a.unpaidMgmtFee) > 0)) { a.unpaidMgmtFee = String(Math.ceil(R.unpaidMgmt.won / 10000)); R.unpaidMgmtApplied = true; }
+        if (R.households > 0 && !(a.households && a.householdsVer === 2)) { a.households = R.households; a.householdsVer = 2; }  // 탱크옥션 단지정보의 세대수(없을 때만)
+        try { await saveAuctionAPI(a); res.done++; res.applied.push({ name: a.name || a.addr || label, pyung: '', n: R.registry.length, caseNo: label, tenants: R.tenants.length, assumed: (R.warnings || []).length }); }
+        catch (e) { msgs.push(label + ': 저장 실패 ' + e.message); }
+    }
+    res.text = res.done ? '' : (msgs.join(' / ') || '반영된 물건이 없어요');
+    if (res.done) {
+        bidBoardRows = bidBoardRows.map(function(r) { var a = auctionList.filter(function(x) { return String(x.id) === String(r.id); })[0]; if (!a || !a.rights || r.a === a) return r; r.a = a; delete r._vev; if (r.type === 'villa') return r; try { return finalizeBidBoardRow(r); } catch (e) { return r; } });
+        try { renderBidBoard(); renderBidDrawer(); } catch (e) {}
+    }
+    return res;
 }
 async function rightsBatchRun() {
     var ta = document.getElementById('rights-batch-text'), out = document.getElementById('rights-batch-result'), btn = document.getElementById('rights-batch-run');
@@ -21315,8 +21348,9 @@ async function processListingInbox() {
         if (!bidBoardRows.length) return;
         var got = 0, names = [], prevAll = lbAll; lbAll = true; // 수신함은 대상을 좁히지 않음(이미 사용자가 고른 단지를 보낸 것)
         for (var i = 0; i < pending.length; i++) {
-            var it = pending[i], list = parseNaverListings(it.text || ''), res = { done: 0, text: '매매 매물을 찾지 못했어요', applied: [] };
-            if (list.length) res = await applyListingListsAuto(list);
+            var it = pending[i], res = { done: 0, text: '매매 매물을 찾지 못했어요', applied: [] };
+            if (it.kind === 'tank') { res = await rightsApplyTankText(it.text || ''); if (res.done) listingToast('📥 탱크옥션 상세 반영됨: ' + res.applied.slice(0, 3).map(function(x) { return '<b>' + bbEsc(x.name) + '</b> 권리분석(등기 ' + x.n + '건' + (x.tenants ? ' · 임차인 ' + x.tenants + '명' : ' · 임차인 없음') + ')'; }).join(' · ')); else listingToast('📥 탱크옥션 상세를 받았지만 반영하지 못했어요 - ' + bbEsc(res.text), false); }
+            else { var list = parseNaverListings(it.text || ''); if (list.length) res = await applyListingListsAuto(list); }
             got += res.done; res.applied.forEach(function(x) { names.push(x); });
             // 확장이 결과를 볼 수 있게 처리 기록을 남김(원문도 하루 보관)
             try { await fetch('/api/auction?kind=listingRaw', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: it.id, at: it.at, url: it.url, text: it.text, done: true, appliedAt: new Date().toISOString(), result: { done: res.done, text: res.text, applied: res.applied } }) }); } catch (e) {}
@@ -21324,7 +21358,8 @@ async function processListingInbox() {
         lbAll = prevAll;
         renderBidBoard(); try { renderBidDrawer(); } catch (e) {}
         var fm = function(v) { return v ? toEok(String(v)) : '-'; };
-        if (got) listingToast('📥 호가 반영됨: ' + names.slice(0, 3).map(function(x) { return '<b>' + bbEsc(x.name) + ' ' + x.pyung + '평</b> 매물 ' + x.n + '건 (' + fm(x.min) + '~' + fm(x.max) + ')'; }).join(' · ') + (names.length > 3 ? ' 외 ' + (names.length - 3) + '건' : ''));
+        if (pending.every(function(x) { return x.kind === 'tank'; })) { /* 탱크옥션 상세는 위에서 알림을 이미 띄움 */ }
+        else if (got) listingToast('📥 호가 반영됨: ' + names.slice(0, 3).map(function(x) { return '<b>' + bbEsc(x.name) + ' ' + x.pyung + '평</b> 매물 ' + x.n + '건 (' + fm(x.min) + '~' + fm(x.max) + ')'; }).join(' · ') + (names.length > 3 ? ' 외 ' + (names.length - 3) + '건' : ''));
         else listingToast('📥 호가를 받았지만 반영된 물건이 없어요 - 대상 단지가 아니거나 같은 평형 매물이 없어요', false);
     } catch (e) { /* 수신함이 없거나 네트워크 오류면 조용히 넘어감 */ } finally { listingInboxBusy = false; }
 }

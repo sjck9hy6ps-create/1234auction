@@ -7,6 +7,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     try {
       const id = Date.now() + '_' + Math.random().toString(36).slice(2, 7);
       const body = { id, at: new Date().toISOString(), url: msg.url || '', text: String(msg.text || '').slice(0, 200000) };
+      if (msg.kind === 'tank') body.kind = 'tank';  // 탱크옥션 상세 글 - 앱이 권리분석으로 읽음
       const r = await fetch(APP + '/api/auction?kind=listingRaw', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
       if (!r.ok) { sendResponse({ ok: false, status: r.status }); return; }
       // 열려 있는 앱 탭에 즉시 알림(새로고침·대기 없이 바로 반영)

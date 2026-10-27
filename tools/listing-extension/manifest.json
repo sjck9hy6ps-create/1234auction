@@ -1,13 +1,44 @@
 {
   "manifest_version": 3,
-  "name": "호가 보내기 (경매 앱)",
-  "version": "0.2.0",
-  "description": "열어 둔 네이버 부동산 단지 페이지의 매매 매물 목록을 버튼 한 번으로 경매 앱에 보내고, 앱이 반영한 결과를 바로 보여 줍니다. 사용자가 연 페이지에서만 동작하고, 자동으로 페이지를 순회하지 않습니다.",
+  "name": "호가·탱크옥션 상세 보내기 (경매 앱)",
+  "version": "0.3.0",
+  "description": "열어 둔 네이버 부동산 단지 페이지의 매매 매물 목록, 또는 탱크옥션 물건 상세 페이지의 권리분석 자료를 버튼 한 번으로 경매 앱에 보냅니다. 사용자가 연 페이지에서 버튼을 눌렀을 때만 동작하고, 자동으로 페이지를 순회하지 않으며, 로그인 정보는 다루지 않습니다.",
   "permissions": [],
-  "host_permissions": ["https://1234auction.vercel.app/*"],
-  "background": { "service_worker": "background.js" },
+  "host_permissions": [
+    "https://1234auction.vercel.app/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
   "content_scripts": [
-    { "matches": ["https://new.land.naver.com/*"], "js": ["content.js"], "run_at": "document_idle" },
-    { "matches": ["https://1234auction.vercel.app/*"], "js": ["app-bridge.js"], "run_at": "document_idle" }
+    {
+      "matches": [
+        "https://new.land.naver.com/*"
+      ],
+      "js": [
+        "content.js"
+      ],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": [
+        "https://www.tankauction.com/*",
+        "https://tankauction.com/*"
+      ],
+      "js": [
+        "content-tank.js"
+      ],
+      "run_at": "document_idle",
+      "all_frames": true
+    },
+    {
+      "matches": [
+        "https://1234auction.vercel.app/*"
+      ],
+      "js": [
+        "app-bridge.js"
+      ],
+      "run_at": "document_idle"
+    }
   ]
 }
