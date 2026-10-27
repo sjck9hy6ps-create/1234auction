@@ -19035,16 +19035,14 @@ function winbidProbRaw(wb, bid) {
     for (var i = 1; i < q.length; i++) if (thr <= q[i]) return (i + (thr - q[i - 1]) / ((q[i] - q[i - 1]) || 1)) / 100;
     return 0.99;
 }
-/* 2026-10-25 낙찰 가능성 보정(사용자: 추천가 정확도) - 입찰 전 저장한 '낙찰 가능성'과 실제 낙찰 결과 약 540건으로 만든 보정표(서버가 매주 갱신, 시간순 검증을 통과했을 때만 저장됨):
+/* 2026-10-25 낙찰 가능성 보정(사용자: 추천가 정확도) - 입찰 전 저장한 '낙찰 가능성'과 실제 낙찰 결과 약 540건으로 만든 보정식(서버가 매주 갱신, 시간순 검증을 통과했을 때만 저장됨):
    높게 나온 구간이 실제보다 크게 높았음(73% 예측 → 16% 실제). 보정값이 원래보다 낮을 때만 깎아서 씀(올리지는 않음). 표가 없으면 원래 값 그대로 */
 function winbidProbAt(wb, bid) {
     if (!wb || !bid) return null;
-    var p = winbidProbRaw(wb, bid), cal = winbidModel && winbidModel.probCal && winbidModel.probCal.knots;
-    if (cal && cal.length >= 2) {
-        var c;
-        if (p <= cal[0][0]) c = cal[0][1]; else if (p >= cal[cal.length - 1][0]) c = cal[cal.length - 1][1];
-        else { for (var i = 1; i < cal.length; i++) if (p <= cal[i][0]) { c = cal[i - 1][1] + (cal[i][1] - cal[i - 1][1]) * ((p - cal[i - 1][0]) / ((cal[i][0] - cal[i - 1][0]) || 1)); break; } }
-        if (typeof c === 'number' && c < p) p = Math.max(0.01, c);
+    var p = winbidProbRaw(wb, bid), lr = winbidModel && winbidModel.probCal && winbidModel.probCal.lr;
+    if (lr && lr.length === 2 && lr[1] > 0) {  // logit(보정) = a + b·logit(원래) - 입찰가를 올리면 가능성도 항상 같이 올라감(단조)
+        var q = Math.min(0.99, Math.max(0.01, p)), c = 1 / (1 + Math.exp(-(lr[0] + lr[1] * Math.log(q / (1 - q)))));
+        if (c < p) p = Math.max(0.01, c);
     }
     return p;
 }

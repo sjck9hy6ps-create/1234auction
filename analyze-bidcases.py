@@ -1397,33 +1397,26 @@ def pick_snap(x, sale_int):
 
 
 def prob_calibration(P, won):
-    """2026-10-25 낙찰 가능성 보정표: 앱이 입찰 전 저장한 낙찰 가능성(prob)과 실제 낙찰 여부로 단조 보정(PAVA). 높은 구간이 실제보다 크게 높게 나오던 문제(73% 예측 → 16% 실제).
-    앱은 '깎기만' 함(보정값이 원래보다 낮을 때만 적용). 학습 구간·시험 구간(시간순 60/40)으로 Brier 점수가 좋아졌는지 확인한 뒤에만 저장"""
-    P = np.asarray(P, float); Y = np.asarray(won, float)
+    """2026-10-25 낙찰 가능성 보정: 앱이 입찰 전 저장한 낙찰 가능성(prob)과 실제 낙찰 여부로 로지스틱 보정(logit(보정) = a + b·logit(원래)).
+    높게 나온 구간이 실제보다 크게 높았던 문제(73% 예측 → 16% 실제)를 줄이되, 입찰가를 올리면 낙찰 가능성도 항상 올라가게(단조 증가) 함.
+    (처음엔 구간 평균 방식(PAVA)이었는데 높은 구간이 한 값으로 납작해져 입찰가를 올려도 가능성이 같게 나와서 로지스틱으로 바꿈 - 2026-10-27)
+    시간순 60/40 검증에서 Brier 점수가 2% 넘게 좋아질 때만 앱이 씀. 앱은 보정값이 원래보다 낮을 때만 깎아서 씀"""
+    P = np.clip(np.asarray(P, float), 0.01, 0.99); Y = np.asarray(won, float)
     if len(P) < 150: return None
-    def pava(x, y):
-        o = np.argsort(x, kind="stable"); xs = x[o]; v = list(y[o]); w = [1.0] * len(v); bl = [[xv] for xv in xs]
-        i = 0
-        while i < len(v) - 1:
-            if v[i] > v[i + 1]:
-                t = w[i] + w[i + 1]; v[i] = (v[i] * w[i] + v[i + 1] * w[i + 1]) / t; w[i] = t; bl[i] += bl[i + 1]
-                del v[i + 1], w[i + 1], bl[i + 1]; i = max(i - 1, 0)
-            else: i += 1
-        return [(float(np.mean(b)), float(val), float(ww)) for b, val, ww in zip(bl, v, w)]
-    def ap(kn, p): return float(np.interp(p, [k[0] for k in kn], [k[1] for k in kn]))
-    k = int(len(P) * 0.6); kn = pava(P[:k], Y[:k]); te = slice(k, None)
-    pc = np.minimum(P[te], [ap(kn, x) for x in P[te]])
+    lg = lambda p: np.log(p / (1 - p))
+    def fit(x, y):
+        w = np.zeros(2); X = np.c_[np.ones(len(x)), x]
+        for _ in range(60):
+            p = 1 / (1 + np.exp(-X @ w)); g = X.T @ (p - y); H = X.T @ (X * (p * (1 - p))[:, None]) + 1e-6 * np.eye(2)
+            w = w - np.linalg.solve(H, g)
+        return w
+    ap = lambda w, p: 1 / (1 + np.exp(-(w[0] + w[1] * lg(p))))
+    k = int(len(P) * 0.6); w1 = fit(lg(P[:k]), Y[:k]); te = slice(k, None)
+    pc = np.minimum(P[te], ap(w1, P[te]))
     b0 = float(np.mean((P[te] - Y[te]) ** 2)); b1 = float(np.mean((pc - Y[te]) ** 2))
-    full = pava(P, Y)
-    # 앱에 보낼 매듭: 같은 값 합치고 최대 14개로 줄임
-    pts = []
-    for x, y, w in full:
-        if pts and abs(pts[-1][1] - y) < 1e-9: pts[-1] = (x, y)
-        else: pts.append((x, y))
-    if len(pts) > 14:
-        idx = np.unique(np.linspace(0, len(pts) - 1, 14).round().astype(int)); pts = [pts[i] for i in idx]
-    res = {"n": int(len(P)), "brierBefore": round(b0, 4), "brierAfter": round(b1, 4), "knots": [[round(x, 3), round(y, 3)] for x, y in pts], "use": bool(b1 < b0 * 0.98)}
-    print("  🎯 낙찰 가능성 보정(시험 구간):", {k2: v for k2, v in res.items() if k2 != "knots"}, "매듭", res["knots"])
+    w = fit(lg(P), Y)
+    res = {"n": int(len(P)), "brierBefore": round(b0, 4), "brierAfter": round(b1, 4), "lr": [round(float(w[0]), 4), round(float(w[1]), 4)], "use": bool(b1 < b0 * 0.98 and w[1] > 0)}
+    print("  🎯 낙찰 가능성 보정(시험 구간):", res, "| 예: 원래 50%→", round(float(ap(w, 0.5)), 3), " 90%→", round(float(ap(w, 0.9)), 3), " 99%→", round(float(ap(w, 0.99)), 3))
     return res
 
 
@@ -1687,7 +1680,7 @@ def weekly_report(R, now_dt, now_iso):
                 _rr = _rq.get(f"{cyc.SUPABASE_URL}/rest/v1/leader_follower_cache?select=payload&id=eq.signal%7C__winbid__", headers=cyc.HEADERS, timeout=60)
                 if _rr.ok and _rr.json():
                     _wb = _rr.json()[0].get("payload") or {}
-                    _wb["probCal"] = {"knots": _pc["knots"], "n": _pc["n"], "generatedAt": now_iso}
+                    _wb["probCal"] = {"lr": _pc["lr"], "n": _pc["n"], "generatedAt": now_iso}
                     cyc.upsert_rows([{"id": "signal|__winbid__", "payload": cyc.clean_json(_wb), "fetched_at": now_iso}])
                     print("  ✅ 낙찰 가능성 보정표를 예상 낙찰가 모델에 저장")
         except Exception as e:
