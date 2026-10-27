@@ -21301,6 +21301,7 @@ async function applyListingListsAuto(list) {
     var nameKey = function(n) { return matchNormName(String(n || '').replace(/\([^)]*\)|（[^）]*）/g, '').replace(/아파트\s*$/, '')); };
     var byName = {}; list.forEach(function(x) { var k = nameKey(x.complex); (byName[k] = byName[k] || []).push(x); });
     var done = 0, noSize = [], used = {}, ambiguous = [], applied = [];
+    var canonName = function(n) { var s0 = String(n || ''), ch = (s0.match(/\d+\s*(?:차|단지)/g) || []).map(function(x) { return x.replace(/\s/g, ''); }).sort().join(','), hg = (s0.replace(/\d+\s*(?:차|단지)/g, '').match(/[가-힣]/g) || []).sort().join(''); return hg.length >= 4 ? ch + '|' + hg : ''; };
     var T = listingBulkTargets();
     var cx = function(r) { return (r.region || '') + '|' + (r.a.dong || ''); }; // 같은 단지 = 같은 지역·동
     // 이름이 같으면 맞는 것으로 보되, 이름이 흔해서 임장 후보 중 서로 다른 단지 여러 곳과 맞으면(주공아파트 등) 엉뚱한 곳에 저장될 수 있어 건너뜀 → 상세에서 직접 붙여넣기
@@ -21309,6 +21310,8 @@ async function applyListingListsAuto(list) {
     Object.keys(byName).forEach(function(n) {
         var cands = T.filter(function(r) { return nameKey(r.name) === n; }); // 이름이 정확히 같은 물건이 있으면 그것만(일산·해운대 두산위브더제니스처럼 이름 일부가 겹치는 다른 단지와 섞이지 않게)
         if (!cands.length) cands = T.filter(function(r) { return sameName(nameKey(r.name), n); });
+        // 2026-10-27(영등4차제일아파트 ↔ 네이버 '영등제일4차'): 단어 순서만 다른 이름은 '○차' 번호가 같고 나머지 글자가 같으면 같은 단지로 봄(4글자 이상일 때만)
+        if (!cands.length) { var cn = canonName(n); if (cn) cands = T.filter(function(r) { return canonName(nameKey(r.name)) === cn; }); }
         if (!cands.length) return;
         var kinds = {}; cands.forEach(function(r) { kinds[cx(r)] = 1; });
         if (Object.keys(kinds).length > 1) { used[n] = 1; ambiguous.push(byName[n][0].complex + '(' + Object.keys(kinds).length + '곳)'); return; }
