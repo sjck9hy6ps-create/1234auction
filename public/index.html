@@ -21268,8 +21268,9 @@ async function applyListingList(a, row, list) {
 /* 📋 호가 모으기(2026-10-18, 사용자: 호가를 모으는 방법) - ① 호가 확인 순서(임장 후보 단지를 입찰일 가까운 순, 네이버 검색 링크·마지막 수집일) ② 여러 단지 매물을 한 번에 붙여넣으면 단지 이름·평형으로 알아서 입찰물건에 나눠 저장.
    네이버 부동산은 자동 수집을 약관으로 제한하므로 열기·복사는 사용자가 직접 하고(앱은 링크와 정리만), 대량 자동 수집은 만들지 않음. */
 var lbAll = false; // 호가 모으기 대상: 기본은 입찰 7일 안 + 추천가가 있는 임장 후보(동작을 줄이려고), 켜면 임장 후보 전체
+var lbAny = false;  // 수신함(확장이 보낸 호가)은 임장 후보가 아닌 물건(패스)도 대상으로 삼음 - 사용자가 직접 연 단지를 보낸 것이라(2026-10-28 마린애시앙부영: 패스 판정이라 '대상이 아닌 단지'로 처리되던 문제)
 function listingBulkTargets() {
-    return bidBoardRows.filter(function(r) { return r.type === 'apt' && r.a && !r.skippedPast && r.visit && r.visit.go && (lbAll || (r.recBid && r.dday && r.dday.diffDays >= 0 && r.dday.diffDays <= 7)); }).sort(function(x, y) { return (x.dday ? x.dday.diffDays : 9999) - (y.dday ? y.dday.diffDays : 9999); });
+    return bidBoardRows.filter(function(r) { return r.type === 'apt' && r.a && !r.skippedPast && (lbAny || (r.visit && r.visit.go)) && (lbAll || (r.recBid && r.dday && r.dday.diffDays >= 0 && r.dday.diffDays <= 7)); }).sort(function(x, y) { return (x.dday ? x.dday.diffDays : 9999) - (y.dday ? y.dday.diffDays : 9999); });
 }
 function listingAgeDays(a) { var at = a.listingParse && a.listingParse.at; return at ? Math.floor((Date.now() - new Date(at + 'T00:00:00').getTime()) / 86400000) : null; }
 function openListingBulk() {
@@ -21363,7 +21364,7 @@ async function processListingInbox() {
         if (!bidBoardRows.length && typeof refreshBidBoard === 'function') { try { await refreshBidBoard(); } catch (e) {} }
         for (var w = 0; w < 40 && (!bidBoardRows.length || bidBoardRows.some(function(r) { return r.pending; })); w++) await new Promise(function(r) { setTimeout(r, 1500); });
         if (!bidBoardRows.length) return;
-        var got = 0, names = [], prevAll = lbAll; lbAll = true; // 수신함은 대상을 좁히지 않음(이미 사용자가 고른 단지를 보낸 것)
+        var got = 0, names = [], prevAll = lbAll, prevAny = lbAny; lbAll = true; lbAny = true; // 수신함은 대상을 좁히지 않음(이미 사용자가 고른 단지를 보낸 것)
         for (var i = 0; i < pending.length; i++) {
             var it = pending[i], res = { done: 0, text: '매매 매물을 찾지 못했어요', applied: [] };
             if (it.kind === 'tank') { res = await rightsApplyTankText(it.text || ''); if (res.done) listingToast('📥 탱크옥션 상세 반영됨: ' + res.applied.slice(0, 3).map(function(x) { return '<b>' + bbEsc(x.name) + '</b> 권리분석(등기 ' + x.n + '건' + (x.tenants ? ' · 임차인 ' + x.tenants + '명' : ' · 임차인 없음') + ')'; }).join(' · ')); else listingToast('📥 탱크옥션 상세를 받았지만 반영하지 못했어요 - ' + bbEsc(res.text), false); }
@@ -21372,7 +21373,7 @@ async function processListingInbox() {
             // 확장이 결과를 볼 수 있게 처리 기록을 남김(원문도 하루 보관)
             try { await fetch('/api/auction?kind=listingRaw', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: it.id, at: it.at, url: it.url, text: it.text, done: true, appliedAt: new Date().toISOString(), result: { done: res.done, text: res.text, applied: res.applied } }) }); } catch (e) {}
         }
-        lbAll = prevAll;
+        lbAll = prevAll; lbAny = prevAny;
         renderBidBoard(); try { renderBidDrawer(); } catch (e) {}
         var fm = function(v) { return v ? toEok(String(v)) : '-'; };
         if (pending.every(function(x) { return x.kind === 'tank'; })) { /* 탱크옥션 상세는 위에서 알림을 이미 띄움 */ }
