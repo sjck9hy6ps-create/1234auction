@@ -18909,7 +18909,14 @@ function aptOwnTradeStats(a, bunjiFull, pyung) {
         if (deps.length >= 2 && p12.length) jeonse = { ratio: med(deps) / med(p12), n: deps.length };
     }
     var qtile = function(x, q) { if (!x.length) return null; x = x.slice().sort(function(m, n) { return m - n; }); var i = (x.length - 1) * q, lo = Math.floor(i), hi = Math.ceil(i); return x[lo] + (x[hi] - x[lo]) * (i - lo); };
-    return { lastP: lastP, p3med: qtile(p3, 0.5), n3: p3.length, p6q40: qtile(p6, 0.4), jmed6: dep6.length >= 2 ? med(dep6) : null, pw1: weightedMedianByAge(p6a, 1), pw2: weightedMedianByAge(p6a, 2), pw2f: weightedMedianByAge(p6a, 2, isNaN(tf) ? null : tf), last3: (function() { var q = p6a.slice().sort(function(x, y) { return x.age - y.age; }).slice(0, 3).map(function(x) { return x.p; }); return q.length >= 3 ? med(q) : null; })(), jeonse: jeonse, v6: v6, vPrev6: vPrev6, recent: recent, lowF: lowF, maxF: maxF, sim6n: sim6.length, sim6med: med(sim6), n12: p12.length, n6: n6, nYear: nYear, n36: p36.length, med12: med(p12), med36: med(p36), lastAgeM: last === null ? null : Math.round((now - last) / 86400000 / 30.4 * 10) / 10 };
+    // 2026-10-27(사용자: 호황이면 더 높게, 하락이면 더 보수적으로 - 단지 시세 흐름 반영): 같은 평형 최근 3개월 중위 ÷ 4~9개월 전 중위 (최근 2건+, 이전 3건+일 때만) - 호가 상한의 흥정률 조정에만 씀
+    var trend = null;
+    (function() {
+        var rec = [], pri = [];
+        all.forEach(function(t2) { var ag2 = (now - t2.td) / 86400000 / 30.4; if (ag2 <= 3) rec.push(t2.p); else if (ag2 > 4 && ag2 <= 9) pri.push(t2.p); });
+        if (rec.length >= 2 && pri.length >= 3) trend = { pct: Math.round((med(rec) / med(pri) - 1) * 1000) / 10, nR: rec.length, nP: pri.length };
+    })();
+    return { trend: trend, lastP: lastP, p3med: qtile(p3, 0.5), n3: p3.length, p6q40: qtile(p6, 0.4), jmed6: dep6.length >= 2 ? med(dep6) : null, pw1: weightedMedianByAge(p6a, 1), pw2: weightedMedianByAge(p6a, 2), pw2f: weightedMedianByAge(p6a, 2, isNaN(tf) ? null : tf), last3: (function() { var q = p6a.slice().sort(function(x, y) { return x.age - y.age; }).slice(0, 3).map(function(x) { return x.p; }); return q.length >= 3 ? med(q) : null; })(), jeonse: jeonse, v6: v6, vPrev6: vPrev6, recent: recent, lowF: lowF, maxF: maxF, sim6n: sim6.length, sim6med: med(sim6), n12: p12.length, n6: n6, nYear: nYear, n36: p36.length, med12: med(p12), med36: med(p36), lastAgeM: last === null ? null : Math.round((now - last) / 86400000 / 30.4 * 10) / 10 };
 }
 // 예상매도가 상한: 자기 단지 같은 평형 최근 실거래 중앙값(1년, 없으면 3년). 감정가는 1년 전 값이라 안 씀
 function aptSaleCapInfo(a, bunjiFull, pyung, st) {
@@ -18934,7 +18941,16 @@ function plannedRepairLevel(a) { var c = (a.fieldCheck || {}).cond; return (c ==
    기본 수리 → 일부수리·표시 없는 매물). 3건 이상일 때만, 8건 이상이면 하위 25% 지점·그보다 적으면 가장 싼 2건 평균, 흥정분 3% 뺌(가정값 -
    붙여넣은 매물을 저장해 두고 나중 실거래와 비교해 실측값으로 바꿀 예정). 붙여넣은 지 60일 넘으면 적용 안 함. */
 var LISTING_NEGO_PCT = 0.03;
-function listingCapFor(a) {
+// 흥정률(2026-10-27): 기본 3%. 이 단지 같은 평형 시세가 오르는 중이면 줄이고(최소 1%), 내리는 중이면 늘림(최대 7%) - 오름 +1%p당 0.4%p 감소, 내림 −1%p당 0.6%p 증가.
+// ⚠️ 호가→실제 거래 차이를 아직 측정하지 못해(호가 이력이 쌓이는 중) 방향만 반영한 가정값 - 측정되면 교체
+function listingNegoFor(trend) {
+    if (!trend || trend.pct == null) return { pct: LISTING_NEGO_PCT, note: '' };
+    var t = trend.pct, n = t >= 0 ? 3 - 0.4 * t : 3 + 0.6 * Math.abs(t);
+    n = Math.max(1, Math.min(7, n));
+    if (Math.abs(n - 3) < 0.05) return { pct: LISTING_NEGO_PCT, note: '' };
+    return { pct: Math.round(n * 10) / 1000, note: '(이 단지 시세 ' + (t >= 0 ? '상승 +' : '하락 ') + t + '% 반영)' };
+}
+function listingCapFor(a, ownStats) {
     var lp = a.listingParse;
     if (!lp || !Array.isArray(lp.items) || !lp.at) return null;
     var ageD = Math.floor((Date.now() - new Date(lp.at + 'T00:00:00').getTime()) / 86400000);
@@ -18951,7 +18967,9 @@ function listingCapFor(a) {
     var live = lp.items.filter(function(x) { return !x.tenant && inBand(x); });
     var cand = sortP(live.filter(okRep));
     var res = { n: cand.length, lvl: lvl, ageD: ageD, at: lp.at };
-    var bandTxt = isNaN(tf) ? '' : (tf <= 1 ? '1~2층 ' : '비슷한 층 '), negoTxt = ' − 흥정 ' + Math.round(LISTING_NEGO_PCT * 100) + '%';
+    var ng = listingNegoFor(ownStats && ownStats.trend), nego = ng.pct;
+    var bandTxt = isNaN(tf) ? '' : (tf <= 1 ? '1~2층 ' : '비슷한 층 '), negoTxt = ' − 흥정 ' + Math.round(nego * 1000) / 10 + '%' + ng.note;
+    res.nego = nego;
     if (cand.length >= 3) {
         var r0 = refOf(cand); res.ref = Math.round(r0.v); res.how = r0.how;
         res.desc = bandTxt + (lvl === 'full' ? '올수리' : '기본 상태') + ' 매물 ' + cand.length + '건 ' + r0.how + ' ' + toEok(String(res.ref)) + negoTxt;
@@ -18965,7 +18983,7 @@ function listingCapFor(a) {
         var r1 = refOf(alt); res.ref = Math.round(r1.v + (lvl === 'full' ? gap : -gap)); res.how = r1.how; res.viaGap = Math.round(gap);
         res.desc = bandTxt + (lvl === 'full' ? '기본 상태' : '올수리') + ' 매물 ' + alt.length + '건 ' + r1.how + ' ' + toEok(String(Math.round(r1.v))) + (lvl === 'full' ? ' + ' : ' − ') + '이 단지 올수리 차이 ' + toEok(String(Math.round(gap))) + negoTxt;
     }
-    res.cap = Math.round(res.ref * (1 - LISTING_NEGO_PCT));
+    res.cap = Math.round(res.ref * (1 - nego));
     return res;
 }
 /* ════ 🎲 예상 낙찰가 (2026-10, 사용자: "실제로 낙찰받을 수 있는 가격과 마진이 남는 판매가를 확인하고 싶다" → 검증 후 "넣어줘")
@@ -19438,7 +19456,7 @@ function finalizeBidBoardRow(row) {
     if (row.saleTrade === undefined) row.saleTrade = row.sale;
     row.sale = row.saleTrade; row.listingCap = null;
     if (row.sale && (type === 'apt' || type === 'villa') && !row.saleSaved) {
-        var lc = listingCapFor(a);
+        var lc = listingCapFor(a, row.ownStats);
         if (lc) { row.listingCap = lc; if (lc.cap && lc.cap < row.sale) row.sale = lc.cap; }
     }
     // 목표마진: 모달에서 직접 정해 저장한 값이 있으면 그걸, 없으면 추천 목표마진
@@ -20008,7 +20026,7 @@ async function mergeServerBoardCache(local, onlyFirst) {
 setTimeout(function() { try { listIdbOp('readwrite', function(st) { return st.delete('bidBoardCache:v1'); }); } catch (e) {} }, 4000); // 예전 큰 로컬 저장본(서버 계산본 포함, 수십 MB)은 읽지 않고 지움(느린 기기에서 열 때 수 초 멈춤, 2026-10-21)
 setTimeout(function() { var go = function() { try { srvBoardParts(); setTimeout(function() { try { window.villaSrvP = villaFetchServerCalc(); } catch (e) {} }, 4000); } catch (e) {} }; if (window.requestIdleCallback) requestIdleCallback(go, { timeout: 6000 }); else go(); }, 2500); // 앱을 켜고 2.5초 뒤 한가할 때 배경에서 미리 받기(빌라는 4초 더 뒤)
 // 저장 계산을 다시 써도 되는지 - 물건 입력값(시세 계산에 쓰는 것)과 입찰일 지남 여부. 계산 방식이 바뀌면 BOARD_CALC_VER을 올림
-var BOARD_CALC_VER = 56; // 54: 튀는 가격 반영 안 함·경고만(2026-10-24) - // 53: 최근 거래 시세반영/튀는 가격 구별(2026-10-24) - // 52: 임장 생략 판정(2026-10-19) - // 51: 전세가율 구간 보정·위험 신호(2026-10-18) - // 50: 지방 최근 거래 비슷한 층 비중·1~2건은 12개월 원값(2026-10-18) - // 49: 근거 약함 경고를 판정 단계에서 다시 붙임 - // 48: 예상매도가-감정가 큰 차이 근거 약함 표시 - // 47: 다른 평형 환산이 같은 평형과 20% 넘게 다르면 섞지 않음 - // 46: 같은 동 추론(③④) 제거·거래 없는 단지는 기존 주변 비교 + 근거 약함(2026-10-18) - // 45: 회전율 구간별 보정 항상 적용(주간 갱신 표, 2026-10-17) - // 44: 추론에 최근 6개월 1~2건 포함 - // 43: 6개월 거래 부족 시 단계별 추론(2026-10-17) - // 42: 지역별 예상매도가(서울 최근3건·경기인천 반감1개월·지방 반감2개월)와 위험 여유(2026-10-17) - // 41: 아파트 예상매도가를 최근 6개월 같은 평형 거래의 최근가중 중위값으로(전국 백테스트, 2026-10-17) - // 40: 임차인 둘로 읽힌 경우 별개/같은 임차권(갱신·승계) 선택(2026-10-11) - // 39: 39: 임차권등기를 임차인으로 계산(전입·확정일자 기준)·경매신청인 전세권 안내(2026-10-11) - // 38: 38: 권리분석 날짜 선후 규칙 정리(전입 다음 날 0시·동순위 안분, 2026-10-11) - // 37: 37: 권리분석에 말소기준일보다 앞선 전세권·임차권 등 등기부 인수 권리 반영(2026-10-11) - // 36: 저가 아파트 순이익률 10% 추천가 규칙 되돌림(2026-10-11, 백테스트 손해 30~42%) - // 34: 33: 아파트 고층 보정 축소·저층 범위(2026-10-11) - // 29: nYear 저장 추가 - // 27: 🎲 예상 낙찰가용 시세(wbBase) 추가 (범위 표시는 화면에서 바로 계산 - 버전 변경 없음)
+var BOARD_CALC_VER = 57; // 54: 튀는 가격 반영 안 함·경고만(2026-10-24) - // 53: 최근 거래 시세반영/튀는 가격 구별(2026-10-24) - // 52: 임장 생략 판정(2026-10-19) - // 51: 전세가율 구간 보정·위험 신호(2026-10-18) - // 50: 지방 최근 거래 비슷한 층 비중·1~2건은 12개월 원값(2026-10-18) - // 49: 근거 약함 경고를 판정 단계에서 다시 붙임 - // 48: 예상매도가-감정가 큰 차이 근거 약함 표시 - // 47: 다른 평형 환산이 같은 평형과 20% 넘게 다르면 섞지 않음 - // 46: 같은 동 추론(③④) 제거·거래 없는 단지는 기존 주변 비교 + 근거 약함(2026-10-18) - // 45: 회전율 구간별 보정 항상 적용(주간 갱신 표, 2026-10-17) - // 44: 추론에 최근 6개월 1~2건 포함 - // 43: 6개월 거래 부족 시 단계별 추론(2026-10-17) - // 42: 지역별 예상매도가(서울 최근3건·경기인천 반감1개월·지방 반감2개월)와 위험 여유(2026-10-17) - // 41: 아파트 예상매도가를 최근 6개월 같은 평형 거래의 최근가중 중위값으로(전국 백테스트, 2026-10-17) - // 40: 임차인 둘로 읽힌 경우 별개/같은 임차권(갱신·승계) 선택(2026-10-11) - // 39: 39: 임차권등기를 임차인으로 계산(전입·확정일자 기준)·경매신청인 전세권 안내(2026-10-11) - // 38: 38: 권리분석 날짜 선후 규칙 정리(전입 다음 날 0시·동순위 안분, 2026-10-11) - // 37: 37: 권리분석에 말소기준일보다 앞선 전세권·임차권 등 등기부 인수 권리 반영(2026-10-11) - // 36: 저가 아파트 순이익률 10% 추천가 규칙 되돌림(2026-10-11, 백테스트 손해 30~42%) - // 34: 33: 아파트 고층 보정 축소·저층 범위(2026-10-11) - // 29: nYear 저장 추가 - // 27: 🎲 예상 낙찰가용 시세(wbBase) 추가 (범위 표시는 화면에서 바로 계산 - 버전 변경 없음)
 /* 2026-10-15(사용자: 입찰후보 로딩이 느림 - 원인 실측): 식별값 끝의 'P/F'(입찰일 지남 여부)가 한국 시각 자정에 바뀌어, 서버 미리 계산이 돈 뒤 어제 입찰이던 물건(하루 약 350건)이 전부 '다른 물건'이 돼
    지역 자료 86곳(곳당 9~13MB)을 새로 받아 다시 계산했음. 계산 결과는 입찰일 지남 여부와 무관하므로(날짜 표시는 열 때 다시 계산) 저장본의 P/F가 반대여도 같은 것으로 봄(flip). */
 function boardBaseSig(a, flip) {
