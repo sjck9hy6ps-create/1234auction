@@ -21310,6 +21310,8 @@ async function applyListingListsAuto(list) {
     Object.keys(byName).forEach(function(n) {
         var cands = T.filter(function(r) { return nameKey(r.name) === n; }); // 이름이 정확히 같은 물건이 있으면 그것만(일산·해운대 두산위브더제니스처럼 이름 일부가 겹치는 다른 단지와 섞이지 않게)
         if (!cands.length) cands = T.filter(function(r) { return sameName(nameKey(r.name), n); });
+        // 2026-10-27(청당마을 ↔ 네이버 '청당마을신도브래뉴'): 앱에 짧게 저장된 이름이면 주소(건물명이 들어 있음)에 네이버 단지 이름이 통째로 들어 있는 물건으로 찾음(5글자 이상)
+        if (!cands.length && n.length >= 5) cands = T.filter(function(r) { return matchNormName(String(r.a.addr || '')).indexOf(n) >= 0; });
         // 2026-10-27(영등4차제일아파트 ↔ 네이버 '영등제일4차'): 단어 순서만 다른 이름은 '○차' 번호가 같고 나머지 글자가 같으면 같은 단지로 봄(4글자 이상일 때만)
         if (!cands.length) { var cn = canonName(n); if (cn) cands = T.filter(function(r) { return canonName(nameKey(r.name)) === cn; }); }
         if (!cands.length) return;
