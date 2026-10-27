@@ -111,7 +111,10 @@ def main():
             ests["최근5건중위"] = float(np.median(pr[np.argsort(ag)[:5]])) if len(pr) >= 5 else np.nan
             ests["최근3건평균"] = float(np.mean(pr[np.argsort(ag)[:3]])) if len(pr) >= 3 else np.nan
             ests["최근3건중위"] = float(np.median(pr[np.argsort(ag)[:3]])) if len(pr) >= 3 else np.nan
-            rows.append(dict(cls=cls, t=float(T["t"]), n3=len(p3), n6=len(p6), tr12=tr12, hh=h, actual=float(T["price"]), **{"e_" + k2: v for k2, v in ests.items()}))
+            # 2026-10-27 단지 시세 흐름: 같은 평형 최근 3개월 중위 ÷ 4~9개월 전 중위 - 1 (최근 2건+, 이전 3건+)
+            r3, r9 = pr[ag <= 3], pr[(ag > 4) & (ag <= 9)]
+            trd = float((np.median(r3) / np.median(r9) - 1) * 100) if len(r3) >= 2 and len(r9) >= 3 else np.nan
+            rows.append(dict(cls=cls, trd=trd, t=float(T["t"]), n3=len(p3), n6=len(p6), tr12=tr12, hh=h, actual=float(T["price"]), **{"e_" + k2: v for k2, v in ests.items()}))
     D = pd.DataFrame(rows)
     D.to_json("backtest-sale-rule.json", orient="records", force_ascii=False)
     print(f"  시험 가능 {len(D):,}건, 세대수 연결 {D['hh'].notna().sum():,}건({D['hh'].notna().mean() * 100:.0f}%)")
@@ -130,6 +133,45 @@ def main():
         write_challenger(D)
     except Exception as e:
         print("  개선 후보 점검 건너뜀:", e)
+
+
+def trend_report(D):
+    """2026-10-27(사용자: 호황이면 더 높게·하락이면 더 보수적으로 - 단지 시세 흐름 반영) 현재 규칙(지역별 주규칙)이 오르는/내리는 단지에서 한쪽으로 치우치나, 흐름을 반영하면 나아지나"""
+    out = {}
+    d = D[D["trd"].notna()].copy()
+    if len(d) < 1000: print("  흐름 점검: 표본 부족"); return
+    d["cur"] = [d.loc[i, MAIN_RULE[d.loc[i, "cls"]]] for i in d.index]
+    d = d[d["cur"].notna()]
+    d["r"] = d["actual"] / d["cur"] - 1
+    bins = [(-999, -8, "하락 -8%↓"), (-8, -3, "하락 -8~-3%"), (-3, 3, "보합 ±3%"), (3, 8, "상승 +3~8%"), (8, 999, "상승 +8%↑")]
+    def line(G):
+        r = G["r"]
+        return {"n": int(len(G)), "bias": round(float(r.median()) * 100, 2), "err": round(float(r.abs().median()) * 100, 2), "hi10": round(float((r < -0.10).mean()) * 100, 1), "lo10": round(float((r > 0.10).mean()) * 100, 1)}
+    print("\n==== 📈 단지 시세 흐름별 현재 규칙의 치우침 (bias +: 실제가 예상보다 비쌌음) ====")
+    for cls in ("전체", "서울", "경기·인천", "지방"):
+        G0 = d if cls == "전체" else d[d.cls == cls]
+        out[cls] = {}
+        for lo, hi, lab in bins:
+            G = G0[(G0.trd > lo) & (G0.trd <= hi)]
+            if len(G) >= 150: out[cls][lab] = line(G)
+        print(f"[{cls}] 흐름 계산된 {len(G0):,}건 (전체의 {len(G0) / len(D) * 100:.0f}%)")
+        for lab, v in out[cls].items(): print(f"   {lab:<12}", v)
+    print("\n==== 흐름을 예상매도가에 반영하면? (예상 × (1 + k × 흐름%)) ====")
+    cmp = {}
+    for k in (0.0, 0.1, 0.2, 0.3, 0.5):
+        adj = d["cur"] * (1 + k * d["trd"].clip(-15, 15) / 100)
+        r = d["actual"] / adj - 1
+        cmp[k] = {"err": round(float(r.abs().median()) * 100, 3), "bias": round(float(r.median()) * 100, 2), "hi10": round(float((r < -0.10).mean()) * 100, 2), "hi15": round(float((r < -0.15).mean()) * 100, 2), "p10": round(float(np.quantile(r, .1)) * 100, 1)}
+        print(f"   k={k}", cmp[k])
+    # 하락·상승 구간만 따로(상승에서만 올리기 / 하락에서만 내리기)
+    for nm, mk in (("상승(+3%↑)만 반영", d.trd > 3), ("하락(-3%↓)만 반영", d.trd < -3)):
+        for k in (0.2, 0.5):
+            adj = np.where(mk, d["cur"] * (1 + k * d["trd"].clip(-15, 15) / 100), d["cur"])
+            r = d["actual"] / adj - 1
+            print(f"   {nm} k={k}", {"err": round(float(np.median(np.abs(r))) * 100, 3), "hi10": round(float((r < -0.10).mean()) * 100, 2), "hi15": round(float((r < -0.15).mean()) * 100, 2)})
+    out["adj"] = cmp
+    if os.environ.get("GITHUB_STEP_SUMMARY"):
+        open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8").write("### 단지 시세 흐름별 치우침\n```json\n" + json.dumps(out, ensure_ascii=False, indent=1) + "\n```\n")
 
 
 def report(D):
@@ -151,6 +193,7 @@ def report(D):
             if len(dd) < 300: continue
             print(f"[{cls}·{nm}] n{len(dd):,}")
             for q in (40, 50, 60): print(f"   {q}%", tail(dd, f"e_주규칙{q}"))
+    trend_report(D)
     print("\n==== 지역별 ====")
     for cls in ("서울", "경기·인천", "지방"):
         d = D[D.cls == cls]
