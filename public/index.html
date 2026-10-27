@@ -14343,7 +14343,7 @@ function parseTankRights(text) {
     // 건물등기. (PC) "갑(4)<탭>2023-11-09<줄바꿈>가압류<탭>권리자<탭>금액<탭>비고" / (모바일) "2023.11.09<줄>갑(4)<줄>가압류<줄>금액<줄>권리자<줄>소멸"
     var ri = text.search(/건물등기\s*\n/), rb = ri >= 0 ? text.slice(ri) : '';
     var rf = rb.search(/\n참고\/주의|\n주의사항|\n권리분석요약|\n주요변동/); if (rf > 0) rb = rb.slice(0, rf);
-    var rre = /(갑|을)\((\d+)\)\s+(\d{4}-\d{2}-\d{2})\s*\n([^\t\n]+)\t([^\t\n]*)\t([^\t\n]*)\t?([^\n]*)/g, rm, rstarts = [];
+    var rre = /(갑|을)\((\d+)\)\s+(\d{4}-\d{2}-\d{2})\s*\n[\t ]*([^\t\n]+)\t([^\t\n]*)\t([^\t\n]*)\t?([^\n]*)/g, rm, rstarts = [];
     while ((rm = rre.exec(rb))) rstarts.push({ at: rm.index, seq: rm[1] + '(' + rm[2] + ')', date: rm[3], type: rm[4].trim(), holder: rm[5].trim(), amountRaw: rm[6].trim(), rest: rm[7] });
     rstarts.forEach(function(r, k) {
         var chunk = rb.slice(r.at, k + 1 < rstarts.length ? rstarts[k + 1].at : rb.length);
