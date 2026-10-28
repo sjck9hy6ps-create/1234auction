@@ -66,7 +66,19 @@ def main():
                 t0 = S["t"].values[j]
                 oth = S[(np.abs(S["t"].values - t0) <= 60) & (S["floor"].values > 2)]["price"].values
                 if len(oth) >= 2: ratios.append(pr[j] / np.median(oth)); lows.append((ag[j], pr[j], np.median(oth)))
-            rec = dict(cls=T["cls"], actual=float(T["price"]), base=base, eA=eA, nlow=len(ratios))
+            # 1층만 별도 계산(2026-10-29): 이 단지 같은 평형 1층 거래만 모아, 각 거래를 그 시점 ±60일 3층+ 중위 대비 현재 규칙 값 수준으로 시점 보정한 값들의 (최근 가중) 중위
+            f1 = []
+            for j in np.where((fl == 1) & (ag <= 12))[0]:
+                t0 = S["t"].values[j]
+                oth = S[(np.abs(S["t"].values - t0) <= 60) & (S["floor"].values > 2)]["price"].values
+                if len(oth) >= 2: f1.append((ag[j], pr[j] * base / np.median(oth) / (base / np.median(oth)) , pr[j] / np.median(oth)))
+            n1 = len(f1)
+            rec = dict(cls=T["cls"], actual=float(T["price"]), base=base, eA=eA, nlow=len(ratios), n1=n1)
+            if n1:
+                # E: 1층 거래의 '다른 층 대비 비율' 중위 × 지금 규칙 값(시점 보정은 규칙 값이 이미 최근 시세)
+                rec["eE"] = base * min(1.0, float(np.median([x[2] for x in f1])))
+                # F: 1층 거래 가격 자체를 시점 보정(그 시점 다른 층 중위 → 지금 규칙 값) 한 값들의 중위
+                rec["eF"] = float(np.median([min(1.0, x[2]) * base for x in f1]))
             if ratios:
                 rB = float(np.median(ratios)); rec["eB"] = base * min(1.0, rB)   # 1층이 다른 층보다 비쌌던 경우도 있어 상한 1.0
                 last = sorted(lows)[0]; rec["eC"] = base * min(1.0, last[1] / last[2])
@@ -85,6 +97,16 @@ def main():
         for c, lab in (("base", "보정 없음(규칙 값)"), ("eA", "A 현재 근사(−7.8%)"), ("eB", "B 이 단지 1~2층 비율"), ("eC", "C 마지막 1~2층 거래 시점보정"), ("eD", "D B·A 평균")):
             if c in G.columns and G[c].notna().sum() > 100:
                 x = st(G[G[c].notna()], c); out[nm + "|" + lab] = x; print(f"   {lab:<24}", x)
+    print("\n==== 1층만 별도 계산: 이 단지 같은 평형 1층 거래 수별 ====")
+    for lab, lo, hi in (("1층 거래 1건", 1, 1), ("2건", 2, 2), ("3건+", 3, 99)):
+        G = D[(D.n1 >= lo) & (D.n1 <= hi)]
+        if len(G) < 150: continue
+        print(f"[{lab}] n{len(G):,}")
+        for c, nm in (("eA", "A 현재 근사"), ("eD", "D B·A 평균"), ("eE", "E 1층 거래 비율만"), ("eF", "F 1층 거래 시점보정 중위")):
+            if c in G.columns and G[c].notna().sum() > 100: print(f"   {nm:<22}", st(G[G[c].notna()], c))
+        if len(G) >= 150:
+            m = G.assign(eG=0.5 * G["eE"] + 0.5 * G["eA"])
+            print(f"   {'G E·A 평균':<22}", st(m, "eG"))
     for cls in ("서울", "경기·인천", "지방"):
         G = sub[sub.cls == cls]
         if len(G) < 150: continue
