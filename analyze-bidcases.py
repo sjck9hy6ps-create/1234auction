@@ -1675,7 +1675,7 @@ def weekly_report(R, now_dt, now_iso):
         print("  추천가 성적표:", {k: v for k, v in out["scorecard"].items() if k != "items"})
         try:
             _pc = out["scorecard"].get("probCal")
-            if _pc and _pc.get("use"):
+            if False and _pc and _pc.get("use"):  # 2026-10-28 되돌림: 앱에 쓰지 않음(계산·기록만 유지) - 예상 낙찰가에 입찰해도 15%로 나와 모델 정의와 어긋남
                 import requests as _rq
                 _rr = _rq.get(f"{cyc.SUPABASE_URL}/rest/v1/leader_follower_cache?select=payload&id=eq.signal%7C__winbid__", headers=cyc.HEADERS, timeout=60)
                 if _rr.ok and _rr.json():
