@@ -3951,7 +3951,7 @@ function villaMarginPlan(row, ve, title) {
    낙찰가÷예상매도가(중앙 0.755)를 최저가÷예상매도가·유찰·지역·평형·층·연식·근거 단계·계절로 설명. 학습에 안 쓴 2026-06~ 사례 1,597건: 낙찰가 보통 오차 9.4%(상수 비율 20.3%), ±10% 안 54%.
    추천가 = 필요 마진(villaMarginPlan: 최소 2,000만 + 연식·근거·승강기 여유, 1층 +20%)이 남는 입찰가 중 낙찰 가능성 × 순이익이 가장 큰 값. */
 var villaWinModel = null;
-(function() { fetch('/villa-winbid.json').then(function(r) { return r.json(); }).then(function(d) { if (d && d.eff && d.resQ) villaWinModel = d; }).catch(function() {}); })();
+(function() { Promise.all([fetch('/villa-winbid.json').then(function(r) { return r.json(); }), loadWinbidCorr()]).then(function(pair) { var d = pair[0]; if (d && d.eff && d.resQ) { d.corrTable = pair[1].villa; villaWinModel = d; } }).catch(function() {}); })();
 function villaRegionLabel(addr) {
     var t = String(addr || '').trim().split(/\s+/); if (t.length < 2) return null;
     var sd = { '서울특별시': '서울', '서울': '서울', '인천광역시': '인천', '인천': '인천', '경기도': '경기', '경기': '경기' }[t[0]]; if (!sd) return null;
@@ -3979,7 +3979,9 @@ function villaWinbid(row, ve, title) {
         season: (mm === 12 || mm <= 2) ? '겨울' : (mm <= 5 ? '봄' : (mm <= 8 ? '여름' : '가을'))
     };
     var pred = m.base; Object.keys(keys).forEach(function(k) { var v = (m.eff[k] || {})[keys[k]]; if (typeof v === 'number') pred += v; });
-    return { pred: pred, price: Math.round(ve.est * Math.exp(pred)), est: ve.est };
+    var vcorr = null;  // 자동 보정(지역×유찰): 키 예) '서울|신건', '경기|2회+ 유찰'
+    if (m.corrTable) { var rg0 = String(keys.region || '').split(' ')[0], fl0 = keys.fails === '0' ? '신건' : (keys.fails === '1' ? '1회 유찰' : '2회+ 유찰'), cv2 = m.corrTable[rg0 + '|' + fl0]; if (typeof cv2 === 'number') { vcorr = cv2; pred += cv2 / 100; } }
+    return { pred: pred, price: Math.round(ve.est * Math.exp(pred)), est: ve.est, corrPct: vcorr };
 }
 function villaProbAt(wb, bid) {
     if (!wb || !bid) return null; var q = villaWinModel.resQ, thr = Math.log(bid / wb.est) - wb.pred;
@@ -19008,6 +19010,14 @@ function listingCapFor(a, ownStats) {
    ⚠️ 모델이 배운 "시세"와 똑같이 맞추려고 여기서 시세를 따로 구함: 입찰 30일 전(지난 입찰은 그때, 앞으로 입찰은 오늘) 기준
       같은 단지·면적 ±2㎡·직거래 제외, 1층/그 외를 나눠 최근 1년 3건 이상(없으면 3년 1건 이상)의 ㎡당 가격 40% 지점 × 면적.
    최저가는 이 예측에만 씀(예상매도가·추천 입찰가 계산엔 그대로 안 씀). 아파트만. ════ */
+/* 🔧 자동 보정(2026-10-29, 사용자: 자동 보정 검사 결과가 모두 '적용 권장'이니 아파트·빌라 모두 적용) - 서버가 매주 과거로 앞으로 가며 검증(winbid_corr.py)한 구간별 보정을 예상 낙찰가에 더함.
+   직전 약 12주 잔차 중앙값을 구간(아파트: 지역 / 빌라: 지역×유찰)별로 표본 수만큼 줄여서 최대 ±4%. 검증에서 '적용 권장'이 아니면 쓰지 않음. 모델을 받을 때 함께 받아 같은 시점에 적용(계산 순서가 달라도 같은 값) */
+function loadWinbidCorr() {
+    return fetch('/api/data-coverage?mode=corrCheck').then(function(r) { return r.json(); }).then(function(d) {
+        var tab = function(x) { if (!x || !x.ok || !x.recommend || !x.current || !x.current.table) return null; var o = {}; Object.keys(x.current.table).forEach(function(k) { var v = x.current.table[k]; if (v && typeof v.corrPct === 'number') o[k] = v.corrPct; }); return Object.keys(o).length ? o : null; };
+        return { apt: tab(d && d.apt), villa: tab(d && d.villa), aptVariant: d && d.apt && d.apt.current && d.apt.current.variant, villaVariant: d && d.villa && d.villa.current && d.villa.current.variant };
+    }).catch(function() { return { apt: null, villa: null }; });
+}
 var winbidModel = null, winbidLoading = false;
 function loadWinbidModel() {
     if (winbidModel || winbidLoading) return;
@@ -19027,7 +19037,8 @@ function loadWinbidModel() {
         } catch (e) {}
         return true;
     };
-    fetch('/api/data-coverage?mode=winbid').then(function(r) { return r.json(); }).then(function(d) {
+    Promise.all([fetch('/api/data-coverage?mode=winbid').then(function(r) { return r.json(); }), loadWinbidCorr()]).then(function(pair) {
+        var d = pair[0]; if (d && typeof d === 'object') { d.corrTable = pair[1].apt; d.corrVariant = pair[1].aptVariant; }
         // 감정가 요인(lab)이 없는 옛 서버 모델이면 새 요인이 들어 있는 기본 파일을 먼저 씀(서버 계산이 새 모델로 바뀔 때까지)
         if (d && d.eff && d.eff.lab && use(d)) return;
         return fetch('/winbid-model.json').then(function(r) { return r.json(); }).then(function(d2) { if (!use(d2)) winbidLoading = false; });
@@ -19119,7 +19130,9 @@ function winbidFor(row) {
         var ca = winbidModel.compAdj && winbidModel.compAdj[comp];
         if (ca && ca.n >= 300 && typeof ca.adj === 'number') { compShift = Math.max(-0.08, Math.min(0.08, ca.adj)); pred += compShift; }
     }
-    var wb = { est: b.est, own: b.own, pred: pred, price: Math.round(b.est * Math.exp(pred)), bidN: bidN, comp: comp, compShift: compShift };
+    var corrPct = null;  // 자동 보정(지역별) - 서울이면 +, 지방이면 − 처럼 최근 12주 잔차 반영
+    if (winbidModel.corrTable) { var rc = row.regionCls || (row.lawd ? aptRegionClass(row.lawd) : null), cv = rc != null ? winbidModel.corrTable[rc] : null; if (typeof cv === 'number') { corrPct = cv; pred += cv / 100; } }
+    var wb = { est: b.est, own: b.own, pred: pred, price: Math.round(b.est * Math.exp(pred)), bidN: bidN, comp: comp, compShift: compShift, corrPct: corrPct };
     wb.probRec = row.recBid ? winbidProbAt(wb, row.recBid) : null;
     wb.probAggr = row.recAggr ? winbidProbAt(wb, row.recAggr) : null;
     // 2026-10-25 입력 금액 점검: 감정가가 시세의 30% 미만·3배 초과이거나 최저가가 감정가보다 높으면 금액이 잘못 들어갔을 가능성(실제로 다른 물건 금액이 섞여 저장된 사례 확인) → 낙찰 가능성을 계산하지 않음
@@ -20039,7 +20052,7 @@ async function mergeServerBoardCache(local, onlyFirst) {
 setTimeout(function() { try { listIdbOp('readwrite', function(st) { return st.delete('bidBoardCache:v1'); }); } catch (e) {} }, 4000); // 예전 큰 로컬 저장본(서버 계산본 포함, 수십 MB)은 읽지 않고 지움(느린 기기에서 열 때 수 초 멈춤, 2026-10-21)
 setTimeout(function() { var go = function() { try { srvBoardParts(); setTimeout(function() { try { window.villaSrvP = villaFetchServerCalc(); } catch (e) {} }, 4000); } catch (e) {} }; if (window.requestIdleCallback) requestIdleCallback(go, { timeout: 6000 }); else go(); }, 2500); // 앱을 켜고 2.5초 뒤 한가할 때 배경에서 미리 받기(빌라는 4초 더 뒤)
 // 저장 계산을 다시 써도 되는지 - 물건 입력값(시세 계산에 쓰는 것)과 입찰일 지남 여부. 계산 방식이 바뀌면 BOARD_CALC_VER을 올림
-var BOARD_CALC_VER = 62; // 54: 튀는 가격 반영 안 함·경고만(2026-10-24) - // 53: 최근 거래 시세반영/튀는 가격 구별(2026-10-24) - // 52: 임장 생략 판정(2026-10-19) - // 51: 전세가율 구간 보정·위험 신호(2026-10-18) - // 50: 지방 최근 거래 비슷한 층 비중·1~2건은 12개월 원값(2026-10-18) - // 49: 근거 약함 경고를 판정 단계에서 다시 붙임 - // 48: 예상매도가-감정가 큰 차이 근거 약함 표시 - // 47: 다른 평형 환산이 같은 평형과 20% 넘게 다르면 섞지 않음 - // 46: 같은 동 추론(③④) 제거·거래 없는 단지는 기존 주변 비교 + 근거 약함(2026-10-18) - // 45: 회전율 구간별 보정 항상 적용(주간 갱신 표, 2026-10-17) - // 44: 추론에 최근 6개월 1~2건 포함 - // 43: 6개월 거래 부족 시 단계별 추론(2026-10-17) - // 42: 지역별 예상매도가(서울 최근3건·경기인천 반감1개월·지방 반감2개월)와 위험 여유(2026-10-17) - // 41: 아파트 예상매도가를 최근 6개월 같은 평형 거래의 최근가중 중위값으로(전국 백테스트, 2026-10-17) - // 40: 임차인 둘로 읽힌 경우 별개/같은 임차권(갱신·승계) 선택(2026-10-11) - // 39: 39: 임차권등기를 임차인으로 계산(전입·확정일자 기준)·경매신청인 전세권 안내(2026-10-11) - // 38: 38: 권리분석 날짜 선후 규칙 정리(전입 다음 날 0시·동순위 안분, 2026-10-11) - // 37: 37: 권리분석에 말소기준일보다 앞선 전세권·임차권 등 등기부 인수 권리 반영(2026-10-11) - // 36: 저가 아파트 순이익률 10% 추천가 규칙 되돌림(2026-10-11, 백테스트 손해 30~42%) - // 34: 33: 아파트 고층 보정 축소·저층 범위(2026-10-11) - // 29: nYear 저장 추가 - // 27: 🎲 예상 낙찰가용 시세(wbBase) 추가 (범위 표시는 화면에서 바로 계산 - 버전 변경 없음)
+var BOARD_CALC_VER = 63; // 54: 튀는 가격 반영 안 함·경고만(2026-10-24) - // 53: 최근 거래 시세반영/튀는 가격 구별(2026-10-24) - // 52: 임장 생략 판정(2026-10-19) - // 51: 전세가율 구간 보정·위험 신호(2026-10-18) - // 50: 지방 최근 거래 비슷한 층 비중·1~2건은 12개월 원값(2026-10-18) - // 49: 근거 약함 경고를 판정 단계에서 다시 붙임 - // 48: 예상매도가-감정가 큰 차이 근거 약함 표시 - // 47: 다른 평형 환산이 같은 평형과 20% 넘게 다르면 섞지 않음 - // 46: 같은 동 추론(③④) 제거·거래 없는 단지는 기존 주변 비교 + 근거 약함(2026-10-18) - // 45: 회전율 구간별 보정 항상 적용(주간 갱신 표, 2026-10-17) - // 44: 추론에 최근 6개월 1~2건 포함 - // 43: 6개월 거래 부족 시 단계별 추론(2026-10-17) - // 42: 지역별 예상매도가(서울 최근3건·경기인천 반감1개월·지방 반감2개월)와 위험 여유(2026-10-17) - // 41: 아파트 예상매도가를 최근 6개월 같은 평형 거래의 최근가중 중위값으로(전국 백테스트, 2026-10-17) - // 40: 임차인 둘로 읽힌 경우 별개/같은 임차권(갱신·승계) 선택(2026-10-11) - // 39: 39: 임차권등기를 임차인으로 계산(전입·확정일자 기준)·경매신청인 전세권 안내(2026-10-11) - // 38: 38: 권리분석 날짜 선후 규칙 정리(전입 다음 날 0시·동순위 안분, 2026-10-11) - // 37: 37: 권리분석에 말소기준일보다 앞선 전세권·임차권 등 등기부 인수 권리 반영(2026-10-11) - // 36: 저가 아파트 순이익률 10% 추천가 규칙 되돌림(2026-10-11, 백테스트 손해 30~42%) - // 34: 33: 아파트 고층 보정 축소·저층 범위(2026-10-11) - // 29: nYear 저장 추가 - // 27: 🎲 예상 낙찰가용 시세(wbBase) 추가 (범위 표시는 화면에서 바로 계산 - 버전 변경 없음)
 /* 2026-10-15(사용자: 입찰후보 로딩이 느림 - 원인 실측): 식별값 끝의 'P/F'(입찰일 지남 여부)가 한국 시각 자정에 바뀌어, 서버 미리 계산이 돈 뒤 어제 입찰이던 물건(하루 약 350건)이 전부 '다른 물건'이 돼
    지역 자료 86곳(곳당 9~13MB)을 새로 받아 다시 계산했음. 계산 결과는 입찰일 지남 여부와 무관하므로(날짜 표시는 열 때 다시 계산) 저장본의 P/F가 반대여도 같은 것으로 봄(flip). */
 function boardBaseSig(a, flip) {
@@ -20716,7 +20729,7 @@ async function renderBidDrawer() {
                 + (row.winbid.probAggr != null ? ' · 적극 입찰가면 약 ' + Math.round(row.winbid.probAggr * 100) + '%' : '') + '</div>' : '')
             + (row.winbid.amountSuspect ? '<div style="color:#b91c1c;">⚠️ 감정가·최저가가 시세와 너무 달라요 - 입력 금액이 잘못됐을 수 있어 낙찰 가능성은 계산하지 않았어요(CSV를 다시 올리면 바로잡아요)</div>' : '')
             + (wbp != null && wbp < 35 ? '<div style="color:#b91c1c;">마진을 지키는 상한이 보통 낙찰 가격보다 낮아요 - 써도 질 가능성이 커요(무리해서 올리면 마진이 줄어요)</div>' : '')
-            + compNote + (row.winbid.compShift ? '<div class="dr-sub" style="color:#7c3aed;">경쟁 예상이 ' + row.winbid.comp + '이라 예상 낙찰가를 ' + (row.winbid.compShift > 0 ? '+' : '') + (Math.round(row.winbid.compShift * 1000) / 10) + '% 조정했어요(과거 같은 경쟁 예상 물건의 실제 낙찰가 기준)</div>' : '')
+            + compNote + (row.winbid.corrPct ? '<div class="dr-sub" style="color:#7c3aed;">최근 12주 낙찰 결과로 이 지역 예상 낙찰가를 ' + (row.winbid.corrPct > 0 ? '+' : '') + row.winbid.corrPct + '% 보정했어요(매주 자동 검증을 통과한 보정)</div>' : '') + (row.winbid.compShift ? '<div class="dr-sub" style="color:#7c3aed;">경쟁 예상이 ' + row.winbid.comp + '이라 예상 낙찰가를 ' + (row.winbid.compShift > 0 ? '+' : '') + (Math.round(row.winbid.compShift * 1000) / 10) + '% 조정했어요(과거 같은 경쟁 예상 물건의 실제 낙찰가 기준)</div>' : '')
             + '<div class="dr-sub">낙찰사례 2만여 건 전국 모델에 이 시군구·법정동 사례를 덧반영(사례가 적은 곳은 전국 평균 쪽으로 당김) · 시세는 이 단지 거래 기준(학습에 안 쓴 최근 1년 검증 보통 오차 ' + ((winbidModel.oos && winbidModel.oos.medAbsErrPct) || '5~6') + '%) · 최저가는 이 예측에만 쓰고 예상매도가엔 안 써요'
             + ' · 시세(같은 단지·평형 ' + row.winbid.own + '건 40% 지점) ' + fmt(row.winbid.est) + '</div></div>';
     }
