@@ -129,6 +129,60 @@ def run(D, tr, te, wb_fit, wb_predict, zones, est_rule_experiment, R, now):
         for nm, v in cx.items(): print("  🧪 ⑤", nm, v)
     except Exception as e:
         print("  🧪 ⑤ 건너뜀:", e)
+    try:
+        out["⑥ 노이즈 낙찰가 거르기"] = noise_experiment(D, tr, te, wb_fit, wb_predict, nonreg)
+    except Exception as e:
+        import traceback; traceback.print_exc(); print("  🧪 ⑥ 건너뜀:", e)
     if os.environ.get("GITHUB_STEP_SUMMARY"):
         open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8").write("### 예상 낙찰가 개선 실험\n```json\n" + json.dumps(out, ensure_ascii=False, indent=1) + "\n```\n")
+    return out
+
+
+def noise_experiment(D, tr, te, wb_fit, wb_predict, nonreg):
+    """2026-10-29(사용자: 실수요·미래가치 입찰자와 보증공사(HUG) 경매는 투자자가 이길 수 없는 높은 가격 → 학습에서 거를 방법)
+    ① 태그별 잔차(실제÷예상) ② 태그를 요인으로 ③ 해당 건을 학습에서 빼기 ④ 학습 잔차 이상치(+20% 초과) 빼기 ⑤ 낙찰자가 차순위보다 크게 높게 쓴 비율"""
+    G = wb_fit.__globals__; base_f = list(G["WB_FACTORS"])
+    tagf = lambda df: np.where(df["notes"].fillna("").astype(str).str.contains("HUG"), "HUG", np.where(df["notes"].fillna("").astype(str).str.contains("임차권|대항력"), "임차", "없음"))
+    tag_te = tagf(te); tag_tr = tagf(tr)
+    print("  🧪 ⑥ 태그 분포 학습", {k: int((tag_tr == k).sum()) for k in ("HUG", "임차", "없음")}, "시험", {k: int((tag_te == k).sum()) for k in ("HUG", "임차", "없음")})
+    y_te = np.log(te["actual"].values / te["est"].values)
+    def metrics(p, mask=None):
+        r = np.exp(y_te - p) - 1  # 실제 ÷ 예상 − 1
+        if mask is not None: r = r[mask]
+        return {"n": int(len(r)), "err": round(float(np.median(np.abs(r))) * 100, 2), "bias": round(float(np.median(r)) * 100, 2), "lo10": round(float((r > 0.10).mean()) * 100, 1), "hi10": round(float((r < -0.10).mean()) * 100, 1), "lo20": round(float((r > 0.20).mean()) * 100, 1)}
+    out = {}
+    m0 = wb_fit(tr); p0 = wb_predict(m0, te)
+    out["① 태그별(현재 모델)"] = {k: metrics(p0, tag_te == k) for k in ("HUG", "임차", "없음") if (tag_te == k).sum() >= 100}
+    for k, v in out["① 태그별(현재 모델)"].items(): print("  🧪 ⑥①", k, v)
+    # ② 태그를 요인으로
+    try:
+        G["WB_FACTORS"] = base_f + [("hug", 30)]
+        m1 = wb_fit(tr); p1 = wb_predict(m1, te)
+        out["② 태그를 요인으로"] = {"전체": metrics(p1), "비규제": metrics(p1, nonreg), "HUG": metrics(p1, tag_te == "HUG"), "태그 없음": metrics(p1, tag_te == "없음"), "효과": m1["eff"].get("hug")}
+        print("  🧪 ⑥② 요인으로 추가", out["② 태그를 요인으로"])
+    finally:
+        G["WB_FACTORS"] = base_f
+    out["기준(현재) 전체·태그 없음"] = {"전체": metrics(p0), "태그 없음": metrics(p0, tag_te == "없음")}
+    print("  🧪 ⑥ 기준", out["기준(현재) 전체·태그 없음"])
+    # ③ 학습에서 해당 건 빼기
+    for nm, keep in (("HUG만 빼고 학습", tag_tr != "HUG"), ("HUG·임차 모두 빼고 학습", tag_tr == "없음")):
+        m2 = wb_fit(tr[keep]); p2 = wb_predict(m2, te)
+        out["③ " + nm] = {"전체": metrics(p2), "태그 없음": metrics(p2, tag_te == "없음"), "HUG": metrics(p2, tag_te == "HUG")}
+        print("  🧪 ⑥③", nm, out["③ " + nm])
+    # ④ 학습 잔차 이상치 빼기
+    r_tr = np.log(tr["actual"].values / tr["est"].values) - wb_predict(m0, tr)
+    for cut in (0.20, 0.30):
+        keep = r_tr <= cut
+        m3 = wb_fit(tr[keep]); p3 = wb_predict(m3, te)
+        out[f"④ 학습 잔차 +{int(cut*100)}% 초과 빼기({int((~keep).sum())}건)"] = {"전체": metrics(p3), "태그 없음": metrics(p3, tag_te == "없음")}
+        print("  🧪 ⑥④", f"+{int(cut*100)}% 초과 제거 {int((~keep).sum())}건", out[f"④ 학습 잔차 +{int(cut*100)}% 초과 빼기({int((~keep).sum())}건)"])
+    # ⑤ 낙찰자가 차순위보다 크게 높게 쓴 비율(비경제적 낙찰)
+    try:
+        sec = pd.to_numeric(te["second"], errors="coerce").values; act = te["actual"].values; bid = pd.to_numeric(te["bidders"], errors="coerce").values
+        ok = np.isfinite(sec) & (sec > 0) & (bid >= 2)
+        gap = (act - sec) / act
+        out["⑤ 차순위 대비 낙찰가 격차 8%+ 비율"] = {k: {"n": int((ok & (tag_te == k)).sum()), "pct": round(float((gap[ok & (tag_te == k)] > 0.08).mean()) * 100, 1)} for k in ("HUG", "임차", "없음") if (ok & (tag_te == k)).sum() >= 100}
+        print("  🧪 ⑥⑤", out["⑤ 차순위 대비 낙찰가 격차 8%+ 비율"])
+    except Exception as ex:
+        print("  🧪 ⑥⑤ 건너뜀:", ex)
     return out

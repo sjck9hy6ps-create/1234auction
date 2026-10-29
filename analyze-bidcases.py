@@ -1067,6 +1067,9 @@ def wb_features(D):
     X["lab"] = la.map(lambda v: "?" if v is None or not np.isfinite(v) else str(sum(1 for e in WB_LAB_EDGES if v > e)))
     X["lbl"] = X["lb"] + "|" + X["lab"]
     X["labf"] = X["lab"] + "|" + X["fails"]
+    if "notes" in D.columns:  # 2026-10-29 경매현황 특이사항 태그(HUG 임차권 인수조건변경·임차권등기·대항력 있는 임차인) - 실험용 요인(WB_FACTORS에 넣을 때만 쓰임)
+        nt = D["notes"].fillna("").astype(str)
+        X["hug"] = np.where(nt.str.contains("HUG"), "HUG", np.where(nt.str.contains("임차권|대항력"), "임차", "없음"))
     jbv = pd.to_numeric(D["jb"], errors="coerce") if "jb" in D.columns else pd.Series(np.nan, index=D.index)
     X["jb"] = jbv.map(lambda v: "?" if v is None or not np.isfinite(v) else ("dn" if v <= -0.05 else ("fl" if v <= 0.05 else ("up1" if v <= 0.12 else ("up2" if v <= 0.20 else "up3")))))
     return X
