@@ -14929,6 +14929,7 @@ function myrHouseRead(t) {
     out.absent = /거주\s*불명|말소/.test(reg.replace(/말소자\s*또는\s*거주\s*불명[^\n]*/g, '').replace(/[알말]소자[^\n]*/g, ''));
     out.empty = /전입\s*세대\s*(?:가\s*)?없|해당\s*세대\s*없|세대\s*없음/.test(t);
     var oc = (reg.match(/거주자/g) || []).length; out.residents = oc;
+    var sn = t.match(/최초\s*전입자의\s*전입일자\s*\n\s*([가-힣])\s*\n/); if (sn) out.surname = sn[1];  // 가려진 이름의 성씨(그림 글자 인식)
     return out;
 }
 function myrDocDigest(docs, split) {
@@ -15206,6 +15207,36 @@ function myrStoryHtml(a, R, my, vd, bidWon, row) {
     if (hr && hr.ageDays > 180) imp.push('⚠️ 세대열람이 ' + e(hr.issued) + ' 발급으로 오래돼, 입찰 직전에 전입 상황을 다시 확인해야 해요.');
     if (cn.length) imp.push('⚠️ 이 사건은 낙찰자가 대금을 못 내 취소된 일이 있어요. 입찰하면 자금 계획을 확실히 세우세요(대금을 못 내면 보증금을 잃어요).');
     P.push(['⑤ 남은 관계와 낙찰자에게 미치는 영향', '<ul style="margin:2px 0 0 16px;padding:0;">' + imp.map(function(x) { return '<li style="margin-bottom:3px;">' + x + '</li>'; }).join('') + '</ul>']);
+    if (isJoint) {
+        var P2 = [], rr = R.registry || [], first = rr.filter(function(r) { return /소유권이전/.test(r.type || ''); })[0], note0 = first ? String(first.note || '') : '', pc = note0.match(/([가-힣]{2,4})\s+([가-힣]{2,4})\s+각\s*(\d+\/\d+)/), px = note0.match(/거래가액\s*금?\s*([\d,]+)/);
+        var shareX = rr.filter(function(r) { return /([가-힣]{2,4})지분전부이전/.test(r.type || ''); })[0], shareFrom = shareX ? (shareX.type.match(/([가-힣]{2,4})지분전부이전/) || [])[1] : '', shareAuc = shareX ? (String(shareX.note || '').match(/(\d{4}타경\d+)/) || [])[1] : '';
+        var shMort = rr.filter(function(r) { return /지분/.test(r.type || '') && /근저당|저당/.test(r.type || ''); })[0], mortOwner = shMort ? (shMort.type.match(/([가-힣]{2,4})지분/) || [])[1] : '';
+        P2.push(['① 어떻게 공동 소유가 됐나', first ? (pc ? '<b>' + e(pc[1]) + '</b>과(와) <b>' + e(pc[2]) + '</b>이 <b>' + e(first.date) + '</b>에 이 집을 <b>각 ' + e(pc[3]) + '씩 공동으로 샀어요</b>' + (px ? '(거래가액 ' + man(rightsNum(px[1])) + ')' : '') + '.' : '<b>' + e(first.date) + '</b>에 ' + e(first.holder || '') + '이(가) 소유권을 취득했어요.') : '공동 소유가 된 과정을 등기부에서 읽지 못했어요.']);
+        var d2 = [];
+        if (shMort) d2.push('<b>' + e(shMort.date) + '</b>에 <b>' + e(mortOwner || '한쪽 공유자') + '</b>이(가) 자기 지분을 담보로 <b>' + e(shMort.holder || '채권자') + '</b>에게서 돈을 빌렸어요(근저당 ' + man(shMort.amount) + ', 그 사람 지분에만 설정).');
+        if (shareX) d2.push('<b>' + e(shareFrom) + '</b>의 지분은 ' + (shareAuc ? '다른 경매(' + e(shareAuc) + ')로 ' : '') + '<b>' + e(shareX.date) + '</b>에 <b>' + e(shareX.holder || '') + '</b>에게 넘어갔어요 → 이제 ' + e(shareX.holder || '') + '이(가) 새 공유자예요.');
+        P2.push(['② 지분은 어떻게 바뀌었나', d2.join(' ') || '지분 변동 내역을 읽지 못했어요.']);
+        var rel0 = (R.docs && R.docs.related || [])[0];
+        P2.push(['③ 왜 경매가 시작됐나', '<b>' + e(f.startDate || '?') + '</b>에 공유자 <b>' + e(f.creditor || '신청인') + '</b>이(가) 상대 공유자 <b>' + e(f.debtor || '') + '</b>과(와) 집을 나누지 못해 법원에 <b>공유물분할을 위한 경매</b>를 신청했어요. 빚 때문이 아니라, 공유 관계를 끝내려고 집 전체를 팔아 대금을 지분대로 나누는 경매예요(민법 제269조·민사집행법 제274조).' + (rel0 ? ' 같은 문제로 <b>' + e(rel0.no) + ' ' + e(rel0.kind) + '</b> 소송도 있었어요(내용은 서류에서 읽을 수 없어 법원 사건검색에서 확인 필요).' : '')]);
+        var ch = evs.filter(function(x) { return x.r === '변경' || x.r === '연기'; }), reqs = de.filter(function(x) { return /기일변경신청/.test(x.t); }), fl = evs.filter(function(x) { return x.r === '유찰'; });
+        var s4b = fl.map(function(x) { return e(x.d) + ' 최저가 ' + man(x.p) + ' → <b>유찰(입찰자 없음)</b>'; }).join('<br>');
+        if (fl.length) { var nx = evs.filter(function(x) { return x.k === '매각기일' && x.d > fl[0].d && x.p && x.p < fl[0].p; })[0]; s4b += '<br><b>유찰 이유</b>: 서류에 이유는 없고, 입찰한 사람이 없었다는 뜻이에요.' + (nx ? ' 유찰되면 최저가가 ' + Math.round((1 - nx.p / fl[0].p) * 100) + '% 내려가요.' : ''); var sale2 = row && row.sale ? row.sale * 10000 : 0; if (sale2) s4b += ' 당시 최저가(' + man(fl[0].p) + ')가 앱의 예상 시세(' + man(sale2) + ')' + (fl[0].p >= sale2 * 0.92 ? '와 비슷하거나 더 비싸서 입찰이 없었던 것으로 보여요(추정).' : '보다 낮은데도 유찰됐어요.'); }
+        if (ch.length) s4b += '<br><b>기일 변경</b>: ' + ch.map(function(x) { return e(x.d); }).join(', ') + ' 기일이 바뀌었어요' + (reqs.length ? '(문건에 신청인의 기일변경신청서 ' + reqs.length + '건 - 신청한 공유자가 일정을 미룬 것)' : '') + '.';
+        if (f.saleDate) s4b += '<br><b>지금</b>: ' + e(f.saleDate) + ' 매각기일에 최저가 ' + man(f.minPrice) + '(감정가 ' + man(f.appraisal) + '의 ' + (f.minPct || '?') + '%)로 입찰을 받아요.';
+        P2.push(['④ 그동안 어떻게 진행됐나', s4b || '진행 기록을 읽지 못했어요.']);
+        var hr2 = R.docs && R.docs.houseRead, imp2 = [], shNames = [f.owner, f.debtor, f.creditor, first && first.holder, shareX && shareX.holder].join(' '), former = shareFrom || '';
+        imp2.push('<b>한쪽 공유자 지분의 근저당' + (shMort ? '(' + e(shMort.holder || '') + ' ' + man(shMort.amount) + ')' : '') + '은 낙찰자가 떠안지 않아요.</b> 집 전체를 팔아, 그 공유자 몫의 대금에서 먼저 갚고 등기는 지워져요(대법원 2009.10.29. 선고 2006다37908). 매각물건명세서의 "매각으로 소멸하지 않는 권리" 칸도 ' + ((R.docs && R.docs.specRead && R.docs.specRead.state === 'none') ? '비어 있어요.' : '확인이 필요해요.'));
+        imp2.push('공유자는 우선매수권이 없어요(집 전체를 파는 경매, 대법원 2008마693 등) → 최고가로 낙찰받으면 공유자에게 빼앗길 일이 없어요. 낙찰대금은 공유자들이 지분대로 나눠 가져요(낙찰자와는 무관).');
+        imp2.push(R.noTenants || !(R.tenants || []).length ? '<b>임차인은 없어요</b>(현황조사서 임대차 0명). 낙찰자가 돌려줄 보증금이 없어요.' : '임차인이 있어요 - 아래 권리분석의 대항력 판정을 보세요.');
+        if (hr2 && hr2.state === 'ok') {
+            var sur = hr2.surname || '', cur = [f.owner, f.debtor, f.creditor].join(' '), formerHit = sur && former && former.charAt(0) === sur && cur.indexOf(sur) < 0;
+            imp2.push('세대열람(' + e(hr2.issued || '') + '): 세대주' + (sur ? ' <b>"' + e(sur) + '"씨</b>' : '') + ' 1세대가 ' + e((hr2.moveIns || []).join(', ')) + ' 전입해 살고 있어요. ' + (formerHit ? '이분은 <b>지분을 잃은 전 공유자(' + e(former) + ')로 보여요</b> - 소유자가 아니라서 낙찰자는 대금 납부 후 인도명령(민사집행법 제136조)으로 집을 넘겨받을 수 있어요. 다만 현황조사서는 점유자를 "' + e(f.debtor || '') + '(공유자) 세대"로 적어 <b>서로 달라요</b> → 실제로 누가 사는지, 임대차 주장이 없는지 입찰 전에 확인하세요.' : (sur && cur.indexOf(sur) < 0 ? '⚠️ 이 성씨는 현재 공유자들과 달라요 → 임차인 등 제3자일 수 있어요. 전입일이 말소기준일(' + e(R.baseDate || '-') + ')보다 빠르면 임차인일 경우 대항력이 있으니 꼭 확인하세요.' : '소유자 쪽 세대로 보여요.')));
+            if (hr2.ageDays > 180) imp2.push('⚠️ 세대열람이 ' + e(hr2.issued) + ' 발급으로 ' + Math.round(hr2.ageDays / 30) + '개월 지났어요. 입찰 직전에 다시 확인하세요.');
+        }
+        imp2.push('낙찰자가 따로 부담하는 건 취득세 등 비용과 <b>체납 관리비 중 공용부분</b>이에요(집합건물, 대법원 2001다8097 전원합의체).');
+        P2.push(['⑤ 남은 관계와 낙찰자에게 미치는 영향', '<ul style="margin:2px 0 0 16px;padding:0;">' + imp2.map(function(x) { return '<li style="margin-bottom:3px;">' + x + '</li>'; }).join('') + '</ul>']);
+        P = P2;
+    }
     var h = '<div class="dr-sec" style="border:2px solid #6366f1;border-radius:10px;padding:10px 12px;"><h4>📖 이 집의 이야기 <span class="dr-sub" style="font-weight:400;">서류와 법 조문으로 풀어 쓴 요약 (세부 권리 판정은 아래 권리분석)</span></h4>';
     P.forEach(function(p) { h += '<div style="margin-top:8px;"><div style="font-weight:700;color:#4338ca;">' + p[0] + '</div><div style="font-size:13px;line-height:1.7;">' + p[1] + '</div></div>'; });
     h += '<div class="dr-sub" style="margin-top:8px;">※ 이름이 가려진 부분과 \'추정\' 표시는 서류만으로 확정할 수 없는 내용이에요. 법원의 최신 문건은 입찰 전에 직접 확인하세요.</div></div>';
