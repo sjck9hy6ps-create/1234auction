@@ -14914,7 +14914,8 @@ function myrSpecRead(t) {
     var cleaned = reg.replace(/등기된|부동산에|관한|권리|또는|가처분으로|매각으로|효력이|소멸되지|아니하는|매각에|따라|설정된|것으로|보는|지상권의|개요|비고란|[\s,.:;·※()\-_\d]|그|것/g, '');
     var ex = reg.replace(/등기된\s*부동산에\s*관한\s*권리\s*또는\s*가처분으로\s*매각으로\s*(?:그\s*)?효력이\s*소멸되지\s*아니하는\s*것/, '').replace(/\s+/g, ' ').trim().slice(0, 200);
     if (/없\s*음|해당\s*(?:사항\s*)?없/.test(reg)) return { state: 'none', excerpt: ex };
-    return cleaned.length >= 2 ? { state: 'listed', excerpt: ex } : { state: 'blank', excerpt: ex };
+    if (cleaned.length >= 2) return { state: 'listed', excerpt: ex };
+    return /\[쪽 \d+\]/.test(String(t)) && j > 0 ? { state: 'none', excerpt: '(칸이 비어 있음)', empty: true } : { state: 'blank', excerpt: ex };  // 위치로 줄을 맞춘 명세서에서 다음 칸 제목이 바로 이어지면 이 칸은 비어 있는 것
 }
 function myrDocDigest(docs, split) {
     var d = { got: split.found.slice(0), missing: split.missing.slice(0), empty: (split.empty || []).slice(0), at: Date.now() };
