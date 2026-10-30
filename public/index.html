@@ -15074,6 +15074,8 @@ function myrVerdict(a, R, my, cmp, bidWon, opts, row) {
     if (hr && hr.state === 'unreadable') up('yellow', '세대열람(전입세대확인서)을 글로 읽지 못했어요(그림 PDF) - 전입 세대·임차인 유무를 직접 확인하세요.');
     else if (hr && hr.state === 'ok') {
         if (hr.ageDays != null && hr.ageDays > 180) up('yellow', '세대열람이 ' + hr.issued + ' 발급(' + Math.round(hr.ageDays / 30) + '개월 전)이라 오래됐어요 - 그 뒤 전입·전출이 바뀌었을 수 있어요. 입찰 직전에 다시 확인하세요.');
+        var stN = R.story || {}, curNames = [stN.owner, stN.debtor, stN.creditor].join(' ');
+        if (hr.surname && curNames.trim() && curNames.indexOf(hr.surname) < 0) up('yellow', '세대열람의 세대주 성씨("' + hr.surname + '")가 현재 소유자·공유자(' + [stN.owner, stN.creditor].filter(Boolean).join(', ') + ')와 달라요 - 전 소유자이거나 임차인 등 제3자일 수 있어요. 전입일(' + (hr.moveIns || []).join(', ') + ')이 말소기준일(' + (R.baseDate || '-') + ')보다 빠르면 임차인일 경우 대항력이 있으니 실제 점유자를 확인하세요.');
         if (hr.absent) up('yellow', '세대열람에 거주불명·말소자 표시가 있어요 - 실제 거주자와 대항력 여부를 확인하세요.');
     }
     var js = myrJointSale(R, my);
