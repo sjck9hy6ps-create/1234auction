@@ -1,4 +1,4 @@
-// 탱크옥션 상세 보내기(0.4.1: 참고자료 팝업·iframe 안 글도 읽고, 못 찾은 탭이 있으면 화면 버튼 이름을 같이 보냄, 끝나면 완료 안내창 + 모으려고 열었던 팝업창 자동 닫기 / 0.4.0: 사건내역·기일내역·문건/송달·현황조사서·부동산표시·감정평가서·매각물건명세서·건물등기·세대열람 탭까지 같이 읽음) - 탱크옥션 물건 상세 페이지에 버튼 하나를 띄움. 눌렀을 때만 지금 열려 있는 페이지의 글(임차인 현황·건물등기·권리분석 등)을 앱에 보냄.
+// 탱크옥션 상세 보내기(0.4.2: 상세 팝업의 '파일자료' 메뉴는 눌러도 같은 화면이 바뀌지 않고 참고자료 팝업이 새로 열리므로, 보내기를 누르면 그 팝업을 한 번 열어 그 안의 탭(사건내역~세대열람)을 읽어 상세 글과 합쳐 보냄 / 0.4.1: 참고자료 팝업·iframe 안 글도 읽고, 못 찾은 탭이 있으면 화면 버튼 이름을 같이 보냄, 끝나면 완료 안내창 + 모으려고 열었던 팝업창 자동 닫기 / 0.4.0: 사건내역·기일내역·문건/송달·현황조사서·부동산표시·감정평가서·매각물건명세서·건물등기·세대열람 탭까지 같이 읽음) - 탱크옥션 물건 상세 페이지에 버튼 하나를 띄움. 눌렀을 때만 지금 열려 있는 페이지의 글(임차인 현황·건물등기·권리분석 등)을 앱에 보냄.
 // 로그인은 사용자가 직접 한 화면만 읽음(로그인 정보는 건드리지 않고, 자동으로 다른 페이지로 이동하거나 순회하지 않음).
 (function () {
   const ID = 'tk-send-btn';
@@ -40,8 +40,8 @@
     return cands[0] || null;
   };
   const waitChange = async (before, ms) => { const t0 = Date.now(); while (Date.now() - t0 < ms) { await sleep(250); if (bodyText() !== before) { await sleep(500); return true; } } return false; };
-  const collectTabs = async (onProgress) => {
-    const seen = new Set(bodyText().split('\n').map(norm).filter(Boolean));
+  const collectTabs = async (onProgress, fresh) => {
+    const seen = fresh ? new Set() : new Set(bodyText().split('\n').map(norm).filter(Boolean));
     let out = '', found = [], missing = [], empty = [];
     for (let i = 0; i < TABS.length; i++) {
       const [key, label, re] = TABS[i]; onProgress(label, i + 1, TABS.length);
@@ -93,8 +93,46 @@
   let btn = null;
   const label = isFile ? '📤 참고자료 보내기 (모든 탭)' : '📤 탱크옥션 상세 보내기 (모든 탭)';
   const toast = (t, ok) => { if (!btn) return; btn.textContent = t; btn.style.background = ok === false ? '#c62828' : (ok ? '#2e7d32' : (ok === null ? '#ef6c00' : '#7b1fa2')); };
+  const msg = (m) => new Promise((r) => { try { chrome.runtime.sendMessage(m, (x) => r(chrome.runtime.lastError ? null : x)); } catch (e) { r(null); } });
+  let autoRun = false;
+  // 앱에 보내고(권리분석 반영 결과를 기다림) 완료 안내창을 띄움
+  const deliver = (text, tabRes, kind, url) => {
+    toast('보내는 중… (탭 ' + tabRes.found.length + '개 읽음' + (tabRes.missing.length ? ', 못 찾은 탭 ' + tabRes.missing.length + '개' : '') + (tabRes.empty.length ? ', 새 글 없음 ' + tabRes.empty.length + '개' : '') + ')');
+    chrome.runtime.sendMessage({ type: 'send', kind, text: text.slice(0, 190000), url: String(url || location.href).replace(/(transferKey)=[^&]*/gi, '$1=…') }, (res) => {
+      const sum = ['읽은 탭: ' + (tabRes.found.length ? tabRes.found.length + '개 (' + tabRes.found.join(', ') + ')' : '없음') + (tabRes.missing.length ? ' / 못 찾은 탭 ' + tabRes.missing.length + '개' : '') + (tabRes.empty.length ? ' / 새 글 없음 ' + tabRes.empty.length + '개' : '')];
+      if (!res || !res.ok) { toast('❌ 보내기 실패', false); finish(false, '❌ 모으기 실패', sum.concat(['앱으로 보내지 못했어요. 잠시 뒤 다시 눌러 주세요.'])); }
+      else if (res.applied) {
+        const a = (res.result && res.result.applied) || [];
+        if (a.length) { toast('✅ 앱에 반영됨: ' + a[0].name + ' 권리분석 (등기 ' + a[0].n + '건, ' + (a[0].tenants ? '임차인 ' + a[0].tenants + '명' : '임차인 없음') + ')', true); finish(true, '✅ 사건 정보 모으기 완료', sum.concat([a[0].name + ' 권리분석이 앱에 반영됐어요.', '앱에서 입찰후보 판정을 확인하세요.'])); }
+        else if (kind === 'probe') { toast('✅ 참고자료를 보냈어요', true); finish(true, '✅ 참고자료 보내기 완료', sum.concat(['참고자료 글을 앱 수신함에 올렸어요(권리분석에는 아직 반영하지 않음).'])); }
+        else { toast('⚠️ 받았지만 반영 못함: ' + ((res.result && res.result.text) || '입찰후보에 없는 사건이에요'), false); finish(false, '⚠️ 앱에 반영하지 못했어요', sum.concat([(res.result && res.result.text) || '입찰후보에 없는 사건이에요.'])); }
+      } else { toast(res.noApp ? '⏳ 앱 탭이 안 열려 있어요 - 앱을 열면 자동 반영돼요' : '⏳ 앱이 아직 처리 중이에요 - 앱 화면에서 확인하세요', null); finish(true, '✅ 모으기 완료(앱 반영 대기)', sum.concat([res.noApp ? '앱 탭이 열려 있지 않아요. 앱을 열면 자동으로 반영돼요.' : '앱이 아직 처리 중이에요. 앱 화면에서 확인하세요.'])); }
+      setTimeout(() => { if (btn) { btn.textContent = label; btn.style.background = '#7b1fa2'; btn.disabled = false; } }, 8000);
+    });
+  };
+  // 상세 팝업: '파일자료' 메뉴(사건내역 등)를 누르면 참고자료 팝업이 새로 열림 → 팝업이 스스로 읽도록 표시해 두고 한 번만 누름. 팝업이 열려 읽기 시작하면 true
+  const tryDelegate = async (headText) => {
+    const el = findTab(TABS[0][2]); if (!el) return false;
+    await msg({ type: 'arm', tid: tidOf(), text: headText, url: location.href });
+    try { el.click(); } catch (e) { await msg({ type: 'disarm', tid: tidOf() }); return false; }
+    for (let i = 0; i < 28; i++) { await sleep(250); const r = await msg({ type: 'armState', tid: tidOf() }); if (r && r.claimed) return true; }
+    await msg({ type: 'disarm', tid: tidOf() }); return false;
+  };
+  // 참고자료 팝업이 열렸는데 상세 팝업이 미리 표시해 둔 것이 있으면 자동으로 탭을 읽어 보냄
+  const autoCollect = async () => {
+    const r = await msg({ type: 'claim', tid: tidOf() });
+    if (!r || !r.armed) return;
+    autoRun = true;
+    for (let i = 0; i < 60 && !findTab(TABS[0][2]); i++) await sleep(500);
+    const oldTitle = document.title; let tabRes = { found: [], missing: [], empty: [], text: '' };
+    try { tabRes = await collectTabs((l, i, n) => { document.title = '탭 읽는 중 ' + l + ' (' + i + '/' + n + ')'; }, true); } catch (e) {}
+    document.title = oldTitle;
+    const text = r.text + tabRes.text + '\n【수집결과】 via=popup; found=' + tabRes.found.join(',') + '; missing=' + tabRes.missing.join(',') + '; empty=' + tabRes.empty.join(',') + probe();
+    deliver(text, tabRes, /경매\s*\d{4}\s*타경/.test(text) ? 'tank' : 'probe', r.url);
+  };
+  if (isTop && isFile) autoCollect();
   const ensure = () => {
-    const show = isDetail();
+    const show = isDetail() && !autoRun;
     if (show && !btn) {
       if (document.getElementById(ID)) return;
       btn = document.createElement('button');
@@ -111,21 +149,14 @@
         text = text.slice(0, 100000);
         let tabRes = { found: [], missing: [], empty: [] };
         const oldTitle = document.title; btn.style.display = 'none';
+        if (!isFile) {
+          toast('참고자료 창을 여는 중…', null); btn.style.display = '';
+          if (await tryDelegate(text)) { toast('참고자료 창에서 읽는 중… (끝나면 알려 드려요)', null); setTimeout(() => { if (btn) { btn.textContent = label; btn.style.background = '#7b1fa2'; btn.disabled = false; } }, 90000); return; }
+          btn.style.display = 'none';
+        }
         try { tabRes = await collectTabs((l, i, n) => { document.title = '탭 읽는 중 ' + l + ' (' + i + '/' + n + ')'; }); text += tabRes.text + '\n【수집결과】 found=' + tabRes.found.join(',') + '; missing=' + tabRes.missing.join(',') + '; empty=' + tabRes.empty.join(',') + probe(); } catch (e) {}
         document.title = oldTitle; btn.style.display = '';
-        text = text.slice(0, 190000);
-        toast('보내는 중… (탭 ' + tabRes.found.length + '개 읽음' + (tabRes.missing.length ? ', 못 찾은 탭 ' + tabRes.missing.length + '개' : '') + (tabRes.empty.length ? ', 새 글 없음 ' + tabRes.empty.length + '개' : '') + ')');
-        chrome.runtime.sendMessage({ type: 'send', kind: (isFile && !/경매\s*\d{4}\s*타경/.test(text)) ? 'probe' : 'tank', text, url: location.href.replace(/(transferKey)=[^&]*/gi, '$1=…') }, (res) => {
-          const sum = ['읽은 탭: ' + (tabRes.found.length ? tabRes.found.length + '개' : '없음') + (tabRes.missing.length ? ' / 못 찾은 탭 ' + tabRes.missing.length + '개' : '') + (tabRes.empty.length ? ' / 새 글 없음 ' + tabRes.empty.length + '개' : '')];
-          if (!res || !res.ok) { toast('❌ 보내기 실패', false); finish(false, '❌ 모으기 실패', sum.concat(['앱으로 보내지 못했어요. 잠시 뒤 다시 눌러 주세요.'])); }
-          else if (res.applied) {
-            const a = (res.result && res.result.applied) || [];
-            if (a.length) { toast('✅ 앱에 반영됨: ' + a[0].name + ' 권리분석 (등기 ' + a[0].n + '건, ' + (a[0].tenants ? '임차인 ' + a[0].tenants + '명' : '임차인 없음') + ')', true); finish(true, '✅ 사건 정보 모으기 완료', sum.concat([a[0].name + ' 권리분석이 앱에 반영됐어요.', '앱에서 입찰후보 판정을 확인하세요.'])); }
-            else if (isFile && !/경매\s*\d{4}\s*타경/.test(text)) { toast('✅ 참고자료를 보냈어요', true); finish(true, '✅ 참고자료 보내기 완료', sum.concat(['참고자료 글을 앱 수신함에 올렸어요(권리분석에는 아직 반영하지 않음).'])); }
-            else { toast('⚠️ 받았지만 반영 못함: ' + ((res.result && res.result.text) || '입찰후보에 없는 사건이에요'), false); finish(false, '⚠️ 앱에 반영하지 못했어요', sum.concat([(res.result && res.result.text) || '입찰후보에 없는 사건이에요.'])); }
-          } else { toast(res.noApp ? '⏳ 앱 탭이 안 열려 있어요 - 앱을 열면 자동 반영돼요' : '⏳ 앱이 아직 처리 중이에요 - 앱 화면에서 확인하세요', null); finish(true, '✅ 모으기 완료(앱 반영 대기)', sum.concat([res.noApp ? '앱 탭이 열려 있지 않아요. 앱을 열면 자동으로 반영돼요.' : '앱이 아직 처리 중이에요. 앱 화면에서 확인하세요.'])); }
-          setTimeout(() => { if (btn) { btn.textContent = label; btn.style.background = '#7b1fa2'; btn.disabled = false; } }, 8000);
-        });
+        deliver(text, tabRes, (isFile && !/경매\s*\d{4}\s*타경/.test(text)) ? 'probe' : 'tank');
       };
     } else if (!show && btn) { btn.remove(); btn = null; }
   };

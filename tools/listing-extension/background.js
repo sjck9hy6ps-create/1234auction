@@ -16,6 +16,24 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     })();
     return true;
   }
+  // 상세 팝업 ↔ 참고자료 팝업 사이 인계: 상세 팝업이 표시(arm)하면 새로 열린 참고자료 팝업이 가져가서(claim) 읽음. 60초 지나면 무효
+  if (msg && ['arm', 'claim', 'armState', 'disarm'].indexOf(msg.type) >= 0) {
+    (async () => {
+      const k = 'arm_' + String(msg.tid || ''), st = chrome.storage.session;
+      try {
+        if (msg.type === 'arm') { await st.set({ [k]: { text: String(msg.text || '').slice(0, 100000), url: msg.url || '', at: Date.now(), claimed: false } }); sendResponse({ ok: true }); return; }
+        const cur = (await st.get(k))[k];
+        const fresh = cur && Date.now() - cur.at < 60000;
+        if (msg.type === 'disarm') { await st.remove(k); sendResponse({ ok: true }); }
+        else if (msg.type === 'armState') sendResponse({ claimed: !!(fresh && cur.claimed) });
+        else if (msg.type === 'claim') {
+          if (fresh && !cur.claimed) { cur.claimed = true; await st.set({ [k]: cur }); sendResponse({ armed: true, text: cur.text, url: cur.url }); }
+          else sendResponse({ armed: false });
+        }
+      } catch (e) { sendResponse({ armed: false, error: String(e) }); }
+    })();
+    return true;
+  }
   if (!msg || msg.type !== 'send') return;
   (async () => {
     try {
