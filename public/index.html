@@ -14396,7 +14396,7 @@ function parseTankRights(text) {
     if (wvm) out.waiver = { text: wvm[0].replace(/\s+/g, ' ').trim().slice(0, 240), hard: !!wvHard, tankExt: out.registry.some(function(r) { return /임차권/.test(r.type) && r.extinguished; }) || /소멸로\s*계산/.test(text) };
     var sm = text.match(/권리분석요약\s*\n([\s\S]{0,500})/);
     if (sm) { var st0 = sm[1]; out.tankSummary = { level: /직접\s*인수위험은\s*없고\s*조건부|조건부\s*확인/.test(st0) ? 'cond' : (/별도\s*인수위험[^\n]{0,12}(?:확인되지|없)/.test(st0) ? 'none' : (/인수\s*(?:위험|대상|권리)[^\n]{0,20}(?:있|확인됩니다|발견)/.test(st0) ? 'risk' : '')), text: st0.split('\n').slice(0, 2).join(' ').replace(/\s+/g, ' ').trim().slice(0, 160) }; }
-    if (/조사된\s*임차내역\s*없음/.test(text)) out.noTenants = true;  // 탱크옥션이 '조사된 임차내역 없음'으로 표시한 경우 - 경고하지 않음
+    if (/조사된\s*임차내역\s*없음|임차인이\s*없으며|임차인\s*없음|전부를\s*소유자(?:가|\([^)]*\)가)?\s*점유/.test(text)) out.noTenants = true;  // 탱크옥션이 '조사된 임차내역 없음'으로 표시한 경우 - 경고하지 않음
     if ((m = text.match(/세대수\s+([\d,]+)\s*세대/))) out.households = rightsNum(m[1]);  // 단지정보의 단지 전체 세대수
     if (!out.tenants.length && !out.noTenants) out.warnings.push('임차인 현황을 찾지 못했어요(전입세대 없음이면 정상) - 상세 페이지의 "임차인 현황" 부분까지 같이 붙여넣었는지 확인');
     if (!out.registry.length) out.warnings.push('건물등기(권리 목록)를 찾지 못했어요');
@@ -14867,6 +14867,9 @@ var MYR_RISK_PATTERNS = [
     ['대항력 있는 임차인', /대항력\s*있는|대항력을\s*갖춘|매수인에게\s*대항할\s*수\s*있는|(?:대항요건|전입신고)[^\n]{0,24}(?:先|먼저|앞서|빠른)/, 'danger', ['spec'], '매각물건명세서의 임차인 칸에서 보증금과 배당요구 여부 확인(배당받지 못한 보증금은 낙찰자가 인수)'],
     ['매수인이 인수하는 권리', /(?:소멸되지\s*아니하는|소멸되지\s*않는|인수되는)[^\n]{0,30}(?:것|권리|부담)\s*\n?\s*[:：]?\s*([^\n]{0,80})/, 'danger', ['spec'], '명세서에 적힌 인수 권리의 종류와 금액 확인'],
     ['선순위 가처분·가등기', /선순위[^\n]{0,10}(?:가처분|가등기)|예고등기/, 'danger', ['spec', 'docs', 'registry', 'case'], '가처분·가등기가 소유권을 다투는 것인지 등기부 원문 확인(본안에서 지면 소유권을 잃을 수 있음)'],
+    ['공유물분할 경매(형식적 경매)', /공유물\s*분할/, 'danger', ['case', 'estate', 'survey', 'spec', 'docs', 'registry'], '공유자끼리 나누려고 하는 경매라 일반 경매와 달라요 - 공유자 한 명의 지분에만 설정된 근저당·전세권이 매각으로 지워지는지(대법원 결정), 일부 지분만 파는지, 공유자의 우선매수 가능 여부를 확인'],
+    ['지분에만 설정된 권리', /지분\s*전부\s*(?:근저당|전세권|지상권|가압류|압류|가처분)|[가-힣]{2,4}\s*지분\s*(?:근저당|전세권|가압류|압류)/, 'warn', ['registry', 'spec', 'docs'], '일부 공유자의 지분에만 설정된 권리가 낙찰 후 어떻게 되는지(소멸 여부, 낙찰자 지분 범위) 등기부와 명세서로 확인'],
+    ['관련 소송·사건', /관련\s*사건[\s\S]{0,80}?\d{4}\s*(?:가단|가합|가소|나|다|카단|카합)\s*\d+/, 'info', ['docs', 'case'], '관련 사건(소송·가처분 등)의 종국 결과를 대법원 사건검색으로 확인'],
     ['지분 매각', /지분\s*(?:매각|경매)|공유자\s*우선\s*매수/, 'warn', ['spec', 'case', 'estate', 'appraisal'], '일부 지분만 파는 경매인지 확인(공유자가 우선매수할 수 있고 사용·처분이 제한됨)'],
     ['토지·대지권 문제', /토지\s*별도\s*등기|대지권\s*미등기|대지권\s*(?:없음|이\s*없)|건물만\s*매각|제시\s*외\s*건물/, 'warn', ['spec', 'appraisal', 'estate', 'registry'], '대지권이 건물과 함께 팔리는지 등기부·명세서로 확인'],
     ['위반건축물', /위반\s*건축물|무허가\s*건물|불법\s*증축|용도\s*변경\s*(?:위반|불가)/, 'warn', ['spec', 'appraisal', 'estate', 'survey'], '건축물대장 위반 표시와 이행강제금 여부 확인(대출·매도에 영향)'],
@@ -14909,11 +14912,23 @@ function myrDocDigest(docs, split) {
     return d;
 }
 // 한 번에: 본문 + 탭 글 → 권리분석 자료(R)
+// 탭이 없는 한 화면(팝업 상세)의 본문을 구간으로 나눔
+function myrMainSections(main) {
+    var d = {}, g = function(re1, re2) { var i = main.search(re1); if (i < 0) return ''; var rest = main.slice(i), j = re2 ? rest.slice(4).search(re2) : -1; return j > 0 ? rest.slice(0, j + 4) : rest.slice(0, 6000); };
+    var ai = main.search(/AI\s*권리분석/); d.case = (ai > 0 ? main.slice(0, ai) : main.slice(0, 1500)) + '\n' + g(/관련사건\s*\n/, /\n예상대출한도|\n매각사례|\n국토부/);
+    d.dates = g(/구분\t매각기일|매각기일\s*최저매각가격/, /\n사진\s*▼|\n토지\/건물\s*현황|\n토지·건물\s*현황/);
+    d.estate = g(/토지\/건물\s*현황/, /\n임차인\s*현황/);
+    d.survey = g(/임차인\s*현황/, /\n건물등기/);
+    d.registry = g(/건물등기\s*\n/, /\n권리분석요약|\n관련사건/);
+    d.docs = g(/관련사건\s*\n/, /\n예상대출한도|\n매각사례|\n국토부/);
+    return d;
+}
 function rightsParseFull(text) {
     var sp = myrSplitDocs(text), R = parseTankRights(sp.main);
     if (!R.registry.length && sp.docs.registry) { var R2 = parseTankRights('건물등기\n' + sp.docs.registry); if (R2.registry.length) { R.registry = R2.registry; if (!R.baseDate) R.baseDate = R2.baseDate; var wi = R.warnings.indexOf('건물등기(권리 목록)를 찾지 못했어요'); if (wi >= 0) R.warnings.splice(wi, 1); } }
     if (!R.tenants.length && !R.noTenants && sp.docs.spec) { /* 임차인 표는 본문에서만 읽음(명세서 형식은 표가 달라 위험 목록으로만 사용) */ }
     if (Object.keys(sp.docs).length) { var all = {}; Object.keys(sp.docs).forEach(function(k) { all[k] = sp.docs[k]; }); R.docs = myrDocDigest(all, sp); }
+    else { var md = myrMainSections(sp.main), got = Object.keys(md).filter(function(k) { return md[k]; }); if (got.length) { R.docs = myrDocDigest(md, { found: got, missing: ['spec'], empty: [] }); R.docs.src = 'main'; } }  // 팝업 상세(caView)처럼 한 화면에 다 들어 있고 탭이 없는 경우: 본문의 구간(사건·기일·현황·임차인·등기·관련사건)으로 점검
     return R;
 }
 function myrClean(R, baseDate, baseItem) {  // 탱크옥션의 판단 표시를 모두 빼고(날짜·종류·금액만 남김) 복사
@@ -15018,7 +15033,8 @@ function myrVerdict(a, R, my, cmp, bidWon, opts, row) {
         var tankAsW = R.tankAssumeWon;
         if (tankAsW != null && cmp.myAssumedAtRef != null && Math.abs(cmp.myAssumedAtRef - tankAsW) > MYR_DIFF_WON) up('yellow', '추가금이 탱크옥션(' + man(tankAsW) + ')과 내 계산(' + man(cmp.myAssumedAtRef) + ')이 많이 달라요.');
     }
-    if (!R.docs) reasons.push({ lvl: 'info', why: '법원 서류 탭(명세서·현황조사서·문건 등)을 아직 못 불러왔어요 - 확장 0.4.0의 "탱크옥션 상세 보내기"로 다시 보내면 서류 속 위험도 같이 점검해요.' });
+    if (!R.docs) reasons.push({ lvl: 'info', why: '서류 속 위험은 아직 점검하지 못했어요 - 확장 0.4.0의 "탱크옥션 상세 보내기"로 다시 보내면 같이 점검해요.' });
+    else if (R.docs.src === 'main') reasons.push({ lvl: 'info', why: '이 탱크옥션 화면(팝업 상세)에는 매각물건명세서와 문건/송달내역이 없어서 그 서류의 위험은 점검하지 못했어요 - 대법원 경매정보 사이트에서 매각물건명세서·문건/송달내역을 직접 확인하세요. (사건·기일·현황·임차인·등기·관련사건은 이 화면 글로 점검했어요)' });
     else if (R.docs.missing && R.docs.missing.length) reasons.push({ lvl: 'info', why: '못 불러온 탭: ' + R.docs.missing.map(function(k) { var t = MYR_TABS.filter(function(x) { return x[0] === k; })[0]; return t ? t[1] : k; }).join(', ') + ' - 해당 서류의 위험은 점검하지 못했어요.' });
     return { level: level, reasons: reasons };
 }
