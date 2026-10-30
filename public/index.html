@@ -21796,7 +21796,7 @@ async function processListingInbox() {
         lbAll = prevAll; lbAny = prevAny;
         renderBidBoard(); try { renderBidDrawer(); } catch (e) {}
         var fm = function(v) { return v ? toEok(String(v)) : '-'; };
-        if (pending.every(function(x) { return x.kind === 'tank'; })) { /* 탱크옥션 상세는 위에서 알림을 이미 띄움 */ }
+        if (pending.every(function(x) { return x.kind === 'tank' || x.kind === 'probe'; })) { /* 탱크옥션 상세는 위에서 알림을 이미 띄움 */ }
         else if (got) listingToast('📥 호가 반영됨: ' + names.slice(0, 3).map(function(x) { return '<b>' + bbEsc(x.name) + ' ' + x.pyung + '평</b> 매물 ' + x.n + '건 (' + fm(x.min) + '~' + fm(x.max) + ')'; }).join(' · ') + (names.length > 3 ? ' 외 ' + (names.length - 3) + '건' : ''));
         else listingToast('📥 호가를 받았지만 반영된 물건이 없어요 - 대상 단지가 아니거나 같은 평형 매물이 없어요', false);
     } catch (e) { /* 수신함이 없거나 네트워크 오류면 조용히 넘어감 */ } finally { listingInboxBusy = false; }
