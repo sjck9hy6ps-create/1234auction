@@ -1,4 +1,4 @@
-// 탱크옥션 상세 보내기(0.4.2: 상세 팝업의 '파일자료' 메뉴는 눌러도 같은 화면이 바뀌지 않고 참고자료 팝업이 새로 열리므로, 보내기를 누르면 그 팝업을 한 번 열어 그 안의 탭(사건내역~세대열람)을 읽어 상세 글과 합쳐 보냄 / 0.4.1: 참고자료 팝업·iframe 안 글도 읽고, 못 찾은 탭이 있으면 화면 버튼 이름을 같이 보냄, 끝나면 완료 안내창 + 모으려고 열었던 팝업창 자동 닫기 / 0.4.0: 사건내역·기일내역·문건/송달·현황조사서·부동산표시·감정평가서·매각물건명세서·건물등기·세대열람 탭까지 같이 읽음) - 탱크옥션 물건 상세 페이지에 버튼 하나를 띄움. 눌렀을 때만 지금 열려 있는 페이지의 글(임차인 현황·건물등기·권리분석 등)을 앱에 보냄.
+// 탱크옥션 상세 보내기(0.4.3: PDF로 열리는 서류(감정평가서·매물명세서·건물등기·세대열람)는 글 조각이 줄바꿈으로 흩어져 읽히므로, 쪽을 끝까지 넘겨 그린 뒤 글 조각의 위치로 줄을 다시 맞춤 / 0.4.2: 상세 팝업의 '파일자료' 메뉴는 눌러도 같은 화면이 바뀌지 않고 참고자료 팝업이 새로 열리므로, 보내기를 누르면 그 팝업을 한 번 열어 그 안의 탭(사건내역~세대열람)을 읽어 상세 글과 합쳐 보냄 / 0.4.1: 참고자료 팝업·iframe 안 글도 읽고, 못 찾은 탭이 있으면 화면 버튼 이름을 같이 보냄, 끝나면 완료 안내창 + 모으려고 열었던 팝업창 자동 닫기 / 0.4.0: 사건내역·기일내역·문건/송달·현황조사서·부동산표시·감정평가서·매각물건명세서·건물등기·세대열람 탭까지 같이 읽음) - 탱크옥션 물건 상세 페이지에 버튼 하나를 띄움. 눌렀을 때만 지금 열려 있는 페이지의 글(임차인 현황·건물등기·권리분석 등)을 앱에 보냄.
 // 로그인은 사용자가 직접 한 화면만 읽음(로그인 정보는 건드리지 않고, 자동으로 다른 페이지로 이동하거나 순회하지 않음).
 (function () {
   const ID = 'tk-send-btn';
@@ -39,10 +39,38 @@
     cands.sort((x, y) => (x.querySelectorAll('*').length - y.querySelectorAll('*').length));
     return cands[0] || null;
   };
+  // PDF 보기 화면(pdf.js)의 글 조각을 위치(세로·가로)로 묶어 한 줄씩 복원 - 표의 칸은 탭으로 구분
+  const pdfLines = () => {
+    const out = [];
+    docs().forEach((d) => Array.from(d.querySelectorAll('.page')).forEach((pg, pi) => {
+      const sp = Array.from(pg.querySelectorAll('.textLayer span')).filter((e) => !e.querySelector('span') && (e.textContent || '').trim());
+      if (!sp.length) return;
+      const items = sp.map((e) => { const r = e.getBoundingClientRect(); return { t: e.textContent.replace(/\s+$/, ''), x: r.left, y: r.top + r.height / 2, h: r.height || 10, w: r.width }; }).sort((a, b) => a.y - b.y || a.x - b.x);
+      const rows = []; items.forEach((it) => { const last = rows[rows.length - 1]; if (last && Math.abs(it.y - last.y) < Math.max(3, last.h * 0.6)) { last.items.push(it); last.y = (last.y * (last.items.length - 1) + it.y) / last.items.length; } else rows.push({ y: it.y, h: it.h, items: [it] }); });
+      out.push('[쪽 ' + (pg.getAttribute('data-page-number') || (pi + 1)) + ']');
+      rows.forEach((r) => { r.items.sort((a, b) => a.x - b.x); let line = '', px = null; r.items.forEach((it) => { if (px !== null) line += (it.x - px > r.h * 1.8) ? '\t' : (it.x - px > 1 ? ' ' : ''); line += it.t; px = it.x + it.w; }); out.push(line); });
+    }));
+    return out.join('\n');
+  };
+  const hasPdf = () => docs().some((d) => d.querySelector('.pdfViewer,#viewer .page,.textLayer'));
+  // 쪽을 차례로 보이게 해서 글이 그려지게 하고, 글 조각 수가 더 늘지 않을 때까지 기다림(없으면 빈 글)
+  const pdfRead = async (prevSig, maxMs) => {
+    const t0 = Date.now(); let last = -1, stable = 0, txt = '';
+    while (Date.now() - t0 < maxMs) {
+      docs().forEach((d) => Array.from(d.querySelectorAll('.page')).slice(0, 40).forEach((pg) => { try { pg.scrollIntoView({ block: 'start' }); } catch (e) {} }));
+      await sleep(450);
+      const n = docs().reduce((a, d) => a + d.querySelectorAll('.textLayer span').length, 0);
+      txt = pdfLines();
+      if (n > 0 && n === last && txt.slice(0, 300) !== prevSig) { if (++stable >= 2) break; } else stable = 0;
+      last = n;
+    }
+    docs().forEach((d) => Array.from(d.querySelectorAll('.page')).slice(0, 1).forEach((pg) => { try { pg.scrollIntoView({ block: 'start' }); } catch (e) {} }));
+    return txt && txt.slice(0, 300) !== prevSig ? txt : '';
+  };
   const waitChange = async (before, ms) => { const t0 = Date.now(); while (Date.now() - t0 < ms) { await sleep(250); if (bodyText() !== before) { await sleep(500); return true; } } return false; };
   const collectTabs = async (onProgress, fresh) => {
     const seen = fresh ? new Set() : new Set(bodyText().split('\n').map(norm).filter(Boolean));
-    let out = '', found = [], missing = [], empty = [];
+    let out = '', found = [], missing = [], empty = [], pdfSigPrev = hasPdf() ? pdfLines().slice(0, 300) : '';
     for (let i = 0; i < TABS.length; i++) {
       const [key, label, re] = TABS[i]; onProgress(label, i + 1, TABS.length);
       const el = findTab(re);
@@ -50,6 +78,10 @@
       const before = bodyText();
       try { el.click(); } catch (e) { missing.push(key); continue; }
       await waitChange(before, 3000);
+      if (hasPdf()) {  // PDF로 열리는 서류: 위치로 맞춘 줄을 씀
+        const pt = await pdfRead(pdfSigPrev, 9000);
+        if (pt) { pdfSigPrev = pt.slice(0, 300); pt.split('\n').forEach((x) => seen.add(norm(x))); found.push(key); out += '\n【탭:' + key + '|' + label + '】\n' + pt.slice(0, 40000); continue; }
+      }
       const lines = bodyText().split('\n').map((x) => x.replace(/\s+$/, '')).filter((x) => { const n = norm(x); if (!n || seen.has(n)) return false; seen.add(n); return true; });
       if (!lines.length) { empty.push(key); continue; }
       found.push(key);
