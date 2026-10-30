@@ -14917,6 +14917,20 @@ function myrSpecRead(t) {
     if (cleaned.length >= 2) return { state: 'listed', excerpt: ex };
     return /\[쪽 \d+\]/.test(String(t)) && j > 0 ? { state: 'none', excerpt: '(칸이 비어 있음)', empty: true } : { state: 'blank', excerpt: ex };  // 위치로 줄을 맞춘 명세서에서 다음 칸 제목이 바로 이어지면 이 칸은 비어 있는 것
 }
+// 세대열람(전입세대확인서) 읽기 - 글(또는 글자 인식 결과)에서 발급일·전입일·세대 구성. 그림이라 글이 없으면 state='unreadable'
+function myrHouseRead(t) {
+    t = String(t || '');
+    if (!/전입\s*일자|세대\s*주|전입세대|동거인/.test(t)) return { state: 'unreadable' };
+    var out = { state: 'ok', foreignNote: true }, im = t.match(/[발말]급\s*일자?\s*[:：]?\s*(\d{4})\s*[년.\-]\s*(\d{1,2})\s*[월.\-]\s*(\d{1,2})/) || t.match(/열람\s*일자?\s*[:：]?\s*(\d{4})\s*[년.\-]\s*(\d{1,2})\s*[월.\-]\s*(\d{1,2})/);
+    if (im) { out.issued = im[1] + '-' + String(im[2]).padStart(2, '0') + '-' + String(im[3]).padStart(2, '0'); out.ageDays = Math.floor((Date.now() - new Date(out.issued + 'T00:00:00').getTime()) / 86400000); }
+    var a = t.search(/세대\s*순번/), b = t.search(/주민\s*등록법/), reg = a >= 0 ? t.slice(a, b > a ? b : a + 800) : t;
+    var ds = (reg.match(/\d{4}-\d{2}-\d{2}/g) || []).filter(function(x, i, arr) { return arr.indexOf(x) === i; });
+    out.moveIns = ds; out.holders = (reg.match(/세대주[^\d]{0,40}?\d{4}-\d{2}-\d{2}/g) || []).length;
+    out.absent = /거주\s*불명|말소/.test(reg.replace(/말소자\s*또는\s*거주\s*불명[^\n]*/g, '').replace(/[알말]소자[^\n]*/g, ''));
+    out.empty = /전입\s*세대\s*(?:가\s*)?없|해당\s*세대\s*없|세대\s*없음/.test(t);
+    var oc = (reg.match(/거주자/g) || []).length; out.residents = oc;
+    return out;
+}
 function myrDocDigest(docs, split) {
     var d = { got: split.found.slice(0), missing: split.missing.slice(0), empty: (split.empty || []).slice(0), at: Date.now() };
     var scanDocs = docs;
@@ -14934,6 +14948,7 @@ function myrDocDigest(docs, split) {
     d.specGot = split.found.indexOf('spec') >= 0;
     if (d.specGot) { d.specRead = myrSpecRead(docs.spec); if (d.specRead && d.specRead.state === 'listed') d.risks.push({ k: '명세서: 소멸하지 않는 권리 기재', lvl: 'danger', src: 'spec', note: d.specRead.excerpt, ask: '매각물건명세서의 "매각으로 효력이 소멸되지 아니하는 것" 칸에 내용이 있어요 - 낙찰자가 인수할 수 있으니 항목과 금액을 확인하세요' }); }
     var hs = docs.house || '', hd = hs.match(/\d{4}[.\-]\d{1,2}[.\-]\d{1,2}/g) || [];
+    if (hs) d.houseRead = myrHouseRead(hs);
     if (hs) d.house = { dates: hd.slice(0, 30).map(rightsDate), nChars: hs.length, none: /전입\s*세대\s*(?:가\s*)?없|열람\s*내역\s*없|세대\s*없음/.test(hs) };
     return d;
 }
@@ -15053,6 +15068,12 @@ function myrVerdict(a, R, my, cmp, bidWon, opts, row) {
     (R.flags || []).forEach(function(f) { if (/유치권|법정지상권|분묘|선순위/.test(f.k)) up('yellow', '위험 권리(탱크옥션 글에 언급): ' + f.k + ' - "' + f.note + '"'); else up('yellow', '주의: ' + f.k + ' - "' + f.note + '"'); });
     var dr = (R.docs && R.docs.risks) || [];
     dr.filter(function(x) { return x.lvl === 'danger'; }).forEach(function(x) { up('yellow', '위험 권리(' + x.src + '): ' + x.k + ' - "' + x.note + '"'); });
+    var hr = R.docs && R.docs.houseRead;
+    if (hr && hr.state === 'unreadable') up('yellow', '세대열람(전입세대확인서)을 글로 읽지 못했어요(그림 PDF) - 전입 세대·임차인 유무를 직접 확인하세요.');
+    else if (hr && hr.state === 'ok') {
+        if (hr.ageDays != null && hr.ageDays > 180) up('yellow', '세대열람이 ' + hr.issued + ' 발급(' + Math.round(hr.ageDays / 30) + '개월 전)이라 오래됐어요 - 그 뒤 전입·전출이 바뀌었을 수 있어요. 입찰 직전에 다시 확인하세요.');
+        if (hr.absent) up('yellow', '세대열람에 거주불명·말소자 표시가 있어요 - 실제 거주자와 대항력 여부를 확인하세요.');
+    }
     var js = myrJointSale(R, my);
     if (js) js.items.forEach(function(it) { if (it.st === 'ok' || it.st === 'likely') reasons.push({ lvl: 'info', why: '공유물분할 경매 - ' + it.k + ': ' + it.msg }); else up('yellow', '공유물분할 경매 - ' + it.k + ': ' + it.msg); });
     if (cmp) {
@@ -15127,6 +15148,19 @@ function myrPanelHtml(row) {
     dr.forEach(function(x) { h += '<div class="dr-warn" style="margin-top:3px;background:' + (x.lvl === 'danger' ? '#fee2e2' : (x.lvl === 'warn' ? '#fef9c3' : '#f1f5f9')) + ';">' + (x.lvl === 'danger' ? '⛔ ' : (x.lvl === 'warn' ? '⚠️ ' : 'ℹ️ ')) + '<b>' + bbEsc(x.k) + '</b> (' + bbEsc((MYR_TABS.filter(function(t) { return t[0] === x.src; })[0] || [0, x.src])[1]) + '): "' + bbEsc(x.note) + '"</div>'; });
     var js2 = myrJointSale(R, my);
     if (js2) { h += '<div class="dr-sub" style="margin-top:6px;"><b>공유물분할 경매 자동 판정</b> (공유자끼리 나누려고 하는 경매)</div><table class="dr-tbl">'; js2.items.forEach(function(it) { h += '<tr><td style="white-space:nowrap;">' + ({ ok: '✅', likely: '✅', check: '⚠️', danger: '⛔' }[it.st] || '') + ' ' + bbEsc(it.k) + '</td><td class="dr-sub">' + bbEsc(it.msg) + '<div style="color:#64748b;">근거: ' + bbEsc(it.basis) + '</div></td></tr>'; }); h += '</table>'; }
+    var hrp = R.docs && R.docs.houseRead;
+    if (hrp) {
+        var hx = '<div class="dr-sub" style="margin-top:6px;"><b>세대열람(전입세대확인서)</b></div>';
+        if (hrp.state === 'unreadable') hx += '<div class="dr-warn" style="margin-top:3px;background:#fef9c3;">⚠️ 그림 PDF라 글로 읽지 못했어요 - 확장 0.4.4로 보내면 그림이 저장되고 글자 인식 결과를 넣을 수 있어요.</div>';
+        else {
+            hx += '<table class="dr-tbl"><tr><td>발급일</td><td>' + bbEsc(hrp.issued || '못 읽음') + (hrp.ageDays != null ? ' <span class="dr-sub">(' + (hrp.ageDays > 365 ? Math.floor(hrp.ageDays / 365) + '년 ' + Math.round((hrp.ageDays % 365) / 30) + '개월 전' : Math.round(hrp.ageDays / 30) + '개월 전') + ')</span>' : '') + '</td><td>' + (hrp.ageDays != null && hrp.ageDays > 180 ? '⚠️ 오래됨' : '✅') + '</td></tr>'
+                + '<tr><td>전입일</td><td>' + bbEsc((hrp.moveIns || []).join(', ') || '없음') + '</td><td>' + (hrp.empty ? '✅ 전입세대 없음' : '') + '</td></tr>'
+                + '<tr><td>세대</td><td>세대주 ' + Math.max(hrp.holders, 0) + ' · 거주자 표시 ' + (hrp.residents || 0) + (hrp.absent ? ' · 거주불명/말소 표시' : '') + '</td><td></td></tr></table>';
+            hx += '<div class="dr-sub" style="margin-top:3px;">대항력 판단: 이 서류의 전입일이 말소기준일(' + bbEsc(R.baseDate || '-') + ')보다 빠르면 대항력이 있어요(임차인 표와 같이 확인). 가짜 임차인 확인: 세대주 성씨·전입일이 소유자·채무자와 같은 가족인지, 전입일이 근저당 설정 직전에 몰려 있는지 보세요.</div>';
+            hx += '<div class="dr-warn" style="margin-top:3px;background:#f1f5f9;">ℹ️ 전입세대확인서에는 <b>외국인·외국국적동포가 나오지 않아요</b>(서류 유의사항) → 외국인 임차인은 현황조사서·임차인 표·외국인등록 사실증명으로 따로 확인해야 해요.</div>';
+        }
+        h += hx;
+    }
     if (R.docs && R.docs.house && R.docs.house.dates && R.docs.house.dates.length) {
         var tm = {}; (R.tenants || []).forEach(function(t) { if (t.moveIn) tm[t.moveIn] = 1; });
         var extra = R.docs.house.dates.filter(function(d, i, arr) { return d && arr.indexOf(d) === i && !tm[d]; });
