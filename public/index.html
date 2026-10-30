@@ -15002,6 +15002,7 @@ function myrVerdict(a, R, my, cmp, bidWon, opts, row) {
         else {
             var okProfit = recM > 0 && minM > 0 && adjRec >= minM;
             if (okProfit) up('yellow', '주의: 낙찰금액(' + man(bidWon) + ')으로 배당이 끝나지 않아 ' + man(ex) + '을 더 내야 해요. 그래도 추가금을 반영한 추천가 ' + man(adjRec * 10000) + '가 최저가 ' + man(minWon) + ' 이상이라 이 가격 이하로 입찰하면 수익이 나요.');
+            else if (row && row.verdict === 'no' && row.sale && !recM) up('red', '낙찰금액(' + man(bidWon) + ')으로 배당이 끝나지 않아 ' + man(ex) + '을 더 내야 하는데, 이 돈을 반영하면 앱 판정이 "' + bbEsc((row.reasons && row.reasons[0]) || '최저가로 사도 목표마진이 안 남아요') + '"예요 - 수익이 나지 않아요.');
             else if (recM > 0 && minM > 0) up('red', '낙찰금액(' + man(bidWon) + ')으로 배당이 끝나지 않아 ' + man(ex) + '을 더 내야 하고, 그 돈을 반영하면 추천가가 최저가 ' + man(minWon) + '보다 낮아 수익이 나지 않아요.');
             else up('yellow', '낙찰금액으로 배당이 끝나지 않아 ' + man(ex) + '을 더 내야 해요. 수익성(추천가)이 아직 계산되지 않아 판단할 수 없어요.');
         }
