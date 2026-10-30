@@ -1,4 +1,4 @@
-// 탱크옥션 상세 보내기(0.4.3: PDF로 열리는 서류(감정평가서·매물명세서·건물등기·세대열람)는 글 조각이 줄바꿈으로 흩어져 읽히므로, 쪽을 끝까지 넘겨 그린 뒤 글 조각의 위치로 줄을 다시 맞춤 / 0.4.2: 상세 팝업의 '파일자료' 메뉴는 눌러도 같은 화면이 바뀌지 않고 참고자료 팝업이 새로 열리므로, 보내기를 누르면 그 팝업을 한 번 열어 그 안의 탭(사건내역~세대열람)을 읽어 상세 글과 합쳐 보냄 / 0.4.1: 참고자료 팝업·iframe 안 글도 읽고, 못 찾은 탭이 있으면 화면 버튼 이름을 같이 보냄, 끝나면 완료 안내창 + 모으려고 열었던 팝업창 자동 닫기 / 0.4.0: 사건내역·기일내역·문건/송달·현황조사서·부동산표시·감정평가서·매각물건명세서·건물등기·세대열람 탭까지 같이 읽음) - 탱크옥션 물건 상세 페이지에 버튼 하나를 띄움. 눌렀을 때만 지금 열려 있는 페이지의 글(임차인 현황·건물등기·권리분석 등)을 앱에 보냄.
+// 탱크옥션 상세 보내기(0.4.4: 글자 정보가 없는 그림 PDF(세대열람)는 확대해서 쪽 그림을 내려받기 폴더(tank-ocr)에 저장 - 글자 인식용 / 0.4.3: PDF로 열리는 서류(감정평가서·매물명세서·건물등기·세대열람)는 글 조각이 줄바꿈으로 흩어져 읽히므로, 쪽을 끝까지 넘겨 그린 뒤 글 조각의 위치로 줄을 다시 맞춤 / 0.4.2: 상세 팝업의 '파일자료' 메뉴는 눌러도 같은 화면이 바뀌지 않고 참고자료 팝업이 새로 열리므로, 보내기를 누르면 그 팝업을 한 번 열어 그 안의 탭(사건내역~세대열람)을 읽어 상세 글과 합쳐 보냄 / 0.4.1: 참고자료 팝업·iframe 안 글도 읽고, 못 찾은 탭이 있으면 화면 버튼 이름을 같이 보냄, 끝나면 완료 안내창 + 모으려고 열었던 팝업창 자동 닫기 / 0.4.0: 사건내역·기일내역·문건/송달·현황조사서·부동산표시·감정평가서·매각물건명세서·건물등기·세대열람 탭까지 같이 읽음) - 탱크옥션 물건 상세 페이지에 버튼 하나를 띄움. 눌렀을 때만 지금 열려 있는 페이지의 글(임차인 현황·건물등기·권리분석 등)을 앱에 보냄.
 // 로그인은 사용자가 직접 한 화면만 읽음(로그인 정보는 건드리지 않고, 자동으로 다른 페이지로 이동하거나 순회하지 않음).
 (function () {
   const ID = 'tk-send-btn';
@@ -52,6 +52,22 @@
     }));
     return out.join('\n');
   };
+  // 글자 정보가 없는 그림 PDF(세대열람 등): 확대해서 다시 그린 뒤 쪽마다 그림을 파일로 저장(내려받기 폴더/tank-ocr). 저장한 개수를 돌려줌
+  const pdfImages = async (key, maxPages) => {
+    const zoomIn = () => docs().forEach((d) => { const b = Array.from(d.querySelectorAll('button,[role=button]')).find((x) => /확대|zoom\s*in/i.test((x.title || '') + (x.getAttribute('aria-label') || '') + (x.textContent || ''))); if (b) try { b.click(); } catch (e) {} });
+    zoomIn(); await sleep(400); zoomIn(); await sleep(1500);
+    const imgs = [];
+    const pages = [].concat(...docs().map((d) => Array.from(d.querySelectorAll('.page'))));
+    for (let i = 0; i < pages.length && imgs.length < maxPages; i++) {
+      try { pages[i].scrollIntoView({ block: 'start' }); } catch (e) {}
+      await sleep(900);
+      const c = pages[i].querySelector('canvas'); if (!c || !c.width) continue;
+      try { imgs.push(c.toDataURL('image/png')); } catch (e) {}
+    }
+    if (!imgs.length) return 0;
+    const r = await msg({ type: 'saveImages', tid: tidOf(), key, images: imgs });
+    return r && r.ok ? r.saved : 0;
+  };
   const hasPdf = () => docs().some((d) => d.querySelector('.pdfViewer,#viewer .page,.textLayer'));
   // 쪽을 차례로 보이게 해서 글이 그려지게 하고, 글 조각 수가 더 늘지 않을 때까지 기다림(없으면 빈 글)
   const pdfRead = async (prevSig, maxMs) => {
@@ -70,7 +86,7 @@
   const waitChange = async (before, ms) => { const t0 = Date.now(); while (Date.now() - t0 < ms) { await sleep(250); if (bodyText() !== before) { await sleep(500); return true; } } return false; };
   const collectTabs = async (onProgress, fresh) => {
     const seen = fresh ? new Set() : new Set(bodyText().split('\n').map(norm).filter(Boolean));
-    let out = '', found = [], missing = [], empty = [], pdfSigPrev = hasPdf() ? pdfLines().slice(0, 300) : '';
+    let out = '', found = [], missing = [], empty = [], images = [], pdfSigPrev = hasPdf() ? pdfLines().slice(0, 300) : '';
     for (let i = 0; i < TABS.length; i++) {
       const [key, label, re] = TABS[i]; onProgress(label, i + 1, TABS.length);
       const el = findTab(re);
@@ -81,13 +97,14 @@
       if (hasPdf()) {  // PDF로 열리는 서류: 위치로 맞춘 줄을 씀
         const pt = await pdfRead(pdfSigPrev, 9000);
         if (pt) { pdfSigPrev = pt.slice(0, 300); pt.split('\n').forEach((x) => seen.add(norm(x))); found.push(key); out += '\n【탭:' + key + '|' + label + '】\n' + pt.slice(0, 40000); continue; }
+        if (key === 'house') { const n = await pdfImages(key, 8); if (n) { images.push(key + ':' + n); out += '\n【탭:' + key + '|' + label + '】\n【그림 PDF - 글자 정보 없음. 쪽 그림 ' + n + '장을 내려받기 폴더(tank-ocr)에 저장】'; found.push(key); continue; } }
       }
       const lines = bodyText().split('\n').map((x) => x.replace(/\s+$/, '')).filter((x) => { const n = norm(x); if (!n || seen.has(n)) return false; seen.add(n); return true; });
       if (!lines.length) { empty.push(key); continue; }
       found.push(key);
       out += '\n【탭:' + key + '|' + label + '】\n' + lines.join('\n').slice(0, 30000);
     }
-    return { text: out, found, missing, empty };
+    return { text: out, found, missing, empty, images };
   };
   // 화면에서 눌러 볼 만한 짧은 글자(탭·버튼 이름)와 iframe 주소 - 탭을 못 찾았을 때 어디에 서류가 있는지 확인하는 용도(로그인·열쇠값은 빼고 보냄)
   const probe = () => {

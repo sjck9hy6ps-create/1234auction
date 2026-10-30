@@ -34,6 +34,20 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     })();
     return true;
   }
+  // 글자 없는 그림 PDF의 쪽 그림을 내려받기 폴더/tank-ocr 에 저장(글자 인식용)
+  if (msg && msg.type === 'saveImages') {
+    (async () => {
+      let saved = 0;
+      try {
+        for (let i = 0; i < (msg.images || []).length; i++) {
+          await chrome.downloads.download({ url: msg.images[i], filename: 'tank-ocr/' + String(msg.tid || 'x') + '_' + String(msg.key || 'p') + '_p' + (i + 1) + '.png', saveAs: false, conflictAction: 'overwrite' });
+          saved++;
+        }
+      } catch (e) {}
+      sendResponse({ ok: saved > 0, saved });
+    })();
+    return true;
+  }
   if (!msg || msg.type !== 'send') return;
   (async () => {
     try {
