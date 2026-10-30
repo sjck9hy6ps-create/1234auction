@@ -14867,9 +14867,10 @@ var MYR_RISK_PATTERNS = [
     ['대항력 있는 임차인', /대항력\s*있는|대항력을\s*갖춘|매수인에게\s*대항할\s*수\s*있는|(?:대항요건|전입신고)[^\n]{0,24}(?:先|먼저|앞서|빠른)/, 'danger', ['spec'], '매각물건명세서의 임차인 칸에서 보증금과 배당요구 여부 확인(배당받지 못한 보증금은 낙찰자가 인수)'],
     ['매수인이 인수하는 권리', /(?:소멸되지\s*아니하는|소멸되지\s*않는|인수되는)[^\n]{0,30}(?:것|권리|부담)\s*\n?\s*[:：]?\s*([^\n]{0,80})/, 'danger', ['spec'], '명세서에 적힌 인수 권리의 종류와 금액 확인'],
     ['선순위 가처분·가등기', /선순위[^\n]{0,10}(?:가처분|가등기)|예고등기/, 'danger', ['spec', 'docs', 'registry', 'case'], '가처분·가등기가 소유권을 다투는 것인지 등기부 원문 확인(본안에서 지면 소유권을 잃을 수 있음)'],
-    ['공유물분할 경매(형식적 경매)', /공유물\s*분할/, 'danger', ['case', 'estate', 'survey', 'spec', 'docs', 'registry'], '공유자끼리 나누려고 하는 경매라 일반 경매와 달라요 - 공유자 한 명의 지분에만 설정된 근저당·전세권이 매각으로 지워지는지(대법원 결정), 일부 지분만 파는지, 공유자의 우선매수 가능 여부를 확인'],
+    ['공유물분할 경매(형식적 경매)', /공유물\s*분할/, 'info', ['case', 'estate', 'survey', 'spec', 'docs', 'registry'], '공유자끼리 나누려고 하는 경매라 일반 경매와 달라요 - 공유자 한 명의 지분에만 설정된 근저당·전세권이 매각으로 지워지는지(대법원 결정), 일부 지분만 파는지, 공유자의 우선매수 가능 여부를 확인'],
     ['지분에만 설정된 권리', /지분\s*전부\s*(?:근저당|전세권|지상권|가압류|압류|가처분)|[가-힣]{2,4}\s*지분\s*(?:근저당|전세권|가압류|압류)/, 'warn', ['registry', 'spec', 'docs'], '일부 공유자의 지분에만 설정된 권리가 낙찰 후 어떻게 되는지(소멸 여부, 낙찰자 지분 범위) 등기부와 명세서로 확인'],
     ['관련 소송·사건', /관련\s*사건[\s\S]{0,80}?\d{4}\s*(?:가단|가합|가소|나|다|카단|카합)\s*\d+/, 'info', ['docs', 'case'], '관련 사건(소송·가처분 등)의 종국 결과를 대법원 사건검색으로 확인'],
+    ['매각조건 변경(인수 조건)', /매각\s*조건\s*변경|조건\s*변경\s*결정|(?:저당권|근저당권?|전세권)[^\n]{0,24}매수인[^\n]{0,12}인수/, 'danger', ['spec', 'docs', 'case'], '법원이 매각조건을 바꿔 부담을 낙찰자가 인수하게 했는지 매각물건명세서·결정문으로 확인'],
     ['지분 매각', /지분\s*(?:매각|경매)|공유자\s*우선\s*매수/, 'warn', ['spec', 'case', 'estate', 'appraisal'], '일부 지분만 파는 경매인지 확인(공유자가 우선매수할 수 있고 사용·처분이 제한됨)'],
     ['토지·대지권 문제', /토지\s*별도\s*등기|대지권\s*미등기|대지권\s*(?:없음|이\s*없)|건물만\s*매각|제시\s*외\s*건물/, 'warn', ['spec', 'appraisal', 'estate', 'registry'], '대지권이 건물과 함께 팔리는지 등기부·명세서로 확인'],
     ['위반건축물', /위반\s*건축물|무허가\s*건물|불법\s*증축|용도\s*변경\s*(?:위반|불가)/, 'warn', ['spec', 'appraisal', 'estate', 'survey'], '건축물대장 위반 표시와 이행강제금 여부 확인(대출·매도에 영향)'],
@@ -14907,6 +14908,10 @@ function myrDocDigest(docs, split) {
     var cs = docs.case || '', cm;
     if ((cm = cs.match(/(강제|임의)\s*경매/))) d.caseKind = cm[1];
     if ((cm = cs.match(/청구\s*금액\s*[:：]?\s*([\d,]{6,})/))) d.claimWon = rightsNum(cm[1]);
+    var rel = [], rt = docs.docs || docs.case || '', rr = /(\d{4}(?:가단|가합|가소|나|다|카단|카합|타경|머|느단|드단|라|마)\d+)[\s\t]+([^\t\n]{2,20})/g, rm0;
+    while ((rm0 = rr.exec(rt)) && rel.length < 6) rel.push({ no: rm0[1], kind: rm0[2].trim(), court: ((rt.slice(Math.max(0, rm0.index - 14), rm0.index).match(/([가-힣]{2,6}(?:지방법원|지원|법원))/) || [])[1]) || '' });
+    if (rel.length) d.related = rel;
+    d.specGot = split.found.indexOf('spec') >= 0;
     var hs = docs.house || '', hd = hs.match(/\d{4}[.\-]\d{1,2}[.\-]\d{1,2}/g) || [];
     if (hs) d.house = { dates: hd.slice(0, 30).map(rightsDate), nChars: hs.length, none: /전입\s*세대\s*(?:가\s*)?없|열람\s*내역\s*없|세대\s*없음/.test(hs) };
     return d;
@@ -15027,6 +15032,8 @@ function myrVerdict(a, R, my, cmp, bidWon, opts, row) {
     (R.flags || []).forEach(function(f) { if (/유치권|법정지상권|분묘|선순위/.test(f.k)) up('yellow', '위험 권리(탱크옥션 글에 언급): ' + f.k + ' - "' + f.note + '"'); else up('yellow', '주의: ' + f.k + ' - "' + f.note + '"'); });
     var dr = (R.docs && R.docs.risks) || [];
     dr.filter(function(x) { return x.lvl === 'danger'; }).forEach(function(x) { up('yellow', '위험 권리(' + x.src + '): ' + x.k + ' - "' + x.note + '"'); });
+    var js = myrJointSale(R, my);
+    if (js) js.items.forEach(function(it) { if (it.st === 'ok' || it.st === 'likely') reasons.push({ lvl: 'info', why: '공유물분할 경매 - ' + it.k + ': ' + it.msg }); else up('yellow', '공유물분할 경매 - ' + it.k + ': ' + it.msg); });
     if (cmp) {
         var diffs = cmp.rows.filter(function(r) { return !r.ok; });
         if (diffs.length) up('yellow', '내 분석과 탱크옥션이 다른 항목이 ' + diffs.length + '개예요 - 아래 대조표의 이유를 확인하세요.');
@@ -15037,6 +15044,27 @@ function myrVerdict(a, R, my, cmp, bidWon, opts, row) {
     else if (R.docs.src === 'main') reasons.push({ lvl: 'info', why: '이 탱크옥션 화면(팝업 상세)에는 매각물건명세서와 문건/송달내역이 없어서 그 서류의 위험은 점검하지 못했어요 - 대법원 경매정보 사이트에서 매각물건명세서·문건/송달내역을 직접 확인하세요. (사건·기일·현황·임차인·등기·관련사건은 이 화면 글로 점검했어요)' });
     else if (R.docs.missing && R.docs.missing.length) reasons.push({ lvl: 'info', why: '못 불러온 탭: ' + R.docs.missing.map(function(k) { var t = MYR_TABS.filter(function(x) { return x[0] === k; })[0]; return t ? t[1] : k; }).join(', ') + ' - 해당 서류의 위험은 점검하지 못했어요.' });
     return { level: level, reasons: reasons };
+}
+// 공유물분할을 위한 경매 자동 판정(2026-10-31, 사용자: 4가지를 앱에서 자동 판정). 근거: 대법원 2009.10.29. 선고 2006다37908(원칙 소멸주의, 인수시키려면 매각조건 변경결정과 고지), 2008마693·2013그305·91마239(공유물 전부 경매엔 공유자 우선매수권 없음), 민사집행법 제274조·제140조
+function myrJointSale(R, my) {
+    var risks = (R.docs && R.docs.risks) || [], isJoint = risks.some(function(x) { return /공유물분할/.test(x.k); }) || /공유물\s*분할/.test(R.caseNote || '');
+    if (!isJoint) return null;
+    var items = [], specGot = !!(R.docs && R.docs.specGot), specAssume = risks.some(function(x) { return /매각조건 변경|매수인이 인수하는 권리/.test(x.k); });
+    var shareRows = (my && my.regRows || []).filter(function(r) { return /지분/.test(r.type || '') && /근저당|전세권|가압류|압류|저당/.test(r.type || ''); });
+    // ① 소멸하지 않는 권리가 명세서에 적혔나 / ② 지분 근저당 소멸
+    if (specAssume) items.push({ k: '매각조건(소멸 여부)', st: 'danger', msg: '매각물건명세서에 매각조건 변경·인수 권리가 적혀 있어요 - 근저당 등이 지워지지 않고 낙찰자가 인수할 수 있어요. 금액을 확인해 입찰가에서 빼세요.', basis: '대법원 2009.10.29. 선고 2006다37908: 원칙은 소멸이지만 법원이 매각조건 변경결정을 하고 고지하면 인수' });
+    else if (specGot) items.push({ k: '매각조건(소멸 여부)', st: 'ok', msg: '매각물건명세서에 인수 조건이 적혀 있지 않아요 → 법정 매각조건대로 근저당 등 부담이 매각으로 소멸해요.', basis: '대법원 2009.10.29. 선고 2006다37908' });
+    else items.push({ k: '매각조건(소멸 여부)', st: 'check', msg: '법정 매각조건은 소멸이라 근저당 등은 지워지는 게 원칙이에요. 다만 매각물건명세서가 이 화면에 없어서 법원이 인수 조건으로 바꿨는지는 확인하지 못했어요 - 명세서의 "매각으로 소멸하지 않는 권리" 칸만 보면 돼요(확장으로 매각물건명세서 탭을 읽으면 자동 확인).', basis: '대법원 2009.10.29. 선고 2006다37908' });
+    shareRows.forEach(function(r) { items.push({ k: '지분 근저당 · ' + r.type + ' ' + (r.holder || ''), st: specAssume ? 'danger' : (specGot ? 'ok' : 'likely'), msg: (specAssume ? '인수 조건이 걸려 있으면 낙찰자가 떠안아요. ' : '매각으로 소멸(원칙) - 낙찰자는 인수하지 않아요. ') + '이 권리의 채권액' + (r.amount ? ' ' + toEok(String(Math.round(r.amount / 10000))) : '') + '은 해당 공유자 지분의 매각대금 몫에서 먼저 갚고, 남는 돈이 그 공유자에게 가요(낙찰자와는 무관).', basis: '대법원 2009.10.29. 선고 2006다37908(일부 지분에만 부담이 있어도 소멸주의)' }); });
+    // ③ 우선매수
+    items.push({ k: '공유자 우선매수', st: 'ok', msg: '공유물 전부를 파는 경매라 공유자 우선매수권이 없어요 → 최고가로 낙찰받으면 공유자에게 빼앗길 일이 없어요. (물건 전부가 아니라 지분만 파는 경매라면 우선매수가 가능하니, 매각 대상이 "토지·건물 전부"인지만 확인)', basis: '대법원 2008마693 결정, 2014.2.14.자 2013그305 결정, 1991.12.16.자 91마239 결정 / 민사집행법 제140조는 채무자 지분 경매에 적용' });
+    // ④ 관련 사건
+    var rel = (R.docs && R.docs.related) || [];
+    rel.forEach(function(x) {
+        var kind = x.kind || '', note = /화해권고/.test(kind) ? '소송 중 법원이 내놓은 합의안이에요. 이의가 없으면 확정되어 재판상 화해(확정판결과 같은 효력)가 되고, 공유물분할 소송이었다면 분할 방법(경매 분할)과 대금 분배 비율이 정해졌을 가능성이 커요.' : (/조정/.test(kind) ? '조정 결과예요. 성립하면 재판상 화해와 같아요.' : (/판결/.test(kind) ? '판결이에요. 분할 방법·분배 비율이 정해져 있어요.' : '진행 중이거나 종류를 알 수 없어요.'));
+        items.push({ k: '관련 사건 ' + x.no + (x.court ? ' (' + x.court + ')' : ''), st: 'check', msg: kind + ' - ' + note + ' 내용(분할 방법·분배 비율·확정 여부)은 법원 사건검색에서만 볼 수 있어 앱이 자동으로 읽지 못해요. 이 경매가 이 결정에 따라 진행되는 것이면 결과가 확정돼 있어야 안전해요.', basis: '민법 제269조(분할 방법), 민사소송법 제231조(화해권고결정의 확정)' });
+    });
+    return { items: items };
 }
 function myrChecklist(R, my) {  // 입찰 전에 법원 문건·현장에서 확인할 것
     var L = ['매각물건명세서(최신): 임차인 점유·보증금·배당요구, 인수되는 권리, 비고란의 특이사항', '현황조사서: 점유자 누구인지, 임대차 내용, 폐문부재 여부', '등기사항전부증명서(입찰 직전 발급): 접수 후 새로 생긴 가압류·가처분·소유권 변동', '문건/송달내역: 최근 접수된 유치권신고·권리신고·배당요구·취하서·정지신청', '임장: 실제 거주자 면담, 관리사무소 체납 관리비와 공용 부분 확인'];
@@ -15073,6 +15101,8 @@ function myrPanelHtml(row) {
     var dr = (R.docs && R.docs.risks) || [];
     if (R.docs) h += '<div class="dr-sub">불러온 서류: ' + (R.docs.got || []).map(function(k) { var t = MYR_TABS.filter(function(x) { return x[0] === k; })[0]; return t ? t[1] : k; }).join(' · ') + (R.docs.dates ? ' · 유찰 ' + R.docs.dates.yuchal + '회, 기일 변경/연기 ' + R.docs.dates.changed + '회' : '') + ((R.docs.empty || []).length ? ' · 열었지만 새 글 없음: ' + R.docs.empty.map(function(k) { var t = MYR_TABS.filter(function(x) { return x[0] === k; })[0]; return t ? t[1] : k; }).join(', ') : '') + '</div>';
     dr.forEach(function(x) { h += '<div class="dr-warn" style="margin-top:3px;background:' + (x.lvl === 'danger' ? '#fee2e2' : (x.lvl === 'warn' ? '#fef9c3' : '#f1f5f9')) + ';">' + (x.lvl === 'danger' ? '⛔ ' : (x.lvl === 'warn' ? '⚠️ ' : 'ℹ️ ')) + '<b>' + bbEsc(x.k) + '</b> (' + bbEsc((MYR_TABS.filter(function(t) { return t[0] === x.src; })[0] || [0, x.src])[1]) + '): "' + bbEsc(x.note) + '"</div>'; });
+    var js2 = myrJointSale(R, my);
+    if (js2) { h += '<div class="dr-sub" style="margin-top:6px;"><b>공유물분할 경매 자동 판정</b> (공유자끼리 나누려고 하는 경매)</div><table class="dr-tbl">'; js2.items.forEach(function(it) { h += '<tr><td style="white-space:nowrap;">' + ({ ok: '✅', likely: '✅', check: '⚠️', danger: '⛔' }[it.st] || '') + ' ' + bbEsc(it.k) + '</td><td class="dr-sub">' + bbEsc(it.msg) + '<div style="color:#64748b;">근거: ' + bbEsc(it.basis) + '</div></td></tr>'; }); h += '</table>'; }
     if (R.docs && R.docs.house && R.docs.house.dates && R.docs.house.dates.length) {
         var tm = {}; (R.tenants || []).forEach(function(t) { if (t.moveIn) tm[t.moveIn] = 1; });
         var extra = R.docs.house.dates.filter(function(d, i, arr) { return d && arr.indexOf(d) === i && !tm[d]; });
