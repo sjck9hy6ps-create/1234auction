@@ -14839,9 +14839,9 @@ async function fbList() {
 /* 🧭 나만의 권리분석 + 탱크옥션 더블체크 + 입찰 판정 (2026-10-31, 사용자: 확실한 법을 기준으로 내 권리분석 → 탱크옥션과 대조 → 입찰 여부·주의점)
    1단 내 분석: 탱크옥션의 '소멸/인수' 표시와 대항력 표시를 쓰지 않고, 날짜·종류·금액만으로 법 조문대로 다시 판정(민사집행법 제91조, 주택임대차보호법 제3조·제3조의2·제8조, 시행령 제10·11조).
    2단 대조: 내 판정과 탱크옥션 표시를 항목별로 나란히 비교(말소기준일·권리별 소멸/인수·임차인 대항력·인수금액).
-   3단 판정: 🟢입찰 가능 / 🟡조건부(확인 후) / 🔴패스. 위험 권리가 있으면 🟡(사용자 결정), 내 계산 인수금액이 MYR_RED_WON 이상이면 🔴. */
-var MYR_RED_WON = 30000000;        // 내 계산 인수금액이 이 금액 이상이면 🔴(패스)
-var MYR_DIFF_WON = 10000000;       // 탱크옥션과 인수금액이 이 금액 넘게 다르면 🟡(확인 필요)
+   3단 판정: 🟢입찰 가능 / 🟡조건부(확인 후) / 🔴패스. 위험 권리가 있으면 🟡(사용자 결정).
+   '인수금액'은 낙찰금액으로 배당이 끝나지 않아 낙찰자가 추가로 내야 하는 돈만 뜻함(사용자 2026-10-31). 추가금이 있으면 주의(🟡)하되, 추가금을 내고도 수익이 나면(추천가 ≥ 최저가) 입찰 가능. 추가금을 내면 수익이 안 나는 경우만 🔴. */
+var MYR_DIFF_WON = 10000000;       // 탱크옥션·앱 계산과 추가금이 이 금액 넘게 다르면 🟡(확인 필요)
 var MYR_TABS = [  // 탱크옥션 상세의 탭(사용자 목록). key는 저장용, re는 탭 글자 찾기용(확장과 같은 목록)
     ['photo', '사진/지도'], ['case', '사건내역'], ['dates', '기일내역'], ['docs', '문건/송달현황'], ['survey', '현황조사서'],
     ['estate', '부동산표시'], ['appraisal', '감정평가서'], ['spec', '매각물건명세서'], ['registry', '건물등기'], ['house', '세대열람']
@@ -14948,9 +14948,15 @@ function myrAnalyze(a, R, bidWon, opts) {
     var reg = R.registry || [], baseItem = myrBase(reg), base = baseItem ? baseItem.date : '';
     var tenants = R.tenants || [];
     var regRows = reg.map(function(r) { var f = myrRegFate(r, base, baseItem, tenants); return { seq: r.seq, date: r.date, type: r.type, holder: r.holder, amount: r.amount, fate: f.fate, law: f.law, risk: !!f.risk, won: f.won, tank: r.base ? '기준' : (r.extinguished ? '소멸' : (r.assumed ? '인수' : '')) }; });
-    var C = myrClean(R, base, baseItem), w = null, o = opts || {};
-    if (base && bidWon > 0) { try { w = rightsWaterfall(C, bidWon, { addr: o.addr, extraPriorWon: o.extraPriorWon || 0 }); } catch (e) { w = null; } }
-    return { base: base, baseItem: baseItem, regRows: regRows, w: w, clean: C };
+    var C = myrClean(R, base, baseItem), w = null, o = opts || {}, extraWon = null, worstWon = null, jShort = 0;
+    // 선순위 전세권은 배당요구를 했다고 보고 낙찰대금에서 먼저 배당(모자란 돈만 추가금). 배당요구를 안 했으면 전액 인수라 '최악' 값을 따로 계산
+    var seniorJ = reg.filter(function(r) { return /전세권/.test(r.type || '') && r.amount > 0 && r.date && base && r.date < base; });
+    var Cext = JSON.parse(JSON.stringify(C)); seniorJ.forEach(function(r) { Cext.ovr[r.seq] = 'ext'; });
+    if (base && bidWon > 0) {
+        try { w = rightsWaterfall(Cext, bidWon, { addr: o.addr, extraPriorWon: o.extraPriorWon || 0 }); (w.jeonseShort || []).forEach(function(x) { jShort += x.short || 0; }); extraWon = w.assumedWon + jShort; } catch (e) { w = null; }
+        if (seniorJ.length) { try { worstWon = rightsWaterfall(C, bidWon, { addr: o.addr, extraPriorWon: o.extraPriorWon || 0 }).assumedWon; } catch (e) {} }
+    }
+    return { base: base, baseItem: baseItem, regRows: regRows, w: w, clean: Cext, extraWon: extraWon, worstWon: worstWon, seniorJeonse: seniorJ.length };
 }
 // 2단: 탱크옥션 표시와 항목별 대조
 function myrCompare(a, R, my, refBidWon, opts) {
@@ -14972,24 +14978,35 @@ function myrCompare(a, R, my, refBidWon, opts) {
     });
     // 인수금액: 내 계산 vs 탱크옥션이 말한 금액 vs 앱 기존 계산(탱크옥션 표시 반영)
     var refW = refBidWon || R.minBidWon || 0, myAs = null, appAs = null;
-    if (refW > 0 && my.base) { try { myAs = rightsWaterfall(my.clean, refW, { addr: (opts || {}).addr, extraPriorWon: (opts || {}).extraPriorWon || 0 }).assumedWon; } catch (e) {} try { appAs = rightsWaterfall(R, refW, { addr: (opts || {}).addr, extraPriorWon: (opts || {}).extraPriorWon || 0 }).assumedWon; } catch (e) {} }
+    if (refW > 0 && my.base) { try { var wm = rightsWaterfall(my.clean, refW, { addr: (opts || {}).addr, extraPriorWon: (opts || {}).extraPriorWon || 0 }); myAs = wm.assumedWon + (wm.jeonseShort || []).reduce(function(s, x) { return s + (x.short || 0); }, 0); } catch (e) {} try { appAs = rightsWaterfall(R, refW, { addr: (opts || {}).addr, extraPriorWon: (opts || {}).extraPriorWon || 0 }).assumedWon; } catch (e) {} }
     if (myAs != null) {
         var tankAs = R.tankAssumeWon != null ? R.tankAssumeWon : null;
-        rows.push({ item: '낙찰자 인수금액(최저가 ' + man(refW) + ' 기준)', mine: man(myAs), tank: tankAs != null ? man(tankAs) : '표시 없음 (앱 기존 계산 ' + man(appAs) + ')', ok: tankAs != null ? Math.abs(myAs - tankAs) <= MYR_DIFF_WON : Math.abs(myAs - appAs) <= MYR_DIFF_WON, why: '' });
+        rows.push({ item: '추가금(낙찰금액으로 배당이 안 끝나 더 내야 할 돈, 최저가 ' + man(refW) + ' 기준)', mine: man(myAs), tank: tankAs != null ? man(tankAs) : '표시 없음 (앱 기존 계산 ' + man(appAs) + ')', ok: tankAs != null ? Math.abs(myAs - tankAs) <= MYR_DIFF_WON : Math.abs(myAs - appAs) <= MYR_DIFF_WON, why: '' });
     }
     return { rows: rows, myAssumedAtRef: myAs, appAssumedAtRef: appAs };
 }
 // 3단: 입찰 판정. 반환 level: green|yellow|red
-function myrVerdict(a, R, my, cmp, bidWon, opts) {
+// 추가금 = 낙찰금액으로 배당이 끝나지 않아 낙찰자가 더 내야 하는 돈. 추가금이 있으면 주의하되, 추가금을 내고도 수익이 나면(추천가 ≥ 최저가) 입찰 가능
+function myrVerdict(a, R, my, cmp, bidWon, opts, row) {
     var reasons = [], level = 'green', up = function(l, why) { var rank = { green: 0, yellow: 1, red: 2 }; if (rank[l] > rank[level]) level = l; reasons.push({ lvl: l, why: why }); };
     var man = function(v) { return toEok(String(Math.round(v / 10000))); };
     if (!R.registry || !R.registry.length) up('yellow', '건물등기(권리 목록)를 못 읽었어요 - 권리분석을 믿을 수 없어요. 등기부를 직접 확인하세요.');
     if (!my.base) up('yellow', '말소기준권리를 정하지 못했어요(근저당·압류 등 없음 또는 못 읽음) - 등기부를 직접 확인하세요.');
-    var asW = my.w ? my.w.assumedWon : null;
-    var wvExplains = !!(R.waiver && R.waiver.hard && R.waiver.tankExt && cmp && cmp.appAssumedAtRef != null && cmp.appAssumedAtRef <= MYR_DIFF_WON);  // 확약서(인수조건변경)가 법원에 제출됐다면 법 기준 인수금액이 사라짐 - 서류 확인 전에는 🔴로 단정하지 않고 🟡
-    if (asW != null && asW >= MYR_RED_WON && wvExplains) up('yellow', '법 기준으로는 낙찰자가 떠안을 돈이 ' + man(asW) + '이지만, 보증공사 등이 "말소 동의·청구권 포기" 확약서를 냈다는 글이 있어 탱크옥션은 인수가 없다고 봐요 - 매각물건명세서에 인수조건변경이 적혀 있는지 확인되기 전에는 입찰하지 마세요.');
-    else if (asW != null && asW >= MYR_RED_WON) up('red', '내 계산으로 낙찰자가 떠안을 돈이 ' + man(asW) + '(입찰가 ' + man(bidWon) + ' 기준)이에요 - 기준 ' + man(MYR_RED_WON) + ' 이상이라 패스.');
-    else if (asW != null && asW > 0) up('yellow', '내 계산으로 낙찰자가 떠안을 돈이 ' + man(asW) + '이에요 - 입찰가에서 빼고 계산해야 해요.');
+    var ex = my.extraWon, minM = row ? (parseInt(row.minBid) || parseInt(a.minBid) || 0) : 0, recM = row && row.recBid ? row.recBid : 0;
+    var appEx = cmp && cmp.appAssumedAtRef != null ? cmp.appAssumedAtRef : null, minWon = minM * 10000;
+    var wvExplains = !!(R.waiver && R.waiver.hard && R.waiver.tankExt && appEx != null && appEx <= MYR_DIFF_WON);  // 확약서(인수조건변경)가 법원에 제출됐다면 법 기준 추가금이 사라짐
+    if (ex != null && ex > 0) {
+        // 추천가는 앱이 계산한 추가금(appEx)을 이미 뺀 값 → 내 계산이 더 크면 그 차이만큼 추천가를 낮춰서 수익이 나는지 봄
+        var gapM = appEx != null ? Math.round((ex - appEx) / 10000) : 0, adjRec = recM ? recM - gapM : 0;
+        if (wvExplains && gapM > 1000) up('yellow', '법 기준으로는 낙찰금액으로 배당이 끝나지 않아 ' + man(ex) + '을 더 내야 하지만, 보증공사 등이 "말소 동의·청구권 포기" 확약서를 냈다는 글이 있어 탱크옥션은 추가금이 없다고 봐요 - 매각물건명세서에 인수조건변경이 적혀 있는지 확인되기 전에는 입찰하지 마세요.');
+        else {
+            var okProfit = recM > 0 && minM > 0 && adjRec >= minM;
+            if (okProfit) up('yellow', '주의: 낙찰금액(' + man(bidWon) + ')으로 배당이 끝나지 않아 ' + man(ex) + '을 더 내야 해요. 그래도 추가금을 반영한 추천가 ' + man(adjRec * 10000) + '가 최저가 ' + man(minWon) + ' 이상이라 이 가격 이하로 입찰하면 수익이 나요.');
+            else if (recM > 0 && minM > 0) up('red', '낙찰금액(' + man(bidWon) + ')으로 배당이 끝나지 않아 ' + man(ex) + '을 더 내야 하고, 그 돈을 반영하면 추천가가 최저가 ' + man(minWon) + '보다 낮아 수익이 나지 않아요.');
+            else up('yellow', '낙찰금액으로 배당이 끝나지 않아 ' + man(ex) + '을 더 내야 해요. 수익성(추천가)이 아직 계산되지 않아 판단할 수 없어요.');
+        }
+    }
+    if (my.worstWon != null && my.seniorJeonse && my.worstWon > (ex || 0) + MYR_DIFF_WON) up('yellow', '선순위 전세권자가 배당요구를 하지 않으면 전세금 ' + man(my.worstWon) + '을 통째로 인수해요(위는 배당요구를 했다고 본 계산) - 배당요구 여부를 법원 문건/송달내역·매각물건명세서에서 꼭 확인하세요.');
     my.regRows.filter(function(r) { return r.risk && r.fate === '인수'; }).forEach(function(r) { up('yellow', '위험 권리: ' + r.type + ' ' + (r.holder || '') + ' (' + r.date + ') - ' + r.law); });
     (R.flags || []).forEach(function(f) { if (/유치권|법정지상권|분묘|선순위/.test(f.k)) up('yellow', '위험 권리(탱크옥션 글에 언급): ' + f.k + ' - "' + f.note + '"'); else up('yellow', '주의: ' + f.k + ' - "' + f.note + '"'); });
     var dr = (R.docs && R.docs.risks) || [];
@@ -14998,7 +15015,7 @@ function myrVerdict(a, R, my, cmp, bidWon, opts) {
         var diffs = cmp.rows.filter(function(r) { return !r.ok; });
         if (diffs.length) up('yellow', '내 분석과 탱크옥션이 다른 항목이 ' + diffs.length + '개예요 - 아래 대조표의 이유를 확인하세요.');
         var tankAsW = R.tankAssumeWon;
-        if (tankAsW != null && cmp.myAssumedAtRef != null && Math.abs(cmp.myAssumedAtRef - tankAsW) > MYR_DIFF_WON) up('yellow', '인수금액이 탱크옥션(' + man(tankAsW) + ')과 내 계산(' + man(cmp.myAssumedAtRef) + ')이 많이 달라요.');
+        if (tankAsW != null && cmp.myAssumedAtRef != null && Math.abs(cmp.myAssumedAtRef - tankAsW) > MYR_DIFF_WON) up('yellow', '추가금이 탱크옥션(' + man(tankAsW) + ')과 내 계산(' + man(cmp.myAssumedAtRef) + ')이 많이 달라요.');
     }
     if (!R.docs) reasons.push({ lvl: 'info', why: '법원 서류 탭(명세서·현황조사서·문건 등)을 아직 못 불러왔어요 - 확장 0.4.0의 "탱크옥션 상세 보내기"로 다시 보내면 서류 속 위험도 같이 점검해요.' });
     else if (R.docs.missing && R.docs.missing.length) reasons.push({ lvl: 'info', why: '못 불러온 탭: ' + R.docs.missing.map(function(k) { var t = MYR_TABS.filter(function(x) { return x[0] === k; })[0]; return t ? t[1] : k; }).join(', ') + ' - 해당 서류의 위험은 점검하지 못했어요.' });
@@ -15014,10 +15031,10 @@ function myrPanelHtml(row) {
     var a = row.a, R = a.rights; if (!R || (!(R.registry || []).length && !(R.tenants || []).length)) return '';
     var minWon = (parseInt(row.minBid) || parseInt(a.minBid) || 0) * 10000, recWon = row.recBid ? Math.round(row.recBid * 10000) : 0, bidWon = recWon || minWon, opts = { addr: a.addr, extraPriorWon: (parseInt(a.assumedPrior) || 0) * 10000 + (R.extraPriorWon || 0) };
     var my, cmp, vd, man = function(v) { return toEok(String(Math.round(v / 10000))); };
-    try { my = myrAnalyze(a, R, bidWon, opts); cmp = myrCompare(a, R, my, minWon || bidWon, opts); vd = myrVerdict(a, R, my, cmp, bidWon, opts); } catch (e) { return '<div class="dr-sec"><h4>🧭 내 권리분석</h4><div class="dr-warn">계산 중 오류: ' + bbEsc(String(e.message || e)) + '</div></div>'; }
+    try { my = myrAnalyze(a, R, bidWon, opts); cmp = myrCompare(a, R, my, minWon || bidWon, opts); vd = myrVerdict(a, R, my, cmp, bidWon, opts, row); } catch (e) { return '<div class="dr-sec"><h4>🧭 내 권리분석</h4><div class="dr-warn">계산 중 오류: ' + bbEsc(String(e.message || e)) + '</div></div>'; }
     var pill = { green: ['🟢 입찰 가능', '#dcfce7', '#166534'], yellow: ['🟡 조건부 - 확인 후 입찰', '#fef9c3', '#854d0e'], red: ['🔴 패스', '#fee2e2', '#991b1b'] }[vd.level];
     var h = '<div class="dr-sec"><h4>🧭 내 권리분석 · 탱크옥션 더블체크 <span class="dr-sub" style="font-weight:400;">법 조문 기준으로 다시 계산해 탱크옥션과 비교해요</span></h4>';
-    h += '<div style="display:inline-block;padding:4px 10px;border-radius:14px;font-weight:700;background:' + pill[1] + ';color:' + pill[2] + ';">' + pill[0] + '</div> <span class="dr-sub">입찰가 ' + (bidWon ? man(bidWon) : '-') + ' 기준 · 내 계산 인수금액 ' + (my.w ? man(my.w.assumedWon) : '계산 못 함') + '</span>';
+    h += '<div style="display:inline-block;padding:4px 10px;border-radius:14px;font-weight:700;background:' + pill[1] + ';color:' + pill[2] + ';">' + pill[0] + '</div> <span class="dr-sub">입찰가 ' + (bidWon ? man(bidWon) : '-') + ' 기준 · 추가로 더 내야 할 돈(낙찰금액으로 배당이 안 끝나는 부분) ' + (my.extraWon != null ? man(my.extraWon) : '계산 못 함') + '</span>';
     vd.reasons.forEach(function(x) { h += '<div class="' + (x.lvl === 'info' ? 'dr-sub' : 'dr-warn') + '" style="margin-top:3px;">' + (x.lvl === 'red' ? '⛔ ' : (x.lvl === 'yellow' ? '⚠️ ' : 'ℹ️ ')) + bbEsc(x.why) + '</div>'; });
     if (!vd.reasons.length) h += '<div class="dr-sub" style="margin-top:3px;">✅ 걸리는 위험 권리와 탱크옥션과의 차이가 없어요. (그래도 법원 문건은 입찰 전에 직접 확인)</div>';
     h += '<details open style="margin-top:6px;"><summary><b>1단 · 내 분석</b> (탱크옥션의 소멸/인수 표시는 안 쓰고 날짜·종류·금액만으로 판정)</summary>';
@@ -15045,7 +15062,7 @@ function myrPanelHtml(row) {
         if (extra.length && (R.tenants || []).length) h += '<div class="dr-warn" style="margin-top:3px;">⚠️ 세대열람의 날짜 중 임차인 표에 없는 것: ' + bbEsc(extra.slice(0, 6).join(', ')) + ' - 표에 없는 전입세대(숨은 임차인)가 있는지 확인</div>';
     }
     h += '<div class="dr-sub" style="margin-top:6px;"><b>입찰 전에 직접 확인할 것</b></div><ul style="margin:2px 0 0 16px;padding:0;font-size:12px;">' + myrChecklist(R, my).map(function(x) { return '<li>' + bbEsc(x) + '</li>'; }).join('') + '</ul>';
-    h += '<div class="dr-sub" style="margin-top:6px;">판정 기준: 🔴 내 계산 인수금액 ' + man(MYR_RED_WON) + ' 이상 · 🟡 위험 권리가 있거나 인수금액이 조금이라도 있거나 탱크옥션과 다르거나 자료가 부족 · 🟢 그 외. 이 판정은 참고용이며 입찰 전에 법원 문건으로 직접 확인해야 해요.</div></details></div>';
+    h += '<div class="dr-sub" style="margin-top:6px;">판정 기준: 🔴 낙찰금액으로 배당이 안 끝나 추가금을 내야 하고 그 돈을 반영하면 수익이 안 나는 경우 · 🟡 위험 권리가 있거나 추가금이 있어도 수익은 나거나 탱크옥션과 다르거나 자료가 부족 · 🟢 그 외. 이 판정은 참고용이며 입찰 전에 법원 문건으로 직접 확인해야 해요.</div></details></div>';
     return h;
 }
 
