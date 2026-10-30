@@ -21787,6 +21787,7 @@ async function processListingInbox() {
         for (var i = 0; i < pending.length; i++) {
             var it = pending[i], res = { done: 0, text: '매매 매물을 찾지 못했어요', applied: [] };
             if (it.kind === 'tank') { res = await rightsApplyTankText(it.text || ''); if (res.done) listingToast('📥 탱크옥션 상세 반영됨: ' + res.applied.slice(0, 3).map(function(x) { return '<b>' + bbEsc(x.name) + '</b> 권리분석(등기 ' + x.n + '건' + (x.tenants ? ' · 임차인 ' + x.tenants + '명' : ' · 임차인 없음') + ')' + (x.audit && x.audit.length ? ' ❌ ' + bbEsc(x.audit[0]) : ''); }).join(' · '), !res.applied.some(function(x) { return x.audit && x.audit.length; })); else listingToast('📥 탱크옥션 상세를 받았지만 반영하지 못했어요 - ' + bbEsc(res.text), false); }
+            else if (it.kind === 'probe') { res = { done: 1, text: '참고자료 원문 보관(권리분석에는 반영하지 않음)', applied: [] }; } // 참고자료 팝업 글: 구조 확인용으로 수신함에만 보관(하루 뒤 정리)
             else { var list = parseNaverListings(it.text || ''); if (list.length) res = await applyListingListsAuto(list); }
             got += res.done; res.applied.forEach(function(x) { names.push(x); });
             // 확장이 결과를 볼 수 있게 처리 기록을 남김(원문도 하루 보관)
