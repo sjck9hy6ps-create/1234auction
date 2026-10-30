@@ -14897,7 +14897,7 @@ function myrScanDocs(docs) {
             // '없음/해당없음/배제'가 바로 뒤에 붙으면 위험으로 안 봄
             var after = t.slice(m.index, m.index + 70).replace(/\s+/g, ' ');
             if (/^(?:유치권|법정지상권|분묘[가-힣]*|지분[^ ]*|예고등기|재매각)[^가-힣]{0,6}(?:없|해당\s*없|배제|아님|불성립)/.test(after) || /(?:신고|주장)[^ ]{0,4}\s*(?:없|해당\s*없)/.test(after.slice(0, 40))) return;
-            if (p[0] === '매수인이 인수하는 권리') { var tail = (m[1] || '').trim(); if (!tail || /^(?:없음|해당\s*없|-|X|\.|\()/.test(tail)) return; }
+            if (p[0] === '매수인이 인수하는 권리') { var tail = (m[1] || '').trim(); if (!tail || /^(?:없음|해당\s*없|-|X|\.|\(|매각에\s*따라|비고|※|\[쪽)/.test(tail)) return; }  // 칸이 비어 바로 다음 칸 제목이 이어지는 경우 포함
             var key = p[0] + '|' + src; if (seen[key]) return; seen[key] = 1;
             risks.push({ k: p[0], lvl: p[2], src: src, note: ctx.slice(0, 140), ask: p[4] });
         });
