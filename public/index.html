@@ -14710,8 +14710,10 @@ async function rightsApplyTankText(text) {
     if (!parts.length) { res.text = '상세 페이지의 사건번호(경매 ○○○○타경○○○)를 못 찾았어요'; return res; }
     var msgs = [];
     for (var i = 0; i < parts.length; i++) {
-        var part = parts[i], m = part.match(/경매\s*(\d{4})\s*타경\s*(\d+)/), key = normalizeCaseNoForCompare(m[1] + '타경' + m[2]), label = m[1] + '타경' + m[2];
+        var part = parts[i], m = part.match(/경매\s*(\d{4})\s*타경\s*(\d+)\s*(\(\d+\))?/), key = normalizeCaseNoForCompare(m[1] + '타경' + m[2] + (m[3] || '')), label = m[1] + '타경' + m[2] + (m[3] || '');
         var cands = auctionList.filter(function(a) { return !a.isBacktest && normalizeCaseNoForCompare(a.caseNo) === key; });
+        if (!cands.length && m[3]) cands = auctionList.filter(function(a) { return !a.isBacktest && normalizeCaseNoForCompare(a.caseNo).replace(/\(\d+\)$/, '') === normalizeCaseNoForCompare(m[1] + '타경' + m[2]); }); /* 물건번호 (1)(2)가 앱에 다르게 적혀 있으면 번호 빼고 찾은 뒤 주소로 가림 */
+        else if (!cands.length) cands = auctionList.filter(function(a) { return !a.isBacktest && normalizeCaseNoForCompare(a.caseNo).replace(/\(\d+\)$/, '') === key; }); /* 탱크 글에 물건번호가 없는데 앱에는 (1)이 붙은 경우 */
         if (cands.length > 1) {
             var by = cands.filter(function(a) { var dg = String(a.dong || '').trim(), bj = String(a.bunji || '').trim(); return dg && part.indexOf(dg) >= 0 && (!bj || part.indexOf(bj) >= 0); });
             cands = by.length === 1 ? by : cands;
@@ -14741,8 +14743,10 @@ async function rightsBatchRun() {
     var parts = myrMaskTabs(txt).split(/(?=경매\s*\d{4}\s*타경\s*\d+)/).filter(function(x) { return /경매\s*\d{4}\s*타경\s*\d+/.test(x); });
     var ok = [], miss = [], amb = [], saved = 0;
     for (var i = 0; i < parts.length; i++) {
-        var part = parts[i], m = part.match(/경매\s*(\d{4})\s*타경\s*(\d+)/), key = normalizeCaseNoForCompare(m[1] + '타경' + m[2]), label = m[1] + '타경' + m[2];
+        var part = parts[i], m = part.match(/경매\s*(\d{4})\s*타경\s*(\d+)\s*(\(\d+\))?/), key = normalizeCaseNoForCompare(m[1] + '타경' + m[2] + (m[3] || '')), label = m[1] + '타경' + m[2] + (m[3] || '');
         var cands = auctionList.filter(function(a) { return !a.isBacktest && normalizeCaseNoForCompare(a.caseNo) === key; });
+        if (!cands.length && m[3]) cands = auctionList.filter(function(a) { return !a.isBacktest && normalizeCaseNoForCompare(a.caseNo).replace(/\(\d+\)$/, '') === normalizeCaseNoForCompare(m[1] + '타경' + m[2]); }); /* 물건번호 (1)(2)가 앱에 다르게 적혀 있으면 번호 빼고 찾은 뒤 주소로 가림 */
+        else if (!cands.length) cands = auctionList.filter(function(a) { return !a.isBacktest && normalizeCaseNoForCompare(a.caseNo).replace(/\(\d+\)$/, '') === key; }); /* 탱크 글에 물건번호가 없는데 앱에는 (1)이 붙은 경우 */
         if (cands.length > 1) { // 법원이 달라 사건번호가 같을 수 있음 → 글 안의 주소(동·번지)로 가림
             var by = cands.filter(function(a) { var dg = String(a.dong || '').trim(), bj = String(a.bunji || '').trim(); return dg && part.indexOf(dg) >= 0 && (!bj || part.indexOf(bj) >= 0); });
             cands = by.length === 1 ? by : cands;
