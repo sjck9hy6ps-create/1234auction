@@ -14919,7 +14919,10 @@ function myrSpecRead(t) {
 }
 function myrDocDigest(docs, split) {
     var d = { got: split.found.slice(0), missing: split.missing.slice(0), empty: (split.empty || []).slice(0), at: Date.now() };
-    d.risks = myrScanDocs(docs);
+    var scanDocs = docs;
+    if (docs.spec) { scanDocs = {}; Object.keys(docs).forEach(function(k) { scanDocs[k] = docs[k]; });  // 명세서에 항상 인쇄돼 있는 안내문(비고·※ 설명)은 위험 문구로 보지 않음
+        scanDocs.spec = String(docs.spec).replace(/※?\s*최선순위\s*설정일자보다[\s\S]*?주의하\s*시기\s*바랍니다\.?/g, ' ').replace(/※\s*1\s*:[\s\S]*$/, ' ').replace(/<\s*비고\s*>/g, ' '); }
+    d.risks = myrScanDocs(scanDocs);
     var dt = docs.dates || '';
     d.dates = { yuchal: (dt.match(/유찰/g) || []).length, changed: (dt.match(/변경|연기|취소/g) || []).length, unpermit: /불허가/.test(dt) };
     var cs = docs.case || '', cm;
