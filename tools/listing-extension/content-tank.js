@@ -217,11 +217,11 @@
     const txt = (document.body && document.body.innerText) || '';
     const cm = txt.match(/경매\s*(\d{4})\s*타경\s*(\d+)\s*(\(\d+\))?/);
     if (cm && tidOf()) map[normCase(cm[1] + '타경' + cm[2] + (cm[3] || ''))] = tidOf();  // 상세 화면: 이 사건의 tid
-    const tidOfEl = (a) => { const at = (a.getAttribute('href') || '') + ' ' + (a.getAttribute('onclick') || '') + ' ' + Array.from(a.attributes || []).filter((x) => /^data-/.test(x.name)).map((x) => x.value).join(' '); const m = at.match(/[?&]tid=(\d+)/) || at.match(/tid['":=\s]+(\d{6,8})/) || at.match(/\((?:[^)]*?[,\s'"])?(2\d{6})(?:[,'"\s)][^)]*)?\)/); return m ? m[1] : ''; };
+    const tidOfEl = (a) => { const dt = a.getAttribute('data-tid'); if (dt && /^\d{6,8}$/.test(dt)) return dt; const at = (a.getAttribute('href') || '') + ' ' + (a.getAttribute('onclick') || '') + ' ' + Array.from(a.attributes || []).filter((x) => /^data-/.test(x.name)).map((x) => x.value).join(' '); const m = at.match(/[?&]tid=(\d+)/) || at.match(/tid['":=\s]+(\d{6,8})/) || at.match(/\((?:[^)]*?[,\s'"])?(2\d{6})(?:[,'"\s)][^)]*)?\)/); return m ? m[1] : ''; };
     Array.from(document.querySelectorAll('a[href],[onclick],[data-tid],[data-id]')).slice(0, 800).forEach((a) => {  // 목록 화면: 한 줄에 사건번호가 하나뿐인 링크만
       const tv = tidOfEl(a); if (!tv) return; const m = [0, tv];
       let el = a;
-      for (let k = 0; k < 6 && el; k++) { el = el.parentElement; if (!el) break; const ms = ((el.innerText || '').slice(0, 600).match(/\d{4}\s*타경\s*\d+(?:\(\d+\))?/g) || []).map(normCase); const u = ms.filter((v, i) => ms.indexOf(v) === i); if (u.length === 1) { map[u[0]] = m[1]; break; } if (u.length > 1) break; }
+      for (let k = 0; k < 7 && el; k++) { if (k > 0) el = el.parentElement; if (!el) break; const ms = ((el.innerText || '').slice(0, 600).match(/\d{4}\s*타경\s*\d+(?:\(\d+\))?/g) || []).map(normCase); const u = ms.filter((v, i) => ms.indexOf(v) === i); if (u.length === 1) { map[u[0]] = m[1]; break; } if (u.length > 1) break; }
     });
     if (Object.keys(map).length) msg({ type: 'learnTids', map });
   };
