@@ -1,4 +1,4 @@
-// 탱크옥션 상세 보내기(0.5.2: 수집 중 화면 위쪽에 진행 막대(사건·단계), 메인 화면 대기열 버튼에도 '수집 중' 실시간 표시, ▶ 자동 수집 시작 버튼, 2분 넘게 막힌 사건은 건너뛰고 다음으로 / 0.5.1: 대기열 사건이 끝나면 다음 사건을 자동으로 열기(체크박스, 8초 뒤·하루 30건 상한), 번호(tid) 학습을 링크 외 속성(onclick·data-*)까지 확대, '🔎 번호 점검' 버튼 / 0.5.0: 앱이 만든 '모으기 대기열'을 탱크옥션 화면 왼쪽 아래에 보여 주고, 한 번 누르면 그 사건 팝업을 열어 자동 수집·닫기. 사건번호↔탱크옥션 번호(tid)는 사용자가 연 화면에서 자동으로 기억 / 0.4.4: 글자 정보가 없는 그림 PDF(세대열람)는 확대해서 쪽 그림을 내려받기 폴더(tank-ocr)에 저장 - 글자 인식용 / 0.4.3: PDF로 열리는 서류(감정평가서·매물명세서·건물등기·세대열람)는 글 조각이 줄바꿈으로 흩어져 읽히므로, 쪽을 끝까지 넘겨 그린 뒤 글 조각의 위치로 줄을 다시 맞춤 / 0.4.2: 상세 팝업의 '파일자료' 메뉴는 눌러도 같은 화면이 바뀌지 않고 참고자료 팝업이 새로 열리므로, 보내기를 누르면 그 팝업을 한 번 열어 그 안의 탭(사건내역~세대열람)을 읽어 상세 글과 합쳐 보냄 / 0.4.1: 참고자료 팝업·iframe 안 글도 읽고, 못 찾은 탭이 있으면 화면 버튼 이름을 같이 보냄, 끝나면 완료 안내창 + 모으려고 열었던 팝업창 자동 닫기 / 0.4.0: 사건내역·기일내역·문건/송달·현황조사서·부동산표시·감정평가서·매각물건명세서·건물등기·세대열람 탭까지 같이 읽음) - 탱크옥션 물건 상세 페이지에 버튼 하나를 띄움. 눌렀을 때만 지금 열려 있는 페이지의 글(임차인 현황·건물등기·권리분석 등)을 앱에 보냄.
+// 탱크옥션 상세 보내기(0.5.3: 자동으로 열린 팝업은 사용자 클릭이 없어 크롬이 참고자료 팝업을 막을 수 있음 → 막히면 빈 자료를 보내지 않고 '팝업 허용' 안내 후 자동 수집 중단 / 번호(tid) 학습을 href·data-tid로 좁히고 상세 팝업에서는 자기 사건만 기억 / 0.5.2: 수집 중 화면 위쪽에 진행 막대(사건·단계), 메인 화면 대기열 버튼에도 '수집 중' 실시간 표시, ▶ 자동 수집 시작 버튼, 2분 넘게 막힌 사건은 건너뛰고 다음으로 / 0.5.1: 대기열 사건이 끝나면 다음 사건을 자동으로 열기(체크박스, 8초 뒤·하루 30건 상한), 번호(tid) 학습을 링크 외 속성(onclick·data-*)까지 확대, '🔎 번호 점검' 버튼 / 0.5.0: 앱이 만든 '모으기 대기열'을 탱크옥션 화면 왼쪽 아래에 보여 주고, 한 번 누르면 그 사건 팝업을 열어 자동 수집·닫기. 사건번호↔탱크옥션 번호(tid)는 사용자가 연 화면에서 자동으로 기억 / 0.4.4: 글자 정보가 없는 그림 PDF(세대열람)는 확대해서 쪽 그림을 내려받기 폴더(tank-ocr)에 저장 - 글자 인식용 / 0.4.3: PDF로 열리는 서류(감정평가서·매물명세서·건물등기·세대열람)는 글 조각이 줄바꿈으로 흩어져 읽히므로, 쪽을 끝까지 넘겨 그린 뒤 글 조각의 위치로 줄을 다시 맞춤 / 0.4.2: 상세 팝업의 '파일자료' 메뉴는 눌러도 같은 화면이 바뀌지 않고 참고자료 팝업이 새로 열리므로, 보내기를 누르면 그 팝업을 한 번 열어 그 안의 탭(사건내역~세대열람)을 읽어 상세 글과 합쳐 보냄 / 0.4.1: 참고자료 팝업·iframe 안 글도 읽고, 못 찾은 탭이 있으면 화면 버튼 이름을 같이 보냄, 끝나면 완료 안내창 + 모으려고 열었던 팝업창 자동 닫기 / 0.4.0: 사건내역·기일내역·문건/송달·현황조사서·부동산표시·감정평가서·매각물건명세서·건물등기·세대열람 탭까지 같이 읽음) - 탱크옥션 물건 상세 페이지에 버튼 하나를 띄움. 눌렀을 때만 지금 열려 있는 페이지의 글(임차인 현황·건물등기·권리분석 등)을 앱에 보냄.
 // 로그인은 사용자가 직접 한 화면만 읽음(로그인 정보는 건드리지 않고, 자동으로 다른 페이지로 이동하거나 순회하지 않음).
 (function () {
   const ID = 'tk-send-btn';
@@ -172,11 +172,12 @@
   };
   // 상세 팝업: '파일자료' 메뉴(사건내역 등)를 누르면 참고자료 팝업이 새로 열림 → 팝업이 스스로 읽도록 표시해 두고 한 번만 누름. 팝업이 열려 읽기 시작하면 true
   const tryDelegate = async (headText) => {
-    const el = findTab(TABS[0][2]); if (!el) return false;
+    const el = findTab(TABS[0][2]); if (!el) return 'notab';
     await msg({ type: 'arm', tid: tidOf(), text: headText, url: location.href });
-    try { el.click(); } catch (e) { await msg({ type: 'disarm', tid: tidOf() }); return false; }
-    for (let i = 0; i < 28; i++) { await sleep(250); const r = await msg({ type: 'armState', tid: tidOf() }); if (r && r.claimed) return true; }
-    await msg({ type: 'disarm', tid: tidOf() }); return false;
+    const before = bodyText();
+    try { el.click(); } catch (e) { await msg({ type: 'disarm', tid: tidOf() }); return 'inline'; }
+    for (let i = 0; i < 28; i++) { await sleep(250); const r = await msg({ type: 'armState', tid: tidOf() }); if (r && r.claimed) return 'popup'; if (i === 8 && bodyText() !== before) { await msg({ type: 'disarm', tid: tidOf() }); return 'inline'; } }
+    await msg({ type: 'disarm', tid: tidOf() }); return 'blocked';
   };
   // 참고자료 팝업이 열렸는데 상세 팝업이 미리 표시해 둔 것이 있으면 자동으로 탭을 읽어 보냄
   const autoCollect = async () => {
@@ -212,7 +213,9 @@
         const oldTitle = document.title; btn.style.display = 'none';
         if (!isFile) {
           toast('참고자료 창을 여는 중…', null); setProg('참고자료 창 여는 중'); btn.style.display = '';
-          if (await tryDelegate(text)) { toast('참고자료 창에서 읽는 중… (끝나면 알려 드려요)', null); setTimeout(() => { if (btn) { btn.textContent = label; btn.style.background = '#7b1fa2'; btn.disabled = false; } }, 90000); return; }
+          const dl = await tryDelegate(text);
+          if (dl === 'blocked' && autoMode) { setProg('실패 - 참고자료 창이 열리지 않았어요(크롬 팝업 차단) · 팝업 허용 후 다시 시작'); toast('팝업이 차단됐어요 - 주소창 오른쪽 팝업 표시에서 "항상 허용"', false); msg({ type: 'chainFail', tid: tidOf(), reason: 'popup' }); btn.style.display = ''; btn.disabled = false; return; }
+          if (dl === 'popup') { toast('참고자료 창에서 읽는 중… (끝나면 알려 드려요)', null); setTimeout(() => { if (btn) { btn.textContent = label; btn.style.background = '#7b1fa2'; btn.disabled = false; } }, 90000); return; }
           btn.style.display = 'none';
         }
         try { tabRes = await collectTabs((l, i, n) => { document.title = '탭 읽는 중 ' + l + ' (' + i + '/' + n + ')'; setProg('탭 읽는 중 ' + l + ' (' + i + '/' + n + ')'); }); text += tabRes.text + '\n【수집결과】 found=' + tabRes.found.join(',') + '; missing=' + tabRes.missing.join(',') + '; empty=' + tabRes.empty.join(',') + probe(); } catch (e) {}
@@ -228,8 +231,9 @@
     const txt = (document.body && document.body.innerText) || '';
     const cm = txt.match(/경매\s*(\d{4})\s*타경\s*(\d+)\s*(\(\d+\))?/);
     if (cm && tidOf()) map[normCase(cm[1] + '타경' + cm[2] + (cm[3] || ''))] = tidOf();  // 상세 화면: 이 사건의 tid
-    const tidOfEl = (a) => { const dt = a.getAttribute('data-tid'); if (dt && /^\d{6,8}$/.test(dt)) return dt; const at = (a.getAttribute('href') || '') + ' ' + (a.getAttribute('onclick') || '') + ' ' + Array.from(a.attributes || []).filter((x) => /^data-/.test(x.name)).map((x) => x.value).join(' '); const m = at.match(/[?&]tid=(\d+)/) || at.match(/tid['":=\s]+(\d{6,8})/) || at.match(/\((?:[^)]*?[,\s'"])?(2\d{6})(?:[,'"\s)][^)]*)?\)/); return m ? m[1] : ''; };
-    Array.from(document.querySelectorAll('a[href],[onclick],[data-tid],[data-id]')).slice(0, 800).forEach((a) => {  // 목록 화면: 한 줄에 사건번호가 하나뿐인 링크만
+    const tidOfEl = (a) => { const dt = a.getAttribute('data-tid'); if (dt && /^\d{6,8}$/.test(dt)) return dt; const m = (a.getAttribute('href') || '').match(/[?&]tid=(\d+)/); return m ? m[1] : ''; };
+    if (/\/popup\//.test(location.pathname)) { if (Object.keys(map).length) msg({ type: 'learnTids', map }); return; }  // 상세 팝업에서는 자기 사건만 기억(최근 열람 목록 등 다른 사건 링크로 잘못 기억하지 않게)
+    Array.from(document.querySelectorAll('a[href*="tid="],[data-tid]')).slice(0, 800).forEach((a) => {  // 목록 화면: 한 줄에 사건번호가 하나뿐인 링크만
       const tv = tidOfEl(a); if (!tv) return; const m = [0, tv];
       let el = a;
       for (let k = 0; k < 7 && el; k++) { if (k > 0) el = el.parentElement; if (!el) break; const ms = ((el.innerText || '').slice(0, 600).match(/\d{4}\s*타경\s*\d+(?:\(\d+\))?/g) || []).map(normCase); const u = ms.filter((v, i) => ms.indexOf(v) === i); if (u.length === 1) { map[u[0]] = m[1]; break; } if (u.length > 1) break; }

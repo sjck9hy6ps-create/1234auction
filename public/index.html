@@ -21981,7 +21981,8 @@ function auctionQueueTargets() {
 async function aqLoad() { try { var l = await fetch('/api/auction?kind=listingRaw', { cache: 'no-store' }).then(function(r) { return r.json(); }); var it = Array.isArray(l) ? l.filter(function(x) { return x.id === 'queue'; })[0] : null; return it ? JSON.parse(it.text) : null; } catch (e) { return null; } }
 async function aqSave() {
     var T = auctionQueueTargets().slice(0, AQ_LIMIT), old = (await aqLoad()) || {}, doneSet = {}; (old.done || []).forEach(function(c) { doneSet[c] = 1; });
-    var q = { at: new Date().toISOString(), items: T.map(function(t) { return { caseNo: t.caseNo, name: t.name, sale: t.sale }; }), done: (old.done || []).filter(function(c) { return T.some(function(t) { return t.caseNo === c; }); }), tids: old.tids || {} };
+    var q = { at: new Date().toISOString(), items: T.map(function(t) { return { caseNo: t.caseNo, name: t.name, sale: t.sale }; }), done: (old.done || []).filter(function(c) { return T.some(function(t) { return t.caseNo === c; }); }), tids: {} };
+    Object.keys(old.tids || {}).forEach(function(c) { if (q.done.indexOf(c) >= 0) q.tids[c] = old.tids[c]; });  // 번호는 실제로 모은 사건 것만 유지(잘못 기억된 번호 제거)
     await fetch('/api/auction?kind=listingRaw', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: 'queue', at: q.at, kind: 'queue', url: '', text: JSON.stringify(q), done: true, appliedAt: q.at }) });
     return q;
 }
