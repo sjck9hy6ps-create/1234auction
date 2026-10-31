@@ -14499,7 +14499,6 @@ function rightsWaterfall(rights, bidWon, opts) {
     var steps = [], pool = bidWon;
     var take = function(label, amt) { var p = Math.min(Math.max(pool, 0), amt); pool -= p; steps.push({ label: label, claim: amt, paid: p }); return p; };
     take('경매집행비용(가정)', exec);
-    if (extra > 0) take('당해세·임금채권 등 먼저 빠지는 돈(직접 입력)', extra);
     // 개시결정 등기일(대항요건 기준일): 강제경매/임의경매 접수일, 없으면 말소기준일
     var startReg = reg.filter(function(r) { return /경매개시|강제경매|임의경매/.test(r.type); })[0], startDate = startReg ? startReg.date : base;
     var ml = rightsMinorLimit(base, opts.addr), minorTotalCap = Math.floor(bidWon / 2);
@@ -14522,6 +14521,7 @@ function rightsWaterfall(rights, bidWon, opts) {
     ts.filter(function(t) { return t.minor; }).forEach(function(t) {
         var amt = Math.min(ml.pay, t.deposit); amt = Math.min(amt, Math.max(0, minorTotalCap - minorPaid)); var p = take('소액임차인 최우선변제 - ' + t.name, amt); t.minorPaid = p; minorPaid += p;
     });
+    if (extra > 0) take('당해세·임금채권 등 먼저 빠지는 돈(직접 입력, 소액임차인 최우선변제 뒤)', extra);  // 소액임차인 최우선변제는 항상 당해세보다 먼저(배당 순서)
     // 담보물권(근저당·전세권·담보가등기)과 확정일자 임차인을 날짜순으로
     var queue = [], regItems = rightsRegItems(rights), asmSeq = {};
     regItems.forEach(function(it) { if (it.kind === 'money' && it.mode === 'asm') asmSeq[it.seq] = true; });
@@ -15078,6 +15078,7 @@ function myrVerdict(a, R, my, cmp, bidWon, opts, row) {
         if (hr.surname && curNames.trim() && curNames.indexOf(hr.surname) < 0) up('yellow', '세대열람의 세대주 성씨("' + hr.surname + '")가 현재 소유자·공유자(' + [stN.owner, stN.creditor].filter(Boolean).join(', ') + ')와 달라요 - 전 소유자이거나 임차인 등 제3자일 수 있어요. 전입일(' + (hr.moveIns || []).join(', ') + ')이 말소기준일(' + (R.baseDate || '-') + ')보다 빠르면 임차인일 경우 대항력이 있으니 실제 점유자를 확인하세요.');
         if (hr.absent) up('yellow', '세대열람에 거주불명·말소자 표시가 있어요 - 실제 거주자와 대항력 여부를 확인하세요.');
     }
+    try { var tx0 = myrTaxSim(a, R, my, row, bidWon, opts); if (tx0 && tx0.worry) { var d2 = tx0.rows[2].d, d1 = tx0.rows[1].d, adj2 = tx0.recM ? tx0.recM - Math.round(d2 / 10000) : 0; up('yellow', '세금(당해세) 주의: 세금 압류·교부청구가 있고 대항력 있는 임차인이 있어요. 당해세가 임차인보다 먼저 배당되면 낙찰자 인수금이 추정 ' + man(d1) + '~' + man(d2) + ' 늘어요' + (tx0.recM ? ' → 수익을 유지하려면 추천가를 ' + man(adj2 * 10000) + ' 이하로 낮춰야 해요' + (tx0.minM && adj2 < tx0.minM ? '(최저가보다 낮아 입찰이 어려워요)' : '') : '') + '.'); } } catch (e) {}
     var js = myrJointSale(R, my);
     if (js) js.items.forEach(function(it) { if (it.st === 'ok' || it.st === 'likely') reasons.push({ lvl: 'info', why: '공유물분할 경매 - ' + it.k + ': ' + it.msg }); else up('yellow', '공유물분할 경매 - ' + it.k + ': ' + it.msg); });
     if (cmp) {
@@ -15130,6 +15131,8 @@ function myrStoryFacts(main, docs) {
     f.court = (main.match(/([가-힣]{2,8}(?:지방법원|지원)\s*[가-힣]*\s*\d+계)/) || [])[1] || '';
     var ap = main.match(/감정가[\s\S]{0,120}?(\d{1,3}(?:,\d{3}){2,})/); if (ap) f.appraisal = rightsNum(ap[1]);
     var mp = main.match(/최저가\s*\((\d+)%\)\s*(\d{1,3}(?:,\d{3})+)/); if (mp) { f.minPct = +mp[1]; f.minPrice = rightsNum(mp[2]); }
+    var pp = main.match(/공동주택공시가격\([^)]*\)\s*[:：]\s*([\d,]+)\s*원/); if (pp) f.pubPrice = rightsNum(pp[1]);
+    var tv = main.match(/체납조사\(본건\)\s+(\d{4}-\d{2}-\d{2})\s+체납금액\s+([\d,]+)/); if (tv) f.taxSurvey = { d: tv[1], won: rightsNum(tv[2]) };
     var sd = main.match(/매각일자\s*(\d{4})\.(\d{2})\.(\d{2})/); if (sd) f.saleDate = sd[1] + '-' + sd[2] + '-' + sd[3];
     var ty = main.match(/\n(아파트|다세대|연립|빌라|오피스텔|다가구|단독주택|근린|상가)[^\n]*\n/); if (ty) f.propType = ty[1];
     var ar = main.match(/건물면적\s+([\d.]+)㎡/); if (ar) f.areaM2 = +ar[1];
@@ -15244,6 +15247,80 @@ function myrStoryHtml(a, R, my, vd, bidWon, row) {
     h += '<div class="dr-sub" style="margin-top:8px;">※ 이름이 가려진 부분과 \'추정\' 표시는 서류만으로 확정할 수 없는 내용이에요. 법원의 최신 문건은 입찰 전에 직접 확인하세요.</div></div>';
     return h;
 }
+// ===== 당해세 시뮬레이션·놓치기 쉬운 점 점검 (2026-10-31, 사용자: 검색한 사실을 앱 권리분석에 반영) =====
+// 근거: 국세기본법 제35조·지방세기본법 제71조(당해세는 법정기일과 무관하게 저당권·임차권보다 우선, 2023.4.1 개정으로 주택 임차인은 확정일자보다 법정기일이 늦은 당해세 배당액 범위에서 보증금 먼저), 소액임차인 최우선변제는 당해세보다 항상 먼저
+function myrPropTaxEstimate(pub) {
+    if (!(pub > 0)) return null;
+    var base = pub * 0.6, t;  // 주택 공정시장가액비율 60%(자료에 따라 1주택 43~45%라는 설명도 있어 큰 쪽인 60% 사용)
+    if (base <= 60e6) t = base * 0.001; else if (base <= 150e6) t = 60000 + (base - 60e6) * 0.0015; else if (base <= 300e6) t = 195000 + (base - 150e6) * 0.0025; else t = 570000 + (base - 300e6) * 0.004;  // 표준세율(1세대 1주택 특례는 0.05%p 낮아 더 작음)
+    var urban = base * 0.0014, edu = t * 0.2;  // 도시지역분(도시지역 가정) · 지방교육세(재산세액의 20%)
+    return { base: base, prop: Math.round(t), urban: Math.round(urban), edu: Math.round(edu), total: Math.round(t + urban + edu) };
+}
+function myrTaxSim(a, R, my, row, bidWon, opts) {
+    var f = R.story || {}, reg = R.registry || [], de = (R.docs && R.docs.docs !== undefined ? (f.docEvents || []) : (f.docEvents || []));
+    var taxHolders = reg.filter(function(r) { return /압류/.test(r.type || '') && !/가압류/.test(r.type || '') && /세무서|세무|시청|구청|군청|도청|세관|시장|군수|구청장/.test(r.holder || ''); });
+    var taxDocs = de.filter(function(x) { return /교부청구/.test(x.t) && !/미체납/.test(x.t); });
+    var out = { evidence: taxHolders.length + taxDocs.length > 0, nHold: taxHolders.length, nDocs: taxDocs.length, tenantsStanding: ((my.w && my.w.tenants) || []).filter(function(t) { return t.standing; }).length, est: null, years: 0, T: 0 };
+    var local = taxHolders.filter(function(r) { return /시청|구청|군청|도청|시장|군수|구청장/.test(r.holder || ''); }).length;
+    out.localTax = local;
+    out.est = myrPropTaxEstimate(f.pubPrice);
+    var firstDate = taxHolders.map(function(r) { return r.date; }).concat(taxDocs.map(function(x) { return x.d; })).filter(Boolean).sort()[0], endDate = f.startDate || new Date().toISOString().slice(0, 10);
+    out.years = firstDate ? Math.min(5, Math.max(1, Math.round((new Date(endDate) - new Date(firstDate)) / 31557600000))) : 1;  // 지방세 소멸시효 5년까지
+    out.T = out.est ? out.est.total * out.years : 0;
+    out.survey = f.taxSurvey || null;
+    if (!out.tenantsStanding || !out.est || !(bidWon > 0) || !my.base) return out;
+    var inca = function(T) { try { var w = rightsWaterfall(my.clean, bidWon, { addr: (opts || {}).addr, extraPriorWon: ((opts || {}).extraPriorWon || 0) + T }); return w.assumedWon + (w.jeonseShort || []).reduce(function(s, x) { return s + (x.short || 0); }, 0); } catch (e) { return null; } };
+    var z = inca(0), s1 = inca(out.T), s2 = inca(out.T * 2);
+    if (z != null && s1 != null && s2 != null) {
+        out.rows = [{ k: '당해세 없음', T: 0, assumed: z, d: 0 }, { k: '추정 ' + out.years + '년치', T: out.T, assumed: s1, d: s1 - z }, { k: '추정의 2배(보수적)', T: out.T * 2, assumed: s2, d: s2 - z }];
+        var minM = row ? (parseInt(row.minBid) || parseInt(a.minBid) || 0) : 0, recM = row && row.recBid ? row.recBid : 0;
+        out.recM = recM; out.minM = minM; out.adj = out.rows.map(function(r) { return recM ? recM - Math.round(r.d / 10000) : 0; });
+        out.worry = out.evidence && out.rows[2].d > 0;
+    }
+    return out;
+}
+function myrMissedChecklist(a, R, my, tx, row) {
+    var L = [], f = R.story || {}, reg = R.registry || [], de = f.docEvents || [], dl = R.distDeadline || '', man = function(v) { return v ? toEok(String(Math.round(v / 10000))) : '-'; };
+    var cd = de.filter(function(x) { return /교부청구/.test(x.t); }), late = dl ? cd.filter(function(x) { return x.d > dl; }) : [];
+    if (cd.length) L.push({ st: late.length ? 'warn' : 'ok', t: '교부청구(세무서·지자체가 체납 세금을 배당해 달라고 신청) ' + cd.length + '건 접수' + (cd.filter(function(x) { return /미체납/.test(x.t); }).length ? '(그중 제목에 "미체납"이 들어간 것 ' + cd.filter(function(x) { return /미체납/.test(x.t); }).length + '건 - 법원 문건에서 내용 확인)' : '') + '. 교부청구는 배당요구종기(' + (dl || '미확인') + ')까지 해야 효력이 있어요' + (late.length ? ' → <b>종기 뒤에 접수된 ' + late.length + '건은 배당을 못 받을 수 있어요</b>.' : '.'), src: 'korea.legal 교부청구' });
+    else L.push({ st: 'ok', t: '문건/송달에 교부청구 기록이 없어요. 세금이 있어도 종기까지 교부청구(또는 경매 전 압류등기)가 없으면 이 경매에서 배당받지 못해요.', src: 'korea.legal 교부청구' });
+    var th = reg.filter(function(r) { return /압류/.test(r.type || '') && !/가압류/.test(r.type || '') && /세무|세관|시청|구청|군청|도청|공단/.test(r.holder || ''); });
+    if (th.length) L.push({ st: 'info', t: '세금·보험료 체납 압류등기 ' + th.length + '건(' + th.map(function(r) { return bbEsc((r.holder || '').replace(/\s*\(.*\)/, '') + ' ' + (r.date || '').slice(0, 7)); }).join(', ') + '). 경매개시 전에 체납처분 압류등기가 있으면 별도 교부청구가 없어도 배당요구와 같은 효력이 있지만 <b>압류 때 적은 금액까지만</b> 배당받아요. 말소기준일 뒤 압류는 매각으로 지워져 낙찰자는 안 떠안아요.', src: 'korea.legal 교부청구' });
+    L.push({ st: 'info', t: '<b>당해세</b>는 그 부동산 자체에 매겨진 세금이에요. 국세는 상속세·증여세·종합부동산세, 지방세는 재산세·자동차세·소방분 지역자원시설세·재산세에 붙는 지방교육세예요. 당해세는 법정기일과 상관없이 저당권·임차권보다 먼저 배당받아요(국세기본법 제35조, 지방세기본법 제71조). 일반 소득세·부가세 체납은 당해세가 아니에요.' + (tx && tx.localTax ? ' 이 사건에는 시·구청 등 지자체 압류가 있어 재산세 당해세일 수 있어요.' : (tx && tx.nHold ? ' 이 사건의 세무서 압류는 세목을 알 수 없어요(종합부동산세 등이면 당해세).' : '')), src: 'lawtalk 배당순위·korea.legal 지방세기본법 제71조' });
+    L.push({ st: 'info', t: '배당 순서: 집행비용 → <b>소액임차인 최우선변제·최종 3개월 임금</b> → <b>당해세</b> → 근저당·확정일자 임차보증금(설정일·확정일자 빠른 순) → 일반 조세 → 공과금 → 일반채권. 소액임차인 최우선변제는 항상 당해세보다 먼저예요.', src: 'lawtalk 배당순위 총정리' });
+    L.push({ st: 'info', t: '2023.4.1 개정(국세기본법 제35조 제7항, 지방세기본법 제71조 제6항): <b>주택</b> 임차인은 확정일자보다 법정기일이 늦은 당해세가 받을 금액 범위에서 보증금을 먼저 받아요. <b>상가</b>와 종합부동산세는 예외라 당해세가 먼저예요. 예전 글은 "당해세가 항상 먼저"라고 적은 것이 많아요. 적용 시점은 자료마다 달라(매각허가결정 기준이라는 설명) 사건별로 부칙 확인이 필요해요.', src: 'lawtimes·lawtalk 당해세 개정' });
+    var ts = (my.w && my.w.tenants) || [];
+    if (!ts.length && (R.noTenants || !(R.tenants || []).length)) L.push({ st: 'ok', t: '임차인이 없으면 세금이 얼마든 낙찰자가 인수할 보증금이 없어서 당해세는 낙찰자 수익에 영향을 주지 않아요(체납 세금은 낙찰대금에서 배당).', src: '법령 순서' });
+    ts.forEach(function(t) {
+        if (t.standing) {
+            var rq = !!t.requested;
+            L.push({ st: rq ? 'warn' : 'danger', t: '대항력 있는 임차인 <b>' + bbEsc(t.name || '') + '</b>(보증금 ' + man(t.deposit) + '): ' + (rq ? '배당요구가 확인돼요(종기 내). 배당받고도 <b>못 받은 잔액은 낙찰자가 인수</b>해요.' : '<b>배당요구가 확인되지 않아요.</b> 배당요구를 안 하면 보증금 전액이 낙찰자 인수금이 되고, 임차인은 <b>낙찰자에게 보증금 반환을 청구할 수 있어 분쟁·소송으로 이어질 수 있어요</b>. 앱은 이 경우 전액 인수로 계산해 입찰가에서 빼요.'), src: 'safehomes 배당요구·민사집행법 제91조 제4항' });
+        } else L.push({ st: 'ok', t: '임차인 ' + bbEsc(t.name || '') + ': 대항력이 없어 보증금은 낙찰자가 인수하지 않아요(배당요구종기까지 배당요구를 못 하면 이 임차인 본인이 보증금을 잃을 수 있어요). 명도는 낙찰자 몫이에요.', src: 'safehomes 배당요구종기' });
+    });
+    if (ts.length) L.push({ st: 'info', t: '<b>권리신고와 배당요구는 달라요.</b> 권리신고만으로는 배당받는 효력이 없고, 종기까지 배당요구를 따로 해야 해요. 임차인 표의 "배당요구일"과 문건/송달의 "배당요구신청서 제출"을 같이 보세요.', src: '검색 종합(권리신고 vs 배당요구)' });
+    var fails = ((f.events || []).filter(function(x) { return x.r === '유찰'; })).length;
+    if (fails >= 2) L.push({ st: 'warn', t: '여러 번 유찰된 물건(' + fails + '회)은 다른 입찰자들이 피한 이유(선순위 임차인·유치권 주장·명도 어려움 등)가 있을 수 있어요.', src: '검색 종합' });
+    L.push({ st: 'info', t: '판단 기준 서류는 사설 사이트 요약이 아니라 <b>법원 매각물건명세서</b>예요. 임차인 표·"소멸하지 않는 권리" 칸을 원문으로 확인하세요.', src: '검색 종합(매각물건명세서 기준)' });
+    return L;
+}
+function myrTaxHtml(a, R, my, tx, row, bidWon) {
+    var man = function(v) { return toEok(String(Math.round(v / 10000))); }, e = bbEsc, f = R.story || {};
+    var h = '<div class="dr-sec" style="border:1px solid #f59e0b;border-radius:10px;padding:8px 10px;"><h4>💸 세금(당해세)이 입찰가에 미치는 영향 <span class="dr-sub" style="font-weight:400;">임차인이 있을 때만 의미가 있어요</span></h4>';
+    if (!tx.tenantsStanding) {
+        h += '<div class="dr-sub">대항력 있는 임차인이 없어서 세금 규모와 관계없이 낙찰자가 인수할 보증금이 없어요 → 세금은 입찰가에 영향이 없어요(체납 세금은 낙찰대금에서 배당).</div></div>'; return h;
+    }
+    h += '<div class="dr-sub">세금 흔적: 세무·지자체 압류 ' + tx.nHold + '건 · 교부청구 ' + tx.nDocs + '건' + (f.taxSurvey ? ' · 탱크옥션 체납조사(' + e(f.taxSurvey.d) + ') 체납금액 ' + man(f.taxSurvey.won) : '') + '.</div>';
+    if (!tx.evidence) { h += '<div class="dr-sub" style="margin-top:4px;">세금 압류·교부청구가 없어요 → 종기 안에 신청이 없으면 이 경매에서는 세금이 배당받지 못해요. 시뮬레이션은 생략했어요(종기 전에 교부청구가 들어오는지 문건/송달을 다시 확인).</div></div>'; return h; }
+    if (!tx.est) { h += '<div class="dr-warn" style="margin-top:4px;">공시가격을 못 읽어 재산세 규모를 추정하지 못했어요. 세금 규모를 직접 알면 권리분석의 "당해세 직접 입력"에 넣어 보세요.</div></div>'; return h; }
+    var es = tx.est;
+    h += '<div class="dr-sub" style="margin-top:4px;">재산세 추정(연): 공시가격 ' + man(f.pubPrice) + ' × 60% = 과세표준 ' + man(es.base) + ' → 재산세 ' + es.prop.toLocaleString() + '원 + 도시지역분 ' + es.urban.toLocaleString() + '원 + 지방교육세 ' + es.edu.toLocaleString() + '원 = <b>연 ' + man(es.total) + '</b>. 체납 기간은 첫 세금 압류·교부청구부터 경매개시까지 ' + tx.years + '년으로 가정 → <b>' + man(tx.T) + '</b>. (표준세율 기준 추정이며 실제 체납액은 법원 교부청구서·세무서에서 확인해야 해요. 소방분 지역자원시설세·종합부동산세는 뺐어요.)</div>';
+    if (tx.rows) {
+        h += '<table class="dr-tbl" style="margin-top:4px;"><tr><td class="dr-sub">경우</td><td class="dr-sub">당해세</td><td class="dr-sub">낙찰자 인수금(입찰가 ' + man(bidWon) + ')</td><td class="dr-sub">늘어난 인수금</td><td class="dr-sub">수익 유지 추천가</td></tr>';
+        tx.rows.forEach(function(r, i) { h += '<tr><td>' + e(r.k) + '</td><td>' + (r.T ? man(r.T) : '-') + '</td><td>' + man(r.assumed) + '</td><td>' + (r.d > 0 ? '<b>+' + man(r.d) + '</b>' : '0') + '</td><td>' + (tx.recM ? man((tx.recM - Math.round(r.d / 10000)) * 10000) + (tx.minM && tx.recM - Math.round(r.d / 10000) < tx.minM ? ' ⛔ 최저가보다 낮음' : '') : '-') + '</td></tr>'; });
+        h += '</table><div class="dr-sub" style="margin-top:4px;">읽는 법: 당해세가 임차인보다 <b>먼저</b> 배당되면(상가, 종합부동산세, 또는 법정기일이 임차인 확정일자보다 빠른 당해세) 임차인이 받을 돈이 줄어 그만큼 낙찰자 인수금이 늘어요. 주택 임차인의 확정일자가 당해세 법정기일보다 빠르면(2023.4.1 개정) 임차인이 먼저 받아 늘어난 인수금이 0이에요. 위 표는 당해세가 먼저 빠지는 경우의 최악 계산이에요(소액임차인 최우선변제는 항상 당해세보다 먼저).</div>';
+    }
+    return h + '</div>';
+}
 function myrPanelHtml(row) {
     var a = row.a, R = a.rights; if (!R || (!(R.registry || []).length && !(R.tenants || []).length)) return '';
     var minWon = (parseInt(row.minBid) || parseInt(a.minBid) || 0) * 10000, recWon = row.recBid ? Math.round(row.recBid * 10000) : 0, bidWon = recWon || minWon, opts = { addr: a.addr, extraPriorWon: (parseInt(a.assumedPrior) || 0) * 10000 + (R.extraPriorWon || 0) };
@@ -15295,7 +15372,7 @@ function myrPanelHtml(row) {
     }
     h += '<div class="dr-sub" style="margin-top:6px;"><b>입찰 전에 직접 확인할 것</b></div><ul style="margin:2px 0 0 16px;padding:0;font-size:12px;">' + myrChecklist(R, my).map(function(x) { return '<li>' + bbEsc(x) + '</li>'; }).join('') + '</ul>';
     h += '<div class="dr-sub" style="margin-top:6px;">판정 기준: 🔴 낙찰금액으로 배당이 안 끝나 추가금을 내야 하고 그 돈을 반영하면 수익이 안 나는 경우 · 🟡 위험 권리가 있거나 추가금이 있어도 수익은 나거나 탱크옥션과 다르거나 자료가 부족 · 🟢 그 외. 이 판정은 참고용이며 입찰 전에 법원 문건으로 직접 확인해야 해요.</div></details></div>';
-    try { h = myrStoryHtml(a, R, my, vd, bidWon, row) + h; } catch (e) { h = '<div class="dr-warn">이야기 만들기 오류: ' + bbEsc(String(e.message || e)) + '</div>' + h; }
+    try { var txx = myrTaxSim(a, R, my, row, bidWon, opts), ck = myrMissedChecklist(a, R, my, txx, row); h = myrStoryHtml(a, R, my, vd, bidWon, row) + myrTaxHtml(a, R, my, txx, row, bidWon) + '<div class="dr-sec"><h4>🧩 입찰자가 놓치기 쉬운 것 <span class="dr-sub" style="font-weight:400;">검색·법령 근거로 이 사건에 맞춰 점검</span></h4><ul style="margin:2px 0 0 16px;padding:0;font-size:12px;">' + ck.map(function(x) { return '<li style="margin-bottom:4px;">' + ({ ok: '✅', warn: '⚠️', danger: '⛔', info: 'ℹ️' }[x.st] || '') + ' ' + x.t + ' <span class="dr-sub">[' + bbEsc(x.src) + ']</span></li>'; }).join('') + '</ul></div>' + h; } catch (e) { h = '<div class="dr-warn">이야기 만들기 오류: ' + bbEsc(String(e.message || e)) + '</div>' + h; }
     return h;
 }
 
