@@ -15396,7 +15396,7 @@ function rightsPanelHtmlBase(row) {
     var a = row.a, R = a.rights, id = String(a.id).replace(/'/g, "\\'"), h = '<div class="dr-sec"><h4>⚖️ 권리분석 <span class="dr-sub" style="font-weight:400;">탱크옥션 상세 페이지를 붙여넣으면 임차인·등기로 인수 금액을 계산해요</span></h4>';
     var eok = function(won) { return toEok(String(Math.round(won / 10000))); };
     if (!R || (!R.tenants.length && !R.registry.length)) {
-        return h + '<textarea id="rights-paste" rows="4" style="width:100%;box-sizing:border-box;font-size:12px;" placeholder="탱크옥션 물건 상세 페이지 전체(임차인 현황·건물등기 포함)를 복사해 붙여넣기"></textarea>'
+        return h + '<div class="dr-sub" style="margin:4px 0;line-height:1.6;">📲 <b>경매정보 모으기</b>는 맥의 크롬 확장프로그램(탱크옥션 상세 → "📤 보내기")으로 해요. 보내면 이 화면(아이패드 포함)에 자동으로 나타나요. 아이패드에서는 크롬 확장을 쓸 수 없어서, 탱크옥션 상세 화면을 <b>전체 선택·복사</b>해 아래에 붙여넣으면 본문(임차인·등기) 기준으로만 분석해요(사건내역·문건/송달·명세서·세대열람은 맥 확장으로 보내야 읽혀요).</div><textarea id="rights-paste" rows="4" style="width:100%;box-sizing:border-box;font-size:12px;" placeholder="탱크옥션 물건 상세 페이지 전체(임차인 현황·건물등기 포함)를 복사해 붙여넣기"></textarea>'
             + '<button class="modal-btn btn-gray" style="margin-top:4px;" onclick="rightsApplyPaste(\'' + id + '\')">⚖️ 분석하기</button></div>';
     }
     var minWon = (parseInt(row.minBid) || parseInt(a.minBid) || 0) * 10000, recWon = row.recBid ? Math.round(row.recBid * 10000) : 0, opts = { addr: a.addr, extraPriorWon: (parseInt(a.assumedPrior) || 0) * 10000 + (R.extraPriorWon || 0) };
