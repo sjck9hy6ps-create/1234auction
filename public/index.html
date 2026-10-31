@@ -21967,13 +21967,15 @@ function listingAgeDays(a) { var at = a.listingParse && a.listingParse.at; retur
 // 앱이 임장 후보 중 서류가 없는 사건을 골라 listingRaw의 id 'queue' 항목으로 저장 → 맥 크롬 확장이 탱크옥션 화면에 대기열로 보여 주고, 사용자가 누르면 팝업을 열어 자동 수집·닫기. 하루 상한 30건.
 var AQ_LIMIT = 30;
 function auctionQueueTargets() {
-    var seen = {}, out = [];
+    var seen = {}, out = [], tom = new Date(Date.now() + 86400000).toISOString().slice(0, 10);  // 내일 이후 매각만(이미 지난 기일은 제외)
     (bidBoardRows || []).forEach(function(r) {
         if (!r || !r.a || r.pending || !r.visit || !r.visit.go || r.a.rights || r.a.isBacktest || !r.a.caseNo) return;
+        if (!r.a.bidDate || r.a.bidDate < tom) return;
         var k = String(r.a.caseNo).replace(/타경/g, '-').replace(/\s+/g, ''); if (seen[k]) return; seen[k] = 1;
-        out.push({ caseNo: k, name: r.a.name || r.a.addr || '', sale: r.a.bidDate || '', rec: r.recBid || 0, id: r.a.id });
+        var pm = false; try { pm = !!permitFor(r.a); } catch (e) {}
+        out.push({ caseNo: k, name: r.a.name || r.a.addr || '', sale: r.a.bidDate || '', rec: r.recBid || 0, id: r.a.id, permit: pm });
     });
-    out.sort(function(x, y) { return (x.sale || '9999') < (y.sale || '9999') ? -1 : ((x.sale || '9999') > (y.sale || '9999') ? 1 : (y.rec - x.rec)); });
+    out.sort(function(x, y) { return (x.permit - y.permit) || ((x.sale || '9999') < (y.sale || '9999') ? -1 : ((x.sale || '9999') > (y.sale || '9999') ? 1 : (y.rec - x.rec))); });  // 비규제(허가구역 밖) 먼저, 그다음 매각일 순
     return out;
 }
 async function aqLoad() { try { var l = await fetch('/api/auction?kind=listingRaw', { cache: 'no-store' }).then(function(r) { return r.json(); }); var it = Array.isArray(l) ? l.filter(function(x) { return x.id === 'queue'; })[0] : null; return it ? JSON.parse(it.text) : null; } catch (e) { return null; } }
