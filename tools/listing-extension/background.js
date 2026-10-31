@@ -44,7 +44,8 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       const openTid = async (tid) => { await ses.set({ ['auto_' + tid]: Date.now() }); await chrome.windows.create({ url: 'https://www.tankauction.com/ca/inc/component/popup/caView.php?tid=' + encodeURIComponent(tid) + '&chkNo=1&TotNo=1&opener_1st_no=' + encodeURIComponent(tid), type: 'popup', width: 1300, height: 900 }); };
       // 다음 사건 열기: 번호를 아는 미완료 사건 1건(하루 30건 상한). wait=true면 8초 뒤
       const chainNext = async (q, tm, wait) => {
-        if (!q) return false; const today = new Date().toISOString().slice(0, 10), cnt0 = ((await loc.get('chainCnt')).chainCnt) || { d: today, n: 0 }, c = cnt0.d === today ? cnt0 : { d: today, n: 0 };
+        if (!q) return false; tm = Object.assign({}, q.tids || {}, tm);  // 서버 대기열에 기록된 번호(앱이 남긴 것)도 함께 사용
+        const today = new Date().toISOString().slice(0, 10), cnt0 = ((await loc.get('chainCnt')).chainCnt) || { d: today, n: 0 }, c = cnt0.d === today ? cnt0 : { d: today, n: 0 };
         if (c.n >= 30) return false;
         const dn = new Set((q.done || []).concat(q.failed || [])), nxt = (q.items || []).find((i) => !dn.has(norm(i.caseNo)) && tm[norm(i.caseNo)]); if (!nxt) return false;
         if (wait) await new Promise((r) => setTimeout(r, 8000));
@@ -100,8 +101,8 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       try { tabs = await chrome.tabs.query({ url: APP + '/*' }); } catch (e) {}
       for (const t of tabs) { try { await chrome.tabs.sendMessage(t.id, { type: 'inbox', id }); } catch (e) {} }
       // 앱이 반영하고 남긴 처리 기록을 기다림(최대 약 60초)
-      for (let i = 0; i < 30; i++) {
-        await sleep(2000);
+      for (let i = 0; i < 20; i++) {
+        await sleep(1500);
         try {
           const list = await fetch(APP + '/api/auction?kind=listingRaw', { cache: 'no-store' }).then((x) => x.json());
           const mine = Array.isArray(list) ? list.find((x) => x.id === id) : null;
