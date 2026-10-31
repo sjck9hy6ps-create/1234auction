@@ -15275,7 +15275,7 @@ function myrTaxSim(a, R, my, row, bidWon, opts) {
         out.rows = [{ k: '당해세 없음', T: 0, assumed: z, d: 0 }, { k: '추정 ' + out.years + '년치', T: out.T, assumed: s1, d: s1 - z }, { k: '추정의 2배(보수적)', T: out.T * 2, assumed: s2, d: s2 - z }];
         var minM = row ? (parseInt(row.minBid) || parseInt(a.minBid) || 0) : 0, recM = row && row.recBid ? row.recBid : 0;
         out.recM = recM; out.minM = minM; out.adj = out.rows.map(function(r) { return recM ? recM - Math.round(r.d / 10000) : 0; });
-        out.worry = out.evidence && out.rows[2].d > 0;
+        out.worry = out.evidence && out.rows[2].d > MYR_DIFF_WON;  // 1천만 원 넘게 인수금이 늘 때만 판정에 반영(재산세는 보통 수십~수백만 원이라 작음)
     }
     return out;
 }
@@ -15309,7 +15309,7 @@ function myrTaxHtml(a, R, my, tx, row, bidWon) {
     if (!tx.tenantsStanding) {
         h += '<div class="dr-sub">대항력 있는 임차인이 없어서 세금 규모와 관계없이 낙찰자가 인수할 보증금이 없어요 → 세금은 입찰가에 영향이 없어요(체납 세금은 낙찰대금에서 배당).</div></div>'; return h;
     }
-    h += '<div class="dr-sub">세금 흔적: 세무·지자체 압류 ' + tx.nHold + '건 · 교부청구 ' + tx.nDocs + '건' + (f.taxSurvey ? ' · 탱크옥션 체납조사(' + e(f.taxSurvey.d) + ') 체납금액 ' + man(f.taxSurvey.won) : '') + '.</div>';
+    h += '<div class="dr-sub">' + (tx.nHold && !tx.localTax ? '압류한 곳이 세무서(국세)라 <b>재산세(지방세) 당해세일 가능성은 낮고</b>, 국세 당해세는 종합부동산세·상속·증여세뿐이에요. 아래 표는 참고용 최악 계산이에요.<br>' : '') + '세금 흔적: 세무·지자체 압류 ' + tx.nHold + '건 · 교부청구 ' + tx.nDocs + '건' + (f.taxSurvey ? ' · 탱크옥션 체납조사(' + e(f.taxSurvey.d) + ') 체납금액 ' + man(f.taxSurvey.won) : '') + '.</div>';
     if (!tx.evidence) { h += '<div class="dr-sub" style="margin-top:4px;">세금 압류·교부청구가 없어요 → 종기 안에 신청이 없으면 이 경매에서는 세금이 배당받지 못해요. 시뮬레이션은 생략했어요(종기 전에 교부청구가 들어오는지 문건/송달을 다시 확인).</div></div>'; return h; }
     if (!tx.est) { h += '<div class="dr-warn" style="margin-top:4px;">공시가격을 못 읽어 재산세 규모를 추정하지 못했어요. 세금 규모를 직접 알면 권리분석의 "당해세 직접 입력"에 넣어 보세요.</div></div>'; return h; }
     var es = tx.est;
