@@ -1,4 +1,4 @@
-// 탱크옥션 상세 보내기(0.5.0: 앱이 만든 '모으기 대기열'을 탱크옥션 화면 왼쪽 아래에 보여 주고, 한 번 누르면 그 사건 팝업을 열어 자동 수집·닫기. 사건번호↔탱크옥션 번호(tid)는 사용자가 연 화면에서 자동으로 기억 / 0.4.4: 글자 정보가 없는 그림 PDF(세대열람)는 확대해서 쪽 그림을 내려받기 폴더(tank-ocr)에 저장 - 글자 인식용 / 0.4.3: PDF로 열리는 서류(감정평가서·매물명세서·건물등기·세대열람)는 글 조각이 줄바꿈으로 흩어져 읽히므로, 쪽을 끝까지 넘겨 그린 뒤 글 조각의 위치로 줄을 다시 맞춤 / 0.4.2: 상세 팝업의 '파일자료' 메뉴는 눌러도 같은 화면이 바뀌지 않고 참고자료 팝업이 새로 열리므로, 보내기를 누르면 그 팝업을 한 번 열어 그 안의 탭(사건내역~세대열람)을 읽어 상세 글과 합쳐 보냄 / 0.4.1: 참고자료 팝업·iframe 안 글도 읽고, 못 찾은 탭이 있으면 화면 버튼 이름을 같이 보냄, 끝나면 완료 안내창 + 모으려고 열었던 팝업창 자동 닫기 / 0.4.0: 사건내역·기일내역·문건/송달·현황조사서·부동산표시·감정평가서·매각물건명세서·건물등기·세대열람 탭까지 같이 읽음) - 탱크옥션 물건 상세 페이지에 버튼 하나를 띄움. 눌렀을 때만 지금 열려 있는 페이지의 글(임차인 현황·건물등기·권리분석 등)을 앱에 보냄.
+// 탱크옥션 상세 보내기(0.5.1: 대기열 사건이 끝나면 다음 사건을 자동으로 열기(체크박스, 8초 뒤·하루 30건 상한), 번호(tid) 학습을 링크 외 속성(onclick·data-*)까지 확대, '🔎 번호 점검' 버튼 / 0.5.0: 앱이 만든 '모으기 대기열'을 탱크옥션 화면 왼쪽 아래에 보여 주고, 한 번 누르면 그 사건 팝업을 열어 자동 수집·닫기. 사건번호↔탱크옥션 번호(tid)는 사용자가 연 화면에서 자동으로 기억 / 0.4.4: 글자 정보가 없는 그림 PDF(세대열람)는 확대해서 쪽 그림을 내려받기 폴더(tank-ocr)에 저장 - 글자 인식용 / 0.4.3: PDF로 열리는 서류(감정평가서·매물명세서·건물등기·세대열람)는 글 조각이 줄바꿈으로 흩어져 읽히므로, 쪽을 끝까지 넘겨 그린 뒤 글 조각의 위치로 줄을 다시 맞춤 / 0.4.2: 상세 팝업의 '파일자료' 메뉴는 눌러도 같은 화면이 바뀌지 않고 참고자료 팝업이 새로 열리므로, 보내기를 누르면 그 팝업을 한 번 열어 그 안의 탭(사건내역~세대열람)을 읽어 상세 글과 합쳐 보냄 / 0.4.1: 참고자료 팝업·iframe 안 글도 읽고, 못 찾은 탭이 있으면 화면 버튼 이름을 같이 보냄, 끝나면 완료 안내창 + 모으려고 열었던 팝업창 자동 닫기 / 0.4.0: 사건내역·기일내역·문건/송달·현황조사서·부동산표시·감정평가서·매각물건명세서·건물등기·세대열람 탭까지 같이 읽음) - 탱크옥션 물건 상세 페이지에 버튼 하나를 띄움. 눌렀을 때만 지금 열려 있는 페이지의 글(임차인 현황·건물등기·권리분석 등)을 앱에 보냄.
 // 로그인은 사용자가 직접 한 화면만 읽음(로그인 정보는 건드리지 않고, 자동으로 다른 페이지로 이동하거나 순회하지 않음).
 (function () {
   const ID = 'tk-send-btn';
@@ -217,8 +217,9 @@
     const txt = (document.body && document.body.innerText) || '';
     const cm = txt.match(/경매\s*(\d{4})\s*타경\s*(\d+)\s*(\(\d+\))?/);
     if (cm && tidOf()) map[normCase(cm[1] + '타경' + cm[2] + (cm[3] || ''))] = tidOf();  // 상세 화면: 이 사건의 tid
-    Array.from(document.querySelectorAll('a[href*="tid="]')).slice(0, 400).forEach((a) => {  // 목록 화면: 한 줄에 사건번호가 하나뿐인 링크만
-      const m = (a.getAttribute('href') || '').match(/[?&]tid=(\d+)/); if (!m) return;
+    const tidOfEl = (a) => { const at = (a.getAttribute('href') || '') + ' ' + (a.getAttribute('onclick') || '') + ' ' + Array.from(a.attributes || []).filter((x) => /^data-/.test(x.name)).map((x) => x.value).join(' '); const m = at.match(/[?&]tid=(\d+)/) || at.match(/tid['":=\s]+(\d{6,8})/) || at.match(/\((?:[^)]*?[,\s'"])?(2\d{6})(?:[,'"\s)][^)]*)?\)/); return m ? m[1] : ''; };
+    Array.from(document.querySelectorAll('a[href],[onclick],[data-tid],[data-id]')).slice(0, 800).forEach((a) => {  // 목록 화면: 한 줄에 사건번호가 하나뿐인 링크만
+      const tv = tidOfEl(a); if (!tv) return; const m = [0, tv];
       let el = a;
       for (let k = 0; k < 6 && el; k++) { el = el.parentElement; if (!el) break; const ms = ((el.innerText || '').slice(0, 600).match(/\d{4}\s*타경\s*\d+(?:\(\d+\))?/g) || []).map(normCase); const u = ms.filter((v, i) => ms.indexOf(v) === i); if (u.length === 1) { map[u[0]] = m[1]; break; } if (u.length > 1) break; }
     });
@@ -235,6 +236,12 @@
     qBox.textContent = '';
     const head = document.createElement('button'); head.textContent = '🧲 모으기 대기열 ' + left.length + '건 남음 ' + (qOpen ? '▾' : '▸'); head.style.cssText = 'background:#0369a1;color:#fff;border:none;border-radius:20px;padding:9px 14px;font-weight:700;cursor:pointer;box-shadow:0 2px 8px rgba(0,0,0,.3);'; head.onclick = () => { qOpen = !qOpen; renderQueue(); }; qBox.appendChild(head);
     if (!qOpen) return;
+    const opts = document.createElement('div'); opts.style.cssText = 'margin-top:6px;background:#fff;border:1px solid #cbd5e1;border-radius:10px;padding:6px 10px;color:#111;max-width:380px;';
+    const cb = document.createElement('input'); cb.type = 'checkbox'; cb.checked = !!(r && r.chainOn); cb.onchange = () => msg({ type: 'chainSet', on: cb.checked });
+    const lb = document.createElement('label'); lb.style.cssText = 'cursor:pointer;'; lb.appendChild(cb); lb.appendChild(document.createTextNode(' 끝나면 다음 사건 자동 열기(8초 뒤, 번호를 아는 사건만, 하루 30건)')); opts.appendChild(lb);
+    const dg = document.createElement('button'); dg.textContent = '🔎 이 화면에서 번호 점검'; dg.style.cssText = 'display:block;margin-top:5px;padding:3px 9px;border:1px solid #94a3b8;border-radius:8px;background:#f1f5f9;cursor:pointer;';
+    dg.onclick = async () => { const aEl = Array.from(document.querySelectorAll('a[href],[onclick],[data-tid],[data-id]')); const withTid = aEl.filter((x) => /tid|\b2\d{6}\b/.test((x.getAttribute('href') || '') + (x.getAttribute('onclick') || '') + (x.getAttribute('data-tid') || ''))); const ex = withTid.slice(0, 6).map((x) => '<' + x.tagName.toLowerCase() + ' href=' + (x.getAttribute('href') || '').slice(0, 90) + ' onclick=' + (x.getAttribute('onclick') || '').slice(0, 90) + '> ' + norm((x.parentElement && x.parentElement.innerText || x.innerText || '')).slice(0, 80)); learnTids(); const rr = await msg({ type: 'queueGet' }); dg.textContent = '점검: 번호 후보 요소 ' + withTid.length + '개 · 기억한 사건 ' + Object.keys((rr && rr.tids) || {}).length + '건 (자세한 내용은 앱으로 보냈어요)'; msg({ type: 'send', kind: 'probe', text: '【번호점검】 url=' + location.pathname + ' 후보=' + withTid.length + '\n' + ex.join('\n'), url: location.pathname }); };
+    opts.appendChild(dg); qBox.appendChild(opts);
     const list = document.createElement('div'); list.style.cssText = 'margin-top:6px;background:#fff;border:1px solid #cbd5e1;border-radius:10px;padding:8px 10px;max-width:380px;max-height:60vh;overflow:auto;box-shadow:0 4px 14px rgba(0,0,0,.25);color:#111;';
     if (!left.length) list.textContent = '✅ 대기열을 모두 모았어요.';
     left.slice(0, 12).forEach((it) => {
