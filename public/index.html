@@ -1808,6 +1808,7 @@ body.ui2 #auction-modal.am4 { width:620px; }
             <input type="file" id="bb-csv-input" multiple accept=".csv,text/csv" style="display:none;" onchange="onBoardCsvFile(this)">
             <span class="bb-help" onclick="var g=document.getElementById('bb-guide-box');g.style.display=g.style.display==='none'?'':'none'">ⓘ 보는 법</span>
             <span class="bb-help" style="cursor:pointer;" title="임장 후보 단지의 네이버 매물 목록을 모아 입찰물건에 반영" onclick="openListingBulk()">📋 호가 모으기</span>
+            <span class="bb-help" style="cursor:pointer;" title="임장 후보 중 권리분석 서류가 없는 사건을 맥 크롬 확장프로그램의 모으기 대기열로 보내요" onclick="openAuctionQueue()">🧲 경매정보 모으기</span>
             <span class="bb-zoom" title="입찰후보 창 글자·화면 크기 (두 손가락으로 벌려도 확대돼요)"><button onclick="bbSetZoom(-1)" aria-label="작게">A−</button><b id="bb-zoom-lab">100%</b><button onclick="bbSetZoom(1)" aria-label="크게">A+</button></span>
             <label class="bb-help" style="margin-left:auto;cursor:pointer;"><input type="checkbox" id="pref-home-board" style="margin:0 4px 0 0;vertical-align:middle;" onchange="setHomeBoardPref(this.checked)">앱을 열면 입찰후보부터</label>
         </div>
@@ -21962,6 +21963,55 @@ function listingBulkTargets() {
     return bidBoardRows.filter(function(r) { return r.type === 'apt' && r.a && !r.skippedPast && (lbAny || (r.visit && r.visit.go)) && (lbAll || (r.recBid && r.dday && r.dday.diffDays >= 0 && r.dday.diffDays <= 7)); }).sort(function(x, y) { return (x.dday ? x.dday.diffDays : 9999) - (y.dday ? y.dday.diffDays : 9999); });
 }
 function listingAgeDays(a) { var at = a.listingParse && a.listingParse.at; return at ? Math.floor((Date.now() - new Date(at + 'T00:00:00').getTime()) / 86400000) : null; }
+// ===== 🧲 경매정보 모으기 대기열 (2026-10-31, 사용자: 맥에서 가능한 많이, 방식 A=한 번씩 누르기) =====
+// 앱이 임장 후보 중 서류가 없는 사건을 골라 listingRaw의 id 'queue' 항목으로 저장 → 맥 크롬 확장이 탱크옥션 화면에 대기열로 보여 주고, 사용자가 누르면 팝업을 열어 자동 수집·닫기. 하루 상한 30건.
+var AQ_LIMIT = 30;
+function auctionQueueTargets() {
+    var seen = {}, out = [];
+    (bidBoardRows || []).forEach(function(r) {
+        if (!r || !r.a || r.pending || !r.visit || !r.visit.go || r.a.rights || r.a.isBacktest || !r.a.caseNo) return;
+        var k = String(r.a.caseNo).replace(/타경/g, '-').replace(/\s+/g, ''); if (seen[k]) return; seen[k] = 1;
+        out.push({ caseNo: k, name: r.a.name || r.a.addr || '', sale: r.a.bidDate || '', rec: r.recBid || 0, id: r.a.id });
+    });
+    out.sort(function(x, y) { return (x.sale || '9999') < (y.sale || '9999') ? -1 : ((x.sale || '9999') > (y.sale || '9999') ? 1 : (y.rec - x.rec)); });
+    return out;
+}
+async function aqLoad() { try { var l = await fetch('/api/auction?kind=listingRaw', { cache: 'no-store' }).then(function(r) { return r.json(); }); var it = Array.isArray(l) ? l.filter(function(x) { return x.id === 'queue'; })[0] : null; return it ? JSON.parse(it.text) : null; } catch (e) { return null; } }
+async function aqSave() {
+    var T = auctionQueueTargets().slice(0, AQ_LIMIT), old = (await aqLoad()) || {}, doneSet = {}; (old.done || []).forEach(function(c) { doneSet[c] = 1; });
+    var q = { at: new Date().toISOString(), items: T.map(function(t) { return { caseNo: t.caseNo, name: t.name, sale: t.sale }; }), done: (old.done || []).filter(function(c) { return T.some(function(t) { return t.caseNo === c; }); }), tids: old.tids || {} };
+    await fetch('/api/auction?kind=listingRaw', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: 'queue', at: q.at, kind: 'queue', url: '', text: JSON.stringify(q), done: true, appliedAt: q.at }) });
+    return q;
+}
+var aqTimer = null;
+async function renderAuctionQueue() {
+    var box = document.getElementById('aq-body'); if (!box) return;
+    var q = await aqLoad(), T = auctionQueueTargets(), done = {}, tids = (q && q.tids) || {}; ((q && q.done) || []).forEach(function(c) { done[c] = 1; });
+    var items = q && q.items ? q.items : [], left = items.filter(function(i) { return !done[i.caseNo]; });
+    var h = '<div class="bb-sub" style="margin:4px 0 8px;line-height:1.6;">임장 후보 중 <b>권리분석 서류가 아직 없는 사건</b>이 ' + T.length + '건이에요. 아래 [대기열 만들기]를 누르면 매각일이 가까운 순서로 최대 ' + AQ_LIMIT + '건을 맥 크롬 확장프로그램에 보내요. 맥 크롬의 탱크옥션 화면 <b>왼쪽 아래 "🧲 모으기 대기열"</b>에서 한 건씩 눌러 자동으로 모아요(한 번 열어 본 사건은 다음부터 "▶ 열어서 자동 수집", 처음 보는 사건은 사건번호를 복사해 탱크옥션에서 한 번 열어 주세요).</div>'
+        + '<button class="modal-btn btn-gray" onclick="aqMake()">🧲 대기열 만들기(최대 ' + AQ_LIMIT + '건)</button> <span id="aq-msg" class="bb-sub"></span>';
+    if (q && items.length) {
+        h += '<div class="bb-sub" style="margin-top:10px;"><b>현재 대기열</b> ' + items.length + '건 중 ' + (items.length - left.length) + '건 완료 · ' + left.length + '건 남음 <span style="color:#64748b;">(' + new Date(q.at).toLocaleString('ko-KR') + ' 저장)</span></div><table class="dr-tbl" style="font-size:12px;"><tr><td class="dr-sub">상태</td><td class="dr-sub">사건번호</td><td class="dr-sub">물건</td><td class="dr-sub">매각일</td></tr>';
+        items.forEach(function(i) { h += '<tr><td>' + (done[i.caseNo] ? '✅ 완료' : (tids[i.caseNo] ? '🔗 자동 열기 가능' : '⏳ 대기')) + '</td><td>' + bbEsc(i.caseNo) + '</td><td>' + bbEsc(i.name) + '</td><td>' + bbEsc(i.sale || '-') + '</td></tr>'; });
+        h += '</table>';
+    }
+    box.innerHTML = h;
+}
+async function aqMake() {
+    var m = document.getElementById('aq-msg'); if (m) m.textContent = '저장 중…';
+    try { var q = await aqSave(); if (m) m.textContent = '✅ ' + q.items.length + '건을 저장했어요. 맥 크롬의 탱크옥션 화면에서 확인하세요.'; renderAuctionQueue(); } catch (e) { if (m) m.textContent = '❌ 저장 실패: ' + (e.message || e); }
+}
+function openAuctionQueue() {
+    var box = document.getElementById('aq-modal');
+    if (!box) {
+        box = document.createElement('div'); box.id = 'aq-modal';
+        box.style.cssText = 'position:fixed;inset:0;z-index:100000;background:rgba(0,0,0,.45);display:flex;align-items:center;justify-content:center;';
+        box.onclick = function(e) { if (e.target === box) { box.style.display = 'none'; if (aqTimer) { clearInterval(aqTimer); aqTimer = null; } } };
+        box.innerHTML = '<div style="background:#fff;border-radius:14px;max-width:760px;width:94vw;max-height:90vh;overflow:auto;padding:16px 18px;font-size:13px;"><div style="display:flex;align-items:center;"><b style="font-size:16px;">🧲 경매정보 모으기 대기열</b><span style="margin-left:auto;cursor:pointer;font-size:18px;" onclick="document.getElementById(\'aq-modal\').style.display=\'none\';if(aqTimer){clearInterval(aqTimer);aqTimer=null;}">✕</span></div><div id="aq-body">불러오는 중…</div></div>';
+        document.body.appendChild(box);
+    }
+    box.style.display = 'flex'; renderAuctionQueue(); if (aqTimer) clearInterval(aqTimer); aqTimer = setInterval(renderAuctionQueue, 10000);
+}
 function openListingBulk() {
     var box = document.getElementById('lb-modal');
     if (!box) {
@@ -22074,7 +22124,7 @@ async function processListingInbox() {
         lbAll = prevAll; lbAny = prevAny;
         renderBidBoard(); try { renderBidDrawer(); } catch (e) {}
         var fm = function(v) { return v ? toEok(String(v)) : '-'; };
-        if (pending.every(function(x) { return x.kind === 'tank' || x.kind === 'probe'; })) { /* 탱크옥션 상세는 위에서 알림을 이미 띄움 */ }
+        if (pending.every(function(x) { return x.kind === 'tank' || x.kind === 'probe' || x.kind === 'queue'; })) { /* 탱크옥션 상세는 위에서 알림을 이미 띄움 */ }
         else if (got) listingToast('📥 호가 반영됨: ' + names.slice(0, 3).map(function(x) { return '<b>' + bbEsc(x.name) + ' ' + x.pyung + '평</b> 매물 ' + x.n + '건 (' + fm(x.min) + '~' + fm(x.max) + ')'; }).join(' · ') + (names.length > 3 ? ' 외 ' + (names.length - 3) + '건' : ''));
         else listingToast('📥 호가를 받았지만 반영된 물건이 없어요 - 대상 단지가 아니거나 같은 평형 매물이 없어요', false);
     } catch (e) { /* 수신함이 없거나 네트워크 오류면 조용히 넘어감 */ } finally { listingInboxBusy = false; }

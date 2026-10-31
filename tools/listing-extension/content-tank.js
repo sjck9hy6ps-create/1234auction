@@ -1,4 +1,4 @@
-// 탱크옥션 상세 보내기(0.4.4: 글자 정보가 없는 그림 PDF(세대열람)는 확대해서 쪽 그림을 내려받기 폴더(tank-ocr)에 저장 - 글자 인식용 / 0.4.3: PDF로 열리는 서류(감정평가서·매물명세서·건물등기·세대열람)는 글 조각이 줄바꿈으로 흩어져 읽히므로, 쪽을 끝까지 넘겨 그린 뒤 글 조각의 위치로 줄을 다시 맞춤 / 0.4.2: 상세 팝업의 '파일자료' 메뉴는 눌러도 같은 화면이 바뀌지 않고 참고자료 팝업이 새로 열리므로, 보내기를 누르면 그 팝업을 한 번 열어 그 안의 탭(사건내역~세대열람)을 읽어 상세 글과 합쳐 보냄 / 0.4.1: 참고자료 팝업·iframe 안 글도 읽고, 못 찾은 탭이 있으면 화면 버튼 이름을 같이 보냄, 끝나면 완료 안내창 + 모으려고 열었던 팝업창 자동 닫기 / 0.4.0: 사건내역·기일내역·문건/송달·현황조사서·부동산표시·감정평가서·매각물건명세서·건물등기·세대열람 탭까지 같이 읽음) - 탱크옥션 물건 상세 페이지에 버튼 하나를 띄움. 눌렀을 때만 지금 열려 있는 페이지의 글(임차인 현황·건물등기·권리분석 등)을 앱에 보냄.
+// 탱크옥션 상세 보내기(0.5.0: 앱이 만든 '모으기 대기열'을 탱크옥션 화면 왼쪽 아래에 보여 주고, 한 번 누르면 그 사건 팝업을 열어 자동 수집·닫기. 사건번호↔탱크옥션 번호(tid)는 사용자가 연 화면에서 자동으로 기억 / 0.4.4: 글자 정보가 없는 그림 PDF(세대열람)는 확대해서 쪽 그림을 내려받기 폴더(tank-ocr)에 저장 - 글자 인식용 / 0.4.3: PDF로 열리는 서류(감정평가서·매물명세서·건물등기·세대열람)는 글 조각이 줄바꿈으로 흩어져 읽히므로, 쪽을 끝까지 넘겨 그린 뒤 글 조각의 위치로 줄을 다시 맞춤 / 0.4.2: 상세 팝업의 '파일자료' 메뉴는 눌러도 같은 화면이 바뀌지 않고 참고자료 팝업이 새로 열리므로, 보내기를 누르면 그 팝업을 한 번 열어 그 안의 탭(사건내역~세대열람)을 읽어 상세 글과 합쳐 보냄 / 0.4.1: 참고자료 팝업·iframe 안 글도 읽고, 못 찾은 탭이 있으면 화면 버튼 이름을 같이 보냄, 끝나면 완료 안내창 + 모으려고 열었던 팝업창 자동 닫기 / 0.4.0: 사건내역·기일내역·문건/송달·현황조사서·부동산표시·감정평가서·매각물건명세서·건물등기·세대열람 탭까지 같이 읽음) - 탱크옥션 물건 상세 페이지에 버튼 하나를 띄움. 눌렀을 때만 지금 열려 있는 페이지의 글(임차인 현황·건물등기·권리분석 등)을 앱에 보냄.
 // 로그인은 사용자가 직접 한 화면만 읽음(로그인 정보는 건드리지 않고, 자동으로 다른 페이지로 이동하거나 순회하지 않음).
 (function () {
   const ID = 'tk-send-btn';
@@ -152,7 +152,7 @@
       if (!res || !res.ok) { toast('❌ 보내기 실패', false); finish(false, '❌ 모으기 실패', sum.concat(['앱으로 보내지 못했어요. 잠시 뒤 다시 눌러 주세요.'])); }
       else if (res.applied) {
         const a = (res.result && res.result.applied) || [];
-        if (a.length) { toast('✅ 앱에 반영됨: ' + a[0].name + ' 권리분석 (등기 ' + a[0].n + '건, ' + (a[0].tenants ? '임차인 ' + a[0].tenants + '명' : '임차인 없음') + ')', true); finish(true, '✅ 사건 정보 모으기 완료', sum.concat([a[0].name + ' 권리분석이 앱에 반영됐어요.', '앱에서 입찰후보 판정을 확인하세요.'])); }
+        if (a.length) { msg({ type: 'queueDone', caseNo: a[0].caseNo || '', tid: tidOf() }); toast('✅ 앱에 반영됨: ' + a[0].name + ' 권리분석 (등기 ' + a[0].n + '건, ' + (a[0].tenants ? '임차인 ' + a[0].tenants + '명' : '임차인 없음') + ')', true); finish(true, '✅ 사건 정보 모으기 완료', sum.concat([a[0].name + ' 권리분석이 앱에 반영됐어요.', '앱에서 입찰후보 판정을 확인하세요.'])); }
         else if (kind === 'probe') { toast('✅ 참고자료를 보냈어요', true); finish(true, '✅ 참고자료 보내기 완료', sum.concat(['참고자료 글을 앱 수신함에 올렸어요(권리분석에는 아직 반영하지 않음).'])); }
         else { toast('⚠️ 받았지만 반영 못함: ' + ((res.result && res.result.text) || '입찰후보에 없는 사건이에요'), false); finish(false, '⚠️ 앱에 반영하지 못했어요', sum.concat([(res.result && res.result.text) || '입찰후보에 없는 사건이에요.'])); }
       } else { toast(res.noApp ? '⏳ 앱 탭이 안 열려 있어요 - 앱을 열면 자동 반영돼요' : '⏳ 앱이 아직 처리 중이에요 - 앱 화면에서 확인하세요', null); finish(true, '✅ 모으기 완료(앱 반영 대기)', sum.concat([res.noApp ? '앱 탭이 열려 있지 않아요. 앱을 열면 자동으로 반영돼요.' : '앱이 아직 처리 중이에요. 앱 화면에서 확인하세요.'])); }
@@ -188,6 +188,7 @@
       btn.id = ID; btn.textContent = label;
       btn.style.cssText = 'position:fixed;right:16px;bottom:64px;z-index:2147483647;background:#7b1fa2;color:#fff;border:none;border-radius:20px;padding:10px 16px;font-size:14px;font-weight:700;cursor:pointer;box-shadow:0 2px 8px rgba(0,0,0,.3);';
       document.body.appendChild(btn);
+      if (!isFile) msg({ type: 'autoStart', tid: tidOf() }).then((r) => { if (r && r.auto) setTimeout(() => { try { btn.click(); } catch (e) {} }, 2500); });  // 대기열에서 열린 팝업이면 자동으로 모으기 시작
       btn.onclick = async () => {
         btn.disabled = true;
         const full = bodyText();
@@ -209,6 +210,44 @@
       };
     } else if (!show && btn) { btn.remove(); btn = null; }
   };
+  // ---- 모으기 대기열 패널(일반 탱크옥션 화면 왼쪽 아래) ----
+  const normCase = (x) => String(x || '').replace(/타경/g, '-').replace(/\s+/g, '');
+  const learnTids = () => {
+    const map = {};
+    const txt = (document.body && document.body.innerText) || '';
+    const cm = txt.match(/경매\s*(\d{4})\s*타경\s*(\d+)\s*(\(\d+\))?/);
+    if (cm && tidOf()) map[normCase(cm[1] + '타경' + cm[2] + (cm[3] || ''))] = tidOf();  // 상세 화면: 이 사건의 tid
+    Array.from(document.querySelectorAll('a[href*="tid="]')).slice(0, 400).forEach((a) => {  // 목록 화면: 한 줄에 사건번호가 하나뿐인 링크만
+      const m = (a.getAttribute('href') || '').match(/[?&]tid=(\d+)/); if (!m) return;
+      let el = a;
+      for (let k = 0; k < 6 && el; k++) { el = el.parentElement; if (!el) break; const ms = ((el.innerText || '').slice(0, 600).match(/\d{4}\s*타경\s*\d+(?:\(\d+\))?/g) || []).map(normCase); const u = ms.filter((v, i) => ms.indexOf(v) === i); if (u.length === 1) { map[u[0]] = m[1]; break; } if (u.length > 1) break; }
+    });
+    if (Object.keys(map).length) msg({ type: 'learnTids', map });
+  };
+  let qBox = null, qOpen = false;
+  const renderQueue = async () => {
+    if (!isTop || /\/popup\//.test(location.pathname)) return;
+    const r = await msg({ type: 'queueGet' }), q = r && r.q;
+    if (!q || !(q.items || []).length) { if (qBox) { qBox.remove(); qBox = null; } return; }
+    const done = new Set((q.done || []).map(normCase)), tids = Object.assign({}, q.tids || {}, r.tids || {});
+    const left = q.items.filter((i) => !done.has(normCase(i.caseNo)));
+    if (!qBox) { qBox = document.createElement('div'); qBox.id = 'tk-queue'; qBox.style.cssText = 'position:fixed;left:16px;bottom:64px;z-index:2147483646;font-family:sans-serif;font-size:13px;'; document.body.appendChild(qBox); }
+    qBox.textContent = '';
+    const head = document.createElement('button'); head.textContent = '🧲 모으기 대기열 ' + left.length + '건 남음 ' + (qOpen ? '▾' : '▸'); head.style.cssText = 'background:#0369a1;color:#fff;border:none;border-radius:20px;padding:9px 14px;font-weight:700;cursor:pointer;box-shadow:0 2px 8px rgba(0,0,0,.3);'; head.onclick = () => { qOpen = !qOpen; renderQueue(); }; qBox.appendChild(head);
+    if (!qOpen) return;
+    const list = document.createElement('div'); list.style.cssText = 'margin-top:6px;background:#fff;border:1px solid #cbd5e1;border-radius:10px;padding:8px 10px;max-width:380px;max-height:60vh;overflow:auto;box-shadow:0 4px 14px rgba(0,0,0,.25);color:#111;';
+    if (!left.length) list.textContent = '✅ 대기열을 모두 모았어요.';
+    left.slice(0, 12).forEach((it) => {
+      const row = document.createElement('div'); row.style.cssText = 'padding:5px 0;border-bottom:1px solid #eef2f7;';
+      const t = document.createElement('div'); t.textContent = it.caseNo + ' · ' + (it.name || '') + (it.sale ? ' · 매각 ' + it.sale : ''); t.style.cssText = 'font-weight:600;word-break:keep-all;'; row.appendChild(t);
+      const tid = tids[normCase(it.caseNo)], b = document.createElement('button'); b.style.cssText = 'margin-top:3px;margin-right:6px;padding:3px 9px;border:none;border-radius:8px;cursor:pointer;color:#fff;background:' + (tid ? '#16a34a' : '#64748b') + ';';
+      if (tid) { b.textContent = '▶ 열어서 자동 수집'; b.onclick = () => { b.disabled = true; b.textContent = '여는 중…'; msg({ type: 'openCase', tid }); setTimeout(() => renderQueue(), 4000); }; }
+      else { b.textContent = '📋 사건번호 복사'; b.onclick = async () => { try { await navigator.clipboard.writeText(it.caseNo.replace('-', '타경')); b.textContent = '복사됨 - 탱크옥션 검색에 붙여넣기'; } catch (e) { b.textContent = it.caseNo; } }; const hint = document.createElement('span'); hint.textContent = '(처음 보는 사건: 한 번 열면 다음부턴 자동)'; hint.style.cssText = 'font-size:11px;color:#64748b;'; row.appendChild(b); row.appendChild(hint); list.appendChild(row); return; }
+      row.appendChild(b); list.appendChild(row);
+    });
+    qBox.appendChild(list);
+  };
   setInterval(ensure, 2000);
   ensure();
+  if (isTop) { learnTids(); renderQueue(); setInterval(learnTids, 5000); setInterval(renderQueue, 20000); }
 })();
