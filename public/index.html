@@ -15157,7 +15157,7 @@ function myrStoryFacts(main, docs) {
     if (dv.length) f.docEvents = dv.slice(0, 30);
     return f;
 }
-function myrStoryHtml(a, R, my, vd, bidWon, row) {
+function myrStoryFactsHtml(a, R, my, vd, bidWon, row) {
     // 원칙(사용자 2026-10-31): 서류에 적힌 사실과 법 조문만 쓰고, 과거 일의 원인·이유를 추측하지 않음(이유가 서류에 없으면 "서류에 없음"이라고만 적음)
     var f = R.story || {}, reg = (R.registry || []).slice().sort(function(x, y) { return String(x.date) < String(y.date) ? -1 : 1; }), man = function(v) { return v ? toEok(String(Math.round(v / 10000))) : '-'; }, e = bbEsc;
     var dr = (R.docs && R.docs.risks) || [], isJoint = dr.some(function(x) { return /공유물분할/.test(x.k); }), kind = f.kind || (R.docs && R.docs.caseKind ? R.docs.caseKind + '경매' : '');
@@ -15206,7 +15206,7 @@ function myrStoryHtml(a, R, my, vd, bidWon, row) {
     imp.push('집합건물 체납 관리비 중 공용부분은 낙찰자가 이어받고 연체료는 제외돼요(대법원 2001다8097 전원합의체)' + (a.unpaidMgmtFee ? '. 앱에 입력된 미납 관리비: ' + e(a.unpaidMgmtFee) + '만원' : '') + '. 취득세 등 세금·등기 비용은 낙찰자가 부담해요.');
     if (evs.some(function(x) { return /허가취소/.test(x.r); })) imp.push('이 사건은 낙찰 뒤 매각허가가 취소된 기록이 있어요. 매수인이 대금을 내지 않으면 재매각이 되고 그 매수인은 매수신청 보증금을 돌려받지 못해요(민사집행법 제138조).');
     P.push(['⑤ 서류에 적힌 관계와 낙찰자에게 미치는 법적 효과', '<ul style="margin:2px 0 0 16px;padding:0;">' + imp.filter(Boolean).map(function(x) { return '<li style="margin-bottom:3px;">' + x + '</li>'; }).join('') + '</ul>']);
-    var h = '<div class="dr-sec" style="border:2px solid #6366f1;border-radius:10px;padding:10px 12px;"><h4>📖 이 집의 이야기 <span class="dr-sub" style="font-weight:400;">서류에 적힌 사실과 법 조문만 (이유·원인은 추측하지 않아요)</span></h4>';
+    var h = '<div style="padding:4px 2px;">';
     P.forEach(function(p) { h += '<div style="margin-top:8px;"><div style="font-weight:700;color:#4338ca;">' + p[0] + '</div><div style="font-size:13px;line-height:1.7;">' + p[1] + '</div></div>'; });
     h += '<div class="dr-sub" style="margin-top:8px;">※ 이름이 가려진 부분은 알 수 없어요. 법원의 최신 문건과 조문 정본(국가법령정보센터)은 입찰 전에 직접 확인하세요.</div></div>';
     return h;
@@ -15260,6 +15260,81 @@ function myrTaxHtml(a, R, my, tx, row, bidWon) {
         h += '</table><div class="dr-sub" style="margin-top:4px;">읽는 법: 당해세가 임차인보다 먼저 배당되는 경우(상가, 종합부동산세, 임차인 확정일자보다 법정기일이 빠른 당해세)에는 임차인이 받을 돈이 줄어 그만큼 낙찰자 인수금이 늘어요. 주택 임차인의 확정일자가 당해세 법정기일보다 빠르면(2023.4.1 개정 기준) 임차인이 먼저 받아 늘어나는 금액이 없어요. 위 금액은 실제 체납액이 아니라 <b>가정</b>이에요. 소액임차인 최우선변제는 항상 당해세보다 먼저 배당해 계산해요.</div>';
     }
     return h + '</div>';
+}
+// ===== 이 집의 이야기: 읽기 쉬운 줄거리(사실 + [추정]/[예상] 표시) =====
+function myrNarrative(a, R, my, vd, bidWon, row) {
+    var f = R.story || {}, reg = (R.registry || []).slice().sort(function(x, y) { return String(x.date) < String(y.date) ? -1 : 1; }), man = function(v) { return v ? toEok(String(Math.round(v / 10000))) : '-'; }, e = bbEsc;
+    var EST = ' <span style="background:#fef3c7;color:#92400e;border-radius:6px;padding:0 5px;font-size:11px;font-weight:700;white-space:nowrap;">추정</span>', FOR = ' <span style="background:#dbeafe;color:#1e40af;border-radius:6px;padding:0 5px;font-size:11px;font-weight:700;white-space:nowrap;">예상</span>';
+    var dr = (R.docs && R.docs.risks) || [], isJoint = dr.some(function(x) { return /공유물분할/.test(x.k); }), evs = f.events || [], de = f.docEvents || [], hr = R.docs && R.docs.houseRead, sv = f.survey || null, today = new Date().toISOString().slice(0, 10);
+    var auc = reg.filter(function(r) { return /임의경매|강제경매|경매개시/.test(r.type || ''); })[0], startD = f.startDate || (auc && auc.date) || '', creditor = f.creditor || (auc && auc.holder) || '', kind = f.kind || (auc ? (/임의/.test(auc.type) ? '임의경매' : (/강제/.test(auc.type) ? '강제경매' : '')) : '');
+    var owner = (f.owner || '').replace(/\s외.*$/, ''), debtor = (f.debtor || '').replace(/\s외.*$/, ''), sale = row && row.sale ? row.sale * 10000 : 0;
+    var firstOwn = reg.filter(function(r) { return /소유권이전/.test(r.type || ''); })[0], ch = [];
+    var years = function(d1, d2) { return Math.max(0, Math.round((new Date(d2) - new Date(d1)) / 31557600000)); };
+    var sales = evs.filter(function(x) { return x.k === '매각기일'; }), fails = sales.filter(function(x) { return x.r === '유찰'; }), solds = sales.filter(function(x) { return x.r === '매각'; });
+    var cancels = evs.filter(function(x) { return /허가취소/.test(x.r); }), stop = de.filter(function(x) { return /집행정지/.test(x.t); })[0], notices = de.filter(function(x) { return /대금지급기한통지서/.test(x.t); });
+    var lastCut = 0; for (var i = 1; i < sales.length; i++) if (sales[i - 1].r === '유찰' && sales[i].p && sales[i - 1].p && sales[i].p < sales[i - 1].p) lastCut = Math.round((1 - sales[i].p / sales[i - 1].p) * 100);
+    var tn = (my.w && my.w.tenants) || [], takes = (my.regRows || []).filter(function(r) { return r.fate === '인수'; });
+    if (isJoint) {
+        var n0 = firstOwn ? String(firstOwn.note || '') : '', pc = n0.match(/([가-힣]{2,4})\s+([가-힣]{2,4})\s+각\s*(\d+\/\d+)/), px = n0.match(/거래가액\s*금?\s*([\d,]+)/);
+        var shX = reg.filter(function(r) { return /([가-힣]{2,4})지분전부이전/.test(r.type || ''); })[0], former = shX ? (shX.type.match(/(?:\d+번)?([가-힣]{2,4})지분전부이전/) || [])[1] : '', auc2 = shX ? (String(shX.note || '').match(/(\d{4}타경\d+)/) || [])[1] : '';
+        var shM = reg.filter(function(r) { return /지분/.test(r.type || '') && /근저당|저당/.test(r.type || ''); })[0], mOwner = shM ? (shM.type.match(/(?:\d+번)?([가-힣]{2,4})지분/) || [])[1] : '';
+        ch.push(['🏠 둘이 함께 산 집', firstOwn ? (pc ? '<b>' + e(pc[1]) + '</b> 씨와 <b>' + e(pc[2]) + '</b> 씨는 ' : '') + '<b>' + e(firstOwn.date) + '</b>에 이 집을 ' + (pc ? '반반(각 ' + e(pc[3]) + ')씩 ' : '') + '함께 샀어요' + (px ? '(거래가액 ' + man(rightsNum(px[1])) + ')' : '') + '.' : '이 집은 공동 소유예요.']);
+        var d2 = [];
+        if (shM) d2.push('<b>' + e(shM.date) + '</b>, ' + e(mOwner || '한 분') + ' 씨는 자기 지분을 담보로 <b>' + e(shM.holder || '') + '</b> 씨 앞으로 근저당(채권최고액 ' + man(shM.amount) + ')을 잡혔어요. 이 근저당은 그 지분에만 걸려 있어요.');
+        if (shX) d2.push('그리고 <b>' + e(shX.date) + '</b>, ' + e(former) + ' 씨의 지분이 ' + (auc2 ? '다른 경매(' + e(auc2) + ')를 통해 ' : '') + '<b>' + e(shX.holder || '') + '</b> 씨에게 넘어갔어요. 그래서 ' + e(shX.holder || '') + ' 씨가 새 공유자가 됐어요.');
+        ch.push(['🔗 지분이 바뀌다', d2.join(' ') || '지분 변동 내역을 읽지 못했어요.']);
+        var rel0 = (R.docs && R.docs.related || [])[0];
+        ch.push(['⚖️ 경매가 시작되다', '<b>' + e(startD || '?') + '</b>, 새 공유자 <b>' + e(creditor || '') + '</b> 씨가 상대 공유자 ' + e(f.debtor || '') + ' 씨를 상대로 <b>공유물분할을 위한 경매</b>를 신청했고 법원이 개시결정을 했어요. 공유물분할 경매는 집을 통째로 팔아 대금을 지분대로 나누는 방식이에요(민법 제269조, 민사집행법 제274조).' + (rel0 ? ' 같은 문제로 ' + e(rel0.no) + ' ' + e(rel0.kind) + ' 사건도 있어요(내용은 서류에서 읽을 수 없어요).' : '') + ' 두 사람이 집을 어떻게 나눌지 합의하지 못해 법원의 힘을 빌린 것으로 보여요.' + EST + ' <span class="dr-sub">신청 이유는 서류에 적혀 있지 않아요.</span>']);
+    } else {
+        var m1 = reg.filter(function(r) { return /근저당|저당/.test(r.type || ''); })[0], oth = reg.filter(function(r) { return r !== firstOwn && r !== m1 && !/임의경매|강제경매|경매개시/.test(r.type || ''); });
+        var priceN = firstOwn ? (String(firstOwn.note || '').match(/거래가액\s*금?\s*([\d,]+)/) || [])[1] : '', causeN = firstOwn ? (String(firstOwn.note || '').match(/매매|상속|증여|판결|신탁|분양/) || [''])[0] : '';
+        ch.push(['🏠 이 집의 주인', firstOwn ? '<b>' + e(firstOwn.holder || owner || '소유자') + '</b> 씨는 <b>' + e(firstOwn.date) + '</b>에 이 집을 ' + (causeN ? e(causeN) + '로 ' : '') + '갖게 됐어요' + (priceN ? '(거래가액 ' + man(rightsNum(priceN)) + ')' : '') + '.' : '이 집의 주인은 <b>' + e(owner || '미확인') + '</b> 씨예요.']);
+        var d2g = '';
+        if (m1) d2g += (firstOwn ? years(firstOwn.date, m1.date) + '년쯤 뒤인 ' : '') + '<b>' + e(m1.date) + '</b>, <b>' + e(m1.holder || '금융기관') + '</b> 앞으로 근저당(채권최고액 ' + man(m1.amount) + ')이 잡혔어요. 집을 담보로 돈을 빌린 거예요. 그 돈을 어디에 썼는지는 서류에 없어요.';
+        if (oth.length) { var jud = oth.filter(function(r) { return /가압류/.test(r.type || ''); }).length, tax = oth.filter(function(r) { return /압류/.test(r.type || '') && !/가압류/.test(r.type || ''); }).length, mm = oth.filter(function(r) { return /근저당|저당/.test(r.type || ''); }).length; d2g += ' 그 뒤로 ' + [mm ? '근저당 ' + mm + '건' : '', jud ? '가압류 ' + jud + '건' : '', tax ? '세금·보험료 압류 ' + tax + '건' : ''].filter(Boolean).join(', ') + '이 차례로 등기부에 올라왔어요.' + (oth.length >= 3 ? ' 갚을 곳이 여러 군데로 늘어난 것으로 보여요.' + EST : ''); }
+        ch.push(['💳 빚이 생기다', d2g || '등기부에서 빚(근저당·압류) 기록을 읽지 못했어요.']);
+        ch.push(['⚖️ 경매가 시작되다', '<b>' + e(startD || '?') + '</b>, <b>' + e(creditor || '채권자') + '</b>가 신청해 법원이 ' + e(kind || '경매') + ' 개시결정을 했어요.' + (/임의/.test(kind) ? ' 임의경매는 근저당 같은 담보권을 실행하는 경매예요(민사집행법 제264조).' : (/강제/.test(kind) ? ' 강제경매는 판결 같은 집행권원으로 신청하는 경매예요(민사집행법 제80조).' : '')) + (R.docs && R.docs.claimWon ? ' 받을 돈(청구금액)은 ' + man(R.docs.claimWon) + '이에요.' : '') + (/임의/.test(kind) && m1 ? ' 대출을 제때 갚지 못해 시작된 것으로 보여요.' + EST + ' <span class="dr-sub">신청 이유는 서류에 적혀 있지 않아요.</span>' : '')]);
+    }
+    // 경매 과정(공통)
+    var p4 = '';
+    if (sales.length) {
+        var f1 = sales[0];
+        p4 += '<b>' + e(f1.d) + '</b> 첫 매각기일(최저가 ' + man(f1.p) + ')' + (f1.r === '유찰' ? '에는 입찰한 사람이 없어 <b>유찰</b>됐어요. 유찰되면 법원이 최저가를 낮춰 다시 기일을 잡아요(민사집행법 제119조)' + (lastCut ? ' - 이 사건은 ' + lastCut + '% 낮췄어요' : '') + '.' : ' 결과는 "' + e(f1.r || '미기재') + '"이에요.');
+        if (fails.length && sale && fails[0].p) p4 += ' 유찰된 이유는 서류에 없지만, 당시 최저가(' + man(fails[0].p) + ')가 앱이 보는 시세 ' + man(sale) + '와 ' + (fails[0].p >= sale * 0.92 ? '비슷하거나 더 비싸서 입찰이 없었던 것으로 보여요.' : '견줘 낮은데도 유찰됐어요.') + (fails[0].p >= sale * 0.92 ? EST : '');
+    }
+    if (solds.length) {
+        solds.forEach(function(sd, idx) {
+            var nextC = cancels.filter(function(c) { return c.d > sd.d; })[0], nt = notices.filter(function(x) { return x.d > sd.d && (!nextC || x.d < nextC.d); }).length;
+            p4 += ' <b>' + e(sd.d) + '</b>에는 최저가 ' + man(sd.p) + '에 낙찰됐어요' + (nextC ? '. 하지만 <b>' + e(nextC.d) + '</b> 매각허가가 취소됐어요. 취소 이유는 서류에 적혀 있지 않아요.' + (nt ? ' 그 사이 낙찰자에게 대금 납부 통지가 ' + nt + '번 나갔는데 납부 기록은 없어서, 낙찰자가 대금을 내지 못한 것으로 보여요.' + EST : '') : '.');
+        });
+        if (stop) p4 += ' 한편 <b>' + e(stop.d) + '</b>에는 소유자가 경매를 멈춰 달라는 집행정지 신청서를 냈어요. 이 신청 때문에 첫 낙찰의 대금 납부가 미뤄진 것으로 보여요.' + EST;
+    }
+    if (sales.filter(function(x) { return x.r === '변경'; }).length) p4 += ' 매각기일은 ' + sales.filter(function(x) { return x.r === '변경'; }).map(function(x) { return e(x.d); }).join(', ') + '에 바뀌었어요(문건에 ' + (de.filter(function(x) { return /기일변경신청/.test(x.t); }).length ? '신청인의 기일변경신청서가 있어요' : '변경 사유는 적혀 있지 않아요') + ').';
+    ch.push(['🔨 입찰은 어떻게 흘러왔나', p4 || '매각기일 기록을 읽지 못했어요.']);
+    // 지금과 낙찰자
+    var p5 = '';
+    if (f.saleDate) p5 += '지금은 <b>' + e(f.saleDate) + '</b> 기일에 최저가 <b>' + man(f.minPrice) + '</b>(감정가 ' + man(f.appraisal) + '의 ' + (f.minPct || '?') + '%)로 입찰을 받아요. ';
+    if (f.saleDate && f.minPrice && lastCut) p5 += '이번에도 유찰되면 다음 최저가는 약 ' + man(f.minPrice * (1 - lastCut / 100)) + '으로 내려갈 것으로 예상돼요(앞서 ' + lastCut + '% 낮춘 기록 기준).' + FOR + ' ';
+    var imp = [];
+    imp.push(takes.length ? '낙찰자가 떠안는 권리는 <b>' + takes.map(function(r) { return e(r.type + ' ' + (r.holder || '') + ' ' + man(r.amount)); }).join(', ') + '</b>이에요(민사집행법 제91조).' : '등기된 권리 ' + (my.regRows || []).filter(function(r) { return r.fate === '소멸'; }).length + '건은 낙찰되면 모두 지워져서 낙찰자가 떠안는 권리는 없어요(민사집행법 제91조).');
+    if (isJoint) imp.push('한쪽 공유자 지분에만 걸린 근저당도 지워지고 그 몫의 대금에서 먼저 갚아요(대법원 2006다37908). 공유자에게 우선매수권이 없어서 최고가로 낙찰받으면 빼앗길 일이 없어요(대법원 2008마693 등).');
+    tn.forEach(function(t) { imp.push('임차인 ' + e(t.name || '') + '(보증금 ' + man(t.deposit) + ')은 ' + (t.standing ? '<b>대항력이 있어</b> 배당받고 모자란 보증금은 낙찰자가 떠안아요(주택임대차보호법 제3조의5 단서).' : '대항력이 없어 임차권이 지워져요(제3조의5).')); });
+    if (!tn.length && (R.noTenants || sv && sv.n === 0)) imp.push('현황조사서에 임차인은 없다고 적혀 있어요.');
+    if (hr && hr.state === 'ok') imp.push('세대열람(' + e(hr.issued || '') + ' 발급)에는 ' + (hr.surname ? e(hr.surname) + '씨 ' : '') + '세대 ' + (hr.holders || 0) + '곳이 ' + e((hr.moveIns || []).join(', ')) + '에 전입돼 있어요.' + (hr.ageDays > 180 ? ' 다만 ' + Math.round(hr.ageDays / 30) + '개월 지난 자료예요.' : ''));
+    var sur = hr && hr.surname, ownersTxt = [f.owner, f.debtor, f.creditor].join(' ');
+    if (sur && ownersTxt.indexOf(sur) >= 0 && !tn.length) imp.push('세대주 성씨가 소유자와 같아서 소유자 가족이 살고 있는 것으로 보여요.' + EST);
+    if (sur && ownersTxt.trim() && ownersTxt.indexOf(sur) < 0) { var fm = reg.map(function(r) { return (String(r.type || '').match(/(?:\d+번)?([가-힣]{2,4})지분전부이전/) || [])[1]; }).filter(function(x) { return x && x.charAt(0) === sur; })[0]; imp.push('세대주 성씨("' + e(sur) + '")가 현재 소유자들과 달라요.' + (fm ? ' 등기부에 지분이 넘어간 전 공유자 ' + e(fm) + ' 씨와 성씨가 같아서, 지분을 넘기고도 계속 살고 있는 사람일 수 있어요.' + EST : '') + ' 다만 현황조사서는 점유를 "' + e(sv && (sv.occ + ' ' + (sv.memo || '')).trim() || '미기재') + '"로 적어 서로 달라요 - 입찰 전에 누가 사는지 확인이 필요해요.'); }
+    imp.push('집을 넘겨받을 때 점유자가 있으면 대금을 낸 뒤 6개월 안에 인도명령을 신청할 수 있어요(민사집행법 제136조). 체납 관리비 중 공용부분은 낙찰자가 이어받아요(대법원 2001다8097 전원합의체).');
+    if (cancels.length) imp.push('낙찰 뒤 허가가 취소된 이력이 있는 사건이에요. 낙찰자가 대금을 내지 않으면 보증금을 돌려받지 못해요(민사집행법 제138조) - 자금 계획을 미리 세우세요.');
+    ch.push(['🎯 지금, 낙찰받는다면', p5 + '<ul style="margin:4px 0 0 18px;padding:0;">' + imp.filter(Boolean).map(function(x) { return '<li style="margin-bottom:3px;">' + x + '</li>'; }).join('') + '</ul>']);
+    var h = '<div class="dr-sec" style="border:2px solid #6366f1;border-radius:10px;padding:10px 12px;"><h4>📖 이 집의 이야기 <span class="dr-sub" style="font-weight:400;">서류에 적힌 사실을 줄거리로 풀었어요 · 사실이 아닌 부분은 <span style="background:#fef3c7;color:#92400e;border-radius:6px;padding:0 5px;font-size:11px;font-weight:700;">추정</span> <span style="background:#dbeafe;color:#1e40af;border-radius:6px;padding:0 5px;font-size:11px;font-weight:700;">예상</span> 표시</span></h4>';
+    ch.forEach(function(c) { h += '<div style="margin-top:9px;"><div style="font-weight:700;color:#4338ca;">' + c[0] + '</div><div style="font-size:13.5px;line-height:1.85;">' + c[1] + '</div></div>'; });
+    return h + '</div>';
+}
+function myrStoryHtml(a, R, my, vd, bidWon, row) {
+    var h = myrNarrative(a, R, my, vd, bidWon, row), det = '';
+    try { det = myrStoryFactsHtml(a, R, my, vd, bidWon, row); } catch (e) {}
+    return h.replace(/<\/div>$/, '') + '<details style="margin-top:10px;"><summary style="cursor:pointer;font-weight:700;color:#475569;">📎 근거가 된 서류 기록·법 조문 (사실만)</summary>' + det + '</details></div>';
 }
 function myrPanelHtml(row) {
     var a = row.a, R = a.rights; if (!R || (!(R.registry || []).length && !(R.tenants || []).length)) return '';
