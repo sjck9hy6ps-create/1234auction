@@ -9399,10 +9399,14 @@ function bidTargetSameAddr(a, c) {
         return ta.indexOf(' ' + cd + ' ') >= 0 || tc.indexOf(' ' + ad + ' ') >= 0;
     }
     if (cd && cb) { var t = ' ' + String(a.addr || '') + ' ' + String(a.addrLabel || '') + ' '; return t.indexOf(' ' + cd + ' ') >= 0 && new RegExp('[\\s,]' + cb.replace(/[-\\.]/g, '\\$&') + '(?![\\d-])').test(t); }
+    /* 한쪽에 동·지번이 없을 때: CSV 주소의 동 이름이 기존 물건 주소에 없으면 다른 물건(같은 사건번호를 쓰는 다른 법원 물건이 금액을 덮어쓰지 않게, 2026-11-01) */
+    var cj = String(c.addrJibun || ''), am = cj.match(/([가-힣0-9]+(?:동|리|가))\s+\d/), at = ' ' + String(a.addr || '') + ' ' + String(a.addrLabel || '') + ' ';
+    if (am && String(a.addr || a.addrLabel || '').trim() && at.indexOf(am[1]) < 0) return false;
     return true;
 }
 // CSV가 정답(법원 자료): 저장된 감정가가 CSV와 2% 넘게 다르면 잘못 저장된 금액(다른 물건 금액이 섞였던 경우 등) - 감정가·최저가를 CSV 값으로 바로잡음
 function bidTargetAmountMismatch(a, c) {
+    if (!bidTargetSameAddr(a, c)) return false;  /* 주소가 다른 행의 금액으로는 절대 덮어쓰지 않음 */
     var ca = c.appraisalPrice ? Math.round(c.appraisalPrice / 10000) : 0, aa = parseInt(a.appraisal) || 0;
     return !!(ca && aa && Math.abs(ca / aa - 1) > 0.02);
 }
@@ -14849,6 +14853,7 @@ async function rightsApplyTankText(text) {
             if (R.tankSaleDate && !R.tankSoldWon && a.bidDate !== R.tankSaleDate) { prev.bidDate = a.bidDate; a.bidDate = R.tankSaleDate; ch.push('입찰일'); }
             if (typeof R.tankFailCount === 'number' && !R.tankSoldWon && ch.length && Number(a.failCount) !== R.tankFailCount) { prev.failCount = a.failCount; a.failCount = R.tankFailCount; ch.push('유찰수'); }
             if (ch.length) { R.tankSync = { at: Date.now(), changed: ch, prev: prev }; }
+            if (R.appraisalWon > 0 && R.minBidWon > 0) delete a.amountUnverified;  /* 탱크옥션 상세로 확인됨 */
         })();
         if (R.unpaidMgmt && !(parseInt(a.unpaidMgmtFee) > 0)) { a.unpaidMgmtFee = String(Math.ceil(R.unpaidMgmt.won / 10000)); R.unpaidMgmtApplied = true; }
         if (R.households > 0 && !(a.households && a.householdsVer === 2)) { a.households = R.households; a.householdsVer = 2; }  // 탱크옥션 단지정보의 세대수(없을 때만)
@@ -15529,6 +15534,7 @@ function preBidItems(row) {
     var ageD = R.pastedAt ? Math.floor((now - R.pastedAt) / day) : null, bidD = a.bidDate ? Math.ceil((new Date(a.bidDate + 'T00:00:00').getTime() - now) / day) : null;
     if (bidD != null && bidD < 0) add('date', 'bad', '입찰일', '입찰일(' + a.bidDate + ')이 지났어요 - 목록의 입찰일이 오래된 값일 수 있어요');
     else add('date', 'ok', '입찰일', (a.bidDate || '-') + (bidD != null ? ' (D-' + bidD + ')' : ''));
+    if (a.amountUnverified) add('unv', 'bad', '금액 확인', '감정가·최저가가 다른 물건 금액일 수 있어요(CSV 사건번호 충돌) - 탱크옥션 상세로 다시 모으세요');
     if (R.tankSoldWon) add('sold', 'bad', '낙찰 여부', '탱크옥션에 매각가 ' + man(R.tankSoldWon) + '이 표시돼요 - 이미 낙찰된 사건이에요');
     else add('sold', 'ok', '낙찰 여부', '탱크옥션 상세에 낙찰(매각가) 표시 없음');
     if (ageD == null) add('fresh', 'warn', '자료 신선도', '탱크옥션 수집일을 알 수 없어요 - 다시 모으세요');
@@ -20138,6 +20144,7 @@ var VISIT_MIN_P = 0.20; // 임장은 비용이 작아 낙찰 가능성 20% 이�
 function computePick(row) {
     row.pick = null; row.visit = { go: false, why: '' };
     var t = row.type;
+    if (row.a && row.a.amountUnverified) { row.visit.why = '감정가·최저가가 다른 물건 금액일 수 있어요(금액 미확인) - 🟦 탱크옥션 버튼으로 모으면 확인돼요'; return; }  /* CSV 사건번호 충돌로 금액이 섞였을 수 있는 물건은 탱크옥션 상세로 확인되기 전까지 추천하지 않음(2026-11-01) */
     if (row.a && row.a.rights && row.a.rights.tankSoldWon) { row.visit.why = '이미 낙찰된 사건이에요 - 탱크옥션에 매각 ' + (row.a.rights.tankSaleDate || '') + ' 표시'; return; }  /* 탱크옥션에서 이미 매각된 사건은 추천·임장 대상에서 제외(2026-11-01) */
     if (row.a && row.a.rights && (row.a.rights.unknownOccupants || []).some(function(u) { return u.senior; }) && !row.a.occChecked && !((parseInt(row.a.assumedDeposit) || 0) > 0)) { row.visit.why = '대항력 있는 점유자의 보증금을 알 수 없어요 - 명세서 확인 후 "인수보증금" 입력 또는 점검표에서 확인 체크'; return; }  /* 보증금 0원으로 계산하면 입찰에 손해(2026-11-01) */
     if (t !== 'apt') { row.visit.why = '빌라는 아직 계산하지 않아요'; return; }
