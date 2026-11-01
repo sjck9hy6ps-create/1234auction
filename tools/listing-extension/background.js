@@ -62,7 +62,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       const chainNext = async (q, tm, wait) => {
         if (!q) return false; tm = Object.assign({}, q.tids || {}, tm);  // 서버 대기열에 기록된 번호(앱이 남긴 것)도 함께 사용
         const today = new Date().toISOString().slice(0, 10), cnt0 = ((await loc.get('chainCnt')).chainCnt) || { d: today, n: 0 }, c = cnt0.d === today ? cnt0 : { d: today, n: 0 };
-        if (c.n >= 30) return false;
+        if (c.n >= 60) { await loc.set({ qStatus: { step: '⏸ 오늘 자동으로 연 사건이 60건에 도달해 멈췄어요(탱크옥션 부담을 줄이는 하루 상한) - 내일 다시 시작하세요', tid: '', caseNo: '', at: Date.now() } }); return false; }
         const dn = new Set((q.done || []).concat(q.failed || [])), todo = (q.items || []).filter((i) => !dn.has(norm(i.caseNo))); if (!todo.length) return false;
         if (wait) await new Promise((r) => setTimeout(r, 8000));
         for (const nxt of todo) {
@@ -73,7 +73,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         await loc.set({ qStatus: { step: '⏸ 이어서 열 사건이 이 목록에 없어요 - 대기열 사건이 보이는 탱크옥션 목록(매각기일 등)을 열어 두고 다시 시작하세요', tid: '', caseNo: '', at: Date.now() } }); return false;
       };
       try {
-        let tm = ((await loc.get('tidMap')).tidMap) || {}; if (((await loc.get('tidMapVer')).tidMapVer) !== 4) { tm = {}; await loc.set({ tidMap: {}, tidMapVer: 4 }); }  // 0.5.1~0.5.2에서 잘못 기억된 번호 초기화
+        let tm = ((await loc.get('tidMap')).tidMap) || {}; if (((await loc.get('tidMapVer')).tidMapVer) !== 5) { tm = {}; await loc.set({ tidMap: {}, tidMapVer: 5, chainCnt: { d: '', n: 0 } }); }  // 0.5.1~0.5.2에서 잘못 기억된 번호 초기화
         if (msg.type === 'chainStart') { const { q } = await qLoad(); sendResponse({ ok: await chainNext(q, tm, false) }); return; }
         if (msg.type === 'chainFail' && msg.reason === 'popup') { await loc.set({ qStatus: { step: '⛔ 팝업 차단 - 크롬에서 tankauction.com 팝업을 허용한 뒤 다시 시작하세요', tid: msg.tid || '', caseNo: '', at: Date.now() }, chainStop: Date.now() }); try { const tabs = await chrome.tabs.query({ url: ['https://www.tankauction.com/*', 'https://tankauction.com/*'] }); const ids = tabs.filter((t) => /\/popup\//.test(t.url || '') && new RegExp('[?&](tid|opener_1st_no)=' + String(msg.tid) + '(&|$)').test(t.url || '')).map((t) => t.id); setTimeout(() => chrome.tabs.remove(ids).catch(() => {}), 12000); } catch (e) {} sendResponse({ ok: true }); return; }
         if (msg.type === 'chainFail') { const { it, q } = await qLoad(); const rev = Object.keys(tm).find((k) => tm[k] === String(msg.tid || '')); if (q && rev) { q.failed = Array.from(new Set((q.failed || []).concat([rev]))); await qSave(it, q); } sendResponse({ ok: true }); try { const tabs = await chrome.tabs.query({ url: ['https://www.tankauction.com/*', 'https://tankauction.com/*'] }); const ids = tabs.filter((t) => /\/popup\//.test(t.url || '') && new RegExp('[?&](tid|opener_1st_no)=' + String(msg.tid) + '(&|$)').test(t.url || '')).map((t) => t.id); if (ids.length) await chrome.tabs.remove(ids); } catch (e) {} await chainNext(q, tm, true); return; }
