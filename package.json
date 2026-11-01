@@ -7,5 +7,8 @@
     "iconv-lite": "^0.7.3",
     "papaparse": "^5.4.1",
     "ws": "^8.21.1"
+  },
+  "scripts": {
+    "test:rights": "node tests/rights-regression.cjs"
   }
 }

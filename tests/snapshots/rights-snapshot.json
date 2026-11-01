@@ -1,0 +1,2552 @@
+{
+ "2024-2963": {
+  "tenants": [],
+  "unknown": [],
+  "registry": [
+   [
+    "갑(2)",
+    "2014-04-14",
+    "소유권이전",
+    0,
+    false,
+    false,
+    false
+   ],
+   [
+    "을(9)",
+    "2021-03-02",
+    "근저당권설정",
+    136400000,
+    true,
+    true,
+    false
+   ],
+   [
+    "을(10)",
+    "2021-03-02",
+    "근저당권설정",
+    360000000,
+    false,
+    true,
+    false
+   ],
+   [
+    "을(11)",
+    "2021-06-28",
+    "근저당권설정",
+    48000000,
+    false,
+    true,
+    false
+   ],
+   [
+    "을(12)",
+    "2021-08-13",
+    "근저당권설정",
+    36000000,
+    false,
+    true,
+    false
+   ],
+   [
+    "을(13)",
+    "2022-08-10",
+    "근저당권설정",
+    54000000,
+    false,
+    true,
+    false
+   ],
+   [
+    "갑(4)",
+    "2024-01-24",
+    "가압류",
+    51138969,
+    false,
+    true,
+    false
+   ],
+   [
+    "갑(5)",
+    "2024-01-24",
+    "가압류",
+    28250000,
+    false,
+    true,
+    false
+   ],
+   [
+    "갑(6)",
+    "2024-01-29",
+    "가압류",
+    29434242,
+    false,
+    true,
+    false
+   ],
+   [
+    "갑(7)",
+    "2024-02-28",
+    "가압류",
+    28383635,
+    false,
+    true,
+    false
+   ],
+   [
+    "갑(8)",
+    "2024-05-20",
+    "임의경매",
+    543758751,
+    false,
+    false,
+    false
+   ]
+  ],
+  "minBidWon": 357700000,
+  "appraisalWon": 511000000,
+  "tankSaleDate": "2026-11-03",
+  "tankSoldWon": 0,
+  "baseDate": "2021-03-02",
+  "distDeadline": "2024-07-30",
+  "claimTotalWon": 771606846,
+  "tankTenantN": null,
+  "warnings": 0
+ },
+ "2024-40118": {
+  "tenants": [],
+  "unknown": [],
+  "registry": [
+   [
+    "갑(2)",
+    "2019-04-29",
+    "소유권이전",
+    0,
+    false,
+    false,
+    false
+   ],
+   [
+    "을(1)",
+    "2019-04-29",
+    "근저당권설정",
+    292600000,
+    true,
+    true,
+    false
+   ],
+   [
+    "을(2)",
+    "2023-06-15",
+    "근저당권설정",
+    70400000,
+    false,
+    true,
+    false
+   ],
+   [
+    "을(4)",
+    "2023-10-16",
+    "근저당권설정",
+    50000000,
+    false,
+    true,
+    false
+   ],
+   [
+    "을(5)",
+    "2024-01-04",
+    "근저당권설정",
+    77000000,
+    false,
+    true,
+    false
+   ],
+   [
+    "갑(3)",
+    "2024-10-10",
+    "임의경매",
+    50000000,
+    false,
+    false,
+    false
+   ],
+   [
+    "갑(4)",
+    "2024-12-26",
+    "임의경매",
+    77000000,
+    false,
+    false,
+    false
+   ],
+   [
+    "갑(5)",
+    "2025-03-10",
+    "가압류",
+    351000000,
+    false,
+    true,
+    false
+   ],
+   [
+    "갑(6)",
+    "2026-02-03",
+    "가압류",
+    49929033,
+    false,
+    true,
+    false
+   ],
+   [
+    "갑(7)",
+    "2026-08-18",
+    "가압류",
+    85098511,
+    false,
+    true,
+    false
+   ]
+  ],
+  "minBidWon": 297920000,
+  "appraisalWon": 608000000,
+  "tankSaleDate": "2026-11-04",
+  "tankSoldWon": 0,
+  "baseDate": "2019-04-29",
+  "distDeadline": "2025-01-13",
+  "claimTotalWon": 976027544,
+  "tankTenantN": null,
+  "warnings": 0
+ },
+ "2025-101694": {
+  "tenants": [],
+  "unknown": [],
+  "registry": [
+   [
+    "갑(3)",
+    "2019-07-15",
+    "소유권이전",
+    0,
+    false,
+    false,
+    false
+   ],
+   [
+    "을(3)",
+    "2019-07-15",
+    "근저당권설정",
+    264000000,
+    true,
+    true,
+    false
+   ],
+   [
+    "을(10)",
+    "2022-09-30",
+    "근저당권설정",
+    153400000,
+    false,
+    true,
+    false
+   ],
+   [
+    "갑(8)",
+    "2025-07-14",
+    "임의경매",
+    78677594,
+    false,
+    false,
+    false
+   ],
+   [
+    "갑(9)",
+    "2025-07-24",
+    "가압류",
+    12787117,
+    false,
+    true,
+    false
+   ]
+  ],
+  "minBidWon": 283500000,
+  "appraisalWon": 405000000,
+  "tankSaleDate": "2026-11-04",
+  "tankSoldWon": 0,
+  "baseDate": "2019-07-15",
+  "distDeadline": "2026-04-21",
+  "claimTotalWon": 430187117,
+  "tankTenantN": null,
+  "warnings": 0
+ },
+ "2025-12149": {
+  "tenants": [],
+  "unknown": [],
+  "registry": [
+   [
+    "갑(1)",
+    "2017-01-02",
+    "소유권보존",
+    0,
+    false,
+    false,
+    false
+   ],
+   [
+    "을(1)",
+    "2017-01-02",
+    "근저당권설정",
+    198000000,
+    true,
+    true,
+    false
+   ],
+   [
+    "을(2)",
+    "2021-07-08",
+    "근저당권설정",
+    40800000,
+    false,
+    true,
+    false
+   ],
+   [
+    "을(3)",
+    "2022-01-26",
+    "근저당권설정",
+    63600000,
+    false,
+    true,
+    false
+   ],
+   [
+    "갑(2)",
+    "2025-09-30",
+    "소유권이전",
+    0,
+    false,
+    false,
+    false
+   ],
+   [
+    "갑(3)",
+    "2025-10-10",
+    "임의경매",
+    126172398,
+    false,
+    false,
+    false
+   ],
+   [
+    "갑(4)",
+    "2025-10-24",
+    "가압류",
+    14197327,
+    false,
+    true,
+    false
+   ],
+   [
+    "갑(5)",
+    "2025-11-11",
+    "가압류",
+    20820250,
+    false,
+    true,
+    false
+   ],
+   [
+    "갑(6)",
+    "2025-11-18",
+    "가압류",
+    80451522,
+    false,
+    true,
+    false
+   ]
+  ],
+  "minBidWon": 159600000,
+  "appraisalWon": 228000000,
+  "tankSaleDate": "2026-11-03",
+  "tankSoldWon": 0,
+  "baseDate": "2017-01-02",
+  "distDeadline": "2026-01-12",
+  "claimTotalWon": 417869099,
+  "tankTenantN": null,
+  "warnings": 0
+ },
+ "2025-12402": {
+  "tenants": [],
+  "unknown": [],
+  "registry": [
+   [
+    "갑(2)",
+    "2019-04-25",
+    "공유자전원지분전부이전",
+    0,
+    false,
+    false,
+    false
+   ],
+   [
+    "을(1)",
+    "2019-04-25",
+    "근저당권설정",
+    206123804,
+    true,
+    true,
+    false
+   ],
+   [
+    "을(4)",
+    "2024-05-20",
+    "근저당권설정",
+    50000000,
+    false,
+    true,
+    false
+   ],
+   [
+    "을(7)",
+    "2024-05-22",
+    "전세권설정",
+    5000000,
+    false,
+    true,
+    false
+   ],
+   [
+    "갑(4)",
+    "2025-11-11",
+    "임의경매",
+    198579393,
+    false,
+    false,
+    false
+   ]
+  ],
+  "minBidWon": 207900000,
+  "appraisalWon": 297000000,
+  "tankSaleDate": "2026-11-03",
+  "tankSoldWon": 0,
+  "baseDate": "2019-04-25",
+  "distDeadline": "2026-02-10",
+  "claimTotalWon": 261123804,
+  "tankTenantN": null,
+  "warnings": 0
+ },
+ "2025-21136": {
+  "tenants": [
+   [
+    "2022-09-16",
+    "2022-09-13",
+    "2024-08-08",
+    340000000,
+    0,
+    true
+   ]
+  ],
+  "unknown": [],
+  "registry": [
+   [
+    "갑(3)",
+    "2022-04-21",
+    "소유권이전",
+    0,
+    false,
+    false,
+    false
+   ],
+   [
+    "을(6)",
+    "2022-10-14",
+    "근저당권설정",
+    470400000,
+    true,
+    true,
+    false
+   ],
+   [
+    "을(7)",
+    "2024-08-08",
+    "주택임차권",
+    340000000,
+    false,
+    false,
+    true
+   ],
+   [
+    "갑(6)",
+    "2025-11-06",
+    "파산선고",
+    0,
+    false,
+    false,
+    false
+   ],
+   [
+    "을(8)",
+    "2025-12-11",
+    "근저당권설정",
+    340000000,
+    false,
+    true,
+    false
+   ],
+   [
+    "갑(7)",
+    "2026-01-05",
+    "임의경매",
+    340000000,
+    false,
+    false,
+    false
+   ]
+  ],
+  "minBidWon": 313600000,
+  "appraisalWon": 448000000,
+  "tankSaleDate": "2026-11-09",
+  "tankSoldWon": 0,
+  "baseDate": "2022-10-14",
+  "distDeadline": "2026-04-06",
+  "claimTotalWon": 1150400000,
+  "tankTenantN": null,
+  "warnings": 0
+ },
+ "2025-21759": {
+  "tenants": [],
+  "unknown": [],
+  "registry": [
+   [
+    "갑(2)",
+    "2017-04-25",
+    "소유권이전",
+    0,
+    false,
+    false,
+    false
+   ],
+   [
+    "을(3)",
+    "2017-05-02",
+    "근저당권설정",
+    268400000,
+    true,
+    true,
+    false
+   ],
+   [
+    "을(8)",
+    "2022-01-10",
+    "근저당권설정",
+    147600000,
+    false,
+    true,
+    false
+   ],
+   [
+    "을(9)",
+    "2023-01-27",
+    "근저당권설정",
+    170000000,
+    false,
+    true,
+    false
+   ],
+   [
+    "갑(5)",
+    "2024-11-13",
+    "가압류",
+    21675000,
+    false,
+    true,
+    false
+   ],
+   [
+    "을(10)",
+    "2024-12-04",
+    "근저당권설정",
+    40000000,
+    false,
+    true,
+    false
+   ],
+   [
+    "갑(6)",
+    "2024-12-17",
+    "가압류",
+    30479212,
+    false,
+    true,
+    false
+   ],
+   [
+    "갑(7)",
+    "2025-04-08",
+    "임의경매",
+    134468499,
+    false,
+    false,
+    false
+   ],
+   [
+    "갑(8)",
+    "2025-08-29",
+    "임의경매",
+    226948411,
+    false,
+    false,
+    false
+   ]
+  ],
+  "minBidWon": 252000000,
+  "appraisalWon": 360000000,
+  "tankSaleDate": "2026-11-03",
+  "tankSoldWon": 0,
+  "baseDate": "2017-05-02",
+  "distDeadline": "2025-06-20",
+  "claimTotalWon": 678154212,
+  "tankTenantN": null,
+  "warnings": 0
+ },
+ "2025-21863": {
+  "tenants": [],
+  "unknown": [],
+  "registry": [
+   [
+    "갑(3)",
+    "2013-04-29",
+    "소유권이전",
+    0,
+    false,
+    false,
+    false
+   ],
+   [
+    "을(3)",
+    "2013-04-29",
+    "근저당권설정",
+    164500000,
+    true,
+    true,
+    false
+   ],
+   [
+    "을(6)",
+    "2021-02-10",
+    "근저당권설정",
+    140000000,
+    false,
+    true,
+    false
+   ],
+   [
+    "을(7)",
+    "2021-02-10",
+    "전세권설정",
+    5000000,
+    false,
+    true,
+    false
+   ],
+   [
+    "갑(4)",
+    "2021-07-15",
+    "가압류",
+    210000000,
+    false,
+    true,
+    false
+   ],
+   [
+    "갑(5)",
+    "2022-05-12",
+    "가압류",
+    186920751,
+    false,
+    true,
+    false
+   ],
+   [
+    "갑(7)",
+    "2023-02-03",
+    "압류",
+    0,
+    false,
+    true,
+    false
+   ],
+   [
+    "갑(8)",
+    "2024-08-22",
+    "가압류",
+    10000000,
+    false,
+    true,
+    false
+   ],
+   [
+    "갑(9)",
+    "2024-09-20",
+    "가압류",
+    20767033,
+    false,
+    true,
+    false
+   ],
+   [
+    "갑(10)",
+    "2024-11-11",
+    "압류",
+    0,
+    false,
+    true,
+    false
+   ],
+   [
+    "갑(12)",
+    "2025-02-17",
+    "가압류",
+    12558400,
+    false,
+    true,
+    false
+   ],
+   [
+    "갑(13)",
+    "2025-04-23",
+    "임의경매",
+    133943926,
+    false,
+    false,
+    false
+   ]
+  ],
+  "minBidWon": 186200000,
+  "appraisalWon": 266000000,
+  "tankSaleDate": "2026-11-03",
+  "tankSoldWon": 0,
+  "baseDate": "2013-04-29",
+  "distDeadline": "2025-07-07",
+  "claimTotalWon": 749746184,
+  "tankTenantN": null,
+  "warnings": 1
+ },
+ "2025-21877": {
+  "tenants": [],
+  "unknown": [],
+  "registry": [
+   [
+    "갑(2)",
+    "2018-05-04",
+    "소유권이전",
+    0,
+    false,
+    false,
+    false
+   ],
+   [
+    "을(1)",
+    "2018-05-04",
+    "근저당권설정",
+    331200000,
+    true,
+    true,
+    false
+   ],
+   [
+    "을(2)",
+    "2022-04-08",
+    "근저당권설정",
+    206400000,
+    false,
+    true,
+    false
+   ],
+   [
+    "갑(4)",
+    "2024-10-23",
+    "가압류",
+    27744562,
+    false,
+    true,
+    false
+   ],
+   [
+    "갑(5)",
+    "2024-10-30",
+    "가압류",
+    10097170,
+    false,
+    true,
+    false
+   ],
+   [
+    "갑(6)",
+    "2024-11-08",
+    "가압류",
+    5064171,
+    false,
+    true,
+    false
+   ],
+   [
+    "갑(7)",
+    "2024-11-15",
+    "가압류",
+    44800087,
+    false,
+    true,
+    false
+   ],
+   [
+    "갑(8)",
+    "2024-11-25",
+    "가압류",
+    20147577,
+    false,
+    true,
+    false
+   ],
+   [
+    "갑(9)",
+    "2025-04-28",
+    "임의경매",
+    184988088,
+    false,
+    false,
+    false
+   ],
+   [
+    "갑(10)",
+    "2025-06-23",
+    "임의경매",
+    259187726,
+    false,
+    false,
+    false
+   ],
+   [
+    "갑(11)",
+    "2025-06-23",
+    "압류",
+    0,
+    false,
+    true,
+    false
+   ]
+  ],
+  "minBidWon": 311500000,
+  "appraisalWon": 445000000,
+  "tankSaleDate": "2026-11-03",
+  "tankSoldWon": 0,
+  "baseDate": "2018-05-04",
+  "distDeadline": "2025-07-10",
+  "claimTotalWon": 645453567,
+  "tankTenantN": null,
+  "warnings": 0
+ },
+ "2025-21885": {
+  "tenants": [],
+  "unknown": [],
+  "registry": [
+   [
+    "갑(12)",
+    "2017-02-15",
+    "소유권이전",
+    0,
+    false,
+    false,
+    false
+   ],
+   [
+    "을(18)",
+    "2024-04-11",
+    "근저당권설정",
+    456000000,
+    true,
+    true,
+    false
+   ],
+   [
+    "갑(13)",
+    "2025-04-28",
+    "임의경매",
+    389873488,
+    false,
+    false,
+    false
+   ],
+   [
+    "갑(16)",
+    "2025-10-13",
+    "압류",
+    0,
+    false,
+    true,
+    false
+   ],
+   [
+    "갑(17)",
+    "2025-10-27",
+    "압류",
+    0,
+    false,
+    true,
+    false
+   ]
+  ],
+  "minBidWon": 486000000,
+  "appraisalWon": 486000000,
+  "tankSaleDate": "2026-11-03",
+  "tankSoldWon": 0,
+  "baseDate": "2024-04-11",
+  "distDeadline": "2025-07-09",
+  "claimTotalWon": 456000000,
+  "tankTenantN": null,
+  "warnings": 0
+ },
+ "2025-3430": {
+  "tenants": [],
+  "unknown": [],
+  "registry": [
+   [
+    "갑(9)",
+    "2010-09-01",
+    "소유권이전",
+    0,
+    false,
+    false,
+    false
+   ],
+   [
+    "을(11)",
+    "2015-03-09",
+    "근저당권설정",
+    4820000,
+    true,
+    true,
+    false
+   ],
+   [
+    "을(12)",
+    "2015-04-15",
+    "근저당권설정",
+    5100000,
+    false,
+    true,
+    false
+   ],
+   [
+    "을(13)",
+    "2015-05-28",
+    "근저당권설정",
+    12000000,
+    false,
+    true,
+    false
+   ],
+   [
+    "을(14)",
+    "2016-07-29",
+    "근저당권설정",
+    25600000,
+    false,
+    true,
+    false
+   ],
+   [
+    "을(15)",
+    "2017-01-10",
+    "근저당권설정",
+    33520000,
+    false,
+    true,
+    false
+   ],
+   [
+    "을(33)",
+    "2022-04-19",
+    "근저당권설정",
+    171600000,
+    false,
+    true,
+    false
+   ],
+   [
+    "갑(18)",
+    "2025-05-26",
+    "임의경매",
+    60224676,
+    false,
+    false,
+    false
+   ]
+  ],
+  "minBidWon": 165200000,
+  "appraisalWon": 236000000,
+  "tankSaleDate": "2026-11-03",
+  "tankSoldWon": 0,
+  "baseDate": "2015-03-09",
+  "distDeadline": "2025-08-18",
+  "claimTotalWon": 252640000,
+  "tankTenantN": null,
+  "warnings": 0
+ },
+ "2025-34385": {
+  "tenants": [],
+  "unknown": [],
+  "registry": [
+   [
+    "갑(3)",
+    "2020-07-17",
+    "소유권이전",
+    0,
+    false,
+    false,
+    false
+   ],
+   [
+    "을(2)",
+    "2020-07-17",
+    "근저당권설정",
+    361900000,
+    true,
+    true,
+    false
+   ],
+   [
+    "을(4)",
+    "2022-03-10",
+    "근저당권설정",
+    304800000,
+    false,
+    true,
+    false
+   ],
+   [
+    "갑(4)",
+    "2025-11-17",
+    "임의경매",
+    277064520,
+    false,
+    false,
+    false
+   ]
+  ],
+  "minBidWon": 343000000,
+  "appraisalWon": 490000000,
+  "tankSaleDate": "2026-11-04",
+  "tankSoldWon": 0,
+  "baseDate": "2020-07-17",
+  "distDeadline": "2026-02-09",
+  "claimTotalWon": 666700000,
+  "tankTenantN": null,
+  "warnings": 0
+ },
+ "2025-4135": {
+  "tenants": [],
+  "unknown": [
+   [
+    "2007-06-29",
+    null,
+    true,
+    true
+   ]
+  ],
+  "registry": [
+   [
+    "갑(3)",
+    "2014-08-22",
+    "소유권이전",
+    0,
+    false,
+    false,
+    false
+   ],
+   [
+    "을(4)",
+    "2016-09-06",
+    "근저당권설정",
+    138000000,
+    true,
+    true,
+    false
+   ],
+   [
+    "갑(4)",
+    "2018-10-05",
+    "가압류",
+    11195971,
+    false,
+    true,
+    false
+   ],
+   [
+    "갑(5)",
+    "2018-10-18",
+    "가압류",
+    9654057,
+    false,
+    true,
+    false
+   ],
+   [
+    "갑(6)",
+    "2019-01-03",
+    "가압류",
+    10118751,
+    false,
+    true,
+    false
+   ],
+   [
+    "갑(7)",
+    "2019-01-22",
+    "가압류",
+    6250000,
+    false,
+    true,
+    false
+   ],
+   [
+    "갑(8)",
+    "2025-09-17",
+    "임의경매",
+    111502780,
+    false,
+    false,
+    false
+   ]
+  ],
+  "minBidWon": 77910000,
+  "appraisalWon": 159000000,
+  "tankSaleDate": "2026-11-02",
+  "tankSoldWon": 0,
+  "baseDate": "2016-09-06",
+  "distDeadline": "2025-11-26",
+  "claimTotalWon": 175218779,
+  "tankTenantN": null,
+  "warnings": 1
+ },
+ "2025-500": {
+  "tenants": [],
+  "unknown": [],
+  "registry": [
+   [
+    "갑(4)",
+    "2014-02-18",
+    "공유자전원지분전부이전",
+    0,
+    false,
+    false,
+    false
+   ],
+   [
+    "을(3)",
+    "2014-02-18",
+    "근저당권설정",
+    252000000,
+    true,
+    true,
+    false
+   ],
+   [
+    "을(6)",
+    "2014-11-05",
+    "근저당권설정",
+    90000000,
+    false,
+    true,
+    false
+   ],
+   [
+    "갑(11)",
+    "2025-08-18",
+    "압류",
+    0,
+    false,
+    true,
+    false
+   ],
+   [
+    "갑(12)",
+    "2025-09-16",
+    "임의경매",
+    168861860,
+    false,
+    true,
+    false
+   ]
+  ],
+  "minBidWon": 170100000,
+  "appraisalWon": 243000000,
+  "tankSaleDate": "2026-11-02",
+  "tankSoldWon": 0,
+  "baseDate": "2014-02-18",
+  "distDeadline": "2025-11-25",
+  "claimTotalWon": 342000000,
+  "tankTenantN": null,
+  "warnings": 0
+ },
+ "2025-513342": {
+  "tenants": [
+   [
+    "2021-03-11",
+    "2021-03-02",
+    "2025-11-27",
+    100000000,
+    0,
+    true
+   ]
+  ],
+  "unknown": [],
+  "registry": [
+   [
+    "갑(27)",
+    "2012-09-20",
+    "소유권이전",
+    0,
+    false,
+    false,
+    false
+   ],
+   [
+    "갑(36)",
+    "2025-10-29",
+    "강제경매",
+    62392802,
+    true,
+    false,
+    false
+   ],
+   [
+    "갑(37)",
+    "2025-11-05",
+    "압류",
+    0,
+    false,
+    true,
+    false
+   ]
+  ],
+  "minBidWon": 74970000,
+  "appraisalWon": 153000000,
+  "tankSaleDate": "2026-11-02",
+  "tankSoldWon": 0,
+  "baseDate": "2025-10-29",
+  "distDeadline": "2026-01-19",
+  "claimTotalWon": 0,
+  "tankTenantN": null,
+  "warnings": 0
+ },
+ "2025-51545": {
+  "tenants": [
+   [
+    "2021-02-19",
+    "2021-01-08",
+    "2025-02-19",
+    157000000,
+    0,
+    true
+   ]
+  ],
+  "unknown": [],
+  "registry": [
+   [
+    "갑(2)",
+    "2016-09-07",
+    "소유권이전",
+    0,
+    false,
+    false,
+    false
+   ],
+   [
+    "갑(4)",
+    "2024-10-23",
+    "가압류",
+    863994654,
+    true,
+    true,
+    false
+   ],
+   [
+    "을(3)",
+    "2025-02-19",
+    "주택임차권",
+    157000000,
+    false,
+    false,
+    true
+   ],
+   [
+    "갑(5)",
+    "2025-10-16",
+    "강제경매",
+    157000000,
+    false,
+    false,
+    false
+   ],
+   [
+    "갑(6)",
+    "2026-08-20",
+    "압류",
+    0,
+    false,
+    true,
+    false
+   ]
+  ],
+  "minBidWon": 82880000,
+  "appraisalWon": 185000000,
+  "tankSaleDate": "2026-11-02",
+  "tankSoldWon": 0,
+  "baseDate": "2024-10-23",
+  "distDeadline": "2026-01-19",
+  "claimTotalWon": 1020994654,
+  "tankTenantN": null,
+  "warnings": 0
+ },
+ "2025-5616": {
+  "tenants": [
+   [
+    "2024-03-13",
+    "2024-03-13",
+    "2025-09-23",
+    30000000,
+    1800000,
+    false
+   ]
+  ],
+  "unknown": [
+   [
+    "2024-06-10",
+    false,
+    false,
+    false
+   ]
+  ],
+  "registry": [
+   [
+    "갑(2)",
+    "2023-03-20",
+    "소유권이전",
+    0,
+    false,
+    false,
+    false
+   ],
+   [
+    "을(1)",
+    "2023-03-20",
+    "근저당권설정",
+    319000000,
+    true,
+    true,
+    false
+   ],
+   [
+    "을(2)",
+    "2024-02-19",
+    "근저당권설정",
+    572400000,
+    false,
+    true,
+    false
+   ],
+   [
+    "갑(4)",
+    "2025-07-24",
+    "임의경매",
+    483561423,
+    false,
+    false,
+    false
+   ]
+  ],
+  "minBidWon": 825000000,
+  "appraisalWon": 825000000,
+  "tankSaleDate": "2026-11-03",
+  "tankSoldWon": 0,
+  "baseDate": "2023-03-20",
+  "distDeadline": "2025-10-10",
+  "claimTotalWon": 891400000,
+  "tankTenantN": 2,
+  "warnings": 0
+ },
+ "2025-570": {
+  "tenants": [
+   [
+    "2018-08-21",
+    "2018-08-08",
+    "2024-06-03",
+    180000000,
+    0,
+    false
+   ]
+  ],
+  "unknown": [
+   [
+    "2025-03-04",
+    false,
+    false,
+    false
+   ]
+  ],
+  "registry": [
+   [
+    "갑(5)",
+    "2018-08-20",
+    "소유권이전",
+    0,
+    false,
+    false,
+    false
+   ],
+   [
+    "을(5)",
+    "2018-08-20",
+    "근저당권설정",
+    102000000,
+    true,
+    true,
+    false
+   ],
+   [
+    "갑(6)",
+    "2023-09-05",
+    "가압류",
+    9322998,
+    false,
+    true,
+    false
+   ],
+   [
+    "갑(7)",
+    "2023-10-05",
+    "가압류",
+    73371000,
+    false,
+    true,
+    false
+   ],
+   [
+    "갑(8)",
+    "2023-10-24",
+    "가압류",
+    13299838,
+    false,
+    true,
+    false
+   ],
+   [
+    "갑(9)",
+    "2023-10-25",
+    "가압류",
+    14387491,
+    false,
+    true,
+    false
+   ],
+   [
+    "갑(10)",
+    "2024-05-27",
+    "가압류",
+    24672977,
+    false,
+    true,
+    false
+   ],
+   [
+    "을(6)",
+    "2024-06-03",
+    "주택임차권",
+    180000000,
+    false,
+    true,
+    false
+   ],
+   [
+    "갑(11)",
+    "2024-12-17",
+    "압류",
+    0,
+    false,
+    true,
+    false
+   ],
+   [
+    "갑(12)",
+    "2025-11-13",
+    "임의경매",
+    100213910,
+    false,
+    false,
+    false
+   ]
+  ],
+  "minBidWon": 141400000,
+  "appraisalWon": 202000000,
+  "tankSaleDate": "2026-11-02",
+  "tankSoldWon": 0,
+  "baseDate": "2018-08-20",
+  "distDeadline": "2026-01-23",
+  "claimTotalWon": 417054304,
+  "tankTenantN": 2,
+  "warnings": 0
+ },
+ "2025-5813": {
+  "tenants": [],
+  "unknown": [],
+  "registry": [
+   [
+    "갑(5)",
+    "2014-11-12",
+    "소유권이전",
+    0,
+    false,
+    false,
+    false
+   ],
+   [
+    "을(19)",
+    "2020-06-22",
+    "근저당권설정",
+    184800000,
+    true,
+    true,
+    false
+   ],
+   [
+    "을(20)",
+    "2020-06-22",
+    "근저당권설정",
+    76800000,
+    false,
+    true,
+    false
+   ],
+   [
+    "을(22)",
+    "2020-12-23",
+    "근저당권설정",
+    21600000,
+    false,
+    true,
+    false
+   ],
+   [
+    "을(26)",
+    "2022-05-31",
+    "근저당권설정",
+    39600000,
+    false,
+    true,
+    false
+   ],
+   [
+    "갑(6)",
+    "2025-02-28",
+    "가압류",
+    21000000,
+    false,
+    true,
+    false
+   ],
+   [
+    "갑(7)",
+    "2025-05-12",
+    "가압류",
+    90000000,
+    false,
+    true,
+    false
+   ],
+   [
+    "갑(8)",
+    "2025-09-10",
+    "임의경매",
+    260408400,
+    false,
+    false,
+    false
+   ]
+  ],
+  "minBidWon": 189700000,
+  "appraisalWon": 271000000,
+  "tankSaleDate": "2026-11-03",
+  "tankSoldWon": 0,
+  "baseDate": "2020-06-22",
+  "distDeadline": "2025-11-21",
+  "claimTotalWon": 433800000,
+  "tankTenantN": null,
+  "warnings": 0
+ },
+ "2025-590": {
+  "tenants": [
+   [
+    "2023-03-28",
+    "2023-03-08",
+    "2025-06-16",
+    150000000,
+    400000,
+    false
+   ]
+  ],
+  "unknown": [],
+  "registry": [
+   [
+    "갑(2)",
+    "2022-04-15",
+    "소유권이전",
+    0,
+    false,
+    false,
+    false
+   ],
+   [
+    "을(1)",
+    "2022-04-15",
+    "근저당권설정",
+    649000000,
+    true,
+    true,
+    false
+   ],
+   [
+    "갑(4)",
+    "2024-06-03",
+    "가압류",
+    122000000,
+    false,
+    true,
+    false
+   ],
+   [
+    "을(2)",
+    "2024-12-04",
+    "근저당권설정",
+    187000000,
+    false,
+    true,
+    false
+   ],
+   [
+    "갑(5)",
+    "2024-12-11",
+    "가압류",
+    100000000,
+    false,
+    true,
+    false
+   ],
+   [
+    "갑(6)",
+    "2025-06-09",
+    "임의경매",
+    592272087,
+    false,
+    false,
+    false
+   ],
+   [
+    "갑(7)",
+    "2025-07-30",
+    "가압류",
+    1175270956,
+    false,
+    true,
+    false
+   ]
+  ],
+  "minBidWon": 536900000,
+  "appraisalWon": 767000000,
+  "tankSaleDate": "2026-11-03",
+  "tankSoldWon": 0,
+  "baseDate": "2022-04-15",
+  "distDeadline": "2025-08-19",
+  "claimTotalWon": 2233270956,
+  "tankTenantN": null,
+  "warnings": 0
+ },
+ "2025-5910": {
+  "tenants": [
+   [
+    "2019-12-18",
+    "2019-12-18",
+    "2023-12-28",
+    140000000,
+    0,
+    true
+   ]
+  ],
+  "unknown": [
+   [
+    "2025-09-29",
+    false,
+    false,
+    false
+   ]
+  ],
+  "registry": [
+   [
+    "갑(13)",
+    "2006-04-25",
+    "소유권이전",
+    0,
+    false,
+    false,
+    false
+   ],
+   [
+    "을(17)",
+    "2020-03-27",
+    "근저당권설정",
+    30000000,
+    true,
+    true,
+    false
+   ],
+   [
+    "갑(24)",
+    "2021-08-10",
+    "압류",
+    0,
+    false,
+    true,
+    false
+   ],
+   [
+    "갑(25)",
+    "2022-01-25",
+    "압류",
+    0,
+    false,
+    true,
+    false
+   ],
+   [
+    "을(19)",
+    "2023-12-28",
+    "주택임차권",
+    140000000,
+    false,
+    false,
+    true
+   ],
+   [
+    "갑(26)",
+    "2024-06-04",
+    "압류",
+    0,
+    false,
+    true,
+    false
+   ],
+   [
+    "갑(27)",
+    "2025-10-14",
+    "강제경매",
+    151592631,
+    false,
+    false,
+    false
+   ]
+  ],
+  "minBidWon": 100450000,
+  "appraisalWon": 205000000,
+  "tankSaleDate": "2026-11-02",
+  "tankSoldWon": 0,
+  "baseDate": "2020-03-27",
+  "distDeadline": "2025-12-24",
+  "claimTotalWon": 170000000,
+  "tankTenantN": 2,
+  "warnings": 0
+ },
+ "2025-6072": {
+  "tenants": [],
+  "unknown": [],
+  "registry": [
+   [
+    "갑(4)",
+    "2015-02-27",
+    "소유권이전",
+    0,
+    false,
+    false,
+    false
+   ],
+   [
+    "을(15)",
+    "2018-06-26",
+    "근저당권설정",
+    203300000,
+    true,
+    true,
+    false
+   ],
+   [
+    "을(22)",
+    "2021-07-21",
+    "근저당권설정",
+    149500000,
+    false,
+    true,
+    false
+   ],
+   [
+    "을(24)",
+    "2021-11-03",
+    "근저당권설정",
+    61100000,
+    false,
+    true,
+    false
+   ],
+   [
+    "갑(7)",
+    "2025-11-17",
+    "임의경매",
+    116215747,
+    false,
+    false,
+    false
+   ]
+  ],
+  "minBidWon": 313000000,
+  "appraisalWon": 313000000,
+  "tankSaleDate": "2026-11-03",
+  "tankSoldWon": 0,
+  "baseDate": "2018-06-26",
+  "distDeadline": "2026-01-28",
+  "claimTotalWon": 563400000,
+  "tankTenantN": null,
+  "warnings": 0
+ },
+ "2025-751": {
+  "tenants": [],
+  "unknown": [
+   [
+    "2024-08-28",
+    false,
+    false,
+    false
+   ]
+  ],
+  "registry": [
+   [
+    "갑(2)",
+    "2021-10-05",
+    "소유권이전",
+    0,
+    false,
+    false,
+    false
+   ],
+   [
+    "을(1)",
+    "2021-10-05",
+    "근저당권설정",
+    264000000,
+    true,
+    true,
+    false
+   ],
+   [
+    "을(2)",
+    "2024-07-25",
+    "근저당권설정",
+    68640000,
+    false,
+    true,
+    false
+   ],
+   [
+    "을(3)",
+    "2024-07-25",
+    "근저당권설정",
+    29010000,
+    false,
+    true,
+    false
+   ],
+   [
+    "갑(3)",
+    "2025-07-22",
+    "가압류",
+    239000000,
+    false,
+    true,
+    false
+   ],
+   [
+    "갑(4)",
+    "2025-09-26",
+    "임의경매",
+    230507351,
+    false,
+    false,
+    false
+   ]
+  ],
+  "minBidWon": 235200000,
+  "appraisalWon": 336000000,
+  "tankSaleDate": "2026-11-03",
+  "tankSoldWon": 0,
+  "baseDate": "2021-10-05",
+  "distDeadline": "2025-12-30",
+  "claimTotalWon": 600650000,
+  "tankTenantN": null,
+  "warnings": 0
+ },
+ "2026-100087": {
+  "tenants": [],
+  "unknown": [],
+  "registry": [
+   [
+    "갑(4)",
+    "2021-10-06",
+    "공유자전원지분전부이전",
+    0,
+    false,
+    false,
+    false
+   ],
+   [
+    "을(2)",
+    "2021-10-06",
+    "근저당권설정",
+    348000000,
+    true,
+    true,
+    false
+   ],
+   [
+    "을(8)",
+    "2022-05-27",
+    "근저당권설정",
+    360000000,
+    false,
+    true,
+    false
+   ],
+   [
+    "을(9)",
+    "2024-04-30",
+    "근저당권설정",
+    168000000,
+    false,
+    true,
+    false
+   ],
+   [
+    "갑(5)",
+    "2025-06-19",
+    "가압류",
+    50581200,
+    false,
+    true,
+    false
+   ],
+   [
+    "갑(6)",
+    "2025-07-01",
+    "가압류",
+    9956579,
+    false,
+    true,
+    false
+   ],
+   [
+    "갑(7)",
+    "2025-07-08",
+    "가압류",
+    23619000,
+    false,
+    true,
+    false
+   ],
+   [
+    "갑(8)",
+    "2025-08-28",
+    "가압류",
+    32080000,
+    false,
+    true,
+    false
+   ],
+   [
+    "갑(9)",
+    "2026-01-20",
+    "임의경매",
+    296289271,
+    false,
+    false,
+    false
+   ]
+  ],
+  "minBidWon": 273000000,
+  "appraisalWon": 390000000,
+  "tankSaleDate": "2026-11-11",
+  "tankSoldWon": 0,
+  "baseDate": "2021-10-06",
+  "distDeadline": "2026-04-01",
+  "claimTotalWon": 992236779,
+  "tankTenantN": null,
+  "warnings": 0
+ },
+ "2026-100199": {
+  "tenants": [],
+  "unknown": [],
+  "registry": [
+   [
+    "갑(2)",
+    "2018-09-10",
+    "소유권이전",
+    0,
+    false,
+    false,
+    false
+   ],
+   [
+    "을(1)",
+    "2018-09-10",
+    "근저당권설정",
+    139440000,
+    true,
+    true,
+    false
+   ],
+   [
+    "을(2)",
+    "2023-10-05",
+    "근저당권설정",
+    36000000,
+    false,
+    true,
+    false
+   ],
+   [
+    "갑(6)",
+    "2026-02-23",
+    "임의경매",
+    109073227,
+    false,
+    false,
+    false
+   ]
+  ],
+  "minBidWon": 160300000,
+  "appraisalWon": 229000000,
+  "tankSaleDate": "2026-11-04",
+  "tankSoldWon": 0,
+  "baseDate": "2018-09-10",
+  "distDeadline": "2026-05-18",
+  "claimTotalWon": 175440000,
+  "tankTenantN": null,
+  "warnings": 0
+ },
+ "2026-100329": {
+  "tenants": [],
+  "unknown": [
+   [
+    "2014-02-27",
+    false,
+    false,
+    true
+   ]
+  ],
+  "registry": [
+   [
+    "갑(4)",
+    "2014-02-25",
+    "공유자전원지분전부이전",
+    0,
+    false,
+    false,
+    false
+   ],
+   [
+    "을(6)",
+    "2014-02-25",
+    "근저당권설정",
+    139250000,
+    true,
+    true,
+    false
+   ],
+   [
+    "을(7)",
+    "2014-04-22",
+    "근저당권설정",
+    60000000,
+    false,
+    true,
+    false
+   ],
+   [
+    "을(8)",
+    "2018-02-06",
+    "근저당권설정",
+    17750000,
+    false,
+    true,
+    false
+   ],
+   [
+    "을(9)",
+    "2019-09-27",
+    "근저당권설정",
+    99600000,
+    false,
+    true,
+    false
+   ],
+   [
+    "을(10)",
+    "2021-04-29",
+    "근저당권설정",
+    120000000,
+    false,
+    true,
+    false
+   ],
+   [
+    "갑(7)",
+    "2024-04-29",
+    "압류",
+    0,
+    false,
+    true,
+    false
+   ],
+   [
+    "을(11)",
+    "2024-08-30",
+    "근저당권설정",
+    100000000,
+    false,
+    true,
+    false
+   ],
+   [
+    "갑(8)",
+    "2024-11-07",
+    "가압류",
+    24088633,
+    false,
+    true,
+    false
+   ],
+   [
+    "갑(9)",
+    "2024-12-19",
+    "압류",
+    0,
+    false,
+    true,
+    false
+   ],
+   [
+    "갑(10)",
+    "2025-01-13",
+    "가압류",
+    84066900,
+    false,
+    true,
+    false
+   ],
+   [
+    "갑(11)",
+    "2026-02-05",
+    "임의경매",
+    196133976,
+    false,
+    false,
+    false
+   ],
+   [
+    "갑(12)",
+    "2026-03-19",
+    "압류",
+    0,
+    false,
+    true,
+    false
+   ]
+  ],
+  "minBidWon": 151900000,
+  "appraisalWon": 310000000,
+  "tankSaleDate": "2026-11-04",
+  "tankSoldWon": 0,
+  "baseDate": "2014-02-25",
+  "distDeadline": "2026-04-20",
+  "claimTotalWon": 644755533,
+  "tankTenantN": null,
+  "warnings": 0
+ },
+ "2026-10198": {
+  "tenants": [],
+  "unknown": [],
+  "registry": [
+   [
+    "갑(1)",
+    "1996-08-09",
+    "소유권이전",
+    0,
+    false,
+    false,
+    false
+   ],
+   [
+    "을(13)",
+    "2018-05-25",
+    "근저당권설정",
+    104992457,
+    true,
+    true,
+    false
+   ],
+   [
+    "을(14)",
+    "2024-07-29",
+    "근저당권설정",
+    19500000,
+    false,
+    true,
+    false
+   ],
+   [
+    "갑(3)",
+    "2025-03-26",
+    "가압류",
+    37890767,
+    false,
+    true,
+    false
+   ],
+   [
+    "갑(5)",
+    "2025-08-01",
+    "가압류",
+    7738708,
+    false,
+    true,
+    false
+   ],
+   [
+    "갑(6)",
+    "2026-03-31",
+    "임의경매",
+    16713087,
+    false,
+    false,
+    false
+   ]
+  ],
+  "minBidWon": 100800000,
+  "appraisalWon": 144000000,
+  "tankSaleDate": "2026-11-02",
+  "tankSoldWon": 0,
+  "baseDate": "2018-05-25",
+  "distDeadline": "2026-06-15",
+  "claimTotalWon": 170121932,
+  "tankTenantN": null,
+  "warnings": 0
+ },
+ "2026-15038": {
+  "tenants": [
+   [
+    "2023-10-05",
+    "2023-09-06",
+    "2026-02-09",
+    60000000,
+    0,
+    false
+   ]
+  ],
+  "unknown": [],
+  "registry": [
+   [
+    "갑(21)",
+    "2015-01-30",
+    "소유권이전",
+    0,
+    false,
+    false,
+    false
+   ],
+   [
+    "을(9)",
+    "2015-04-16",
+    "근저당권설정",
+    39000000,
+    true,
+    true,
+    false
+   ],
+   [
+    "을(10)",
+    "2017-03-06",
+    "근저당권설정",
+    20000000,
+    false,
+    true,
+    false
+   ],
+   [
+    "갑(24)",
+    "2024-09-02",
+    "가압류",
+    37115762,
+    false,
+    true,
+    false
+   ],
+   [
+    "갑(30)",
+    "2025-04-23",
+    "압류",
+    0,
+    false,
+    true,
+    false
+   ],
+   [
+    "갑(33)",
+    "2025-07-01",
+    "압류",
+    0,
+    false,
+    true,
+    false
+   ],
+   [
+    "갑(37)",
+    "2025-09-02",
+    "가압류",
+    8696523,
+    false,
+    true,
+    false
+   ],
+   [
+    "갑(38)",
+    "2026-01-21",
+    "임의경매",
+    17237722,
+    false,
+    false,
+    false
+   ],
+   [
+    "갑(39)",
+    "2026-03-13",
+    "가압류",
+    102287217,
+    false,
+    true,
+    false
+   ]
+  ],
+  "minBidWon": 102200000,
+  "appraisalWon": 146000000,
+  "tankSaleDate": "2026-11-03",
+  "tankSoldWon": 0,
+  "baseDate": "2015-04-16",
+  "distDeadline": "2026-04-08",
+  "claimTotalWon": 207099502,
+  "tankTenantN": null,
+  "warnings": 0
+ },
+ "2026-30198": {
+  "tenants": [],
+  "unknown": [],
+  "registry": [
+   [
+    "갑(4)",
+    "2018-05-08",
+    "소유권이전",
+    0,
+    false,
+    false,
+    false
+   ],
+   [
+    "을(4)",
+    "2020-08-31",
+    "근저당권설정",
+    300000000,
+    true,
+    true,
+    false
+   ],
+   [
+    "을(7)",
+    "2022-09-07",
+    "근저당권설정",
+    276000000,
+    false,
+    true,
+    false
+   ],
+   [
+    "을(9)",
+    "2025-07-29",
+    "근저당권설정",
+    300000000,
+    false,
+    true,
+    false
+   ],
+   [
+    "갑(5)",
+    "2026-01-22",
+    "임의경매",
+    304753872,
+    false,
+    false,
+    false
+   ]
+  ],
+  "minBidWon": 562100000,
+  "appraisalWon": 803000000,
+  "tankSaleDate": "2026-08-11",
+  "tankSoldWon": 713000170,
+  "baseDate": "2020-08-31",
+  "distDeadline": "2026-04-16",
+  "claimTotalWon": 876000000,
+  "tankTenantN": null,
+  "warnings": 0
+ },
+ "2026-30776": {
+  "tenants": [
+   [
+    "2025-11-03",
+    "2025-11-03",
+    "2026-05-15",
+    59000000,
+    1000000,
+    false
+   ]
+  ],
+  "unknown": [],
+  "registry": [
+   [
+    "갑(1)",
+    "2019-12-20",
+    "소유권보존",
+    0,
+    false,
+    false,
+    false
+   ],
+   [
+    "을(1)",
+    "2020-01-07",
+    "근저당권설정",
+    354200000,
+    true,
+    true,
+    false
+   ],
+   [
+    "을(2)",
+    "2022-03-25",
+    "근저당권설정",
+    196800000,
+    false,
+    true,
+    false
+   ],
+   [
+    "갑(2)",
+    "2026-03-20",
+    "소유권이전",
+    0,
+    false,
+    false,
+    false
+   ],
+   [
+    "갑(3)",
+    "2026-03-30",
+    "임의경매",
+    279700765,
+    false,
+    false,
+    false
+   ]
+  ],
+  "minBidWon": 343700000,
+  "appraisalWon": 491000000,
+  "tankSaleDate": "2026-11-17",
+  "tankSoldWon": 0,
+  "baseDate": "2020-01-07",
+  "distDeadline": "2026-06-01",
+  "claimTotalWon": 551000000,
+  "tankTenantN": null,
+  "warnings": 0
+ },
+ "2026-71209": {
+  "tenants": [
+   [
+    "2025-05-19",
+    "2025-11-10",
+    "2026-07-13",
+    10000000,
+    400000,
+    false
+   ]
+  ],
+  "unknown": [],
+  "registry": [
+   [
+    "갑(28)",
+    "2021-01-28",
+    "소유권이전",
+    0,
+    false,
+    false,
+    false
+   ],
+   [
+    "을(12)",
+    "2022-06-08",
+    "근저당권설정",
+    194400000,
+    true,
+    true,
+    false
+   ],
+   [
+    "갑(29)",
+    "2026-02-04",
+    "가압류",
+    32371157,
+    false,
+    true,
+    false
+   ],
+   [
+    "갑(30)",
+    "2026-06-15",
+    "임의경매",
+    172431950,
+    false,
+    false,
+    false
+   ]
+  ],
+  "minBidWon": 119000000,
+  "appraisalWon": 170000000,
+  "tankSaleDate": "2026-11-03",
+  "tankSoldWon": 0,
+  "baseDate": "2022-06-08",
+  "distDeadline": "2026-08-31",
+  "claimTotalWon": 226771157,
+  "tankTenantN": null,
+  "warnings": 0
+ }
+}
