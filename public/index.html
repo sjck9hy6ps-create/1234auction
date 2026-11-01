@@ -20036,6 +20036,7 @@ var VISIT_MIN_P = 0.20; // 임장은 비용이 작아 낙찰 가능성 20% 이�
 function computePick(row) {
     row.pick = null; row.visit = { go: false, why: '' };
     var t = row.type;
+    if (row.a && row.a.rights && row.a.rights.tankSoldWon) { row.visit.why = '이미 낙찰된 사건이에요 - 탱크옥션에 매각 ' + (row.a.rights.tankSaleDate || '') + ' 표시'; return; }  /* 탱크옥션에서 이미 매각된 사건은 추천·임장 대상에서 제외(2026-11-01) */
     if (t !== 'apt') { row.visit.why = '빌라는 아직 계산하지 않아요'; return; }
     if (!row.sale) { row.visit.why = '같은 단지 실거래 자료가 부족해요'; return; }
     if (!row.winbid) { row.visit.why = row.wbBase ? '낙찰 가능성을 계산하지 못했어요(감정가·최저가 확인)' : '같은 단지 같은 평형 거래가 부족해서 낙찰 가능성을 계산할 수 없어요'; return; }
