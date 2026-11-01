@@ -1,4 +1,4 @@
-// 탱크옥션 상세 보내기(0.5.5: 목록 화면 줄에 번호(data-tid)가 있는데도 '2025-5910' 형식이라 못 읽던 것 수정 + 번호를 모르는 사건은 목록의 그 사건 줄을 대신 눌러 사이트가 직접 창을 열게 함(눌러 열린 창에서 번호 기억) + 번호가 사건과 다르면 건너뜀 / 0.5.4: 앱 탭이 닫혀 있어도(앱 반영 대기) 모으기가 끝나면 대기열에 완료를 기록하고 다음 사건으로 넘어감 / 대기열에서 번호를 모르는 사건은 탱크옥션 검색 화면(사건번호 칸 채움)을 열어 번호를 기억시키는 버튼 / 0.5.3: 자동으로 열린 팝업은 사용자 클릭이 없어 크롬이 참고자료 팝업을 막을 수 있음 → 막히면 빈 자료를 보내지 않고 '팝업 허용' 안내 후 자동 수집 중단 / 번호(tid) 학습을 href·data-tid로 좁히고 상세 팝업에서는 자기 사건만 기억 / 0.5.2: 수집 중 화면 위쪽에 진행 막대(사건·단계), 메인 화면 대기열 버튼에도 '수집 중' 실시간 표시, ▶ 자동 수집 시작 버튼, 2분 넘게 막힌 사건은 건너뛰고 다음으로 / 0.5.1: 대기열 사건이 끝나면 다음 사건을 자동으로 열기(체크박스, 8초 뒤·하루 30건 상한), 번호(tid) 학습을 링크 외 속성(onclick·data-*)까지 확대, '🔎 번호 점검' 버튼 / 0.5.0: 앱이 만든 '모으기 대기열'을 탱크옥션 화면 왼쪽 아래에 보여 주고, 한 번 누르면 그 사건 팝업을 열어 자동 수집·닫기. 사건번호↔탱크옥션 번호(tid)는 사용자가 연 화면에서 자동으로 기억 / 0.4.4: 글자 정보가 없는 그림 PDF(세대열람)는 확대해서 쪽 그림을 내려받기 폴더(tank-ocr)에 저장 - 글자 인식용 / 0.4.3: PDF로 열리는 서류(감정평가서·매물명세서·건물등기·세대열람)는 글 조각이 줄바꿈으로 흩어져 읽히므로, 쪽을 끝까지 넘겨 그린 뒤 글 조각의 위치로 줄을 다시 맞춤 / 0.4.2: 상세 팝업의 '파일자료' 메뉴는 눌러도 같은 화면이 바뀌지 않고 참고자료 팝업이 새로 열리므로, 보내기를 누르면 그 팝업을 한 번 열어 그 안의 탭(사건내역~세대열람)을 읽어 상세 글과 합쳐 보냄 / 0.4.1: 참고자료 팝업·iframe 안 글도 읽고, 못 찾은 탭이 있으면 화면 버튼 이름을 같이 보냄, 끝나면 완료 안내창 + 모으려고 열었던 팝업창 자동 닫기 / 0.4.0: 사건내역·기일내역·문건/송달·현황조사서·부동산표시·감정평가서·매각물건명세서·건물등기·세대열람 탭까지 같이 읽음) - 탱크옥션 물건 상세 페이지에 버튼 하나를 띄움. 눌렀을 때만 지금 열려 있는 페이지의 글(임차인 현황·건물등기·권리분석 등)을 앱에 보냄.
+// 탱크옥션 상세 보내기(0.5.6: 이 목록에 대기열 사건이 없으면 같은 탭을 그 사건번호 검색 결과로 바꾼 뒤 줄을 눌러 이어감 / 같은 번호가 여러 법원에 있으면 건물 이름으로 구분 / 0.5.5: 목록 화면 줄에 번호(data-tid)가 있는데도 '2025-5910' 형식이라 못 읽던 것 수정 + 번호를 모르는 사건은 목록의 그 사건 줄을 대신 눌러 사이트가 직접 창을 열게 함(눌러 열린 창에서 번호 기억) + 번호가 사건과 다르면 건너뜀 / 0.5.4: 앱 탭이 닫혀 있어도(앱 반영 대기) 모으기가 끝나면 대기열에 완료를 기록하고 다음 사건으로 넘어감 / 대기열에서 번호를 모르는 사건은 탱크옥션 검색 화면(사건번호 칸 채움)을 열어 번호를 기억시키는 버튼 / 0.5.3: 자동으로 열린 팝업은 사용자 클릭이 없어 크롬이 참고자료 팝업을 막을 수 있음 → 막히면 빈 자료를 보내지 않고 '팝업 허용' 안내 후 자동 수집 중단 / 번호(tid) 학습을 href·data-tid로 좁히고 상세 팝업에서는 자기 사건만 기억 / 0.5.2: 수집 중 화면 위쪽에 진행 막대(사건·단계), 메인 화면 대기열 버튼에도 '수집 중' 실시간 표시, ▶ 자동 수집 시작 버튼, 2분 넘게 막힌 사건은 건너뛰고 다음으로 / 0.5.1: 대기열 사건이 끝나면 다음 사건을 자동으로 열기(체크박스, 8초 뒤·하루 30건 상한), 번호(tid) 학습을 링크 외 속성(onclick·data-*)까지 확대, '🔎 번호 점검' 버튼 / 0.5.0: 앱이 만든 '모으기 대기열'을 탱크옥션 화면 왼쪽 아래에 보여 주고, 한 번 누르면 그 사건 팝업을 열어 자동 수집·닫기. 사건번호↔탱크옥션 번호(tid)는 사용자가 연 화면에서 자동으로 기억 / 0.4.4: 글자 정보가 없는 그림 PDF(세대열람)는 확대해서 쪽 그림을 내려받기 폴더(tank-ocr)에 저장 - 글자 인식용 / 0.4.3: PDF로 열리는 서류(감정평가서·매물명세서·건물등기·세대열람)는 글 조각이 줄바꿈으로 흩어져 읽히므로, 쪽을 끝까지 넘겨 그린 뒤 글 조각의 위치로 줄을 다시 맞춤 / 0.4.2: 상세 팝업의 '파일자료' 메뉴는 눌러도 같은 화면이 바뀌지 않고 참고자료 팝업이 새로 열리므로, 보내기를 누르면 그 팝업을 한 번 열어 그 안의 탭(사건내역~세대열람)을 읽어 상세 글과 합쳐 보냄 / 0.4.1: 참고자료 팝업·iframe 안 글도 읽고, 못 찾은 탭이 있으면 화면 버튼 이름을 같이 보냄, 끝나면 완료 안내창 + 모으려고 열었던 팝업창 자동 닫기 / 0.4.0: 사건내역·기일내역·문건/송달·현황조사서·부동산표시·감정평가서·매각물건명세서·건물등기·세대열람 탭까지 같이 읽음) - 탱크옥션 물건 상세 페이지에 버튼 하나를 띄움. 눌렀을 때만 지금 열려 있는 페이지의 글(임차인 현황·건물등기·권리분석 등)을 앱에 보냄.
 // 로그인은 사용자가 직접 한 화면만 읽음(로그인 정보는 건드리지 않고, 자동으로 다른 페이지로 이동하거나 순회하지 않음).
 (function () {
   const ID = 'tk-send-btn';
@@ -275,29 +275,39 @@
   };
 
   // 목록 화면: 대기열 사건의 줄을 찾아 사이트가 직접 사건 창을 열게 누름(번호를 모를 때). 열렸는지는 background의 clickOpen 소모로 확인
-  const findRow = (caseNo) => {
+  const findRow = (caseNo, name) => {
     const cn = normCase(caseNo);
-    const hit = Array.from(document.querySelectorAll('tr,li,[data-tid]')).filter((el) => {
+    let hit = Array.from(document.querySelectorAll('tr,li,[data-tid]')).filter((el) => {
       if (!visible(el) || el.closest('#tk-queue')) return false;
       const ms = ((el.innerText || '').slice(0, 800).match(CASE_RE) || []).map(normCase), u = ms.filter((v, i) => ms.indexOf(v) === i);
       return u.length === 1 && u[0] === cn;
     });
     hit.sort((a, b) => (a.innerText || '').length - (b.innerText || '').length);
-    return hit[0] || null;
+    hit = hit.filter((el, i) => !hit.slice(0, i).some((o) => el.contains(o)));  // 가장 안쪽 줄만
+    if (hit.length > 1) { const nm = String(name || '').replace(/\s+/g, '').slice(0, 4); hit = nm ? hit.filter((el) => (el.innerText || '').replace(/\s+/g, '').indexOf(nm) >= 0) : []; }  // 같은 번호가 여러 법원에 있으면 이름으로 구분
+    return hit.length === 1 ? hit[0] : null;
   };
-  if (isTop && !/\/popup\//.test(location.pathname)) chrome.runtime.onMessage.addListener((m, s, send) => {
-    if (!m || m.type !== 'clickRow') return;
-    const row = findRow(m.caseNo); if (!row) { send({ ok: false }); return; }
-    send({ ok: true });
+  const clickRoutine = async (row, caseNo) => {
+    row.scrollIntoView({ block: 'center' });
+    const cn = normCase(caseNo), cell = Array.from(row.querySelectorAll('td,span,a,div,p')).filter((e) => { const ms = ((e.innerText || '').match(CASE_RE) || []).map(normCase); return ms.length && ms.every((v) => v === cn) && !e.children.length; })[0];
+    const tgts = [cell, row.querySelector('a'), row].filter((x, i, a) => x && a.indexOf(x) === i);
+    for (const t of tgts) { try { t.click(); } catch (e) {} for (let i = 0; i < 8; i++) { await sleep(1000); const r = await msg({ type: 'clickPending' }); if (r && !r.pending) return; } }
+    msg({ type: 'clickFail', caseNo: cn, html: row.outerHTML.replace(/\s+/g, ' ').slice(0, 1500) });
+  };
+  if (isTop && !/\/popup\//.test(location.pathname)) {
+    chrome.runtime.onMessage.addListener((m, s, send) => {
+      if (!m || m.type !== 'clickRow') return;
+      const row = findRow(m.caseNo, m.name); if (!row) { send({ ok: false }); return; }
+      send({ ok: true }); clickRoutine(row, m.caseNo); return false;
+    });
+    // 이 탭이 사건번호 검색 결과로 바뀐 직후라면 그 사건 줄을 찾아 누름
     (async () => {
-      row.scrollIntoView({ block: 'center' });
-      const cn = normCase(m.caseNo), cell = Array.from(row.querySelectorAll('td,span,a,div,p')).filter((e) => { const ms = ((e.innerText || '').match(CASE_RE) || []).map(normCase); return ms.length && ms.every((v) => v === cn) && !e.children.length; })[0];
-      const tgts = [cell, row.querySelector('a'), row].filter((x, i, a) => x && a.indexOf(x) === i);
-      for (const t of tgts) { try { t.click(); } catch (e) {} for (let i = 0; i < 8; i++) { await sleep(1000); const r = await msg({ type: 'clickPending' }); if (r && !r.pending) return; } }
-      msg({ type: 'clickFail', caseNo: cn, html: row.outerHTML.replace(/\s+/g, ' ').slice(0, 1500) });
+      const r = await msg({ type: 'pendingRow' }); if (!r || !r.caseNo) return;
+      let row = null; for (let i = 0; i < 20 && !row; i++) { row = findRow(r.caseNo, r.name); if (!row) await sleep(1000); }
+      if (!row) { msg({ type: 'rowMissing', caseNo: r.caseNo }); return; }
+      clickRoutine(row, r.caseNo);
     })();
-    return false;
-  });
+  }
   setInterval(ensure, 2000);
   ensure();
   if (isTop) { learnTids(); renderQueue(); setInterval(learnTids, 5000); setInterval(renderQueue, 4000); }
