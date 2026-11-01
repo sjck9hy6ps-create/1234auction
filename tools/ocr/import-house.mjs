@@ -38,9 +38,16 @@ for (const f of files) {
   const text = execFileSync(BIN, [path.join(DIR, f)], { encoding: 'utf8', maxBuffer: 1 << 24 });
   const jb = (text.match(/지번\s*주소\s*\t?([^\n]+)/) || [])[1] || '', dm = jb.match(/([가-힣0-9]+(?:동|리|가))\s+(\d+(?:-\d+)?)/), ho = jb.match(/(\d+)호/), dn = jb.replace(/^.*?\d+(?:-\d+)?\s*/, '').match(/(\d+)동/);
   if (!dm) { skipped.push([f, '그림에서 지번 주소를 못 읽음']); continue; }
-  let cand = ents.filter((a) => a.rights.tankAddr.includes(dm[1] + ' ' + dm[2]));
+  const bj = dm[2].replace(/-0$/, '');  // 856-0 = 856
+  let cand = ents.filter((a) => a.rights.tankAddr.includes(dm[1] + ' ' + bj + ' ') || a.rights.tankAddr.includes(dm[1] + ' ' + bj));
   if (ho) cand = cand.filter((a) => a.rights.tankAddr.includes(ho[1] + '호')) || cand;
   if (dn && cand.length > 1) { const c2 = cand.filter((a) => a.rights.tankAddr.includes(dn[1] + '동')); if (c2.length) cand = c2; }
+  let looseNote = '';
+  if (!cand.length && ho && dn) {  // 글자 인식이 동 이름을 한 글자 잘못 읽는 경우(삼숭동→삼송동): 번지·동·호가 모두 같은 물건이 하나뿐이고, 그림의 전입일이 앱의 임차인 전입일과 겹칠 때만 같은 물건으로 봄
+    const bre = new RegExp('(^|\\s)' + bj.replace(/-/g, '\\-') + '(\\s|$)'), dates0 = new Set((text.match(/\d{4}-\d{2}-\d{2}/g) || []));
+    const loose = ents.filter((a) => bre.test(a.rights.tankAddr) && a.rights.tankAddr.includes(dn[1] + '동') && a.rights.tankAddr.includes(ho[1] + '호') && (a.rights.tenants || []).concat(a.rights.unknownOccupants || []).some((t) => t.moveIn && dates0.has(t.moveIn)));
+    if (loose.length === 1) { cand = loose; looseNote = '그림의 동 이름(' + dm[1] + ')이 앱(' + (loose[0].rights.tankAddr.match(/([가-힣0-9]+(?:동|리|가))\s+\d/) || [])[1] + ')과 달라요 - 번지·동·호·전입일이 같아 같은 물건으로 봄'; }
+  }
   if (cand.length !== 1) { skipped.push([f, cand.length ? '같은 주소 물건이 ' + cand.length + '건이라 구분 못 함' : '앱에 이 주소의 탱크옥션 수집 물건이 없음 (' + jb.trim().slice(0, 40) + ')']); continue; }
   const a = cand[0], R = a.rights; R.docs = R.docs || {};
   if (R.docs.houseRead && R.docs.houseRead.ocr && R.docs.houseRead.ocrMtime === mtime) {
@@ -48,12 +55,13 @@ for (const f of files) {
     imgJobs.push({ a, f, mtime }); R.docs.houseRead.imgAt = Date.now(); toSave.push(a); console.log(`${dry ? '[미리보기] ' : ''}${a.caseNo} ${a.name || ''}: 그림만 첨부 (${f})`); continue;  // 글자 인식은 이미 했고 그림만 올림
   }
   const hr = ctx.myrHouseRead(text); if (hr.state !== 'ok') { skipped.push([f, '글자는 읽었지만 세대열람 내용으로 보이지 않음']); continue; }
+  if (looseNote) hr.addrNote = looseNote;
   hr.ocr = true; hr.ocrAt = Date.now(); hr.ocrMtime = mtime; hr.ocrFile = f; hr.imgAt = Date.now();
   imgJobs.push({ a, f, mtime });
   const dates = (text.match(/\d{4}[.\-]\d{1,2}[.\-]\d{1,2}/g) || []).slice(0, 30).map(ctx.rightsDate);
   R.docs.houseRead = hr; R.docs.house = { dates, nChars: text.length, none: !!hr.empty, ocr: true };
   toSave.push(a);
-  console.log(`${dry ? '[미리보기] ' : ''}${a.caseNo} ${a.name || ''} ← ${f}: 발급 ${hr.issued || '?'} · 전입일 ${hr.moveIns.length}개 · 세대주 ${hr.holders}명 · ${hr.empty ? '전입 세대 없음' : '거주자 ' + hr.residents + '명'}${hr.absent ? ' · 말소/거주불명 표시 있음' : ''}`);
+  console.log(`${dry ? '[미리보기] ' : ''}${a.caseNo} ${a.name || ''} ← ${f}${looseNote ? ' (' + looseNote + ')' : ''}: 발급 ${hr.issued || '?'} · 전입일 ${hr.moveIns.length}개 · 세대주 ${hr.holders}명 · ${hr.empty ? '전입 세대 없음' : '거주자 ' + hr.residents + '명'}${hr.absent ? ' · 말소/거주불명 표시 있음' : ''}`);
 }
 skipped.forEach(([f, why]) => console.log('건너뜀', f, '-', why));
 if (!dry && imgJobs.length) {  // 줄인 그림 올리기(사건 id = 키). 저장 실패하면 앱 값도 올리지 않음
