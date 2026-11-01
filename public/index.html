@@ -22213,6 +22213,12 @@ function parseNaverListings(text) {
     var lines = String(text || '').split(/\r?\n/).map(function(x) { return x.trim(); }).filter(Boolean);
     var out = [], cur = null;
     var push = function() { if (cur && cur.price) out.push(cur); cur = null; };
+    // 단지 정보 화면의 '주소'(지번)가 같이 복사됐으면 건물 이름이 비어 있는 물건을 번지로 찾는 데 씀(2026-11-01, 대림1차 ↔ 일곡동 848-2)
+    var naverDong = '', naverBunji = '';
+    for (var li = 0; li < lines.length && !naverBunji; li++) {
+        if (!/^주소(\s|$)/.test(lines[li])) continue;
+        for (var lj = li; lj < Math.min(li + 3, lines.length); lj++) { var am0 = /([가-힣0-9]+(?:동|리|가))\s+(\d+(?:-\d+)?)\s*$/.exec(lines[lj]); if (am0 && !/도로명/.test(lines[lj])) { naverDong = am0[1]; naverBunji = am0[2]; break; } }
+    }
     lines.forEach(function(ln) {
         var hm = /^(?:집주인|공인중개사협회매물)?\s*(.*?)\s*(\d+)동\s*$/.exec(ln);
         if (hm && !/매매|전세|월세/.test(ln)) { push(); cur = { complex: hm[1].replace(/^집주인/, '').trim(), dong: hm[2], desc: [] }; return; }
@@ -22237,7 +22243,7 @@ function parseNaverListings(text) {
         x.tenant = /안고|승계|세입자|갭/.test(d);
         x.urgent = /급매|초급|급,|급\s/.test(d);
         x.repair = /수리.{0,4}(필요|해야)|필요함|도배.{0,8}필요/.test(d) ? 'need' : (/올수리|올리모델링|올\s*수리|샤시포함|샷시포함|샤시까지|완벽/.test(d) ? 'full' : (/수리|교체|리모델링/.test(d) ? 'part' : ''));
-        x.text = d;
+        x.text = d; if (naverBunji) { x.naverDong = naverDong; x.naverBunji = naverBunji; }
         return x;
     });
 }
@@ -22457,6 +22463,8 @@ async function applyListingListsAuto(list) {
         if (!cands.length) cands = T.filter(function(r) { return sameName(nameKey(r.name), n); });
         // 2026-10-27(청당마을 ↔ 네이버 '청당마을신도브래뉴'): 앱에 짧게 저장된 이름이면 주소(건물명이 들어 있음)에 네이버 단지 이름이 통째로 들어 있는 물건으로 찾음(5글자 이상)
         if (!cands.length && n.length >= 5) cands = T.filter(function(r) { return matchNormName(String(r.a.addr || '')).indexOf(n) >= 0; });
+        // 2026-11-01(건물 이름이 비어 있는 물건: 대림1차 ↔ 일곡동 848-2): 단지 정보의 지번 주소가 같이 왔으면 같은 동·같은 번지인 물건만 같은 단지로 봄
+        if (!cands.length) { var nb = byName[n][0]; if (nb && nb.naverBunji) cands = T.filter(function(r) { return r.a.dong === nb.naverDong && String(r.a.bunji || '').replace(/\s/g, '') === nb.naverBunji; }); }
         // 2026-10-28(성호2차아파트 ↔ 네이버 '성호2-1차'): 네이버가 한 단지를 '2-1차·2-2차'처럼 나눈 경우 - 번호를 '2차'로 합친 이름이 같고, 보낸 매물의 동 번호 중에 이 물건의 동(예: 205동)이 있을 때만 같은 단지로 봄
         if (!cands.length) {
             var rawN = String((byName[n][0] || {}).complex || '').replace(/\s/g, ''), subless = rawN.replace(/(\d+)-(\d+)차/, '$1차');
