@@ -14795,6 +14795,28 @@ function rightsAuditHtml(a, R) {
     var L = rightsAuditFor(a, R); if (!L.length) return '<div class="dr-sub" style="margin-top:4px;color:#15803d;">🔍 자료 점검: 주소·감정가·말소기준일이 서로 맞아요 (법원 문건과의 대조는 아니에요 - 매각물건명세서의 임차인·인수 조건은 직접 확인하세요)</div>';
     return '<div class="dr-warn" style="margin-top:4px;"><b>🔍 자료 점검에서 확인할 것</b><br>' + L.map(function(x) { return (x.lvl === 'err' ? '❌ ' : '⚠️ ') + bbEsc(x.msg); }).join('<br>') + '</div>';
 }
+/* 🛡️ 읽은 값 검증(2026-11-01, 사용자 요청: 오타·오차·오류 없이 불러와야 함).
+   저장하기 전에 읽은 값을 원문의 다른 부분과 서로 맞춰 보고, 어긋나면 저장하지 않고(bad) 이유를 돌려줌.
+   - 감정가·최저가를 읽었는지, 최저가가 기일 표의 현재 회차 금액과 같은지
+   - 임차인 수가 원문의 '임차인: N건'과 같은지, 등기 행 수·채권합계·말소기준일이 원문과 같은지
+   - 읽기 코드가 값을 놓쳤을 때 0이나 빈칸으로 저장돼 계산이 조용히 틀어지는 것을 막는 장치 */
+function rightsIntegrity(text, R) {
+    var bad = [], warn = [], t = String(text || '');
+    if (!(R.appraisalWon > 0)) bad.push('감정가를 읽지 못했어요');
+    if (!(R.minBidWon > 0) && !R.tankSoldWon) bad.push('최저가를 읽지 못했어요');
+    var ft = t.indexOf('구분\t매각기일'); if (ft >= 0 && R.minBidWon > 0 && !R.tankSoldWon) {
+        var rows = (t.slice(ft, ft + 1500).match(/\d차\s+\d{4}-\d\d-\d\d\s+[\d,]+\s*(?:\S+)?/g) || []).map(function(x) { var m = x.match(/(\d{4}-\d\d-\d\d)\s+([\d,]+)\s*(\S*)/); return { date: m[1], won: rightsNum(m[2]), res: m[3] || '' }; });
+        var cur = rows.filter(function(r) { return !r.res || r.res === '예정'; })[0];
+        if (cur && R.tankSaleDate && cur.date === R.tankSaleDate && cur.won !== R.minBidWon) bad.push('헤더 최저가(' + R.minBidWon + ')와 기일 표 현재 회차 금액(' + cur.won + ')이 달라요');
+    }
+    if (R.tankTenantN != null && R.tankTenantN !== (R.tenants || []).length + (R.unknownOccupants || []).length) bad.push('원문 임차인 ' + R.tankTenantN + '명인데 ' + ((R.tenants || []).length + (R.unknownOccupants || []).length) + '명만 읽었어요');
+    var ri = t.search(/건물등기\s*\n/), rb = ri >= 0 ? t.slice(ri) : '', rf = rb.search(/\n참고\/주의|\n주의사항|\n권리분석요약|\n주요변동/); if (rf > 0) rb = rb.slice(0, rf);
+    var nRaw = (rb.match(/(?:^|\n)(?:갑|을)\(\d+\)\s+\d{4}-\d\d-\d\d/g) || []).length;
+    if (nRaw && nRaw !== (R.registry || []).length) bad.push('등기 행이 원문 ' + nRaw + '개인데 ' + (R.registry || []).length + '개만 읽었어요');
+    var cm = t.match(/채권합계금액\s*:\s*([\d,]+)원/); if (cm && rightsNum(cm[1]) !== (R.claimTotalWon || 0)) bad.push('채권합계가 원문(' + cm[1] + ')과 달라요');
+    var bm = t.match(/말소기준일\(소액\)\s*:\s*(\d{4}-\d\d-\d\d)/); if (bm && bm[1] !== R.baseDate) warn.push('말소기준일 원문 ' + bm[1] + ' ≠ 읽은 값 ' + (R.baseDate || '-'));
+    return { bad: bad, warn: warn };
+}
 /* 📥 확장(탱크옥션 상세 보내기)에서 온 상세 페이지 글을 읽어 해당 물건의 권리분석에 저장(2026-10-27, 사용자 요청: 호가처럼 탱크옥션 상세내역도 불러오기).
    사건번호로 물건을 찾고, 같은 사건번호가 여럿이면 글 안의 동·번지로 가림. 못 찾거나 모호하면 저장하지 않고 이유를 돌려줌 */
 async function rightsApplyTankText(text) {
@@ -14815,6 +14837,7 @@ async function rightsApplyTankText(text) {
         if (cands.length > 1) { msgs.push(label + ': 같은 사건번호 ' + cands.length + '건이라 주소로 가리지 못했어요 - 상세에서 직접 붙여넣어 주세요'); continue; }
         var a = cands[0], R = rightsParseFull(part);
         if (!R.tenants.length && !R.registry.length && !R.noTenants) { msgs.push(label + ': 임차인·등기를 못 찾았어요 (페이지가 다 열렸는지 확인)'); continue; }
+        var ig = rightsIntegrity(part, R); if (ig.bad.length) { msgs.push(label + ': 읽은 값이 원문과 맞지 않아 저장하지 않았어요 - ' + ig.bad.join(' / ')); continue; }
         if (rightsSameProperty(a, R) === false) { msgs.push(label + ': 주소가 달라요(탱크옥션 "' + R.tankAddr + '" ↔ 앱 ' + (a.dong || '') + ' ' + (a.bunji || '') + ') - 사건번호만 같은 다른 물건일 수 있어 저장하지 않았어요'); continue; }
         R.pastedAt = Date.now(); R.via = 'extension'; a.rights = R;
         /* 탱크옥션이 최신: 앱 목록(입찰예정 CSV)의 감정가·최저가·입찰일·유찰수가 다르면 탱크옥션 값으로 맞추고, 바꾸기 전 값은 tankSync.prev에 남김(2026-11-01, 사용자 요청: 불러온 값에 오류가 없어야 함).

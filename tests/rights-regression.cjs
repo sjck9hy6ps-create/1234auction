@@ -9,7 +9,7 @@ const html = fs.readFileSync(path.join(ROOT, 'public', 'index.html'), 'utf8');
 function grab(i) { let d = 0, k = html.indexOf('{', i); for (;; k++) { const c = html[k]; if (c === '{') d++; else if (c === '}') { d--; if (d === 0) break; } } return html.slice(i, k + 1); }
 const funcs = [...html.matchAll(/^(?:async )?function ((?:myr|rights|parseTank|normalizeCase)\w*)\(/gm)].map((m) => grab(m.index));
 const consts = [...html.matchAll(/^var (?:MYR|RIGHTS)\w* = [^;]*;/gm)].map((m) => m[0]);
-const ctx = {}; vm.createContext(ctx); vm.runInContext(consts.join('\n') + '\n' + funcs.join('\n') + '\nthis.rightsParseFull = rightsParseFull; this.myrMaskTabs = myrMaskTabs;', ctx);
+const ctx = {}; vm.createContext(ctx); vm.runInContext(consts.join('\n') + '\n' + funcs.join('\n') + '\nthis.rightsParseFull = rightsParseFull; this.myrMaskTabs = myrMaskTabs; this.rightsIntegrity = rightsIntegrity;', ctx);
 
 const num = (s) => (/\d/.test(s || '') ? parseInt(String(s).replace(/\D/g, ''), 10) : 0);
 const dt = (s) => { const m = String(s || '').match(/(\d{4})[-.](\d{1,2})[-.](\d{1,2})/); return m ? `${m[1]}-${String(m[2]).padStart(2, '0')}-${String(m[3]).padStart(2, '0')}` : ''; };
@@ -64,12 +64,22 @@ files.forEach((f) => {
   const bm = t.match(/말소기준일\(소액\)\s*:\s*(\d{4}-\d\d-\d\d)/); if (bm && bm[1] !== R.baseDate) iss.push(`말소기준일 원문 ${bm[1]} ≠ 읽음 ${R.baseDate}`);
   const dm = t.match(/배당요구종기일\s*:\s*(\d{4}-\d\d-\d\d)/); if (dm && R.distDeadline && dm[1] !== R.distDeadline) iss.push(`배당종기 원문 ${dm[1]} ≠ 읽음 ${R.distDeadline}`);
   const cm = t.match(/채권합계금액\s*:\s*([\d,]+)원/); if (cm && num(cm[1]) !== (R.claimTotalWon || 0)) iss.push(`채권합계 원문 ${cm[1]} ≠ 읽음 ${R.claimTotalWon}`);
+  // ③ 저장 직전 검증(rightsIntegrity)이 정상 자료를 막지 않는지
+  const ig = ctx.rightsIntegrity(ctx.myrMaskTabs(t), R); ig.bad.forEach((x) => iss.push('저장 검증이 정상 자료를 막음: ' + x));
   // ② 기준 결과와 대조
   const sNow = summary(R); snapNew[key] = sNow;
   if (!update && snapOld[key] && JSON.stringify(snapOld[key]) !== JSON.stringify(sNow)) iss.push('이전에 확인한 읽기 결과와 달라졌어요(의도한 변경이면 --update)');
   if (!update && !snapOld[key]) iss.push('기준 결과가 없어요(--update 로 저장)');
   if (iss.length) { fail++; console.log('❌', key); iss.slice(0, 8).forEach((x) => console.log('    ' + x)); }
 });
+// ④ 일부러 망가뜨린 자료는 저장 검증이 막아야 함 (등기 행 삭제·최저가 0·임차인 행 삭제)
+{
+  const f0 = files.filter((f) => /^2025-570/.test(f))[0] || files[0], t0 = fs.readFileSync(path.join(FIX, f0), 'utf8'), R0 = ctx.rightsParseFull(ctx.myrMaskTabs(t0)); let ok = true;
+  const mut = [['등기 행 누락', (R) => { R.registry.pop(); }], ['최저가 0', (R) => { R.minBidWon = 0; }], ['임차인 행 누락', (R) => { R.tenants.pop(); R.tankTenantN = 5; }], ['채권합계 불일치', (R) => { R.claimTotalWon += 1; }]];
+  mut.forEach(([nm, fn]) => { const R = JSON.parse(JSON.stringify(R0)); fn(R); if (!ctx.rightsIntegrity(ctx.myrMaskTabs(t0), R).bad.length) { console.log('❌ 저장 검증이 못 잡음:', nm); ok = false; fail++; } });
+  if (ok) console.log('저장 검증: 일부러 망가뜨린 자료 ' + mut.length + '종을 모두 막음');
+}
 if (update) { fs.mkdirSync(path.dirname(SNAP), { recursive: true }); fs.writeFileSync(SNAP, JSON.stringify(snapNew, null, 1)); console.log('기준 결과 저장:', Object.keys(snapNew).length, '건'); }
 console.log(`${fail ? '실패' : '통과'}: ${files.length}건 (임차인 ${ten}명, 등기 ${rows}행 원문 대조)${fail ? ' - 문제 ' + fail + '건' : ''}`);
 process.exit(fail && !update ? 1 : 0);
+
