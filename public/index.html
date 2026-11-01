@@ -14335,7 +14335,7 @@ function parseTankRights(text) {
     var m;
     if ((m = text.match(/말소(?:기준일)?\s*(?:\([^)]*\))?\s*:\s*([\d.\-]+)/))) out.baseDate = rightsDate(m[1]);
     if ((m = text.match(/배당(?:요구)?종기(?:일)?\s*:\s*([\d.\-]+)/))) out.distDeadline = rightsDate(m[1]);
-    if ((m = text.match(/최저가(?:격)?\s*\(\d+%\)\s*([\d,]+)/))) out.minBidWon = rightsNum(m[1]);
+    if ((m = text.match(/최저가(?:격)?\s*\(\d+(?:\.\d+)?%\)\s*([\d,]+)/))) out.minBidWon = rightsNum(m[1]);
     if ((m = text.match(/감정가(?:격)?\s+([\d,]{7,})/))) out.appraisalWon = rightsNum(m[1]);
     if ((m = text.match(/([\d,]+)원이\s*매수인\s*인수\s*대상/))) out.tankAssumeWon = rightsNum(m[1]);
     // 체납내역 = 미납 관리비(탱크옥션 표시, 전기·수도 등 포함 안내가 비고에 있음)
@@ -14404,6 +14404,7 @@ function parseTankRights(text) {
     if (!out.baseDate) { var b = out.registry.filter(function(r) { return r.base; })[0]; if (b) out.baseDate = b.date; }
     // 2026-10-30 권리분석 정밀화: ① 인수조건변경·확약서(HUG 등이 '낙찰 시 임차권등기 말소에 동의, 잔존 보증금 반환청구권 포기'를 제출) 근거 문장 ② 탱크옥션 자체 결론(인수위험 없음/조건부/있음)
     // 근거 문장은 '확약서·말소 동의·청구권 포기' 같은 실제 약속이 적힌 문장을 우선 찾음. '인수조건변경' 태그만 있으면(서류 표시일 뿐) 근거 약함(hard=false)
+    var sold = text.slice(0, 2500).match(/매각가\s*\((\d+(?:\.\d+)?)%\)\s*([\d,]+)/); if (sold) out.tankSoldWon = rightsNum(sold[2]);  /* 이미 낙찰된 사건(탱크옥션 헤더에 매각가 표시) */
     var sdm = text.match(/매각일자\s*(\d{4})\.\s*(\d{1,2})\.\s*(\d{1,2})/); if (sdm) out.tankSaleDate = sdm[1] + '-' + ('0' + sdm[2]).slice(-2) + '-' + ('0' + sdm[3]).slice(-2);
     var ctm = text.match(/채권합계금액\s*:\s*([\d,]+)\s*원/); if (ctm) out.claimTotalWon = rightsNum(ctm[1]);
     // 2026-10-30 검증용: 탱크옥션 글의 사건번호·주소(앱 물건과 같은 물건인지 대조)
@@ -14701,8 +14702,11 @@ function rightsAuditFor(a, R) {
     if (!R) return out;
     var same = rightsSameProperty(a, R);
     if (same === false) out.push({ lvl: 'err', msg: '탱크옥션 글의 주소("' + R.tankAddr + '")가 이 물건(' + (a.dong || '') + ' ' + (a.bunji || '') + ')과 달라요 - 다른 물건의 권리분석이 저장됐을 수 있어요. 지우고 다시 보내세요.' });
+    if (R.tankSoldWon) out.push({ lvl: 'err', msg: '이미 낙찰된 사건이에요 - 탱크옥션에 매각가 ' + eok0(man(R.tankSoldWon)) + '이 표시돼요(탱크옥션 매각일 ' + (R.tankSaleDate || '-') + '). 입찰 대상이 아니에요 - 앱 목록의 입찰일이 오래된 값일 수 있어요.' });
     var ap = parseInt(a.appraisal) || 0;
     if (R.appraisalWon && ap && Math.abs(man(R.appraisalWon) / ap - 1) > 0.02) out.push({ lvl: 'err', msg: '감정가가 달라요 - 탱크옥션 ' + eok0(man(R.appraisalWon)) + ' ↔ 앱에 저장된 값 ' + eok0(ap) + '. 앱의 감정가·최저가가 다른 물건 금액으로 저장됐을 수 있어요(입찰예정 CSV를 다시 올리면 바로잡아요). 이 상태의 추천가는 믿지 마세요.' });
+    var mbA = parseInt(a.minBid) || 0;
+    if (R.minBidWon && mbA && Math.abs(man(R.minBidWon) / mbA - 1) > 0.02) out.push({ lvl: 'warn', msg: '최저가가 달라요 - 탱크옥션 ' + eok0(man(R.minBidWon)) + ' ↔ 앱에 저장된 값 ' + eok0(mbA) + '. 유찰·기일 변경으로 바뀌었을 수 있어요(최저가는 탱크옥션 값이 최신이에요).' });
     if (R.tankSaleDate && a.bidDate && R.tankSaleDate !== a.bidDate) out.push({ lvl: 'warn', msg: '입찰일이 달라요 - 탱크옥션 ' + R.tankSaleDate + ' ↔ 앱 ' + a.bidDate + '. 기일이 변경·연기됐거나 앱에 다른 물건 정보가 저장됐을 수 있어요.' });
     var reg = R.registry || [], base = R.baseDate || '';
     var cands = reg.filter(function(r) { return r.date && /근저당|가압류|압류|담보가등기|임의경매|강제경매|경매개시/.test(r.type || ''); });
@@ -15146,7 +15150,7 @@ function myrStoryFacts(main, docs) {
     var sm = main.match(/개시결정\s+(\d{4}-\d{2}-\d{2})\s*\(([^)]*)\)/); if (sm) { f.startDate = sm[1]; f.kind = sm[2]; }
     f.court = (main.match(/([가-힣]{2,8}(?:지방법원|지원)\s*[가-힣]*\s*\d+계)/) || [])[1] || '';
     var ap = main.match(/감정가[\s\S]{0,120}?(\d{1,3}(?:,\d{3}){2,})/); if (ap) f.appraisal = rightsNum(ap[1]);
-    var mp = main.match(/최저가\s*\((\d+)%\)\s*(\d{1,3}(?:,\d{3})+)/); if (mp) { f.minPct = +mp[1]; f.minPrice = rightsNum(mp[2]); }
+    var mp = main.match(/최저가\s*\((\d+(?:\.\d+)?)%\)\s*(\d{1,3}(?:,\d{3})+)/); if (mp) { f.minPct = +mp[1]; f.minPrice = rightsNum(mp[2]); }
     var pp = main.match(/공동주택공시가격\([^)]*\)\s*[:：]\s*([\d,]+)\s*원/); if (pp) f.pubPrice = rightsNum(pp[1]);
     var tv = main.match(/체납조사\(본건\)\s+(\d{4}-\d{2}-\d{2})\s+체납금액\s+([\d,]+)/); if (tv) f.taxSurvey = { d: tv[1], won: rightsNum(tv[2]) };
     var sd0 = String(docs.survey || ''); if (sd0) { var s1 = sd0.match(/조사일시\s*[:：]\s*([^\n]+)/), s2 = sd0.match(/임대차관계\s*\n[\s\S]*?(\d+)\s*명/), s3 = sd0.match(/\n\s*점유관계\s+([^\n]+)/), s4 = sd0.match(/\*([^\n*]*세대주[^\n*]*)\*/); f.survey = { date: s1 ? s1[1].trim() : '', n: s2 ? +s2[1] : null, occ: s3 ? s3[1].trim().slice(0, 60) : '', memo: s4 ? s4[1].trim().slice(0, 120) : '' }; }
