@@ -22272,11 +22272,24 @@ async function applyListingBulk() {
     if (r0.done) { ta.value = ''; setTimeout(function() { try { openListingBulk(); document.getElementById('lb-msg').innerText = r0.text; } catch (e) {} }, 300); }
 }
 // 파싱된 매물 목록(여러 단지 섞여도 됨)을 임장 후보 아파트의 단지 이름·평형으로 찾아 반영 - 붙여넣기와 확장 수신함이 같이 씀
+/* 네이버 단지 이름이 같은 단지가 앱에 여럿일 때 어느 단지인지 한 번 묻는 창(2026-11-01). 고르면 그 물건들에 단지 이름을 연결해 두어 다음부터는 묻지 않음 */
+function listingChooser(ch) {
+    return new Promise(function(resolve) {
+        var old = document.getElementById('lb-chooser'); if (old) old.remove();
+        var box = document.createElement('div'); box.id = 'lb-chooser'; box.style.cssText = 'position:fixed;inset:0;z-index:100002;background:rgba(0,0,0,.45);display:flex;align-items:center;justify-content:center;font-family:sans-serif;';
+        var seen = {}, rows = ch.cands.filter(function(r) { var k = (r.region || '') + '|' + (r.a.dong || ''); if (seen[k]) return false; seen[k] = 1; return true; });
+        var h = '<div style="background:#fff;color:#222;border-radius:14px;padding:18px 20px;max-width:460px;width:92%;max-height:86vh;overflow:auto;box-shadow:0 8px 32px rgba(0,0,0,.4);"><div style="font-size:16px;font-weight:800;margin-bottom:6px;">호가를 어느 물건에 넣을까요?</div><div style="font-size:13px;color:#555;line-height:1.6;margin-bottom:8px;">네이버 단지 <b>' + bbEsc(ch.complex) + '</b>(매물 ' + ch.items.length + '건)과 이름이 같은 단지가 여러 곳이에요. 평형·층·연식으로 걸러 남은 곳이에요. 맞는 곳을 고르면 다음부터는 묻지 않아요.</div>';
+        rows.forEach(function(r, i) { h += '<button data-i="' + i + '" style="display:block;width:100%;text-align:left;margin:6px 0;padding:10px 12px;border:1px solid #cbd5e1;border-radius:10px;background:#f8fafc;cursor:pointer;font-size:13px;line-height:1.5;"><b>' + bbEsc(r.a.addr || r.name) + '</b><br><span style="color:#64748b;">' + (r.pyung || r.a.pyung || '-') + '평 · ' + (r.a.floor || '-') + '층 · ' + (r.a.buildYear || '-') + '년' + (r.a.households ? ' · ' + (parseInt(r.a.households) || 0).toLocaleString() + '세대' : '') + ' · 사건 ' + bbEsc(r.a.caseNo || '') + '</span></button>'; });
+        h += '<button data-i="-1" style="margin-top:6px;padding:7px 12px;border:none;border-radius:8px;background:#e5e7eb;cursor:pointer;">어느 곳도 아니에요(건너뛰기)</button></div>';
+        box.innerHTML = h; document.body.appendChild(box);
+        box.onclick = function(e) { var b = e.target.closest('button[data-i]'); if (!b) return; var i = parseInt(b.getAttribute('data-i'), 10); box.remove(); resolve(i >= 0 ? rows[i] : null); };
+    });
+}
 async function applyListingListsAuto(list) {
     // 단지 이름 비교용: 괄호 안 설명('(주상복합)' 등)과 끝의 '아파트'를 뺌(네이버는 '두산위브더제니스(주상복합)', 앱은 '두산위브더제니스'처럼 다르게 적는 경우가 있음, 2026-10-18)
     var nameKey = function(n) { return matchNormName(String(n || '').replace(/\([^)]*\)|（[^）]*）/g, '').replace(/아파트\s*$/, '')); };
     var byName = {}; list.forEach(function(x) { var k = nameKey(x.complex); (byName[k] = byName[k] || []).push(x); });
-    var done = 0, noSize = [], used = {}, ambiguous = [], applied = [];
+    var done = 0, noSize = [], used = {}, ambiguous = [], applied = [], choosers = [];
     var canonName = function(n) { var s0 = String(n || ''), ch = (s0.match(/\d+\s*(?:차|단지)/g) || []).map(function(x) { return x.replace(/\s/g, ''); }).sort().join(','), hg = (s0.replace(/\d+\s*(?:차|단지)/g, '').match(/[가-힣]/g) || []).sort().join(''); return hg.length >= 4 ? ch + '|' + hg : ''; };
     var T = listingBulkTargets();
     var cx = function(r) { return (r.region || '') + '|' + (r.a.dong || ''); }; // 같은 단지 = 같은 지역·동
@@ -22284,7 +22297,8 @@ async function applyListingListsAuto(list) {
     // 한쪽 이름이 다른 쪽에 포함되는 경우는 짧은 쪽이 5글자 이상이고 긴 쪽의 70% 이상일 때만 같은 단지로 봄
     var sameName = function(a, b) { if (a === b) return true; var sh = a.length < b.length ? a : b, lg = a.length < b.length ? b : a; return sh.length >= 5 && sh.length / lg.length >= 0.7 && lg.indexOf(sh) >= 0; };
     Object.keys(byName).forEach(function(n) {
-        var cands = T.filter(function(r) { return nameKey(r.name) === n; }); // 이름이 정확히 같은 물건이 있으면 그것만(일산·해운대 두산위브더제니스처럼 이름 일부가 겹치는 다른 단지와 섞이지 않게)
+        var cn0 = byName[n][0].complex, cands = T.filter(function(r) { return r.a.naverComplexName && r.a.naverComplexName === cn0; });  /* 사용자가 한 번 연결해 둔 단지(naverComplexName)는 이름이 같은 다른 단지가 있어도 그대로 씀 */
+        if (!cands.length) cands = T.filter(function(r) { return nameKey(r.name) === n; }); // 이름이 정확히 같은 물건이 있으면 그것만(일산·해운대 두산위브더제니스처럼 이름 일부가 겹치는 다른 단지와 섞이지 않게)
         if (!cands.length) cands = T.filter(function(r) { return sameName(nameKey(r.name), n); });
         // 2026-10-27(청당마을 ↔ 네이버 '청당마을신도브래뉴'): 앱에 짧게 저장된 이름이면 주소(건물명이 들어 있음)에 네이버 단지 이름이 통째로 들어 있는 물건으로 찾음(5글자 이상)
         if (!cands.length && n.length >= 5) cands = T.filter(function(r) { return matchNormName(String(r.a.addr || '')).indexOf(n) >= 0; });
@@ -22300,7 +22314,28 @@ async function applyListingListsAuto(list) {
         if (!cands.length) { var cn = canonName(n); if (cn) cands = T.filter(function(r) { return canonName(nameKey(r.name)) === cn; }); }
         if (!cands.length) return;
         var kinds = {}; cands.forEach(function(r) { kinds[cx(r)] = 1; });
-        if (Object.keys(kinds).length > 1) { used[n] = 1; ambiguous.push(byName[n][0].complex + '(' + Object.keys(kinds).length + '곳)'); return; }
+        if (Object.keys(kinds).length > 1) {
+            /* 이름이 같은 단지가 여러 곳이면(성원아파트 등) 네이버 매물의 평형·층수·연식·동 번호로 한 곳만 남는지 봄(2026-11-01, 성원 ↔ 네이버 '성원(토월그랜드타운)' 호가가 안 들어가던 문제).
+               ① 이 물건의 평형(전용 ±3㎡)과 같은 매물이 있고 ② 이 물건의 층이 매물의 최고층 이하이고 ③ 연식이 매물 설명(○년이상·○년이내)과 어긋나지 않는 단지만 남김.
+               그래도 둘 이상이면 이 물건의 동(○동)이 보낸 매물의 동 번호에 있는 단지를 고르고, 하나로 정해지지 않으면 예전처럼 건너뜀 */
+            var its = byName[n], maxFloor = Math.max.apply(null, its.map(function(x) { return x.maxF || 0; }).concat([0])), curYear = new Date().getFullYear();
+            var older = null, newer = null; its.forEach(function(x) { var d = String(x.text || ''), m1 = d.match(/(\d+)년\s*이상/), m2 = d.match(/(\d+)년\s*이내/); if (m1) older = Math.max(older || 0, parseInt(m1[1], 10)); if (m2) newer = Math.min(newer == null ? 99 : newer, parseInt(m2[1], 10)); });
+            var passes = function(r) {
+                var area = (parseFloat(r.a.pyung) || 0) * 3.305785; if (!area || !its.some(function(x) { return x.area && Math.abs(x.area - area) <= 3; })) return false;
+                var fl = parseInt(r.a.floor, 10); if (maxFloor && fl && fl > maxFloor) return false;
+                var by = parseInt(r.a.buildYear, 10); if (by) { var age = curYear - by; if (older != null && age < older - 1) return false; if (older == null && newer != null && age > newer + 1) return false; }
+                return true;
+            };
+            var pass = cands.filter(passes), pk = {}; pass.forEach(function(r) { pk[cx(r)] = 1; });
+            if (Object.keys(pk).length !== 1) {
+                /* 동 번호는 보낸 매물에 일부만 있어 가르는 기준으로 쓰지 않음(성원: 102동이 매물 21건에 없을 수 있음). 후보가 남아 있으면 사용자에게 어느 단지인지 물어 한 번만 연결해 두고, 없으면 건너뜀 */
+                used[n] = 1;
+                if (pass.length && pass.length <= 8) choosers.push({ n: n, complex: byName[n][0].complex, items: its, cands: pass });
+                else ambiguous.push(byName[n][0].complex + '(' + Object.keys(kinds).length + '곳, 평형·층·연식으로 걸러지지 않았어요)');
+                return;
+            }
+            cands = pass;
+        }
         used[n] = 1;
         cands.forEach(function(r) { r.__lbItems = byName[n]; });
     });
@@ -22309,6 +22344,17 @@ async function applyListingListsAuto(list) {
         var area = (parseFloat(r.a.pyung) || 0) * 3.305785, same = items.filter(function(x) { return !x.area || Math.abs(x.area - area) <= 3; });
         if (!same.length) { noSize.push(r.name + ' ' + r.pyung + '평'); continue; }
         try { await applyListingList(r.a, r, items); done++; var lq = r.a.listingParse || {}; applied.push({ name: r.name, pyung: r.pyung, n: lq.n, min: lq.min, med: lq.med, max: lq.max }); } catch (e) { console.error('호가 반영 실패', e); }
+    }
+    for (var ci = 0; ci < choosers.length; ci++) {  // 이름이 같은 단지가 여러 곳이라 사용자에게 묻는 경우
+        var ch = choosers[ci], pick = await listingChooser(ch);
+        if (!pick) { ambiguous.push(ch.complex + '(연결 안 함)'); continue; }
+        var same2 = T.filter(function(r) { return cx(r) === cx(pick); });
+        for (var si = 0; si < same2.length; si++) {
+            var r2 = same2[si], ar2 = (parseFloat(r2.a.pyung) || 0) * 3.305785, items2 = ch.items.filter(function(x) { return !x.area || Math.abs(x.area - ar2) <= 3; });
+            r2.a.naverComplexName = ch.complex;
+            if (!items2.length) { try { await saveAuctionAPI(r2.a); } catch (e) {} noSize.push(r2.name + ' ' + r2.pyung + '평'); continue; }
+            try { await applyListingList(r2.a, r2, ch.items); done++; var lq2 = r2.a.listingParse || {}; applied.push({ name: r2.name, pyung: r2.pyung, n: lq2.n, min: lq2.min, med: lq2.med, max: lq2.max }); } catch (e) { console.error('호가 반영 실패', e); }
+        }
     }
     var unmatched = Object.keys(byName).filter(function(n) { return !used[n]; }).map(function(n) { return byName[n][0].complex; });
     var text = '입찰물건 ' + done + '건에 반영' + (noSize.length ? ' · 같은 평형 매물 없음 ' + noSize.length + '건(' + noSize.slice(0, 3).join(', ') + (noSize.length > 3 ? ' 외' : '') + ')' : '') + (unmatched.length ? ' · 대상이 아닌 단지 ' + unmatched.length + '곳(' + unmatched.slice(0, 3).join(', ') + ')' : '') + (ambiguous.length ? ' · 이름이 같은 단지가 여러 곳이라 건너뜀 ' + ambiguous.length + '곳(' + ambiguous.slice(0, 3).join(', ') + ') - 상세에서 직접 붙여넣어 주세요' : '');
