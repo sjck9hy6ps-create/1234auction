@@ -14463,6 +14463,7 @@ function parseTankRights(text) {
     if (!out.baseDate) { var b = out.registry.filter(function(r) { return r.base; })[0]; if (b) out.baseDate = b.date; }
     // 2026-10-30 권리분석 정밀화: ① 인수조건변경·확약서(HUG 등이 '낙찰 시 임차권등기 말소에 동의, 잔존 보증금 반환청구권 포기'를 제출) 근거 문장 ② 탱크옥션 자체 결론(인수위험 없음/조건부/있음)
     // 근거 문장은 '확약서·말소 동의·청구권 포기' 같은 실제 약속이 적힌 문장을 우선 찾음. '인수조건변경' 태그만 있으면(서류 표시일 뿐) 근거 약함(hard=false)
+    var ftb = text.indexOf('구분\t매각기일'); if (ftb >= 0) out.tankFailCount = (text.slice(ftb, ftb + 900).match(/\d차\s+\d{4}-\d\d-\d\d\s+[\d,]+\s+유찰/g) || []).length;  /* 기일 표의 유찰 횟수 */
     var sold = text.slice(0, 2500).match(/매각가\s*\((\d+(?:\.\d+)?)%\)\s*([\d,]+)/); if (sold) out.tankSoldWon = rightsNum(sold[2]);  /* 이미 낙찰된 사건(탱크옥션 헤더에 매각가 표시) */
     var sdm = text.match(/매각일자\s*(\d{4})\.\s*(\d{1,2})\.\s*(\d{1,2})/); if (sdm) out.tankSaleDate = sdm[1] + '-' + ('0' + sdm[2]).slice(-2) + '-' + ('0' + sdm[3]).slice(-2);
     var ctm = text.match(/채권합계금액\s*:\s*([\d,]+)\s*원/); if (ctm) out.claimTotalWon = rightsNum(ctm[1]);
@@ -14804,9 +14805,19 @@ async function rightsApplyTankText(text) {
         if (!R.tenants.length && !R.registry.length && !R.noTenants) { msgs.push(label + ': 임차인·등기를 못 찾았어요 (페이지가 다 열렸는지 확인)'); continue; }
         if (rightsSameProperty(a, R) === false) { msgs.push(label + ': 주소가 달라요(탱크옥션 "' + R.tankAddr + '" ↔ 앱 ' + (a.dong || '') + ' ' + (a.bunji || '') + ') - 사건번호만 같은 다른 물건일 수 있어 저장하지 않았어요'); continue; }
         R.pastedAt = Date.now(); R.via = 'extension'; a.rights = R;
+        /* 탱크옥션이 최신: 앱 목록(입찰예정 CSV)의 감정가·최저가·입찰일·유찰수가 다르면 탱크옥션 값으로 맞추고, 바꾸기 전 값은 tankSync.prev에 남김(2026-11-01, 사용자 요청: 불러온 값에 오류가 없어야 함).
+           이미 낙찰된 사건은 입찰일을 바꾸지 않음(❌ 표시로 알림) */
+        (function() {
+            var man = function(v) { return Math.round(v / 10000); }, prev = {}, ch = [];
+            if (R.appraisalWon > 0 && Math.abs(man(R.appraisalWon) / (parseInt(a.appraisal) || 1) - 1) > 0.005) { prev.appraisal = a.appraisal; a.appraisal = man(R.appraisalWon); ch.push('감정가'); }
+            if (R.minBidWon > 0 && Math.abs(man(R.minBidWon) / (parseInt(a.minBid) || 1) - 1) > 0.005) { prev.minBid = a.minBid; a.minBid = man(R.minBidWon); ch.push('최저가'); }
+            if (R.tankSaleDate && !R.tankSoldWon && a.bidDate !== R.tankSaleDate) { prev.bidDate = a.bidDate; a.bidDate = R.tankSaleDate; ch.push('입찰일'); }
+            if (typeof R.tankFailCount === 'number' && !R.tankSoldWon && ch.length && Number(a.failCount) !== R.tankFailCount) { prev.failCount = a.failCount; a.failCount = R.tankFailCount; ch.push('유찰수'); }
+            if (ch.length) { R.tankSync = { at: Date.now(), changed: ch, prev: prev }; }
+        })();
         if (R.unpaidMgmt && !(parseInt(a.unpaidMgmtFee) > 0)) { a.unpaidMgmtFee = String(Math.ceil(R.unpaidMgmt.won / 10000)); R.unpaidMgmtApplied = true; }
         if (R.households > 0 && !(a.households && a.householdsVer === 2)) { a.households = R.households; a.householdsVer = 2; }  // 탱크옥션 단지정보의 세대수(없을 때만)
-        try { await saveAuctionAPI(a); res.done++; res.applied.push({ name: a.name || a.addr || label, pyung: '', n: R.registry.length, caseNo: label, tenants: R.tenants.length, assumed: (R.warnings || []).length, audit: rightsAuditFor(a, R).filter(function(x) { return x.lvl === 'err'; }).map(function(x) { return x.msg; }) }); }
+        try { await saveAuctionAPI(a); res.done++; res.applied.push({ name: a.name || a.addr || label, pyung: '', n: R.registry.length, caseNo: label, tenants: R.tenants.length, sync: (R.tankSync && R.tankSync.changed) || [], assumed: (R.warnings || []).length, audit: rightsAuditFor(a, R).filter(function(x) { return x.lvl === 'err'; }).map(function(x) { return x.msg; }) }); }
         catch (e) { msgs.push(label + ': 저장 실패 ' + e.message); }
     }
     res.text = res.done ? '' : (msgs.join(' / ') || '반영된 물건이 없어요');
@@ -22204,7 +22215,7 @@ async function processListingInbox() {
         var got = 0, names = [], prevAll = lbAll, prevAny = lbAny; lbAll = true; lbAny = true; // 수신함은 대상을 좁히지 않음(이미 사용자가 고른 단지를 보낸 것)
         for (var i = 0; i < pending.length; i++) {
             var it = pending[i], res = { done: 0, text: '매매 매물을 찾지 못했어요', applied: [] };
-            if (it.kind === 'tank') { res = await rightsApplyTankText(it.text || ''); if (res.done) aqMarkDone(res.applied, it.url); if (res.done) listingToast('📥 탱크옥션 상세 반영됨: ' + res.applied.slice(0, 3).map(function(x) { return '<b>' + bbEsc(x.name) + '</b> 권리분석(등기 ' + x.n + '건' + (x.tenants ? ' · 임차인 ' + x.tenants + '명' : ' · 임차인 없음') + ')' + (x.audit && x.audit.length ? ' ❌ ' + bbEsc(x.audit[0]) : ''); }).join(' · '), !res.applied.some(function(x) { return x.audit && x.audit.length; })); else listingToast('📥 탱크옥션 상세를 받았지만 반영하지 못했어요 - ' + bbEsc(res.text), false); }
+            if (it.kind === 'tank') { res = await rightsApplyTankText(it.text || ''); if (res.done) aqMarkDone(res.applied, it.url); if (res.done) listingToast('📥 탱크옥션 상세 반영됨: ' + res.applied.slice(0, 3).map(function(x) { return '<b>' + bbEsc(x.name) + '</b> 권리분석(등기 ' + x.n + '건' + (x.tenants ? ' · 임차인 ' + x.tenants + '명' : ' · 임차인 없음') + ')' + (x.sync && x.sync.length ? ' 🔄 ' + x.sync.join('·') + ' 탱크옥션 값으로 맞춤' : '') + (x.audit && x.audit.length ? ' ❌ ' + bbEsc(x.audit[0]) : ''); }).join(' · '), !res.applied.some(function(x) { return x.audit && x.audit.length; })); else listingToast('📥 탱크옥션 상세를 받았지만 반영하지 못했어요 - ' + bbEsc(res.text), false); }
             else if (it.kind === 'probe') { res = { done: 1, text: '참고자료 원문 보관(권리분석에는 반영하지 않음)', applied: [] }; } // 참고자료 팝업 글: 구조 확인용으로 수신함에만 보관(하루 뒤 정리)
             else { var list = parseNaverListings(it.text || ''); if (list.length) res = await applyListingListsAuto(list); }
             got += res.done; res.applied.forEach(function(x) { names.push(x); });
