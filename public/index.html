@@ -29746,6 +29746,14 @@ function renderAuctionSummaryCard(a) {
             if (r.verdict !== 'nodata' && r.recBid && r.minBid) r.verdict = r.recBid < r.minBid ? 'no' : (r.verdict === 'no' ? 'check' : r.verdict);
         } catch (e) {}
     }
+    /* 이미 매각(낙찰)된 물건은 앞으로 입찰할 것처럼 추천가·마진을 보여 주지 않고 결과만 보여 줌(2026-11-01) */
+    var soldWon = (a.courtResult === '매각' && parseInt(a.soldPrice) > 0) ? parseInt(a.soldPrice) : 0, soldTank = a.rights && a.rights.tankSoldWon ? Math.round(a.rights.tankSoldWon / 10000) : 0;
+    if (a.courtResult === '매각' || soldTank) {
+        var sw = soldWon || soldTank, mn = parseInt(a.minBid) || 0, ap0 = parseInt(a.appraisal) || 0;
+        box.innerHTML = '<div class="pn-card am-sum"><div style="display:flex;align-items:center;gap:6px;margin-bottom:6px;"><b style="font-size:14px;">입찰 판단</b><span class="bb-verdict" style="color:#6b7280;background:#f3f4f6;font-weight:700;border-radius:10px;padding:1px 8px;font-size:12px;">이미 낙찰된 사건</span></div>'
+            + '<div class="pn-muted" style="line-height:1.6;">' + (sw ? '낙찰가 <b>' + pnFmtEok(sw) + '</b>' + (mn ? ' (최저가 ' + pnFmtEok(mn) + ' 대비 ' + Math.round(sw / mn * 1000) / 10 + '%' + (ap0 ? ', 감정가 대비 ' + Math.round(sw / ap0 * 1000) / 10 + '%' : '') + ')' : '') : '매각 결과가 있어요(낙찰가는 확인되지 않았어요)') + (a.courtResultDate ? ' · 매각일 ' + a.courtResultDate : '') + '<br>입찰 대상이 아니라 추천 입찰가와 마진 계산은 보여 주지 않아요. 같은 단지 다음 물건을 볼 때 참고용 낙찰 사례로 쓰여요.</div></div>';
+        return;
+    }
     var v = BID_BOARD_VERDICT[r.verdict];
     var st = function(k, val, sub) { return '<div class="pn-stat"><div class="k">' + k + '</div><div class="v">' + val + '</div>' + (sub ? '<div class="s">' + sub + '</div>' : '') + '</div>'; };
     var room = r.roomPct == null ? '-' : (r.roomPct >= 0 ? '<span style="color:#16a34a;">+' + r.roomPct + '%</span>' : '<span style="color:#dc2626;">' + r.roomPct + '%</span>');
