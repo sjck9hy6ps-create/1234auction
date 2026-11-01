@@ -15503,7 +15503,13 @@ function myrAiStoryHtml(R) {
     var ck = st.check || {}, bad = (ck.unverified || []).length;
     var h = '<div class="dr-sec" style="border:2px solid #0ea5e9;border-radius:10px;padding:10px 12px;"><h4>✍️ 서류로 쓴 이야기 <span class="dr-sub" style="font-weight:400;">AI(Claude)가 수집한 서류를 읽고 썼어요 · 서류에 있는 내용만 쓰고, 서류로 확정되지 않는 해석은 <span style="background:#fef3c7;border-radius:4px;padding:0 3px;">예상</span>으로 표시했어요</span></h4>';
     h += '<div class="dr-sub" style="margin:2px 0 6px;">' + (bad ? '<b style="color:#c62828;">⚠️ 서류에서 못 찾은 값 ' + bad + '개: ' + e((ck.unverified || []).slice(0, 6).join(', ')) + '</b>' : '✅ 이야기 속 숫자·날짜·금액·이름 ' + (ck.total || 0) + '개를 서류와 대조해 모두 일치했어요') + ' · ' + e(new Date(st.at || 0).toISOString().slice(0, 10)) + ' 작성 · 문장의 뜻까지 서류와 맞는지는 사람이 확인해 주세요</div>';
-    st.sections.forEach(function(sec) { h += '<div style="margin-top:9px;"><div style="font-weight:700;color:#0369a1;">' + e(sec.title) + '</div>' + (sec.paragraphs || []).map(function(p) { return '<div style="font-size:13.5px;line-height:1.85;margin-top:3px;">' + fmt(p) + '</div>'; }).join('') + '</div>'; });
+    /* 탱크옥션 권리분석 요약처럼 한눈에 읽히게: 칸 제목 → 항목마다 [분류 칩] 굵은 결론 한 줄 + 짧은 설명(2026-11-01, 사용자: 같은 내용이어도 가독성 차이가 커요) */
+    st.sections.forEach(function(sec) {
+        h += '<div style="margin-top:10px;"><div style="font-weight:700;color:#0369a1;">' + e(sec.title) + '</div>';
+        (sec.items || []).forEach(function(it) { h += '<div style="margin:5px 0 0 4px;padding:6px 8px;border-left:3px solid #bae6fd;background:#f8fafc;border-radius:0 6px 6px 0;">' + (it.tag ? '<span style="display:inline-block;background:#e0f2fe;color:#075985;border-radius:5px;padding:0 6px;font-size:11px;font-weight:700;margin-right:6px;">' + e(it.tag) + '</span>' : '') + '<b style="font-size:13.5px;">' + fmt(it.head) + '</b>' + (it.body ? '<div style="font-size:12.5px;line-height:1.7;color:#334155;margin-top:2px;">' + fmt(it.body) + '</div>' : '') + '</div>'; });
+        (sec.paragraphs || []).forEach(function(p) { h += '<div style="font-size:13.5px;line-height:1.85;margin-top:3px;">' + fmt(p) + '</div>'; });
+        h += '</div>';
+    });
     return h + '</div>';
 }
 function myrNarrative(a, R, my, vd, bidWon, row) {

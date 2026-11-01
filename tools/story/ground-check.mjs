@@ -36,7 +36,7 @@ export function groundCheck(storyText, sources) {
   return { total: toks.length, ok: toks.length - bad.length, unverified: bad, calc };
 }
 if (process.argv[1] && process.argv[1].endsWith('ground-check.mjs') && process.argv.length >= 4) {
-  const story = JSON.parse(fs.readFileSync(process.argv[2], 'utf8')), text = story.sections.map((s) => s.title + '\n' + s.paragraphs.join('\n')).join('\n');
+  const story = JSON.parse(fs.readFileSync(process.argv[2], 'utf8')), text = story.sections.map((s) => s.title + '\n' + (s.paragraphs || []).join('\n') + (s.items || []).map((i) => '\n' + (i.tag || '') + ' ' + (i.head || '') + ' ' + (i.body || '')).join('')).join('\n');
   const r = groundCheck(text, process.argv.slice(3).map((f) => fs.readFileSync(f, 'utf8')));
   console.log(`대조한 값 ${r.total}개 중 서류와 일치 ${r.ok}개 / 서류에서 못 찾은 값 ${r.unverified.length}개 / 계산으로 표시한 값 ${r.calc.length}개`);
   r.unverified.forEach((t) => console.log('  ✗ ' + t.type + ': ' + t.raw));

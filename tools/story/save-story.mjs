@@ -5,7 +5,7 @@ import fs from 'fs'; import { groundCheck } from './ground-check.mjs';
 const args = process.argv.slice(2), force = args.includes('--force'), si = args.indexOf('--site'), SITE = si >= 0 ? args[si + 1] : 'https://1234auction.vercel.app';
 const files = args.filter((a, i) => !a.startsWith('--') && (si < 0 || (i !== si + 1)));
 const story = JSON.parse(fs.readFileSync(files[0], 'utf8')), srcs = files.slice(1).map((f) => fs.readFileSync(f, 'utf8'));
-const text = story.sections.map((s) => s.title + '\n' + s.paragraphs.join('\n')).join('\n'), r = groundCheck(text, srcs);
+const text = story.sections.map((s) => s.title + '\n' + (s.paragraphs || []).join('\n') + (s.items || []).map((i) => '\n' + (i.tag || '') + ' ' + (i.head || '') + ' ' + (i.body || '')).join('')).join('\n'), r = groundCheck(text, srcs);
 console.log(`서류 대조: ${r.total}개 중 일치 ${r.ok}개, 못 찾은 값 ${r.unverified.length}개`); r.unverified.forEach((t) => console.log('  ✗ ' + t.type + ': ' + t.raw));
 if (r.unverified.length && !force) { console.log('서류에 없는 값이 있어 저장하지 않았어요(확인 후 고치거나 --force).'); process.exit(1); }
 const n = (x) => String(x || '').replace(/타경/g, '-').replace(/\s/g, '');
