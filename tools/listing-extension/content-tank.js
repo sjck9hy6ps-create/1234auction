@@ -1,4 +1,4 @@
-// 탱크옥션 상세 보내기(0.6.0: 앱의 🟦 탱크옥션 버튼으로 사건 1건을 자동 모으기(검색→줄 누르기→수집→창 닫기, 연쇄·하루 30건 상한과 무관) / 하루 연쇄 상한은 탱크옥션 자동 수집 제한을 피하려는 것이라 30건으로 되돌림 / 0.5.11: 목록 줄의 data-tid는 사건 창 번호가 아니었음(엉뚱한 사건이 열림) → 목록에서 번호를 기억하지 않고 열린 사건 창에서만 기억 / 임차인·등기가 없는 예정물건 창에서도 사건·이름 검사를 하고, 자료가 없으면 건너뜀 / 0.5.10: 다른 법원 사건으로 확인된 번호는 목록 화면이 다시 읽어도 기억하지 않음(열고 닫기 반복 방지) / 0.5.9: 목록에 같은 사건번호가 번호 다른 줄로 여럿이면 기억하지 않음 / 0.5.8: 하루 자동 열기 상한 30→60건(어제부터 30건이 차서 '열 사건이 없어요'로 보이던 문제), 상한에 걸리면 이유를 표시 / 0.5.7: 같은 사건번호가 다른 법원에 또 있을 때 엉뚱한 사건을 열었는지 건물 이름으로 검사(어긋나면 수집 안 함·번호 기억 안 함) / 0.5.6: 이 목록에 대기열 사건이 없으면 같은 탭을 그 사건번호 검색 결과로 바꾼 뒤 줄을 눌러 이어감 / 같은 번호가 여러 법원에 있으면 건물 이름으로 구분 / 0.5.5: 목록 화면 줄에 번호(data-tid)가 있는데도 '2025-5910' 형식이라 못 읽던 것 수정 + 번호를 모르는 사건은 목록의 그 사건 줄을 대신 눌러 사이트가 직접 창을 열게 함(눌러 열린 창에서 번호 기억) + 번호가 사건과 다르면 건너뜀 / 0.5.4: 앱 탭이 닫혀 있어도(앱 반영 대기) 모으기가 끝나면 대기열에 완료를 기록하고 다음 사건으로 넘어감 / 대기열에서 번호를 모르는 사건은 탱크옥션 검색 화면(사건번호 칸 채움)을 열어 번호를 기억시키는 버튼 / 0.5.3: 자동으로 열린 팝업은 사용자 클릭이 없어 크롬이 참고자료 팝업을 막을 수 있음 → 막히면 빈 자료를 보내지 않고 '팝업 허용' 안내 후 자동 수집 중단 / 번호(tid) 학습을 href·data-tid로 좁히고 상세 팝업에서는 자기 사건만 기억 / 0.5.2: 수집 중 화면 위쪽에 진행 막대(사건·단계), 메인 화면 대기열 버튼에도 '수집 중' 실시간 표시, ▶ 자동 수집 시작 버튼, 2분 넘게 막힌 사건은 건너뛰고 다음으로 / 0.5.1: 대기열 사건이 끝나면 다음 사건을 자동으로 열기(체크박스, 8초 뒤·하루 30건 상한), 번호(tid) 학습을 링크 외 속성(onclick·data-*)까지 확대, '🔎 번호 점검' 버튼 / 0.5.0: 앱이 만든 '모으기 대기열'을 탱크옥션 화면 왼쪽 아래에 보여 주고, 한 번 누르면 그 사건 팝업을 열어 자동 수집·닫기. 사건번호↔탱크옥션 번호(tid)는 사용자가 연 화면에서 자동으로 기억 / 0.4.4: 글자 정보가 없는 그림 PDF(세대열람)는 확대해서 쪽 그림을 내려받기 폴더(tank-ocr)에 저장 - 글자 인식용 / 0.4.3: PDF로 열리는 서류(감정평가서·매물명세서·건물등기·세대열람)는 글 조각이 줄바꿈으로 흩어져 읽히므로, 쪽을 끝까지 넘겨 그린 뒤 글 조각의 위치로 줄을 다시 맞춤 / 0.4.2: 상세 팝업의 '파일자료' 메뉴는 눌러도 같은 화면이 바뀌지 않고 참고자료 팝업이 새로 열리므로, 보내기를 누르면 그 팝업을 한 번 열어 그 안의 탭(사건내역~세대열람)을 읽어 상세 글과 합쳐 보냄 / 0.4.1: 참고자료 팝업·iframe 안 글도 읽고, 못 찾은 탭이 있으면 화면 버튼 이름을 같이 보냄, 끝나면 완료 안내창 + 모으려고 열었던 팝업창 자동 닫기 / 0.4.0: 사건내역·기일내역·문건/송달·현황조사서·부동산표시·감정평가서·매각물건명세서·건물등기·세대열람 탭까지 같이 읽음) - 탱크옥션 물건 상세 페이지에 버튼 하나를 띄움. 눌렀을 때만 지금 열려 있는 페이지의 글(임차인 현황·건물등기·권리분석 등)을 앱에 보냄.
+// 탱크옥션 상세 보내기(0.6.1: PDF 서류(등기부 7쪽 등)를 쪽마다 차례로 화면에 띄워 그 쪽 글이 그려질 때까지 기다렸다가 읽음 - 전엔 1·2·7쪽만 읽히고 3~6쪽(갑구·을구 전체 이력)이 빠졌음 / 0.6.0: 앱의 🟦 탱크옥션 버튼으로 사건 1건을 자동 모으기(검색→줄 누르기→수집→창 닫기, 연쇄·하루 30건 상한과 무관) / 하루 연쇄 상한은 탱크옥션 자동 수집 제한을 피하려는 것이라 30건으로 되돌림 / 0.5.11: 목록 줄의 data-tid는 사건 창 번호가 아니었음(엉뚱한 사건이 열림) → 목록에서 번호를 기억하지 않고 열린 사건 창에서만 기억 / 임차인·등기가 없는 예정물건 창에서도 사건·이름 검사를 하고, 자료가 없으면 건너뜀 / 0.5.10: 다른 법원 사건으로 확인된 번호는 목록 화면이 다시 읽어도 기억하지 않음(열고 닫기 반복 방지) / 0.5.9: 목록에 같은 사건번호가 번호 다른 줄로 여럿이면 기억하지 않음 / 0.5.8: 하루 자동 열기 상한 30→60건(어제부터 30건이 차서 '열 사건이 없어요'로 보이던 문제), 상한에 걸리면 이유를 표시 / 0.5.7: 같은 사건번호가 다른 법원에 또 있을 때 엉뚱한 사건을 열었는지 건물 이름으로 검사(어긋나면 수집 안 함·번호 기억 안 함) / 0.5.6: 이 목록에 대기열 사건이 없으면 같은 탭을 그 사건번호 검색 결과로 바꾼 뒤 줄을 눌러 이어감 / 같은 번호가 여러 법원에 있으면 건물 이름으로 구분 / 0.5.5: 목록 화면 줄에 번호(data-tid)가 있는데도 '2025-5910' 형식이라 못 읽던 것 수정 + 번호를 모르는 사건은 목록의 그 사건 줄을 대신 눌러 사이트가 직접 창을 열게 함(눌러 열린 창에서 번호 기억) + 번호가 사건과 다르면 건너뜀 / 0.5.4: 앱 탭이 닫혀 있어도(앱 반영 대기) 모으기가 끝나면 대기열에 완료를 기록하고 다음 사건으로 넘어감 / 대기열에서 번호를 모르는 사건은 탱크옥션 검색 화면(사건번호 칸 채움)을 열어 번호를 기억시키는 버튼 / 0.5.3: 자동으로 열린 팝업은 사용자 클릭이 없어 크롬이 참고자료 팝업을 막을 수 있음 → 막히면 빈 자료를 보내지 않고 '팝업 허용' 안내 후 자동 수집 중단 / 번호(tid) 학습을 href·data-tid로 좁히고 상세 팝업에서는 자기 사건만 기억 / 0.5.2: 수집 중 화면 위쪽에 진행 막대(사건·단계), 메인 화면 대기열 버튼에도 '수집 중' 실시간 표시, ▶ 자동 수집 시작 버튼, 2분 넘게 막힌 사건은 건너뛰고 다음으로 / 0.5.1: 대기열 사건이 끝나면 다음 사건을 자동으로 열기(체크박스, 8초 뒤·하루 30건 상한), 번호(tid) 학습을 링크 외 속성(onclick·data-*)까지 확대, '🔎 번호 점검' 버튼 / 0.5.0: 앱이 만든 '모으기 대기열'을 탱크옥션 화면 왼쪽 아래에 보여 주고, 한 번 누르면 그 사건 팝업을 열어 자동 수집·닫기. 사건번호↔탱크옥션 번호(tid)는 사용자가 연 화면에서 자동으로 기억 / 0.4.4: 글자 정보가 없는 그림 PDF(세대열람)는 확대해서 쪽 그림을 내려받기 폴더(tank-ocr)에 저장 - 글자 인식용 / 0.4.3: PDF로 열리는 서류(감정평가서·매물명세서·건물등기·세대열람)는 글 조각이 줄바꿈으로 흩어져 읽히므로, 쪽을 끝까지 넘겨 그린 뒤 글 조각의 위치로 줄을 다시 맞춤 / 0.4.2: 상세 팝업의 '파일자료' 메뉴는 눌러도 같은 화면이 바뀌지 않고 참고자료 팝업이 새로 열리므로, 보내기를 누르면 그 팝업을 한 번 열어 그 안의 탭(사건내역~세대열람)을 읽어 상세 글과 합쳐 보냄 / 0.4.1: 참고자료 팝업·iframe 안 글도 읽고, 못 찾은 탭이 있으면 화면 버튼 이름을 같이 보냄, 끝나면 완료 안내창 + 모으려고 열었던 팝업창 자동 닫기 / 0.4.0: 사건내역·기일내역·문건/송달·현황조사서·부동산표시·감정평가서·매각물건명세서·건물등기·세대열람 탭까지 같이 읽음) - 탱크옥션 물건 상세 페이지에 버튼 하나를 띄움. 눌렀을 때만 지금 열려 있는 페이지의 글(임차인 현황·건물등기·권리분석 등)을 앱에 보냄.
 // 로그인은 사용자가 직접 한 화면만 읽음(로그인 정보는 건드리지 않고, 자동으로 다른 페이지로 이동하거나 순회하지 않음).
 (function () {
   const ID = 'tk-send-btn';
@@ -40,16 +40,19 @@
     return cands[0] || null;
   };
   // PDF 보기 화면(pdf.js)의 글 조각을 위치(세로·가로)로 묶어 한 줄씩 복원 - 표의 칸은 탭으로 구분
+  // 한 쪽의 글 조각을 위치로 줄에 맞춤(글이 아직 안 그려졌으면 빈 배열)
+  const pdfPageOut = (pg, pi) => {
+    const sp = Array.from(pg.querySelectorAll('.textLayer span')).filter((e) => !e.querySelector('span') && (e.textContent || '').trim());
+    if (!sp.length) return [];
+    const items = sp.map((e) => { const r = e.getBoundingClientRect(); return { t: e.textContent.replace(/\s+$/, ''), x: r.left, y: r.top + r.height / 2, h: r.height || 10, w: r.width }; }).sort((a, b) => a.y - b.y || a.x - b.x);
+    const rows = []; items.forEach((it) => { const last = rows[rows.length - 1]; if (last && Math.abs(it.y - last.y) < Math.max(3, last.h * 0.6)) { last.items.push(it); last.y = (last.y * (last.items.length - 1) + it.y) / last.items.length; } else rows.push({ y: it.y, h: it.h, items: [it] }); });
+    const out = ['[쪽 ' + (pg.getAttribute('data-page-number') || (pi + 1)) + ']'];
+    rows.forEach((r) => { r.items.sort((a, b) => a.x - b.x); let line = '', px = null; r.items.forEach((it) => { if (px !== null) line += (it.x - px > r.h * 1.8) ? '\t' : (it.x - px > 1 ? ' ' : ''); line += it.t; px = it.x + it.w; }); out.push(line); });
+    return out;
+  };
   const pdfLines = () => {
     const out = [];
-    docs().forEach((d) => Array.from(d.querySelectorAll('.page')).forEach((pg, pi) => {
-      const sp = Array.from(pg.querySelectorAll('.textLayer span')).filter((e) => !e.querySelector('span') && (e.textContent || '').trim());
-      if (!sp.length) return;
-      const items = sp.map((e) => { const r = e.getBoundingClientRect(); return { t: e.textContent.replace(/\s+$/, ''), x: r.left, y: r.top + r.height / 2, h: r.height || 10, w: r.width }; }).sort((a, b) => a.y - b.y || a.x - b.x);
-      const rows = []; items.forEach((it) => { const last = rows[rows.length - 1]; if (last && Math.abs(it.y - last.y) < Math.max(3, last.h * 0.6)) { last.items.push(it); last.y = (last.y * (last.items.length - 1) + it.y) / last.items.length; } else rows.push({ y: it.y, h: it.h, items: [it] }); });
-      out.push('[쪽 ' + (pg.getAttribute('data-page-number') || (pi + 1)) + ']');
-      rows.forEach((r) => { r.items.sort((a, b) => a.x - b.x); let line = '', px = null; r.items.forEach((it) => { if (px !== null) line += (it.x - px > r.h * 1.8) ? '\t' : (it.x - px > 1 ? ' ' : ''); line += it.t; px = it.x + it.w; }); out.push(line); });
-    }));
+    docs().forEach((d) => Array.from(d.querySelectorAll('.page')).forEach((pg, pi) => { pdfPageOut(pg, pi).forEach((x) => out.push(x)); }));
     return out.join('\n');
   };
   // 글자 정보가 없는 그림 PDF(세대열람 등): 확대해서 다시 그린 뒤 쪽마다 그림을 파일로 저장(내려받기 폴더/tank-ocr). 저장한 개수를 돌려줌
@@ -71,14 +74,22 @@
   const hasPdf = () => docs().some((d) => d.querySelector('.pdfViewer,#viewer .page,.textLayer'));
   // 쪽을 차례로 보이게 해서 글이 그려지게 하고, 글 조각 수가 더 늘지 않을 때까지 기다림(없으면 빈 글)
   const pdfRead = async (prevSig, maxMs) => {
-    const t0 = Date.now(); let last = -1, stable = 0, txt = '';
+    // 0.6.1: 쪽을 한꺼번에 훑으면 PDF 뷰어가 화면에 보이는 쪽만 그려서 일부 쪽(예: 등기부 3~6쪽)이 빠짐 → 쪽마다 화면에 띄우고 그 쪽 글이 그려질 때까지 기다린 뒤 바로 읽어 모음
+    const t0 = Date.now(); let txt = '';
     while (Date.now() - t0 < maxMs) {
-      docs().forEach((d) => Array.from(d.querySelectorAll('.page')).slice(0, 40).forEach((pg) => { try { pg.scrollIntoView({ block: 'start' }); } catch (e) {} }));
-      await sleep(450);
-      const n = docs().reduce((a, d) => a + d.querySelectorAll('.textLayer span').length, 0);
-      txt = pdfLines();
-      if (n > 0 && n === last && txt.slice(0, 300) !== prevSig) { if (++stable >= 2) break; } else stable = 0;
-      last = n;
+      const pages = [].concat(...docs().map((d) => Array.from(d.querySelectorAll('.page')))).slice(0, 40);
+      if (!pages.length) { await sleep(450); continue; }
+      const got = [];
+      for (let i = 0; i < pages.length && Date.now() - t0 < maxMs + 25000; i++) {
+        const pg = pages[i];
+        try { pg.scrollIntoView({ block: 'start' }); } catch (e) {}
+        let lines = [];
+        for (let w = 0; w < 12; w++) { await sleep(w === 0 ? 350 : 250); if (pg.querySelector('.textLayer span')) { await sleep(250); lines = pdfPageOut(pg, i); if (lines.length > 1) break; } }
+        if (lines.length > 1) got.push(lines.join('\n'));
+      }
+      txt = got.join('\n');
+      if (txt && txt.slice(0, 300) !== prevSig) break;
+      await sleep(450);  // 아직 이전 서류가 보이는 중이면 다시
     }
     docs().forEach((d) => Array.from(d.querySelectorAll('.page')).slice(0, 1).forEach((pg) => { try { pg.scrollIntoView({ block: 'start' }); } catch (e) {} }));
     return txt && txt.slice(0, 300) !== prevSig ? txt : '';
