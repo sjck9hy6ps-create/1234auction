@@ -7234,11 +7234,14 @@ function searchAuctionsNear(lat, lon, meters) {
 function openAuctionFromSearch(a) {
     var la = parseFloat(a.lat), lo = parseFloat(a.lon);
     try { if (la && lo && map) { map.setCenter(new kakao.maps.LatLng(la, lo)); map.setLevel(3); } } catch (e) {}
+    /* 입찰후보 화면에 없는 물건(입찰일이 지났거나 후보에서 빠진 물건)은 경매물건 상세(수정 화면)로 열어 사건 정보를 바로 보여 줌 */
+    var fallback = function() { try { linkToast('입찰후보 화면에는 없는 물건이에요(입찰일 ' + (a.bidDate || '-') + ' 등) - 경매물건 상세로 열어요'); } catch (e) {} if (typeof openAuctionModal === 'function') openAuctionModal(a.id); };
     var bd = document.getElementById('bid-board'); if (!bd || bd.style.display === 'none') openBidBoard();
     var n = 0, iv = setInterval(function() {
         n++;
         if (bidBoardRows.some(function(r) { return r.id === a.id; })) { clearInterval(iv); openBidDrawer(a.id); return; }
-        if (n > 40) { clearInterval(iv); alert('이 물건은 입찰후보 화면에 없어요 (사건 ' + (a.caseNo || '-') + '). 경매물건 목록에서 사건번호로 찾아 주세요.'); }
+        var ready = bidBoardRows.length && !bidBoardRows.some(function(r) { return r.pending; });
+        if ((ready && n >= 3) || n > 40) { clearInterval(iv); fallback(); }
     }, 400);
 }
 function searchBadgeColor(type) { return type === '경매' ? '#7b1fa2' : (type === '아파트' ? '#e53935' : '#1565c0'); }
