@@ -15501,12 +15501,13 @@ function aiStoryLoad(id) {  // 이야기는 사건 기록과 따로 저장돼 �
     if (aiStoryLoading[id]) return; aiStoryLoading[id] = 1;
     var after = function() { aiStoryLoading[id] = 0; try { if (String(bidDrawerId) === String(id)) renderBidDrawer(); } catch (e) {} };
     var fetchOne = function() { fetch('/api/auction?kind=aiStory&id=' + encodeURIComponent(id)).then(function(r) { return r.ok ? r.json() : null; }).then(function(d) { aiStoryCache[id] = d && d.sections ? d : null; after(); }).catch(function() { aiStoryCache[id] = null; aiStoryLoading[id] = 0; }); };
-    if (aiStoryIds) { if (aiStoryIds.indexOf(String(id)) >= 0) fetchOne(); else { aiStoryCache[id] = null; aiStoryLoading[id] = 0; } return; }
-    fetch('/api/auction?kind=aiStory').then(function(r) { return r.json(); }).then(function(ids) { aiStoryIds = Array.isArray(ids) ? ids.map(String) : []; aiStoryLoading[id] = 0; if (aiStoryIds.indexOf(String(id)) >= 0) aiStoryLoad(id); else aiStoryCache[id] = null; }).catch(function() { aiStoryLoading[id] = 0; });
+    // 목록에 없어도 1분이 지났으면 목록을 다시 확인(방금 새로 올라온 이야기가 새로고침 없이 보이게)
+    if (aiStoryIds && (aiStoryIds.indexOf(String(id)) >= 0 || Date.now() - (aiStoryIds._at || 0) < 60000)) { if (aiStoryIds.indexOf(String(id)) >= 0) fetchOne(); else { aiStoryCache[id] = null; aiStoryLoading[id] = 0; } return; }
+    fetch('/api/auction?kind=aiStory').then(function(r) { return r.json(); }).then(function(ids) { aiStoryIds = Array.isArray(ids) ? ids.map(String) : []; aiStoryIds._at = Date.now(); aiStoryLoading[id] = 0; if (aiStoryIds.indexOf(String(id)) >= 0) aiStoryLoad(id); else aiStoryCache[id] = null; }).catch(function() { aiStoryLoading[id] = 0; });
 }
 function myrAiStoryHtml(a) {
     var id = a && a.id; if (id == null) return '';
-    if (!(id in aiStoryCache)) { aiStoryLoad(id); return ''; }
+    if (!(id in aiStoryCache) || (aiStoryCache[id] === null && aiStoryIds && Date.now() - (aiStoryIds._at || 0) > 60000 && !aiStoryLoading[id])) { if (id in aiStoryCache) delete aiStoryCache[id]; aiStoryLoad(id); if (!(id in aiStoryCache)) return ''; }
     var st = aiStoryCache[id]; if (!st || !(st.sections || []).length) return '';
     var e = function(x) { return bbEsc(String(x == null ? '' : x)); };
     var fmt = function(t) { return e(t).replace(/〔예상〕([\s\S]*?)〔\/예상〕/g, '<span style="background:#fef3c7;border-radius:4px;padding:0 3px;">$1</span><span style="background:#fde68a;color:#92400e;border-radius:6px;padding:0 5px;font-size:11px;font-weight:700;white-space:nowrap;margin-left:2px;">예상</span>').replace(/〔계산〕([\s\S]*?)〔\/계산〕/g, '<span style="border-bottom:1px dotted #64748b;" title="서류의 값으로 계산한 값">$1</span>'); };
