@@ -425,15 +425,29 @@ export async function upsertChunked(table, rows, onConflict) {
   return failed;
 }
 
+// 2026-11-01(사용자: 불러온 값 오차 없게): 아파트 매매 저장 키에 가격이 없어서, 같은 단지·면적·층·날짜의 서로 다른 거래(가격이 다른 두 호실 등)가
+// 한 건으로 합쳐졌음(공식 CSV 대조에서 약 1.1%). 가격을 키에 넣으려면 DB 쪽 유니크 키를 바꿔야 해서(sql/house-trades-key-with-price.sql),
+// 새 키가 DB에 있으면 새 키로, 아직 없으면 예전 키로 저장하도록 자동 판별함(SQL을 실행하기 전에도 수집이 멈추지 않음).
+export const HOUSE_KEY_OLD = 'region,dong,danji,size,floor,deal_date';
+export const HOUSE_KEY_NEW = HOUSE_KEY_OLD + ',price';
+let _houseNewKey = null;
+export async function houseTradesUseNewKey(sampleRow) {
+  if (_houseNewKey !== null) return _houseNewKey;
+  if (!sampleRow) return false;
+  const { error } = await supabase.from('house_trades').upsert([sampleRow], { onConflict: HOUSE_KEY_NEW });
+  _houseNewKey = !error;
+  if (error && !/no unique or exclusion constraint|ON CONFLICT/i.test(String(error.message || ''))) console.error('⚠️ house_trades 새 키 확인 중 다른 오류(예전 키로 저장):', String(error.message || '').slice(0, 120));
+  console.log(_houseNewKey ? '🔑 house_trades: 가격 포함 새 키로 저장' : '🔑 house_trades: 예전 키로 저장 (가격 포함 키는 sql/house-trades-key-with-price.sql 실행 후 자동 적용)');
+  return _houseNewKey;
+}
+export async function upsertHouseTrades(rows) {
+  if (!rows || rows.length === 0) return 0;
+  const withPrice = await houseTradesUseNewKey(rows[0]);
+  const keyOf = (r) => `${r.region}_${r.dong}_${r.danji}_${r.size}_${r.floor}_${r.deal_date}` + (withPrice ? `_${r.price}` : '');
+  const uniqueRows = Array.from(new Map(rows.map((row) => [keyOf(row), row])).values());
+  await upsertChunked('house_trades', uniqueRows, withPrice ? HOUSE_KEY_NEW : HOUSE_KEY_OLD);
+  return uniqueRows.length;
+}
 export async function upsertBatch(rows) {
-  if (rows.length === 0) return;
-  const uniqueRows = Array.from(
-    new Map(
-      rows.map(row => [
-        `${row.region}_${row.dong}_${row.danji}_${row.size}_${row.floor}_${row.deal_date}`,
-        row
-      ])
-    ).values()
-  );
-  await upsertChunked('house_trades', uniqueRows, 'region,dong,danji,size,floor,deal_date');
+  await upsertHouseTrades(rows);
 }

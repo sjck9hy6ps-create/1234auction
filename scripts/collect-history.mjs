@@ -1,6 +1,6 @@
 import { createClient } from '@supabase/supabase-js';
 import ws from 'ws';
-import { LAWD_CODES, fetchMonth, sleep, DELAY_MS, upsertChunked } from './shared.mjs';
+import { LAWD_CODES, fetchMonth, sleep, DELAY_MS, upsertHouseTrades } from './shared.mjs';
 
 // ⚠️ 2026-09: Node 20은 네이티브 WebSocket이 없어 ws 패키지를 transport로 명시하지
 // 않으면 createClient()가 즉시 예외를 던짐(shared.mjs 등 다른 파일들은 이미 이 옵션이
@@ -48,20 +48,11 @@ for (const month of targetMonths) {
     }
   }
 
-  // 중복 제거 (region, danji, size, floor, deal_date 기준)
-  const uniqueRows = Array.from(
-    new Map(
-      monthRows.map(row => [
-        `${row.region}_${row.dong}_${row.danji}_${row.size}_${row.floor}_${row.deal_date}`,
-        row
-      ])
-    ).values()
-  );
+  // 중복 제거·저장 키는 shared.mjs의 upsertHouseTrades가 맡음(가격 포함 새 키가 DB에 있으면 그 키로)
+  const savedN = await upsertHouseTrades(monthRows);
 
-  await upsertChunked('house_trades', uniqueRows, 'region,dong,danji,size,floor,deal_date');
-
-  totalInserted += uniqueRows.length;
-  console.log(`✅ ${ym} 완료: ${uniqueRows.length}건 (누적 ${totalInserted}건)`);
+  totalInserted += savedN;
+  console.log(`✅ ${ym} 완료: ${savedN}건 (누적 ${totalInserted}건)`);
 }
 
 console.log(`\n🎉 ${TARGET_YEAR}년 완료! 총 ${totalInserted}건`);

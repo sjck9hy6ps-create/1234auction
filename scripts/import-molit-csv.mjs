@@ -31,7 +31,7 @@
 ════════════════════════════════════════════════════════════ */
 import fs from 'fs';
 import iconv from 'iconv-lite';
-import { supabase, LAWD_CODES } from './shared.mjs';
+import { supabase, LAWD_CODES, houseTradesUseNewKey, HOUSE_KEY_OLD, HOUSE_KEY_NEW } from './shared.mjs';
 
 const UPSERT_BATCH_SIZE = 500;
 
@@ -212,14 +212,17 @@ const BUILDERS = {
 
 async function upsertBatch(tableName, rows) {
   if (!rows.length) return 0;
+  // house_trades는 가격 포함 새 키가 DB에 있으면 그 키로(shared.mjs 참고), 나머지 테이블은 예전 키
+  const withPrice = tableName === 'house_trades' && await houseTradesUseNewKey(rows[0]);
+  const conflictCols = withPrice ? HOUSE_KEY_NEW : HOUSE_KEY_OLD;
   const uniqueRows = Array.from(
-    new Map(rows.map(r => [`${r.region}_${r.dong}_${r.danji}_${r.size}_${r.floor}_${r.deal_date}`, r])).values()
+    new Map(rows.map(r => [`${r.region}_${r.dong}_${r.danji}_${r.size}_${r.floor}_${r.deal_date}` + (withPrice ? `_${r.price}` : ''), r])).values()
   );
   let success = 0;
   for (let i = 0; i < uniqueRows.length; i += UPSERT_BATCH_SIZE) {
     const chunk = uniqueRows.slice(i, i + UPSERT_BATCH_SIZE);
     const { error } = await supabase.from(tableName).upsert(chunk, {
-      onConflict: 'region,dong,danji,size,floor,deal_date',
+      onConflict: conflictCols,
     });
     if (error) {
       console.error(`❌ ${tableName} upsert 에러 (${i + 1}~${i + chunk.length}행):`, error.message);

@@ -13,6 +13,22 @@ for (let i = 0; i <= 2; i++) {
   months.push(String(d.getFullYear()) + String(d.getMonth() + 1).padStart(2, '0'));
 }
 
+// 2026-11-01(사용자: 불러온 값 오차 없게): 공식 CSV와 대조하니 앱 DB에 계약월 기준 2~10%가 빠져 있었음(4개 구 2025-03~2026-05 대조).
+// 늦게 신고된 거래는 3개월 창 밖에서 들어오므로 못 잡았음 → 매주 4~15개월 전 중 2개월씩 돌아가며 다시 받음(한 달은 약 6주마다 한 번 재확인).
+// 직접 지정: DEEP_MONTHS=202503,202509 (쉼표) / 끄기: DEEP_MONTHS=none
+const deepEnv = (process.env.DEEP_MONTHS || '').trim();
+if (deepEnv !== 'none') {
+  let deep = [];
+  if (deepEnv) deep = deepEnv.split(',').map((x) => x.trim()).filter((x) => /^\d{6}$/.test(x));
+  else {
+    const wk = Math.floor(now.getTime() / (7 * 24 * 3600 * 1000));  // 주 번호
+    const pool = [];
+    for (let i = 3; i <= 14; i++) { const d = new Date(now.getFullYear(), now.getMonth() - i, 1); pool.push(String(d.getFullYear()) + String(d.getMonth() + 1).padStart(2, '0')); }
+    deep = [pool[(wk * 2) % pool.length], pool[(wk * 2 + 1) % pool.length]];
+  }
+  deep.forEach((ym) => { if (!months.includes(ym)) months.push(ym); });
+}
+
 console.log(`\n📅 주간 수집: ${months.join(', ')}`);
 
 let totalInserted = 0;

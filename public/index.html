@@ -14859,7 +14859,15 @@ async function rightsApplyTankText(text) {
             if (R.appraisalWon > 0 && R.minBidWon > 0) delete a.amountUnverified;  /* 탱크옥션 상세로 확인됨 */
         })();
         if (R.unpaidMgmt && !(parseInt(a.unpaidMgmtFee) > 0)) { a.unpaidMgmtFee = String(Math.ceil(R.unpaidMgmt.won / 10000)); R.unpaidMgmtApplied = true; }
-        if (R.households > 0 && !(a.households && a.householdsVer === 2)) { a.households = R.households; a.householdsVer = 2; }  // 탱크옥션 단지정보의 세대수(없을 때만)
+        /* 세대수: 건축물대장은 '그 지번'의 합계라 단지가 여러 지번에 걸치면 일부만 잡힘(새한센시빌 56 vs 단지 106, 효성타운 706 vs 단지 1,162 - 2026-11-01 대조).
+           회전율은 단지 전체 거래 ÷ 단지 세대수라 탱크옥션 단지정보 값을 쓰고, 10% 넘게 다르면 대장 값은 householdsBldg에 남김 */
+        if (R.households > 0) {
+            var hv0 = parseInt(a.households) || 0;
+            if (!(hv0 && a.householdsVer === 2)) { a.households = R.households; a.householdsVer = 2; a.householdsSource = '탱크옥션 단지정보'; }
+            else if (Math.abs(R.households / hv0 - 1) > 0.1) { a.householdsBldg = hv0; a.households = R.households; a.householdsVer = 2; a.householdsSource = '탱크옥션 단지정보(건축물대장 이 지번 합계 ' + hv0 + '세대와 달라요)'; }
+        }
+        /* 공시가격: 탱크옥션 상세의 '공동주택공시가격(YY-MM) : N원'을 저장(앱 자체 공시가격은 9천여 건 중 68건뿐이라 126% 점검·재산세 추정이 대부분 값 없이 돌았음). 이미 있으면 같을 때만 그대로 두고 다르면 탱크옥션(최신 공시) 값으로 */
+        (function() { var pm = part.match(/공동주택공시가격\((\d\d)-(\d\d)\)\s*:\s*([\d,]+)원/); if (pm) { var pw = rightsNum(pm[3]); if (pw > 0) { var po = parseFloat(a.officialPriceWon) || 0; if (!po || Math.abs(pw / po - 1) > 0.005) { if (po) a.officialPriceWonPrev = po; a.officialPriceWon = pw; a.officialPriceSource = '탱크옥션 공동주택공시가격(' + pm[1] + '-' + pm[2] + ')'; } } } })();
         try { await saveAuctionAPI(a); res.done++; res.applied.push({ name: a.name || a.addr || label, pyung: '', n: R.registry.length, caseNo: label, tenants: R.tenants.length, sync: (R.tankSync && R.tankSync.changed) || [], assumed: (R.warnings || []).length, audit: rightsAuditFor(a, R).filter(function(x) { return x.lvl === 'err'; }).map(function(x) { return x.msg; }) }); }
         catch (e) { msgs.push(label + ': 저장 실패 ' + e.message); }
     }
@@ -15560,6 +15568,7 @@ function preBidItems(row) {
     var hr = R.docs && R.docs.houseRead;
     if (hr && hr.state === 'ok') add('house', hr.ageDays != null && hr.ageDays > 180 ? 'warn' : 'ok', '세대열람', hr.issued + ' 발급' + (hr.ageDays != null ? ' (' + Math.round(hr.ageDays / 30) + '개월 경과)' : '') + (hr.ageDays > 180 ? ' - 입찰 직전에 다시 확인' : ''));
     else add('house', 'warn', '세대열람', hr && hr.state === 'unreadable' ? '그림 PDF라 글로 읽지 못했어요 - 직접 확인' : '세대열람 자료가 없어요 - 임차인 유무를 직접 확인');
+    if (a.householdsBldg) add('hh', 'warn', '세대수', '단지 ' + (parseInt(a.households) || 0).toLocaleString() + '세대(탱크옥션) · 건축물대장 이 지번 ' + a.householdsBldg.toLocaleString() + '세대 - 단지가 여러 지번에 걸쳐 있어요. 회전율은 단지 세대수 기준');
     if (R.tankAssumeWon > 0) add('assume', 'warn', '인수 금액', '탱크옥션이 매수인 인수 대상 ' + man(R.tankAssumeWon) + '을 표시해요 - 추천가에 반영됐는지 확인');
     var manual = [
         { k: 'court', label: '대법원 법원경매정보(공식)에서 매각기일·최저가가 앱과 같은지 확인', btn: '<button class="modal-btn btn-gray" style="font-size:11px;padding:2px 8px;" onclick="event.stopPropagation();openCourtQuick(\'' + String(a.caseNo || '').replace(/'/g, "\\'") + '\')">🏛️ 법원경매 열기(사건번호 복사)</button>' },
