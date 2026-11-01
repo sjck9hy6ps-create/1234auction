@@ -15074,6 +15074,22 @@ function myrHouseRead(t) {
     var sn = t.match(/최초\s*전입자의\s*전입일자\s*\n\s*([가-힣])\s*\n/); if (sn) out.surname = sn[1];  // 가려진 이름의 성씨(그림 글자 인식)
     return out;
 }
+/* 같은 서류 문장에서 여러 규칙이 나와 같은 경고가 3번씩 되풀이되던 것을 한 줄로 합침(2026-11-01, 사용자: 같은 주의문구가 반복돼요).
+   같은 서류(src)에서 근거 문장이 겹치는 항목(20자 이상 같은 구간)을 하나로 합치고, 제목은 ' · '로 이어 붙이고, 가장 높은 심각도와 가장 긴 문장을 남김 */
+function myrDedupeRisks(list) {
+    var norm = function(t) { return String(t || '').replace(/[\s"“”'.,·:()\-]/g, ''); };
+    var overlap = function(a, b) { if (!a || !b) return false; var sh = a.length <= b.length ? a : b, lg = sh === a ? b : a; if (sh.length < 20) return lg.indexOf(sh) >= 0; for (var i = 0; i + 20 <= sh.length; i += 5) if (lg.indexOf(sh.substr(i, 20)) >= 0) return true; return false; };
+    var rank = { danger: 3, warn: 2, info: 1 }, out = [];
+    (list || []).forEach(function(r) {
+        var n = norm(r.note), hit = out.filter(function(x) { return x.src === r.src && overlap(x._n, n); })[0];
+        if (!hit) { out.push(Object.assign({}, r, { _n: n, _ks: [r.k] })); return; }
+        if (hit._ks.indexOf(r.k) < 0) hit._ks.push(r.k);
+        if ((rank[r.lvl] || 0) > (rank[hit.lvl] || 0)) hit.lvl = r.lvl;
+        if (String(r.note || '').length > String(hit.note || '').length) { hit.note = r.note; hit._n = n; }
+        if (r.ask && !hit.ask) hit.ask = r.ask;
+    });
+    return out.map(function(x) { var o = Object.assign({}, x, { k: x._ks.join(' · ') }); delete o._n; delete o._ks; return o; });
+}
 function myrDocDigest(docs, split) {
     var d = { got: split.found.slice(0), missing: split.missing.slice(0), empty: (split.empty || []).slice(0), at: Date.now() };
     var scanDocs = docs;
@@ -15210,7 +15226,7 @@ function myrVerdict(a, R, my, cmp, bidWon, opts, row) {
     if (my.worstWon != null && my.seniorJeonse && my.worstWon > (ex || 0) + MYR_DIFF_WON) up('yellow', '선순위 전세권자가 배당요구를 하지 않으면 전세금 ' + man(my.worstWon) + '을 통째로 인수해요(위는 배당요구를 했다고 본 계산) - 배당요구 여부를 법원 문건/송달내역·매각물건명세서에서 꼭 확인하세요.');
     my.regRows.filter(function(r) { return r.risk && r.fate === '인수'; }).forEach(function(r) { up('yellow', '위험 권리: ' + r.type + ' ' + (r.holder || '') + ' (' + r.date + ') - ' + r.law); });
     (R.flags || []).forEach(function(f) { if (/유치권|법정지상권|분묘|선순위/.test(f.k)) up('yellow', '위험 권리(탱크옥션 글에 언급): ' + f.k + ' - "' + f.note + '"'); else up('yellow', '주의: ' + f.k + ' - "' + f.note + '"'); });
-    var dr = (R.docs && R.docs.risks) || [];
+    var dr = myrDedupeRisks((R.docs && R.docs.risks) || []);
     dr.filter(function(x) { return x.lvl === 'danger'; }).forEach(function(x) { up('yellow', '위험 권리(' + x.src + '): ' + x.k + ' - "' + x.note + '"'); });
     (R.unknownOccupants || []).filter(function(u) { return u.senior; }).forEach(function(u) { if (a.occChecked || (parseInt(a.assumedDeposit) || 0) > 0) up('yellow', '대항력 있는 점유자 ' + u.name + '(보증금 미상) - 직접 확인한 내용을 반영했다고 표시돼 있어요. 입찰 전 한 번 더 확인하세요.'); else up('yellow', '대항력 있는 점유자 ' + u.name + '(전입 ' + u.moveIn + ')의 보증금을 알 수 없어요 - 인수 금액이 0원이 아닐 수 있어 추천가를 믿을 수 없어요. 매각물건명세서를 확인하세요.'); });
     (R.unknownOccupants || []).filter(function(u) { return u.family; }).forEach(function(u) { up('yellow', '채무자·소유자 가족으로 기재된 점유자 ' + u.name + '(전입 ' + u.moveIn + ') - 임대차계약이 실제로 있는지, 대항력이 인정되는지는 사실확인이 필요해요(탱크옥션 기재 기준).'); });
@@ -15506,7 +15522,7 @@ function myrPanelHtml(row) {
     cmp.rows.forEach(function(r) { h += '<tr><td>' + bbEsc(r.item) + '</td><td>' + bbEsc(r.mine) + '</td><td>' + bbEsc(r.tank) + '</td><td>' + (r.ok ? '✅' : '⚠️') + '</td></tr>' + (r.ok ? '' : '<tr><td colspan="4" class="dr-sub" style="background:#fffbeb;">' + bbEsc(r.why || '두 결과가 달라요 - 등기부·명세서 원문으로 어느 쪽이 맞는지 확인') + '</td></tr>'); });
     h += '</table></details>';
     h += '<details open style="margin-top:6px;"><summary><b>3단 · 입찰 판정과 주의점</b></summary>';
-    var dr = (R.docs && R.docs.risks) || [];
+    var dr = myrDedupeRisks((R.docs && R.docs.risks) || []);
     if (R.docs) h += '<div class="dr-sub">불러온 서류: ' + (R.docs.got || []).map(function(k) { var t = MYR_TABS.filter(function(x) { return x[0] === k; })[0]; return t ? t[1] : k; }).join(' · ') + (R.docs.dates ? ' · 유찰 ' + R.docs.dates.yuchal + '회, 기일 변경/연기 ' + R.docs.dates.changed + '회' : '') + ((R.docs.empty || []).length ? ' · 열었지만 새 글 없음: ' + R.docs.empty.map(function(k) { var t = MYR_TABS.filter(function(x) { return x[0] === k; })[0]; return t ? t[1] : k; }).join(', ') : '') + '</div>';
     dr.forEach(function(x) { h += '<div class="dr-warn" style="margin-top:3px;background:' + (x.lvl === 'danger' ? '#fee2e2' : (x.lvl === 'warn' ? '#fef9c3' : '#f1f5f9')) + ';">' + (x.lvl === 'danger' ? '⛔ ' : (x.lvl === 'warn' ? '⚠️ ' : 'ℹ️ ')) + '<b>' + bbEsc(x.k) + '</b> (' + bbEsc((MYR_TABS.filter(function(t) { return t[0] === x.src; })[0] || [0, x.src])[1]) + '): "' + bbEsc(x.note) + '"</div>'; });
     var js2 = myrJointSale(R, my);
