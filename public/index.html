@@ -22558,6 +22558,70 @@ setInterval(function() {
         if (Array.isArray(d.list) && d.list.some(function(x) { return !x.done; })) processListingInbox();
     }).catch(function() {});
 }, 30000);
+/* 🔄 외부 갱신 자동 반영(2026-11-01, 사용자: "경매정보 업데이트 후 매번 새로고침은 비효율적") -
+   확장·OCR 감시·이야기 저장 등 앱 밖에서 경매물건이 바뀌면, 열려 있는 동안 30초마다(탭을 다시 볼 때도) 버전만 물어보고
+   바뀐 사건만 골라 화면에 반영함. 보관본(IndexedDB)과 서버 버전이 같으면 가벼운 확인 한 번으로 끝나 속도 변화 없음.
+   입력 중(글상자·입력칸에 커서)이면 입력이 지워지지 않게 화면 갱신만 다음 확인으로 미룸. */
+var extSyncBusy = false, extSyncBase = null, extSyncPendingRender = false;
+async function syncExternalUpdates() {
+    if (extSyncBusy || document.visibilityState !== 'visible' || !Array.isArray(auctionList) || !auctionList.length) return;
+    extSyncBusy = true;
+    try {
+        var db = await listIdb(); if (!db) return;   // 보관본을 못 쓰는 환경은 매번 통째로 받게 되므로 하지 않음
+        var cached = await listIdbOp('readonly', function(st) { return st.get(listCacheKey('')); });
+        var url = '/api/auction?withVer=1' + (cached && cached.ver ? '&since=' + encodeURIComponent(cached.ver) : '');
+        var r = await fetch(url, { cache: 'no-store' }), data = await r.json();
+        if (r.ok && data && !data.unchanged && Array.isArray(data.list)) {
+            var baseSig = {};
+            if (cached && Array.isArray(cached.list)) cached.list.forEach(function(x) { if (x && x.id != null) baseSig[x.id] = JSON.stringify(x); });
+            else if (extSyncBase) baseSig = extSyncBase;
+            else baseSig = null;   // 비교 기준이 없으면 이번엔 기준만 만들고 넘어감
+            var newSig = {}, changed = [], seen = {}, added = 0;
+            data.list.forEach(function(x) {
+                if (!x || x.id == null) return;
+                var s = JSON.stringify(x); newSig[x.id] = s; seen[x.id] = 1;
+                if (baseSig && baseSig[x.id] !== s) { changed.push(x); if (baseSig[x.id] === undefined) added++; }
+            });
+            var removed = baseSig ? Object.keys(baseSig).filter(function(k) { return !seen[k]; }) : [];
+            listIdbOp('readwrite', function(st) { return st.put({ ver: data.ver, list: data.list }, listCacheKey('')); });
+            extSyncBase = newSig;
+            if (baseSig && (changed.length || removed.length)) {
+                var pos = {}; auctionList.forEach(function(x, i) { if (x && x.id != null) pos[x.id] = i; });
+                changed.forEach(function(x) { if (pos[x.id] != null) auctionList[pos[x.id]] = x; else auctionList.push(x); });
+                if (removed.length) { var rm = {}; removed.forEach(function(k) { rm[k] = 1; }); auctionList = auctionList.filter(function(x) { return !(x && rm[x.id]); }); }
+                var upd = {}; changed.forEach(function(x) { upd[x.id] = x; });
+                var drawerHit = false;
+                bidBoardRows = bidBoardRows.map(function(row) {
+                    var n = upd[row.id]; if (!n) return row;
+                    if (String(bidDrawerId) === String(row.id)) drawerHit = true;
+                    row.a = n; delete row._vev;
+                    if (row.type === 'villa') return row;
+                    try { return finalizeBidBoardRow(row); } catch (e) { return row; }
+                });
+                extSyncPendingRender = true;
+                var nm = changed.length - added;
+                if (nm > 0 || added > 0) { try { listingToast('🔄 다른 곳에서 바뀐 경매정보 ' + changed.length + '건을 자동 반영했어요' + (added ? ' (새 사건 ' + added + '건은 입찰후보 새로고침 때 계산돼요)' : '')); } catch (e) {} }
+                try { renderAuctionMarkers(); } catch (e) {}
+            }
+        }
+        // 열려 있는 사건의 AI 이야기도 한 건만 다시 확인(전체 목록 아님, 캐시 우회)
+        var sid = bidDrawerId;
+        if (sid != null) {
+            try {
+                var rs = await fetch('/api/auction?kind=aiStory&id=' + encodeURIComponent(sid) + '&_=' + Date.now(), { cache: 'no-store' });
+                var st = rs.ok ? await rs.json() : null; if (!st || !st.sections) st = null;
+                var old = aiStoryCache[sid] || null;
+                if ((st && st.at) !== (old && old.at)) { aiStoryCache[sid] = st; if (st && aiStoryIds && aiStoryIds.indexOf(String(sid)) < 0) aiStoryIds.push(String(sid)); extSyncPendingRender = true; }
+            } catch (e) {}
+        }
+        if (extSyncPendingRender) {
+            var ae = document.activeElement, typing = ae && /^(INPUT|TEXTAREA|SELECT)$/.test(ae.tagName) && ae.closest && ae.closest('#bb-drawer, #bid-board');
+            if (!typing) { extSyncPendingRender = false; try { renderBidBoard(); } catch (e) {} try { if (bidDrawerId != null) renderBidDrawer(); } catch (e) {} }
+        }
+    } catch (e) { /* 네트워크 오류는 조용히 다음 확인에서 다시 */ } finally { extSyncBusy = false; }
+}
+setInterval(syncExternalUpdates, 30000);
+document.addEventListener('visibilitychange', function() { if (document.visibilityState === 'visible') setTimeout(syncExternalUpdates, 500); });
 function naverListingHtml(row, idJs) {
     var a = row.a, sm = a.listingParse, f = function(v) { return v ? toEok(String(v)) : '-'; };
     var h = '<div style="margin-top:8px;border-top:1px dashed #e3e6ea;padding-top:8px;"><div class="dr-sub" style="margin-bottom:4px;"><b>📋 네이버 매물 붙여넣기</b> - 단지 매물 목록을 통째로 복사해 붙이면 같은 평형만 골라 정리하고 위 호가·매물 수를 채워요</div>';
