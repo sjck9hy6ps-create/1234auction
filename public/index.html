@@ -15076,6 +15076,25 @@ function myrHouseRead(t) {
 }
 /* 같은 서류 문장에서 여러 규칙이 나와 같은 경고가 3번씩 되풀이되던 것을 한 줄로 합침(2026-11-01, 사용자: 같은 주의문구가 반복돼요).
    같은 서류(src)에서 근거 문장이 겹치는 항목(20자 이상 같은 구간)을 하나로 합치고, 제목은 ' · '로 이어 붙이고, 가장 높은 심각도와 가장 긴 문장을 남김 */
+/* 매각물건명세서 PDF는 글자 사이 띄어쓰기가 빠져 읽혀 문장이 붙어 보임(2026-11-01, 사용자: 고쳐줘).
+   법원 공통 양식의 고정 문구와 자주 나오는 정해진 표현만 띄어쓰기를 복원함 - 단어 뜻을 바꾸지 않고 공백만 넣으며, 모르는 부분은 그대로 둠. 화면 표시용(저장된 원문은 그대로) */
+var MYR_SPACING = [
+    ['에관한권리또는가처분으로매각으로그효력이소멸되지아니하는것', '에 관한 권리 또는 가처분으로 매각으로 그 효력이 소멸되지 아니하는 것'], ['등기된부동산', '등기된 부동산'],
+    ['매각에따라설정된것으로보는지상권의개요', '매각에 따라 설정된 것으로 보는 지상권의 개요'],
+    ['부동산의점유자와점유의권원', '부동산의 점유자와 점유의 권원'], ['점유할수있는기간', '점유할 수 있는 기간'], ['차임또는보증금에관한관계인의진술', '차임 또는 보증금에 관한 관계인의 진술'],
+    ['및임차인이있는경우배당요구여부와그일자', '및 임차인이 있는 경우 배당요구 여부와 그 일자'], ['전입신고일자또는사업자등록신청일자와확정일자의유무와그일자', '전입신고일자 또는 사업자등록신청일자와 확정일자의 유무와 그 일자'],
+    ['수있고,대항력과우선변제권이있는주택·상가건물임차인이배당요구를하였으나보증금전액에관하여배당을받지아니한', '수 있고, 대항력과 우선변제권이 있는 주택·상가건물 임차인이 배당요구를 하였으나 보증금 전액에 관하여 배당을 받지 아니한'],
+    ['경우에는배당받지못한잔액이매수인에게인수되게됨을주의하시기바랍니다', '경우에는 배당받지 못한 잔액이 매수인에게 인수되게 됨을 주의하시기 바랍니다'],
+    ['매수인에게대항할수있는', '매수인에게 대항할 수 있는'],
+    ['배당에서보증금이전액변제되지아니하면잔액을매수인이인수함', '배당에서 보증금이 전액 변제되지 아니하면 잔액을 매수인이 인수함'], ['배당에서보증금이전액변제되지않으면잔액을매수인이인수함', '배당에서 보증금이 전액 변제되지 않으면 잔액을 매수인이 인수함'],
+    ['채무자겸소유자의부임', '채무자 겸 소유자의 부임'], ['채무자겸소유자', '채무자 겸 소유자'], ['전입세대확인서에따라기재함', '전입세대확인서에 따라 기재함']
+];
+function myrPretty(t) {
+    var o = String(t == null ? '' : t);
+    MYR_SPACING.forEach(function(p) { o = o.split(p[0]).join(p[1]); });
+    o = o.replace(/([갑을]구)순위(\d+번)/g, '$1 순위 $2').replace(/\)있음\(/g, ') 있음 (').replace(/(대항할 수 있는)(?=[갑을]구)/g, '$1 ').replace(/(\d+번)(?=임차권|근저당|가압류|전세권|가등기|가처분|지상권|압류)/g, '$1 ').replace(/\)(?=배당에서)/g, ') ').replace(/(만원|원)(?=전입일|확정일자|점유개시일자|전입일자)/g, '$1 ').replace(/(\d{4}\.\d{1,2}\.\d{1,2}\.?)(?=[가-힣])/g, '$1 ');
+    return o;
+}
 function myrDedupeRisks(list) {
     var norm = function(t) { return String(t || '').replace(/[\s"“”'.,·:()\-]/g, ''); };
     var overlap = function(a, b) { if (!a || !b) return false; var sh = a.length <= b.length ? a : b, lg = sh === a ? b : a; if (sh.length < 20) return lg.indexOf(sh) >= 0; for (var i = 0; i + 20 <= sh.length; i += 5) if (lg.indexOf(sh.substr(i, 20)) >= 0) return true; return false; };
@@ -15088,7 +15107,7 @@ function myrDedupeRisks(list) {
         if (String(r.note || '').length > String(hit.note || '').length) { hit.note = r.note; hit._n = n; }
         if (r.ask && !hit.ask) hit.ask = r.ask;
     });
-    return out.map(function(x) { var o = Object.assign({}, x, { k: x._ks.join(' · ') }); delete o._n; delete o._ks; return o; });
+    return out.map(function(x) { var o = Object.assign({}, x, { k: x._ks.join(' · '), note: myrPretty(x.note) }); delete o._n; delete o._ks; return o; });
 }
 function myrDocDigest(docs, split) {
     var d = { got: split.found.slice(0), missing: split.missing.slice(0), empty: (split.empty || []).slice(0), at: Date.now() };
