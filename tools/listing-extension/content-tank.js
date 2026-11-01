@@ -300,7 +300,12 @@
     });
     hit.sort((a, b) => (a.innerText || '').length - (b.innerText || '').length);
     hit = hit.filter((el, i) => !hit.slice(0, i).some((o) => el.contains(o)));  // 가장 안쪽 줄만
-    if (hit.length > 1) { const nm = String(name || '').replace(/\s+/g, '').slice(0, 4); hit = nm ? hit.filter((el) => (el.innerText || '').replace(/\s+/g, '').indexOf(nm) >= 0) : []; }  // 같은 번호가 여러 법원에 있으면 이름으로 구분
+    if (hit.length > 1) {
+      const raw = String(name || '').trim(), nm = raw.replace(/\s+/g, '').slice(0, 4), am = raw.match(/^(\S+(?:동|리|가))\s+(\d+(?:-\d+)?)$/);  // 주소 힌트(법정동 번지)면 동+번지로 구분
+      const has = (el, t) => (el.innerText || '').replace(/\s+/g, '').indexOf(t) >= 0;
+      if (am) { const both = hit.filter((el) => has(el, am[1] + am[2])), dong = hit.filter((el) => has(el, am[1])); hit = both.length ? both : dong; }
+      else hit = nm ? hit.filter((el) => has(el, nm)) : [];
+    }  // 같은 번호가 여러 법원에 있으면 이름으로 구분
     return hit.length === 1 ? hit[0] : null;
   };
   const clickRoutine = async (row, caseNo) => {
