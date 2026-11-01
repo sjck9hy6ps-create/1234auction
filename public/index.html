@@ -15564,9 +15564,16 @@ function myrPanelHtml(row) {
         var extra = R.docs.house.dates.filter(function(d, i, arr) { return d && arr.indexOf(d) === i && !tm[d]; });
         if (extra.length && (R.tenants || []).length) h += '<div class="dr-warn" style="margin-top:3px;">⚠️ 세대열람의 날짜 중 임차인 표에 없는 것: ' + bbEsc(extra.slice(0, 6).join(', ')) + ' - 표에 없는 전입세대(숨은 임차인)가 있는지 확인</div>';
     }
-    h += '<div class="dr-sub" style="margin-top:6px;"><b>입찰 전에 직접 확인할 것</b></div><ul style="margin:2px 0 0 16px;padding:0;font-size:12px;">' + myrChecklist(R, my).map(function(x) { return '<li>' + bbEsc(x) + '</li>'; }).join('') + '</ul>';
-    h += '<div class="dr-sub" style="margin-top:6px;">판정 기준: 🔴 낙찰금액으로 배당이 안 끝나 추가금을 내야 하고 그 돈을 반영하면 수익이 안 나는 경우 · 🟡 위험 권리가 있거나 추가금이 있어도 수익은 나거나 탱크옥션과 다르거나 자료가 부족 · 🟢 그 외. 이 판정은 참고용이며 입찰 전에 법원 문건으로 직접 확인해야 해요.</div></details></div>';
-    try { var txx = myrTaxSim(a, R, my, row, bidWon, opts), ck = myrMissedChecklist(a, R, my, txx, row); h = myrStoryHtml(a, R, my, vd, bidWon, row) + myrTaxHtml(a, R, my, txx, row, bidWon) + '<div class="dr-sec"><h4>🧩 입찰자가 놓치기 쉬운 것 <span class="dr-sub" style="font-weight:400;">검색·법령 근거로 이 사건에 맞춰 점검</span></h4><ul style="margin:2px 0 0 16px;padding:0;font-size:12px;">' + ck.map(function(x) { return '<li style="margin-bottom:4px;">' + ({ ok: '✅', warn: '⚠️', danger: '⛔', info: 'ℹ️' }[x.st] || '') + ' ' + x.t + ' <span class="dr-sub">[' + bbEsc(x.src) + ']</span></li>'; }).join('') + '</ul></div>' + h; } catch (e) { h = '<div class="dr-warn">이야기 만들기 오류: ' + bbEsc(String(e.message || e)) + '</div>' + h; }
+    var chkL = myrChecklist(R, my);
+    h += '<details style="margin-top:6px;"><summary class="dr-sub" style="cursor:pointer;"><b>입찰 전에 직접 확인할 것 ' + chkL.length + '건</b> 보기 (아래 "입찰 전 점검표"의 직접 확인 항목과 함께 보세요)</summary><ul style="margin:2px 0 0 16px;padding:0;font-size:12px;">' + chkL.map(function(x) { return '<li>' + bbEsc(x) + '</li>'; }).join('') + '</ul></details>';
+    h += '<details style="margin-top:6px;"><summary class="dr-sub" style="cursor:pointer;">판정 기준 보기</summary><div class="dr-sub">판정 기준: 🔴 낙찰금액으로 배당이 안 끝나 추가금을 내야 하고 그 돈을 반영하면 수익이 안 나는 경우 · 🟡 위험 권리가 있거나 추가금이 있어도 수익은 나거나 탱크옥션과 다르거나 자료가 부족 · 🟢 그 외. 이 판정은 참고용이며 입찰 전에 법원 문건으로 직접 확인해야 해요.</div></details></div></details>';
+    try { var txx = myrTaxSim(a, R, my, row, bidWon, opts), ck = myrMissedChecklist(a, R, my, txx, row); h = myrStoryHtml(a, R, my, vd, bidWon, row) + myrTaxHtml(a, R, my, txx, row, bidWon) + '<div class="dr-sec"><h4>🧩 입찰자가 놓치기 쉬운 것 <span class="dr-sub" style="font-weight:400;">검색·법령 근거로 이 사건에 맞춰 점검</span></h4>' + (function() {
+        /* 어느 사건에나 똑같이 나오는 공통 법 안내(당해세 설명·배당 순서·2023.4.1 개정 등)는 접어 두고, 이 사건에 해당하는 항목만 펼쳐 보임(2026-11-01, 사용자: 중복·불필요 항목 정리) */
+        var gen = function(x) { return x.st === 'info' && /^<b>당해세<\/b>|^배당 순서|^2023\.4\.1 개정|^권리신고만으로는|^입찰 판단의 기준 서류|^대항력 있는 임차인이 없으면/.test(String(x.t)); };
+        var li = function(x) { return '<li style="margin-bottom:4px;">' + ({ ok: '✅', warn: '⚠️', danger: '⛔', info: 'ℹ️' }[x.st] || '') + ' ' + x.t + ' <span class="dr-sub">[' + bbEsc(x.src) + ']</span></li>'; };
+        var spec = ck.filter(function(x) { return !gen(x); }), gn = ck.filter(gen);
+        return '<ul style="margin:2px 0 0 16px;padding:0;font-size:12px;">' + spec.map(li).join('') + '</ul>' + (gn.length ? '<details style="margin-top:4px;"><summary class="dr-sub" style="cursor:pointer;">공통 법 안내 ' + gn.length + '건 보기 (어느 사건에나 같게 나오는 설명)</summary><ul style="margin:2px 0 0 16px;padding:0;font-size:12px;">' + gn.map(li).join('') + '</ul></details>' : '');
+    })() + '</div>' + h; } catch (e) { h = '<div class="dr-warn">이야기 만들기 오류: ' + bbEsc(String(e.message || e)) + '</div>' + h; }
     return h;
 }
 
@@ -20178,9 +20185,9 @@ function bidPlanHtml(row, fmt) {
     return '<div class="dr-plan"><b>💡 입찰가 고르기</b> <span class="dr-sub" style="margin:0;">마진이 나는 구간(순이익 ' + minMarginTxt(row) + ' 이상' + (isFirstFloor(row.a) ? ' · 1층이라 20% 더' : '') + ') 안에서</span>'
         + '<table class="pn-table"><thead><tr><th></th><th class="r">입찰가</th><th class="r">낙찰 가능성</th><th class="r">순이익(세후)</th><th class="r">마진율(세전)</th></tr></thead><tbody>'
         + line('마진 확보 상한', pl.max, false, '순이익이 ' + minMarginTxt(row) + ' 남는 가장 높은 입찰가 - 이보다 높게 쓰면 마진이 그 아래')
-        + line('<b>기대수익 최대</b>', pl.ev, true, '낙찰 가능성 × 순이익이 가장 큰 입찰가')
+        + line(pl.ev && pl.rec && Math.abs(pl.ev.bid - pl.rec.bid) <= 1 ? '<b>기대수익 최대 = 추천 입찰가</b>' : '<b>기대수익 최대</b>', pl.ev, true, '낙찰 가능성 × 순이익이 가장 큰 입찰가' + (pl.ev && pl.rec && Math.abs(pl.ev.bid - pl.rec.bid) <= 1 ? ' (추천 입찰가와 같아서 한 줄로 합쳤어요)' : ''))
         + (pl.p70 && (!pl.ev || Math.abs(pl.p70.bid - pl.ev.bid) > 1) ? line('낙찰 70%', pl.p70, false, '낙찰 가능성이 70%가 되는 가장 낮은 입찰가') : '')
-        + line('추천 입찰가', pl.rec, false, '목표 마진(500만 + 시세의 5~9%)을 지키는 입찰가')
+        + (pl.ev && pl.rec && Math.abs(pl.ev.bid - pl.rec.bid) <= 1 ? '' : line('추천 입찰가', pl.rec, false, '목표 마진(500만 + 시세의 5~9%)을 지키는 입찰가'))
         + '</tbody></table>'
         + (pl.ladder && pl.ladder.length ? '<div class="dr-sub" style="margin-top:6px;"><b>마진을 줄여서라도 낙찰받고 싶다면</b> (예상 낙찰가 ' + fmt(row.winbid.price) + ' 기준, 예상 낙찰가의 보통 오차는 약 5.6%예요)</div><table class="pn-table"><thead><tr><th></th><th class="r">입찰가</th><th class="r">낙찰 가능성</th><th class="r">순이익(세후)</th></tr></thead><tbody>'
             + pl.ladder.map(function(x) { var pc = Math.round(x.p * 100); return '<tr><td>예상 낙찰가 ' + (x.k ? '+' + Math.round(x.k * 100) + '%' : '그대로') + '</td><td class="r"><b>' + fmt(x.bid) + '</b></td><td class="r">' + pc + '%</td><td class="r" style="color:' + (x.net < 0 ? '#b91c1c' : '#374151') + ';">' + fmt(x.net) + '</td></tr>'; }).join('')
@@ -21721,7 +21728,7 @@ async function renderBidDrawer() {
             var rt = pe && row.sale ? (pe.pre / row.sale * 100).toFixed(1) + '%' : '-';
             card = '<div class="dr-pickcard ' + (go ? 'go' : 'pass') + '"><div class="pk-v">' + (go ? '🚶 임장 추천' : '패스') + (row.visit && row.visit.why ? ' · ' + bbEsc(row.visit.why) : '') + '</div>'
                 + (pe ? '<div class="pk-big"><span>추천 입찰가 ' + infoI('rec') + '</span><b>' + fmt(pe.bid) + '</b>' + (row.sale ? '<span title="추천가 ÷ 예상매도가(시세)">시세의 <b style="font-size:15px;color:#374151;">' + Math.round(pe.bid / row.sale * 100) + '%</b></span>' : '') + '</div>'
-                    + '<div class="pk-sub">낙찰 가능성 <b>' + pcc + '%</b> · 예상 순이익(세후) <b>' + fmt(pe.net) + '</b> · 마진율(세전) ' + rt + '<br>예상매도가 ' + fmt(row.sale) + ' ' + infoI('sale') + ' · 최저가 ' + fmt(row.minBid) + (row.pick.max ? ' · 마진 ' + minMarginTxt(row) + ' 남는 상한 ' + fmt(row.pick.max.bid) + (isFirstFloor(row.a) ? ' <span title="1층은 중층보다 평균 8.7% 싸고 편차가 커서 필요 마진을 20% 더 둬요" style="color:#b45309;">(1층 +20%)</span>' : '') : '') + (function() { var rl = null; try { rl = repairScenarios(row); } catch (e) {} return rl ? '<br>🔧 수리별 마진 ' + minMarginTxt(row) + ' 남는 상한 · 전체 ' + fmt(rl[0].max) + ' · 중간 ' + fmt(rl[1].max) + ' · <b>도배·장판만 ' + fmt(rl[2].max) + '</b>' : ''; })() + (row.ownStats ? '<br>같은 단지 같은 평형 거래: 최근 1년 <b>' + (row.ownStats.n12 || 0) + '건</b> · 올해 ' + (row.ownStats.nYear || 0) + '건' + (row.ownStats.lastAgeM != null ? ' · 마지막 ' + row.ownStats.lastAgeM + '개월 전' : '') : '') + '</div>'
+                    + '<div class="pk-sub">낙찰 가능성 <b>' + pcc + '%</b> · 예상 순이익(세후) <b>' + fmt(pe.net) + '</b> · 마진율(세전) ' + rt + '<br>예상매도가 ' + fmt(row.sale) + ' ' + infoI('sale') + ' · 최저가 ' + fmt(row.minBid) + (row.pick.max ? ' · 마진 ' + minMarginTxt(row) + ' 남는 상한 ' + fmt(row.pick.max.bid) + (isFirstFloor(row.a) ? ' <span title="1층은 중층보다 평균 8.7% 싸고 편차가 커서 필요 마진을 20% 더 둬요" style="color:#b45309;">(1층 +20%)</span>' : '') : '')  + (row.ownStats ? '<br>같은 단지 같은 평형 거래: 최근 1년 <b>' + (row.ownStats.n12 || 0) + '건</b> · 올해 ' + (row.ownStats.nYear || 0) + '건' + (row.ownStats.lastAgeM != null ? ' · 마지막 ' + row.ownStats.lastAgeM + '개월 전' : '') : '') + '</div>'
                     : '<div class="pk-sub">추천가가 없어요 · 예상매도가 ' + fmt(row.sale) + ' · 최저가 ' + fmt(row.minBid) + '</div>')
                 + '</div>';
             var legacy = h.slice(i1, i2); legacy = legacy.slice(legacy.indexOf('</div>') + 6); // 예전 판정 알약(❌ 제외 등)은 새 판정(맨 위 카드)과 충돌해서 뺌
