@@ -15519,7 +15519,7 @@ function preBidItems(row) {
     if (R.tankSaleDate && !R.tankSoldWon && a.bidDate !== R.tankSaleDate) diff.push('입찰일');
     add('amt', diff.length ? 'bad' : 'ok', '금액·입찰일 일치', diff.length ? '앱과 탱크옥션의 ' + diff.join('·') + '이(가) 달라요 - 다시 모아 맞추세요' : '앱 값 = 탱크옥션 값 (감정가 ' + man((R.appraisalWon || 0)) + ', 최저가 ' + man(R.minBidWon || 0) + (R.tankSync ? ', ' + new Date(R.tankSync.at).toISOString().slice(0, 10) + '에 맞춤: ' + R.tankSync.changed.join('·') : '') + ')');
     var tn = (R.tenants || []).length + (R.unknownOccupants || []).length;
-    if (R.tankTenantN == null) add('tn', 'warn', '임차인 수', '원문 임차인 수를 저장하지 않은 자료예요 - 다시 모으면 점검돼요');
+    if (R.tankTenantN == null) add('tn', 'warn', '임차인 수', '원문에 "임차인: N건" 표기가 없거나 이전 자료라 수를 점검하지 못했어요 - 임차인 현황 표를 직접 확인');
     else add('tn', tn === R.tankTenantN ? 'ok' : 'bad', '임차인 수', tn === R.tankTenantN ? '원문 ' + R.tankTenantN + '명 = 읽은 ' + tn + '명' : '원문 ' + R.tankTenantN + '명인데 ' + tn + '명만 읽었어요 - 누락됐을 수 있어요');
     var sen = (R.unknownOccupants || []).filter(function(u) { return u.senior; });
     if (sen.length) add('senior', (a.occChecked || (parseInt(a.assumedDeposit) || 0) > 0) ? 'warn' : 'bad', '대항력 있는 점유자', sen.map(function(u) { return u.name; }).join('·') + ' - 보증금 미상. ' + ((a.occChecked || (parseInt(a.assumedDeposit) || 0) > 0) ? '직접 확인한 내용이 반영돼 있어요' : '인수 금액을 0으로 계산하지 않았고 추천가는 보류돼요'));
