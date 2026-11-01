@@ -14479,7 +14479,7 @@ function parseTankRights(text) {
     if (!out.baseDate) { var b = out.registry.filter(function(r) { return r.base; })[0]; if (b) out.baseDate = b.date; }
     // 2026-10-30 권리분석 정밀화: ① 인수조건변경·확약서(HUG 등이 '낙찰 시 임차권등기 말소에 동의, 잔존 보증금 반환청구권 포기'를 제출) 근거 문장 ② 탱크옥션 자체 결론(인수위험 없음/조건부/있음)
     // 근거 문장은 '확약서·말소 동의·청구권 포기' 같은 실제 약속이 적힌 문장을 우선 찾음. '인수조건변경' 태그만 있으면(서류 표시일 뿐) 근거 약함(hard=false)
-    var ftb = text.indexOf('구분\t매각기일'); if (ftb >= 0) out.tankFailCount = (text.slice(ftb, ftb + 900).match(/\d차\s+\d{4}-\d\d-\d\d\s+[\d,]+\s+유찰/g) || []).length;  /* 기일 표의 유찰 횟수 */
+    var ftb = text.indexOf('구분\t매각기일'); if (ftb >= 0) { var fm0 = text.slice(ftb, ftb + 4000).match(/\d차\s+\d{4}-\d\d-\d\d\s+[\d,]+\s+유찰/g) || [], fs0 = {}; fm0.forEach(function(x) { fs0[x.replace(/^\d차\s+/, '')] = 1; }); out.tankFailCount = Object.keys(fs0).length; }  /* 기일 표의 유찰 횟수(2026-11-01: 900자만 보면 기일이 많은 사건이 모자라게 읽힘 - 2024타경85701은 5회인데 3회로 읽힘. 기일이 바뀌어 감정가로 돌아간 뒤의 유찰도 포함 = 사용자 확인) */
     var sold = text.slice(0, 2500).match(/매각가\s*\((\d+(?:\.\d+)?)%\)\s*([\d,]+)/); if (sold) out.tankSoldWon = rightsNum(sold[2]);  /* 이미 낙찰된 사건(탱크옥션 헤더에 매각가 표시) */
     var sdm = text.match(/매각일자\s*(\d{4})\.\s*(\d{1,2})\.\s*(\d{1,2})/); if (sdm) out.tankSaleDate = sdm[1] + '-' + ('0' + sdm[2]).slice(-2) + '-' + ('0' + sdm[3]).slice(-2);
     var ctm = text.match(/채권합계금액\s*:\s*([\d,]+)\s*원/); if (ctm) out.claimTotalWon = rightsNum(ctm[1]);
