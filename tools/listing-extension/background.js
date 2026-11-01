@@ -73,14 +73,14 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         await loc.set({ qStatus: { step: '⏸ 이어서 열 사건이 이 목록에 없어요 - 대기열 사건이 보이는 탱크옥션 목록(매각기일 등)을 열어 두고 다시 시작하세요', tid: '', caseNo: '', at: Date.now() } }); return false;
       };
       try {
-        let tm = ((await loc.get('tidMap')).tidMap) || {}; if (((await loc.get('tidMapVer')).tidMapVer) !== 3) { tm = {}; await loc.set({ tidMap: {}, tidMapVer: 3 }); }  // 0.5.1~0.5.2에서 잘못 기억된 번호 초기화
+        let tm = ((await loc.get('tidMap')).tidMap) || {}; if (((await loc.get('tidMapVer')).tidMapVer) !== 4) { tm = {}; await loc.set({ tidMap: {}, tidMapVer: 4 }); }  // 0.5.1~0.5.2에서 잘못 기억된 번호 초기화
         if (msg.type === 'chainStart') { const { q } = await qLoad(); sendResponse({ ok: await chainNext(q, tm, false) }); return; }
         if (msg.type === 'chainFail' && msg.reason === 'popup') { await loc.set({ qStatus: { step: '⛔ 팝업 차단 - 크롬에서 tankauction.com 팝업을 허용한 뒤 다시 시작하세요', tid: msg.tid || '', caseNo: '', at: Date.now() }, chainStop: Date.now() }); try { const tabs = await chrome.tabs.query({ url: ['https://www.tankauction.com/*', 'https://tankauction.com/*'] }); const ids = tabs.filter((t) => /\/popup\//.test(t.url || '') && new RegExp('[?&](tid|opener_1st_no)=' + String(msg.tid) + '(&|$)').test(t.url || '')).map((t) => t.id); setTimeout(() => chrome.tabs.remove(ids).catch(() => {}), 12000); } catch (e) {} sendResponse({ ok: true }); return; }
         if (msg.type === 'chainFail') { const { it, q } = await qLoad(); const rev = Object.keys(tm).find((k) => tm[k] === String(msg.tid || '')); if (q && rev) { q.failed = Array.from(new Set((q.failed || []).concat([rev]))); await qSave(it, q); } sendResponse({ ok: true }); try { const tabs = await chrome.tabs.query({ url: ['https://www.tankauction.com/*', 'https://tankauction.com/*'] }); const ids = tabs.filter((t) => /\/popup\//.test(t.url || '') && new RegExp('[?&](tid|opener_1st_no)=' + String(msg.tid) + '(&|$)').test(t.url || '')).map((t) => t.id); if (ids.length) await chrome.tabs.remove(ids); } catch (e) {} await chainNext(q, tm, true); return; }
         if (msg.type === 'queueGet') { const { q } = await qLoad(); const cv = (await loc.get('chainOn')).chainOn; const stt = ((await loc.get('qStatus')).qStatus) || null; sendResponse({ q, tids: tm, chainOn: cv === undefined ? true : cv, status: stt }); return; }
         if (msg.type === 'prog') { const rev = Object.keys(tm).find((k) => tm[k] === String(msg.tid || '')); await loc.set({ qStatus: { step: String(msg.step || ''), tid: msg.tid || '', caseNo: rev || '', at: Date.now() } }); sendResponse({ ok: true }); return; }
         if (msg.type === 'chainSet') { await loc.set({ chainOn: !!msg.on }); sendResponse({ ok: true }); return; }
-        if (msg.type === 'learnTids') { Object.assign(tm, msg.map || {}); await loc.set({ tidMap: tm }); sendResponse({ ok: true }); return; }
+        if (msg.type === 'learnTids') { const mp = Object.assign({}, msg.map || {}); if (msg.hay) { const { q: ql } = await qLoad(); Object.keys(mp).forEach((k) => { const qi = ql && (ql.items || []).find((i) => norm(i.caseNo) === k), nm = qi && String(qi.name || '').replace(/\s+/g, '').slice(0, 4); if (nm && nm.length >= 3 && String(msg.hay).indexOf(nm) < 0) delete mp[k]; }); } Object.assign(tm, mp); await loc.set({ tidMap: tm }); sendResponse({ ok: true }); return; }
         if (msg.type === 'openCase') { await ses.set({ ['auto_' + msg.tid]: { at: Date.now(), caseNo: msg.caseNo || '' } }); await chrome.windows.create({ url: 'https://www.tankauction.com/ca/inc/component/popup/caView.php?tid=' + encodeURIComponent(msg.tid) + '&chkNo=1&TotNo=1&opener_1st_no=' + encodeURIComponent(msg.tid), type: 'popup', width: 1300, height: 900 }); sendResponse({ ok: true }); return; }
         if (msg.type === 'pendingRow') { const pr = (await ses.get('pendingRow')).pendingRow; if (pr && Date.now() - pr.at < 90000) { await ses.remove('pendingRow'); await ses.set({ clickOpen: { caseNo: pr.caseNo, at: Date.now() } }); await loc.set({ qStatus: { step: '검색 결과에서 줄을 누르는 중', tid: '', caseNo: pr.caseNo, at: Date.now() } }); sendResponse({ caseNo: pr.caseNo, name: pr.name }); } else sendResponse({}); return; }
         if (msg.type === 'rowMissing') { const { it, q } = await qLoad(); await ses.remove('clickOpen'); if (q) { q.failed = Array.from(new Set((q.failed || []).concat([norm(msg.caseNo)]))); await qSave(it, q); } sendResponse({ ok: true }); if (q) await chainNext(q, tm, true); return; }
@@ -93,6 +93,17 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         }
         if (msg.type === 'autoStart') {
           const k = 'auto_' + msg.tid, v = (await ses.get(k))[k], co = (await ses.get('clickOpen')).clickOpen, nc = norm(msg.caseNo || ''), fresh = (t) => t && Date.now() - t < 120000;
+          // 같은 사건번호가 다른 법원에도 있으면 번호가 같아도 엉뚱한 사건일 수 있음 → 대기열의 건물 이름이 화면에 없으면 다른 사건으로 봄
+          if (nc && (fresh(v && (v.at || v)) || (co && fresh(co.at)))) {
+            const { it: it0, q: q0 } = await qLoad(), qi = q0 && (q0.items || []).find((i) => norm(i.caseNo) === nc), nm = qi && String(qi.name || '').replace(/\s+/g, '').slice(0, 4);
+            if (nm && nm.length >= 3 && String(msg.hay || '').indexOf(nm) < 0) {
+              await ses.remove(k); await ses.remove('clickOpen'); delete tm[nc]; await loc.set({ tidMap: tm, qStatus: { step: '같은 사건번호의 다른 법원 사건이라 건너뜀 (' + nc + ')', tid: msg.tid, caseNo: nc, at: Date.now() } });
+              if (q0) { if (q0.tids) delete q0.tids[nc]; await qSave(it0, q0); }
+              sendResponse({ auto: false, mismatch: true });
+              try { const tabs = await chrome.tabs.query({ url: TKURL }); const ids = tabs.filter((t) => /\/popup\//.test(t.url || '') && new RegExp('[?&](tid|opener_1st_no)=' + String(msg.tid) + '(&|$)').test(t.url || '')).map((t) => t.id); if (ids.length) await chrome.tabs.remove(ids); } catch (e) {}
+              if (q0) await chainNext(q0, tm, true); return;
+            }
+          }
           if (v && fresh(v.at || v)) {
             await ses.remove(k); const exp = (v && v.caseNo) || '';
             if (exp && nc && exp !== nc) {  // 기억한 번호가 다른 사건이었음: 바로잡고 이 창은 닫은 뒤 다음으로
