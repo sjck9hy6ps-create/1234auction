@@ -35,21 +35,38 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     return true;
   }
   // ---- 모으기 대기열(앱이 listingRaw의 id 'queue' 항목으로 저장) ----
-  if (msg && ['queueGet', 'queueDone', 'learnTids', 'openCase', 'autoStart', 'chainSet', 'prog', 'chainFail', 'chainStart'].indexOf(msg.type) >= 0) {
+  if (msg && ['queueGet', 'queueDone', 'learnTids', 'openCase', 'autoStart', 'chainSet', 'prog', 'chainFail', 'chainStart', 'clickPending', 'clickFail'].indexOf(msg.type) >= 0) {
     (async () => {
       const QID = 'queue', loc = chrome.storage.local, ses = chrome.storage.session;
       const qLoad = async () => { const list = await fetch(APP + '/api/auction?kind=listingRaw', { cache: 'no-store' }).then((x) => x.json()); const it = Array.isArray(list) ? list.find((x) => x.id === QID) : null; let q = null; try { q = it && JSON.parse(it.text); } catch (e) {} return { it, q }; };
       const qSave = async (it, q) => { await fetch(APP + '/api/auction?kind=listingRaw', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: QID, at: (it && it.at) || new Date().toISOString(), kind: 'queue', url: '', text: JSON.stringify(q), done: true, appliedAt: new Date().toISOString() }) }); };
       const norm = (x) => String(x || '').replace(/타경/g, '-').replace(/\s+/g, '');
-      const openTid = async (tid) => { await ses.set({ ['auto_' + tid]: Date.now() }); await chrome.windows.create({ url: 'https://www.tankauction.com/ca/inc/component/popup/caView.php?tid=' + encodeURIComponent(tid) + '&chkNo=1&TotNo=1&opener_1st_no=' + encodeURIComponent(tid), type: 'popup', width: 1300, height: 900 }); };
+      const openTid = async (tid, caseNo) => { await ses.set({ ['auto_' + tid]: { at: Date.now(), caseNo: caseNo || '' } }); await chrome.windows.create({ url: 'https://www.tankauction.com/ca/inc/component/popup/caView.php?tid=' + encodeURIComponent(tid) + '&chkNo=1&TotNo=1&opener_1st_no=' + encodeURIComponent(tid), type: 'popup', width: 1300, height: 900 }); };
       // 다음 사건 열기: 번호를 아는 미완료 사건 1건(하루 30건 상한). wait=true면 8초 뒤
+      const TKURL = ['https://www.tankauction.com/*', 'https://tankauction.com/*'];
+      // 번호를 모르는 사건: 열려 있는 탱크옥션 목록 탭에서 그 사건 줄을 대신 눌러 사이트가 창을 열게 함
+      const viaList = async (caseNo) => {
+        const tabs = (await chrome.tabs.query({ url: TKURL })).filter((t) => !/\/popup\//.test(t.url || ''));
+        for (const t of tabs) {
+          await ses.set({ clickOpen: { caseNo, at: Date.now() } });
+          const r = await new Promise((res) => { try { chrome.tabs.sendMessage(t.id, { type: 'clickRow', caseNo }, (x) => res(chrome.runtime.lastError ? null : x)); } catch (e) { res(null); } });
+          if (r && r.ok) return true;
+        }
+        await ses.remove('clickOpen'); return false;
+      };
+      // 다음 사건 열기: 미완료 사건을 차례로 - 번호를 알면 바로 열고, 모르면 목록 탭의 줄을 눌러 열기(하루 30건 상한). wait=true면 8초 뒤
       const chainNext = async (q, tm, wait) => {
         if (!q) return false; tm = Object.assign({}, q.tids || {}, tm);  // 서버 대기열에 기록된 번호(앱이 남긴 것)도 함께 사용
         const today = new Date().toISOString().slice(0, 10), cnt0 = ((await loc.get('chainCnt')).chainCnt) || { d: today, n: 0 }, c = cnt0.d === today ? cnt0 : { d: today, n: 0 };
         if (c.n >= 30) return false;
-        const dn = new Set((q.done || []).concat(q.failed || [])), nxt = (q.items || []).find((i) => !dn.has(norm(i.caseNo)) && tm[norm(i.caseNo)]); if (!nxt) return false;
+        const dn = new Set((q.done || []).concat(q.failed || [])), todo = (q.items || []).filter((i) => !dn.has(norm(i.caseNo))); if (!todo.length) return false;
         if (wait) await new Promise((r) => setTimeout(r, 8000));
-        c.n++; await loc.set({ chainCnt: c, qStatus: { step: '다음 사건 여는 중', tid: tm[norm(nxt.caseNo)], caseNo: norm(nxt.caseNo), at: Date.now() } }); await openTid(tm[norm(nxt.caseNo)]); return true;
+        for (const nxt of todo) {
+          const cn = norm(nxt.caseNo);
+          if (tm[cn]) { c.n++; await loc.set({ chainCnt: c, qStatus: { step: '다음 사건 여는 중', tid: tm[cn], caseNo: cn, at: Date.now() } }); await openTid(tm[cn], cn); return true; }
+          if (await viaList(cn)) { c.n++; await loc.set({ chainCnt: c, qStatus: { step: '목록에서 다음 사건 줄을 누르는 중', tid: '', caseNo: cn, at: Date.now() } }); return true; }
+        }
+        await loc.set({ qStatus: { step: '⏸ 이어서 열 사건이 이 목록에 없어요 - 대기열 사건이 보이는 탱크옥션 목록(매각기일 등)을 열어 두고 다시 시작하세요', tid: '', caseNo: '', at: Date.now() } }); return false;
       };
       try {
         let tm = ((await loc.get('tidMap')).tidMap) || {}; if (((await loc.get('tidMapVer')).tidMapVer) !== 3) { tm = {}; await loc.set({ tidMap: {}, tidMapVer: 3 }); }  // 0.5.1~0.5.2에서 잘못 기억된 번호 초기화
@@ -60,8 +77,30 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         if (msg.type === 'prog') { const rev = Object.keys(tm).find((k) => tm[k] === String(msg.tid || '')); await loc.set({ qStatus: { step: String(msg.step || ''), tid: msg.tid || '', caseNo: rev || '', at: Date.now() } }); sendResponse({ ok: true }); return; }
         if (msg.type === 'chainSet') { await loc.set({ chainOn: !!msg.on }); sendResponse({ ok: true }); return; }
         if (msg.type === 'learnTids') { Object.assign(tm, msg.map || {}); await loc.set({ tidMap: tm }); sendResponse({ ok: true }); return; }
-        if (msg.type === 'openCase') { await ses.set({ ['auto_' + msg.tid]: Date.now() }); await chrome.windows.create({ url: 'https://www.tankauction.com/ca/inc/component/popup/caView.php?tid=' + encodeURIComponent(msg.tid) + '&chkNo=1&TotNo=1&opener_1st_no=' + encodeURIComponent(msg.tid), type: 'popup', width: 1300, height: 900 }); sendResponse({ ok: true }); return; }
-        if (msg.type === 'autoStart') { const k = 'auto_' + msg.tid, v = (await ses.get(k))[k]; if (v && Date.now() - v < 120000) { await ses.remove(k); sendResponse({ auto: true }); } else sendResponse({ auto: false }); return; }
+        if (msg.type === 'openCase') { await ses.set({ ['auto_' + msg.tid]: { at: Date.now(), caseNo: msg.caseNo || '' } }); await chrome.windows.create({ url: 'https://www.tankauction.com/ca/inc/component/popup/caView.php?tid=' + encodeURIComponent(msg.tid) + '&chkNo=1&TotNo=1&opener_1st_no=' + encodeURIComponent(msg.tid), type: 'popup', width: 1300, height: 900 }); sendResponse({ ok: true }); return; }
+        if (msg.type === 'clickPending') { const co = (await ses.get('clickOpen')).clickOpen; sendResponse({ pending: !!(co && Date.now() - co.at < 120000) }); return; }
+        if (msg.type === 'clickFail') {
+          await ses.remove('clickOpen');
+          await loc.set({ qStatus: { step: '⛔ 목록의 줄을 눌렀지만 사건 창이 안 열렸어요 - 크롬 팝업 허용(tankauction.com) 확인', tid: '', caseNo: String(msg.caseNo || ''), at: Date.now() }, chainStop: Date.now() });
+          try { await fetch(APP + '/api/auction?kind=listingRaw', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: Date.now() + '_clk', at: new Date().toISOString(), kind: 'probe', url: '', text: '【줄클릭실패】 ' + msg.caseNo + '\n' + String(msg.html || '') }) }); } catch (e) {}
+          sendResponse({ ok: true }); return;
+        }
+        if (msg.type === 'autoStart') {
+          const k = 'auto_' + msg.tid, v = (await ses.get(k))[k], co = (await ses.get('clickOpen')).clickOpen, nc = norm(msg.caseNo || ''), fresh = (t) => t && Date.now() - t < 120000;
+          if (v && fresh(v.at || v)) {
+            await ses.remove(k); const exp = (v && v.caseNo) || '';
+            if (exp && nc && exp !== nc) {  // 기억한 번호가 다른 사건이었음: 바로잡고 이 창은 닫은 뒤 다음으로
+              delete tm[exp]; tm[nc] = String(msg.tid); await loc.set({ tidMap: tm, qStatus: { step: '번호가 다른 사건이라 건너뜀 (' + exp + ')', tid: msg.tid, caseNo: exp, at: Date.now() } });
+              sendResponse({ auto: false, mismatch: true });
+              try { const tabs = await chrome.tabs.query({ url: TKURL }); const ids = tabs.filter((t) => /\/popup\//.test(t.url || '') && new RegExp('[?&](tid|opener_1st_no)=' + String(msg.tid) + '(&|$)').test(t.url || '')).map((t) => t.id); if (ids.length) await chrome.tabs.remove(ids); } catch (e) {}
+              const { q } = await qLoad(); await chainNext(q, tm, true); return;
+            }
+            if (nc) { tm[nc] = String(msg.tid); await loc.set({ tidMap: tm }); }
+            sendResponse({ auto: true }); return;
+          }
+          if (co && fresh(co.at) && nc && co.caseNo === nc) { await ses.remove('clickOpen'); tm[nc] = String(msg.tid); await loc.set({ tidMap: tm }); sendResponse({ auto: true }); return; }
+          sendResponse({ auto: false }); return;
+        }
         if (msg.type === 'queueDone') {
           if (msg.caseNo && msg.tid) { tm[String(msg.caseNo).replace(/타경/g, '-').replace(/\s+/g, '')] = msg.tid; await loc.set({ tidMap: tm }); }
           const { it, q } = await qLoad(); if (q) { q.done = Array.from(new Set((q.done || []).concat([String(msg.caseNo || '').replace(/타경/g, '-').replace(/\s+/g, '')]))); q.tids = Object.assign(q.tids || {}, tm); await qSave(it, q); }

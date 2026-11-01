@@ -1,4 +1,4 @@
-// 탱크옥션 상세 보내기(0.5.4: 앱 탭이 닫혀 있어도(앱 반영 대기) 모으기가 끝나면 대기열에 완료를 기록하고 다음 사건으로 넘어감 / 대기열에서 번호를 모르는 사건은 탱크옥션 검색 화면(사건번호 칸 채움)을 열어 번호를 기억시키는 버튼 / 0.5.3: 자동으로 열린 팝업은 사용자 클릭이 없어 크롬이 참고자료 팝업을 막을 수 있음 → 막히면 빈 자료를 보내지 않고 '팝업 허용' 안내 후 자동 수집 중단 / 번호(tid) 학습을 href·data-tid로 좁히고 상세 팝업에서는 자기 사건만 기억 / 0.5.2: 수집 중 화면 위쪽에 진행 막대(사건·단계), 메인 화면 대기열 버튼에도 '수집 중' 실시간 표시, ▶ 자동 수집 시작 버튼, 2분 넘게 막힌 사건은 건너뛰고 다음으로 / 0.5.1: 대기열 사건이 끝나면 다음 사건을 자동으로 열기(체크박스, 8초 뒤·하루 30건 상한), 번호(tid) 학습을 링크 외 속성(onclick·data-*)까지 확대, '🔎 번호 점검' 버튼 / 0.5.0: 앱이 만든 '모으기 대기열'을 탱크옥션 화면 왼쪽 아래에 보여 주고, 한 번 누르면 그 사건 팝업을 열어 자동 수집·닫기. 사건번호↔탱크옥션 번호(tid)는 사용자가 연 화면에서 자동으로 기억 / 0.4.4: 글자 정보가 없는 그림 PDF(세대열람)는 확대해서 쪽 그림을 내려받기 폴더(tank-ocr)에 저장 - 글자 인식용 / 0.4.3: PDF로 열리는 서류(감정평가서·매물명세서·건물등기·세대열람)는 글 조각이 줄바꿈으로 흩어져 읽히므로, 쪽을 끝까지 넘겨 그린 뒤 글 조각의 위치로 줄을 다시 맞춤 / 0.4.2: 상세 팝업의 '파일자료' 메뉴는 눌러도 같은 화면이 바뀌지 않고 참고자료 팝업이 새로 열리므로, 보내기를 누르면 그 팝업을 한 번 열어 그 안의 탭(사건내역~세대열람)을 읽어 상세 글과 합쳐 보냄 / 0.4.1: 참고자료 팝업·iframe 안 글도 읽고, 못 찾은 탭이 있으면 화면 버튼 이름을 같이 보냄, 끝나면 완료 안내창 + 모으려고 열었던 팝업창 자동 닫기 / 0.4.0: 사건내역·기일내역·문건/송달·현황조사서·부동산표시·감정평가서·매각물건명세서·건물등기·세대열람 탭까지 같이 읽음) - 탱크옥션 물건 상세 페이지에 버튼 하나를 띄움. 눌렀을 때만 지금 열려 있는 페이지의 글(임차인 현황·건물등기·권리분석 등)을 앱에 보냄.
+// 탱크옥션 상세 보내기(0.5.5: 목록 화면 줄에 번호(data-tid)가 있는데도 '2025-5910' 형식이라 못 읽던 것 수정 + 번호를 모르는 사건은 목록의 그 사건 줄을 대신 눌러 사이트가 직접 창을 열게 함(눌러 열린 창에서 번호 기억) + 번호가 사건과 다르면 건너뜀 / 0.5.4: 앱 탭이 닫혀 있어도(앱 반영 대기) 모으기가 끝나면 대기열에 완료를 기록하고 다음 사건으로 넘어감 / 대기열에서 번호를 모르는 사건은 탱크옥션 검색 화면(사건번호 칸 채움)을 열어 번호를 기억시키는 버튼 / 0.5.3: 자동으로 열린 팝업은 사용자 클릭이 없어 크롬이 참고자료 팝업을 막을 수 있음 → 막히면 빈 자료를 보내지 않고 '팝업 허용' 안내 후 자동 수집 중단 / 번호(tid) 학습을 href·data-tid로 좁히고 상세 팝업에서는 자기 사건만 기억 / 0.5.2: 수집 중 화면 위쪽에 진행 막대(사건·단계), 메인 화면 대기열 버튼에도 '수집 중' 실시간 표시, ▶ 자동 수집 시작 버튼, 2분 넘게 막힌 사건은 건너뛰고 다음으로 / 0.5.1: 대기열 사건이 끝나면 다음 사건을 자동으로 열기(체크박스, 8초 뒤·하루 30건 상한), 번호(tid) 학습을 링크 외 속성(onclick·data-*)까지 확대, '🔎 번호 점검' 버튼 / 0.5.0: 앱이 만든 '모으기 대기열'을 탱크옥션 화면 왼쪽 아래에 보여 주고, 한 번 누르면 그 사건 팝업을 열어 자동 수집·닫기. 사건번호↔탱크옥션 번호(tid)는 사용자가 연 화면에서 자동으로 기억 / 0.4.4: 글자 정보가 없는 그림 PDF(세대열람)는 확대해서 쪽 그림을 내려받기 폴더(tank-ocr)에 저장 - 글자 인식용 / 0.4.3: PDF로 열리는 서류(감정평가서·매물명세서·건물등기·세대열람)는 글 조각이 줄바꿈으로 흩어져 읽히므로, 쪽을 끝까지 넘겨 그린 뒤 글 조각의 위치로 줄을 다시 맞춤 / 0.4.2: 상세 팝업의 '파일자료' 메뉴는 눌러도 같은 화면이 바뀌지 않고 참고자료 팝업이 새로 열리므로, 보내기를 누르면 그 팝업을 한 번 열어 그 안의 탭(사건내역~세대열람)을 읽어 상세 글과 합쳐 보냄 / 0.4.1: 참고자료 팝업·iframe 안 글도 읽고, 못 찾은 탭이 있으면 화면 버튼 이름을 같이 보냄, 끝나면 완료 안내창 + 모으려고 열었던 팝업창 자동 닫기 / 0.4.0: 사건내역·기일내역·문건/송달·현황조사서·부동산표시·감정평가서·매각물건명세서·건물등기·세대열람 탭까지 같이 읽음) - 탱크옥션 물건 상세 페이지에 버튼 하나를 띄움. 눌렀을 때만 지금 열려 있는 페이지의 글(임차인 현황·건물등기·권리분석 등)을 앱에 보냄.
 // 로그인은 사용자가 직접 한 화면만 읽음(로그인 정보는 건드리지 않고, 자동으로 다른 페이지로 이동하거나 순회하지 않음).
 (function () {
   const ID = 'tk-send-btn';
@@ -200,7 +200,7 @@
       btn.id = ID; btn.textContent = label;
       btn.style.cssText = 'position:fixed;right:16px;bottom:64px;z-index:2147483647;background:#7b1fa2;color:#fff;border:none;border-radius:20px;padding:10px 16px;font-size:14px;font-weight:700;cursor:pointer;box-shadow:0 2px 8px rgba(0,0,0,.3);';
       document.body.appendChild(btn);
-      if (!isFile) msg({ type: 'autoStart', tid: tidOf() }).then((r) => { if (r && r.auto) { autoMode = true; setProg('상세 글 읽는 중'); setTimeout(() => { try { btn.click(); } catch (e) {} }, 2500); setTimeout(() => { if (!document.getElementById('tk-done')) { setProg('실패 - 2분 넘게 끝나지 않아 건너뛰어요'); msg({ type: 'chainFail', tid: tidOf() }); } }, 150000); } });  // 대기열에서 열린 팝업이면 자동으로 모으기 시작
+      if (!isFile) msg({ type: 'autoStart', tid: tidOf(), caseNo: (() => { const cm = bodyText().match(/경매\s*(\d{4})\s*타경\s*(\d+)\s*(\(\d+\))?/); return cm ? cm[1] + '타경' + cm[2] + (cm[3] || '') : ''; })() }).then((r) => { if (r && r.auto) { autoMode = true; setProg('상세 글 읽는 중'); setTimeout(() => { try { btn.click(); } catch (e) {} }, 2500); setTimeout(() => { if (!document.getElementById('tk-done')) { setProg('실패 - 2분 넘게 끝나지 않아 건너뛰어요'); msg({ type: 'chainFail', tid: tidOf() }); } }, 150000); } });  // 대기열에서 열린 팝업이면 자동으로 모으기 시작
       btn.onclick = async () => {
         btn.disabled = true;
         const full = bodyText();
@@ -226,6 +226,7 @@
   };
   // ---- 모으기 대기열 패널(일반 탱크옥션 화면 왼쪽 아래) ----
   const normCase = (x) => String(x || '').replace(/타경/g, '-').replace(/\s+/g, '');
+  const CASE_RE = /20\d{2}\s*타경\s*\d+(?:\(\d+\))?|(?<![\d-])20\d{2}-\d{1,7}(?:\(\d+\))?(?![\d-])/g;  // '2025타경500' 또는 목록의 '2025-5910'(날짜 2026-11-03은 제외)
   const learnTids = () => {
     const map = {};
     const txt = (document.body && document.body.innerText) || '';
@@ -236,7 +237,7 @@
     Array.from(document.querySelectorAll('a[href*="tid="],[data-tid]')).slice(0, 800).forEach((a) => {  // 목록 화면: 한 줄에 사건번호가 하나뿐인 링크만
       const tv = tidOfEl(a); if (!tv) return; const m = [0, tv];
       let el = a;
-      for (let k = 0; k < 7 && el; k++) { if (k > 0) el = el.parentElement; if (!el) break; const ms = ((el.innerText || '').slice(0, 600).match(/\d{4}\s*타경\s*\d+(?:\(\d+\))?/g) || []).map(normCase); const u = ms.filter((v, i) => ms.indexOf(v) === i); if (u.length === 1) { map[u[0]] = m[1]; break; } if (u.length > 1) break; }
+      for (let k = 0; k < 7 && el; k++) { if (k > 0) el = el.parentElement; if (!el) break; const ms = ((el.innerText || '').slice(0, 600).match(CASE_RE) || []).map(normCase); const u = ms.filter((v, i) => ms.indexOf(v) === i); if (u.length === 1) { map[u[0]] = m[1]; break; } if (u.length > 1) break; }
     });
     if (Object.keys(map).length) msg({ type: 'learnTids', map });
   };
@@ -254,10 +255,10 @@
     if (!qOpen) return;
     const opts = document.createElement('div'); opts.style.cssText = 'margin-top:6px;background:#fff;border:1px solid #cbd5e1;border-radius:10px;padding:6px 10px;color:#111;max-width:380px;';
     const cb = document.createElement('input'); cb.type = 'checkbox'; cb.checked = !!(r && r.chainOn); cb.onchange = () => msg({ type: 'chainSet', on: cb.checked });
-    const lb = document.createElement('label'); lb.style.cssText = 'cursor:pointer;'; lb.appendChild(cb); lb.appendChild(document.createTextNode(' 끝나면 다음 사건 자동 열기(8초 뒤, 번호를 아는 사건만, 하루 30건)')); opts.appendChild(lb);
+    const lb = document.createElement('label'); lb.style.cssText = 'cursor:pointer;'; lb.appendChild(cb); lb.appendChild(document.createTextNode(' 끝나면 다음 사건 자동 열기(8초 뒤, 번호를 모르면 이 목록 화면에서 그 줄을 대신 눌러요, 하루 30건)')); opts.appendChild(lb);
     const dg = document.createElement('button'); dg.textContent = '🔎 이 화면에서 번호 점검'; dg.style.cssText = 'display:block;margin-top:5px;padding:3px 9px;border:1px solid #94a3b8;border-radius:8px;background:#f1f5f9;cursor:pointer;';
-    dg.onclick = async () => { const aEl = Array.from(document.querySelectorAll('a[href],[onclick],[data-tid],[data-id]')); const withTid = aEl.filter((x) => /tid|\b2\d{6}\b/.test((x.getAttribute('href') || '') + (x.getAttribute('onclick') || '') + (x.getAttribute('data-tid') || ''))); const ex = withTid.slice(0, 6).map((x) => '<' + x.tagName.toLowerCase() + ' href=' + (x.getAttribute('href') || '').slice(0, 90) + ' onclick=' + (x.getAttribute('onclick') || '').slice(0, 90) + '> ' + norm((x.parentElement && x.parentElement.innerText || x.innerText || '')).slice(0, 80)); learnTids(); const rr = await msg({ type: 'queueGet' }); dg.textContent = '점검: 번호 후보 요소 ' + withTid.length + '개 · 기억한 사건 ' + Object.keys((rr && rr.tids) || {}).length + '건 (자세한 내용은 앱으로 보냈어요)'; msg({ type: 'send', kind: 'probe', text: '【번호점검】 url=' + location.pathname + ' 후보=' + withTid.length + '\n' + ex.join('\n'), url: location.pathname }); };
-    const known = left.filter((i) => tids[normCase(i.caseNo)]).length, go = document.createElement('button'); go.textContent = '▶ 대기열 자동 수집 시작 (번호 아는 ' + known + '건' + (left.length - known ? ', 모르는 ' + (left.length - known) + '건은 건너뜀' : '') + ')'; go.style.cssText = 'display:block;margin-top:5px;padding:5px 10px;border:none;border-radius:8px;background:#16a34a;color:#fff;font-weight:700;cursor:pointer;'; go.disabled = !known || !!stt; go.onclick = () => { go.disabled = true; go.textContent = '여는 중…'; msg({ type: 'chainStart' }); setTimeout(() => renderQueue(), 3000); };
+    dg.onclick = async () => { const aEl = Array.from(document.querySelectorAll('a[href],[onclick],[data-tid],[data-id]')); const withTid = aEl.filter((x) => /tid|\b2\d{6}\b/.test((x.getAttribute('href') || '') + (x.getAttribute('onclick') || '') + (x.getAttribute('data-tid') || ''))); const ex = withTid.slice(0, 6).map((x) => '<' + x.tagName.toLowerCase() + ' data-tid=' + (x.getAttribute('data-tid') || '') + ' href=' + (x.getAttribute('href') || '').slice(0, 90) + ' onclick=' + (x.getAttribute('onclick') || '').slice(0, 90) + '> ' + norm((x.parentElement && x.parentElement.innerText || x.innerText || '')).slice(0, 80)); learnTids(); const rr = await msg({ type: 'queueGet' }); dg.textContent = '점검: 번호 후보 요소 ' + withTid.length + '개 · 기억한 사건 ' + Object.keys((rr && rr.tids) || {}).length + '건 (자세한 내용은 앱으로 보냈어요)'; msg({ type: 'send', kind: 'probe', text: '【번호점검】 url=' + location.pathname + ' 후보=' + withTid.length + '\n' + ex.join('\n'), url: location.pathname }); };
+    const known = left.filter((i) => tids[normCase(i.caseNo)]).length, go = document.createElement('button'); go.textContent = '▶ 대기열 자동 수집 시작 (번호 아는 ' + known + '건' + (left.length - known ? ', 모르는 ' + (left.length - known) + '건은 목록 화면의 줄을 눌러 열기' : '') + ')'; go.style.cssText = 'display:block;margin-top:5px;padding:5px 10px;border:none;border-radius:8px;background:#16a34a;color:#fff;font-weight:700;cursor:pointer;'; go.disabled = !!stt; go.onclick = () => { go.disabled = true; go.textContent = '여는 중…'; msg({ type: 'chainStart' }).then((x) => { if (x && x.ok === false) go.textContent = '열 사건이 없어요 - 번호를 모르는 사건은 그 사건이 보이는 목록 화면에서 시작하세요'; }); setTimeout(() => renderQueue(), 3000); };
     opts.insertBefore(go, opts.firstChild); opts.appendChild(dg); qBox.appendChild(opts);
     const list = document.createElement('div'); list.style.cssText = 'margin-top:6px;background:#fff;border:1px solid #cbd5e1;border-radius:10px;padding:8px 10px;max-width:380px;max-height:60vh;overflow:auto;box-shadow:0 4px 14px rgba(0,0,0,.25);color:#111;';
     if (!left.length) list.textContent = '✅ 대기열을 모두 모았어요.';
@@ -265,13 +266,38 @@
       const row = document.createElement('div'); row.style.cssText = 'padding:5px 0;border-bottom:1px solid #eef2f7;';
       const t = document.createElement('div'); t.textContent = it.caseNo + ' · ' + (it.name || '') + (it.sale ? ' · 매각 ' + it.sale : ''); t.style.cssText = 'font-weight:600;word-break:keep-all;'; row.appendChild(t);
       const tid = tids[normCase(it.caseNo)], b = document.createElement('button'); b.style.cssText = 'margin-top:3px;margin-right:6px;padding:3px 9px;border:none;border-radius:8px;cursor:pointer;color:#fff;background:' + (tid ? '#16a34a' : '#64748b') + ';';
-      if (tid) { b.textContent = '▶ 열어서 자동 수집'; b.onclick = () => { b.disabled = true; b.textContent = '여는 중…'; msg({ type: 'openCase', tid }); setTimeout(() => renderQueue(), 4000); }; }
+      if (tid) { b.textContent = '▶ 열어서 자동 수집'; b.onclick = () => { b.disabled = true; b.textContent = '여는 중…'; msg({ type: 'openCase', tid, caseNo: normCase(it.caseNo) }); setTimeout(() => renderQueue(), 4000); }; }
       else { const cm = it.caseNo.match(/^(\d{4})-(\d+)(?:\((\d+)\))?$/), sb = document.createElement('button'); sb.textContent = '🔎 탱크옥션에서 찾기(번호 기억)'; sb.style.cssText = b.style.cssText.replace(/background:[^;]+;/, 'background:#0369a1;'); sb.onclick = () => { if (cm) window.open('https://www.tankauction.com/ca/caList.php?sn1=' + cm[1] + '&sn2=' + cm[2] + (cm[3] ? '&pn=' + cm[3] : ''), '_blank'); }; row.appendChild(sb);
         b.textContent = '📋 사건번호 복사'; b.onclick = async () => { try { await navigator.clipboard.writeText(it.caseNo.replace('-', '타경')); b.textContent = '복사됨 - 탱크옥션 검색에 붙여넣기'; } catch (e) { b.textContent = it.caseNo; } }; const hint = document.createElement('span'); hint.textContent = '(처음 보는 사건: 한 번 열면 다음부턴 자동)'; hint.style.cssText = 'font-size:11px;color:#64748b;'; row.appendChild(b); row.appendChild(hint); list.appendChild(row); return; }
       row.appendChild(b); list.appendChild(row);
     });
     qBox.appendChild(list);
   };
+
+  // 목록 화면: 대기열 사건의 줄을 찾아 사이트가 직접 사건 창을 열게 누름(번호를 모를 때). 열렸는지는 background의 clickOpen 소모로 확인
+  const findRow = (caseNo) => {
+    const cn = normCase(caseNo);
+    const hit = Array.from(document.querySelectorAll('tr,li,[data-tid]')).filter((el) => {
+      if (!visible(el) || el.closest('#tk-queue')) return false;
+      const ms = ((el.innerText || '').slice(0, 800).match(CASE_RE) || []).map(normCase), u = ms.filter((v, i) => ms.indexOf(v) === i);
+      return u.length === 1 && u[0] === cn;
+    });
+    hit.sort((a, b) => (a.innerText || '').length - (b.innerText || '').length);
+    return hit[0] || null;
+  };
+  if (isTop && !/\/popup\//.test(location.pathname)) chrome.runtime.onMessage.addListener((m, s, send) => {
+    if (!m || m.type !== 'clickRow') return;
+    const row = findRow(m.caseNo); if (!row) { send({ ok: false }); return; }
+    send({ ok: true });
+    (async () => {
+      row.scrollIntoView({ block: 'center' });
+      const cn = normCase(m.caseNo), cell = Array.from(row.querySelectorAll('td,span,a,div,p')).filter((e) => { const ms = ((e.innerText || '').match(CASE_RE) || []).map(normCase); return ms.length && ms.every((v) => v === cn) && !e.children.length; })[0];
+      const tgts = [cell, row.querySelector('a'), row].filter((x, i, a) => x && a.indexOf(x) === i);
+      for (const t of tgts) { try { t.click(); } catch (e) {} for (let i = 0; i < 8; i++) { await sleep(1000); const r = await msg({ type: 'clickPending' }); if (r && !r.pending) return; } }
+      msg({ type: 'clickFail', caseNo: cn, html: row.outerHTML.replace(/\s+/g, ' ').slice(0, 1500) });
+    })();
+    return false;
+  });
   setInterval(ensure, 2000);
   ensure();
   if (isTop) { learnTids(); renderQueue(); setInterval(learnTids, 5000); setInterval(renderQueue, 4000); }
