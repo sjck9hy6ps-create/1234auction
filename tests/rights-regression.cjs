@@ -33,7 +33,7 @@ function indepRegistry(t) {
   });
 }
 function summary(R) {
-  return { tenants: R.tenants.map((x) => [x.moveIn, x.fixed, x.distDate, x.deposit, x.rent, x.tankStanding]), unknown: (R.unknownOccupants || []).map((u) => [u.moveIn, u.tankStanding, !!u.senior, !!u.ownerNote]),
+  return { tenants: R.tenants.map((x) => [x.moveIn, x.fixed, x.distDate, x.deposit, x.rent, x.tankStanding]), unknown: (R.unknownOccupants || []).map((u) => [u.moveIn, u.tankStanding, !!u.senior, !!u.ownerNote, !!u.family]),
     registry: R.registry.map((x) => [x.seq, x.date, x.type, x.amount, x.base, x.extinguished, x.assumed]), minBidWon: R.minBidWon, appraisalWon: R.appraisalWon, tankSaleDate: R.tankSaleDate || '', tankSoldWon: R.tankSoldWon || 0,
     baseDate: R.baseDate, distDeadline: R.distDeadline, claimTotalWon: R.claimTotalWon || 0, tankTenantN: R.tankTenantN == null ? null : R.tankTenantN, warnings: R.warnings.length };
 }

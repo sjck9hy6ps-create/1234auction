@@ -1049,6 +1049,7 @@
    [
     "2007-06-29",
     null,
+    false,
     true,
     true
    ]
@@ -1324,6 +1325,7 @@
     "2024-06-10",
     false,
     false,
+    false,
     false
    ]
   ],
@@ -1389,6 +1391,7 @@
   "unknown": [
    [
     "2025-03-04",
+    false,
     false,
     false,
     false
@@ -1686,6 +1689,7 @@
     "2025-09-29",
     false,
     false,
+    false,
     false
    ]
   ],
@@ -1829,6 +1833,7 @@
   "unknown": [
    [
     "2024-08-28",
+    false,
     false,
     false,
     false
@@ -2054,7 +2059,8 @@
     "2014-02-27",
     false,
     false,
-    true
+    true,
+    false
    ]
   ],
   "registry": [

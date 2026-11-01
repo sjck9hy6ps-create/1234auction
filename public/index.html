@@ -14483,9 +14483,12 @@ function parseTankRights(text) {
     if (!out.registry.length) out.warnings.push('건물등기(권리 목록)를 찾지 못했어요');
     var tnm = text.match(/임차인\s*:\s*(\d+)\s*건/); if (tnm) out.tankTenantN = parseInt(tnm[1], 10);  /* 원문이 적어 준 임차인 수 - 읽은 수와 맞는지 점검용 */
     (out.unknownOccupants || []).forEach(function(u) {
-        u.senior = u.tankStanding === true || (u.tankStanding !== false && !!u.moveIn && !!out.baseDate && u.moveIn < out.baseDate);  /* 전입이 말소기준일보다 앞서면 대항력 있음(주택임대차보호법 제3조) */
+        var early = u.tankStanding === true || (u.tankStanding !== false && !!u.moveIn && !!out.baseDate && u.moveIn < out.baseDate);  /* 전입이 말소기준일보다 앞서면 대항력 있음(주택임대차보호법 제3조) */
         try { u.ownerNote = new RegExp(u.name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '[^\\n]{0,80}(?:채무자\\s*겸\\s*소유자|소유자\\s*의\\s*(?:부|처|자|배우자|모|조카|가족)|채무자겸소유자)').test(text); } catch (e) { u.ownerNote = false; }
-        if (u.senior) out.warnings.push('대항력이 있는 점유자 ' + u.name + '(전입 ' + u.moveIn + ', 말소기준일 ' + (out.baseDate || '-') + ')의 보증금을 알 수 없어요 - 인수 금액을 0원으로 두지 않았어요. 매각물건명세서에서 임대차 여부와 보증금을 확인한 뒤 "인수보증금"에 입력하세요.' + (u.ownerNote ? ' (탱크옥션 기재: 채무자·소유자 본인 또는 그 가족으로 보여 임대차가 아닐 수도 있어요)' : ''));
+        /* 채무자·소유자 본인 또는 가족으로 기재된 점유자는 임대차(대항력) 인정 여부가 달라 대항력 있는 임차인으로 보지 않고 '사실확인 필요'로 분리(2026-11-01, 사용자 지시) */
+        u.family = !!(early && u.ownerNote); u.senior = early && !u.ownerNote;
+        if (u.senior) out.warnings.push('대항력이 있는 점유자 ' + u.name + '(전입 ' + u.moveIn + ', 말소기준일 ' + (out.baseDate || '-') + ')의 보증금을 알 수 없어요 - 인수 금액을 0원으로 두지 않았어요. 매각물건명세서에서 임대차 여부와 보증금을 확인한 뒤 "인수보증금"에 입력하세요.');
+        else if (u.family) out.warnings.push('채무자·소유자 본인 또는 가족으로 기재된 점유자 ' + u.name + '(전입 ' + u.moveIn + ', 말소기준일 ' + (out.baseDate || '-') + ')가 있어요 - 임대차계약이 실제로 있는지, 대항력이 인정되는지는 사실확인이 필요해요(탱크옥션 기재 기준).');
     });
     return out;
 }
@@ -15171,6 +15174,7 @@ function myrVerdict(a, R, my, cmp, bidWon, opts, row) {
     var dr = (R.docs && R.docs.risks) || [];
     dr.filter(function(x) { return x.lvl === 'danger'; }).forEach(function(x) { up('yellow', '위험 권리(' + x.src + '): ' + x.k + ' - "' + x.note + '"'); });
     (R.unknownOccupants || []).filter(function(u) { return u.senior; }).forEach(function(u) { if (a.occChecked || (parseInt(a.assumedDeposit) || 0) > 0) up('yellow', '대항력 있는 점유자 ' + u.name + '(보증금 미상) - 직접 확인한 내용을 반영했다고 표시돼 있어요. 입찰 전 한 번 더 확인하세요.'); else up('yellow', '대항력 있는 점유자 ' + u.name + '(전입 ' + u.moveIn + ')의 보증금을 알 수 없어요 - 인수 금액이 0원이 아닐 수 있어 추천가를 믿을 수 없어요. 매각물건명세서를 확인하세요.'); });
+    (R.unknownOccupants || []).filter(function(u) { return u.family; }).forEach(function(u) { up('yellow', '채무자·소유자 가족으로 기재된 점유자 ' + u.name + '(전입 ' + u.moveIn + ') - 임대차계약이 실제로 있는지, 대항력이 인정되는지는 사실확인이 필요해요(탱크옥션 기재 기준).'); });
     var hr = R.docs && R.docs.houseRead;
     if (hr && hr.state === 'unreadable') up('yellow', '세대열람(전입세대확인서)을 글로 읽지 못했어요(그림 PDF) - 전입 세대·임차인 유무를 직접 확인하세요.');
     else if (hr && hr.state === 'ok') {
@@ -15519,6 +15523,8 @@ function preBidItems(row) {
     else add('tn', tn === R.tankTenantN ? 'ok' : 'bad', '임차인 수', tn === R.tankTenantN ? '원문 ' + R.tankTenantN + '명 = 읽은 ' + tn + '명' : '원문 ' + R.tankTenantN + '명인데 ' + tn + '명만 읽었어요 - 누락됐을 수 있어요');
     var sen = (R.unknownOccupants || []).filter(function(u) { return u.senior; });
     if (sen.length) add('senior', (a.occChecked || (parseInt(a.assumedDeposit) || 0) > 0) ? 'warn' : 'bad', '대항력 있는 점유자', sen.map(function(u) { return u.name; }).join('·') + ' - 보증금 미상. ' + ((a.occChecked || (parseInt(a.assumedDeposit) || 0) > 0) ? '직접 확인한 내용이 반영돼 있어요' : '인수 금액을 0으로 계산하지 않았고 추천가는 보류돼요'));
+    var fam = (R.unknownOccupants || []).filter(function(u) { return u.family; });
+    if (fam.length) add('family', 'warn', '가족·소유자 점유자', fam.map(function(u) { return u.name; }).join('·') + ' - 임대차·대항력은 사실확인 필요(아래 직접 확인 항목)');
     var hr = R.docs && R.docs.houseRead;
     if (hr && hr.state === 'ok') add('house', hr.ageDays != null && hr.ageDays > 180 ? 'warn' : 'ok', '세대열람', hr.issued + ' 발급' + (hr.ageDays != null ? ' (' + Math.round(hr.ageDays / 30) + '개월 경과)' : '') + (hr.ageDays > 180 ? ' - 입찰 직전에 다시 확인' : ''));
     else add('house', 'warn', '세대열람', hr && hr.state === 'unreadable' ? '그림 PDF라 글로 읽지 못했어요 - 직접 확인' : '세대열람 자료가 없어요 - 임차인 유무를 직접 확인');
@@ -15530,6 +15536,7 @@ function preBidItems(row) {
         { k: 'dayof', label: '입찰 당일 아침 기일변경·취하·정지 여부 다시 확인' }
     ];
     if (sen.length) manual.splice(2, 0, { k: 'occ', label: '대항력 있는 점유자의 임대차 여부·보증금을 명세서에서 확인했고 "인수보증금"에 반영했어요(확인 체크 시 추천가 보류가 풀려요)' });
+    if (fam.length) manual.splice(2, 0, { k: 'family', label: '채무자·소유자 가족으로 기재된 점유자(' + fam.map(function(u) { return u.name; }).join('·') + ')의 임대차계약 존재·대항력 인정 여부를 사실 확인(현황조사서·매각물건명세서·전입세대 열람)' });
     var chk = a.preBid || {};
     manual.forEach(function(m) { out.push({ k: m.k, st: chk[m.k] ? 'ok' : 'todo', label: m.label, detail: chk[m.k] ? new Date(chk[m.k]).toISOString().slice(0, 10) + ' 확인' : '', btn: m.btn || '', auto: false }); });
     return out;
@@ -15569,7 +15576,7 @@ function rightsPanelHtmlBase(row) {
         h += '<table class="dr-tbl" style="margin-top:6px;"><tr><td class="dr-sub">임차인</td><td class="dr-sub">보증금</td><td class="dr-sub">대항력·배당</td></tr>';
         w0.tenants.forEach(function(t) { h += '<tr><td>' + bbEsc(t.name) + '<div class="dr-sub">전입 ' + (t.moveIn || '미상') + (t.effDate ? '(대항력 ' + t.effDate + ' 0시~)' : '') + ' · 확정 ' + (t.fixed || '미상') + (t.prioDate ? ' → 배당 순위 ' + t.prioDate + (t.viaFixed ? ' 당일' : ' 0시') + ' 기준' : '') + ' · 배당요구 ' + (t.distDate || (t.rankedDist ? '있음' : '미확인')) + '</div></td><td class="r">' + eok(t.deposit) + '</td><td class="dr-sub">' + (t.standing ? '대항력 있음' : '대항력 없음') + (t.minor ? ' · 소액' : '') + '<br>' + bbEsc(t.status) + (t.linkNote ? '<br><span class="dr-sub">' + bbEsc(t.linkNote) + '</span>' : '') + '</td></tr>'; });
         h += '</table>';
-        if (R.unknownOccupants && R.unknownOccupants.length) h += '<div class="dr-sub" style="margin-top:4px;">👥 보증금을 알 수 없는 점유자(인수 계산에는 넣지 않았어요): ' + R.unknownOccupants.map(function(u) { return (u.senior ? '<b style="color:#c62828;">' : '') + bbEsc(u.name) + '(전입 ' + (u.moveIn || '미상') + ', ' + (u.senior ? '말소기준일보다 앞선 전입 = 대항력 있음' : u.tankStanding === false ? '대항력 없음' : '대항력 표시 없음') + (u.ownerNote ? ', 채무자·소유자 관련 기재' : '') + ')' + (u.senior ? '</b>' : ''); }).join(' · ') + (R.unknownOccupants.some(function(u) { return u.senior; }) ? ' - <b style="color:#c62828;">보증금을 알 수 없어 0원으로 계산하지 않았어요. 매각물건명세서에서 임대차 여부와 보증금을 확인하세요</b>' : ' - 명도 때 확인이 필요해요') + '</div>';
+        if (R.unknownOccupants && R.unknownOccupants.length) h += '<div class="dr-sub" style="margin-top:4px;">👥 보증금을 알 수 없는 점유자(인수 계산에는 넣지 않았어요): ' + R.unknownOccupants.map(function(u) { return (u.senior ? '<b style="color:#c62828;">' : '') + bbEsc(u.name) + '(전입 ' + (u.moveIn || '미상') + ', ' + (u.senior ? '말소기준일보다 앞선 전입 = 대항력 있음' : u.family ? '채무자·소유자 가족 기재 - 임대차·대항력 사실확인 필요' : u.tankStanding === false ? '대항력 없음' : '대항력 표시 없음') + (u.ownerNote && !u.family ? ', 채무자·소유자 관련 기재' : '') + ')' + (u.senior ? '</b>' : ''); }).join(' · ') + (R.unknownOccupants.some(function(u) { return u.senior; }) ? ' - <b style="color:#c62828;">보증금을 알 수 없어 0원으로 계산하지 않았어요. 매각물건명세서에서 임대차 여부와 보증금을 확인하세요</b>' : ' - 명도 때 확인이 필요해요') + '</div>';
     }
     rightsTenantLinks(R).pairs.forEach(function(pr) {
         h += '<div class="dr-warn" style="margin-top:4px;">임차인 표의 <b>' + bbEsc(pr.tenant) + '</b>(전입 ' + (pr.tenantMoveIn || '미상') + ')과 등기부 임차권 <b>' + bbEsc(pr.holder) + '</b>(전입 ' + pr.regMoveIn + ')의 보증금이 같아요. 어떻게 볼까요? '
