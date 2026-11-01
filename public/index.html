@@ -7728,7 +7728,23 @@ function openBatoner(caseNo) {
     if (!cn) { linkToast('바토너 대리입찰 신청 화면을 열었어요. 사건번호가 등록돼 있지 않아 직접 검색해 주세요.'); return; }
     copyText(cn).then(function(ok) { linkToast(ok ? '사건번호 ' + cn + ' 복사됨 → 바토너 "경매 사건을 검색하세요" 칸에 붙여넣기 (로그인 필요)' : '사건번호: ' + cn + ' (자동 복사 실패 - 직접 입력해 주세요)'); });
 }
-function openTankQuick(caseNo) {
+/* 🟦 탱크옥션(개별 모으기, 2026-11-01): 확장(0.6.0+)이 있으면 사건번호 복사·붙여넣기 없이 그 사건 1건만 자동으로 찾아 열고 모아서 앱에 반영(대기열의 하루 30건 상한과 무관·연쇄 없음).
+   확장이 없거나 응답이 없으면 예전 방식(탱크옥션 열고 번호 복사)으로 */
+function openTankQuick(caseNo, name) {
+    var mm = String(caseNo || '').match(/(\d{4})\D+(\d+)\s*(?:\((\d+)\))?/);
+    if (!mm) { openTankQuickManual(caseNo); return; }
+    var key = mm[1] + '-' + mm[2] + (mm[3] ? '(' + mm[3] + ')' : ''), acked = false;
+    var onAck = function(e) {
+        if (!e.data || e.data.source !== 'hg-ext' || e.data.type !== 'collectAck') return;
+        acked = true; window.removeEventListener('message', onAck);
+        if (e.data.ok) linkToast('🧲 ' + key + ' 자동으로 모으는 중이에요 - 탱크옥션 창이 열리고 끝나면 닫혀요. 앱에는 자동 반영돼요 (크롬 팝업 허용 필요)');
+        else openTankQuickManual(caseNo);
+    };
+    window.addEventListener('message', onAck);
+    window.postMessage({ source: 'hg-app', type: 'collectCase', caseNo: key, name: name || '' }, '*');
+    setTimeout(function() { if (acked) return; window.removeEventListener('message', onAck); openTankQuickManual(caseNo); }, 1500);
+}
+function openTankQuickManual(caseNo) {
     var cn = caseNoForSearch(caseNo), m = cn.match(/(\d{4})타경(\d+)/);
     openLinkWindow('https://www.tankauction.com/ca/caList.php', 'win-tank');
     if (!m) { linkToast('탱크옥션을 열었어요. 사건번호가 없어 직접 검색해 주세요.'); return; }
@@ -21442,7 +21458,7 @@ async function renderBidDrawer() {
     // 2026-10 정리: 지도·상세 버튼은 창 맨 위에 이미 있어 아래쪽 중복 버튼은 뺌
     h += '<div class="dr-sec dr-btns">'
         + '<button onclick="openCourtQuick(\'' + String(a.caseNo || '').replace(/'/g, "\\'") + '\')">🏛️ 법원경매</button>'
-        + '<button onclick="openTankQuick(\'' + String(a.caseNo || '').replace(/'/g, "\\'") + '\')">🟦 탱크옥션</button>'
+        + '<button onclick="openTankQuick(\'' + String(a.caseNo || '').replace(/'/g, "\\'") + '\',\'' + String(a.name || '').replace(/'/g, "\\'") + '\')" title="사건번호 복사 없이 이 사건 1건을 자동으로 열어 모아요(확장 필요)">🟦 탱크옥션</button>'
         + '<button onclick="openNaverForRow(\'' + idJs + '\')" title="이 물건 위치·종류·평형(±5평)·연식(−5~+10년)을 맞춘 네이버부동산 매물 지도">🟢 네이버부동산</button><button onclick="openNaverMapForRow(\'' + idJs + '\')" title="네이버 지도에서 이 주소를 검색해 핀이 꽂힌 위치로 열어요">📍 네이버 지도</button>' + '<button onclick="openBatoner(\'' + String(a.caseNo || '').replace(/'/g, "\\'") + '\')">🙋 바토너 대리입찰</button></div>';
     // 임장 후보 화면(2026-10): 맨 위에 판정 + 추천가 1개, 근거·범위·실거래·비용은 "자세히"로 접고, 직접 확인한 금액 입력칸은 항상 보이게
     var i1 = h.indexOf('<div style="margin-top:6px;"><span class="bb-verdict"'), i2 = h.indexOf('<div class="dr-sec"><h4>직접 확인한 금액');
@@ -21640,7 +21656,7 @@ async function renderVillaDrawer(d, row) {
         + '<label>인수보다 먼저 빠지는 비용 (집행비용·체납세금, 비우면 300만)</label><input type="number" value="' + (parseInt(a.assumedPrior) || '') + '" placeholder="300" onchange="updateDrawerField(\'' + idJs + '\',\'assumedPrior\',this.value)">'
         + '<label>미납 관리비</label><input type="number" value="' + (parseInt(a.unpaidMgmtFee) || '') + '" placeholder="0" onchange="updateDrawerField(\'' + idJs + '\',\'unpaidMgmtFee\',this.value)">'
         + '<label>수리비 (비우면 연식 기준 자동)</label><input type="number" value="' + (parseInt(a.repair) || '') + '" placeholder="자동" onchange="updateDrawerField(\'' + idJs + '\',\'repair\',this.value)"></div></div>';
-    h += '<div class="dr-sec dr-btns"><button onclick="openCourtQuick(\'' + String(a.caseNo || '').replace(/'/g, "\\'") + '\')">🏛️ 법원경매</button><button onclick="openTankQuick(\'' + String(a.caseNo || '').replace(/'/g, "\\'") + '\')">🟦 탱크옥션</button><button onclick="openNaverForRow(\'' + idJs + '\')" title="이 물건 위치·종류·평형(±5평)·연식(−5~+10년)을 맞춘 네이버부동산 매물 지도">🟢 네이버부동산</button><button onclick="openNaverMapForRow(\'' + idJs + '\')" title="네이버 지도에서 이 주소를 검색해 핀이 꽂힌 위치로 열어요">📍 네이버 지도</button><button onclick="openBatoner(\'' + String(a.caseNo || '').replace(/'/g, "\\'") + '\')">🙋 바토너 대리입찰</button></div>';
+    h += '<div class="dr-sec dr-btns"><button onclick="openCourtQuick(\'' + String(a.caseNo || '').replace(/'/g, "\\'") + '\')">🏛️ 법원경매</button><button onclick="openTankQuick(\'' + String(a.caseNo || '').replace(/'/g, "\\'") + '\',\'' + String(a.name || '').replace(/'/g, "\\'") + '\')" title="사건번호 복사 없이 이 사건 1건을 자동으로 열어 모아요(확장 필요)">🟦 탱크옥션</button><button onclick="openNaverForRow(\'' + idJs + '\')" title="이 물건 위치·종류·평형(±5평)·연식(−5~+10년)을 맞춘 네이버부동산 매물 지도">🟢 네이버부동산</button><button onclick="openNaverMapForRow(\'' + idJs + '\')" title="네이버 지도에서 이 주소를 검색해 핀이 꽂힌 위치로 열어요">📍 네이버 지도</button><button onclick="openBatoner(\'' + String(a.caseNo || '').replace(/'/g, "\\'") + '\')">🙋 바토너 대리입찰</button></div>';
     d.innerHTML = h; drawerNavInit(d);
     // 지역 사이클 채우기
     if (lawd) loadMarketCycle(lawd).then(function(cd) {
