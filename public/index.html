@@ -14411,11 +14411,14 @@ function parseTankRights(text) {
     if (!starts.length) { var re2 = /(?:^|\n)([^\t\n]{1,30})\t전입\s*:/g; while ((mm = re2.exec(tb))) starts.push({ i: mm.index + (tb[mm.index] === '\n' ? 1 : 0), name: mm[1].trim() }); }
     starts.forEach(function(st, k) {
         var chunk = tb.slice(st.i, k + 1 < starts.length ? starts[k + 1].i : tb.length);
-        var mv = chunk.match(/전입\s*:\s*([\d.\-]+|미상)/), fx = chunk.match(/확정\s*:\s*([\d.\-]+|미상)/), ds = chunk.match(/배당\s*:\s*([\d.\-]+|미상|없음)/), dp = chunk.match(/보\s*:\s*([\d,]+)\s*원(?:\s*\/\s*월?\s*:?\s*([\d,]+)\s*원?)?/), sd = chunk.match(/원\s*\t\s*(있음|없음|미상)(?:\t|\n|$)/);
-        if (!dp) return;
+        var mv = chunk.match(/전입\s*:\s*([\d.\-]+|미상)/), fx = chunk.match(/확정\s*:\s*([\d.\-]+|미상)/), ds = chunk.match(/배당\s*:\s*([\d.\-]+|미상|없음)/), dp = chunk.match(/보\s*:\s*([\d,]+)\s*원(?:\s*\/\s*월?\s*:?\s*([\d,]+)\s*원?)?/), sd = chunk.match(/(?:원|미상)\s*\t\s*(있음|없음|미상)(?:\t|\n|$)/), rentM = chunk.match(/(?:^|[\s\/])월\s*:\s*([\d,]+)\s*원/);  /* 월세는 '보:...원' 다음 줄('월:1,800,000원')에 따로 적힌 형식도 읽음(2026-11-01: 월세가 0으로 저장되던 것 수정) */
+        if (!dp) {  /* 보증금이 '미상'인 점유자(동거인·세대원 등)는 인수 계산에는 넣지 않고 따로 보관(2026-11-01: 통째로 빠지던 것 수정) */
+            if (/보\s*:\s*미상/.test(chunk)) { (out.unknownOccupants = out.unknownOccupants || []).push({ name: st.name, moveIn: mv && /\d/.test(mv[1]) ? rightsDate(mv[1]) : '', fixed: fx && /\d/.test(fx[1]) ? rightsDate(fx[1]) : '', tankStanding: sd ? (sd[1] === '있음' ? true : (sd[1] === '없음' ? false : null)) : null, _txt: chunk.replace(/\s+/g, ' ').trim().slice(0, 300) }); }
+            return;
+        }
         var roleM = chunk.match(/(임차권등기자|경매신청인|소유자|채무자)[^\t\n]*/g), roles = roleM ? roleM.join(' ') : '';
         out.tenants.push({ name: st.name, moveIn: mv && /\d/.test(mv[1]) ? rightsDate(mv[1]) : '', fixed: fx && /\d/.test(fx[1]) ? rightsDate(fx[1]) : '', distDate: ds && /\d/.test(ds[1]) ? rightsDate(ds[1]) : '',
-            deposit: rightsNum(dp[1]), rent: dp[2] ? rightsNum(dp[2]) : 0, tankStanding: sd ? (sd[1] === '있음' ? true : (sd[1] === '없음' ? false : null)) : null,
+            deposit: rightsNum(dp[1]), rent: dp[2] ? rightsNum(dp[2]) : (rentM ? rightsNum(rentM[1]) : 0), tankStanding: sd ? (sd[1] === '있음' ? true : (sd[1] === '없음' ? false : null)) : null,
             rankedDist: /순위배당\s*있음/.test(chunk), tankAssumeNote: /미배당\s*보증금\s*매수인\s*인수/.test(chunk), waiveHint: /인수\s*조건\s*변경|조건\s*변경/.test(chunk), role: roles.replace(/\s+/g, ' ').trim(), selfOccupied: /소유자|채무자/.test(roles) && !/경매신청인|임차권등기자/.test(roles), _txt: chunk.replace(/\s+/g, ' ') });
     });
     // 건물등기. (PC) "갑(4)<탭>2023-11-09<줄바꿈>가압류<탭>권리자<탭>금액<탭>비고" / (모바일) "2023.11.09<줄>갑(4)<줄>가압류<줄>금액<줄>권리자<줄>소멸"
@@ -14476,8 +14479,9 @@ function parseTankRights(text) {
     if (sm) { var st0 = sm[1]; out.tankSummary = { level: /직접\s*인수위험은\s*없고\s*조건부|조건부\s*확인/.test(st0) ? 'cond' : (/별도\s*인수위험[^\n]{0,12}(?:확인되지|없)/.test(st0) ? 'none' : (/인수\s*(?:위험|대상|권리)[^\n]{0,20}(?:있|확인됩니다|발견)/.test(st0) ? 'risk' : '')), text: st0.split('\n').slice(0, 2).join(' ').replace(/\s+/g, ' ').trim().slice(0, 160) }; }
     if (/조사된\s*임차내역\s*없음|임차인이\s*없으며|임차인\s*없음|전부를\s*소유자(?:가|\([^)]*\)가)?\s*점유/.test(text)) out.noTenants = true;  // 탱크옥션이 '조사된 임차내역 없음'으로 표시한 경우 - 경고하지 않음
     if ((m = text.match(/세대수\s+([\d,]+)\s*세대/))) out.households = rightsNum(m[1]);  // 단지정보의 단지 전체 세대수
-    if (!out.tenants.length && !out.noTenants) out.warnings.push('임차인 현황을 찾지 못했어요(전입세대 없음이면 정상) - 상세 페이지의 "임차인 현황" 부분까지 같이 붙여넣었는지 확인');
+    if (!out.tenants.length && !out.noTenants && !(out.unknownOccupants && out.unknownOccupants.length)) out.warnings.push('임차인 현황을 찾지 못했어요(전입세대 없음이면 정상) - 상세 페이지의 "임차인 현황" 부분까지 같이 붙여넣었는지 확인');
     if (!out.registry.length) out.warnings.push('건물등기(권리 목록)를 찾지 못했어요');
+    (out.unknownOccupants || []).forEach(function(u) { if (u.tankStanding === true || (u.tankStanding === null && u.moveIn && out.baseDate && u.moveIn < out.baseDate)) out.warnings.push('보증금을 알 수 없는 점유자 ' + u.name + '(전입 ' + u.moveIn + ')이(가) ' + (u.tankStanding === true ? '대항력 있음으로 표시돼요' : '말소기준일보다 먼저 전입했는데 대항력 표시가 없어요') + ' - 인수 금액을 계산할 수 없으니 매각물건명세서에서 직접 확인하세요'); });
     return out;
 }
 // 같은 임차권을 승계한 임차인(대위변제 후 양수인 표기 등)은 한 건으로: 보증금이 같고 한쪽 설명에 다른 쪽 이름이 들어 있으면 합침(날짜가 있는 쪽을 대표로)
@@ -15498,6 +15502,7 @@ function rightsPanelHtmlBase(row) {
         h += '<table class="dr-tbl" style="margin-top:6px;"><tr><td class="dr-sub">임차인</td><td class="dr-sub">보증금</td><td class="dr-sub">대항력·배당</td></tr>';
         w0.tenants.forEach(function(t) { h += '<tr><td>' + bbEsc(t.name) + '<div class="dr-sub">전입 ' + (t.moveIn || '미상') + (t.effDate ? '(대항력 ' + t.effDate + ' 0시~)' : '') + ' · 확정 ' + (t.fixed || '미상') + (t.prioDate ? ' → 배당 순위 ' + t.prioDate + (t.viaFixed ? ' 당일' : ' 0시') + ' 기준' : '') + ' · 배당요구 ' + (t.distDate || (t.rankedDist ? '있음' : '미확인')) + '</div></td><td class="r">' + eok(t.deposit) + '</td><td class="dr-sub">' + (t.standing ? '대항력 있음' : '대항력 없음') + (t.minor ? ' · 소액' : '') + '<br>' + bbEsc(t.status) + (t.linkNote ? '<br><span class="dr-sub">' + bbEsc(t.linkNote) + '</span>' : '') + '</td></tr>'; });
         h += '</table>';
+        if (R.unknownOccupants && R.unknownOccupants.length) h += '<div class="dr-sub" style="margin-top:4px;">👥 보증금을 알 수 없는 점유자(인수 계산에는 넣지 않았어요): ' + R.unknownOccupants.map(function(u) { return bbEsc(u.name) + '(전입 ' + (u.moveIn || '미상') + ', 대항력 ' + (u.tankStanding === true ? '있음' : u.tankStanding === false ? '없음' : '미상') + ')'; }).join(' · ') + ' - 명도 때 확인이 필요해요</div>';
     }
     rightsTenantLinks(R).pairs.forEach(function(pr) {
         h += '<div class="dr-warn" style="margin-top:4px;">임차인 표의 <b>' + bbEsc(pr.tenant) + '</b>(전입 ' + (pr.tenantMoveIn || '미상') + ')과 등기부 임차권 <b>' + bbEsc(pr.holder) + '</b>(전입 ' + pr.regMoveIn + ')의 보증금이 같아요. 어떻게 볼까요? '
