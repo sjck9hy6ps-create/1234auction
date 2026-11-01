@@ -15069,7 +15069,7 @@ function myrHouseRead(t) {
     var ds = (reg.match(/\d{4}-\d{2}-\d{2}/g) || []).filter(function(x, i, arr) { return arr.indexOf(x) === i; });
     out.moveIns = ds; out.holders = (reg.match(/세대주[^\d]{0,40}?\d{4}-\d{2}-\d{2}/g) || []).length;
     out.absent = /거주\s*불명|말소/.test(reg.replace(/말소자\s*또는\s*거주\s*불명[^\n]*/g, '').replace(/[알말]소자[^\n]*/g, ''));
-    out.empty = /전입\s*세대\s*(?:가\s*)?없|해당\s*세대\s*없|세대\s*없음/.test(t);
+    out.empty = /전입\s*세대\s*(?:가\s*)?없|해당\s*세대\s*없|세대\s*없음|세대주가\s*존재하지\s*않/.test(t);  /* '해당주소의 세대주가 존재하지 않음'도 전입 세대 없음(2026-11-01) */
     var oc = (reg.match(/거주자/g) || []).length; out.residents = oc;
     var sn = t.match(/최초\s*전입자의\s*전입일자\s*\n\s*([가-힣])\s*\n/); if (sn) out.surname = sn[1];  // 가려진 이름의 성씨(그림 글자 인식)
     return out;
@@ -15092,7 +15092,7 @@ function myrDocDigest(docs, split) {
     if (d.specGot) { d.specRead = myrSpecRead(docs.spec); if (d.specRead && d.specRead.state === 'listed') d.risks.push({ k: '명세서: 소멸하지 않는 권리 기재', lvl: 'danger', src: 'spec', note: d.specRead.excerpt, ask: '매각물건명세서의 "매각으로 효력이 소멸되지 아니하는 것" 칸에 내용이 있어요 - 낙찰자가 인수할 수 있으니 항목과 금액을 확인하세요' }); }
     var hs = docs.house || '', hd = hs.match(/\d{4}[.\-]\d{1,2}[.\-]\d{1,2}/g) || [];
     if (hs) d.houseRead = myrHouseRead(hs);
-    if (hs) d.house = { dates: hd.slice(0, 30).map(rightsDate), nChars: hs.length, none: /전입\s*세대\s*(?:가\s*)?없|열람\s*내역\s*없|세대\s*없음/.test(hs) };
+    if (hs) d.house = { dates: hd.slice(0, 30).map(rightsDate), nChars: hs.length, none: /전입\s*세대\s*(?:가\s*)?없|열람\s*내역\s*없|세대\s*없음|세대주가\s*존재하지\s*않/.test(hs) };
     return d;
 }
 // 한 번에: 본문 + 탭 글 → 권리분석 자료(R)
@@ -15514,7 +15514,7 @@ function myrPanelHtml(row) {
     var hrp = R.docs && R.docs.houseRead;
     if (hrp) {
         var hx = '<div class="dr-sub" style="margin-top:6px;"><b>세대열람(전입세대확인서)</b></div>';
-        if (hrp.state === 'unreadable') hx += '<div class="dr-warn" style="margin-top:3px;background:#fef9c3;">⚠️ 그림 PDF라 글로 읽지 못했어요 - 확장 0.4.4로 보내면 그림이 저장되고 글자 인식 결과를 넣을 수 있어요.</div>';
+        if (hrp.state === 'unreadable') hx += '<div class="dr-warn" style="margin-top:3px;background:#fef9c3;">⚠️ 그림 PDF라 글로 읽지 못했어요 - 확장프로그램으로 모으면 그림이 내려받기 폴더의 tank-ocr에 저장돼요. 맥에서 <code>node tools/ocr/import-house.mjs</code>를 실행하면 글자 인식 결과가 이 물건에 들어가요(Claude에게 세대열람 글자 인식 반영을 요청해도 돼요).</div>';
         else {
             hx += '<table class="dr-tbl"><tr><td>발급일</td><td>' + bbEsc(hrp.issued || '못 읽음') + (hrp.ageDays != null ? ' <span class="dr-sub">(' + (hrp.ageDays > 365 ? Math.floor(hrp.ageDays / 365) + '년 ' + Math.round((hrp.ageDays % 365) / 30) + '개월 전' : Math.round(hrp.ageDays / 30) + '개월 전') + ')</span>' : '') + '</td><td>' + (hrp.ageDays != null && hrp.ageDays > 180 ? '⚠️ 오래됨' : '✅') + '</td></tr>'
                 + '<tr><td>전입일</td><td>' + bbEsc((hrp.moveIns || []).join(', ') || '없음') + '</td><td>' + (hrp.empty ? '✅ 전입세대 없음' : '') + '</td></tr>'
@@ -15539,6 +15539,24 @@ function myrPanelHtml(row) {
    앱이 자동으로 확인하는 것(자료 신선도·금액/입찰일·사건·주소 일치·임차인 수·세대열람·선순위 점유자)과
    사람이 공식 사이트에서 직접 확인해야 하는 것(대법원 법원경매정보·매각물건명세서·현황조사서·입찰 당일 기일변경)을 나눔.
    직접 확인 항목은 체크하면 물건에 저장됨(a.preBid). 탱크옥션은 제3자 자료라 입찰 직전 공식 사이트 확인이 마지막 단계 */
+/* 🖼️ 세대열람 원본 그림 보기(2026-11-01): 그림 글자 인식(OCR)으로 읽은 값을 원본과 나란히 보고 사람이 맞는지 확인. 그림은 누를 때만 사건 한 건씩 받아 옴(앱 시작·목록 속도에 영향 없음) */
+async function showHouseImage(id) {
+    var a = auctionList.filter(function(x) { return String(x.id) === String(id); })[0]; if (!a) return;
+    var hr = (a.rights && a.rights.docs && a.rights.docs.houseRead) || {};
+    var old = document.getElementById('hi-modal'); if (old) old.remove();
+    var box = document.createElement('div'); box.id = 'hi-modal'; box.style.cssText = 'position:fixed;inset:0;z-index:100003;background:rgba(0,0,0,.55);display:flex;align-items:center;justify-content:center;padding:10px;';
+    var vals = '<div style="font-size:13px;line-height:1.7;"><b>앱이 읽은 값</b> <span class="dr-sub">(글자 인식 - 틀릴 수 있어요)</span><br>발급일 ' + bbEsc(hr.issued || '못 읽음') + (hr.ageDays != null ? ' (' + hr.ageDays + '일 전)' : '') + '<br>'
+        + (hr.empty ? '전입 세대 없음' : '전입일 ' + ((hr.moveIns || []).map(bbEsc).join(', ') || '-') + '<br>세대주 ' + (hr.holders != null ? hr.holders : '-') + '명 · 거주자 ' + (hr.residents != null ? hr.residents : '-') + '명' + (hr.absent ? '<br><b style="color:#c62828;">말소/거주불명 표시가 있어요</b>' : '')) + '<br><span class="dr-sub">그림과 다르면 앱의 값을 믿지 말고 그림을 기준으로 보세요.</span></div>';
+    box.innerHTML = '<div style="background:#fff;color:#222;border-radius:14px;max-width:1000px;width:100%;max-height:94vh;overflow:auto;padding:14px 16px;box-shadow:0 8px 32px rgba(0,0,0,.4);"><div style="display:flex;align-items:center;margin-bottom:8px;"><b style="font-size:15px;">세대열람 원본 그림 · ' + bbEsc(a.name || a.caseNo || '') + '</b><button id="hi-close" style="margin-left:auto;border:none;background:#e5e7eb;border-radius:8px;padding:5px 12px;cursor:pointer;">닫기</button></div>'
+        + '<div style="display:flex;gap:14px;flex-wrap:wrap;align-items:flex-start;"><div style="flex:1 1 420px;min-width:260px;" id="hi-img"><div class="dr-sub">그림 불러오는 중...</div></div><div style="flex:0 1 300px;min-width:220px;">' + vals + '</div></div></div>';
+    document.body.appendChild(box);
+    box.onclick = function(e) { if (e.target === box || e.target.id === 'hi-close') box.remove(); };
+    try {
+        var r = await fetch('/api/auction?kind=houseImg&id=' + encodeURIComponent(a.id)), d = await r.json();
+        if (!r.ok || !d.img) throw new Error(d.error || '그림이 없어요');
+        document.getElementById('hi-img').innerHTML = '<img src="' + d.img + '" style="width:100%;border:1px solid #cbd5e1;border-radius:6px;" alt="세대열람 원본">';
+    } catch (e) { var hb = document.getElementById('hi-img'); if (hb) hb.innerHTML = '<div class="dr-warn">그림을 불러오지 못했어요: ' + bbEsc(e.message) + '</div>'; }
+}
 function preBidItems(row) {
     var a = row.a, R = a.rights || {}, now = Date.now(), man = function(v) { return toEok(String(Math.round(v / 10000))); }, out = [], day = 86400000;
     var add = function(k, st, label, detail) { out.push({ k: k, st: st, label: label, detail: detail || '', auto: true }); };
@@ -15576,6 +15594,8 @@ function preBidItems(row) {
         { k: 'survey', label: '현황조사서의 점유자와 앱의 임차인·점유자가 같은지 확인' },
         { k: 'dayof', label: '입찰 당일 아침 기일변경·취하·정지 여부 다시 확인' }
     ];
+    var hrOcr = R.docs && R.docs.houseRead && R.docs.houseRead.ocr ? R.docs.houseRead : null;
+    if (hrOcr) manual.splice(1, 0, { k: 'houseimg', label: '세대열람을 글자 인식으로 읽었어요 - 원본 그림과 읽은 값(발급일·전입일·세대주·말소 표시)이 같은지 확인', btn: hrOcr.imgAt ? '<button class="modal-btn btn-gray" style="font-size:11px;padding:2px 8px;" onclick="event.stopPropagation();showHouseImage(\'' + String(a.id).replace(/'/g, "\\'") + '\')">🖼️ 원본 그림 보기</button>' : ' <span class="dr-sub">(그림 미첨부 - 맥에서 node tools/ocr/import-house.mjs)</span>' });
     if (sen.length) manual.splice(2, 0, { k: 'occ', label: '대항력 있는 점유자의 임대차 여부·보증금을 명세서에서 확인했고 "인수보증금"에 반영했어요(확인 체크 시 추천가 보류가 풀려요)' });
     if (fam.length) manual.splice(2, 0, { k: 'family', label: '채무자·소유자 가족으로 기재된 점유자(' + fam.map(function(u) { return u.name; }).join('·') + ')의 임대차계약 존재·대항력 인정 여부를 사실 확인(현황조사서·매각물건명세서·전입세대 열람)' });
     var chk = a.preBid || {};

@@ -22,7 +22,7 @@
       응답 형식은 예전과 같음(?withVer=1을 안 붙이면 배열 그대로) - dashboard.html·match-bid-cases.mjs 호환.
 ════════════════════════════════════ */
 // myAssets(2026-10): 💼 내 자산 탭 - 보유 부동산·올해 소득(몇 건뿐이라 저장량 부담 없음)
-const KINDS = { auctions: 'auctions', siteNotes: 'siteNotes', bidCases: 'bidCases', myAssets: 'myAssets', feedback: 'feedback', listingRaw: 'listingRaw' }; // listingRaw: 크롬 확장이 보낸 네이버 매물 목록 원문 수신함(2026-10-18) - 앱이 읽어 반영한 뒤 지움 // feedback: 앱 안 '수정 요청'(2026-10-11)
+const KINDS = { auctions: 'auctions', siteNotes: 'siteNotes', bidCases: 'bidCases', myAssets: 'myAssets', feedback: 'feedback', listingRaw: 'listingRaw', houseImg: 'houseImg' }; // listingRaw: 크롬 확장이 보낸 네이버 매물 목록 원문 수신함(2026-10-18) - 앱이 읽어 반영한 뒤 지움 // feedback: 앱 안 '수정 요청'(2026-10-11)
 
 export default async function handler(req, res) {
     const REDIS_URL = process.env.UPSTASH_REDIS_URL;
@@ -113,6 +113,17 @@ export default async function handler(req, res) {
             // 진단 전용(읽기만 함) - 값 자체/비밀값은 노출하지 않음
             const [hlen, ver, dbsize] = await pipeline([['HLEN', hashKey], ['GET', verKey], ['DBSIZE']]);
             return res.status(200).json({ kind, items: hlen, ver, dbsize });
+        }
+        // houseImg(2026-11-01): 세대열람 원본 그림(줄인 JPEG, 장당 약 50KB) - 사건(id)별 한 건씩만 읽음. 목록 읽기(앱 시작·30초 확인)에는 절대 포함되지 않게
+        // id 없이 읽으면 그림 없이 id 목록만 돌려줌(전송량·속도 영향 없음). 그림은 점검표의 '그림 보기'를 눌렀을 때만 받음.
+        if (kind === 'houseImg' && req.method === 'GET') {
+            if (req.query.id) {
+                const v = await cmd(['HGET', hashKey, String(req.query.id)]);
+                if (!v) return res.status(404).json({ error: '저장된 그림이 없습니다.' });
+                res.setHeader('Cache-Control', 'private, max-age=86400');
+                try { return res.status(200).json(JSON.parse(v)); } catch (e) { return res.status(500).json({ error: '그림 자료가 깨졌습니다.' }); }
+            }
+            return res.status(200).json(await cmd(['HKEYS', hashKey]));
         }
         if (req.method === 'GET' && req.query.cursor !== undefined) {
             // 나눠 받기(2026-10): 앱이 큰 목록을 여러 번에 나눠 받음 - 응답 하나가 너무 커지지 않게. _ord(순서)는 앱에서 정렬 후 지움
