@@ -12,6 +12,7 @@ const n = (x) => String(x || '').replace(/타경/g, '-').replace(/\s/g, '');
 const auc = await fetch(SITE + '/api/auction?kind=auctions').then((x) => x.json());
 const a = auc.find((x) => !x.isBacktest && n(x.caseNo) === n(story.case) && x.rights && x.rights.via === 'extension');
 if (!a) { console.log('앱에서 이 사건(탱크옥션 수집)을 못 찾았어요:', story.case); process.exit(1); }
-a.rights.aiStory = { at: Date.now(), by: 'Claude (서류를 읽고 작성 - 서류 값 대조 후 저장)', title: story.title, sections: story.sections, check: { total: r.total, ok: r.ok, unverified: r.unverified.map((t) => t.type + ':' + t.raw), calc: r.calc.length } };
-const res = await fetch(SITE + '/api/auction', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(a) });
+const rec = { id: a.id, caseNo: a.caseNo, at: Date.now(), by: 'Claude (서류를 읽고 작성 - 서류 값 대조 후 저장)', title: story.title, sections: story.sections, check: { total: r.total, ok: r.ok, unverified: r.unverified.map((t) => t.type + ':' + t.raw), calc: r.calc.length } };
+// 사건 기록(auctions)에 넣으면 열려 있는 앱 화면이 옛 사본을 다시 저장하면서 지워 버림(실제로 겪음) → 별도 저장소(kind=aiStory)에 사건 id로 저장
+const res = await fetch(SITE + '/api/auction?kind=aiStory', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(rec) });
 console.log(res.ok ? '✅ 앱에 저장했어요 - ' + a.caseNo + ' ' + (a.name || '') : '저장 실패 ' + res.status);

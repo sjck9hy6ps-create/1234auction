@@ -15496,18 +15496,27 @@ function myrOccupantStory(a, R, FOR, EST) {
 /* ✍️ 서류로 쓴 이야기(AI 작성, 2026-11-01, 사용자 요청: AI 모델로 자연스러운 이야기, 서류에 없는 내용은 지어내지 않기).
    Claude가 서류 원문을 읽고 쓰고, 이야기 속 숫자·날짜·금액·면적·퍼센트·사건번호·이름이 서류에 있는지 코드로 대조한 뒤 저장함(tools/story). 서류로 확정되지 않는 해석은 〔예상〕으로 표시.
    앱이 열릴 때 AI를 부르지 않고 저장된 글만 보여 줌(무료·속도 영향 없음) */
-function myrAiStoryHtml(R) {
-    var st = R && R.aiStory; if (!st || !(st.sections || []).length) return '';
+var aiStoryIds = null, aiStoryCache = {}, aiStoryLoading = {};
+function aiStoryLoad(id) {  // 이야기는 사건 기록과 따로 저장돼 있어(kind=aiStory) 처음 상세를 열 때 id 목록(아주 작음)을 받고, 있는 사건만 한 건 받음
+    if (aiStoryLoading[id]) return; aiStoryLoading[id] = 1;
+    var after = function() { aiStoryLoading[id] = 0; try { if (String(bidDrawerId) === String(id)) renderBidDrawer(); } catch (e) {} };
+    var fetchOne = function() { fetch('/api/auction?kind=aiStory&id=' + encodeURIComponent(id)).then(function(r) { return r.ok ? r.json() : null; }).then(function(d) { aiStoryCache[id] = d && d.sections ? d : null; after(); }).catch(function() { aiStoryCache[id] = null; aiStoryLoading[id] = 0; }); };
+    if (aiStoryIds) { if (aiStoryIds.indexOf(String(id)) >= 0) fetchOne(); else { aiStoryCache[id] = null; aiStoryLoading[id] = 0; } return; }
+    fetch('/api/auction?kind=aiStory').then(function(r) { return r.json(); }).then(function(ids) { aiStoryIds = Array.isArray(ids) ? ids.map(String) : []; aiStoryLoading[id] = 0; if (aiStoryIds.indexOf(String(id)) >= 0) aiStoryLoad(id); else aiStoryCache[id] = null; }).catch(function() { aiStoryLoading[id] = 0; });
+}
+function myrAiStoryHtml(a) {
+    var id = a && a.id; if (id == null) return '';
+    if (!(id in aiStoryCache)) { aiStoryLoad(id); return ''; }
+    var st = aiStoryCache[id]; if (!st || !(st.sections || []).length) return '';
     var e = function(x) { return bbEsc(String(x == null ? '' : x)); };
     var fmt = function(t) { return e(t).replace(/〔예상〕([\s\S]*?)〔\/예상〕/g, '<span style="background:#fef3c7;border-radius:4px;padding:0 3px;">$1</span><span style="background:#fde68a;color:#92400e;border-radius:6px;padding:0 5px;font-size:11px;font-weight:700;white-space:nowrap;margin-left:2px;">예상</span>').replace(/〔계산〕([\s\S]*?)〔\/계산〕/g, '<span style="border-bottom:1px dotted #64748b;" title="서류의 값으로 계산한 값">$1</span>'); };
     var ck = st.check || {}, bad = (ck.unverified || []).length;
     var h = '<div class="dr-sec" style="border:2px solid #0ea5e9;border-radius:10px;padding:10px 12px;"><h4>✍️ 서류로 쓴 이야기 <span class="dr-sub" style="font-weight:400;">AI(Claude)가 수집한 서류를 읽고 썼어요 · 서류에 있는 내용만 쓰고, 서류로 확정되지 않는 해석은 <span style="background:#fef3c7;border-radius:4px;padding:0 3px;">예상</span>으로 표시했어요</span></h4>';
     h += '<div class="dr-sub" style="margin:2px 0 6px;">' + (bad ? '<b style="color:#c62828;">⚠️ 서류에서 못 찾은 값 ' + bad + '개: ' + e((ck.unverified || []).slice(0, 6).join(', ')) + '</b>' : '✅ 이야기 속 숫자·날짜·금액·이름 ' + (ck.total || 0) + '개를 서류와 대조해 모두 일치했어요') + ' · ' + e(new Date(st.at || 0).toISOString().slice(0, 10)) + ' 작성 · 문장의 뜻까지 서류와 맞는지는 사람이 확인해 주세요</div>';
-    /* 탱크옥션 권리분석 요약처럼 한눈에 읽히게: 칸 제목 → 항목마다 [분류 칩] 굵은 결론 한 줄 + 짧은 설명(2026-11-01, 사용자: 같은 내용이어도 가독성 차이가 커요) */
     st.sections.forEach(function(sec) {
         h += '<div style="margin-top:10px;"><div style="font-weight:700;color:#0369a1;">' + e(sec.title) + '</div>';
         (sec.items || []).forEach(function(it) { h += '<div style="margin:5px 0 0 4px;padding:6px 8px;border-left:3px solid #bae6fd;background:#f8fafc;border-radius:0 6px 6px 0;">' + (it.tag ? '<span style="display:inline-block;background:#e0f2fe;color:#075985;border-radius:5px;padding:0 6px;font-size:11px;font-weight:700;margin-right:6px;">' + e(it.tag) + '</span>' : '') + '<b style="font-size:13.5px;">' + fmt(it.head) + '</b>' + (it.body ? '<div style="font-size:12.5px;line-height:1.7;color:#334155;margin-top:2px;">' + fmt(it.body) + '</div>' : '') + '</div>'; });
-        (sec.paragraphs || []).forEach(function(p) { h += '<div style="font-size:13.5px;line-height:1.85;margin-top:3px;">' + fmt(p) + '</div>'; });
+        (sec.paragraphs || []).forEach(function(p) { h += '<div style="font-size:13.5px;line-height:1.85;margin-top:6px;">' + fmt(p) + '</div>'; });
         h += '</div>';
     });
     return h + '</div>';
@@ -15588,7 +15597,7 @@ function myrStoryHtml(a, R, my, vd, bidWon, row) {
     var h = myrNarrative(a, R, my, vd, bidWon, row), det = '';
     try { det = myrStoryFactsHtml(a, R, my, vd, bidWon, row); } catch (e) {}
     var base = h.replace(/<\/div>$/, '') + '<details style="margin-top:10px;"><summary style="cursor:pointer;font-weight:700;color:#475569;">📎 근거가 된 서류 기록·법 조문 (사실만)</summary>' + det + '</details></div>';
-    var ai = ''; try { ai = myrAiStoryHtml(R); } catch (e) {}
+    var ai = ''; try { ai = myrAiStoryHtml(a); } catch (e) {}
     /* AI가 쓴 이야기가 있으면 그것을 먼저 보이고, 규칙으로 정리한 이야기·근거는 접어 둠(같은 내용이 겹쳐 길어지는 것을 줄임) */
     return ai ? ai + '<details style="margin-top:8px;"><summary class="dr-sub" style="cursor:pointer;">규칙으로 정리한 이야기·근거 서류 보기 (위 이야기와 같은 서류예요)</summary>' + base + '</details>' : base;
 }

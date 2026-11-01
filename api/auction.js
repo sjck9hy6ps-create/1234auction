@@ -22,7 +22,7 @@
       응답 형식은 예전과 같음(?withVer=1을 안 붙이면 배열 그대로) - dashboard.html·match-bid-cases.mjs 호환.
 ════════════════════════════════════ */
 // myAssets(2026-10): 💼 내 자산 탭 - 보유 부동산·올해 소득(몇 건뿐이라 저장량 부담 없음)
-const KINDS = { auctions: 'auctions', siteNotes: 'siteNotes', bidCases: 'bidCases', myAssets: 'myAssets', feedback: 'feedback', listingRaw: 'listingRaw', houseImg: 'houseImg' }; // listingRaw: 크롬 확장이 보낸 네이버 매물 목록 원문 수신함(2026-10-18) - 앱이 읽어 반영한 뒤 지움 // feedback: 앱 안 '수정 요청'(2026-10-11)
+const KINDS = { auctions: 'auctions', siteNotes: 'siteNotes', bidCases: 'bidCases', myAssets: 'myAssets', feedback: 'feedback', listingRaw: 'listingRaw', houseImg: 'houseImg', aiStory: 'aiStory' }; // listingRaw: 크롬 확장이 보낸 네이버 매물 목록 원문 수신함(2026-10-18) - 앱이 읽어 반영한 뒤 지움 // feedback: 앱 안 '수정 요청'(2026-10-11)
 
 export default async function handler(req, res) {
     const REDIS_URL = process.env.UPSTASH_REDIS_URL;
@@ -116,7 +116,7 @@ export default async function handler(req, res) {
         }
         // houseImg(2026-11-01): 세대열람 원본 그림(줄인 JPEG, 장당 약 50KB) - 사건(id)별 한 건씩만 읽음. 목록 읽기(앱 시작·30초 확인)에는 절대 포함되지 않게
         // id 없이 읽으면 그림 없이 id 목록만 돌려줌(전송량·속도 영향 없음). 그림은 점검표의 '그림 보기'를 눌렀을 때만 받음.
-        if (kind === 'houseImg' && req.method === 'GET') {
+        if ((kind === 'houseImg' || kind === 'aiStory') && req.method === 'GET') {  // aiStory(2026-11-01): AI가 쓴 이야기(사건 id별 한 건) - 사건 기록과 따로 보관해 열려 있는 앱 화면이 옛 사본으로 덮어써 지우는 일을 막음
             if (req.query.id) {
                 const v = await cmd(['HGET', hashKey, String(req.query.id)]);
                 if (!v) return res.status(404).json({ error: '저장된 그림이 없습니다.' });
