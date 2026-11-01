@@ -14491,7 +14491,7 @@ function parseTankRights(text) {
     var tnm = text.match(/임차인\s*:\s*(\d+)\s*건/); if (tnm) out.tankTenantN = parseInt(tnm[1], 10);  /* 원문이 적어 준 임차인 수 - 읽은 수와 맞는지 점검용 */
     (out.unknownOccupants || []).forEach(function(u) {
         var early = u.tankStanding === true || (u.tankStanding !== false && !!u.moveIn && !!out.baseDate && u.moveIn < out.baseDate);  /* 전입이 말소기준일보다 앞서면 대항력 있음(주택임대차보호법 제3조) */
-        try { u.ownerNote = new RegExp(u.name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '[^\\n]{0,80}(?:채무자\\s*겸\\s*소유자|소유자\\s*의\\s*(?:부|처|자|배우자|모|조카|가족)|채무자겸소유자)').test(text); } catch (e) { u.ownerNote = false; }
+        try { u.ownerNote = new RegExp(u.name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '[^\\n]{0,80}(?:채무자\\s*겸\\s*소유자|소유자|채무자)\\s*(?:[가-힣]{2,4}\\s*)?의\\s*(?:부|모|처|남편|아내|배우자|자녀|아들|딸|형제|자매|형|동생|누나|오빠|언니|조카|손자|손녀|사위|며느리|가족|동거인)').test(text); } catch (e) { u.ownerNote = false; }
         /* 채무자·소유자 본인 또는 가족으로 기재된 점유자는 임대차(대항력) 인정 여부가 달라 대항력 있는 임차인으로 보지 않고 '사실확인 필요'로 분리(2026-11-01, 사용자 지시) */
         u.family = !!(early && u.ownerNote); u.senior = early && !u.ownerNote;
         if (u.senior) out.warnings.push('대항력이 있는 점유자 ' + u.name + '(전입 ' + u.moveIn + ', 말소기준일 ' + (out.baseDate || '-') + ')의 보증금을 알 수 없어요 - 인수 금액을 0원으로 두지 않았어요. 매각물건명세서에서 임대차 여부와 보증금을 확인한 뒤 "인수보증금"에 입력하세요.');
@@ -15441,6 +15441,58 @@ function myrTaxHtml(a, R, my, tx, row, bidWon) {
     return h + '</div>';
 }
 // ===== 이 집의 이야기: 읽기 쉬운 줄거리(사실 + [추정]/[예상] 표시) =====
+/* 🧑‍🤝‍🧑 점유자 정황 이야기(2026-11-01, 사용자 요청): 임차인 현황표에 보증금 없이 올라온 점유자(보증금 미상)가 누구일 가능성이 큰지, 서류에 적힌 사실을 근거로 '예상'으로 풀어 줌.
+   규칙: ① 서류의 사실(출처 표시)과 ② 예상(가장 가능성 높은 이야기)을 분리하고 ③ 예상이 틀릴 수 있는 이유와 ④ 확인할 곳을 붙임. 가족관계·임대차 여부는 서류로 확정할 수 없으므로 항상 '예상'으로만 씀.
+   점수는 서류 정황의 개수일 뿐 확률이 아님. 입력: 앱에 저장된 임차인 현황·세대열람·문건/송달·등기·탱크옥션 기재(+ 등기부 전체 이력이 있으면 R.history) */
+function myrOccupantStory(a, R, FOR, EST) {
+    var us = (R && R.unknownOccupants) || []; if (!us.length) return null;
+    var e = function(x) { return bbEsc(String(x == null ? '' : x)); }, f = R.story || {}, de = f.docEvents || [], hr = R.docs && R.docs.houseRead, reg = (R.registry || []).slice().sort(function(x, y) { return String(x.date) < String(y.date) ? -1 : 1; });
+    var owner = String(f.owner || '').replace(/\s외.*$/, '').trim(), debtor = String(f.debtor || '').replace(/\s외.*$/, '').trim(), base = R.baseDate || '', H = R.history || null;
+    var ownRows = reg.filter(function(r) { return /소유권이전/.test(r.type || ''); }), curOwn = ownRows[ownRows.length - 1] || null;
+    var cause = curOwn ? (String(curOwn.note || '').match(/협의분할에\s*의한\s*상속|상속|매매|증여|판결|신탁|분양/) || [''])[0] : '';
+    var html = '';
+    us.forEach(function(u) {
+        var sn = String(u.name || '').charAt(0), F = [], G = [], D = [], T = [], fam = 0, famPos = 0, lease = 0;  // fam = 가족 쪽 정황 수(famPos = 그중 가족을 직접 가리키는 것)
+        var iga = function(w) { var c = String(w).charCodeAt(String(w).length - 1) - 0xAC00; return c >= 0 && c <= 11171 && c % 28 !== 0 ? '이' : '가'; };
+        F.push('<b>' + e(u.name) + '</b>' + iga(u.name) + ' 전입 <b>' + e(u.moveIn || '날짜 미상') + '</b>로 점유자 목록에 올라 있고 보증금은 적혀 있지 않아요 <span class="dr-sub">[임차인 현황]</span>');
+        if (u.moveIn && base) F.push('이 전입은 말소기준일(' + e(base) + ')보다 ' + (u.moveIn < base ? '<b>앞서요</b>' : '뒤예요') + ' <span class="dr-sub">[임차인 현황·등기]</span>');
+        if (curOwn && u.moveIn) F.push('현재 소유자(' + e(owner || curOwn.holder) + ')가 등기한 날(' + e(curOwn.date) + (cause ? ', 원인 ' + e(cause) : '') + ')보다 ' + (u.moveIn < curOwn.date ? '<b>먼저</b> 전입했어요' : '나중에 전입했어요') + ' <span class="dr-sub">[등기·임차인 현황]</span>');
+        if (sn && owner && owner.charAt(0) === sn) { fam += 1; famPos += 1; F.push('성씨가 소유자와 같아요(' + e(sn) + ') <span class="dr-sub">[임차인 현황]</span>'); }
+        if (u.ownerNote) { fam += 2; famPos += 1; F.push('탱크옥션 기재에 소유자·채무자와의 가족관계가 적혀 있어요 <span class="dr-sub">[탱크옥션 기타사항]</span>'); }
+        var notice = de.filter(function(x) { return /임차인통지서/.test(x.t) && new RegExp('(?:점유자|임차인|주택임차권자)\\s*' + sn + 'O').test(x.t); });
+        if (notice.length) { var lastN = notice[notice.length - 1]; F.push('법원이 점유자에게 임차인통지서를 보냈어요(발송 ' + e(lastN.d) + ' · ' + e((String(lastN.t).match(/(도달|송달간주|폐문부재|수취인불명|이사불명)[^\n]*$/) || [''])[0]) + ') <span class="dr-sub">[문건/송달]</span>'); }
+        var filed = de.filter(function(x) { return /권리신고|배당요구신청/.test(x.t) && new RegExp('(?:점유자|임차인|주택임차권자|권리신고인)[^\\n]{0,6}' + sn + 'O').test(x.t); });
+        if (!filed.length && notice.length) { fam += 1; F.push('그 뒤 문건에 이 점유자의 권리신고·배당요구는 <b>보이지 않아요</b> <span class="dr-sub">[문건/송달]</span>'); } else if (filed.length) { lease += 1; F.push('문건에 이 점유자의 권리신고·배당요구가 있어요 <span class="dr-sub">[문건/송달]</span>'); }
+        var leaseReg = reg.filter(function(r) { return /임차권|전세권/.test(r.type || '') && String(r.holder || '').indexOf(u.name) >= 0; });
+        if (leaseReg.length) { lease += 2; F.push('등기부에 이 점유자 명의 ' + e(leaseReg[0].type) + '가 있어요 <span class="dr-sub">[등기]</span>'); } else { fam += 1; F.push('등기부에 이 점유자 명의 임차권등기·전세권은 <b>없어요</b> <span class="dr-sub">[등기]</span>'); }
+        if (u.fixed) { lease += 2; F.push('확정일자(' + e(u.fixed) + ')가 있어요 <span class="dr-sub">[임차인 현황]</span>'); }
+        if (f.survey && /소유자|채무자/.test(f.survey.occ || '')) { fam += 1; famPos += 1; F.push('현황조사에서 소유자·채무자 점유로 적혀 있어요 <span class="dr-sub">[현황조사서]</span>'); }
+        else if (f.survey && /만나지|폐문|부재/.test(f.survey.occ || '')) F.push('현황조사 때 점유자를 만나지 못했어요(폐문부재) <span class="dr-sub">[현황조사서]</span>');
+        if (hr && hr.state === 'ok' && !hr.empty && hr.holders) F.push('세대열람(' + e(hr.issued || '') + (hr.ocr ? ', 글자 인식' : '') + ')에 세대주 ' + hr.holders + '명' + (hr.absent ? '(말소 표시 있음)' : '') + '이 올라 있어요 <span class="dr-sub">[세대열람]</span>'); 
+        if (H && H.ownerAddrSame) { fam += 1; famPos += 1; F.push('이전·현재 소유자의 등기상 주소가 이 집이에요 <span class="dr-sub">[등기부 전체]</span>'); }
+        var prevLeaseReg = (R.tenants || []).filter(function(t) { return /임차권등기/.test(t.role || '') && t.moveIn && u.moveIn && t.name !== u.name; })[0], plRow = prevLeaseReg ? reg.filter(function(r) { return /임차권/.test(r.type || '') && String(r.holder || '').indexOf(prevLeaseReg.name) >= 0; })[0] : null;
+        if (plRow && u.moveIn > plRow.date) F.push('앞서 ' + e(prevLeaseReg.name) + '의 임차권등기(' + e(plRow.date) + ')가 있고, 이 점유자는 그 <b>뒤</b>에 전입했어요 <span class="dr-sub">[등기·임차인 현황]</span>');
+        // 예상
+        var moved = u.moveIn && curOwn && u.moveIn < curOwn.date, early = u.moveIn && base && u.moveIn < base;
+        if (lease >= 2) G.push('<b>임차인일 가능성이 있는 점유자</b>로 보여요. 확정일자·임차권 같은 임대차 흔적이 있어서, 보증금과 인수 여부를 매각물건명세서로 반드시 확인해야 해요.');
+        else if (famPos >= 2 && fam >= 3) G.push('<b>소유자의 가족이 ' + (moved ? '소유자보다 먼저 이 집에 들어와 ' : '') + '계속 살고 있는 집</b>일 가능성이 가장 높아 보여요. 세입자와 맺은 임대차라기보다 가족 거주로 보는 게 서류 정황과 가장 잘 맞아요.' + (cause === '협의분할에 의한 상속' || cause === '상속' ? ' 소유자가 이 집을 상속으로 받았다는 점도 이 이야기와 이어져요(예: 부모가 살던 집을 자녀가 상속).' : ''));
+        else if (plRow && u.moveIn > plRow.date) G.push('임차권등기를 한 이전 세입자(' + e(prevLeaseReg.name) + ')가 나간 뒤 <b>새로 들어온 사람</b>일 가능성이 있어 보여요(새 세입자이거나 소유자 쪽 사람). 가족인지 세입자인지는 서류만으로 가르기 어려워요.');
+        else if (famPos >= 1) G.push('소유자 가족일 수도, 소유자가 들인 세입자일 수도 있어서 <b>서류만으로는 가르기 어려워요</b>. 가족 쪽을 가리키는 정황이 ' + famPos + '개 있어요.');
+        else G.push('가족인지 세입자인지 판단할 정황이 거의 없어요. 점유 상태를 직접 확인해야 해요.');
+        if (early) G.push('만약 이 점유자에게 임대차가 인정된다면 전입이 말소기준일보다 앞서 <b>대항력이 있을 수 있고</b>(주택임대차보호법 제3조), 그 경우 보증금 전액을 낙찰자가 떠안을 수 있어요. 가족 사이 임대차는 실제 보증금 지급 등 실질이 입증돼야 하고(대법원 2004다19647), 채권 회수 목적의 임대차는 대항력이 부정돼요(대법원 2024다268508). 그래서 가족 거주로 보면 인수 금액은 0원에 가깝지만, 이건 예상일 뿐이에요.');
+        else if (u.moveIn && base) G.push('이 점유자의 전입은 말소기준일보다 늦어 <b>대항력이 없는 후순위</b>로 보여요. 인수 위험은 낮고, 낙찰 후에는 명도(인도명령) 대상이 될 가능성이 커요(예상).');
+        D.push('임차권등기가 없어도 임차인이 있을 수 있어요(대항력은 전입과 점유로 생겨요).');
+        D.push('권리신고를 안 했다고 임차인이 아닌 건 아니에요. 대항력 있는 임차인이 배당요구를 안 하면 보증금 전액을 낙찰자가 인수할 수 있어요.');
+        D.push('가족관계·거주 사실은 서류에 확정돼 있지 않아요(성씨·탱크옥션 기재·주소 정황으로 본 거예요).');
+        T.push('매각물건명세서의 점유자 란과 임차인 표', '현황조사서 원본(점유자 진술, 가족 여부)', '법원 경매기록의 권리신고·배당요구 여부(최신)', '관리사무소·이웃 탐문으로 실제 거주자와 거주 기간');
+        html += '<div style="margin-top:6px;padding:8px 10px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;"><b>' + e(u.name) + '</b> <span class="dr-sub">(보증금 미상 점유자)</span>'
+            + '<div style="margin-top:3px;"><b>서류에 적힌 사실</b><ul style="margin:2px 0 0 18px;padding:0;">' + F.map(function(x) { return '<li>' + x + '</li>'; }).join('') + '</ul></div>'
+            + '<div style="margin-top:5px;"><b>가장 가능성 높은 이야기</b>' + FOR + '<div>' + G.join('<br>') + '</div></div>'
+            + '<div style="margin-top:5px;"><b>이 예상이 틀릴 수 있는 이유</b><ul style="margin:2px 0 0 18px;padding:0;">' + D.map(function(x) { return '<li>' + x + '</li>'; }).join('') + '</ul></div>'
+            + '<div style="margin-top:5px;"><b>확인할 곳</b> <span class="dr-sub">' + T.map(e).join(' · ') + '</span></div></div>';
+    });
+    return ['🧑‍🤝‍🧑 이 집에 사는 사람은 누구일까 <span class="dr-sub" style="font-weight:400;">(서류의 사실 + 예상)</span>', '<div class="dr-sub" style="margin-bottom:2px;">가족관계·임대차 여부는 서류로 확정되지 않아 아래 이야기는 모두 예상이에요. 서류에 적힌 사실에는 출처를 붙였어요.</div>' + html];
+}
 function myrNarrative(a, R, my, vd, bidWon, row) {
     var f = R.story || {}, reg = (R.registry || []).slice().sort(function(x, y) { return String(x.date) < String(y.date) ? -1 : 1; }), man = function(v) { return v ? toEok(String(Math.round(v / 10000))) : '-'; }, e = bbEsc;
     var EST = ' <span style="background:#fef3c7;color:#92400e;border-radius:6px;padding:0 5px;font-size:11px;font-weight:700;white-space:nowrap;">추정</span>', FOR = ' <span style="background:#dbeafe;color:#1e40af;border-radius:6px;padding:0 5px;font-size:11px;font-weight:700;white-space:nowrap;">예상</span>';
@@ -15507,6 +15559,7 @@ function myrNarrative(a, R, my, vd, bidWon, row) {
     if (sur && ownersTxt.trim() && ownersTxt.indexOf(sur) < 0) { var fm = reg.map(function(r) { return (String(r.type || '').match(/(?:\d+번)?([가-힣]{2,4})지분전부이전/) || [])[1]; }).filter(function(x) { return x && x.charAt(0) === sur; })[0]; imp.push('세대주 성씨("' + e(sur) + '")가 현재 소유자들과 달라요.' + (fm ? ' 등기부에 지분이 넘어간 전 공유자 ' + e(fm) + ' 씨와 성씨가 같아서, 지분을 넘기고도 계속 살고 있는 사람일 수 있어요.' + EST : '') + ' 그런데 현황조사서는 점유관계를 "' + e(sv && sv.occ || '미기재') + '"로 적고' + (sv && sv.memo ? ', 조사서에는 "' + e(sv.memo) + '"라고 적어서' : '') + ' 세대열람과 서로 달라요 - 입찰 전에 실제로 누가 사는지 확인이 필요해요.'); }
     imp.push('집을 넘겨받을 때 점유자가 있으면 대금을 낸 뒤 6개월 안에 인도명령을 신청할 수 있어요(민사집행법 제136조). 체납 관리비 중 공용부분은 낙찰자가 이어받아요(대법원 2001다8097 전원합의체).');
     if (cancels.length) imp.push('낙찰 뒤 허가가 취소된 이력이 있는 사건이에요. 낙찰자가 대금을 내지 않으면 보증금을 돌려받지 못해요(민사집행법 제138조) - 자금 계획을 미리 세우세요.');
+    try { var occS = myrOccupantStory(a, R, FOR, EST); if (occS) ch.push(occS); } catch (oe) { /* 점유자 정황은 보조 정보라 오류가 나도 이야기를 막지 않음 */ }
     ch.push(['🎯 지금, 낙찰받는다면', p5 + '<ul style="margin:4px 0 0 18px;padding:0;">' + imp.filter(Boolean).map(function(x) { return '<li style="margin-bottom:3px;">' + x + '</li>'; }).join('') + '</ul>']);
     var h = '<div class="dr-sec" style="border:2px solid #6366f1;border-radius:10px;padding:10px 12px;"><h4>📖 이 집의 이야기 <span class="dr-sub" style="font-weight:400;">서류에 적힌 사실을 줄거리로 풀었어요 · 사실이 아닌 부분은 <span style="background:#fef3c7;color:#92400e;border-radius:6px;padding:0 5px;font-size:11px;font-weight:700;">추정</span> <span style="background:#dbeafe;color:#1e40af;border-radius:6px;padding:0 5px;font-size:11px;font-weight:700;">예상</span> 표시</span></h4>';
     ch.forEach(function(c) { h += '<div style="margin-top:9px;"><div style="font-weight:700;color:#4338ca;">' + c[0] + '</div><div style="font-size:13.5px;line-height:1.85;">' + c[1] + '</div></div>'; });
