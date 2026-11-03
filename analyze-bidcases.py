@@ -1271,8 +1271,21 @@ def winbid_model(R, now):
     tr, te = D[D["sale"] < cut], D[D["sale"] >= cut]
     global WB_FACTORS
     f_base = [f for f in WB_FACTORS if f[0] != "jb"]; f_jb = f_base + [WB_JB_FACTOR]
-    WB_FACTORS = f_base; p0 = wb_predict(wb_fit(tr), te)
-    WB_FACTORS = f_jb; p1 = wb_predict(wb_fit(tr), te)
+    # 🕐 최근 가중(2026-11-04, 사용자 "개선안 적용"): 학습에서 최근 12개월 사례를 3배(원본 + 2번 더)로 셈. 리포트 12주 비교에서 보통 오차 5.49→5.41%(±10% 안 +0.8%p).
+    # 같은 학습/검증 분할에서 가중 없는 모델과 비교해 좋아질 때만 씀(아니면 예전 방식 그대로)
+    def _recent_w(df, ref_int):
+        ref = pd.to_datetime(str(int(ref_int)), format="%Y%m%d"); since = int((ref - pd.DateOffset(months=12)).strftime("%Y%m%d"))
+        rec = df[df["sale"] >= since]
+        return pd.concat([df, rec, rec])
+    trw = _recent_w(tr, cut)
+    WB_FACTORS = f_base
+    _ea = lambda pp: float(np.median(np.abs(np.exp(pp) * te["est"].values / te["actual"].values - 1)))
+    _e_plain, _e_w = _ea(wb_predict(wb_fit(tr), te)), _ea(wb_predict(wb_fit(trw), te))
+    use_rw = bool(_e_w < _e_plain - 0.0003)
+    print(f"  🕐 최근 가중(최근 12개월 3배) 검증: 보통 오차 {_e_plain * 100:.3f}% → {_e_w * 100:.3f}% →", "사용" if use_rw else "사용 안 함(효과 없음)")
+    TRF = trw if use_rw else tr
+    WB_FACTORS = f_base; p0 = wb_predict(wb_fit(TRF), te)
+    WB_FACTORS = f_jb; p1 = wb_predict(wb_fit(TRF), te)
     ea = lambda pp: np.abs(np.exp(pp) * te["est"].values / te["actual"].values - 1)
     e0, e1 = ea(p0), ea(p1); jm = (pd.to_numeric(te["jb"], errors="coerce").abs() > 0.12).values if "jb" in te.columns else np.zeros(len(te), bool)
     print(f"  🆕 최근 거래 점프 요인(jb) 검증(최근 12개월 {len(te):,}건): 보통 오차 {np.median(e0) * 100:.3f}% → {np.median(e1) * 100:.3f}% | 점프 큰 사례 {int(jm.sum())}건: {np.median(e0[jm]) * 100 if jm.sum() else float('nan'):.2f}% → {np.median(e1[jm]) * 100 if jm.sum() else float('nan'):.2f}%")
@@ -1347,7 +1360,8 @@ def winbid_model(R, now):
             _we.run(D, tr, te, wb_fit, wb_predict, _zn, est_rule_experiment, R, now)
         except Exception as e:
             import traceback; traceback.print_exc(); print("  개선 실험 건너뜀:", e)
-    full = wb_fit(D)
+    full = wb_fit(_recent_w(D, int(D["sale"].max())) if use_rw else D)
+    full["recentWeight"] = bool(use_rw); full["n"] = int(len(D))
     # 경쟁 예상(2026-10-10): 같은 요인으로 로그 응찰자 수를 맞추는 모델 - 앱이 하위 25%(낮음)·상위 25%(높음)로 표시
     try:
         Db = D[D["bidders"].notna() & (D["bidders"] > 0) & (D["sale"] >= 20230101)].copy()
