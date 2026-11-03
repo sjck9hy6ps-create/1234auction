@@ -1371,6 +1371,42 @@ def winbid_model(R, now):
     except Exception as e:
         print("  경쟁 예상별 보정 건너뜀:", e)
     full["resQ"] = [round(float(np.quantile(res, q / 100)), 4) for q in range(1, 100)]
+    # 📐 구간별 오차 분포(2026-11-03, 사용자: "낙찰 가능성은 예상 낙찰가에서 나오는데 모든 물건에 같은 오차폭을 쓰니 깊은 할인 예측 구간에서 확률이 과신")
+    # 예상 낙찰가÷시세(=exp(예측)) 구간별로 오차(실제÷예상의 로그) 분포를 따로 만들어 앱이 낙찰 가능성을 구간 분포로 계산하게 함.
+    # 학습에 안 쓴 최근 12개월(te)을 시간순 60/40으로 나눠 "앞 60%로 만든 표가 뒤 40%에서 얼마나 맞는지"(분위 적중률 오차)를 전체 단일 분포와 비교해 좋아질 때만 use=True
+    try:
+        ratio = np.exp(p); edges = [round(float(np.quantile(ratio, q)), 3) for q in (0.10, 0.25, 0.50, 0.75, 0.90)]
+        bk = np.searchsorted(np.array(edges), ratio, side="right"); qs = np.arange(1, 100) / 100.0; TAU = (0.1, 0.25, 0.5, 0.75, 0.9)
+        def qtab(idx):
+            allq = np.quantile(res[idx], qs); out = []
+            for b in range(len(edges) + 1):
+                m = idx[bk[idx] == b]
+                out.append(np.quantile(res[m], qs) if len(m) >= 150 else allq)
+            return out
+        order = np.argsort(te["sale"].values, kind="stable"); k = int(len(order) * 0.6); fi, vi = order[:k], order[k:]
+        t60 = qtab(fi); g60 = np.quantile(res[fi], qs)
+        def cover_err(tabs, idx):
+            errs = []; per = {}
+            for b in range(len(edges) + 1):
+                m = idx[bk[idx] == b]
+                if len(m) < 50: continue
+                e_b = []
+                for t in TAU:
+                    qv = (tabs[b] if tabs is not None else g60)[int(round(t * 100)) - 1]
+                    e_b.append(abs(float((res[m] <= qv).mean()) - t))
+                per[b] = round(float(np.mean(e_b)) * 100, 1); errs += e_b
+            return (float(np.mean(errs)) if errs else 9.0), per
+        eg, pg = cover_err(None, vi); eb, pb = cover_err(t60, vi)
+        use_b = bool(eb < eg * 0.9)
+        # 전체 깊은 구간 예시: 하위 10% 구간에서 "예상가로 입찰하면 낙찰" 비율이 이 표로 얼마나 정확한지(0.5에 가까울수록 좋음)
+        full["resQB"] = {"edges": edges, "q": [[round(float(v), 4) for v in row] for row in qtab(np.arange(len(res)))], "use": use_b,
+                         "check": {"전체분포 적중오차%": round(eg * 100, 2), "구간분포 적중오차%": round(eb * 100, 2), "구간별 전체분포 오차%": pg, "구간별 구간분포 오차%": pb, "검증 n": int(len(vi))},
+                         "spread": [round(float(np.quantile(res[bk == b], 0.75) - np.quantile(res[bk == b], 0.25)), 4) for b in range(len(edges) + 1)], "n": int(len(res))}
+        print("  📐 구간별 오차 분포:", json.dumps({k2: v2 for k2, v2 in full["resQB"].items() if k2 != "q"}, ensure_ascii=False))
+        if os.environ.get("GITHUB_STEP_SUMMARY"):
+            open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8").write("### 구간별 오차 분포\n```json\n" + json.dumps({k2: v2 for k2, v2 in full["resQB"].items() if k2 != "q"}, ensure_ascii=False, indent=1) + "\n```\n")
+    except Exception as e:
+        print("  구간별 오차 분포 건너뜀:", e)
     full["oos"] = {"from": cut, "n": int(len(te)), "medAbsErrPct": round(float(np.median(np.abs(np.exp(p) * te["est"] / te["actual"] - 1))) * 100, 1)}
     try:
         import accuracy_ledger as _led

@@ -20101,6 +20101,9 @@ function winbidBaseEst(a, pyung) {
 }
 function winbidProbRaw(wb, bid) {
     var thr = Math.log(bid / wb.est) - wb.pred, q = winbidModel.resQ;
+    // 2026-11-03 구간별 오차 분포: 예상 낙찰가÷시세 구간마다 오차폭이 달라(깊은 할인 예측일수록 넓음) 구간 표가 있고 서버 검증을 통과했으면(use) 그 구간의 분포로 계산
+    var qb = winbidModel.resQB;
+    if (qb && qb.use && qb.edges && qb.q && wb.pred != null) { var rt = Math.exp(wb.pred), bi = 0; while (bi < qb.edges.length && rt >= qb.edges[bi]) bi++; if (qb.q[bi] && qb.q[bi].length === 99) q = qb.q[bi]; }
     if (thr <= q[0]) return 0.01;
     if (thr >= q[q.length - 1]) return 0.99;
     for (var i = 1; i < q.length; i++) if (thr <= q[i]) return (i + (thr - q[i - 1]) / ((q[i] - q[i - 1]) || 1)) / 100;
