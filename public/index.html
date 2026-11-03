@@ -30148,11 +30148,23 @@ function setupBidCasePanelLayout() {
     hdr.insertAdjacentHTML('beforeend', ' <button class="bb-csv" style="margin-left:8px;font-size:11px;padding:3px 10px;" onclick="openWeeklyReport()">📊 주간 리포트</button>');
     renderBidCaseSummary();
 }
+/* 낙찰/입찰예정 구분(2026-11-03, 사용자: "오늘 날짜와 낙찰일·입찰일을 정확히 구분해 낙찰사건과 입찰예정 사건을 구분") - 오늘(한국 날짜)·상태·낙찰가로만 판정:
+   sold = 상태 '매각' + 낙찰가 있음 + 입찰일이 오늘 이전(또는 오늘) / upcoming = 낙찰 아님 + 입찰일이 내일 이후 / today = 낙찰 아님 + 오늘 입찰 /
+   pastOpen = 낙찰 아님 + 입찰일 지남(결과 미확인) / odd = 낙찰인데 입찰일이 미래(자료 이상) */
+function bidCaseTodayStr() { return new Date(Date.now() + 9 * 3600000).toISOString().slice(0, 10); }
+function bidCaseKind(c, today) {
+    today = today || bidCaseTodayStr();
+    var d = String((c && c.saleDate) || '').slice(0, 10), sold = !!(c && c.status === '매각' && c.finalBidPrice > 0);
+    if (sold) return d > today ? 'odd' : 'sold';
+    if (!d) return 'pastOpen';
+    return d > today ? 'upcoming' : (d === today ? 'today' : 'pastOpen');
+}
 function renderBidCaseSummary() {
     var box = document.getElementById('bc-summary');
     if (!box || typeof bidCaseList === 'undefined') return;
-    var n = bidCaseList.length, sold = 0, bid = 0, res = 0, reg = {};
+    var n = bidCaseList.length, sold = 0, bid = 0, res = 0, reg = {}, kinds = { sold: 0, upcoming: 0, today: 0, pastOpen: 0, odd: 0 };
     bidCaseList.forEach(function(c) {
+        kinds[bidCaseKind(c)]++;
         if (c.finalBidPrice) sold++;
         if (c.bidders) bid++;
         if (c.resaleMatch && c.resaleMatch.amount) res++;
@@ -30160,7 +30172,8 @@ function renderBidCaseSummary() {
     });
     var st = function(k, v) { return '<div class="pn-stat"><div class="k">' + k + '</div><div class="v">' + v + '</div></div>'; };
     var top = Object.keys(reg).sort(function(a, b) { return reg[b] - reg[a]; }).slice(0, 6);
-    box.innerHTML = '<div class="pn-stats" style="margin-top:0;border-top:none;padding-top:0;">' + st('낙찰사례', n.toLocaleString() + '건') + st('낙찰가 있음', sold.toLocaleString()) + st('재매도 확인', res.toLocaleString()) + '</div>'
+    box.innerHTML = '<div class="pn-stats" style="margin-top:0;border-top:none;padding-top:0;">' + st('낙찰(결과 확정)', kinds.sold.toLocaleString() + '건') + st('입찰예정', kinds.upcoming.toLocaleString()) + st('오늘 입찰', kinds.today.toLocaleString()) + st('기일 지남·결과 미확인', kinds.pastOpen.toLocaleString()) + st('재매도 확인', res.toLocaleString()) + '</div>'
+        + '<div class="pn-muted" style="margin-top:6px;">오늘(' + bidCaseTodayStr() + ') 기준 · <b>낙찰</b>은 상태가 "매각"이고 낙찰가가 있는 지난 사건만이고, <b>입찰예정</b>은 입찰일이 내일 이후라 아직 결과가 없는 사건이에요(분석·시세·정확도 계산에는 낙찰만 써요). "기일 지남·결과 미확인"은 입찰일이 지났는데 목록에는 신건·유찰로 남은 사건이라 다음에 낙찰사례를 올리면 결과가 채워져요.' + (kinds.odd ? ' <b style="color:#b91c1c;">⚠️ 낙찰인데 입찰일이 미래인 이상 자료 ' + kinds.odd + '건</b>' : '') + '</div>'
         + '<div class="am-legend" style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px;">' + top.map(function(k) { return '<span class="pn-pill" style="background:#f3f4f6;color:#374151;">' + k + ' ' + reg[k].toLocaleString() + '</span>'; }).join('') + '</div>';
 }
 (function hookBidCasePanel() {

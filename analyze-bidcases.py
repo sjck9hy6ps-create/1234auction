@@ -104,6 +104,11 @@ def main():
     print(f"  낙찰사례 {len(df):,}건")
     df = df[df["propertyType"].astype(str).str.contains("아파트", na=False)]
     df = df[pd.to_numeric(df["finalBidPrice"], errors="coerce") > 0]
+    # 2026-11-03 낙찰/입찰예정 구분: 상태가 '매각'이고(상태 칸이 있을 때) 입찰일이 오늘(한국) 이전인 낙찰만 분석에 씀 - 입찰예정·결과 미확인 사건이 섞이지 않게
+    _today = (datetime.now(timezone.utc) + timedelta(hours=9)).strftime("%Y-%m-%d")
+    if "status" in df.columns:
+        df = df[df["status"].isna() | (df["status"].astype(str) == "매각")]
+    df = df[df["saleDate"].astype(str) <= _today]
     df = df[df["saleDate"].astype(str).str.match(r"^\d{4}-\d{2}-\d{2}$", na=False)]
     df["actual"] = pd.to_numeric(df["finalBidPrice"]) / 10000.0
     df["appraisal"] = pd.to_numeric(df["appraisalPrice"], errors="coerce") / 10000.0
