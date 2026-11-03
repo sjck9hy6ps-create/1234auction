@@ -29479,6 +29479,40 @@ function wrLoadCorr() {
     var el = document.getElementById('wr-corr'); if (!el) return;
     fetch('/api/data-coverage?mode=corrCheck').then(function(r) { return r.json(); }).then(function(d) { el.innerHTML = wrRenderCorr('아파트', d && d.apt) + wrRenderCorr('빌라(수도권)', d && d.villa); }).catch(function() { el.innerHTML = '<div class="pn-muted">불러오지 못했어요.</div>'; });
 }
+/* 🧪 시세 규칙 비교 누적(2026-11-04, 사용자: 새 시세 규칙을 매주 비교 리포트에 두 값으로 표기하고 누적해 비교한 뒤 나중에 규칙을 바꿀 것) -
+   서버가 낙찰 사례마다 '현재 / 시세 새 규칙 / 최근 가중 / 둘 다' 예측 오차(%)를 한 번만 기록해 쌓은 값(signal|__winbid_compare__). 같은 사례를 여러 주 세지 않음 */
+function wrLoadCompare() {
+    var el = document.getElementById('wr-cmp'); if (!el) return;
+    fetch('/api/data-coverage?mode=winbidCompare').then(function(r) { return r.json(); }).then(function(d) { el.innerHTML = wrRenderCompare(d); }).catch(function() { el.innerHTML = ''; });
+}
+function wrRenderCompare(d) {
+    if (!d || !Array.isArray(d.items) || !d.items.length) return '<div class="wr-sec"><b>🧪 시세 규칙 비교 (누적)</b><div class="pn-muted">다음 주간 분석부터 쌓여요.</div></div>';
+    var names = d.names || ['현재', '시세 새 규칙', '최근 가중', '개선안(둘 다)'], items = d.items;
+    var med = function(v) { v = v.slice().sort(function(a, b) { return a - b; }); var k = v.length >> 1; return v.length % 2 ? v[k] : (v[k - 1] + v[k]) / 2; };
+    var stat = function(arr, i) { var e = arr.map(function(x) { return x[2 + i]; }), a = e.map(Math.abs); return { n: e.length, err: med(a), in10: 100 * a.filter(function(x) { return x <= 10; }).length / e.length, bias: med(e), over: 100 * e.filter(function(x) { return x > 10; }).length / e.length }; };
+    var r1 = function(v) { return Math.round(v * 100) / 100; }, r0 = function(v) { return Math.round(v * 10) / 10; };
+    var tot = names.map(function(nm, i) { return stat(items, i); });
+    var dl = function(v, b) { var x = r1(v - b); if (Math.abs(x) < 0.005) return ''; return ' <span style="color:' + (x < 0 ? '#15803d' : '#b91c1c') + ';">(' + (x > 0 ? '+' : '') + x + ')</span>'; };
+    var h = '<div class="wr-sec"><b>🧪 시세 규칙 비교 (누적)</b> <span class="pn-muted">· 낙찰 ' + items.length + '건을 사례마다 한 번씩만 기록 · 입찰 30일 전 시점 시세로, 그 낙찰 이전 사례만으로 학습한 모델 기준 · 앱의 실제 계산은 아직 바뀌지 않음</span>'
+        + '<table class="pn-table"><thead><tr><th>방식</th><th class="r">보통 오차</th><th class="r">±10% 안</th><th class="r">치우침</th><th class="r">10% 넘게 높게 예측</th></tr></thead><tbody>'
+        + names.map(function(nm, i) { var t = tot[i]; return '<tr' + (i === 3 ? ' style="background:#f0fdf4;"' : '') + '><td>' + bbEsc(nm) + '</td><td class="r"><b>' + r1(t.err) + '%</b>' + (i ? dl(t.err, tot[0].err) : '') + '</td><td class="r">' + r0(t.in10) + '%</td><td class="r">' + (t.bias > 0 ? '+' : '') + r1(t.bias) + '%</td><td class="r">' + r0(t.over) + '%</td></tr>'; }).join('')
+        + '</tbody></table>';
+    // 주별(낙찰일이 속한 주의 월요일 기준)
+    var wk = {};
+    items.forEach(function(x) { var s = String(x[1]), dt = new Date(s.slice(0, 4) + '-' + s.slice(4, 6) + '-' + s.slice(6, 8) + 'T00:00:00'), dow = (dt.getDay() + 6) % 7; dt.setDate(dt.getDate() - dow); var k = dt.toISOString().slice(0, 10); (wk[k] = wk[k] || []).push(x); });
+    var wkeys = Object.keys(wk).sort().reverse().slice(0, 14), better = 0, streak = 0, counting = true;
+    var rows = wkeys.map(function(k) {
+        var g = wk[k]; if (g.length < 20) return '';
+        var a = stat(g, 0), b = stat(g, 1), c = stat(g, 2), e = stat(g, 3), d = r1(b.err - a.err), dd = r1(e.err - c.err);
+        if (counting) { if (b.err < a.err) streak++; else counting = false; }
+        if (b.err < a.err) better++;
+        return '<tr><td>' + k.slice(5) + ' 주</td><td class="r">' + g.length + '</td><td class="r">' + r1(a.err) + '%</td><td class="r"><b>' + r1(b.err) + '%</b> <span style="color:' + (d < 0 ? '#15803d' : '#b91c1c') + ';">(' + (d > 0 ? '+' : '') + d + ')</span></td><td class="r">' + r1(c.err) + '%</td><td class="r"><b>' + r1(e.err) + '%</b> <span style="color:' + (dd < 0 ? '#15803d' : '#b91c1c') + ';">(' + (dd > 0 ? '+' : '') + dd + ')</span></td></tr>';
+    }).join('');
+    h += '<div class="pn-muted" style="margin-top:6px;">시세 규칙만 바꿨을 때: 현재 ' + r1(tot[0].err) + '% → 새 규칙 ' + r1(tot[1].err) + '%' + dl(tot[1].err, tot[0].err) + ' · 최근 가중을 같이 쓰고 시세 규칙을 바꾸면: ' + r1(tot[2].err) + '% → ' + r1(tot[3].err) + '%' + dl(tot[3].err, tot[2].err)
+        + (streak ? ' · <b>최근 ' + streak + '주 연속 새 규칙이 더 나았어요</b>' : '') + '</div>';
+    if (rows) h += '<details style="margin-top:6px;"><summary>주별 보기 (건수 20 이상인 주만 · 지난 ' + better + '주 중 새 규칙이 나은 주)</summary><table class="pn-table"><thead><tr><th>낙찰 주(월)</th><th class="r">건수</th><th class="r">현재</th><th class="r">시세 새 규칙</th><th class="r">최근 가중</th><th class="r">둘 다</th></tr></thead><tbody>' + rows + '</tbody></table><div class="pn-muted">괄호는 같은 주의 "현재(또는 최근 가중)" 대비 변화(초록=좋아짐).</div></details>';
+    return h + '</div>';
+}
 function wrRenderCorr(label, c) {
     var pc = function(v) { return v == null ? '-' : v + '%'; };
     if (!c || !c.ok) return '<div class="wr-sec"><b>🔧 ' + label + ' 자동 보정 검증</b><div class="pn-muted">' + (c && c.why ? bbEsc(c.why) : '이번 주 분석 후 나와요.') + '</div></div>';
@@ -29496,8 +29530,8 @@ function wrRenderCorr(label, c) {
         + (cur ? '<div class="pn-muted">이번 주 보정값(적용한다면): ' + cur + '</div>' : '') + '<div class="pn-muted">' + (c.generatedAt ? String(c.generatedAt).slice(0, 10) + ' 계산 · ' : '') + '보정은 표본 30건 이상일 때만, 최대 ±4%, 표본이 적을수록 약하게 반영해요. 아직 앱 계산에는 적용하지 않았어요.</div></div>';
 }
 function wrRenderWinScore(ws) {
-    setTimeout(wrLoadCorr, 300);
-    if (!ws || !ws.all) return '<div class="pn-muted" style="padding:8px 0;">다음 주간 분석부터 나와요.</div><div id="wr-corr"></div>';
+    setTimeout(wrLoadCorr, 300); setTimeout(wrLoadCompare, 300);
+    if (!ws || !ws.all) return '<div class="pn-muted" style="padding:8px 0;">다음 주간 분석부터 나와요.</div><div id="wr-cmp"></div><div id="wr-corr"></div>';
     var pc = function(v) { return v == null ? '-' : v + '%'; }, a = ws.all;
     var row = function(x, lab) { return '<tr><td>' + lab + '</td><td class="r">' + x.n + '</td><td class="r"><b>' + pc(x.medAbsErrPct) + '</b></td><td class="r">' + pc(x.within10Pct) + '</td><td class="r">' + wrBiasShort(x.biasPct) + '</td><td class="r">' + pc(x.winAtPredPct) + '</td><td class="r">' + pc(x.winAtPlus5Pct) + '</td></tr>'; };
     var th = '<thead><tr><th></th><th class="r">건수</th><th class="r">보통 오차</th><th class="r">±10% 안</th><th class="r">방향</th><th class="r">예상가로 낙찰</th><th class="r">+5%로 낙찰</th></tr></thead>';
@@ -29521,7 +29555,7 @@ function wrRenderWinScore(ws) {
     if (ws.weeks && ws.weeks.length) h += '<div class="wr-sec"><b>주별</b><table class="pn-table">' + th.replace('<th></th>', '<th>낙찰 주(월요일)</th>') + '<tbody>' + ws.weeks.slice().reverse().map(function(x) { return row(x, wrYmd(x.week)); }).join('') + '</tbody></table></div>';
     if (ws.byClass && ws.byClass.length) h += '<div class="wr-sec"><b>지역별</b><table class="pn-table">' + th + '<tbody>' + ws.byClass.map(function(x) { return row(x, x.label); }).join('') + '</tbody></table></div>';
     if (ws.byFails && ws.byFails.length) h += '<div class="wr-sec"><b>유찰별</b><table class="pn-table">' + th + '<tbody>' + ws.byFails.map(function(x) { return row(x, x.label); }).join('') + '</tbody></table></div>';
-    return h + '<div id="wr-corr"></div>';
+    return h + '<div id="wr-cmp"></div><div id="wr-corr"></div>';
 }
 function wrRenderHistory(items, cur) {
     if (!items || !items.length) return '<div class="pn-muted" style="padding:8px 0;">아직 누적된 지난 리포트가 없어요. 이번 주 분석부터 매주 쌓여요.</div>';

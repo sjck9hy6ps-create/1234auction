@@ -23,6 +23,7 @@ import os
 import re
 import json
 import math
+import time
 from datetime import datetime, timezone, timedelta
 
 import numpy as np
@@ -1636,7 +1637,7 @@ def winscore_improved(D, now_dt):
     def cdf(res):
         q = np.sort(res); return lambda d: np.searchsorted(q, d, side="right") / max(len(q), 1)
     def fb(df): return df["fails"].map(lambda f: "?" if f is None or pd.isna(f) else str(min(int(f), 2)))
-    acc = {"현재": [], "시세 새 규칙": [], "최근 가중": [], "개선안(둘 다)": []}; br = {"현재(오차 폭 하나)": [], "유찰별 오차 폭": []}; ns = 0
+    acc = {"현재": [], "시세 새 규칙": [], "최근 가중": [], "개선안(둘 다)": []}; br = {"현재(오차 폭 하나)": [], "유찰별 오차 폭": []}; ns = 0; case_err = {}
     for b in range(3):
         b_to = now_dt - timedelta(days=28 * b); b_from = b_to - timedelta(days=28)
         lo_i, hi_i = ymd(b_from), ymd(b_to)
@@ -1653,6 +1654,8 @@ def winscore_improved(D, now_dt):
             pr = np.exp(wb_predict(m, TT)) * TT[col]; X = TT.copy(); X["pred"] = pr; X["actual_"] = TT["actual"]
             X["base_est"] = T["est"].values  # 비교용: 같은 사례
             acc[nm].append(X[["pred", "actual", "region"]])
+            for cn_, rg_, sl_, pr_, ac_ in zip(TT["caseNo"].values, TT["region"].values, TT["sale"].values, pr.values, TT["actual"].values):  # 사례별 오차(누적 비교용, 같은 사례는 한 번만 기록)
+                case_err.setdefault(f"{cn_}|{rg_}|{int(sl_)}", {"sale": int(sl_)})[nm] = round(float((pr_ / ac_ - 1) * 100), 1)
         # 낙찰 가능성: 개선안 모델의 시험 잔차를 전체 하나 / 유찰별 분포로 평가(학습 잔차는 4분할)
         Ts = Trw2.sort_values("sale"); fo = np.array_split(np.arange(len(Ts)), 4); oof = np.zeros(len(Ts))
         for k in range(4):
@@ -1673,7 +1676,27 @@ def winscore_improved(D, now_dt):
                 "overPct": round(float((e > 0.10).mean()) * 100, 1), "p90AbsPct": round(float(a.quantile(.9)) * 100, 1)}
     out = {"n": ns, "variants": {nm: st(v) for nm, v in acc.items()}, "brier": {nm: round(float(np.mean(np.concatenate([np.array(x) for x in v]))), 5) for nm, v in br.items()},
            "components": ["시세 새 규칙(est_rule)", "최근 12개월 3배 가중", "낙찰 가능성 오차 폭을 유찰 횟수별로"]}
+    out["_cases"] = case_err   # 호출한 쪽이 누적 저장에 쓰고 리포트 본문에는 넣지 않음
     return out
+
+
+def update_compare_history(case_err, now_iso):
+    """2026-11-04(사용자: 새 시세 규칙을 매주 비교 리포트에 두 값으로 표기하고 누적해서 비교) - 낙찰 사례마다 '현재/시세 새 규칙/최근 가중/둘 다' 예측 오차(%)를 한 번만 기록해
+    주마다 겹치지 않게 쌓음(리포트 창이 9일·12주라 같은 사례가 여러 주 나오므로 사례 키로 중복 제거, 처음 기록한 값 유지). 앱이 누적 표를 이걸로 그림."""
+    if not case_err:
+        return
+    NAMES = ["현재", "시세 새 규칙", "최근 가중", "개선안(둘 다)"]
+    try:
+        old = (requests.get(f"{SITE_URL}/api/data-coverage?mode=winbidCompare&nocache={int(time.time())}", timeout=60).json() or {}).get("items") or []
+    except Exception:
+        old = []
+    have = {it[0] for it in old if isinstance(it, list) and it}
+    new = [[k, v["sale"]] + [v.get(nm) for nm in NAMES] for k, v in case_err.items() if k not in have and all(v.get(nm) is not None for nm in NAMES)]
+    items = (old + new)
+    items.sort(key=lambda it: it[1])
+    items = items[-8000:]
+    cyc.upsert_rows([{"id": "signal|__winbid_compare__", "payload": cyc.clean_json({"names": NAMES, "items": items, "generatedAt": now_iso}), "fetched_at": now_iso}])
+    print(f"  🧪 시세 규칙 비교 누적: 새로 {len(new)}건 → 총 {len(items)}건")
 
 
 def weekly_report(R, now_dt, now_iso):
@@ -1831,6 +1854,10 @@ def weekly_report(R, now_dt, now_iso):
             ws["from"] = int(A["sale"].min()); ws["to"] = int(A["sale"].max())
         try:
             ws["improved"] = winscore_improved(D, now_dt)
+            try:
+                update_compare_history((ws["improved"] or {}).pop("_cases", None) or {}, now_iso)
+            except Exception as e:
+                print("  비교 누적 저장 건너뜀:", e)
             print("  🆕 예상 낙찰가 개선안 비교:", json.dumps(ws["improved"], ensure_ascii=False))
             if ws["improved"]:
                 import accuracy_ledger as _led
