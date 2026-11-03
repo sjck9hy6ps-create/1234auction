@@ -29499,7 +29499,7 @@ function wrRenderCompare(d) {
         + '</tbody></table>';
     // 주별(낙찰일이 속한 주의 월요일 기준)
     var wk = {};
-    items.forEach(function(x) { var s = String(x[1]), dt = new Date(s.slice(0, 4) + '-' + s.slice(4, 6) + '-' + s.slice(6, 8) + 'T00:00:00'), dow = (dt.getDay() + 6) % 7; dt.setDate(dt.getDate() - dow); var k = dt.toISOString().slice(0, 10); (wk[k] = wk[k] || []).push(x); });
+    items.forEach(function(x) { var s = String(x[1]), dt = new Date(s.slice(0, 4) + '-' + s.slice(4, 6) + '-' + s.slice(6, 8) + 'T00:00:00'); if (isNaN(dt.getTime())) return; var dow = (dt.getDay() + 6) % 7; dt.setDate(dt.getDate() - dow); var k = dt.toISOString().slice(0, 10); (wk[k] = wk[k] || []).push(x); });
     var wkeys = Object.keys(wk).sort().reverse().slice(0, 14), better = 0, streak = 0, counting = true;
     var rows = wkeys.map(function(k) {
         var g = wk[k]; if (g.length < 20) return '';
