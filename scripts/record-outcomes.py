@@ -11,14 +11,21 @@ CSV 한 줄 = 사건 1건 (헤더: 사건번호,종별,주소(시군구동),외 
         · 앱에 낙찰로 있는데 불허가·허가취소·기각이면 courtDenied 표시(낙찰가·상태는 그대로)
   - 진행상태가 '신건'/'유찰 N회'  → 입찰예정 목록(다음 주 물건). 결과가 아니라 ① 유찰 추정이던 건의 확정(다음 기일로 다시 올라옴) 검증에만 씀
 
-소거법(--all-states-uploaded): 입찰일 구간에서 낙찰도 종료도 아닌 아파트 기록을 outcomeEst='유찰(추정)'로 표시.
-  ⚠️ 그 구간의 모든 상태(매각전부·변경/연기·취하·취소·기각·각하·정지·불허가/허가취소·이송·미진행·기타)를 받았을 때만 이 옵션을 쓸 것.
-  하나라도 빠졌으면 그 상태의 사건이 유찰로 잘못 기록된다. 입찰일 이틀 이후에 받는 게 안전(결과 반영 지연).
+소거법(--estimate-failed): 입찰일 구간에서 낙찰도 종료도 아닌 아파트 기록을 outcomeEst='유찰(추정)'로 표시.
+  ⚠️ 상태 파일이 하나라도 빠지면 그 상태의 사건이 유찰로 잘못 기록되므로 저장 전에 아래 점검을 모두 통과해야 한다(통과 못 하면 저장 안 함, --force 로만 무시 가능·기록됨):
+   A. 날짜별 낙찰 파일: 결과 미확인 사건이 5건 이상인데 그 날 낙찰 행이 0건이면 낙찰 파일 누락
+   B. 상태별 기준 비율: 변경·취하·기각·불허가/허가취소는 이번 주 낙찰 건수 대비 기준 비율(scripts/outcome-baseline.json)의 50% 미만이면 그 상태 파일 누락
+   B2. 날짜별: 낙찰이 60건 이상인 날 종료(취하·변경 등) 행이 낙찰의 10% 미만이면 그 날 상태 파일 누락
+   C. 100건 한도: 정확히 100건인 파일이 이어지는 파일 없이 끝나면 잘렸을 수 있음
+   D. 행이 하나도 없는 상태(취소·각하·정지·이송·미진행·기타 등)는 --empty-states 로 "조회해 보니 0건이었다"고 이름을 직접 적어야 함
+   E. 열린 입찰 중 유찰(추정) 비율이 75% 초과(전체·날짜별 100%)면 누락 의심
+   F. 표본 점검표(backups/outcome-spotcheck-*.csv): 유찰(추정) 10건을 탱크옥션에서 직접 확인할 수 있게 뽑아 줌(--spotcheck-ok 를 주면 확인했다고 기록)
+  입찰일 이틀 이후에 받는 게 안전(결과 반영 지연).
 
 사용 예
   python3 scripts/record-outcomes.py                       # 최근 3일 안에 받은 파일 미리보기
   python3 scripts/record-outcomes.py --apply               # 낙찰·종료·불허가·중복 반영
-  python3 scripts/record-outcomes.py --apply --all-states-uploaded   # + 유찰(추정) 표시
+  python3 scripts/record-outcomes.py --apply --estimate-failed --empty-states 취소,각하,이송,기타   # + 유찰(추정) 표시
   python3 scripts/record-outcomes.py --dir ~/Downloads --hours 120 --from 2026-11-02 --to 2026-11-06
 """
 import argparse, collections, csv, glob, json, os, re, sys, time, urllib.request
@@ -92,7 +99,11 @@ def main():
     ap.add_argument("--hours", type=float, default=72, help="이 시간 안에 받은 파일만 읽음(기본 72)")
     ap.add_argument("--from", dest="d_from"); ap.add_argument("--to", dest="d_to")
     ap.add_argument("--apply", action="store_true", help="실제로 저장(기본은 미리보기)")
-    ap.add_argument("--all-states-uploaded", action="store_true", help="모든 상태 파일을 받았음 → 나머지를 유찰(추정)으로 표시")
+    ap.add_argument("--estimate-failed", action="store_true", help="나머지를 유찰(추정)으로 표시(아래 점검을 통과해야 저장됨)")
+    ap.add_argument("--empty-states", default="", help="조회 결과가 0건이었던 상태 이름(쉼표). 예: 취소,각하,이송,기타")
+    ap.add_argument("--spotcheck-ok", action="store_true", help="표본 점검표 10건을 탱크옥션에서 직접 확인했음")
+    ap.add_argument("--dry-test-unmarked", action="store_true", help="(시험용·저장 안 함) 이미 표시된 기록도 미표시로 보고 점검만 돌려 봄")
+    ap.add_argument("--force", action="store_true", help="점검 실패를 무시(기록됨) - 권장하지 않음")
     a = ap.parse_args()
 
     today = (datetime.now(timezone.utc) + timedelta(hours=9)).strftime("%Y-%m-%d")
@@ -183,27 +194,96 @@ def main():
         elif r.get("매각가", "").isdigit() and b.get("finalBidPrice") and abs(int(r["매각가"]) - b["finalBidPrice"]) > 1:
             log["⚠️ 낙찰가 앱과 다름"].append(r["사건번호"])
 
-    # ③ 소거법 유찰(추정)
-    if a.all_states_uploaded and d_from:
+    # ③ 소거법 유찰(추정) - 점검 A~F 통과 필요
+    problems, notes = [], []
+    if a.estimate_failed and d_from:
         sold_idx = collections.defaultdict(list)
         for b in B:
             if b["status"] == "매각":
                 sold_idx[norm_case(b["caseNo"])].append(b)
+        cand = []
         for b in B:
             if "아파트" not in str(b.get("propertyType")) or not (d_from <= (b.get("saleDate") or "") <= d_to):
                 continue
-            if b["status"] == "매각" or CLOSED_RE.match(str(b["status"])) or b.get("prevStatus") or b.get("outcomeEst") or b.get("dupOfSold"):
+            if b["status"] == "매각" or (not a.dry_test_unmarked and (CLOSED_RE.match(str(b["status"])) or b.get("prevStatus") or b.get("outcomeEst") or b.get("dupOfSold"))):
                 continue
             if b["id"] in changes and changes[b["id"]].get("prevStatus"):
                 continue
-            dup = [s for s in sold_idx.get(norm_case(b["caseNo"]), []) if s.get("dong") == b.get("dong") and str(s.get("bunji", "")).replace(" ", "") == str(b.get("bunji", "")).replace(" ", "") and s["saleDate"] == b["saleDate"]]
+            cand.append(b)
+        # --- 점검 ---
+        sold_by_date = collections.Counter(r["_d"] for r in sold_rows if d_from <= r["_d"] <= d_to)
+        cand_by_date = collections.Counter(b["saleDate"] for b in cand)
+        for d, n in sorted(cand_by_date.items()):
+            if n >= 5 and sold_by_date.get(d, 0) == 0:
+                problems.append(f"A. {d}: 결과 미확인 {n}건인데 그 날 낙찰 행이 0건 → 그 날 '매각전부' 파일이 빠졌을 수 있어요")
+        n_sold = sum(sold_by_date.values()); base = json.load(open(os.path.join(ROOT, "scripts", "outcome-baseline.json"), encoding="utf-8"))
+        st_cnt = collections.Counter()
+        for r in closed_rows:
+            if d_from <= r["_d"] <= d_to:
+                st_cnt[re.sub(r"\s.*", "", r["진행상태"])] += 1
+        grp = {"변경·연기": ["변경", "연기"], "취하": ["취하"], "기각": ["기각"], "불허가·허가취소": ["불허가", "허가취소"]}
+        for gname, names in grp.items():
+            exp = base["ratioPerSold"].get(gname, 0) * n_sold; obs = sum(st_cnt.get(x, 0) for x in names)
+            if exp >= 8 and obs < exp * 0.5:
+                problems.append(f"B. {gname}: 이번 구간 {obs}건(낙찰 {n_sold}건 기준 보통 약 {exp:.0f}건) → 그 상태 파일이 빠졌을 수 있어요")
+        closed_by_date = collections.Counter(r["_d"] for r in closed_rows if d_from <= r["_d"] <= d_to)
+        for d, n_s in sorted(sold_by_date.items()):  # B2: 낙찰이 많은 날(60건+)인데 종료 행이 낙찰의 10% 미만이면 그 날 상태 파일 누락(보통 15~30%)
+            if n_s >= 60 and closed_by_date.get(d, 0) < base["perDateMinClosedRatio"] * n_s:
+                problems.append(f"B2. {d}: 낙찰 {n_s}건인데 취하·변경 등 종료 {closed_by_date.get(d, 0)}건뿐(보통 {int(n_s*0.15)}~{int(n_s*0.3)}건) → 그 날 상태 파일이 빠졌을 수 있어요")
+        trunc = [(n, c) for n, c, st in per if c == 100]
+        for n, c in trunc:
+            f_rows = [r for r in rows if r["_f"] == n]
+            ends = {min((r["_d"] for r in f_rows), default=""), max((r["_d"] for r in f_rows), default="")}  # 100건씩 쪽을 나눠 받으면 한쪽 끝 날짜가 다음 파일로 이어짐
+            cont = any(r["_f"] != n and r["_d"] in ends for r in rows)
+            if not cont:
+                problems.append(f"C. {n[-18:]}: 정확히 100건이고 이어지는 파일이 없어요 → 100건 한도로 잘렸을 수 있어요(날짜를 나눠 다시 받으세요)")
+        seen = set(re.sub(r"\s.*", "", r["진행상태"]) for r in closed_rows if d_from <= r["_d"] <= d_to)
+        empty = {x.strip() for x in a.empty_states.split(",") if x.strip()}
+        alias = {"매각전부": {"매각"}, "변경/연기": {"변경", "연기"}, "불허가/허가취소": {"불허가", "허가취소"}}
+        miss = []
+        for x in base["requiredStates"]:
+            names = alias.get(x, {x})
+            have = (n_sold > 0) if x == "매각전부" else bool(seen & names)
+            if not have and not (empty & (names | {x, x.split("/")[0]})):
+                miss.append(x)
+        if miss:
+            problems.append("D. 이번 구간에 행이 없는 상태: " + ", ".join(miss) + " → 탱크옥션에서 조회했을 때 0건이었으면 --empty-states " + ",".join(x.split('/')[0] for x in miss) + " 로 직접 적어 주세요(안 받은 거라면 먼저 받으세요)")
+        opened = len(cand) + n_sold
+        if opened and len(cand) / opened > 0.75:
+            problems.append(f"E. 열린 입찰 {opened}건 중 유찰(추정) {len(cand)}건({len(cand)*100//opened}%) → 보통 약 55%예요. 낙찰·종료 파일 누락 의심")
+        for d, n in sorted(cand_by_date.items()):
+            tot = n + sold_by_date.get(d, 0)
+            if tot >= 10 and n == tot:
+                problems.append(f"E. {d}: 열린 입찰 {tot}건 전부가 유찰 추정 → 그 날 파일 누락 의심")
+        # F 표본 점검표
+        import random
+        rnd = random.Random(d_to); pick = rnd.sample(cand, min(10, len(cand)))
+        sc = os.path.join(ROOT, "backups", f"outcome-spotcheck-{today}.csv"); os.makedirs(os.path.dirname(sc), exist_ok=True)
+        with open(sc, "w", encoding="utf-8-sig", newline="") as fh:
+            w = csv.writer(fh); w.writerow(["사건번호", "입찰일", "주소", "앱 최저가(원)", "탱크옥션에서 확인할 것: 이 입찰일에 유찰이 맞는지"])
+            for b in pick:
+                w.writerow([b["caseNo"], b["saleDate"], b.get("addrJibun"), b.get("minBidPrice"), ""])
+        notes.append("F. 표본 점검표: " + os.path.relpath(sc, ROOT) + " (10건 - 탱크옥션 기일내역에서 유찰인지 확인 후 --spotcheck-ok)")
+        if not a.spotcheck_ok:
+            problems.append("F. 표본 점검표 10건을 확인하지 않았어요(확인했다면 --spotcheck-ok)")
+        if problems and not a.force:
+            print("\n⛔ 유찰(추정) 표시 점검 실패 - 이 부분은 저장하지 않아요:")
+            for pr in problems: print("   ", pr)
+            for nt in notes: print("   ", nt)
+            cand = []
+        elif problems and a.force:
+            print("\n⚠️ --force: 아래 점검 실패를 무시하고 진행(기록에 남김)")
+            for pr in problems: print("   ", pr)
+        for b in cand:
+            dup = [x for x in sold_idx.get(norm_case(b["caseNo"]), []) if x.get("dong") == b.get("dong") and str(x.get("bunji", "")).replace(" ", "") == str(b.get("bunji", "")).replace(" ", "") and x["saleDate"] == b["saleDate"]]
             n = edit(b)
             if dup:
-                n["dupOfSold"] = {"ids": [s["id"] for s in dup][:5], "note": "같은 사건·동·번지·입찰일의 낙찰 기록이 따로 있어 유찰 추정에서 제외", "at": today}; log["중복(낙찰 기록 따로 있음)"].append(b["caseNo"])
+                n["dupOfSold"] = {"ids": [x["id"] for x in dup][:5], "note": "같은 사건·동·번지·입찰일의 낙찰 기록이 따로 있어 유찰 추정에서 제외", "at": today}; log["중복(낙찰 기록 따로 있음)"].append(b["caseNo"])
             else:
-                n["outcomeEst"] = {"result": "유찰(추정)", "basis": f"입찰일 {d_from}~{d_to} 낙찰·종료 CSV 어디에도 없음(소거법)", "at": today}; log["유찰(추정) 표시"].append(b["caseNo"])
-    elif not a.all_states_uploaded:
-        log["(참고) 유찰(추정)은 --all-states-uploaded 를 줘야 표시"].append("-")
+                n["outcomeEst"] = {"result": "유찰(추정)", "basis": f"입찰일 {d_from}~{d_to} 낙찰·종료 CSV 어디에도 없음(소거법)", "at": today,
+                                   "checks": ("force" if problems else "통과"), "spotChecked": bool(a.spotcheck_ok)}; log["유찰(추정) 표시"].append(b["caseNo"])
+    elif not a.estimate_failed:
+        log["(참고) 유찰(추정)은 --estimate-failed 를 줘야 표시"].append("-")
 
     # ④ 유찰(추정) → 확정: 다음 기일(더 늦은 입찰일)에 '유찰 N회'(N이 이전보다 큼)로 다시 올라온 건
     conf = 0
@@ -228,6 +308,8 @@ def main():
     print("\n━━ 결과 ━━")
     for k, v in log.items():
         print(f"  {k}: {len(v) if v != ['-'] else ''}" + (f"  예) {', '.join(v[:3])}" if v and v != ['-'] and len(v) else ""))
+    if a.dry_test_unmarked:
+        print("(시험용 실행 - 저장하지 않아요)"); return 0
     print(f"\n바뀔 레코드: {len(changes)}건")
     if not changes:
         print("바꿀 게 없어요."); return 0
