@@ -30155,6 +30155,7 @@ function bidCaseTodayStr() { return new Date(Date.now() + 9 * 3600000).toISOStri
 function bidCaseKind(c, today) {
     today = today || bidCaseTodayStr();
     var d = String((c && c.saleDate) || '').slice(0, 10), sold = !!(c && c.status === '매각' && c.finalBidPrice > 0);
+    if (c && c.dupOfSold) return 'dup';  // 같은 사건의 낙찰 기록이 따로 있는 옛 목록 기록(중복) - 건수에서 뺌
     if (sold && c.courtDenied) return 'denied';  // 낙찰됐지만 법원이 불허가·허가취소·기각(2026-11-03 CSV 확인) - 낙찰가는 실제 입찰가라 시세 분석엔 쓰고 낙찰 확정 건수에서는 따로 셈
     if (sold) return d > today ? 'odd' : 'sold';
     if (/^(변경|연기|취하|취소|기각|각하|정지|불허가|허가취소|이송|종국|모사건종결|미진행|결정변경|배당종결)/.test(String(c.status || ''))) return 'closed';
@@ -30165,7 +30166,7 @@ function bidCaseKind(c, today) {
 function renderBidCaseSummary() {
     var box = document.getElementById('bc-summary');
     if (!box || typeof bidCaseList === 'undefined') return;
-    var n = bidCaseList.length, sold = 0, bid = 0, res = 0, reg = {}, kinds = { sold: 0, upcoming: 0, today: 0, pastOpen: 0, closed: 0, failedEst: 0, denied: 0, odd: 0 };
+    var n = bidCaseList.length, sold = 0, bid = 0, res = 0, reg = {}, kinds = { sold: 0, upcoming: 0, today: 0, pastOpen: 0, closed: 0, failedEst: 0, denied: 0, dup: 0, odd: 0 };
     bidCaseList.forEach(function(c) {
         kinds[bidCaseKind(c)]++;
         if (c.finalBidPrice) sold++;
