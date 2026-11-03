@@ -1275,6 +1275,31 @@ def winbid_model(R, now):
     WB_FACTORS = f_jb if use_jb else f_base; p = p1 if use_jb else p0
     print("  → 최근 거래 점프 요인", "사용" if use_jb else "사용 안 함(효과 없음)")
     res = np.log(te["actual"] / te["est"]).values - p
+    # 📍 법정동별 정확도(2026-11-03, 사용자 수정요청: "예상낙찰가·추천입찰가가 실제낙찰가와 잘 맞는 지역을 법정동 단위로") -
+    # 학습에 안 쓴 최근 12개월(te) 사례를 시군구+법정동으로 묶어 ① 예상 낙찰가 ② 추천입찰가가 실제 낙찰가와 얼마나 맞았는지 계산.
+    # ⚠️ ②의 추천입찰가는 앱이 입찰 전에 저장한 값이 아니라 "예상매도가(est)−고정비용−최소마진 1,000만"을 비율비용으로 나눠 다시 계산한 근사값(앱 추천가는 낙찰 확률·기대수익까지 보므로 다를 수 있음)
+    try:
+        MIN_MARGIN = 1000
+        dd = te.copy(); dd["pred"] = np.exp(p) * dd["est"].values
+        dd["rec"] = (dd["est"] - FIXED_COST - MIN_MARGIN) / COST_RATIO
+        dd["e1"] = dd["actual"] / dd["pred"] - 1
+        rows = []
+        for (rg, dk), G in dd.groupby(["region", "dk"]):
+            if not dk or len(G) < 12: continue
+            e1 = G["e1"].values; row = {"region": rg, "dong": dk, "n": int(len(G)),
+                "predErrPct": round(float(np.median(np.abs(e1))) * 100, 1), "predBiasPct": round(float(np.median(e1)) * 100, 1),
+                "predIn5Pct": round(float((np.abs(e1) <= 0.05).mean()) * 100), "predIn10Pct": round(float((np.abs(e1) <= 0.10).mean()) * 100)}
+            Gr = G[G["rec"] > 0]
+            if len(Gr) >= 12:
+                e2 = (Gr["actual"] / Gr["rec"] - 1).values
+                row.update({"recN": int(len(Gr)), "recErrPct": round(float(np.median(np.abs(e2))) * 100, 1), "recGapPct": round(float(np.median(e2)) * 100, 1),
+                            "recIn10Pct": round(float((np.abs(e2) <= 0.10).mean()) * 100), "winAtRecPct": round(float((Gr["actual"] <= Gr["rec"]).mean()) * 100)})
+            rows.append(row)
+        if rows:
+            cyc.upsert_rows([{"id": "signal|__winbid_dong__", "payload": cyc.clean_json({"generatedAt": now, "from": cut, "to": int(D["sale"].max()), "minN": 12, "minMargin": MIN_MARGIN, "rows": rows}), "fetched_at": now}])
+            print(f"  📍 법정동별 정확도: {len(rows)}곳 저장 (사례 12건 이상)")
+    except Exception as e:
+        print("  법정동별 정확도 건너뜀:", e)
     # 🧭 틈새 진단(2026-10-10, 사용자: "틈새라면 입찰가를 낮춰 수익을 키워야"): 틈새 시군구에서 낙찰가가 모델 예상보다 낮게 나오는지(잔차) 확인 - 최근 12개월 검증 표본
     try:
         NICHE = {"충남 당진시", "충남 서산시", "전북 군산시", "전북 남원시", "경남 창녕군", "경남 함안군"}

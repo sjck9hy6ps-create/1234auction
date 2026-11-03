@@ -1301,23 +1301,23 @@ body.ui2 #auction-modal.am4 { width:620px; }
 </style>
 <style>
 /* 📊 주간 리포트(2026-10) */
-#weekly-panel { position:fixed; top:56px; right:24px; width:min(1080px, calc(100vw - 48px)); height:min(calc(100vh - 80px), 920px); overflow:auto; background:#f4f6fa; border:1px solid #e5e7eb; border-radius:14px; box-shadow:0 12px 40px rgba(0,0,0,.25); z-index:9050; font-size:14px; line-height:1.55; -webkit-overflow-scrolling:touch; }
+#weekly-panel, #wbd-panel { position:fixed; top:56px; right:24px; width:min(1080px, calc(100vw - 48px)); height:min(calc(100vh - 80px), 920px); overflow:auto; background:#f4f6fa; border:1px solid #e5e7eb; border-radius:14px; box-shadow:0 12px 40px rgba(0,0,0,.25); z-index:9050; font-size:14px; line-height:1.55; -webkit-overflow-scrolling:touch; }
 #bld-panel { position:fixed; top:70px; left:80px; width:min(620px, calc(100vw - 100px)); height:min(700px, calc(100vh - 100px)); overflow:auto; background:#f8f9fb; border:1px solid #e5e7eb; border-radius:12px; box-shadow:0 10px 30px rgba(0,0,0,.25); z-index:135; font-size:12.5px; }
 #bld-panel .wr-h { position:sticky; top:0; background:#fff; padding:11px 14px; font-weight:800; font-size:14px; border-bottom:1px solid #eef0f3; display:flex; justify-content:space-between; z-index:2; }
 #bld-panel .wr-b { padding:10px 14px 16px; } #bld-panel table { width:100%; border-collapse:collapse; } #bld-panel td, #bld-panel th { padding:4px 6px; border-bottom:1px solid #eef0f3; text-align:left; vertical-align:top; }
 .hs-pill { display:inline-block; border-radius:8px; padding:1px 8px; font-weight:700; font-size:11px; color:#fff; } .hs-ok { background:#0d9488; } .hs-check { background:#d97706; } .hs-no { background:#b91c1c; } .hs-load { background:#9ca3af; }
-#weekly-panel .wr-h { position:sticky; top:0; background:#fff; padding:14px 20px; font-weight:800; font-size:17px; border-bottom:1px solid #eef0f3; display:flex; justify-content:space-between; z-index:2; }
-#weekly-panel .wr-tabs { display:flex; gap:6px; margin:0 0 8px; flex-wrap:wrap; } #weekly-panel .wr-tabs button { border:1px solid #d1d5db; background:#fff; border-radius:10px; padding:9px 16px; font-size:14px; font-weight:700; cursor:pointer; } #weekly-panel .wr-tabs button.on { background:#1e5eff; color:#fff; border-color:#1e5eff; }
-#weekly-panel .wr-b { padding:14px 20px 28px; }
-#weekly-panel .wr-kpis { display:grid; grid-template-columns:repeat(auto-fit, minmax(170px, 1fr)); gap:12px; margin:12px 0 16px; }
-#weekly-panel .wr-kpis div { background:#fff; border:1px solid #e5e7eb; border-radius:12px; padding:14px 16px; }
-#weekly-panel .wr-kpis span { display:block; color:#4b5563; font-size:13px; font-weight:600; } #weekly-panel .wr-kpis b { display:block; font-size:28px; margin:4px 0; letter-spacing:-.5px; } #weekly-panel .wr-kpis em b { display:inline; font-size:inherit; margin:0; letter-spacing:0; color:#111827; } #weekly-panel .wr-kpis em { display:block; font-style:normal; color:#6b7280; font-size:12.5px; line-height:1.4; }
-#weekly-panel .wr-sec { background:#fff; border:1px solid #e5e7eb; border-radius:14px; padding:16px 18px; margin-top:14px; line-height:1.65; } #weekly-panel .wr-sec > b:first-child { font-size:15.5px; }
-#weekly-panel .pn-table { width:100%; border-collapse:collapse; margin-top:10px; table-layout:auto; } #weekly-panel .pn-table th { background:#f9fafb; color:#374151; font-size:12.5px; font-weight:700; padding:10px 12px; border-bottom:2px solid #e5e7eb; text-align:left; white-space:nowrap; } #weekly-panel .pn-table td { padding:11px 12px; border-bottom:1px solid #eef0f3; font-size:14px; vertical-align:middle; } #weekly-panel .pn-table td.r, #weekly-panel .pn-table th.r { text-align:right; white-space:nowrap; font-variant-numeric:tabular-nums; } #weekly-panel .pn-table td:first-child { min-width:170px; text-align:left; } #weekly-panel .pn-table td { text-align:left; } #weekly-panel .pn-table td.r { text-align:right; } #weekly-panel .pn-table tbody tr:nth-child(even) { background:#fafbfc; } #weekly-panel .pn-table td .pn-muted { font-size:12px; }
-#weekly-panel .wr-btn { border:1px solid #d1d5db; background:#fff; border-radius:10px; padding:8px 14px; font-size:14px; font-weight:700; cursor:pointer; } #weekly-panel .wr-btn:hover { background:#f3f4f6; }
-#weekly-panel .wr-pill { display:inline-block; white-space:nowrap; border-radius:999px; padding:3px 11px; font-size:12.5px; font-weight:700; } #weekly-panel .wr-pill.win { background:#dcfce7; color:#15803d; } #weekly-panel .wr-pill.lose { background:#fee2e2; color:#b91c1c; } #weekly-panel .wr-fresh { display:inline-block; margin-left:4px; font-size:11px; font-weight:600; color:#7c3aed; background:#f3e8ff; border-radius:6px; padding:1px 6px; vertical-align:middle; }
-#weekly-panel .wr-sec table { margin-top:6px; }
-@media (max-width: 1100px) { #weekly-panel { right:12px; left:12px; width:auto; top:48px; height:calc(100vh - 64px); } #weekly-panel .wr-kpis { grid-template-columns:repeat(2, 1fr); } }
+#weekly-panel .wr-h, #wbd-panel .wr-h { position:sticky; top:0; background:#fff; padding:14px 20px; font-weight:800; font-size:17px; border-bottom:1px solid #eef0f3; display:flex; justify-content:space-between; z-index:2; }
+#weekly-panel .wr-tabs, #wbd-panel .wr-tabs { display:flex; gap:6px; margin:0 0 8px; flex-wrap:wrap; } #weekly-panel .wr-tabs button, #wbd-panel .wr-tabs button { border:1px solid #d1d5db; background:#fff; border-radius:10px; padding:9px 16px; font-size:14px; font-weight:700; cursor:pointer; } #weekly-panel .wr-tabs button.on, #wbd-panel .wr-tabs button.on { background:#1e5eff; color:#fff; border-color:#1e5eff; }
+#weekly-panel .wr-b, #wbd-panel .wr-b { padding:14px 20px 28px; }
+#weekly-panel .wr-kpis, #wbd-panel .wr-kpis { display:grid; grid-template-columns:repeat(auto-fit, minmax(170px, 1fr)); gap:12px; margin:12px 0 16px; }
+#weekly-panel .wr-kpis div, #wbd-panel .wr-kpis div { background:#fff; border:1px solid #e5e7eb; border-radius:12px; padding:14px 16px; }
+#weekly-panel .wr-kpis span, #wbd-panel .wr-kpis span { display:block; color:#4b5563; font-size:13px; font-weight:600; } #weekly-panel .wr-kpis b, #wbd-panel .wr-kpis b { display:block; font-size:28px; margin:4px 0; letter-spacing:-.5px; } #weekly-panel .wr-kpis em b, #wbd-panel .wr-kpis em b { display:inline; font-size:inherit; margin:0; letter-spacing:0; color:#111827; } #weekly-panel .wr-kpis em, #wbd-panel .wr-kpis em { display:block; font-style:normal; color:#6b7280; font-size:12.5px; line-height:1.4; }
+#weekly-panel .wr-sec, #wbd-panel .wr-sec { background:#fff; border:1px solid #e5e7eb; border-radius:14px; padding:16px 18px; margin-top:14px; line-height:1.65; } #weekly-panel .wr-sec > b:first-child, #wbd-panel .wr-sec > b:first-child { font-size:15.5px; }
+#weekly-panel .pn-table, #wbd-panel .pn-table { width:100%; border-collapse:collapse; margin-top:10px; table-layout:auto; } #weekly-panel .pn-table th, #wbd-panel .pn-table th { background:#f9fafb; color:#374151; font-size:12.5px; font-weight:700; padding:10px 12px; border-bottom:2px solid #e5e7eb; text-align:left; white-space:nowrap; } #weekly-panel .pn-table td, #wbd-panel .pn-table td { padding:11px 12px; border-bottom:1px solid #eef0f3; font-size:14px; vertical-align:middle; } #weekly-panel .pn-table td.r, #weekly-panel .pn-table th.r, #wbd-panel .pn-table th.r { text-align:right; white-space:nowrap; font-variant-numeric:tabular-nums; } #weekly-panel .pn-table td:first-child, #wbd-panel .pn-table td:first-child { min-width:170px; text-align:left; } #weekly-panel .pn-table td, #wbd-panel .pn-table td { text-align:left; } #weekly-panel .pn-table td.r, #wbd-panel .pn-table td.r { text-align:right; } #weekly-panel .pn-table tbody tr:nth-child(even), #wbd-panel .pn-table tbody tr:nth-child(even) { background:#fafbfc; } #weekly-panel .pn-table td .pn-muted, #wbd-panel .pn-table td .pn-muted { font-size:12px; }
+#weekly-panel .wr-btn, #wbd-panel .wr-btn { border:1px solid #d1d5db; background:#fff; border-radius:10px; padding:8px 14px; font-size:14px; font-weight:700; cursor:pointer; } #weekly-panel .wr-btn:hover, #wbd-panel .wr-btn:hover { background:#f3f4f6; }
+#weekly-panel .wr-pill, #wbd-panel .wr-pill { display:inline-block; white-space:nowrap; border-radius:999px; padding:3px 11px; font-size:12.5px; font-weight:700; } #weekly-panel .wr-pill.win, #wbd-panel .wr-pill.win { background:#dcfce7; color:#15803d; } #weekly-panel .wr-pill.lose, #wbd-panel .wr-pill.lose { background:#fee2e2; color:#b91c1c; } #weekly-panel .wr-fresh, #wbd-panel .wr-fresh { display:inline-block; margin-left:4px; font-size:11px; font-weight:600; color:#7c3aed; background:#f3e8ff; border-radius:6px; padding:1px 6px; vertical-align:middle; }
+#weekly-panel .wr-sec table, #wbd-panel .wr-sec table { margin-top:6px; }
+@media (max-width: 1100px) { #weekly-panel, #wbd-panel { right:12px; left:12px; width:auto; top:48px; height:calc(100vh - 64px); } #weekly-panel .wr-kpis, #wbd-panel .wr-kpis { grid-template-columns:repeat(2, 1fr); } }
 </style>
 <style>
 /* 💡 입찰가 고르기(2026-10) */
@@ -1477,6 +1477,7 @@ body.ui2 #auction-modal.am4 { width:620px; }
         <button onclick="openMoneyRegionPanel(); closeTbMenus();">💰 돈되는 지역</button>
         <button onclick="toggleCyclePanel(); closeTbMenus();">📈 사이클</button>
         <button onclick="openWeeklyReport(); closeTbMenus();" title="매주 리포트·추천가 성적표·지난 리포트 누적 목록 (알림에서 확인한 뒤에도 언제든 열어요)">📊 리포트</button>
+        <button onclick="openWinbidDong(); closeTbMenus();" title="예상 낙찰가·추천 입찰가가 실제 낙찰가와 잘 맞은 법정동">📍 동별 정확도</button>
         <button onclick="openGuide(); closeTbMenus();">📘 사용법</button>
         <a class="tb-link" href="/backup.html">📦 백업</a>
         <button id="tb-remind-btn" onclick="toggleRemindPanel(); closeTbMenus();" title="지금 해야 할 일">🔔<span id="tb-remind-count" style="display:none;"></span></button>
@@ -29519,6 +29520,45 @@ function wrRenderHistory(items, cur) {
         + items.slice().reverse().map(function(h) {
             return '<tr style="cursor:pointer;' + (String(h.week) === String(cur) ? 'background:#eef2ff;' : '') + '" onclick="openWeeklyReport(\'' + h.week + '\')"><td>' + wrYmd(h.windowFrom) + '~' + wrYmd(h.windowTo) + '<div class="pn-muted">' + String(h.generatedAt || '').slice(0, 10) + ' 계산</div></td><td class="r">' + (h.n == null ? '-' : h.n) + '</td><td class="r"><b>' + pc(h.medAbsErrPct) + '</b></td><td class="r">' + pc(h.within10Pct) + '</td><td class="r">' + wrBiasShort(h.biasPct) + '</td><td class="r">' + (h.recKnown ? h.recWon + '/' + h.recKnown : '-') + '</td></tr>';
         }).join('') + '</tbody></table>';
+}
+/* 📍 동별 정확도(2026-11-03, 수정요청: "예상낙찰가·추천입찰가가 실제낙찰가와 잘 맞는 지역을 법정동 단위로") -
+   매주 분석(analyze-bidcases.py)이 학습에 안 쓴 최근 12개월 낙찰사례를 시군구+법정동으로 묶어 계산한 값(signal|__winbid_dong__). 사례 12건 미만인 동은 빼서 없음. */
+var wbdData = null, wbdMode = 'pred', wbdQuery = '';
+function openWinbidDong() {
+    var p = document.getElementById('wbd-panel');
+    if (p) { p.remove(); return; }
+    p = document.createElement('div'); p.id = 'wbd-panel'; document.body.appendChild(p);
+    p.innerHTML = '<div class="wr-h">📍 동별 정확도 <span class="rm-x" onclick="document.getElementById(\'wbd-panel\').remove()">✕</span></div><div class="wr-b">불러오는 중…</div>';
+    try { floatWin(p, 'wbd', '.wr-h'); } catch (e) {}
+    var go = function(d) { wbdData = d; wbdRender(); };
+    if (wbdData) { go(wbdData); return; }
+    fetch('/api/data-coverage?mode=winbidDong').then(function(r) { return r.json(); }).then(go).catch(function() { go({}); });
+}
+function wbdSet(k, v) { if (k === 'mode') wbdMode = v; else wbdQuery = v; wbdRender(k === 'q'); }
+function wbdRender(keepFocus) {
+    var p = document.getElementById('wbd-panel'); if (!p) return;
+    var b = p.querySelector('.wr-b'), d = wbdData;
+    if (!d || !Array.isArray(d.rows) || !d.rows.length) { b.innerHTML = '<div class="pn-muted">아직 동별 계산이 없어요. 다음 주간 분석(낙찰사례 분석)이 끝나면 만들어져요.</div>'; return; }
+    var pred = wbdMode === 'pred', q = wbdQuery.replace(/\s+/g, '');
+    var rows = d.rows.filter(function(r) { return pred || r.recN; }).filter(function(r) { return !q || (r.region + r.dong).replace(/\s+/g, '').indexOf(q) >= 0; });
+    var key = pred ? 'predErrPct' : 'recErrPct';
+    rows.sort(function(x, y) { return x[key] - y[key] || y.n - x.n; });
+    var tot = rows.length, shown = rows.slice(0, 150);
+    var bias = function(v) { return Math.abs(v) < 1.5 ? '거의 맞음' : (v > 0 ? '실제가 ' + v + '% 더 높았음' : '실제가 ' + (-v) + '% 더 낮았음'); };
+    var h = '<div class="pn-muted">' + String(d.from).replace(/^(\d{4})(\d\d)(\d\d)$/, '$1-$2-$3') + ' ~ ' + String(d.to).replace(/^(\d{4})(\d\d)(\d\d)$/, '$1-$2-$3') + ' 낙찰된 아파트 중 <b>모델이 학습에 쓰지 않은 사례</b>로 계산했어요(한 동에 ' + d.minN + '건 이상인 곳만). 숫자가 작을수록 실제와 가까워요.</div>'
+        + '<div style="margin:8px 0;display:flex;gap:6px;flex-wrap:wrap;align-items:center;">'
+        + '<button class="wr-btn" style="' + (pred ? 'background:#1e5eff;color:#fff;border-color:#1e5eff;' : '') + '" onclick="wbdSet(\'mode\',\'pred\')">예상 낙찰가</button><button class="wr-btn" style="' + (pred ? '' : 'background:#1e5eff;color:#fff;border-color:#1e5eff;') + '" onclick="wbdSet(\'mode\',\'rec\')">추천 입찰가</button>'
+        + '<input id="wbd-q" value="' + bbEsc(wbdQuery) + '" oninput="wbdSet(\'q\',this.value)" placeholder="지역·동 검색 (예: 광주 남구, 봉선동)" style="flex:1;min-width:150px;border:1px solid #d1d5db;border-radius:8px;padding:5px 8px;font-size:12px;"></div>';
+    h += pred ? '<div class="pn-muted" style="margin-bottom:6px;">예상 낙찰가가 실제 낙찰가와 평균 몇 % 차이 났는지예요. "±10% 안"은 그 안에 든 사례 비율이에요.</div>'
+              : '<div class="pn-muted" style="margin-bottom:6px;"><b>추천 입찰가는 앱이 저장해 둔 값이 아니라</b> 예상매도가에서 비용과 최소 마진 ' + toEok(String(d.minMargin)) + '을 뺀 값으로 다시 계산한 근사치예요. 차이가 작으면 "마진 1천만을 남기는 가격"이 그 동의 실제 낙찰가와 비슷했다는 뜻이에요.</div>';
+    h += '<table class="pn-table" style="font-size:13px;"><thead><tr><th>지역</th><th>동</th><th>사례</th><th>' + (pred ? '평균 차이' : '평균 차이') + '</th><th>±10% 안</th><th>' + (pred ? '실제 vs 예상' : '추천가 이하 낙찰') + '</th></tr></thead><tbody>'
+        + shown.map(function(r) {
+            return '<tr><td>' + bbEsc(r.region) + '</td><td><b>' + bbEsc(r.dong) + '</b></td><td>' + (pred ? r.n : r.recN) + '</td><td><b>' + (pred ? r.predErrPct : r.recErrPct) + '%</b></td><td>' + (pred ? r.predIn10Pct : r.recIn10Pct) + '%</td>'
+                + '<td>' + (pred ? bias(r.predBiasPct) : r.winAtRecPct + '% (실제가 ' + (r.recGapPct >= 0 ? '+' : '') + r.recGapPct + '%)') + '</td></tr>';
+        }).join('') + '</tbody></table>'
+        + (tot > shown.length ? '<div class="pn-muted" style="margin-top:6px;">' + tot + '곳 중 위 150곳만 보여요 - 검색으로 좁혀 보세요.</div>' : '');
+    b.innerHTML = h;
+    if (keepFocus) { var i = document.getElementById('wbd-q'); if (i) { i.focus(); var L = i.value.length; try { i.setSelectionRange(L, L); } catch (e) {} } }
 }
 function openWeeklyReport(week) {
     var p = document.getElementById('weekly-panel');
