@@ -1496,7 +1496,7 @@ def scorecard(D, amap):
         if not sn or not sn.get("recBid"):
             continue
         rows.append({"case": r.caseNo, "name": (r.bname if isinstance(r.bname, str) and r.bname.strip() and r.bname != "nan" else None) or x.get("name") or "", "region": r.region, "sale": int(r.sale), "actual": float(r.actual), "rec": float(sn["recBid"]),
-                     "prob": sn.get("prob"), "win": sn.get("win"), "minbid": float(r.minbid), "at": sn.get("at")})
+                     "prob": sn.get("prob"), "win": sn.get("win"), "minbid": float(r.minbid), "at": sn.get("at"), "snapMin": sn.get("minBid")})
     out = {"n": len(rows)}
     if not rows:
         return out
@@ -1527,6 +1527,22 @@ def scorecard(D, amap):
         out["probCal"] = prob_calibration(Xs["prob"].values, Xs["won"].values)
     except Exception as e:
         print("  낙찰 가능성 보정 건너뜀:", e); out["probCal"] = None
+    # 🧼 깨끗한 예측만(2026-11-03, 사용자: "새로 쌓이는 예측만으로 성적표를 다시 보기") - ① 금액 일치: 입찰 전 저장한 최저가가 실제 최저가와 2% 안 ② 새 예측: 금액 점검(탱크옥션 대조·금액 미확인 보류)이 들어간 뒤(FRESH_FROM) 저장된 것
+    def _view(V):
+        if not len(V): return {"n": 0}
+        v = {"n": int(len(V)), "recWonPct": round(float(V["won"].mean()) * 100, 1), "actualOverRecMed": round(float(V["ratio"].median()), 3)}
+        PV = V[V["prob"].notna()]
+        if len(PV):
+            v["probPredPct"] = round(float(PV["prob"].mean()) * 100, 1); v["probActualPct"] = round(float(PV["won"].mean()) * 100, 1)
+            v["calibration"] = [{"label": lab, "n": int(len(G)), "predPct": round(float(G["prob"].mean()) * 100, 1), "actualPct": round(float(G["won"].mean()) * 100, 1)}
+                                for lo, hi, lab in bins for G in [PV[(PV["prob"] >= lo) & (PV["prob"] < hi)]] if len(G)]
+        return v
+    try:
+        okm = X["snapMin"].notna() & (np.abs(X["snapMin"].astype(float) - X["minbid"]) / X["minbid"] <= 0.02)
+        FRESH_FROM = "2026-11-01"
+        out["clean"] = {"금액일치": _view(X[okm]), "금액불일치": _view(X[X["snapMin"].notna() & ~okm]), "새예측": {"from": FRESH_FROM, **_view(X[okm & (X["at"].astype(str) >= FRESH_FROM)])}, "기준": "저장한 최저가가 실제와 2% 안인 예측만 / 새예측은 FRESH_FROM 이후 저장분"}
+    except Exception as e:
+        print("  깨끗한 예측 성적표 건너뜀:", e)
     out["items"] = [{"case": r["case"], "name": r["name"], "region": r["region"], "sale": int(r["sale"]), "rec": round(r["rec"]), "actual": round(r["actual"]), "won": bool(r["won"]),
                      "prob": None if pd.isna(r["prob"]) else r["prob"], "win": None if pd.isna(r["win"]) else r["win"]} for _, r in X.sort_values("sale", ascending=False).head(60).iterrows()]
     return out
