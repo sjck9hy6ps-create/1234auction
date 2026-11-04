@@ -15,7 +15,14 @@ def _wmed(v, w):
     return float(np.interp(0.5, c, v))
 
 
-def est_rule_asof(g, c, sale_d, cut, cut_ym, idx_at):
+def flow_gate_g(rate, vol):
+    """가격 흐름을 거래량으로 믿는 정도(2026-11-05): 가격 상승+거래량 감소(끝물 가능)는 0.4, 상승+증가 1, 하락+감소 1, 하락+증가(바닥 다지기) 0.5, 그 외 0.75"""
+    v = 0.0 if vol is None else float(vol)
+    if rate > 0: return 1.0 if v >= 0.2 else (0.75 if v > -0.2 else 0.4)
+    return 1.0 if v <= -0.2 else (0.75 if v < 0.2 else 0.5)
+
+
+def est_rule_asof(g, c, sale_d, cut, cut_ym, idx_at, flow=None):
     """2026-10-20 앱의 새 예상매도가 규칙을 '입찰 30일 전 시점'으로 재현(사용자: 낙찰가 모델의 시세 기준을 새 규칙으로 바꾸면 오차가 줄까)
     6개월 같은 평형(±3㎡) 3건+ → 서울 최근3건 중위 / 경기·인천 반감1개월 / 지방 반감2개월 가중 중위. 부족하면 같은 평형 36개월(6개월 밖은 시군구 지수 보정, 반감3개월; 지방 최근 1건+는 12개월 원값),
     없으면 같은 단지 다른 평형 12개월 ㎡당 가격 환산. 같은 평형 이전 값과 다른 평형 값이 둘 다 있고 6개월 안 거래가 없으면 6:4. (층·회전율·전세 보정은 제외)"""
@@ -27,11 +34,16 @@ def est_rule_asof(g, c, sale_d, cut, cut_ym, idx_at):
     else:
         age = np.array([])
     price = h["price"].values.astype(float) if len(h) else np.array([])
+    # 📈 지역 가격 흐름 반영(2026-11-05, 사용자: 모든 가격에 부동산 흐름 반영): 12개월 안 원값 거래를 거래 나이(년)×연율 흐름×거래량 믿음도(0.6 배)로 지금 시점에 맞춤(-5%~+8%). flow=None이면 예전 값 그대로
+    pf = price
+    if flow is not None and len(price):
+        _g = flow_gate_g(flow["rate"], flow.get("vol"))
+        pf = price * np.where(age <= 12, np.clip(np.exp(0.6 * flow["rate"] * _g * age / 12.0), 0.95, 1.08), 1.0)
     sido = str(c.region).split(" ")[0]
     cls = "서울" if sido.startswith("서울") else ("경기·인천" if sido[:2] in ("경기", "인천") else "지방")
     m6 = age <= 6; n6 = int(m6.sum())
     if n6 >= 3:
-        p6, a6 = price[m6], age[m6]
+        p6, a6 = pf[m6], age[m6]
         if cls == "서울": return float(np.median(p6[np.argsort(a6)[:3]]))
         return _wmed(p6, 0.5 ** (a6 / (1.0 if cls == "경기·인천" else 2.0)))
     base = idx_at(c.region, cut_ym)
@@ -40,12 +52,13 @@ def est_rule_asof(g, c, sale_d, cut, cut_ym, idx_at):
     if m36.any():
         if cls == "지방" and n6 >= 1:
             m12 = age <= 12
-            t2 = _wmed(price[m12], 0.5 ** (age[m12] / 3.0))
+            t2 = _wmed(pf[m12], 0.5 ** (age[m12] / 3.0))
         else:
             vals, ws = [], []
-            for pr, ag, ym in zip(price[m36], age[m36], h["ym"].values[m36]):
-                v = pr
+            for pr, ag, ym, pfv in zip(price[m36], age[m36], h["ym"].values[m36], pf[m36]):
+                v = pfv
                 if ag > 6:
+                    v = pr
                     b0 = idx_at(c.region, int(ym))
                     if not (base and b0): continue
                     v = pr * max(0.7, min(1.4, base / b0))

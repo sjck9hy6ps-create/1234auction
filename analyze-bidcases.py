@@ -373,6 +373,18 @@ def main():
                 rec["est_rule"] = est_rule_asof(g, c, sale_d, cut, cut_ym, idx_at)
             except Exception:
                 rec["est_rule"] = None
+            try:  # 📈 흐름 반영 시세(est_rule_f): 같은 규칙 + 오래된 거래를 지역 가격 흐름만큼 지금 시점으로(수도권 법정동→시군구, 지방 같은 단지→시군구, 불확실하면 보정 안 함)
+                _sido_e = str(c.region).split(" ")[0]; _cls_e = "수도권" if _sido_e[:2] in ("서울", "경기", "인천") else "지방"
+                _dgE = dgroups.get((c.region, c.dk)); _rgE = rgroups.get(c.region)
+                _dres = adaptive_flow(_dgE[0], _dgE[2], cut, 20, 365) if _dgE else None
+                _sres = adaptive_flow(_rgE[0], _rgE[1], cut, 40, 365) if _rgE else None
+                _gE = g.sort_values("deal_date"); _gE = _gE[(_gE["size"] - c.area).abs() <= 10]
+                _cres = adaptive_flow(_gE["deal_date"].to_numpy(), _gE["ppm"].to_numpy(dtype=float), cut, 5, 730)
+                _fl = pick_flow(_cls_e, _dres, _sres, _cres)
+                rec["est_rule_f"] = est_rule_asof(g, c, sale_d, cut, cut_ym, idx_at, flow=_fl)
+                rec["est_flow_rate"] = _fl["rate"] if _fl else None
+            except Exception:
+                rec["est_rule_f"] = None
             # 2026-10-11 환금성: 입찰 30일 전 기준 같은 단지·같은 평형(±3㎡) 최근 1년 중개거래 수 - 앱의 "최근 1년 같은 평형 거래"와 같은 정의
             rec["n12"] = int(((g["deal_date"] >= ymd_int(sale_d - timedelta(days=30 + 365))) & (g["deal_date"] < cut) & ((g["size"] - c.area).abs() <= 3)).sum())
             rec.update(rec_est)
@@ -1427,7 +1439,22 @@ def _wmed(v, w):
     return float(np.interp(0.5, c, v))
 
 
-def est_rule_asof(g, c, sale_d, cut, cut_ym, idx_at):
+def flow_gate_g(rate, vol):
+    """가격 흐름을 거래량으로 믿는 정도(2026-11-05): 가격 상승+거래량 감소(끝물 가능)는 0.4, 상승+증가 1, 하락+감소 1, 하락+증가(바닥 다지기) 0.5, 그 외 0.75"""
+    v = 0.0 if vol is None else float(vol)
+    if rate > 0: return 1.0 if v >= 0.2 else (0.75 if v > -0.2 else 0.4)
+    return 1.0 if v <= -0.2 else (0.75 if v < 0.2 else 0.5)
+
+
+def pick_flow(cls2, d_res, s_res, c_res):
+    """시세에 반영할 흐름 하나 고르기: 수도권=법정동→시군구, 지방=같은 단지(같은 크기대)→시군구. 가격 변화가 불확실(|z|<1)하면 건너뜀(노이즈 방지). 없으면 None"""
+    for r_ in ((d_res, s_res) if cls2 == "수도권" else (c_res, s_res)):
+        if r_ is not None and np.isfinite(r_["z"]) and abs(r_["z"]) >= 1.0:
+            return {"rate": float(r_["rate"]), "vol": float(r_["vol"])}
+    return None
+
+
+def est_rule_asof(g, c, sale_d, cut, cut_ym, idx_at, flow=None):
     """2026-10-20 앱의 새 예상매도가 규칙을 '입찰 30일 전 시점'으로 재현(사용자: 낙찰가 모델의 시세 기준을 새 규칙으로 바꾸면 오차가 줄까)
     6개월 같은 평형(±3㎡) 3건+ → 서울 최근3건 중위 / 경기·인천 반감1개월 / 지방 반감2개월 가중 중위. 부족하면 같은 평형 36개월(6개월 밖은 시군구 지수 보정, 반감3개월; 지방 최근 1건+는 12개월 원값),
     없으면 같은 단지 다른 평형 12개월 ㎡당 가격 환산. 같은 평형 이전 값과 다른 평형 값이 둘 다 있고 6개월 안 거래가 없으면 6:4. (층·회전율·전세 보정은 제외)"""
@@ -1439,11 +1466,16 @@ def est_rule_asof(g, c, sale_d, cut, cut_ym, idx_at):
     else:
         age = np.array([])
     price = h["price"].values.astype(float) if len(h) else np.array([])
+    # 📈 지역 가격 흐름 반영(2026-11-05, 사용자: 모든 가격에 부동산 흐름 반영): 12개월 안 원값 거래를 거래 나이(년)×연율 흐름×거래량 믿음도(0.6 배)로 지금 시점에 맞춤(-5%~+8%). flow=None이면 예전 값 그대로
+    pf = price
+    if flow is not None and len(price):
+        _g = flow_gate_g(flow["rate"], flow.get("vol"))
+        pf = price * np.where(age <= 12, np.clip(np.exp(0.6 * flow["rate"] * _g * age / 12.0), 0.95, 1.08), 1.0)
     sido = str(c.region).split(" ")[0]
     cls = "서울" if sido.startswith("서울") else ("경기·인천" if sido[:2] in ("경기", "인천") else "지방")
     m6 = age <= 6; n6 = int(m6.sum())
     if n6 >= 3:
-        p6, a6 = price[m6], age[m6]
+        p6, a6 = pf[m6], age[m6]
         if cls == "서울": return float(np.median(p6[np.argsort(a6)[:3]]))
         return _wmed(p6, 0.5 ** (a6 / (1.0 if cls == "경기·인천" else 2.0)))
     base = idx_at(c.region, cut_ym)
@@ -1452,12 +1484,13 @@ def est_rule_asof(g, c, sale_d, cut, cut_ym, idx_at):
     if m36.any():
         if cls == "지방" and n6 >= 1:
             m12 = age <= 12
-            t2 = _wmed(price[m12], 0.5 ** (age[m12] / 3.0))
+            t2 = _wmed(pf[m12], 0.5 ** (age[m12] / 3.0))
         else:
             vals, ws = [], []
-            for pr, ag, ym in zip(price[m36], age[m36], h["ym"].values[m36]):
-                v = pr
+            for pr, ag, ym, pfv in zip(price[m36], age[m36], h["ym"].values[m36], pf[m36]):
+                v = pfv
                 if ag > 6:
+                    v = pr
                     b0 = idx_at(c.region, int(ym))
                     if not (base and b0): continue
                     v = pr * max(0.7, min(1.4, base / b0))
@@ -1549,7 +1582,10 @@ def resale_gap_report(R, now):
 def winbid_model(R, now):
     # 🆕 시세 새 규칙(est_rule) 적용(2026-11-04, 사용자 결정): 모델이 보는 시세(est)를 새 규칙으로 - 앱도 같은 규칙으로 시세를 계산해야 함(모델 payload의 estRule 표시)
     R0 = R
-    R = R0.copy(); R["est_q40"] = R["est"]; R["est"] = R["est_rule"].where(R["est_rule"].notna() & (R["est_rule"] > 0))
+    R = R0.copy(); R["est_q40"] = R["est"]
+    _er = R["est_rule_f"] if "est_rule_f" in R.columns else R["est_rule"]   # 📈 흐름 반영 시세(est_rule_f)를 쓰되, 흐름 반영이 없으면(값 없음) 같은 규칙의 기본 값
+    _er = _er.where(_er.notna() & (_er > 0), R["est_rule"])
+    R["est"] = _er.where(_er.notna() & (_er > 0))
     D = R[R["est"].notna() & (R["est"] > 0) & R["actual"].notna() & R["minbid"].notna() & (R["minbid"] > 0) & (R["sale"] >= 20200101)].copy()
     D = D[np.log(D["actual"] / D["est"]).between(np.log(0.4), np.log(1.6))]
     if len(D) < 3000:
@@ -1689,7 +1725,7 @@ def winbid_model(R, now):
         full["flowInfo"] = _fi
     except Exception as _e:
         print("  흐름 채움 비율 건너뜀:", _e)
-    full["flowIsNew"] = True; full["flowDiag"] = flow_diag; full["estRule"] = True; full["factorsK"] = [[f, k] for f, k in WB_FACTORS]
+    full["flowIsNew"] = True; full["flowDiag"] = flow_diag; full["estRule"] = True; full["estFlow"] = "est_rule_f" in R.columns; full["factorsK"] = [[f, k] for f, k in WB_FACTORS]
     # 경쟁 예상(2026-10-10): 같은 요인으로 로그 응찰자 수를 맞추는 모델 - 앱이 하위 25%(낮음)·상위 25%(높음)로 표시
     try:
         Db = D[D["bidders"].notna() & (D["bidders"] > 0) & (D["sale"] >= 20230101)].copy()

@@ -20083,24 +20083,31 @@ setTimeout(loadWinbidModel, 2500);
 /* 🆕 시세 새 규칙(est_rule, 2026-11-04 사용자 결정) - 서버 낙찰가 모델(analyze-bidcases.py est_rule_asof)과 같은 값을 냄:
    같은 단지·같은 평형(±3㎡) 입찰 30일 전 이전 거래. 6개월 안 3건+ → 서울 최근 3건 중위, 경기·인천 반감 1개월·지방 반감 2개월 가중 중위.
    부족하면 36개월(6개월보다 오래된 거래는 시군구 ㎡당 지수로 지금 시점에 맞춤, 지방은 6개월 안 1~2건이면 12개월 원값 반감 3개월), 같은 단지 다른 평형 12개월(㎡당)과 6:4. 층·회전율·전세 보정은 없음 */
-function estRuleCore(trades, area, cls, ref, idx, base) {
+function estRuleCore(trades, area, cls, ref, idx, base, flow) {   // flow: {rate, vol} 지역 가격 흐름(서버 pick_flow와 같음) - 없으면 예전 값
     // trades: [{td(ms), price(만원), size(㎡), ppm(만원/㎡)}] - 직거래·무효 제외 후. ref(ms) 이후 거래는 안 씀. idx(ym)=시군구 월 지수(ym=year*12+month), base=ref 달의 지수
     var DAY = 86400000, ym = function(ms) { var d = new Date(ms); return d.getFullYear() * 12 + d.getMonth() + 1; };
     var clamp = function(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); };
     var med = function(x) { x = x.slice().sort(function(m, n) { return m - n; }); var k = x.length >> 1; return x.length % 2 ? x[k] : (x[k - 1] + x[k]) / 2; };
     var H = [], O = [];
-    trades.forEach(function(t) { if (t.td >= ref) return; var age = (ref - t.td) / DAY / 30.4; var it = { p: t.price, age: age, ppm: t.ppm, size: t.size, ym: ym(t.td) }; if (Math.abs(t.size - area) <= 3) H.push(it); else O.push(it); });
+    var fg = flow ? 0.6 * flow.rate * flowGateG(flow.rate, flow.vol) : 0;
+    trades.forEach(function(t) {
+        if (t.td >= ref) return; var age = (ref - t.td) / DAY / 30.4;
+        var it = { p: t.price, age: age, ppm: t.ppm, size: t.size, ym: ym(t.td) };
+        it.pf = (flow && age <= 12) ? t.price * clamp(Math.exp(fg * age / 12), 0.95, 1.08) : t.price;   // 흐름 반영한 값(12개월 안 원값 거래)
+        if (Math.abs(t.size - area) <= 3) H.push(it); else O.push(it);
+    });
     var m6 = H.filter(function(x) { return x.age <= 6; }), n6 = m6.length;
     if (n6 >= 3) {
-        if (cls === '서울') return med(m6.slice().sort(function(a, b) { return a.age - b.age; }).slice(0, 3).map(function(x) { return x.p; }));
-        return weightedMedianByAge(m6, cls === '경기·인천' ? 1.0 : 2.0);
+        var m6f = m6.map(function(x) { return { p: x.pf, age: x.age }; });
+        if (cls === '서울') return med(m6.slice().sort(function(a, b) { return a.age - b.age; }).slice(0, 3).map(function(x) { return x.pf; }));
+        return weightedMedianByAge(m6f, cls === '경기·인천' ? 1.0 : 2.0);
     }
     var t2 = null, m36 = H.filter(function(x) { return x.age <= 36; });
     if (m36.length) {
-        if (cls === '지방' && n6 >= 1) t2 = weightedMedianByAge(H.filter(function(x) { return x.age <= 12; }), 3.0);
+        if (cls === '지방' && n6 >= 1) t2 = weightedMedianByAge(H.filter(function(x) { return x.age <= 12; }).map(function(x) { return { p: x.pf, age: x.age }; }), 3.0);
         else {
             var vs = [];
-            m36.forEach(function(x) { var v = x.p; if (x.age > 6) { var b0 = idx(x.ym); if (!(base && b0)) return; v = x.p * clamp(base / b0, 0.7, 1.4); } vs.push({ p: v, age: x.age }); });
+            m36.forEach(function(x) { var v = x.pf; if (x.age > 6) { v = x.p; var b0 = idx(x.ym); if (!(base && b0)) return; v = x.p * clamp(base / b0, 0.7, 1.4); } vs.push({ p: v, age: x.age }); });
             if (vs.length) t2 = weightedMedianByAge(vs, 3.0);
         }
     }
@@ -20147,8 +20154,9 @@ function winbidEstRule(a, pyung, lawd, ref) {
             trades.push({ td: tradeDate(t).getTime(), price: p, size: ar, ppm: p / ar });
         });
     });
-    var idx = aptIdxPy(lawd), rd = new Date(ref), base = idx(rd.getFullYear() * 12 + rd.getMonth() + 1);
-    return estRuleCore(trades, area, aptRegionClass(lawd), ref, idx, base);
+    var idx = aptIdxPy(lawd), rd = new Date(ref), base = idx(rd.getFullYear() * 12 + rd.getMonth() + 1), flow = null;
+    if (winbidModel && winbidModel.estFlow) { var fp = flowPick(a, lawd, area, bunjiFull, Date.UTC(rd.getFullYear(), rd.getMonth(), rd.getDate()) / 86400000); if (fp) flow = { rate: fp.rate, vol: fp.vol }; }
+    return estRuleCore(trades, area, aptRegionClass(lawd), ref, idx, base, flow);
 }
 function winbidBaseEst(a, pyung, lawd) {
     var old = winbidBaseEstQ40(a, pyung);
@@ -20156,7 +20164,7 @@ function winbidBaseEst(a, pyung, lawd) {
         var ref = Date.now();
         if (a.bidDate) { var bd = new Date(a.bidDate + 'T00:00:00').getTime() - 30 * 86400000; if (bd < ref) ref = bd; }
         var er = lawd ? winbidEstRule(a, pyung, lawd, ref) : null;
-        return er ? { est: er, own: old ? old.own : 0, rule: 'rule' } : null;
+        return er ? { est: er, own: old ? old.own : 0, rule: winbidModel.estFlow ? 'ruleF' : 'rule' } : null;
     }
     return old ? { est: old.est, own: old.own, rule: 'q40' } : null;
 }
@@ -20236,6 +20244,19 @@ function flowDaysTrades(lawd, dongK, which, band) {   // which: 'sgg' | 'dong' |
     else allAptList.forEach(push);
     out.sort(function(x, y) { return x.d - y.d; }); return out;
 }
+function flowGateG(rate, vol) {   // 서버 flow_gate_g와 같음 - 가격 흐름을 거래량으로 믿는 정도
+    var v = vol == null ? 0 : vol;
+    if (rate > 0) return v >= 0.2 ? 1 : (v > -0.2 ? 0.75 : 0.4);
+    return v <= -0.2 ? 1 : (v < 0.2 ? 0.75 : 0.5);
+}
+function flowPick(a, lawd, area, bunjiFull, cutDays) {   // 서버 pick_flow와 같음: 수도권=법정동→시군구, 지방=같은 단지(같은 크기대)→시군구, |z|<1이면 건너뜀
+    var cls = aptRegionClass(lawd) === '지방' ? '지방' : '수도권', res = null;
+    var tryLv = function(lv, fn) { if (res) return; var r = fn(); if (r && isFinite(r.z) && Math.abs(r.z) >= 1) res = { rate: r.rate, vol: r.vol, z: r.z, level: lv }; };
+    if (cls === '수도권') tryLv('법정동', function() { return adaptiveFlowCore(flowDaysTrades(lawd, dongKey(a.dong), 'dong'), cutDays, 20, 365); });
+    else tryLv('같은 단지', function() { return adaptiveFlowCore(flowDaysTrades(lawd, null, 'cx', { a: a, bunjiFull: bunjiFull, area: area }), cutDays, 5, 730); });
+    tryLv('시군구', function() { return adaptiveFlowCore(flowDaysTrades(lawd, null, 'sgg'), cutDays, 40, 365); });
+    return res;
+}
 function saleFlowFor(a, lawd, area, bunjiFull) {
     var cls = aptRegionClass(lawd) === '지방' ? '지방' : '수도권', now = new Date(), cut = Date.UTC(now.getFullYear(), now.getMonth(), now.getDate()) / 86400000, got = null, level = null, volOnly = null;
     var tryLv = function(lv, fn) {
@@ -20300,7 +20321,7 @@ function winbidFor(row) {
     var a = row.a;
     if (!winbidModel || row.type !== 'apt' || !row.minBid) return null;
     var b = row.wbBase || null;
-    if (b && winbidModel.estRule && b.rule !== 'rule') b = null;   // 모델이 새 시세 규칙인데 저장된 시세가 옛 규칙이면 다시 계산
+    if (b && winbidModel.estRule && b.rule !== (winbidModel.estFlow ? 'ruleF' : 'rule')) b = null;   // 모델이 새 시세 규칙인데 저장된 시세가 옛 규칙이면 다시 계산
     if (!b && row.lawd && dataCache[row.lawd]) { try { b = winbidBaseEst(a, row.pyung, row.lawd); } catch (e) { b = null; } }
     if (!b || !b.est) return null;
     var lmin = Math.log(row.minBid / b.est);
@@ -21268,7 +21289,7 @@ async function mergeServerBoardCache(local, onlyFirst) {
 setTimeout(function() { try { listIdbOp('readwrite', function(st) { return st.delete('bidBoardCache:v1'); }); } catch (e) {} }, 4000); // 예전 큰 로컬 저장본(서버 계산본 포함, 수십 MB)은 읽지 않고 지움(느린 기기에서 열 때 수 초 멈춤, 2026-10-21)
 setTimeout(function() { var go = function() { try { srvBoardParts(); setTimeout(function() { try { window.villaSrvP = villaFetchServerCalc(); } catch (e) {} }, 4000); } catch (e) {} }; if (window.requestIdleCallback) requestIdleCallback(go, { timeout: 6000 }); else go(); }, 2500); // 앱을 켜고 2.5초 뒤 한가할 때 배경에서 미리 받기(빌라는 4초 더 뒤)
 // 저장 계산을 다시 써도 되는지 - 물건 입력값(시세 계산에 쓰는 것)과 입찰일 지남 여부. 계산 방식이 바뀌면 BOARD_CALC_VER을 올림
-var BOARD_CALC_VER = 70; // 70: 예상매도가에 지역 가격 흐름 반영(2026-11-05) - // 69: 시세 새 규칙(est_rule)·감정가 제외·최저가 유지(2026-11-04) - // 68: 감정가 제외 - // // 54: 튀는 가격 반영 안 함·경고만(2026-10-24) - // 53: 최근 거래 시세반영/튀는 가격 구별(2026-10-24) - // 52: 임장 생략 판정(2026-10-19) - // 51: 전세가율 구간 보정·위험 신호(2026-10-18) - // 50: 지방 최근 거래 비슷한 층 비중·1~2건은 12개월 원값(2026-10-18) - // 49: 근거 약함 경고를 판정 단계에서 다시 붙임 - // 48: 예상매도가-감정가 큰 차이 근거 약함 표시 - // 47: 다른 평형 환산이 같은 평형과 20% 넘게 다르면 섞지 않음 - // 46: 같은 동 추론(③④) 제거·거래 없는 단지는 기존 주변 비교 + 근거 약함(2026-10-18) - // 45: 회전율 구간별 보정 항상 적용(주간 갱신 표, 2026-10-17) - // 44: 추론에 최근 6개월 1~2건 포함 - // 43: 6개월 거래 부족 시 단계별 추론(2026-10-17) - // 42: 지역별 예상매도가(서울 최근3건·경기인천 반감1개월·지방 반감2개월)와 위험 여유(2026-10-17) - // 41: 아파트 예상매도가를 최근 6개월 같은 평형 거래의 최근가중 중위값으로(전국 백테스트, 2026-10-17) - // 40: 임차인 둘로 읽힌 경우 별개/같은 임차권(갱신·승계) 선택(2026-10-11) - // 39: 39: 임차권등기를 임차인으로 계산(전입·확정일자 기준)·경매신청인 전세권 안내(2026-10-11) - // 38: 38: 권리분석 날짜 선후 규칙 정리(전입 다음 날 0시·동순위 안분, 2026-10-11) - // 37: 37: 권리분석에 말소기준일보다 앞선 전세권·임차권 등 등기부 인수 권리 반영(2026-10-11) - // 36: 저가 아파트 순이익률 10% 추천가 규칙 되돌림(2026-10-11, 백테스트 손해 30~42%) - // 34: 33: 아파트 고층 보정 축소·저층 범위(2026-10-11) - // 29: nYear 저장 추가 - // 27: 🎲 예상 낙찰가용 시세(wbBase) 추가 (범위 표시는 화면에서 바로 계산 - 버전 변경 없음)
+var BOARD_CALC_VER = 71; // 71: 낙찰가 모델 시세(est)에도 지역 가격 흐름 반영(est_rule_f, 2026-11-05) - // 70: 예상매도가에 지역 가격 흐름 반영(2026-11-05) - // 69: 시세 새 규칙(est_rule)·감정가 제외·최저가 유지(2026-11-04) - // 68: 감정가 제외 - // // 54: 튀는 가격 반영 안 함·경고만(2026-10-24) - // 53: 최근 거래 시세반영/튀는 가격 구별(2026-10-24) - // 52: 임장 생략 판정(2026-10-19) - // 51: 전세가율 구간 보정·위험 신호(2026-10-18) - // 50: 지방 최근 거래 비슷한 층 비중·1~2건은 12개월 원값(2026-10-18) - // 49: 근거 약함 경고를 판정 단계에서 다시 붙임 - // 48: 예상매도가-감정가 큰 차이 근거 약함 표시 - // 47: 다른 평형 환산이 같은 평형과 20% 넘게 다르면 섞지 않음 - // 46: 같은 동 추론(③④) 제거·거래 없는 단지는 기존 주변 비교 + 근거 약함(2026-10-18) - // 45: 회전율 구간별 보정 항상 적용(주간 갱신 표, 2026-10-17) - // 44: 추론에 최근 6개월 1~2건 포함 - // 43: 6개월 거래 부족 시 단계별 추론(2026-10-17) - // 42: 지역별 예상매도가(서울 최근3건·경기인천 반감1개월·지방 반감2개월)와 위험 여유(2026-10-17) - // 41: 아파트 예상매도가를 최근 6개월 같은 평형 거래의 최근가중 중위값으로(전국 백테스트, 2026-10-17) - // 40: 임차인 둘로 읽힌 경우 별개/같은 임차권(갱신·승계) 선택(2026-10-11) - // 39: 39: 임차권등기를 임차인으로 계산(전입·확정일자 기준)·경매신청인 전세권 안내(2026-10-11) - // 38: 38: 권리분석 날짜 선후 규칙 정리(전입 다음 날 0시·동순위 안분, 2026-10-11) - // 37: 37: 권리분석에 말소기준일보다 앞선 전세권·임차권 등 등기부 인수 권리 반영(2026-10-11) - // 36: 저가 아파트 순이익률 10% 추천가 규칙 되돌림(2026-10-11, 백테스트 손해 30~42%) - // 34: 33: 아파트 고층 보정 축소·저층 범위(2026-10-11) - // 29: nYear 저장 추가 - // 27: 🎲 예상 낙찰가용 시세(wbBase) 추가 (범위 표시는 화면에서 바로 계산 - 버전 변경 없음)
 /* 2026-10-15(사용자: 입찰후보 로딩이 느림 - 원인 실측): 식별값 끝의 'P/F'(입찰일 지남 여부)가 한국 시각 자정에 바뀌어, 서버 미리 계산이 돈 뒤 어제 입찰이던 물건(하루 약 350건)이 전부 '다른 물건'이 돼
    지역 자료 86곳(곳당 9~13MB)을 새로 받아 다시 계산했음. 계산 결과는 입찰일 지남 여부와 무관하므로(날짜 표시는 열 때 다시 계산) 저장본의 P/F가 반대여도 같은 것으로 봄(flip). */
 function boardBaseSig(a, flip) {
