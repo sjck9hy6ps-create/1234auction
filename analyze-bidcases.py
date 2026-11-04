@@ -461,10 +461,78 @@ def main():
                     _rf = radius_flow(_la, _lo, _cut2, _km)
                     rec[f"flowR{_km}_p"], rec[f"flowR{_km}_v"], rec[f"flowR{_km}_t"] = (_rf["p"], _rf["v"], _rf["t"]) if _rf else (None, None, None)
                 _r0 = radius_flow(_la, _lo, _cut2, 0.15); rec["flow_cx_t"] = _r0["t"] if _r0 else None
+                try:  # 적응형 흐름: 단지(같은 크기대)·반경 1/2/3km·법정동·시군구, 회전율(세대수)
+                    def _gather(km, hh_only, mx):
+                        if _la is None or _lo is None or not (np.isfinite(_la) and np.isfinite(_lo)): return None, 0
+                        ix = CX["tree"].query_radius(np.radians([[_la, _lo]]), r=km / 6371.0)[0]
+                        lo_ = ymd_int(int_to_date(int(_cut2)) - timedelta(days=mx)); D_, P_, H_ = [], [], 0
+                        for j_ in ix:
+                            if hh_only and CX["hh"][j_] <= 0: continue
+                            dd_ = CX["dd"][j_]; a0 = int(np.searchsorted(dd_, lo_)); a1 = int(np.searchsorted(dd_, int(_cut2)))
+                            if a1 > a0: D_.append(dd_[a0:a1]); P_.append(CX["pp"][j_][a0:a1])
+                            H_ += int(max(CX["hh"][j_], 0)) if hh_only else 0
+                        if not D_: return None, H_
+                        dd2 = np.concatenate(D_); pp2 = np.concatenate(P_); o_ = np.argsort(dd2, kind="stable"); return (dd2[o_], pp2[o_]), H_
+                    for _nm, _km, _K in (("R1", 1.0, 12), ("R2", 2.0, 16), ("R3", 3.0, 20)):
+                        _gd, _ = _gather(_km, False, 365)
+                        _af = adaptive_flow(_gd[0], _gd[1], _cut2, _K, 365) if _gd else None
+                        rec[f"af{_nm}_rate"], rec[f"af{_nm}_z"], rec[f"af{_nm}_vol"] = (_af["rate"], _af["z"], _af["vol"]) if _af else (None, None, None)
+                    _gd, _H = _gather(2.0, True, 365)   # 회전율: 세대수 아는 단지만(거래도 그 단지만)
+                    _af = adaptive_flow(_gd[0], _gd[1], _cut2, 16, 365) if (_gd and _H >= 500) else None
+                    rec["afR2_t"] = (_af["dens"] * 91.0 / _H * 100.0) if _af else None
+                    _gd, _H = _gather(0.15, True, 730)
+                    _af = adaptive_flow(_gd[0], _gd[1], _cut2, 6, 730) if (_gd and _H >= 100) else None
+                    rec["afC_t"] = (_af["dens"] * 91.0 / _H * 100.0) if _af else None
+                except Exception:
+                    pass
+            if g is not None and len(g):
+                _ga2 = g.sort_values("deal_date"); _gb = _ga2[(_ga2["size"] - c.area).abs() <= 10]
+                _af = adaptive_flow(_gb["deal_date"].to_numpy(), _gb["ppm"].to_numpy(dtype=float), _cut2, 5, 730)
+                rec["afC_rate"], rec["afC_z"], rec["afC_vol"] = (_af["rate"], _af["z"], _af["vol"]) if _af else (None, None, None)
+            _af = adaptive_flow(_dg[0], _dg[2], _cut2, 20, 365) if _dg else None
+            rec["afD_rate"], rec["afD_z"], rec["afD_vol"] = (_af["rate"], _af["z"], _af["vol"]) if _af else (None, None, None)
+            _af = adaptive_flow(_rg[0], _rg[1], _cut2, 40, 365) if _rg else None
+            rec["afS_rate"], rec["afS_z"], rec["afS_vol"] = (_af["rate"], _af["z"], _af["vol"]) if _af else (None, None, None)
         except Exception:
             pass
         out.append(rec)
     R = pd.DataFrame(out)
+    try:  # 🌊 적응형 흐름 상태(수도권·지방 따로 눈금: 그룹 안 분위수로 구간을 나눔 - 같은 고정 경계를 두 그룹에 쓰지 않음)
+        def _cls_q(col, cls_col, qs):
+            res_ = {}
+            for cl_ in ("수도권", "지방"):
+                v_ = pd.to_numeric(R.loc[R[cls_col] == cl_, col], errors="coerce").dropna()
+                res_[cl_] = [float(v_.quantile(q_)) for q_ in qs] if len(v_) >= 30 else None
+            return res_
+        def _st_price(lvl):
+            rt, zz = pd.to_numeric(R.get(f"af{lvl}_rate"), errors="coerce"), pd.to_numeric(R.get(f"af{lvl}_z"), errors="coerce")
+            strong = {}
+            for cl_ in ("수도권", "지방"):
+                m_ = (R["flow_cls"] == cl_) & (zz.abs() >= 1.0); strong[cl_] = float(rt[m_].abs().median()) if m_.sum() >= 30 else None
+            out_ = []
+            for a_, z_, c_ in zip(rt, zz, R["flow_cls"]):
+                if not np.isfinite(a_) or not np.isfinite(z_): out_.append("-")
+                elif abs(z_) < 1.0: out_.append("u")
+                else:
+                    t_ = strong.get(c_) or 0.0; out_.append(("up2" if abs(a_) >= t_ else "up1") if a_ > 0 else ("dn2" if abs(a_) >= t_ else "dn1"))
+            return out_
+        def _st_terc(col):
+            q_ = _cls_q(col, "flow_cls", (1 / 3, 2 / 3)); vv = pd.to_numeric(R.get(col), errors="coerce"); o_ = []
+            for v_, c_ in zip(vv, R["flow_cls"]):
+                if not np.isfinite(v_) or q_.get(c_) is None: o_.append("-")
+                else: o_.append("lo" if v_ <= q_[c_][0] else ("hi" if v_ >= q_[c_][1] else "mid"))
+            return o_
+        _lv = [l_ for l_ in ("C", "R1", "R2", "R3", "D", "S") if f"af{l_}_rate" in R.columns]
+        for l_ in _lv:
+            pr_, vo_ = _st_price(l_), _st_terc(f"af{l_}_vol")
+            R[f"af{l_}_s"] = [f"{c_}|{a_}|{b_}" for c_, a_, b_ in zip(R["flow_cls"], pr_, vo_)]
+        if "afR2_t" in R.columns and "R2" in _lv:
+            R["afT2_s"] = [f"{c_}|T{t_}|{p_}" for c_, t_, p_ in zip(R["flow_cls"], _st_terc("afR2_t"), _st_price("R2"))]
+        if "afC_t" in R.columns and "C" in _lv:
+            R["afTC_s"] = [f"{c_}|T{t_}|{v_}" for c_, t_, v_ in zip(R["flow_cls"], _st_terc("afC_t"), _st_terc("afC_vol"))]
+        print("  🌊 적응형 흐름 상태 계산:", {l_: round(float((R[f"af{l_}_s"].str.split("|").str[1] != "-").mean()) * 100, 1) for l_ in _lv})
+    except Exception as e_:
+        print("  적응형 흐름 상태 건너뜀:", e_)
     R["ratio"] = R["actual"] / R["est"]
     R["err"] = (R["est"] - R["resale"]) / R["resale"]
     R["second_gap"] = (R["actual"] - R["second"]) / R["est"]
@@ -1146,7 +1214,7 @@ WB_FACTORS = [("lb", 10), ("fails", 120), ("region", 120), ("tier", 5), ("season
 # 각 요인의 비중(k: 클수록 전국 평균 쪽으로 당김)은 winbid_model이 매주 감정가 없이 시간순 검증으로 다시 조정(wb_tune)
 WB_CANDS = [("lbf", 40), ("lbs", 40), ("lbo", 40), ("regf", 60), ("flowM", 60), ("flowL", 60), ("flowS", 60)]
 # 서버가 좌표·세대수로만 계산할 수 있는 요인 - 앱이 아직 값을 못 받으므로 이번 단계에선 "효과만 측정"하고 실제 모델에는 넣지 않음(넣으면 앱 예측이 어긋남). 효과가 크면 서버가 값을 미리 계산해 앱에 주는 단계를 만듦
-WB_CANDS_SERVER = [("flowR1", 60), ("flowR2", 60), ("flowR3", 60), ("flowT", 60), ("flowLT", 60)]
+WB_CANDS_SERVER = [("flowR2", 60), ("flowT", 60), ("afC", 60), ("afR1", 60), ("afR2", 60), ("afR3", 60), ("afD", 60), ("afS", 60), ("afT2", 60), ("afTC", 60)]
 SERVER_ONLY = {k for k, _ in WB_CANDS_SERVER}  # 감정가 없는 교호항 후보 - 검증에서 좋아질 때만 추가
 WB_JB_FACTOR = ("jb", 40)  # 최근 거래 점프 요인 - winbid_model이 검증(학습에 안 쓴 최근 12개월)에서 좋아질 때만 WB_FACTORS에 넣음
 
@@ -1188,6 +1256,8 @@ def wb_features(D):
     X["flowT"] = [str(c) + "|" + _bt(t) + "|" + _b3(a) for c, t, a in zip(fcls, _t2, _p2)]
     _tc = _col("flow_cx_t")
     X["flowLT"] = [("지방|단지|" + _bt(t) + "|" + _bv(v)) if c == "지방" else "-" for c, t, v in zip(fcls, _tc, fcv)]
+    for _n in ("C", "R1", "R2", "R3", "D", "S", "T2", "TC"):
+        X[f"af{_n}"] = D[f"af{_n}_s"].fillna("-").values if f"af{_n}_s" in D.columns else "-"
     X["lbf"] = X["lb"] + "|" + X["fails"]
     X["lbs"] = X["lb"] + "|" + X["size"]
     X["lbo"] = X["lb"] + "|" + X["own"]
@@ -1253,7 +1323,7 @@ def wb_tune(tr, factors0, cands):
             pick = None
             for nm, k0 in cands:
                 if any(f[0] == nm for f in cur): continue
-                for k in (k0, k0 * 3):
+                for k in ((k0,) if nm in SERVER_ONLY else (k0, k0 * 3)):
                     sc = score(cur + [(nm, k)])
                     if sc < best - 0.0001 and (pick is None or sc < pick[0]): pick = (sc, (nm, k))
             if not pick: break
@@ -1299,6 +1369,36 @@ def liquidity_curve(R, now_iso):
     payload = {"generatedAt": now_iso, "basis": "입찰 30일 전 기준 같은 단지·같은 평형(±3㎡) 최근 1년 중개거래 수(n12) - 낙찰사례 2023~", "note": "p6/p12 = 낙찰 후 6/12개월 안 같은 동·같은 층 되팔림 흔적(낙찰 1년 이상 지난 사례), p18·medMonths = 18개월+ 지난 사례", "bins": bins}
     print("  환금성 곡선:", json.dumps([(b["label"], b["p6"], b["holdMonths"]) for b in bins], ensure_ascii=False))
     cyc.upsert_rows([{"id": "signal|__liqcurve__", "payload": cyc.clean_json(payload), "fetched_at": now_iso}])
+
+
+def ymd_ord(a):
+    """yyyymmdd 정수(배열) → 1970-01-01부터 지난 날수(벡터 계산)"""
+    a = np.asarray(a, dtype=np.int64); y = a // 10000; m = (a // 100) % 100; d = a % 100
+    y = y - (m <= 2); era = y // 400; yoe = y - era * 400; mp = np.where(m > 2, m - 3, m + 9)
+    doy = (153 * mp + 2) // 5 + d - 1; doe = yoe * 365 + yoe // 4 - yoe // 100 + doy
+    return era * 146097 + doe - 719468
+
+
+def adaptive_flow(dd, pp, cut_ymd, K, max_days):
+    """🌊 적응형 흐름(2026-11-04, 사용자: 고정 건수·기간 기준은 수도권에만 맞음 - 지방은 거래가 적어 노이즈) -
+    비교 기간 W = max(입찰 30일 전 이전 최근 K건이 걸린 기간, 90일): 거래가 적은 곳은 W가 자동으로 길어지고, 많은 곳도 90일보다 짧게 쓰지 않음(며칠치 가격에 흔들리지 않게).
+    최근 W일(R)과 그 앞 W일(P)을 비교하고, P에도 K건 이상 있어야 하며 2W가 max_days를 넘으면 None.
+    rate = 가격 변화(로그)를 W로 연율화, z = 변화 ÷ 불확실성(묶음 안 가격 흩어짐 MAD/√건수) - |z|<1이면 보합(불확실)로 취급, vol = 거래 수 변화(로그, +1 보정), dens = 최근 W의 하루 거래 수.
+    dd=정렬된 거래일 yyyymmdd, pp=㎡당 가격"""
+    if dd is None or len(dd) == 0: return None
+    i = int(np.searchsorted(dd, int(cut_ymd)))
+    if i < 2 * K: return None
+    co = int(ymd_ord([int(cut_ymd)])[0]); oK = int(ymd_ord([int(dd[i - K])])[0]); W = max(co - oK, 90)
+    if 2 * W > max_days: return None
+    oall = ymd_ord(dd[max(0, i - 4000):i]); base = max(0, i - 4000)
+    a1 = int(np.searchsorted(oall, co - W)); a0 = int(np.searchsorted(oall, co - 2 * W))
+    nR, nP = (len(oall) - a1), (a1 - a0)
+    if nR < K or nP < K: return None
+    lr = np.log(np.asarray(pp[base + a1:i], dtype=float)); lp = np.log(np.asarray(pp[base + a0:base + a1], dtype=float))
+    mR, mP = float(np.median(lr)), float(np.median(lp)); flow = mR - mP
+    sR, sP = 1.4826 * float(np.median(np.abs(lr - mR))), 1.4826 * float(np.median(np.abs(lp - mP)))
+    se = max(1.2533 * float(np.sqrt(sR ** 2 / nR + sP ** 2 / nP)), 0.005)
+    return {"rate": flow / (W / 365.0), "z": flow / se, "vol": float(np.log((nR + 1) / (nP + 1))), "dens": nR / W}
 
 
 def flow_pv(dd_p, pp, dd_v, cut_ymd, min_p, min_base):
@@ -1494,7 +1594,7 @@ def winbid_model(R, now):
     flow_diag = {}
     try:  # 🌊 흐름 요인 신호 확인: 최종 모델(흐름 없음)의 잔차(실제÷예상, 로그)를 흐름 상태별로 묶어 중앙값을 봄 - 상태마다 잔차가 일정하게 쏠리면 그 요인에 신호가 있다는 뜻
         WB_FACTORS = f_base; _m = wb_fit(TRF); _res = np.log(te["actual"].values / te["est"].values) - wb_predict(_m, te); _Xt = wb_features(te)
-        for fn_ in ("flowM", "flowL", "flowS", "flowR1", "flowR2", "flowR3", "flowT", "flowLT"):
+        for fn_ in ("flowM", "flowL", "flowS", "flowR2", "flowT", "afC", "afR1", "afR2", "afR3", "afD", "afS", "afT2", "afTC"):
             if fn_ not in _Xt.columns: continue
             _df = pd.DataFrame({"k": _Xt[fn_].values, "r": _res}); gg = _df.groupby("k")["r"].agg(["median", "count"]); gg = gg[(gg["count"] >= 40) & (gg.index != "-")]
             if len(gg):
