@@ -1,10 +1,11 @@
 const fs=require('fs');
 const src=fs.readFileSync('/tmp/chk1.js','utf8')+fs.readFileSync('/tmp/chk0.js','utf8');
-const i=src.indexOf('function flowRatioCore'), j=src.indexOf('function flowB5');
-const f=new Function(src.slice(i,j)+';return flowRatioCore;')();
+const i=src.indexOf('function flowPVCore'), j=src.indexOf('function flowB5');
+const f=new Function(src.slice(i,j)+';return flowPVCore;')();
 const D=JSON.parse(fs.readFileSync('/tmp/flow_in.json','utf8'));
-let bad=0,maxd=0,n=0;
+let bad=0,maxd=0,np_=0,nv=0;
 D.cases.forEach((c,k)=>{const cd=String(c.cut);const ref=new Date(+cd.slice(0,4),+cd.slice(4,6)-1,+cd.slice(6)).getTime();
- const out=f(c.t.map(t=>({td:new Date(t.y,t.m-1,t.d).getTime(),ppm:t.ppm})),ref,c.minn); const p=D.py[k];
- if((out==null)!==(p==null)){bad++;return;} if(out!=null){n++;maxd=Math.max(maxd,Math.abs(out-p));}});
-console.log('비교',n,'건 / 값 있음·없음 불일치',bad,'/ 최대 차이',maxd);
+ const o=f(c.band.map(t=>({td:new Date(t.y,t.m-1,t.d).getTime(),ppm:t.ppm})),c.all.map(t=>({td:new Date(t.y,t.m-1,t.d).getTime()})),ref,c.minp,c.minb);
+ const p=D.py[k];
+ for(const [a,b,tag] of [[o.p,p[0],'p'],[o.v,p[1],'v']]){ if((a==null)!==(b==null)){bad++;continue;} if(a!=null){ if(tag=='p')np_++;else nv++; maxd=Math.max(maxd,Math.abs(a-b)); } }});
+console.log('가격',np_,'건 거래량',nv,'건 비교 / 값 유무 불일치',bad,'/ 최대 차이',maxd);

@@ -382,13 +382,13 @@ def main():
             _sd2 = int_to_date(c.sale_int); _cut2 = ymd_int(_sd2 - timedelta(days=30)); _sido = str(c.region).split(" ")[0]
             rec["flow_cls"] = "수도권" if _sido[:2] in ("서울", "경기", "인천") else "지방"
             _rg = rgroups.get(c.region); _dg = dgroups.get((c.region, c.dk))
-            rec["flow_sgg"] = flow_ratio(_rg[0], _rg[1], _cut2, 30) if _rg else None
-            rec["flow_dong"] = flow_ratio(_dg[0], _dg[2], _cut2, 10) if _dg else None
+            rec["flow_sgg"], rec["flow_sgg_v"] = flow_pv(_rg[0], _rg[1], _rg[0], _cut2, 30, 90) if _rg else (None, None)
+            rec["flow_dong"], rec["flow_dong_v"] = flow_pv(_dg[0], _dg[2], _dg[0], _cut2, 10, 30) if _dg else (None, None)
             if g is not None and len(g):
-                _gs = g[(g["size"] - c.area).abs() <= 10].sort_values("deal_date")
-                rec["flow_cx"] = flow_ratio(_gs["deal_date"].to_numpy(), _gs["ppm"].to_numpy(dtype=float), _cut2, 3)
+                _ga = g.sort_values("deal_date"); _gs = _ga[(_ga["size"] - c.area).abs() <= 10]
+                rec["flow_cx"], rec["flow_cx_v"] = flow_pv(_gs["deal_date"].to_numpy(), _gs["ppm"].to_numpy(dtype=float), _ga["deal_date"].to_numpy(), _cut2, 3, 6)
             else:
-                rec["flow_cx"] = None
+                rec["flow_cx"], rec["flow_cx_v"] = None, None
         except Exception:
             pass
         out.append(rec)
@@ -1095,13 +1095,15 @@ def wb_features(D):
         return "-" if v is None or not np.isfinite(v) else ("dn2" if v <= -0.04 else ("dn1" if v <= -0.01 else ("fl" if v <= 0.01 else ("up1" if v <= 0.04 else "up2"))))
     def _b3(v):
         return "-" if v is None or not np.isfinite(v) else ("dn" if v <= -0.03 else ("up" if v >= 0.03 else "fl"))
+    def _bv(v):  # 거래량 흐름: 최근 3개월 거래가 앞 9개월 분기 평균보다 20% 넘게 줄었나/늘었나
+        return "-" if v is None or not np.isfinite(v) else ("vd" if v <= -0.2 else ("vu" if v >= 0.2 else "vf"))
     def _col(n):
         return pd.to_numeric(D[n], errors="coerce") if n in D.columns else pd.Series(np.nan, index=D.index)
     fcls = D["flow_cls"].fillna("?") if "flow_cls" in D.columns else pd.Series("?", index=D.index)
-    fd, fs, fc = _col("flow_dong"), _col("flow_sgg"), _col("flow_cx")
-    X["flowM"] = [("수도권|동|" + _b5(a) if (c == "수도권" and np.isfinite(a)) else ("수도권|시군구|" + _b5(b) if c == "수도권" else "-")) for c, a, b in zip(fcls, fd, fs)]
-    X["flowL"] = [("지방|단지|" + _b3(a) if c == "지방" else "-") for c, a in zip(fcls, fc)]
-    X["flowS"] = [str(c) + "|" + _b5(b) for c, b in zip(fcls, fs)]
+    fd, fdv, fs, fsv, fc, fcv = _col("flow_dong"), _col("flow_dong_v"), _col("flow_sgg"), _col("flow_sgg_v"), _col("flow_cx"), _col("flow_cx_v")
+    X["flowM"] = [("수도권|동|" + _b5(a) + "|" + _bv(av) if (c == "수도권" and (np.isfinite(a) or np.isfinite(av))) else ("수도권|시군구|" + _b5(b) + "|" + _bv(bv) if c == "수도권" else "-")) for c, a, av, b, bv in zip(fcls, fd, fdv, fs, fsv)]
+    X["flowL"] = [("지방|단지|" + _b3(a) + "|" + _bv(av) if c == "지방" else "-") for c, a, av in zip(fcls, fc, fcv)]
+    X["flowS"] = [str(c) + "|" + _b5(b) + "|" + _bv(bv) for c, b, bv in zip(fcls, fs, fsv)]
     X["lbf"] = X["lb"] + "|" + X["fails"]
     X["lbs"] = X["lb"] + "|" + X["size"]
     X["lbo"] = X["lb"] + "|" + X["own"]
@@ -1215,19 +1217,24 @@ def liquidity_curve(R, now_iso):
     cyc.upsert_rows([{"id": "signal|__liqcurve__", "payload": cyc.clean_json(payload), "fetched_at": now_iso}])
 
 
-def flow_ratio(dd, pp, cut_ymd, min_n):
-    """🌊 시세 흐름(2026-11-04, 사용자: 수도권은 시군구·법정동 흐름이 비슷하고 지방은 단지별 차이가 극명 - 노이즈가 없어야 함) -
-    입찰 30일 전(cut) 기준 최근 3개월 ㎡당 가격 중위값 ÷ 그 앞 3개월 중위값의 로그. dd=거래일(yyyymmdd 정렬 배열), pp=㎡당 가격. 두 구간 모두 min_n건 이상이 아니면 None(노이즈 방지: 값을 억지로 만들지 않음)"""
-    if dd is None or len(dd) == 0:
-        return None
-    ref = int_to_date(int(cut_ymd))
-    lo1, lo2 = ymd_int(ref - timedelta(days=90)), ymd_int(ref - timedelta(days=180))
-    i2, i1, i0 = int(np.searchsorted(dd, lo2)), int(np.searchsorted(dd, lo1)), int(np.searchsorted(dd, int(cut_ymd)))
-    R_, P_ = pp[i1:i0], pp[i2:i1]
-    if len(R_) < min_n or len(P_) < min_n:
-        return None
-    a, b = float(np.median(R_)), float(np.median(P_))
-    return float(np.log(a / b)) if a > 0 and b > 0 else None
+def flow_pv(dd_p, pp, dd_v, cut_ymd, min_p, min_base):
+    """🌊 시세 흐름 = 가격 + 거래량(2026-11-04, 사용자: 거래량이 줄어드는데 신고가면 하락 쪽, 거래량이 늘며 가격이 다져지면 상승기 쪽 - 가격만으로는 흐름을 못 봄) -
+    입찰 30일 전(cut) 기준 ① 가격: 최근 3개월 ㎡당 가격 중위값 ÷ 그 앞 3개월 중위값(로그), 두 구간 모두 min_p건 이상이어야 함 ② 거래량: 최근 3개월 거래 수 ÷ 그 앞 9개월의 분기 평균 거래 수(로그, +1 보정),
+    앞 9개월 거래가 min_base건 이상이어야 함. 모자라면 None(노이즈 방지: 값을 억지로 만들지 않음). dd_p·pp=가격용(날짜 yyyymmdd 정렬, ㎡당 가격), dd_v=거래량용 날짜(정렬)"""
+    ref = int_to_date(int(cut_ymd)); price = None; vol = None
+    lo1, lo2, lo3 = ymd_int(ref - timedelta(days=90)), ymd_int(ref - timedelta(days=180)), ymd_int(ref - timedelta(days=360))
+    if dd_p is not None and len(dd_p):
+        i2, i1, i0 = int(np.searchsorted(dd_p, lo2)), int(np.searchsorted(dd_p, lo1)), int(np.searchsorted(dd_p, int(cut_ymd)))
+        R_, P_ = pp[i1:i0], pp[i2:i1]
+        if len(R_) >= min_p and len(P_) >= min_p:
+            a, b = float(np.median(R_)), float(np.median(P_))
+            price = float(np.log(a / b)) if a > 0 and b > 0 else None
+    if dd_v is not None and len(dd_v):
+        a0, a1, a2 = int(np.searchsorted(dd_v, lo3)), int(np.searchsorted(dd_v, lo1)), int(np.searchsorted(dd_v, int(cut_ymd)))
+        nR, nB = a2 - a1, a1 - a0
+        if nB >= min_base:
+            vol = float(np.log((nR + 1) / (nB / 3.0 + 1)))
+    return price, vol
 
 
 def _wmed(v, w):
@@ -1477,7 +1484,7 @@ def winbid_model(R, now):
         _fi = {}
         for _c in ("수도권", "지방"):
             _G = D[D["flow_cls"] == _c] if "flow_cls" in D.columns else D.iloc[0:0]
-            if len(_G): _fi[_c] = {"n": int(len(_G)), "동": round(float(_G["flow_dong"].notna().mean()) * 100, 1), "시군구": round(float(_G["flow_sgg"].notna().mean()) * 100, 1), "단지": round(float(_G["flow_cx"].notna().mean()) * 100, 1)}
+            if len(_G): _fi[_c] = {"n": int(len(_G)), "동": round(float(_G["flow_dong"].notna().mean()) * 100, 1), "시군구": round(float(_G["flow_sgg"].notna().mean()) * 100, 1), "단지": round(float(_G["flow_cx"].notna().mean()) * 100, 1), "동거래량": round(float(_G["flow_dong_v"].notna().mean()) * 100, 1), "단지거래량": round(float(_G["flow_cx_v"].notna().mean()) * 100, 1)}
         full["flowInfo"] = _fi
     except Exception as _e:
         print("  흐름 채움 비율 건너뜀:", _e)
