@@ -1,0 +1,31 @@
+# 시장 흐름 연구실(2026-11-05): 생활권 흐름·보정계수 점검·유사 구간 3개월 예측 (analyze-flow-lab.py 상단 설명 참고)
+name: Analyze flow lab
+
+on:
+  push:                # 트리거 파일을 고쳐 올리면 한 번 실행(git push로 구동)
+    paths: ['.github/triggers/analyze-flow-lab.txt']
+  workflow_dispatch:
+
+jobs:
+  lab:
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install pandas numpy requests scikit-learn scipy
+      - env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          SITE_URL: ${{ secrets.SITE_URL }}
+          PYTHONUNBUFFERED: '1'
+        run: python analyze-flow-lab.py
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: flow-lab-report
+          path: flow-lab-report.json
+          if-no-files-found: ignore
+          retention-days: 30
