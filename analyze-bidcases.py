@@ -208,6 +208,13 @@ def main():
     groups = {k: g for k, g in tr.groupby(["region_n", "dk", "bunji_s"])}
     # 2026-10-11 같은 단지 거래가 0~2건일 때를 위한 같은 동 시세(변형 시험): 동별 거래 배열
     dgroups = {k: (g["deal_date"].to_numpy(), g["size"].to_numpy(dtype=float), g["ppm"].to_numpy(dtype=float), pd.to_numeric(g["build_year"], errors="coerce").to_numpy(dtype=float)) for k, g in tr.sort_values("deal_date").groupby(["region_n", "dk"])}
+    # 🌊 시군구 전체 거래 배열(흐름용): 법정동 배열을 시군구별로 합쳐 날짜순 정렬
+    _rg_parts = {}
+    for (rg_, dk_), (dd_, sz_, pp_, yb_) in dgroups.items():
+        _rg_parts.setdefault(rg_, []).append((dd_, pp_))
+    rgroups = {}
+    for rg_, parts in _rg_parts.items():
+        _d = np.concatenate([x[0] for x in parts]); _p = np.concatenate([x[1] for x in parts]); _o = np.argsort(_d, kind="stable"); rgroups[rg_] = (_d[_o], _p[_o])
     # 동 전체 거래 날짜(정렬) - 입찰 전 3년 동 거래량(거래가 되는 동네인지)
     dong_dates = {k: np.sort(g["deal_date"].to_numpy()) for k, g in tr.groupby(["region_n", "dk"])}
     # 인기 등급(현재 기준 - 약간의 미래 정보가 섞임): pop|<시군구>
@@ -369,6 +376,19 @@ def main():
                         if ed:
                             rec["est_blend" + tag] = ed if not rec.get("est") else 0.5 * rec["est"] + 0.5 * ed
                             rec["est_blend70" + tag] = ed if not rec.get("est") else 0.7 * rec["est"] + 0.3 * ed
+        except Exception:
+            pass
+        try:  # 🌊 시세 흐름(입찰 30일 전 기준): 시군구·법정동(수도권용)·같은 크기대 단지(지방용). 표본이 모자라면 None
+            _sd2 = int_to_date(c.sale_int); _cut2 = ymd_int(_sd2 - timedelta(days=30)); _sido = str(c.region).split(" ")[0]
+            rec["flow_cls"] = "수도권" if _sido[:2] in ("서울", "경기", "인천") else "지방"
+            _rg = rgroups.get(c.region); _dg = dgroups.get((c.region, c.dk))
+            rec["flow_sgg"] = flow_ratio(_rg[0], _rg[1], _cut2, 30) if _rg else None
+            rec["flow_dong"] = flow_ratio(_dg[0], _dg[2], _cut2, 10) if _dg else None
+            if g is not None and len(g):
+                _gs = g[(g["size"] - c.area).abs() <= 10].sort_values("deal_date")
+                rec["flow_cx"] = flow_ratio(_gs["deal_date"].to_numpy(), _gs["ppm"].to_numpy(dtype=float), _cut2, 3)
+            else:
+                rec["flow_cx"] = None
         except Exception:
             pass
         out.append(rec)
@@ -1052,7 +1072,7 @@ def competition_stats(R, now):
 WB_FACTORS = [("lb", 10), ("fails", 120), ("region", 120), ("tier", 5), ("season", 300), ("floor", 5), ("size", 30), ("own", 120), ("dong", 40)]
 # 2026-11-04(사용자 원칙): 입찰가·낙찰가는 '시세 대비 비율'만 - 시세와 시장 흐름(지역·동·시기·인기·층·크기·거래 활발도·유찰 횟수)과 시세 대비 최저가(입찰자 수를 정하는 큰 요소)로만 예측. 감정가는 철저히 계산에서 제외(결과 측정·금액 입력 점검에만 씀).
 # 각 요인의 비중(k: 클수록 전국 평균 쪽으로 당김)은 winbid_model이 매주 감정가 없이 시간순 검증으로 다시 조정(wb_tune)
-WB_CANDS = [("lbf", 40), ("lbs", 40), ("lbo", 40), ("regf", 60)]  # 감정가 없는 교호항 후보 - 검증에서 좋아질 때만 추가
+WB_CANDS = [("lbf", 40), ("lbs", 40), ("lbo", 40), ("regf", 60), ("flowM", 60), ("flowL", 60), ("flowS", 60)]  # 감정가 없는 교호항 후보 - 검증에서 좋아질 때만 추가
 WB_JB_FACTOR = ("jb", 40)  # 최근 거래 점프 요인 - winbid_model이 검증(학습에 안 쓴 최근 12개월)에서 좋아질 때만 WB_FACTORS에 넣음
 
 
@@ -1070,6 +1090,18 @@ def wb_features(D):
     X["size"] = D["area"].map(lambda a: "소형" if a < 60 else ("중형" if a <= 85 else "대형"))
     X["own"] = D["own"].map(lambda n: "1~2" if n <= 2 else ("3~5" if n <= 5 else ("6~10" if n <= 10 else "11+")))
     # 2026-11-04(사용자 원칙): 감정가는 계산에 일절 쓰지 않음(감정가÷시세·교호항 계산 삭제). 시세 대비 최저가(lb)는 입찰자 수를 정하는 큰 요소라 유지하고, 교호항은 감정가 없이 최저가·유찰·지역·크기·거래 활발도로만 만듦
+    # 🌊 시세 흐름 요인(2026-11-04) - 수도권(서울·경기·인천)과 지방을 따로 만듦. 값이 없으면(표본 부족) "-"라서 노이즈 없이 효과가 0 쪽으로 감
+    def _b5(v):
+        return "-" if v is None or not np.isfinite(v) else ("dn2" if v <= -0.04 else ("dn1" if v <= -0.01 else ("fl" if v <= 0.01 else ("up1" if v <= 0.04 else "up2"))))
+    def _b3(v):
+        return "-" if v is None or not np.isfinite(v) else ("dn" if v <= -0.03 else ("up" if v >= 0.03 else "fl"))
+    def _col(n):
+        return pd.to_numeric(D[n], errors="coerce") if n in D.columns else pd.Series(np.nan, index=D.index)
+    fcls = D["flow_cls"].fillna("?") if "flow_cls" in D.columns else pd.Series("?", index=D.index)
+    fd, fs, fc = _col("flow_dong"), _col("flow_sgg"), _col("flow_cx")
+    X["flowM"] = [("수도권|동|" + _b5(a) if (c == "수도권" and np.isfinite(a)) else ("수도권|시군구|" + _b5(b) if c == "수도권" else "-")) for c, a, b in zip(fcls, fd, fs)]
+    X["flowL"] = [("지방|단지|" + _b3(a) if c == "지방" else "-") for c, a in zip(fcls, fc)]
+    X["flowS"] = [str(c) + "|" + _b5(b) for c, b in zip(fcls, fs)]
     X["lbf"] = X["lb"] + "|" + X["fails"]
     X["lbs"] = X["lb"] + "|" + X["size"]
     X["lbo"] = X["lb"] + "|" + X["own"]
@@ -1131,7 +1163,7 @@ def wb_tune(tr, factors0, cands):
                     sc = score(trial)
                     if sc < best - 0.00005: best, cur = sc, trial
         added = []
-        for _round in range(3):
+        for _round in range(5):
             pick = None
             for nm, k0 in cands:
                 if any(f[0] == nm for f in cur): continue
@@ -1181,6 +1213,21 @@ def liquidity_curve(R, now_iso):
     payload = {"generatedAt": now_iso, "basis": "입찰 30일 전 기준 같은 단지·같은 평형(±3㎡) 최근 1년 중개거래 수(n12) - 낙찰사례 2023~", "note": "p6/p12 = 낙찰 후 6/12개월 안 같은 동·같은 층 되팔림 흔적(낙찰 1년 이상 지난 사례), p18·medMonths = 18개월+ 지난 사례", "bins": bins}
     print("  환금성 곡선:", json.dumps([(b["label"], b["p6"], b["holdMonths"]) for b in bins], ensure_ascii=False))
     cyc.upsert_rows([{"id": "signal|__liqcurve__", "payload": cyc.clean_json(payload), "fetched_at": now_iso}])
+
+
+def flow_ratio(dd, pp, cut_ymd, min_n):
+    """🌊 시세 흐름(2026-11-04, 사용자: 수도권은 시군구·법정동 흐름이 비슷하고 지방은 단지별 차이가 극명 - 노이즈가 없어야 함) -
+    입찰 30일 전(cut) 기준 최근 3개월 ㎡당 가격 중위값 ÷ 그 앞 3개월 중위값의 로그. dd=거래일(yyyymmdd 정렬 배열), pp=㎡당 가격. 두 구간 모두 min_n건 이상이 아니면 None(노이즈 방지: 값을 억지로 만들지 않음)"""
+    if dd is None or len(dd) == 0:
+        return None
+    ref = int_to_date(int(cut_ymd))
+    lo1, lo2 = ymd_int(ref - timedelta(days=90)), ymd_int(ref - timedelta(days=180))
+    i2, i1, i0 = int(np.searchsorted(dd, lo2)), int(np.searchsorted(dd, lo1)), int(np.searchsorted(dd, int(cut_ymd)))
+    R_, P_ = pp[i1:i0], pp[i2:i1]
+    if len(R_) < min_n or len(P_) < min_n:
+        return None
+    a, b = float(np.median(R_)), float(np.median(P_))
+    return float(np.log(a / b)) if a > 0 and b > 0 else None
 
 
 def _wmed(v, w):
@@ -1425,7 +1472,16 @@ def winbid_model(R, now):
         except Exception as e:
             import traceback; traceback.print_exc(); print("  개선 실험 건너뜀:", e)
     full = wb_fit(_recent_w(D, int(D["sale"].max())) if use_rw else D)
-    full["recentWeight"] = bool(use_rw); full["n"] = int(len(D)); full["principle"] = principle; full["factors"] = [f for f, _ in WB_FACTORS]; full["tuned"] = tune_info; full["estRule"] = True; full["factorsK"] = [[f, k] for f, k in WB_FACTORS]
+    full["recentWeight"] = bool(use_rw); full["n"] = int(len(D)); full["principle"] = principle; full["factors"] = [f for f, _ in WB_FACTORS]; full["tuned"] = tune_info;
+    try:  # 🌊 흐름 값이 실제로 얼마나 채워졌나(수도권·지방 따로) - 표본 부족이면 비워 두므로 비율을 기록
+        _fi = {}
+        for _c in ("수도권", "지방"):
+            _G = D[D["flow_cls"] == _c] if "flow_cls" in D.columns else D.iloc[0:0]
+            if len(_G): _fi[_c] = {"n": int(len(_G)), "동": round(float(_G["flow_dong"].notna().mean()) * 100, 1), "시군구": round(float(_G["flow_sgg"].notna().mean()) * 100, 1), "단지": round(float(_G["flow_cx"].notna().mean()) * 100, 1)}
+        full["flowInfo"] = _fi
+    except Exception as _e:
+        print("  흐름 채움 비율 건너뜀:", _e)
+    full["flowIsNew"] = True; full["estRule"] = True; full["factorsK"] = [[f, k] for f, k in WB_FACTORS]
     # 경쟁 예상(2026-10-10): 같은 요인으로 로그 응찰자 수를 맞추는 모델 - 앱이 하위 25%(낮음)·상위 25%(높음)로 표시
     try:
         Db = D[D["bidders"].notna() & (D["bidders"] > 0) & (D["sale"] >= 20230101)].copy()

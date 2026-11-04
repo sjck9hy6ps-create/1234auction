@@ -20195,6 +20195,43 @@ function winbidProbAt(wb, bid) {
     if (!wb || !bid) return null;
     return winbidProbRaw(wb, bid);
 }
+/* 🌊 시세 흐름 요인(2026-11-04, 사용자: 수도권은 시군구·법정동 흐름이 비슷하고 지방은 같은 동 안에서도 단지별 차이가 극명 - 노이즈 없이, 지방은 지방만의 흐름 요인) - 서버 낙찰가 모델(analyze-bidcases.py flow_ratio)과 같은 계산:
+   입찰 30일 전 기준 최근 3개월 ㎡당 가격 중위값 ÷ 그 앞 3개월 중위값(로그). 두 구간 모두 표본이 모자라면(시군구 30건·법정동 10건·단지 3건) 값을 만들지 않음("-")
+   수도권: flowM = 법정동(없으면 시군구) 5단계 / 지방: flowL = 같은 단지(같은 크기대 ±10㎡) 3단계 / 공통 flowS = 시군구 5단계(수도권·지방 따로 학습) - 서버 모델이 검증을 통과해 가진 요인만 반영됨 */
+function flowRatioCore(trades, ref, minN) {
+    var DAY = 86400000, lo1 = ref - 90 * DAY, lo2 = ref - 180 * DAY, R = [], P = [];
+    trades.forEach(function(t) { if (t.td >= ref) return; if (t.td >= lo1) R.push(t.ppm); else if (t.td >= lo2) P.push(t.ppm); });
+    if (R.length < minN || P.length < minN) return null;
+    var med = function(x) { x = x.slice().sort(function(m, n) { return m - n; }); var k = x.length >> 1; return x.length % 2 ? x[k] : (x[k - 1] + x[k]) / 2; };
+    var a = med(R), b = med(P); return a > 0 && b > 0 ? Math.log(a / b) : null;
+}
+function flowB5(v) { return v == null || !isFinite(v) ? '-' : (v <= -0.04 ? 'dn2' : (v <= -0.01 ? 'dn1' : (v <= 0.01 ? 'fl' : (v <= 0.04 ? 'up1' : 'up2')))); }
+function flowB3(v) { return v == null || !isFinite(v) ? '-' : (v <= -0.03 ? 'dn' : (v >= 0.03 ? 'up' : 'fl')); }
+var flowCache = {};
+function flowTrades(lawd, dongK, which) {   // which: 'sgg'(시군구 전체) | 'dong'(법정동)
+    var out = [], push = function(ap) { if ((ap.buildingType || 'apt') !== 'apt' || ap.lawdCd !== lawd) return; (ap.trades || []).forEach(function(t) { if (t.dealing_type === '직거래') return; var p = parseInt(t.amount), ar = parseFloat(t.area); if (p > 0 && ar > 10) out.push({ td: tradeDate(t).getTime(), ppm: p / ar }); }); };
+    if (which === 'dong') (aptIndexByDong.get(dongK) || []).forEach(push); else allAptList.forEach(push);
+    return out;
+}
+function winbidFlowKeys(a, lawd, area, ref, e) {
+    var cls = aptRegionClass(lawd) === '지방' ? '지방' : '수도권', res = {}, dayKey = Math.floor(ref / 86400000), n0 = allAptList.length;
+    var memo = function(k, fn) { var c = flowCache[k]; if (c && c.n === n0) return c.v; var v = fn(); flowCache[k] = { n: n0, v: v }; return v; };
+    var sgg = (e.flowM || e.flowS) ? memo('s|' + lawd + '|' + dayKey, function() { return flowRatioCore(flowTrades(lawd, null, 'sgg'), ref, 30); }) : null;
+    if (e.flowS) res.flowS = cls + '|' + flowB5(sgg);
+    if (e.flowM) {
+        var dong = cls === '수도권' ? memo('d|' + lawd + '|' + dongKey(a.dong) + '|' + dayKey, function() { return flowRatioCore(flowTrades(lawd, dongKey(a.dong), 'dong'), ref, 10); }) : null;
+        res.flowM = cls === '수도권' ? (dong != null ? '수도권|동|' + flowB5(dong) : '수도권|시군구|' + flowB5(sgg)) : '-';
+    }
+    if (e.flowL) {
+        var cx = null;
+        if (cls === '지방') {
+            var tr = []; ownComplexEntries(a, fullBunjiFromAddr(a.addr, a.dong, a.bunji), 'apt').forEach(function(ap) { (ap.trades || []).forEach(function(t) { if (t.dealing_type === '직거래') return; var p = parseInt(t.amount), ar = parseFloat(t.area); if (p > 0 && ar > 10 && Math.abs(ar - area) <= 10) tr.push({ td: tradeDate(t).getTime(), ppm: p / ar }); }); });
+            cx = flowRatioCore(tr, ref, 3);
+        }
+        res.flowL = cls === '지방' ? '지방|단지|' + flowB3(cx) : '-';
+    }
+    return res;
+}
 function winbidFor(row) {
     var a = row.a;
     if (!winbidModel || row.type !== 'apt' || !row.minBid) return null;
@@ -20221,6 +20258,10 @@ function winbidFor(row) {
     var apr = parseFloat(row.appraisal) || parseFloat(a.appraisal) || 0;
     // 최근 거래 점프(2026-10-24): 입찰 전 3개월 안 같은 평형 가장 최근 거래 ÷ 시세 - 서버 모델이 검증을 통과해 jb 요인을 가졌을 때만 쓰임(없으면 무시)
     if (e.jb) { var osj = row.ownStats; keys.jb = (osj && osj.lastP > 0 && osj.lastAgeM != null && osj.lastAgeM <= 3) ? (function(v) { return v <= -0.05 ? 'dn' : (v <= 0.05 ? 'fl' : (v <= 0.12 ? 'up1' : (v <= 0.20 ? 'up2' : 'up3'))); })(Math.log(osj.lastP / b.est)) : '?'; }
+    if (e.flowM || e.flowL || e.flowS) {   // 🌊 시세 흐름(서버 모델에 있을 때만)
+        var refF = Date.now(); if (a.bidDate) { var bdF = new Date(a.bidDate + 'T00:00:00').getTime() - 30 * 86400000; if (bdF < refF) refF = bdF; }
+        try { var fk = winbidFlowKeys(a, row.lawd, area, refF, e); Object.keys(fk).forEach(function(k2) { keys[k2] = fk[k2]; }); } catch (er) {}
+    }
     keys.lbf = keys.lb + '|' + keys.fails; keys.lbs = keys.lb + '|' + keys.size; keys.lbo = keys.lb + '|' + keys.own; keys.regf = keys.region + '|' + keys.fails;  // 감정가 없는 교호항(서버 모델이 검증을 통과해 가졌을 때만 쓰임)
     keys.dong = keys.region + '|' + dongKey(a.dong); // 2026-10-09 법정동 보정(서버 모델에 dong 요인이 있을 때만 적용됨)
     // (예전 앱 보정 +1.8% - 2026-10-08 새 모델부터 0) 앱 보정 +1.8%(2026-10 실측): 앱에서 구한 시세가 서버 계산보다 약간 높게 나와(해제 거래 포함·3년 지수 보정 없음) 예상 낙찰가가 1.8% 낮게 나왔음.
