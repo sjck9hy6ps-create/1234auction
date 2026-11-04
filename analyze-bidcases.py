@@ -1749,8 +1749,10 @@ def update_compare_history(case_err, now_iso):
     if not case_err:
         return
     NAMES = ["현재", "시세 새 규칙", "최근 가중", "개선안(둘 다)"]
+    VER = "2026-11-04b"   # 모델 요인 구성이 바뀌면(감정가 제외·최저가 유지·새 시세 규칙) 이전 누적은 다른 모델의 값이라 버리고 새로 쌓음
     try:
-        old = (requests.get(f"{SITE_URL}/api/data-coverage?mode=winbidCompare&nocache={int(time.time())}", timeout=60).json() or {}).get("items") or []
+        _pj = requests.get(f"{SITE_URL}/api/data-coverage?mode=winbidCompare&nocache={int(time.time())}", timeout=60).json() or {}
+        old = (_pj.get("items") or []) if _pj.get("ver") == VER else []
     except Exception:
         old = []
     have = {it[0] for it in old if isinstance(it, list) and it}
@@ -1758,7 +1760,7 @@ def update_compare_history(case_err, now_iso):
     items = (old + new)
     items.sort(key=lambda it: it[1])
     items = items[-8000:]
-    cyc.upsert_rows([{"id": "signal|__winbid_compare__", "payload": cyc.clean_json({"names": NAMES, "items": items, "generatedAt": now_iso}), "fetched_at": now_iso}])
+    cyc.upsert_rows([{"id": "signal|__winbid_compare__", "payload": cyc.clean_json({"names": NAMES, "items": items, "generatedAt": now_iso, "ver": VER}), "fetched_at": now_iso}])
     print(f"  🧪 시세 규칙 비교 누적: 새로 {len(new)}건 → 총 {len(items)}건")
 
 
