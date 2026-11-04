@@ -155,7 +155,7 @@ def main():
             names.add(f"{alias} {gu}")
     # 실거래 지역명은 "전북 전주 완산구"처럼 구까지 붙어 있어 정확히 같은 이름(in)으로는 못 찾음 → 앞부분 일치(like)로
     flt = "&or=(" + ",".join('region.like."' + n + '*"' for n in sorted(names)) + ")"
-    tr = avm.fetch_all_rows("house_trades", cols="region,dong,danji,bunji,price,size,floor,deal_date,dealing_type,build_year,apt_dong,cdeal_type",
+    tr = avm.fetch_all_rows("house_trades", cols="region,dong,danji,bunji,price,size,floor,deal_date,dealing_type,build_year,apt_dong,cdeal_type,road_name,main_num,sub_num",
                             extra_filter=f"&deal_date=gte.{cyc.START_DATE}{flt}")
     # 2026-10: 해제(취소)된 거래는 시세·되팔기 모두에서 뺌(응답의 3~8%)
     if "cdeal_type" in tr.columns:
@@ -215,6 +215,72 @@ def main():
     rgroups = {}
     for rg_, parts in _rg_parts.items():
         _d = np.concatenate([x[0] for x in parts]); _p = np.concatenate([x[1] for x in parts]); _o = np.argsort(_d, kind="stable"); rgroups[rg_] = (_d[_o], _p[_o])
+    # 🏘 생활반경·세대수 흐름용 단지 인덱스(2026-11-04, 사용자: 한 단지만으로는 아쉽고 거래량에 세대수를 넣어야 신빙성 - 반경 안 단지들의 거래·세대수로 흐름을 봄)
+    # 단지 키(complex_coords의 cache_key와 같은 규칙) → 좌표, (법정동코드·본번·부번) → 세대수(건축물대장). 실패하면 이 요인만 건너뛰고 나머지는 그대로
+    CX = None
+    try:
+        from sklearn.neighbors import BallTree
+        def _ck(r_):
+            mn = r_.get("main_num"); sn = r_.get("sub_num")
+            mn = 0 if mn is None or (isinstance(mn, float) and np.isnan(mn)) else int(float(mn))
+            sn = "" if sn is None or (isinstance(sn, float) and np.isnan(sn)) or str(sn).strip() in ("", "0", "0.0") else str(int(float(sn)))
+            return "|".join(str(x) for x in [r_.get("dong") or "", r_.get("danji") or "", r_.get("bunji") or "", r_.get("road_name") or "", mn, sn]).lower()
+        _tk = tr[["dong", "danji", "bunji", "road_name", "main_num", "sub_num"]].drop_duplicates()
+        _tk["ckey"] = [_ck(r_) for r_ in _tk.to_dict("records")]
+        tr = tr.merge(_tk[["dong", "danji", "bunji", "road_name", "main_num", "sub_num", "ckey"]], on=["dong", "danji", "bunji", "road_name", "main_num", "sub_num"], how="left")
+        cc = avm.fetch_all_rows("complex_coords", cols="cache_key,lat,lon,sigungu_cd,bjdong_cd", order_col="id", extra_filter="&lat=not.is.null")
+        cc["ck"] = cc["cache_key"].astype(str).str.lower(); cc = cc.drop_duplicates("ck").set_index("ck")
+        keys_ = tr["ckey"].dropna().unique(); cc_hit = cc.reindex(keys_); ok_ = cc_hit["lat"].notna().values
+        print(f"  🏘 단지 좌표 연결: 단지 {len(keys_):,}곳 중 {int(ok_.sum()):,}곳({ok_.mean() * 100:.1f}%)")
+        HH = {}
+        try:
+            bi = avm.fetch_all_rows("building_info", cols="sigungu_cd,bjdong_cd,bun,ji,hh:title_json->>hhldCnt,hs:title_json->>hhldSum", order_col="id")
+            for r_ in bi.itertuples():
+                try:
+                    h_ = int(float(r_.hh)) if r_.hh not in (None, "", "nan") and float(r_.hh) > 0 else (int(float(r_.hs)) if r_.hs not in (None, "", "nan") else 0)
+                except Exception:
+                    h_ = 0
+                if h_ > 0: HH[(str(r_.sigungu_cd), str(r_.bjdong_cd), str(r_.bun).zfill(4), str(r_.ji).zfill(4))] = h_
+            print(f"  🏘 건축물대장 세대수 {len(HH):,}건")
+        except Exception as e_:
+            print("  🏘 세대수 불러오기 건너뜀:", e_)
+        cx_keys, cx_lat, cx_lon, cx_dd, cx_pp, cx_hh = [], [], [], [], [], []
+        _trs = tr.sort_values("deal_date")
+        for ck_, g_ in _trs.groupby("ckey"):
+            row_ = cc_hit.loc[ck_] if ck_ in cc_hit.index else None
+            if row_ is None or not np.isfinite(row_["lat"]): continue
+            parts_ = ck_.split("|")[2].replace("산", "").split("-")
+            try: bun_ = parts_[0].zfill(4); ji_ = (parts_[1] if len(parts_) > 1 else "0").zfill(4)
+            except Exception: bun_, ji_ = "", ""
+            hh_ = HH.get((str(row_["sigungu_cd"]), str(row_["bjdong_cd"]), bun_, ji_), 0)
+            cx_keys.append(ck_); cx_lat.append(float(row_["lat"])); cx_lon.append(float(row_["lon"]))
+            cx_dd.append(g_["deal_date"].to_numpy()); cx_pp.append(g_["ppm"].to_numpy(dtype=float)); cx_hh.append(hh_)
+        cx_xy = np.radians(np.c_[cx_lat, cx_lon]); CX = {"tree": BallTree(cx_xy, metric="haversine"), "dd": cx_dd, "pp": cx_pp, "hh": np.array(cx_hh), "ck": {k_: i_ for i_, k_ in enumerate(cx_keys)}, "n": len(cx_keys)}
+        print(f"  🏘 생활반경용 단지 {CX['n']:,}곳(세대수 아는 곳 {int((CX['hh'] > 0).sum()):,})")
+    except Exception as e_:
+        print("  🏘 생활반경 요인 건너뜀:", e_); CX = None
+
+    def radius_flow(lat_, lon_, cut_ymd, km, ck_self=None):
+        """반경 km 안 모든 단지(자기 단지 포함)의 거래를 모아 가격(㎡당)·거래량 흐름과 회전율(최근 3개월 거래 ÷ 세대수×100, 세대수 아는 단지만) 계산. 표본 모자라면 None"""
+        if CX is None or lat_ is None or lon_ is None or not (np.isfinite(lat_) and np.isfinite(lon_)): return None
+        idx_ = CX["tree"].query_radius(np.radians([[lat_, lon_]]), r=km / 6371.0)[0]
+        if len(idx_) == 0: return None
+        ref = int_to_date(int(cut_ymd)); lo1, lo2, lo3 = ymd_int(ref - timedelta(days=90)), ymd_int(ref - timedelta(days=180)), ymd_int(ref - timedelta(days=360))
+        Rp, Pp, nR, nB, nRh, Hs = [], [], 0, 0, 0, 0
+        for i_ in idx_:
+            dd_, pp_ = CX["dd"][i_], CX["pp"][i_]
+            a0, a1, a2, a3 = np.searchsorted(dd_, lo3), np.searchsorted(dd_, lo2), np.searchsorted(dd_, lo1), np.searchsorted(dd_, int(cut_ymd))
+            r_n = a3 - a2; nR += r_n; nB += a2 - a0
+            if r_n: Rp.append(pp_[a2:a3])
+            if a2 - a1: Pp.append(pp_[a1:a2])
+            if CX["hh"][i_] > 0: nRh += r_n; Hs += int(CX["hh"][i_])
+        out = {"n_cx": int(len(idx_)), "p": None, "v": None, "t": None}
+        if Rp and Pp:
+            R_ = np.concatenate(Rp); P_ = np.concatenate(Pp)
+            if len(R_) >= 20 and len(P_) >= 20: out["p"] = float(np.log(np.median(R_) / np.median(P_)))
+        if nB >= 60: out["v"] = float(np.log((nR + 1) / (nB / 3.0 + 1)))
+        if Hs >= 1000: out["t"] = nRh / Hs * 100.0
+        return out
     # 동 전체 거래 날짜(정렬) - 입찰 전 3년 동 거래량(거래가 되는 동네인지)
     dong_dates = {k: np.sort(g["deal_date"].to_numpy()) for k, g in tr.groupby(["region_n", "dk"])}
     # 인기 등급(현재 기준 - 약간의 미래 정보가 섞임): pop|<시군구>
@@ -389,6 +455,12 @@ def main():
                 rec["flow_cx"], rec["flow_cx_v"] = flow_pv(_gs["deal_date"].to_numpy(), _gs["ppm"].to_numpy(dtype=float), _ga["deal_date"].to_numpy(), _cut2, 3, 6)
             else:
                 rec["flow_cx"], rec["flow_cx_v"] = None, None
+            if CX is not None:  # 🏘 생활반경 1·2·3km 흐름(가격·거래량·회전율)과 같은 단지(150m) 회전율
+                _la, _lo = getattr(c, "lat", None), getattr(c, "lon", None)
+                for _km in (1, 2, 3):
+                    _rf = radius_flow(_la, _lo, _cut2, _km)
+                    rec[f"flowR{_km}_p"], rec[f"flowR{_km}_v"], rec[f"flowR{_km}_t"] = (_rf["p"], _rf["v"], _rf["t"]) if _rf else (None, None, None)
+                _r0 = radius_flow(_la, _lo, _cut2, 0.15); rec["flow_cx_t"] = _r0["t"] if _r0 else None
         except Exception:
             pass
         out.append(rec)
@@ -1072,7 +1144,10 @@ def competition_stats(R, now):
 WB_FACTORS = [("lb", 10), ("fails", 120), ("region", 120), ("tier", 5), ("season", 300), ("floor", 5), ("size", 30), ("own", 120), ("dong", 40)]
 # 2026-11-04(사용자 원칙): 입찰가·낙찰가는 '시세 대비 비율'만 - 시세와 시장 흐름(지역·동·시기·인기·층·크기·거래 활발도·유찰 횟수)과 시세 대비 최저가(입찰자 수를 정하는 큰 요소)로만 예측. 감정가는 철저히 계산에서 제외(결과 측정·금액 입력 점검에만 씀).
 # 각 요인의 비중(k: 클수록 전국 평균 쪽으로 당김)은 winbid_model이 매주 감정가 없이 시간순 검증으로 다시 조정(wb_tune)
-WB_CANDS = [("lbf", 40), ("lbs", 40), ("lbo", 40), ("regf", 60), ("flowM", 60), ("flowL", 60), ("flowS", 60)]  # 감정가 없는 교호항 후보 - 검증에서 좋아질 때만 추가
+WB_CANDS = [("lbf", 40), ("lbs", 40), ("lbo", 40), ("regf", 60), ("flowM", 60), ("flowL", 60), ("flowS", 60)]
+# 서버가 좌표·세대수로만 계산할 수 있는 요인 - 앱이 아직 값을 못 받으므로 이번 단계에선 "효과만 측정"하고 실제 모델에는 넣지 않음(넣으면 앱 예측이 어긋남). 효과가 크면 서버가 값을 미리 계산해 앱에 주는 단계를 만듦
+WB_CANDS_SERVER = [("flowR1", 60), ("flowR2", 60), ("flowR3", 60), ("flowT", 60), ("flowLT", 60)]
+SERVER_ONLY = {k for k, _ in WB_CANDS_SERVER}  # 감정가 없는 교호항 후보 - 검증에서 좋아질 때만 추가
 WB_JB_FACTOR = ("jb", 40)  # 최근 거래 점프 요인 - winbid_model이 검증(학습에 안 쓴 최근 12개월)에서 좋아질 때만 WB_FACTORS에 넣음
 
 
@@ -1104,6 +1179,15 @@ def wb_features(D):
     X["flowM"] = [("수도권|동|" + _b5(a) + "|" + _bv(av) if (c == "수도권" and (np.isfinite(a) or np.isfinite(av))) else ("수도권|시군구|" + _b5(b) + "|" + _bv(bv) if c == "수도권" else "-")) for c, a, av, b, bv in zip(fcls, fd, fdv, fs, fsv)]
     X["flowL"] = [("지방|단지|" + _b3(a) + "|" + _bv(av) if c == "지방" else "-") for c, a, av in zip(fcls, fc, fcv)]
     X["flowS"] = [str(c) + "|" + _b5(b) + "|" + _bv(bv) for c, b, bv in zip(fcls, fs, fsv)]
+    def _bt(v):  # 회전율: 최근 3개월 거래 ÷ 세대수 × 100 (분기). 연 5% 안팎 = 1.2
+        return "-" if v is None or not np.isfinite(v) else ("tl" if v < 0.7 else ("th" if v > 1.8 else "tm"))
+    for _km in (1, 2, 3):
+        _p_, _v_ = _col(f"flowR{_km}_p"), _col(f"flowR{_km}_v")
+        X[f"flowR{_km}"] = [str(c) + "|" + _b5(a) + "|" + _bv(b) for c, a, b in zip(fcls, _p_, _v_)]
+    _t2, _p2 = _col("flowR2_t"), _col("flowR2_p")
+    X["flowT"] = [str(c) + "|" + _bt(t) + "|" + _b3(a) for c, t, a in zip(fcls, _t2, _p2)]
+    _tc = _col("flow_cx_t")
+    X["flowLT"] = [("지방|단지|" + _bt(t) + "|" + _bv(v)) if c == "지방" else "-" for c, t, v in zip(fcls, _tc, fcv)]
     X["lbf"] = X["lb"] + "|" + X["fails"]
     X["lbs"] = X["lb"] + "|" + X["size"]
     X["lbo"] = X["lb"] + "|" + X["own"]
@@ -1376,7 +1460,10 @@ def winbid_model(R, now):
     global WB_FACTORS
     WB_BASE0 = list(WB_FACTORS)
     try:  # 🎛 요인 비중 조정(감정가 없이) - 학습 구간만으로 시간순 검증해 비중·교호항을 고름(최종 검증 구간은 쓰지 않음)
-        _tf, tune_info = wb_tune(tr, WB_BASE0, WB_CANDS); WB_FACTORS = [tuple(f) for f in _tf]
+        _tf, tune_info = wb_tune(tr, WB_BASE0, WB_CANDS + WB_CANDS_SERVER)
+        tune_info["serverOnlyChosen"] = [f for f in _tf if f[0] in SERVER_ONLY]   # 채택됐을 서버 전용 요인(참고) - 모델에는 넣지 않음
+        WB_FACTORS = [tuple(f) for f in _tf if f[0] not in SERVER_ONLY]
+        tune_info["factors"] = [[f, k] for f, k in WB_FACTORS]
     except Exception as e:
         print("  요인 비중 조정 건너뜀:", e); tune_info = {"skipped": str(e)}; WB_FACTORS = list(WB_BASE0)
     f_base = [f for f in WB_FACTORS if f[0] != "jb"]; f_jb = f_base + [WB_JB_FACTOR]
@@ -1396,12 +1483,26 @@ def winbid_model(R, now):
     # 📏 원칙 적용 비용 확인(2026-11-04): 같은 검증 구간에서 요인을 바꿔 가며 오차 비교 - 실제로 쓰는 모델은 맨 아래(감정가·최저가 없음)
     principle = {}
     try:  # 같은 최종 검증 구간에서 "기본 비중" ↔ "조정한 비중" 비교(기록용)
-        for nm, fl in (("기본 비중", WB_BASE0), ("조정한 비중(사용)", f_base)):
+        _srv = [tuple(f) for f in tune_info.get("serverOnlyChosen", [])]
+        _cmp = [("기본 비중", WB_BASE0), ("조정한 비중(사용)", f_base)] + ([("서버 전용 요인 포함(참고·앱 미적용)", f_base + _srv)] if _srv else [])
+        for nm, fl in _cmp:
             WB_FACTORS = fl; _pp = wb_predict(wb_fit(TRF), te); _e = np.exp(_pp) * te["est"].values / te["actual"].values - 1
             principle[nm] = {"medAbsErrPct": round(float(np.median(np.abs(_e))) * 100, 2), "within10Pct": round(float((np.abs(_e) <= 0.10).mean()) * 100, 1), "biasPct": round(float(np.median(-_e / (1 + _e))) * 100, 2), "n": int(len(te))}
         print("  📏 비중 조정 효과(최종 검증 구간):", json.dumps(principle, ensure_ascii=False))
     except Exception as e:
         print("  비중 조정 효과 계산 건너뜀:", e)
+    flow_diag = {}
+    try:  # 🌊 흐름 요인 신호 확인: 최종 모델(흐름 없음)의 잔차(실제÷예상, 로그)를 흐름 상태별로 묶어 중앙값을 봄 - 상태마다 잔차가 일정하게 쏠리면 그 요인에 신호가 있다는 뜻
+        WB_FACTORS = f_base; _m = wb_fit(TRF); _res = np.log(te["actual"].values / te["est"].values) - wb_predict(_m, te); _Xt = wb_features(te)
+        for fn_ in ("flowM", "flowL", "flowS", "flowR1", "flowR2", "flowR3", "flowT", "flowLT"):
+            if fn_ not in _Xt.columns: continue
+            _df = pd.DataFrame({"k": _Xt[fn_].values, "r": _res}); gg = _df.groupby("k")["r"].agg(["median", "count"]); gg = gg[(gg["count"] >= 40) & (gg.index != "-")]
+            if len(gg):
+                flow_diag[fn_] = {"채워진 비율%": round(float((_Xt[fn_].values != "-").mean()) * 100, 1), "상태별(40건+)": {k_: {"n": int(v_["count"]), "잔차중앙%": round(float(v_["median"]) * 100, 1)} for k_, v_ in gg.sort_values("median").iterrows()}}
+        print("  🌊 흐름 상태별 잔차(최종 검증 구간):", json.dumps({k: {"채움": v["채워진 비율%"], "최대쏠림%": max(abs(x["잔차중앙%"]) for x in v["상태별(40건+)"].values())} for k, v in flow_diag.items()}, ensure_ascii=False))
+    except Exception as e:
+        print("  흐름 신호 확인 건너뜀:", e)
+    WB_FACTORS = f_base
     WB_FACTORS = f_base; p0 = wb_predict(wb_fit(TRF), te)
     WB_FACTORS = f_jb; p1 = wb_predict(wb_fit(TRF), te)
     ea = lambda pp: np.abs(np.exp(pp) * te["est"].values / te["actual"].values - 1)
@@ -1484,11 +1585,11 @@ def winbid_model(R, now):
         _fi = {}
         for _c in ("수도권", "지방"):
             _G = D[D["flow_cls"] == _c] if "flow_cls" in D.columns else D.iloc[0:0]
-            if len(_G): _fi[_c] = {"n": int(len(_G)), "동": round(float(_G["flow_dong"].notna().mean()) * 100, 1), "시군구": round(float(_G["flow_sgg"].notna().mean()) * 100, 1), "단지": round(float(_G["flow_cx"].notna().mean()) * 100, 1), "동거래량": round(float(_G["flow_dong_v"].notna().mean()) * 100, 1), "단지거래량": round(float(_G["flow_cx_v"].notna().mean()) * 100, 1)}
+            if len(_G): _fi[_c] = {"n": int(len(_G)), "동": round(float(_G["flow_dong"].notna().mean()) * 100, 1), "시군구": round(float(_G["flow_sgg"].notna().mean()) * 100, 1), "단지": round(float(_G["flow_cx"].notna().mean()) * 100, 1), "동거래량": round(float(_G["flow_dong_v"].notna().mean()) * 100, 1), "단지거래량": round(float(_G["flow_cx_v"].notna().mean()) * 100, 1), "반경2km가격": round(float(_G["flowR2_p"].notna().mean()) * 100, 1) if "flowR2_p" in _G.columns else None, "반경2km회전율": round(float(_G["flowR2_t"].notna().mean()) * 100, 1) if "flowR2_t" in _G.columns else None}
         full["flowInfo"] = _fi
     except Exception as _e:
         print("  흐름 채움 비율 건너뜀:", _e)
-    full["flowIsNew"] = True; full["estRule"] = True; full["factorsK"] = [[f, k] for f, k in WB_FACTORS]
+    full["flowIsNew"] = True; full["flowDiag"] = flow_diag; full["estRule"] = True; full["factorsK"] = [[f, k] for f, k in WB_FACTORS]
     # 경쟁 예상(2026-10-10): 같은 요인으로 로그 응찰자 수를 맞추는 모델 - 앱이 하위 25%(낮음)·상위 25%(높음)로 표시
     try:
         Db = D[D["bidders"].notna() & (D["bidders"] > 0) & (D["sale"] >= 20230101)].copy()
