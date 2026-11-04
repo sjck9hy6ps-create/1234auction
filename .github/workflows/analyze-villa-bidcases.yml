@@ -1,6 +1,8 @@
 name: 분석 - 수도권 빌라 낙찰가 모델
 on:
   workflow_call:
+  push:                # 2026-11-04: 트리거 파일을 고쳐 올리면 한 번 실행(git push로 구동)
+    paths: ['.github/triggers/analyze-villa-bidcases.txt']
   workflow_dispatch:
 jobs:
   an:
