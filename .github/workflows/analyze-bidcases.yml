@@ -3,6 +3,8 @@ name: Analyze bid cases
 
 on:
   workflow_call:       # 주간 파이프라인(weekly-pipeline.yml)이 순서대로 부름 - 단독 일정은 없앰(2026-10-11)
+  push:                # 2026-11-04: 이 파일을 고쳐 올리면 바로 한 번 실행(Actions 화면을 못 열 때 git push로 구동) - 다른 파일 push에는 반응하지 않음
+    paths: ['.github/triggers/analyze-bidcases.txt']
   workflow_dispatch:
     inputs:
       experiment:
