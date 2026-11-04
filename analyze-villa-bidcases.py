@@ -103,14 +103,14 @@ def main():
     X["age"] = D["by"].map(lambda b: "?" if pd.isna(b) else ("~10년" if 2026 - b <= 10 else ("11~20" if 2026 - b <= 20 else ("21~30" if 2026 - b <= 30 else "31+")))).values
     X["lvl"] = D["lvl"].values
     X["season"] = D["sale"].map(lambda d: "겨울" if (d // 100) % 100 in (12, 1, 2) else ("봄" if (d // 100) % 100 <= 5 else ("여름" if (d // 100) % 100 <= 8 else "가을"))).values
-    # 2026-11-04(사용자 원칙): 입찰가·낙찰가는 시세 대비 비율만 - 시세와 시장 흐름(지역·시기·크기·층·연식)과 유찰 횟수로만 예측하고 최저가(lb)·감정가는 쓰지 않음
-    FAC = [("fails", 120), ("region", 120), ("size", 30), ("floor", 30), ("age", 60), ("lvl", 60), ("season", 300), ("dong", 40)]
+    # 2026-11-04(사용자 원칙): 감정가는 쓰지 않음. 시세 대비 최저가(lb)는 입찰자 수를 정하는 큰 요소라 유지
+    FAC = [("lb", 10), ("fails", 120), ("region", 120), ("size", 30), ("floor", 30), ("age", 60), ("lvl", 60), ("season", 300), ("dong", 40)]
     y = np.log(D["ratio"].values)
     cut = 20260601
     tr = (D["sale"] < cut).values; te = ~tr
     print(f"학습 {tr.sum():,} / 시험(2026-06~) {te.sum():,}")
     res = {}
-    for name, fac in (("기본(지역만)", [("region", 120)]), ("+유찰·지역·평형·층", [("fails", 120), ("region", 120), ("size", 30), ("floor", 30)]), ("전체", FAC), ("전체−동", [f for f in FAC if f[0] != "dong"])):
+    for name, fac in (("기본(최저가만)", [("lb", 10)]), ("+유찰·지역·평형·층", [("lb", 10), ("fails", 120), ("region", 120), ("size", 30), ("floor", 30)]), ("전체", FAC), ("전체−동", [f for f in FAC if f[0] != "dong"])):
         m = fit_additive(X[tr], y[tr], fac); p = predict(m, X[te], fac)
         pr = np.exp(p) * D["est"].values[te]; act = D["actual"].values[te]
         e = pr / act - 1

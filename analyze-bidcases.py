@@ -747,8 +747,6 @@ def crowd_features(D, use_region=False):
     X["floor"] = D["floor"].map(lambda f: "?" if f is None or pd.isna(f) else ("1층" if f == 1 else ("2~3층" if f <= 3 else "4층+")))
     X["size"] = D["area"].map(lambda a: "소형" if a < 60 else ("중형" if a <= 85 else "대형"))
     X["own"] = D["own"].map(lambda n: "1~2" if n <= 2 else ("3~5" if n <= 5 else ("6~10" if n <= 10 else "11+")))
-    la = np.log(D["appraisal"].astype(float) / D["est"].astype(float))
-    X["lab"] = la.map(lambda v: "?" if v is None or not np.isfinite(v) else str(sum(1 for e in CROWD_LAB_EDGES if v > e)))
     bk = [crowd_bucket(m, a, c) for m, a, c in zip(D["minbid"].astype(float), D["age"].astype(float), D["cx12"].astype(float))]
     X["minb"] = [b[0] for b in bk]; X["ageb"] = [b[1] for b in bk]; X["cxb"] = [b[2] for b in bk]
     lbc = lm.map(lambda v: "L" if v <= -0.25 else ("M" if v <= -0.10 else "H"))
@@ -939,7 +937,7 @@ def crowd_analysis(R, now):
     for k, pat in KW.items():
         D["kw_" + k] = notes.str.contains(pat, regex=True).astype(int)
     D["kw_cnt"] = D[[c for c in D.columns if c.startswith("kw_") and c != "kw_cnt"]].sum(axis=1)
-    D["lb"] = np.log(D["minbid"] / D["est"]); D["lab"] = np.log(D["appraisal"].astype(float) / D["est"]) if "appraisal" in D else np.nan
+    D["lb"] = np.log(D["minbid"] / D["est"])  # 감정가(lab)는 쓰지 않음(2026-11-04)
     D["fails_n"] = D["fails"].map(lambda f: np.nan if f is None or pd.isna(f) else min(int(f), 4))
     D["logmin"] = np.log(D["minbid"].astype(float))
     D["season"] = ((D["sale"] // 100) % 100).astype(int)
@@ -951,7 +949,7 @@ def crowd_analysis(R, now):
     cats = ["region_c", "tier_c", "land_c"]
     for c in cats:
         D[c + "_i"] = D[c].astype("category").cat.codes
-    base_f = ["lb", "fails_n", "region_c_i", "tier_c_i", "season", "fl", "area_n", "own_n", "lab"]
+    base_f = ["lb", "fails_n", "region_c_i", "tier_c_i", "season", "fl", "area_n", "own_n"]
     ext_f = base_f + ["logmin", "age_n", "cx3y_n", "dong3y_n", "land_c_i"] + [c for c in D.columns if c.startswith("kw_")]
     last = pd.to_datetime(str(int(D["sale"].max())), format="%Y%m%d"); cut = int((last - pd.DateOffset(months=12)).strftime("%Y%m%d"))
     tr, te = D[D["sale"] < cut], D[D["sale"] >= cut]
@@ -1051,9 +1049,10 @@ def competition_stats(R, now):
 #  보통 오차 5.46% → 5.22%, ±10% 77.1% → 78.6%, 예측 쏠림 −0.93% → 0%(예측가로 쓸 때 낙찰 45% → 50%).
 #  k는 클수록 그 요인의 영향을 줄임(표본 적은 칸을 전체 평균 쪽으로 당김). 최근 사례 가중·지역 시장 분위기·준공연도 등은 시험했으나 효과 없거나 미미해 제외.
 #  lab = 감정가÷시세 구간, lbl = 최저가×감정가 교호, labf = 감정가×유찰 교호(감정가는 최저가가 어떤 규칙으로 정해졌는지 알려 줌 - 낙찰가 예측에만 사용, 시세·예상매도가에는 안 씀)
-WB_FACTORS = [("fails", 120), ("region", 120), ("tier", 5), ("season", 300), ("floor", 5), ("size", 30), ("own", 120), ("dong", 40)]
-# 2026-11-04(사용자 원칙): 입찰가·낙찰가는 '시세 대비 비율'만 - 시세와 시장 흐름(지역·동·시기·인기·층·크기·거래 활발도·유찰 횟수)으로만 예측. 감정가(lab·lbl·labf)와 최저가(lb)는 쓰지 않음(최저가는 감정가에서 나온 값이라 입찰가를 최저가에 붙잡아 낮추고 입찰 확률을 못 올림). 감정가·최저가는 결과 측정과 금액 입력 점검에만 씀
-WB_LAB_EDGES = (-0.2, -0.1, 0.0, 0.1, 0.2, 0.35)
+WB_FACTORS = [("lb", 10), ("fails", 120), ("region", 120), ("tier", 5), ("season", 300), ("floor", 5), ("size", 30), ("own", 120), ("dong", 40)]
+# 2026-11-04(사용자 원칙): 입찰가·낙찰가는 '시세 대비 비율'만 - 시세와 시장 흐름(지역·동·시기·인기·층·크기·거래 활발도·유찰 횟수)과 시세 대비 최저가(입찰자 수를 정하는 큰 요소)로만 예측. 감정가는 철저히 계산에서 제외(결과 측정·금액 입력 점검에만 씀).
+# 각 요인의 비중(k: 클수록 전국 평균 쪽으로 당김)은 winbid_model이 매주 감정가 없이 시간순 검증으로 다시 조정(wb_tune)
+WB_CANDS = [("lbf", 40), ("lbs", 40), ("lbo", 40), ("regf", 60)]  # 감정가 없는 교호항 후보 - 검증에서 좋아질 때만 추가
 WB_JB_FACTOR = ("jb", 40)  # 최근 거래 점프 요인 - winbid_model이 검증(학습에 안 쓴 최근 12개월)에서 좋아질 때만 WB_FACTORS에 넣음
 
 
@@ -1070,10 +1069,11 @@ def wb_features(D):
     X["floor"] = D["floor"].map(lambda f: "1층" if f == 1 else ("2~3층" if f in (2, 3) else "4층+"))
     X["size"] = D["area"].map(lambda a: "소형" if a < 60 else ("중형" if a <= 85 else "대형"))
     X["own"] = D["own"].map(lambda n: "1~2" if n <= 2 else ("3~5" if n <= 5 else ("6~10" if n <= 10 else "11+")))
-    la = np.log(D["appraisal"].astype(float) / D["est"].astype(float))
-    X["lab"] = la.map(lambda v: "?" if v is None or not np.isfinite(v) else str(sum(1 for e in WB_LAB_EDGES if v > e)))
-    X["lbl"] = X["lb"] + "|" + X["lab"]
-    X["labf"] = X["lab"] + "|" + X["fails"]
+    # 2026-11-04(사용자 원칙): 감정가는 계산에 일절 쓰지 않음(감정가÷시세·교호항 계산 삭제). 시세 대비 최저가(lb)는 입찰자 수를 정하는 큰 요소라 유지하고, 교호항은 감정가 없이 최저가·유찰·지역·크기·거래 활발도로만 만듦
+    X["lbf"] = X["lb"] + "|" + X["fails"]
+    X["lbs"] = X["lb"] + "|" + X["size"]
+    X["lbo"] = X["lb"] + "|" + X["own"]
+    X["regf"] = X["region"] + "|" + X["fails"]
     if "notes" in D.columns:  # 2026-10-29 경매현황 특이사항 태그(HUG 임차권 인수조건변경·임차권등기·대항력 있는 임차인) - 실험용 요인(WB_FACTORS에 넣을 때만 쓰임)
         nt = D["notes"].fillna("").astype(str)
         X["hug"] = np.where(nt.str.contains("HUG"), "HUG", np.where(nt.str.contains("임차권|대항력"), "임차", "없음"))
@@ -1100,6 +1100,51 @@ def wb_fit_y(D, y, iters=6):
             eff[f] = new
             pred = pred - cur + X[f].map(new).fillna(0).values
     return {"base": base, "eff": {f: {str(k): round(float(v), 4) for k, v in d.items()} for f, d in eff.items()}, "n": int(len(y))}
+
+
+def wb_tune(tr, factors0, cands):
+    """2026-11-04(사용자: 감정가는 무시하되 다른 요인들의 비중을 조절해 최고의 정확도를) - 학습 구간(tr)만 써서 시간순 2개 검증 구간(직전 12개월·그 앞 12개월)의 보통 오차(평균)가 가장 낮아지도록
+    ① 요인별 비중(k)을 ×0.5·×2로 두 바퀴 조정 ② 교호항 후보를 하나씩 추가해 0.01%p 넘게 좋아질 때만 채택. 최종 검증(최근 12개월)은 여기에 쓰지 않아 숫자가 부풀지 않음."""
+    global WB_FACTORS
+    last = pd.to_datetime(str(int(tr["sale"].max())), format="%Y%m%d")
+    folds = []
+    for m_ in (12, 24):
+        hi = int((last - pd.DateOffset(months=m_ - 12)).strftime("%Y%m%d")) if m_ > 12 else int(tr["sale"].max()) + 1
+        lo = int((last - pd.DateOffset(months=m_)).strftime("%Y%m%d"))
+        trn, tst = tr[tr["sale"] < lo], tr[(tr["sale"] >= lo) & (tr["sale"] < hi)]
+        if len(trn) >= 3000 and len(tst) >= 500: folds.append((trn, tst))
+    if not folds:
+        return factors0, {"skipped": "검증 구간 부족"}
+    def score(fl):
+        global WB_FACTORS
+        WB_FACTORS = fl; es = []
+        for trn, tst in folds:
+            p_ = wb_predict(wb_fit(trn), tst); es.append(float(np.median(np.abs(np.exp(p_) * tst["est"].values / tst["actual"].values - 1))))
+        return float(np.mean(es))
+    keep = WB_FACTORS
+    try:
+        cur = [tuple(f) for f in factors0]; best = score(cur); start = best
+        for _pass in range(2):
+            for i in range(len(cur)):
+                for mult in (0.5, 2.0):
+                    trial = list(cur); trial[i] = (cur[i][0], max(1, round(cur[i][1] * mult)))
+                    sc = score(trial)
+                    if sc < best - 0.00005: best, cur = sc, trial
+        added = []
+        for _round in range(3):
+            pick = None
+            for nm, k0 in cands:
+                if any(f[0] == nm for f in cur): continue
+                for k in (k0, k0 * 3):
+                    sc = score(cur + [(nm, k)])
+                    if sc < best - 0.0001 and (pick is None or sc < pick[0]): pick = (sc, (nm, k))
+            if not pick: break
+            best = pick[0]; cur = cur + [pick[1]]; added.append(pick[1][0])
+        info = {"folds": len(folds), "startErrPct": round(start * 100, 3), "tunedErrPct": round(best * 100, 3), "factors": [[f, k] for f, k in cur], "added": added}
+        print("  🎛  요인 비중 조정(감정가 제외):", json.dumps(info, ensure_ascii=False))
+        return cur, info
+    finally:
+        WB_FACTORS = keep
 
 
 def wb_predict(model, D):
@@ -1264,6 +1309,9 @@ def resale_gap_report(R, now):
 
 
 def winbid_model(R, now):
+    # 🆕 시세 새 규칙(est_rule) 적용(2026-11-04, 사용자 결정): 모델이 보는 시세(est)를 새 규칙으로 - 앱도 같은 규칙으로 시세를 계산해야 함(모델 payload의 estRule 표시)
+    R0 = R
+    R = R0.copy(); R["est_q40"] = R["est"]; R["est"] = R["est_rule"].where(R["est_rule"].notna() & (R["est_rule"] > 0))
     D = R[R["est"].notna() & (R["est"] > 0) & R["actual"].notna() & R["minbid"].notna() & (R["minbid"] > 0) & (R["sale"] >= 20200101)].copy()
     D = D[np.log(D["actual"] / D["est"]).between(np.log(0.4), np.log(1.6))]
     if len(D) < 3000:
@@ -1272,6 +1320,11 @@ def winbid_model(R, now):
     cut = int((last - pd.DateOffset(months=12)).strftime("%Y%m%d"))
     tr, te = D[D["sale"] < cut], D[D["sale"] >= cut]
     global WB_FACTORS
+    WB_BASE0 = list(WB_FACTORS)
+    try:  # 🎛 요인 비중 조정(감정가 없이) - 학습 구간만으로 시간순 검증해 비중·교호항을 고름(최종 검증 구간은 쓰지 않음)
+        _tf, tune_info = wb_tune(tr, WB_BASE0, WB_CANDS); WB_FACTORS = [tuple(f) for f in _tf]
+    except Exception as e:
+        print("  요인 비중 조정 건너뜀:", e); tune_info = {"skipped": str(e)}; WB_FACTORS = list(WB_BASE0)
     f_base = [f for f in WB_FACTORS if f[0] != "jb"]; f_jb = f_base + [WB_JB_FACTOR]
     # 🕐 최근 가중(2026-11-04, 사용자 "개선안 적용"): 학습에서 최근 12개월 사례를 3배(원본 + 2번 더)로 셈. 리포트 12주 비교에서 보통 오차 5.49→5.41%(±10% 안 +0.8%p).
     # 같은 학습/검증 분할에서 가중 없는 모델과 비교해 좋아질 때만 씀(아니면 예전 방식 그대로)
@@ -1288,18 +1341,13 @@ def winbid_model(R, now):
     TRF = trw if use_rw else tr
     # 📏 원칙 적용 비용 확인(2026-11-04): 같은 검증 구간에서 요인을 바꿔 가며 오차 비교 - 실제로 쓰는 모델은 맨 아래(감정가·최저가 없음)
     principle = {}
-    try:
-        _all = [("lb", 10), ("fails", 120), ("region", 120), ("tier", 5), ("season", 300), ("floor", 5), ("size", 30), ("own", 120), ("lab", 30), ("lbl", 40), ("labf", 40), ("dong", 40)]
-        _def = {"감정가·최저가 모두 사용(이전)": _all, "감정가만 뺌": [f for f in _all if f[0] not in ("lab", "lbl", "labf")],
-                "감정가·최저가 뺌(유찰 횟수는 사용)": [f for f in _all if f[0] not in ("lab", "lbl", "labf", "lb")],
-                "감정가·최저가·유찰 횟수 모두 뺌": [f for f in _all if f[0] not in ("lab", "lbl", "labf", "lb", "fails")]}
-        for nm, fl in _def.items():
-            WB_FACTORS = fl; _m = wb_fit(TRF); _pp = wb_predict(_m, te)
-            _e = np.exp(_pp) * te["est"].values / te["actual"].values - 1
+    try:  # 같은 최종 검증 구간에서 "기본 비중" ↔ "조정한 비중" 비교(기록용)
+        for nm, fl in (("기본 비중", WB_BASE0), ("조정한 비중(사용)", f_base)):
+            WB_FACTORS = fl; _pp = wb_predict(wb_fit(TRF), te); _e = np.exp(_pp) * te["est"].values / te["actual"].values - 1
             principle[nm] = {"medAbsErrPct": round(float(np.median(np.abs(_e))) * 100, 2), "within10Pct": round(float((np.abs(_e) <= 0.10).mean()) * 100, 1), "biasPct": round(float(np.median(-_e / (1 + _e))) * 100, 2), "n": int(len(te))}
-        print("  📏 원칙 적용 비용(같은 검증 구간):", json.dumps(principle, ensure_ascii=False))
+        print("  📏 비중 조정 효과(최종 검증 구간):", json.dumps(principle, ensure_ascii=False))
     except Exception as e:
-        print("  원칙 적용 비용 계산 건너뜀:", e)
+        print("  비중 조정 효과 계산 건너뜀:", e)
     WB_FACTORS = f_base; p0 = wb_predict(wb_fit(TRF), te)
     WB_FACTORS = f_jb; p1 = wb_predict(wb_fit(TRF), te)
     ea = lambda pp: np.abs(np.exp(pp) * te["est"].values / te["actual"].values - 1)
@@ -1355,16 +1403,16 @@ def winbid_model(R, now):
     except Exception as e:
         print("  틈새 진단 건너뜀:", e)
     try:
-        resale_gap_report(R, now)
+        resale_gap_report(R0, now)
     except Exception as e:
         print("  되팔기 간극 건너뜀:", e)
     try:
-        est_rule_experiment(R, wb_fit, wb_predict, now)
+        est_rule_experiment(R0, wb_fit, wb_predict, now)
     except Exception as e:
         print("  새 시세 기준 실험 건너뜀:", e)
     try:
         print("  ▶ 시세 기준 지점(40/50/60%) 비교")
-        est_rule_experiment(R, wb_fit, wb_predict, now, (("40%(현재)", "est"), ("50%", "est_q50"), ("60%", "est_q60")), "시세 기준 지점 40/50/60% 비교")
+        est_rule_experiment(R0, wb_fit, wb_predict, now, (("40%(현재)", "est"), ("50%", "est_q50"), ("60%", "est_q60")), "시세 기준 지점 40/50/60% 비교")
     except Exception as e:
         print("  시세 기준 지점 비교 건너뜀:", e)
     if os.environ.get("WB_EXP"):  # 2026-10-25 예상 낙찰가 개선 실험(수동 실행 때만) - 앱 계산은 바꾸지 않음
@@ -1377,7 +1425,7 @@ def winbid_model(R, now):
         except Exception as e:
             import traceback; traceback.print_exc(); print("  개선 실험 건너뜀:", e)
     full = wb_fit(_recent_w(D, int(D["sale"].max())) if use_rw else D)
-    full["recentWeight"] = bool(use_rw); full["n"] = int(len(D)); full["principle"] = principle; full["factors"] = [f for f, _ in WB_FACTORS]
+    full["recentWeight"] = bool(use_rw); full["n"] = int(len(D)); full["principle"] = principle; full["factors"] = [f for f, _ in WB_FACTORS]; full["tuned"] = tune_info; full["estRule"] = True; full["factorsK"] = [[f, k] for f, k in WB_FACTORS]
     # 경쟁 예상(2026-10-10): 같은 요인으로 로그 응찰자 수를 맞추는 모델 - 앱이 하위 25%(낮음)·상위 25%(높음)로 표시
     try:
         Db = D[D["bidders"].notna() & (D["bidders"] > 0) & (D["sale"] >= 20230101)].copy()
