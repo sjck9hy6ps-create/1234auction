@@ -724,7 +724,7 @@ def attention_analysis(R, seg_stats, med):
 
 
 
-CROWD_FACTORS = [("lb", 10), ("fails", 120), ("tier", 5), ("floor", 5), ("size", 30), ("own", 120), ("lab", 30), ("minb", 30), ("ageb", 60), ("cxb", 30), ("lbcx", 60), ("lbo", 60)]
+CROWD_FACTORS = [("lb", 10), ("fails", 120), ("tier", 5), ("floor", 5), ("size", 30), ("own", 120), ("minb", 30), ("ageb", 60), ("cxb", 30), ("lbcx", 60), ("lbo", 60)]
 CROWD_RC_FACTORS = [("rc", 120), ("rclb", 60)]  # 큰 지역(서울·경기·인천·지방) 요인 - 시군구·법정동 평균이 아니라 3개 권역(2026-10-24 검증 후 쓸지 결정)
 CROWD_LAB_EDGES = [-0.2, -0.1, 0, 0.1, 0.2, 0.35]
 
@@ -1051,7 +1051,8 @@ def competition_stats(R, now):
 #  보통 오차 5.46% → 5.22%, ±10% 77.1% → 78.6%, 예측 쏠림 −0.93% → 0%(예측가로 쓸 때 낙찰 45% → 50%).
 #  k는 클수록 그 요인의 영향을 줄임(표본 적은 칸을 전체 평균 쪽으로 당김). 최근 사례 가중·지역 시장 분위기·준공연도 등은 시험했으나 효과 없거나 미미해 제외.
 #  lab = 감정가÷시세 구간, lbl = 최저가×감정가 교호, labf = 감정가×유찰 교호(감정가는 최저가가 어떤 규칙으로 정해졌는지 알려 줌 - 낙찰가 예측에만 사용, 시세·예상매도가에는 안 씀)
-WB_FACTORS = [("lb", 10), ("fails", 120), ("region", 120), ("tier", 5), ("season", 300), ("floor", 5), ("size", 30), ("own", 120), ("lab", 30), ("lbl", 40), ("labf", 40), ("dong", 40)]
+WB_FACTORS = [("fails", 120), ("region", 120), ("tier", 5), ("season", 300), ("floor", 5), ("size", 30), ("own", 120), ("dong", 40)]
+# 2026-11-04(사용자 원칙): 입찰가·낙찰가는 '시세 대비 비율'만 - 시세와 시장 흐름(지역·동·시기·인기·층·크기·거래 활발도·유찰 횟수)으로만 예측. 감정가(lab·lbl·labf)와 최저가(lb)는 쓰지 않음(최저가는 감정가에서 나온 값이라 입찰가를 최저가에 붙잡아 낮추고 입찰 확률을 못 올림). 감정가·최저가는 결과 측정과 금액 입력 점검에만 씀
 WB_LAB_EDGES = (-0.2, -0.1, 0.0, 0.1, 0.2, 0.35)
 WB_JB_FACTOR = ("jb", 40)  # 최근 거래 점프 요인 - winbid_model이 검증(학습에 안 쓴 최근 12개월)에서 좋아질 때만 WB_FACTORS에 넣음
 
@@ -1285,6 +1286,20 @@ def winbid_model(R, now):
     use_rw = bool(_e_w < _e_plain - 0.0003)
     print(f"  🕐 최근 가중(최근 12개월 3배) 검증: 보통 오차 {_e_plain * 100:.3f}% → {_e_w * 100:.3f}% →", "사용" if use_rw else "사용 안 함(효과 없음)")
     TRF = trw if use_rw else tr
+    # 📏 원칙 적용 비용 확인(2026-11-04): 같은 검증 구간에서 요인을 바꿔 가며 오차 비교 - 실제로 쓰는 모델은 맨 아래(감정가·최저가 없음)
+    principle = {}
+    try:
+        _all = [("lb", 10), ("fails", 120), ("region", 120), ("tier", 5), ("season", 300), ("floor", 5), ("size", 30), ("own", 120), ("lab", 30), ("lbl", 40), ("labf", 40), ("dong", 40)]
+        _def = {"감정가·최저가 모두 사용(이전)": _all, "감정가만 뺌": [f for f in _all if f[0] not in ("lab", "lbl", "labf")],
+                "감정가·최저가 뺌(유찰 횟수는 사용)": [f for f in _all if f[0] not in ("lab", "lbl", "labf", "lb")],
+                "감정가·최저가·유찰 횟수 모두 뺌": [f for f in _all if f[0] not in ("lab", "lbl", "labf", "lb", "fails")]}
+        for nm, fl in _def.items():
+            WB_FACTORS = fl; _m = wb_fit(TRF); _pp = wb_predict(_m, te)
+            _e = np.exp(_pp) * te["est"].values / te["actual"].values - 1
+            principle[nm] = {"medAbsErrPct": round(float(np.median(np.abs(_e))) * 100, 2), "within10Pct": round(float((np.abs(_e) <= 0.10).mean()) * 100, 1), "biasPct": round(float(np.median(-_e / (1 + _e))) * 100, 2), "n": int(len(te))}
+        print("  📏 원칙 적용 비용(같은 검증 구간):", json.dumps(principle, ensure_ascii=False))
+    except Exception as e:
+        print("  원칙 적용 비용 계산 건너뜀:", e)
     WB_FACTORS = f_base; p0 = wb_predict(wb_fit(TRF), te)
     WB_FACTORS = f_jb; p1 = wb_predict(wb_fit(TRF), te)
     ea = lambda pp: np.abs(np.exp(pp) * te["est"].values / te["actual"].values - 1)
@@ -1362,7 +1377,7 @@ def winbid_model(R, now):
         except Exception as e:
             import traceback; traceback.print_exc(); print("  개선 실험 건너뜀:", e)
     full = wb_fit(_recent_w(D, int(D["sale"].max())) if use_rw else D)
-    full["recentWeight"] = bool(use_rw); full["n"] = int(len(D))
+    full["recentWeight"] = bool(use_rw); full["n"] = int(len(D)); full["principle"] = principle; full["factors"] = [f for f, _ in WB_FACTORS]
     # 경쟁 예상(2026-10-10): 같은 요인으로 로그 응찰자 수를 맞추는 모델 - 앱이 하위 25%(낮음)·상위 25%(높음)로 표시
     try:
         Db = D[D["bidders"].notna() & (D["bidders"] > 0) & (D["sale"] >= 20230101)].copy()

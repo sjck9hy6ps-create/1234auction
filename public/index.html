@@ -3970,8 +3970,7 @@ function villaWinbid(row, ve, title) {
     var a = row.a, area = (parseFloat(a.pyung) || 0) * 3.305785, f = parseInt(a.floor, 10);
     var yr = title && title.useAprDay ? parseInt(String(title.useAprDay).slice(0, 4), 10) : (parseInt(a.buildYear, 10) || ve.by || null), age = yr ? new Date().getFullYear() - yr : null;
     var mm = a.bidDate ? parseInt(a.bidDate.slice(5, 7), 10) : (new Date().getMonth() + 1);
-    var keys = {
-        lb: String(Math.max(-24, Math.min(9, Math.floor(Math.log(row.minBid / ve.est) / 0.05)))),
+    var keys = {  // 2026-11-04: 최저가÷시세(lb)는 쓰지 않음(사용자 원칙: 시세 대비 비율만)
         fails: villaFailsFromRatio(row.minBid, parseFloat(a.appraisal) || 0),
         region: villaRegionLabel(a.addr) || '?',
         size: area < 40 ? '40↓' : (area < 60 ? '40~60' : (area < 85 ? '60~85' : '85↑')),
@@ -4025,8 +4024,6 @@ function crowdFor(r) {
         var m = crowdModel, b = r.wbBase, os = r.ownStats, a = r.a;
         if (b && b.est > 0 && r.minBid > 0 && os && a) {
             var lm = Math.log(r.minBid / b.est), fl = parseInt(a.floor), area = (parseFloat(r.pyung) || 0) * 3.305785;
-            var apr = parseFloat(r.appraisal) || parseFloat(a.appraisal) || 0, labV = '?';
-            if (apr > 0) { var la = Math.log(apr / b.est); labV = String([-0.2, -0.1, 0, 0.1, 0.2, 0.35].filter(function(e) { return la > e; }).length); }
             var by = parseInt(a.buildYear || r.estBuildYear) || 0, yr = a.bidDate ? parseInt(String(a.bidDate).slice(0, 4), 10) : new Date().getFullYear(), age = by ? yr - by : null;
             var cx = (os.v6 || 0) + (os.vPrev6 || 0), mb = r.minBid;
             var minb = mb < 5000 ? '<0.5억' : (mb < 10000 ? '0.5-1억' : (mb < 15000 ? '1-1.5억' : (mb < 20000 ? '1.5-2억' : (mb < 30000 ? '2-3억' : (mb < 40000 ? '3-4억' : '4억+')))));
@@ -4037,7 +4034,7 @@ function crowdFor(r) {
             var keys = {
                 lb: String(Math.max(-24, Math.min(9, Math.floor(lm / 0.05)))), fails: r.fails == null ? '?' : String(Math.min(3, r.fails)),
                 tier: r.pop && !r.pop.noRecent && r.pop.tier ? r.pop.tier : '없음', floor: isNaN(fl) ? '?' : (fl === 1 ? '1층' : (fl <= 3 ? '2~3층' : '4층+')),
-                size: area < 60 ? '소형' : (area <= 85 ? '중형' : '대형'), own: own, lab: labV, minb: minb, ageb: ageb, cxb: cxb, lbcx: lbc + '|' + cxb, lbo: lbc + '|' + own,
+                size: area < 60 ? '소형' : (area <= 85 ? '중형' : '대형'), own: own, minb: minb, ageb: ageb, cxb: cxb, lbcx: lbc + '|' + cxb, lbo: lbc + '|' + own,
                 rc: r.regionCls || '지방', rclb: (r.regionCls || '지방') + '|' + lbc, regionf: competitionRegionKey(a.addr) || '?', dong: (competitionRegionKey(a.addr) || '?') + '|' + dongKey(a.dong) // 큰 권역·시군구·법정동(서버 모델이 검증을 통과해 가졌을 때만 쓰임, 법정동 키는 낙찰가 모델과 같은 형식)(서울·경기인천·지방) - 서버 모델이 검증을 통과해 이 요인을 가졌을 때만 쓰임
             };
             var p = m.base; (m.factors || []).forEach(function(f) { var v = (m.eff[f] || {})[keys[f]]; if (typeof v === 'number') p += v; });
@@ -20065,8 +20062,8 @@ function loadWinbidModel() {
     };
     Promise.all([fetch('/api/data-coverage?mode=winbid').then(function(r) { return r.json(); }), loadWinbidCorr()]).then(function(pair) {
         var d = pair[0]; if (d && typeof d === 'object') { d.corrTable = pair[1].apt; d.corrVariant = pair[1].aptVariant; }
-        // 감정가 요인(lab)이 없는 옛 서버 모델이면 새 요인이 들어 있는 기본 파일을 먼저 씀(서버 계산이 새 모델로 바뀔 때까지)
-        if (d && d.eff && d.eff.lab && use(d)) return;
+        // 2026-11-04: 감정가 요인은 쓰지 않으므로(사용자 원칙) 서버 모델이 있으면 그대로 씀 - 기본 파일은 서버를 못 받을 때만
+        if (d && d.eff && use(d)) return;
         return fetch('/winbid-model.json').then(function(r) { return r.json(); }).then(function(d2) { if (!use(d2)) winbidLoading = false; });
     }).catch(function() {
         fetch('/winbid-model.json').then(function(r) { return r.json(); }).then(function(d2) { if (!use(d2)) winbidLoading = false; }).catch(function() { winbidLoading = false; });
@@ -20127,8 +20124,8 @@ function winbidFor(row) {
     if (!isFinite(lmin)) return null;
     var e = winbidModel.eff, mm = a.bidDate ? parseInt(a.bidDate.slice(5, 7), 10) : (new Date().getMonth() + 1);
     var fl = parseInt(a.floor), area = (parseFloat(row.pyung) || 0) * 3.305785;
+    // 2026-11-04(사용자 원칙: 입찰가·낙찰가는 시세 대비 비율만, 감정가·최저가는 판단 기준이 아님) 최저가÷시세 요인(lb)은 모델에 있어도 쓰지 않음 - 서버 모델이 새로 계산되면(요인 목록 factors에 lb 없음) 그대로 일치
     var keys = {
-        lb: String(Math.max(-24, Math.min(9, Math.floor(lmin / 0.05)))),
         fails: row.fails == null ? '?' : String(Math.min(3, row.fails)),
         region: competitionRegionKey(a.addr) || '?',
         tier: row.pop && !row.pop.noRecent && row.pop.tier ? row.pop.tier : '없음',
@@ -20137,10 +20134,8 @@ function winbidFor(row) {
         size: area < 60 ? '소형' : (area <= 85 ? '중형' : '대형'),
         own: b.own <= 2 ? '1~2' : (b.own <= 5 ? '3~5' : (b.own <= 10 ? '6~10' : '11+'))
     };
-    // 2026-10-08 감정가 요인(서버 모델과 같은 구간): lab = 감정가÷시세 구간(0~6), lbl = 최저가×감정가 교호, labf = 감정가×유찰 교호
-    var apr = parseFloat(row.appraisal) || parseFloat(a.appraisal) || 0, labV = '?';
-    if (apr > 0) { var la = Math.log(apr / b.est); labV = String([-0.2, -0.1, 0, 0.1, 0.2, 0.35].filter(function(e2) { return la > e2; }).length); }
-    keys.lab = labV; keys.lbl = keys.lb + '|' + labV; keys.labf = labV + '|' + keys.fails;
+    // 2026-11-04(사용자 원칙: 감정가는 낙찰가·입찰가 산정에 넣지 않음 - 감정가가 들어가면 입찰 확률이 높아질 수 없음): 감정가 요인(lab·lbl·labf)은 모델에 있어도 쓰지 않음. 감정가는 금액 입력 점검(amountSuspect)에만 씀
+    var apr = parseFloat(row.appraisal) || parseFloat(a.appraisal) || 0;
     // 최근 거래 점프(2026-10-24): 입찰 전 3개월 안 같은 평형 가장 최근 거래 ÷ 시세 - 서버 모델이 검증을 통과해 jb 요인을 가졌을 때만 쓰임(없으면 무시)
     if (e.jb) { var osj = row.ownStats; keys.jb = (osj && osj.lastP > 0 && osj.lastAgeM != null && osj.lastAgeM <= 3) ? (function(v) { return v <= -0.05 ? 'dn' : (v <= 0.05 ? 'fl' : (v <= 0.12 ? 'up1' : (v <= 0.20 ? 'up2' : 'up3'))); })(Math.log(osj.lastP / b.est)) : '?'; }
     keys.dong = keys.region + '|' + dongKey(a.dong); // 2026-10-09 법정동 보정(서버 모델에 dong 요인이 있을 때만 적용됨)
@@ -20157,7 +20152,8 @@ function winbidFor(row) {
         Object.keys(keys).forEach(function(f) { var v = (bm.eff[f] || {})[keys[f]]; if (typeof v === 'number') pbv += v; });
         bidN = Math.exp(pbv); comp = pbv <= bm.q25 ? '낮음' : (pbv >= bm.q75 ? '높음' : '보통');
         var ca = winbidModel.compAdj && winbidModel.compAdj[comp];
-        if (ca && ca.n >= 300 && typeof ca.adj === 'number') { compShift = Math.max(-0.08, Math.min(0.08, ca.adj)); pred += compShift; }
+        // 2026-11-04(사용자 원칙: 입찰가·낙찰가는 시세 대비 비율만) 경쟁 예상은 최저가 기반이라 낙찰가에 더하지 않고 표시용으로만 둠
+        // if (ca && ca.n >= 300 && typeof ca.adj === 'number') { compShift = Math.max(-0.08, Math.min(0.08, ca.adj)); pred += compShift; }
     }
     var corrPct = null;  // 자동 보정(지역별) - 서울이면 +, 지방이면 − 처럼 최근 12주 잔차 반영
     if (winbidModel.corrTable) { var rc = row.regionCls || (row.lawd ? aptRegionClass(row.lawd) : null), cv = rc != null ? winbidModel.corrTable[rc] : null; if (typeof cv === 'number') { corrPct = cv; pred += cv / 100; } }
@@ -21084,7 +21080,7 @@ async function mergeServerBoardCache(local, onlyFirst) {
 setTimeout(function() { try { listIdbOp('readwrite', function(st) { return st.delete('bidBoardCache:v1'); }); } catch (e) {} }, 4000); // 예전 큰 로컬 저장본(서버 계산본 포함, 수십 MB)은 읽지 않고 지움(느린 기기에서 열 때 수 초 멈춤, 2026-10-21)
 setTimeout(function() { var go = function() { try { srvBoardParts(); setTimeout(function() { try { window.villaSrvP = villaFetchServerCalc(); } catch (e) {} }, 4000); } catch (e) {} }; if (window.requestIdleCallback) requestIdleCallback(go, { timeout: 6000 }); else go(); }, 2500); // 앱을 켜고 2.5초 뒤 한가할 때 배경에서 미리 받기(빌라는 4초 더 뒤)
 // 저장 계산을 다시 써도 되는지 - 물건 입력값(시세 계산에 쓰는 것)과 입찰일 지남 여부. 계산 방식이 바뀌면 BOARD_CALC_VER을 올림
-var BOARD_CALC_VER = 67; // 54: 튀는 가격 반영 안 함·경고만(2026-10-24) - // 53: 최근 거래 시세반영/튀는 가격 구별(2026-10-24) - // 52: 임장 생략 판정(2026-10-19) - // 51: 전세가율 구간 보정·위험 신호(2026-10-18) - // 50: 지방 최근 거래 비슷한 층 비중·1~2건은 12개월 원값(2026-10-18) - // 49: 근거 약함 경고를 판정 단계에서 다시 붙임 - // 48: 예상매도가-감정가 큰 차이 근거 약함 표시 - // 47: 다른 평형 환산이 같은 평형과 20% 넘게 다르면 섞지 않음 - // 46: 같은 동 추론(③④) 제거·거래 없는 단지는 기존 주변 비교 + 근거 약함(2026-10-18) - // 45: 회전율 구간별 보정 항상 적용(주간 갱신 표, 2026-10-17) - // 44: 추론에 최근 6개월 1~2건 포함 - // 43: 6개월 거래 부족 시 단계별 추론(2026-10-17) - // 42: 지역별 예상매도가(서울 최근3건·경기인천 반감1개월·지방 반감2개월)와 위험 여유(2026-10-17) - // 41: 아파트 예상매도가를 최근 6개월 같은 평형 거래의 최근가중 중위값으로(전국 백테스트, 2026-10-17) - // 40: 임차인 둘로 읽힌 경우 별개/같은 임차권(갱신·승계) 선택(2026-10-11) - // 39: 39: 임차권등기를 임차인으로 계산(전입·확정일자 기준)·경매신청인 전세권 안내(2026-10-11) - // 38: 38: 권리분석 날짜 선후 규칙 정리(전입 다음 날 0시·동순위 안분, 2026-10-11) - // 37: 37: 권리분석에 말소기준일보다 앞선 전세권·임차권 등 등기부 인수 권리 반영(2026-10-11) - // 36: 저가 아파트 순이익률 10% 추천가 규칙 되돌림(2026-10-11, 백테스트 손해 30~42%) - // 34: 33: 아파트 고층 보정 축소·저층 범위(2026-10-11) - // 29: nYear 저장 추가 - // 27: 🎲 예상 낙찰가용 시세(wbBase) 추가 (범위 표시는 화면에서 바로 계산 - 버전 변경 없음)
+var BOARD_CALC_VER = 68; // 68: 예상 낙찰가에서 감정가·최저가 요인 제거 - 시세 대비 비율만(2026-11-04) - // // 54: 튀는 가격 반영 안 함·경고만(2026-10-24) - // 53: 최근 거래 시세반영/튀는 가격 구별(2026-10-24) - // 52: 임장 생략 판정(2026-10-19) - // 51: 전세가율 구간 보정·위험 신호(2026-10-18) - // 50: 지방 최근 거래 비슷한 층 비중·1~2건은 12개월 원값(2026-10-18) - // 49: 근거 약함 경고를 판정 단계에서 다시 붙임 - // 48: 예상매도가-감정가 큰 차이 근거 약함 표시 - // 47: 다른 평형 환산이 같은 평형과 20% 넘게 다르면 섞지 않음 - // 46: 같은 동 추론(③④) 제거·거래 없는 단지는 기존 주변 비교 + 근거 약함(2026-10-18) - // 45: 회전율 구간별 보정 항상 적용(주간 갱신 표, 2026-10-17) - // 44: 추론에 최근 6개월 1~2건 포함 - // 43: 6개월 거래 부족 시 단계별 추론(2026-10-17) - // 42: 지역별 예상매도가(서울 최근3건·경기인천 반감1개월·지방 반감2개월)와 위험 여유(2026-10-17) - // 41: 아파트 예상매도가를 최근 6개월 같은 평형 거래의 최근가중 중위값으로(전국 백테스트, 2026-10-17) - // 40: 임차인 둘로 읽힌 경우 별개/같은 임차권(갱신·승계) 선택(2026-10-11) - // 39: 39: 임차권등기를 임차인으로 계산(전입·확정일자 기준)·경매신청인 전세권 안내(2026-10-11) - // 38: 38: 권리분석 날짜 선후 규칙 정리(전입 다음 날 0시·동순위 안분, 2026-10-11) - // 37: 37: 권리분석에 말소기준일보다 앞선 전세권·임차권 등 등기부 인수 권리 반영(2026-10-11) - // 36: 저가 아파트 순이익률 10% 추천가 규칙 되돌림(2026-10-11, 백테스트 손해 30~42%) - // 34: 33: 아파트 고층 보정 축소·저층 범위(2026-10-11) - // 29: nYear 저장 추가 - // 27: 🎲 예상 낙찰가용 시세(wbBase) 추가 (범위 표시는 화면에서 바로 계산 - 버전 변경 없음)
 /* 2026-10-15(사용자: 입찰후보 로딩이 느림 - 원인 실측): 식별값 끝의 'P/F'(입찰일 지남 여부)가 한국 시각 자정에 바뀌어, 서버 미리 계산이 돈 뒤 어제 입찰이던 물건(하루 약 350건)이 전부 '다른 물건'이 돼
    지역 자료 86곳(곳당 9~13MB)을 새로 받아 다시 계산했음. 계산 결과는 입찰일 지남 여부와 무관하므로(날짜 표시는 열 때 다시 계산) 저장본의 P/F가 반대여도 같은 것으로 봄(flip). */
 function boardBaseSig(a, flip) {
