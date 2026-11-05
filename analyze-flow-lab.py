@@ -168,7 +168,7 @@ def backtest_coeff():
         return 1.0 if vol <= -0.2 else (0.75 if vol < 0.2 else 0.5)
     levels = ("radius", "dong", "sgg")
     results = {}
-    grid = [(s_, gt, zt, cl) for s_ in (0.0, 0.3, 0.6, 1.0, 1.5) for gt in (False, True) for zt in (False, True) for cl in ((0.95, 1.08), (0.90, 1.15))]
+    grid = [(s_, gt, zt, cl) for s_ in (0.0, 0.6, 1.0, 1.5, 2.0, 3.0, 4.0) for gt in (False, True) for zt in (False, True) for cl in ((0.95, 1.08), (0.90, 1.15))]
     err = {(lv, gp): [] for lv in levels for gp in grid}; base_err = []; meta = []
     for (price, cls, prices, ages, cm, ci, gi, di, si) in recs:
         b0 = est_base(prices, ages, cls); base_err.append(math.log(b0 / price)); meta.append(cls)
@@ -233,29 +233,42 @@ try:
             if len(idx) > cap: idx = rng.choice(idx, cap, replace=False)
             X.append(f[idx]); Y.append(y[idx]); TT.append(np.full(len(idx), t)); CI.append(idx)
         return (np.vstack(X), np.concatenate(Y), np.concatenate(TT), np.concatenate(CI)) if X else (None,) * 4
-    LX, LY, LT, LC = collect(range(t_lo, lib_hi + 1), max(1, 160000 // max(lib_hi - t_lo + 1, 1)))
-    QX, QY, QT, QC = collect(range(t_test_lo, t_test_hi + 1), max(1, 60000 // 12))
-    log(f"유사 구간 라이브러리 {len(LX):,}개, 시험 {len(QX):,}개")
-    mu, sd = LX.mean(axis=0), LX.std(axis=0) + 1e-6
-    Lz, Qz = (LX - mu) / sd, (QX - mu) / sd
-    bt = {}
     K = 40
-    for cl in ("수도권", "지방", "전체"):
-        lm = (cls_arr[LC] == cl) if cl != "전체" else np.ones(len(LC), bool); qm = (cls_arr[QC] == cl) if cl != "전체" else np.ones(len(QC), bool)
-        if lm.sum() < 500 or qm.sum() < 200: continue
-        nn = NearestNeighbors(n_neighbors=K).fit(Lz[lm]); dist, ind = nn.kneighbors(Qz[qm])
-        w = 1.0 / (dist + 0.3); pred = (LY[lm][ind] * w).sum(axis=1) / w.sum(axis=1); y = QY[qm]
-        mom = QX[qm][:, 0]            # 추세 지속(최근 3개월 변화가 앞으로도 같은 만큼)
-        grp = np.full(len(y), float(np.median(LY[lm])))
-        m_ = lambda p_: {"MAE%": round(float(np.mean(np.abs(p_ - y))) * 100, 3), "방향적중%": round(float((np.sign(p_) == np.sign(y))[np.abs(y) > 0.005].mean()) * 100, 1), "상관": round(float(np.corrcoef(p_, y)[0, 1]), 3) if np.std(p_) > 0 else None}
-        bt[cl] = {"n": int(qm.sum()), "유사구간 예측": m_(pred), "변화 없음(0)": m_(np.zeros(len(y))), "추세 지속": m_(mom), "과거 평균": m_(grp)}
-        # 예측값 구간별 실제 변화(예측이 신뢰할 만한지)
-        qs = np.quantile(pred, [0, 0.2, 0.4, 0.6, 0.8, 1.0]); bt[cl]["예측 5분위별 실제 중앙값%"] = [round(float(np.median(y[(pred >= qs[i]) & (pred <= qs[i + 1])])) * 100, 2) for i in range(5)]
-        bt[cl]["예측 5분위별 예측 중앙값%"] = [round(float(np.median(pred[(pred >= qs[i]) & (pred <= qs[i + 1])])) * 100, 2) for i in range(5)]
-        log(f"유사 구간 예측 시험 [{cl}]:", json.dumps(bt[cl], ensure_ascii=False))
-    REPORT["analog"] = {"backtest": bt, "libraryMonths": [int(lib_hi), t_lo], "testMonths": [int(t_test_lo), int(t_test_hi)], "K": K}
+    def run_bt(test_lo, gap, tag):
+        """시험 달 12개월(test_lo..test_lo+11), 라이브러리는 시험 시작 gap개월 전까지(gap=12면 같은 단지의 최근 12개월 흔적을 제외한 진짜 과거 구간)"""
+        hi = test_lo - gap
+        LX, LY, LT, LC = collect(range(t_lo, hi + 1), max(1, 160000 // max(hi - t_lo + 1, 1)))
+        QX, QY, QT, QC = collect(range(test_lo, test_lo + 12), max(1, 60000 // 12))
+        mu, sd = LX.mean(axis=0), LX.std(axis=0) + 1e-6; Lz, Qz = (LX - mu) / sd, (QX - mu) / sd
+        res = {}
+        for cl in ("수도권", "지방", "전체"):
+            lm = (cls_arr[LC] == cl) if cl != "전체" else np.ones(len(LC), bool); qm = (cls_arr[QC] == cl) if cl != "전체" else np.ones(len(QC), bool)
+            if lm.sum() < 500 or qm.sum() < 200: continue
+            nn = NearestNeighbors(n_neighbors=K).fit(Lz[lm]); dist, ind = nn.kneighbors(Qz[qm])
+            w = 1.0 / (dist + 0.3); pred = (LY[lm][ind] * w).sum(axis=1) / w.sum(axis=1); y = QY[qm]
+            mom = QX[qm][:, 0]; grp = np.full(len(y), float(np.median(LY[lm])))
+            m_ = lambda p_: {"MAE%": round(float(np.mean(np.abs(p_ - y))) * 100, 3), "방향적중%": round(float((np.sign(p_) == np.sign(y))[np.abs(y) > 0.005].mean()) * 100, 1), "상관": round(float(np.corrcoef(p_, y)[0, 1]), 3) if np.std(p_) > 0 else None}
+            slope = float((pred * y).sum() / max((pred * pred).sum(), 1e-9))     # 예측을 얼마나 줄여 써야 맞는지(원점 회귀)
+            r = {"n": int(qm.sum()), "유사구간 예측": m_(pred), "줄여 쓴 예측": m_(pred * min(max(slope, 0), 1)), "변화 없음(0)": m_(np.zeros(len(y))), "추세 지속": m_(mom), "과거 평균": m_(grp), "줄이는 비율": round(slope, 3), "라이브러리 마지막 달": int(hi)}
+            qs = np.quantile(pred, [0, 0.2, 0.4, 0.6, 0.8, 1.0]); r["예측 5분위별 실제 중앙값%"] = [round(float(np.median(y[(pred >= qs[i]) & (pred <= qs[i + 1])])) * 100, 2) for i in range(5)]
+            r["예측 5분위별 예측 중앙값%"] = [round(float(np.median(pred[(pred >= qs[i]) & (pred <= qs[i + 1])])) * 100, 2) for i in range(5)]
+            res[cl] = r; log(f"유사 구간 예측 시험 [{tag}·{cl}]:", json.dumps(r, ensure_ascii=False))
+        return res
+    bt = {}
+    for tag, test_lo, gap in (("최근1년·간격3", NOW_M - 14, 3), ("최근1년·간격12", NOW_M - 14, 12), ("그 전 1년·간격12", NOW_M - 26, 12), ("그 전 1년·간격3", NOW_M - 26, 3)):
+        try: bt[tag] = run_bt(test_lo, gap, tag)
+        except Exception as e: log("시험 건너뜀", tag, e)
+    # 줄이는 비율: 간격12 시험 두 해 평균(클래스별)
+    shrink = {}
+    for cl in ("수도권", "지방"):
+        v = [bt[t][cl]["줄이는 비율"] for t in ("최근1년·간격12", "그 전 1년·간격12") if t in bt and cl in bt[t]]
+        shrink[cl] = round(float(min(max(np.mean(v), 0.0), 1.0)), 3) if v else 0.5
+    log("줄이는 비율(간격12 두 해 평균):", shrink)
+    t_test_lo = NOW_M - 14; lib_hi = t_test_lo - 12
+    REPORT["analog"] = {"backtest": bt, "libraryMonths": [int(lib_hi), t_lo], "testMonths": [int(t_test_lo), int(t_test_lo + 11)], "K": K, "shrink": shrink}
     # 현재 예측: 라이브러리 = 결과가 나온 모든 달(t ≤ NOW_M-3)
-    LX2, LY2, LT2, LC2 = collect(range(t_lo, NOW_M - 3 + 1), max(1, 220000 // max(NOW_M - 3 - t_lo + 1, 1)))
+    hi2 = NOW_M - 1 - 12      # 지금 달에서 12개월 넘게 지난 구간만(같은 단지의 최근 흔적 제외 - 진짜 과거 구간과 비교)
+    LX2, LY2, LT2, LC2 = collect(range(t_lo, hi2 + 1), max(1, 220000 // max(hi2 - t_lo + 1, 1)))
     mu2, sd2 = LX2.mean(axis=0), LX2.std(axis=0) + 1e-6; Lz2 = (LX2 - mu2) / sd2
     tnow = NOW_M - 1                       # 마지막 완결 달(진행 중인 달 제외)
     Fx = build_features(tnow); okc = np.isfinite(Fx).all(axis=1); ci_ok = np.where(okc)[0]
@@ -269,7 +282,7 @@ try:
         tl = LT2[lm][ind]
         for j, ci in enumerate(cm_):
             mo = np.array(tl[j]); ym = (2017 + mo // 12) * 100 + mo % 12 + 1; cnt = pd.Series(ym).value_counts().head(3)
-            cur[int(ci)] = {"fc3": round(float(pred[j]), 4), "sd": round(float(spread[j]), 4), "analog": [[int(k_), int(v_)] for k_, v_ in cnt.items()], "dist": round(float(dist[j].mean()), 3)}
+            cur[int(ci)] = {"fc3": round(float(pred[j]), 4), "fc3s": round(float(pred[j]) * shrink.get(cl, 0.5), 4), "sd": round(float(spread[j]), 4), "analog": [[int(k_), int(v_)] for k_, v_ in cnt.items()], "dist": round(float(dist[j].mean()), 3)}
     # 시군구별 요약(현재 예측 평균, 유사 시기 분포)
     sg = {}
     for ci, v in cur.items():
@@ -285,13 +298,19 @@ try:
     try:
         auc = requests.get(f"{SITE_URL}/api/auction", timeout=120).json()
         cxt = BallTree(cx_xy, metric="haversine"); items = {}
+        def rad_flow(ci, cm):    # 생활권 가격 흐름(앱이 시세 보정에 씀): 연율 변화·확실도 z·거래량 변화
+            a_, b_ = P3[ci, cm], P3[ci, cm - 3]
+            if not (np.isfinite(a_) and np.isfinite(b_)): return None
+            na, nb = N3[ci, cm], N3[ci, cm - 3]; va, vb = VAR3[ci, cm], VAR3[ci, cm - 3]
+            se = math.sqrt(max(va, 1e-6) / max(na, 1) + max(vb, 1e-6) / max(nb, 1)) if np.isfinite(va) and np.isfinite(vb) else 0.05
+            return {"rate": round(float((a_ - b_) / 0.25), 4), "z": round(float((a_ - b_) / max(se, 0.003)), 2), "vol": round(float(math.log((na + 1) / (nb + 1))), 3)}
         for a in auc:
             if a.get("propType") != "apt" or not a.get("lat") or not a.get("lon"): continue
             d_, i_ = cxt.query(np.radians([[float(a["lat"]), float(a["lon"])]]), k=1)
             if d_[0][0] * 6371.0 > 0.2: continue
             ci = int(i_[0][0]); v = cur.get(ci)
             if not v: continue
-            items[str(a["id"])] = {**v, "rate3": round(float(P3[ci, tnow] - P3[ci, tnow - 3]), 4), "vol3": round(float(np.log((V3[ci, tnow] + 1) / (V3[ci, tnow - 3] + 1))), 3), "km": float(rad_pick[ci]), "n12": int(cN[ci, NOW_M - 11:NOW_M + 1].sum())}
+            items[str(a["id"])] = {**v, "rate3": round(float(P3[ci, tnow] - P3[ci, tnow - 3]), 4), "vol3": round(float(np.log((V3[ci, tnow] + 1) / (V3[ci, tnow - 3] + 1))), 3), "km": float(rad_pick[ci]), "rf": rad_flow(ci, tnow), "n12": int(cN[ci, NOW_M - 11:NOW_M + 1].sum())}
         REPORT["analog"]["auctionsMatched"] = len(items); log(f"입찰물건 {len(items):,}건에 연결")
         cyc.upsert_rows([{"id": "signal|__flow_forecast__", "payload": cyc.clean_json({"generatedAt": REPORT["generatedAt"], "month": int(tnow), "items": items}), "fetched_at": REPORT["generatedAt"]}])
     except Exception as e:
