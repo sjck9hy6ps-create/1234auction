@@ -386,6 +386,9 @@ def main():
             except Exception:
                 rec["est_rule_f"] = None
             # 2026-10-11 환금성: 입찰 30일 전 기준 같은 단지·같은 평형(±3㎡) 최근 1년 중개거래 수 - 앱의 "최근 1년 같은 평형 거래"와 같은 정의
+            # 낙찰 뒤 6개월 안 같은 단지·같은 평형(±3㎡) 시장 실거래 중위값(되팔기와 무관한 시장 가격) - 지방 성적표에서 예상매도가와 비교
+            _aft = g[(g["deal_date"] >= ymd_int(sale_d)) & (g["deal_date"] < ymd_int(sale_d + timedelta(days=183))) & ((g["size"] - c.area).abs() <= 3)]
+            rec["mkt_after_n"] = int(len(_aft)); rec["mkt_after"] = float(_aft["price"].median()) if len(_aft) else None
             rec["n6"] = int(((g["deal_date"] >= ymd_int(sale_d - timedelta(days=30 + 183))) & (g["deal_date"] < cut) & ((g["size"] - c.area).abs() <= 3)).sum())
             rec["n12"] = int(((g["deal_date"] >= ymd_int(sale_d - timedelta(days=30 + 365))) & (g["deal_date"] < cut) & ((g["size"] - c.area).abs() <= 3)).sum())
             rec.update(rec_est)
@@ -1583,50 +1586,128 @@ def resale_gap_report(R, now):
 
 def jibang_scorecard(te, p, R0, now):
     """2026-11-05 지방 아파트 성적표(사용자: 지방 아파트 입찰이 내 조건에 가장 적합 - 예상낙찰가·추천입찰가·예상매도가 정확도가 가장 중요)
-    비규제 구분 없이 '지방'(서울·경기·인천 제외)만, 학습에 안 쓴 최근 12개월(te)과 낙찰 후 되판 사례(같은 동·층 확인)로 채점. 근거 두께(같은 단지·같은 평형 거래 수)별로 나눠 표시.
-    ① 예상낙찰가: 모델 예상 vs 실제 낙찰가 ② 추천입찰가: 시세−고정비−최소마진 1천만으로 역산한 근사(앱 저장 추천가 아님) 대비 실제 낙찰가 ③ 예상매도가: 입찰 30일 전 시세(est_rule_f) vs 되판 가격"""
+    대상: 비규제 지방(서울·경기·인천 제외, 토지거래허가구역 시군구 제외) - 광역시/시·군을 나눠 표시. 학습에 안 쓴 최근 12개월(te)과 낙찰 후 사례로 채점. 구간 = 6개월 같은 평형 거래 수(없으면 1년), 모든 지표에 신뢰 범위(95%)
+    ① 예상낙찰가 ② 추천입찰가: (a)앱이 입찰 전 저장한 추천가가 있는 사건 (b)저장분이 없는 과거는 '기대수익 최대' 규칙(앱과 같은 원리)으로 다시 계산해 채점, 실제 되판/시장 가격으로 비용 뺀 순이익
+    ③ 예상매도가: 입찰 30일 전 시세(est_rule_f) vs (a)되판 가격(동·층 확인) (b)낙찰 뒤 6개월 안 같은 단지·평형 시장 실거래 중위값"""
+    rng_ = np.random.default_rng(5)
     isjb = lambda rg: not (str(rg).startswith("서울") or str(rg)[:2] in ("경기", "인천"))
+    zones = set()
+    try:
+        _pz = requests.get(f"{SITE_URL}/api/data-coverage?mode=permit", timeout=120).json()
+        zones = {region_norm(v[3]) for v in (_pz.get("flagged") or {}).values() if len(v) > 3 and v[3]}; zones.discard(None)
+    except Exception as e:
+        print("  허가구역 목록 불러오기 실패(구분 없이 진행):", e)
+    METRO = ("부산", "대구", "광주", "대전", "울산", "세종")
+    sub = lambda rg: "광역시" if str(rg)[:2] in METRO else "시·군"
+    use_n6 = "n6" in R0.columns and R0["n6"].notna().mean() >= 0.5
     def bins_for(df):
         out = [("전체", np.ones(len(df), bool))]
-        if "n6" in df.columns and df["n6"].notna().mean() >= 0.5:
+        if use_n6 and "n6" in df.columns:
             n = df["n6"].fillna(-1).values
             out += [("6개월 같은 평형 0건", n == 0), ("1~2건", (n >= 1) & (n <= 2)), ("3건 이상", n >= 3)]
         else:
             n = df["n12"].fillna(-1).values
             out += [("1년 같은 평형 0~2건", (n >= 0) & (n <= 2)), ("3~5건", (n >= 3) & (n <= 5)), ("6~11건", (n >= 6) & (n <= 11)), ("12건 이상", n >= 12)]
         return out
-    res = {"generatedAt": now, "기준": "지방 아파트(서울·경기·인천 제외), 오차 = (예상−실제)/실제", "구간기준": "6개월 같은 평형 거래 수" if ("n6" in R0.columns and R0["n6"].notna().mean() >= 0.5) else "1년 같은 평형 거래 수(6개월 값은 다음 구동부터)"}
+    def ci_med(x, f=np.median):
+        x = np.asarray(x, float)
+        if len(x) < 10: return None
+        bs = [f(x[rng_.integers(0, len(x), len(x))]) for _ in range(300)]
+        return [round(float(np.quantile(bs, .025)) * 100, 1), round(float(np.quantile(bs, .975)) * 100, 1)]
+    def ci_prop(k, n):
+        if n == 0: return None
+        ph = k / n; z = 1.96; den = 1 + z * z / n; c = (ph + z * z / (2 * n)) / den; h = z * np.sqrt(ph * (1 - ph) / n + z * z / (4 * n * n)) / den
+        return [round(float(c - h) * 100, 1), round(float(c + h) * 100, 1)]
+    def prop(mask):
+        mask = np.asarray(mask, bool); n = len(mask); k = int(mask.sum())
+        return {"%": round(k / n * 100, 1) if n else None, "범위": ci_prop(k, n)}
+    res = {"generatedAt": now, "기준": "비규제 지방 아파트(서울·경기·인천·토지거래허가구역 제외), 오차 = (예상−실제)/실제, 범위 = 95% 신뢰 범위", "구간기준": "6개월 같은 평형 거래 수" if use_n6 else "1년 같은 평형 거래 수(6개월 값은 다음 구동부터)", "허가구역시군구수": len(zones)}
+    def split(df, fn):
+        out = {}
+        views = [("전체", np.ones(len(df), bool))] + [(k, (df["region"].map(sub) == k).values) for k in ("광역시", "시·군")]
+        for vn, vm in views:
+            d1 = df[vm]
+            for bn, bm in bins_for(d1):
+                if bm.sum() >= 30: out[f"{vn}|{bn}"] = fn(d1[bm])
+        return out
+    # ── ① 예상낙찰가
     T = te.copy(); T["pred"] = np.exp(p) * T["est"].values
-    T = T[T["region"].map(isjb)]
+    T = T[T["region"].map(isjb) & ~T["region"].isin(zones)]
     def st_win(G):
         e = ((G["pred"] - G["actual"]) / G["actual"]).values; a = np.abs(e)
-        return {"n": int(len(G)), "보통오차": round(float(np.median(a)) * 100, 1), "방향": round(float(np.median(e)) * 100, 1), "10안": round(float((a <= .10).mean()) * 100, 1), "10넘게높음": round(float((e > .10).mean()) * 100, 1), "10넘게낮음": round(float((e < -.10).mean()) * 100, 1), "p90": round(float(np.quantile(a, .9)) * 100, 1)}
-    def st_rec(G):
-        rec = ((G["est"] - FIXED_COST - 1000) / COST_RATIO); G = G[rec > 0]; rec = rec[rec > 0]
-        if len(G) < 20: return {"n": int(len(G))}
-        r = (G["actual"] / rec).values
-        return {"n": int(len(G)), "추천가이하낙찰%": round(float((G["actual"].values <= rec.values).mean()) * 100, 1), "실제÷추천가중앙": round(float(np.median(r)), 3), "추천가보다10넘게비쌈%": round(float((r > 1.10).mean()) * 100, 1)}
-    res["예상낙찰가"] = {k: st_win(T[m]) for k, m in bins_for(T) if m.sum() >= 30}
-    res["추천입찰가_근사"] = {k: st_rec(T[m]) for k, m in bins_for(T) if m.sum() >= 30}
-    # 예상매도가 vs 되판 가격
-    col = "est_rule_f" if "est_rule_f" in R0.columns else "est_rule"
-    D = R0[(R0["resale_conf"] == "dong") & R0["resale"].notna() & R0[col].notna() & (R0[col] > 0) & R0["resale_m"].between(0.45, 12) & (R0["sale"] >= 20230101)].copy()
-    D = D[D["region"].map(isjb)]
-    def st_sale(G):
-        g = (G["resale"] / G[col] - 1).values; a = np.abs(g)
-        return {"n": int(len(G)), "보통오차": round(float(np.median(a)) * 100, 1), "방향(되판÷예상-1)": round(float(np.median(g)) * 100, 1), "10안": round(float((a <= .10).mean()) * 100, 1), "10넘게낮게팔림": round(float((g < -.10).mean()) * 100, 1), "하방10분위": round(float(np.quantile(g, .1)) * 100, 1)}
-    res["예상매도가_되판가"] = {k: st_sale(D[m]) for k, m in bins_for(D) if m.sum() >= 30}
-    res["예상매도가_되판가_기간"] = {k: st_sale(D[m]) for k, m in (("3개월 이내", (D["resale_m"] <= 3).values), ("3~6개월", ((D["resale_m"] > 3) & (D["resale_m"] <= 6)).values), ("6~12개월", (D["resale_m"] > 6).values)) if m.sum() >= 30}
-    # 추천가 이하 낙찰 건의 되판 손익(비용 전): 되판가÷낙찰가
+        return {"n": int(len(G)), "보통오차": round(float(np.median(a)) * 100, 1), "오차범위": ci_med(a), "방향": round(float(np.median(e)) * 100, 1), "10안": prop(a <= .10), "10넘게높음": prop(e > .10), "10넘게낮음": prop(e < -.10), "p90": round(float(np.quantile(a, .9)) * 100, 1)}
+    res["예상낙찰가"] = split(T, st_win)
+    # ── ② 추천입찰가
+    # (b) 기대수익 최대 규칙 재계산: 시세 S, 예상 낙찰가 분포 = 모델 예상 × 잔차 분위(반대편 절반에서 추정 - 교차)
+    T = T.sort_values("sale"); half = len(T) // 2
+    T["resid"] = np.log(T["actual"].values / T["pred"].values)
+    sell = np.where(T["resale"].notna() & (T["resale_conf"] == "dong") & T["resale_m"].between(0.45, 12), T["resale"], np.where(T["mkt_after"].notna(), T["mkt_after"], np.nan)) if "mkt_after" in T.columns else np.where(T["resale"].notna() & (T["resale_conf"] == "dong"), T["resale"], np.nan)
+    T["sell"] = sell
+    MIN_M = 1000
+    def replay(G, qs):
+        """각 사건: 후보 입찰가 격자에서 기대수익 P(낙찰)·(S−1.05b−400) 최대, 최소순익 1천만 이상만"""
+        recs = []
+        for pr, S in zip(G["pred"].values, G["est"].values):
+            bmax = (S - FIXED_COST - MIN_M) / COST_RATIO
+            if bmax <= 0: recs.append(np.nan); continue
+            bs = np.linspace(bmax * 0.6, bmax, 41)
+            pw = np.searchsorted(qs[0], np.log(bs / pr), side="right") / len(qs[0])      # P(실제 ≤ b) = P(잔차 ≤ log(b/예상))
+            ev = pw * (S - COST_RATIO * bs - FIXED_COST)
+            recs.append(float(bs[int(np.argmax(ev))]) if ev.max() > 0 else np.nan)
+        return np.array(recs)
     try:
-        rec_all = (D[col] - FIXED_COST - 1000) / COST_RATIO
-        if rec_all is not None:
-            W = D[(D["actual"] <= rec_all) & D["actual"].notna()]
-            if len(W) >= 20:
-                rr = (W["resale"] / W["actual"]).values
-                res["추천가이하낙찰_되판비율"] = {"n": int(len(W)), "중앙": round(float(np.median(rr)), 3), "1.06미만%": round(float((rr < 1.06).mean()) * 100, 1), "1.00미만%": round(float((rr < 1.0).mean()) * 100, 1)}
+        parts = []
+        for tr_, ts_ in ((T.iloc[:half], T.iloc[half:]), (T.iloc[half:], T.iloc[:half])):
+            if len(tr_) < 50 or len(ts_) < 30: continue
+            ts_ = ts_.copy(); ts_["recR"] = replay(ts_, (np.sort(tr_["resid"].values),)); parts.append(ts_)
+        RP = pd.concat(parts) if parts else T.iloc[0:0].assign(recR=np.nan)
+        RP = RP[RP["recR"].notna()]
     except Exception as e:
-        print("  추천가이하 되판비율 건너뜀:", e)
+        print("  추천가 재계산 건너뜀:", e); RP = T.iloc[0:0].assign(recR=np.nan)
+    def st_rec(G):
+        won = (G["actual"].values <= G["recR"].values); out = {"n": int(len(G)), "추천가이하낙찰": prop(won), "실제÷추천가중앙": round(float(np.median(G["actual"].values / G["recR"].values)), 3), "10넘게비쌈": prop(G["actual"].values / G["recR"].values > 1.10)}
+        W = G[won & G["sell"].notna().values]
+        if len(W) >= 15:
+            pf = (W["sell"].values - COST_RATIO * W["actual"].values - FIXED_COST)
+            out["낙찰시_순이익(만원)"] = {"n": int(len(W)), "중앙": round(float(np.median(pf))), "범위": [round(float(np.quantile([np.median(pf[rng_.integers(0, len(pf), len(pf))]) for _ in range(300)], q))) for q in (.025, .975)], "손실비율": prop(pf < 0), "1천만미만": prop(pf < 1000)}
+        return out
+    res["추천입찰가_재계산"] = split(RP, st_rec) if len(RP) else {}
+    # (a) 앱이 입찰 전 저장한 추천가
+    try:
+        au = requests.get(f"{SITE_URL}/api/auction", timeout=180).json()
+        amap = {(norm_case(x.get("caseNo")), region_norm(x.get("addr"))): x for x in au if isinstance(x, dict) and x.get("caseNo") and not x.get("isBacktest")}
+        rows = []
+        for r in T.itertuples():
+            x = amap.get((norm_case(r.caseNo), r.region))
+            if not x or not amt_ok(x, getattr(r, "appraisal", None)): continue
+            sn = pick_snap(x, r.sale)
+            if sn and sn.get("recBid"): rows.append({"actual": float(r.actual), "rec": float(sn["recBid"]), "region": r.region, "n6": getattr(r, "n6", np.nan), "n12": getattr(r, "n12", np.nan), "sell": getattr(r, "sell", np.nan)})
+        if len(rows) >= 15:
+            X = pd.DataFrame(rows); rr = X["actual"].values / X["rec"].values; won = rr <= 1
+            sv = {"n": int(len(X)), "추천가이하낙찰": prop(won), "실제÷추천가중앙": round(float(np.median(rr)), 3), "10넘게비쌈": prop(rr > 1.10)}
+            W = X[won & X["sell"].notna().values]
+            if len(W) >= 10:
+                pf = W["sell"].values - COST_RATIO * W["actual"].values - FIXED_COST; sv["낙찰시_순이익(만원)"] = {"n": int(len(W)), "중앙": round(float(np.median(pf))), "손실비율": prop(pf < 0)}
+            res["추천입찰가_저장분"] = sv
+        else:
+            res["추천입찰가_저장분"] = {"n": len(rows), "note": "저장분이 15건 미만"}
+    except Exception as e:
+        print("  저장 추천가 채점 건너뜀:", e)
+    # ── ③ 예상매도가
+    col = "est_rule_f" if "est_rule_f" in R0.columns else "est_rule"
+    D0 = R0[R0["region"].map(isjb) & ~R0["region"].isin(zones) & R0[col].notna() & (R0[col] > 0) & (R0["sale"] >= 20230101)].copy()
+    def st_sale(df, tgt):
+        def f(G):
+            g = (G[tgt] / G[col] - 1).values; a = np.abs(g)
+            return {"n": int(len(G)), "보통오차": round(float(np.median(a)) * 100, 1), "오차범위": ci_med(a), "방향(실제÷예상-1)": round(float(np.median(g)) * 100, 1), "10안": prop(a <= .10), "10넘게낮게팔림": prop(g < -.10), "하방10분위": round(float(np.quantile(g, .1)) * 100, 1)}
+        return split(df, f)
+    Dr = D0[(D0["resale_conf"] == "dong") & D0["resale"].notna() & D0["resale_m"].between(0.45, 12)]
+    res["예상매도가_vs_되판가"] = st_sale(Dr, "resale")
+    if "mkt_after" in D0.columns:
+        Dm = D0[D0["mkt_after"].notna()]; res["예상매도가_vs_시장실거래(낙찰뒤6개월)"] = st_sale(Dm, "mkt_after")
+    for lab, m in (("3개월 이내", Dr["resale_m"] <= 3), ("3~6개월", (Dr["resale_m"] > 3) & (Dr["resale_m"] <= 6)), ("6~12개월", Dr["resale_m"] > 6)):
+        if m.sum() >= 30:
+            g = (Dr[m]["resale"] / Dr[m][col] - 1).values; res.setdefault("되판가_보유기간별", {})[lab] = {"n": int(m.sum()), "보통오차": round(float(np.median(np.abs(g))) * 100, 1), "방향": round(float(np.median(g)) * 100, 1)}
     print("  🧾 지방 성적표:", json.dumps(res, ensure_ascii=False))
     if os.environ.get("GITHUB_STEP_SUMMARY"):
         open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8").write("### 지방 아파트 성적표\n```json\n" + json.dumps(res, ensure_ascii=False, indent=1) + "\n```\n")
