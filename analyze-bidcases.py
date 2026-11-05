@@ -1681,16 +1681,25 @@ def jibang_scorecard(te, p, R0, now):
             x = amap.get((norm_case(r.caseNo), r.region))
             if not x or not amt_ok(x, getattr(r, "appraisal", None)): continue
             sn = pick_snap(x, r.sale)
-            if sn and sn.get("recBid"): rows.append({"actual": float(r.actual), "rec": float(sn["recBid"]), "region": r.region, "n6": getattr(r, "n6", np.nan), "n12": getattr(r, "n12", np.nan), "sell": getattr(r, "sell", np.nan)})
-        if len(rows) >= 15:
-            X = pd.DataFrame(rows); rr = X["actual"].values / X["rec"].values; won = rr <= 1
-            sv = {"n": int(len(X)), "추천가이하낙찰": prop(won), "실제÷추천가중앙": round(float(np.median(rr)), 3), "10넘게비쌈": prop(rr > 1.10)}
-            W = X[won & X["sell"].notna().values]
-            if len(W) >= 10:
-                pf = W["sell"].values - COST_RATIO * W["actual"].values - FIXED_COST; sv["낙찰시_순이익(만원)"] = {"n": int(len(W)), "중앙": round(float(np.median(pf))), "손실비율": prop(pf < 0)}
-            res["추천입찰가_저장분"] = sv
+            if sn and sn.get("recBid"): rows.append({"actual": float(r.actual), "rec": float(sn["recBid"]), "minb": float(r.minbid), "snapMin": sn.get("minBid"), "win": sn.get("win"), "go": sn.get("go"), "at": sn.get("at"), "sell": getattr(r, "sell", np.nan)})
+        X = pd.DataFrame(rows)
+        sv = {"n": int(len(X))}
+        if len(X) >= 15:
+            X["ok"] = X["snapMin"].notna() & ((X["snapMin"].astype(float) - X["minb"]).abs() / X["minb"] <= 0.02)   # 저장한 최저가가 실제와 2% 안
+            X["feas"] = X["rec"] >= X["minb"]                                                                      # 추천가가 최저가 이상(입찰 가능한 값)
+            def sv_st(G):
+                if len(G) < 10: return {"n": int(len(G))}
+                rr = G["actual"].values / G["rec"].values; o = {"n": int(len(G)), "추천가이하낙찰": prop(rr <= 1), "실제÷추천가중앙": round(float(np.median(rr)), 3), "실제÷추천가_25~75": [round(float(np.quantile(rr, .25)), 3), round(float(np.quantile(rr, .75)), 3)], "추천가÷저장예상낙찰가중앙": None}
+                W = G[G["win"].notna() & (G["win"] > 0)]
+                if len(W) >= 10:
+                    o["추천가÷저장예상낙찰가중앙"] = round(float(np.median(W["rec"].values / W["win"].values)), 3); o["저장예상낙찰가_방향"] = round(float(np.median(W["win"].values / W["actual"].values - 1)) * 100, 1)
+                return o
+            sv["전체"] = sv_st(X); sv["추천가<최저가(입찰 불가한 값) 비율%"] = round(float((~X["feas"]).mean()) * 100, 1)
+            sv["금액일치"] = sv_st(X[X["ok"]]); sv["금액일치·입찰가능"] = sv_st(X[X["ok"] & X["feas"]]); sv["입찰후보(go)만"] = sv_st(X[X["ok"] & X["feas"] & (X["go"] == True)])
+            sv["저장 기간"] = [str(X["at"].min()), str(X["at"].max())]
         else:
-            res["추천입찰가_저장분"] = {"n": len(rows), "note": "저장분이 15건 미만"}
+            sv["note"] = "저장분이 15건 미만"
+        res["추천입찰가_저장분"] = sv
     except Exception as e:
         print("  저장 추천가 채점 건너뜀:", e)
     # ── ③ 예상매도가
