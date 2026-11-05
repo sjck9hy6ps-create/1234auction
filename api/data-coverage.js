@@ -3439,10 +3439,10 @@ export default async function handler(req, res) {
       return res.status(500).json({ error: err.message });
     }
   }
-  if (req.query.mode === 'flowLab' || req.query.mode === 'flowForecast' || req.query.mode === 'jibangScore') { // 2026-11-05 흐름 연구실 결과(analyze-flow-lab.py): 보정계수 점검·유사 구간 예측·입찰물건별 3개월 예측
+  if (req.query.mode === 'flowLab' || req.query.mode === 'flowForecast' || req.query.mode === 'jibangScore' || req.query.mode === 'thinEst') { // 2026-11-05 흐름 연구실 결과(analyze-flow-lab.py): 보정계수 점검·유사 구간 예측·입찰물건별 3개월 예측
     res.setHeader('Cache-Control', req.query.nocache ? 'no-store' : 's-maxage=600, stale-while-revalidate=3600');
     try {
-      const id = req.query.mode === 'flowLab' ? 'signal|__flow_lab__' : (req.query.mode === 'jibangScore' ? 'signal|__jibang_score__' : 'signal|__flow_forecast__');
+      const id = req.query.mode === 'flowLab' ? 'signal|__flow_lab__' : (req.query.mode === 'jibangScore' ? 'signal|__jibang_score__' : (req.query.mode === 'thinEst' ? 'signal|__thin_est__' : 'signal|__flow_forecast__'));
       const { data, error } = await supabase.from('leader_follower_cache').select('payload').eq('id', id).maybeSingle();
       if (error) return res.status(500).json({ error: error.message });
       return res.status(200).json((data && data.payload) || {});

@@ -388,6 +388,14 @@ def main():
             # 2026-10-11 환금성: 입찰 30일 전 기준 같은 단지·같은 평형(±3㎡) 최근 1년 중개거래 수 - 앱의 "최근 1년 같은 평형 거래"와 같은 정의
             # 낙찰 뒤 6개월 안 같은 단지·같은 평형(±3㎡) 시장 실거래 중위값(되팔기와 무관한 시장 가격) - 지방 성적표에서 예상매도가와 비교
             _aft = g[(g["deal_date"] >= ymd_int(sale_d)) & (g["deal_date"] < ymd_int(sale_d + timedelta(days=183))) & ((g["size"] - c.area).abs() <= 3)]
+            # 시세 근거가 얇을 때의 편향 진단용 특징(입찰 30일 전 시점, 미래 정보 없음): 같은 평형 36개월 거래 수·가장 최근 거래 나이(개월)·최근 가격 흩어짐·다른 평형 12개월 거래 수
+            _s36 = g[(g["deal_date"] >= ymd_int(sale_d - timedelta(days=30 + 1095))) & (g["deal_date"] < cut) & ((g["size"] - c.area).abs() <= 3)]
+            rec["t_n36"] = int(len(_s36))
+            if len(_s36):
+                _ls = _s36.sort_values("deal_date")
+                rec["t_last_age"] = float((int_to_date(cut) - int_to_date(int(_ls["deal_date"].iloc[-1]))).days / 30.4); rec["t_last_price"] = float(_ls["price"].iloc[-1])
+                rec["t_disp"] = float(np.std(np.log(_ls["price"].values[-5:].astype(float)))) if len(_ls) >= 2 else None
+            rec["t_n_other12"] = int(((g["deal_date"] >= ymd_int(sale_d - timedelta(days=30 + 365))) & (g["deal_date"] < cut) & ((g["size"] - c.area).abs() > 3)).sum())
             rec["mkt_after_n"] = int(len(_aft)); rec["mkt_after"] = float(_aft["price"].median()) if len(_aft) else None
             rec["n6"] = int(((g["deal_date"] >= ymd_int(sale_d - timedelta(days=30 + 183))) & (g["deal_date"] < cut) & ((g["size"] - c.area).abs() <= 3)).sum())
             rec["n12"] = int(((g["deal_date"] >= ymd_int(sale_d - timedelta(days=30 + 365))) & (g["deal_date"] < cut) & ((g["size"] - c.area).abs() <= 3)).sum())
@@ -1723,6 +1731,83 @@ def jibang_scorecard(te, p, R0, now):
     cyc.upsert_rows([{"id": "signal|__jibang_score__", "payload": cyc.clean_json(res), "fetched_at": now}])
 
 
+def thin_correction(R0, now):
+    """2026-11-05 시세 근거가 얇을 때(6개월 같은 평형 0~2건) 지방 예상매도가의 체계적 과대평가를 어떻게 고치는 게 최선인지 찾는 실험(사용자: 한 가지 규칙을 모든 곳에 고정할 수 없음).
+    목표 = log(낙찰 뒤 6개월 같은 단지·평형 시장 실거래 중위값 ÷ 입찰 30일 전 시세 est_rule_f). 후보: 보정 없음 / 상수 / 근거 형태별 표(가장 최근 거래 나이·36개월 거래 수·다른 평형 유무·광역시/시군) / 특징 회귀(릿지).
+    시간순 검증(최근 12개월 따로), 되판 가격으로 교차 확인. 결과를 signal|__thin_est__에 저장(앱 적용은 승인 뒤)"""
+    rng_ = np.random.default_rng(9)
+    isjb = lambda rg: not (str(rg).startswith("서울") or str(rg)[:2] in ("경기", "인천"))
+    zones = set()
+    try:
+        _pz = requests.get(f"{SITE_URL}/api/data-coverage?mode=permit", timeout=120).json()
+        zones = {region_norm(v[3]) for v in (_pz.get("flagged") or {}).values() if len(v) > 3 and v[3]}; zones.discard(None)
+    except Exception as e:
+        print("  허가구역 목록 실패(구분 없이):", e)
+    need = ["n6", "mkt_after", "t_n36", "t_last_age", "t_n_other12"]
+    if any(c_ not in R0.columns for c_ in need):
+        print("  얇은 근거 보정 실험: 필요한 열 없음, 건너뜀"); return
+    col = "est_rule_f" if "est_rule_f" in R0.columns else "est_rule"
+    now_ymd = int((datetime.strptime(now[:10], "%Y-%m-%d") - timedelta(days=190)).strftime("%Y%m%d"))
+    D = R0[R0["region"].map(isjb) & ~R0["region"].isin(zones) & R0[col].notna() & (R0[col] > 0) & R0["n6"].notna() & (R0["n6"] <= 2) & (R0["sale"] >= 20230101) & (R0["sale"] <= now_ymd)].copy()
+    D["y"] = np.log(D["mkt_after"] / D[col]); D["yr"] = np.where(D["resale"].notna() & (D["resale_conf"] == "dong") & D["resale_m"].between(0.45, 12), np.log(D["resale"] / D[col]), np.nan)
+    D["sub"] = D["region"].map(lambda r: 1.0 if str(r)[:2] in ("부산", "대구", "광주", "대전", "울산", "세종") else 0.0)
+    D["la"] = D["t_last_age"].fillna(40.0); D["n36"] = D["t_n36"].fillna(0)
+    D["last_gap"] = np.where(D["t_last_price"].notna(), np.log(D["t_last_price"].fillna(1) / D[col]), 0.0)
+    D["disp"] = D["t_disp"].fillna(0.0); D["oth"] = (D["t_n_other12"].fillna(0) > 0).astype(float); D["lest"] = np.log(D[col])
+    D["flow"] = D["est_flow_rate"].fillna(0.0) if "est_flow_rate" in D.columns else 0.0
+    D["n6g"] = D["n6"].astype(int)
+    E = D[D["y"].notna() & np.isfinite(D["y"])].copy(); E = E[E["y"].between(-0.6, 0.6)]
+    if len(E) < 400:
+        print(f"  얇은 근거 보정 실험: 표본 부족({len(E)}), 건너뜀"); return
+    cutd = int(E["sale"].quantile(0.75)); TR, TE = E[E["sale"] < cutd], E[E["sale"] >= cutd]
+    def bucket(df):
+        la = np.where(df["la"] <= 12, "A≤12개월", np.where(df["la"] <= 24, "B≤24개월", "C24개월+"))
+        n3 = np.where(df["n36"] == 0, "0건", np.where(df["n36"] <= 2, "1~2건", "3건+"))
+        return pd.Series([f"{a}|{b}|{'다른평형있음' if o else '없음'}" for a, b, o in zip(la, n3, df["oth"].values)], index=df.index)
+    def bucket2(df):   # 더 단순한 표(칸이 적어 안정적): 최근 거래 나이 × 6개월 건수
+        la = np.where(df["la"] <= 12, "A≤12개월", np.where(df["la"] <= 24, "B≤24개월", "C24개월+"))
+        return pd.Series([f"{a}|6개월{int(n)}건" for a, n in zip(la, df["n6g"].values)], index=df.index)
+    def fit_table(T, bf, k=30):
+        glob = float(T["y"].median()); b = bf(T); out = {}
+        for key, G in T.groupby(b): out[key] = glob + (float(G["y"].median()) - glob) * len(G) / (len(G) + k)
+        return glob, out
+    def apply_table(df, glob, tab, bf): return bf(df).map(lambda k_: tab.get(k_, glob)).values
+    feats = ["la", "n36", "oth", "disp", "last_gap", "sub", "lest", "flow", "n6g"]
+    def fit_ridge(T, lam=30.0):
+        X = T[feats].values.astype(float); mu, sd = X.mean(0), X.std(0) + 1e-9; Z = (X - mu) / sd; y = T["y"].values; ym = y.mean()
+        w = np.linalg.solve(Z.T @ Z + lam * np.eye(Z.shape[1]), Z.T @ (y - ym)); return mu, sd, w, ym
+    def pred_ridge(m, df): mu, sd, w, ym = m; return ym + ((df[feats].values.astype(float) - mu) / sd) @ w
+    def metrics(y, pr, sub=None):
+        e = np.exp(y - pr) - 1 if False else (np.exp(y) / np.exp(pr) - 1)   # 보정 후 (실제/보정된 예상 - 1)
+        a = np.abs(e)
+        bs = [np.median(a[rng_.integers(0, len(a), len(a))]) for _ in range(200)]
+        return {"n": int(len(y)), "보통오차": round(float(np.median(a)) * 100, 1), "오차범위": [round(float(np.quantile(bs, .025)) * 100, 1), round(float(np.quantile(bs, .975)) * 100, 1)], "방향": round(float(np.median(e)) * 100, 1),
+                "10안": round(float((a <= .10).mean()) * 100, 1), "10넘게낮게팔림": round(float((e < -.10).mean()) * 100, 1), "10넘게높게팔림": round(float((e > .10).mean()) * 100, 1)}
+    cands = {}
+    cands["보정 없음"] = (lambda df: np.zeros(len(df)), None)
+    g0 = float(TR["y"].median()); cands["상수(한 가지 규칙)"] = (lambda df, g0=g0: np.full(len(df), g0), {"값%": round(g0 * 100, 1)})
+    gl, tb = fit_table(TR, bucket2); cands["표: 최근 거래 나이×6개월 건수"] = (lambda df, gl=gl, tb=tb: apply_table(df, gl, tb, bucket2), {"기본%": round(gl * 100, 1), "칸%": {k_: round(v * 100, 1) for k_, v in tb.items()}})
+    gl3, tb3 = fit_table(TR, bucket); cands["표: 나이×36개월 건수×다른 평형"] = (lambda df, gl=gl3, tb=tb3: apply_table(df, gl, tb, bucket), {"기본%": round(gl3 * 100, 1), "칸%": {k_: round(v * 100, 1) for k_, v in tb3.items()}})
+    mr = fit_ridge(TR); cands["특징 회귀(릿지)"] = (lambda df, mr=mr: pred_ridge(mr, df), {"특징": feats, "가중": [round(float(x), 4) for x in mr[2]]})
+    res = {"generatedAt": now, "기준": "비규제 지방, 6개월 같은 평형 0~2건, 목표 = 낙찰 뒤 6개월 시장 실거래 중위값 ÷ 시세 - 1(오차 = 실제÷보정된 예상 - 1)", "학습": {"n": int(len(TR)), "까지": cutd}, "검증": {"n": int(len(TE)), "부터": cutd}, "후보": {}}
+    for nm, (fn, info) in cands.items():
+        pr = fn(TE); r = {"전체": metrics(TE["y"].values, pr), "정보": info}
+        for gname, mk in (("6개월0건", TE["n6g"] == 0), ("6개월1~2건", TE["n6g"] >= 1), ("광역시", TE["sub"] == 1), ("시·군", TE["sub"] == 0)):
+            if mk.sum() >= 40: r[gname] = metrics(TE["y"].values[mk.values], pr[mk.values])
+        TY = TE[TE["yr"].notna()]
+        if len(TY) >= 40: r["되판가로 교차확인"] = metrics(TY["yr"].values, fn(TY))
+        res["후보"][nm] = r
+    best = min(res["후보"].items(), key=lambda kv: (kv[1]["전체"]["보통오차"], kv[1]["전체"]["10넘게낮게팔림"]))
+    res["최선"] = best[0]
+    print("  🩹 얇은 근거 보정 실험:", json.dumps({k: {"전체": v["전체"], **({"6개월0건": v["6개월0건"]} if "6개월0건" in v else {})} for k, v in res["후보"].items()}, ensure_ascii=False), "→ 최선:", best[0])
+    # 최종 학습(전체 표본)으로 표·상수 저장(앱 적용 시 사용)
+    glF, tbF = fit_table(E, bucket2); res["표_전체학습"] = {"기본%": round(glF * 100, 1), "칸%": {k_: round(v * 100, 1) for k_, v in tbF.items()}, "표본": int(len(E))}
+    gl3F, tb3F = fit_table(E, bucket); res["표2_전체학습"] = {"기본%": round(gl3F * 100, 1), "칸%": {k_: round(v * 100, 1) for k_, v in tb3F.items()}}
+    if os.environ.get("GITHUB_STEP_SUMMARY"):
+        open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8").write("### 얇은 근거 보정 실험\n```json\n" + json.dumps(res, ensure_ascii=False, indent=1) + "\n```\n")
+    cyc.upsert_rows([{"id": "signal|__thin_est__", "payload": cyc.clean_json(res), "fetched_at": now}])
+
+
 def winbid_model(R, now):
     # 🆕 시세 새 규칙(est_rule) 적용(2026-11-04, 사용자 결정): 모델이 보는 시세(est)를 새 규칙으로 - 앱도 같은 규칙으로 시세를 계산해야 함(모델 payload의 estRule 표시)
     R0 = R
@@ -1841,6 +1926,10 @@ def winbid_model(R, now):
         jibang_scorecard(te, p, R0, now)
     except Exception as e:
         import traceback; traceback.print_exc(); print("  지방 성적표 건너뜀:", e)
+    try:
+        thin_correction(R0, now)
+    except Exception as e:
+        import traceback; traceback.print_exc(); print("  얇은 근거 보정 실험 건너뜀:", e)
     try:
         resale_gap_report(R0, now)
     except Exception as e:
