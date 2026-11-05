@@ -399,6 +399,11 @@ def main():
             rec["mkt_after_n"] = int(len(_aft)); rec["mkt_after"] = float(_aft["price"].median()) if len(_aft) else None
             rec["n6"] = int(((g["deal_date"] >= ymd_int(sale_d - timedelta(days=30 + 183))) & (g["deal_date"] < cut) & ((g["size"] - c.area).abs() <= 3)).sum())
             rec["n12"] = int(((g["deal_date"] >= ymd_int(sale_d - timedelta(days=30 + 365))) & (g["deal_date"] < cut) & ((g["size"] - c.area).abs() <= 3)).sum())
+            if rec["n6"] <= 2 and str(c.region).split(" ")[0][:2] not in ("서울", "경기", "인천"):   # 2026-11-06 얇은 근거 시세 후보(시험용): 앱·모델 계산엔 영향 없음
+                try:
+                    rec.update(thin_variants(g, c, cut, cut_ym, idx_at, dgroups.get((c.region, c.dk)), rgroups.get(c.region)))
+                except Exception:
+                    pass
             rec.update(rec_est)
             # 재매도 - 2026-10 정확도 개선: 큰 단지는 같은 층에 같은 평형이 여러 채라 "같은 층 첫 거래"의 절반 이상이 다른 집이었음
             # (낙찰 12개월 안 같은 층 거래 56% vs 2층 위·아래 층 43%). 2023년부터 실거래에 동(棟)이 있어 같은 동·같은 층으로 좁힘:
@@ -1467,6 +1472,63 @@ def pick_flow(cls2, d_res, s_res, c_res):
     return None
 
 
+def thin_variants(g, c, cut, cut_ym, idx_at, dg, rg):
+    """2026-11-06 근거가 얇을 때(6개월 같은 평형 0~2건) 시세 후보들(시험용, 입찰 30일 전까지 정보만 사용):
+    tv_prem = 단지 프리미엄 × 지금 주변 시세 - 같은 단지 같은 평형 최근 36개월 거래마다 '그때 같은 법정동(없으면 시군구) 비슷한 평형 ㎡당 중위값 대비 비율'을 구해 가중 중위(반감 6개월)로 모으고, 지금(최근 4개월) 주변 ㎡당 중위값에 곱함 - 오래된 거래를 그 시점의 동네 시세로 정확히 옮김
+    tv_flow = 오래된 거래(36개월 안)를 시군구 최근 흐름×나이로 옮긴 가중 중위(반감 3개월)
+    tv_idx = 시군구 월별 지수로 36개월 안 거래를 지금 수준에 맞춘 가중 중위(반감 3개월, 지수 없으면 원값)
+    tv_oth = 같은 단지 다른 평형 24개월 ㎡당 가격(지수 보정) 환산(탄력 -0.285)"""
+    out = {}; area = float(c.area); cut_d = int_to_date(int(cut)); co = int(ymd_ord([int(cut)])[0])
+    h = g[(g["deal_date"] < cut) & ((g["size"] - area).abs() <= 3)]
+    h = h[h["deal_date"] >= ymd_int(cut_d - timedelta(days=1095))]
+    base = idx_at(c.region, cut_ym)
+    if len(h):
+        hd = ymd_ord(h["deal_date"].values.astype(np.int64)); age = (co - hd) / 30.4; ph = h["price"].values.astype(float); pm = h["ppm"].values.astype(float); ym = h["ym"].values
+        # 지수 보정
+        v, w = [], []
+        for pr, ag, y_ in zip(ph, age, ym):
+            b0 = idx_at(c.region, int(y_)); f = max(0.6, min(1.6, base / b0)) if (base and b0) else 1.0
+            v.append(pr * f); w.append(0.5 ** (ag / 3.0))
+        out["tv_idx"] = float(_wmed(v, w))
+        # 흐름 보정
+        _sres = adaptive_flow(rg[0], rg[1], cut, 40, 365) if rg else None
+        rate = float(_sres["rate"]) if (_sres is not None and np.isfinite(_sres["z"]) and abs(_sres["z"]) >= 1.0) else 0.0
+        out["tv_flow"] = float(_wmed(ph * np.clip(np.exp(FLOW_COEF * rate * age / 12.0), 0.8, 1.25), 0.5 ** (age / 3.0)))
+        # 단지 프리미엄 × 지금 주변 시세
+        def ctrl(c_lo, c_hi, use_size=True):
+            for src in (0, 1):
+                if src == 0 and dg is not None:
+                    dd, sz, pp = dg[0], dg[1], dg[2]
+                    a, b = int(np.searchsorted(dd, c_lo)), int(np.searchsorted(dd, c_hi)); x = pp[a:b]; s_ = sz[a:b]
+                    x = x[np.abs(s_ - area) <= 15]
+                elif src == 1 and rg is not None:
+                    dd, pp = rg[0], rg[1]; a, b = int(np.searchsorted(dd, c_lo)), int(np.searchsorted(dd, c_hi)); x = pp[a:b]
+                else:
+                    continue
+                if len(x) >= 8: return float(np.median(x)), src
+            return None, None
+        L0, s0 = ctrl(ymd_int(cut_d - timedelta(days=120)), int(cut))
+        if L0:
+            rat, rw = [], []
+            for d_, p_, ag in zip(h["deal_date"].values, pm, age):
+                dt = int_to_date(int(d_)); hi = min(int(cut), ymd_int(dt + timedelta(days=90)))
+                Lc, _ = ctrl(ymd_int(dt - timedelta(days=90)), hi)
+                if Lc: rat.append(p_ / Lc); rw.append(0.5 ** (ag / 6.0))
+            if rat:
+                out["tv_prem"] = float(_wmed(rat, rw)) * L0 * area; out["tv_prem_src"] = s0
+    # 같은 단지 다른 평형
+    o = g[(g["deal_date"] < cut) & ((g["size"] - area).abs() > 3) & (g["deal_date"] >= ymd_int(cut_d - timedelta(days=730)))]
+    if len(o) and base:
+        pp_, sz_ = [], []
+        for ppm, y_, z in zip(o["ppm"].values, o["ym"].values, o["size"].values):
+            b0 = idx_at(c.region, int(y_))
+            if b0: pp_.append(ppm * max(0.6, min(1.6, base / b0))); sz_.append(z)
+        if pp_:
+            r = area / float(np.median(sz_))
+            if 0.6 <= r <= 1.6: out["tv_oth"] = float(np.median(pp_)) * area * float(np.exp(-0.285 * np.log(r)))
+    return out
+
+
 def est_rule_asof(g, c, sale_d, cut, cut_ym, idx_at, flow=None):
     """2026-10-20 앱의 새 예상매도가 규칙을 '입찰 30일 전 시점'으로 재현(사용자: 낙찰가 모델의 시세 기준을 새 규칙으로 바꾸면 오차가 줄까)
     6개월 같은 평형(±3㎡) 3건+ → 서울 최근3건 중위 / 경기·인천 반감1개월 / 지방 반감2개월 가중 중위. 부족하면 같은 평형 36개월(6개월 밖은 시군구 지수 보정, 반감3개월; 지방 최근 1건+는 12개월 원값),
@@ -1797,6 +1859,56 @@ def thin_correction(R0, now):
         TY = TE[TE["yr"].notna()]
         if len(TY) >= 40: r["되판가로 교차확인"] = metrics(TY["yr"].values, fn(TY))
         res["후보"][nm] = r
+    try:  # 🧪 시세 후보 시험(2026-11-06): 가격을 옮기는 대신 근거를 보강한 시세로 바꿔 채점 - 같은 학습/검증 분할, 후보가 비는 사건은 기존 시세 그대로
+        vres = {"설명": "tv_prem=단지 프리미엄×지금 주변 시세, tv_flow=흐름으로 옮긴 오래된 거래, tv_idx=시군구 지수로 옮긴 거래, tv_oth=다른 평형 환산. 섞기 비중은 학습 구간에서 6개월 건수별로 고름(0~1, 0.1 간격)", "후보": {}}
+        base_ = E[col].values.astype(float)
+        def lv(nm):
+            if nm not in E.columns: return None
+            v = pd.to_numeric(E[nm], errors="coerce").values.astype(float)
+            return np.where(np.isfinite(v) & (v > 0) & (np.abs(np.log(np.where(v > 0, v, 1) / base_)) < 0.5), np.log(np.where(v > 0, v, 1) / base_), np.nan)   # 기존 시세와 ±50% 넘게 다르면 이상값으로 보고 제외
+        shifts = {nm: lv(nm) for nm in ("tv_prem", "tv_flow", "tv_idx", "tv_oth")}
+        shifts = {k_: v_ for k_, v_ in shifts.items() if v_ is not None}
+        istr = (E["sale"] < cutd).values; iste = ~istr; n6a = E["n6g"].values
+        def shift_for(arr, wmap):
+            out = np.zeros(len(E))
+            for nb in (0, 1):   # 6개월 0건 / 1~2건
+                m = (n6a == 0) if nb == 0 else (n6a >= 1); wgt = wmap[nb]; ok = m & np.isfinite(arr); out[ok] = wgt * arr[ok]
+            return out
+        def best_w(arr):
+            wm = {}
+            for nb in (0, 1):
+                m = istr & np.isfinite(arr) & ((n6a == 0) if nb == 0 else (n6a >= 1)); best = (9, 0.0)
+                if m.sum() < 40: wm[nb] = 0.0; continue
+                for wv in np.arange(0, 1.01, 0.1):
+                    e_ = np.median(np.abs(np.exp(E["y"].values[m] - wv * arr[m]) - 1))
+                    if e_ < best[0] - 1e-9: best = (e_, float(wv))
+                wm[nb] = best[1]
+            return wm
+        allm = np.nanmean(np.vstack([np.where(np.isfinite(v_), v_, 0.0) for v_ in shifts.values()]), axis=0) if shifts else None
+        def mt(sh):
+            te_ = E.iloc[np.where(iste)[0]]; r = {"전체": metrics(te_["y"].values, sh[iste])}
+            for gname, mk in (("6개월0건", te_["n6g"] == 0), ("6개월1~2건", te_["n6g"] >= 1), ("광역시", te_["sub"] == 1), ("시·군", te_["sub"] == 0)):
+                if mk.sum() >= 40: r[gname] = metrics(te_["y"].values[mk.values], sh[iste][mk.values])
+            return r
+        vres["후보"]["기존 시세(보정 없음)"] = mt(np.zeros(len(E)))
+        for nm, arr in shifts.items():
+            cover = float(np.isfinite(arr[iste]).mean()) * 100; wm = best_w(arr)
+            r_full = mt(shift_for(arr, {0: 1.0, 1: 1.0})); r_mix = mt(shift_for(arr, wm))
+            vres["후보"][nm + " 그대로"] = {**r_full, "검증 중 후보 있는 비율%": round(cover, 1)}
+            vres["후보"][nm + " 섞기"] = {**r_mix, "섞는 비중(0건,1~2건)": [wm[0], wm[1]], "검증 중 후보 있는 비율%": round(cover, 1)}
+        if allm is not None:
+            vres["후보"]["후보 평균(기존 포함 아님)"] = mt(allm)
+            wmA = best_w(allm); vres["후보"]["후보 평균 섞기"] = {**mt(shift_for(allm, wmA)), "섞는 비중(0건,1~2건)": [wmA[0], wmA[1]]}
+        # 좋은 후보에 특징 회귀(릿지)를 더 얹으면
+        try:
+            TRm = E[istr].copy(); best_nm = min((k_ for k_ in vres["후보"] if k_.endswith("섞기")), key=lambda k_: vres["후보"][k_]["전체"]["보통오차"])
+            vres["최선(시세 후보)"] = best_nm
+        except Exception: pass
+        vres["표본"] = {"학습": int(istr.sum()), "검증": int(iste.sum())}
+        print("  🧪 시세 후보 시험:", json.dumps({k_: v_["전체"] for k_, v_ in vres["후보"].items()}, ensure_ascii=False))
+        res["시세후보시험"] = vres
+    except Exception as e:
+        print("  시세 후보 시험 실패:", e)
     best = min(res["후보"].items(), key=lambda kv: (kv[1]["전체"]["보통오차"], kv[1]["전체"]["10넘게낮게팔림"]))
     res["최선"] = best[0]
     print("  🩹 얇은 근거 보정 실험:", json.dumps({k: {"전체": v["전체"], **({"6개월0건": v["6개월0건"]} if "6개월0건" in v else {})} for k, v in res["후보"].items()}, ensure_ascii=False), "→ 최선:", best[0])
