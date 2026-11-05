@@ -192,6 +192,14 @@ def backtest_coeff():
             e = np.array(err[(lv, gp)]); rows.append({"계수": gp[0], "거래량믿음도": gp[1], "불확실건너뜀": gp[2], "범위": list(gp[3]), "전체": stat(e), "수도권": stat(e, meta == "수도권"), "지방": stat(e, meta == "지방")})
         rows.sort(key=lambda r: r["전체"]["medAbs%"])
         out["단위별 최적"][lv] = rows[:3]
+        if lv == "sgg":   # 🔁 흐름 계수 자동 선택(2026-11-06): 지역등급별로 보통 오차가 가장 작은 계수(차이 0.5% 안이면 더 작은 계수 - 흔들림 방지). 입찰후보 계산(서버·앱)이 이 값을 읽음
+            cand = [r for r in rows if (not r["거래량믿음도"]) and r["불확실건너뜀"] and list(r["범위"]) == [0.95, 1.08] and r["계수"] > 0]
+            auto = {}
+            for cn in ("수도권", "지방"):
+                if not cand: break
+                best = min(r[cn]["medAbs%"] for r in cand)
+                auto[cn] = float(min(r["계수"] for r in cand if r[cn]["medAbs%"] <= best * 1.005 + 1e-9))
+            if auto: out["coefAuto"] = auto
         # 계수별 최선(다른 설정은 최선으로)
         byS = {}
         for r in rows:

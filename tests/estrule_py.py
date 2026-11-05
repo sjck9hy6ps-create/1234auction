@@ -15,6 +15,7 @@ def _wmed(v, w):
     return float(np.interp(0.5, c, v))
 
 
+FLOW_COEF_CLS = {"수도권": 1.5, "지방": 1.5}
 FLOW_COEF = 1.5   # 흐름 반영 계수(2026-11-05 점검: 1.5~3에서 오차 최소·평탄, 0.6은 얻을 개선의 일부만)
 
 
@@ -39,7 +40,7 @@ def est_rule_asof(g, c, sale_d, cut, cut_ym, idx_at, flow=None):
     pf = price
     if flow is not None and len(price):
         _g = flow_gate_g(flow["rate"], flow.get("vol"))
-        pf = price * np.where(age <= 12, np.clip(np.exp(FLOW_COEF * flow["rate"] * _g * age / 12.0), 0.95, 1.08), 1.0)
+        pf = price * np.where(age <= 12, np.clip(np.exp(FLOW_COEF_CLS["수도권" if str(c.region).split(" ")[0][:2] in ("서울", "경기", "인천") else "지방"] * flow["rate"] * _g * age / 12.0), 0.95, 1.08), 1.0)
     sido = str(c.region).split(" ")[0]
     cls = "서울" if sido.startswith("서울") else ("경기·인천" if sido[:2] in ("경기", "인천") else "지방")
     m6 = age <= 6; n6 = int(m6.sum())

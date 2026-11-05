@@ -100,6 +100,7 @@ def fails_from_ratio(r):
 def main():
     now = datetime.now(timezone.utc).isoformat()
     print("🏃 낙찰사례 검증 시작", now)
+    load_flow_coef()
     cases = requests.get(f"{SITE_URL}/api/auction?kind=bidCases", timeout=120).json()
     df = pd.DataFrame(cases)
     print(f"  낙찰사례 {len(df):,}건")
@@ -1456,7 +1457,20 @@ def _wmed(v, w):
     return float(np.interp(0.5, c, v))
 
 
-FLOW_COEF = 1.5   # 흐름 반영 계수(2026-11-05 점검: 1.5~3에서 오차 최소·평탄, 0.6은 얻을 개선의 일부만)
+FLOW_COEF = 1.5   # 흐름 반영 계수 기본값(2026-11-05 점검: 1.5~3에서 오차 최소·평탄, 0.6은 얻을 개선의 일부만)
+FLOW_COEF_CLS = {"수도권": FLOW_COEF, "지방": FLOW_COEF}   # 지역등급별 계수 - 매주 흐름 실험(analyze-flow-lab)이 고른 값으로 갱신(load_flow_coef), 못 읽으면 기본값
+
+
+def load_flow_coef():
+    try:
+        d = requests.get(f"{SITE_URL}/api/data-coverage?mode=flowLab&nocache=1&x={int(time.time())}", timeout=120).json()
+        auto = ((d.get("coeff") or {}).get("coefAuto")) or {}
+        for k_ in ("수도권", "지방"):
+            v_ = auto.get(k_)
+            if isinstance(v_, (int, float)) and 0.3 <= v_ <= 5: FLOW_COEF_CLS[k_] = float(v_)
+        print("  🔁 흐름 계수(주간 자동 선택):", FLOW_COEF_CLS)
+    except Exception as e:
+        print("  흐름 계수 자동 선택 못 읽음(기본값 사용):", e)
 
 
 def flow_gate_g(rate, vol):
@@ -1545,7 +1559,7 @@ def est_rule_asof(g, c, sale_d, cut, cut_ym, idx_at, flow=None):
     pf = price
     if flow is not None and len(price):
         _g = flow_gate_g(flow["rate"], flow.get("vol"))
-        pf = price * np.where(age <= 12, np.clip(np.exp(FLOW_COEF * flow["rate"] * _g * age / 12.0), 0.95, 1.08), 1.0)
+        pf = price * np.where(age <= 12, np.clip(np.exp(FLOW_COEF_CLS["수도권" if str(c.region).split(" ")[0][:2] in ("서울", "경기", "인천") else "지방"] * flow["rate"] * _g * age / 12.0), 0.95, 1.08), 1.0)
     sido = str(c.region).split(" ")[0]
     cls = "서울" if sido.startswith("서울") else ("경기·인천" if sido[:2] in ("경기", "인천") else "지방")
     m6 = age <= 6; n6 = int(m6.sum())
@@ -1920,6 +1934,34 @@ def thin_correction(R0, now):
     cyc.upsert_rows([{"id": "signal|__thin_est__", "payload": cyc.clean_json(res), "fetched_at": now}])
 
 
+def risk_table(R0, now):
+    """2026-11-06 근거 두께별 '낙찰 뒤 실제 시장가 ÷ 입찰 30일 전 시세 - 1' 분포(하방 25%·중앙·하방 10%) - 추천가의 위험 여유가 고정 숫자 대신 최근 실측을 따르게 함.
+    정답 = 낙찰 뒤 6개월 같은 단지·평형 시장 실거래 중위값. 낙찰 후 6개월이 지난 사건 중 최근 12개월분(그 뒤는 아직 정답이 없음). 칸 = 지역등급(서울/경기·인천/지방) × 근거(6개월 같은 평형 0건·가장 최근 거래 12개월 이내/초과, 1~2건, 3~4건, 5건+).
+    칸 표본이 40건 미만이면 같은 근거의 전체 지역 칸으로 대체(표시 n 포함). 매주 모델 갱신 때 다시 계산됨"""
+    need = ["n6", "mkt_after", "t_last_age"]
+    if any(c_ not in R0.columns for c_ in need): return None
+    col = "est_rule_f" if "est_rule_f" in R0.columns else "est_rule"
+    hi = int((datetime.strptime(now[:10], "%Y-%m-%d") - timedelta(days=190)).strftime("%Y%m%d"))
+    lo = int((datetime.strptime(now[:10], "%Y-%m-%d") - timedelta(days=190 + 365)).strftime("%Y%m%d"))
+    D = R0[R0[col].notna() & (R0[col] > 0) & R0["mkt_after"].notna() & (R0["mkt_after"] > 0) & R0["n6"].notna() & (R0["sale"] >= lo) & (R0["sale"] <= hi)].copy()
+    D["e"] = D["mkt_after"] / D[col] - 1; D = D[D["e"].between(-0.6, 0.9)]
+    cls_f = lambda rg: "서울" if str(rg).startswith("서울") else ("경기·인천" if str(rg)[:2] in ("경기", "인천") else "지방")
+    D["cls"] = D["region"].map(cls_f)
+    def ev(n6, la):
+        if n6 == 0: return "0건·최근" if (pd.notna(la) and la <= 12) else "0건·오래"
+        return "1~2건" if n6 <= 2 else ("3~4건" if n6 <= 4 else "5건+")
+    D["ev"] = [ev(int(n), la) for n, la in zip(D["n6"], D["t_last_age"])]
+    st = lambda x: {"n": int(len(x)), "q10": round(float(np.quantile(x, .10)), 4), "q25": round(float(np.quantile(x, .25)), 4), "q50": round(float(np.quantile(x, .50)), 4)}
+    allt = {k_: st(g_["e"].values) for k_, g_ in D.groupby("ev") if len(g_) >= 40}
+    tab = {}
+    for (cl, e_), g_ in D.groupby(["cls", "ev"]):
+        if len(g_) >= 40: tab[f"{cl}|{e_}"] = st(g_["e"].values)
+        elif e_ in allt: tab[f"{cl}|{e_}"] = {**allt[e_], "대체": "전체 지역"}
+    out = {"기간": [lo, hi], "표본": int(len(D)), "칸": tab, "전체칸": allt, "정의": "e = 낙찰 뒤 6개월 시장 실거래 중위 ÷ 시세(est_rule_f) - 1"}
+    print("  🧱 근거 두께별 하방 표:", json.dumps({k_: [v_["n"], v_["q25"], v_["q50"]] for k_, v_ in tab.items()}, ensure_ascii=False))
+    return out
+
+
 def winbid_model(R, now):
     # 🆕 시세 새 규칙(est_rule) 적용(2026-11-04, 사용자 결정): 모델이 보는 시세(est)를 새 규칙으로 - 앱도 같은 규칙으로 시세를 계산해야 함(모델 payload의 estRule 표시)
     R0 = R
@@ -2074,6 +2116,9 @@ def winbid_model(R, now):
         full["flowInfo"] = _fi
     except Exception as _e:
         print("  흐름 채움 비율 건너뜀:", _e)
+    full["flowCoef"] = dict(FLOW_COEF_CLS)   # 앱이 같은 계수로 시세 흐름 반영(주간 자동 선택)
+    try: full["riskTable"] = risk_table(R0, now)
+    except Exception as e: print("  위험 표 계산 실패:", e)
     full["flowIsNew"] = True; full["flowDiag"] = flow_diag; full["estRule"] = True; full["estFlow"] = "est_rule_f" in R.columns; full["factorsK"] = [[f, k] for f, k in WB_FACTORS]
     # 경쟁 예상(2026-10-10): 같은 요인으로 로그 응찰자 수를 맞추는 모델 - 앱이 하위 25%(낮음)·상위 25%(높음)로 표시
     try:

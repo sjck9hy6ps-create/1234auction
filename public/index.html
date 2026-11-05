@@ -20049,6 +20049,7 @@ function loadWinbidModel() {
     var use = function(d) {
         if (!d || !d.eff || !d.resQ) return false;
         winbidModel = d; winbidLoading = false;
+        if (d.flowCoef) { ['수도권', '지방'].forEach(function(k) { if (typeof d.flowCoef[k] === 'number' && isFinite(d.flowCoef[k])) FLOW_COEF_CLS[k] = d.flowCoef[k]; }); }
         if (!d.bid) {  // 서버 모델에 경쟁 예상(bid)이 아직 없으면 기본 파일의 것을 붙임
             fetch('/winbid-model.json').then(function(r) { return r.json(); }).then(function(f) {
                 if (!f || !f.bid || !winbidModel || winbidModel.bid) return;
@@ -20080,7 +20081,7 @@ function estRuleCore(trades, area, cls, ref, idx, base, flow) {   // flow: {rate
     var clamp = function(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); };
     var med = function(x) { x = x.slice().sort(function(m, n) { return m - n; }); var k = x.length >> 1; return x.length % 2 ? x[k] : (x[k - 1] + x[k]) / 2; };
     var H = [], O = [];
-    var fg = flow ? FLOW_COEF * flow.rate * flowGateG(flow.rate, flow.vol) : 0;
+    var fg = flow ? flowCoefFor(cls) * flow.rate * flowGateG(flow.rate, flow.vol) : 0;
     trades.forEach(function(t) {
         if (t.td >= ref) return; var age = (ref - t.td) / DAY / 30.4;
         var it = { p: t.price, age: age, ppm: t.ppm, size: t.size, ym: ym(t.td) };
@@ -20235,7 +20236,9 @@ function flowDaysTrades(lawd, dongK, which, band) {   // which: 'sgg' | 'dong' |
     else allAptList.forEach(push);
     out.sort(function(x, y) { return x.d - y.d; }); return out;
 }
-var FLOW_COEF = 1.5;   // 서버 FLOW_COEF와 같음(2026-11-05 점검)
+var FLOW_COEF = 1.5;   // 서버 FLOW_COEF 기본값과 같음(2026-11-05 점검)
+var FLOW_COEF_CLS = { '수도권': 1.5, '지방': 1.5 };   // 서버 모델 payload(flowCoef)가 주간 자동 선택한 값으로 바뀜
+function flowCoefFor(cls) { var v = FLOW_COEF_CLS[cls === '지방' ? '지방' : '수도권']; return (typeof v === 'number' && isFinite(v)) ? v : FLOW_COEF; }
 function flowGateG(rate, vol) { return 1; }   // 서버 flow_gate_g와 같음 - 거래량 믿음도는 점검에서 도움이 안 돼 쓰지 않음
 function flowPick(a, lawd, area, bunjiFull, cutDays) {   // 서버 pick_flow와 같음: 수도권=법정동→시군구, 지방=시군구, |z|<1이면 건너뜀
     var cls = aptRegionClass(lawd) === '지방' ? '지방' : '수도권', res = null;
@@ -20261,7 +20264,7 @@ function saleFlowFor(a, lawd, area, bunjiFull) {
     tryLv('시군구', function() { return adaptiveFlowCore(flowDaysTrades(lawd, null, 'sgg'), cut, 40, 365); });
     var out = { adj: 1, level: null, rate: 0, z: 0 };
     if (got) {
-        var raw = Math.exp(FLOW_COEF * got.rate * (cls === '수도권' ? 0.15 : 0.30));
+        var raw = Math.exp(flowCoefFor(cls) * got.rate * (cls === '수도권' ? 0.15 : 0.30));
         out = { adj: Math.max(0.95, Math.min(1.08, raw)), level: level, rate: got.rate, z: got.z, vol: got.vol };
     }
     // 앞으로 3개월 예측(수도권만): 지금과 닮은 과거 구간 뒤의 가격 변화 × 검증으로 정한 줄이는 비율, ±4% 안
