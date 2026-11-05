@@ -386,6 +386,7 @@ def main():
             except Exception:
                 rec["est_rule_f"] = None
             # 2026-10-11 환금성: 입찰 30일 전 기준 같은 단지·같은 평형(±3㎡) 최근 1년 중개거래 수 - 앱의 "최근 1년 같은 평형 거래"와 같은 정의
+            rec["n6"] = int(((g["deal_date"] >= ymd_int(sale_d - timedelta(days=30 + 183))) & (g["deal_date"] < cut) & ((g["size"] - c.area).abs() <= 3)).sum())
             rec["n12"] = int(((g["deal_date"] >= ymd_int(sale_d - timedelta(days=30 + 365))) & (g["deal_date"] < cut) & ((g["size"] - c.area).abs() <= 3)).sum())
             rec.update(rec_est)
             # 재매도 - 2026-10 정확도 개선: 큰 단지는 같은 층에 같은 평형이 여러 채라 "같은 층 첫 거래"의 절반 이상이 다른 집이었음
@@ -1580,6 +1581,58 @@ def resale_gap_report(R, now):
     cyc.upsert_rows([{"id": "signal|__resale_gap__", "payload": cyc.clean_json(out), "fetched_at": now}])
 
 
+def jibang_scorecard(te, p, R0, now):
+    """2026-11-05 지방 아파트 성적표(사용자: 지방 아파트 입찰이 내 조건에 가장 적합 - 예상낙찰가·추천입찰가·예상매도가 정확도가 가장 중요)
+    비규제 구분 없이 '지방'(서울·경기·인천 제외)만, 학습에 안 쓴 최근 12개월(te)과 낙찰 후 되판 사례(같은 동·층 확인)로 채점. 근거 두께(같은 단지·같은 평형 거래 수)별로 나눠 표시.
+    ① 예상낙찰가: 모델 예상 vs 실제 낙찰가 ② 추천입찰가: 시세−고정비−최소마진 1천만으로 역산한 근사(앱 저장 추천가 아님) 대비 실제 낙찰가 ③ 예상매도가: 입찰 30일 전 시세(est_rule_f) vs 되판 가격"""
+    isjb = lambda rg: not (str(rg).startswith("서울") or str(rg)[:2] in ("경기", "인천"))
+    def bins_for(df):
+        out = [("전체", np.ones(len(df), bool))]
+        if "n6" in df.columns and df["n6"].notna().mean() >= 0.5:
+            n = df["n6"].fillna(-1).values
+            out += [("6개월 같은 평형 0건", n == 0), ("1~2건", (n >= 1) & (n <= 2)), ("3건 이상", n >= 3)]
+        else:
+            n = df["n12"].fillna(-1).values
+            out += [("1년 같은 평형 0~2건", (n >= 0) & (n <= 2)), ("3~5건", (n >= 3) & (n <= 5)), ("6~11건", (n >= 6) & (n <= 11)), ("12건 이상", n >= 12)]
+        return out
+    res = {"generatedAt": now, "기준": "지방 아파트(서울·경기·인천 제외), 오차 = (예상−실제)/실제", "구간기준": "6개월 같은 평형 거래 수" if ("n6" in R0.columns and R0["n6"].notna().mean() >= 0.5) else "1년 같은 평형 거래 수(6개월 값은 다음 구동부터)"}
+    T = te.copy(); T["pred"] = np.exp(p) * T["est"].values
+    T = T[T["region"].map(isjb)]
+    def st_win(G):
+        e = ((G["pred"] - G["actual"]) / G["actual"]).values; a = np.abs(e)
+        return {"n": int(len(G)), "보통오차": round(float(np.median(a)) * 100, 1), "방향": round(float(np.median(e)) * 100, 1), "10안": round(float((a <= .10).mean()) * 100, 1), "10넘게높음": round(float((e > .10).mean()) * 100, 1), "10넘게낮음": round(float((e < -.10).mean()) * 100, 1), "p90": round(float(np.quantile(a, .9)) * 100, 1)}
+    def st_rec(G):
+        rec = ((G["est"] - FIXED_COST - 1000) / COST_RATIO); G = G[rec > 0]; rec = rec[rec > 0]
+        if len(G) < 20: return {"n": int(len(G))}
+        r = (G["actual"] / rec).values
+        return {"n": int(len(G)), "추천가이하낙찰%": round(float((G["actual"].values <= rec.values).mean()) * 100, 1), "실제÷추천가중앙": round(float(np.median(r)), 3), "추천가보다10넘게비쌈%": round(float((r > 1.10).mean()) * 100, 1)}
+    res["예상낙찰가"] = {k: st_win(T[m]) for k, m in bins_for(T) if m.sum() >= 30}
+    res["추천입찰가_근사"] = {k: st_rec(T[m]) for k, m in bins_for(T) if m.sum() >= 30}
+    # 예상매도가 vs 되판 가격
+    col = "est_rule_f" if "est_rule_f" in R0.columns else "est_rule"
+    D = R0[(R0["resale_conf"] == "dong") & R0["resale"].notna() & R0[col].notna() & (R0[col] > 0) & R0["resale_m"].between(0.45, 12) & (R0["sale"] >= 20230101)].copy()
+    D = D[D["region"].map(isjb)]
+    def st_sale(G):
+        g = (G["resale"] / G[col] - 1).values; a = np.abs(g)
+        return {"n": int(len(G)), "보통오차": round(float(np.median(a)) * 100, 1), "방향(되판÷예상-1)": round(float(np.median(g)) * 100, 1), "10안": round(float((a <= .10).mean()) * 100, 1), "10넘게낮게팔림": round(float((g < -.10).mean()) * 100, 1), "하방10분위": round(float(np.quantile(g, .1)) * 100, 1)}
+    res["예상매도가_되판가"] = {k: st_sale(D[m]) for k, m in bins_for(D) if m.sum() >= 30}
+    res["예상매도가_되판가_기간"] = {k: st_sale(D[m]) for k, m in (("3개월 이내", (D["resale_m"] <= 3).values), ("3~6개월", ((D["resale_m"] > 3) & (D["resale_m"] <= 6)).values), ("6~12개월", (D["resale_m"] > 6).values)) if m.sum() >= 30}
+    # 추천가 이하 낙찰 건의 되판 손익(비용 전): 되판가÷낙찰가
+    try:
+        rec_all = (D[col] - FIXED_COST - 1000) / COST_RATIO
+        if rec_all is not None:
+            W = D[(D["actual"] <= rec_all) & D["actual"].notna()]
+            if len(W) >= 20:
+                rr = (W["resale"] / W["actual"]).values
+                res["추천가이하낙찰_되판비율"] = {"n": int(len(W)), "중앙": round(float(np.median(rr)), 3), "1.06미만%": round(float((rr < 1.06).mean()) * 100, 1), "1.00미만%": round(float((rr < 1.0).mean()) * 100, 1)}
+    except Exception as e:
+        print("  추천가이하 되판비율 건너뜀:", e)
+    print("  🧾 지방 성적표:", json.dumps(res, ensure_ascii=False))
+    if os.environ.get("GITHUB_STEP_SUMMARY"):
+        open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8").write("### 지방 아파트 성적표\n```json\n" + json.dumps(res, ensure_ascii=False, indent=1) + "\n```\n")
+    cyc.upsert_rows([{"id": "signal|__jibang_score__", "payload": cyc.clean_json(res), "fetched_at": now}])
+
+
 def winbid_model(R, now):
     # 🆕 시세 새 규칙(est_rule) 적용(2026-11-04, 사용자 결정): 모델이 보는 시세(est)를 새 규칙으로 - 앱도 같은 규칙으로 시세를 계산해야 함(모델 payload의 estRule 표시)
     R0 = R
@@ -1694,6 +1747,10 @@ def winbid_model(R, now):
             open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8").write("### 틈새 진단\n```json\n" + json.dumps(diag, ensure_ascii=False, indent=1) + "\n```\n")
     except Exception as e:
         print("  틈새 진단 건너뜀:", e)
+    try:
+        jibang_scorecard(te, p, R0, now)
+    except Exception as e:
+        import traceback; traceback.print_exc(); print("  지방 성적표 건너뜀:", e)
     try:
         resale_gap_report(R0, now)
     except Exception as e:
