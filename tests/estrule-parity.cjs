@@ -2,7 +2,7 @@ const fs=require('fs');
 const src=fs.readFileSync('/tmp/chk1.js','utf8')+fs.readFileSync('/tmp/chk0.js','utf8');
 const i=src.indexOf('function estRuleCore'), j=src.indexOf('// 서버 지수와 같은 방식');
 const k=src.indexOf('function weightedMedianByAge'), l=src.indexOf('function aptOwnTradeStats');
-const gi=src.indexOf('function flowGateG'), gj=src.indexOf('function flowPick');
+const gi=src.indexOf('var FLOW_COEF'), gj=src.indexOf('function flowPick');
 const f=new Function(src.slice(k,l)+src.slice(gi,gj)+src.slice(i,j)+';return estRuleCore;')();
 const D=JSON.parse(fs.readFileSync('/tmp/parity_in.json','utf8'));
 const idxmap=D.idx;

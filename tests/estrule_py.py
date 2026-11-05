@@ -15,11 +15,12 @@ def _wmed(v, w):
     return float(np.interp(0.5, c, v))
 
 
+FLOW_COEF = 1.5   # 흐름 반영 계수(2026-11-05 점검: 1.5~3에서 오차 최소·평탄, 0.6은 얻을 개선의 일부만)
+
+
 def flow_gate_g(rate, vol):
-    """가격 흐름을 거래량으로 믿는 정도(2026-11-05): 가격 상승+거래량 감소(끝물 가능)는 0.4, 상승+증가 1, 하락+감소 1, 하락+증가(바닥 다지기) 0.5, 그 외 0.75"""
-    v = 0.0 if vol is None else float(vol)
-    if rate > 0: return 1.0 if v >= 0.2 else (0.75 if v > -0.2 else 0.4)
-    return 1.0 if v <= -0.2 else (0.75 if v < 0.2 else 0.5)
+    """거래량으로 가격 흐름 믿음을 조절하던 값 - 2026-11-05 점검에서 시세 보정에는 도움이 안 돼 쓰지 않음(항상 1)"""
+    return 1.0
 
 
 def est_rule_asof(g, c, sale_d, cut, cut_ym, idx_at, flow=None):
@@ -34,11 +35,11 @@ def est_rule_asof(g, c, sale_d, cut, cut_ym, idx_at, flow=None):
     else:
         age = np.array([])
     price = h["price"].values.astype(float) if len(h) else np.array([])
-    # 📈 지역 가격 흐름 반영(2026-11-05, 사용자: 모든 가격에 부동산 흐름 반영): 12개월 안 원값 거래를 거래 나이(년)×연율 흐름×거래량 믿음도(0.6 배)로 지금 시점에 맞춤(-5%~+8%). flow=None이면 예전 값 그대로
+    # 📈 지역 가격 흐름 반영(2026-11-05, 사용자: 모든 가격에 부동산 흐름 반영): 12개월 안 원값 거래를 거래 나이(년)×연율 흐름×계수(FLOW_COEF)로 지금 시점에 맞춤(-5%~+8%). flow=None이면 예전 값 그대로
     pf = price
     if flow is not None and len(price):
         _g = flow_gate_g(flow["rate"], flow.get("vol"))
-        pf = price * np.where(age <= 12, np.clip(np.exp(0.6 * flow["rate"] * _g * age / 12.0), 0.95, 1.08), 1.0)
+        pf = price * np.where(age <= 12, np.clip(np.exp(FLOW_COEF * flow["rate"] * _g * age / 12.0), 0.95, 1.08), 1.0)
     sido = str(c.region).split(" ")[0]
     cls = "서울" if sido.startswith("서울") else ("경기·인천" if sido[:2] in ("경기", "인천") else "지방")
     m6 = age <= 6; n6 = int(m6.sum())
