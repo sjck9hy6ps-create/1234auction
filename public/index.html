@@ -4097,7 +4097,8 @@ async function favSaveNote(id, txt) {
     a.favNote = String(txt || '').slice(0, 500);
     try { await saveAuctionAPI(a); } catch (e) { alert('저장 실패: ' + e.message); }
 }
-function favRows() { return bidBoardRows.filter(function(r) { return (r.type === 'apt' || r.type === 'villa') && !r.pending && r.a && r.a.fav; }); }
+function isSeoulRow(r) { return /^서울/.test(String((r.a && r.a.addr) || r.region || '').trim()); }
+function favRows() { return bidBoardRows.filter(function(r) { return (r.type === 'apt' || (r.type === 'villa' && r.metro)) && !r.pending && r.a && r.a.fav; }); }
 function favNoteHtml(row) {
     var idJs = String(row.id).replace(/\\/g, '\\\\').replace(/'/g, "\\'");
     return '<div class="dr-sec"><h4>⭐ 즐겨찾기 ' + (row.a.fav ? '<span class="dr-sub" style="display:inline;">(' + bbEsc(row.a.favAt || '') + ' 담음)</span>' : '') + '</h4>'
@@ -19236,7 +19237,7 @@ function riskTableRate(ri) {
     var ev = n6 === 0 ? ((ri.lastAgeM != null && ri.lastAgeM <= 12) ? '0건·최근' : '0건·오래') : (n6 <= 2 ? '1~2건' : (n6 <= 4 ? '3~4건' : '5건+'));
     var c = (rt['칸'] || {})[ri.cls + '|' + ev] || (rt['전체칸'] || {})[ev];
     if (!c || typeof c.q25 !== 'number' || !(c.n >= 40)) return null;
-    return { rate: Math.max(0.02, Math.min(0.22, -c.q25)), key: ri.cls + '|' + ev, n: c.n, sub: !!c['대체'] };
+    return { rate: Math.max(0.02, Math.min(0.22, -c.q25)), key: ri.cls + '|' + ev, n: c.n, sub: c['대체'] || '' };
 }
 function riskMarginFor(predictedSale, ownTrades, downRisk, popInfo, regionInfo) {
     if (!predictedSale) return null;
@@ -19261,7 +19262,7 @@ function riskMarginFor(predictedSale, ownTrades, downRisk, popInfo, regionInfo) 
     var popExtra = popInfo && popInfo.tier === '하위40%' ? LOW_POP_EXTRA_RATE : 0;
     // 2026-10(사용자 기준): 최소마진 1,000만 원 - 싼 물건에서 비율로 계산한 마진이 이보다 작으면 1,000만 원으로 올림
     var m = Math.round((500 + predictedSale * (rate + extra + popExtra)) / 10) * 10;
-    return { margin: Math.max(MIN_MARGIN_MANWON, m), rate: rate, extra: extra, popExtra: popExtra, floored: m < MIN_MARGIN_MANWON, tbl: tbl ? tbl.key + " " + tbl.n + "건" + (tbl.sub ? "(전체 지역 대체)" : "") : null };
+    return { margin: Math.max(MIN_MARGIN_MANWON, m), rate: rate, extra: extra, popExtra: popExtra, floored: m < MIN_MARGIN_MANWON, tbl: tbl ? tbl.key + " " + tbl.n + "건" + (tbl.sub ? "(" + tbl.sub + " 대체)" : "") : null };
 }
 var subjectRiskCache = {}; // lawdCd -> {level, avgDropPct, negative} (사이클 분석 결과)
 function getSubjectDownRisk(ctx, onReady) {
@@ -21507,6 +21508,8 @@ function renderBidBoardLite() {
         return '<button class="bb-tab' + (s.visit === t[0] ? ' on' : '') + '" onclick="setLiteVisit(\'' + t[0] + '\')">' + t[1] + ' <b>' + t[2] + '</b></button>';
     }).join('') + (isVillaTab ? '' : ' <button class="bb-tab' + (s.nicheLite ? ' on' : '') + '" title="입찰자가 적으면서 되팔림도 좋은 시군구의 물건" onclick="bidBoardState.nicheLite=!bidBoardState.nicheLite;bidBoardState.liteLimit=120;renderBidBoard();">🧭 틈새만 <b>' + cur.filter(function(r) { return r.niche && !r.pending; }).length + '</b></button>');
     var listN = isVillaTab ? villaMetroRows().filter(function(r) { return listingStatus(r.a).st === 'yes'; }).length : cur.filter(function(r) { return !r.pending && listingStatus(r.a).st === 'yes'; }).length;
+    var seoulN = isVillaTab ? 0 : cur.filter(function(r) { return !r.pending && r.winbid && r.sale && isSeoulRow(r); }).length;
+    if (!isVillaTab) sub += ' <button class="bb-tab' + (s.seoulOwn ? ' on' : '') + '" title="서울 아파트를 되팔지 않고 직접 살 때 보는 화면: 임장·패스 구분 없이 서울 물건 전체를, 예상 낙찰가가 예상매도가보다 얼마나 싼지 순서로 보여줘요(사업자대출·마진 기준은 적용하지 않아요)" onclick="bidBoardState.seoulOwn=!bidBoardState.seoulOwn;bidBoardState.liteLimit=120;renderBidBoard();">🏠 서울 자가 매입 <b>' + seoulN + '</b></button>';
     sub += ' <button class="bb-tab' + (s.listLite ? ' on' : '') + '" title="네이버 매물 목록을 붙여넣어 매물이 있는 것으로 확인한 물건만" onclick="setListFilter()">📋 매물 등록 <b>' + listN + '</b></button>';
     sub += ' <button class="bb-tab' + (s.rightsNeed ? ' on' : '') + '" title="임장 후보인데 권리분석이 없는 물건만" onclick="toggleRightsNeed();">⚖️ 권리분석 필요 <b>' + rightsNeedCount(isVillaTab, cur) + '</b></button> <button class="bb-tab" title="탱크옥션 상세 글 여러 건을 한 번에 붙여넣기" onclick="rightsBatchOpen()">⚖️ 일괄 붙여넣기</button>';
     if (isFavTab) { bar.innerHTML = grp; renderFavLite(document.getElementById('bb-body')); var cn1 = document.getElementById('bb-cache-note'); if (cn1) cn1.style.display = 'none'; return; }
@@ -21515,9 +21518,14 @@ function renderBidBoardLite() {
         + permitStaleHtml() + ' <a href="#" class="bb2-link" onclick="toggleLitePast();return false;">' + (s.pastLite ? '지난 입찰 숨기기' : '지난 입찰 ' + pastN + '건 보기') + '</a>'
         + (pend && !isVillaTab ? ' <span class="bb-sub">⏳ ' + pend + '건 계산 중</span>' : '');
     if (s.visit === 'villa') { renderVillaLite(document.getElementById('bb-body')); var cn0 = document.getElementById('bb-cache-note'); if (cn0) cn0.style.display = 'none'; return; }
-    var rows = cur.filter(function(r) { return !r.pending && r.visit && (s.visit === 'all' || (s.visit === 'go') === r.visit.go) && (!s.nicheLite || r.niche) && (!s.listLite || listingStatus(r.a).st === 'yes') && (!s.rightsNeed || rightsNeeded(r, r.visit.go)); });
+    if (s.seoulOwn) {   // 🏠 서울 자가 매입(2026-11-06): 되팔기 마진이 아니라 시세 대비 싸게 사는지를 봄 - 임장/패스·틈새 조건 없이 서울 아파트 전체
+        var rowsO = cur.filter(function(r) { return !r.pending && r.winbid && r.winbid.price && r.sale && isSeoulRow(r) && (!s.listLite || listingStatus(r.a).st === 'yes'); });
+        rowsO.sort(function(x, y) { return (x.winbid.price / x.sale) - (y.winbid.price / y.sale); });
+        s.__ownRows = rowsO;
+    } else s.__ownRows = null;
+    var rows = s.__ownRows || cur.filter(function(r) { return !r.pending && r.visit && (s.visit === 'all' || (s.visit === 'go') === r.visit.go) && (!s.nicheLite || r.niche) && (!s.listLite || listingStatus(r.a).st === 'yes') && (!s.rightsNeed || rightsNeeded(r, r.visit.go)); });
     var colDef = LITE_COLS[s.liteCol] || LITE_COLS.verdict;
-    rows.sort(function(x, y) {
+    if (!s.__ownRows || s.liteCol !== 'verdict') rows.sort(function(x, y) {
         var vx = colDef.val(x), vy = colDef.val(y);
         var nx = vx == null || (typeof vx === 'number' && !isFinite(vx)), ny = vy == null || (typeof vy === 'number' && !isFinite(vy));
         if (nx !== ny) return nx ? 1 : -1;
@@ -21554,7 +21562,7 @@ function renderBidBoardLite() {
                 + '<td data-l="동일평형 거래" class="r bb2-n">' + liteTradesHtml(r) + '</td>'
                 + '<td data-l="거래량 순위" class="bb2-rank">' + liteRankHtml(r) + '</td>'
                 + '<td data-l="최저가" class="r">' + money(r.minBid) + '</td>'
-                + '<td data-l="예상 낙찰가" class="r">' + (r.winbid && r.winbid.price ? '<b>' + money(r.winbid.price) + '</b>' + (r.minBid ? '<div class="bb-sub vt-hide" title="예상 낙찰가 ÷ 최저가">최저가의 ' + Math.round(r.winbid.price / r.minBid * 100) + '%</div>' : '') : '<span class="bb-sub">-</span>') + '</td>'
+                + '<td data-l="예상 낙찰가" class="r">' + (r.winbid && r.winbid.price ? '<b>' + money(r.winbid.price) + '</b>' + (bidBoardState.seoulOwn && r.sale ? '<div class="bb-sub" title="예상 낙찰가 ÷ 예상매도가(시세). 낮을수록 시세보다 싸게 사요">시세의 ' + Math.round(r.winbid.price / r.sale * 100) + '%</div>' : (r.minBid ? '<div class="bb-sub vt-hide" title="예상 낙찰가 ÷ 최저가">최저가의 ' + Math.round(r.winbid.price / r.minBid * 100) + '%</div>' : '')) : '<span class="bb-sub">-</span>') + '</td>'
                 + '<td data-l="예상매도가" class="r">' + money(r.sale) + '</td>'
                 + '<td data-l="추천가" class="r">' + (e ? '<b class="bb2-rec">' + money(e.bid) + '</b>' + (r.sale ? '<div class="bb-sub" title="추천가 ÷ 예상매도가(시세)">시세의 <b>' + Math.round(e.bid / r.sale * 100) + '%</b></div>' : '') : '<span class="bb-sub">-</span>') + '</td>'
                 + '<td data-l="낙찰 가능성" class="r">' + (pc != null ? '<b style="color:' + col + ';">' + pc + '%</b>' : '-') + '</td>'
@@ -29916,7 +29924,7 @@ async function savePredSnapshots() {
     try {
         var today = remindTodayStr(), upd = [];
         (bidBoardRows || []).forEach(function(r) {
-            if ((r.type !== 'apt' && r.type !== 'villa') || r.pending || r.skippedPast || !r.a || !r.winbid || !r.dday || r.dday.diffDays < 0 || r.dday.diffDays > 21) return;
+            if ((r.type !== 'apt' && !(r.type === 'villa' && r.metro)) || r.pending || r.skippedPast || !r.a || !r.winbid || !r.dday || r.dday.diffDays < 0 || r.dday.diffDays > 21) return;
             var sn = r.a.predSnap, age = sn && sn.at ? (Date.now() - new Date(sn.at + 'T00:00:00').getTime()) / 86400000 : 99;
             if (sn && age < 3 && sn.minBid === r.minBid && sn.go !== undefined) return;
             var snapNew = { at: today, minBid: r.minBid, fails: r.fails, sale: Math.round(r.sale), recBid: r.recBid ? Math.round(r.recBid) : null, aggr: r.recAggr ? Math.round(r.recAggr) : null,

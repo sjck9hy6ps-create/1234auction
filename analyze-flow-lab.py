@@ -122,6 +122,28 @@ dong_codes, dP3, dVAR3, dN3 = level_index((gmeta["region"].astype(str) + "|" + g
 sgg_codes, sP3, sVAR3, sN3 = level_index(gmeta["region"].astype(str).values)
 
 # ───────────── 2. 보정계수 점검 ─────────────
+def risk_by_trades(recs, risk_x, coef_auto, flow_at, est_base):
+    """실거래만으로 만든 근거 두께별 하방 표(2026-11-06): 낙찰 사례가 적은 서울·경기·인천 칸을 채움.
+    e = 거래 뒤 6개월 같은 단지·평형 중위 ÷ 30일 전 시세(흐름 반영, 앱과 같은 규칙) - 1. 근거 3~4건 / 5건+ 만(그 아래는 시세 규칙이 다름)"""
+    rows = {}
+    for rec, (rg, n6, post) in zip(recs, risk_x):
+        if post is None or n6 < 3: continue
+        price, cls, prices, ages, cm, ci, gi, di, si = rec
+        f = flow_at("sgg", cm, ci, gi, di, si); s_ = coef_auto.get(cls, 0)
+        fac = None
+        if f is not None and s_ > 0 and abs(f["z"]) >= 1.0:
+            fac = np.clip(np.exp(s_ * f["rate"] * ages / 12.0), 0.95, 1.08)
+        est = est_base(prices, ages, cls, fac)
+        e = post / est - 1
+        if not (-0.6 <= e <= 0.9): continue
+        c3 = "서울" if rg.startswith("서울") else ("경기·인천" if rg[:2] in ("경기", "인천") else "지방")
+        rows.setdefault(f"{c3}|{'3~4건' if n6 <= 4 else '5건+'}", []).append(e)
+    out = {}
+    for k, v in rows.items():
+        if len(v) >= 100:
+            v = np.array(v); out[k] = {"n": int(len(v)), "q10": round(float(np.quantile(v, .10)), 4), "q25": round(float(np.quantile(v, .25)), 4), "q50": round(float(np.quantile(v, .50)), 4)}
+    return out
+
 def backtest_coeff():
     rng = np.random.default_rng(7)
     # 대상 거래: 2025-01 이후, 같은 단지·크기(±3㎡)의 앞선 거래가 30일 전 기준 6개월 안에 3건 이상
@@ -131,7 +153,7 @@ def backtest_coeff():
     def ord_(d):
         d = np.asarray(d, dtype=np.int64); y = d // 10000; m = (d // 100) % 100; dd = d % 100; y = y - (m <= 2); era = y // 400; yoe = y - era * 400
         mp = np.where(m > 2, m - 3, m + 9); doy = (153 * mp + 2) // 5 + dd - 1; doe = yoe * 365 + yoe // 4 - yoe // 100 + doy; return era * 146097 + doe - 719468
-    recs = []
+    recs = []; risk_x = []
     for r in tt.itertuples(index=False):
         g_ = by_c.get(r.ckey)
         if g_ is None: continue
@@ -146,6 +168,9 @@ def backtest_coeff():
         ci = ck_idx.get(r.ckey)
         if ci is None: continue
         recs.append((r.price, r.cls, prices, ages, cm, ci, int(r.g), int(dong_codes[int(r.g)]), int(sgg_codes[int(r.g)])))
+        # 📉 추천가 여유표용(2026-11-06): 이 거래 뒤 6개월 같은 단지·평형 실거래 중위값 = 정답, 근거 두께 = 30일 전 기준 6개월 같은 평형 거래 수
+        aft = (o_all > to) & (o_all <= to + 183) & (np.abs(g_["size"].values - r.size) <= 3)
+        risk_x.append((str(r.region), int(sel.sum()), float(np.median(g_["price"].values[aft])) if aft.sum() >= 2 else None))
     log(f"보정계수 점검 대상 {len(recs):,}건")
     def est_base(prices, ages, cls, fac=None):
         p = prices * (fac if fac is not None else 1.0)
@@ -200,6 +225,9 @@ def backtest_coeff():
                 best = min(r[cn]["medAbs%"] for r in cand)
                 auto[cn] = float(min(r["계수"] for r in cand if r[cn]["medAbs%"] <= best * 1.005 + 1e-9))
             if auto: out["coefAuto"] = auto
+        if lv == "sgg" and out.get("coefAuto"):
+            try: out["riskByTrades"] = risk_by_trades(recs, risk_x, out["coefAuto"], flow_at, est_base)
+            except Exception as e_: import traceback; traceback.print_exc(); out["riskByTrades"] = {"error": str(e_)}
         # 계수별 최선(다른 설정은 최선으로)
         byS = {}
         for r in rows:
