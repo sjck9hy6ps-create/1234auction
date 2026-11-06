@@ -154,7 +154,7 @@ def thick_lab(recs, thick_x, risk_x, coef_auto, flow_at):
     cur = {c3: [] for c3 in ("서울", "경기·인천", "지방")}; disp = {c3: [] for c3 in ("서울", "경기·인천", "지방")}; n6s = []
     for rec, tx, (rg, n6, post) in zip(recs, thick_x, risk_x):
         if n6 < 3: continue
-        price, cls, prices, ages, cm, ci, gi, di, si = rec; z, f, ts, tf = tx
+        price, cls, prices, ages, cm, ci, gi, di, si = rec; z, f, ts, tf = tx[:4]
         c3 = region3(rg)
         fl = flow_at("sgg", cm, ci, gi, di, si); s_ = coef_auto.get(cls, 0)
         fac = np.clip(np.exp(s_ * fl["rate"] * ages / 12.0), 0.95, 1.08) if (fl is not None and s_ > 0 and abs(fl["z"]) >= 1.0) else None
@@ -178,6 +178,51 @@ def thick_lab(recs, thick_x, risk_x, coef_auto, flow_at):
         d = np.array(disp[c3])
         if len(d) >= 200:   # 가격이 흩어진(변동 큰) 단지일수록 오차도 큰지 - 추천가 여유를 흩어짐에 따라 달리할 근거
             qs = np.quantile(d[:, 0], [0.33, 0.66]); out.setdefault("흩어짐별 오차", {})[c3] = {n_: st(d[m_, 1]) for n_, m_ in (("낮음", d[:, 0] <= qs[0]), ("중간", (d[:, 0] > qs[0]) & (d[:, 0] <= qs[1])), ("높음", d[:, 0] > qs[1]))}
+    return out
+
+
+def risk_by_dispersion(recs, thick_x, risk_x, coef_auto, flow_at):
+    """거래 활발 단지(6개월 같은 평형 3건+)의 추천가 여유를 '최근 6개월 거래가 얼마나 흩어졌나'로 나눈 하방 표(2026-11-06).
+    흩어짐 = 6개월 같은 평형 거래가격(로그)의 표준편차(원값, 앱도 같은 식). 지역등급별 아래·가운데·위 3등분 경계와 칸별 e(거래 뒤 6개월 중위 ÷ 시세 - 1)의 하방 분포.
+    검증: 이른 절반으로 경계·분포를 만들고 늦은 절반에서 '하방 25% 아래로 떨어진 비율'이 25%에 가까운지 흩어짐 칸 vs 흩어짐 무시 칸 비교"""
+    def wmed(p, w):
+        o = np.argsort(p); pp, ww = p[o], w[o]; c_ = (np.cumsum(ww) - 0.5 * ww) / ww.sum(); return float(np.interp(0.5, c_, pp))
+    rows = []
+    for rec, tx, (rg, n6, post) in zip(recs, thick_x, risk_x):
+        if post is None or n6 < 3: continue
+        price, cls, prices, ages, cm, ci, gi, di, si = rec
+        c3 = "서울" if rg.startswith("서울") else ("경기·인천" if rg[:2] in ("경기", "인천") else "지방")
+        fl = flow_at("sgg", cm, ci, gi, di, si); s_ = coef_auto.get(cls, 0)
+        pf = prices * np.clip(np.exp(s_ * fl["rate"] * ages / 12.0), 0.95, 1.08) if (fl is not None and s_ > 0 and abs(fl["z"]) >= 1.0) else prices
+        m6 = ages <= 6
+        est = float(np.median(pf[m6][np.argsort(ages[m6])[:3]])) if c3 == "서울" else wmed(pf[m6], 0.5 ** (ages[m6] / (1.0 if c3 == "경기·인천" else 2.0)))
+        e = post / est - 1
+        if not (-0.6 <= e <= 0.9): continue
+        rows.append((c3, float(np.std(np.log(prices[m6]))), e, tx[4]))
+    out = {"칸": {}, "경계": {}, "검증": {}}
+    tiers = ("낮음", "중간", "높음")
+    def tier_of(x, cut): return tiers[0] if x <= cut[0] else (tiers[1] if x <= cut[1] else tiers[2])
+    q = lambda v, p_: round(float(np.quantile(v, p_)), 4)
+    for c3 in ("서울", "경기·인천", "지방"):
+        R = [r for r in rows if r[0] == c3]
+        if len(R) < 600: continue
+        d = np.array([r[1] for r in R]); e = np.array([r[2] for r in R]); t = np.array([r[3] for r in R])
+        cut = [float(np.quantile(d, 1 / 3)), float(np.quantile(d, 2 / 3))]; out["경계"][c3] = [round(cut[0], 4), round(cut[1], 4)]
+        tr_ = d >= 0
+        for tn in tiers:
+            m = np.array([tier_of(x, cut) == tn for x in d])
+            if m.sum() >= 100: out["칸"][f"{c3}|{tn}"] = {"n": int(m.sum()), "q10": q(e[m], .10), "q25": q(e[m], .25), "q50": q(e[m], .50)}
+        # 시간순 검증
+        mid = np.median(t); a, b = t < mid, t >= mid
+        cut2 = [float(np.quantile(d[a], 1 / 3)), float(np.quantile(d[a], 2 / 3))]
+        qa_all = float(np.quantile(e[a], .25)); v = {"전체 하방25% 기준 - 이른 절반 값": round(qa_all, 4)}
+        bt = np.array([tier_of(x, cut2) for x in d[b]]); eb = e[b]
+        v["늦은 절반에서 하방25% 아래로 떨어진 비율(흩어짐 무시)"] = {tn: round(float((eb[bt == tn] < qa_all).mean()) * 100, 1) for tn in tiers}
+        v["늦은 절반에서 하방25% 아래로 떨어진 비율(흩어짐 칸 사용)"] = {}
+        for tn in tiers:
+            ma = np.array([tier_of(x, cut2) == tn for x in d[a]])
+            if ma.sum() >= 100 and (bt == tn).sum() >= 50: v["늦은 절반에서 하방25% 아래로 떨어진 비율(흩어짐 칸 사용)"][tn] = round(float((eb[bt == tn] < float(np.quantile(e[a][ma], .25))).mean()) * 100, 1)
+        out["검증"][c3] = v
     return out
 
 
@@ -229,7 +274,7 @@ def backtest_coeff():
         recs.append((r.price, r.cls, prices, ages, cm, ci, int(r.g), int(dong_codes[int(r.g)]), int(sgg_codes[int(r.g)])))
         # 📉 추천가 여유표용(2026-11-06): 이 거래 뒤 6개월 같은 단지·평형 실거래 중위값 = 정답, 근거 두께 = 30일 전 기준 6개월 같은 평형 거래 수
         aft = (o_all > to) & (o_all <= to + 183) & (np.abs(g_["size"].values - r.size) <= 3)
-        thick_x.append((g_["size"].values[sel].astype(float), g_["floor"].values[sel].astype(float), float(r.size), float(r.floor) if r.floor == r.floor else float('nan')))
+        thick_x.append((g_["size"].values[sel].astype(float), g_["floor"].values[sel].astype(float), float(r.size), float(r.floor) if r.floor == r.floor else float('nan'), int(to)))
         risk_x.append((str(r.region), int(sel.sum()), float(np.median(g_["price"].values[aft])) if aft.sum() >= 2 else None))
     log(f"보정계수 점검 대상 {len(recs):,}건")
     def est_base(prices, ages, cls, fac=None):
@@ -286,6 +331,8 @@ def backtest_coeff():
                 auto[cn] = float(min(r["계수"] for r in cand if r[cn]["medAbs%"] <= best * 1.005 + 1e-9))
             if auto: out["coefAuto"] = auto
         if lv == "sgg" and out.get("coefAuto"):
+            try: out["riskDisp"] = risk_by_dispersion(recs, thick_x, risk_x, out["coefAuto"], flow_at)
+            except Exception as e_: import traceback; traceback.print_exc(); out["riskDisp"] = {"error": str(e_)}
             try: out["thickLab"] = thick_lab(recs, thick_x, risk_x, out["coefAuto"], flow_at)
             except Exception as e_: import traceback; traceback.print_exc(); out["thickLab"] = {"error": str(e_)}
             try: out["riskByTrades"] = risk_by_trades(recs, risk_x, out["coefAuto"], flow_at, est_base)

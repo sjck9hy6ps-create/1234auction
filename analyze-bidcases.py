@@ -1461,6 +1461,7 @@ FLOW_COEF = 1.5   # 흐름 반영 계수 기본값(2026-11-05 점검: 1.5~3에�
 FLOW_COEF_CLS = {"수도권": FLOW_COEF, "지방": FLOW_COEF}   # 지역등급별 계수 - 매주 흐름 실험(analyze-flow-lab)이 고른 값으로 갱신(load_flow_coef), 못 읽으면 기본값
 
 
+RISK_DISP = {}   # 거래 활발 단지의 흩어짐별 하방 표(흐름 연구실, 경계 포함)
 RISK_BY_TRADES = {}   # 흐름 연구실이 실거래로 만든 근거 두께별 하방 표(낙찰 사례 없는 서울·경기·인천 칸 보충)
 
 
@@ -1472,6 +1473,8 @@ def load_flow_coef():
             v_ = auto.get(k_)
             if isinstance(v_, (int, float)) and 0.3 <= v_ <= 5: FLOW_COEF_CLS[k_] = float(v_)
         print("  🔁 흐름 계수(주간 자동 선택):", FLOW_COEF_CLS)
+        rdp = (d.get("coeff") or {}).get("riskDisp")
+        if isinstance(rdp, dict) and rdp.get("칸"): RISK_DISP.update(rdp); print("  📉 흩어짐별 하방 표:", {k_: v_["n"] for k_, v_ in RISK_DISP["칸"].items()})
         rbt = (d.get("coeff") or {}).get("riskByTrades")
         if isinstance(rbt, dict) and "error" not in rbt: RISK_BY_TRADES.update(rbt); print("  📉 실거래 기반 하방 표:", {k_: v_["n"] for k_, v_ in RISK_BY_TRADES.items()})
     except Exception as e:
@@ -1991,7 +1994,8 @@ def risk_table(R0, now):
         elif e_ in allt: tab[f"{cl}|{e_}"] = {**allt[e_], "대체": "전체 지역"}
     for k_, v_ in RISK_BY_TRADES.items():
         if k_ not in tab: tab[k_] = {**v_, "대체": "실거래 기반"}
-    out = {"기간": [lo, hi], "표본": int(len(D)), "칸": tab, "전체칸": allt, "정의": "e = 낙찰 뒤 6개월 시장 실거래 중위 ÷ 시세(est_rule_f) - 1"}
+    disp_extra = {"분산칸": RISK_DISP.get("칸"), "분산경계": RISK_DISP.get("경계")} if RISK_DISP.get("칸") else {}
+    out = {**disp_extra, "기간": [lo, hi], "표본": int(len(D)), "칸": tab, "전체칸": allt, "정의": "e = 낙찰 뒤 6개월 시장 실거래 중위 ÷ 시세(est_rule_f) - 1"}
     print("  🧱 근거 두께별 하방 표:", json.dumps({k_: [v_["n"], v_["q25"], v_["q50"]] for k_, v_ in tab.items()}, ensure_ascii=False))
     return out
 
