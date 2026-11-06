@@ -24,18 +24,24 @@ print("빌라 매매(수도권 2023~):", len(vt))
 def keyof(r):
     mn = num(r.main_num, 0); sn = "" if (r.sub_num is None or (isinstance(r.sub_num, float) and np.isnan(r.sub_num)) or str(r.sub_num).strip() in ("", "0", "0.0")) else str(num(r.sub_num))
     return "|".join(str(x) for x in [r.dong or "", r.danji or "", r.bunji or "", r.road_name or "", mn, sn]).lower()
+def keyold(r):   # 예전 형식(warmup 이전): 값이 없으면 빈 칸 그대로(주번 0이 아니라 "")
+    f = lambda x: "" if (x is None or (isinstance(x, float) and np.isnan(x))) else (str(int(x)) if isinstance(x, (int, float, np.integer, np.floating)) and float(x) == int(float(x)) else str(x))
+    return "|".join([f(r.dong), f(r.danji), f(r.bunji), f(r.road_name), f(r.main_num), f(r.sub_num)]).lower()
 vt["k"] = [keyof(r) for r in vt.itertuples(index=False)]
-G = vt.groupby("k").agg(n=("price", "size"), region=("region", "first"), bunji=("bunji", "first"), dong=("dong", "first"), last=("deal_date", "max")).reset_index()
+vt["lk"] = [keyold(r) for r in vt.itertuples(index=False)]
+G = vt.groupby("k").agg(lk=("lk", "first"), n=("price", "size"), region=("region", "first"), bunji=("bunji", "first"), dong=("dong", "first"), last=("deal_date", "max")).reset_index()
 cc = avm.fetch_all_rows("complex_coords", cols="cache_key,sigungu_cd,bjdong_cd,lat,lon", order_col="id")
 cc["ck"] = cc["cache_key"].astype(str).str.lower(); ccd = cc.drop_duplicates("ck").set_index("ck")
 bi = avm.fetch_all_rows("building_info", cols="id,sigungu_cd,bjdong_cd,bun,ji", order_col="id")
 bi_empty = avm.fetch_all_rows("building_info", cols="id", order_col="id", extra_filter="&title_json=is.null")
 empty_ids = set(bi_empty["id"].tolist()) if len(bi_empty) else set()
 bimap = {(str(r.sigungu_cd), str(r.bjdong_cd), str(r.bun), str(r.ji)): r.id for r in bi.itertuples(index=False)}
+REPORT["키형식"] = {"새형식으로 매칭": int(G["k"].isin(ccd.index).sum()), "예전형식으로만 매칭": int((~G["k"].isin(ccd.index) & G["lk"].isin(ccd.index)).sum()), "둘 다 없음": int((~G["k"].isin(ccd.index) & ~G["lk"].isin(ccd.index)).sum())}
+print(REPORT["키형식"])
 print("complex_coords:", len(cc), "building_info:", len(bi), "빈 대장:", len(empty_ids))
 cat, ex = [], {}
 for r in G.itertuples(index=False):
-    s = ccd.loc[r.k] if r.k in ccd.index else None
+    s = ccd.loc[r.k] if r.k in ccd.index else (ccd.loc[r.lk] if r.lk in ccd.index else None)
     if s is None: c = "A 좌표 행 없음(아직 위치 조회 안 함)"
     elif not s["sigungu_cd"] or not s["bjdong_cd"] or str(s["bjdong_cd"]) in ("nan", "None", ""): c = "B 법정동코드 없음"
     else:
