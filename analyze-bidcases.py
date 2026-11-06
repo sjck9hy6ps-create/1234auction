@@ -1928,6 +1928,32 @@ def thin_correction(R0, now):
         res["시세후보시험"] = vres
     except Exception as e:
         print("  시세 후보 시험 실패:", e)
+    # 🔬 편향 원인 진단(2026-11-06): 근거가 얇을 때 예상이 실제보다 높게 나오는 이유 - 특징별로 쪼개 편향(중앙값 %)을 비교. 원인이 한 곳에 몰려 있으면 그곳이 원인
+    try:
+        def _b(m): 
+            x = E.loc[m, "y"].values
+            return {"n": int(len(x)), "편향%": round(float(np.median(x)) * 100, 1), "평균%": round(float(np.mean(x)) * 100, 1), "하락비율%": round(float((x < -0.03).mean()) * 100, 0)} if len(x) >= 30 else None
+        dg = {"전체": _b(E["y"].notna())}
+        dg["근거건수"] = {str(k_): _b(E["n6g"] == k_) for k_ in (0, 1, 2)}
+        dg["가장 최근 거래 나이(개월)"] = {n_: _b(m_) for n_, m_ in (("3 이하", E["la"] <= 3), ("3~6", E["la"].between(3, 6, inclusive="right")), ("6~12", E["la"].between(6, 12, inclusive="right")), ("12~24", E["la"].between(12, 24, inclusive="right")), ("24 초과·없음", E["la"] > 24))}
+        dg["36개월 같은 평형 거래수"] = {n_: _b(m_) for n_, m_ in (("0", E["n36"] == 0), ("1~2", E["n36"].between(1, 2)), ("3~5", E["n36"].between(3, 5)), ("6+", E["n36"] >= 6))}
+        dg["낙찰 뒤 6개월 시장 거래수"] = {n_: _b(m_) for n_, m_ in (("1건", E["mkt_after_n"] == 1), ("2~3건", E["mkt_after_n"].between(2, 3)), ("4건+", E["mkt_after_n"] >= 4))} if "mkt_after_n" in E.columns else None
+        dg["마지막 거래가 대비 시세(위로 쏠림)"] = {n_: _b(m_) for n_, m_ in (("시세가 마지막 거래보다 5%+ 낮음", E["last_gap"] < -0.05), ("±5%", E["last_gap"].between(-0.05, 0.05)), ("시세가 마지막 거래보다 5%+ 높음", E["last_gap"] > 0.05))}
+        dg["다른 평형 거래 있음"] = {"있음": _b(E["oth"] > 0), "없음": _b(E["oth"] == 0)}
+        dg["광역시/시군"] = {"광역시": _b(E["sub"] == 1), "시군": _b(E["sub"] == 0)}
+        dg["낙찰 연도"] = {str(y_): _b(E["sale"] // 10000 == y_) for y_ in sorted(E["sale"].astype(int).floordiv(10000).unique())}
+        dg["낙찰 월"] = {f"{m_}월": _b((E["sale"] // 100 % 100) == m_) for m_ in range(1, 13)}
+        if "floor" in E.columns: dg["층"] = {n_: _b(m_) for n_, m_ in (("1~2층", E["floor"] <= 2), ("3~5층", E["floor"].between(3, 5)), ("6층+", E["floor"] >= 6))}
+        if "flow" in E.columns: dg["지역 가격 흐름(연율)"] = {n_: _b(m_) for n_, m_ in (("하락 -3%↓", E["flow"] < -0.03), ("보합", E["flow"].between(-0.03, 0.03)), ("상승 +3%↑", E["flow"] > 0.03))}
+        # 같은 지역의 근거 충분(5건+) 물건 편향 - 비교 기준
+        isjb2 = R0["region"].map(isjb) & ~R0["region"].isin(zones) & R0[col].notna() & (R0[col] > 0) & R0["mkt_after"].notna() & (R0["sale"] >= 20230101) & (R0["sale"] <= now_ymd)
+        for n_, m_ in (("5건+", R0["n6"] >= 5), ("3~4건", R0["n6"].between(3, 4))):
+            xx = np.log(R0.loc[isjb2 & m_, "mkt_after"] / R0.loc[isjb2 & m_, col]); xx = xx[np.isfinite(xx) & xx.between(-0.6, 0.6)]
+            dg.setdefault("비교: 같은 지역 근거 충분", {})[n_] = {"n": int(len(xx)), "편향%": round(float(np.median(xx)) * 100, 1)}
+        res["편향진단"] = dg
+        print("  🔬 편향 진단:", json.dumps(dg, ensure_ascii=False))
+    except Exception as e:
+        import traceback; traceback.print_exc(); print("  편향 진단 실패:", e)
     best = min(res["후보"].items(), key=lambda kv: (kv[1]["전체"]["보통오차"], kv[1]["전체"]["10넘게낮게팔림"]))
     res["최선"] = best[0]
     print("  🩹 얇은 근거 보정 실험:", json.dumps({k: {"전체": v["전체"], **({"6개월0건": v["6개월0건"]} if "6개월0건" in v else {})} for k, v in res["후보"].items()}, ensure_ascii=False), "→ 최선:", best[0])
