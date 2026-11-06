@@ -1994,7 +1994,9 @@ def risk_table(R0, now):
         elif e_ in allt: tab[f"{cl}|{e_}"] = {**allt[e_], "대체": "전체 지역"}
     for k_, v_ in RISK_BY_TRADES.items():
         if k_ not in tab: tab[k_] = {**v_, "대체": "실거래 기반"}
-    disp_extra = {"분산칸": RISK_DISP.get("칸"), "분산경계": RISK_DISP.get("경계")} if RISK_DISP.get("칸") else {}
+    # 흩어짐 칸은 시간순 검증(늦은 절반에서 하방 25% 아래 비율이 25%에 맞는지)이 좋아진 지역등급만 씀 - 2026-11-06 검증: 지방 33→25%로 개선, 서울·경기·인천은 흩어짐 차이가 작거나 개선 없음
+    _dk = {k_: v_ for k_, v_ in (RISK_DISP.get("칸") or {}).items() if k_.startswith("지방|")}
+    disp_extra = {"분산칸": _dk, "분산경계": {"지방": (RISK_DISP.get("경계") or {}).get("지방")}} if _dk else {}
     out = {**disp_extra, "기간": [lo, hi], "표본": int(len(D)), "칸": tab, "전체칸": allt, "정의": "e = 낙찰 뒤 6개월 시장 실거래 중위 ÷ 시세(est_rule_f) - 1"}
     print("  🧱 근거 두께별 하방 표:", json.dumps({k_: [v_["n"], v_["q25"], v_["q50"]] for k_, v_ in tab.items()}, ensure_ascii=False))
     return out
