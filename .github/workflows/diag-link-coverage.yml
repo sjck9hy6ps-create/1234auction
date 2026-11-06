@@ -1,0 +1,31 @@
+# 빌라 거래↔대장 연결률·전월세 자료 충분도 실측(2026-11-06)
+name: Diag link coverage
+
+on:
+  push:
+    paths: ['.github/triggers/diag-link-coverage.txt']
+  workflow_dispatch:
+
+jobs:
+  diag:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install pandas numpy requests scikit-learn scipy
+      - env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          SITE_URL: ${{ secrets.SITE_URL }}
+          PYTHONUNBUFFERED: '1'
+        run: python diag-link-coverage.py
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: link-diag
+          path: link-diag.json
+          if-no-files-found: ignore
+          retention-days: 30
