@@ -181,6 +181,71 @@ def thick_lab(recs, thick_x, risk_x, coef_auto, flow_at):
     return out
 
 
+def risk_calib(recs, thick_x, risk_x, coef_auto, flow_at):
+    """수도권 하방 표 보강(2026-11-06): 서울·경기·인천 표가 옛 상승장에 묶여 늦은 구간에서 하방 25%를 넘어 떨어지던 문제. 방식 4가지를 시간순 2구간(뒤 50~75%·75~100%)에서 비교 -
+    ① 전체 동일 가중 ② 최근 가중(반감 60/120/240일) ③ 지역 가격 흐름 상태별(오름/보합/내림) ④ ③+②. 뒤 구간에서 '하방 25% 아래로 떨어진 비율'이 25%에 가까운 방식이 좋은 것.
+    산출: 방식 비교표와 지역등급별 '현재 표'(전체 자료, 선택 방식 적용). 앱은 flow 상태(연율 ±3%)로 칸을 골라 최소 여유 = max(-q25, -q10/2)"""
+    def wq(x, w, qq):
+        o = np.argsort(x); x, w = x[o], w[o]; c_ = np.cumsum(w) - 0.5 * w; c_ /= w.sum(); return float(np.interp(qq, c_, x))
+    def wmed(p, w):
+        o = np.argsort(p); pp, ww = p[o], w[o]; c_ = (np.cumsum(ww) - 0.5 * ww) / ww.sum(); return float(np.interp(0.5, c_, pp))
+    state_of = lambda r_: "내림" if r_ < -0.03 else ("오름" if r_ > 0.03 else "보합")
+    rows = []
+    for rec, tx, (rg, n6, post) in zip(recs, thick_x, risk_x):
+        if post is None or n6 < 3: continue
+        price, cls, prices, ages, cm, ci, gi, di, si = rec
+        c3 = "서울" if rg.startswith("서울") else ("경기·인천" if rg[:2] in ("경기", "인천") else "지방")
+        fl = flow_at("sgg", cm, ci, gi, di, si); s_ = coef_auto.get(cls, 0)
+        pf = prices * np.clip(np.exp(s_ * fl["rate"] * ages / 12.0), 0.95, 1.08) if (fl is not None and s_ > 0 and abs(fl["z"]) >= 1.0) else prices
+        m6 = ages <= 6
+        est = float(np.median(pf[m6][np.argsort(ages[m6])[:3]])) if c3 == "서울" else wmed(pf[m6], 0.5 ** (ages[m6] / (1.0 if c3 == "경기·인천" else 2.0)))
+        e = post / est - 1
+        if not (-0.6 <= e <= 0.9): continue
+        rows.append((c3, e, tx[4], state_of(fl["rate"]) if fl is not None else "보합"))
+    out = {"비교": {}, "표": {}}
+    HLS = (60, 120, 240)
+    for c3 in ("서울", "경기·인천", "지방"):
+        R = [r for r in rows if r[0] == c3]
+        if len(R) < 1500: continue
+        e = np.array([r[1] for r in R]); t = np.array([r[2] for r in R], float); stt = np.array([r[3] for r in R])
+        lo_, hi_ = np.quantile(t, [0.5, 1.0]); cuts = [np.quantile(t, 0.5), np.quantile(t, 0.75), t.max() + 1]
+        res = {}
+        def methods(tr_m):
+            ms = {"①전체": lambda m, tt: (None, None)}
+            return ms
+        for fold, (a_, b_) in enumerate(((cuts[0], cuts[1]), (cuts[1], cuts[2]))):
+            tr_ = t < a_; te_ = (t >= a_) & (t < b_)
+            if tr_.sum() < 500 or te_.sum() < 200: continue
+            tmax = t[tr_].max()
+            def cov(qfun):   # qfun(state) -> (q25, q10)
+                v25 = np.array([qfun(s_)[0] for s_ in stt[te_]]); v10 = np.array([qfun(s_)[1] for s_ in stt[te_]])
+                return round(float((e[te_] < v25).mean()) * 100, 1), round(float((e[te_] < v10).mean()) * 100, 1)
+            res.setdefault("①전체", []).append(cov(lambda s_, q=(float(np.quantile(e[tr_], .25)), float(np.quantile(e[tr_], .10))): q))
+            for hl in HLS:
+                w = 0.5 ** ((tmax - t[tr_]) / hl)
+                q = (wq(e[tr_], w, .25), wq(e[tr_], w, .10)); res.setdefault(f"②최근가중{hl}일", []).append(cov(lambda s_, q=q: q))
+            qs = {st_: (float(np.quantile(e[tr_ & (stt == st_)], .25)), float(np.quantile(e[tr_ & (stt == st_)], .10))) for st_ in ("오름", "보합", "내림") if (tr_ & (stt == st_)).sum() >= 100}
+            qa = (float(np.quantile(e[tr_], .25)), float(np.quantile(e[tr_], .10)))
+            res.setdefault("③흐름별", []).append(cov(lambda s_, qs=qs, qa=qa: qs.get(s_, qa)))
+            for hl in HLS:
+                w = 0.5 ** ((tmax - t[tr_]) / hl)
+                qs2 = {st_: (wq(e[tr_ & (stt == st_)], w[stt[tr_] == st_], .25), wq(e[tr_ & (stt == st_)], w[stt[tr_] == st_], .10)) for st_ in ("오름", "보합", "내림") if (tr_ & (stt == st_)).sum() >= 100}
+                qa2 = (wq(e[tr_], w, .25), wq(e[tr_], w, .10)); res.setdefault(f"④흐름별+최근가중{hl}일", []).append(cov(lambda s_, qs=qs2, qa=qa2: qs.get(s_, qa)))
+        cmpd = {k: {"뒤50~75%": v[0] if len(v) > 0 else None, "뒤75~100%": v[1] if len(v) > 1 else None, "25%기준 평균벗어남": round(float(np.mean([abs(x[0] - 25) for x in v])), 1)} for k, v in res.items()}
+        out["비교"][c3] = cmpd
+        best = min(cmpd, key=lambda k: cmpd[k]["25%기준 평균벗어남"]); out["비교"][c3]["선택"] = best
+        # 선택 방식으로 전체 자료의 현재 표
+        tmax = t.max(); hl = next((h for h in HLS if f"{h}일" in best), None); w = 0.5 ** ((tmax - t) / hl) if hl else np.ones(len(t))
+        cells = {}
+        if best.startswith("③") or best.startswith("④"):
+            for st_ in ("오름", "보합", "내림"):
+                m = stt == st_
+                if m.sum() >= 100: cells[st_] = {"n": int(m.sum()), "q25": round(wq(e[m], w[m], .25), 4), "q10": round(wq(e[m], w[m], .10), 4)}
+        cells["전체"] = {"n": int(len(e)), "q25": round(wq(e, w, .25), 4), "q10": round(wq(e, w, .10), 4)}
+        out["표"][c3] = {"방식": best, "칸": cells}
+    return out
+
+
 def risk_by_dispersion(recs, thick_x, risk_x, coef_auto, flow_at):
     """거래 활발 단지(6개월 같은 평형 3건+)의 추천가 여유를 '최근 6개월 거래가 얼마나 흩어졌나'로 나눈 하방 표(2026-11-06).
     흩어짐 = 6개월 같은 평형 거래가격(로그)의 표준편차(원값, 앱도 같은 식). 지역등급별 아래·가운데·위 3등분 경계와 칸별 e(거래 뒤 6개월 중위 ÷ 시세 - 1)의 하방 분포.
@@ -331,6 +396,8 @@ def backtest_coeff():
                 auto[cn] = float(min(r["계수"] for r in cand if r[cn]["medAbs%"] <= best * 1.005 + 1e-9))
             if auto: out["coefAuto"] = auto
         if lv == "sgg" and out.get("coefAuto"):
+            try: out["riskCalib"] = risk_calib(recs, thick_x, risk_x, out["coefAuto"], flow_at)
+            except Exception as e_: import traceback; traceback.print_exc(); out["riskCalib"] = {"error": str(e_)}
             try: out["riskDisp"] = risk_by_dispersion(recs, thick_x, risk_x, out["coefAuto"], flow_at)
             except Exception as e_: import traceback; traceback.print_exc(); out["riskDisp"] = {"error": str(e_)}
             try: out["thickLab"] = thick_lab(recs, thick_x, risk_x, out["coefAuto"], flow_at)
