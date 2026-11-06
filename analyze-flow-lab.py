@@ -31,12 +31,12 @@ def region_cls(r):
 
 # ───────────── 0. 데이터 ─────────────
 log("실거래 불러오는 중")
-tr = avm.fetch_all_rows("house_trades", cols="region,dong,danji,bunji,price,size,deal_date,dealing_type,cdeal_type,road_name,main_num,sub_num", extra_filter=f"&deal_date=gte.{cyc.START_DATE}")
+tr = avm.fetch_all_rows("house_trades", cols="region,dong,danji,bunji,price,size,floor,deal_date,dealing_type,cdeal_type,road_name,main_num,sub_num", extra_filter=f"&deal_date=gte.{cyc.START_DATE}")
 if "cdeal_type" in tr.columns:
     tr = tr[tr["cdeal_type"].fillna("").astype(str).str.strip() == ""]
 if "dealing_type" in tr.columns:
     tr = tr[tr["dealing_type"] != "직거래"]
-for c in ("price", "size", "deal_date"):
+for c in ("price", "size", "deal_date", "floor"):
     tr[c] = pd.to_numeric(tr[c], errors="coerce")
 tr = tr.dropna(subset=["price", "size", "deal_date"]); tr = tr[(tr["price"] > 0) & (tr["size"] > 10)].copy()
 tr["deal_date"] = tr["deal_date"].astype(np.int64)
@@ -122,6 +122,65 @@ dong_codes, dP3, dVAR3, dN3 = level_index((gmeta["region"].astype(str) + "|" + g
 sgg_codes, sP3, sVAR3, sN3 = level_index(gmeta["region"].astype(str).values)
 
 # ───────────── 2. 보정계수 점검 ─────────────
+def thick_lab(recs, thick_x, risk_x, coef_auto, flow_at):
+    """거래가 활발한 단지(6개월 같은 평형 3건+)의 시세 계산 방식 비교(2026-11-06, 사용자: 거래 없는 단지보다 거래 있는 단지의 정확도가 더 중요).
+    같은 대상 거래에 방식만 바꿔 입찰 30일 전 자료로 맞혀 보고 보통 오차·편향·5% 안 비율을 지역등급별로 비교. 흐름 반영 여부, 가중 반감기, 기간, 튀는 값 제거, 최근 N건, 비슷한 층 가중 등"""
+    def wmed(p, w):
+        o = np.argsort(p); pp, ww = p[o], w[o]; c_ = (np.cumsum(ww) - 0.5 * ww) / ww.sum(); return float(np.interp(0.5, c_, pp))
+    def region3(rg): return "서울" if rg.startswith("서울") else ("경기·인천" if rg[:2] in ("경기", "인천") else "지방")
+    V = {}
+    def add(name, fn): V[name] = fn
+    for hl in (0.5, 1.0, 2.0, 3.0, 6.0):
+        add(f"반감{hl}개월", lambda p, a, z, f, ts, tf, hl=hl: wmed(p, 0.5 ** (a / hl)))
+    add("6개월 단순 중위", lambda p, a, z, f, ts, tf: float(np.median(p)))
+    add("3개월 안만(3건+이면)", lambda p, a, z, f, ts, tf: wmed(p[a <= 3], 0.5 ** (a[a <= 3] / 1.0)) if (a <= 3).sum() >= 3 else wmed(p, 0.5 ** (a / 1.0)))
+    for n in (1, 3, 5):
+        add(f"최근 {n}건 중위", lambda p, a, z, f, ts, tf, n=n: float(np.median(p[np.argsort(a)[:n]])))
+    def trim(p, a, hl):
+        if len(p) >= 6:
+            o = np.argsort(p); keep = np.ones(len(p), bool); keep[o[0]] = False; keep[o[-1]] = False; p, a = p[keep], a[keep]
+        return wmed(p, 0.5 ** (a / hl))
+    add("튀는 값(최고·최저) 제외 반감1", lambda p, a, z, f, ts, tf: trim(p, a, 1.0))
+    add("튀는 값(최고·최저) 제외 반감2", lambda p, a, z, f, ts, tf: trim(p, a, 2.0))
+    def floorw(p, a, f, tf, hl, k):
+        if not np.isfinite(tf): return wmed(p, 0.5 ** (a / hl))
+        w = 0.5 ** (a / hl) * np.where(np.isfinite(f) & (np.abs(f - tf) <= 3), k, 1.0); return wmed(p, w)
+    add("비슷한 층(±3) 2배 가중", lambda p, a, z, f, ts, tf: floorw(p, a, f, tf, 1.5, 2.0))
+    add("비슷한 층(±3) 4배 가중", lambda p, a, z, f, ts, tf: floorw(p, a, f, tf, 1.5, 4.0))
+    add("면적 ±1.5㎡ 가중 2배", lambda p, a, z, f, ts, tf: wmed(p, 0.5 ** (a / 1.5) * np.where(np.abs(z - ts) <= 1.5, 2.0, 1.0)))
+    add("가중 평균(중위 대신)", lambda p, a, z, f, ts, tf: float(np.sum(p * 0.5 ** (a / 1.5)) / np.sum(0.5 ** (a / 1.5))))
+    add("로그 가중 평균", lambda p, a, z, f, ts, tf: float(np.exp(np.sum(np.log(p) * 0.5 ** (a / 1.5)) / np.sum(0.5 ** (a / 1.5)))))
+    errs = {(k, flow, c3): [] for k in V for flow in (False, True) for c3 in ("서울", "경기·인천", "지방")}
+    cur = {c3: [] for c3 in ("서울", "경기·인천", "지방")}; disp = {c3: [] for c3 in ("서울", "경기·인천", "지방")}; n6s = []
+    for rec, tx, (rg, n6, post) in zip(recs, thick_x, risk_x):
+        if n6 < 3: continue
+        price, cls, prices, ages, cm, ci, gi, di, si = rec; z, f, ts, tf = tx
+        c3 = region3(rg)
+        fl = flow_at("sgg", cm, ci, gi, di, si); s_ = coef_auto.get(cls, 0)
+        fac = np.clip(np.exp(s_ * fl["rate"] * ages / 12.0), 0.95, 1.08) if (fl is not None and s_ > 0 and abs(fl["z"]) >= 1.0) else None
+        m6 = ages <= 6
+        for flow in (False, True):
+            if flow and fac is None: pf = prices
+            else: pf = prices * fac if (flow and fac is not None) else prices
+            for k, fn in V.items():
+                try: errs[(k, flow, c3)].append(math.log(fn(pf[m6], ages[m6], z[m6], f[m6], ts, tf) / price))
+                except Exception: pass
+        # 지금 앱 규칙(서울: 최근 3건 중위, 경기·인천 반감1, 지방 반감2)을 기준선으로
+        pfa = prices * fac if fac is not None else prices
+        if c3 == "서울": cur[c3].append(math.log(float(np.median(pfa[m6][np.argsort(ages[m6])[:3]])) / price))
+        else: cur[c3].append(math.log(wmed(pfa[m6], 0.5 ** (ages[m6] / (1.0 if c3 == "경기·인천" else 2.0))) / price))
+        disp[c3].append((float(np.std(np.log(prices[m6]))), cur[c3][-1]))
+    def st(e): e = np.asarray(e); return {"n": int(len(e)), "보통오차%": round(float(np.median(np.abs(e))) * 100, 2), "편향%": round(float(np.median(e)) * 100, 2), "5%안": round(float((np.abs(e) <= 0.05).mean()) * 100, 1)} if len(e) >= 100 else None
+    out = {"현재 앱 규칙": {c3: st(v) for c3, v in cur.items()}, "방식별": {}}
+    for c3 in ("서울", "경기·인천", "지방"):
+        rows = [{"방식": k, "흐름반영": flow, **st(errs[(k, flow, c3)])} for k in V for flow in (False, True) if st(errs[(k, flow, c3)])]
+        rows.sort(key=lambda r: r["보통오차%"]); out["방식별"][c3] = rows[:8] + [r for r in rows if r["방식"] in ("반감1.0개월", "반감2.0개월") and r["흐름반영"]]
+        d = np.array(disp[c3])
+        if len(d) >= 200:   # 가격이 흩어진(변동 큰) 단지일수록 오차도 큰지 - 추천가 여유를 흩어짐에 따라 달리할 근거
+            qs = np.quantile(d[:, 0], [0.33, 0.66]); out.setdefault("흩어짐별 오차", {})[c3] = {n_: st(d[m_, 1]) for n_, m_ in (("낮음", d[:, 0] <= qs[0]), ("중간", (d[:, 0] > qs[0]) & (d[:, 0] <= qs[1])), ("높음", d[:, 0] > qs[1]))}
+    return out
+
+
 def risk_by_trades(recs, risk_x, coef_auto, flow_at, est_base):
     """실거래만으로 만든 근거 두께별 하방 표(2026-11-06): 낙찰 사례가 적은 서울·경기·인천 칸을 채움.
     e = 거래 뒤 6개월 같은 단지·평형 중위 ÷ 30일 전 시세(흐름 반영, 앱과 같은 규칙) - 1. 근거 3~4건 / 5건+ 만(그 아래는 시세 규칙이 다름)"""
@@ -153,7 +212,7 @@ def backtest_coeff():
     def ord_(d):
         d = np.asarray(d, dtype=np.int64); y = d // 10000; m = (d // 100) % 100; dd = d % 100; y = y - (m <= 2); era = y // 400; yoe = y - era * 400
         mp = np.where(m > 2, m - 3, m + 9); doy = (153 * mp + 2) // 5 + dd - 1; doe = yoe * 365 + yoe // 4 - yoe // 100 + doy; return era * 146097 + doe - 719468
-    recs = []; risk_x = []
+    recs = []; risk_x = []; thick_x = []
     for r in tt.itertuples(index=False):
         g_ = by_c.get(r.ckey)
         if g_ is None: continue
@@ -170,6 +229,7 @@ def backtest_coeff():
         recs.append((r.price, r.cls, prices, ages, cm, ci, int(r.g), int(dong_codes[int(r.g)]), int(sgg_codes[int(r.g)])))
         # 📉 추천가 여유표용(2026-11-06): 이 거래 뒤 6개월 같은 단지·평형 실거래 중위값 = 정답, 근거 두께 = 30일 전 기준 6개월 같은 평형 거래 수
         aft = (o_all > to) & (o_all <= to + 183) & (np.abs(g_["size"].values - r.size) <= 3)
+        thick_x.append((g_["size"].values[sel].astype(float), g_["floor"].values[sel].astype(float), float(r.size), float(r.floor) if r.floor == r.floor else float('nan')))
         risk_x.append((str(r.region), int(sel.sum()), float(np.median(g_["price"].values[aft])) if aft.sum() >= 2 else None))
     log(f"보정계수 점검 대상 {len(recs):,}건")
     def est_base(prices, ages, cls, fac=None):
@@ -226,6 +286,8 @@ def backtest_coeff():
                 auto[cn] = float(min(r["계수"] for r in cand if r[cn]["medAbs%"] <= best * 1.005 + 1e-9))
             if auto: out["coefAuto"] = auto
         if lv == "sgg" and out.get("coefAuto"):
+            try: out["thickLab"] = thick_lab(recs, thick_x, risk_x, out["coefAuto"], flow_at)
+            except Exception as e_: import traceback; traceback.print_exc(); out["thickLab"] = {"error": str(e_)}
             try: out["riskByTrades"] = risk_by_trades(recs, risk_x, out["coefAuto"], flow_at, est_base)
             except Exception as e_: import traceback; traceback.print_exc(); out["riskByTrades"] = {"error": str(e_)}
         # 계수별 최선(다른 설정은 최선으로)
