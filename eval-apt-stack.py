@@ -49,6 +49,10 @@ X["sido"] = df.lawd.str[:2].astype(int)
 X["tier_c"] = df.tier.map({"A": 0, "B": 1, "C": 2, "D": 3})
 X["hi_floor_share"] = (X.floor / X.mxF.replace(0, np.nan))
 
+X = X.drop(columns=[c for c in os.environ.get("DROP", "").split(",") if c])
+X = X.loc[:, X.nunique(dropna=True) >= 2]   # 값이 하나뿐인 열은 학습기가 오류를 냄
+print("사용 특성", X.shape[1], list(X.columns))
+
 def metr(e):
     e = np.asarray(e)
     if len(e) == 0: return None
@@ -74,6 +78,28 @@ for nm, (tr_end, te_start) in FOLDS.items():
     print("==", nm, res["학습"], res["채점"]); print(" 앱", res["앱"]); print(" 종합", res["종합"]); print(" 절반", res["절반반영"])
     for g in ("cls", "tier", "cutoff"):
         for v, o in res["by_" + g].items(): print("  ", g, v, "앱", o["앱"], "종합", o["종합"])
+if os.environ.get("EXPORT") == "1":
+    # 전체 자료로 학습한 모델을 앱이 직접 계산할 수 있게 내보냄(트리 노드 배열). 검증: 같은 입력에 파이썬 예측과 같은 값이어야 함
+    mm = HistGradientBoostingRegressor(**params).fit(X, df.y)
+    trees = []
+    for it in mm._predictors:
+        nd = it[0].nodes
+        trees.append([[-1 if n["is_leaf"] else int(n["feature_idx"]), float(n["num_threshold"]), int(n["left"]), int(n["right"]), 1 if n["missing_go_to_left"] else 0, round(float(n["value"]), 6)] for n in nd])
+    base = float(mm._baseline_prediction.ravel()[0])
+    def walk(row):
+        v = base
+        for t in trees:
+            i = 0
+            while t[i][0] >= 0:
+                f, th, l, r, ml, _ = t[i]; x = row[f]
+                i = (l if ml else r) if x != x else (l if x <= th else r)
+            v += t[i][5]
+        return v
+    smp = X.sample(2000, random_state=1); pyp = mm.predict(smp); myp = np.array([walk(r) for r in smp.values.astype(float)])
+    print("내보내기 검증: 최대 차이", float(np.abs(pyp - myp).max()), "0.0005초과 비율", float((np.abs(pyp - myp) > 5e-4).mean()))
+    exp = {"ver": 1, "feat": list(X.columns), "base": base, "trees": trees, "trainN": int(len(df)), "cutoffs": sorted(df.cutoff.unique().tolist()), "generatedAt": out["at"], "clip": [-0.3, 0.3],
+           "oos": {k: v["종합"] for k, v in out["folds"].items()}, "oosApp": {k: v["앱"] for k, v in out["folds"].items()}}
+    json.dump(exp, open("apt-stack.json", "w"), ensure_ascii=False, separators=(",", ":")); print("apt-stack.json", os.path.getsize("apt-stack.json") // 1024, "KB")
 json.dump(out, open("apt-stack-eval.json", "w"), ensure_ascii=False)
 if os.environ.get("SUPABASE_URL"):
     import importlib.util

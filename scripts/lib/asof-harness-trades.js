@@ -66,7 +66,7 @@
               fbT: row.saleFb ? (row.saleFb.tier || '') : '', fbN: row.saleFb ? row.saleFb.n : null, fl: row.saleFloorAdj ? rd(row.saleFloorAdj.factor) : null, cap: row.saleCapBy ? 1 : 0, wb: row.wbBase || null,
               n3: os.n3, n12: os.n12, n36: os.n36, l3: os.last3, pw1: os.pw1, pw2: os.pw2, pw2f: os.pw2f, p3m: os.p3med, q40: os.p6q40, m12: os.med12, m36: os.med36, lp: os.lastP, lag: os.lastAgeM, dsp: rd(os.disp6), v6: os.v6, vp6: os.vPrev6, mxF: os.maxF, tr: os.trend ? os.trend.pct : null, jm: os.jeonse ? rd(os.jeonse.ratio) : null,
               lm3: rd(ml.m3), lm6: rd(ml.m6), lv3: ml.v3, lv12: ml.v12, dm3: rd(md.m3), dm6: rd(md.m6), dv3: md.v3, dv12: md.v12, by: a2.buildYear || null } : null;
-            rows.push({ cutoff: c, id: a2.id, lawd, cls: row && row.regionCls, sale: row && row.sale, by: row && (row.saleSimBy || ''), n6: row && row.ownStats ? row.ownStats.n6 : null, weak: !!(row && row.saleFb && row.saleFb.weak), pyung: a2.pyung, floor: a2.floor, truth: [s.p], err, f: feat, dong: s.ap.dong || '', tdate: new RD(s.t.year, s.t.month - 1, s.t.day).toISOString().slice(0, 10) });
+            rows.push({ cutoff: c, id: a2.id, lawd, cls: row && row.regionCls, sale: row && (row.saleApp != null ? row.saleApp : row.sale), stk: row && row.saleStack ? row.sale : null, by: row && (row.saleSimBy || ''), n6: row && row.ownStats ? row.ownStats.n6 : null, weak: !!(row && row.saleFb && row.saleFb.weak), pyung: a2.pyung, floor: a2.floor, truth: [s.p], err, f: feat, dong: s.ap.dong || '', tdate: new RD(s.t.year, s.t.month - 1, s.t.day).toISOString().slice(0, 10) });
           });
         } finally {
           window.Date = RD; allAptList = origList; buildAptMatchIndex();
