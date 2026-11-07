@@ -2314,6 +2314,7 @@ def scorecard(D, amap):
             continue
         rows.append({"case": r.caseNo, "name": (r.bname if isinstance(r.bname, str) and r.bname.strip() and r.bname != "nan" else None) or x.get("name") or "", "region": r.region, "sale": int(r.sale), "actual": float(r.actual), "rec": float(sn["recBid"]),
                      "prob": sn.get("prob"), "win": sn.get("win"), "minbid": float(r.minbid), "at": sn.get("at"), "snapMin": sn.get("minBid")})
+        rows[-1]["typ"] = str(x.get("propType") or x.get("type") or sn.get("type") or "?")
     out = {"n": len(rows)}
     if not rows:
         return out
@@ -2360,6 +2361,25 @@ def scorecard(D, amap):
         out["clean"] = {"금액일치": _view(X[okm]), "금액불일치": _view(X[X["snapMin"].notna() & ~okm]), "새예측": {"from": FRESH_FROM, **_view(X[okm & (X["at"].astype(str) >= FRESH_FROM)])}, "기준": "저장한 최저가가 실제와 2% 안인 예측만 / 새예측은 FRESH_FROM 이후 저장분"}
     except Exception as e:
         print("  깨끗한 예측 성적표 건너뜀:", e)
+    # 🧭 세그먼트별 성적표(2026-11-07, 사용자: 아파트·빌라·지역마다 시장이 달라 계산식이 달라야 하고, 구독 서비스로도 일관된 기준이 필요) - 지방/경기·인천/서울 × 종류(아파트·빌라)로 나눠
+    #   예상 낙찰가 오차·추천가로 낙찰된 비율·실제÷추천가·낙찰 가능성 예측 vs 실제. 서울도 자가 매입 기준이 아니라 다른 세그먼트와 같은 가격 정확도 기준.
+    try:
+        def _seg(rg): return "서울" if str(rg).startswith("서울") else ("경기·인천" if str(rg).startswith(("경기", "인천")) else "지방")
+        X["seg"] = X["region"].map(_seg); X["typ2"] = X["typ"].map(lambda t: "빌라" if ("villa" in t or "빌라" in t or "연립" in t or "다세대" in t) else ("아파트" if ("apt" in t or "아파트" in t) else "미상"))
+        bs = {}
+        for (tp, sg), G in X.groupby(["typ2", "seg"]):
+            v = {"n": int(len(G)), "recWonPct": round(float(G["won"].mean()) * 100, 1), "actualOverRecMed": round(float(G["ratio"].median()), 3)}
+            GW = G[G["win"].notna() & (G["win"] > 0)]
+            if len(GW) >= 5:
+                ee = (GW["win"] - GW["actual"]) / GW["actual"]
+                v.update({"winN": int(len(GW)), "winMedAbsErrPct": round(float(ee.abs().median()) * 100, 1), "winBiasPct": round(float(ee.median()) * 100, 1), "winWithin10Pct": round(float((ee.abs() <= .1).mean()) * 100, 1)})
+            GP = G[G["prob"].notna()]
+            if len(GP): v.update({"probPredPct": round(float(GP["prob"].mean()) * 100, 1), "probActualPct": round(float(GP["won"].mean()) * 100, 1)})
+            bs[f"{tp}|{sg}"] = v
+        out["bySegment"] = bs
+        print("  세그먼트별 성적표:", json.dumps(bs, ensure_ascii=False)[:900])
+    except Exception as e:
+        print("  세그먼트별 성적표 건너뜀:", e)
     out["items"] = [{"case": r["case"], "name": r["name"], "region": r["region"], "sale": int(r["sale"]), "rec": round(r["rec"]), "actual": round(r["actual"]), "won": bool(r["won"]),
                      "prob": None if pd.isna(r["prob"]) else r["prob"], "win": None if pd.isna(r["win"]) else r["win"]} for _, r in X.sort_values("sale", ascending=False).head(60).iterrows()]
     return out
