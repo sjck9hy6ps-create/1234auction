@@ -29945,11 +29945,13 @@ async function savePredSnapshots() {
     try {
         var today = remindTodayStr(), upd = [];
         (bidBoardRows || []).forEach(function(r) {
-            if ((r.type !== 'apt' && !(r.type === 'villa' && r.metro)) || r.pending || r.skippedPast || !r.a || !r.winbid || !r.dday || r.dday.diffDays < 0 || r.dday.diffDays > 21) return;
+            // 빌라(수도권)는 r.winbid가 아니라 빌라 평가(_vev.wb)에 예상 낙찰가가 있음 - 예전엔 !r.winbid로 항상 건너뛰어 빌라 예측이 한 건도 안 쌓였음(2026-11-07 발견)
+            var vwb = r.type === 'villa' && r._vev && r._vev.wb && r._vev.ve ? r._vev.wb : null, wbx = r.type === 'villa' ? vwb : r.winbid;
+            if ((r.type !== 'apt' && !(r.type === 'villa' && r.metro)) || r.pending || r.skippedPast || !r.a || !wbx || !r.dday || r.dday.diffDays < 0 || r.dday.diffDays > 21) return;
             var sn = r.a.predSnap, age = sn && sn.at ? (Date.now() - new Date(sn.at + 'T00:00:00').getTime()) / 86400000 : 99;
             if (sn && age < 3 && sn.minBid === r.minBid && sn.go !== undefined) return;
             var snapNew = { at: today, minBid: r.minBid, fails: r.fails, sale: Math.round(r.sale), recBid: r.recBid ? Math.round(r.recBid) : null, aggr: r.recAggr ? Math.round(r.recAggr) : null,
-                win: Math.round(r.winbid.price), prob: r.winbid.probRec != null ? Math.round(r.winbid.probRec * 100) / 100 : null, own: r.own,
+                win: Math.round(wbx.price), prob: r.type === 'villa' ? (r.recBid ? (function() { var pv = villaProbAt(wbx, r.recBid); return pv != null ? Math.round(pv * 100) / 100 : null; })() : null) : (r.winbid.probRec != null ? Math.round(r.winbid.probRec * 100) / 100 : null), own: r.own, type: r.type,
                 go: !!(r.visit && r.visit.go), nv: r.noVisit ? r.noVisit.lvl : null, why: r.visit && r.visit.go ? '' : String((r.visit && r.visit.why) || '').slice(0, 60) };
             // 2026-10-09 누적 이력: 덮어쓰지 않고 날짜별로 쌓음(같은 날 다시 저장하면 그날 것만 교체, 최대 25개) - 주간 리포트가 "입찰 직전 마지막 예측"을 골라 비교
             var hist = Array.isArray(r.a.predHist) ? r.a.predHist.slice() : (sn ? [sn] : []);
