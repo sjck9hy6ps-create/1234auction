@@ -1,0 +1,39 @@
+# 빌라 낙찰가 모델 다시 학습(2026-11-07): 종합 예상매도가 기준으로 villa-winbid.json 새로 만들어 저장소에 올림(앱이 읽는 파일)
+name: Fit villa winbid
+on:
+  push:
+    paths: ['.github/triggers/fit-villa-winbid.txt']
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  fit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install pandas numpy requests scikit-learn scipy
+      - env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          COLLECT_PROXY_SECRET: ${{ secrets.COLLECT_PROXY_SECRET }}
+          SITE_URL: https://1234auction.vercel.app
+          PYTHONUNBUFFERED: '1'
+          FIT_WINBID: '1'
+        run: python compute-villa-stack.py
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: villa-winbid-stack
+          path: villa-winbid.json
+          if-no-files-found: ignore
+      - name: 저장소에 반영
+        run: |
+          test -s villa-winbid.json || exit 1
+          cp villa-winbid.json public/villa-winbid.json
+          git config user.name "github-actions"; git config user.email "actions@github.com"
+          git add public/villa-winbid.json
+          git diff --cached --quiet || (git commit -m "빌라 낙찰가 모델: 종합 예상매도가 기준으로 다시 학습" && git push)

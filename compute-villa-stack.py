@@ -118,8 +118,8 @@ def main():
         return D
 
     # ── 학습: 2023~ 거래 표본 ──
-    EVAL = os.environ.get("EVAL_APP") == "1"; EVALW = os.environ.get("EVAL_WINBID") == "1"
-    cutoff = 20260101 if EVAL else (20260601 if EVALW else None)
+    EVAL = os.environ.get("EVAL_APP") == "1"; EVALW = os.environ.get("EVAL_WINBID") == "1"; FITW = os.environ.get("FIT_WINBID") == "1"
+    cutoff = 20260101 if EVAL else (20260601 if (EVALW or FITW) else None)
     T = df[(df["deal_date"] >= 20230101) & ((df["deal_date"] < cutoff) if cutoff else True)]
     if len(T) > N_TRAIN: T = T.sample(N_TRAIN, random_state=11)
     D = featurize(T); D["y"] = np.log(T.loc[D.index, "price"] / D["base"])
@@ -132,6 +132,12 @@ def main():
         return eval_app(df, D, pt, mq, featurize)
     if EVALW:
         return eval_winbid(df, pt, featurize)
+    if FITW:   # 낙찰가 모델 다시 학습(2026-11-07): 검증용(2026-06 이전 거래로 학습)과 최종(전체 거래로 학습) 점 보정을 둘 다 만들어 넘김
+        T2 = df[(df["deal_date"] >= 20230101)]
+        if len(T2) > N_TRAIN: T2 = T2.sample(N_TRAIN, random_state=11)
+        D2 = featurize(T2); D2["y"] = np.log(T2.loc[D2.index, "price"] / D2["base"])
+        pt_all = HistGradientBoostingRegressor(loss="absolute_error", **P).fit(D2[COLS], D2["y"])
+        return eval_winbid(df, pt, featurize, pt_all=pt_all)
     # ── 입찰 물건 ──
     au = requests.get(f"{SITE}/api/auction?kind=auctions", timeout=300).json()
     today = pd.Timestamp.now(tz="Asia/Seoul").tz_localize(None).normalize()
@@ -221,6 +227,38 @@ def eval_app(df, D, pt, mq, featurize):
     cyc.upsert_rows([{"id": "signal|__villa_bt_appeval__", "payload": cyc.clean_json(dict(out, generatedAt=now)), "fetched_at": now}]); print("서버 저장: appeval")
 
 
+def fit_winbid(D, F, T, c2, pt_all, mkX, FAC, Xs, tr, te, mB, featurize):
+    """앱이 읽는 villa-winbid.json 새로 만들기(종합 예상매도가 기준). 시험 값(oos·resQ)은 2026-06 이전 학습분으로, 최종 요인표는 전체 사례+전체 거래로 학습한 종합 값으로."""
+    act = D["actual"].values
+    p_te = D["stack"].values[te] * np.exp(predict_additive(mB, Xs[te], FAC)); e = p_te / act[te] - 1
+    oos = {"전체": {"n": int(te.sum()), "medAbsErrPct": round(float(np.median(np.abs(e))) * 100, 2), "within10Pct": round(float((np.abs(e) <= .1).mean()) * 100, 1), "biasPct": round(float(np.median(e)) * 100, 2)}}
+    base_c = np.exp(np.median(np.log(act[tr] / D["stack"].values[tr]))) * D["stack"].values[te]; e0 = base_c / act[te] - 1
+    oos["상수 비율(기준선)"] = {"medAbsErrPct": round(float(np.median(np.abs(e0))) * 100, 2), "within10Pct": round(float((np.abs(e0) <= .1).mean()) * 100, 1)}
+    T2 = pd.DataFrame({"lvl": D["lvl"].values[te], "e": e, "age": Xs["age"].values[te], "fl": Xs["floor"].values[te]})
+    g = lambda col, keys=None: {k: dict(n=int(len(G)), medAbsErrPct=round(float(G["e"].abs().median()) * 100, 1), **({"within10Pct": round(float((G["e"].abs() <= .1).mean()) * 100, 1)} if col == "lvl" else {})) for k, G in T2.groupby(col) if len(G) >= 50}
+    flr = {k: {"n": int(len(G)), "ratioMed": round(float((G["actual"] / G["stack"]).median()), 3)} for k, G in D.assign(fl2=Xs["floor"]).groupby("fl2") if len(G) >= 80}
+    resq = [round(float(np.quantile(np.log(act[te] / p_te), q / 100)), 4) for q in range(1, 100)]
+    # 최종: 전체 거래로 학습한 종합 값으로 모든 사례의 예상매도가를 다시 계산해 요인표를 학습
+    F2 = F.copy(); F2["stack_all"] = F2["base"] * np.exp(np.clip(pt_all.predict(F2[COLS]), -0.4, 0.4))
+    D2 = D.copy(); D2["stack"] = F2["stack_all"].reindex(D2.index).values
+    D2 = D2[(D2["stack"] > 0) & (D2["actual"] / D2["stack"]).between(0.25, 1.8)]
+    Xf = mkX_for(D2, mkX, D)
+    full = fit_additive(Xf, np.log(D2["actual"].values / D2["stack"].values), FAC)
+    try: old = json.load(open(os.path.join(HERE, "public", "villa-winbid.json"), encoding="utf-8"))
+    except Exception: old = {}
+    out = {"n": int(len(D2)), "oos": oos, "byLevel": g("lvl"), "byAge": g("age"), "byFloor": g("fl"), "floorRatio": flr, "floorResale": old.get("floorResale", {}), "ratioMed": round(float((D2["actual"] / D2["stack"]).median()), 3),
+           "resQ": resq, "factors": [f for f, _ in FAC], "base": full[0], "eff": {f: {str(k): round(float(v), 4) for k, v in d.items()} for f, d in full[1].items()}, "estBasis": "stack", "generatedAt": datetime.now(timezone.utc).isoformat()}
+    print(json.dumps({k: out[k] for k in ("n", "oos", "byLevel", "ratioMed")}, ensure_ascii=False, indent=1))
+    json.dump(out, open("villa-winbid.json", "w", encoding="utf-8"), ensure_ascii=False); print("저장 villa-winbid.json")
+
+
+def mkX_for(D2, mkX, D):
+    """mkX는 바깥 D를 쓰므로 같은 열(예상매도가만 다름)로 요인 키를 다시 만든다 - lb(최저가÷예상매도가)만 바뀜"""
+    X = mkX(D["stack"]).reindex(D2.index)
+    X["lb"] = np.clip(np.floor(np.log(D2["minbid"] / D2["stack"]) / 0.05), -24, 9).astype(int).astype(str)
+    return X
+
+
 def fails_from_ratio(minb, appr):
     if not appr or not minb or appr <= 0: return None
     r = minb / appr
@@ -246,7 +284,7 @@ def predict_additive(m, X, factors):
     return p
 
 
-def eval_winbid(df, pt, featurize):
+def eval_winbid(df, pt, featurize, pt_all=None):
     """빌라 예상 낙찰가 채점(2026-11-07): 낙찰사례(수도권 빌라, 2024~)의 낙찰가를 ① 예전 예상매도가(시험용 기본 추정) 기준 모델 ② 같은 모델에 종합 예상매도가를 넣은 것(앱이 지금 하는 일) ③ 종합 값으로 다시 학습한 모델로 예측.
     학습 = 2026-06 이전 사례, 시험 = 2026-06~(학습에 안 쓴 구간). 종합 모델(점 보정)도 2026-06 이전 거래로만 학습해 시험 구간 정보가 새지 않게 함."""
     cases = pd.DataFrame(requests.get(f"{SITE}/api/auction?kind=bidCases", timeout=300).json())
@@ -290,6 +328,8 @@ def eval_winbid(df, pt, featurize):
     act = D["actual"].values
     mA = fit_additive(Xb[tr], np.log(act[tr] / D["base"].values[tr]), FAC)
     mB = fit_additive(Xs[tr], np.log(act[tr] / D["stack"].values[tr]), FAC)
+    if pt_all is not None:
+        return fit_winbid(D, F, T, c2, pt_all, mkX, FAC, Xs, tr, te, mB, featurize)
     pr = {"① 예전 예상매도가+예전 모델": D["base"].values * np.exp(predict_additive(mA, Xb, FAC)),
           "② 종합 예상매도가+예전 모델(앱 지금)": D["stack"].values * np.exp(predict_additive(mA, Xs, FAC)),
           "③ 종합 예상매도가+다시 학습": D["stack"].values * np.exp(predict_additive(mB, Xs, FAC)),
