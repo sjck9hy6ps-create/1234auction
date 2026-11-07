@@ -677,6 +677,9 @@ def main():
     print(json.dumps(summary, ensure_ascii=False, indent=1))
     try:
         competition_stats(R, now)
+        if os.environ.get("APT_STACK_DIR"):   # 2026-11-07 아파트 낙찰가 모델: 종합 평가 보정된 예상매도가 기준으로 다시 학습하면 좋아지나(앱이 낙찰일 35일 전 자료로 다시 계산한 값, apt-case-data 워크플로 결과)
+            apt_stack_experiment(R, now)
+            if os.environ.get("APT_STACK_ONLY") == "1": return
         try:
             winbid_model(R, now)
             try:
@@ -1608,6 +1611,28 @@ def est_rule_asof(g, c, sale_d, cut, cut_ym, idx_at, flow=None):
     if t2 and t3 and abs(t3 / t2 - 1) > 0.20: t3 = None
     if t2 and t3 and n6 == 0: return 0.6 * t2 + 0.4 * t3
     return t2 or t3
+
+
+def apt_stack_load(R):
+    import glob
+    mp = {}
+    for f in glob.glob(os.path.join(os.environ["APT_STACK_DIR"], "**", "rows.json"), recursive=True):
+        for r in json.load(open(f)):
+            if r.get("err") or not r.get("sale"): continue
+            mp[str(r["id"])] = (r.get("stk") or r["sale"], r["sale"], r.get("wb"))
+    R["est_stack"] = R["id"].astype(str).map(lambda i: mp.get(i, (None,))[0])
+    R["est_pre"] = R["id"].astype(str).map(lambda i: mp.get(i, (None, None))[1])
+    print(f"  아파트 종합 평가 값 연결: {int(R['est_stack'].notna().sum()):,}/{len(R):,}건 (보정 전 값 {int(R['est_pre'].notna().sum()):,})")
+    return mp
+
+
+def apt_stack_experiment(R, now):
+    if "id" not in R.columns:
+        print("  사례 id 열이 없어 종합 평가 비교를 건너뜀"); return
+    apt_stack_load(R)
+    R2 = R[R["est_stack"].notna() & (R["est_stack"] > 0)].copy()
+    est_rule_experiment(R2, wb_fit, wb_predict, now, cands=(("기존 규칙(est_rule_f)", "est_rule_f" if "est_rule_f" in R2.columns else "est_rule"), ("앱 보정 전 값(est_pre)", "est_pre"), ("종합 평가(est_stack)", "est_stack")),
+                        title="아파트 낙찰가 모델 시세 기준 비교: 종합 평가 보정")
 
 
 def est_rule_experiment(R, wb_fit, wb_predict, now, cands=(("기존", "est"), ("새규칙", "est_rule")), title="낙찰가 모델 시세 기준 비교"):
