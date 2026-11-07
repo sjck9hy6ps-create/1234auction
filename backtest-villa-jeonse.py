@@ -101,9 +101,19 @@ def main():
             if s: out.setdefault("단계별 " + l, {})[nm] = s
     out["전세 출처 비율%"] = {k: round(v * 100, 1) for k, v in S["jsrc"].value_counts(normalize=True).items()}
     txt = json.dumps(out, ensure_ascii=False, indent=1); print(txt)
-    json.dump(out, open("backtest-villa-jeonse.json", "w"), ensure_ascii=False, indent=1)
+    json.dump(out, open("backtest-villa-jeonse.json", "w"), ensure_ascii=False, indent=1); _save_server("jeonse", out)
     if os.environ.get("GITHUB_STEP_SUMMARY"):
         open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8").write("```json\n" + txt + "\n```\n")
+
+def _save_server(name, out):
+    try:
+        from datetime import datetime, timezone
+        s = importlib.util.spec_from_file_location("cyc", os.path.join(HERE, "analyze-cycle.py")); cyc = importlib.util.module_from_spec(s); s.loader.exec_module(cyc)
+        now = datetime.now(timezone.utc).isoformat()
+        cyc.upsert_rows([{"id": "signal|__villa_bt_" + name + "__", "payload": cyc.clean_json(dict(out, generatedAt=now)), "fetched_at": now}])
+        print("서버 저장:", name)
+    except Exception as e:
+        print("서버 저장 실패:", e)
 
 
 if __name__ == "__main__":
