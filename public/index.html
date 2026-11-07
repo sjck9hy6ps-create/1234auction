@@ -1836,7 +1836,7 @@ body.ui2 #auction-modal.am4 { width:620px; }
                 <option value="">아파트·빌라</option><option value="apt">아파트만</option><option value="villa">빌라만</option>
             </select>
             <select id="bb-sort" onchange="bidBoardState.sortCol = null; setBidBoardFilter('sort', this.value)">
-                <option value="verdict">판정 → 여유 큰 순</option><option value="date">입찰일 빠른 순</option><option value="room">여유 큰 순</option><option value="pop">거래량 순위 높은 순</option><option value="niche">🧭 틈새 우선</option><option value="win">🎲 낙찰 가능성 높은 순</option>
+                <option value="verdict">판정 → 여유 큰 순</option><option value="date">입찰일 빠른 순</option><option value="room">여유 큰 순</option><option value="pop">거래량 순위 높은 순</option><option value="popwin">거래량 많은 순 → 예상낙찰가 낮은 순</option><option value="niche">🧭 틈새 우선</option><option value="win">🎲 낙찰 가능성 높은 순</option>
             </select>
             <!-- 2026-10(사용자: "가능성에 따라 확인할 수 있는 필터") - 추천 입찰가로 썼을 때의 낙찰 가능성(🎲 예상 낙찰가 모델) -->
             <select id="bb-issue" onchange="setBidBoardFilter('issue', this.value)" title="3회 이상 유찰이거나 최저가가 시세보다 지나치게 낮은 물건(보증금 등 인수할 권리가 있을 가능성)">
@@ -1847,6 +1847,7 @@ body.ui2 #auction-modal.am4 { width:620px; }
             </select>
             <label class="bb-chk" style="display:none;"><input type="checkbox" onchange="setBidBoardFilter('popOnly', this.checked)"> 🔥 인기 단지만</label>
 
+            <select id="bb-excl" onchange="setBidBoardFilter('excl', this.value)" title="직접 확인하고 입찰하지 않기로 한 물건(상세 창의 🚫 입찰 제외 체크)"><option value="">🚫 입찰 제외 숨김</option><option value="only">🚫 입찰 제외 보관함만</option></select>
             <label class="bb-chk"><input type="checkbox" onchange="setBidBoardFilter('showPast', this.checked)"> 오래 지난 입찰(45일+)도 보기</label>
         </div>
         <div id="bb-cache-note" style="font-size:11px;color:#888;padding:2px 0;"></div>
@@ -4623,6 +4624,7 @@ function villaEval(row) {
     else if (!isNaN(fl) && fl <= 0) v.why = '지하·반지하';
     else if (ev.pn.ev.p < VILLA_VISIT_MIN_P) v.why = '낙찰 가능성 ' + Math.round(ev.pn.ev.p * 100) + '%로 낮아요';
     else v.go = true;
+    try { row.rightsStop = rightsStopFor(row.a); if (row.rightsStop && v.go) { v.go = false; v.why = '🚨 권리 위험: ' + row.rightsStop.names.join(' · ') + ' - 해결 방안 확인 전 입찰 비권장'; } if (row.a && row.a.bidExcluded && v.go) { v.go = false; v.why = '🚫 입찰 제외(내가 선택)'; } } catch (e) {}
     row._vev = ev; return ev;
 }
 function setVillaVisit(v) { bbResetDrawer(); bidBoardState.villaVisit = v; bidBoardState.villaLimit = 120; renderBidBoard(); }
@@ -4630,7 +4632,7 @@ function villaMore() { bidBoardState.villaLimit = (bidBoardState.villaLimit || 1
 function renderVillaLite(body) {
     if (villaRestoreState < 2) { if (!villaRestoreState) villaRestoreCalc(); body.innerHTML = '<div class="bb-empty">저장된 계산을 불러오는 중…</div>'; return; }
     villaFlushHsPend();
-    var all = villaMetroRows(), s = bidBoardState, vv = s.villaVisit || 'go';
+    var s = bidBoardState, all = villaMetroRows().filter(bbExclPass), vv = s.villaVisit || 'go';
     if (!homestayAgg) loadHomestayAgg(function() { if (bidBoardState.visit === 'villa') renderBidBoard(); }); // 이미 받았으면 콜백이 바로 불려 무한 반복되므로 처음 한 번만
     if (all.some(function(r) { return !hsBld[r.id]; })) all.slice().sort(function(x, y) { return (x.dday ? x.dday.diffDays : 9999) - (y.dday ? y.dday.diffDays : 9999); }).forEach(ensureHomestayCheck); // 입찰이 가까운 물건부터 조회(이미 다 조회했으면 건너뜀)
     var evs = {}; window.__villaEvDeadline = performance.now() + 14; all.forEach(function(r) { evs[r.id] = villaEval(r); }); window.__villaEvDeadline = 0;
@@ -14704,6 +14706,44 @@ async function rightsApplyPaste(idJs) {
     try { await saveAuctionAPI(a); } catch (e) { alert('저장 실패: ' + e.message); }
     rightsRefreshRow(a);
 }
+/* 🚨 권리 위험 안전장치 · 🚫 입찰 제외 (2026-11-07, 수정 요청: 선순위 가등기 등 위험한 권리가 있는데 해결 방안 없이 추천가만 나온다 / 직접 입찰 안 하기로 한 물건을 걸러내고 별도 보관)
+   권리분석에서 낙찰자가 인수하는 '위험' 권리(선순위 가등기·인수되는 가처분·지상권 등)가 있으면 임장 후보(go)에서 빼고 빨간 경고를 붙임. 추천가에는 이 위험이 반영되지 않았다는 점도 표시.
+   입찰 제외는 사용자가 상세 창에서 체크 → 물건 기록(a.bidExcluded)에 저장 → 목록·임장 후보에서 빠지고 '🚫 입찰 제외 보관함'에서만 보임(다시 체크 해제하면 복귀). */
+function rightsStopFor(a) {
+    if (!a || !a.rights) return null;
+    var L = []; try { L = rightsRegItems(a.rights).filter(function(x) { return x.kind === 'risk' && x.mode === 'asm'; }); } catch (e) { return null; }
+    if (!L.length) return null;
+    var names = []; L.forEach(function(x) { var t = /가등기/.test(x.type) ? '선순위 가등기' : (/가처분|처분금지/.test(x.type) ? '인수되는 가처분' : (/지상권|지역권/.test(x.type) ? '인수되는 지상권·지역권' : (x.type || '인수 위험 권리'))); if (names.indexOf(t) < 0) names.push(t); });
+    return { names: names, n: L.length };
+}
+function applyRightsGate(row) {
+    row.rightsStop = rightsStopFor(row.a);
+    if (row.rightsStop) {
+        row.warns.unshift('🚨 권리 위험: ' + row.rightsStop.names.join(' · ') + ' - 해결 방안 확인 전 입찰 비권장(추천가에는 이 위험이 반영되지 않았어요)');
+        if (row.visit) row.visit = Object.assign({}, row.visit, { go: false, why: '🚨 권리 위험: ' + row.rightsStop.names.join(' · ') });
+        if (row.verdict === 'yes') row.verdict = 'check';
+    }
+    if (row.a && row.a.bidExcluded && row.visit) row.visit = Object.assign({}, row.visit, { go: false, why: '🚫 입찰 제외(내가 선택)' });
+}
+function bbExclPass(r) { var ex = !!(r && r.a && r.a.bidExcluded), m = bidBoardState.excl; return m === 'only' ? ex : !ex; }
+function rightsStopBannerHtml(row) {
+    var rs = row.rightsStop || rightsStopFor(row.a); if (!rs) return '';
+    var hints = ''; try { hints = rightsHintsHtml(row.a.rights, { regItems: rightsRegItems(row.a.rights) }); } catch (e) {}
+    return '<div style="margin-top:6px;background:#fef2f2;border:1px solid #fecaca;border-radius:8px;padding:8px 10px;"><b style="color:#b91c1c;">🚨 권리 위험 - 입찰을 피하는 쪽을 권해요</b>'
+        + '<div class="dr-sub" style="color:#7f1d1d;">' + bbEsc(rs.names.join(' · ')) + ' (낙찰자가 인수). 아래 추천 입찰가는 이 위험을 가격에 반영하지 않았고, 이런 물건은 임장 후보에서 뺐어요. 해결 방법을 확인할 수 없다면 아래 <b>입찰 제외</b>로 보관하세요.</div>' + hints + '</div>';
+}
+function bidExclBoxHtml(row, idJs) {
+    var on = !!(row.a && row.a.bidExcluded);
+    return '<label style="display:flex;align-items:center;gap:6px;margin-top:6px;font-size:13px;"><input type="checkbox" ' + (on ? 'checked ' : '') + 'onchange="toggleBidExcluded(\'' + idJs + '\', this.checked)"> 🚫 입찰 제외 <span class="dr-sub" style="margin:0;">(체크하면 목록·임장 후보에서 빠지고 \'입찰 제외 보관함\'에 보관돼요)</span></label>';
+}
+async function toggleBidExcluded(idJs, on) {
+    var a = auctionList.filter(function(x) { return String(x.id) === String(idJs); })[0]; if (!a) return;
+    if (on) { a.bidExcluded = true; a.bidExcludedAt = new Date().toISOString().slice(0, 10); } else { delete a.bidExcluded; delete a.bidExcludedAt; }
+    try { await saveAuctionAPI(a); } catch (e) { alert('저장 실패: ' + e.message); }
+    try { bidBoardRows.forEach(function(r) { if (String(r.id) === String(idJs)) { r.finalSig = null; delete r._vev; } }); } catch (e) {}
+    if (on) closeBidDrawer();
+    renderBidBoard();
+}
 /* 💡 인수 항목별 예상 해결 방법·수익 기회(2026-10-30, 사용자: 인수해야 할 등기가 있으면 해결하고 고수익을 노릴 수 있다) - 기본 권리분석 자료(민사집행법 제91조 등)의 일반 원칙이며 법률 자문이 아님. 해당하는 것만 보여 줌 */
 function rightsHintsList(R, w) {
     var out = [], ri = (w && w.regItems) || [], fl = (R && R.flags) || [], has = function(k) { return fl.some(function(f) { return f.k === k; }); }, eok1 = function(v) { return toEok(String(Math.round(v / 10000))); };
@@ -20928,6 +20968,7 @@ function finalizeBidBoardRow(row) {
     if (row.niche) row.notes.unshift('🧭 틈새: ' + row.niche.why.join(' · '));
     try { computePick(row); applyPickToRow(row); } catch (e) { row.pick = null; row.visit = { go: false, why: '계산 오류' }; }
     try { noVisitFor(row); } catch (e) { row.noVisit = null; }
+    try { applyRightsGate(row); } catch (e) {}
     return row;
 }
 /* ════ 🧭 틈새 (2026-10, 사용자 정의: "거래가 가능한 지역인데 사람들 시선이 안 가는 곳" - 유찰 횟수와는 무관)
@@ -21328,7 +21369,7 @@ async function mergeServerBoardCache(local, onlyFirst) {
 setTimeout(function() { try { listIdbOp('readwrite', function(st) { return st.delete('bidBoardCache:v1'); }); } catch (e) {} }, 4000); // 예전 큰 로컬 저장본(서버 계산본 포함, 수십 MB)은 읽지 않고 지움(느린 기기에서 열 때 수 초 멈춤, 2026-10-21)
 setTimeout(function() { var go = function() { try { srvBoardParts(); setTimeout(function() { try { window.villaSrvP = villaFetchServerCalc(); } catch (e) {} }, 4000); } catch (e) {} }; if (window.requestIdleCallback) requestIdleCallback(go, { timeout: 6000 }); else go(); }, 2500); // 앱을 켜고 2.5초 뒤 한가할 때 배경에서 미리 받기(빌라는 4초 더 뒤)
 // 저장 계산을 다시 써도 되는지 - 물건 입력값(시세 계산에 쓰는 것)과 입찰일 지남 여부. 계산 방식이 바뀌면 BOARD_CALC_VER을 올림
-var BOARD_CALC_VER = 79; // 79: 추천가 낙찰 가능성 간격 보정 표시(2026-11-07) - // 78: // 78: 빌라 종합 평가 상한 제거·건물 3건 이상 포함(앱 실제 계산과 직접 채점 후, 2026-11-07) - // 77: 빌라 종합 평가 안전장치(지하 제외·앱 값 +15% 상한, 2026-11-07) - // 76: 수도권 빌라 종합 평가 값 적용(건물 3건 미만 단계, 2026-11-07) - // // 75: 거래 활발 단지 위험 여유를 최근 거래 흩어짐별 하방 표로(2026-11-06) - // 74: 위험 여유를 근거 두께별 실측 하방 표로(주간 갱신)·흐름 계수 주간 자동 선택(2026-11-06) - // 73: 감정가 기준 전부 제거(감정가 대비 경고·금액 점검·빌라 이슈·틈새 조건, 2026-11-06) - // 72: 시세 흐름 계수 올림·거래량 믿음도 제거·지방 시군구·수도권 생활권·3개월 예측 반영(2026-11-05) - // 71: 낙찰가 모델 시세(est)에도 지역 가격 흐름 반영(est_rule_f, 2026-11-05) - // 70: 예상매도가에 지역 가격 흐름 반영(2026-11-05) - // 69: 시세 새 규칙(est_rule)·감정가 제외·최저가 유지(2026-11-04) - // 68: 감정가 제외 - // // 54: 튀는 가격 반영 안 함·경고만(2026-10-24) - // 53: 최근 거래 시세반영/튀는 가격 구별(2026-10-24) - // 52: 임장 생략 판정(2026-10-19) - // 51: 전세가율 구간 보정·위험 신호(2026-10-18) - // 50: 지방 최근 거래 비슷한 층 비중·1~2건은 12개월 원값(2026-10-18) - // 49: 근거 약함 경고를 판정 단계에서 다시 붙임 - // 48: 예상매도가-감정가 큰 차이 근거 약함 표시 - // 47: 다른 평형 환산이 같은 평형과 20% 넘게 다르면 섞지 않음 - // 46: 같은 동 추론(③④) 제거·거래 없는 단지는 기존 주변 비교 + 근거 약함(2026-10-18) - // 45: 회전율 구간별 보정 항상 적용(주간 갱신 표, 2026-10-17) - // 44: 추론에 최근 6개월 1~2건 포함 - // 43: 6개월 거래 부족 시 단계별 추론(2026-10-17) - // 42: 지역별 예상매도가(서울 최근3건·경기인천 반감1개월·지방 반감2개월)와 위험 여유(2026-10-17) - // 41: 아파트 예상매도가를 최근 6개월 같은 평형 거래의 최근가중 중위값으로(전국 백테스트, 2026-10-17) - // 40: 임차인 둘로 읽힌 경우 별개/같은 임차권(갱신·승계) 선택(2026-10-11) - // 39: 39: 임차권등기를 임차인으로 계산(전입·확정일자 기준)·경매신청인 전세권 안내(2026-10-11) - // 38: 38: 권리분석 날짜 선후 규칙 정리(전입 다음 날 0시·동순위 안분, 2026-10-11) - // 37: 37: 권리분석에 말소기준일보다 앞선 전세권·임차권 등 등기부 인수 권리 반영(2026-10-11) - // 36: 저가 아파트 순이익률 10% 추천가 규칙 되돌림(2026-10-11, 백테스트 손해 30~42%) - // 34: 33: 아파트 고층 보정 축소·저층 범위(2026-10-11) - // 29: nYear 저장 추가 - // 27: 🎲 예상 낙찰가용 시세(wbBase) 추가 (범위 표시는 화면에서 바로 계산 - 버전 변경 없음)
+var BOARD_CALC_VER = 80; // 80: 권리 위험 안전장치·입찰 제외(2026-11-07) - // 79: // 79: 추천가 낙찰 가능성 간격 보정 표시(2026-11-07) - // 78: // 78: 빌라 종합 평가 상한 제거·건물 3건 이상 포함(앱 실제 계산과 직접 채점 후, 2026-11-07) - // 77: 빌라 종합 평가 안전장치(지하 제외·앱 값 +15% 상한, 2026-11-07) - // 76: 수도권 빌라 종합 평가 값 적용(건물 3건 미만 단계, 2026-11-07) - // // 75: 거래 활발 단지 위험 여유를 최근 거래 흩어짐별 하방 표로(2026-11-06) - // 74: 위험 여유를 근거 두께별 실측 하방 표로(주간 갱신)·흐름 계수 주간 자동 선택(2026-11-06) - // 73: 감정가 기준 전부 제거(감정가 대비 경고·금액 점검·빌라 이슈·틈새 조건, 2026-11-06) - // 72: 시세 흐름 계수 올림·거래량 믿음도 제거·지방 시군구·수도권 생활권·3개월 예측 반영(2026-11-05) - // 71: 낙찰가 모델 시세(est)에도 지역 가격 흐름 반영(est_rule_f, 2026-11-05) - // 70: 예상매도가에 지역 가격 흐름 반영(2026-11-05) - // 69: 시세 새 규칙(est_rule)·감정가 제외·최저가 유지(2026-11-04) - // 68: 감정가 제외 - // // 54: 튀는 가격 반영 안 함·경고만(2026-10-24) - // 53: 최근 거래 시세반영/튀는 가격 구별(2026-10-24) - // 52: 임장 생략 판정(2026-10-19) - // 51: 전세가율 구간 보정·위험 신호(2026-10-18) - // 50: 지방 최근 거래 비슷한 층 비중·1~2건은 12개월 원값(2026-10-18) - // 49: 근거 약함 경고를 판정 단계에서 다시 붙임 - // 48: 예상매도가-감정가 큰 차이 근거 약함 표시 - // 47: 다른 평형 환산이 같은 평형과 20% 넘게 다르면 섞지 않음 - // 46: 같은 동 추론(③④) 제거·거래 없는 단지는 기존 주변 비교 + 근거 약함(2026-10-18) - // 45: 회전율 구간별 보정 항상 적용(주간 갱신 표, 2026-10-17) - // 44: 추론에 최근 6개월 1~2건 포함 - // 43: 6개월 거래 부족 시 단계별 추론(2026-10-17) - // 42: 지역별 예상매도가(서울 최근3건·경기인천 반감1개월·지방 반감2개월)와 위험 여유(2026-10-17) - // 41: 아파트 예상매도가를 최근 6개월 같은 평형 거래의 최근가중 중위값으로(전국 백테스트, 2026-10-17) - // 40: 임차인 둘로 읽힌 경우 별개/같은 임차권(갱신·승계) 선택(2026-10-11) - // 39: 39: 임차권등기를 임차인으로 계산(전입·확정일자 기준)·경매신청인 전세권 안내(2026-10-11) - // 38: 38: 권리분석 날짜 선후 규칙 정리(전입 다음 날 0시·동순위 안분, 2026-10-11) - // 37: 37: 권리분석에 말소기준일보다 앞선 전세권·임차권 등 등기부 인수 권리 반영(2026-10-11) - // 36: 저가 아파트 순이익률 10% 추천가 규칙 되돌림(2026-10-11, 백테스트 손해 30~42%) - // 34: 33: 아파트 고층 보정 축소·저층 범위(2026-10-11) - // 29: nYear 저장 추가 - // 27: 🎲 예상 낙찰가용 시세(wbBase) 추가 (범위 표시는 화면에서 바로 계산 - 버전 변경 없음)
 /* 2026-10-15(사용자: 입찰후보 로딩이 느림 - 원인 실측): 식별값 끝의 'P/F'(입찰일 지남 여부)가 한국 시각 자정에 바뀌어, 서버 미리 계산이 돈 뒤 어제 입찰이던 물건(하루 약 350건)이 전부 '다른 물건'이 돼
    지역 자료 86곳(곳당 9~13MB)을 새로 받아 다시 계산했음. 계산 결과는 입찰일 지남 여부와 무관하므로(날짜 표시는 열 때 다시 계산) 저장본의 P/F가 반대여도 같은 것으로 봄(flip). */
 function boardBaseSig(a, flip) {
@@ -21365,6 +21406,7 @@ function bidBoardVisibleRows() {
         if (s.region && r.region !== s.region) return false;
         if (!permitMatch(r)) return false;
         if (s.type && r.a.propType !== s.type) return false;
+        if (!bbExclPass(r)) return false;
         if (s.popOnly && !r.popular) return false;
         if (s.nicheOnly && !r.niche) return false;
         if (s.oppOnly && !r.opportunity) return false;
@@ -21693,6 +21735,12 @@ function renderBidBoard() {
             var vx0 = BID_BOARD_VERDICT[x.verdict].order, vy0 = BID_BOARD_VERDICT[y.verdict].order;
             if (vx0 !== vy0) return vx0 - vy0;
         }
+        if (s.sort === 'popwin') {
+            var tierRk = function(r) { var t = r.pop ? (r.pop.band ? r.pop.band.tier : r.pop.tier) : null; return t === '상위20%' ? 0 : (t === '하위40%' ? 2 : (t ? 1 : 3)); };
+            var tx0 = tierRk(x), ty0 = tierRk(y); if (tx0 !== ty0) return tx0 - ty0;
+            var px0 = x.winbid && x.winbid.price > 0 ? x.winbid.price : Infinity, py0 = y.winbid && y.winbid.price > 0 ? y.winbid.price : Infinity;
+            if (px0 !== py0) return px0 < py0 ? -1 : 1;
+        }
         if (s.sort === 'win') {
             var wx = x.winbid && x.winbid.probRec != null ? x.winbid.probRec : -1, wy = y.winbid && y.winbid.probRec != null ? y.winbid.probRec : -1;
             if (wx !== wy) return wy - wx;
@@ -21828,6 +21876,7 @@ var BB_CHIPS = [
     { k: 'caution', g: 'risk', label: '⚠️ 손해 주의', f: function(r) { return !!r.overshoot; } },
     { k: 'voldown', g: 'risk', label: '📉 거래 감소', f: function(r) { return !!r.volDown; } },
     { k: 'hardhold', g: 'risk', label: '⏳ 버티기 어려움(전세가율 60% 미만)', f: function(r) { return !!r.hardHold; } },
+    { k: 'rightsstop', g: 'risk', label: '🚨 권리 위험(가등기 등 인수)', f: function(r) { return !!r.rightsStop; } },
     { k: 'check', g: 'verdict', label: '🟡 검토', f: function(r) { return r.verdict === 'check'; } },
     { k: 'no', g: 'verdict', label: '❌ 제외', f: function(r) { return r.verdict === 'no'; } }
 ];
@@ -21845,13 +21894,17 @@ function renderBidBoardChips(base) {
         var n = base.filter(c.f).length, on = c.k === 'all' ? !any : !!sel[c.k];
         if (!n && c.k !== 'all' && !on) return '';
         return '<span class="chip' + (on ? ' on' : '') + '" onclick="toggleBbChip(\'' + c.k + '\')">' + (on && c.k !== 'all' ? '✓ ' : '') + c.label + '<b>' + n + '</b></span>';
-    }).join('') + (any ? '<span class="chip" style="border-style:dashed;" onclick="toggleBbChip(\'all\')">선택 해제</span>' : '');
+    }).join('') + (Object.keys(sel).length > 1 ? '<span class="chip" style="border-style:dashed;background:#eef4ff;" title="고른 조건을 하나라도 만족하면 보이는지(OR), 모두 만족해야 보이는지(AND) 바꿔요" onclick="toggleChipMode()">' + (bidBoardState.chipMode === 'and' ? '🔗 모두 만족(AND)' : '🔀 하나라도 만족(OR)') + '</span>' : '') + (any ? '<span class="chip" style="border-style:dashed;" onclick="toggleBbChip(\'all\')">선택 해제</span>' : '');
 }
 function bidBoardChipFilter(r) {
     var sel = bbSelChips(), groups = {};
     BB_CHIPS.forEach(function(c) { if (sel[c.k]) (groups[c.g] = groups[c.g] || []).push(c); });
-    return Object.keys(groups).every(function(g) { return groups[g].some(function(c) { return c.f(r); }); });
+    // 2026-11-07(수정 요청: 거래량·예상낙찰가처럼 고른 조건을 하나라도 만족하는 물건을 보고 싶다) - 기본은 '하나라도 만족(OR)', 칩 줄 끝의 버튼으로 '모두 만족(AND)'으로 바꿀 수 있음
+    if (bidBoardState.chipMode === 'and') return Object.keys(groups).every(function(g) { return groups[g].some(function(c) { return c.f(r); }); });
+    var ks = Object.keys(groups); if (!ks.length) return true;
+    return ks.some(function(g) { return groups[g].some(function(c) { return c.f(r); }); });
 }
+function toggleChipMode() { bidBoardState.chipMode = bidBoardState.chipMode === 'and' ? 'or' : 'and'; renderBidBoard(); }
 // ── 상세 창 ──
 var bidDrawerId = null;
 function openBidDrawer(id) {
@@ -21979,8 +22032,8 @@ async function renderBidDrawer() {
     var tr = (row.type === 'apt' || row.type === 'villa') ? drawerTrades(row) : [];
     var fmt = function(x) { return x ? toEok(String(Math.round(x))) : '-'; };
     // 2026-10(사용자: "목록 옆 좁은 창 안에 지도/상세 버튼") - 맨 위 이름 옆에 바로 보이게
-    var h = '<div class="dr-h"><h3>' + favStar(a, idJs) + bbEsc(row.name) + '</h3><button class="dr-x" onclick="closeBidDrawer()">✕</button></div>'
-        + '<div class="dr-top-btns"><button onclick="bidBoardGo(\'' + idJs + '\')">🗺️ 지도</button><button onclick="bbOpenDetail(\'' + idJs + '\')">📝 상세</button><button onclick="openCyclePanel()">📈 사이클</button></div>'
+    var h = '<div class="dr-h"><h3>' + favStar(a, idJs) + bbEsc(row.name) + (a.caseNo ? ' <span style="font-size:12px;font-weight:normal;color:#6b7280;">· ' + bbEsc(a.caseNo) + '</span>' : '') + '</h3><button class="dr-x" onclick="closeBidDrawer()">✕</button></div>'
+        + '<div class="dr-top-btns"><button onclick="bidBoardGo(\'' + idJs + '\')">🗺️ 지도</button><button onclick="bbOpenDetail(\'' + idJs + '\')">📝 상세</button><button onclick="openCyclePanel()">📈 사이클</button></div>' + bidExclBoxHtml(row, idJs) + rightsStopBannerHtml(row)
         + '<div class="dr-sub">' + bbEsc(row.region) + ' · ' + (row.pyung ? row.pyung + '평' + (row.type === 'apt' && sizeBandOf(row.pyung) ? '(' + sizeBandOf(row.pyung) + ' ' + Math.round(row.pyung * 3.305785) + '㎡)' : '') + ' · ' : '') + (row.floor ? row.floor + '층 · ' : '') + bbEsc(a.caseNo || '') + (row.dday ? ' · <b>' + row.dday.label + '</b> (' + bbEsc(a.bidDate) + ')' : '') + '</div>'
         + '<div style="margin-top:6px;"><span class="bb-verdict" style="color:' + v.color + ';background:' + v.bg + ';">' + v.label + '</span>'
         + (row.sweet ? ' <span class="bb-pill" style="background:#e8f5e9;color:#2e7d32;">👍 입찰 추천 구간</span>' : '') + (row.overshoot ? ' <span class="bb-pill" style="background:#fff3e0;color:#e65100;">⚠️ 손해 주의</span>' : '') + (row.bulk ? ' <span class="bb-pill" style="background:#fee2e2;color:#b91c1c;">🏢 대량 경매 ' + row.bulkN + '건</span>' : '')
@@ -22218,8 +22271,8 @@ async function renderVillaDrawer(d, row) {
     var idJs = String(row.id).replace(/\\/g, '\\\\').replace(/'/g, "\\'");
     var fmt = function(x) { return x ? toEok(String(Math.round(x))) : '-'; };
     var go = ev.visit.go, pe = pn && pn.ev;
-    var h = '<div class="dr-h"><h3>' + favStar(a, idJs) + bbEsc(villaNameFor(row)) + '</h3><button class="dr-x" onclick="closeBidDrawer()">✕</button></div>'
-        + '<div class="dr-top-btns"><button onclick="bidBoardGo(\'' + idJs + '\')">🗺️ 지도</button><button onclick="bbOpenDetail(\'' + idJs + '\')">📝 상세</button><button onclick="openCyclePanel()">📈 사이클</button></div>'
+    var h = '<div class="dr-h"><h3>' + favStar(a, idJs) + bbEsc(villaNameFor(row)) + (a.caseNo ? ' <span style="font-size:12px;font-weight:normal;color:#6b7280;">· ' + bbEsc(a.caseNo) + '</span>' : '') + '</h3><button class="dr-x" onclick="closeBidDrawer()">✕</button></div>'
+        + '<div class="dr-top-btns"><button onclick="bidBoardGo(\'' + idJs + '\')">🗺️ 지도</button><button onclick="bbOpenDetail(\'' + idJs + '\')">📝 상세</button><button onclick="openCyclePanel()">📈 사이클</button></div>' + bidExclBoxHtml(row, idJs) + rightsStopBannerHtml(row)
         + '<div class="dr-sub">' + bbEsc(row.region) + (row.pyung ? ' · ' + row.pyung + '평(' + Math.round(row.pyung * 3.305785) + '㎡)' : '') + (row.floor ? ' · ' + row.floor + '층' : '') + (a.buildYear ? ' · ' + a.buildYear + '년' : '') + (row.dday ? ' · 입찰 ' + bbEsc(row.dday.label) + ' ' + bbEsc(a.bidDate || '') : '') + '</div>'
         + '<div class="dr-pickcard ' + (go ? 'go' : 'pass') + '"><div class="pk-v">' + (go ? '🚶 임장 추천' : '패스') + (ev.visit.why ? ' · ' + bbEsc(ev.visit.why) : '') + '</div>'
         + (pe ? '<div class="pk-big"><span>추천 입찰가</span><b>' + fmt(pe.bid) + '</b>' + (ve ? '<span>시세의 <b style="font-size:15px;color:#374151;">' + Math.round(pe.bid / ve.est * 100) + '%</b></span>' : '') + '</div>'
