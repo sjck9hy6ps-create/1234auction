@@ -164,7 +164,6 @@ def main():
     F["pt"] = pt.predict(F[COLS]); F["q10"] = mq[0.1].predict(F[COLS]); F["q25"] = mq[0.25].predict(F[COLS])
     out = {}
     for i, f in F.iterrows():
-        if f["lvl"] == "건물3+": continue  # 검증에서 이득 없음 → 앱 기존 값 유지
         base_ = float(f["base"]); est = base_ * float(np.exp(np.clip(f["pt"], -0.4, 0.4)))
         l25 = min(base_ * float(np.exp(f["q25"])), est); l10 = min(base_ * float(np.exp(f["q10"])), l25)
         id_ = Lr.loc[i, "id"]
