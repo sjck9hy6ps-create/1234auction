@@ -2696,6 +2696,18 @@ body.ui2 #auction-modal.am4 { width:620px; }
             <span class="modal-label">메모</span>
             <textarea class="modal-input" id="sn-memo" rows="4" placeholder="현장에서 확인한 내용, 특이사항 등을 자유롭게 적어주세요." style="resize:vertical;width:100%;"></textarea>
         </div>
+        <div style="font-size:11px;font-weight:bold;color:#1565c0;margin:10px 0 2px;">🏠 중개사 시세 확인 <span style="font-weight:normal;color:#999;">(금액은 만원 단위, 아는 것만 입력)</span></div>
+        <div style="background:#f3f8ff;border:1px solid #cfe2ff;border-radius:8px;padding:8px 10px;">
+            <div class="modal-row"><span class="modal-label">중개사</span><input class="modal-input" id="sn-q-agent" placeholder="상호·담당자(선택)"></div>
+            <div class="modal-row"><span class="modal-label">평형·층</span><input class="modal-input" id="sn-q-pyung" placeholder="전용 ㎡ 또는 평" style="width:48%;"><input class="modal-input" id="sn-q-floor" placeholder="층" style="width:30%;margin-left:6px;"></div>
+            <div class="modal-row"><span class="modal-label">호가</span><input type="number" class="modal-input" id="sn-q-ask" placeholder="지금 나와 있는 매물 호가" oninput="snQuoteHint()"></div>
+            <div class="modal-row"><span class="modal-label">거래 가능가</span><input type="number" class="modal-input" id="sn-q-deal" placeholder="중개사가 말한 실제 팔릴 가격" oninput="snQuoteHint()"></div>
+            <div class="modal-row"><span class="modal-label">급매 가능가</span><input type="number" class="modal-input" id="sn-q-rush" placeholder="급하게 팔면 얼마(선택)" oninput="snQuoteHint()"></div>
+            <div class="modal-row"><span class="modal-label">최근 체결가</span><input type="number" class="modal-input" id="sn-q-last" placeholder="최근 실제 체결 체감가(선택)" oninput="snQuoteHint()"></div>
+            <div class="modal-row"><span class="modal-label">매물 수</span><input type="number" class="modal-input" id="sn-q-n" placeholder="같은 평형 나온 매물 수(선택)"></div>
+            <div class="modal-row"><span class="modal-label">거래 분위기</span><select class="modal-input" id="sn-q-mood"><option value="">선택 안 함</option><option value="up">오르는 중(매물 줄고 문의 늘어요)</option><option value="flat">보합</option><option value="down">내리는 중(매물 쌓이고 호가 내려요)</option></select></div>
+            <div id="sn-q-hint" style="font-size:11px;color:#1565c0;line-height:1.6;margin-top:4px;"></div>
+        </div>
         <div style="font-size:11px;font-weight:bold;color:#e65100;margin:10px 0 4px;">임장 체크리스트</div>
         <div id="sn-checklist-body"></div>
         <div style="text-align:right;margin-top:8px;">
@@ -25660,6 +25672,36 @@ function buildSiteVisitChecklistHtml() {
     });
     return html;
 }
+/* 🏠 중개사 시세 기록(2026-11-07, 사용자: 임장의 핵심은 중개사를 통해 실제 거래 가능한 가격을 아는 것) - 호가→거래 가능가 비율(협상률)을 시군구별로 모아 앱 예상매도가와 비교 */
+var siteNoteTargetEst = null;
+function snRegionKey(addr) { var t = String(addr || '').trim().split(/\s+/); return t.length >= 2 ? t[0].replace(/(특별시|광역시|특별자치시|특별자치도|도)$/, '') + ' ' + t[1] : ''; }
+function snNegoStats(addr) {
+    var key = snRegionKey(addr), all = [], reg = [];
+    siteNoteList.forEach(function(n) {
+        var q = n.quote; if (!q || !(q.ask > 0) || !(q.deal > 0)) return;
+        var r = q.deal / q.ask; if (!(r > 0.5 && r < 1.2)) return;
+        all.push(r); if (key && snRegionKey(n.addr) === key) reg.push(r);
+    });
+    var med = function(a) { if (!a.length) return null; a = a.slice().sort(function(x, y) { return x - y; }); var k = a.length >> 1; return a.length % 2 ? a[k] : (a[k - 1] + a[k]) / 2; };
+    return { nAll: all.length, medAll: med(all), nReg: reg.length, medReg: med(reg), key: key };
+}
+function snQuoteHint() {
+    var g = function(id) { var v = parseFloat((document.getElementById(id) || {}).value); return v > 0 ? v : null; };
+    var ask = g('sn-q-ask'), deal = g('sn-q-deal'), rush = g('sn-q-rush'), last = g('sn-q-last'), est = siteNoteTargetEst, h = [];
+    if (ask && deal) h.push('호가 대비 거래 가능가 <b>' + (deal / ask * 100).toFixed(1) + '%</b> (협상 여지 ' + ((1 - deal / ask) * 100).toFixed(1) + '%)');
+    if (est && deal) h.push('앱 예상매도가 ' + toEok(String(Math.round(est))) + ' 대비 거래 가능가 <b>' + (deal / est >= 1 ? '+' : '') + ((deal / est - 1) * 100).toFixed(1) + '%</b>' + (Math.abs(deal / est - 1) >= 0.08 ? ' - 8% 넘게 달라요. 최근 거래·단지 상태를 다시 확인해 보세요' : ' - 비슷해요'));
+    if (est && rush) h.push('급매 가능가는 예상매도가의 ' + (rush / est * 100).toFixed(1) + '%');
+    if (est && last) h.push('최근 체결 체감가는 예상매도가 대비 ' + (last / est >= 1 ? '+' : '') + ((last / est - 1) * 100).toFixed(1) + '%');
+    var st = snNegoStats(siteNoteTargetAddr);
+    if (st.nReg >= 3) h.push('내 기록 ' + st.key + ' 평균 거래 가능가 비율 ' + (st.medReg * 100).toFixed(1) + '% (' + st.nReg + '건)'); else if (st.nAll >= 3) h.push('내 기록 전체 평균 거래 가능가 비율 ' + (st.medAll * 100).toFixed(1) + '% (' + st.nAll + '건)');
+    var el = document.getElementById('sn-q-hint'); if (el) el.innerHTML = h.join('<br>');
+}
+function snQuoteFromForm() {
+    var g = function(id) { var v = parseFloat((document.getElementById(id) || {}).value); return v > 0 ? v : null; };
+    var t = function(id) { return ((document.getElementById(id) || {}).value || '').trim(); };
+    var q = { agent: t('sn-q-agent'), pyungText: t('sn-q-pyung'), floorText: t('sn-q-floor'), ask: g('sn-q-ask'), deal: g('sn-q-deal'), rush: g('sn-q-rush'), last: g('sn-q-last'), n: g('sn-q-n'), mood: t('sn-q-mood') };
+    return (q.ask || q.deal || q.rush || q.last || q.n || q.mood) ? q : null;
+}
 function renderSiteNoteHistory() {
     var box = document.getElementById('sn-history-list');
     if (!box) return;
@@ -25673,6 +25715,7 @@ function renderSiteNoteHistory() {
             + '<b style="font-size:11.5px;color:#e65100;">' + (n.visitDate || '날짜 미상') + ' 방문</b>'
             + '<span style="font-size:10px;color:#c62828;cursor:pointer;" onclick="deleteSiteNoteRow(\'' + n.id + '\')">삭제</span>'
             + '</div>'
+            + (n.quote ? '<div style="font-size:11px;color:#1565c0;margin-top:4px;line-height:1.5;">🏠 중개사' + (n.quote.agent ? '(' + n.quote.agent + ')' : '') + ' ' + [n.quote.pyungText ? n.quote.pyungText : '', n.quote.floorText ? n.quote.floorText + '층' : ''].filter(Boolean).join(' ') + (n.quote.ask ? ' 호가 ' + n.quote.ask.toLocaleString() : '') + (n.quote.deal ? ' → 거래 가능 ' + n.quote.deal.toLocaleString() : '') + (n.quote.ask && n.quote.deal ? ' (' + (n.quote.deal / n.quote.ask * 100).toFixed(1) + '%)' : '') + (n.quote.rush ? ' · 급매 ' + n.quote.rush.toLocaleString() : '') + (n.quote.mood ? ' · ' + ({ up: '오르는 중', flat: '보합', down: '내리는 중' }[n.quote.mood] || '') : '') + (n.appEst ? ' · 당시 앱 예상 ' + toEok(String(Math.round(n.appEst))) : '') + '</div>' : '')
             + (n.memo ? '<div style="font-size:11.5px;color:#555;margin-top:4px;line-height:1.5;">' + n.memo.replace(/\n/g, '<br>') + '</div>' : '')
             + (doneCount ? '<div style="font-size:10px;color:#999;margin-top:3px;">체크리스트 ' + doneCount + '개 확인</div>' : '')
             + '</div>';
@@ -25691,6 +25734,10 @@ function openSiteNoteModal(name, dong, addr, lat, lon) {
     document.getElementById('sn-title').innerText = '📝 임장메모 — ' + (siteNoteTargetName || siteNoteTargetDong);
     document.getElementById('sn-visit-date').value = new Date().toISOString().slice(0, 10);
     document.getElementById('sn-memo').value = '';
+    ['sn-q-agent', 'sn-q-pyung', 'sn-q-floor', 'sn-q-ask', 'sn-q-deal', 'sn-q-rush', 'sn-q-last', 'sn-q-n', 'sn-q-mood'].forEach(function(i) { var e = document.getElementById(i); if (e) e.value = ''; });
+    siteNoteTargetEst = null;
+    try { var nmx = String(siteNoteTargetName || '').trim(); var rr = (bidBoardRows || []).filter(function(r) { return r && r.sale && ((nmx && String(r.name || '').trim() === nmx) || (!nmx && r.a && r.a.dong === siteNoteTargetDong)); })[0]; if (rr) siteNoteTargetEst = rr.sale; } catch (e) {}
+    snQuoteHint();
     document.getElementById('sn-checklist-body').innerHTML = buildSiteVisitChecklistHtml();
     renderSiteNoteHistory();
     document.getElementById('site-note-modal-bg').style.display = 'flex';
@@ -25703,12 +25750,15 @@ async function saveSiteNote() {
     var memo = document.getElementById('sn-memo').value.trim();
     var visitDate = document.getElementById('sn-visit-date').value;
     var hasChecked = Object.keys(currentSiteNoteChecklist).some(function(k) { return currentSiteNoteChecklist[k]; });
-    if (!memo && !hasChecked) { alert('메모를 입력하거나 체크리스트를 하나 이상 확인해 주세요.'); return; }
+    var quote = snQuoteFromForm();
+    if (!memo && !hasChecked && !quote) { alert('메모, 중개사 시세, 체크리스트 중 하나는 입력해 주세요.'); return; }
+    if (quote && quote.ask && quote.deal && quote.deal > quote.ask * 1.05) { if (!confirm('거래 가능가가 호가보다 높아요. 맞게 입력하셨나요?')) return; }
     var data = {
         id: Date.now().toString(),
         name: siteNoteTargetName, dong: siteNoteTargetDong, addr: siteNoteTargetAddr,
         lat: siteNoteTargetLat, lon: siteNoteTargetLon,
         visitDate: visitDate, memo: memo,
+        quote: quote, appEst: quote ? siteNoteTargetEst : null,
         checklist: currentSiteNoteChecklist,
         createdAt: new Date().toISOString(),
     };
@@ -25718,6 +25768,8 @@ async function saveSiteNote() {
         var saved = await saveSiteNoteAPI(data);
         siteNoteList.push(saved);
         document.getElementById('sn-memo').value = '';
+        ['sn-q-agent', 'sn-q-pyung', 'sn-q-floor', 'sn-q-ask', 'sn-q-deal', 'sn-q-rush', 'sn-q-last', 'sn-q-n', 'sn-q-mood'].forEach(function(i) { var e = document.getElementById(i); if (e) e.value = ''; });
+        snQuoteHint();
         currentSiteNoteChecklist = {};
         document.getElementById('sn-checklist-body').innerHTML = buildSiteVisitChecklistHtml();
         renderSiteNoteHistory();
