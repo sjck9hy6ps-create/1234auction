@@ -1516,6 +1516,7 @@ body.ui2 #auction-modal.am4 { width:620px; }
          데이터가 갱신됐거나 배지가 이상해 보일 때 사용자가 직접 강제로 다시 불러올 방법이
          없었음 - reloadBadges()가 현재 지역의 "이미 시도함" 플래그를 지우고 재조회함. -->
     <button id="badge-reload-btn" onclick="reloadBadges()" title="현재 지역의 대장/후발주자 순위 배지를 다시 불러옵니다">🔄 배지 재로딩</button>
+    <button id="macro-btn" onclick="openMacroPanel()" title="기준금리·대출금리와 최근 정책 발표, 한국부동산원 주간 가격·매수우위로 본 지금의 시장 반응">💹 금리·정책</button>
     <button id="cycle-btn" onclick="openCyclePanel()" title="2017년부터의 실거래로 본 상승기·하락기 사이클과 지금 위치, 후발주자 후보">📈 사이클</button>
 </div>
 <div id="geo-tools-group">
@@ -28786,6 +28787,36 @@ function toggleLegendPanel() {
     document.getElementById('rt-legend').classList.toggle('on', on);
     var lg = document.getElementById('legend');
     if (on && lg && lg.classList.contains('collapsed')) toggleLegend();
+}
+/* 💹 금리·정책 패널(2026-11-07, 사용자: 금리·정책에 즉각 대응해 후발주자 중 앞서기) - 공개 통계(한국은행·한국부동산원 주간)와 출처가 붙은 정책 발표만 보여줌. 계산에 쓰는 값이 아니라 판단 참고용 */
+async function openMacroPanel() {
+    var bg = document.getElementById('macro-modal-bg');
+    if (!bg) {
+        bg = document.createElement('div'); bg.id = 'macro-modal-bg';
+        bg.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.45);z-index:131;display:flex;align-items:center;justify-content:center;';
+        bg.onclick = function(e) { if (e.target === bg) bg.style.display = 'none'; };
+        bg.innerHTML = '<div style="background:white;border-radius:14px;width:min(760px,96vw);max-height:88vh;overflow-y:auto;box-shadow:0 8px 32px rgba(0,0,0,0.25);"><div class="modal-header"><span>💹 금리·정책과 시장 반응</span><span class="modal-close" onclick="document.getElementById(\'macro-modal-bg\').style.display=\'none\'">✕</span></div><div id="macro-body" style="padding:6px 16px 16px;font-size:12px;color:#333;">불러오는 중…</div></div>';
+        document.body.appendChild(bg);
+    }
+    bg.style.display = 'flex';
+    var body = document.getElementById('macro-body'); body.innerHTML = '불러오는 중…';
+    try {
+        var d = await (await fetch('/api/data-coverage?mode=macroSummary')).json();
+        if (!d || !d.rates) { body.innerHTML = '아직 자료가 없어요. 매일 새벽에 자동으로 모아요.'; return; }
+        var f1 = function(v) { return v == null ? '-' : (v > 0 ? '+' : '') + v; };
+        var h = '<div style="color:#999;font-size:11px;margin:4px 0 8px;">한국은행·한국부동산원 공개 통계 · 기준 ' + (d.dateLatest || '') + ' 주 · 매일 갱신</div>';
+        h += '<table style="width:100%;border-collapse:collapse;font-size:12px;"><tr style="background:#f5f5f5;"><th style="text-align:left;padding:4px 6px;">금리</th><th>현재(%)</th><th>3개월 전 대비</th><th>6개월</th><th>12개월</th></tr>';
+        d.rates.forEach(function(r) { h += '<tr style="border-bottom:1px solid #eee;"><td style="padding:4px 6px;">' + r.name + ' <span style="color:#aaa;font-size:10px;">' + r.time + '</span></td><td style="text-align:center;font-weight:bold;">' + r.value + '</td><td style="text-align:center;">' + f1(r.chg3) + '</td><td style="text-align:center;">' + f1(r.chg6) + '</td><td style="text-align:center;">' + f1(r.chg12) + '</td></tr>'; });
+        h += '</table>';
+        var cut = new Date(Date.now() - 400 * 864e5).toISOString().slice(0, 10), ev = (d.events || []).filter(function(e) { return e.date >= cut; }).sort(function(a, b) { return b.date.localeCompare(a.date); });
+        h += '<div style="font-weight:bold;margin:14px 0 4px;color:#1565c0;">최근 금리 변경·정책 발표 (출처 포함)</div>';
+        ev.forEach(function(e) { h += '<div style="padding:5px 0;border-bottom:1px solid #eee;"><b>' + e.date + '</b> <span style="background:#e3f2fd;color:#1565c0;border-radius:4px;padding:0 5px;font-size:10px;">' + e.type + '</span> ' + e.title + (e.effective ? ' <span style="color:#777;">(시행 ' + e.effective + ')</span>' : '') + '<div style="font-size:10.5px;color:#888;">출처: ' + (e.url ? '<a href="' + e.url + '" target="_blank" rel="noopener">' + e.source + '</a>' : e.source) + (e.check ? ' · ' + e.check : '') + '</div></div>'; });
+        h += '<div style="font-weight:bold;margin:14px 0 4px;color:#1565c0;">지금 시장 반응 (한국부동산원 주간)</div><div style="font-size:11px;color:#777;margin-bottom:4px;">매수우위지수는 100보다 낮으면 팔려는 사람이 많고, 높으면 사려는 사람이 많다는 뜻이에요. 서울 동남권(강남 3구 등)이 먼저 움직이는지 먼저 보세요.</div>';
+        h += '<table style="width:100%;border-collapse:collapse;font-size:11.5px;"><tr style="background:#f5f5f5;"><th style="text-align:left;padding:4px 6px;">지역</th><th>매매 4주</th><th>12주</th><th>1년</th><th>전세 4주</th><th>매수우위 지금</th><th>직전 4주 평균</th><th>그 전 12주 평균</th></tr>';
+        (d.region || []).forEach(function(r) { h += '<tr style="border-bottom:1px solid #eee;"><td style="padding:4px 6px;">' + r.name.replace('서울>강남지역>', '서울 ').replace('서울>강북지역', '서울 강북') + '</td><td style="text-align:center;">' + f1(r.w4) + '%</td><td style="text-align:center;">' + f1(r.w12) + '%</td><td style="text-align:center;">' + f1(r.w52) + '%</td><td style="text-align:center;">' + f1(r.jw4) + '%</td><td style="text-align:center;font-weight:bold;">' + (r.demand == null ? '-' : r.demand.toFixed(1)) + '</td><td style="text-align:center;">' + (r.demand4 == null ? '-' : r.demand4) + '</td><td style="text-align:center;">' + (r.demand12 == null ? '-' : r.demand12) + '</td></tr>'; });
+        h += '</table><div style="font-size:10.5px;color:#999;margin-top:8px;">이 화면은 판단 참고용이에요. 예상매도가에는 금리·주간 지표가 아직 들어가지 않았고, 넣기 전에 과거 자료로 정확도가 좋아지는지 먼저 확인해요.</div>';
+        body.innerHTML = h;
+    } catch (e) { body.innerHTML = '불러오지 못했어요: ' + e.message; }
 }
 function toggleSidebar() {
     if (window.innerWidth <= 900) {

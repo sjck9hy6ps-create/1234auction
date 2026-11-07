@@ -3472,6 +3472,31 @@ export default async function handler(req, res) {
       return res.status(500).json({ error: err.message });
     }
   }
+  if (req.query.mode === 'macroSummary') { // 2026-11-07 금리·정책 요약(collect-macro.py가 매일 갱신하는 signal|__macro__에서 화면용 숫자만 뽑음)
+    res.setHeader('Cache-Control', 's-maxage=1800, stale-while-revalidate=21600');
+    try {
+      const { data, error } = await supabase.from('leader_follower_cache').select('payload').eq('id', 'signal|__macro__').maybeSingle();
+      if (error) return res.status(500).json({ error: error.message });
+      const m = data && data.payload; if (!m) return res.status(200).json({});
+      const lastN = (a, n) => { const v = (a || []).filter((x) => x != null); return v.length > n ? [v[v.length - 1], v[v.length - 1 - n]] : null; };
+      const mon = (arr) => { const o = {}; (arr || []).forEach(([t, v]) => { o[String(t).slice(0, 6)] = v; }); const ks = Object.keys(o).sort(); return ks.map((k) => [k, o[k]]); };
+      const rate = (arr, name) => { const mm = mon(arr), L = mm[mm.length - 1]; if (!L) return null; const at = (n) => (mm.length > n ? mm[mm.length - 1 - n][1] : null); return { name, time: L[0], value: L[1], chg3: at(3) == null ? null : +(L[1] - at(3)).toFixed(2), chg6: at(6) == null ? null : +(L[1] - at(6)).toFixed(2), chg12: at(12) == null ? null : +(L[1] - at(12)).toFixed(2) }; };
+      const e = m.ecos || {};
+      const regions = ['전국', '서울', '서울>강남지역>동남권', '서울>강남지역>서남권', '서울>강북지역', '경기', '인천', '5대광역시', '지방권', '부산', '대구', '대전', '광주', '전남광주>광주', '울산', '세종', '충남', '충북', '경남', '경북', '전북', '강원', '제주'];
+      const rg = (tbl, name) => { const t = m.rone && m.rone[tbl]; return t && t.reg && t.reg[name] ? t.reg[name] : null; };
+      const weeks = (m.rone && m.rone.saleIdx && m.rone.saleIdx.weeks) || [], dates = (m.rone && m.rone.saleIdx && m.rone.saleIdx.dates) || [];
+      const region = [];
+      regions.forEach((nm) => {
+        const idx = rg('saleIdx', nm), dem = rg('saleDemand', nm), jdem = rg('jeonseDemand', nm), jidx = rg('jeonseIdx', nm);
+        if (!idx) return;
+        const pct = (a, n) => { const v = lastN(a, n); return v ? +((v[0] / v[1] - 1) * 100).toFixed(2) : null; };
+        const dv = (dem || []).filter((x) => x != null);
+        region.push({ name: nm, idx: idx.filter((x) => x != null).slice(-1)[0], w4: pct(idx, 4), w12: pct(idx, 12), w52: pct(idx, 52), jw4: pct(jidx, 4), demand: dv.length ? dv[dv.length - 1] : null, demand4: dv.length >= 4 ? +(dv.slice(-4).reduce((a, b) => a + b, 0) / 4).toFixed(1) : null, demand12: dv.length >= 13 ? +(dv.slice(-13, -1).reduce((a, b) => a + b, 0) / 12).toFixed(1) : null, jdemand: (jdem || []).filter((x) => x != null).slice(-1)[0] || null });
+      });
+      return res.status(200).json({ generatedAt: m.generatedAt, weekLatest: weeks[weeks.length - 1] || null, dateLatest: dates[dates.length - 1] || null,
+        rates: [rate(e.baseRateD, '한국은행 기준금리'), rate(e.mortgageM, '예금은행 주택담보대출 금리(신규)'), rate(e.cd91D, 'CD 91일'), rate(e.ktb3D, '국고채 3년')].filter(Boolean), events: m.events || [], region });
+    } catch (err) { return res.status(500).json({ error: err.message }); }
+  }
   if (req.query.mode === 'winbidCompare') { // 2026-11-04 시세 규칙 비교 누적(낙찰 사례별 '현재/시세 새 규칙/최근 가중/둘 다' 예측 오차 %, analyze-bidcases.py가 매주 쌓음)
     res.setHeader('Cache-Control', req.query.nocache ? 'no-store' : 's-maxage=600, stale-while-revalidate=3600');
     try {
