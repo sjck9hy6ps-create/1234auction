@@ -84,7 +84,7 @@ if os.environ.get("EXPORT") == "1":
     trees = []
     for it in mm._predictors:
         nd = it[0].nodes
-        trees.append([[-1 if n["is_leaf"] else int(n["feature_idx"]), float(n["num_threshold"]), int(n["left"]), int(n["right"]), 1 if n["missing_go_to_left"] else 0, round(float(n["value"]), 6)] for n in nd])
+        trees.append([[-1 if n["is_leaf"] else int(n["feature_idx"]), min(1e30, max(-1e30, float(n["num_threshold"]))), int(n["left"]), int(n["right"]), 1 if n["missing_go_to_left"] else 0, round(float(n["value"]), 6)] for n in nd])
     base = float(mm._baseline_prediction.ravel()[0])
     def walk(row):
         v = base
