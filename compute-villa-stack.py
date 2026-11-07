@@ -118,7 +118,8 @@ def main():
         return D
 
     # ── 학습: 2023~ 거래 표본 ──
-    T = df[df["deal_date"] >= 20230101]
+    EVAL = os.environ.get("EVAL_APP") == "1"
+    T = df[(df["deal_date"] >= 20230101) & ((df["deal_date"] < 20260101) if EVAL else True)]
     if len(T) > N_TRAIN: T = T.sample(N_TRAIN, random_state=11)
     D = featurize(T); D["y"] = np.log(T.loc[D.index, "price"] / D["base"])
     print(f"학습 {len(D):,}건")
@@ -126,6 +127,8 @@ def main():
     pt = HistGradientBoostingRegressor(loss="absolute_error", **P).fit(D[COLS], D["y"])
     mq = {q: HistGradientBoostingRegressor(loss="quantile", quantile=q, **P).fit(D[COLS], D["y"]) for q in (0.1, 0.25)}
 
+    if EVAL:
+        return eval_app(df, D, pt, mq, featurize)
     # ── 입찰 물건 ──
     au = requests.get(f"{SITE}/api/auction?kind=auctions", timeout=300).json()
     today = pd.Timestamp.now(tz="Asia/Seoul").tz_localize(None).normalize()
@@ -171,6 +174,49 @@ def main():
     print(json.dumps({k: v for k, v in payload.items() if k != "rows"}, ensure_ascii=False)); print(list(out.items())[:3])
     json.dump(payload, open("villa-stack.json", "w", encoding="utf-8"), ensure_ascii=False)
     cyc.upsert_rows([{"id": "signal|__villa_stack__", "payload": cyc.clean_json(payload), "fetched_at": now}]); print("서버 저장: villa_stack")
+
+
+def eval_app(df, D, pt, mq, featurize):
+    """앱 실제 계산(villaSaleEst, 거래 30일 전 자료)과 같은 거래의 기본 추정·종합 모델·안전장치 적용 값을 실제가와 비교(2026-11-07)."""
+    ap = requests.get(f"{SITE}/api/data-coverage?mode=villaBt&name=appasof&nocache=1", timeout=300).json()
+    R = pd.DataFrame(ap.get("rows") or [])
+    print(f"앱 값 행 {len(R):,} (앱 값 있음 {int((R['app'] > 0).sum()) if len(R) else 0:,})")
+    R = R[R["app"] > 0].copy()
+    df = df.copy(); df["_k"] = df["dong"].astype(str) + "|" + df["bunji"].astype(str) + "|" + df["deal_date"].astype(int).astype(str) + "|" + df["price"].astype(int).astype(str) + "|" + df["size"].round(0).astype(int).astype(str)
+    R["_k"] = R["dong"].astype(str) + "|" + R["bunji"].astype(str) + "|" + R["d"].astype(int).astype(str) + "|" + R["price"].astype(int).astype(str) + "|" + R["area"].round(0).astype(int).astype(str)
+    first = df.drop_duplicates("_k").set_index("_k")
+    R = R[R["_k"].isin(first.index)].drop_duplicates("_k")
+    T = first.loc[R["_k"].values].reset_index(drop=True)
+    T.index = np.arange(20_000_000, 20_000_000 + len(T)); R.index = T.index
+    print(f"매칭된 거래 {len(T):,}")
+    F = featurize(T)
+    F["pt"] = pt.predict(F[COLS]); F["q10"] = mq[0.1].predict(F[COLS]); F["q25"] = mq[0.25].predict(F[COLS])
+    X = pd.DataFrame({"actual": T.loc[F.index, "price"].values, "app": R.loc[F.index, "app"].values, "base": F["base"].values, "lvl": F["lvl"].values,
+                      "stack": (F["base"] * np.exp(np.clip(F["pt"], -0.4, 0.4))).values, "q10": (F["base"] * np.exp(F["q10"])).values, "q25": (F["base"] * np.exp(F["q25"])).values,
+                      "floor": T.loc[F.index, "floor"].values, "appLvl": R.loc[F.index, "lvl"].values, "sido": F["sido"].values})
+    X["guard"] = np.where(X["floor"] <= 0, X["app"], np.minimum(X["stack"], X["app"] * 1.15))      # 앱에 넣은 안전장치(지하 제외·+15% 상한)
+    X["guard_n3"] = np.where(X["lvl"] == "건물3+", X["app"], X["guard"])                           # 건물 3건 이상은 앱 값 유지(실제 적용 방식)
+    X["avg"] = np.sqrt(X["app"] * X["stack"])                                                       # 두 값의 기하평균(참고)
+    def st(S, col):
+        e = S[col] / S["actual"] - 1; a = e.abs()
+        return {"n": int(len(S)), "오차%": round(float(a.median()) * 100, 2), "±10%": round(float((a <= .1).mean()) * 100, 1), "±20%": round(float((a <= .2).mean()) * 100, 1), "쏠림%": round(float(e.median()) * 100, 1),
+                "높게 틀림 10%초과 비율": round(float((e > .1).mean()) * 100, 1), "낮게 틀림 10%초과 비율": round(float((e < -.1).mean()) * 100, 1)}
+    cols = ["app", "base", "stack", "guard", "guard_n3", "avg"]
+    out = {"matched": int(len(X)), "from": ap.get("from")}
+    out["전체"] = {c: st(X, c) for c in cols}
+    for nm, S in (("건물3+ 아님(실제 적용 대상)", X[X["lvl"] != "건물3+"]), ("건물3+", X[X["lvl"] == "건물3+"]), ("지하·반지하", X[X["floor"] <= 0]), ("서울", X[X["sido"] == 0]), ("인천·경기", X[X["sido"] > 0])):
+        if len(S) >= 100: out[nm] = {c: st(S, c) for c in cols}
+    for l, S in X.groupby("lvl"):
+        if len(S) >= 100: out["단계 " + l] = {c: st(S, c) for c in ("app", "base", "stack", "guard")}
+    # 두 값이 크게 다를 때 누가 맞나
+    X["gap"] = X["stack"] / X["app"] - 1
+    for nm, S in (("종합이 앱보다 15%+ 높음", X[X["gap"] > .15]), ("종합이 앱보다 15%+ 낮음", X[X["gap"] < -.15]), ("차이 15% 이내", X[X["gap"].abs() <= .15])):
+        if len(S) >= 50: out["차이 " + nm] = {c: st(S, c) for c in ("app", "stack", "guard")}
+    # 하위 분위 포함률(실제가가 하위값 이상인 비율): 종합 모델 q25/q10
+    out["종합 하위값 포함률%"] = {"q25(목표75)": round(float((X["actual"] >= X["q25"]).mean()) * 100, 1), "q10(목표90)": round(float((X["actual"] >= X["q10"]).mean()) * 100, 1)}
+    txt = json.dumps(out, ensure_ascii=False, indent=1); print(txt)
+    now = datetime.now(timezone.utc).isoformat()
+    cyc.upsert_rows([{"id": "signal|__villa_bt_appeval__", "payload": cyc.clean_json(dict(out, generatedAt=now)), "fetched_at": now}]); print("서버 저장: appeval")
 
 
 if __name__ == "__main__":

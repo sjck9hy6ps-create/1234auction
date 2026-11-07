@@ -1,0 +1,24 @@
+# 수도권 빌라 종합 평가 값 계산(2026-11-07) - 입찰 물건별 예상매도가·하위 분위. 매일 새벽(한국 06시 전) + 트리거 파일 푸시
+name: Eval villa app vs stack
+on:
+  push:
+    paths: ['.github/triggers/eval-villa-app.txt']
+  workflow_dispatch:
+jobs:
+  bt:
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install pandas numpy requests scikit-learn scipy
+      - env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          COLLECT_PROXY_SECRET: ${{ secrets.COLLECT_PROXY_SECRET }}
+          SITE_URL: https://1234auction.vercel.app
+          PYTHONUNBUFFERED: '1'
+          EVAL_APP: '1'
+        run: python compute-villa-stack.py
