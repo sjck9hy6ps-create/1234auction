@@ -49,6 +49,60 @@ X["sido"] = df.lawd.str[:2].astype(int)
 X["tier_c"] = df.tier.map({"A": 0, "B": 1, "C": 2, "D": 3})
 X["hi_floor_share"] = (X.floor / X.mxF.replace(0, np.nan))
 
+if os.environ.get("MACRO"):   # 금리·주간 시장 흐름 특징(시점 기준으로 그때까지 공개된 값만)
+    mac = json.load(open(os.environ["MACRO"]))
+    SIDO_R = {"11": ["서울"], "26": ["부산"], "27": ["대구"], "28": ["인천"], "29": ["전남광주>광주"], "30": ["대전"], "31": ["울산"], "36": ["세종"], "41": ["경기"], "42": ["강원"], "51": ["강원"], "43": ["충북"], "44": ["충남"], "45": ["전북"], "52": ["전북"], "46": ["전남광주>전남"], "47": ["경북"], "48": ["경남"], "50": ["제주"]}
+    wk = mac["rone"]["saleIdx"]["weeks"]; wdate = mac["rone"]["saleIdx"]["dates"]
+    def widx(cut):
+        k = -1
+        for i, d in enumerate(wdate):
+            if d and d <= cut: k = i
+        return k
+    def ser(tbl, name): return (mac["rone"][tbl]["reg"].get(name) if mac["rone"].get(tbl) else None)
+    def chg(a, k, n):
+        if a is None or k - n < 0 or a[k] is None or a[k - n] is None: return np.nan
+        return float(np.log(a[k] / a[k - n]))
+    def lvl(a, k):
+        if a is None or k < 0 or a[k] is None: return np.nan
+        return float(a[k])
+    def mavg(a, k, n):
+        if a is None or k - n + 1 < 0: return np.nan
+        v = [x for x in a[k - n + 1:k + 1] if x is not None]; return float(np.mean(v)) if v else np.nan
+    def monthly(arr):
+        o = {}
+        for t, v in arr: o[str(t)[:6]] = v
+        return o
+    base = monthly(mac["ecos"]["baseRateD"]); mort = monthly(mac["ecos"]["mortgageM"]); cd = monthly(mac["ecos"]["cd91D"]); kt = monthly(mac["ecos"]["ktb3D"])
+    def mval(d, ym, back=0):
+        y, m = int(ym[:4]), int(ym[4:6]); m -= back
+        while m <= 0: m += 12; y -= 1
+        k = f"{y}{m:02d}"
+        for _ in range(3):   # 해당 달 값이 없으면 이전 달 값
+            if k in d: return d[k]
+            m -= 1
+            if m <= 0: m += 12; y -= 1
+            k = f"{y}{m:02d}"
+        return np.nan
+    cache = {}
+    def macro_row(cut, lawd):
+        key = (cut, lawd[:2])
+        if key in cache: return cache[key]
+        k = widx(cut); ym = cut[:4] + cut[5:7]; r = {}
+        nm = SIDO_R.get(lawd[:2], ["전국"])[0]
+        for tag, region in (("s", nm), ("n", "전국"), ("g", "서울>강남지역>동남권")):
+            a = ser("saleIdx", region); d = ser("saleDemand", region)
+            r[f"m_{tag}_w4"] = chg(a, k, 4); r[f"m_{tag}_w12"] = chg(a, k, 12); r[f"m_{tag}_w52"] = chg(a, k, 52)
+            r[f"m_{tag}_dem"] = lvl(d, k); r[f"m_{tag}_dem4"] = mavg(d, k, 4); r[f"m_{tag}_dem12"] = mavg(d, k, 13)
+        r["m_jw4"] = chg(ser("jeonseIdx", nm), k, 4)
+        r["m_base"] = mval(base, ym); r["m_base_c6"] = r["m_base"] - mval(base, ym, 6)
+        r["m_mort"] = mval(mort, ym, 1); r["m_mort_c6"] = r["m_mort"] - mval(mort, ym, 7)
+        r["m_cd"] = mval(cd, ym); r["m_kt3"] = mval(kt, ym); r["m_kt3_c6"] = r["m_kt3"] - mval(kt, ym, 6)
+        cache[key] = r; return r
+    M = pd.DataFrame([macro_row(c, l) for c, l in zip(df.cutoff, df.lawd)], index=df.index)
+    keep = os.environ.get("MACRO_SET", "all")
+    if keep == "rate": M = M[[c for c in M.columns if c.startswith("m_base") or c.startswith("m_mort") or c in ("m_cd", "m_kt3", "m_kt3_c6")]]
+    elif keep == "weekly": M = M[[c for c in M.columns if c.startswith("m_s_") or c.startswith("m_n_") or c.startswith("m_g_") or c == "m_jw4"]]
+    X = pd.concat([X, M], axis=1)
 X = X.drop(columns=[c for c in os.environ.get("DROP", "").split(",") if c])
 X = X.loc[:, X.nunique(dropna=True) >= 2]   # 값이 하나뿐인 열은 학습기가 오류를 냄
 print("사용 특성", X.shape[1], list(X.columns))
