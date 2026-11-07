@@ -19,5 +19,5 @@ jobs:
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
           COLLECT_PROXY_SECRET: ${{ secrets.COLLECT_PROXY_SECRET }}
           SITE_URL: https://1234auction.vercel.app
-          backtest-villa-compare.pyTHONUNBUFFERED: '1'
+          PYTHONUNBUFFERED: '1'
         run: python backtest-villa-compare.py
