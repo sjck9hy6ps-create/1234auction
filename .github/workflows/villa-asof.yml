@@ -1,0 +1,29 @@
+# 빌라 앱 실제 계산 종단 검증(2026-11-07) - 푸시 트리거
+name: Villa app as-of
+on:
+  push:
+    paths: ['.github/triggers/villa-asof.txt']
+  workflow_dispatch:
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - run: npm install @supabase/supabase-js ws playwright
+      - run: npx playwright install --with-deps chromium
+      - env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          SITE_URL: https://1234auction.vercel.app
+        run: node scripts/validate-villa-asof.mjs
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: villa-asof
+          path: villa-asof.json
+          if-no-files-found: ignore
+          retention-days: 14
