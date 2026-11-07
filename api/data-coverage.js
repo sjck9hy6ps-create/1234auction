@@ -3102,6 +3102,28 @@ export default async function handler(req, res) {
       return res.status(500).json({ error: err.message });
     }
   }
+  // 거시 자료 원본 조회(2026-11-07, 사용자: 금리·정책 반영) - 키는 서버에만 두고 GitHub Actions 수집기가 이 길로 읽음. 읽기 전용, 허용된 통계만.
+  //   ecosRaw: 한국은행 ECOS 통계(stat=통계표코드, item=항목코드, cycle=D|M|Q, from/to=YYYYMM 또는 YYYYMMDD) / ecosItems: 통계표 항목 목록(stat)
+  //   roneRaw: 한국부동산원 R-ONE 통계(statbl=통계표ID, cycle=WK|MM, time=시점코드) / roneList: 통계표 목록(검색어 q)
+  if (['ecosRaw', 'ecosItems', 'roneRaw', 'roneList'].includes(req.query.mode)) {
+    const q = req.query, safe = (v) => String(v || '').replace(/[^A-Za-z0-9_.\-가-힣]/g, '');
+    try {
+      let url;
+      if (q.mode === 'ecosRaw' || q.mode === 'ecosItems') {
+        if (!ECOS_API_KEY) return res.status(200).json({ error: 'ECOS_API_KEY 환경변수 없음' });
+        url = q.mode === 'ecosItems' ? `https://ecos.bok.or.kr/api/StatisticItemList/${ECOS_API_KEY}/json/kr/1/200/${safe(q.stat)}`
+          : `${ECOS_BASE_URL}/${ECOS_API_KEY}/json/kr/1/${parseInt(q.count || '400', 10) || 400}/${safe(q.stat)}/${safe(q.cycle || 'M')}/${safe(q.from)}/${safe(q.to)}${q.item ? '/' + safe(q.item) : ''}${q.item2 ? '/' + safe(q.item2) : ''}`;
+      } else {
+        if (!RONE_API_KEY) return res.status(200).json({ error: 'RONE_API_KEY 환경변수 없음' });
+        url = q.mode === 'roneList' ? `https://www.reb.or.kr/r-one/openapi/SttsApiTbl.do?KEY=${RONE_API_KEY}&Type=json&pIndex=1&pSize=300${q.q ? '&STATBL_NM=' + encodeURIComponent(String(q.q).slice(0, 40)) : ''}`
+          : `${RONE_BASE_URL}?STATBL_ID=${safe(q.statbl)}&DTACYCLE_CD=${safe(q.cycle || 'MM')}${q.time ? '&WRTTIME_IDTFR_ID=' + safe(q.time) : ''}&Type=json&pIndex=${parseInt(q.page || '1', 10) || 1}&pSize=${parseInt(q.size || '1000', 10) || 1000}&KEY=${RONE_API_KEY}`;
+      }
+      const r = await fetch(url, { signal: AbortSignal.timeout(20000) });
+      const t = await r.text();
+      res.setHeader('Cache-Control', 's-maxage=3600');
+      try { return res.status(200).json(JSON.parse(t)); } catch (e) { return res.status(200).json({ error: '응답이 JSON이 아님', head: t.slice(0, 300) }); }
+    } catch (e) { return res.status(200).json({ error: String(e.message || e) }); }
+  }
   if (req.query.mode === 'baseRate') {
     // 6시간 CDN 캐시 위에 Supabase 24시간 캐시가 또 있음(getBaseRateTrend 참고) - 이중 캐시라
     // 실제 ECOS 호출은 하루 몇 번 안 됨.
