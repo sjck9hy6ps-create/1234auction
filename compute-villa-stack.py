@@ -118,8 +118,9 @@ def main():
         return D
 
     # ── 학습: 2023~ 거래 표본 ──
-    EVAL = os.environ.get("EVAL_APP") == "1"
-    T = df[(df["deal_date"] >= 20230101) & ((df["deal_date"] < 20260101) if EVAL else True)]
+    EVAL = os.environ.get("EVAL_APP") == "1"; EVALW = os.environ.get("EVAL_WINBID") == "1"
+    cutoff = 20260101 if EVAL else (20260601 if EVALW else None)
+    T = df[(df["deal_date"] >= 20230101) & ((df["deal_date"] < cutoff) if cutoff else True)]
     if len(T) > N_TRAIN: T = T.sample(N_TRAIN, random_state=11)
     D = featurize(T); D["y"] = np.log(T.loc[D.index, "price"] / D["base"])
     print(f"학습 {len(D):,}건")
@@ -129,6 +130,8 @@ def main():
 
     if EVAL:
         return eval_app(df, D, pt, mq, featurize)
+    if EVALW:
+        return eval_winbid(df, pt, featurize)
     # ── 입찰 물건 ──
     au = requests.get(f"{SITE}/api/auction?kind=auctions", timeout=300).json()
     today = pd.Timestamp.now(tz="Asia/Seoul").tz_localize(None).normalize()
@@ -216,6 +219,97 @@ def eval_app(df, D, pt, mq, featurize):
     txt = json.dumps(out, ensure_ascii=False, indent=1); print(txt)
     now = datetime.now(timezone.utc).isoformat()
     cyc.upsert_rows([{"id": "signal|__villa_bt_appeval__", "payload": cyc.clean_json(dict(out, generatedAt=now)), "fetched_at": now}]); print("서버 저장: appeval")
+
+
+def fails_from_ratio(minb, appr):
+    if not appr or not minb or appr <= 0: return None
+    r = minb / appr
+    for k, lim in enumerate((0.9, 0.72, 0.58, 0.47, 0.38, 0.31, 0.25)):
+        if r >= lim: return k
+    return 6
+
+
+def fit_additive(X, y, factors, iters=6):
+    base = float(np.median(y)); eff = {f: {} for f, _ in factors}; pred = np.full(len(y), base)
+    for _ in range(iters):
+        for f, k in factors:
+            cur = X[f].map(eff[f]).fillna(0).values; r = y - (pred - cur)
+            g = pd.DataFrame({"k": X[f].values, "r": r}).groupby("k")["r"].agg(["median", "count"])
+            new = (g["median"] * g["count"] / (g["count"] + k)).to_dict(); eff[f] = new
+            pred = pred - cur + X[f].map(new).fillna(0).values
+    return base, eff
+
+
+def predict_additive(m, X, factors):
+    base, eff = m; p = np.full(len(X), base)
+    for f, _ in factors: p = p + X[f].map(eff[f]).fillna(0).values
+    return p
+
+
+def eval_winbid(df, pt, featurize):
+    """빌라 예상 낙찰가 채점(2026-11-07): 낙찰사례(수도권 빌라, 2024~)의 낙찰가를 ① 예전 예상매도가(시험용 기본 추정) 기준 모델 ② 같은 모델에 종합 예상매도가를 넣은 것(앱이 지금 하는 일) ③ 종합 값으로 다시 학습한 모델로 예측.
+    학습 = 2026-06 이전 사례, 시험 = 2026-06~(학습에 안 쓴 구간). 종합 모델(점 보정)도 2026-06 이전 거래로만 학습해 시험 구간 정보가 새지 않게 함."""
+    cases = pd.DataFrame(requests.get(f"{SITE}/api/auction?kind=bidCases", timeout=300).json())
+    c = cases[cases["propertyType"].astype(str).str.contains("다세대|연립|도시형", na=False)].copy()
+    c["actual"] = pd.to_numeric(c["finalBidPrice"], errors="coerce") / 10000.0; c["minbid"] = pd.to_numeric(c["minBidPrice"], errors="coerce") / 10000.0
+    c["appr"] = pd.to_numeric(c["appraisalPrice"], errors="coerce") / 10000.0; c["area"] = pd.to_numeric(c["areaM2"], errors="coerce"); c["fl"] = pd.to_numeric(c["floor"], errors="coerce")
+    c = c[(c["actual"] > 0) & (c["minbid"] > 0) & c["area"].between(15, 150) & c["saleDate"].astype(str).str.match(r"^\d{4}-\d\d-\d\d$", na=False)]
+    c["region"] = c["addrJibun"].map(trade_region); c = c.dropna(subset=["region", "dong", "bunji"])
+    c["dong"] = c["dong"].astype(str).str.strip().str.split().str[-1]; c["bunji"] = c["bunji"].astype(str).str.strip()
+    c["sale"] = c["saleDate"].str.replace("-", "").astype(int); c = c[c["sale"] >= 20240101]
+    c = c[c["region"].isin(set(df["region"].unique()))]
+    byb = df.dropna(subset=["build_year"]).groupby(["region", "dong", "bunji"])["build_year"].agg(lambda s: s.mode().iloc[0]).to_dict()
+    T = pd.DataFrame({"region": c["region"].values, "dong": c["dong"].values, "bunji": c["bunji"].values, "size": c["area"].values, "floor": c["fl"].values, "price": c["actual"].values,
+                      "day": (pd.to_datetime(c["sale"].astype(str), format="%Y%m%d") - EPOCH).dt.days.values})
+    T["build_year"] = [byb.get((r, d, b), np.nan) for r, d, b in zip(T["region"], T["dong"], T["bunji"])]
+    T["by2"] = T["build_year"]; T["bld"] = T["region"] + "|" + T["dong"] + "|" + T["bunji"]; T["dk"] = T["region"] + "|" + T["dong"]
+    bl = df.dropna(subset=["elv"]).groupby("bld").agg(elv=("elv", "last"), grnd=("grnd", "last"), hh=("hh", "last"))
+    for col in ("elv", "grnd", "hh"): T[col] = T["bld"].map(bl[col]) if len(bl) else np.nan
+    T.index = c.index + 30_000_000
+    F = featurize(T); F["stack"] = F["base"] * np.exp(np.clip(pt.predict(F[COLS]), -0.4, 0.4))
+    c2 = c.loc[F.index - 30_000_000].copy(); c2.index = F.index
+    D = c2.join(F[["base", "stack", "lvl", "sido"]]); D["by"] = T["build_year"].reindex(D.index)
+    D = D[(D["base"] > 0) & (D["stack"] > 0)]
+    D = D[(D["actual"] / D["base"]).between(0.25, 1.8) & (D["actual"] / D["stack"]).between(0.25, 1.8)].copy()
+    D["fails"] = [fails_from_ratio(m_, a_) for m_, a_ in zip(D["minbid"], D["appr"])]
+    FAC = [("lb", 10), ("fails", 120), ("region", 120), ("size", 30), ("floor", 30), ("age", 60), ("lvl", 60), ("season", 300)]
+    def mkX(est):
+        X = pd.DataFrame(index=D.index)
+        X["lb"] = np.clip(np.floor(np.log(D["minbid"] / est) / 0.05), -24, 9).astype(int).astype(str)
+        X["fails"] = D["fails"].map(lambda v: "?" if v is None or pd.isna(v) else str(min(int(v), 4)))
+        X["region"] = D["region"].values
+        X["size"] = D["area"].map(lambda a: "40↓" if a < 40 else ("40~60" if a < 60 else ("60~85" if a < 85 else "85↑"))).values
+        X["floor"] = D["fl"].map(lambda f: "지하" if f <= 0 else ("1층" if f == 1 else ("2~3층" if f <= 3 else "4층+"))).values
+        X["age"] = D["by"].map(lambda b: "?" if pd.isna(b) else ("~10년" if 2026 - b <= 10 else ("11~20" if 2026 - b <= 20 else ("21~30" if 2026 - b <= 30 else "31+")))).values
+        X["lvl"] = D["lvl"].values
+        X["season"] = D["sale"].map(lambda d: "겨울" if (d // 100) % 100 in (12, 1, 2) else ("봄" if (d // 100) % 100 <= 5 else ("여름" if (d // 100) % 100 <= 8 else "가을"))).values
+        return X
+    Xb, Xs = mkX(D["base"]), mkX(D["stack"])
+    tr = (D["sale"] < 20260601).values; te = ~tr
+    print(f"학습 {tr.sum():,} / 시험(2026-06~) {te.sum():,}")
+    act = D["actual"].values
+    mA = fit_additive(Xb[tr], np.log(act[tr] / D["base"].values[tr]), FAC)
+    mB = fit_additive(Xs[tr], np.log(act[tr] / D["stack"].values[tr]), FAC)
+    pr = {"① 예전 예상매도가+예전 모델": D["base"].values * np.exp(predict_additive(mA, Xb, FAC)),
+          "② 종합 예상매도가+예전 모델(앱 지금)": D["stack"].values * np.exp(predict_additive(mA, Xs, FAC)),
+          "③ 종합 예상매도가+다시 학습": D["stack"].values * np.exp(predict_additive(mB, Xs, FAC)),
+          "(기준) 예상매도가 자체×0.755": D["stack"].values * 0.755}
+    def st(mask):
+        o = {}
+        for k, p in pr.items():
+            e = p[mask] / act[mask] - 1; o[k] = {"n": int(mask.sum()), "오차%": round(float(np.median(np.abs(e))) * 100, 2), "±10%": round(float((np.abs(e) <= .1).mean()) * 100, 1), "쏠림%": round(float(np.median(e)) * 100, 2),
+                                                "높게 예상 10%+": round(float((e > .10).mean()) * 100, 1), "낮게 예상 10%+": round(float((e < -.10).mean()) * 100, 1),
+                                                "예상가 이하 낙찰%": round(float((act[mask] <= p[mask]).mean()) * 100, 1)}
+        return o
+    out = {"학습 n": int(tr.sum()), "시험 n": int(te.sum()), "전체": st(te)}
+    out["서울"] = st(te & (D["sido"].values == 0)); out["인천·경기"] = st(te & (D["sido"].values > 0))
+    for l in sorted(set(D["lvl"].values[te])):
+        m_ = te & (D["lvl"].values == l)
+        if m_.sum() >= 60: out["단계 " + l] = st(m_)
+    out["낙찰가÷예상매도가 중앙"] = {"예전": round(float(np.median(act[te] / D["base"].values[te])), 3), "종합": round(float(np.median(act[te] / D["stack"].values[te])), 3)}
+    print(json.dumps(out, ensure_ascii=False, indent=1))
+    now = datetime.now(timezone.utc).isoformat()
+    cyc.upsert_rows([{"id": "signal|__villa_bt_winbideval__", "payload": cyc.clean_json(dict(out, generatedAt=now)), "fetched_at": now}]); print("서버 저장: winbideval")
 
 
 if __name__ == "__main__":
