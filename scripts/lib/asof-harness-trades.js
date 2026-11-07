@@ -26,7 +26,7 @@
           const d = new RD(t.year, t.month - 1, t.day).getTime(); if (d < C || d >= end) return;
           const p = parseInt(t.amount); if (!p) return; subj.push({ ap, t, p });
         }));
-        subj.sort((x, y) => (x.ap.dong + x.ap.bunji).localeCompare(y.ap.dong + y.ap.bunji) || x.p - y.p);
+        const ky = (z) => String(z.ap.dong || '') + '|' + String(z.ap.bunji || '') + '|' + String(z.ap.name || ''); subj.sort((x, y) => ky(x).localeCompare(ky(y)) || x.p - y.p);
         eligible += subj.length;
         const step = Math.max(1, Math.ceil(subj.length / cap)), pick = subj.filter((_, i) => i % step === 0);
         if (!pick.length) continue;
