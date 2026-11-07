@@ -1,0 +1,40 @@
+# 배포된 앱이 실제로 종합 평가 보정을 적용해 학습에 안 쓴 시점의 거래를 더 잘 맞히는지 확인(2026-11-07)
+name: Apt stack verify
+on:
+  push:
+    paths: ['.github/triggers/apt-stack-verify.txt']
+  workflow_dispatch:
+jobs:
+  v:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        prefix: ['11', '41', '28', '44', '48', '47']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - run: npm install @supabase/supabase-js ws playwright
+      - run: npx playwright install --with-deps chromium
+      - env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          SITE_URL: https://1234auction.vercel.app
+          LAWD_PREFIX: ${{ matrix.prefix }}
+          CUTOFFS: '2026-09-20,2026-10-05'
+          MAX_PER_REGION: '70'
+          NO_SAVE: '1'
+          OUT_FILE: rows.json
+        run: node scripts/validate-app-asof-trades.mjs > log.txt 2>&1 || (tail -30 log.txt; exit 1)
+      - run: |
+          python3 - <<'PY'
+          import json, statistics as st
+          r = [x for x in json.load(open('rows.json')) if x.get('sale') and x.get('truth')]
+          def m(k):
+              e = [x['truth'][0] / x[k] - 1 for x in r if x.get(k)]
+              return len(e), round(st.median(abs(v) for v in e) * 100, 2), round(st.median(e) * 100, 2), round(sum(abs(v) <= .1 for v in e) / len(e) * 100, 1)
+          print('prefix ${{ matrix.prefix }} 앱(보정 전)', m('sale'), '보정 후', m('stk'), '보정 적용 수', sum(1 for x in r if x.get('stk')), '/', len(r))
+          PY
