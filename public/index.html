@@ -3898,7 +3898,13 @@ function villaSaleEst(a, ref) {
        수도권 빌라 4만 건 검증(예상매도가는 그대로): 흩어짐 15% 미만 → 예상이 실제보다 10% 넘게 높은 비율 18%·하위10% -18% / 15~30% 27%·-24% / 30~50% 32%·-34% / 50%↑ 38%·-43%. 마진 계산이 이 값으로 위험 여유를 키움. */
     var prim = n1 >= 1 ? c1 : (n2 >= 1 ? c2 : cAll), disp = null;
     if (prim && prim.length >= 3) { var mid = wq(prim, .5); if (mid > 0) disp = (wq(prim, .75) - wq(prim, .25)) / mid; }
-    return { bs: bsT, disp: disp == null ? null : Math.round(disp * 1000) / 1000, nm: nmOwn, by: byOwn, est: est, lvl: lvl, n1: n1, n2: n2, lo: Math.round(est / (1 + r[1] / 100)), hi: Math.round(est / (1 + r[0] / 100)), errPct: r[2] };
+    var res = { bs: bsT, disp: disp == null ? null : Math.round(disp * 1000) / 1000, nm: nmOwn, by: byOwn, est: est, lvl: lvl, n1: n1, n2: n2, lo: Math.round(est / (1 + r[1] / 100)), hi: Math.round(est / (1 + r[0] / 100)), errPct: r[2] };
+    var sk = villaStack && villaStack.rows && a.id != null ? villaStack.rows[String(a.id)] : null;
+    if (sk && sk.est > 0 && sk.l10 > 0 && lvl !== '건물5+') { // 종합 평가 값으로 교체(기존 값은 estApp에 보관)
+        res.estApp = est; res.est = sk.est; res.lo = Math.round(sk.est / (1 + r[1] / 100)); res.hi = Math.round(sk.est / (1 + r[0] / 100));
+        res.stack = { est: sk.est, l25: sk.l25, l10: sk.l10, rel10: (sk.est - sk.l10) / sk.est, rel25: (sk.est - sk.l25) / sk.est };
+    }
+    return res;
 }
 
 /* ════ 🏘️ 빌라 최소 마진 규칙 (2026-10-10, 사용자: "빌라는 예측 신뢰도가 아파트보다 낮아 마진폭을 늘려야 - 최소 2,000만원 유지, 구축일수록 마진이 커져야, 연식·평형·승강기가 가격 형성의 핵심") ════
@@ -3939,7 +3945,11 @@ function villaMarginPlan(row, ve, title) {
     var ef = (elv != null && fl >= 4) ? (elv > 0 ? 0.7 : 1.15) : 1;
     // 비교 거래가 들쭉날쭉하면(흩어짐 30%↑ ×1.35, 50%↑ ×1.7 = 과거 하위10% 지점 비율) 위험 여유를 키움 - 줄이지는 않음, 상한 25% → 32%
     var dispX = ve.disp == null ? 1 : (ve.disp >= 0.50 ? 1.7 : (ve.disp >= 0.30 ? 1.35 : 1));
-    var mx = villaFloorMx(row.a, elv, fl), fx = mx.x, buf = Math.min(dispX > 1 ? 32 : 25, 0.5 * p90 * ef * dispX), margin = Math.round(Math.max(VILLA_MARGIN_MIN, Math.round(ve.est * buf / 100 / 100) * 100) * fx / 100) * 100;
+    var mx = villaFloorMx(row.a, elv, fl), fx = mx.x, buf = Math.min(dispX > 1 ? 32 : 25, 0.5 * p90 * ef * dispX);
+    if (ve.stack) { // 종합 평가: 칸 평균(p90) 대신 이 물건의 하위 10% 값의 절반(기존 규칙 구조 그대로, 입력만 물건별) - 층·승강기·연식·흩어짐은 모델이 이미 반영해 배수는 지하만 유지
+        buf = Math.min(32, Math.max(0, 0.5 * ve.stack.rel10 * 100)); ef = 1; dispX = 1; if (mx.why !== '지하') { fx = 1; mx = { x: 1, why: '' }; }
+    }
+    var margin = Math.round(Math.max(VILLA_MARGIN_MIN, Math.round(ve.est * buf / 100 / 100) * 100) * fx / 100) * 100;
     var out = { dispX: dispX, disp: ve.disp, ageFromTrades: ageFromTrades, margin: margin, buf: Math.round(buf * 10) / 10, age: age, ageBand: band, elv: elv, ef: ef, floorMin: margin === VILLA_MARGIN_MIN * fx, first: fx > 1, fx: fx, fxWhy: mx.why };
     try {
         var a = row.a, base = Object.assign({}, a, { target: ve.est, repair: effRepairFee(a, 'villa', row.pyung, yr || null), compTargetMargin: margin });
@@ -3952,6 +3962,10 @@ function villaMarginPlan(row, ve, title) {
 /* 🏘️ 빌라 예상 낙찰가·추천 입찰가 (2026-10-10, 수도권 빌라 낙찰사례 약 6천 건으로 학습 - 아파트와 같은 방식)
    낙찰가÷예상매도가(중앙 0.755)를 최저가÷예상매도가·유찰·지역·평형·층·연식·근거 단계·계절로 설명. 학습에 안 쓴 2026-06~ 사례 1,597건: 낙찰가 보통 오차 9.4%(상수 비율 20.3%), ±10% 안 54%.
    추천가 = 필요 마진(villaMarginPlan: 최소 2,000만 + 연식·근거·승강기 여유, 1층 +20%)이 남는 입찰가 중 낙찰 가능성 × 순이익이 가장 큰 값. */
+/* 🏘️ 빌라 종합 평가(2026-11-07, 사용자: 기준·상수 대신 여러 조건을 종합해 가장 좋은 값) - 서버(compute-villa-stack.py)가 물건별로 계산한 예상매도가·하위 10/25% 값.
+   수도권 빌라 교차 시간 검증 3구간: 점 오차 12.9→11.1%, ±10% 이내 41→46%, 같은 포함률에서 하위 25% 여유폭 10.4→9.4%. 건물 거래 3건 이상 단계는 검증에서 이득이 없어 기존 값 그대로(서버가 값을 안 보냄). 10일 넘은 값은 쓰지 않음. */
+var villaStack = null;
+(function() { fetch('/api/data-coverage?mode=villaStack').then(function(r) { return r.json(); }).then(function(d) { if (d && d.rows && d.generatedAt && Date.now() - Date.parse(d.generatedAt) < 10 * 86400000) villaStack = d; }).catch(function() {}); })();
 var villaWinModel = null;
 (function() { Promise.all([fetch('/villa-winbid.json').then(function(r) { return r.json(); }), loadWinbidCorr()]).then(function(pair) { var d = pair[0]; if (d && d.eff && d.resQ) { d.corrTable = pair[1].villa; villaWinModel = d; } }).catch(function() {}); })();
 function villaRegionLabel(addr) {
@@ -4525,7 +4539,7 @@ function villaSaveCalcSoon() {
     villaSaveT = setTimeout(function() { var snap = villaCalcSnapshot(); listIdbOp('readwrite', function(st) { return st.put(snap, VILLA_CALC_KEY); }); }, 4000);
 }
 var villaVeCache = {}, villaLoadBusy = false;
-function villaVeSig(a) { return ['v7', a.pyung, a.addr, a.dong, a.bunji, a.bidDate, a.buildYear || '', a.estBuildYear || '', a.buildYear || a.estBuildYear ? '' : (villaHsYear(a) || '')].join('|'); }
+function villaVeSig(a) { return ['v8', villaStack ? villaStack.generatedAt : '', a.pyung, a.addr, a.dong, a.bunji, a.bidDate, a.buildYear || '', a.estBuildYear || '', a.buildYear || a.estBuildYear ? '' : (villaHsYear(a) || '')].join('|'); }
 async function villaLoadRegions() {
     if (villaLoadBusy) return; villaLoadBusy = true;
     try {
@@ -4578,7 +4592,7 @@ function villaEval(row) {
     var st = hsBld[row.id] || {}, t = st.info && st.info.title, lawd = bidBoardLawdOf(row.a);
     var vc = villaVeCache[row.id], vcOk = vc && vc.sig === villaVeSig(row.a);
     var lq = villaLiqFinal ? villaLiqCache[row.id] : null;
-    var sig = [vcOk ? 1 : 0, lq ? 1 + lq.r500.a6 : 0, t ? 1 : 0, villaWinModel ? 1 : 0, row.minBid, row.a.floor, row.a.pyung, row.a.buildYear || '', row.a.bidDate || '', row.a.appraisal || '', st.loading ? 1 : 0, (row.a.listingParse && row.a.listingParse.at) || '', (row.a.listingParse && row.a.listingParse.n) || 0, row.a.repair || '', row.a.assumedDeposit || '', row.a.assumedFixed || '', row.a.assumedPrior || '', row.a.rights ? (row.a.rights.pastedAt || 1) + ':' + (row.a.rights.editedAt || 0) : '', row.a.unpaidMgmtFee || '', row.a.etc || '', 'fx3'].join('|');
+    var sig = [vcOk ? 1 : 0, lq ? 1 + lq.r500.a6 : 0, t ? 1 : 0, villaWinModel ? 1 : 0, row.minBid, row.a.floor, row.a.pyung, row.a.buildYear || '', row.a.bidDate || '', row.a.appraisal || '', st.loading ? 1 : 0, (row.a.listingParse && row.a.listingParse.at) || '', (row.a.listingParse && row.a.listingParse.n) || 0, row.a.repair || '', row.a.assumedDeposit || '', row.a.assumedFixed || '', row.a.assumedPrior || '', row.a.rights ? (row.a.rights.pastedAt || 1) + ':' + (row.a.rights.editedAt || 0) : '', row.a.unpaidMgmtFee || '', row.a.etc || '', 'fx3', villaStack ? villaStack.generatedAt : ''].join('|');
     if (row._vev && row._vev.sig === sig) return row._vev;
     var pe0 = villaEvPend[row.id];
     if (pe0) { delete villaEvPend[row.id]; if (pe0.sig === sig) { var re0 = Object.assign({}, pe0, { t: t, liq: lq }); row._vev = re0; return re0; } }
@@ -4690,7 +4704,7 @@ function buildingDetailHtml(row, st) {
         var h = (!t ? '<div class="dr-warn" style="margin-bottom:6px;">건축물대장을 못 찾았어요. 도로명 주소(예: 문학길 102-2)를 넣으면 찾아 연식·승강기를 채워요 <input id="bld-road-input" style="width:60%;font-size:12px;" placeholder="인천 미추홀구 문학길 102-2"> <button id="bld-road-btn" class="modal-btn btn-gray" onclick="bldgFindByRoad(\'' + String(row.id).replace(/'/g, "\\'") + '\')">찾기</button></div>' : '') + (a.bldgMethod ? '<div class="dr-sub">대장 찾은 방법: ' + ({ 'road-lot': '도로명 → 대표 지번', 'near-lot': '같은 본번의 인접 부번', 'road-scan': '법정동 전체 도로명 검색(최후 수단)' }[a.bldgMethod] || a.bldgMethod) + '</div>' : '') + (bldUseWarn(t) ? '<div class="dr-warn" style="margin-bottom:6px;">⚠️ ' + bbEsc(bldUseWarn(t)) + (a.bldgBunji ? '' : '') + '</div>' : '') + (a.bldgBunji ? '<div class="dr-sub">대장 번지: ' + bbEsc(a.bldgBunji) + ' (경매 주소 번지 ' + bbEsc(a.bunji || '') + ' → 도로명 주소로 찾은 대표 번지)</div>' : '') + '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">' + hsPill(chk.verdict, st.quota) + '<span class="bb-sub">' + bbEsc(a.addr || '') + (a.floor ? ' · ' + a.floor + '층' : '') + (a.pyung ? ' · ' + a.pyung + '평' : '') + '</span></div>';
         var ve = null, vc0 = villaVeCache[row.id]; if (vc0 && vc0.ve) ve = vc0.ve; else { try { ve = villaSaleEst(a); } catch (e) {} } // 저장된 계산 우선(지역 자료가 내려가 있어도 바로)
         if (ve) h += '<div style="margin-top:8px;background:#fff;border:1px solid #e5e7eb;border-radius:8px;padding:6px 10px;"><b>예상매도가(참고)</b> ' + toEok(String(ve.est)) + ' <span class="bb-sub" style="display:inline;">실제 10~90% 범위 ' + toEok(String(ve.lo)) + ' ~ ' + toEok(String(ve.hi)) + '</span><div class="bb-sub">근거: ' + ve.lvl + '(' + (ve.n1 || ve.n2) + '건) · 같은 방식 백테스트 보통 오차 약 ' + ve.errPct + '% (아파트는 4~5%) - 빌라는 호별 차이가 커서 현장 확인 값으로 다시 판단하세요</div></div>';
-        if (ve) { var vp = villaMarginPlan(row, ve, t); if (vp) h += '<div style="margin-top:6px;background:#f5f3ff;border:1px solid #ddd6fe;border-radius:8px;padding:6px 10px;"><b>필요 마진 ' + toEok(String(vp.margin)) + '</b>' + (vp.floorMin ? ' (빌라 최소 2,000만)' : ' (예상매도가의 ' + vp.buf + '%)') + (vp.bid ? ' → <b style="color:' + (vp.feasible ? '#15803d' : '#b91c1c') + ';">' + (vp.feasible ? '입찰 상한 ' + toEok(String(vp.bid)) : '최저가로도 마진 부족') + '</b>' : '') + '<div class="bb-sub">' + (vp.age != null ? '연식 ' + vp.age + '년(구축일수록 여유를 더 둠)' : '연식을 몰라 20~30년으로 가정') + (vp.elv != null ? ' · 승강기 ' + (vp.elv > 0 ? '있음(오차 작음)' : '없음(오차 큼)') : '') + ' · 근거 ' + ve.lvl + '. 빌라는 예상 오차가 아파트의 약 3배라 마진 기준을 높였어요.</div></div>'; }
+        if (ve) { var vp = villaMarginPlan(row, ve, t); if (vp) h += '<div style="margin-top:6px;background:#f5f3ff;border:1px solid #ddd6fe;border-radius:8px;padding:6px 10px;"><b>필요 마진 ' + toEok(String(vp.margin)) + '</b>' + (vp.floorMin ? ' (빌라 최소 2,000만)' : ' (예상매도가의 ' + vp.buf + '%)') + (vp.bid ? ' → <b style="color:' + (vp.feasible ? '#15803d' : '#b91c1c') + ';">' + (vp.feasible ? '입찰 상한 ' + toEok(String(vp.bid)) : '최저가로도 마진 부족') + '</b>' : '') + '<div class="bb-sub">' + (vp.age != null ? '연식 ' + vp.age + '년(구축일수록 여유를 더 둠)' : '연식을 몰라 20~30년으로 가정') + (vp.elv != null ? ' · 승강기 ' + (vp.elv > 0 ? '있음(오차 작음)' : '없음(오차 큼)') : '') + ' · 근거 ' + ve.lvl + (ve.stack ? '. 🧮 종합 평가 적용: 건물·동·시군구 시세와 층·연식·승강기·거래 흩어짐을 함께 보고 계산한 값이에요(기존 방식 ' + toEok(String(ve.estApp)) + '). 여유는 이 물건이 크게 빗나갈 경우(하위 10%)의 절반.' : '. 빌라는 예상 오차가 아파트의 약 3배라 마진 기준을 높였어요.') + '</div></div>'; }
 
         h += villaListingHtml(row);
         h += '<h4 style="margin:10px 0 4px;">🏠 도시민박업 건물 요건 점검</h4><table>';
@@ -21304,7 +21318,7 @@ async function mergeServerBoardCache(local, onlyFirst) {
 setTimeout(function() { try { listIdbOp('readwrite', function(st) { return st.delete('bidBoardCache:v1'); }); } catch (e) {} }, 4000); // 예전 큰 로컬 저장본(서버 계산본 포함, 수십 MB)은 읽지 않고 지움(느린 기기에서 열 때 수 초 멈춤, 2026-10-21)
 setTimeout(function() { var go = function() { try { srvBoardParts(); setTimeout(function() { try { window.villaSrvP = villaFetchServerCalc(); } catch (e) {} }, 4000); } catch (e) {} }; if (window.requestIdleCallback) requestIdleCallback(go, { timeout: 6000 }); else go(); }, 2500); // 앱을 켜고 2.5초 뒤 한가할 때 배경에서 미리 받기(빌라는 4초 더 뒤)
 // 저장 계산을 다시 써도 되는지 - 물건 입력값(시세 계산에 쓰는 것)과 입찰일 지남 여부. 계산 방식이 바뀌면 BOARD_CALC_VER을 올림
-var BOARD_CALC_VER = 75; // 75: 거래 활발 단지 위험 여유를 최근 거래 흩어짐별 하방 표로(2026-11-06) - // 74: 위험 여유를 근거 두께별 실측 하방 표로(주간 갱신)·흐름 계수 주간 자동 선택(2026-11-06) - // 73: 감정가 기준 전부 제거(감정가 대비 경고·금액 점검·빌라 이슈·틈새 조건, 2026-11-06) - // 72: 시세 흐름 계수 올림·거래량 믿음도 제거·지방 시군구·수도권 생활권·3개월 예측 반영(2026-11-05) - // 71: 낙찰가 모델 시세(est)에도 지역 가격 흐름 반영(est_rule_f, 2026-11-05) - // 70: 예상매도가에 지역 가격 흐름 반영(2026-11-05) - // 69: 시세 새 규칙(est_rule)·감정가 제외·최저가 유지(2026-11-04) - // 68: 감정가 제외 - // // 54: 튀는 가격 반영 안 함·경고만(2026-10-24) - // 53: 최근 거래 시세반영/튀는 가격 구별(2026-10-24) - // 52: 임장 생략 판정(2026-10-19) - // 51: 전세가율 구간 보정·위험 신호(2026-10-18) - // 50: 지방 최근 거래 비슷한 층 비중·1~2건은 12개월 원값(2026-10-18) - // 49: 근거 약함 경고를 판정 단계에서 다시 붙임 - // 48: 예상매도가-감정가 큰 차이 근거 약함 표시 - // 47: 다른 평형 환산이 같은 평형과 20% 넘게 다르면 섞지 않음 - // 46: 같은 동 추론(③④) 제거·거래 없는 단지는 기존 주변 비교 + 근거 약함(2026-10-18) - // 45: 회전율 구간별 보정 항상 적용(주간 갱신 표, 2026-10-17) - // 44: 추론에 최근 6개월 1~2건 포함 - // 43: 6개월 거래 부족 시 단계별 추론(2026-10-17) - // 42: 지역별 예상매도가(서울 최근3건·경기인천 반감1개월·지방 반감2개월)와 위험 여유(2026-10-17) - // 41: 아파트 예상매도가를 최근 6개월 같은 평형 거래의 최근가중 중위값으로(전국 백테스트, 2026-10-17) - // 40: 임차인 둘로 읽힌 경우 별개/같은 임차권(갱신·승계) 선택(2026-10-11) - // 39: 39: 임차권등기를 임차인으로 계산(전입·확정일자 기준)·경매신청인 전세권 안내(2026-10-11) - // 38: 38: 권리분석 날짜 선후 규칙 정리(전입 다음 날 0시·동순위 안분, 2026-10-11) - // 37: 37: 권리분석에 말소기준일보다 앞선 전세권·임차권 등 등기부 인수 권리 반영(2026-10-11) - // 36: 저가 아파트 순이익률 10% 추천가 규칙 되돌림(2026-10-11, 백테스트 손해 30~42%) - // 34: 33: 아파트 고층 보정 축소·저층 범위(2026-10-11) - // 29: nYear 저장 추가 - // 27: 🎲 예상 낙찰가용 시세(wbBase) 추가 (범위 표시는 화면에서 바로 계산 - 버전 변경 없음)
+var BOARD_CALC_VER = 76; // 76: 수도권 빌라 종합 평가 값 적용(건물 3건 미만 단계, 2026-11-07) - // // 75: 거래 활발 단지 위험 여유를 최근 거래 흩어짐별 하방 표로(2026-11-06) - // 74: 위험 여유를 근거 두께별 실측 하방 표로(주간 갱신)·흐름 계수 주간 자동 선택(2026-11-06) - // 73: 감정가 기준 전부 제거(감정가 대비 경고·금액 점검·빌라 이슈·틈새 조건, 2026-11-06) - // 72: 시세 흐름 계수 올림·거래량 믿음도 제거·지방 시군구·수도권 생활권·3개월 예측 반영(2026-11-05) - // 71: 낙찰가 모델 시세(est)에도 지역 가격 흐름 반영(est_rule_f, 2026-11-05) - // 70: 예상매도가에 지역 가격 흐름 반영(2026-11-05) - // 69: 시세 새 규칙(est_rule)·감정가 제외·최저가 유지(2026-11-04) - // 68: 감정가 제외 - // // 54: 튀는 가격 반영 안 함·경고만(2026-10-24) - // 53: 최근 거래 시세반영/튀는 가격 구별(2026-10-24) - // 52: 임장 생략 판정(2026-10-19) - // 51: 전세가율 구간 보정·위험 신호(2026-10-18) - // 50: 지방 최근 거래 비슷한 층 비중·1~2건은 12개월 원값(2026-10-18) - // 49: 근거 약함 경고를 판정 단계에서 다시 붙임 - // 48: 예상매도가-감정가 큰 차이 근거 약함 표시 - // 47: 다른 평형 환산이 같은 평형과 20% 넘게 다르면 섞지 않음 - // 46: 같은 동 추론(③④) 제거·거래 없는 단지는 기존 주변 비교 + 근거 약함(2026-10-18) - // 45: 회전율 구간별 보정 항상 적용(주간 갱신 표, 2026-10-17) - // 44: 추론에 최근 6개월 1~2건 포함 - // 43: 6개월 거래 부족 시 단계별 추론(2026-10-17) - // 42: 지역별 예상매도가(서울 최근3건·경기인천 반감1개월·지방 반감2개월)와 위험 여유(2026-10-17) - // 41: 아파트 예상매도가를 최근 6개월 같은 평형 거래의 최근가중 중위값으로(전국 백테스트, 2026-10-17) - // 40: 임차인 둘로 읽힌 경우 별개/같은 임차권(갱신·승계) 선택(2026-10-11) - // 39: 39: 임차권등기를 임차인으로 계산(전입·확정일자 기준)·경매신청인 전세권 안내(2026-10-11) - // 38: 38: 권리분석 날짜 선후 규칙 정리(전입 다음 날 0시·동순위 안분, 2026-10-11) - // 37: 37: 권리분석에 말소기준일보다 앞선 전세권·임차권 등 등기부 인수 권리 반영(2026-10-11) - // 36: 저가 아파트 순이익률 10% 추천가 규칙 되돌림(2026-10-11, 백테스트 손해 30~42%) - // 34: 33: 아파트 고층 보정 축소·저층 범위(2026-10-11) - // 29: nYear 저장 추가 - // 27: 🎲 예상 낙찰가용 시세(wbBase) 추가 (범위 표시는 화면에서 바로 계산 - 버전 변경 없음)
 /* 2026-10-15(사용자: 입찰후보 로딩이 느림 - 원인 실측): 식별값 끝의 'P/F'(입찰일 지남 여부)가 한국 시각 자정에 바뀌어, 서버 미리 계산이 돈 뒤 어제 입찰이던 물건(하루 약 350건)이 전부 '다른 물건'이 돼
    지역 자료 86곳(곳당 9~13MB)을 새로 받아 다시 계산했음. 계산 결과는 입찰일 지남 여부와 무관하므로(날짜 표시는 열 때 다시 계산) 저장본의 P/F가 반대여도 같은 것으로 봄(flip). */
 function boardBaseSig(a, flip) {
