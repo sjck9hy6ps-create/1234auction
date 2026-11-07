@@ -9,9 +9,13 @@
     assign(cases) {
       const by = {};
       auctionList.forEach((a) => { if (a.propType === 'apt' && a.lat && a.lon && a.bCode) (by[labelOf(a.addr)] = by[labelOf(a.addr)] || []).push({ lat: a.lat, lon: a.lon, l: String(a.bCode).slice(0, 5) }); });
+      // 좌표 없는 사례(서울 대부분)는 시군구 표기가 하나의 지역코드에만 대응할 때 그 코드를 씀(2026-11-08)
+      const uniq = {};
+      auctionList.forEach((a) => { if (a.propType === 'apt' && a.bCode) { const l = labelOf(a.addr); (uniq[l] = uniq[l] || new Set()).add(String(a.bCode).slice(0, 5)); } });
       const out = {};
       cases.forEach((c) => {
-        const L = by[labelOf(c.addrJibun)]; if (!L || !c.lat || !c.lon) return;
+        if (!c.lat || !c.lon) { const u = uniq[labelOf(c.addrJibun)]; if (u && u.size === 1) { const l = [...u][0]; (out[l] = out[l] || []).push(c.id); } return; }
+        const L = by[labelOf(c.addrJibun)]; if (!L) return;
         let best = null, bd = 1e9; for (const p of L) { const d = (p.lat - c.lat) ** 2 + (p.lon - c.lon) ** 2; if (d < bd) { bd = d; best = p.l; } }
         if (best) (out[best] = out[best] || []).push(c.id);
       });

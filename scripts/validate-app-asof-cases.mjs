@@ -15,7 +15,7 @@ await page.addScriptTag({ path: 'scripts/lib/asof-harness-cases.js' });
 await page.evaluate(() => { try { loadSaleRuleParams(); } catch (e) {} });
 await page.waitForTimeout(4000);
 const plan = await page.evaluate(([from, pf]) => {
-  const cs = bidCaseList.filter((c) => /아파트/.test(c.propertyType || '') && c.saleDate >= from && c.finalBidPrice > 0 && c.minBidPrice > 0 && c.areaM2 > 0 && c.lat && c.lon);
+  const cs = bidCaseList.filter((c) => /아파트/.test(c.propertyType || '') && c.saleDate >= from && c.finalBidPrice > 0 && c.minBidPrice > 0 && c.areaM2 > 0);
   const by = __vc.assign(cs), out = {};
   Object.keys(by).forEach((l) => { if (pf.some((p) => l.startsWith(p))) out[l] = by[l]; });
   return { total: cs.length, byLawd: out };
