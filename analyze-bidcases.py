@@ -680,6 +680,9 @@ def main():
         if os.environ.get("APT_STACK_DIR"):   # 2026-11-07 아파트 낙찰가 모델: 종합 평가 보정된 예상매도가 기준으로 다시 학습하면 좋아지나(앱이 낙찰일 35일 전 자료로 다시 계산한 값, apt-case-data 워크플로 결과)
             apt_stack_experiment(R, now)
             if os.environ.get("APT_STACK_ONLY") == "1": return
+        if not os.environ.get("APT_STACK_DIR"):
+            try: apt_stack_load(R)
+            except Exception as e: print("  종합 평가 연결 건너뜀:", e)
         try:
             winbid_model(R, now)
             try:
@@ -1616,10 +1619,18 @@ def est_rule_asof(g, c, sale_d, cut, cut_ym, idx_at, flow=None):
 def apt_stack_load(R):
     import glob
     mp = {}
-    for f in glob.glob(os.path.join(os.environ["APT_STACK_DIR"], "**", "rows.json"), recursive=True):
-        for r in json.load(open(f)):
-            if r.get("err") or not r.get("sale"): continue
-            mp[str(r["id"])] = (r.get("stk") or r["sale"], r["sale"], r.get("wb"))
+    if os.environ.get("APT_STACK_DIR"):
+        for f in glob.glob(os.path.join(os.environ["APT_STACK_DIR"], "**", "rows.json"), recursive=True):
+            for r in json.load(open(f)):
+                if r.get("err") or not r.get("sale"): continue
+                mp[str(r["id"])] = (r.get("stk") or r["sale"], r["sale"], r.get("wb"))
+    else:   # 매주 apt-case-data가 저장해 둔 값(signal|__apt_case_stack__)
+        try:
+            res = requests.get(f"{cyc.SUPABASE_URL}/rest/v1/leader_follower_cache", headers=cyc.HEADERS, params={"select": "payload", "id": "eq.signal|__apt_case_stack__"}, timeout=120).json()
+            rows = (res[0]["payload"] or {}).get("rows", {}) if res else {}
+            for k, v in rows.items(): mp[str(k)] = (v[0], v[1], None)
+        except Exception as e:
+            print("  아파트 종합 평가 값 불러오기 실패:", e)
     R["est_stack"] = R["id"].astype(str).map(lambda i: mp.get(i, (None,))[0])
     R["est_pre"] = R["id"].astype(str).map(lambda i: mp.get(i, (None, None))[1])
     print(f"  아파트 종합 평가 값 연결: {int(R['est_stack'].notna().sum()):,}/{len(R):,}건 (보정 전 값 {int(R['est_pre'].notna().sum()):,})")
@@ -2034,6 +2045,11 @@ def winbid_model(R, now):
     _er = R["est_rule_f"] if "est_rule_f" in R.columns else R["est_rule"]   # 📈 흐름 반영 시세(est_rule_f)를 쓰되, 흐름 반영이 없으면(값 없음) 같은 규칙의 기본 값
     _er = _er.where(_er.notna() & (_er > 0), R["est_rule"])
     R["est"] = _er.where(_er.notna() & (_er > 0))
+    # 🏢 종합 평가 기준(2026-11-07, 사용자: 흐름을 반영하는 종합 모델 우선): 앱이 낙찰일 35일 전 자료로 다시 계산한 보정된 예상매도가가 3천 건 넘게 있으면 그걸 시세로 학습(앱도 같은 값을 씀)
+    est_stack_on = False
+    if "est_stack" in R.columns and int((R["est_stack"] > 0).sum()) >= 3000 and os.environ.get("APT_STACK_OFF") != "1":
+        R["est"] = R["est_stack"].where(R["est_stack"] > 0); est_stack_on = True
+        print(f"  🏢 종합 평가 시세로 학습: {int(R['est'].notna().sum()):,}건")
     D = R[R["est"].notna() & (R["est"] > 0) & R["actual"].notna() & R["minbid"].notna() & (R["minbid"] > 0) & (R["sale"] >= 20200101)].copy()
     D = D[np.log(D["actual"] / D["est"]).between(np.log(0.4), np.log(1.6))]
     if len(D) < 3000:
@@ -2184,7 +2200,7 @@ def winbid_model(R, now):
     full["flowCoef"] = dict(FLOW_COEF_CLS)   # 앱이 같은 계수로 시세 흐름 반영(주간 자동 선택)
     try: full["riskTable"] = risk_table(R0, now)
     except Exception as e: print("  위험 표 계산 실패:", e)
-    full["flowIsNew"] = True; full["flowDiag"] = flow_diag; full["estRule"] = True; full["estFlow"] = "est_rule_f" in R.columns; full["factorsK"] = [[f, k] for f, k in WB_FACTORS]
+    full["estStack"] = bool(est_stack_on); full["flowIsNew"] = True; full["flowDiag"] = flow_diag; full["estRule"] = True; full["estFlow"] = "est_rule_f" in R.columns; full["factorsK"] = [[f, k] for f, k in WB_FACTORS]
     # 경쟁 예상(2026-10-10): 같은 요인으로 로그 응찰자 수를 맞추는 모델 - 앱이 하위 25%(낮음)·상위 25%(높음)로 표시
     try:
         Db = D[D["bidders"].notna() & (D["bidders"] > 0) & (D["sale"] >= 20230101)].copy()

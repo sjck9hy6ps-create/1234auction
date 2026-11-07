@@ -1,6 +1,7 @@
 # 아파트 낙찰사례를 과거 시점으로 되돌려 앱 계산(종합 평가 보정 포함)을 다시 돌림(2026-11-07) - 낙찰가 모델 재학습·채점용
 name: Apt case data
 on:
+  workflow_call:
   push:
     paths: ['.github/triggers/apt-case-data.txt']
   workflow_dispatch:
@@ -35,3 +36,22 @@ jobs:
           path: rows.json
           if-no-files-found: ignore
           retention-days: 7
+  merge:
+    needs: collect
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install pandas numpy requests
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: aptcases-*
+          path: aptcases
+      - env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: python save-apt-case-stack.py aptcases

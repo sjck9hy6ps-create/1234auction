@@ -50,11 +50,17 @@ jobs:
     secrets: inherit
     needs: analyze-cycle
     if: ${{ !cancelled() }}
+  apt-case-data:
+    name: 7z 아파트 낙찰사례 종합 평가 값 다시 계산
+    uses: ./.github/workflows/apt-case-data.yml
+    secrets: inherit
+    needs: analyze-liquidity
+    if: ${{ !cancelled() }}
   analyze-bidcases:
     name: 8 낙찰사례 분석·낙찰가 모델
     uses: ./.github/workflows/analyze-bidcases.yml
     secrets: inherit
-    needs: analyze-liquidity
+    needs: apt-case-data
     if: ${{ !cancelled() }}
   analyze-villa-bidcases:
     name: 8b 빌라 낙찰가 모델·자동 보정 검증

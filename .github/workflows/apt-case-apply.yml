@@ -1,0 +1,34 @@
+# 아파트 낙찰가 모델을 종합 평가 시세로 다시 학습해 서버에 저장(2026-11-07) - apt-case-data 결과 실행 번호를 받아 값 저장 → 낙찰사례 분석 전체 실행
+name: Apt case apply
+on:
+  workflow_dispatch:
+    inputs:
+      run_id:
+        description: 'apt-case-data 실행 번호'
+        required: true
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install pandas numpy requests scikit-learn scipy
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: aptcases-*
+          path: aptcases
+          run-id: ${{ inputs.run_id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+      - env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: python save-apt-case-stack.py aptcases
+      - env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          SITE_URL: https://1234auction.vercel.app
+          PYTHONUNBUFFERED: '1'
+        run: python analyze-bidcases.py

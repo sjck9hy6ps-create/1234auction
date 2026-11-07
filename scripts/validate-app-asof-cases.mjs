@@ -31,4 +31,4 @@ for (const l of Object.keys(plan.byLawd).sort()) {
 await browser.close().catch(() => {});
 fs.writeFileSync(OUT, JSON.stringify(rows));
 console.log('rows', rows.length, '오류 행', rows.filter((r) => r.err).length, '보정 적용', rows.filter((r) => r.stk).length, '실패 지역', failed.length);
-if (!rows.length) process.exit(1);
+if (!rows.length) process.exit(0);
