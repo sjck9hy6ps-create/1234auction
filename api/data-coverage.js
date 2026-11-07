@@ -3115,7 +3115,7 @@ export default async function handler(req, res) {
           : `${ECOS_BASE_URL}/${ECOS_API_KEY}/json/kr/1/${parseInt(q.count || '400', 10) || 400}/${safe(q.stat)}/${safe(q.cycle || 'M')}/${safe(q.from)}/${safe(q.to)}${q.item ? '/' + safe(q.item) : ''}${q.item2 ? '/' + safe(q.item2) : ''}`;
       } else {
         if (!RONE_API_KEY) return res.status(200).json({ error: 'RONE_API_KEY 환경변수 없음' });
-        url = q.mode === 'roneList' ? `https://www.reb.or.kr/r-one/openapi/SttsApiTbl.do?KEY=${RONE_API_KEY}&Type=json&pIndex=1&pSize=300${q.q ? '&STATBL_NM=' + encodeURIComponent(String(q.q).slice(0, 40)) : ''}`
+        url = q.mode === 'roneList' ? `https://www.reb.or.kr/r-one/openapi/SttsApiTbl.do?KEY=${RONE_API_KEY}&Type=json&pIndex=${parseInt(q.page || '1', 10) || 1}&pSize=300${q.q ? '&STATBL_NM=' + encodeURIComponent(String(q.q).slice(0, 40)) : ''}`
           : `${RONE_BASE_URL}?STATBL_ID=${safe(q.statbl)}&DTACYCLE_CD=${safe(q.cycle || 'MM')}${q.time ? '&WRTTIME_IDTFR_ID=' + safe(q.time) : ''}&Type=json&pIndex=${parseInt(q.page || '1', 10) || 1}&pSize=${parseInt(q.size || '1000', 10) || 1000}&KEY=${RONE_API_KEY}`;
       }
       const r = await fetch(url, { signal: AbortSignal.timeout(20000) });
