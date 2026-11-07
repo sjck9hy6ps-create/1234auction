@@ -1,0 +1,24 @@
+# 금리·시장 흐름 자료 수집(2026-11-07): ECOS 기준금리·주담대 금리·CD·국고채, R-ONE 주간 가격지수·수급동향. 매일 새벽 + 트리거 파일 푸시
+name: Collect macro
+on:
+  schedule:
+    - cron: '30 21 * * *'
+  push:
+    paths: ['.github/triggers/collect-macro.txt', 'data/policy-events.json']
+  workflow_dispatch:
+jobs:
+  c:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install pandas numpy requests
+      - env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          SITE_URL: https://1234auction.vercel.app
+          PYTHONUNBUFFERED: '1'
+        run: python collect-macro.py
