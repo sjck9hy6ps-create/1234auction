@@ -2301,6 +2301,27 @@ def prob_calibration(P, won):
     return res
 
 
+def gap_calibration(rec, win, won):
+    """2026-11-07 추천가 낙찰 가능성의 '간격' 보정: P(낙찰) = 시그모이드(a + b·ln(추천가÷예상낙찰가)). 기존 보정(원래 확률의 로짓)은 같은 확률이어도 간격이 다르면 실제 낙찰률이 달라지는 걸 못 잡음.
+    입찰 전 저장한 추천가 실적 약 770건 시간순 60/40 검증: 시험 구간 Brier 원래 0.0853 → 현재 방식 0.0771 → 간격 0.0728(원래 대비 -15%). 예상 낙찰가는 전체로는 맞지만(예상가 이하 낙찰 52%)
+    추천가가 예상가에 가까운 후보에서는 실제 낙찰가가 더 높게 나옴(예상가 이하 31~37%) - 후보 선택 효과. 예상 낙찰가(중간값)의 정의는 그대로 두고 '추천가 낙찰 가능성' 표시만 보정"""
+    R = np.asarray(rec, float); W = np.asarray(win, float); Y = np.asarray(won, float)
+    ok = np.isfinite(R) & np.isfinite(W) & (R > 0) & (W > 0)
+    R, W, Y = R[ok], W[ok], Y[ok]
+    if len(R) < 200: return None
+    g = np.log(R / W)
+    def fit(x, y):
+        X = np.c_[np.ones(len(x)), x]; w = np.zeros(2)
+        for _ in range(100):
+            p = 1 / (1 + np.exp(-X @ w)); gr = X.T @ (p - y) + 1e-3 * w; H = X.T @ (X * (p * (1 - p))[:, None]) + 1e-3 * np.eye(2); w = w - np.linalg.solve(H, gr)
+        return w
+    ap = lambda w, x: 1 / (1 + np.exp(-(w[0] + w[1] * x)))
+    k = int(len(g) * 0.6); w1 = fit(g[:k], Y[:k]); te = slice(k, None)
+    P0 = None
+    b1 = float(np.mean((ap(w1, g[te]) - Y[te]) ** 2)); w = fit(g, Y)
+    return {"n": int(len(g)), "a": round(float(w[0]), 4), "b": round(float(w[1]), 4), "brierAfter": round(b1, 4), "winAtPred": round(float(ap(w, 0.0)), 3), "monotone": bool(w[1] > 0)}
+
+
 def scorecard(D, amap):
     """2026-10-09 추천가 성적표 - 지금까지 저장된 예측(입찰 전) 전체를 실제 낙찰 결과와 비교(주 단위가 아니라 누적).
     낙찰 가능성 구간별 '예측 vs 실제 낙찰 비율', 추천가 대비 실제 낙찰가, 낙찰가 예측 오차"""
@@ -2340,6 +2361,15 @@ def scorecard(D, amap):
     gap = (float(P["won"].mean()) - float(P["prob"].mean())) * 100 if tot else 0
     out["probGapPct"] = round(gap, 1)
     out["needAdjust"] = bool(tot >= 30 and abs(gap) >= 15)
+    try:
+        Xs = P.sort_values("sale")
+        gc = gap_calibration(Xs["rec"].values, Xs["win"].values, Xs["won"].values)
+        if gc:
+            kk = int(len(Xs) * 0.6); b0 = float(np.mean((np.clip(Xs["prob"].values[kk:], 0.01, 0.99) - Xs["won"].values[kk:].astype(float)) ** 2))
+            gc["brierBefore"] = round(b0, 4); gc["use"] = bool(gc["monotone"] and gc["brierAfter"] < b0 * 0.95)
+            out["gapCal"] = gc; print("  🎯 간격 보정(시험 구간):", gc)
+    except Exception as e:
+        print("  간격 보정 건너뜀:", e)
     try:
         Xs = P.sort_values("sale")
         out["probCal"] = prob_calibration(Xs["prob"].values, Xs["won"].values)
@@ -2616,6 +2646,15 @@ def weekly_report(R, now_dt, now_iso):
         print("  추천가 성적표:", {k: v for k, v in out["scorecard"].items() if k != "items"})
         try:
             _pc = out["scorecard"].get("probCal")
+            _gc = out["scorecard"].get("gapCal")
+            if _gc and _gc.get("use"):  # 2026-11-07: 추천가 낙찰 가능성 표시만 간격 보정(예상 낙찰가 정의는 그대로) - 앱은 보정값이 원래보다 낮을 때만 씀
+                import requests as _rq2
+                _r2 = _rq2.get(f"{cyc.SUPABASE_URL}/rest/v1/leader_follower_cache?select=payload&id=eq.signal%7C__winbid__", headers=cyc.HEADERS, timeout=60)
+                if _r2.ok and _r2.json():
+                    _wb2 = _r2.json()[0].get("payload") or {}
+                    _wb2["probGapCal"] = {"a": _gc["a"], "b": _gc["b"], "n": _gc["n"], "use": True, "generatedAt": now_iso}
+                    cyc.upsert_rows([{"id": "signal|__winbid__", "payload": cyc.clean_json(_wb2), "fetched_at": now_iso}])
+                    print("  ✅ 간격 보정을 예상 낙찰가 모델에 저장")
             if False and _pc and _pc.get("use"):  # 2026-10-28 되돌림: 앱에 쓰지 않음(계산·기록만 유지) - 예상 낙찰가에 입찰해도 15%로 나와 모델 정의와 어긋남
                 import requests as _rq
                 _rr = _rq.get(f"{cyc.SUPABASE_URL}/rest/v1/leader_follower_cache?select=payload&id=eq.signal%7C__winbid__", headers=cyc.HEADERS, timeout=60)
