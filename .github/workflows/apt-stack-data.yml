@@ -1,0 +1,62 @@
+# 아파트 예상매도가 종합 평가용 자료 만들기(2026-11-07): 시도별로 앱 실제 계산을 시점별로 돌려 특징·정답 저장 → 마지막에 모아 학습·채점
+name: Apt stack data
+on:
+  push:
+    paths: ['.github/triggers/apt-stack-data.txt']
+  workflow_dispatch:
+jobs:
+  collect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+    strategy:
+      fail-fast: false
+      matrix:
+        prefix: ['11', '26', '27', '28', '29', '30', '31', '36', '41', '42,51', '43', '44', '45,52', '46', '47', '48', '50']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - run: npm install @supabase/supabase-js ws playwright
+      - run: npx playwright install --with-deps chromium
+      - env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          SITE_URL: https://1234auction.vercel.app
+          LAWD_PREFIX: ${{ matrix.prefix }}
+          CUTOFFS: '2025-03-01,2025-04-15,2025-06-01,2025-07-15,2025-09-01,2025-10-15,2025-12-01,2026-01-15,2026-03-01,2026-04-15,2026-06-01,2026-07-15,2026-09-01'
+          MAX_PER_REGION: '70'
+          NO_SAVE: '1'
+          OUT_FILE: rows.json
+        run: node scripts/validate-app-asof-trades.mjs > log.txt 2>&1 || (tail -30 log.txt; exit 1)
+      - run: tail -5 log.txt || true
+        if: always()
+      - id: nm
+        run: echo "n=$(echo '${{ matrix.prefix }}' | tr ',' '_')" >> $GITHUB_OUTPUT
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: aptrows-${{ steps.nm.outputs.n }}
+          path: rows.json
+          if-no-files-found: ignore
+          retention-days: 7
+  train:
+    needs: collect
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install pandas numpy requests scikit-learn scipy
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: aptrows-*
+          path: rows
+      - env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          PYTHONUNBUFFERED: '1'
+        run: python eval-apt-stack.py rows

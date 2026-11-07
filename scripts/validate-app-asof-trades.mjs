@@ -7,6 +7,9 @@ import fs from 'fs';
 
 const SITE = process.env.SITE_URL || 'https://1234auction.vercel.app';
 const PREFIX = process.env.LAWD_PREFIX || '11';
+const PREFIXES = PREFIX.split(',');
+const OUT = process.env.OUT_FILE || 'asof-trades.json';
+const SAVE_KEY = process.env.SUMMARY_KEY || 'signal|__asof_val_trades__';
 const CUTOFFS = (process.env.CUTOFFS || '2026-02-01,2026-04-01,2026-06-01,2026-08-01,2026-09-15').split(',');
 const WINDOW_DAYS = parseInt(process.env.WINDOW_DAYS || '40', 10);
 const CAP = parseInt(process.env.MAX_PER_REGION || '120', 10);
@@ -21,7 +24,8 @@ await page.waitForTimeout(5000);
 await page.addScriptTag({ path: 'scripts/lib/asof-harness-trades.js' });
 await page.evaluate(() => { try { loadSaleRuleParams(); } catch (e) {} });
 await page.waitForTimeout(4000);
-const lawds = await page.evaluate((p) => __v2.lawds(p), PREFIX);
+const lawds = {};
+for (const pf of PREFIXES) Object.assign(lawds, await page.evaluate((p) => __v2.lawds(p), pf));
 const list = Object.keys(lawds).sort();
 console.log(`대상 지역 ${list.length}곳(접두 ${PREFIX})`);
 const rows = [], failed = []; let eligibleAll = 0;
@@ -32,7 +36,7 @@ for (const l of list) {
   } catch (e) { failed.push(l); console.log(`❌ ${l}: ${String(e.message || e).slice(0, 140)}`); }
 }
 await browser.close().catch(() => {});
-fs.writeFileSync('asof-trades.json', JSON.stringify(rows));
+fs.writeFileSync(OUT, JSON.stringify(rows));
 const med = (a) => { a = a.slice().sort((x, y) => x - y); const k = a.length >> 1; return a.length % 2 ? a[k] : (a[k - 1] + a[k]) / 2; };
 const q = (a, p) => { a = a.slice().sort((x, y) => x - y); return a[Math.floor((a.length - 1) * p)]; };
 const stat = (list) => {
@@ -48,6 +52,6 @@ for (const c of CUTOFFS) summary.byCutoff[c] = stat(rows.filter((r) => r.cutoff 
 summary.byFloor = { '1~2층': stat(rows.filter((r) => parseInt(r.floor) >= 1 && parseInt(r.floor) <= 2)), '3~9층': stat(rows.filter((r) => parseInt(r.floor) >= 3 && parseInt(r.floor) <= 9)), '10층+': stat(rows.filter((r) => parseInt(r.floor) >= 10)) };
 for (const l of list) { const s = stat(rows.filter((r) => r.lawd === l)); if (s && s.n >= 40) summary.byRegion[l] = s; }
 console.log(JSON.stringify(summary, null, 1));
-const { error } = await supa.from('leader_follower_cache').upsert({ id: 'signal|__asof_val_trades__', payload: summary, fetched_at: summary.at }, { onConflict: 'id' });
+const { error } = process.env.NO_SAVE ? { error: null } : await supa.from('leader_follower_cache').upsert({ id: SAVE_KEY, payload: summary, fetched_at: summary.at }, { onConflict: 'id' });
 console.log(error ? '저장 실패: ' + error.message : '✅ 저장');
 if (!rows.length) process.exit(1);
