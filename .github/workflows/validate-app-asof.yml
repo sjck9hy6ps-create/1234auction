@@ -1,6 +1,8 @@
 name: 검증 - 앱 실제 출력 종단 검증(과거 시점으로 되돌려 예상매도가 비교)
 
 on:
+  push:                # 2026-11-07: 트리거 파일을 고쳐 올리면 기본 설정으로 한 번 실행
+    paths: ['.github/triggers/validate-app-asof.txt']
   workflow_call:
   workflow_dispatch:
     inputs:
