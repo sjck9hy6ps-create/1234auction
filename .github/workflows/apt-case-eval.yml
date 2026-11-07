@@ -1,0 +1,32 @@
+# 앱이 다시 계산한 아파트 낙찰사례 값(apt-case-data 결과)으로 낙찰가 모델 시세 기준을 비교(2026-11-07)
+name: Apt case eval
+on:
+  workflow_dispatch:
+    inputs:
+      run_id:
+        description: 'apt-case-data 실행 번호'
+        required: true
+jobs:
+  eval:
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install pandas numpy requests
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: aptcases-*
+          path: aptcases
+          run-id: ${{ inputs.run_id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+      - env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          SITE_URL: https://1234auction.vercel.app
+          PYTHONUNBUFFERED: '1'
+          APT_STACK_DIR: aptcases
+          APT_STACK_ONLY: '1'
+        run: python analyze-bidcases.py
