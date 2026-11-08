@@ -55,6 +55,11 @@ jobs:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
         run: python save-apt-case-stack.py aptcases
+      - name: 예상매도가 최근 쏠림 보정 저장(walk-forward 검증 통과 등급만)
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: python save-sale-corr.py aptcases
       - name: 낙찰 가능성 양방향 보정 저장(시간순 검증 통과 시만 use)
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
