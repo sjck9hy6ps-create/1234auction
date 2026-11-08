@@ -2115,7 +2115,41 @@ def risk_table(R0, now):
         qdev = lambda L_: (sum(abs(a_ - .25) * n_ for a_, n_ in L_) / max(1, sum(n_ for _, n_ in L_))) if L_ else None
         wdev = lambda L_: (sum(abs(a_ - .25) * n_ for a_, n_ in L_) / max(1, sum(n_ for _, n_ in L_))) if L_ else None
         db, da = wdev(ev_["base"]), wdev(ev_["adj"])
-        cond = {"표": full_t, "기준": "낙찰가÷시세 <= y 인 사례의 (낙찰 뒤 시장가 하방 - 칸 q25)", "검증": {"이른절반으로 늦은절반": {"기준편차": None if db is None else round(db, 4), "보정편차": None if da is None else round(da, 4)}}, "use": bool(db is not None and da is not None and da < db - 0.005), "useQ": bool(q_b and qdev(q_a) < qdev(q_b) - 0.005), "qCheck": {"조건없음": None if not q_b else round(qdev(q_b), 4), "낙찰조건": None if not q_a else round(qdev(q_a), 4)}, "useShift": bool(sh_b and (sum(x * n for x, n in sh_a) / sum(n for _, n in sh_a)) < (sum(x * n for x, n in sh_b) / sum(n for _, n in sh_b)) - 0.002), "shiftCheck": {"보정없음": round(sum(x * n for x, n in sh_b) / max(1, sum(n for _, n in sh_b)), 4), "보정": round(sum(x * n for x, n in sh_a) / max(1, sum(n for _, n in sh_a)), 4)}}
+        # 🧱 근거 두께 차원(2026-11-08): 지방 사례에서 낙찰 뒤 시장가 하락이 같은 평형 6개월 거래 0건이면 중앙 -9.8%(하위 25% -22.5%), 6건+이면 -2.6%(-5.9%)로 크게 다름 → 지역등급×근거 두께별로 따로 잼
+        #    shift는 지역등급 전체 중앙 대비(앱 예상매도가가 이미 가정한 값 기준). 시간순 검증: 늦은 낙찰 건에서 '지역등급 shift' vs '지역등급×근거 shift' 중 실제 중앙에 더 가까운 쪽이 이길 때만 useEv
+        evb = lambda x: "0건" if str(x).startswith("0건") else str(x)
+        Z["_evb"] = [evb(x_) for x_ in Z["ev"]]
+        def mk_ev(G, base_t):
+            r = {}
+            for (cl, eb), g_ in G.groupby(["cls", "_evb"]):
+                if len(g_) < 150 or cl not in base_t: continue
+                b50 = base_t[cl]["base50"]; pts_ = []
+                for y in grid:
+                    S_ = g_[g_["_y"] <= y]
+                    if len(S_) >= 50: pts_.append({"y": y, "n": int(len(S_)), "shift": round(float(np.median(S_["e"].values)) - b50, 4), "e25": round(float(np.quantile(S_["e"].values, .25)), 4)})
+                if pts_: r[f"{cl}|{eb}"] = {"pts": pts_}
+            return r
+        ev_full, ev_early = mk_ev(Z, full_t), mk_ev(Z.iloc[:half], early_t)
+        def pick_sh(pts_, y):
+            v = None
+            for p_ in pts_:
+                if p_["y"] <= y: v = p_["shift"]
+            return v
+        ev_b, ev_a = [], []
+        for key, t_ in ev_early.items():
+            cl, eb = key.split("|"); Lg = L[(L["cls"] == cl) & (L["_evb"] == eb)]; Lc = L[L["cls"] == cl]
+            if cl not in early_t or len(Lg) < 30: continue
+            e0 = float(np.median(Lc["e"].values))
+            for y in (0.6, 0.7, 0.8, 0.9):
+                W_ = Lg[Lg["_y"] <= y]
+                if len(W_) < 30: continue
+                s_ev, s_cl = pick_sh(t_["pts"], y), pick_sh(early_t[cl]["pts"], y)
+                if s_ev is None or s_cl is None: continue
+                real = float(np.median(W_["e"].values)); ev_b.append((abs(real - (e0 + s_cl)), len(W_))); ev_a.append((abs(real - (e0 + s_ev)), len(W_)))
+        use_ev = bool(ev_b and (sum(x * n for x, n in ev_a) / sum(n for _, n in ev_a)) < (sum(x * n for x, n in ev_b) / sum(n for _, n in ev_b)) - 0.002)
+        ev_chk = {"지역등급만": None if not ev_b else round(sum(x * n for x, n in ev_b) / sum(n for _, n in ev_b), 4), "근거두께추가": None if not ev_a else round(sum(x * n for x, n in ev_a) / sum(n for _, n in ev_a), 4)}
+        print("  🧱 낙찰 조건 근거 두께:", {k_: [(p_["y"], p_["n"], p_["shift"]) for p_ in v_["pts"] if p_["y"] in (0.6, 0.7, 0.8, 0.9)] for k_, v_ in ev_full.items()}, "검증", ev_chk, "useEv", use_ev)
+        cond = {"표": full_t, "기준": "낙찰가÷시세 <= y 인 사례의 (낙찰 뒤 시장가 하방 - 칸 q25)", "검증": {"이른절반으로 늦은절반": {"기준편차": None if db is None else round(db, 4), "보정편차": None if da is None else round(da, 4)}}, "ev": ev_full, "useEv": use_ev, "evCheck": ev_chk, "use": bool(db is not None and da is not None and da < db - 0.005), "useQ": bool(q_b and qdev(q_a) < qdev(q_b) - 0.005), "qCheck": {"조건없음": None if not q_b else round(qdev(q_b), 4), "낙찰조건": None if not q_a else round(qdev(q_a), 4)}, "useShift": bool(sh_b and (sum(x * n for x, n in sh_a) / sum(n for _, n in sh_a)) < (sum(x * n for x, n in sh_b) / sum(n for _, n in sh_b)) - 0.002), "shiftCheck": {"보정없음": round(sum(x * n for x, n in sh_b) / max(1, sum(n for _, n in sh_b)), 4), "보정": round(sum(x * n for x, n in sh_a) / max(1, sum(n for _, n in sh_a)), 4)}}
         print("  🏆 낙찰 조건 하방:", json.dumps({k_: [(p_["y"], p_["n"], p_["extra"]) for p_ in v_["pts"]] for k_, v_ in full_t.items()}, ensure_ascii=False), "검증", cond["검증"], "use", cond["use"], "shift", cond["useShift"], cond["shiftCheck"], "useQ", cond["useQ"], cond["qCheck"], {k_: [(p_["y"], p_["e25"]) for p_ in v_["pts"]] for k_, v_ in full_t.items()}, {k_: [(p_["y"], p_["shift"]) for p_ in v_["pts"]] for k_, v_ in full_t.items()})
     except Exception as ex:
         print("  낙찰 조건 하방 건너뜀:", ex)
