@@ -20981,6 +20981,12 @@ function finalizeStaleRows(cb) {
         var t = performance.now();
         while (i < todo.length && performance.now() - t < 12) { try { finalizeBidBoardRow(todo[i]); } catch (e) {} i++; }
         try { if (nUpFs > 30) { if (i < nUpFs) setBidBoardProgress(fsMsg + i + '/' + nUpFs); else { var pgF = document.getElementById('bb-progress'); if (pgF && pgF.innerText.indexOf('새 기준으로 다시 판정') >= 0) setBidBoardProgress(''); } } } catch (e) {}
+        /* 2026-11-08(사용자: 임장 후보 수가 적게 보임): 재계산이 끝나는 맨 마지막에야 화면을 다시 그려, 데이터는 255건인데 칩은 111건으로 남아 있었음 - 계산 중에도 4초마다(방금 누른 직후 2초 안은 미룸), 입찰 가까운 아파트가 끝났을 때 한 번 다시 그림 */
+        try {
+            var nowF = Date.now(), boardOpenF = document.getElementById('bid-board') && document.getElementById('bid-board').style.display !== 'none';
+            if (boardOpenF && i < todo.length && ((!window.__fsrLastR || nowF - window.__fsrLastR > 4000) || (nUpFs > 30 && i >= nUpFs && !window.__fsrUpDone)) && nowF - (typeof bbLastInteract !== 'undefined' ? bbLastInteract : 0) > 2000) { window.__fsrLastR = nowF; if (i >= nUpFs) window.__fsrUpDone = true; renderBidBoard(); }
+            if (i >= todo.length) window.__fsrUpDone = false;
+        } catch (e) {}
         if (i < todo.length) { setTimeout(step, 16); return; }
         _fsrBusy = false;
         try { if (document.getElementById('bid-board').style.display !== 'none') renderBidBoard(); if (typeof bidDrawerId !== 'undefined' && bidDrawerId) renderBidDrawer(); } catch (e) {}
