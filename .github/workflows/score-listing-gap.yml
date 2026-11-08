@@ -1,0 +1,27 @@
+# 호가 → 실거래 짝짓기 채점(2026-11-08): 호가 기록과 그 뒤 실거래를 비교해 호가 상한의 흥정률을 실측 - 매주 또는 트리거 파일로 실행
+name: Score listing gap
+on:
+  push:
+    paths: ['.github/triggers/score-listing-gap.txt']
+  workflow_dispatch:
+  workflow_call:
+jobs:
+  score:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - run: npm install playwright
+      - run: npx playwright install --with-deps chromium
+      - env:
+          SITE_URL: https://1234auction.vercel.app
+        run: node scripts/score-listing-gap.mjs | tee gap-log.txt
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: listing-gap
+          path: listing-gap.json
+          retention-days: 60
