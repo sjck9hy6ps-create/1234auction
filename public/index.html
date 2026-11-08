@@ -21522,7 +21522,7 @@ async function refreshBidBoard() {
         // 입찰후보 계산 중 화면 다시 그리기: 5초에 한 번, 사용자가 방금 누른 직후(2초 안)에는 미룸(클릭이 씹히지 않게)
         if ((Date.now() - lastRender > 5000 && Date.now() - bbLastInteract > 2000) || i === order.length - 1) { renderBidBoard(); lastRender = Date.now(); }
         // 보드 때문에 새로 불러온 지역은 계산이 끝나면 메모리에서 내림(지역당 수 MB - 다시 필요하면 브라우저 저장본에서 금방 불러옴)
-        if (lawd !== '_' && boardOnly && lawd !== keepLawd && dataCache[lawd]) {
+        if (lawd !== '_' && boardOnly && lawd !== keepLawd && lawd !== drawerLawdNow() && dataCache[lawd]) {
             delete dataCache[lawd]; delete rentCacheByLawd[lawd]; mergedLawdCds.delete(lawd);
             var vi = lawdCdVisitOrder.indexOf(lawd); if (vi !== -1) lawdCdVisitOrder.splice(vi, 1);
         }
@@ -21664,7 +21664,7 @@ function bidBoardVisibleRows() {
 function bbResetDrawer() {
     bidDrawerId = null;
     var b = document.getElementById('bid-board'); if (b) b.classList.remove('with-drawer');
-    var d = document.getElementById('bb-drawer'); if (d) { d.style.display = 'none'; d.innerHTML = ''; }
+    var d = document.getElementById('bb-drawer'); if (d) { d.style.display = 'none'; d.innerHTML = ''; d.__lastId = null; d.__lastHtml = null; }
 }
 function setLiteVisit(v) { bbResetDrawer(); var s0 = bidBoardState, wasVilla = s0.visit === 'villa'; if (v !== 'villa' && v !== 'fav') s0.aptVisit = v; s0.visit = v;
     if (v !== 'villa' && String(s0.region || '').indexOf('g:') === 0) s0.region = '';
@@ -22183,7 +22183,7 @@ var bbDrawerPos = null;
         else if (bbDrawerPos) { d.style.left = Math.min(bbDrawerPos.x, window.innerWidth - 60) + 'px'; d.style.top = Math.min(bbDrawerPos.y, window.innerHeight - 50) + 'px'; d.style.right = 'auto'; }
     });
 })();
-function closeBidDrawer() { bidDrawerId = null; document.getElementById('bid-board').classList.remove('with-drawer'); var d = document.getElementById('bb-drawer'); if (d) d.style.display = 'none'; renderBidBoard(); }
+function closeBidDrawer() { bidDrawerId = null; document.getElementById('bid-board').classList.remove('with-drawer'); var d = document.getElementById('bb-drawer'); if (d) { d.style.display = 'none'; d.__lastId = null; d.__lastHtml = null; } renderBidBoard(); }
 function bidCostLines(row) {
     var a = row.a, type = row.type, sale = row.sale, bid = row.recBid;
     if (!sale || !bid) return null;
@@ -22249,6 +22249,20 @@ function repairScenarioHtml(row, fmt) {
         + list.map(function(x, i) { return '<tr' + (i === 0 ? ' class="ev"' : '') + '><td>' + x.label + '</td><td class="r">' + fmt(x.rep) + '</td><td class="r"><b>' + fmt(x.max) + '</b></td><td class="r">' + fmt(x.rec) + '</td><td class="r">' + (x.p != null ? Math.round(x.p * 100) + '%' : '-') + '</td></tr>'; }).join('')
         + '</tbody></table><div class="dr-sub">상태를 모르면 앱은 연식 기준 전체 수리를 가정해요. 임장에서 "집 내부 상태"를 입력하면 그 수준으로 바로 계산돼요. 마진 확보 상한 = 순이익 ' + minMarginTxt(row) + '이 남는 최고 입찰가.</div></div>';
 }
+/* 상세 창을 다시 그릴 때(자동 갱신·후보 재계산·호가 반영 등) 맨 위로 튀지 않게(2026-11-08, 사용자: 경매정보가 자동 등록되면 상세 화면이 첫 줄로 이동):
+   같은 물건이면 스크롤 위치와 펼쳐 둔 '자세히' 칸을 유지하고, 내용이 그대로면 아예 다시 그리지 않음. 다른 물건·닫았다 다시 열기는 맨 위에서 시작 */
+/* 지금 열려 있는 상세 창 물건의 지역코드(보드 계산이 끝나고 임시 지역 자료를 내릴 때 이 지역은 남겨 둠 - 내리면 상세 창이 '불러오는 중'으로 바뀌며 맨 위로 튐) */
+function drawerLawdNow() { try { if (bidDrawerId == null) return null; var r = bidBoardRows.filter(function(x) { return x.id === bidDrawerId; })[0]; return r ? (r.lawd || bidBoardLawdOf(r.a)) : null; } catch (e) { return null; } }
+function setDrawerHtml(d, h, rowId) {
+    var same = d.__lastId != null && d.__lastId === rowId;
+    if (same && d.__lastHtml === h) return false;
+    var st = same ? d.scrollTop : 0, opens = same ? Array.prototype.map.call(d.querySelectorAll('details'), function(x) { return x.open; }) : null;
+    var focusId = same && document.activeElement && d.contains(document.activeElement) && document.activeElement.id ? document.activeElement.id : null;
+    d.innerHTML = h; d.__lastId = rowId; d.__lastHtml = h;
+    if (opens) { var ds = d.querySelectorAll('details'); opens.forEach(function(o, i) { if (o && ds[i]) ds[i].open = true; }); }
+    if (same) { d.scrollTop = st; if (focusId) { var fe = document.getElementById(focusId); if (fe && fe.focus) { try { fe.focus(); } catch (e) {} } } }
+    return true;
+}
 async function renderBidDrawer() {
     var d = document.getElementById('bb-drawer'); if (!d) return;
     var row = bidBoardRows.filter(function(r) { return r.id === bidDrawerId; })[0];
@@ -22257,7 +22271,7 @@ async function renderBidDrawer() {
     var a = row.a, lawd = row.lawd || bidBoardLawdOf(a);
     if (row.type !== 'villa' && lawd && !dataCache[lawd] && !row._drawerLoading) { // 빌라는 renderVillaDrawer가 자료를 기다리지 않고 바로 그림
         row._drawerLoading = true;
-        d.innerHTML = '<div class="dr-sub">이 지역 실거래 불러오는 중…</div>';
+        if (d.__lastId !== row.id) { d.innerHTML = '<div class="dr-sub">이 지역 실거래 불러오는 중…</div>'; d.__lastId = null; d.__lastHtml = null; }   // 이미 이 물건을 보여 주는 중이면 내용·스크롤을 그대로 두고 조용히 불러옴
         try { var dd = await fetchHouseDataCached(lawd); if (dd && !dd.error && Array.isArray(dd.apt)) await ingestRegionHouseData(dd, '', lawd); } catch (e) {}
         row._drawerLoading = false;
         if (bidDrawerId !== row.id) return;
@@ -22380,7 +22394,7 @@ async function renderBidDrawer() {
             h = h.slice(0, i1) + card + issueHtml + bidScoreHtml(row) + permitDrawerHtml(row) + (row.visit && row.visit.go ? fieldChecklistHtml(row) : '') + '<details class="dr-more"><summary>자세히 (근거·범위·실거래·비용)</summary>' + legacy + '</details>' + h.slice(i2);
         } else h = h.slice(0, i1) + issueHtml + h.slice(i1);
     } else h += issueHtml;
-    d.innerHTML = h; drawerNavInit(d);
+    if (setDrawerHtml(d, h, row.id)) drawerNavInit(d);
 }
 /* 🎯 입찰 경쟁·등수·환금성(2026-10-14, 사용자: 모든 입찰건 상세에 ① 생활반경 기준 잘 팔리는 평형인지 추천/비추천 ② 생활반경 기준 최근 입찰 인원으로 예상 입찰자 수 → 구간별 낙찰가 ③ 입찰자 수 구간별 낙찰가·1등 확률·격차)
    서버(score-bid-objects.py)가 매주 계산해 저장 → 앱은 물건 상세를 열 때 그 물건이 든 묶음만 받아서 표시. 시험으로 확인한 한계(아파트: 입찰자 수는 반경 정보보다 가격 매력·유찰이 더 크게 좌우, 빌라: 사전 예측이 거의 안 돼 유찰별 평균)도 화면에 적음 */
@@ -22566,7 +22580,7 @@ async function renderVillaDrawer(d, row) {
         + '<label>미납 관리비</label><input type="number" value="' + (parseInt(a.unpaidMgmtFee) || '') + '" placeholder="0" onchange="updateDrawerField(\'' + idJs + '\',\'unpaidMgmtFee\',this.value)">'
         + '<label>수리비 (비우면 연식 기준 자동)</label><input type="number" value="' + (parseInt(a.repair) || '') + '" placeholder="자동" onchange="updateDrawerField(\'' + idJs + '\',\'repair\',this.value)"></div></div>';
     h += '<div class="dr-sec dr-btns"><button onclick="openCourtQuick(\'' + String(a.caseNo || '').replace(/'/g, "\\'") + '\')">🏛️ 법원경매</button><button onclick="openTankQuick(\'' + String(a.caseNo || '').replace(/'/g, "\\'") + '\',\'' + tankNameHint(a).replace(/'/g, "\\'") + '\')" title="사건번호 복사 없이 이 사건 1건을 자동으로 열어 모아요(확장 필요)">🟦 탱크옥션</button><button onclick="openNaverForRow(\'' + idJs + '\')" title="이 물건 위치·종류·평형(±5평)·연식(−5~+10년)을 맞춘 네이버부동산 매물 지도">🟢 네이버부동산</button><button onclick="openNaverMapForRow(\'' + idJs + '\')" title="네이버 지도에서 이 주소를 검색해 핀이 꽂힌 위치로 열어요">📍 네이버 지도</button><button onclick="openBatoner(\'' + String(a.caseNo || '').replace(/'/g, "\\'") + '\')">🙋 바토너 대리입찰</button></div>';
-    d.innerHTML = h; drawerNavInit(d);
+    if (setDrawerHtml(d, h, row.id)) drawerNavInit(d);
     // 지역 사이클 채우기
     if (lawd) loadMarketCycle(lawd).then(function(cd) {
         var box = document.getElementById('vd-cycle'); if (!box || bidDrawerId !== row.id) return;
@@ -23177,7 +23191,7 @@ async function addNewBoardRows(newAs, tries) {
                 } catch (e) { console.error('새 사건 지역 자료 실패:', k, e && e.message); }
             }
             byLawd[k].forEach(function(a) { try { var r = computeBidBoardRow(a); if (r) { made.push(r); bidVerdictCache[a.id] = { sig: bidVerdictSig(a), row: r }; } } catch (e) { console.error('새 사건 계산 실패:', a.id, e); } });
-            if (boardOnly && k !== keepLawd && dataCache[k]) { delete dataCache[k]; delete rentCacheByLawd[k]; mergedLawdCds.delete(k); var vi = lawdCdVisitOrder.indexOf(k); if (vi !== -1) lawdCdVisitOrder.splice(vi, 1); didLoad = true; }
+            if (boardOnly && k !== keepLawd && k !== drawerLawdNow() && dataCache[k]) { delete dataCache[k]; delete rentCacheByLawd[k]; mergedLawdCds.delete(k); var vi = lawdCdVisitOrder.indexOf(k); if (vi !== -1) lawdCdVisitOrder.splice(vi, 1); didLoad = true; }
         }
     } finally { window.redrawMarkers = origDraw.r; window.renderAuctionMarkers = origDraw.a; window.renderBidCaseMarkers = origDraw.b; }
     if (didLoad) { try { rebuildMergedLists(); } catch (e) {} }
