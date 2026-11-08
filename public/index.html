@@ -23012,7 +23012,9 @@ async function applyListingListsAuto(list) {
             if (Object.keys(pk).length !== 1) {
                 /* 동 번호는 보낸 매물에 일부만 있어 가르는 기준으로 쓰지 않음(성원: 102동이 매물 21건에 없을 수 있음). 후보가 남아 있으면 사용자에게 어느 단지인지 물어 한 번만 연결해 두고, 없으면 건너뜀 */
                 used[n] = 1;
-                if (pass.length && pass.length <= 8) choosers.push({ n: n, complex: byName[n][0].complex, items: its, cands: pass });
+                /* 후보 '물건'이 아니라 후보 '단지'(지역·동·번지)가 12곳 이하이면 한 번 물어봄(2026-11-08: 같은 단지 물건이 여럿이면 8건을 넘어 건너뛰던 문제) - 단지마다 대표 물건 하나만 보여 줌 */
+                var uniq = {}, passU = []; pass.forEach(function(r) { var k = cx(r); if (!uniq[k]) { uniq[k] = 1; passU.push(r); } });
+                if (passU.length && passU.length <= 12) choosers.push({ n: n, complex: byName[n][0].complex, items: its, cands: passU });
                 else ambiguous.push(byName[n][0].complex + '(' + Object.keys(kinds).length + '곳, 평형·층·연식으로 걸러지지 않았어요)');
                 return;
             }
