@@ -22903,7 +22903,8 @@ async function applyListingListsAuto(list) {
     var done = 0, noSize = [], used = {}, ambiguous = [], applied = [], choosers = [];
     var canonName = function(n) { var s0 = String(n || ''), ch = (s0.match(/\d+\s*(?:차|단지)/g) || []).map(function(x) { return x.replace(/\s/g, ''); }).sort().join(','), hg = (s0.replace(/\d+\s*(?:차|단지)/g, '').match(/[가-힣]/g) || []).sort().join(''); return hg.length >= 4 ? ch + '|' + hg : ''; };
     var T = listingBulkTargets();
-    var cx = function(r) { return (r.region || '') + '|' + (r.a.dong || ''); }; // 같은 단지 = 같은 지역·동
+    // 같은 단지 = 같은 지역·법정동·번지(2026-11-08, 사용자: 신개금엘지 1차·2차처럼 같은 법정동에 이름이 비슷한 단지가 둘이면 호가를 구분 못함 - 번지가 다르면 다른 단지)
+    var cx = function(r) { var bj = ''; try { bj = String(fullBunjiFromAddr(r.a.addr, r.a.dong, r.a.bunji) || r.a.bunji || '').split('-')[0].replace(/\D/g, ''); } catch (e) { bj = String(r.a.bunji || '').split('-')[0]; } return (r.region || '') + '|' + (r.a.dong || '') + '|' + bj; };
     // 이름이 같으면 맞는 것으로 보되, 이름이 흔해서 임장 후보 중 서로 다른 단지 여러 곳과 맞으면(주공아파트 등) 엉뚱한 곳에 저장될 수 있어 건너뜀 → 상세에서 직접 붙여넣기
     // 한쪽 이름이 다른 쪽에 포함되는 경우는 짧은 쪽이 5글자 이상이고 긴 쪽의 70% 이상일 때만 같은 단지로 봄
     var sameName = function(a, b) { if (a === b) return true; var sh = a.length < b.length ? a : b, lg = a.length < b.length ? b : a; return sh.length >= 5 && sh.length / lg.length >= 0.7 && lg.indexOf(sh) >= 0; };
@@ -22940,6 +22941,12 @@ async function applyListingListsAuto(list) {
                 return true;
             };
             var pass = cands.filter(passes), pk = {}; pass.forEach(function(r) { pk[cx(r)] = 1; });
+            /* 평형·층·연식으로 둘 이상 남으면: 보낸 매물의 동 번호(예: 2xx동)가 이 물건의 동(예: 207동)과 맞는 단지가 한 곳뿐일 때만 그 단지로 정함(동 번호가 일부만 있어 '없다'는 근거로는 안 씀) */
+            if (Object.keys(pk).length > 1) {
+                var dsetH = {}; its.forEach(function(x) { if (x.dong) dsetH[String(x.dong).replace(/\D/g, '')] = 1; });
+                var hit = pass.filter(function(r) { var mm = String(r.a.addr || '').match(/(\d+)동\s*$/), dn = (mm && mm[1]) || String(r.a.aptDong || '').replace(/\D/g, ''); return dn && dsetH[dn]; }), hk = {}; hit.forEach(function(r) { hk[cx(r)] = 1; });
+                if (Object.keys(hk).length === 1) { var onlyK = Object.keys(hk)[0]; pass = pass.filter(function(r) { return cx(r) === onlyK; }); pk = {}; pass.forEach(function(r) { pk[cx(r)] = 1; }); }
+            }
             if (Object.keys(pk).length !== 1) {
                 /* 동 번호는 보낸 매물에 일부만 있어 가르는 기준으로 쓰지 않음(성원: 102동이 매물 21건에 없을 수 있음). 후보가 남아 있으면 사용자에게 어느 단지인지 물어 한 번만 연결해 두고, 없으면 건너뜀 */
                 used[n] = 1;
