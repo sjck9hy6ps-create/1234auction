@@ -3522,7 +3522,9 @@ export default async function handler(req, res) {
     try {
       const { data, error } = await supabase.from('leader_follower_cache').select('payload').eq('id', 'signal|__winbid__').maybeSingle();
       if (error) return res.status(500).json({ error: error.message });
-      return res.status(200).json((data && data.payload) || {});
+      const pay = (data && data.payload) || {};
+      try { const pc = await supabase.from('leader_follower_cache').select('payload').eq('id', 'signal|__prob_cal2__').maybeSingle(); if (pc && pc.data && pc.data.payload) pay.probCal2 = pc.data.payload; } catch (e) { /* 보정이 없으면 원래 확률 */ }   // 2026-11-08 낙찰 가능성 양방향 보정(매주 낙찰가 모델이 새로 저장돼도 유지되게 따로 보관)
+      return res.status(200).json(pay);
     } catch (err) {
       return res.status(500).json({ error: err.message });
     }
