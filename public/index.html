@@ -20971,6 +20971,9 @@ function finalizeStaleRows(cb) {
     todo.forEach(function(r) { (inCache.has(r) || (r.visit && r.visit.go) ? hi : lo).push(r); });
     var needAll = bidBoardState.visit !== 'go' && bidBoardState.visit !== 'villa' && document.getElementById('bid-board') && document.getElementById('bid-board').style.display !== 'none';
     todo = needAll ? hi.concat(lo) : hi; var rest = needAll ? [] : lo;
+    /* 2026-11-08(사용자: 규제 필터 후 임장 후보가 11개): 다시 계산이 목록 순서라 지금 화면에서 보는 입찰이 가까운 아파트가 뒤에 밀려, 열자마자 옛 판정(11건)이 보이다가 5분에 걸쳐 늘었음 - 아파트·입찰 가까운 순(지난 입찰은 맨 뒤)으로 먼저 계산 */
+    var _pri = function(r) { var d = r.dday && r.dday.diffDays != null ? r.dday.diffDays : 9999, up = d >= 0; return (r.type === 'apt' ? 0 : 1) * 100000 + (up ? 0 : 50000) + (up ? d : 0); };
+    todo = todo.map(function(r) { return { r: r, k: _pri(r) }; }).sort(function(x, y) { return x.k - y.k; }).map(function(x) { return x.r; });
     _fsrBusy = true; var i = 0;
     (function step() {
         var t = performance.now();
