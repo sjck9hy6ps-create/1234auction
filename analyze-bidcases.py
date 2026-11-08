@@ -2033,7 +2033,26 @@ def risk_table(R0, now):
     # 흩어짐 칸은 시간순 검증(늦은 절반에서 하방 25% 아래 비율이 25%에 맞는지)이 좋아진 지역등급만 씀 - 2026-11-06 검증: 지방 33→25%로 개선, 서울·경기·인천은 흩어짐 차이가 작거나 개선 없음
     _dk = {k_: v_ for k_, v_ in (RISK_DISP.get("칸") or {}).items() if k_.startswith("지방|")}
     disp_extra = {"분산칸": _dk, "분산경계": {"지방": (RISK_DISP.get("경계") or {}).get("지방")}} if _dk else {}
-    out = {**disp_extra, "기간": [lo, hi], "표본": int(len(D)), "칸": tab, "전체칸": allt, "정의": "e = 낙찰 뒤 6개월 시장 실거래 중위 ÷ 시세(est_rule_f) - 1"}
+    # 🔁 거래량(인기) 등급 보정(2026-11-08, 사용자: 고정 숫자 대신 회전율·거래량 실측): 같은 칸(지역×근거)의 하방 25% 지점 대비 등급별로 하방이 얼마나 더 깊은지 측정.
+    #    r = e - 칸 q25. 등급 q25(r)가 -0.02면 그 등급은 칸 기준보다 하방 25%가 2%p 더 낮음 → 위험 여유에 +2%. 시간순 검증(이른 절반으로 측정, 늦은 절반에서 '칸 q25 아래' 비율이 25%에 더 가까워질 때만 use)
+    pop_adj = {}
+    try:
+        if "tier" in D.columns:
+            D["_cq"] = [(tab.get(f"{c_}|{e_}") or {}).get("q25") for c_, e_ in zip(D["cls"], D["ev"])]
+            Q = D[D["_cq"].notna()].copy(); Q["r"] = Q["e"] - Q["_cq"].astype(float); Q["tr"] = Q["tier"].fillna("없음").astype(str)
+            Q = Q.sort_values("sale"); half = len(Q) // 2; E1, L1 = Q.iloc[:half], Q.iloc[half:]
+            for t_, g_ in Q.groupby("tr"):
+                if len(g_) < 100: continue
+                adj = float(np.quantile(g_["r"].values, .25))
+                g1, g2 = E1[E1["tr"] == t_], L1[L1["tr"] == t_]
+                if len(g1) < 50 or len(g2) < 50: pop_adj[t_] = {"n": int(len(g_)), "q25": round(adj, 4), "use": False, "why": "검증 표본 부족"}; continue
+                a1 = float(np.quantile(g1["r"].values, .25))
+                base_sh = float((g2["r"].values < 0).mean()); adj_sh = float((g2["r"].values < a1).mean())
+                pop_adj[t_] = {"n": int(len(g_)), "q25": round(adj, 4), "earlyQ25": round(a1, 4), "lateBelowCell": round(base_sh, 3), "lateBelowAdj": round(adj_sh, 3), "use": bool(abs(adj_sh - .25) < abs(base_sh - .25) - 0.01)}
+            print("  🔁 거래량 등급 보정:", json.dumps(pop_adj, ensure_ascii=False))
+    except Exception as ex:
+        print("  거래량 등급 보정 건너뜀:", ex)
+    out = {**disp_extra, "기간": [lo, hi], "표본": int(len(D)), "칸": tab, "전체칸": allt, "인기보정": pop_adj, "정의": "e = 낙찰 뒤 6개월 시장 실거래 중위 ÷ 시세(est_rule_f) - 1"}
     print("  🧱 근거 두께별 하방 표:", json.dumps({k_: [v_["n"], v_["q25"], v_["q50"]] for k_, v_ in tab.items()}, ensure_ascii=False))
     return out
 

@@ -19335,6 +19335,8 @@ function riskMarginFor(predictedSale, ownTrades, downRisk, popInfo, regionInfo) 
     // 2026-10: 지역 "6개월 하락 위험 높음"이면 그 등급의 과거 평균 6개월 하락폭(수도권 3.8%·지방 2.1%)만큼 더 얹음
     var extra = (downRisk && downRisk.level === '높음' && downRisk.avgDropPct > 0) ? downRisk.avgDropPct / 100 : 0;
     var popExtra = popInfo && popInfo.tier === '하위40%' ? LOW_POP_EXTRA_RATE : 0;
+    /* 거래량 등급 보정(2026-11-08): 서버가 칸(지역×근거) 하방 대비 등급별 추가 하방을 실측·시간순 검증해 use=true일 때만 고정 2%를 대체(음수면 그만큼 여유 감소, 한도 -3%~+6%) */
+    try { var pa = winbidModel && winbidModel.riskTable && winbidModel.riskTable['인기보정'], pt = pa && popInfo && popInfo.tier && pa[popInfo.tier]; if (tbl && pt && pt.use && typeof pt.q25 === 'number') popExtra = Math.max(-0.03, Math.min(0.06, -pt.q25)); } catch (e) {}
     // 2026-10(사용자 기준): 최소마진 1,000만 원 - 싼 물건에서 비율로 계산한 마진이 이보다 작으면 1,000만 원으로 올림
     var m = Math.round((500 + predictedSale * (rate + extra + popExtra)) / 10) * 10;
     return { margin: Math.max(MIN_MARGIN_MANWON, m), rate: rate, extra: extra, popExtra: popExtra, floored: m < MIN_MARGIN_MANWON, tbl: tbl ? tbl.key + " " + tbl.n + "건" + (tbl.sub ? "(" + tbl.sub + " 대체)" : "") : null };
