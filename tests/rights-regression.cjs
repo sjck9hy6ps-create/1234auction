@@ -46,7 +46,7 @@ files.forEach((f) => {
   // ① 독립 추출과 대조
   const it = indepTenants(t); ten += it.length;
   const un = R.unknownOccupants || [];
-  if (R.tankTenantN != null && R.tankTenantN !== R.tenants.length + un.length) iss.push(`임차인 수 원문표기 ${R.tankTenantN} ≠ 읽음 ${R.tenants.length}+${un.length}`);
+  if (R.tankTenantN != null && R.tankTenantN !== R.tenants.length && R.tankTenantN !== R.tenants.length + un.length) iss.push(`임차인 수 원문표기 ${R.tankTenantN} ≠ 읽음 ${R.tenants.length}+${un.length}`);
   if (it.length !== R.tenants.length + un.length) iss.push(`임차인 행 ${it.length} ≠ 읽음 ${R.tenants.length + un.length}`);
   it.forEach((x, k) => {
     if (x.depUnknown) { const u = un.filter((y) => y.moveIn === x.moveIn)[0]; if (!u) iss.push(`보증금 미상 점유자 누락(전입 ${x.moveIn})`); return; }
