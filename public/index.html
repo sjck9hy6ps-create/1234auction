@@ -19332,6 +19332,17 @@ function riskMarginFor(predictedSale, ownTrades, downRisk, popInfo, regionInfo) 
     var tbl = riskTableRate(regionInfo);
     if (tbl) { rate = tbl.rate; carry = (regionInfo.jr || 0) + (regionInfo.up || 0); volX = 0; }
     rate += carry + volX + ((regionInfo && regionInfo.unst) || 0);
+    /* 🏆 낙찰 조건 하방(2026-11-08): 입찰가가 시세에 가까울수록 낙찰은 약한 시장·숨은 문제의 신호라 낙찰 뒤 하방이 더 깊음(지방 추천가 낙찰 250건 중앙 -4.9%). 서버가 매주 y(=입찰가÷예상매도가)별 추가 여유를 실측·시간순 검증하고 use일 때만 적용 */
+    var condExtra = 0;
+    try {
+        var cc = winbidModel && winbidModel.riskTable && winbidModel.riskTable['낙찰조건'], ct = cc && cc.use && regionInfo && regionInfo.cls && regionInfo.bidRatio > 0 && cc['표'] && cc['표'][regionInfo.cls];
+        if (tbl && ct && ct.pts && ct.pts.length) {
+            var yy = regionInfo.bidRatio, pts = ct.pts, ex0 = 0, k0;
+            if (yy <= pts[0].y) ex0 = pts[0].extra; else if (yy >= pts[pts.length - 1].y) ex0 = pts[pts.length - 1].extra;
+            else for (k0 = 1; k0 < pts.length; k0++) if (yy <= pts[k0].y) { ex0 = pts[k0 - 1].extra + (pts[k0].extra - pts[k0 - 1].extra) * (yy - pts[k0 - 1].y) / (pts[k0].y - pts[k0 - 1].y); break; }
+            condExtra = Math.max(0, Math.min(0.2, ex0)); rate += condExtra;
+        }
+    } catch (e) {}
     // 2026-10: 지역 "6개월 하락 위험 높음"이면 그 등급의 과거 평균 6개월 하락폭(수도권 3.8%·지방 2.1%)만큼 더 얹음
     var extra = (downRisk && downRisk.level === '높음' && downRisk.avgDropPct > 0) ? downRisk.avgDropPct / 100 : 0;
     var popExtra = popInfo && popInfo.tier === '하위40%' ? LOW_POP_EXTRA_RATE : 0;
@@ -19339,7 +19350,7 @@ function riskMarginFor(predictedSale, ownTrades, downRisk, popInfo, regionInfo) 
     try { var pa = winbidModel && winbidModel.riskTable && winbidModel.riskTable['인기보정'], pt = pa && popInfo && popInfo.tier && pa[popInfo.tier]; if (tbl && pt && pt.n >= 100 && typeof pt.q25 === 'number') popExtra = Math.max(-0.03, Math.min(0.06, -pt.q25)); } catch (e) {}
     // 2026-10(사용자 기준): 최소마진 1,000만 원 - 싼 물건에서 비율로 계산한 마진이 이보다 작으면 1,000만 원으로 올림
     var m = Math.round((500 + predictedSale * (rate + extra + popExtra)) / 10) * 10;
-    return { margin: Math.max(MIN_MARGIN_MANWON, m), rate: rate, extra: extra, popExtra: popExtra, floored: m < MIN_MARGIN_MANWON, tbl: tbl ? tbl.key + " " + tbl.n + "건" + (tbl.sub ? "(" + tbl.sub + " 대체)" : "") : null };
+    return { margin: Math.max(MIN_MARGIN_MANWON, m), rate: rate, condExtra: condExtra, extra: extra, popExtra: popExtra, floored: m < MIN_MARGIN_MANWON, tbl: tbl ? tbl.key + " " + tbl.n + "건" + (tbl.sub ? "(" + tbl.sub + " 대체)" : "") : null };
 }
 var subjectRiskCache = {}; // lawdCd -> {level, avgDropPct, negative} (사이클 분석 결과)
 function getSubjectDownRisk(ctx, onReady) {
@@ -20960,6 +20971,18 @@ function finalizeBidBoardRow(row) {
             target: row.sale, compTargetMargin: row.margin, holdAuto: row.holdAuto,
             repair: effRepairFee(a, type, pyung, buildYear)
         }));
+        /* 입찰가 수준별 위험 여유(2026-11-08): 추천가가 정해지면 입찰가÷예상매도가로 낙찰 조건 하방을 다시 얹어 2번 더 맞춤(여유가 커지면 추천가가 내려가고 y가 낮아짐) */
+        if (rec && rm && !row.marginUser && rm.tbl && winbidModel && winbidModel.riskTable && winbidModel.riskTable['낙찰조건'] && winbidModel.riskTable['낙찰조건'].use && type === 'apt' && !row.saleSaved && !row.salePresale && row.regionCls) {
+            for (var it = 0; it < 2; it++) {
+                var ri2 = { cls: row.regionCls, n6: row.ownStats ? row.ownStats.n6 : null, disp6: row.ownStats ? row.ownStats.disp6 : null, lastAgeM: row.ownStats ? row.ownStats.lastAgeM : null, fb: row.saleFb || null, up: row.saleAdjTotal ? Math.max(0, row.saleAdjTotal - 1) : 0, jr: row.saleJr ? row.saleJr.riskExtra : 0, unst: row.priceUnstable ? 0.03 : 0, bidRatio: rec.bid / row.sale };
+                var rm2 = riskMarginFor(row.sale, row.own, row.risk, row.popEff, ri2);
+                if (!rm2 || rm2.margin === row.margin) break;
+                row.margin = rm2.margin; rm = rm2;
+                var rec2 = solveAuctionBidFromRecord(Object.assign({}, a, { target: row.sale, compTargetMargin: row.margin, holdAuto: row.holdAuto, repair: effRepairFee(a, type, pyung, buildYear) }));
+                if (!rec2) break; rec = rec2;
+            }
+            row.condRisk = rm && rm.condExtra ? Math.round(rm.condExtra * 1000) / 10 : 0;
+        }
         row.recBid = rec ? rec.bid : null;
         row.resaleVat = rec ? rec.resaleVat || 0 : 0;
         row.vatEstimated = rec ? !!rec.vatEstimated : false;
@@ -21509,7 +21532,7 @@ async function mergeServerBoardCache(local, onlyFirst) {
 setTimeout(function() { try { listIdbOp('readwrite', function(st) { return st.delete('bidBoardCache:v1'); }); } catch (e) {} }, 4000); // 예전 큰 로컬 저장본(서버 계산본 포함, 수십 MB)은 읽지 않고 지움(느린 기기에서 열 때 수 초 멈춤, 2026-10-21)
 setTimeout(function() { var go = function() { try { srvBoardParts(); setTimeout(function() { try { window.villaSrvP = villaFetchServerCalc(); } catch (e) {} }, 4000); } catch (e) {} }; if (window.requestIdleCallback) requestIdleCallback(go, { timeout: 6000 }); else go(); }, 2500); // 앱을 켜고 2.5초 뒤 한가할 때 배경에서 미리 받기(빌라는 4초 더 뒤)
 // 저장 계산을 다시 써도 되는지 - 물건 입력값(시세 계산에 쓰는 것)과 입찰일 지남 여부. 계산 방식이 바뀌면 BOARD_CALC_VER을 올림
-var BOARD_CALC_VER = 92; // 92: 거래 드문 단지 고정 2% 가산을 실측값으로 대체(2026-11-08) - // 91: 낙찰가 기준 시세를 예상매도가(종합 평가·호가 상한)와 같게(2026-11-08) - // 90: 임차인 수 점검은 미상 점유자 제외 값도 인정(2026-11-08) - // 89: 이름 앞부분·보증금·전입·확정일이 같은 승계 중복 임차인 줄 합침(2026-11-08) - // 88: 호가 흐름 판정에 주변 단지 흐름 추가(2026-11-08) - // 87: 호가 흐름 지표를 실거래 흐름 먼저·경계는 단지 거래 흩어짐에 맞춤(2026-11-08) - // 86: 호가 흐름 지표 표시(참고용, 2026-11-08) - // 85: 호가 상한은 수리 상태로 거르지 않고 모든 호가 사용(2026-11-08) - // 84: 호가 상한은 층 구분(1~2층/탑층/중간층)별로만 비교(2026-11-08) - // 83: 가격 불안정은 같은 층대(1·2층/3층+) 최근 거래끼리만 비교(2026-11-08) - // 82: 아파트 낙찰가 모델 종합 평가 시세 기준(2026-11-07) - // 81: 아파트 예상매도가 종합 평가 보정(오차 5.5→4.0%, 2026-11-07) - // 80: 권리 위험 안전장치·입찰 제외(2026-11-07) - // 79: // 79: 추천가 낙찰 가능성 간격 보정 표시(2026-11-07) - // 78: // 78: 빌라 종합 평가 상한 제거·건물 3건 이상 포함(앱 실제 계산과 직접 채점 후, 2026-11-07) - // 77: 빌라 종합 평가 안전장치(지하 제외·앱 값 +15% 상한, 2026-11-07) - // 76: 수도권 빌라 종합 평가 값 적용(건물 3건 미만 단계, 2026-11-07) - // // 75: 거래 활발 단지 위험 여유를 최근 거래 흩어짐별 하방 표로(2026-11-06) - // 74: 위험 여유를 근거 두께별 실측 하방 표로(주간 갱신)·흐름 계수 주간 자동 선택(2026-11-06) - // 73: 감정가 기준 전부 제거(감정가 대비 경고·금액 점검·빌라 이슈·틈새 조건, 2026-11-06) - // 72: 시세 흐름 계수 올림·거래량 믿음도 제거·지방 시군구·수도권 생활권·3개월 예측 반영(2026-11-05) - // 71: 낙찰가 모델 시세(est)에도 지역 가격 흐름 반영(est_rule_f, 2026-11-05) - // 70: 예상매도가에 지역 가격 흐름 반영(2026-11-05) - // 69: 시세 새 규칙(est_rule)·감정가 제외·최저가 유지(2026-11-04) - // 68: 감정가 제외 - // // 54: 튀는 가격 반영 안 함·경고만(2026-10-24) - // 53: 최근 거래 시세반영/튀는 가격 구별(2026-10-24) - // 52: 임장 생략 판정(2026-10-19) - // 51: 전세가율 구간 보정·위험 신호(2026-10-18) - // 50: 지방 최근 거래 비슷한 층 비중·1~2건은 12개월 원값(2026-10-18) - // 49: 근거 약함 경고를 판정 단계에서 다시 붙임 - // 48: 예상매도가-감정가 큰 차이 근거 약함 표시 - // 47: 다른 평형 환산이 같은 평형과 20% 넘게 다르면 섞지 않음 - // 46: 같은 동 추론(③④) 제거·거래 없는 단지는 기존 주변 비교 + 근거 약함(2026-10-18) - // 45: 회전율 구간별 보정 항상 적용(주간 갱신 표, 2026-10-17) - // 44: 추론에 최근 6개월 1~2건 포함 - // 43: 6개월 거래 부족 시 단계별 추론(2026-10-17) - // 42: 지역별 예상매도가(서울 최근3건·경기인천 반감1개월·지방 반감2개월)와 위험 여유(2026-10-17) - // 41: 아파트 예상매도가를 최근 6개월 같은 평형 거래의 최근가중 중위값으로(전국 백테스트, 2026-10-17) - // 40: 임차인 둘로 읽힌 경우 별개/같은 임차권(갱신·승계) 선택(2026-10-11) - // 39: 39: 임차권등기를 임차인으로 계산(전입·확정일자 기준)·경매신청인 전세권 안내(2026-10-11) - // 38: 38: 권리분석 날짜 선후 규칙 정리(전입 다음 날 0시·동순위 안분, 2026-10-11) - // 37: 37: 권리분석에 말소기준일보다 앞선 전세권·임차권 등 등기부 인수 권리 반영(2026-10-11) - // 36: 저가 아파트 순이익률 10% 추천가 규칙 되돌림(2026-10-11, 백테스트 손해 30~42%) - // 34: 33: 아파트 고층 보정 축소·저층 범위(2026-10-11) - // 29: nYear 저장 추가 - // 27: 🎲 예상 낙찰가용 시세(wbBase) 추가 (범위 표시는 화면에서 바로 계산 - 버전 변경 없음)
+var BOARD_CALC_VER = 93; // 93: 낙찰 조건 하방(입찰가가 시세에 가까울수록 위험 여유 가산, 서버 검증 통과 시, 2026-11-08) - // 92: 거래 드문 단지 고정 2% 가산을 실측값으로 대체(2026-11-08) - // 91: 낙찰가 기준 시세를 예상매도가(종합 평가·호가 상한)와 같게(2026-11-08) - // 90: 임차인 수 점검은 미상 점유자 제외 값도 인정(2026-11-08) - // 89: 이름 앞부분·보증금·전입·확정일이 같은 승계 중복 임차인 줄 합침(2026-11-08) - // 88: 호가 흐름 판정에 주변 단지 흐름 추가(2026-11-08) - // 87: 호가 흐름 지표를 실거래 흐름 먼저·경계는 단지 거래 흩어짐에 맞춤(2026-11-08) - // 86: 호가 흐름 지표 표시(참고용, 2026-11-08) - // 85: 호가 상한은 수리 상태로 거르지 않고 모든 호가 사용(2026-11-08) - // 84: 호가 상한은 층 구분(1~2층/탑층/중간층)별로만 비교(2026-11-08) - // 83: 가격 불안정은 같은 층대(1·2층/3층+) 최근 거래끼리만 비교(2026-11-08) - // 82: 아파트 낙찰가 모델 종합 평가 시세 기준(2026-11-07) - // 81: 아파트 예상매도가 종합 평가 보정(오차 5.5→4.0%, 2026-11-07) - // 80: 권리 위험 안전장치·입찰 제외(2026-11-07) - // 79: // 79: 추천가 낙찰 가능성 간격 보정 표시(2026-11-07) - // 78: // 78: 빌라 종합 평가 상한 제거·건물 3건 이상 포함(앱 실제 계산과 직접 채점 후, 2026-11-07) - // 77: 빌라 종합 평가 안전장치(지하 제외·앱 값 +15% 상한, 2026-11-07) - // 76: 수도권 빌라 종합 평가 값 적용(건물 3건 미만 단계, 2026-11-07) - // // 75: 거래 활발 단지 위험 여유를 최근 거래 흩어짐별 하방 표로(2026-11-06) - // 74: 위험 여유를 근거 두께별 실측 하방 표로(주간 갱신)·흐름 계수 주간 자동 선택(2026-11-06) - // 73: 감정가 기준 전부 제거(감정가 대비 경고·금액 점검·빌라 이슈·틈새 조건, 2026-11-06) - // 72: 시세 흐름 계수 올림·거래량 믿음도 제거·지방 시군구·수도권 생활권·3개월 예측 반영(2026-11-05) - // 71: 낙찰가 모델 시세(est)에도 지역 가격 흐름 반영(est_rule_f, 2026-11-05) - // 70: 예상매도가에 지역 가격 흐름 반영(2026-11-05) - // 69: 시세 새 규칙(est_rule)·감정가 제외·최저가 유지(2026-11-04) - // 68: 감정가 제외 - // // 54: 튀는 가격 반영 안 함·경고만(2026-10-24) - // 53: 최근 거래 시세반영/튀는 가격 구별(2026-10-24) - // 52: 임장 생략 판정(2026-10-19) - // 51: 전세가율 구간 보정·위험 신호(2026-10-18) - // 50: 지방 최근 거래 비슷한 층 비중·1~2건은 12개월 원값(2026-10-18) - // 49: 근거 약함 경고를 판정 단계에서 다시 붙임 - // 48: 예상매도가-감정가 큰 차이 근거 약함 표시 - // 47: 다른 평형 환산이 같은 평형과 20% 넘게 다르면 섞지 않음 - // 46: 같은 동 추론(③④) 제거·거래 없는 단지는 기존 주변 비교 + 근거 약함(2026-10-18) - // 45: 회전율 구간별 보정 항상 적용(주간 갱신 표, 2026-10-17) - // 44: 추론에 최근 6개월 1~2건 포함 - // 43: 6개월 거래 부족 시 단계별 추론(2026-10-17) - // 42: 지역별 예상매도가(서울 최근3건·경기인천 반감1개월·지방 반감2개월)와 위험 여유(2026-10-17) - // 41: 아파트 예상매도가를 최근 6개월 같은 평형 거래의 최근가중 중위값으로(전국 백테스트, 2026-10-17) - // 40: 임차인 둘로 읽힌 경우 별개/같은 임차권(갱신·승계) 선택(2026-10-11) - // 39: 39: 임차권등기를 임차인으로 계산(전입·확정일자 기준)·경매신청인 전세권 안내(2026-10-11) - // 38: 38: 권리분석 날짜 선후 규칙 정리(전입 다음 날 0시·동순위 안분, 2026-10-11) - // 37: 37: 권리분석에 말소기준일보다 앞선 전세권·임차권 등 등기부 인수 권리 반영(2026-10-11) - // 36: 저가 아파트 순이익률 10% 추천가 규칙 되돌림(2026-10-11, 백테스트 손해 30~42%) - // 34: 33: 아파트 고층 보정 축소·저층 범위(2026-10-11) - // 29: nYear 저장 추가 - // 27: 🎲 예상 낙찰가용 시세(wbBase) 추가 (범위 표시는 화면에서 바로 계산 - 버전 변경 없음)
 /* 2026-10-15(사용자: 입찰후보 로딩이 느림 - 원인 실측): 식별값 끝의 'P/F'(입찰일 지남 여부)가 한국 시각 자정에 바뀌어, 서버 미리 계산이 돈 뒤 어제 입찰이던 물건(하루 약 350건)이 전부 '다른 물건'이 돼
    지역 자료 86곳(곳당 9~13MB)을 새로 받아 다시 계산했음. 계산 결과는 입찰일 지남 여부와 무관하므로(날짜 표시는 열 때 다시 계산) 저장본의 P/F가 반대여도 같은 것으로 봄(flip). */
 function boardBaseSig(a, flip) {

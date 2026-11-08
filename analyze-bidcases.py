@@ -2052,7 +2052,43 @@ def risk_table(R0, now):
             print("  🔁 거래량 등급 보정:", json.dumps(pop_adj, ensure_ascii=False))
     except Exception as ex:
         print("  거래량 등급 보정 건너뜀:", ex)
-    out = {**disp_extra, "기간": [lo, hi], "표본": int(len(D)), "칸": tab, "전체칸": allt, "인기보정": pop_adj, "정의": "e = 낙찰 뒤 6개월 시장 실거래 중위 ÷ 시세(est_rule_f) - 1"}
+    # 🏆 낙찰 조건 하방(2026-11-08, 사용자: 추천가로 낙찰된 경우의 실현 마진 점검): 입찰가가 시세(est)의 y배일 때 낙찰되는 사례(실제 낙찰가 ÷ 시세 <= y)만 모아 낙찰 뒤 시장가 하방을 잼.
+    #    지방에서 추천가로 낙찰됐다면 낙찰 뒤 시장가가 예상매도가보다 중앙 -4.9%(전체 평균 -1.3%) - 낙찰됐다는 사실 자체가 약한 시장·숨은 문제의 신호(승자의 저주). extra(y) = 칸 기준 하방 대비 추가로 더 둘 위험 여유.
+    #    시간순 검증: 이른 절반으로 표를 만들고 늦은 절반에서 y∈{.6,.7,.8,.9} 입찰의 낙찰 건 중 '칸 q25 - extra' 아래로 떨어진 비율이 25%에 더 가까워질 때만 use
+    cond = {}
+    try:
+        D["_y"] = D["actual"] / D[col]; D["_cq"] = [(tab.get(f"{c_}|{e_}") or {}).get("q25") for c_, e_ in zip(D["cls"], D["ev"])]
+        Z = D[D["_y"].notna() & D["_cq"].notna()].copy().sort_values("sale"); half = len(Z) // 2
+        grid = [round(0.45 + 0.05 * i, 2) for i in range(14)]
+        def mk_extra(G):
+            r = {}
+            for cl, g_ in G.groupby("cls"):
+                base = float(np.quantile(g_["e"].values - g_["_cq"].values, .25))   # 칸 기준 대비 전체 하방(보통 약 0)
+                pts = []
+                for y in grid:
+                    S = g_[g_["_y"] <= y]
+                    if len(S) >= 60: pts.append({"y": y, "n": int(len(S)), "q25": round(float(np.quantile(S["e"].values - S["_cq"].values, .25)), 4), "q10": round(float(np.quantile(S["e"].values - S["_cq"].values, .10)), 4)})
+                if pts: r[cl] = {"base": round(base, 4), "pts": [{**p_, "extra": round(max(0.0, base - p_["q25"]), 4)} for p_ in pts]}
+            return r
+        full_t, early_t = mk_extra(Z), mk_extra(Z.iloc[:half])
+        L = Z.iloc[half:]; ev_ = {"base": [], "adj": []}
+        for cl, t_ in early_t.items():
+            Lc = L[L["cls"] == cl]
+            for y in (0.6, 0.7, 0.8, 0.9):
+                W_ = Lc[Lc["_y"] <= y]
+                if len(W_) < 30: continue
+                ex = 0.0; pts = t_["pts"]
+                for p_ in pts:
+                    if p_["y"] <= y: ex = p_["extra"]
+                rr = (W_["e"].values - W_["_cq"].values)
+                ev_["base"].append((float((rr < 0).mean()), len(W_))); ev_["adj"].append((float((rr < -ex).mean()), len(W_)))
+        wdev = lambda L_: (sum(abs(a_ - .25) * n_ for a_, n_ in L_) / max(1, sum(n_ for _, n_ in L_))) if L_ else None
+        db, da = wdev(ev_["base"]), wdev(ev_["adj"])
+        cond = {"표": full_t, "기준": "낙찰가÷시세 <= y 인 사례의 (낙찰 뒤 시장가 하방 - 칸 q25)", "검증": {"이른절반으로 늦은절반": {"기준편차": None if db is None else round(db, 4), "보정편차": None if da is None else round(da, 4)}}, "use": bool(db is not None and da is not None and da < db - 0.005)}
+        print("  🏆 낙찰 조건 하방:", json.dumps({k_: [(p_["y"], p_["n"], p_["extra"]) for p_ in v_["pts"]] for k_, v_ in full_t.items()}, ensure_ascii=False), "검증", cond["검증"], "use", cond["use"])
+    except Exception as ex:
+        print("  낙찰 조건 하방 건너뜀:", ex)
+    out = {**disp_extra, "기간": [lo, hi], "표본": int(len(D)), "칸": tab, "전체칸": allt, "인기보정": pop_adj, "낙찰조건": cond, "정의": "e = 낙찰 뒤 6개월 시장 실거래 중위 ÷ 시세(est_rule_f) - 1"}
     print("  🧱 근거 두께별 하방 표:", json.dumps({k_: [v_["n"], v_["q25"], v_["q50"]] for k_, v_ in tab.items()}, ensure_ascii=False))
     return out
 
