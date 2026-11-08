@@ -20968,7 +20968,8 @@ function finalizeStaleRows(cb) {
     // 지금 화면에 필요한 것(임장 후보·지도 배지)을 먼저 하고, 나머지(패스·계산 전)는 뒤에서 아주 천천히(8ms씩, 80ms 간격) - 패스 목록을 열면 그때 바로 이어서 함
     var inCache = new Set(); Object.keys(bidVerdictCache).forEach(function(id) { var c = bidVerdictCache[id]; if (c && c.row) inCache.add(c.row); });
     var hi = [], lo = [];
-    todo.forEach(function(r) { (inCache.has(r) || (r.visit && r.visit.go) ? hi : lo).push(r); });
+    /* 2026-11-08(사용자: 다른 탭을 눌렀다 돌아오면 임장 후보가 적어짐): 예전에 후보가 아니던 아파트는 낮은 우선순위로 밀려 빌라 등 다른 탭에 있는 동안 거의 계산되지 않았음 - 입찰이 가까운 아파트는 어느 탭에서든 먼저 계산 */
+    todo.forEach(function(r) { (inCache.has(r) || (r.visit && r.visit.go) || (r.type === 'apt' && r.dday && r.dday.diffDays >= 0) ? hi : lo).push(r); });
     var needAll = bidBoardState.visit !== 'go' && bidBoardState.visit !== 'villa' && document.getElementById('bid-board') && document.getElementById('bid-board').style.display !== 'none';
     todo = needAll ? hi.concat(lo) : hi; var rest = needAll ? [] : lo;
     /* 2026-11-08(사용자: 규제 필터 후 임장 후보가 11개): 다시 계산이 목록 순서라 지금 화면에서 보는 입찰이 가까운 아파트가 뒤에 밀려, 열자마자 옛 판정(11건)이 보이다가 5분에 걸쳐 늘었음 - 아파트·입찰 가까운 순(지난 입찰은 맨 뒤)으로 먼저 계산 */
@@ -21652,7 +21653,7 @@ function bbResetDrawer() {
 function setLiteVisit(v) { bbResetDrawer(); var s0 = bidBoardState, wasVilla = s0.visit === 'villa'; if (v !== 'villa' && v !== 'fav') s0.aptVisit = v; s0.visit = v;
     if (v !== 'villa' && String(s0.region || '').indexOf('g:') === 0) s0.region = '';
     if (v === 'fav') s0.region = '';
-    if (s0.region && (wasVilla !== (v === 'villa')) && !bidBoardRows.some(function(r) { return (r.type === 'villa') === (v === 'villa') && regionMatch(r, s0.region); })) s0.region = '';  bidBoardState.liteLimit = 120; renderBidBoard(); if (v === 'pass' || v === 'all' || v === 'fav') setTimeout(function() { try { finalizeStaleRows(); } catch (e) {} }, 50); }
+    if (s0.region && (wasVilla !== (v === 'villa')) && !bidBoardRows.some(function(r) { return (r.type === 'villa') === (v === 'villa') && regionMatch(r, s0.region); })) s0.region = '';  bidBoardState.liteLimit = 120; renderBidBoard(); if (v === 'go' || v === 'pass' || v === 'all' || v === 'fav') setTimeout(function() { try { finalizeStaleRows(); } catch (e) {} }, 50); }
 // 열 머리글을 누르면 그 값으로 오름차순 ↔ 내림차순(2026-10, 사용자: "순위 표기보다 항목별 오름·내림차순 정렬을 직접 고르게"). 값이 없는 물건은 방향과 상관없이 맨 아래
 var LITE_COLS = {
     verdict: { label: '판정', first: 1, val: function(r) { return r.visit.go ? 0 : 1; } },
