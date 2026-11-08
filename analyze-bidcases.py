@@ -2068,7 +2068,11 @@ def risk_table(R0, now):
                 for y in grid:
                     S = g_[g_["_y"] <= y]
                     if len(S) >= 60: pts.append({"y": y, "n": int(len(S)), "q25": round(float(np.quantile(S["e"].values - S["_cq"].values, .25)), 4), "q10": round(float(np.quantile(S["e"].values - S["_cq"].values, .10)), 4)})
-                if pts: r[cl] = {"base": round(base, 4), "pts": [{**p_, "extra": round(max(0.0, base - p_["q25"]), 4)} for p_ in pts]}
+                base50 = float(np.median(g_["e"].values))
+                for p_ in pts:
+                    S50 = g_[g_["_y"] <= p_["y"]]
+                    p_["m50"] = round(float(np.median(S50["e"].values)), 4); p_["shift"] = round(p_["m50"] - base50, 4)   # shift = 낙찰 조건 중앙 변화(전체 중앙 대비)
+                if pts: r[cl] = {"base": round(base, 4), "base50": round(base50, 4), "pts": [{**p_, "extra": round(max(0.0, base - p_["q25"]), 4)} for p_ in pts]}
             return r
         full_t, early_t = mk_extra(Z), mk_extra(Z.iloc[:half])
         L = Z.iloc[half:]; ev_ = {"base": [], "adj": []}
@@ -2082,10 +2086,22 @@ def risk_table(R0, now):
                     if p_["y"] <= y: ex = p_["extra"]
                 rr = (W_["e"].values - W_["_cq"].values)
                 ev_["base"].append((float((rr < 0).mean()), len(W_))); ev_["adj"].append((float((rr < -ex).mean()), len(W_)))
+        sh_b, sh_a = [], []
+        for cl, t_ in early_t.items():
+            Lc = L[L["cls"] == cl]
+            if not t_.get("pts"): continue
+            for y in (0.6, 0.7, 0.8, 0.9):
+                W_ = Lc[Lc["_y"] <= y]
+                if len(W_) < 30: continue
+                sh = 0.0
+                for p_ in t_["pts"]:
+                    if p_["y"] <= y: sh = p_["shift"]
+                real = float(np.median(W_["e"].values)); e0 = float(np.median(Lc["e"].values))   # 낙찰 건 실제 중앙 vs 전체 중앙(보정 없음) vs 전체 중앙+shift(보정)
+                sh_b.append((abs(real - e0), len(W_))); sh_a.append((abs(real - (e0 + sh)), len(W_)))
         wdev = lambda L_: (sum(abs(a_ - .25) * n_ for a_, n_ in L_) / max(1, sum(n_ for _, n_ in L_))) if L_ else None
         db, da = wdev(ev_["base"]), wdev(ev_["adj"])
-        cond = {"표": full_t, "기준": "낙찰가÷시세 <= y 인 사례의 (낙찰 뒤 시장가 하방 - 칸 q25)", "검증": {"이른절반으로 늦은절반": {"기준편차": None if db is None else round(db, 4), "보정편차": None if da is None else round(da, 4)}}, "use": bool(db is not None and da is not None and da < db - 0.005)}
-        print("  🏆 낙찰 조건 하방:", json.dumps({k_: [(p_["y"], p_["n"], p_["extra"]) for p_ in v_["pts"]] for k_, v_ in full_t.items()}, ensure_ascii=False), "검증", cond["검증"], "use", cond["use"])
+        cond = {"표": full_t, "기준": "낙찰가÷시세 <= y 인 사례의 (낙찰 뒤 시장가 하방 - 칸 q25)", "검증": {"이른절반으로 늦은절반": {"기준편차": None if db is None else round(db, 4), "보정편차": None if da is None else round(da, 4)}}, "use": bool(db is not None and da is not None and da < db - 0.005), "useShift": bool(sh_b and (sum(x * n for x, n in sh_a) / sum(n for _, n in sh_a)) < (sum(x * n for x, n in sh_b) / sum(n for _, n in sh_b)) - 0.002), "shiftCheck": {"보정없음": round(sum(x * n for x, n in sh_b) / max(1, sum(n for _, n in sh_b)), 4), "보정": round(sum(x * n for x, n in sh_a) / max(1, sum(n for _, n in sh_a)), 4)}}
+        print("  🏆 낙찰 조건 하방:", json.dumps({k_: [(p_["y"], p_["n"], p_["extra"]) for p_ in v_["pts"]] for k_, v_ in full_t.items()}, ensure_ascii=False), "검증", cond["검증"], "use", cond["use"], "shift", cond["useShift"], cond["shiftCheck"], {k_: [(p_["y"], p_["shift"]) for p_ in v_["pts"]] for k_, v_ in full_t.items()})
     except Exception as ex:
         print("  낙찰 조건 하방 건너뜀:", ex)
     out = {**disp_extra, "기간": [lo, hi], "표본": int(len(D)), "칸": tab, "전체칸": allt, "인기보정": pop_adj, "낙찰조건": cond, "정의": "e = 낙찰 뒤 6개월 시장 실거래 중위 ÷ 시세(est_rule_f) - 1"}
