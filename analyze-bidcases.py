@@ -2119,6 +2119,7 @@ def risk_table(R0, now):
         #    shift는 지역등급 전체 중앙 대비(앱 예상매도가가 이미 가정한 값 기준). 시간순 검증: 늦은 낙찰 건에서 '지역등급 shift' vs '지역등급×근거 shift' 중 실제 중앙에 더 가까운 쪽이 이길 때만 useEv
         evb = lambda x: "0건" if str(x).startswith("0건") else str(x)
         Z["_evb"] = [evb(x_) for x_ in Z["ev"]]
+        L = Z.iloc[half:]   # _evb 열을 더한 뒤 늦은 절반을 다시 잘라 씀(이전 L에는 열이 없었음)
         def mk_ev(G, base_t):
             r = {}
             for (cl, eb), g_ in G.groupby(["cls", "_evb"]):
