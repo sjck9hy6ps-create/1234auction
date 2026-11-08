@@ -23109,11 +23109,11 @@ setInterval(function() {
    바뀐 사건만 골라 화면에 반영함. 보관본(IndexedDB)과 서버 버전이 같으면 가벼운 확인 한 번으로 끝나 속도 변화 없음.
    입력 중(글상자·입력칸에 커서)이면 입력이 지워지지 않게 화면 갱신만 다음 확인으로 미룸. */
 /* 🆕 새 사건 자동 계산(2026-11-08, 사용자: 자동수집 끝에 '입찰후보 새로고침' 안내가 나오는데 새로고침하면 재계산으로 로딩이 느려 불필요) -
-   확장 등 앱 밖에서 새 사건이 들어오면 전체 보드를 다시 돌리지 않고 새 사건만 지역 자료를 받아 계산해 목록에 끼워 넣고, 저장본에도 남김. 보드 계산 중이면 끝날 때까지 기다렸다가(최대 3회) 계산 */
+   확장 등 앱 밖에서 새 사건이 들어오면 전체 보드를 다시 돌리지 않고 새 사건만 지역 자료를 받아 계산해 목록에 끼워 넣고, 저장본에도 남김. 보드 계산 중이면 끝날 때까지 기다렸다가(5초마다, 최대 5분) 계산 */
 async function addNewBoardRows(newAs, tries) {
     tries = tries || 0;
     if (!Array.isArray(newAs) || !newAs.length || !bidBoardRows.length) return 0;
-    if (bidBoardRunning) { if (tries < 3) setTimeout(function() { addNewBoardRows(newAs, tries + 1); }, 20000); return 0; }
+    if (bidBoardRunning) { if (tries < 60) setTimeout(function() { addNewBoardRows(newAs, tries + 1).then(function(n) { if (n) { try { listingToast('🆕 새 사건 ' + n + '건을 입찰후보에 계산해 넣었어요'); } catch (e) {} } }); }, 5000); return 0; }   // 보드 계산이 끝날 때까지 5초마다 확인(최대 5분)
     var have = {}; bidBoardRows.forEach(function(r) { have[r.id] = 1; });
     var cands = newAs.filter(function(a) { return a && !have[a.id] && isBidBoardCandidate(a); });
     if (!cands.length) return 0;
