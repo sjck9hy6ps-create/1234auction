@@ -14,7 +14,9 @@ await page.waitForTimeout(5000);
 await page.addScriptTag({ path: 'scripts/lib/asof-harness-cases.js' });
 await page.evaluate(() => { try { loadSaleRuleParams(); } catch (e) {} });
 await page.evaluate(() => { try { loadWinbidModel(); } catch (e) {} });
-try { await page.waitForFunction(() => typeof winbidModel !== 'undefined' && !!winbidModel, null, { timeout: 90000 }); } catch (e) { console.log('낙찰가 모델을 못 받음 - 낙찰가·추천가 채점 불가'); }
+// 정적 파일(/winbid-model.json)이 먼저 도착하면 위험 표·종합 시세 정보가 없는 옛 모델이라, 서버가 준 최신 모델(riskTable 포함)이 올 때까지 기다림(2026-11-08 수정)
+try { await page.waitForFunction(() => typeof winbidModel !== 'undefined' && !!winbidModel && !!winbidModel.riskTable && !!winbidModel.estStack, null, { timeout: 150000 }); } catch (e) { console.log('최신 낙찰가 모델을 못 받음 - 채점이 옛 모델 기준일 수 있음'); }
+console.log('낙찰가 모델:', await page.evaluate(() => winbidModel ? JSON.stringify({ gen: winbidModel.generatedAt, estStack: !!winbidModel.estStack, risk: !!winbidModel.riskTable, cond: !!(winbidModel.riskTable && winbidModel.riskTable['낙찰조건'] && winbidModel.riskTable['낙찰조건'].use) }) : '없음'));
 await page.waitForTimeout(4000);
 const plan = await page.evaluate(([from, pf]) => {
   const cs = bidCaseList.filter((c) => /아파트/.test(c.propertyType || '') && c.saleDate >= from && c.finalBidPrice > 0 && c.minBidPrice > 0 && c.areaM2 > 0);
