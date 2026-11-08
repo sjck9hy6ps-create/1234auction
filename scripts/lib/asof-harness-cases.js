@@ -57,7 +57,7 @@
             let mkt = null, mktN = 0;
             try {
               const s0 = new RD(c.saleDate + 'T00:00:00+09:00').getTime(), s1 = s0 + 183 * 864e5;
-              const ap0 = (region.find((x) => x.dong === c.dong && String(x.bunji) === String(c.bunji))) || null;
+              const ap0 = (region.find((x) => x.latest && x.latest.dong === c.dong && String(x.latest.bunji) === String(c.bunji))) || null;   // 단지 객체엔 동·번지가 latest 안에만 있음
               if (ap0) { const am = (ap0.__ot || []).filter((t) => Math.abs((+t.area || 0) - c.areaM2) <= 3 && !t.cancelled).map((t) => ({ ms: new RD(t.year, t.month - 1, t.day).getTime(), p: parseInt(String(t.amount).replace(/,/g, ''), 10) })).filter((t) => t.ms >= s0 && t.ms <= s1 && t.p > 0).map((t) => t.p).sort((x, y) => x - y); mktN = am.length; if (am.length) mkt = am.length % 2 ? am[(am.length - 1) / 2] : (am[am.length / 2 - 1] + am[am.length / 2]) / 2; }
             } catch (e) {}
             const w = row && row.winbid;
