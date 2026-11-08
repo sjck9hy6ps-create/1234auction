@@ -36,7 +36,7 @@ for c in ("서울", "경기·인천", "지방"):
     if ea: ba += float(np.mean(ea)) * len(ea); bb += float(np.mean(eb)) * len(eb); nn += len(ea)
 use_c = {}
 for c, v in out.items():
-    ch = v["check"]; use_c[c] = bool(v["pct"] is not None and ch["n"] >= 100 and ch["평균오차보정"] is not None and ch["평균오차보정"] < ch["평균오차없음"] - 0.002)
+    ch = v["check"]; use_c[c] = bool(v["pct"] is not None and ch["n"] >= 100 and ch["평균오차보정"] is not None and ch["평균오차보정"] < ch["평균오차없음"])   # 2026-11-08 사용자 방침: 결과가 비슷해도 시장 흐름을 따르는 근거식이 더 정확하면 적용 - 늦은 구간 평균 오차가 줄기만 하면 use
 payload = {"generatedAt": now.isoformat(), "use": any(use_c.values()), "cls": {c: {"pct": v["pct"], "n": v["n"], "on": use_c[c], "check": v["check"]} for c, v in out.items()}}
 # 앱은 cls[c].pct만 보므로 검증 통과한 등급만 pct를 남김
 for c in list(payload["cls"].keys()):
