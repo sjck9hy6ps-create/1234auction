@@ -951,6 +951,16 @@ def crowd_features(D, use_region=False):
     X["regionf"] = D["region"].fillna("?").astype(str).values
     rc = D["region"].map(lambda r: "서울" if str(r).startswith("서울") else ("경기·인천" if str(r)[:2] in ("경기", "인천") else "지방"))
     X["rc"] = rc.values; X["rclb"] = rc.values + "|" + lbc.values
+    # 🌊 생활권 흐름(2026-11-08, 사용자: 생활권이 수익성이 있어야 입찰자가 몰림) - 낙찰가 모델의 flowM·flowL·flowS와 같은 정의(앱 winbidFlowKeys와 같은 키): 수도권은 법정동·시군구, 지방은 단지, 가격 흐름 × 거래량 흐름
+    def _b5(v): return "-" if v is None or not np.isfinite(v) else ("dn2" if v <= -0.04 else ("dn1" if v <= -0.01 else ("fl" if v <= 0.01 else ("up1" if v <= 0.04 else "up2"))))
+    def _b3(v): return "-" if v is None or not np.isfinite(v) else ("dn" if v <= -0.03 else ("up" if v >= 0.03 else "fl"))
+    def _bv(v): return "-" if v is None or not np.isfinite(v) else ("vd" if v <= -0.2 else ("vu" if v >= 0.2 else "vf"))
+    def _col(n): return pd.to_numeric(D[n], errors="coerce") if n in D.columns else pd.Series(np.nan, index=D.index)
+    fcls = D["flow_cls"].fillna("?") if "flow_cls" in D.columns else pd.Series("?", index=D.index)
+    fd, fdv, fs, fsv, fc, fcv = _col("flow_dong"), _col("flow_dong_v"), _col("flow_sgg"), _col("flow_sgg_v"), _col("flow_cx"), _col("flow_cx_v")
+    X["flowM"] = [("수도권|동|" + _b5(a_) + "|" + _bv(av_) if (c_ == "수도권" and (np.isfinite(a_) or np.isfinite(av_))) else ("수도권|시군구|" + _b5(b_) + "|" + _bv(bv_) if c_ == "수도권" else "-")) for c_, a_, av_, b_, bv_ in zip(fcls, fd, fdv, fs, fsv)]
+    X["flowL"] = [("지방|단지|" + _b3(a_) + "|" + _bv(av_) if c_ == "지방" else "-") for c_, a_, av_ in zip(fcls, fc, fcv)]
+    X["flowS"] = [str(c_) + "|" + _b5(b_) + "|" + _bv(bv_) for c_, b_, bv_ in zip(fcls, fs, fsv)]
     if use_region:
         X["region"] = D["region"].fillna("?").astype(str)
     return X
@@ -989,7 +999,9 @@ def crowd_item_model(R, now):
     last = pd.to_datetime(str(int(D["sale"].max())), format="%Y%m%d"); cut = int((last - pd.DateOffset(months=12)).strftime("%Y%m%d"))
     tr = (D["sale"] < cut).values; te = ~tr
     FACT0 = list(CROWD_FACTORS)
-    VAR = {"물건 조건만": FACT0, "+권역": FACT0 + CROWD_RC_FACTORS, "+법정동": FACT0 + [("dong", 40)], "+시군구+법정동": FACT0 + [("regionf", 120), ("dong", 40)], "+권역+시군구+법정동": FACT0 + CROWD_RC_FACTORS + [("regionf", 120), ("dong", 40)]}
+    VAR = {"물건 조건만": FACT0, "+권역": FACT0 + CROWD_RC_FACTORS, "+법정동": FACT0 + [("dong", 40)], "+시군구+법정동": FACT0 + [("regionf", 120), ("dong", 40)], "+권역+시군구+법정동": FACT0 + CROWD_RC_FACTORS + [("regionf", 120), ("dong", 40)],
+           "+생활권 흐름": FACT0 + [("flowM", 60), ("flowL", 60), ("flowS", 60)],
+           "+시군구+법정동+생활권 흐름": FACT0 + [("regionf", 120), ("dong", 40), ("flowM", 60), ("flowL", 60), ("flowS", 60)]}
     rc_te = X.loc[te, "rc"].values
     def bias_by_class(pp):
         bn_ = np.exp(pp); ed = np.quantile(bn_, np.linspace(0, 1, 13)); pr = np.zeros(len(bn_)); Bt = D["bidders"].values[te].astype(float)
@@ -1014,6 +1026,10 @@ def crowd_item_model(R, now):
     base_auc = res_v["물건 조건만"]["auc"]
     best_nm = max(res_v, key=lambda k: res_v[k]["auc"])
     use_pick = best_nm if res_v[best_nm]["auc"] >= base_auc + 0.002 else "물건 조건만"
+    # 2026-11-08(사용자 방침: 시장 흐름을 따르는 근거식이면 결과가 비슷해도 적용): 생활권 흐름을 넣은 모델이 지금 선택한 모델보다 AUC가 0.001 넘게 나쁘지 않으면 흐름 포함 모델을 씀
+    _fl = "+시군구+법정동+생활권 흐름"
+    if _fl in res_v and use_pick != _fl and res_v[_fl]["auc"] >= res_v[use_pick]["auc"] - 0.001:
+        print(f"  → 생활권 흐름 포함 모델로 변경: {use_pick} {res_v[use_pick]['auc']} → {_fl} {res_v[_fl]['auc']}"); use_pick = _fl
     m, p_te, CF = preds[use_pick]
     print("  → 선택:", use_pick)
     auc, auc_r = res_v[use_pick]["auc"], res_v["+시군구+법정동"]["auc"]
