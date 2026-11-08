@@ -20975,9 +20975,11 @@ function finalizeStaleRows(cb) {
     var _pri = function(r) { var d = r.dday && r.dday.diffDays != null ? r.dday.diffDays : 9999, up = d >= 0; return (r.type === 'apt' ? 0 : 1) * 100000 + (up ? 0 : 50000) + (up ? d : 0); };
     todo = todo.map(function(r) { return { r: r, k: _pri(r) }; }).sort(function(x, y) { return x.k - y.k; }).map(function(x) { return x.r; });
     _fsrBusy = true; var i = 0;
+    var nUpFs = todo.filter(function(r) { return r.type === 'apt' && r.dday && r.dday.diffDays >= 0; }).length, fsMsg = '입찰 가까운 아파트를 새 기준으로 다시 판정하는 중이라 후보 수가 늘어나요 ';
     (function step() {
         var t = performance.now();
         while (i < todo.length && performance.now() - t < 12) { try { finalizeBidBoardRow(todo[i]); } catch (e) {} i++; }
+        try { if (nUpFs > 30) { if (i < nUpFs) setBidBoardProgress(fsMsg + i + '/' + nUpFs); else { var pgF = document.getElementById('bb-progress'); if (pgF && pgF.innerText.indexOf('새 기준으로 다시 판정') >= 0) setBidBoardProgress(''); } } } catch (e) {}
         if (i < todo.length) { setTimeout(step, 16); return; }
         _fsrBusy = false;
         try { if (document.getElementById('bid-board').style.display !== 'none') renderBidBoard(); if (typeof bidDrawerId !== 'undefined' && bidDrawerId) renderBidDrawer(); } catch (e) {}
