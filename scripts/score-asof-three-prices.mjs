@@ -22,7 +22,7 @@ const rep = {};
   const win = (r) => (r.rec >= r.act ? 1 : 0), br = (f) => Pq.length ? +(Pq.reduce((s, r) => s + (f(r) - win(r)) ** 2, 0) / Pq.length).toFixed(4) : null;
   const bins = {}; Pq.forEach((r) => { const k = Math.min(4, Math.floor(r.probRec * 5)); (bins[k] = bins[k] || []).push(r); });
   o.추천가확률 = { n: Pq.length, 예측평균: Pq.length ? +(Pq.reduce((s, r) => s + r.probRec, 0) / Pq.length).toFixed(3) : null, 실제낙찰: Pq.length ? +(Pq.reduce((s, r) => s + win(r), 0) / Pq.length).toFixed(3) : null, brier보정: br((r) => r.probRec), brier원래: br((r) => r.probRaw ?? r.probRec), 구간: Object.keys(bins).sort().map((k) => ({ 예측: +(bins[k].reduce((s, r) => s + r.probRec, 0) / bins[k].length).toFixed(2), 실제: +(bins[k].reduce((s, r) => s + win(r), 0) / bins[k].length).toFixed(2), n: bins[k].length })) };
-  const Wn = R.filter((r) => r.rec > 0 && r.act > 0 && r.rec >= r.act && r.mkt > 0 && r.saleFinal > 0 && r.margin != null), net = Wn.map((r) => r.margin + (r.mkt - r.saleFinal));
+  const Wn = R.filter((r) => r.rec > 0 && r.act > 0 && r.rec >= r.act && r.mkt > 0 && r.saleFinal > 0 && r.margin != null), net = Wn.map((r) => (r.marginRaw != null ? r.marginRaw : r.margin) + (r.mkt - r.saleFinal));   // 보정 전 마진 + (낙찰 뒤 시장가 - 예상매도가): 낙찰 조건 보정이 들어간 마진을 쓰면 보정분을 두 번 셈
   o.추천가낙찰시 = { n: Wn.length, 예상마진중앙: Wn.length ? Math.round(med(Wn.map((r) => r.margin))) : null, 실현마진중앙: Wn.length ? Math.round(med(net)) : null, 손해비율: Wn.length ? +(100 * net.filter((x) => x < 0).length / Wn.length).toFixed(1) : null, 천만미만비율: Wn.length ? +(100 * net.filter((x) => x < 1000).length / Wn.length).toFixed(1) : null };
   rep[g] = o;
 });
