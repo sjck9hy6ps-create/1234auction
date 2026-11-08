@@ -21438,6 +21438,7 @@ async function refreshBidBoard() {
         var wa = work[wi];
         var c = boardCache[wa.id];
         if (!c || !c.row) continue;
+        if (!wbBaseRuleOk(c.row)) continue;   // 옛 시세 규칙으로 저장된 행은 다시 계산(위 wbBaseRuleOk 설명)
         var fresh = (c.sig === boardBaseSig(wa) || c.sig === boardBaseSig(wa, true)) && nowMs - c.at <= (c.srv ? BOARD_SRV_MAX_AGE : BOARD_CACHE_MAX_AGE);
         try {
             var row = Object.assign({}, c.row, { a: wa, dday: wa.bidDate ? calcAuctionDday(wa.bidDate) : null, fromCache: c.at, stale: !fresh });
@@ -21514,7 +21515,7 @@ async function refreshBidBoard() {
             catch (e) { console.error('입찰후보 계산 실패:', a.id, e); }
         });
         bidBoardRows = bidBoardRows.map(function(r) { return fresh[r.id] || r; });
-        Object.keys(fresh).forEach(function(id) { var f = fresh[id]; if (f && f.a && !(f.verdict === 'nodata' && !f.loaded && f.type && f.a.lat)) boardCache[id] = { sig: boardBaseSig(f.a), at: Date.now(), row: boardRowForCache(f) }; });
+        Object.keys(fresh).forEach(function(id) { var f = fresh[id]; if (f && f.a && winbidModel && wbBaseRuleOk(f) && !(f.verdict === 'nodata' && !f.loaded && f.type && f.a.lat)) boardCache[id] = { sig: boardBaseSig(f.a), at: Date.now(), row: boardRowForCache(f) }; });
         // 입찰후보 계산 중 화면 다시 그리기: 5초에 한 번, 사용자가 방금 누른 직후(2초 안)에는 미룸(클릭이 씹히지 않게)
         if ((Date.now() - lastRender > 5000 && Date.now() - bbLastInteract > 2000) || i === order.length - 1) { renderBidBoard(); lastRender = Date.now(); }
         // 보드 때문에 새로 불러온 지역은 계산이 끝나면 메모리에서 내림(지역당 수 MB - 다시 필요하면 브라우저 저장본에서 금방 불러옴)
@@ -21577,6 +21578,12 @@ function srvBoardParts() {
     })();
     return window.__srvBoardP;
 }
+/* 저장 계산의 '낙찰가 모델용 시세 규칙'이 지금 모델과 맞는지(2026-11-08, 사용자 크롬에서 임장 후보가 6건으로 줄던 문제): 서버(Supabase)가 멈춰 있던 동안 낙찰가 모델 없이 계산된 행은 옛 규칙(q40)으로 저장돼,
+   지역 자료가 없는 상태에선 낙찰가를 못 구해 '낙찰 가능성을 계산하지 못했어요'가 됐고, 서버의 정상 저장본보다 '더 최근'이라 계속 우선 사용됐음. 모델이 아직 안 왔으면 판단하지 않음(true) */
+function wbBaseRuleOk(r) {
+    var b = r && r.wbBase; if (!b || !winbidModel || !winbidModel.estRule) return true;
+    return b.rule === (winbidModel.estFlow ? 'ruleF' : 'rule') || (b.rule === 'stack' && !!winbidModel.estStack);
+}
 async function mergeServerBoardCache(local, onlyFirst) {
     try {
         var parts;
@@ -21584,7 +21591,7 @@ async function mergeServerBoardCache(local, onlyFirst) {
         else { parts = await srvBoardParts(); }
         if (!parts) return local;
         var merged = 0;
-        parts.forEach(function(p) { Object.keys((p && p.items) || {}).forEach(function(id) { var sv = p.items[id], lc = local[id]; if (!lc || !lc.row || (sv.at || 0) > (lc.at || 0)) { local[id] = sv; merged++; } }); });
+        parts.forEach(function(p) { Object.keys((p && p.items) || {}).forEach(function(id) { var sv = p.items[id], lc = local[id]; if (!lc || !lc.row || (sv.at || 0) > (lc.at || 0) || (!wbBaseRuleOk(lc.row) && wbBaseRuleOk(sv.row))) { local[id] = sv; merged++; } }); });
         console.log('미리 계산된 입찰후보 ' + merged + '건 받음');
     } catch (e) { console.warn('미리 계산 결과 못 받음(직접 계산):', e && e.message); }
     return local;
@@ -23174,7 +23181,7 @@ async function addNewBoardRows(newAs, tries) {
     if (!made.length) return 0;
     var cur = {}; bidBoardRows.forEach(function(r) { cur[r.id] = 1; });
     made.forEach(function(r) { if (!cur[r.id]) bidBoardRows.push(r); else bidBoardRows = bidBoardRows.map(function(x) { return x.id === r.id ? r : x; }); });
-    try { var bc = (await listIdbOp('readonly', function(st) { return st.get(BOARD_CACHE_KEY); })) || {}; made.forEach(function(f) { if (f && f.a && !(f.verdict === 'nodata' && !f.loaded && f.type && f.a.lat)) bc[f.id] = { sig: boardBaseSig(f.a), at: Date.now(), row: boardRowForCache(f) }; }); await listIdbOp('readwrite', function(st) { return st.put(bc, BOARD_CACHE_KEY); }); } catch (e) {}
+    try { var bc = (await listIdbOp('readonly', function(st) { return st.get(BOARD_CACHE_KEY); })) || {}; made.forEach(function(f) { if (f && f.a && winbidModel && wbBaseRuleOk(f) && !(f.verdict === 'nodata' && !f.loaded && f.type && f.a.lat)) bc[f.id] = { sig: boardBaseSig(f.a), at: Date.now(), row: boardRowForCache(f) }; }); await listIdbOp('readwrite', function(st) { return st.put(bc, BOARD_CACHE_KEY); }); } catch (e) {}
     try { renderBidBoard(); } catch (e) {}
     try { renderAuctionMarkers(); } catch (e) {}
     return made.length;
