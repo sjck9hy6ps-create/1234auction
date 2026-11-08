@@ -53,7 +53,15 @@
             const a2 = { id: 'asofc_' + c.id, propType: 'apt', addr: c.addrJibun, dong: c.dong, bunji: c.bunji, name: (ap && ap.name) || c.buildingName || '', pyung: c.areaM2 / 3.305785, floor: c.floor, lat: c.lat, lon: c.lon,
               bCode: lawd + '10100', bidDate: c.saleDate, minBid: String(Math.round((c.minBidPrice || 0) / 10000)), appraisal: String(Math.round((c.appraisalPrice || 0) / 10000)), buildYear: parseInt(l.build_year) || null };
             let row = null, err = null; try { row = computeBidBoardRow(a2); } catch (e) { err = String(e.message || e).slice(0, 80); }
-            rows.push({ id: c.id, lawd, cutoff: new RD(C).toISOString().slice(0, 10), sale: row && (row.saleApp != null ? row.saleApp : row.sale), stk: row && row.saleStack ? row.sale : null, wb: row && row.wbBase ? row.wbBase.est : null, wbRule: row && row.wbBase ? row.wbBase.rule : null, by: row && (row.saleSimBy || ''), n6: row && row.ownStats ? row.ownStats.n6 : null, err });
+            // 🎯 3개 가격 채점용(2026-11-08): 낙찰 뒤 6개월 같은 단지·평형(±3㎡) 시장 실거래 중위값(정답), 실제 낙찰가, 예상 낙찰가·추천가·낙찰 가능성
+            let mkt = null, mktN = 0;
+            try {
+              const s0 = new RD(c.saleDate + 'T00:00:00+09:00').getTime(), s1 = s0 + 183 * 864e5;
+              const ap0 = (region.find((x) => x.dong === c.dong && String(x.bunji) === String(c.bunji))) || null;
+              if (ap0) { const am = (ap0.__ot || []).filter((t) => Math.abs((+t.area || 0) - c.areaM2) <= 3 && !t.cancelled).map((t) => ({ ms: new RD(t.year, t.month - 1, t.day).getTime(), p: parseInt(String(t.amount).replace(/,/g, ''), 10) })).filter((t) => t.ms >= s0 && t.ms <= s1 && t.p > 0).map((t) => t.p).sort((x, y) => x - y); mktN = am.length; if (am.length) mkt = am.length % 2 ? am[(am.length - 1) / 2] : (am[am.length / 2 - 1] + am[am.length / 2]) / 2; }
+            } catch (e) {}
+            const w = row && row.winbid;
+            rows.push({ id: c.id, saleDate: c.saleDate, act: Math.round((c.finalBidPrice || 0) / 1e4), minB: row ? row.minBid : null, fails: row ? row.fails : null, mkt, mktN, wbP: w ? w.price : null, wbPred: w ? w.pred : null, wbEst: w ? w.est : null, rec: row ? row.recBid : null, margin: row ? row.margin : null, recAggr: row ? row.recAggr : null, verdict: row ? row.verdict : null, probRec: w ? w.probRec : null, probRaw: w ? w.probRecRaw : null, saleFinal: row ? row.sale : null, lawd, cutoff: new RD(C).toISOString().slice(0, 10), sale: row && (row.saleApp != null ? row.saleApp : row.sale), stk: row && row.saleStack ? row.sale : null, wb: row && row.wbBase ? row.wbBase.est : null, wbRule: row && row.wbBase ? row.wbBase.rule : null, by: row && (row.saleSimBy || ''), n6: row && row.ownStats ? row.ownStats.n6 : null, err });
           });
         } finally {
           window.Date = RD; allAptList = origList; buildAptMatchIndex();

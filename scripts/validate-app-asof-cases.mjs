@@ -13,6 +13,8 @@ await page.waitForFunction(() => typeof auctionList !== 'undefined' && auctionLi
 await page.waitForTimeout(5000);
 await page.addScriptTag({ path: 'scripts/lib/asof-harness-cases.js' });
 await page.evaluate(() => { try { loadSaleRuleParams(); } catch (e) {} });
+await page.evaluate(() => { try { loadWinbidModel(); } catch (e) {} });
+try { await page.waitForFunction(() => typeof winbidModel !== 'undefined' && !!winbidModel, null, { timeout: 90000 }); } catch (e) { console.log('낙찰가 모델을 못 받음 - 낙찰가·추천가 채점 불가'); }
 await page.waitForTimeout(4000);
 const plan = await page.evaluate(([from, pf]) => {
   const cs = bidCaseList.filter((c) => /아파트/.test(c.propertyType || '') && c.saleDate >= from && c.finalBidPrice > 0 && c.minBidPrice > 0 && c.areaM2 > 0);
@@ -32,3 +34,4 @@ await browser.close().catch(() => {});
 fs.writeFileSync(OUT, JSON.stringify(rows));
 console.log('rows', rows.length, '오류 행', rows.filter((r) => r.err).length, '보정 적용', rows.filter((r) => r.stk).length, '실패 지역', failed.length);
 if (!rows.length) process.exit(0);
+

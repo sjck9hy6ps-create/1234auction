@@ -55,3 +55,13 @@ jobs:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
         run: python save-apt-case-stack.py aptcases
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: 세 가격 채점(학습에 안 쓴 구간)
+        run: node scripts/score-asof-three-prices.mjs aptcases
+      - uses: actions/upload-artifact@v4
+        with:
+          name: three-price-score
+          path: three-price-score.json
+          retention-days: 30
