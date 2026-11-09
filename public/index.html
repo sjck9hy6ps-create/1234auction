@@ -3490,20 +3490,24 @@ var showHomestay = false, homestayAgg = null, homestayPts = null, homestayLoadin
 /* 🏅 입지 TOP10 (2026-11-09, 사용자: 입지를 좌표 기반으로 뽑아 지도에 반경으로 상위 10곳 표시, API 호출·비용 없이)
    서버(compute-location-index.py, 매주)가 만든 정적 파일 /location-index.json 하나만 읽음 - 지도 SDK의 원(Circle)은 브라우저에서 그리므로 추가 호출 없음.
    입지 = 실거래가 매긴 위치 가치(면적·연식·층 보정한 기준 물건 평당가, 좌표 격자 + 이웃 평균). 지금 지도에 보이는 범위에서 높은 순 10곳(서로 1.2km 이상 떨어진 곳). */
-var showLocation = false, locIndex = null, locLoading = false, locOverlays = [];
+var showLocation = false, locIndex = null, locLoading = false, locOverlays = [], locShapes = [], locPickKey = '', locSorted = {}, locRT = null;
 var LOC_STYLE = { apt: { name: '아파트', col: ['#dc2626', '#ea580c', '#f59e0b'] }, villa: { name: '빌라', col: ['#047857', '#0d9488', '#0891b2'] } };   // 아파트=붉은 계열, 빌라=초록 계열(도시민박 보라와 겹치지 않게)
 function toggleLocationLayer() {
     showLocation = !showLocation;
     var b = document.getElementById('loc-quick-btn'); if (b) b.classList.toggle('active', showLocation);
     renderLocationLayer();
 }
+/* 2026-11-10(사용자: 지도를 확대·축소·이동할 때 끊김) - 이벤트마다 원·이름표를 지우고 다시 만들던 것을 고침:
+   ① 확대·이동 이벤트는 120ms 모아서 한 번만(scheduleLocationRender) ② 격자를 처음 한 번만 점수순으로 정렬 ③ 상위 10곳이 그대로면 도형을 다시 만들지 않고 반경만 조절
+   ④ 확대해서 점선 윤곽(실제 입지 범위)이 화면 밖으로 너무 커지면(그려도 안 보임) 그리지 않음 */
+function scheduleLocationRender(ms) { clearTimeout(locRT); locRT = setTimeout(renderLocationLayer, ms == null ? 120 : ms); }
 /* 2026-11-10(사용자: 빌라 탭을 볼 땐 빌라만, 아파트 탭을 볼 땐 아파트만) - 지금 보고 있는 유형을 자동으로 따라감: 입찰후보 창이 열려 있으면 그 창의 탭(빌라/아파트), 아니면 지도의 유형 필터(연립다세대/아파트) */
 function locTypeNow() {
     var bb = document.getElementById('bid-board');
     if (bb && bb.style.display && bb.style.display !== 'none') return bidBoardState.visit === 'villa' ? 'villa' : 'apt';
     return currentTypeFilter === 'villa' ? 'villa' : 'apt';
 }
-function clearLocationOverlays() { locOverlays.forEach(function(o) { o.setMap(null); }); locOverlays = []; }
+function clearLocationOverlays() { locShapes.forEach(function(sh) { if (sh.ring) sh.ring.setMap(null); sh.circ.setMap(null); sh.ov.setMap(null); }); locShapes = []; locOverlays = []; locPickKey = ''; }
 function locMetersPerPx(la, lo) {   // 지금 지도 축척에서 화면 1픽셀이 실제 몇 m인지(지도 SDK 좌표 변환으로 계산 - 추가 호출 없음). 계산 못 하면 null
     try {
         var pr = map.getProjection(), a = pr.containerPointFromCoords(new kakao.maps.LatLng(la, lo)), b = pr.containerPointFromCoords(new kakao.maps.LatLng(la, lo + 0.001)), dpx = Math.abs(b.x - a.x);
@@ -3512,12 +3516,12 @@ function locMetersPerPx(la, lo) {   // 지금 지도 축척에서 화면 1픽셀
     return null;
 }
 function locKm(la1, lo1, la2, lo2) { var dx = (lo1 - lo2) * 111 * Math.cos(la1 * Math.PI / 180), dy = (la1 - la2) * 111; return Math.sqrt(dx * dx + dy * dy); }
+function locSortedFor(t) { if (!locSorted[t]) { var T = locIndex && locIndex.types && locIndex.types[t]; locSorted[t] = (T && T.cells) ? T.cells.slice().sort(function(a, b) { return b[2] - a[2]; }) : []; } return locSorted[t]; }
 function renderLocationLayer() {
-    clearLocationOverlays();
     var bar = document.getElementById('loc-bar'); if (bar) bar.style.display = showLocation ? 'flex' : 'none';
+    if (!showLocation || !map) { clearLocationOverlays(); return; }
     var curT = locTypeNow(), tl = document.getElementById('loc-type'); if (tl) { tl.textContent = (curT === 'apt' ? '🏢 아파트' : '🏘️ 빌라'); tl.style.background = LOC_STYLE[curT].col[0]; }
     var note = document.getElementById('loc-note');
-    if (!showLocation || !map) return;
     if (!locIndex) {
         if (locLoading) return;
         locLoading = true;
@@ -3525,38 +3529,42 @@ function renderLocationLayer() {
         if (note) note.textContent = '불러오는 중…';
         return;
     }
+    var ST = LOC_STYLE[curT], all = locSortedFor(curT);
+    if (!all.length) { clearLocationOverlays(); if (note) note.textContent = '입지 자료가 아직 없어요(주간 계산 후 표시)'; return; }
     var bnd = map.getBounds(), sw = bnd.getSouthWest(), ne = bnd.getNorthEast();
-    var la0 = sw.getLat(), la1 = ne.getLat(), lo0 = sw.getLng(), lo1 = ne.getLng(), counts = [], missing = false;
-    [curT].forEach(function(t) {
-        var T = locIndex.types && locIndex.types[t], ST = LOC_STYLE[t];
-        if (!T || !T.cells || !T.cells.length) { missing = true; return; }
-        var inView = T.cells.filter(function(c) { var la = c[0] / 1e4, lo = c[1] / 1e4; return la >= la0 && la <= la1 && lo >= lo0 && lo <= lo1; });
-        inView.sort(function(a, b) { return b[2] - a[2]; });
-        var pick = [];
-        for (var i = 0; i < inView.length && pick.length < 10; i++) {   // 같은 유형 안에서 서로 1.2km 이상 떨어진 곳만(한 동네가 10곳을 다 차지하지 않게)
-            var c = inView[i], ok = true;
-            for (var j = 0; j < pick.length; j++) if (locKm(c[0] / 1e4, c[1] / 1e4, pick[j][0] / 1e4, pick[j][1] / 1e4) < 1.2) { ok = false; break; }
-            if (ok) pick.push(c);
-        }
-        counts.push(ST.name + ' ' + pick.length + '곳');
+    var la0 = sw.getLat(), la1 = ne.getLat(), lo0 = sw.getLng(), lo1 = ne.getLng(), pick = [];
+    for (var i = 0; i < all.length && pick.length < 10; i++) {   // 이미 점수순으로 정렬돼 있어 보이는 범위 안에서 위에서부터 10곳(서로 1.2km 이상 떨어진 곳)만 고르면 끝
+        var c = all[i], la = c[0] / 1e4, lo = c[1] / 1e4;
+        if (la < la0 || la > la1 || lo < lo0 || lo > lo1) continue;
+        var ok = true;
+        for (var j = 0; j < pick.length; j++) if (locKm(la, lo, pick[j][0] / 1e4, pick[j][1] / 1e4) < 1.2) { ok = false; break; }
+        if (ok) pick.push(c);
+    }
+    if (note) note.textContent = pick.length ? '보이는 범위 ' + ST.name + ' ' + pick.length + '곳 (기준 물건 평당가 순 · 점선=실제 입지 범위 600m, 색 원=축척에 맞춘 중심부)' : '이 범위에는 ' + ST.name + ' 입지 자료가 없어요';
+    var key = curT + '|' + pick.map(function(c) { return c[0] + ',' + c[1]; }).join(';');
+    var R0 = 600;
+    if (key !== locPickKey) {   // 상위 10곳이 바뀐 때만 도형을 새로 만듦
+        clearLocationOverlays(); locPickKey = key;
         pick.forEach(function(c, k) {
-            var la = c[0] / 1e4, lo = c[1] / 1e4, col = ST.col[k < 3 ? 0 : (k < 6 ? 1 : 2)];
-            /* 2026-11-10(사용자: 확대하면 반경이 너무 큼 - 축척에 맞게 바꾸되 실제 입지 범위는 유지) - 실제 입지 범위(R0=600m, 점수를 계산한 이웃 격자 크기)는 얇은 윤곽선으로 항상 그대로 두고,
-               색이 채워진 강조 원만 화면에서 일정한 크기(약 90px)가 되도록 줄이되 R0의 40%(240m) 아래로는 작아지지 않고 R0(600m)를 넘지도 않음 */
-            var R0 = 600, mpp = locMetersPerPx(la, lo), Rf = mpp ? Math.max(R0 * 0.4, Math.min(R0, mpp * 90)) : R0;
-            var ring = new kakao.maps.Circle({ center: new kakao.maps.LatLng(la, lo), radius: R0, strokeWeight: 1, strokeColor: col, strokeOpacity: 0.55, strokeStyle: 'dash', fillColor: col, fillOpacity: 0 });
-            ring.setMap(map); locOverlays.push(ring);
-            var circ = new kakao.maps.Circle({ center: new kakao.maps.LatLng(la, lo), radius: Rf, strokeWeight: 2, strokeColor: col, strokeOpacity: 0.85, strokeStyle: t === 'villa' ? 'dash' : 'solid', fillColor: col, fillOpacity: 0.14 });
-            circ.setMap(map); locOverlays.push(circ);
+            var la = c[0] / 1e4, lo = c[1] / 1e4, col = ST.col[k < 3 ? 0 : (k < 6 ? 1 : 2)], t = curT, ll = new kakao.maps.LatLng(la, lo);
+            var ring = new kakao.maps.Circle({ center: ll, radius: R0, strokeWeight: 1, strokeColor: col, strokeOpacity: 0.55, strokeStyle: 'dash', fillColor: col, fillOpacity: 0 });
+            var circ = new kakao.maps.Circle({ center: ll, radius: R0, strokeWeight: 2, strokeColor: col, strokeOpacity: 0.85, strokeStyle: t === 'villa' ? 'dash' : 'solid', fillColor: col, fillOpacity: 0.14 });
             var tip = ST.name + ' ' + (k + 1) + '위 입지 · 기준 물건(60~85㎡·11~20년·4~7층) 평당 ' + c[2].toLocaleString() + '만원 · 최근 12개월 ' + ST.name + ' 거래 ' + c[3] + '건(격자) · ' + (c[4] >= 0 ? '지하철역 ' + c[4] + 'm' : '역 정보 없음') + ' · 전국 ' + ST.name + ' 중 상위 ' + Math.max(1, 100 - c[5]) + '%';
             var el = document.createElement('div');
             el.innerHTML = '<div title="' + bbEsc(tip) + '" style="background:' + col + ';color:#fff;border:2px solid #fff;border-radius:14px;padding:2px 8px;font-size:12px;font-weight:800;box-shadow:0 1px 4px rgba(0,0,0,.35);white-space:nowrap;cursor:pointer;">' + (t === 'apt' ? '🏢' : '🏘️') + ' ' + ST.name + ' ' + (k + 1) + '위 · 평당 ' + c[2].toLocaleString() + '만</div>';
             el.addEventListener('click', function(e) { e.stopPropagation(); alert(tip); });
-            var ov = new kakao.maps.CustomOverlay({ position: new kakao.maps.LatLng(la, lo), content: el, yAnchor: t === 'villa' ? 0.1 : 0.9, xAnchor: 0.5, zIndex: 9000 + (t === 'apt' ? 1 : 0), clickable: true });
-            ov.setMap(map); locOverlays.push(ov);
+            var ov = new kakao.maps.CustomOverlay({ position: ll, content: el, yAnchor: t === 'villa' ? 0.1 : 0.9, xAnchor: 0.5, zIndex: 9000 + (t === 'apt' ? 1 : 0), clickable: true });
+            circ.setMap(map); ov.setMap(map);
+            locShapes.push({ la: la, lo: lo, ring: ring, ringOn: false, circ: circ, ov: ov, rf: R0 });
+            locOverlays.push(ring, circ, ov);
         });
+    }
+    /* 축척에 맞춘 반경: 색 원은 화면에서 약 90px(실제 입지 범위 R0의 40%~100% 안), 점선 윤곽은 항상 R0 - 단 화면 밖으로 너무 커지면(2000px 초과) 그리지 않음. 바뀐 것만 반영 */
+    locShapes.forEach(function(sh) {
+        var mpp = locMetersPerPx(sh.la, sh.lo), rf = mpp ? Math.max(R0 * 0.4, Math.min(R0, mpp * 90)) : R0, showRing = !mpp || R0 / mpp <= 2000;
+        if (Math.abs(rf - sh.rf) >= 1) { sh.circ.setRadius(rf); sh.rf = rf; }
+        if (showRing !== sh.ringOn) { sh.ring.setMap(showRing ? map : null); sh.ringOn = showRing; }
     });
-    if (note) note.textContent = missing && !counts.length ? '입지 자료가 아직 없어요(주간 계산 후 표시)' : (counts.length ? '보이는 범위 ' + counts.join(' · ') + ' (각각 기준 물건 평당가 순 · 점선=실제 입지 범위 600m, 색 원=축척에 맞춘 중심부)' : '');
 }
 var HS_STATE = { '활성화': { c: '#e11d48', t: '활성화 ▲' }, '안정': { c: '#0d9488', t: '안정' }, '위축': { c: '#64748b', t: '위축 ▼' }, '표본적음': { c: '#9ca3af', t: '표본 적음' } };
 function toggleHomestayLayer() {
@@ -6155,7 +6163,7 @@ function initMap(lat, lon) {
     // 한 번에 처리함. map이 막 생성된 시점이라야 리스너 등록이 되므로 여기(initMap)에서 호출.
     toggleDongBoundaryMode(document.getElementById('boundary-toggle-btn'));
     updateBadgeScale();
-    kakao.maps.event.addListener(map, 'zoom_changed', function() { updateBadgeScale(); scheduleOverlapResolve(); if (showHomestay) renderHomestayLayer(); if (showLocation) renderLocationLayer(); var th = map.getLevel() >= AUCTION_THIN_LEVEL; if (th !== window.__lastThin) { window.__lastThin = th; try { renderAuctionMarkers(); } catch (e) {} } }); // 후보만 보이는 단계를 넘나들 때 바로 다시 그림
+    kakao.maps.event.addListener(map, 'zoom_changed', function() { updateBadgeScale(); scheduleOverlapResolve(); if (showHomestay) renderHomestayLayer(); if (showLocation) scheduleLocationRender(120); var th = map.getLevel() >= AUCTION_THIN_LEVEL; if (th !== window.__lastThin) { window.__lastThin = th; try { renderAuctionMarkers(); } catch (e) {} } }); // 후보만 보이는 단계를 넘나들 때 바로 다시 그림
     // 경매 등록 물건은 지역 데이터를 기다리지 않고 가장 먼저 불러와서 표시
     // (비교물건 배지 반영을 위해 아파트/빌라 마커도 함께 다시 그림)
     fetchAuctions().then(function() { renderAuctionMarkers(); redrawMarkers(); try { var bb0 = document.getElementById('bid-board'); if (bb0 && bb0.style.display === 'flex' && !bidBoardRows.length && !bidBoardRunning) refreshBidBoard(); } catch (e) {} }); // 입찰후보를 경매 목록보다 먼저 열었으면 목록이 오는 대로 다시 계산
@@ -6176,7 +6184,7 @@ function initMap(lat, lon) {
             loadAllData(c.getLat(), c.getLng()).then(function() { renderAuctionMarkers(); renderBidCaseMarkers(); });
             updateCurrentDongArea(c.getLat(), c.getLng());
             if (showHomestay) renderHomestayLayer();
-            if (showLocation) renderLocationLayer();
+            if (showLocation) scheduleLocationRender(0);
         }, 600); // 2026-10(로딩속도 개선): 지도가 멈춘 뒤 1.2초 기다리던 것을 0.6초로 줄임(같은 지역 안 이동은 캐시로 즉시 처리됨)
     });
 }
