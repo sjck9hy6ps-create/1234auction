@@ -1528,6 +1528,7 @@ body.ui2 #auction-modal.am4 { width:620px; }
          필터패널 안의 기존 bidcasebadge-toggle-btn과 toggleShowBidCaseBadges()가 그대로
          동기화해줌(둘 중 아무거나 눌러도 서로 같이 바뀜). -->
     <button class="geo-tool-btn" id="homestay-quick-btn" onclick="toggleHomestayLayer()" title="🏠 도시민박(공간대여) 배지 표시/숨김 - 증가·감소로 활성도 표시">🏠</button>
+    <button class="geo-tool-btn" id="loc-quick-btn" onclick="toggleLocationLayer()" title="🏅 입지 TOP10 - 지금 보이는 지도에서 실거래가 매긴 입지 가치가 높은 곳 10곳을 반경으로 표시(추가 API 호출 없음)">🏅</button>
 </div>
 <div id="compass-hud">
     <div id="compass-pointer"></div>
@@ -1612,6 +1613,12 @@ body.ui2 #auction-modal.am4 { width:620px; }
             <button class="filter-tab ft-reset" onclick="resetAuctionDateFilter()">초기화</button>
         </div>
     </div>
+</div>
+<div id="loc-bar" style="display:none;position:absolute;top:60px;left:50%;transform:translateX(-50%);z-index:51;background:rgba(17,24,39,0.88);color:#fff;font-size:12px;padding:5px 10px;border-radius:16px;align-items:center;gap:8px;white-space:nowrap;">
+    <b>🏅 입지 TOP10</b>
+    <button id="loc-t-apt" onclick="setLocationType('apt')" style="border:0;border-radius:10px;padding:2px 9px;font-size:12px;font-weight:700;cursor:pointer;">아파트</button>
+    <button id="loc-t-villa" onclick="setLocationType('villa')" style="border:0;border-radius:10px;padding:2px 9px;font-size:12px;font-weight:700;cursor:pointer;">빌라</button>
+    <span id="loc-note" style="color:#cbd5e1;"></span>
 </div>
 <div id="hs-hint" style="display:none;position:absolute;top:100px;left:50%;transform:translateX(-50%);z-index:50;background:rgba(0,0,0,0.75);color:white;font-size:12px;padding:5px 12px;border-radius:14px;pointer-events:none;"></div>
 <div id="dong-boundary-info" style="display:none;position:absolute;top:60px;left:50%;transform:translateX(-50%);z-index:50;background:rgba(0,0,0,0.75);color:white;font-size:12px;font-weight:bold;padding:5px 12px;border-radius:14px;pointer-events:none;"></div>
@@ -3481,6 +3488,56 @@ function toggleNewHighOnlyFilter(btn) {
    행안부 외국인관광 도시민박업 인허가(합법 등록분) - analyze-homestay.py가 매주 집계(signal|__homestay__ 동별 집계, signal|__homestay_pts__ 업소 위치).
    지도를 넓게 볼 땐(레벨 5~8) 법정동별 배지(영업 수·순증), 가까이 볼 땐(레벨 ≤4) 업소 하나하나를 작은 핀으로 표시. 순증 = 최근 1년 신규 허가 − 폐업. */
 var showHomestay = false, homestayAgg = null, homestayPts = null, homestayLoading = false, homestayOverlays = [];
+/* 🏅 입지 TOP10 (2026-11-09, 사용자: 입지를 좌표 기반으로 뽑아 지도에 반경으로 상위 10곳 표시, API 호출·비용 없이)
+   서버(compute-location-index.py, 매주)가 만든 정적 파일 /location-index.json 하나만 읽음 - 지도 SDK의 원(Circle)은 브라우저에서 그리므로 추가 호출 없음.
+   입지 = 실거래가 매긴 위치 가치(면적·연식·층 보정한 기준 물건 평당가, 좌표 격자 + 이웃 평균). 지금 지도에 보이는 범위에서 높은 순 10곳(서로 1.2km 이상 떨어진 곳). */
+var showLocation = false, locIndex = null, locLoading = false, locOverlays = [], locType = 'apt';
+function toggleLocationLayer() {
+    showLocation = !showLocation;
+    var b = document.getElementById('loc-quick-btn'); if (b) b.classList.toggle('active', showLocation);
+    renderLocationLayer();
+}
+function setLocationType(t) { locType = t; renderLocationLayer(); }
+function clearLocationOverlays() { locOverlays.forEach(function(o) { o.setMap(null); }); locOverlays = []; }
+function locKm(la1, lo1, la2, lo2) { var dx = (lo1 - lo2) * 111 * Math.cos(la1 * Math.PI / 180), dy = (la1 - la2) * 111; return Math.sqrt(dx * dx + dy * dy); }
+function renderLocationLayer() {
+    clearLocationOverlays();
+    var bar = document.getElementById('loc-bar'); if (bar) bar.style.display = showLocation ? 'flex' : 'none';
+    ['apt', 'villa'].forEach(function(t) { var e = document.getElementById('loc-t-' + t); if (e) { e.style.background = locType === t ? '#facc15' : '#374151'; e.style.color = locType === t ? '#111827' : '#e5e7eb'; } });
+    var note = document.getElementById('loc-note');
+    if (!showLocation || !map) return;
+    if (!locIndex) {
+        if (locLoading) return;
+        locLoading = true;
+        fetch('/location-index.json').then(function(r) { return r.json(); }).then(function(d) { locIndex = (d && d.types) ? d : { types: {}, empty: true }; locLoading = false; renderLocationLayer(); }).catch(function() { locLoading = false; locIndex = { types: {}, empty: true }; renderLocationLayer(); });
+        if (note) note.textContent = '불러오는 중…';
+        return;
+    }
+    var T = locIndex.types && locIndex.types[locType];
+    if (!T || !T.cells || !T.cells.length) { if (note) note.textContent = '입지 자료가 아직 없어요(주간 계산 후 표시)'; return; }
+    var bnd = map.getBounds(), sw = bnd.getSouthWest(), ne = bnd.getNorthEast();
+    var la0 = sw.getLat(), la1 = ne.getLat(), lo0 = sw.getLng(), lo1 = ne.getLng();
+    var inView = T.cells.filter(function(c) { var la = c[0] / 1e4, lo = c[1] / 1e4; return la >= la0 && la <= la1 && lo >= lo0 && lo <= lo1; });
+    inView.sort(function(a, b) { return b[2] - a[2]; });
+    var pick = [];
+    for (var i = 0; i < inView.length && pick.length < 10; i++) {
+        var c = inView[i], ok = true;
+        for (var j = 0; j < pick.length; j++) if (locKm(c[0] / 1e4, c[1] / 1e4, pick[j][0] / 1e4, pick[j][1] / 1e4) < 1.2) { ok = false; break; }
+        if (ok) pick.push(c);
+    }
+    if (note) note.textContent = pick.length ? '보이는 범위 ' + pick.length + '곳 · 기준 물건 평당가 순(원 반경 600m)' : '이 범위에는 입지 자료가 없어요';
+    pick.forEach(function(c, k) {
+        var la = c[0] / 1e4, lo = c[1] / 1e4, col = k < 3 ? '#dc2626' : (k < 6 ? '#ea580c' : '#2563eb');
+        var circ = new kakao.maps.Circle({ center: new kakao.maps.LatLng(la, lo), radius: 600, strokeWeight: 2, strokeColor: col, strokeOpacity: 0.85, strokeStyle: 'solid', fillColor: col, fillOpacity: 0.12 });
+        circ.setMap(map); locOverlays.push(circ);
+        var tip = (k + 1) + '위 입지 · 기준 물건(60~85㎡·11~20년·4~7층) 평당 ' + c[2].toLocaleString() + '만원 · 최근 12개월 거래 ' + c[3] + '건(격자) · ' + (c[4] >= 0 ? '지하철역 ' + c[4] + 'm' : '역 정보 없음') + ' · 전국 상위 ' + Math.max(1, 100 - c[5]) + '%';
+        var el = document.createElement('div');
+        el.innerHTML = '<div title="' + bbEsc(tip) + '" style="background:' + col + ';color:#fff;border:2px solid #fff;border-radius:14px;padding:2px 8px;font-size:12px;font-weight:800;box-shadow:0 1px 4px rgba(0,0,0,.35);white-space:nowrap;cursor:pointer;">' + (k + 1) + '위 · 평당 ' + c[2].toLocaleString() + '만</div>';
+        el.addEventListener('click', function(e) { e.stopPropagation(); alert(tip); });
+        var ov = new kakao.maps.CustomOverlay({ position: new kakao.maps.LatLng(la, lo), content: el, yAnchor: 0.5, xAnchor: 0.5, zIndex: 9000, clickable: true });
+        ov.setMap(map); locOverlays.push(ov);
+    });
+}
 var HS_STATE = { '활성화': { c: '#e11d48', t: '활성화 ▲' }, '안정': { c: '#0d9488', t: '안정' }, '위축': { c: '#64748b', t: '위축 ▼' }, '표본적음': { c: '#9ca3af', t: '표본 적음' } };
 function toggleHomestayLayer() {
     showHomestay = !showHomestay;
@@ -6073,7 +6130,7 @@ function initMap(lat, lon) {
     // 한 번에 처리함. map이 막 생성된 시점이라야 리스너 등록이 되므로 여기(initMap)에서 호출.
     toggleDongBoundaryMode(document.getElementById('boundary-toggle-btn'));
     updateBadgeScale();
-    kakao.maps.event.addListener(map, 'zoom_changed', function() { updateBadgeScale(); scheduleOverlapResolve(); if (showHomestay) renderHomestayLayer(); var th = map.getLevel() >= AUCTION_THIN_LEVEL; if (th !== window.__lastThin) { window.__lastThin = th; try { renderAuctionMarkers(); } catch (e) {} } }); // 후보만 보이는 단계를 넘나들 때 바로 다시 그림
+    kakao.maps.event.addListener(map, 'zoom_changed', function() { updateBadgeScale(); scheduleOverlapResolve(); if (showHomestay) renderHomestayLayer(); if (showLocation) renderLocationLayer(); var th = map.getLevel() >= AUCTION_THIN_LEVEL; if (th !== window.__lastThin) { window.__lastThin = th; try { renderAuctionMarkers(); } catch (e) {} } }); // 후보만 보이는 단계를 넘나들 때 바로 다시 그림
     // 경매 등록 물건은 지역 데이터를 기다리지 않고 가장 먼저 불러와서 표시
     // (비교물건 배지 반영을 위해 아파트/빌라 마커도 함께 다시 그림)
     fetchAuctions().then(function() { renderAuctionMarkers(); redrawMarkers(); try { var bb0 = document.getElementById('bid-board'); if (bb0 && bb0.style.display === 'flex' && !bidBoardRows.length && !bidBoardRunning) refreshBidBoard(); } catch (e) {} }); // 입찰후보를 경매 목록보다 먼저 열었으면 목록이 오는 대로 다시 계산
@@ -6094,6 +6151,7 @@ function initMap(lat, lon) {
             loadAllData(c.getLat(), c.getLng()).then(function() { renderAuctionMarkers(); renderBidCaseMarkers(); });
             updateCurrentDongArea(c.getLat(), c.getLng());
             if (showHomestay) renderHomestayLayer();
+            if (showLocation) renderLocationLayer();
         }, 600); // 2026-10(로딩속도 개선): 지도가 멈춘 뒤 1.2초 기다리던 것을 0.6초로 줄임(같은 지역 안 이동은 캐시로 즉시 처리됨)
     });
 }
