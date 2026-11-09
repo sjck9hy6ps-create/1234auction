@@ -176,6 +176,21 @@ def main():
                      "단계별": {l: {"n": int(len(S)), "기존": round(float((S["base"] / S["actual"] - 1).abs().median()) * 100, 2), "①": round(float((S["est_s0"] / S["actual"] - 1).abs().median()) * 100, 2), "②": round(float((S["est_s1"] / S["actual"] - 1).abs().median()) * 100, 2)} for l, S in A.groupby("lvl") if len(S) >= 150},
                      "대장 연식 어긋남별(②)": {lab: {"n": int(len(S)), "①": round(float((S["est_s0"] / S["actual"] - 1).abs().median()) * 100, 2), "②": round(float((S["est_s1"] / S["actual"] - 1).abs().median()) * 100, 2)} for lab, S in (("연식 대조 불가", A[A["link_gap"].isna()]), ("0~1년 일치", A[A["link_gap"] <= 1]), ("2~5년 차이", A[(A["link_gap"] > 1) & (A["link_gap"] <= 5)]), ("6년+ 차이", A[A["link_gap"] > 5])) if len(S) >= 150},
                      "생활권 특징 있는 거래만(700m)": {"n": int(A["e_rad700"].notna().sum()), "①": pstat(A[A["e_rad700"].notna()], "est_s0"), "②": pstat(A[A["e_rad700"].notna()], "est_s1")}}
+    if allte:   # 시세 파악 가능 문턱 찾기(2026-11-09): 종합+생활권 값(②)의 오차를 근거 단계·반경 근거 수·반경 흩어짐별로
+        A = pd.concat(allte); A["e"] = A["est_s1"] / A["actual"] - 1; A["ae"] = A["e"].abs()
+        def row(S): return {"n": int(len(S)), "오차%": round(float(S["ae"].median()) * 100, 2), "±10%": round(float((S["ae"] <= .1).mean()) * 100, 1), "10%+높음%": round(float((S["e"] > .10).mean()) * 100, 1), "20%+높음%": round(float((S["e"] > .20).mean()) * 100, 1), "하위10%지점": round(float(S["e"].quantile(0.9)) * 100 * -1, 1)}
+        nb = pd.cut(A["n_rad700"], [-1, 2, 5, 10, 20, 50, 1e9], labels=["0~2건", "3~5건", "6~10건", "11~20건", "21~50건", "51건+"])
+        out["문턱"] = {"반경700m 비슷한 면적 거래 수별": {str(k): row(S) for k, S in A.groupby(nb, observed=True) if len(S) >= 150},
+                     "반경 거래 가격 흩어짐별": {}, "단계×반경거래수": {}}
+        dq = A["rad_disp"].quantile([.25, .5, .75]).values
+        for lab, lo, hi in (("흩어짐 낮음(하위25%)", -1, dq[0]), ("보통", dq[0], dq[2]), ("높음(상위25%)", dq[2], 9)):
+            S = A[(A["rad_disp"] > lo) & (A["rad_disp"] <= hi)]
+            if len(S) >= 150: out["문턱"]["반경 거래 가격 흩어짐별"][lab] = row(S)
+        for l, S0 in A.groupby("lvl"):
+            for lab, m in (("반경 6건+", S0["n_rad700"] >= 6), ("반경 5건 이하", S0["n_rad700"] < 6)):
+                S = S0[m]
+                if len(S) >= 150: out["문턱"]["단계×반경거래수"][f"{l} · {lab}"] = row(S)
+        out["문턱"]["흩어짐 경계"] = [round(float(x), 3) for x in dq]
     txt = json.dumps(out, ensure_ascii=False, indent=1); print(txt)
     json.dump(out, open("villa-living-area-cv.json", "w"), ensure_ascii=False, indent=1)
 
