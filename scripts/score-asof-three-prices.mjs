@@ -24,6 +24,13 @@ const rep = {};
   o.추천가확률 = { n: Pq.length, 예측평균: Pq.length ? +(Pq.reduce((s, r) => s + r.probRec, 0) / Pq.length).toFixed(3) : null, 실제낙찰: Pq.length ? +(Pq.reduce((s, r) => s + win(r), 0) / Pq.length).toFixed(3) : null, brier보정: br((r) => r.probRec), brier원래: br((r) => r.probRaw ?? r.probRec), 구간: Object.keys(bins).sort().map((k) => ({ 예측: +(bins[k].reduce((s, r) => s + r.probRec, 0) / bins[k].length).toFixed(2), 실제: +(bins[k].reduce((s, r) => s + win(r), 0) / bins[k].length).toFixed(2), n: bins[k].length })) };
   const Wn = R.filter((r) => r.rec > 0 && r.act > 0 && r.rec >= r.act && r.mkt > 0 && r.saleFinal > 0 && r.margin != null), net = Wn.map((r) => (r.marginRaw != null ? r.marginRaw : r.margin) + (r.mkt - r.saleFinal));   // 보정 전 마진 + (낙찰 뒤 시장가 - 예상매도가): 낙찰 조건 보정이 들어간 마진을 쓰면 보정분을 두 번 셈
   o.추천가낙찰시 = { n: Wn.length, 예상마진중앙: Wn.length ? Math.round(med(Wn.map((r) => r.margin))) : null, 실현마진중앙: Wn.length ? Math.round(med(net)) : null, 손해비율: Wn.length ? +(100 * net.filter((x) => x < 0).length / Wn.length).toFixed(1) : null, 천만미만비율: Wn.length ? +(100 * net.filter((x) => x < 1000).length / Wn.length).toFixed(1) : null };
+  // 2026-11-09: 손해 28.8%의 정체를 가르는 분해 - 정답(낙찰 뒤 6개월 실거래 중위)이 몇 건 거래로 만들어졌는지·낙찰 전 6개월 거래 수·실제 후보였는지별 손해 비율
+  const lossBy = (key, bins) => bins.map(([lo, hi, lab]) => { const G = Wn.filter((r) => key(r) >= lo && key(r) <= hi), N = G.map((r) => (r.marginRaw != null ? r.marginRaw : r.margin) + (r.mkt - r.saleFinal)); return { 구간: lab, n: G.length, 손해비율: G.length ? +(100 * N.filter((x) => x < 0).length / G.length).toFixed(1) : null }; });
+  o.손해분해 = {
+    정답거래수: lossBy((r) => r.mktN || 0, [[1, 1, '1건'], [2, 2, '2건'], [3, 4, '3~4건'], [5, 999, '5건+']]),
+    낙찰전6개월거래: lossBy((r) => r.n6 || 0, [[0, 0, '0건'], [1, 2, '1~2건'], [3, 5, '3~5건'], [6, 999, '6건+']]),
+    후보여부: [true, false].map((f) => { const G = Wn.filter((r) => !!r.go === f), N = G.map((r) => (r.marginRaw != null ? r.marginRaw : r.margin) + (r.mkt - r.saleFinal)); return { 구간: f ? '앱이 임장 후보로 고른 물건' : '후보 아님', n: G.length, 손해비율: G.length ? +(100 * N.filter((x) => x < 0).length / G.length).toFixed(1) : null }; })
+  };
   rep[g] = o;
 });
 console.log('📊 세 가격 채점(학습에 안 쓴 ' + OOS + ' 이후):', JSON.stringify(rep, null, 1));
