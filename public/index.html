@@ -4609,9 +4609,10 @@ function villaApplyCalc(d, force) {
 async function villaFetchServerCalc() { // 서버가 미리 계산해 둔 빌라 결과(precompute-board.mjs가 매일 새벽 올림)
     try {
         var withT = function(p, ms) { return Promise.race([p, new Promise(function(_, rej) { setTimeout(function() { rej(new Error('시간 초과')); }, ms); })]); };
-        var meta = await withT(fetch('/api/data-coverage?mode=boardCacheMeta&kind=villa').then(function(r) { return r.json(); }), 4000);
+        /* 2026-11-10: 서버가 응답을 최대 1시간 이전 값으로 캐시해 사전 계산 직후에도 옛 저장본을 받았음 - 저장 시각 확인(작은 한 줄)만 1분 단위로 새로 받고, 묶음 주소엔 저장 시각(v)을 넣어 저장본마다 주소를 고정 */
+        var meta = await withT(fetch('/api/data-coverage?mode=boardCacheMeta&kind=villa&c=' + Math.floor(Date.now() / 60000)).then(function(r) { return r.json(); }), 4000);
         if (!meta || !meta.n || !meta.at || Date.now() - meta.at > 9 * 24 * 3600 * 1000) return null;
-        var parts = await withT(Promise.all(Array.from({ length: meta.n }, function(_, i) { return fetch('/api/data-coverage?mode=boardCacheChunk&kind=villa&i=' + i).then(function(r) { return r.json(); }); })), 25000);
+        var parts = await withT(Promise.all(Array.from({ length: meta.n }, function(_, i) { return fetch('/api/data-coverage?mode=boardCacheChunk&kind=villa&i=' + i + '&v=' + meta.at).then(function(r) { return r.json(); }); })), 25000);
         var d = { ve: {}, liq: {}, hs: {}, ev: {}, rc: {} };
         parts.forEach(function(p) { ['ve', 'liq', 'hs', 'ev', 'rc'].forEach(function(k) { Object.assign(d[k], (p && p[k]) || {}); }); });
         d.at = meta.at; return d;
@@ -21694,7 +21695,7 @@ function srvBoardParts() {
     window.__srvBoardP = (async function() {
         var withTimeout = function(p, ms) { return Promise.race([p, new Promise(function(_, rej) { setTimeout(function() { rej(new Error('시간 초과')); }, ms); })]); };
         try {
-            var meta = await withTimeout(fetch('/api/data-coverage?mode=boardCacheMeta').then(function(r) { return r.json(); }), 6000);
+            var meta = await withTimeout(fetch('/api/data-coverage?mode=boardCacheMeta&c=' + Math.floor(Date.now() / 60000)).then(function(r) { return r.json(); }), 6000);
             if (!meta || !meta.n || !meta.at || Date.now() - meta.at > BOARD_SRV_MAX_AGE) { window.__srvFirstDone = true; resolveFirst(null); return null; }
             // 2026-10-21(사용자: 입찰후보 저장 계산 불러오기가 김) - 서버가 임장 후보를 앞쪽 묶음에 모아 둠(goChunks): 후보 묶음을 먼저 받아 화면을 채우고, 나머지는 8개씩 뒤에서 받음
             var N = meta.n, F = Math.min(N, Math.max(1, meta.goChunks || N));
