@@ -5055,13 +5055,34 @@ function calcAuctionDday(bidDateStr) {
 // "그외 경매건"으로 묶임.
 // 2026-10-10(사용자 요청): 경매건 필터를 '입찰후보 단계'(임장 후보 / 패스 / 계산 전)로 바꿈 - 입찰후보 목록·배지와 같은 판정을 씀. 낙찰 확정 건은 어느 단계에도 안 넣음
 var bidRowById = {}, bidRowByIdRef = null;
+/* 2026-11-10(사용자: 상세필터 입찰후보 단계 필터를 누르면 계산이 직접 도는 것처럼 느림) - 필터를 누르면 지도 마커를 다시 그리며 경매물건 전체(약 1.4만 건)를 두 번 훑는데, 빌라는 그때마다 판정(villaEval)을 직접 계산했음.
+   ① 같은 그리기 안에서는 물건별 단계를 한 번만 계산(0.8초 동안 재사용) ② 빌라는 이미 계산된 판정만 읽고 안 된 것은 '계산 전'으로 두며, 계산은 화면이 멈추지 않게 12ms씩 나눠 뒤에서 끝낸 뒤 지도에 한 번 다시 반영 */
+var aBucketMemo = null, villaWarmT = null;
+function villaEvWarmSoon() {
+    if (villaWarmT) return;
+    villaWarmT = setTimeout(function step() {
+        villaWarmT = null;
+        var rows = villaMetroRows(true), pend = 0;
+        window.__villaEvDeadline = performance.now() + 12;
+        for (var i = 0; i < rows.length; i++) { var e = null; try { e = villaEval(rows[i]); } catch (er) {} if (e && e.pending) pend++; }
+        window.__villaEvDeadline = 0;
+        if (pend) { villaWarmT = setTimeout(step, 40); return; }
+        aBucketMemo = null; try { if (activeAuctionDateFilters.size) renderAuctionMarkers(); } catch (er) {}
+    }, 30);
+}
 function classifyAuctionDateBucket(a) {
     if (a && parseFloat(a.actualBid)) return 'done';
+    var now = Date.now();
+    if (!aBucketMemo || aBucketMemo.ref !== bidBoardRows || now - aBucketMemo.at > 800) aBucketMemo = { ref: bidBoardRows, at: now, m: {} };
+    var hit = aBucketMemo.m[a.id]; if (hit) return hit;
+    return (aBucketMemo.m[a.id] = classifyAuctionBucketRaw(a));
+}
+function classifyAuctionBucketRaw(a) {
     if (bidRowByIdRef !== bidBoardRows) { bidRowByIdRef = bidBoardRows; bidRowById = {}; bidBoardRows.forEach(function(x) { bidRowById[x.id] = x; }); } // 입찰후보 목록에서 바로 찾음(경매물건마다 다시 계산하면 수 초 걸림)
     var r = bidRowById[a.id] || null;
     if (!r || r.pending) return 'wait';
     var why = '';
-    if (r.type === 'villa') { var ev = null; try { ev = villaEval(r); } catch (e) {} if (!ev) return 'wait'; if (ev.visit.go) return 'go'; why = String(ev.visit.why || ''); }
+    if (r.type === 'villa') { var ev = (r._vev && !r._vev.pending) ? r._vev : (villaEvPend[r.id] && villaEvPend[r.id].visit ? villaEvPend[r.id] : null); if (!ev) { villaEvWarmSoon(); return 'wait'; } if (ev.visit.go) return 'go'; why = String(ev.visit.why || ''); }
     else if (r.type === 'apt' && r.visit) { if (r.visit.go) return 'go'; why = String(r.visit.why || ''); }
     else return 'wait';
     return /자료가 부족|계산할 수 없|계산하지 못|계산 중|불러오는|계산 오류/.test(why) ? 'wait' : 'pass';
