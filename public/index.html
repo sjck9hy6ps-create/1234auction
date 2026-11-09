@@ -4708,8 +4708,15 @@ function villaEval(row) {
     var sig = [vcOk ? 1 : 0, lq ? 1 + lq.r500.a6 : 0, t ? 1 : 0, villaWinModel ? 1 : 0, row.minBid, row.a.floor, row.a.pyung, row.a.buildYear || '', row.a.bidDate || '', row.a.appraisal || '', st.loading ? 1 : 0, (row.a.listingParse && row.a.listingParse.at) || '', (row.a.listingParse && row.a.listingParse.n) || 0, row.a.repair || '', row.a.assumedDeposit || '', row.a.assumedFixed || '', row.a.assumedPrior || '', row.a.rights ? (row.a.rights.pastedAt || 1) + ':' + (row.a.rights.editedAt || 0) : '', row.a.unpaidMgmtFee || '', row.a.etc || '', 'fx3', villaStack ? villaStack.generatedAt : ''].join('|');
     if (row._vev && row._vev.sig === sig) return row._vev;
     var pe0 = villaEvPend[row.id];
-    if (pe0) { delete villaEvPend[row.id]; if (pe0.sig === sig) { var re0 = Object.assign({}, pe0, { t: t, liq: lq }); row._vev = re0; return re0; } }
+    if (pe0) {
+        /* 2026-11-10: 서버 저장본과 앱의 식별값이 '반경 500m 최근 6개월 거래 수' 한 칸에서 1~2건씩 어긋나 약 20%가 전부 다시 계산됐음(물건당 약 50ms). 판정 로직엔 이 값이 0건인지 아닌지만 쓰이므로
+           둘 다 1건 이상이면 같은 것으로 봄(0건이 걸린 경우는 그대로 엄격하게 비교). 어긋나서 지금 계산하지 못하는 경우(14ms 나눔)엔 저장본을 지우지 않고 남겨 둠 */
+        var okE = pe0.sig === sig;
+        if (!okE) { var pa = String(pe0.sig).split('|'), pb = String(sig).split('|'); if (pa.length === pb.length && pa[1] !== pb[1] && pa[1] !== '0' && pa[1] !== '1' && pb[1] !== '0' && pb[1] !== '1') { pa[1] = pb[1]; okE = pa.join('|') === sig; } }
+        if (okE) { delete villaEvPend[row.id]; var re0 = Object.assign({}, pe0, { sig: sig, t: t, liq: lq }); row._vev = re0; return re0; }
+    }
     if (window.__villaEvDeadline && performance.now() > window.__villaEvDeadline) return { sig: 'pending', pending: true, t: t, liq: lq, ve: null, mp: null, wb: null, pn: null, visit: { go: false, why: '계산 중' } }; // 한 번에 몰아 계산해 화면이 멈추지 않게 14ms씩 나눔
+    delete villaEvPend[row.id];
     var ev = { sig: sig, t: t, liq: lq, ve: null, mp: null, wb: null, pn: null, visit: { go: false, why: '' } };
     if (vcOk) ev.ve = vc.ve;
     else if (lawd && dataCache[lawd]) { try { ev.ve = villaSaleEst(row.a); } catch (e) {} villaVeCache[row.id] = { sig: villaVeSig(row.a), ve: ev.ve }; }
