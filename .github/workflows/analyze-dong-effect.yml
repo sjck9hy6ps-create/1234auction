@@ -1,0 +1,27 @@
+name: 분석 - 같은 단지 동(棟)별 가격 차이
+on:
+  workflow_dispatch:
+jobs:
+  an:
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install pandas numpy requests
+      - env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          PYTHONUNBUFFERED: '1'
+        run: python analyze-dong-effect.py | tee dong-log.txt
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: dong-effect
+          path: |
+            dong-effect.json
+            dong-log.txt
+          if-no-files-found: ignore
+          retention-days: 30
