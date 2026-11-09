@@ -1,0 +1,39 @@
+# 입지 지수 계산(2026-11-09) - 좌표 격자별 기준 물건 평당가. 지도 입지 TOP10 층이 읽는 정적 파일 public/location-index.json 을 만듦(매주 월요일 + 수동)
+name: Compute location index
+on:
+  schedule:
+    - cron: '0 21 * * 1'
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  loc:
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install pandas numpy requests
+      - env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          PYTHONUNBUFFERED: '1'
+        run: python compute-location-index.py | tee location-log.txt
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: location-index
+          path: |
+            location-index.json
+            location-log.txt
+          if-no-files-found: ignore
+          retention-days: 30
+      - name: 저장소에 반영
+        run: |
+          test -s location-index.json || exit 1
+          cp location-index.json public/location-index.json
+          git config user.name "github-actions"; git config user.email "actions@github.com"
+          git add public/location-index.json
+          git diff --cached --quiet || (git commit -m "입지 지수 갱신" && git pull --rebase -q && git push)
