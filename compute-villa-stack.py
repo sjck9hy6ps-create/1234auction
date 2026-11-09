@@ -9,6 +9,7 @@ from datetime import datetime, timezone, timedelta
 import numpy as np
 import pandas as pd
 import requests
+from scipy.spatial import cKDTree
 from sklearn.ensemble import HistGradientBoostingRegressor
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -21,7 +22,10 @@ N_TRAIN = int(os.environ.get("N_TRAIN", "50000"))
 FLT = "&or=(" + ",".join('region.like."' + n + '*"' for n in ("서울", "인천", "경기")) + ")"
 SIDO = {"서울특별시": "서울", "서울": "서울", "인천광역시": "인천", "인천": "인천", "경기도": "경기", "경기": "경기"}
 EPOCH = pd.Timestamp("2020-01-01")
-COLS = ["r_e_bld", "r_e_dong", "r_e_dongw", "r_e_reg", "n_bld", "n_dong", "n_reg", "age_bld", "age_dong", "disp", "size", "floor", "age", "elv", "grnd", "hh", "lvl_c", "sido", "reg_code", "lbase"]
+# 2026-11-09 생활권(반경) 시세 특징 추가(backtest-villa-living-area-cv.py, 3개 시간순 구간 모두 개선: 오차 10.97→10.22%, ±20% 72.5→76.0%, 하위25% 핀볼 약 8% 감소)
+RADII = (0.3, 0.7, 1.5)   # km
+RAD_COLS = ["r_e_rad300", "r_e_rad700", "r_e_rad1500", "n_rad300", "n_rad700", "n_rad1500", "r_lvl300", "r_lvl700", "r_lvl1500", "rad_disp", "rad_dist"]
+COLS = ["r_e_bld", "r_e_dong", "r_e_dongw", "r_e_reg", "n_bld", "n_dong", "n_reg", "age_bld", "age_dong", "disp", "size", "floor", "age", "elv", "grnd", "hh", "lvl_c", "sido", "reg_code", "lbase"] + RAD_COLS
 LVL = {"건물3+": 0, "건물1~2+동": 1, "건물1~2": 2, "동5+": 3, "동1~4": 4, "시군구": 5}
 
 
@@ -48,8 +52,8 @@ def fcls(f):
 def main():
     raw = avm.fetch_all_rows("villa_trades", cols="region,dong,danji,bunji,road_name,main_num,sub_num,price,size,floor,deal_date,dealing_type,build_year", extra_filter=f"&deal_date=gte.{bv.START}{FLT}")
     df = bv.prep(raw)
-    cc = avm.fetch_all_rows("complex_coords", cols="cache_key,sigungu_cd,bjdong_cd", order_col="id", extra_filter="&or=(sigungu_cd.like.11*,sigungu_cd.like.28*,sigungu_cd.like.41*)")
-    cmap = {r.cache_key: (r.sigungu_cd, r.bjdong_cd) for r in cc.itertuples()}
+    cc = avm.fetch_all_rows("complex_coords", cols="cache_key,sigungu_cd,bjdong_cd,lat,lon", order_col="id", extra_filter="&or=(sigungu_cd.like.11*,sigungu_cd.like.28*,sigungu_cd.like.41*)")
+    cmap = {r.cache_key: (r.sigungu_cd, r.bjdong_cd, r.lat, r.lon) for r in cc.itertuples()}
     mnum = pd.to_numeric(df["main_num"], errors="coerce"); snum = pd.to_numeric(df["sub_num"], errors="coerce")
     base = df["dong"].fillna("").astype(str) + "|" + df["danji"].fillna("").astype(str) + "|" + df["bunji"].fillna("").astype(str) + "|" + df["road_name"].fillna("").astype(str) + "|"
     k_new = (base + mnum.fillna(0).astype(int).astype(str) + "|" + snum.fillna(0).astype(int).astype(str).where(snum.fillna(0) > 0, "")).str.lower()
@@ -58,6 +62,7 @@ def main():
     c2 = k_new.map(cmap)
     for alt in (k_leg, k_leg0): c2 = c2.where(~c2.isna(), alt.map(cmap))
     df["sg"] = c2.map(lambda x: x[0] if isinstance(x, tuple) else None); df["bj"] = c2.map(lambda x: x[1] if isinstance(x, tuple) else None)
+    df["lat"] = c2.map(lambda x: x[2] if isinstance(x, tuple) and x[2] else np.nan); df["lon"] = c2.map(lambda x: x[3] if isinstance(x, tuple) and x[3] else np.nan)
     bb = df["bunji"].map(vf.bunji_to_bunji); df["bun"] = bb.map(lambda x: x[0] if x else None); df["ji"] = bb.map(lambda x: x[1] if x else None)
     B = vf.fetch_buildings()
     for c in ("elv", "emg", "grnd", "hh"): B[c] = pd.to_numeric(B.get(c), errors="coerce")
@@ -66,7 +71,15 @@ def main():
     Bg = B.groupby(["sigungu_cd", "bjdong_cd", "bun", "ji"]).agg(elv=("elvAny", "max"), grnd=("grnd", "max"), hh=("hh", "max"), apr=("apr", "min")).reset_index()
     df = df.merge(Bg, how="left", left_on=["sg", "bj", "bun", "ji"], right_on=["sigungu_cd", "bjdong_cd", "bun", "ji"], suffixes=("", "_b")).reset_index(drop=True)
     df["by2"] = df["build_year"].where(df["build_year"].between(1960, 2026), df["apr"].where(df["apr"].between(1960, 2026)))
-    print(f"거래 {len(df):,}건, 대장 승강기 연결 {df['elv'].notna().mean() * 100:.1f}%")
+    print(f"거래 {len(df):,}건, 대장 승강기 연결 {df['elv'].notna().mean() * 100:.1f}%, 좌표 {df['lat'].notna().mean() * 100:.1f}%")
+    # 반경 검색용 배열(좌표 있는 거래)
+    Gc = df[df["lat"].notna()]
+    KM = 111.0 * np.cos(np.radians(37.5))
+    Xc = np.c_[Gc["lat"].values * 111.0, Gc["lon"].values * KM]; tree = cKDTree(Xc)
+    cpos = {i: k for k, i in enumerate(Gc.index)}
+    g_day, g_size, g_ppm = Gc["day"].values, Gc["size"].values, Gc["ppm"].values
+    g_by, g_elv = Gc["by2"].values.astype(float), Gc["elv"].values.astype(float)
+    g_fc = fcls(Gc["floor"].values.astype(float))
 
     def mk(key):
         return {k: (g["day"].values, g["size"].values, g["ppm"].values, g["by2"].values.astype(float), g["elv"].values.astype(float), fcls(g["floor"].values.astype(float)))
@@ -108,12 +121,40 @@ def main():
             else: x["e_dongw"] = np.nan
             c = comp("region", r.region, r, 365, 8)
             x["n_reg"] = 0 if c is None else len(c[0]); x["e_reg"] = wmed(c[0], c[1]) * r.size if c else np.nan
+            # ── 생활권(반경) 특징: 그 거래(입찰 기준일) 30일 전까지 반경 안 거래만, 최근·면적·연식·승강기·층·거리 가중 ──
+            for R_ in RADII: x[f"e_rad{int(R_ * 1000)}"] = np.nan; x[f"n_rad{int(R_ * 1000)}"] = 0; x[f"lvl_rad{int(R_ * 1000)}"] = np.nan
+            x["rad_disp"] = np.nan; x["rad_dist"] = np.nan
+            la, lo_ = getattr(r, "lat", np.nan), getattr(r, "lon", np.nan)
+            if la is not None and lo_ is not None and np.isfinite(la) and np.isfinite(lo_):
+                p0 = np.array([la * 111.0, lo_ * KM]); k0 = cpos.get(r.Index, -1)
+                nb = np.array(tree.query_ball_point(p0, max(RADII)), dtype=int)
+                if len(nb):
+                    dc_ = r.day - 30
+                    ok_ = (g_day[nb] <= dc_) & (g_day[nb] >= dc_ - 730) & (nb != k0)
+                    nb = nb[ok_]
+                    if len(nb):
+                        dist = np.sqrt(((Xc[nb] - p0) ** 2).sum(1)); agx = dc_ - g_day[nb]
+                        for R_ in RADII:
+                            mR = dist <= R_; kk = int(R_ * 1000)
+                            if mR.sum() < 3: continue
+                            idx_ = nb[mR]; dd_ = dist[mR]; ag_ = agx[mR]
+                            ms = np.abs(g_size[idx_] - r.size) <= 15
+                            if ms.sum() >= 3:
+                                i2 = idx_[ms]; w = np.exp(-ag_[ms] / 540.0) * np.exp(-np.abs(g_size[i2] - r.size) / 10.0) * np.exp(-dd_[ms] / max(R_, 0.3))
+                                if np.isfinite(r.by2): w = w * np.where(np.isnan(g_by[i2]), 0.5, np.exp(-np.abs(g_by[i2] - r.by2) / 5.0))
+                                if np.isfinite(r.elv): w = w * np.where(np.isnan(g_elv[i2]), 0.65, np.where(g_elv[i2] == r.elv, 1.0, 0.3))
+                                tf_ = fcls(np.array([r.floor], dtype=float))[0]; w = w * np.where(g_fc[i2] == tf_, 1.0, 0.5)
+                                x[f"e_rad{kk}"] = wmed(g_ppm[i2], w) * r.size; x[f"n_rad{kk}"] = int(ms.sum())
+                                if kk == 700: x["rad_disp"] = float(np.std(np.log(g_ppm[i2]))); x["rad_dist"] = float(np.average(dd_[ms], weights=w))
+                            rec_ = ag_ <= 180
+                            if rec_.sum() >= 5: x[f"lvl_rad{kk}"] = float(np.median(g_ppm[idx_][rec_]))
             dy = (EPOCH + pd.Timedelta(days=int(r.day))).year
             x.update({"size": r.size, "floor": r.floor if np.isfinite(r.floor) else 3.0, "age": dy - r.by2 if np.isfinite(r.by2) else np.nan, "elv": r.elv, "grnd": r.grnd, "hh": r.hh,
                       "sido": 0 if str(r.region).startswith("서울") else (1 if str(r.region).startswith("인천") else 2), "reg_code": regmap.get(r.region, -1)})
             rows.append(x)
         D = pd.DataFrame(rows).set_index("i")
-        for k in ("e_bld", "e_dong", "e_dongw", "e_reg"): D["r_" + k] = np.log(D[k] / D["base"])
+        for k in ("e_bld", "e_dong", "e_dongw", "e_reg", "e_rad300", "e_rad700", "e_rad1500"): D["r_" + k] = np.log(D[k] / D["base"])
+        for kk in ("300", "700", "1500"): D["r_lvl" + kk] = np.log(D["lvl_rad" + kk] * D["size"] / D["base"])
         D["lvl_c"] = D["lvl"].map(LVL); D["lbase"] = np.log(D["base"] / D["size"])
         return D
 
@@ -158,7 +199,9 @@ def main():
         except Exception: fl = np.nan
         try: by = float(a.get("buildYear")) if a.get("buildYear") else np.nan
         except Exception: by = np.nan
-        L.append({"id": str(a["id"]), "region": reg, "dong": a["dong"], "bunji": bunji, "size": area, "floor": fl, "build_year": by, "day": int((ref - EPOCH).days)})
+        try: la_ = float(a.get("lat")); lo2 = float(a.get("lon"))
+        except Exception: la_ = lo2 = np.nan
+        L.append({"id": str(a["id"]), "region": reg, "dong": a["dong"], "bunji": bunji, "size": area, "floor": fl, "build_year": by, "day": int((ref - EPOCH).days), "lat": la_, "lon": lo2})
     Lr = pd.DataFrame(L)
     print(f"입찰 예정 수도권 빌라 {len(Lr):,}건")
     Lr["bld"] = Lr["region"] + "|" + Lr["dong"].astype(str) + "|" + Lr["bunji"]; Lr["dk"] = Lr["region"] + "|" + Lr["dong"].astype(str)
@@ -298,7 +341,8 @@ def eval_winbid(df, pt, featurize, pt_all=None):
     c = c[c["region"].isin(set(df["region"].unique()))]
     byb = df.dropna(subset=["build_year"]).groupby(["region", "dong", "bunji"])["build_year"].agg(lambda s: s.mode().iloc[0]).to_dict()
     T = pd.DataFrame({"region": c["region"].values, "dong": c["dong"].values, "bunji": c["bunji"].values, "size": c["area"].values, "floor": c["fl"].values, "price": c["actual"].values,
-                      "day": (pd.to_datetime(c["sale"].astype(str), format="%Y%m%d") - EPOCH).dt.days.values})
+                      "day": (pd.to_datetime(c["sale"].astype(str), format="%Y%m%d") - EPOCH).dt.days.values,
+                      "lat": pd.to_numeric(c.get("lat"), errors="coerce").values, "lon": pd.to_numeric(c.get("lon"), errors="coerce").values})
     T["build_year"] = [byb.get((r, d, b), np.nan) for r, d, b in zip(T["region"], T["dong"], T["bunji"])]
     T["by2"] = T["build_year"]; T["bld"] = T["region"] + "|" + T["dong"] + "|" + T["bunji"]; T["dk"] = T["region"] + "|" + T["dong"]
     bl = df.dropna(subset=["elv"]).groupby("bld").agg(elv=("elv", "last"), grnd=("grnd", "last"), hh=("hh", "last"))
