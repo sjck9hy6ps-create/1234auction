@@ -2776,6 +2776,14 @@ def weekly_report(R, now_dt, now_iso):
             sn = pick_snap(x, r.sale) or {}
             row = {"caseNo": r.caseNo, "name": r.bname or x.get("name") or "", "region": r.region, "actual": round(float(r.actual)), "bidders": None if pd.isna(r.bidders) else int(r.bidders),
                    "second": None if pd.isna(r.second) else round(float(r.second)), "minbid": round(float(r.minbid)), "modelPred": round(float(r.pred))}
+            # 2026-11-09(사용자: 6억 예상→3억 낙찰 같은 큰 빗나감이 사건·물건 매칭 오류 아닌가) - 저장 당시 최저가가 낙찰사례의 최저가와 2% 넘게 다르면
+            # 재진행·변경(유찰 횟수 불일치 등)으로 다른 회차의 예측일 수 있어 모델 오차에서 제외하고 따로 표시(리포트가 정답 비교에 쓰지 않음)
+            try:
+                _sm = float(sn.get("minBid") or 0); _am = float(r.minbid or 0)
+                if sn and _sm > 0 and _am > 0 and abs(_sm / _am - 1) > 0.02:
+                    row["snapStale"] = True; sn = {}
+            except (TypeError, ValueError):
+                pass
             if sn:
                 row["snap"] = {"at": sn.get("at"), "rec": sn.get("recBid"), "aggr": sn.get("aggr"), "win": sn.get("win"), "prob": sn.get("prob"), "sale": sn.get("sale")}
                 if sn.get("recBid"):
@@ -2783,7 +2791,7 @@ def weekly_report(R, now_dt, now_iso):
                 if sn.get("win"):
                     row["snapErrPct"] = round((sn["win"] - float(r.actual)) / float(r.actual) * 100, 1)
             tr.append(row)
-        out["tracked"] = {"n": len(tr), "withSnap": sum(1 for t in tr if t.get("snap")), "items": tr[:30],
+        out["tracked"] = {"n": len(tr), "withSnap": sum(1 for t in tr if t.get("snap")), "staleSnapN": sum(1 for t in tr if t.get("snapStale")), "items": tr[:30],
                           "recWon": sum(1 for t in tr if t.get("recWon")), "recKnown": sum(1 for t in tr if "recWon" in t)}
         # 2026-10-19(사용자: 후보인데 안 낙찰·후보 아닌데 낙찰된 이유를 알아 후보군 정확도를 높이고 싶다) - 후보/비후보 × 낙찰/미낙찰 4칸 + 이유
         try:
