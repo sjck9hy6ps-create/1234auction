@@ -3974,7 +3974,7 @@ function villaSaleEst(a, ref) {
     if (sk && sk.est > 0 && sk.l10 > 0 && !bsT) { // 종합 평가 값으로 교체(기존 값은 estApp에 보관). 지하·반지하만 제외(높게 틀리는 비율이 커짐)
         // 2026년 실제 빌라 거래 8,643건을 거래 30일 전 자료로 앱 실제 계산(villaSaleEst)과 직접 채점(2026-11-07): 오차 중앙 12.21→10.61%, ±10% 이내 43.4→47.9%, 두 값이 15% 넘게 갈린 건에서도 종합 값이 맞음(상한을 씌우면 오히려 나빠져 상한 없음).
         res.estApp = est; res.est = sk.est; res.lo = Math.round(sk.est / (1 + r[1] / 100)); res.hi = Math.round(sk.est / (1 + r[0] / 100));
-        res.stack = { est: sk.est, l25: sk.l25, l10: sk.l10, rel10: (sk.est - sk.l10) / sk.est, rel25: (sk.est - sk.l25) / sk.est };
+        res.stack = { est: sk.est, l25: sk.l25, l10: sk.l10, rel10: (sk.est - sk.l10) / sk.est, rel25: (sk.est - sk.l25) / sk.est, nr: sk.nr != null ? sk.nr : null, rd: sk.rd != null ? sk.rd : null };
     }
     return res;
 }
@@ -4700,6 +4700,8 @@ function villaEval(row) {
     else if ((ev.issue = villaIssueFor(row, ev.ve))) v.why = '🚩 이슈 ' + (ev.issue.level === 'high' ? '강한 의심' : '의심') + '(' + ev.issue.why.join('·') + ') - 권리 문제·인수 보증금 확인 필요';
     else if (!ev.pn || ev.pn.infeasible || !ev.pn.ev) v.why = '최저가로도 필요 마진 ' + (ev.mp ? toEok(String(ev.mp.margin)) : '') + '이 안 남아요';
     else if (ev.ve.lvl === '동1~4' || ev.ve.lvl === '시군구') v.why = '시세 근거 약함(' + ev.ve.lvl + ')';
+    /* 2026-11-09(빌라 생활권 시험, 3개 시간순 구간 31,900건): 반경 700m 안 비슷한 면적(±15㎡) 24개월 거래가 2건 이하면 오차 중앙 21.8%·하위10% -58.7%(3~5건 12.0%·-31.6%) - 시세 파악이 어려워 후보에서 제외 */
+    else if (ev.ve.stack && ev.ve.stack.nr != null && ev.ve.stack.nr <= 2) v.why = '생활권(반경 700m) 비슷한 면적 거래가 ' + ev.ve.stack.nr + '건뿐이에요 - 시세 파악이 어려워요(과거 오차 중앙 22%)';
     else if (!isNaN(fl) && fl <= 0) v.why = '지하·반지하';
     else if (ev.pn.ev.p < VILLA_VISIT_MIN_P) v.why = '낙찰 가능성 ' + Math.round(ev.pn.ev.p * 100) + '%로 낮아요';
     else v.go = true;

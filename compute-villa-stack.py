@@ -219,7 +219,8 @@ def main():
         base_ = float(f["base"]); est = base_ * float(np.exp(np.clip(f["pt"], -0.4, 0.4)))
         l25 = min(base_ * float(np.exp(f["q25"])), est); l10 = min(base_ * float(np.exp(f["q10"])), l25)
         id_ = Lr.loc[i, "id"]
-        out[id_] = {"est": round(est), "l25": round(l25), "l10": round(l10), "base": round(base_), "lvl": f["lvl"], "n": int(f["n_bld"]), "nd": int(f["n_dong"])}
+        out[id_] = {"est": round(est), "l25": round(l25), "l10": round(l10), "base": round(base_), "lvl": f["lvl"], "n": int(f["n_bld"]), "nd": int(f["n_dong"]),
+                  "nr": int(f["n_rad700"]), "rd": (round(float(f["rad_disp"]), 3) if np.isfinite(f["rad_disp"]) else None)}   # 생활권(반경 700m) 비슷한 면적 거래 수·흩어짐(2026-11-09: 거래 2건 이하면 오차 21.8%·하위10% -58.7%)
     now = datetime.now(timezone.utc).isoformat()
     payload = {"generatedAt": now, "ver": 1, "trainN": int(len(D)), "rows": out, "물건수": int(len(Lr)), "적용수": len(out)}
     print(json.dumps({k: v for k, v in payload.items() if k != "rows"}, ensure_ascii=False)); print(list(out.items())[:3])
