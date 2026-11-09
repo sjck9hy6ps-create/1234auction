@@ -3504,6 +3504,13 @@ function locTypeNow() {
     return currentTypeFilter === 'villa' ? 'villa' : 'apt';
 }
 function clearLocationOverlays() { locOverlays.forEach(function(o) { o.setMap(null); }); locOverlays = []; }
+function locMetersPerPx(la, lo) {   // 지금 지도 축척에서 화면 1픽셀이 실제 몇 m인지(지도 SDK 좌표 변환으로 계산 - 추가 호출 없음). 계산 못 하면 null
+    try {
+        var pr = map.getProjection(), a = pr.containerPointFromCoords(new kakao.maps.LatLng(la, lo)), b = pr.containerPointFromCoords(new kakao.maps.LatLng(la, lo + 0.001)), dpx = Math.abs(b.x - a.x);
+        if (dpx > 0.3) return (0.001 * 111000 * Math.cos(la * Math.PI / 180)) / dpx;
+    } catch (e) {}
+    return null;
+}
 function locKm(la1, lo1, la2, lo2) { var dx = (lo1 - lo2) * 111 * Math.cos(la1 * Math.PI / 180), dy = (la1 - la2) * 111; return Math.sqrt(dx * dx + dy * dy); }
 function renderLocationLayer() {
     clearLocationOverlays();
@@ -3534,7 +3541,12 @@ function renderLocationLayer() {
         counts.push(ST.name + ' ' + pick.length + '곳');
         pick.forEach(function(c, k) {
             var la = c[0] / 1e4, lo = c[1] / 1e4, col = ST.col[k < 3 ? 0 : (k < 6 ? 1 : 2)];
-            var circ = new kakao.maps.Circle({ center: new kakao.maps.LatLng(la, lo), radius: 600, strokeWeight: 2, strokeColor: col, strokeOpacity: 0.85, strokeStyle: t === 'villa' ? 'dash' : 'solid', fillColor: col, fillOpacity: 0.12 });
+            /* 2026-11-10(사용자: 확대하면 반경이 너무 큼 - 축척에 맞게 바꾸되 실제 입지 범위는 유지) - 실제 입지 범위(R0=600m, 점수를 계산한 이웃 격자 크기)는 얇은 윤곽선으로 항상 그대로 두고,
+               색이 채워진 강조 원만 화면에서 일정한 크기(약 90px)가 되도록 줄이되 R0의 40%(240m) 아래로는 작아지지 않고 R0(600m)를 넘지도 않음 */
+            var R0 = 600, mpp = locMetersPerPx(la, lo), Rf = mpp ? Math.max(R0 * 0.4, Math.min(R0, mpp * 90)) : R0;
+            var ring = new kakao.maps.Circle({ center: new kakao.maps.LatLng(la, lo), radius: R0, strokeWeight: 1, strokeColor: col, strokeOpacity: 0.55, strokeStyle: 'dash', fillColor: col, fillOpacity: 0 });
+            ring.setMap(map); locOverlays.push(ring);
+            var circ = new kakao.maps.Circle({ center: new kakao.maps.LatLng(la, lo), radius: Rf, strokeWeight: 2, strokeColor: col, strokeOpacity: 0.85, strokeStyle: t === 'villa' ? 'dash' : 'solid', fillColor: col, fillOpacity: 0.14 });
             circ.setMap(map); locOverlays.push(circ);
             var tip = ST.name + ' ' + (k + 1) + '위 입지 · 기준 물건(60~85㎡·11~20년·4~7층) 평당 ' + c[2].toLocaleString() + '만원 · 최근 12개월 ' + ST.name + ' 거래 ' + c[3] + '건(격자) · ' + (c[4] >= 0 ? '지하철역 ' + c[4] + 'm' : '역 정보 없음') + ' · 전국 ' + ST.name + ' 중 상위 ' + Math.max(1, 100 - c[5]) + '%';
             var el = document.createElement('div');
@@ -3544,7 +3556,7 @@ function renderLocationLayer() {
             ov.setMap(map); locOverlays.push(ov);
         });
     });
-    if (note) note.textContent = missing && !counts.length ? '입지 자료가 아직 없어요(주간 계산 후 표시)' : (counts.length ? '보이는 범위 ' + counts.join(' · ') + ' (각각 기준 물건 평당가 순, 원 반경 600m)' : '');
+    if (note) note.textContent = missing && !counts.length ? '입지 자료가 아직 없어요(주간 계산 후 표시)' : (counts.length ? '보이는 범위 ' + counts.join(' · ') + ' (각각 기준 물건 평당가 순 · 점선=실제 입지 범위 600m, 색 원=축척에 맞춘 중심부)' : '');
 }
 var HS_STATE = { '활성화': { c: '#e11d48', t: '활성화 ▲' }, '안정': { c: '#0d9488', t: '안정' }, '위축': { c: '#64748b', t: '위축 ▼' }, '표본적음': { c: '#9ca3af', t: '표본 적음' } };
 function toggleHomestayLayer() {
