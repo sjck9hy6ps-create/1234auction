@@ -22,7 +22,7 @@ def pct(x): return round(float(x) * 100, 1)
 
 
 def main():
-    raw = avm.fetch_all_rows("villa_trades", cols="region,dong,danji,bunji,road_name,main_num,sub_num,price,size,floor,deal_date,dealing_type,build_year,cdeal_type",
+    raw = avm.fetch_all_rows("villa_trades", cols="region,dong,danji,bunji,road_name,main_num,sub_num,price,size,floor,deal_date,dealing_type,build_year",
                              extra_filter=f"&deal_date=gte.20230101{avf.METRO}")
     df = bv.prep(raw)
     print(f"빌라 거래 {len(df):,}건")
