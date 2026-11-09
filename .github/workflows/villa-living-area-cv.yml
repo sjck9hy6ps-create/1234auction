@@ -1,0 +1,29 @@
+# 빌라 생활권(반경) 시세 종합 평가 시험(2026-11-09) - 측정 전용
+name: Villa living area CV
+on:
+  workflow_dispatch:
+jobs:
+  bt:
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install pandas numpy requests scikit-learn scipy
+      - env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          SITE_URL: https://1234auction.vercel.app
+          PYTHONUNBUFFERED: '1'
+        run: python backtest-villa-living-area-cv.py | tee living-log.txt
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: villa-living-area
+          path: |
+            villa-living-area-cv.json
+            living-log.txt
+          if-no-files-found: ignore
+          retention-days: 30
