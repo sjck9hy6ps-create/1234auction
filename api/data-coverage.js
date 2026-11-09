@@ -3628,6 +3628,8 @@ export default async function handler(req, res) {
   if (req.query.mode === 'boardCacheMeta' || req.query.mode === 'boardCacheChunk') {
     // 묶음은 주소에 저장 시각(v)이 들어가 저장본이 바뀌면 주소도 바뀜 → 오래 보관해도 안전(2026-10-21: 첫 요청이 건당 약 2초 걸려 입찰후보 첫 화면이 늦었음)
     if (req.query.mode === 'boardCacheChunk' && req.query.v) res.setHeader('Cache-Control', 'public, max-age=86400, s-maxage=31536000, immutable');
+    // 2026-11-10: 저장 시각(meta)은 사전 계산이 끝난 뒤에도 최대 1시간 이전 값으로 보여(stale-while-revalidate 3600) 앱이 옛 저장본을 받았음 - 짧게(60초 + 재확인 중 120초까지만 이전 값) 두고, 앱은 주소를 바꾸지 않고 캐시된 빠른 응답을 씀
+    else if (req.query.mode === 'boardCacheMeta') res.setHeader('Cache-Control', 's-maxage=60, stale-while-revalidate=120');
     else res.setHeader('Cache-Control', 's-maxage=300, stale-while-revalidate=3600');
     try {
       const pre = req.query.kind === 'villa' ? 'board|villa|' : 'board|cache|'; // villa: 빌라 탭 미리 계산(2026-10-10)
