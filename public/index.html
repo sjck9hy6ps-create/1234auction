@@ -4612,7 +4612,7 @@ async function villaFetchServerCalc() { // 서버가 미리 계산해 둔 빌라
         /* 2026-11-10: 서버가 응답을 최대 1시간 이전 값으로 캐시해 사전 계산 직후에도 옛 저장본을 받았음 - 저장 시각 확인(meta)은 서버에서 캐시를 짧게(60초) 두고, 묶음 주소엔 저장 시각(v)을 넣어 저장본마다 주소를 고정 */
         var meta = await withT(fetch('/api/data-coverage?mode=boardCacheMeta&kind=villa').then(function(r) { return r.json(); }), 8000);
         if (!meta || !meta.n || !meta.at || Date.now() - meta.at > 9 * 24 * 3600 * 1000) return null;
-        var parts = await withT(Promise.all(Array.from({ length: meta.n }, function(_, i) { return fetch('/api/data-coverage?mode=boardCacheChunk&kind=villa&i=' + i + '&v=' + meta.at).then(function(r) { return r.json(); }); })), 25000);
+        var parts = await withT(Promise.all(Array.from({ length: meta.n }, function(_, i) { return fetch('/api/data-coverage?mode=boardCacheChunk&kind=villa&i=' + i + '&v=' + meta.at).then(function(r) { return r.json(); }); })), 45000);
         var d = { ve: {}, liq: {}, hs: {}, ev: {}, rc: {} };
         parts.forEach(function(p) { ['ve', 'liq', 'hs', 'ev', 'rc'].forEach(function(k) { Object.assign(d[k], (p && p[k]) || {}); }); });
         d.at = meta.at; return d;
@@ -4626,6 +4626,7 @@ async function villaRestoreCalc() {
         if (fresh) villaApplyCalc(d);
         // 서버가 매주 토요일 새벽에 계산해 둔 것이 브라우저 저장본보다 새로우면 그것으로 바꿔 씀(저장본이 없거나 없는 물건은 채움)
         var sd = await (window.villaSrvP || villaFetchServerCalc()); window.villaSrvP = null;
+        if (!sd) sd = await villaFetchServerCalc();   // 2026-11-10: 앱을 켠 직후 미리 받아 두는 시도가 아파트 묶음 66개와 겹쳐 시간 초과로 실패(null)해도 다시 시도하지 않아 빌라 2,300여 건을 전부 다시 계산했음 - 탭을 여는 시점에 한 번 더 받음
         if (sd) { villaApplyCalc(sd, !(d && d.at >= sd.at)); villaSaveCalcSoon(); }
     } catch (e) {}
     try { villaFlushHsPend(); } catch (e) {}
