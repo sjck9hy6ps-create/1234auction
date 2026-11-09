@@ -4625,7 +4625,10 @@ function villaSaveCalcSoon() {
     villaSaveT = setTimeout(function() { var snap = villaCalcSnapshot(); listIdbOp('readwrite', function(st) { return st.put(snap, VILLA_CALC_KEY); }); }, 4000);
 }
 var villaVeCache = {}, villaLoadBusy = false;
-function villaVeSig(a) { return ['v8', villaStack ? villaStack.generatedAt : '', a.pyung, a.addr, a.dong, a.bunji, a.bidDate, a.buildYear || '', a.estBuildYear || '', a.buildYear || a.estBuildYear ? '' : (villaHsYear(a) || '')].join('|'); }
+/* 2026-11-10: 식별값에 서버 시세 '계산 시각' 대신 이 물건의 서버 시세 값만 넣음 - 서버 시세가 매일 새로 계산돼 계산 시각이 바뀌면 사전 계산(주 1회) 저장본이 하루 만에 전부 무효가 돼
+   빌라 탭을 열 때마다 다시 계산하던 문제. 이제는 그 물건의 값이 실제로 바뀐 때만 다시 계산 */
+function villaStackSig(a) { var sk = villaStack && villaStack.rows && a.id != null ? villaStack.rows[String(a.id)] : null; return sk ? [sk.est, sk.l10, sk.nr == null ? '' : sk.nr].join(':') : 'n'; }
+function villaVeSig(a) { return ['v9', villaStackSig(a), a.pyung, a.addr, a.dong, a.bunji, a.bidDate, a.buildYear || '', a.estBuildYear || '', a.buildYear || a.estBuildYear ? '' : (villaHsYear(a) || '')].join('|'); }
 async function villaLoadRegions() {
     if (villaLoadBusy) return; villaLoadBusy = true;
     try {
