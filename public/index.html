@@ -1616,8 +1616,7 @@ body.ui2 #auction-modal.am4 { width:620px; }
 </div>
 <div id="loc-bar" style="display:none;position:absolute;top:60px;left:50%;transform:translateX(-50%);z-index:51;background:rgba(17,24,39,0.88);color:#fff;font-size:12px;padding:5px 10px;border-radius:16px;align-items:center;gap:8px;white-space:nowrap;">
     <b>🏅 입지 TOP10</b>
-    <button id="loc-t-apt" onclick="setLocationType('apt')" title="아파트 입지 TOP10 켜기/끄기" style="border:0;border-radius:10px;padding:2px 9px;font-size:12px;font-weight:700;cursor:pointer;">🏢 아파트</button>
-    <button id="loc-t-villa" onclick="setLocationType('villa')" title="빌라 입지 TOP10 켜기/끄기" style="border:0;border-radius:10px;padding:2px 9px;font-size:12px;font-weight:700;cursor:pointer;">🏘️ 빌라</button>
+    <span id="loc-type" title="지금 보고 있는 탭(아파트/연립다세대·입찰후보 아파트/빌라)에 맞는 유형만 표시돼요" style="border-radius:10px;padding:2px 9px;font-size:12px;font-weight:700;color:#fff;background:#dc2626;"></span>
     <span id="loc-note" style="color:#cbd5e1;"></span>
 </div>
 <div id="hs-hint" style="display:none;position:absolute;top:100px;left:50%;transform:translateX(-50%);z-index:50;background:rgba(0,0,0,0.75);color:white;font-size:12px;padding:5px 12px;border-radius:14px;pointer-events:none;"></div>
@@ -3491,20 +3490,25 @@ var showHomestay = false, homestayAgg = null, homestayPts = null, homestayLoadin
 /* 🏅 입지 TOP10 (2026-11-09, 사용자: 입지를 좌표 기반으로 뽑아 지도에 반경으로 상위 10곳 표시, API 호출·비용 없이)
    서버(compute-location-index.py, 매주)가 만든 정적 파일 /location-index.json 하나만 읽음 - 지도 SDK의 원(Circle)은 브라우저에서 그리므로 추가 호출 없음.
    입지 = 실거래가 매긴 위치 가치(면적·연식·층 보정한 기준 물건 평당가, 좌표 격자 + 이웃 평균). 지금 지도에 보이는 범위에서 높은 순 10곳(서로 1.2km 이상 떨어진 곳). */
-var showLocation = false, locIndex = null, locLoading = false, locOverlays = [], locOn = { apt: true, villa: true };
+var showLocation = false, locIndex = null, locLoading = false, locOverlays = [];
 var LOC_STYLE = { apt: { name: '아파트', col: ['#dc2626', '#ea580c', '#f59e0b'] }, villa: { name: '빌라', col: ['#047857', '#0d9488', '#0891b2'] } };   // 아파트=붉은 계열, 빌라=초록 계열(도시민박 보라와 겹치지 않게)
 function toggleLocationLayer() {
     showLocation = !showLocation;
     var b = document.getElementById('loc-quick-btn'); if (b) b.classList.toggle('active', showLocation);
     renderLocationLayer();
 }
-function setLocationType(t) { locOn[t] = !locOn[t]; if (!locOn.apt && !locOn.villa) locOn[t === 'apt' ? 'villa' : 'apt'] = true; renderLocationLayer(); }   // 둘 중 하나만 또는 둘 다 켤 수 있음(둘 다 끄진 못함)
+/* 2026-11-10(사용자: 빌라 탭을 볼 땐 빌라만, 아파트 탭을 볼 땐 아파트만) - 지금 보고 있는 유형을 자동으로 따라감: 입찰후보 창이 열려 있으면 그 창의 탭(빌라/아파트), 아니면 지도의 유형 필터(연립다세대/아파트) */
+function locTypeNow() {
+    var bb = document.getElementById('bid-board');
+    if (bb && bb.style.display && bb.style.display !== 'none') return bidBoardState.visit === 'villa' ? 'villa' : 'apt';
+    return currentTypeFilter === 'villa' ? 'villa' : 'apt';
+}
 function clearLocationOverlays() { locOverlays.forEach(function(o) { o.setMap(null); }); locOverlays = []; }
 function locKm(la1, lo1, la2, lo2) { var dx = (lo1 - lo2) * 111 * Math.cos(la1 * Math.PI / 180), dy = (la1 - la2) * 111; return Math.sqrt(dx * dx + dy * dy); }
 function renderLocationLayer() {
     clearLocationOverlays();
     var bar = document.getElementById('loc-bar'); if (bar) bar.style.display = showLocation ? 'flex' : 'none';
-    ['apt', 'villa'].forEach(function(t) { var e = document.getElementById('loc-t-' + t); if (e) { e.style.background = locOn[t] ? LOC_STYLE[t].col[0] : '#374151'; e.style.color = locOn[t] ? '#fff' : '#9ca3af'; } });
+    var curT = locTypeNow(), tl = document.getElementById('loc-type'); if (tl) { tl.textContent = (curT === 'apt' ? '🏢 아파트' : '🏘️ 빌라'); tl.style.background = LOC_STYLE[curT].col[0]; }
     var note = document.getElementById('loc-note');
     if (!showLocation || !map) return;
     if (!locIndex) {
@@ -3516,8 +3520,7 @@ function renderLocationLayer() {
     }
     var bnd = map.getBounds(), sw = bnd.getSouthWest(), ne = bnd.getNorthEast();
     var la0 = sw.getLat(), la1 = ne.getLat(), lo0 = sw.getLng(), lo1 = ne.getLng(), counts = [], missing = false;
-    ['apt', 'villa'].forEach(function(t) {
-        if (!locOn[t]) return;
+    [curT].forEach(function(t) {
         var T = locIndex.types && locIndex.types[t], ST = LOC_STYLE[t];
         if (!T || !T.cells || !T.cells.length) { missing = true; return; }
         var inView = T.cells.filter(function(c) { var la = c[0] / 1e4, lo = c[1] / 1e4; return la >= la0 && la <= la1 && lo >= lo0 && lo <= lo1; });
@@ -7211,6 +7214,7 @@ function setTypeFilter(type, btn) {
     btn.classList.add(type === 'villa' ? 'active-villa' : 'active-apt');
     updateLegendLabels();
     redrawMarkers();
+    if (showLocation) renderLocationLayer();
 }
 // 연립다세대·단독다가구는 최근/과거 거래 기준(6개월/전년도)이 아파트(3개월/1년)와 달라서
 // 범례 문구도 현재 선택된 타입에 맞춰 바꿔줌
@@ -8025,6 +8029,7 @@ function setTypeFilter(type, btn) {
     btn.classList.add(type === 'villa' ? 'active-villa' : 'active-apt');
     updateLegendLabels();
     redrawMarkers();
+    if (showLocation) renderLocationLayer();
 }
 // 연립다세대·단독다가구는 최근/과거 거래 기준(6개월/전년도)이 아파트(3개월/1년)와 달라서
 // 범례 문구도 현재 선택된 타입에 맞춰 바꿔줌
@@ -21494,8 +21499,9 @@ function openBidBoard(opts) {
     (opts.updatedIds || []).forEach(function(id) { bidBoardState.updated[id] = true; });
     refreshBidBoard();
     syncBoardBtn();
+    if (showLocation) renderLocationLayer();
 }
-function closeBidBoard() { document.getElementById('bid-board').style.display = 'none'; bbPinchZoom(false); syncBoardBtn(); }
+function closeBidBoard() { document.getElementById('bid-board').style.display = 'none'; bbPinchZoom(false); syncBoardBtn(); if (showLocation) renderLocationLayer(); }
 async function refreshBidBoard() {
     if (bidBoardRunning) return;
     bidBoardRunning = true;
@@ -21755,7 +21761,7 @@ function bbResetDrawer() {
     var b = document.getElementById('bid-board'); if (b) b.classList.remove('with-drawer');
     var d = document.getElementById('bb-drawer'); if (d) { d.style.display = 'none'; d.innerHTML = ''; d.__lastId = null; d.__lastHtml = null; }
 }
-function setLiteVisit(v) { bbResetDrawer(); var s0 = bidBoardState, wasVilla = s0.visit === 'villa'; if (v !== 'villa' && v !== 'fav') s0.aptVisit = v; s0.visit = v;
+function setLiteVisit(v) { bbResetDrawer(); var s0 = bidBoardState, wasVilla = s0.visit === 'villa'; if (v !== 'villa' && v !== 'fav') s0.aptVisit = v; s0.visit = v; if (showLocation) setTimeout(renderLocationLayer, 0);
     if (v !== 'villa' && String(s0.region || '').indexOf('g:') === 0) s0.region = '';
     if (v === 'fav') s0.region = '';
     if (s0.region && (wasVilla !== (v === 'villa')) && !bidBoardRows.some(function(r) { return (r.type === 'villa') === (v === 'villa') && regionMatch(r, s0.region); })) s0.region = '';  bidBoardState.liteLimit = 120; renderBidBoard(); if (v === 'go' || v === 'pass' || v === 'all' || v === 'fav') setTimeout(function() { try { finalizeStaleRows(); } catch (e) {} }, 50); }
