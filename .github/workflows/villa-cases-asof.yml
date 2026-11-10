@@ -1,0 +1,47 @@
+# 빌라 과거 낙찰 사례 채점용 자료 만들기(2026-11-10) - 2026-06 이후 낙찰 사례마다 '그 당시' 종합 시세·하위값과, 2026-06 이전 사례로만 학습한 낙찰가 모델을 내보냄(시험 구간 정보가 안 새게).
+# 한도 보호(사용자: API 호출·일일 용량에 막히지 않게): ① 서버 상태를 먼저 확인해 느리면 돌리지 않음 ② 같은 작업은 겹쳐 돌지 않음(concurrency) ③ 서버 읽기는 병렬 6줄·한 번만 ④ 외부 API(대장·좌표·공공데이터)는 전혀 부르지 않음
+name: Villa cases as-of
+on:
+  workflow_dispatch:
+concurrency:
+  group: villa-cases-asof
+  cancel-in-progress: false
+jobs:
+  export:
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
+    steps:
+      - uses: actions/checkout@v4
+      - name: 서버 상태 확인(느리거나 오류면 중단)
+        run: |
+          for i in 1 2 3; do
+            t=$(curl -s -o /dev/null -w "%{http_code} %{time_total}" -m 20 https://1234auction.vercel.app/api/data-coverage || echo "000 99")
+            echo "시도 $i: $t"; code=${t%% *}; sec=${t##* }
+            if [ "$code" = "200" ] && awk "BEGIN{exit !($sec < 3.0)}"; then ok=1; break; fi
+            sleep 20
+          done
+          [ "${ok:-0}" = "1" ] || { echo "서버가 느려서 돌리지 않아요"; exit 1; }
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install pandas numpy requests scikit-learn scipy
+      - env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          COLLECT_PROXY_SECRET: ${{ secrets.COLLECT_PROXY_SECRET }}
+          SITE_URL: https://1234auction.vercel.app
+          FETCH_THREADS: '6'
+          FIT_WINBID: '1'
+          EXPORT_CASES: '1'
+          PYTHONUNBUFFERED: '1'
+        run: python compute-villa-stack.py | tee export-log.txt
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: villa-cases-asof
+          path: |
+            villa-cases-asof.json
+            villa-winbid-pre.json
+            export-log.txt
+          if-no-files-found: ignore
+          retention-days: 30

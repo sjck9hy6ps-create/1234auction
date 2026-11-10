@@ -178,7 +178,7 @@ def main():
         if len(T2) > N_TRAIN: T2 = T2.sample(N_TRAIN, random_state=11)
         D2 = featurize(T2); D2["y"] = np.log(T2.loc[D2.index, "price"] / D2["base"])
         pt_all = HistGradientBoostingRegressor(loss="absolute_error", **P).fit(D2[COLS], D2["y"])
-        return eval_winbid(df, pt, featurize, pt_all=pt_all)
+        return eval_winbid(df, pt, featurize, pt_all=pt_all, mq=mq)
     # ── 입찰 물건 ──
     au = requests.get(f"{SITE}/api/auction?kind=auctions", timeout=300).json()
     today = pd.Timestamp.now(tz="Asia/Seoul").tz_localize(None).normalize()
@@ -296,6 +296,32 @@ def fit_winbid(D, F, T, c2, pt_all, mkX, FAC, Xs, tr, te, mB, featurize):
     json.dump(out, open("villa-winbid.json", "w", encoding="utf-8"), ensure_ascii=False); print("저장 villa-winbid.json")
 
 
+def export_cases(D, F, T, Xs, mB, FAC, te, mq):
+    """과거 낙찰 사례 채점용 파일 2개: villa-cases-asof.json(2026-06 이후 사례 + 그 당시 시점 종합 시세·하위값·대장 값), villa-winbid-pre.json(2026-06 이전 사례로만 학습한 낙찰가 모델 - 시험 구간 정보가 안 샌 것)"""
+    S = D[te].copy()
+    Fx = F.reindex(S.index)
+    for q in (0.1, 0.25):
+        S[f"q{int(q * 100)}"] = (Fx["base"] * np.exp(mq[q].predict(Fx[COLS]))).values if mq else np.nan
+    for col in ("elv", "grnd", "hh", "by2"): S["t_" + col] = T[col].reindex(S.index).values if col in T.columns else np.nan
+    S["disp"] = Fx["disp"].values; S["n_bld"] = Fx["n_bld"].values; S["n_dong"] = Fx["n_dong"].values
+    S["n_rad700"] = Fx["n_rad700"].values if "n_rad700" in Fx.columns else np.nan
+    nz = lambda v: None if (v is None or (isinstance(v, float) and not np.isfinite(v))) else v
+    rows = []
+    for i, r in S.iterrows():
+        rows.append({"id": str(r.get("id")), "caseNo": r.get("caseNo"), "addr": r.get("addrJibun"), "dong": r.get("dong"), "bunji": r.get("bunji"), "region": r.get("region"), "sido": int(r.get("sido")),
+                     "area": nz(float(r["area"])), "floor": nz(float(r["fl"])) if r.get("fl") is not None else None, "minbid": nz(float(r["minbid"])), "appr": nz(float(r["appr"])), "actual": nz(float(r["actual"])),
+                     "bidders": nz(float(r["bidders"])) if r.get("bidders") is not None and r.get("bidders") == r.get("bidders") else None, "sale": int(r["sale"]),
+                     "est": nz(float(r["stack"])), "base": nz(float(r["base"])), "q10": nz(float(r["q10"])), "q25": nz(float(r["q25"])), "lvl": r.get("lvl"), "by": nz(float(r["by"])) if r.get("by") == r.get("by") else None,
+                     "elv": nz(float(r["t_elv"])), "grnd": nz(float(r["t_grnd"])), "hh": nz(float(r["t_hh"])), "disp": nz(float(r["disp"])), "nBld": int(r["n_bld"]), "nDong": int(r["n_dong"]),
+                     "nRad": None if r["n_rad700"] != r["n_rad700"] else int(r["n_rad700"]), "lat": nz(float(r["lat"])) if r.get("lat") is not None and r.get("lat") == r.get("lat") else None, "lon": nz(float(r["lon"])) if r.get("lon") is not None and r.get("lon") == r.get("lon") else None})
+    json.dump(rows, open("villa-cases-asof.json", "w", encoding="utf-8"), ensure_ascii=False)
+    act = D["actual"].values; p_te = D["stack"].values[te] * np.exp(predict_additive(mB, Xs[te], FAC))
+    resq = [round(float(np.quantile(np.log(act[te] / p_te), q / 100)), 4) for q in range(1, 100)]
+    pre = {"base": mB[0], "eff": {f: {str(k): round(float(v), 4) for k, v in d.items()} for f, d in mB[1].items()}, "resQ": resq, "factors": [f for f, _ in FAC], "estBasis": "stack", "note": "2026-06 이전 사례로만 학습"}
+    json.dump(pre, open("villa-winbid-pre.json", "w", encoding="utf-8"), ensure_ascii=False)
+    print(f"내보내기: 사례 {len(rows):,}건(villa-cases-asof.json), 사전 학습 낙찰가 모델(villa-winbid-pre.json)")
+
+
 def mkX_for(D2, mkX, D):
     """mkX는 바깥 D를 쓰므로 같은 열(예상매도가만 다름)로 요인 키를 다시 만든다 - lb(최저가÷예상매도가)만 바뀜"""
     X = mkX(D["stack"]).reindex(D2.index)
@@ -328,7 +354,7 @@ def predict_additive(m, X, factors):
     return p
 
 
-def eval_winbid(df, pt, featurize, pt_all=None):
+def eval_winbid(df, pt, featurize, pt_all=None, mq=None):
     """빌라 예상 낙찰가 채점(2026-11-07): 낙찰사례(수도권 빌라, 2024~)의 낙찰가를 ① 예전 예상매도가(시험용 기본 추정) 기준 모델 ② 같은 모델에 종합 예상매도가를 넣은 것(앱이 지금 하는 일) ③ 종합 값으로 다시 학습한 모델로 예측.
     학습 = 2026-06 이전 사례, 시험 = 2026-06~(학습에 안 쓴 구간). 종합 모델(점 보정)도 2026-06 이전 거래로만 학습해 시험 구간 정보가 새지 않게 함."""
     cases = pd.DataFrame(requests.get(f"{SITE}/api/auction?kind=bidCases", timeout=300).json())
@@ -373,6 +399,8 @@ def eval_winbid(df, pt, featurize, pt_all=None):
     act = D["actual"].values
     mA = fit_additive(Xb[tr], np.log(act[tr] / D["base"].values[tr]), FAC)
     mB = fit_additive(Xs[tr], np.log(act[tr] / D["stack"].values[tr]), FAC)
+    if pt_all is not None and os.environ.get("EXPORT_CASES") == "1":
+        export_cases(D, F, T, Xs, mB, FAC, te, mq)   # 2026-11-10 빌라 과거 낙찰 사례 채점용 내보내기(앱 계산을 입찰 전 상태로 되돌려 채점)
     if pt_all is not None:
         return fit_winbid(D, F, T, c2, pt_all, mkX, FAC, Xs, tr, te, mB, featurize)
     pr = {"① 예전 예상매도가+예전 모델": D["base"].values * np.exp(predict_additive(mA, Xb, FAC)),
