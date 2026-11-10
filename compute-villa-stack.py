@@ -303,6 +303,7 @@ def export_cases(D, F, T, Xs, mB, FAC, te, mq):
     for q in (0.1, 0.25):
         S[f"q{int(q * 100)}"] = (Fx["base"] * np.exp(mq[q].predict(Fx[COLS]))).values if mq else np.nan
     for col in ("elv", "grnd", "hh", "by2"): S["t_" + col] = T[col].reindex(S.index).values if col in T.columns else np.nan
+    for col in ("lat", "lon"): S[col] = T[col].reindex(S.index).values if col in T.columns else S.get(col)   # 좌표 채움 후 값(2026-11-10)
     S["disp"] = Fx["disp"].values; S["n_bld"] = Fx["n_bld"].values; S["n_dong"] = Fx["n_dong"].values
     S["n_rad700"] = Fx["n_rad700"].values if "n_rad700" in Fx.columns else np.nan
     nz = lambda v: None if (v is None or (isinstance(v, float) and not np.isfinite(v))) else v

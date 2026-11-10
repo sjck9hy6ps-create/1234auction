@@ -1,0 +1,65 @@
+# 빌라 낙찰가 개선 시험(2026-11-10): ① 요인 확대 모델(②-b) 교차 검증 ② 몰림을 읽는 새 입력 요인 - 측정 전용
+# 멈춤을 피하는 장치: 서버가 느리면 지수 대기 후 계속, 서버 읽기는 거래·좌표 한 번과 도시민박 집계 한 번(재시도), 외부 API 없음, 겹쳐 돌지 않음
+name: Analyze villa crowd test
+on:
+  workflow_dispatch:
+    inputs:
+      export_run_id:
+        description: 'villa-cases-asof 실행 번호'
+        required: true
+      score_run_id:
+        description: 'score-villa-cases 실행 번호(현재 낙찰가 모델의 예상 낙찰가)'
+        required: true
+concurrency:
+  group: analyze-villa-crowd-test
+  cancel-in-progress: false
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - name: 서버가 한가해질 때까지 기다림(느려도 중단하지 않고 최대 30분 후 계속)
+        run: |
+          waited=0; wait=20
+          while [ $waited -lt 1800 ]; do
+            t=$(curl -s -o /dev/null -w "%{http_code} %{time_total}" -m 20 https://1234auction.vercel.app/api/data-coverage || echo "000 99")
+            echo "서버 확인: $t"; code=${t%% *}; sec=${t##* }
+            if [ "$code" = "200" ] && awk "BEGIN{exit !($sec < 3.0)}"; then break; fi
+            sleep $wait; waited=$((waited+wait)); wait=$((wait*2)); [ $wait -gt 300 ] && wait=300
+          done
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install pandas numpy requests scikit-learn scipy
+      - uses: actions/download-artifact@v4
+        with:
+          name: villa-cases-asof
+          path: input
+          run-id: ${{ inputs.export_run_id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+      - uses: actions/download-artifact@v4
+        with:
+          name: villa-score
+          path: input
+          run-id: ${{ inputs.score_run_id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+      - env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          SITE_URL: https://1234auction.vercel.app
+          FETCH_THREADS: '6'
+          PYTHONUNBUFFERED: '1'
+        run: python analyze-villa-crowd-test.py | tee crowd-log.txt
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: villa-crowd-test
+          path: |
+            villa-crowd-test.json
+            crowd-log.txt
+          if-no-files-found: ignore
+          retention-days: 30
