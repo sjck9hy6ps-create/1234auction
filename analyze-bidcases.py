@@ -2407,7 +2407,7 @@ def winbid_model(R, now):
     except Exception as e:
         print("  구간별 오차 분포 건너뜀:", e)
     # 🌊 큰 상승 단지의 상방 꼬리(2026-11-10, 사용자: 입찰자가 몰리는 건 오르는 흐름이 받쳐 주기 때문) - 단지 가격 흐름이 +8% 이상(flowC=up2)인 사례는 모델보다 높게 낙찰되는 꼬리가 두꺼움(검증 7,199건: 10%+ 높게 낙찰 18.6% vs 횡보 5.8%).
-    # 이 사례들의 오차 분포를 따로 만들어 앱이 낙찰 가능성(추천가가 이길 확률)을 계산할 때 쓰게 함. 검증: 학습에 안 쓴 최근 12개월(te)을 시간순 60/40으로 나눠, 앞 60%로 만든 분포가 뒤 40%의 해당 사례에서 전체 분포보다 분위 적중오차가 10% 넘게 줄 때만 use
+    # 이 사례들의 오차 분포를 따로 만들어 앱이 낙찰 가능성(추천가가 이길 확률)을 계산할 때 쓰게 함. 검증: 학습에 안 쓴 최근 12개월(te)을 시간순 60/40으로 나눠, 앞 60%로 만든 분포가 뒤 40%의 해당 사례에서 전체 분포보다 분위 적중오차가 작을 때 use(사용자 방침: 흐름에 맞는 근거식은 결과가 비슷하면 적용)
     try:
         _fk = wb_features(te)["flowC"].values
         _pc = np.array([(k.split("|")[2] if (k != "-" and k.count("|") >= 3) else "-") for k in _fk])
@@ -2421,7 +2421,7 @@ def winbid_model(R, now):
                 _tf = np.quantile(res[_uf], _qs); _gl = np.quantile(res[_fi], _qs)
                 def _cerr(qv, idx): return float(np.mean([abs(float((res[idx] <= qv[int(round(t * 100)) - 1]).mean()) - t) for t in (0.1, 0.25, 0.5, 0.75, 0.9)]))
                 _e1, _e0 = _cerr(_tf, _uv), _cerr(_gl, _uv)
-                full["resQF"] = {"key": "up2", "q": [round(float(v), 4) for v in np.quantile(res[_up], _qs)], "n": int(len(_up)), "use": bool(_e1 < _e0 * 0.9),
+                full["resQF"] = {"key": "up2", "q": [round(float(v), 4) for v in np.quantile(res[_up], _qs)], "n": int(len(_up)), "use": bool(_e1 < _e0),
                                  "check": {"전체분포 적중오차%": round(_e0 * 100, 2), "상승단지분포 적중오차%": round(_e1 * 100, 2), "검증 n": int(len(_uv))},
                                  "median": {"상승 단지": round(float(np.median(res[_up])), 4), "나머지": round(float(np.median(res[np.where(_pc != "up2")[0]])), 4)}}
                 print("  🌊 큰 상승 단지 오차 분포:", json.dumps({k2: v2 for k2, v2 in full["resQF"].items() if k2 != "q"}, ensure_ascii=False))
