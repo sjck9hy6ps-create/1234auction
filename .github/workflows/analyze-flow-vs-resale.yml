@@ -1,0 +1,42 @@
+name: 분석 - 흐름과 되판 가격
+on:
+  workflow_dispatch:
+    inputs:
+      rows_run_id:
+        description: '채점 사례(aptcases-*)가 들어 있는 apt-case-data 실행 번호'
+        default: '42611988407'
+jobs:
+  an:
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install pandas numpy requests
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: aptcases-*
+          path: rows
+          run-id: ${{ inputs.rows_run_id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+      - env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          SITE_URL: https://1234auction.vercel.app
+          ROWS_DIR: rows
+          PYTHONUNBUFFERED: '1'
+        run: python analyze-flow-vs-resale.py | tee flow-log.txt
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: flow-vs-resale
+          path: |
+            flow-vs-resale.json
+            flow-log.txt
+          if-no-files-found: ignore
+          retention-days: 30
