@@ -81,9 +81,9 @@ def main():
     cor = {}
     for col in ("cxP", "cxV", "dgP", "sgP"):
         S = O[[col, "res"]].dropna()
-        if len(S) > 100: cor[col] = {"n": int(len(S)), "잔차와 상관": round(float(S[col].corr(S["res"], method="spearman")), 3)}
+        if len(S) > 100: cor[col] = {"n": int(len(S)), "잔차와 순위상관": round(float(S[col].rank().corr(S["res"].rank())), 3)}
         S2 = O[[col, "bidders"]].dropna()
-        if len(S2) > 100: cor.setdefault(col, {})["응찰자수와 상관"] = round(float(S2[col].corr(S2["bidders"].astype(float), method="spearman")), 3)
+        if len(S2) > 100: cor.setdefault(col, {})["응찰자수와 순위상관"] = round(float(S2[col].rank().corr(S2["bidders"].astype(float).rank())), 3)
     res["상관"] = cor
     # 가격·거래량이 함께 오르는 단지(수익성이 보이는 단지) vs 나머지
     S = O[O["cxP"].notna() & O["cxV"].notna()]
