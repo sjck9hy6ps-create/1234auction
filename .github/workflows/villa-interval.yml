@@ -1,0 +1,43 @@
+# 빌라 시세 학습 시험 2(2026-11-11): 최근 기간 집중 + 약한 구간 표본 넓히기. 이미 계산된 조각 파일만 사용(DB·외부 호출 없음)
+name: Villa interval
+on:
+  workflow_dispatch:
+    inputs:
+      shard_run_id:
+        description: 'Villa data scale 실행 번호(조각 파일 보관 14일)'
+        default: '42851729554'
+concurrency:
+  group: villa-interval
+  cancel-in-progress: false
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install pandas numpy scikit-learn scipy
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: feat-*
+          path: shards
+          run-id: ${{ inputs.shard_run_id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+      - env:
+          SHARD_GLOB: shards/**/feat-shard-*.pkl
+          PYTHONUNBUFFERED: '1'
+        run: python merge-villa-interval.py | tee interval-log.txt
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: villa-interval
+          path: |
+            villa-interval.json
+            interval-log.txt
+          if-no-files-found: ignore
+          retention-days: 30
