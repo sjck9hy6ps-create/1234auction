@@ -3,6 +3,9 @@
 # 멈춤을 피하는 장치: DB 읽기는 prepare 한 번뿐(조각은 파일만 사용), 서버가 느리면 지수 대기 후 계속, 조각이 일부 실패해도 병합은 가진 만큼으로 진행(fail-fast 끔), 동시에 도는 조각은 6개로 제한
 name: Villa data scale
 on:
+  workflow_run:
+    workflows: ["Analyze villa crowd test"]
+    types: [completed]
   workflow_dispatch:
     inputs:
       shards:
@@ -64,7 +67,7 @@ jobs:
       - env:
           MODE: shard
           DF_FILE: input/villa-df.pkl
-          SHARD: ${{ matrix.idx }}/${{ inputs.shards }}
+          SHARD: ${{ matrix.idx }}/${{ inputs.shards || '48' }}
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
           PYTHONUNBUFFERED: '1'

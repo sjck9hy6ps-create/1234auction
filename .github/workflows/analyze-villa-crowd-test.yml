@@ -2,19 +2,23 @@
 # 멈춤을 피하는 장치: 서버가 느리면 지수 대기 후 계속, 서버 읽기는 거래·좌표 한 번과 도시민박 집계 한 번(재시도), 외부 API 없음, 겹쳐 돌지 않음
 name: Analyze villa crowd test
 on:
+  workflow_run:
+    workflows: ["Villa cases as-of"]
+    types: [completed]
   workflow_dispatch:
     inputs:
       export_run_id:
         description: 'villa-cases-asof 실행 번호'
-        required: true
+        required: false
       score_run_id:
         description: 'score-villa-cases 실행 번호(현재 낙찰가 모델의 예상 낙찰가)'
-        required: true
+        default: '42842901898'
 concurrency:
   group: analyze-villa-crowd-test
   cancel-in-progress: false
 jobs:
   test:
+    if: ${{ github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success' }}
     runs-on: ubuntu-latest
     timeout-minutes: 150
     permissions:
@@ -39,13 +43,13 @@ jobs:
         with:
           name: villa-cases-asof
           path: input
-          run-id: ${{ inputs.export_run_id }}
+          run-id: ${{ github.event.workflow_run.id || inputs.export_run_id }}
           github-token: ${{ secrets.GITHUB_TOKEN }}
       - uses: actions/download-artifact@v4
         with:
           name: villa-score
           path: input
-          run-id: ${{ inputs.score_run_id }}
+          run-id: ${{ inputs.score_run_id || '42842901898' }}
           github-token: ${{ secrets.GITHUB_TOKEN }}
       - env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
