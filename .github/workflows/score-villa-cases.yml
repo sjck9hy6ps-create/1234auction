@@ -1,5 +1,5 @@
 # 빌라 과거 낙찰 사례 채점(2026-11-10) - 앱 실제 계산(추천가·예상 낙찰가·낙찰 가능성)을 가상 브라우저에서 돌려 실제 낙찰가와 비교.
-# 한도 보호: 외부·서버 API 호출 전면 차단(스크립트 상단 설명), 요청 수·시간 상한, 겹쳐 돌지 않음, 입력은 villa-cases-asof 파일(서버를 새로 읽지 않음)
+# 멈춤을 피하는 장치: 외부·서버 API 호출을 아예 만들지 않음(가상 브라우저 안에서 빈 응답), 서버가 느려도 기다렸다 계속, 묶음마다 저장·실패하면 새 브라우저로 쪼개 이어하기, 죽으면 자동 재시작, 겹쳐 돌지 않음
 name: Score villa cases
 on:
   workflow_dispatch:
@@ -13,7 +13,7 @@ concurrency:
 jobs:
   score:
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    timeout-minutes: 180
     permissions:
       actions: read
       contents: read
@@ -30,13 +30,19 @@ jobs:
           github-token: ${{ secrets.GITHUB_TOKEN }}
       - run: npm install playwright
       - run: npx playwright install --with-deps chromium
-      - env:
+      - name: 채점(중간에 죽으면 같은 파일에서 이어서 다시 - 최대 5번)
+        env:
           SITE_URL: https://1234auction.vercel.app
           CASES: input/villa-cases-asof.json
           PRE_MODEL: input/villa-winbid-pre.json
           MAX_NET_CALLS: '40'
-          TIME_BUDGET_MIN: '40'
-        run: node scripts/score-villa-cases.mjs | tee score-log.txt
+          BATCH: '150'
+        run: |
+          set -o pipefail
+          for i in 1 2 3 4 5; do
+            RESUME=1 node scripts/score-villa-cases.mjs 2>&1 | tee -a score-log.txt && break
+            echo "비정상 종료($i회) - 30초 뒤 저장된 결과에서 이어서 다시" | tee -a score-log.txt; sleep 30
+          done
       - uses: actions/upload-artifact@v4
         if: always()
         with:
