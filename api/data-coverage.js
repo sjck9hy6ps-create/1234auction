@@ -3391,11 +3391,14 @@ export default async function handler(req, res) {
     try {
       let region = req.query.region || null;
       if (req.query.lawdCd) { const f = LAWD_CODES.find((r) => r.code === String(req.query.lawdCd)); if (f) region = f.name; }
-      const ids = ['cycle|__summary__', 'cycle|__forecast__'].concat(region ? ['cycle|' + region, 'pop|' + region, 'presale|' + region] : []);
+      // 2026-11-10(수정 요청: 빌라 사이클을 빌라 기준으로): segment=villa 면 빌라 거래로 만든 cyclev|* 를 읽음(후발주자·인기·분양권은 아파트 전용이라 빈 값)
+      const vil = req.query.segment === 'villa';
+      const cp = vil ? 'cyclev|' : 'cycle|';
+      const ids = [cp + '__summary__', 'cycle|__forecast__'].concat(region ? [cp + region].concat(vil ? [] : ['pop|' + region, 'presale|' + region]) : []);
       const { data, error } = await supabase.from('leader_follower_cache').select('id,payload,fetched_at').in('id', ids);
       if (error) return res.status(500).json({ error: error.message });
-      const sum = (data || []).find((r) => r.id === 'cycle|__summary__');
-      const reg = region ? (data || []).find((r) => r.id === 'cycle|' + region) : null;
+      const sum = (data || []).find((r) => r.id === cp + '__summary__');
+      const reg = region ? (data || []).find((r) => r.id === cp + region) : null;
       if (!sum) return res.status(404).json({ error: '사이클 분석 결과가 아직 없습니다(analyze-cycle 워크플로 실행 필요).' });
       const p = sum.payload || {};
       const sidoKey = region ? String(region).split(' ')[0] : null;
@@ -3415,10 +3418,11 @@ export default async function handler(req, res) {
         followerCatchupCoefUsed: p.followerCatchupCoefUsed,
         region: reg ? reg.payload : null,
         // 2026-10 인기 단지 목록(analyze-liquidity.py, 동별 상위20%/중간/하위40% + 분기마다 거래된 비율)
+        segment: vil ? 'villa' : 'apt',
         popular: region ? (((data || []).find((r) => r.id === 'pop|' + region) || {}).payload || null) : null,
         // 2026-10 분양권·입주권 전매 실거래(scripts/collect-presale.mjs) - 신축 단지 시세용
         presale: region ? (((data || []).find((r) => r.id === 'presale|' + region) || {}).payload || null) : null,
-        risk,
+        risk: vil ? null : risk,
       });
     } catch (err) {
       return res.status(500).json({ error: err.message });

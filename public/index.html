@@ -3052,14 +3052,15 @@ function resolvePopInfo(dong, name, bunji, type, altName) {
     return null;
 }
 var cycleDataByLawd = {};
-async function loadMarketCycle(lawdCd) {
+async function loadMarketCycle(lawdCd, segment) {   // segment 'villa'(2026-11-10): 빌라 거래로 만든 사이클(빌라 상세에서 📈 사이클)
     if (!lawdCd) return null;
-    if (cycleDataByLawd[lawdCd]) return cycleDataByLawd[lawdCd];
+    var ck = segment === 'villa' ? 'v|' + lawdCd : lawdCd;
+    if (cycleDataByLawd[ck]) return cycleDataByLawd[ck];
     try {
-        var r = await fetch('/api/data-coverage?mode=marketCycle&lawdCd=' + encodeURIComponent(lawdCd));
+        var r = await fetch('/api/data-coverage?mode=marketCycle&lawdCd=' + encodeURIComponent(lawdCd) + (segment === 'villa' ? '&segment=villa' : ''));
         if (!r.ok) return null;
         var d = await r.json();
-        cycleDataByLawd[lawdCd] = d;
+        cycleDataByLawd[ck] = d;
         var pop = d.popular && d.popular.byDong;
         if (pop) {
             var pm = Object.assign({}, popularMap);
@@ -15151,6 +15152,17 @@ function fbOpen() {
     document.body.appendChild(d);
     document.getElementById('fb-ctx').innerText = JSON.stringify(fbContext(), null, 1);
     d.addEventListener('click', function(e) { if (e.target === d) d.remove(); });
+    /* 2026-11-10(수정 요청: 아이패드로 수정 요청을 쓸 때 키패드에 화면이 가려짐) - 아이패드 사파리는 키패드가 올라와도 고정 위치 창을 줄이지 않고 그 위를 덮음. 보이는 영역(visualViewport) 크기에 창을 맞추고, 입력칸을 누르면 그 칸이 보이게 스크롤 */
+    var vv = window.visualViewport;
+    if (vv) {
+        var fit = function() {
+            if (!document.body.contains(d)) { vv.removeEventListener('resize', fit); vv.removeEventListener('scroll', fit); return; }
+            d.style.inset = 'auto'; d.style.left = '0'; d.style.width = '100%'; d.style.top = vv.offsetTop + 'px'; d.style.height = vv.height + 'px';
+            var bx = d.firstElementChild; if (bx) bx.style.maxHeight = '100%';
+        };
+        fit(); vv.addEventListener('resize', fit); vv.addEventListener('scroll', fit);
+    }
+    var ta = document.getElementById('fb-text'); if (ta) ta.addEventListener('focus', function() { setTimeout(function() { try { ta.scrollIntoView({ block: 'center', behavior: 'smooth' }); } catch (e) {} }, 300); });
 }
 function fbPick(b) { Array.prototype.forEach.call(document.querySelectorAll('#fb-kinds button'), function(x) { x.style.background = '#fff'; x.removeAttribute('data-on'); }); b.style.background = '#e0e7ff'; b.setAttribute('data-on', '1'); }
 async function fbSend() {
@@ -22329,14 +22341,15 @@ var bbDrawerPos = null;
     });
 })();
 function closeBidDrawer() { bidDrawerId = null; document.getElementById('bid-board').classList.remove('with-drawer'); var d = document.getElementById('bb-drawer'); if (d) { d.style.display = 'none'; d.__lastId = null; d.__lastHtml = null; } renderBidBoard(); }
-function bidCostLines(row) {
-    var a = row.a, type = row.type, sale = row.sale, bid = row.recBid;
+function bidCostLines(row, opt) {   // opt(2026-11-10): 빌라 상세처럼 행의 추천가·예상매도가가 아닌 값(빌라 계산의 추천 입찰가·예상매도가)으로 비용을 보고 싶을 때 {bid, sale, buildYear}
+    opt = opt || {};
+    var a = row.a, type = row.type, sale = opt.sale != null ? opt.sale : row.sale, bid = opt.bid != null ? opt.bid : row.recBid;
     if (!sale || !bid) return null;
     var pyung = parseFloat(a.pyung) || 0, addr = a.addr || '', appraisal = parseInt(a.appraisal) || 0;
     var rank = myHouseRankFor(a), adj = !!a.isAdjusted, cheap = effLocalCheap(a, sale);
     var loan = calcRegionAwareLoan('dealer', addr, bid, appraisal, sale);
     var holdM = parseInt(a.holdMonths) || row.holdAuto || DEFAULT_INTEREST_HOLD_MONTHS;
-    var repairAuto = calcRepairFee(type, pyung, a.buildYear || row.estBuildYear || null) || 0;
+    var repairAuto = calcRepairFee(type, pyung, opt.buildYear || a.buildYear || row.estBuildYear || null) || 0;
     var L = [
         ['취득세' + (rank >= 2 ? ' (' + rank + '번째 주택)' : ''), calcAcquisitionTaxDetailed(bid, type, pyung, rank, adj, cheap)],
         ['등기비', calcRegistryFee(bid)],
@@ -22653,6 +22666,23 @@ function fieldChecklistHtml(row) {
 }
 /* ════ 🏘️ 빌라 상세 창 (2026-10-10, 사용자: "빌라 행을 누르면 아파트처럼 상세 내역(지도·사이클·상세정보)이 나오게") ════
    아파트와 같은 오른쪽 상세 창을 쓰되, 빌라 계산(예상매도가·필요 마진·예상 낙찰가·추천가)과 건물 상세(대장·도시민박·매물 붙여넣기)로 채움 */
+/* 💰 빌라 입찰 후 비용 내역(2026-11-10, 수정 요청: 빌라도 아파트처럼 입찰 후 비용 처리 내용을 포함해서 예상 순마진을 표기) - 아파트 상세와 같은 비용 계산(취득세·등기·대출이자·수수료·명도·수리·이사청소·인수금·미납관리비·세금)을
+   빌라 계산이 고른 추천 입찰가·예상매도가 기준으로 한 줄씩 보여 줌. 수리비는 빌라 추천가 계산(villaBidPlan)과 같은 규칙(effRepairFee) */
+function villaCostHtml(row, ev, fmt) {
+    var pe = ev && ev.pn && ev.pn.ev, ve = ev && ev.ve; if (!pe || !ve) return '';
+    var mp = ev.mp, yr = mp && mp.age != null ? new Date().getFullYear() - mp.age : null, cl = null;
+    try { cl = bidCostLines(row, { bid: pe.bid, sale: ve.est, buildYear: yr }); } catch (e) {}
+    if (!cl) return '';
+    var rep = effRepairFee(row.a, 'villa', row.pyung, yr), li = cl.lines.map(function(x) { if (/^수리비/.test(x[0])) return ['수리비' + (parseInt(row.a.repair) ? ' (직접 입력)' : ' (연식 기준)'), rep]; return x; }), cost = li.reduce(function(sum, x) { return sum + x[1]; }, 0);
+    var pre = ve.est - pe.bid - cost, tax = calcResaleIncomeTax('dealer', pre, 0, !!row.a.isAdjusted, myHouseRankFor(row.a)).totalTax, net = pre - tax;
+    return '<div class="dr-sec"><h4>추천 입찰가로 샀을 때 (비용 반영)</h4><table>'
+        + '<tr><td>예상매도가</td><td class="r">' + fmt(ve.est) + '</td></tr><tr><td>− 입찰가</td><td class="r">' + fmt(pe.bid) + '</td></tr>'
+        + li.map(function(x) { return '<tr><td>− ' + x[0] + '</td><td class="r">' + toEok(String(x[1])) + '</td></tr>'; }).join('')
+        + '<tr><td>− 종합소득세·지방세</td><td class="r">' + toEok(String(tax)) + '</td></tr>'
+        + '<tr><td><b>예상 순마진(세후)</b></td><td class="r"><b style="color:' + (net >= 1000 ? '#16a34a' : '#dc2626') + ';">' + toEok(String(Math.round(net))) + '</b></td></tr>'
+        + '<tr><td class="dr-sub">필요 현금(대출 ' + fmt(cl.loan) + ' 제외, 비용 별도)</td><td class="r dr-sub">' + fmt(cl.cash) + '</td></tr></table>'
+        + '<div class="dr-sub">예상매도가 ' + fmt(ve.est) + '이 맞는다는 가정의 값이에요(빌라 시세 보통 오차 약 10%). 하위 10% 값(' + (ev.ve.stack ? fmt(ev.ve.stack.l10) : '-') + ')에 팔리면 순마진은 약 ' + (ev.ve.stack ? fmt(Math.round(net - (ve.est - ev.ve.stack.l10))) : '-') + '이에요(세금 변화 제외).</div></div>';
+}
 async function renderVillaDrawer(d, row) {
     var a = row.a, lawd = row.lawd || bidBoardLawdOf(a);
     // 2026-10-10(사용자: 빌라 상세·지도 로딩 딜레이): 지역 실거래(수 MB)를 다 받을 때까지 상세를 비워 두지 않음 - 저장된 계산(예상매도가·마진·생활권)으로 바로 그리고,
@@ -22679,6 +22709,7 @@ async function renderVillaDrawer(d, row) {
         + (pe ? '<div class="pk-big"><span>추천 입찰가</span><b>' + fmt(pe.bid) + '</b>' + (ve ? '<span>시세의 <b style="font-size:15px;color:#374151;">' + Math.round(pe.bid / ve.est * 100) + '%</b></span>' : '') + '</div>'
             + '<div class="pk-sub">낙찰 가능성 <b>' + Math.round(pe.p * 100) + '%</b> · 예상 순이익(세후) <b>' + fmt(pe.net) + '</b><br>예상매도가 ' + fmt(ve && ve.est) + ' · 최저가 ' + fmt(row.minBid) + '</div>'
             : '<div class="pk-sub">추천가가 없어요 · 예상매도가 ' + fmt(ve && ve.est) + ' · 최저가 ' + fmt(row.minBid) + '</div>') + '</div>';
+    h += villaCostHtml(row, ev, fmt);
     h += bidScoreHtml(row);
     h += permitDrawerHtml(row);
     if (go) h += fieldChecklistHtml(row);
@@ -23847,14 +23878,17 @@ async function openCyclePanel() {
     }
     box.innerHTML = '<div style="text-align:right;"><button onclick="document.getElementById(\'cycle-panel\').remove()" style="border:none;background:none;font-size:18px;cursor:pointer;">×</button></div>불러오는 중...';
     var target = cycleTargetApt();
-    var d = await loadMarketCycle((target && target.lawd) || lastLawdCd || '');
+    var isVillaCyc = !!(target && target.villa);
+    var d = await loadMarketCycle((target && target.lawd) || lastLawdCd || '', isVillaCyc ? 'villa' : null);
+    if (!d && isVillaCyc) d = await loadMarketCycle((target && target.lawd) || lastLawdCd || '');   // 빌라 사이클이 아직 없으면 예전처럼 아파트 사이클로
+    if (d && isVillaCyc && d.segment !== 'villa') isVillaCyc = false;
     if (!d) {
-        try { d = await (await fetch('/api/data-coverage?mode=marketCycle')).json(); } catch (e) { d = null; }
+        try { d = await (await fetch('/api/data-coverage?mode=marketCycle' + (isVillaCyc ? '&segment=villa' : ''))).json(); } catch (e) { d = null; }
     }
     if (!d || !d.national) { box.innerHTML = '<div>사이클 분석 결과를 불러오지 못했어요.</div>'; return; }
     var html = '<div class="cyc-head" title="잡고 끌면 창을 옮길 수 있어요" style="display:flex;justify-content:space-between;align-items:center;cursor:move;touch-action:none;position:sticky;top:-12px;background:#fff;z-index:2;margin:-12px -14px 0;padding:12px 14px 4px;"><b style="font-size:14px;">⠿ 📈 부동산 사이클(아파트)</b>'
         + '<button onclick="document.getElementById(\'cycle-panel\').remove()" style="border:none;background:none;font-size:18px;cursor:pointer;">×</button></div>'
-        + '<div style="color:#999;font-size:10px;">' + d.dataFrom + '~' + d.dataTo + ' 실거래(같은 단지·평형끼리 비교한 가격지수) · 매주 갱신</div>';
+        + '<div style="color:#999;font-size:10px;">' + d.dataFrom + '~' + d.dataTo + ' 실거래(' + (isVillaCyc ? '연립·다세대 거래 · 같은 동·면적대·연식끼리 비교한 가격지수' : '같은 단지·평형끼리 비교한 가격지수') + ') · 매주 갱신</div>';
     var block = function(title, obj, color) {
         if (!obj || !obj.phase) return '';
         return '<div style="margin-top:10px;border-top:1px solid #eee;padding-top:8px;"><div style="font-weight:bold;">' + title + '</div>'
@@ -23863,7 +23897,7 @@ async function openCyclePanel() {
     html += block('전국', d.national, '#424242');
     if (d.sido) html += block(d.sido.name + ' 전체', d.sido, '#6a1b9a');
     if (d.region) html += block(d.region.region, d.region, '#00897b');
-    if (target && target.villa) html += '<div class="pn-muted" style="margin-top:8px;">🏘️ 빌라는 단지 사이클 대신 위의 <b>시군구 사이클</b>을 참고하세요(아파트 사이클이에요 - 같은 지역 흐름을 가늠하는 용도).</div>';
+    if (target && target.villa) html += '<div class="pn-muted" style="margin-top:8px;">🏘️ 빌라는 단지 사이클 대신 위의 <b>시군구 사이클</b>을 참고하세요(' + (isVillaCyc ? '연립·다세대 거래로 만든 빌라 사이클이에요' : '아직 빌라 사이클이 없어 아파트 사이클을 보여 드려요 - 같은 지역 흐름을 가늠하는 용도') + ').</div>';
     else if (target) html += '<div id="cycle-complex-block" style="margin-top:10px;border-top:1px solid #eee;padding-top:8px;"><b>🏢 ' + bbEsc(target.label || '이 단지') + '</b><div class="pn-muted">단지 10년 실거래 불러오는 중…</div></div>';
     else html += '<div class="pn-muted" style="margin-top:8px;">🏢 단지 사이클은 단지 상세나 입찰후보 상세 창을 연 상태에서 📈 사이클을 누르면 보여요</div>';
     html += buildRiskBlockHtml(d.risk, d.region && d.region.region);
