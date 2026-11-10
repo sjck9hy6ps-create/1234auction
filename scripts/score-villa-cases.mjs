@@ -99,7 +99,7 @@ const EVAL_FN = (cs) => cs.map((c) => {
     else if (issue) why = '이슈';
     else if (!pn || pn.infeasible || !pe) why = '마진 부족';
     else if (ve.lvl === '동1~4' || ve.lvl === '시군구') why = '근거 약함';
-    else if (c.nRad != null && c.nRad <= 2) why = '반경 거래 적음';
+    else if (c.nRad != null && c.lat != null && c.nRad <= 2) why = '반경 거래 적음';   // 좌표가 없는 사례는 반경을 못 재므로 이 규칙을 적용하지 않음
     else if (!isNaN(fl) && fl <= 0) why = '지하';
     else if (pe.p < VILLA_VISIT_MIN_P) why = '낙찰 가능성 낮음';
     return { id: c.id, sale: c.sale, actual: c.actual, minbid: c.minbid, est: ve.est, lvl: c.lvl, sido: c.sido, wbPrice: wb ? wb.price : null, margin: mp ? mp.margin : null, mpBid: mp ? mp.bid : null, rec: pe ? pe.bid : null, p: pe ? pe.p : null, net: pe ? pe.net : null, go: !why, why: why, bidders: c.bidders };

@@ -372,6 +372,14 @@ def eval_winbid(df, pt, featurize, pt_all=None, mq=None):
                       "lat": pd.to_numeric(c.get("lat"), errors="coerce").values, "lon": pd.to_numeric(c.get("lon"), errors="coerce").values})
     T["build_year"] = [byb.get((r, d, b), np.nan) for r, d, b in zip(T["region"], T["dong"], T["bunji"])]
     T["by2"] = T["build_year"]; T["bld"] = T["region"] + "|" + T["dong"] + "|" + T["bunji"]; T["dk"] = T["region"] + "|" + T["dong"]
+    # 2026-11-10: 낙찰사례에 좌표가 없는 사례(약 43%)는 같은 건물(번지)의 거래 좌표로 채움 - 실제 앱의 경매 물건은 좌표가 99.9%라 생활권(반경) 특징이 있음. 못 채우면 그대로 비워 둠
+    try:
+        _cg = df.dropna(subset=["lat", "lon"]).groupby("bld")[["lat", "lon"]].median()
+        for _c in ("lat", "lon"):
+            T[_c] = pd.to_numeric(T[_c], errors="coerce"); T[_c] = T[_c].fillna(T["bld"].map(_cg[_c]))
+        print(f"좌표 채움 후 사례 좌표 있음 {T['lat'].notna().mean() * 100:.1f}%")
+    except Exception as _e:
+        print("좌표 채우기 건너뜀:", _e)
     bl = df.dropna(subset=["elv"]).groupby("bld").agg(elv=("elv", "last"), grnd=("grnd", "last"), hh=("hh", "last"))
     for col in ("elv", "grnd", "hh"): T[col] = T["bld"].map(bl[col]) if len(bl) else np.nan
     T.index = c.index + 30_000_000
