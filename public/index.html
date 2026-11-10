@@ -22704,7 +22704,7 @@ function villaCostHtml(row, ev, fmt) {
         + '<tr><td>− 종합소득세·지방세</td><td class="r">' + toEok(String(tax)) + '</td></tr>'
         + '<tr><td><b>예상 순마진(세후)</b></td><td class="r"><b style="color:' + (net >= 1000 ? '#16a34a' : '#dc2626') + ';">' + toEok(String(Math.round(net))) + '</b></td></tr>'
         + '<tr><td class="dr-sub">필요 현금(대출 ' + fmt(cl.loan) + ' 제외, 비용 별도)</td><td class="r dr-sub">' + fmt(cl.cash) + '</td></tr></table>'
-        + '<div class="dr-sub">예상매도가 ' + fmt(ve.est) + '이 맞는다는 가정의 값이에요(빌라 시세 보통 오차 약 10%). 하위 10% 값(' + (ev.ve.stack ? fmt(ev.ve.stack.l10) : '-') + ')에 팔리면 순마진은 약 ' + (ev.ve.stack ? fmt(Math.round(net - (ve.est - ev.ve.stack.l10))) : '-') + '이에요(세금 변화 제외).</div></div>';
+        + '<div class="dr-sub">예상매도가 ' + fmt(ve.est) + '이 맞는다는 가정의 값이에요(빌라 시세 보통 오차 약 10%).' + (ev.ve.stack && ev.ve.stack.l10 ? ' 하위 10% 값(' + fmt(ev.ve.stack.l10) + ')에 팔리면 순마진은 약 ' + fmt(Math.round(net - (ve.est - ev.ve.stack.l10))) + '이에요(세금 변화 제외).' : '') + '</div></div>';
 }
 async function renderVillaDrawer(d, row) {
     var a = row.a, lawd = row.lawd || bidBoardLawdOf(a);
@@ -23909,7 +23909,7 @@ async function openCyclePanel() {
         try { d = await (await fetch('/api/data-coverage?mode=marketCycle' + (isVillaCyc ? '&segment=villa' : ''))).json(); } catch (e) { d = null; }
     }
     if (!d || !d.national) { box.innerHTML = '<div>사이클 분석 결과를 불러오지 못했어요.</div>'; return; }
-    var html = '<div class="cyc-head" title="잡고 끌면 창을 옮길 수 있어요" style="display:flex;justify-content:space-between;align-items:center;cursor:move;touch-action:none;position:sticky;top:-12px;background:#fff;z-index:2;margin:-12px -14px 0;padding:12px 14px 4px;"><b style="font-size:14px;">⠿ 📈 부동산 사이클(아파트)</b>'
+    var html = '<div class="cyc-head" title="잡고 끌면 창을 옮길 수 있어요" style="display:flex;justify-content:space-between;align-items:center;cursor:move;touch-action:none;position:sticky;top:-12px;background:#fff;z-index:2;margin:-12px -14px 0;padding:12px 14px 4px;"><b style="font-size:14px;">⠿ 📈 부동산 사이클(' + (isVillaCyc ? '빌라' : '아파트') + ')</b>'
         + '<button onclick="document.getElementById(\'cycle-panel\').remove()" style="border:none;background:none;font-size:18px;cursor:pointer;">×</button></div>'
         + '<div style="color:#999;font-size:10px;">' + d.dataFrom + '~' + d.dataTo + ' 실거래(' + (isVillaCyc ? '연립·다세대 거래 · 같은 동·면적대·연식끼리 비교한 가격지수' : '같은 단지·평형끼리 비교한 가격지수') + ') · 매주 갱신</div>';
     var block = function(title, obj, color) {
