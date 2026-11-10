@@ -4369,11 +4369,9 @@ function villaListingCap(a) {
     res.desc = (tf === 1 ? '1~2층 ' : '비슷한 층 ') + '매물 ' + cand.length + '건 ' + how + ' ' + toEok(String(res.ref)) + ' − 흥정 ' + Math.round(LISTING_NEGO_PCT * 100) + '%';
     return res;
 }
-async function applyVillaListings(id) {
-    var ta = document.getElementById('vl-paste-' + id); if (!ta || !ta.value.trim()) { alert('네이버 부동산 빌라 매물 목록을 붙여넣어 주세요'); return; }
-    var a = auctionList.filter(function(x) { return String(x.id) === String(id); })[0]; if (!a) return;
-    var list = parseVillaListings(ta.value);
-    if (!list.length) { alert('매매 매물을 찾지 못했어요. 네이버 부동산 매물 목록(매매 가격이 보이는 화면)을 그대로 복사해 주세요'); return; }
+/* 빌라 매물 목록 반영 핵심(2026-11-10 분리): 붙여넣기(applyVillaListings)와 크롬 확장 수신함(applyVillaListingsAuto)이 같이 씀 */
+async function applyVillaListingList(a, list) {
+    var id = a.id;
     var row = bidBoardRows.filter(function(r) { return String(r.id) === String(id); })[0], ev = null;
     try { ev = row && villaSaleEst(a); } catch (e) {}
     var sm = summarizeVillaListings(list, (parseFloat(a.pyung) || 0) * 3.305785, a.floor, ev && ev.est);
@@ -4383,6 +4381,31 @@ async function applyVillaListings(id) {
     bidBoardRows = bidBoardRows.map(function(r) { if (String(r.id) === String(id)) { r.a = a; delete r._vev; } return r; });
     if (document.getElementById('bld-panel')) openBuildingDetail(id);
     renderBidBoard(); if (String(bidDrawerId) === String(id)) renderBidDrawer();
+    return sm;
+}
+async function applyVillaListings(id) {
+    var ta = document.getElementById('vl-paste-' + id); if (!ta || !ta.value.trim()) { alert('네이버 부동산 빌라 매물 목록을 붙여넣어 주세요'); return; }
+    var a = auctionList.filter(function(x) { return String(x.id) === String(id); })[0]; if (!a) return;
+    var list = parseVillaListings(ta.value);
+    if (!list.length) { alert('매매 매물을 찾지 못했어요. 네이버 부동산 매물 목록(매매 가격이 보이는 화면)을 그대로 복사해 주세요'); return; }
+    await applyVillaListingList(a, list);
+}
+/* 📥 크롬 확장 수신함의 빌라 호가(2026-11-10, 수정 요청: 빌라 네이버 호가 불러오기가 안 됨) - 확장이 보낸 글이 아파트 단지 형식('○○ 101동' 머리글)이 아니면 빌라 목록으로 읽음.
+   어느 빌라인지 정하는 순서: ① 지금 상세 창에 열어 둔 빌라 ② 매물 머리글의 건물 이름이 입찰 빌라 한 곳과만 맞을 때. 정해지지 않으면 엉뚱한 곳에 저장하지 않고 안내만 함 */
+async function applyVillaListingsAuto(text) {
+    var list = parseVillaListings(text);
+    if (!list.length) return null;
+    var rows = bidBoardRows.filter(function(r) { return r.type === 'villa' && r.a; }), target = null;
+    var open = bidDrawerId ? rows.filter(function(r) { return String(r.id) === String(bidDrawerId); })[0] : null;
+    if (open) target = open;
+    else {
+        var names = {}; list.forEach(function(x) { var k = matchNormName(String(x.name || '').replace(/\([^)]*\)/g, '')); if (k && k.length >= 3) names[k] = 1; });
+        var hit = rows.filter(function(r) { var k = matchNormName(String(villaNameFor(r) || '').replace(/\([^)]*\)/g, '')); return k && k.length >= 3 && Object.keys(names).some(function(n) { return n === k || (n.length >= 5 && k.indexOf(n) >= 0) || (k.length >= 5 && n.indexOf(k) >= 0); }); });
+        if (hit.length === 1) target = hit[0];
+    }
+    if (!target) return { done: 0, text: '빌라 매물 ' + list.length + '건을 받았지만 어느 물건인지 정하지 못했어요 - 해당 빌라의 상세 창을 연 상태에서 다시 보내 주세요', applied: [] };
+    var sm = await applyVillaListingList(target.a, list);
+    return { done: 1, text: '빌라 매물 ' + sm.n + '건 반영', applied: [{ name: villaNameFor(target), pyung: target.pyung, n: sm.n, min: sm.min, med: sm.med, max: sm.max }] };
 }
 function villaListingHtml(row) {
     var a = row.a, sm = a.listingParse && a.listingParse.kind === 'villa' ? a.listingParse : null, f = function(v) { return v ? toEok(String(v)) : '-'; };
@@ -23309,13 +23332,13 @@ async function processListingInbox() {
         if (!bidBoardRows.length && typeof refreshBidBoard === 'function') { try { await refreshBidBoard(); } catch (e) {} }
         for (var w = 0; w < 40 && (!bidBoardRows.length || bidBoardRows.some(function(r) { return r.pending; })); w++) await new Promise(function(r) { setTimeout(r, 1500); });
         if (!bidBoardRows.length) return;
-        var got = 0, names = [], prevAll = lbAll, prevAny = lbAny; lbAll = true; lbAny = true; // 수신함은 대상을 좁히지 않음(이미 사용자가 고른 단지를 보낸 것)
+        var got = 0, names = [], lastResText = '', prevAll = lbAll, prevAny = lbAny; lbAll = true; lbAny = true; // 수신함은 대상을 좁히지 않음(이미 사용자가 고른 단지를 보낸 것)
         for (var i = 0; i < pending.length; i++) {
             var it = pending[i], res = { done: 0, text: '매매 매물을 찾지 못했어요', applied: [] };
             if (it.kind === 'tank') { res = await rightsApplyTankText(it.text || ''); if (res.done) aqMarkDone(res.applied, it.url); if (res.done) listingToast('📥 탱크옥션 상세 반영됨: ' + res.applied.slice(0, 3).map(function(x) { return '<b>' + bbEsc(x.name) + '</b> 권리분석(등기 ' + x.n + '건' + (x.tenants ? ' · 임차인 ' + x.tenants + '명' : ' · 임차인 없음') + ')' + (x.sync && x.sync.length ? ' 🔄 ' + x.sync.join('·') + ' 탱크옥션 값으로 맞춤' : '') + (x.audit && x.audit.length ? ' ❌ ' + bbEsc(x.audit[0]) : ''); }).join(' · '), !res.applied.some(function(x) { return x.audit && x.audit.length; })); else listingToast('📥 탱크옥션 상세를 받았지만 반영하지 못했어요 - ' + bbEsc(res.text), false); }
             else if (it.kind === 'probe') { res = { done: 1, text: '참고자료 원문 보관(권리분석에는 반영하지 않음)', applied: [] }; } // 참고자료 팝업 글: 구조 확인용으로 수신함에만 보관(하루 뒤 정리)
-            else { var list = parseNaverListings(it.text || ''); if (list.length) res = await applyListingListsAuto(list); }
-            got += res.done; res.applied.forEach(function(x) { names.push(x); });
+            else { var list = parseNaverListings(it.text || ''); if (list.length) res = await applyListingListsAuto(list); else { var vres = await applyVillaListingsAuto(it.text || ''); if (vres) res = vres; } }   // 아파트 단지 형식이 아니면 빌라 목록으로 읽음(2026-11-10)
+            got += res.done; lastResText = res.text || lastResText; res.applied.forEach(function(x) { names.push(x); });
             // 확장이 결과를 볼 수 있게 처리 기록을 남김(원문도 하루 보관)
             try { await fetch('/api/auction?kind=listingRaw', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: it.id, at: it.at, url: it.url, text: it.text, done: true, appliedAt: new Date().toISOString(), result: { done: res.done, text: res.text, applied: res.applied } }) }); } catch (e) {}
         }
@@ -23324,7 +23347,7 @@ async function processListingInbox() {
         var fm = function(v) { return v ? toEok(String(v)) : '-'; };
         if (pending.every(function(x) { return x.kind === 'tank' || x.kind === 'probe' || x.kind === 'queue'; })) { /* 탱크옥션 상세는 위에서 알림을 이미 띄움 */ }
         else if (got) listingToast('📥 호가 반영됨: ' + names.slice(0, 3).map(function(x) { return '<b>' + bbEsc(x.name) + ' ' + x.pyung + '평</b> 매물 ' + x.n + '건 (' + fm(x.min) + '~' + fm(x.max) + ')'; }).join(' · ') + (names.length > 3 ? ' 외 ' + (names.length - 3) + '건' : ''));
-        else listingToast('📥 호가를 받았지만 반영된 물건이 없어요 - 대상 단지가 아니거나 같은 평형 매물이 없어요', false);
+        else listingToast('📥 호가를 받았지만 반영된 물건이 없어요 - ' + (lastResText || '대상 단지가 아니거나 같은 평형 매물이 없어요'), false);
     } catch (e) { /* 수신함이 없거나 네트워크 오류면 조용히 넘어감 */ } finally { listingInboxBusy = false; }
 }
 // 실시간: ① 확장이 앱 탭에 직접 신호를 보내면 즉시 ② 열려 있는 동안 30초마다 목록이 바뀌었는지만 가볍게 확인(바뀌었을 때만 처리)
