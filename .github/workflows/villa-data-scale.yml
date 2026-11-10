@@ -1,0 +1,106 @@
+# 빌라 거래 전체 학습 준비·시험(2026-11-10, 사용자: 아파트·빌라 모두 지난 기록을 전체 학습) - 1단계 빌라
+# ① prepare: DB를 한 번만 읽어 df 파일 저장 ② shards: 거래 전체(85만 건)의 '당시 시점 입력'을 여러 작업이 나눠 계산(DB 호출 없음) ③ merge: 합쳐서 자료량·기간 시험
+# 멈춤을 피하는 장치: DB 읽기는 prepare 한 번뿐(조각은 파일만 사용), 서버가 느리면 지수 대기 후 계속, 조각이 일부 실패해도 병합은 가진 만큼으로 진행(fail-fast 끔), 동시에 도는 조각은 6개로 제한
+name: Villa data scale
+on:
+  workflow_dispatch:
+    inputs:
+      shards:
+        description: '조각 수'
+        default: '48'
+concurrency:
+  group: villa-data-scale
+  cancel-in-progress: false
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - name: 서버가 한가해질 때까지 기다림(최대 30분 후 계속)
+        run: |
+          waited=0; wait=20
+          while [ $waited -lt 1800 ]; do
+            t=$(curl -s -o /dev/null -w "%{http_code} %{time_total}" -m 20 https://1234auction.vercel.app/api/data-coverage || echo "000 99")
+            echo "서버 확인: $t"; code=${t%% *}; sec=${t##* }
+            if [ "$code" = "200" ] && awk "BEGIN{exit !($sec < 3.0)}"; then break; fi
+            sleep $wait; waited=$((waited+wait)); wait=$((wait*2)); [ $wait -gt 300 ] && wait=300
+          done
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install pandas numpy requests scikit-learn scipy
+      - env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          FETCH_THREADS: '6'
+          MODE: prepare
+          PYTHONUNBUFFERED: '1'
+        run: python backtest-villa-data-scale.py | tee prepare-log.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: villa-df
+          path: villa-df.pkl
+          retention-days: 7
+  shards:
+    needs: prepare
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
+    strategy:
+      fail-fast: false
+      max-parallel: 6
+      matrix:
+        idx: [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32,33,34,35,36,37,38,39,40,41,42,43,44,45,46,47]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install pandas numpy requests scikit-learn scipy
+      - uses: actions/download-artifact@v4
+        with:
+          name: villa-df
+          path: input
+      - env:
+          MODE: shard
+          DF_FILE: input/villa-df.pkl
+          SHARD: ${{ matrix.idx }}/${{ inputs.shards }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          PYTHONUNBUFFERED: '1'
+        run: python backtest-villa-data-scale.py | tee shard-log.txt
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: feat-${{ matrix.idx }}
+          path: feat-shard-*.pkl
+          if-no-files-found: ignore
+          retention-days: 14
+  merge:
+    needs: shards
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install pandas numpy scikit-learn scipy
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: feat-*
+          path: shards
+      - env:
+          SHARD_GLOB: shards/**/feat-shard-*.pkl
+          PYTHONUNBUFFERED: '1'
+        run: python merge-villa-data-scale.py | tee merge-log.txt
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: villa-data-scale
+          path: |
+            villa-data-scale.json
+            merge-log.txt
+          if-no-files-found: ignore
+          retention-days: 30
