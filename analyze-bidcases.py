@@ -1261,7 +1261,8 @@ def competition_stats(R, now):
 #  보통 오차 5.46% → 5.22%, ±10% 77.1% → 78.6%, 예측 쏠림 −0.93% → 0%(예측가로 쓸 때 낙찰 45% → 50%).
 #  k는 클수록 그 요인의 영향을 줄임(표본 적은 칸을 전체 평균 쪽으로 당김). 최근 사례 가중·지역 시장 분위기·준공연도 등은 시험했으나 효과 없거나 미미해 제외.
 #  lab = 감정가÷시세 구간, lbl = 최저가×감정가 교호, labf = 감정가×유찰 교호(감정가는 최저가가 어떤 규칙으로 정해졌는지 알려 줌 - 낙찰가 예측에만 사용, 시세·예상매도가에는 안 씀)
-WB_FACTORS = [("lb", 10), ("fails", 120), ("region", 120), ("tier", 5), ("season", 300), ("floor", 5), ("size", 30), ("own", 120), ("dong", 40), ("flowM", 60), ("flowL", 60), ("flowS", 60)]
+WB_FACTORS = [("lb", 10), ("fails", 120), ("region", 120), ("tier", 5), ("season", 300), ("floor", 5), ("size", 30), ("own", 120), ("dong", 40), ("flowM", 60), ("flowL", 60), ("flowS", 60), ("flowC", 60)]
+# 2026-11-10(사용자: 입찰자가 몰린다는 건 수익성이 보인다는 것 = 오르는 흐름이 받쳐 줌) flowC = 같은 단지·평형 가격 흐름(최근 3개월 vs 앞 3개월) × 거래량 흐름, 수도권·지방 모두(flowL은 지방 전용·±3% 3단계라 큰 상승을 못 가름). 검증: 단지 가격이 10%↑ 오른 사례는 모델보다 10%+ 높게 낙찰된 비율이 18.6%(횡보 5.8%)
 # 2026-11-04(사용자 원칙): 입찰가·낙찰가는 '시세 대비 비율'만 - 시세와 시장 흐름(지역·동·시기·인기·층·크기·거래 활발도·유찰 횟수)과 시세 대비 최저가(입찰자 수를 정하는 큰 요소)로만 예측. 감정가는 철저히 계산에서 제외(결과 측정·금액 입력 점검에만 씀).
 # 시세 흐름 요인(flowM·flowL·flowS: 수도권 법정동·시군구, 지방 단지, 가격×거래량)은 검증 성적과 상관없이 항상 포함(사용자 2026-11-05: 모든 가격에는 반드시 부동산 흐름이 반영돼야 함). 각 요인의 비중(k: 클수록 전국 평균 쪽으로 당김)은 winbid_model이 매주 감정가 없이 시간순 검증으로 다시 조정(wb_tune)
 WB_CANDS = [("lbf", 40), ("lbs", 40), ("lbo", 40), ("regf", 60)]
@@ -1299,6 +1300,9 @@ def wb_features(D):
     X["flowM"] = [("수도권|동|" + _b5(a) + "|" + _bv(av) if (c == "수도권" and (np.isfinite(a) or np.isfinite(av))) else ("수도권|시군구|" + _b5(b) + "|" + _bv(bv) if c == "수도권" else "-")) for c, a, av, b, bv in zip(fcls, fd, fdv, fs, fsv)]
     X["flowL"] = [("지방|단지|" + _b3(a) + "|" + _bv(av) if c == "지방" else "-") for c, a, av in zip(fcls, fc, fcv)]
     X["flowS"] = [str(c) + "|" + _b5(b) + "|" + _bv(bv) for c, b, bv in zip(fcls, fs, fsv)]
+    def _b4(v):  # 단지 가격 흐름 4단계: 큰 상승(+8%↑)을 따로 가름(오르는 단지에서 높게 낙찰되는 꼬리)
+        return "-" if v is None or not np.isfinite(v) else ("dn" if v <= -0.03 else ("fl" if v < 0.03 else ("up1" if v < 0.08 else "up2")))
+    X["flowC"] = [(str(c) + "|단지|" + _b4(a) + "|" + _bv(av)) if (c in ("수도권", "지방") and a is not None and np.isfinite(a)) else "-" for c, a, av in zip(fcls, fc, fcv)]
     def _bt(v):  # 회전율: 최근 3개월 거래 ÷ 세대수 × 100 (분기). 연 5% 안팎 = 1.2
         return "-" if v is None or not np.isfinite(v) else ("tl" if v < 0.7 else ("th" if v > 1.8 else "tm"))
     for _km in (1, 2, 3):
@@ -2402,6 +2406,27 @@ def winbid_model(R, now):
             open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8").write("### 구간별 오차 분포\n```json\n" + json.dumps({k2: v2 for k2, v2 in full["resQB"].items() if k2 != "q"}, ensure_ascii=False, indent=1) + "\n```\n")
     except Exception as e:
         print("  구간별 오차 분포 건너뜀:", e)
+    # 🌊 큰 상승 단지의 상방 꼬리(2026-11-10, 사용자: 입찰자가 몰리는 건 오르는 흐름이 받쳐 주기 때문) - 단지 가격 흐름이 +8% 이상(flowC=up2)인 사례는 모델보다 높게 낙찰되는 꼬리가 두꺼움(검증 7,199건: 10%+ 높게 낙찰 18.6% vs 횡보 5.8%).
+    # 이 사례들의 오차 분포를 따로 만들어 앱이 낙찰 가능성(추천가가 이길 확률)을 계산할 때 쓰게 함. 검증: 학습에 안 쓴 최근 12개월(te)을 시간순 60/40으로 나눠, 앞 60%로 만든 분포가 뒤 40%의 해당 사례에서 전체 분포보다 분위 적중오차가 10% 넘게 줄 때만 use
+    try:
+        _fk = wb_features(te)["flowC"].values
+        _pc = np.array([(k.split("|")[2] if (k != "-" and k.count("|") >= 3) else "-") for k in _fk])
+        _up = np.where(_pc == "up2")[0]
+        _qs = np.arange(1, 100) / 100.0
+        if len(_up) >= 120:
+            _ord = np.argsort(te["sale"].values, kind="stable"); _pos = np.empty(len(_ord), dtype=int); _pos[_ord] = np.arange(len(_ord)); _ci = int(len(_ord) * 0.6)
+            _fi, _vi = np.where(_pos < _ci)[0], np.where(_pos >= _ci)[0]
+            _uf, _uv = np.intersect1d(_up, _fi), np.intersect1d(_up, _vi)
+            if len(_uf) >= 60 and len(_uv) >= 40:
+                _tf = np.quantile(res[_uf], _qs); _gl = np.quantile(res[_fi], _qs)
+                def _cerr(qv, idx): return float(np.mean([abs(float((res[idx] <= qv[int(round(t * 100)) - 1]).mean()) - t) for t in (0.1, 0.25, 0.5, 0.75, 0.9)]))
+                _e1, _e0 = _cerr(_tf, _uv), _cerr(_gl, _uv)
+                full["resQF"] = {"key": "up2", "q": [round(float(v), 4) for v in np.quantile(res[_up], _qs)], "n": int(len(_up)), "use": bool(_e1 < _e0 * 0.9),
+                                 "check": {"전체분포 적중오차%": round(_e0 * 100, 2), "상승단지분포 적중오차%": round(_e1 * 100, 2), "검증 n": int(len(_uv))},
+                                 "median": {"상승 단지": round(float(np.median(res[_up])), 4), "나머지": round(float(np.median(res[np.where(_pc != "up2")[0]])), 4)}}
+                print("  🌊 큰 상승 단지 오차 분포:", json.dumps({k2: v2 for k2, v2 in full["resQF"].items() if k2 != "q"}, ensure_ascii=False))
+    except Exception as e:
+        print("  큰 상승 단지 오차 분포 건너뜀:", e)
     full["oos"] = {"from": cut, "n": int(len(te)), "medAbsErrPct": round(float(np.median(np.abs(np.exp(p) * te["est"] / te["actual"] - 1))) * 100, 1)}
     try:
         import accuracy_ledger as _led
