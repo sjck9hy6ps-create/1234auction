@@ -18,7 +18,13 @@ def load(name, fn):
 bv = load("bv", "backtest-villa.py"); vf = load("vf", "analyze-villa-factors.py"); cyc = load("cyc", "analyze-cycle.py")
 avm = bv.avm
 SITE = os.environ.get("SITE_URL", "https://1234auction.vercel.app")
-N_TRAIN = int(os.environ.get("N_TRAIN", "50000"))
+N_TRAIN = int(os.environ.get("N_TRAIN", "300000"))   # 2026-11-11: 학습 표본 상한 5만→30만(실제로는 직전 24개월 거래 전부가 들어가 상한에 걸리지 않음)
+TRAIN_MONTHS = int(os.environ.get("TRAIN_MONTHS", "24"))   # 학습은 기준일 직전 24개월 거래만(시험: 직전 12~24개월이 2023년 이후 전부보다 정확)
+
+
+def train_start(ref_date):
+    t = ref_date.year * 12 + ref_date.month - 1 - TRAIN_MONTHS
+    return (t // 12) * 10000 + (t % 12 + 1) * 100 + 1
 FLT = "&or=(" + ",".join('region.like."' + n + '*"' for n in ("서울", "인천", "경기")) + ")"
 SIDO = {"서울특별시": "서울", "서울": "서울", "인천광역시": "인천", "인천": "인천", "경기도": "경기", "경기": "경기"}
 EPOCH = pd.Timestamp("2020-01-01")
@@ -161,7 +167,8 @@ def main():
     # ── 학습: 2023~ 거래 표본 ──
     EVAL = os.environ.get("EVAL_APP") == "1"; EVALW = os.environ.get("EVAL_WINBID") == "1"; FITW = os.environ.get("FIT_WINBID") == "1"
     cutoff = 20260101 if EVAL else (20260601 if (EVALW or FITW) else None)
-    T = df[(df["deal_date"] >= 20230101) & ((df["deal_date"] < cutoff) if cutoff else True)]
+    _ref = pd.Timestamp(str(cutoff)) if cutoff else pd.Timestamp.now(tz="Asia/Seoul").tz_localize(None)
+    T = df[(df["deal_date"] >= train_start(_ref)) & ((df["deal_date"] < cutoff) if cutoff else True)]
     if len(T) > N_TRAIN: T = T.sample(N_TRAIN, random_state=11)
     D = featurize(T); D["y"] = np.log(T.loc[D.index, "price"] / D["base"])
     print(f"학습 {len(D):,}건")
@@ -174,7 +181,7 @@ def main():
     if EVALW:
         return eval_winbid(df, pt, featurize)
     if FITW:   # 낙찰가 모델 다시 학습(2026-11-07): 검증용(2026-06 이전 거래로 학습)과 최종(전체 거래로 학습) 점 보정을 둘 다 만들어 넘김
-        T2 = df[(df["deal_date"] >= 20230101)]
+        T2 = df[(df["deal_date"] >= train_start(pd.Timestamp.now(tz="Asia/Seoul").tz_localize(None)))]
         if len(T2) > N_TRAIN: T2 = T2.sample(N_TRAIN, random_state=11)
         D2 = featurize(T2); D2["y"] = np.log(T2.loc[D2.index, "price"] / D2["base"])
         pt_all = HistGradientBoostingRegressor(loss="absolute_error", **P).fit(D2[COLS], D2["y"])
