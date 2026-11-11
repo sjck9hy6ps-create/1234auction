@@ -8,7 +8,7 @@ const SITE = 'https://1234auction.vercel.app';
 const COMMITS = (process.env.COMMITS || 'HEAD').split(',');
 const CASE_NO = process.env.CASE_NO || '2024-213', SALE = process.env.SALE || '2026-11-06';
 const DAYS = (process.env.DAYS || '30').split(',').map(Number);
-const MMOS = (process.env.MMOS || '').split(',').filter(Boolean).map(Number);   // 최소 순이익 가정(만원) 목록 - 비우면 앱 기본값 한 번만
+const MMOS = (process.env.MMOS || '').split(',').filter(Boolean);   // 'mmo' 또는 'mmo:1'(1이면 근거 두께별 위험 여유 규칙 끔)   // 최소 순이익 가정(만원) 목록 - 비우면 앱 기본값 한 번만
 let harness = fs.readFileSync('scripts/lib/asof-harness-cases.js', 'utf8');
 harness = harness.replace('const w = row && row.winbid;', 'const w = row && row.winbid; try { window.__lastRow = row; } catch (e) {}');
 const out = [];
@@ -48,16 +48,17 @@ for (const commit of COMMITS) {
     }, [CASE_NO, SALE]);
     console.log(commit, JSON.stringify(info));
     if (info.id) {
-      for (const dBefore of DAYS) for (const mmo of (MMOS.length ? MMOS : [null])) {
-        const r = await page.evaluate(async ([lawd, id, d, mm]) => {
-          window.__mmo = mm == null ? 0 : mm;   // 0이면 앱 기본값, 양수면 그 값을 최소 순이익으로
+      for (const dBefore of DAYS) for (const mv of (MMOS.length ? MMOS : [null])) {
+        const mmo = mv == null ? null : Number(String(mv).split(':')[0]), norisk = mv != null && String(mv).split(':')[1] === '1';
+        const r = await page.evaluate(async ([lawd, id, d, mm, nr]) => {
+          window.__mmo = mm == null ? 0 : mm; const __rtr = window.riskTableRate; if (nr) window.riskTableRate = function () { return null; };   // 0이면 앱 기본값, 양수면 그 값을 최소 순이익으로
           const rows = await __vc.processCases(lawd, bidCaseList.filter((x) => x.id === id), d); const rw = window.__lastRow, w = rw && rw.winbid;
           const pk = rw && rw.pick ? { keys: Object.keys(rw.pick), infeasible: !!rw.pick.infeasible, max: rw.pick.max ? rw.pick.max.bid : null, best: rw.pick.best ? rw.pick.best.bid : null, rec: rw.pick.rec ? rw.pick.rec.bid : null } : null;
           const MINM = typeof minMarginOf === 'function' && rw ? minMarginOf(rw) : null;
-          window.__mmo = 0;
-          return { rows, dbg: rw ? { sale: rw.sale, saleStack: !!rw.saleStack, minBid: rw.minBid, fails: rw.fails, recBid: rw.recBid, recAggr: rw.recAggr, minMargin: MINM, pick: pk, est: w && w.est, pred: w && w.pred, price: w && w.price, compShift: w && w.compShift, corrPct: w && w.corrPct, comp: w && w.comp, flowC: w && w.flowC, flowUp: w && w.flowUp, probRec: w && w.probRec } : null };
-        }, [info.lawd, info.id, dBefore, mmo]);
-        out.push({ commit, daysBefore: dBefore, mmo, row: r.rows[0], dbg: r.dbg }); console.log(commit, dBefore, 'mmo', mmo, JSON.stringify(r.dbg), JSON.stringify(r.rows[0] && { wbP: r.rows[0].wbP, wbEst: r.rows[0].wbEst, rec: r.rows[0].rec, stk: r.rows[0].stk, err: r.rows[0].err }));
+          window.__mmo = 0; window.riskTableRate = __rtr;
+          return { rows, dbg: rw ? { sale: rw.sale, saleStack: !!rw.saleStack, minBid: rw.minBid, fails: rw.fails, recBid: rw.recBid, recAggr: rw.recAggr, minMargin: MINM, evBid: rw.pick && rw.pick.ev ? rw.pick.ev.bid : null, evNet: rw.pick && rw.pick.ev ? rw.pick.ev.net : null, maxBid: rw.pick && rw.pick.max ? rw.pick.max.bid : null, maxNet: rw.pick && rw.pick.max ? rw.pick.max.net : null, p70: rw.pick && rw.pick.p70 ? rw.pick.p70.bid : null, regionCls: rw.regionCls, n6: rw.ownStats ? rw.ownStats.n6 : null, riskRate: (function () { try { const os3 = rw.ownStats; const t = riskTableRate({ cls: rw.regionCls, n6: os3 ? os3.n6 : null, disp6: os3 ? os3.disp6 : null, lastAgeM: os3 ? os3.lastAgeM : null, fb: rw.saleFb || null }); return t && t.rate; } catch (e) { return null; } })(), pick: pk, est: w && w.est, pred: w && w.pred, price: w && w.price, compShift: w && w.compShift, corrPct: w && w.corrPct, comp: w && w.comp, flowC: w && w.flowC, flowUp: w && w.flowUp, probRec: w && w.probRec } : null };
+        }, [info.lawd, info.id, dBefore, mmo, norisk]);
+        out.push({ commit, daysBefore: dBefore, mmo, norisk, row: r.rows[0], dbg: r.dbg }); console.log(commit, dBefore, 'mmo', mmo, 'norisk', norisk, JSON.stringify(r.dbg), JSON.stringify(r.rows[0] && { wbP: r.rows[0].wbP, wbEst: r.rows[0].wbEst, rec: r.rows[0].rec, stk: r.rows[0].stk, err: r.rows[0].err }));
       }
     }
   } catch (e) { console.log(commit, '실패:', String(e.message || e).slice(0, 200)); out.push({ commit, err: String(e.message || e).slice(0, 200) }); }
