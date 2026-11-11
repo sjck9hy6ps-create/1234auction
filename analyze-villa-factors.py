@@ -27,20 +27,30 @@ def bunji_to_bunji(b):
 
 
 def fetch_buildings():
-    rows, off = [], 0
-    sel = "sigungu_cd,bjdong_cd,bun,ji,elv:title_json->rideElvtCnt,emg:title_json->emgenElvtCnt,grnd:title_json->grndFlrCnt,hh:title_json->hhldCnt,apr:title_json->>useAprDay,purp:title_json->>mainPurps,plat:title_json->platArea,tot:title_json->totArea,vl:title_json->vlRat,bc:title_json->bcRat"
+    """건축물대장 전체 읽기. 2026-11-11 수정: 예전에는 offset 방식이라 15만 행 근처에서 시간 초과(500)가 나면 조용히 멈춰 28만 행 중 15.5만 행만 읽었음
+    (빌라 거래 6.8%가 '대장 없음'으로 처리됨 - 실제로는 9,093/9,180 건물이 대장에 있음). 이제 id 기준 이어 읽기(keyset)로 느려지지 않게 하고, 실패하면 기다렸다 다시 시도(멈추지 않음), 끝내 못 읽으면 오류로 멈춰 조용히 일부만 쓰는 일이 없게 함."""
+    import time
+    rows, last = [], 0
+    sel = "id,sigungu_cd,bjdong_cd,bun,ji,elv:title_json->rideElvtCnt,emg:title_json->emgenElvtCnt,grnd:title_json->grndFlrCnt,hh:title_json->hhldCnt,apr:title_json->>useAprDay,purp:title_json->>mainPurps,plat:title_json->platArea,tot:title_json->totArea,vl:title_json->vlRat,bc:title_json->bcRat"
     flt = "&or=(sigungu_cd.like.11*,sigungu_cd.like.28*,sigungu_cd.like.41*)"
+    n = 0
     while True:
-        r = requests.get(f"{URL}/rest/v1/building_info?select={sel}{flt}&order=id.asc", headers={**HDR, "Range-Unit": "items", "Range": f"{off}-{off + 999}"}, timeout=120)
-        if r.status_code not in (200, 206):
-            print("building_info 오류", r.status_code, r.text[:200]); break
-        d = r.json()
+        d = None
+        for attempt in range(8):
+            try:
+                r = requests.get(f"{URL}/rest/v1/building_info?select={sel}{flt}&id=gt.{last}&order=id.asc&limit=1000", headers=HDR, timeout=120)
+                if r.status_code == 200: d = r.json(); break
+                print(f"  building_info 응답 {r.status_code} - {2 ** attempt * 3}초 쉬고 다시 시도 ({r.text[:100]})", flush=True)
+            except Exception as e:
+                print(f"  building_info 요청 오류 {e!r} - 쉬고 다시 시도", flush=True)
+            time.sleep(min(2 ** attempt * 3, 120))
+        if d is None: raise RuntimeError(f"건축물대장 읽기 실패(id>{last}) - 일부만 쓰지 않도록 중단")
         if not d: break
-        rows += d; off += 1000
-        if off % 50000 == 0: print(f"  건축물대장 {off:,}행", flush=True)
+        rows += d; last = d[-1]["id"]; n += len(d)
+        if n % 50000 < 1000: print(f"  건축물대장 {n:,}행", flush=True)
         if len(d) < 1000: break
     print(f"건축물대장 {len(rows):,}건")
-    return pd.DataFrame(rows)
+    return pd.DataFrame(rows).drop(columns=["id"], errors="ignore")
 
 
 def main():
