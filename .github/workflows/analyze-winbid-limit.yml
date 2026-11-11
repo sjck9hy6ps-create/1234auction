@@ -17,7 +17,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-      - run: pip install pandas numpy requests
+      - run: pip install pandas numpy requests scikit-learn scipy
       - uses: actions/download-artifact@v4
         with:
           pattern: aptcases-*
@@ -30,7 +30,7 @@ jobs:
           SITE_URL: https://1234auction.vercel.app
           ROWS_DIR: rows
           PYTHONUNBUFFERED: '1'
-        run: python analyze-winbid-limit.py | tee limit-log.txt
+        run: set -o pipefail; python analyze-winbid-limit.py | tee limit-log.txt
       - uses: actions/upload-artifact@v4
         if: always()
         with:
