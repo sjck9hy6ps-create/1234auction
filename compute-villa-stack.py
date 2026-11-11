@@ -22,8 +22,8 @@ N_TRAIN = int(os.environ.get("N_TRAIN", "300000"))   # 2026-11-11: 학습 표본
 TRAIN_MONTHS = int(os.environ.get("TRAIN_MONTHS", "24"))   # 학습은 기준일 직전 24개월 거래만(시험: 직전 12~24개월이 2023년 이후 전부보다 정확)
 
 
-def train_start(ref_date):
-    t = ref_date.year * 12 + ref_date.month - 1 - TRAIN_MONTHS
+def train_start(ref_date, months=None):
+    t = ref_date.year * 12 + ref_date.month - 1 - (TRAIN_MONTHS if months is None else months)
     return (t // 12) * 10000 + (t % 12 + 1) * 100 + 1
 FLT = "&or=(" + ",".join('region.like."' + n + '*"' for n in ("서울", "인천", "경기")) + ")"
 SIDO = {"서울특별시": "서울", "서울": "서울", "인천광역시": "인천", "인천": "인천", "경기도": "경기", "경기": "경기"}
@@ -33,6 +33,10 @@ RADII = (0.3, 0.7, 1.5)   # km
 RAD_COLS = ["r_e_rad300", "r_e_rad700", "r_e_rad1500", "n_rad300", "n_rad700", "n_rad1500", "r_lvl300", "r_lvl700", "r_lvl1500", "rad_disp", "rad_dist"]
 COLS = ["r_e_bld", "r_e_dong", "r_e_dongw", "r_e_reg", "n_bld", "n_dong", "n_reg", "age_bld", "age_dong", "disp", "size", "floor", "age", "elv", "grnd", "hh", "lvl_c", "sido", "reg_code", "lbase"] + RAD_COLS
 LVL = {"건물3+": 0, "건물1~2+동": 1, "건물1~2": 2, "동5+": 3, "동1~4": 4, "시군구": 5}
+# 2026-11-11 시험(exp-villa-ideas.py)으로 추가: 같은 건물 거래 쌍(반복매매) 추정 + 동·시군구 잔차 부분 공유(중앙 오차 9.99→9.82%, ±10% 50.1→50.8%) + 하위값 conformal 보정(포함률 어긋남 2.3→1.5%p)
+PAIR_COLS = ["r_pair", "n_pair", "age_pair"]; POOL_COLS = ["dres", "dres_n", "rres", "rres_n"]
+COLS_NEW = COLS + PAIR_COLS + POOL_COLS
+PB_EDGES = [0, 8000, 15000, 1e9]; PB_LABELS = ["8천만 미만", "8천~1.5억", "1.5억 이상"]
 
 
 def trade_region(addr):
@@ -164,17 +168,100 @@ def main():
         D["lvl_c"] = D["lvl"].map(LVL); D["lbase"] = np.log(D["base"] / D["size"])
         return D
 
+    # ── 2026-11-11 추가 특징: 같은 건물 거래 쌍(반복매매) 추정, 동·시군구 잔차 부분 공유 ──
+    _mi = df.groupby(["region", "ym"])["ppm"].median().apply(np.log).unstack("ym"); _mi = _mi.T.sort_index().rolling(3, min_periods=1).mean().T
+    IDXR = {}
+    for _rg, _row in _mi.iterrows():
+        _r = _row.dropna(); IDXR[_rg] = (_r.index.values.astype(int), _r.values)
+
+    def lidx(rg, ym):
+        t = IDXR.get(rg)
+        if t is None: return np.nan
+        k = np.searchsorted(t[0], ym, side="right") - 1
+        return t[1][k] if k >= 0 else np.nan
+    bgp = {k: (g["day"].values, g["size"].values, g["ppm"].values, g["ym"].values) for k, g in df.groupby("bld")}
+
+    def icc_k(Y, key):
+        S = Y[["y", key]].dropna(); g = S.groupby(key)["y"]; n = g.size(); m = g.mean(); N = len(S); k = len(n)
+        msb = (n * (m - S["y"].mean()) ** 2).sum() / max(k - 1, 1); msw = ((S["y"] - S[key].map(m)) ** 2).sum() / max(N - k, 1); n0 = (N - (n ** 2).sum() / N) / max(k - 1, 1)
+        var_b = max((msb - msw) / n0, 1e-6); return float(msw / var_b)
+
+    def build_pool(Y):
+        """Y: 인덱스=df 행, 열 y(실제÷기준값 로그), dk, region, day - 잔차 부분 공유용 자료(그 거래 30일 전까지만 쓰이도록 day 순으로 보관)"""
+        pool = {"dk": {}, "region": {}}
+        for key in ("dk", "region"):
+            for k, G in Y.groupby(key):
+                o = np.argsort(G["day"].values); pool[key][k] = (G["day"].values[o], G["y"].values[o])
+        pool["K"] = {"dk": icc_k(Y, "dk"), "region": icc_k(Y, "region")}
+        print(f"  잔차 부분 공유 k(동 {pool['K']['dk']:.1f}, 시군구 {pool['K']['region']:.1f}), 자료 {len(Y):,}행")
+        return pool
+
+    def augment(F, Tt, pool):
+        """featurize 결과 F에 쌍 추정·잔차 공유 특징 추가(그 거래 30일 전 자료만)"""
+        Tx = Tt.loc[F.index]
+        n = len(F); est_p = np.full(n, np.nan); n_p = np.zeros(n); age_p = np.full(n, np.nan); dres = np.full(n, np.nan); dn = np.zeros(n); rres = np.full(n, np.nan); rn = np.zeros(n)
+        dts = EPOCH + pd.to_timedelta(Tx["day"].values - 30, unit="D"); cutym = (dts.year * 100 + dts.month).values
+        for j, (b, rg, dk, day, sz) in enumerate(zip(Tx["bld"].values, Tx["region"].values, Tx["dk"].values, Tx["day"].values, Tx["size"].values)):
+            cut = day - 30
+            g = bgp.get(b)
+            if g is not None:
+                d, ss, pp, ym = g; lo = np.searchsorted(d, cut - 1095, side="left"); hi = np.searchsorted(d, cut, side="right")
+                if hi > lo:
+                    m = np.abs(ss[lo:hi] - sz) <= 6
+                    if m.any():
+                        Ln = lidx(rg, cutym[j])
+                        if not np.isnan(Ln):
+                            adj = np.log(pp[lo:hi][m]) + (Ln - np.array([lidx(rg, y_) for y_ in ym[lo:hi][m]])); ok = ~np.isnan(adj)
+                            if ok.any():
+                                age = cut - d[lo:hi][m][ok]; w = np.exp(-age / 540.0) * np.exp(-np.abs(ss[lo:hi][m][ok] - sz) / 8.0)
+                                est_p[j] = np.exp(wmed(adj[ok], w)) * sz; n_p[j] = int(ok.sum()); age_p[j] = float(age.min())
+            for key, kv, win, outm, outn in (("dk", dk, 365, dres, dn), ("region", rg, 180, rres, rn)):
+                t = pool[key].get(kv)
+                if t is None: continue
+                lo = np.searchsorted(t[0], cut - win, side="left"); hi = np.searchsorted(t[0], cut, side="right")
+                if hi > lo: outn[j] = hi - lo; outm[j] = t[1][lo:hi].sum() / ((hi - lo) + pool["K"][key])
+        F = F.copy(); F["r_pair"] = np.log(est_p / F["base"].values); F["n_pair"] = n_p; F["age_pair"] = age_p
+        F["dres"] = dres; F["dres_n"] = dn; F["rres"] = rres; F["rres_n"] = rn
+        return F
+
     # ── 학습: 2023~ 거래 표본 ──
     EVAL = os.environ.get("EVAL_APP") == "1"; EVALW = os.environ.get("EVAL_WINBID") == "1"; FITW = os.environ.get("FIT_WINBID") == "1"
     cutoff = 20260101 if EVAL else (20260601 if (EVALW or FITW) else None)
     _ref = pd.Timestamp(str(cutoff)) if cutoff else pd.Timestamp.now(tz="Asia/Seoul").tz_localize(None)
-    T = df[(df["deal_date"] >= train_start(_ref)) & ((df["deal_date"] < cutoff) if cutoff else True)]
-    if len(T) > N_TRAIN: T = T.sample(N_TRAIN, random_state=11)
-    D = featurize(T); D["y"] = np.log(T.loc[D.index, "price"] / D["base"])
-    print(f"학습 {len(D):,}건")
+    SPECIAL = EVAL or EVALW or FITW   # 검증·낙찰가 재학습 경로는 예전 입력(COLS) 그대로 - 입찰 물건 계산(운영)만 새 입력·보정 사용
     P = dict(max_iter=250, learning_rate=0.05, max_depth=5, min_samples_leaf=60, l2_regularization=1.0, random_state=1)
-    pt = HistGradientBoostingRegressor(loss="absolute_error", **P).fit(D[COLS], D["y"])
-    mq = {q: HistGradientBoostingRegressor(loss="quantile", quantile=q, **P).fit(D[COLS], D["y"]) for q in (0.1, 0.25)}
+    if SPECIAL:
+        T = df[(df["deal_date"] >= train_start(_ref)) & ((df["deal_date"] < cutoff) if cutoff else True)]
+        if len(T) > N_TRAIN: T = T.sample(N_TRAIN, random_state=11)
+        D = featurize(T); D["y"] = np.log(T.loc[D.index, "price"] / D["base"])
+        print(f"학습 {len(D):,}건")
+        pt = HistGradientBoostingRegressor(loss="absolute_error", **P).fit(D[COLS], D["y"])
+        mq = {q: HistGradientBoostingRegressor(loss="quantile", quantile=q, **P).fit(D[COLS], D["y"]) for q in (0.1, 0.25)}
+        COLS_USE = COLS; CALIB = None
+    else:
+        # 잔차 부분 공유는 학습 시작 1년 전 거래의 '기준값 대비 실제'도 필요 → 36개월 거래를 모두 계산하고, 학습은 그중 직전 24개월
+        T3 = df[df["deal_date"] >= train_start(_ref, TRAIN_MONTHS + 12)]
+        D3 = featurize(T3); D3["y"] = np.log(T3.loc[D3.index, "price"] / D3["base"])
+        Y = T3.loc[D3.index, ["dk", "region", "day"]].assign(y=D3["y"].values)
+        POOL = build_pool(Y)
+        D3 = augment(D3, T3, POOL)
+        D3["_dd"] = T3.loc[D3.index, "deal_date"].values
+        D = D3[D3["_dd"] >= train_start(_ref)].sort_values("_dd")
+        print(f"학습 {len(D):,}건 (잔차 공유용 포함 계산 {len(D3):,}건)")
+        COLS_USE = COLS_NEW
+        pt = HistGradientBoostingRegressor(loss="absolute_error", **P).fit(D[COLS_USE], D["y"])
+        # 하위 25·10% 값: 앞 80%로 학습, 뒤 20%로 근거 단계×가격대별 보정량(conformal) 계산 → 목표 포함률(75·90%)에 맞춤
+        k80 = int(len(D) * 0.8); FIT, CAL = D.iloc[:k80], D.iloc[k80:]
+        mq = {q: HistGradientBoostingRegressor(loss="quantile", quantile=q, **P).fit(FIT[COLS_USE], FIT["y"]) for q in (0.1, 0.25)}
+        pbf = lambda X: pd.cut(X["base"], PB_EDGES, labels=PB_LABELS).astype(str)
+        stc = (CAL["lvl"].astype(str) + "|" + pbf(CAL)).values; CALIB = {}
+        for q, lev in ((0.25, 0.75), (0.1, 0.9)):
+            sc = mq[q].predict(CAL[COLS_USE]) - CAL["y"].values; call = float(np.quantile(sc, lev)); cm = {}
+            for kk in np.unique(stc):
+                mk_ = stc == kk
+                if mk_.sum() >= 150: cm[kk] = float(np.quantile(sc[mk_], lev))
+            CALIB[q] = {"all": call, "by": cm}
+        print("  구간 보정량(전체)", {q: round(v["all"], 4) for q, v in CALIB.items()}, "단계×가격대별", {q: len(v["by"]) for q, v in CALIB.items()})
 
     if EVAL:
         return eval_app(df, D, pt, mq, featurize)
@@ -220,7 +307,12 @@ def main():
     Lr["price"] = 0.0
     Lr.index = np.arange(10_000_000, 10_000_000 + len(Lr)); Lr["floor"] = Lr["floor"]
     F = featurize(Lr)
-    F["pt"] = pt.predict(F[COLS]); F["q10"] = mq[0.1].predict(F[COLS]); F["q25"] = mq[0.25].predict(F[COLS])
+    if not SPECIAL: F = augment(F, Lr, POOL)
+    F["pt"] = pt.predict(F[COLS_USE]); F["q10"] = mq[0.1].predict(F[COLS_USE]); F["q25"] = mq[0.25].predict(F[COLS_USE])
+    if CALIB:
+        stk = (F["lvl"].astype(str) + "|" + pd.cut(F["base"], PB_EDGES, labels=PB_LABELS).astype(str)).values
+        for q, col in ((0.25, "q25"), (0.1, "q10")):
+            cc_ = np.array([CALIB[q]["by"].get(k_, CALIB[q]["all"]) for k_ in stk]); F[col] = F[col].values - cc_
     out = {}
     for i, f in F.iterrows():
         base_ = float(f["base"]); est = base_ * float(np.exp(np.clip(f["pt"], -0.4, 0.4)))
@@ -229,7 +321,7 @@ def main():
         out[id_] = {"est": round(est), "l25": round(l25), "l10": round(l10), "base": round(base_), "lvl": f["lvl"], "n": int(f["n_bld"]), "nd": int(f["n_dong"]),
                   "nr": int(f["n_rad700"]), "rd": (round(float(f["rad_disp"]), 3) if np.isfinite(f["rad_disp"]) else None)}   # 생활권(반경 700m) 비슷한 면적 거래 수·흩어짐(2026-11-09: 거래 2건 이하면 오차 21.8%·하위10% -58.7%)
     now = datetime.now(timezone.utc).isoformat()
-    payload = {"generatedAt": now, "ver": 1, "trainN": int(len(D)), "rows": out, "물건수": int(len(Lr)), "적용수": len(out)}
+    payload = {"generatedAt": now, "ver": 1, "trainN": int(len(D)), "rows": out, "물건수": int(len(Lr)), "적용수": len(out), "inputs": "pair+pool+conformal" if not SPECIAL else "base"}
     print(json.dumps({k: v for k, v in payload.items() if k != "rows"}, ensure_ascii=False)); print(list(out.items())[:3])
     json.dump(payload, open("villa-stack.json", "w", encoding="utf-8"), ensure_ascii=False)
     cyc.upsert_rows([{"id": "signal|__villa_stack__", "payload": cyc.clean_json(payload), "fetched_at": now}]); print("서버 저장: villa_stack")
