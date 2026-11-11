@@ -48,8 +48,6 @@ def main():
     res["가격대별"] = {l: grp(G) for l, G in T.groupby("pb")}
     res["전체"] = grp(T)
     # 연결 안 된 거래의 지역 분포(어디가 비는가)
-    res["대장 미연결 시군구 상위"] = {str(k): int(v) for k, v in T[~T["linked"]]["region"].value_counts().head(12).items()}
-    res["시군구별 대장 연결률 하위(거래 100건+)"] = {str(k): round(float(v) * 100, 1) for k, v in T.groupby("region")["linked"].agg(lambda s: s.mean() if len(s) >= 100 else np.nan).dropna().sort_values().head(12).items()}
     print(json.dumps(res, ensure_ascii=False, indent=1)); json.dump(res, open("villa-inputs-gap.json", "w"), ensure_ascii=False, indent=1)
 
 
