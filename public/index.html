@@ -1461,6 +1461,67 @@ body.ui2 #auction-modal.am4 { width:620px; }
 #info-pop .ip-x { cursor:pointer; color:#6b7280; font-weight:400; padding:0 2px; }
 #info-pop .ip-b { padding:2px 12px 12px; max-height:min(60vh, 420px); overflow:auto; } #info-pop ul { margin:4px 0 6px 16px; padding:0; } #info-pop .ip-muted { color:#6b7280; font-size:11.5px; }
 </style>
+<style id="phone-ui">
+/* 📱 휴대폰 세로 화면(갤럭시 Z 플립7 펼친 화면 ≈ 412×960 CSS px, 2026-11-12 사용자 요청) - 아이패드 미니 화면처럼 폰 전용 배치.
+   원칙: ① 위쪽 필터·버튼 영역은 한 줄씩 옆으로 밀어 보는 줄로 줄여서 목록·지도를 가리지 않게 ② 작은 글씨·긴 글이 겹치지 않게 줄바꿈·말줄임 ③ 떠 있는 버튼은 작게 ④ 상세 필터는 아래에서 올라오는 시트 */
+@media (max-width: 480px) {
+    html, body { overflow-x:hidden; -webkit-text-size-adjust:100%; }
+    body.ui2 #map { height:calc(100vh - 96px - 46px); height:calc(100dvh - 96px - 46px); }
+    /* 상단바·칩바: 옆으로 밀어 보기, 글자 잘림 방지 */
+    #topbar { gap:4px; padding:0 6px; }
+    #chipbar { overflow-x:auto; scrollbar-width:none; -webkit-overflow-scrolling:touch; white-space:nowrap; }
+    #chipbar::-webkit-scrollbar { display:none; }
+    body.ui2 #chipbar .chip { flex:none; white-space:nowrap; }
+    /* 입찰후보 보드: 머리 영역을 (제목 줄 + 탭 줄 + 선택 줄)로 압축 → 목록이 화면 대부분을 차지 */
+    #bid-board { font-size:12px; }
+    #bid-board .bb-head { padding:6px 10px 4px; }
+    #bid-board .bb-title { flex-wrap:nowrap; overflow-x:auto; gap:10px; white-space:nowrap; scrollbar-width:none; -webkit-overflow-scrolling:touch; }
+    #bid-board .bb-title::-webkit-scrollbar { display:none; }
+    #bid-board .bb-title > * { flex:none; }
+    #bid-board .bb-title h2 { font-size:15px; }
+    #bid-board .bb-zoom { transform:scale(.82); transform-origin:left center; margin-right:-14px; }
+    #bid-board .bb-tools { gap:5px; margin-top:5px; }
+    #bb2-tabs { flex-wrap:nowrap !important; overflow-x:auto; width:100%; padding-bottom:3px; gap:5px; scrollbar-width:none; -webkit-overflow-scrolling:touch; }
+    #bb2-tabs::-webkit-scrollbar { display:none; }
+    #bb2-tabs > * { flex:none !important; white-space:nowrap; }
+    #bb2-tabs .bb-tab, #bb2-tabs button { padding:6px 11px !important; font-size:12px !important; height:30px; line-height:1; }
+    #bb2-tabs .bb2-link { font-size:11.5px; align-self:center; }
+    #bid-board .bb-tools > select { flex:1 1 0; min-width:0; max-width:none; width:auto; font-size:12px; padding:0 4px; height:30px; }
+    #bb-progress, #bb-cache-note, #bb-fail-note { font-size:11px; line-height:1.35; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+    #bid-board .bb-head > div[style*="font-size"] { white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+    /* 목록 줄: 글이 칸 밖으로 넘치거나 겹치지 않게 */
+    #bid-board .bb2-table td, #bid-board .bb-table td { overflow-wrap:anywhere; word-break:keep-all; min-width:0; }
+    #bid-board .bb2-table tr { padding-right:10px; }
+    /* 상세 창·모달: 화면 전체 폭 */
+    /* 물건 상세: 상단바 아래부터 화면 끝까지 꽉 찬 창(아래에 목록이 비치거나 버튼이 가리지 않게), 제목줄·닫기는 위에 고정 */
+    #bb-drawer { position:fixed !important; top:52px !important; bottom:0 !important; left:0 !important; right:0 !important; width:100vw !important; max-width:100vw !important; height:auto !important; border-radius:0 !important; z-index:99994 !important; padding:10px 14px calc(24px + env(safe-area-inset-bottom)); }
+    #bb-drawer .dr-h { position:sticky; top:-10px; background:#fff; z-index:3; padding:6px 0; }
+    #bb-drawer .dr-big { grid-template-columns:repeat(2,1fr); }
+    #bb-drawer table { display:block; overflow-x:auto; max-width:100%; }
+    body.ui2 #auction-modal, body.ui2 #auction-modal.am4 { width:100vw; max-width:100vw; border-radius:0; }
+    /* 상세 필터: 아래에서 올라오는 시트(지도·목록을 가리는 면적 ↓, 닫기 버튼은 위에 고정) */
+    body.ui2 #filter-panel { position:fixed; left:0; right:0; top:auto !important; bottom:0; width:auto; max-width:none; max-height:66vh; max-height:66dvh; border-radius:16px 16px 0 0; box-shadow:0 -8px 28px rgba(0,0,0,.28); padding-bottom:env(safe-area-inset-bottom); z-index:99995; }
+    body.ui2 #filter-panel .fp-head { position:sticky; top:0; background:#fff; z-index:2; padding:10px 14px 8px; border-bottom:1px solid #eef0f3; }
+    body.ui2 #filter-panel .filter-row { flex-wrap:wrap; }
+    body.ui2 #filter-panel button { padding:7px 11px; }
+    /* 지도 오른쪽 도구 */
+    #right-tools { top:104px; right:6px; gap:4px; }
+    #right-tools .rt-btn { width:40px; height:40px; font-size:10px; }
+    /* 수정 요청 버튼: 작은 동그라미(목록·마지막 칸을 가리지 않게) */
+    #fb-fab { width:42px !important; height:42px !important; padding:0 !important; border-radius:50% !important; font-size:0 !important; right:8px !important; bottom:calc(60px + env(safe-area-inset-bottom)) !important; opacity:.82 !important; line-height:42px; }
+    #fb-fab::before { content:'🛠'; font-size:19px; line-height:42px; display:block; text-align:center; }
+    /* 옆으로 밀리는 칩 줄은 오른쪽 끝을 흐리게 해서 더 있다는 것을 알려 줌 */
+    #bb2-tabs { -webkit-mask-image:linear-gradient(to right, #000 88%, transparent); mask-image:linear-gradient(to right, #000 88%, transparent); padding-right:22px; }
+    /* 목록을 밀어 올리는 동안 수정 요청 버튼은 숨김(마지막 칸 가림 방지) */
+    body.fab-hide #fb-fab { opacity:0 !important; pointer-events:none; transition:opacity .15s; }
+    body:has(#bid-board.with-drawer) #fb-fab { opacity:.35 !important; }
+    /* 아래 시트(이 지역 단지 목록) 높이·손잡이 */
+    #sidebar { z-index:50; }
+    /* 입력칸 글자 16px: 눌렀을 때 화면이 확대되지 않게 */
+    input[type=text], input[type=search], input[type=number], textarea, select { font-size:16px; }
+    #bid-board .bb-tools > select { font-size:12.5px; }
+}
+</style>
 </head>
 <body>
 <div id="topbar">
@@ -31150,5 +31211,27 @@ window.addEventListener('load', function() {
 });
 </script>
 
+<script>
+/* 📱 휴대폰 보조 동작(2026-11-12): ① 입찰후보 탭 줄이 옆으로 밀리므로 선택된 칩(임장 후보 등)이 보이게 자동으로 맞춤 ② 스크롤 중엔 수정 요청 버튼 숨김. 폭 480px 이하에서만 작동 */
+(function() {
+    var mq = window.matchMedia ? window.matchMedia('(max-width: 480px)') : null;
+    if (!mq) return;
+    var t = null;
+    document.addEventListener('scroll', function() { if (!mq.matches) return; document.body.classList.add('fab-hide'); clearTimeout(t); t = setTimeout(function() { document.body.classList.remove('fab-hide'); }, 700); }, true);
+    var iv = setInterval(function() {
+        var bar = document.getElementById('bb2-tabs'); if (!bar) return; clearInterval(iv);
+        var fix = function() {
+            if (!mq.matches) return;
+            var on = bar.querySelectorAll('.bb-tab.on'); if (!on.length) return;
+            var first = on[0], last = on[on.length - 1];
+            var left = (last.offsetLeft + last.offsetWidth - first.offsetLeft <= bar.clientWidth - 30) ? first.offsetLeft - 6 : last.offsetLeft - 6;
+            try { bar.scrollTo({ left: Math.max(0, left), behavior: 'auto' }); } catch (e) { bar.scrollLeft = Math.max(0, left); }
+        };
+        var timer = null;
+        new MutationObserver(function() { clearTimeout(timer); timer = setTimeout(fix, 40); }).observe(bar, { childList: true, subtree: true, attributes: true, attributeFilter: ['class'] });
+        fix();
+    }, 500);
+})();
+</script>
 </body>
 </html>
