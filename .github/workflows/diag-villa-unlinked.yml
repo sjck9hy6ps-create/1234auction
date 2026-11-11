@@ -1,0 +1,37 @@
+# 빌라 대장 미연결 거래 원인 분류(2026-11-11, 측정 전용) - 이미 만든 거래 파일(villa-df, 보관 7일)만 사용
+name: Diag villa unlinked
+on:
+  workflow_dispatch:
+    inputs:
+      df_run_id:
+        description: 'Villa data scale 실행 번호(villa-df 보관)'
+        default: '42851729554'
+jobs:
+  diag:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install pandas numpy
+      - uses: actions/download-artifact@v4
+        with:
+          name: villa-df
+          path: input
+          run-id: ${{ inputs.df_run_id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+      - run: python diag-villa-unlinked.py | tee unlinked-log.txt
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: villa-unlinked
+          path: |
+            villa-unlinked.json
+            villa-unlinked-buildings.csv
+            unlinked-log.txt
+          retention-days: 30
