@@ -27,7 +27,7 @@ for (const commit of COMMITS) {
     } catch (e) { res.statusCode = 502; res.end(String(e)); }
   }).listen(0);
   const port = server.address().port;
-  const browser = await chromium.launch();
+  const browser = await chromium.launch(process.env.CHROME_CHANNEL ? { channel: process.env.CHROME_CHANNEL } : {});
   const page = await browser.newPage({ viewport: { width: 1400, height: 900 }, timezoneId: 'Asia/Seoul', locale: 'ko-KR' });
   page.on('pageerror', (e) => console.log(commit, '페이지 오류:', String(e).slice(0, 140)));
   page.on('requestfailed', (r) => console.log(commit, '요청 실패:', r.url().slice(0, 120), r.failure() && r.failure().errorText));

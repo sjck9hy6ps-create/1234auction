@@ -21,12 +21,11 @@ jobs:
         with:
           node-version: '20'
       - run: npm install playwright
-      - run: sudo apt-get update || true
-      - run: npx playwright install --with-deps chromium || (sleep 20 && sudo apt-get update && npx playwright install --with-deps chromium)
       - env:
           COMMITS: ${{ inputs.commits || '2384c51,375a941,ff42559,2b2420b,8a75e5e,ac37e5d,de7724d,a96f56e,HEAD' }}
           DAYS: '30'
           USE_LIVE: '1'
+          CHROME_CHANNEL: chrome   # 실행기에 이미 설치된 크롬 사용(브라우저 설치 단계에서 멈추는 문제 회피)
           MMOS: ${{ inputs.mmos }}
         run: node scripts/replay-case-versions.mjs 2>&1 | tee replay-log.txt
       - uses: actions/upload-artifact@v4
