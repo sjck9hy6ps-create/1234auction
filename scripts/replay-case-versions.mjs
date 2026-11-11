@@ -33,7 +33,7 @@ for (const commit of COMMITS) {
   page.on('requestfailed', (r) => console.log(commit, '요청 실패:', r.url().slice(0, 120), r.failure() && r.failure().errorText));
   page.on('response', (r) => { if (r.status() >= 400) console.log(commit, '응답', r.status(), r.url().slice(0, 120)); });
   try {
-    await page.goto(`http://localhost:${port}/`, { waitUntil: 'load' });
+    await page.goto(commit === 'HEAD' && process.env.USE_LIVE === '1' ? SITE : `http://localhost:${port}/`, { waitUntil: 'load' });   // 현재 코드는 실서버 그대로(중계 없이)
     try { await page.waitForFunction(() => typeof auctionList !== 'undefined' && auctionList.length > 100 && typeof bidCaseList !== 'undefined' && bidCaseList.length > 1000, null, { timeout: 240000 }); } catch (e) { console.log(commit, '목록 대기 시간 초과:', await page.evaluate(() => JSON.stringify({ a: typeof auctionList !== 'undefined' ? auctionList.length : null, b: typeof bidCaseList !== 'undefined' ? bidCaseList.length : null }))); throw e; }
     await page.waitForTimeout(5000);
     await page.evaluate(() => { try { loadSaleRuleParams(); } catch (e) {} try { loadWinbidModel(); } catch (e) {} });

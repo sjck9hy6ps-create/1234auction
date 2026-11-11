@@ -25,6 +25,7 @@ jobs:
       - env:
           COMMITS: ${{ inputs.commits || '2384c51,375a941,ff42559,2b2420b,8a75e5e,ac37e5d,de7724d,a96f56e,HEAD' }}
           DAYS: '30'
+          USE_LIVE: '1'
           MMOS: ${{ inputs.mmos }}
         run: node scripts/replay-case-versions.mjs 2>&1 | tee replay-log.txt
       - uses: actions/upload-artifact@v4
