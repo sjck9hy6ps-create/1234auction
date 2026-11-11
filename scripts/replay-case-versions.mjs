@@ -30,9 +30,11 @@ for (const commit of COMMITS) {
   const browser = await chromium.launch();
   const page = await browser.newPage({ viewport: { width: 1400, height: 900 }, timezoneId: 'Asia/Seoul', locale: 'ko-KR' });
   page.on('pageerror', (e) => console.log(commit, '페이지 오류:', String(e).slice(0, 140)));
+  page.on('requestfailed', (r) => console.log(commit, '요청 실패:', r.url().slice(0, 120), r.failure() && r.failure().errorText));
+  page.on('response', (r) => { if (r.status() >= 400) console.log(commit, '응답', r.status(), r.url().slice(0, 120)); });
   try {
     await page.goto(`http://localhost:${port}/`, { waitUntil: 'load' });
-    await page.waitForFunction(() => typeof auctionList !== 'undefined' && auctionList.length > 100 && typeof bidCaseList !== 'undefined' && bidCaseList.length > 1000, null, { timeout: 240000 });
+    try { await page.waitForFunction(() => typeof auctionList !== 'undefined' && auctionList.length > 100 && typeof bidCaseList !== 'undefined' && bidCaseList.length > 1000, null, { timeout: 240000 }); } catch (e) { console.log(commit, '목록 대기 시간 초과:', await page.evaluate(() => JSON.stringify({ a: typeof auctionList !== 'undefined' ? auctionList.length : null, b: typeof bidCaseList !== 'undefined' ? bidCaseList.length : null }))); throw e; }
     await page.waitForTimeout(5000);
     await page.evaluate(() => { try { loadSaleRuleParams(); } catch (e) {} try { loadWinbidModel(); } catch (e) {} });
     try { await page.waitForFunction(() => typeof winbidModel !== 'undefined' && !!winbidModel && !!winbidModel.factors, null, { timeout: 150000 }); } catch (e) { console.log(commit, '최신 낙찰가 모델 대기 시간 초과'); }
