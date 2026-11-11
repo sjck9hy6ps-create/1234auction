@@ -8,6 +8,7 @@ const SITE = 'https://1234auction.vercel.app';
 const COMMITS = (process.env.COMMITS || 'HEAD').split(',');
 const CASE_NO = process.env.CASE_NO || '2024-213', SALE = process.env.SALE || '2026-11-06';
 const DAYS = (process.env.DAYS || '30').split(',').map(Number);
+const MMOS = (process.env.MMOS || '').split(',').filter(Boolean).map(Number);   // 최소 순이익 가정(만원) 목록 - 비우면 앱 기본값 한 번만
 let harness = fs.readFileSync('scripts/lib/asof-harness-cases.js', 'utf8');
 harness = harness.replace('const w = row && row.winbid;', 'const w = row && row.winbid; try { window.__lastRow = row; } catch (e) {}');
 const out = [];
@@ -45,12 +46,16 @@ for (const commit of COMMITS) {
     }, [CASE_NO, SALE]);
     console.log(commit, JSON.stringify(info));
     if (info.id) {
-      for (const dBefore of DAYS) {
-        const r = await page.evaluate(async ([lawd, id, d]) => {
+      for (const dBefore of DAYS) for (const mmo of (MMOS.length ? MMOS : [null])) {
+        const r = await page.evaluate(async ([lawd, id, d, mm]) => {
+          window.__mmo = mm == null ? 0 : mm;   // 0이면 앱 기본값, 양수면 그 값을 최소 순이익으로
           const rows = await __vc.processCases(lawd, bidCaseList.filter((x) => x.id === id), d); const rw = window.__lastRow, w = rw && rw.winbid;
-          return { rows, dbg: rw ? { sale: rw.sale, saleStack: !!rw.saleStack, minBid: rw.minBid, fails: rw.fails, recBid: rw.recBid, est: w && w.est, pred: w && w.pred, price: w && w.price, compShift: w && w.compShift, corrPct: w && w.corrPct, comp: w && w.comp, flowC: w && w.flowC, flowUp: w && w.flowUp } : null };
-        }, [info.lawd, info.id, dBefore]);
-        out.push({ commit, daysBefore: dBefore, row: r.rows[0], dbg: r.dbg }); console.log(commit, dBefore, JSON.stringify(r.dbg), JSON.stringify(r.rows[0] && { wbP: r.rows[0].wbP, wbEst: r.rows[0].wbEst, rec: r.rows[0].rec, stk: r.rows[0].stk, err: r.rows[0].err }));
+          const pk = rw && rw.pick ? { keys: Object.keys(rw.pick), infeasible: !!rw.pick.infeasible, max: rw.pick.max ? rw.pick.max.bid : null, best: rw.pick.best ? rw.pick.best.bid : null, rec: rw.pick.rec ? rw.pick.rec.bid : null } : null;
+          const MINM = typeof minMarginOf === 'function' && rw ? minMarginOf(rw) : null;
+          window.__mmo = 0;
+          return { rows, dbg: rw ? { sale: rw.sale, saleStack: !!rw.saleStack, minBid: rw.minBid, fails: rw.fails, recBid: rw.recBid, recAggr: rw.recAggr, minMargin: MINM, pick: pk, est: w && w.est, pred: w && w.pred, price: w && w.price, compShift: w && w.compShift, corrPct: w && w.corrPct, comp: w && w.comp, flowC: w && w.flowC, flowUp: w && w.flowUp, probRec: w && w.probRec } : null };
+        }, [info.lawd, info.id, dBefore, mmo]);
+        out.push({ commit, daysBefore: dBefore, mmo, row: r.rows[0], dbg: r.dbg }); console.log(commit, dBefore, 'mmo', mmo, JSON.stringify(r.dbg), JSON.stringify(r.rows[0] && { wbP: r.rows[0].wbP, wbEst: r.rows[0].wbEst, rec: r.rows[0].rec, stk: r.rows[0].stk, err: r.rows[0].err }));
       }
     }
   } catch (e) { console.log(commit, '실패:', String(e.message || e).slice(0, 200)); out.push({ commit, err: String(e.message || e).slice(0, 200) }); }

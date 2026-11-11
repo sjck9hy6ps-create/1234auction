@@ -6,6 +6,9 @@ on:
       commits:
         description: '코드 버전(쉼표). 비우면 기본 목록'
         required: false
+      mmos:
+        description: '최소 순이익 가정(만원, 쉼표). 비우면 앱 기본'
+        required: false
 jobs:
   replay:
     runs-on: ubuntu-latest
@@ -22,6 +25,7 @@ jobs:
       - env:
           COMMITS: ${{ inputs.commits || '2384c51,375a941,ff42559,2b2420b,8a75e5e,ac37e5d,de7724d,a96f56e,HEAD' }}
           DAYS: '30'
+          MMOS: ${{ inputs.mmos }}
         run: node scripts/replay-case-versions.mjs 2>&1 | tee replay-log.txt
       - uses: actions/upload-artifact@v4
         if: always()
