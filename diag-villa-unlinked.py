@@ -30,3 +30,24 @@ bl = d[~d["elv_ok"]].groupby("bld").agg(n=("bld", "size"), region=("region", "fi
 res["미연결 건물 수"] = int(len(bl)); res["미연결 건물 상위 15"] = [f"{r.region} {r.dong} {r.bunji} ({r.n}건, {r.cause})" for r in bl.head(15).itertuples()]
 print(json.dumps(res, ensure_ascii=False, indent=1)); json.dump(res, open("villa-unlinked.json", "w"), ensure_ascii=False, indent=1)
 bl.reset_index().to_csv("villa-unlinked-buildings.csv", index=False)
+
+# ── 2단계: C(대장에 번지 없음) 건물이 실제 building_info에 있는지 직접 대조 ──
+import importlib.util, requests
+HERE = os.path.dirname(os.path.abspath(__file__))
+_s = importlib.util.spec_from_file_location("avm", os.path.join(HERE, "train-avm.py")); avm = importlib.util.module_from_spec(_s); _s.loader.exec_module(avm)
+bi = avm.fetch_all_rows("building_info", cols="id,sigungu_cd,bjdong_cd,bun,ji", order_col="id")
+print("building_info", len(bi), bi.head(3).to_dict("records"))
+bi["sg"] = bi["sigungu_cd"].astype(str); bi["bj"] = bi["bjdong_cd"].astype(str); bi["bun"] = bi["bun"].astype(str); bi["ji"] = bi["ji"].astype(str)
+exact = set(zip(bi["sg"], bi["bj"], bi["bun"], bi["ji"])); bybun = set(zip(bi["sg"], bi["bj"], bi["bun"])); bybj = set(zip(bi["sg"], bi["bj"]))
+cs = d[d["cause"] == "C 대장에 번지 없음"].drop_duplicates("bld").copy()
+cs["sg"] = cs["sg"].astype(str); cs["bj"] = cs["bj"].astype(str); cs["bun"] = cs["bun"].astype(str); cs["ji"] = cs["ji"].astype(str)
+cs["exact"] = [(a, b, c, e) in exact for a, b, c, e in zip(cs["sg"], cs["bj"], cs["bun"], cs["ji"])]
+cs["bunonly"] = [(a, b, c) in bybun for a, b, c in zip(cs["sg"], cs["bj"], cs["bun"])]
+cs["bjhas"] = [(a, b) in bybj for a, b in zip(cs["sg"], cs["bj"])]
+r2 = {"C 건물": int(len(cs)), "대장 표에 정확히 있음(병합이 놓침)": int(cs["exact"].sum()), "같은 본번은 있으나 부번이 다름": int((~cs["exact"] & cs["bunonly"]).sum()),
+      "같은 법정동엔 대장이 있으나 이 번지는 없음": int((~cs["exact"] & ~cs["bunonly"] & cs["bjhas"]).sum()), "그 법정동 대장이 아예 없음": int((~cs["bjhas"]).sum())}
+print(json.dumps(r2, ensure_ascii=False))
+g = cs.groupby(["sg", "bj"]).agg(n=("bld", "size"), region=("region", "first"), dong=("dong", "first"), has=("bjhas", "first")).sort_values("n", ascending=False).head(15)
+r2["법정동별 상위"] = [f"{r.region} {r.dong} ({k[0]}/{k[1]}) 건물 {r.n}개, 그 법정동 대장 있음={r.has}" for k, r in g.iterrows()]
+bn = cs[~cs["exact"] & cs["bunonly"]].head(8)[["region", "dong", "bunji", "sg", "bj", "bun", "ji"]].to_dict("records"); r2["부번 다른 예"] = bn
+print(json.dumps(r2, ensure_ascii=False, indent=1)); json.dump(r2, open("villa-unlinked-c.json", "w"), ensure_ascii=False, indent=1)
