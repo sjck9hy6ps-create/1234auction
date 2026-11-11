@@ -50,6 +50,7 @@ def fetch_buildings():
         if n % 50000 < 1000: print(f"  건축물대장 {n:,}행", flush=True)
         if len(d) < 1000: break
     print(f"건축물대장 {len(rows):,}건")
+    avm.verify_rows("building_info", len(rows), flt)
     return pd.DataFrame(rows).drop(columns=["id"], errors="ignore")
 
 

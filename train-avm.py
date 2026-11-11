@@ -286,7 +286,40 @@ def _fetch_id_range(table, select_cols, order_col, lo, hi, extra_filter):
     return rows
 
 
+def count_rows_exact(table: str, extra_filter: str = ""):
+    """DB가 세는 행 수(같은 조건). 못 세면 None. (2026-11-11: 읽은 행 수와 대조해 조용히 일부만 읽는 일을 막기 위함)"""
+    for attempt in range(3):
+        try:
+            r = requests.get(f"{SUPABASE_URL}/rest/v1/{table}?select=id{extra_filter}", headers={**HEADERS, "Prefer": "count=exact", "Range": "0-0"}, timeout=120)
+            if r.status_code in (200, 206):
+                c = r.headers.get("Content-Range", "*/").split("/")[-1]
+                if c.isdigit(): return int(c)
+            time.sleep(3 * (attempt + 1))
+        except requests.exceptions.RequestException:
+            time.sleep(3 * (attempt + 1))
+    return None
+
+
+def verify_rows(table: str, got: int, extra_filter: str = "", tol_frac: float = 0.003, tol_abs: int = 300):
+    """읽은 행 수가 DB 행 수보다 눈에 띄게 적으면 오류로 멈춤(일부만 쓴 채 결과를 내지 않도록). 읽는 동안 새로 들어온 행은 허용 오차로 흡수. 대조 불가는 경고만."""
+    c = count_rows_exact(table, extra_filter)
+    if c is None:
+        print(f"  ⚠️ {table}: 행 수 대조 못 함(DB 집계 실패) - 읽은 {got:,}행")
+        return
+    if got < c - max(tol_abs, int(c * tol_frac)):
+        raise RuntimeError(f"{table}: 읽은 행 {got:,} < DB 행 {c:,} - 일부만 읽혔을 가능성, 중단")
+    print(f"  ✔ {table}: 행 수 대조 통과(읽은 {got:,} / DB {c:,})")
+
+
 def fetch_all_rows(table: str, cols: str = "region,dong,danji,price,size,floor,deal_date,build_year",
+                   order_col: str = "id", extra_filter: str = "") -> pd.DataFrame:
+    """fetch_all_rows_unchecked + 행 수 대조(일부만 읽히면 중단). 2026-11-11 추가."""
+    df = fetch_all_rows_unchecked(table, cols=cols, order_col=order_col, extra_filter=extra_filter)
+    if os.environ.get("SKIP_ROW_VERIFY") != "1": verify_rows(table, len(df), extra_filter)
+    return df
+
+
+def fetch_all_rows_unchecked(table: str, cols: str = "region,dong,danji,price,size,floor,deal_date,build_year",
                    order_col: str = "id", extra_filter: str = "") -> pd.DataFrame:
     """전체 행 받기. id가 숫자인 큰 테이블은 id 구간을 나눠 여러 줄(FETCH_THREADS, 기본 16)로 동시에 받음(2026-10-12 -
     주간 분석 단계마다 거래 420만 건을 순차로 받느라 40~60분씩 걸렸음. 한 줄 키셋 방식은 그대로 두고 구간만 병렬화). 실패하거나 숫자 id가
