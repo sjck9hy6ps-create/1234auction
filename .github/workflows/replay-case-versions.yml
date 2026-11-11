@@ -1,0 +1,34 @@
+# 연산자이 예상 낙찰가 재현 시험(2026-11-11, 측정 전용): 앱 코드 버전별로 같은 사건을 같은 모델·자료로 계산
+name: Replay case versions
+on:
+  workflow_dispatch:
+    inputs:
+      commits:
+        description: '코드 버전(쉼표). 비우면 기본 목록'
+        required: false
+jobs:
+  replay:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - run: npm install playwright
+      - run: npx playwright install --with-deps chromium
+      - env:
+          COMMITS: ${{ inputs.commits || '2384c51,375a941,ff42559,2b2420b,8a75e5e,ac37e5d,de7724d,a96f56e,HEAD' }}
+          DAYS: '30'
+        run: node scripts/replay-case-versions.mjs 2>&1 | tee replay-log.txt
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: replay-case
+          path: |
+            replay-case.json
+            replay-log.txt
+          if-no-files-found: ignore
+          retention-days: 30
