@@ -1,0 +1,41 @@
+# 아파트 예상매도가 한계 진단(2026-11-11): 이미 모은 시점별 앱 계산 자료(aptrows)로 학습 기간·분포만 바꿔 비교. DB·외부 호출 없음(자료 보관 7일 - 2026-11-14까지)
+name: Apt limit diag
+on:
+  workflow_dispatch:
+jobs:
+  diag:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install pandas numpy scikit-learn scipy requests
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: aptrows-*
+          path: rows
+          run-id: 42370699864
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: aptrows-old1_*
+          path: rows
+          run-id: 42375311602
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+      - env:
+          PYTHONUNBUFFERED: '1'
+        run: python eval-apt-window.py rows | tee apt-diag-log.txt
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: apt-limit-diag
+          path: |
+            apt-limit-diag.json
+            apt-diag-log.txt
+          if-no-files-found: ignore
+          retention-days: 30
