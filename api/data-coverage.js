@@ -2407,6 +2407,7 @@ async function getRegionTradeRowsPpp(type, region, start, end) {
         .eq('region', region)
         .gte('deal_date', start).lt('deal_date', end)
         .gte('size', MOMENTUM_SIZE_MIN).lte('size', MOMENTUM_SIZE_MAX)
+        .order('id', { ascending: true })
         .range(offset, offset + PAGE_SIZE - 1);
       if (error) throw error;
       rows = rows.concat(data || []);
@@ -2470,11 +2471,25 @@ function compEstPercentiles(ppps) {
 // 비교하는 상대지수 계산을 하기 위함(아래 getPriceMomentum 주석 참고).
 async function getBucketDanjiPrices(type, start, end, sido) {
   try {
-    const { data, error } = await supabase.rpc('rpc_bucket_avg_price', {
-      p_start: start, p_end: end, p_sido: sido || null, p_type: type,
-      p_min_size: MOMENTUM_SIZE_MIN, p_max_size: MOMENTUM_SIZE_MAX,
-    });
-    if (error) { console.warn(`priceMomentum(rpc): ${type} 조회 실패 -`, error.message); return {}; }
+    // 2026-11-11: 범위 지정 없이 부르면 PostgREST 기본 상한(1000행)에서 조용히 잘렸음(단지 수가 많은 시도에서 일부 단지가 빠짐) -
+    // 1000행씩 끝까지 받고, 실패하면 쉬었다 다시 시도, 끝내 실패하면 빈 결과로 넘기지 않고 오류로 멈춤
+    const data = [];
+    for (let offset = 0; ; offset += 1000) {
+      let page = null, error = null;
+      for (let attempt = 0; attempt < 4; attempt++) {
+        const r = await supabase.rpc('rpc_bucket_avg_price', {
+          p_start: start, p_end: end, p_sido: sido || null, p_type: type,
+          p_min_size: MOMENTUM_SIZE_MIN, p_max_size: MOMENTUM_SIZE_MAX,
+        }).range(offset, offset + 999);
+        page = r.data; error = r.error;
+        if (!error) break;
+        console.warn(`priceMomentum(rpc): ${type} 조회 실패(시도 ${attempt + 1}/4) -`, error.message);
+        await new Promise(res => setTimeout(res, 500 * (attempt + 1)));
+      }
+      if (error) throw new Error(`priceMomentum(rpc): ${type} 조회 끝내 실패 - ${error.message}`);
+      data.push(...(page || []));
+      if (!page || page.length < 1000) break;
+    }
     const acc = {};
     (data || []).forEach(r => {
       const key = r.region + '|' + r.dong;
@@ -2486,7 +2501,7 @@ async function getBucketDanjiPrices(type, start, end, sido) {
       acc[key].newAvg = r.new_avg_price != null ? Number(r.new_avg_price) : null;
     });
     return acc;
-  } catch (e) { console.warn(`priceMomentum(rpc): ${type} 조회 예외 -`, e.message); return {}; }
+  } catch (e) { console.warn(`priceMomentum(rpc): ${type} 조회 예외 -`, e.message); throw e; }
 }
 // ⚠️ 2026-09(#465): leaderFollower(대장/후발주자) 전용 - [p_start,p_end)를 p_bucket_days
 // 간격으로 잘라 (region,dong,danji)별 시계열을 SQL에서 한 번에 집계해 옴(왕복 1번,
@@ -2509,14 +2524,19 @@ async function getBucketSeriesDanjiPrices(type, start, end, bucketOrigin, bucket
   try {
     let offset = 0;
     for (;;) {
-      const { data, error } = await supabase.rpc('rpc_bucket_series_avg_price', {
-        p_start: start, p_end: end, p_bucket_origin: bucketOrigin, p_bucket_days: bucketDays, p_sido: sido || null, p_type: type,
-        p_min_size: MOMENTUM_SIZE_MIN, p_max_size: MOMENTUM_SIZE_MAX,
-      }).range(offset, offset + PAGE_SIZE - 1);
-      if (error) {
-        console.warn(`leaderFollower(rpc_series): ${type} 조회 실패 -`, error.message);
-        break;
+      // 2026-11-11: 실패하면 쉬었다 다시 시도하고, 끝내 실패하면 오류로 멈춤 - 예전에는 break로 일부만 받은 결과를 그대로 돌려줘 대장/후발주자가 조용히 틀릴 수 있었음
+      let data = null, error = null;
+      for (let attempt = 0; attempt < 4; attempt++) {
+        const r = await supabase.rpc('rpc_bucket_series_avg_price', {
+          p_start: start, p_end: end, p_bucket_origin: bucketOrigin, p_bucket_days: bucketDays, p_sido: sido || null, p_type: type,
+          p_min_size: MOMENTUM_SIZE_MIN, p_max_size: MOMENTUM_SIZE_MAX,
+        }).range(offset, offset + PAGE_SIZE - 1);
+        data = r.data; error = r.error;
+        if (!error) break;
+        console.warn(`leaderFollower(rpc_series): ${type} 조회 실패(시도 ${attempt + 1}/4) -`, error.message);
+        await new Promise(res => setTimeout(res, 500 * (attempt + 1)));
       }
+      if (error) throw new Error(`leaderFollower(rpc_series): ${type} 조회 끝내 실패 - ${error.message} (일부만 받은 결과로 계산하지 않음)`);
       (data || []).forEach(r => {
         const key = r.region + '|' + r.dong;
         if (!acc[key]) acc[key] = { region: r.region, dong: r.dong, danjis: {} };
@@ -2530,7 +2550,7 @@ async function getBucketSeriesDanjiPrices(type, start, end, bucketOrigin, bucket
     return acc;
   } catch (e) {
     console.warn(`leaderFollower(rpc_series): ${type} 조회 예외 -`, e.message);
-    return acc;
+    throw e;
   }
 }
 // 전국(시/도 미지정) 조회 전용 - dong 단위(danji 없이) 평단가/건수를 받아옴.

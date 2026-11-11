@@ -411,6 +411,7 @@ async function handleBatchCacheCheck(req, res) {
             .from('building_info')
             .select('*')
             .eq('sigungu_cd', sg).eq('bjdong_cd', bj).in('bun', part)
+            .order('id', { ascending: true })
             .range(from, from + 999);
           if (error) throw error;
           (data || []).forEach(row => {
