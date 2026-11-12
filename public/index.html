@@ -3838,11 +3838,14 @@ function hsItemOf(r) {
 }
 async function hsFillFromCache(rows) {
     if (hsFillBusy) return; hsFillBusy = true;
+    var got = 0;
     try {
         var todo = rows.filter(function(r) { var h0 = hsBld[r.id]; return !(h0 && h0.info && h0.info.title) && !hsFillDone[r.id]; });
+        /* 2026-11-13 수정 요청(정렬 줄이 제자리로 돌아감): 번지 정보가 없어 조회할 수 없는 물건은 '처리 끝'으로 표시 → 안 하면 목록을 그릴 때마다 조회가 다시 시작돼 0.1초마다 화면이 새로 그려졌음 */
+        todo.forEach(function(r) { if (!hsItemOf(r)) hsFillDone[r.id] = true; });
         var items = todo.map(hsItemOf).filter(Boolean), byId = {}; todo.forEach(function(r) { byId[String(r.id)] = r; });
         var chunks = []; for (var i = 0; i < items.length; i += 100) chunks.push(items.slice(i, i + 100));
-        var next = 0, got = 0;
+        var next = 0;
         var worker = async function() {
             while (next < chunks.length) {
                 var ch = chunks[next++];
@@ -3861,7 +3864,7 @@ async function hsFillFromCache(rows) {
         };
         await Promise.all([worker(), worker(), worker()]);
         if (got) villaSaveCalcSoon();
-    } finally { hsFillBusy = false; if (bidBoardState.visit === 'villa') renderBidBoard(); }
+    } finally { hsFillBusy = false; if (got && bidBoardState.visit === 'villa') renderBidBoard(); }
 }
 var hsBld = {}, hsQueue = [], hsRunning = 0, hsRenderT = null, hsQuotaUntil = 0; // hsQuotaUntil: 건축HUB 하루 한도를 넘으면 그 시각까지 조회를 멈춤(한도가 풀릴 때까지 계속 두드리지 않게)
 function hsDongKey(addr) {
