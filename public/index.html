@@ -1422,6 +1422,7 @@ body.ui2 #auction-modal.am4 { width:620px; }
 .nv-spec { font-size:13px; color:#374151; margin-top:3px; }
 .nv-why { font-size:12px; color:#6b7280; margin-top:2px; line-height:1.4; } .nv-why.bad { color:#b91c1c; }
 .nv-sum { font-size:12.5px; color:#555; margin-top:2px; } .nv-sum b { color:#111; } .nv-sum small { color:#9ca3af; }
+.nv-i { display:inline-block; white-space:nowrap; margin-right:12px; } .nv-sum { line-height:1.55; }
 .nv-chips { display:flex; flex-wrap:wrap; gap:5px; margin-top:7px; }
 .nv-chip { font-size:11.5px; color:#6b7280; background:#f3f4f6; border:1px solid #e5e7eb; border-radius:4px; padding:1px 7px; white-space:nowrap; } .nv-chip.g { color:#15803d; background:#f0fdf4; border-color:#bbf7d0; } .nv-chip.o { color:#b45309; background:#fffbeb; border-color:#fde68a; } .nv-chip.r { color:#b91c1c; background:#fef2f2; border-color:#fecaca; }
 @media (min-width: 641px) and (max-width: 900px) {
@@ -1514,6 +1515,15 @@ body.ui2 #auction-modal.am4 { width:620px; }
     #bb2-tabs { -webkit-mask-image:linear-gradient(to right, #000 88%, transparent); mask-image:linear-gradient(to right, #000 88%, transparent); padding-right:22px; }
     /* 목록을 밀어 올리는 동안 수정 요청 버튼은 숨김(마지막 칸 가림 방지) */
     body.fab-hide #fb-fab { opacity:0 !important; pointer-events:none; transition:opacity .15s; }
+    /* 2026-11-12 수정 요청: 정렬 글자가 작아 누르기 어려움·긴 줄 줄바꿈이 지저분함 */
+    .nv-sort { overscroll-behavior-x:contain; -webkit-overflow-scrolling:touch; scrollbar-width:none; padding:4px 10px; }
+    .nv-sort::-webkit-scrollbar { display:none; }
+    .nv-sort a { display:inline-block; padding:9px 10px; font-size:13.5px; }
+    .nv-card { padding:12px 12px 11px; }
+    .nv-i { display:block; margin-right:0; }
+    .nv-sum { display:grid; grid-template-columns:1fr 1fr; column-gap:10px; font-size:12.5px; }
+    .nv-name { font-size:15.5px; }
+    .nv-why { overflow-wrap:anywhere; }
     body:has(#bid-board.with-drawer) #fb-fab { opacity:.35 !important; }
     /* 아래 시트(이 지역 단지 목록) 높이·손잡이 */
     #sidebar { z-index:50; }
@@ -1897,7 +1907,7 @@ body.ui2 #auction-modal.am4 { width:620px; }
             <select id="bb-permit" onchange="setBidBoardFilter('permit', this.value)" title="토지거래허가구역 자료 기준(🚧 허가구역 표시가 붙은 물건)">
                 <option value="">규제지역 전체</option><option value="only">🚧 규제지역만</option><option value="exclude">규제지역 제외</option>
             </select>
-            <select id="bb-crowd" onchange="setBidBoardFilter('crowd', this.value)" title="입찰자가 몰릴지 예상 - 지역 평균이 아니라 물건별 조건 기준(과거 낙찰사례 학습)">
+            <select id="bb-crowd" style="display:none !important" onchange="setBidBoardFilter('crowd', this.value)" title="입찰자가 몰릴지 예상 - 지역 평균이 아니라 물건별 조건 기준(과거 낙찰사례 학습)">
                 <option value="">응찰 예상 전체</option><option value="hi">🔥 많이 몰릴 물건</option><option value="lo">적게 몰릴 물건</option>
             </select>
             <select onchange="setBidBoardFilter('type', this.value)">
@@ -4234,7 +4244,7 @@ function crowdFor(r) {
     return out;
 }
 function crowdMatch(r) {
-    var f = bidBoardState.crowd; if (!f) return true;
+    var f = null; /* 2026-11-12 사용자: 응찰 예상 필터 불필요 → 항상 통과 */ if (!f) return true;
     if (!crowdModel) { loadCrowdModel(); return true; } // 모델이 오기 전에는 거르지 않음(도착하면 다시 그림)
     var c = crowdFor(r); if (!c) return false;
     return f === 'hi' ? c.lvl === 'hi' : c.lvl === 'lo';
@@ -4298,7 +4308,7 @@ function nvVillaCard(r, ev) {
         dday: r.dday ? r.dday.label : '', soon: r.dday && r.dday.diffDays >= 0 && r.dday.diffDays <= 3,
         rec: pe ? vm(pe.bid) : '', recPct: pe && ve ? Math.round(pe.bid / ve.est * 100) : null,
         spec: bbEsc(r.region) + (r.pyung ? ' · 빌라 ' + r.pyung + '평(' + Math.round(r.pyung * 3.305785) + '㎡)' : '') + (r.floor ? ' · ' + r.floor + '층' : '') + (mp && mp.age != null ? ' · ' + mp.age + '년차' : ''),
-        sum: '예상매도가 <b>' + vm(ve && ve.est) + '</b>' + (ve ? ' <small>±' + ve.errPct + '%</small>' : '') + ' · 최저가 ' + vm(r.minBid) + (mp ? ' · 필요 마진 ' + vm(mp.margin) : ''),
+        sum: '<span class="nv-i">예상매도가 <b>' + vm(ve && ve.est) + '</b>' + (ve ? ' <small>±' + ve.errPct + '%</small>' : '') + '</span><span class="nv-i">최저가 ' + vm(r.minBid) + '</span>' + (ev.wb && ev.wb.price ? '<span class="nv-i">예상 낙찰가 <b>' + vm(ev.wb.price) + '</b></span>' : '') + (mp ? '<span class="nv-i">필요 마진 ' + vm(mp.margin) + '</span>' : ''),
         chips: [r.visit.go ? noVisitPill(r) : null, crowdChip(r), permitFor(r) ? { t: '🚧 허가구역', cls: 'r' } : null, pe ? { t: '낙찰 ' + Math.round(pe.p * 100) + '%', cls: pe.p >= 0.6 ? 'g' : (pe.p >= 0.35 ? 'o' : 'r') } : null, pe ? { t: '순이익 ' + vm(pe.net) } : null,
             ev.liq ? { t: '생활권 6개월 ' + ev.liq.r500.a6 + '건', cls: ev.liq.r500.a6 === 0 ? 'r' : '' } : null, (function(c) { return c ? { t: '💰 월세 ' + (c.cf >= 0 ? '+' : '') + Math.round(c.cf) + '만/월', cls: c.ok ? 'g' : (c.cf >= 0 ? 'o' : 'r') } : null; })(villaRentCash(r, ev)), l.st === 'yes' ? { t: '📋 매물 ' + l.n + '건', cls: 'g' } : (l.st === 'none' ? { t: '📋 매물 없음' } : null),
             hv === 'ok' ? { t: '🏠 도시민박 검토 가능', cls: 'g' } : null, ev.issue ? { t: '🚩 이슈 의심', cls: 'r' } : null, rightsNeeded(r, ev.visit.go) ? { t: '⚖️ 권리분석 필요', cls: 'o' } : null, (hsBld[r.id] && hsBld[r.id].info && bldUseWarn(hsBld[r.id].info.title)) ? { t: '⚠️ 비주택 용도', cls: 'r' } : null], note: r.a.fav ? r.a.favNote : '' });
@@ -4310,7 +4320,7 @@ function nvAptCard(r) {
         dday: r.dday ? r.dday.label : '', soon: r.dday && r.dday.diffDays >= 0 && r.dday.diffDays <= 3,
         rec: e ? am(e.bid) : '', recPct: e && r.sale ? Math.round(e.bid / r.sale * 100) : null,
         spec: bbEsc(r.region) + (r.pyung ? ' · 아파트 ' + r.pyung + '평(' + Math.round(r.pyung * 3.305785) + '㎡)' : '') + (r.floor ? ' · ' + r.floor + '층' : '') + ' · ' + (r.fails == null ? '' : (r.fails === 0 ? '신건' : r.fails + '회 유찰')),
-        sum: '예상매도가 <b>' + am(r.sale) + '</b> · 최저가 ' + am(r.minBid) + (r.winbid && r.winbid.price ? ' · 예상 낙찰가 ' + am(r.winbid.price) : ''),
+        sum: '<span class="nv-i">예상매도가 <b>' + am(r.sale) + '</b></span><span class="nv-i">최저가 ' + am(r.minBid) + '</span>' + (r.winbid && r.winbid.price ? '<span class="nv-i">예상 낙찰가 <b>' + am(r.winbid.price) + '</b></span>' : ''),
         chips: [permitFor(r) ? { t: '🚧 허가구역', cls: 'r' } : null, e ? { t: '낙찰 ' + Math.round(e.p * 100) + '%', cls: e.p >= 0.6 ? 'g' : (e.p >= 0.35 ? 'o' : 'r') } : null, e ? { t: '순이익 ' + am(e.net) } : null,
             os ? { t: '1년 거래 ' + (os.n12 || 0) + '건', cls: (os.n12 || 0) >= 6 ? 'g' : ((os.n12 || 0) >= 3 ? '' : 'r') } : null, r.liq ? { t: '💧 6개월 내 되팔림 ' + Math.round(r.liq.p6) + '%' + (r.holdFromSupply ? ' · 매물 많음' : ''), cls: r.liq.p6 >= 30 ? 'g' : (r.liq.p6 < 18 ? 'r' : '') } : null, r.niche ? { t: '🧭 틈새', cls: 'g' } : null, r.issueSuspect ? { t: '🚩 이슈 의심', cls: 'r' } : null,
             l.st === 'yes' ? { t: '📋 매물 ' + l.n + '건', cls: 'g' } : (l.st === 'none' ? { t: '📋 매물 없음' } : null), rightsNeeded(r, r.visit.go) ? { t: '⚖️ 권리분석 필요', cls: 'o' } : null], note: r.a.fav ? r.a.favNote : '' });
@@ -4330,8 +4340,8 @@ function nvSortBar(kind) {
 }
 function nvSort(kind, k) {
     var s = bidBoardState; if (k === 'crowd') loadCrowdModel();
-    if (kind === 'villa') { s.villaCol = k; s.villaDir = VILLA_COLS[k] ? VILLA_COLS[k].first : 1; s.villaLimit = 120; }
-    else { s.liteCol = k; s.liteDir = LITE_COLS[k] ? LITE_COLS[k].first : 1; s.liteLimit = 120; }
+    if (kind === 'villa') { s.villaCol = k; s.villaDir = VILLA_COLS[k] ? VILLA_COLS[k].first : 1; s.villaLimit = pageN(); }
+    else { s.liteCol = k; s.liteDir = LITE_COLS[k] ? LITE_COLS[k].first : 1; s.liteLimit = pageN(); }
     renderBidBoard();
 }
 function nvCard(o) {
@@ -4507,7 +4517,7 @@ var VILLA_COLS = {
     hs: { label: '도시민박', first: 1, val: function(r) { var st = hsBld[r.id]; return st && st.chk ? ({ ok: 0, check: 1, no: 2 })[st.chk.verdict] : null; } },
     net1y: { label: '순증', first: -1, val: function(r) { var dk = hsDongKey(r.a.addr), ag = dk && homestayAgg && homestayAgg.byDong ? homestayAgg.byDong[dk] : null; return ag ? ag.net1y : null; } }
 };
-function setVillaCol(k) { var s = bidBoardState; if ((s.villaCol || 'verdict') === k) s.villaDir = -(s.villaDir || 1); else { s.villaCol = k; s.villaDir = VILLA_COLS[k].first; } s.villaLimit = 120; renderBidBoard(); }
+function setVillaCol(k) { var s = bidBoardState; if ((s.villaCol || 'verdict') === k) s.villaDir = -(s.villaDir || 1); else { s.villaCol = k; s.villaDir = VILLA_COLS[k].first; } s.villaLimit = pageN(); renderBidBoard(); }
 function villaTh(k, label) {
     var s = bidBoardState, col = s.villaCol || 'verdict', on = col === k, c = VILLA_COLS[k], dir = s.villaDir || 1;
     return '<span class="bb2-sortlink' + (on ? ' on' : '') + '" title="눌러서 ' + (on ? (dir === 1 ? '내림차순' : '오름차순') : (c.first === 1 ? '오름차순' : '내림차순')) + ' 정렬" onclick="event.stopPropagation();setVillaCol(\'' + k + '\')">' + (label || c.label) + '<span class="bb-arrow">' + (on ? (dir === 1 ? '▲' : '▼') : '↕') + '</span></span>';
@@ -4663,7 +4673,7 @@ function villaFloorResaleHtml(row) {
 function villaRentDemandHtml(rc) {
     return '<div class="dr-sub" style="margin-top:4px;">월세 거래 활발도(전용 ±10㎡, 최근 6개월): 같은 동 <b>' + (rc.d6 != null ? rc.d6 : '-') + '건</b>' + (rc.r6 != null ? ' · 반경 500m <b>' + rc.r6 + '건</b>(좌표를 아는 신고만 세서 실제보다 적어요)' : '') + ' - 세입자 구하기 쉬운 동네인지 보는 값이에요.</div>';
 }
-function setVillaCash() { bidBoardState.villaCash = !bidBoardState.villaCash; bidBoardState.villaLimit = 120; renderBidBoard(); }
+function setVillaCash() { bidBoardState.villaCash = !bidBoardState.villaCash; bidBoardState.villaLimit = pageN(); renderBidBoard(); }
 /* 💾 빌라 계산 결과 보관(2026-10-10, 사용자: "빌라 입찰후보 창이 매번 새로 불러오는 것 같아 느려") - 예상매도가·생활권 거래·건축물대장 요약을 브라우저에 24시간 저장해 두고
    다시 열면 바로 보여줌(지역 실거래 68곳을 다시 받지 않음). 건물 상세(전유부 등 큰 자료)는 열 때 다시 받음. */
 var VILLA_CALC_KEY = 'villaCalc:v1', VILLA_CALC_TTL = 8 * 24 * 3600 * 1000, villaRestoreState = 0, villaSaveT = null;
@@ -4833,8 +4843,8 @@ function villaEval(row) {
     try { row.rightsStop = rightsStopFor(row.a); if (row.rightsStop && v.go) { v.go = false; v.why = '🚨 권리 위험: ' + row.rightsStop.names.join(' · ') + ' - 해결 방안 확인 전 입찰 비권장'; } if (row.a && row.a.bidExcluded && v.go) { v.go = false; v.why = '🚫 입찰 제외(내가 선택)'; } } catch (e) {}
     row._vev = ev; return ev;
 }
-function setVillaVisit(v) { bbResetDrawer(); bidBoardState.villaVisit = v; bidBoardState.villaLimit = 120; renderBidBoard(); }
-function villaMore() { bidBoardState.villaLimit = (bidBoardState.villaLimit || 120) + 300; renderBidBoard(); }
+function setVillaVisit(v) { bbResetDrawer(); bidBoardState.villaVisit = v; bidBoardState.villaLimit = pageN(); renderBidBoard(); }
+function villaMore() { bidBoardState.villaLimit = (bidBoardState.villaLimit || pageN()) + 300; renderBidBoard(); }
 function renderVillaLite(body) {
     if (villaRestoreState < 2) { if (!villaRestoreState) villaRestoreCalc(); body.innerHTML = '<div class="bb-empty">저장된 계산을 불러오는 중…</div>'; return; }
     villaFlushHsPend();
@@ -4879,7 +4889,7 @@ function renderVillaLite(body) {
     var h = '<div style="padding:6px 4px;">' + tabs + ' <button class="bb-tab' + (s.villaCash ? ' on' : '') + '" title="추천가(없으면 최저가)로 사서 대출을 받고 월세를 놓았을 때 월세 − 이자가 월 20만원 이상 남는 물건만" onclick="setVillaCash()">💰 월세 20만+ <b>' + all.filter(function(r) { var c = villaRentCash(r, evs[r.id]); return c && c.ok; }).length + '</b></button>' + ' <span class="bb-sub">수도권 빌라 · 🏠 도시민박 검토 가능 <b>' + okN + '건</b> · 행을 누르면 건물 상세(대장·도시민박·수리 가정)'
         + (homestayAgg && !homestayAgg.empty ? '' : ' · 도시민박 지역 집계 불러오는 중…') + '</span></div>';
     if (!rows.length) { h += '<div class="bb-empty">' + (all.length ? '이 목록에는 물건이 없어요.' : '수도권 빌라 입찰후보가 없어요.') + '</div>'; window.__villaLastHtml = h; window.__villaLastKey = vKey; body.innerHTML = h; return; }
-    var lim = s.villaLimit || 120;
+    var lim = s.villaLimit || pageN();
     if (bbCardMode()) {
         h += nvSortBar('villa') + '<div class="nv-list">' + rows.slice(0, lim).map(function(r) { return nvVillaCard(r, evs[r.id]); }).join('') + '</div>' + (rows.length > lim ? '<div style="text-align:center;padding:14px;"><button class="bb-csv" style="font-size:13px;padding:8px 18px;" onclick="villaMore()">+ 더 보기 (남은 ' + (rows.length - lim) + '건)</button></div>' : '');
         window.__villaLastHtml = h; window.__villaLastKey = vKey; body.innerHTML = h; return;
@@ -8006,8 +8016,18 @@ function buildCourtAuctionLinkHtml(caseNo, addr) {
    바토너(https://batoner.kr)는 로그인 후 "대리입찰 신청" 화면에서 사건을 검색해 신청하는 방식이고, 사건번호를 주소(URL)로 미리 채우는 방법은 공개돼 있지 않아
    법원·탱크옥션과 같은 방식으로 "사건번호(2025타경12345 형식)를 복사해 신청 화면을 새 탭으로 열기"만 함. 로그인·신청은 직접 해야 함(이 앱이 대신하지 않음). */
 /* 🔗 입찰후보에서 여는 외부 링크(법원경매·탱크옥션·네이버부동산·바토너)는 사이트마다 이름 붙은 별도 새 창으로 열어 앱 화면을 바꾸지 않고, 다시 누르면 같은 창을 재사용(2026-10-10, 사용자 요청) */
+/* 한 번에 그리는 카드 수 - 폰은 40장(탭 이동 지연 완화, 2026-11-12 수정 요청), 나머지는 120장. '더 보기'로 늘림 */
+function pageN() { return isPhoneDevice() ? 40 : 120; }
+function isPhoneDevice() { try { return (window.matchMedia && window.matchMedia('(max-width: 480px)').matches) || /Android.*Mobile|iPhone/i.test(navigator.userAgent || ''); } catch (e) { return false; } }
 function openLinkWindow(url, name) {
     var w = null;
+    /* 2026-11-12 수정 요청(휴대폰): 작은 팝업 창 규격은 폰에서 의미가 없고, 다른 사이트 화면에는 앱이 닫기 버튼을 달 수 없음 → 폰에서는 일반 새 탭으로 열고 탭의 ✕·뒤로가기로 앱에 돌아오게 안내 */
+    if (isPhoneDevice()) {
+        try { w = window.open(url, '_blank'); } catch (e) { w = null; }
+        if (!w) { try { linkToast('새 탭이 막혔어요. 브라우저의 팝업 허용을 켜 주세요.'); } catch (e) {} }
+        else { try { linkToast('새 탭으로 열었어요. 닫으려면 탭의 ✕ 또는 뒤로 가기를 누르면 앱으로 돌아와요.'); } catch (e) {} }
+        return w;
+    }
     // 창 크기는 고정값이 아니라 화면 크기에 맞춰(가로 80%·세로 85%) 열고, 크기 조절·스크롤·주소창을 모두 켬(2026-10-10, 사용자: 크기 변경이 되게)
     var sw = (window.screen && (screen.availWidth || screen.width)) || 1440, sh = (window.screen && (screen.availHeight || screen.height)) || 900;
     var ww = Math.max(720, Math.round(sw * 0.8)), wh = Math.max(560, Math.round(sh * 0.85)), wl = Math.round((sw - ww) / 2), wt = Math.round((sh - wh) / 3);
@@ -12412,7 +12432,7 @@ async function recordNoListings(id) {
     bidBoardRows = bidBoardRows.map(function(r) { if (String(r.id) === String(id)) { r.a = a; delete r._vev; if (r.type !== 'villa') { try { return finalizeBidBoardRow(r); } catch (e) { return r; } } } return r; });
     renderBidBoard(); if (String(bidDrawerId) === String(id)) renderBidDrawer();
 }
-function setListFilter() { bidBoardState.listLite = !bidBoardState.listLite; bidBoardState.liteLimit = 120; bidBoardState.villaLimit = 120; renderBidBoard(); }
+function setListFilter() { bidBoardState.listLite = !bidBoardState.listLite; bidBoardState.liteLimit = pageN(); bidBoardState.villaLimit = pageN(); renderBidBoard(); }
 /* 🟢 네이버부동산 링크 공통 만들기 (2026-10-10, 사용자: "입찰후보 상세에도 네이버 링크 - 기존 링크 로직은 빌라/아파트 구분·비슷한 연식·평형 조절 상태, 구분이 안 되는 경우가 있었어 보완")
    종류 판단 순서(예전엔 입력칸 하나만 봐서 비어 있거나 틀리면 필터가 빠졌음): ① 건축물대장 주용도(아파트/다세대·연립/오피스텔) ② 지도 거래자료의 건물 종류(buildingType)
    ③ 물건에 저장된 종류(단, 이름·주소에 '빌라·다세대·연립'만 있고 '아파트'가 없으면 빌라, 반대면 아파트로 바로잡음) ④ 이름·주소 글자. 알 수 없으면 종류 필터를 걸지 않음(잘못 걸면 0건).
@@ -12439,6 +12459,8 @@ function naverLandUrl(o) {
     if (code && py > 0) q += '&h=' + Math.max(Math.round((py - 5) * 3.305785), 0) + '&i=' + Math.round((py + 5) * 3.305785);
     var by = parseInt(o.buildYear, 10);
     if (code && by > 1900) { var age = new Date().getFullYear() - by; q += '&j=' + (age + 5) + '&k=' + Math.max(age - 10, 0); }
+    /* 2026-11-12 수정 요청: 폰에서 네이버부동산(PC 주소 new.land)이 연결되지 않음 → 폰은 모바일 주소(m.land) 지도로 연결(종류별 필터는 종류 코드만) */
+    if (o.lat && o.lon && isPhoneDevice()) return { url: 'https://m.land.naver.com/map/' + o.lat + ':' + o.lon + ':17/' + (code || 'APT:VL') + '/A1', type: type };
     if (o.lat && o.lon) return { url: 'https://new.land.naver.com/' + (NAVER_ROUTE[type] || 'houses') + '?ms=' + o.lat + ',' + o.lon + ',17' + q, type: type };
     var qq = [o.name, o.addr || o.dong].filter(Boolean).join(' ').trim();
     if (!qq) return null;
@@ -15045,7 +15067,7 @@ function rightsNeedList() {
 }
 function rightsNeedText() { return rightsNeedList().map(function(x, i) { return (i + 1) + '. ' + (x.r.a.caseNo || '') + ' ' + (x.apt ? x.r.name : villaNameFor(x.r)) + ' (' + (x.r.region || '') + ') ' + (x.r.dday ? x.r.dday.label : ''); }).join('\n'); }
 function rightsNeedCopy() { var t = rightsNeedText(); try { navigator.clipboard.writeText(t).then(function() { alert('붙여넣을 사건 목록을 복사했어요.'); }, function() { prompt('복사해서 쓰세요', t); }); } catch (e) { prompt('복사해서 쓰세요', t); } }
-function toggleRightsNeed() { var s = bidBoardState; s.rightsNeed = !s.rightsNeed; if (s.rightsNeed) { s.liteCol = 'date'; s.liteDir = 1; s.villaCol = 'date'; s.villaDir = 1; } s.liteLimit = 120; s.villaLimit = 120; renderBidBoard(); }
+function toggleRightsNeed() { var s = bidBoardState; s.rightsNeed = !s.rightsNeed; if (s.rightsNeed) { s.liteCol = 'date'; s.liteDir = 1; s.villaCol = 'date'; s.villaDir = 1; } s.liteLimit = pageN(); s.villaLimit = pageN(); renderBidBoard(); }
 function rightsBatchOpen() {
     var old = document.getElementById('rights-batch-modal'); if (old) old.remove();
     var d = document.createElement('div'); d.id = 'rights-batch-modal';
@@ -21920,7 +21942,7 @@ function bbResetDrawer() {
 function setLiteVisit(v) { bbResetDrawer(); var s0 = bidBoardState, wasVilla = s0.visit === 'villa'; if (v !== 'villa' && v !== 'fav') s0.aptVisit = v; s0.visit = v; if (showLocation) setTimeout(renderLocationLayer, 0);
     if (v !== 'villa' && String(s0.region || '').indexOf('g:') === 0) s0.region = '';
     if (v === 'fav') s0.region = '';
-    if (s0.region && (wasVilla !== (v === 'villa')) && !bidBoardRows.some(function(r) { return (r.type === 'villa') === (v === 'villa') && regionMatch(r, s0.region); })) s0.region = '';  bidBoardState.liteLimit = 120; renderBidBoard(); if (v === 'go' || v === 'pass' || v === 'all' || v === 'fav') setTimeout(function() { try { finalizeStaleRows(); } catch (e) {} }, 50); }
+    if (s0.region && (wasVilla !== (v === 'villa')) && !bidBoardRows.some(function(r) { return (r.type === 'villa') === (v === 'villa') && regionMatch(r, s0.region); })) s0.region = '';  bidBoardState.liteLimit = pageN(); renderBidBoard(); if (v === 'go' || v === 'pass' || v === 'all' || v === 'fav') setTimeout(function() { try { finalizeStaleRows(); } catch (e) {} }, 50); }
 // 열 머리글을 누르면 그 값으로 오름차순 ↔ 내림차순(2026-10, 사용자: "순위 표기보다 항목별 오름·내림차순 정렬을 직접 고르게"). 값이 없는 물건은 방향과 상관없이 맨 아래
 var LITE_COLS = {
     verdict: { label: '판정', first: 1, val: function(r) { return r.visit.go ? 0 : 1; } },
@@ -21990,7 +22012,7 @@ function liteTh(k, label, right) {
     var s = bidBoardState, on = s.liteCol === k, c = LITE_COLS[k];
     return '<span class="bb2-sortlink' + (on ? ' on' : '') + '" title="눌러서 ' + (on ? (s.liteDir === 1 ? '내림차순' : '오름차순') : (c.first === 1 ? '오름차순' : '내림차순')) + ' 정렬" onclick="event.stopPropagation();setLiteCol(\'' + k + '\')">' + (label || c.label) + '<span class="bb-arrow">' + (on ? (s.liteDir === 1 ? '▲' : '▼') : '↕') + '</span></span>';
 }
-function toggleLitePast() { bidBoardState.pastLite = !bidBoardState.pastLite; bidBoardState.liteLimit = 120; renderBidBoard(); }
+function toggleLitePast() { bidBoardState.pastLite = !bidBoardState.pastLite; bidBoardState.liteLimit = pageN(); renderBidBoard(); }
 // 단지 내 동일 평형(±3㎡) 최근 거래 건수(2026-10, 사용자: "시세 근거가 되는 거래가 몇 건인지 보여줘")
 function compCellHtml(r) { // 2026-10-24(사용자: 경쟁 예상 표현이 어려움 - 예상 입찰자 수만 쉽게) 입찰자 수 한 가지만: 물건별 예상(없으면 기존 예상)
     var c = crowdFor(r), n = c ? c.n : (r.winbid && r.winbid.bidN != null ? Math.max(1, Math.round(r.winbid.bidN)) : null);
@@ -22101,7 +22123,7 @@ function renderBidBoardLite() {
     if (!rows.length) { body.innerHTML = '<div class="bb-empty">' + (pend || bidBoardRunning || bidBoardRows.some(function(r) { return r.pending; }) ? '저장된 계산을 불러오는 중이에요…' : (s.visit === 'go' ? '지금은 임장할 만한 물건이 없어요.<br>패스 목록에서 이유를 확인하거나 새 CSV를 올려 보세요.' : '조건에 맞는 물건이 없어요.')) + '</div>'; return; }
     var money = function(v) { return v ? toEok(String(Math.round(v))) : '-'; };
     if (bbCardMode()) {
-        body.innerHTML = nvSortBar('apt') + '<div class="nv-list">' + rows.slice(0, bidBoardState.liteLimit || 120).map(function(r) { return nvAptCard(r); }).join('') + '</div>' + (rows.length > (bidBoardState.liteLimit || 120) ? '<div style="text-align:center;padding:14px;"><button class="bb-csv" style="font-size:13px;padding:8px 18px;" onclick="bbLiteMore()">+ 더 보기 (남은 ' + (rows.length - (bidBoardState.liteLimit || 120)) + '건)</button></div>' : '');
+        body.innerHTML = nvSortBar('apt') + '<div class="nv-list">' + rows.slice(0, bidBoardState.liteLimit || pageN()).map(function(r) { return nvAptCard(r); }).join('') + '</div>' + (rows.length > (bidBoardState.liteLimit || pageN()) ? '<div style="text-align:center;padding:14px;"><button class="bb-csv" style="font-size:13px;padding:8px 18px;" onclick="bbLiteMore()">+ 더 보기 (남은 ' + (rows.length - (bidBoardState.liteLimit || pageN())) + '건)</button></div>' : '');
         return;
     }
     body.innerHTML = '<table class="bb2-table bb2-atable"><thead><tr>'
@@ -22110,7 +22132,7 @@ function renderBidBoardLite() {
         + '<th>거래량 순위·회전율<div class="bb2-subsort">' + liteTh('turn', '회전율') + liteTh('liv', '생활권') + liteTh('band', '평형') + liteTh('dong', '동') + '</div></th>'
         + '<th class="r">' + liteTh('minBid') + '</th><th class="r">' + liteTh('wbp') + '</th><th class="r">' + liteTh('sale') + infoI('sale') + '</th><th class="r">' + liteTh('rec') + infoI('rec') + '<div class="bb2-subsort" style="justify-content:flex-end;">' + liteTh('recPct', '시세 대비 %') + '</div></th><th class="r">' + liteTh('p') + '</th><th class="r">' + liteTh('comp') + infoI('comp') + '</th><th class="r">' + liteTh('net') + '</th><th class="r">' + liteTh('rate') + '</th>'
         + '</tr></thead><tbody>'
-        + rows.slice(0, bidBoardState.liteLimit || 120).map(function(r) {
+        + rows.slice(0, bidBoardState.liteLimit || pageN()).map(function(r) {
             var go = r.visit.go, e = r.pick && r.pick.ev, idJs = String(r.id).replace(/\\/g, '\\\\').replace(/'/g, "\\'");
             var pc = e ? Math.round(e.p * 100) : null, col = pc == null ? '#6b7280' : (pc >= 60 ? '#15803d' : (pc >= 35 ? '#b45309' : '#b91c1c'));
             var mr = e && r.sale ? e.pre / r.sale * 100 : null;
@@ -22130,11 +22152,11 @@ function renderBidBoardLite() {
                 + '<td data-l="순이익" class="r">' + (e ? money(e.net) : '-') + '</td>'
                 + '<td data-l="마진율" class="r">' + (mr != null ? mr.toFixed(1) + '%' : '-') + '</td></tr>';
         }).join('') + '</tbody></table>'
-        + (rows.length > (bidBoardState.liteLimit || 120) ? '<div style="text-align:center;padding:14px;"><button class="bb-csv" style="font-size:13px;padding:8px 18px;" onclick="bbLiteMore()">+ 더 보기 (남은 ' + (rows.length - (bidBoardState.liteLimit || 120)) + '건 · 지금 ' + (bidBoardState.liteLimit || 120) + '건 표시)</button></div>' : '');
+        + (rows.length > (bidBoardState.liteLimit || pageN()) ? '<div style="text-align:center;padding:14px;"><button class="bb-csv" style="font-size:13px;padding:8px 18px;" onclick="bbLiteMore()">+ 더 보기 (남은 ' + (rows.length - (bidBoardState.liteLimit || pageN())) + '건 · 지금 ' + (bidBoardState.liteLimit || pageN()) + '건 표시)</button></div>' : '');
     var cn = document.getElementById('bb-cache-note'); if (cn) cn.style.display = 'none';
 }
 // 2026-10-10(사용자: 입찰후보 로딩 중·탭 이동·닫기에서 반응이 느림): 표를 한 번에 1천 건 넘게 그리던 걸 120건으로 줄이고 더 보기로 늘림(정렬·필터는 전체에 그대로 적용)
-function bbLiteMore() { bidBoardState.liteLimit = (bidBoardState.liteLimit || 120) + 300; renderBidBoard(); }
+function bbLiteMore() { bidBoardState.liteLimit = (bidBoardState.liteLimit || pageN()) + 300; renderBidBoard(); }
 var bbLastInteract = 0;
 document.addEventListener('pointerdown', function(e) { if (e.target.closest && e.target.closest('#bid-board')) bbLastInteract = Date.now(); }, true);
 document.addEventListener('keydown', function(e) { if (document.getElementById('bid-board') && document.getElementById('bid-board').style.display !== 'none') bbLastInteract = Date.now(); }, true);
@@ -22448,20 +22470,31 @@ function bidCostLines(row, opt) {   // opt(2026-11-10): 빌라 상세처럼 행�
         ['취득세' + (rank >= 2 ? ' (' + rank + '번째 주택)' : ''), calcAcquisitionTaxDetailed(bid, type, pyung, rank, adj, cheap)],
         ['등기비', calcRegistryFee(bid)],
         ['대출이자 (' + holdM + '개월, ' + loan.rate + '%)', calcLoanInterest(loan.amount, loan.rate, holdM)],
-        ['중도상환수수료', calcLoanPrepayFee(loan.amount, DEFAULT_LOAN_PREPAY_FEE_RATE)],
-        ['중개수수료(매도)', calcAgentFee(sale, type)],
+        ['중도상환수수료', calcLoanPrepayFee(loan.amount, DEFAULT_LOAN_PREPAY_FEE_RATE), 'sell'],
+        ['중개수수료(매도)', calcAgentFee(sale, type), 'sell'],
         ['명도비', calcEvictionFee(pyung)],
         ['수리비' + ((parseInt(a.repair) || repairAuto) < basicRepairFee(pyung) ? ' (최소: 도배·장판)' : (parseInt(a.repair) ? ' (직접 입력)' : ' (연식 기준)')), Math.max(parseInt(a.repair) || repairAuto, basicRepairFee(pyung))],
         ['이사·청소', (calcMovingFee(pyung) || 0) + (calcCleaningFee(pyung) || 0)],
-        ['매도 부가세 (85㎡ 초과)', row.resaleVat || 0],
+        ['매도 부가세 (85㎡ 초과)', row.resaleVat || 0, 'sell'],
         ['인수 금액 중 입찰대금으로 못 갚는 차액' + (parseInt(a.assumedDeposit) ? ' (인수 ' + toEok(String(parseInt(a.assumedDeposit))) + ')' : (a.rights ? ' (권리분석)' : '')), assumedCostRec(a, bid)],
         ['미납 관리비', parseInt(a.unpaidMgmtFee) || 0],
         ['임장 추가 비용 (명도·누수)', parseInt(a.etc) || 0]
     ].filter(function(x) { return x[1] > 0; });
     var cost = L.reduce(function(s, x) { return s + x[1]; }, 0);
+    /* 2026-11-12 수정 요청: 필요 현금 = 입찰가 − 대출 + 입찰 후~매도 전에 내 주머니에서 나가는 비용(취득세·등기·이자·명도·수리·이사청소·인수차액·관리비 등).
+       매도수수료·중도상환수수료·부가세는 매도대금에서 정산되므로 제외 */
+    var cashCost = L.reduce(function(s, x) { return s + (x[2] === 'sell' ? 0 : x[1]); }, 0);
     var pre = sale - bid - cost;
     var tax = calcResaleIncomeTax('dealer', pre, 0, adj, rank).totalTax;
-    return { lines: L, cost: cost, pre: pre, tax: tax, net: pre - tax, loan: loan.amount, cash: bid - loan.amount, repairAuto: repairAuto };
+    return { lines: L, cost: cost, pre: pre, tax: tax, net: pre - tax, loan: loan.amount, cash: bid - loan.amount + cashCost, cashCost: cashCost, repairAuto: repairAuto };
+}
+/* 📈 상세 창 시세 그래프(2026-11-12 수정 요청: 시세 그래프 없음) - 같은 평형(빌라는 같은 건물 비슷한 면적) 실거래의 점·월별 중앙값 선·거래량 */
+function drawerChartHtml(tr, title) {
+    if (!tr || tr.length < 2) return '<div class="dr-sec dr-sub">' + title + ' 그래프: 이 평형 거래가 ' + (tr ? tr.length : 0) + '건뿐이라 그릴 수 없어요</div>';
+    var pts = tr.filter(function(t) { return t.d && t.p > 0; }).map(function(t) { return { amount: String(t.p), year: t.d.getFullYear(), month: t.d.getMonth() + 1, day: t.d.getDate(), floor: isNaN(t.f) ? '-' : t.f }; });
+    var svg = ''; try { svg = buildPriceChartSvg(pts, '3y'); } catch (e) { svg = ''; }
+    if (!svg) return '';
+    return '<div class="dr-sec"><h4>' + title + ' 시세 그래프 <span class="dr-sub" style="display:inline;">(점=실거래, 선=월 중앙값, 아래 막대=거래량)</span></h4>' + svg + '</div>';
 }
 function drawerTrades(row) {
     var a = row.a, area = (parseFloat(a.pyung) || 0) * 3.305785, tf = parseInt(a.floor), out = [];
@@ -22600,6 +22633,7 @@ async function renderBidDrawer() {
     (row.warns || []).concat(bidBoardState.lite ? [] : (row.reasons || [])).forEach(function(w) { h += '<div class="dr-warn">' + bbEsc(w) + '</div>'; });
     // 최근 거래
     if (tr.length) {
+        h += drawerChartHtml(tr, '같은 평형');
         h += '<div class="dr-sec"><h4>같은 평형 실거래 (파란 줄 = 비슷한 층 ±3)</h4><table><tr><th>거래일</th><th>층</th><th class="r">가격</th></tr>'
             + tr.slice(0, 12).map(function(t) { return '<tr class="' + (t.sim ? 'sim' : '') + '"><td>' + t.d.toISOString().slice(0, 10) + (t.direct ? ' <span style="color:#9ca3af;">직거래</span>' : '') + '</td><td>' + (isNaN(t.f) ? '-' : t.f + '층') + '</td><td class="r">' + toEok(String(t.p)) + '</td></tr>'; }).join('')
             + '</table>' + (tr.length > 12 ? '<div class="dr-sub">최근 12건만 · 전체 ' + tr.length + '건</div>' : '') + '</div>';
@@ -22611,7 +22645,7 @@ async function renderBidDrawer() {
             + cl.lines.map(function(x) { return '<tr><td>− ' + x[0] + '</td><td class="r">' + toEok(String(x[1])) + '</td></tr>'; }).join('')
             + '<tr><td>− 종합소득세·지방세</td><td class="r">' + toEok(String(cl.tax)) + '</td></tr>'
             + '<tr><td><b>남는 돈(세후)</b></td><td class="r"><b style="color:' + (cl.net >= 1000 ? '#16a34a' : '#dc2626') + ';">' + toEok(String(Math.round(cl.net))) + '</b></td></tr>'
-            + '<tr><td class="dr-sub">필요 현금(대출 ' + fmt(cl.loan) + ' 제외, 비용 별도)</td><td class="r dr-sub">' + fmt(cl.cash) + '</td></tr></table></div>';
+            + '<tr><td class="dr-sub">필요 현금(입찰가 − 대출 ' + fmt(cl.loan) + ' + 입찰 후~매도 전 비용 ' + fmt(cl.cashCost) + ', 매도 때 정산되는 수수료·부가세 제외)</td><td class="r dr-sub">' + fmt(cl.cash) + '</td></tr></table></div>';
     }
     h += competitionHtml(row);
     h += fieldCheckHtml(row);
@@ -22774,7 +22808,7 @@ function villaCostHtml(row, ev, fmt) {
         + li.map(function(x) { return '<tr><td>− ' + x[0] + '</td><td class="r">' + toEok(String(x[1])) + '</td></tr>'; }).join('')
         + '<tr><td>− 종합소득세·지방세</td><td class="r">' + toEok(String(tax)) + '</td></tr>'
         + '<tr><td><b>예상 순마진(세후)</b></td><td class="r"><b style="color:' + (net >= 1000 ? '#16a34a' : '#dc2626') + ';">' + toEok(String(Math.round(net))) + '</b></td></tr>'
-        + '<tr><td class="dr-sub">필요 현금(대출 ' + fmt(cl.loan) + ' 제외, 비용 별도)</td><td class="r dr-sub">' + fmt(cl.cash) + '</td></tr></table>'
+        + '<tr><td class="dr-sub">필요 현금(입찰가 − 대출 ' + fmt(cl.loan) + ' + 입찰 후~매도 전 비용 ' + fmt(cl.cashCost) + ', 매도 때 정산되는 수수료·부가세 제외)</td><td class="r dr-sub">' + fmt(cl.cash) + '</td></tr></table>'
         + '<div class="dr-sub">예상매도가 ' + fmt(ve.est) + '이 맞는다는 가정의 값이에요(빌라 시세 보통 오차 약 10%).' + (ev.ve.stack && ev.ve.stack.l10 ? ' 하위 10% 값(' + fmt(ev.ve.stack.l10) + ')에 팔리면 순마진은 약 ' + fmt(Math.round(net - (ve.est - ev.ve.stack.l10))) + '이에요(세금 변화 제외).' : '') + '</div></div>';
 }
 async function renderVillaDrawer(d, row) {
@@ -22831,6 +22865,7 @@ async function renderVillaDrawer(d, row) {
     // 같은 건물·같은 동 비슷한 면적 실거래
     var tr = []; try { tr = drawerTrades(row); } catch (e) {}
     if (tr.length) {
+        h += drawerChartHtml(tr, '같은 건물');
         h += '<div class="dr-sec"><h4>같은 건물 비슷한 면적 실거래</h4><table><tr><th>거래일</th><th>층</th><th class="r">가격</th></tr>'
             + tr.slice(0, 10).map(function(t) { return '<tr><td>' + t.d.toISOString().slice(0, 10) + (t.direct ? ' <span style="color:#9ca3af;">직거래</span>' : '') + '</td><td>' + (isNaN(t.f) ? '-' : t.f + '층') + '</td><td class="r">' + toEok(String(t.p)) + '</td></tr>'; }).join('') + '</table></div>';
     } else h += '<div class="dr-sec dr-sub">' + (lawd && !dataCache[lawd] ? '같은 건물 실거래를 불러오는 중…' : '같은 건물 비슷한 면적 실거래는 없어요(같은 동·시군구 거래로 계산)') + '</div>';
@@ -31218,11 +31253,25 @@ window.addEventListener('load', function() {
     if (!mq) return;
     var t = null;
     document.addEventListener('scroll', function() { if (!mq.matches) return; document.body.classList.add('fab-hide'); clearTimeout(t); t = setTimeout(function() { document.body.classList.remove('fab-hide'); }, 700); }, true);
+    /* 정렬 줄(.nv-sort)은 목록을 다시 그릴 때마다 새로 만들어져 밀어 둔 위치가 0으로 돌아감 → 위치를 기억했다가 되돌림 */
+    var sortLeft = 0;
+    document.addEventListener('scroll', function(e) { var el = e.target; if (el && el.classList && el.classList.contains('nv-sort')) sortLeft = el.scrollLeft; }, true);
+    new MutationObserver(function() {
+        var el = document.querySelector('#bb-body .nv-sort'); if (el && sortLeft && Math.abs(el.scrollLeft - sortLeft) > 2) el.scrollLeft = sortLeft;
+    }).observe(document.body, { childList: true, subtree: true });
     var iv = setInterval(function() {
         var bar = document.getElementById('bb2-tabs'); if (!bar) return; clearInterval(iv);
+        var lastSig = '', touchAt = 0;
+        bar.addEventListener('touchstart', function() { touchAt = Date.now(); }, { passive: true });
+        bar.addEventListener('touchmove', function() { touchAt = Date.now(); }, { passive: true });
+        bar.addEventListener('scroll', function() { if (Date.now() - touchAt < 1500) touchAt = Date.now(); }, { passive: true });
         var fix = function() {
             if (!mq.matches) return;
             var on = bar.querySelectorAll('.bb-tab.on'); if (!on.length) return;
+            /* 2026-11-12 수정 요청: 손으로 밀어 둔 위치가 손을 떼면 원위치로 돌아감 → 선택 칩이 바뀐 때만, 손으로 만지는 중이 아닐 때만 맞춤 */
+            var sig = Array.prototype.map.call(on, function(x) { return x.textContent; }).join('|');
+            if (sig === lastSig || Date.now() - touchAt < 1500) { return; }
+            lastSig = sig;
             var first = on[0], last = on[on.length - 1];
             var left = (last.offsetLeft + last.offsetWidth - first.offsetLeft <= bar.clientWidth - 30) ? first.offsetLeft - 6 : last.offsetLeft - 6;
             try { bar.scrollTo({ left: Math.max(0, left), behavior: 'auto' }); } catch (e) { bar.scrollLeft = Math.max(0, left); }
