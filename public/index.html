@@ -1514,7 +1514,7 @@ body.ui2 #auction-modal.am4 { width:620px; }
     /* 옆으로 밀리는 칩 줄은 오른쪽 끝을 흐리게 해서 더 있다는 것을 알려 줌 */
     #bb2-tabs { -webkit-mask-image:linear-gradient(to right, #000 88%, transparent); mask-image:linear-gradient(to right, #000 88%, transparent); padding-right:22px; }
     /* 목록을 밀어 올리는 동안 수정 요청 버튼은 숨김(마지막 칸 가림 방지) */
-    body.fab-hide #fb-fab { opacity:0 !important; pointer-events:none; transition:opacity .15s; }
+    body.fab-hide #fb-fab { opacity:.4 !important; transition:opacity .15s; } /* 2026-11-12 수정 요청: 스크롤 중 버튼이 사라져 작성 불가 → 완전히 숨기지 않고 흐리게만(누르기는 항상 가능) */
     /* 2026-11-12 수정 요청: 정렬 글자가 작아 누르기 어려움·긴 줄 줄바꿈이 지저분함 */
     /* 표 머리(정렬 줄)·카드 배치 정돈: 글자를 크게, 예상매도가·추천가·최저가 옆에 예상 낙찰가를 같은 줄에 */
     #bid-board .bb2-table thead tr { overscroll-behavior-x:contain; }
@@ -1550,7 +1550,7 @@ body.ui2 #auction-modal.am4 { width:620px; }
     /* 2026-11-12 수정 요청: 임장 배지 아래 메모가 길어 카드 높이가 들쭉날쭉 → 2줄까지만 보이고 나머지는 ...(전체는 상세 창) */
     .nv-why { overflow-wrap:anywhere; display:-webkit-box; -webkit-box-orient:vertical; -webkit-line-clamp:2; overflow:hidden; }
     #bid-board .bb2-atable td[data-l="판정"] .bb-sub { display:-webkit-box; -webkit-box-orient:vertical; -webkit-line-clamp:2; overflow:hidden; }
-    body:has(#bid-board.with-drawer) #fb-fab { opacity:.35 !important; }
+    body:has(#bid-board.with-drawer) #fb-fab { opacity:.8 !important; z-index:99999 !important; }
     /* 아래 시트(이 지역 단지 목록) 높이·손잡이 */
     #sidebar { z-index:50; }
     /* 2026-11-12 수정 요청: ① 입찰후보 화면에서 ☰ 메뉴를 눌러도 메뉴가 보드 뒤에 깔려 안 보임 → 상단바를 보드 위로 */
@@ -31322,6 +31322,26 @@ window.addEventListener('load', function() {
             return res;
         };
     }
+    /* 2026-11-12 수정 요청: 빌라 가로 정렬 줄이 좌우로 안 움직임(밀어도 다시 그려지며 처음 자리로 돌아감) → 사용자가 민 위치를 기억해 두고, 줄이 새로 만들어지면 그 위치로 되돌림. 입찰후보 탭·지역을 바꾸면 기억을 지움 */
+    (function() {
+        var mem = { a: 0, h: 0 };
+        var q = function(sel) { return document.querySelector('#bb-body ' + sel); };
+        document.addEventListener('scroll', function(e) {
+            var t = e.target; if (!t || !t.matches) return;
+            if (t.matches('.nv-sort')) mem.a = t.scrollLeft; else if (t.matches('.bb2-table thead tr')) mem.h = t.scrollLeft;
+        }, true);
+        document.addEventListener('click', function(e) { if (e.target.closest && e.target.closest('#bb2-tabs, #bb-chips')) { mem.a = 0; mem.h = 0; } }, true);
+        var fixT = null;
+        var fixNow = function() {
+            var a = q('.nv-sort'), h = q('.bb2-table thead tr');
+            if (a && mem.a && !a.scrollLeft) a.scrollLeft = mem.a;
+            if (h && mem.h && !h.scrollLeft) h.scrollLeft = mem.h;
+        };
+        var iv2 = setInterval(function() {
+            var body = document.getElementById('bb-body'); if (!body) return; clearInterval(iv2);
+            new MutationObserver(function() { clearTimeout(fixT); fixT = setTimeout(fixNow, 30); }).observe(body, { childList: true, subtree: true });
+        }, 500);
+    })();
     var iv = setInterval(function() {
         var bar = document.getElementById('bb2-tabs'); if (!bar) return; clearInterval(iv);
         var lastSig = '', touchAt = 0;
