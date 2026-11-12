@@ -13,7 +13,7 @@ df = pd.read_pickle(os.environ.get("DF_FILE", "input/villa-df.pkl"))
 files = sorted(glob.glob(os.environ.get("SHARD_GLOB", "shards/**/feat-shard-*.pkl"), recursive=True))
 D = pd.concat([pd.read_pickle(f) for f in files], ignore_index=True); D = D[D["deal_date"] >= 20220101].copy().reset_index(drop=True)
 print(f"거래 {len(df):,}, 특징 {len(D):,}행(2022~)", flush=True)
-D = D.merge(df[["bld", "dk", "region", "day", "size", "ppm", "ym", "sg", "bj", "bun", "ji", "floor"]].rename(columns={"size": "sz"}), left_on="i", right_index=True, how="left")
+D = D.merge(df[["bld", "dk", "region", "day", "size", "ppm", "ym", "sg", "bj", "bun", "ji", "floor"]].rename(columns={"size": "sz", "floor": "fl_raw"}), left_on="i", right_index=True, how="left")
 D["pb"] = pd.cut(D["base"], PB, labels=PL).astype(str)
 # ── 시군구 월별 가격 지수(앱 estimate와 같은 방식: 월 중앙값 로그, 3개월 이동평균) ──
 mi = df.groupby(["region", "ym"])["ppm"].median().apply(np.log).unstack("ym"); mi = mi.T.sort_index().rolling(3, min_periods=1).mean().T
@@ -87,7 +87,7 @@ print("공시 건물-연도", len(OP), flush=True)
 D["pnu"] = D["sg"].astype(str) + D["bj"].astype(str) + "1" + D["bun"].astype(str).str.zfill(4) + D["ji"].fillna("0").astype(str).str.zfill(4)
 _dd = _t0 + pd.to_timedelta(D["day"].values, unit="D"); yr = np.where(_dd.month >= 5, _dd.year, _dd.year - 1)   # 그 거래 시점에 이미 공표된 가장 최근 공시(4월 말 공표 → 5월부터 사용)
 g_unit = np.full(len(D), np.nan); g_rel = np.full(len(D), np.nan); g_ppm = np.full(len(D), np.nan); g_exact = np.zeros(len(D)); g_n = np.zeros(len(D))
-for j, (p, y, sz, fl) in enumerate(zip(D["pnu"].values, yr, D["sz"].values, D["floor"].values)):
+for j, (p, y, sz, fl) in enumerate(zip(D["pnu"].values, yr, D["sz"].values, D["fl_raw"].values)):
     t = OP.get((p, int(y)))
     if t is None: continue
     F, A, Pr = t; near = np.abs(A - sz) <= 3.0
