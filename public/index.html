@@ -1558,6 +1558,24 @@ body.ui2 #auction-modal.am4 { width:620px; }
     /* ③ 빌라 후보 카드: 글이 너무 많아 한 화면에 2개만 보임 → 핵심(판정·이름·가격·추천가·순이익)만 두고 자세한 줄은 상세 창에서 보게 */
     #bid-board .bb2-vtable td .bb-sub { display:none; }
     #bid-board .bb2-vtable td[data-l="예상 낙찰가 · 추천가"] .bb-sub { display:block; }
+    /* 2026-11-12 수정 요청(빌라 카드): 아파트처럼 심플하게, 한 화면에 3개 → 이름·판정 / 최저가·예상매도가·예상 낙찰가·추천가 / 입찰일·낙찰 가능성·순이익 3줄만. 필요 마진·도시민박 칸은 상세 창에서 */
+    #bid-board .bb2-vtable tr { grid-template-columns:1fr 1.2fr 1.2fr 1.2fr; gap:3px 8px; padding:8px 11px; margin-bottom:6px; }
+    #bid-board .bb2-vtable td[data-l="판정"] .bb2-go, #bid-board .bb2-vtable td[data-l="판정"] .bb2-pass { white-space:nowrap; }
+    #bid-board .bb2-vtable .bb2-name { grid-column:1 / 4; grid-row:1; }
+    #bid-board .bb2-vtable .bb2-name > div:last-child:not(.bb-sub) { display:none; }
+    #bid-board .bb2-vtable .bb2-name .bb-sub { display:block; }
+    #bid-board .bb2-vtable td[data-l="최저가"] { grid-column:1; grid-row:2; }
+    #bid-board .bb2-vtable td[data-l="예상매도가"] { grid-column:2; grid-row:2; }
+    #bid-board .bb2-vtable td[data-l="예상매도가"] .bb-sub { display:none; }
+    #bid-board .bb2-vtable td[data-l="예상 낙찰가 · 추천가"] { display:contents; }
+    #bid-board .bb2-vtable td[data-l="예상 낙찰가 · 추천가"]::before { display:none; }
+    #bid-board .bb2-vtable .vw-win { grid-column:3; grid-row:2; text-align:left; }
+    #bid-board .bb2-vtable .vw-rec { grid-column:4; grid-row:2; text-align:left; }
+    #bid-board .bb2-vtable .vw-rec.vw-p { grid-column:2 / 5; grid-row:3; }
+    #bid-board .bb2-vtable .vw-p { grid-column:2 / 5; grid-row:3; text-align:left; font-size:11.5px; color:#374151; align-self:center; }
+    #bid-board .bb2-vtable td[data-l="입찰일"] { grid-column:1; grid-row:3; align-self:center; }
+    #bid-board .bb2-vtable td[data-l="입찰일"] .bb-sub { display:none; }
+    #bid-board .bb2-vtable td[data-l="필요 마진 · 입찰 상한"], #bid-board .bb2-vtable td[data-l="도시민박"] { display:none !important; }
     #bid-board .bb2-vtable td[data-l="생활권 거래(반경 500m)"], #bid-board .bb2-vtable td[data-l="월세 현금흐름"], #bid-board .bb2-vtable td[data-l="건물(대장)"], #bid-board .bb2-vtable td[data-l="이 동의 도시민박"] { display:none !important; }
     /* 입력칸 글자 16px: 눌렀을 때 화면이 확대되지 않게 */
     input[type=text], input[type=search], input[type=number], textarea, select { font-size:16px; }
@@ -4934,7 +4952,7 @@ function renderVillaLite(body) {
         var estCell = ve ? (function() { var cl = ve.lvl === '건물5+' ? '#15803d' : (ve.lvl === '건물1~2+동' || ve.lvl === '건물1~2' ? '#b45309' : '#b91c1c'); return '<b title="실제 값이 ' + money(ve.lo) + '~' + money(ve.hi) + ' 사이였던 비율이 80% (백테스트)">' + money(ve.est) + '</b><div class="bb-sub" style="color:' + cl + ';">보통 오차 ±' + ve.errPct + '%</div><div class="bb-sub">' + ve.lvl + ' · 거래 ' + (ve.n1 || ve.n2) + '건</div>' + (ve.capped ? '<div class="bb-sub" style="color:#7c3aed;" title="' + bbEsc(ve.capped.desc) + '">📋 호가 상한 적용(실거래 ' + money(ve.estTrade) + ')</div>' : ''); })() : '<span class="bb-sub">-</span>';
         var marCell = mp ? (function() { var why = (mp.age != null ? '연식 ' + mp.age + '년' : '연식 모름') + (mp.elv != null ? ' · 승강기 ' + (mp.elv > 0 ? '있음' : '없음') : '') + ' · ' + ve.lvl;
             return '<b>마진 ' + toEok(String(mp.margin)) + '</b>' + (mp.first ? '<div class="bb-sub" style="color:#b45309;">' + bbEsc(mp.fxWhy) + ' +' + Math.round((mp.fx - 1) * 100) + '%</div>' : (mp.floorMin ? '' : '<div class="bb-sub vt-hide">매도가의 ' + mp.buf + '%</div>')) + (mp.bid ? '<div style="color:' + (mp.feasible ? '#15803d' : '#b91c1c') + ';font-weight:700;">' + (mp.feasible ? '입찰 상한 ' + money(mp.bid) : '최저가로도 마진 부족') + '</div>' : '') + '<div class="bb-sub" title="필요 마진 근거">' + why + '</div>'; })() : '<span class="bb-sub">-</span>';
-        var winCell = wb ? '<b>' + money(wb.price) + '</b><div class="bb-sub" title="낙찰사례 약 6천 건 모델, 보통 오차 약 9%">예상 낙찰가</div>' + (pn && pn.ev ? '<div style="color:#15803d;font-weight:700;">추천 ' + money(pn.ev.bid) + '</div><div class="bb-sub">낙찰 가능성 ' + Math.round(pn.ev.p * 100) + '% · 순이익 ' + money(pn.ev.net) + '</div>' : '<div class="bb-sub" style="color:#b91c1c;">' + (pn && pn.infeasible ? '최저가로도 마진 부족' : '추천가 없음') + '</div>') : '<span class="bb-sub">-</span>';
+        var winCell = wb ? '<span class="vw-win"><b>' + money(wb.price) + '</b><div class="bb-sub" title="낙찰사례 약 6천 건 모델, 보통 오차 약 9%">예상 낙찰가</div></span>' + (pn && pn.ev ? '<div class="vw-rec" style="color:#15803d;font-weight:700;">추천 ' + money(pn.ev.bid) + '</div><div class="bb-sub vw-p">낙찰 가능성 ' + Math.round(pn.ev.p * 100) + '% · 순이익 ' + money(pn.ev.net) + '</div>' : '<div class="bb-sub vw-rec vw-p" style="color:#b91c1c;">' + (pn && pn.infeasible ? '최저가로도 마진 부족' : '추천가 없음') + '</div>') : '<span class="bb-sub">-</span>';
         h += '<tr data-rid="' + bbEsc(r.id) + '" class="bb2-row ' + (ev.visit.go ? 'go' : 'pass') + '" onclick="openBidDrawer(\'' + idJs + '\')">'
             + '<td data-l="판정">' + (ev.visit.go ? '<span class="bb2-go">🚶 임장</span>' : '<span class="bb2-pass">패스</span>') + (ev.visit.why ? '<div class="bb-sub"' + (ev.issue ? ' style="color:#b91c1c;"' : '') + '>' + bbEsc(ev.visit.why) + '</div>' : '') + '</td>'
             + '<td data-l="입찰일">' + (r.dday ? '<span class="bb-dday' + (r.dday.diffDays >= 0 && r.dday.diffDays <= 3 ? ' soon' : '') + '">' + bbEsc(r.dday.label) + '</span>' : '-') + '<div class="bb-sub">' + bbEsc(r.a.bidDate || '') + '</div></td>'
