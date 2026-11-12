@@ -117,6 +117,7 @@ def main():
             rows.append(dict(cls=cls, trd=trd, t=float(T["t"]), n3=len(p3), n6=len(p6), tr12=tr12, hh=h, actual=float(T["price"]), **{"e_" + k2: v for k2, v in ests.items()}))
     D = pd.DataFrame(rows)
     D.to_json("backtest-sale-rule.json", orient="records", force_ascii=False)
+    if os.environ.get("ONLY_JSON"): print("  ONLY_JSON: 보고·저장 생략"); return
     print(f"  시험 가능 {len(D):,}건, 세대수 연결 {D['hh'].notna().sum():,}건({D['hh'].notna().mean() * 100:.0f}%)")
     report(D)
     write_params(D)
