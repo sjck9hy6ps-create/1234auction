@@ -22601,6 +22601,27 @@ function setDrawerHtml(d, h, rowId) {
     if (same) { d.scrollTop = st; if (focusId) { var fe = document.getElementById(focusId); if (fe && fe.focus) { try { fe.focus(); } catch (e) {} } } }
     return true;
 }
+/* 🏢 아파트 상세 건축물대장 칸(2026-11-12) - 조회 결과는 물건별로 기억, 끝나면 이 칸만 다시 그림(상세 전체를 다시 그리지 않음) */
+var aptBldState = {};
+function aptBldHtml(row) {
+    var st = aptBldState[row.id];
+    if (!st || st.loading) return '<div class="dr-sub">불러오는 중…</div>';
+    if (st.info) return buildBuildingInfoHtml(st.info, { idPrefix: 'ab', highlightUnit: row.a && row.a.aptHo });
+    return '<div class="dr-sub">' + (st.failed ? '조회가 몰려 일시적으로 못 가져왔어요 - 잠시 뒤 다시 열어 보세요(없는 게 아니에요)' : '정보 없음(건축HUB에 등록되지 않았거나 주소로 찾지 못했어요)') + '</div>';
+}
+function aptBldEnsure(row) {
+    var st = aptBldState[row.id]; if (st && (st.loading || st.info || !st.failed)) return;
+    var a = row.a || {};
+    aptBldState[row.id] = { loading: true };
+    var fin = function(info) {
+        aptBldState[row.id] = { info: info || null, failed: !info && !!loadBuildingInfo.lastFailed };
+        var box = document.getElementById('apt-bld');
+        if (box && bidDrawerId === row.id) box.innerHTML = '<h4>🏢 건축물대장</h4>' + aptBldHtml(row);
+    };
+    if (!a.lat || !a.lon || !a.bunji) { fin(null); return; }
+    loadBuildingInfo({ latest: { dong: a.dong, name: a.name || row.name, bunji: a.bldgBunji || a.bunji, aptDong: a.aptDong } }, a.lat, a.lon, false, a.bldgBCode || a.bCode || null)
+        .then(fin).catch(function() { fin(null); });
+}
 async function renderBidDrawer() {
     var d = document.getElementById('bb-drawer'); if (!d) return;
     var row = bidBoardRows.filter(function(r) { return r.id === bidDrawerId; })[0];
@@ -22717,6 +22738,9 @@ async function renderBidDrawer() {
         + '<button onclick="openCourtQuick(\'' + String(a.caseNo || '').replace(/'/g, "\\'") + '\')">🏛️ 법원경매</button>'
         + '<button onclick="openTankQuick(\'' + String(a.caseNo || '').replace(/'/g, "\\'") + '\',\'' + tankNameHint(a).replace(/'/g, "\\'") + '\')" title="사건번호 복사 없이 이 사건 1건을 자동으로 열어 모아요(확장 필요)">🟦 탱크옥션</button>'
         + '<button onclick="openNaverForRow(\'' + idJs + '\')" title="이 물건 위치·종류·평형(±5평)·연식(−5~+10년)을 맞춘 네이버부동산 매물 지도">🟢 네이버부동산</button><button onclick="openNaverMapForRow(\'' + idJs + '\')" title="네이버 지도에서 이 주소를 검색해 핀이 꽂힌 위치로 열어요">📍 네이버 지도</button>' + '<button onclick="openBatoner(\'' + String(a.caseNo || '').replace(/'/g, "\\'") + '\')">🙋 바토너 대리입찰</button></div>';
+    // 2026-11-12(사용자: 임장후보 아파트 상세 안에 건축물대장 정보) - 열 때 한 번 조회해서 이 칸만 채움
+    h += '<div class="dr-sec" id="apt-bld"><h4>🏢 건축물대장</h4>' + aptBldHtml(row) + '</div>';
+    aptBldEnsure(row);
     // 임장 후보 화면(2026-10): 맨 위에 판정 + 추천가 1개, 근거·범위·실거래·비용은 "자세히"로 접고, 직접 확인한 금액 입력칸은 항상 보이게
     var i1 = h.indexOf('<div style="margin-top:6px;"><span class="bb-verdict"'), i2 = h.indexOf('<div class="dr-sec"><h4>직접 확인한 금액');
     if (i1 > 0 && i2 > i1) {
