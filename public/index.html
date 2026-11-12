@@ -1551,6 +1551,14 @@ body.ui2 #auction-modal.am4 { width:620px; }
     body:has(#bid-board.with-drawer) #fb-fab { opacity:.35 !important; }
     /* 아래 시트(이 지역 단지 목록) 높이·손잡이 */
     #sidebar { z-index:50; }
+    /* 2026-11-12 수정 요청: ① 입찰후보 화면에서 ☰ 메뉴를 눌러도 메뉴가 보드 뒤에 깔려 안 보임 → 상단바를 보드 위로 */
+    #topbar { z-index:71; }
+    /* ② 수정 요청 버튼이 흐려서 빌라 목록에서 눈에 안 띔 → 또렷하게(흰 테두리·그림자), 스크롤 멈춘 뒤 금방 다시 보이게 */
+    #fb-fab { opacity:1 !important; border:2px solid #fff !important; box-shadow:0 3px 10px rgba(0,0,0,.35) !important; }
+    /* ③ 빌라 후보 카드: 글이 너무 많아 한 화면에 2개만 보임 → 핵심(판정·이름·가격·추천가·순이익)만 두고 자세한 줄은 상세 창에서 보게 */
+    #bid-board .bb2-vtable td .bb-sub { display:none; }
+    #bid-board .bb2-vtable td[data-l="예상 낙찰가 · 추천가"] .bb-sub { display:block; }
+    #bid-board .bb2-vtable td[data-l="생활권 거래(반경 500m)"], #bid-board .bb2-vtable td[data-l="월세 현금흐름"], #bid-board .bb2-vtable td[data-l="건물(대장)"], #bid-board .bb2-vtable td[data-l="이 동의 도시민박"] { display:none !important; }
     /* 입력칸 글자 16px: 눌렀을 때 화면이 확대되지 않게 */
     input[type=text], input[type=search], input[type=number], textarea, select { font-size:16px; }
     #bid-board .bb-tools > select { font-size:12.5px; }
