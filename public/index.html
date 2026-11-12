@@ -1583,7 +1583,8 @@ body.ui2 #auction-modal.am4 { width:620px; }
     /* 2026-11-13 수정 요청: 빌라 목록을 아파트와 같은 형식으로 → 이름 아래 지역·배지 줄, 추천가는 파란 큰 글씨 4번째 칸, 입찰일·낙찰 가능성·순이익은 라벨 붙은 칸 */
     #bid-board .bb2-vtable .vw-rec { grid-column:4; grid-row:2; display:block; font-size:15px; color:#2563eb !important; }
     #bid-board .bb2-vtable .vw-rec .vr-k { display:block; font-style:normal; font-weight:400; font-size:10px; color:#999; }
-    #bid-board .bb2-vtable .vw-rec.vw-p { grid-column:3 / 5; grid-row:2; display:block; font-size:11.5px; }
+    /* 2026-11-13: '최저가로도 마진 부족'·'추천가 없음' 글이 예상 낙찰가 칸과 겹침 → 3번째 줄로 내림 */
+    #bid-board .bb2-vtable .vw-rec.vw-p { grid-column:2 / 5; grid-row:3; display:block; font-size:11.5px; }
     #bid-board .bb2-vtable .vw-p .vp-s { display:none; }
     #bid-board .bb2-vtable .vw-p:not(.vw-rec) { display:contents !important; }
     #bid-board .bb2-vtable .vw-p > span { display:block; font-size:11.5px; color:#111; }
