@@ -5,6 +5,9 @@ on:
       scale_run_id:
         description: 'Villa data scale 실행 번호(villa-df 보관)'
         default: '43010239831'
+      resume_run_id:
+        description: '이어받을 이전 수집 실행 번호(비우면 처음부터)'
+        default: '43225853012'
       sample:
         description: '건물 표본 수'
         default: '15000'
@@ -29,6 +32,13 @@ jobs:
           name: villa-df
           path: input
           run-id: ${{ inputs.scale_run_id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+      - uses: actions/download-artifact@v4
+        if: ${{ inputs.resume_run_id != '' }}
+        with:
+          name: villa-official-price
+          path: .
+          run-id: ${{ inputs.resume_run_id }}
           github-token: ${{ secrets.GITHUB_TOKEN }}
       - env:
           COLLECT_PROXY_SECRET: ${{ secrets.COLLECT_PROXY_SECRET }}
