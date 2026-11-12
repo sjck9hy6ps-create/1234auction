@@ -1,0 +1,49 @@
+# 빌라 시세 개선 시도 1·2·3·5(2026-11-11, 측정 전용): 이미 계산된 조각·거래 파일만 사용(DB·외부 호출 없음)
+name: Exp villa ideas2
+on:
+  workflow_dispatch:
+    inputs:
+      scale_run_id:
+        description: 'Villa data scale 실행 번호(villa-df·조각 보관: 조각 14일, 거래 파일 7일)'
+        default: '43010239831'
+concurrency:
+  group: exp-villa-ideas2
+  cancel-in-progress: false
+jobs:
+  exp:
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install pandas numpy scikit-learn scipy
+      - uses: actions/download-artifact@v4
+        with:
+          name: villa-df
+          path: input
+          run-id: ${{ inputs.scale_run_id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: feat-*
+          path: shards
+          run-id: ${{ inputs.scale_run_id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+      - env:
+          SHARD_GLOB: shards/**/feat-shard-*.pkl
+          PYTHONUNBUFFERED: '1'
+        run: set -o pipefail; python exp-villa-ideas2.py | tee ideas2-log.txt
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: villa-ideas2
+          path: |
+            villa-ideas2.json
+            ideas2-log.txt
+          if-no-files-found: ignore
+          retention-days: 30
