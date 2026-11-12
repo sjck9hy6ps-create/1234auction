@@ -1569,7 +1569,8 @@ body.ui2 #auction-modal.am4 { width:620px; }
     #bid-board .bb2-vtable td[data-l="예상매도가"] .bb-sub { display:none; }
     #bid-board .bb2-vtable td[data-l="예상 낙찰가 · 추천가"] { display:contents; }
     #bid-board .bb2-vtable td[data-l="예상 낙찰가 · 추천가"]::before { display:none; }
-    #bid-board .bb2-vtable .vw-win { grid-column:3; grid-row:2; text-align:left; }
+    #bid-board .bb2-vtable .vw-win { grid-column:3; grid-row:2; text-align:left; display:flex; flex-direction:column-reverse; }
+    #bid-board .bb2-vtable .vw-win .bb-sub { color:#999; font-size:10px; margin-top:0; }
     #bid-board .bb2-vtable .vw-rec { grid-column:4; grid-row:2; text-align:left; }
     #bid-board .bb2-vtable .vw-rec.vw-p { grid-column:2 / 5; grid-row:3; }
     #bid-board .bb2-vtable .vw-p { grid-column:2 / 5; grid-row:3; text-align:left; font-size:11.5px; color:#374151; align-self:center; }
