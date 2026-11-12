@@ -27,5 +27,7 @@ jobs:
         if: always()
         with:
           name: sale-gate
-          path: gate.log
+          path: |
+            gate.log
+            backtest-sale-rule.json
           retention-days: 14

@@ -15,6 +15,7 @@ def table(tr):
     for (c, b), g in tr.groupby(["cls", "tb"]):
         if len(g) >= 200: out[(c, b)] = float(np.median(g.actual / g.base) - 1)
     return out
+CAPS = {"최근6개월 최고가": "mx6", "최근6개월 2번째 높은 가": "top2"}
 RULES = {
  "보정 없음": lambda b, t: 0.0,
  "보정 항상": lambda b, t: b,
@@ -76,3 +77,27 @@ r = pd.concat(na); print(f"  흐름 계산 불가 n{len(r):>6} 치우침 {(np.me
 import os
 if os.environ.get("GITHUB_STEP_SUMMARY"):
     open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8").write("### 보정 선택 적용 검증\n```json\n" + json.dumps(res, ensure_ascii=False, indent=1) + "\n```\n")
+
+print("\n==== 보정은 유지하되, 예상매도가가 '같은 평형 최근 6개월에 실제로 있었던 가격'을 넘지 못하게 막으면? ====")
+for scope in ("전체", "서울", "경기·인천", "지방"):
+    print(f"[{scope}]")
+    for capname, col in CAPS.items():
+        for rname in ("보정 항상",):
+            rs = []; hit = []
+            for h in (0, 1):
+                tr, te = D[D.half != h], D[D.half == h]
+                if scope != "전체": te = te[te.cls == scope]
+                tab = table(tr)
+                fac = np.array([1 + max(-0.03, min(0.03, tab.get((c, b), 0.0))) for c, b in zip(te.cls, te.tb)])
+                est0 = te.base.values * fac; est = np.minimum(est0, te[col].values); hit.append((est < est0 - 1).mean())
+                rs.append(pd.Series(te.actual.values / est))
+            print(f"  보정+상한({capname:<14})", stat(pd.concat(rs)), "상한에 걸린 비율", round(float(np.mean(hit)) * 100, 1), "%")
+# 거래 수·변동성별 상향 보정 효과
+print("\n==== 6개월 거래 수별: 상향 대상 물건의 치우침(보정 없음 기준) ====")
+for lo, hi in ((3, 5), (5, 10), (10, 20), (20, 999)):
+    rs = []
+    for h in (0, 1):
+        tr, te = D[D.half != h], D[D.half == h]; tab = table(tr)
+        m = np.array([max(-0.03, min(0.03, tab.get((c, b), 0.0))) > 0 for c, b in zip(te.cls, te.tb)]) & (te.n6.values >= lo) & (te.n6.values < hi)
+        rs.append(te[m].actual / te[m].base)
+    r = pd.concat(rs); print(f"  6개월 {lo}~{hi-1}건 n{len(r):>6} 치우침 {(np.median(r)-1)*100:+.2f}%")

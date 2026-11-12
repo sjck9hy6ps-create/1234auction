@@ -114,7 +114,8 @@ def main():
             # 2026-10-27 단지 시세 흐름: 같은 평형 최근 3개월 중위 ÷ 4~9개월 전 중위 - 1 (최근 2건+, 이전 3건+)
             r3, r9 = pr[ag <= 3], pr[(ag > 4) & (ag <= 9)]
             trd = float((np.median(r3) / np.median(r9) - 1) * 100) if len(r3) >= 2 and len(r9) >= 3 else np.nan
-            rows.append(dict(cls=cls, trd=trd, t=float(T["t"]), n3=len(p3), n6=len(p6), tr12=tr12, hh=h, actual=float(T["price"]), **{"e_" + k2: v for k2, v in ests.items()}))
+            srt = np.sort(pr[ag <= 6])[::-1]
+            rows.append(dict(cls=cls, mx6=float(srt[0]), top2=float(srt[1]) if len(srt) > 1 else float(srt[0]), mx3=float(p3.max()) if len(p3) else np.nan, lastp=float(pr[np.argmin(ag)]), trd=trd, t=float(T["t"]), n3=len(p3), n6=len(p6), tr12=tr12, hh=h, actual=float(T["price"]), **{"e_" + k2: v for k2, v in ests.items()}))
     D = pd.DataFrame(rows)
     D.to_json("backtest-sale-rule.json", orient="records", force_ascii=False)
     if os.environ.get("ONLY_JSON"): print("  ONLY_JSON: 보고·저장 생략"); return
