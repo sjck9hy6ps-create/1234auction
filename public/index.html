@@ -1547,7 +1547,9 @@ body.ui2 #auction-modal.am4 { width:620px; }
     .nv-i { display:block; margin-right:0; }
     .nv-sum { display:grid; grid-template-columns:1fr 1fr; column-gap:10px; font-size:12.5px; }
     .nv-name { font-size:15.5px; }
-    .nv-why { overflow-wrap:anywhere; }
+    /* 2026-11-12 수정 요청: 임장 배지 아래 메모가 길어 카드 높이가 들쭉날쭉 → 2줄까지만 보이고 나머지는 ...(전체는 상세 창) */
+    .nv-why { overflow-wrap:anywhere; display:-webkit-box; -webkit-box-orient:vertical; -webkit-line-clamp:2; overflow:hidden; }
+    #bid-board .bb2-atable td[data-l="판정"] .bb-sub { display:-webkit-box; -webkit-box-orient:vertical; -webkit-line-clamp:2; overflow:hidden; }
     body:has(#bid-board.with-drawer) #fb-fab { opacity:.35 !important; }
     /* 아래 시트(이 지역 단지 목록) 높이·손잡이 */
     #sidebar { z-index:50; }
@@ -31341,6 +31343,31 @@ window.addEventListener('load', function() {
         new MutationObserver(function() { clearTimeout(timer); timer = setTimeout(fix, 40); }).observe(bar, { childList: true, subtree: true, attributes: true, attributeFilter: ['class'] });
         fix();
     }, 500);
+})();
+</script>
+<script>
+/* 2026-11-12 수정 요청: 입찰후보(빌라) 가로 정렬 줄이 PC 좁은 창에서 좌우 이동이 안 됨(마우스는 밀기 불가·스크롤바 숨김) → 마우스로 끌어서·휠로 좌우 이동 */
+(function() {
+    var SEL = '.nv-sort, .bb2-table thead tr, #bb2-tabs, #bb-chips';
+    var drag = null, moved = false;
+    function box(t) { return t && t.closest ? t.closest(SEL) : null; }
+    document.addEventListener('mousedown', function(e) {
+        var b = box(e.target); if (!b || e.button !== 0 || b.scrollWidth <= b.clientWidth) return;
+        drag = { b: b, x: e.clientX, l: b.scrollLeft }; moved = false;
+    });
+    document.addEventListener('mousemove', function(e) {
+        if (!drag) return; var dx = e.clientX - drag.x;
+        if (Math.abs(dx) > 4) { moved = true; drag.b.scrollLeft = drag.l - dx; e.preventDefault(); }
+    });
+    document.addEventListener('mouseup', function() { drag = null; });
+    document.addEventListener('click', function(e) { if (moved && box(e.target)) { e.stopPropagation(); e.preventDefault(); } moved = false; }, true);
+    document.addEventListener('wheel', function(e) {
+        var b = box(e.target); if (!b || b.scrollWidth <= b.clientWidth) return;
+        if (Math.abs(e.deltaY) > Math.abs(e.deltaX)) { b.scrollLeft += e.deltaY; e.preventDefault(); }
+    }, { passive: false });
+    var st = document.createElement('style');
+    st.textContent = '@media (max-width:900px){ .nv-sort, .bb2-table thead tr { cursor:grab; scrollbar-width:thin !important; } .nv-sort::-webkit-scrollbar, .bb2-table thead tr::-webkit-scrollbar { display:block !important; height:4px; } }';
+    document.head.appendChild(st);
 })();
 </script>
 </body>
