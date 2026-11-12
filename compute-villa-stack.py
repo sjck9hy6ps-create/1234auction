@@ -205,7 +205,7 @@ def main():
             cut = day - 30
             g = bgp.get(b)
             if g is not None:
-                d, ss, pp, ym = g; lo = np.searchsorted(d, cut - 1825, side="left")  # 2026-11-12: 쌍 추정 이력 3→5년(시간순 6구간 모두 개선, 오차 9.82→9.64%); hi = np.searchsorted(d, cut, side="right")
+                d, ss, pp, ym = g; lo = np.searchsorted(d, cut - 1825, side="left"); hi = np.searchsorted(d, cut, side="right")  # 2026-11-12: 쌍 추정 이력 3→5년(시간순 6구간 모두 개선, 오차 9.82→9.64%)
                 if hi > lo:
                     m = np.abs(ss[lo:hi] - sz) <= 6
                     if m.any():
