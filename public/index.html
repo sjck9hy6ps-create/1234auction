@@ -31278,21 +31278,21 @@ window.addEventListener('load', function() {
     var t = null;
     document.addEventListener('scroll', function() { if (!mq.matches) return; document.body.classList.add('fab-hide'); clearTimeout(t); t = setTimeout(function() { document.body.classList.remove('fab-hide'); }, 700); }, true);
     /* 정렬 줄(.nv-sort)은 목록을 다시 그릴 때마다 새로 만들어져 밀어 둔 위치가 0으로 돌아감 → 위치를 기억했다가 되돌림 */
-    var sortLeft = { s: 0, h: 0 };
-    document.addEventListener('scroll', function(e) {
-        var el = e.target; if (!el || !el.classList && el.tagName !== 'TR') return;
-        if (el.classList && el.classList.contains('nv-sort')) sortLeft.s = el.scrollLeft;
-        else if (el.tagName === 'TR' && el.parentElement && el.parentElement.tagName === 'THEAD') sortLeft.h = el.scrollLeft;
-    }, true);
-    var restoring = null;
-    new MutationObserver(function() {
-        if (!mq.matches) return;
-        clearTimeout(restoring);
-        restoring = setTimeout(function() {
-            var a = document.querySelector('#bb-body .nv-sort'); if (a && sortLeft.s && Math.abs(a.scrollLeft - sortLeft.s) > 2) a.scrollLeft = sortLeft.s;
-            var h = document.querySelector('#bb-body thead tr'); if (h && sortLeft.h && Math.abs(h.scrollLeft - sortLeft.h) > 2) h.scrollLeft = sortLeft.h;
-        }, 0);
-    }).observe(document.body, { childList: true, subtree: true });
+    /* 목록을 다시 그리면 정렬 줄이 새로 만들어져 밀어 둔 위치가 0으로 돌아감 → 다시 그리기 직전 위치를 적어 두었다가 그린 직후 되돌림 */
+    var origRender = window.renderBidBoard;
+    if (typeof origRender === 'function') {
+        window.renderBidBoard = function() {
+            var a0 = document.querySelector('#bb-body .nv-sort'), h0 = document.querySelector('#bb-body thead tr');
+            var sa = a0 ? a0.scrollLeft : 0, sh = h0 ? h0.scrollLeft : 0;
+            var res = origRender.apply(this, arguments);
+            var put = function() {
+                if (sa) { var a = document.querySelector('#bb-body .nv-sort'); if (a) a.scrollLeft = sa; }
+                if (sh) { var h = document.querySelector('#bb-body thead tr'); if (h) h.scrollLeft = sh; }
+            };
+            put(); setTimeout(put, 60);
+            return res;
+        };
+    }
     var iv = setInterval(function() {
         var bar = document.getElementById('bb2-tabs'); if (!bar) return; clearInterval(iv);
         var lastSig = '', touchAt = 0;
