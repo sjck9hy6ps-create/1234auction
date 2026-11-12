@@ -228,7 +228,8 @@ def main():
     EVAL = os.environ.get("EVAL_APP") == "1"; EVALW = os.environ.get("EVAL_WINBID") == "1"; FITW = os.environ.get("FIT_WINBID") == "1"
     cutoff = 20260101 if EVAL else (20260601 if (EVALW or FITW) else None)
     _ref = pd.Timestamp(str(cutoff)) if cutoff else pd.Timestamp.now(tz="Asia/Seoul").tz_localize(None)
-    SPECIAL = EVAL or EVALW or FITW   # 검증·낙찰가 재학습 경로는 예전 입력(COLS) 그대로 - 입찰 물건 계산(운영)만 새 입력·보정 사용
+    NEWIN = os.environ.get("NEW_INPUTS") == "1" and FITW   # 2026-11-12: 과거 낙찰 사례 채점을 '지금 계산식(쌍 추정·잔차 공유·구간 보정)'으로 - 학습은 cutoff 이전 거래만
+    SPECIAL = (EVAL or EVALW or FITW) and not NEWIN   # 검증·낙찰가 재학습 경로는 예전 입력(COLS) 그대로 - 입찰 물건 계산(운영)만 새 입력·보정 사용
     P = dict(max_iter=250, learning_rate=0.05, max_depth=5, min_samples_leaf=60, l2_regularization=1.0, random_state=1)
     if SPECIAL:
         T = df[(df["deal_date"] >= train_start(_ref)) & ((df["deal_date"] < cutoff) if cutoff else True)]
@@ -246,7 +247,7 @@ def main():
         POOL = build_pool(Y)
         D3 = augment(D3, T3, POOL)
         D3["_dd"] = T3.loc[D3.index, "deal_date"].values
-        D = D3[D3["_dd"] >= train_start(_ref)].sort_values("_dd")
+        D = D3[(D3["_dd"] >= train_start(_ref)) & ((D3["_dd"] < cutoff) if cutoff else True)].sort_values("_dd")
         print(f"학습 {len(D):,}건 (잔차 공유용 포함 계산 {len(D3):,}건)")
         COLS_USE = COLS_NEW
         pt = HistGradientBoostingRegressor(loss="absolute_error", **P).fit(D[COLS_USE], D["y"])
@@ -272,7 +273,7 @@ def main():
         if len(T2) > N_TRAIN: T2 = T2.sample(N_TRAIN, random_state=11)
         D2 = featurize(T2); D2["y"] = np.log(T2.loc[D2.index, "price"] / D2["base"])
         pt_all = HistGradientBoostingRegressor(loss="absolute_error", **P).fit(D2[COLS], D2["y"])
-        return eval_winbid(df, pt, featurize, pt_all=pt_all, mq=mq)
+        return eval_winbid(df, pt, featurize, pt_all=pt_all, mq=mq, newin=((augment, POOL, COLS_USE, CALIB) if NEWIN else None))
     # ── 입찰 물건 ──
     au = requests.get(f"{SITE}/api/auction?kind=auctions", timeout=300).json()
     today = pd.Timestamp.now(tz="Asia/Seoul").tz_localize(None).normalize()
@@ -395,12 +396,17 @@ def fit_winbid(D, F, T, c2, pt_all, mkX, FAC, Xs, tr, te, mB, featurize):
     json.dump(out, open("villa-winbid.json", "w", encoding="utf-8"), ensure_ascii=False); print("저장 villa-winbid.json")
 
 
-def export_cases(D, F, T, Xs, mB, FAC, te, mq):
+def export_cases(D, F, T, Xs, mB, FAC, te, mq, cols=None, calib=None):
     """과거 낙찰 사례 채점용 파일 2개: villa-cases-asof.json(2026-06 이후 사례 + 그 당시 시점 종합 시세·하위값·대장 값), villa-winbid-pre.json(2026-06 이전 사례로만 학습한 낙찰가 모델 - 시험 구간 정보가 안 샌 것)"""
     S = D[te].copy()
     Fx = F.reindex(S.index)
+    cols = cols or COLS
+    stk_ = (Fx["lvl"].astype(str) + "|" + pd.cut(Fx["base"], PB_EDGES, labels=PB_LABELS).astype(str)).values if calib else None
     for q in (0.1, 0.25):
-        S[f"q{int(q * 100)}"] = (Fx["base"] * np.exp(mq[q].predict(Fx[COLS]))).values if mq else np.nan
+        if not mq: S[f"q{int(q * 100)}"] = np.nan; continue
+        lg = mq[q].predict(Fx[cols])
+        if calib: lg = lg - np.array([calib[q]["by"].get(k_, calib[q]["all"]) for k_ in stk_])
+        S[f"q{int(q * 100)}"] = (Fx["base"] * np.exp(lg)).values
     for col in ("elv", "grnd", "hh", "by2"): S["t_" + col] = T[col].reindex(S.index).values if col in T.columns else np.nan
     for col in ("lat", "lon"): S[col] = T[col].reindex(S.index).values if col in T.columns else S.get(col)   # 좌표 채움 후 값(2026-11-10)
     S["disp"] = Fx["disp"].values; S["n_bld"] = Fx["n_bld"].values; S["n_dong"] = Fx["n_dong"].values
@@ -454,7 +460,7 @@ def predict_additive(m, X, factors):
     return p
 
 
-def eval_winbid(df, pt, featurize, pt_all=None, mq=None):
+def eval_winbid(df, pt, featurize, pt_all=None, mq=None, newin=None):
     """빌라 예상 낙찰가 채점(2026-11-07): 낙찰사례(수도권 빌라, 2024~)의 낙찰가를 ① 예전 예상매도가(시험용 기본 추정) 기준 모델 ② 같은 모델에 종합 예상매도가를 넣은 것(앱이 지금 하는 일) ③ 종합 값으로 다시 학습한 모델로 예측.
     학습 = 2026-06 이전 사례, 시험 = 2026-06~(학습에 안 쓴 구간). 종합 모델(점 보정)도 2026-06 이전 거래로만 학습해 시험 구간 정보가 새지 않게 함."""
     cases = pd.DataFrame(requests.get(f"{SITE}/api/auction?kind=bidCases", timeout=300).json())
@@ -483,7 +489,11 @@ def eval_winbid(df, pt, featurize, pt_all=None, mq=None):
     bl = df.dropna(subset=["elv"]).groupby("bld").agg(elv=("elv", "last"), grnd=("grnd", "last"), hh=("hh", "last"))
     for col in ("elv", "grnd", "hh"): T[col] = T["bld"].map(bl[col]) if len(bl) else np.nan
     T.index = c.index + 30_000_000
-    F = featurize(T); F["stack"] = F["base"] * np.exp(np.clip(pt.predict(F[COLS]), -0.4, 0.4))
+    F = featurize(T)
+    if newin:
+        _aug, _POOL, CU, CAL = newin; F = _aug(F, T, _POOL); print("  새 입력(쌍 추정·잔차 공유)으로 시세 계산")
+    else: CU, CAL = COLS, None
+    F["stack"] = F["base"] * np.exp(np.clip(pt.predict(F[CU]), -0.4, 0.4))
     c2 = c.loc[F.index - 30_000_000].copy(); c2.index = F.index
     D = c2.join(F[["base", "stack", "lvl", "sido"]]); D["by"] = T["build_year"].reindex(D.index)
     D = D[(D["base"] > 0) & (D["stack"] > 0)]
@@ -508,7 +518,7 @@ def eval_winbid(df, pt, featurize, pt_all=None, mq=None):
     mA = fit_additive(Xb[tr], np.log(act[tr] / D["base"].values[tr]), FAC)
     mB = fit_additive(Xs[tr], np.log(act[tr] / D["stack"].values[tr]), FAC)
     if pt_all is not None and os.environ.get("EXPORT_CASES") == "1":
-        export_cases(D, F, T, Xs, mB, FAC, te, mq)   # 2026-11-10 빌라 과거 낙찰 사례 채점용 내보내기(앱 계산을 입찰 전 상태로 되돌려 채점)
+        export_cases(D, F, T, Xs, mB, FAC, te, mq, cols=CU, calib=CAL)   # 2026-11-10 빌라 과거 낙찰 사례 채점용 내보내기(앱 계산을 입찰 전 상태로 되돌려 채점)
     if pt_all is not None:
         return fit_winbid(D, F, T, c2, pt_all, mkX, FAC, Xs, tr, te, mB, featurize)
     pr = {"① 예전 예상매도가+예전 모델": D["base"].values * np.exp(predict_additive(mA, Xb, FAC)),

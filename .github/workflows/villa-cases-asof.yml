@@ -33,6 +33,7 @@ jobs:
           SITE_URL: https://1234auction.vercel.app
           FETCH_THREADS: '6'
           FIT_WINBID: '1'
+          NEW_INPUTS: '1'
           EXPORT_CASES: '1'
           PYTHONUNBUFFERED: '1'
         run: python compute-villa-stack.py | tee export-log.txt
