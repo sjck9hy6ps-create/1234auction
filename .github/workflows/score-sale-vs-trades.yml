@@ -1,0 +1,39 @@
+# 예상매도가 사후 채점(2026-11-13): 낙찰 사례 예상매도가 vs 이후 같은 건물 실거래
+name: Score sale vs trades
+on:
+  workflow_dispatch:
+    inputs:
+      asof_run_id:
+        description: 'Villa cases as-of 실행 번호'
+        default: '43415604340'
+jobs:
+  s:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install pandas numpy requests scipy
+      - uses: actions/download-artifact@v4
+        with:
+          name: villa-cases-asof
+          path: input
+          run-id: ${{ inputs.asof_run_id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+      - env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          PYTHONUNBUFFERED: '1'
+        run: set -o pipefail; python score-sale-vs-trades.py | tee sale-log.txt
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: sale-vs-trades
+          path: |
+            sale-vs-trades.json
+            sale-log.txt
