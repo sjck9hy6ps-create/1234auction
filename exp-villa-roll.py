@@ -116,20 +116,22 @@ for a_, b_ in FOLDS3:
     TE = D[(D["deal_date"] >= a_) & (D["deal_date"] < b_)]
     TR = D[(D["deal_date"] < a_) & (D["deal_date"] >= mb(a_, 24))].sort_values("deal_date")
     if len(TE) < 500 or len(TR) < 5000: print(a_, "건너뜀", len(TE), len(TR), flush=True); continue
-    cols = [c for c in (base_cols + c_g) if TR[c].nunique(dropna=True) > 1]   # 학습 구간에 값이 하나뿐인 열(2024-05 전에는 공시가 없음)은 제외
+    allc = base_cols + c_g
+    cols = [c for c in allc if TR[c].nunique(dropna=True) > 1]   # 학습 구간에 값이 하나뿐인 열(2024-05 전에는 공시가 없음)은 제외
     k80 = int(len(TR) * 0.8); FIT, CAL = TR.iloc[:k80], TR.iloc[k80:]
+    colq = [c for c in cols if FIT[c].nunique(dropna=True) > 1]   # 하위값 모델은 앞 80%만 학습하므로 거기서도 한 값뿐인 열 제외
     pt = HistGradientBoostingRegressor(loss="absolute_error", **P).fit(TR[cols], TR["y"])
-    mq = {q: HistGradientBoostingRegressor(loss="quantile", quantile=q, **P).fit(FIT[cols], FIT["y"]) for q in (0.1, 0.25)}
+    mq = {q: HistGradientBoostingRegressor(loss="quantile", quantile=q, **P).fit(FIT[colq], FIT["y"]) for q in (0.1, 0.25)}
     stc = (CAL["lvl"].astype(str) + "|" + pbf(CAL)).values; stt = (TE["lvl"].astype(str) + "|" + pbf(TE)).values
     out = TE[["lvl", "pb", "base", "has_g", "deal_date"]].copy(); out["y"] = TE["y"].values; out["fold"] = a_
     out["e"] = TE["base"].values * np.exp(pt.predict(TE[cols])) / TE["actual"].values - 1
     out["e_base"] = TE["base"].values / TE["actual"].values - 1   # 모델 보정 전 '기준 추정'(비교용)
     for q, lev, col in ((0.25, 0.75, "q25"), (0.1, 0.9, "q10")):
-        sc = mq[q].predict(CAL[cols]) - CAL["y"].values; allv = float(np.quantile(sc, lev)); cm = {}
+        sc = mq[q].predict(CAL[colq]) - CAL["y"].values; allv = float(np.quantile(sc, lev)); cm = {}
         for kk in np.unique(stc):
             mk_ = stc == kk
             if mk_.sum() >= 150: cm[kk] = float(np.quantile(sc[mk_], lev))
-        out[col] = mq[q].predict(TE[cols]) - np.array([cm.get(k_, allv) for k_ in stt])
+        out[col] = mq[q].predict(TE[colq]) - np.array([cm.get(k_, allv) for k_ in stt])
     out["hit25"] = out["y"].values >= out["q25"].values; out["hit10"] = out["y"].values >= out["q10"].values; out["cand"] = CAND(TE).values
     parts.append(out); print(a_, "시험", len(TE), "학습", len(TR), pstat(out["e"].values), "적중", round(float(out["hit25"].mean()) * 100, 1), round(float(out["hit10"].mean()) * 100, 1), flush=True)
 T = pd.concat(parts)
