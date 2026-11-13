@@ -36,7 +36,52 @@ LVL = {"건물3+": 0, "건물1~2+동": 1, "건물1~2": 2, "동5+": 3, "동1~4": 
 # 2026-11-11 시험(exp-villa-ideas.py)으로 추가: 같은 건물 거래 쌍(반복매매) 추정 + 동·시군구 잔차 부분 공유(중앙 오차 9.99→9.82%, ±10% 50.1→50.8%) + 하위값 conformal 보정(포함률 어긋남 2.3→1.5%p)
 PAIR_COLS = ["r_pair", "n_pair", "age_pair"]; POOL_COLS = ["dres", "dres_n", "rres", "rres_n"]
 COLS_NEW = COLS + PAIR_COLS + POOL_COLS
+# 2026-11-13 호별 공시가격 추가(exp-villa-official2.py: 과거 거래 1.7만 건 4구간 모두 오차 개선 9.80→9.40%, 하위 25·10% 적중 75.4·90.1% 유지, 크게 높게 예상 비율 불변). 공시는 4월 말 공표 → 그 거래 시점에 공표된 최근 연도만 사용
+GONG_COLS = ["g_ratio", "g_ppm", "g_unit_rel", "g_exact", "g_n"]
 PB_EDGES = [0, 8000, 15000, 1e9]; PB_LABELS = ["8천만 미만", "8천~1.5억", "1.5억 이상"]
+
+
+def load_official(path=None):
+    """공시가격 파일(jsonl 또는 jsonl.gz) → {(PNU, 연도): (층, 전용면적, 공시가격[만원])}. 파일이 없으면 빈 dict(그 경우 공시 특징 없이 계산)"""
+    import gzip
+    path = path or os.environ.get("OFFICIAL_FILE", os.path.join(HERE, "official-price.jsonl.gz"))
+    if not os.path.exists(path): print("  (공시가격 파일 없음: 공시 특징 없이 계산)"); return {}
+    OP = {}; op = gzip.open if path.endswith(".gz") else open
+    with op(path, "rt", encoding="utf-8") as fh:
+        for ln in fh:
+            r = json.loads(ln)
+            if not r["units"]: continue
+            fl = []; ar = []; pr = []
+            for dong, f, ho, a, p in r["units"]:
+                try: fl.append(int("".join(ch for ch in str(f) if ch.lstrip("-").isdigit()) or "nan")); ar.append(float(a)); pr.append(float(p) / 10000.0)
+                except Exception: pass
+            if pr: OP[(r["pnu"], r["year"])] = (np.array(fl, float), np.array(ar), np.array(pr))
+    print(f"  공시가격 건물-연도 {len(OP):,}"); return OP
+
+
+def gong_feats(F, Tx, OP):
+    """F(특성표)에 공시 특징 5개 추가: 그 거래 시점(5월~다음해 4월 → 직전 4월 말 공표분) 호별 공시 중 같은 건물·같은 층·가장 가까운 면적(없으면 층 무관). Tx: F와 같은 인덱스의 거래/물건(sg,bj,bun,ji,floor,size,day)"""
+    n = len(F); g_unit = np.full(n, np.nan); g_ppm = np.full(n, np.nan); g_rel = np.full(n, np.nan); g_ex = np.zeros(n); g_n = np.zeros(n)
+    if OP and all(c in Tx.columns for c in ("sg", "bj", "bun", "ji", "floor", "size", "day")):
+        pnu = Tx["sg"].astype(str) + Tx["bj"].astype(str) + "1" + Tx["bun"].astype(str).str.zfill(4) + Tx["ji"].fillna("0").astype(str).str.zfill(4)
+        dd = EPOCH + pd.to_timedelta(Tx["day"].values, unit="D"); yr = np.where(dd.month >= 5, dd.year, dd.year - 1)
+        for j, (p, y, sz, fl) in enumerate(zip(pnu.values, yr, Tx["size"].values, Tx["floor"].values)):
+            t = None
+            for yy in range(int(y), 2023, -1):   # 해당 연도 공시가 아직 없으면(예: 새 연도 수집 전) 직전 연도 사용
+                t = OP.get((p, yy))
+                if t is not None: break
+                if yy < int(y) - 1: break
+            if t is None: continue
+            Fl, A, Pr = t; near = np.abs(A - sz) <= 3.0
+            if not near.any(): continue
+            ff = near & (Fl == fl) if not np.isnan(fl) else near & False
+            if ff.any(): k = np.where(ff)[0]; ex = 1
+            else: k = np.where(near)[0]; ex = 0
+            i0 = k[np.argmin(np.abs(A[k] - sz))]; pp = Pr[i0]
+            if not pp > 0: continue
+            g_unit[j] = np.log(pp); g_ppm[j] = np.log(pp / A[i0]); g_rel[j] = np.log((Pr / A).mean()); g_ex[j] = ex; g_n[j] = len(Pr)
+    F = F.copy(); F["g_ratio"] = g_unit - np.log(F["base"].values); F["g_ppm"] = g_ppm; F["g_unit_rel"] = g_ppm - g_rel; F["g_exact"] = g_ex; F["g_n"] = g_n
+    return F
 
 
 def trade_region(addr):
@@ -60,6 +105,7 @@ def fcls(f):
 
 
 def main():
+    OP = load_official()
     raw = avm.fetch_all_rows("villa_trades", cols="region,dong,danji,bunji,road_name,main_num,sub_num,price,size,floor,deal_date,dealing_type,build_year", extra_filter=f"&deal_date=gte.{bv.START}{FLT}")
     df = bv.prep(raw)
     cc = avm.fetch_all_rows("complex_coords", cols="cache_key,sigungu_cd,bjdong_cd,lat,lon", order_col="id", extra_filter="&or=(sigungu_cd.like.11*,sigungu_cd.like.28*,sigungu_cd.like.41*)")
@@ -222,6 +268,7 @@ def main():
                 if hi > lo: outn[j] = hi - lo; outm[j] = t[1][lo:hi].sum() / ((hi - lo) + pool["K"][key])
         F = F.copy(); F["r_pair"] = np.log(est_p / F["base"].values); F["n_pair"] = n_p; F["age_pair"] = age_p
         F["dres"] = dres; F["dres_n"] = dn; F["rres"] = rres; F["rres_n"] = rn
+        if OP: F = gong_feats(F, Tx, OP)
         return F
 
     # ── 학습: 2023~ 거래 표본 ──
@@ -249,7 +296,7 @@ def main():
         D3["_dd"] = T3.loc[D3.index, "deal_date"].values
         D = D3[(D3["_dd"] >= train_start(_ref)) & ((D3["_dd"] < cutoff) if cutoff else True)].sort_values("_dd")
         print(f"학습 {len(D):,}건 (잔차 공유용 포함 계산 {len(D3):,}건)")
-        COLS_USE = COLS_NEW
+        COLS_USE = COLS_NEW + (GONG_COLS if OP else [])
         pt = HistGradientBoostingRegressor(loss="absolute_error", **P).fit(D[COLS_USE], D["y"])
         # 하위 25·10% 값: 앞 80%로 학습, 뒤 20%로 근거 단계×가격대별 보정량(conformal) 계산 → 목표 포함률(75·90%)에 맞춤
         k80 = int(len(D) * 0.8); FIT, CAL = D.iloc[:k80], D.iloc[k80:]
@@ -306,6 +353,9 @@ def main():
     byb = Lr["bld"].map(bl["byy"]) if len(bl) else np.nan
     Lr["by2"] = Lr["build_year"].where(Lr["build_year"].between(1960, 2026), byb)
     Lr["price"] = 0.0
+    if OP:   # 공시 연결: 같은 건물(번지) 거래에 붙은 법정동·번지 코드로 PNU 구성(거래가 없던 건물은 빈칸)
+        cb = df.dropna(subset=["sg", "bj", "bun"]).drop_duplicates("bld", keep="last").set_index("bld")[["sg", "bj", "bun", "ji"]]
+        for c in ("sg", "bj", "bun", "ji"): Lr[c] = Lr["bld"].map(cb[c])
     Lr.index = np.arange(10_000_000, 10_000_000 + len(Lr)); Lr["floor"] = Lr["floor"]
     F = featurize(Lr)
     if not SPECIAL: F = augment(F, Lr, POOL)

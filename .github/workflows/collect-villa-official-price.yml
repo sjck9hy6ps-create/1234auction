@@ -1,16 +1,23 @@
+# 빌라 호별 공시가격 수집·보관(2026-11-13): 시세 계산(compute-villa-stack)이 쓰는 공시 파일을 Supabase 비공개 저장소(data/official-price.jsonl.gz)에 보관.
+# 공시가격은 매년 4월 말 공표 → 매년 5월 15일에 새 연도분을 이어서 받음(이미 받은 건물·연도는 건너뜀).
 name: Collect villa official price
 on:
+  schedule:
+    - cron: '0 18 14 5 *'
   workflow_dispatch:
     inputs:
       scale_run_id:
         description: 'Villa data scale 실행 번호(villa-df 보관)'
         default: '43010239831'
       resume_run_id:
-        description: '이어받을 이전 수집 실행 번호(비우면 처음부터)'
-        default: '43225853012'
+        description: '이어받을 이전 수집 실행 번호(비우면 보관소 파일에서 이어받음)'
+        default: ''
       sample:
         description: '건물 표본 수'
-        default: '15000'
+        default: '1000000'
+      years:
+        description: '받을 연도(쉼표)'
+        default: ''
 concurrency:
   group: collect-villa-official-price
   cancel-in-progress: false
@@ -31,7 +38,7 @@ jobs:
         with:
           name: villa-df
           path: input
-          run-id: ${{ inputs.scale_run_id }}
+          run-id: ${{ inputs.scale_run_id || '43010239831' }}
           github-token: ${{ secrets.GITHUB_TOKEN }}
       - uses: actions/download-artifact@v4
         if: ${{ inputs.resume_run_id != '' }}
@@ -40,12 +47,29 @@ jobs:
           path: .
           run-id: ${{ inputs.resume_run_id }}
           github-token: ${{ secrets.GITHUB_TOKEN }}
+      - name: 보관소 파일 이어받기
+        if: ${{ inputs.resume_run_id == '' }}
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: |
+          if curl -sf -H "Authorization: Bearer $SUPABASE_SERVICE_ROLE_KEY" -H "apikey: $SUPABASE_SERVICE_ROLE_KEY" "$SUPABASE_URL/storage/v1/object/data/official-price.jsonl.gz" -o prev.gz; then gunzip -c prev.gz > official-price.jsonl; wc -l official-price.jsonl; else echo "보관소에 파일 없음: 처음부터"; fi
       - env:
           COLLECT_PROXY_SECRET: ${{ secrets.COLLECT_PROXY_SECRET }}
           SITE_URL: https://1234auction.vercel.app
-          SAMPLE: ${{ inputs.sample }}
+          SAMPLE: ${{ inputs.sample || '1000000' }}
+          YEARS: ${{ inputs.years }}
           PYTHONUNBUFFERED: '1'
         run: set -o pipefail; python collect-villa-official-price.py | tee collect-log.txt
+      - name: 보관소에 올리기
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: |
+          N=$(wc -l < official-price.jsonl); echo "줄 수 $N"; if [ "$N" -lt 100000 ]; then echo "자료가 너무 적어 올리지 않음"; exit 1; fi
+          gzip -9 -c official-price.jsonl > official-price.jsonl.gz
+          curl -s -X POST "$SUPABASE_URL/storage/v1/bucket" -H "Authorization: Bearer $SUPABASE_SERVICE_ROLE_KEY" -H "apikey: $SUPABASE_SERVICE_ROLE_KEY" -H "Content-Type: application/json" -d '{"id":"data","name":"data","public":false}' || true; echo
+          curl -sf -X POST "$SUPABASE_URL/storage/v1/object/data/official-price.jsonl.gz" -H "Authorization: Bearer $SUPABASE_SERVICE_ROLE_KEY" -H "apikey: $SUPABASE_SERVICE_ROLE_KEY" -H "x-upsert: true" -H "Content-Type: application/gzip" --data-binary @official-price.jsonl.gz && echo "올림 완료"
       - uses: actions/upload-artifact@v4
         if: always()
         with:
