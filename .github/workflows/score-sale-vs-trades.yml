@@ -3,9 +3,15 @@ name: Score sale vs trades
 on:
   workflow_dispatch:
     inputs:
-      asof_run_id:
-        description: 'Villa cases as-of 실행 번호'
+      run_a:
+        description: 'Villa cases as-of 실행 번호 1'
         default: '43415604340'
+      run_b:
+        description: '실행 번호 2(없으면 비움)'
+        default: ''
+      run_c:
+        description: '실행 번호 3(없으면 비움)'
+        default: ''
 jobs:
   s:
     runs-on: ubuntu-latest
@@ -23,7 +29,21 @@ jobs:
         with:
           name: villa-cases-asof
           path: input
-          run-id: ${{ inputs.asof_run_id }}
+          run-id: ${{ inputs.run_a }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+      - uses: actions/download-artifact@v4
+        if: ${{ inputs.run_b != '' }}
+        with:
+          name: villa-cases-asof
+          path: input_b
+          run-id: ${{ inputs.run_b }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+      - uses: actions/download-artifact@v4
+        if: ${{ inputs.run_c != '' }}
+        with:
+          name: villa-cases-asof
+          path: input_c
+          run-id: ${{ inputs.run_c }}
           github-token: ${{ secrets.GITHUB_TOKEN }}
       - env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}

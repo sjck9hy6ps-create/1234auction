@@ -9,9 +9,12 @@ def load(name, fn):
     s = importlib.util.spec_from_file_location(name, os.path.join(HERE, fn)); m = importlib.util.module_from_spec(s); s.loader.exec_module(m); return m
 bv = load("bv", "backtest-villa.py"); avm = bv.avm
 FLT = "&or=(" + ",".join('region.like."' + n + '*"' for n in ("서울", "인천", "경기")) + ")"
-cases = json.load(open(os.environ.get("CASES_FILE", "input/villa-cases-asof.json")))
-raw = avm.fetch_all_rows("villa_trades", cols="region,dong,danji,bunji,road_name,main_num,sub_num,price,size,floor,deal_date,dealing_type,build_year", extra_filter=f"&deal_date=gte.20260301{FLT}")
-df = bv.prep(raw); print(f"거래 {len(df):,}건(2026-03~), 최근 거래일 {df['deal_date'].max()}", flush=True)
+import glob
+cases = []
+for f in sorted(glob.glob("input*/villa-cases-asof.json")): cases += json.load(open(f))
+print(f"낙찰 사례 {len(cases):,}건 읽음")
+raw = avm.fetch_all_rows("villa_trades", cols="region,dong,danji,bunji,road_name,main_num,sub_num,price,size,floor,deal_date,dealing_type,build_year", extra_filter=f"&deal_date=gte.20250301{FLT}")
+df = bv.prep(raw); print(f"거래 {len(df):,}건(2025-03~), 최근 거래일 {df['deal_date'].max()}", flush=True)
 df["dt"] = pd.to_datetime(df["deal_date"].astype(str), format="%Y%m%d", errors="coerce")
 bg = {k: g for k, g in df.groupby("bld")}; dg = {k: g for k, g in df.groupby("dk")}
 rows = []
