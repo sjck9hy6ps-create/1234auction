@@ -5,7 +5,7 @@ import os, json, time, random, sys
 import pandas as pd, requests
 from concurrent.futures import ThreadPoolExecutor
 SITE = os.environ.get("SITE_URL", "https://1234auction.vercel.app"); SEC = os.environ["COLLECT_PROXY_SECRET"].strip()
-SAMPLE = int(os.environ.get("SAMPLE", "15000")); YEARS = [int(x) for x in (os.environ.get("YEARS") or str(__import__("datetime").date.today().year)).split(",")]   # 비우면 올해만(5월 정기 실행: 새로 공표된 연도); THREADS = int(os.environ.get("THREADS", "8"))
+SAMPLE = int(os.environ.get("SAMPLE", "15000")); YEARS = [int(x) for x in (os.environ.get("YEARS") or str(__import__("datetime").date.today().year)).split(",")]; THREADS = int(os.environ.get("THREADS", "8"))   # YEARS 비우면 올해만(5월 정기 실행: 새로 공표된 연도)
 OUT = "official-price.jsonl"
 df = pd.read_pickle(os.environ.get("DF_FILE", "input/villa-df.pkl"))
 d = df[(df["deal_date"] >= 20240501) & df["sg"].notna() & df["bj"].notna() & df["bun"].notna()]
