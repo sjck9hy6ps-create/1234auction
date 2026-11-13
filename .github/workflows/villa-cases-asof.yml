@@ -3,8 +3,15 @@
 name: Villa cases as-of
 on:
   workflow_dispatch:
+    inputs:
+      case_cutoff:
+        description: '학습은 이 날짜 이전 낙찰·거래만, 시험은 이 날짜부터(YYYYMMDD)'
+        default: '20260601'
+      case_end:
+        description: '시험 구간 끝(이 날짜 미만, YYYYMMDD)'
+        default: '99999999'
 concurrency:
-  group: villa-cases-asof
+  group: villa-cases-asof-${{ inputs.case_cutoff }}
   cancel-in-progress: false
 jobs:
   export:
@@ -40,6 +47,8 @@ jobs:
           FETCH_THREADS: '6'
           FIT_WINBID: '1'
           NEW_INPUTS: '1'
+          CASE_CUTOFF: ${{ inputs.case_cutoff }}
+          CASE_END: ${{ inputs.case_end }}
           EXPORT_CASES: '1'
           PYTHONUNBUFFERED: '1'
         run: python compute-villa-stack.py | tee export-log.txt

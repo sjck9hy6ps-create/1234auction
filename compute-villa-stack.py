@@ -273,7 +273,8 @@ def main():
 
     # ── 학습: 2023~ 거래 표본 ──
     EVAL = os.environ.get("EVAL_APP") == "1"; EVALW = os.environ.get("EVAL_WINBID") == "1"; FITW = os.environ.get("FIT_WINBID") == "1"
-    cutoff = 20260101 if EVAL else (20260601 if (EVALW or FITW) else None)
+    CASE_CUT = int(os.environ.get("CASE_CUTOFF", "20260601")); CASE_END = int(os.environ.get("CASE_END", "99999999"))   # 2026-11-13: 채점 구간을 옮겨 가며(롤링) 더 많은 낙찰 사례로 검증
+    cutoff = 20260101 if EVAL else (CASE_CUT if (EVALW or FITW) else None)
     _ref = pd.Timestamp(str(cutoff)) if cutoff else pd.Timestamp.now(tz="Asia/Seoul").tz_localize(None)
     NEWIN = os.environ.get("NEW_INPUTS") == "1" and FITW   # 2026-11-12: 과거 낙찰 사례 채점을 '지금 계산식(쌍 추정·잔차 공유·구간 보정)'으로 - 학습은 cutoff 이전 거래만
     SPECIAL = (EVAL or EVALW or FITW) and not NEWIN   # 검증·낙찰가 재학습 경로는 예전 입력(COLS) 그대로 - 입찰 물건 계산(운영)만 새 입력·보정 사용
@@ -562,8 +563,9 @@ def eval_winbid(df, pt, featurize, pt_all=None, mq=None, newin=None):
         X["season"] = D["sale"].map(lambda d: "겨울" if (d // 100) % 100 in (12, 1, 2) else ("봄" if (d // 100) % 100 <= 5 else ("여름" if (d // 100) % 100 <= 8 else "가을"))).values
         return X
     Xb, Xs = mkX(D["base"]), mkX(D["stack"])
-    tr = (D["sale"] < 20260601).values; te = ~tr
-    print(f"학습 {tr.sum():,} / 시험(2026-06~) {te.sum():,}")
+    _cc = int(os.environ.get("CASE_CUTOFF", "20260601")); _ce = int(os.environ.get("CASE_END", "99999999"))
+    tr = (D["sale"] < _cc).values; te = ((D["sale"] >= _cc) & (D["sale"] < _ce)).values
+    print(f"학습 {tr.sum():,} / 시험({_cc}~{_ce}) {te.sum():,}")
     act = D["actual"].values
     mA = fit_additive(Xb[tr], np.log(act[tr] / D["base"].values[tr]), FAC)
     mB = fit_additive(Xs[tr], np.log(act[tr] / D["stack"].values[tr]), FAC)

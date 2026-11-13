@@ -8,7 +8,7 @@ on:
         description: 'villa-cases-asof 워크플로 실행 번호(채점용 자료 artifact가 있는 실행)'
         required: true
 concurrency:
-  group: score-villa-cases
+  group: score-villa-cases-${{ inputs.export_run_id }}
   cancel-in-progress: false
 jobs:
   score:
