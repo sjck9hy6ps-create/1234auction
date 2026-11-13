@@ -110,13 +110,13 @@ for y in (2024, 2025, 2026):
     for q in range(4):
         a_ = qstart(y, q); b_ = qstart(y + (1 if q == 3 else 0), (q + 1) % 4)
         if a_ <= 20261001: FOLDS3.append((a_, b_))
-cols = base_cols + c_g
 def pbf(X): return pd.cut(X["base"], PB, labels=PL).astype(str)
 parts = []
 for a_, b_ in FOLDS3:
     TE = D[(D["deal_date"] >= a_) & (D["deal_date"] < b_)]
     TR = D[(D["deal_date"] < a_) & (D["deal_date"] >= mb(a_, 24))].sort_values("deal_date")
     if len(TE) < 500 or len(TR) < 5000: print(a_, "건너뜀", len(TE), len(TR), flush=True); continue
+    cols = [c for c in (base_cols + c_g) if TR[c].nunique(dropna=True) > 1]   # 학습 구간에 값이 하나뿐인 열(2024-05 전에는 공시가 없음)은 제외
     k80 = int(len(TR) * 0.8); FIT, CAL = TR.iloc[:k80], TR.iloc[k80:]
     pt = HistGradientBoostingRegressor(loss="absolute_error", **P).fit(TR[cols], TR["y"])
     mq = {q: HistGradientBoostingRegressor(loss="quantile", quantile=q, **P).fit(FIT[cols], FIT["y"]) for q in (0.1, 0.25)}
