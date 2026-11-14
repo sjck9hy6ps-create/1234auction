@@ -5112,12 +5112,18 @@ function syncBadgeChips() {
     if (c) { c.innerText = tradeBadgesOn ? '🏢 실거래 배지: 켜짐' : '🏢 실거래 배지: 꺼짐'; c.classList.toggle('on', tradeBadgesOn); }
     document.querySelectorAll('#chip-auc-group .chip').forEach(function(b) { b.classList.toggle('on', b.getAttribute('data-am') === auctionBadgeMode); });
 }
-function toggleTradeBadges() { tradeBadgesOn = !tradeBadgesOn; syncBadgeChips(); redrawMarkers(); }
-function ensureTradeBadges() { if (!tradeBadgesOn) { tradeBadgesOn = true; syncBadgeChips(); } }
+var pendingVillaPrefetch = null;
+function flushVillaPrefetch() {
+    if (!pendingVillaPrefetch) return; var l = pendingVillaPrefetch; pendingVillaPrefetch = null; villaInfoLoading = true;
+    villaInfoQueue = villaInfoQueue.then(function() { return prefetchVillaBuildingInfo(l); }).then(function() { villaInfoLoading = false; redrawMarkers(); }).catch(function(e) { villaInfoLoading = false; console.error('연립다세대 정보 일괄조회 실패:', e && e.message); });
+}
+function toggleTradeBadges() { tradeBadgesOn = !tradeBadgesOn; syncBadgeChips(); redrawMarkers(); if (tradeBadgesOn) flushVillaPrefetch(); }
+function ensureTradeBadges() { if (!tradeBadgesOn) { tradeBadgesOn = true; syncBadgeChips(); flushVillaPrefetch(); } }
 function setAuctionBadgeMode(m) {
     auctionBadgeMode = m; syncBadgeChips();
     if ((m === 'go' || m === 'pop') && !bidBoardRows.length && !bidBoardRunning) { try { linkToast('입찰후보 판정을 불러오는 중이에요(처음 한 번, 잠시 후 지도에 반영돼요)'); refreshBidBoard(); } catch (e) {} }
     if (m === 'pop') { try { loadVillaQuality(); } catch (e) {} }
+    if (m !== 'off') { try { warmServerBoardOnce(); } catch (e) {} }
     renderAuctionMarkers();
 }
 function auctionModeOk(a) {
@@ -6679,7 +6685,7 @@ async function loadAllData(centerLat, centerLon) {
                 // 곧 끝남 - 최종 6초 캡만 걸어 순위까지 반영해서 한 번에 그림.
                 await waitForLeaderFollowerOrTimeout(lfPromise, 6000);
                 redrawMarkers();
-                setTimeout(function() { warmBuildingCache(regionAptList); }, 3000);
+                setTimeout(function() { if (tradeBadgesOn) warmBuildingCache(regionAptList); }, 3000);
                 // ⚠️ 2026-08: 직접 호출하지 않고 villaInfoQueue에 이어붙임 - 다른 지역(lawdCd)의
                 // loadAllData가 짧은 간격으로 여러 번 실행돼도, 연립다세대 건축물정보 배치조회
                 // (CONCURRENCY=6, 지오코딩+건축HUB API 호출 다수 발생)만큼은 한 번에 하나씩만
@@ -6687,6 +6693,7 @@ async function loadAllData(centerLat, centerLon) {
                 // 선언부 주석 참고.
                 villaInfoLoading = true;
                 villaInfoQueue = villaInfoQueue.then(function() {
+                    if (!tradeBadgesOn) { pendingVillaPrefetch = regionAptList; return; }   /* 실거래 배지가 꺼져 있으면 건물 대장 조회를 미뤘다가 켤 때 함(2026-11-14) */
                     return prefetchVillaBuildingInfo(regionAptList);
                 }).then(function() {
                     villaInfoLoading = false;
@@ -22072,7 +22079,13 @@ async function mergeServerBoardCache(local, onlyFirst) {
     return local;
 }
 setTimeout(function() { try { listIdbOp('readwrite', function(st) { return st.delete('bidBoardCache:v1'); }); } catch (e) {} }, 4000); // 예전 큰 로컬 저장본(서버 계산본 포함, 수십 MB)은 읽지 않고 지움(느린 기기에서 열 때 수 초 멈춤, 2026-10-21)
-setTimeout(function() { var go = function() { try { srvBoardParts(); setTimeout(function() { try { window.villaSrvP = villaFetchServerCalc(); } catch (e) {} }, 4000); } catch (e) {} }; if (window.requestIdleCallback) requestIdleCallback(go, { timeout: 6000 }); else go(); }, 2500); // 앱을 켜고 2.5초 뒤 한가할 때 배경에서 미리 받기(빌라는 4초 더 뒤)
+/* 2026-11-14(사용자: 지역 자료·건물 대장·입찰후보 저장분은 자주 바뀌는 정보가 아닌데 켤 때마다 받는다) - 입찰후보 저장분(35MB)은 경매 배지를 켜거나 입찰후보 창을 열 때만 받음(예전엔 켜고 2.5초 뒤 항상 배경에서 받아 폰이 느려졌음) */
+function warmServerBoardOnce() {
+    if (window.__bwWarm) return; window.__bwWarm = 1;
+    var go = function() { try { srvBoardParts(); setTimeout(function() { try { window.villaSrvP = villaFetchServerCalc(); } catch (e) {} }, 4000); } catch (e) {} };
+    if (window.requestIdleCallback) requestIdleCallback(go, { timeout: 6000 }); else go();
+}
+setTimeout(function() { if (auctionBadgeMode !== 'off') warmServerBoardOnce(); }, 2500);
 // 저장 계산을 다시 써도 되는지 - 물건 입력값(시세 계산에 쓰는 것)과 입찰일 지남 여부. 계산 방식이 바뀌면 BOARD_CALC_VER을 올림
 /* 저장 계산(서버 사전 계산·브라우저 저장본)을 다시 써도 되는지 보는 '기본 계산' 버전(2026-11-08): computeBidBoardRow의 기본 계산(시세·보정·모델 입력)이 바뀔 때만 올림.
    판정·추천가 고르기(finalize·computePick) 단계만 바뀌면 BOARD_CALC_VER만 올림 - 이때는 저장본을 그대로 쓰고 판정만 뒤에서 다시 계산(화면은 즉시). 전엔 모든 변경이 저장본 7천여 건을 무효로 만들어 로딩이 비었음 */
