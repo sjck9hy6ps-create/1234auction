@@ -1,0 +1,31 @@
+name: Diag villa bld
+on:
+  workflow_dispatch:
+    inputs:
+      df_run_id:
+        required: true
+      dong: { default: '주교동' }
+      bun: { default: '305' }
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install pandas numpy
+      - uses: actions/download-artifact@v4
+        with:
+          name: villa-df
+          path: input
+          run-id: ${{ inputs.df_run_id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+      - env:
+          DONG: ${{ inputs.dong }}
+          BUN: ${{ inputs.bun }}
+        run: python diag-villa-bld.py
