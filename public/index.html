@@ -13507,6 +13507,26 @@ var REGULATED_RULES = [
     /^(경기도?)?화성(시)?동탄(구)?/,
     /^(경기도?)?화성(시)?(석우|반송|청계|영천|중|금곡|방교|여울|산척|송|장지|목|신|오산|능)동/
 ];
+/* 규제지역 목록 파일(/regulated-areas.json) - 매월 1일 점검·갱신(2026-11-14 사용자 요청). 파일이 안 열리면 위 기본 목록을 그대로 씀 */
+var regulatedMeta = null;
+function regRuleFromEntry(e) {
+    var t = String(e || '').trim().split(/\s+/); if (!t[0]) return null;
+    var SIDO = { '서울': '서울(특별시)?', '경기': '경기도?', '인천': '인천(광역시)?', '부산': '부산(광역시)?', '대구': '대구(광역시)?', '광주': '광주(광역시)?', '대전': '대전(광역시)?', '울산': '울산(광역시)?', '세종': '세종(특별자치시)?', '강원': '강원(특별자치도|도)?', '충북': '충(청북도|북)', '충남': '충(청남도|남)', '전북': '전(북특별자치도|라북도|북)', '전남': '전(라남도|남)', '경북': '경(상북도|북)', '경남': '경(상남도|남)', '제주': '제주(특별자치도)?' };
+    var sd = SIDO[t[0]]; if (!sd) return null;
+    var rest = t.slice(1).map(function(x) { return x.replace(/(특별시|광역시|특별자치시|시|구|군)$/, ''); }).filter(Boolean);
+    return new RegExp('^' + (t[0] === '경기' && rest.length ? '(' + sd + ')?' : sd) + rest.map(function(n) { return n + '(시|구|군)?'; }).join(''));
+}
+function loadRegulatedAreas() {
+    fetch('/regulated-areas.json?t=' + Math.floor(Date.now() / 3600000)).then(function(r) { return r.ok ? r.json() : null; }).then(function(d) {
+        if (!d || !Array.isArray(d.entries) || !d.entries.length) return;
+        var rules = d.entries.map(regRuleFromEntry).filter(Boolean);
+        if (!rules.length) return;
+        if (d.entries.some(function(e) { return /화성\s*시?\s*동탄/.test(e); })) rules.push(/^(경기도?)?화성(시)?(석우|반송|청계|영천|중|금곡|방교|여울|산척|송|장지|목|신|오산|능)동/);   // 구 이름이 없는 옛 동탄 주소(법정동 이름으로 추정)
+        REGULATED_RULES = rules; regulatedMeta = d;
+        try { renderRemindUi(); } catch (e) {}
+    }).catch(function() {});
+}
+loadRegulatedAreas();
 function guessIsAdjustedArea(addr) {
     if (!addr) return false;
     var a = String(addr).replace(/\s+/g, '');
@@ -22002,7 +22022,7 @@ function boardBaseSig(a, flip) {
     var asm = (a.assumedDeposit || a.assumedFixed || a.assumedPrior || a.rights) ? 'A2:' + (a.assumedDeposit || '') + ':' + (a.assumedFixed || '') + ':' + (a.assumedPrior || '') + (a.rights ? ':R' + (a.rights.pastedAt || 0) + ':' + (a.rights.editedAt || 0) : '') : ''; // 인수금액 입력이 있는 물건만(새 계산식 v2)
     return [BOARD_BASE_VER, auctionWonEstSignature(a), a.minBid, a.appraisal, a.bidDate, a.court, a.failCount, a.landType, String(a.memo || '').length,
         Array.isArray(a.bidHistory) ? a.bidHistory.length : 0, a.courtResult || '', a.target || '', a.compTargetMargin || '', a.repair || '', auto ? '' : (a.buildYear || ''), auto || a.elevatorCnt == null ? '' : a.elevatorCnt, a.listingParse ? a.listingParse.at + '/' + a.listingParse.n : '', (a.fieldCheck || {}).cond || '',
-        pf].concat(asm ? [asm] : [], e0 ? [e0] : []).join('|');
+        pf].concat(asm ? [asm] : [], e0 ? [e0] : [], adjOf(a) ? ['R'] : []).join('|');   // 규제지역 판정이 바뀌면(목록 갱신) 그 물건만 다시 계산
 }
 function boardRowForCache(r) {
     var o = {};
@@ -29946,6 +29966,7 @@ var REMIND_FIXED = [
 // 주기적으로 하는 일 - every: month(매월)·quarter(1·4·7·10월)·year(months로 달 지정), from~to: 그 달 며칠 사이에 띄울지
 var REMIND_RECUR = [
     { key: 'm-assets', every: 'month', from: 1, to: 10, icon: '💼', title: '이번 달 내 자산 점검', sub: '보유·매도 상태와 올해 다른 소득을 최신으로 - 주택 수·취득세율·종소세 구간이 입찰가에 바로 반영돼요', btn: '💼 내 자산', act: 'openMyAssetsPanel()' },
+    { key: 'm-regarea', every: 'month', from: 1, to: 10, pri: 1, icon: '🔶', title: '규제지역 목록 점검', sub: '투기과열지구·조정대상지역이 바뀌었는지 확인(국토부 공고) - 취득세 중과·대출 한도(LTV)에 바로 영향. 매월 1일 자동 점검 결과는 카톡으로 와요. 바뀌었으면 regulated-areas.json을 고치면 앱이 따라가요', btn: '🏛 국토부', act: "window.open('https://www.molit.go.kr','_blank')", cond: function() { return regulatedMeta ? '(자동 점검 ' + (regulatedMeta.checkedAt || '-') + ', 목록 변경 ' + (regulatedMeta.updatedAt || '-') + ')' : '(목록 파일을 못 받았어요)'; } },
     { key: 'm-won', every: 'month', from: 1, to: 10, icon: '🔨', title: '낙찰 물건 진행 확인', sub: '팔렸으면 상태를 "매도완료"로 바꾸고 실제 매도가·매도일 입력 → 내 자산 수익·세금·예정신고 마감에 반영돼요',
       btn: '🔨 낙찰 물건 목록', act: 'openAuctionList()', cond: function() { var n = myWonAuctions().length; return n ? '(' + n + '건)' : false; } },
     { key: 'm-backup', every: 'month', from: 1, to: 10, icon: '📦', title: '자료 백업 내려받기', sub: '등록한 경매 물건·낙찰사례·내 자산을 파일로 받아 두기(혹시 모를 서버 문제 대비)', btn: '📦 백업', act: "location.href='/backup.html'" },
