@@ -49,7 +49,7 @@ def classes(df, kind):
     return sz, ag, fc
 
 
-def run(kind, trades_table, cols, cutoff_old, cut_recent, cmap, tmap, kapt=None, hmap=None, bmap=None):
+def run(kind, trades_table, cols, cutoff_old, cut_recent, cmap, tmap, kapt=None, hmap=None, bmap=None, biinfo=None):
     raw = avm.fetch_all_rows(trades_table, cols=cols, extra_filter=f"&deal_date=gte.{cutoff_old}")
     df = raw.copy()
     if "cdeal_type" in df.columns: df = df[df["cdeal_type"].fillna("").astype(str).str.strip() == ""]
@@ -185,6 +185,24 @@ def run(kind, trades_table, cols, cutoff_old, cut_recent, cmap, tmap, kapt=None,
             print(f"[{kind}] 건축물대장 세대수로 새로 채운 거래 {int(got.sum()):,}건 / 아직 모르던 거래 {len(M):,}건")
             R2.loc[got[got].index, "households"] = hh_b[got]
             R2.loc[got[got].index, "cid"] = "B|" + bid[got]
+            # 진단: 아직 못 채운 거래의 원인(좌표·법정동코드 없음 / 대장 없음 / 대장은 있으나 세대수 없음)
+            try:
+                from collections import Counter
+                cnt = Counter(); ex = {}
+                for (idx, a, b_, c_) in zip(M.index, sg, bun, ji):
+                    if got.get(idx, False): continue
+                    if not isinstance(a, tuple): why = "좌표·법정동코드 없음(complex_coords에 없음)"
+                    else:
+                        inf = (biinfo or {}).get((a[0], a[1], b_, c_))
+                        if inf is None: why = "건축물대장 없음(building_info에 없음)"
+                        else:
+                            hv, hc, st, hs = inf
+                            why = "대장 있음·세대수 없음(동 하나 값만 있음, 동 합계 미수집)" if (hc not in (None, "", "0") and hv != "2") else "대장 있음·세대수 0/없음(주상복합·총괄 없음 등)"
+                    cnt[why] += 1; ex.setdefault(why, []).append((M.at[idx, "dong"], M.at[idx, "danji"]))
+                for why, n in cnt.most_common():
+                    top = Counter(ex[why]).most_common(5)
+                    print(f"[{kind}] 못 채운 사유: {why} {n:,}건 · 예) " + ", ".join(f"{d}/{j}({c})" for (d, j), c in top))
+            except Exception as e: print("진단 실패", e)
         known = R2["households"].notna() & (R2["households"] > 0)
         try:
             un2 = R2[~known]; kd = set(kapt["dong"].astype(str)); 
@@ -228,7 +246,7 @@ def main():
     cc = avm.fetch_all_rows("complex_coords", cols="cache_key,lat,lon,sigungu_cd,bjdong_cd", order_col="id")
     cmap = {r.cache_key: (float(r.lat), float(r.lon)) for r in cc.itertuples() if r.lat and r.lon}
     hmap = {r.cache_key: (r.sigungu_cd, r.bjdong_cd) for r in cc.itertuples() if r.sigungu_cd and r.bjdong_cd}
-    bi = avm.fetch_all_rows("building_info", cols="id,sigungu_cd,bjdong_cd,bun,ji,hs:title_json->>hhldSum,st:title_json->site->>hhldCnt,hv:title_json->>hhVer", order_col="id")
+    bi = avm.fetch_all_rows("building_info", cols="id,sigungu_cd,bjdong_cd,bun,ji,hs:title_json->>hhldSum,st:title_json->site->>hhldCnt,hv:title_json->>hhVer,hc:title_json->>hhldCnt", order_col="id")
     def _hh(r):
         for v in (r.st, r.hs):                 # 총괄표제부(단지 전체) 세대수 → 같은 지번 모든 동 합계
             try:
@@ -236,6 +254,7 @@ def main():
                 if x > 0: return x
             except Exception: pass
         return 0
+    biinfo = {(r.sigungu_cd, r.bjdong_cd, str(r.bun), str(r.ji)): (r.hv, r.hc, r.st, r.hs) for r in bi.itertuples()}
     bmap = {}
     for r in bi.itertuples():
         h = _hh(r)
@@ -248,7 +267,7 @@ def main():
     out = {"generatedAt": now.isoformat(), "ver": 3, "step": [LAT_STEP, LON_STEP], "note": "cells=[위도*1e4, 경도*1e4, 거래 활발도(이 격자+둘레 8격자 약 1km의 최근 12개월 거래 건수), 이 격자 거래 수, 지하철m(-1 없음), 전국 백분위(활발도), 기준 물건 평당가(만원, 참고)]", "types": {}}
     for kind, table, cols in (("apt", "house_trades", "region,dong,danji,bunji,road_name,main_num,sub_num,price,size,floor,deal_date,dealing_type,build_year,cdeal_type"),
                               ("villa", "villa_trades", "region,dong,danji,bunji,road_name,main_num,sub_num,price,size,floor,deal_date,dealing_type,build_year")):
-        cells, meta = run(kind, table, cols, cutoff_old, cut_recent, cmap, tmap, kapt if kind == 'apt' else None, hmap, bmap)
+        cells, meta = run(kind, table, cols, cutoff_old, cut_recent, cmap, tmap, kapt if kind == 'apt' else None, hmap, bmap, biinfo)
         out["types"][kind] = {"cells": cells, "meta": meta}
     txt = json.dumps(out, ensure_ascii=False, separators=(",", ":"))
     open("location-index.json", "w", encoding="utf-8").write(txt)
