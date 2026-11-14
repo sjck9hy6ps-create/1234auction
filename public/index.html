@@ -4740,10 +4740,10 @@ function villaRentDemandHtml(rc) {
     return '<div class="dr-sub" style="margin-top:4px;">월세 거래 활발도(전용 ±10㎡, 최근 6개월): 같은 동 <b>' + (rc.d6 != null ? rc.d6 : '-') + '건</b>' + (rc.r6 != null ? ' · 반경 500m <b>' + rc.r6 + '건</b>(좌표를 아는 신고만 세서 실제보다 적어요)' : '') + ' - 세입자 구하기 쉬운 동네인지 보는 값이에요.</div>';
 }
 /* ⭐ 좋은 후보 필터(2026-11-14, 사용자: 입찰 후보를 줄이고 좋은 후보만) - 과거 낙찰사례를 되돌려 앱 계산으로 채점하고, 낙찰 후 같은 건물·단지의 실제 거래를 되팔 가격 대리값으로 '낙찰가로 샀다면 실현 순이익 2,000만원 이상'인 물건 비율을 비교한 결과:
-   · 아파트(6,254건·3개 시간 구간 모두 같은 방향): 임장 후보 중 낙찰 가능성 20%↑ & 예상 순마진 2,000만↑ → 좋은 물건 37%(지금 임장 후보 18.5%), 후보 수는 지금의 약 3분의 1
+   · 아파트(6,254건·3개 시간 구간 모두 같은 방향): 임장 후보 중 낙찰 가능성 15%↑(2026-11-14 확률 보정 뒤 기준, 보정 전 20%와 같은 선별) & 예상 순마진 2,000만↑ → 좋은 물건 37%(지금 임장 후보 18.5%), 후보 수는 지금의 약 3분의 1
    · 빌라(이슈 제외 1,819건·4개 구간 모두 같은 방향): 임장 후보 중 낙찰 가능성 25%↑ & 예상 순이익 2,500만↑ → 좋은 물건 54.5%(지금 임장 후보 44.0%), 후보 수는 지금의 약 절반
    재현율(좋은 물건 중 이 필터에 남는 비율)은 아파트 43%·빌라 47% - 필터를 켜면 좋은 물건 일부도 같이 빠지므로 '더 골라 보기'용이고 기본 목록은 그대로 둠. 낙찰 가능성·순마진은 앱이 이미 보여주는 값(검증 전용 숫자 아님). */
-var GOOD_APT_MIN_P = 0.20, GOOD_APT_MIN_NET = 2000, GOOD_VILLA_MIN_P = 0.25, GOOD_VILLA_MIN_NET = 2500;
+var GOOD_APT_MIN_P = 0.15, GOOD_APT_MIN_NET = 2000, GOOD_VILLA_MIN_P = 0.25, GOOD_VILLA_MIN_NET = 2500;
 function goodAptRow(r) { var w = r && r.winbid, p = w ? (w.probRec != null ? w.probRec : w.probRecRaw) : null; return !!(r && r.visit && r.visit.go && p != null && p >= GOOD_APT_MIN_P && r.margin != null && r.margin >= GOOD_APT_MIN_NET); }
 function goodVillaRow(r, e) { return !!(e && e.visit && e.visit.go && e.pn && e.pn.ev && e.pn.ev.p >= GOOD_VILLA_MIN_P && e.pn.ev.net >= GOOD_VILLA_MIN_NET); }
 function toggleGoodOnly() { var s = bidBoardState; s.goodOnly = !s.goodOnly; s.liteLimit = pageN(); s.villaLimit = pageN(); renderBidBoard(); }
