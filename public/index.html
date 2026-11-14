@@ -22830,7 +22830,7 @@ async function renderBidDrawer() {
     var fmt = function(x) { return x ? toEok(String(Math.round(x))) : '-'; };
     // 2026-10(사용자: "목록 옆 좁은 창 안에 지도/상세 버튼") - 맨 위 이름 옆에 바로 보이게
     var h = '<div class="dr-h"><h3>' + favStar(a, idJs) + bbEsc(row.name) + (a.caseNo ? ' <span style="font-size:12px;font-weight:normal;color:#6b7280;">· ' + bbEsc(a.caseNo) + '</span>' : '') + '</h3><button class="dr-x" onclick="closeBidDrawer()">✕</button></div>'
-        + '<div class="dr-top-btns"><button onclick="bidBoardGo(\'' + idJs + '\')">🗺️ 지도</button><button onclick="bbOpenDetail(\'' + idJs + '\')">📋 입력·권리 체크</button><button onclick="openCyclePanel()">📈 사이클</button></div>' + bidExclBoxHtml(row, idJs) + rightsStopBannerHtml(row)
+        + '<div class="dr-top-btns"><button onclick="bidBoardGo(\'' + idJs + '\')">🗺️ 지도</button><button onclick="bbGoVisit()">📝 임장</button><button onclick="openCyclePanel()">📈 사이클</button></div>' + bidExclBoxHtml(row, idJs) + rightsStopBannerHtml(row)
         + '<div class="dr-sub">' + bbEsc(row.region) + ' · ' + (row.pyung ? row.pyung + '평' + (row.type === 'apt' && sizeBandOf(row.pyung) ? '(' + sizeBandOf(row.pyung) + ' ' + Math.round(row.pyung * 3.305785) + '㎡)' : '') + ' · ' : '') + (row.floor ? row.floor + '층 · ' : '') + bbEsc(a.caseNo || '') + (row.dday ? ' · <b>' + row.dday.label + '</b> (' + bbEsc(a.bidDate) + ')' : '') + '</div>'
         + '<div style="margin-top:6px;"><span class="bb-verdict" style="color:' + v.color + ';background:' + v.bg + ';">' + v.label + '</span>'
         + (row.sweet ? ' <span class="bb-pill" style="background:#e8f5e9;color:#2e7d32;">👍 입찰 추천 구간</span>' : '') + (row.overshoot ? ' <span class="bb-pill" style="background:#fff3e0;color:#e65100;">⚠️ 손해 주의</span>' : '') + (row.bulk ? ' <span class="bb-pill" style="background:#fee2e2;color:#b91c1c;">🏢 대량 경매 ' + row.bulkN + '건</span>' : '')
@@ -22909,7 +22909,6 @@ async function renderBidDrawer() {
             + '<tr><td class="dr-sub">필요 현금(입찰가 − 대출 ' + fmt(cl.loan) + ' + 입찰 후~매도 전 비용 ' + fmt(cl.cashCost) + ', 매도 때 정산되는 수수료·부가세 제외)</td><td class="r dr-sub">' + fmt(cl.cash) + '</td></tr></table></div>';
     }
     h += competitionHtml(row);
-    h += fieldCheckHtml(row);
     h += rightsPanelHtml(row);
     // 직접 입력
     h += favNoteHtml(row);
@@ -22941,7 +22940,7 @@ async function renderBidDrawer() {
                     : '<div class="pk-sub">추천가가 없어요 · 예상매도가 ' + fmt(row.sale) + ' · 최저가 ' + fmt(row.minBid) + '</div>')
                 + '</div>';
             var legacy = h.slice(i1, i2); legacy = legacy.slice(legacy.indexOf('</div>') + 6); // 예전 판정 알약(❌ 제외 등)은 새 판정(맨 위 카드)과 충돌해서 뺌
-            h = h.slice(0, i1) + card + issueHtml + bidScoreHtml(row) + permitDrawerHtml(row) + (row.visit && row.visit.go ? fieldChecklistHtml(row) : '') + '<details class="dr-more"><summary>자세히 (근거·범위·실거래·비용)</summary>' + legacy + '</details>' + h.slice(i2);
+            h = h.slice(0, i1) + card + issueHtml + bidScoreHtml(row) + permitDrawerHtml(row) + visitSectionHtml(row) + '<details class="dr-more"><summary>자세히 (근거·범위·실거래·비용)</summary>' + legacy + '</details>' + h.slice(i2);
         } else h = h.slice(0, i1) + issueHtml + h.slice(i1);
     } else h += issueHtml;
     if (setDrawerHtml(d, h, row.id)) drawerNavInit(d);
@@ -23036,6 +23035,17 @@ function permitDrawerHtml(row) {
 function fieldChkKey(id) { return 'fieldChk:' + id; }
 function fieldChkState(id) { try { return JSON.parse(localStorage.getItem(fieldChkKey(id)) || '{}') || {}; } catch (e) { return {}; } }
 function fieldChkToggle(idJs, k, on) { var st = fieldChkState(idJs); if (on) st[k] = 1; else delete st[k]; try { localStorage.setItem(fieldChkKey(idJs), JSON.stringify(st)); } catch (e) {} }
+/* 📝 임장 칸(2026-11-15, 사용자: 상세 버튼의 '입력·권리 체크'는 내용이 중복 → 임장 칸으로) - 체크리스트 + 임장 문답(아파트)을 한 곳에 모으고, 맨 위 📝 임장 버튼이 여기로 이동 */
+function visitSectionHtml(row) {
+    var h = fieldChecklistHtml(row);
+    if (row.type === 'apt') h += fieldCheckHtml(row);
+    return '<div id="dr-visit">' + h + '</div>';
+}
+function bbGoVisit() {
+    var el = document.getElementById('dr-visit'); if (!el) return;
+    el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    el.style.transition = 'background .3s'; el.style.background = '#fff7ed'; setTimeout(function() { el.style.background = ''; }, 1400);
+}
 function fieldChecklistHtml(row) {
     var a = row.a || {}, isV = row.type === 'villa', items = [], fm = function(v) { return v ? toEok(String(Math.round(v))) : '-'; };
     var rt = a.rights ? null : '권리분석이 없어요 - 탱크옥션 글을 붙여넣어 인수 금액부터 확인';
@@ -23095,7 +23105,7 @@ async function renderVillaDrawer(d, row) {
     var fmt = function(x) { return x ? toEok(String(Math.round(x))) : '-'; };
     var go = ev.visit.go, pe = pn && pn.ev;
     var h = '<div class="dr-h"><h3>' + favStar(a, idJs) + bbEsc(villaNameFor(row)) + (a.caseNo ? ' <span style="font-size:12px;font-weight:normal;color:#6b7280;">· ' + bbEsc(a.caseNo) + '</span>' : '') + '</h3><button class="dr-x" onclick="closeBidDrawer()">✕</button></div>'
-        + '<div class="dr-top-btns"><button onclick="bidBoardGo(\'' + idJs + '\')">🗺️ 지도</button><button onclick="bbOpenDetail(\'' + idJs + '\')">📋 입력·권리 체크</button><button onclick="openCyclePanel()">📈 사이클</button></div>' + bidExclBoxHtml(row, idJs) + rightsStopBannerHtml(row)
+        + '<div class="dr-top-btns"><button onclick="bidBoardGo(\'' + idJs + '\')">🗺️ 지도</button><button onclick="bbGoVisit()">📝 임장</button><button onclick="openCyclePanel()">📈 사이클</button></div>' + bidExclBoxHtml(row, idJs) + rightsStopBannerHtml(row)
         + '<div class="dr-sub">' + bbEsc(row.region) + (row.pyung ? ' · ' + row.pyung + '평(' + Math.round(row.pyung * 3.305785) + '㎡)' : '') + (row.floor ? ' · ' + row.floor + '층' : '') + (a.buildYear ? ' · ' + a.buildYear + '년' : '') + (row.dday ? ' · 입찰 ' + bbEsc(row.dday.label) + ' ' + bbEsc(a.bidDate || '') : '') + '</div>'
         + '<div class="dr-pickcard ' + (go ? 'go' : 'pass') + '"><div class="pk-v">' + (go ? '🚶 임장 추천' : '패스') + (ev.visit.why ? ' · ' + bbEsc(ev.visit.why) : '') + '</div>'
         + (pe ? '<div class="pk-big"><span>추천 입찰가</span><b>' + fmt(pe.bid) + '</b>' + (ve ? '<span>시세의 <b style="font-size:15px;color:#374151;">' + Math.round(pe.bid / ve.est * 100) + '%</b></span>' : '') + '</div>'
@@ -23104,7 +23114,7 @@ async function renderVillaDrawer(d, row) {
     h += villaCostHtml(row, ev, fmt);
     h += bidScoreHtml(row);
     h += permitDrawerHtml(row);
-    if (go) h += fieldChecklistHtml(row);
+    h += visitSectionHtml(row);
     if (ve) {
         var r2 = function(v) { return fmt(v); };
         h += '<div class="dr-sec"><h4>예상매도가</h4><div><b>' + fmt(ve.est) + '</b> <span class="dr-sub" style="display:inline;">보통 오차 ±' + ve.errPct + '% · ' + bbEsc(ve.lvl) + ' · 거래 ' + (ve.n1 || ve.n2) + '건</span></div>'
