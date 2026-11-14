@@ -4739,6 +4739,14 @@ function villaFloorResaleHtml(row) {
 function villaRentDemandHtml(rc) {
     return '<div class="dr-sub" style="margin-top:4px;">월세 거래 활발도(전용 ±10㎡, 최근 6개월): 같은 동 <b>' + (rc.d6 != null ? rc.d6 : '-') + '건</b>' + (rc.r6 != null ? ' · 반경 500m <b>' + rc.r6 + '건</b>(좌표를 아는 신고만 세서 실제보다 적어요)' : '') + ' - 세입자 구하기 쉬운 동네인지 보는 값이에요.</div>';
 }
+/* ⭐ 좋은 후보 필터(2026-11-14, 사용자: 입찰 후보를 줄이고 좋은 후보만) - 과거 낙찰사례를 되돌려 앱 계산으로 채점하고, 낙찰 후 같은 건물·단지의 실제 거래를 되팔 가격 대리값으로 '낙찰가로 샀다면 실현 순이익 2,000만원 이상'인 물건 비율을 비교한 결과:
+   · 아파트(6,254건·3개 시간 구간 모두 같은 방향): 임장 후보 중 낙찰 가능성 20%↑ & 예상 순마진 2,000만↑ → 좋은 물건 37%(지금 임장 후보 18.5%), 후보 수는 지금의 약 3분의 1
+   · 빌라(이슈 제외 1,819건·4개 구간 모두 같은 방향): 임장 후보 중 낙찰 가능성 25%↑ & 예상 순이익 2,500만↑ → 좋은 물건 54.5%(지금 임장 후보 44.0%), 후보 수는 지금의 약 절반
+   재현율(좋은 물건 중 이 필터에 남는 비율)은 아파트 43%·빌라 47% - 필터를 켜면 좋은 물건 일부도 같이 빠지므로 '더 골라 보기'용이고 기본 목록은 그대로 둠. 낙찰 가능성·순마진은 앱이 이미 보여주는 값(검증 전용 숫자 아님). */
+var GOOD_APT_MIN_P = 0.20, GOOD_APT_MIN_NET = 2000, GOOD_VILLA_MIN_P = 0.25, GOOD_VILLA_MIN_NET = 2500;
+function goodAptRow(r) { var w = r && r.winbid, p = w ? (w.probRec != null ? w.probRec : w.probRecRaw) : null; return !!(r && r.visit && r.visit.go && p != null && p >= GOOD_APT_MIN_P && r.margin != null && r.margin >= GOOD_APT_MIN_NET); }
+function goodVillaRow(r, e) { return !!(e && e.visit && e.visit.go && e.pn && e.pn.ev && e.pn.ev.p >= GOOD_VILLA_MIN_P && e.pn.ev.net >= GOOD_VILLA_MIN_NET); }
+function toggleGoodOnly() { var s = bidBoardState; s.goodOnly = !s.goodOnly; s.liteLimit = pageN(); s.villaLimit = pageN(); renderBidBoard(); }
 function setVillaCash() { bidBoardState.villaCash = !bidBoardState.villaCash; bidBoardState.villaLimit = pageN(); renderBidBoard(); }
 /* 💾 빌라 계산 결과 보관(2026-10-10, 사용자: "빌라 입찰후보 창이 매번 새로 불러오는 것 같아 느려") - 예상매도가·생활권 거래·건축물대장 요약을 브라우저에 24시간 저장해 두고
    다시 열면 바로 보여줌(지역 실거래 68곳을 다시 받지 않음). 건물 상세(전유부 등 큰 자료)는 열 때 다시 받음. */
@@ -4919,7 +4927,7 @@ function renderVillaLite(body) {
     if (all.some(function(r) { return !hsBld[r.id]; })) all.slice().sort(function(x, y) { return (x.dday ? x.dday.diffDays : 9999) - (y.dday ? y.dday.diffDays : 9999); }).forEach(ensureHomestayCheck); // 입찰이 가까운 물건부터 조회(이미 다 조회했으면 건너뜀)
     var evs = {}; window.__villaEvDeadline = performance.now() + 14; all.forEach(function(r) { evs[r.id] = villaEval(r); }); window.__villaEvDeadline = 0;
     var evPendN = all.filter(function(r) { return evs[r.id].pending; }).length;
-    var vKey = [vv, s.villaCol || '', s.villaDir || '', s.villaCash ? 1 : 0, s.listLite ? 1 : 0, s.rightsNeed ? 1 : 0, bbCardMode() ? 'c' : 't'].join('|');
+    var vKey = [vv, s.villaCol || '', s.villaDir || '', s.villaCash ? 1 : 0, s.listLite ? 1 : 0, s.rightsNeed ? 1 : 0, s.goodOnly ? 1 : 0, bbCardMode() ? 'c' : 't'].join('|');
     if (evPendN) {
         clearTimeout(window.__villaEvT); window.__villaEvT = setTimeout(function() { if (bidBoardState.visit === 'villa') renderBidBoard(); }, 20);
         var pTxt = '⏳ 빌라 ' + (all.length - evPendN) + '/' + all.length + '건 새로 계산 중 (' + Math.floor((all.length - evPendN) / all.length * 100) + '%) - 끝나면 아래 목록이 갱신돼요';
@@ -4936,7 +4944,7 @@ function renderVillaLite(body) {
     var goN = all.filter(function(r) { return evs[r.id].visit.go; }).length, passN = all.length - goN;
     var rank = { ok: 0, check: 1, no: 2 };
     var vcol = s.villaCol || 'verdict', vdir = s.villaDir || 1, vdef = VILLA_COLS[vcol] || VILLA_COLS.verdict;
-    var rows = all.filter(function(r) { return (vv === 'all' || (vv === 'go') === evs[r.id].visit.go) && (!s.listLite || listingStatus(r.a).st === 'yes') && (!s.rightsNeed || rightsNeeded(r, evs[r.id].visit.go)) && (!s.villaCash || (function(c) { return c && c.ok; })(villaRentCash(r, evs[r.id]))); }).sort(function(x, y) {
+    var rows = all.filter(function(r) { return (vv === 'all' || (vv === 'go') === evs[r.id].visit.go) && (!s.listLite || listingStatus(r.a).st === 'yes') && (!s.rightsNeed || rightsNeeded(r, evs[r.id].visit.go)) && (!s.villaCash || (function(c) { return c && c.ok; })(villaRentCash(r, evs[r.id]))) && (!s.goodOnly || goodVillaRow(r, evs[r.id])); }).sort(function(x, y) {
         var ex = evs[x.id], ey = evs[y.id];
         if (vcol !== 'verdict' && vdef.val) {
             var ax = vdef.val(x, ex), ay = vdef.val(y, ey), nx = ax == null || (typeof ax === 'number' && !isFinite(ax)), ny = ay == null || (typeof ay === 'number' && !isFinite(ay));
@@ -15303,7 +15311,7 @@ function fbContext() {
         var bd = document.getElementById('bid-board'), open = bd && bd.style.display !== 'none';
         c.boardOpen = !!open;
         if (open) {
-            var s = bidBoardState; c.tab = s.visit; c.aptVisit = s.aptVisit; c.region = s.region || ''; c.villaVisit = s.villaVisit; c.rightsNeed = !!s.rightsNeed; c.listLite = !!s.listLite; c.card = bbCardMode();
+            var s = bidBoardState; c.tab = s.visit; c.aptVisit = s.aptVisit; c.region = s.region || ''; c.villaVisit = s.villaVisit; c.rightsNeed = !!s.rightsNeed; c.goodOnly = !!s.goodOnly; c.listLite = !!s.listLite; c.card = bbCardMode();
             c.rows = bidBoardRows.length; c.pending = bidBoardRows.filter(function(r) { return r.pending; }).length; c.running = !!bidBoardRunning;
             if (typeof bidDrawerId !== 'undefined' && bidDrawerId) { var r = bidBoardRows.filter(function(x) { return String(x.id) === String(bidDrawerId); })[0]; if (r) c.row = { id: r.id, caseNo: r.a && r.a.caseNo, addr: r.a && r.a.addr, type: r.type, recBid: r.recBid || null, sale: r.sale || null, verdict: r.verdict }; }
         }
@@ -22158,6 +22166,8 @@ function renderBidBoardLite() {
     var listN = isVillaTab ? villaMetroRows().filter(function(r) { return listingStatus(r.a).st === 'yes'; }).length : cur.filter(function(r) { return !r.pending && listingStatus(r.a).st === 'yes'; }).length;
     var seoulN = isVillaTab ? 0 : cur.filter(function(r) { return !r.pending && r.winbid && r.sale && isSeoulRow(r); }).length;
     if (!isVillaTab) sub += ' <button class="bb-tab' + (s.seoulOwn ? ' on' : '') + '" title="서울 아파트를 되팔지 않고 직접 살 때 보는 화면: 임장·패스 구분 없이 서울 물건 전체를, 예상 낙찰가가 예상매도가보다 얼마나 싼지 순서로 보여줘요(사업자대출·마진 기준은 적용하지 않아요)" onclick="bidBoardState.seoulOwn=!bidBoardState.seoulOwn;bidBoardState.liteLimit=120;renderBidBoard();">🏠 서울 자가 매입 <b>' + seoulN + '</b></button>';
+    var goodN = isVillaTab ? villaMetroRows().filter(bbExclPass).filter(function(r) { var e = r._vev; return e && !e.pending && goodVillaRow(r, e); }).length : cur.filter(function(r) { return !r.pending && goodAptRow(r); }).length;
+    sub += ' <button class="bb-tab' + (s.goodOnly ? ' on' : '') + '" title="' + (isVillaTab ? '임장 후보 중 낙찰 가능성 ' + Math.round(GOOD_VILLA_MIN_P * 100) + '%↑ · 예상 순이익 ' + GOOD_VILLA_MIN_NET + '만↑ (과거 낙찰 1,819건: 좋은 물건 54% vs 지금 임장 후보 44%, 후보 수 절반)' : '임장 후보 중 낙찰 가능성 ' + Math.round(GOOD_APT_MIN_P * 100) + '%↑ · 예상 순마진 ' + GOOD_APT_MIN_NET + '만↑ (과거 낙찰 6,254건: 좋은 물건 37% vs 지금 임장 후보 18.5%, 후보 수 약 3분의 1)') + '. 좋은 물건 일부도 같이 빠지니 더 골라 볼 때만 켜세요" onclick="toggleGoodOnly()">⭐ 좋은 후보만 <b>' + goodN + '</b></button>';
     sub += ' <button class="bb-tab' + (s.listLite ? ' on' : '') + '" title="네이버 매물 목록을 붙여넣어 매물이 있는 것으로 확인한 물건만" onclick="setListFilter()">📋 매물 등록 <b>' + listN + '</b></button>';
     sub += ' <button class="bb-tab' + (s.rightsNeed ? ' on' : '') + '" title="임장 후보인데 권리분석이 없는 물건만" onclick="toggleRightsNeed();">⚖️ 권리분석 필요 <b>' + rightsNeedCount(isVillaTab, cur) + '</b></button> <button class="bb-tab" title="탱크옥션 상세 글 여러 건을 한 번에 붙여넣기" onclick="rightsBatchOpen()">⚖️ 일괄 붙여넣기</button>';
     if (isFavTab) { bar.innerHTML = grp; renderFavLite(document.getElementById('bb-body')); var cn1 = document.getElementById('bb-cache-note'); if (cn1) cn1.style.display = 'none'; return; }
@@ -22171,7 +22181,7 @@ function renderBidBoardLite() {
         rowsO.sort(function(x, y) { return (x.winbid.price / x.sale) - (y.winbid.price / y.sale); });
         s.__ownRows = rowsO;
     } else s.__ownRows = null;
-    var rows = s.__ownRows || cur.filter(function(r) { return !r.pending && r.visit && (s.visit === 'all' || (s.visit === 'go') === r.visit.go) && (!s.nicheLite || r.niche) && (!s.listLite || listingStatus(r.a).st === 'yes') && (!s.rightsNeed || rightsNeeded(r, r.visit.go)); });
+    var rows = s.__ownRows || cur.filter(function(r) { return !r.pending && r.visit && (s.visit === 'all' || (s.visit === 'go') === r.visit.go) && (!s.nicheLite || r.niche) && (!s.listLite || listingStatus(r.a).st === 'yes') && (!s.rightsNeed || rightsNeeded(r, r.visit.go)) && (!s.goodOnly || goodAptRow(r)); });
     var colDef = LITE_COLS[s.liteCol] || LITE_COLS.verdict;
     if (!s.__ownRows || s.liteCol !== 'verdict') rows.sort(function(x, y) {
         var vx = colDef.val(x), vy = colDef.val(y);
