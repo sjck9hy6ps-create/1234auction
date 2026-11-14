@@ -7,9 +7,10 @@ import numpy as np, pandas as pd
 df = pd.read_pickle("input/villa-df.pkl"); df = df[(df["deal_date"] >= 20230101)].copy().reset_index(drop=True)
 df["q"] = (df["ym"] // 100) * 4 + ((df["ym"] % 100) - 1) // 3
 print("거래", len(df), flush=True)
-def loo(keys, size_tol, extra=None, minn=2):
+def loo(keys, size_tol, extra=None, minn=2, data=None):
+    data = df if data is None else data
     errs = []; ns = []; price_band = []; n_groups = 0
-    for _, g in df.groupby(keys, sort=False):
+    for _, g in data.groupby(keys, sort=False):
         if len(g) < minn: continue
         n_groups += 1
         s = g["size"].values; p = g["price"].values.astype(float); y = g["by2"].values
@@ -28,9 +29,13 @@ def loo(keys, size_tol, extra=None, minn=2):
         if mm.sum() >= 300: out["가격대 " + lab] = {"건수": int(mm.sum()), "바닥 오차%": round(float(np.median(a[mm])) * 100, 2)}
     return out
 res = {}
-res["A 같은 건물·같은 달·면적 ±1.5㎡"] = loo(["bld", "ym"], 1.5)
 df["fl"] = df["floor"].fillna(-99)
-res["B A + 같은 층"] = loo(["bld", "ym", "fl"], 1.5)
-res["C 같은 건물·같은 분기·면적 ±1.5㎡"] = loo(["bld", "q"], 1.5)
-res["D 같은 동·같은 달·면적 ±2㎡·연식 ±2년(다른 건물 포함)"] = loo(["dk", "ym"], 2.0, extra=2.0)
+SUB = {"구축(사용승인 2005년 이전, 20년+)": df[df["by2"] <= 2005], "신축(2015년 이후)": df[df["by2"] >= 2015], "전체": df}
+for nm, dd in SUB.items():
+    r = {}
+    r["A 같은 건물·같은 달·면적 ±1.5㎡"] = loo(["bld", "ym"], 1.5, data=dd)
+    r["B A + 같은 층"] = loo(["bld", "ym", "fl"], 1.5, data=dd)
+    r["C 같은 건물·같은 분기·면적 ±1.5㎡"] = loo(["bld", "q"], 1.5, data=dd)
+    r["D 같은 동·같은 달·면적 ±2㎡·연식 ±2년(다른 건물 포함)"] = loo(["dk", "ym"], 2.0, extra=2.0, data=dd)
+    res[nm] = r
 print(json.dumps(res, ensure_ascii=False, indent=1)); json.dump(res, open("villa-noise-test.json", "w"), ensure_ascii=False, indent=1)
