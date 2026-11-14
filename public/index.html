@@ -23072,7 +23072,7 @@ function visitItems(row) {
 }
 function visitChkGet(a) { return (a && a.visitCheck) || {}; }
 function fieldChecklistHtml(row) {
-    var it = visitItems(row), st = visitChkGet(row.a), idJs = String(row.id).replace(/\\/g, '\\\\').replace(/'/g, "\\'"), E = bbEsc;
+    var fm = function(v) { return v ? toEok(String(Math.round(v))) : '-'; }, it = visitItems(row), st = visitChkGet(row.a), idJs = String(row.id).replace(/\\/g, '\\\\').replace(/'/g, "\\'"), E = bbEsc;
     var all = it.V.concat(it.C), done = all.filter(function(x) { return st[x.k] && st[x.k].s; }).length;
     var bad = all.filter(function(x) { return st[x.k] && st[x.k].s === 'bad'; });
     var btn = function(x, s, label) {
