@@ -1,5 +1,6 @@
 """
 📍 입지 지수 계산 (2026-11-09, 사용자: 입지가 가장 중요 - 좌표 기반으로 뽑고, 지도에 반경으로 상위 10곳을 표시. API 호출·비용이 늘지 않게)
+(2026-11-14 변경: 순위 = 거래 활발도 = 이웃 격자 포함 최근 12개월 거래 건수. 평당가는 참고로만 저장)
 입지 = 시장이 이미 가격으로 매긴 위치의 가치(면적·연식·층이 같다고 보정한 ㎡당 가격). 철저히 실거래 자료만 사용(평판·상급지 같은 주관 개념 없음).
 계산(아파트·빌라 따로):
  ① 속성 보정: 같은 법정동·같은 분기 안에서 ㎡당 가격이 면적대·연식대·층 구분에 따라 얼마나 다른지를 자료에서 추정(덧셈 모델) → 모든 거래를 '기준 물건'(면적 60~85㎡·연식 11~20년·4~7층) 가격으로 환산
@@ -133,12 +134,16 @@ def run(kind, trades_table, cols, cutoff_old, cut_recent, cmap, tmap):
                       "오차 줄어든 비율%": round(float((e_cell < e_reg).mean()) * 100, 1)}
         print(f"[{kind}] 검증: {meta['검증']}")
     # 최근 12개월로 최종
-    g, k, sw2, sb2 = level_table(rec); g = g[g["n"] >= MIN_N].copy(); g["sm"] = smooth(g)
-    g["ppy"] = np.exp(g["sm"]) * 3.305785       # 만원/평
-    g["pct"] = g["sm"].rank(pct=True) * 100
+    g, k, sw2, sb2 = level_table(rec)
+    nall = {(r.gi, r.gj): int(r.n) for r in g.itertuples()}      # 모든 격자의 최근 12개월 거래 수(6건 미만 격자도 이웃 합계에는 포함)
+    g = g[g["n"] >= MIN_N].copy(); g["sm"] = smooth(g)
+    g["ppy"] = np.exp(g["sm"]) * 3.305785       # 만원/평(참고용)
+    # 2026-11-14(사용자: 평단가 말고 거래가 얼마나 잘 이루어지는지로 입지 순위) - 점수 = 이 격자와 둘레 8격자(약 1km)의 최근 12개월 거래 건수 합
+    g["act"] = [sum(nall.get((gi + di, gj + dj), 0) for di in (-1, 0, 1) for dj in (-1, 0, 1)) for gi, gj in zip(g["gi"], g["gj"])]
+    g["pct"] = g["act"].rank(pct=True) * 100
     meta.update({"k": round(float(k), 2), "격자 안 분산": round(sw2, 4), "격자 간 분산": round(sb2, 4), "격자 수": int(len(g)), "거래 수": int(len(rec))})
     print(f"[{kind}] 격자 {len(g):,}곳, k={k:.2f}, 평당 기준가 분포(만원) 10/50/90%: {np.percentile(g['ppy'], [10, 50, 90]).round(0)}")
-    cells = [[int(round(r.lat * 1e4)), int(round(r.lon * 1e4)), int(round(r.ppy)), int(r.n), (int(r.sub) if pd.notna(r.sub) else -1), int(round(r.pct))] for r in g.itertuples()]
+    cells = [[int(round(r.lat * 1e4)), int(round(r.lon * 1e4)), int(r.act), int(r.n), (int(r.sub) if pd.notna(r.sub) else -1), int(round(r.pct)), int(round(r.ppy))] for r in g.itertuples()]
     return cells, meta
 
 
@@ -150,7 +155,7 @@ def main():
     tf = avm.fetch_all_rows("transit_features", cols="cache_key,dist_subway_m", order_col="cache_key")
     tmap = {r.cache_key: r.dist_subway_m for r in tf.itertuples() if pd.notna(r.dist_subway_m)}
     print(f"좌표 {len(cmap):,}건, 역거리 {len(tmap):,}건")
-    out = {"generatedAt": now.isoformat(), "ver": 1, "step": [LAT_STEP, LON_STEP], "note": "기준 물건(60~85㎡·11~20년·4~7층) 평당가(만원), 최근 12개월 거래, 이웃 격자 평균", "types": {}}
+    out = {"generatedAt": now.isoformat(), "ver": 2, "step": [LAT_STEP, LON_STEP], "note": "cells=[위도*1e4, 경도*1e4, 거래 활발도(이 격자+둘레 8격자 약 1km의 최근 12개월 거래 건수), 이 격자 거래 수, 지하철m(-1 없음), 전국 백분위(활발도), 기준 물건 평당가(만원, 참고)]", "types": {}}
     for kind, table, cols in (("apt", "house_trades", "region,dong,danji,bunji,road_name,main_num,sub_num,price,size,floor,deal_date,dealing_type,build_year,cdeal_type"),
                               ("villa", "villa_trades", "region,dong,danji,bunji,road_name,main_num,sub_num,price,size,floor,deal_date,dealing_type,build_year")):
         cells, meta = run(kind, table, cols, cutoff_old, cut_recent, cmap, tmap)

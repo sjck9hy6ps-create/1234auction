@@ -1662,7 +1662,7 @@ body.ui2 #auction-modal.am4 { width:620px; }
          필터패널 안의 기존 bidcasebadge-toggle-btn과 toggleShowBidCaseBadges()가 그대로
          동기화해줌(둘 중 아무거나 눌러도 서로 같이 바뀜). -->
     <button class="geo-tool-btn" id="homestay-quick-btn" onclick="toggleHomestayLayer()" title="🏠 도시민박(공간대여) 배지 표시/숨김 - 증가·감소로 활성도 표시">🏠</button>
-    <button class="geo-tool-btn" id="loc-quick-btn" onclick="toggleLocationLayer()" title="🏅 입지 TOP10 - 지금 보이는 지도에서 실거래가 매긴 입지 가치가 높은 곳 10곳을 반경으로 표시(추가 API 호출 없음)">🏅</button>
+    <button class="geo-tool-btn" id="loc-quick-btn" onclick="toggleLocationLayer()" title="🏅 입지 TOP10 - 지금 보이는 지도에서 최근 12개월 거래가 가장 활발한 곳 10곳을 반경으로 표시(추가 API 호출 없음)">🏅</button>
 </div>
 <div id="compass-hud">
     <div id="compass-pointer"></div>
@@ -3675,7 +3675,7 @@ function renderLocationLayer() {
         for (var j = 0; j < pick.length; j++) if (locKm(la, lo, pick[j][0] / 1e4, pick[j][1] / 1e4) < 1.2) { ok = false; break; }
         if (ok) pick.push(c);
     }
-    if (note) note.textContent = pick.length ? '보이는 범위 ' + ST.name + ' ' + pick.length + '곳 (기준 물건 평당가 순 · 점선=실제 입지 범위 600m, 색 원=축척에 맞춘 중심부)' : '이 범위에는 ' + ST.name + ' 입지 자료가 없어요';
+    if (note) note.textContent = pick.length ? '보이는 범위 ' + ST.name + ' ' + pick.length + '곳 (거래가 활발한 순 · 최근 12개월 반경 약 1km 거래 건수 · 점선=범위 600m, 색 원=축척에 맞춘 중심부)' : '이 범위에는 ' + ST.name + ' 입지 자료가 없어요';
     var key = curT + '|' + pick.map(function(c) { return c[0] + ',' + c[1]; }).join(';');
     var R0 = 600;
     if (key !== locPickKey) {   // 상위 10곳이 바뀐 때만 도형을 새로 만듦
@@ -3684,9 +3684,9 @@ function renderLocationLayer() {
             var la = c[0] / 1e4, lo = c[1] / 1e4, col = ST.col[k < 3 ? 0 : (k < 6 ? 1 : 2)], t = curT, ll = new kakao.maps.LatLng(la, lo);
             var ring = new kakao.maps.Circle({ center: ll, radius: R0, strokeWeight: 1, strokeColor: col, strokeOpacity: 0.55, strokeStyle: 'dash', fillColor: col, fillOpacity: 0 });
             var circ = new kakao.maps.Circle({ center: ll, radius: R0, strokeWeight: 2, strokeColor: col, strokeOpacity: 0.85, strokeStyle: t === 'villa' ? 'dash' : 'solid', fillColor: col, fillOpacity: 0.14 });
-            var tip = ST.name + ' ' + (k + 1) + '위 입지 · 기준 물건(60~85㎡·11~20년·4~7층) 평당 ' + c[2].toLocaleString() + '만원 · 최근 12개월 ' + ST.name + ' 거래 ' + c[3] + '건(격자) · ' + (c[4] >= 0 ? '지하철역 ' + c[4] + 'm' : '역 정보 없음') + ' · 전국 ' + ST.name + ' 중 상위 ' + Math.max(1, 100 - c[5]) + '%';
+            var tip = ST.name + ' ' + (k + 1) + '위 거래 활발 · 최근 12개월 반경 약 1km 거래 ' + c[2].toLocaleString() + '건(이 칸 ' + c[3] + '건, 월 평균 약 ' + Math.round(c[2] / 12) + '건) · ' + (c[6] ? '참고 기준 평당 ' + c[6].toLocaleString() + '만원 · ' : '') + (c[4] >= 0 ? '지하철역 ' + c[4] + 'm' : '역 정보 없음') + ' · 전국 ' + ST.name + ' 중 거래 활발 상위 ' + Math.max(1, 100 - c[5]) + '%';
             var el = document.createElement('div');
-            el.innerHTML = '<div title="' + bbEsc(tip) + '" style="background:' + col + ';color:#fff;border:2px solid #fff;border-radius:14px;padding:2px 8px;font-size:12px;font-weight:800;box-shadow:0 1px 4px rgba(0,0,0,.35);white-space:nowrap;cursor:pointer;">' + (t === 'apt' ? '🏢' : '🏘️') + ' ' + ST.name + ' ' + (k + 1) + '위 · 평당 ' + c[2].toLocaleString() + '만</div>';
+            el.innerHTML = '<div title="' + bbEsc(tip) + '" style="background:' + col + ';color:#fff;border:2px solid #fff;border-radius:14px;padding:2px 8px;font-size:12px;font-weight:800;box-shadow:0 1px 4px rgba(0,0,0,.35);white-space:nowrap;cursor:pointer;">' + (t === 'apt' ? '🏢' : '🏘️') + ' ' + ST.name + ' ' + (k + 1) + '위 · 거래 ' + c[2].toLocaleString() + '건</div>';
             el.addEventListener('click', function(e) { e.stopPropagation(); alert(tip); });
             var ov = new kakao.maps.CustomOverlay({ position: ll, content: el, yAnchor: t === 'villa' ? 0.1 : 0.9, xAnchor: 0.5, zIndex: 9000 + (t === 'apt' ? 1 : 0), clickable: true });
             circ.setMap(map); ov.setMap(map);
