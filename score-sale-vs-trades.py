@@ -32,7 +32,7 @@ for c in cases:
     # 면적 차이를 평당 가격으로 보정한 실거래 기준값(중앙)
     ref = float(np.median(m["ppm"].values)) * area
     rows.append({"id": c["id"], "kind": kind, "n": int(len(m)), "lvl": c["lvl"], "est": c["est"], "base": c["base"], "q25": c["q25"], "q10": c["q10"], "ref": ref, "nbld": c.get("nBld")})
-R = pd.DataFrame(rows); print(f"매칭 {len(R)}건 / 사례 {len(cases)}건", flush=True)
+R = pd.DataFrame(rows); print(f"매칭 {len(R)}건 / 사례 {len(cases)}건", flush=True); R.to_json("sale-vs-trades-rows.json", orient="records", force_ascii=False)   # 사례별 되팔 가격 대리값(마진 재평가용, 2026-11-14)
 def stat(T):
     e = T["est"].values / T["ref"].values - 1; a = np.abs(e)
     return {"n": int(len(T)), "오차중앙%": round(float(np.median(a)) * 100, 1), "쏠림중앙%": round(float(np.median(e)) * 100, 1), "±10%": round(float((a <= .1).mean()) * 100, 1), "±20%": round(float((a <= .2).mean()) * 100, 1),

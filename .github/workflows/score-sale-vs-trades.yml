@@ -56,4 +56,5 @@ jobs:
           name: sale-vs-trades
           path: |
             sale-vs-trades.json
+            sale-vs-trades-rows.json
             sale-log.txt
