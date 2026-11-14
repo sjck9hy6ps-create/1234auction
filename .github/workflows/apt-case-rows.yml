@@ -1,0 +1,35 @@
+# 아파트 낙찰사례를 과거 시점으로 되돌려 앱 계산을 다시 돌려 rows만 보관(2026-11-14, 서버에 아무것도 저장하지 않음 - 실제 마진 점검용)
+name: Apt case rows
+on:
+  workflow_dispatch:
+jobs:
+  collect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 330
+    strategy:
+      fail-fast: false
+      matrix:
+        prefix: ['11', '26', '27', '28', '29', '30', '31', '36', '41', '42,51', '43', '44', '45,52', '46', '47', '48', '50']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - run: npm install playwright
+      - run: npx playwright install --with-deps chromium
+      - env:
+          SITE_URL: https://1234auction.vercel.app
+          LAWD_PREFIX: ${{ matrix.prefix }}
+          OUT_FILE: rows.json
+        run: node scripts/validate-app-asof-cases.mjs > log.txt 2>&1 || (tail -30 log.txt; exit 1)
+      - run: tail -4 log.txt || true
+        if: always()
+      - id: nm
+        run: echo "n=$(echo '${{ matrix.prefix }}' | tr ',' '_')" >> $GITHUB_OUTPUT
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: aptrows-${{ steps.nm.outputs.n }}
+          path: rows.json
+          if-no-files-found: ignore
+          retention-days: 14
