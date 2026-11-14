@@ -1967,8 +1967,8 @@ body.ui2 #auction-modal.am4 { width:620px; }
         <div class="bb-tools">
             <span id="bb-tabs"></span>
             <select id="bb-region" onchange="setBidBoardFilter('region', this.value)"></select>
-            <select id="bb-permit" onchange="setBidBoardFilter('permit', this.value)" title="토지거래허가구역 자료 기준(🚧 허가구역 표시가 붙은 물건)">
-                <option value="">규제지역 전체</option><option value="only">🚧 규제지역만</option><option value="exclude">규제지역 제외</option>
+            <select id="bb-permit" onchange="setBidBoardFilter('permit', this.value)" title="규제지역 = 투기과열지구·조정대상지역(서울 25개 구 + 경기 15곳, 2026-07-01 기준) - 취득세 중과·대출 한도(LTV)에 영향. 주소로 판정해요">
+                <option value="">규제지역 전체</option><option value="only">🔶 규제지역만</option><option value="exclude">규제지역 제외(비규제)</option>
             </select>
             <select id="bb-crowd" style="display:none !important" onchange="setBidBoardFilter('crowd', this.value)" title="입찰자가 몰릴지 예상 - 지역 평균이 아니라 물건별 조건 기준(과거 낙찰사례 학습)">
                 <option value="">응찰 예상 전체</option><option value="hi">🔥 많이 몰릴 물건</option><option value="lo">적게 몰릴 물건</option>
@@ -4335,7 +4335,7 @@ function crowdNoteHtml(r) {
     return '<div>👥 예상 입찰자 <b style="color:' + (c.lvl === 'hi' ? '#b91c1c' : (c.lvl === 'lo' ? '#15803d' : '#374151')) + ';">' + crowdRangeText(c) + '</b>' + (c.lvl === 'hi' ? ' <b style="color:#b91c1c;">🔥 몰릴 가능성 높음</b>' : (c.lvl === 'lo' ? ' · 적을 가능성 높음' : '')) + ' <span class="dr-sub" style="display:inline;">(비슷한 물건에 실제로 왔던 범위 · 8명 이상 몰린 비율 ' + c.pct + '% · 과거 검증에서 이 범위 안에 실제 입찰자 수가 들어온 비율은 약 절반(52%)이에요. 그날 분위기에 따라 어긋날 수 있는 참고값입니다)</span></div>';
 }
 // 규제지역 필터(2026-10-21, 사용자 요청: 지역 필터 옆에) - 토지거래허가구역 자료(permitFor) 기준. 지역 필터를 쓰는 모든 목록·개수에 함께 적용
-function permitMatch(r) { var pf = bidBoardState.permit; if (!pf) return true; if (!permitData) { try { loadPermit(); } catch (e) {} } var z = !!permitFor(r); return pf === 'only' ? z : !z; }   // 허가구역 자료가 아직 없으면 다시 받아 보고(자료가 오면 목록이 다시 그려짐), 그때까지는 규제 판정을 모름
+function permitMatch(r) { var pf = bidBoardState.permit; if (!pf) return true; var z = adjOf(r && r.a); return pf === 'only' ? z : !z; }   // 2026-11-14 규제지역 = 투기과열지구·조정대상지역(주소 기준). 예전엔 토지거래허가구역 자료 기준이었음(경매는 허가 면제라 대출·취득세에 영향을 주는 조정대상지역이 맞음)
 function regionMatch(r, reg) { if (!permitMatch(r) || !crowdMatch(r)) return false; return !reg || (reg.indexOf('g:') === 0 ? String(r.region).indexOf(reg.slice(2) + ' ') === 0 : r.region === reg); }
 /* 📱 네이버부동산식 목록 카드 + 상세 창 (2026-10-10, 사용자: 아이패드에서 네이버부동산 UI를 벤치마킹) - 641~1240px에서 표 대신 카드(이름·큰 추천가·한 줄 요약·칩)와 정렬 줄,
    상세 창은 목록 옆에 붙여서(왼쪽 목록 / 오른쪽 상세) 보여주고 상세 맨 위에 구역 이동 탭을 둠 */
@@ -4377,7 +4377,7 @@ function nvVillaCard(r, ev) {
         rec: pe ? vm(pe.bid) : '', recPct: pe && ve ? Math.round(pe.bid / ve.est * 100) : null,
         spec: bbEsc(r.region) + (r.pyung ? ' · 빌라 ' + r.pyung + '평(' + Math.round(r.pyung * 3.305785) + '㎡)' : '') + (r.floor ? ' · ' + r.floor + '층' : '') + (mp && mp.age != null ? ' · ' + mp.age + '년차' : ''),
         sum: '<span class="nv-i">예상매도가 <b>' + vm(ve && ve.est) + '</b>' + (ve ? ' <small>±' + ve.errPct + '%</small>' : '') + '</span><span class="nv-i">최저가 ' + vm(r.minBid) + '</span>' + (ev.wb && ev.wb.price ? '<span class="nv-i">예상 낙찰가 <b>' + vm(ev.wb.price) + '</b></span>' : '') + (mp ? '<span class="nv-i">필요 마진 ' + vm(mp.margin) + '</span>' : ''),
-        chips: [r.visit.go ? noVisitPill(r) : null, crowdChip(r), permitFor(r) ? { t: '🚧 허가구역', cls: 'r' } : null, pe ? { t: '낙찰 ' + Math.round(pe.p * 100) + '%', cls: pe.p >= 0.6 ? 'g' : (pe.p >= 0.35 ? 'o' : 'r') } : null, pe ? { t: '순이익 ' + vm(pe.net) } : null,
+        chips: [r.visit.go ? noVisitPill(r) : null, crowdChip(r), adjOf(r.a) ? { t: '🔶 규제지역', cls: 'r' } : null, permitFor(r) ? { t: '🚧 허가구역', cls: 'r' } : null, pe ? { t: '낙찰 ' + Math.round(pe.p * 100) + '%', cls: pe.p >= 0.6 ? 'g' : (pe.p >= 0.35 ? 'o' : 'r') } : null, pe ? { t: '순이익 ' + vm(pe.net) } : null,
             ev.liq ? { t: '생활권 6개월 ' + ev.liq.r500.a6 + '건', cls: ev.liq.r500.a6 === 0 ? 'r' : '' } : null, (function(c) { return c ? { t: '💰 월세 ' + (c.cf >= 0 ? '+' : '') + Math.round(c.cf) + '만/월', cls: c.ok ? 'g' : (c.cf >= 0 ? 'o' : 'r') } : null; })(villaRentCash(r, ev)), l.st === 'yes' ? { t: '📋 매물 ' + l.n + '건', cls: 'g' } : (l.st === 'none' ? { t: '📋 매물 없음' } : null),
             hv === 'ok' ? { t: '🏠 도시민박 검토 가능', cls: 'g' } : null, ev.issue ? { t: '🚩 이슈 의심', cls: 'r' } : null, rightsNeeded(r, ev.visit.go) ? { t: '⚖️ 권리분석 필요', cls: 'o' } : null, (hsBld[r.id] && hsBld[r.id].info && bldUseWarn(hsBld[r.id].info.title)) ? { t: '⚠️ 비주택 용도', cls: 'r' } : null], note: r.a.fav ? r.a.favNote : '' });
 }
@@ -4389,7 +4389,7 @@ function nvAptCard(r) {
         rec: e ? am(e.bid) : '', recPct: e && r.sale ? Math.round(e.bid / r.sale * 100) : null,
         spec: bbEsc(r.region) + (r.pyung ? ' · 아파트 ' + r.pyung + '평(' + Math.round(r.pyung * 3.305785) + '㎡)' : '') + (r.floor ? ' · ' + r.floor + '층' : '') + ' · ' + (r.fails == null ? '' : (r.fails === 0 ? '신건' : r.fails + '회 유찰')),
         sum: '<span class="nv-i">예상매도가 <b>' + am(r.sale) + '</b></span><span class="nv-i">최저가 ' + am(r.minBid) + '</span>' + (r.winbid && r.winbid.price ? '<span class="nv-i">예상 낙찰가 <b>' + am(r.winbid.price) + '</b></span>' : ''),
-        chips: [permitFor(r) ? { t: '🚧 허가구역', cls: 'r' } : null, e ? { t: '낙찰 ' + Math.round(e.p * 100) + '%', cls: e.p >= 0.6 ? 'g' : (e.p >= 0.35 ? 'o' : 'r') } : null, e ? { t: '순이익 ' + am(e.net) } : null,
+        chips: [adjOf(r.a) ? { t: '🔶 규제지역', cls: 'r' } : null, permitFor(r) ? { t: '🚧 허가구역', cls: 'r' } : null, e ? { t: '낙찰 ' + Math.round(e.p * 100) + '%', cls: e.p >= 0.6 ? 'g' : (e.p >= 0.35 ? 'o' : 'r') } : null, e ? { t: '순이익 ' + am(e.net) } : null,
             os ? { t: '1년 거래 ' + (os.n12 || 0) + '건', cls: (os.n12 || 0) >= 6 ? 'g' : ((os.n12 || 0) >= 3 ? '' : 'r') } : null, r.liq ? { t: '💧 6개월 내 되팔림 ' + Math.round(r.liq.p6) + '%' + (r.holdFromSupply ? ' · 매물 많음' : ''), cls: r.liq.p6 >= 30 ? 'g' : (r.liq.p6 < 18 ? 'r' : '') } : null, r.niche ? { t: '🧭 틈새', cls: 'g' } : null, r.issueSuspect ? { t: '🚩 이슈 의심', cls: 'r' } : null,
             l.st === 'yes' ? { t: '📋 매물 ' + l.n + '건', cls: 'g' } : (l.st === 'none' ? { t: '📋 매물 없음' } : null), rightsNeeded(r, r.visit.go) ? { t: '⚖️ 권리분석 필요', cls: 'o' } : null], note: r.a.fav ? r.a.favNote : '' });
 }
@@ -13492,17 +13492,29 @@ async function loadAuctionBuildingInfo(force) {
      ② 지방 저가주택 특례 - 비수도권(서울·경기·인천 외) + 공시가격 2억원 이하
         (2025.1.2 이후 유상취득분부터 1억→2억 완화). ①과 달리 수도권에는 적용되지 않음.
 ════════════════════════════════════ */
-var ADJUSTED_AREAS = [
-    '서울',
-    '경기 과천', '경기 광명', '경기 성남 분당', '경기 성남 수정', '경기 성남 중원',
-    '경기 수원 영통', '경기 수원 장안', '경기 수원 팔달', '경기 안양 동안',
-    '경기 용인 수지', '경기 의왕', '경기 하남'
+/* 규제지역 = 투기과열지구·조정대상지역(두 지정이 같은 지역, 취득세 중과·대출 LTV·재개발 조합원 지위에 영향). 2026-11-14(사용자: 규제지역을 정확히 구분) 정리:
+   ① 국토부 2026-07-01 기준: 서울 25개 구 전역 + 경기 15곳(과천·광명·성남 분당·수정·중원·수원 영통·장안·팔달·안양 동안·용인 수지·의왕·하남 + 2026-07-01 추가 화성 동탄구·용인 기흥구·구리).
+   ② 예전 함수는 '경기 성남 분당'처럼 시·구 글자 없는 형태만 맞춰서 경매 주소('경기도 성남시 분당구')·카카오 주소('경기 과천시')의 경기 지역이 거의 다 '비규제'로 나왔음 → 시·구 글자는 있어도 없어도 맞게 고침.
+   ③ 화성 동탄구는 법정동 일부(반송·능동 등)가 걸쳐 있어 구 이름이 없는 옛 주소는 동탄 법정동 이름으로 추정(석우·반송·청계·영천·중·금곡·방교·여울·산척·송·장지·목·신·오산·능동).
+   지정·해제는 바뀔 수 있어 입찰 전 국토부 공고로 다시 확인할 것. */
+var REGULATED_RULES = [
+    /^서울(특별시)?/,
+    /^(경기도?)?(과천|광명|의왕|하남|구리)(시)?/,
+    /^(경기도?)?성남(시)?(분당|수정|중원)(구)?/,
+    /^(경기도?)?수원(시)?(영통|장안|팔달)(구)?/,
+    /^(경기도?)?안양(시)?동안(구)?/,
+    /^(경기도?)?용인(시)?(수지|기흥)(구)?/,
+    /^(경기도?)?화성(시)?동탄(구)?/,
+    /^(경기도?)?화성(시)?(석우|반송|청계|영천|중|금곡|방교|여울|산척|송|장지|목|신|오산|능)동/
 ];
 function guessIsAdjustedArea(addr) {
     if (!addr) return false;
-    var a = addr.replace(/\s+/g, '');
-    return ADJUSTED_AREAS.some(function(k) { return a.indexOf(k.replace(/\s+/g, '')) !== -1; });
+    var a = String(addr).replace(/\s+/g, '');
+    for (var i = 0; i < REGULATED_RULES.length; i++) if (REGULATED_RULES[i].test(a)) return true;
+    return false;
 }
+/* 이 경매물건이 규제지역인지: 사용자가 모달에서 '규제지역'으로 직접 체크했으면 그대로, 아니면 주소로 판정(경매 물건은 모달에서 저장하기 전까지 이 값이 비어 있어 예전엔 서울 물건도 모두 비규제로 계산됐음) */
+function adjOf(a) { return !!(a && (a.isAdjusted === true || guessIsAdjustedArea(a.addr || a.addrJibun || ''))); }
 function autoDetectAdjustedArea() {
     var addr = document.getElementById('a-addr').value.trim();
     if (!addr) { alert('주소를 먼저 입력해 주세요.'); return; }
@@ -18128,7 +18140,7 @@ function buildMarginSummaryHtml(a) {
     var feesSum = tax + registryFee + evictionFee + repair + agent + moving + cleaning + interestCost + prepayFee + etc + vat + propertyTax + compTax;
     var totalCost = useBid + feesSum;
     var preTaxMargin = useSell > 0 ? useSell - totalCost : 0;
-    var taxResult = (useSell > 0 && preTaxMargin > 0) ? calcResaleIncomeTax(bidMethod, preTaxMargin, holdMonths, !!a.isAdjusted, myHouseRankFor(a)) : { totalTax: 0, rateLabel: '' };
+    var taxResult = (useSell > 0 && preTaxMargin > 0) ? calcResaleIncomeTax(bidMethod, preTaxMargin, holdMonths, adjOf(a), myHouseRankFor(a)) : { totalTax: 0, rateLabel: '' };
     var margin = useSell > 0 ? preTaxMargin - taxResult.totalTax : 0;
     var roi = (totalCost > 0 && useSell > 0) ? Math.round(margin / totalCost * 1000) / 10 : 0;
     var apprRate = (appraisal > 0 && useBid > 0) ? Math.round(useBid / appraisal * 1000) / 10 : 0;
@@ -19510,7 +19522,7 @@ function solveAuctionBidFromRecord(a) {
     var marginValue = isNaN(marginValueRaw) ? null : marginValueRaw;
     if (!saleValue || saleValue <= 0 || marginValue === null) return null;
     var propType = a.propType || '', pyung = parseFloat(a.pyung) || 0;
-    var houseRank = myHouseRankFor(a), isAdjusted = !!a.isAdjusted, isLocalCheap = effLocalCheap(a, saleValue);
+    var houseRank = myHouseRankFor(a), isAdjusted = adjOf(a), isLocalCheap = effLocalCheap(a, saleValue);
     var repair = parseInt(a.repair) || 0, etc = parseInt(a.etc) || 0;
     var assumedDeposit = parseInt(a.assumedDeposit) || 0;
     var unpaidMgmtFee = parseInt(a.unpaidMgmtFee) || 0;
@@ -19573,7 +19585,7 @@ function solveImpliedTargetFromBid(a, marginValue) {
     var actualBid = parseInt(a.actualBid) || 0;
     if (!actualBid || actualBid <= 0 || marginValue === null || marginValue === undefined) return null;
     var propType = a.propType || '', pyung = parseFloat(a.pyung) || 0;
-    var houseRank = myHouseRankFor(a), isAdjusted = !!a.isAdjusted, isLocalCheap = effLocalCheap(a, parseInt(a.target) || null);
+    var houseRank = myHouseRankFor(a), isAdjusted = adjOf(a), isLocalCheap = effLocalCheap(a, parseInt(a.target) || null);
     var repair = parseInt(a.repair) || 0, etc = parseInt(a.etc) || 0;
     var assumedDeposit = parseInt(a.assumedDeposit) || 0;
     var unpaidMgmtFee = parseInt(a.unpaidMgmtFee) || 0;
@@ -21978,8 +21990,8 @@ setTimeout(function() { var go = function() { try { srvBoardParts(); setTimeout(
 // 저장 계산을 다시 써도 되는지 - 물건 입력값(시세 계산에 쓰는 것)과 입찰일 지남 여부. 계산 방식이 바뀌면 BOARD_CALC_VER을 올림
 /* 저장 계산(서버 사전 계산·브라우저 저장본)을 다시 써도 되는지 보는 '기본 계산' 버전(2026-11-08): computeBidBoardRow의 기본 계산(시세·보정·모델 입력)이 바뀔 때만 올림.
    판정·추천가 고르기(finalize·computePick) 단계만 바뀌면 BOARD_CALC_VER만 올림 - 이때는 저장본을 그대로 쓰고 판정만 뒤에서 다시 계산(화면은 즉시). 전엔 모든 변경이 저장본 7천여 건을 무효로 만들어 로딩이 비었음 */
-var BOARD_BASE_VER = 103; /* 103: 6개월 최고가 상한 철회(사용자: 요구 전 방식으로, 2026-11-12) */
-var BOARD_CALC_VER = 108;  /* (허가구역 자료 재시도 2026-11-08) */ // 107: 낙찰가 모델에 단지 가격 흐름 요인(flowC)·큰 상승 단지 상방 꼬리 분포(resQF) 추가(2026-11-10) - // 106: 시세 근거 얇음(6개월 1~2건) 필요 마진은 칸 하위 10% 하방·주변 단지 대체 시세 후보 제외(2026-11-09) - 105: 지방 추천가 손해 줄이기(거래 0건 제외·큰 마진 경고·근거 두께별 필요 마진, 2026-11-08) - // 104: 유찰 4회 이상은 이슈 강한 의심 - 임장 후보에서 제외(2026-11-08) - // 103: 후보 최소 순이익 500만·이슈 강한 의심·낙찰 가능성 낮은 물건도 후보(2026-11-08) - // 102: 후보 확대(하위25% 필터 제거·최소 순이익은 보정 전 기준, 2026-11-08) - // 101: 임장 후보 낙찰 가능성 기준을 보정된 확률 척도로 환산(후보가 3건으로 줄던 문제, 2026-11-08) - // 100: (입찰자 수 모델에 생활권 흐름 요인 후보 추가 2026-11-08) (새 사건은 새로고침 없이 자동 계산 2026-11-08) 100: 낙찰 조건 표에 근거 두께(같은 평형 6개월 거래수) 차원 추가(서버 검증 통과 시, 2026-11-08) - // 99: 사용자 방침(결과가 비슷해도 시장 흐름을 따르는 근거식이 더 정확하면 적용) - 낙찰 가능성 보정·낙찰 조건 하위 25% 필터를 추천가 고르기에 다시 적용(2026-11-08) - // 98: 낙찰 가능성 보정은 표시에만, 예상매도가 최근 쏠림 자동 보정(서버 walk-forward 검증 통과 시, 2026-11-08) - // 97: (호가 모으기: 같은 이름 단지는 네이버 지번 주소로 먼저 좁힘 2026-11-08) 97: 낙찰 가능성 양방향 보정(서버 시간순 검증 통과 시, 추천가 고르기에도 사용, 2026-11-08) - // 96: 낙찰 조건 하위 25% 필터는 채점에서 효과 없어 뺌(지방 손해 31.3→31.4%, 2026-11-08) - // 95: 추천가는 낙찰 조건 하위 25% 지점에서도 손해가 안 나는 가격만(서버 검증 통과 시, 2026-11-08) - // 94: 추천가 고르기 순이익에 낙찰 조건 기대 변화 반영(서버 검증 통과 시, 2026-11-08) - // 93: 낙찰 조건 하방(입찰가가 시세에 가까울수록 위험 여유 가산, 서버 검증 통과 시, 2026-11-08) - // 92: 거래 드문 단지 고정 2% 가산을 실측값으로 대체(2026-11-08) - // 91: 낙찰가 기준 시세를 예상매도가(종합 평가·호가 상한)와 같게(2026-11-08) - // 90: 임차인 수 점검은 미상 점유자 제외 값도 인정(2026-11-08) - // 89: 이름 앞부분·보증금·전입·확정일이 같은 승계 중복 임차인 줄 합침(2026-11-08) - // 88: 호가 흐름 판정에 주변 단지 흐름 추가(2026-11-08) - // 87: 호가 흐름 지표를 실거래 흐름 먼저·경계는 단지 거래 흩어짐에 맞춤(2026-11-08) - // 86: 호가 흐름 지표 표시(참고용, 2026-11-08) - // 85: 호가 상한은 수리 상태로 거르지 않고 모든 호가 사용(2026-11-08) - // 84: 호가 상한은 층 구분(1~2층/탑층/중간층)별로만 비교(2026-11-08) - // 83: 가격 불안정은 같은 층대(1·2층/3층+) 최근 거래끼리만 비교(2026-11-08) - // 82: 아파트 낙찰가 모델 종합 평가 시세 기준(2026-11-07) - // 81: 아파트 예상매도가 종합 평가 보정(오차 5.5→4.0%, 2026-11-07) - // 80: 권리 위험 안전장치·입찰 제외(2026-11-07) - // 79: // 79: 추천가 낙찰 가능성 간격 보정 표시(2026-11-07) - // 78: // 78: 빌라 종합 평가 상한 제거·건물 3건 이상 포함(앱 실제 계산과 직접 채점 후, 2026-11-07) - // 77: 빌라 종합 평가 안전장치(지하 제외·앱 값 +15% 상한, 2026-11-07) - // 76: 수도권 빌라 종합 평가 값 적용(건물 3건 미만 단계, 2026-11-07) - // // 75: 거래 활발 단지 위험 여유를 최근 거래 흩어짐별 하방 표로(2026-11-06) - // 74: 위험 여유를 근거 두께별 실측 하방 표로(주간 갱신)·흐름 계수 주간 자동 선택(2026-11-06) - // 73: 감정가 기준 전부 제거(감정가 대비 경고·금액 점검·빌라 이슈·틈새 조건, 2026-11-06) - // 72: 시세 흐름 계수 올림·거래량 믿음도 제거·지방 시군구·수도권 생활권·3개월 예측 반영(2026-11-05) - // 71: 낙찰가 모델 시세(est)에도 지역 가격 흐름 반영(est_rule_f, 2026-11-05) - // 70: 예상매도가에 지역 가격 흐름 반영(2026-11-05) - // 69: 시세 새 규칙(est_rule)·감정가 제외·최저가 유지(2026-11-04) - // 68: 감정가 제외 - // // 54: 튀는 가격 반영 안 함·경고만(2026-10-24) - // 53: 최근 거래 시세반영/튀는 가격 구별(2026-10-24) - // 52: 임장 생략 판정(2026-10-19) - // 51: 전세가율 구간 보정·위험 신호(2026-10-18) - // 50: 지방 최근 거래 비슷한 층 비중·1~2건은 12개월 원값(2026-10-18) - // 49: 근거 약함 경고를 판정 단계에서 다시 붙임 - // 48: 예상매도가-감정가 큰 차이 근거 약함 표시 - // 47: 다른 평형 환산이 같은 평형과 20% 넘게 다르면 섞지 않음 - // 46: 같은 동 추론(③④) 제거·거래 없는 단지는 기존 주변 비교 + 근거 약함(2026-10-18) - // 45: 회전율 구간별 보정 항상 적용(주간 갱신 표, 2026-10-17) - // 44: 추론에 최근 6개월 1~2건 포함 - // 43: 6개월 거래 부족 시 단계별 추론(2026-10-17) - // 42: 지역별 예상매도가(서울 최근3건·경기인천 반감1개월·지방 반감2개월)와 위험 여유(2026-10-17) - // 41: 아파트 예상매도가를 최근 6개월 같은 평형 거래의 최근가중 중위값으로(전국 백테스트, 2026-10-17) - // 40: 임차인 둘로 읽힌 경우 별개/같은 임차권(갱신·승계) 선택(2026-10-11) - // 39: 39: 임차권등기를 임차인으로 계산(전입·확정일자 기준)·경매신청인 전세권 안내(2026-10-11) - // 38: 38: 권리분석 날짜 선후 규칙 정리(전입 다음 날 0시·동순위 안분, 2026-10-11) - // 37: 37: 권리분석에 말소기준일보다 앞선 전세권·임차권 등 등기부 인수 권리 반영(2026-10-11) - // 36: 저가 아파트 순이익률 10% 추천가 규칙 되돌림(2026-10-11, 백테스트 손해 30~42%) - // 34: 33: 아파트 고층 보정 축소·저층 범위(2026-10-11) - // 29: nYear 저장 추가 - // 27: 🎲 예상 낙찰가용 시세(wbBase) 추가 (범위 표시는 화면에서 바로 계산 - 버전 변경 없음)
+var BOARD_BASE_VER = 104; /* 104: 규제지역(조정대상지역·투기과열지구) 판정을 주소로 고쳐 취득세·대출에 반영(2026-11-14) / 103: 6개월 최고가 상한 철회(사용자: 요구 전 방식으로, 2026-11-12) */
+var BOARD_CALC_VER = 109;  /* (허가구역 자료 재시도 2026-11-08) */ // 107: 낙찰가 모델에 단지 가격 흐름 요인(flowC)·큰 상승 단지 상방 꼬리 분포(resQF) 추가(2026-11-10) - // 106: 시세 근거 얇음(6개월 1~2건) 필요 마진은 칸 하위 10% 하방·주변 단지 대체 시세 후보 제외(2026-11-09) - 105: 지방 추천가 손해 줄이기(거래 0건 제외·큰 마진 경고·근거 두께별 필요 마진, 2026-11-08) - // 104: 유찰 4회 이상은 이슈 강한 의심 - 임장 후보에서 제외(2026-11-08) - // 103: 후보 최소 순이익 500만·이슈 강한 의심·낙찰 가능성 낮은 물건도 후보(2026-11-08) - // 102: 후보 확대(하위25% 필터 제거·최소 순이익은 보정 전 기준, 2026-11-08) - // 101: 임장 후보 낙찰 가능성 기준을 보정된 확률 척도로 환산(후보가 3건으로 줄던 문제, 2026-11-08) - // 100: (입찰자 수 모델에 생활권 흐름 요인 후보 추가 2026-11-08) (새 사건은 새로고침 없이 자동 계산 2026-11-08) 100: 낙찰 조건 표에 근거 두께(같은 평형 6개월 거래수) 차원 추가(서버 검증 통과 시, 2026-11-08) - // 99: 사용자 방침(결과가 비슷해도 시장 흐름을 따르는 근거식이 더 정확하면 적용) - 낙찰 가능성 보정·낙찰 조건 하위 25% 필터를 추천가 고르기에 다시 적용(2026-11-08) - // 98: 낙찰 가능성 보정은 표시에만, 예상매도가 최근 쏠림 자동 보정(서버 walk-forward 검증 통과 시, 2026-11-08) - // 97: (호가 모으기: 같은 이름 단지는 네이버 지번 주소로 먼저 좁힘 2026-11-08) 97: 낙찰 가능성 양방향 보정(서버 시간순 검증 통과 시, 추천가 고르기에도 사용, 2026-11-08) - // 96: 낙찰 조건 하위 25% 필터는 채점에서 효과 없어 뺌(지방 손해 31.3→31.4%, 2026-11-08) - // 95: 추천가는 낙찰 조건 하위 25% 지점에서도 손해가 안 나는 가격만(서버 검증 통과 시, 2026-11-08) - // 94: 추천가 고르기 순이익에 낙찰 조건 기대 변화 반영(서버 검증 통과 시, 2026-11-08) - // 93: 낙찰 조건 하방(입찰가가 시세에 가까울수록 위험 여유 가산, 서버 검증 통과 시, 2026-11-08) - // 92: 거래 드문 단지 고정 2% 가산을 실측값으로 대체(2026-11-08) - // 91: 낙찰가 기준 시세를 예상매도가(종합 평가·호가 상한)와 같게(2026-11-08) - // 90: 임차인 수 점검은 미상 점유자 제외 값도 인정(2026-11-08) - // 89: 이름 앞부분·보증금·전입·확정일이 같은 승계 중복 임차인 줄 합침(2026-11-08) - // 88: 호가 흐름 판정에 주변 단지 흐름 추가(2026-11-08) - // 87: 호가 흐름 지표를 실거래 흐름 먼저·경계는 단지 거래 흩어짐에 맞춤(2026-11-08) - // 86: 호가 흐름 지표 표시(참고용, 2026-11-08) - // 85: 호가 상한은 수리 상태로 거르지 않고 모든 호가 사용(2026-11-08) - // 84: 호가 상한은 층 구분(1~2층/탑층/중간층)별로만 비교(2026-11-08) - // 83: 가격 불안정은 같은 층대(1·2층/3층+) 최근 거래끼리만 비교(2026-11-08) - // 82: 아파트 낙찰가 모델 종합 평가 시세 기준(2026-11-07) - // 81: 아파트 예상매도가 종합 평가 보정(오차 5.5→4.0%, 2026-11-07) - // 80: 권리 위험 안전장치·입찰 제외(2026-11-07) - // 79: // 79: 추천가 낙찰 가능성 간격 보정 표시(2026-11-07) - // 78: // 78: 빌라 종합 평가 상한 제거·건물 3건 이상 포함(앱 실제 계산과 직접 채점 후, 2026-11-07) - // 77: 빌라 종합 평가 안전장치(지하 제외·앱 값 +15% 상한, 2026-11-07) - // 76: 수도권 빌라 종합 평가 값 적용(건물 3건 미만 단계, 2026-11-07) - // // 75: 거래 활발 단지 위험 여유를 최근 거래 흩어짐별 하방 표로(2026-11-06) - // 74: 위험 여유를 근거 두께별 실측 하방 표로(주간 갱신)·흐름 계수 주간 자동 선택(2026-11-06) - // 73: 감정가 기준 전부 제거(감정가 대비 경고·금액 점검·빌라 이슈·틈새 조건, 2026-11-06) - // 72: 시세 흐름 계수 올림·거래량 믿음도 제거·지방 시군구·수도권 생활권·3개월 예측 반영(2026-11-05) - // 71: 낙찰가 모델 시세(est)에도 지역 가격 흐름 반영(est_rule_f, 2026-11-05) - // 70: 예상매도가에 지역 가격 흐름 반영(2026-11-05) - // 69: 시세 새 규칙(est_rule)·감정가 제외·최저가 유지(2026-11-04) - // 68: 감정가 제외 - // // 54: 튀는 가격 반영 안 함·경고만(2026-10-24) - // 53: 최근 거래 시세반영/튀는 가격 구별(2026-10-24) - // 52: 임장 생략 판정(2026-10-19) - // 51: 전세가율 구간 보정·위험 신호(2026-10-18) - // 50: 지방 최근 거래 비슷한 층 비중·1~2건은 12개월 원값(2026-10-18) - // 49: 근거 약함 경고를 판정 단계에서 다시 붙임 - // 48: 예상매도가-감정가 큰 차이 근거 약함 표시 - // 47: 다른 평형 환산이 같은 평형과 20% 넘게 다르면 섞지 않음 - // 46: 같은 동 추론(③④) 제거·거래 없는 단지는 기존 주변 비교 + 근거 약함(2026-10-18) - // 45: 회전율 구간별 보정 항상 적용(주간 갱신 표, 2026-10-17) - // 44: 추론에 최근 6개월 1~2건 포함 - // 43: 6개월 거래 부족 시 단계별 추론(2026-10-17) - // 42: 지역별 예상매도가(서울 최근3건·경기인천 반감1개월·지방 반감2개월)와 위험 여유(2026-10-17) - // 41: 아파트 예상매도가를 최근 6개월 같은 평형 거래의 최근가중 중위값으로(전국 백테스트, 2026-10-17) - // 40: 임차인 둘로 읽힌 경우 별개/같은 임차권(갱신·승계) 선택(2026-10-11) - // 39: 39: 임차권등기를 임차인으로 계산(전입·확정일자 기준)·경매신청인 전세권 안내(2026-10-11) - // 38: 38: 권리분석 날짜 선후 규칙 정리(전입 다음 날 0시·동순위 안분, 2026-10-11) - // 37: 37: 권리분석에 말소기준일보다 앞선 전세권·임차권 등 등기부 인수 권리 반영(2026-10-11) - // 36: 저가 아파트 순이익률 10% 추천가 규칙 되돌림(2026-10-11, 백테스트 손해 30~42%) - // 34: 33: 아파트 고층 보정 축소·저층 범위(2026-10-11) - // 29: nYear 저장 추가 - // 27: 🎲 예상 낙찰가용 시세(wbBase) 추가 (범위 표시는 화면에서 바로 계산 - 버전 변경 없음)
 /* 2026-10-15(사용자: 입찰후보 로딩이 느림 - 원인 실측): 식별값 끝의 'P/F'(입찰일 지남 여부)가 한국 시각 자정에 바뀌어, 서버 미리 계산이 돈 뒤 어제 입찰이던 물건(하루 약 350건)이 전부 '다른 물건'이 돼
    지역 자료 86곳(곳당 9~13MB)을 새로 받아 다시 계산했음. 계산 결과는 입찰일 지남 여부와 무관하므로(날짜 표시는 열 때 다시 계산) 저장본의 P/F가 반대여도 같은 것으로 봄(flip). */
 function boardBaseSig(a, flip) {
@@ -22004,7 +22016,6 @@ function setBidBoardProgress(t) {
 }
 function setBidBoardFilter(key, val) {
     bidBoardState[key] = val;
-    if (key === 'permit' && val && !permitData) { try { setBidBoardProgress('허가구역(규제지역) 자료를 아직 못 받아서 이 필터가 적용되지 않아요 - 받는 대로 자동으로 반영돼요'); loadPermit(); } catch (e) {} }
     renderBidBoard();
     if (key === 'visit' && val !== 'go' && val !== 'villa') setTimeout(function() { try { finalizeStaleRows(); } catch (e) {} }, 50); // 패스·전체 목록을 열면 뒤로 미뤄 둔 나머지 계산을 이어서
     // 지난 입찰은 평소엔 계산하지 않음 - 보기를 켜면 그때 계산
@@ -22565,7 +22576,7 @@ function bidCostLines(row, opt) {   // opt(2026-11-10): 빌라 상세처럼 행�
     var a = row.a, type = row.type, sale = opt.sale != null ? opt.sale : row.sale, bid = opt.bid != null ? opt.bid : row.recBid;
     if (!sale || !bid) return null;
     var pyung = parseFloat(a.pyung) || 0, addr = a.addr || '', appraisal = parseInt(a.appraisal) || 0;
-    var rank = myHouseRankFor(a), adj = !!a.isAdjusted, cheap = effLocalCheap(a, sale);
+    var rank = myHouseRankFor(a), adj = adjOf(a), cheap = effLocalCheap(a, sale);
     var loan = calcRegionAwareLoan('dealer', addr, bid, appraisal, sale);
     var holdM = parseInt(a.holdMonths) || row.holdAuto || DEFAULT_INTEREST_HOLD_MONTHS;
     var repairAuto = calcRepairFee(type, pyung, opt.buildYear || a.buildYear || row.estBuildYear || null) || 0;
@@ -22929,7 +22940,7 @@ function villaCostHtml(row, ev, fmt) {
     try { cl = bidCostLines(row, { bid: pe.bid, sale: ve.est, buildYear: yr }); } catch (e) {}
     if (!cl) return '';
     var rep = effRepairFee(row.a, 'villa', row.pyung, yr), li = cl.lines.map(function(x) { if (/^수리비/.test(x[0])) return ['수리비' + (parseInt(row.a.repair) ? ' (직접 입력)' : ' (연식 기준)'), rep]; return x; }), cost = li.reduce(function(sum, x) { return sum + x[1]; }, 0);
-    var pre = ve.est - pe.bid - cost, tax = calcResaleIncomeTax('dealer', pre, 0, !!row.a.isAdjusted, myHouseRankFor(row.a)).totalTax, net = pre - tax;
+    var pre = ve.est - pe.bid - cost, tax = calcResaleIncomeTax('dealer', pre, 0, adjOf(row.a), myHouseRankFor(row.a)).totalTax, net = pre - tax;
     return '<div class="dr-sec"><h4>추천 입찰가로 샀을 때 (비용 반영)</h4><table>'
         + '<tr><td>예상매도가</td><td class="r">' + fmt(ve.est) + '</td></tr><tr><td>− 입찰가</td><td class="r">' + fmt(pe.bid) + '</td></tr>'
         + li.map(function(x) { return '<tr><td>− ' + x[0] + '</td><td class="r">' + toEok(String(x[1])) + '</td></tr>'; }).join('')
