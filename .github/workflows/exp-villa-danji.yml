@@ -1,0 +1,35 @@
+name: Exp villa danji
+on:
+  workflow_dispatch:
+    inputs:
+      df_run_id:
+        required: true
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install pandas numpy
+      - uses: actions/download-artifact@v4
+        with:
+          name: villa-df
+          path: input
+          run-id: ${{ inputs.df_run_id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+      - env:
+          PYTHONUNBUFFERED: '1'
+        run: set -o pipefail; python exp-villa-danji.py | tee danji-log.txt
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: villa-danji-test
+          path: |
+            villa-danji-test.json
+            danji-log.txt
