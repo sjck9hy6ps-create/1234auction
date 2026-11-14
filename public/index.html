@@ -3660,7 +3660,7 @@ function renderLocationLayer() {
     if (!locIndex) {
         if (locLoading) return;
         locLoading = true;
-        fetch('/location-index.json').then(function(r) { return r.json(); }).then(function(d) { locIndex = (d && d.types) ? d : { types: {}, empty: true }; locLoading = false; renderLocationLayer(); }).catch(function() { locLoading = false; locIndex = { types: {}, empty: true }; renderLocationLayer(); });
+        fetch('/location-index.json').then(function(r) { return r.json(); }).then(function(d) { locIndex = (d && d.types && d.ver >= 2) ? d : { types: {}, empty: true }; locLoading = false; renderLocationLayer(); }   // ver 2부터 점수=거래 활발도(예전 파일은 평당가라 쓰지 않음)).catch(function() { locLoading = false; locIndex = { types: {}, empty: true }; renderLocationLayer(); });
         if (note) note.textContent = '불러오는 중…';
         return;
     }
