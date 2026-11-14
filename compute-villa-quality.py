@@ -108,7 +108,9 @@ def score_rows(X):
     jrp = np.where(X["jr"].fillna(0) > 90, -10, 0)
     tot = np.clip(age + relp + elvp + flp + pkp + rkp + jrp, 0, 100)
     return tot, [age, relp, elvp, flp, pkp, rkp.values if hasattr(rkp, "values") else rkp, jrp]
+S = S.reset_index(drop=True)
 S["score"], comps = score_rows(S)
+for _i, _c in enumerate(comps): S[f"c{_i}"] = np.asarray(_c, dtype=float)
 S["nbk"] = S["sigungu_cd"].astype(str) + "|" + S["bjdong_cd"].astype(str)
 S["pct"] = S.groupby("nbk")["score"].rank(pct=True) * 100                       # 같은 법정동 건물 중 이 점수의 위치(높을수록 좋음)
 Sx = S.set_index(["sigungu_cd", "bjdong_cd", "bun", "ji"]); Sx = Sx[~Sx.index.duplicated()]
@@ -134,7 +136,7 @@ for a in auc:
                            "rel": int(round((r["rel"] if pd.notna(r["rel"]) else 0.5) * 100)), "elv": (int(bool(r["elv"])) if pd.notna(r["elv"]) else -1), "g": int(r["grnd"]) if pd.notna(r["grnd"]) else -1,
                            "pk": round(float(r["pk"] / r["hh"]), 2) if (pd.notna(r["pk"]) and r["hh"] and r["hh"] > 0) else -1,
                            "rk": int(round(r["rentRank"] * 100)) if pd.notna(r["rentRank"]) else -1, "jr": int(round(r["jr"])) if pd.notna(r["jr"]) else -1,
-                           "c": [int(round(float(np.asarray(c)[int(idx)]))) for c in comps]}
+                           "c": [int(round(float(S.at[int(idx), f"c{_i}"]))) for _i in range(len(comps))]}
 print(f"경매 빌라 {n_all}건 중 점수 계산 {len(items)}건, 건물 못 찾음 {miss}건")
 vals = np.array([v["t"] for v in items.values()]); print("동네 상위 % 분포 10/50/90:", np.percentile(vals, [10, 50, 90]).round(0) if len(vals) else None)
 out = {"generatedAt": pd.Timestamp.utcnow().isoformat(), "ver": 1, "scheme": ["연식", "동네 안 상대 연식", "승강기", "층수", "주차", "전월세 활발도", "전세가율"], "max": [30, 15, 15, 10, 5, 25, 0], "items": items}
