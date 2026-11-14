@@ -5,7 +5,9 @@
 import os, json, importlib.util
 import numpy as np, pandas as pd
 HERE = os.path.dirname(os.path.abspath(__file__))
-_s = importlib.util.spec_from_file_location("afv", os.path.join(HERE, "analyze-villa-factors.py")); afv = importlib.util.module_from_spec(_s); _s.loader.exec_module(afv)
+_src = open(os.path.join(HERE, "analyze-villa-factors.py"), encoding="utf-8").read().replace('bc:title_json->bcRat"', 'bc:title_json->bcRat,pk1:title_json->indrAutoUtcnt,pk2:title_json->oudrAutoUtcnt,pk3:title_json->indrMechUtcnt,pk4:title_json->oudrMechUtcnt,st:title_json->>strct,hs:title_json->hhldSum,hgt:title_json->heit"')
+assert "pk1:title_json" in _src
+afv = importlib.util.module_from_spec(importlib.util.spec_from_loader("afv", loader=None)); afv.__file__ = os.path.join(HERE, "analyze-villa-factors.py"); exec(compile(_src, "analyze-villa-factors.py", "exec"), afv.__dict__)
 bv = afv.bv; avm = afv.avm
 raw = avm.fetch_all_rows("villa_trades", cols="region,dong,danji,bunji,road_name,main_num,sub_num,price,size,floor,deal_date,dealing_type,build_year", extra_filter=f"&deal_date=gte.20230101{afv.METRO}")
 df = bv.prep(raw); print(f"빌라 거래 {len(df):,}건")
@@ -21,12 +23,20 @@ for alt in (k_leg, k_leg0):
     miss = cc2.isna(); cc2 = cc2.where(~miss, alt.map(cmap))
 df["sg"] = cc2.map(lambda x: x[0] if isinstance(x, tuple) else None); df["bj"] = cc2.map(lambda x: x[1] if isinstance(x, tuple) else None)
 bb = df["bunji"].map(afv.bunji_to_bunji); df["bun"] = bb.map(lambda x: x[0] if x else None); df["ji"] = bb.map(lambda x: x[1] if x else None)
+tf = avm.fetch_all_rows("transit_features", cols="cache_key,dist_subway_m", order_col="cache_key"); tmap = {r.cache_key: r.dist_subway_m for r in tf.itertuples() if pd.notna(r.dist_subway_m)}
+t2 = k_new.map(tmap)
+for alt in (k_leg, k_leg0):
+    t2 = t2.where(t2.notna(), alt.map(tmap))
+df["subm"] = t2
 B = afv.fetch_buildings()
 for c in ("elv", "emg", "grnd", "hh"): B[c] = pd.to_numeric(B[c], errors="coerce")
 B["apr"] = pd.to_numeric(B["apr"].astype(str).str[:4], errors="coerce")
 B["elvAny"] = (B["elv"].fillna(0) + B["emg"].fillna(0)) > 0
-B = B[B["purp"].astype(str).str.contains("다세대|연립", na=False) & B["apr"].between(1960, 2026)].copy()
-Bg = B.groupby(["sigungu_cd", "bjdong_cd", "bun", "ji"]).agg(elv=("elvAny", "max"), grnd=("grnd", "max"), hh=("hh", "max"), apr=("apr", "min")).reset_index()
+for c in ("pk1", "pk2", "pk3", "pk4", "plat", "tot", "vl", "bc", "hgt"): B[c] = pd.to_numeric(B[c], errors="coerce")
+print("대장 건물 용도 상위:", B["purp"].astype(str).value_counts().head(8).to_dict())
+B = B[B["purp"].astype(str).str.contains("공동주택|다세대|연립", na=False) & B["apr"].between(1960, 2026) & (B["hh"].fillna(0) <= 80) & (B["grnd"].fillna(0) <= 7)].copy()
+B["pk"] = B[["pk1", "pk2", "pk3", "pk4"]].fillna(0).sum(axis=1)
+Bg = B.groupby(["sigungu_cd", "bjdong_cd", "bun", "ji"]).agg(elv=("elvAny", "max"), grnd=("grnd", "max"), hh=("hh", "max"), apr=("apr", "min"), pk=("pk", "max"), plat=("plat", "max"), tot=("tot", "max"), vl=("vl", "max"), bc=("bc", "max"), st=("st", "first")).reset_index()
 print(f"연립·다세대 대장 건물 {len(Bg):,}곳")
 # 동네(법정동)별 상대 연식·승강기 비율
 Bg["nb"] = Bg["sigungu_cd"].astype(str) + "|" + Bg["bjdong_cd"].astype(str)
@@ -112,5 +122,37 @@ for k, G in Zh.groupby("shb", observed=True):
     a, b_ = G[G["elv"].astype(bool)], G[~G["elv"].astype(bool)]
     if len(a) >= 100 and len(b_) >= 100: ev2[str(k)] = {"승강기 있음": {"건물": int(len(a)), "연 회전율%": round(float(a["n"].sum() / a["hh"].sum() / 1.75 * 100), 2)}, "없음": {"건물": int(len(b_)), "연 회전율%": round(float(b_["n"].sum() / b_["hh"].sum() / 1.75 * 100), 2)}}
 out["elevatorTurnoverByNbShare"] = ev2
-print(json.dumps(out, ensure_ascii=False, indent=1))
-json.dump(out, open("villa-relative.json", "w", encoding="utf-8"), ensure_ascii=False, indent=1)
+
+# ④ 다른 인기 조건 후보: 층수·규모(세대수)·주차(세대당)·대지지분(대지면적/세대)·구조·역 거리·용적률 - 각각 같은 동·분기 대비 프리미엄과 추가 설명력(층·평형·절대연식·상대연식을 넣은 뒤 더해지는 R²)
+D["pkr"] = D["pk"] / D["hh"].replace(0, np.nan); D["landPer"] = D["plat"] / D["hh"].replace(0, np.nan)
+FEATS = {
+  "층수(지상)": pd.cut(D["grnd"], [0, 3, 4, 5, 20], labels=["3층 이하", "4층", "5층", "6층+"]),
+  "규모(세대수)": pd.cut(D["hh"], [0, 8, 16, 30, 80], labels=["8세대 이하", "9~16", "17~30", "31~80"]),
+  "주차(세대당 대수)": pd.cut(D["pkr"], [-.01, .3, .6, .9, 1.2, 10], labels=["0.3 이하", "0.3~0.6", "0.6~0.9", "0.9~1.2", "1.2 초과"]),
+  "대지 면적/세대(㎡)": pd.cut(D["landPer"], [0, 15, 25, 40, 70, 1000], labels=["15 이하", "15~25", "25~40", "40~70", "70 초과"]),
+  "용적률(%)": pd.cut(D["vl"], [0, 150, 200, 250, 1000], labels=["150 이하", "150~200", "200~250", "250 초과"]),
+  "역 거리(m)": pd.cut(D["subm"], [-1, 300, 600, 1000, 2000, 1e9], labels=["300 이내", "300~600", "600~1000", "1~2km", "2km 초과"]),
+  "구조": D["st"].astype(str).map(lambda x: "철근콘크리트" if "철근" in x else ("조적(벽돌·블록)" if ("조적" in x or "벽돌" in x or "블록" in x) else ("기타" if x not in ("None", "nan") else None))),
+}
+base_ex = ab + [D["rel"].values]; rB, _ = r2(D, base_ex); fres = {}
+for name, ser in FEATS.items():
+    ok = ser.notna().values
+    if ok.sum() < 20000: fres[name] = {"n": int(ok.sum()), "비고": "표본 부족"}; continue
+    X = D[ok].copy(); sr = ser[ok].astype(str); levels = [v for v in sorted(sr.unique())]
+    dum = [(sr == v).astype(float).values for v in levels[1:]]
+    r_b, _ = r2(X, [e[ok] if hasattr(e, "__len__") and len(e) == len(D) else e for e in base_ex]); r_f, _ = r2(X, [e[ok] for e in base_ex] + dum)
+    tab = X.assign(_f=sr.values).groupby("_f")["dev"].agg(["size", "median"]); tab = tab[tab["size"] >= 500]
+    fres[name] = {"n": int(ok.sum()), "추가 설명력(R2)": round(r_f - r_b, 4), "구간별 프리미엄%": {str(k): {"n": int(v["size"]), "premiumPct": round((float(np.exp(v["median"])) - 1) * 100, 1)} for k, v in tab.iterrows()}}
+out["otherFeatures_premium"] = fres
+out["baseR2_withAge"] = round(rB, 4)
+# 회전율(건물 단위, 대장 전체 건물): 같은 특성 구간별
+Z["pkr"] = Z["pk"] / Z["hh"].replace(0, np.nan); Z["landPer"] = Z["plat"] / Z["hh"].replace(0, np.nan)
+ZF = {"층수(지상)": pd.cut(Z["grnd"], [0, 3, 4, 5, 20], labels=["3층 이하", "4층", "5층", "6층+"]), "규모(세대수)": pd.cut(Z["hh"], [0, 8, 16, 30, 80], labels=["8세대 이하", "9~16", "17~30", "31~80"]),
+      "주차(세대당 대수)": pd.cut(Z["pkr"], [-.01, .3, .6, .9, 1.2, 10], labels=["0.3 이하", "0.3~0.6", "0.6~0.9", "0.9~1.2", "1.2 초과"]), "대지 면적/세대(㎡)": pd.cut(Z["landPer"], [0, 15, 25, 40, 70, 1000], labels=["15 이하", "15~25", "25~40", "40~70", "70 초과"]),
+      "용적률(%)": pd.cut(Z["vl"], [0, 150, 200, 250, 1000], labels=["150 이하", "150~200", "200~250", "250 초과"])}
+tres = {}
+for name, ser in ZF.items():
+    G = Z.assign(_f=ser).dropna(subset=["_f"]); tres[name] = {str(k): {"건물": int(len(H)), "연 회전율%": round(float(H["n"].sum() / H["hh"].sum() / 1.75 * 100), 2)} for k, H in G.groupby("_f", observed=True) if len(H) >= 300}
+out["otherFeatures_turnover"] = tres
+print(json.dumps(out, ensure_ascii=False, indent=1, default=str))
+json.dump(out, open("villa-relative.json", "w", encoding="utf-8"), ensure_ascii=False, indent=1, default=str)
