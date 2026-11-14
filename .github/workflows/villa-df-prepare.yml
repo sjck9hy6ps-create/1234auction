@@ -1,0 +1,28 @@
+# 빌라 거래 파일(villa-df)만 새로 만들어 보관(2026-11-14): 호가 분석용. 조각 계산 없이 prepare만(약 15~25분), 보관 30일
+name: Villa df prepare
+on:
+  workflow_dispatch:
+concurrency:
+  group: villa-df-prepare
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install pandas numpy requests scikit-learn scipy
+      - env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          FETCH_THREADS: '6'
+          MODE: prepare
+          PYTHONUNBUFFERED: '1'
+        run: python backtest-villa-data-scale.py | tee prepare-log.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: villa-df
+          path: villa-df.pkl
+          retention-days: 30
