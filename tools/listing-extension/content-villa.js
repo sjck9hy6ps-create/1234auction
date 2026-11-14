@@ -56,14 +56,14 @@
       toast('호가 읽는 중…');
       let sc = findScroller(); harvest(sc);
       let same = 0, last = items.size;
-      for (let i = 0; i < 60 && same < 3; i++) {
+      for (let i = 0; i < 100 && same < 5; i++) {   // 목록이 20건씩 늦게 이어 불러와지는 것을 기다림(0.7.5: 대기 1.3초·연속 5번 안 늘어야 중단)
         if (sc) sc.scrollTop += Math.max(300, sc.clientHeight * 0.9); else window.scrollBy(0, Math.max(300, window.innerHeight * 0.9));
-        await sleep(700);
+        await sleep(1300);
         if (!sc) sc = findScroller();
         harvest(sc); same = items.size === last ? same + 1 : 0; last = items.size;
       }
       if (!items.size) { toast('매매 호가를 못 찾았어요(목록이 보이는지 확인)', false); return; }
-      toast('보내는 중… (' + items.size + '건)');
+      toast('보내는 중… (' + items.size + '건' + (items.size <= 20 ? ' - 20건 이하면 목록 끝까지 안 내려졌을 수 있어요' : '') + ')');
       chrome.runtime.sendMessage({ type: 'sendVillaAsks', lat: m[0], lon: m[1], zoom: m[2] || null, enc: enc, url: location.href, items: [...items.values()] }, (res) => {
         if (!res || !res.ok) toast('❌ 보내기 실패' + (res && res.error ? ': ' + res.error : ''), false);
         else toast('✅ 저장됨: 호가 ' + res.n + '건', true);
