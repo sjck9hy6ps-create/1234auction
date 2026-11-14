@@ -2537,7 +2537,7 @@ def scorecard(D, amap):
         if not sn or not sn.get("recBid"):
             continue
         rows.append({"case": r.caseNo, "name": (r.bname if isinstance(r.bname, str) and r.bname.strip() and r.bname != "nan" else None) or x.get("name") or "", "region": r.region, "sale": int(r.sale), "actual": float(r.actual), "rec": float(sn["recBid"]),
-                     "prob": sn.get("prob"), "win": sn.get("win"), "minbid": float(r.minbid), "at": sn.get("at"), "snapMin": sn.get("minBid")})
+                     "prob": sn.get("prob"), "probC": sn.get("probC"), "win": sn.get("win"), "minbid": float(r.minbid), "at": sn.get("at"), "snapMin": sn.get("minBid")})
         rows[-1]["typ"] = str(x.get("propType") or x.get("type") or sn.get("type") or "?")
     out = {"n": len(rows)}
     if not rows:
@@ -2559,6 +2559,16 @@ def scorecard(D, amap):
         if len(G):
             cal.append({"label": lab, "n": int(len(G)), "predPct": round(float(G["prob"].mean()) * 100, 1), "actualPct": round(float(G["won"].mean()) * 100, 1)})
     out["calibration"] = cal
+    # 2026-11-14: 앱이 보정 후 확률(probC)을 저장하기 시작한 예측만 따로 채점(보정이 실제로 맞는지 새 예측으로 확인)
+    PC = X[X["probC"].notna()]
+    if len(PC) >= 1:
+        calc = []
+        for lo, hi, lab in bins:
+            G = PC[(PC["probC"] >= lo) & (PC["probC"] < hi)]
+            if len(G):
+                calc.append({"label": lab, "n": int(len(G)), "predPct": round(float(G["probC"].mean()) * 100, 1), "actualPct": round(float(G["won"].mean()) * 100, 1)})
+        out["calibrationC"] = {"n": int(len(PC)), "rows": calc, "brier": round(float(np.mean((np.clip(PC["probC"].values, 0.01, 0.99) - PC["won"].values.astype(float)) ** 2)), 4),
+                               "brierRaw": round(float(np.mean((np.clip(PC["prob"].values, 0.01, 0.99) - PC["won"].values.astype(float)) ** 2)), 4) if PC["prob"].notna().all() else None}
     # 조정 필요 신호: 구간 합계가 30건 이상이고 예측 평균과 실제 비율이 15%p 넘게 다르면
     tot = int(P["won"].count())
     gap = (float(P["won"].mean()) - float(P["prob"].mean())) * 100 if tot else 0
