@@ -29,8 +29,12 @@
   btn.onclick = async () => {
     btn.disabled = true;
     try {
-      const m = (new URL(location.href).searchParams.get('ms') || '').split(',').map(Number);
-      if (!(m[0] > 33 && m[1] > 124)) { toast('주소창에 ms=위도,경도 가 없어요', false); return; }
+      // 좌표 찾기: ① ms=위도,경도,확대(쉼표가 %2C로 바뀌어도 읽음) ② /map/위도:경도:확대 형태 ③ 주소 어디든 '33~39.x, 124~132.x' 숫자 쌍
+      const href = decodeURIComponent(location.href); let m = null, mm;
+      if ((mm = href.match(/[?&#]ms=(\d{2}\.\d+)[,:](\d{3}\.\d+)(?:[,:](\d+))?/))) m = [+mm[1], +mm[2], +(mm[3] || 0)];
+      else if ((mm = href.match(/\/map\/(\d{2}\.\d+):(\d{3}\.\d+)(?::(\d+))?/))) m = [+mm[1], +mm[2], +(mm[3] || 0)];
+      else if ((mm = href.match(/(3[3-9]\.\d{3,})[,:\/](12[4-9]\.\d{3,}|13[0-2]\.\d{3,})/))) m = [+mm[1], +mm[2], 0];
+      if (!m) { toast('좌표를 못 찾았어요 - 주소: ' + location.pathname + location.search.slice(0, 60), false); return; }
       toast('호가 읽는 중…');
       let sc = findScroller(); harvest(sc);
       let same = 0, last = items.size;
