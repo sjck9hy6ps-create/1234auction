@@ -20910,7 +20910,7 @@ function winbidFlowKeys(a, lawd, area, ref, e) {
    서버가 지역등급별 logit 보정(a,b)을 매주 맞추고 시간순 검증(늦은 절반 Brier)이 좋아질 때만 use - 위·아래 모두 보정. 저장·성적표는 원래 확률(probRecRaw) 그대로 */
 function probCalFor(row, p) {
     try {
-        var pc = winbidModel && winbidModel.probCal2, c = pc && pc.use && row && row.regionCls && pc.cls && pc.cls[row.regionCls];
+        var pc = winbidModel && winbidModel.probCal2, c = pc && pc.use && row && row.regionCls && pc.cls && (pc.cls[row.regionCls] || pc.cls['전체']);   // 2026-11-14: 자기 등급 보정이 없으면 전체(풀링) 보정
         if (!c || p == null || !isFinite(p)) return p;
         var q = Math.max(0.003, Math.min(0.997, p)), z = c.a + c.b * Math.log(q / (1 - q));
         return 1 / (1 + Math.exp(-z));
@@ -20970,7 +20970,7 @@ function winbidFor(row) {
     wb.probRec = row.recBid ? winbidProbAt(wb, row.recBid) : null;
     wb.probAggr = row.recAggr ? winbidProbAt(wb, row.recAggr) : null;
     wb.probRecRaw = wb.probRec;  // 저장·성적표용 원래 확률(보정 학습이 보정된 값을 다시 학습하지 않게)
-    var cal2On = !!(winbidModel && winbidModel.probCal2 && winbidModel.probCal2.use && row.regionCls && winbidModel.probCal2.cls && winbidModel.probCal2.cls[row.regionCls]);
+    var cal2On = !!(winbidModel && winbidModel.probCal2 && winbidModel.probCal2.use && row.regionCls && winbidModel.probCal2.cls && (winbidModel.probCal2.cls[row.regionCls] || winbidModel.probCal2.cls['전체']));
     if (cal2On) { wb.probRec = probCalFor(row, wb.probRec); wb.probAggr = probCalFor(row, wb.probAggr); wb.probCal2 = true; }
     /* 📉 추천가 낙찰 가능성 간격 보정(2026-11-07): 입찰 전 저장한 추천가 약 770건 시간순 검증에서 Brier 0.0853→0.0728. 예상 낙찰가(중간값)는 그대로 두고 '추천가로 낙찰될 가능성' 표시만 보정 - 서버가 매주 a·b를 갱신(probGapCal), 원래보다 낮을 때만 깎아 씀 */
     try {
