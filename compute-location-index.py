@@ -153,7 +153,7 @@ def run(kind, trades_table, cols, cutoff_old, cut_recent, cmap, tmap, kapt=None)
             for w in ("아파트", "단지", "마을"): x = x.replace(w, "")
             return x
         kg = {}
-        for r in kapt.itertuples(): kg.setdefault((r.region, r.dong), []).append((core(r._name_norm), r.households))
+        for rg_, dg_, nn_, hh_ in zip(kapt["region"], kapt["dong"], kapt["_name_norm"], kapt["households"]): kg.setdefault((rg_, dg_), []).append((core(nn_), hh_))
         un = R2[R2["households"].isna()][["region", "dong", "nm"]].drop_duplicates()
         fz = {}; nfz = 0
         for r in un.itertuples():
