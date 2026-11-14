@@ -41,6 +41,11 @@ def main():
         r = requests.get(f"{SB}/storage/v1/object/data/{f}", headers=HD, timeout=60)
         if r.ok: snaps.append(r.json())
     if not snaps: print("아직 쌓인 호가가 없어요"); json.dump({"snapshots": 0}, open("villa-asks-report.json", "w")); return
+    for s in snaps:   # 받은 호가 요약(거래 자료 없이도 출력)
+        its = [parse_item(b) for b in s["items"]]; ok = [x for x in its if x and x["price"] and x["area"]]
+        print("스냅샷", s["at"], "중심", round(s["lat"], 5), round(s["lon"], 5), "줄", s["n"], "해석됨", len(ok), "암호", s.get("enc"), "| 가격 중앙(만원)", int(np.median([x["price"] for x in ok])) if ok else None, "면적 중앙", np.median([x["area"] for x in ok]) if ok else None, flush=True)
+        print("   예시:", s["items"][0].replace("\n", " / ")[:200], flush=True)
+    if not os.path.exists(os.environ.get("DF_FILE", "input/villa-df.pkl")): print("거래 자료 파일이 없어 비교는 건너뜀(villa-data-scale 재실행 필요)"); json.dump({"snapshots": len(snaps)}, open("villa-asks-report.json", "w")); return
     df = pd.read_pickle(os.environ.get("DF_FILE", "input/villa-df.pkl")); df = df[df["lat"].notna() & (df["size"] > 0)].copy()
     KM = 111.0 * np.cos(np.radians(37.5)); tree = cKDTree(np.c_[df["lat"].values * 111.0, df["lon"].values * KM])
     day0 = pd.Timestamp("2020-01-01"); ddate = (day0 + pd.to_timedelta(df["day"].values, unit="D")).values
