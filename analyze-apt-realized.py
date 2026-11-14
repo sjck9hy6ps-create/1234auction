@@ -30,7 +30,7 @@ for r in rows:
     m = g[(g["dt"] > sd) & (g["dt"] <= sd + pd.Timedelta(days=180)) & ((g["size"] - area).abs() <= 3)]
     if len(m) < 1: continue
     ref = float(np.median(m["ppm"].values)) * area
-    out.append({"id": r["id"], "sale": r["saleFinal"], "ref": ref, "n": int(len(m)), "act": r["act"], "rec": r.get("rec"), "margin": r.get("margin"), "verdict": r.get("verdict"), "mkt": r.get("mkt"), "saleDate": c["saleDate"], "minB": r.get("minB"), "probRec": r.get("probRec")})
+    out.append({"id": r["id"], "sale": r["saleFinal"], "ref": ref, "n": int(len(m)), "act": r["act"], "rec": r.get("rec"), "margin": r.get("margin"), "verdict": r.get("verdict"), "mkt": r.get("mkt"), "saleDate": c["saleDate"], "minB": r.get("minB"), "probRec": r.get("probRec"), "nd": r.get("nd"), "ndLoaded": r.get("ndLoaded"), "ndLat": r.get("ndLat"), "ndSale": r.get("ndSale"), "ndMin": r.get("ndMin"), "lawd": r.get("lawd")})
 print("대리값 있는 사례", len(out), flush=True)
 O = pd.DataFrame(out)
 def err(X): e = X["sale"] / X["ref"] - 1; a = e.abs(); return {"n": int(len(X)), "오차중앙%": round(float(a.median()) * 100, 1), "쏠림중앙%": round(float(e.median()) * 100, 1), "±10%": round(float((a <= .1).mean()) * 100, 1), "높게10%+": round(float((e > .1).mean()) * 100, 1)}
@@ -54,5 +54,12 @@ for h in (0, 0.02, 0.04, 0.06, 0.08, 0.10):
         if bid > r.act: tot += r.margin - (r.sale - r.ref) - (bid - r.rec) * 1.02; w += 1
     sim[f"보수 {int(h * 100)}%"] = {"낙찰률%": round(w / len(A) * 100, 1), "시도당 실현 기대 순이익(만)": round(tot / len(A))}
 res["일괄 보수화 시뮬레이션(추천가 있는 사례)"] = sim
+# nodata 원인 분류(2026-11-14): 판정이 안 난 사례가 왜 그런지, 원인별 좋은 물건 비율(낙찰가로 샀다면 실현 2,000만+)
+ND = O[O["verdict"] == "nodata"].copy()
+if len(ND):
+    ND["good"] = (ND["margin"].fillna(0) + (ND["rec"].fillna(ND["act"]) - ND["act"]) * 1.02 - (ND["sale"] - ND["ref"])) >= 2000
+    ND["원인"] = ND["nd"].fillna("(원인 없음)").astype(str).str.slice(0, 40)
+    res["nodata 원인별"] = {k: {"건수": int(len(g)), "좋은 물건 %": round(float(g["good"].mean()) * 100, 1), "지역자료 로딩됨 %": round(float(g["ndLoaded"].fillna(False).astype(bool).mean()) * 100, 1), "좌표 있음 %": round(float(g["ndLat"].fillna(False).astype(bool).mean()) * 100, 1), "예상매도가 있음 %": round(float(g["ndSale"].fillna(False).astype(bool).mean()) * 100, 1), "추천가 있음 %": round(float(g["rec"].notna().mean()) * 100, 1)} for k, g in ND.groupby("원인")}
+    res["nodata 지역별(상위)"] = {str(k): {"건수": int(len(g)), "좋은 물건 %": round(float(g["good"].mean()) * 100, 1)} for k, g in ND.groupby(ND["lawd"].astype(str).str.slice(0, 2)) if len(g) >= 20}
 print(json.dumps(res, ensure_ascii=False, indent=1, default=str)); json.dump(res, open("apt-realized.json", "w"), ensure_ascii=False, indent=1, default=str)
 O.to_json("apt-realized-rows.json", orient="records", force_ascii=False)
