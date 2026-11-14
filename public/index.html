@@ -29964,6 +29964,17 @@ async function remindReportAck() {
     renderRemindUi();
 }
 // 예상 낙찰가 개선안 확인 알림(2026-10-25 사용자 요청: 개선안을 다음 주 알림에 확인용으로) - 확인했다고 누르면 다시 안 뜸
+var hhMatchData = null;
+function loadHhMatch() { fetch('/location-match.json?t=' + Math.floor(Date.now() / 3600000)).then(function(r) { return r.ok ? r.json() : null; }).then(function(d) { if (d && d.generatedAt) { hhMatchData = d; try { renderRemindUi(); } catch (e) {} } }).catch(function() {}); }
+setTimeout(loadHhMatch, 6000);
+async function remindHhAck() {
+    try {
+        if (!hhMatchData) return;
+        var prof = Object.assign({ id: 'profile', year: new Date().getFullYear() }, myAssets.profile || {});
+        prof.hhMatchSeen = String(hhMatchData.generatedAt).slice(0, 10);
+        await saveMyAssetItem(prof);
+    } catch (e) {}
+}
 async function remindImproveAck() {
     try {
         var wr = weeklyReportData; if (!wr) return;
@@ -30100,6 +30111,16 @@ function computeReminders() {
                 sub: '이번 주: 보통 오차 현재 ' + c0.medAbsErrPct + '% → 개선안 ' + c1.medAbsErrPct + '% (' + (dErr > 0 ? '+' : '') + dErr + '%p) · 10% 이내 ' + c0.within10Pct + '% → ' + c1.within10Pct + '%'
                     + '\n지난주(10/27 리포트)는 5.45% → 5.11%였어요. 몇 주 연속 같은 방향이면 앱에 반영(시세 기준을 새 규칙으로, 최근 사례 가중, 유찰별 오차 폭)할지 정해 주세요. 지금은 리포트에서만 비교 중이라 앱 계산은 그대로예요.',
                 btn: '📊 개선안 보기', act: 'openWeeklyReport();setTimeout(function(){wrTab(\'wsc\')},900);remindImproveAck()', weeklyAck: true });
+        }
+    } catch (e) {}
+    // ⑧c 아파트 세대수(회전율) 연결 결과 알림(2026-11-14 사용자 요청: 다음 주 리포트에 매칭 결과를 알람으로) - 건축물대장 재조회가 끝난 뒤(11/17 새벽) 입지 지수 주간 계산 결과를 보여줌
+    try {
+        var hm = hhMatchData;
+        if (hm && hm.generatedAt && myAssets && myAssets.loaded && String(hm.generatedAt).slice(0, 10) >= '2026-11-17' && ((myAssets.profile || {}).hhMatchSeen || '') < String(hm.generatedAt).slice(0, 10)) {
+            out.push({ key: 'hh-match-' + String(hm.generatedAt).slice(0, 10), pri: 1, icon: '🏢', title: '아파트 세대수(회전율) 연결 결과가 나왔어요',
+                sub: '최근 12개월 아파트 거래 중 세대수를 아는 비율 ' + hm.covered + '% (11/14: 76.4%, 처음 34.2%) · 회전율을 계산할 수 있는 칸 ' + (hm.gridsOk || 0).toLocaleString() + '/' + (hm.gridsAll || 0).toLocaleString() + '칸'
+                    + '\n건축물대장 재조회(하루 4,000건씩, 약 1.4만 곳)가 11/17에 끝나서 이 숫자가 최종이에요. 입지 TOP10과 경매 상세의 회전율에 같이 쓰여요.',
+                btn: '✓ 확인', act: 'remindHhAck()', weeklyAck: true });
         }
     } catch (e) {}
     // ⑥ 주기적으로 하는 일(매월·분기·매년) - "완료"를 누르면 그 기간엔 다시 안 뜸(내 자산 저장소에 기록 → 맥북·아이패드 같이)

@@ -227,8 +227,9 @@ def run(kind, trades_table, cols, cutoff_old, cut_recent, cmap, tmap, kapt=None,
         g["turn"] = np.where(g["kh"] > 0, g["kt"] / g["kh"].clip(lower=1) * 100, np.nan)    # 연간 회전율 %
         ok = g["turn"].notna() & (g["kh"] >= MIN_HH) & (g["cov"] >= MIN_COV)
         print(f"[{kind}] 회전율 계산 가능 격자 {int(ok.sum()):,}/{len(g):,} (세대수 합 {MIN_HH}세대 이상·세대수 아는 거래 {MIN_COV:.0f}% 이상) · 회전율 분포 10/50/90%: {np.percentile(g.loc[ok, 'turn'], [10, 50, 90]).round(1)}")
+        grids_all = int(len(g)); grids_ok = int(ok.sum())
         g = g[ok].copy(); g["pct"] = g["turn"].rank(pct=True) * 100
-        extra = {"metric": "turnover", "minHouseholds": MIN_HH, "minCoverage": MIN_COV, "covered": round(float(known.mean()) * 100, 1)}
+        extra = {"metric": "turnover", "minHouseholds": MIN_HH, "minCoverage": MIN_COV, "covered": round(float(known.mean()) * 100, 1), "gridsAll": grids_all, "gridsOk": grids_ok, "tradesAll": int(len(R2)), "tradesKnown": int(known.sum())}
     meta.update({"k": round(float(k), 2), "격자 안 분산": round(sw2, 4), "격자 간 분산": round(sb2, 4), "격자 수": int(len(g)), "거래 수": int(len(rec))})
     print(f"[{kind}] 격자 {len(g):,}곳, k={k:.2f}, 평당 기준가 분포(만원) 10/50/90%: {np.percentile(g['ppy'], [10, 50, 90]).round(0)}")
     if extra:
@@ -271,6 +272,11 @@ def main():
         out["types"][kind] = {"cells": cells, "meta": meta}
     txt = json.dumps(out, ensure_ascii=False, separators=(",", ":"))
     open("location-index.json", "w", encoding="utf-8").write(txt)
+    # 아파트 세대수 연결 결과 요약(앱 알림이 읽는 작은 파일)
+    try:
+        am = out["types"]["apt"]["meta"]
+        open("location-match.json", "w", encoding="utf-8").write(json.dumps({"generatedAt": out["generatedAt"], "covered": am.get("covered"), "gridsAll": am.get("gridsAll"), "gridsOk": am.get("gridsOk"), "tradesAll": am.get("tradesAll"), "tradesKnown": am.get("tradesKnown")}, ensure_ascii=False))
+    except Exception as e: print("연결 결과 요약 저장 실패:", e)
     print(f"location-index.json {len(txt) / 1e6:.2f}MB")
 
 

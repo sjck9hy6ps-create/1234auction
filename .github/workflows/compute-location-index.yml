@@ -27,13 +27,14 @@ jobs:
           name: location-index
           path: |
             location-index.json
+            location-match.json
             location-log.txt
           if-no-files-found: ignore
           retention-days: 30
       - name: 저장소에 반영
         run: |
           test -s location-index.json || exit 1
-          cp location-index.json public/location-index.json
+          cp location-index.json public/location-index.json; test -s location-match.json && cp location-match.json public/location-match.json
           git config user.name "github-actions"; git config user.email "actions@github.com"
-          git add public/location-index.json
+          git add public/location-index.json public/location-match.json
           git diff --cached --quiet || (git commit -m "입지 지수 갱신" && git pull --rebase -q && git push)
