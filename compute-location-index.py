@@ -49,7 +49,7 @@ def classes(df, kind):
     return sz, ag, fc
 
 
-def run(kind, trades_table, cols, cutoff_old, cut_recent, cmap, tmap):
+def run(kind, trades_table, cols, cutoff_old, cut_recent, cmap, tmap, kapt=None):
     raw = avm.fetch_all_rows(trades_table, cols=cols, extra_filter=f"&deal_date=gte.{cutoff_old}")
     df = raw.copy()
     if "cdeal_type" in df.columns: df = df[df["cdeal_type"].fillna("").astype(str).str.strip() == ""]
@@ -141,9 +141,41 @@ def run(kind, trades_table, cols, cutoff_old, cut_recent, cmap, tmap):
     # 2026-11-14(사용자: 평단가 말고 거래가 얼마나 잘 이루어지는지로 입지 순위) - 점수 = 이 격자와 둘레 8격자(약 1km)의 최근 12개월 거래 건수 합
     g["act"] = [sum(nall.get((gi + di, gj + dj), 0) for di in (-1, 0, 1) for dj in (-1, 0, 1)) for gi, gj in zip(g["gi"], g["gj"])]
     g["pct"] = g["act"].rank(pct=True) * 100
+    extra = {}
+    if kind == "apt" and kapt is not None:
+        # 2026-11-14(사용자: 아파트는 회전율) - 점수 = (이 격자+둘레 8격자의 최근 12개월 거래 합계) ÷ (그 안 단지들 세대수 합계). 세대수(K-apt)를 아는 단지만 분자·분모에 넣음
+        R2 = rec.copy(); R2["nm"] = R2["danji"].map(avm.normalize_complex_name)
+        R2 = R2.merge(kapt.rename(columns={"dong": "dong", "_name_norm": "nm"})[["region", "dong", "nm", "households"]], on=["region", "dong", "nm"], how="left")
+        known = R2["households"].notna() & (R2["households"] > 0)
+        print(f"[{kind}] 최근 12개월 거래 {len(R2):,}건 중 세대수 아는 단지 거래 {int(known.sum()):,}건 ({known.mean() * 100:.1f}%)")
+        K = R2[known].copy(); K["cid"] = K["region"] + "|" + K["dong"].astype(str) + "|" + K["nm"]
+        cx = K.groupby("cid").agg(t=("lat", "size"), hh=("households", "first"), lat=("lat", "mean"), lon=("lon", "mean")).reset_index()
+        cx["gi"] = np.floor(cx["lat"] / LAT_STEP).astype(int); cx["gj"] = np.floor(cx["lon"] / LON_STEP).astype(int)
+        cg = cx.groupby(["gi", "gj"]).agg(t=("t", "sum"), hh=("hh", "sum")).to_dict("index")
+        def nb(gi, gj):
+            t = h = 0
+            for di in (-1, 0, 1):
+                for dj in (-1, 0, 1):
+                    v = cg.get((gi + di, gj + dj))
+                    if v: t += v["t"]; h += v["hh"]
+            return t, h
+        res = [nb(a, b) for a, b in zip(g["gi"], g["gj"])]
+        g["kt"] = [r[0] for r in res]; g["kh"] = [r[1] for r in res]
+        g["cov"] = np.where(g["act"] > 0, g["kt"] / g["act"].clip(lower=1) * 100, 0)
+        MIN_HH, MIN_COV = 500, 50.0
+        g["turn"] = np.where(g["kh"] > 0, g["kt"] / g["kh"].clip(lower=1) * 100, np.nan)    # 연간 회전율 %
+        ok = g["turn"].notna() & (g["kh"] >= MIN_HH) & (g["cov"] >= MIN_COV)
+        print(f"[{kind}] 회전율 계산 가능 격자 {int(ok.sum()):,}/{len(g):,} (세대수 합 {MIN_HH}세대 이상·세대수 아는 거래 {MIN_COV:.0f}% 이상) · 회전율 분포 10/50/90%: {np.percentile(g.loc[ok, 'turn'], [10, 50, 90]).round(1)}")
+        g = g[ok].copy(); g["pct"] = g["turn"].rank(pct=True) * 100
+        extra = {"metric": "turnover", "minHouseholds": MIN_HH, "minCoverage": MIN_COV, "covered": round(float(known.mean()) * 100, 1)}
     meta.update({"k": round(float(k), 2), "격자 안 분산": round(sw2, 4), "격자 간 분산": round(sb2, 4), "격자 수": int(len(g)), "거래 수": int(len(rec))})
     print(f"[{kind}] 격자 {len(g):,}곳, k={k:.2f}, 평당 기준가 분포(만원) 10/50/90%: {np.percentile(g['ppy'], [10, 50, 90]).round(0)}")
-    cells = [[int(round(r.lat * 1e4)), int(round(r.lon * 1e4)), int(r.act), int(r.n), (int(r.sub) if pd.notna(r.sub) else -1), int(round(r.pct)), int(round(r.ppy))] for r in g.itertuples()]
+    if extra:
+        cells = [[int(round(r.lat * 1e4)), int(round(r.lon * 1e4)), int(round(r.turn * 10)), int(r.n), (int(r.sub) if pd.notna(r.sub) else -1), int(round(r.pct)), int(round(r.ppy)), int(r.kt), int(r.kh), int(round(r.cov))] for r in g.itertuples()]
+        meta.update(extra)
+    else:
+        cells = [[int(round(r.lat * 1e4)), int(round(r.lon * 1e4)), int(r.act), int(r.n), (int(r.sub) if pd.notna(r.sub) else -1), int(round(r.pct)), int(round(r.ppy))] for r in g.itertuples()]
+        meta["metric"] = "trades"
     return cells, meta
 
 
@@ -155,10 +187,11 @@ def main():
     tf = avm.fetch_all_rows("transit_features", cols="cache_key,dist_subway_m", order_col="cache_key")
     tmap = {r.cache_key: r.dist_subway_m for r in tf.itertuples() if pd.notna(r.dist_subway_m)}
     print(f"좌표 {len(cmap):,}건, 역거리 {len(tmap):,}건")
-    out = {"generatedAt": now.isoformat(), "ver": 2, "step": [LAT_STEP, LON_STEP], "note": "cells=[위도*1e4, 경도*1e4, 거래 활발도(이 격자+둘레 8격자 약 1km의 최근 12개월 거래 건수), 이 격자 거래 수, 지하철m(-1 없음), 전국 백분위(활발도), 기준 물건 평당가(만원, 참고)]", "types": {}}
+    kapt = avm.build_kapt_lookup()
+    out = {"generatedAt": now.isoformat(), "ver": 3, "step": [LAT_STEP, LON_STEP], "note": "cells=[위도*1e4, 경도*1e4, 거래 활발도(이 격자+둘레 8격자 약 1km의 최근 12개월 거래 건수), 이 격자 거래 수, 지하철m(-1 없음), 전국 백분위(활발도), 기준 물건 평당가(만원, 참고)]", "types": {}}
     for kind, table, cols in (("apt", "house_trades", "region,dong,danji,bunji,road_name,main_num,sub_num,price,size,floor,deal_date,dealing_type,build_year,cdeal_type"),
                               ("villa", "villa_trades", "region,dong,danji,bunji,road_name,main_num,sub_num,price,size,floor,deal_date,dealing_type,build_year")):
-        cells, meta = run(kind, table, cols, cutoff_old, cut_recent, cmap, tmap)
+        cells, meta = run(kind, table, cols, cutoff_old, cut_recent, cmap, tmap, kapt if kind == 'apt' else None)
         out["types"][kind] = {"cells": cells, "meta": meta}
     txt = json.dumps(out, ensure_ascii=False, separators=(",", ":"))
     open("location-index.json", "w", encoding="utf-8").write(txt)
