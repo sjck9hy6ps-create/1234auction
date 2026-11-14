@@ -2143,6 +2143,7 @@ body.ui2 #auction-modal.am4 { width:620px; }
         <div id="bid-target-notice" style="display:none;background:#fffde7;border:1px solid #fdd835;border-radius:6px;padding:8px 10px;margin-bottom:8px;font-size:11px;color:#f57f17;font-weight:bold;">
             📋 입찰예정물건 일괄등록으로 가볍게 등록된 물건입니다. 정보를 확인하고 저장하면 일반 물건(🔨)으로 전환됩니다.
         </div>
+        <div id="cur-calc-summary" style="display:none;background:#f0f7ff;border:1px solid #bcd6f7;border-radius:8px;padding:10px 12px;margin-bottom:10px;font-size:12.5px;"></div>
         <div class="modal-section">
             <div class="modal-section-title">🤖 AI 자동 채우기</div>
             <textarea class="modal-input" id="a-paste-text" rows="4"
@@ -12440,6 +12441,32 @@ function openAuctionModal(id) {
 // 2026-10(사용자: "입찰후보 → 물건 거래내역 → 상세를 닫으면 첫 화면이 아니라 거래내역 화면이 유지되게"):
 // 입찰후보에서 상세를 열 때 돌아올 곳(열려 있던 물건 창)을 기억했다가, 상세를 닫으면 입찰후보와 그 창을 다시 엶
 var bbReturnAfterModal = null;
+/* 📌 입찰후보 물건의 경매 상세 창(📋 입력·권리 체크) - 2026-11-14(사용자: 상세 버튼 내용이 예전 사항, 예전 기록은 지워줘):
+   입찰후보 판정에 쓰는 현재 계산(추천가·필요 마진=예상 순이익·예상매도가·낙찰 가능성)만 위에 보여주고, 예전 방식 블록(목표마진 2,000만·적정입찰가·전세가율 기반 매도가·🔧 상세 도구)은 화면에서 숨김.
+   숨긴 칸들은 다른 계산 함수가 값을 읽고 쓰므로 코드(DOM)는 남김. 입찰후보 계산에 없는 물건(오피스텔·직접 등록 등)은 예전 화면 그대로. */
+function renderCurCalcSummary(id) {
+    var box = document.getElementById('cur-calc-summary'), g1 = document.getElementById('mg-estimate'), g2 = document.getElementById('mg-estimate-detail');
+    if (!box) return;
+    var row = null; try { row = id ? (bidBoardRows || []).filter(function(r) { return r.a && String(r.a.id) === String(id) && !r.pending; })[0] : null; } catch (e) { row = null; }
+    var rec = null, net = null, sale = null, margin = null, p = null, verdict = '';
+    if (row && row.type === 'apt' && row.pick && row.pick.ev) { rec = row.recBid; net = row.pick.ev.net; sale = row.sale; margin = row.margin; p = row.pick.ev.p; verdict = row.visit && row.visit.go ? '🚶 임장 후보' : ('후보 아님 - ' + String((row.visit && row.visit.why) || '').slice(0, 70)); }
+    else if (row && row.type === 'villa' && row._vev && !row._vev.pending && row._vev.pn && row._vev.pn.ev) { var e = row._vev; rec = e.pn.ev.bid; net = e.pn.ev.net; sale = e.ve && e.ve.est; margin = e.mp && e.mp.margin; p = e.pn.ev.p; verdict = e.visit && e.visit.go ? '🚶 임장 후보' : ('후보 아님 - ' + String((e.visit && e.visit.why) || '').slice(0, 70)); }
+    else if (row && row.visit && !row.visit.go) { verdict = '후보 아님 - ' + String(row.visit.why || '').slice(0, 80); }
+    if (!row) { box.style.display = 'none'; if (g1) g1.style.display = ''; if (g2) g2.style.display = ''; return; }
+    var f = function(v) { return v != null && !isNaN(v) ? toEok(String(Math.round(v))) : '-'; };
+    box.style.display = '';
+    box.innerHTML = '<div style="font-weight:700;margin-bottom:5px;">📌 현재 계산 (입찰후보 기준) <span style="font-weight:400;color:#6b7280;font-size:11px;">' + bbEsc(verdict) + '</span></div>'
+        + '<table style="width:100%;font-size:12.5px;"><tr><td>추천 입찰가</td><td style="text-align:right;"><b>' + f(rec) + '</b></td></tr>'
+        + '<tr><td>예상 순이익 (추천가에 낙찰 시, 세후)</td><td style="text-align:right;"><b>' + f(net) + '</b></td></tr>'
+        + '<tr><td>필요 마진 (최소 500만 + 위험 여유)</td><td style="text-align:right;">' + f(margin) + '</td></tr>'
+        + '<tr><td>예상 매도가</td><td style="text-align:right;">' + f(sale) + '</td></tr>'
+        + '<tr><td>낙찰 가능성 (추천가)</td><td style="text-align:right;">' + (p != null ? Math.round(p * 100) + '%' : '-') + '</td></tr>'
+        + '<tr><td>규제지역</td><td style="text-align:right;">' + (adjOf(row.a) ? '🔶 해당 (취득세 중과·LTV 40%)' : '비해당') + '</td></tr></table>'
+        + '<div style="font-size:10.5px;color:#6b7280;margin-top:5px;">금액을 바꾸려면 입찰후보 상세 창의 "직접 확인한 금액"(인수금액·수리비 등)을 입력하세요. 예전 방식(목표마진 2,000만·적정입찰가·전세가율 매도가)은 판정에 쓰이지 않아 이 화면에서 뺐어요.</div>';
+    if (g1) g1.style.display = 'none'; if (g2) g2.style.display = 'none';
+}
+(function() { var _oam = openAuctionModal; openAuctionModal = function(id) { var r = _oam.apply(this, arguments); try { renderCurCalcSummary(id); } catch (e) {} return r; }; })();
+
 function bbOpenDetail(id) {
     bbReturnAfterModal = { drawerId: bidDrawerId };
     closeBidBoard();
@@ -22803,7 +22830,7 @@ async function renderBidDrawer() {
     var fmt = function(x) { return x ? toEok(String(Math.round(x))) : '-'; };
     // 2026-10(사용자: "목록 옆 좁은 창 안에 지도/상세 버튼") - 맨 위 이름 옆에 바로 보이게
     var h = '<div class="dr-h"><h3>' + favStar(a, idJs) + bbEsc(row.name) + (a.caseNo ? ' <span style="font-size:12px;font-weight:normal;color:#6b7280;">· ' + bbEsc(a.caseNo) + '</span>' : '') + '</h3><button class="dr-x" onclick="closeBidDrawer()">✕</button></div>'
-        + '<div class="dr-top-btns"><button onclick="bidBoardGo(\'' + idJs + '\')">🗺️ 지도</button><button onclick="bbOpenDetail(\'' + idJs + '\')">📝 상세</button><button onclick="openCyclePanel()">📈 사이클</button></div>' + bidExclBoxHtml(row, idJs) + rightsStopBannerHtml(row)
+        + '<div class="dr-top-btns"><button onclick="bidBoardGo(\'' + idJs + '\')">🗺️ 지도</button><button onclick="bbOpenDetail(\'' + idJs + '\')">📋 입력·권리 체크</button><button onclick="openCyclePanel()">📈 사이클</button></div>' + bidExclBoxHtml(row, idJs) + rightsStopBannerHtml(row)
         + '<div class="dr-sub">' + bbEsc(row.region) + ' · ' + (row.pyung ? row.pyung + '평' + (row.type === 'apt' && sizeBandOf(row.pyung) ? '(' + sizeBandOf(row.pyung) + ' ' + Math.round(row.pyung * 3.305785) + '㎡)' : '') + ' · ' : '') + (row.floor ? row.floor + '층 · ' : '') + bbEsc(a.caseNo || '') + (row.dday ? ' · <b>' + row.dday.label + '</b> (' + bbEsc(a.bidDate) + ')' : '') + '</div>'
         + '<div style="margin-top:6px;"><span class="bb-verdict" style="color:' + v.color + ';background:' + v.bg + ';">' + v.label + '</span>'
         + (row.sweet ? ' <span class="bb-pill" style="background:#e8f5e9;color:#2e7d32;">👍 입찰 추천 구간</span>' : '') + (row.overshoot ? ' <span class="bb-pill" style="background:#fff3e0;color:#e65100;">⚠️ 손해 주의</span>' : '') + (row.bulk ? ' <span class="bb-pill" style="background:#fee2e2;color:#b91c1c;">🏢 대량 경매 ' + row.bulkN + '건</span>' : '')
@@ -23068,7 +23095,7 @@ async function renderVillaDrawer(d, row) {
     var fmt = function(x) { return x ? toEok(String(Math.round(x))) : '-'; };
     var go = ev.visit.go, pe = pn && pn.ev;
     var h = '<div class="dr-h"><h3>' + favStar(a, idJs) + bbEsc(villaNameFor(row)) + (a.caseNo ? ' <span style="font-size:12px;font-weight:normal;color:#6b7280;">· ' + bbEsc(a.caseNo) + '</span>' : '') + '</h3><button class="dr-x" onclick="closeBidDrawer()">✕</button></div>'
-        + '<div class="dr-top-btns"><button onclick="bidBoardGo(\'' + idJs + '\')">🗺️ 지도</button><button onclick="bbOpenDetail(\'' + idJs + '\')">📝 상세</button><button onclick="openCyclePanel()">📈 사이클</button></div>' + bidExclBoxHtml(row, idJs) + rightsStopBannerHtml(row)
+        + '<div class="dr-top-btns"><button onclick="bidBoardGo(\'' + idJs + '\')">🗺️ 지도</button><button onclick="bbOpenDetail(\'' + idJs + '\')">📋 입력·권리 체크</button><button onclick="openCyclePanel()">📈 사이클</button></div>' + bidExclBoxHtml(row, idJs) + rightsStopBannerHtml(row)
         + '<div class="dr-sub">' + bbEsc(row.region) + (row.pyung ? ' · ' + row.pyung + '평(' + Math.round(row.pyung * 3.305785) + '㎡)' : '') + (row.floor ? ' · ' + row.floor + '층' : '') + (a.buildYear ? ' · ' + a.buildYear + '년' : '') + (row.dday ? ' · 입찰 ' + bbEsc(row.dday.label) + ' ' + bbEsc(a.bidDate || '') : '') + '</div>'
         + '<div class="dr-pickcard ' + (go ? 'go' : 'pass') + '"><div class="pk-v">' + (go ? '🚶 임장 추천' : '패스') + (ev.visit.why ? ' · ' + bbEsc(ev.visit.why) : '') + '</div>'
         + (pe ? '<div class="pk-big"><span>추천 입찰가</span><b>' + fmt(pe.bid) + '</b>' + (ve ? '<span>시세의 <b style="font-size:15px;color:#374151;">' + Math.round(pe.bid / ve.est * 100) + '%</b></span>' : '') + '</div>'
