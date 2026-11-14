@@ -934,6 +934,18 @@ body.ui2 #dong-boundary-info { top:108px !important; }
   body.ui2 #legend { right:8px; bottom:56px; }
   body.ui2 #surge-panel, body.ui2 #cycle-panel { right:8px !important; left:8px; width:auto !important; }
 }
+/* 2026-11-14 수정 요청: ① 첫 화면 필터(칩·종류 버튼·입찰후보 선택칸) 글자가 커서 한 화면에 다 안 나옴 → 글자·여백 축소
+   ② 우측 상단 ☰ 메뉴가 화면 폭 전체를 채워 지도를 가림 → 오른쪽 작은 반투명 창으로 */
+@media (max-width: 480px) {
+    #tb-menu.open { left:auto !important; right:6px; top:54px !important; width:168px; max-height:calc(100vh - 130px); max-height:calc(100dvh - 130px); overflow-y:auto; padding:4px; border-radius:12px; background:rgba(30,94,255,.8); -webkit-backdrop-filter:blur(5px); backdrop-filter:blur(5px); box-shadow:0 6px 18px rgba(0,0,0,.25); }
+    #tb-menu.open > button, #tb-menu.open > a.tb-link { padding:6px 9px !important; font-size:12px !important; line-height:1.25; }
+    body.ui2 #chipbar .chip { padding:3px 9px; font-size:11px; }
+    #type-filter .type-btn { padding:4px 9px; font-size:11.5px; }
+    #bid-board .bb-tools > select { font-size:11px !important; height:26px; }
+    #bb2-tabs .bb-tab, #bb2-tabs button { padding:4px 9px !important; font-size:11px !important; height:26px; }
+    #remind-panel { width:min(300px, calc(100vw - 20px)); font-size:11.5px; padding:8px 10px; }
+    #remind-panel .rm-h { font-size:12.5px; }
+}
 </style>
 
 <style>
