@@ -1,0 +1,39 @@
+# 빌라 '동네 상위 몇 %' 점수(2026-11-14, 사용자 요청: 표시 전용) - 경매 빌라(입찰일 14일 전부터)별 점수를 만들어 public/villa-quality.json 으로 저장. 매일 새벽 + 수동
+name: Compute villa quality
+on:
+  schedule:
+    - cron: '30 20 * * *'
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  vq:
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install pandas numpy requests scikit-learn
+      - env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          PYTHONUNBUFFERED: '1'
+        run: python compute-villa-quality.py | tee vq-log.txt
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: villa-quality
+          path: |
+            villa-quality.json
+            vq-log.txt
+          if-no-files-found: ignore
+          retention-days: 14
+      - name: 저장소에 반영
+        run: |
+          test -s villa-quality.json || exit 1
+          cp villa-quality.json public/villa-quality.json
+          git config user.name "github-actions"; git config user.email "actions@github.com"
+          git add public/villa-quality.json
+          git diff --cached --quiet || (git commit -m "빌라 동네 점수 갱신" && git pull --rebase -q && git push)
