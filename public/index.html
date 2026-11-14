@@ -4778,7 +4778,7 @@ function toggleVqOnly() { var s = bidBoardState; s.vqOnly = !s.vqOnly; s.liteLim
 function vqDetailHtml(a) {
     var q = vqOf(a); if (!q) return '';
     var names = villaQuality.scheme || [], mx = villaQuality.max || [];
-    var note = [q.age + '년차', '동네 건물 중 새로운 쪽 ' + (100 - q.rel) + '% 안(' + q.n + '곳 중)', q.elv < 0 ? '승강기 정보 없음' : (q.g >= 0 && q.g <= 3 ? '3층 이하라 승강기 해당 없음' : (q.elv ? '승강기 있음' : '승강기 없음')), q.g >= 0 ? '지상 ' + q.g + '층' : '층수 정보 없음', q.pk >= 0 ? '세대당 주차 ' + q.pk + '대' : '주차 정보 없음', q.rk >= 0 ? '동네 안 전월세 활발도 상위 ' + Math.max(1, 100 - q.rk) + '%' : '전월세 자료가 없어 중간값', q.jr >= 0 ? '전세가율 ' + q.jr + '%' + (q.jr > 90 ? ' (90% 초과 감점)' : '') : '전세가율 자료 없음'];
+    var note = [q.age + '년차', (q.rel >= 50 ? '동네에서 새로운 쪽 상위 ' + Math.max(1, 100 - q.rel) + '%' : '동네에서 오래된 쪽 하위 ' + Math.max(1, q.rel) + '%') + '(' + q.n + '곳 중)', q.elv < 0 ? '승강기 정보 없음' : (q.g >= 0 && q.g <= 3 ? '3층 이하라 승강기 해당 없음' : (q.elv ? '승강기 있음' : '승강기 없음')), q.g >= 0 ? '지상 ' + q.g + '층' : '층수 정보 없음', q.pk >= 0 ? '세대당 주차 ' + q.pk + '대' : '주차 정보 없음', q.rk >= 0 ? '동네 안 전월세 활발도 상위 ' + Math.max(1, 100 - q.rk) + '%' : '전월세 자료가 없어 중간값', q.jr >= 0 ? '전세가율 ' + q.jr + '%' + (q.jr > 90 ? ' (90% 초과 감점)' : '') : '전세가율 자료 없음'];
     var rows = names.map(function(nm, i) { return '<tr><td>' + bbEsc(nm) + ' <span class="dr-sub">' + bbEsc(note[i] || '') + '</span></td><td class="r">' + (q.c[i] >= 0 ? q.c[i] : q.c[i]) + (mx[i] ? ' / ' + mx[i] : '') + '</td></tr>'; }).join('');
     return '<div class="dr-sec"><h4>🏅 동네에서 얼마나 좋은 집인가 (참고)</h4><table>' + rows
         + '<tr><td><b>합계</b> <span class="dr-sub">같은 법정동 연립·다세대 ' + q.n + '곳 중 상위 ' + Math.max(1, q.t) + '%</span></td><td class="r"><b>' + q.s + '점</b></td></tr></table>'
