@@ -1,0 +1,39 @@
+name: Analyze apt realized margin
+on:
+  workflow_dispatch:
+    inputs:
+      rows_run_id:
+        description: 'Apt case rows 실행 번호'
+        required: true
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install pandas numpy requests scipy
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: aptrows-*
+          path: .
+          run-id: ${{ inputs.rows_run_id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+      - env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          PYTHONUNBUFFERED: '1'
+        run: set -o pipefail; ls; python analyze-apt-realized.py | tee apt-real-log.txt
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: apt-realized
+          path: |
+            apt-realized.json
+            apt-realized-rows.json
+            apt-real-log.txt
