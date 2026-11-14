@@ -29,12 +29,20 @@
   btn.onclick = async () => {
     btn.disabled = true;
     try {
-      // 좌표 찾기: ① ms=위도,경도,확대(쉼표가 %2C로 바뀌어도 읽음) ② /map/위도:경도:확대 형태 ③ 주소 어디든 '33~39.x, 124~132.x' 숫자 쌍
-      const href = decodeURIComponent(location.href); let m = null, mm;
+      // 좌표 찾기: ① 주소에 숫자 좌표가 있으면 그대로 ② 네이버가 암호 같은 글자로 바꿨으면(ms=2AIWpC,3zk8iO), 바뀌기 전에 기억해 둔 좌표(content-villa-early.js).
+      //   단, 기억해 둔 것은 '처음 열었을 때' 화면이라 지도를 움직였으면(주소가 또 바뀜) 쓸 수 없음 → 앱 링크로 다시 열도록 안내
+      const href = decodeURIComponent(location.href); let m = null, mm, enc = '';
       if ((mm = href.match(/[?&#]ms=(\d{2}\.\d+)[,:](\d{3}\.\d+)(?:[,:](\d+))?/))) m = [+mm[1], +mm[2], +(mm[3] || 0)];
-      else if ((mm = href.match(/\/map\/(\d{2}\.\d+):(\d{3}\.\d+)(?::(\d+))?/))) m = [+mm[1], +mm[2], +(mm[3] || 0)];
-      else if ((mm = href.match(/(3[3-9]\.\d{3,})[,:\/](12[4-9]\.\d{3,}|13[0-2]\.\d{3,})/))) m = [+mm[1], +mm[2], 0];
-      if (!m) { toast('좌표를 못 찾았어요 - 주소: ' + location.pathname + location.search.slice(0, 60), false); return; }
+      else {
+        enc = new URL(location.href).searchParams.get('ms') || '';
+        let st = null; try { st = JSON.parse(sessionStorage.getItem('hg_ms0') || 'null'); } catch (e) {}
+        if (st && st.lat) {
+          if (!st.enc) { st.enc = enc; try { sessionStorage.setItem('hg_ms0', JSON.stringify(st)); } catch (e) {} }
+          if (st.enc === enc) m = [st.lat, st.lon, st.z];
+          else { toast('지도를 움직였어요 - 앱의 네이버 링크로 다시 열어 처음 화면에서 눌러 주세요', false); return; }
+        }
+      }
+      if (!m) { toast('좌표를 못 찾았어요 - 앱의 네이버부동산 링크로 열어 주세요(주소: ' + location.pathname + location.search.slice(0, 40) + ')', false); return; }
       toast('호가 읽는 중…');
       let sc = findScroller(); harvest(sc);
       let same = 0, last = items.size;
@@ -46,7 +54,7 @@
       }
       if (!items.size) { toast('매매 호가를 못 찾았어요(목록이 보이는지 확인)', false); return; }
       toast('보내는 중… (' + items.size + '건)');
-      chrome.runtime.sendMessage({ type: 'sendVillaAsks', lat: m[0], lon: m[1], zoom: m[2] || null, url: location.href, items: [...items.values()] }, (res) => {
+      chrome.runtime.sendMessage({ type: 'sendVillaAsks', lat: m[0], lon: m[1], zoom: m[2] || null, enc: enc, url: location.href, items: [...items.values()] }, (res) => {
         if (!res || !res.ok) toast('❌ 보내기 실패' + (res && res.error ? ': ' + res.error : ''), false);
         else toast('✅ 저장됨: 호가 ' + res.n + '건', true);
         setTimeout(() => { btn.textContent = '🏘 빌라 호가 보내기'; btn.style.background = '#6a1b9a'; btn.disabled = false; }, 8000);

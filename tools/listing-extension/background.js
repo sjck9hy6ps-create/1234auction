@@ -186,7 +186,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (!msg || msg.type !== 'sendVillaAsks') return;
   (async () => {
     try {
-      const r = await fetch(APP + '/api/villa-asks', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ lat: msg.lat, lon: msg.lon, zoom: msg.zoom, url: msg.url, items: msg.items }) });
+      const r = await fetch(APP + '/api/villa-asks', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ lat: msg.lat, lon: msg.lon, zoom: msg.zoom, enc: msg.enc, url: msg.url, items: msg.items }) });
       const j = await r.json().catch(() => ({}));
       sendResponse(r.ok && j.ok ? { ok: true, n: j.n } : { ok: false, error: j.error || ('HTTP ' + r.status) });
     } catch (e) { sendResponse({ ok: false, error: String(e) }); }

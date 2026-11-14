@@ -20,7 +20,7 @@ export default async function handler(req, res) {
   const now = new Date();
   const day = now.toISOString().slice(0, 10);
   const path = `asks/villa/${day}/${now.toISOString().replace(/[:.]/g, '')}-${Math.random().toString(36).slice(2, 7)}.json`;
-  const body = JSON.stringify({ at: now.toISOString(), lat, lon, zoom: isFinite(zoom) ? zoom : null, url: String(b.url || '').slice(0, 300), n: items.length, items });
+  const body = JSON.stringify({ at: now.toISOString(), lat, lon, zoom: isFinite(zoom) ? zoom : null, url: String(b.url || '').slice(0, 300), enc: String(b.enc || '').slice(0, 40), n: items.length, items });
   try {
     const { error } = await supabase.storage.from('data').upload(path, body, { contentType: 'application/json', upsert: false });
     if (error) return res.status(500).json({ error: error.message });
