@@ -23058,7 +23058,7 @@ function visitItems(row) {
     V.push({ k: 'mgmt', t: '🧾 관리비 체납', app: '앱 가정 ' + (a.unpaidMgmtFee ? fm(parseInt(a.unpaidMgmtFee)) : '0 (입력 없음)'), ask: '관리사무소에서 확인한 체납액(공용부분)·연체료는 얼마인지' });
     V.push({ k: 'repair', t: '🔧 수리 상태·수리비', app: '앱 수리비 가정 ' + fm(parseInt(a.repair) || 0) + '<br><span class="dr-sub">참고: 11/14 호가 분석에서 수리 표시 호가의 프리미엄은 약 +3%(61건, 표본 적음) - 수리비만큼 가격으로 안 돌아올 수 있어요</span>', ask: '현장에서 본 수리 범위로 견적하면 얼마인지(도배·장판·누수·곰팡이)' });
     var l = typeof listingStatus === 'function' ? listingStatus(a) : null;
-    V.push({ k: 'price', t: '💰 시세·수리 후 가격', app: '앱 예상매도가 <b>' + fm(row.sale) + '</b>' + (l && l.st === 'yes' ? ' · 네이버 매물 ' + l.n + '건' : (l && l.st === 'none' ? ' · 네이버 매물 없음' : ' · 호가 미확인')) + (!isV && row.ownStats ? ' · 이 단지 1년 거래 ' + (row.ownStats.n12 || 0) + '건' : ''), ask: '중개사 2곳이 말한 같은 평형 호가·수리 후 가격(적어 두면 앱 값과 비교돼요)' });
+    V.push({ k: 'price', t: '💰 시세·수리 후 가격', app: '앱 예상매도가 <b>' + fm(row.sale) + '</b>' + (l && l.st === 'yes' ? ' · 네이버 매물 ' + l.n + '건' : (l && l.st === 'none' ? ' · 네이버 매물 없음' : ' · 호가 미확인')) + (!isV && row.ownStats ? ' · 이 단지 1년 거래 ' + (row.ownStats.n12 || 0) + '건' : '') + (a.fieldCheck && a.fieldCheck.ask ? ' · 입력된 최저 호가 ' + fm(parseInt(a.fieldCheck.ask)) : ''), ask: '중개사 2곳이 말한 같은 평형 호가·수리 후 가격(적어 두면 앱 값과 비교돼요)' });
     var elv = a.elevatorCnt != null && a.elevatorCnt !== '' ? parseInt(a.elevatorCnt) : null;
     V.push({ k: 'bld', t: '🏢 건물 정보', app: [a.buildYear ? '연식 ' + a.buildYear + '년' : '연식 미확인', a.floor ? a.floor + '층' : '', elv != null ? (elv > 0 ? '승강기 ' + elv + '대' : '승강기 없음') : '승강기 미확인'].filter(Boolean).join(' · ') + ' <span class="dr-sub">(건축물대장)</span>', ask: '현장에서 본 연식·층·승강기·주차가 대장과 같은지' });
     if (isV) { var rc = typeof villaRcCache !== 'undefined' ? villaRcCache[row.id] : null; V.push({ k: 'rent', t: '🏠 월세 가능성', app: rc && rc.m ? '앱 월세 ' + rc.m + '만 (보증금 ' + fm(rc.d) + ')' : '앱 월세 자료 없음', ask: '동네 중개사가 말한 월세 시세·세입자 수요가 같은지' }); }
@@ -23079,7 +23079,17 @@ function fieldChecklistHtml(row) {
         var on = st[x.k] && st[x.k].s === s;
         return '<button style="border:1px solid ' + (on ? (s === 'bad' ? '#b91c1c' : '#15803d') : '#d1d5db') + ';background:' + (on ? (s === 'bad' ? '#fee2e2' : '#dcfce7') : '#fff') + ';color:#111;border-radius:14px;padding:5px 12px;font-size:12.5px;margin:0 6px 4px 0;cursor:pointer;" onclick="visitChkSet(\'' + idJs + '\',\'' + x.k + '\',\'' + (on ? '' : s) + '\')">' + label + '</button>';
     };
-    var note = function(x, ph) { var s = st[x.k]; return s && s.s === 'bad' ? '<input type="text" id="vc-' + x.k + '" value="' + E(s.v || '') + '" placeholder="' + ph + '" style="width:100%;box-sizing:border-box;margin:2px 0 6px;padding:6px 8px;border:1px solid #fca5a5;border-radius:6px;font-size:13px;" onchange="visitChkNote(\'' + idJs + '\',\'' + x.k + '\',this.value)">' : ''; };
+    var APPLY = { mgmt: '미납 관리비', repair: '수리비' }; if (row.type === 'apt') APPLY.price = '같은 평형 최저 호가';
+    var note = function(x, ph) {
+        var s = st[x.k]; if (!s || s.s !== 'bad') return '';
+        var ap = APPLY[x.k], n = ap ? visitParseMan(s.v) : null, extra = '';
+        if (ap) {
+            ph = ap + ' 현장 값(만원, 예: 350 또는 1.2억)';
+            if (s.applied != null) extra = '<div style="font-size:12.5px;color:#15803d;margin:0 0 6px;">✔ 계산에 반영됨: ' + ap + ' <b>' + fm(s.applied) + '</b> (이전 ' + (s.prev ? fm(parseInt(s.prev)) : '입력 없음') + ') <button style="border:1px solid #d1d5db;background:#fff;border-radius:12px;padding:3px 10px;font-size:12px;cursor:pointer;" onclick="visitChkUndo(\'' + idJs + '\',\'' + x.k + '\')">↩ 되돌리기</button></div>';
+            else if (n) extra = '<div style="margin:0 0 6px;"><button style="border:1px solid #15803d;background:#15803d;color:#fff;border-radius:14px;padding:5px 12px;font-size:12.5px;cursor:pointer;" onclick="visitChkApply(\'' + idJs + '\',\'' + x.k + '\')">📌 ' + fm(n) + '으로 계산에 반영</button> <span class="dr-sub" style="display:inline;">' + (x.k === 'price' ? '아래 임장 문답 점수에 반영돼요(추천가는 안 바뀌어요)' : '추천 입찰가·순이익이 바로 다시 계산돼요') + '</span></div>';
+        }
+        return '<input type="text" id="vc-' + x.k + '" value="' + E(s.v || '') + '" placeholder="' + ph + '" style="width:100%;box-sizing:border-box;margin:2px 0 6px;padding:6px 8px;border:1px solid #fca5a5;border-radius:6px;font-size:13px;" onchange="visitChkNote(\'' + idJs + '\',\'' + x.k + '\',this.value)">' + extra;
+    };
     var h = '<div class="dr-sec"><h4>📝 임장 확인표 <span class="dr-sub" style="display:inline;">확인 ' + done + '/' + all.length + (bad.length ? ' · <b style="color:#b91c1c;">다름·문제 ' + bad.length + '건</b>' : '') + ' (사건 기록에 저장 · 계산에는 아직 반영 안 함)</span></h4>';
     h += '<div class="dr-sub" style="margin:2px 0 4px;"><b>앱 값과 대조</b> - 앱이 아는 값을 보여 드려요</div>';
     it.V.forEach(function(x) {
@@ -23094,6 +23104,7 @@ function fieldChecklistHtml(row) {
 }
 async function visitChkSet(id, k, s) {
     var a = auctionList.filter(function(x) { return String(x.id) === String(id); })[0]; if (!a) return;
+    if (a.visitCheck && a.visitCheck[k] && a.visitCheck[k].applied != null) { alert('이미 계산에 반영한 값이에요. 먼저 ↩ 되돌리기를 눌러 주세요.'); return; }
     a.visitCheck = Object.assign({}, a.visitCheck || {});
     if (!s) delete a.visitCheck[k]; else a.visitCheck[k] = { s: s, v: (a.visitCheck[k] && a.visitCheck[k].v) || '', at: new Date().toISOString().slice(0, 10) };
     visitChkRefresh(id); visitChkSave(a);
@@ -23103,6 +23114,29 @@ function visitChkNote(id, k, v) {
     a.visitCheck = Object.assign({}, a.visitCheck); a.visitCheck[k] = Object.assign({}, a.visitCheck[k], { v: String(v || '').slice(0, 200) });
     visitChkRefresh(id); visitChkSave(a);
 }
+/* 현장 값 → 계산 반영(2026-11-15): 관리비·수리비·최저 호가만. 이전 값을 기억해 되돌릴 수 있음 */
+function visitParseMan(v) {
+    var t = String(v || '').replace(/,/g, ''), m = t.match(/(\d+(?:\.\d+)?)\s*억\s*(\d+)?/);
+    var n = m ? Math.round(parseFloat(m[1]) * 10000 + (m[2] ? parseInt(m[2]) : 0)) : (/^\s*\d+(?:\.\d+)?\s*(?:만|만원)?\s*$/.test(t) ? Math.round(parseFloat(t)) : null);
+    return n > 0 ? n : null;
+}
+async function visitChkApply(id, k, undo) {
+    var a = auctionList.filter(function(x) { return String(x.id) === String(id); })[0]; if (!a) return;
+    var vc = Object.assign({}, a.visitCheck || {}), it = vc[k]; if (!it) return;
+    var row = bidBoardRows.filter(function(r) { return String(r.id) === String(id); })[0], val;
+    if (undo) { if (it.applied == null) return; val = it.prev == null ? '' : String(it.prev); }
+    else { var n = visitParseMan(it.v); if (!n) { alert('숫자(만원)로 적어 주세요. 예: 350 또는 1.2억'); return; } val = String(n); }
+    var cur = k === 'mgmt' ? a.unpaidMgmtFee : (k === 'repair' ? a.repair : (a.fieldCheck || {}).ask);
+    if (k === 'mgmt') a.unpaidMgmtFee = val;
+    else if (k === 'repair') { a.repair = val; if (undo) delete a.repairFromVisit; else { delete a.repairFromField; a.repairFromVisit = true; } }
+    else { a.fieldCheck = Object.assign({}, a.fieldCheck || {}); a.fieldCheck.ask = val; try { applyFieldCheckToRecord(a, row); } catch (e) {} }
+    vc[k] = undo ? { s: it.s, v: it.v, at: it.at } : { s: it.s, v: it.v, at: it.at, applied: parseInt(val), prev: cur == null ? '' : String(cur) };
+    a.visitCheck = vc;
+    try { await saveAuctionAPI(a); } catch (e) { alert('저장 실패: ' + e.message); }
+    bidBoardRows = bidBoardRows.map(function(r) { if (String(r.id) !== String(id)) return r; r.a = a; try { return finalizeBidBoardRow(r); } catch (e) { return r; } });
+    renderBidBoard(); renderBidDrawer();
+}
+function visitChkUndo(id, k) { return visitChkApply(id, k, true); }
 var _vcSaveT = {};
 function visitChkSave(a) { clearTimeout(_vcSaveT[a.id]); _vcSaveT[a.id] = setTimeout(function() { saveAuctionAPI(a).catch(function(e) { alert('임장 확인 저장 실패: ' + e.message); }); }, 600); }
 function visitChkRefresh(id) {
