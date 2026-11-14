@@ -22128,7 +22128,7 @@ function boardBaseSig(a, flip) {
     var asm = (a.assumedDeposit || a.assumedFixed || a.assumedPrior || a.rights) ? 'A2:' + (a.assumedDeposit || '') + ':' + (a.assumedFixed || '') + ':' + (a.assumedPrior || '') + (a.rights ? ':R' + (a.rights.pastedAt || 0) + ':' + (a.rights.editedAt || 0) : '') : ''; // 인수금액 입력이 있는 물건만(새 계산식 v2)
     return [BOARD_BASE_VER, auctionWonEstSignature(a), a.minBid, a.appraisal, a.bidDate, a.court, a.failCount, a.landType, String(a.memo || '').length,
         Array.isArray(a.bidHistory) ? a.bidHistory.length : 0, a.courtResult || '', a.target || '', a.compTargetMargin || '', a.repair || '', auto ? '' : (a.buildYear || ''), auto || a.elevatorCnt == null ? '' : a.elevatorCnt, a.listingParse ? a.listingParse.at + '/' + a.listingParse.n : '', (a.fieldCheck || {}).cond || '',
-        pf].concat(asm ? [asm] : [], e0 ? [e0] : [], adjOf(a) ? ['R'] : []).join('|');   // 규제지역 판정이 바뀌면(목록 갱신) 그 물건만 다시 계산
+        pf].concat(asm ? [asm] : [], e0 ? [e0] : [], adjOf(a) ? ['R'] : [], parseInt(a.unpaidMgmtFee) > 0 ? ['M' + parseInt(a.unpaidMgmtFee)] : []).join('|');   // 미납 관리비가 입력된 물건만(임장 확인표 반영 포함)   // 규제지역 판정이 바뀌면(목록 갱신) 그 물건만 다시 계산
 }
 function boardRowForCache(r) {
     var o = {};
