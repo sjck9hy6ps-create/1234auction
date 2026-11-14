@@ -1637,6 +1637,13 @@ body.ui2 #auction-modal.am4 { width:620px; }
     <button class="chip" onclick="openFilterPanelTab('attr')">📐 평형·연식·등급 ▾</button>
     <button class="chip" onclick="openFilterPanelTab('display')">⚙️ 필터 전체 ▾</button>
     <span class="chip-sep"></span>
+    <button class="chip" id="chip-trade-badge" onclick="toggleTradeBadges()" title="실거래 배지(아파트·빌라 거래 기록)를 지도에 표시해요. 앱을 켤 때는 꺼져 있고(첫 화면은 빈 지도), 아래 필터를 누르면 자동으로 켜져요">🏢 실거래 배지: 꺼짐</button>
+    <span id="chip-auc-group" style="display:inline-flex;gap:4px;">
+        <button class="chip on" data-am="off" onclick="setAuctionBadgeMode('off')" title="경매 배지를 지도에 표시하지 않아요(앱을 켤 때 기본)">🔨 경매: 꺼짐</button>
+        <button class="chip" data-am="go" onclick="setAuctionBadgeMode('go')" title="임장 후보로 판정된 경매물건 배지만(내 물건 포함)">임장후보</button>
+        <button class="chip" data-am="all" onclick="setAuctionBadgeMode('all')" title="입찰후보 전체(임장·패스)와 내 물건 배지">전체</button>
+        <button class="chip" data-am="pop" onclick="setAuctionBadgeMode('pop')" title="빌라 중 같은 법정동에서 연식·승강기·전월세 활발도 점수가 상위 30%인 경매물건 배지(표시용)">동네인기</button>
+    </span>
     <button class="chip" id="chip-badge-mode" onclick="toggleBadgeMode()">🔍 배지: 간단</button>
 </div>
 <div id="sidebar">
@@ -1750,13 +1757,6 @@ body.ui2 #auction-modal.am4 { width:620px; }
             <button class="filter-tab ft-tier" data-tier="old" onclick="toggleVillaTier('old',this)">구축(16~25년)</button>
             <button class="filter-tab ft-tier" data-tier="aged" onclick="toggleVillaTier('aged',this)">노후(26년~)</button>
             <button class="filter-tab ft-reset" onclick="resetVillaTierFilter()">초기화</button>
-        </div>
-        <div class="filter-row">
-            <div class="filter-row-label" title="입찰후보로 판정된 경매물건을 단계별로 골라 봐요(여러 개 고르면 하나라도 맞는 것)">입찰후보 단계</div>
-            <button class="filter-tab ft-adate" data-adate="go" onclick="toggleAuctionDateFilter('go',this)">🚶 임장 후보</button>
-            <button class="filter-tab ft-adate" data-adate="pass" onclick="toggleAuctionDateFilter('pass',this)">패스</button>
-            <button class="filter-tab ft-adate" data-adate="wait" onclick="toggleAuctionDateFilter('wait',this)">⏳ 계산 전</button>
-            <button class="filter-tab ft-reset" onclick="resetAuctionDateFilter()">초기화</button>
         </div>
     </div>
 </div>
@@ -5103,6 +5103,31 @@ function toggleShowBidCaseBadges() {
 }
 // "경매건" 필터(지난/오늘/그외) - 등급 필터(toggleGrade)와 동일하게 복수 선택 가능한
 // OR 조건: 하나도 선택 안 하면 전체 표시, 선택하면 선택된 버킷에 해당하는 경매물건만 표시.
+/* 🔌 배지 켜고 끄기(2026-11-14, 사용자: 앱을 켜면 첫 화면은 빈 지도, 실거래 배지·경매 배지를 필터로 켜기 - 구동 직후 배지 계산이 폰을 멈추게 해서 첫 로딩을 백그라운드로 돌리려는 것)
+   - tradeBadgesOn: 실거래 배지. 아래 필터(유형·등급·평형·연식 등)를 누르면 자동으로 켜짐
+   - auctionBadgeMode: 'off'(기본) / 'go' 임장후보 / 'all' 전체 / 'pop' 동네인기(빌라 동네 상위 30%) */
+var tradeBadgesOn = false, auctionBadgeMode = 'off';
+function syncBadgeChips() {
+    var c = document.getElementById('chip-trade-badge');
+    if (c) { c.innerText = tradeBadgesOn ? '🏢 실거래 배지: 켜짐' : '🏢 실거래 배지: 꺼짐'; c.classList.toggle('on', tradeBadgesOn); }
+    document.querySelectorAll('#chip-auc-group .chip').forEach(function(b) { b.classList.toggle('on', b.getAttribute('data-am') === auctionBadgeMode); });
+}
+function toggleTradeBadges() { tradeBadgesOn = !tradeBadgesOn; syncBadgeChips(); redrawMarkers(); }
+function ensureTradeBadges() { if (!tradeBadgesOn) { tradeBadgesOn = true; syncBadgeChips(); } }
+function setAuctionBadgeMode(m) {
+    auctionBadgeMode = m; syncBadgeChips();
+    if ((m === 'go' || m === 'pop') && !bidBoardRows.length && !bidBoardRunning) { try { linkToast('입찰후보 판정을 불러오는 중이에요(처음 한 번, 잠시 후 지도에 반영돼요)'); refreshBidBoard(); } catch (e) {} }
+    if (m === 'pop') { try { loadVillaQuality(); } catch (e) {} }
+    renderAuctionMarkers();
+}
+function auctionModeOk(a) {
+    var m = auctionBadgeMode; if (m === 'off') return false; if (m === 'all') return true;
+    if (auctionIsMine(a)) return true;
+    if (m === 'go') return classifyAuctionDateBucket(a) === 'go';
+    if (m === 'pop') return a.propType === 'villa' && vqTop(a) <= VQ_TOP_MAX;
+    return true;
+}
+setTimeout(function() { try { syncBadgeChips(); if (!tradeBadgesOn && auctionBadgeMode === 'off') linkToast('지도에 배지가 꺼져 있어요 - 위 "🏢 실거래 배지"나 "🔨 경매"를 눌러 켜세요'); } catch (e) {} }, 2500);
 function toggleAuctionDateFilter(val, btn) {
     if (activeAuctionDateFilters.has(val)) { activeAuctionDateFilters.delete(val); btn.classList.remove('active'); }
     else { activeAuctionDateFilters.add(val); btn.classList.add('active'); }
@@ -5283,7 +5308,7 @@ function villaEvWarmSoon() {
         for (var i = 0; i < rows.length; i++) { var e = null; try { e = villaEval(rows[i]); } catch (er) {} if (e && e.pending) pend++; }
         window.__villaEvDeadline = 0;
         if (pend) { villaWarmT = setTimeout(step, 40); return; }
-        aBucketMemo = null; try { if (activeAuctionDateFilters.size) renderAuctionMarkers(); } catch (er) {}
+        aBucketMemo = null; try { if (activeAuctionDateFilters.size || auctionBadgeMode === 'go') renderAuctionMarkers(); } catch (er) {}
     }, 30);
 }
 function classifyAuctionDateBucket(a) {
@@ -6946,6 +6971,9 @@ function redrawMarkers() {
     // 여유) 스코프 리스트를 먼저 한 번만 만들어서 마커 생성과 급등순위 계산 양쪽에 그대로
     // 재사용함 - 데이터(allAptList/dataCache) 자체는 계속 누적해서 갖고 있으니 "배지가
     // 안 사라짐" 요구사항은 그대로 유지되고, 실제 계산량은 "지금 보이는 양"에만 비례하게 됨.
+    if (!tradeBadgesOn) {   /* 실거래 배지 꺼짐: 배지·순위 계산을 건너뛰고 떠 있는 배지만 치움(2026-11-14) */
+        placeMarkers([], myGen); setTimeout(function() { renderAuctionMarkers(); renderBidCaseMarkers(); }, 100); return;
+    }
     var viewportList = filterAptListToDongArea(filterAptListToViewport(allAptList));
     surgeRankMap = computeSurgeRankMap(currentTypeFilter, viewportList);
     comparableIndex = computeComparableIndex();
@@ -17214,7 +17242,9 @@ function auctionPastBeyondWeek(a) {   // 입찰일 문자열(YYYY-MM-DD)을 기�
 }
 function auctionBadgeWorthy(a) {
     if (!a || a.isBacktest || /_bx_/.test(String(a.id))) return false;
+    if (auctionBadgeMode === 'off') return false;
     if (auctionPastBeyondWeek(a) && !auctionIsMine(a)) return false;
+    if (!auctionModeOk(a)) return false;
     if (a.status === '낙찰' || a.status === '매도완료') return true;
     return isBidBoardCandidate(a);
 }
@@ -31197,7 +31227,8 @@ Object.keys(SIDE_PANEL_OPENERS).forEach(function(fn) {
  'toggleVillaTier', 'resetVillaTierFilter', 'toggleAuctionDateFilter', 'resetAuctionDateFilter', 'setTypeFilter'].forEach(function(fn) {
     var orig = window[fn];
     if (typeof orig !== 'function') return;
-    window[fn] = function() { var r = orig.apply(this, arguments); syncFilterUi(); return r; };
+    var turnsOn = ['toggleRecentYearOnly', 'toggleCompOnlyFilter', 'toggleShowRentOnly', 'toggleBidCaseOnlyFilter', 'toggleNewHighOnlyFilter', 'toggleGrade', 'togglePyeongTier', 'toggleVillaFilter', 'toggleVillaTier', 'setTypeFilter'].indexOf(fn) >= 0;
+    window[fn] = function() { if (turnsOn) { try { ensureTradeBadges(); } catch (e) {} } var r = orig.apply(this, arguments); syncFilterUi(); return r; };
 });
 function setupUiV3() {
     // 1) 칩: "평형·연식·등급"·"필터 전체" 두 개 → "상세 필터" 하나(누르면 열고, 다시 누르면 닫힘) + 적용 중일 때만 "모두 끄기"
