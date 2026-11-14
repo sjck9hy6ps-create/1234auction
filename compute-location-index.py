@@ -146,7 +146,31 @@ def run(kind, trades_table, cols, cutoff_old, cut_recent, cmap, tmap, kapt=None)
         # 2026-11-14(사용자: 아파트는 회전율) - 점수 = (이 격자+둘레 8격자의 최근 12개월 거래 합계) ÷ (그 안 단지들 세대수 합계). 세대수(K-apt)를 아는 단지만 분자·분모에 넣음
         R2 = rec.copy(); R2["nm"] = R2["danji"].map(avm.normalize_complex_name)
         R2 = R2.merge(kapt.rename(columns={"dong": "dong", "_name_norm": "nm"})[["region", "dong", "nm", "households"]], on=["region", "dong", "nm"], how="left")
+        # 2026-11-14 세대수 연결 보완: 이름이 정확히 같지 않은 단지를 같은 법정동 안에서 이름 닮은 정도로 연결(괄호·'아파트·단지·마을' 같은 말 빼고 비교 → 같거나 한쪽이 다른 쪽을 포함하거나 85% 이상 닮고, 후보가 하나일 때만)
+        import re, difflib
+        def core(x):
+            x = re.sub(r"\([^)]*\)", "", str(x or "")); x = re.sub(r"[^0-9A-Za-z가-힣]", "", x)
+            for w in ("아파트", "단지", "마을"): x = x.replace(w, "")
+            return x
+        kg = {}
+        for r in kapt.itertuples(): kg.setdefault((r.region, r.dong), []).append((core(r._name_norm), r.households))
+        un = R2[R2["households"].isna()][["region", "dong", "nm"]].drop_duplicates()
+        fz = {}; nfz = 0
+        for r in un.itertuples():
+            c0 = core(r.nm); cand = kg.get((r.region, r.dong))
+            if not cand or len(c0) < 2: continue
+            hit = [h for (kn, h) in cand if kn and (kn == c0 or ((len(kn) >= 3 and len(c0) >= 3) and (kn in c0 or c0 in kn)) or difflib.SequenceMatcher(None, kn, c0).ratio() >= 0.85)]
+            if len(hit) == 1: fz[(r.region, r.dong, r.nm)] = hit[0]; nfz += 1
+        print(f"[{kind}] 이름 닮은 정도로 새로 연결한 단지 {nfz:,}곳 / 이름이 안 맞던 단지 {len(un):,}곳")
+        if fz:
+            key = list(zip(R2["region"], R2["dong"], R2["nm"]))
+            add = pd.Series([fz.get(k, np.nan) for k in key], index=R2.index)
+            R2["households"] = R2["households"].where(R2["households"].notna(), add)
         known = R2["households"].notna() & (R2["households"] > 0)
+        try:
+            un2 = R2[~known]; kd = set(kapt["dong"].astype(str)); 
+            print(f"[{kind}] 연결 안 된 거래 {len(un2):,}건 중 동 자체가 K-apt에 없는 거래 {int((~un2['dong'].astype(str).isin(kd)).sum()):,}건 · 상위 안 맞는 단지: " + ", ".join(f"{a}/{b}({c})" for (a, b), c in un2.groupby(['dong', 'nm']).size().sort_values(ascending=False).head(12).items()))
+        except Exception as e: print("진단 실패", e)
         print(f"[{kind}] 최근 12개월 거래 {len(R2):,}건 중 세대수 아는 단지 거래 {int(known.sum()):,}건 ({known.mean() * 100:.1f}%)")
         K = R2[known].copy(); K["cid"] = K["region"] + "|" + K["dong"].astype(str) + "|" + K["nm"]
         cx = K.groupby("cid").agg(t=("lat", "size"), hh=("households", "first"), lat=("lat", "mean"), lon=("lon", "mean")).reset_index()
