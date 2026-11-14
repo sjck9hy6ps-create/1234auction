@@ -36,8 +36,12 @@
       if ((mm = href.match(/[?&#]ms=(\d{2}\.\d+)[,:](\d{3}\.\d+)(?:[,:](\d+))?/))) m = [+mm[1], +mm[2], +(mm[3] || 0)];
       else {
         enc = new URL(location.href).searchParams.get('ms') || '';
-        let st = null; try { st = JSON.parse(sessionStorage.getItem('hg_ms0') || 'null'); } catch (e) {}
-        if (st && st.lat) {
+        // 네이버의 암호 좌표 풀이(2026-11-14 실측 2쌍으로 확인): 62진법(0-9a-zA-Z) 숫자 ÷ 1e7 − 200 = 위도·경도 (예 2AIWpC,3zk8iO → 37.49247,127.03687)
+        const B62 = '0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ', d62 = (t) => { let v = 0; for (const ch of t) { const k = B62.indexOf(ch); if (k < 0) return NaN; v = v * 62 + k; } return v / 1e7 - 200; };
+        const pr = enc.split(',');
+        if (pr.length >= 2 && /^[0-9a-zA-Z]{5,7}$/.test(pr[0]) && /^[0-9a-zA-Z]{5,7}$/.test(pr[1])) { const la = d62(pr[0]), lo = d62(pr[1]); if (la > 33 && la < 39 && lo > 124 && lo < 132) m = [la, lo, +(pr[2] || 0)]; }
+        let st = null; if (!m) try { st = JSON.parse(sessionStorage.getItem('hg_ms0') || 'null'); } catch (e) {}
+        if (!m && st && st.lat) {
           if (!st.enc) { st.enc = enc; try { sessionStorage.setItem('hg_ms0', JSON.stringify(st)); } catch (e) {} }
           if (st.enc === enc) m = [st.lat, st.lon, st.z];
           else { toast('지도를 움직였어요 - 앱의 네이버 링크로 다시 열어 처음 화면에서 눌러 주세요', false); return; }
