@@ -21,7 +21,12 @@ for s in snaps:
         if not it or not it["price"] or not it["area"]: continue
         age = re.search(r"(\d+)년\s*(이상|이내)", b); it["age_tag"] = (age.group(1) + "년" + age.group(2)) if age else ""
         it["snap_at"] = s["at"]; it["raw"] = b.replace("\n", " / ")[:160]; rows.append(it)
-A = pd.DataFrame(rows).drop_duplicates(subset=["price", "area", "floor", "raw"])
+A = pd.DataFrame(rows)
+# 같은 매물이 확인일만 바뀌어 여러 번 잡히는 것(예: 확인매물 26.11.02 / 26.11.13)을 하나로: 가격·면적·층·층수·방향·설명 앞부분이 같으면 같은 매물
+def _key(r):
+    d = re.sub(r"확인매물\s*[\d.]+(?:중개사\d+곳)?|집주인|공인중개사협회매물", "", r["raw"]); m = re.search(r"\d+/\d+층,\s*(\S+)", d)
+    return f"{r['price']}|{r['area']}|{r['floor']}|{r.get('maxF')}|{m.group(1) if m else ''}|{(d.split('/')[4].strip()[:18] if d.count('/') >= 4 else '')}"
+A["k"] = A.apply(_key, axis=1); n0 = len(A); A = A.drop_duplicates(subset=["k"]); print(f"같은 매물 중복 제거: {n0} → {len(A)}건")
 print(f"반경 {RAD}km 안 호가 {len(A)}건(중복 제거)")
 if not len(A): raise SystemExit
 A["ppm"] = A["price"] / A["area"]
