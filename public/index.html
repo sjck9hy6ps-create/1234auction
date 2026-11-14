@@ -6065,9 +6065,21 @@ function initKakao() {
     places   = new kakao.maps.services.Places();
     loadDataCoverage();
     if (navigator.geolocation) {
+        /* 2026-11-14(사용자: 앱을 처음 구동할 때 현위치 인식이 안 됨) - 위치 요청에 시간 제한·캐시 허용을 주고, 첫 요청이 실패(시간 초과·일시 불가, 권한 거부는 제외)하면 지도는 서울로 먼저 열고 잠시 뒤 한 번 더 요청해 성공하면 지도를 내 위치로 옮김(그 사이 사용자가 지도를 움직였으면 옮기지 않음) */
         navigator.geolocation.getCurrentPosition(
             function(p) { initMap(p.coords.latitude, p.coords.longitude); },
-            function()  { initMap(37.5665, 126.9780); }
+            function(err) {
+                initMap(37.5665, 126.9780);
+                if (err && err.code === 1) return;
+                setTimeout(function() {
+                    try {
+                        navigator.geolocation.getCurrentPosition(function(p) {
+                            try { var c = map.getCenter(); if (Math.abs(c.getLat() - 37.5665) < 0.002 && Math.abs(c.getLng() - 126.9780) < 0.002) map.setCenter(new kakao.maps.LatLng(p.coords.latitude, p.coords.longitude)); } catch (e) {}
+                        }, function() {}, { enableHighAccuracy: false, timeout: 20000, maximumAge: 600000 });
+                    } catch (e) {}
+                }, 1500);
+            },
+            { enableHighAccuracy: false, timeout: 10000, maximumAge: 600000 }
         );
     } else { initMap(37.5665, 126.9780); }
    document.getElementById('addr-input').addEventListener('input', function() {
