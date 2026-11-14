@@ -1,4 +1,4 @@
-"""🏘 한 사건 반경의 호가 vs 실거래 vs 앱 예상매도가 비교(2026-11-14, 참고용 - 앱 숫자는 바꾸지 않음).
+"""🏘 (정의 수정 2026-11-14: 예상호가=비슷한 조건 호가 수준, 예상매도가≤예상호가−절충) 한 사건 반경의 호가 vs 실거래 vs 앱 예상매도가 비교(2026-11-14, 참고용 - 앱 숫자는 바꾸지 않음).
 환경변수: LAT, LON, AREA(㎡), YEAR(연식), SALE(앱 예상매도가 만원), AREA_TOL=10, YEAR_TOL=3, RAD_KM=0.5"""
 import os, re, json, importlib.util
 import numpy as np, pandas as pd, requests
@@ -38,8 +38,11 @@ print(sel.sort_values("ppm")[["price", "area", "floor", "age_tag", "age_ok", "ra
 use = sel[sel["age_ok"] != False]
 res = {"반경km": RAD, "호가 전체": int(len(A)), "면적 조건": int(len(sel)), "면적+연식 조건": int(len(use))}
 if len(use):
-    res["호가 ㎡당 중앙(만원)"] = round(float(use["ppm"].median()), 1); res["호가 환산(이 사건 면적, 만원)"] = int(use["ppm"].median() * AREA)
+    res["호가 ㎡당 중앙(만원)"] = round(float(use["ppm"].median()), 1); res["예상호가(비슷한 조건 호가 중앙, 이 사건 면적 환산, 만원)"] = int(use["ppm"].median() * AREA); res["호가 환산(이 사건 면적, 만원)"] = res["예상호가(비슷한 조건 호가 중앙, 이 사건 면적 환산, 만원)"]
     res["호가 낮은쪽 25%·높은쪽 25% 환산"] = [int(use["ppm"].quantile(.25) * AREA), int(use["ppm"].quantile(.75) * AREA)]
+    NEGO = float(os.environ.get("NEGO", "0.03")); res["절충 가정"] = NEGO; res["예상호가 − 절충(매도가 상한, 만원)"] = int(res["예상호가(비슷한 조건 호가 중앙, 이 사건 면적 환산, 만원)"] * (1 - NEGO))
+    res["상한 규칙 성립(앱 예상매도가 ≤ 예상호가 − 절충)"] = bool(SALE <= res["예상호가 − 절충(매도가 상한, 만원)"])
+    res["예상매도가 ÷ 예상호가"] = round(SALE / res["예상호가(비슷한 조건 호가 중앙, 이 사건 면적 환산, 만원)"], 3)
 # 실거래
 df = pd.read_pickle(os.environ.get("DF_FILE", "input/villa-df.pkl")); df = df[df["lat"].notna() & (df["size"] > 0)].copy()
 tree = cKDTree(np.c_[df["lat"].values * 111.0, df["lon"].values * KM]); ii = np.array(tree.query_ball_point([LAT * 111.0, LON * KM], RAD))
