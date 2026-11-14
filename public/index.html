@@ -17135,12 +17135,12 @@ function refreshMatchedAuctionMarkers() {
    '내 물건' = 내가 입찰가를 정한 물건(myBid), 즐겨찾기, 내가 매도 완료로 표시한 물건, 상태가 검토중·낙찰이 아닌 내가 직접 관리하는 진행 상태. 데이터(auctionList·입찰후보 목록)는 그대로 두고 지도 배지만 뺌. */
 var AUCTION_BADGE_PAST_DAYS = 7;
 function auctionIsMine(a) { return !!(a && (a.myBid || a.fav || a.status === '매도완료' || (a.status && a.status !== '검토중' && a.status !== '낙찰'))); }
-var _apCutDay = '', _apCut = '';
-function auctionPastBeyondWeek(a) {   // 입찰일 문자열(YYYY-MM-DD)을 기준일 문자열과 비교(1.4만 건을 여러 번 훑으므로 날짜 계산은 하루에 한 번만)
-    if (!a || !a.bidDate) return false;
-    var now = new Date(), dayKey = now.getFullYear() + '-' + now.getMonth() + '-' + now.getDate();
-    if (_apCutDay !== dayKey) { _apCutDay = dayKey; var c = new Date(now.getFullYear(), now.getMonth(), now.getDate() - AUCTION_BADGE_PAST_DAYS); _apCut = c.getFullYear() + '-' + String(c.getMonth() + 1).padStart(2, '0') + '-' + String(c.getDate()).padStart(2, '0'); }
-    return String(a.bidDate) < _apCut;
+var _apCutAt = 0, _apCut = '';
+function auctionPastBeyondWeek(a) {   // 입찰일 문자열(YYYY-MM-DD)을 기준일 문자열과 비교 - 기준일은 1분에 한 번만 계산(지도를 다시 그릴 때마다 수만~수천만 번 불려서 건마다 날짜를 만들면 느려졌음, 2026-11-14)
+    var bd = a && a.bidDate; if (!bd) return false;
+    var t = Date.now();
+    if (t - _apCutAt > 60000) { _apCutAt = t; var now = new Date(t), c = new Date(now.getFullYear(), now.getMonth(), now.getDate() - AUCTION_BADGE_PAST_DAYS); _apCut = c.getFullYear() + '-' + String(c.getMonth() + 1).padStart(2, '0') + '-' + String(c.getDate()).padStart(2, '0'); }
+    return bd < _apCut;
 }
 function auctionBadgeWorthy(a) {
     if (!a || a.isBacktest || /_bx_/.test(String(a.id))) return false;
