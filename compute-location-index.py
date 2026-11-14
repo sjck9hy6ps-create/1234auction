@@ -49,7 +49,7 @@ def classes(df, kind):
     return sz, ag, fc
 
 
-def run(kind, trades_table, cols, cutoff_old, cut_recent, cmap, tmap, kapt=None):
+def run(kind, trades_table, cols, cutoff_old, cut_recent, cmap, tmap, kapt=None, hmap=None, bmap=None):
     raw = avm.fetch_all_rows(trades_table, cols=cols, extra_filter=f"&deal_date=gte.{cutoff_old}")
     df = raw.copy()
     if "cdeal_type" in df.columns: df = df[df["cdeal_type"].fillna("").astype(str).str.strip() == ""]
@@ -166,13 +166,32 @@ def run(kind, trades_table, cols, cutoff_old, cut_recent, cmap, tmap, kapt=None)
             key = list(zip(R2["region"], R2["dong"], R2["nm"]))
             add = pd.Series([fz.get(k, np.nan) for k in key], index=R2.index)
             R2["households"] = R2["households"].where(R2["households"].notna(), add)
+        # 2026-11-14 건축물대장 보완: 아직 세대수를 모르는 거래는 거래 건물키 → complex_coords(시군구·법정동코드) → building_info(본번·부번)로 이어 건축물대장 세대수(총괄표제부 → 같은 지번 동 합계 순)를 씀
+        R2["cid"] = R2["region"] + "|" + R2["dong"].astype(str) + "|" + R2["nm"]
+        if hmap is not None and bmap is not None:
+            miss = R2["households"].isna() | (R2["households"] <= 0)
+            M = R2[miss]
+            sg = lookup(M, hmap)
+            bp = M["bunji"].fillna("").astype(str).str.split("-", n=1, expand=True)
+            bun = bp[0].str.replace(r"\D", "", regex=True).str.zfill(4)
+            ji = (bp[1] if bp.shape[1] > 1 else pd.Series("0", index=M.index)).fillna("0").str.replace(r"\D", "", regex=True).replace("", "0").str.zfill(4)
+            hh_b = []; bid = []
+            for a, b_, c_ in zip(sg, bun, ji):
+                if isinstance(a, tuple):
+                    v = bmap.get((a[0], a[1], b_, c_)); hh_b.append(v if v else np.nan); bid.append(f"{a[0]}|{a[1]}|{b_}|{c_}")
+                else: hh_b.append(np.nan); bid.append(None)
+            hh_b = pd.Series(hh_b, index=M.index, dtype=float); bid = pd.Series(bid, index=M.index)
+            got = hh_b.notna() & (hh_b > 0)
+            print(f"[{kind}] 건축물대장 세대수로 새로 채운 거래 {int(got.sum()):,}건 / 아직 모르던 거래 {len(M):,}건")
+            R2.loc[got[got].index, "households"] = hh_b[got]
+            R2.loc[got[got].index, "cid"] = "B|" + bid[got]
         known = R2["households"].notna() & (R2["households"] > 0)
         try:
             un2 = R2[~known]; kd = set(kapt["dong"].astype(str)); 
             print(f"[{kind}] 연결 안 된 거래 {len(un2):,}건 중 동 자체가 K-apt에 없는 거래 {int((~un2['dong'].astype(str).isin(kd)).sum()):,}건 · 상위 안 맞는 단지: " + ", ".join(f"{a}/{b}({c})" for (a, b), c in un2.groupby(['dong', 'nm']).size().sort_values(ascending=False).head(12).items()))
         except Exception as e: print("진단 실패", e)
         print(f"[{kind}] 최근 12개월 거래 {len(R2):,}건 중 세대수 아는 단지 거래 {int(known.sum()):,}건 ({known.mean() * 100:.1f}%)")
-        K = R2[known].copy(); K["cid"] = K["region"] + "|" + K["dong"].astype(str) + "|" + K["nm"]
+        K = R2[known].copy()
         cx = K.groupby("cid").agg(t=("lat", "size"), hh=("households", "first"), lat=("lat", "mean"), lon=("lon", "mean")).reset_index()
         cx["gi"] = np.floor(cx["lat"] / LAT_STEP).astype(int); cx["gj"] = np.floor(cx["lon"] / LON_STEP).astype(int)
         cg = cx.groupby(["gi", "gj"]).agg(t=("t", "sum"), hh=("hh", "sum")).to_dict("index")
@@ -206,8 +225,22 @@ def run(kind, trades_table, cols, cutoff_old, cut_recent, cmap, tmap, kapt=None)
 def main():
     now = datetime.now(timezone.utc); today = now.date()
     cut_recent = int((today - timedelta(days=365)).strftime("%Y%m%d")); cutoff_old = int((today - timedelta(days=730)).strftime("%Y%m%d"))
-    cc = avm.fetch_all_rows("complex_coords", cols="cache_key,lat,lon", order_col="id")
+    cc = avm.fetch_all_rows("complex_coords", cols="cache_key,lat,lon,sigungu_cd,bjdong_cd", order_col="id")
     cmap = {r.cache_key: (float(r.lat), float(r.lon)) for r in cc.itertuples() if r.lat and r.lon}
+    hmap = {r.cache_key: (r.sigungu_cd, r.bjdong_cd) for r in cc.itertuples() if r.sigungu_cd and r.bjdong_cd}
+    bi = avm.fetch_all_rows("building_info", cols="id,sigungu_cd,bjdong_cd,bun,ji,hs:title_json->>hhldSum,st:title_json->site->>hhldCnt,hv:title_json->>hhVer", order_col="id")
+    def _hh(r):
+        for v in (r.st, r.hs):                 # 총괄표제부(단지 전체) 세대수 → 같은 지번 모든 동 합계
+            try:
+                x = int(float(v))
+                if x > 0: return x
+            except Exception: pass
+        return 0
+    bmap = {}
+    for r in bi.itertuples():
+        h = _hh(r)
+        if h: bmap[(r.sigungu_cd, r.bjdong_cd, str(r.bun), str(r.ji))] = h
+    print(f"건축물대장 {len(bi):,}건 중 세대수(총괄·동 합계) 있는 건물 {len(bmap):,}곳")
     tf = avm.fetch_all_rows("transit_features", cols="cache_key,dist_subway_m", order_col="cache_key")
     tmap = {r.cache_key: r.dist_subway_m for r in tf.itertuples() if pd.notna(r.dist_subway_m)}
     print(f"좌표 {len(cmap):,}건, 역거리 {len(tmap):,}건")
@@ -215,7 +248,7 @@ def main():
     out = {"generatedAt": now.isoformat(), "ver": 3, "step": [LAT_STEP, LON_STEP], "note": "cells=[위도*1e4, 경도*1e4, 거래 활발도(이 격자+둘레 8격자 약 1km의 최근 12개월 거래 건수), 이 격자 거래 수, 지하철m(-1 없음), 전국 백분위(활발도), 기준 물건 평당가(만원, 참고)]", "types": {}}
     for kind, table, cols in (("apt", "house_trades", "region,dong,danji,bunji,road_name,main_num,sub_num,price,size,floor,deal_date,dealing_type,build_year,cdeal_type"),
                               ("villa", "villa_trades", "region,dong,danji,bunji,road_name,main_num,sub_num,price,size,floor,deal_date,dealing_type,build_year")):
-        cells, meta = run(kind, table, cols, cutoff_old, cut_recent, cmap, tmap, kapt if kind == 'apt' else None)
+        cells, meta = run(kind, table, cols, cutoff_old, cut_recent, cmap, tmap, kapt if kind == 'apt' else None, hmap, bmap)
         out["types"][kind] = {"cells": cells, "meta": meta}
     txt = json.dumps(out, ensure_ascii=False, separators=(",", ":"))
     open("location-index.json", "w", encoding="utf-8").write(txt)
