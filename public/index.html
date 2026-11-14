@@ -22914,7 +22914,7 @@ async function renderBidDrawer() {
             + (function() {
                 var pe0 = row.pick && row.pick.ev, adj0 = pe0 && pe0.bid === row.recBid && pe0.shift && row.sale ? Math.round(row.sale * pe0.shift) : 0;
                 if (!adj0) return '<tr><td><b>남는 돈(세후)</b></td><td class="r"><b style="color:' + (cl.net >= 1000 ? '#16a34a' : '#dc2626') + ';">' + toEok(String(Math.round(cl.net))) + '</b></td></tr>';
-                var fin = Math.round(cl.net + adj0);   // 맨 위 카드의 예상 순이익과 같은 값(낙찰 조건 보정 반영)
+                var fin = Math.round(pe0.net);   // 맨 위 카드의 예상 순이익과 같은 값(낙찰 조건 보정 반영)
                 return '<tr><td>남는 돈(세후, 보정 전)</td><td class="r">' + toEok(String(Math.round(cl.net))) + '</td></tr>'
                     + '<tr><td>' + (adj0 < 0 ? '− ' : '+ ') + '낙찰 조건 보정 <span class="dr-sub">(과거에 이 가격대로 낙찰된 물건은 이후 시세가 예상매도가보다 낮은 경향이 있어 반영)</span></td><td class="r">' + toEok(String(Math.abs(adj0))) + '</td></tr>'
                     + '<tr><td><b>예상 순이익 (위 카드와 같은 값)</b></td><td class="r"><b style="color:' + (fin >= 1000 ? '#16a34a' : '#dc2626') + ';">' + toEok(String(fin)) + '</b></td></tr>';
