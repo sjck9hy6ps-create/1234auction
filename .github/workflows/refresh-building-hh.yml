@@ -1,0 +1,29 @@
+# 건축물대장 세대수 보완 수집(2026-11-14, 사용자 지시: 다시 조회해야 하는 약 10만 건 거래의 건물을 먼저 조회) - 동 하나 값만 있는 아파트 대장을 최근 12개월 거래 많은 순으로 재조회(회전율 세대수 연결률용).
+# 매일 KST 04:30(건축HUB 하루 한도가 새로 시작된 뒤, 07:59 웜업보다 먼저)에 4,000건씩 - 대상이 다 끝나면 '필요한 대장 0곳'이라 바로 끝남
+name: Refresh building households
+on:
+  schedule:
+    - cron: '30 19 * * *'
+  workflow_dispatch:
+    inputs:
+      cap:
+        description: '이번에 조회할 최대 건수'
+        default: '4000'
+permissions:
+  contents: read
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install pandas numpy requests scikit-learn
+      - env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          CAP: ${{ github.event.inputs.cap || '4000' }}
+          PYTHONUNBUFFERED: '1'
+        run: python refresh-building-hh.py | tee refresh-log.txt
