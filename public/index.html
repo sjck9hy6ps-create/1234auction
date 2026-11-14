@@ -23036,35 +23036,81 @@ function fieldChkKey(id) { return 'fieldChk:' + id; }
 function fieldChkState(id) { try { return JSON.parse(localStorage.getItem(fieldChkKey(id)) || '{}') || {}; } catch (e) { return {}; } }
 function fieldChkToggle(idJs, k, on) { var st = fieldChkState(idJs); if (on) st[k] = 1; else delete st[k]; try { localStorage.setItem(fieldChkKey(idJs), JSON.stringify(st)); } catch (e) {} }
 /* 📝 임장 칸(2026-11-15, 사용자: 상세 버튼의 '입력·권리 체크'는 내용이 중복 → 임장 칸으로) - 체크리스트 + 임장 문답(아파트)을 한 곳에 모으고, 맨 위 📝 임장 버튼이 여기로 이동 */
-function visitSectionHtml(row) {
-    var h = fieldChecklistHtml(row);
-    if (row.type === 'apt') h += fieldCheckHtml(row);
-    return '<div id="dr-visit">' + h + '</div>';
-}
+function visitSectionInner(row) { var h = fieldChecklistHtml(row); if (row.type === 'apt') h += fieldCheckHtml(row); return h; }
+function visitSectionHtml(row) { return '<div id="dr-visit">' + visitSectionInner(row) + '</div>'; }
 function bbGoVisit() {
     var el = document.getElementById('dr-visit'); if (!el) return;
     el.scrollIntoView({ behavior: 'smooth', block: 'start' });
     el.style.transition = 'background .3s'; el.style.background = '#fff7ed'; setTimeout(function() { el.style.background = ''; }, 1400);
 }
-function fieldChecklistHtml(row) {
-    var a = row.a || {}, isV = row.type === 'villa', items = [], fm = function(v) { return v ? toEok(String(Math.round(v))) : '-'; };
-    var rt = a.rights ? null : '권리분석이 없어요 - 탱크옥션 글을 붙여넣어 인수 금액부터 확인';
-    items.push(['rights', '⚖️ 권리 · 점유', rt || '인수 금액·대항력 임차인 확인(현재 점유자·전입 세대는 주민센터 열람, 보증금이 맞는지)']);
-    if (a.unpaidMgmtFee) items.push(['mgmt', '🧾 관리비 체납', '관리사무소에서 체납액(공용부분) 확인 - 앱 가정 ' + fm(parseInt(a.unpaidMgmtFee))]);
-    else items.push(['mgmt', '🧾 관리비 체납', '관리사무소에서 체납 관리비(공용부분)·연체료 확인']);
+/* 📝 임장 확인표(2026-11-15, 사용자: 앱에서 불러올 수 있는 값은 자동으로 채워 진위를 체크하고, 못 불러오는 것도 간단히 체크) -
+   ① 앱 값이 있는 항목: 앱이 아는 값을 보여 주고 [✅ 앱과 같음 / ❌ 앱과 다름(현장 값 적기)]
+   ② 앱이 모르는 항목: [👍 이상 없음 / ⚠️ 문제 있음(한 줄 메모)]
+   체크 결과는 사건 기록(a.visitCheck)에 저장돼 아이패드·맥 어디서나 같게 보임. 계산(추천가·판정)에는 아직 반영하지 않고 기록만 함. */
+function visitItems(row) {
+    var a = row.a || {}, R = a.rights || null, isV = row.type === 'villa', E = bbEsc, fm = function(v) { return v ? toEok(String(Math.round(v))) : '-'; };
+    var V = [], C = [];
+    // ── 앱 값이 있는 항목
+    var tn = R && Array.isArray(R.tenants) ? R.tenants : null, svT = R && R.docs && typeof R.docs.survey === 'string' ? R.docs.survey : '', svM = svT.match(/점유관계\s+([^\n]+)/), sv = svM ? svM[1] : '';
+    V.push({ k: 'occ', t: '🏠 점유자·세입자', app: R ? ('서류상 임차인·점유자 <b>' + (tn ? tn.length : 0) + '명</b>' + (tn && tn.length ? ' (' + tn.slice(0, 4).map(function(t) { return E((t.name || '?') + (t.moveIn ? ' 전입 ' + t.moveIn : '')); }).join(' · ') + (tn.length > 4 ? ' 외' : '') + ')' : '') + (sv ? '<br>현황조사: ' + E(String(sv).slice(0, 60)) : '')) : null, ask: '이웃·경비실 탐문과 전입세대 열람 결과와 같은지(우편물·계량기로 실거주 확인)', none: '권리분석이 없어요 - 탱크옥션 글을 먼저 붙여넣으면 서류 값이 채워져요' });
+    var lienFlag = R && (R.flags || []).filter(function(f) { return /유치권/.test(f.k || ''); })[0];
+    V.push({ k: 'lien', t: '🚪 유치권', app: R ? (lienFlag ? '⚠️ 탱크옥션 글에 유치권 언급: ' + E(String(lienFlag.note || '').slice(0, 70)) : '서류에는 유치권 신고가 보이지 않아요') : null, ask: '현관·공사 흔적에 유치권 안내문이 붙어 있는지', none: '권리분석이 없어요' });
+    V.push({ k: 'mgmt', t: '🧾 관리비 체납', app: '앱 가정 ' + (a.unpaidMgmtFee ? fm(parseInt(a.unpaidMgmtFee)) : '0 (입력 없음)'), ask: '관리사무소에서 확인한 체납액(공용부분)·연체료는 얼마인지' });
+    V.push({ k: 'repair', t: '🔧 수리 상태·수리비', app: '앱 수리비 가정 ' + fm(parseInt(a.repair) || 0) + '<br><span class="dr-sub">참고: 11/14 호가 분석에서 수리 표시 호가의 프리미엄은 약 +3%(61건, 표본 적음) - 수리비만큼 가격으로 안 돌아올 수 있어요</span>', ask: '현장에서 본 수리 범위로 견적하면 얼마인지(도배·장판·누수·곰팡이)' });
     var l = typeof listingStatus === 'function' ? listingStatus(a) : null;
-    items.push(['price', '💰 시세 확인', (l && l.st === 'yes' ? '현재 호가 ' + l.n + '건과 앱 예상매도가를 비교' : '중개사 2곳에 같은 평형 호가·최근 거래를 물어 앱 예상매도가와 비교') + (row.type === 'apt' && row.sale ? ' (앱 ' + fm(row.sale) + ')' : '')]);
-    items.push(['repair', '🔧 수리 상태', '도배·장판·누수·곰팡이 확인 - 앱 수리비 가정 ' + fm(parseInt(a.repair) || 0)]);
-    items.push(['lien', '🚪 유치권 · 대지권', '현장에 유치권 안내문이 있는지, 대지권 등기·토지별도등기 여부 확인']);
-    if (isV) {
-        items.push(['bld', '🏢 건물', '승강기·층수·주차·불법증축(위반건축물) 여부' + (a.floor ? ' · ' + a.floor + '층' : '')]);
-        var rc = typeof villaRcCache !== 'undefined' ? villaRcCache[row.id] : null;
-        items.push(['rent', '🏠 월세 가능성', '동네 중개사에 월세 시세·세입자 수요 확인' + (rc && rc.m ? ' - 앱 월세 ' + rc.m + '만(보증금 ' + fm(rc.d) + ')' : '')]);
-    } else items.push(['demand', '🏙 수요', '단지 전세·월세 수요와 최근 거래 활발도(앱 1년 거래 ' + ((row.ownStats && row.ownStats.n12) || 0) + '건) 확인']);
-    var st = fieldChkState(row.id), idJs = String(row.id).replace(/\\/g, '\\\\').replace(/'/g, "\\'");
-    return '<div class="dr-sec"><h4>📝 임장 체크리스트 <span class="dr-sub" style="display:inline;">(체크 상태는 이 기기에 저장)</span></h4>' + items.map(function(it) {
-        return '<label style="display:block;padding:4px 0;font-size:13px;line-height:1.4;"><input type="checkbox" style="width:18px;height:18px;vertical-align:middle;margin-right:6px;"' + (st[it[0]] ? ' checked' : '') + ' onchange="fieldChkToggle(\'' + idJs + '\',\'' + it[0] + '\',this.checked)"><b>' + it[1] + '</b> <span style="color:#4b5563;">' + bbEsc(it[2]) + '</span></label>';
-    }).join('') + '</div>';
+    V.push({ k: 'price', t: '💰 시세·수리 후 가격', app: '앱 예상매도가 <b>' + fm(row.sale) + '</b>' + (l && l.st === 'yes' ? ' · 네이버 매물 ' + l.n + '건' : (l && l.st === 'none' ? ' · 네이버 매물 없음' : ' · 호가 미확인')) + (!isV && row.ownStats ? ' · 이 단지 1년 거래 ' + (row.ownStats.n12 || 0) + '건' : ''), ask: '중개사 2곳이 말한 같은 평형 호가·수리 후 가격(적어 두면 앱 값과 비교돼요)' });
+    var elv = a.elevatorCnt != null && a.elevatorCnt !== '' ? parseInt(a.elevatorCnt) : null;
+    V.push({ k: 'bld', t: '🏢 건물 정보', app: [a.buildYear ? '연식 ' + a.buildYear + '년' : '연식 미확인', a.floor ? a.floor + '층' : '', elv != null ? (elv > 0 ? '승강기 ' + elv + '대' : '승강기 없음') : '승강기 미확인'].filter(Boolean).join(' · ') + ' <span class="dr-sub">(건축물대장)</span>', ask: '현장에서 본 연식·층·승강기·주차가 대장과 같은지' });
+    if (isV) { var rc = typeof villaRcCache !== 'undefined' ? villaRcCache[row.id] : null; V.push({ k: 'rent', t: '🏠 월세 가능성', app: rc && rc.m ? '앱 월세 ' + rc.m + '만 (보증금 ' + fm(rc.d) + ')' : '앱 월세 자료 없음', ask: '동네 중개사가 말한 월세 시세·세입자 수요가 같은지' }); }
+    V.push({ k: 'sale', t: '📅 입찰 당일 사건 상태', app: '입찰일 ' + E(a.bidDate || '?') + (R && R.tankSaleDate ? ' · 탱크옥션 ' + E(R.tankSaleDate) : ''), ask: '입찰 당일 아침 법원·탱크옥션에서 취하·정지·변경이 없는지(최신 등기도 재확인)' });
+    // ── 앱이 모르는 항목(간단 체크)
+    [['leak', '💧 누수·곰팡이·결로'], ['pipe', '🚿 수압·온수·보일러'], ['win', '🪟 창문·샷시 단열·소음'], ['crack', '🧱 외벽 균열·옥상 방수·기울어짐'], ['illegal', '🚧 불법 증축·방 쪼개기 (대장 API는 위반 표시를 안 줘요)'],
+     ['park', '🅿️ 주차·골목 폭·채광 체감'], ['trash', '🗑 쓰레기 배출장소'], ['env', '🔊 소음·냄새·혐오시설'], ['walk', '🚶 역·버스·학교 도보 거리'], ['night', '🌙 낮·밤 분위기'],
+     ['redev', '🏗 재개발·재건축 구역·호재 현수막'], ['road', '🛣 도로 접면·맹지'], ['util', '💡 공공요금(전기·가스·수도) 체납'], ['attitude', '🗣 점유자 태도·이사 의사'],
+     ['agent', '🧑‍💼 중개사: 매수 문의·대출 문제·팔리는 기간'], ['evict', '🚚 명도 비용·기간 계획'], ['lock', '🔑 낙찰 후 잠금장치 교체 가능']].forEach(function(x) { C.push({ k: x[0], t: x[1] }); });
+    return { V: V, C: C };
+}
+function visitChkGet(a) { return (a && a.visitCheck) || {}; }
+function fieldChecklistHtml(row) {
+    var it = visitItems(row), st = visitChkGet(row.a), idJs = String(row.id).replace(/\\/g, '\\\\').replace(/'/g, "\\'"), E = bbEsc;
+    var all = it.V.concat(it.C), done = all.filter(function(x) { return st[x.k] && st[x.k].s; }).length;
+    var bad = all.filter(function(x) { return st[x.k] && st[x.k].s === 'bad'; });
+    var btn = function(x, s, label) {
+        var on = st[x.k] && st[x.k].s === s;
+        return '<button style="border:1px solid ' + (on ? (s === 'bad' ? '#b91c1c' : '#15803d') : '#d1d5db') + ';background:' + (on ? (s === 'bad' ? '#fee2e2' : '#dcfce7') : '#fff') + ';color:#111;border-radius:14px;padding:5px 12px;font-size:12.5px;margin:0 6px 4px 0;cursor:pointer;" onclick="visitChkSet(\'' + idJs + '\',\'' + x.k + '\',\'' + (on ? '' : s) + '\')">' + label + '</button>';
+    };
+    var note = function(x, ph) { var s = st[x.k]; return s && s.s === 'bad' ? '<input type="text" id="vc-' + x.k + '" value="' + E(s.v || '') + '" placeholder="' + ph + '" style="width:100%;box-sizing:border-box;margin:2px 0 6px;padding:6px 8px;border:1px solid #fca5a5;border-radius:6px;font-size:13px;" onchange="visitChkNote(\'' + idJs + '\',\'' + x.k + '\',this.value)">' : ''; };
+    var h = '<div class="dr-sec"><h4>📝 임장 확인표 <span class="dr-sub" style="display:inline;">확인 ' + done + '/' + all.length + (bad.length ? ' · <b style="color:#b91c1c;">다름·문제 ' + bad.length + '건</b>' : '') + ' (사건 기록에 저장 · 계산에는 아직 반영 안 함)</span></h4>';
+    h += '<div class="dr-sub" style="margin:2px 0 4px;"><b>앱 값과 대조</b> - 앱이 아는 값을 보여 드려요</div>';
+    it.V.forEach(function(x) {
+        h += '<div style="padding:6px 0;border-top:1px solid #f1f5f9;"><div style="font-size:13px;"><b>' + x.t + '</b></div>'
+            + '<div style="font-size:12.5px;background:#f8fafc;border-radius:6px;padding:4px 8px;margin:3px 0;">' + (x.app || '<span class="dr-sub">' + E(x.none || '앱에 값이 없어요') + '</span>') + '</div>'
+            + '<div class="dr-sub" style="margin:0 0 3px;">' + E(x.ask) + '</div>' + btn(x, 'ok', '✅ 앱과 같음') + btn(x, 'bad', '❌ 앱과 다름') + note(x, '현장에서 확인한 값을 적어요') + '</div>';
+    });
+    h += '<div class="dr-sub" style="margin:10px 0 4px;"><b>현장에서만 확인되는 것</b> - 이상 없으면 👍, 걸리면 ⚠️ 와 한 줄 메모</div>';
+    it.C.forEach(function(x) { h += '<div style="padding:5px 0;border-top:1px solid #f1f5f9;"><div style="font-size:13px;margin-bottom:3px;">' + x.t + '</div>' + btn(x, 'ok', '👍 이상 없음') + btn(x, 'bad', '⚠️ 문제 있음') + note(x, '무엇이 문제인지 한 줄') + '</div>'; });
+    if (bad.length) h += '<div class="dr-warn" style="margin-top:8px;"><b>다름·문제로 표시한 것</b><br>' + bad.map(function(x) { return E(x.t) + (st[x.k].v ? ' - ' + E(st[x.k].v) : ''); }).join('<br>') + '</div>';
+    return h + '</div>';
+}
+async function visitChkSet(id, k, s) {
+    var a = auctionList.filter(function(x) { return String(x.id) === String(id); })[0]; if (!a) return;
+    a.visitCheck = Object.assign({}, a.visitCheck || {});
+    if (!s) delete a.visitCheck[k]; else a.visitCheck[k] = { s: s, v: (a.visitCheck[k] && a.visitCheck[k].v) || '', at: new Date().toISOString().slice(0, 10) };
+    visitChkRefresh(id); visitChkSave(a);
+}
+function visitChkNote(id, k, v) {
+    var a = auctionList.filter(function(x) { return String(x.id) === String(id); })[0]; if (!a || !a.visitCheck || !a.visitCheck[k]) return;
+    a.visitCheck = Object.assign({}, a.visitCheck); a.visitCheck[k] = Object.assign({}, a.visitCheck[k], { v: String(v || '').slice(0, 200) });
+    visitChkRefresh(id); visitChkSave(a);
+}
+var _vcSaveT = {};
+function visitChkSave(a) { clearTimeout(_vcSaveT[a.id]); _vcSaveT[a.id] = setTimeout(function() { saveAuctionAPI(a).catch(function(e) { alert('임장 확인 저장 실패: ' + e.message); }); }, 600); }
+function visitChkRefresh(id) {
+    var row = bidBoardRows.filter(function(r) { return String(r.id) === String(id); })[0], box = document.getElementById('dr-visit'); if (!row || !box) return;
+    var y = box.closest('#bb-drawer') ? box.closest('#bb-drawer').scrollTop : null;
+    var aa = auctionList.filter(function(x) { return String(x.id) === String(id); })[0]; if (aa && row.a !== aa) row.a.visitCheck = aa.visitCheck;
+    box.innerHTML = visitSectionInner(row);
+    var d = document.getElementById('bb-drawer'); if (d) { if (y != null) d.scrollTop = y; d.__lastHtml = null; }
 }
 /* ════ 🏘️ 빌라 상세 창 (2026-10-10, 사용자: "빌라 행을 누르면 아파트처럼 상세 내역(지도·사이클·상세정보)이 나오게") ════
    아파트와 같은 오른쪽 상세 창을 쓰되, 빌라 계산(예상매도가·필요 마진·예상 낙찰가·추천가)과 건물 상세(대장·도시민박·매물 붙여넣기)로 채움 */
