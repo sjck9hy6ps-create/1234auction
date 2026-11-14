@@ -227,6 +227,32 @@ def main():
         return t[1][k] if k >= 0 else np.nan
     bgp = {k: (g["day"].values, g["size"].values, g["ppm"].values, g["ym"].values) for k, g in df.groupby("bld")}
 
+    # ── 2026-11-14 생활권 반복매매 지수(사용자 원칙: 빌라 시험의 가장 중요한 것은 생활권 비교): 같은 건물·같은 면적대(±6㎡) 두 거래(간격 90일+) 사이의 ㎡당 가격 변화로
+    #    이 건물 주변 반경(0.5→1→2→5km, 최근 2년 쌍 8개 이상인 가장 가까운 반경)의 연 변화율을 구해 비교 거래를 지금 시점으로 옮김. 롤링 검증 15만 건: 오차 9.30→9.23%(후보 8.65→8.57), 높게 10%+ 24.1→23.5%, 12분기 중 10개 개선.
+    #    좌표가 없으면 예전 방식(시군구 월 지수)으로 대신함
+    from scipy.spatial import cKDTree as _KD
+    _KMc = 111.0 * np.cos(np.radians(37.5)); _d0 = df[df["lat"].notna()]; _PA = []
+    for _b, _g in _d0.sort_values("day").groupby("bld"):
+        if len(_g) < 2: continue
+        _dd = _g["day"].values; _ss = _g["size"].values; _pp = _g["ppm"].values; _la = _g["lat"].values[0]; _lo = _g["lon"].values[0]
+        for _i in range(1, len(_g)):
+            for _j in range(_i - 1, max(-1, _i - 6), -1):
+                if abs(_ss[_i] - _ss[_j]) <= 6 and _dd[_i] - _dd[_j] >= 90:
+                    _PA.append((_dd[_i], _dd[_j], np.log(_pp[_i] / _pp[_j]), _la, _lo)); break
+    _PR = pd.DataFrame(_PA, columns=["t2", "t1", "dl", "la", "lo"]); _PR = _PR[_PR["dl"].abs() < 1.0].reset_index(drop=True)
+    _PR["dy"] = (_PR["t2"] - _PR["t1"]) / 365.0; _PR["rate"] = _PR["dl"] / _PR["dy"]
+    _PTREE = _KD(np.c_[_PR["la"].values * 111.0, _PR["lo"].values * _KMc]); _PT2 = _PR["t2"].values; _PRATE = _PR["rate"].values; _PDY = _PR["dy"].values
+    print(f"  생활권 반복매매 쌍 {len(_PR):,}개(연 변화율 중앙 {float(_PR['rate'].median()) * 100:.1f}%)")
+
+    def la_drift(la, lo, cut, rads=(0.5, 1.0, 2.0, 5.0), min_n=8, win=730):
+        for R_ in rads:
+            ix = np.array(_PTREE.query_ball_point([la * 111.0, lo * _KMc], R_), dtype=int)
+            if len(ix) == 0: continue
+            ix = ix[(_PT2[ix] <= cut) & (_PT2[ix] >= cut - win)]
+            if len(ix) >= min_n:
+                r_ = _PRATE[ix]; w_ = np.minimum(_PDY[ix], 1.5); o_ = np.argsort(r_); c_ = np.cumsum(w_[o_]) / w_.sum(); return float(r_[o_][min(np.searchsorted(c_, 0.5), len(r_) - 1)])
+        return 0.0
+
     def icc_k(Y, key):
         S = Y[["y", key]].dropna(); g = S.groupby(key)["y"]; n = g.size(); m = g.mean(); N = len(S); k = len(n)
         msb = (n * (m - S["y"].mean()) ** 2).sum() / max(k - 1, 1); msw = ((S["y"] - S[key].map(m)) ** 2).sum() / max(N - k, 1); n0 = (N - (n ** 2).sum() / N) / max(k - 1, 1)
@@ -247,6 +273,7 @@ def main():
         Tx = Tt.loc[F.index]
         n = len(F); est_p = np.full(n, np.nan); n_p = np.zeros(n); age_p = np.full(n, np.nan); dres = np.full(n, np.nan); dn = np.zeros(n); rres = np.full(n, np.nan); rn = np.zeros(n)
         dts = EPOCH + pd.to_timedelta(Tx["day"].values - 30, unit="D"); cutym = (dts.year * 100 + dts.month).values
+        LATv = pd.to_numeric(Tx["lat"], errors="coerce").values if "lat" in Tx.columns else np.full(n, np.nan); LONv = pd.to_numeric(Tx["lon"], errors="coerce").values if "lon" in Tx.columns else np.full(n, np.nan)
         for j, (b, rg, dk, day, sz) in enumerate(zip(Tx["bld"].values, Tx["region"].values, Tx["dk"].values, Tx["day"].values, Tx["size"].values)):
             cut = day - 30
             g = bgp.get(b)
@@ -255,9 +282,14 @@ def main():
                 if hi > lo:
                     m = np.abs(ss[lo:hi] - sz) <= 6
                     if m.any():
-                        Ln = lidx(rg, cutym[j])
-                        if not np.isnan(Ln):
-                            adj = np.log(pp[lo:hi][m]) + (Ln - np.array([lidx(rg, y_) for y_ in ym[lo:hi][m]])); ok = ~np.isnan(adj)
+                        la_j, lo_j = LATv[j], LONv[j]
+                        if la_j == la_j and lo_j == lo_j:   # 좌표가 있으면 생활권 반복매매 지수로 시점 보정
+                            adj = np.log(pp[lo:hi][m]) + la_drift(la_j, lo_j, cut) * (cut - d[lo:hi][m]) / 365.0; ok = np.ones(len(adj), bool)
+                        else:
+                            Ln = lidx(rg, cutym[j]); adj = np.full(int(m.sum()), np.nan)
+                            if not np.isnan(Ln): adj = np.log(pp[lo:hi][m]) + (Ln - np.array([lidx(rg, y_) for y_ in ym[lo:hi][m]]))
+                            ok = ~np.isnan(adj)
+                        if True:
                             if ok.any():
                                 age = cut - d[lo:hi][m][ok]; w = np.exp(-age / 540.0) * np.exp(-np.abs(ss[lo:hi][m][ok] - sz) / 8.0)
                                 est_p[j] = np.exp(wmed(adj[ok], w)) * sz; n_p[j] = int(ok.sum()); age_p[j] = float(age.min())
