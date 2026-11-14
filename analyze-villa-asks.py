@@ -22,8 +22,12 @@ def parse_item(blk):
     ar = re.search(r"(?:전용|공급)?\s*(\d+(?:\.\d+)?)\s*(?:㎡|m²|m2)", t)   # 전용 우선
     ex = re.search(r"전용\s*(\d+(?:\.\d+)?)", t)
     area = float(ex.group(1)) if ex else (float(ar.group(1)) if ar else None)
-    fl = re.search(r"(\d+|저|중|고)\s*/\s*(\d+)\s*층", t); floor = int(fl.group(1)) if fl and fl.group(1).isdigit() else None
-    return {"price": price, "area": area, "floor": floor}
+    fl = re.search(r"(\d+|저|중|고)\s*/\s*(\d+)\s*층", t); floor = int(fl.group(1)) if fl and fl.group(1).isdigit() else None; maxf = int(fl.group(2)) if fl else None
+    # 수리 상태·세입자: 앱의 호가 붙여넣기 해석(parseNaverListings)과 같은 글자 규칙
+    d = " ".join(L[L.index(pl) + 1:])   # 가격 줄 뒤(이 매물의 종류·면적·설명·태그)만
+    tenant = bool(re.search(r"안고|승계|세입자|갭", d))
+    repair = "need" if re.search(r"수리.{0,4}(필요|해야)|필요함|도배.{0,8}필요", d) else ("full" if re.search(r"올수리|올리모델링|올\s*수리|샤시포함|샷시포함|샤시까지|샷시까지|완벽|내부깔끔", d) else ("part" if re.search(r"수리|교체|리모델링", d) else ""))
+    return {"price": price, "area": area, "floor": floor, "maxF": maxf, "tenant": tenant, "repair": repair}
 def lst(prefix):
     out = []; stack = [prefix]
     while stack:

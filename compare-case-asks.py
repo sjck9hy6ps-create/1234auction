@@ -35,14 +35,25 @@ sel["age_ok"] = sel["age_tag"].map(age_ok)
 print(f"면적 {AREA-AT:.0f}~{AREA+AT:.0f}㎡: {len(sel)}건 | 연식 구간 맞음 {int((sel['age_ok']==True).sum())}건, 구간표시 없음 {int(sel['age_ok'].isna().sum())}건, 안 맞음 {int((sel['age_ok']==False).sum())}건")
 pd.set_option("display.width", 250, "display.max_colwidth", 110)
 print(sel.sort_values("ppm")[["price", "area", "floor", "age_tag", "age_ok", "raw"]].to_string())
-use = sel[sel["age_ok"] != False]
+use = sel[(sel["age_ok"] != False)]
 res = {"반경km": RAD, "호가 전체": int(len(A)), "면적 조건": int(len(sel)), "면적+연식 조건": int(len(use))}
-if len(use):
-    res["호가 ㎡당 중앙(만원)"] = round(float(use["ppm"].median()), 1); res["예상호가(비슷한 조건 호가 중앙, 이 사건 면적 환산, 만원)"] = int(use["ppm"].median() * AREA); res["호가 환산(이 사건 면적, 만원)"] = res["예상호가(비슷한 조건 호가 중앙, 이 사건 면적 환산, 만원)"]
-    res["호가 낮은쪽 25%·높은쪽 25% 환산"] = [int(use["ppm"].quantile(.25) * AREA), int(use["ppm"].quantile(.75) * AREA)]
-    NEGO = float(os.environ.get("NEGO", "0.03")); res["절충 가정"] = NEGO; res["예상호가 − 절충(매도가 상한, 만원)"] = int(res["예상호가(비슷한 조건 호가 중앙, 이 사건 면적 환산, 만원)"] * (1 - NEGO))
-    res["상한 규칙 성립(앱 예상매도가 ≤ 예상호가 − 절충)"] = bool(SALE <= res["예상호가 − 절충(매도가 상한, 만원)"])
-    res["예상매도가 ÷ 예상호가"] = round(SALE / res["예상호가(비슷한 조건 호가 중앙, 이 사건 면적 환산, 만원)"], 3)
+# 예상호가 = '살고 싶은 집으로 고쳐 파는' 계획이므로 수리된(올수리) 좋은 집의 호가 수준. 세입자 낀 매물은 빈 집 매도와 달라 제외.
+live = use[~use["tenant"]]; full = live[live["repair"] == "full"]; oth = live[live["repair"] != "full"]
+res["호가 구성"] = {"세입자 낀 매물(제외)": int(use["tenant"].sum()), "수리된 집(올수리 등)": int(len(full)), "그 외(수리 필요·보통)": int(len(oth))}
+exp_ask = None; how = None
+if len(full) >= 3: exp_ask = float(full["ppm"].median()) * AREA; how = "수리된 집 호가 중앙(" + str(len(full)) + "건)"
+elif len(full) >= 1 and len(oth) >= 3:
+    prem = (float(full["ppm"].median()) - float(oth["ppm"].median())) * AREA
+    res["수리 호가 프리미엄(수리된 집 − 그 외, 만원, 참고)"] = int(prem)
+    how = "수리된 집 호가가 " + str(len(full)) + "건뿐이라 예상호가를 못 정함(최소 3건 필요) - 더 모으세요"
+else: how = "수리된 집 호가가 없어요"
+res["예상호가 근거"] = how
+if exp_ask:
+    NEGO = float(os.environ.get("NEGO", "0.03")); res["예상호가(수리된 집, 이 사건 면적 환산, 만원)"] = int(exp_ask); res["절충 가정"] = NEGO; res["예상호가 − 절충(매도가 상한, 만원)"] = int(exp_ask * (1 - NEGO))
+    res["상한 규칙 성립(앱 예상매도가 ≤ 예상호가 − 절충)"] = bool(SALE <= exp_ask * (1 - NEGO)); res["예상매도가 ÷ 예상호가"] = round(SALE / exp_ask, 3)
+if len(live): res["참고: 세입자 제외 호가 중앙 환산(만원)"] = int(live["ppm"].median() * AREA); res["참고: 호가 낮은쪽25%~높은쪽25% 환산"] = [int(live["ppm"].quantile(.25) * AREA), int(live["ppm"].quantile(.75) * AREA)]
+print(live.sort_values("ppm")[["price", "area", "floor", "repair", "raw"]].to_string()) if len(live) else None
+res["호가 환산(이 사건 면적, 만원)"] = res.get("예상호가(수리된 집, 이 사건 면적 환산, 만원)") or res.get("참고: 세입자 제외 호가 중앙 환산(만원)")
 # 실거래
 df = pd.read_pickle(os.environ.get("DF_FILE", "input/villa-df.pkl")); df = df[df["lat"].notna() & (df["size"] > 0)].copy()
 tree = cKDTree(np.c_[df["lat"].values * 111.0, df["lon"].values * KM]); ii = np.array(tree.query_ball_point([LAT * 111.0, LON * KM], RAD))
