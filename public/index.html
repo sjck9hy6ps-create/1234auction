@@ -22838,7 +22838,6 @@ async function renderBidDrawer() {
             + '<tr><td><b>남는 돈(세후)</b></td><td class="r"><b style="color:' + (cl.net >= 1000 ? '#16a34a' : '#dc2626') + ';">' + toEok(String(Math.round(cl.net))) + '</b></td></tr>'
             + '<tr><td class="dr-sub">필요 현금(입찰가 − 대출 ' + fmt(cl.loan) + ' + 입찰 후~매도 전 비용 ' + fmt(cl.cashCost) + ', 매도 때 정산되는 수수료·부가세 제외)</td><td class="r dr-sub">' + fmt(cl.cash) + '</td></tr></table></div>';
     }
-    h += vqDetailHtml(a);
     h += competitionHtml(row);
     h += fieldCheckHtml(row);
     h += rightsPanelHtml(row);
@@ -23051,6 +23050,7 @@ async function renderVillaDrawer(d, row) {
         h += '<div class="dr-wb"><div class="dr-wb-h">🎲 예상 낙찰가 <b>' + fmt(wb.price) + '</b><span class="dr-sub" style="margin:0 0 0 6px;">비슷한 빌라가 보통 낙찰되는 가격(낙찰사례 약 6천 건, 보통 오차 약 9%)</span></div>'
             + (pn && pn.pMax != null ? '<div>입찰 상한 ' + fmt(pn.max) + '으로 쓰면 낙찰 가능성 약 <b>' + Math.round(pn.pMax * 100) + '%</b></div>' : '') + '</div>';
     }
+    h += vqDetailHtml(row.a);
     h += villaRentDrawerHtml(row, ev, fmt);
     h += villaFloorResaleHtml(row);
     h += '<div class="dr-sec"><h4>📍 생활권 거래 활발도 <span class="dr-sub" style="display:inline;">(법정동이 아니라 이 물건 위치 기준 반경)</span></h4>'
