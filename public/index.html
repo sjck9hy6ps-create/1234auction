@@ -22803,7 +22803,7 @@ function aptBldEnsure(row) {
     var fin = function(info) {
         aptBldState[row.id] = { info: info || null, failed: !info && !!loadBuildingInfo.lastFailed };
         var box = document.getElementById('apt-bld');
-        if (box && bidDrawerId === row.id) box.innerHTML = '<h4>🏢 건축물대장</h4>' + aptBldHtml(row);
+        if (box && bidDrawerId === row.id) box.innerHTML = aptBldHtml(row);
     };
     if (!a.lat || !a.lon || !a.bunji) { fin(null); return; }
     loadBuildingInfo({ latest: { dong: a.dong, name: a.name || row.name, bunji: a.bldgBunji || a.bunji, aptDong: a.aptDong } }, a.lat, a.lon, false, a.bldgBCode || a.bCode || null)
@@ -22835,7 +22835,7 @@ async function renderBidDrawer() {
         + '<div style="margin-top:6px;"><span class="bb-verdict" style="color:' + v.color + ';background:' + v.bg + ';">' + v.label + '</span>'
         + (row.sweet ? ' <span class="bb-pill" style="background:#e8f5e9;color:#2e7d32;">👍 입찰 추천 구간</span>' : '') + (row.overshoot ? ' <span class="bb-pill" style="background:#fff3e0;color:#e65100;">⚠️ 손해 주의</span>' : '') + (row.bulk ? ' <span class="bb-pill" style="background:#fee2e2;color:#b91c1c;">🏢 대량 경매 ' + row.bulkN + '건</span>' : '')
         + (row.niche ? ' <span class="bb-pill" style="background:#e0f2f1;color:#00695c;">🧭 틈새</span>' : '') + (row.sturdy ? ' <span class="bb-pill" style="background:#ecfeff;color:#0e7490;">🛡️ 버팀 ' + Math.round(row.ownStats.jeonse.ratio * 100) + '%</span>' : '') + (row.hardHold ? ' <span class="bb-pill" style="background:#fffbeb;color:#92400e;">⏳ 버티기 어려움 ' + Math.round(row.ownStats.jeonse.ratio * 100) + '%</span>' : '') + (row.opportunity ? ' <span class="bb-pill" style="background:#fff8e1;color:#e65100;">🎯 기회</span>' : '') + '</div>'
-        + '<div class="dr-big"><div><span>예상매도가</span><b>' + fmt(row.sale) + '</b></div><div><span>추천 입찰가</span><b style="color:#16a34a;">' + fmt(row.recBid) + '</b>' + (row.recAggr ? '<span style="color:#7c3aed;margin-top:2px;">적극 ' + fmt(row.recAggr) + '</span>' : '') + '</div><div><span>최저가</span><b>' + fmt(row.minBid) + '</b></div></div>';
+        + (bidBoardState.lite && row.type === 'apt' ? '' : '<div class="dr-big"><div><span>예상매도가</span><b>' + fmt(row.sale) + '</b></div><div><span>추천 입찰가</span><b style="color:#16a34a;">' + fmt(row.recBid) + '</b>' + (row.recAggr ? '<span style="color:#7c3aed;margin-top:2px;">적극 ' + fmt(row.recAggr) + '</span>' : '') + '</div><div><span>최저가</span><b>' + fmt(row.minBid) + '</b></div></div>');
     var issueHtml = '';
     if (row.issueSuspect) {
         issueHtml = '<div class="dr-issue ' + row.issueSuspect.level + '"><b>🚩 이슈 ' + (row.issueSuspect.level === 'high' ? '강한 의심' : '의심') + '</b> - ' + bbEsc(row.issueSuspect.why.join(' · '))
@@ -22925,7 +22925,7 @@ async function renderBidDrawer() {
         + '<button onclick="openTankQuick(\'' + String(a.caseNo || '').replace(/'/g, "\\'") + '\',\'' + tankNameHint(a).replace(/'/g, "\\'") + '\')" title="사건번호 복사 없이 이 사건 1건을 자동으로 열어 모아요(확장 필요)">🟦 탱크옥션</button>'
         + '<button onclick="openNaverForRow(\'' + idJs + '\')" title="이 물건 위치·종류·평형(±5평)·연식(−5~+10년)을 맞춘 네이버부동산 매물 지도">🟢 네이버부동산</button><button onclick="openNaverMapForRow(\'' + idJs + '\')" title="네이버 지도에서 이 주소를 검색해 핀이 꽂힌 위치로 열어요">📍 네이버 지도</button>' + '<button onclick="openBatoner(\'' + String(a.caseNo || '').replace(/'/g, "\\'") + '\')">🙋 바토너 대리입찰</button></div>';
     // 2026-11-12(사용자: 임장후보 아파트 상세 안에 건축물대장 정보) - 열 때 한 번 조회해서 이 칸만 채움
-    h += '<div class="dr-sec" id="apt-bld"><h4>🏢 건축물대장</h4>' + aptBldHtml(row) + '</div>';
+    h += '<div class="dr-sec" id="apt-bld">' + aptBldHtml(row) + '</div>';
     aptBldEnsure(row);
     // 임장 후보 화면(2026-10): 맨 위에 판정 + 추천가 1개, 근거·범위·실거래·비용은 "자세히"로 접고, 직접 확인한 금액 입력칸은 항상 보이게
     var i1 = h.indexOf('<div style="margin-top:6px;"><span class="bb-verdict"'), i2 = h.indexOf('<div class="dr-sec"><h4>직접 확인한 금액');
@@ -23068,6 +23068,11 @@ function visitItems(row) {
      ['park', '🅿️ 주차·골목 폭·채광 체감'], ['trash', '🗑 쓰레기 배출장소'], ['env', '🔊 소음·냄새·혐오시설'], ['walk', '🚶 역·버스·학교 도보 거리'], ['night', '🌙 낮·밤 분위기'],
      ['redev', '🏗 재개발·재건축 구역·호재 현수막'], ['road', '🛣 도로 접면·맹지'], ['util', '💡 공공요금(전기·가스·수도) 체납'], ['attitude', '🗣 점유자 태도·이사 의사'],
      ['agent', '🧑‍💼 중개사: 매수 문의·대출 문제·팔리는 기간'], ['evict', '🚚 명도 비용·기간 계획'], ['lock', '🔑 낙찰 후 잠금장치 교체 가능']].forEach(function(x) { C.push({ k: x[0], t: x[1] }); });
+    if (row.type === 'apt') { // 아래 '임장 문답'이 같은 걸 묻는 항목은 확인표에서 뺌(집 내부 상태·누수·향/소음·주차/엘리베이터·점유자 협조·매도 기간·최저 호가)
+        var dup = { leak: 1, win: 1, park: 1, attitude: 1, agent: 1 };
+        C = C.filter(function(x) { return !dup[x.k]; });
+        V.forEach(function(x) { if (x.k === 'price') { x.t = '💰 시세'; x.ask = '중개사 2곳이 말한 같은 평형 호가·수리 후 가격이 앱 예상매도가와 비슷한지(최저 호가·매물 수는 아래 임장 문답에 입력)'; } });
+    }
     return { V: V, C: C };
 }
 function visitChkGet(a) { return (a && a.visitCheck) || {}; }
@@ -23079,7 +23084,7 @@ function fieldChecklistHtml(row) {
         var on = st[x.k] && st[x.k].s === s;
         return '<button style="border:1px solid ' + (on ? (s === 'bad' ? '#b91c1c' : '#15803d') : '#d1d5db') + ';background:' + (on ? (s === 'bad' ? '#fee2e2' : '#dcfce7') : '#fff') + ';color:#111;border-radius:14px;padding:5px 12px;font-size:12.5px;margin:0 6px 4px 0;cursor:pointer;" onclick="visitChkSet(\'' + idJs + '\',\'' + x.k + '\',\'' + (on ? '' : s) + '\')">' + label + '</button>';
     };
-    var APPLY = { mgmt: '미납 관리비', repair: '수리비' }; if (row.type === 'apt') APPLY.price = '같은 평형 최저 호가';
+    var APPLY = { mgmt: '미납 관리비', repair: '수리비' };
     var note = function(x, ph) {
         var s = st[x.k]; if (!s || s.s !== 'bad') return '';
         var ap = APPLY[x.k], n = ap ? visitParseMan(s.v) : null, extra = '';
