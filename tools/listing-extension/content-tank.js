@@ -230,7 +230,7 @@
           toast('참고자료 창을 여는 중…', null); setProg('참고자료 창 여는 중'); btn.style.display = '';
           let dl = await tryDelegate(text);
           if (dl === 'blocked' && autoMode) { setProg('참고자료 창이 늦어요 - 한 번 더 시도'); await sleep(1500); dl = await tryDelegate(text); }   /* 0.7.6: 자동 수집은 실패로 치기 전에 한 번 더 */
-          if (dl === 'blocked' && autoMode) { setProg('실패 - 참고자료 창이 열리지 않았어요(크롬 팝업 차단) · 팝업 허용 후 다시 시작'); toast('팝업이 차단됐어요 - 주소창 오른쪽 팝업 표시에서 "항상 허용"', false); msg({ type: 'chainFail', tid: tidOf(), reason: 'popup' }); btn.style.display = ''; btn.disabled = false; return; }
+          if (dl === 'blocked' && autoMode) { setProg('참고자료 창이 안 열려요 - 창 없이 직접 읽는 방식으로 이어가요(느려요)'); toast('참고자료 창이 안 열려 직접 읽는 방식으로 이어가요 (조금 느려요)', null); }   /* 0.7.7(사용자: 개별로 모으면 느려도 통과 - 자동은 팝업 차단으로 멈춤): 자동 모드도 개별과 같이 창 없이 읽는 방식으로 넘어가고 실패로 끝내지 않음 */
           if (dl === 'popup') { toast('참고자료 창에서 읽는 중… (끝나면 알려 드려요)', null); setTimeout(() => { if (btn) { btn.textContent = label; btn.style.background = '#7b1fa2'; btn.disabled = false; } }, 90000); return; }
           btn.style.display = 'none';
         }
