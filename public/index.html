@@ -31426,6 +31426,15 @@ window.addEventListener('load', function() {
     st.textContent = '@media (max-width:900px){ .nv-sort, .bb2-table thead tr { cursor:grab; scrollbar-width:thin !important; } .nv-sort::-webkit-scrollbar, .bb2-table thead tr::-webkit-scrollbar { display:block !important; height:4px; } }';
     document.head.appendChild(st);
 })();
+
+/* 2026-11-14 빌라 호가 확장: 네이버 지도가 주소 좌표를 암호로 바꿔서, 앱이 연 링크의 좌표를 확장에 미리 알려 줌(확장이 없으면 아무 일도 안 일어남) */
+(function () {
+  function tell(url) {
+    try { var m = String(url || '').match(/new\.land\.naver\.com\/[a-z]+\?ms=(\d{2}\.\d+),(\d{3}\.\d+),(\d+)/); if (m) window.postMessage({ source: 'hg-app', type: 'naverOpen', lat: +m[1], lon: +m[2], z: +m[3] }, '*'); } catch (e) {}
+  }
+  var _open = window.open; window.open = function (u) { tell(u); return _open.apply(this, arguments); };
+  document.addEventListener('click', function (e) { var a = e.target && e.target.closest ? e.target.closest('a[href]') : null; if (a) tell(a.href); }, true);
+})();
 </script>
 </body>
 </html>

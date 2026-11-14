@@ -193,3 +193,18 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   })();
   return true;
 });
+
+// 빌라 호가(0.7.3): 앱이 네이버 링크를 열 때 알려 준 좌표를 기억(naverOpen) → 새로 열린 네이버 탭이 처음 주소를 알려 주면(bindEnc) 짝지음 → 버튼 때 확인(getOpen)
+chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+  if (!msg || ['naverOpen', 'bindEnc', 'getOpen'].indexOf(msg.type) < 0) return;
+  (async () => {
+    const loc = chrome.storage.local;
+    try {
+      if (msg.type === 'naverOpen') { await loc.set({ lastOpen: { lat: msg.lat, lon: msg.lon, z: msg.z, enc: null, at: Date.now() } }); sendResponse({ ok: true }); return; }
+      const lo = (await loc.get('lastOpen')).lastOpen;
+      if (msg.type === 'bindEnc') { if (lo && !lo.enc && Date.now() - lo.at < 120000) { lo.enc = msg.enc; await loc.set({ lastOpen: lo }); } sendResponse({ ok: true }); return; }
+      sendResponse(lo && lo.enc && lo.enc === msg.enc && Date.now() - lo.at < 6 * 3600 * 1000 ? { ok: true, lat: lo.lat, lon: lo.lon, z: lo.z } : { ok: false });
+    } catch (e) { sendResponse({ ok: false }); }
+  })();
+  return true;
+});

@@ -8,6 +8,7 @@
   btn.id = 'hg-villa-btn'; btn.textContent = '🏘 빌라 호가 보내기';
   btn.style.cssText = 'position:fixed;right:16px;bottom:64px;z-index:2147483647;background:#6a1b9a;color:#fff;border:none;border-radius:20px;padding:10px 16px;font-size:14px;font-weight:700;cursor:pointer;box-shadow:0 2px 10px rgba(0,0,0,.3);';
   document.body.appendChild(btn);
+  try { const e0 = new URL(location.href).searchParams.get('ms') || ''; if (e0 && !/^\d{2}\./.test(e0)) chrome.runtime.sendMessage({ type: 'bindEnc', enc: e0 }); } catch (e) {}   // 앱이 방금 연 탭이면 처음(암호화된) 주소를 앱이 알려 준 좌표와 짝지음
   const toast = (t, ok) => { btn.textContent = t; btn.style.background = ok === false ? '#c62828' : (ok ? '#2e7d32' : '#6a1b9a'); };
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   const isPrice = (l) => /^매매\s*[\d억]/.test(l);
@@ -41,6 +42,11 @@
           if (st.enc === enc) m = [st.lat, st.lon, st.z];
           else { toast('지도를 움직였어요 - 앱의 네이버 링크로 다시 열어 처음 화면에서 눌러 주세요', false); return; }
         }
+      }
+      if (!m) {   // 앱이 링크를 열 때 알려 준 좌표(처음 주소와 같을 때만)
+        const r = await new Promise((res) => { try { chrome.runtime.sendMessage({ type: 'getOpen', enc }, (x) => res(chrome.runtime.lastError ? null : x)); } catch (e) { res(null); } });
+        if (r && r.ok) m = [r.lat, r.lon, r.z || 0];
+        else if (enc) { const lo = await new Promise((res) => { try { chrome.storage.local.get('lastOpen', (x) => res(x && x.lastOpen)); } catch (e) { res(null); } }); if (lo && lo.enc && lo.enc !== enc) { toast('지도를 움직였어요 - 앱의 네이버 링크로 다시 열어 처음 화면에서 눌러 주세요', false); return; } }
       }
       if (!m) { toast('좌표를 못 찾았어요 - 앱의 네이버부동산 링크로 열어 주세요(주소: ' + location.pathname + location.search.slice(0, 40) + ')', false); return; }
       toast('호가 읽는 중…');
