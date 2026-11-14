@@ -1,0 +1,44 @@
+# 빌라 주변 호가 분석(2026-11-14): 쌓인 스냅샷 → 호가 갭 → (60일 지난 것은) 이후 실거래와 비교 검증. 매주 월요일 + 수동
+name: Analyze villa asks
+on:
+  workflow_dispatch:
+    inputs:
+      scale_run_id:
+        description: 'Villa data scale 실행 번호(villa-df 파일을 낸 실행). 보관기간이 지났으면 villa-data-scale을 먼저 돌려 새 번호를 넣으세요'
+        default: '43010239831'
+  schedule:
+    - cron: '0 0 * * 1'
+concurrency:
+  group: analyze-villa-asks
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install pandas numpy scipy requests
+      - uses: actions/download-artifact@v4
+        continue-on-error: true
+        with:
+          name: villa-df
+          path: input
+          run-id: ${{ inputs.scale_run_id || '43010239831' }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+      - env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: set -o pipefail; python analyze-villa-asks.py | tee asks-log.txt
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: villa-asks-report
+          path: |
+            villa-asks-report.json
+            asks-log.txt
+          if-no-files-found: ignore
