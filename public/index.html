@@ -8495,11 +8495,35 @@ function setChartRange(r) { currentChartRange = r; renderTable(); }
 // 시세 그래프 10년 보기 - 지도 자료는 최근 2년치뿐이라 단지 하나의 10년 매매를 따로 받아(api/get-house action=history) 합침.
 // 같은 지번에 다른 단지가 섞이지 않게 이름이 서로 포함되는 거래만 씀(예전 신고는 '용봉동' 같은 접두어가 빠진 경우가 있음).
 var pnHistoryCache = {};
-function pnHistoryFor(apt, recent) {
+/* 📊 10년 그래프 미리 계산본(2026-11-15, 사용자: 변동 작은 값은 바로 불러오기) - 입찰후보가 있는 단지는 서버(precompute-board.mjs)가 '최근 자료보다 오래된' 달의 [년월, 거래 수, 중앙값]을 저장해 둠.
+   지난 달 값은 바뀌지 않으므로 바로 쓰고, 최근 자료와 겹치는 달은 빼서 이중으로 세지 않음. 이 단지·이 평형이 저장돼 있지 않으면 예전처럼 실시간으로 받음 */
+var histPre = { st: {}, pend: {}, meta: null };
+function histPreHash(key) { var h = 0, t = String(key); for (var i = 0; i < t.length; i++) h = (h * 31 + t.charCodeAt(i)) >>> 0; return h % 40; }
+function histPreEnsure(key) {
+    var k = histPreHash(key);
+    if (!histPre.pend[k]) {
+        histPre.pend[k] = (histPre.meta || (histPre.meta = fetch('/api/data-coverage?mode=boardCacheMeta&kind=hist').then(function(r) { return r.json(); })))
+            .then(function(m) { return fetch('/api/data-coverage?mode=boardCacheChunk&kind=hist&i=' + k + (m && m.at ? '&v=' + m.at : '')).then(function(r) { return r.json(); }); })
+            .then(function(d) { var it = (d && d.items) || {}; Object.keys(it).forEach(function(kk) { histPre.st[kk] = it[kk]; }); })
+            .catch(function() {});
+    }
+    return histPre.pend[k].then(function() { if (histPre.st[key] === undefined) histPre.st[key] = null; return histPre.st[key]; });
+}
+function pnHistoryFor(apt, recent, chartPy) {
     var l = apt && apt.latest;
     if (!l || !l.region || !l.dong || !l.bunji) return null;
     var type = (apt.buildingType || l.buildingType) === 'villa' ? 'villa' : 'apt';
     var key = [l.region, l.dong, l.bunji, type].join('|');
+    if (chartPy != null && histPre.st[key] !== null && !pnHistoryCache[key]) {   // 10년 그래프(평형이 정해진 호출)에서만 미리 계산본을 씀
+        var hp = histPre.st[key];
+        if (hp === undefined) { histPreEnsure(key).then(function() { if (currentPanelApt === apt && currentChartRange === '10y') renderTable(); }); return 'loading'; }
+        if (hp && String(hp.py) === String(chartPy) && hp.m && hp.m.length) {
+            var minYm = 999999; (recent || []).forEach(function(t) { var ym = (+t.year) * 100 + (+t.month); if (ym > 0 && ym < minYm) minYm = ym; });
+            var syn = [], ar = (+hp.py) * 3.305785;
+            hp.m.forEach(function(x) { if (x[0] >= minYm) return; for (var q = 0; q < Math.min(x[1], 25); q++) syn.push({ year: Math.floor(x[0] / 100), month: x[0] % 100, day: 15, amount: String(x[2]), area: ar, floor: '-', name: '', dealing_type: '' }); });
+            return (recent || []).concat(syn);
+        }
+    }
     var c = pnHistoryCache[key];
     if (c === 'loading') return 'loading';
     if (c) {
@@ -8689,7 +8713,7 @@ function renderTable() {
     // ② 시세 그래프(그 평형)
     var chartSrc = all, histNote = '';
     if (currentChartRange === '10y' && currentPanelApt) {
-        var hist = pnHistoryFor(currentPanelApt, all);
+        var hist = pnHistoryFor(currentPanelApt, all, chartPy);
         if (hist === 'loading') histNote = '<div class="pn-muted" style="font-size:11px;padding:2px 4px;">10년치 거래 불러오는 중…</div>';
         else if (hist) chartSrc = hist;
     }
@@ -23568,12 +23592,9 @@ async function villaCompElevatorLoad(row, rows, tol) {
         if (bidDrawerId === row.id) renderBidDrawer();   // 어느 탭(패스·즐겨찾기 포함)에서 열었든 다시 그림
     } catch (e) {}
 }
-function villaPriceGridHtml(row, ev, fmt) {
-    var a = row.a, ve = ev.ve, pe = ev.pn && ev.pn.ev, wb = ev.wb;
-    var item = function(label, value, sub, color) {
-        return '<div class="indicator-item"><div class="indicator-label">' + label + '</div><div class="indicator-value"' + (color ? ' style="color:' + color + ';"' : '') + '>' + value + '</div>' + (sub ? '<div class="indicator-label" style="margin:2px 0 0;">' + sub + '</div>' : '') + '</div>';
-    };
-    var c = null; try { c = villaNearComps(row); } catch (e) {}
+/* 빌라 최근거래가 1건 고르기(2026-11-15 사용자 규칙) - 화면(villaPriceGridHtml)과 서버 사전 계산(precompute-board.mjs)이 같은 규칙을 쓰도록 따로 뺌 */
+function villaRecentPick(row) {
+    var a = row.a;
     // 최근거래가(2026-11-15, 사용자 규칙): 보정이 필요한 층은 비교에서 분리 - 지하는 지하 거래끼리, 승강기 없는 4층 이상은 승강기 없는 4층 이상 거래끼리,
     // 그 외(1~3층·승강기 있는 건물)는 지하와 '승강기 없는 4층 이상' 거래를 뺀 거래 중 가장 최근 1건. 같은 조건 거래가 없으면 다른 층으로 대신하지 않고 '없음'
     var vFl = parseInt(row.floor != null ? row.floor : a.floor);
@@ -23590,22 +23611,31 @@ function villaPriceGridHtml(row, ev, fmt) {
     // 비슷한 거래 1건 찾는 순서(2026-11-15 사용자): ① 반경 500m·면적 ±10% → ② 반경 500m·면적 ±15% → ③ 거리는 마지막에 100m씩 늘려 1,000m까지(면적 ±15% 유지).
     // 층 조건·직거래 제외는 모든 단계에서 그대로. 비교 건물 승강기 정보를 받는 중에는 판단을 미룸
     var cc = null; try { cc = villaNearComps(row, 0.15); } catch (e) {}   // 반경 1km·면적 ±15% 후보 전체(단계별로 아래서 거름)
-    c = cc;
     var nearAll = cc && cc.rows ? cc.rows.filter(function(r) { return !r.direct; }) : [];   // 직거래 제외(2026-11-15 사용자)
-    row._compElvTried = row._compElvTried || {};
-    if (nearAll.length && !row._compElvTried[0.15]) villaCompElevatorLoad(row, nearAll, 0.15);
     var steps = [[500, 0.10], [500, 0.15], [600, 0.15], [700, 0.15], [800, 0.15], [900, 0.15], [1000, 0.15]], tier = null, near = null;
     var devOf = function(r) { return cc && cc.area ? Math.abs(r.area - cc.area) / cc.area : 1; };
     for (var si = 0; si < steps.length && !near; si++) {
         var stp = steps[si], cand = nearAll.filter(function(r) { return devOf(r) <= stp[1] + 1e-9 && r.dist <= stp[0] && okFor(r); });
         if (cand.length) { near = cand[0]; tier = stp; }
     }
-    var P = { pend: nearAll.length && nearAll.some(function(r) { return r.ap && r.ap.buildingInfo === undefined; }) };
-    var nearOther = false, nearMode = near ? 'ok' : '';
-    var nElv = near ? elvOf(near.ap) : null, elvTxt = myElv == null ? '' : (myElv ? '승강기 있음' : '승강기 없음');
-    var elvPending = P.pend;
-    var nearSub = near ? (function(ts) { var dt = new Date(ts); return dt.getFullYear() + '.' + ('0' + (dt.getMonth() + 1)).slice(-2) + '.' + ('0' + dt.getDate()).slice(-2); })(near.ts) + (isNaN(near.floor) ? '' : ' · ' + near.floor + '층') + (near.area > 0 ? ' · ' + (near.area / 3.305785).toFixed(1) + '평(' + Math.round(near.area) + '㎡)' : '') + (compBy(near) ? ' · ' + compBy(near) + '년식' : '') + ' · ' + near.dist + 'm' + (near.name ? '<br>' + bbEsc(near.name) : '') + (near.direct ? ' · 직거래' : '') + '<br>' + kindLabel + (elvTxt ? ' · 이 물건 ' + elvTxt : '') + (subjBy ? '<br>준공 ±3년(이 물건 ' + subjBy + '년)' : '<br>이 물건 연식 정보 없음 - 연식 조건 없이 비교') + '<br>찾은 범위: 반경 ' + tier[0] + 'm · 면적 ±' + Math.round(tier[1] * 100) + '%' + (tier[1] > 0.1 || tier[0] > 500 ? ' (더 가까운·비슷한 조건에는 일치 거래 없음)' : '')
-        : (c && c.loading ? '지역 실거래 불러오는 중' : (c && c.err ? bbEsc(c.err) : (nearAll.length ? (elvPending ? '비교 건물 승강기 정보 확인 중' : '같은 조건 거래 없음 (반경 1,000m·면적 ±15%·준공 ±3년까지 확인) · ' + kindLabel) : '반경 1,000m 안 비슷한 면적(±15%) 거래 없음')));
+    var pend = nearAll.length && nearAll.some(function(r) { return r.ap && r.ap.buildingInfo === undefined; });
+    return { c: cc, nearAll: nearAll, near: near, tier: tier, kindLabel: kindLabel, subjBy: subjBy, myElv: myElv, myKind: myKind, pend: pend, compBy: compBy };
+}
+function villaPriceGridHtml(row, ev, fmt) {
+    var a = row.a, ve = ev.ve, pe = ev.pn && ev.pn.ev, wb = ev.wb;
+    var item = function(label, value, sub, color) {
+        return '<div class="indicator-item"><div class="indicator-label">' + label + '</div><div class="indicator-value"' + (color ? ' style="color:' + color + ';"' : '') + '>' + value + '</div>' + (sub ? '<div class="indicator-label" style="margin:2px 0 0;">' + sub + '</div>' : '') + '</div>';
+    };
+    var rp = villaRecentPick(row), c = rp.c, near = rp.near, tier = rp.tier, kindLabel = rp.kindLabel, subjBy = rp.subjBy, myElv = rp.myElv, nearAll = rp.nearAll, elvPending = rp.pend, compBy = rp.compBy;
+    // 지역 실거래를 아직 못 받았으면 서버가 미리 계산해 둔 최근거래가 1건을 씀(2026-11-15, 사용자: 변동 작은 값은 바로 불러오기) - 지역 자료가 도착하면 위 실시간 계산으로 바뀜
+    var sv = null;
+    if (!near && c && c.loading) { sv = chartPre.items[row.id + '#n'] || null; if (sv && sv.p) { near = { ts: sv.ts, floor: sv.fl, area: sv.ar, by: sv.by, dist: sv.di, name: sv.nm, direct: false, p: sv.p }; tier = sv.tier; } }
+    row._compElvTried = row._compElvTried || {};
+    if (nearAll.length && !row._compElvTried[0.15]) villaCompElevatorLoad(row, nearAll, 0.15);
+    var elvTxt = myElv == null ? '' : (myElv ? '승강기 있음' : '승강기 없음');
+    var nearSub = near ? (function(ts) { var dt = new Date(ts); return dt.getFullYear() + '.' + ('0' + (dt.getMonth() + 1)).slice(-2) + '.' + ('0' + dt.getDate()).slice(-2); })(near.ts) + (isNaN(near.floor) ? '' : ' · ' + near.floor + '층') + (near.area > 0 ? ' · ' + (near.area / 3.305785).toFixed(1) + '평(' + Math.round(near.area) + '㎡)' : '') + (compBy(near) ? ' · ' + compBy(near) + '년식' : '') + ' · ' + near.dist + 'm' + (near.name ? '<br>' + bbEsc(near.name) : '') + (near.direct ? ' · 직거래' : '') + '<br>' + kindLabel + (elvTxt ? ' · 이 물건 ' + elvTxt : '') + (subjBy ? '<br>준공 ±3년(이 물건 ' + subjBy + '년)' : '<br>이 물건 연식 정보 없음 - 연식 조건 없이 비교') + '<br>찾은 범위: 반경 ' + tier[0] + 'm · 면적 ±' + Math.round(tier[1] * 100) + '%' + (tier[1] > 0.1 || tier[0] > 500 ? ' (더 가까운·비슷한 조건에는 일치 거래 없음)' : '') + (sv ? '<br><span style="color:#9ca3af;">미리 계산해 둔 값 · 지역 자료를 받으면 새로 계산해요</span>' : '')
+        : (sv ? (sv.n ? '같은 조건 거래 없음 (반경 1,000m·면적 ±15%·준공 ±3년까지 확인) · ' + kindLabel : '반경 1,000m 안 비슷한 면적(±15%) 거래 없음') + '<br><span style="color:#9ca3af;">미리 계산해 둔 값</span>'
+        : (c && c.loading ? '지역 실거래 불러오는 중' : (c && c.err ? bbEsc(c.err) : (nearAll.length ? (elvPending ? '비교 건물 승강기 정보 확인 중' : '같은 조건 거래 없음 (반경 1,000m·면적 ±15%·준공 ±3년까지 확인) · ' + kindLabel) : '반경 1,000m 안 비슷한 면적(±15%) 거래 없음'))));
     var sale = (ve && ve.est) || row.sale, fails = row.fails != null ? row.fails : parseInt(a.failCount);
     var pcc = pe && pe.p != null ? Math.round(pe.p * 100) : null;
     var h = '<div class="indicator-box" style="margin-top:8px;"><div class="indicator-title">💰 가격 한눈에</div><div class="indicator-grid">';

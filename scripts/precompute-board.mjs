@@ -126,6 +126,66 @@ try {
   });
   console.log(`가격 그래프 점 ${Object.keys(charts).length}건`);
 } catch (e) { console.log('가격 그래프 점 만들기 실패:', String(e).slice(0, 200)); }
+// ── 빌라 최근거래가 1건 미리 계산(2026-11-15): 비교 건물 승강기 정보(건축물대장)를 받은 뒤 앱과 같은 규칙(villaRecentPick)으로 고름. 지역 자료 없이도 바로 보이게
+try {
+  const near = await page.evaluate(async () => {
+    const out = {}, rows = villaMetroRows(true), t0 = Date.now(); let idx = 0;
+    const work = async () => {
+      while (idx < rows.length && Date.now() - t0 < 20 * 60 * 1000) {
+        const r = rows[idx++];
+        try {
+          const cc = villaNearComps(r, 0.15);
+          if (!cc || !cc.rows) continue;
+          const nearAll = cc.rows.filter((x) => !x.direct);
+          if (nearAll.length) await villaCompElevatorLoad(r, nearAll, 0.15);
+          const rp = villaRecentPick(r);
+          if (rp.pend) continue;   // 승강기 정보를 못 받은 물건은 저장하지 않음(앱이 실시간으로 계산)
+          if (rp.near) out[r.id + '#n'] = { p: rp.near.price || rp.near.p || rp.near.amount, ts: rp.near.ts, fl: rp.near.floor, ar: Math.round(rp.near.area * 10) / 10, by: rp.compBy(rp.near), di: rp.near.dist, nm: rp.near.name || '', tier: rp.tier };
+          else out[r.id + '#n'] = { n: nearAll.length };
+        } catch (e) {}
+      }
+    };
+    await Promise.all(Array.from({ length: 6 }, work));
+    return out;
+  });
+  charts = Object.assign(charts || {}, near);
+  console.log(`빌라 최근거래가 미리 계산 ${Object.keys(near).length}건 (거래 있음 ${Object.values(near).filter((x) => x.p).length})`);
+} catch (e) { console.log('빌라 최근거래가 미리 계산 실패:', String(e).slice(0, 200)); }
+// ── 10년 그래프 미리 계산(2026-11-15, 사용자: 변동 작은 값은 바로 불러오기): 단지별로 '최근 자료보다 오래된' 달의 [년월, 거래 수, 중앙값]
+let hist = null;
+try {
+  hist = await page.evaluate(async () => {
+    currentPyung = 'all';
+    const out = {}, todo = {}, t0 = Date.now();
+    const rows = (bidBoardRows || []).filter((r) => r.type === 'apt' && !r.pending && !r.skippedPast && r.a).concat(villaMetroRows(true));
+    rows.forEach((r) => {
+      try {
+        const a = r.a, ap = ownComplexEntries(a, r.bunjiFull || fullBunjiFromAddr(a.addr, a.dong, a.bunji), r.type)[0], l = ap && ap.latest;
+        if (!l || !l.region || !l.dong || !l.bunji) return;
+        const type = (ap.buildingType || l.buildingType) === 'villa' ? 'villa' : 'apt', key = [l.region, l.dong, l.bunji, type].join('|');
+        if (!todo[key]) todo[key] = ap;
+      } catch (e) {}
+    });
+    const keys = Object.keys(todo);
+    for (let i = 0; i < keys.length && Date.now() - t0 < 20 * 60 * 1000; i += 8) {
+      const batch = keys.slice(i, i + 8), res = {};
+      batch.forEach((k) => { res[k] = pnHistoryFor(todo[k], todo[k].trades || []); });
+      for (let w = 0; w < 60 && batch.some((k) => res[k] === 'loading'); w++) { await new Promise((r) => setTimeout(r, 200)); batch.forEach((k) => { if (res[k] === 'loading') res[k] = pnHistoryFor(todo[k], todo[k].trades || []); }); }
+      batch.forEach((k) => {
+        const h = res[k], ap = todo[k], recent = ap.trades || [];
+        if (!h || h === 'loading' || !h.length) return;
+        const py = pnChartPyung(recent); if (!py) return;
+        let minYm = 999999; recent.forEach((t) => { const ym = t.year * 100 + t.month; if (ym > 0 && ym < minYm) minYm = ym; });
+        const by = {};
+        h.forEach((t) => { if (!(t.area > 0) || String(toPyung(t.area)) !== String(py)) return; const v = parseInt(t.amount); const ym = t.year * 100 + t.month; if (!(v > 0) || ym >= minYm) return; (by[ym] = by[ym] || []).push(v); });
+        const m = Object.keys(by).map(Number).sort((x, y) => x - y).map((ym) => { const v = by[ym].sort((x, y) => x - y); return [ym, v.length, v[v.length >> 1]]; });
+        out[k] = { py: py, m: m };
+      });
+    }
+    return out;
+  });
+  console.log(`10년 그래프 미리 계산 ${Object.keys(hist).length}개 단지`);
+} catch (e) { console.log('10년 그래프 미리 계산 실패:', String(e).slice(0, 200)); }
 await browser.close();
 // 2026-10-21(사용자: 입찰후보 저장 계산 불러오는 시간이 김) - 임장 후보를 앞쪽 묶음에 모아 앱이 후보부터 받고 화면을 먼저 채우게 함(나머지는 뒤에서)
 const ids = Object.keys(cache || {}).sort((x, y) => {
@@ -205,6 +265,29 @@ try {
     console.log(`그래프 점 캐시 데우기 ${okN}/${NCH}`);
   } else console.log('가격 그래프 점이 너무 적어 올리지 않음');
 } catch (e) { console.log('가격 그래프 점 올리기 실패(무시):', String(e).slice(0, 200)); }
+
+// ── 10년 그래프 미리 계산본 올리기(단지 키 해시로 40묶음)
+try {
+  if (hist && Object.keys(hist).length >= 100) {
+    const NCH = 40, hashOf = (id) => { let h = 0; for (const ch of String(id)) h = (h * 31 + ch.charCodeAt(0)) >>> 0; return h % NCH; };
+    const parts = Array.from({ length: NCH }, () => ({ items: {} }));
+    Object.keys(hist).forEach((k) => { parts[hashOf(k)].items[k] = hist[k]; });
+    for (let i = 0; i < NCH; i++) {
+      for (let t = 0; t < 4; t++) {
+        const { error } = await supabase.from('leader_follower_cache').upsert({ id: `board|hist|${i}`, payload: parts[i], fetched_at: now }, { onConflict: 'id' });
+        if (!error) break;
+        console.log('10년 그래프 저장 재시도', i, error.message);
+        await new Promise((res) => setTimeout(res, 3000 * (t + 1)));
+      }
+    }
+    const hat = Date.now();
+    await supabase.from('leader_follower_cache').upsert({ id: 'board|hist|meta', payload: { n: NCH, count: Object.keys(hist).length, at: hat }, fetched_at: now }, { onConflict: 'id' });
+    console.log(`✅ 10년 그래프 올림: ${NCH}묶음 / ${Object.keys(hist).length}개 단지`);
+    let okN = 0;
+    for (let i = 0; i < NCH; i += 8) await Promise.all(Array.from({ length: Math.min(8, NCH - i) }, (_, k) => fetch(`${SITE}/api/data-coverage?mode=boardCacheChunk&kind=hist&i=${i + k}&v=${hat}`).then((r) => { if (r.ok) okN++; return r.arrayBuffer(); }).catch(() => {})));
+    console.log(`10년 그래프 캐시 데우기 ${okN}/${NCH}`);
+  } else console.log('10년 그래프 미리 계산이 너무 적어 올리지 않음');
+} catch (e) { console.log('10년 그래프 올리기 실패(무시):', String(e).slice(0, 200)); }
 
 // ── 이번 주 변동(2026-10-12): 지난 기준 저장본(board|snap|base)과 비교해 board|diff|latest에 저장. 기준은 5일 넘게 지났을 때만 새로 교체(한 주에 여러 번 돌려도 주 단위로 비교) ──
 try {
