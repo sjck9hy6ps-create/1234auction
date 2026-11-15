@@ -1641,6 +1641,13 @@ body.ui2 #auction-modal.am4 { width:620px; }
 #bb-drawer .dr-ex-btn { opacity:.75; } #bb-drawer .dr-ex-btn.on { opacity:1; background:#e0e7ff; }
 #bb-drawer .dr-warn details > summary::-webkit-details-marker { display:none; }
 #remind-panel .rm-s { display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; cursor:pointer; } #remind-panel .rm-s.open { display:block; }
+
+/* 앱 전체 텍스트 단순화(2026-11-15) */
+.x-explain { display:none !important; } body.show-explain-all .x-explain { display:revert !important; }
+body.show-explain-all #bb-drawer .dr-explain { display:block; }
+#x-ex-global { position:fixed; left:12px; bottom:14px; z-index:100000; border:1px solid #c7d2fe; background:#eef2ff; color:#3730a3; border-radius:16px; padding:6px 12px; font-size:12.5px; font-weight:700; box-shadow:0 2px 8px rgba(0,0,0,.18); cursor:pointer; display:none; }
+#x-ex-global.on { background:#3730a3; color:#fff; }
+#guide-modal .gd-d { display:none; } #guide-modal .gd-step.open .gd-d { display:block; } #guide-modal .gd-step .gd-t { cursor:pointer; } #guide-modal .gd-step .gd-t::after { content:' ▾'; color:#9ca3af; font-size:11px; } #guide-modal .gd-step.open .gd-t::after { content:' ▴'; }
 </style>
 </head>
 <body>
@@ -31360,6 +31367,38 @@ async function savePredSnapshots() {
 // 예전 누적 투자 리포트 주소(/dashboard.html → /#assets)로 들어오면 내 자산 화면을 바로 엶
 window.addEventListener('load', function() { if (location.hash === '#assets') setTimeout(function() { openMyAssetsPanel(); }, 1500); });
 document.addEventListener('click', function(e) { var t = e.target && e.target.closest && e.target.closest('#remind-panel .rm-s'); if (t) t.classList.toggle('open'); });
+
+/* 🧹 앱 전체 텍스트 단순화(2026-11-15, 사용자: 모두 단순화) - 패널·창 안의 긴 회색 설명 문장(46자 이상·작은 글씨·회색, 표 칸·버튼 제외)은 기본으로 숨기고,
+   왼쪽 아래 'ⓘ 설명' 버튼으로 한꺼번에 켜고 끔. 사용법 창은 단계 제목만 보이고 누르면 펼쳐짐. 내용이 바뀔 때마다 새로 생긴 것만 다시 훑음 */
+(function() {
+    var ROOT_SEL = '#my-assets-panel, #bid-case-panel, #weekly-panel, #wbd-panel, #cycle-panel, #bid-target-panel, #filter-panel, #surge-panel, #guide-modal, #auction-modal, #money-panel, #rates-panel, #unsold-panel';
+    var SKIP = /^(TD|TH|BUTTON|INPUT|SELECT|TEXTAREA|SUMMARY|LABEL|A|OPTION|H1|H2|H3|H4|B|STRONG)$/;
+    var INLINE = /^(B|SPAN|I|A|SMALL|BR|U|EM|STRONG)$/;
+    var grey = function(c) { var m = String(c).match(/\d+(\.\d+)?/g); if (!m || m.length < 3) return false; var r = +m[0], g = +m[1], b = +m[2], mx = Math.max(r, g, b), mn = Math.min(r, g, b); return mx - mn <= 32 && mx >= 95 && mx <= 205; };
+    function scan() {
+        var any = false;
+        document.querySelectorAll(ROOT_SEL).forEach(function(root) {
+            var cs0 = getComputedStyle(root); if (cs0.display === 'none' || cs0.visibility === 'hidden') return;
+            var rr = root.getBoundingClientRect(); if (rr.width < 40 || rr.height < 40) return;
+            any = true;
+            root.querySelectorAll('*').forEach(function(el) {
+                if (el.dataset.sx || SKIP.test(el.tagName) || el.closest('td, th, button, summary, label, select, .dr-nav, #bb-drawer')) { return; }
+                el.dataset.sx = '1';
+                if (Array.prototype.some.call(el.children, function(c) { return !INLINE.test(c.tagName); })) return;
+                var t = (el.textContent || '').trim(); if (t.length < 46) return;
+                var cs = getComputedStyle(el); if (parseFloat(cs.fontSize) > 13.2 || !grey(cs.color)) return;
+                el.classList.add('x-explain');
+            });
+        });
+        var btn = document.getElementById('x-ex-global');
+        if (!btn) { btn = document.createElement('button'); btn.id = 'x-ex-global'; btn.type = 'button'; btn.textContent = 'ⓘ 설명'; btn.onclick = function() { var on = document.body.classList.toggle('show-explain-all'); btn.classList.toggle('on', on); btn.textContent = on ? 'ⓘ 설명 끄기' : 'ⓘ 설명'; }; document.body.appendChild(btn); }
+        btn.style.display = any ? 'block' : 'none';
+    }
+    var tmr = null, obs = new MutationObserver(function() { clearTimeout(tmr); tmr = setTimeout(function() { try { scan(); } catch (e) {} }, 300); });
+    function start() { try { obs.observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ['style', 'class'] }); scan(); } catch (e) {} }
+    if (document.body) start(); else document.addEventListener('DOMContentLoaded', start);
+    document.addEventListener('click', function(e) { var st = e.target && e.target.closest && e.target.closest('#guide-modal .gd-step'); if (st) st.classList.toggle('open'); });
+})();
 function closeMyAssetsPanel() { document.getElementById('my-assets-panel').style.display = 'none'; }
 var maEditId = null;
 function maEsc(t) { return String(t == null ? '' : t).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }
