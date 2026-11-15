@@ -22962,7 +22962,7 @@ function aptBldEnsure(row) {
    현재가 = 유찰로 내려온 지금 최저가(minBid) / 최근거래가 = 이 단지 같은 평형 가장 최근 실거래 1건(상세 창의 실거래 표와 같은 목록, 직거래 포함·표시) */
 function drawerPriceGridHtml(row) {
     if (!row || row.type !== 'apt') return '';
-    var a = row.a, pe = row.pick && row.pick.ev;
+    var a = row.a, pe = row.pick && row.pick.ev, fmt = function(x) { return x ? toEok(String(Math.round(x))) : '-'; };
     var item = function(label, value, sub, color) {
         return '<div class="indicator-item"><div class="indicator-label">' + label + '</div><div class="indicator-value"' + (color ? ' style="color:' + color + ';"' : '') + '>' + value + '</div>' + (sub ? '<div class="indicator-label" style="margin:2px 0 0;">' + sub + '</div>' : '') + '</div>';
     };
