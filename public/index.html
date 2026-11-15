@@ -4245,6 +4245,10 @@ function villaSaleEst(a, ref) {
     var prim = n1 >= 1 ? c1 : (n2 >= 1 ? c2 : cAll), disp = null;
     if (prim && prim.length >= 3) { var mid = wq(prim, .5); if (mid > 0) disp = (wq(prim, .75) - wq(prim, .25)) / mid; }
     var res = { bs: bsT, disp: disp == null ? null : Math.round(disp * 1000) / 1000, nm: nmOwn, by: byOwn, est: est, lvl: lvl, n1: n1, n2: n2, lo: Math.round(est / (1 + r[1] / 100)), hi: Math.round(est / (1 + r[0] / 100)), errPct: r[2] };
+    try {   // 2026-11-15 최근시세(입찰후보 리스트 표시): 비교 거래 중 가장 최근 3건의 가격 중앙값과 가장 최근 거래 날짜
+        var lastS = (prim || []).filter(function(x) { return x.p > 0 && x.td > 0; }).sort(function(x, y) { return y.td - x.td; }).slice(0, 3);
+        if (lastS.length) { var lp = lastS.map(function(x) { return x.p; }).sort(function(x, y) { return x - y; }); res.last = { p: lp.length % 2 ? lp[(lp.length - 1) >> 1] : Math.round((lp[lp.length / 2 - 1] + lp[lp.length / 2]) / 2), n: lastS.length, td: lastS[0].td }; }
+    } catch (e) {}
     var sk = villaStack && villaStack.rows && a.id != null ? villaStack.rows[String(a.id)] : null;
     if (sk && sk.est > 0 && sk.l10 > 0 && !bsT) { // 종합 평가 값으로 교체(기존 값은 estApp에 보관). 지하·반지하만 제외(높게 틀리는 비율이 커짐)
         // 2026년 실제 빌라 거래 8,643건을 거래 30일 전 자료로 앱 실제 계산(villaSaleEst)과 직접 채점(2026-11-07): 오차 중앙 12.21→10.61%, ±10% 이내 43.4→47.9%, 두 값이 15% 넘게 갈린 건에서도 종합 값이 맞음(상한을 씌우면 오히려 나빠져 상한 없음).
@@ -4483,10 +4487,17 @@ function nvVillaCard(r, ev) {
         dday: r.dday ? r.dday.label : '', soon: r.dday && r.dday.diffDays >= 0 && r.dday.diffDays <= 3,
         rec: pe ? vm(pe.bid) : '', recPct: pe && ve ? Math.round(pe.bid / ve.est * 100) : null,
         spec: bbEsc(r.region) + (r.pyung ? ' · 빌라 ' + r.pyung + '평(' + Math.round(r.pyung * 3.305785) + '㎡)' : '') + (r.floor ? ' · ' + r.floor + '층' : '') + (mp && mp.age != null ? ' · ' + mp.age + '년차' : ''),
-        sum: '<span class="nv-i">예상매도가 <b>' + vm(ve && ve.est) + '</b>' + (ve ? ' <small>±' + ve.errPct + '%</small>' : '') + '</span><span class="nv-i">최저가 ' + vm(r.minBid) + '</span>' + (ev.wb && ev.wb.price ? '<span class="nv-i">예상 낙찰가 <b>' + vm(ev.wb.price) + '</b></span>' : '') + (mp ? '<span class="nv-i">필요 마진 ' + vm(mp.margin) + '</span>' : ''),
+        sum: '<span class="nv-i">예상매도가 <b>' + vm(ve && ve.est) + '</b>' + (ve ? ' <small>±' + ve.errPct + '%</small>' : '') + '</span>' + (ve && ve.last ? '<span class="nv-i" title="비교 거래 중 가장 최근 ' + ve.last.n + '건의 가격 중앙값">최근시세 <b>' + vm(ve.last.p) + '</b> <small>(' + new Date(ve.last.td).toISOString().slice(2, 7).replace('-', '.') + ' 기준 ' + ve.last.n + '건)</small></span>' : '') + '<span class="nv-i">최저가 ' + vm(r.minBid) + '</span>' + (ev.wb && ev.wb.price ? '<span class="nv-i">예상 낙찰가 <b>' + vm(ev.wb.price) + '</b></span>' : '') + (mp ? '<span class="nv-i">필요 마진 ' + vm(mp.margin) + '</span>' : ''),
         chips: [r.visit.go ? noVisitPill(r) : null, crowdChip(r), vqChip(r.a), adjOf(r.a) ? { t: '🔶 규제지역', cls: 'r' } : null, permitFor(r) ? { t: '🚧 허가구역', cls: 'r' } : null, pe ? { t: '낙찰 ' + Math.round(pe.p * 100) + '%', cls: pe.p >= 0.6 ? 'g' : (pe.p >= 0.35 ? 'o' : 'r') } : null, pe ? { t: '순이익 ' + vm(pe.net) } : null,
             ev.liq ? { t: '생활권 6개월 ' + ev.liq.r500.a6 + '건', cls: ev.liq.r500.a6 === 0 ? 'r' : '' } : null, (function(c) { return c ? { t: '💰 월세 ' + (c.cf >= 0 ? '+' : '') + Math.round(c.cf) + '만/월', cls: c.ok ? 'g' : (c.cf >= 0 ? 'o' : 'r') } : null; })(villaRentCash(r, ev)), l.st === 'yes' ? { t: '📋 매물 ' + l.n + '건', cls: 'g' } : (l.st === 'none' ? { t: '📋 매물 없음' } : null),
             hv === 'ok' ? { t: '🏠 도시민박 검토 가능', cls: 'g' } : null, ev.issue ? { t: '🚩 이슈 의심', cls: 'r' } : null, rightsNeeded(r, ev.visit.go) ? { t: '⚖️ 권리분석 필요', cls: 'o' } : null, (hsBld[r.id] && hsBld[r.id].info && bldUseWarn(hsBld[r.id].info.title)) ? { t: '⚠️ 비주택 용도', cls: 'r' } : null], note: r.a.fav ? r.a.favNote : '' });
+}
+/* 최근시세(2026-11-15, 사용자: 리스트만 보고 관심을 갖도록) - 아파트: 이 단지 같은 평형 최근 3개월 거래 중위값(2건 이상), 없으면 가장 최근 거래 */
+function nvRecentApt(r, am) {
+    var o = r.ownStats; if (!o) return '';
+    if (o.p3med > 0 && o.n3 >= 2) return '<span class="nv-i" title="이 단지 같은 평형 최근 3개월 거래의 중위값">최근시세 <b>' + am(o.p3med) + '</b> <small>(3개월 ' + o.n3 + '건)</small></span>';
+    var rc = o.recent; if (rc && rc.price > 0) return '<span class="nv-i" title="이 단지 같은 평형 가장 최근 실거래(최근 3개월 거래가 2건 미만)">최근시세 <b>' + am(rc.price) + '</b> <small>(' + String(rc.date).slice(2, 7).replace('-', '.') + ' ' + rc.floor + '층 1건)</small></span>';
+    return '';
 }
 function nvAptCard(r) {
     var am = function(v) { return v ? toEok(String(Math.round(v))) : '-'; };
@@ -4495,7 +4506,7 @@ function nvAptCard(r) {
         dday: r.dday ? r.dday.label : '', soon: r.dday && r.dday.diffDays >= 0 && r.dday.diffDays <= 3,
         rec: e ? am(e.bid) : '', recPct: e && r.sale ? Math.round(e.bid / r.sale * 100) : null,
         spec: bbEsc(r.region) + (r.pyung ? ' · 아파트 ' + r.pyung + '평(' + Math.round(r.pyung * 3.305785) + '㎡)' : '') + (r.floor ? ' · ' + r.floor + '층' : '') + ' · ' + (r.fails == null ? '' : (r.fails === 0 ? '신건' : r.fails + '회 유찰')),
-        sum: '<span class="nv-i">예상매도가 <b>' + am(r.sale) + '</b></span><span class="nv-i">최저가 ' + am(r.minBid) + '</span>' + (r.winbid && r.winbid.price ? '<span class="nv-i">예상 낙찰가 <b>' + am(r.winbid.price) + '</b></span>' : ''),
+        sum: '<span class="nv-i">예상매도가 <b>' + am(r.sale) + '</b></span>' + nvRecentApt(r, am) + '<span class="nv-i">최저가 ' + am(r.minBid) + '</span>' + (r.winbid && r.winbid.price ? '<span class="nv-i">예상 낙찰가 <b>' + am(r.winbid.price) + '</b></span>' : ''),
         chips: [adjOf(r.a) ? { t: '🔶 규제지역', cls: 'r' } : null, permitFor(r) ? { t: '🚧 허가구역', cls: 'r' } : null, e ? { t: '낙찰 ' + Math.round(e.p * 100) + '%', cls: e.p >= 0.6 ? 'g' : (e.p >= 0.35 ? 'o' : 'r') } : null, e ? { t: '순이익 ' + am(e.net) } : null,
             os ? { t: '1년 거래 ' + (os.n12 || 0) + '건', cls: (os.n12 || 0) >= 6 ? 'g' : ((os.n12 || 0) >= 3 ? '' : 'r') } : null, r.liq ? { t: '💧 6개월 내 되팔림 ' + Math.round(r.liq.p6) + '%' + (r.holdFromSupply ? ' · 매물 많음' : ''), cls: r.liq.p6 >= 30 ? 'g' : (r.liq.p6 < 18 ? 'r' : '') } : null, r.niche ? { t: '🧭 틈새', cls: 'g' } : null, r.issueSuspect ? { t: '🚩 이슈 의심', cls: 'r' } : null,
             l.st === 'yes' ? { t: '📋 매물 ' + l.n + '건', cls: 'g' } : (l.st === 'none' ? { t: '📋 매물 없음' } : null), rightsNeeded(r, r.visit.go) ? { t: '⚖️ 권리분석 필요', cls: 'o' } : null], note: r.a.fav ? r.a.favNote : '' });
