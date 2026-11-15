@@ -2238,16 +2238,19 @@ def nolb_test(R, now):
             tf, info = wb_tune(tr, f0, cands)
             WB_FACTORS = [tuple(f) for f in tf if f[0] not in SERVER_ONLY]
             m = wb_fit(tr); pp = wb_predict(m, te)
-            e = np.exp(pp) * te["est"].values / te["actual"].values - 1      # 예상/실제 - 1
-            rows = {}
-            for sn, mk in segs.items():
-                if int(mk.sum()) < 30: rows[sn] = {"n": int(mk.sum())}; continue
-                ee = e[mk]
-                rows[sn] = {"n": int(mk.sum()), "보통오차%": round(float(np.median(np.abs(ee))) * 100, 2), "10%이내%": round(float((np.abs(ee) <= 0.10).mean()) * 100, 1), "쏠림%(예상-실제 중앙, +면 높게 예상)": round(float(np.median(ee)) * 100, 2), "실제보다 낮게 예상해 낙찰 못한 비율%": round(float((ee < -0.0).mean()) * 100, 1)}
-            out["variants"][nm] = {"요인": [[f, k] for f, k in WB_FACTORS], "구간별": rows}
+            for suffix, floor_on in (("", False), (" + 최저가 미만 불가 하한", True)):   # 하한 = 최저가 미만으로는 낙찰될 수 없다는 규칙(가격 기준이 아니라 입찰 가능 하한)
+                pr = np.exp(pp) * te["est"].values
+                if floor_on: pr = np.maximum(pr, te["minbid"].values)
+                e = pr / te["actual"].values - 1      # 예상/실제 - 1
+                rows = {}
+                for sn, mk in segs.items():
+                    if int(mk.sum()) < 30: rows[sn] = {"n": int(mk.sum())}; continue
+                    ee = e[mk]
+                    rows[sn] = {"n": int(mk.sum()), "보통오차%": round(float(np.median(np.abs(ee))) * 100, 2), "10%이내%": round(float((np.abs(ee) <= 0.10).mean()) * 100, 1), "쏠림%(예상-실제 중앙, +면 높게 예상)": round(float(np.median(ee)) * 100, 2), "실제보다 낮게 예상해 낙찰 못한 비율%": round(float((ee < -0.0).mean()) * 100, 1)}
+                out["variants"][nm + suffix] = {"요인": [[f, k] for f, k in WB_FACTORS], "구간별": rows}
         except Exception as ex:
             out["variants"][nm] = {"error": str(ex)[:200]}
-        print("  🧪", nm, json.dumps(out["variants"][nm].get("구간별", {}).get("전체", {}), ensure_ascii=False))
+        for _vn in [k_ for k_ in out["variants"] if k_.startswith(nm)]: print("  🧪", _vn, json.dumps(out["variants"][_vn].get("구간별", {}).get("전체", {}), ensure_ascii=False))
     WB_FACTORS = base0
     print("  🧪 최저가 요인 제외 시험 결과:\n" + json.dumps(out, ensure_ascii=False, indent=1))
     if os.environ.get("GITHUB_STEP_SUMMARY"):
