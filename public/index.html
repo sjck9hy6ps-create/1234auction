@@ -1448,6 +1448,10 @@ body.ui2 #auction-modal.am4 { width:620px; }
 #bb-drawer .dr-h { position:sticky !important; top:-14px; z-index:6; background:#fff; margin:-14px -16px 0 !important; padding:12px 16px 0 !important; flex-wrap:wrap; align-items:center; cursor:default; }
 #bb-drawer .dr-h h3 { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 #bb-drawer .dr-h .dr-nav { position:static; flex:0 0 100%; margin:8px -16px 0; top:auto; }
+/* 임장 탭(2026-11-15): 임장 확인표·임장 문답·직접 확인한 금액은 '임장' 탭에서만 보이고, 전체 내역에는 나오지 않음 */
+#bb-drawer .dr-visit-only { display:none; }
+#bb-drawer.view-visit > :not(.dr-h):not(.dr-top-btns):not(.dr-pickcard):not(.dr-visit-only) { display:none !important; }
+#bb-drawer.view-visit > .dr-visit-only { display:block; }
 .bb-zoom { display:inline-flex; align-items:center; gap:4px; margin-left:8px; } .bb-zoom button { border:1px solid #d1d5db; background:#fff; border-radius:8px; padding:3px 9px; font-size:14px; font-weight:800; cursor:pointer; color:#111827; } .bb-zoom b { font-size:11.5px; color:#6b7280; min-width:36px; text-align:center; }
 .fav-star { cursor:pointer; font-size:18px; line-height:1; margin-right:5px; vertical-align:middle; user-select:none; } .fav-star.off { color:#cbd5e1; } .fav-star.on { color:#f59e0b; } .fav-star:hover { transform:scale(1.15); }
 .bb-tab.fav.on { background:#f59e0b !important; border-color:#f59e0b !important; color:#fff !important; }
@@ -23273,15 +23277,24 @@ async function renderVillaDrawer(d, row) {
 function drawerNavInit(d) {
     try {
         var old = d.querySelector('.dr-nav'); if (old) old.remove();
-        var defs = [['시세·마진', /예상매도가|필요 마진|예상 낙찰가/], ['생활권', /생활권/], ['실거래', /실거래/], ['사이클', /사이클/], ['건물·도시민박', /건축물대장|도시민박|건물 규모/], ['매물·호가', /매물|호가/], ['직접 입력', /직접 확인/]];
-        var heads = Array.prototype.slice.call(d.querySelectorAll('.dr-sec > h4, .dr-wb-h, .dr-band, details.dr-more > summary, h4'));
+        var defs = [['시세·마진', /예상매도가|필요 마진|예상 낙찰가/], ['생활권', /생활권/], ['실거래', /실거래/], ['사이클', /사이클/], ['건물·도시민박', /건축물대장|도시민박|건물 규모/], ['매물·호가', /매물|호가/]];
+        var heads = Array.prototype.slice.call(d.querySelectorAll('.dr-sec > h4, .dr-wb-h, .dr-band, details.dr-more > summary, h4')).filter(function(h) { return !(h.closest && h.closest('#dr-visit')) && !/직접 확인한 금액/.test(h.textContent || ''); });   // 임장 탭 안의 제목은 전체 내역 이동 대상에서 뺌
         var items = [{ t: '요약', el: d.querySelector('.dr-pickcard') || d.firstChild }];
         defs.forEach(function(df) { var el = heads.filter(function(h) { return df[1].test(h.textContent || ''); })[0]; if (el && !items.some(function(x) { return x.el === el; })) items.push({ t: df[0], el: el }); });
         if (items.length < 3) return;
+        // 임장 항목(확인표·문답·직접 확인한 금액)은 전체 내역에서 빼고 '임장' 탭에서만 보이게
+        var vis = [], vEl = d.querySelector('#dr-visit'); if (vEl) vis.push(vEl);
+        Array.prototype.forEach.call(d.children, function(c) { var h4 = c.classList && c.classList.contains('dr-sec') ? c.querySelector(':scope > h4') : null; if (h4 && /직접 확인한 금액/.test(h4.textContent || '')) vis.push(c); });
+        vis.forEach(function(c) { c.classList.add('dr-visit-only'); });
+        if (d.__vvId !== d.__lastId) { d.classList.remove('view-visit'); d.__vvId = d.__lastId; }   // 다른 물건을 열면 전체 내역부터
+        if (vis.length) items.push({ t: '임장', visit: true });
+        var inVisit = d.classList.contains('view-visit') && vis.length;
         var nav = document.createElement('div'); nav.className = 'dr-nav';
         items.forEach(function(it, i) {
-            var a = document.createElement('a'); a.textContent = it.t; if (!i) a.className = 'on';
+            var a = document.createElement('a'); a.textContent = it.t; if (inVisit ? it.visit : !i) a.className = 'on';
             a.onclick = function() {
+                if (it.visit) { d.classList.add('view-visit'); d.scrollTo({ top: 0, behavior: 'smooth' }); Array.prototype.forEach.call(nav.children, function(c) { c.classList.remove('on'); }); a.classList.add('on'); return; }
+                d.classList.remove('view-visit');
                 var det = it.el.closest && it.el.closest('details'); if (det && !det.open) det.open = true;
                 d.scrollTo({ top: Math.max(0, it.el.getBoundingClientRect().top - d.getBoundingClientRect().top + d.scrollTop - 44), behavior: 'smooth' });
                 Array.prototype.forEach.call(nav.children, function(c) { c.classList.remove('on'); }); a.classList.add('on');
