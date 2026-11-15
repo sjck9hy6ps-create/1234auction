@@ -1658,6 +1658,10 @@ body.show-explain-all #bb-drawer .dr-explain { display:block; }
 /* 입찰후보 화면에서 ☰ 메뉴가 안 열리던 문제(2026-11-15): 메뉴는 상단바 안에 있는데 상단바(z 60)가 입찰후보 화면(z 70)보다 아래라 메뉴가 화면 뒤에 열렸음 → 상단바를 위로 */
 body.ui2 #topbar { z-index:75; }
 body.ui2 #tb-menu.open { z-index:76; }
+
+/* ☰ 메뉴가 열려 있는 동안엔 상단바를 할 일 알림(z 9100)·사용법 창 위로(2026-11-15) */
+body.tb-menu-open.ui2 #topbar { z-index:9300; }
+body.tb-menu-open.ui2 #tb-menu.open { z-index:9301; }
 </style>
 </head>
 <body>
@@ -29935,8 +29939,8 @@ function syncProxyChips() {
         });
     }, 50);
 }
-function toggleTbMenuMobile() { document.getElementById('tb-menu').classList.toggle('open'); }
-function closeTbMenus() { var m = document.getElementById('tb-more-menu'); if (m) m.classList.remove('open'); document.getElementById('tb-menu').classList.remove('open'); }
+function toggleTbMenuMobile() { var on = document.getElementById('tb-menu').classList.toggle('open'); document.body.classList.toggle('tb-menu-open', on); }
+function closeTbMenus() { var m = document.getElementById('tb-more-menu'); if (m) m.classList.remove('open'); document.getElementById('tb-menu').classList.remove('open'); document.body.classList.remove('tb-menu-open'); }
 // 입찰후보 ↔ 지도 토글(상단 첫 버튼) - 입찰후보 화면이 떠 있으면 "🗺️ 지도", 아니면 "🎯 입찰후보"
 function syncBoardBtn() {
     var b = document.getElementById('tb-board-btn'), bb = document.getElementById('bid-board');
