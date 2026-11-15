@@ -1,0 +1,27 @@
+# 상한 규칙 시험(2026-11-15): 흐름 상향 보정을 최근 실거래 대비 제한하면 예상매도가가 더 맞는지 (backtest-flow-cap.py, 서버·앱에 아무것도 저장하지 않음)
+name: Backtest flow cap
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install pandas numpy requests scikit-learn scipy
+      - env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          SITE_URL: ${{ secrets.SITE_URL }}
+          PYTHONUNBUFFERED: '1'
+        run: python backtest-flow-cap.py
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: flow-cap-report
+          path: flow-cap-report.json
+          if-no-files-found: ignore
+          retention-days: 30
