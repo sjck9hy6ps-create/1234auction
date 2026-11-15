@@ -56,11 +56,17 @@ jobs:
     secrets: inherit
     needs: analyze-liquidity
     if: ${{ !cancelled() }}
+  analyze-flow-lab:
+    name: 7y 생활권 흐름·보정계수 갱신(새 입찰물건에도 같은 방식 적용)
+    uses: ./.github/workflows/analyze-flow-lab.yml
+    secrets: inherit
+    needs: apt-case-data
+    if: ${{ !cancelled() }}
   analyze-bidcases:
     name: 8 낙찰사례 분석·낙찰가 모델
     uses: ./.github/workflows/analyze-bidcases.yml
     secrets: inherit
-    needs: apt-case-data
+    needs: analyze-flow-lab
     if: ${{ !cancelled() }}
   analyze-villa-bidcases:
     name: 8b 빌라 낙찰가 모델·자동 보정 검증

@@ -5,6 +5,7 @@ on:
   push:                # 트리거 파일을 고쳐 올리면 한 번 실행(git push로 구동)
     paths: ['.github/triggers/analyze-flow-lab.txt']
   workflow_dispatch:
+  workflow_call:       # 주간 파이프라인에서 호출(2026-11-15: 새 입찰물건도 생활권 흐름이 같은 방식으로 적용되게 매주 갱신)
 
 jobs:
   lab:
