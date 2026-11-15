@@ -22884,9 +22884,30 @@ function drawerChartHtml(tr, title) {
     if (!svg) return '';
     return '<div class="dr-sec"><h4>' + title + ' 시세 그래프 <span class="dr-sub" style="display:inline;">(점=실거래, 선=월 중앙값, 아래 막대=거래량)</span></h4>' + svg + '</div>';
 }
+/* 📊 가격 그래프 점 미리 계산본(2026-11-15, 사용자: 가격차트 금액을 사전에 계산해 로딩 단축) - 서버(precompute-board.mjs)가 물건별 최근 3년 같은 평형(빌라는 같은 건물 비슷한 면적) 거래를
+   [날짜, 가격, 층, 직거래]로 저장해 둠. 물건 번호로 나눈 40개 묶음 중 하나만 받아 지역 실거래(수 MB)를 받기 전에도 그래프·최근거래가를 그림. 지역 자료가 로드되면 원래 방식(실시간 계산)을 씀 */
+var chartPre = { items: {}, pend: {}, meta: null };
+function chartPreHash(id) { var h = 0, t = String(id); for (var i = 0; i < t.length; i++) h = (h * 31 + t.charCodeAt(i)) >>> 0; return h % 40; }
+function chartPreEnsure(row) {
+    if (!row || chartPre.items[row.id] !== undefined) return Promise.resolve(chartPre.items[row.id]);
+    var k = chartPreHash(row.id);
+    if (!chartPre.pend[k]) {
+        chartPre.pend[k] = (chartPre.meta || (chartPre.meta = fetch('/api/data-coverage?mode=boardCacheMeta&kind=chart').then(function(r) { return r.json(); })))
+            .then(function(m) { return fetch('/api/data-coverage?mode=boardCacheChunk&kind=chart&i=' + k + (m && m.at ? '&v=' + m.at : '')).then(function(r) { return r.json(); }); })
+            .then(function(d) { var it = (d && d.items) || {}; Object.keys(it).forEach(function(id) { chartPre.items[id] = it[id]; }); return it; })
+            .catch(function() { return {}; });
+    }
+    return chartPre.pend[k].then(function() { if (chartPre.items[row.id] === undefined) chartPre.items[row.id] = null; return chartPre.items[row.id]; });
+}
 function drawerTrades(row) {
     var a = row.a, area = (parseFloat(a.pyung) || 0) * 3.305785, tf = parseInt(a.floor), out = [];
     var bunjiFull = row.bunjiFull || fullBunjiFromAddr(a.addr, a.dong, a.bunji);
+    var pre0 = chartPre.items[row.id];
+    if (pre0 && pre0.length && !dataCache[row.lawd || bidBoardLawdOf(a)]) {   // 지역 실거래를 아직 못 받았으면 서버가 미리 계산한 점으로
+        out = pre0.map(function(x) { var ds = String(x[0]); return { d: new Date(+ds.slice(0, 4), +ds.slice(4, 6) - 1, +ds.slice(6, 8)), f: x[2] == null ? NaN : x[2], p: x[1], direct: !!x[3] }; });
+        out.sort(function(x, y) { return y.d - x.d; });
+        return out.map(function(t) { t.sim = !isNaN(tf) && Math.abs(t.f - tf) <= 3; return t; });
+    }
     ownComplexEntries(a, bunjiFull, row.type).forEach(function(ap) {
         (ap.trades || []).forEach(function(t) {
             if (!(t.area > 0) || Math.abs(t.area - area) > 3) return;
@@ -22996,11 +23017,23 @@ async function renderBidDrawer() {
     var a = row.a, lawd = row.lawd || bidBoardLawdOf(a);
     if (row.type !== 'villa' && lawd && !dataCache[lawd] && !row._drawerLoading) { // 빌라는 renderVillaDrawer가 자료를 기다리지 않고 바로 그림
         row._drawerLoading = true;
-        if (d.__lastId !== row.id) { d.innerHTML = '<div class="dr-sub">이 지역 실거래 불러오는 중…</div>'; d.__lastId = null; d.__lastHtml = null; }   // 이미 이 물건을 보여 주는 중이면 내용·스크롤을 그대로 두고 조용히 불러옴
+        if (d.__lastId !== row.id) {
+            d.innerHTML = '<div class="dr-sub">이 지역 실거래 불러오는 중…</div>'; d.__lastId = null; d.__lastHtml = null;
+            // 서버가 미리 계산한 그래프 점이 있으면 지역 자료를 기다리는 동안 가격 한눈에·시세 그래프를 먼저 보여 줌
+            chartPreEnsure(row).then(function(pre) {
+                if (!pre || bidDrawerId !== row.id || dataCache[lawd] || d.__lastId === row.id) return;
+                try {
+                    var pt = drawerTrades(row), idJ = String(row.id).replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+                    d.innerHTML = '<div class="dr-h"><h3>' + bbEsc(row.name) + (a.caseNo ? ' <span style="font-size:12px;font-weight:normal;color:#6b7280;">· ' + bbEsc(a.caseNo) + '</span>' : '') + '</h3><button class="dr-x" onclick="closeBidDrawer()">✕</button></div>'
+                        + drawerPriceGridHtml(row) + drawerChartHtml(pt, '같은 평형') + '<div class="dr-sub">이 지역 실거래를 받는 중이에요 - 나머지 내용은 곧 채워져요…</div>';
+                } catch (e) {}
+            });
+        }   // 이미 이 물건을 보여 주는 중이면 내용·스크롤을 그대로 두고 조용히 불러옴
         try { var dd = await fetchHouseDataCached(lawd); if (dd && !dd.error && Array.isArray(dd.apt)) await ingestRegionHouseData(dd, '', lawd); } catch (e) {}
         row._drawerLoading = false;
         if (bidDrawerId !== row.id) return;
     }
+    setTimeout(function() { try { loadCycleRates(); loadMarketCycle(lawd, row.type === 'villa' ? 'villa' : null); } catch (e) {} }, 600);   // 📈 사이클·금리 자료를 미리 받아 두어 사이클 창이 바로 열리게(2026-11-15)
     if (row.type === 'villa') { renderVillaDrawer(d, row); return; }
     var v = BID_BOARD_VERDICT[row.verdict] || BID_BOARD_VERDICT.nodata;
     var idJs = String(row.id).replace(/\\/g, '\\\\').replace(/'/g, "\\'");
@@ -23587,6 +23620,7 @@ function villaPriceGridHtml(row, ev, fmt) {
 }
 async function renderVillaDrawer(d, row) {
     var a = row.a, lawd = row.lawd || bidBoardLawdOf(a);
+    if (!dataCache[lawd] && chartPre.items[row.id] === undefined) chartPreEnsure(row).then(function(p) { if (p && bidDrawerId === row.id && !dataCache[lawd]) renderBidDrawer(); });   // 미리 계산한 그래프 점이 도착하면 그래프를 먼저 그림
     // 2026-10-10(사용자: 빌라 상세·지도 로딩 딜레이): 지역 실거래(수 MB)를 다 받을 때까지 상세를 비워 두지 않음 - 저장된 계산(예상매도가·마진·생활권)으로 바로 그리고,
     // 같은 건물 실거래 표는 지역 자료가 도착하는 대로 다시 그림
     if (lawd && !dataCache[lawd] && !row._drawerLoading) {

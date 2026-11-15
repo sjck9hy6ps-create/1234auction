@@ -107,6 +107,25 @@ try {
     return out;
   });
 } catch (e) { console.log('변동 요약 만들기 실패:', String(e).slice(0, 200)); }
+// ── 가격 그래프 점 미리 만들기(2026-11-15, 사용자: 가격차트 금액을 미리 계산해 로딩 단축) - 상세 창이 지역 실거래(수 MB)를 받기 전에도 그래프·최근거래가를 바로 그리도록
+//    물건별 같은 평형(아파트)·같은 건물 비슷한 면적(빌라) 최근 3년 거래를 [날짜, 가격(만), 층, 직거래] 로 저장. 앱은 물건 번호로 나눈 40개 묶음 중 하나만 받음.
+let charts = null;
+try {
+  charts = await page.evaluate(() => {
+    const out = {}, cut = Date.now() - 3 * 366 * 86400000;
+    const add = (r) => {
+      try {
+        const a = [];
+        drawerTrades(r).forEach((t) => { if (t.d && t.d.getTime() >= cut && t.p > 0) a.push([t.d.getFullYear() * 10000 + (t.d.getMonth() + 1) * 100 + t.d.getDate(), t.p, isNaN(t.f) ? null : t.f, t.direct ? 1 : 0]); });
+        if (a.length) out[r.id] = a.slice(0, 80);
+      } catch (e) {}
+    };
+    (bidBoardRows || []).forEach((r) => { if (r.type === 'apt' && !r.pending && !r.skippedPast && r.a) add(r); });
+    villaMetroRows(true).forEach(add);
+    return out;
+  });
+  console.log(`가격 그래프 점 ${Object.keys(charts).length}건`);
+} catch (e) { console.log('가격 그래프 점 만들기 실패:', String(e).slice(0, 200)); }
 await browser.close();
 // 2026-10-21(사용자: 입찰후보 저장 계산 불러오는 시간이 김) - 임장 후보를 앞쪽 묶음에 모아 앱이 후보부터 받고 화면을 먼저 채우게 함(나머지는 뒤에서)
 const ids = Object.keys(cache || {}).sort((x, y) => {
@@ -163,6 +182,29 @@ if (villa && Object.keys(villa.ve || {}).length >= 50) {
   await supabase.from('leader_follower_cache').upsert({ id: 'board|villa|meta', payload: { n: vrows.length, count: vids.length, at: Date.now() }, fetched_at: now }, { onConflict: 'id' });
   console.log(`✅ 빌라 올림: ${vrows.length}묶음 / ${vids.length}건 (생활권 ${Object.keys(villa.liq).length}, 대장 ${Object.keys(villa.hs).length})`);
 } else console.log('빌라 계산이 너무 적어 올리지 않음');
+
+// ── 가격 그래프 점 올리기: 물건 번호 해시로 40묶음(앱이 같은 식으로 묶음을 고름)
+try {
+  if (charts && Object.keys(charts).length >= 100) {
+    const NCH = 40, hashOf = (id) => { let h = 0; for (const ch of String(id)) h = (h * 31 + ch.charCodeAt(0)) >>> 0; return h % NCH; };
+    const parts = Array.from({ length: NCH }, () => ({ items: {} }));
+    Object.keys(charts).forEach((id) => { parts[hashOf(id)].items[id] = charts[id]; });
+    for (let i = 0; i < NCH; i++) {
+      for (let t = 0; t < 4; t++) {
+        const { error } = await supabase.from('leader_follower_cache').upsert({ id: `board|chart|${i}`, payload: parts[i], fetched_at: now }, { onConflict: 'id' });
+        if (!error) break;
+        console.log('그래프 점 저장 재시도', i, error.message);
+        await new Promise((res) => setTimeout(res, 3000 * (t + 1)));
+      }
+    }
+    const cat = Date.now();
+    await supabase.from('leader_follower_cache').upsert({ id: 'board|chart|meta', payload: { n: NCH, count: Object.keys(charts).length, at: cat }, fetched_at: now }, { onConflict: 'id' });
+    console.log(`✅ 가격 그래프 점 올림: ${NCH}묶음 / ${Object.keys(charts).length}건`);
+    let okN = 0;   // 서버 캐시 미리 데우기
+    for (let i = 0; i < NCH; i += 8) await Promise.all(Array.from({ length: Math.min(8, NCH - i) }, (_, k) => fetch(`${SITE}/api/data-coverage?mode=boardCacheChunk&kind=chart&i=${i + k}&v=${cat}`).then((r) => { if (r.ok) okN++; return r.arrayBuffer(); }).catch(() => {})));
+    console.log(`그래프 점 캐시 데우기 ${okN}/${NCH}`);
+  } else console.log('가격 그래프 점이 너무 적어 올리지 않음');
+} catch (e) { console.log('가격 그래프 점 올리기 실패(무시):', String(e).slice(0, 200)); }
 
 // ── 이번 주 변동(2026-10-12): 지난 기준 저장본(board|snap|base)과 비교해 board|diff|latest에 저장. 기준은 5일 넘게 지났을 때만 새로 교체(한 주에 여러 번 돌려도 주 단위로 비교) ──
 try {
