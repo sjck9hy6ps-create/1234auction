@@ -23545,10 +23545,10 @@ function villaPriceGridHtml(row, ev, fmt) {
     // 구분: B 지하 / NE4 승강기 없는 4층 이상 / U4 4층 이상인데 승강기 정보 없음 / N 그 밖(보정 필요 없는 층)
     var vKind = function(f, elv) { if (isNaN(f)) return 'N'; if (f <= 0) return 'B'; if (f >= 4) return elv === false ? 'NE4' : (elv === null ? 'U4' : 'N'); return 'N'; };
     var myKind = (typeof villaIsBasement === 'function' && villaIsBasement(a)) ? 'B' : vKind(vFl, myElv), kindLabel = { B: '지하 거래끼리', NE4: '승강기 없는 4층 이상 거래끼리', U4: '4층 이상 거래(이 물건 승강기 정보 없음)', N: '지하·승강기 없는 4층 이상을 뺀 거래끼리' }[myKind];
-    // 연식 조건(2026-11-15 사용자: 가장 기본인 연식 필터 누락): 비교 건물 준공연도가 이 물건 ±5년 안(앱의 다른 빌라 비교와 같은 기준). 비교 건물 연식은 거래 자료의 준공연도, 없으면 건축물대장 사용승인연도. 이 물건 연식을 모르면 연식 조건 없이 비교
+    // 연식 조건(2026-11-15 사용자: 가장 기본인 연식 필터 누락 → 기본 ±3년): 비교 건물 준공연도가 이 물건 ±3년 안. 비교 건물 연식은 거래 자료의 준공연도, 없으면 건축물대장 사용승인연도. 이 물건 연식을 모르면 연식 조건 없이 비교
     var subjBy = parseInt(a.buildYear || a.estBuildYear, 10) || (typeof villaHsYear === 'function' ? villaHsYear(a) : null) || null;
     var compBy = function(r) { var y = r.by; if (!y) { var t = r.ap && r.ap.buildingInfo && r.ap.buildingInfo.title, d = t && t.useAprDay; y = d ? parseInt(String(d).slice(0, 4), 10) : null; } return y || null; };
-    var byOk = function(r) { if (!subjBy) return true; var y = compBy(r); return !!y && Math.abs(y - subjBy) <= 5; };
+    var byOk = function(r) { if (!subjBy) return true; var y = compBy(r); return !!y && Math.abs(y - subjBy) <= 3; };   // 기본 ±3년(2026-11-15 사용자)
     var okFor = function(r) { if (!byOk(r)) return false; var k = vKind(parseInt(r.floor), elvOf(r.ap)); if (myKind === 'B') return k === 'B'; if (myKind === 'NE4') return k === 'NE4'; if (myKind === 'U4') return parseInt(r.floor) >= 4; return k === 'N'; };
     // 비슷한 거래 1건 찾는 순서(2026-11-15 사용자): ① 반경 500m·면적 ±10% → ② 반경 500m·면적 ±15% → ③ 거리는 마지막에 100m씩 늘려 1,000m까지(면적 ±15% 유지).
     // 층 조건·직거래 제외는 모든 단계에서 그대로. 비교 건물 승강기 정보를 받는 중에는 판단을 미룸
@@ -23567,8 +23567,8 @@ function villaPriceGridHtml(row, ev, fmt) {
     var nearOther = false, nearMode = near ? 'ok' : '';
     var nElv = near ? elvOf(near.ap) : null, elvTxt = myElv == null ? '' : (myElv ? '승강기 있음' : '승강기 없음');
     var elvPending = P.pend;
-    var nearSub = near ? (function(ts) { var dt = new Date(ts); return dt.getFullYear() + '.' + ('0' + (dt.getMonth() + 1)).slice(-2) + '.' + ('0' + dt.getDate()).slice(-2); })(near.ts) + (isNaN(near.floor) ? '' : ' · ' + near.floor + '층') + (near.area > 0 ? ' · ' + (near.area / 3.305785).toFixed(1) + '평(' + Math.round(near.area) + '㎡)' : '') + (compBy(near) ? ' · ' + compBy(near) + '년식' : '') + ' · ' + near.dist + 'm' + (near.name ? '<br>' + bbEsc(near.name) : '') + (near.direct ? ' · 직거래' : '') + '<br>' + kindLabel + (elvTxt ? ' · 이 물건 ' + elvTxt : '') + (subjBy ? '<br>준공 ±5년(이 물건 ' + subjBy + '년)' : '<br>이 물건 연식 정보 없음 - 연식 조건 없이 비교') + '<br>찾은 범위: 반경 ' + tier[0] + 'm · 면적 ±' + Math.round(tier[1] * 100) + '%' + (tier[1] > 0.1 || tier[0] > 500 ? ' (더 가까운·비슷한 조건에는 일치 거래 없음)' : '')
-        : (c && c.loading ? '지역 실거래 불러오는 중' : (c && c.err ? bbEsc(c.err) : (nearAll.length ? (elvPending ? '비교 건물 승강기 정보 확인 중' : '같은 조건 거래 없음 (반경 1,000m·면적 ±15%·준공 ±5년까지 확인) · ' + kindLabel) : '반경 1,000m 안 비슷한 면적(±15%) 거래 없음')));
+    var nearSub = near ? (function(ts) { var dt = new Date(ts); return dt.getFullYear() + '.' + ('0' + (dt.getMonth() + 1)).slice(-2) + '.' + ('0' + dt.getDate()).slice(-2); })(near.ts) + (isNaN(near.floor) ? '' : ' · ' + near.floor + '층') + (near.area > 0 ? ' · ' + (near.area / 3.305785).toFixed(1) + '평(' + Math.round(near.area) + '㎡)' : '') + (compBy(near) ? ' · ' + compBy(near) + '년식' : '') + ' · ' + near.dist + 'm' + (near.name ? '<br>' + bbEsc(near.name) : '') + (near.direct ? ' · 직거래' : '') + '<br>' + kindLabel + (elvTxt ? ' · 이 물건 ' + elvTxt : '') + (subjBy ? '<br>준공 ±3년(이 물건 ' + subjBy + '년)' : '<br>이 물건 연식 정보 없음 - 연식 조건 없이 비교') + '<br>찾은 범위: 반경 ' + tier[0] + 'm · 면적 ±' + Math.round(tier[1] * 100) + '%' + (tier[1] > 0.1 || tier[0] > 500 ? ' (더 가까운·비슷한 조건에는 일치 거래 없음)' : '')
+        : (c && c.loading ? '지역 실거래 불러오는 중' : (c && c.err ? bbEsc(c.err) : (nearAll.length ? (elvPending ? '비교 건물 승강기 정보 확인 중' : '같은 조건 거래 없음 (반경 1,000m·면적 ±15%·준공 ±3년까지 확인) · ' + kindLabel) : '반경 1,000m 안 비슷한 면적(±15%) 거래 없음')));
     var sale = (ve && ve.est) || row.sale, fails = row.fails != null ? row.fails : parseInt(a.failCount);
     var pcc = pe && pe.p != null ? Math.round(pe.p * 100) : null;
     var h = '<div class="indicator-box" style="margin-top:8px;"><div class="indicator-title">💰 가격 한눈에</div><div class="indicator-grid">';
