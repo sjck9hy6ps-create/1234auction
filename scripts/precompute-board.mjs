@@ -107,85 +107,97 @@ try {
     return out;
   });
 } catch (e) { console.log('변동 요약 만들기 실패:', String(e).slice(0, 200)); }
-// ── 가격 그래프 점 미리 만들기(2026-11-15, 사용자: 가격차트 금액을 미리 계산해 로딩 단축) - 상세 창이 지역 실거래(수 MB)를 받기 전에도 그래프·최근거래가를 바로 그리도록
-//    물건별 같은 평형(아파트)·같은 건물 비슷한 면적(빌라) 최근 3년 거래를 [날짜, 가격(만), 층, 직거래] 로 저장. 앱은 물건 번호로 나눈 40개 묶음 중 하나만 받음.
-let charts = null;
+// ── 가격 그래프·빌라 최근거래가·10년 그래프 미리 만들기(2026-11-15, 사용자: 가격차트 금액을 미리 계산하고, 변동 작은 값은 바로 불러오게)
+//    보드 계산이 끝나면 앱이 임시 지역 자료를 내려 버리므로, 지역(법정동 코드)별로 실거래를 다시 받아 → 그 지역 물건들을 계산 → 자료를 내리는 순서로 진행.
+//    ① 물건별 최근 3년 같은 평형(아파트)·같은 건물 비슷한 면적(빌라) 거래 [날짜, 가격(만), 층, 직거래]
+//    ② 빌라 최근거래가 1건(앱과 같은 규칙 villaRecentPick, 비교 건물 승강기 정보 포함)
+//    ③ 단지별 10년 그래프의 '최근 자료보다 오래된' 달 [년월, 거래 수, 중앙값]
+const charts = {}, hist = {};
 try {
-  charts = await page.evaluate(() => {
-    const out = {}, cut = Date.now() - 3 * 366 * 86400000;
-    const add = (r) => {
-      try {
-        const a = [];
-        drawerTrades(r).forEach((t) => { if (t.d && t.d.getTime() >= cut && t.p > 0) a.push([t.d.getFullYear() * 10000 + (t.d.getMonth() + 1) * 100 + t.d.getDate(), t.p, isNaN(t.f) ? null : t.f, t.direct ? 1 : 0]); });
-        if (a.length) out[r.id] = a.slice(0, 80);
-      } catch (e) {}
-    };
-    (bidBoardRows || []).forEach((r) => { if (r.type === 'apt' && !r.pending && !r.skippedPast && r.a) add(r); });
-    villaMetroRows(true).forEach(add);
-    return out;
+  const lawds = await page.evaluate(() => {
+    const set = {};
+    (bidBoardRows || []).forEach((r) => { if (r.type === 'apt' && !r.pending && !r.skippedPast && r.a) { const l = r.lawd || bidBoardLawdOf(r.a); if (l) set[l] = (set[l] || 0) + 1; } });
+    villaMetroRows(true).forEach((r) => { const l = r.lawd || bidBoardLawdOf(r.a); if (l) set[l] = (set[l] || 0) + 1; });
+    return Object.keys(set);
   });
-  console.log(`가격 그래프 점 ${Object.keys(charts).length}건`);
-} catch (e) { console.log('가격 그래프 점 만들기 실패:', String(e).slice(0, 200)); }
-// ── 빌라 최근거래가 1건 미리 계산(2026-11-15): 비교 건물 승강기 정보(건축물대장)를 받은 뒤 앱과 같은 규칙(villaRecentPick)으로 고름. 지역 자료 없이도 바로 보이게
-try {
-  const near = await page.evaluate(async () => {
-    const out = {}, rows = villaMetroRows(true), t0 = Date.now(); let idx = 0;
-    const work = async () => {
-      while (idx < rows.length && Date.now() - t0 < 20 * 60 * 1000) {
-        const r = rows[idx++];
-        try {
-          const cc = villaNearComps(r, 0.15);
-          if (!cc || !cc.rows) continue;
-          const nearAll = cc.rows.filter((x) => !x.direct);
-          if (nearAll.length) await villaCompElevatorLoad(r, nearAll, 0.15);
-          const rp = villaRecentPick(r);
-          if (rp.pend) continue;   // 승강기 정보를 못 받은 물건은 저장하지 않음(앱이 실시간으로 계산)
-          if (rp.near) out[r.id + '#n'] = { p: rp.near.price || rp.near.p || rp.near.amount, ts: rp.near.ts, fl: rp.near.floor, ar: Math.round(rp.near.area * 10) / 10, by: rp.compBy(rp.near), di: rp.near.dist, nm: rp.near.name || '', tier: rp.tier };
-          else out[r.id + '#n'] = { n: nearAll.length };
-        } catch (e) {}
-      }
-    };
-    await Promise.all(Array.from({ length: 6 }, work));
-    return out;
-  });
-  charts = Object.assign(charts || {}, near);
-  console.log(`빌라 최근거래가 미리 계산 ${Object.keys(near).length}건 (거래 있음 ${Object.values(near).filter((x) => x.p).length})`);
-} catch (e) { console.log('빌라 최근거래가 미리 계산 실패:', String(e).slice(0, 200)); }
-// ── 10년 그래프 미리 계산(2026-11-15, 사용자: 변동 작은 값은 바로 불러오기): 단지별로 '최근 자료보다 오래된' 달의 [년월, 거래 수, 중앙값]
-let hist = null;
-try {
-  hist = await page.evaluate(async () => {
-    currentPyung = 'all';
-    const out = {}, todo = {}, t0 = Date.now();
-    const rows = (bidBoardRows || []).filter((r) => r.type === 'apt' && !r.pending && !r.skippedPast && r.a).concat(villaMetroRows(true));
-    rows.forEach((r) => {
-      try {
-        const a = r.a, ap = ownComplexEntries(a, r.bunjiFull || fullBunjiFromAddr(a.addr, a.dong, a.bunji), r.type)[0], l = ap && ap.latest;
-        if (!l || !l.region || !l.dong || !l.bunji) return;
-        const type = (ap.buildingType || l.buildingType) === 'villa' ? 'villa' : 'apt', key = [l.region, l.dong, l.bunji, type].join('|');
-        if (!todo[key]) todo[key] = ap;
-      } catch (e) {}
-    });
-    const keys = Object.keys(todo);
-    for (let i = 0; i < keys.length && Date.now() - t0 < 20 * 60 * 1000; i += 8) {
-      const batch = keys.slice(i, i + 8), res = {};
-      batch.forEach((k) => { res[k] = pnHistoryFor(todo[k], todo[k].trades || []); });
-      for (let w = 0; w < 60 && batch.some((k) => res[k] === 'loading'); w++) { await new Promise((r) => setTimeout(r, 200)); batch.forEach((k) => { if (res[k] === 'loading') res[k] = pnHistoryFor(todo[k], todo[k].trades || []); }); }
-      batch.forEach((k) => {
-        const h = res[k], ap = todo[k], recent = ap.trades || [];
-        if (!h || h === 'loading' || !h.length) return;
-        const py = pnChartPyung(recent); if (!py) return;
-        let minYm = 999999; recent.forEach((t) => { const ym = t.year * 100 + t.month; if (ym > 0 && ym < minYm) minYm = ym; });
-        const by = {};
-        h.forEach((t) => { if (!(t.area > 0) || String(toPyung(t.area)) !== String(py)) return; const v = parseInt(t.amount); const ym = t.year * 100 + t.month; if (!(v > 0) || ym >= minYm) return; (by[ym] = by[ym] || []).push(v); });
-        const m = Object.keys(by).map(Number).sort((x, y) => x - y).map((ym) => { const v = by[ym].sort((x, y) => x - y); return [ym, v.length, v[v.length >> 1]]; });
-        out[k] = { py: py, m: m };
-      });
-    }
-    return out;
-  });
-  console.log(`10년 그래프 미리 계산 ${Object.keys(hist).length}개 단지`);
-} catch (e) { console.log('10년 그래프 미리 계산 실패:', String(e).slice(0, 200)); }
+  console.log(`가격 그래프 계산 대상 지역 ${lawds.length}곳`);
+  const tStart = Date.now();
+  let done = 0;
+  for (const lawd of lawds) {
+    if (Date.now() - tStart > 45 * 60 * 1000) { console.log('가격 그래프 계산 시간 초과 - 나머지 지역은 건너뜀'); break; }
+    try {
+      const res = await page.evaluate(async (lw) => {
+        const out = { charts: {}, hist: {} };
+        if (!dataCache[lw]) { const dd = await fetchHouseDataCached(lw); if (dd && !dd.error && Array.isArray(dd.apt)) await ingestRegionHouseData(dd, '', lw); }
+        if (!dataCache[lw]) return out;
+        const lawdOf = (r) => r.lawd || bidBoardLawdOf(r.a);
+        const aptRows = (bidBoardRows || []).filter((r) => r.type === 'apt' && !r.pending && !r.skippedPast && r.a && lawdOf(r) === lw);
+        const villaRows = villaMetroRows(true).filter((r) => lawdOf(r) === lw);
+        const cut = Date.now() - 3 * 366 * 86400000;
+        const add = (r) => {
+          try {
+            const a = [];
+            drawerTrades(r).forEach((t) => { if (t.d && t.d.getTime() >= cut && t.p > 0) a.push([t.d.getFullYear() * 10000 + (t.d.getMonth() + 1) * 100 + t.d.getDate(), t.p, isNaN(t.f) ? null : t.f, t.direct ? 1 : 0]); });
+            if (a.length) out.charts[r.id] = a.slice(0, 80);
+          } catch (e) {}
+        };
+        aptRows.forEach(add); villaRows.forEach(add);
+        // ② 빌라 최근거래가 (승강기 정보를 못 받은 물건은 저장하지 않음 - 앱이 실시간으로 계산)
+        let idx = 0;
+        const work = async () => {
+          while (idx < villaRows.length) {
+            const r = villaRows[idx++];
+            try {
+              const cc = villaNearComps(r, 0.15);
+              if (!cc || !cc.rows) continue;
+              const nearAll = cc.rows.filter((x) => !x.direct);
+              if (nearAll.length) await villaCompElevatorLoad(r, nearAll, 0.15);
+              const rp = villaRecentPick(r);
+              if (rp.pend) continue;
+              if (rp.near) out.charts[r.id + '#n'] = { p: rp.near.price || rp.near.p || rp.near.amount, ts: rp.near.ts, fl: rp.near.floor, ar: Math.round(rp.near.area * 10) / 10, by: rp.compBy(rp.near), di: rp.near.dist, nm: rp.near.name || '', tier: rp.tier };
+              else out.charts[r.id + '#n'] = { n: nearAll.length };
+            } catch (e) {}
+          }
+        };
+        await Promise.all(Array.from({ length: 6 }, work));
+        // ③ 10년 그래프
+        currentPyung = 'all';
+        const todo = {};
+        aptRows.concat(villaRows).forEach((r) => {
+          try {
+            const a = r.a, ap = ownComplexEntries(a, r.bunjiFull || fullBunjiFromAddr(a.addr, a.dong, a.bunji), r.type)[0], l = ap && ap.latest;
+            if (!l || !l.region || !l.dong || !l.bunji) return;
+            const type = (ap.buildingType || l.buildingType) === 'villa' ? 'villa' : 'apt', key = [l.region, l.dong, l.bunji, type].join('|');
+            if (!todo[key]) todo[key] = ap;
+          } catch (e) {}
+        });
+        const keys = Object.keys(todo);
+        for (let i = 0; i < keys.length; i += 8) {
+          const batch = keys.slice(i, i + 8), res = {};
+          batch.forEach((k) => { res[k] = pnHistoryFor(todo[k], todo[k].trades || []); });
+          for (let w = 0; w < 60 && batch.some((k) => res[k] === 'loading'); w++) { await new Promise((rr) => setTimeout(rr, 200)); batch.forEach((k) => { if (res[k] === 'loading') res[k] = pnHistoryFor(todo[k], todo[k].trades || []); }); }
+          batch.forEach((k) => {
+            const h = res[k], ap = todo[k], recent = ap.trades || [];
+            if (!h || h === 'loading' || !h.length) return;
+            const py = pnChartPyung(recent); if (!py) return;
+            let minYm = 999999; recent.forEach((t) => { const ym = t.year * 100 + t.month; if (ym > 0 && ym < minYm) minYm = ym; });
+            const by = {};
+            h.forEach((t) => { if (!(t.area > 0) || String(toPyung(t.area)) !== String(py)) return; const v = parseInt(t.amount); const ym = t.year * 100 + t.month; if (!(v > 0) || ym >= minYm) return; (by[ym] = by[ym] || []).push(v); });
+            const m = Object.keys(by).map(Number).sort((x, y) => x - y).map((ym) => { const v = by[ym].sort((x, y) => x - y); return [ym, v.length, v[v.length >> 1]]; });
+            out.hist[k] = { py: py, m: m };
+          });
+        }
+        // 자료 내리기(메모리)
+        delete dataCache[lw]; delete rentCacheByLawd[lw]; mergedLawdCds.delete(lw);
+        return out;
+      }, lawd);
+      Object.assign(charts, res.charts); Object.assign(hist, res.hist);
+    } catch (e) { console.log('가격 그래프 계산 실패', lawd, String(e).slice(0, 120)); }
+    done++;
+    if (done % 20 === 0) console.log(`가격 그래프 계산 ${done}/${lawds.length}곳 · 점 ${Object.keys(charts).length} · 10년 단지 ${Object.keys(hist).length} · ${Math.round((Date.now() - tStart) / 1000)}s`);
+  }
+  console.log(`가격 그래프 점 ${Object.keys(charts).length}건 (빌라 최근거래가 ${Object.keys(charts).filter((k) => k.endsWith('#n')).length}) · 10년 그래프 ${Object.keys(hist).length}개 단지`);
+} catch (e) { console.log('가격 그래프 미리 계산 실패:', String(e).slice(0, 200)); }
 await browser.close();
 // 2026-10-21(사용자: 입찰후보 저장 계산 불러오는 시간이 김) - 임장 후보를 앞쪽 묶음에 모아 앱이 후보부터 받고 화면을 먼저 채우게 함(나머지는 뒤에서)
 const ids = Object.keys(cache || {}).sort((x, y) => {
