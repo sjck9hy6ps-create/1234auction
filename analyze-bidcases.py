@@ -2343,7 +2343,7 @@ def winbid_model(R, now):
         except Exception as e:
             import traceback; traceback.print_exc(); print("  개선 실험 건너뜀:", e)
     try:  # 2026-11-15 생활권(반경) 흐름 요인 시험(사용자: 표본 많게) - 낙찰사례에 좌표가 없던 수도권도 단지 좌표로 채운 뒤, 학습에 안 쓴 최근 12개월에서 요인 하나씩 추가했을 때 비교. 앱·모델은 바꾸지 않음
-        _keep = list(WB_FACTORS); _Xte = wb_features(te); _rc = _Xte["rc"].values
+        _keep = list(WB_FACTORS); _Xte = wb_features(te); _rc = te["flow_cls"].values
         def _fx_eval(cand):
             global WB_FACTORS
             WB_FACTORS = _keep + ([(cand, 60)] if cand else [])
