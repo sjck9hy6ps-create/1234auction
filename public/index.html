@@ -4344,7 +4344,9 @@ function villaWinbid(row, ve, title) {
     var pred = m.base; Object.keys(keys).forEach(function(k) { var v = (m.eff[k] || {})[keys[k]]; if (typeof v === 'number') pred += v; });
     var vcorr = null;  // 자동 보정(지역×유찰): 키 예) '서울|신건', '경기|2회+ 유찰'
     if (m.corrTable) { var rg0 = String(keys.region || '').split(' ')[0], fl0 = keys.fails === '0' ? '신건' : (keys.fails === '1' ? '1회 유찰' : '2회+ 유찰'), cv2 = m.corrTable[rg0 + '|' + fl0]; if (typeof cv2 === 'number') { vcorr = cv2; pred += cv2 / 100; } }
-    return { pred: pred, price: Math.round(ve.est * Math.exp(pred)), est: ve.est, corrPct: vcorr };
+    /* 2026-11-15(사용자 승인): 낙찰가는 이번 회차 최저가보다 낮을 수 없음 - 최저가가 시세보다 높은 물건은 모델이 학습 사례가 거의 없어 최저가 아래 값(예: 성산사랑마을 1억 9,309만 < 최저가 2억 2,000만)을 냈음 → 최저가로 맞춤 */
+    var floored = false, pmin = Math.log(row.minBid / ve.est); if (isFinite(pmin) && pred < pmin) { pred = pmin; floored = true; }
+    return { pred: pred, price: Math.round(ve.est * Math.exp(pred)), est: ve.est, corrPct: vcorr, floored: floored };
 }
 function villaProbAt(wb, bid) {
     if (!wb || !bid) return null; var q = villaWinModel.resQ, thr = Math.log(bid / wb.est) - wb.pred;
@@ -23578,7 +23580,7 @@ function villaPriceGridHtml(row, ev, fmt) {
     h += item('최근거래가 (생활권·층·연식 조건 일치·직거래 제외)', near ? fmt(near.p || near.price || near.amount) : '-', nearSub);
     h += item('추천 입찰가', pe && pe.bid ? fmt(pe.bid) : '-', pe && pe.bid && sale ? '시세의 ' + Math.round(pe.bid / sale * 100) + '%' : (pe ? '' : '추천가 없음'), pe && pe.bid ? '#15803d' : '');
     h += item('낙찰 가능성', pcc != null ? pcc + '%' : '-', pcc != null ? '추천 입찰가로 낙찰될 확률' : '', pcc == null ? '' : (pcc >= 60 ? '#15803d' : (pcc >= 35 ? '#b45309' : '#b91c1c')));
-    h += item('예상 낙찰가', wb && wb.price ? fmt(wb.price) : '-', wb && wb.price && sale ? '시세의 ' + Math.round(wb.price / sale * 100) + '%' : '');
+    h += item('예상 낙찰가', wb && wb.price ? fmt(wb.price) : '-', wb && wb.price && sale ? '시세의 ' + Math.round(wb.price / sale * 100) + '%' + (wb.floored ? '<br>이번 회차 최저가가 시세보다 높아 최저가로 표시 - 이 회차엔 마진이 나는 낙찰가가 없어요' : '') : '');
     return h + '</div></div>';
 }
 async function renderVillaDrawer(d, row) {
