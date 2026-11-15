@@ -1458,6 +1458,7 @@ body.ui2 #auction-modal.am4 { width:620px; }
 #bb-drawer .vc-in { width:100%; box-sizing:border-box; margin:3px 0 2px; padding:6px 8px; border:1px solid #fca5a5; border-radius:6px; font-size:13px; }
 #bb-drawer .vc-n { display:flex; align-items:center; gap:6px; flex-wrap:wrap; font-size:12.5px; } #bb-drawer .vc-n .vc-num { width:90px; margin:0; border-color:#d1d5db; text-align:right; }
 #bb-drawer .vc-p { display:flex; flex-wrap:wrap; align-items:center; gap:4px; margin:3px 0; } #bb-drawer .vc-p > span { font-size:12px; color:#6b7280; margin-right:2px; } #bb-drawer .vc-nv { margin-top:4px; } #bb-drawer .vc-nv > summary { font-size:12.5px; cursor:pointer; color:#374151; }
+#bb-drawer .vc-tbl { width:100%; border-collapse:collapse; font-size:12px; margin-top:4px; } #bb-drawer .vc-tbl th { text-align:left; font-weight:700; color:#6b7280; padding:3px 4px; border-bottom:1px solid #e5e7eb; } #bb-drawer .vc-tbl td { padding:4px; border-bottom:1px solid #f1f5f9; vertical-align:top; } #bb-drawer .vc-tbl .r { text-align:right; white-space:nowrap; }
 #bb-drawer .vc-ap { color:#15803d; font-size:12.5px; } #bb-drawer .vc-u { border:1px solid #d1d5db; background:#fff; border-radius:12px; padding:2px 9px; font-size:12px; cursor:pointer; }
 #bb-drawer.view-visit > :not(.dr-h):not(.dr-top-btns):not(.dr-pickcard):not(.dr-visit-only) { display:none !important; }
 #bb-drawer.view-visit > .dr-visit-only { display:block; }
@@ -23097,7 +23098,22 @@ function visitItems(row) {
         C = C.filter(function(x) { return !dup[x.k]; });
         V = V.filter(function(x) { return x.k !== 'price'; });   // 시세·최저 호가·매물 수는 아래 임장 문답에서 한 번만 입력
     }
-    return { V: V, C: C };
+    var B = [];
+    if (isV) {   // 🏚 빌라 건물 상태 점검(2026-11-15, 사용자: 건물 상태를 판단할 수 있는 임장 리스트) - 되팔 때 매수자가 보는 것 위주
+        B = [['b_wall', '🧱 외벽 균열·들뜸·누수 자국', '폭 0.3mm 넘는 균열, 하얀 가루(백화), 물이 흘러내린 자국, 옥상 방수층 들뜸'],
+             ['b_tilt', '📐 건물 기울어짐·침하', '현관 문틀·복도 타일 틈, 건물과 땅 사이 벌어짐, 문이 잘 안 닫히는지'],
+             ['b_piloti', '🏗 필로티·기둥·보 균열', '주차장 기둥 균열·철근 노출(필로티 구조인 경우)'],
+             ['b_common', '🚪 공용 계단·복도·현관', '청결, 조명, 도어락·CCTV, 우편함 - 관리가 되는 건물인지'],
+             ['b_leakc', '💧 공용부 누수·곰팡이', '계단 천장·벽, 옥상 출입구 아래 얼룩·곰팡이'],
+             ['b_elev', '🛗 승강기 유무·작동', '앱의 대장 값(위 건물 정보)과 같은지, 고장·점검 스티커'],
+             ['b_park', '🅿️ 주차 방식·여건', '자주식·기계식·없음, 세대당 대수, 이중주차·진입 난이도'],
+             ['b_trash', '🗑 쓰레기·분리수거 장소', '위치·위생(악취·벌레)'],
+             ['b_mgmt', '🧑‍🔧 관리 주체·관리비', '관리인·자치관리 여부, 공용 전기·수도 요금 분담 방식'],
+             ['b_illegal', '🚧 불법 증축·방 쪼개기 흔적', '옥탑·베란다 확장, 한 층을 여러 호로 쪼갠 흔적(대장 위반 표시는 앱이 못 가져와요)'],
+             ['b_finish', '🔥 외벽 마감 재료', '드라이비트(스티로폼) 등 가연성 마감인지 - 화재 위험·매수자 기피']].map(function(x) { return { k: x[0], t: x[1], hint: x[2] }; });
+        C = C.filter(function(x) { return x.k !== 'crack' && x.k !== 'trash'; });   // 건물 상태 점검으로 옮김
+    }
+    return { V: V, B: B, C: C };
 }
 /* 인수 금액(2026-11-15, 사용자: 경매정보를 활용 - 인수 금액은 낙찰대금으로 먼저 처리하고 남는 금액만 낙찰자 부담, 집행비용·체납세금은 낙찰대금에 포함) - 직접 입력칸은 없애고 경매정보(권리분석) 기준 값만 보여줌. 예전에 직접 넣은 값이 있으면 계속 계산에 쓰임 */
 function asmInfoHtml(row) {
@@ -23110,12 +23126,60 @@ function asmInfoHtml(row) {
     if (man.length) h += '<div class="dr-sub">예전에 직접 넣은 값이 있어 계산에 계속 쓰여요: ' + bbEsc(man.join(' · ')) + '</div>';
     return h + '</div>';
 }
+/* 📍 빌라 임장: 생활권 최근 거래(2026-11-15, 사용자: 임장할 물건의 생활권에서 가장 최근에 팔린 비슷한 물건이 얼마에 팔렸는지 보고 팔 수 있는 물건인지 판단)
+   이 물건 반경 1km 안, 최근 18개월, 이 물건과 전용면적 ±20% 이내인 빌라 매매(직거래 제외 표시)를 최신순으로 보여주고, 반경별 건수·㎡당 가격 중앙값·이 물건 면적 환산가를 앱 예상매도가와 나란히 보여줌.
+   지역 실거래 자료(dataCache)와 건물 좌표(coordCache)만 쓰므로 새 호출 없음 - 좌표를 아직 모르는 건물은 빠지므로 그 수를 같이 알림 */
+function villaNearComps(row) {
+    var a = row.a || {}, lawd = row.lawd || bidBoardLawdOf(a);
+    if (!(a.lat && a.lon)) return { err: '이 물건의 좌표가 없어서 주변 거래를 찾지 못했어요' };
+    var area = (parseFloat(row.pyung) || 0) * 3.305785; if (!(area > 0)) return { err: '이 물건의 면적 정보가 없어요' };
+    var list = lawd && dataCache[lawd]; if (!list) return { loading: true };
+    var memoK = list.length + '|' + a.lat + '|' + a.lon + '|' + area.toFixed(1), m = row._compsMemo; if (m && m.k === memoK) return m.v;
+    var cut = Date.now() - 548 * 86400000, out = [], noCoord = 0, R = 1000;
+    list.forEach(function(ap) {
+        if ((ap.buildingType || 'apt') !== 'villa') return;
+        var l = ap.latest || {}, c = coordCache[[l.dong, l.name, l.bunji, l.road_name, l.main_num, l.sub_num].join('|').toLowerCase()];
+        if (!c || !c.lat) { noCoord++; return; }
+        var dy = (c.lat - a.lat) * 111000, dx = (c.lon - a.lon) * 88000, dist = Math.sqrt(dx * dx + dy * dy); if (dist > R) return;
+        (ap.trades || []).forEach(function(tr) {
+            var ar = parseFloat(tr.area), p = parseInt(tr.amount); if (!(ar > 0 && p > 0) || Math.abs(ar - area) > area * 0.2) return;
+            var ts = tradeDate(tr).getTime(); if (!(ts >= cut)) return;
+            out.push({ ts: ts, dist: Math.round(dist), name: tr.name || l.name || '', dong: tr.dong || l.dong || '', bunji: tr.bunji || l.bunji || '', area: ar, floor: parseInt(tr.floor), by: parseInt(tr.build_year || l.build_year) || null, price: p, ppm: p / ar, direct: tr.dealing_type === '직거래', same: dist < 25 });
+        });
+    });
+    out.sort(function(x, y) { return y.ts - x.ts; });
+    var v = { rows: out, noCoord: noCoord, area: area }; row._compsMemo = { k: memoK, v: v }; return v;
+}
+function villaCompsHtml(row) {
+    var c = villaNearComps(row), E = bbEsc, fmt = function(x) { return x ? toEok(String(Math.round(x))) : '-'; };
+    var h = '<div class="dr-sec"><h4>📍 생활권 최근 거래 <span class="dr-sub" style="display:inline;">(반경 1km · 최근 18개월 · 이 물건과 비슷한 면적 ±20%)</span></h4>';
+    if (c.loading) return h + '<div class="dr-sub">지역 실거래를 불러오는 중이에요…</div></div>';
+    if (c.err) return h + '<div class="dr-sub">' + E(c.err) + '</div></div>';
+    var rows = c.rows, now = Date.now(), D = 86400000, norm = rows.filter(function(r) { return !r.direct; });
+    if (!rows.length) return h + '<div class="dr-warn">이 생활권(반경 1km)에서 최근 18개월 비슷한 면적 빌라 거래가 한 건도 없어요 - 팔릴 근거가 약해요(좌표를 모르는 건물 ' + c.noCoord + '곳은 제외됨)</div></div>';
+    var n500 = rows.filter(function(r) { return r.dist <= 500; }).length, n6 = rows.filter(function(r) { return now - r.ts < 183 * D; }).length;
+    var ppm = norm.map(function(r) { return r.ppm; }).sort(function(x, y) { return x - y; }), med = ppm.length ? ppm[ppm.length >> 1] : null, mine = med ? med * c.area : null;
+    var est = null; try { var ev = villaEval(row); est = ev && ev.ve && ev.ve.est; } catch (e) {}
+    h += '<div class="vc-app">비슷한 거래 <b>' + rows.length + '건</b> (반경 500m ' + n500 + '건 · 최근 6개월 ' + n6 + '건) · 가장 최근 <b>' + Math.max(0, Math.round((now - rows[0].ts) / D)) + '일 전</b>'
+        + (med ? '<br>㎡당 중앙값 <b>' + (Math.round(med * 10) / 10).toLocaleString() + '만</b> → 이 물건 면적(' + Math.round(c.area) + '㎡) 환산 <b>' + fmt(mine) + '</b>' + (est ? ' · 앱 예상매도가 <b>' + fmt(est) + '</b> (' + (est >= mine ? '+' : '') + Math.round((est / mine - 1) * 1000) / 10 + '%)' : '') : '') + '</div>';
+    var subjBy = parseInt(row.a.buildYear) || null, subjFl = parseInt(row.a.floor);
+    var line = function(r) {
+        var d = new Date(r.ts), ds = d.getFullYear().toString().slice(2) + '.' + ('0' + (d.getMonth() + 1)).slice(-2) + '.' + ('0' + d.getDate()).slice(-2);
+        var tags = (r.same ? '<span style="color:#7c3aed;">같은 건물</span> ' : '') + (r.direct ? '<span style="color:#9ca3af;">직거래</span> ' : '')
+            + (subjBy && r.by && Math.abs(r.by - subjBy) <= 5 ? '<span style="color:#15803d;">연식 비슷</span> ' : '') + (subjFl && !isNaN(r.floor) && (r.floor <= 1) === (subjFl <= 1) ? '' : '<span style="color:#b45309;">층 다름</span> ');
+        return '<tr><td>' + ds + '</td><td class="r">' + r.dist + 'm</td><td>' + E((r.name ? r.name + ' ' : '') + r.dong + ' ' + r.bunji) + '<div class="bb-sub">' + tags + '</div></td><td class="r">' + Math.round(r.area) + '㎡<br>' + (isNaN(r.floor) ? '-' : r.floor + '층') + '</td><td class="r">' + (r.by || '-') + '</td><td class="r"><b>' + fmt(r.price) + '</b><div class="bb-sub">' + (Math.round(r.ppm * 10) / 10) + '만/㎡</div></td></tr>';
+    };
+    h += '<table class="vc-tbl"><tr><th>거래일</th><th class="r">거리</th><th>건물</th><th class="r">면적·층</th><th class="r">준공</th><th class="r">가격</th></tr>' + rows.slice(0, 8).map(line).join('') + '</table>';
+    if (rows.length > 8) h += '<details class="vc-nv"><summary>더 보기 (' + (rows.length - 8) + '건)</summary><table class="vc-tbl">' + rows.slice(8, 30).map(line).join('') + '</table></details>';
+    h += '<div class="dr-sub">같은 시군구 실거래 기준이에요(옆 시군구 거래는 빠져요)' + (c.noCoord ? ' · 좌표를 아직 모르는 건물 ' + c.noCoord + '곳은 거리 계산에서 빠졌어요' : '') + '. 같은 층대·비슷한 연식 거래를 우선 비교하세요.</div></div>';
+    return h;
+}
 function visitChkGet(a) { return (a && a.visitCheck) || {}; }
 function fieldChecklistHtml(row) {
     var fm = function(v) { return v ? toEok(String(Math.round(v))) : '-'; }, it = visitItems(row), st = visitChkGet(row.a), idJs = String(row.id).replace(/\\/g, '\\\\').replace(/'/g, "\\'"), E = bbEsc, a = row.a || {};
     var isApt = row.type === 'apt', fc = a.fieldCheck || {}, ev = isApt ? fieldCheckEval(a, row.sale) : null;
     var QS = {}; FIELD_QS.forEach(function(Q) { QS[Q.k] = Q; });
-    var all = it.V.concat(it.C), done = all.filter(function(x) { return st[x.k] && st[x.k].s; }).length;
+    var all = it.V.concat(it.B || [], it.C), done = all.filter(function(x) { return st[x.k] && st[x.k].s; }).length;
     var total = all.length, bad = all.filter(function(x) { return st[x.k] && st[x.k].s === 'bad'; });
     if (isApt) { ['cond', 'view', 'inconv'].forEach(function(k) { total++; if (fc[k]) done++; }); }
     var btn = function(x, s, label) {
@@ -23151,6 +23215,12 @@ function fieldChecklistHtml(row) {
                 + '<details class="vc-nv"><summary>📋 네이버 매물 붙여넣기 (매물 수·호가 자동 채움)</summary>' + naverListingHtml(row, idJs) + '</details></div>';
         }
     });
+    if (it.B && it.B.length) {
+        var bb = it.B.filter(function(x) { return st[x.k] && st[x.k].s === 'bad'; }).length, bdone = it.B.filter(function(x) { return st[x.k] && st[x.k].s; }).length;
+        var bj = bdone < 4 ? '' : (bb <= 1 ? ' <b style="color:#15803d;">양호</b>' : (bb <= 3 ? ' <b style="color:#b45309;">주의</b>' : ' <b style="color:#b91c1c;">나쁨 - 수리비·되팔기 어려움 점검</b>'));
+        h += '<div class="vc-sec">🏚 건물 상태 점검 <span>확인 ' + bdone + '/' + it.B.length + ' · ⚠️ ' + bb + '건</span>' + bj + '</div>';
+        it.B.forEach(function(x) { h += '<div class="vc-r vc-c"><div class="vc-h"><span>' + x.t + '</span><span class="vc-bs">' + btn(x, 'ok', '👍') + btn(x, 'bad', '⚠️') + '</span></div><div class="vc-hint">' + E(x.hint) + '</div>' + memo(x, '무엇이 문제인지 한 줄') + '</div>'; });
+    }
     h += '<div class="vc-sec">현장 체크 <span>이상 없으면 👍 · 걸리면 ⚠️ 와 한 줄 메모</span></div>';
     it.C.forEach(function(x) { h += '<div class="vc-r vc-c"><div class="vc-h"><span>' + x.t + '</span><span class="vc-bs">' + btn(x, 'ok', '👍') + btn(x, 'bad', '⚠️') + '</span></div>' + memo(x, '무엇이 문제인지 한 줄') + '</div>'; });
     if (isApt) [['view', '🪟 향·조망·소음'], ['inconv', '🅿️ 주차·엘리베이터 등 불편']].forEach(function(p) { h += '<div class="vc-r vc-c"><div class="vc-h"><span>' + p[1] + '</span><span class="vc-bs">' + pills(p[0]) + '</span></div></div>'; });
@@ -23159,7 +23229,7 @@ function fieldChecklistHtml(row) {
         ev.notes.forEach(function(n) { h += '<div class="dr-warn">' + E(n) + '</div>'; });
         if (ev.answered) h += '<div class="dr-sub" style="margin-top:4px;">문답 반영: ' + [ev.repairFactor != null ? '수리비 연식 기준의 ' + Math.round(ev.repairFactor * 100) + '%' : '', ev.extra ? '추가 비용 ' + toEok(String(ev.extra)) : '', ev.holdMonths ? '보유 ' + ev.holdMonths + '개월로 이자 계산' : ''].filter(Boolean).join(' · ') + '</div>';
     }
-    return h + '</div>';
+    return (!isApt ? villaCompsHtml(row) : '') + h + '</div>';
 }
 async function visitChkSet(id, k, s) {
     var a = auctionList.filter(function(x) { return String(x.id) === String(id); })[0]; if (!a) return;
