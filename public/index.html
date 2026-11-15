@@ -31006,7 +31006,9 @@ function wrLedgerHtml(L) {
 }
 function wrLoadPl() {
     var el = document.getElementById('wr-t-pl'); if (!el || el.dataset.done) return;
-    fetch('/api/data-coverage?mode=pipeline').then(function(r) { return r.json(); }).then(function(d) {
+    Promise.all([fetch('/api/data-coverage?mode=pipeline').then(function(r) { return r.json(); }), fetch('/api/data-coverage?mode=ledger').then(function(r) { return r.json(); }).catch(function() { return null; })]).then(function(pair) {
+        var d = pair[0], liveL = pair[1];
+        if (d && liveL && liveL.metrics && (!d.ledger || String(liveL.generatedAt || '') > String((d.ledger && d.ledger.generatedAt) || ''))) d.ledger = liveL;   // 파이프라인 요약보다 새 원장이 있으면 그걸 보여줌
         el.dataset.done = '1';
         if (!d || !d.runId) { el.innerHTML = '<div class="pn-muted" style="padding:8px 0;">아직 요약이 없어요. 다음 주간 파이프라인(일요일 밤)이 끝나면 여기에 단계별 결과가 나와요.</div>'; return; }
         var kst = function(iso) { if (!iso) return '-'; var t = new Date(new Date(iso).getTime() + 9 * 3600000).toISOString(); return t.slice(5, 10).replace('-', '/') + ' ' + t.slice(11, 16); };

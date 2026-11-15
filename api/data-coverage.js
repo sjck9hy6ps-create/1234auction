@@ -3599,6 +3599,14 @@ export default async function handler(req, res) {
       return res.status(200).json((data && data.payload) || {});
     } catch (err) { return res.status(500).json({ error: err.message }); }
   }
+  if (req.query.mode === 'ledger') { // 정확도 원장 최신본(accuracy_ledger.py가 단계마다 갱신) - 주간 파이프라인 요약은 끝날 때만 복사돼서 오래될 수 있어 따로 제공(2026-11-15)
+    res.setHeader('Cache-Control', 's-maxage=120, stale-while-revalidate=3600');
+    try {
+      const { data, error } = await supabase.from('leader_follower_cache').select('payload').eq('id', 'signal|__accuracy_ledger__').maybeSingle();
+      if (error) return res.status(500).json({ error: error.message });
+      return res.status(200).json((data && data.payload) || {});
+    } catch (err) { return res.status(500).json({ error: err.message }); }
+  }
   if (req.query.mode === 'pipeline') { // 주간 파이프라인 결과 요약(scripts/pipeline-summary.mjs, 2026-10-15)
     res.setHeader('Cache-Control', 's-maxage=600, stale-while-revalidate=86400');
     try {
