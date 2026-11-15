@@ -11,6 +11,10 @@ on:
         description: '예상 낙찰가 개선 실험도 함께 실행(앱 계산은 바뀌지 않음)'
         required: false
         default: 'false'
+      nolb:
+        description: '최저가 요인 제외 시험만 실행(저장 없음)'
+        required: false
+        default: 'false'
 
 jobs:
   analyze:
@@ -28,6 +32,8 @@ jobs:
           SITE_URL: ${{ secrets.SITE_URL }}
           PYTHONUNBUFFERED: '1'
           WB_EXP: ${{ github.event.inputs.experiment == 'true' && '1' || '' }}
+          WB_NOLB_ONLY: ${{ github.event.inputs.nolb == 'true' && '1' || '' }}
+          WRITE_BACK: ${{ github.event.inputs.nolb == 'true' && '0' || '1' }}
         run: python analyze-bidcases.py
       - uses: actions/upload-artifact@v4
         if: always()

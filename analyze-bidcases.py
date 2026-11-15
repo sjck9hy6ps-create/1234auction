@@ -697,6 +697,8 @@ def main():
         if not os.environ.get("APT_STACK_DIR"):
             try: apt_stack_load(R)
             except Exception as e: print("  종합 평가 연결 건너뜀:", e)
+        if os.environ.get("WB_NOLB_ONLY") == "1":   # 2026-11-16 시험: 최저가 요인을 뺀 예상 낙찰가 모델 비교(앱·서버 저장값은 안 바뀜) - 끝나면 바로 종료
+            nolb_test(R, now); return
         try:
             winbid_model(R, now)
             try:
@@ -2191,6 +2193,65 @@ def risk_table(R0, now):
     out = {**disp_extra, "기간": [lo, hi], "표본": int(len(D)), "칸": tab, "전체칸": allt, "인기보정": pop_adj, "낙찰조건": cond, "정의": "e = 낙찰 뒤 6개월 시장 실거래 중위 ÷ 시세(est_rule_f) - 1"}
     print("  🧱 근거 두께별 하방 표:", json.dumps({k_: [v_["n"], v_["q25"], v_["q50"]] for k_, v_ in tab.items()}, ensure_ascii=False))
     return out
+
+
+def nolb_test(R, now):
+    """2026-11-16(사용자: 최저가는 감정 시점 가격이라 금액 판단 기준이 되면 안 됨) 최저가 요인을 뺀 예상 낙찰가 모델 시험.
+    같은 학습/검증 분할(검증 = 최근 12개월)에서 요인 비중 조정까지 똑같이 거쳐 ① 지금 모델 ② 최저가 요인(lb·lbf·lbs·lbo) 제외 ③ 최저가+유찰 횟수 제외 를 비교.
+    구간별(신건/유찰, 수도권/지방, 최저가가 시세의 90% 이상인 신건 등)로도 오차·쏠림을 냄. 저장하는 것 없음(결과는 로그·요약에만)."""
+    global WB_FACTORS
+    R0 = R; R = R0.copy(); R["est_q40"] = R["est"]
+    _er = R["est_rule_f"] if "est_rule_f" in R.columns else R["est_rule"]
+    _er = _er.where(_er.notna() & (_er > 0), R["est_rule"])
+    R["est"] = _er.where(_er.notna() & (_er > 0))
+    if "est_stack" in R.columns and int((R["est_stack"] > 0).sum()) >= 3000 and os.environ.get("APT_STACK_OFF") != "1":
+        R["est"] = R["est_stack"].where(R["est_stack"] > 0)
+    D = R[R["est"].notna() & (R["est"] > 0) & R["actual"].notna() & R["minbid"].notna() & (R["minbid"] > 0) & (R["sale"] >= 20200101)].copy()
+    D = D[np.log(D["actual"] / D["est"]).between(np.log(0.4), np.log(1.6))]
+    last = pd.to_datetime(str(int(D["sale"].max())), format="%Y%m%d")
+    cut = int((last - pd.DateOffset(months=12)).strftime("%Y%m%d"))
+    tr, te = D[D["sale"] < cut], D[D["sale"] >= cut]
+    base0 = list(WB_FACTORS)
+    LB = {"lb", "lbf", "lbs", "lbo"}
+    variants = {
+        "① 지금 모델(최저가 요인 있음)": (base0, WB_CANDS + WB_CANDS_SERVER),
+        "② 최저가 요인 제외": ([f for f in base0 if f[0] not in LB], [c for c in WB_CANDS if c[0] not in LB] + WB_CANDS_SERVER),
+        "③ 최저가+유찰 횟수 제외": ([f for f in base0 if f[0] not in LB and f[0] != "fails"], [c for c in WB_CANDS if c[0] not in LB and c[0] not in ("regf",)] + WB_CANDS_SERVER),
+    }
+    lmin = np.log(te["minbid"].values / te["est"].values)
+    fails = te["fails"].fillna(-1).values
+    fcls = te["flow_cls"].fillna("?").values if "flow_cls" in te.columns else np.array(["?"] * len(te))
+    segs = {
+        "전체": np.ones(len(te), bool),
+        "신건(유찰 0회)": fails == 0,
+        "유찰 1회": fails == 1,
+        "유찰 2회+": fails >= 2,
+        "수도권": fcls == "수도권",
+        "지방": fcls == "지방",
+        "신건 & 최저가가 시세 90% 이상(이번 청라 물건 같은 경우)": (fails == 0) & (lmin >= np.log(0.9)),
+        "최저가가 시세 90% 이상(전체)": lmin >= np.log(0.9),
+        "신건 & 수도권": (fails == 0) & (fcls == "수도권"),
+    }
+    out = {"n_train": int(len(tr)), "n_test": int(len(te)), "variants": {}}
+    for nm, (f0, cands) in variants.items():
+        try:
+            tf, info = wb_tune(tr, f0, cands)
+            WB_FACTORS = [tuple(f) for f in tf if f[0] not in SERVER_ONLY]
+            m = wb_fit(tr); pp = wb_predict(m, te)
+            e = np.exp(pp) * te["est"].values / te["actual"].values - 1      # 예상/실제 - 1
+            rows = {}
+            for sn, mk in segs.items():
+                if int(mk.sum()) < 30: rows[sn] = {"n": int(mk.sum())}; continue
+                ee = e[mk]
+                rows[sn] = {"n": int(mk.sum()), "보통오차%": round(float(np.median(np.abs(ee))) * 100, 2), "10%이내%": round(float((np.abs(ee) <= 0.10).mean()) * 100, 1), "쏠림%(예상-실제 중앙, +면 높게 예상)": round(float(np.median(ee)) * 100, 2), "실제보다 낮게 예상해 낙찰 못한 비율%": round(float((ee < -0.0).mean()) * 100, 1)}
+            out["variants"][nm] = {"요인": [[f, k] for f, k in WB_FACTORS], "구간별": rows}
+        except Exception as ex:
+            out["variants"][nm] = {"error": str(ex)[:200]}
+        print("  🧪", nm, json.dumps(out["variants"][nm].get("구간별", {}).get("전체", {}), ensure_ascii=False))
+    WB_FACTORS = base0
+    print("  🧪 최저가 요인 제외 시험 결과:\n" + json.dumps(out, ensure_ascii=False, indent=1))
+    if os.environ.get("GITHUB_STEP_SUMMARY"):
+        open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8").write("### 최저가 요인 제외 시험\n```json\n" + json.dumps(out, ensure_ascii=False, indent=1) + "\n```\n")
 
 
 def winbid_model(R, now):
