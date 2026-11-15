@@ -23526,9 +23526,9 @@ async function villaCompElevatorLoad(row, rows, tol) {
     try {
         var seen = {}, aps = [];
         rows.forEach(function(r) { var ap = r.ap; if (ap && ap.buildingInfo === undefined && !seen[ap.__elvId || (ap.__elvId = Math.random())]) { seen[ap.__elvId] = 1; aps.push(ap); } });
-        if (aps.length) await batchFetchVillaBuildingInfo(aps);
+        if (aps.length) { try { await batchFetchVillaBuildingInfo(aps); } catch (e2) {} }
         aps.forEach(function(ap) { if (ap.buildingInfo === undefined) ap.buildingInfo = null; });   // 못 찾은 건물은 '정보 없음'으로 두고 다시 묻지 않음
-        if (bidDrawerId === row.id && bidBoardState.visit === 'villa') renderBidDrawer();
+        if (bidDrawerId === row.id) renderBidDrawer();   // 어느 탭(패스·즐겨찾기 포함)에서 열었든 다시 그림
     } catch (e) {}
 }
 function villaPriceGridHtml(row, ev, fmt) {
@@ -23590,7 +23590,7 @@ async function renderVillaDrawer(d, row) {
         (async function() {
             try { var dd = await fetchHouseDataCached(lawd); if (dd && !dd.error && Array.isArray(dd.apt)) await ingestRegionHouseData(dd, '', lawd); } catch (e) {}
             row._drawerLoading = false;
-            if (bidDrawerId === row.id && bidBoardState.visit === 'villa') renderBidDrawer();
+            if (bidDrawerId === row.id) renderBidDrawer();   // 어느 탭(패스·즐겨찾기 포함)에서 열었든 다시 그림
         })();
     }
     if (hsBld[row.id] && hsBld[row.id].partial) delete hsBld[row.id]; // 저장본은 요약뿐이라 상세를 열면 전체를 다시 받음
