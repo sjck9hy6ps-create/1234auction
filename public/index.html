@@ -23551,7 +23551,7 @@ function villaPriceGridHtml(row, ev, fmt) {
     var near = nearSame[0] || null, nearOther = false, nearMode = near ? 'ok' : '';
     var nElv = near ? elvOf(near.ap) : null, elvTxt = myElv == null ? '' : (myElv ? '승강기 있음' : '승강기 없음');
     var elvPending = nearAll.length && nearAll.some(function(r) { return r.ap && r.ap.buildingInfo === undefined; });
-    var nearSub = near ? (function(ts) { var dt = new Date(ts); return dt.getFullYear() + '.' + ('0' + (dt.getMonth() + 1)).slice(-2) + '.' + ('0' + dt.getDate()).slice(-2); })(near.ts) + (isNaN(near.floor) ? '' : ' · ' + near.floor + '층') + ' · ' + near.dist + 'm' + (near.name ? '<br>' + bbEsc(near.name) : '') + (near.direct ? ' · 직거래' : '') + '<br>' + kindLabel + (elvTxt ? ' · 이 물건 ' + elvTxt : '')
+    var nearSub = near ? (function(ts) { var dt = new Date(ts); return dt.getFullYear() + '.' + ('0' + (dt.getMonth() + 1)).slice(-2) + '.' + ('0' + dt.getDate()).slice(-2); })(near.ts) + (isNaN(near.floor) ? '' : ' · ' + near.floor + '층') + (near.area > 0 ? ' · ' + (near.area / 3.305785).toFixed(1) + '평(' + Math.round(near.area) + '㎡)' : '') + ' · ' + near.dist + 'm' + (near.name ? '<br>' + bbEsc(near.name) : '') + (near.direct ? ' · 직거래' : '') + '<br>' + kindLabel + (elvTxt ? ' · 이 물건 ' + elvTxt : '')
         : (c && c.loading ? '지역 실거래 불러오는 중' : (c && c.err ? bbEsc(c.err) : (nearAll.length ? (elvPending ? '비교 건물 승강기 정보 확인 중' : '같은 조건 거래 없음 · ' + kindLabel) : '반경 1km 비슷한 면적 거래 없음')));
     var sale = (ve && ve.est) || row.sale, fails = row.fails != null ? row.fails : parseInt(a.failCount);
     var pcc = pe && pe.p != null ? Math.round(pe.p * 100) : null;
