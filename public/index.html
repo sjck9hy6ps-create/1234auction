@@ -23514,6 +23514,28 @@ function villaCostHtml(row, ev, fmt) {
         + '<tr><td class="dr-sub">필요 현금(입찰가 − 대출 ' + fmt(cl.loan) + ' + 입찰 후~매도 전 비용 ' + fmt(cl.cashCost) + ', 매도 때 정산되는 수수료·부가세 제외)</td><td class="r dr-sub">' + fmt(cl.cash) + '</td></tr></table>'
         + '<div class="dr-sub">예상매도가 ' + fmt(ve.est) + '이 맞는다는 가정의 값이에요(빌라 시세 보통 오차 약 10%).' + (ev.ve.stack && ev.ve.stack.l10 ? ' 하위 10% 값(' + fmt(ev.ve.stack.l10) + ')에 팔리면 순마진은 약 ' + fmt(Math.round(net - (ve.est - ev.ve.stack.l10))) + '이에요(세금 변화 제외).' : '') + '</div></div>';
 }
+/* 💰 빌라 가격 한눈에 카드(2026-11-15, 사용자: 빌라는 같은 단지가 아니라 생활권의 비슷한 조건 매물 최근 거래가 필요) - 최근거래가 = 반경 1km·비슷한 면적(±20%) 최근 18개월 거래 중 가장 최근 1건(임장 탭 '생활권 최근 거래'와 같은 목록, 직거래·신축 포함해 표시) */
+function villaPriceGridHtml(row, ev, fmt) {
+    var a = row.a, ve = ev.ve, pe = ev.pn && ev.pn.ev, wb = ev.wb;
+    var item = function(label, value, sub, color) {
+        return '<div class="indicator-item"><div class="indicator-label">' + label + '</div><div class="indicator-value"' + (color ? ' style="color:' + color + ';"' : '') + '>' + value + '</div>' + (sub ? '<div class="indicator-label" style="margin:2px 0 0;">' + sub + '</div>' : '') + '</div>';
+    };
+    var c = null; try { c = villaNearComps(row); } catch (e) {}
+    var near = c && c.rows && c.rows.length ? c.rows[0] : null;
+    var nearSub = near ? (function(ts) { var dt = new Date(ts); return dt.getFullYear() + '.' + ('0' + (dt.getMonth() + 1)).slice(-2) + '.' + ('0' + dt.getDate()).slice(-2); })(near.ts) + (isNaN(near.floor) ? '' : ' · ' + near.floor + '층') + ' · ' + near.dist + 'm' + (near.name ? '<br>' + bbEsc(near.name) : '') + (near.direct ? ' · 직거래' : '')
+        : (c && c.loading ? '지역 실거래 불러오는 중' : (c && c.err ? bbEsc(c.err) : '반경 1km 비슷한 면적 거래 없음'));
+    var sale = (ve && ve.est) || row.sale, fails = row.fails != null ? row.fails : parseInt(a.failCount);
+    var pcc = pe && pe.p != null ? Math.round(pe.p * 100) : null;
+    var h = '<div class="indicator-box" style="margin-top:8px;"><div class="indicator-title">💰 가격 한눈에</div><div class="indicator-grid">';
+    h += item('감정가', parseInt(a.appraisal) > 0 ? fmt(parseInt(a.appraisal)) : '-', '');
+    h += item('현재가 (유찰 반영 최저가)', row.minBid ? fmt(row.minBid) : '-', fails != null && !isNaN(fails) ? (fails === 0 ? '신건' : fails + '회 유찰') : '');
+    h += item('예상 매도가', sale ? fmt(sale) : '-', sale && row.minBid ? '현재가의 ' + Math.round(sale / row.minBid * 100) + '%' : '');
+    h += item('최근거래가 (생활권 비슷한 면적)', near ? fmt(near.p || near.price || near.amount) : '-', nearSub);
+    h += item('추천 입찰가', pe && pe.bid ? fmt(pe.bid) : '-', pe && pe.bid && sale ? '시세의 ' + Math.round(pe.bid / sale * 100) + '%' : (pe ? '' : '추천가 없음'), pe && pe.bid ? '#15803d' : '');
+    h += item('낙찰 가능성', pcc != null ? pcc + '%' : '-', pcc != null ? '추천 입찰가로 낙찰될 확률' : '', pcc == null ? '' : (pcc >= 60 ? '#15803d' : (pcc >= 35 ? '#b45309' : '#b91c1c')));
+    h += item('예상 낙찰가', wb && wb.price ? fmt(wb.price) : '-', wb && wb.price && sale ? '시세의 ' + Math.round(wb.price / sale * 100) + '%' : '');
+    return h + '</div></div>';
+}
 async function renderVillaDrawer(d, row) {
     var a = row.a, lawd = row.lawd || bidBoardLawdOf(a);
     // 2026-10-10(사용자: 빌라 상세·지도 로딩 딜레이): 지역 실거래(수 MB)를 다 받을 때까지 상세를 비워 두지 않음 - 저장된 계산(예상매도가·마진·생활권)으로 바로 그리고,
@@ -23537,9 +23559,8 @@ async function renderVillaDrawer(d, row) {
         + '<div class="dr-top-btns"><button onclick="bidBoardGo(\'' + idJs + '\')">🗺️ 지도</button><button onclick="openCyclePanel()">📈 사이클</button></div>' + bidExclBoxHtml(row, idJs) + rightsStopBannerHtml(row)
         + '<div class="dr-sub">' + bbEsc(row.region) + (row.pyung ? ' · ' + row.pyung + '평(' + Math.round(row.pyung * 3.305785) + '㎡)' : '') + (row.floor ? ' · ' + row.floor + '층' : '') + (a.buildYear ? ' · ' + a.buildYear + '년' : '') + (row.dday ? ' · 입찰 ' + bbEsc(row.dday.label) + ' ' + bbEsc(a.bidDate || '') : '') + '</div>'
         + '<div class="dr-pickcard ' + (go ? 'go' : 'pass') + '"><div class="pk-v">' + (go ? '🚶 임장 추천' : '패스') + (ev.visit.why ? ' · ' + bbEsc(ev.visit.why) : '') + '</div>'
-        + (pe ? '<div class="pk-big"><span>추천 입찰가</span><b>' + fmt(pe.bid) + '</b>' + (ve ? '<span>시세의 <b style="font-size:15px;color:#374151;">' + Math.round(pe.bid / ve.est * 100) + '%</b></span>' : '') + '</div>'
-            + '<div class="pk-sub">낙찰 가능성 <b>' + Math.round(pe.p * 100) + '%</b> · 예상 순이익(세후) <b>' + fmt(pe.net) + '</b><br>예상매도가 ' + fmt((ve && ve.est) || row.sale) + ' · 최저가 ' + fmt(row.minBid) + '</div>'
-            : '<div class="pk-sub">추천가가 없어요 · 예상매도가 ' + fmt((ve && ve.est) || row.sale) + ' · 최저가 ' + fmt(row.minBid) + '</div>') + '</div>';
+        + (pe ? '<div class="pk-sub">예상 순이익(세후) <b>' + fmt(pe.net) + '</b></div>'
+            : '<div class="pk-sub">추천가가 없어요</div>') + '</div>' + villaPriceGridHtml(row, ev, fmt);
     h += permitDrawerHtml(row);
     h += visitSectionHtml(row);
     // 2026-11-15(첫 화면 단순화): 맨 위 카드(추천가·낙찰 가능성·순이익·임장 여부)와 권리분석만 보이고 비용·근거·거래·건물은 '자세히'로 접음
