@@ -23573,6 +23573,7 @@ function drawerNavInit(d) {
         Array.prototype.forEach.call(d.children, function(c) { var h4 = c.classList && c.classList.contains('dr-sec') ? c.querySelector(':scope > h4') : null; if (h4 && /인수 금액 \(경매정보 기준\)/.test(h4.textContent || '')) vis.push(c); });
         vis.forEach(function(c) { c.classList.add('dr-visit-only'); });
         if (d.__vvId !== d.__lastId) { d.classList.remove('view-visit'); d.__vvId = d.__lastId; }   // 다른 물건을 열면 전체 내역부터
+        items.forEach(function(it) { if (it.t === '건물·도시민박' && d.querySelector('#apt-bld')) it.t = '건물'; });   // 도시민박은 빌라 전용 - 아파트 상세 탭에는 '건물'로만
         if (vis.length) items.push({ t: '임장', visit: true });
         var inVisit = d.classList.contains('view-visit') && vis.length;
         var nav = document.createElement('div'); nav.className = 'dr-nav';
