@@ -22966,19 +22966,18 @@ function drawerPriceGridHtml(row) {
     var item = function(label, value, sub, color) {
         return '<div class="indicator-item"><div class="indicator-label">' + label + '</div><div class="indicator-value"' + (color ? ' style="color:' + color + ';"' : '') + '>' + value + '</div>' + (sub ? '<div class="indicator-label" style="margin:2px 0 0;">' + sub + '</div>' : '') + '</div>';
     };
-    // 최근거래가는 이 물건과 같은 층대 거래 중 가장 최근 1건(2026-11-15, 사용자: 층 보정 - 아파트는 1층이 다른 층과 다름). 층대 = 1층 / 2층 이상. 같은 층대 거래가 없으면 전체 최근 거래를 '다른 층' 표시와 함께 보여줌
+    // 최근거래가(2026-11-15, 사용자 규칙): 보정이 필요한 층(1층)은 비교에서 분리 - 1층 물건은 1층 거래만, 2층 이상 물건은 1층을 뺀 거래 중 가장 최근 1건. 같은 조건 거래가 없으면 다른 층으로 대신하지 않고 '없음'
     var allTr = []; try { allTr = drawerTrades(row); } catch (e) {}
-    var fl = parseInt(a.floor), cls = function(f) { return isNaN(f) ? null : (f <= 1 ? 1 : 2); }, myCls = cls(fl);
-    var sameTr = myCls ? allTr.filter(function(t) { return cls(t.f) === myCls; }) : allTr, tr = sameTr[0] || null, otherFloor = false;
-    if (!tr && allTr.length) { tr = allTr[0]; otherFloor = true; }
-    var clsLabel = myCls === 1 ? '1층 거래' : (myCls === 2 ? '2층 이상 거래' : '');
+    var fl = parseInt(a.floor), is1 = function(f) { return f === 1; };
+    var sameTr = isNaN(fl) ? allTr : allTr.filter(function(t) { return is1(fl) ? is1(t.f) : !is1(t.f); }), tr = sameTr[0] || null;
+    var clsLabel = isNaN(fl) ? '' : (is1(fl) ? '1층 거래끼리' : '1층 제외 거래끼리'), noMatch = is1(fl) ? '1층 거래 없음' : '같은 조건 거래 없음';
     var fails = row.fails != null ? row.fails : parseInt(a.failCount);
     var appr = parseInt(a.appraisal) > 0 ? fmt(parseInt(a.appraisal)) : '-';
     var h = '<div class="indicator-box" style="margin-top:8px;"><div class="indicator-title">💰 가격 한눈에</div><div class="indicator-grid">';
     h += item('감정가', appr, '');
     h += item('현재가 (유찰 반영 최저가)', row.minBid ? fmt(row.minBid) : '-', fails != null && !isNaN(fails) ? (fails === 0 ? '신건' : fails + '회 유찰') : '');
     h += item('예상 매도가 ' + infoI('sale'), row.sale ? fmt(row.sale) : '-', row.sale && row.minBid ? '현재가의 ' + Math.round(row.sale / row.minBid * 100) + '%' : '');
-    h += item('최근거래가 (같은 층대)', tr && tr.p > 0 ? fmt(tr.p) : '-', tr && tr.d ? (function(d) { var dt = new Date(d); return dt.getFullYear() + '.' + ('0' + (dt.getMonth() + 1)).slice(-2) + '.' + ('0' + dt.getDate()).slice(-2); })(tr.d) + (isNaN(tr.f) ? '' : ' · ' + tr.f + '층') + (tr.direct ? ' · 직거래' : '') + '<br>' + (otherFloor ? '같은 층대 거래 없음 · 다른 층 거래' : clsLabel + ' 기준') : '같은 단지 같은 평형 거래 없음');
+    h += item('최근거래가 (층 조건 일치)', tr && tr.p > 0 ? fmt(tr.p) : '-', tr && tr.d ? (function(d) { var dt = new Date(d); return dt.getFullYear() + '.' + ('0' + (dt.getMonth() + 1)).slice(-2) + '.' + ('0' + dt.getDate()).slice(-2); })(tr.d) + (isNaN(tr.f) ? '' : ' · ' + tr.f + '층') + (tr.direct ? ' · 직거래' : '') + '<br>' + clsLabel : noMatch + ' (같은 단지 같은 평형)');
     h += item('추천 입찰가 ' + infoI('rec'), pe && pe.bid ? fmt(pe.bid) : '-', pe && pe.bid && row.sale ? '시세의 ' + Math.round(pe.bid / row.sale * 100) + '%' : (pe ? '' : '추천가 없음'), pe && pe.bid ? '#15803d' : '');
     var pcc2 = pe && pe.p != null ? Math.round(pe.p * 100) : null;
     h += item('낙찰 가능성', pcc2 != null ? pcc2 + '%' : '-', pcc2 != null ? '추천 입찰가로 낙찰될 확률' : '', pcc2 == null ? '' : (pcc2 >= 60 ? '#15803d' : (pcc2 >= 35 ? '#b45309' : '#b91c1c')));
@@ -23537,28 +23536,30 @@ function villaPriceGridHtml(row, ev, fmt) {
         return '<div class="indicator-item"><div class="indicator-label">' + label + '</div><div class="indicator-value"' + (color ? ' style="color:' + color + ';"' : '') + '>' + value + '</div>' + (sub ? '<div class="indicator-label" style="margin:2px 0 0;">' + sub + '</div>' : '') + '</div>';
     };
     var c = null; try { c = villaNearComps(row); } catch (e) {}
-    // 최근거래가(2026-11-15, 사용자: 빌라는 승강기 유무에 따라 층 선호가 달라 - 비교 건물의 건축물대장 승강기 정보로 맞춤):
-    // 같은 층대(지하 / 1층 / 2~3층 / 4층 이상) + 같은 승강기 유무 건물의 가장 최근 1건 → 없으면 같은 층대 → 없으면 전체 최근('다른 층' 표시)
-    var vFl = parseInt(row.floor != null ? row.floor : a.floor), vCls = function(f) { return isNaN(f) ? null : (f <= 0 ? 'B' : (f === 1 ? '1' : (f <= 3 ? '2~3' : '4+'))); }, myV = vCls(vFl), vLabel = { B: '지하', '1': '1층', '2~3': '2~3층', '4+': '4층 이상' }[myV] || '';
+    // 최근거래가(2026-11-15, 사용자 규칙): 보정이 필요한 층은 비교에서 분리 - 지하는 지하 거래끼리, 승강기 없는 4층 이상은 승강기 없는 4층 이상 거래끼리,
+    // 그 외(1~3층·승강기 있는 건물)는 지하와 '승강기 없는 4층 이상' 거래를 뺀 거래 중 가장 최근 1건. 같은 조건 거래가 없으면 다른 층으로 대신하지 않고 '없음'
+    var vFl = parseInt(row.floor != null ? row.floor : a.floor);
     var elvOf = function(ap) { var t = ap && ap.buildingInfo && ap.buildingInfo.title; return t ? ((t.rideElvtCnt || 0) + (t.emgenElvtCnt || 0)) > 0 : null; };
     var myElv = a.elevatorCnt != null && a.elevatorCnt !== '' ? parseInt(a.elevatorCnt) > 0 : null;
+    // 구분: B 지하 / NE4 승강기 없는 4층 이상 / U4 4층 이상인데 승강기 정보 없음 / N 그 밖(보정 필요 없는 층)
+    var vKind = function(f, elv) { if (isNaN(f)) return 'N'; if (f <= 0) return 'B'; if (f >= 4) return elv === false ? 'NE4' : (elv === null ? 'U4' : 'N'); return 'N'; };
+    var myKind = vKind(vFl, myElv), kindLabel = { B: '지하 거래끼리', NE4: '승강기 없는 4층 이상 거래끼리', U4: '4층 이상 거래(이 물건 승강기 정보 없음)', N: '지하·승강기 없는 4층 이상을 뺀 거래끼리' }[myKind];
     var nearAll = c && c.rows ? c.rows : [];
     if (nearAll.length && !row._compElvTried) villaCompElevatorLoad(row, nearAll);
-    var sameCls = myV ? nearAll.filter(function(r) { return vCls(r.floor) === myV; }) : nearAll;
-    var sameElv = myElv == null ? [] : sameCls.filter(function(r) { return elvOf(r.ap) === myElv; });
-    var near = sameElv[0] || sameCls[0] || null, nearOther = false, nearMode = sameElv[0] ? 'both' : (sameCls[0] ? 'floor' : '');
-    if (!near && nearAll.length) { near = nearAll[0]; nearOther = true; }
+    var okFor = function(r) { var k = vKind(parseInt(r.floor), elvOf(r.ap)); if (myKind === 'B') return k === 'B'; if (myKind === 'NE4') return k === 'NE4'; if (myKind === 'U4') return parseInt(r.floor) >= 4; return k === 'N'; };
+    var nearSame = nearAll.filter(okFor);
+    var near = nearSame[0] || null, nearOther = false, nearMode = near ? 'ok' : '';
     var nElv = near ? elvOf(near.ap) : null, elvTxt = myElv == null ? '' : (myElv ? '승강기 있음' : '승강기 없음');
     var elvPending = nearAll.length && nearAll.some(function(r) { return r.ap && r.ap.buildingInfo === undefined; });
-    var nearSub = near ? (function(ts) { var dt = new Date(ts); return dt.getFullYear() + '.' + ('0' + (dt.getMonth() + 1)).slice(-2) + '.' + ('0' + dt.getDate()).slice(-2); })(near.ts) + (isNaN(near.floor) ? '' : ' · ' + near.floor + '층') + ' · ' + near.dist + 'm' + (near.name ? '<br>' + bbEsc(near.name) : '') + (near.direct ? ' · 직거래' : '') + '<br>' + (nearOther ? '같은 층대 거래 없음 · 다른 층 거래' : vLabel + ' · ' + (nearMode === 'both' ? elvTxt + ' 건물끼리' : '거래 기준' + (elvTxt ? ' (이 물건 ' + elvTxt + (nElv == null ? ', 비교 건물 승강기 정보 ' + (elvPending ? '확인 중' : '없음') : ', 비교 건물 ' + (nElv ? '있음' : '없음')) + ')' : ''))) + (nearMode === 'both' || nElv == null ? '' : '')
-        : (c && c.loading ? '지역 실거래 불러오는 중' : (c && c.err ? bbEsc(c.err) : '반경 1km 비슷한 면적 거래 없음'));
+    var nearSub = near ? (function(ts) { var dt = new Date(ts); return dt.getFullYear() + '.' + ('0' + (dt.getMonth() + 1)).slice(-2) + '.' + ('0' + dt.getDate()).slice(-2); })(near.ts) + (isNaN(near.floor) ? '' : ' · ' + near.floor + '층') + ' · ' + near.dist + 'm' + (near.name ? '<br>' + bbEsc(near.name) : '') + (near.direct ? ' · 직거래' : '') + '<br>' + kindLabel + (elvTxt ? ' · 이 물건 ' + elvTxt : '')
+        : (c && c.loading ? '지역 실거래 불러오는 중' : (c && c.err ? bbEsc(c.err) : (nearAll.length ? (elvPending ? '비교 건물 승강기 정보 확인 중' : '같은 조건 거래 없음 · ' + kindLabel) : '반경 1km 비슷한 면적 거래 없음')));
     var sale = (ve && ve.est) || row.sale, fails = row.fails != null ? row.fails : parseInt(a.failCount);
     var pcc = pe && pe.p != null ? Math.round(pe.p * 100) : null;
     var h = '<div class="indicator-box" style="margin-top:8px;"><div class="indicator-title">💰 가격 한눈에</div><div class="indicator-grid">';
     h += item('감정가', parseInt(a.appraisal) > 0 ? fmt(parseInt(a.appraisal)) : '-', '');
     h += item('현재가 (유찰 반영 최저가)', row.minBid ? fmt(row.minBid) : '-', fails != null && !isNaN(fails) ? (fails === 0 ? '신건' : fails + '회 유찰') : '');
     h += item('예상 매도가', sale ? fmt(sale) : '-', sale && row.minBid ? '현재가의 ' + Math.round(sale / row.minBid * 100) + '%' : '');
-    h += item('최근거래가 (생활권·같은 층대·승강기)', near ? fmt(near.p || near.price || near.amount) : '-', nearSub);
+    h += item('최근거래가 (생활권·층 조건 일치)', near ? fmt(near.p || near.price || near.amount) : '-', nearSub);
     h += item('추천 입찰가', pe && pe.bid ? fmt(pe.bid) : '-', pe && pe.bid && sale ? '시세의 ' + Math.round(pe.bid / sale * 100) + '%' : (pe ? '' : '추천가 없음'), pe && pe.bid ? '#15803d' : '');
     h += item('낙찰 가능성', pcc != null ? pcc + '%' : '-', pcc != null ? '추천 입찰가로 낙찰될 확률' : '', pcc == null ? '' : (pcc >= 60 ? '#15803d' : (pcc >= 35 ? '#b45309' : '#b91c1c')));
     h += item('예상 낙찰가', wb && wb.price ? fmt(wb.price) : '-', wb && wb.price && sale ? '시세의 ' + Math.round(wb.price / sale * 100) + '%' : '');
