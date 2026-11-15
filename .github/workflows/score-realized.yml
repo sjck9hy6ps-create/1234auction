@@ -1,0 +1,23 @@
+# 실현 검증 원장(2026-11-15): 앱이 입찰 전에 저장한 예측을 실제 낙찰·되판 거래와 비교해 정확도 원장에 매주 한 줄씩 쌓음 (score-realized.py)
+name: Score realized
+
+on:
+  workflow_dispatch:
+  workflow_call:
+
+jobs:
+  score:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install pandas numpy requests scikit-learn scipy
+      - env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          SITE_URL: ${{ secrets.SITE_URL }}
+          PYTHONUNBUFFERED: '1'
+        run: python score-realized.py

@@ -68,11 +68,17 @@ jobs:
     secrets: inherit
     needs: analyze-flow-lab
     if: ${{ !cancelled() }}
+  score-realized:
+    name: 8a 실현 검증(앱 예측 vs 실제 되판 가격)
+    uses: ./.github/workflows/score-realized.yml
+    secrets: inherit
+    needs: analyze-bidcases
+    if: ${{ !cancelled() }}
   analyze-villa-bidcases:
     name: 8b 빌라 낙찰가 모델·자동 보정 검증
     uses: ./.github/workflows/analyze-villa-bidcases.yml
     secrets: inherit
-    needs: analyze-bidcases
+    needs: score-realized
     if: ${{ !cancelled() }}
   refit-villa-robust:
     name: 8c 빌라 시세·예상매도가 정확도 기록
