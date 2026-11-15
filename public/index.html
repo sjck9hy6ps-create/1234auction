@@ -24538,7 +24538,7 @@ setTimeout(function() { try { loadCycleRates().then(function(r) { if (r) { try {
 function loadCycleRates() {
     if (cycleRates) return Promise.resolve(cycleRates);
     if (cycleRatesLoading) return cycleRatesLoading;
-    cycleRatesLoading = fetch('/api/data-coverage?mode=macroSummary').then(function(r) { return r.json(); }).then(function(d) {
+    cycleRatesLoading = fetch('/api/data-coverage?mode=macroSummary&mr=2017').then(function(r) { return r.json(); }).then(function(d) {
         var arr = d && d.baseRateMonthly; if (!arr || !arr.length) return null;
         var m = {}; arr.forEach(function(x) { m[String(x[0]).slice(0, 4) + '-' + String(x[0]).slice(4, 6)] = x[1]; });
         var keys = Object.keys(m).sort(), out = {}, y = parseInt(keys[0].slice(0, 4), 10), mo = parseInt(keys[0].slice(5, 7), 10), last = m[keys[0]], endK = new Date().getFullYear() + '-' + ('0' + (new Date().getMonth() + 1)).slice(-2);
