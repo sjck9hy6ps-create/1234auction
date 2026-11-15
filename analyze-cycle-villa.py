@@ -66,7 +66,7 @@ def main():
         sm = cyc.smooth_series(s, "center"); trail = cyc.smooth_series(s, "trail"); pts = cyc.zigzag(sm, cyc.ZIGZAG_REGION)
         vol = dfr.groupby("ym").size()
         f = cyc.build_region_features(trail, vol); f["ym"] = f.index; f["region"] = region; feat_rows.append(f)
-        rr = {"region": region, "segment": "villa", **pack(trail, pts, vol), "followers": []}
+        rr = {"region": region, "segment": "villa", **pack(trail, pts, vol), "followers": [], "dongs": cyc.dong_blocks(dfr)}
         region_rows.append(rr)
     print(f"  시군구 {len(region_rows)}곳")
     feats = pd.concat(feat_rows, ignore_index=True)

@@ -385,6 +385,33 @@ def series_payload(log_s):
     return [[ym_label(int(k)), round(math.exp(float(v)) * 100, 2)] for k, v in log_s.items()]
 
 
+DONG_MIN_TRADES = 300      # 법정동 그래프를 만들 최소 거래 수(2026-11-15 사용자: 전국·시군구·법정동 단위로 시세와 금리 그래프)
+DONG_MIN_UNITS = 3         # 법정동은 거래가 적어 한 달에 3개 유닛부터 인정(시군구는 5)
+DONG_ZIGZAG = 0.06
+
+
+def dong_blocks(dfr_idx):
+    """시군구 안의 법정동별 가격지수(같은 단지 고정효과 지수)·고점/저점·현재 국면. 법정동 이름은 동 이름의 마지막 단어."""
+    out = {}
+    if "dongk" not in dfr_idx.columns:
+        return out
+    for dk, g in dfr_idx.groupby("dongk"):
+        if len(g) < DONG_MIN_TRADES:
+            continue
+        try:
+            s, n = fe_index(g, "unit", "ym")
+            s = s[n.reindex(s.index).fillna(0) >= DONG_MIN_UNITS]
+            if len(s) < 36:
+                continue
+            sm = smooth_series(s, "center"); trail = smooth_series(s, "trail")
+            pts = zigzag(sm, DONG_ZIGZAG); vol = g.groupby("ym").size()
+            out[str(dk)] = {"index": series_payload(trail), "turningPoints": [{**p, "ym": ym_label(p["ym"]), "level": round(math.exp(p["level"]) * 100, 2)} for p in pts],
+                            "phase": describe_phase(trail, pts, vol), "cycle": cycle_stats(pts)}
+        except Exception:
+            continue
+    return out
+
+
 def main():
     now = datetime.now(timezone.utc).isoformat()
     print("🏠 부동산 사이클·후발주자 분석 시작", now)
@@ -461,7 +488,7 @@ def main():
         all_samples.extend(samples)
         region_rows.append({"region": region, "index": series_payload(trail),
                             "turningPoints": [{**p, "ym": ym_label(p["ym"]), "level": round(math.exp(p["level"]) * 100, 2)} for p in pts],
-                            "phase": describe_phase(trail, pts, vol), "cycle": cycle_stats(pts), "followers": fol})
+                            "phase": describe_phase(trail, pts, vol), "cycle": cycle_stats(pts), "followers": fol, "dongs": dong_blocks(dfr_idx)})
         if (i + 1) % 25 == 0:
             print(f"  시군구 {i + 1}/{len(regions)} 처리")
 

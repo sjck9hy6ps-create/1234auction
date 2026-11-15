@@ -24638,16 +24638,16 @@ function cycleTargetApt() {
     var bb = document.getElementById('bid-board');
     if (bb && bb.style.display !== 'none' && getComputedStyle(bb).display !== 'none' && bidDrawerId) {
         var row = bidBoardRows.filter(function(r) { return r.id === bidDrawerId; })[0];
-        if (row && row.type === 'villa') return { villa: true, lawd: row.lawd || bidBoardLawdOf(row.a), label: row.name }; // 빌라는 단지 사이클 대신 시군구 사이클
+        if (row && row.type === 'villa') return { villa: true, lawd: row.lawd || bidBoardLawdOf(row.a), label: row.name, dong: row.a && row.a.dong }; // 빌라는 단지 사이클 대신 시군구 사이클
         if (row && row.a) {
             var m = null; try { m = findMatchedApt(row.a); } catch (e) {}
-            if (m) return { apt: m, lawd: row.lawd || m.lawdCd, label: row.name };
+            if (m) return { apt: m, lawd: row.lawd || m.lawdCd, label: row.name, dong: row.a.dong || (m.latest && m.latest.dong) };
         }
     }
     var pn = document.getElementById('panel');
     if (currentPanelApt && pn && getComputedStyle(pn).display !== 'none') {
         var l = currentPanelApt.latest || {};
-        return { apt: currentPanelApt, lawd: currentPanelApt.lawdCd, label: (l.dong ? l.dong + ' ' : '') + (l.name || '') };
+        return { apt: currentPanelApt, lawd: currentPanelApt.lawdCd, label: (l.dong ? l.dong + ' ' : '') + (l.name || ''), dong: l.dong };
     }
     return null;
 }
@@ -24771,6 +24771,10 @@ async function openCyclePanel() {
     html += block('전국', d.national, '#424242');
     if (d.sido) html += block(d.sido.name + ' 전체', d.sido, '#6a1b9a');
     if (d.region) html += block(d.region.region, d.region, '#00897b');
+    // 법정동 사이클(2026-11-15): 시군구 안 법정동별 가격지수(서버 분석이 만든 값이 있을 때만)
+    var dgName = target && target.dong ? String(target.dong).trim().split(/\s+/).pop() : '', dgObj = dgName && d.region && d.region.dongs ? d.region.dongs[dgName] : null;
+    if (dgObj) html += block('법정동 · ' + dgName, dgObj, '#1565c0');
+    else if (dgName && d.region) html += '<div class="pn-muted" style="margin-top:8px;">법정동(' + bbEsc(dgName) + ') 사이클은 거래가 적거나 아직 계산되지 않아 시군구 사이클만 보여요</div>';
     if (target && target.villa) html += '<div class="pn-muted" style="margin-top:8px;">🏘️ 빌라는 단지 사이클 대신 위의 <b>시군구 사이클</b>을 참고하세요(' + (isVillaCyc ? '연립·다세대 거래로 만든 빌라 사이클이에요' : '아직 빌라 사이클이 없어 아파트 사이클을 보여 드려요 - 같은 지역 흐름을 가늠하는 용도') + ').</div>';
     else if (target) html += '<div id="cycle-complex-block" style="margin-top:10px;border-top:1px solid #eee;padding-top:8px;"><b>🏢 ' + bbEsc(target.label || '이 단지') + '</b><div class="pn-muted">단지 10년 실거래 불러오는 중…</div></div>';
     else html += '<div class="pn-muted" style="margin-top:8px;">🏢 단지 사이클은 단지 상세나 입찰후보 상세 창을 연 상태에서 📈 사이클을 누르면 보여요</div>';
