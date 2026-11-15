@@ -23276,7 +23276,7 @@ function asmInfoHtml(row) {
     return h + '</div>';
 }
 /* 📍 빌라 임장: 생활권 최근 거래(2026-11-15, 사용자: 임장할 물건의 생활권에서 가장 최근에 팔린 비슷한 물건이 얼마에 팔렸는지 보고 팔 수 있는 물건인지 판단)
-   이 물건 반경 1km 안, 최근 18개월, 이 물건과 전용면적 ±20% 이내인 빌라 매매(직거래 제외 표시)를 최신순으로 보여주고, 반경별 건수·㎡당 가격 중앙값·이 물건 면적 환산가를 앱 예상매도가와 나란히 보여줌.
+   이 물건 반경 1km 안, 최근 18개월, 이 물건과 전용면적 ±10% 이내인 빌라 매매(직거래 제외 표시)를 최신순으로 보여주고, 반경별 건수·㎡당 가격 중앙값·이 물건 면적 환산가를 앱 예상매도가와 나란히 보여줌.
    지역 실거래 자료(dataCache)와 건물 좌표(coordCache)만 쓰므로 새 호출 없음 - 좌표를 아직 모르는 건물은 빠지므로 그 수를 같이 알림 */
 /* 🏢 최근 거래 건물 임장 + 후보와 비교(2026-11-15, 사용자: 최근 거래도 임장해야 하니 거래별 임장 체크리스트를 만들어 입찰후보 체크리스트와 비교) -
    건물 상태 점검 11항목을 최근 거래 건물(동·번지 단위)마다 같은 방식으로 기록하고, 후보와 한 표에서 비교. 기록은 이 후보 사건(a.compVisits)에 저장돼 기기 어디서나 같게 보임 */
@@ -23347,7 +23347,7 @@ function villaNearComps(row) {
         if (!c || !c.lat) { noCoord++; return; }
         var dy = (c.lat - a.lat) * 111000, dx = (c.lon - a.lon) * 88000, dist = Math.sqrt(dx * dx + dy * dy); if (dist > R) return;
         (ap.trades || []).forEach(function(tr) {
-            var ar = parseFloat(tr.area), p = parseInt(tr.amount); if (!(ar > 0 && p > 0) || Math.abs(ar - area) > area * 0.2) return;
+            var ar = parseFloat(tr.area), p = parseInt(tr.amount); if (!(ar > 0 && p > 0) || Math.abs(ar - area) > area * 0.1) return;   // 비슷한 거래 면적 조건 ±10%(2026-11-15 사용자: 앱의 비슷한 거래 기본 조건)
             var ts = tradeDate(tr).getTime(); if (!(ts >= cut)) return;
             out.push({ ap: ap, ts: ts, dist: Math.round(dist), name: tr.name || l.name || '', dong: tr.dong || l.dong || '', bunji: tr.bunji || l.bunji || '', area: ar, floor: parseInt(tr.floor), by: parseInt(tr.build_year || l.build_year) || null, price: p, ppm: p / ar, direct: tr.dealing_type === '직거래', same: dist < 25 });
         });
@@ -23357,7 +23357,7 @@ function villaNearComps(row) {
 }
 function villaCompsHtml(row) {
     var c = villaNearComps(row), E = bbEsc, fmt = function(x) { return x ? toEok(String(Math.round(x))) : '-'; };
-    var h = '<div class="dr-sec"><h4>📍 생활권 최근 거래 <span class="dr-sub" style="display:inline;">(반경 1km · 최근 18개월 · 이 물건과 비슷한 면적 ±20%)</span></h4>';
+    var h = '<div class="dr-sec"><h4>📍 생활권 최근 거래 <span class="dr-sub" style="display:inline;">(반경 1km · 최근 18개월 · 이 물건과 비슷한 면적 ±10%)</span></h4>';
     if (c.loading) return h + '<div class="dr-sub">지역 실거래를 불러오는 중이에요…</div></div>';
     if (c.err) return h + '<div class="dr-sub">' + E(c.err) + '</div></div>';
     var rows = c.rows, now = Date.now(), D = 86400000, yr = new Date().getFullYear(), isNew = function(r) { return r.by && r.by >= yr - 4; };
