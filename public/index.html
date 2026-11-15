@@ -22404,9 +22404,11 @@ function renderBidBoardLite() {
     var grp = [['apt', '🏢 아파트', aptTotal], ['villa', '🏘️ 빌라(수도권)', villaMetroN]].map(function(t) {
         return '<button class="bb-tab' + (!isFavTab && (t[0] === 'villa') === isVillaTab ? ' on' : '') + '" style="font-weight:700;" onclick="setLiteVisit(\'' + (t[0] === 'villa' ? 'villa' : (s.aptVisit || 'go')) + '\')">' + t[1] + ' <b>' + t[2] + '</b></button>';
     }).join('') + ' <button class="bb-tab fav' + (isFavTab ? ' on' : '') + '" style="font-weight:700;" onclick="setLiteVisit(\'fav\')">⭐ 즐겨찾기 <b>' + favN + '</b></button>';
-    var sub = (isVillaTab || isFavTab) ? '' : ' <span style="color:#cbd5e1;">|</span> ' + [['go', '🚶 임장 후보', goN], ['pass', '패스', passN], ['all', '전체', aptTotal]].map(function(t) {
+    // 2026-11-15(사용자: 아파트도 빌라처럼) - 임장 후보·패스·전체는 위 탭 옆이 아니라 목록 맨 위 새 줄에 둠(빌라와 같은 위치·모양)
+    var subRow = (isVillaTab || isFavTab) ? '' : '<div style="padding:6px 4px;">' + [['go', '🚶 임장 후보', goN], ['pass', '패스', passN], ['all', '전체', aptTotal]].map(function(t) {
         return '<button class="bb-tab' + (s.visit === t[0] ? ' on' : '') + '" onclick="setLiteVisit(\'' + t[0] + '\')">' + t[1] + ' <b>' + t[2] + '</b></button>';
-    }).join('');
+    }).join(' ') + '</div>';
+    var sub = '';
     // 2026-11-15(사용자: 사용하지 않는 메뉴 삭제) 틈새·서울 자가 매입·좋은 후보만·매물 등록·권리분석 필요·일괄 붙여넣기 버튼을 없앰 - 켜져 있던 필터도 꺼서 보이지 않는 채로 목록을 걸러내지 않게 함
     s.nicheLite = false; s.seoulOwn = false; s.goodOnly = false; s.listLite = false; s.rightsNeed = false;
     if (isFavTab) { bar.innerHTML = grp; renderFavLite(document.getElementById('bb-body')); var cn1 = document.getElementById('bb-cache-note'); if (cn1) cn1.style.display = 'none'; return; }
@@ -22433,14 +22435,14 @@ function renderBidBoardLite() {
         return dx - dy || (LITE_COLS.ev.val(y) || 0) - (LITE_COLS.ev.val(x) || 0);
     });
     var body = document.getElementById('bb-body');
-    if (!bidBoardRows.length) { body.innerHTML = '<div class="bb-empty">등록된 경매 물건이 없어요.<br>상단 <b>📝 경매물건 등록</b>에서 CSV를 올리면 여기에 모여요.</div>'; return; }
-    if (!rows.length) { body.innerHTML = '<div class="bb-empty">' + (pend || bidBoardRunning || bidBoardRows.some(function(r) { return r.pending; }) ? '저장된 계산을 불러오는 중이에요…' : (s.visit === 'go' ? '지금은 임장할 만한 물건이 없어요.<br>패스 목록에서 이유를 확인하거나 새 CSV를 올려 보세요.' : '조건에 맞는 물건이 없어요.')) + '</div>'; return; }
+    if (!bidBoardRows.length) { body.innerHTML = subRow + '<div class="bb-empty">등록된 경매 물건이 없어요.<br>상단 <b>📝 경매물건 등록</b>에서 CSV를 올리면 여기에 모여요.</div>'; return; }
+    if (!rows.length) { body.innerHTML = subRow + '<div class="bb-empty">' + (pend || bidBoardRunning || bidBoardRows.some(function(r) { return r.pending; }) ? '저장된 계산을 불러오는 중이에요…' : (s.visit === 'go' ? '지금은 임장할 만한 물건이 없어요.<br>패스 목록에서 이유를 확인하거나 새 CSV를 올려 보세요.' : '조건에 맞는 물건이 없어요.')) + '</div>'; return; }
     var money = function(v) { return v ? toEok(String(Math.round(v))) : '-'; };
     if (bbCardMode()) {
-        body.innerHTML = nvSortBar('apt') + '<div class="nv-list">' + rows.slice(0, bidBoardState.liteLimit || pageN()).map(function(r) { return nvAptCard(r); }).join('') + '</div>' + (rows.length > (bidBoardState.liteLimit || pageN()) ? '<div style="text-align:center;padding:14px;"><button class="bb-csv" style="font-size:13px;padding:8px 18px;" onclick="bbLiteMore()">+ 더 보기 (남은 ' + (rows.length - (bidBoardState.liteLimit || pageN())) + '건)</button></div>' : '');
+        body.innerHTML = subRow + nvSortBar('apt') + '<div class="nv-list">' + rows.slice(0, bidBoardState.liteLimit || pageN()).map(function(r) { return nvAptCard(r); }).join('') + '</div>' + (rows.length > (bidBoardState.liteLimit || pageN()) ? '<div style="text-align:center;padding:14px;"><button class="bb-csv" style="font-size:13px;padding:8px 18px;" onclick="bbLiteMore()">+ 더 보기 (남은 ' + (rows.length - (bidBoardState.liteLimit || pageN())) + '건)</button></div>' : '');
         return;
     }
-    body.innerHTML = '<table class="bb2-table bb2-atable"><thead><tr>'
+    body.innerHTML = subRow + '<table class="bb2-table bb2-atable"><thead><tr>'
         + '<th>' + liteTh('verdict') + '</th><th>' + liteTh('date') + '</th><th>' + liteTh('name') + '</th><th class="r">' + liteTh('fails') + '</th>'
         + '<th class="r">동일평형 거래<div class="bb2-subsort" style="justify-content:flex-end;">' + liteTh('n12', '1년') + liteTh('nYear', '올해') + liteTh('last', '마지막') + '</div></th>'
         + '<th>거래량 순위·회전율<div class="bb2-subsort">' + liteTh('turn', '회전율') + liteTh('liv', '생활권') + liteTh('band', '평형') + liteTh('dong', '동') + '</div></th>'
