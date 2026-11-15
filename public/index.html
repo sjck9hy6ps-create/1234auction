@@ -21101,9 +21101,13 @@ function saleFlowFor(a, lawd, area, bunjiFull) {
         var raw = Math.exp(flowCoefFor(cls) * got.rate * (cls === '수도권' ? 0.15 : 0.30));
         var fadj = Math.max(0.95, Math.min(1.08, raw)), fnote = null;
         /* 2026-11-15 상한 규칙(수도권 31,507건 시험): 가격은 오르는데 거래량이 급감(vol<-0.5)하면 흐름 보정을 반으로, 흐름 상향은 보정 전 값의 +4%까지만 */
-        if (cls === '수도권' && fadj > 1 && FLOW_VARIANT !== 'old') {   // FLOW_VARIANT: 시험용(old=규칙 없음·vol=거래량 규칙만·cap=상한만·cur=둘 다, 기본)
-            if (FLOW_VARIANT !== 'cap' && got.rate > 0 && got.vol != null && got.vol < -0.5) { fadj = 1 + (fadj - 1) * 0.5; fnote = 'vol'; }
-            if (FLOW_VARIANT !== 'vol' && fadj > 1.04) { fadj = 1.04; fnote = 'cap'; }
+        var fvT = String(FLOW_VARIANT).split('+'), fvOld = fvT.indexOf('old') >= 0, fvVol = !fvOld && (fvT.indexOf('vol') >= 0 || fvT.indexOf('cur') >= 0), fvCap = !fvOld && (fvT.indexOf('cap') >= 0 || fvT.indexOf('cur') >= 0);   // FLOW_VARIANT: 시험용 스위치(기본 'cur')
+        if (cls === '수도권' && fadj > 1) {
+            if (fvVol && got.rate > 0 && got.vol != null && got.vol < -0.5) { fadj = 1 + (fadj - 1) * 0.5; fnote = 'vol'; }
+            if (fvCap && fadj > 1.04) { fadj = 1.04; fnote = 'cap'; }
+        }
+        if (cls === '수도권' && fadj < 1) {   // 하향 보정 시험(2026-11-15): dn0=하향 보정 안 함·dnh=반으로·dn2=하한 -2%
+            if (fvT.indexOf('dn0') >= 0) fadj = 1; else if (fvT.indexOf('dnh') >= 0) fadj = 1 + (fadj - 1) * 0.5; else if (fvT.indexOf('dn2') >= 0) fadj = Math.max(fadj, 0.98);
         }
         out = { adj: fadj, level: level, rate: got.rate, z: got.z, vol: got.vol, capNote: fnote };
     }
