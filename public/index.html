@@ -15109,7 +15109,7 @@ function rightsRegItems(rights) {
             return;
         }
         if (ref > base || (ref === base && (lease || r.extinguished))) return;
-        var tie = ref === base; mk = function(kind, mode, why) { items.push({ seq: r.seq, type: ty, holder: r.holder, date: r.date, amount: r.amount || 0, kind: kind, mode: mode, auto: !ovr[r.seq], why: (tie ? '⚠️ 말소기준일과 같은 날 접수 - 접수번호 순서를 확인하세요. ' : '') + why }); };
+        var tie = ref === base; var mk = function(kind, mode, why) { items.push({ seq: r.seq, type: ty, holder: r.holder, date: r.date, amount: r.amount || 0, kind: kind, mode: mode, auto: !ovr[r.seq], why: (tie ? '⚠️ 말소기준일과 같은 날 접수 - 접수번호 순서를 확인하세요. ' : '') + why }); };
         if (/전세권/.test(ty)) {
             var m1 = ovr[r.seq] || (r.extinguished ? 'ext' : 'asm');
             var applicant = reg.some(function(x) { return /강제경매|임의경매/.test(x.type) && x.holder && x.holder === r.holder; });
@@ -16458,6 +16458,7 @@ function assumedCostAt(gross, fixed, prior, bid) {
    반영하도록 하기 위함 - 대지권 면적처럼 조용히 자동채움하면 "왜 갑자기 마진이 줄었지"를
    추적하기 어려움. */
 function suggestAssumedDeposit() {
+    var won = function(v) { return (v === null || v === undefined || v === '') ? '' : toEok(String(Math.round(v / 10000))); };   // 2026-11-15 코드 점검: won이 이 함수 안에 없어 '최악가정 제안'이 오류 나던 것 수정
     var detail = pendingAuctionDetail;
     var tenants = (detail && detail.tenantOccupants) ? detail.tenantOccupants : [];
     var split = splitGenuineTenants(tenants, detail && detail.owner, detail && detail.debtor);
