@@ -219,7 +219,7 @@ def main():
         _d = np.concatenate([x[0] for x in parts]); _p = np.concatenate([x[1] for x in parts]); _o = np.argsort(_d, kind="stable"); rgroups[rg_] = (_d[_o], _p[_o])
     # 🏘 생활반경·세대수 흐름용 단지 인덱스(2026-11-04, 사용자: 한 단지만으로는 아쉽고 거래량에 세대수를 넣어야 신빙성 - 반경 안 단지들의 거래·세대수로 흐름을 봄)
     # 단지 키(complex_coords의 cache_key와 같은 규칙) → 좌표, (법정동코드·본번·부번) → 세대수(건축물대장). 실패하면 이 요인만 건너뛰고 나머지는 그대로
-    CX = None
+    CX = None; CXLL = {}
     try:
         from sklearn.neighbors import BallTree
         def _ck(r_):
@@ -258,6 +258,16 @@ def main():
             cx_keys.append(ck_); cx_lat.append(float(row_["lat"])); cx_lon.append(float(row_["lon"]))
             cx_dd.append(g_["deal_date"].to_numpy()); cx_pp.append(g_["ppm"].to_numpy(dtype=float)); cx_hh.append(hh_)
         cx_xy = np.radians(np.c_[cx_lat, cx_lon]); CX = {"tree": BallTree(cx_xy, metric="haversine"), "dd": cx_dd, "pp": cx_pp, "hh": np.array(cx_hh), "ck": {k_: i_ for i_, k_ in enumerate(cx_keys)}, "n": len(cx_keys)}
+        # 2026-11-15 수도권 낙찰사례는 좌표가 11%뿐이라(지방 96%) 생활권 흐름 표본이 작았음 → 사례가 속한 단지(지역·동·번지)의 좌표로 채움
+        CXLL = {}
+        try:
+            _tl = tr.dropna(subset=["ckey"]).drop_duplicates(["region_n", "dk", "bunji_s"])
+            for _rn, _dk, _bj, _ck in zip(_tl["region_n"], _tl["dk"], _tl["bunji_s"], _tl["ckey"]):
+                _i = CX["ck"].get(_ck)
+                if _i is not None: CXLL[(_rn, _dk, _bj)] = (cx_lat[_i], cx_lon[_i])
+            print(f"  🏘 사례 좌표 보충용 단지 좌표 {len(CXLL):,}곳")
+        except Exception as e_:
+            print("  🏘 사례 좌표 보충 건너뜀:", e_)
         print(f"  🏘 생활반경용 단지 {CX['n']:,}곳(세대수 아는 곳 {int((CX['hh'] > 0).sum()):,})")
     except Exception as e_:
         print("  🏘 생활반경 요인 건너뜀:", e_); CX = None
@@ -488,6 +498,9 @@ def main():
                 rec["flow_cx"], rec["flow_cx_v"] = None, None
             if CX is not None:  # 🏘 생활반경 1·2·3km 흐름(가격·거래량·회전율)과 같은 단지(150m) 회전율
                 _la, _lo = getattr(c, "lat", None), getattr(c, "lon", None)
+                if (_la is None or _lo is None or not (np.isfinite(_la) and np.isfinite(_lo))) and CXLL:
+                    _ll = CXLL.get((c.region, c.dk, c.bunji_s))
+                    if _ll: _la, _lo = _ll; rec["ll_fill"] = 1
                 for _km in (1, 2, 3):
                     _rf = radius_flow(_la, _lo, _cut2, _km)
                     rec[f"flowR{_km}_p"], rec[f"flowR{_km}_v"], rec[f"flowR{_km}_t"] = (_rf["p"], _rf["v"], _rf["t"]) if _rf else (None, None, None)
@@ -2329,6 +2342,33 @@ def winbid_model(R, now):
             _we.run(D, tr, te, wb_fit, wb_predict, _zn, est_rule_experiment, R, now)
         except Exception as e:
             import traceback; traceback.print_exc(); print("  개선 실험 건너뜀:", e)
+    try:  # 2026-11-15 생활권(반경) 흐름 요인 시험(사용자: 표본 많게) - 낙찰사례에 좌표가 없던 수도권도 단지 좌표로 채운 뒤, 학습에 안 쓴 최근 12개월에서 요인 하나씩 추가했을 때 비교. 앱·모델은 바꾸지 않음
+        _keep = list(WB_FACTORS); _Xte = wb_features(te); _rc = _Xte["rc"].values
+        def _fx_eval(cand):
+            global WB_FACTORS
+            WB_FACTORS = _keep + ([(cand, 60)] if cand else [])
+            m_ = wb_fit(tr); p_ = wb_predict(m_, te)
+            est_, act_ = te["est"].values, te["actual"].values; r_ = act_ / (np.exp(p_) * est_) - 1
+            out_ = {}
+            for gn, mk in (("전체", np.ones(len(r_), bool)), ("수도권", _rc == "수도권"), ("지방", _rc != "수도권")):
+                rr = r_[mk]
+                if len(rr) >= 30: out_[gn] = {"n": int(len(rr)), "err": round(float(np.median(np.abs(rr))) * 100, 2), "bias": round(float(np.median(rr)) * 100, 2), "높게맞춤10%+": round(float((rr < -0.10).mean()) * 100, 1), "낮게맞춤10%+": round(float((rr > 0.10).mean()) * 100, 1)}
+            if cand:
+                col_ = wb_features(te)[cand].values; hit_ = (col_ != "-")
+                out_["채워진 비율%"] = {"전체": round(float(hit_.mean()) * 100, 1), "수도권": round(float(hit_[_rc == "수도권"].mean()) * 100, 1) if (_rc == "수도권").any() else None, "지방": round(float(hit_[_rc != "수도권"].mean()) * 100, 1) if (_rc != "수도권").any() else None}
+            return out_
+        _fxr = {}
+        for _cn in (None, "flowR1", "flowR2", "flowR3", "flowT", "afR2", "afC"):
+            try: _fxr[_cn or "현재 모델"] = _fx_eval(_cn)
+            except Exception as e_: _fxr[_cn or "현재 모델"] = {"실패": str(e_)[:100]}
+        WB_FACTORS = _keep
+        print("  🏘 생활권 흐름 요인 시험(시험 구간 = 최근 12개월):")
+        for _k, _v in _fxr.items(): print("   ", _k, json.dumps(_v, ensure_ascii=False))
+        if os.environ.get("GITHUB_STEP_SUMMARY"):
+            open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8").write("### 생활권 흐름 요인 시험\n```json\n" + json.dumps(_fxr, ensure_ascii=False, indent=1) + "\n```\n")
+    except Exception as e:
+        WB_FACTORS = list(_keep) if "_keep" in dir() else WB_FACTORS
+        print("  생활권 흐름 요인 시험 건너뜀:", e)
     full = wb_fit(_recent_w(D, int(D["sale"].max())) if use_rw else D)
     full["recentWeight"] = bool(use_rw); full["n"] = int(len(D)); full["principle"] = principle; full["factors"] = [f for f, _ in WB_FACTORS]; full["tuned"] = tune_info;
     try:  # 🌊 흐름 값이 실제로 얼마나 채워졌나(수도권·지방 따로) - 표본 부족이면 비워 두므로 비율을 기록
