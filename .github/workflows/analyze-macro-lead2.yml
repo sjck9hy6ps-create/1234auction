@@ -1,0 +1,21 @@
+# 금리·수급 신호 선행성 시험(2026-11-15): 구간을 나눠 시간순 채점. 앱·서버에는 아무것도 바꾸지 않음(collect-macro.py는 평소 매일 도는 같은 수집)
+name: Analyze macro lead 2
+on:
+  workflow_dispatch:
+jobs:
+  a:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install pandas numpy requests scikit-learn
+      - env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          SITE_URL: https://1234auction.vercel.app
+          PYTHONUNBUFFERED: '1'
+        run: python collect-macro.py
+      - run: python analyze-macro-lead2.py macro.json
