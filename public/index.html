@@ -8490,6 +8490,9 @@ function pnChartHover(e, svg) {
     r.setAttribute('x', bx); r.setAttribute('y', d.T); r.setAttribute('width', w);
     t[0].setAttribute('x', bx + 6); t[0].setAttribute('y', d.T + 12); t[0].textContent = l1;
     t[1].setAttribute('x', bx + 6); t[1].setAttribute('y', d.T + 25); t[1].textContent = l2;
+    var l3 = best.r != null ? '기준금리 ' + best.r.toFixed(2) + '%' : '';
+    r.setAttribute('height', l3 ? 42 : 30); r.setAttribute('width', Math.max(w, l3.length * 7 + 12));
+    if (t[2]) { t[2].setAttribute('x', bx + 6); t[2].setAttribute('y', d.T + 37); t[2].textContent = l3; }
     if (e.touches) e.preventDefault();
 }
 function pnChartHide(svg) { var g = svg.querySelector('.pn-hov'); if (g) g.style.display = 'none'; }
@@ -8561,6 +8564,7 @@ function buildPriceChartSvg(trades, range) {
         .map(function(t) { return { d: pnTradeDate(t), v: parseInt(t.amount), f: t.floor }; }).sort(function(a, b) { return a.d - b.d; });
     if (pts.length < 2) return '<div class="pn-empty">이 기간 거래가 ' + pts.length + '건이라 그래프를 그릴 수 없어요</div>';
     var W = 330, H = 170, L = 38, R = 8, T = 10, B = 40, VH = 24;
+    var rtB = cycleRates && cycleRates.base ? cycleRates.base : null; if (rtB) R = 28;   // 2026-11-15 기준금리 오른쪽 눈금 자리
     var t0 = from.getTime(), t1 = now.getTime();
     var vs = pts.map(function(p) { return p.v; }), lo = Math.min.apply(null, vs), hi = Math.max.apply(null, vs);
     var pad = Math.max((hi - lo) * 0.12, hi * 0.03); lo = Math.max(0, lo - pad); hi = hi + pad;
@@ -8589,6 +8593,18 @@ function buildPriceChartSvg(trades, range) {
         var bh = byM[k].length / maxN * VH, bx = X(d);
         svg += '<rect x="' + (bx - 2) + '" y="' + (H - B + 4 + (VH - bh)) + '" width="4" height="' + bh.toFixed(1) + '" fill="#c9d6ff"/>';
     });
+    var rateOf = function(k) { return rtB ? rtB[Math.floor(k / 12) + '-' + ('0' + (k % 12 + 1)).slice(-2)] : null; };
+    if (rtB) {
+        var rvs = mlist.map(rateOf).filter(function(v) { return v != null; });
+        if (rvs.length >= 2) {
+            var rlo = Math.min.apply(null, rvs), rhi = Math.max.apply(null, rvs); if (rhi - rlo < 0.5) { rhi = rlo + 0.5; }
+            var Yr = function(v) { return T + (1 - (v - rlo) / (rhi - rlo)) * (H - T - B - VH); }, rp = '', prevYr = null;
+            mlist.forEach(function(k) { var v = rateOf(k); if (v == null) return; var xx = X(new Date(Math.floor(k / 12), k % 12, 15)).toFixed(1), yr = Yr(v).toFixed(1); rp += (rp ? 'L' + xx + ' ' + prevYr + 'L' : 'M') + xx + ' ' + yr; prevYr = yr; });
+            svg += '<path d="' + rp + '" fill="none" stroke="#e11d48" stroke-width="1.3" stroke-dasharray="3 2" opacity="0.85"/>'
+                + '<text x="' + (W - R + 3) + '" y="' + (T + 8) + '" font-size="8.5" fill="#e11d48">' + rhi.toFixed(2) + '%</text><text x="' + (W - R + 3) + '" y="' + (H - B - VH + 2) + '" font-size="8.5" fill="#e11d48">' + rlo.toFixed(2) + '%</text>'
+                + '<text x="' + (L + 3) + '" y="' + (T + 9) + '" font-size="8.5" fill="#e11d48">┈ 기준금리(오른쪽 눈금)</text>';
+        } else rtB = null;
+    }
     svg += '<polyline points="' + line.join(' ') + '" fill="none" stroke="var(--ui-blue,#1e5eff)" stroke-width="2"/>';
     pts.forEach(function(p) { svg += '<circle cx="' + X(p.d).toFixed(1) + '" cy="' + Y(p.v).toFixed(1) + '" r="2.2" fill="var(--ui-blue,#1e5eff)" opacity="0.35"><title>' + p.d.getFullYear() + '.' + (p.d.getMonth() + 1) + ' · ' + p.f + '층 · ' + pnFmtEok(p.v) + '</title></circle>'; });
     // x축 연도
@@ -8602,11 +8618,11 @@ function buildPriceChartSvg(trades, range) {
     pnChartData[cid] = { W: W, L: L, R: R, T: T, H: H, B: B, VH: VH, months: mlist.map(function(k) {
         var arr = (byM[k] || []).slice().sort(function(a, b) { return a - b; });
         var d = new Date(Math.floor(k / 12), k % 12, 15);
-        return { x: X(d), ym: Math.floor(k / 12) + '.' + String(k % 12 + 1).padStart(2, '0'), n: arr.length, med: arr.length ? arr[Math.floor(arr.length / 2)] : null, y: arr.length ? Y(arr[Math.floor(arr.length / 2)]) : null };
+        return { x: X(d), r: rateOf(k), ym: Math.floor(k / 12) + '.' + String(k % 12 + 1).padStart(2, '0'), n: arr.length, med: arr.length ? arr[Math.floor(arr.length / 2)] : null, y: arr.length ? Y(arr[Math.floor(arr.length / 2)]) : null };
     }) };
     svg += '<g class="pn-hov" style="display:none;pointer-events:none;"><line x1="0" x2="0" y1="' + T + '" y2="' + (H - B + VH + 4) + '" stroke="#111" stroke-dasharray="2 2" stroke-width="0.8"/>'
         + '<circle r="3.5" fill="#fff" stroke="var(--ui-blue,#1e5eff)" stroke-width="2"/>'
-        + '<rect rx="5" height="30" fill="#111" opacity="0.85"/><text font-size="10" fill="#fff" font-weight="700"></text><text font-size="9" fill="#d1d5db"></text></g>';
+        + '<rect rx="5" height="30" fill="#111" opacity="0.85"/><text font-size="10" fill="#fff" font-weight="700"></text><text font-size="9" fill="#d1d5db"></text><text font-size="9" fill="#fda4af"></text></g>';
     return svg + '</svg>';
 }
 function buildPanelSummaryHtml(all, chartPy) {
@@ -24516,6 +24532,21 @@ function cyclePhaseText(ph) {
 // 2026-10(사용자: "사이클 그래프에서 마우스 위치의 시점을 알려주는 기능이 사라졌다 - 맥북·아이패드 모두"):
 // 그래프 위에 마우스를 올리거나 손가락을 대고 움직이면 세로선 + 그 달(연월)·지금 대비 몇 %인지·고점/바닥 여부를 보여줌
 var cycSparkSeq = 0, cycSparkData = {};
+/* 💹 사이클 그래프에 겹쳐 그릴 월별 기준금리(2026-11-15, 사용자: 그래프마다 시세와 금리를 함께) - macroSummary의 baseRateMonthly(그 달 마지막 값)를 월별로 이어 채움 */
+var cycleRates = null, cycleRatesLoading = null;
+setTimeout(function() { try { loadCycleRates().then(function(r) { if (r) { try { if (typeof bidDrawerId !== 'undefined' && bidDrawerId && typeof renderBidDrawer === 'function') renderBidDrawer(); } catch (e) {} } }); } catch (e) {} }, 4000);
+function loadCycleRates() {
+    if (cycleRates) return Promise.resolve(cycleRates);
+    if (cycleRatesLoading) return cycleRatesLoading;
+    cycleRatesLoading = fetch('/api/data-coverage?mode=macroSummary').then(function(r) { return r.json(); }).then(function(d) {
+        var arr = d && d.baseRateMonthly; if (!arr || !arr.length) return null;
+        var m = {}; arr.forEach(function(x) { m[String(x[0]).slice(0, 4) + '-' + String(x[0]).slice(4, 6)] = x[1]; });
+        var keys = Object.keys(m).sort(), out = {}, y = parseInt(keys[0].slice(0, 4), 10), mo = parseInt(keys[0].slice(5, 7), 10), last = m[keys[0]], endK = new Date().getFullYear() + '-' + ('0' + (new Date().getMonth() + 1)).slice(-2);
+        for (var g = 0; g < 400; g++) { var k = y + '-' + ('0' + mo).slice(-2); if (m[k] != null) last = m[k]; out[k] = last; if (k >= endK) break; mo++; if (mo > 12) { mo = 1; y++; } }
+        cycleRates = { base: out }; return cycleRates;
+    }).catch(function() { return null; });
+    return cycleRatesLoading;
+}
 function cycleSparkSvg(series, turning, color) {
     if (!series || series.length < 2) return '';
     var W = 320, H = 80, vals = series.map(function(x) { return x[1]; });
@@ -24529,13 +24560,21 @@ function cycleSparkSvg(series, turning, color) {
         var i = idx[t.ym]; tpOf[t.ym] = t.type;
         return '<circle cx="' + px(i) + '" cy="' + py(series[i][1]) + '" r="3" fill="' + (t.type === 'peak' ? '#c62828' : '#1565c0') + '"><title>' + t.ym + (t.type === 'peak' ? ' 고점' : ' 바닥') + '</title></circle>';
     }).join('');
+    var rv = cycleRates && cycleRates.base ? series.map(function(x) { var v = cycleRates.base[String(x[0]).slice(0, 7)]; return v == null ? null : v; }) : null, ratePath = '', rateLegend = '';
+    if (rv && rv.filter(function(v) { return v != null; }).length >= 6) {
+        var rvs = rv.filter(function(v) { return v != null; }), rmn = Math.min.apply(null, rvs), rmx = Math.max.apply(null, rvs); if (rmx - rmn < 0.5) { rmx = rmn + 0.5; }
+        var ry = function(v) { return Math.round(H - 8 - (v - rmn) / (rmx - rmn) * (H - 16)); }, started = false, prevY = null;
+        rv.forEach(function(v, i) { if (v == null) return; var yy = ry(v); if (!started) { ratePath += 'M' + px(i) + ' ' + yy; started = true; } else { ratePath += 'L' + px(i) + ' ' + prevY + 'L' + px(i) + ' ' + yy; } prevY = yy; });
+        rateLegend = '<text x="' + Math.round(W / 2) + '" y="10" font-size="9" fill="#e11d48" text-anchor="middle">┈ 기준금리 ' + rmn.toFixed(2) + '~' + rmx.toFixed(2) + '%</text>';
+    } else rv = null;
     var id = 'cycsp' + (++cycSparkSeq), last = series[series.length - 1][1];
-    cycSparkData[id] = { W: W, H: H, last: last, pts: series.map(function(x, i) { return { x: px(i), y: py(x[1]), ym: x[0], v: x[1], tp: tpOf[x[0]] }; }) };
+    cycSparkData[id] = { W: W, H: H, last: last, hasRate: !!(rv && ratePath), pts: series.map(function(x, i) { return { x: px(i), y: py(x[1]), ym: x[0], v: x[1], tp: tpOf[x[0]], r: rv ? rv[i] : null }; }) };
     return '<svg id="' + id + '" viewBox="0 0 ' + W + ' ' + H + '" style="width:100%;height:80px;touch-action:pan-y;cursor:crosshair;" onmousemove="cycSparkHover(event,this)" ontouchstart="cycSparkHover(event,this)" ontouchmove="cycSparkHover(event,this)" onmouseleave="cycSparkHide(this)" ontouchend="cycSparkHide(this,1500)">'
-        + '<path d="' + d + '" fill="none" stroke="' + color + '" stroke-width="1.6"/>' + marks
+        + (ratePath ? '<path d="' + ratePath + '" fill="none" stroke="#e11d48" stroke-width="1.3" stroke-dasharray="3 2" opacity="0.85"/>' : '')
+        + '<path d="' + d + '" fill="none" stroke="' + color + '" stroke-width="1.6"/>' + marks + rateLegend
         + '<text x="5" y="10" font-size="9" fill="#999">' + series[0][0] + '</text><text x="' + (W - 5) + '" y="10" font-size="9" fill="#999" text-anchor="end">' + series[series.length - 1][0] + '</text>'
         + '<g class="cyc-hov" style="display:none;pointer-events:none;"><line y1="2" y2="' + H + '" stroke="#111" stroke-dasharray="2 2" stroke-width="0.8"/><circle r="3.2" fill="#fff" stroke="#111" stroke-width="1.2"/>'
-        + '<rect y="12" height="28" rx="4" fill="#111827" opacity="0.9"/><text font-size="9.5" fill="#fff" font-weight="700"></text><text font-size="9" fill="#e5e7eb"></text></g></svg>';
+        + '<rect y="12" height="28" rx="4" fill="#111827" opacity="0.9"/><text font-size="9.5" fill="#fff" font-weight="700"></text><text font-size="9" fill="#e5e7eb"></text><text font-size="9" fill="#fda4af"></text></g></svg>';
 }
 function cycSparkHover(e, svg) {
     var d = cycSparkData[svg.id]; if (!d) return;
@@ -24557,6 +24596,9 @@ function cycSparkHover(e, svg) {
     r.setAttribute('x', bx); r.setAttribute('width', w);
     t[0].setAttribute('x', bx + 6); t[0].setAttribute('y', 24); t[0].textContent = l1;
     t[1].setAttribute('x', bx + 6); t[1].setAttribute('y', 36); t[1].textContent = l2;
+    var l3 = d.hasRate && best.r != null ? '기준금리 ' + best.r.toFixed(2) + '%' : '';
+    r.setAttribute('height', l3 ? 40 : 28); r.setAttribute('width', Math.max(w, l3.length * 7 + 10));
+    if (t[2]) { t[2].setAttribute('x', bx + 6); t[2].setAttribute('y', 48); t[2].textContent = l3; }
 }
 function cycSparkHide(svg, delay) {
     var g = svg.querySelector('.cyc-hov'); if (!g) return;
@@ -24717,6 +24759,7 @@ async function openCyclePanel() {
         try { d = await (await fetch('/api/data-coverage?mode=marketCycle' + (isVillaCyc ? '&segment=villa' : ''))).json(); } catch (e) { d = null; }
     }
     if (!d || !d.national) { box.innerHTML = '<div>사이클 분석 결과를 불러오지 못했어요.</div>'; return; }
+    try { await loadCycleRates(); } catch (e) {}
     var html = '<div class="cyc-head" title="잡고 끌면 창을 옮길 수 있어요" style="display:flex;justify-content:space-between;align-items:center;cursor:move;touch-action:none;position:sticky;top:-12px;background:#fff;z-index:2;margin:-12px -14px 0;padding:12px 14px 4px;"><b style="font-size:14px;">⠿ 📈 부동산 사이클(' + (isVillaCyc ? '빌라' : '아파트') + ')</b>'
         + '<button onclick="document.getElementById(\'cycle-panel\').remove()" style="border:none;background:none;font-size:18px;cursor:pointer;">×</button></div>'
         + '<div style="color:#999;font-size:10px;">' + d.dataFrom + '~' + d.dataTo + ' 실거래(' + (isVillaCyc ? '연립·다세대 거래 · 같은 동·면적대·연식끼리 비교한 가격지수' : '같은 단지·평형끼리 비교한 가격지수') + ') · 매주 갱신</div>';

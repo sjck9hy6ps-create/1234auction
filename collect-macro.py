@@ -61,8 +61,8 @@ def main():
         macro["rone"][k] = {"weeks": weeks, "dates": [desc.get(w) for w in weeks], "reg": {n: [v[w][0] if w in v else None for w in weeks] for n, v in data.items()}}
         print(k, "행", total, "지역", len(data), "최근", weeks[-1] if weeks else None)
     ym = now.strftime("%Y%m"); ymd = now.strftime("%Y%m%d")
-    base_d = ecos("722Y001", "D", "20190101", ymd, "0101000")
-    mort = ecos("121Y006", "M", "201901", ym, "BECBLA0302")
+    base_d = ecos("722Y001", "D", "20170101", ymd, "0101000")
+    mort = ecos("121Y006", "M", "201701", ym, "BECBLA0302")
     cd91 = ecos("817Y002", "D", "20190101", ymd, "010502000")
     ktb3 = ecos("817Y002", "D", "20190101", ymd, "010200000")
     macro["ecos"] = {"baseRateD": base_d, "mortgageM": mort, "cd91D": cd91, "ktb3D": ktb3}

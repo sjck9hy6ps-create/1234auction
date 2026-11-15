@@ -3521,7 +3521,8 @@ export default async function handler(req, res) {
         region.push({ name: nm, idx: idx.filter((x) => x != null).slice(-1)[0], w4: pct(idx, 4), w12: pct(idx, 12), w52: pct(idx, 52), jw4: pct(jidx, 4), demand: dv.length ? dv[dv.length - 1] : null, demand4: dv.length >= 4 ? +(dv.slice(-4).reduce((a, b) => a + b, 0) / 4).toFixed(1) : null, demand12: dv.length >= 13 ? +(dv.slice(-13, -1).reduce((a, b) => a + b, 0) / 12).toFixed(1) : null, jdemand: (jdem || []).filter((x) => x != null).slice(-1)[0] || null });
       });
       return res.status(200).json({ generatedAt: m.generatedAt, weekLatest: weeks[weeks.length - 1] || null, dateLatest: dates[dates.length - 1] || null,
-        rates: [rate(e.baseRateD, '한국은행 기준금리'), rate(e.mortgageM, '예금은행 주택담보대출 금리(신규)'), rate(e.cd91D, 'CD 91일'), rate(e.ktb3D, '국고채 3년')].filter(Boolean), events: m.events || [], region });
+        rates: [rate(e.baseRateD, '한국은행 기준금리'), rate(e.mortgageM, '예금은행 주택담보대출 금리(신규)'), rate(e.cd91D, 'CD 91일'), rate(e.ktb3D, '국고채 3년')].filter(Boolean), events: m.events || [], region,
+        baseRateMonthly: mon(e.baseRateD), mortgageMonthly: mon(e.mortgageM) });   // 2026-11-15 사이클 그래프에 겹쳐 그릴 월별 금리(기준금리는 그 달 마지막 값)
     } catch (err) { return res.status(500).json({ error: err.message }); }
   }
   if (req.query.mode === 'winbidCompare') { // 2026-11-04 시세 규칙 비교 누적(낙찰 사례별 '현재/시세 새 규칙/최근 가중/둘 다' 예측 오차 %, analyze-bidcases.py가 매주 쌓음)
