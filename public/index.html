@@ -1457,6 +1457,7 @@ body.ui2 #auction-modal.am4 { width:620px; }
 #bb-drawer .vc-b { border:1px solid #d1d5db; background:#fff; color:#111; border-radius:14px; padding:4px 11px; font-size:12.5px; cursor:pointer; white-space:nowrap; } #bb-drawer .vc-b.ok { border-color:#15803d; background:#dcfce7; } #bb-drawer .vc-b.bad { border-color:#b91c1c; background:#fee2e2; }
 #bb-drawer .vc-in { width:100%; box-sizing:border-box; margin:3px 0 2px; padding:6px 8px; border:1px solid #fca5a5; border-radius:6px; font-size:13px; }
 #bb-drawer .vc-n { display:flex; align-items:center; gap:6px; flex-wrap:wrap; font-size:12.5px; } #bb-drawer .vc-n .vc-num { width:90px; margin:0; border-color:#d1d5db; text-align:right; }
+#bb-drawer .vc-p { display:flex; flex-wrap:wrap; align-items:center; gap:4px; margin:3px 0; } #bb-drawer .vc-p > span { font-size:12px; color:#6b7280; margin-right:2px; } #bb-drawer .vc-nv { margin-top:4px; } #bb-drawer .vc-nv > summary { font-size:12.5px; cursor:pointer; color:#374151; }
 #bb-drawer .vc-ap { color:#15803d; font-size:12.5px; } #bb-drawer .vc-u { border:1px solid #d1d5db; background:#fff; border-radius:12px; padding:2px 9px; font-size:12px; cursor:pointer; }
 #bb-drawer.view-visit > :not(.dr-h):not(.dr-top-btns):not(.dr-pickcard):not(.dr-visit-only) { display:none !important; }
 #bb-drawer.view-visit > .dr-visit-only { display:block; }
@@ -23064,7 +23065,7 @@ function fieldChkKey(id) { return 'fieldChk:' + id; }
 function fieldChkState(id) { try { return JSON.parse(localStorage.getItem(fieldChkKey(id)) || '{}') || {}; } catch (e) { return {}; } }
 function fieldChkToggle(idJs, k, on) { var st = fieldChkState(idJs); if (on) st[k] = 1; else delete st[k]; try { localStorage.setItem(fieldChkKey(idJs), JSON.stringify(st)); } catch (e) {} }
 /* 📝 임장 칸(2026-11-15, 사용자: 상세 버튼의 '입력·권리 체크'는 내용이 중복 → 임장 칸으로) - 체크리스트 + 임장 문답(아파트)을 한 곳에 모으고, 맨 위 📝 임장 버튼이 여기로 이동 */
-function visitSectionInner(row) { var h = fieldChecklistHtml(row); if (row.type === 'apt') h += fieldCheckHtml(row); return h; }
+function visitSectionInner(row) { return fieldChecklistHtml(row); }   // 2026-11-15: 임장 문답을 확인표 안으로 합침
 function visitSectionHtml(row) { return '<div id="dr-visit">' + visitSectionInner(row) + '</div>'; }
 function bbGoVisit() {
     var el = document.getElementById('dr-visit'); if (!el) return;
@@ -23106,31 +23107,53 @@ function visitItems(row) {
 function visitChkGet(a) { return (a && a.visitCheck) || {}; }
 function fieldChecklistHtml(row) {
     var fm = function(v) { return v ? toEok(String(Math.round(v))) : '-'; }, it = visitItems(row), st = visitChkGet(row.a), idJs = String(row.id).replace(/\\/g, '\\\\').replace(/'/g, "\\'"), E = bbEsc, a = row.a || {};
+    var isApt = row.type === 'apt', fc = a.fieldCheck || {}, ev = isApt ? fieldCheckEval(a, row.sale) : null;
+    var QS = {}; FIELD_QS.forEach(function(Q) { QS[Q.k] = Q; });
     var all = it.V.concat(it.C), done = all.filter(function(x) { return st[x.k] && st[x.k].s; }).length;
-    var bad = all.filter(function(x) { return st[x.k] && st[x.k].s === 'bad'; });
+    var total = all.length, bad = all.filter(function(x) { return st[x.k] && st[x.k].s === 'bad'; });
+    if (isApt) { total += FIELD_QS.length; FIELD_QS.forEach(function(Q) { if (fc[Q.k]) done++; }); }
     var btn = function(x, s, label) {
         var on = st[x.k] && st[x.k].s === s;
         return '<button class="vc-b' + (on ? (s === 'bad' ? ' bad' : ' ok') : '') + '" onclick="visitChkSet(\'' + idJs + '\',\'' + x.k + '\',\'' + (on ? '' : s) + '\')">' + label + '</button>';
     };
+    // 문답(선택지) 버튼 - 답하면 수리비·보유기간·추가비용·점수에 바로 반영(기존 임장 문답과 같은 계산)
+    var pills = function(k) { var Q = QS[k]; return Q.opts.map(function(o) { var on = fc[k] === o[0]; return '<button class="vc-b' + (on ? ' ok' : '') + '" onclick="setFieldAnswer(\'' + idJs + '\',\'' + k + '\',\'' + (on ? '' : o[0]) + '\')">' + o[1] + '</button>'; }).join(''); };
+    var pRow = function(k, label) { return '<div class="vc-p"><span>' + label + '</span>' + pills(k) + '</div>'; };
     var memo = function(x, ph) { var s = st[x.k]; return s && s.s === 'bad' ? '<input type="text" class="vc-in" id="vc-' + x.k + '" value="' + E(s.v || '') + '" placeholder="' + ph + '" onchange="visitChkNote(\'' + idJs + '\',\'' + x.k + '\',this.value)">' : ''; };
-    // 금액 행(관리비·수리비): 앱 값 + 현장 값 입력칸 하나 - 적으면 바로 계산에 반영, 비우면 되돌림
-    var NUM = { mgmt: { f: 'unpaidMgmtFee', ph: '현장 값(만원)' }, repair: { f: 'repair', ph: '현장 값(만원)' } };
+    var NUM = { mgmt: { f: 'unpaidMgmtFee' }, repair: { f: 'repair' } };
     var numRow = function(x) {
         var s = st[x.k] || {}, cur = parseInt(a[NUM[x.k].f]) || '';
         return '<div class="vc-n"><span>현장 값</span><input type="text" inputmode="numeric" class="vc-in vc-num" value="' + E(cur === '' ? '' : String(cur)) + '" placeholder="만원" onchange="visitNumSet(\'' + idJs + '\',\'' + x.k + '\',this.value)"><span>만원</span>'
             + (s.applied != null ? '<span class="vc-ap">✔ 계산에 반영 <button class="vc-u" onclick="visitChkUndo(\'' + idJs + '\',\'' + x.k + '\')">↩ 되돌리기</button></span>' : btn(x, 'ok', '✅ 앱과 같음')) + '</div>';
     };
-    var h = '<div class="dr-sec vc"><h4>📝 임장 확인표 <span class="dr-sub" style="display:inline;">확인 ' + done + '/' + all.length + (bad.length ? ' · <b style="color:#b91c1c;">다름·문제 ' + bad.length + '건</b>' : '') + '</span></h4>';
+    var h = '<div class="dr-sec vc"><h4>📝 임장 확인표 <span class="dr-sub" style="display:inline;">확인 ' + done + '/' + total + (bad.length ? ' · <b style="color:#b91c1c;">다름·문제 ' + bad.length + '건</b>' : '') + '</span>'
+        + (ev && ev.grade ? ' <span style="color:' + ev.grade.c + ';font-size:12px;">' + ev.score + '점 · ' + ev.grade.t + '</span>' : '') + '</h4>';
     h += '<div class="vc-sec">앱 값과 대조 <span>앱이 아는 값을 보여 드려요 · 저장은 자동</span></div>';
     it.V.forEach(function(x) {
         var isNum = !!NUM[x.k];
         h += '<div class="vc-r"><div class="vc-h"><b>' + x.t + '</b>' + (isNum ? '' : '<span class="vc-bs">' + btn(x, 'ok', '✅ 같음') + btn(x, 'bad', '❌ 다름') + '</span>') + '</div>'
             + '<div class="vc-app">' + (x.app || '<span class="dr-sub">' + E(x.none || '앱에 값이 없어요') + '</span>') + '</div>'
-            + '<div class="vc-hint">' + E(x.ask) + '</div>' + (isNum ? numRow(x) : memo(x, '현장에서 확인한 값')) + '</div>';
+            + '<div class="vc-hint">' + E(x.ask) + '</div>'
+            + (isApt && x.k === 'occ' ? pRow('occ', '명도') : '')
+            + (isApt && x.k === 'repair' ? pRow('cond', '집 상태') : '')
+            + (isNum ? numRow(x) : memo(x, '현장에서 확인한 값')) + '</div>';
+        if (isApt && x.k === 'repair') {   // 시세·호가(문답의 최저 호가·매물 수·매도 기간·네이버 붙여넣기를 여기로)
+            var l = typeof listingStatus === 'function' ? listingStatus(a) : null;
+            h += '<div class="vc-r"><div class="vc-h"><b>💰 시세·호가</b></div><div class="vc-app">앱 예상매도가 <b>' + fm(row.sale) + '</b>' + (l && l.st === 'yes' ? ' · 네이버 매물 ' + l.n + '건' : (l && l.st === 'none' ? ' · 네이버 매물 없음' : ' · 호가 미확인')) + (row.ownStats ? ' · 이 단지 1년 거래 ' + (row.ownStats.n12 || 0) + '건' : '') + '</div>'
+                + '<div class="vc-hint">중개사 2곳이 말한 같은 평형 최저 호가·매물 수를 적으면 앱 값과 비교해 점수에 반영돼요</div>'
+                + '<div class="vc-n"><span>최저 호가</span><input type="text" inputmode="numeric" class="vc-in vc-num" value="' + E(fc.ask || '') + '" onchange="setFieldAnswer(\'' + idJs + '\',\'ask\',this.value)"><span>만원</span><span>매물</span><input type="text" inputmode="numeric" class="vc-in vc-num" style="width:56px;" value="' + E(fc.listings != null ? fc.listings : '') + '" onchange="setFieldAnswer(\'' + idJs + '\',\'listings\',this.value)"><span>건</span></div>'
+                + pRow('sell', '중개사가 본 매도 기간')
+                + '<details class="vc-nv"><summary>📋 네이버 매물 붙여넣기 (매물 수·호가 자동 채움)</summary>' + naverListingHtml(row, idJs) + '</details></div>';
+        }
     });
     h += '<div class="vc-sec">현장 체크 <span>이상 없으면 👍 · 걸리면 ⚠️ 와 한 줄 메모</span></div>';
     it.C.forEach(function(x) { h += '<div class="vc-r vc-c"><div class="vc-h"><span>' + x.t + '</span><span class="vc-bs">' + btn(x, 'ok', '👍') + btn(x, 'bad', '⚠️') + '</span></div>' + memo(x, '무엇이 문제인지 한 줄') + '</div>'; });
+    if (isApt) [['leak', '💧 누수·결로·곰팡이 흔적'], ['view', '🪟 향·조망·소음'], ['inconv', '🅿️ 주차·엘리베이터 등 불편']].forEach(function(p) { h += '<div class="vc-r vc-c"><div class="vc-h"><span>' + p[1] + '</span><span class="vc-bs">' + pills(p[0]) + '</span></div></div>'; });
     if (bad.length) h += '<div class="dr-warn" style="margin-top:8px;"><b>다름·문제로 표시한 것</b><br>' + bad.map(function(x) { return E(x.t) + (st[x.k].v ? ' - ' + E(st[x.k].v) : ''); }).join('<br>') + '</div>';
+    if (ev) {
+        ev.notes.forEach(function(n) { h += '<div class="dr-warn">' + E(n) + '</div>'; });
+        if (ev.answered) h += '<div class="dr-sub" style="margin-top:4px;">문답 반영: ' + [ev.repairFactor != null ? '수리비 연식 기준의 ' + Math.round(ev.repairFactor * 100) + '%' : '', ev.extra ? '추가 비용 ' + toEok(String(ev.extra)) : '', ev.holdMonths ? '보유 ' + ev.holdMonths + '개월로 이자 계산' : ''].filter(Boolean).join(' · ') + '</div>';
+    }
     return h + '</div>';
 }
 async function visitChkSet(id, k, s) {
