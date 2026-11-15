@@ -24020,6 +24020,8 @@ async function applyListingListsAuto(list) {
     var sameName = function(a, b) { if (a === b) return true; var sh = a.length < b.length ? a : b, lg = a.length < b.length ? b : a; return sh.length >= 5 && sh.length / lg.length >= 0.7 && lg.indexOf(sh) >= 0; };
     Object.keys(byName).forEach(function(n) {
         var cn0 = byName[n][0].complex, cands = T.filter(function(r) { return r.a.naverComplexName && r.a.naverComplexName === cn0; });  /* 사용자가 한 번 연결해 둔 단지(naverComplexName)는 이름이 같은 다른 단지가 있어도 그대로 씀 */
+        /* 2026-11-15(성원아파트 창원 상남동 45-1: 18.1평 물건에만 단지 연결이 있어 같은 단지의 15.1평·25.7평 물건은 호가가 반영되지 않던 문제) - 연결된 물건과 같은 단지(지역·동·번지)인 물건도 함께 대상으로 삼음. 평형은 아래에서 물건별로 거름 */
+        if (cands.length) { var kxN = {}; cands.forEach(function(r) { kxN[cx(r)] = 1; }); T.forEach(function(r) { if (kxN[cx(r)] && cands.indexOf(r) < 0) cands.push(r); }); }
         if (!cands.length) cands = T.filter(function(r) { return nameKey(r.name) === n; }); // 이름이 정확히 같은 물건이 있으면 그것만(일산·해운대 두산위브더제니스처럼 이름 일부가 겹치는 다른 단지와 섞이지 않게)
         if (!cands.length) cands = T.filter(function(r) { return sameName(nameKey(r.name), n); });
         // 2026-10-27(청당마을 ↔ 네이버 '청당마을신도브래뉴'): 앱에 짧게 저장된 이름이면 주소(건물명이 들어 있음)에 네이버 단지 이름이 통째로 들어 있는 물건으로 찾음(5글자 이상)
