@@ -22904,14 +22904,15 @@ function bidCostLines(row, opt) {   // opt(2026-11-10): 빌라 상세처럼 행�
 /* 아파트 상세: 그래프·실거래가 비는 이유를 알려줌(2026-11-16, 사용자 요청) - 지역 자료 도착 전/그 번지 거래 기록 없음/다른 평형 거래만 있음 */
 function aptNoTradeNote(row) {
     var lw = row.lawd || (row.a && bidBoardLawdOf(row.a));
-    if (lw && !dataCache[lw]) return '<div class="dr-sec dr-sub">같은 평형 실거래를 불러오는 중이에요…</div>';
+    var st = 'background:#fffbeb;border:1px solid #fcd34d;border-radius:6px;padding:7px 10px;color:#b45309;';   // 안내 문구는 눈에 띄게 주황 계열(2026-11-16, 사용자 요청)
+    if (lw && !dataCache[lw]) return '<div class="dr-sec dr-sub" style="' + st + '">같은 평형 실거래를 불러오는 중이에요…</div>';
     var es = [], area = ((row.a && parseFloat(row.a.pyung)) || 0) * 3.305785, all = 0, other = 0;
     try { es = ownComplexEntries(row.a, row.bunjiFull || fullBunjiFromAddr(row.a.addr, row.a.dong, row.a.bunji), row.type); } catch (e) {}
     es.forEach(function(ap) { (ap.trades || []).forEach(function(t) { all++; if (t.area > 0 && Math.abs(t.area - area) <= 3) other++; }); });
     var msg = !es.length ? '이 단지는 실거래 자료에서 찾을 수 없어요(거래 기록이 아직 없는 단지일 수 있어요). 그래서 그래프를 그릴 수 없어요.'
         : !all ? '이 단지는 실거래 기록이 없어요. 그래서 그래프를 그릴 수 없어요.'
         : '이 단지 거래는 있지만 같은 평형(±3㎡) 거래가 없어서 그래프를 그릴 수 없어요.';
-    return '<div class="dr-sec dr-sub">' + msg + '</div>';
+    return '<div class="dr-sec dr-sub" style="' + st + '">' + msg + '</div>';
 }
 function drawerChartHtml(tr, title) {
     if (!tr || tr.length < 2) return '<div class="dr-sec dr-sub">' + title + ' 그래프: 이 평형 거래가 ' + (tr ? tr.length : 0) + '건뿐이라 그릴 수 없어요</div>';
