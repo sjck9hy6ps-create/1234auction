@@ -1459,6 +1459,7 @@ body.ui2 #auction-modal.am4 { width:620px; }
 #bb-drawer .vc-n { display:flex; align-items:center; gap:6px; flex-wrap:wrap; font-size:12.5px; } #bb-drawer .vc-n .vc-num { width:90px; margin:0; border-color:#d1d5db; text-align:right; }
 #bb-drawer .vc-p { display:flex; flex-wrap:wrap; align-items:center; gap:4px; margin:3px 0; } #bb-drawer .vc-p > span { font-size:12px; color:#6b7280; margin-right:2px; } #bb-drawer .vc-nv { margin-top:4px; } #bb-drawer .vc-nv > summary { font-size:12.5px; cursor:pointer; color:#374151; }
 #bb-drawer .vc-tbl { width:100%; border-collapse:collapse; font-size:12px; margin-top:4px; } #bb-drawer .vc-tbl th { text-align:left; font-weight:700; color:#6b7280; padding:3px 4px; border-bottom:1px solid #e5e7eb; } #bb-drawer .vc-tbl td { padding:4px; border-bottom:1px solid #f1f5f9; vertical-align:top; } #bb-drawer .vc-tbl .r { text-align:right; white-space:nowrap; }
+#bb-drawer .vc-cpn { background:#fafafa; border:1px solid #e5e7eb; border-radius:8px; padding:6px 8px; margin:4px 0; }
 #bb-drawer .vc-ap { color:#15803d; font-size:12.5px; } #bb-drawer .vc-u { border:1px solid #d1d5db; background:#fff; border-radius:12px; padding:2px 9px; font-size:12px; cursor:pointer; }
 #bb-drawer.view-visit > :not(.dr-h):not(.dr-top-btns):not(.dr-pickcard):not(.dr-visit-only) { display:none !important; }
 #bb-drawer.view-visit > .dr-visit-only { display:block; }
@@ -23129,6 +23130,62 @@ function asmInfoHtml(row) {
 /* 📍 빌라 임장: 생활권 최근 거래(2026-11-15, 사용자: 임장할 물건의 생활권에서 가장 최근에 팔린 비슷한 물건이 얼마에 팔렸는지 보고 팔 수 있는 물건인지 판단)
    이 물건 반경 1km 안, 최근 18개월, 이 물건과 전용면적 ±20% 이내인 빌라 매매(직거래 제외 표시)를 최신순으로 보여주고, 반경별 건수·㎡당 가격 중앙값·이 물건 면적 환산가를 앱 예상매도가와 나란히 보여줌.
    지역 실거래 자료(dataCache)와 건물 좌표(coordCache)만 쓰므로 새 호출 없음 - 좌표를 아직 모르는 건물은 빠지므로 그 수를 같이 알림 */
+/* 🏢 최근 거래 건물 임장 + 후보와 비교(2026-11-15, 사용자: 최근 거래도 임장해야 하니 거래별 임장 체크리스트를 만들어 입찰후보 체크리스트와 비교) -
+   건물 상태 점검 11항목을 최근 거래 건물(동·번지 단위)마다 같은 방식으로 기록하고, 후보와 한 표에서 비교. 기록은 이 후보 사건(a.compVisits)에 저장돼 기기 어디서나 같게 보임 */
+var compOpen = {};
+function compKeyOf(r) { return String(r.dong || '') + '|' + String(r.bunji || ''); }
+function compEnc(k) { return encodeURIComponent(k).replace(/'/g, '%27'); }
+function compStat(a, key, B) { var cv = (a.compVisits || {})[key], it = (cv && cv.items) || {}, n = 0, bad = 0; B.forEach(function(x) { if (it[x.k] && it[x.k].s) { n++; if (it[x.k].s === 'bad') bad++; } }); return { n: n, bad: bad, total: B.length, memo: (cv && cv.memo) || '' }; }
+function compVerdict(n, bad) { return n < 4 ? '' : (bad <= 1 ? '양호' : (bad <= 3 ? '주의' : '나쁨')); }
+function compPanelHtml(row, r, B) {
+    var a = row.a || {}, key = compKeyOf(r), enc = compEnc(key), idJs = String(row.id).replace(/\\/g, '\\\\').replace(/'/g, "\\'"), E = bbEsc, cv = (a.compVisits || {})[key] || {}, it = cv.items || {};
+    var h = '<div class="vc-cpn"><div class="vc-sec" style="margin-top:0;">🏢 ' + E((r.name ? r.name + ' ' : '') + r.dong + ' ' + r.bunji) + ' 임장 <span>준공 ' + (r.by || '?') + ' · 후보에서 ' + r.dist + 'm · 후보와 같은 11항목으로 기록해요</span></div>';
+    B.forEach(function(x) {
+        var s = it[x.k] && it[x.k].s, mk = function(v, lab) { return '<button class="vc-b' + (s === v ? (v === 'bad' ? ' bad' : ' ok') : '') + '" onclick="compChkSet(\'' + idJs + '\',\'' + enc + '\',\'' + x.k + '\',\'' + (s === v ? '' : v) + '\')">' + lab + '</button>'; };
+        h += '<div class="vc-r vc-c"><div class="vc-h"><span>' + x.t + '</span><span class="vc-bs">' + mk('ok', '👍') + mk('bad', '⚠️') + '</span></div>'
+            + (s === 'bad' ? '<input type="text" class="vc-in" value="' + E(it[x.k].v || '') + '" placeholder="무엇이 문제인지 한 줄" onchange="compChkNote(\'' + idJs + '\',\'' + enc + '\',\'' + x.k + '\',this.value)">' : '') + '</div>';
+    });
+    h += '<input type="text" class="vc-in" style="border-color:#d1d5db;" value="' + E(cv.memo || '') + '" placeholder="이 건물 메모 (매물 호가·중개사 말·내부 상태 등)" onchange="compMemo(\'' + idJs + '\',\'' + enc + '\',this.value)"></div>';
+    return h;
+}
+function compCompareHtml(row, B) {
+    var a = row.a || {}, cvs = a.compVisits || {}, E = bbEsc, st = visitChkGet(a), keys = Object.keys(cvs).filter(function(k) { return compStat(a, k, B).n > 0; });
+    if (!keys.length) return '';
+    var comps = {}; try { (villaNearComps(row).rows || []).forEach(function(r) { var k = compKeyOf(r); if (!comps[k]) comps[k] = r; }); } catch (e) {}
+    var fmt = function(x) { return x ? toEok(String(Math.round(x))) : '-'; };
+    var cell = function(s, memo) { return s === 'ok' ? '👍' : (s === 'bad' ? '<span title="' + E(memo || '') + '">⚠️</span>' : '<span style="color:#d1d5db;">·</span>'); };
+    var candStat = { n: 0, bad: 0 }; B.forEach(function(x) { if (st[x.k] && st[x.k].s) { candStat.n++; if (st[x.k].s === 'bad') candStat.bad++; } });
+    var h = '<div class="dr-sec"><h4>🆚 후보 vs 임장한 비교 건물 <span class="dr-sub" style="display:inline;">(⚠️ 칸에 손가락을 대면 메모)</span></h4><div style="overflow-x:auto;"><table class="vc-tbl"><tr><th>항목</th><th class="r">후보</th>'
+        + keys.slice(0, 6).map(function(k, i) { var r = comps[k]; return '<th class="r">' + E(cvs[k].n || (r ? ((r.name || '') + ' ' + r.bunji) : k.split('|')[1])).slice(0, 12) + '</th>'; }).join('') + '</tr>';
+    h += '<tr><td class="dr-sub">최근 거래가·준공</td><td class="r dr-sub">' + (row.sale ? '예상 ' + fmt(row.sale) : '-') + '<br>' + (a.buildYear || '?') + '</td>' + keys.slice(0, 6).map(function(k) { var r = comps[k]; return '<td class="r dr-sub">' + (r ? fmt(r.price) + '<br>' + (r.by || '?') + ' · ' + r.dist + 'm' : '-') + '</td>'; }).join('') + '</tr>';
+    B.forEach(function(x) { h += '<tr><td>' + E(x.t.replace(/^[^\s]+\s/, '')) + '</td><td class="r">' + cell(st[x.k] && st[x.k].s, st[x.k] && st[x.k].v) + '</td>' + keys.slice(0, 6).map(function(k) { var it = (cvs[k].items || {})[x.k]; return '<td class="r">' + cell(it && it.s, it && it.v) + '</td>'; }).join('') + '</tr>'; });
+    var vd = function(n, bad) { var v = compVerdict(n, bad); return '⚠️ ' + bad + '건' + (v ? '<br><b>' + v + '</b>' : '<br><span class="dr-sub">확인 ' + n + '/' + B.length + '</span>'); };
+    h += '<tr><td><b>요약</b></td><td class="r">' + vd(candStat.n, candStat.bad) + '</td>' + keys.slice(0, 6).map(function(k) { var s2 = compStat(a, k, B); return '<td class="r">' + vd(s2.n, s2.bad) + '</td>'; }).join('') + '</tr></table></div>';
+    var notes = keys.filter(function(k) { return cvs[k].memo; }).map(function(k) { return E((cvs[k].n || k)) + ': ' + E(cvs[k].memo); });
+    if (notes.length) h += '<div class="dr-sub" style="margin-top:4px;">' + notes.join('<br>') + '</div>';
+    h += '<div class="dr-sub">같은 항목에서 후보만 ⚠️이면 비교 건물보다 상태가 나쁘다는 뜻이라, 그 건물 거래가보다 낮게 팔릴 수 있어요(앱 계산에는 반영하지 않아요).</div></div>';
+    return h;
+}
+function compSaveAndRefresh(id, mut) {
+    var a = auctionList.filter(function(x) { return String(x.id) === String(id); })[0]; if (!a) return;
+    a.compVisits = Object.assign({}, a.compVisits || {}); mut(a.compVisits);
+    visitChkRefresh(id); visitChkSave(a);
+}
+function compVisitToggle(id, enc) { var k = decodeURIComponent(enc), kk = id + '|' + k; compOpen[kk] = !compOpen[kk]; visitChkRefresh(id); }
+function compChkSet(id, enc, item, s) {
+    var key = decodeURIComponent(enc), rowI = bidBoardRows.filter(function(r) { return String(r.id) === String(id); })[0];
+    compSaveAndRefresh(id, function(cv) {
+        var cur = Object.assign({ items: {} }, cv[key] || {}); cur.items = Object.assign({}, cur.items);
+        if (!s) delete cur.items[item]; else cur.items[item] = { s: s, v: (cur.items[item] && cur.items[item].v) || '' };
+        if (!cur.n) { try { var c = villaNearComps(rowI).rows.filter(function(r) { return compKeyOf(r) === key; })[0]; if (c) cur.n = ((c.name ? c.name + ' ' : '') + c.dong + ' ' + c.bunji).trim(); } catch (e) {} }
+        cur.at = new Date().toISOString().slice(0, 10); cv[key] = cur;
+    });
+}
+function compChkNote(id, enc, item, v) {
+    var key = decodeURIComponent(enc);
+    compSaveAndRefresh(id, function(cv) { var cur = cv[key]; if (!cur || !cur.items || !cur.items[item]) return; cur = Object.assign({}, cur); cur.items = Object.assign({}, cur.items); cur.items[item] = Object.assign({}, cur.items[item], { v: String(v || '').slice(0, 200) }); cv[key] = cur; });
+}
+function compMemo(id, enc, v) { var key = decodeURIComponent(enc); compSaveAndRefresh(id, function(cv) { cv[key] = Object.assign({ items: {} }, cv[key] || {}, { memo: String(v || '').slice(0, 300) }); }); }
 function villaNearComps(row) {
     var a = row.a || {}, lawd = row.lawd || bidBoardLawdOf(a);
     if (!(a.lat && a.lon)) return { err: '이 물건의 좌표가 없어서 주변 거래를 찾지 못했어요' };
@@ -23167,11 +23224,15 @@ function villaCompsHtml(row) {
     h += '<div class="vc-app">비슷한 거래 <b>' + rows.length + '건</b> (반경 500m ' + n500 + '건 · 최근 6개월 ' + n6 + '건) · 가장 최근 <b>' + Math.max(0, Math.round((now - rows[0].ts) / D)) + '일 전</b>'
         + (med ? '<br>㎡당 중앙값 <b>' + (Math.round(med * 10) / 10).toLocaleString() + '만</b> <span class="dr-sub" style="display:inline;">(직거래·신축 제외 ' + norm.length + '건)</span> → 이 물건 면적(' + Math.round(c.area) + '㎡) 환산 <b>' + fmt(mine) + '</b>' + (est ? ' · 앱 예상매도가 <b>' + fmt(est) + '</b> (' + (est >= mine ? '+' : '') + Math.round((est / mine - 1) * 1000) / 10 + '%)' : '') : '<br><span style="color:#b45309;">직거래·신축을 뺀 거래가 없어서 중앙값을 못 구했어요</span>')
         + (nearAge.length >= 3 ? '<br>준공 ±8년(' + (subjBy - 8) + '~' + (subjBy + 8) + ') 거래만: ' + nearAge.length + '건 · ㎡당 중앙값 <b>' + (Math.round(medOf(nearAge) * 10) / 10).toLocaleString() + '만</b> → 환산 <b>' + fmt(medOf(nearAge) * c.area) + '</b>' : '') + '</div>';
+    var BI = visitItems(row).B || [], shownP = {};
     var line = function(r) {
         var d = new Date(r.ts), ds = d.getFullYear().toString().slice(2) + '.' + ('0' + (d.getMonth() + 1)).slice(-2) + '.' + ('0' + d.getDate()).slice(-2);
         var tags = (r.same ? '<span style="color:#7c3aed;">같은 건물</span> ' : '') + (r.direct ? '<span style="color:#9ca3af;">직거래</span> ' : '') + (isNew(r) ? '<span style="color:#9ca3af;">신축(중앙값 제외)</span> ' : '')
             + (subjBy && r.by && Math.abs(r.by - subjBy) <= 5 ? '<span style="color:#15803d;">연식 비슷</span> ' : '') + (subjFl && !isNaN(r.floor) && (r.floor <= 1) === (subjFl <= 1) ? '' : '<span style="color:#b45309;">층 다름</span> ');
-        return '<tr><td>' + ds + '</td><td class="r">' + r.dist + 'm</td><td>' + E((r.name ? r.name + ' ' : '') + r.dong + ' ' + r.bunji) + '<div class="bb-sub">' + tags + '</div></td><td class="r">' + Math.round(r.area) + '㎡<br>' + (isNaN(r.floor) ? '-' : r.floor + '층') + '</td><td class="r">' + (r.by || '-') + '</td><td class="r"><b>' + fmt(r.price) + '</b><div class="bb-sub">' + (Math.round(r.ppm * 10) / 10) + '만/㎡</div></td></tr>';
+        var ck = compKeyOf(r), cs = compStat(row.a, ck, BI), open = !!compOpen[row.id + '|' + ck], idJs = String(row.id).replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+        var btn2 = '<button class="vc-u" onclick="compVisitToggle(\'' + idJs + '\',\'' + compEnc(ck) + '\')">' + (open ? '▲ 닫기' : '📝 임장') + (cs.n ? ' ' + cs.n + '/' + cs.total + (cs.bad ? ' · ⚠️' + cs.bad : '') : '') + '</button>';
+        var panel = (open && !shownP[ck]) ? '<tr class="vc-cp"><td colspan="6">' + compPanelHtml(row, r, BI) + '</td></tr>' : ''; if (open) shownP[ck] = true;
+        return '<tr><td>' + ds + '</td><td class="r">' + r.dist + 'm</td><td>' + E((r.name ? r.name + ' ' : '') + r.dong + ' ' + r.bunji) + '<div class="bb-sub">' + tags + '</div><div>' + btn2 + '</div></td><td class="r">' + Math.round(r.area) + '㎡<br>' + (isNaN(r.floor) ? '-' : r.floor + '층') + '</td><td class="r">' + (r.by || '-') + '</td><td class="r"><b>' + fmt(r.price) + '</b><div class="bb-sub">' + (Math.round(r.ppm * 10) / 10) + '만/㎡</div></td></tr>' + panel;
     };
     h += '<table class="vc-tbl"><tr><th>거래일</th><th class="r">거리</th><th>건물</th><th class="r">면적·층</th><th class="r">준공</th><th class="r">가격</th></tr>' + rows.slice(0, 8).map(line).join('') + '</table>';
     if (rows.length > 8) h += '<details class="vc-nv"><summary>더 보기 (' + (rows.length - 8) + '건)</summary><table class="vc-tbl">' + rows.slice(8, 30).map(line).join('') + '</table></details>';
@@ -23225,6 +23286,7 @@ function fieldChecklistHtml(row) {
         h += '<div class="vc-sec">🏚 건물 상태 점검 <span>확인 ' + bdone + '/' + it.B.length + ' · ⚠️ ' + bb + '건</span>' + bj + '</div>';
         it.B.forEach(function(x) { h += '<div class="vc-r vc-c"><div class="vc-h"><span>' + x.t + '</span><span class="vc-bs">' + btn(x, 'ok', '👍') + btn(x, 'bad', '⚠️') + '</span></div><div class="vc-hint">' + E(x.hint) + '</div>' + memo(x, '무엇이 문제인지 한 줄') + '</div>'; });
     }
+    if (it.B && it.B.length) h += '</div>' + compCompareHtml(row, it.B) + '<div class="dr-sec vc">';
     h += '<div class="vc-sec">현장 체크 <span>이상 없으면 👍 · 걸리면 ⚠️ 와 한 줄 메모</span></div>';
     it.C.forEach(function(x) { h += '<div class="vc-r vc-c"><div class="vc-h"><span>' + x.t + '</span><span class="vc-bs">' + btn(x, 'ok', '👍') + btn(x, 'bad', '⚠️') + '</span></div>' + memo(x, '무엇이 문제인지 한 줄') + '</div>'; });
     if (isApt) [['view', '🪟 향·조망·소음'], ['inconv', '🅿️ 주차·엘리베이터 등 불편']].forEach(function(p) { h += '<div class="vc-r vc-c"><div class="vc-h"><span>' + p[1] + '</span><span class="vc-bs">' + pills(p[0]) + '</span></div></div>'; });
