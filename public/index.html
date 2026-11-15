@@ -22901,6 +22901,18 @@ function bidCostLines(row, opt) {   // opt(2026-11-10): 빌라 상세처럼 행�
     return { lines: L, cost: cost, pre: pre, tax: tax, net: pre - tax, loan: loan.amount, cash: bid - loan.amount + cashCost, cashCost: cashCost, repairAuto: repairAuto };
 }
 /* 📈 상세 창 시세 그래프(2026-11-12 수정 요청: 시세 그래프 없음) - 같은 평형(빌라는 같은 건물 비슷한 면적) 실거래의 점·월별 중앙값 선·거래량 */
+/* 아파트 상세: 그래프·실거래가 비는 이유를 알려줌(2026-11-16, 사용자 요청) - 지역 자료 도착 전/그 번지 거래 기록 없음/다른 평형 거래만 있음 */
+function aptNoTradeNote(row) {
+    var lw = row.lawd || (row.a && bidBoardLawdOf(row.a));
+    if (lw && !dataCache[lw]) return '<div class="dr-sec dr-sub">같은 평형 실거래를 불러오는 중이에요…</div>';
+    var es = [], area = ((row.a && parseFloat(row.a.pyung)) || 0) * 3.305785, all = 0, other = 0;
+    try { es = ownComplexEntries(row.a, row.bunjiFull || fullBunjiFromAddr(row.a.addr, row.a.dong, row.a.bunji), row.type); } catch (e) {}
+    es.forEach(function(ap) { (ap.trades || []).forEach(function(t) { all++; if (t.area > 0 && Math.abs(t.area - area) <= 3) other++; }); });
+    var msg = !es.length ? '이 단지는 실거래 자료에서 찾을 수 없어요(거래 기록이 아직 없는 단지일 수 있어요). 그래서 그래프를 그릴 수 없어요.'
+        : !all ? '이 단지는 실거래 기록이 없어요. 그래서 그래프를 그릴 수 없어요.'
+        : '이 단지 거래는 있지만 같은 평형(±3㎡) 거래가 없어서 그래프를 그릴 수 없어요.';
+    return '<div class="dr-sec dr-sub">' + msg + '</div>';
+}
 function drawerChartHtml(tr, title) {
     if (!tr || tr.length < 2) return '<div class="dr-sec dr-sub">' + title + ' 그래프: 이 평형 거래가 ' + (tr ? tr.length : 0) + '건뿐이라 그릴 수 없어요</div>';
     var pts = tr.filter(function(t) { return t.d && t.p > 0; }).map(function(t) { return { amount: String(t.p), year: t.d.getFullYear(), month: t.d.getMonth() + 1, day: t.d.getDate(), floor: isNaN(t.f) ? '-' : t.f }; });
@@ -23134,7 +23146,7 @@ async function renderBidDrawer() {
         h += '<div class="dr-sec"><h4>같은 평형 실거래 (파란 줄 = 비슷한 층 ±3)</h4><table><tr><th>거래일</th><th>층</th><th class="r">가격</th></tr>'
             + tr.slice(0, 12).map(function(t) { return '<tr class="' + (t.sim ? 'sim' : '') + '"><td>' + t.d.toISOString().slice(0, 10) + (t.direct ? ' <span style="color:#9ca3af;">직거래</span>' : '') + '</td><td>' + (isNaN(t.f) ? '-' : t.f + '층') + '</td><td class="r">' + toEok(String(t.p)) + '</td></tr>'; }).join('')
             + '</table>' + (tr.length > 12 ? '<div class="dr-sub">최근 12건만 · 전체 ' + tr.length + '건</div>' : '') + '</div>';
-    } else h += '<div class="dr-sec dr-sub">같은 평형 실거래가 없어요</div>';
+    } else h += aptNoTradeNote(row);
     // 비용
     if (cl) {
         h += '<div class="dr-sec"><h4>추천 입찰가로 샀을 때</h4><table>'
