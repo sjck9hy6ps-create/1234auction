@@ -21085,6 +21085,7 @@ function loadFlowForecast() {
     return fetch('/api/data-coverage?mode=flowForecast').then(function(r) { return r.json(); }).then(function(d) { flowFc = (d && d.items) || {}; flowFcMonth = d && d.month; shrinkFc = (d && d.shrink) || null; }).catch(function() { flowFc = {}; });
 }
 var flowFcMonth = null, shrinkFc = null;
+var FLOW_VARIANT = 'cur';
 function saleFlowFor(a, lawd, area, bunjiFull) {
     // 흐름 측정 단위(2026-11-05 점검): 수도권=생활권(단지 반경 1~5km, 서버 계산)→법정동→시군구 / 지방=시군구. 가격 변화가 불확실(|z|<1)하면 건너뜀
     var cls = aptRegionClass(lawd) === '지방' ? '지방' : '수도권', now = new Date(), cut = Date.UTC(now.getFullYear(), now.getMonth(), now.getDate()) / 86400000, got = null, level = null;
@@ -21100,9 +21101,9 @@ function saleFlowFor(a, lawd, area, bunjiFull) {
         var raw = Math.exp(flowCoefFor(cls) * got.rate * (cls === '수도권' ? 0.15 : 0.30));
         var fadj = Math.max(0.95, Math.min(1.08, raw)), fnote = null;
         /* 2026-11-15 상한 규칙(수도권 31,507건 시험): 가격은 오르는데 거래량이 급감(vol<-0.5)하면 흐름 보정을 반으로, 흐름 상향은 보정 전 값의 +4%까지만 */
-        if (cls === '수도권' && fadj > 1) {
-            if (got.rate > 0 && got.vol != null && got.vol < -0.5) { fadj = 1 + (fadj - 1) * 0.5; fnote = 'vol'; }
-            if (fadj > 1.04) { fadj = 1.04; fnote = 'cap'; }
+        if (cls === '수도권' && fadj > 1 && FLOW_VARIANT !== 'old') {   // FLOW_VARIANT: 시험용(old=규칙 없음·vol=거래량 규칙만·cap=상한만·cur=둘 다, 기본)
+            if (FLOW_VARIANT !== 'cap' && got.rate > 0 && got.vol != null && got.vol < -0.5) { fadj = 1 + (fadj - 1) * 0.5; fnote = 'vol'; }
+            if (FLOW_VARIANT !== 'vol' && fadj > 1.04) { fadj = 1.04; fnote = 'cap'; }
         }
         out = { adj: fadj, level: level, rate: got.rate, z: got.z, vol: got.vol, capNote: fnote };
     }
