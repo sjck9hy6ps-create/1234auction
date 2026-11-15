@@ -2,6 +2,14 @@
 # 멈춤을 피하는 장치(사용자: 시험을 멈추는 게 아니라 멈춤을 피하게): ① 서버가 느리면 중단하지 않고 지수 대기로 기다렸다 계속 ② 같은 작업은 겹쳐 돌지 않음(concurrency) ③ 서버 읽기는 병렬 6줄·한 번만(읽기 실패는 앱의 읽기 도구가 재시도·순차 방식으로 이어감) ④ 외부 API(대장·좌표·공공데이터)는 전혀 부르지 않음
 name: Villa cases as-of
 on:
+  workflow_call:
+    inputs:
+      case_cutoff:
+        type: string
+        default: '20260601'
+      case_end:
+        type: string
+        default: '99999999'
   workflow_dispatch:
     inputs:
       case_cutoff:

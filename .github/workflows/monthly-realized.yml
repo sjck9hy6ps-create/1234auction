@@ -1,0 +1,110 @@
+# 매월 새벽 실현 검증(2026-11-15, 사용자: 월 1회는 새벽에 돌려 앱을 쓸 때는 새로 계산된 값으로 보게)
+# 매월 2일 새벽 2시(한국 시간)에 시작: ① 입찰후보 전체 사전 계산(앱 값 새로 고침) → ② 지난달 이후 낙찰 사례를 과거 시점으로 되돌려 앱 계산 다시(아파트·빌라, 새 사례만) →
+# ③ 과거 전체 + 실전을 한 표로 병합해 실현 순이익 평균을 정확도 원장에 기록(score-pooled.py, 보관본 data/asof-*.json에 새 사례를 더해 커밋).
+# 단계는 차례로 실행해 서버(앱)에 한꺼번에 부담을 주지 않음. 앞 단계가 실패해도 다음 단계는 계속.
+name: 월간 실현 검증 (새벽)
+on:
+  schedule:
+    - cron: '0 17 1 * *'   # 매월 1일 17:00 UTC = 한국 시간 2일 02:00
+  workflow_dispatch:
+    inputs:
+      skip_asof:
+        description: '과거 시점 재계산(오래 걸림)은 건너뛰고 병합 계산만'
+        type: boolean
+        default: false
+      skip_precompute:
+        description: '입찰후보 사전 계산은 건너뜀'
+        type: boolean
+        default: false
+
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    outputs:
+      sale_from: ${{ steps.d.outputs.sale_from }}
+      cutoff: ${{ steps.d.outputs.cutoff }}
+    steps:
+      - id: d
+        run: |
+          pm=$(date -u -d "$(date -u +%Y-%m-01) -1 month" +%Y-%m-%d)
+          echo "sale_from=$pm" >> $GITHUB_OUTPUT
+          echo "cutoff=$(echo $pm | tr -d '-')" >> $GITHUB_OUTPUT
+          echo "지난달 첫날: $pm"
+  precompute:
+    name: 1 입찰후보 전체 사전 계산(앱 값 새로 고침)
+    needs: plan
+    if: ${{ !cancelled() && !inputs.skip_precompute }}
+    uses: ./.github/workflows/precompute-board.yml
+    secrets: inherit
+  asof-apt:
+    name: 2 아파트 지난달 이후 낙찰 사례 재계산
+    needs: [plan, precompute]
+    if: ${{ !cancelled() && !inputs.skip_asof }}
+    uses: ./.github/workflows/apt-case-rows.yml
+    with:
+      sale_from: ${{ needs.plan.outputs.sale_from }}
+    secrets: inherit
+  villa-export:
+    name: 3 빌라 재계산 자료(지난달 이후)
+    needs: [plan, asof-apt]
+    if: ${{ !cancelled() && !inputs.skip_asof }}
+    uses: ./.github/workflows/villa-cases-asof.yml
+    with:
+      case_cutoff: ${{ needs.plan.outputs.cutoff }}
+      case_end: '99999999'
+    secrets: inherit
+  villa-score:
+    name: 4 빌라 채점
+    needs: villa-export
+    if: ${{ !cancelled() && !inputs.skip_asof }}
+    uses: ./.github/workflows/score-villa-cases.yml
+    with:
+      export_run_id: ${{ github.run_id }}
+    secrets: inherit
+  pool:
+    name: 5 과거+실전 병합 실현 검증(원장 기록)
+    needs: [asof-apt, villa-score]
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    permissions:
+      contents: write
+      actions: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install pandas numpy requests scikit-learn scipy
+      - uses: actions/download-artifact@v4
+        continue-on-error: true
+        with:
+          pattern: aptrows-*
+      - uses: actions/download-artifact@v4
+        continue-on-error: true
+        with:
+          name: villa-score
+          path: villa-new
+      - name: 과거 보관본을 이번 달 새 재계산과 함께 읽게 놓기
+        run: |
+          mkdir -p aptrows-hist && cp data/asof-apt-rows.json aptrows-hist/rows.json
+          ls -d aptrows-* villa-new 2>/dev/null || true
+      - name: 아파트 낙찰 후 180일 실거래로 대리 되판가 계산
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          PYTHONUNBUFFERED: '1'
+        run: python analyze-apt-realized.py | tail -40
+      - name: 병합 실현 검증 + 정확도 원장 기록
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          SITE_URL: ${{ secrets.SITE_URL }}
+          PYTHONUNBUFFERED: '1'
+        run: python score-pooled.py
+      - name: 보관본 갱신 커밋
+        run: |
+          git config user.name "github-actions"; git config user.email "actions@users.noreply.github.com"
+          git add data/asof-apt-rows.json data/asof-villa-rows.json
+          if git diff --cached --quiet; then echo "보관본 변화 없음"; else
+            git commit -m "월간 실현 검증: 재계산 보관본에 새 사례 추가"; git pull --rebase -q; git push -q; fi

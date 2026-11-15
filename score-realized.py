@@ -39,7 +39,8 @@ def stats(rows):
             "recWonPct": round(float(np.mean([r["recWon"] for r in rows if r["recWon"] is not None])) * 100, 1) if any(r["recWon"] is not None for r in rows) else None}
 
 
-def main():
+def collect_live():
+    """입찰 전 저장 예측 ↔ 실제 낙찰 ↔ 되판 거래가 이어진 사례(실전). 병합 스크립트(score-pooled.py)도 이 함수를 씀"""
     au = requests.get(f"{SITE_URL}/api/auction", timeout=180).json()
     bc = requests.get(f"{SITE_URL}/api/auction?kind=bidCases", timeout=300).json()
     amap = {}
@@ -70,8 +71,13 @@ def main():
         rows.append({"case": c.get("caseNo"), "sale": str(c.get("saleDate")), "actual": actual, "resale": resale, "m": round((rs_d - sale_d).days / 30.4, 1),
                      "snapSale": float(sn["sale"]), "rec": rec, "go": bool(sn.get("go")), "conf": rm.get("conf") or ("approx" if rm.get("approx") else "floor"),
                      "err": (float(sn["sale"]) - resale) / resale, "net": resale - actual * COST_RATIO - FIXED_COST,
-                     "recWon": (actual <= rec) if rec else None, "type": sn.get("type") or "apt"})
+                     "recWon": (actual <= rec) if rec else None, "type": sn.get("type") or "apt", "net_pred": sn.get("net"), "key": key[0] + "|" + key[1]})
     print(f"예측 저장 {len(amap):,}건 · 낙찰 + 되판 거래까지 이어진 사례 {len(rows):,}건")
+    return rows, len(amap)
+
+
+def main():
+    rows, n_snap = collect_live()
     out = {}
     if rows:
         dong = [r for r in rows if r["conf"] == "dong"]
