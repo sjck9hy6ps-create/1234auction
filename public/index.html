@@ -23543,7 +23543,7 @@ function villaPriceGridHtml(row, ev, fmt) {
     var myElv = a.elevatorCnt != null && a.elevatorCnt !== '' ? parseInt(a.elevatorCnt) > 0 : null;
     // 구분: B 지하 / NE4 승강기 없는 4층 이상 / U4 4층 이상인데 승강기 정보 없음 / N 그 밖(보정 필요 없는 층)
     var vKind = function(f, elv) { if (isNaN(f)) return 'N'; if (f <= 0) return 'B'; if (f >= 4) return elv === false ? 'NE4' : (elv === null ? 'U4' : 'N'); return 'N'; };
-    var myKind = vKind(vFl, myElv), kindLabel = { B: '지하 거래끼리', NE4: '승강기 없는 4층 이상 거래끼리', U4: '4층 이상 거래(이 물건 승강기 정보 없음)', N: '지하·승강기 없는 4층 이상을 뺀 거래끼리' }[myKind];
+    var myKind = (typeof villaIsBasement === 'function' && villaIsBasement(a)) ? 'B' : vKind(vFl, myElv), kindLabel = { B: '지하 거래끼리', NE4: '승강기 없는 4층 이상 거래끼리', U4: '4층 이상 거래(이 물건 승강기 정보 없음)', N: '지하·승강기 없는 4층 이상을 뺀 거래끼리' }[myKind];
     var nearAll = c && c.rows ? c.rows : [];
     if (nearAll.length && !row._compElvTried) villaCompElevatorLoad(row, nearAll);
     var okFor = function(r) { var k = vKind(parseInt(r.floor), elvOf(r.ap)); if (myKind === 'B') return k === 'B'; if (myKind === 'NE4') return k === 'NE4'; if (myKind === 'U4') return parseInt(r.floor) >= 4; return k === 'N'; };
