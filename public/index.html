@@ -2038,8 +2038,8 @@ body.ui2 #auction-modal.am4 { width:620px; }
       <b>🏁 지역 경쟁 강도</b> "약함"인지 · <b>예상매도가 근거</b>가 "최근 3·6개월 ○건"인지<br>
       <b>📋 네이버 매물 붙여넣기는 꼭</b> - 비슷한 집이 더 싸게 나와 있으면 예상매도가가 자동으로 낮아져요<br>
       <b>📝 임장 문답</b> - 집 상태·점유자·누수를 답하면 수리비·비용에 반영</div></div></div>
-    <div class="gd-step"><div class="gd-n">4</div><div><div class="gd-t">직접 확인한 금액 넣기</div><div class="gd-d">
-      <b>인수 금액</b>(매각물건명세서 권리) · <b>미납 관리비</b>(관리사무소) · <b>수리비</b>(견적) → 추천 입찰가가 바로 바뀜<br>
+    <div class="gd-step"><div class="gd-n">4</div><div><div class="gd-t">임장 탭에서 금액 확인</div><div class="gd-d">
+      <b>미납 관리비</b>(관리사무소) · <b>수리비</b>(견적)를 확인표에 적으면 추천 입찰가가 바로 바뀜 · 인수 금액은 경매정보로 자동 계산<br>
       권리가 애매하면 <span class="no">입찰하지 않기</span></div></div></div>
     <div class="gd-step"><div class="gd-n">5</div><div><div class="gd-t">입찰가 정하기</div><div class="gd-d">
       <b>추천 입찰가</b> = 최소 순이익 500만이 남는 상한 · <b>적극 입찰가</b>(기회·버팀만) = 2등을 아깝게 놓친 경우까지 +3%<br>
@@ -12475,7 +12475,7 @@ function renderCurCalcSummary(id) {
         + '<tr><td>예상 매도가</td><td style="text-align:right;">' + f(sale) + '</td></tr>'
         + '<tr><td>낙찰 가능성 (추천가)</td><td style="text-align:right;">' + (p != null ? Math.round(p * 100) + '%' : '-') + '</td></tr>'
         + '<tr><td>규제지역</td><td style="text-align:right;">' + (adjOf(row.a) ? '🔶 해당 (취득세 중과·LTV 40%)' : '비해당') + '</td></tr></table>'
-        + '<div style="font-size:10.5px;color:#6b7280;margin-top:5px;">금액을 바꾸려면 입찰후보 상세 창의 "직접 확인한 금액"(인수금액·수리비 등)을 입력하세요. 예전 방식(목표마진 2,000만·적정입찰가·전세가율 매도가)은 판정에 쓰이지 않아 이 화면에서 뺐어요.</div>';
+        + '<div style="font-size:10.5px;color:#6b7280;margin-top:5px;">금액을 바꾸려면 입찰후보 상세 창 "임장" 탭의 확인표에서 미납 관리비·수리비를 고치세요. 예전 방식(목표마진 2,000만·적정입찰가·전세가율 매도가)은 판정에 쓰이지 않아 이 화면에서 뺐어요.</div>';
     if (g1) g1.style.display = 'none'; if (g2) g2.style.display = 'none';
 }
 (function() { var _oam = openAuctionModal; openAuctionModal = function(id) { var r = _oam.apply(this, arguments); try { renderCurCalcSummary(id); } catch (e) {} return r; }; })();
@@ -22863,7 +22863,7 @@ async function renderBidDrawer() {
     var issueHtml = '';
     if (row.issueSuspect) {
         issueHtml = '<div class="dr-issue ' + row.issueSuspect.level + '"><b>🚩 이슈 ' + (row.issueSuspect.level === 'high' ? '강한 의심' : '의심') + '</b> - ' + bbEsc(row.issueSuspect.why.join(' · '))
-            + '<div class="dr-sub" style="margin:2px 0 0;">과거 낙찰사례에서 이런 물건은 입찰자가 1~2명뿐(보통 5명)이고 낙찰가가 시세의 34~55%였어요. 시장이 가격에 문제를 반영한 신호로, <b>임차인 보증금 등 인수할 권리</b>가 있을 가능성이 높아요. 매각물건명세서로 확인하고, 인수 금액을 아래 "직접 확인한 금액"에 넣으면 추천 입찰가에서 바로 빠져요. (낙찰사례에는 인수 금액이 없어 손해 여부는 확인하지 못했어요.)</div></div>';
+            + '<div class="dr-sub" style="margin:2px 0 0;">과거 낙찰사례에서 이런 물건은 입찰자가 1~2명뿐(보통 5명)이고 낙찰가가 시세의 34~55%였어요. 시장이 가격에 문제를 반영한 신호로, <b>임차인 보증금 등 인수할 권리</b>가 있을 가능성이 높아요. 매각물건명세서로 확인하고, 인수 금액은 경매정보(권리분석)로 계산돼 추천 입찰가에서 빠져요 - 권리분석이 없으면 경매정보 모으기를 먼저 하세요. (낙찰사례에는 인수 금액이 없어 손해 여부는 확인하지 못했어요.)</div></div>';
     }
     // 예상매도가 오차 범위(2026-10)
     var sbw = saleBandFor(row);
@@ -22943,11 +22943,7 @@ async function renderBidDrawer() {
     h += rightsPanelHtml(row);
     // 직접 입력
     h += favNoteHtml(row);
-    h += '<div class="dr-sec"><h4>직접 확인한 금액 (만원) - 넣으면 추천 입찰가가 바로 바뀌어요</h4><div class="dr-in">'
-        + '<label>인수 금액 (매각물건명세서 권리)</label><input type="number" value="' + (parseInt(a.assumedDeposit) || '') + '" placeholder="0" onchange="updateDrawerField(\'' + idJs + '\',\'assumedDeposit\',this.value)">'
-        + '<label>갚아도 안 갚는 인수 (배당요구 안 한 임차인 등, 전액 부담)</label><input type="number" value="' + (parseInt(a.assumedFixed) || '') + '" placeholder="0" onchange="updateDrawerField(\'' + idJs + '\',\'assumedFixed\',this.value)">'
-        + '<label>인수보다 먼저 빠지는 비용 (집행비용·체납세금, 비우면 300만)</label><input type="number" value="' + (parseInt(a.assumedPrior) || '') + '" placeholder="300" onchange="updateDrawerField(\'' + idJs + '\',\'assumedPrior\',this.value)">'
-        + '</div><div class="dr-sub">미납 관리비·수리비는 위 임장 확인표의 금액 칸에 적어요.</div></div>';
+    h += asmInfoHtml(row);
     // 2026-10 정리: 지도·상세 버튼은 창 맨 위에 이미 있어 아래쪽 중복 버튼은 뺌
     h += '<div class="dr-sec dr-btns">'
         + '<button onclick="openCourtQuick(\'' + String(a.caseNo || '').replace(/'/g, "\\'") + '\')">🏛️ 법원경매</button>'
@@ -22957,7 +22953,7 @@ async function renderBidDrawer() {
     h += '<div class="dr-sec" id="apt-bld">' + aptBldHtml(row) + '</div>';
     aptBldEnsure(row);
     // 임장 후보 화면(2026-10): 맨 위에 판정 + 추천가 1개, 근거·범위·실거래·비용은 "자세히"로 접고, 직접 확인한 금액 입력칸은 항상 보이게
-    var i1 = h.indexOf('<div style="margin-top:6px;"><span class="bb-verdict"'), i2 = h.indexOf('<div class="dr-sec"><h4>직접 확인한 금액');
+    var i1 = h.indexOf('<div style="margin-top:6px;"><span class="bb-verdict"'), i2 = h.indexOf('<div class="dr-sec"><h4>인수 금액 (경매정보 기준)');
     if (i1 > 0 && i2 > i1) {
         var card = '';
         if (bidBoardState.lite && row.type === 'apt') {
@@ -23081,10 +23077,11 @@ function visitItems(row) {
     var V = [], C = [];
     // ── 앱 값이 있는 항목
     var tn = R && Array.isArray(R.tenants) ? R.tenants : null, svT = R && R.docs && typeof R.docs.survey === 'string' ? R.docs.survey : '', svM = svT.match(/점유관계\s+([^\n]+)/), sv = svM ? svM[1] : '';
-    V.push({ k: 'occ', t: '🏠 점유자·세입자', app: R ? ('서류상 임차인·점유자 <b>' + (tn ? tn.length : 0) + '명</b>' + (tn && tn.length ? ' (' + tn.slice(0, 4).map(function(t) { return E((t.name || '?') + (t.moveIn ? ' 전입 ' + t.moveIn : '')); }).join(' · ') + (tn.length > 4 ? ' 외' : '') + ')' : '') + (sv ? '<br>현황조사: ' + E(String(sv).slice(0, 60)) : '')) : null, ask: '이웃·경비실 탐문과 전입세대 열람 결과와 같은지(우편물·계량기로 실거주 확인)', none: '권리분석이 없어요 - 탱크옥션 글을 먼저 붙여넣으면 서류 값이 채워져요' });
-    var lienFlag = R && (R.flags || []).filter(function(f) { return /유치권/.test(f.k || ''); })[0];
-    V.push({ k: 'lien', t: '🚪 유치권', app: R ? (lienFlag ? '⚠️ 탱크옥션 글에 유치권 언급: ' + E(String(lienFlag.note || '').slice(0, 70)) : '서류에는 유치권 신고가 보이지 않아요') : null, ask: '현관·공사 흔적에 유치권 안내문이 붙어 있는지', none: '권리분석이 없어요' });
-    V.push({ k: 'mgmt', t: '🧾 관리비 체납', app: '앱 가정 ' + (a.unpaidMgmtFee ? fm(parseInt(a.unpaidMgmtFee)) : '0 (입력 없음)'), ask: '관리사무소에서 확인한 체납액(공용부분)·연체료는 얼마인지' });
+    var nDiv = tn ? tn.filter(function(t) { return t.distDate; }).length : null;
+    V.push({ k: 't_div', t: '🏠 배당요구한 임차인', app: R ? ('서류상 임차인·점유자 <b>' + (tn ? tn.length : 0) + '명</b> 중 배당요구 <b>' + nDiv + '명</b>' + (tn && tn.length ? ' (' + tn.slice(0, 4).map(function(t) { return E((t.name || '?') + (t.moveIn ? ' 전입 ' + t.moveIn : '')); }).join(' · ') + (tn.length > 4 ? ' 외' : '') + ')' : '') + (sv ? '<br>현황조사: ' + E(String(sv).slice(0, 60)) : '')) : null, ask: '배당요구 여부는 서류와 현장(탐문·전입세대 열람)이 같은지 확인 - 나머지 임차인 정보는 서류로 충분해요', none: '권리분석이 없어요 - 경매정보 모으기를 하면 서류 값이 채워져요' });
+    V.push({ k: 't_for', t: '🌏 외국인 세대주', chk: true });
+    V.push({ k: 't_fake', t: '🕵️ 가장임차인 의심', chk: true });
+    V.push({ k: 'mgmt', t: '🧾 미납 관리비', app: '앱 값 ' + (parseInt(a.unpaidMgmtFee) > 0 ? fm(parseInt(a.unpaidMgmtFee)) + (R && R.unpaidMgmtApplied ? ' (경매정보 체납내역에서 가져옴)' : ' (입력값)') : '0 (경매정보에 체납 없음)'), ask: '임장 때 관리사무소에서 금액을 다시 확인해, 다르면 아래에 고쳐 적어요(공용부분 체납액)' });
     V.push({ k: 'repair', t: '🔧 수리 상태·수리비', app: '앱 수리비 가정 ' + fm((function() { try { return parseInt(a.repair) || effRepairFee(a, row.type, row.pyung, a.buildYear || row.estBuildYear || null) || 0; } catch (e) { return parseInt(a.repair) || 0; } })()) + (a.repairFromField ? ' (집 상태 답변 기준)' : (parseInt(a.repair) ? ' (직접 입력)' : ' (연식 기준)')) + '<br><span class="dr-sub">참고: 11/14 호가 분석에서 수리 표시 호가의 프리미엄은 약 +3%(61건, 표본 적음) - 수리비만큼 가격으로 안 돌아올 수 있어요</span>', ask: '현장에서 본 수리 범위로 견적하면 얼마인지(도배·장판·누수·곰팡이)' });
     var l = typeof listingStatus === 'function' ? listingStatus(a) : null;
     V.push({ k: 'price', t: '💰 시세·수리 후 가격', app: '앱 예상매도가 <b>' + fm(row.sale) + '</b>' + (l && l.st === 'yes' ? ' · 네이버 매물 ' + l.n + '건' : (l && l.st === 'none' ? ' · 네이버 매물 없음' : ' · 호가 미확인')) + (!isV && row.ownStats ? ' · 이 단지 1년 거래 ' + (row.ownStats.n12 || 0) + '건' : '') + (a.fieldCheck && a.fieldCheck.ask ? ' · 입력된 최저 호가 ' + fm(parseInt(a.fieldCheck.ask)) : ''), ask: '중개사 2곳이 말한 같은 평형 호가·수리 후 가격(적어 두면 앱 값과 비교돼요)' });
@@ -23093,16 +23090,25 @@ function visitItems(row) {
     if (isV) { var rc = typeof villaRcCache !== 'undefined' ? villaRcCache[row.id] : null; V.push({ k: 'rent', t: '🏠 월세 가능성', app: rc && rc.m ? '앱 월세 ' + rc.m + '만 (보증금 ' + fm(rc.d) + ')' : '앱 월세 자료 없음', ask: '동네 중개사가 말한 월세 시세·세입자 수요가 같은지' }); }
     V.push({ k: 'sale', t: '📅 입찰 당일 사건 상태', app: '입찰일 ' + E(a.bidDate || '?') + (R && R.tankSaleDate ? ' · 탱크옥션 ' + E(R.tankSaleDate) : ''), ask: '입찰 당일 아침 법원·탱크옥션에서 취하·정지·변경이 없는지(최신 등기도 재확인)' });
     // ── 앱이 모르는 항목(간단 체크)
-    [['leak', '💧 누수·곰팡이·결로'], ['pipe', '🚿 수압·온수·보일러'], ['win', '🪟 창문·샷시 단열·소음'], ['crack', '🧱 외벽 균열·옥상 방수·기울어짐'], ['illegal', '🚧 불법 증축·방 쪼개기 (대장 API는 위반 표시를 안 줘요)'],
-     ['park', '🅿️ 주차·골목 폭·채광 체감'], ['trash', '🗑 쓰레기 배출장소'], ['env', '🔊 소음·냄새·혐오시설'], ['walk', '🚶 역·버스·학교 도보 거리'], ['night', '🌙 낮·밤 분위기'],
-     ['redev', '🏗 재개발·재건축 구역·호재 현수막'], ['road', '🛣 도로 접면·맹지'], ['util', '💡 공공요금(전기·가스·수도) 체납'], ['attitude', '🗣 점유자 태도·이사 의사'],
-     ['agent', '🧑‍💼 중개사: 매수 문의·대출 문제·팔리는 기간'], ['evict', '🚚 명도 비용·기간 계획'], ['lock', '🔑 낙찰 후 잠금장치 교체 가능']].forEach(function(x) { C.push({ k: x[0], t: x[1] }); });
+    [['crack', '🧱 외벽 균열·옥상 방수·기울어짐'], ['park', '🅿️ 주차·골목 폭·채광 체감'], ['trash', '🗑 쓰레기 배출장소'], ['env', '🔊 소음·냄새·혐오시설'],
+     ['redev', '🏗 재개발·재건축 구역·호재 현수막'], ['evict', '🚚 명도 비용·기간 계획']].forEach(function(x) { C.push({ k: x[0], t: x[1] }); });
     if (row.type === 'apt') { // 아래 '임장 문답'이 같은 걸 묻는 항목은 확인표에서 뺌(집 내부 상태·누수·향/소음·주차/엘리베이터·점유자 협조·매도 기간·최저 호가)
-        var dup = { leak: 1, win: 1, park: 1, attitude: 1, agent: 1 };
+        var dup = { park: 1 };   // 주차·엘리베이터는 선택형 문답이 대신함
         C = C.filter(function(x) { return !dup[x.k]; });
         V = V.filter(function(x) { return x.k !== 'price'; });   // 시세·최저 호가·매물 수는 아래 임장 문답에서 한 번만 입력
     }
     return { V: V, C: C };
+}
+/* 인수 금액(2026-11-15, 사용자: 경매정보를 활용 - 인수 금액은 낙찰대금으로 먼저 처리하고 남는 금액만 낙찰자 부담, 집행비용·체납세금은 낙찰대금에 포함) - 직접 입력칸은 없애고 경매정보(권리분석) 기준 값만 보여줌. 예전에 직접 넣은 값이 있으면 계속 계산에 쓰임 */
+function asmInfoHtml(row) {
+    var a = row.a || {}, R = a.rights, h = '<div class="dr-sec"><h4>인수 금액 (경매정보 기준)</h4>';
+    if (R && (((R.tenants || []).length) || ((R.registry || []).length))) {
+        var c = 0; try { c = assumedCostRec(a, row.recBid || 0) || 0; } catch (e) {}
+        h += '<div class="vc-app">경매정보(권리분석) 기준 · 추천 입찰가로 낙찰하면 낙찰대금으로 처리하고 남아서 낙찰자가 떠안는 금액 <b>' + (c > 0 ? toEok(String(Math.round(c))) : '0원') + '</b></div>';
+    } else h += '<div class="vc-app"><span class="dr-sub">권리분석이 없어요 - 경매정보 모으기를 하면 자동으로 계산돼요</span></div>';
+    var man = [parseInt(a.assumedDeposit) > 0 ? '인수 금액 ' + toEok(String(parseInt(a.assumedDeposit))) : '', parseInt(a.assumedFixed) > 0 ? '안 갚는 인수 ' + toEok(String(parseInt(a.assumedFixed))) : '', parseInt(a.assumedPrior) > 0 ? '먼저 빠지는 비용 ' + toEok(String(parseInt(a.assumedPrior))) : ''].filter(Boolean);
+    if (man.length) h += '<div class="dr-sub">예전에 직접 넣은 값이 있어 계산에 계속 쓰여요: ' + bbEsc(man.join(' · ')) + '</div>';
+    return h + '</div>';
 }
 function visitChkGet(a) { return (a && a.visitCheck) || {}; }
 function fieldChecklistHtml(row) {
@@ -23111,7 +23117,7 @@ function fieldChecklistHtml(row) {
     var QS = {}; FIELD_QS.forEach(function(Q) { QS[Q.k] = Q; });
     var all = it.V.concat(it.C), done = all.filter(function(x) { return st[x.k] && st[x.k].s; }).length;
     var total = all.length, bad = all.filter(function(x) { return st[x.k] && st[x.k].s === 'bad'; });
-    if (isApt) { total += FIELD_QS.length; FIELD_QS.forEach(function(Q) { if (fc[Q.k]) done++; }); }
+    if (isApt) { ['cond', 'view', 'inconv'].forEach(function(k) { total++; if (fc[k]) done++; }); }
     var btn = function(x, s, label) {
         var on = st[x.k] && st[x.k].s === s;
         return '<button class="vc-b' + (on ? (s === 'bad' ? ' bad' : ' ok') : '') + '" onclick="visitChkSet(\'' + idJs + '\',\'' + x.k + '\',\'' + (on ? '' : s) + '\')">' + label + '</button>';
@@ -23130,25 +23136,24 @@ function fieldChecklistHtml(row) {
         + (ev && ev.grade ? ' <span style="color:' + ev.grade.c + ';font-size:12px;">' + ev.score + '점 · ' + ev.grade.t + '</span>' : '') + '</h4>';
     h += '<div class="vc-sec">앱 값과 대조 <span>앱이 아는 값을 보여 드려요 · 저장은 자동</span></div>';
     it.V.forEach(function(x) {
+        if (x.chk) { h += '<div class="vc-r vc-c"><div class="vc-h"><span>' + x.t + '</span><span class="vc-bs">' + btn(x, 'ok', '👍 없음') + btn(x, 'bad', '⚠️ 있음') + '</span></div>' + memo(x, '내용을 한 줄로') + '</div>'; return; }
         var isNum = !!NUM[x.k];
         h += '<div class="vc-r"><div class="vc-h"><b>' + x.t + '</b>' + (isNum ? '' : '<span class="vc-bs">' + btn(x, 'ok', '✅ 같음') + btn(x, 'bad', '❌ 다름') + '</span>') + '</div>'
             + '<div class="vc-app">' + (x.app || '<span class="dr-sub">' + E(x.none || '앱에 값이 없어요') + '</span>') + '</div>'
             + '<div class="vc-hint">' + E(x.ask) + '</div>'
-            + (isApt && x.k === 'occ' ? pRow('occ', '명도') : '')
             + (isApt && x.k === 'repair' ? pRow('cond', '집 상태') : '')
             + (isNum ? numRow(x) : memo(x, '현장에서 확인한 값')) + '</div>';
         if (isApt && x.k === 'repair') {   // 시세·호가(문답의 최저 호가·매물 수·매도 기간·네이버 붙여넣기를 여기로)
             var l = typeof listingStatus === 'function' ? listingStatus(a) : null;
             h += '<div class="vc-r"><div class="vc-h"><b>💰 시세·호가</b></div><div class="vc-app">앱 예상매도가 <b>' + fm(row.sale) + '</b>' + (l && l.st === 'yes' ? ' · 네이버 매물 ' + l.n + '건' : (l && l.st === 'none' ? ' · 네이버 매물 없음' : ' · 호가 미확인')) + (row.ownStats ? ' · 이 단지 1년 거래 ' + (row.ownStats.n12 || 0) + '건' : '') + '</div>'
-                + '<div class="vc-hint">중개사 2곳이 말한 같은 평형 최저 호가·매물 수를 적으면 앱 값과 비교해 점수에 반영돼요</div>'
+                + '<div class="vc-hint">중개사가 말한 같은 평형 최저 호가·매물 수를 적으면 앱 값과 비교해 점수에 반영돼요(매도 기간은 회전율로 앱이 이미 예상해요)</div>'
                 + '<div class="vc-n"><span>최저 호가</span><input type="text" inputmode="numeric" class="vc-in vc-num" value="' + E(fc.ask || '') + '" onchange="setFieldAnswer(\'' + idJs + '\',\'ask\',this.value)"><span>만원</span><span>매물</span><input type="text" inputmode="numeric" class="vc-in vc-num" style="width:56px;" value="' + E(fc.listings != null ? fc.listings : '') + '" onchange="setFieldAnswer(\'' + idJs + '\',\'listings\',this.value)"><span>건</span></div>'
-                + pRow('sell', '중개사가 본 매도 기간')
                 + '<details class="vc-nv"><summary>📋 네이버 매물 붙여넣기 (매물 수·호가 자동 채움)</summary>' + naverListingHtml(row, idJs) + '</details></div>';
         }
     });
     h += '<div class="vc-sec">현장 체크 <span>이상 없으면 👍 · 걸리면 ⚠️ 와 한 줄 메모</span></div>';
     it.C.forEach(function(x) { h += '<div class="vc-r vc-c"><div class="vc-h"><span>' + x.t + '</span><span class="vc-bs">' + btn(x, 'ok', '👍') + btn(x, 'bad', '⚠️') + '</span></div>' + memo(x, '무엇이 문제인지 한 줄') + '</div>'; });
-    if (isApt) [['leak', '💧 누수·결로·곰팡이 흔적'], ['view', '🪟 향·조망·소음'], ['inconv', '🅿️ 주차·엘리베이터 등 불편']].forEach(function(p) { h += '<div class="vc-r vc-c"><div class="vc-h"><span>' + p[1] + '</span><span class="vc-bs">' + pills(p[0]) + '</span></div></div>'; });
+    if (isApt) [['view', '🪟 향·조망·소음'], ['inconv', '🅿️ 주차·엘리베이터 등 불편']].forEach(function(p) { h += '<div class="vc-r vc-c"><div class="vc-h"><span>' + p[1] + '</span><span class="vc-bs">' + pills(p[0]) + '</span></div></div>'; });
     if (bad.length) h += '<div class="dr-warn" style="margin-top:8px;"><b>다름·문제로 표시한 것</b><br>' + bad.map(function(x) { return E(x.t) + (st[x.k].v ? ' - ' + E(st[x.k].v) : ''); }).join('<br>') + '</div>';
     if (ev) {
         ev.notes.forEach(function(n) { h += '<div class="dr-warn">' + E(n) + '</div>'; });
@@ -23297,11 +23302,7 @@ async function renderVillaDrawer(d, row) {
     h += '</div>';
     h += rightsPanelHtml(row);
     h += favNoteHtml(row);
-    h += '<div class="dr-sec"><h4>직접 확인한 금액 (만원) - 넣으면 추천가가 바로 바뀌어요</h4><div class="dr-in">'
-        + '<label>인수 금액 (매각물건명세서 권리)</label><input type="number" value="' + (parseInt(a.assumedDeposit) || '') + '" placeholder="0" onchange="updateDrawerField(\'' + idJs + '\',\'assumedDeposit\',this.value)">'
-        + '<label>갚아도 안 갚는 인수 (배당요구 안 한 임차인 등, 전액 부담)</label><input type="number" value="' + (parseInt(a.assumedFixed) || '') + '" placeholder="0" onchange="updateDrawerField(\'' + idJs + '\',\'assumedFixed\',this.value)">'
-        + '<label>인수보다 먼저 빠지는 비용 (집행비용·체납세금, 비우면 300만)</label><input type="number" value="' + (parseInt(a.assumedPrior) || '') + '" placeholder="300" onchange="updateDrawerField(\'' + idJs + '\',\'assumedPrior\',this.value)">'
-        + '</div><div class="dr-sub">미납 관리비·수리비는 위 임장 확인표의 금액 칸에 적어요.</div></div>';
+    h += asmInfoHtml(row);
     h += '<div class="dr-sec dr-btns"><button onclick="openCourtQuick(\'' + String(a.caseNo || '').replace(/'/g, "\\'") + '\')">🏛️ 법원경매</button><button onclick="openTankQuick(\'' + String(a.caseNo || '').replace(/'/g, "\\'") + '\',\'' + tankNameHint(a).replace(/'/g, "\\'") + '\')" title="사건번호 복사 없이 이 사건 1건을 자동으로 열어 모아요(확장 필요)">🟦 탱크옥션</button><button onclick="openNaverForRow(\'' + idJs + '\')" title="이 물건 위치·종류·평형(±5평)·연식(−5~+10년)을 맞춘 네이버부동산 매물 지도">🟢 네이버부동산</button><button onclick="openNaverMapForRow(\'' + idJs + '\')" title="네이버 지도에서 이 주소를 검색해 핀이 꽂힌 위치로 열어요">📍 네이버 지도</button><button onclick="openBatoner(\'' + String(a.caseNo || '').replace(/'/g, "\\'") + '\')">🙋 바토너 대리입찰</button></div>';
     if (setDrawerHtml(d, h, row.id)) drawerNavInit(d);
     // 지역 사이클 채우기
@@ -23314,13 +23315,13 @@ function drawerNavInit(d) {
     try {
         var old = d.querySelector('.dr-nav'); if (old) old.remove();
         var defs = [['시세·마진', /예상매도가|필요 마진|예상 낙찰가/], ['생활권', /생활권/], ['실거래', /실거래/], ['사이클', /사이클/], ['건물·도시민박', /건축물대장|도시민박|건물 규모/], ['매물·호가', /매물|호가/]];
-        var heads = Array.prototype.slice.call(d.querySelectorAll('.dr-sec > h4, .dr-wb-h, .dr-band, details.dr-more > summary, h4')).filter(function(h) { return !(h.closest && h.closest('#dr-visit')) && !/직접 확인한 금액/.test(h.textContent || ''); });   // 임장 탭 안의 제목은 전체 내역 이동 대상에서 뺌
+        var heads = Array.prototype.slice.call(d.querySelectorAll('.dr-sec > h4, .dr-wb-h, .dr-band, details.dr-more > summary, h4')).filter(function(h) { return !(h.closest && h.closest('#dr-visit')) && !/인수 금액 \(경매정보 기준\)/.test(h.textContent || ''); });   // 임장 탭 안의 제목은 전체 내역 이동 대상에서 뺌
         var items = [{ t: '요약', el: d.querySelector('.dr-pickcard') || d.firstChild }];
         defs.forEach(function(df) { var el = heads.filter(function(h) { return df[1].test(h.textContent || ''); })[0]; if (el && !items.some(function(x) { return x.el === el; })) items.push({ t: df[0], el: el }); });
         if (items.length < 3) return;
         // 임장 항목(확인표·문답·직접 확인한 금액)은 전체 내역에서 빼고 '임장' 탭에서만 보이게
         var vis = [], vEl = d.querySelector('#dr-visit'); if (vEl) vis.push(vEl);
-        Array.prototype.forEach.call(d.children, function(c) { var h4 = c.classList && c.classList.contains('dr-sec') ? c.querySelector(':scope > h4') : null; if (h4 && /직접 확인한 금액/.test(h4.textContent || '')) vis.push(c); });
+        Array.prototype.forEach.call(d.children, function(c) { var h4 = c.classList && c.classList.contains('dr-sec') ? c.querySelector(':scope > h4') : null; if (h4 && /인수 금액 \(경매정보 기준\)/.test(h4.textContent || '')) vis.push(c); });
         vis.forEach(function(c) { c.classList.add('dr-visit-only'); });
         if (d.__vvId !== d.__lastId) { d.classList.remove('view-visit'); d.__vvId = d.__lastId; }   // 다른 물건을 열면 전체 내역부터
         if (vis.length) items.push({ t: '임장', visit: true });
