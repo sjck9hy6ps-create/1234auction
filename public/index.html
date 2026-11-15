@@ -1654,6 +1654,10 @@ body.show-explain-all #bb-drawer .dr-explain { display:block; }
   body.ui2 #tb-hamburger { display:block; min-width:52px; width:52px; height:48px; padding:0; font-size:30px; line-height:48px; text-align:center; color:#fff; border-radius:10px; flex:0 0 52px; -webkit-tap-highlight-color:rgba(255,255,255,.25); }
   body.ui2 #tb-hamburger:active { background:rgba(255,255,255,.18); }
 }
+
+/* 입찰후보 화면에서 ☰ 메뉴가 안 열리던 문제(2026-11-15): 메뉴는 상단바 안에 있는데 상단바(z 60)가 입찰후보 화면(z 70)보다 아래라 메뉴가 화면 뒤에 열렸음 → 상단바를 위로 */
+body.ui2 #topbar { z-index:75; }
+body.ui2 #tb-menu.open { z-index:76; }
 </style>
 </head>
 <body>
