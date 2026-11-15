@@ -1,0 +1,158 @@
+{
+ "ver": 1,
+ "checkedAt": "2026-11-15",
+ "updatedAt": "2026-11-15",
+ "source": "앱에 내장돼 있던 값을 그대로 옮김(매월 1일 점검이 바뀐 것만 갱신)",
+ "note": "maxWon 1e18 = 끝없음(Infinity). 매매사업자 세금은 종합소득세 기준을 유지(비교과세는 계산에 넣지 않음, 사용자 결정 2026-11-15). 값은 TAX_CONFIG와 같은 구조·단위(원/만원/비율)",
+ "values": {
+  "acquisition": {
+   "baseTierLowMax": 60000,
+   "baseTierMidMax": 90000,
+   "heavyRateAdjusted2": 8,
+   "heavyRateAdjusted3plus": 12,
+   "heavyRateNonAdjusted3": 8,
+   "heavyRateNonAdjusted4plus": 12,
+   "eduTaxAddPct": 0.4,
+   "nongTaxAdd8": 0.6,
+   "nongTaxAdd12": 1,
+   "nongTaxAddBase85": 0.2,
+   "otherPropertyRatePct": 4.6
+  },
+  "propertyTax": {
+   "ratio1HouseTiers": [
+    {
+     "maxWon": 300000000,
+     "ratio": 0.43
+    },
+    {
+     "maxWon": 600000000,
+     "ratio": 0.44
+    },
+    {
+     "maxWon": 1000000000000000000,
+     "ratio": 0.45
+    }
+   ],
+   "ratioMultiHouse": 0.6,
+   "brackets": [
+    {
+     "maxWon": 60000000,
+     "rate": 0.001
+    },
+    {
+     "maxWon": 150000000,
+     "rate": 0.0015
+    },
+    {
+     "maxWon": 300000000,
+     "rate": 0.0025
+    },
+    {
+     "maxWon": 1000000000000000000,
+     "rate": 0.004
+    }
+   ],
+   "eduTaxRate": 0.2,
+   "urbanTaxRate": 0.0014
+  },
+  "compTax": {
+   "deduction1HouseManwon": 120000,
+   "deductionOtherManwon": 90000,
+   "ratio": 0.6,
+   "levyRate": 0.2,
+   "brackets": [
+    {
+     "minManwon": 0,
+     "rate": 0.005,
+     "dedManwon": 0
+    },
+    {
+     "minManwon": 30000,
+     "rate": 0.007,
+     "dedManwon": 60
+    },
+    {
+     "minManwon": 60000,
+     "rate": 0.01,
+     "dedManwon": 240
+    },
+    {
+     "minManwon": 120000,
+     "rate": 0.02,
+     "dedManwon": 1440
+    },
+    {
+     "minManwon": 250000,
+     "rate": 0.03,
+     "dedManwon": 3940
+    },
+    {
+     "minManwon": 500000,
+     "rate": 0.04,
+     "dedManwon": 8940
+    },
+    {
+     "minManwon": 940000,
+     "rate": 0.05,
+     "dedManwon": 18340
+    }
+   ]
+  },
+  "incomeTax": {
+   "brackets": [
+    {
+     "minManwon": 0,
+     "rate": 0.06,
+     "dedManwon": 0
+    },
+    {
+     "minManwon": 1400,
+     "rate": 0.15,
+     "dedManwon": 126
+    },
+    {
+     "minManwon": 5000,
+     "rate": 0.24,
+     "dedManwon": 576
+    },
+    {
+     "minManwon": 8800,
+     "rate": 0.35,
+     "dedManwon": 1544
+    },
+    {
+     "minManwon": 15000,
+     "rate": 0.38,
+     "dedManwon": 1994
+    },
+    {
+     "minManwon": 30000,
+     "rate": 0.4,
+     "dedManwon": 2594
+    },
+    {
+     "minManwon": 50000,
+     "rate": 0.42,
+     "dedManwon": 3594
+    },
+    {
+     "minManwon": 100000,
+     "rate": 0.45,
+     "dedManwon": 6594
+    }
+   ],
+   "localTaxRate": 0.1,
+   "basicDeductionManwon": 250,
+   "shortRateUnder1y": 0.7,
+   "shortRateUnder2y": 0.6,
+   "longTermDeductionPerYear": 0.02,
+   "longTermDeductionMax": 0.3,
+   "heavySurcharge2House": 0.2,
+   "heavySurcharge3House": 0.3
+  },
+  "vat": {
+   "rate": 0.1,
+   "nationalHousingAreaM2": 85
+  }
+ }
+}

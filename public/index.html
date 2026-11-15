@@ -13859,6 +13859,26 @@ function deepCloneTaxConfig(obj) {
     return obj;
 }
 var DEFAULT_TAX_CONFIG = deepCloneTaxConfig(TAX_CONFIG);
+/* 🗓️ 세율 매월 갱신(2026-11-15, 사용자: 매매사업자 세율은 유지하되 매월 갱신) - /tax-rates.json의 값을 TAX_CONFIG에 덮어씀. 매월 1일 점검(예약 작업)이 법이 바뀌었을 때만 이 파일을 고쳐 올림.
+   기존 구조에 있는 항목만 받고(모르는 항목 무시), maxWon 1e18 이상은 끝없음(Infinity)으로 되살림. 못 읽으면 코드 내장 값 그대로 */
+function applyTaxRatesFile(doc) {
+    if (!doc || !doc.values) return false;
+    var revive = function(v) { return (typeof v === 'number' && v >= 1e17) ? Infinity : v; };
+    var merge = function(dst, src) {
+        Object.keys(src).forEach(function(k) {
+            if (!(k in dst)) return;
+            var a = dst[k], b = src[k];
+            if (Array.isArray(a)) { if (Array.isArray(b) && b.length) dst[k] = b.map(function(x) { if (x && typeof x === 'object') { var o2 = {}; Object.keys(x).forEach(function(kk) { o2[kk] = revive(x[kk]); }); return o2; } return revive(x); }); }
+            else if (a && typeof a === 'object') { if (b && typeof b === 'object') merge(a, b); }
+            else if (typeof a === typeof b) dst[k] = b;
+        });
+    };
+    merge(TAX_CONFIG, doc.values);
+    if (doc.updatedAt) TAX_CONFIG.lastUpdated = doc.updatedAt;
+    return true;
+}
+var taxRatesLoaded = false;
+(function loadTaxRatesFile() { try { fetch('/tax-rates.json?v=' + Math.floor(Date.now() / 3600000)).then(function(r) { return r.ok ? r.json() : null; }).then(function(d) { taxRatesLoaded = applyTaxRatesFile(d); }).catch(function() {}); } catch (e) {} })();
 // 계단식(누진) 구간 세금 계산 공용 헬퍼 - brackets:[{maxWon,rate}, ...] 오름차순, 마지막 구간은
 // maxWon:Infinity여야 함. 재산세처럼 "구간마다 그 구간에 걸린 금액에만 그 구간 세율"을 적용하는
 // 방식(공제액을 따로 안 쓰고 실제로 누적 계산)에 씀 - 종부세/양도세처럼 "과세표준×세율-누진공제"
