@@ -2358,7 +2358,7 @@ def winbid_model(R, now):
                 out_["채워진 비율%"] = {"전체": round(float(hit_.mean()) * 100, 1), "수도권": round(float(hit_[_rc == "수도권"].mean()) * 100, 1) if (_rc == "수도권").any() else None, "지방": round(float(hit_[_rc != "수도권"].mean()) * 100, 1) if (_rc != "수도권").any() else None}
             return out_
         _fxr = {}
-        for _cn in (None, "flowR1", "flowR2", "flowR3", "flowT", "afR2", "afC"):
+        for _cn in (None, "afTC", "afT2", "flowLT", "flowT", "afC"):
             try: _fxr[_cn or "현재 모델"] = _fx_eval(_cn)
             except Exception as e_: _fxr[_cn or "현재 모델"] = {"실패": str(e_)[:100]}
         WB_FACTORS = _keep
