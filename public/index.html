@@ -1635,6 +1635,12 @@ body.ui2 #auction-modal.am4 { width:620px; }
   body.ui2 #tb-menu > button, body.ui2 #tb-menu > a.tb-link { text-align:left; padding:9px 10px; font-size:14px; }
   body.ui2 #tb-more-menu { position:static; box-shadow:none; }
 }
+
+/* 텍스트 단순화(2026-11-15) */
+#bb-drawer .dr-explain { display:none; } #bb-drawer.show-explain .dr-explain { display:block; }
+#bb-drawer .dr-ex-btn { opacity:.75; } #bb-drawer .dr-ex-btn.on { opacity:1; background:#e0e7ff; }
+#bb-drawer .dr-warn details > summary::-webkit-details-marker { display:none; }
+#remind-panel .rm-s { display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; cursor:pointer; } #remind-panel .rm-s.open { display:block; }
 </style>
 </head>
 <body>
@@ -22989,7 +22995,7 @@ async function renderBidDrawer() {
             var rt = pe && row.sale ? (pe.pre / row.sale * 100).toFixed(1) + '%' : '-';
             card = '<div class="dr-pickcard ' + (go ? 'go' : 'pass') + '"><div class="pk-v">' + (go ? '🚶 임장 추천' : '패스') + (row.visit && row.visit.why ? ' · ' + bbEsc(row.visit.why) : '') + '</div>'
                 + (pe ? '<div class="pk-big"><span>추천 입찰가 ' + infoI('rec') + '</span><b>' + fmt(pe.bid) + '</b>' + (row.sale ? '<span title="추천가 ÷ 예상매도가(시세)">시세의 <b style="font-size:15px;color:#374151;">' + Math.round(pe.bid / row.sale * 100) + '%</b></span>' : '') + '</div>'
-                    + '<div class="pk-sub">낙찰 가능성 <b>' + pcc + '%</b> · 예상 순이익(세후) <b>' + fmt(pe.net) + '</b> · 마진율(세전) ' + rt + '<br>예상매도가 ' + fmt(row.sale) + ' ' + infoI('sale') + ' · 최저가 ' + fmt(row.minBid) + (row.pick.max ? ' · 순이익 ' + minMarginTxt(row) + '(낙찰 조건 보정 전)이 남는 입찰 상한 ' + fmt(row.pick.max.bid) + (isFirstFloor(row.a) ? ' <span title="1층은 중층보다 평균 8.7% 싸고 편차가 커서 필요 마진을 20% 더 둬요" style="color:#b45309;">(1층 +20%)</span>' : '') : '')  + (row.ownStats ? '<br>같은 단지 같은 평형 거래: 최근 1년 <b>' + (row.ownStats.n12 || 0) + '건</b> · 올해 ' + (row.ownStats.nYear || 0) + '건' + (row.ownStats.lastAgeM != null ? ' · 마지막 ' + row.ownStats.lastAgeM + '개월 전' : '') : '') + '</div>'
+                    + '<div class="pk-sub">낙찰 가능성 <b>' + pcc + '%</b> · 예상 순이익(세후) <b>' + fmt(pe.net) + '</b> · 마진율(세전) ' + rt + '<br>예상매도가 ' + fmt(row.sale) + ' ' + infoI('sale') + ' · 최저가 ' + fmt(row.minBid) + (row.pick.max ? ' · 입찰 상한 ' + fmt(row.pick.max.bid) + (isFirstFloor(row.a) ? ' <span title="1층은 중층보다 평균 8.7% 싸고 편차가 커서 필요 마진을 20% 더 둬요" style="color:#b45309;">(1층 +20%)</span>' : '') : '')  + (row.ownStats ? '<br>같은 단지 같은 평형 거래: 최근 1년 <b>' + (row.ownStats.n12 || 0) + '건</b> · 올해 ' + (row.ownStats.nYear || 0) + '건' + (row.ownStats.lastAgeM != null ? ' · 마지막 ' + row.ownStats.lastAgeM + '개월 전' : '') : '') + '</div>'
                     : '<div class="pk-sub">추천가가 없어요 · 예상매도가 ' + fmt(row.sale) + ' · 최저가 ' + fmt(row.minBid) + '</div>')
                 + '</div>';
             var legacy = h.slice(i1, i2); legacy = legacy.slice(legacy.indexOf('</div>') + 6); // 예전 판정 알약(❌ 제외 등)은 새 판정(맨 위 카드)과 충돌해서 뺌
@@ -23477,6 +23483,20 @@ async function renderVillaDrawer(d, row) {
     }).catch(function() { var box = document.getElementById('vd-cycle'); if (box) box.innerText = '불러오지 못했어요'; });
 }
 function drawerNavInit(d) {
+    // 텍스트 단순화(2026-11-15, 사용자: 텍스트가 너무 많다) - 긴 설명 문장은 기본으로 숨기고 'ⓘ 설명' 버튼으로 켬, 긴 경고는 첫 줄만 보이고 '자세히'로 펼침
+    try {
+        Array.prototype.forEach.call(d.querySelectorAll('.dr-sub'), function(x) {
+            if (x.parentElement === d || x.closest('.vc, .vc-tbl, table, .dr-nav, .dr-h, .dr-warn, summary')) return;
+            if ((x.textContent || '').trim().length > 45) x.classList.add('dr-explain');
+        });
+        Array.prototype.forEach.call(d.querySelectorAll('.dr-warn'), function(w) {
+            if (w.dataset.sm || (w.textContent || '').length < 110) return; w.dataset.sm = '1';
+            var parts = w.innerHTML.split(/<br\s*\/?>/i); if (parts.length < 2) return;
+            w.innerHTML = '<details><summary style="cursor:pointer;list-style:none;">' + parts[0] + ' <span class="dr-sub" style="display:inline;color:#2563eb;">자세히 ▾</span></summary>' + parts.slice(1).join('<br>') + '</details>';
+        });
+        var tb0 = d.querySelector('.dr-top-btns');
+        if (tb0 && !tb0.querySelector('.dr-ex-btn')) { var eb = document.createElement('button'); eb.className = 'dr-ex-btn'; eb.textContent = 'ⓘ 설명'; eb.onclick = function() { d.classList.toggle('show-explain'); eb.classList.toggle('on', d.classList.contains('show-explain')); }; tb0.appendChild(eb); }
+    } catch (e) {}
     try {
         var old = d.querySelector('.dr-nav'); if (old) old.remove();
         var defs = [['시세·마진', /예상매도가|필요 마진|예상 낙찰가/], ['생활권', /생활권/], ['실거래', /실거래/], ['사이클', /사이클/], ['건물·도시민박', /건축물대장|도시민박|건물 규모/], ['매물·호가', /매물|호가/]];
@@ -31339,6 +31359,7 @@ async function savePredSnapshots() {
 }
 // 예전 누적 투자 리포트 주소(/dashboard.html → /#assets)로 들어오면 내 자산 화면을 바로 엶
 window.addEventListener('load', function() { if (location.hash === '#assets') setTimeout(function() { openMyAssetsPanel(); }, 1500); });
+document.addEventListener('click', function(e) { var t = e.target && e.target.closest && e.target.closest('#remind-panel .rm-s'); if (t) t.classList.toggle('open'); });
 function closeMyAssetsPanel() { document.getElementById('my-assets-panel').style.display = 'none'; }
 var maEditId = null;
 function maEsc(t) { return String(t == null ? '' : t).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }
