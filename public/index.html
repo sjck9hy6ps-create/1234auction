@@ -23085,7 +23085,7 @@ function visitItems(row) {
     var lienFlag = R && (R.flags || []).filter(function(f) { return /유치권/.test(f.k || ''); })[0];
     V.push({ k: 'lien', t: '🚪 유치권', app: R ? (lienFlag ? '⚠️ 탱크옥션 글에 유치권 언급: ' + E(String(lienFlag.note || '').slice(0, 70)) : '서류에는 유치권 신고가 보이지 않아요') : null, ask: '현관·공사 흔적에 유치권 안내문이 붙어 있는지', none: '권리분석이 없어요' });
     V.push({ k: 'mgmt', t: '🧾 관리비 체납', app: '앱 가정 ' + (a.unpaidMgmtFee ? fm(parseInt(a.unpaidMgmtFee)) : '0 (입력 없음)'), ask: '관리사무소에서 확인한 체납액(공용부분)·연체료는 얼마인지' });
-    V.push({ k: 'repair', t: '🔧 수리 상태·수리비', app: '앱 수리비 가정 ' + fm(parseInt(a.repair) || 0) + '<br><span class="dr-sub">참고: 11/14 호가 분석에서 수리 표시 호가의 프리미엄은 약 +3%(61건, 표본 적음) - 수리비만큼 가격으로 안 돌아올 수 있어요</span>', ask: '현장에서 본 수리 범위로 견적하면 얼마인지(도배·장판·누수·곰팡이)' });
+    V.push({ k: 'repair', t: '🔧 수리 상태·수리비', app: '앱 수리비 가정 ' + fm((function() { try { return parseInt(a.repair) || effRepairFee(a, row.type, row.pyung, a.buildYear || row.estBuildYear || null) || 0; } catch (e) { return parseInt(a.repair) || 0; } })()) + (a.repairFromField ? ' (집 상태 답변 기준)' : (parseInt(a.repair) ? ' (직접 입력)' : ' (연식 기준)')) + '<br><span class="dr-sub">참고: 11/14 호가 분석에서 수리 표시 호가의 프리미엄은 약 +3%(61건, 표본 적음) - 수리비만큼 가격으로 안 돌아올 수 있어요</span>', ask: '현장에서 본 수리 범위로 견적하면 얼마인지(도배·장판·누수·곰팡이)' });
     var l = typeof listingStatus === 'function' ? listingStatus(a) : null;
     V.push({ k: 'price', t: '💰 시세·수리 후 가격', app: '앱 예상매도가 <b>' + fm(row.sale) + '</b>' + (l && l.st === 'yes' ? ' · 네이버 매물 ' + l.n + '건' : (l && l.st === 'none' ? ' · 네이버 매물 없음' : ' · 호가 미확인')) + (!isV && row.ownStats ? ' · 이 단지 1년 거래 ' + (row.ownStats.n12 || 0) + '건' : '') + (a.fieldCheck && a.fieldCheck.ask ? ' · 입력된 최저 호가 ' + fm(parseInt(a.fieldCheck.ask)) : ''), ask: '중개사 2곳이 말한 같은 평형 호가·수리 후 가격(적어 두면 앱 값과 비교돼요)' });
     var elv = a.elevatorCnt != null && a.elevatorCnt !== '' ? parseInt(a.elevatorCnt) : null;
@@ -23122,7 +23122,7 @@ function fieldChecklistHtml(row) {
     var memo = function(x, ph) { var s = st[x.k]; return s && s.s === 'bad' ? '<input type="text" class="vc-in" id="vc-' + x.k + '" value="' + E(s.v || '') + '" placeholder="' + ph + '" onchange="visitChkNote(\'' + idJs + '\',\'' + x.k + '\',this.value)">' : ''; };
     var NUM = { mgmt: { f: 'unpaidMgmtFee' }, repair: { f: 'repair' } };
     var numRow = function(x) {
-        var s = st[x.k] || {}, cur = parseInt(a[NUM[x.k].f]) || '';
+        var s = st[x.k] || {}, cur = (x.k === 'repair' && a.repairFromField) ? '' : (parseInt(a[NUM[x.k].f]) || '');   // 집 상태 답변으로 자동 채워진 수리비는 '현장 값'으로 보이지 않게
         return '<div class="vc-n"><span>현장 값</span><input type="text" inputmode="numeric" class="vc-in vc-num" value="' + E(cur === '' ? '' : String(cur)) + '" placeholder="만원" onchange="visitNumSet(\'' + idJs + '\',\'' + x.k + '\',this.value)"><span>만원</span>'
             + (s.applied != null ? '<span class="vc-ap">✔ 계산에 반영 <button class="vc-u" onclick="visitChkUndo(\'' + idJs + '\',\'' + x.k + '\')">↩ 되돌리기</button></span>' : btn(x, 'ok', '✅ 앱과 같음')) + '</div>';
     };
