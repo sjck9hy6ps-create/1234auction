@@ -45,10 +45,13 @@ df["unit"] = df["region"].astype(str) + "|" + df["dong"].astype(str).str.split()
 df["sido"] = df["region"].astype(str).str.split().str[0]
 last_full = int(df["ym"].max()) - 1; df = df[df["ym"] <= last_full]
 print("실거래", len(df), "건", int(df.ym.min()), "~", last_full)
-IDX, CNT = {}, {}
+IDX, CNT, RAW = {}, {}, {}
+def to_ym(k): return (int(k) // 12) * 100 + int(k) % 12 + 1   # analyze-cycle의 월 번호(연*12+월-1) → YYYYMM
 for name, sub in [("전국", df)] + [(s, g) for s, g in df.groupby("sido") if len(g) > 20000]:
     s, n = cyc.fe_index(sub, "unit", "ym"); s = s[n.reindex(s.index).fillna(0) >= cyc.MIN_UNITS_PER_MONTH]
-    if len(s) >= 36: IDX[name] = cyc.smooth_series(s, "trail"); CNT[name] = sub.groupby("ym").size().reindex(IDX[name].index).fillna(0)
+    if len(s) >= 36:
+        RAW[name] = s; sm = cyc.smooth_series(s, "trail"); cn = sub.groupby("ym").size().reindex(sm.index).fillna(0)
+        sm.index = [to_ym(k) for k in sm.index]; cn.index = sm.index; IDX[name] = sm; CNT[name] = cn
 print("지수 만든 지역", list(IDX))
 # A) 기준금리 변동 달 기준
 chg = []
@@ -75,7 +78,8 @@ for lab, ym in CYC:
     if row: print(f"{lab}: 전국 {ch(nat, ym, 12)*100:+.1f}% · 시도 중앙 {np.median(list(row.values())):+.1f}% · 오른 시도 {sum(v>0 for v in row.values())}/{len(row)}")
     else: print(f"{lab}: 이후 12개월 자료 없음(전국 이후 6개월 {ch(nat, ym, 6)*100:+.1f}%)")
 # B) 지수 전환점 vs 금리 방향
-pts = cyc.zigzag(cyc.smooth_series(nat, "center"), 0.03)
+pts = cyc.zigzag(cyc.smooth_series(RAW["전국"], "center"), 0.03)
+for p_ in pts: p_["ym"] = to_ym(p_["ym"])
 print("\n[B] 전국 지수 전환점(3% 되돌림)과 그때 기준금리")
 for p in pts:
     ym = p["ym"]; print(f"{p['type']:6s} {ym}  기준금리 {gm(base_m, ym):.2f}% (6개월 전 대비 {gm(base_m, ym) - gm(base_m, ym, 6):+.2f}%p, 12개월 전 대비 {gm(base_m, ym) - gm(base_m, ym, 12):+.2f}%p)")
