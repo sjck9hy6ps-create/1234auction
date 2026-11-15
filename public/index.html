@@ -22758,7 +22758,7 @@ function drawerTrades(row) {
 /* 🔧 수리 가정 3가지별 입찰 상한 (2026-10-10, 사용자: "입찰후보 상세에도 도배·장판만 할 경우를 표기") - 같은 예상매도가·같은 비용 계산에서 수리비만 전체/중간/도배·장판으로 바꿔 입찰 상한·추천가를 다시 구함 */
 function repairScenarios(row) {
     if (!row || row.type !== 'apt' || !row.sale || !row.minBid) return null;
-    var a = row.a, sig = [boardBaseSig(a), a.repair || '', JSON.stringify(a.fieldCheck || {}), row.sale].join('|');
+    var a = row.a, sig = [boardBaseSig(a), a.repair || '', JSON.stringify(a.fieldCheck || {}), row.sale, row.recBid, row.winbid ? row.winbid.price : '', 'v2'].join('|');   // 카드 추천가·예상 낙찰가가 바뀌면 다시 계산(카드와 같은 값 유지)
     if (row._repSc && row._repSc.sig === sig) return row._repSc.list;
     var by = a.buildYear || row.estBuildYear || null;
     var full = effRepairFee(a, 'apt', row.pyung, by), basic = basicRepairFee(row.pyung), half = Math.round((full + basic) / 2);
@@ -22766,7 +22766,12 @@ function repairScenarios(row) {
     var levels = [['전체 수리' + (userRep ? ' (직접 입력)' : ' (앱 기본)'), full], ['중간 수리', half], ['도배·장판만', basic]];
     var list = levels.map(function(lv) {
         var r3 = null, pl = null;
-        try { r3 = computeBidBoardRow(Object.assign({}, a, { repair: lv[1] })); pl = bidPlanFor(r3, false); } catch (e) {}
+        try {
+            /* 2026-11-15: 카드와 같은 값이 나오게 - 처음부터 다시 계산(computeBidBoardRow)하면 동네 인기 등급(row.pop) 같은 '이미 불러온 자료'가 빠져 예상 입찰자 수·낙찰가가 달라졌음.
+               이 물건의 행(row)을 복사해 수리비만 바꿔 같은 방식(finalizeBidBoardRow)으로 다시 계산 */
+            r3 = Object.assign({}, row, { a: Object.assign({}, a, { repair: lv[1] }), notes: (row.notes || []).slice(), warns: (row.warns || []).slice() });
+            finalizeBidBoardRow(r3); pl = bidPlanFor(r3, false);
+        } catch (e) { r3 = null; try { r3 = computeBidBoardRow(Object.assign({}, a, { repair: lv[1] })); pl = bidPlanFor(r3, false); } catch (e2) {} }
         return { label: lv[0], rep: lv[1], rec: r3 && r3.recBid, max: pl && pl.max ? pl.max.bid : null, p: r3 && r3.winbid ? r3.winbid.probRec : null };
     });
     row._repSc = { sig: sig, list: list };
