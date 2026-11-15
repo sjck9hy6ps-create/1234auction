@@ -23163,7 +23163,7 @@ function villaCompsHtml(row) {
     if (!rows.length) return h + '<div class="dr-warn">이 생활권(반경 1km)에서 최근 18개월 비슷한 면적 빌라 거래가 한 건도 없어요 - 팔릴 근거가 약해요(좌표를 모르는 건물 ' + c.noCoord + '곳은 제외됨)</div></div>';
     var n500 = rows.filter(function(r) { return r.dist <= 500; }).length, n6 = rows.filter(function(r) { return now - r.ts < 183 * D; }).length;
     var med = medOf(norm), mine = med ? med * c.area : null;
-    var est = null; try { var ev = villaEval(row); est = ev && ev.ve && ev.ve.est; } catch (e) {}
+    var est = null; try { var ev = villaEval(row); est = (ev && ev.ve && ev.ve.est) || row.sale || null; } catch (e) { est = row.sale || null; }   // 빌라 계산이 아직 없으면 목록의 저장된 예상매도가
     h += '<div class="vc-app">비슷한 거래 <b>' + rows.length + '건</b> (반경 500m ' + n500 + '건 · 최근 6개월 ' + n6 + '건) · 가장 최근 <b>' + Math.max(0, Math.round((now - rows[0].ts) / D)) + '일 전</b>'
         + (med ? '<br>㎡당 중앙값 <b>' + (Math.round(med * 10) / 10).toLocaleString() + '만</b> <span class="dr-sub" style="display:inline;">(직거래·신축 제외 ' + norm.length + '건)</span> → 이 물건 면적(' + Math.round(c.area) + '㎡) 환산 <b>' + fmt(mine) + '</b>' + (est ? ' · 앱 예상매도가 <b>' + fmt(est) + '</b> (' + (est >= mine ? '+' : '') + Math.round((est / mine - 1) * 1000) / 10 + '%)' : '') : '<br><span style="color:#b45309;">직거래·신축을 뺀 거래가 없어서 중앙값을 못 구했어요</span>')
         + (nearAge.length >= 3 ? '<br>준공 ±8년(' + (subjBy - 8) + '~' + (subjBy + 8) + ') 거래만: ' + nearAge.length + '건 · ㎡당 중앙값 <b>' + (Math.round(medOf(nearAge) * 10) / 10).toLocaleString() + '만</b> → 환산 <b>' + fmt(medOf(nearAge) * c.area) + '</b>' : '') + '</div>';
