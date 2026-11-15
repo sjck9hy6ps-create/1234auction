@@ -64,6 +64,12 @@ for an in ("b0", "r3", "last"):
         variants[f"상한 {an}×(1+{int(u*100)}%)"] = (lambda an_, u_: (lambda r: min(r["b0"] * r["adj"], r[an_] * (1 + u_))))(an, u)
 variants["거래량 급감 시 흐름 반으로"] = lambda r: r["b0"] * (1 + (r["adj"] - 1) * (0.5 if (r["rate"] > 0 and r["vol"] < -0.5) else 1.0))
 variants["거래량 급감 시 흐름 0"] = lambda r: r["b0"] * (1.0 if (r["rate"] > 0 and r["vol"] < -0.5) else r["adj"])
+def _vol0(r): return r["rate"] > 0 and r["vol"] < -0.5
+for u in (0.03, 0.04, 0.05):
+    variants[f"[조합] 거래량 급감 시 흐름 0 + 상한 b0×(1+{int(u*100)}%)"] = (lambda u_: (lambda r: min(r["b0"] * (1.0 if _vol0(r) else r["adj"]), r["b0"] * (1 + u_))))(u)
+    variants[f"[조합] 거래량 급감 시 흐름 반 + 상한 b0×(1+{int(u*100)}%)"] = (lambda u_: (lambda r: min(r["b0"] * (1 + (r["adj"] - 1) * (0.5 if _vol0(r) else 1.0)), r["b0"] * (1 + u_))))(u)
+variants["상한 b0×(1+3%)"] = lambda r: min(r["b0"] * r["adj"], r["b0"] * 1.03)
+variants["상한 b0×(1+5%)"] = lambda r: min(r["b0"] * r["adj"], r["b0"] * 1.05)
 variants["최근 3개월 중위값만"] = lambda r: r["r3"]
 variants["가장 최근 거래만"] = lambda r: r["last"]
 
