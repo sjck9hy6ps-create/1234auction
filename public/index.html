@@ -22975,6 +22975,8 @@ function drawerPriceGridHtml(row) {
     h += item('예상 매도가 ' + infoI('sale'), row.sale ? fmt(row.sale) : '-', row.sale && row.minBid ? '현재가의 ' + Math.round(row.sale / row.minBid * 100) + '%' : '');
     h += item('최근거래가', tr && tr.p > 0 ? fmt(tr.p) : '-', tr && tr.d ? (function(d) { var dt = new Date(d); return dt.getFullYear() + '.' + ('0' + (dt.getMonth() + 1)).slice(-2) + '.' + ('0' + dt.getDate()).slice(-2); })(tr.d) + (isNaN(tr.f) ? '' : ' · ' + tr.f + '층') + (tr.direct ? ' · 직거래' : '') : '같은 단지 같은 평형 거래 없음');
     h += item('추천 입찰가 ' + infoI('rec'), pe && pe.bid ? fmt(pe.bid) : '-', pe && pe.bid && row.sale ? '시세의 ' + Math.round(pe.bid / row.sale * 100) + '%' : (pe ? '' : '추천가 없음'), pe && pe.bid ? '#15803d' : '');
+    var pcc2 = pe && pe.p != null ? Math.round(pe.p * 100) : null;
+    h += item('낙찰 가능성', pcc2 != null ? pcc2 + '%' : '-', pcc2 != null ? '추천 입찰가로 낙찰될 확률' : '', pcc2 == null ? '' : (pcc2 >= 60 ? '#15803d' : (pcc2 >= 35 ? '#b45309' : '#b91c1c')));
     h += item('예상 낙찰가', row.winbid && row.winbid.price ? fmt(row.winbid.price) : '-', row.winbid && row.winbid.price && row.sale ? '시세의 ' + Math.round(row.winbid.price / row.sale * 100) + '%' : '', '');
     return h + '</div></div>';
 }
@@ -23105,7 +23107,7 @@ async function renderBidDrawer() {
             var pe = row.pick && row.pick.ev, go = row.visit && row.visit.go, pcc = pe ? Math.round(pe.p * 100) : null;
             var rt = pe && row.sale ? (pe.pre / row.sale * 100).toFixed(1) + '%' : '-';
             card = '<div class="dr-pickcard ' + (go ? 'go' : 'pass') + '"><div class="pk-v">' + (go ? '🚶 임장 추천' : '패스') + (row.visit && row.visit.why ? ' · ' + bbEsc(row.visit.why) : '') + '</div>'
-                + (pe ? '<div class="pk-sub">낙찰 가능성 <b>' + pcc + '%</b> · 예상 순이익(세후) <b>' + fmt(pe.net) + '</b> · 마진율(세전) ' + rt + (row.pick.max ? '<br>입찰 상한 ' + fmt(row.pick.max.bid) + (isFirstFloor(row.a) ? ' <span title="1층은 중층보다 평균 8.7% 싸고 편차가 커서 필요 마진을 20% 더 둬요" style="color:#b45309;">(1층 +20%)</span>' : '') : '') + (row.ownStats ? '<br>같은 단지 같은 평형 거래: 최근 1년 <b>' + (row.ownStats.n12 || 0) + '건</b> · 올해 ' + (row.ownStats.nYear || 0) + '건' + (row.ownStats.lastAgeM != null ? ' · 마지막 ' + row.ownStats.lastAgeM + '개월 전' : '') : '') + '</div>'
+                + (pe ? '<div class="pk-sub">예상 순이익(세후) <b>' + fmt(pe.net) + '</b> · 마진율(세전) ' + rt + (row.pick.max ? '<br>입찰 상한 ' + fmt(row.pick.max.bid) + (isFirstFloor(row.a) ? ' <span title="1층은 중층보다 평균 8.7% 싸고 편차가 커서 필요 마진을 20% 더 둬요" style="color:#b45309;">(1층 +20%)</span>' : '') : '') + (row.ownStats ? '<br>같은 단지 같은 평형 거래: 최근 1년 <b>' + (row.ownStats.n12 || 0) + '건</b> · 올해 ' + (row.ownStats.nYear || 0) + '건' + (row.ownStats.lastAgeM != null ? ' · 마지막 ' + row.ownStats.lastAgeM + '개월 전' : '') : '') + '</div>'
                     : '<div class="pk-sub">추천가가 없어요</div>')
                 + '</div>';
             var legacy = h.slice(i1, i2); legacy = legacy.slice(legacy.indexOf('</div>') + 6); // 예전 판정 알약(❌ 제외 등)은 새 판정(맨 위 카드)과 충돌해서 뺌
