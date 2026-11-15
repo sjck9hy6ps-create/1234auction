@@ -7,6 +7,7 @@
 """
 import os, re, json, importlib.util
 import requests
+WRITE_HDR = {"x-write-key": os.environ["WRITE_KEY"]} if os.environ.get("WRITE_KEY") else {}   # 🔑 쓰기 열쇠(강제 단계에서 필요)
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 _spec = importlib.util.spec_from_file_location("ab", os.path.join(HERE, "analyze-bidcases.py"))
@@ -56,7 +57,7 @@ def main():
         part = fixed[i:i + 50]
         for attempt in range(3):
             try:
-                r = requests.post(f"{SITE}/api/auction", json=part, timeout=120)
+                r = requests.post(f"{SITE}/api/auction", json=part, headers=WRITE_HDR, timeout=120)
                 if r.status_code == 200:
                     ok += len(part); break
                 print("   저장 실패", r.status_code, r.text[:200])

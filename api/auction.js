@@ -24,6 +24,8 @@
 // myAssets(2026-10): 💼 내 자산 탭 - 보유 부동산·올해 소득(몇 건뿐이라 저장량 부담 없음)
 const KINDS = { auctions: 'auctions', siteNotes: 'siteNotes', bidCases: 'bidCases', myAssets: 'myAssets', feedback: 'feedback', listingRaw: 'listingRaw', houseImg: 'houseImg', aiStory: 'aiStory' }; // listingRaw: 크롬 확장이 보낸 네이버 매물 목록 원문 수신함(2026-10-18) - 앱이 읽어 반영한 뒤 지움 // feedback: 앱 안 '수정 요청'(2026-10-11)
 
+import { rejectWrite, writeAuthMode } from './_auth.js';
+
 export default async function handler(req, res) {
     const REDIS_URL = process.env.UPSTASH_REDIS_URL;
     const REDIS_TOKEN = process.env.UPSTASH_REDIS_TOKEN;
@@ -98,6 +100,17 @@ export default async function handler(req, res) {
     }
 
     try {
+        // 🔑 쓰기 인증 - 모니터링 단계에서는 열쇠 없는 쓰기도 허용하고 날짜별 횟수만 기록, 강제 단계에서는 401
+        if (req.method === 'GET' && req.query.diag === 'writeauth') {
+            res.setHeader('Cache-Control', 'no-store');
+            let stats = {};
+            try { const flat = await cmd(['HGETALL', 'writeauth']); for (let i = 0; i + 1 < (flat || []).length; i += 2) stats[flat[i]] = flat[i + 1]; } catch (e) {}
+            return res.status(200).json({ mode: writeAuthMode(), stats });
+        }
+        if (req.method === 'POST' || req.method === 'DELETE') {
+            const day = new Date(Date.now() + 9 * 3600000).toISOString().slice(0, 10);
+            if (rejectWrite(req, res, (reason) => { cmd(['HINCRBY', 'writeauth', day + '|' + reason + '|' + kind, 1]).catch(() => {}); cmd(['HSET', 'writeauth', 'last|' + reason, JSON.stringify({ at: new Date().toISOString(), ua: String(req.headers['user-agent'] || '').slice(0, 80), kind })]).catch(() => {}); })) return;
+        }
         await ensureMigrated();
 
         if (req.method === 'GET' && req.query.diag === 'usage') {

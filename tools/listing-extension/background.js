@@ -1,5 +1,7 @@
 // 호가 보내기 - 백그라운드: 매물 목록 원문을 경매 앱 수신함(kind=listingRaw)에 올리고, 열려 있는 앱 탭에 바로 알려 반영시킨 뒤, 앱이 반영한 결과를 기다려 돌려줌
 const APP = 'https://1234auction.vercel.app';
+// 🔑 저장 열쇠(2026-11-15): 앱 탭이 보관해 둔 열쇠를 쓰기 요청 헤더에 붙임(없으면 열쇠 없이 보냄 - 서버가 모니터링 단계면 허용)
+async function wkHeader() { try { const o = await chrome.storage.local.get('writeKey'); return o && o.writeKey ? { 'x-write-key': o.writeKey } : {}; } catch (e) { return {}; } }
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   // 모으기가 끝나면 그 사건을 보려고 열었던 탱크옥션 팝업창(상세·참고자료)을 모두 닫음. 일반 상세 페이지·앱 탭은 닫지 않음
@@ -39,7 +41,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     (async () => {
       const QID = 'queue', loc = chrome.storage.local, ses = chrome.storage.session;
       const qLoad = async () => { const list = await fetch(APP + '/api/auction?kind=listingRaw', { cache: 'no-store' }).then((x) => x.json()); const it = Array.isArray(list) ? list.find((x) => x.id === QID) : null; let q = null; try { q = it && JSON.parse(it.text); } catch (e) {} return { it, q }; };
-      const qSave = async (it, q) => { await fetch(APP + '/api/auction?kind=listingRaw', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: QID, at: (it && it.at) || new Date().toISOString(), kind: 'queue', url: '', text: JSON.stringify(q), done: true, appliedAt: new Date().toISOString() }) }); };
+      const qSave = async (it, q) => { await fetch(APP + '/api/auction?kind=listingRaw', { method: 'POST', headers: Object.assign({ 'Content-Type': 'application/json' }, await wkHeader()), body: JSON.stringify({ id: QID, at: (it && it.at) || new Date().toISOString(), kind: 'queue', url: '', text: JSON.stringify(q), done: true, appliedAt: new Date().toISOString() }) }); };
       const norm = (x) => String(x || '').replace(/타경/g, '-').replace(/\s+/g, '');
       const openTid = async (tid, caseNo) => { await ses.set({ ['auto_' + tid]: { at: Date.now(), caseNo: caseNo || '' } }); await chrome.windows.create({ url: 'https://www.tankauction.com/ca/inc/component/popup/caView.php?tid=' + encodeURIComponent(tid) + '&chkNo=1&TotNo=1&opener_1st_no=' + encodeURIComponent(tid), type: 'popup', width: 1300, height: 900 }); };
       // 다음 사건 열기: 번호를 아는 미완료 사건 1건(하루 30건 상한). wait=true면 8초 뒤
@@ -96,7 +98,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         if (msg.type === 'clickFail') {
           await ses.remove('clickOpen'); await ses.remove('single');
           await loc.set({ qStatus: { step: '⛔ 목록의 줄을 눌렀지만 사건 창이 안 열렸어요 - 크롬 팝업 허용(tankauction.com) 확인', tid: '', caseNo: String(msg.caseNo || ''), at: Date.now() }, chainStop: Date.now() });
-          try { await fetch(APP + '/api/auction?kind=listingRaw', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: Date.now() + '_clk', at: new Date().toISOString(), kind: 'probe', url: '', text: '【줄클릭실패】 ' + msg.caseNo + '\n' + String(msg.html || '') }) }); } catch (e) {}
+          try { await fetch(APP + '/api/auction?kind=listingRaw', { method: 'POST', headers: Object.assign({ 'Content-Type': 'application/json' }, await wkHeader()), body: JSON.stringify({ id: Date.now() + '_clk', at: new Date().toISOString(), kind: 'probe', url: '', text: '【줄클릭실패】 ' + msg.caseNo + '\n' + String(msg.html || '') }) }); } catch (e) {}
           sendResponse({ ok: true }); return;
         }
         if (msg.type === 'autoStart') {
@@ -160,7 +162,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       const id = Date.now() + '_' + Math.random().toString(36).slice(2, 7);
       const body = { id, at: new Date().toISOString(), url: msg.url || '', text: String(msg.text || '').slice(0, 200000) };
       if (msg.kind === 'tank' || msg.kind === 'probe') body.kind = msg.kind;  // 탱크옥션 상세 글 - 앱이 권리분석으로 읽음
-      const r = await fetch(APP + '/api/auction?kind=listingRaw', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+      const r = await fetch(APP + '/api/auction?kind=listingRaw', { method: 'POST', headers: Object.assign({ 'Content-Type': 'application/json' }, await wkHeader()), body: JSON.stringify(body) });
       if (!r.ok) { sendResponse({ ok: false, status: r.status }); return; }
       // 열려 있는 앱 탭에 즉시 알림(새로고침·대기 없이 바로 반영)
       let tabs = [];
@@ -186,7 +188,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (!msg || msg.type !== 'sendVillaAsks') return;
   (async () => {
     try {
-      const r = await fetch(APP + '/api/villa-asks', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ lat: msg.lat, lon: msg.lon, zoom: msg.zoom, enc: msg.enc, url: msg.url, items: msg.items }) });
+      const r = await fetch(APP + '/api/villa-asks', { method: 'POST', headers: Object.assign({ 'Content-Type': 'application/json' }, await wkHeader()), body: JSON.stringify({ lat: msg.lat, lon: msg.lon, zoom: msg.zoom, enc: msg.enc, url: msg.url, items: msg.items }) });
       const j = await r.json().catch(() => ({}));
       sendResponse(r.ok && j.ok ? { ok: true, n: j.n } : { ok: false, error: j.error || ('HTTP ' + r.status) });
     } catch (e) { sendResponse({ ok: false, error: String(e) }); }

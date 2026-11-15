@@ -68,12 +68,12 @@ if (!dry && imgJobs.length) {  // 줄인 그림 올리기(사건 id = 키). 저�
   let sum = 0;
   for (const j of imgJobs) {
     const im = shrink(path.join(DIR, j.f)); sum += im.bytes;
-    const r = await fetch(SITE + '/api/auction?kind=houseImg', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: j.a.id, caseNo: j.a.caseNo, img: im.dataUrl, file: j.f, mtime: j.mtime, at: Date.now() }) });
+    const r = await fetch(SITE + '/api/auction?kind=houseImg', { method: 'POST', headers: { 'Content-Type': 'application/json', ...(process.env.WRITE_KEY ? { 'x-write-key': process.env.WRITE_KEY } : {}) }, body: JSON.stringify({ id: j.a.id, caseNo: j.a.caseNo, img: im.dataUrl, file: j.f, mtime: j.mtime, at: Date.now() }) });
     if (!r.ok) { console.error('그림 저장 실패', j.a.caseNo, r.status, (await r.text()).slice(0, 120)); process.exit(1); }
   }
   console.log(`🖼️ 그림 ${imgJobs.length}장 첨부 (합계 ${Math.round(sum / 1024)}KB)`);
 }
 if (!dry && toSave.length) {
-  for (let i = 0; i < toSave.length; i += 15) { const r = await fetch(SITE + '/api/auction', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(toSave.slice(i, i + 15)) }); if (!r.ok) { console.error('저장 실패', r.status); process.exit(1); } }
+  for (let i = 0; i < toSave.length; i += 15) { const r = await fetch(SITE + '/api/auction', { method: 'POST', headers: { 'Content-Type': 'application/json', ...(process.env.WRITE_KEY ? { 'x-write-key': process.env.WRITE_KEY } : {}) }, body: JSON.stringify(toSave.slice(i, i + 15)) }); if (!r.ok) { console.error('저장 실패', r.status); process.exit(1); } }
   console.log(`✅ ${toSave.length}건 앱에 반영했어요. 앱을 새로고침하세요.`);
 } else if (dry) console.log(`(미리보기) ${toSave.length}건을 반영할 수 있어요.`);

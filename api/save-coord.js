@@ -4,6 +4,7 @@
    fire-and-forget으로 호출해서 결과를 영구 저장합니다.
 ════════════════════════════════════ */
 import { createClient } from '@supabase/supabase-js';
+import { rejectWrite } from './_auth.js';
 
 const supabase = createClient(
   process.env.SUPABASE_URL,
@@ -16,6 +17,7 @@ export default async function handler(req, res) {
   if (req.method !== 'POST') {
     return res.status(405).json({ error: 'POST only' });
   }
+  if (rejectWrite(req, res, (reason) => console.warn('쓰기 열쇠 ' + reason + ': ' + req.url))) return;   // 🔑 쓰기 인증(모니터링 단계는 기록만)
 
   const { cacheKey, lat, lon, sigunguCd, bjdongCd } = req.body || {};
   if (!cacheKey || !lat || !lon) {

@@ -5,13 +5,15 @@
    스냅샷 = { at, lat, lon, zoom, url, items: [ 줄 묶음 문자열 ] } - 한 지도 화면 안의 호가 목록 원문(해석은 나중에 python이 함)
 ════════════════════════════════════ */
 import { createClient } from '@supabase/supabase-js';
+import { rejectWrite } from './_auth.js';
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY);
 
 export default async function handler(req, res) {
   res.setHeader('Cache-Control', 'no-store');
   res.setHeader('Access-Control-Allow-Origin', '*');
-  if (req.method === 'OPTIONS') { res.setHeader('Access-Control-Allow-Methods', 'POST'); res.setHeader('Access-Control-Allow-Headers', 'Content-Type'); return res.status(204).end(); }
+  if (req.method === 'OPTIONS') { res.setHeader('Access-Control-Allow-Methods', 'POST'); res.setHeader('Access-Control-Allow-Headers', 'Content-Type, x-write-key'); return res.status(204).end(); }
   if (req.method !== 'POST') return res.status(405).json({ error: 'POST only' });
+  if (rejectWrite(req, res, (reason) => console.warn('쓰기 열쇠 ' + reason + ': ' + req.url))) return;   // 🔑 쓰기 인증(모니터링 단계는 기록만)
   const b = req.body || {};
   const lat = Number(b.lat), lon = Number(b.lon), zoom = Number(b.zoom);
   if (!(lat > 33 && lat < 39 && lon > 124 && lon < 132)) return res.status(400).json({ error: '지도 중심 좌표가 필요해요(주소창의 ms=위도,경도,확대)' });

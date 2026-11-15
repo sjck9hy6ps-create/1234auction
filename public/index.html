@@ -1681,6 +1681,7 @@ body.tb-menu-open.ui2 #tb-menu.open { z-index:9301; }
         <button onclick="openWinbidDong(); closeTbMenus();" title="예상 낙찰가·추천 입찰가가 실제 낙찰가와 잘 맞은 법정동">📍 동별 정확도</button>
         <button onclick="openGuide(); closeTbMenus();">📘 사용법</button>
         <a class="tb-link" href="/backup.html">📦 백업</a>
+        <button onclick="setWriteKey(); closeTbMenus();" title="저장·삭제에 쓰는 열쇠(기기마다 한 번 입력)">🔑 저장 열쇠</button>
         <button id="tb-remind-btn" onclick="toggleRemindPanel(); closeTbMenus();" title="지금 해야 할 일">🔔<span id="tb-remind-count" style="display:none;"></span></button>
     </nav>
     <button id="tb-hamburger" onclick="toggleTbMenuMobile()" aria-label="메뉴">☰</button>
@@ -2946,6 +2947,45 @@ body.tb-menu-open.ui2 #tb-menu.open { z-index:9301; }
     <div id="panel-body"></div>
 </div>
 <script>
+/* 🔑 저장 열쇠(2026-11-15) - 쓰기(저장·삭제) 요청에 기기에 저장된 열쇠를 헤더(x-write-key)로 자동으로 붙임. 서버가 강제 모드일 때 열쇠가 없거나 틀리면 401 → 안내.
+   열쇠는 ☰ 메뉴 → 🔑 저장 열쇠에서 기기마다 한 번 입력(브라우저 저장 공간에만 보관) */
+(function() {
+    var _fetch = window.fetch, lastWarn = 0;
+    window.fetch = function(input, init) {
+        try {
+            var url = typeof input === 'string' ? input : ((input && input.url) || '');
+            var method = String((init && init.method) || (input && input.method) || 'GET').toUpperCase();
+            if (method !== 'GET' && method !== 'HEAD' && /^(\/api\/|https:\/\/1234auction\.vercel\.app\/api\/)/.test(url)) {
+                var key = ''; try { key = localStorage.getItem('writeKey') || ''; } catch (e) {}
+                if (key) { init = Object.assign({}, init || {}); var h = new Headers(init.headers || (input && input.headers) || {}); h.set('x-write-key', key); init.headers = h; }
+            }
+        } catch (e) {}
+        var p = _fetch.call(this, input, init);
+        try {
+            if (typeof input === 'string' && /^\/api\//.test(input)) p = p.then(function(r) {
+                if (r && r.status === 401 && Date.now() - lastWarn > 30000) { lastWarn = Date.now(); try { (window.linkToast || alert)('저장 열쇠가 필요해요 - ☰ 메뉴 → 🔑 저장 열쇠에서 입력해 주세요'); } catch (e) {} }
+                return r;
+            });
+        } catch (e) {}
+        return p;
+    };
+})();
+function setWriteKey() {
+    var cur = ''; try { cur = localStorage.getItem('writeKey') || ''; } catch (e) {}
+    var v = prompt('저장 열쇠를 입력하세요.\n' + (cur ? '이 기기에는 이미 저장돼 있어요. 바꾸려면 새 열쇠를 입력하고, 지우려면 빈칸으로 확인을 누르세요.' : '열쇠가 없으면 빈칸으로 두세요.'), '');
+    if (v === null) return; v = v.trim();
+    try { if (v) localStorage.setItem('writeKey', v); else localStorage.removeItem('writeKey'); } catch (e) { alert('이 브라우저가 저장을 막고 있어요(사생활 보호 모드 등)'); return; }
+    try { window.postMessage({ source: 'hg-app', type: 'writeKey', key: v }, '*'); } catch (e) {}
+    try { linkToast(v ? '저장 열쇠를 이 기기에 저장했어요' : '저장 열쇠를 지웠어요'); } catch (e) {}
+}
+setTimeout(function() {   // 서버가 열쇠를 요구하는 중인데 이 기기에 열쇠가 없으면 하루 한 번 안내
+    try {
+        var has = localStorage.getItem('writeKey'), last = parseInt(localStorage.getItem('writeKeyHintAt') || '0', 10);
+        if (has || Date.now() - last < 86400000) return;
+        fetch('/api/auction?diag=writeauth').then(function(r) { return r.json(); }).then(function(d) { if (d && d.mode && d.mode !== 'off') { localStorage.setItem('writeKeyHintAt', String(Date.now())); linkToast('저장 열쇠가 아직 없어요 - ☰ 메뉴 → 🔑 저장 열쇠에서 입력해 주세요'); } }).catch(function() {});
+    } catch (e) {}
+}, 6000);
+
 /* ════════════════════════════════════
    전역 변수
 ════════════════════════════════════ */

@@ -228,7 +228,7 @@ async function main() {
     }
     try {
       await fetch(`${SITE_URL}/api/auction?kind=bidCases`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(c),
+        method: 'POST', headers: { 'Content-Type': 'application/json', ...(process.env.WRITE_KEY ? { 'x-write-key': process.env.WRITE_KEY } : {}) }, body: JSON.stringify(c),
       });
     } catch (e) {
       savedFailCount++;

@@ -11,6 +11,7 @@
      (한 단계 더 올라가야 하는데 안 올라감) - FUNCTION_INVOCATION_FAILED로 조사해서 확인.
 ════════════════════════════════════════════════════════════ */
 import { createClient } from '@supabase/supabase-js';
+import { rejectWrite } from './_auth.js';
 import ws from 'ws';
 import { importBatch, VALID_TABLES } from '../lib/molit-import.mjs';
 
@@ -23,6 +24,7 @@ export default async function handler(req, res) {
   if (req.method !== 'POST') {
     return res.status(405).json({ error: 'POST만 지원함' });
   }
+  if (rejectWrite(req, res, (reason) => console.warn('쓰기 열쇠 ' + reason + ': ' + req.url))) return;   // 🔑 쓰기 인증(모니터링 단계는 기록만)
   try {
     const { table, rows } = req.body || {};
     if (!VALID_TABLES.includes(table)) {

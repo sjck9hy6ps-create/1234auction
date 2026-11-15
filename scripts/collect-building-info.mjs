@@ -95,7 +95,7 @@ async function main() {
   const out = [];
   ids.forEach((id) => { const cur = byId.get(String(id)); if (cur) out.push({ ...cur, ...updates[id] }); });
   for (let i = 0; i < out.length; i += 100) {
-    const r = await fetch(`${SITE}/api/auction`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(out.slice(i, i + 100)) });
+    const r = await fetch(`${SITE}/api/auction`, { method: 'POST', headers: { 'Content-Type': 'application/json', ...(process.env.WRITE_KEY ? { 'x-write-key': process.env.WRITE_KEY } : {}) }, body: JSON.stringify(out.slice(i, i + 100)) });
     console.log('저장', i, '~', Math.min(i + 100, out.length), r.status);
   }
   const got = (k) => out.filter((x) => updates[x.id] && updates[x.id][k] != null).length;

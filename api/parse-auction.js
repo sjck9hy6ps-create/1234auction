@@ -57,6 +57,7 @@
       (SCHEMA_BRIEFING/BRIEFING_HEADER/handleBriefing 참고, 1건당 호출 1회).
 ════════════════════════════════════ */
 import crypto from 'crypto';
+import { rejectWrite } from './_auth.js';
 
 // claude-haiku-4-5: 구조화된 정보 추출 용도로 충분히 정확하면서 빠르고 저렴한 모델.
 // 물건 상세페이지 추출처럼 스키마가 큰 요청도 안정적으로 처리 가능.
@@ -1479,6 +1480,7 @@ function buildNumericWarnings(m) {
 export default async function handler(req, res) {
   res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
   if (req.method !== 'POST') return res.status(405).json({ error: 'POST only' });
+  if (rejectWrite(req, res, (reason) => console.warn('쓰기 열쇠 ' + reason + ': ' + req.url))) return;   // 🔑 쓰기 인증(모니터링 단계는 기록만)
   // 개발호재 검색(mode:'devNews')은 기존 경매정보지 추출(Claude) 로직과 완전히 별개(네이버 뉴스검색
   // API 사용)라 ANTHROPIC_API_KEY 확인보다 먼저 분기함
   if (req.body && req.body.mode === 'devNews') {

@@ -29,6 +29,7 @@
      );
 ════════════════════════════════════ */
 import { createClient } from '@supabase/supabase-js';
+import { rejectWrite } from './_auth.js';
 import { LAWD_CODES } from '../scripts/lawd-codes.mjs';
 const supabase = createClient(
   process.env.SUPABASE_URL,
@@ -2940,6 +2941,7 @@ export default async function handler(req, res) {
   if (req.query.mode === 'regionCodeSet') {
     res.setHeader('Cache-Control', 'no-store');
     if (req.method !== 'POST') return res.status(405).json({ error: 'POST로 {lat,lon,result} 를 보내주세요.' });
+    if (rejectWrite(req, res, (reason) => console.warn('쓰기 열쇠 ' + reason + ': ' + req.url))) return;   // 🔑 쓰기 인증
     try {
       const { lat, lon, result } = req.body || {};
       const latNum = parseFloat(lat);
@@ -3383,6 +3385,7 @@ export default async function handler(req, res) {
     // ⚠️ #480: 다른 write 계열 엔드포인트(save-auction 등)와 동일하게 별도 인증 없이 둠 -
     // 이 앱 전체의 기존 관례를 따름(비밀키 기반 보호가 필요하면 추후 일괄 도입 검토).
     if (req.method !== 'POST') return res.status(405).json({ error: 'POST만 지원합니다.' });
+    if (rejectWrite(req, res, (reason) => console.warn('쓰기 열쇠 ' + reason + ': ' + req.url))) return;   // 🔑 쓰기 인증
     try {
       const { signalType, sampleSizeFollower, sampleSizeNonFollower, hitRateFollower, hitRateNonFollower,
         avgFollowerCatchUpPct, avgNonFollowerCatchUpPct, cutoff, regionsChecked, byQuarter } = req.body || {};
@@ -3769,6 +3772,7 @@ export default async function handler(req, res) {
     // 다른 write 계열 엔드포인트(save-auction, saveSignalBacktestStats 등)와 동일하게 별도
     // 인증 없이 둠(이 앱 전체의 기존 관례).
     if (req.method !== 'POST') return res.status(405).json({ error: 'POST만 지원합니다.' });
+    if (rejectWrite(req, res, (reason) => console.warn('쓰기 열쇠 ' + reason + ': ' + req.url))) return;   // 🔑 쓰기 인증
     try {
       const {
         signalType, cutoff, regionsChecked, sampleSize, mapePct, medianApePct,

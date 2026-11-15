@@ -29,7 +29,7 @@ elif cmd == "set":
     it = it[0]; it["status"] = st
     if reply: it["reply"] = reply
     it["updatedAt"] = __import__("datetime").datetime.utcnow().isoformat() + "Z"
-    req = urllib.request.Request(U, data=json.dumps(it).encode(), headers={"Content-Type": "application/json"}, method="POST")
+    req = urllib.request.Request(U, data=json.dumps(it).encode(), headers=dict({"Content-Type": "application/json"}, **({"x-write-key": os.environ["WRITE_KEY"]} if os.environ.get("WRITE_KEY") else {})), method="POST")
     print(urllib.request.urlopen(req, timeout=60).read().decode())
 else:
     print(__doc__)
