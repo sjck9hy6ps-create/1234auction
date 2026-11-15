@@ -23155,17 +23155,21 @@ function villaCompsHtml(row) {
     var h = '<div class="dr-sec"><h4>📍 생활권 최근 거래 <span class="dr-sub" style="display:inline;">(반경 1km · 최근 18개월 · 이 물건과 비슷한 면적 ±20%)</span></h4>';
     if (c.loading) return h + '<div class="dr-sub">지역 실거래를 불러오는 중이에요…</div></div>';
     if (c.err) return h + '<div class="dr-sub">' + E(c.err) + '</div></div>';
-    var rows = c.rows, now = Date.now(), D = 86400000, norm = rows.filter(function(r) { return !r.direct; });
+    var rows = c.rows, now = Date.now(), D = 86400000, yr = new Date().getFullYear(), isNew = function(r) { return r.by && r.by >= yr - 4; };
+    var subjBy = parseInt(row.a.buildYear) || null, subjFl = parseInt(row.a.floor);
+    var norm = rows.filter(function(r) { return !r.direct && !isNew(r); });   // 중앙값은 직거래·신축(준공 4년 이내, 앱이 거품으로 보고 제외하는 대상) 뺀 거래로
+    var medOf = function(a) { var x = a.map(function(r) { return r.ppm; }).sort(function(m, n) { return m - n; }); return x.length ? x[x.length >> 1] : null; };
+    var nearAge = subjBy ? norm.filter(function(r) { return r.by && Math.abs(r.by - subjBy) <= 8; }) : [];
     if (!rows.length) return h + '<div class="dr-warn">이 생활권(반경 1km)에서 최근 18개월 비슷한 면적 빌라 거래가 한 건도 없어요 - 팔릴 근거가 약해요(좌표를 모르는 건물 ' + c.noCoord + '곳은 제외됨)</div></div>';
     var n500 = rows.filter(function(r) { return r.dist <= 500; }).length, n6 = rows.filter(function(r) { return now - r.ts < 183 * D; }).length;
-    var ppm = norm.map(function(r) { return r.ppm; }).sort(function(x, y) { return x - y; }), med = ppm.length ? ppm[ppm.length >> 1] : null, mine = med ? med * c.area : null;
+    var med = medOf(norm), mine = med ? med * c.area : null;
     var est = null; try { var ev = villaEval(row); est = ev && ev.ve && ev.ve.est; } catch (e) {}
     h += '<div class="vc-app">비슷한 거래 <b>' + rows.length + '건</b> (반경 500m ' + n500 + '건 · 최근 6개월 ' + n6 + '건) · 가장 최근 <b>' + Math.max(0, Math.round((now - rows[0].ts) / D)) + '일 전</b>'
-        + (med ? '<br>㎡당 중앙값 <b>' + (Math.round(med * 10) / 10).toLocaleString() + '만</b> → 이 물건 면적(' + Math.round(c.area) + '㎡) 환산 <b>' + fmt(mine) + '</b>' + (est ? ' · 앱 예상매도가 <b>' + fmt(est) + '</b> (' + (est >= mine ? '+' : '') + Math.round((est / mine - 1) * 1000) / 10 + '%)' : '') : '') + '</div>';
-    var subjBy = parseInt(row.a.buildYear) || null, subjFl = parseInt(row.a.floor);
+        + (med ? '<br>㎡당 중앙값 <b>' + (Math.round(med * 10) / 10).toLocaleString() + '만</b> <span class="dr-sub" style="display:inline;">(직거래·신축 제외 ' + norm.length + '건)</span> → 이 물건 면적(' + Math.round(c.area) + '㎡) 환산 <b>' + fmt(mine) + '</b>' + (est ? ' · 앱 예상매도가 <b>' + fmt(est) + '</b> (' + (est >= mine ? '+' : '') + Math.round((est / mine - 1) * 1000) / 10 + '%)' : '') : '<br><span style="color:#b45309;">직거래·신축을 뺀 거래가 없어서 중앙값을 못 구했어요</span>')
+        + (nearAge.length >= 3 ? '<br>준공 ±8년(' + (subjBy - 8) + '~' + (subjBy + 8) + ') 거래만: ' + nearAge.length + '건 · ㎡당 중앙값 <b>' + (Math.round(medOf(nearAge) * 10) / 10).toLocaleString() + '만</b> → 환산 <b>' + fmt(medOf(nearAge) * c.area) + '</b>' : '') + '</div>';
     var line = function(r) {
         var d = new Date(r.ts), ds = d.getFullYear().toString().slice(2) + '.' + ('0' + (d.getMonth() + 1)).slice(-2) + '.' + ('0' + d.getDate()).slice(-2);
-        var tags = (r.same ? '<span style="color:#7c3aed;">같은 건물</span> ' : '') + (r.direct ? '<span style="color:#9ca3af;">직거래</span> ' : '')
+        var tags = (r.same ? '<span style="color:#7c3aed;">같은 건물</span> ' : '') + (r.direct ? '<span style="color:#9ca3af;">직거래</span> ' : '') + (isNew(r) ? '<span style="color:#9ca3af;">신축(중앙값 제외)</span> ' : '')
             + (subjBy && r.by && Math.abs(r.by - subjBy) <= 5 ? '<span style="color:#15803d;">연식 비슷</span> ' : '') + (subjFl && !isNaN(r.floor) && (r.floor <= 1) === (subjFl <= 1) ? '' : '<span style="color:#b45309;">층 다름</span> ');
         return '<tr><td>' + ds + '</td><td class="r">' + r.dist + 'm</td><td>' + E((r.name ? r.name + ' ' : '') + r.dong + ' ' + r.bunji) + '<div class="bb-sub">' + tags + '</div></td><td class="r">' + Math.round(r.area) + '㎡<br>' + (isNaN(r.floor) ? '-' : r.floor + '층') + '</td><td class="r">' + (r.by || '-') + '</td><td class="r"><b>' + fmt(r.price) + '</b><div class="bb-sub">' + (Math.round(r.ppm * 10) / 10) + '만/㎡</div></td></tr>';
     };
