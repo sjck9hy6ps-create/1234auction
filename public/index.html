@@ -823,6 +823,19 @@ tr:hover td { background:#fffde7; }
     0% { transform:scale(1); opacity:0.7; }
     100% { transform:scale(3); opacity:0; }
 }
+
+/* 📱 아이패드도 모바일처럼(2026-11-15, 사용자: 첫 화면 검색칸이 작고 2줄을 씀 - 모바일 UI처럼) - 641~1240px: 로고·메뉴 모음은 ☰ 안으로, 검색칸이 남는 폭을 모두 씀 */
+@media (min-width: 641px) and (max-width: 1240px) {
+  #topbar { gap:8px; padding:0 10px; flex-wrap:nowrap; }
+  #tb-brand { display:none; }
+  #tb-search-slot { flex:1; min-width:0; }
+  #tb-search-slot input, #tb-search-slot .tb-input { width:100%; min-width:0; box-sizing:border-box; }
+  #tb-hamburger { display:block; }
+  #tb-menu { display:none; position:fixed; top:54px; right:8px; left:auto; width:210px; background:rgba(30,94,255,.94); flex-direction:column; align-items:stretch; padding:6px; border-radius:12px; z-index:70; max-height:calc(100vh - 120px); overflow-y:auto; }
+  #tb-menu.open { display:flex; }
+  #tb-menu > button, #tb-menu > a.tb-link { text-align:left; padding:9px 10px; font-size:14px; }
+  #tb-more-menu { position:static; box-shadow:none; }
+}
 </style>
 <!-- ════ 2026-10 화면 개편(사용자 요청: "아실처럼 보기 편하게") ════
      기존 버튼·패널·함수는 그대로 두고, 상단 메뉴줄(#topbar)·필터 칩줄(#chipbar)·왼쪽 단지 목록(#sidebar)·
@@ -1635,7 +1648,6 @@ body.ui2 #auction-modal.am4 { width:620px; }
         <button onclick="openMyAssetsPanel(); closeTbMenus();">💼 내 자산</button>
         <button onclick="openBidTargetPanel(); closeTbMenus();">📝 경매물건 등록</button>
         <button onclick="openBidCasePanel(); closeTbMenus();">⚖️ 낙찰사례</button>
-        <button onclick="openMoneyRegionPanel(); closeTbMenus();">💰 돈되는 지역</button>
         <button onclick="toggleCyclePanel(); closeTbMenus();">📈 사이클</button>
         <button onclick="openWeeklyReport(); closeTbMenus();" title="매주 리포트·추천가 성적표·지난 리포트 누적 목록 (알림에서 확인한 뒤에도 언제든 열어요)">📊 리포트</button>
         <button onclick="openWinbidDong(); closeTbMenus();" title="예상 낙찰가·추천 입찰가가 실제 낙찰가와 잘 맞은 법정동">📍 동별 정확도</button>
@@ -1882,7 +1894,6 @@ body.ui2 #auction-modal.am4 { width:620px; }
     <div style="margin-top:4px;"><span onclick="openBidCasePanel()" style="font-size:11px;color:#e65100;font-weight:bold;cursor:pointer;">📈 낙찰사례 통계</span></div>
     <div style="margin-top:4px;"><span onclick="openBidTargetPanel()" style="font-size:11px;color:#f57f17;font-weight:bold;cursor:pointer;">📋 입찰예정물건 일괄등록</span></div>
     <div style="margin-top:4px;"><span onclick="openBacktestPanel()" style="font-size:11px;color:#6a1b9a;font-weight:bold;cursor:pointer;">📐 낙찰가 백테스트 일괄등록</span></div>
-    <div style="margin-top:4px;"><span onclick="openSurgePanel()" style="font-size:11px;color:#e53935;font-weight:bold;cursor:pointer;">🔥 급등지역 · 돈되는 지역 순위</span></div>
     </div>
 </div>
 <button id="auction-add-btn" onclick="openAuctionList()">🔨 경매 관리</button>
@@ -4378,7 +4389,7 @@ function favStar(a, idJs) {
 async function favToggle(id) {
     var a = auctionList.filter(function(x) { return String(x.id) === String(id); })[0]; if (!a) return;
     a.fav = !a.fav; a.favAt = a.fav ? new Date().toISOString().slice(0, 10) : null;
-    bidBoardRows = bidBoardRows.map(function(r) { if (String(r.id) === String(id)) { r.a = a; delete r._vev; } return r; });
+    bidBoardRows = bidBoardRows.map(function(r) { if (String(r.id) === String(id)) { r.a = a; } return r; });   // 즐겨찾기는 계산에 영향이 없어 _vev를 지우지 않음(지우면 빌라가 목록에서 사라졌다 돌아옴)
     renderBidBoard(); if (String(bidDrawerId) === String(id)) renderBidDrawer();
     try { renderAuctionMarkers(); } catch (e) {}
     try { await saveAuctionAPI(a); } catch (e) { alert('저장 실패: ' + e.message); }
@@ -22367,17 +22378,11 @@ function renderBidBoardLite() {
     }).join('') + ' <button class="bb-tab fav' + (isFavTab ? ' on' : '') + '" style="font-weight:700;" onclick="setLiteVisit(\'fav\')">⭐ 즐겨찾기 <b>' + favN + '</b></button>';
     var sub = (isVillaTab || isFavTab) ? '' : ' <span style="color:#cbd5e1;">|</span> ' + [['go', '🚶 임장 후보', goN], ['pass', '패스', passN], ['all', '전체', aptTotal]].map(function(t) {
         return '<button class="bb-tab' + (s.visit === t[0] ? ' on' : '') + '" onclick="setLiteVisit(\'' + t[0] + '\')">' + t[1] + ' <b>' + t[2] + '</b></button>';
-    }).join('') + (isVillaTab ? '' : ' <button class="bb-tab' + (s.nicheLite ? ' on' : '') + '" title="입찰자가 적으면서 되팔림도 좋은 시군구의 물건" onclick="bidBoardState.nicheLite=!bidBoardState.nicheLite;bidBoardState.liteLimit=120;renderBidBoard();">🧭 틈새만 <b>' + cur.filter(function(r) { return r.niche && !r.pending; }).length + '</b></button>');
-    var listN = isVillaTab ? villaMetroRows().filter(function(r) { return listingStatus(r.a).st === 'yes'; }).length : cur.filter(function(r) { return !r.pending && listingStatus(r.a).st === 'yes'; }).length;
-    var seoulN = isVillaTab ? 0 : cur.filter(function(r) { return !r.pending && r.winbid && r.sale && isSeoulRow(r); }).length;
-    if (!isVillaTab) sub += ' <button class="bb-tab' + (s.seoulOwn ? ' on' : '') + '" title="서울 아파트를 되팔지 않고 직접 살 때 보는 화면: 임장·패스 구분 없이 서울 물건 전체를, 예상 낙찰가가 예상매도가보다 얼마나 싼지 순서로 보여줘요(사업자대출·마진 기준은 적용하지 않아요)" onclick="bidBoardState.seoulOwn=!bidBoardState.seoulOwn;bidBoardState.liteLimit=120;renderBidBoard();">🏠 서울 자가 매입 <b>' + seoulN + '</b></button>';
-    var goodN = isVillaTab ? villaMetroRows().filter(bbExclPass).filter(function(r) { var e = r._vev; return e && !e.pending && goodVillaRow(r, e); }).length : cur.filter(function(r) { return !r.pending && goodAptRow(r); }).length;
-    sub += ' <button class="bb-tab' + (s.goodOnly ? ' on' : '') + '" title="' + (isVillaTab ? '임장 후보 중 낙찰 가능성 ' + Math.round(GOOD_VILLA_MIN_P * 100) + '%↑ · 예상 순이익 ' + GOOD_VILLA_MIN_NET + '만↑ (과거 낙찰 1,819건: 좋은 물건 54% vs 지금 임장 후보 44%, 후보 수 절반)' : '임장 후보 중 낙찰 가능성 ' + Math.round(GOOD_APT_MIN_P * 100) + '%↑ · 예상 순마진 ' + GOOD_APT_MIN_NET + '만↑ (과거 낙찰 6,254건: 좋은 물건 37% vs 지금 임장 후보 18.5%, 후보 수 약 3분의 1)') + '. 좋은 물건 일부도 같이 빠지니 더 골라 볼 때만 켜세요" onclick="toggleGoodOnly()">⭐ 좋은 후보만 <b>' + goodN + '</b></button>';
-    sub += ' <button class="bb-tab' + (s.listLite ? ' on' : '') + '" title="네이버 매물 목록을 붙여넣어 매물이 있는 것으로 확인한 물건만" onclick="setListFilter()">📋 매물 등록 <b>' + listN + '</b></button>';
-    sub += ' <button class="bb-tab' + (s.rightsNeed ? ' on' : '') + '" title="임장 후보인데 권리분석이 없는 물건만" onclick="toggleRightsNeed();">⚖️ 권리분석 필요 <b>' + rightsNeedCount(isVillaTab, cur) + '</b></button> <button class="bb-tab" title="탱크옥션 상세 글 여러 건을 한 번에 붙여넣기" onclick="rightsBatchOpen()">⚖️ 일괄 붙여넣기</button>';
+    }).join('');
+    // 2026-11-15(사용자: 사용하지 않는 메뉴 삭제) 틈새·서울 자가 매입·좋은 후보만·매물 등록·권리분석 필요·일괄 붙여넣기 버튼을 없앰 - 켜져 있던 필터도 꺼서 보이지 않는 채로 목록을 걸러내지 않게 함
+    s.nicheLite = false; s.seoulOwn = false; s.goodOnly = false; s.listLite = false; s.rightsNeed = false;
     if (isFavTab) { bar.innerHTML = grp; renderFavLite(document.getElementById('bb-body')); var cn1 = document.getElementById('bb-cache-note'); if (cn1) cn1.style.display = 'none'; return; }
     bar.innerHTML = grp + sub
-        + ' <span class="bb-sub">열 이름을 누르면 오름차순·내림차순으로 정렬돼요</span>'
         + permitStaleHtml() + ' <a href="#" class="bb2-link" onclick="toggleLitePast();return false;">' + (s.pastLite ? '지난 입찰 숨기기' : '지난 입찰 ' + pastN + '건 보기') + '</a>'
         + (pend && !isVillaTab ? ' <span class="bb-sub">⏳ ' + pend + '건 계산 중</span>' : '');
     if (s.visit === 'villa') { renderVillaLite(document.getElementById('bb-body')); var cn0 = document.getElementById('bb-cache-note'); if (cn0) cn0.style.display = 'none'; return; }
