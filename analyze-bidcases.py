@@ -698,7 +698,10 @@ def main():
             try: apt_stack_load(R)
             except Exception as e: print("  종합 평가 연결 건너뜀:", e)
         if os.environ.get("WB_BASEDIST_ONLY") == "1":   # 2026-11-16 낙찰비율 분포 보고(저장 없음)
-            basedist_test(R, now); return
+            basedist_test(R, now)
+            try: coverage_test(R, now)
+            except Exception as e: print("  집계 실패:", e)
+            return
         if os.environ.get("WB_NOLB_ONLY") == "1":   # 2026-11-16 시험: 최저가 요인을 뺀 예상 낙찰가 모델 비교(앱·서버 저장값은 안 바뀜) - 끝나면 바로 종료
             nolb_test(R, now); return
         try:
@@ -2195,6 +2198,39 @@ def risk_table(R0, now):
     out = {**disp_extra, "기간": [lo, hi], "표본": int(len(D)), "칸": tab, "전체칸": allt, "인기보정": pop_adj, "낙찰조건": cond, "정의": "e = 낙찰 뒤 6개월 시장 실거래 중위 ÷ 시세(est_rule_f) - 1"}
     print("  🧱 근거 두께별 하방 표:", json.dumps({k_: [v_["n"], v_["q25"], v_["q50"]] for k_, v_ in tab.items()}, ensure_ascii=False))
     return out
+
+
+def coverage_test(R, now):
+    """2026-11-16(사용자: 시세·최저가 값이 빠지는 사례가 있는 이유) 모델 학습에서 빠지는 사례 집계. 저장 없음."""
+    n0 = len(R)
+    out = {"R행수(지역·면적·동 값이 있는 아파트 낙찰)": n0}
+    def cnt(m): return int(m.sum())
+    mb_null = R["minbid"].isna() | (R["minbid"] <= 0)
+    ap_null = R["appraisal"].isna() | (R["appraisal"] <= 0) if "appraisal" in R.columns else pd.Series(False, index=R.index)
+    er = R["est_rule_f"] if "est_rule_f" in R.columns else R["est_rule"]
+    er = er.where(er.notna() & (er > 0), R["est_rule"])
+    est_null = ~(er.notna() & (er > 0))
+    out["최저가 없음/0"] = cnt(mb_null); out["감정가 없음/0"] = cnt(ap_null)
+    out["시세 없음(est_rule·est_rule_f 모두)"] = cnt(est_null)
+    out["시세 없음 & 같은 지번 실거래 묶음 자체 없음(own=0)"] = cnt(est_null & (R["own"].fillna(0) == 0))
+    out["2020년 이전 낙찰"] = cnt(R["sale"] < 20200101)
+    ok = ~mb_null & ~est_null & (R["sale"] >= 20200101)
+    rr = (R["actual"] / er)
+    out["위 조건 통과"] = cnt(ok); out["통과했지만 낙찰가÷시세 40~160% 밖"] = cnt(ok & ~rr.between(0.4, 1.6))
+    out["최종 학습 대상(추정)"] = cnt(ok & rr.between(0.4, 1.6))
+    R = R.copy(); R["yr"] = (R["sale"] // 10000).astype(int); R["est_null"] = est_null.values; R["mb_null"] = mb_null.values
+    out["연도별 시세 없음 비율%"] = {str(y): [int(len(g)), round(float(g["est_null"].mean()) * 100, 1)] for y, g in R.groupby("yr")}
+    out["시도별 시세 없음 비율%"] = {str(k): [int(len(g)), round(float(g["est_null"].mean()) * 100, 1)] for k, g in R.groupby("sido") if len(g) >= 30}
+    out["연도별 최저가 없음 비율%"] = {str(y): [int(len(g)), round(float(g["mb_null"].mean()) * 100, 1)] for y, g in R.groupby("yr")}
+    for nm, col in (("시세 없음", "est_null"), ("최저가 없음", "mb_null")):
+        a, b = R[R[col]], R[~R[col]]
+        def q(g):
+            d = (g["actual"] / g["appraisal"]).replace([np.inf, -np.inf], np.nan).dropna()
+            return {"n": int(len(g)), "낙찰가 중앙(만원)": round(float(g["actual"].median())), "낙찰가÷감정가 중앙": round(float(d.median()), 3) if len(d) else None, "신건·유찰없음 비율%": round(float((g["fails"] == 0).mean()) * 100, 1)}
+        out["빠진 사례 vs 남은 사례 - " + nm] = {"빠진": q(a), "남은": q(b)}
+    print("📋 COVERAGE_JSON " + json.dumps(out, ensure_ascii=False))
+    if os.environ.get("GITHUB_STEP_SUMMARY"):
+        open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8").write("### 학습에서 빠지는 사례 집계\n```json\n" + json.dumps(out, ensure_ascii=False, indent=1)[:60000] + "\n```\n")
 
 
 def basedist_test(R, now):
