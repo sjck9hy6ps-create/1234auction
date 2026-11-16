@@ -21290,7 +21290,10 @@ function winbidFor(row) {
     }
     var corrPct = null;  // 자동 보정(지역별) - 서울이면 +, 지방이면 − 처럼 최근 12주 잔차 반영
     if (winbidModel.corrTable) { var rc = row.regionCls || (row.lawd ? aptRegionClass(row.lawd) : null), cv = rc != null ? winbidModel.corrTable[rc] : null; if (typeof cv === 'number') { corrPct = cv; pred += cv / 100; } }
-    var wb = { est: b.est, own: b.own, pred: pred, price: Math.round(b.est * Math.exp(pred)), bidN: bidN, comp: comp, compShift: compShift, corrPct: corrPct, flowUp: !!(keys.flowC && /\|up2\|/.test(keys.flowC)), flowC: keys.flowC || null };
+    // 신건(유찰 0회) 하한(사용자 2026-11-16 결정): 최저가 미만으로는 낙찰될 수 없으므로 예상 낙찰가가 최저가보다 낮으면 최저가로 올림(시세 대비 비율 규칙은 그대로, 법적 하한만 적용). 시험(7,091건): 신건 오차 4.23→3.81%, 유찰 1회 이상은 변화 없어 적용 안 함
+    var floorUp = false;
+    if (row.fails === 0 && pred < lmin) { pred = lmin; floorUp = true; }
+    var wb = { est: b.est, own: b.own, pred: pred, floorUp: floorUp, price: Math.round(b.est * Math.exp(pred)), bidN: bidN, comp: comp, compShift: compShift, corrPct: corrPct, flowUp: !!(keys.flowC && /\|up2\|/.test(keys.flowC)), flowC: keys.flowC || null };
     winbidRefreshRec(row, wb);
     return wb;
 }
