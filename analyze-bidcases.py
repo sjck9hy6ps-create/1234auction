@@ -2218,7 +2218,7 @@ def coverage_test(R, now):
     rr = (R["actual"] / er)
     out["위 조건 통과"] = cnt(ok); out["통과했지만 낙찰가÷시세 40~160% 밖"] = cnt(ok & ~rr.between(0.4, 1.6))
     out["최종 학습 대상(추정)"] = cnt(ok & rr.between(0.4, 1.6))
-    R = R.copy(); R["yr"] = (R["sale"] // 10000).astype(int); R["est_null"] = est_null.values; R["mb_null"] = mb_null.values
+    R = R.copy(); R["yr"] = (R["sale"].fillna(0) // 10000).astype(int); R["est_null"] = est_null.values; R["mb_null"] = mb_null.values
     out["연도별 시세 없음 비율%"] = {str(y): [int(len(g)), round(float(g["est_null"].mean()) * 100, 1)] for y, g in R.groupby("yr")}
     out["시도별 시세 없음 비율%"] = {str(k): [int(len(g)), round(float(g["est_null"].mean()) * 100, 1)] for k, g in R.groupby("sido") if len(g) >= 30}
     out["연도별 최저가 없음 비율%"] = {str(y): [int(len(g)), round(float(g["mb_null"].mean()) * 100, 1)] for y, g in R.groupby("yr")}
