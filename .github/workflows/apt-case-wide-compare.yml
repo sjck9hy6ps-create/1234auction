@@ -1,0 +1,28 @@
+# 종합 평가 사례 넓힘 변형 비교(2026-11-16) - 이미 계산된 결과(실행 43888375977)를 받아 비교만 함. 저장 없음
+name: Apt case wide compare only
+on:
+  workflow_dispatch:
+jobs:
+  compare:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install pandas numpy requests scikit-learn
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: aptwide-*
+          path: aptwide
+          run-id: 43888375977
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+      - env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          SITE_URL: ${{ secrets.SITE_URL }}
+          PYTHONUNBUFFERED: '1'
+          WB_WIDECMP_DIR: aptwide
+          WRITE_BACK: '0'
+        run: python analyze-bidcases.py

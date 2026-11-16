@@ -2345,14 +2345,20 @@ def widecmp_test(R, now):
     sido = te["sido"].fillna("?").values
     segs = {"전체": np.ones(len(te), bool), "신건(유찰 0회)": fails == 0, "유찰 1회": fails == 1, "유찰 2회+": fails >= 2, "수도권": fcls == "수도권", "지방": fcls == "지방", "전남광주": sido == "전남광주", "전남광주 제외": sido != "전남광주"}
     out = {"n_test": int(len(te)), "n_train_지금식(2025-02-15~)": int(len(trA)), "n_train_넓힘(2020~)": int(len(trB)), "n_train_넓힘 중 전남광주": int((trB["sido"] == "전남광주").sum()), "구간": {}}
-    for nm, tr in (("① 지금처럼(2025-02-15 이후만)", trA), ("② 넓힘(2020년 이후 전체)", trB)):
+    _ref = pd.to_datetime(str(cut), format="%Y%m%d"); _since = int((_ref - pd.DateOffset(months=12)).strftime("%Y%m%d"))
+    _rec = trB[trB["sale"] >= _since]
+    variants = (("① 지금처럼(2025-02-15 이후만)", trA), ("② 넓힘(2020년 이후 전체)", trB),
+                ("③ 전체 + 최근 12개월 3배 가중", pd.concat([trB, _rec, _rec])), ("④ 2024년 이후만", trB[trB["sale"] >= 20240101]),
+                ("⑤ 2023년 이후만", trB[trB["sale"] >= 20230101]))
+    out["연도별 낙찰가÷시세 중앙(학습 구간)%"] = {str(y): [int(len(g)), round(float(np.median(g["actual"] / g["est"])) * 100, 1)] for y, g in trB.assign(y=(trB["sale"] // 10000)).groupby("y") if len(g) >= 30}
+    for nm, tr in variants:
         m = wb_fit(tr); pp = wb_predict(m, te); e = np.exp(pp) * te["est"].values / te["actual"].values - 1
         r = {}
         for sn, mk in segs.items():
             if int(mk.sum()) < 30: r[sn] = {"n": int(mk.sum())}; continue
             ee = e[mk]
             r[sn] = {"n": int(mk.sum()), "보통오차%": round(float(np.median(np.abs(ee))) * 100, 2), "10%이내%": round(float((np.abs(ee) <= 0.10).mean()) * 100, 1), "쏠림%": round(float(np.median(ee)) * 100, 2)}
-        out["구간"][nm] = r
+        out["구간"][nm] = r; out.setdefault("학습 건수", {})[nm] = int(len(tr))
         print("  🧪", nm, json.dumps(r["전체"], ensure_ascii=False))
     print("📋 WIDECMP_JSON " + json.dumps(out, ensure_ascii=False))
     if os.environ.get("GITHUB_STEP_SUMMARY"):
