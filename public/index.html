@@ -1330,6 +1330,23 @@ body.ui2 #auction-modal.am4 { width:620px; }
 #weekly-panel .wr-pill, #wbd-panel .wr-pill { display:inline-block; white-space:nowrap; border-radius:999px; padding:3px 11px; font-size:12.5px; font-weight:700; } #weekly-panel .wr-pill.win, #wbd-panel .wr-pill.win { background:#dcfce7; color:#15803d; } #weekly-panel .wr-pill.lose, #wbd-panel .wr-pill.lose { background:#fee2e2; color:#b91c1c; } #weekly-panel .wr-fresh, #wbd-panel .wr-fresh { display:inline-block; margin-left:4px; font-size:11px; font-weight:600; color:#7c3aed; background:#f3e8ff; border-radius:6px; padding:1px 6px; vertical-align:middle; }
 #weekly-panel .wr-sec table, #wbd-panel .wr-sec table { margin-top:6px; }
 @media (max-width: 1100px) { #weekly-panel, #wbd-panel { right:12px; left:12px; width:auto; top:48px; height:calc(100vh - 64px); } #weekly-panel .wr-kpis, #wbd-panel .wr-kpis { grid-template-columns:repeat(2, 1fr); } }
+/* 📱 폰 세로 화면에서 주간 리포트 줄바뀜 줄이기(2026-11-17 수정 요청): 글자·여백을 줄이고, 표는 옆으로 밀어 보게 해서 칸 안 글이 한 글자씩 끊기지 않게 함 */
+@media (max-width: 480px) {
+  #weekly-panel, #wbd-panel { left:4px; right:4px; top:44px; height:calc(100dvh - 52px); font-size:13px; line-height:1.5; }
+  #weekly-panel .wr-h, #wbd-panel .wr-h { padding:10px 12px; font-size:15px; }
+  #weekly-panel .wr-b, #wbd-panel .wr-b { padding:8px 8px 20px; }
+  #weekly-panel .wr-tabs, #wbd-panel .wr-tabs { flex-wrap:nowrap; overflow-x:auto; -webkit-overflow-scrolling:touch; padding-bottom:4px; }
+  #weekly-panel .wr-tabs button, #wbd-panel .wr-tabs button { padding:7px 11px; font-size:12.5px; white-space:nowrap; flex:0 0 auto; }
+  #weekly-panel .wr-kpis, #wbd-panel .wr-kpis { gap:6px; }
+  #weekly-panel .wr-kpis div, #wbd-panel .wr-kpis div { padding:8px 10px; }
+  #weekly-panel .wr-kpis b, #wbd-panel .wr-kpis b { font-size:20px; }
+  #weekly-panel .wr-kpis span, #wbd-panel .wr-kpis span { font-size:11.5px; }
+  #weekly-panel .wr-sec, #wbd-panel .wr-sec { padding:10px; margin-top:8px; overflow-x:auto; -webkit-overflow-scrolling:touch; }
+  #weekly-panel .pn-table, #wbd-panel .pn-table { width:max-content; min-width:100%; }
+  #weekly-panel .pn-table th, #wbd-panel .pn-table th { padding:6px 7px; font-size:11px; }
+  #weekly-panel .pn-table td, #wbd-panel .pn-table td { padding:6px 7px; font-size:12px; white-space:nowrap; }
+  #weekly-panel .wr-btn, #wbd-panel .wr-btn { padding:6px 10px; font-size:12.5px; }
+}
 </style>
 <style>
 /* 💡 입찰가 고르기(2026-10) */
