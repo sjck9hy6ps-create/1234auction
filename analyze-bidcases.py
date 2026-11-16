@@ -697,6 +697,8 @@ def main():
         if not os.environ.get("APT_STACK_DIR"):
             try: apt_stack_load(R)
             except Exception as e: print("  종합 평가 연결 건너뜀:", e)
+        if os.environ.get("WB_WIDECMP_DIR"):   # 2026-11-16 종합 평가 사례 넓힘 시험(저장 없음)
+            widecmp_test(R, now); return
         if os.environ.get("WB_BASEDIST_ONLY") == "1":   # 2026-11-16 낙찰비율 분포 보고(저장 없음)
             basedist_test(R, now)
             try: coverage_test(R, now)
@@ -2200,6 +2202,44 @@ def risk_table(R0, now):
     out = {**disp_extra, "기간": [lo, hi], "표본": int(len(D)), "칸": tab, "전체칸": allt, "인기보정": pop_adj, "낙찰조건": cond, "정의": "e = 낙찰 뒤 6개월 시장 실거래 중위 ÷ 시세(est_rule_f) - 1"}
     print("  🧱 근거 두께별 하방 표:", json.dumps({k_: [v_["n"], v_["q25"], v_["q50"]] for k_, v_ in tab.items()}, ensure_ascii=False))
     return out
+
+
+def widecmp_test(R, now):
+    """2026-11-16(사용자: 종합 평가 값을 더 많은 사례(2020년~·전남광주)로 늘려 학습하면 정확도가 좋아지나) 저장 없음.
+    같은 시점 앱 계산(WB_WIDECMP_DIR의 rows.json)으로 ① 지금처럼 2025-02-15 이후 사례만 학습 ② 2020년 이후 전체(전남광주 포함) 학습을 같은 검증 구간(최근 12개월)에서 비교.
+    요인 목록·비중은 두 쪽 모두 지금 모델 그대로(조정 없음)."""
+    global WB_FACTORS
+    import glob
+    mp = {}
+    for f in glob.glob(os.path.join(os.environ["WB_WIDECMP_DIR"], "**", "rows.json"), recursive=True):
+        for r in json.load(open(f)):
+            if r.get("err") or not r.get("sale"): continue
+            mp[str(r["id"])] = r.get("stk") or r["sale"]
+    R = R.copy()
+    R["est"] = R["id"].astype(str).map(mp.get)
+    print(f"  넓힌 종합 평가 값 연결: {int(R['est'].notna().sum()):,}/{len(R):,}건")
+    D = R[R["est"].notna() & (R["est"] > 0) & R["actual"].notna() & R["minbid"].notna() & (R["minbid"] > 0) & (R["sale"] >= 20200101)].copy()
+    D = D[np.log(D["actual"] / D["est"]).between(np.log(0.4), np.log(1.6))]
+    last = pd.to_datetime(str(int(D["sale"].max())), format="%Y%m%d")
+    cut = int((last - pd.DateOffset(months=12)).strftime("%Y%m%d"))
+    te = D[D["sale"] >= cut]; trB = D[D["sale"] < cut]; trA = trB[trB["sale"] >= 20250215]
+    fails = te["fails"].fillna(-1).values
+    fcls = te["flow_cls"].fillna("?").values if "flow_cls" in te.columns else np.array(["?"] * len(te))
+    sido = te["sido"].fillna("?").values
+    segs = {"전체": np.ones(len(te), bool), "신건(유찰 0회)": fails == 0, "유찰 1회": fails == 1, "유찰 2회+": fails >= 2, "수도권": fcls == "수도권", "지방": fcls == "지방", "전남광주": sido == "전남광주", "전남광주 제외": sido != "전남광주"}
+    out = {"n_test": int(len(te)), "n_train_지금식(2025-02-15~)": int(len(trA)), "n_train_넓힘(2020~)": int(len(trB)), "n_train_넓힘 중 전남광주": int((trB["sido"] == "전남광주").sum()), "구간": {}}
+    for nm, tr in (("① 지금처럼(2025-02-15 이후만)", trA), ("② 넓힘(2020년 이후 전체)", trB)):
+        m = wb_fit(tr); pp = wb_predict(m, te); e = np.exp(pp) * te["est"].values / te["actual"].values - 1
+        r = {}
+        for sn, mk in segs.items():
+            if int(mk.sum()) < 30: r[sn] = {"n": int(mk.sum())}; continue
+            ee = e[mk]
+            r[sn] = {"n": int(mk.sum()), "보통오차%": round(float(np.median(np.abs(ee))) * 100, 2), "10%이내%": round(float((np.abs(ee) <= 0.10).mean()) * 100, 1), "쏠림%": round(float(np.median(ee)) * 100, 2)}
+        out["구간"][nm] = r
+        print("  🧪", nm, json.dumps(r["전체"], ensure_ascii=False))
+    print("📋 WIDECMP_JSON " + json.dumps(out, ensure_ascii=False))
+    if os.environ.get("GITHUB_STEP_SUMMARY"):
+        open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8").write("### 종합 평가 사례 넓힘 시험\n```json\n" + json.dumps(out, ensure_ascii=False, indent=1) + "\n```\n")
 
 
 def stackcmp_test(R, now):
