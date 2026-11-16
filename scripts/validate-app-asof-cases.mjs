@@ -4,6 +4,8 @@ import fs from 'fs';
 const SITE = process.env.SITE_URL || 'https://1234auction.vercel.app';
 const PREFIXES = (process.env.LAWD_PREFIX || '11').split(',');
 const FROM = process.env.SALE_FROM || '2025-02-15';
+const TO = process.env.SALE_TO || '9999-12-31';
+const LONG_YEARS = process.env.LONG_YEARS ? parseInt(process.env.LONG_YEARS, 10) : 0;
 const OUT = process.env.OUT_FILE || 'rows.json';
 const browser = await chromium.launch();
 const page = await browser.newPage({ viewport: { width: 1400, height: 900 }, timezoneId: 'Asia/Seoul', locale: 'ko-KR' });
@@ -18,17 +20,17 @@ await page.evaluate(() => { try { loadWinbidModel(); } catch (e) {} });
 try { await page.waitForFunction(() => typeof winbidModel !== 'undefined' && !!winbidModel && !!winbidModel.riskTable && !!winbidModel.estStack, null, { timeout: 150000 }); } catch (e) { console.log('최신 낙찰가 모델을 못 받음 - 채점이 옛 모델 기준일 수 있음'); }
 console.log('낙찰가 모델:', await page.evaluate(() => winbidModel ? JSON.stringify({ gen: winbidModel.generatedAt, estStack: !!winbidModel.estStack, risk: !!winbidModel.riskTable, cond: !!(winbidModel.riskTable && winbidModel.riskTable['낙찰조건'] && winbidModel.riskTable['낙찰조건'].use) }) : '없음'));
 await page.waitForTimeout(4000);
-const plan = await page.evaluate(([from, pf]) => {
-  const cs = bidCaseList.filter((c) => /아파트/.test(c.propertyType || '') && c.saleDate >= from && c.finalBidPrice > 0 && c.minBidPrice > 0 && c.areaM2 > 0);
+const plan = await page.evaluate(([from, pf, to]) => {
+  const cs = bidCaseList.filter((c) => /아파트/.test(c.propertyType || '') && c.saleDate >= from && c.saleDate < to && c.finalBidPrice > 0 && c.minBidPrice > 0 && c.areaM2 > 0);
   const by = __vc.assign(cs), out = {};
   Object.keys(by).forEach((l) => { if (pf.some((p) => l.startsWith(p))) out[l] = by[l]; });
   return { total: cs.length, byLawd: out };
-}, [FROM, PREFIXES]);
+}, [FROM, PREFIXES, TO]);
 console.log('대상 사례', plan.total, '지역', Object.keys(plan.byLawd).length);
 const rows = [], failed = [];
 for (const l of Object.keys(plan.byLawd).sort()) {
   try {
-    const r = await page.evaluate(([lawd, ids]) => { const set = new Set(ids); return __vc.processCases(lawd, bidCaseList.filter((c) => set.has(c.id)), 35); }, [l, plan.byLawd[l]]);
+    const r = await page.evaluate(([lawd, ids, yrs]) => { const set = new Set(ids); return __vc.processCases(lawd, bidCaseList.filter((c) => set.has(c.id)), 35, yrs ? { years: yrs } : null); }, [l, plan.byLawd[l], LONG_YEARS]);
     r.forEach((x) => rows.push(x));
   } catch (e) { failed.push(l); console.log('❌', l, String(e.message || e).slice(0, 140)); }
 }

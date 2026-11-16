@@ -26,10 +26,16 @@
       });
       return out;
     },
-    async processCases(lawd, cases, daysBefore) {
+    async processCases(lawd, cases, daysBefore, opts) {
       const wasLoaded = !!dataCache[lawd];
       if (!wasLoaded) {
-        const d = await fetchHouseDataCached(lawd);
+        // 2026-11-16: opts.years가 있으면 서버의 백테스트용 긴 조회(매매 최대 6년, 전세 최대 4년)로 받음 - 앱 화면용 조회는 최근 2년치만 줘서 2024년 이전 낙찰사례는 그 당시 3년 거래가 없었음
+        let d;
+        if (opts && opts.years) {
+          const r = await fetch('/api/get-house?lawdCd=' + lawd + '&years=' + opts.years + '&rent=1');
+          d = await r.json();
+          if (d && Array.isArray(d.apt)) { d.apt.forEach((x) => { if (x.region === undefined) x.region = ''; if (x.source === undefined) x.source = 'db'; }); }
+        } else d = await fetchHouseDataCached(lawd);
         if (!d || d.error || !Array.isArray(d.apt)) throw new Error('지역 자료를 못 받음 ' + lawd);
         await ingestRegionHouseData(d, '', lawd);
       }
