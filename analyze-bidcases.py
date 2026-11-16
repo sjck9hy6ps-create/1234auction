@@ -701,6 +701,8 @@ def main():
             basedist_test(R, now)
             try: coverage_test(R, now)
             except Exception as e: print("  집계 실패:", e)
+            try: stackcmp_test(R, now)
+            except Exception as e: import traceback; print("  비교 실패:", e); traceback.print_exc()
             return
         if os.environ.get("WB_NOLB_ONLY") == "1":   # 2026-11-16 시험: 최저가 요인을 뺀 예상 낙찰가 모델 비교(앱·서버 저장값은 안 바뀜) - 끝나면 바로 종료
             nolb_test(R, now); return
@@ -2198,6 +2200,36 @@ def risk_table(R0, now):
     out = {**disp_extra, "기간": [lo, hi], "표본": int(len(D)), "칸": tab, "전체칸": allt, "인기보정": pop_adj, "낙찰조건": cond, "정의": "e = 낙찰 뒤 6개월 시장 실거래 중위 ÷ 시세(est_rule_f) - 1"}
     print("  🧱 근거 두께별 하방 표:", json.dumps({k_: [v_["n"], v_["q25"], v_["q50"]] for k_, v_ in tab.items()}, ensure_ascii=False))
     return out
+
+
+def stackcmp_test(R, now):
+    """2026-11-16(사용자: 종합 평가 값이 있는 사례 vs 없는 사례 분포 비교) 같은 시세(규칙 시세 est_rule_f) 기준 낙찰가÷시세 분포를 두 집단으로 나눠 비교. 저장 없음."""
+    R = R.copy()
+    er = R["est_rule_f"] if "est_rule_f" in R.columns else R["est_rule"]
+    er = er.where(er.notna() & (er > 0), R["est_rule"])
+    R["er"] = er.where(er.notna() & (er > 0))
+    R = R[R["er"].notna() & R["actual"].notna() & (R["sale"] >= 20200101)].copy()
+    R["ratio"] = R["actual"] / R["er"]
+    R = R[R["ratio"].between(0.4, 1.6)]
+    R["has"] = (R["est_stack"] > 0) if "est_stack" in R.columns else False
+    R["fk"] = R["fails"].map(lambda v: "?" if pd.isna(v) else str(int(min(3, v))))
+    R["yr"] = (R["sale"] // 10000).astype(int)
+    R["pb"] = pd.cut(R["actual"], [0, 10000, 20000, 30000, 50000, 1e9], labels=["1억 미만", "1~2억", "2~3억", "3~5억", "5억+"])
+    def st(g):
+        r = g["ratio"].values
+        if not len(r): return None
+        return [int(len(r)), round(float(np.median(r)) * 100, 1), round(float(np.quantile(r, .25)) * 100, 1), round(float(np.quantile(r, .75)) * 100, 1)]
+    out = {"전체": {"있음": st(R[R["has"]]), "없음": st(R[~R["has"]])}}
+    for nm, col in (("유찰별", "fk"), ("연도별", "yr"), ("시도별", "sido"), ("가격대별", "pb")):
+        out[nm] = {}
+        for k, g in R.groupby(col, observed=True):
+            if len(g) >= 30: out[nm][str(k)] = {"있음": st(g[g["has"]]), "없음": st(g[~g["has"]])}
+    out["종합 평가 있는 비율%(시도별)"] = {str(k): [int(len(g)), round(float(g["has"].mean()) * 100, 1)] for k, g in R.groupby("sido") if len(g) >= 30}
+    out["종합 평가 있는 비율%(연도별)"] = {str(k): [int(len(g)), round(float(g["has"].mean()) * 100, 1)] for k, g in R.groupby("yr") if len(g) >= 30}
+    out["종합 평가 있는 비율%(가격대별)"] = {str(k): [int(len(g)), round(float(g["has"].mean()) * 100, 1)] for k, g in R.groupby("pb", observed=True)}
+    print("📋 STACKCMP_JSON " + json.dumps(out, ensure_ascii=False))
+    if os.environ.get("GITHUB_STEP_SUMMARY"):
+        open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8").write("### 종합 평가 있음/없음 비교\n```json\n" + json.dumps(out, ensure_ascii=False, indent=1)[:60000] + "\n```\n")
 
 
 def coverage_test(R, now):
