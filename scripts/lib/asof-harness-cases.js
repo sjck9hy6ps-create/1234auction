@@ -56,7 +56,10 @@
           auctionWonEstCache = {}; regionPpmIdxCache = {}; try { calcPriceGrades(); } catch (e) {}
           groups[k].forEach((c) => {
             const ap = list.find((x) => x.dong === c.dong && String(x.bunji) === String(c.bunji)), l = (ap && ap.latest) || {};
-            const a2 = { id: 'asofc_' + c.id, propType: 'apt', addr: c.addrJibun, dong: c.dong, bunji: c.bunji, name: (ap && ap.name) || c.buildingName || '', pyung: c.areaM2 / 3.305785, floor: c.floor, lat: c.lat, lon: c.lon,
+            // 2026-11-16: 낙찰사례에 좌표가 없으면 같은 지번 단지의 저장된 좌표를 씀(거래 자료에 지번이 있으면 위치를 알 수 있음)
+            const LL = { lat: c.lat, lon: c.lon };
+            if (!(LL.lat && LL.lon) && ap && ap.latest) { try { const l0 = ap.latest, cc = coordCache[[l0.dong, l0.name, l0.bunji, l0.road_name, l0.main_num, l0.sub_num].join('|').toLowerCase()]; if (cc && cc.lat && cc.lon) { LL.lat = cc.lat; LL.lon = cc.lon; } } catch (e) {} }
+            const a2 = { id: 'asofc_' + c.id, propType: 'apt', addr: c.addrJibun, dong: c.dong, bunji: c.bunji, name: (ap && ap.name) || c.buildingName || '', pyung: c.areaM2 / 3.305785, floor: c.floor, lat: LL.lat, lon: LL.lon,
               bCode: lawd + '10100', bidDate: c.saleDate, minBid: String(Math.round((c.minBidPrice || 0) / 10000)), appraisal: String(Math.round((c.appraisalPrice || 0) / 10000)), buildYear: parseInt(l.build_year) || null };
             let row = null, err = null; try { row = computeBidBoardRow(a2); } catch (e) { err = String(e.message || e).slice(0, 80); }
             // 🎯 3개 가격 채점용(2026-11-08): 낙찰 뒤 6개월 같은 단지·평형(±3㎡) 시장 실거래 중위값(정답), 실제 낙찰가, 예상 낙찰가·추천가·낙찰 가능성

@@ -9,6 +9,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
+        part: ['old', 'new']
         prefix: ['11', '12', '26', '27', '28', '29', '30', '31', '36', '41', '42,51', '43', '44', '45,52', '46', '47', '48', '50']
     steps:
       - uses: actions/checkout@v4
@@ -20,9 +21,9 @@ jobs:
       - env:
           SITE_URL: https://1234auction.vercel.app
           LAWD_PREFIX: ${{ matrix.prefix }}
-          SALE_FROM: '2020-01-01'
-          SALE_TO: '2025-02-15'
-          LONG_YEARS: '6'
+          SALE_FROM: ${{ matrix.part == 'old' && '2020-01-01' || '2025-02-15' }}
+          SALE_TO: ${{ matrix.part == 'old' && '2025-02-15' || '9999-12-31' }}
+          LONG_YEARS: ${{ matrix.part == 'old' && '6' || '' }}
           OUT_FILE: rows.json
         run: node scripts/validate-app-asof-cases.mjs > log.txt 2>&1 || (tail -30 log.txt; exit 1)
       - run: tail -4 log.txt || true
@@ -32,7 +33,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: aptold-${{ steps.nm.outputs.n }}
+          name: aptwide-${{ matrix.part }}-${{ steps.nm.outputs.n }}
           path: rows.json
           if-no-files-found: ignore
           retention-days: 14
@@ -49,14 +50,8 @@ jobs:
       - run: pip install pandas numpy requests scikit-learn
       - uses: actions/download-artifact@v4
         with:
-          pattern: aptold-*
-          path: aptwide
-      - uses: actions/download-artifact@v4
-        with:
           pattern: aptwide-*
           path: aptwide
-          run-id: 43879534628
-          github-token: ${{ secrets.GITHUB_TOKEN }}
       - env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
