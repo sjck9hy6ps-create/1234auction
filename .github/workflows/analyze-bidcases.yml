@@ -21,6 +21,11 @@ on:
         required: false
         default: 'false'
 
+      noest:
+        description: '시세 없는 사례 진단만 실행(저장 없음)'
+        required: false
+        default: 'false'
+
 jobs:
   analyze:
     runs-on: ubuntu-latest
@@ -38,8 +43,9 @@ jobs:
           PYTHONUNBUFFERED: '1'
           WB_EXP: ${{ github.event.inputs.experiment == 'true' && '1' || '' }}
           WB_NOLB_ONLY: ${{ github.event.inputs.nolb == 'true' && '1' || '' }}
+          WB_NOEST_DIAG: ${{ github.event.inputs.noest == 'true' && '1' || '' }}
           WB_BASEDIST_ONLY: ${{ github.event.inputs.basedist == 'true' && '1' || '' }}
-          WRITE_BACK: ${{ (github.event.inputs.nolb == 'true' || github.event.inputs.basedist == 'true') && '0' || '1' }}
+          WRITE_BACK: ${{ (github.event.inputs.nolb == 'true' || github.event.inputs.basedist == 'true' || github.event.inputs.noest == 'true') && '0' || '1' }}
         run: python analyze-bidcases.py
       - uses: actions/upload-artifact@v4
         if: always()

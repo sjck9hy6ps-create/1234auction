@@ -541,6 +541,8 @@ def main():
             pass
         out.append(rec)
     R = pd.DataFrame(out)
+    if os.environ.get("WB_NOEST_DIAG") == "1":   # 2026-11-16 시세 없는 사례 진단(저장 없음)
+        noest_diag(df, tr, R); return
     try:  # 🌊 적응형 흐름 상태(수도권·지방 따로 눈금: 그룹 안 분위수로 구간을 나눔 - 같은 고정 경계를 두 그룹에 쓰지 않음)
         def _cls_q(col, cls_col, qs):
             res_ = {}
@@ -2202,6 +2204,72 @@ def risk_table(R0, now):
     out = {**disp_extra, "기간": [lo, hi], "표본": int(len(D)), "칸": tab, "전체칸": allt, "인기보정": pop_adj, "낙찰조건": cond, "정의": "e = 낙찰 뒤 6개월 시장 실거래 중위 ÷ 시세(est_rule_f) - 1"}
     print("  🧱 근거 두께별 하방 표:", json.dumps({k_: [v_["n"], v_["q25"], v_["q50"]] for k_, v_ in tab.items()}, ensure_ascii=False))
     return out
+
+
+def noest_diag(df, tr, R):
+    """2026-11-16(사용자: 시세를 못 구하는 3천여 건도 구하는 법) 시세 없는 낙찰사례의 원인 분류와 대체 연결(본번·단지명·같은 동 같은 평형) 구제 건수 + 대체 방식 정확도 점검. 저장 없음."""
+    from collections import Counter
+    assert len(df) == len(R), (len(df), len(R))
+    er = R["est_rule_f"] if "est_rule_f" in R.columns else R["est_rule"]
+    er = er.where(er.notna() & (er > 0), R["est_rule"])
+    miss = ~(er.notna() & (er > 0)).values
+    tr = tr.copy(); tr["danji_n"] = tr["danji"].map(lambda x: avm.normalize_complex_name(x) if isinstance(x, str) else "")
+    tr["bmain"] = tr["bunji_s"].astype(str).str.split("-").str[0]
+    byd = {k: g for k, g in tr.groupby(["region_n", "dk"])}
+    df = df.reset_index(drop=True)
+    def cands(c, exclude_exact=False):
+        g = byd.get((c.region, c.dk))
+        if g is None: return None, None, None, None
+        sale_d = int_to_date(c.sale_int); cut = ymd_int(sale_d - timedelta(days=30)); lo = ymd_int(sale_d - timedelta(days=30 + 1095))
+        g = g[(g["deal_date"] < cut) & (g["deal_date"] >= lo) & ((g["size"] - float(c.area)).abs() <= 3)]
+        if exclude_exact: g = g[g["bunji_s"] != c.bunji_s]
+        bm = str(c.bunji_s).split("-")[0]
+        gb = g[g["bmain"] == bm]
+        nm = avm.normalize_complex_name(str(getattr(c, "buildingName", "") or "")) if str(getattr(c, "buildingName", "") or "").strip() else ""
+        gn = g[g["danji_n"] == nm] if nm else g.iloc[0:0]
+        return g, gb, gn, cut
+    cnt = Counter(); rescued = {"본번": 0, "단지명": 0, "본번 또는 단지명": 0, "같은 동 같은 평형(3건+)": 0}
+    est_fb = {}
+    ex_bunji = Counter()
+    for i, c in enumerate(df.itertuples()):
+        if not miss[i]: continue
+        g, gb, gn, cut = cands(c)
+        if g is None: cnt["동 거래 자료 자체가 없음(동 이름 연결 실패 가능)"] += 1; continue
+        n_g = len(g)
+        if n_g == 0: cnt["같은 동에 같은 평형(±3㎡) 3년 거래 없음"] += 1; continue
+        ok_b, ok_n = len(gb) >= 1, len(gn) >= 1
+        if ok_b: rescued["본번"] += 1
+        if ok_n: rescued["단지명"] += 1
+        if ok_b or ok_n: rescued["본번 또는 단지명"] += 1
+        if n_g >= 3: rescued["같은 동 같은 평형(3건+)"] += 1
+        cnt["같은 동 같은 평형 거래는 있음(지번·단지명 연결이 관건)"] += 1
+        if ok_b: est_fb[i] = float(np.median(gb["ppm"])) * float(c.area)
+        elif ok_n: est_fb[i] = float(np.median(gn["ppm"])) * float(c.area)
+        elif n_g >= 3: est_fb[i] = float(np.median(g["ppm"])) * float(c.area)
+        else: est_fb[i] = None
+    out = {"시세 없음 건수": int(miss.sum()), "원인 분류": dict(cnt), "대체 연결로 구제 가능 건수": rescued}
+    # 구제된 사례의 낙찰가÷대체시세 분포(정상 사례 86~88% 근처인지)
+    rr = [float(df.loc[i, "actual"]) / v for i, v in est_fb.items() if v]
+    if rr: out["구제 사례 낙찰가÷대체시세(중앙/25%/75%)"] = [len(rr), round(float(np.median(rr)) * 100, 1), round(float(np.quantile(rr, .25)) * 100, 1), round(float(np.quantile(rr, .75)) * 100, 1)]
+    # 대체 방식 정확도: 시세가 있는 사례 3000건에서 정확한 지번 시세 대신 대체 방식으로 구한 값이 얼마나 다른지
+    rng = np.random.RandomState(7); idxs = [i for i in range(len(df)) if not miss[i]]; rng.shuffle(idxs)
+    errs = {"같은 동 같은 평형(정확한 지번 제외)": [], "본번(부번만 다른 지번)": []}; used = 0
+    for i in idxs[:6000]:
+        c = df.iloc[i]; cc = df.iloc[i:i + 1].itertuples().__next__()
+        g, gb, gn, cut = cands(cc, exclude_exact=True)
+        if g is None: continue
+        ex = float(er.iloc[i])
+        if len(g) >= 3: errs["같은 동 같은 평형(정확한 지번 제외)"].append(abs(float(np.median(g["ppm"])) * float(c["area"]) / ex - 1))
+        if len(gb) >= 1: errs["본번(부번만 다른 지번)"].append(abs(float(np.median(gb["ppm"])) * float(c["area"]) / ex - 1))
+    out["대체 방식 vs 정확한 지번 시세 차이(중앙 절대차%·건수)"] = {k: [len(v), round(float(np.median(v)) * 100, 1) if v else None, round(float(np.quantile(v, .75)) * 100, 1) if v else None] for k, v in errs.items()}
+    # 시세 없는 사례의 지역/동 분포 상위
+    mm = df[miss]
+    out["시세 없음 상위 시군구"] = mm["region"].value_counts().head(15).to_dict()
+    out["시세 없음 주소 예(15건)"] = [str(x)[:60] for x in mm["addrJibun"].head(15)]
+    out["시세 없음 단지명 예(15건)"] = [str(x)[:30] for x in (mm["buildingName"] if "buildingName" in mm.columns else pd.Series([])).head(15)]
+    print("📋 NOEST_JSON " + json.dumps(out, ensure_ascii=False))
+    if os.environ.get("GITHUB_STEP_SUMMARY"):
+        open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8").write("### 시세 없는 사례 진단\n```json\n" + json.dumps(out, ensure_ascii=False, indent=1) + "\n```\n")
 
 
 def widecmp_test(R, now):
