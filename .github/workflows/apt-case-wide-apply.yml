@@ -1,0 +1,54 @@
+# 2020년~ 전체 낙찰사례(전남광주 포함)의 종합 평가 값을 저장하고 낙찰가 모델을 다시 학습(2026-11-17, 사용자 승인) - 저장 전 기존 값 백업을 artifact로 남김
+name: Apt case wide apply
+on:
+  workflow_dispatch:
+    inputs:
+      run_id:
+        description: '넓힌 계산(apt-case-wide2) 실행 번호'
+        required: true
+        default: '43888375977'
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install pandas numpy requests scikit-learn scipy
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: aptwide-*
+          path: aptcases
+          run-id: ${{ inputs.run_id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+      - name: 기존 저장값 백업
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: |
+          python - <<'PY'
+          import os, json, requests
+          u = os.environ["SUPABASE_URL"]; k = os.environ["SUPABASE_SERVICE_ROLE_KEY"]
+          h = {"apikey": k, "Authorization": "Bearer " + k}
+          for id_ in ["signal|__apt_case_stack__", "signal|__winbid__"]:
+              r = requests.get(f"{u}/rest/v1/leader_follower_cache", headers=h, params={"select": "id,payload,fetched_at", "id": "eq." + id_}, timeout=120).json()
+              open("backup-" + id_.split("|")[1] + ".json", "w").write(json.dumps(r, ensure_ascii=False))
+              print(id_, len(json.dumps(r)))
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: stack-backup
+          path: backup-*.json
+          retention-days: 60
+      - env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: python save-apt-case-stack.py aptcases
+      - env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          SITE_URL: https://1234auction.vercel.app
+          PYTHONUNBUFFERED: '1'
+        run: python analyze-bidcases.py
