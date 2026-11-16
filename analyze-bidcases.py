@@ -2226,7 +2226,7 @@ def coverage_test(R, now):
         a, b = R[R[col]], R[~R[col]]
         def q(g):
             d = (g["actual"] / g["appraisal"]).replace([np.inf, -np.inf], np.nan).dropna()
-            return {"n": int(len(g)), "낙찰가 중앙(만원)": round(float(g["actual"].median())), "낙찰가÷감정가 중앙": round(float(d.median()), 3) if len(d) else None, "신건·유찰없음 비율%": round(float((g["fails"] == 0).mean()) * 100, 1)}
+            return {"n": int(len(g)), "낙찰가 중앙(만원)": (round(float(g["actual"].median())) if len(g) else None), "낙찰가÷감정가 중앙": round(float(d.median()), 3) if len(d) else None, "신건·유찰없음 비율%": (round(float((g["fails"] == 0).mean()) * 100, 1) if len(g) else None)}
         out["빠진 사례 vs 남은 사례 - " + nm] = {"빠진": q(a), "남은": q(b)}
     print("📋 COVERAGE_JSON " + json.dumps(out, ensure_ascii=False))
     if os.environ.get("GITHUB_STEP_SUMMARY"):
