@@ -16,6 +16,11 @@ on:
         required: false
         default: 'false'
 
+      basedist:
+        description: '낙찰비율 분포 보고만 실행(저장 없음)'
+        required: false
+        default: 'false'
+
 jobs:
   analyze:
     runs-on: ubuntu-latest
@@ -33,7 +38,8 @@ jobs:
           PYTHONUNBUFFERED: '1'
           WB_EXP: ${{ github.event.inputs.experiment == 'true' && '1' || '' }}
           WB_NOLB_ONLY: ${{ github.event.inputs.nolb == 'true' && '1' || '' }}
-          WRITE_BACK: ${{ github.event.inputs.nolb == 'true' && '0' || '1' }}
+          WB_BASEDIST_ONLY: ${{ github.event.inputs.basedist == 'true' && '1' || '' }}
+          WRITE_BACK: ${{ (github.event.inputs.nolb == 'true' || github.event.inputs.basedist == 'true') && '0' || '1' }}
         run: python analyze-bidcases.py
       - uses: actions/upload-artifact@v4
         if: always()

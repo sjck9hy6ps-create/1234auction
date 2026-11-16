@@ -697,6 +697,8 @@ def main():
         if not os.environ.get("APT_STACK_DIR"):
             try: apt_stack_load(R)
             except Exception as e: print("  종합 평가 연결 건너뜀:", e)
+        if os.environ.get("WB_BASEDIST_ONLY") == "1":   # 2026-11-16 낙찰비율 분포 보고(저장 없음)
+            basedist_test(R, now); return
         if os.environ.get("WB_NOLB_ONLY") == "1":   # 2026-11-16 시험: 최저가 요인을 뺀 예상 낙찰가 모델 비교(앱·서버 저장값은 안 바뀜) - 끝나면 바로 종료
             nolb_test(R, now); return
         try:
@@ -2193,6 +2195,41 @@ def risk_table(R0, now):
     out = {**disp_extra, "기간": [lo, hi], "표본": int(len(D)), "칸": tab, "전체칸": allt, "인기보정": pop_adj, "낙찰조건": cond, "정의": "e = 낙찰 뒤 6개월 시장 실거래 중위 ÷ 시세(est_rule_f) - 1"}
     print("  🧱 근거 두께별 하방 표:", json.dumps({k_: [v_["n"], v_["q25"], v_["q50"]] for k_, v_ in tab.items()}, ensure_ascii=False))
     return out
+
+
+def basedist_test(R, now):
+    """2026-11-16(사용자: 기본값 −12.5%를 지역별·유찰 횟수별로 나눠 실제 낙찰비율 분포를 보고 싶음) 낙찰가÷시세 분포 보고. 저장 없음(로그·요약에만).
+    모델과 같은 사례(학습+검증 전체)·같은 시세 기준. 지역은 모델의 region 요인과 같은 구분."""
+    R = R.copy()
+    _er = R["est_rule_f"] if "est_rule_f" in R.columns else R["est_rule"]
+    _er = _er.where(_er.notna() & (_er > 0), R["est_rule"])
+    R["est"] = _er.where(_er.notna() & (_er > 0))
+    if "est_stack" in R.columns and int((R["est_stack"] > 0).sum()) >= 3000 and os.environ.get("APT_STACK_OFF") != "1":
+        R["est"] = R["est_stack"].where(R["est_stack"] > 0)
+    D = R[R["est"].notna() & (R["est"] > 0) & R["actual"].notna() & R["minbid"].notna() & (R["minbid"] > 0) & (R["sale"] >= 20200101)].copy()
+    D = D[np.log(D["actual"] / D["est"]).between(np.log(0.4), np.log(1.6))]
+    X = wb_features(D)
+    D["ratio"] = (D["actual"] / D["est"]).values
+    D["region_k"] = X["region"].values
+    D["fails_k"] = X["fails"].values
+    last = pd.to_datetime(str(int(D["sale"].max())), format="%Y%m%d")
+    D["recent"] = D["sale"] >= int((last - pd.DateOffset(months=12)).strftime("%Y%m%d"))
+    base_ratio = float(np.exp(np.median(np.log(D["ratio"]))))
+    lines = []
+    def stat(g):
+        r = g["ratio"].values
+        return {"n": int(len(r)), "중앙": round(float(np.median(r)) * 100, 1), "p10": round(float(np.quantile(r, .10)) * 100, 1), "p25": round(float(np.quantile(r, .25)) * 100, 1),
+                "p75": round(float(np.quantile(r, .75)) * 100, 1), "p90": round(float(np.quantile(r, .90)) * 100, 1), "기본값대비중앙차%p": round((float(np.median(r)) - base_ratio) * 100, 1)}
+    out = {"기준(전체 중앙, 시세 대비 %)": round(base_ratio * 100, 1), "전체": stat(D), "최근12개월": stat(D[D["recent"]]), "유찰별": {}, "지역별": {}, "지역별 유찰별(n>=30)": {}}
+    for k, g in D.groupby("fails_k"): out["유찰별"][str(k)] = stat(g)
+    for k, g in D.groupby("region_k"):
+        if len(g) >= 30: out["지역별"][str(k)] = stat(g)
+    for (rk, fk), g in D.groupby(["region_k", "fails_k"]):
+        if len(g) >= 30 and str(fk) in ("0", "1", "2", "3"): out["지역별 유찰별(n>=30)"][f"{rk}|{fk}"] = stat(g)
+    print("  📊 낙찰비율 분포(낙찰가÷시세, %):", json.dumps(out["전체"], ensure_ascii=False))
+    print("📊 BASEDIST_JSON " + json.dumps(out, ensure_ascii=False))
+    if os.environ.get("GITHUB_STEP_SUMMARY"):
+        open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8").write("### 낙찰비율 분포\n```json\n" + json.dumps(out, ensure_ascii=False, indent=1)[:60000] + "\n```\n")
 
 
 def nolb_test(R, now):
