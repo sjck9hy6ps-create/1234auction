@@ -257,7 +257,7 @@ def main():
             hh_ = HH.get((str(row_["sigungu_cd"]), str(row_["bjdong_cd"]), bun_, ji_), 0)
             cx_keys.append(ck_); cx_lat.append(float(row_["lat"])); cx_lon.append(float(row_["lon"]))
             cx_dd.append(g_["deal_date"].to_numpy()); cx_pp.append(g_["ppm"].to_numpy(dtype=float)); cx_hh.append(hh_)
-        cx_xy = np.radians(np.c_[cx_lat, cx_lon]); CX = {"tree": BallTree(cx_xy, metric="haversine"), "dd": cx_dd, "pp": cx_pp, "hh": np.array(cx_hh), "ck": {k_: i_ for i_, k_ in enumerate(cx_keys)}, "n": len(cx_keys)}
+        cx_xy = np.radians(np.c_[cx_lat, cx_lon]); CX = {"tree": BallTree(cx_xy, metric="haversine"), "dd": cx_dd, "pp": cx_pp, "hh": np.array(cx_hh), "ck": {k_: i_ for i_, k_ in enumerate(cx_keys)}, "n": len(cx_keys), "keys": cx_keys, "lat": np.array(cx_lat), "lon": np.array(cx_lon)}
         # 2026-11-15 수도권 낙찰사례는 좌표가 11%뿐이라(지방 96%) 생활권 흐름 표본이 작았음 → 사례가 속한 단지(지역·동·번지)의 좌표로 채움
         CXLL = {}
         try:
@@ -542,7 +542,7 @@ def main():
         out.append(rec)
     R = pd.DataFrame(out)
     if os.environ.get("WB_NOEST_DIAG") == "1":   # 2026-11-16 시세 없는 사례 진단(저장 없음)
-        noest_diag(df, tr, R); return
+        noest_diag(df, tr, R, CX); return
     try:  # 🌊 적응형 흐름 상태(수도권·지방 따로 눈금: 그룹 안 분위수로 구간을 나눔 - 같은 고정 경계를 두 그룹에 쓰지 않음)
         def _cls_q(col, cls_col, qs):
             res_ = {}
@@ -2206,7 +2206,7 @@ def risk_table(R0, now):
     return out
 
 
-def noest_diag(df, tr, R):
+def noest_diag(df, tr, R, CX=None):
     """2026-11-16(사용자: 시세를 못 구하는 3천여 건도 구하는 법) 시세 없는 낙찰사례의 원인 분류와 대체 연결(본번·단지명·같은 동 같은 평형) 구제 건수 + 대체 방식 정확도 점검. 저장 없음."""
     from collections import Counter
     assert len(df) == len(R), (len(df), len(R))
@@ -2262,6 +2262,55 @@ def noest_diag(df, tr, R):
         if len(g) >= 3: errs["같은 동 같은 평형(정확한 지번 제외)"].append(abs(float(np.median(g["ppm"])) * float(c["area"]) / ex - 1))
         if len(gb) >= 1: errs["본번(부번만 다른 지번)"].append(abs(float(np.median(gb["ppm"])) * float(c["area"]) / ex - 1))
     out["대체 방식 vs 정확한 지번 시세 차이(중앙 절대차%·건수)"] = {k: [len(v), round(float(np.median(v)) * 100, 1) if v else None, round(float(np.quantile(v, .75)) * 100, 1) if v else None] for k, v in errs.items()}
+    # ── 좌표 근처 단지 연결(사례 좌표 반경 100/200/300m의 같은 평형 거래 단지로 시세) ──
+    try:
+        if CX is not None and "lat" in df.columns:
+            from collections import defaultdict
+            info = {}
+            for ck_, g_ in tr.dropna(subset=["ckey"]).groupby("ckey"):
+                info[ck_] = (g_["deal_date"].to_numpy(), g_["size"].to_numpy(dtype=float), g_["ppm"].to_numpy(dtype=float), str(g_["region_n"].iloc[0]))
+            la = pd.to_numeric(df["lat"], errors="coerce").values; lo_ = pd.to_numeric(df["lon"], errors="coerce").values
+            def nn_est(i, c, r_m, min_n=2, skip_bunji=False):
+                if not (np.isfinite(la[i]) and np.isfinite(lo_[i])): return None
+                ids, ds = CX["tree"].query_radius(np.radians([[la[i], lo_[i]]]), r=r_m / 6371000.0, return_distance=True)
+                sale_d = int_to_date(c.sale_int); cut = ymd_int(sale_d - timedelta(days=30)); lo = ymd_int(sale_d - timedelta(days=30 + 1095))
+                best = None
+                for j, d_ in zip(ids[0], ds[0]):
+                    k = CX["keys"][j]; inf = info.get(k)
+                    if inf is None or inf[3] != c.region: continue
+                    if skip_bunji and k.split("|")[2] == str(c.bunji_s): continue
+                    dd, sz, pp, _ = inf
+                    m = (dd < cut) & (dd >= lo) & (np.abs(sz - float(c.area)) <= 3)
+                    n = int(m.sum())
+                    if n < min_n: continue
+                    cand = (d_, -n, float(np.median(pp[m])) * float(c.area), n)
+                    if best is None or cand < best: best = cand
+                return best
+            nnres = {}
+            has_ll = int((np.isfinite(la) & np.isfinite(lo_))[miss].sum())
+            nnres["시세 없음 중 좌표 있는 건수"] = has_ll
+            for r_m in (100, 200, 300):
+                ests = {}
+                for i, c in enumerate(df.itertuples()):
+                    if not miss[i]: continue
+                    b = nn_est(i, c, r_m)
+                    if b: ests[i] = b[2]
+                rr2 = [float(df.loc[i, "actual"]) / v for i, v in ests.items() if v]
+                nnres[f"반경 {r_m}m 구제 건수"] = len(ests)
+                if rr2: nnres[f"반경 {r_m}m 낙찰가÷시세(중앙/25%/75%)"] = [round(float(np.median(rr2)) * 100, 1), round(float(np.quantile(rr2, .25)) * 100, 1), round(float(np.quantile(rr2, .75)) * 100, 1)]
+            # 정확도: 시세가 있는 사례에서 같은 지번 단지를 빼고 근처 단지로 구한 값 vs 정확한 시세
+            rng2 = np.random.RandomState(11); idx2 = [i for i in range(len(df)) if not miss[i] and np.isfinite(la[i]) and np.isfinite(lo_[i])]; rng2.shuffle(idx2)
+            for r_m in (100, 200, 300):
+                errs2 = []; cm = list(df.iloc[:0].itertuples())
+                for i in idx2[:2500]:
+                    cc = df.iloc[i:i + 1].itertuples().__next__()
+                    b = nn_est(i, cc, r_m, skip_bunji=True)
+                    if b: errs2.append(b[2] / float(er.iloc[i]) - 1)
+                if errs2:
+                    ae = np.abs(errs2); nnres[f"반경 {r_m}m 정확도(시세 있는 사례 {len(errs2)}건)"] = {"중앙절대차%": round(float(np.median(ae)) * 100, 1), "75%": round(float(np.quantile(ae, .75)) * 100, 1), "쏠림%": round(float(np.median(errs2)) * 100, 1), "10%이내%": round(float((ae <= 0.10).mean()) * 100, 1)}
+            out["좌표 근처 단지 연결"] = nnres
+    except Exception as ex_:
+        import traceback; traceback.print_exc(); out["좌표 근처 단지 연결 오류"] = str(ex_)[:200]
     # 시세 없는 사례의 지역/동 분포 상위
     mm = df[miss]
     out["시세 없음 상위 시군구"] = mm["region"].value_counts().head(15).to_dict()
