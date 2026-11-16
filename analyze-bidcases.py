@@ -701,6 +701,8 @@ def main():
             except Exception as e: print("  종합 평가 연결 건너뜀:", e)
         if os.environ.get("WB_WIDECMP_DIR"):   # 2026-11-16 종합 평가 사례 넓힘 시험(저장 없음)
             widecmp_test(R, now); return
+        if os.environ.get("WB_RECWIN") == "1":   # 2026-11-17 오늘 기준 최근 기간별 비교 시험(저장 없음)
+            recwin_test(R, now); return
         if os.environ.get("WB_BASEDIST_ONLY") == "1":   # 2026-11-16 낙찰비율 분포 보고(저장 없음)
             basedist_test(R, now)
             try: coverage_test(R, now)
@@ -2363,6 +2365,44 @@ def widecmp_test(R, now):
     print("📋 WIDECMP_JSON " + json.dumps(out, ensure_ascii=False))
     if os.environ.get("GITHUB_STEP_SUMMARY"):
         open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8").write("### 종합 평가 사례 넓힘 시험\n```json\n" + json.dumps(out, ensure_ascii=False, indent=1) + "\n```\n")
+
+
+def recwin_test(R, now):
+    """2026-11-17(사용자: 연도·분기 요인이 아니라 오늘 기준 최근 3개월·6개월·1년·2년 자료를 비교) 저장 없음.
+    저장된 종합 평가 값(est_stack) 전체로, 검증 구간(오늘 기준 최근 3·6·12·24개월) × 학습 방식(전체 / 전체+최근 N개월 3배 / 최근 N개월만)을 비교. 요인 목록·비중은 지금 모델 그대로."""
+    global WB_FACTORS
+    R = R.copy(); R["est"] = R["est_stack"].where(R["est_stack"] > 0)
+    print(f"  종합 평가 값 연결: {int(R['est'].notna().sum()):,}/{len(R):,}건")
+    D = R[R["est"].notna() & (R["est"] > 0) & R["actual"].notna() & R["minbid"].notna() & (R["minbid"] > 0) & (R["sale"] >= 20200101)].copy()
+    D = D[np.log(D["actual"] / D["est"]).between(np.log(0.4), np.log(1.6))]
+    last = pd.to_datetime(str(int(D["sale"].max())), format="%Y%m%d")
+    out = {"기준일(가장 최근 낙찰일)": str(last.date()), "검증": {}}
+    ago = lambda ref, m: int((ref - pd.DateOffset(months=m)).strftime("%Y%m%d"))
+    for H in (3, 6, 12, 24):
+        cut = ago(last, H); te = D[D["sale"] >= cut]; trB = D[D["sale"] < cut]
+        if len(te) < 100: continue
+        ref = pd.to_datetime(str(cut), format="%Y%m%d")
+        fcls = te["flow_cls"].fillna("?").values if "flow_cls" in te.columns else np.array(["?"] * len(te))
+        segs = {"전체": np.ones(len(te), bool), "수도권": fcls == "수도권", "지방": fcls == "지방"}
+        variants = [("전체", trB)]
+        for W in (3, 6, 12, 24):
+            rec = trB[trB["sale"] >= ago(ref, W)]; variants.append((f"전체 + 최근 {W}개월 3배", pd.concat([trB, rec, rec]))); 
+        for W in (6, 12, 24):
+            variants.append((f"최근 {W}개월만", trB[trB["sale"] >= ago(ref, W)]))
+        res = {}
+        for nm, tr in variants:
+            if len(tr) < 300: continue
+            m = wb_fit(tr); e = np.exp(wb_predict(m, te)) * te["est"].values / te["actual"].values - 1
+            r = {"학습": int(len(tr))}
+            for sn, mk in segs.items():
+                ee = e[mk]
+                if len(ee) >= 30: r[sn] = [round(float(np.median(np.abs(ee))) * 100, 2), round(float((np.abs(ee) <= 0.10).mean()) * 100, 1), round(float(np.median(ee)) * 100, 2)]
+            res[nm] = r
+        out["검증"][f"최근 {H}개월(검증 {len(te)}건)"] = res
+        print(f"  🧪 검증 최근 {H}개월", len(te), "건:", json.dumps({k: v.get("전체") for k, v in res.items()}, ensure_ascii=False))
+    print("📋 RECWIN_JSON " + json.dumps(out, ensure_ascii=False))
+    if os.environ.get("GITHUB_STEP_SUMMARY"):
+        open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8").write("### 최근 기간별 비교\n```json\n" + json.dumps(out, ensure_ascii=False, indent=1) + "\n```\n")
 
 
 def stackcmp_test(R, now):

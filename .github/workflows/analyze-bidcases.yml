@@ -26,6 +26,11 @@ on:
         required: false
         default: 'false'
 
+      recwin:
+        description: '오늘 기준 최근 기간별 비교 시험만 실행(저장 없음)'
+        required: false
+        default: 'false'
+
 jobs:
   analyze:
     runs-on: ubuntu-latest
@@ -44,8 +49,9 @@ jobs:
           WB_EXP: ${{ github.event.inputs.experiment == 'true' && '1' || '' }}
           WB_NOLB_ONLY: ${{ github.event.inputs.nolb == 'true' && '1' || '' }}
           WB_NOEST_DIAG: ${{ github.event.inputs.noest == 'true' && '1' || '' }}
+          WB_RECWIN: ${{ github.event.inputs.recwin == 'true' && '1' || '' }}
           WB_BASEDIST_ONLY: ${{ github.event.inputs.basedist == 'true' && '1' || '' }}
-          WRITE_BACK: ${{ (github.event.inputs.nolb == 'true' || github.event.inputs.basedist == 'true' || github.event.inputs.noest == 'true') && '0' || '1' }}
+          WRITE_BACK: ${{ (github.event.inputs.nolb == 'true' || github.event.inputs.basedist == 'true' || github.event.inputs.noest == 'true' || github.event.inputs.recwin == 'true') && '0' || '1' }}
         run: python analyze-bidcases.py
       - uses: actions/upload-artifact@v4
         if: always()
