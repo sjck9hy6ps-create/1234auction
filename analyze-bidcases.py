@@ -701,6 +701,8 @@ def main():
             except Exception as e: print("  종합 평가 연결 건너뜀:", e)
         if os.environ.get("WB_WIDECMP_DIR"):   # 2026-11-16 종합 평가 사례 넓힘 시험(저장 없음)
             widecmp_test(R, now); return
+        if os.environ.get("WB_CALFULL") == "1":   # 2026-11-17 낙찰 가능성 보정 효과를 과거 낙찰사례 전체로 재확인(저장 없음)
+            calib_full_test(R, now); return
         if os.environ.get("WB_ALARMTEST") == "1" or os.environ.get("WB_CALTEST") == "1":   # 2026-11-17 낙찰 가능성 경보 기준 구간별 시험(저장 없음, 여기서 바로 종료)
             alarm_test_main(R, now); return
         if os.environ.get("WB_RECWIN") == "1":   # 2026-11-17 오늘 기준 최근 기간별 비교 시험(저장 없음)
@@ -2407,11 +2409,93 @@ def alarm_test_main(R, now):
     import requests as _rq
     au = _rq.get(f"{SITE_URL}/api/auction", timeout=180).json()
     amap = {(norm_case(x.get("caseNo")), region_norm(x.get("addr"))): x for x in au if isinstance(x, dict) and x.get("caseNo") and not x.get("isBacktest")}
-    scorecard(D, amap)
+    _sc = scorecard(D, amap)
+    print("📋 SCORECARD_NEW " + json.dumps({k: _sc.get(k) for k in ("needAdjust", "needAdjustAvg", "needAdjustRaw", "binAlarmRaw", "calibrationAfter", "probGapPct")}, ensure_ascii=False))
     X = globals().get("_SC_X")
     if X is None: print("  성적표 표본 없음"); return
     if os.environ.get("WB_CALTEST") == "1": calib_methods_test(X, D)
     if os.environ.get("WB_ALARMTEST") == "1": alarm_test(X)
+
+
+def calib_full_test(R, now):
+    """2026-11-17(사용자: 보정 효과를 과거 낙찰사례 전부로 재확인) 저장 없음.
+    저장된 추천가 표본은 1,350건뿐이라, 종합 평가 값이 있는 과거 낙찰사례 전체에 대해 '그 시점 이전 자료로만 학습한 낙찰가 모델'로 예상 낙찰가·낙찰 확률을 다시 만들고
+    (분기마다: 이전 자료로 모델 학습, 그 앞 6개월 사례의 오차 분포로 낙찰 확률 표 작성) 낙찰 확률 보정 방법을 시간순(분기별 과거 학습→현재 분기 채점)으로 비교.
+    입찰가 세트 A = 추천가 근사((시세-고정비-목표순익)/비용률, 최저가 이상인 후보만), 세트 B = 예상 낙찰가의 92·96·100·104%(최저가 이상)로 확률 전 구간을 고르게 채움.
+    앱의 구간별 오차 분포·큰 상승 단지 꼬리 등은 반영하지 않은 단순 근사."""
+    global WB_FACTORS
+    from sklearn.linear_model import LogisticRegression
+    R = R.copy(); R["est"] = R["est_stack"].where(R["est_stack"] > 0)
+    D = R[R["est"].notna() & (R["est"] > 0) & R["actual"].notna() & R["minbid"].notna() & (R["minbid"] > 0) & (R["sale"] >= 20200101)].copy()
+    D = D[np.log(D["actual"] / D["est"]).between(np.log(0.4), np.log(1.6))].reset_index(drop=True)
+    print(f"  전체 사례 {len(D):,}건 ({int(D['sale'].min())}~{int(D['sale'].max())})")
+    D["q"] = (D["sale"] // 10000) * 10 + ((D["sale"] // 100) % 100 - 1) // 3 + 1
+    qs = sorted(D["q"].unique()); qstart = lambda q: int((q // 10) * 10000 + ((q % 10) - 1) * 300 + 101)
+    TARGET = 1000
+    rows = []
+    for q in qs:
+        st_ = qstart(q); st_d = pd.to_datetime(str(st_), format="%Y%m%d")
+        tr = D[D["sale"] < st_]; te = D[D["q"] == q]
+        if len(tr) < 1500 or len(te) < 30: continue
+        s6 = int((st_d - pd.DateOffset(months=6)).strftime("%Y%m%d"))
+        tr6 = D[D["sale"] < s6]; oos = D[(D["sale"] >= s6) & (D["sale"] < st_)]
+        if len(tr6) < 1000 or len(oos) < 200: continue
+        m1 = wb_fit(tr6); res = np.log(oos["actual"].values / (oos["est"].values * np.exp(wb_predict(m1, oos))))
+        rq = np.quantile(res, np.arange(1, 100) / 100)
+        m2 = wb_fit(tr); pr = wb_predict(m2, te)
+        for i_, (idx, r_) in enumerate(te.iterrows()):
+            est = float(r_["est"]); win = est * float(np.exp(pr[i_])); act = float(r_["actual"]); mb = float(r_["minbid"])
+            bids = {}
+            rec = (est - FIXED_COST - TARGET) / COST_RATIO
+            if rec >= mb: bids["A"] = rec
+            for k_, f_ in (("B92", .92), ("B96", .96), ("B100", 1.0), ("B104", 1.04)):
+                if win * f_ >= mb: bids[k_] = win * f_
+            for k_, b_ in bids.items():
+                thr = np.log(b_ / est) - pr[i_]
+                p0 = 0.01 if thr <= rq[0] else (0.99 if thr >= rq[-1] else float(np.interp(thr, rq, np.arange(1, 100) / 100)))
+                rows.append({"q": q, "set": "A" if k_ == "A" else "B", "bid": b_, "win": win, "prob": p0, "won": float(act <= b_), "fails": r_.get("fails"), "cls": r_.get("flow_cls"), "region": r_.get("region"), "sale": int(r_["sale"])})
+        print(f"  분기 {q}: 학습 {len(tr):,} · 채점 {len(te)}건", flush=True)
+    S = pd.DataFrame(rows)
+    S["gap"] = np.log(S["bid"] / S["win"]).clip(-1, 1); S["lp"] = np.log(S["prob"].clip(0.01, 0.99) / (1 - S["prob"].clip(0.01, 0.99)))
+    S["f0"] = (S["fails"].fillna(-1) == 0).astype(float); S["f1"] = (S["fails"].fillna(-1) == 1).astype(float); S["f2"] = (S["fails"].fillna(-1) >= 2).astype(float); S["cap"] = (S["cls"] == "수도권").astype(float)
+    rbm = D[D["sale"] < 20230101].groupby("region")["bidders"].median(); S["rbid"] = np.log(S["region"].map(rbm).fillna(float(D["bidders"].median())).clip(lower=1))
+    FE = {"간격(현재)": ["gap"], "원래 확률 로짓": ["lp"], "간격+유찰+지역등급+응찰수": ["gap", "f0", "f1", "f2", "cap", "rbid"], "간격+원래확률+요인 전부": ["gap", "lp", "f0", "f1", "f2", "cap", "rbid"]}
+    variants = [("원래(보정 전)", None, 0)] + [(k, v, 0) for k, v in FE.items()] + [(k + " + 최근 2분기 3배", v, 2) for k, v in FE.items() if k in ("간격(현재)", "간격+유찰+지역등급+응찰수")] + [(k + " + 최근 4분기 3배", v, 4) for k, v in FE.items() if k in ("간격(현재)", "간격+유찰+지역등급+응찰수")]
+    qlist = sorted(S["q"].unique()); out = {"전체 사례": int(len(D)), "시뮬레이션 행": int(len(S)), "분기": [int(x) for x in qlist], "결과": {}}
+    for setn in ("A", "B"):
+        SS = S[S["set"] == setn]; acc = {nm: {"p": [], "pm": [], "y": [], "pr": [], "q": []} for nm, _, _ in variants}
+        for q in qlist:
+            Tr = SS[SS["q"] < q]; Te = SS[SS["q"] == q]
+            if len(Tr) < 1000 or len(Te) < 30: continue
+            for nm, cols, rec in variants:
+                prr = np.clip(Te["prob"].values, 0.01, 0.99)
+                if cols is None: p = prr
+                else:
+                    w = np.ones(len(Tr))
+                    if rec: w = np.where(Tr["q"] >= qlist[max(0, qlist.index(q) - rec)], 3.0, 1.0)
+                    mu = Tr[cols].mean(); sd = Tr[cols].std().replace(0, 1)
+                    m = LogisticRegression(C=1.0, max_iter=500).fit(((Tr[cols] - mu) / sd).values, Tr["won"].values, sample_weight=w)
+                    p = np.clip(m.predict_proba(((Te[cols] - mu) / sd).values)[:, 1], 0.005, 0.995)
+                a = acc[nm]; a["p"] += list(p); a["pm"] += list(np.minimum(p, prr)); a["y"] += list(Te["won"].values); a["pr"] += list(prr); a["q"] += [q] * len(Te)
+        res = {}
+        for nm, a in acc.items():
+            if not a["y"]: continue
+            y = np.array(a["y"]); p = np.array(a["p"]); pm = np.array(a["pm"]); qq = np.array(a["q"])
+            bins = {}
+            for lo, hi, lab in [(0, .10, "10% 미만"), (.10, .25, "10~25%"), (.25, .50, "25~50%"), (.50, .75, "50~75%"), (.75, 1.01, "75% 이상")]:
+                mk = (p >= lo) & (p < hi)
+                if mk.sum() >= 30: bins[lab] = [int(mk.sum()), round(float(p[mk].mean()) * 100, 1), round(float(y[mk].mean()) * 100, 1)]
+            yr = {}
+            for yy in sorted(set(int(x) // 10 for x in qq)):
+                mk = (qq // 10) == yy
+                if mk.sum() >= 100: yr[str(yy)] = round(float(np.mean((p[mk] - y[mk]) ** 2)), 4)
+            res[nm] = {"n": int(len(y)), "Brier": round(float(np.mean((p - y) ** 2)), 4), "Brier(깎기만)": round(float(np.mean((pm - y) ** 2)), 4), "로그손실": round(float(-np.mean(y * np.log(np.clip(p, 1e-4, 1 - 1e-4)) + (1 - y) * np.log(np.clip(1 - p, 1e-4, 1)))), 4), "구간별[건수,예상%,실제%]": bins, "연도별 Brier": yr, "낙찰 비율%": round(float(y.mean()) * 100, 1)}
+        out["결과"]["세트 " + setn] = res
+        b = res["원래(보정 전)"]["Brier"]
+        for nm, r in res.items(): print(f"  🧪 세트 {setn} | {nm}: n={r['n']:,} Brier {r['Brier']} (보정 전 대비 {round((r['Brier'] / b - 1) * 100, 1)}%) 깎기만 {r['Brier(깎기만)']} 로그손실 {r['로그손실']}")
+    print("📋 CALFULL_JSON " + json.dumps(out, ensure_ascii=False))
+    if os.environ.get("GITHUB_STEP_SUMMARY"):
+        open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8").write("### 낙찰 가능성 보정 전체 사례 재확인\n```json\n" + json.dumps(out, ensure_ascii=False, indent=1) + "\n```\n")
 
 
 def calib_methods_test(X, D):
@@ -3154,7 +3238,44 @@ def scorecard(D, amap):
     tot = int(P["won"].count())
     gap = (float(P["won"].mean()) - float(P["prob"].mean())) * 100 if tot else 0
     out["probGapPct"] = round(gap, 1)
-    out["needAdjust"] = bool(tot >= 30 and abs(gap) >= 15)
+    out["needAdjustAvg"] = bool(tot >= 30 and abs(gap) >= 15)   # 예전 기준(평균 15%p) - 참고용으로만 남김
+    # 2026-11-17(사용자 승인): 경보를 구간별로 판정 - 구간 건수 30건+ · 예측과 실제 차이가 우연이 아님(이항검정 p<0.05) · 5%p 이상이면 그 구간을 경보.
+    # 평균 기준은 낮은 확률 구간(사례의 63%)의 작은 과소가 높은 확률 구간의 큰 과대를 상쇄해 보정 필요를 놓쳤음(시험: 평균 기준 0/2, 구간별 기준 2/2 포착).
+    # 판정 대상: ① 보정 전(원래) 확률 - 정보용 ② 보정 후(앱이 쓰는 간격 보정을 과거 자료로만 학습해 다시 적용) - 이 쪽이 실제 경보
+    def _bin_rows(df, pcol):
+        try: from scipy.stats import binomtest as _bt
+        except Exception: _bt = None
+        rr = []
+        for lo, hi, lab in bins:
+            G = df[(df[pcol] >= lo) & (df[pcol] < hi)]
+            if not len(G): continue
+            k = int(G["won"].sum()); n = int(len(G)); pr = float(G[pcol].mean()); pv = float(_bt(k, n, min(max(pr, 1e-4), 1 - 1e-4)).pvalue) if _bt else None
+            d_ = (k / n - pr) * 100
+            rr.append({"label": lab, "n": n, "predPct": round(pr * 100, 1), "actualPct": round(k / n * 100, 1), "gapPct": round(d_, 1), "p": None if pv is None else round(pv, 4),
+                       "flag": bool(n >= 30 and pv is not None and pv < 0.05 and abs(d_) >= 5)})
+        return rr
+    try:
+        rawr = _bin_rows(P, "prob"); out["binAlarmRaw"] = rawr; out["needAdjustRaw"] = any(r_["flag"] for r_ in rawr)
+        Q = P[P["win"].notna() & (P["win"] > 0)].copy(); Q["d"] = pd.to_datetime(Q["sale"].astype(int).astype(str), format="%Y%m%d"); Q = Q.sort_values("d")
+        gl = np.log(Q["rec"].values / Q["win"].values); pa = np.full(len(Q), np.nan); wk = Q["d"].dt.to_period("W-SUN").astype(str).values
+        for w_ in sorted(set(wk)):
+            mk = wk == w_; tr_ = (Q["d"].values < Q["d"].values[mk].min())
+            if tr_.sum() < 150: continue
+            Xm = np.c_[np.ones(int(tr_.sum())), gl[tr_]]; yv = Q["won"].values[tr_].astype(float); ww = np.zeros(2)
+            for _ in range(50):
+                pp = 1 / (1 + np.exp(-Xm @ ww)); ww = ww - np.linalg.solve(Xm.T @ (Xm * (pp * (1 - pp))[:, None]) + 1e-3 * np.eye(2), Xm.T @ (pp - yv) + 1e-3 * ww)
+            pa[mk] = np.minimum(Q["prob"].values[mk], 1 / (1 + np.exp(-(ww[0] + ww[1] * gl[mk]))))
+        Q["pafter"] = pa; Qa = Q[Q["pafter"].notna()]
+        if len(Qa) >= 30:
+            ar = _bin_rows(Qa, "pafter")
+            out["calibrationAfter"] = {"n": int(len(Qa)), "rows": ar, "brierRaw": round(float(np.mean((np.clip(Qa["prob"].values, 0.01, 0.99) - Qa["won"].values.astype(float)) ** 2)), 4),
+                                       "brierAfter": round(float(np.mean((np.clip(Qa["pafter"].values, 0.01, 0.99) - Qa["won"].values.astype(float)) ** 2)), 4),
+                                       "note": "앱이 쓰는 간격 보정을 매주 '그 주 이전 사례로만' 학습해 다시 적용한 값(미래 정보 없음)"}
+            out["needAdjust"] = any(r_["flag"] for r_ in ar)
+        else:
+            out["needAdjust"] = bool(out.get("needAdjustRaw") and False)
+    except Exception as e:
+        print("  구간별 경보 계산 실패(건너뜀):", e); out["needAdjust"] = bool(out["needAdjustAvg"])
     try:
         Xs = P.sort_values("sale")
         gc = gap_calibration(Xs["rec"].values, Xs["win"].values, Xs["won"].values)

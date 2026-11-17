@@ -46,6 +46,11 @@ on:
         required: false
         default: 'false'
 
+      calfull:
+        description: '낙찰 가능성 보정 전체 사례 재확인만 실행(저장 없음)'
+        required: false
+        default: 'false'
+
 jobs:
   analyze:
     runs-on: ubuntu-latest
@@ -64,12 +69,13 @@ jobs:
           WB_EXP: ${{ github.event.inputs.experiment == 'true' && '1' || '' }}
           WB_NOLB_ONLY: ${{ github.event.inputs.nolb == 'true' && '1' || '' }}
           WB_NOEST_DIAG: ${{ github.event.inputs.noest == 'true' && '1' || '' }}
+          WB_CALFULL: ${{ github.event.inputs.calfull == 'true' && '1' || '' }}
           WB_CALTEST: ${{ github.event.inputs.caltest == 'true' && '1' || '' }}
           WB_ALARMTEST: ${{ github.event.inputs.alarmtest == 'true' && '1' || '' }}
           WB_RW_RECHECK: ${{ github.event.inputs.rwcheck == 'true' && '1' || '' }}
           WB_RECWIN: ${{ github.event.inputs.recwin == 'true' && '1' || '' }}
           WB_BASEDIST_ONLY: ${{ github.event.inputs.basedist == 'true' && '1' || '' }}
-          WRITE_BACK: ${{ (github.event.inputs.nolb == 'true' || github.event.inputs.basedist == 'true' || github.event.inputs.noest == 'true' || github.event.inputs.recwin == 'true' || github.event.inputs.rwcheck == 'true' || github.event.inputs.alarmtest == 'true' || github.event.inputs.caltest == 'true') && '0' || '1' }}
+          WRITE_BACK: ${{ (github.event.inputs.nolb == 'true' || github.event.inputs.basedist == 'true' || github.event.inputs.noest == 'true' || github.event.inputs.recwin == 'true' || github.event.inputs.rwcheck == 'true' || github.event.inputs.alarmtest == 'true' || github.event.inputs.caltest == 'true' || github.event.inputs.calfull == 'true') && '0' || '1' }}
         run: python analyze-bidcases.py
       - uses: actions/upload-artifact@v4
         if: always()
