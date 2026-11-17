@@ -2444,6 +2444,52 @@ def alarm_test_main(R, now):
     if os.environ.get("WB_ALARMTEST") == "1": alarm_test(X)
 
 
+def gbm_app_block(D, cn, cmed, clast, cbav, vol):
+    """앱이 이미 계산하는 값(표 방식 요인 효과·최저가 비율·유찰·평형·보유 수·층·월)만 입력으로, 표 방식 예측을 GBM이 보정(잔차를 트리로 학습)하는 구조를 시험.
+    앱은 트리를 JSON으로 받아 그대로 계산할 수 있어야 하므로 앱이 못 만드는 입력(예: 시군구 가격 지수 변화)은 쓰지 않음. 변형: A=표 방식, B=표+트리(앱 입력만), C=B+단지 낙찰 이력·가격 변동성(앱이 낙찰사례·실거래로 계산 가능).
+    검증 구간은 오늘 기준 최근 3·6·9·12개월(구간 시작 이전 사례로만 학습)."""
+    global WB_FACTORS
+    from sklearn.ensemble import HistGradientBoostingRegressor
+    BASE = [("lb", 10), ("fails", 120), ("region", 120), ("tier", 5), ("season", 300), ("floor", 5), ("size", 30), ("own", 120), ("dong", 40), ("flowM", 60), ("flowL", 60), ("flowS", 60), ("flowC", 60), ("jb", 40)]
+    last_d = D["d"].max(); HS = (3, 6, 9, 12); CUT = {H: int((last_d - pd.DateOffset(months=H)).strftime("%Y%m%d")) for H in HS}
+    y = D["lr"].values; out = {"검증 구간": {f"{H}개월": [CUT[H], int((D["sale"] >= CUT[H]).sum())] for H in HS}, "결과": {}}
+    seginfo = {"신건": D["fails"] == 0, "유찰1": D["fails"] == 1, "유찰2+": D["fails"] >= 2}
+    nodes = {}
+    for H in HS:
+        WB_FACTORS = list(BASE); trm = (D["sale"] < CUT[H]).values; tem = ~trm if False else (D["sale"] >= CUT[H]).values
+        tr, te = D[trm], D[tem]; m = wb_fit(tr)
+        def feats(Dx, idx):
+            X = wb_features(Dx); F = pd.DataFrame(index=Dx.index)
+            for f, _ in BASE: F["e_" + f] = X[f].map(m["eff"].get(f, {})).fillna(0).values
+            F["pred_add"] = m["base"] + F[[c for c in F.columns if c.startswith("e_")]].sum(axis=1).values
+            F["lmin"] = np.log(Dx["minbid"] / Dx["est"]).values; F["fails"] = Dx["fails"].fillna(-1).values; F["area"] = Dx["area"].values; F["own"] = Dx["own"].fillna(0).values
+            F["month"] = ((Dx["sale"] // 100) % 100).values; F["flr"] = pd.to_numeric(Dx["floor"], errors="coerce").values
+            return F
+        Ftr, Fte = feats(tr, None), feats(te, None)
+        ex = {"cxN": cn, "cxL": clast, "cxR": cmed, "cxB": cbav, "vol": vol}
+        FtrC, FteC = Ftr.copy(), Fte.copy()
+        for k, v in ex.items(): FtrC[k] = np.asarray(v)[trm]; FteC[k] = np.asarray(v)[tem]
+        rtr = y[trm] - Ftr["pred_add"].values
+        res = {}
+        pa = Fte["pred_add"].values; ea = np.exp(pa) * te["est"].values / te["actual"].values - 1
+        def rec(e, mask=None):
+            if mask is not None: e = e[mask]
+            return [round(float(np.median(np.abs(e))) * 100, 3), round(float(np.median(e)) * 100, 2), round(float((np.abs(e) <= .10).mean()) * 100, 1)]
+        res["A 표 방식"] = {"전체": rec(ea), **{k: rec(ea, v[tem].values) for k, v in seginfo.items()}}
+        for nm, Ftr_, Fte_ in (("B 표+트리(앱 입력만)", Ftr, Fte), ("C B+단지 이력·변동성", FtrC, FteC)):
+            g = HistGradientBoostingRegressor(loss="absolute_error", max_iter=200, learning_rate=0.05, max_leaf_nodes=15, min_samples_leaf=80, l2_regularization=1.0, random_state=0)
+            keep = [c for c in Ftr_.columns if Ftr_[c].nunique(dropna=True) >= 3]; g.fit(Ftr_[keep], rtr)
+            p = pa + g.predict(Fte_[keep]); e = np.exp(p) * te["est"].values / te["actual"].values - 1
+            res[nm] = {"전체": rec(e), **{k: rec(e, v[tem].values) for k, v in seginfo.items()}}
+            try: nodes[nm] = int(sum(len(pr.nodes) for it in g._predictors for pr in it))
+            except Exception: pass
+        out["결과"][f"{H}개월"] = res; print("  ", H, json.dumps(res, ensure_ascii=False), flush=True)
+    out["트리 노드 수(마지막 구간 모델)"] = nodes
+    print("📋 GBMAPP_JSON " + json.dumps(out, ensure_ascii=False))
+    if os.environ.get("GITHUB_STEP_SUMMARY"):
+        open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8").write("### 앱 입력 GBM 시험\n```json\n" + json.dumps(out, ensure_ascii=False, indent=1) + "\n```\n")
+
+
 def factor_search_test(R, now):
     """2026-11-17(사용자: 지역·위치·입지·단지 흐름 등 사건별 요인을 더 찾아 예상 낙찰가 정확도를 올리고 싶다) 저장 없음.
     ① 사건별 후보 요인(같은 단지 최근 낙찰 이력, 같은 날 같은 단지·동 경매 수, 동 최근 낙찰가율, 단지 가격 변동성, 세대수, 지하철 거리, 입지 활발도)을 현재 모델에 하나씩 더해 시간순 오차 변화 확인
@@ -2503,6 +2549,8 @@ def factor_search_test(R, now):
         print("  입지 지수 건너뜀:", e)
     cands = [c for c in D.columns if c.startswith("xf_")]
     print("  후보 요인:", cands, {c: D[c].value_counts().to_dict() for c in cands[:3]})
+    if os.environ.get("WB_GBMAPP") == "1":   # 2026-11-18 앱이 계산할 수 있는 정보만 쓰는 GBM(표 방식 효과값 + 보정 트리)이 최근 3·6·9·12개월에서 좋아지는지 확인(저장 없음)
+        gbm_app_block(D, cn, cmed, clast, cbav, vol); return
     # --- 모든 항목 같은 기준(2026-11-17 사용자): 검증 구간은 오늘(가장 최근 낙찰일) 기준 최근 3·6·9·12개월, 각 구간은 그 시작 이전 사례로만 학습. 작년·재작년 같은 해 단위 구간은 쓰지 않음 ---
     BASE = [("lb", 10), ("fails", 120), ("region", 120), ("tier", 5), ("season", 300), ("floor", 5), ("size", 30), ("own", 120), ("dong", 40), ("flowM", 60), ("flowL", 60), ("flowS", 60), ("flowC", 60), ("jb", 40)]
     last_d = D["d"].max(); HS = (3, 6, 9, 12)
