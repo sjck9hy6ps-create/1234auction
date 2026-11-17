@@ -701,6 +701,8 @@ def main():
             except Exception as e: print("  종합 평가 연결 건너뜀:", e)
         if os.environ.get("WB_WIDECMP_DIR"):   # 2026-11-16 종합 평가 사례 넓힘 시험(저장 없음)
             widecmp_test(R, now); return
+        if os.environ.get("WB_SEASON") == "1":   # 2026-11-17 시장 분위기(낙찰가율·응찰자 수) - 계절 vs 시장 구분 시험(저장 없음)
+            season_test(R, now); return
         if os.environ.get("WB_CALFULL") == "1":   # 2026-11-17 낙찰 가능성 보정 효과를 과거 낙찰사례 전체로 재확인(저장 없음)
             calib_full_test(R, now); return
         if os.environ.get("WB_ALARMTEST") == "1" or os.environ.get("WB_CALTEST") == "1":   # 2026-11-17 낙찰 가능성 경보 기준 구간별 시험(저장 없음, 여기서 바로 종료)
@@ -2415,6 +2417,64 @@ def alarm_test_main(R, now):
     if X is None: print("  성적표 표본 없음"); return
     if os.environ.get("WB_CALTEST") == "1": calib_methods_test(X, D)
     if os.environ.get("WB_ALARMTEST") == "1": alarm_test(X)
+
+
+def season_test(R, now):
+    """2026-11-17(사용자: 이번 주 낙찰가율 85%·응찰자 4명·1명 22%가 시장 탓인지 겨울 탓인지 과거 사례로 확인) 저장 없음.
+    종합 평가 시세(est_stack) 대비 낙찰가율(actual/est)·응찰자 수·1명 응찰 비율을 연·월·주별로 보고, 같은 해 평균 대비 월별 계절 지수와 연도 효과를 분리."""
+    R = R.copy(); R["est"] = R["est_stack"].where(R["est_stack"] > 0)
+    D = R[R["est"].notna() & (R["est"] > 0) & R["actual"].notna() & (R["sale"] >= 20210101)].copy()
+    D = D[np.log(D["actual"] / D["est"]).between(np.log(0.4), np.log(1.6))]
+    D["d"] = pd.to_datetime(D["sale"].astype(int).astype(str), format="%Y%m%d"); D["y"] = D["d"].dt.year; D["m"] = D["d"].dt.month
+    D["ratio"] = D["actual"] / D["est"]; D["one"] = (D["bidders"] == 1).astype(float).where(D["bidders"].notna())
+    last = D["d"].max(); print(f"  사례 {len(D):,}건, {D['d'].min().date()}~{last.date()}")
+    out = {"n": int(len(D)), "기간": [str(D["d"].min().date()), str(last.date())]}
+    # 연월 표
+    ym = {}
+    for (y, m), g in D.groupby(["y", "m"]):
+        if len(g) >= 30: ym[f"{y}-{m:02d}"] = [int(len(g)), round(float(g["ratio"].median()) * 100, 1), None if g["bidders"].notna().sum() < 20 else float(g["bidders"].median()), None if g["one"].notna().sum() < 20 else round(float(g["one"].mean()) * 100, 1)]
+    out["연월[건수,낙찰가율%,응찰자 중앙,1명 응찰%]"] = ym
+    # 연도별 기준(해당 연도 중앙) 대비 월 지수 - 완전한 연도(2022~2025)만
+    idx = {}
+    for key, col, fn_ in (("낙찰가율", "ratio", lambda g: float(g["ratio"].median()) * 100), ("응찰자", "bidders", lambda g: float(g["bidders"].median())), ("1명응찰", "one", lambda g: float(g["one"].mean()) * 100)):
+        per = {}
+        for y in (2022, 2023, 2024, 2025):
+            G = D[(D["y"] == y) & D[col].notna()]
+            if len(G) < 500: continue
+            base = fn_(G)
+            for m in range(1, 13):
+                g = G[G["m"] == m]
+                if len(g) >= 30: per.setdefault(m, []).append(fn_(g) - base)
+        idx[key] = {str(m): {"평균": round(float(np.mean(v)), 2), "해별": [round(float(x), 2) for x in v], "같은 방향 해 수": int(sum(1 for x in v if np.sign(x) == np.sign(np.mean(v))))} for m, v in sorted(per.items())}
+    out["월 지수(같은 해 평균 대비, 2022~2025)"] = idx
+    # 11월 둘째 주(8~14일) - 해마다
+    wk = {}
+    for y in (2022, 2023, 2024, 2025, 2026):
+        g = D[(D["y"] == y) & (D["m"] == 11) & (D["d"].dt.day.between(6, 14))]; G = D[(D["y"] == y) & (D["d"] < pd.Timestamp(y, 11, 1)) & (D["d"] >= pd.Timestamp(y - 1, 11, 1))]
+        if len(g) >= 30: wk[str(y)] = {"이번 주 즈음": [int(len(g)), round(float(g["ratio"].median()) * 100, 1), float(g["bidders"].median()), round(float(g["one"].mean()) * 100, 1)], "직전 1년": [round(float(G["ratio"].median()) * 100, 1), float(G["bidders"].median()), round(float(G["one"].mean()) * 100, 1)]}
+    out["11월 6~14일 vs 직전 1년"] = wk
+    # 연도 효과를 뺀 월 효과(회귀: ln 낙찰가율 ~ 연도 + 월)
+    try:
+        E = D[(D["y"] >= 2022) & (D["y"] <= 2025)]
+        Xd = pd.get_dummies(E["y"].astype(str), prefix="y", drop_first=False).astype(float); Md = pd.get_dummies(E["m"].astype(str).str.zfill(2), prefix="m", drop_first=True).astype(float)
+        A = np.c_[Xd.values, Md.values]; yv = np.log(E["ratio"].values); b, *_ = np.linalg.lstsq(A, yv, rcond=None); r = yv - A @ b
+        cov = np.linalg.pinv(A.T @ A) @ (A.T * (r ** 2)) @ A @ np.linalg.pinv(A.T @ A); se = np.sqrt(np.diag(cov)); k0 = Xd.shape[1]
+        out["월 효과(연도 효과 제거, 1월 대비 낙찰가율 %)"] = {c.replace("m_", ""): [round((np.exp(b[k0 + i]) - 1) * 100, 2), round(float(se[k0 + i]) * 100, 2)] for i, c in enumerate(Md.columns)}
+    except Exception as e: print("  월 효과 회귀 실패:", e)
+    # 2026 현재 vs 계절 기대: 2026 1~9월 낙찰가율 + (10·11월 계절 지수)
+    try:
+        g26 = D[(D["y"] == 2026) & (D["m"] <= 9)]; base = float(g26["ratio"].median()) * 100
+        for m in (10, 11):
+            si = idx["낙찰가율"].get(str(m), {}).get("평균"); act = D[(D["y"] == 2026) & (D["m"] == m)]
+            if si is not None and len(act) >= 30: out[f"2026-{m}월 기대 vs 실제"] = {"2026 1~9월 낙찰가율": round(base, 1), "계절 지수": si, "기대": round(base + si, 1), "실제": round(float(act["ratio"].median()) * 100, 1), "건수": int(len(act))}
+    except Exception as e: print("  기대 계산 실패:", e)
+    # 시세 흐름(같은 단지 시세 대비 아니라 예상 시세 중앙값의 12개월 변화) - 가격이 내리는 중인지
+    try:
+        mm = D.groupby(["y", "m"])["est"].median(); out["월별 예상 시세 중앙값(만원)"] = {f"{y}-{m:02d}": int(v) for (y, m), v in mm.items() if (y >= 2024)}
+    except Exception: pass
+    print("📋 SEASON_JSON " + json.dumps(out, ensure_ascii=False))
+    if os.environ.get("GITHUB_STEP_SUMMARY"):
+        open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8").write("### 시장 분위기: 계절 vs 시장\n```json\n" + json.dumps(out, ensure_ascii=False, indent=1) + "\n```\n")
 
 
 def calib_full_test(R, now):
