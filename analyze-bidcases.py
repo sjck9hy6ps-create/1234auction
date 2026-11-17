@@ -485,6 +485,12 @@ def main():
                             rec["est_blend70" + tag] = ed if not rec.get("est") else 0.7 * rec["est"] + 0.3 * ed
         except Exception:
             pass
+        try:  # 2026-11-17 시장 지수(시험용 열): 입찰 30일 전 기준 시군구 ㎡당 가격 지수의 3·12개월 변화(월 지수는 3개월 이동중위값) - 계절 vs 시장 분리 시험(season_test)에서만 씀
+            _cy = int(ymd_int(int_to_date(c.sale_int) - timedelta(days=30)) // 100); _sh = lambda ym, k: (ym // 100 + (ym % 100 - 1 - k) // 12) * 100 + ((ym % 100 - 1 - k) % 12) + 1
+            _i0, _i3, _i12 = idx_at(c.region, _cy), idx_at(c.region, _sh(_cy, 3)), idx_at(c.region, _sh(_cy, 12))
+            rec["mi_m3"] = float(np.log(_i0 / _i3)) if _i0 and _i3 else None; rec["mi_m12"] = float(np.log(_i0 / _i12)) if _i0 and _i12 else None; rec["mi_lvl"] = float(_i0) if _i0 else None
+        except Exception:
+            rec["mi_m3"] = rec["mi_m12"] = rec["mi_lvl"] = None
         try:  # 🌊 시세 흐름(입찰 30일 전 기준): 시군구·법정동(수도권용)·같은 크기대 단지(지방용). 표본이 모자라면 None
             _sd2 = int_to_date(c.sale_int); _cut2 = ymd_int(_sd2 - timedelta(days=30)); _sido = str(c.region).split(" ")[0]
             rec["flow_cls"] = "수도권" if _sido[:2] in ("서울", "경기", "인천") else "지방"
@@ -701,6 +707,8 @@ def main():
             except Exception as e: print("  종합 평가 연결 건너뜀:", e)
         if os.environ.get("WB_WIDECMP_DIR"):   # 2026-11-16 종합 평가 사례 넓힘 시험(저장 없음)
             widecmp_test(R, now); return
+        if os.environ.get("WB_SEASON2") == "1":   # 2026-11-17 계절 vs 시장(시군구 가격 지수 함께) 시험(저장 없음)
+            season2_test(R, now); return
         if os.environ.get("WB_SEASON") == "1":   # 2026-11-17 시장 분위기(낙찰가율·응찰자 수) - 계절 vs 시장 구분 시험(저장 없음)
             season_test(R, now); return
         if os.environ.get("WB_CALFULL") == "1":   # 2026-11-17 낙찰 가능성 보정 효과를 과거 낙찰사례 전체로 재확인(저장 없음)
@@ -2417,6 +2425,50 @@ def alarm_test_main(R, now):
     if X is None: print("  성적표 표본 없음"); return
     if os.environ.get("WB_CALTEST") == "1": calib_methods_test(X, D)
     if os.environ.get("WB_ALARMTEST") == "1": alarm_test(X)
+
+
+def season2_test(R, now):
+    """2026-11-17(사용자 진행 지시) 낙찰가율의 월(계절) 효과와 시장(시군구 가격 지수 변화) 효과를 같은 회귀에서 분리. 저장 없음.
+    ln(낙찰가÷시세) = 연도 무관 월 효과 + b1·지수 3개월 변화 + b2·지수 12개월 변화 (+ 지역 등급). 월 효과가 시장 변수를 넣기 전후로 얼마나 변하는지, 이번 주 시장 값이 과거 대비 어느 위치인지 확인."""
+    R = R.copy(); R["est"] = R["est_stack"].where(R["est_stack"] > 0)
+    D = R[R["est"].notna() & (R["est"] > 0) & R["actual"].notna() & (R["sale"] >= 20220101) & R["mi_m3"].notna() & R["mi_m12"].notna()].copy()
+    D = D[np.log(D["actual"] / D["est"]).between(np.log(0.4), np.log(1.6))]
+    D["d"] = pd.to_datetime(D["sale"].astype(int).astype(str), format="%Y%m%d"); D["y"] = D["d"].dt.year; D["m"] = D["d"].dt.month; D["ym"] = D["y"] * 100 + D["m"]
+    D["lr"] = np.log(D["actual"] / D["est"]); D["cap"] = (D["flow_cls"] == "수도권").astype(float)
+    print(f"  사례 {len(D):,}건 (지수 있는 것), {D['d'].min().date()}~{D['d'].max().date()}")
+    out = {"n": int(len(D))}
+    # ① 월별 시장 방향(시군구 지수 3·12개월 변화의 사례 평균)과 낙찰가율
+    mon = D.groupby("ym").agg(n=("lr", "size"), ratio=("lr", lambda x: float(np.exp(x.median()) * 100)), m3=("mi_m3", "mean"), m12=("mi_m12", "mean"), bid=("bidders", "median"))
+    mon = mon[mon["n"] >= 100]
+    out["월별[건수,낙찰가율%,지수 3개월 변화%,지수 12개월 변화%,응찰자]"] = {str(k): [int(r.n), round(r.ratio, 1), round(r.m3 * 100, 2), round(r.m12 * 100, 2), None if pd.isna(r.bid) else float(r.bid)] for k, r in mon.iterrows()}
+    cor = {}
+    for lag in (0, 1, 2, 3):
+        a = mon["ratio"].values[lag:]; b = mon["m3"].values[:len(mon) - lag] if lag else mon["m3"].values; b2 = mon["m12"].values[:len(mon) - lag] if lag else mon["m12"].values
+        if len(a) > 12: cor[str(lag)] = {"지수3개월": round(float(np.corrcoef(a, b)[0, 1]), 2), "지수12개월": round(float(np.corrcoef(a, b2)[0, 1]), 2)}
+    out["월별 상관(낙찰가율 vs 지수 변화, 지수가 lag개월 앞선 경우)"] = cor
+    # ② 회귀: 월 효과 - 시장 변수 없음 vs 있음 (사례 단위, HC 표준오차)
+    def ols(cols_m, extra):
+        Md = pd.get_dummies(D["m"].astype(str).str.zfill(2), prefix="m", drop_first=False).astype(float)
+        Md = Md[[c for c in Md.columns if c in cols_m]]
+        X = np.c_[Md.values, D[extra].values] if extra else Md.values; y = D["lr"].values
+        b, *_ = np.linalg.lstsq(X, y, rcond=None); r = y - X @ b; A = np.linalg.pinv(X.T @ X); cov = A @ (X.T * (r ** 2)) @ X @ A; se = np.sqrt(np.diag(cov))
+        return b, se, list(Md.columns), r2 if False else float(1 - np.var(r) / np.var(y))
+    allm = ["m_%02d" % i for i in range(1, 13)]
+    b0, s0, c0, r0 = ols(allm, []); b1, s1, c1, r1 = ols(allm, ["mi_m3", "mi_m12"]); b2, s2, c2, r2_ = ols(allm, ["mi_m3", "mi_m12", "cap"])
+    avg0 = float(np.mean(b0[:12])); avg1 = float(np.mean(b1[:12]))
+    out["월 효과(연평균 대비 %p, 시장 변수 없음)"] = {c.replace("m_", ""): [round((np.exp(b0[i] - avg0) - 1) * 100, 2), round(float(s0[i]) * 100, 2)] for i, c in enumerate(c0)}
+    out["월 효과(연평균 대비 %p, 시장 변수 포함)"] = {c.replace("m_", ""): [round((np.exp(b1[i] - avg1) - 1) * 100, 2), round(float(s1[i]) * 100, 2)] for i, c in enumerate(c1)}
+    out["시장 변수 계수"] = {"지수 3개월 변화(1.0=100%p)": [round(float(b1[12]), 3), round(float(s1[12]), 3)], "지수 12개월 변화": [round(float(b1[13]), 3), round(float(s1[13]), 3)], "설명력 R2": [round(r0, 4), round(r1, 4), round(r2_, 4)]}
+    # ③ 이번 주(11/6~14) 시장 값과 기대 낙찰가율
+    cur = D[(D["d"] >= pd.Timestamp(2026, 11, 6))]; base = D[(D["d"] >= pd.Timestamp(2025, 11, 1)) & (D["d"] < pd.Timestamp(2026, 11, 1))]
+    if len(cur) >= 30:
+        out["이번 주 시장 값 vs 직전 1년"] = {"건수": [int(len(cur)), int(len(base))], "지수 3개월 변화%": [round(float(cur["mi_m3"].mean()) * 100, 2), round(float(base["mi_m3"].mean()) * 100, 2)], "지수 12개월 변화%": [round(float(cur["mi_m12"].mean()) * 100, 2), round(float(base["mi_m12"].mean()) * 100, 2)], "낙찰가율%": [round(float(np.exp(cur["lr"].median()) * 100), 1), round(float(np.exp(base["lr"].median()) * 100), 1)]}
+        e_mkt = b1[12] * (cur["mi_m3"].mean() - base["mi_m3"].mean()) + b1[13] * (cur["mi_m12"].mean() - base["mi_m12"].mean())
+        e_sea = float(np.mean([b1[int(m) - 1] for m in [11]]) - np.average(b1[:12], weights=D.groupby("m").size().reindex(range(1, 13)).fillna(0).values / len(D)))
+        out["이번 주 낙찰가율 차이 분해(%p)"] = {"실제 차이(이번 주-직전 1년)": round((float(np.exp(cur["lr"].median())) - float(np.exp(base["lr"].median()))) * 100, 2), "시장 변수로 설명": round((np.exp(e_mkt) - 1) * 100, 2), "11월 계절로 설명": round((np.exp(e_sea) - 1) * 100, 2)}
+    print("📋 SEASON2_JSON " + json.dumps(out, ensure_ascii=False))
+    if os.environ.get("GITHUB_STEP_SUMMARY"):
+        open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8").write("### 계절 vs 시장(지수 포함)\n```json\n" + json.dumps(out, ensure_ascii=False, indent=1) + "\n```\n")
 
 
 def season_test(R, now):
