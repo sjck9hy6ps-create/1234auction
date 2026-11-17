@@ -2451,8 +2451,13 @@ def gbm_app_block(D, cn, cmed, clast, cbav, vol):
     global WB_FACTORS
     from sklearn.ensemble import HistGradientBoostingRegressor
     BASE = [("lb", 10), ("fails", 120), ("region", 120), ("tier", 5), ("season", 300), ("floor", 5), ("size", 30), ("own", 120), ("dong", 40), ("flowM", 60), ("flowL", 60), ("flowS", 60), ("flowC", 60), ("jb", 40)]
+    try:   # 운영 중인 모델의 조정된 요인·비중(factorsK)과 같은 기준에서 비교(2026-11-18: 운영 기준선 대비 개선을 확인)
+        import requests as _rq2
+        _fk = _rq2.get(f"{SITE_URL}/api/data-coverage?mode=winbid&x={int(time.time())}", timeout=120).json().get("factorsK")
+        if _fk: BASE = [(f, int(k)) for f, k in _fk]; print("  운영 요인:", BASE, flush=True)
+    except Exception as _e: print("  운영 요인 불러오기 실패(기본 요인 사용):", _e)
     last_d = D["d"].max(); HS = (3, 6, 9, 12); CUT = {H: int((last_d - pd.DateOffset(months=H)).strftime("%Y%m%d")) for H in HS}
-    y = D["lr"].values; out = {"검증 구간": {f"{H}개월": [CUT[H], int((D["sale"] >= CUT[H]).sum())] for H in HS}, "결과": {}}
+    y = D["lr"].values; out = {"운영 요인": [f for f, _ in BASE], "검증 구간": {f"{H}개월": [CUT[H], int((D["sale"] >= CUT[H]).sum())] for H in HS}, "결과": {}}
     seginfo = {"신건": D["fails"] == 0, "유찰1": D["fails"] == 1, "유찰2+": D["fails"] >= 2}
     nodes = {}
     for H in HS:
@@ -2471,7 +2476,8 @@ def gbm_app_block(D, cn, cmed, clast, cbav, vol):
         for k, v in ex.items(): FtrC[k] = np.asarray(v)[trm]; FteC[k] = np.asarray(v)[tem]
         rtr = y[trm] - Ftr["pred_add"].values
         res = {}
-        pa = Fte["pred_add"].values; ea = np.exp(pa) * te["est"].values / te["actual"].values - 1
+        lm_te = np.log(te["minbid"].values / te["est"].values); nw = (te["fails"].fillna(-1).values == 0)   # 신건 하한(최저가 미만 불가)은 운영과 같게 모두에 적용
+        pa = np.where(nw, np.maximum(Fte["pred_add"].values, lm_te), Fte["pred_add"].values); ea = np.exp(pa) * te["est"].values / te["actual"].values - 1
         def rec(e, mask=None):
             if mask is not None: e = e[mask]
             return [round(float(np.median(np.abs(e))) * 100, 3), round(float(np.median(e)) * 100, 2), round(float((np.abs(e) <= .10).mean()) * 100, 1)]
@@ -2479,7 +2485,7 @@ def gbm_app_block(D, cn, cmed, clast, cbav, vol):
         for nm, Ftr_, Fte_ in (("B 표+트리(앱 입력만)", Ftr, Fte), ("C B+단지 이력·변동성", FtrC, FteC)):
             g = HistGradientBoostingRegressor(loss="absolute_error", max_iter=200, learning_rate=0.05, max_leaf_nodes=15, min_samples_leaf=80, l2_regularization=1.0, random_state=0)
             keep = [c for c in Ftr_.columns if Ftr_[c].nunique(dropna=True) >= 3]; g.fit(Ftr_[keep], rtr)
-            p = pa + g.predict(Fte_[keep]); e = np.exp(p) * te["est"].values / te["actual"].values - 1
+            p = Fte["pred_add"].values + g.predict(Fte_[keep]); p = np.where(nw, np.maximum(p, lm_te), p); e = np.exp(p) * te["est"].values / te["actual"].values - 1
             res[nm] = {"전체": rec(e), **{k: rec(e, v[tem].values) for k, v in seginfo.items()}}
             try: nodes[nm] = int(sum(len(pr.nodes) for it in g._predictors for pr in it))
             except Exception: pass
