@@ -2367,6 +2367,38 @@ def widecmp_test(R, now):
         open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8").write("### 종합 평가 사례 넓힘 시험\n```json\n" + json.dumps(out, ensure_ascii=False, indent=1) + "\n```\n")
 
 
+def rw_recheck(D, tr, te, cut, f_base, wb_fit, wb_predict):
+    """서버와 같은 학습(요인 비중 조정 후)에서 가중 기간(없음/3/6/12/24개월 3배)을 바꿔 비교. 검증 시작일을 12·6·3개월 전으로 나눠 세 번, 사례별 개선 비율도 함께 기록."""
+    global WB_FACTORS
+    WB_FACTORS = f_base
+    last = pd.to_datetime(str(int(D["sale"].max())), format="%Y%m%d")
+    ago = lambda ref, m: int((ref - pd.DateOffset(months=m)).strftime("%Y%m%d"))
+    out = {"요인": [f for f, _ in f_base], "검증": {}}
+    for H in (12, 6, 3):
+        c = ago(last, H); T = D[D["sale"] >= c]; Tr = D[D["sale"] < c]; ref = pd.to_datetime(str(c), format="%Y%m%d")
+        fcls = T["flow_cls"].fillna("?").values if "flow_cls" in T.columns else np.array(["?"] * len(T))
+        sido = T["sido"].fillna("?").values; fails = T["fails"].fillna(-1).values
+        segs = {"전체": np.ones(len(T), bool), "수도권": fcls == "수도권", "지방": fcls == "지방", "전남광주": sido == "전남광주", "신건": fails == 0, "유찰1회+": fails >= 1}
+        res = {}; base_abs = None
+        for nm, W in (("가중 없음", 0), ("3개월 3배", 3), ("6개월 3배", 6), ("12개월 3배", 12), ("24개월 3배", 24)):
+            X = Tr if not W else pd.concat([Tr, Tr[Tr["sale"] >= ago(ref, W)], Tr[Tr["sale"] >= ago(ref, W)]])
+            e = np.exp(wb_predict(wb_fit(X), T)) * T["est"].values / T["actual"].values - 1
+            a = np.abs(e)
+            r = {"학습": int(len(X))}
+            for sn, mk in segs.items():
+                if int(mk.sum()) >= 30: r[sn] = [round(float(np.median(a[mk])) * 100, 2), round(float((a[mk] <= 0.10).mean()) * 100, 1), round(float(np.median(e[mk])) * 100, 2)]
+            if base_abs is None: base_abs = a
+            else:
+                d = a - base_abs
+                r["가중없음 대비"] = {"평균 오차 변화%p": round(float(d.mean()) * 100, 3), "더 좋아진 사례%": round(float((d < -1e-9).mean()) * 100, 1), "나빠진 사례%": round(float((d > 1e-9).mean()) * 100, 1), "표준오차%p": round(float(d.std() / np.sqrt(len(d))) * 100, 3)}
+            res[nm] = r
+        out["검증"][f"최근 {H}개월(검증 {len(T)}건)"] = res
+        print(f"  🧪 최근 {H}개월 검증", len(T), "건:", json.dumps({k: v.get("전체") for k, v in res.items()}, ensure_ascii=False))
+    print("📋 RWRECHECK_JSON " + json.dumps(out, ensure_ascii=False))
+    if os.environ.get("GITHUB_STEP_SUMMARY"):
+        open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8").write("### 가중 기간 재확인\n```json\n" + json.dumps(out, ensure_ascii=False, indent=1) + "\n```\n")
+
+
 def recwin_test(R, now):
     """2026-11-17(사용자: 연도·분기 요인이 아니라 오늘 기준 최근 3개월·6개월·1년·2년 자료를 비교) 저장 없음.
     저장된 종합 평가 값(est_stack) 전체로, 검증 구간(오늘 기준 최근 3·6·12·24개월) × 학습 방식(전체 / 전체+최근 N개월 3배 / 최근 N개월만)을 비교. 요인 목록·비중은 지금 모델 그대로."""
@@ -2606,6 +2638,8 @@ def winbid_model(R, now):
     _e_plain, _e_w = _ea(wb_predict(wb_fit(tr), te)), _ea(wb_predict(wb_fit(trw), te))
     use_rw = bool(_e_w < _e_plain - 0.0003)
     print(f"  🕐 최근 가중(최근 12개월 3배) 검증: 보통 오차 {_e_plain * 100:.3f}% → {_e_w * 100:.3f}% →", "사용" if use_rw else "사용 안 함(효과 없음)")
+    if os.environ.get("WB_RW_RECHECK") == "1":   # 2026-11-17(사용자: 6개월 3배 가중으로 재확인) 서버와 같은 절차(요인 조정 후)로 가중 기간별 비교 - 저장 없이 종료
+        rw_recheck(D, tr, te, cut, f_base, wb_fit, wb_predict); return
     TRF = trw if use_rw else tr
     # 📏 원칙 적용 비용 확인(2026-11-04): 같은 검증 구간에서 요인을 바꿔 가며 오차 비교 - 실제로 쓰는 모델은 맨 아래(감정가·최저가 없음)
     principle = {}
