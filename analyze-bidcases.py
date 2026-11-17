@@ -2503,55 +2503,55 @@ def factor_search_test(R, now):
         print("  입지 지수 건너뜀:", e)
     cands = [c for c in D.columns if c.startswith("xf_")]
     print("  후보 요인:", cands, {c: D[c].value_counts().to_dict() for c in cands[:3]})
-    # --- ① 후보 요인 하나씩 ---
+    # --- 모든 항목 같은 기준(2026-11-17 사용자): 검증 구간은 오늘(가장 최근 낙찰일) 기준 최근 3·6·9·12개월, 각 구간은 그 시작 이전 사례로만 학습. 작년·재작년 같은 해 단위 구간은 쓰지 않음 ---
     BASE = [("lb", 10), ("fails", 120), ("region", 120), ("tier", 5), ("season", 300), ("floor", 5), ("size", 30), ("own", 120), ("dong", 40), ("flowM", 60), ("flowL", 60), ("flowS", 60), ("flowC", 60), ("jb", 40)]
-    last_d = D["d"].max(); cutA = int((last_d - pd.DateOffset(months=12)).strftime("%Y%m%d")); cutB = int((last_d - pd.DateOffset(months=24)).strftime("%Y%m%d"))
-    foldA = (D[D["sale"] < cutA], D[D["sale"] >= cutA]); foldB = (D[D["sale"] < cutB], D[(D["sale"] >= cutB) & (D["sale"] < cutA)])
-    def err(fl, fold, mask=None):
+    last_d = D["d"].max(); HS = (3, 6, 9, 12)
+    CUT = {H: int((last_d - pd.DateOffset(months=H)).strftime("%Y%m%d")) for H in HS}
+    TR = {H: D[D["sale"] < CUT[H]] for H in HS}; TE = {H: D[D["sale"] >= CUT[H]] for H in HS}
+    print("  검증 구간:", {H: (CUT[H], len(TE[H])) for H in HS}, flush=True)
+    def err(fl, H, mask=None):
         global WB_FACTORS
-        WB_FACTORS = fl; trn, tst = fold
+        WB_FACTORS = fl; tst = TE[H]
         if mask is not None: tst = tst[mask(tst)]
-        p = wb_predict(wb_fit(foldcache.get((id(fold), tuple(fl))) if False else trn), tst); e = np.exp(p) * tst["est"].values / tst["actual"].values - 1
-        return float(np.median(np.abs(e))) * 100, float(np.median(e)) * 100
-    out = {"n": int(len(D)), "후보": cands, "개별": {}}
-    b_A, b_B = err(BASE, foldA), err(BASE, foldB); out["기준(현재 요인)"] = {"최근12개월": [round(b_A[0], 3), round(b_A[1], 2)], "그 앞 1년": [round(b_B[0], 3), round(b_B[1], 2)]}
-    print("  기준", out["기준(현재 요인)"], flush=True)
+        p = wb_predict(wb_fit(TR[H]), tst); e = np.exp(p) * tst["est"].values / tst["actual"].values - 1
+        return float(np.median(np.abs(e))) * 100, float(np.median(e)) * 100, float((np.abs(e) <= .10).mean()) * 100
+    out = {"n": int(len(D)), "후보": cands, "검증 구간(건수)": {f"최근 {H}개월": [CUT[H], int(len(TE[H]))] for H in HS}, "개별": {}}
+    base = {H: err(BASE, H) for H in HS}; out["기준(현재 요인) 보통오차%"] = {f"{H}개월": round(base[H][0], 3) for H in HS}
+    print("  기준", out["기준(현재 요인) 보통오차%"], flush=True)
+    delta = lambda fl: {H: err(fl, H)[0] - base[H][0] for H in HS}
     for c in cands:
-        r = {}
-        for k in (60,):
-            a, b = err(BASE + [(c, k)], foldA), err(BASE + [(c, k)], foldB)
-            r = {"최근12개월": [round(a[0], 3), round(a[0] - b_A[0], 3)], "그 앞 1년": [round(b[0], 3), round(b[0] - b_B[0], 3)]}
-        out["개별"][c] = r; print("  ", c, r, flush=True)
-    # 선택: '그 앞 1년'에서 좋아지는 후보를 순서대로 추가(0.005%p 넘게), 최근 12개월에서 확인
-    chosen = []; cur = list(BASE); best = b_B[0]
-    for _ in range(4):
+        d_ = delta(BASE + [(c, 60)]); out["개별"][c] = {f"{H}개월": round(d_[H], 3) for H in HS} | {"평균": round(float(np.mean(list(d_.values()))), 3), "4구간 모두 개선": bool(all(v < 0 for v in d_.values()))}
+        print("  ", c, out["개별"][c], flush=True)
+    # 선택: 4개 구간 모두에서 좋아지는 후보 중 평균 개선이 가장 큰 것부터 추가(평균 0.02%p 넘게)
+    chosen = []; cur = list(BASE); cur_err = {H: base[H][0] for H in HS}
+    for _ in range(3):
         pick = None
         for c in cands:
             if c in chosen: continue
-            sc = err(cur + [(c, 60)], foldB)[0]
-            if sc < best - 0.005 and (pick is None or sc < pick[0]): pick = (sc, c)
+            d_ = {H: err(cur + [(c, 60)], H)[0] - cur_err[H] for H in HS}
+            if all(v < 0 for v in d_.values()) and float(np.mean(list(d_.values()))) < -0.02 and (pick is None or np.mean(list(d_.values())) < pick[0]): pick = (float(np.mean(list(d_.values()))), c, d_)
         if not pick: break
-        best = pick[0]; chosen.append(pick[1]); cur = cur + [(pick[1], 60)]
-    fa = err(cur, foldA); out["선택"] = {"고른 요인": chosen, "그 앞 1년 오차": round(best, 3), "최근12개월(확인)": [round(fa[0], 3), round(fa[0] - b_A[0], 3), round(fa[1], 2)]}
-    print("  선택", out["선택"], flush=True)
+        chosen.append(pick[1]); cur = cur + [(pick[1], 60)]; cur_err = {H: cur_err[H] + pick[2][H] for H in HS}
+    fin = {H: err(cur, H) for H in HS}
+    out["선택(4개 구간 모두 개선)"] = {"고른 요인": chosen, "보통오차%(기준→선택)": {f"{H}개월": [round(base[H][0], 3), round(fin[H][0], 3)] for H in HS}, "10%이내%(기준→선택)": {f"{H}개월": [round(base[H][2], 1), round(fin[H][2], 1)] for H in HS}, "쏠림%(기준→선택)": {f"{H}개월": [round(base[H][1], 2), round(fin[H][1], 2)] for H in HS}}
+    print("  선택", out["선택(4개 구간 모두 개선)"], flush=True)
     seg = {}
     for nm, mk in (("신건", lambda t: t["fails"] == 0), ("유찰1", lambda t: t["fails"] == 1), ("유찰2+", lambda t: t["fails"] >= 2), ("수도권", lambda t: t["flow_cls"] == "수도권"), ("지방", lambda t: t["flow_cls"] == "지방")):
-        try: x0, x1 = err(BASE, foldA, mk), err(cur, foldA, mk); seg[nm] = [round(x0[0], 2), round(x1[0], 2)]
+        try: seg[nm] = {f"{H}개월": [round(err(BASE, H, mk)[0], 2), round(err(cur, H, mk)[0], 2)] for H in HS}
         except Exception: pass
-    out["구간별 오차(현재→선택, 최근12개월)"] = seg
-    # --- ② (a) 입찰자 수 예측 ---
+    out["구간별 보통오차%(기준→선택)"] = seg
+    # --- 3번 (a) 입찰자 수 예측 ---
     try:
-        WB_FACTORS = list(BASE); hasb = np.isfinite(bd)
-        Db = D[hasb].copy(); Db["actual_b"] = np.log(bd[hasb]); trb, teb = Db[Db["sale"] < cutA], Db[Db["sale"] >= cutA]
-        def bid_r2(fl):
-            global WB_FACTORS
-            WB_FACTORS = fl; m = wb_fit_y(trb, trb["actual_b"].values); p = wb_predict(m, teb); y = teb["actual_b"].values
-            return round(float(1 - np.sum((y - p) ** 2) / np.sum((y - y.mean()) ** 2)), 4), round(float(np.corrcoef(p, y)[0, 1]), 4)
-        r0 = bid_r2([f for f in BASE if f[0] != "jb"]); r1 = bid_r2([f for f in BASE if f[0] != "jb"] + [(c, 60) for c in cands])
-        out["입찰자 수 예측(최근12개월, ln 응찰자)"] = {"현재 요인 [R2,상관]": r0, "현재+후보 전부 [R2,상관]": r1, "표본": int(len(teb))}
-        print("  입찰자 수 예측", out["입찰자 수 예측(최근12개월, ln 응찰자)"], flush=True)
+        hasb = np.isfinite(bd); Db = D[hasb].copy(); Db["actual_b"] = np.log(bd[hasb]); rr = {}
+        for H in HS:
+            trb, teb = Db[Db["sale"] < CUT[H]], Db[Db["sale"] >= CUT[H]]; row_ = {}
+            for nm, fl in (("현재 요인", [f for f in BASE if f[0] != "jb"]), ("현재+후보 전부", [f for f in BASE if f[0] != "jb"] + [(c, 60) for c in cands if c in D.columns])):
+                WB_FACTORS = fl; m = wb_fit_y(trb, trb["actual_b"].values); p = wb_predict(m, teb); yv = teb["actual_b"].values
+                row_[nm] = [round(float(1 - np.sum((yv - p) ** 2) / np.sum((yv - yv.mean()) ** 2)), 4), round(float(np.corrcoef(p, yv)[0, 1]), 4)]
+            rr[f"{H}개월(n={len(teb)})"] = row_
+        out["입찰자 수 예측 [R2, 상관]"] = rr; print("  입찰자 수 예측", rr, flush=True)
     except Exception as e: print("  입찰자 수 예측 실패:", e)
-    # --- ② (b)(c) GBM과 분위수 ---
+    # --- 3번 (b) GBM, (c) 사건별 범위 ---
     try:
         X = pd.DataFrame(index=D.index); lmin = np.log(D["minbid"] / D["est"]); X["lmin"] = lmin; X["fails"] = D["fails"].fillna(-1); X["area"] = D["area"]; X["own"] = D["own"].fillna(0); X["month"] = (D["sale"] // 100) % 100
         for cn_ in ("flow_dong", "flow_sgg", "flow_cx", "flow_dong_v", "flow_sgg_v", "flow_cx_v", "flowR2_p", "flowR2_v", "flowR2_t", "jb", "mi_m3", "mi_m12", "age", "cx3y", "cx12", "floor"):
@@ -2561,39 +2561,35 @@ def factor_search_test(R, now):
         X["vol"], X["hh"] = vol, hh
         if "xf_metro" in D.columns:
             X["metro"] = D["xf_metro"].map({"-": np.nan, "no": 9, "m1": 1, "m2": 2, "m3": 3}).astype(float); X["loc"] = D["xf_loc"].map({"-": np.nan, "p1": 1, "p2": 2, "p3": 3, "p4": 4}).astype(float)
-        XB = X.drop(columns=[c for c in ["cxN", "cxR", "cxL", "cxB", "day", "dayD", "dgN", "dgR", "vol", "hh", "metro", "loc"] if c in X.columns]); y = D["lr"].values
-        trm, tem = (D["sale"] < cutA).values, (D["sale"] >= cutA).values
-        _okc = [c for c in X.columns if X.loc[trm, c].nunique(dropna=True) >= 3]; X = X[_okc]; XB = XB[[c for c in XB.columns if c in _okc]]   # 값이 거의 없는 열은 GBM 구간 나누기에서 오류(상수 열)라 뺌
-        def hgb(Xm, q=None):
-            m = HistGradientBoostingRegressor(loss="absolute_error" if q is None else "quantile", quantile=q, max_iter=300, learning_rate=0.05, max_leaf_nodes=31, min_samples_leaf=40, l2_regularization=1.0, categorical_features=[Xm.columns.get_loc(c) for c in ("reg", "dong") if c in Xm.columns], random_state=0)
-            return m.fit(Xm[trm], y[trm])
-        g = {}
-        for nm, Xm in (("GBM(현재 정보)", XB), ("GBM(+후보 요인)", X)):
-            m = hgb(Xm); p = m.predict(Xm[tem]); e = np.exp(p) * D["est"].values[tem] / D["actual"].values[tem] - 1
-            g[nm] = {"보통오차%": round(float(np.median(np.abs(e))) * 100, 3), "쏠림%": round(float(np.median(e)) * 100, 2), "10%이내%": round(float((np.abs(e) <= .1).mean()) * 100, 1)}
-        WB_FACTORS = list(BASE); pa = wb_predict(wb_fit(D[trm]), D[tem]); ea = np.exp(pa) * D["est"].values[tem] / D["actual"].values[tem] - 1
-        g["표 방식(현재 요인)"] = {"보통오차%": round(float(np.median(np.abs(ea))) * 100, 3), "쏠림%": round(float(np.median(ea)) * 100, 2), "10%이내%": round(float((np.abs(ea) <= .1).mean()) * 100, 1)}
-        out["GBM vs 표 방식(최근12개월)"] = g; print("  GBM", g, flush=True)
-        # 분위수: 사건별 범위 vs 고정 오차 분포(앞선 학습 구간의 잔차 분위수)
-        QS = [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9]; yt = y[tem]; res = {}
+        NEWC = [c for c in ["cxN", "cxR", "cxL", "cxB", "day", "dayD", "dgN", "dgR", "vol", "hh", "metro", "loc"] if c in X.columns]
+        y = D["lr"].values; QS = [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9]
         pin = lambda yv, qv, q: float(np.mean(np.maximum(q * (yv - qv), (q - 1) * (yv - qv))))
-        qm = {q: hgb(X, q).predict(X[tem]) for q in QS}
-        pre = (D["sale"] < cutB).values; mid = ((D["sale"] >= cutB) & (D["sale"] < cutA)).values
-        WB_FACTORS = list(BASE); m0 = wb_fit(D[pre]); resid = y[mid] - wb_predict(m0, D[mid]); mA = wb_fit(D[trm]); pA = wb_predict(mA, D[tem])
-        rq = {q: float(np.quantile(resid, q)) for q in QS}; fl = D["fails"].fillna(-1).values
-        rqf = {}
-        for lab, mk in (("n", fl == 0), ("1", fl == 1), ("2", fl >= 2)):
-            rr = (y[mid] - wb_predict(m0, D[mid]))[mk[mid]]; rqf[lab] = {q: float(np.quantile(rr, q)) for q in QS} if len(rr) > 50 else rq
-        lab_te = np.where(fl[tem] == 0, "n", np.where(fl[tem] == 1, "1", "2"))
-        base_q = {q: pA + np.array([rqf[l][q] for l in lab_te]) for q in QS}
-        for nm, qd in (("고정 오차 분포(유찰별)", base_q), ("GBM 분위수(사건별)", qm)):
-            cov = float(np.mean((yt >= qd[0.2]) & (yt <= qd[0.8]))) * 100; wid = float(np.median(qd[0.8] - qd[0.2])) * 100
-            lo90, hi90 = float(np.mean((yt >= qd[0.1]) & (yt <= qd[0.9]))) * 100, float(np.median(qd[0.9] - qd[0.1])) * 100
-            cov_by = {}
-            for lab, mk in (("신건", fl[tem] == 0), ("유찰1", fl[tem] == 1), ("유찰2+", fl[tem] >= 2)):
-                cov_by[lab] = [round(float(np.mean(((yt >= qd[0.2]) & (yt <= qd[0.8]))[mk])) * 100, 1), round(float(np.median((qd[0.8] - qd[0.2])[mk])) * 100, 1)]
-            res[nm] = {"60% 구간 적중%(목표 60)": round(cov, 1), "60% 구간 폭(중앙, %p)": round(wid, 2), "80% 구간 적중%(목표 80)": round(lo90, 1), "80% 구간 폭": round(hi90, 2), "평균 pinball": round(float(np.mean([pin(yt, qd[q], q) for q in QS])) * 100, 4), "유찰별[60%적중,폭]": cov_by}
-        out["사건별 범위 vs 고정 분포(최근12개월)"] = res; print("  범위", res, flush=True)
+        gres, rres = {}, {}
+        for H in HS:
+            trm, tem = (D["sale"] < CUT[H]).values, (D["sale"] >= CUT[H]).values
+            okc = [c for c in X.columns if X.loc[trm, c].nunique(dropna=True) >= 3]; Xa = X[okc]; Xb = X[[c for c in okc if c not in NEWC]]
+            def hgb(Xm, q=None):
+                m = HistGradientBoostingRegressor(loss="absolute_error" if q is None else "quantile", quantile=q, max_iter=300, learning_rate=0.05, max_leaf_nodes=31, min_samples_leaf=40, l2_regularization=1.0, categorical_features=[Xm.columns.get_loc(c) for c in ("reg",) if c in Xm.columns], random_state=0)
+                return m.fit(Xm[trm], y[trm])
+            g = {}
+            for nm, Xm in (("GBM(현재 정보)", Xb), ("GBM(+후보 요인)", Xa)):
+                p = hgb(Xm).predict(Xm[tem]); e = np.exp(p) * D["est"].values[tem] / D["actual"].values[tem] - 1
+                g[nm] = [round(float(np.median(np.abs(e))) * 100, 3), round(float(np.median(e)) * 100, 2), round(float((np.abs(e) <= .1).mean()) * 100, 1)]
+            WB_FACTORS = list(BASE); pa = wb_predict(wb_fit(D[trm]), D[tem]); ea = np.exp(pa) * D["est"].values[tem] / D["actual"].values[tem] - 1
+            g["표 방식(현재 요인)"] = [round(float(np.median(np.abs(ea))) * 100, 3), round(float(np.median(ea)) * 100, 2), round(float((np.abs(ea) <= .1).mean()) * 100, 1)]
+            gres[f"{H}개월"] = g; print("  GBM", H, g, flush=True)
+            yt = y[tem]; qm = {q: hgb(Xa, q).predict(Xa[tem]) for q in QS}
+            c12 = int((pd.to_datetime(str(CUT[H]), format="%Y%m%d") - pd.DateOffset(months=12)).strftime("%Y%m%d")); pre = (D["sale"] < c12).values; mid = ((D["sale"] >= c12) & (D["sale"] < CUT[H])).values
+            m0 = wb_fit(D[pre]); resid = y[mid] - wb_predict(m0, D[mid]); fl_all = D["fails"].fillna(-1).values
+            rq = {q: float(np.quantile(resid, q)) for q in QS}; rqf = {}
+            for lab, mk in (("n", fl_all == 0), ("1", fl_all == 1), ("2", fl_all >= 2)):
+                rr_ = resid[mk[mid]]; rqf[lab] = {q: float(np.quantile(rr_, q)) for q in QS} if len(rr_) > 50 else rq
+            lab_te = np.where(fl_all[tem] == 0, "n", np.where(fl_all[tem] == 1, "1", "2"))
+            base_q = {q: pa + np.array([rqf[l][q] for l in lab_te]) for q in QS}; res = {}
+            for nm, qd in (("고정 오차 분포(유찰별)", base_q), ("GBM 분위수(사건별)", qm)):
+                res[nm] = {"60%구간 적중%(목표60)": round(float(np.mean((yt >= qd[0.2]) & (yt <= qd[0.8]))) * 100, 1), "60%구간 폭%p": round(float(np.median(qd[0.8] - qd[0.2])) * 100, 2), "80%구간 적중%(목표80)": round(float(np.mean((yt >= qd[0.1]) & (yt <= qd[0.9]))) * 100, 1), "80%구간 폭%p": round(float(np.median(qd[0.9] - qd[0.1])) * 100, 2), "평균 pinball": round(float(np.mean([pin(yt, qd[q], q) for q in QS])) * 100, 4)}
+            rres[f"{H}개월"] = res; print("  범위", H, res, flush=True)
+        out["GBM vs 표 방식 [보통오차%, 쏠림%, 10%이내%]"] = gres; out["사건별 범위 vs 고정 분포"] = rres
     except Exception as e:
         import traceback; traceback.print_exc(); print("  GBM·범위 실패:", e)
     print("📋 FS_JSON " + json.dumps(out, ensure_ascii=False))
