@@ -3150,6 +3150,60 @@ def nolb_test(R, now):
         open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8").write("### 최저가 요인 제외 시험\n```json\n" + json.dumps(out, ensure_ascii=False, indent=1) + "\n```\n")
 
 
+def xf_window_report(D, base_factors):
+    """2026-11-18 사건별 후보 요인(단지 낙찰 이력·가격 변동성 등) 효과를 오늘 기준 최근 3·6·9·12개월 4구간에서 매주 기록(모델에는 넣지 않음 - 앱이 같은 값을 아직 못 만듦).
+    각 구간은 그 시작 이전 사례로만 학습. 값은 '현재 요인 대비 보통 오차 변화(%p)'(음수=좋아짐)와 4구간 모두 개선 여부."""
+    global WB_FACTORS
+    keep = WB_FACTORS; cands = [c for c in D.columns if c.startswith("xf_")]
+    if not cands: return None
+    last_d = pd.to_datetime(str(int(D["sale"].max())), format="%Y%m%d"); HS = (3, 6, 9, 12); CUT = {H: int((last_d - pd.DateOffset(months=H)).strftime("%Y%m%d")) for H in HS}
+    try:
+        def err(fl, H):
+            global WB_FACTORS
+            WB_FACTORS = fl; trn, tst = D[D["sale"] < CUT[H]], D[D["sale"] >= CUT[H]]
+            p = wb_predict(wb_fit(trn), tst); e = np.exp(p) * tst["est"].values / tst["actual"].values - 1
+            return float(np.median(np.abs(e))) * 100
+        base = {H: err(list(base_factors), H) for H in HS}; out = {"기준 보통오차%": {f"{H}개월": round(base[H], 3) for H in HS}, "후보": {}}
+        sets = {c: [c] for c in cands}
+        if "xf_cxL" in cands and "xf_vol" in cands: sets["xf_cxL+xf_vol"] = ["xf_cxL", "xf_vol"]
+        for nm, cs in sets.items():
+            d_ = {H: err(list(base_factors) + [(c, 60) for c in cs], H) - base[H] for H in HS}
+            out["후보"][nm] = {**{f"{H}개월": round(d_[H], 3) for H in HS}, "평균": round(float(np.mean(list(d_.values()))), 3), "4구간 모두 개선": bool(all(v < 0 for v in d_.values()))}
+        print("  🧪 후보 요인 4구간 효과:", json.dumps(out, ensure_ascii=False), flush=True)
+        return out
+    finally:
+        WB_FACTORS = keep
+
+
+def add_xf_features(D):
+    """2026-11-18 사건별 후보 요인(입찰일에 이미 알 수 있는 정보만): 같은 단지 최근 12개월 낙찰 이력(직전·중앙 낙찰가율, 응찰자 평균), 같은 동 최근 90일 낙찰가율, 단지 가격 변동성.
+    매주 서버 모델이 후보로 시험(SERVER_ONLY - 앱이 아직 같은 값을 못 만들어 모델에는 넣지 않고 효과만 기록). 최근 3·6·9·12개월 시험에서 4구간 모두 개선된 후보들."""
+    D = D.copy(); order = np.argsort(D["sale"].values, kind="stable"); S = D.iloc[order]
+    d_ = pd.to_datetime(S["sale"].astype(int).astype(str), format="%Y%m%d"); dn = d_.values.astype("datetime64[D]").astype(np.int64)
+    lr = np.log(S["actual"].values / S["est"].values); bd = pd.to_numeric(S["bidders"], errors="coerce").values
+    cxk = np.where(S["cx"].notna(), S["region"].astype(str) + "|" + S["dk"].astype(str) + "|" + S["cx"].astype(str), None); dgk = (S["region"].astype(str) + "|" + S["dk"].astype(str)).values
+    def asof(keys, win, gap=3):
+        n = np.zeros(len(S)); med = np.full(len(S), np.nan); last = np.full(len(S), np.nan); bav = np.full(len(S), np.nan); idx = {}
+        for i, k in enumerate(keys):
+            if k is not None: idx.setdefault(k, []).append(i)
+        for k, ii in idx.items():
+            ii = np.array(ii); dd = dn[ii]
+            for i in ii:
+                lo = np.searchsorted(dd, dn[i] - win, "left"); hi = np.searchsorted(dd, dn[i] - gap, "right")
+                if hi > lo:
+                    sl = ii[lo:hi]; n[i] = len(sl); med[i] = float(np.median(lr[sl])); last[i] = lr[sl[-1]]
+                    b_ = bd[sl]; bav[i] = float(np.nanmean(b_)) if np.isfinite(b_).any() else np.nan
+        return n, med, last, bav
+    cn, cmed, clast, cbav = asof(cxk, 365); gn, gmed, _gl, _gb = asof(list(dgk), 90)
+    rb = lambda v: np.where(~np.isfinite(v), "-", np.where(v <= -0.10, "lo2", np.where(v <= -0.03, "lo1", np.where(v < 0.03, "mid", np.where(v < 0.08, "hi1", "hi2")))))
+    vol = pd.to_numeric(S["cx_vol"], errors="coerce").values if "cx_vol" in S.columns else np.full(len(S), np.nan)
+    cols = {"xf_cxR": rb(cmed), "xf_cxL": rb(clast), "xf_cxB": np.where(~np.isfinite(cbav), "-", np.where(cbav <= 3, "b3", np.where(cbav <= 6, "b6", "b7"))),
+            "xf_dgR": np.where(gn >= 3, rb(gmed), "-"), "xf_vol": np.where(~np.isfinite(vol), "-", np.where(vol < 0.03, "v1", np.where(vol < 0.06, "v2", "v3")))}
+    for k, v in cols.items():
+        tmp = pd.Series(v, index=S.index); D[k] = tmp.reindex(D.index).values
+    return D
+
+
 def winbid_model(R, now):
     # 🆕 시세 새 규칙(est_rule) 적용(2026-11-04, 사용자 결정): 모델이 보는 시세(est)를 새 규칙으로 - 앱도 같은 규칙으로 시세를 계산해야 함(모델 payload의 estRule 표시)
     R0 = R
@@ -3166,6 +3220,8 @@ def winbid_model(R, now):
     D = D[np.log(D["actual"] / D["est"]).between(np.log(0.4), np.log(1.6))]
     if len(D) < 3000:
         print("  예상 낙찰가 모델: 사례 부족, 건너뜀"); return
+    try: D = add_xf_features(D); print("  후보 요인(단지 이력·변동성) 열 추가:", [c for c in D.columns if c.startswith("xf_")])
+    except Exception as _e: print("  후보 요인 열 추가 실패(건너뜀):", _e)
     last = pd.to_datetime(str(int(D["sale"].max())), format="%Y%m%d")
     cut = int((last - pd.DateOffset(months=12)).strftime("%Y%m%d"))
     tr, te = D[D["sale"] < cut], D[D["sale"] >= cut]
@@ -3179,6 +3235,8 @@ def winbid_model(R, now):
     except Exception as e:
         print("  요인 비중 조정 건너뜀:", e); tune_info = {"skipped": str(e)}; WB_FACTORS = list(WB_BASE0)
     f_base = [f for f in WB_FACTORS if f[0] != "jb"]; f_jb = f_base + [WB_JB_FACTOR]
+    try: tune_info["xfReport"] = xf_window_report(D, f_base + [WB_JB_FACTOR])
+    except Exception as _e: print("  후보 요인 4구간 기록 건너뜀:", _e)
     # 🕐 최근 가중(2026-11-04, 사용자 "개선안 적용"): 학습에서 최근 12개월 사례를 3배(원본 + 2번 더)로 셈. 리포트 12주 비교에서 보통 오차 5.49→5.41%(±10% 안 +0.8%p).
     # 같은 학습/검증 분할에서 가중 없는 모델과 비교해 좋아질 때만 씀(아니면 예전 방식 그대로)
     def _recent_w(df, ref_int):
