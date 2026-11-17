@@ -487,6 +487,7 @@ def main():
             pass
         try:  # 2026-11-17 시험용 열: 단지 가격 변동성(같은 평형대 직전 12개월 ln ㎡당가 표준편차)·단지 세대수 - factor_search_test에서만 씀
             _sd3 = int_to_date(c.sale_int); _ct3 = ymd_int(_sd3 - timedelta(days=30)); rec["cx_vol"] = None; rec["cx_hh"] = None
+            rec["lat_t"] = getattr(c, "lat", None); rec["lon_t"] = getattr(c, "lon", None)
             if g is not None and len(g):
                 _s3 = g[(g["deal_date"] < _ct3) & (g["deal_date"] >= ymd_int(_sd3 - timedelta(days=30 + 365))) & ((g["size"] - c.area).abs() <= 10)]
                 if len(_s3) >= 4: rec["cx_vol"] = float(np.std(np.log(_s3["ppm"].to_numpy(dtype=float))))
@@ -2492,7 +2493,7 @@ def factor_search_test(R, now):
     try:  # 지하철 거리·입지 활발도(앱의 입지 지수 파일)
         li = _rq.get(f"{SITE_URL}/location-index.json", timeout=120).json(); cells = np.array(li["types"]["apt"]["cells"], dtype=float)
         from sklearn.neighbors import BallTree
-        bt = BallTree(np.radians(np.c_[cells[:, 0] / 1e4, cells[:, 1] / 1e4]), metric="haversine"); la = pd.to_numeric(D.get("lat"), errors="coerce").values; lo = pd.to_numeric(D.get("lon"), errors="coerce").values
+        bt = BallTree(np.radians(np.c_[cells[:, 0] / 1e4, cells[:, 1] / 1e4]), metric="haversine"); la = pd.to_numeric(D["lat_t"], errors="coerce").values; lo = pd.to_numeric(D["lon_t"], errors="coerce").values
         ok = np.isfinite(la) & np.isfinite(lo); met = np.full(len(D), np.nan); pct = np.full(len(D), np.nan)
         dist, ix = bt.query(np.radians(np.c_[la[ok], lo[ok]]), k=1); near = dist[:, 0] * 6371.0 < 0.6
         sel = np.where(ok)[0][near]; met[sel] = cells[ix[near, 0], 4]; pct[sel] = cells[ix[near, 0], 5]
@@ -2558,8 +2559,11 @@ def factor_search_test(R, now):
         X["cap"] = (D["flow_cls"] == "수도권").astype(float); X["reg"] = D["region"].astype("category").cat.codes.clip(lower=0); _dgs = (D["region"].astype(str) + "|" + D["dk"].astype(str)); _top = {k: i + 1 for i, k in enumerate(_dgs.value_counts().index[:240])}; X["dong"] = _dgs.map(_top).fillna(0).astype(int)
         X["cxN"], X["cxR"], X["cxL"], X["cxB"], X["day"], X["dayD"], X["dgN"], X["dgR"] = cn, cmed, clast, cbav, csame, gsame, gn, gmed
         X["vol"], X["hh"] = vol, hh
-        XB = X.drop(columns=["cxN", "cxR", "cxL", "cxB", "day", "dayD", "dgN", "dgR", "vol", "hh"]); y = D["lr"].values
+        if "xf_metro" in D.columns:
+            X["metro"] = D["xf_metro"].map({"-": np.nan, "no": 9, "m1": 1, "m2": 2, "m3": 3}).astype(float); X["loc"] = D["xf_loc"].map({"-": np.nan, "p1": 1, "p2": 2, "p3": 3, "p4": 4}).astype(float)
+        XB = X.drop(columns=[c for c in ["cxN", "cxR", "cxL", "cxB", "day", "dayD", "dgN", "dgR", "vol", "hh", "metro", "loc"] if c in X.columns]); y = D["lr"].values
         trm, tem = (D["sale"] < cutA).values, (D["sale"] >= cutA).values
+        _okc = [c for c in X.columns if X.loc[trm, c].nunique(dropna=True) >= 3]; X = X[_okc]; XB = XB[[c for c in XB.columns if c in _okc]]   # 값이 거의 없는 열은 GBM 구간 나누기에서 오류(상수 열)라 뺌
         def hgb(Xm, q=None):
             m = HistGradientBoostingRegressor(loss="absolute_error" if q is None else "quantile", quantile=q, max_iter=300, learning_rate=0.05, max_leaf_nodes=31, min_samples_leaf=40, l2_regularization=1.0, categorical_features=[Xm.columns.get_loc(c) for c in ("reg", "dong") if c in Xm.columns], random_state=0)
             return m.fit(Xm[trm], y[trm])
