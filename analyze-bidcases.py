@@ -701,7 +701,7 @@ def main():
             except Exception as e: print("  종합 평가 연결 건너뜀:", e)
         if os.environ.get("WB_WIDECMP_DIR"):   # 2026-11-16 종합 평가 사례 넓힘 시험(저장 없음)
             widecmp_test(R, now); return
-        if os.environ.get("WB_ALARMTEST") == "1":   # 2026-11-17 낙찰 가능성 경보 기준 구간별 시험(저장 없음, 여기서 바로 종료)
+        if os.environ.get("WB_ALARMTEST") == "1" or os.environ.get("WB_CALTEST") == "1":   # 2026-11-17 낙찰 가능성 경보 기준 구간별 시험(저장 없음, 여기서 바로 종료)
             alarm_test_main(R, now); return
         if os.environ.get("WB_RECWIN") == "1":   # 2026-11-17 오늘 기준 최근 기간별 비교 시험(저장 없음)
             recwin_test(R, now); return
@@ -2410,7 +2410,57 @@ def alarm_test_main(R, now):
     scorecard(D, amap)
     X = globals().get("_SC_X")
     if X is None: print("  성적표 표본 없음"); return
-    alarm_test(X)
+    if os.environ.get("WB_CALTEST") == "1": calib_methods_test(X, D)
+    if os.environ.get("WB_ALARMTEST") == "1": alarm_test(X)
+
+
+def calib_methods_test(X, D):
+    """2026-11-17(사용자: 요인 추가·최근 사례 가중 보정 시험) 저장 없음. 추천가 낙찰 가능성 보정 방법을 시간순(매주 과거로 학습→다음 7일 채점)으로 비교.
+    요인은 입찰 전에 알 수 있는 것만: 유찰 횟수, 지역 등급(수도권/지방), 지역 평균 응찰 수(2026-10-01 이전 낙찰 자료), 추천가÷예상낙찰가 간격, 원래 확률. 실제 응찰 수는 결과라서 쓰지 않음."""
+    from sklearn.linear_model import LogisticRegression
+    P = X[X["prob"].notna() & X["win"].notna() & (X["win"] > 0)].copy()
+    meta = D[["caseNo", "region", "fails", "flow_cls"]].drop_duplicates(["caseNo", "region"])
+    P = P.merge(meta, left_on=["case", "region"], right_on=["caseNo", "region"], how="left")
+    pre = D[D["sale"] < 20261001]; rb = pre.groupby("region")["bidders"].median(); allb = float(pre["bidders"].median())
+    P["rbid"] = np.log(P["region"].map(rb).fillna(allb).clip(lower=1))
+    P["gap"] = np.log(P["rec"] / P["win"]).clip(-1, 1); P["lp"] = np.log(P["prob"].clip(0.01, 0.99) / (1 - P["prob"].clip(0.01, 0.99)))
+    P["f0"] = (P["fails"].fillna(-1) == 0).astype(float); P["f1"] = (P["fails"].fillna(-1) == 1).astype(float); P["f2"] = (P["fails"].fillna(-1) >= 2).astype(float)
+    P["cap"] = (P["flow_cls"] == "수도권").astype(float)
+    P["d"] = pd.to_datetime(P["sale"].astype(int).astype(str), format="%Y%m%d"); P = P.sort_values("d").reset_index(drop=True)
+    P["won"] = P["won"].astype(float)
+    FEATS = {"간격(현재)": ["gap"], "원래 확률 로짓": ["lp"], "간격+유찰": ["gap", "f0", "f1", "f2"], "간격+지역등급": ["gap", "cap"], "간격+응찰수(지역평균)": ["gap", "rbid"], "간격+유찰+지역등급+응찰수": ["gap", "f0", "f1", "f2", "cap", "rbid"], "간격+원래확률+요인 전부": ["gap", "lp", "f0", "f1", "f2", "cap", "rbid"]}
+    last = P["d"].max(); cps = []; c = P["d"].min() + pd.Timedelta(days=28)
+    while c < last: cps.append(c); c += pd.Timedelta(days=7)
+    def fitpred(cols, Tr, Te, recency):
+        w = np.ones(len(Tr))
+        if recency: w = np.where(Tr["d"] > Tr["d"].max() - pd.Timedelta(days=recency), 3.0, 1.0)
+        m = LogisticRegression(C=1.0, max_iter=500); mu = Tr[cols].mean(); sd = Tr[cols].std().replace(0, 1)
+        m.fit(((Tr[cols] - mu) / sd).values, Tr["won"].values, sample_weight=w)
+        return m.predict_proba(((Te[cols] - mu) / sd).values)[:, 1]
+    variants = [("원래(보정 전)", None, 0)] + [(f"{k}", v, 0) for k, v in FEATS.items()] + [(f"{k} + 최근 4주 3배", v, 28) for k, v in FEATS.items() if k in ("간격(현재)", "간격+유찰+지역등급+응찰수", "간격+원래확률+요인 전부")] + [(f"{k} + 최근 8주 3배", v, 56) for k, v in FEATS.items() if k in ("간격(현재)", "간격+유찰+지역등급+응찰수")]
+    acc = {nm: {"p": [], "pm": [], "y": [], "pr": []} for nm, _, _ in variants}
+    for c in cps:
+        Tr = P[P["d"] <= c]; Te = P[(P["d"] > c) & (P["d"] <= c + pd.Timedelta(days=7))]
+        if len(Tr) < 150 or len(Te) == 0: continue
+        for nm, cols, rec in variants:
+            pr = np.clip(Te["prob"].values, 0.01, 0.99)
+            p = pr if cols is None else np.clip(fitpred(cols, Tr, Te, rec), 0.005, 0.995)
+            acc[nm]["p"] += list(p); acc[nm]["pm"] += list(np.minimum(p, pr)); acc[nm]["y"] += list(Te["won"].values); acc[nm]["pr"] += list(pr)
+    res = {}
+    for nm, a in acc.items():
+        if not a["y"]: continue
+        y = np.array(a["y"]); p = np.array(a["p"]); pm = np.array(a["pm"]); pr = np.array(a["pr"])
+        ll = lambda q: float(-np.mean(y * np.log(q) + (1 - y) * np.log(1 - q)))
+        bins = {}
+        for lo, hi, lab in [(0, .10, "10% 미만"), (.10, .25, "10~25%"), (.25, .50, "25~50%"), (.50, 1.01, "50% 이상")]:
+            mk = (p >= lo) & (p < hi)
+            if mk.sum() >= 10: bins[lab] = [int(mk.sum()), round(float(p[mk].mean()) * 100, 1), round(float(y[mk].mean()) * 100, 1)]
+        res[nm] = {"n": int(len(y)), "Brier": round(float(np.mean((p - y) ** 2)), 4), "Brier(깎기만)": round(float(np.mean((pm - y) ** 2)), 4), "로그손실": round(ll(p), 4), "구간별[건수,예상%,실제%]": bins}
+    base = res["원래(보정 전)"]["Brier"]
+    for nm, r in res.items(): print(f"  🧪 {nm}: n={r['n']} Brier {r['Brier']} (원래 대비 {round((r['Brier'] / base - 1) * 100, 1)}%) 깎기만 {r['Brier(깎기만)']} 로그손실 {r['로그손실']}")
+    print("📋 CAL_JSON " + json.dumps({"표본": int(len(P)), "채점 표본": res["원래(보정 전)"]["n"], "결과": res}, ensure_ascii=False))
+    if os.environ.get("GITHUB_STEP_SUMMARY"):
+        open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8").write("### 낙찰 가능성 보정 방법 비교\n```json\n" + json.dumps(res, ensure_ascii=False, indent=1) + "\n```\n")
 
 
 def alarm_test(X):
@@ -3075,7 +3125,7 @@ def scorecard(D, amap):
     X = pd.DataFrame(rows)
     X["won"] = X["actual"] <= X["rec"]
     X["ratio"] = X["actual"] / X["rec"]
-    if os.environ.get("WB_ALARMTEST") == "1": globals()["_SC_X"] = X.copy()
+    if os.environ.get("WB_ALARMTEST") == "1" or os.environ.get("WB_CALTEST") == "1": globals()["_SC_X"] = X.copy()
     out["recWon"] = int(X["won"].sum()); out["recWonPct"] = round(float(X["won"].mean()) * 100, 1)
     out["actualOverRecMed"] = round(float(X["ratio"].median()), 3)
     W = X[X["win"].notna() & (X["win"] > 0)]
