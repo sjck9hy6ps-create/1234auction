@@ -701,6 +701,8 @@ def main():
             except Exception as e: print("  종합 평가 연결 건너뜀:", e)
         if os.environ.get("WB_WIDECMP_DIR"):   # 2026-11-16 종합 평가 사례 넓힘 시험(저장 없음)
             widecmp_test(R, now); return
+        if os.environ.get("WB_ALARMTEST") == "1":   # 2026-11-17 낙찰 가능성 경보 기준 구간별 시험(저장 없음, 여기서 바로 종료)
+            alarm_test_main(R, now); return
         if os.environ.get("WB_RECWIN") == "1":   # 2026-11-17 오늘 기준 최근 기간별 비교 시험(저장 없음)
             recwin_test(R, now); return
         if os.environ.get("WB_BASEDIST_ONLY") == "1":   # 2026-11-16 낙찰비율 분포 보고(저장 없음)
@@ -2399,6 +2401,87 @@ def rw_recheck(D, tr, te, cut, f_base, wb_fit, wb_predict):
         open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8").write("### 가중 기간 재확인\n```json\n" + json.dumps(out, ensure_ascii=False, indent=1) + "\n```\n")
 
 
+def alarm_test_main(R, now):
+    D = R[R["est"].notna() & (R["est"] > 0) & R["actual"].notna() & R["minbid"].notna() & (R["minbid"] > 0) & (R["sale"] >= 20200101)].copy()
+    D = D[np.log(D["actual"] / D["est"]).between(np.log(0.4), np.log(1.6))]
+    import requests as _rq
+    au = _rq.get(f"{SITE_URL}/api/auction", timeout=180).json()
+    amap = {(norm_case(x.get("caseNo")), region_norm(x.get("addr"))): x for x in au if isinstance(x, dict) and x.get("caseNo") and not x.get("isBacktest")}
+    scorecard(D, amap)
+    X = globals().get("_SC_X")
+    if X is None: print("  성적표 표본 없음"); return
+    alarm_test(X)
+
+
+def alarm_test(X):
+    """2026-11-17(사용자: 낙찰 가능성 경보 기준을 구간별로 시험) 저장 없음.
+    ① 구간별 예측 vs 실제(95% 신뢰구간) - 누적/최근 4주/11-01 이후 새 예측 ② 경보 규칙 비교: 매주 누적 자료로 경보 여부를 계산하고,
+    그 뒤 4주 새 표본에서 '보정(원래보다 낮을 때만 깎기)'이 실제로 Brier를 좋아지게 했는지로 경보가 쓸모 있었는지 확인."""
+    from scipy.stats import binomtest
+    P = X[X["prob"].notna()].copy(); P["prob"] = P["prob"].astype(float); P["won"] = P["won"].astype(float)
+    P["d"] = pd.to_datetime(P["sale"].astype(int).astype(str), format="%Y%m%d"); P = P.sort_values("d")
+    bins = [(0, 0.10, "10% 미만"), (0.10, 0.25, "10~25%"), (0.25, 0.50, "25~50%"), (0.50, 1.01, "50% 이상")]
+    def wilson(k, n, z=1.96):
+        if n == 0: return (0, 0)
+        p = k / n; den = 1 + z * z / n; c = p + z * z / (2 * n); h = z * np.sqrt(p * (1 - p) / n + z * z / (4 * n * n))
+        return ((c - h) / den, (c + h) / den)
+    def bintab(Q):
+        res = {}
+        for lo, hi, lab in bins:
+            G = Q[(Q["prob"] >= lo) & (Q["prob"] < hi)]; n = len(G)
+            if n == 0: continue
+            k = int(G["won"].sum()); pr = float(G["prob"].mean()); lo_, hi_ = wilson(k, n)
+            pv = float(binomtest(k, n, min(max(pr, 1e-4), 1 - 1e-4)).pvalue)
+            res[lab] = {"n": n, "예상%": round(pr * 100, 1), "실제%": round(k / n * 100, 1), "차이%p": round((k / n - pr) * 100, 1), "실제 95%구간": [round(lo_ * 100, 1), round(hi_ * 100, 1)], "p값": round(pv, 4)}
+        return res
+    last = P["d"].max()
+    out = {"표본": int(len(P)), "기간": [str(P["d"].min().date()), str(last.date())]}
+    out["구간별(누적)"] = bintab(P)
+    out["구간별(최근 4주)"] = bintab(P[P["d"] > last - pd.Timedelta(days=28)])
+    if "at" in P.columns: out["구간별(11-01 이후 새 예측)"] = bintab(P[P["at"].astype(str) >= "2026-11-01"])
+    PC = P[P["probC"].notna()].copy()
+    if len(PC):
+        PC["prob"] = PC["probC"].astype(float); out["보정 후 확률 구간별"] = {"n": int(len(PC)), "구간": bintab(PC)}
+    def rules(Q):
+        r = {}
+        tot = len(Q); gap = (Q["won"].mean() - Q["prob"].mean()) * 100 if tot else 0
+        r["현재(평균 15%p)"] = bool(tot >= 30 and abs(gap) >= 15); r["평균 10%p"] = bool(tot >= 30 and abs(gap) >= 10); r["평균 5%p"] = bool(tot >= 30 and abs(gap) >= 5)
+        T = bintab(Q)
+        for th in (5, 7, 10):
+            r[f"구간 하나라도 {th}%p 이상(30건+)"] = any(v["n"] >= 30 and abs(v["차이%p"]) >= th for v in T.values())
+        r["구간 하나라도 통계적으로 다름(p<0.05)+5%p"] = any(v["n"] >= 30 and v["p값"] < 0.05 and abs(v["차이%p"]) >= 5 for v in T.values())
+        r["구간 하나라도 상대 30% 이상(30건+)"] = any(v["n"] >= 30 and v["예상%"] > 0 and abs(v["실제%"] / v["예상%"] - 1) >= 0.3 for v in T.values())
+        return r
+    def recal_gain(Tr, Te):
+        """Tr로 보정 학습, Te에서 Brier 변화(앱처럼 원래보다 낮을 때만 깎음). 음수=개선"""
+        if len(Tr) < 150 or len(Te) < 30: return None
+        Pt = np.clip(Tr["prob"].values, 0.01, 0.99); lg = lambda p: np.log(p / (1 - p)); Xm = np.c_[np.ones(len(Pt)), lg(Pt)]; w = np.zeros(2)
+        for _ in range(60):
+            p = 1 / (1 + np.exp(-Xm @ w)); w = w - np.linalg.solve(Xm.T @ (Xm * (p * (1 - p))[:, None]) + 1e-6 * np.eye(2), Xm.T @ (p - Tr["won"].values))
+        Pe = np.clip(Te["prob"].values, 0.01, 0.99); pc = np.minimum(Pe, 1 / (1 + np.exp(-(w[0] + w[1] * lg(Pe)))))
+        b0 = float(np.mean((Pe - Te["won"].values) ** 2)); b1 = float(np.mean((pc - Te["won"].values) ** 2))
+        return (b1 - b0) / b0 * 100
+    cps = []; c = P["d"].min() + pd.Timedelta(days=21)
+    while c < last - pd.Timedelta(days=7): cps.append(c); c += pd.Timedelta(days=7)
+    table = {}; rows = []
+    for c in cps:
+        Tr = P[P["d"] <= c]; Te = P[(P["d"] > c) & (P["d"] <= c + pd.Timedelta(days=28))]
+        if len(Tr) < 150: continue
+        g = recal_gain(Tr, Te); rr = rules(Tr); rows.append({"기준일": str(c.date()), "학습": int(len(Tr)), "다음4주": int(len(Te)), "보정 효과(Brier %)": None if g is None else round(g, 1), "경보": {k: bool(v) for k, v in rr.items()}})
+    out["주별 점검"] = rows
+    names = list(rows[0]["경보"].keys()) if rows else []
+    for nm in names:
+        al = [r for r in rows if r["경보"][nm] and r["보정 효과(Brier %)"] is not None]; na = [r for r in rows if not r["경보"][nm] and r["보정 효과(Brier %)"] is not None]
+        table[nm] = {"경보 횟수": len(al), "경보 뒤 보정이 개선": sum(1 for r in al if r["보정 효과(Brier %)"] < -2), "경보 없음": len(na), "경보 없었는데 보정이 개선": sum(1 for r in na if r["보정 효과(Brier %)"] < -2)}
+    out["규칙별 요약"] = table
+    for k in ("구간별(누적)", "구간별(최근 4주)", "구간별(11-01 이후 새 예측)", "보정 후 확률 구간별"):
+        if k in out: print("  ", k, json.dumps(out[k], ensure_ascii=False))
+    print("  규칙별 요약", json.dumps(table, ensure_ascii=False))
+    print("📋 ALARM_JSON " + json.dumps(out, ensure_ascii=False))
+    if os.environ.get("GITHUB_STEP_SUMMARY"):
+        open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8").write("### 낙찰 가능성 경보 시험\n```json\n" + json.dumps(out, ensure_ascii=False, indent=1) + "\n```\n")
+
+
 def recwin_test(R, now):
     """2026-11-17(사용자: 연도·분기 요인이 아니라 오늘 기준 최근 3개월·6개월·1년·2년 자료를 비교) 저장 없음.
     저장된 종합 평가 값(est_stack) 전체로, 검증 구간(오늘 기준 최근 3·6·12·24개월) × 학습 방식(전체 / 전체+최근 N개월 3배 / 최근 N개월만)을 비교. 요인 목록·비중은 지금 모델 그대로."""
@@ -2992,6 +3075,7 @@ def scorecard(D, amap):
     X = pd.DataFrame(rows)
     X["won"] = X["actual"] <= X["rec"]
     X["ratio"] = X["actual"] / X["rec"]
+    if os.environ.get("WB_ALARMTEST") == "1": globals()["_SC_X"] = X.copy()
     out["recWon"] = int(X["won"].sum()); out["recWonPct"] = round(float(X["won"].mean()) * 100, 1)
     out["actualOverRecMed"] = round(float(X["ratio"].median()), 3)
     W = X[X["win"].notna() & (X["win"] > 0)]
