@@ -182,9 +182,9 @@ def main():
         except Exception as ex:
             print("  빌라 저장본 비교 건너뜀:", ex)
         if rows:
-            X = pd.DataFrame(rows, columns=["rec", "actual", "win"]); X["won"] = X["actual"] <= X["rec"]
-            rb["saved"] = {"n": int(len(X)), "recWonPct": round(float(X["won"].mean()) * 100, 1), "actualOverRec": round(float((X["actual"] / X["rec"]).median()), 3)}
-            W = X[X["win"].notna() & (X["win"] > 0)]
+            XS = pd.DataFrame(rows, columns=["rec", "actual", "win"]); XS["won"] = XS["actual"] <= XS["rec"]
+            rb["saved"] = {"n": int(len(XS)), "recWonPct": round(float(XS["won"].mean()) * 100, 1), "actualOverRec": round(float((XS["actual"] / XS["rec"]).median()), 3)}
+            W = XS[XS["win"].notna() & (XS["win"] > 0)]
             if len(W): rb["saved"]["winPredErr"] = round(float(((W["win"] - W["actual"]) / W["actual"]).abs().median()) * 100, 1)
         print("  빌라 추천가 정확도:", json.dumps(rb, ensure_ascii=False))
         use = rb.get("saved") if rb.get("saved") and rb["saved"]["n"] >= 20 else rb["sim"]
