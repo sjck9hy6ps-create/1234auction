@@ -2412,7 +2412,7 @@ def alarm_test_main(R, now):
     au = _rq.get(f"{SITE_URL}/api/auction", timeout=180).json()
     amap = {(norm_case(x.get("caseNo")), region_norm(x.get("addr"))): x for x in au if isinstance(x, dict) and x.get("caseNo") and not x.get("isBacktest")}
     _sc = scorecard(D, amap)
-    print("📋 SCORECARD_NEW " + json.dumps({k: _sc.get(k) for k in ("needAdjust", "needAdjustAvg", "needAdjustRaw", "binAlarmRaw", "calibrationAfter", "probGapPct")}, ensure_ascii=False))
+    print("📋 SCORECARD_NEW " + json.dumps({k: _sc.get(k) for k in ("needAdjust", "needAdjustAvg", "needAdjustRaw", "binAlarmRaw", "calibrationAfter", "probGapPct", "winSaved")}, ensure_ascii=False))
     X = globals().get("_SC_X")
     if X is None: print("  성적표 표본 없음"); return
     if os.environ.get("WB_CALTEST") == "1": calib_methods_test(X, D)
@@ -3263,6 +3263,7 @@ def scorecard(D, amap):
         rows.append({"case": r.caseNo, "name": (r.bname if isinstance(r.bname, str) and r.bname.strip() and r.bname != "nan" else None) or x.get("name") or "", "region": r.region, "sale": int(r.sale), "actual": float(r.actual), "rec": float(sn["recBid"]),
                      "prob": sn.get("prob"), "probC": sn.get("probC"), "win": sn.get("win"), "minbid": float(r.minbid), "at": sn.get("at"), "snapMin": sn.get("minBid")})
         rows[-1]["typ"] = str(x.get("propType") or x.get("type") or sn.get("type") or "?")
+        rows[-1]["fails"] = getattr(r, "fails", None); rows[-1]["cls"] = getattr(r, "flow_cls", None)
     out = {"n": len(rows)}
     if not rows:
         return out
@@ -3276,6 +3277,20 @@ def scorecard(D, amap):
     if len(W):
         e = (W["win"] - W["actual"]) / W["actual"]
         out["winPredN"] = int(len(W)); out["winPredMedAbsErrPct"] = round(float(e.abs().median()) * 100, 1); out["winPredBiasPct"] = round(float(e.median()) * 100, 1)
+        # 2026-11-17(사용자 요청): 입찰 전에 앱이 저장한 예상 낙찰가의 성적표(실제 입찰 때 보여준 값 기준) - 전체·주별·지역등급별·유찰별
+        try:
+            Ws = W.copy(); Ws["err"] = (Ws["win"] - Ws["actual"]) / Ws["actual"]
+            def _ws(G, lab):
+                ee = G["err"]; return {"label": lab, "n": int(len(G)), "medAbsErrPct": round(float(ee.abs().median()) * 100, 1), "within5Pct": round(float((ee.abs() <= 0.05).mean()) * 100, 1), "within10Pct": round(float((ee.abs() <= 0.10).mean()) * 100, 1),
+                                       "biasPct": round(float(ee.median()) * 100, 1), "winAtPredPct": round(float((G["actual"] <= G["win"]).mean()) * 100, 1), "winAtPlus5Pct": round(float((G["actual"] <= G["win"] * 1.05).mean()) * 100, 1)}
+            Ws["d"] = pd.to_datetime(Ws["sale"].astype(int).astype(str), format="%Y%m%d"); Ws["wk"] = (Ws["d"] - pd.to_timedelta(Ws["d"].dt.weekday, unit="D")).dt.strftime("%Y%m%d")
+            sv = {"all": _ws(Ws, "전체"), "weeks": [dict(_ws(g, w), week=w) for w, g in sorted(Ws.groupby("wk")) if len(g) >= 5][-10:], "from": str(Ws["d"].min().date()), "to": str(Ws["d"].max().date())}
+            if "cls" in Ws.columns: sv["byClass"] = [_ws(g, str(c)) for c, g in Ws.groupby(Ws["cls"].fillna("?")) if len(g) >= 20]
+            if "fails" in Ws.columns:
+                fl = Ws["fails"].fillna(-1); sv["byFails"] = [_ws(Ws[mk], lab) for lab, mk in (("신건", fl == 0), ("유찰 1회", fl == 1), ("유찰 2회+", fl >= 2)) if int(mk.sum()) >= 20]
+            out["winSaved"] = sv
+        except Exception as ex:
+            print("  입찰 전 저장 예상 낙찰가 성적표 건너뜀:", ex)
     P = X[X["prob"].notna()]
     bins = [(0, 0.10, "10% 미만"), (0.10, 0.25, "10~25%"), (0.25, 0.50, "25~50%"), (0.50, 1.01, "50% 이상")]
     cal = []
