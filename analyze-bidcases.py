@@ -3452,6 +3452,13 @@ def winbid_model(R, now):
     except Exception as e:
         print("  경쟁 예상별 보정 건너뜀:", e)
     full["resQ"] = [round(float(np.quantile(res, q / 100)), 4) for q in range(1, 100)]
+    try:   # 2026-11-18(사용자: 낙찰가 범위가 임의면 안 되고 앱 계산 근거로) 예상 낙찰가 하한·상한 = 오차 분포의 하위 25%·상위 25% 지점. 근거 수치: 학습에 안 쓴 최근 12개월 오차, 앞 60%로 만든 범위가 뒤 40%에서 맞는 비율(시간순)
+        _o = np.argsort(te["sale"].values, kind="stable"); _r = res[_o]; _k = int(len(_r) * 0.6); _a, _b = np.quantile(_r[:_k], 0.25), np.quantile(_r[:_k], 0.75)
+        full["rangeCheck"] = {"n": int(len(_r)), "from": int(te["sale"].min()), "to": int(te["sale"].max()), "lowPct": round(float(np.exp(np.quantile(_r, 0.25)) - 1) * 100, 1), "highPct": round(float(np.exp(np.quantile(_r, 0.75)) - 1) * 100, 1),
+                              "holdoutHitPct": round(float(((_r[_k:] >= _a) & (_r[_k:] <= _b)).mean()) * 100, 1), "holdoutN": int(len(_r) - _k), "targetPct": 50}
+        print("  📐 낙찰가 범위 근거:", json.dumps(full["rangeCheck"], ensure_ascii=False))
+    except Exception as _e:
+        print("  범위 근거 계산 건너뜀:", _e)
     # 📐 구간별 오차 분포(2026-11-03, 사용자: "낙찰 가능성은 예상 낙찰가에서 나오는데 모든 물건에 같은 오차폭을 쓰니 깊은 할인 예측 구간에서 확률이 과신")
     # 예상 낙찰가÷시세(=exp(예측)) 구간별로 오차(실제÷예상의 로그) 분포를 따로 만들어 앱이 낙찰 가능성을 구간 분포로 계산하게 함.
     # 학습에 안 쓴 최근 12개월(te)을 시간순 60/40으로 나눠 "앞 60%로 만든 표가 뒤 40%에서 얼마나 맞는지"(분위 적중률 오차)를 전체 단일 분포와 비교해 좋아질 때만 use=True
