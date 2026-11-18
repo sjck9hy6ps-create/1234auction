@@ -20952,6 +20952,23 @@ function loadWinbidCorr() {
         return { apt: tab(d && d.apt), villa: tab(d && d.villa), aptVariant: d && d.apt && d.apt.current && d.apt.current.variant, villaVariant: d && d.villa && d.villa.current && d.villa.current.variant };
     }).catch(function() { return { apt: null, villa: null }; });
 }
+/* 📉 저평가 단지 후보(2026-11-19, 사용자: 저평가 후보를 경매와 연결) - 서버(analyze-undervalued.py)가 '같은 동 대장 단지와의 격차가 평소보다 벌어진 정도 상위 20%'(대장 고정, 극단 저가·거래 적은 단지 제외) 단지를 시군구|동|번지 키로 저장.
+   과거 검증(3·6·9·12개월 전 출발): 상위 20%가 시군구 중앙보다 더 오른 비율 약 60~64%, 초과 상승 중앙 +1.5~+2.6% - 참고 신호 */
+var uvData = null, uvLoading = false;
+function loadUndervalued() {
+    if (uvData || uvLoading) return; uvLoading = true;
+    fetch('/api/data-coverage?mode=undervalued').then(function(r) { return r.json(); }).then(function(d) { uvData = d && d.map ? d : { map: {} }; uvLoading = false; try { if (document.getElementById('bid-board') && document.getElementById('bid-board').style.display !== 'none') renderBidBoard(); } catch (e) {} }).catch(function() { uvData = { map: {} }; uvLoading = false; });
+}
+function uvOf(row) {
+    try {
+        if (!uvData || !uvData.map || !row || row.type !== 'apt' || !row.a) return null;
+        if (row._uv !== undefined && row._uvV === uvData) return row._uv;
+        var key = competitionRegionKey(row.a.addr) + '|' + dongKey(row.a.dong) + '|' + (row.bunjiFull || fullBunjiFromAddr(row.a.addr, row.a.dong, row.a.bunji)), v = uvData.map[key];
+        row._uvV = uvData; row._uv = v ? { catchP: v[0], gap: v[1], peer: v[2], leader: v[3], by: v[4], p84: v[5], name: v[6] } : null; return row._uv;
+    } catch (e) { return null; }
+}
+function toggleUvOnly() { bidBoardState.uvOnly = !bidBoardState.uvOnly; try { renderBidBoard(); } catch (e) {} }
+function uvChipText(u) { return '📉 저평가 후보 · 대장 격차 평소보다 +' + Math.round(u.catchP) + '%p'; }
 var winbidModel = null, winbidLoading = false;
 function loadWinbidModel() {
     if (winbidModel || winbidLoading) return;
@@ -20982,6 +20999,7 @@ function loadWinbidModel() {
     });
 }
 setTimeout(loadWinbidModel, 2500);
+setTimeout(loadUndervalued, 3500);
 /* 🆕 시세 새 규칙(est_rule, 2026-11-04 사용자 결정) - 서버 낙찰가 모델(analyze-bidcases.py est_rule_asof)과 같은 값을 냄:
    같은 단지·같은 평형(±3㎡) 입찰 30일 전 이전 거래. 6개월 안 3건+ → 서울 최근 3건 중위, 경기·인천 반감 1개월·지방 반감 2개월 가중 중위.
    부족하면 36개월(6개월보다 오래된 거래는 시군구 ㎡당 지수로 지금 시점에 맞춤, 지방은 6개월 안 1~2건이면 12개월 원값 반감 3개월), 같은 단지 다른 평형 12개월(㎡당)과 6:4. 층·회전율·전세 보정은 없음 */
@@ -22579,7 +22597,7 @@ function renderBidBoardLite() {
     s.nicheLite = false; s.seoulOwn = false; s.goodOnly = false; s.listLite = false; s.rightsNeed = false;
     if (isFavTab) { bar.innerHTML = grp; renderFavLite(document.getElementById('bb-body')); var cn1 = document.getElementById('bb-cache-note'); if (cn1) cn1.style.display = 'none'; return; }
     bar.innerHTML = grp + sub
-        + permitStaleHtml() + ' <a href="#" class="bb2-link" onclick="toggleLitePast();return false;">' + (s.pastLite ? '지난 입찰 숨기기' : '지난 입찰 ' + pastN + '건 보기') + '</a>'
+        + permitStaleHtml() + ' <a href="#" class="bb2-link" onclick="toggleUvOnly();return false;" title="같은 동 대장 단지와의 격차가 평소보다 벌어진 단지(과거 검증: 상위 20%의 60~64%가 시군구 중앙보다 더 오름 - 오를 것을 보장하지 않는 참고 신호)">' + (s.uvOnly ? '✔ ' : '') + '📉 저평가 단지만' + (uvData && uvData.mapMeta ? ' (' + cur.filter(function(r) { return uvOf(r); }).length + ')' : '') + '</a> · <a href="#" class="bb2-link" onclick="toggleLitePast();return false;">' + (s.pastLite ? '지난 입찰 숨기기' : '지난 입찰 ' + pastN + '건 보기') + '</a>'
         + (pend && !isVillaTab ? ' <span class="bb-sub">⏳ ' + pend + '건 계산 중</span>' : '');
     if (s.visit === 'villa') { renderVillaLite(document.getElementById('bb-body')); var cn0 = document.getElementById('bb-cache-note'); if (cn0) cn0.style.display = 'none'; return; }
     if (s.seoulOwn) {   // 🏠 서울 자가 매입(2026-11-06): 되팔기 마진이 아니라 시세 대비 싸게 사는지를 봄 - 임장/패스·틈새 조건 없이 서울 아파트 전체
@@ -22587,7 +22605,7 @@ function renderBidBoardLite() {
         rowsO.sort(function(x, y) { return (x.winbid.price / x.sale) - (y.winbid.price / y.sale); });
         s.__ownRows = rowsO;
     } else s.__ownRows = null;
-    var rows = s.__ownRows || cur.filter(function(r) { return !r.pending && r.visit && (s.visit === 'all' || (s.visit === 'go') === r.visit.go) && (!s.nicheLite || r.niche) && (!s.listLite || listingStatus(r.a).st === 'yes') && (!s.rightsNeed || rightsNeeded(r, r.visit.go)) && (!s.goodOnly || goodAptRow(r)); });
+    var rows = s.__ownRows || cur.filter(function(r) { return !r.pending && r.visit && (s.visit === 'all' || (s.visit === 'go') === r.visit.go) && (!s.nicheLite || r.niche) && (!s.listLite || listingStatus(r.a).st === 'yes') && (!s.rightsNeed || rightsNeeded(r, r.visit.go)) && (!s.goodOnly || goodAptRow(r)) && (!s.uvOnly || uvOf(r)); });
     var colDef = LITE_COLS[s.liteCol] || LITE_COLS.verdict;
     if (!s.__ownRows || s.liteCol !== 'verdict') rows.sort(function(x, y) {
         var vx = colDef.val(x), vy = colDef.val(y);
@@ -22624,7 +22642,7 @@ function renderBidBoardLite() {
             return '<tr data-rid="' + bbEsc(r.id) + '" class="bb2-row ' + (go ? 'go' : 'pass') + (String(bidDrawerId) === String(r.id) ? ' sel' : '') + '" onclick="openBidDrawer(\'' + idJs + '\')">'
                 + '<td data-l="판정">' + (go ? '<span class="bb2-go">🚶 임장</span>' : '<span class="bb2-pass">패스</span>') + (r.visit.why ? '<div class="bb-sub">' + bbEsc(r.visit.why) + '</div>' : '') + '</td>'
                 + '<td data-l="입찰일">' + (r.dday ? '<span class="bb-dday' + (r.dday.diffDays >= 0 && r.dday.diffDays <= 3 ? ' soon' : '') + '">' + bbEsc(r.dday.label) + '</span>' : '-') + '<div class="bb-sub">' + bbEsc(r.a.bidDate || '') + '</div></td>'
-                + '<td data-l="물건" class="bb2-name">' + favStar(r.a, idJs) + '<b>' + bbEsc(r.name) + '</b><div class="bb-sub">' + bbEsc(r.region) + (r.pyung ? ' · ' + r.pyung + '평' : '') + (r.floor ? ' · ' + r.floor + '층' : '') + (r.issueSuspect ? ' · <span style="color:#b91c1c;">🚩</span>' : '') + '</div><div>' + listingPillHtml(r.a) + permitPill(r) + (rightsNeeded(r, r.visit.go) ? ' ' + rightsNeedPill() : '') + '</div>' + (r.niche ? '<div><span class="bb-pill" style="background:#e0f2f1;color:#00695c;border:1px solid #4db6ac;" title="' + bbEsc(r.niche.why.join(' · ')) + '">🧭 틈새</span></div>' : '') + '</td>'
+                + '<td data-l="물건" class="bb2-name">' + favStar(r.a, idJs) + '<b>' + bbEsc(r.name) + '</b><div class="bb-sub">' + bbEsc(r.region) + (r.pyung ? ' · ' + r.pyung + '평' : '') + (r.floor ? ' · ' + r.floor + '층' : '') + (r.issueSuspect ? ' · <span style="color:#b91c1c;">🚩</span>' : '') + '</div><div>' + (uvOf(r) ? '<span class="bb-pill" style="background:#ede9fe;color:#5b21b6;border:1px solid #a78bfa;" title="' + bbEsc(uvChipText(uvOf(r))) + '">📉 저평가 후보</span> ' : '') + listingPillHtml(r.a) + permitPill(r) + (rightsNeeded(r, r.visit.go) ? ' ' + rightsNeedPill() : '') + '</div>' + (r.niche ? '<div><span class="bb-pill" style="background:#e0f2f1;color:#00695c;border:1px solid #4db6ac;" title="' + bbEsc(r.niche.why.join(' · ')) + '">🧭 틈새</span></div>' : '') + '</td>'
                 + '<td data-l="유찰" class="r">' + (r.fails == null ? '-' : (r.fails === 0 ? '신건' : r.fails + '회')) + '</td>'
                 + '<td data-l="동일평형 거래" class="r bb2-n">' + liteTradesHtml(r) + '</td>'
                 + '<td data-l="거래량 순위" class="bb2-rank">' + liteRankHtml(r) + '</td>'
@@ -23156,7 +23174,13 @@ function drawerPriceGridHtml(row) {
     h += item('예상 낙찰가 ' + infoI('winp'), row.winbid && row.winbid.price ? fmt(row.winbid.price) : '-', row.winbid && row.winbid.price && row.sale ? '시세의 ' + Math.round(row.winbid.price / row.sale * 100) + '%' + (wbr ? '<br>하한 ' + fmt(wbr.p25) + ' · 상한 ' + fmt(wbr.p75) : '') : '', '');
     // 2026-11-17(사용자): 가격 한눈에 마지막 칸에 예상 순수익 - 추천 입찰가로 낙찰받아 예상 매도가에 팔 때 남는 세후 순이익(수리비·이자·세금 반영, 입찰가 고르기 표와 같은 값)
     h += item('예상 순수익 (추천가 기준)', pe && pe.net != null ? fmt(pe.net) : '-', pe && pe.net != null ? '낙찰되면 · 세후' + (pe.pre != null ? '<br>세전 ' + fmt(pe.pre) : '') + (pe.p != null ? '<br>낙찰 ' + Math.round(pe.p * 100) + '% 반영 기대 ' + fmt(pe.net * pe.p) : '') : (pe ? '' : '추천가 없음'), pe && pe.net != null ? (pe.net > 0 ? '#15803d' : '#b91c1c') : '');
-    return h + '</div></div>' + drawerRangeChartHtml(row);
+    return h + '</div></div>' + uvDrawerHtml(row) + drawerRangeChartHtml(row);
+}
+function uvDrawerHtml(row) {
+    var u = uvOf(row); if (!u) return '';
+    return '<div class="dr-sec" style="background:#f5f3ff;border:1px solid #ddd6fe;border-radius:8px;padding:8px 10px;"><b style="color:#5b21b6;">📉 저평가 단지 후보</b> <span class="dr-sub" style="display:inline;margin:0;">(같은 동 대장 단지 기준)</span>'
+        + '<div class="dr-sub" style="margin-top:4px;line-height:1.7;">대장 <b>' + bbEsc(u.leader || '-') + '</b>보다 ' + Math.abs(Math.round(u.gap)) + '% 낮고, 평소(최근 1~3년) 격차보다 <b>+' + Math.round(u.catchP) + '%p</b> 더 벌어져 있어요. 주변 비슷한 연식 단지 대비 ' + (u.peer > 0 ? '+' : '') + Math.round(u.peer) + '%.<br>'
+        + '과거 검증(3·6·9·12개월 전 출발): 이 기준 상위 20% 단지의 약 60~64%가 시군구 중앙보다 더 올랐고 초과 상승 중앙은 +1.5~+2.6%였어요. 오를 것을 보장하는 값이 아니라 참고 신호예요.</div></div>';
 }
 /* 2026-11-18(사용자: 상세창 요약 탭에 시세 그래프 위로 예상 낙찰가 범위 좁음·보통·넓음과 상한·하한을 그려줘) - 좁음=절반(50%) · 보통=80% · 넓음=90% 범위(과거 낙찰에서 모델이 빗나간 분포) */
 function drawerRangeChartHtml(row) {

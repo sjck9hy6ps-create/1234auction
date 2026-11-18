@@ -3545,6 +3545,17 @@ export default async function handler(req, res) {
       return res.status(500).json({ error: err.message });
     }
   }
+  if (req.query.mode === 'undervalued') { // 2026-11-19 저평가 단지 후보(analyze-undervalued.py가 저장) - 앱이 경매 물건과 연결해 표시
+    res.setHeader('Cache-Control', 's-maxage=3600, stale-while-revalidate=86400');
+    try {
+      const { data, error } = await supabase.from('leader_follower_cache').select('payload').eq('id', 'signal|__undervalued__').maybeSingle();
+      if (error) return res.status(500).json({ error: error.message });
+      const pay = (data && data.payload) || {};
+      return res.status(200).json({ generatedAt: pay.generatedAt || null, 기준월: pay['기준월'] || null, map: pay.map || {}, mapMeta: pay.mapMeta || null, 검증: pay['검증'] || null, 서울: pay['서울 상위'] || [], 수도권: pay['수도권 상위'] || [] });
+    } catch (err) {
+      return res.status(500).json({ error: err.message });
+    }
+  }
   if (req.query.mode === 'winbid') {
     res.setHeader('Cache-Control', 's-maxage=3600, stale-while-revalidate=86400');
     try {
