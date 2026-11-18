@@ -2061,7 +2061,7 @@ body.tb-menu-open.ui2 #tb-menu.open { z-index:9301; }
                 <option value="">아파트·빌라</option><option value="apt">아파트만</option><option value="villa">빌라만</option>
             </select>
             <select id="bb-sort" onchange="bidBoardState.sortCol = null; setBidBoardFilter('sort', this.value)">
-                <option value="verdict">판정 → 여유 큰 순</option><option value="date">입찰일 빠른 순</option><option value="room">여유 큰 순</option><option value="pop">거래량 순위 높은 순</option><option value="popwin">거래량 많은 순 → 예상낙찰가 낮은 순</option><option value="niche">🧭 틈새 우선</option><option value="win">🎲 낙찰 가능성 높은 순</option>
+                <option value="verdict">판정 → 여유 큰 순</option><option value="date">입찰일 빠른 순</option><option value="room">여유 큰 순</option><option value="pop">거래량 순위 높은 순</option><option value="popwin">거래량 많은 순 → 예상낙찰가 낮은 순</option><option value="niche">🧭 틈새 우선</option><option value="win">🎲 낙찰 가능성 높은 순 (0.5%p 안은 순수익 큰 순)</option>
             </select>
             <!-- 2026-10(사용자: "가능성에 따라 확인할 수 있는 필터") - 추천 입찰가로 썼을 때의 낙찰 가능성(🎲 예상 낙찰가 모델) -->
             <select id="bb-issue" onchange="setBidBoardFilter('issue', this.value)" title="3회 이상 유찰이거나 최저가가 시세보다 지나치게 낮은 물건(보증금 등 인수할 권리가 있을 가능성)">
@@ -21318,7 +21318,7 @@ function winbidLineHtml(wb, compact) {
     if (!wb) return '';
     var p = wb.probRec, pc = p == null ? null : Math.round(p * 100);
     var col = pc == null ? '#6b7280' : (pc >= 60 ? '#15803d' : (pc >= 35 ? '#b45309' : '#b91c1c'));
-    if (compact) return '<div class="bb-wb" title="비슷한 물건이 보통 낙찰되는 가격(낙찰사례 2만여 건 기준, 보통 오차 5~6%)">예상 낙찰 ' + toEok(String(wb.price)) + (pc != null ? ' · <b style="color:' + col + ';">낙찰 ' + pc + '%</b>' : '') + '</div>';
+    if (compact) return '<div class="bb-wb" title="비슷한 물건이 보통 낙찰되는 가격(낙찰사례 2만여 건 기준, 보통 오차 5~6%)">예상 낙찰 ' + toEok(String(wb.price)) + (pc != null ? ' · <b style="color:' + col + ';">낙찰 ' + (Math.round(p * 1000) / 10).toFixed(1) + '%</b>' : '') + '</div>';
     return pc;
 }
 /* ════ 💡 입찰가 고르기 (2026-10, 사용자: "마진을 형성할 수 있는 구간 안에서 최적의 낙찰가를 선정하고, 가격대별 마진율도 확인") ════
@@ -22684,8 +22684,13 @@ function renderBidBoard() {
             if (px0 !== py0) return px0 < py0 ? -1 : 1;
         }
         if (s.sort === 'win') {
+            // 2026-11-18(사용자: 정렬하면 같은 값이 많이 나옴) 낙찰 가능성은 0.5%p 단위 묶음으로 비교하고, 같은 묶음 안에서는 추천가 기준 순수익이 큰 순(그다음 여유 큰 순) -
+            // 최근 3·6·9·12개월 시험: 소수점 낙찰 가능성 순이 구간 안 무작위보다 낙찰 +4.5~5%p, 마진을 먼저 보면 오히려 낙찰이 줄어 마진은 같은 묶음 안에서만 씀
             var wx = x.winbid && x.winbid.probRec != null ? x.winbid.probRec : -1, wy = y.winbid && y.winbid.probRec != null ? y.winbid.probRec : -1;
-            if (wx !== wy) return wy - wx;
+            var bx = Math.floor(wx * 200), by = Math.floor(wy * 200);
+            if (bx !== by) return by - bx;
+            var nx2 = x.pick && x.pick.ev && x.pick.ev.net != null ? x.pick.ev.net : -1e9, ny2 = y.pick && y.pick.ev && y.pick.ev.net != null ? y.pick.ev.net : -1e9;
+            if (nx2 !== ny2) return ny2 - nx2;
         }
         if (s.sort === 'pop') {
             var px = popRankOf(x), py = popRankOf(y);
@@ -23062,7 +23067,7 @@ function drawerPriceGridHtml(row) {
     h += item('최근거래가 (층 조건 일치·직거래 제외)', tr && tr.p > 0 ? fmt(tr.p) : '-', tr && tr.d ? (function(d) { var dt = new Date(d); return dt.getFullYear() + '.' + ('0' + (dt.getMonth() + 1)).slice(-2) + '.' + ('0' + dt.getDate()).slice(-2); })(tr.d) + (isNaN(tr.f) ? '' : ' · ' + tr.f + '층') + (tr.direct ? ' · 직거래' : '') + '<br>' + clsLabel : noMatch + ' (같은 단지 같은 평형)');
     h += item('추천 입찰가 ' + infoI('rec'), pe && pe.bid ? fmt(pe.bid) : '-', pe && pe.bid && row.sale ? '시세의 ' + Math.round(pe.bid / row.sale * 100) + '%' : (pe ? '' : '추천가 없음'), pe && pe.bid ? '#15803d' : '');
     var pcc2 = pe && pe.p != null ? Math.round(pe.p * 100) : null;
-    h += item('낙찰 가능성', pcc2 != null ? pcc2 + '%' : '-', pcc2 != null ? '추천 입찰가로 낙찰될 확률' : '', pcc2 == null ? '' : (pcc2 >= 60 ? '#15803d' : (pcc2 >= 35 ? '#b45309' : '#b91c1c')));
+    h += item('낙찰 가능성', pcc2 != null ? (Math.round(pe.p * 1000) / 10).toFixed(1) + '%' : '-', pcc2 != null ? '추천 입찰가로 낙찰될 확률' : '', pcc2 == null ? '' : (pcc2 >= 60 ? '#15803d' : (pcc2 >= 35 ? '#b45309' : '#b91c1c')));
     h += item('예상 낙찰가', row.winbid && row.winbid.price ? fmt(row.winbid.price) : '-', row.winbid && row.winbid.price && row.sale ? '시세의 ' + Math.round(row.winbid.price / row.sale * 100) + '%' : '', '');
     // 2026-11-17(사용자): 가격 한눈에 마지막 칸에 예상 순수익 - 추천 입찰가로 낙찰받아 예상 매도가에 팔 때 남는 세후 순이익(수리비·이자·세금 반영, 입찰가 고르기 표와 같은 값)
     h += item('예상 순수익 (추천가 기준)', pe && pe.net != null ? fmt(pe.net) : '-', pe && pe.net != null ? '낙찰되면 · 세후' + (pe.pre != null ? '<br>세전 ' + fmt(pe.pre) : '') + (pe.p != null ? '<br>낙찰 ' + Math.round(pe.p * 100) + '% 반영 기대 ' + fmt(pe.net * pe.p) : '') : (pe ? '' : '추천가 없음'), pe && pe.net != null ? (pe.net > 0 ? '#15803d' : '#b91c1c') : '');
@@ -23679,7 +23684,7 @@ function villaPriceGridHtml(row, ev, fmt) {
     h += item('예상 매도가', sale ? fmt(sale) : '-', sale && row.minBid ? '현재가의 ' + Math.round(sale / row.minBid * 100) + '%' : '');
     h += item('최근거래가 (생활권·층·연식 조건 일치·직거래 제외)', near ? fmt(near.p || near.price || near.amount) : '-', nearSub);
     h += item('추천 입찰가', pe && pe.bid ? fmt(pe.bid) : '-', pe && pe.bid && sale ? '시세의 ' + Math.round(pe.bid / sale * 100) + '%' : (pe ? '' : '추천가 없음'), pe && pe.bid ? '#15803d' : '');
-    h += item('낙찰 가능성', pcc != null ? pcc + '%' : '-', pcc != null ? '추천 입찰가로 낙찰될 확률' : '', pcc == null ? '' : (pcc >= 60 ? '#15803d' : (pcc >= 35 ? '#b45309' : '#b91c1c')));
+    h += item('낙찰 가능성', pcc != null ? (Math.round(pe.p * 1000) / 10).toFixed(1) + '%' : '-', pcc != null ? '추천 입찰가로 낙찰될 확률' : '', pcc == null ? '' : (pcc >= 60 ? '#15803d' : (pcc >= 35 ? '#b45309' : '#b91c1c')));
     h += item('예상 낙찰가', wb && wb.price ? fmt(wb.price) : '-', wb && wb.price && sale ? '시세의 ' + Math.round(wb.price / sale * 100) + '%' + (wb.floored ? '<br>이번 회차 최저가가 시세보다 높아 최저가로 표시 - 이 회차엔 마진이 나는 낙찰가가 없어요' : '') : '');
     h += item('예상 순수익 (추천가 기준)', pe && pe.net != null ? fmt(pe.net) : '-', pe && pe.net != null ? '낙찰되면 · 세후' + (pe.pre != null ? '<br>세전 ' + fmt(pe.pre) : '') + (pe.p != null ? '<br>낙찰 ' + Math.round(pe.p * 100) + '% 반영 기대 ' + fmt(pe.net * pe.p) : '') : (pe ? '' : '추천가 없음'), pe && pe.net != null ? (pe.net > 0 ? '#15803d' : '#b91c1c') : '');
     return h + '</div></div>';
