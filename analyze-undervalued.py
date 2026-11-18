@@ -73,7 +73,21 @@ def main():
             return np.log(L["p"] / lead).reindex(idx)
         gap_now = gap_at(T, S.index)
         hist = pd.concat([gap_at(T - m, S.index) for m in (12, 24, 36)], axis=1).median(axis=1)
-        S["gap"] = gap_now; S["catch"] = hist - gap_now   # 클수록 평소보다 대장과 더 벌어져 있음(키 맞추기 여지)
+        S["gap"] = gap_now; S["catch_old"] = hist - gap_now   # 대장을 시점마다 다시 뽑은 방식(대장이 바뀌면 격차가 구조적으로 벌어져 착시 가능)
+        # 2026-11-19 대장 고정: 지금(T) 대장 단지를 정하고, 과거 격차도 같은 대장 단지와의 격차로 계산 - 신축이 대장이 된 경우는 과거 격차가 없어 빠짐
+        Lq = S[["sgg", "dongk", "p", "n12"]]; bigq = Lq[Lq["n12"] >= 10]
+        led_d = bigq.groupby(["sgg", "dongk"])["p"].idxmax(); cnt_d = Lq.groupby(["sgg", "dongk"])["p"].count(); led_s = bigq.groupby("sgg")["p"].idxmax()
+        lk = []
+        for ck_, r_ in Lq.iterrows():
+            kk = (r_["sgg"], r_["dongk"]); lk.append(led_d.get(kk) if cnt_d.get(kk, 0) >= 3 and kk in led_d.index else led_s.get(r_["sgg"]))
+        S["leader"] = pd.Series(lk, index=S.index)
+        pL = S["p"].reindex(S["leader"].values).values; S["gapf"] = np.log(S["p"].values / pL)
+        hs = []
+        for m in (12, 24, 36):
+            lvm = level(T - m - 5, T - m)[0]
+            hs.append(np.log(lvm.reindex(S.index).values / lvm.reindex(S["leader"].values).values))
+        hmed = np.nanmedian(np.vstack(hs), axis=0); hcnt = np.sum(~np.isnan(np.vstack(hs)), axis=0)
+        S["catch"] = np.where((hcnt >= 2) & (S.index.values != S["leader"].values), hmed - S["gapf"].values, np.nan)   # 클수록 같은 대장과 평소보다 더 벌어져 있음
         # ③ 전고점 대비 낙폭(최근 4년 6개월 중앙값 수준 중 최고 대비)
         lv = pd.concat([level(T - m - 5, T - m)[0].reindex(S.index) for m in (0, 6, 12, 18, 24, 30, 36, 42, 48)], axis=1)
         S["dd"] = np.log(S["p"] / lv.max(axis=1))   # 0이면 전고점, 음수일수록 낙폭
@@ -109,6 +123,10 @@ def main():
         top, bot = F[F["q"] == 4], F[F["q"] == 0]; t10 = F[F["catch"] >= F["catch"].quantile(0.9)]
         res["catch_필터"] = {"설명": "대장 격차 기준 + 평당가가 주변의 78% 미만인 단지·12개월 거래 15건 미만 제외", "표본": int(len(F)), "5분위 초과변화 중앙%": [round(float(F[F["q"] == q]["rel"].median()) * 100, 2) for q in (4, 3, 2, 1, 0)],
                               "상위20%에서 시군구 중앙보다 더 오른 비율%": round(float((top["rel"] > 0).mean()) * 100, 1), "상위10% 초과변화 중앙%": round(float(t10["rel"].median()) * 100, 2), "상위10%에서 더 오른 비율%": round(float((t10["rel"] > 0).mean()) * 100, 1), "격차%p(상위20-하위20)": round(float(top["rel"].median() - bot["rel"].median()) * 100, 2)}
+        Fo = S[(S["peer"] >= -0.25) & (S["n12"] >= 15)].dropna(subset=["catch_old"]).copy()
+        if len(Fo) > 100:
+            Fo["q"] = pd.qcut(Fo["catch_old"].rank(method="first"), 5, labels=False); to_, bo_ = Fo[Fo["q"] == 4], Fo[Fo["q"] == 0]
+            res["catch_대장 재선정(이전 방식)"] = {"표본": int(len(Fo)), "상위20% 초과변화 중앙%": round(float(to_["rel"].median()) * 100, 2), "상위20%에서 더 오른 비율%": round(float((to_["rel"] > 0).mean()) * 100, 1), "격차%p": round(float(to_["rel"].median() - bo_["rel"].median()) * 100, 2)}
         out["검증"][f"{H}개월 전 출발"] = res
         print(f"  {H}개월 전 출발:", json.dumps(res, ensure_ascii=False), flush=True)
     # 현재 후보
@@ -124,15 +142,19 @@ def main():
             cand.append({"c": r["danji"], "r": r["region"], "dong": ck.split("|")[1], "by": None if pd.isna(r["by"]) else int(r["by"]), "n12": int(r["n12"]), "p84": round(float(r["p84"]), 2), "peer": round(float(r["peer"]) * 100, 1),
                          "catch": None if pd.isna(r["catch"]) else round(float(r["catch"]) * 100, 1), "dd": None if pd.isna(r["dd"]) else round(float(r["dd"]) * 100, 1), "score": round(float(r["comp"]), 3)})
         S2 = S[(S["peer"] >= -0.25) & (S["n12"] >= 15) & S["catch"].notna()].sort_values("catch", ascending=False)
-        def pack(r, ck): return {"c": r["danji"], "r": r["region"], "dong": ck.split("|")[1], "by": None if pd.isna(r["by"]) else int(r["by"]), "n12": int(r["n12"]), "p84": round(float(r["p84"]), 2), "peer": round(float(r["peer"]) * 100, 1), "gap": round(float(r["gap"]) * 100, 1), "catch": round(float(r["catch"]) * 100, 1), "dd": None if pd.isna(r["dd"]) else round(float(r["dd"]) * 100, 1)}
+        def pack(r, ck): return {"c": r["danji"], "ld": str(attr["danji"].get(r["leader"], "")), "r": r["region"], "dong": ck.split("|")[1], "by": None if pd.isna(r["by"]) else int(r["by"]), "n12": int(r["n12"]), "p84": round(float(r["p84"]), 2), "peer": round(float(r["peer"]) * 100, 1), "gap": round(float(r["gapf"]) * 100, 1), "catch": round(float(r["catch"]) * 100, 1), "dd": None if pd.isna(r["dd"]) else round(float(r["dd"]) * 100, 1)}
         cand_c = [pack(r, ck) for ck, r in S2.head(300).iterrows()]
         out["대장격차 후보"] = cand_c
+        # 앱 연결용: 상위 20%(검증한 구간) 단지 맵 {단지키: [평소보다 벌어짐%p, 대장 대비 격차%, 주변 대비%, 대장 단지명, 연식, 84㎡ 환산가(억)]}
+        elig = S[(S["peer"] >= -0.25) & (S["n12"] >= 15) & S["catch"].notna()]; thr = elig["catch"].quantile(0.8); topq = elig[elig["catch"] >= thr]
+        out["map"] = {ck: [round(float(r["catch"]) * 100, 1), round(float(r["gapf"]) * 100, 1), round(float(r["peer"]) * 100, 1), str(attr["danji"].get(r["leader"], "")), None if pd.isna(r["by"]) else int(r["by"]), round(float(r["p84"]), 2)] for ck, r in topq.iterrows()}
+        out["mapMeta"] = {"n": int(len(topq)), "eligible": int(len(elig)), "thr": round(float(thr) * 100, 1), "기준": "같은 동 대장 단지와의 격차가 평소보다 벌어진 정도 상위 20%(대장 고정, 평당가 주변의 78% 미만·12개월 거래 15건 미만 제외)"}
         seoul = [pack(r, ck) for ck, r in S2[S2["region"].astype(str).str.startswith("서울")].head(30).iterrows()]
         metro = [pack(r, ck) for ck, r in S2[S2["region"].astype(str).str.startswith(("서울", "경기", "인천"))].head(40).iterrows()]
         out["서울 상위"] = seoul; out["수도권 상위"] = metro; print("서울 상위:", json.dumps(seoul[:15], ensure_ascii=False))
         print("수도권 상위:", json.dumps(metro[:20], ensure_ascii=False)); print("전국 상위:", json.dumps(cand_c[:25], ensure_ascii=False))
     out["후보"] = cand
-    print("📋 UV_JSON " + json.dumps({k: v for k, v in out.items() if k != "후보"}, ensure_ascii=False))
+    print("📋 UV_JSON " + json.dumps({k: v for k, v in out.items() if k in ("기준월", "검증", "mapMeta")}, ensure_ascii=False))
     from datetime import datetime, timezone
     now = datetime.now(timezone.utc).isoformat()
     cyc.upsert_rows([{"id": "signal|__undervalued__", "payload": cyc.clean_json({"generatedAt": now, **out}), "fetched_at": now}])
