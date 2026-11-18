@@ -8588,6 +8588,7 @@ function buildPriceChartSvg(trades, range, bands) {
     var now = new Date(), from = new Date(now);
     if (range === '1y') from.setFullYear(now.getFullYear() - 1);
     else if (range === '3y') from.setFullYear(now.getFullYear() - 3);
+    else if (range === '5y') from.setFullYear(now.getFullYear() - 5);
     else {
         // 10년(사용자 요청: 1년·3년·10년) - 거래 기록이 10년보다 짧으면 첫 거래부터 그려 왼쪽이 비지 않게
         from.setFullYear(now.getFullYear() - 10);
@@ -22991,6 +22992,9 @@ function aptNoTradeNote(row) {
         : '이 단지 거래는 있지만 같은 평형(±3㎡) 거래가 없어서 그래프를 그릴 수 없어요.';
     return '<div class="dr-sec dr-sub" style="' + st + '">' + msg + '</div>';
 }
+var drawerChartRange = (function() { try { var v = localStorage.getItem('drChartRange'); return /^(1y|3y|5y|10y)$/.test(v) ? v : '10y'; } catch (e) { return '10y'; } })();
+function setDrawerChartRange(r) { drawerChartRange = r; try { localStorage.setItem('drChartRange', r); } catch (e) {} try { renderBidDrawer(); } catch (e) {} }
+function drawerRangeBtns() { return '<div class="pn-seg" style="margin:2px 0 6px;">' + [['1y', '1년'], ['3y', '3년'], ['5y', '5년'], ['10y', '10년']].map(function(r) { return '<button class="' + (drawerChartRange === r[0] ? 'on' : '') + '" onclick="setDrawerChartRange(\'' + r[0] + '\')">' + r[1] + '</button>'; }).join('') + '</div>'; }
 /* 2026-11-18(사용자: 상세 창 시세 그래프를 10년으로) - 앱이 받는 지역 실거래는 최근 2년뿐이라, 이 단지·평형의 2년 이전은 서버가 미리 계산한 월 중앙값(10년 그래프 미리 계산본)이나 단지 거래 이력 조회(get-house?action=history)로 이어 붙임.
    받는 동안은 최근 2년만 그리고, 도착하면 상세 창을 다시 그림 */
 function drawerHistPoints(row) {
@@ -23015,10 +23019,10 @@ function drawerHistPoints(row) {
 function drawerChartHtml(tr, title, row) {
     if (!tr || tr.length < 2) return '<div class="dr-sec dr-sub">' + title + ' 그래프: 이 평형 거래가 ' + (tr ? tr.length : 0) + '건뿐이라 그릴 수 없어요</div>';
     var pts = tr.filter(function(t) { return t.d && t.p > 0; }).map(function(t) { return { amount: String(t.p), year: t.d.getFullYear(), month: t.d.getMonth() + 1, day: t.d.getDate(), floor: isNaN(t.f) ? '-' : t.f }; });
-    var hp = row ? drawerHistPoints(row) : null, longH = !!(hp && hp.pts), note = '';
+    var hp = row && drawerChartRange !== '1y' ? drawerHistPoints(row) : null, longH = !!(hp && hp.pts), note = '';
     if (longH) { var minYm = 999999; pts.forEach(function(p) { var ym = p.year * 100 + p.month; if (ym < minYm) minYm = ym; }); pts = pts.concat(hp.pts.filter(function(p) { return p.year * 100 + p.month < minYm; })); }
     else if (hp && hp.loading) note = ' · 10년치 불러오는 중…';
-    var svg = ''; try { svg = buildPriceChartSvg(pts, longH || hp ? '10y' : '3y'); } catch (e) { svg = ''; }
+    var svg = ''; try { svg = buildPriceChartSvg(pts, drawerChartRange); } catch (e) { svg = ''; }
     if (!svg) return '';
     return '<div class="dr-sec"><h4>' + title + ' 시세 그래프 <span class="dr-sub" style="display:inline;">(점=실거래, 선=월 중앙값, 아래 막대=거래량' + (longH ? ' · 2년 이전은 월 중앙값' : '') + note + ')</span></h4>' + svg + '</div>';
 }
@@ -23163,13 +23167,13 @@ function drawerRangeChartHtml(row) {
         var bands = { mid: rg.mid, items: [{ name: '예상 낙찰가', lo: rg.p25, hi: rg.p75, col: '#15803d', op: 0.38, tc: '#166534' }] };   // 2026-11-18(사용자: 범위 3단계는 필요 없음 - 가장 좁은 범위 하나와 예상 낙찰가가 그 안에 있는지가 중요)
         var tr = []; try { tr = drawerTrades(row); } catch (e) {}
         var pts = tr.filter(function(t) { return t.d && t.p > 0; }).map(function(t) { return { amount: String(t.p), year: t.d.getFullYear(), month: t.d.getMonth() + 1, day: t.d.getDate(), floor: isNaN(t.f) ? '-' : t.f }; });
-        var hp2 = drawerHistPoints(row), long2 = !!(hp2 && hp2.pts);
+        var hp2 = drawerChartRange !== '1y' ? drawerHistPoints(row) : null, long2 = !!(hp2 && hp2.pts);
         if (long2) { var minYm2 = 999999; pts.forEach(function(p) { var ym = p.year * 100 + p.month; if (ym < minYm2) minYm2 = ym; }); pts = pts.concat(hp2.pts.filter(function(p) { return p.year * 100 + p.month < minYm2; })); }
-        var svg = ''; if (pts.length >= 2) { try { svg = buildPriceChartSvg(pts, (long2 || (hp2 && hp2.loading)) ? '10y' : '3y', bands); } catch (e) { svg = ''; } }
+        var svg = ''; if (pts.length >= 2) { try { svg = buildPriceChartSvg(pts, drawerChartRange, bands); } catch (e) { svg = ''; } }
         if (!svg) svg = '<div class="dr-sub" style="padding:6px 0;">' + (!dataCache[row.lawd || bidBoardLawdOf(row.a)] ? '시세 그래프: 지역 실거래를 불러오는 중이에요…' : '시세 그래프: 이 평형 거래가 ' + pts.length + '건뿐이라 그릴 수 없어요') + '</div>';
         var inRange = rg.mid >= rg.p25 && rg.mid <= rg.p75, sg = function(v) { return (v > 0 ? '+' : '') + v + '%'; };
         var basis = '<b>계산</b>: 이 앱의 예상 낙찰가 계산을 학습에 쓰지 않은 과거 낙찰에 적용했을 때 <b>실제 낙찰가 ÷ 예상 낙찰가</b>가 하위 25%였던 지점을 <b>하한</b>, 상위 25%였던 지점을 <b>상한</b>으로 이 물건의 예상 낙찰가에 적용했어요(' + rg.src + ' 사용: 하한 ' + sg(rg.lowPct) + ', 상한 ' + sg(rg.highPct) + '). 낙찰 뒤에는 실제 낙찰가가 이 하한~상한 안에 들었는지 리포트 성적표에서 확인해요.';
-        return '<div class="dr-sec"><h4>예상 낙찰가 하한 · 상한 <span class="dr-sub" style="display:inline;">(시세 그래프 위에 겹쳐 그림 · 점=실거래, 선=월 중앙값' + (long2 ? ' · 10년(2년 이전은 월 중앙값)' : (hp2 && hp2.loading ? ' · 10년치 불러오는 중…' : '')) + ')</span></h4>' + svg
+        return '<div class="dr-sec"><h4>예상 낙찰가 하한 · 상한 <span class="dr-sub" style="display:inline;">(시세 그래프 위에 겹쳐 그림 · 점=실거래, 선=월 중앙값' + (long2 ? ' · 2년 이전은 월 중앙값' : (hp2 && hp2.loading ? ' · 이전 거래 불러오는 중…' : '')) + ')</span></h4>' + drawerRangeBtns() + svg
             + '<div class="dr-sub" style="line-height:1.8;"><span style="white-space:nowrap;"><i style="display:inline-block;width:10px;height:10px;background:#15803d;opacity:0.9;margin-right:3px;vertical-align:-1px;"></i><b>예상 낙찰가 하한</b> ' + fmt(rg.p25) + ' (예상 낙찰가 대비 ' + sg(Math.round((rg.p25 / rg.mid - 1) * 1000) / 10) + ')</span><br>'
             + '<span style="white-space:nowrap;"><i style="display:inline-block;width:10px;height:10px;background:#15803d;opacity:0.9;margin-right:3px;vertical-align:-1px;"></i><b>예상 낙찰가 상한</b> ' + fmt(rg.p75) + ' (' + sg(Math.round((rg.p75 / rg.mid - 1) * 1000) / 10) + ')</span><br>'
             + '점선 <b>예상 낙찰가 ' + fmt(rg.mid) + '</b> ' + (inRange ? '(하한~상한 사이)' : '(범위 밖 - 신건 최저가 보정)') + (row.fails === 0 ? ' · 신건은 최저가 아래로 낙찰될 수 없어 하한을 최저가에 맞췄어요(법적 하한)' : '') + '<br>' + basis + '</div></div>';
