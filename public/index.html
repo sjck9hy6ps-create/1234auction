@@ -8584,7 +8584,7 @@ function pnChartPyung(all) {
     Object.keys(cnt).forEach(function(p) { if (!best || cnt[p] > cnt[best]) best = p; });
     return best;
 }
-function buildPriceChartSvg(trades, range) {
+function buildPriceChartSvg(trades, range, bands) {
     var now = new Date(), from = new Date(now);
     if (range === '1y') from.setFullYear(now.getFullYear() - 1);
     else if (range === '3y') from.setFullYear(now.getFullYear() - 3);
@@ -8602,6 +8602,10 @@ function buildPriceChartSvg(trades, range) {
     var t0 = from.getTime(), t1 = now.getTime();
     var vs = pts.map(function(p) { return p.v; }), lo = Math.min.apply(null, vs), hi = Math.max.apply(null, vs);
     var pad = Math.max((hi - lo) * 0.12, hi * 0.03); lo = Math.max(0, lo - pad); hi = hi + pad;
+    if (bands && bands.items && bands.items.length) {   // 2026-11-18 예상 낙찰가 범위가 보이도록 세로 눈금을 범위까지 넓힘
+        var bLo = Math.min.apply(null, bands.items.map(function(b) { return b.lo; })), bHi = Math.max.apply(null, bands.items.map(function(b) { return b.hi; })), bPad = Math.max((bHi - bLo) * 0.08, bHi * 0.01);
+        lo = Math.max(0, Math.min(lo, bLo - bPad)); hi = Math.max(hi, bHi + bPad);
+    }
     var X = function(d) { return L + (d.getTime() - t0) / (t1 - t0) * (W - L - R); };
     var Y = function(v) { return T + (1 - (v - lo) / (hi - lo)) * (H - T - B - VH); };
     // 마우스(손가락)를 올리면 그 달의 연월·시세·거래 건수를 보여주는 용도로 달마다 위치를 저장해 둠
@@ -8613,6 +8617,16 @@ function buildPriceChartSvg(trades, range) {
         var v = lo + (hi - lo) * i / 3, y = Y(v);
         svg += '<line x1="' + L + '" x2="' + (W - R) + '" y1="' + y + '" y2="' + y + '" stroke="#eef0f3"/>'
             + '<text x="' + (L - 4) + '" y="' + (y + 3) + '" text-anchor="end" font-size="9" fill="#9aa0a6">' + pnFmtEok(v) + '</text>';
+    }
+    if (bands && bands.items && bands.items.length) {   // 예상 낙찰가 범위(좁음·보통·넓음) - 넓은 것부터 겹쳐 그림 + 가운데 선, 오른쪽에 상한·하한 숫자
+        var bx0 = L, bx1 = W - R, labs = [];
+        bands.items.slice().sort(function(a, b) { return (b.hi - b.lo) - (a.hi - a.lo); }).forEach(function(b) {
+            svg += '<rect x="' + bx0 + '" y="' + Y(b.hi).toFixed(1) + '" width="' + (bx1 - bx0) + '" height="' + Math.max(1, Y(b.lo) - Y(b.hi)).toFixed(1) + '" fill="' + b.col + '" opacity="' + b.op + '"/>';
+            labs.push({ y: Y(b.hi), t: b.name + ' 상한 ' + pnFmtEok(b.hi), col: b.tc }); labs.push({ y: Y(b.lo), t: b.name + ' 하한 ' + pnFmtEok(b.lo), col: b.tc });
+        });
+        if (bands.mid) svg += '<line x1="' + bx0 + '" x2="' + bx1 + '" y1="' + Y(bands.mid).toFixed(1) + '" y2="' + Y(bands.mid).toFixed(1) + '" stroke="#111827" stroke-width="1.2" stroke-dasharray="4 2"/><text x="' + (bx0 + 3) + '" y="' + (Y(bands.mid) - 3).toFixed(1) + '" font-size="8.5" fill="#111827" font-weight="700">예상 낙찰가 ' + pnFmtEok(bands.mid) + '</text>';
+        labs.sort(function(a, b) { return a.y - b.y; }); for (var li = 1; li < labs.length; li++) if (labs[li].y - labs[li - 1].y < 9.5) labs[li].y = labs[li - 1].y + 9.5;
+        labs.forEach(function(lb) { svg += '<text x="' + (bx1 - 2) + '" y="' + (lb.y + 3).toFixed(1) + '" text-anchor="end" font-size="8" fill="' + lb.col + '" style="paint-order:stroke;stroke:#fff;stroke-width:2.5px;">' + lb.t + '</text>'; });
     }
     // 월별 중앙값 선 + 거래량 막대
     var byM = {};
@@ -21101,7 +21115,7 @@ function winbidRangeFor(wb, row) {
         var at = function(k) { return Math.round(wb.est * Math.exp(wb.pred + q[k - 1])); };
         var minB = row && row.fails === 0 && row.minBid ? row.minBid : 0;
         var cl = function(v) { return minB && v < minB ? minB : v; };
-        return { p25: cl(at(25)), p75: cl(at(75)), p10: cl(at(10)), p90: cl(at(90)) };
+        return { p25: cl(at(25)), p75: cl(at(75)), p10: cl(at(10)), p90: cl(at(90)), p5: cl(at(5)), p95: cl(at(95)), mid: Math.round(wb.price) };
     } catch (e) { return null; }
 }
 /* 2026-10-25 낙찰 가능성 보정(사용자: 추천가 정확도) - 입찰 전 저장한 '낙찰 가능성'과 실제 낙찰 결과 약 540건으로 만든 보정식(서버가 매주 갱신, 시간순 검증을 통과했을 때만 저장됨):
@@ -23095,7 +23109,26 @@ function drawerPriceGridHtml(row) {
     h += item('예상 낙찰가 ' + infoI('winp'), row.winbid && row.winbid.price ? fmt(row.winbid.price) : '-', row.winbid && row.winbid.price && row.sale ? '시세의 ' + Math.round(row.winbid.price / row.sale * 100) + '%' + (wbr ? '<br>절반 범위 ' + fmt(wbr.p25) + '~' + fmt(wbr.p75) + '<br>80% 범위 ' + fmt(wbr.p10) + '~' + fmt(wbr.p90) : '') : '', '');
     // 2026-11-17(사용자): 가격 한눈에 마지막 칸에 예상 순수익 - 추천 입찰가로 낙찰받아 예상 매도가에 팔 때 남는 세후 순이익(수리비·이자·세금 반영, 입찰가 고르기 표와 같은 값)
     h += item('예상 순수익 (추천가 기준)', pe && pe.net != null ? fmt(pe.net) : '-', pe && pe.net != null ? '낙찰되면 · 세후' + (pe.pre != null ? '<br>세전 ' + fmt(pe.pre) : '') + (pe.p != null ? '<br>낙찰 ' + Math.round(pe.p * 100) + '% 반영 기대 ' + fmt(pe.net * pe.p) : '') : (pe ? '' : '추천가 없음'), pe && pe.net != null ? (pe.net > 0 ? '#15803d' : '#b91c1c') : '');
-    return h + '</div></div>';
+    return h + '</div></div>' + drawerRangeChartHtml(row);
+}
+/* 2026-11-18(사용자: 상세창 요약 탭에 시세 그래프 위로 예상 낙찰가 범위 좁음·보통·넓음과 상한·하한을 그려줘) - 좁음=절반(50%) · 보통=80% · 넓음=90% 범위(과거 낙찰에서 모델이 빗나간 분포) */
+function drawerRangeChartHtml(row) {
+    try {
+        if (!row || row.type !== 'apt' || !row.winbid || !row.winbid.price) return '';
+        var rg = winbidRangeFor(row.winbid, row); if (!rg) return '';
+        var fmt = function(x) { return toEok(String(Math.round(x))); };
+        var bands = { mid: rg.mid, items: [
+            { name: '좁음', lo: rg.p25, hi: rg.p75, col: '#16a34a', op: 0.30, tc: '#166534' },
+            { name: '보통', lo: rg.p10, hi: rg.p90, col: '#f59e0b', op: 0.20, tc: '#92400e' },
+            { name: '넓음', lo: rg.p5, hi: rg.p95, col: '#ef4444', op: 0.12, tc: '#991b1b' }] };
+        var tr = []; try { tr = drawerTrades(row); } catch (e) {}
+        var pts = tr.filter(function(t) { return t.d && t.p > 0; }).map(function(t) { return { amount: String(t.p), year: t.d.getFullYear(), month: t.d.getMonth() + 1, day: t.d.getDate(), floor: isNaN(t.f) ? '-' : t.f }; });
+        var svg = ''; if (pts.length >= 2) { try { svg = buildPriceChartSvg(pts, '3y', bands); } catch (e) { svg = ''; } }
+        var leg = function(b, pctTxt) { return '<span style="white-space:nowrap;"><i style="display:inline-block;width:10px;height:10px;background:' + b.col + ';opacity:' + Math.min(1, b.op * 2.5) + ';margin-right:3px;vertical-align:-1px;"></i><b>' + b.name + '</b>(' + pctTxt + ') ' + fmt(b.lo) + ' ~ ' + fmt(b.hi) + '</span>'; };
+        return '<div class="dr-sec"><h4>예상 낙찰가 범위 <span class="dr-sub" style="display:inline;">(시세 그래프 위에 겹쳐 그림 · 점=실거래, 선=월 중앙값)</span></h4>' + svg
+            + '<div class="dr-sub" style="line-height:1.9;">' + leg(bands.items[0], '낙찰가가 이 안에 들 확률 50%') + '<br>' + leg(bands.items[1], '80%') + '<br>' + leg(bands.items[2], '90%') + '</div>'
+            + '<div class="dr-sub">점선 = 예상 낙찰가 ' + fmt(rg.mid) + '(이 가격 이하로 낙찰될 확률 약 50%). 범위는 입찰자 수에 따라 낙찰가가 흩어지는 정도예요' + (row.fails === 0 ? ' · 신건은 최저가 아래로 낙찰될 수 없어 아래쪽을 최저가에 맞췄어요' : '') + '.</div></div>';
+    } catch (e) { return ''; }
 }
 async function renderBidDrawer() {
     var d = document.getElementById('bb-drawer'); if (!d) return;
