@@ -2440,6 +2440,9 @@ def alarm_test_main(R, now):
     au = _rq.get(f"{SITE_URL}/api/auction", timeout=180).json()
     amap = {(norm_case(x.get("caseNo")), region_norm(x.get("addr"))): x for x in au if isinstance(x, dict) and x.get("caseNo") and not x.get("isBacktest")}
     _sc = scorecard(D, amap)
+    try:
+        _s1 = scorecard(D, amap, max_lag=1); print("📋 STRICT_NEW " + json.dumps({k: _s1.get(k) for k in ("n", "recWon", "recWonPct", "actualOverRecMed", "winPredN", "winPredMedAbsErrPct", "winPredBiasPct")} | {"allN": _sc.get("n")}, ensure_ascii=False))
+    except Exception as _e: print("  strict 실패:", _e)
     print("📋 SCORECARD_NEW " + json.dumps({k: _sc.get(k) for k in ("needAdjust", "needAdjustAvg", "needAdjustRaw", "binAlarmRaw", "calibrationAfter", "probGapPct", "winSaved")}, ensure_ascii=False))
     X = globals().get("_SC_X")
     if X is None: print("  성적표 표본 없음"); return
@@ -3550,13 +3553,21 @@ def amt_ok(x, appraisal_manwon):
     return a <= 0 or b <= 0 or abs(a / b - 1) <= 0.05
 
 
-def pick_snap(x, sale_int):
-    """낙찰일 이전에 저장된 예측 중 가장 늦은(=입찰에 가장 가까운) 것. 누적 이력(predHist)이 없으면 마지막 저장본(predSnap)"""
+def pick_snap(x, sale_int, max_lag=None):
+    """낙찰일 이전에 저장된 예측 중 가장 늦은(=입찰에 가장 가까운) 것. 누적 이력(predHist)이 없으면 마지막 저장본(predSnap).
+    max_lag(2026-11-18, 사용자: 입찰 전날 값으로 성적표): 저장일이 입찰일보다 max_lag일보다 더 앞서면 없는 것으로 봄(1이면 입찰 전날·당일 저장분만)"""
     hist = [h for h in (x.get("predHist") or []) if isinstance(h, dict) and h.get("at")]
     if not hist and x.get("predSnap"):
         hist = [x["predSnap"]]
     ok = [h for h in hist if str(h.get("at", "")).replace("-", "") <= str(int(sale_int))]
-    return (sorted(ok, key=lambda h: h["at"])[-1] if ok else None)
+    sn = sorted(ok, key=lambda h: h["at"])[-1] if ok else None
+    if sn is not None and max_lag is not None:
+        try:
+            lag = (datetime.strptime(str(int(sale_int)), "%Y%m%d") - datetime.strptime(str(sn["at"])[:10], "%Y-%m-%d")).days
+            if lag > max_lag: return None
+        except Exception:
+            return None
+    return sn
 
 
 def prob_calibration(P, won):
@@ -3604,7 +3615,7 @@ def gap_calibration(rec, win, won):
     return {"n": int(len(g)), "a": round(float(w[0]), 4), "b": round(float(w[1]), 4), "brierAfter": round(b1, 4), "winAtPred": round(float(ap(w, 0.0)), 3), "monotone": bool(w[1] > 0)}
 
 
-def scorecard(D, amap):
+def scorecard(D, amap, max_lag=None):
     """2026-10-09 추천가 성적표 - 지금까지 저장된 예측(입찰 전) 전체를 실제 낙찰 결과와 비교(주 단위가 아니라 누적).
     낙찰 가능성 구간별 '예측 vs 실제 낙찰 비율', 추천가 대비 실제 낙찰가, 낙찰가 예측 오차"""
     rows = []
@@ -3612,7 +3623,7 @@ def scorecard(D, amap):
         x = amap.get((norm_case(r.caseNo), r.region))
         if not x or not amt_ok(x, getattr(r, "appraisal", None)):
             continue
-        sn = pick_snap(x, r.sale)
+        sn = pick_snap(x, r.sale, max_lag)
         if not sn or not sn.get("recBid"):
             continue
         rows.append({"case": r.caseNo, "name": (r.bname if isinstance(r.bname, str) and r.bname.strip() and r.bname != "nan" else None) or x.get("name") or "", "region": r.region, "sale": int(r.sale), "actual": float(r.actual), "rec": float(sn["recBid"]),
@@ -3996,6 +4007,11 @@ def weekly_report(R, now_dt, now_iso):
         print("  낙찰자 마진 건너뜀:", e)
     try:
         out["scorecard"] = scorecard(D, amap)
+        try:   # 2026-11-18(사용자: 입찰 전날 계산한 값과 낙찰 결과를 비교해야 정확한 성적표) 입찰 전날·당일 저장분만 따로 채점(보정 학습은 위 전체 표본으로 계속)
+            _sc1 = scorecard(D, amap, max_lag=1); _sc1["maxLag"] = 1; _sc1["allN"] = out["scorecard"].get("n"); out["scorecardStrict"] = _sc1
+            print("  입찰 전날·당일 저장분 성적표:", {k: v for k, v in _sc1.items() if k in ("n", "allN", "recWonPct", "winPredN", "winPredMedAbsErrPct")})
+        except Exception as _e:
+            print("  입찰 전날 성적표 건너뜀:", _e)
         print("  추천가 성적표:", {k: v for k, v in out["scorecard"].items() if k != "items"})
         try:
             _pc = out["scorecard"].get("probCal")
