@@ -3452,13 +3452,6 @@ def winbid_model(R, now):
     except Exception as e:
         print("  경쟁 예상별 보정 건너뜀:", e)
     full["resQ"] = [round(float(np.quantile(res, q / 100)), 4) for q in range(1, 100)]
-    try:   # 2026-11-18(사용자: 낙찰가 범위가 임의면 안 되고 앱 계산 근거로) 예상 낙찰가 하한·상한 = 오차 분포의 하위 25%·상위 25% 지점. 근거 수치: 학습에 안 쓴 최근 12개월 오차, 앞 60%로 만든 범위가 뒤 40%에서 맞는 비율(시간순)
-        _o = np.argsort(te["sale"].values, kind="stable"); _r = res[_o]; _k = int(len(_r) * 0.6); _a, _b = np.quantile(_r[:_k], 0.25), np.quantile(_r[:_k], 0.75)
-        full["rangeCheck"] = {"n": int(len(_r)), "from": int(te["sale"].min()), "to": int(te["sale"].max()), "lowPct": round(float(np.exp(np.quantile(_r, 0.25)) - 1) * 100, 1), "highPct": round(float(np.exp(np.quantile(_r, 0.75)) - 1) * 100, 1),
-                              "holdoutHitPct": round(float(((_r[_k:] >= _a) & (_r[_k:] <= _b)).mean()) * 100, 1), "holdoutN": int(len(_r) - _k), "targetPct": 50}
-        print("  📐 낙찰가 범위 근거:", json.dumps(full["rangeCheck"], ensure_ascii=False))
-    except Exception as _e:
-        print("  범위 근거 계산 건너뜀:", _e)
     # 📐 구간별 오차 분포(2026-11-03, 사용자: "낙찰 가능성은 예상 낙찰가에서 나오는데 모든 물건에 같은 오차폭을 쓰니 깊은 할인 예측 구간에서 확률이 과신")
     # 예상 낙찰가÷시세(=exp(예측)) 구간별로 오차(실제÷예상의 로그) 분포를 따로 만들어 앱이 낙찰 가능성을 구간 분포로 계산하게 함.
     # 학습에 안 쓴 최근 12개월(te)을 시간순 60/40으로 나눠 "앞 60%로 만든 표가 뒤 40%에서 얼마나 맞는지"(분위 적중률 오차)를 전체 단일 분포와 비교해 좋아질 때만 use=True
@@ -3634,7 +3627,7 @@ def scorecard(D, amap, max_lag=None):
         if not sn or not sn.get("recBid"):
             continue
         rows.append({"case": r.caseNo, "name": (r.bname if isinstance(r.bname, str) and r.bname.strip() and r.bname != "nan" else None) or x.get("name") or "", "region": r.region, "sale": int(r.sale), "actual": float(r.actual), "rec": float(sn["recBid"]),
-                     "prob": sn.get("prob"), "probC": sn.get("probC"), "win": sn.get("win"), "rg": sn.get("rg"), "minbid": float(r.minbid), "at": sn.get("at"), "snapMin": sn.get("minBid")})
+                     "prob": sn.get("prob"), "probC": sn.get("probC"), "win": sn.get("win"), "rg": sn.get("rg"), "snapSale": sn.get("sale"), "minbid": float(r.minbid), "at": sn.get("at"), "snapMin": sn.get("minBid")})
         rows[-1]["typ"] = str(x.get("propType") or x.get("type") or sn.get("type") or "?")
         rows[-1]["fails"] = getattr(r, "fails", None); rows[-1]["cls"] = getattr(r, "flow_cls", None)
     out = {"n": len(rows)}
@@ -3661,11 +3654,27 @@ def scorecard(D, amap, max_lag=None):
             if "cls" in Ws.columns: sv["byClass"] = [_ws(g, str(c)) for c, g in Ws.groupby(Ws["cls"].fillna("?")) if len(g) >= 20]
             if "fails" in Ws.columns:
                 fl = Ws["fails"].fillna(-1); sv["byFails"] = [_ws(Ws[mk], lab) for lab, mk in (("신건", fl == 0), ("유찰 1회", fl == 1), ("유찰 2회+", fl >= 2)) if int(mk.sum()) >= 20]
-            try:   # 2026-11-18 낙찰가 범위(좁은 범위, 약 50%) 적중률 - 범위를 저장하기 시작한 뒤의 입찰 전날 값만
-                Rg = Ws[Ws["rg"].map(lambda v: isinstance(v, (list, tuple)) and len(v) == 2)]
-                if len(Rg) >= 1:
-                    lo_ = Rg["rg"].map(lambda v: float(v[0])); hi_ = Rg["rg"].map(lambda v: float(v[1]))
-                    sv["rangeHit"] = {"n": int(len(Rg)), "hitPct": round(float(((Rg["actual"] >= lo_) & (Rg["actual"] <= hi_)).mean()) * 100, 1), "targetPct": 50, "widthMedPct": round(float(((hi_ - lo_) / Rg["win"]).median()) * 100, 1)}
+            try:   # 2026-11-18(사용자: 계산된 하한~상한 안에 실제 낙찰가가 들어갔는지가 중요) 예상 낙찰가 하한·상한(오차 분포 하위 25%·상위 25%) 적중률 - 저장한 하한·상한이 있으면 그것, 없으면 저장한 예상 낙찰가에 같은 분포를 적용
+                import requests as _rq5
+                _pm = _rq5.get(f"{SITE_URL}/api/data-coverage?mode=winbid&x={int(datetime.now().timestamp())}", timeout=60).json(); _q = _pm["resQ"]; _qb = _pm.get("resQB")
+                def _rng(r_):
+                    g = r_["rg"]
+                    if isinstance(g, (list, tuple)) and len(g) == 2: return float(g[0]), float(g[1]), False
+                    sw, w_ = r_.get("snapSale"), r_["win"]
+                    if not sw or not w_: return None
+                    qq = _q
+                    if _qb and _qb.get("use") and _qb.get("edges") and _qb.get("q"):
+                        rt = float(w_) / float(sw); bi = 0
+                        while bi < len(_qb["edges"]) and rt >= _qb["edges"][bi]: bi += 1
+                        if len(_qb["q"][bi]) == 99: qq = _qb["q"][bi]
+                    lo_, hi_ = float(w_) * float(np.exp(qq[24])), float(w_) * float(np.exp(qq[74]))
+                    if r_.get("fails") == 0 and r_.get("minbid") and lo_ < r_["minbid"]: lo_ = float(r_["minbid"])
+                    return lo_, hi_, True
+                _L = [(r_, _rng(r_)) for _, r_ in Ws.iterrows()]; _L = [(r_, g) for r_, g in _L if g]
+                if _L:
+                    _in = [g[0] <= r_["actual"] <= g[1] for r_, g in _L]; _lo = [r_["actual"] < g[0] for r_, g in _L]; _hi = [r_["actual"] > g[1] for r_, g in _L]
+                    sv["rangeHit"] = {"n": len(_L), "hitPct": round(float(np.mean(_in)) * 100, 1), "belowPct": round(float(np.mean(_lo)) * 100, 1), "abovePct": round(float(np.mean(_hi)) * 100, 1), "targetPct": 50,
+                                      "savedN": int(sum(1 for _, g in _L if not g[2])), "derivedN": int(sum(1 for _, g in _L if g[2])), "widthMedPct": round(float(np.median([(g[1] - g[0]) / r_["win"] for r_, g in _L])) * 100, 1)}
             except Exception as _e2:
                 print("  범위 적중률 건너뜀:", _e2)
             out["winSaved"] = sv
