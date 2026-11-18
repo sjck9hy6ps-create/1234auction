@@ -1,11 +1,16 @@
 name: 입찰후보 계산 미리 해 두기
 
 on:
-  workflow_call:       # 주간 파이프라인(weekly-pipeline.yml)이 순서대로 부름 - 단독 일정은 없앰(2026-10-11)
+  schedule:
+    - cron: '0 18 * * *'   # 매일 KST 03:00 - 2026-11-18(사용자: 모든 계산을 새벽에 끝내 두어 일과시간에 앱을 열 때 로딩 없이) 앱이 열 때 다시 판정하는 일을 줄이려고 모델·자산·새 물건 반영을 새벽에 미리 함
+  workflow_call:       # 주간 파이프라인(weekly-pipeline.yml)이 순서대로 부름
   push:                # 2026-11-04: 트리거 파일을 고쳐 올리면 한 번 실행(git push로 구동)
     paths: ['.github/triggers/precompute-board.txt']
   workflow_dispatch:
 
+concurrency:
+  group: precompute-board
+  cancel-in-progress: false
 jobs:
   precompute:
     runs-on: ubuntu-latest
