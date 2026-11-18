@@ -3627,7 +3627,7 @@ def scorecard(D, amap, max_lag=None):
         if not sn or not sn.get("recBid"):
             continue
         rows.append({"case": r.caseNo, "name": (r.bname if isinstance(r.bname, str) and r.bname.strip() and r.bname != "nan" else None) or x.get("name") or "", "region": r.region, "sale": int(r.sale), "actual": float(r.actual), "rec": float(sn["recBid"]),
-                     "prob": sn.get("prob"), "probC": sn.get("probC"), "win": sn.get("win"), "minbid": float(r.minbid), "at": sn.get("at"), "snapMin": sn.get("minBid")})
+                     "prob": sn.get("prob"), "probC": sn.get("probC"), "win": sn.get("win"), "rg": sn.get("rg"), "minbid": float(r.minbid), "at": sn.get("at"), "snapMin": sn.get("minBid")})
         rows[-1]["typ"] = str(x.get("propType") or x.get("type") or sn.get("type") or "?")
         rows[-1]["fails"] = getattr(r, "fails", None); rows[-1]["cls"] = getattr(r, "flow_cls", None)
     out = {"n": len(rows)}
@@ -3654,6 +3654,13 @@ def scorecard(D, amap, max_lag=None):
             if "cls" in Ws.columns: sv["byClass"] = [_ws(g, str(c)) for c, g in Ws.groupby(Ws["cls"].fillna("?")) if len(g) >= 20]
             if "fails" in Ws.columns:
                 fl = Ws["fails"].fillna(-1); sv["byFails"] = [_ws(Ws[mk], lab) for lab, mk in (("신건", fl == 0), ("유찰 1회", fl == 1), ("유찰 2회+", fl >= 2)) if int(mk.sum()) >= 20]
+            try:   # 2026-11-18 낙찰가 범위(좁은 범위, 약 50%) 적중률 - 범위를 저장하기 시작한 뒤의 입찰 전날 값만
+                Rg = Ws[Ws["rg"].map(lambda v: isinstance(v, (list, tuple)) and len(v) == 2)]
+                if len(Rg) >= 1:
+                    lo_ = Rg["rg"].map(lambda v: float(v[0])); hi_ = Rg["rg"].map(lambda v: float(v[1]))
+                    sv["rangeHit"] = {"n": int(len(Rg)), "hitPct": round(float(((Rg["actual"] >= lo_) & (Rg["actual"] <= hi_)).mean()) * 100, 1), "targetPct": 50, "widthMedPct": round(float(((hi_ - lo_) / Rg["win"]).median()) * 100, 1)}
+            except Exception as _e2:
+                print("  범위 적중률 건너뜀:", _e2)
             out["winSaved"] = sv
         except Exception as ex:
             print("  입찰 전 저장 예상 낙찰가 성적표 건너뜀:", ex)

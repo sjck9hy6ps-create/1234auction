@@ -22448,7 +22448,7 @@ var INFO_POP = {
     winp: { t: '예상 낙찰가와 범위는 어떻게 나오나요?', h:
         '<b>물건 하나하나에 대해 따로 계산해요.</b> 이 물건의 시세, 시세 대비 최저가, 유찰 횟수, 지역·법정동, 층, 평형, 단지·지역 가격 흐름을 과거 낙찰 2만 6천여 건에서 맞춘 표에 넣어 <b>시세 대비 낙찰 비율</b>을 구하고 시세에 곱해요.<br>'
         + '<b>왜 하나로 안 정해지나요?</b> 같은 물건도 그날 몇 명이 오고 얼마를 쓰는지에 따라 낙찰가가 달라지고, 입찰 전에는 그걸 알 수 없어요. 그래서 이 물건의 낙찰가를 <b>"이 가격 이하로 낙찰될 확률이 약 50%"인 값</b>으로 보여주고, 옆에 흩어짐을 범위로 보여줘요.<br>'
-        + '<ul><li><b>절반 범위</b>: 낙찰가가 이 안에 들 확률 50% (좁게 보는 범위)</li><li><b>80% 범위</b>: 이 안에 들 확률 80% (넉넉하게 보는 범위)</li></ul>'
+        + '<b>낙찰가 범위</b>는 낙찰가가 이 안에 들 확률이 약 50%인 가장 좁은 구간이에요. 예상 낙찰가는 항상 이 범위 안에 있어요.<br>'
         + '<b>앱이 좁히는 것은?</b> 지난 12개월 낙찰 8,600여 건에서, 시세에 "지난 1년 평균 낙찰가율(87.5%)" 하나만 곱하면 평균 오차가 약 7.0%(±10% 안에 63%)인데 이 앱은 약 5.2%(±10% 안에 76%)예요. 오차가 약 26% 줄고, 유찰·지역·단지 흐름에 따라 범위의 위치도 물건마다 달라져요. 입찰자 수는 입찰 전에 알 수 없어서 5% 안팎의 흩어짐은 남아요.<br>'
         + '<span class="ip-muted">참고용 추정이며 낙찰이나 수익을 보장하지 않아요.</span>' },
     rec: { t: '추천가는 어떻게 계산하나요?', h:
@@ -23109,7 +23109,7 @@ function drawerPriceGridHtml(row) {
     var pcc2 = pe && pe.p != null ? Math.round(pe.p * 100) : null;
     h += item('낙찰 가능성', pcc2 != null ? (Math.round(pe.p * 1000) / 10).toFixed(1) + '%' : '-', pcc2 != null ? '추천 입찰가로 낙찰될 확률' : '', pcc2 == null ? '' : (pcc2 >= 60 ? '#15803d' : (pcc2 >= 35 ? '#b45309' : '#b91c1c')));
     var wbr = row.winbid && row.winbid.price ? winbidRangeFor(row.winbid, row) : null;
-    h += item('예상 낙찰가 ' + infoI('winp'), row.winbid && row.winbid.price ? fmt(row.winbid.price) : '-', row.winbid && row.winbid.price && row.sale ? '시세의 ' + Math.round(row.winbid.price / row.sale * 100) + '%' + (wbr ? '<br>절반 범위 ' + fmt(wbr.p25) + '~' + fmt(wbr.p75) + '<br>80% 범위 ' + fmt(wbr.p10) + '~' + fmt(wbr.p90) : '') : '', '');
+    h += item('예상 낙찰가 ' + infoI('winp'), row.winbid && row.winbid.price ? fmt(row.winbid.price) : '-', row.winbid && row.winbid.price && row.sale ? '시세의 ' + Math.round(row.winbid.price / row.sale * 100) + '%' + (wbr ? '<br>낙찰가 범위 ' + fmt(wbr.p25) + '~' + fmt(wbr.p75) : '') : '', '');
     // 2026-11-17(사용자): 가격 한눈에 마지막 칸에 예상 순수익 - 추천 입찰가로 낙찰받아 예상 매도가에 팔 때 남는 세후 순이익(수리비·이자·세금 반영, 입찰가 고르기 표와 같은 값)
     h += item('예상 순수익 (추천가 기준)', pe && pe.net != null ? fmt(pe.net) : '-', pe && pe.net != null ? '낙찰되면 · 세후' + (pe.pre != null ? '<br>세전 ' + fmt(pe.pre) : '') + (pe.p != null ? '<br>낙찰 ' + Math.round(pe.p * 100) + '% 반영 기대 ' + fmt(pe.net * pe.p) : '') : (pe ? '' : '추천가 없음'), pe && pe.net != null ? (pe.net > 0 ? '#15803d' : '#b91c1c') : '');
     return h + '</div></div>' + drawerRangeChartHtml(row);
@@ -23120,17 +23120,14 @@ function drawerRangeChartHtml(row) {
         if (!row || row.type !== 'apt' || !row.winbid || !row.winbid.price) return '';
         var rg = winbidRangeFor(row.winbid, row); if (!rg) return '';
         var fmt = function(x) { return toEok(String(Math.round(x))); };
-        var bands = { mid: rg.mid, items: [
-            { name: '좁음', lo: rg.p25, hi: rg.p75, col: '#15803d', op: 0.38, tc: '#166534' },
-            { name: '보통', lo: rg.p10, hi: rg.p90, col: '#d97706', op: 0.30, tc: '#92400e' },
-            { name: '넓음', lo: rg.p5, hi: rg.p95, col: '#7c3aed', op: 0.20, tc: '#5b21b6' }] };
+        var bands = { mid: rg.mid, items: [{ name: '범위', lo: rg.p25, hi: rg.p75, col: '#15803d', op: 0.38, tc: '#166534' }] };   // 2026-11-18(사용자: 범위 3단계는 필요 없음 - 가장 좁은 범위 하나와 예상 낙찰가가 그 안에 있는지가 중요)
         var tr = []; try { tr = drawerTrades(row); } catch (e) {}
         var pts = tr.filter(function(t) { return t.d && t.p > 0; }).map(function(t) { return { amount: String(t.p), year: t.d.getFullYear(), month: t.d.getMonth() + 1, day: t.d.getDate(), floor: isNaN(t.f) ? '-' : t.f }; });
         var svg = ''; if (pts.length >= 2) { try { svg = buildPriceChartSvg(pts, '3y', bands); } catch (e) { svg = ''; } }
-        var leg = function(b, pctTxt) { return '<span style="white-space:nowrap;"><i style="display:inline-block;width:10px;height:10px;background:' + b.col + ';opacity:' + Math.min(1, b.op * 2.4) + ';border:1px solid ' + b.col + ';margin-right:3px;vertical-align:-1px;"></i><b>' + b.name + '</b>(' + pctTxt + ') ' + fmt(b.lo) + ' ~ ' + fmt(b.hi) + '</span>'; };
+        var inRange = rg.mid >= rg.p25 && rg.mid <= rg.p75;
         return '<div class="dr-sec"><h4>예상 낙찰가 범위 <span class="dr-sub" style="display:inline;">(시세 그래프 위에 겹쳐 그림 · 점=실거래, 선=월 중앙값)</span></h4>' + svg
-            + '<div class="dr-sub" style="line-height:1.9;">' + leg(bands.items[0], '낙찰가가 이 안에 들 확률 50%') + '<br>' + leg(bands.items[1], '80%') + '<br>' + leg(bands.items[2], '90%') + '</div>'
-            + '<div class="dr-sub">점선 = 예상 낙찰가 ' + fmt(rg.mid) + '(이 가격 이하로 낙찰될 확률 약 50%). 범위는 입찰자 수에 따라 낙찰가가 흩어지는 정도예요' + (row.fails === 0 ? ' · 신건은 최저가 아래로 낙찰될 수 없어 아래쪽을 최저가에 맞췄어요' : '') + '.</div></div>';
+            + '<div class="dr-sub" style="line-height:1.8;"><span style="white-space:nowrap;"><i style="display:inline-block;width:10px;height:10px;background:#15803d;opacity:0.9;margin-right:3px;vertical-align:-1px;"></i><b>낙찰가 범위</b> ' + fmt(rg.p25) + ' ~ ' + fmt(rg.p75) + '</span> · 낙찰가가 이 안에 들 확률 약 50%<br>'
+            + '점선 <b>예상 낙찰가 ' + fmt(rg.mid) + '</b> ' + (inRange ? '(범위 안)' : '(범위 밖 - 신건 최저가 보정)') + ' · 이 가격 이하로 낙찰될 확률 약 50%. 범위는 입찰자 수에 따라 낙찰가가 흩어지는 정도예요' + (row.fails === 0 ? ' · 신건은 최저가 아래로 낙찰될 수 없어 아래쪽을 최저가에 맞췄어요' : '') + '.</div></div>';
     } catch (e) { return ''; }
 }
 async function renderBidDrawer() {
@@ -23194,7 +23191,7 @@ async function renderBidDrawer() {
         var compNote = row.winbid.comp ? '<div>경쟁 예상 <b style="color:' + (row.winbid.comp === '높음' ? '#b91c1c' : (row.winbid.comp === '낮음' ? '#15803d' : '#6b7280')) + ';">' + row.winbid.comp + '</b> (응찰 약 ' + Math.max(1, Math.round(row.winbid.bidN)) + '명) ' + infoI('comp') + (row.winbid.comp === '높음' ? ' · 낙찰가가 예상보다 위로 흩어질 수 있어요' : (row.winbid.comp === '낮음' ? ' · 낙찰가가 예상보다 낮게 나올 수 있어요' : '')) + '</div>' : '';
         var cnH = crowdNoteHtml(row); compNote = cnH ? cnH : (compNote || ''); // 입찰자 수는 한 가지만 보여줌
         h += '<div class="dr-wb"><div class="dr-wb-h">🎲 예상 낙찰가 <b>' + fmt(row.winbid.price) + '</b><span class="dr-sub" style="margin:0 0 0 6px;">이 물건 조건으로 계산한, 이 가격 이하로 낙찰될 확률이 약 50%인 값 ' + infoI('winp') + '</span></div>'
-            + (function() { var rg = winbidRangeFor(row.winbid, row); return rg ? '<div>낙찰가 범위 · 절반 확률 <b>' + fmt(rg.p25) + ' ~ ' + fmt(rg.p75) + '</b> · 80% 확률 <b>' + fmt(rg.p10) + ' ~ ' + fmt(rg.p90) + '</b></div>' : ''; })()
+            + (function() { var rg = winbidRangeFor(row.winbid, row); return rg ? '<div>낙찰가 범위 <b>' + fmt(rg.p25) + ' ~ ' + fmt(rg.p75) + '</b> <span class="dr-sub" style="margin:0;">(이 안에 낙찰될 확률 약 50%)</span></div>' : ''; })()
             + (wbp != null ? '<div>추천 입찰가로 쓰면 <b style="color:' + wcol + ';">낙찰 가능성 약 ' + wbp + '%</b> · 예상 낙찰가보다 ' + (wbg >= 0 ? '<b>' + wbg + '%</b> 높음' : '<b>' + Math.abs(wbg) + '%</b> 낮음')
                 + (row.winbid.probAggr != null ? ' · 적극 입찰가면 약 ' + Math.round(row.winbid.probAggr * 100) + '%' : '') + '</div>' : '')
             + (row.winbid.amountSuspect ? '<div style="color:#b91c1c;">⚠️ 최저가가 시세와 너무 달라요 - 입력 금액이 잘못됐을 수 있어 낙찰 가능성은 계산하지 않았어요(CSV를 다시 올리면 바로잡아요)</div>' : '')
@@ -31589,7 +31586,8 @@ function wrRenderWinScore(ws, sv) {
     var svh = '';
     if (sv && sv.all && sv.all.n) {   // 2026-11-17: 입찰 전에 앱이 저장해 둔 예상 낙찰가의 실제 성적(그때 화면에 보여준 값)
         svh = '<div class="wr-sec"><b>입찰 전 저장한 예상 낙찰가 성적</b> <span class="pn-muted">(실제 입찰 전에 앱이 보여준 값과 낙찰 결과를 비교 · ' + sv.from + ' ~ ' + sv.to + ')</span>'
-            + '<div class="wr-kpis"><div><span>보통 오차</span><b>' + pc(sv.all.medAbsErrPct) + '</b><em>' + wrBiasShort(sv.all.biasPct) + ' · ' + sv.all.n + '건</em></div><div><span>±5% / ±10% 안</span><b>' + pc(sv.all.within5Pct) + ' / ' + pc(sv.all.within10Pct) + '</b><em>실제 낙찰가 기준</em></div><div><span>예상가로 썼다면 낙찰</span><b>' + pc(sv.all.winAtPredPct) + '</b><em>+5%면 ' + pc(sv.all.winAtPlus5Pct) + '</em></div></div>'
+            + '<div class="wr-kpis"><div><span>보통 오차</span><b>' + pc(sv.all.medAbsErrPct) + '</b><em>' + wrBiasShort(sv.all.biasPct) + ' · ' + sv.all.n + '건</em></div><div><span>±5% / ±10% 안</span><b>' + pc(sv.all.within5Pct) + ' / ' + pc(sv.all.within10Pct) + '</b><em>실제 낙찰가 기준</em></div><div><span>예상가로 썼다면 낙찰</span><b>' + pc(sv.all.winAtPredPct) + '</b><em>+5%면 ' + pc(sv.all.winAtPlus5Pct) + '</em></div>'
+            + (sv.rangeHit ? '<div><span>낙찰가 범위 적중</span><b>' + pc(sv.rangeHit.hitPct) + '</b><em>실제 낙찰가가 범위 안(목표 약 ' + sv.rangeHit.targetPct + '%) · ' + sv.rangeHit.n + '건 · 범위 폭 ' + sv.rangeHit.widthMedPct + '%</em></div>' : '') + '</div>'
             + (sv.weeks && sv.weeks.length ? '<table class="pn-table">' + th.replace('<th></th>', '<th>낙찰 주(월요일)</th>') + '<tbody>' + sv.weeks.slice().reverse().map(function(x) { return row(x, wrYmd(x.week)); }).join('') + '</tbody></table>' : '')
             + (sv.byClass && sv.byClass.length ? '<table class="pn-table" style="margin-top:10px;">' + th.replace('<th></th>', '<th>지역</th>') + '<tbody>' + sv.byClass.map(function(x) { return row(x, x.label); }).join('') + '</tbody></table>' : '')
             + (sv.byFails && sv.byFails.length ? '<table class="pn-table" style="margin-top:10px;">' + th.replace('<th></th>', '<th>유찰</th>') + '<tbody>' + sv.byFails.map(function(x) { return row(x, x.label); }).join('') + '</tbody></table>' : '')
@@ -31764,7 +31762,7 @@ async function savePredSnapshots() {
             var sn = r.a.predSnap, age = sn && sn.at ? (Date.now() - new Date(sn.at + 'T00:00:00').getTime()) / 86400000 : 99;
             if (sn && age < 3 && sn.minBid === r.minBid && sn.go !== undefined && r.dday.diffDays > 1) return;   // 입찰 하루 전·당일은 매일 다시 저장(2026-11-18, 사용자: 입찰 전날 값을 성적표 기준으로)
             var snapNew = { at: today, minBid: r.minBid, fails: r.fails, sale: Math.round(r.sale), recBid: r.recBid ? Math.round(r.recBid) : null, aggr: r.recAggr ? Math.round(r.recAggr) : null,
-                win: Math.round(wbx.price), prob: r.type === 'villa' ? (r.recBid ? (function() { var pv = villaProbAt(wbx, r.recBid); return pv != null ? Math.round(pv * 100) / 100 : null; })() : null) : (function() { var pr = r.winbid.probRecRaw != null ? r.winbid.probRecRaw : r.winbid.probRec; return pr != null ? Math.round(pr * 100) / 100 : null; })(), probC: r.type === 'villa' ? null : (r.winbid.probRec != null && r.winbid.probCal2 ? Math.round(r.winbid.probRec * 100) / 100 : null), own: r.own, type: r.type,   // 2026-11-14 probC = 보정된 낙찰 가능성(prob는 보정 학습용 원래 값 그대로)
+                win: Math.round(wbx.price), rg: (r.type === 'apt' ? (function() { var g = winbidRangeFor(r.winbid, r); return g ? [g.p25, g.p75] : null; })() : null), prob: r.type === 'villa' ? (r.recBid ? (function() { var pv = villaProbAt(wbx, r.recBid); return pv != null ? Math.round(pv * 100) / 100 : null; })() : null) : (function() { var pr = r.winbid.probRecRaw != null ? r.winbid.probRecRaw : r.winbid.probRec; return pr != null ? Math.round(pr * 100) / 100 : null; })(), probC: r.type === 'villa' ? null : (r.winbid.probRec != null && r.winbid.probCal2 ? Math.round(r.winbid.probRec * 100) / 100 : null), own: r.own, type: r.type,   // 2026-11-14 probC = 보정된 낙찰 가능성(prob는 보정 학습용 원래 값 그대로)
                 go: !!(r.visit && r.visit.go), net: (r.type === 'villa' ? (r._vev && r._vev.pn && r._vev.pn.ev ? Math.round(r._vev.pn.ev.net) : null) : (r.pick && r.pick.ev ? Math.round(r.pick.ev.net) : null)), nv: r.noVisit ? r.noVisit.lvl : null, why: r.visit && r.visit.go ? '' : String((r.visit && r.visit.why) || '').slice(0, 60) };
             // 2026-10-09 누적 이력: 덮어쓰지 않고 날짜별로 쌓음(같은 날 다시 저장하면 그날 것만 교체, 최대 25개) - 주간 리포트가 "입찰 직전 마지막 예측"을 골라 비교
             var hist = Array.isArray(r.a.predHist) ? r.a.predHist.slice() : (sn ? [sn] : []);
