@@ -4505,7 +4505,7 @@ function nvVillaCard(r, ev) {
         rec: pe ? vm(pe.bid) : '', recPct: pe && ve ? Math.round(pe.bid / ve.est * 100) : null,
         spec: bbEsc(r.region) + (r.pyung ? ' · 빌라 ' + r.pyung + '평(' + Math.round(r.pyung * 3.305785) + '㎡)' : '') + (r.floor ? ' · ' + r.floor + '층' : '') + (mp && mp.age != null ? ' · ' + mp.age + '년차' : ''),
         sum: '<span class="nv-i">예상매도가 <b>' + vm(ve && ve.est) + '</b>' + (ve ? ' <small>±' + ve.errPct + '%</small>' : '') + '</span><span class="nv-i">최저가 ' + vm(r.minBid) + '</span>' + (ev.wb && ev.wb.price ? '<span class="nv-i">예상 낙찰가 <b>' + vm(ev.wb.price) + '</b></span>' : '') + (mp ? '<span class="nv-i">필요 마진 ' + vm(mp.margin) + '</span>' : ''),
-        chips: [r.visit.go ? noVisitPill(r) : null, crowdChip(r), vqChip(r.a), adjOf(r.a) ? { t: '🔶 규제지역', cls: 'r' } : null, permitFor(r) ? { t: '🚧 허가구역', cls: 'r' } : null, pe ? { t: '낙찰 ' + Math.round(pe.p * 100) + '%', cls: pe.p >= 0.6 ? 'g' : (pe.p >= 0.35 ? 'o' : 'r') } : null, pe ? { t: '순이익 ' + vm(pe.net) } : null,
+        chips: [r.visit.go ? noVisitPill(r) : null, crowdChip(r), vqChip(r.a), adjOf(r.a) ? { t: '🔶 규제지역', cls: 'r' } : null, permitFor(r) ? { t: '🚧 허가구역', cls: 'r' } : null, pe ? { t: '낙찰 ' + (Math.round(pe.p * 1000) / 10).toFixed(1) + '%', cls: pe.p >= 0.6 ? 'g' : (pe.p >= 0.35 ? 'o' : 'r') } : null, pe ? { t: '순이익 ' + vm(pe.net) } : null,
             ev.liq ? { t: '생활권 6개월 ' + ev.liq.r500.a6 + '건', cls: ev.liq.r500.a6 === 0 ? 'r' : '' } : null, (function(c) { return c ? { t: '💰 월세 ' + (c.cf >= 0 ? '+' : '') + Math.round(c.cf) + '만/월', cls: c.ok ? 'g' : (c.cf >= 0 ? 'o' : 'r') } : null; })(villaRentCash(r, ev)), l.st === 'yes' ? { t: '📋 매물 ' + l.n + '건', cls: 'g' } : (l.st === 'none' ? { t: '📋 매물 없음' } : null),
             hv === 'ok' ? { t: '🏠 도시민박 검토 가능', cls: 'g' } : null, ev.issue ? { t: '🚩 이슈 의심', cls: 'r' } : null, rightsNeeded(r, ev.visit.go) ? { t: '⚖️ 권리분석 필요', cls: 'o' } : null, (hsBld[r.id] && hsBld[r.id].info && bldUseWarn(hsBld[r.id].info.title)) ? { t: '⚠️ 비주택 용도', cls: 'r' } : null], note: r.a.fav ? r.a.favNote : '' });
 }
@@ -4517,7 +4517,7 @@ function nvAptCard(r) {
         rec: e ? am(e.bid) : '', recPct: e && r.sale ? Math.round(e.bid / r.sale * 100) : null,
         spec: bbEsc(r.region) + (r.pyung ? ' · 아파트 ' + r.pyung + '평(' + Math.round(r.pyung * 3.305785) + '㎡)' : '') + (r.floor ? ' · ' + r.floor + '층' : '') + ' · ' + (r.fails == null ? '' : (r.fails === 0 ? '신건' : r.fails + '회 유찰')),
         sum: '<span class="nv-i">예상매도가 <b>' + am(r.sale) + '</b></span><span class="nv-i">최저가 ' + am(r.minBid) + '</span>' + (r.winbid && r.winbid.price ? '<span class="nv-i">예상 낙찰가 <b>' + am(r.winbid.price) + '</b></span>' : ''),
-        chips: [adjOf(r.a) ? { t: '🔶 규제지역', cls: 'r' } : null, permitFor(r) ? { t: '🚧 허가구역', cls: 'r' } : null, e ? { t: '낙찰 ' + Math.round(e.p * 100) + '%', cls: e.p >= 0.6 ? 'g' : (e.p >= 0.35 ? 'o' : 'r') } : null, e ? { t: '순이익 ' + am(e.net) } : null,
+        chips: [adjOf(r.a) ? { t: '🔶 규제지역', cls: 'r' } : null, permitFor(r) ? { t: '🚧 허가구역', cls: 'r' } : null, e ? { t: '낙찰 ' + (Math.round(e.p * 1000) / 10).toFixed(1) + '%', cls: e.p >= 0.6 ? 'g' : (e.p >= 0.35 ? 'o' : 'r') } : null, e ? { t: '순이익 ' + am(e.net) } : null,
             os ? { t: '1년 거래 ' + (os.n12 || 0) + '건', cls: (os.n12 || 0) >= 6 ? 'g' : ((os.n12 || 0) >= 3 ? '' : 'r') } : null, r.liq ? { t: '💧 6개월 내 되팔림 ' + Math.round(r.liq.p6) + '%' + (r.holdFromSupply ? ' · 매물 많음' : ''), cls: r.liq.p6 >= 30 ? 'g' : (r.liq.p6 < 18 ? 'r' : '') } : null, r.niche ? { t: '🧭 틈새', cls: 'g' } : null, r.issueSuspect ? { t: '🚩 이슈 의심', cls: 'r' } : null,
             l.st === 'yes' ? { t: '📋 매물 ' + l.n + '건', cls: 'g' } : (l.st === 'none' ? { t: '📋 매물 없음' } : null), rightsNeeded(r, r.visit.go) ? { t: '⚖️ 권리분석 필요', cls: 'o' } : null], note: r.a.fav ? r.a.favNote : '' });
 }
@@ -22579,7 +22579,7 @@ function renderBidBoardLite() {
                 + '<td data-l="예상 낙찰가" class="r">' + (r.winbid && r.winbid.price ? '<b>' + money(r.winbid.price) + '</b>' + (bidBoardState.seoulOwn && r.sale ? '<div class="bb-sub" title="예상 낙찰가 ÷ 예상매도가(시세). 낮을수록 시세보다 싸게 사요">시세의 ' + Math.round(r.winbid.price / r.sale * 100) + '%</div>' : (r.minBid ? '<div class="bb-sub vt-hide" title="예상 낙찰가 ÷ 최저가">최저가의 ' + Math.round(r.winbid.price / r.minBid * 100) + '%</div>' : '')) : '<span class="bb-sub">-</span>') + '</td>'
                 + '<td data-l="예상매도가" class="r">' + money(r.sale) + '</td>'
                 + '<td data-l="추천가" class="r">' + (e ? '<b class="bb2-rec">' + money(e.bid) + '</b>' + (r.sale ? '<div class="bb-sub" title="추천가 ÷ 예상매도가(시세)">시세의 <b>' + Math.round(e.bid / r.sale * 100) + '%</b></div>' : '') : '<span class="bb-sub">-</span>') + '</td>'
-                + '<td data-l="낙찰 가능성" class="r">' + (pc != null ? '<b style="color:' + col + ';">' + pc + '%</b>' : '-') + '</td>'
+                + '<td data-l="낙찰 가능성" class="r">' + (pc != null ? '<b style="color:' + col + ';">' + (Math.round(e.p * 1000) / 10).toFixed(1) + '%</b>' : '-') + '</td>'
                 + '<td data-l="예상 입찰자" class="r">' + compCellHtml(r) + '</td>'
                 + '<td data-l="순이익" class="r">' + (e ? money(e.net) : '-') + '</td>'
                 + '<td data-l="마진율" class="r">' + (mr != null ? mr.toFixed(1) + '%' : '-') + '</td></tr>';
