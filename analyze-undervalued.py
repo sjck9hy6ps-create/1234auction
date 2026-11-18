@@ -104,6 +104,11 @@ def main():
             res[k] = {"설명": lab, "5분위 초과변화 중앙%(저평가 5분위 → 고평가 1분위)": [round(float(qs.loc[q, "median"]) * 100, 2) for q in (4, 3, 2, 1, 0)],
                       "저평가 상위20% 초과변화 중앙%": round(float(top["rel"].median()) * 100, 2), "저평가 상위20%에서 시군구 중앙보다 더 오른 비율%": round(float((top["rel"] > 0).mean()) * 100, 1),
                       "고평가 하위20% 초과변화 중앙%": round(float(bot["rel"].median()) * 100, 2), "격차%p(상위-하위)": round(float(top["rel"].median() - bot["rel"].median()) * 100, 2), "표본": int(len(top))}
+        # 변형(2026-11-19): 대장 격차 기준만 쓰되 평당가가 지나치게 싼(주변의 78% 미만) 단지는 뺌 / 상위 10%
+        F = S[(S["peer"] >= -0.25) & (S["n12"] >= 15)].dropna(subset=["catch"]).copy(); F["q"] = pd.qcut(F["catch"].rank(method="first"), 5, labels=False)
+        top, bot = F[F["q"] == 4], F[F["q"] == 0]; t10 = F[F["catch"] >= F["catch"].quantile(0.9)]
+        res["catch_필터"] = {"설명": "대장 격차 기준 + 평당가가 주변의 78% 미만인 단지·12개월 거래 15건 미만 제외", "표본": int(len(F)), "5분위 초과변화 중앙%": [round(float(F[F["q"] == q]["rel"].median()) * 100, 2) for q in (4, 3, 2, 1, 0)],
+                              "상위20%에서 시군구 중앙보다 더 오른 비율%": round(float((top["rel"] > 0).mean()) * 100, 1), "상위10% 초과변화 중앙%": round(float(t10["rel"].median()) * 100, 2), "상위10%에서 더 오른 비율%": round(float((t10["rel"] > 0).mean()) * 100, 1), "격차%p(상위20-하위20)": round(float(top["rel"].median() - bot["rel"].median()) * 100, 2)}
         out["검증"][f"{H}개월 전 출발"] = res
         print(f"  {H}개월 전 출발:", json.dumps(res, ensure_ascii=False), flush=True)
     # 현재 후보
@@ -118,9 +123,14 @@ def main():
         for ck, r in top.iterrows():
             cand.append({"c": r["danji"], "r": r["region"], "dong": ck.split("|")[1], "by": None if pd.isna(r["by"]) else int(r["by"]), "n12": int(r["n12"]), "p84": round(float(r["p84"]), 2), "peer": round(float(r["peer"]) * 100, 1),
                          "catch": None if pd.isna(r["catch"]) else round(float(r["catch"]) * 100, 1), "dd": None if pd.isna(r["dd"]) else round(float(r["dd"]) * 100, 1), "score": round(float(r["comp"]), 3)})
-        seoul = [c for c in cand if str(c["r"]).startswith("서울")][:30]
-        out["서울 상위"] = seoul; print("서울 상위:", json.dumps(seoul[:15], ensure_ascii=False))
-        print("전국 상위:", json.dumps(cand[:25], ensure_ascii=False))
+        S2 = S[(S["peer"] >= -0.25) & (S["n12"] >= 15) & S["catch"].notna()].sort_values("catch", ascending=False)
+        def pack(r, ck): return {"c": r["danji"], "r": r["region"], "dong": ck.split("|")[1], "by": None if pd.isna(r["by"]) else int(r["by"]), "n12": int(r["n12"]), "p84": round(float(r["p84"]), 2), "peer": round(float(r["peer"]) * 100, 1), "gap": round(float(r["gap"]) * 100, 1), "catch": round(float(r["catch"]) * 100, 1), "dd": None if pd.isna(r["dd"]) else round(float(r["dd"]) * 100, 1)}
+        cand_c = [pack(r, ck) for ck, r in S2.head(300).iterrows()]
+        out["대장격차 후보"] = cand_c
+        seoul = [pack(r, ck) for ck, r in S2[S2["region"].astype(str).str.startswith("서울")].head(30).iterrows()]
+        metro = [pack(r, ck) for ck, r in S2[S2["region"].astype(str).str.startswith(("서울", "경기", "인천"))].head(40).iterrows()]
+        out["서울 상위"] = seoul; out["수도권 상위"] = metro; print("서울 상위:", json.dumps(seoul[:15], ensure_ascii=False))
+        print("수도권 상위:", json.dumps(metro[:20], ensure_ascii=False)); print("전국 상위:", json.dumps(cand_c[:25], ensure_ascii=False))
     out["후보"] = cand
     print("📋 UV_JSON " + json.dumps({k: v for k, v in out.items() if k != "후보"}, ensure_ascii=False))
     from datetime import datetime, timezone
