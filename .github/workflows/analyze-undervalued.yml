@@ -1,0 +1,21 @@
+# 저평가 아파트 후보 찾기 + 시장 기준 시간순 검증 (analyze-undervalued.py 상단 설명 참고) - 수동 실행
+name: Analyze undervalued
+on:
+  workflow_dispatch: {}
+  push:
+    paths: ['.github/triggers/analyze-undervalued.txt']
+jobs:
+  analyze:
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install pandas numpy requests
+      - env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          PYTHONUNBUFFERED: '1'
+        run: python analyze-undervalued.py
