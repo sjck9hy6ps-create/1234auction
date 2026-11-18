@@ -1,0 +1,22 @@
+# 입찰 전날 값 저장(2026-11-18, 사용자 승인: 입찰 전날 계산한 값과 낙찰 결과를 비교해야 정확한 성적표) - 매일 저녁 가상 브라우저가 앱을 열어 입찰이 내일·오늘인 물건의 예측을 저장
+name: 입찰 전날 값 저장
+on:
+  schedule:
+    - cron: '30 11 * * *'   # 매일 KST 20:30
+  push:
+    paths: ['.github/triggers/eve-snapshot.txt']
+  workflow_dispatch:
+jobs:
+  snapshot:
+    runs-on: ubuntu-latest
+    timeout-minutes: 70
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - run: npm install playwright
+      - run: npx playwright install --with-deps chromium
+      - env:
+          SITE_URL: https://1234auction.vercel.app
+        run: node scripts/eve-snapshot.mjs
