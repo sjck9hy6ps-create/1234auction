@@ -3647,7 +3647,7 @@ def scorecard(D, amap, max_lag=None):
         try:
             Ws = W.copy(); Ws["err"] = (Ws["win"] - Ws["actual"]) / Ws["actual"]
             def _ws(G, lab):
-                ee = G["err"]; return {"label": lab, "n": int(len(G)), "medAbsErrPct": round(float(ee.abs().median()) * 100, 1), "within5Pct": round(float((ee.abs() <= 0.05).mean()) * 100, 1), "within10Pct": round(float((ee.abs() <= 0.10).mean()) * 100, 1),
+                ee = G["err"]; return {"label": lab, "n": int(len(G)), "medAbsErrPct": round(float(ee.abs().median()) * 100, 1), "within1Pct": round(float((ee.abs() <= 0.01).mean()) * 100, 1), "within2Pct": round(float((ee.abs() <= 0.02).mean()) * 100, 1), "within3Pct": round(float((ee.abs() <= 0.03).mean()) * 100, 1), "within5Pct": round(float((ee.abs() <= 0.05).mean()) * 100, 1), "within10Pct": round(float((ee.abs() <= 0.10).mean()) * 100, 1),
                                        "biasPct": round(float(ee.median()) * 100, 1), "winAtPredPct": round(float((G["actual"] <= G["win"]).mean()) * 100, 1), "winAtPlus5Pct": round(float((G["actual"] <= G["win"] * 1.05).mean()) * 100, 1)}
             Ws["d"] = pd.to_datetime(Ws["sale"].astype(int).astype(str), format="%Y%m%d"); Ws["wk"] = (Ws["d"] - pd.to_timedelta(Ws["d"].dt.weekday, unit="D")).dt.strftime("%Y%m%d")
             sv = {"all": _ws(Ws, "전체"), "weeks": [dict(_ws(g, w), week=w) for w, g in sorted(Ws.groupby("wk")) if len(g) >= 5][-10:], "from": str(Ws["d"].min().date()), "to": str(Ws["d"].max().date())}
