@@ -22543,8 +22543,11 @@ function renderBidBoardLite() {
         var vx = colDef.val(x), vy = colDef.val(y);
         var nx = vx == null || (typeof vx === 'number' && !isFinite(vx)), ny = vy == null || (typeof vy === 'number' && !isFinite(vy));
         if (nx !== ny) return nx ? 1 : -1;
+        // 2026-11-18(사용자: 낙찰 가능성 정렬에 같은 값이 많음) 낙찰 가능성은 0.5%p 단위 묶음으로 비교 - 같은 묶음 안에서는 추천가 기준 순수익이 큰 순(최근 3·6·9·12개월 시험: 소수점 낙찰 가능성 순이 가장 낙찰이 많고, 마진을 먼저 보면 낙찰이 줄어 마진은 같은 묶음 안에서만 씀)
+        if (s.liteCol === 'p' && !nx) { vx = Math.floor(vx * 200); vy = Math.floor(vy * 200); }
         var c = nx ? 0 : (typeof vx === 'string' ? vx.localeCompare(vy, 'ko') : vx - vy);
         if (c) return c * s.liteDir;
+        if (s.liteCol === 'p' && !nx) { var n1 = LITE_COLS.net.val(x), n2 = LITE_COLS.net.val(y); n1 = n1 == null ? -1e9 : n1; n2 = n2 == null ? -1e9 : n2; if (n1 !== n2) return n2 - n1; }
         // 같은 값이면 임장 후보 먼저 → 입찰일 → 기대수익
         if (x.visit.go !== y.visit.go) return x.visit.go ? -1 : 1;
         var dx = x.dday ? x.dday.diffDays : 9999, dy = y.dday ? y.dday.diffDays : 9999;
