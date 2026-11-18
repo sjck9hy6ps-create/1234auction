@@ -31698,7 +31698,7 @@ async function savePredSnapshots() {
     if (predSnapSaving) return;
     predSnapSaving = true;
     try {
-        var today = remindTodayStr(), upd = [];
+        var today = remindTodayStr(), upd = [], updP = [];
         (bidBoardRows || []).forEach(function(r) {
             // 빌라(수도권)는 r.winbid가 아니라 빌라 평가(_vev.wb)에 예상 낙찰가가 있음 - 예전엔 !r.winbid로 항상 건너뛰어 빌라 예측이 한 건도 안 쌓였음(2026-11-07 발견)
             var vwb = r.type === 'villa' && r._vev && r._vev.wb && r._vev.ve ? r._vev.wb : null, wbx = r.type === 'villa' ? vwb : r.winbid;
@@ -31711,9 +31711,11 @@ async function savePredSnapshots() {
             // 2026-10-09 누적 이력: 덮어쓰지 않고 날짜별로 쌓음(같은 날 다시 저장하면 그날 것만 교체, 최대 25개) - 주간 리포트가 "입찰 직전 마지막 예측"을 골라 비교
             var hist = Array.isArray(r.a.predHist) ? r.a.predHist.slice() : (sn ? [sn] : []);
             hist = hist.filter(function(h) { return h && h.at !== today; }); hist.push(snapNew);
-            upd.push(Object.assign({}, r.a, { predSnap: snapNew, predHist: hist.slice(-25) }));
+            updP.push([r.dday.diffDays, Object.assign({}, r.a, { predSnap: snapNew, predHist: hist.slice(-25) })]);
         });
-        for (var i = 0; i < upd.length && i < 400; i += 50) await saveAuctionAPI(upd.slice(i, i + 50));
+        // 2026-11-18: 입찰이 가까운 물건부터 저장(전에는 400건에서 잘려 입찰 내일 물건 일부가 빠졌음 - 가상 브라우저 시험에서 내일 입찰 아파트 478건 중 290건만 저장됨)
+        updP.sort(function(x, y) { return x[0] - y[0]; }); updP.forEach(function(q) { upd.push(q[1]); });
+        for (var i = 0; i < upd.length && i < 1500; i += 50) await saveAuctionAPI(upd.slice(i, i + 50));
     } catch (e) { console.error('예측 저장 실패:', e && e.message); }
     predSnapSaving = false;
 }
