@@ -327,6 +327,7 @@ def main():
                "dk": c.dk, "dongName": str(c.dong), "cx": None, "dong3y": 0,
                "caseNo": str(getattr(c, "caseNo", "") or ""), "bname": str(getattr(c, "buildingName", "") or ""),
                "adong": c.adong if isinstance(c.adong, str) and c.adong else None}
+        rec["bj_s"] = str(getattr(c, "bunji_s", "") or "")   # 2026-11-18 같은 단지 식별(시군구·법정동·번지) - 단지 낙찰 이력 요인용
         dd = dong_dates.get((c.region, c.dk))
         if dd is not None:
             _sd = int_to_date(c.sale_int)
@@ -720,6 +721,8 @@ def main():
             except Exception as e: print("  종합 평가 연결 건너뜀:", e)
         if os.environ.get("WB_WIDECMP_DIR"):   # 2026-11-16 종합 평가 사례 넓힘 시험(저장 없음)
             widecmp_test(R, now); return
+        if os.environ.get("WB_XFCHECK") == "1":   # 2026-11-18 번지 기준 단지 이력 요인이 운영 요인 위에서 최근 3·6·9·12개월 모두 좋아지는지(저장 없음)
+            xf_check_main(R, now); return
         if os.environ.get("WB_FACTORSEARCH") == "1":   # 2026-11-17 사건별 요인 후보 시험 + GBM·사건별 범위 확인(저장 없음)
             factor_search_test(R, now); return
         if os.environ.get("WB_SEASON2") == "1":   # 2026-11-17 계절 vs 시장(시군구 가격 지수 함께) 시험(저장 없음)
@@ -3175,13 +3178,31 @@ def xf_window_report(D, base_factors):
         WB_FACTORS = keep
 
 
+def xf_check_main(R, now):
+    global WB_FACTORS
+    R = R.copy(); R["est"] = R["est_stack"].where(R["est_stack"] > 0)
+    D = R[R["est"].notna() & (R["est"] > 0) & R["actual"].notna() & R["minbid"].notna() & (R["minbid"] > 0) & (R["sale"] >= 20210101)].copy()
+    D = D[np.log(D["actual"] / D["est"]).between(np.log(0.4), np.log(1.6))].reset_index(drop=True)
+    D = add_xf_features(D)
+    import requests as _rq3
+    fk = _rq3.get(f"{SITE_URL}/api/data-coverage?mode=winbid&x={int(time.time())}", timeout=120).json().get("factorsK")
+    base = [(f, int(k)) for f, k in fk]; print("  운영 요인:", base, flush=True)
+    print("  단지 키 있는 사례 비율:", round(float((D["bj_s"].astype(str).str.len() > 0).mean()) * 100, 1) if "bj_s" in D.columns else "bj_s 없음", " cxL 있음:", round(float((D["xf_cxL"] != "-").mean()) * 100, 1), " vol 있음:", round(float((D["xf_vol"] != "-").mean()) * 100, 1), flush=True)
+    WB_FACTORS = list(base); rep = xf_window_report(D, base)
+    print("📋 XFCHECK_JSON " + json.dumps(rep, ensure_ascii=False))
+    if os.environ.get("GITHUB_STEP_SUMMARY"):
+        open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8").write("### 후보 요인 4구간(번지 기준)\n```json\n" + json.dumps(rep, ensure_ascii=False, indent=1) + "\n```\n")
+
+
 def add_xf_features(D):
     """2026-11-18 사건별 후보 요인(입찰일에 이미 알 수 있는 정보만): 같은 단지 최근 12개월 낙찰 이력(직전·중앙 낙찰가율, 응찰자 평균), 같은 동 최근 90일 낙찰가율, 단지 가격 변동성.
     매주 서버 모델이 후보로 시험(SERVER_ONLY - 앱이 아직 같은 값을 못 만들어 모델에는 넣지 않고 효과만 기록). 최근 3·6·9·12개월 시험에서 4구간 모두 개선된 후보들."""
     D = D.copy(); order = np.argsort(D["sale"].values, kind="stable"); S = D.iloc[order]
     d_ = pd.to_datetime(S["sale"].astype(int).astype(str), format="%Y%m%d"); dn = d_.values.astype("datetime64[D]").astype(np.int64)
     lr = np.log(S["actual"].values / S["est"].values); bd = pd.to_numeric(S["bidders"], errors="coerce").values
-    cxk = np.where(S["cx"].notna(), S["region"].astype(str) + "|" + S["dk"].astype(str) + "|" + S["cx"].astype(str), None); dgk = (S["region"].astype(str) + "|" + S["dk"].astype(str)).values
+    if "bj_s" in S.columns: cxk = np.where(S["bj_s"].astype(str).str.len() > 0, S["region"].astype(str) + "|" + S["dk"].astype(str) + "|" + S["bj_s"].astype(str), None)   # 같은 번지 = 같은 단지(앱도 번지로 같은 단지 거래를 찾음)
+    else: cxk = np.where(S["cx"].notna(), S["region"].astype(str) + "|" + S["dk"].astype(str) + "|" + S["cx"].astype(str), None)
+    dgk = (S["region"].astype(str) + "|" + S["dk"].astype(str)).values
     def asof(keys, win, gap=3):
         n = np.zeros(len(S)); med = np.full(len(S), np.nan); last = np.full(len(S), np.nan); bav = np.full(len(S), np.nan); idx = {}
         for i, k in enumerate(keys):

@@ -71,6 +71,11 @@ on:
         required: false
         default: 'false'
 
+      xfcheck:
+        description: '번지 기준 단지 이력 요인 4구간 확인만 실행(저장 없음)'
+        required: false
+        default: 'false'
+
 jobs:
   analyze:
     runs-on: ubuntu-latest
@@ -89,6 +94,7 @@ jobs:
           WB_EXP: ${{ github.event.inputs.experiment == 'true' && '1' || '' }}
           WB_NOLB_ONLY: ${{ github.event.inputs.nolb == 'true' && '1' || '' }}
           WB_NOEST_DIAG: ${{ github.event.inputs.noest == 'true' && '1' || '' }}
+          WB_XFCHECK: ${{ github.event.inputs.xfcheck == 'true' && '1' || '' }}
           WB_GBMAPP: ${{ github.event.inputs.gbmapp == 'true' && '1' || '' }}
           WB_FACTORSEARCH: ${{ (github.event.inputs.factorsearch == 'true' || github.event.inputs.gbmapp == 'true') && '1' || '' }}
           WB_FACTORSEARCH_OLD: ${{ github.event.inputs.factorsearch == 'true' && '1' || '' }}
@@ -100,7 +106,7 @@ jobs:
           WB_RW_RECHECK: ${{ github.event.inputs.rwcheck == 'true' && '1' || '' }}
           WB_RECWIN: ${{ github.event.inputs.recwin == 'true' && '1' || '' }}
           WB_BASEDIST_ONLY: ${{ github.event.inputs.basedist == 'true' && '1' || '' }}
-          WRITE_BACK: ${{ (github.event.inputs.nolb == 'true' || github.event.inputs.basedist == 'true' || github.event.inputs.noest == 'true' || github.event.inputs.recwin == 'true' || github.event.inputs.rwcheck == 'true' || github.event.inputs.alarmtest == 'true' || github.event.inputs.caltest == 'true' || github.event.inputs.calfull == 'true' || github.event.inputs.season == 'true' || github.event.inputs.season2 == 'true' || github.event.inputs.factorsearch == 'true' || github.event.inputs.gbmapp == 'true') && '0' || '1' }}
+          WRITE_BACK: ${{ (github.event.inputs.nolb == 'true' || github.event.inputs.basedist == 'true' || github.event.inputs.noest == 'true' || github.event.inputs.recwin == 'true' || github.event.inputs.rwcheck == 'true' || github.event.inputs.alarmtest == 'true' || github.event.inputs.caltest == 'true' || github.event.inputs.calfull == 'true' || github.event.inputs.season == 'true' || github.event.inputs.season2 == 'true' || github.event.inputs.factorsearch == 'true' || github.event.inputs.gbmapp == 'true' || github.event.inputs.xfcheck == 'true') && '0' || '1' }}
         run: python analyze-bidcases.py
       - uses: actions/upload-artifact@v4
         if: always()
