@@ -8624,9 +8624,10 @@ function buildPriceChartSvg(trades, range, bands) {
             svg += '<rect x="' + bx0 + '" y="' + Y(b.hi).toFixed(1) + '" width="' + (bx1 - bx0) + '" height="' + Math.max(1, Y(b.lo) - Y(b.hi)).toFixed(1) + '" fill="' + b.col + '" opacity="' + b.op + '"/>'
                 + '<line x1="' + bx0 + '" x2="' + bx1 + '" y1="' + Y(b.hi).toFixed(1) + '" y2="' + Y(b.hi).toFixed(1) + '" stroke="' + b.col + '" stroke-width="1.4"/>'
                 + '<line x1="' + bx0 + '" x2="' + bx1 + '" y1="' + Y(b.lo).toFixed(1) + '" y2="' + Y(b.lo).toFixed(1) + '" stroke="' + b.col + '" stroke-width="1.4"/>';   // 2026-11-18 색 구분 강조: 띠를 진하게 + 위·아래 경계선
-            labs.push({ y: Y(b.hi), t: b.name + ' 상한 ' + pnFmtEok(b.hi), col: b.tc }); labs.push({ y: Y(b.lo), t: b.name + ' 하한 ' + pnFmtEok(b.lo), col: b.tc });
+            var eokT = function(v) { return toEok(String(Math.round(v))); };   // 눈금처럼 0.1억 단위로 줄이면 서로 다른 금액이 같아 보여 만원 단위까지 표기
+            labs.push({ y: Y(b.hi), t: b.name + ' 상한 ' + eokT(b.hi), col: b.tc }); labs.push({ y: Y(b.lo), t: b.name + ' 하한 ' + eokT(b.lo), col: b.tc });
         });
-        if (bands.mid) svg += '<line x1="' + bx0 + '" x2="' + bx1 + '" y1="' + Y(bands.mid).toFixed(1) + '" y2="' + Y(bands.mid).toFixed(1) + '" stroke="#111827" stroke-width="1.2" stroke-dasharray="4 2"/><text x="' + (bx0 + 3) + '" y="' + (Y(bands.mid) - 3).toFixed(1) + '" font-size="8.5" fill="#111827" font-weight="700">예상 낙찰가 ' + pnFmtEok(bands.mid) + '</text>';
+        if (bands.mid) svg += '<line x1="' + bx0 + '" x2="' + bx1 + '" y1="' + Y(bands.mid).toFixed(1) + '" y2="' + Y(bands.mid).toFixed(1) + '" stroke="#111827" stroke-width="1.2" stroke-dasharray="4 2"/><text x="' + (bx0 + 3) + '" y="' + (Y(bands.mid) - 3).toFixed(1) + '" font-size="8.5" fill="#111827" font-weight="700">예상 낙찰가 ' + toEok(String(Math.round(bands.mid))) + '</text>';
         labs.sort(function(a, b) { return a.y - b.y; }); for (var li = 1; li < labs.length; li++) if (labs[li].y - labs[li - 1].y < 9.5) labs[li].y = labs[li - 1].y + 9.5;
         labs.forEach(function(lb) { svg += '<text x="' + (bx0 + 3) + '" y="' + (lb.y + 3).toFixed(1) + '" text-anchor="start" font-size="8.5" font-weight="700" fill="' + lb.col + '" style="paint-order:stroke;stroke:#fff;stroke-width:3px;">' + lb.t + '</text>'; });   // 상한·하한 글자는 그래프 시작(왼쪽)에 - 오른쪽 최근 시세 위에 글자가 몰리지 않게
     }
