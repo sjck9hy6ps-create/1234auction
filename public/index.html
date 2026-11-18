@@ -23001,10 +23001,11 @@ function drawerHistPoints(row) {
         var area = (parseFloat(a.pyung) || 0) * 3.305785, recent = ap.trades || [], chartPy = String(toPyung(area));
         var h = pnHistoryFor(ap, recent, chartPy);
         if (h === 'loading') {
-            row._histTry = (row._histTry || 0) + 1;
-            if (row._histTry <= 25) setTimeout(function() { if (bidDrawerId === row.id) { try { renderBidDrawer(); } catch (e) {} } }, 2500);
+            row._histStart = row._histStart || Date.now();
+            if (!row._histTimer && Date.now() - row._histStart < 90000) row._histTimer = setTimeout(function() { row._histTimer = null; if (bidDrawerId === row.id) { try { renderBidDrawer(); } catch (e) {} } }, 2000);   // 한 번에 하나만 예약(그리는 곳이 둘이라 횟수로 세면 금방 소진됨)
             return { loading: true, pts: null };
         }
+        row._histStart = 0;
         if (!h || !h.length) return null;
         var pts = h.filter(function(t) { return t.area > 0 && Math.abs(t.area - area) <= 3 && parseInt(t.amount) > 0 && t.dealing_type !== '직거래'; })
             .map(function(t) { return { amount: String(parseInt(t.amount)), year: +t.year, month: +t.month, day: +t.day || 15, floor: isNaN(parseInt(t.floor)) ? '-' : t.floor }; });
