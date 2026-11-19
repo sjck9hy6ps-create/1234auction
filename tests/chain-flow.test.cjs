@@ -67,6 +67,13 @@ const click = async (box, label) => { const b = box.children[1].children.find((x
   p = load('https://new.land.naver.com/complexes/111', '매매 없음', { collect: { text: '', n: 0 } }); await p.done; await new Promise((r) => setTimeout(r, 200));
   assert.strictEqual(store.hchain.on, false); assert.ok(/연속/.test(store.hchain.stop), store.hchain.stop);
   console.log('✓ 3번 연속 못 읽으면 멈춤');
+  // 9) 검색 결과 없음 → 이름+동으로 한 번 더, 그래도 없으면 실패 기록
+  queue.handled = {}; queue.items = [{ key: 'd|', name: '새단지', dong: '월곡동' }]; store.hchain = { on: true, owner: 7, day, count: 0, fails: 0, cur: { key: 'd|', name: '새단지', dong: '월곡동', qi: 0, step: 'search', at: clock } };
+  p = load('https://new.land.naver.com/search?sk=a', '해당되는 검색결과가 없습니다.', { links: [] }); await p.done; await new Promise((r) => setTimeout(r, 200));
+  assert.ok(/sk=%EC%83%88%EB%8B%A8%EC%A7%80%20%EC%9B%94%EA%B3%A1%EB%8F%99/.test(nav[nav.length - 1]), nav[nav.length - 1]); assert.strictEqual(store.hchain.cur.qi, 1);
+  p = load('https://new.land.naver.com/search?sk=b', '해당되는 검색결과가 없습니다.', { links: [] }); await p.done; await new Promise((r) => setTimeout(r, 200));
+  assert.strictEqual(marks[marks.length - 1][1], 'fail');
+  console.log('✓ 검색 결과가 없으면 이름+동으로 한 번 더 찾고, 그래도 없으면 실패로 기록');
   console.log('모두 통과');
   process.exit(0);
 })().catch((e) => { console.error('실패:', e); process.exit(1); });
