@@ -1362,7 +1362,7 @@ body.ui2 #auction-modal.am4 { width:620px; }
 </style>
 <style>
 /* 🚶 임장 후보 화면(2026-10) - 판정 탭·칩·필터를 줄이고 한 줄에 판단 하나 */
-#bid-board.lite #bb-chips, #bid-board.lite #bb-tabs, #bid-board.lite .bb-tools > select:not(#bb-region):not(#bb-permit):not(#bb-crowd):not(#bb2-sort), #bid-board.lite .bb-tools > label, #bid-board.lite #bb-fail-note, #bid-board.lite #bb-cache-note, #bid-board.lite .bb-guide { display:none !important; }
+#bid-board.lite #bb-chips, #bid-board.lite #bb-tabs, #bid-board.lite .bb-tools > select:not(#bb-region):not(#bb-permit):not(#bb-pub):not(#bb-crowd):not(#bb2-sort), #bid-board.lite .bb-tools > label, #bid-board.lite #bb-fail-note, #bid-board.lite #bb-cache-note, #bid-board.lite .bb-guide { display:none !important; }
 #bb2-tabs { display:inline-flex; align-items:center; gap:6px; flex-wrap:wrap; }
 #bb2-tabs .bb2-link { font-size:12px; color:var(--ui-blue,#1e5eff); }
 .bb2-table { width:100%; border-collapse:separate; border-spacing:0; background:#fff; border-radius:10px; overflow:clip; /* hidden이면 헤더 고정(sticky)이 안 먹어 스크롤하면 열 이름이 사라졌음(2026-10-21) */ box-shadow:0 1px 3px rgba(0,0,0,.06); font-size:12.5px; }
@@ -2060,6 +2060,9 @@ body.tb-menu-open.ui2 #tb-menu.open { z-index:9301; }
             <select id="bb-region" onchange="setBidBoardFilter('region', this.value)"></select>
             <select id="bb-permit" onchange="setBidBoardFilter('permit', this.value)" title="규제지역 = 투기과열지구·조정대상지역(서울 25개 구 + 경기 15곳, 2026-07-01 기준) - 취득세 중과·대출 한도(LTV)에 영향. 주소로 판정해요">
                 <option value="">규제지역 전체</option><option value="only">🔶 규제지역만</option><option value="exclude">규제지역 제외(비규제)</option>
+            </select>
+            <select id="bb-pub" onchange="setBidBoardFilter('pub', this.value)" title="공시가격 기준(저장된 공시가격이 있으면 그 값, 없으면 예상매도가 × 69%로 추정 - 앱 세금 계산과 같은 방식). 공시가격 1억 이하는 다주택 중과 배제 기준이에요">
+                <option value="">공시가격 전체</option><option value="1">공시가 1억 이하</option><option value="2">공시가 2억 이하</option>
             </select>
             <select id="bb-crowd" style="display:none !important" onchange="setBidBoardFilter('crowd', this.value)" title="입찰자가 몰릴지 예상 - 지역 평균이 아니라 물건별 조건 기준(과거 낙찰사례 학습)">
                 <option value="">응찰 예상 전체</option><option value="hi">🔥 많이 몰릴 물건</option><option value="lo">적게 몰릴 물건</option>
@@ -4471,7 +4474,14 @@ function crowdNoteHtml(r) {
 }
 // 규제지역 필터(2026-10-21, 사용자 요청: 지역 필터 옆에) - 토지거래허가구역 자료(permitFor) 기준. 지역 필터를 쓰는 모든 목록·개수에 함께 적용
 function permitMatch(r) { var pf = bidBoardState.permit; if (!pf) return true; var z = adjOf(r && r.a); return pf === 'only' ? z : !z; }   // 2026-11-14 규제지역 = 투기과열지구·조정대상지역(주소 기준). 예전엔 토지거래허가구역 자료 기준이었음(경매는 허가 면제라 대출·취득세에 영향을 주는 조정대상지역이 맞음)
-function regionMatch(r, reg) { if (!permitMatch(r) || !crowdMatch(r)) return false; return !reg || (reg.indexOf('g:') === 0 ? String(r.region).indexOf(reg.slice(2) + ' ') === 0 : r.region === reg); }
+/* 2026-11-19(수정 요청: 지역필터를 8도·광역시로 나누고 수도권 항목 추가 / 공시가격 필터 1억·2억 이하) 시도 구분은 주소 첫 단어로(전남광주 합쳐진 시군구 키가 아니라 광주·전남을 따로 보려고) */
+var SIDO_OF_TOKEN = [[/^(서울)/, '서울'], [/^(부산)/, '부산'], [/^(대구)/, '대구'], [/^(인천)/, '인천'], [/^(광주)/, '광주'], [/^(대전)/, '대전'], [/^(울산)/, '울산'], [/^(세종)/, '세종'], [/^(경기)/, '경기'], [/^(강원)/, '강원'], [/^(충북|충청북)/, '충북'], [/^(충남|충청남)/, '충남'], [/^(전북|전라북)/, '전북'], [/^(전남|전라남)/, '전남'], [/^(경북|경상북)/, '경북'], [/^(경남|경상남)/, '경남'], [/^(제주)/, '제주']];
+function sidoOfRow(r) { var t = String((r && r.a && r.a.addr) || (r && r.region) || '').trim().split(/\s+/)[0] || ''; for (var i = 0; i < SIDO_OF_TOKEN.length; i++) if (SIDO_OF_TOKEN[i][0].test(t)) return SIDO_OF_TOKEN[i][1]; return String((r && r.region) || '').split(' ')[0]; }
+var SIDO_METRO = ['서울', '부산', '대구', '인천', '광주', '대전', '울산', '세종'], SIDO_DO = ['경기', '강원', '충북', '충남', '전북', '전남', '경북', '경남', '제주'], SIDO_CAPITAL = ['서울', '경기', '인천'];
+// 공시가격(원): 저장된 값이 있으면 그대로, 없으면 예상매도가 × 69%(앱 세금 계산과 같은 추정) - 필터에서는 추정 여부를 같이 알려 줌
+function pubPriceOf(r) { var a = r && r.a; var won = a ? (parseInt(a.officialPriceWon) || 0) : 0; if (won > 0) return { won: won, est: false }; var sale = r && r.sale; return sale ? { won: Math.round(sale * 10000 * 0.69), est: true } : null; }
+function pubMatch(r) { var pf = bidBoardState.pub; if (!pf) return true; var pp = pubPriceOf(r); if (!pp) return false; return pp.won <= (pf === '1' ? 100000000 : (pf === '2' ? 200000000 : 300000000)); }
+function regionMatch(r, reg) { if (!permitMatch(r) || !crowdMatch(r) || !pubMatch(r)) return false; if (!reg) return true; if (reg.indexOf('g:') === 0) return String(r.region).indexOf(reg.slice(2) + ' ') === 0; if (reg === 'm:수도권') return SIDO_CAPITAL.indexOf(sidoOfRow(r)) >= 0; if (reg.indexOf('s:') === 0) return sidoOfRow(r) === reg.slice(3 - 1); return r.region === reg; }
 /* 📱 네이버부동산식 목록 카드 + 상세 창 (2026-10-10, 사용자: 아이패드에서 네이버부동산 UI를 벤치마킹) - 641~1240px에서 표 대신 카드(이름·큰 추천가·한 줄 요약·칩)와 정렬 줄,
    상세 창은 목록 옆에 붙여서(왼쪽 목록 / 오른쪽 상세) 보여주고 상세 맨 위에 구역 이동 탭을 둠 */
 (function() { try { var mq = window.matchMedia('(min-width:641px) and (max-width:1240px)'); var f = function() { var b = document.getElementById('bid-board'); if (b && b.style.display !== 'none' && typeof renderBidBoard === 'function') { try { renderBidBoard(); } catch (e) {} } }; if (mq.addEventListener) mq.addEventListener('change', f); else if (mq.addListener) mq.addListener(f); } catch (e) {} })();
@@ -8591,7 +8601,7 @@ function pnChartPyung(all) {
     Object.keys(cnt).forEach(function(p) { if (!best || cnt[p] > cnt[best]) best = p; });
     return best;
 }
-function buildPriceChartSvg(trades, range, bands) {
+function buildPriceChartSvg(trades, range, bands, allByM, rent) {
     var now = new Date(), from = new Date(now);
     if (range === '1y') from.setFullYear(now.getFullYear() - 1);
     else if (range === '3y') from.setFullYear(now.getFullYear() - 3);
@@ -8635,7 +8645,7 @@ function buildPriceChartSvg(trades, range, bands) {
             var eokT = function(v) { return toEok(String(Math.round(v))); };   // 눈금처럼 0.1억 단위로 줄이면 서로 다른 금액이 같아 보여 만원 단위까지 표기
             labs.push({ y: Y(b.hi), t: b.name + ' 상한 ' + eokT(b.hi), col: b.tc }); labs.push({ y: Y(b.lo), t: b.name + ' 하한 ' + eokT(b.lo), col: b.tc });
         });
-        if (bands.mid) svg += '<line x1="' + bx0 + '" x2="' + bx1 + '" y1="' + Y(bands.mid).toFixed(1) + '" y2="' + Y(bands.mid).toFixed(1) + '" stroke="#111827" stroke-width="1.2" stroke-dasharray="4 2"/><text x="' + (bx0 + 3) + '" y="' + (Y(bands.mid) - 3).toFixed(1) + '" font-size="8.5" fill="#111827" font-weight="700">예상 낙찰가 ' + toEok(String(Math.round(bands.mid))) + '</text>';
+        if (bands.mid) svg += '<line x1="' + bx0 + '" x2="' + bx1 + '" y1="' + Y(bands.mid).toFixed(1) + '" y2="' + Y(bands.mid).toFixed(1) + '" stroke="#111827" stroke-width="1.2" stroke-dasharray="4 2"/><text x="' + (bx1 - 2) + '" y="' + (Y(bands.mid) - 3).toFixed(1) + '" text-anchor="end" font-size="8.5" fill="#111827" font-weight="700" style="paint-order:stroke;stroke:#fff;stroke-width:3px;">예상 낙찰가 ' + toEok(String(Math.round(bands.mid))) + '</text>';   // 수정 요청: 상한·하한 글자(왼쪽)와 겹치지 않게 오른쪽
         labs.sort(function(a, b) { return a.y - b.y; }); for (var li = 1; li < labs.length; li++) if (labs[li].y - labs[li - 1].y < 9.5) labs[li].y = labs[li - 1].y + 9.5;
         labs.forEach(function(lb) { svg += '<text x="' + (bx0 + 3) + '" y="' + (lb.y + 3).toFixed(1) + '" text-anchor="start" font-size="8.5" font-weight="700" fill="' + lb.col + '" style="paint-order:stroke;stroke:#fff;stroke-width:3px;">' + lb.t + '</text>'; });   // 상한·하한 글자는 그래프 시작(왼쪽)에 - 오른쪽 최근 시세 위에 글자가 몰리지 않게
     }
@@ -8644,13 +8654,16 @@ function buildPriceChartSvg(trades, range, bands) {
     pts.forEach(function(p) { var k = p.d.getFullYear() * 12 + p.d.getMonth(); (byM[k] = byM[k] || []).push(p.v); });
     var keys = Object.keys(byM).map(Number).sort(function(a, b) { return a - b; });
     var maxN = Math.max.apply(null, keys.map(function(k) { return byM[k].length; }));
+    var allM = {}; if (allByM) Object.keys(allByM).forEach(function(k) { var d0 = new Date(Math.floor(+k / 12), (+k) % 12, 15); if (d0 >= from && d0 <= now) allM[k] = allByM[k]; });   // 2026-11-19(수정 요청) 같은 평형 거래량 옆에 단지 전체 평형 거래량(회색)
+    Object.keys(allM).forEach(function(k) { if (allM[k] > maxN) maxN = allM[k]; });
+    Object.keys(allM).forEach(function(k) { var d = new Date(Math.floor(+k / 12), (+k) % 12, 15), bh = allM[k] / maxN * VH; svg += '<rect x="' + (X(d) - 3.2).toFixed(1) + '" y="' + (H - B + 4 + (VH - bh)).toFixed(1) + '" width="6.4" height="' + bh.toFixed(1) + '" fill="#d1d5db"><title>' + Math.floor(+k / 12) + '.' + ((+k) % 12 + 1) + ' 단지 전체 평형 ' + allM[k] + '건</title></rect>'; });
     var line = [];
     keys.forEach(function(k) {
         var arr = byM[k].slice().sort(function(a, b) { return a - b; }), m = arr[Math.floor(arr.length / 2)];
         var d = new Date(Math.floor(k / 12), k % 12, 15);
         line.push(X(d).toFixed(1) + ',' + Y(m).toFixed(1));
         var bh = byM[k].length / maxN * VH, bx = X(d);
-        svg += '<rect x="' + (bx - 2) + '" y="' + (H - B + 4 + (VH - bh)) + '" width="4" height="' + bh.toFixed(1) + '" fill="#c9d6ff"/>';
+        svg += '<rect x="' + (bx - 2) + '" y="' + (H - B + 4 + (VH - bh)) + '" width="4" height="' + bh.toFixed(1) + '" fill="#8fa8ff"/>';
     });
     var rateOf = function(k) { return rtB ? rtB[Math.floor(k / 12) + '-' + ('0' + (k % 12 + 1)).slice(-2)] : null; };
     if (rtB) {
@@ -8663,6 +8676,18 @@ function buildPriceChartSvg(trades, range, bands) {
                 + '<text x="' + (W - R + 3) + '" y="' + (T + 8) + '" font-size="8.5" fill="#e11d48">' + rhi.toFixed(2) + '%</text><text x="' + (W - R + 3) + '" y="' + (H - B - VH + 2) + '" font-size="8.5" fill="#e11d48">' + rlo.toFixed(2) + '%</text>'
                 + '<text x="' + (L + 3) + '" y="' + (T + 9) + '" font-size="8.5" fill="#e11d48">┈ 기준금리(오른쪽 눈금)</text>';
         } else rtB = null;
+    }
+    if (rent) {   // 전세(초록)·월세 보증금(주황) 월 중앙값 선 - 범위 안 점만(세로 눈금은 매매 기준이라 범위를 벗어난 값은 그리지 않음)
+        [['jeonse', '#059669', '전세'], ['wolse', '#d97706', '월세(보증금)']].forEach(function(cfg, ci) {
+            var arr = (rent[cfg[0]] || []).filter(function(p) { var d0 = new Date(p.year, p.month - 1, p.day); return d0 >= from && d0 <= now; }); if (arr.length < 2) return;
+            var bm = {}; arr.forEach(function(p) { var k = p.year * 12 + p.month - 1; (bm[k] = bm[k] || []).push(parseInt(p.amount)); });
+            var ks = Object.keys(bm).map(Number).sort(function(x, y) { return x - y; }), pts2 = [];
+            ks.forEach(function(k) { var v = bm[k].sort(function(x, y) { return x - y; }); var med = v[v.length >> 1]; if (med >= lo && med <= hi) pts2.push([X(new Date(Math.floor(k / 12), k % 12, 15)), Y(med), med, k]); });
+            if (pts2.length < 2) return;
+            svg += '<polyline points="' + pts2.map(function(q) { return q[0].toFixed(1) + ',' + q[1].toFixed(1); }).join(' ') + '" fill="none" stroke="' + cfg[1] + '" stroke-width="1.6" stroke-dasharray="' + (ci ? '2 2' : '5 2') + '"/>';
+            pts2.forEach(function(q) { svg += '<circle cx="' + q[0].toFixed(1) + '" cy="' + q[1].toFixed(1) + '" r="1.6" fill="' + cfg[1] + '"><title>' + cfg[2] + ' ' + Math.floor(q[3] / 12) + '.' + (q[3] % 12 + 1) + ' 중앙 ' + pnFmtEok(q[2]) + '</title></circle>'; });
+            var last = pts2[pts2.length - 1]; svg += '<text x="' + (last[0] - 3).toFixed(1) + '" y="' + (last[1] - 4).toFixed(1) + '" text-anchor="end" font-size="8.5" font-weight="700" fill="' + cfg[1] + '" style="paint-order:stroke;stroke:#fff;stroke-width:3px;">' + cfg[2] + ' ' + pnFmtEok(last[2]) + '</text>';
+        });
     }
     svg += '<polyline points="' + line.join(' ') + '" fill="none" stroke="var(--ui-blue,#1e5eff)" stroke-width="2"/>';
     pts.forEach(function(p) { svg += '<circle cx="' + X(p.d).toFixed(1) + '" cy="' + Y(p.v).toFixed(1) + '" r="2.2" fill="var(--ui-blue,#1e5eff)" opacity="0.35"><title>' + p.d.getFullYear() + '.' + (p.d.getMonth() + 1) + ' · ' + p.f + '층 · ' + pnFmtEok(p.v) + '</title></circle>'; });
@@ -22586,7 +22611,13 @@ function renderBidBoardLite() {
                 if (false) {} else opts += '<optgroup label="' + c + '"><option value="g:' + c + '"' + (s.region === 'g:' + c ? ' selected' : '') + '>' + c + ' 전체 (' + tot + ')</option>' + ks.map(function(k) { return '<option value="' + bbEsc(k) + '"' + (s.region === k ? ' selected' : '') + '>　' + bbEsc(k.slice(c.length + 1)) + ' (' + regions[k] + ')</option>'; }).join('') + '</optgroup>';
             });
             bbSetSelOpts(sel, opts);
-        } else bbSetSelOpts(sel, '<option value="">지역 전체</option>' + Object.keys(regions).sort().map(function(k) { return '<option value="' + bbEsc(k) + '"' + (s.region === k ? ' selected' : '') + '>' + bbEsc(k) + ' (' + regions[k] + ')</option>'; }).join(''));
+        } else {   // 아파트: 수도권 / 광역시·특별시 / 도 / 시군구 순(2026-11-19 수정 요청)
+            var sc = {}; bidBoardRows.forEach(function(r) { if (r.type === 'apt') { var sd = sidoOfRow(r); sc[sd] = (sc[sd] || 0) + 1; } });
+            var capN = SIDO_CAPITAL.reduce(function(n, k) { return n + (sc[k] || 0); }, 0);
+            var og = function(label, list) { var items = list.filter(function(k) { return sc[k]; }); return items.length ? '<optgroup label="' + label + '">' + items.map(function(k) { return '<option value="s:' + k + '"' + (s.region === 's:' + k ? ' selected' : '') + '>' + k + ' 전체 (' + sc[k] + ')</option>'; }).join('') + '</optgroup>' : ''; };
+            bbSetSelOpts(sel, '<option value="">지역 전체</option><optgroup label="수도권"><option value="m:수도권"' + (s.region === 'm:수도권' ? ' selected' : '') + '>수도권 전체 (서울·경기·인천 ' + capN + ')</option></optgroup>' + og('광역시·특별시', SIDO_METRO) + og('도', SIDO_DO)
+                + '<optgroup label="시군구">' + Object.keys(regions).sort().map(function(k) { return '<option value="' + bbEsc(k) + '"' + (s.region === k ? ' selected' : '') + '>' + bbEsc(k) + ' (' + regions[k] + ')</option>'; }).join('') + '</optgroup>');
+        }
     }
     var bar = document.getElementById('bb2-tabs');
     if (!bar) { bar = document.createElement('span'); bar.id = 'bb2-tabs'; var tools = document.querySelector('#bid-board .bb-tools'); tools.insertBefore(bar, tools.firstChild); }
@@ -23027,29 +23058,49 @@ function drawerHistPoints(row) {
         if (!row || row.type !== 'apt') return null;
         var a = row.a, ap = (ownComplexEntries(a, row.bunjiFull || fullBunjiFromAddr(a.addr, a.dong, a.bunji), row.type) || [])[0];
         if (!ap || !ap.latest) return null;
-        var area = (parseFloat(a.pyung) || 0) * 3.305785, recent = ap.trades || [], chartPy = String(toPyung(area));
-        var h = pnHistoryFor(ap, recent, chartPy);
+        var area = (parseFloat(a.pyung) || 0) * 3.305785, recent = ap.trades || [];
+        var h = pnHistoryFor(ap, recent, null);   // 평형을 안 넘기면 단지 전체(모든 평형) 거래 이력을 받음 - 같은 평형 점과 단지 전체 거래량을 둘 다 이 목록으로 만듦(2026-11-19)
         if (h === 'loading') {
             row._histStart = row._histStart || Date.now();
             if (!row._histTimer && Date.now() - row._histStart < 90000) row._histTimer = setTimeout(function() { row._histTimer = null; if (bidDrawerId === row.id) { try { renderBidDrawer(); } catch (e) {} } }, 2000);   // 한 번에 하나만 예약(그리는 곳이 둘이라 횟수로 세면 금방 소진됨)
-            return { loading: true, pts: null };
+            return { loading: true, pts: null, allByM: drawerAllByM(recent) };
         }
         row._histStart = 0;
         if (!h || !h.length) return null;
-        var pts = h.filter(function(t) { return t.area > 0 && Math.abs(t.area - area) <= 3 && parseInt(t.amount) > 0 && t.dealing_type !== '직거래'; })
+        var pts = h.filter(function(t) { return t.area > 0 && Math.abs(t.area - area) <= 3 && parseInt(t.amount) > 0; })
             .map(function(t) { return { amount: String(parseInt(t.amount)), year: +t.year, month: +t.month, day: +t.day || 15, floor: isNaN(parseInt(t.floor)) ? '-' : t.floor }; });
-        return pts.length >= 2 ? { loading: false, pts: pts } : null;
+        return { loading: false, pts: pts.length >= 2 ? pts : null, allByM: drawerAllByM(h) };
     } catch (e) { return null; }
 }
+/* 전·월세 실거래(2026-11-19 수정 요청: 실거래 그래프에 전월세 선) - 앱이 전세가율에 쓰는 지역 전월세 자료(rentCacheByLawd)에서 같은 단지·같은 평형(±3㎡)을 뽑아 월별 중앙값으로 그림.
+   전세 = 월세 0원인 보증금, 월세 = 보증금 + 월세×(전환 아님: 월세는 별도 점선으로 월세 금액을 만원 단위 오른쪽 눈금 없이 보증금 환산하지 않고 보증금만 표시) - 단순하게 전세 보증금 선과 월세 계약의 보증금 선을 따로 그림.
+   (전월세 자료는 2024-07 이후라 그 이전 구간은 비어 있어요) */
+function drawerRentPoints(row) {
+    try {
+        var a = row.a, lawd = a._lawdForRent || row.lawd || bidBoardLawdOf(a), rl = (typeof rentCacheByLawd !== 'undefined') ? rentCacheByLawd[lawd] : null; if (!rl || !rl.length) return null;
+        var bj = String(row.bunjiFull || fullBunjiFromAddr(a.addr, a.dong, a.bunji) || '').trim(), dk = dongKey(a.dong), area = (parseFloat(a.pyung) || 0) * 3.305785, jeon = [], wol = [];
+        rl.forEach(function(r) {
+            if (dongKey(r.dong) !== dk || String(r.bunji || '').trim() !== bj || Math.abs(Number(r.size) - area) > 3) return;
+            var ds = String(r.deal_date || ''); if (ds.length < 8) return; var dep = Number(r.deposit); if (!(dep > 0)) return;
+            var pt = { amount: String(Math.round(dep)), year: +ds.slice(0, 4), month: +ds.slice(4, 6), day: +ds.slice(6, 8), floor: r.floor == null ? '-' : r.floor };
+            (Number(r.monthly_rent) > 0 ? wol : jeon).push(pt);
+        });
+        return { jeonse: jeon, wolse: wol };
+    } catch (e) { return null; }
+}
+/* 월별 단지 전체 거래 건수(모든 평형) {년*12+월-1: 건수} - 시세 그래프 아래 막대의 회색(같은 평형은 파랑) */
+function drawerAllByM(list) { var m = {}; (list || []).forEach(function(t) { var k = (+t.year) * 12 + (+t.month) - 1; if (k > 0) m[k] = (m[k] || 0) + 1; }); return m; }
+function drawerRecentAllByM(row) { try { var a = row.a, ap = (ownComplexEntries(a, row.bunjiFull || fullBunjiFromAddr(a.addr, a.dong, a.bunji), row.type) || [])[0]; return ap ? drawerAllByM(ap.trades || []) : null; } catch (e) { return null; } }
 function drawerChartHtml(tr, title, row) {
     if (!tr || tr.length < 2) return '<div class="dr-sec dr-sub">' + title + ' 그래프: 이 평형 거래가 ' + (tr ? tr.length : 0) + '건뿐이라 그릴 수 없어요</div>';
     var pts = tr.filter(function(t) { return t.d && t.p > 0; }).map(function(t) { return { amount: String(t.p), year: t.d.getFullYear(), month: t.d.getMonth() + 1, day: t.d.getDate(), floor: isNaN(t.f) ? '-' : t.f }; });
     var hp = row && drawerChartRange !== '1y' ? drawerHistPoints(row) : null, longH = !!(hp && hp.pts), note = '';
     if (longH) { var minYm = 999999; pts.forEach(function(p) { var ym = p.year * 100 + p.month; if (ym < minYm) minYm = ym; }); pts = pts.concat(hp.pts.filter(function(p) { return p.year * 100 + p.month < minYm; })); }
     else if (hp && hp.loading) note = ' · 10년치 불러오는 중…';
-    var svg = ''; try { svg = buildPriceChartSvg(pts, drawerChartRange); } catch (e) { svg = ''; }
+    var allBy = (hp && hp.allByM) || (row ? drawerRecentAllByM(row) : null);
+    var svg = ''; try { svg = buildPriceChartSvg(pts, drawerChartRange, null, allBy, row ? drawerRentPoints(row) : null); } catch (e) { svg = ''; }
     if (!svg) return '';
-    return '<div class="dr-sec"><h4>' + title + ' 시세 그래프 <span class="dr-sub" style="display:inline;">(점=실거래, 선=월 중앙값, 아래 막대=거래량' + (longH ? ' · 2년 이전은 월 중앙값' : '') + note + ')</span></h4>' + svg + '</div>';
+    return '<div class="dr-sec"><h4>' + title + ' 시세 그래프 <span class="dr-sub" style="display:inline;">(점=실거래, 선=월 중앙값, 아래 막대=거래량: 파랑 같은 평형 · 회색 단지 전체 평형' + note + ')</span></h4>' + svg + '</div>';
 }
 /* 📊 가격 그래프 점 미리 계산본(2026-11-15, 사용자: 가격차트 금액을 사전에 계산해 로딩 단축) - 서버(precompute-board.mjs)가 물건별 최근 3년 같은 평형(빌라는 같은 건물 비슷한 면적) 거래를
    [날짜, 가격, 층, 직거래]로 저장해 둠. 물건 번호로 나눈 40개 묶음 중 하나만 받아 지역 실거래(수 MB)를 받기 전에도 그래프·최근거래가를 그림. 지역 자료가 로드되면 원래 방식(실시간 계산)을 씀 */
@@ -23200,11 +23251,12 @@ function drawerRangeChartHtml(row) {
         var pts = tr.filter(function(t) { return t.d && t.p > 0; }).map(function(t) { return { amount: String(t.p), year: t.d.getFullYear(), month: t.d.getMonth() + 1, day: t.d.getDate(), floor: isNaN(t.f) ? '-' : t.f }; });
         var hp2 = drawerChartRange !== '1y' ? drawerHistPoints(row) : null, long2 = !!(hp2 && hp2.pts);
         if (long2) { var minYm2 = 999999; pts.forEach(function(p) { var ym = p.year * 100 + p.month; if (ym < minYm2) minYm2 = ym; }); pts = pts.concat(hp2.pts.filter(function(p) { return p.year * 100 + p.month < minYm2; })); }
-        var svg = ''; if (pts.length >= 2) { try { svg = buildPriceChartSvg(pts, drawerChartRange, bands); } catch (e) { svg = ''; } }
+        var allBy2 = (hp2 && hp2.allByM) || drawerRecentAllByM(row);
+        var svg = ''; if (pts.length >= 2) { try { svg = buildPriceChartSvg(pts, drawerChartRange, bands, allBy2, drawerRentPoints(row)); } catch (e) { svg = ''; } }
         if (!svg) svg = '<div class="dr-sub" style="padding:6px 0;">' + (!dataCache[row.lawd || bidBoardLawdOf(row.a)] ? '시세 그래프: 지역 실거래를 불러오는 중이에요…' : '시세 그래프: 이 평형 거래가 ' + pts.length + '건뿐이라 그릴 수 없어요') + '</div>';
         var inRange = rg.mid >= rg.p25 && rg.mid <= rg.p75, sg = function(v) { return (v > 0 ? '+' : '') + v + '%'; };
         var basis = '<b>계산</b>: 이 앱의 예상 낙찰가 계산을 학습에 쓰지 않은 과거 낙찰에 적용했을 때 <b>실제 낙찰가 ÷ 예상 낙찰가</b>가 하위 25%였던 지점을 <b>하한</b>, 상위 25%였던 지점을 <b>상한</b>으로 이 물건의 예상 낙찰가에 적용했어요(' + rg.src + ' 사용: 하한 ' + sg(rg.lowPct) + ', 상한 ' + sg(rg.highPct) + '). 낙찰 뒤에는 실제 낙찰가가 이 하한~상한 안에 들었는지 리포트 성적표에서 확인해요.';
-        return '<div class="dr-sec"><h4>예상 낙찰가 하한 · 상한 <span class="dr-sub" style="display:inline;">(시세 그래프 위에 겹쳐 그림 · 점=실거래, 선=월 중앙값' + (long2 ? ' · 2년 이전은 월 중앙값' : (hp2 && hp2.loading ? ' · 이전 거래 불러오는 중…' : '')) + ')</span></h4>' + drawerRangeBtns() + svg
+        return '<div class="dr-sec"><h4>예상 낙찰가 하한 · 상한 <span class="dr-sub" style="display:inline;">(시세 그래프 위에 겹쳐 그림 · 점=실거래, 선=월 중앙값' + (hp2 && hp2.loading ? ' · 이전 거래 불러오는 중…' : '') + ' · 아래 막대=거래량: 파랑 같은 평형 · 회색 단지 전체 평형 · 초록 선=전세 보증금, 주황 점선=월세 계약 보증금)</span></h4>' + drawerRangeBtns() + svg
             + '<div class="dr-sub" style="line-height:1.8;"><span style="white-space:nowrap;"><i style="display:inline-block;width:10px;height:10px;background:#15803d;opacity:0.9;margin-right:3px;vertical-align:-1px;"></i><b>예상 낙찰가 하한</b> ' + fmt(rg.p25) + ' (예상 낙찰가 대비 ' + sg(Math.round((rg.p25 / rg.mid - 1) * 1000) / 10) + ')</span><br>'
             + '<span style="white-space:nowrap;"><i style="display:inline-block;width:10px;height:10px;background:#15803d;opacity:0.9;margin-right:3px;vertical-align:-1px;"></i><b>예상 낙찰가 상한</b> ' + fmt(rg.p75) + ' (' + sg(Math.round((rg.p75 / rg.mid - 1) * 1000) / 10) + ')</span><br>'
             + '점선 <b>예상 낙찰가 ' + fmt(rg.mid) + '</b> ' + (inRange ? '(하한~상한 사이)' : '(범위 밖 - 신건 최저가 보정)') + (row.fails === 0 ? ' · 신건은 최저가 아래로 낙찰될 수 없어 하한을 최저가에 맞췄어요(법적 하한)' : '') + '<br>' + basis + '</div></div>';
