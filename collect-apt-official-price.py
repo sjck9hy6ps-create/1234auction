@@ -76,7 +76,7 @@ def build_pnus():
     print(f"법정동코드 못 찾은 거래 {int(nocode.sum()):,}건 ({nocode.mean()*100:.1f}%)", flush=True)
     d = raw[~nocode].copy()
     d["pnu"] = d["sg"].astype(str) + d["bj"].astype(str) + "1" + d["bun"] + d["ji"]
-    g = d.groupby("pnu").agg(n=("deal_date", "size"), last=("deal_date", "max"), danji=("danji", lambda s: s.mode().iloc[0] if len(s.dropna()) else ""), sg=("sg", "first"), bun=("bun", "first"), ji=("ji", "first")).reset_index()
+    g = d.groupby("pnu").agg(n=("deal_date", "size"), last=("deal_date", "max"), danji=("danji", lambda s: s.mode().iloc[0] if len(s.dropna()) else ""), dong=("dong", "first"), sg=("sg", "first"), bun=("bun", "first"), ji=("ji", "first")).reset_index()
     names = d.groupby("pnu")["danji"].agg(lambda s: sorted(set(str(x).strip() for x in s.dropna()))[:6]).to_dict()
     g["names"] = g["pnu"].map(names)
     print(f"고유 건물(PNU) {len(g):,}곳", flush=True)
@@ -101,6 +101,7 @@ def vget(pnu, year, page):
     return None, None, False
 
 
+INFO = {}   # pnu -> (응답의 법정동명 ldCodeNm, 단지명 aphusNm) - 코드가 맞는지 확인·기록용
 def fetch_pnu(job):
     pnu, keep_units = job
     for yr in (YEAR, YEAR - 1):
@@ -110,6 +111,7 @@ def fetch_pnu(job):
             if not ok: return pnu, None, False
             for x in f:
                 if str(x.get("stdrYear")) != str(yr): continue
+                if pnu not in INFO: INFO[pnu] = (x.get("ldCodeNm") or "", x.get("aphusNm") or "")
                 key = (x.get("dongNm"), x.get("floorNm"), x.get("hoNm"), x.get("prvuseAr"), x.get("pblntfPc"))
                 if key in seen: continue
                 seen.add(key); units.append(key)
@@ -162,7 +164,73 @@ def retry_empty():
     print(f"끝: 재시도 {len(todo):,}곳 중 새로 찾음 {sum(1 for v in fixed.values() if v.get('n')):,}곳", flush=True)
 
 
+def fix_gaps():
+    """결측 보완(2026-11-20, 사용자: 공시가격이 없다는 건 말이 안 됨) - ① 경매 아파트 물건의 법정동코드(bCode)+지번으로 PNU를 만들어 수집 목록에 없던 건물 추가 ② 자료 없는 건물 중 인천 분구(서해·검단·영종·제물포구) 건물은 옛 법정동코드를
+    동 이름으로 찾아(예전 좌표 캐시의 옛 코드) 조회하고 응답의 법정동명(ldCodeNm)에 그 동 이름이 있을 때만 채택. 광주·전남·강원·전북은 get-official-price.js의 시군구 매핑."""
+    import re, collections
+    src = open(os.path.join(HERE, "api", "get-official-price.js"), encoding="utf-8").read()
+    leg = json.loads(re.search(r"const LEGACY_SIGUNGU_PREFIX = (\{.*?\});", src).group(1))
+    recs = {}
+    for ln in open(OUT, encoding="utf-8"):
+        r = json.loads(ln); recs[r["pnu"]] = r
+    g, _, _ = build_pnus(); dong_of = dict(zip(g["pnu"], g["dong"])); name_of = dict(zip(g["pnu"], g["danji"]))
+    # 옛 인천 법정동코드: 동 이름 → (시군구, 법정동) (분구 전에 저장된 좌표 캐시)
+    cc = avm.fetch_all_rows("complex_coords", cols="cache_key,sigungu_cd,bjdong_cd", order_col="id")
+    old = collections.defaultdict(collections.Counter)
+    for r in cc.itertuples():
+        if r.sigungu_cd in ("28110", "28140", "28260", "28200") and r.bjdong_cd: old[str(r.cache_key).split("|")[0].strip()][(r.sigungu_cd, r.bjdong_cd)] += 1
+    old_map = {d: c.most_common(1)[0][0] for d, c in old.items()}
+    print(f"옛 인천 법정동코드 {len(old_map)}개 동", flush=True)
+    todo = []   # (pnu, 후보 PNU 목록, 검증할 동 이름, 우선순위, 단지명)
+    # ② 자료 없는 건물
+    for pnu, r in recs.items():
+        if r.get("n"): continue
+        cands = []; sg = pnu[:5]; dn = (dong_of.get(pnu) or "").strip()
+        if sg in leg: cands.append((leg[sg] + pnu[5:], None))
+        if dn in old_map and sg.startswith("28"): cands.append((old_map[dn][0] + old_map[dn][1] + pnu[10:], dn))
+        if cands: todo.append((pnu, cands, r.get("p", 3), r.get("danji", "")))
+    # ① 경매 물건에서 수집 목록에 없던 건물
+    auc = requests.get(SITE + "/api/auction", timeout=120).json(); add = 0
+    for a in auc:
+        if a.get("propType") not in ("apt", "아파트") or not a.get("bCode") or not a.get("bunji"): continue
+        bb = bunji_to_bunji(a.get("bunji"))
+        if not bb: continue
+        pnu = str(a["bCode"]) + "1" + bb[0] + bb[1]
+        if pnu in recs or any(t[0] == pnu for t in todo[-50:]): continue
+        sg = pnu[:5]; dn = str(a.get("dong") or "").strip(); cands = [(pnu, None)]
+        if sg in leg: cands.append((leg[sg] + pnu[5:], None))
+        if sg.startswith("28") and dn in old_map: cands.append((old_map[dn][0] + old_map[dn][1] + pnu[10:], dn))
+        todo.append((pnu, cands, 2, str(a.get("name") or ""))); add += 1; recs.setdefault(pnu, None)
+    todo = list({t[0]: t for t in todo}.values())
+    print(f"보완 대상 {len(todo):,}곳(경매 물건에서 새로 추가 {add:,}곳)", flush=True)
+    def work(t):
+        pnu, cands, pr, nm = t
+        for cp, dn in cands:
+            _, res, ok = fetch_pnu((cp, pr <= 2))
+            if not (ok and res and res[1]): continue
+            ld = (INFO.get(cp) or ("", ""))[0]
+            if dn and dn not in ld: continue   # 동 이름이 맞을 때만(옛 코드 추정이 틀린 경우 거름)
+            yr, units = res
+            rec = {"pnu": pnu, "year": yr, "p": pr, "danji": nm, "n": len(units), "areas": summarize(units), "via": cp, "ld": ld, "nm": (INFO.get(cp) or ("", ""))[1]}
+            if pr <= 2: rec["units"] = [list(u) for u in units]
+            return pnu, rec
+        return pnu, None
+    found = 0; t0 = time.time()
+    with ThreadPoolExecutor(max_workers=THREADS) as ex:
+        for i, (pnu, rec) in enumerate(ex.map(work, todo)):
+            if rec: recs[pnu] = rec; found += 1
+            elif recs.get(pnu) is None: recs.pop(pnu, None)
+            if (i + 1) % 300 == 0: print(f"  {i+1:,}/{len(todo):,} · 찾음 {found:,} · {int(time.time()-t0)}초", flush=True)
+    with open(OUT + ".new", "w", encoding="utf-8") as fo:
+        for r in recs.values():
+            if r: fo.write(json.dumps(r, ensure_ascii=False) + "\n")
+    os.replace(OUT + ".new", OUT)
+    left = sum(1 for r in recs.values() if r and not r.get("n"))
+    print(f"끝: 보완 대상 {len(todo):,}곳 중 새로 찾음 {found:,}곳 · 아직 자료 없음 {left:,}곳", flush=True)
+
+
 def main():
+    if os.environ.get('FIX_GAPS') == '1': return fix_gaps()
     if os.environ.get('RETRY_EMPTY') == '1': return retry_empty()
     g, nocode_n, tot_n = build_pnus()
     bd = board_rows()
