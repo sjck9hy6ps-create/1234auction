@@ -1,0 +1,27 @@
+// 호가 자동 진행 핵심 로직 시험(네이버 화면 없이): node tests/chain-logic.test.cjs
+const vm = require('vm'), fs = require('fs'), ctx = { module: { exports: {} } }; vm.runInNewContext(fs.readFileSync(__dirname + '/../tools/listing-extension/chain-logic.js', 'utf8'), ctx); const L = ctx.module.exports; const assert = require('assert'); let n = 0; const t = (name, fn) => { fn(); n++; console.log('✓', name); };
+const links = [
+  { href: 'https://new.land.naver.com/complexes/111', text: '일곡엘리체프라임', ctx: '광주 북구 일곡동 아파트' },
+  { href: 'https://new.land.naver.com/complexes/222', text: '일곡엘리체', ctx: '광주 북구 용봉동' },
+  { href: 'https://new.land.naver.com/complexes/333', text: '일곡동 푸르지오', ctx: '광주 북구 일곡동' },
+  { href: 'https://new.land.naver.com/articles/9', text: '일곡엘리체프라임', ctx: '' },
+];
+t('이름이 정확히 같은 단지 선택', () => assert.strictEqual(L.pickComplexLink(links, { name: '일곡엘리체프라임', dong: '일곡동' }), 'https://new.land.naver.com/complexes/111'));
+t('(주상복합)·아파트 접미사·공백 무시', () => assert.strictEqual(L.pickComplexLink([{ href: '/complexes/5', text: '두산위브 더 제니스', ctx: '' }], { name: '두산위브더제니스(주상복합)아파트', dong: '' }), '/complexes/5'));
+t('이름이 없으면 엉뚱한 단지를 열지 않음(null)', () => assert.strictEqual(L.pickComplexLink(links, { name: '전혀다른단지', dong: '' }), null));
+t('짧은 이름 부분일치 금지(2글자)', () => assert.strictEqual(L.pickComplexLink([{ href: '/complexes/7', text: '푸르지오', ctx: '' }], { name: '푸르', dong: '' }), null));
+t('동이 맞는 쪽 우선', () => assert.strictEqual(L.pickComplexLink([{ href: '/complexes/1', text: '현대아파트', ctx: '서울 강남구 압구정동' }, { href: '/complexes/2', text: '현대아파트', ctx: '경기 수원시 영통동' }], { name: '현대아파트', dong: '영통동' }), '/complexes/2'));
+t('단지 링크가 아닌 것은 무시', () => assert.strictEqual(L.pickComplexLink([{ href: '/articles/1', text: '일곡엘리체프라임', ctx: '' }], { name: '일곡엘리체프라임' }), null));
+const q = { items: [{ key: 'a|x', name: 'A' }, { key: 'b|y', name: 'B' }, { name: 'C', dong: 'z' }] };
+t('처리 안 한 첫 항목', () => assert.strictEqual(L.nextItem(q, { 'a|x': 1 }).key, 'b|y'));
+t('키 없는 항목은 이름|동으로 키 생성', () => assert.strictEqual(L.nextItem(q, { 'a|x': 1, 'b|y': 1 }).key, 'c|z'));
+t('모두 처리하면 null', () => assert.strictEqual(L.nextItem(q, { 'a|x': 1, 'b|y': 1, 'c|z': 1 }), null));
+t('로그인 주소 감지', () => assert.ok(L.blockedReason('https://nid.naver.com/nidlogin.login', '')));
+t('캡차 문구 감지', () => assert.ok(L.blockedReason('https://new.land.naver.com/complexes/1', '자동입력 방지 문자를 입력해 주세요')));
+t('접속 제한 문구 감지', () => assert.ok(L.blockedReason('https://new.land.naver.com/x', '과도한 접속으로 이용이 제한되었습니다')));
+t('정상 화면은 통과', () => assert.strictEqual(L.blockedReason('https://new.land.naver.com/complexes/1', '매매 5억 9,800 101동 12/20층'), null));
+t('쉬는 시간 20~60초 범위', () => { for (let i = 0; i < 200; i++) { const v = L.jitter(20000, 60000); assert.ok(v >= 20000 && v <= 60000); } assert.strictEqual(L.jitter(20000, 60000, 0), 20000); assert.strictEqual(L.jitter(20000, 60000, 1), 60000); });
+t('하루 30곳 도달 시 멈춤', () => { assert.strictEqual(L.shouldStop({ count: 29, fails: 0 }, 30, 3), null); assert.ok(L.shouldStop({ count: 30, fails: 0 }, 30, 3)); });
+t('3번 연속 실패 시 멈춤', () => { assert.strictEqual(L.shouldStop({ count: 5, fails: 2 }, 30, 3), null); assert.ok(L.shouldStop({ count: 5, fails: 3 }, 30, 3)); });
+t('날짜 키', () => assert.strictEqual(L.dayKey(new Date(2026, 10, 9)), '2026-11-09'));
+console.log(n + '개 통과');

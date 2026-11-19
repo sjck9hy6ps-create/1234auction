@@ -21,39 +21,45 @@
     return best;
   };
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  // 목록 끝까지 내려 읽기(버튼과 자동 진행(content-chain.js)이 같이 씀) → { text, n }
+  const collectListings = async () => {
+    let sc = findScroller();
+    let target = sc || document.body;
+    // 목록 끝까지 한 화면씩 내려 모두 불러옴(최대 50번, 3번 연속 새로 안 늘면 중단). 목록 영역을 못 찾으면 페이지 자체를 내림
+    const scrollOnce = () => { if (sc) sc.scrollTop += Math.max(300, sc.clientHeight * 0.9); else window.scrollBy(0, Math.max(300, window.innerHeight * 0.9)); };
+    // 스크롤하며 보이는 매물 덩어리를 계속 모음(목록이 화면 밖 항목을 지우는 방식이어도 빠지지 않게). 덩어리 = '○○ 101동' 머리 줄부터 다음 머리 줄 전까지
+    const blocks = new Map();
+    const harvest = () => {
+      const lines = (document.body.innerText || '').split(/\r?\n/).map((x) => x.trim()).filter(Boolean);
+      let cur = null;
+      const flush = () => { if (cur && cur.some((l) => /^매매\s*\d/.test(l))) blocks.set(cur.join('\n'), 1); cur = null; };
+      for (const ln of lines) {
+        if (/\d+동\s*$/.test(ln) && !/^(매매|전세|월세)/.test(ln) && ln.length < 40) { flush(); cur = [ln]; }
+        else if (cur) cur.push(ln);
+      }
+      flush();
+    };
+    const cnt = () => { harvest(); return blocks.size; };
+    let same = 0, last = cnt();
+    for (let i = 0; i < 50 && same < 3; i++) {
+      scrollOnce();
+      await sleep(700);
+      // 한 번 더 찾아봄: 처음엔 안 보이던 목록 영역이 내려가며 생길 수 있음
+      if (!sc) { const s2 = findScroller(); if (s2) { sc = s2; } }
+      const n = cnt();
+      same = n === last ? same + 1 : 0; last = n;
+    }
+    harvest();
+    const text = blocks.size ? [...blocks.keys()].join('\n\n') : (document.body.innerText || '');
+    const n = (text.match(/(^|\n)매매\s*\d/g) || []).length;
+    return { text, n };
+  };
+  window.hgCollect = collectListings;
   btn.onclick = async () => {
     btn.disabled = true;
     try {
       toast('매물 읽는 중…');
-      let sc = findScroller();
-      let target = sc || document.body;
-      // 목록 끝까지 한 화면씩 내려 모두 불러옴(최대 50번, 3번 연속 새로 안 늘면 중단). 목록 영역을 못 찾으면 페이지 자체를 내림
-      const scrollOnce = () => { if (sc) sc.scrollTop += Math.max(300, sc.clientHeight * 0.9); else window.scrollBy(0, Math.max(300, window.innerHeight * 0.9)); };
-      // 스크롤하며 보이는 매물 덩어리를 계속 모음(목록이 화면 밖 항목을 지우는 방식이어도 빠지지 않게). 덩어리 = '○○ 101동' 머리 줄부터 다음 머리 줄 전까지
-      const blocks = new Map();
-      const harvest = () => {
-        const lines = (document.body.innerText || '').split(/\r?\n/).map((x) => x.trim()).filter(Boolean);
-        let cur = null;
-        const flush = () => { if (cur && cur.some((l) => /^매매\s*\d/.test(l))) blocks.set(cur.join('\n'), 1); cur = null; };
-        for (const ln of lines) {
-          if (/\d+동\s*$/.test(ln) && !/^(매매|전세|월세)/.test(ln) && ln.length < 40) { flush(); cur = [ln]; }
-          else if (cur) cur.push(ln);
-        }
-        flush();
-      };
-      const cnt = () => { harvest(); return blocks.size; };
-      let same = 0, last = cnt();
-      for (let i = 0; i < 50 && same < 3; i++) {
-        scrollOnce();
-        await sleep(700);
-        // 한 번 더 찾아봄: 처음엔 안 보이던 목록 영역이 내려가며 생길 수 있음
-        if (!sc) { const s2 = findScroller(); if (s2) { sc = s2; } }
-        const n = cnt();
-        same = n === last ? same + 1 : 0; last = n;
-      }
-      harvest();
-      const text = blocks.size ? [...blocks.keys()].join('\n\n') : (document.body.innerText || '');
-      const n = (text.match(/(^|\n)매매\s*\d/g) || []).length;
+      const { text, n } = await collectListings();
       if (!n) { toast('매매 매물을 못 찾았어요', false); return; }
       toast('보내는 중… (' + n + '건)');
       chrome.runtime.sendMessage({ type: 'send', text, url: location.href }, (res) => {
