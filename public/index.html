@@ -23000,6 +23000,19 @@ function bidBoardChipFilter(r) {
 function toggleChipMode() { bidBoardState.chipMode = bidBoardState.chipMode === 'and' ? 'or' : 'and'; renderBidBoard(); }
 // ── 상세 창 ──
 var bidDrawerId = null;
+/* 2026-11-19(수정 요청: 전월세 자료를 먼저 받게) - 목록에서 물건 위에 마우스/손가락을 올리면 그 지역 실거래·전월세를 미리 받아 브라우저에 저장해 둠(상세 창이 열릴 때 바로 나옴). 동시에 2곳까지만 */
+var bbPrefetching = {}, bbPrefetchN = 0, bbPrefetchTimer = null;
+function bbPrefetchRegionOf(el) {
+    try {
+        var card = el && el.closest ? el.closest('[data-rid]') : null; if (!card) return;
+        var id = card.getAttribute('data-rid'), row = bidBoardRows.filter(function(r) { return String(r.id) === id; })[0]; if (!row || row.type === 'villa') return;
+        var lawd = row.lawd || bidBoardLawdOf(row.a); if (!lawd || dataCache[lawd] || bbPrefetching[lawd] || bbPrefetchN >= 2) return;
+        bbPrefetching[lawd] = 1; bbPrefetchN++;
+        fetchHouseDataCached(lawd).catch(function() {}).then(function() { bbPrefetchN--; });
+    } catch (e) {}
+}
+document.addEventListener('mouseover', function(e) { if (!e.target.closest || !e.target.closest('#bid-board')) return; clearTimeout(bbPrefetchTimer); var t = e.target; bbPrefetchTimer = setTimeout(function() { bbPrefetchRegionOf(t); }, 250); }, { passive: true });
+document.addEventListener('touchstart', function(e) { if (e.target.closest && e.target.closest('#bid-board')) bbPrefetchRegionOf(e.target); }, { passive: true });
 function openBidDrawer(id) {
     bidDrawerId = id; document.getElementById('bid-board').classList.add('with-drawer'); renderBidDrawer();
     if (bidBoardState.lite) { // 표 전체를 다시 그리지 않고 선택 표시만 바꿈(2026-10-10)
@@ -23303,7 +23316,7 @@ function drawerRangeChartHtml(row) {
         if (!svg) svg = '<div class="dr-sub" style="padding:6px 0;">' + (!dataCache[row.lawd || bidBoardLawdOf(row.a)] ? '시세 그래프: 지역 실거래를 불러오는 중이에요…' : '시세 그래프: 이 평형 거래가 ' + pts.length + '건뿐이라 그릴 수 없어요') + '</div>';
         var inRange = rg.mid >= rg.p25 && rg.mid <= rg.p75, sg = function(v) { return (v > 0 ? '+' : '') + v + '%'; };
         var basis = '<b>계산</b>: 이 앱의 예상 낙찰가 계산을 학습에 쓰지 않은 과거 낙찰에 적용했을 때 <b>실제 낙찰가 ÷ 예상 낙찰가</b>가 하위 25%였던 지점을 <b>하한</b>, 상위 25%였던 지점을 <b>상한</b>으로 이 물건의 예상 낙찰가에 적용했어요(' + rg.src + ' 사용: 하한 ' + sg(rg.lowPct) + ', 상한 ' + sg(rg.highPct) + '). 낙찰 뒤에는 실제 낙찰가가 이 하한~상한 안에 들었는지 리포트 성적표에서 확인해요.';
-        return '<div class="dr-sec"><h4>예상 낙찰가 하한 · 상한 <span class="dr-sub" style="display:inline;">' + (hp2 && hp2.loading ? '<span class="dr-sub" style="display:inline;">(이전 거래 불러오는 중…)</span>' : '') + '</h4>' + drawerRangeBtns() + drawerLegendHtml(!!(allBy2 && Object.keys(allBy2).length)) + (function() { var rp = drawerRentPoints(row); return !rp ? '<div class="dr-sub">전세·월세: 이 지역 전월세 자료를 아직 못 받았어요(받으면 선이 나타나요)</div>' : (!rp.jeonse.length ? '<div class="dr-sub">전세: 이 단지·평형의 전세 거래가 없어요(전월세 자료는 2024-07 이후, 같은 번지·같은 평형 ±3㎡ 기준)</div>' : (rp.jeonse.length < 2 ? '<div class="dr-sub">전세 거래가 ' + rp.jeonse.length + '건뿐이라 선을 그릴 수 없어요</div>' : '')); })() + svg
+        return '<div class="dr-sec"><h4>예상 낙찰가 하한 · 상한 <span class="dr-sub" style="display:inline;">' + (hp2 && hp2.loading ? '<span class="dr-sub" style="display:inline;">(이전 거래 불러오는 중…)</span>' : '') + '</h4>' + drawerRangeBtns() + drawerLegendHtml(!!(allBy2 && Object.keys(allBy2).length)) + (function() { var rp = drawerRentPoints(row); return !rp ? '<div class="dr-sub">' + (!dataCache[row.lawd || bidBoardLawdOf(row.a)] ? '전세·월세: 이 지역 자료를 불러오는 중이에요(받으면 선이 나타나요)' : '전세·월세: 이 지역에서 받은 전월세 자료가 없어요') + '</div>' : (!rp.jeonse.length ? '<div class="dr-sub">전세: 이 단지·평형의 전세 거래가 없어요(전월세 자료는 2024-07 이후, 같은 번지·같은 평형 ±3㎡ 기준)</div>' : (rp.jeonse.length < 2 ? '<div class="dr-sub">전세 거래가 ' + rp.jeonse.length + '건뿐이라 선을 그릴 수 없어요</div>' : '')); })() + svg
             + '<div class="dr-sub" style="line-height:1.8;"><span style="white-space:nowrap;"><i style="display:inline-block;width:10px;height:10px;background:#15803d;opacity:0.9;margin-right:3px;vertical-align:-1px;"></i><b>예상 낙찰가 하한</b> ' + fmt(rg.p25) + ' (예상 낙찰가 대비 ' + sg(Math.round((rg.p25 / rg.mid - 1) * 1000) / 10) + ')</span><br>'
             + '<span style="white-space:nowrap;"><i style="display:inline-block;width:10px;height:10px;background:#15803d;opacity:0.9;margin-right:3px;vertical-align:-1px;"></i><b>예상 낙찰가 상한</b> ' + fmt(rg.p75) + ' (' + sg(Math.round((rg.p75 / rg.mid - 1) * 1000) / 10) + ')</span><br>'
             + '점선 <b>예상 낙찰가 ' + fmt(rg.mid) + '</b> ' + (inRange ? '(하한~상한 사이)' : '(범위 밖 - 신건 최저가 보정)') + (row.fails === 0 ? ' · 신건은 최저가 아래로 낙찰될 수 없어 하한을 최저가에 맞췄어요(법적 하한)' : '') + '<br>' + basis + '</div></div>';
@@ -23333,6 +23346,7 @@ async function renderBidDrawer() {
         row._drawerLoading = false;
         if (bidDrawerId !== row.id) return;
     }
+    if (row.type !== 'villa' && lawd && !dataCache[lawd] && row._drawerLoading) return;   // 지역 자료(실거래+전월세)를 받는 중이면 받기가 끝난 뒤 한 번만 그림(자료 없이 그리다 '전월세 못 받음'이 보이던 문제)
     setTimeout(function() { try { loadCycleRates(); loadMarketCycle(lawd, row.type === 'villa' ? 'villa' : null); } catch (e) {} }, 600);   // 📈 사이클·금리 자료를 미리 받아 두어 사이클 창이 바로 열리게(2026-11-15)
     if (row.type === 'villa') { renderVillaDrawer(d, row); return; }
     var v = BID_BOARD_VERDICT[row.verdict] || BID_BOARD_VERDICT.nodata;
