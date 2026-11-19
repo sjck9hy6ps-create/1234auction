@@ -3551,7 +3551,7 @@ export default async function handler(req, res) {
       const { data, error } = await supabase.from('leader_follower_cache').select('payload').eq('id', 'signal|__undervalued__').maybeSingle();
       if (error) return res.status(500).json({ error: error.message });
       const pay = (data && data.payload) || {};
-      return res.status(200).json({ generatedAt: pay.generatedAt || null, 기준월: pay['기준월'] || null, map: pay.map || {}, mapMeta: pay.mapMeta || null, 검증: pay['검증'] || null, 서울: pay['서울 상위'] || [], 수도권: pay['수도권 상위'] || [] });
+      return res.status(200).json({ generatedAt: pay.generatedAt || null, 기준월: pay['기준월'] || null, map: pay.map || {}, mapMeta: pay.mapMeta || null, mapOv: pay.mapOv || {}, mapOvMeta: pay.mapOvMeta || null, 검증: pay['검증'] || null, 서울: pay['서울 상위'] || [], 수도권: pay['수도권 상위'] || [] });
     } catch (err) {
       return res.status(500).json({ error: err.message });
     }

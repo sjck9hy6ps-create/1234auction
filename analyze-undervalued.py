@@ -171,15 +171,20 @@ def main():
         out["대장격차 후보"] = cand_c
         # 앱 연결용: 상위 20%(검증한 구간) 단지 맵 {단지키: [평소보다 벌어짐%p, 대장 대비 격차%, 주변 대비%, 대장 단지명, 연식, 84㎡ 환산가(억)]}
         elig = S[(S["peer"] >= -0.25) & (S["n12"] >= 15) & S["catch"].notna()]; thr = elig["catch"].quantile(0.8); topq = elig[elig["catch"] >= thr]
-        bn = df[df["ckey"].isin(topq.index)].assign(bj=df["bunji"].astype(str).str.strip()).groupby(["ckey", "bj"]).size()
-        mp = {}
-        for ck, r in topq.iterrows():
-            val = [round(float(r["catch"]) * 100, 1), round(float(r["gapf"]) * 100, 1), round(float(r["peer"]) * 100, 1), str(attr["danji"].get(r["leader"], "")), None if pd.isna(r["by"]) else int(r["by"]), round(float(r["p84"]), 2), str(r["danji"])]
-            try: bjs = bn.loc[ck].sort_values(ascending=False).head(6).index
-            except Exception: bjs = []
-            for bj in bjs:
-                if bj and bj != "nan": mp[f"{region_norm(r['region'])}|{dong_key(ck.split('|')[1])}|{bj}"] = val
-        out["map"] = mp
+        def build_map(sel):
+            bn = df[df["ckey"].isin(sel.index)].assign(bj=df["bunji"].astype(str).str.strip()).groupby(["ckey", "bj"]).size()
+            mp = {}
+            for ck, r in sel.iterrows():
+                val = [round(float(r["catch"]) * 100, 1), round(float(r["gapf"]) * 100, 1), round(float(r["peer"]) * 100, 1), str(attr["danji"].get(r["leader"], "")), None if pd.isna(r["by"]) else int(r["by"]), round(float(r["p84"]), 2), str(r["danji"])]
+                try: bjs = bn.loc[ck].sort_values(ascending=False).head(6).index
+                except Exception: bjs = []
+                for bj in bjs:
+                    if bj and bj != "nan": mp[f"{region_norm(r['region'])}|{dong_key(ck.split('|')[1])}|{bj}"] = val
+            return mp
+        out["map"] = build_map(topq)
+        # 2026-11-19(수정 요청: 과대평가 아파트도 표기) 같은 기준의 반대쪽 - 대장과의 격차가 평소보다 크게 좁혀진(대장 격차 하위 20%) 단지. 과거 검증에서 이후 시군구 중앙보다 덜 오른 쪽(-0.4~-0.6%)
+        botq = elig[elig["catch"] <= elig["catch"].quantile(0.2)]
+        out["mapOv"] = build_map(botq); out["mapOvMeta"] = {"n": int(len(botq)), "thr": round(float(elig["catch"].quantile(0.2)) * 100, 1)}
         out["mapMeta"] = {"n": int(len(topq)), "eligible": int(len(elig)), "thr": round(float(thr) * 100, 1), "기준": "같은 동 대장 단지와의 격차가 평소보다 벌어진 정도 상위 20%(대장 고정, 평당가 주변의 78% 미만·12개월 거래 15건 미만 제외)"}
         seoul = [pack(r, ck) for ck, r in S2[S2["region"].astype(str).str.startswith("서울")].head(30).iterrows()]
         metro = [pack(r, ck) for ck, r in S2[S2["region"].astype(str).str.startswith(("서울", "경기", "인천"))].head(40).iterrows()]
