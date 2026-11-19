@@ -21578,10 +21578,11 @@ function bidPlanHtml(row, fmt) {
     return '<div class="dr-plan"><b>💡 입찰가 고르기</b> <span class="dr-sub" style="margin:0;">마진이 나는 구간(순이익 ' + minMarginTxt(row) + ' 이상' + (isFirstFloor(row.a) ? ' · 1층이라 20% 더' : '') + ') 안에서</span>'
         + '<table class="pn-table"><thead><tr><th></th><th class="r">입찰가</th><th class="r">낙찰 가능성</th><th class="r">순이익(세후)</th><th class="r">마진율(세전)</th></tr></thead><tbody>'
         + line('마진 확보 상한', pl.max, false, '순이익이 ' + minMarginTxt(row) + ' 남는 가장 높은 입찰가 - 이보다 높게 쓰면 마진이 그 아래')
-        + line(pl.ev && pl.rec && Math.abs(pl.ev.bid - pl.rec.bid) <= 1 ? '<b>기대수익 최대 = 추천 입찰가</b>' : '<b>기대수익 최대</b>', pl.ev, true, '낙찰 가능성 × 순이익이 가장 큰 입찰가' + (pl.ev && pl.rec && Math.abs(pl.ev.bid - pl.rec.bid) <= 1 ? ' (추천 입찰가와 같아서 한 줄로 합쳤어요)' : ''))
+        + line(pl.ev && pl.rec && Math.abs(pl.ev.bid - pl.rec.bid) <= 1 ? '<b>추천 입찰가</b>' : '<b>기대수익 최대</b>', pl.ev, true, '낙찰 가능성 × 순이익이 가장 큰 입찰가' + (pl.ev && pl.rec && Math.abs(pl.ev.bid - pl.rec.bid) <= 1 ? ' (추천 입찰가와 같아서 한 줄로 합쳤어요)' : ''))
         + (pl.p70 && (!pl.ev || Math.abs(pl.p70.bid - pl.ev.bid) > 1) ? line('낙찰 70%', pl.p70, false, '낙찰 가능성이 70%가 되는 가장 낮은 입찰가') : '')
         + (pl.ev && pl.rec && Math.abs(pl.ev.bid - pl.rec.bid) <= 1 ? '' : line('추천 입찰가', pl.rec, false, '목표 마진(500만 + 시세의 5~9%)을 지키는 입찰가'))
         + '</tbody></table>'
+        + '<div class="dr-sub" style="margin:2px 0 0;">추천 입찰가 = 낙찰 가능성 × 순이익(기대수익)이 가장 큰 입찰가</div>'
         + (pl.ladder && pl.ladder.length ? '<div class="dr-sub" style="margin-top:6px;"><b>마진을 줄여서라도 낙찰받고 싶다면</b> (예상 낙찰가 ' + fmt(row.winbid.price) + ' 기준, 예상 낙찰가의 보통 오차는 약 5.6%예요)</div><table class="pn-table"><thead><tr><th></th><th class="r">입찰가</th><th class="r">낙찰 가능성</th><th class="r">순이익(세후)</th></tr></thead><tbody>'
             + pl.ladder.map(function(x) { var pc = Math.round(x.p * 100); return '<tr><td>예상 낙찰가 ' + (x.k ? '+' + Math.round(x.k * 100) + '%' : '그대로') + '</td><td class="r"><b>' + fmt(x.bid) + '</b></td><td class="r">' + pc + '%</td><td class="r" style="color:' + (x.net < 0 ? '#b91c1c' : '#374151') + ';">' + fmt(x.net) + '</td></tr>'; }).join('')
             + (pl.zero ? '<tr><td title="이보다 높게 쓰면 손해">본전(순이익 0) 입찰가</td><td class="r"><b>' + fmt(pl.zero.bid) + '</b></td><td class="r">' + Math.round(pl.zero.p * 100) + '%</td><td class="r">0</td></tr>' : '')
@@ -23246,7 +23247,7 @@ function drawerPriceGridHtml(row) {
     var pcc2 = pe && pe.p != null ? Math.round(pe.p * 100) : null;
     h += item('낙찰 가능성', pcc2 != null ? (Math.round(pe.p * 1000) / 10).toFixed(1) + '%' : '-', pcc2 != null ? '추천 입찰가로 낙찰될 확률' : '', pcc2 == null ? '' : (pcc2 >= 60 ? '#15803d' : (pcc2 >= 35 ? '#b45309' : '#b91c1c')));
     var wbr = row.winbid && row.winbid.price ? winbidRangeFor(row.winbid, row) : null;
-    h += item('예상 낙찰가 ' + infoI('winp'), row.winbid && row.winbid.price ? fmt(row.winbid.price) : '-', row.winbid && row.winbid.price && row.sale ? '시세의 ' + Math.round(row.winbid.price / row.sale * 100) + '%' + (wbr ? '<br>하한 ' + fmt(wbr.p25) + ' · 상한 ' + fmt(wbr.p75) : '') : '', '');
+    h += item('예상 낙찰가 ' + infoI('winp'), row.winbid && row.winbid.price ? fmt(row.winbid.price) : '-', row.winbid && row.winbid.price && row.sale ? '시세의 ' + Math.round(row.winbid.price / row.sale * 100) + '%' + (wbr ? '<br>하한 ' + fmt(wbr.p25) + '<br>상한 ' + fmt(wbr.p75) : '') : '', '');
     // 2026-11-17(사용자): 가격 한눈에 마지막 칸에 예상 순수익 - 추천 입찰가로 낙찰받아 예상 매도가에 팔 때 남는 세후 순이익(수리비·이자·세금 반영, 입찰가 고르기 표와 같은 값)
     h += item('예상 순수익 (추천가 기준)', pe && pe.net != null ? fmt(pe.net) : '-', pe && pe.net != null ? '낙찰되면 · 세후' + (pe.pre != null ? '<br>세전 ' + fmt(pe.pre) : '') + (pe.p != null ? '<br>낙찰 ' + Math.round(pe.p * 100) + '% 반영 기대 ' + fmt(pe.net * pe.p) : '') : (pe ? '' : '추천가 없음'), pe && pe.net != null ? (pe.net > 0 ? '#15803d' : '#b91c1c') : '');
     return h + '</div></div>' + uvDrawerHtml(row) + ovDrawerHtml(row) + drawerRangeChartHtml(row);
