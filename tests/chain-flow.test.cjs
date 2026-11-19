@@ -16,9 +16,9 @@ function load(url, bodyText, opts) {
   const body = mk(); body.innerText = bodyText;
   const loc = { href: url, pathname: new URL(url).pathname, set _h(v) {} };
   const L = { href: url, pathname: new URL(url).pathname }; Object.defineProperty(L, 'href', { get() { return this._href; }, set(v) { nav.push(v); this._href = v; }, configurable: true }); L._href = url;
-  const doc = { body, createElement: mk, querySelectorAll: (sel) => (opts.links || []).map((l) => ({ href: l.href, innerText: l.text, textContent: l.text, closest: () => ({ innerText: l.ctx || '' }) })) };
+  const doc = { body, createElement: mk, querySelectorAll: (sel) => (sel.indexOf('a[href') !== 0 ? (opts.marks || []) : (opts.links || [])).map((l) => ({ href: l.href, innerText: l.text, textContent: l.text, children: [], closest: () => (l.ctx !== undefined ? { innerText: l.ctx || '' } : null), getBoundingClientRect: () => ({ width: 50, height: 20, left: l.x || 0, top: l.y || 0, right: (l.x || 0) + 50, bottom: (l.y || 0) + 20 }), click: () => { if (l.go) { L.pathname = l.go; } }, dispatchEvent: () => {} })) };
   const ctx = {
-    window: null, document: doc, location: L, console,
+    window: null, document: doc, location: L, console, innerWidth: 1200, innerHeight: 800, MouseEvent: class { constructor(t) { this.type = t; } },
     chrome: { runtime: { sendMessage: bgMsg, lastError: null }, storage: { local: { get: async (k) => ({ [k]: store[k] }), set: async (o) => { Object.assign(store, JSON.parse(JSON.stringify(o))); } } } },
     setTimeout: (fn, ms) => { clock += ms; Promise.resolve().then(fn); return 0; },
     Date: class extends Date { static now() { clock += 1; return clock; } constructor(...a) { super(...(a.length ? a : [clock])); } },
@@ -67,6 +67,12 @@ const click = async (box, label) => { const b = box.children[1].children.find((x
   p = load('https://new.land.naver.com/complexes/111', '매매 없음', { collect: { text: '', n: 0 } }); await p.done; await new Promise((r) => setTimeout(r, 200));
   assert.strictEqual(store.hchain.on, false); assert.ok(/연속/.test(store.hchain.stop), store.hchain.stop);
   console.log('✓ 3번 연속 못 읽으면 멈춤');
+  // 8b) 주소 검색 → 지도 표시(링크가 아님)를 눌러 단지 화면으로 이동 → 이어서 읽고 보냄
+  queue.handled = {}; queue.items = [{ key: 'm|', name: '금오아파트', dong: '신암동', addr: '대구 동구 신암동 100' }]; marks.length = 0; const s0 = sent.length;
+  store.hchain = { on: true, owner: 7, day, count: 0, fails: 0, cur: { key: 'm|', name: '금오아파트', dong: '신암동', addr: '대구 동구 신암동 100', qi: 0, step: 'search', at: clock } };
+  p = load('https://new.land.naver.com/search?sk=a', '해당되는 검색결과가 없습니다.', { marks: [{ text: '이마트24', x: 600, y: 300 }, { text: '금오아파트', x: 700, y: 400, go: '/complexes/321' }] }); await p.done; await new Promise((r) => setTimeout(r, 300));
+  assert.strictEqual(sent.length, s0 + 1, '지도 표시를 눌러 단지로 가서 보내야 함'); assert.deepStrictEqual(marks[0], ['m|', 'ok']);
+  console.log('✓ 지도 위 단지 표시를 눌러 목록을 불러와 보냄(주변 단지는 누르지 않음)');
   // 9) 검색 결과 없음 → 이름+동으로 한 번 더, 그래도 없으면 실패 기록
   queue.handled = {}; queue.items = [{ key: 'd|', name: '새단지', dong: '월곡동' }]; store.hchain = { on: true, owner: 7, day, count: 0, fails: 0, cur: { key: 'd|', name: '새단지', dong: '월곡동', qi: 0, step: 'search', at: clock } };
   p = load('https://new.land.naver.com/search?sk=a', '해당되는 검색결과가 없습니다.', { links: [] }); await p.done; await new Promise((r) => setTimeout(r, 200));
