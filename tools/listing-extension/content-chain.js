@@ -118,7 +118,14 @@
       }
       if (clicked) { st.cur.step = 'complex'; st.cur.at = Date.now(); await setSt(st); await sleep(L.jitter(1500, 3000)); return run(); }   // 같은 화면 안에서 주소만 바뀌어 새로고침이 없으므로 이어서 진행
       if ((st.cur.qi || 0) + 1 < qs.length) { st.cur.qi = (st.cur.qi || 0) + 1; st.cur.at = Date.now(); await setSt(st); show('🔁 다른 검색어로 다시 찾아요: ' + qs[st.cur.qi]); await sleep(L.jitter(1500, 3500)); location.href = searchUrl(st.cur, st.cur.qi); return; }
-      await fail(st, note + ' 자동완성 후보: ' + cands.slice(0, 10).map((c) => c.full.slice(0, 40)).join(' | ') + ' · 입력창:' + (inp ? 'O' : 'X') + ' · 화면 앞부분:' + String(document.body.innerText || '').replace(/\s+/g, ' ').slice(0, 260)); return;
+      const probe = () => {   // 확인용: 지도 가격 표시 1개의 HTML(속성에 단지 번호·이름이 있는지)과 입력창·주소 변화
+        try {
+          const pin = [...document.querySelectorAll('div,span,a,button')].find((e) => e.children.length <= 6 && String(e.innerText || '').length < 48 && /매\s*[\d.,]+\s*(억|만)/.test(e.innerText || '') && /㎡/.test(e.innerText || ''));
+          const ph = pin ? pin.outerHTML.replace(/\s+/g, ' ').slice(0, 420) + ' / 부모:' + (pin.parentElement ? pin.parentElement.tagName.toLowerCase() + '.' + String(pin.parentElement.className || '').slice(0, 50) + ' ' + [...pin.parentElement.attributes].map((x) => x.name + '=' + String(x.value).slice(0, 30)).join(' ').slice(0, 160) : '') : '핀 없음';
+          return ' · 핀HTML:' + ph + ' · 입력창:' + (inp ? inp.outerHTML.replace(/\s+/g, ' ').slice(0, 160) : '없음') + ' · 주소:' + location.pathname + location.search.slice(0, 60);
+        } catch (e) { return ''; }
+      };
+      await fail(st, note + ' 자동완성 후보: ' + cands.slice(0, 10).map((c) => c.full.slice(0, 40)).join(' | ') + ' · 입력창:' + (inp ? 'O' : 'X') + ' · 검색어:' + qtext + probe()); return;
     }
     if (st.cur.sent) { const ok = await countdown(L.jitter(20000, 60000), '완료'); if (ok) await advance(); return; }   // 새로고침 등으로 다시 열렸을 때 같은 단지를 다시 보내지 않음
     show('📖 ' + st.cur.name + ' 매물 읽는 중…', [mkBtn('⏹ 멈추기', '#dc2626', userStop)]);
