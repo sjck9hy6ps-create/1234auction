@@ -8601,7 +8601,8 @@ function pnChartPyung(all) {
     Object.keys(cnt).forEach(function(p) { if (!best || cnt[p] > cnt[best]) best = p; });
     return best;
 }
-function buildPriceChartSvg(trades, range, bands, allByM, rent) {
+function buildPriceChartSvg(trades, range, bands, allByM, rent, opt) {
+    var big = !!opt, LY = (opt && opt.layers) || {};   // 2026-11-19(사용자: 읽기 어려움) 상세 창용은 크게·글자는 오른쪽 여백에·색 구분
     var now = new Date(), from = new Date(now);
     if (range === '1y') from.setFullYear(now.getFullYear() - 1);
     else if (range === '3y') from.setFullYear(now.getFullYear() - 3);
@@ -8615,8 +8616,8 @@ function buildPriceChartSvg(trades, range, bands, allByM, rent) {
     var pts = trades.filter(function(t) { return parseInt(t.amount) > 0 && pnTradeDate(t) >= from; })
         .map(function(t) { return { d: pnTradeDate(t), v: parseInt(t.amount), f: t.floor }; }).sort(function(a, b) { return a.d - b.d; });
     if (pts.length < 2) return '<div class="pn-empty">이 기간 거래가 ' + pts.length + '건이라 그래프를 그릴 수 없어요</div>';
-    var W = 330, H = 170, L = 38, R = 8, T = 10, B = 40, VH = 24;
-    var rtB = cycleRates && cycleRates.base ? cycleRates.base : null; if (rtB) R = 28;   // 2026-11-15 기준금리 오른쪽 눈금 자리
+    var W = big ? 360 : 330, H = big ? 280 : 170, L = big ? 40 : 38, R = big ? 74 : 8, T = 10, B = big ? 36 : 40, VH = big ? 46 : 24, mlabs = [];
+    var rtB = cycleRates && cycleRates.base ? cycleRates.base : null; if (rtB && !big) R = 28; if (big && !LY.rate) rtB = null;   // 2026-11-15 기준금리 오른쪽 눈금 자리(상세 창은 켰을 때만, 값은 오른쪽 여백 라벨)
     var t0 = from.getTime(), t1 = now.getTime();
     var vs = pts.map(function(p) { return p.v; }), lo = Math.min.apply(null, vs), hi = Math.max.apply(null, vs);
     var pad = Math.max((hi - lo) * 0.12, hi * 0.03); lo = Math.max(0, lo - pad); hi = hi + pad;
@@ -8631,8 +8632,9 @@ function buildPriceChartSvg(trades, range, bands, allByM, rent) {
     var mlist = [];
     for (var md = new Date(from.getFullYear(), from.getMonth(), 1); md <= now; md = new Date(md.getFullYear(), md.getMonth() + 1, 1)) mlist.push(md.getFullYear() * 12 + md.getMonth());
     var svg = '<svg viewBox="0 0 ' + W + ' ' + H + '" class="pn-chart" id="' + cid + '" onmousemove="pnChartHover(event,this)" ontouchmove="pnChartHover(event,this)" ontouchstart="pnChartHover(event,this)" onmouseleave="pnChartHide(this)">';
-    for (var i = 0; i <= 3; i++) {
-        var v = lo + (hi - lo) * i / 3, y = Y(v);
+    var NT = big ? 4 : 3;
+    for (var i = 0; i <= NT; i++) {
+        var v = lo + (hi - lo) * i / NT, y = Y(v);
         svg += '<line x1="' + L + '" x2="' + (W - R) + '" y1="' + y + '" y2="' + y + '" stroke="#eef0f3"/>'
             + '<text x="' + (L - 4) + '" y="' + (y + 3) + '" text-anchor="end" font-size="9" fill="#9aa0a6">' + pnFmtEok(v) + '</text>';
     }
@@ -8643,11 +8645,12 @@ function buildPriceChartSvg(trades, range, bands, allByM, rent) {
                 + '<line x1="' + bx0 + '" x2="' + bx1 + '" y1="' + Y(b.hi).toFixed(1) + '" y2="' + Y(b.hi).toFixed(1) + '" stroke="' + b.col + '" stroke-width="1.4"/>'
                 + '<line x1="' + bx0 + '" x2="' + bx1 + '" y1="' + Y(b.lo).toFixed(1) + '" y2="' + Y(b.lo).toFixed(1) + '" stroke="' + b.col + '" stroke-width="1.4"/>';   // 2026-11-18 색 구분 강조: 띠를 진하게 + 위·아래 경계선
             var eokT = function(v) { return toEok(String(Math.round(v))); };   // 눈금처럼 0.1억 단위로 줄이면 서로 다른 금액이 같아 보여 만원 단위까지 표기
-            labs.push({ y: Y(b.hi), t: b.name + ' 상한 ' + eokT(b.hi), col: b.tc }); labs.push({ y: Y(b.lo), t: b.name + ' 하한 ' + eokT(b.lo), col: b.tc });
+            if (big) { mlabs.push({ y: Y(b.hi), t: '상한 ' + eokT(b.hi), col: b.tc }); mlabs.push({ y: Y(b.lo), t: '하한 ' + eokT(b.lo), col: b.tc }); } else { labs.push({ y: Y(b.hi), t: b.name + ' 상한 ' + eokT(b.hi), col: b.tc }); labs.push({ y: Y(b.lo), t: b.name + ' 하한 ' + eokT(b.lo), col: b.tc }); }
         });
-        if (bands.mid) svg += '<line x1="' + bx0 + '" x2="' + bx1 + '" y1="' + Y(bands.mid).toFixed(1) + '" y2="' + Y(bands.mid).toFixed(1) + '" stroke="#111827" stroke-width="1.2" stroke-dasharray="4 2"/><text x="' + (bx1 - 2) + '" y="' + (Y(bands.mid) - 3).toFixed(1) + '" text-anchor="end" font-size="8.5" fill="#111827" font-weight="700" style="paint-order:stroke;stroke:#fff;stroke-width:3px;">예상 낙찰가 ' + toEok(String(Math.round(bands.mid))) + '</text>';   // 수정 요청: 상한·하한 글자(왼쪽)와 겹치지 않게 오른쪽
+        if (bands.mid && big) { svg += '<line x1="' + bx0 + '" x2="' + bx1 + '" y1="' + Y(bands.mid).toFixed(1) + '" y2="' + Y(bands.mid).toFixed(1) + '" stroke="#111827" stroke-width="1.3" stroke-dasharray="4 2"/>'; mlabs.push({ y: Y(bands.mid), t: '예상 ' + toEok(String(Math.round(bands.mid))), col: '#111827' }); }
+        else if (bands.mid) svg += '<line x1="' + bx0 + '" x2="' + bx1 + '" y1="' + Y(bands.mid).toFixed(1) + '" y2="' + Y(bands.mid).toFixed(1) + '" stroke="#111827" stroke-width="1.2" stroke-dasharray="4 2"/><text x="' + (bx1 - 2) + '" y="' + (Y(bands.mid) - 3).toFixed(1) + '" text-anchor="end" font-size="8.5" fill="#111827" font-weight="700" style="paint-order:stroke;stroke:#fff;stroke-width:3px;">예상 낙찰가 ' + toEok(String(Math.round(bands.mid))) + '</text>';   // 수정 요청: 상한·하한 글자(왼쪽)와 겹치지 않게 오른쪽
         labs.sort(function(a, b) { return a.y - b.y; }); for (var li = 1; li < labs.length; li++) if (labs[li].y - labs[li - 1].y < 9.5) labs[li].y = labs[li - 1].y + 9.5;
-        labs.forEach(function(lb) { svg += '<text x="' + (bx0 + 3) + '" y="' + (lb.y + 3).toFixed(1) + '" text-anchor="start" font-size="8.5" font-weight="700" fill="' + lb.col + '" style="paint-order:stroke;stroke:#fff;stroke-width:3px;">' + lb.t + '</text>'; });   // 상한·하한 글자는 그래프 시작(왼쪽)에 - 오른쪽 최근 시세 위에 글자가 몰리지 않게
+        if (!big) labs.forEach(function(lb) { svg += '<text x="' + (bx0 + 3) + '" y="' + (lb.y + 3).toFixed(1) + '" text-anchor="start" font-size="8.5" font-weight="700" fill="' + lb.col + '" style="paint-order:stroke;stroke:#fff;stroke-width:3px;">' + lb.t + '</text>'; });   // 상한·하한 글자는 그래프 시작(왼쪽)에 - 오른쪽 최근 시세 위에 글자가 몰리지 않게
     }
     // 월별 중앙값 선 + 거래량 막대
     var byM = {};
@@ -8656,14 +8659,15 @@ function buildPriceChartSvg(trades, range, bands, allByM, rent) {
     var maxN = Math.max.apply(null, keys.map(function(k) { return byM[k].length; }));
     var allM = {}; if (allByM) Object.keys(allByM).forEach(function(k) { var d0 = new Date(Math.floor(+k / 12), (+k) % 12, 15); if (d0 >= from && d0 <= now) allM[k] = allByM[k]; });   // 2026-11-19(수정 요청) 같은 평형 거래량 옆에 단지 전체 평형 거래량(회색)
     Object.keys(allM).forEach(function(k) { if (allM[k] > maxN) maxN = allM[k]; });
-    Object.keys(allM).forEach(function(k) { var d = new Date(Math.floor(+k / 12), (+k) % 12, 15), bh = allM[k] / maxN * VH; svg += '<rect x="' + (X(d) - 3.2).toFixed(1) + '" y="' + (H - B + 4 + (VH - bh)).toFixed(1) + '" width="6.4" height="' + bh.toFixed(1) + '" fill="#d1d5db"><title>' + Math.floor(+k / 12) + '.' + ((+k) % 12 + 1) + ' 단지 전체 평형 ' + allM[k] + '건</title></rect>'; });
+    var pitch = (W - L - R) / Math.max(1, mlist.length), gw = big ? Math.max(1.3, Math.min(9, pitch * 0.9)) : 6.4, bw = big ? Math.max(0.9, gw * 0.55) : 4;   // 회색(단지 전체)을 넓게 뒤에, 파랑(같은 평형)을 좁게 앞에 겹쳐 둘 다 보이게
+    if (!big || LY.all !== false) Object.keys(allM).forEach(function(k) { var d = new Date(Math.floor(+k / 12), (+k) % 12, 15), bh = allM[k] / maxN * VH; svg += '<rect x="' + (X(d) - gw / 2).toFixed(1) + '" y="' + (H - B + 4 + (VH - bh)).toFixed(1) + '" width="' + gw.toFixed(1) + '" height="' + bh.toFixed(1) + '" fill="' + (big ? '#94a3b8' : '#d1d5db') + '"><title>' + Math.floor(+k / 12) + '.' + ((+k) % 12 + 1) + ' 단지 전체 평형 ' + allM[k] + '건</title></rect>'; });
     var line = [];
     keys.forEach(function(k) {
         var arr = byM[k].slice().sort(function(a, b) { return a - b; }), m = arr[Math.floor(arr.length / 2)];
         var d = new Date(Math.floor(k / 12), k % 12, 15);
         line.push(X(d).toFixed(1) + ',' + Y(m).toFixed(1));
         var bh = byM[k].length / maxN * VH, bx = X(d);
-        svg += '<rect x="' + (bx - 2) + '" y="' + (H - B + 4 + (VH - bh)) + '" width="4" height="' + bh.toFixed(1) + '" fill="#8fa8ff"/>';
+        svg += '<rect x="' + (bx - bw / 2).toFixed(1) + '" y="' + (H - B + 4 + (VH - bh)) + '" width="' + bw.toFixed(1) + '" height="' + bh.toFixed(1) + '" fill="' + (big ? '#2563eb' : '#8fa8ff') + '"/>';
     });
     var rateOf = function(k) { return rtB ? rtB[Math.floor(k / 12) + '-' + ('0' + (k % 12 + 1)).slice(-2)] : null; };
     if (rtB) {
@@ -8672,25 +8676,27 @@ function buildPriceChartSvg(trades, range, bands, allByM, rent) {
             var rlo = Math.min.apply(null, rvs), rhi = Math.max.apply(null, rvs); if (rhi - rlo < 0.5) { rhi = rlo + 0.5; }
             var Yr = function(v) { return T + (1 - (v - rlo) / (rhi - rlo)) * (H - T - B - VH); }, rp = '', prevYr = null;
             mlist.forEach(function(k) { var v = rateOf(k); if (v == null) return; var xx = X(new Date(Math.floor(k / 12), k % 12, 15)).toFixed(1), yr = Yr(v).toFixed(1); rp += (rp ? 'L' + xx + ' ' + prevYr + 'L' : 'M') + xx + ' ' + yr; prevYr = yr; });
-            svg += '<path d="' + rp + '" fill="none" stroke="#e11d48" stroke-width="1.3" stroke-dasharray="3 2" opacity="0.85"/>'
+            if (big) { svg += '<path d="' + rp + '" fill="none" stroke="#dc2626" stroke-width="1.1" stroke-dasharray="1.5 2.5" opacity="0.9"/>'; var lastRate = null; mlist.forEach(function(k) { var v = rateOf(k); if (v != null) lastRate = v; }); if (lastRate != null) mlabs.push({ y: Yr(lastRate), t: '금리 ' + lastRate.toFixed(2) + '%', col: '#dc2626' }); }
+            else svg += '<path d="' + rp + '" fill="none" stroke="#e11d48" stroke-width="1.3" stroke-dasharray="3 2" opacity="0.85"/>'
                 + '<text x="' + (W - R + 3) + '" y="' + (T + 8) + '" font-size="8.5" fill="#e11d48">' + rhi.toFixed(2) + '%</text><text x="' + (W - R + 3) + '" y="' + (H - B - VH + 2) + '" font-size="8.5" fill="#e11d48">' + rlo.toFixed(2) + '%</text>'
                 + '<text x="' + (L + 3) + '" y="' + (T + 9) + '" font-size="8.5" fill="#e11d48">┈ 기준금리(오른쪽 눈금)</text>';
         } else rtB = null;
     }
     if (rent) {   // 전세(초록)·월세 보증금(주황) 월 중앙값 선 - 범위 안 점만(세로 눈금은 매매 기준이라 범위를 벗어난 값은 그리지 않음)
-        [['jeonse', '#059669', '전세'], ['wolse', '#d97706', '월세(보증금)']].forEach(function(cfg, ci) {
+        [['jeonse', '#059669', '전세'], ['wolse', '#ea580c', '월세(보증금)']].forEach(function(cfg, ci) {
+            if (big && LY[cfg[0]] === false) return;
             var arr = (rent[cfg[0]] || []).filter(function(p) { var d0 = new Date(p.year, p.month - 1, p.day); return d0 >= from && d0 <= now; }); if (arr.length < 2) return;
             var bm = {}; arr.forEach(function(p) { var k = p.year * 12 + p.month - 1; (bm[k] = bm[k] || []).push(parseInt(p.amount)); });
             var ks = Object.keys(bm).map(Number).sort(function(x, y) { return x - y; }), pts2 = [];
             ks.forEach(function(k) { var v = bm[k].sort(function(x, y) { return x - y; }); var med = v[v.length >> 1]; if (med >= lo && med <= hi) pts2.push([X(new Date(Math.floor(k / 12), k % 12, 15)), Y(med), med, k]); });
             if (pts2.length < 2) return;
-            svg += '<polyline points="' + pts2.map(function(q) { return q[0].toFixed(1) + ',' + q[1].toFixed(1); }).join(' ') + '" fill="none" stroke="' + cfg[1] + '" stroke-width="1.6" stroke-dasharray="' + (ci ? '2 2' : '5 2') + '"/>';
-            pts2.forEach(function(q) { svg += '<circle cx="' + q[0].toFixed(1) + '" cy="' + q[1].toFixed(1) + '" r="1.6" fill="' + cfg[1] + '"><title>' + cfg[2] + ' ' + Math.floor(q[3] / 12) + '.' + (q[3] % 12 + 1) + ' 중앙 ' + pnFmtEok(q[2]) + '</title></circle>'; });
-            var last = pts2[pts2.length - 1]; svg += '<text x="' + (last[0] - 3).toFixed(1) + '" y="' + (last[1] - 4).toFixed(1) + '" text-anchor="end" font-size="8.5" font-weight="700" fill="' + cfg[1] + '" style="paint-order:stroke;stroke:#fff;stroke-width:3px;">' + cfg[2] + ' ' + pnFmtEok(last[2]) + '</text>';
+            svg += '<polyline points="' + pts2.map(function(q) { return q[0].toFixed(1) + ',' + q[1].toFixed(1); }).join(' ') + '" fill="none" stroke="' + cfg[1] + '" stroke-width="' + (big ? 1.8 : 1.6) + '"' + (big ? (ci ? ' stroke-dasharray="5 3"' : '') : ' stroke-dasharray="' + (ci ? '2 2' : '5 2') + '"') + '/>';
+            if (!big) pts2.forEach(function(q) { svg += '<circle cx="' + q[0].toFixed(1) + '" cy="' + q[1].toFixed(1) + '" r="1.6" fill="' + cfg[1] + '"><title>' + cfg[2] + ' ' + Math.floor(q[3] / 12) + '.' + (q[3] % 12 + 1) + ' 중앙 ' + pnFmtEok(q[2]) + '</title></circle>'; });
+            var last = pts2[pts2.length - 1]; if (big) mlabs.push({ y: last[1], t: (ci ? '월세 ' : '전세 ') + pnFmtEok(last[2]), col: cfg[1] }); else svg += '<text x="' + (last[0] - 3).toFixed(1) + '" y="' + (last[1] - 4).toFixed(1) + '" text-anchor="end" font-size="8.5" font-weight="700" fill="' + cfg[1] + '" style="paint-order:stroke;stroke:#fff;stroke-width:3px;">' + cfg[2] + ' ' + pnFmtEok(last[2]) + '</text>';
         });
     }
-    svg += '<polyline points="' + line.join(' ') + '" fill="none" stroke="var(--ui-blue,#1e5eff)" stroke-width="2"/>';
-    pts.forEach(function(p) { svg += '<circle cx="' + X(p.d).toFixed(1) + '" cy="' + Y(p.v).toFixed(1) + '" r="2.2" fill="var(--ui-blue,#1e5eff)" opacity="0.35"><title>' + p.d.getFullYear() + '.' + (p.d.getMonth() + 1) + ' · ' + p.f + '층 · ' + pnFmtEok(p.v) + '</title></circle>'; });
+    svg += '<polyline points="' + line.join(' ') + '" fill="none" stroke="' + (big ? '#1d4ed8' : 'var(--ui-blue,#1e5eff)') + '" stroke-width="' + (big ? 2.4 : 2) + '"/>';
+    pts.forEach(function(p) { svg += '<circle cx="' + X(p.d).toFixed(1) + '" cy="' + Y(p.v).toFixed(1) + '" r="' + (big ? 1.9 : 2.2) + '" fill="' + (big ? '#60a5fa' : 'var(--ui-blue,#1e5eff)') + '" opacity="' + (big ? 0.55 : 0.35) + '"><title>' + p.d.getFullYear() + '.' + (p.d.getMonth() + 1) + ' · ' + p.f + '층 · ' + pnFmtEok(p.v) + '</title></circle>'; });
     // x축 연도
     for (var yy = from.getFullYear() + (from.getMonth() > 0 ? 1 : 0); yy <= now.getFullYear(); yy++) {
         var xd = X(new Date(yy, 0, 1));
@@ -8699,6 +8705,12 @@ function buildPriceChartSvg(trades, range, bands, allByM, rent) {
             + '<text x="' + xd + '" y="' + (H - 4) + '" text-anchor="middle" font-size="9" fill="#9aa0a6">' + String(yy).slice(2) + '년</text>';
     }
     svg += '<text x="' + (L - 4) + '" y="' + (H - B + VH) + '" text-anchor="end" font-size="8" fill="#9aa0a6">거래량</text>';
+    if (big) {
+        svg += '<text x="' + (L - 4) + '" y="' + (H - B + 14) + '" text-anchor="end" font-size="8" fill="#6b7280">' + maxN + '건</text>';
+        mlabs.sort(function(a, b) { return a.y - b.y; }); var ly = mlabs.map(function(m) { return m.y; });
+        for (var q = 1; q < ly.length; q++) if (ly[q] - ly[q - 1] < 11) ly[q] = ly[q - 1] + 11;
+        mlabs.forEach(function(m, q) { var yy = Math.min(ly[q], H - B - VH + 2); svg += '<line x1="' + (W - R) + '" x2="' + (W - R + 4) + '" y1="' + m.y.toFixed(1) + '" y2="' + yy.toFixed(1) + '" stroke="' + m.col + '" stroke-width="1"/><text x="' + (W - R + 5) + '" y="' + (yy + 3).toFixed(1) + '" font-size="9" font-weight="700" fill="' + m.col + '">' + m.t + '</text>'; });
+    }
     pnChartData[cid] = { W: W, L: L, R: R, T: T, H: H, B: B, VH: VH, months: mlist.map(function(k) {
         var arr = (byM[k] || []).slice().sort(function(a, b) { return a - b; });
         var d = new Date(Math.floor(k / 12), k % 12, 15);
@@ -23067,6 +23079,16 @@ function aptNoTradeNote(row) {
     return '<div class="dr-sec dr-sub" style="' + st + '">' + msg + '</div>';
 }
 var drawerChartRange = (function() { try { var v = localStorage.getItem('drChartRange'); return /^(1y|3y|5y|10y)$/.test(v) ? v : '10y'; } catch (e) { return '10y'; } })();
+var drawerLayers = (function() { var d = { jeonse: true, wolse: true, rate: false, all: true }; try { var j = JSON.parse(localStorage.getItem('drLayers') || 'null'); if (j) Object.keys(d).forEach(function(k) { if (typeof j[k] === 'boolean') d[k] = j[k]; }); } catch (e) {} return d; })();
+function toggleDrawerLayer(k) { drawerLayers[k] = !drawerLayers[k]; try { localStorage.setItem('drLayers', JSON.stringify(drawerLayers)); } catch (e) {} try { renderBidDrawer(); } catch (e) {} }
+function drawerLegendHtml(hasAll) {
+    var chip = function(k, color, label, sw) { var on = k ? drawerLayers[k] : true; return '<button type="button" ' + (k ? 'onclick="toggleDrawerLayer(\'' + k + '\')"' : 'disabled') + ' style="display:inline-flex;align-items:center;gap:4px;margin:2px 4px 2px 0;padding:3px 8px;border:1px solid ' + (on ? color : '#d1d5db') + ';border-radius:12px;background:' + (on ? '#fff' : '#f3f4f6') + ';color:' + (on ? '#111827' : '#9ca3af') + ';font-size:11px;cursor:' + (k ? 'pointer' : 'default') + ';white-space:nowrap;">' + sw.replace(/COL/g, on ? color : '#cbd5e1') + label + '</button>'; };
+    var line = function(dash) { return '<svg width="20" height="8" style="vertical-align:middle"><line x1="0" x2="20" y1="4" y2="4" stroke="COL" stroke-width="2.4"' + (dash ? ' stroke-dasharray="' + dash + '"' : '') + '/></svg>'; };
+    var box = '<i style="display:inline-block;width:10px;height:10px;background:COL;"></i>';
+    return '<div style="margin:4px 0 2px;">' + chip(null, '#1d4ed8', '매매 월 중앙값', line('')) + chip(null, '#60a5fa', '실거래 점', '<i style="display:inline-block;width:7px;height:7px;border-radius:50%;background:COL;"></i>') + chip(null, '#7c3aed', '예상 낙찰가 범위', '<i style="display:inline-block;width:12px;height:9px;background:COL;opacity:0.35;border:1px solid COL;"></i>')
+        + chip('jeonse', '#059669', '전세 보증금', line('')) + chip('wolse', '#ea580c', '월세 보증금', line('5 3')) + chip('rate', '#dc2626', '기준금리', line('1.5 2.5'))
+        + '<br>막대(아래): ' + chip(null, '#2563eb', '같은 평형 거래량', box) + (hasAll ? chip('all', '#94a3b8', '단지 전체 거래량', box) : '<span class="dr-sub" style="display:inline;">단지 전체 거래량 자료가 아직 없어요</span>') + '</div>';
+}
 function setDrawerChartRange(r) { drawerChartRange = r; try { localStorage.setItem('drChartRange', r); } catch (e) {} try { renderBidDrawer(); } catch (e) {} }
 function drawerRangeBtns() { return '<div class="pn-seg" style="margin:2px 0 6px;">' + [['1y', '1년'], ['3y', '3년'], ['5y', '5년'], ['10y', '10년']].map(function(r) { return '<button class="' + (drawerChartRange === r[0] ? 'on' : '') + '" onclick="setDrawerChartRange(\'' + r[0] + '\')">' + r[1] + '</button>'; }).join('') + '</div>'; }
 /* 2026-11-18(사용자: 상세 창 시세 그래프를 10년으로) - 앱이 받는 지역 실거래는 최근 2년뿐이라, 이 단지·평형의 2년 이전은 서버가 미리 계산한 월 중앙값(10년 그래프 미리 계산본)이나 단지 거래 이력 조회(get-house?action=history)로 이어 붙임.
@@ -23264,17 +23286,17 @@ function drawerRangeChartHtml(row) {
         if (!row || row.type !== 'apt' || !row.winbid || !row.winbid.price) return '';
         var rg = winbidRangeFor(row.winbid, row); if (!rg) return '';
         var fmt = function(x) { return toEok(String(Math.round(x))); };
-        var bands = { mid: rg.mid, items: [{ name: '예상 낙찰가', lo: rg.p25, hi: rg.p75, col: '#15803d', op: 0.38, tc: '#166534' }] };   // 2026-11-18(사용자: 범위 3단계는 필요 없음 - 가장 좁은 범위 하나와 예상 낙찰가가 그 안에 있는지가 중요)
+        var bands = { mid: rg.mid, items: [{ name: '예상 낙찰가', lo: rg.p25, hi: rg.p75, col: '#7c3aed', op: 0.16, tc: '#6d28d9' }] };   // 2026-11-19 초록(전세 선)과 헷갈려 보라로   // 2026-11-18(사용자: 범위 3단계는 필요 없음 - 가장 좁은 범위 하나와 예상 낙찰가가 그 안에 있는지가 중요)
         var tr = []; try { tr = drawerTrades(row); } catch (e) {}
         var pts = tr.filter(function(t) { return t.d && t.p > 0; }).map(function(t) { return { amount: String(t.p), year: t.d.getFullYear(), month: t.d.getMonth() + 1, day: t.d.getDate(), floor: isNaN(t.f) ? '-' : t.f }; });
         var hp2 = drawerChartRange !== '1y' ? drawerHistPoints(row) : null, long2 = !!(hp2 && hp2.pts);
         if (long2) { var minYm2 = 999999; pts.forEach(function(p) { var ym = p.year * 100 + p.month; if (ym < minYm2) minYm2 = ym; }); pts = pts.concat(hp2.pts.filter(function(p) { return p.year * 100 + p.month < minYm2; })); }
         var allBy2 = (hp2 && hp2.allByM) || drawerRecentAllByM(row);
-        var svg = ''; if (pts.length >= 2) { try { svg = buildPriceChartSvg(pts, drawerChartRange, bands, allBy2, drawerRentPoints(row)); } catch (e) { svg = ''; } }
+        var svg = ''; if (pts.length >= 2) { try { svg = buildPriceChartSvg(pts, drawerChartRange, bands, allBy2, drawerRentPoints(row), { layers: drawerLayers }); } catch (e) { svg = ''; } }
         if (!svg) svg = '<div class="dr-sub" style="padding:6px 0;">' + (!dataCache[row.lawd || bidBoardLawdOf(row.a)] ? '시세 그래프: 지역 실거래를 불러오는 중이에요…' : '시세 그래프: 이 평형 거래가 ' + pts.length + '건뿐이라 그릴 수 없어요') + '</div>';
         var inRange = rg.mid >= rg.p25 && rg.mid <= rg.p75, sg = function(v) { return (v > 0 ? '+' : '') + v + '%'; };
         var basis = '<b>계산</b>: 이 앱의 예상 낙찰가 계산을 학습에 쓰지 않은 과거 낙찰에 적용했을 때 <b>실제 낙찰가 ÷ 예상 낙찰가</b>가 하위 25%였던 지점을 <b>하한</b>, 상위 25%였던 지점을 <b>상한</b>으로 이 물건의 예상 낙찰가에 적용했어요(' + rg.src + ' 사용: 하한 ' + sg(rg.lowPct) + ', 상한 ' + sg(rg.highPct) + '). 낙찰 뒤에는 실제 낙찰가가 이 하한~상한 안에 들었는지 리포트 성적표에서 확인해요.';
-        return '<div class="dr-sec"><h4>예상 낙찰가 하한 · 상한 <span class="dr-sub" style="display:inline;">(시세 그래프 위에 겹쳐 그림 · 점=실거래, 선=월 중앙값' + (hp2 && hp2.loading ? ' · 이전 거래 불러오는 중…' : '') + ' · 아래 막대=거래량: 파랑 같은 평형 · 회색 단지 전체 평형 · 초록 선=전세 보증금, 주황 점선=월세 계약 보증금)</span></h4>' + drawerRangeBtns() + svg
+        return '<div class="dr-sec"><h4>예상 낙찰가 하한 · 상한 <span class="dr-sub" style="display:inline;">' + (hp2 && hp2.loading ? '<span class="dr-sub" style="display:inline;">(이전 거래 불러오는 중…)</span>' : '') + '</h4>' + drawerRangeBtns() + drawerLegendHtml(!!(allBy2 && Object.keys(allBy2).length)) + svg
             + '<div class="dr-sub" style="line-height:1.8;"><span style="white-space:nowrap;"><i style="display:inline-block;width:10px;height:10px;background:#15803d;opacity:0.9;margin-right:3px;vertical-align:-1px;"></i><b>예상 낙찰가 하한</b> ' + fmt(rg.p25) + ' (예상 낙찰가 대비 ' + sg(Math.round((rg.p25 / rg.mid - 1) * 1000) / 10) + ')</span><br>'
             + '<span style="white-space:nowrap;"><i style="display:inline-block;width:10px;height:10px;background:#15803d;opacity:0.9;margin-right:3px;vertical-align:-1px;"></i><b>예상 낙찰가 상한</b> ' + fmt(rg.p75) + ' (' + sg(Math.round((rg.p75 / rg.mid - 1) * 1000) / 10) + ')</span><br>'
             + '점선 <b>예상 낙찰가 ' + fmt(rg.mid) + '</b> ' + (inRange ? '(하한~상한 사이)' : '(범위 밖 - 신건 최저가 보정)') + (row.fails === 0 ? ' · 신건은 최저가 아래로 낙찰될 수 없어 하한을 최저가에 맞췄어요(법적 하한)' : '') + '<br>' + basis + '</div></div>';
