@@ -43,4 +43,8 @@ t('자동완성 후보: 이름이 같은 단지 중 주소 동·리가 맞는 �
   assert.strictEqual(L.pickSuggestion(c, { name: '주공아파트', addr: '경기도 의정부시 신곡동 754', dong: '신곡동' }), 1);
   assert.strictEqual(L.pickSuggestion([{ first: '다른단지', full: '' }], { name: '주공아파트' }), -1);
 });
+t('같은 단지를 번호 순서만 다르게 적어도 같게 봄(장암2단지주공↔장암주공2단지), 9단지 차이는 다르게', () => {
+  assert.ok(L.sameComplex('장암주공2단지 101동', '장암2단지주공아파트')); assert.ok(L.sameComplex('장암주공2단지아파트', '장암2단지주공아파트'));
+  assert.ok(!L.sameComplex('장암주공1단지 105동', '장암2단지주공아파트')); assert.ok(!L.sameComplex('영천마을주공9단지 910동', '영천마을주공아파트'));
+});
 console.log(n + '개 통과');

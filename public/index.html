@@ -24429,7 +24429,7 @@ function hqTargets() {
         if (!hqNameOk(r.name)) { hqSkipped++; return; }
         var k = lbKey(r.name) + '|' + String(r.a.dong || '').replace(/\s/g, ''); if (seen[k]) return; seen[k] = 1;
         var d = listingAgeDays(r.a); if (d != null && d <= 7) return;   // 최근 7일 안에 모은 단지는 건너뜀
-        out.push({ key: k, name: r.name, dong: r.a.dong || '', region: r.region || '', pyung: r.pyung || '', url: lbNaverUrl(r) || '', addr: hqJibun(r), q: (r.name || '') + ' ' + (r.a.dong || ''), dday: r.dday ? r.dday.label : '' });
+        out.push({ key: k, name: r.name, dong: r.a.dong || '', region: r.region || '', pyung: r.pyung || '', url: lbNaverUrl(r) || '', addr: hqJibun(r), area: Math.round((parseFloat(r.pyung) || 0) * 3.305785), q: (r.name || '') + ' ' + (r.a.dong || ''), dday: r.dday ? r.dday.label : '' });
     });
     return out;
 }

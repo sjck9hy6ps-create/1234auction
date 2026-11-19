@@ -64,7 +64,11 @@
   // 화면에 나온 단지 이름(매물 머리줄 '집주인보라맨션 비동'·자동완성 첫 줄 등)이 목표 단지와 같은 단지인지. 이름 앞뒤에 '9단지'·'2차' 같은 구분이 더 붙으면 다른 단지(동 이름 '비동'·'910동'은 무시)
   const sp = (x) => String(x || '').replace(/[\s·.\-_,()]/g, '').toLowerCase();
   const coreName = (n) => sp(String(n || '').replace(/\([^)]*\)|（[^）]*）/g, '').replace(/아파트\s*$/, ''));
+  // 단지 이름 비교용 정본: '○차·○단지' 번호 + 한글 글자(정렬) - 같은 단지를 '장암2단지주공'(국토부)·'장암주공2단지'(네이버)처럼 순서만 다르게 적는 경우를 같게 봄(앱 호가 반영의 canonName과 같은 방식)
+  const canon = (n) => { const s0 = String(n || '').replace(/\([^)]*\)|（[^）]*）/g, '').replace(/집주인/g, '').replace(/아파트/g, ''); const ch = (s0.match(/\d+\s*(?:차|단지)/g) || []).map((x) => x.replace(/\s/g, '')).sort().join(','); const hg = (s0.replace(/\d+\s*(?:차|단지)/g, '').match(/[가-힣]/g) || []).sort().join(''); return ch + '|' + hg; };
   function sameComplex(label, target) {
+    const lbl = String(label || '').replace(/\s*[0-9A-Za-z가-힣]{0,4}동\s*$/, '');
+    const c1 = canon(lbl), c2 = canon(target); if (c1 === c2 && c2.split('|')[1].length >= 3) return true;
     const T = coreName(target); let Lb = sp(String(label || '').replace(/집주인/g, '')).replace(/아파트/g, '');
     if (!T || !Lb) return false;
     const i = Lb.indexOf(T); if (i < 0) return false;

@@ -19,7 +19,8 @@ function load(url, bodyText, opts) {
   class HTMLInputElement { set value(v) { typed.push(v); this._v = v; } get value() { return this._v; } }
   const inp = Object.create(HTMLInputElement.prototype); Object.assign(inp, { focus() {}, dispatchEvent() {}, getBoundingClientRect: () => ({ left: 100, right: 400, top: 50, bottom: 80, width: 300, height: 30 }) });
   const sug = (opts.sugg || []).map((x, i) => ({ innerText: x.text, children: [], closest: () => null, getBoundingClientRect: () => ({ left: 110, right: 390, top: 100 + i * 40, bottom: 130 + i * 40, width: 280, height: 30 }), click() { if (x.go) L.pathname = x.go; }, dispatchEvent() {} }));
-  const doc = { body, createElement: mk, querySelector: () => null, querySelectorAll: (sel) => (sel.indexOf('li,a') === 0 ? sug : ((sel.indexOf('input') >= 0 && !opts.noInput) ? [inp] : [])) };
+  const pinEls = (opts.pins || []).map((x) => ({ innerText: x.text, children: [], closest: () => null, getBoundingClientRect: () => ({ left: x.x, right: x.x + 120, top: x.y, bottom: x.y + 60, width: 120, height: 60 }), click() { if (x.go) L.pathname = x.go; }, dispatchEvent() {} }));
+  const doc = { body, createElement: mk, querySelector: () => null, querySelectorAll: (sel) => (sel === 'div,span,a,button' ? pinEls : sel.indexOf('li,a') === 0 ? sug : ((sel.indexOf('input') >= 0 && !opts.noInput) ? [inp] : [])) };
   const ctx = {
     window: null, document: doc, location: L, console, innerWidth: 1200, innerHeight: 800, HTMLInputElement, Event: class { constructor(t) { this.type = t; } }, MouseEvent: class { constructor(t) { this.type = t; } },
     chrome: { runtime: { sendMessage: bgMsg, lastError: null }, storage: { local: { get: async (k) => ({ [k]: store[k] }), set: async (o) => { Object.assign(store, JSON.parse(JSON.stringify(o))); } } } },
@@ -100,6 +101,19 @@ const state = (o) => { store.hchain = Object.assign({ on: true, owner: 7, day, c
   p = load('https://new.land.naver.com/search?sk=z2', '검색', { noInput: true }); await p.done; await settle(500);   // 이름 → 이름+동 두 번 시도
   assert.ok(/검색창을 못 찾음 구조:/.test(queue.handled['z|'].note), queue.handled['z|'].note || '(note 없음, 다른 검색어로 재시도 중일 수 있음)');
   console.log('✓ 검색창을 못 찾으면 화면 구조 정보를 기록에 남김');
+  // 12) 자동완성이 안 되면 지도 가격 표시를 눌러 보고 단지 화면에 목표 이름이 있으면 진행
+  queue.handled = {}; queue.items = [{ key: 'j|', name: '장암2단지주공아파트', dong: '장암동', area: 74 }, { key: 'k|', name: '끝' }]; marks.length = 0; const s2 = sent.length;
+  state({ cur: { key: 'j|', name: '장암2단지주공아파트', dong: '장암동', area: 74, qi: 1, step: 'search', at: clock } });
+  p = load('https://new.land.naver.com/search?sk=j', '장암2단지주공아파트 단지정보 매매', { sugg: [], pins: [{ text: '1,123만\n매3.97억\n117㎡', x: 500, y: 300, go: '/complexes/1' }, { text: '983만\n매2.2억\n74㎡', x: 1500, y: 450, go: '/complexes/2' }], collect: { text: '장암주공2단지 101동\n매매 2억\n확인매물', n: 3 } }); await p.done; await settle(500);
+  if (sent.length !== s2 + 1) console.log('디버그', JSON.stringify(marks), JSON.stringify(queue.handled), nav.slice(-2), JSON.stringify(store.hchain));
+  assert.strictEqual(sent.length, s2 + 1); assert.strictEqual(marks[0][1], 'ok');
+  console.log('✓ 자동완성이 안 되면 지도 가격 표시(면적이 같은 것 우선)를 눌러 단지 화면에서 이름을 확인하고 진행');
+  // 13) 눌러 본 단지 화면에 목표 이름이 없으면 실패(최대 4번)
+  queue.handled = {}; marks.length = 0; const s3 = sent.length;
+  state({ cur: { key: 'j|', name: '장암2단지주공아파트', dong: '장암동', area: 74, qi: 1, step: 'search', at: clock } });
+  p = load('https://new.land.naver.com/search?sk=j', '다른단지 정보', { sugg: [], pins: [{ text: '매3.97억\n117㎡', x: 500, y: 300, go: '/complexes/1' }, { text: '매6억\n107㎡', x: 1000, y: 450, go: '/complexes/3' }] }); await p.done; await settle(500);
+  assert.strictEqual(sent.length, s3); assert.strictEqual(marks[0][1], 'fail'); assert.ok(/지도 표시 확인 실패/.test(queue.handled['j|'].note), queue.handled['j|'].note);
+  console.log('✓ 눌러 본 단지가 목표가 아니면 보내지 않고 실패로 기록');
   console.log('모두 통과');
   process.exit(0);
 })().catch((e) => { console.error('실패:', e); process.exit(1); });
