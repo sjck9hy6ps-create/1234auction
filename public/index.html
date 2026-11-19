@@ -12916,6 +12916,7 @@ function openNaverMapForRow(id) {
 }
 function openNaverForRow(id) {
     var row = bidBoardRows.filter(function(r) { return String(r.id) === String(id); })[0]; if (!row) return;
+    var direct = row.type === 'apt' ? lbNaverUrl(row) : null; if (direct) { openLinkWindow(direct, 'win-naver'); return; }   // 한 번 호가를 보낸 단지는 네이버 단지 번호를 알아 지도 대신 단지 화면으로 바로(2026-11-19)
     var a = row.a, st = hsBld[row.id], title = st && st.info && st.info.title, m = null; try { m = findMatchedApt(a); } catch (e) {}
     var by = a.buildYear || row.estBuildYear || (title && title.useAprDay ? parseInt(String(title.useAprDay).slice(0, 4), 10) : null) || (m && m.latest && m.latest.build_year) || null;
     var r = naverLandUrl({ propType: row.type || a.propType, title: title, buildingType: m && m.buildingType, name: cleanBldgName(a.name) || row.name, addr: a.addr, dong: a.dong, pyung: row.pyung || a.pyung, buildYear: by, lat: a.lat, lon: a.lon });
