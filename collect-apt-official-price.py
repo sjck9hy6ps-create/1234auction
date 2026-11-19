@@ -181,6 +181,31 @@ def fix_gaps():
         if r.sigungu_cd in ("28110", "28140", "28260", "28200") and r.bjdong_cd: old[str(r.cache_key).split("|")[0].strip()][(r.sigungu_cd, r.bjdong_cd)] += 1
     old_map = {d: c.most_common(1)[0][0] for d, c in old.items()}
     print(f"옛 인천 법정동코드 {len(old_map)}개 동", flush=True)
+    auc = requests.get(SITE + "/api/auction", timeout=120).json()
+    # 좌표 캐시에 없는 동은 옛 시군구(서구·중구·동구) × 법정동코드(10100~13000)를 하나씩 대입해 조회하고, 응답의 법정동명(ldCodeNm)에 그 동 이름이 있을 때만 채택
+    new_inc = ("28275", "28290", "28125", "28155"); need = {}
+    for pnu, r in recs.items():
+        if not r.get("n") and pnu[:5] in new_inc:
+            dn = (dong_of.get(pnu) or "").strip()
+            if dn and dn not in old_map: need.setdefault(dn, []).append(pnu[10:])
+    for a0 in auc:
+        if a0.get("propType") in ("apt", "아파트") and str(a0.get("bCode") or "")[:5] in new_inc and a0.get("bunji"):
+            bb0 = bunji_to_bunji(a0.get("bunji")); dn = str(a0.get("dong") or "").strip()
+            if bb0 and dn and dn not in old_map: need.setdefault(dn, []).append(str(a0["bCode"])[5:] [0:0] + "1" + bb0[0] + bb0[1])
+    def resolve(item):
+        dn, tails = item
+        for tail in list(dict.fromkeys(tails))[:4]:
+            for osg in ("28260", "28110", "28140"):
+                for bj in range(10100, 13100, 100):
+                    cp = osg + str(bj) + tail
+                    f, _, ok = vget(cp, YEAR, 1)
+                    if ok and f and dn in str(f[0].get("ldCodeNm") or ""): return dn, (osg, str(bj))
+        return dn, None
+    print(f"옛 코드를 찾아야 하는 인천 동 {len(need)}개", flush=True)
+    with ThreadPoolExecutor(max_workers=THREADS) as ex:
+        for dn, hit in ex.map(resolve, list(need.items())):
+            if hit: old_map[dn] = hit; print(f"  {dn} → 옛 코드 {hit[0]}{hit[1]}", flush=True)
+    print(f"옛 인천 법정동코드(보완 후) {len(old_map)}개 동", flush=True)
     todo = []   # (pnu, 후보 PNU 목록, 검증할 동 이름, 우선순위, 단지명)
     # ② 자료 없는 건물
     for pnu, r in recs.items():
@@ -190,7 +215,7 @@ def fix_gaps():
         if dn in old_map and sg.startswith("28"): cands.append((old_map[dn][0] + old_map[dn][1] + pnu[10:], dn))
         if cands: todo.append((pnu, cands, r.get("p", 3), r.get("danji", "")))
     # ① 경매 물건에서 수집 목록에 없던 건물
-    auc = requests.get(SITE + "/api/auction", timeout=120).json(); add = 0
+    add = 0
     for a in auc:
         if a.get("propType") not in ("apt", "아파트") or not a.get("bCode") or not a.get("bunji"): continue
         bb = bunji_to_bunji(a.get("bunji"))
