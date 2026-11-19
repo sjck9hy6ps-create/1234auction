@@ -24384,7 +24384,7 @@ async function applyListingList(a, row, list) {
     bidBoardRows = bidBoardRows.map(function(r) { if (String(r.id) !== String(id)) return r; r.a = a; try { return finalizeBidBoardRow(r); } catch (e) { return r; } });
 }
 /* 📋 호가 모으기(2026-10-18, 사용자: 호가를 모으는 방법) - ① 호가 확인 순서(임장 후보 단지를 입찰일 가까운 순, 네이버 검색 링크·마지막 수집일) ② 여러 단지 매물을 한 번에 붙여넣으면 단지 이름·평형으로 알아서 입찰물건에 나눠 저장.
-   네이버 부동산은 자동 수집을 약관으로 제한함 - 원래는 열기·복사를 사용자가 직접 했으나, 2026-11-19 사용자 요청으로 🤖 호가 자동 진행(맥 크롬 확장 0.8.0, 하루 30곳·20~60초 간격·캡차/로그인/접속 제한 시 즉시 멈춤)을 추가함. */
+   네이버 부동산은 자동 수집을 약관으로 제한하므로 열기·복사는 사용자가 직접 하고(앱은 링크와 정리만), 대량 자동 수집은 만들지 않음. (2026-11-19 호가 자동 진행을 만들어 시험했으나 사용자 요청으로 삭제함) */
 var lbAll = false; // 호가 모으기 대상: 기본은 입찰 7일 안 + 추천가가 있는 임장 후보(동작을 줄이려고), 켜면 임장 후보 전체
 var lbAny = false;  // 수신함(확장이 보낸 호가)은 임장 후보가 아닌 물건(패스)도 대상으로 삼음 - 사용자가 직접 연 단지를 보낸 것이라(2026-10-28 마린애시앙부영: 패스 판정이라 '대상이 아닌 단지'로 처리되던 문제)
 /* 네이버 단지 번호 기억(2026-11-19, 사용자: 호가 모으기 3동작 줄이기) - 확장이 보낸 주소(…/complexes/번호)에서 단지 번호를 배워 두었다가, 다음부터 '네이버 열기'가 검색이 아니라 그 단지 페이지로 바로 가게 함(이 기기 브라우저에 저장) */
@@ -24417,38 +24417,6 @@ function auctionQueueTargets() {
     });
     out.sort(function(x, y) { return (x.permit - y.permit) || ((x.sale || '9999') < (y.sale || '9999') ? -1 : ((x.sale || '9999') > (y.sale || '9999') ? 1 : (y.rec - x.rec))); });  // 비규제(허가구역 밖) 먼저, 그다음 매각일 순
     return out;
-}
-/* 🤖 호가 자동 진행 대기열(2026-11-19, 사용자: 호가 모으기 3동작을 대신해 줄 방법) - 입찰 가까운 순 임장 후보 단지를 하루 30곳까지 listingRaw의 id 'hqueue'로 저장 → 맥 크롬 확장(0.8.0)이 네이버 화면에서 '▶ 자동 진행 시작'으로 하나씩 열고·읽고·보냄(20~60초 간격, 캡차·로그인·접속 제한이면 멈춤) */
-var HQ_LIMIT = 30;
-function hqJibun(r) { var t = String((r.a && r.a.addr) || '').trim(), m = t.match(/^(.*?(?:동|읍|면|리|가)\s+(?:산\s*)?\d+(?:-\d+)?)/); return m ? m[1] : ((r.region || '') + ' ' + ((r.a && r.a.dong) || '') + ' ' + (r.bunjiFull || '')).trim(); }   // 네이버 지도 주소 검색용 지번 주소('○○시 ○○구 ○○동 123-4')
-function hqNameOk(n) { var t = String(n || '').trim(); return t.replace(/\s/g, '').length >= 3 && !/\d{1,4}-\d{1,4}\s*$/.test(t) && !/^\d+\s*(차|단지)$/.test(t) && !/^[가-힣]+동\s*\d/.test(t); }   // 주소처럼 쓴 이름('문흥동 1011-1')·'1차' 같은 이름은 네이버 지도에서 찾을 수 없어 대기열에서 뺌(직접 모으기)
-var hqSkipped = 0;
-function hqTargets() {
-    var T = listingBulkTargets(), seen = {}, out = []; hqSkipped = 0;
-    T.forEach(function(r) {
-        if (!hqNameOk(r.name)) { hqSkipped++; return; }
-        var k = lbKey(r.name) + '|' + String(r.a.dong || '').replace(/\s/g, ''); if (seen[k]) return; seen[k] = 1;
-        var d = listingAgeDays(r.a); if (d != null && d <= 7) return;   // 최근 7일 안에 모은 단지는 건너뜀
-        out.push({ key: k, name: r.name, dong: r.a.dong || '', region: r.region || '', pyung: r.pyung || '', url: lbNaverUrl(r) || '', addr: hqJibun(r), area: Math.round((parseFloat(r.pyung) || 0) * 3.305785), q: (r.name || '') + ' ' + (r.a.dong || ''), dday: r.dday ? r.dday.label : '' });
-    });
-    return out;
-}
-async function hqLoad() { try { var l = await fetch('/api/auction?kind=listingRaw', { cache: 'no-store' }).then(function(r) { return r.json(); }); var it = Array.isArray(l) ? l.filter(function(x) { return x.id === 'hqueue'; })[0] : null; return it ? JSON.parse(it.text) : null; } catch (e) { return null; } }
-async function hqMake() {
-    var m = document.getElementById('hq-msg'); if (m) m.textContent = '저장 중…';
-    try {
-        var items = hqTargets().slice(0, HQ_LIMIT), q = { at: new Date().toISOString(), items: items, handled: {} };
-        var r = await fetch('/api/auction?kind=listingRaw', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: 'hqueue', at: q.at, kind: 'hqueue', url: '', text: JSON.stringify(q), done: true, appliedAt: q.at }) });
-        if (!r.ok) throw new Error('HTTP ' + r.status);
-        if (m) m.textContent = '✅ ' + items.length + '곳을 저장했어요. 맥 크롬의 네이버 부동산 화면 왼쪽 아래 [▶ 자동 진행 시작]을 누르세요.'; hqRender();
-    } catch (e) { if (m) m.textContent = '❌ 저장 실패: ' + (e.message || e); }
-}
-async function hqRender() {
-    var box = document.getElementById('hq-body'); if (!box) return;
-    var q = await hqLoad(), T = hqTargets().length;
-    var h = '<div class="bb-sub" style="line-height:1.6;">호가를 아직 안 모은(또는 7일 넘은) 임장 후보 단지 <b>' + T + '곳</b> · 하루 최대 ' + HQ_LIMIT + '곳' + (hqSkipped ? ' <span style="color:#64748b;">(이름이 없거나 \'1차\'처럼 찾을 수 없는 ' + hqSkipped + '곳은 대기열에서 뺐어요 - 직접 모아 주세요)</span>' : '') + '</div>';
-    if (q && q.items) { var hd = q.handled || {}, ok = 0, fl = 0; q.items.forEach(function(i) { var x = hd[i.key]; if (x) { if (x.s === 'ok' || x.s === 'none') ok++; else fl++; } }); h += '<div class="bb-sub" style="margin-top:4px;"><b>현재 대기열</b> ' + q.items.length + '곳 · ✅ 완료 ' + ok + ' · ⚠️ 못 읽음 ' + fl + ' · 남음 ' + (q.items.length - ok - fl) + ' <span style="color:#64748b;">(' + new Date(q.at).toLocaleString('ko-KR') + ' 저장)</span></div>'; }
-    box.innerHTML = h;
 }
 async function aqLoad() { try { var l = await fetch('/api/auction?kind=listingRaw', { cache: 'no-store' }).then(function(r) { return r.json(); }); var it = Array.isArray(l) ? l.filter(function(x) { return x.id === 'queue'; })[0] : null; return it ? JSON.parse(it.text) : null; } catch (e) { return null; } }
 async function aqSave() {
@@ -24511,14 +24479,13 @@ function openListingBulk() {
         + '<div class="bb-sub" style="margin:6px 0 10px;">① 아래 단지를 위에서부터 열어 네이버 부동산 매물 목록(매매)을 복사 → ② 여러 단지 것을 이어서 아래 칸에 붙여넣고 [반영]. 어느 물건 것인지는 단지 이름·평형으로 앱이 찾아요. 네이버 열기·복사는 직접 하시고, 자동 수집은 하지 않아요(약관).</div>'
         + '<textarea id="lb-text" placeholder="네이버 부동산 매물 목록을 여기에 붙여넣기 (여러 단지 이어서 붙여도 돼요)" style="width:100%;height:120px;font-size:12px;border:1px solid #d0d7de;border-radius:8px;padding:8px;box-sizing:border-box;"></textarea>'
         + '<div style="margin:8px 0;"><button class="modal-btn btn-purple" onclick="applyListingBulk()">반영</button> <span id="lb-msg" class="bb-sub"></span></div>'
-        + '<div style="border:1px solid #c7d2fe;background:#eef2ff;border-radius:10px;padding:8px 10px;margin:8px 0;"><div style="font-weight:700;">🤖 호가 자동 진행 <span class="bb-sub" style="font-weight:400;">(맥 크롬 확장 0.8.0 · 네이버 단지를 하나씩 열어 읽고 보냄)</span></div><div id="hq-body" style="margin:4px 0;"></div><button class="modal-btn btn-gray" onclick="hqMake()">🧲 대기열 만들기(최대 ' + HQ_LIMIT + '곳)</button> <span id="hq-msg" class="bb-sub"></span><div class="bb-sub" style="margin-top:4px;line-height:1.6;">네이버 부동산 화면 왼쪽 아래 [▶ 자동 진행 시작]을 한 번 누르면 단지 사이 20~60초 간격으로 진행해요. 캡차·로그인·접속 제한 화면이 뜨거나 3번 연속 못 읽으면 멈춰요(로그인·캡차는 직접 해야 해요).</div></div>'
         + '<div style="font-weight:700;margin:10px 0 4px;">호가 확인 순서 <label class="bb-sub" style="font-weight:400;cursor:pointer;"><input type="checkbox" ' + (lbAll ? 'checked' : '') + ' onchange="lbAll=this.checked;openListingBulk()"> 임장 후보 전체(기본은 입찰 7일 안 + 추천가 있는 물건만)</label> <span class="bb-sub">(아파트 ' + T.length + '건 · 단지 ' + rows.length + '곳 · 7일 넘게 안 모은 단지 ' + need.length + '곳)</span></div>'
         + '<table style="width:100%;border-collapse:collapse;font-size:12px;"><thead><tr style="text-align:left;color:#666;"><th>입찰</th><th>단지 · 평형</th><th>마지막 수집</th><th>열기</th></tr></thead><tbody>'
         + rows.slice(0, 150).map(function(x) {
             var r = x.r, a = r.a, d = listingAgeDays(a), fresh = d != null && d <= 7, q = encodeURIComponent((r.name || '') + ' ' + (a.dong || ''));
             return '<tr style="border-top:1px solid #eee;' + (fresh ? 'opacity:.5;' : '') + '"><td>' + (r.dday ? r.dday.label : '-') + '</td><td><b>' + bbEsc(r.name) + '</b> <span class="bb-sub">' + bbEsc(r.region || '') + ' · ' + (r.pyung || '') + '평' + (x.n > 1 ? ' · 물건 ' + x.n + '건' : '') + '</span></td><td>' + (d == null ? '<span style="color:#c62828;">없음</span>' : d + '일 전') + '</td><td>' + (lbNaverUrl(r) ? '<a href="' + lbNaverUrl(r) + '" target="_blank" rel="noopener" title="이전에 호가를 보낸 단지라 검색 없이 바로 열려요">네이버 열기 ⚡</a>' : '<a href="https://new.land.naver.com/search?sk=' + q + '" target="_blank" rel="noopener">네이버 열기</a>') + '</td></tr>';
         }).join('') + '</tbody></table>' + (rows.length > 150 ? '<div class="bb-sub">앞의 150곳만 보여요.</div>' : '') + '</div>';
-    box.innerHTML = h; box.style.display = 'flex'; try { hqRender(); } catch (e) {}
+    box.innerHTML = h; box.style.display = 'flex';
 }
 async function applyListingBulk() {
     var ta = document.getElementById('lb-text'), msg = document.getElementById('lb-msg'); if (!ta || !ta.value.trim()) { if (msg) msg.innerText = '붙여넣은 내용이 없어요'; return; }

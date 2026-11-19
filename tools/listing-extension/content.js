@@ -76,7 +76,7 @@
     const n = text.split(/\r?\n/).filter((l) => ITEM.test(l.trim())).length;
     return { text, n, expected, info };
   };
-  window.hgCollect = collectListings;
+  window.hgCollect = collectListings;   // 시험(tests/listing-collect.test.cjs)용
   btn.onclick = async () => {
     btn.disabled = true;
     try {

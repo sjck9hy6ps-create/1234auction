@@ -210,22 +210,3 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   })();
   return true;
 });
-
-// 호가 자동 진행(0.8.0): 앱이 만든 대기열(listingRaw의 id 'hqueue')을 읽고, 처리한 항목을 표시. 이 탭이 누구인지(whoami)도 알려 줌
-chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
-  if (!msg || ['hqGet', 'hqMark', 'whoami'].indexOf(msg.type) < 0) return;
-  (async () => {
-    try {
-      if (msg.type === 'whoami') { sendResponse({ tabId: sender.tab ? sender.tab.id : null }); return; }
-      const list = await fetch(APP + '/api/auction?kind=listingRaw', { cache: 'no-store' }).then((x) => x.json());
-      const it = Array.isArray(list) ? list.find((x) => x.id === 'hqueue') : null;
-      const q = it ? JSON.parse(it.text) : null;
-      if (msg.type === 'hqGet') { sendResponse({ ok: true, q }); return; }
-      if (!q) { sendResponse({ ok: false }); return; }
-      q.handled = q.handled || {}; q.handled[msg.key] = { s: msg.status, at: new Date().toISOString(), note: String(msg.note || '').slice(0, 1500) };
-      await fetch(APP + '/api/auction?kind=listingRaw', { method: 'POST', headers: Object.assign({ 'Content-Type': 'application/json' }, await wkHeader()), body: JSON.stringify({ id: 'hqueue', at: q.at, kind: 'hqueue', url: '', text: JSON.stringify(q), done: true, appliedAt: new Date().toISOString() }) });
-      sendResponse({ ok: true });
-    } catch (e) { sendResponse({ ok: false, error: String(e) }); }
-  })();
-  return true;
-});
