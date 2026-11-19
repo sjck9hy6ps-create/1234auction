@@ -18,6 +18,9 @@ on:
       fresh:
         description: '보관 파일 무시하고 처음부터(true)'
         default: 'false'
+      retry_empty:
+        description: '자료 없던 건물만 옛 시군구 코드로 재시도(1)'
+        default: '0'
 concurrency:
   group: collect-apt-official-price
   cancel-in-progress: false
@@ -46,6 +49,7 @@ jobs:
           SAMPLE: ${{ inputs.sample || '0' }}
           MAX_MIN: ${{ inputs.max_min || '320' }}
           THREADS: ${{ inputs.threads || '8' }}
+          RETRY_EMPTY: ${{ inputs.retry_empty || '0' }}
           PYTHONUNBUFFERED: '1'
         run: set -o pipefail; python collect-apt-official-price.py | tee collect-log.txt
       - name: 보관소에 올리기

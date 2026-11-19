@@ -127,7 +127,43 @@ def summarize(units):
     return {str(a): [len(v), int(statistics.median(v)), min(v), max(v)] for a, v in sorted(by.items())}
 
 
+def retry_empty():
+    """자료가 없던 건물(시군구 코드가 바뀐 지역)을 옛 코드로 다시 조회 - 광주·전남(12xxx→29xxx/46xxx)·강원·전북은 get-official-price.js의 매핑, 인천 분구는 서구(28260)·중구(28110)·동구(28140) 후보로 시도"""
+    import re
+    src = open(os.path.join(HERE, "api", "get-official-price.js"), encoding="utf-8").read()
+    leg = json.loads(re.search(r"const LEGACY_SIGUNGU_PREFIX = (\{.*?\});", src).group(1))
+    inc = {"28275": ["28260"], "28290": ["28260"], "28125": ["28110", "28140"], "28155": ["28110", "28140"]}
+    recs = [json.loads(ln) for ln in open(OUT, encoding="utf-8")]
+    todo = [r for r in recs if r.get("n", 0) == 0 and not r.get("retried")]
+    print(f"자료 없는 건물 {len(todo):,}곳 재시도(전체 {len(recs):,}곳)", flush=True)
+    def alts(pnu):
+        sg = pnu[:5]; c = []
+        if sg in leg: c.append(leg[sg] + pnu[5:])
+        for o in inc.get(sg, []): c.append(o + pnu[5:])
+        if pnu[:10] == "2827510400": c.append("28260" + "10600" + pnu[10:])
+        return c
+    def work(r):
+        for ap in alts(r["pnu"]):
+            _, res, ok = fetch_pnu((ap, r.get("p", 3) <= 2))
+            if ok and res and res[1]:
+                yr, units = res
+                nr = {"pnu": r["pnu"], "year": yr, "p": r.get("p", 3), "danji": r.get("danji", ""), "n": len(units), "areas": summarize(units), "via": ap}
+                if nr["p"] <= 2: nr["units"] = [list(u) for u in units]
+                return nr
+        r2 = dict(r); r2["retried"] = True; return r2
+    fixed = {}; t0 = time.time()
+    with ThreadPoolExecutor(max_workers=THREADS) as ex:
+        for i, nr in enumerate(ex.map(work, todo)):
+            fixed[nr["pnu"]] = nr
+            if (i + 1) % 500 == 0: print(f"  {i+1:,}/{len(todo):,} · 찾음 {sum(1 for v in fixed.values() if v.get('n'))} · {int(time.time()-t0)}초", flush=True)
+    with open(OUT + ".new", "w", encoding="utf-8") as fo:
+        for r in recs: fo.write(json.dumps(fixed.get(r["pnu"], r), ensure_ascii=False) + "\n")
+    os.replace(OUT + ".new", OUT)
+    print(f"끝: 재시도 {len(todo):,}곳 중 새로 찾음 {sum(1 for v in fixed.values() if v.get('n')):,}곳", flush=True)
+
+
 def main():
+    if os.environ.get('RETRY_EMPTY') == '1': return retry_empty()
     g, nocode_n, tot_n = build_pnus()
     bd = board_rows()
     # 우선순위: 1 = 입찰후보(임장 후보), 2 = 그 밖의 경매건, 3 = 그 외 전부(거래 많은 순)
