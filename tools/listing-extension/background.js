@@ -210,3 +210,16 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   })();
   return true;
 });
+
+// 호가 보내기 성공 후 그 네이버 부동산 창(탭)을 닫음(2026-11-20, 사용자 요청) - 네이버 단지 화면(/complexes/…)에서 보낸 탭만, 보낸 탭 자신만 닫음
+chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+  if (!msg || msg.type !== 'closeSelf') return;
+  (async () => {
+    try {
+      const t = sender.tab; const u = String((t && t.url) || sender.url || '');
+      if (t && t.id != null && /^https:\/\/new\.land\.naver\.com\/complexes\/\d+/.test(u)) { await chrome.tabs.remove(t.id); sendResponse({ ok: true }); }
+      else sendResponse({ ok: false, reason: 'not-complex-tab' });
+    } catch (e) { sendResponse({ ok: false, error: String(e) }); }
+  })();
+  return true;
+});

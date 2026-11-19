@@ -3,14 +3,14 @@
 const vm = require('vm'), fs = require('fs'), assert = require('assert');
 const fx = (f) => { try { return fs.readFileSync(__dirname + '/fixtures-private/' + f, 'utf8'); } catch (e) { return null; } };
 const code = fs.readFileSync(__dirname + '/../tools/listing-extension/content.js', 'utf8');
-const mk = () => ({ style: {}, children: [], appendChild(c) { this.children.push(c); } });
+const mk = () => ({ style: {}, children: [], appendChild(c) { this.children.push(c); }, addEventListener(ty, fn) { (this._l = this._l || []).push(fn); }, removeEventListener(ty, fn) { this._l = (this._l || []).filter((x) => x !== fn); } });
 function load(opts) {
   const body = mk(); const timers = [];
   if (opts.page !== undefined) body.innerText = opts.page; else Object.defineProperty(body, 'innerText', { get: opts.text });
   const ctx = {
     document: { body, getElementById: () => null, createElement: mk, documentElement: { scrollHeight: 1000 }, querySelectorAll: opts.qsa || (() => []) },
-    getComputedStyle: () => ({ overflowY: 'auto' }), console, setTimeout: (fn) => { Promise.resolve().then(fn); return 0; }, setInterval: (fn) => { timers.push(fn); return 0; },
-    chrome: { runtime: { sendMessage() {} } }, location: { pathname: opts.path || '/complexes/1' }, innerHeight: 800, WheelEvent: class {}, Event: class {}, scrollTo() {}, scrollBy() {}, addEventListener() {}, Promise, Map, Math, JSON, String, RegExp, Array, Object,
+    getComputedStyle: () => ({ overflowY: 'auto' }), console, setTimeout: (fn, ms) => { if (ms === 1000 && opts.cancelOnCountdown && body.children[0] && body.children[0]._l) body.children[0]._l.slice().forEach((f) => f()); Promise.resolve().then(fn); return 0; }, setInterval: (fn) => { timers.push(fn); return 0; },
+    chrome: { runtime: { sendMessage(m, cb) { (opts.msgs = opts.msgs || []).push(m.type); if (m.type === 'send' && cb) cb(opts.sendRes || { ok: true, applied: true, result: { applied: [{ name: '효형', pyung: 23, n: 54 }] } }); } } }, location: { pathname: opts.path || '/complexes/1' }, innerHeight: 800, WheelEvent: class {}, Event: class {}, scrollTo() {}, scrollBy() {}, addEventListener() {}, Promise, Map, Math, JSON, String, RegExp, Array, Object,
   };
   ctx.window = ctx; vm.createContext(ctx); vm.runInContext(code, ctx);
   return { ctx, body, timers };
@@ -46,5 +46,15 @@ function fakeList(mode) {
   f = fakeList('scroll'); L = load({ text: f.text, qsa: f.qsa, path: '/complexes/777' }); await new Promise((r) => setTimeout(r, 100));
   assert.strictEqual(L.timers.length, 0); assert.strictEqual(f.count(), 20);
   console.log('✓ 단지 화면에 들어가도 버튼을 누르기 전에는 아무것도 스크롤하지 않음(자동 펼치기 없음)');
+  // ⑤ 앱에 반영되면 이 네이버 창을 닫음 / 버튼을 누르면 취소 / 반영 안 됐거나 실패하면 닫지 않음
+  const sendFlow = async (extra) => { const f2 = fakeList('scroll'); const o = Object.assign({ text: f2.text, qsa: f2.qsa, path: '/complexes/777' }, extra || {}); const L2 = load(o); await L2.body.children[0].onclick(); await new Promise((r) => setTimeout(r, 150)); return o.msgs || []; };
+  let msgs = await sendFlow(); assert.deepStrictEqual(msgs.filter((m) => m === 'send' || m === 'closeSelf'), ['send', 'closeSelf']);
+  console.log('✓ 앱에 반영되면 3초 뒤 이 네이버 창을 닫음(창 닫기 요청 전송)');
+  msgs = await sendFlow({ cancelOnCountdown: true }); assert.ok(msgs.indexOf('send') >= 0 && msgs.indexOf('closeSelf') < 0);
+  console.log('✓ 닫기 카운트다운 중 버튼을 누르면 창을 닫지 않음');
+  msgs = await sendFlow({ sendRes: { ok: true, applied: true, result: { applied: [], text: '대상이 아닌 단지' } } }); assert.strictEqual(msgs.indexOf('closeSelf'), -1);
+  msgs = await sendFlow({ sendRes: { ok: true, applied: false, noApp: true } }); assert.strictEqual(msgs.indexOf('closeSelf'), -1);
+  msgs = await sendFlow({ sendRes: { ok: false } }); assert.strictEqual(msgs.indexOf('closeSelf'), -1);
+  console.log('✓ 반영된 물건이 없거나 앱 탭이 없거나 보내기가 실패하면 창을 닫지 않음');
   console.log('모두 통과');
 })().catch((e) => { console.error('실패:', e); process.exit(1); });

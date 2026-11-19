@@ -98,7 +98,9 @@
   const idleLabel = () => { btn.textContent = '📤 호가 보내기'; btn.style.background = '#1e5eff'; };
 
   // ---- 📤 호가 보내기 ----
+  let closePending = false;   // 보낸 뒤 창 닫기 카운트다운 중(이때 버튼은 '닫기 취소'로만 동작)
   btn.onclick = async () => {
+    if (closePending) return;
     btn.disabled = true;
     try {
       toast('매물 읽는 중…');
@@ -112,7 +114,20 @@
         if (!res || !res.ok) toast('❌ 보내기 실패', false);
         else if (res.applied) {
           const a = (res.result && res.result.applied) || [];
-          if (a.length) toast('✅ 앱에 반영됨: ' + a.slice(0, 2).map((x) => x.name + ' ' + x.pyung + '평 매물 ' + x.n + '건').join(' · '), true);
+          if (a.length) {
+            const msgOk = '✅ 앱에 반영됨: ' + a.slice(0, 2).map((x) => x.name + ' ' + x.pyung + '평 매물 ' + x.n + '건').join(' · ');
+            toast(msgOk, true);
+            // 앱에 반영되면 이 네이버 창을 닫음(3초 안에 이 버튼을 누르면 닫지 않음). 반영 안 됐거나 실패하면 닫지 않음
+            let cancel = false; const stopClose = () => { cancel = true; toast(msgOk + ' (창 닫기 취소)', true); };
+            closePending = true; btn.disabled = false; btn.addEventListener('click', stopClose, { once: true });
+            (async () => {
+              for (let s2 = 3; s2 > 0 && !cancel; s2--) { toast(msgOk + ' · ' + s2 + '초 뒤 이 창을 닫아요(누르면 취소)', true); await sleep(1000); }
+              btn.removeEventListener('click', stopClose); closePending = false;
+              if (!cancel) { try { chrome.runtime.sendMessage({ type: 'closeSelf' }); } catch (e) {} }
+              else setTimeout(idleLabel, 6000);
+            })();
+            return;
+          }
           else toast('⚠️ 받았지만 반영된 물건이 없어요 (' + ((res.result && res.result.text) || '대상 단지가 아니거나 같은 평형 없음') + ')', false);
         } else toast(res.noApp ? '⏳ 앱 탭이 안 열려 있어요 - 앱을 열면 자동 반영돼요' : '⏳ 앱이 아직 처리 중이에요 - 앱 화면에서 확인하세요', null);
         setTimeout(() => { idleLabel(); btn.disabled = false; }, 8000);
