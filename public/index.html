@@ -23099,7 +23099,7 @@ function aptNoTradeNote(row) {
     return '<div class="dr-sec dr-sub" style="' + st + '">' + msg + '</div>';
 }
 var drawerChartRange = (function() { try { var v = localStorage.getItem('drChartRange'); return /^(1y|3y|5y|10y)$/.test(v) ? v : '10y'; } catch (e) { return '10y'; } })();
-var drawerLayers = (function() { var d = { jeonse: true, wolse: true, rate: false, all: true }; try { var j = JSON.parse(localStorage.getItem('drLayers') || 'null'); if (j) Object.keys(d).forEach(function(k) { if (typeof j[k] === 'boolean') d[k] = j[k]; }); } catch (e) {} return d; })();
+var drawerLayers = (function() { var d = { jeonse: true, wolse: true, rate: true, all: true }; try { var j = JSON.parse(localStorage.getItem('drLayers') || 'null'); if (j) Object.keys(d).forEach(function(k) { if (typeof j[k] === 'boolean') d[k] = j[k]; }); } catch (e) {} return d; })();
 function toggleDrawerLayer(k) { drawerLayers[k] = !drawerLayers[k]; try { localStorage.setItem('drLayers', JSON.stringify(drawerLayers)); } catch (e) {} try { renderBidDrawer(); } catch (e) {} }
 function drawerLegendHtml(hasAll) {
     var chip = function(k, color, label, sw) { var on = k ? drawerLayers[k] : true; return '<button type="button" ' + (k ? 'onclick="toggleDrawerLayer(\'' + k + '\')"' : 'disabled') + ' style="display:inline-flex;align-items:center;gap:4px;margin:2px 4px 2px 0;padding:3px 8px;border:1px solid ' + (on ? color : '#d1d5db') + ';border-radius:12px;background:' + (on ? '#fff' : '#f3f4f6') + ';color:' + (on ? '#111827' : '#9ca3af') + ';font-size:11px;cursor:' + (k ? 'pointer' : 'default') + ';white-space:nowrap;">' + sw.replace(/COL/g, on ? color : '#cbd5e1') + label + '</button>'; };
