@@ -4481,7 +4481,7 @@ var SIDO_METRO = ['서울', '부산', '대구', '인천', '광주', '대전', '�
 // 공시가격(원): 저장된 값이 있으면 그대로, 없으면 예상매도가 × 69%(앱 세금 계산과 같은 추정) - 필터에서는 추정 여부를 같이 알려 줌
 function pubPriceOf(r) { var a = r && r.a; var won = a ? (parseInt(a.officialPriceWon) || 0) : 0; if (won > 0) return { won: won, est: false }; var sale = r && r.sale; return sale ? { won: Math.round(sale * 10000 * 0.69), est: true } : null; }
 function pubMatch(r) { var pf = bidBoardState.pub; if (!pf) return true; var pp = pubPriceOf(r); if (!pp) return false; return pp.won <= (pf === '1' ? 100000000 : (pf === '2' ? 200000000 : 300000000)); }
-function regionMatch(r, reg) { if (!permitMatch(r) || !crowdMatch(r) || !pubMatch(r)) return false; if (!reg) return true; if (reg.indexOf('g:') === 0) return String(r.region).indexOf(reg.slice(2) + ' ') === 0; if (reg === 'm:수도권') return SIDO_CAPITAL.indexOf(sidoOfRow(r)) >= 0; if (reg.indexOf('s:') === 0) return sidoOfRow(r) === reg.slice(3 - 1); return r.region === reg; }
+function regionMatch(r, reg) { if (!permitMatch(r) || !crowdMatch(r) || !pubMatch(r)) return false; if (!reg) return true; if (reg.indexOf('g:') === 0) return String(r.region).indexOf(reg.slice(2) + ' ') === 0; if (reg === 'm:수도권') return SIDO_CAPITAL.indexOf(sidoOfRow(r)) >= 0; if (reg === 'm:수도권외') return SIDO_CAPITAL.indexOf(sidoOfRow(r)) < 0; if (reg === 'm:광역') return SIDO_METRO.indexOf(sidoOfRow(r)) >= 0; if (reg.indexOf('s:') === 0) return sidoOfRow(r) === reg.slice(3 - 1); return r.region === reg; }
 /* 📱 네이버부동산식 목록 카드 + 상세 창 (2026-10-10, 사용자: 아이패드에서 네이버부동산 UI를 벤치마킹) - 641~1240px에서 표 대신 카드(이름·큰 추천가·한 줄 요약·칩)와 정렬 줄,
    상세 창은 목록 옆에 붙여서(왼쪽 목록 / 오른쪽 상세) 보여주고 상세 맨 위에 구역 이동 탭을 둠 */
 (function() { try { var mq = window.matchMedia('(min-width:641px) and (max-width:1240px)'); var f = function() { var b = document.getElementById('bid-board'); if (b && b.style.display !== 'none' && typeof renderBidBoard === 'function') { try { renderBidBoard(); } catch (e) {} } }; if (mq.addEventListener) mq.addEventListener('change', f); else if (mq.addListener) mq.addListener(f); } catch (e) {} })();
@@ -22648,12 +22648,11 @@ function renderBidBoardLite() {
                 if (false) {} else opts += '<optgroup label="' + c + '"><option value="g:' + c + '"' + (s.region === 'g:' + c ? ' selected' : '') + '>' + c + ' 전체 (' + tot + ')</option>' + ks.map(function(k) { return '<option value="' + bbEsc(k) + '"' + (s.region === k ? ' selected' : '') + '>　' + bbEsc(k.slice(c.length + 1)) + ' (' + regions[k] + ')</option>'; }).join('') + '</optgroup>';
             });
             bbSetSelOpts(sel, opts);
-        } else {   // 아파트: 수도권 / 광역시·특별시 / 도 / 시군구 순(2026-11-19 수정 요청)
+        } else {   // 아파트: 지역 전체 / 수도권 / 수도권 외 / 광역시·특별시 (2026-11-19 수정 요청: 간소화, 시군구 필터 삭제)
             var sc = {}; bidBoardRows.forEach(function(r) { if (r.type === 'apt') { var sd = sidoOfRow(r); sc[sd] = (sc[sd] || 0) + 1; } });
-            var capN = SIDO_CAPITAL.reduce(function(n, k) { return n + (sc[k] || 0); }, 0);
-            var og = function(label, list) { var items = list.filter(function(k) { return sc[k]; }); return items.length ? '<optgroup label="' + label + '">' + items.map(function(k) { return '<option value="s:' + k + '"' + (s.region === 's:' + k ? ' selected' : '') + '>' + k + ' 전체 (' + sc[k] + ')</option>'; }).join('') + '</optgroup>' : ''; };
-            bbSetSelOpts(sel, '<option value="">지역 전체</option><optgroup label="수도권"><option value="m:수도권"' + (s.region === 'm:수도권' ? ' selected' : '') + '>수도권 전체 (서울·경기·인천 ' + capN + ')</option></optgroup>' + og('광역시·특별시', SIDO_METRO) + og('도', SIDO_DO)
-                + '<optgroup label="시군구">' + Object.keys(regions).sort().map(function(k) { return '<option value="' + bbEsc(k) + '"' + (s.region === k ? ' selected' : '') + '>' + bbEsc(k) + ' (' + regions[k] + ')</option>'; }).join('') + '</optgroup>');
+            var sumOf = function(list) { return list.reduce(function(n, k) { return n + (sc[k] || 0); }, 0); }, allN = Object.keys(sc).reduce(function(n, k) { return n + sc[k]; }, 0), capN = sumOf(SIDO_CAPITAL);
+            var o = function(v, label) { return '<option value="' + v + '"' + (s.region === v ? ' selected' : '') + '>' + label + '</option>'; };
+            bbSetSelOpts(sel, '<option value="">지역 전체</option>' + o('m:수도권', '수도권 (서울·경기·인천 ' + capN + ')') + o('m:수도권외', '수도권 외 (' + (allN - capN) + ')') + o('m:광역', '광역시·특별시 (' + sumOf(SIDO_METRO) + ')'));
         }
     }
     var bar = document.getElementById('bb2-tabs');
