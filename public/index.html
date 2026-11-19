@@ -24393,12 +24393,13 @@ function auctionQueueTargets() {
 }
 /* 🤖 호가 자동 진행 대기열(2026-11-19, 사용자: 호가 모으기 3동작을 대신해 줄 방법) - 입찰 가까운 순 임장 후보 단지를 하루 30곳까지 listingRaw의 id 'hqueue'로 저장 → 맥 크롬 확장(0.8.0)이 네이버 화면에서 '▶ 자동 진행 시작'으로 하나씩 열고·읽고·보냄(20~60초 간격, 캡차·로그인·접속 제한이면 멈춤) */
 var HQ_LIMIT = 30;
+function hqJibun(r) { var t = String((r.a && r.a.addr) || '').trim(), m = t.match(/^(.*?(?:동|읍|면|리|가)\s+(?:산\s*)?\d+(?:-\d+)?)/); return m ? m[1] : ((r.region || '') + ' ' + ((r.a && r.a.dong) || '') + ' ' + (r.bunjiFull || '')).trim(); }   // 네이버 지도 주소 검색용 지번 주소('○○시 ○○구 ○○동 123-4')
 function hqTargets() {
     var T = listingBulkTargets(), seen = {}, out = [];
     T.forEach(function(r) {
         var k = lbKey(r.name) + '|' + String(r.a.dong || '').replace(/\s/g, ''); if (seen[k]) return; seen[k] = 1;
         var d = listingAgeDays(r.a); if (d != null && d <= 7) return;   // 최근 7일 안에 모은 단지는 건너뜀
-        out.push({ key: k, name: r.name, dong: r.a.dong || '', region: r.region || '', pyung: r.pyung || '', url: lbNaverUrl(r) || '', q: (r.name || '') + ' ' + (r.a.dong || ''), dday: r.dday ? r.dday.label : '' });
+        out.push({ key: k, name: r.name, dong: r.a.dong || '', region: r.region || '', pyung: r.pyung || '', url: lbNaverUrl(r) || '', addr: hqJibun(r), q: (r.name || '') + ' ' + (r.a.dong || ''), dday: r.dday ? r.dday.label : '' });
     });
     return out;
 }

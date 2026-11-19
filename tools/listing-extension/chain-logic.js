@@ -54,6 +54,13 @@
     return null;
   }
 
-  const api = { normName, itemKey, pickComplexLink, nextItem, blockedReason, jitter, dayKey, shouldStop };
+  // 지도 위 단지 표시 후보(화면 요소) 중 목표 단지 이름과 맞는 것을 고름: 이름이 정확히 같은 것 우선, 그다음 화면 가운데(주소 검색으로 지도가 옮겨 간 자리)에 가까운 것. cands: [{ n: 정규화한 글자, x, y }]
+  function rankCandidates(cands, target, cx, cy) {
+    const T = normName(target); if (!T) return [];
+    return (cands || []).filter((c) => c && c.n && (c.n === T || (c.n.length >= 3 && T.length >= 3 && (c.n.indexOf(T) >= 0 || T.indexOf(c.n) >= 0))))
+      .map((c) => Object.assign({}, c, { exact: c.n === T ? 0 : 1, d: Math.hypot((c.x || 0) - cx, (c.y || 0) - cy) }))
+      .sort((a, b) => (a.exact - b.exact) || (a.d - b.d));
+  }
+  const api = { rankCandidates, normName, itemKey, pickComplexLink, nextItem, blockedReason, jitter, dayKey, shouldStop };
   if (typeof module !== 'undefined' && module.exports) module.exports = api; else root.HGChain = api;
 })(typeof self !== 'undefined' ? self : this);

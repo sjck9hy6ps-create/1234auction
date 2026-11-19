@@ -24,4 +24,9 @@ t('쉬는 시간 20~60초 범위', () => { for (let i = 0; i < 200; i++) { const
 t('하루 30곳 도달 시 멈춤', () => { assert.strictEqual(L.shouldStop({ count: 29, fails: 0 }, 30, 3), null); assert.ok(L.shouldStop({ count: 30, fails: 0 }, 30, 3)); });
 t('3번 연속 실패 시 멈춤', () => { assert.strictEqual(L.shouldStop({ count: 5, fails: 2 }, 30, 3), null); assert.ok(L.shouldStop({ count: 5, fails: 3 }, 30, 3)); });
 t('날짜 키', () => assert.strictEqual(L.dayKey(new Date(2026, 10, 9)), '2026-11-09'));
+t('지도 표시 후보: 이름 같은 것 우선, 같은 이름이면 화면 가운데에 가까운 것', () => {
+  const c = [{ n: L.normName('금오아파트'), x: 100, y: 100 }, { n: L.normName('금오아파트'), x: 640, y: 400 }, { n: L.normName('금오 아파트 2차'), x: 650, y: 400 }, { n: L.normName('이마트24'), x: 640, y: 400 }];
+  const r = L.rankCandidates(c, '금오아파트', 640, 400); assert.strictEqual(r.length, 2); assert.strictEqual(r[0].x, 640); assert.strictEqual(r[0].exact, 0);
+});
+t('지도 표시 후보: 이름이 다르면 비어 있음(엉뚱한 단지를 누르지 않음)', () => assert.strictEqual(L.rankCandidates([{ n: L.normName('해링턴플레이스'), x: 1, y: 1 }], '금오아파트', 0, 0).length, 0));
 console.log(n + '개 통과');

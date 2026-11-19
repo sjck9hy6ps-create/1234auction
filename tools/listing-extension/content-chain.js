@@ -21,7 +21,7 @@
     const st = (await getSt()) || {}; st.on = false; st.stop = reason; st.stopAt = Date.now(); await setSt(st);
     show((ok ? '✅ ' : '⏹ ') + '호가 자동 진행 멈춤: ' + reason + (st.count ? ' (오늘 ' + st.count + '곳)' : ''), [mkBtn('닫기', '#475569', () => box.remove())]);
   };
-  const queriesOf = (c) => { const a = [String(c.name || '').trim()]; const b = (String(c.name || '').trim() + ' ' + String(c.dong || '').trim()).trim(); if (b && a.indexOf(b) < 0) a.push(b); return a.filter(Boolean); };
+  const queriesOf = (c) => { const a = []; if (c.addr) a.push(String(c.addr).trim()); a.push(String(c.name || '').trim()); const b = (String(c.name || '').trim() + ' ' + String(c.dong || '').trim()).trim(); if (b && a.indexOf(b) < 0) a.push(b); return a.filter(Boolean); };
   const searchUrl = (c, qi) => SEARCH + encodeURIComponent(queriesOf(c)[qi || 0] || c.name);
   const advance = async () => {
     let st = await getSt(); if (!st || !st.on) return;
@@ -32,7 +32,7 @@
     const handled = {}; Object.keys(q.handled || {}).forEach((k) => { handled[k] = 1; });
     const it = L.nextItem(q, handled);
     if (!it) { await stop('대기열을 모두 처리했어요 ✅', true); return; }
-    st.cur = { key: it.key, name: it.name, dong: it.dong || '', step: it.url ? 'complex' : 'search', qi: 0, at: Date.now() };
+    st.cur = { key: it.key, name: it.name, dong: it.dong || '', addr: it.addr || '', step: it.url ? 'complex' : 'search', qi: 0, at: Date.now() };
     await setSt(st);
     show('➡ 다음 단지로 이동: ' + it.name);
     location.href = it.url || searchUrl(st.cur, 0);
@@ -78,26 +78,37 @@
     if (!st.cur) { await advance(); return; }
     if (Date.now() - st.cur.at > 15 * 60 * 1000) { await fail(st, '한 단지에 15분 넘게 걸렸어요'); return; }
     const onComplex = /\/complexes\/\d+/.test(location.pathname);
-    if (!onComplex) {   // 검색 결과 화면: 이름이 맞는 단지 링크(없으면 이름이 같은 항목)를 눌러 들어감. 못 찾으면 다른 검색어로 한 번 더, 그래도 없으면 건너뜀
-      let href = null, noRes = false, nLinks = 0;
-      const noResult = () => /해당되는\s*검색\s*결과가\s*없습니다/.test(document.body ? document.body.innerText : '');
-      for (let i = 0; i < 15 && !href; i++) {
-        show('🔎 「' + st.cur.name + '」 검색 결과 찾는 중… ' + (15 - i) + '초', [mkBtn('⏹ 멈추기', '#dc2626', userStop)]);
+    if (!onComplex) {   // 주소 검색 화면: 지도가 그 자리로 옮겨 가고 주변 단지가 함께 보임 → 목표 단지 표시(또는 같은 이름 링크)를 눌러 단지 목록을 불러옴
+      let href = null, nLinks = 0, nMark = 0, clicked = false;
+      const markers = () => {
+        const out = [];
+        document.querySelectorAll('body *').forEach((e) => {
+          if (e.closest && e.closest('#hg-chain-box')) return; if (e.children.length > 5) return;
+          const t = String(e.innerText || e.textContent || '').trim(); if (!t || t.length > 40) return;
+          const r = e.getBoundingClientRect(); if (r.width < 5 || r.height < 5 || r.bottom < 0 || r.top > innerHeight || r.right < 0 || r.left > innerWidth) return;
+          out.push({ el: e, n: L.normName(t.split('\n')[0]), x: r.left + r.width / 2, y: r.top + r.height / 2 });
+        });
+        return out;
+      };
+      const press = (el) => { ['mousedown', 'mouseup', 'click'].forEach((t) => { try { el.dispatchEvent(new MouseEvent(t, { bubbles: true, cancelable: true, view: window })); } catch (e) {} }); try { el.click(); } catch (e) {} };
+      for (let i = 0; i < 18 && !href && !clicked; i++) {
+        show('🔎 「' + st.cur.name + '」 찾는 중… ' + (18 - i) + '초 (지도에서 단지를 누를 거예요)', [mkBtn('⏹ 멈추기', '#dc2626', userStop)]);
         await sleep(1000);
         const as = [...document.querySelectorAll('a[href*="/complexes/"]')]; nLinks = as.length;
-        const links = as.map((a) => ({ href: a.href, text: (a.innerText || a.textContent || '').trim(), ctx: ((a.closest('li,div') || a).innerText || '').slice(0, 200) }));
-        href = L.pickComplexLink(links, st.cur);
-        if (!href && i >= 3 && noResult()) { noRes = true; break; }
+        href = L.pickComplexLink(as.map((a) => ({ href: a.href, text: (a.innerText || a.textContent || '').trim(), ctx: ((a.closest('li,div') || a).innerText || '').slice(0, 200) })), st.cur);
+        if (href || i < 2) continue;
+        const rk = L.rankCandidates(markers(), st.cur.name, innerWidth * 0.62, innerHeight * 0.5); nMark = rk.length;
+        if (rk.length) {
+          show('🖱 「' + st.cur.name + '」 단지를 눌러요'); press(rk[0].el);
+          for (let k = 0; k < 8 && !/\/complexes\/\d+/.test(location.pathname); k++) await sleep(1000);
+          if (/\/complexes\/\d+/.test(location.pathname)) clicked = true; else if (rk[1]) { press(rk[1].el); for (let k = 0; k < 6 && !/\/complexes\/\d+/.test(location.pathname); k++) await sleep(1000); clicked = /\/complexes\/\d+/.test(location.pathname); }
+        }
       }
-      if (!href && !noRes) {   // 링크가 아닌 화면 요소(클릭하면 사이트가 이동시키는 목록)에서 이름이 같은 항목 누르기
-        const T = L.normName(st.cur.name);
-        const el = [...document.querySelectorAll('a,li,button,div,span')].find((e) => e.offsetParent !== null && e.children.length <= 4 && L.normName(((e.innerText || '').split('\n')[0]) || '') === T && !e.closest('#hg-chain-box'));
-        if (el) { show('🖱 「' + st.cur.name + '」 항목을 눌러요'); try { el.click(); } catch (e) {} for (let i = 0; i < 8 && !/\/complexes\/\d+/.test(location.pathname); i++) await sleep(1000); if (/\/complexes\/\d+/.test(location.pathname)) { st.cur.step = 'complex'; st.cur.at = Date.now(); await setSt(st); await sleep(L.jitter(1500, 3000)); return run(); } }
-      }
+      if (clicked) { st.cur.step = 'complex'; st.cur.at = Date.now(); await setSt(st); await sleep(L.jitter(1500, 3000)); return run(); }   // 같은 화면 안에서 주소만 바뀌어 새로고침이 없으므로 이어서 진행
       if (!href) {
         const qs = queriesOf(st.cur);
         if ((st.cur.qi || 0) + 1 < qs.length) { st.cur.qi = (st.cur.qi || 0) + 1; st.cur.at = Date.now(); await setSt(st); show('🔁 다른 검색어로 다시 찾아요: ' + qs[st.cur.qi]); await sleep(L.jitter(1500, 3500)); location.href = searchUrl(st.cur, st.cur.qi); return; }
-        await fail(st, '검색에서 단지를 못 찾음(' + (noRes ? '결과 없음' : '링크 ' + nLinks + '개') + ')'); return;
+        await fail(st, '지도에서 단지를 못 찾음(이름 맞는 표시 ' + nMark + '개·링크 ' + nLinks + '개)'); return;
       }
       st.cur.step = 'complex'; st.cur.at = Date.now(); await setSt(st);
       show('➡ 「' + st.cur.name + '」 단지 페이지로 이동'); await sleep(L.jitter(1500, 4000)); location.href = href; return;
