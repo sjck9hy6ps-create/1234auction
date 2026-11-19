@@ -1,0 +1,34 @@
+# 아파트 공시가격 앱용 자료 매일 갱신(2026-11-20): 보관소의 수집 결과 + 오늘 경매 물건의 동·호로 '호별 공시가격'을 다시 만들어 올림(새 경매 물건도 호별 값이 생기게). 수집 자체는 매년 5월(collect-apt-official-price.yml).
+name: Publish apt official price
+on:
+  schedule:
+    - cron: '40 17 * * *'   # 매일 KST 02:40
+  workflow_dispatch: {}
+concurrency:
+  group: publish-apt-official
+  cancel-in-progress: false
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install pandas numpy requests
+      - name: 보관소 파일 받기
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: |
+          curl -sf -H "Authorization: Bearer $SUPABASE_SERVICE_ROLE_KEY" -H "apikey: $SUPABASE_SERVICE_ROLE_KEY" "$SUPABASE_URL/storage/v1/object/data/apt-official-price.jsonl.gz" -o prev.gz
+          gunzip -c prev.gz > apt-official-price.jsonl; wc -l apt-official-price.jsonl
+      - env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          COLLECT_PROXY_SECRET: ${{ secrets.COLLECT_PROXY_SECRET }}
+          SITE_URL: https://1234auction.vercel.app
+          THREADS: '8'
+          PYTHONUNBUFFERED: '1'
+        run: python publish-apt-official.py

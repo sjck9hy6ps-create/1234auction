@@ -283,4 +283,5 @@ def main():
     print(f"끝: {n:,}건 · 자료 있음 {got:,} · 실패 {fails} · 법정동코드 없음 거래 {nocode_n:,}/{tot_n:,}", flush=True)
 
 
-main()
+if __name__ == "__main__":
+    main()

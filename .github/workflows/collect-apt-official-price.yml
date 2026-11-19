@@ -72,6 +72,9 @@ jobs:
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          COLLECT_PROXY_SECRET: ${{ secrets.COLLECT_PROXY_SECRET }}
+          SITE_URL: https://1234auction.vercel.app
+          THREADS: '8'
           PYTHONUNBUFFERED: '1'
         run: python publish-apt-official.py
       - uses: actions/upload-artifact@v4

@@ -3559,7 +3559,7 @@ export default async function handler(req, res) {
   if (req.query.mode === 'aptOfficial') { // 2026-11-19 아파트 공시가격(publish-apt-official.py가 저장): i 없으면 메타(묶음 수), i=N이면 그 묶음(약 0.5MB) - 응답 한도(4.5MB) 때문에 나눠서 줌
     res.setHeader('Cache-Control', 's-maxage=21600, stale-while-revalidate=86400');
     try {
-      const id = req.query.i === undefined ? 'apt-official|meta' : 'apt-official|' + String(parseInt(req.query.i, 10) || 0);
+      const id = req.query.i === undefined ? 'apt-official|meta' : (req.query.i === 'units' ? 'apt-official|units' : 'apt-official|' + String(parseInt(req.query.i, 10) || 0));
       const { data, error } = await supabase.from('leader_follower_cache').select('payload').eq('id', id).maybeSingle();
       if (error) return res.status(500).json({ error: error.message });
       return res.status(200).json((data && data.payload) || {});
