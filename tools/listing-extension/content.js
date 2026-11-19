@@ -40,28 +40,44 @@
       flush();
     };
     const cnt = () => { harvest(); return blocks.size; };
-    let same = 0, last = cnt();
-    for (let i = 0; i < 50 && same < 3; i++) {
-      scrollOnce();
-      await sleep(700);
-      // 한 번 더 찾아봄: 처음엔 안 보이던 목록 영역이 내려가며 생길 수 있음
-      if (!sc) { const s2 = findScroller(); if (s2) { sc = s2; } }
+    // 2026-11-19(사용자: 호가가 40건이 넘는데 21건만 읽힘, 스크롤이 안 됨) - 스크롤 영역을 속성으로 찾는 대신, 화면의 '마지막 매매 매물' 요소를 찾아 그 요소를 화면 끝으로 끌어내리고(scrollIntoView) 그 위로 스크롤되는 가장 가까운 부모도 맨 아래로 내림.
+    // 새로 안 늘어도 바로 멈추지 않고(불러오는 시간 1.2초씩, 5번 연속 그대로면 중단), 화면 위쪽 '매매 N' 건수를 알면 그 수에 닿을 때까지 계속함
+    const expectedOf = () => { const m = (document.body.innerText || '').match(/(^|\n)매매\s*(\d{1,3})\s*(\n|$)/); return m ? +m[2] : 0; };
+    const lastItemEl = () => {
+      let found = null;
+      document.querySelectorAll('div,li,span,a,p,dd').forEach((e) => { if (e.children.length > 4) return; const t = (e.innerText || '').trim(); if (/^매매\s*\d/.test(t) && t.length < 80) found = e; });
+      return found;
+    };
+    const scrollParent = (el) => { for (let p = el; p && p !== document.body && p !== document.documentElement; p = p.parentElement) { let cs = null; try { cs = getComputedStyle(p); } catch (e) {} if (cs && /(auto|scroll)/.test(cs.overflowY) && p.scrollHeight > p.clientHeight + 20) return p; } return null; };
+    const expected = expectedOf();
+    let same = 0, last = cnt(), info = '';
+    for (let i = 0; i < 80 && same < 5; i++) {
+      const el = lastItemEl();
+      if (el) {
+        const sp = scrollParent(el); if (sp) { sp.scrollTop = sp.scrollHeight; info = sp.tagName.toLowerCase() + '.' + String(sp.className || '').split(/\s+/)[0].slice(0, 20); }
+        try { el.scrollIntoView({ block: 'end' }); } catch (e) {}
+        try { (sp || el).dispatchEvent(new WheelEvent('wheel', { deltaY: 600, bubbles: true })); } catch (e) {}
+      } else { scrollOnce(); }
+      await sleep(1200);
+      if (!sc) { const s2 = findScroller(); if (s2) sc = s2; }
       const n = cnt();
       same = n === last ? same + 1 : 0; last = n;
+      if (expected && n >= expected) break;
     }
     harvest();
     const text = blocks.size ? [...blocks.keys()].join('\n\n') : (document.body.innerText || '');
     const n = (text.match(/(^|\n)매매\s*\d/g) || []).length;
-    return { text, n };
+    return { text, n, expected, info };
   };
   window.hgCollect = collectListings;
   btn.onclick = async () => {
     btn.disabled = true;
     try {
       toast('매물 읽는 중…');
-      const { text, n } = await collectListings();
+      let { text, n, expected } = await collectListings();
+      if (expected && n < expected * 0.9) { toast('↻ ' + n + '/' + expected + '건만 읽혀 한 번 더 내려요…'); const r2 = await collectListings(); if (r2.n > n) { text = r2.text; n = r2.n; } }
       if (!n) { toast('매매 매물을 못 찾았어요', false); return; }
-      toast('보내는 중… (' + n + '건)');
+      toast('보내는 중… (' + n + '건' + (expected ? ' / 화면 표시 ' + expected + '건' : '') + ')');
       chrome.runtime.sendMessage({ type: 'send', text, url: location.href }, (res) => {
         if (!res || !res.ok) toast('❌ 보내기 실패', false);
         else if (res.applied) {

@@ -120,7 +120,8 @@
     await sleep(L.jitter(4000, 7000));   // 화면이 그려질 때까지
     for (let i = 0; i < 15 && !/(^|\n)매매\s*\d/.test(document.body.innerText || ''); i++) await sleep(1000);
     const cur = await getSt(); if (!cur || !cur.on) return;
-    const col = await window.hgCollect().catch(() => null);
+    let col = await window.hgCollect().catch(() => null);
+    if (col && col.expected && col.n < col.expected * 0.9) { show('↻ ' + col.n + '/' + col.expected + '건만 읽혀서 한 번 더 내려요'); const c2 = await window.hgCollect().catch(() => null); if (c2 && c2.n > col.n) col = c2; }   // 덜 읽혔으면 한 번 더(이미 불러온 목록 위에서 다시 끝까지)
     if (!col || !col.n) {
       const sp = (x) => String(x || '').replace(/[\s·.\-_,()]/g, '').toLowerCase(), T = sp(st.cur.name), bodyN = sp(String(document.body.innerText || '').slice(0, 4000));   // '아파트'를 떼지 않은 이름으로 비교('삼성아파트'→'삼성'은 너무 짧아 오인)
       if (T.length >= 3 && bodyN.indexOf(T) >= 0) {   // 같은 이름 단지 화면은 열렸는데 매매 매물이 0건 → 실패가 아니라 '매물 없음'(정상)
@@ -133,7 +134,7 @@
     const res = await bg({ type: 'send', text: col.text, url: location.href });
     if (!res || !res.ok) { await fail(cur, '앱으로 보내기 실패'); return; }
     cur.fails = 0; cur.count = (cur.count || 0) + 1; cur.cur.sent = true; await setSt(cur);
-    await mark(cur, 'ok', col.n + '건');
+    await mark(cur, 'ok', col.n + '건' + (col.expected ? ' / 화면 표시 ' + col.expected + '건' + (col.n < col.expected ? ' ⚠️ 덜 읽힘' : '') : '') + (col.info ? ' · 스크롤:' + col.info : ' · 스크롤 영역 못 찾음'));
     const why = L.shouldStop(cur, LIMIT, FAIL_LIMIT); if (why) { await stop(why, true); return; }
     const ok = await countdown(L.jitter(20000, 60000), st.cur.name + ' ' + col.n + '건 완료');
     if (ok) await advance();
