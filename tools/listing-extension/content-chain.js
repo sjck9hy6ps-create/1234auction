@@ -102,6 +102,12 @@
         const readCands = () => { const out = []; document.querySelectorAll('li,a,button,div,span').forEach((e) => { if ((e.closest && e.closest('#hg-chain-box')) || e.children.length > 8 || e === inp) return; const t = String(e.innerText || '').trim(); if (!t || t.length > 140) return; const r = e.getBoundingClientRect(); if (r.width < 20 || r.height < 10 || r.top < ir.bottom - 4 || r.top > innerHeight || r.left < ir.left - 30 || r.left > ir.right + 30) return; out.push({ el: e, first: t.split('\n')[0].trim(), full: t.replace(/\n+/g, ' ') }); }); return out; };
         let pick = -1;
         for (let i = 0; i < 12 && pick < 0; i++) { await sleep(800); cands = readCands(); pick = L.pickSuggestion(cands, st.cur); show('🔎 자동완성에서 「' + st.cur.name + '」 찾는 중… (후보 ' + cands.length + '개)', [mkBtn('⏹ 멈추기', '#dc2626', userStop)]); }
+        if (pick < 0) {   // 자동완성에 없으면 Enter로 검색해서 나오는 결과 목록(왼쪽 패널)에서 같은 이름을 찾음
+          show('↵ Enter로 검색해요: ' + qtext);
+          ['keydown', 'keypress', 'keyup'].forEach((t) => { try { inp.dispatchEvent(new KeyboardEvent(t, { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true })); } catch (e) {} });
+          const readAny = () => { const out = []; document.querySelectorAll('li,a,button,div,span').forEach((e) => { if ((e.closest && e.closest('#hg-chain-box')) || e.children.length > 8 || e === inp) return; const t = String(e.innerText || '').trim(); if (!t || t.length > 140) return; const r = e.getBoundingClientRect(); if (r.width < 20 || r.height < 10 || r.top < ir.bottom - 4 || r.top > innerHeight || r.left > innerWidth * 0.55) return; out.push({ el: e, first: t.split('\n')[0].trim(), full: t.replace(/\n+/g, ' ') }); }); return out; };
+          for (let i = 0; i < 8 && pick < 0; i++) { await sleep(1000); cands = readAny(); pick = L.pickSuggestion(cands, st.cur); }
+        }
         if (pick >= 0) {
           show('🖱 「' + st.cur.name + '」 자동완성 항목을 눌러요'); const el = cands[pick].el;
           ['mousedown', 'mouseup', 'click'].forEach((t) => { try { el.dispatchEvent(new MouseEvent(t, { bubbles: true, cancelable: true, view: window })); } catch (e) {} }); try { el.click(); } catch (e) {}
@@ -109,34 +115,6 @@
           clicked = /\/complexes\/\d+/.test(location.pathname);
           if (!clicked) note = '항목을 눌렀지만 단지 화면으로 안 넘어감';
         } else note = '자동완성에 이름이 맞는 단지가 없음(후보 ' + cands.length + '개)';
-      }
-      if (!clicked) {   // 대체: 자동완성이 안 되면 지도의 가격 표시(보라색 말풍선 '매3.97억 117㎡')를 눌러 보고, 단지 화면에 목표 이름이 없으면 다음 표시로(최대 4번)
-        const cx = innerWidth * 0.69, cy = innerHeight * 0.5, want = +st.cur.area || 0, tried = []; let pinNote = '';
-        const sp2 = (x) => String(x || '').replace(/[\s·.\-_,()]/g, '').toLowerCase(), core = L.coreName(st.cur.name);
-        const nameOnPage = () => { const t = sp2(String(document.body.innerText || '').slice(0, 2500)); let i = t.indexOf(core); while (i >= 0) { const nx = t.charAt(i + core.length); if (!/[0-9차단]/.test(nx)) return true; i = t.indexOf(core, i + 1); } return false; };
-        const pins = () => {
-          const out = [], seen = {};
-          document.querySelectorAll('div,span,a,button').forEach((e) => {
-            if ((e.closest && e.closest('#hg-chain-box')) || e.children.length > 6) return;
-            const t = String(e.innerText || '').trim(); if (!t || t.length > 48 || !/매\s*[\d.,]+\s*(억|만)/.test(t) || !/㎡/.test(t)) return;
-            const r = e.getBoundingClientRect(); if (r.width < 30 || r.height < 20 || r.bottom < 0 || r.top > innerHeight || r.right < innerWidth * 0.3) return;
-            const k = Math.round((r.left + r.width / 2) / 8) + ',' + Math.round((r.top + r.height / 2) / 8); if (seen[k]) return; seen[k] = 1;
-            const am = t.match(/([\d.]+)\s*㎡/); out.push({ el: e, t, d: Math.hypot(r.left + r.width / 2 - cx, r.top + r.height / 2 - cy), area: am ? +am[1] : 0 });
-          });
-          return out.sort((a, b) => ((want && Math.abs(a.area - want) <= 2 ? 0 : 1) - (want && Math.abs(b.area - want) <= 2 ? 0 : 1)) || (a.d - b.d));
-        };
-        for (let k = 0; k < 4 && !clicked; k++) {
-          let list = []; for (let i = 0; i < 6 && !list.length; i++) { list = pins().filter((c) => tried.indexOf(c.t) < 0); if (!list.length) await sleep(1000); }
-          if (!list.length) break;
-          const c = list[0]; tried.push(c.t); show('🖱 지도 표시 ' + (k + 1) + '/4를 눌러 「' + st.cur.name + '」인지 확인해요', [mkBtn('⏹ 멈추기', '#dc2626', userStop)]);
-          const before = location.pathname;
-          ['mousedown', 'mouseup', 'click'].forEach((t) => { try { c.el.dispatchEvent(new MouseEvent(t, { bubbles: true, cancelable: true, view: window })); } catch (e) {} }); try { c.el.click(); } catch (e) {}
-          for (let w = 0; w < 6 && location.pathname === before; w++) await sleep(1000);
-          await sleep(2000);
-          if (/\/complexes\/\d+/.test(location.pathname) && nameOnPage()) { clicked = true; note = ''; break; }
-          pinNote += (pinNote ? ' / ' : '') + (c.t.replace(/\n+/g, ' ') + ' → ' + String(document.body.innerText || '').replace(/\s+/g, ' ').slice(0, 50));
-        }
-        if (!clicked && pinNote) note += ' · 지도 표시 확인 실패: ' + pinNote;
       }
       if (clicked) { st.cur.step = 'complex'; st.cur.at = Date.now(); await setSt(st); await sleep(L.jitter(1500, 3000)); return run(); }   // 같은 화면 안에서 주소만 바뀌어 새로고침이 없으므로 이어서 진행
       if ((st.cur.qi || 0) + 1 < qs.length) { st.cur.qi = (st.cur.qi || 0) + 1; st.cur.at = Date.now(); await setSt(st); show('🔁 다른 검색어로 다시 찾아요: ' + qs[st.cur.qi]); await sleep(L.jitter(1500, 3500)); location.href = searchUrl(st.cur, st.cur.qi); return; }
