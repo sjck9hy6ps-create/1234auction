@@ -24360,6 +24360,18 @@ async function applyListingList(a, row, list) {
    네이버 부동산은 자동 수집을 약관으로 제한하므로 열기·복사는 사용자가 직접 하고(앱은 링크와 정리만), 대량 자동 수집은 만들지 않음. */
 var lbAll = false; // 호가 모으기 대상: 기본은 입찰 7일 안 + 추천가가 있는 임장 후보(동작을 줄이려고), 켜면 임장 후보 전체
 var lbAny = false;  // 수신함(확장이 보낸 호가)은 임장 후보가 아닌 물건(패스)도 대상으로 삼음 - 사용자가 직접 연 단지를 보낸 것이라(2026-10-28 마린애시앙부영: 패스 판정이라 '대상이 아닌 단지'로 처리되던 문제)
+/* 네이버 단지 번호 기억(2026-11-19, 사용자: 호가 모으기 3동작 줄이기) - 확장이 보낸 주소(…/complexes/번호)에서 단지 번호를 배워 두었다가, 다음부터 '네이버 열기'가 검색이 아니라 그 단지 페이지로 바로 가게 함(이 기기 브라우저에 저장) */
+function lbKey(n) { return matchNormName(String(n || '').replace(/\([^)]*\)|（[^）]*）/g, '').replace(/아파트\s*$/, '')); }
+function lbIds() { try { return JSON.parse(localStorage.getItem('naverIds') || '{}') || {}; } catch (e) { return {}; } }
+function lbLearnIds(url, names) {
+    try {
+        var m = String(url || '').match(/\/complexes\/(\d+)/); if (!m) return 0; var ids = lbIds(), n = 0;
+        (names || []).forEach(function(nm) { var k = lbKey(nm); if (k && ids[k] !== m[1]) { ids[k] = m[1]; n++; } });
+        var ks = Object.keys(ids); if (ks.length > 3000) ks.slice(0, ks.length - 3000).forEach(function(k) { delete ids[k]; });
+        if (n) localStorage.setItem('naverIds', JSON.stringify(ids)); return n;
+    } catch (e) { return 0; }
+}
+function lbNaverUrl(r) { var id = lbIds()[lbKey(r.name)]; return id ? 'https://new.land.naver.com/complexes/' + id : null; }
 function listingBulkTargets() {
     return bidBoardRows.filter(function(r) { return r.type === 'apt' && r.a && !r.skippedPast && (lbAny || (r.visit && r.visit.go)) && (lbAll || (r.recBid && r.dday && r.dday.diffDays >= 0 && r.dday.diffDays <= 7)); }).sort(function(x, y) { return (x.dday ? x.dday.diffDays : 9999) - (y.dday ? y.dday.diffDays : 9999); });
 }
@@ -24444,7 +24456,7 @@ function openListingBulk() {
         + '<table style="width:100%;border-collapse:collapse;font-size:12px;"><thead><tr style="text-align:left;color:#666;"><th>입찰</th><th>단지 · 평형</th><th>마지막 수집</th><th>열기</th></tr></thead><tbody>'
         + rows.slice(0, 150).map(function(x) {
             var r = x.r, a = r.a, d = listingAgeDays(a), fresh = d != null && d <= 7, q = encodeURIComponent((r.name || '') + ' ' + (a.dong || ''));
-            return '<tr style="border-top:1px solid #eee;' + (fresh ? 'opacity:.5;' : '') + '"><td>' + (r.dday ? r.dday.label : '-') + '</td><td><b>' + bbEsc(r.name) + '</b> <span class="bb-sub">' + bbEsc(r.region || '') + ' · ' + (r.pyung || '') + '평' + (x.n > 1 ? ' · 물건 ' + x.n + '건' : '') + '</span></td><td>' + (d == null ? '<span style="color:#c62828;">없음</span>' : d + '일 전') + '</td><td><a href="https://new.land.naver.com/search?sk=' + q + '" target="_blank" rel="noopener">네이버 열기</a></td></tr>';
+            return '<tr style="border-top:1px solid #eee;' + (fresh ? 'opacity:.5;' : '') + '"><td>' + (r.dday ? r.dday.label : '-') + '</td><td><b>' + bbEsc(r.name) + '</b> <span class="bb-sub">' + bbEsc(r.region || '') + ' · ' + (r.pyung || '') + '평' + (x.n > 1 ? ' · 물건 ' + x.n + '건' : '') + '</span></td><td>' + (d == null ? '<span style="color:#c62828;">없음</span>' : d + '일 전') + '</td><td>' + (lbNaverUrl(r) ? '<a href="' + lbNaverUrl(r) + '" target="_blank" rel="noopener" title="이전에 호가를 보낸 단지라 검색 없이 바로 열려요">네이버 열기 ⚡</a>' : '<a href="https://new.land.naver.com/search?sk=' + q + '" target="_blank" rel="noopener">네이버 열기</a>') + '</td></tr>';
         }).join('') + '</tbody></table>' + (rows.length > 150 ? '<div class="bb-sub">앞의 150곳만 보여요.</div>' : '') + '</div>';
     box.innerHTML = h; box.style.display = 'flex';
 }
@@ -24596,7 +24608,7 @@ async function processListingInbox() {
             var it = pending[i], res = { done: 0, text: '매매 매물을 찾지 못했어요', applied: [] };
             if (it.kind === 'tank') { res = await rightsApplyTankText(it.text || ''); if (res.done) aqMarkDone(res.applied, it.url); if (res.done) listingToast('📥 탱크옥션 상세 반영됨: ' + res.applied.slice(0, 3).map(function(x) { return '<b>' + bbEsc(x.name) + '</b> 권리분석(등기 ' + x.n + '건' + (x.tenants ? ' · 임차인 ' + x.tenants + '명' : ' · 임차인 없음') + ')' + (x.sync && x.sync.length ? ' 🔄 ' + x.sync.join('·') + ' 탱크옥션 값으로 맞춤' : '') + (x.audit && x.audit.length ? ' ❌ ' + bbEsc(x.audit[0]) : ''); }).join(' · '), !res.applied.some(function(x) { return x.audit && x.audit.length; })); else listingToast('📥 탱크옥션 상세를 받았지만 반영하지 못했어요 - ' + bbEsc(res.text), false); }
             else if (it.kind === 'probe') { res = { done: 1, text: '참고자료 원문 보관(권리분석에는 반영하지 않음)', applied: [] }; } // 참고자료 팝업 글: 구조 확인용으로 수신함에만 보관(하루 뒤 정리)
-            else { var list = parseNaverListings(it.text || ''); if (list.length) res = await applyListingListsAuto(list); else { var vres = await applyVillaListingsAuto(it.text || ''); if (vres) res = vres; } }   // 아파트 단지 형식이 아니면 빌라 목록으로 읽음(2026-11-10)
+            else { var list = parseNaverListings(it.text || ''); if (list.length) { res = await applyListingListsAuto(list); if (list.length && it.url) { var one = {}; list.forEach(function(x) { one[lbKey(x.complex)] = 1; }); if (Object.keys(one).length === 1) lbLearnIds(it.url, list.map(function(x) { return x.complex; }).slice(0, 1).concat((res.applied || []).map(function(x) { return x.name; }))); } } else { var vres = await applyVillaListingsAuto(it.text || ''); if (vres) res = vres; } }   // 아파트 단지 형식이 아니면 빌라 목록으로 읽음(2026-11-10)
             got += res.done; lastResText = res.text || lastResText; res.applied.forEach(function(x) { names.push(x); });
             // 확장이 결과를 볼 수 있게 처리 기록을 남김(원문도 하루 보관)
             try { await fetch('/api/auction?kind=listingRaw', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: it.id, at: it.at, url: it.url, text: it.text, done: true, appliedAt: new Date().toISOString(), result: { done: res.done, text: res.text, applied: res.applied } }) }); } catch (e) {}
