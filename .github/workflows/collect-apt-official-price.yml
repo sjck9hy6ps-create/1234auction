@@ -63,6 +63,13 @@ jobs:
           gzip -9 -c apt-official-price.jsonl > apt-official-price.jsonl.gz; ls -la apt-official-price.jsonl.gz
           curl -s -X POST "$SUPABASE_URL/storage/v1/bucket" -H "Authorization: Bearer $SUPABASE_SERVICE_ROLE_KEY" -H "apikey: $SUPABASE_SERVICE_ROLE_KEY" -H "Content-Type: application/json" -d '{"id":"data","name":"data","public":false}' || true; echo
           curl -sf -X POST "$SUPABASE_URL/storage/v1/object/data/apt-official-price.jsonl.gz" -H "Authorization: Bearer $SUPABASE_SERVICE_ROLE_KEY" -H "apikey: $SUPABASE_SERVICE_ROLE_KEY" -H "x-upsert: true" -H "Content-Type: application/gzip" --data-binary @apt-official-price.jsonl.gz && echo "올림 완료"
+      - name: 앱용 자료 올리기(공시가격 필터·세금 계산)
+        if: ${{ success() }}
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          PYTHONUNBUFFERED: '1'
+        run: python publish-apt-official.py
       - uses: actions/upload-artifact@v4
         if: always()
         with:

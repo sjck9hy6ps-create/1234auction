@@ -2061,7 +2061,7 @@ body.tb-menu-open.ui2 #tb-menu.open { z-index:9301; }
             <select id="bb-permit" onchange="setBidBoardFilter('permit', this.value)" title="규제지역 = 투기과열지구·조정대상지역(서울 25개 구 + 경기 15곳, 2026-07-01 기준) - 취득세 중과·대출 한도(LTV)에 영향. 주소로 판정해요">
                 <option value="">규제지역 전체</option><option value="only">🔶 규제지역만</option><option value="exclude">규제지역 제외(비규제)</option>
             </select>
-            <select id="bb-pub" onchange="setBidBoardFilter('pub', this.value)" title="공시가격 기준(저장된 공시가격이 있으면 그 값, 없으면 예상매도가 × 69%로 추정 - 앱 세금 계산과 같은 방식). 공시가격 1억 이하는 다주택 중과 배제 기준이에요">
+            <select id="bb-pub" onchange="setBidBoardFilter('pub', this.value)" title="공시가격 기준(탱크옥션에서 받은 호별 값 → 같은 단지·같은 면적의 국토부 공시가격 중앙값 → 둘 다 없으면 예상매도가 × 69% 추정). 공시가격 1억 이하는 다주택 중과 배제 기준이에요">
                 <option value="">공시가격 전체</option><option value="1">공시가 1억 이하</option><option value="2">공시가 2억 이하</option>
             </select>
             <select id="bb-crowd" style="display:none !important" onchange="setBidBoardFilter('crowd', this.value)" title="입찰자가 몰릴지 예상 - 지역 평균이 아니라 물건별 조건 기준(과거 낙찰사례 학습)">
@@ -4479,7 +4479,34 @@ var SIDO_OF_TOKEN = [[/^(서울)/, '서울'], [/^(부산)/, '부산'], [/^(대�
 function sidoOfRow(r) { var t = String((r && r.a && r.a.addr) || (r && r.region) || '').trim().split(/\s+/)[0] || ''; for (var i = 0; i < SIDO_OF_TOKEN.length; i++) if (SIDO_OF_TOKEN[i][0].test(t)) return SIDO_OF_TOKEN[i][1]; return String((r && r.region) || '').split(' ')[0]; }
 var SIDO_METRO = ['서울', '부산', '대구', '인천', '광주', '대전', '울산', '세종'], SIDO_DO = ['경기', '강원', '충북', '충남', '전북', '전남', '경북', '경남', '제주'], SIDO_CAPITAL = ['서울', '경기', '인천'];
 // 공시가격(원): 저장된 값이 있으면 그대로, 없으면 예상매도가 × 69%(앱 세금 계산과 같은 추정) - 필터에서는 추정 여부를 같이 알려 줌
-function pubPriceOf(r) { var a = r && r.a; var won = a ? (parseInt(a.officialPriceWon) || 0) : 0; if (won > 0) return { won: won, est: false }; var sale = r && r.sale; return sale ? { won: Math.round(sale * 10000 * 0.69), est: true } : null; }
+/* 아파트 공시가격(2026-11-19): 국토부 공동주택가격(VWorld)을 단지·전용면적별로 모아 둔 자료(collect-apt-official-price.py → api mode=aptOfficial). 탱크옥션에서 받은 호별 값이 있으면 그것, 없으면 단지 같은 면적 중앙값, 그것도 없으면 예상매도가×69% 추정 */
+var aptOff = null, aptOffLoading = false;
+function loadAptOfficial() {
+    if (aptOff || aptOffLoading) return; aptOffLoading = true;
+    fetch('/api/data-coverage?mode=aptOfficial').then(function(r) { return r.json(); }).then(function(m) {
+        var n = (m && m.chunks) || 0; if (!n) { aptOffLoading = false; return; }
+        return Promise.all(Array.from({ length: n }, function(_, i) { return fetch('/api/data-coverage?mode=aptOfficial&i=' + i).then(function(r) { return r.json(); }).catch(function() { return {}; }); })).then(function(parts) {
+            var all = {}; parts.forEach(function(p) { Object.assign(all, (p && p.items) || {}); });
+            aptOff = all; aptOffLoading = false; try { if (bidBoardState.pub) renderBidBoard(); renderBidDrawer(); } catch (e) {}
+        });
+    }).catch(function() { aptOffLoading = false; });
+}
+function aptOfficialOf(r) {
+    if (!aptOff || !r || r.type !== 'apt' || !r.a) return null;
+    var lawd = r.lawd || bidBoardLawdOf(r.a), bb = String(r.bunjiFull || '').split('-'), bun = parseInt(bb[0], 10), ji = parseInt(bb[1] || '0', 10) || 0; if (!lawd || isNaN(bun)) return null;
+    var ents = aptOff[lawd + '|' + String(bun).padStart(4, '0') + '|' + String(ji).padStart(4, '0')]; if (!ents || !ents.length) return null;
+    var nk = lbKey(r.name), pick = ents.filter(function(e) { var k = lbKey(e[0]); return k && nk && (k === nk || k.indexOf(nk) >= 0 || nk.indexOf(k) >= 0); })[0] || (ents.length === 1 ? ents[0] : null); if (!pick) return null;
+    var ar = (parseFloat(r.pyung) || 0) * 3.305785; if (!(ar > 0)) return null;
+    var best = null; pick[1].forEach(function(x) { var d = Math.abs(x[0] - ar); if (!best || d < best.d) best = { d: d, x: x }; });
+    if (!best || best.d > Math.max(2.5, ar * 0.04)) return null;   // 면적이 거의 같은 형(±2.5㎡·4%)만
+    return { won: best.x[2] * 10000, n: best.x[1], area: best.x[0] };
+}
+function pubPriceOf(r) {
+    var a = r && r.a, won = a ? (parseInt(a.officialPriceWon) || 0) : 0; if (won > 0) return { won: won, est: false, src: '호별' };
+    if (!aptOff && !aptOffLoading) loadAptOfficial();
+    var o = aptOfficialOf(r); if (o) return { won: o.won, est: false, src: '단지 같은 면적 중앙값(' + o.n + '호)' };
+    var sale = r && r.sale; return sale ? { won: Math.round(sale * 10000 * 0.69), est: true, src: '추정' } : null;
+}
 function pubMatch(r) { var pf = bidBoardState.pub; if (!pf) return true; var pp = pubPriceOf(r); if (!pp) return false; return pp.won <= (pf === '1' ? 100000000 : (pf === '2' ? 200000000 : 300000000)); }
 function regionMatch(r, reg) { if (!permitMatch(r) || !crowdMatch(r) || !pubMatch(r)) return false; if (!reg) return true; if (reg.indexOf('g:') === 0) return String(r.region).indexOf(reg.slice(2) + ' ') === 0; if (reg === 'm:수도권') return SIDO_CAPITAL.indexOf(sidoOfRow(r)) >= 0; if (reg === 'm:수도권외') return SIDO_CAPITAL.indexOf(sidoOfRow(r)) < 0; if (reg === 'm:광역') return SIDO_METRO.indexOf(sidoOfRow(r)) >= 0; if (reg.indexOf('s:') === 0) return sidoOfRow(r) === reg.slice(3 - 1); return r.region === reg; }
 /* 📱 네이버부동산식 목록 카드 + 상세 창 (2026-10-10, 사용자: 아이패드에서 네이버부동산 UI를 벤치마킹) - 641~1240px에서 표 대신 카드(이름·큰 추천가·한 줄 요약·칩)와 정렬 줄,
@@ -22468,7 +22495,7 @@ function setBidBoardProgress(t) {
     if (p) { p.innerText = t; p.style.display = t ? '' : 'none'; }
 }
 function setBidBoardFilter(key, val) {
-    bidBoardState[key] = val;
+    bidBoardState[key] = val; if (key === 'pub' && val) loadAptOfficial();
     renderBidBoard();
     if (key === 'visit' && val !== 'go' && val !== 'villa') setTimeout(function() { try { finalizeStaleRows(); } catch (e) {} }, 50); // 패스·전체 목록을 열면 뒤로 미뤄 둔 나머지 계산을 이어서
     // 지난 입찰은 평소엔 계산하지 않음 - 보기를 켜면 그때 계산
@@ -23356,7 +23383,7 @@ async function renderBidDrawer() {
     // 2026-10(사용자: "목록 옆 좁은 창 안에 지도/상세 버튼") - 맨 위 이름 옆에 바로 보이게
     var h = '<div class="dr-h"><h3>' + favStar(a, idJs) + bbEsc(row.name) + (a.caseNo ? ' <span style="font-size:12px;font-weight:normal;color:#6b7280;">· ' + bbEsc(a.caseNo) + '</span>' : '') + '</h3><button class="dr-x" onclick="closeBidDrawer()">✕</button></div>'
         + '<div class="dr-top-btns"><button onclick="bidBoardGo(\'' + idJs + '\')">🗺️ 지도</button><button onclick="openCyclePanel()">📈 사이클</button></div>' + bidExclBoxHtml(row, idJs) + rightsStopBannerHtml(row)
-        + '<div class="dr-sub">' + bbEsc(row.region) + ' · ' + (row.pyung ? row.pyung + '평' + (row.type === 'apt' && sizeBandOf(row.pyung) ? '(' + sizeBandOf(row.pyung) + ' ' + Math.round(row.pyung * 3.305785) + '㎡)' : '') + ' · ' : '') + (row.floor ? row.floor + '층 · ' : '') + bbEsc(a.caseNo || '') + (row.dday ? ' · <b>' + row.dday.label + '</b> (' + bbEsc(a.bidDate) + ')' : '') + '</div>'
+        + '<div class="dr-sub">' + bbEsc(row.region) + ' · ' + (row.pyung ? row.pyung + '평' + (row.type === 'apt' && sizeBandOf(row.pyung) ? '(' + sizeBandOf(row.pyung) + ' ' + Math.round(row.pyung * 3.305785) + '㎡)' : '') + ' · ' : '') + (row.floor ? row.floor + '층 · ' : '') + bbEsc(a.caseNo || '') + (row.dday ? ' · <b>' + row.dday.label + '</b> (' + bbEsc(a.bidDate) + ')' : '') + (function() { try { var pp = row.type === 'apt' ? pubPriceOf(row) : null; return pp ? ' · 공시가격 <b>' + toEok(String(Math.round(pp.won / 10000))) + '</b> <span title="' + bbEsc(pp.src) + '">(' + (pp.est ? '추정' : (pp.src === '호별' ? '호별' : '단지·면적별')) + ')</span>' : ''; } catch (e) { return ''; } })() + '</div>'
         + '<div style="margin-top:6px;"><span class="bb-verdict" style="color:' + v.color + ';background:' + v.bg + ';">' + v.label + '</span>'
         + (row.sweet ? ' <span class="bb-pill" style="background:#e8f5e9;color:#2e7d32;">👍 입찰 추천 구간</span>' : '') + (row.overshoot ? ' <span class="bb-pill" style="background:#fff3e0;color:#e65100;">⚠️ 손해 주의</span>' : '') + (row.bulk ? ' <span class="bb-pill" style="background:#fee2e2;color:#b91c1c;">🏢 대량 경매 ' + row.bulkN + '건</span>' : '')
         + (row.niche ? ' <span class="bb-pill" style="background:#e0f2f1;color:#00695c;">🧭 틈새</span>' : '') + (row.sturdy ? ' <span class="bb-pill" style="background:#ecfeff;color:#0e7490;">🛡️ 버팀 ' + Math.round(row.ownStats.jeonse.ratio * 100) + '%</span>' : '') + (row.hardHold ? ' <span class="bb-pill" style="background:#fffbeb;color:#92400e;">⏳ 버티기 어려움 ' + Math.round(row.ownStats.jeonse.ratio * 100) + '%</span>' : '') + (row.opportunity ? ' <span class="bb-pill" style="background:#fff8e1;color:#e65100;">🎯 기회</span>' : '') + '</div>'
