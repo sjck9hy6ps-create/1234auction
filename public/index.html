@@ -1352,6 +1352,13 @@ body.ui2 #auction-modal.am4 { width:620px; }
 /* 💡 입찰가 고르기(2026-10) */
 #bb-drawer .dr-plan { background:#f0f9ff; border:1px solid #bae6fd; border-radius:10px; padding:8px 10px; margin:-4px 0 10px; font-size:12px; line-height:1.55; }
 #bb-drawer .dr-plan table { margin:6px 0 4px; font-size:11.5px; } #bb-drawer .dr-plan td:first-child, #bb-drawer .dr-plan th:first-child { white-space:nowrap; } #bb-drawer .dr-plan th, #bb-drawer .dr-plan td { padding:4px 3px; } #bb-drawer .dr-plan tr.ev td { background:#e0f2fe; }
+/* 2026-11-19(사용자: 아이패드·휴대폰에서 입찰가 고르기 표 줄바뀜) 금액·퍼센트 칸은 줄바꿈 금지(숫자가 '5억 / 5,473만'으로 쪼개지지 않게), 이름 칸만 단어 단위로 줄바꿈, 좁은 화면은 글자·여백을 줄이고 넘치면 가로로 밀어 보기 */
+#bb-drawer .dr-plan { overflow-x:auto; -webkit-overflow-scrolling:touch; }
+#bb-drawer .dr-plan td.r, #bb-drawer .dr-plan th.r { white-space:nowrap; }
+#bb-drawer .dr-plan td:first-child, #bb-drawer .dr-plan th:first-child { white-space:normal; word-break:keep-all; overflow-wrap:normal; }
+#bb-drawer .dr-plan table { width:100%; border-collapse:collapse; }
+@media (max-width: 900px) { #bb-drawer .dr-plan table { font-size:11px; } #bb-drawer .dr-plan th, #bb-drawer .dr-plan td { padding:4px 2px; } }
+@media (max-width: 480px) { #bb-drawer .dr-plan table { font-size:10.5px; } #bb-drawer .dr-plan th, #bb-drawer .dr-plan td { padding:4px 1px; } #bb-drawer .dr-plan td:first-child, #bb-drawer .dr-plan th:first-child { min-width:64px; } }
 </style>
 <style>
 /* 🚶 임장 후보 화면(2026-10) - 판정 탭·칩·필터를 줄이고 한 줄에 판단 하나 */
