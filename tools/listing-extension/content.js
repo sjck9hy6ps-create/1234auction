@@ -1,5 +1,5 @@
-// 호가 보내기 - 네이버 부동산 단지 페이지에 📤 호가 보내기 버튼을 띄움. 사용자가 직접 연 단지 화면에서 매물 목록이 보이면 목록을 끝까지 자동으로 펼쳐(스크롤) 두고(2026-11-19 사용자 요청),
-// 버튼을 누르면 읽어서 앱으로 보냄. 다른 페이지로 이동하거나 단지를 대신 열지 않음(자동 이동·자동 순회 없음). 사용자가 직접 스크롤·클릭하면 자동 펼치기는 멈춤.
+// 호가 보내기 - 네이버 부동산 단지 페이지에 📤 호가 보내기 버튼 하나를 띄움. 눌렀을 때만 동작: 매물 목록을 끝까지 내려 모두 불러온 뒤 읽어 앱으로 보냄.
+// 자동 이동·자동 순회·자동 펼치기 없음(2026-11-19 자동 펼치기는 사용자 요청으로 삭제). 버튼을 누른 그 페이지에서만 스크롤함.
 (function () {
   if (document.getElementById('hg-send-btn')) return;
   // 매물 한 건의 가격 줄('매매2억 5,700' · '매매2억 5,000~2억 6,000' · '매매3억'). 단지 요약 줄('매매3.5억~5.5억', 소수점)과 구분
@@ -49,12 +49,11 @@
     return found;
   };
   const moreButtons = () => [...document.querySelectorAll('button,a,div,span')].filter((e) => e.children.length <= 2 && /(매물\s*)?더\s*보기|더\s*많은\s*매물|매물\s*더/.test(String(e.innerText || '').trim()) && String(e.innerText || '').trim().length < 14);
-  const expandList = async (onProgress, shouldStop) => {
+  const expandList = async (onProgress) => {
     resetIfMoved();
     const expected = expectedOf();
     let same = 0, last = harvest(), info = '', rounds = 0;
     for (let i = 0; i < 120 && same < 6; i++) {
-      if (shouldStop && shouldStop()) break;
       rounds++;
       const el = lastItemEl(), used = [];
       if (el) {
@@ -96,40 +95,14 @@
   window.hgCollect = collectListings;   // 시험(tests/listing-collect.test.cjs)용
   window.hgExpand = expandList;
 
-  // ---- 자동 펼치기: 단지 화면에 매물 목록이 나타나면 끝까지 내려 모두 불러옴 ----
-  let autoPath = null, autoRunning = false, userTouched = false;
-  ['wheel', 'keydown', 'mousedown', 'touchstart'].forEach((ev) => { try { window.addEventListener(ev, (e) => { if (autoRunning && e.isTrusted) userTouched = true; }, { capture: true, passive: true }); } catch (e) {} });   // 사용자가 직접 움직이면 자동 펼치기는 멈춤(내 스크롤 신호 isTrusted=false는 무시)
   const idleLabel = () => { btn.textContent = '📤 호가 보내기'; btn.style.background = '#1e5eff'; };
-  const autoExpand = async () => {
-    autoRunning = true; userTouched = false;
-    try {
-      toast('⬇ 목록 펼치는 중…', null);
-      const r = await expandList((n, expected) => { if (!btn.disabled) toast('⬇ 목록 펼치는 중 ' + n + (expected ? '/' + expected : '') + '건', null); }, () => userTouched);
-      if (userTouched) { toast('📤 호가 보내기 (직접 내리는 중 - 끝나면 눌러 주세요)'); btn.style.background = '#1e5eff'; }
-      else if (r.expected && r.n < r.expected) { toast('📤 호가 보내기 (' + r.n + '/' + r.expected + '건 펼침 · 스크롤:' + r.info + ')'); btn.style.background = '#ef6c00'; }
-      else { toast('📤 호가 보내기 (' + r.n + (r.expected ? '/' + r.expected : '') + '건 펼침 ✅)', true); }
-      btn.title = '스크롤 영역: ' + r.info + ' · 반복 ' + r.rounds + '번';
-    } catch (e) { idleLabel(); }
-    autoRunning = false;
-  };
-  const autoTick = () => {
-    if (autoRunning || btn.disabled) return;
-    if (!/\/complexes\/\d+/.test(location.pathname)) return;   // 단지 화면에서만
-    const key = location.pathname;
-    if (autoPath === key) return;                                    // 같은 단지는 한 번만
-    resetIfMoved(); if (harvest() < 1) return;                      // 매물 목록이 나타난 뒤
-    autoPath = key;
-    setTimeout(() => { if (location.pathname === key) autoExpand(); }, 1500);   // 처음 20건이 다 그려질 때까지 잠깐
-  };
-  try { setInterval(autoTick, 1500); } catch (e) {}
 
   // ---- 📤 호가 보내기 ----
   btn.onclick = async () => {
     btn.disabled = true;
     try {
-      for (let w = 0; w < 120 && autoRunning; w++) await sleep(500);   // 자동 펼치기가 도는 중이면 끝나기를 기다림
       toast('매물 읽는 중…');
-      // 이미 자동으로 펼쳤으면(읽은 건수가 화면 표시 건수에 닿았으면) 다시 내리지 않고 바로 읽음
+      // 이미 화면에 다 불러와져 있으면(읽은 건수가 화면 표시 건수에 닿았으면) 다시 내리지 않고 바로 읽음
       resetIfMoved(); let exp = expectedOf(), got = harvest(), n, text, expected = exp;
       if (!exp || got < exp) { const c = await collectListings((nn, ee) => toast('매물 펼치는 중 ' + nn + (ee ? '/' + ee : '') + '건')); text = c.text; n = c.n; expected = c.expected; if (expected && n < expected * 0.9) { toast('↻ ' + n + '/' + expected + '건만 읽혀 한 번 더 내려요…'); const c2 = await collectListings(); if (c2.n > n) { text = c2.text; n = c2.n; } } }
       else { const r = readListings(); text = r.text; n = r.n; }

@@ -1,5 +1,5 @@
 // 호가 읽기·펼치기(content.js) 시험 - node tests/listing-collect.test.cjs
-// ① 실제 네이버 페이지 글로 매물 나누기(tests/fixtures-private/naver-*.txt 필요, 없으면 건너뜀) ② 가짜 스크롤 목록으로 끝까지 펼치기 ③ 단지 화면이 열리면 자동으로 펼치기
+// ① 실제 네이버 페이지 글로 매물 나누기(tests/fixtures-private/naver-*.txt 필요, 없으면 건너뜀) ② 가짜 스크롤 목록으로 끝까지 펼치기 ③ 자동으로 움직이지 않음
 const vm = require('vm'), fs = require('fs'), assert = require('assert');
 const fx = (f) => { try { return fs.readFileSync(__dirname + '/fixtures-private/' + f, 'utf8'); } catch (e) { return null; } };
 const code = fs.readFileSync(__dirname + '/../tools/listing-extension/content.js', 'utf8');
@@ -42,14 +42,9 @@ function fakeList(mode) {
   // ③ 스크롤 영역이 없고 '매물 더보기' 버튼으로만 더 불러오는 목록
   f = fakeList('more'); L = load({ text: f.text, qsa: f.qsa }); r = await L.ctx.hgExpand(); assert.strictEqual(r.n, 54);
   console.log("✓ 스크롤 영역이 없어도 '매물 더보기' 버튼을 눌러 54건까지 펼침");
-  // ④ 단지 화면이 열리면 자동으로 펼침(버튼 글자로 확인)
-  f = fakeList('scroll'); L = load({ text: f.text, qsa: f.qsa, path: '/complexes/777' }); assert.strictEqual(L.timers.length, 1);
-  L.timers[0](); await new Promise((r) => setTimeout(r, 100));
-  const btn = L.body.children[0]; assert.ok(/54\/54건 펼침/.test(btn.textContent), btn.textContent); assert.strictEqual(f.count(), 54);
-  console.log('✓ 단지 화면에 들어가면 사용자가 아무것도 안 눌러도 목록이 54건까지 자동으로 펼쳐지고 버튼에 표시');
-  // ⑤ 단지 화면이 아니면(지도·검색) 자동으로 움직이지 않음
-  f = fakeList('scroll'); L = load({ text: f.text, qsa: f.qsa, path: '/search' }); L.timers[0](); await new Promise((r) => setTimeout(r, 100));
-  assert.strictEqual(f.count(), 20);
-  console.log('✓ 지도·검색 화면에서는 자동으로 내리지 않음');
+  // ④ 아무것도 누르지 않으면 자동으로 움직이지 않음(타이머·자동 펼치기 없음)
+  f = fakeList('scroll'); L = load({ text: f.text, qsa: f.qsa, path: '/complexes/777' }); await new Promise((r) => setTimeout(r, 100));
+  assert.strictEqual(L.timers.length, 0); assert.strictEqual(f.count(), 20);
+  console.log('✓ 단지 화면에 들어가도 버튼을 누르기 전에는 아무것도 스크롤하지 않음(자동 펼치기 없음)');
   console.log('모두 통과');
 })().catch((e) => { console.error('실패:', e); process.exit(1); });
