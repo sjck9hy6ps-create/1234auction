@@ -80,40 +80,30 @@
     if (!st.cur) { await advance(); return; }
     if (Date.now() - st.cur.at > 15 * 60 * 1000) { await fail(st, '한 단지에 15분 넘게 걸렸어요'); return; }
     const onComplex = /\/complexes\/\d+/.test(location.pathname);
-    if (!onComplex) {   // 주소 검색 화면: 지도가 그 자리로 옮겨 가고 주변 단지가 함께 보임 → 목표 단지 표시(또는 같은 이름 링크)를 눌러 단지 목록을 불러옴
-      let href = null, nLinks = 0, nMark = 0, clicked = false;
-      const markers = () => {
-        const out = [];
-        document.querySelectorAll('body *').forEach((e) => {
-          if (e.closest && e.closest('#hg-chain-box')) return; if (e.children.length > 5) return;
-          const t = String(e.innerText || e.textContent || '').trim(); if (!t || t.length > 40) return;
-          const r = e.getBoundingClientRect(); if (r.width < 5 || r.height < 5 || r.bottom < 0 || r.top > innerHeight || r.right < 0 || r.left > innerWidth) return;
-          out.push({ el: e, n: L.normName(t.split('\n')[0]), x: r.left + r.width / 2, y: r.top + r.height / 2 });
-        });
-        return out;
-      };
-      const press = (el) => { ['mousedown', 'mouseup', 'click'].forEach((t) => { try { el.dispatchEvent(new MouseEvent(t, { bubbles: true, cancelable: true, view: window })); } catch (e) {} }); try { el.click(); } catch (e) {} };
-      for (let i = 0; i < 18 && !href && !clicked; i++) {
-        show('🔎 「' + st.cur.name + '」 찾는 중… ' + (18 - i) + '초 (지도에서 단지를 누를 거예요)', [mkBtn('⏹ 멈추기', '#dc2626', userStop)]);
-        await sleep(1000);
-        const as = [...document.querySelectorAll('a[href*="/complexes/"]')]; nLinks = as.length;
-        href = L.pickComplexLink(as.map((a) => ({ href: a.href, text: (a.innerText || a.textContent || '').trim(), ctx: ((a.closest('li,div') || a).innerText || '').slice(0, 200) })), st.cur);
-        if (href || i < 2) continue;
-        const rk = L.rankCandidates(markers(), st.cur.name, innerWidth * 0.62, innerHeight * 0.5); nMark = rk.length;
-        if (rk.length) {
-          show('🖱 「' + st.cur.name + '」 단지를 눌러요'); press(rk[0].el);
-          for (let k = 0; k < 8 && !/\/complexes\/\d+/.test(location.pathname); k++) await sleep(1000);
-          if (/\/complexes\/\d+/.test(location.pathname)) clicked = true; else if (rk[1]) { press(rk[1].el); for (let k = 0; k < 6 && !/\/complexes\/\d+/.test(location.pathname); k++) await sleep(1000); clicked = /\/complexes\/\d+/.test(location.pathname); }
-        }
+    if (!onComplex) {   // 검색 화면: 지도 위 단지 표시에는 이름이 없고 가격·면적뿐이라(이름은 지도 그림 글자), 검색창에 이름을 쳐서 나오는 자동완성 목록(이름+주소 글자)에서 목표 단지를 골라 누름
+      const qs = queriesOf(st.cur), qtext = qs[st.cur.qi || 0] || st.cur.name;
+      let clicked = false, note = '', cands = [];
+      const findInput = () => document.querySelector('.search_area input[type="text"], .search_area input, input[placeholder*="검색"], input[type="search"]');
+      let inp = null; for (let i = 0; i < 8 && !inp; i++) { inp = findInput(); if (!inp) await sleep(1000); }
+      if (!inp) note = '검색창을 못 찾음';
+      else {
+        show('⌨ 「' + qtext + '」 검색창에 입력', [mkBtn('⏹ 멈추기', '#dc2626', userStop)]);
+        try { inp.focus(); Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(inp, qtext); inp.dispatchEvent(new Event('input', { bubbles: true })); inp.dispatchEvent(new Event('keyup', { bubbles: true })); } catch (e) { note = '입력 실패'; }
+        const ir = inp.getBoundingClientRect();
+        const readCands = () => { const out = []; document.querySelectorAll('li,a,button,div,span').forEach((e) => { if ((e.closest && e.closest('#hg-chain-box')) || e.children.length > 8 || e === inp) return; const t = String(e.innerText || '').trim(); if (!t || t.length > 140) return; const r = e.getBoundingClientRect(); if (r.width < 20 || r.height < 10 || r.top < ir.bottom - 4 || r.top > innerHeight || r.left < ir.left - 30 || r.left > ir.right + 30) return; out.push({ el: e, first: t.split('\n')[0].trim(), full: t.replace(/\n+/g, ' ') }); }); return out; };
+        let pick = -1;
+        for (let i = 0; i < 12 && pick < 0; i++) { await sleep(800); cands = readCands(); pick = L.pickSuggestion(cands, st.cur); show('🔎 자동완성에서 「' + st.cur.name + '」 찾는 중… (후보 ' + cands.length + '개)', [mkBtn('⏹ 멈추기', '#dc2626', userStop)]); }
+        if (pick >= 0) {
+          show('🖱 「' + st.cur.name + '」 자동완성 항목을 눌러요'); const el = cands[pick].el;
+          ['mousedown', 'mouseup', 'click'].forEach((t) => { try { el.dispatchEvent(new MouseEvent(t, { bubbles: true, cancelable: true, view: window })); } catch (e) {} }); try { el.click(); } catch (e) {}
+          for (let k = 0; k < 10 && !/\/complexes\/\d+/.test(location.pathname); k++) await sleep(1000);
+          clicked = /\/complexes\/\d+/.test(location.pathname);
+          if (!clicked) note = '항목을 눌렀지만 단지 화면으로 안 넘어감';
+        } else note = '자동완성에 이름이 맞는 단지가 없음(후보 ' + cands.length + '개)';
       }
       if (clicked) { st.cur.step = 'complex'; st.cur.at = Date.now(); await setSt(st); await sleep(L.jitter(1500, 3000)); return run(); }   // 같은 화면 안에서 주소만 바뀌어 새로고침이 없으므로 이어서 진행
-      if (!href) {
-        const qs = queriesOf(st.cur);
-        if ((st.cur.qi || 0) + 1 < qs.length) { st.cur.qi = (st.cur.qi || 0) + 1; st.cur.at = Date.now(); await setSt(st); show('🔁 다른 검색어로 다시 찾아요: ' + qs[st.cur.qi]); await sleep(L.jitter(1500, 3500)); location.href = searchUrl(st.cur, st.cur.qi); return; }
-        await fail(st, '지도에서 단지를 못 찾음(이름 맞는 표시 ' + nMark + '개·링크 ' + nLinks + '개) 화면: ' + diag()); return;
-      }
-      st.cur.step = 'complex'; st.cur.at = Date.now(); await setSt(st);
-      show('➡ 「' + st.cur.name + '」 단지 페이지로 이동'); await sleep(L.jitter(1500, 4000)); location.href = href; return;
+      if ((st.cur.qi || 0) + 1 < qs.length) { st.cur.qi = (st.cur.qi || 0) + 1; st.cur.at = Date.now(); await setSt(st); show('🔁 다른 검색어로 다시 찾아요: ' + qs[st.cur.qi]); await sleep(L.jitter(1500, 3500)); location.href = searchUrl(st.cur, st.cur.qi); return; }
+      await fail(st, note + ' 자동완성 후보: ' + cands.slice(0, 10).map((c) => c.full.slice(0, 40)).join(' | ') + ' · 입력창:' + (inp ? 'O' : 'X')); return;
     }
     if (st.cur.sent) { const ok = await countdown(L.jitter(20000, 60000), '완료'); if (ok) await advance(); return; }   // 새로고침 등으로 다시 열렸을 때 같은 단지를 다시 보내지 않음
     show('📖 ' + st.cur.name + ' 매물 읽는 중…', [mkBtn('⏹ 멈추기', '#dc2626', userStop)]);
@@ -130,11 +120,16 @@
       }
       await fail(cur, '매매 매물을 못 찾았어요(다른 단지일 수 있음) 화면: ' + document.body.innerText.slice(0, 120).replace(/\n+/g, ' / ')); return;
     }
+    const hm = L.headersMatch(col.text, st.cur.name);
+    if (hm === false) {   // 다른 단지 화면이면 보내지 않음(예: 영천마을주공아파트를 찾는데 영천마을주공9단지가 열림)
+      const first = (String(col.text).split(/\n/)[0] || '').slice(0, 30);
+      await fail(cur, '다른 단지 화면이 열렸어요(첫 매물: ' + first + ')'); return;
+    }
     show('📤 ' + st.cur.name + ' ' + col.n + '건 앱에 보내는 중…');
     const res = await bg({ type: 'send', text: col.text, url: location.href });
     if (!res || !res.ok) { await fail(cur, '앱으로 보내기 실패'); return; }
     cur.fails = 0; cur.count = (cur.count || 0) + 1; cur.cur.sent = true; await setSt(cur);
-    await mark(cur, 'ok', col.n + '건' + (col.expected ? ' / 화면 표시 ' + col.expected + '건' + (col.n < col.expected ? ' ⚠️ 덜 읽힘' : '') : '') + (col.info ? ' · 스크롤:' + col.info : ' · 스크롤 영역 못 찾음'));
+    await mark(cur, 'ok', col.n + '건' + (hm === null ? ' (단지 이름 확인 불가)' : '') + (col.expected ? ' / 화면 표시 ' + col.expected + '건' + (col.n < col.expected ? ' ⚠️ 덜 읽힘' : '') : '') + (col.info ? ' · 스크롤:' + col.info : ' · 스크롤 영역 못 찾음'));
     const why = L.shouldStop(cur, LIMIT, FAIL_LIMIT); if (why) { await stop(why, true); return; }
     const ok = await countdown(L.jitter(20000, 60000), st.cur.name + ' ' + col.n + '건 완료');
     if (ok) await advance();

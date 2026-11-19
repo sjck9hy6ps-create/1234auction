@@ -57,10 +57,42 @@
   // 지도 위 단지 표시 후보(화면 요소) 중 목표 단지 이름과 맞는 것을 고름: 이름이 정확히 같은 것 우선, 그다음 화면 가운데(주소 검색으로 지도가 옮겨 간 자리)에 가까운 것. cands: [{ n: 정규화한 글자, x, y }]
   function rankCandidates(cands, target, cx, cy) {
     const T = normName(target); if (!T) return [];
-    return (cands || []).filter((c) => c && c.n && (c.n === T || (c.n.length >= 3 && T.length >= 3 && (c.n.indexOf(T) >= 0 || T.indexOf(c.n) >= 0))))
+    return (cands || []).filter((c) => c && c.n && (c.n === T || sameComplex(c.t || c.n, target)))
       .map((c) => Object.assign({}, c, { exact: c.n === T ? 0 : 1, d: Math.hypot((c.x || 0) - cx, (c.y || 0) - cy) }))
       .sort((a, b) => (a.exact - b.exact) || (a.d - b.d));
   }
-  const api = { rankCandidates, normName, itemKey, pickComplexLink, nextItem, blockedReason, jitter, dayKey, shouldStop };
+  // 화면에 나온 단지 이름(매물 머리줄 '집주인보라맨션 비동'·자동완성 첫 줄 등)이 목표 단지와 같은 단지인지. 이름 앞뒤에 '9단지'·'2차' 같은 구분이 더 붙으면 다른 단지(동 이름 '비동'·'910동'은 무시)
+  const sp = (x) => String(x || '').replace(/[\s·.\-_,()]/g, '').toLowerCase();
+  const coreName = (n) => sp(String(n || '').replace(/\([^)]*\)|（[^）]*）/g, '').replace(/아파트\s*$/, ''));
+  function sameComplex(label, target) {
+    const T = coreName(target); let Lb = sp(String(label || '').replace(/집주인/g, '')).replace(/아파트/g, '');
+    if (!T || !Lb) return false;
+    const i = Lb.indexOf(T); if (i < 0) return false;
+    let rest = Lb.slice(0, i) + Lb.slice(i + T.length);
+    rest = rest.replace(/[가-힣a-z0-9]{0,4}동$/, '');
+    return rest.length <= 1;
+  }
+  // 보내기 전 확인: 읽은 매물 글(머리줄 = '매매…' 줄 바로 위)의 단지 이름이 목표 단지와 같은지. true/false, 머리줄이 없으면 null(판단 불가)
+  const ITEMLINE = /^매매\s*\d[\d,]*(?:억|만)?(?:\s*[\d,]+)?(?:\s*~\s*[\d,억만\s]+)?$/;
+  function headersMatch(text, target) {
+    const lines = String(text || '').split(/\r?\n/).map((x) => x.trim()).filter(Boolean), hs = [];
+    for (let i = 1; i < lines.length; i++) if (ITEMLINE.test(lines[i]) && !/^(매매|전세|월세)/.test(lines[i - 1]) && lines[i - 1].length < 60) hs.push(lines[i - 1]);
+    if (!hs.length) return null;
+    const ok = hs.filter((h) => sameComplex(h, target)).length;
+    return ok >= Math.ceil(hs.length / 2);
+  }
+  // 검색창 자동완성 후보 중 목표 단지를 고름. cands: [{ first: 첫 줄(단지 이름), full: 전체 글자 }] → 인덱스(없으면 -1). 같은 이름이 여럿이면 지번 주소의 동·읍·면·리가 들어 있는 것 우선
+  function pickSuggestion(cands, item) {
+    const toks = String((item && (item.addr || '')) || '').split(/\s+/).filter((t) => /(동|읍|면|리|가)$/.test(t) && t.length >= 2);
+    if (item && item.dong) toks.push(String(item.dong));
+    let best = -1, bs = -1;
+    (cands || []).forEach((c, i) => {
+      if (!sameComplex(c.first, item && item.name)) return;
+      const f = sp(c.full); let sc = 1; toks.forEach((t) => { if (f.indexOf(sp(t)) >= 0) sc += 2; });
+      if (sc > bs) { bs = sc; best = i; }
+    });
+    return best;
+  }
+  const api = { sameComplex, headersMatch, pickSuggestion, coreName, rankCandidates, normName, itemKey, pickComplexLink, nextItem, blockedReason, jitter, dayKey, shouldStop };
   if (typeof module !== 'undefined' && module.exports) module.exports = api; else root.HGChain = api;
 })(typeof self !== 'undefined' ? self : this);

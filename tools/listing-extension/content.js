@@ -1,6 +1,8 @@
 // 호가 보내기 - 네이버 부동산 단지 페이지에 버튼 하나를 띄움. 눌렀을 때만 지금 열려 있는 페이지의 매물 목록을 읽어 보냄(자동 순회·자동 이동 없음).
 (function () {
   if (document.getElementById('hg-send-btn')) return;
+  // 매물 한 건의 가격 줄('매매2억 5,700' · '매매2억 5,000~2억 6,000' · '매매3억'). 단지 요약 줄('매매3.5억~5.5억', 소수점)과 구분
+  const ITEM = /^매매\s*\d[\d,]*(?:억|만)?(?:\s*[\d,]+)?(?:\s*~\s*[\d,억만\s]+)?$/;
   const btn = document.createElement('button');
   btn.id = 'hg-send-btn';
   btn.textContent = '📤 호가 보내기';
@@ -29,26 +31,31 @@
     const scrollOnce = () => { if (sc) sc.scrollTop += Math.max(300, sc.clientHeight * 0.9); else window.scrollBy(0, Math.max(300, window.innerHeight * 0.9)); };
     // 스크롤하며 보이는 매물 덩어리를 계속 모음(목록이 화면 밖 항목을 지우는 방식이어도 빠지지 않게). 덩어리 = '○○ 101동' 머리 줄부터 다음 머리 줄 전까지
     const blocks = new Map();
+    // 2026-11-19: 매물 하나 = '머리줄(단지+동) → 매매 줄 → … → 확인매물/등록일 줄'. 예전엔 머리줄을 '○○ 101동'(숫자+동)으로만 알아봐서 '비동'·'에이동' 단지는 페이지 끝까지 한 덩어리가 되어 같은 매물이 여러 번 겹쳐 담겼음(보라맨션 8건→18건)
     const harvest = () => {
       const lines = (document.body.innerText || '').split(/\r?\n/).map((x) => x.trim()).filter(Boolean);
-      let cur = null;
-      const flush = () => { if (cur && cur.some((l) => /^매매\s*\d/.test(l))) blocks.set(cur.join('\n'), 1); cur = null; };
-      for (const ln of lines) {
-        if (/\d+동\s*$/.test(ln) && !/^(매매|전세|월세)/.test(ln) && ln.length < 40) { flush(); cur = [ln]; }
-        else if (cur) cur.push(ln);
+      for (let i = 1; i < lines.length; i++) {
+        if (!ITEM.test(lines[i])) continue;
+        const hdr = lines[i - 1]; if (!hdr || /^(매매|전세|월세)/.test(hdr) || hdr.length > 60) continue;
+        const blk = [hdr, lines[i]];
+        for (let j = i + 1; j < lines.length && j < i + 12; j++) {
+          if (ITEM.test(lines[j]) || lines[j] === '지역 선택') break;
+          blk.push(lines[j]);
+          if (/^(확인매물|등록일)/.test(lines[j])) break;
+        }
+        blocks.set(blk.join('\n'), 1);
       }
-      flush();
     };
     const cnt = () => { harvest(); return blocks.size; };
     // 2026-11-19(사용자: 호가가 40건이 넘는데 21건만 읽힘, 스크롤이 안 됨) - 스크롤 영역을 속성으로 찾는 대신, 화면의 '마지막 매매 매물' 요소를 찾아 그 요소를 화면 끝으로 끌어내리고(scrollIntoView) 그 위로 스크롤되는 가장 가까운 부모도 맨 아래로 내림.
     // 새로 안 늘어도 바로 멈추지 않고(불러오는 시간 1.2초씩, 5번 연속 그대로면 중단), 화면 위쪽 '매매 N' 건수를 알면 그 수에 닿을 때까지 계속함
-    const expectedOf = () => { const m = (document.body.innerText || '').match(/(^|\n)매매\s*(\d{1,3})\s*(\n|$)/); return m ? +m[2] : 0; };
+    const expectedOf = () => { const m = (document.body.innerText || '').match(/(\d{1,4})\s*개\s*매물이\s*있습니다/); return m ? +m[1] : 0; };   // '54\n개 매물이 있습니다'
     const lastItemEl = () => {
       let found = null;
-      document.querySelectorAll('div,li,span,a,p,dd').forEach((e) => { if (e.children.length > 4) return; const t = (e.innerText || '').trim(); if (/^매매\s*\d/.test(t) && t.length < 80) found = e; });
+      document.querySelectorAll('div,li,span,a,p,dd').forEach((e) => { if (e.children.length > 4) return; const t = (e.innerText || '').trim(); if (ITEM.test(t.split('\n')[0].trim()) && t.length < 80) found = e; });
       return found;
     };
-    const scrollParent = (el) => { for (let p = el; p && p !== document.body && p !== document.documentElement; p = p.parentElement) { let cs = null; try { cs = getComputedStyle(p); } catch (e) {} if (cs && /(auto|scroll)/.test(cs.overflowY) && p.scrollHeight > p.clientHeight + 20) return p; } return null; };
+    const scrollParent = (el) => { for (let p = el; p && p !== document.body && p !== document.documentElement; p = p.parentElement) { let cs = null; try { cs = getComputedStyle(p); } catch (e) {} if (cs && cs.overflowY !== 'visible' && p.scrollHeight > p.clientHeight + 20) return p; } return null; };
     const expected = expectedOf();
     let same = 0, last = cnt(), info = '';
     for (let i = 0; i < 80 && same < 5; i++) {
@@ -66,7 +73,7 @@
     }
     harvest();
     const text = blocks.size ? [...blocks.keys()].join('\n\n') : (document.body.innerText || '');
-    const n = (text.match(/(^|\n)매매\s*\d/g) || []).length;
+    const n = text.split(/\r?\n/).filter((l) => ITEM.test(l.trim())).length;
     return { text, n, expected, info };
   };
   window.hgCollect = collectListings;

@@ -29,4 +29,18 @@ t('지도 표시 후보: 이름 같은 것 우선, 같은 이름이면 화면 �
   const r = L.rankCandidates(c, '금오아파트', 640, 400); assert.strictEqual(r.length, 2); assert.strictEqual(r[0].x, 640); assert.strictEqual(r[0].exact, 0);
 });
 t('지도 표시 후보: 이름이 다르면 비어 있음(엉뚱한 단지를 누르지 않음)', () => assert.strictEqual(L.rankCandidates([{ n: L.normName('해링턴플레이스'), x: 1, y: 1 }], '금오아파트', 0, 0).length, 0));
+t('같은 단지 판단: 9단지·2차가 붙으면 다른 단지, 동 이름(비동·910동)은 무시', () => {
+  assert.ok(L.sameComplex('집주인보라맨션 비동', '보라맨션')); assert.ok(L.sameComplex('보라맨션 에이동', '보라맨션')); assert.ok(L.sameComplex('영천마을주공 910동', '영천마을주공아파트'));
+  assert.ok(!L.sameComplex('집주인영천마을주공9단지 910동', '영천마을주공아파트')); assert.ok(!L.sameComplex('푸른마을2차', '푸른마을')); assert.ok(!L.sameComplex('총 2동', '보라맨션'));
+});
+t('보내기 전 확인: 머리줄이 다른 단지면 false, 머리줄이 없으면 null', () => {
+  assert.strictEqual(L.headersMatch('집주인영천마을주공9단지 910동\n매매2억 5,700\n확인매물 26.11.19.', '영천마을주공아파트'), false);
+  assert.strictEqual(L.headersMatch('보라맨션 비동\n매매3억\n확인매물\n보라맨션 에이동\n매매5억', '보라맨션'), true);
+  assert.strictEqual(L.headersMatch('매매 5억\n101동', '보라맨션'), null);
+});
+t('자동완성 후보: 이름이 같은 단지 중 주소 동·리가 맞는 것', () => {
+  const c = [{ first: '주공아파트', full: '주공아파트 경기 의정부시 가능동' }, { first: '주공아파트', full: '주공아파트 경기 의정부시 신곡동' }, { first: '주공아파트2단지', full: '주공아파트2단지 경기 의정부시 신곡동' }];
+  assert.strictEqual(L.pickSuggestion(c, { name: '주공아파트', addr: '경기도 의정부시 신곡동 754', dong: '신곡동' }), 1);
+  assert.strictEqual(L.pickSuggestion([{ first: '다른단지', full: '' }], { name: '주공아파트' }), -1);
+});
 console.log(n + '개 통과');
