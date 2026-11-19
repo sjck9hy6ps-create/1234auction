@@ -8616,7 +8616,7 @@ function buildPriceChartSvg(trades, range, bands, allByM, rent, opt) {
     var pts = trades.filter(function(t) { return parseInt(t.amount) > 0 && pnTradeDate(t) >= from; })
         .map(function(t) { return { d: pnTradeDate(t), v: parseInt(t.amount), f: t.floor }; }).sort(function(a, b) { return a.d - b.d; });
     if (pts.length < 2) return '<div class="pn-empty">이 기간 거래가 ' + pts.length + '건이라 그래프를 그릴 수 없어요</div>';
-    var W = big ? 360 : 330, H = big ? 280 : 170, L = big ? 40 : 38, R = big ? 74 : 8, T = 10, B = big ? 36 : 40, VH = big ? 46 : 24, mlabs = [];
+    var W = big ? 360 : 330, H = big ? 290 : 170, L = big ? 40 : 38, R = big ? 74 : 8, T = 10, B = big ? 62 : 40, VH = big ? 46 : 24, mlabs = [];
     var rtB = cycleRates && cycleRates.base ? cycleRates.base : null; if (rtB && !big) R = 28; if (big && !LY.rate) rtB = null;   // 2026-11-15 기준금리 오른쪽 눈금 자리(상세 창은 켰을 때만, 값은 오른쪽 여백 라벨)
     var t0 = from.getTime(), t1 = now.getTime();
     var vs = pts.map(function(p) { return p.v; }), lo = Math.min.apply(null, vs), hi = Math.max.apply(null, vs);
@@ -8708,8 +8708,9 @@ function buildPriceChartSvg(trades, range, bands, allByM, rent, opt) {
     if (big) {
         svg += '<text x="' + (L - 4) + '" y="' + (H - B + 14) + '" text-anchor="end" font-size="8" fill="#6b7280">' + maxN + '건</text>';
         mlabs.sort(function(a, b) { return a.y - b.y; }); var ly = mlabs.map(function(m) { return m.y; });
-        for (var q = 1; q < ly.length; q++) if (ly[q] - ly[q - 1] < 11) ly[q] = ly[q - 1] + 11;
-        mlabs.forEach(function(m, q) { var yy = Math.min(ly[q], H - B - VH + 2); svg += '<line x1="' + (W - R) + '" x2="' + (W - R + 4) + '" y1="' + m.y.toFixed(1) + '" y2="' + yy.toFixed(1) + '" stroke="' + m.col + '" stroke-width="1"/><text x="' + (W - R + 5) + '" y="' + (yy + 3).toFixed(1) + '" font-size="9" font-weight="700" fill="' + m.col + '">' + m.t + '</text>'; });
+        var yMax = H - B - VH + 6; for (var q = 1; q < ly.length; q++) if (ly[q] - ly[q - 1] < 11.5) ly[q] = ly[q - 1] + 11.5;
+        for (var q2 = ly.length - 1; q2 >= 0; q2--) { var lim = q2 === ly.length - 1 ? yMax : ly[q2 + 1] - 11.5; if (ly[q2] > lim) ly[q2] = lim; }
+        mlabs.forEach(function(m, q) { var yy = ly[q]; svg += '<line x1="' + (W - R) + '" x2="' + (W - R + 4) + '" y1="' + m.y.toFixed(1) + '" y2="' + yy.toFixed(1) + '" stroke="' + m.col + '" stroke-width="1"/><text x="' + (W - R + 5) + '" y="' + (yy + 3).toFixed(1) + '" font-size="9" font-weight="700" fill="' + m.col + '">' + m.t + '</text>'; });
     }
     pnChartData[cid] = { W: W, L: L, R: R, T: T, H: H, B: B, VH: VH, months: mlist.map(function(k) {
         var arr = (byM[k] || []).slice().sort(function(a, b) { return a - b; });
