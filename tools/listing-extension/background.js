@@ -222,7 +222,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       const q = it ? JSON.parse(it.text) : null;
       if (msg.type === 'hqGet') { sendResponse({ ok: true, q }); return; }
       if (!q) { sendResponse({ ok: false }); return; }
-      q.handled = q.handled || {}; q.handled[msg.key] = { s: msg.status, at: new Date().toISOString(), note: String(msg.note || '').slice(0, 80) };
+      q.handled = q.handled || {}; q.handled[msg.key] = { s: msg.status, at: new Date().toISOString(), note: String(msg.note || '').slice(0, 1500) };
       await fetch(APP + '/api/auction?kind=listingRaw', { method: 'POST', headers: Object.assign({ 'Content-Type': 'application/json' }, await wkHeader()), body: JSON.stringify({ id: 'hqueue', at: q.at, kind: 'hqueue', url: '', text: JSON.stringify(q), done: true, appliedAt: new Date().toISOString() }) });
       sendResponse({ ok: true });
     } catch (e) { sendResponse({ ok: false, error: String(e) }); }

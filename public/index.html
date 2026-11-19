@@ -24394,9 +24394,12 @@ function auctionQueueTargets() {
 /* 🤖 호가 자동 진행 대기열(2026-11-19, 사용자: 호가 모으기 3동작을 대신해 줄 방법) - 입찰 가까운 순 임장 후보 단지를 하루 30곳까지 listingRaw의 id 'hqueue'로 저장 → 맥 크롬 확장(0.8.0)이 네이버 화면에서 '▶ 자동 진행 시작'으로 하나씩 열고·읽고·보냄(20~60초 간격, 캡차·로그인·접속 제한이면 멈춤) */
 var HQ_LIMIT = 30;
 function hqJibun(r) { var t = String((r.a && r.a.addr) || '').trim(), m = t.match(/^(.*?(?:동|읍|면|리|가)\s+(?:산\s*)?\d+(?:-\d+)?)/); return m ? m[1] : ((r.region || '') + ' ' + ((r.a && r.a.dong) || '') + ' ' + (r.bunjiFull || '')).trim(); }   // 네이버 지도 주소 검색용 지번 주소('○○시 ○○구 ○○동 123-4')
+function hqNameOk(n) { var t = String(n || '').trim(); return t.replace(/\s/g, '').length >= 3 && !/\d{1,4}-\d{1,4}\s*$/.test(t) && !/^\d+\s*(차|단지)$/.test(t) && !/^[가-힣]+동\s*\d/.test(t); }   // 주소처럼 쓴 이름('문흥동 1011-1')·'1차' 같은 이름은 네이버 지도에서 찾을 수 없어 대기열에서 뺌(직접 모으기)
+var hqSkipped = 0;
 function hqTargets() {
-    var T = listingBulkTargets(), seen = {}, out = [];
+    var T = listingBulkTargets(), seen = {}, out = []; hqSkipped = 0;
     T.forEach(function(r) {
+        if (!hqNameOk(r.name)) { hqSkipped++; return; }
         var k = lbKey(r.name) + '|' + String(r.a.dong || '').replace(/\s/g, ''); if (seen[k]) return; seen[k] = 1;
         var d = listingAgeDays(r.a); if (d != null && d <= 7) return;   // 최근 7일 안에 모은 단지는 건너뜀
         out.push({ key: k, name: r.name, dong: r.a.dong || '', region: r.region || '', pyung: r.pyung || '', url: lbNaverUrl(r) || '', addr: hqJibun(r), q: (r.name || '') + ' ' + (r.a.dong || ''), dday: r.dday ? r.dday.label : '' });
@@ -24416,8 +24419,8 @@ async function hqMake() {
 async function hqRender() {
     var box = document.getElementById('hq-body'); if (!box) return;
     var q = await hqLoad(), T = hqTargets().length;
-    var h = '<div class="bb-sub" style="line-height:1.6;">호가를 아직 안 모은(또는 7일 넘은) 임장 후보 단지 <b>' + T + '곳</b> · 하루 최대 ' + HQ_LIMIT + '곳</div>';
-    if (q && q.items) { var hd = q.handled || {}, ok = 0, fl = 0; q.items.forEach(function(i) { var x = hd[i.key]; if (x) { if (x.s === 'ok') ok++; else fl++; } }); h += '<div class="bb-sub" style="margin-top:4px;"><b>현재 대기열</b> ' + q.items.length + '곳 · ✅ 완료 ' + ok + ' · ⚠️ 못 읽음 ' + fl + ' · 남음 ' + (q.items.length - ok - fl) + ' <span style="color:#64748b;">(' + new Date(q.at).toLocaleString('ko-KR') + ' 저장)</span></div>'; }
+    var h = '<div class="bb-sub" style="line-height:1.6;">호가를 아직 안 모은(또는 7일 넘은) 임장 후보 단지 <b>' + T + '곳</b> · 하루 최대 ' + HQ_LIMIT + '곳' + (hqSkipped ? ' <span style="color:#64748b;">(이름이 없거나 \'1차\'처럼 찾을 수 없는 ' + hqSkipped + '곳은 대기열에서 뺐어요 - 직접 모아 주세요)</span>' : '') + '</div>';
+    if (q && q.items) { var hd = q.handled || {}, ok = 0, fl = 0; q.items.forEach(function(i) { var x = hd[i.key]; if (x) { if (x.s === 'ok' || x.s === 'none') ok++; else fl++; } }); h += '<div class="bb-sub" style="margin-top:4px;"><b>현재 대기열</b> ' + q.items.length + '곳 · ✅ 완료 ' + ok + ' · ⚠️ 못 읽음 ' + fl + ' · 남음 ' + (q.items.length - ok - fl) + ' <span style="color:#64748b;">(' + new Date(q.at).toLocaleString('ko-KR') + ' 저장)</span></div>'; }
     box.innerHTML = h;
 }
 async function aqLoad() { try { var l = await fetch('/api/auction?kind=listingRaw', { cache: 'no-store' }).then(function(r) { return r.json(); }); var it = Array.isArray(l) ? l.filter(function(x) { return x.id === 'queue'; })[0] : null; return it ? JSON.parse(it.text) : null; } catch (e) { return null; } }

@@ -3,7 +3,7 @@
 (function () {
   if (window.__hgChain) return; window.__hgChain = true;
   const L = window.HGChain; if (!L) return;
-  const LIMIT = 30, FAIL_LIMIT = 3, SEARCH = 'https://new.land.naver.com/search?sk=';
+  const LIMIT = 30, FAIL_LIMIT = 5, SEARCH = 'https://new.land.naver.com/search?sk=';
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   const bg = (m) => new Promise((res) => { try { chrome.runtime.sendMessage(m, (r) => res(chrome.runtime.lastError ? null : r)); } catch (e) { res(null); } });
   const getSt = async () => ((await chrome.storage.local.get('hchain')).hchain) || null;
@@ -37,6 +37,8 @@
     show('➡ 다음 단지로 이동: ' + it.name);
     location.href = it.url || searchUrl(st.cur, 0);
   };
+  // 실패 때 화면 요소 정보(짧은 글자 요소의 태그·클래스·글자)를 남겨서 어디를 눌러야 하는지 나중에 확인할 수 있게 함
+  const diag = () => { try { const out = [], seen = {}; document.querySelectorAll('body *').forEach((e) => { if (out.length >= 28 || (e.closest && e.closest('#hg-chain-box')) || e.children.length > 2) return; const t = String(e.innerText || e.textContent || '').trim().split('\n')[0]; if (!t || t.length > 24) return; const r = e.getBoundingClientRect(); if (r.width < 5 || r.height < 5 || r.bottom < 0 || r.top > innerHeight) return; const k = t; if (seen[k]) return; seen[k] = 1; out.push(e.tagName.toLowerCase() + '.' + String(e.className && e.className.baseVal !== undefined ? e.className.baseVal : e.className || '').split(/\s+/)[0].slice(0, 28) + ':' + t); }); return out.join(' | ').slice(0, 1200); } catch (e) { return ''; } };
   const mark = async (st, status, note) => { await bg({ type: 'hqMark', key: st.cur.key, status, note }); };
   const countdown = async (ms, label) => {
     const end = Date.now() + ms;
@@ -108,7 +110,7 @@
       if (!href) {
         const qs = queriesOf(st.cur);
         if ((st.cur.qi || 0) + 1 < qs.length) { st.cur.qi = (st.cur.qi || 0) + 1; st.cur.at = Date.now(); await setSt(st); show('🔁 다른 검색어로 다시 찾아요: ' + qs[st.cur.qi]); await sleep(L.jitter(1500, 3500)); location.href = searchUrl(st.cur, st.cur.qi); return; }
-        await fail(st, '지도에서 단지를 못 찾음(이름 맞는 표시 ' + nMark + '개·링크 ' + nLinks + '개)'); return;
+        await fail(st, '지도에서 단지를 못 찾음(이름 맞는 표시 ' + nMark + '개·링크 ' + nLinks + '개) 화면: ' + diag()); return;
       }
       st.cur.step = 'complex'; st.cur.at = Date.now(); await setSt(st);
       show('➡ 「' + st.cur.name + '」 단지 페이지로 이동'); await sleep(L.jitter(1500, 4000)); location.href = href; return;
@@ -119,7 +121,14 @@
     for (let i = 0; i < 15 && !/(^|\n)매매\s*\d/.test(document.body.innerText || ''); i++) await sleep(1000);
     const cur = await getSt(); if (!cur || !cur.on) return;
     const col = await window.hgCollect().catch(() => null);
-    if (!col || !col.n) { await fail(cur, '매매 매물을 못 찾았어요'); return; }
+    if (!col || !col.n) {
+      const sp = (x) => String(x || '').replace(/[\s·.\-_,()]/g, '').toLowerCase(), T = sp(st.cur.name), bodyN = sp(String(document.body.innerText || '').slice(0, 4000));   // '아파트'를 떼지 않은 이름으로 비교('삼성아파트'→'삼성'은 너무 짧아 오인)
+      if (T.length >= 3 && bodyN.indexOf(T) >= 0) {   // 같은 이름 단지 화면은 열렸는데 매매 매물이 0건 → 실패가 아니라 '매물 없음'(정상)
+        cur.fails = 0; cur.count = (cur.count || 0) + 1; await setSt(cur); await mark(cur, 'none', '매매 매물 0건(단지 화면은 열림)');
+        const ok0 = await countdown(L.jitter(20000, 60000), st.cur.name + ' 매물 없음'); if (ok0) await advance(); return;
+      }
+      await fail(cur, '매매 매물을 못 찾았어요(다른 단지일 수 있음) 화면: ' + document.body.innerText.slice(0, 120).replace(/\n+/g, ' / ')); return;
+    }
     show('📤 ' + st.cur.name + ' ' + col.n + '건 앱에 보내는 중…');
     const res = await bg({ type: 'send', text: col.text, url: location.href });
     if (!res || !res.ok) { await fail(cur, '앱으로 보내기 실패'); return; }

@@ -63,10 +63,16 @@ const click = async (box, label) => { const b = box.children[1].children.find((x
   assert.strictEqual(nav.length, n1); assert.strictEqual(sent.length, n0);
   console.log('✓ 시작한 탭이 아닌 다른 네이버 탭에서는 동작하지 않음');
   // 8) 3번 연속 실패 → 멈춤
-  queue.handled = {}; store.hchain = { on: true, owner: 7, day, count: 0, fails: 2, cur: { key: 'a|', name: '일곡엘리체프라임', at: clock } };
+  queue.handled = {}; store.hchain = { on: true, owner: 7, day, count: 0, fails: 4, cur: { key: 'a|', name: '일곡엘리체프라임', at: clock } };
   p = load('https://new.land.naver.com/complexes/111', '매매 없음', { collect: { text: '', n: 0 } }); await p.done; await new Promise((r) => setTimeout(r, 200));
   assert.strictEqual(store.hchain.on, false); assert.ok(/연속/.test(store.hchain.stop), store.hchain.stop);
-  console.log('✓ 3번 연속 못 읽으면 멈춤');
+  console.log('✓ 5번 연속 못 읽으면 멈춤');
+  // 8a) 단지 화면은 열렸는데 매매 매물 0건 → 실패가 아니라 '매물 없음'
+  queue.handled = {}; queue.items = [{ key: 'n|', name: '삼성아파트', dong: '옥련동' }, { key: 'o|', name: '다음단지', dong: '' }]; marks.length = 0;
+  store.hchain = { on: true, owner: 7, day, count: 0, fails: 1, cur: { key: 'n|', name: '삼성아파트', dong: '옥련동', qi: 0, step: 'complex', at: clock } };
+  p = load('https://new.land.naver.com/complexes/55', '삼성아파트 옥련동 단지정보 매매 0 전세 3', { collect: { text: '', n: 0 } }); await p.done; await new Promise((r) => setTimeout(r, 300));
+  assert.deepStrictEqual(marks[0], ['n|', 'none']); assert.strictEqual(store.hchain.fails, 0); assert.strictEqual(store.hchain.count, 1);
+  console.log('✓ 단지 화면은 열렸는데 매물이 0건이면 실패가 아니라 매물 없음으로 처리');
   // 8b) 주소 검색 → 지도 표시(링크가 아님)를 눌러 단지 화면으로 이동 → 이어서 읽고 보냄
   queue.handled = {}; queue.items = [{ key: 'm|', name: '금오아파트', dong: '신암동', addr: '대구 동구 신암동 100' }]; marks.length = 0; const s0 = sent.length;
   store.hchain = { on: true, owner: 7, day, count: 0, fails: 0, cur: { key: 'm|', name: '금오아파트', dong: '신암동', addr: '대구 동구 신암동 100', qi: 0, step: 'search', at: clock } };
