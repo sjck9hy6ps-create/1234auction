@@ -19,7 +19,7 @@ function load(url, bodyText, opts) {
   class HTMLInputElement { set value(v) { typed.push(v); this._v = v; } get value() { return this._v; } }
   const inp = Object.create(HTMLInputElement.prototype); Object.assign(inp, { focus() {}, dispatchEvent() {}, getBoundingClientRect: () => ({ left: 100, right: 400, top: 50, bottom: 80, width: 300, height: 30 }) });
   const sug = (opts.sugg || []).map((x, i) => ({ innerText: x.text, children: [], closest: () => null, getBoundingClientRect: () => ({ left: 110, right: 390, top: 100 + i * 40, bottom: 130 + i * 40, width: 280, height: 30 }), click() { if (x.go) L.pathname = x.go; }, dispatchEvent() {} }));
-  const doc = { body, createElement: mk, querySelector: () => (opts.noInput ? null : inp), querySelectorAll: (sel) => (sel.indexOf('li,a') === 0 ? sug : []) };
+  const doc = { body, createElement: mk, querySelector: () => null, querySelectorAll: (sel) => (sel.indexOf('li,a') === 0 ? sug : ((sel.indexOf('input') >= 0 && !opts.noInput) ? [inp] : [])) };
   const ctx = {
     window: null, document: doc, location: L, console, innerWidth: 1200, innerHeight: 800, HTMLInputElement, Event: class { constructor(t) { this.type = t; } }, MouseEvent: class { constructor(t) { this.type = t; } },
     chrome: { runtime: { sendMessage: bgMsg, lastError: null }, storage: { local: { get: async (k) => ({ [k]: store[k] }), set: async (o) => { Object.assign(store, JSON.parse(JSON.stringify(o))); } } } },
@@ -93,6 +93,13 @@ const state = (o) => { store.hchain = Object.assign({ on: true, owner: 7, day, c
   p = load('https://new.land.naver.com/search?sk=b', '검색', { sugg: [] }); await p.done; await settle(400);
   assert.strictEqual(typed[1], '새단지 월곡동'); assert.strictEqual(marks[marks.length - 1][1], 'fail');
   console.log('✓ 이름으로 못 찾으면 이름+동으로 한 번 더, 그래도 없으면 실패로 기록');
+  // 11) 검색창이 없으면 구조 정보를 남기고 실패
+  queue.handled = {}; queue.items = [{ key: 'z|', name: '파주한양수자인리버팰리스아파트', dong: '당동리' }]; marks.length = 0;
+  state({ cur: { key: 'z|', name: '파주한양수자인리버팰리스아파트', dong: '당동리', qi: 0, step: 'search', at: clock } });
+  p = load('https://new.land.naver.com/search?sk=z', '검색', { noInput: true }); await p.done; await settle(500);
+  p = load('https://new.land.naver.com/search?sk=z2', '검색', { noInput: true }); await p.done; await settle(500);   // 이름 → 이름+동 두 번 시도
+  assert.ok(/검색창을 못 찾음 구조:/.test(queue.handled['z|'].note), queue.handled['z|'].note || '(note 없음, 다른 검색어로 재시도 중일 수 있음)');
+  console.log('✓ 검색창을 못 찾으면 화면 구조 정보를 기록에 남김');
   console.log('모두 통과');
   process.exit(0);
 })().catch((e) => { console.error('실패:', e); process.exit(1); });

@@ -83,9 +83,18 @@
     if (!onComplex) {   // 검색 화면: 지도 위 단지 표시에는 이름이 없고 가격·면적뿐이라(이름은 지도 그림 글자), 검색창에 이름을 쳐서 나오는 자동완성 목록(이름+주소 글자)에서 목표 단지를 골라 누름
       const qs = queriesOf(st.cur), qtext = qs[st.cur.qi || 0] || st.cur.name;
       let clicked = false, note = '', cands = [];
-      const findInput = () => document.querySelector('.search_area input[type="text"], .search_area input, input[placeholder*="검색"], input[type="search"]');
+      const visible = (e) => { try { const r = e.getBoundingClientRect(); return r.width > 20 && r.height > 8; } catch (x) { return false; } };
+      const findInput = () => {
+        const sels = ['#queryInputHeader', '.search_area input', 'input[placeholder*="지역"]', 'input[placeholder*="단지"]', 'input[placeholder*="검색"]', 'input[type="search"]', 'input[type="text"]', 'input:not([type])'];
+        for (const sel of sels) { const e = [...document.querySelectorAll(sel)].find((x) => visible(x) && !(x.closest && x.closest('#hg-chain-box'))); if (e) return e; }
+        return null;
+      };
+      const structure = () => { try { const sa = document.querySelector('.search_area'); const ins = [...document.querySelectorAll('input')].slice(0, 6).map((x) => (x.id || '') + '/' + (x.type || '') + '/' + (x.placeholder || '')).join(' ; '); return ' 구조:' + (sa ? sa.outerHTML.replace(/\s+/g, ' ').slice(0, 420) : '(.search_area 없음)') + ' · input들:' + (ins || '없음'); } catch (e) { return ''; } };
       let inp = null; for (let i = 0; i < 8 && !inp; i++) { inp = findInput(); if (!inp) await sleep(1000); }
-      if (!inp) note = '검색창을 못 찾음';
+      if (!inp) {   // 검색 영역을 눌러야 입력창이 나타나는 화면일 수 있음 → 눌러 보고 다시 찾기
+        const sa = document.querySelector('.search_area'); if (sa) { try { sa.click(); const c = sa.querySelector('a,button,div,span'); if (c) c.click(); } catch (e) {} for (let i = 0; i < 4 && !inp; i++) { await sleep(1000); inp = findInput(); } }
+      }
+      if (!inp) note = '검색창을 못 찾음' + structure();
       else {
         show('⌨ 「' + qtext + '」 검색창에 입력', [mkBtn('⏹ 멈추기', '#dc2626', userStop)]);
         try { inp.focus(); Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(inp, qtext); inp.dispatchEvent(new Event('input', { bubbles: true })); inp.dispatchEvent(new Event('keyup', { bubbles: true })); } catch (e) { note = '입력 실패'; }
@@ -103,7 +112,7 @@
       }
       if (clicked) { st.cur.step = 'complex'; st.cur.at = Date.now(); await setSt(st); await sleep(L.jitter(1500, 3000)); return run(); }   // 같은 화면 안에서 주소만 바뀌어 새로고침이 없으므로 이어서 진행
       if ((st.cur.qi || 0) + 1 < qs.length) { st.cur.qi = (st.cur.qi || 0) + 1; st.cur.at = Date.now(); await setSt(st); show('🔁 다른 검색어로 다시 찾아요: ' + qs[st.cur.qi]); await sleep(L.jitter(1500, 3500)); location.href = searchUrl(st.cur, st.cur.qi); return; }
-      await fail(st, note + ' 자동완성 후보: ' + cands.slice(0, 10).map((c) => c.full.slice(0, 40)).join(' | ') + ' · 입력창:' + (inp ? 'O' : 'X')); return;
+      await fail(st, note + ' 자동완성 후보: ' + cands.slice(0, 10).map((c) => c.full.slice(0, 40)).join(' | ') + ' · 입력창:' + (inp ? 'O' : 'X') + ' · 화면 앞부분:' + String(document.body.innerText || '').replace(/\s+/g, ' ').slice(0, 260)); return;
     }
     if (st.cur.sent) { const ok = await countdown(L.jitter(20000, 60000), '완료'); if (ok) await advance(); return; }   // 새로고침 등으로 다시 열렸을 때 같은 단지를 다시 보내지 않음
     show('📖 ' + st.cur.name + ' 매물 읽는 중…', [mkBtn('⏹ 멈추기', '#dc2626', userStop)]);
