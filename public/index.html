@@ -8682,7 +8682,7 @@ function buildPriceChartSvg(trades, range, bands, allByM, rent, opt) {
             var rlo = Math.min.apply(null, rvs), rhi = Math.max.apply(null, rvs); if (rhi - rlo < 0.5) { rhi = rlo + 0.5; }
             var Yr = function(v) { return T + (1 - (v - rlo) / (rhi - rlo)) * (H - T - B - VH); }, rp = '', prevYr = null;
             mlist.forEach(function(k) { var v = rateOf(k); if (v == null) return; var xx = X(new Date(Math.floor(k / 12), k % 12, 15)).toFixed(1), yr = Yr(v).toFixed(1); rp += (rp ? 'L' + xx + ' ' + prevYr + 'L' : 'M') + xx + ' ' + yr; prevYr = yr; });
-            if (big) { svg += '<path d="' + rp + '" fill="none" stroke="#475569" stroke-width="1.1" stroke-dasharray="1.5 2.5" opacity="0.9"/>'; var lastRate = null; mlist.forEach(function(k) { var v = rateOf(k); if (v != null) lastRate = v; }); if (lastRate != null) mlabs.push({ y: Yr(lastRate), t: '금리 ' + lastRate.toFixed(2) + '%', col: '#475569' }); }
+            if (big) { svg += '<path d="' + rp + '" fill="none" stroke="#dc2626" stroke-width="1.3" stroke-dasharray="1.5 2.5" opacity="0.9"/>'; var lastRate = null; mlist.forEach(function(k) { var v = rateOf(k); if (v != null) lastRate = v; }); if (lastRate != null) mlabs.push({ y: Yr(lastRate), t: '금리 ' + lastRate.toFixed(2) + '%', col: '#dc2626' }); }
             else svg += '<path d="' + rp + '" fill="none" stroke="#e11d48" stroke-width="1.3" stroke-dasharray="3 2" opacity="0.85"/>'
                 + '<text x="' + (W - R + 3) + '" y="' + (T + 8) + '" font-size="8.5" fill="#e11d48">' + rhi.toFixed(2) + '%</text><text x="' + (W - R + 3) + '" y="' + (H - B - VH + 2) + '" font-size="8.5" fill="#e11d48">' + rlo.toFixed(2) + '%</text>'
                 + '<text x="' + (L + 3) + '" y="' + (T + 9) + '" font-size="8.5" fill="#e11d48">┈ 기준금리(오른쪽 눈금)</text>';
@@ -23106,7 +23106,7 @@ function drawerLegendHtml(hasAll) {
     var line = function(dash) { return '<svg width="20" height="8" style="vertical-align:middle"><line x1="0" x2="20" y1="4" y2="4" stroke="COL" stroke-width="2.4"' + (dash ? ' stroke-dasharray="' + dash + '"' : '') + '/></svg>'; };
     var box = '<i style="display:inline-block;width:10px;height:10px;background:COL;"></i>';
     return '<div style="margin:4px 0 2px;">' + chip(null, '#1d4ed8', '매매 월 중앙값', line('')) + chip(null, '#60a5fa', '실거래 점', '<i style="display:inline-block;width:7px;height:7px;border-radius:50%;background:COL;"></i>') + chip(null, '#7c3aed', '예상 낙찰가 범위', '<i style="display:inline-block;width:12px;height:9px;background:COL;opacity:0.35;border:1px solid COL;"></i>')
-        + chip('jeonse', '#059669', '전세 보증금', line('')) + chip('wolse', '#ea580c', '월세 보증금', line('5 3')) + chip('rate', '#475569', '기준금리', line('1.5 2.5'))
+        + chip('jeonse', '#059669', '전세 보증금', line('')) + chip('wolse', '#ea580c', '월세 보증금', line('5 3')) + chip('rate', '#dc2626', '기준금리', line('1.5 2.5'))
         + '<br>막대(아래): ' + chip(null, '#2563eb', '같은 평형 거래량', box) + (hasAll ? chip('all', '#ef4444', '단지 전체 거래량', box) : '<span class="dr-sub" style="display:inline;">단지 전체 거래량 자료가 아직 없어요</span>') + '</div>';
 }
 function setDrawerChartRange(r) { drawerChartRange = r; try { localStorage.setItem('drChartRange', r); } catch (e) {} try { renderBidDrawer(); } catch (e) {} }
