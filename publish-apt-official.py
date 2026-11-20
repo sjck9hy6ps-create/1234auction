@@ -166,8 +166,10 @@ print(f"건물 {n:,}곳 · 번지 키 {len(keys):,}개 · 기준연도 {yr}", fl
 rows = []
 for i in range(0, len(keys), CH):
     rows.append({"id": f"apt-official|{i // CH}", "payload": {"items": {k: items[k] for k in keys[i:i + CH]}}, "fetched_at": now})
+try: nores = json.load(open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "nonres.json"), encoding="utf-8"))   # 건축물대장 전유부로 확인한 비주거 호(사무소·소매점·오피스텔 등): 공시가격(공동주택) 대상 아님
+except Exception: nores = {}
 try:
-    um = build_units(); rows.append({"id": "apt-official|units", "payload": {"items": um, "ranges": getattr(build_units, "ranges", {}), "at": now}, "fetched_at": now})
+    um = build_units(); rows.append({"id": "apt-official|units", "payload": {"items": um, "ranges": getattr(build_units, "ranges", {}), "nores": nores, "at": now}, "fetched_at": now})
 except Exception as e:
     print("호별 공시가격 만들기 실패(면적별 자료만 올림):", e, flush=True)
 rows.append({"id": "apt-official|meta", "payload": {"at": now, "n": n, "keys": len(keys), "chunks": len(rows), "years": {str(k): v for k, v in yr.items()}}, "fetched_at": now})
