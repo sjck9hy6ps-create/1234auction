@@ -37,9 +37,10 @@ def build_units():
         if not dong:   # 저장된 사건에 동이 없으면: 새로 올린 CSV에서 저장한 csvDong → 과거 CSV에서 모은 표(data/csv-dong.json, 사건번호로 찾음)
             cn = re.sub(r"\s", "", str(a.get("caseNo") or "")); mm = re.search(r"(\d{4})\D*(\d+)$", cn)
             dong = dg(a.get("csvDong")) or (csvdong.get(cn) or (csvdong.get(mm.group(1) + "-" + mm.group(2)) if mm else "") or "")
-        jobs.append((a["id"], str(a["bCode"]) + "1" + bb[0] + bb[1], dong, ho))
+        land = "2" if re.search(r"(?:동|리|가)\s*산\s*\d", str(a.get("addr") or "")) or str(a.get("bunji") or "").strip().startswith("산") else "1"   # '산 54-4'는 산 번지(PNU 11번째 자리 2)
+        jobs.append((a["id"], str(a["bCode"]) + land + bb[0] + bb[1], dong, ho))
         ainfo[a["id"]] = {"addr": a.get("addr"), "name": a.get("name"), "case": a.get("caseNo"), "floor": a.get("floor"), "unit": a.get("unitNo"), "buildYear": a.get("buildYear"), "bunji": a.get("bunji")}
-        jobinfo.setdefault(jobs[-1][1], []).append((str(a.get("name") or ""), str(a.get("dong") or ""), str(a.get("bunji") or "")))
+        jobinfo.setdefault(jobs[-1][1], []).append((str(a.get("name") or "") or re.sub(r"\s*(제?\d+\s*동|[가-힣]동\s|[가-힣]동$|제?\d+층.*|\d+호.*|외\s*\d.*)", "", re.sub(r"^.*?\d[\d-]*\s*", "", str(a.get("addr") or ""), 1)).strip(), str(a.get("dong") or ""), str(a.get("bunji") or "")))
     # 호 목록이 없는 건물(요약만 있거나 아직 안 받은 건물)은 지금 받아 옴: 쓴 적 있는 실제 조회 PNU(via) → 새 PNU → 옛 시군구 코드 순
     need = sorted({j[1] for j in jobs if not (recs.get(j[1]) or {}).get("units")})
     print(f"경매 아파트 {len(jobs):,}건 · 호 목록을 새로 받을 건물 {len(need):,}곳", flush=True)
@@ -87,7 +88,15 @@ def build_units():
             m = re.match(r"0*(\d+)-?0*(\d*)", bn.replace(" ", "")); lot = (m.group(1) + ("-" + m.group(2) if m.group(2) else "")) if m else ""
             byb = {}
             for x in rows: byb.setdefault((x.get("aphusCode"), x.get("aphusNm")), []).append(x)
-            pick = [k for k in byb if (norm_nm(nm) and len(norm_nm(nm)) >= 2 and (norm_nm(nm) in norm_nm(k[1]) or norm_nm(k[1]) in norm_nm(nm) and len(norm_nm(k[1])) >= 2)) or (lot and ("(" + lot + ")") in str(k[1]))]
+            nn = norm_nm(nm)
+            def nmok(k):
+                kk = norm_nm(k[1])
+                if nn and len(nn) >= 2 and kk and (nn in kk or (len(kk) >= 2 and kk in nn)): return True
+                return bool(lot and ("(" + lot + ")") in str(k[1]))
+            pick = [k for k in byb if nmok(k)]
+            if not pick and nn and len(byb) == 1:   # 단지명이 조금 달라도(예: 3차우방타운↔우방1) 같은 본번에 건물이 하나뿐이고 앞 두 글자가 같으면 같은 건물로 봄(이후 동·호까지 맞아야 연결)
+                k0 = list(byb)[0]; kk = norm_nm(k0[1]); nn2 = re.sub(r"^\d+차", "", nn)
+                if len(kk) >= 2 and len(nn2) >= 2 and kk[:2] == nn2[:2]: pick = [k0]
             us2 = []
             for k in pick: us2 += [[x.get("dongNm"), x.get("floorNm"), x.get("hoNm"), x.get("prvuseAr"), x.get("pblntfPc")] for x in byb[k]]
             if us2: return pnu, us2
