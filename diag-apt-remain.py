@@ -40,7 +40,16 @@ def probe(x):
     alt = bj + "1" + bun + "0000"
     if alt not in seen:
         f, total, ok = C.vget(alt, C.YEAR, 1); out.append({"pnu": alt, "year": C.YEAR, "ok": ok, "total": total, "nm": (f[0].get("ldCodeNm"), f[0].get("aphusNm")) if f else None, "note": "부번 0으로"})
-    return {"id": a["id"], "addr": a.get("addr"), "name": a.get("name"), "unit": a.get("unitNo"), "buildYear": a.get("buildYear"), "bCode": a.get("bCode"), "bunji": a.get("bunji"), "p": (r or {}).get("p"), "n": (r or {}).get("n"), "probe": out}
+    # 같은 본번(접두 15자리) 안의 건물 이름들(최대 12개)
+    names = []
+    for cp in ([leg[sg] + tail] if sg in leg else []) + [pnu]:
+        seenn = {}
+        for pg in (1, 2, 3):
+            f, total, ok = C.vget(cp[:15], C.YEAR, pg)
+            for x in (f or []): seenn.setdefault(x.get("aphusNm"), 0); seenn[x.get("aphusNm")] += 1
+            if not f or len(f) < C.ROWS: break
+        if seenn: names = [(k, v) for k, v in list(seenn.items())[:12]]; break
+    return {"names15": names, "id": a["id"], "addr": a.get("addr"), "name": a.get("name"), "unit": a.get("unitNo"), "buildYear": a.get("buildYear"), "bCode": a.get("bCode"), "bunji": a.get("bunji"), "p": (r or {}).get("p"), "n": (r or {}).get("n"), "probe": out}
 with ThreadPoolExecutor(max_workers=10) as ex: res = list(ex.map(probe, cases))
 json.dump(res, open("diag-remain.json", "w"), ensure_ascii=False)
 k = collections.Counter()
