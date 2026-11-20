@@ -18,15 +18,12 @@ print("== 접두 PNU(법정동·본번까지) 조회가 되는지 - 부산 반�
 for base in ["2635010300114050033", "1129013300105080123", "4831010600105550006"]:
     for n in (10, 11, 15, 17): show("접두%d" % n, base[:n])
     show("부번0", base[:15] + "0000")
-print("== 영종힐스테이트 중산동 1887-2: 시군구×법정동 탐색(응답 법정동명이 중산동인 것)")
-for sg in ["28155", "28110", "28140", "28200", "28710", "28720", "28245"]:
-    for bj in range(10100, 15100, 100):
-        f, tot, err = vw(sg + str(bj) + "1" + "1887" + "0002", rows=1)
-        if f: print("  발견", sg, bj, f[0].get("ldCodeNm"), f[0].get("aphusNm"), flush=True)
-print("== 여수 봉계동 16 아주타운: 시군구×법정동 탐색")
-for sg in ["46130", "12130", "29110", "46110"]:
-    for bj in range(10100, 16100, 100):
-        f, tot, err = vw(sg + str(bj) + "1" + "0016" + "0000", rows=1)
-        if f: print("  발견", sg, bj, f[0].get("ldCodeNm"), f[0].get("aphusNm"), flush=True)
-print("== 건축·다세대 등 다른 종류(kind) 확인: 성북구 정릉동 508-123를 land/데이터로")
-show("land", "1129013300105080123", kind="land")
+print("== 울산 북구 중산동 621 현대글로리아: 법정동코드 탐색 / 접두 조회")
+for bj in range(10100, 12100, 100):
+    f, tot, err = vw("31200" + str(bj) + "1" + "0621" + "0000", rows=1)
+    if f: print("  발견", bj, f[0].get("ldCodeNm"), f[0].get("aphusNm"), flush=True)
+show("접두10 중산동", "3120010600"); show("접두15", "312001060010621")
+for sg in ["31200", "31140"]:
+    for bj in range(10100, 12100, 100):
+        f, tot, err = vw(sg + str(bj) + "1" + "0621" + "0000", rows=1, yr=2025)
+        if f: print("  2025발견", sg, bj, f[0].get("ldCodeNm"), f[0].get("aphusNm"), flush=True)

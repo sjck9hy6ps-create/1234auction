@@ -34,7 +34,7 @@ def build_units():
         if a.get("propType") not in ("apt", "아파트") or not a.get("bCode") or not a.get("bunji") or not a.get("unitNo"): continue
         bb = C.bunji_to_bunji(a.get("bunji")); ho = dg(a.get("unitNo"))
         if not bb or not ho: continue
-        dm = re.findall(r"(\d+)\s*동", str(a.get("aptDong") or "") + " " + str(a.get("addr") or "")); dong = dm[-1] if dm else ""
+        dm = re.findall(r"(\d+)\s*동(?![가-힣])", str(a.get("aptDong") or "") + " " + str(a.get("addr") or "")); dong = dm[-1] if dm else ""
         if not dong:   # 글자 동('다동'·'제가동'·'에이동')
             lm = re.findall(r"(?:^|[\s,(])제?([가나다라마바사아자차카타파하]|에이|비|씨|디|A|B|C|D)\s*동(?![가-힣])", str(a.get("aptDong") or "") + " " + re.sub(r"^.*?\d[\d-]*", "", str(a.get("addr") or ""), 1))
             dong = LETTER.get(lm[-1], lm[-1]) if lm else ""
@@ -121,7 +121,7 @@ def build_units():
         def pr(u):   # (동, 호) 정리: '101동1001호'·'10층 1001호'·'1-1001호'·'101-1001'·'0803' 같은 표기를 호 숫자만으로, 동은 호 앞 숫자 또는 동 칸 첫 숫자로
             k = (id(u))
             s0 = str(u[2] or ""); d0 = None
-            m = re.search(r"(\d+)\s*동", s0)
+            m = re.search(r"(\d+)\s*동(?![가-힣])", s0)
             if m: d0 = m.group(1)
             s0 = re.sub(r"\d+\s*(동|층|단지)", "", s0)
             if "-" in s0: a0, b0 = s0.rsplit("-", 1); d0 = d0 or dg(a0); s0 = b0
