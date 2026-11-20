@@ -55,7 +55,12 @@ def build_units():
     for aid, pnu, dong, ho in jobs:
         us = (recs.get(pnu) or {}).get("units") or got.get(pnu)
         if not us: miss += 1; bad("건물 호 목록 못 받음"); continue
-        cand = [u for u in us if dg(u[2]) == ho and (not dong or dg(u[0]) == dong or not dg(u[0]))]
+        # 호 표기: '102-1401'(동-호)·'0803'(앞 0)은 호만 떼어 비교, 동은 호 앞 숫자가 있으면 그것을 씀. 국토부 자료에 동이 하나뿐('제1'·'101' 등 건물 전체)이면 사건 동과 비교하지 않음
+        def hn(u): return (dg(str(u[2]).split("-")[-1]) or "").lstrip("0")
+        def dn(u): return dg(str(u[2]).split("-")[0]) if "-" in str(u[2]) else dg(u[0])
+        alld = {dn(u) for u in us}; one = len(alld) <= 1
+        hol = ho.lstrip("0")
+        cand = [u for u in us if hn(u) == hol and (not dong or one or dn(u) == dong.lstrip("0") or not dn(u))]
         if not cand: miss += 1; bad("그 호가 목록에 없음"); continue
         try: pr = sorted(float(u[4]) for u in cand)
         except Exception: miss += 1; bad("가격 읽기 실패"); continue
