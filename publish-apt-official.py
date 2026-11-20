@@ -45,16 +45,19 @@ def build_units():
     with ThreadPoolExecutor(max_workers=int(os.environ.get("THREADS", "8"))) as ex:
         for pnu, u in ex.map(get, need):
             if u: got[pnu] = u
-    out = {}; miss = 0
+    out = {}; miss = 0; why = {}
+    def bad(k): why[k] = why.get(k, 0) + 1
     for aid, pnu, dong, ho in jobs:
         us = (recs.get(pnu) or {}).get("units") or got.get(pnu)
-        if not us: miss += 1; continue
+        if not us: miss += 1; bad("건물 호 목록 못 받음"); continue
         cand = [u for u in us if dg(u[2]) == ho and (not dong or dg(u[0]) == dong or not dg(u[0]))]
-        if not dong and len(cand) > 1: cand = []   # 동을 모르는데 같은 호가 여러 동에 있으면 못 고름
-        if len(cand) >= 1:
-            try: out[str(aid)] = int(round(float(cand[0][4]) / 10000))
-            except Exception: miss += 1
-        else: miss += 1
+        if not cand: miss += 1; bad("그 호가 목록에 없음"); continue
+        try: pr = sorted(float(u[4]) for u in cand)
+        except Exception: miss += 1; bad("가격 읽기 실패"); continue
+        # 동을 모르는데 같은 호가 여러 동에 있으면: 가격이 서로 3% 이내로 같을 때만 중앙값을 씀(면적으로 찾지 않음)
+        if len(cand) > 1 and not dong and pr[-1] > pr[0] * 1.03: miss += 1; bad("동을 몰라 여러 동 가격이 다름"); continue
+        out[str(aid)] = int(round(pr[len(pr) // 2] / 10000))
+    print("못 찾은 이유:", why, flush=True)
     print(f"호별 공시가격 {len(out):,}건 · 못 찾음 {miss:,}건", flush=True)
     return out
 keys = sorted(items); CH = 5000; now = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
