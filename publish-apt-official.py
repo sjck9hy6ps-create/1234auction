@@ -137,14 +137,18 @@ def build_units():
             m2 = re.match(r"\D*(\d+)", str(u[0] or ""))
             dl = ""
             if not d0 and not m2:   # 글자 동 ('가'·'가동'·'제가동'·'에이'·'A동')
-                m3 = re.match(r"^제?\s*([가-힣A-Za-z]{1,2})\s*동?$", str(u[0] or "").strip())
+                t3 = re.sub(r"동$", "", re.sub(r"^제\s*", "", str(u[0] or "").strip()))   # 'B동'·'제가동'·'가동' → 'B'·'가'
+                m3 = re.match(r"^([가-힣A-Za-z]{1,2})$", t3)
                 if m3: dl = LETTER.get(m3.group(1), m3.group(1)).upper()
             return (dg(s0).lstrip("0"), (d0 or (m2.group(1) if m2 else "") or dl or "").lstrip("0"))
+        def dalt(u):   # '12(에이)'·'11(비)'처럼 숫자 뒤 괄호에 글자 동이 같이 적힌 경우
+            m4 = re.search(r"\(\s*([가-힣A-Za-z]{1,2})\s*\)", str(u[0] or ""))
+            return LETTER.get(m4.group(1), m4.group(1)).upper() if m4 else ""
         def hn(u): return pr(u)[0]
         def dn(u): return pr(u)[1]
         alld = {dn(u) for u in us}; one = len(alld) <= 1
         hol = ho.lstrip("0")
-        cand = [u for u in us if hn(u) == hol and (not dong or one or dn(u) == dong.lstrip("0").upper() or dn(u) == dong.lstrip("0") or not dn(u))]
+        cand = [u for u in us if hn(u) == hol and (not dong or one or dn(u) == dong.lstrip("0").upper() or dn(u) == dong.lstrip("0") or dalt(u) == dong.upper() or not dn(u))]
         if not cand: miss += 1; bad("그 호가 목록에 없음", {"n_units": len(us), "dongs": sorted({str(u[0]) for u in us})[:8], "ho_sample": sorted({str(u[2]) for u in us})[:10], "floors": sorted({str(u[1]) for u in us})[:12]}); continue
         try: pr = sorted(float(u[4]) for u in cand)
         except Exception: miss += 1; bad("가격 읽기 실패"); continue
