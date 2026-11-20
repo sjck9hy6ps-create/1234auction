@@ -26,6 +26,7 @@ def build_units():
     dg = lambda x: re.sub(r"\D", "", str(x or ""))
     try: csvdong = json.load(open(os.path.join(HERE, "data", "csv-dong.json"), encoding="utf-8"))
     except Exception: csvdong = {}
+    ainfo = {}; detail = []
     jobinfo = {}   # pnu → [(단지명, 법정동명, 번지)]
     jobs = []   # (경매 id, pnu, 동, 호)
     for a in auc:
@@ -37,6 +38,7 @@ def build_units():
             cn = re.sub(r"\s", "", str(a.get("caseNo") or "")); mm = re.search(r"(\d{4})\D*(\d+)$", cn)
             dong = dg(a.get("csvDong")) or (csvdong.get(cn) or (csvdong.get(mm.group(1) + "-" + mm.group(2)) if mm else "") or "")
         jobs.append((a["id"], str(a["bCode"]) + "1" + bb[0] + bb[1], dong, ho))
+        ainfo[a["id"]] = {"addr": a.get("addr"), "name": a.get("name"), "case": a.get("caseNo"), "floor": a.get("floor"), "unit": a.get("unitNo"), "buildYear": a.get("buildYear"), "bunji": a.get("bunji")}
         jobinfo.setdefault(jobs[-1][1], []).append((str(a.get("name") or ""), str(a.get("dong") or ""), str(a.get("bunji") or "")))
     # 호 목록이 없는 건물(요약만 있거나 아직 안 받은 건물)은 지금 받아 옴: 쓴 적 있는 실제 조회 PNU(via) → 새 PNU → 옛 시군구 코드 순
     need = sorted({j[1] for j in jobs if not (recs.get(j[1]) or {}).get("units")})
@@ -97,7 +99,8 @@ def build_units():
             if u: got[pnu] = u
     print(f"2차로 새로 받은 건물 {sum(1 for x in todo2 if x in got):,}곳", flush=True)
     out = {}; rng = {}; miss = 0; why = {}
-    def bad(k): why[k] = why.get(k, 0) + 1
+    def bad(k, extra=None):
+        why[k] = why.get(k, 0) + 1; detail.append({"why": k, "id": aid, "pnu": pnu, "dong": dong, "ho": ho, **ainfo.get(aid, {}), **(extra or {})})
     for aid, pnu, dong, ho in jobs:
         us = (recs.get(pnu) or {}).get("units") or got.get(pnu)
         if not us: miss += 1; bad("건물 호 목록 못 받음"); continue
@@ -107,13 +110,14 @@ def build_units():
         alld = {dn(u) for u in us}; one = len(alld) <= 1
         hol = ho.lstrip("0")
         cand = [u for u in us if hn(u) == hol and (not dong or one or dn(u) == dong.lstrip("0") or not dn(u))]
-        if not cand: miss += 1; bad("그 호가 목록에 없음"); continue
+        if not cand: miss += 1; bad("그 호가 목록에 없음", {"n_units": len(us), "dongs": sorted({str(u[0]) for u in us})[:8], "ho_sample": sorted({str(u[2]) for u in us})[:10], "floors": sorted({str(u[1]) for u in us})[:12]}); continue
         try: pr = sorted(float(u[4]) for u in cand)
         except Exception: miss += 1; bad("가격 읽기 실패"); continue
         # 동을 모르는데 같은 호가 여러 동에 있으면: 가격이 서로 3% 이내로 같을 때만 중앙값을 씀(면적으로 찾지 않음)
         if len(cand) > 1 and not dong and pr[-1] > pr[0] * 1.03:
-            miss += 1; bad("동을 몰라 여러 동 가격이 다름"); rng[str(aid)] = [int(round(pr[0] / 10000)), int(round(pr[-1] / 10000)), len(pr)]; continue
+            miss += 1; bad("동을 몰라 여러 동 가격이 다름", {"dongs": [str(u[0]) for u in cand][:8]}); rng[str(aid)] = [int(round(pr[0] / 10000)), int(round(pr[-1] / 10000)), len(pr)]; continue
         out[str(aid)] = int(round(pr[len(pr) // 2] / 10000))
+    json.dump(detail, open("unmatched.json", "w", encoding="utf-8"), ensure_ascii=False)
     print("못 찾은 이유:", why, flush=True)
     print(f"호별 공시가격 {len(out):,}건 · 못 찾음 {miss:,}건", flush=True)
     build_units.ranges = rng

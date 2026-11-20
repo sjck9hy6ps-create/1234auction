@@ -32,3 +32,9 @@ jobs:
           THREADS: '8'
           PYTHONUNBUFFERED: '1'
         run: python publish-apt-official.py
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: unmatched
+          path: unmatched.json
+          retention-days: 14
