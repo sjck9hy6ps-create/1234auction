@@ -10257,7 +10257,7 @@ async function saveSelectedBidTargets() {
             id: Date.now().toString() + '_bt_' + i,
             addr: addr, addrLabel: addr, name: c.buildingName || '',
             propType: bidTargetPropTypeFromText(c.propertyType),
-            aptDong: '', floor: c.floor || '', unitNo: c.unitNo || '',
+            aptDong: '', csvDong: c.aptDong || '', floor: c.floor || '', unitNo: c.unitNo || '',
             caseNo: c.caseNo || null, court: c.court || null, pyung: pyung, bidDate: c.saleDate || '',
             landM2: c.landM2 || null, landType: c.landType || null,
             failCount: c.failCount != null ? c.failCount : undefined,
@@ -10760,7 +10760,7 @@ async function runBacktestPipeline() {
         var data = {
             id: recomputeId || (Date.now().toString() + '_bx_' + i),
             addr: addr, addrLabel: geo.addrLabel || addr, name: c.buildingName || '',
-            propType: buildingType, aptDong: '', floor: c.floor || '', unitNo: c.unitNo || '',
+            propType: buildingType, aptDong: '', csvDong: c.aptDong || '', floor: c.floor || '', unitNo: c.unitNo || '',
             caseNo: c.caseNo || null, pyung: pyung || '', bidDate: c.saleDate || '',
             status: '낙찰', appraisal: c.appraisalPrice ? Math.round(c.appraisalPrice / 10000) : '',
             minBid: c.minBidPrice ? Math.round(c.minBidPrice / 10000) : '',

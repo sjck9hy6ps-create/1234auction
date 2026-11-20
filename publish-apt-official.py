@@ -24,12 +24,17 @@ def build_units():
     site = os.environ.get("SITE_URL", "https://1234auction.vercel.app")
     auc = requests.get(site + "/api/auction", timeout=180).json()
     dg = lambda x: re.sub(r"\D", "", str(x or ""))
+    try: csvdong = json.load(open(os.path.join(HERE, "data", "csv-dong.json"), encoding="utf-8"))
+    except Exception: csvdong = {}
     jobs = []   # (경매 id, pnu, 동, 호)
     for a in auc:
         if a.get("propType") not in ("apt", "아파트") or not a.get("bCode") or not a.get("bunji") or not a.get("unitNo"): continue
         bb = C.bunji_to_bunji(a.get("bunji")); ho = dg(a.get("unitNo"))
         if not bb or not ho: continue
         dm = re.findall(r"(\d+)\s*동", str(a.get("aptDong") or "") + " " + str(a.get("addr") or "")); dong = dm[-1] if dm else ""
+        if not dong:   # 저장된 사건에 동이 없으면: 새로 올린 CSV에서 저장한 csvDong → 과거 CSV에서 모은 표(data/csv-dong.json, 사건번호로 찾음)
+            cn = re.sub(r"\s", "", str(a.get("caseNo") or "")); mm = re.search(r"(\d{4})\D*(\d+)$", cn)
+            dong = dg(a.get("csvDong")) or (csvdong.get(cn) or (csvdong.get(mm.group(1) + "-" + mm.group(2)) if mm else "") or "")
         jobs.append((a["id"], str(a["bCode"]) + "1" + bb[0] + bb[1], dong, ho))
     # 호 목록이 없는 건물(요약만 있거나 아직 안 받은 건물)은 지금 받아 옴: 쓴 적 있는 실제 조회 PNU(via) → 새 PNU → 옛 시군구 코드 순
     need = sorted({j[1] for j in jobs if not (recs.get(j[1]) or {}).get("units")})
