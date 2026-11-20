@@ -26,11 +26,12 @@ jobs:
           PYTHONUNBUFFERED: '1'
         run: |
           set -o pipefail
-          python diag-apt-remain.py | tee diag-log.txt
+          python diag-apt-remain3.py | tee diag-log3.txt
       - uses: actions/upload-artifact@v4
         with:
           name: diag-remain
           path: |
             diag-remain.json
-            diag-log.txt
+            diag-log3.txt
+            diag-remain3.json
             diag-log2.txt

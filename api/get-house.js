@@ -261,7 +261,7 @@ async function handleVworldProxy(req, res) {
   if (!PROXY_SECRET || req.query.secret !== PROXY_SECRET) return res.status(401).json({ error: 'unauthorized' });
   const key = process.env.VWORLD_API_KEY;
   if (!key) return res.status(500).json({ error: 'VWORLD_API_KEY not configured' });
-  const base = req.query.kind === 'data' ? 'https://api.vworld.kr/req/data' : (req.query.kind === 'land' ? 'https://api.vworld.kr/ned/data/getIndvdLandPriceAttr' : (req.query.kind === 'apt' ? 'https://api.vworld.kr/ned/data/getApartHousingPriceAttr' : null));
+  const base = req.query.kind === 'data' ? 'https://api.vworld.kr/req/data' : (req.query.kind === 'land' ? 'https://api.vworld.kr/ned/data/getIndvdLandPriceAttr' : (req.query.kind === 'apt' ? 'https://api.vworld.kr/ned/data/getApartHousingPriceAttr' : (req.query.kind === 'house' ? 'https://api.vworld.kr/ned/data/getIndvdHousingPriceAttr' : null)));
   if (!base) return res.status(400).json({ error: 'kind=data|land|apt' });
   const p = new URLSearchParams();
   Object.keys(req.query).forEach((k) => { if (!['secret', 'kind', 'action', 'key', 'domain'].includes(k)) p.set(k, String(req.query[k])); });
