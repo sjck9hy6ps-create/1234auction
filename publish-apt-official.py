@@ -105,8 +105,17 @@ def build_units():
         us = (recs.get(pnu) or {}).get("units") or got.get(pnu)
         if not us: miss += 1; bad("건물 호 목록 못 받음"); continue
         # 호 표기: '102-1401'(동-호)·'0803'(앞 0)은 호만 떼어 비교, 동은 호 앞 숫자가 있으면 그것을 씀. 국토부 자료에 동이 하나뿐('제1'·'101' 등 건물 전체)이면 사건 동과 비교하지 않음
-        def hn(u): return (dg(str(u[2]).split("-")[-1]) or "").lstrip("0")
-        def dn(u): return dg(str(u[2]).split("-")[0]) if "-" in str(u[2]) else dg(u[0])
+        def pr(u):   # (동, 호) 정리: '101동1001호'·'10층 1001호'·'1-1001호'·'101-1001'·'0803' 같은 표기를 호 숫자만으로, 동은 호 앞 숫자 또는 동 칸 첫 숫자로
+            k = (id(u))
+            s0 = str(u[2] or ""); d0 = None
+            m = re.search(r"(\d+)\s*동", s0)
+            if m: d0 = m.group(1)
+            s0 = re.sub(r"\d+\s*(동|층|단지)", "", s0)
+            if "-" in s0: a0, b0 = s0.rsplit("-", 1); d0 = d0 or dg(a0); s0 = b0
+            m2 = re.match(r"\D*(\d+)", str(u[0] or ""))
+            return (dg(s0).lstrip("0"), (d0 or (m2.group(1) if m2 else "") or "").lstrip("0"))
+        def hn(u): return pr(u)[0]
+        def dn(u): return pr(u)[1]
         alld = {dn(u) for u in us}; one = len(alld) <= 1
         hol = ho.lstrip("0")
         cand = [u for u in us if hn(u) == hol and (not dong or one or dn(u) == dong.lstrip("0") or not dn(u))]
