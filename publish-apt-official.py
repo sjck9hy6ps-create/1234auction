@@ -22,6 +22,15 @@ def build_units():
     recs = {}
     for ln in open(SRC, encoding="utf-8"):
         r = json.loads(ln); recs[r["pnu"]] = r
+    vrecs = {}   # 빌라 호별 공시가격(collect-villa-official-price.py가 모은 보관소 파일) → pnu: 호 목록(가장 최근 연도)
+    vyear = {}
+    if os.path.exists("official-price.jsonl"):
+        for ln in open("official-price.jsonl", encoding="utf-8"):
+            try: r = json.loads(ln)
+            except Exception: continue
+            if r.get("units") and r.get("year", 0) >= vyear.get(r["pnu"], 0): vrecs[r["pnu"]] = r["units"]; vyear[r["pnu"]] = r["year"]
+        print(f"빌라 공시가격 보관 건물 {len(vrecs):,}곳", flush=True)
+    have = lambda pnu: (recs.get(pnu) or {}).get("units") or vrecs.get(pnu)
     site = os.environ.get("SITE_URL", "https://1234auction.vercel.app")
     auc = requests.get(site + "/api/auction", timeout=180).json()
     dg = lambda x: re.sub(r"\D", "", str(x or ""))
@@ -31,7 +40,7 @@ def build_units():
     jobinfo = {}   # pnu → [(단지명, 법정동명, 번지)]
     jobs = []   # (경매 id, pnu, 동, 호)
     for a in auc:
-        if a.get("propType") not in ("apt", "아파트") or not a.get("bCode") or not a.get("bunji") or not a.get("unitNo"): continue
+        if a.get("propType") not in ("apt", "아파트", "villa") or not a.get("bCode") or not a.get("bunji") or not a.get("unitNo"): continue
         bb = C.bunji_to_bunji(a.get("bunji")); ho = dg(a.get("unitNo"))
         if not bb or not ho: continue
         dm = re.findall(r"(\d+)\s*동(?![가-힣])", str(a.get("aptDong") or "") + " " + str(a.get("addr") or "")); dong = dm[-1] if dm else ""
@@ -46,8 +55,8 @@ def build_units():
         ainfo[a["id"]] = {"addr": a.get("addr"), "name": a.get("name"), "case": a.get("caseNo"), "floor": a.get("floor"), "unit": a.get("unitNo"), "buildYear": a.get("buildYear"), "bunji": a.get("bunji")}
         jobinfo.setdefault(jobs[-1][1], []).append((str(a.get("name") or "") or re.sub(r"\s*(제?\d+\s*동|[가-힣]동\s|[가-힣]동$|제?\d+층.*|\d+호.*|외\s*\d.*)", "", re.sub(r"^.*?\d[\d-]*\s*", "", str(a.get("addr") or ""), 1)).strip(), str(a.get("dong") or ""), str(a.get("bunji") or "")))
     # 호 목록이 없는 건물(요약만 있거나 아직 안 받은 건물)은 지금 받아 옴: 쓴 적 있는 실제 조회 PNU(via) → 새 PNU → 옛 시군구 코드 순
-    need = sorted({j[1] for j in jobs if not (recs.get(j[1]) or {}).get("units")})
-    print(f"경매 아파트 {len(jobs):,}건 · 호 목록을 새로 받을 건물 {len(need):,}곳", flush=True)
+    need = sorted({j[1] for j in jobs if not have(j[1])})
+    print(f"경매 아파트·빌라 {len(jobs):,}건 · 호 목록을 새로 받을 건물 {len(need):,}곳", flush=True)
     from concurrent.futures import ThreadPoolExecutor
     def get(pnu):
         cands = [(recs.get(pnu) or {}).get("via"), pnu, (leg.get(pnu[:5], "") + pnu[5:]) if pnu[:5] in leg else None]
@@ -115,7 +124,7 @@ def build_units():
     def bad(k, extra=None):
         why[k] = why.get(k, 0) + 1; detail.append({"why": k, "id": aid, "pnu": pnu, "dong": dong, "ho": ho, **ainfo.get(aid, {}), **(extra or {})})
     for aid, pnu, dong, ho in jobs:
-        us = (recs.get(pnu) or {}).get("units") or got.get(pnu)
+        us = have(pnu) or got.get(pnu)
         if not us: miss += 1; bad("건물 호 목록 못 받음"); continue
         # 호 표기: '102-1401'(동-호)·'0803'(앞 0)은 호만 떼어 비교, 동은 호 앞 숫자가 있으면 그것을 씀. 국토부 자료에 동이 하나뿐('제1'·'101' 등 건물 전체)이면 사건 동과 비교하지 않음
         def pr(u):   # (동, 호) 정리: '101동1001호'·'10층 1001호'·'1-1001호'·'101-1001'·'0803' 같은 표기를 호 숫자만으로, 동은 호 앞 숫자 또는 동 칸 첫 숫자로

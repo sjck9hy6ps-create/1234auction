@@ -10,7 +10,7 @@ concurrency:
 jobs:
   publish:
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 120
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -24,6 +24,7 @@ jobs:
         run: |
           curl -sf -H "Authorization: Bearer $SUPABASE_SERVICE_ROLE_KEY" -H "apikey: $SUPABASE_SERVICE_ROLE_KEY" "$SUPABASE_URL/storage/v1/object/data/apt-official-price.jsonl.gz" -o prev.gz
           gunzip -c prev.gz > apt-official-price.jsonl; wc -l apt-official-price.jsonl
+          if curl -sf -H "Authorization: Bearer $SUPABASE_SERVICE_ROLE_KEY" -H "apikey: $SUPABASE_SERVICE_ROLE_KEY" "$SUPABASE_URL/storage/v1/object/data/official-price.jsonl.gz" -o vprev.gz; then gunzip -c vprev.gz > official-price.jsonl; wc -l official-price.jsonl; else echo "빌라 보관 파일 없음"; fi
       - env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
