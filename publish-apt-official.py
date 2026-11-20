@@ -26,6 +26,7 @@ def build_units():
     dg = lambda x: re.sub(r"\D", "", str(x or ""))
     try: csvdong = json.load(open(os.path.join(HERE, "data", "csv-dong.json"), encoding="utf-8"))
     except Exception: csvdong = {}
+    jobinfo = {}   # pnu → [(단지명, 법정동명, 번지)]
     jobs = []   # (경매 id, pnu, 동, 호)
     for a in auc:
         if a.get("propType") not in ("apt", "아파트") or not a.get("bCode") or not a.get("bunji") or not a.get("unitNo"): continue
@@ -36,6 +37,7 @@ def build_units():
             cn = re.sub(r"\s", "", str(a.get("caseNo") or "")); mm = re.search(r"(\d{4})\D*(\d+)$", cn)
             dong = dg(a.get("csvDong")) or (csvdong.get(cn) or (csvdong.get(mm.group(1) + "-" + mm.group(2)) if mm else "") or "")
         jobs.append((a["id"], str(a["bCode"]) + "1" + bb[0] + bb[1], dong, ho))
+        jobinfo.setdefault(jobs[-1][1], []).append((str(a.get("name") or ""), str(a.get("dong") or ""), str(a.get("bunji") or "")))
     # 호 목록이 없는 건물(요약만 있거나 아직 안 받은 건물)은 지금 받아 옴: 쓴 적 있는 실제 조회 PNU(via) → 새 PNU → 옛 시군구 코드 순
     need = sorted({j[1] for j in jobs if not (recs.get(j[1]) or {}).get("units")})
     print(f"경매 아파트 {len(jobs):,}건 · 호 목록을 새로 받을 건물 {len(need):,}곳", flush=True)
@@ -50,6 +52,50 @@ def build_units():
     with ThreadPoolExecutor(max_workers=int(os.environ.get("THREADS", "8"))) as ex:
         for pnu, u in ex.map(get, need):
             if u: got[pnu] = u
+    # 2차(1차에서 못 받은 건물): ① 한 번 더(통신 오류 대비, 천천히) ② 인천 신설구는 옛 시군구×법정동코드 탐색 ③ 같은 본번의 건물 목록(접두 PNU)에서 단지명·번지로 찾기
+    def norm_nm(x): return re.sub(r"[\s·\-()]|아파트|맨션|빌라|주상복합|제?\d*동$", "", str(x or ""))
+    def prefix_rows(pre):
+        rows_all = []
+        for pg in range(1, 61):
+            f, total, ok = C.vget(pre, C.YEAR, pg)
+            if not ok: return None
+            rows_all += [x for x in f if str(x.get("stdrYear")) == str(C.YEAR)]
+            if len(f) < C.ROWS: break
+        return rows_all
+    inc_new = ("28275", "28290", "28125", "28155"); inc_cache = {}
+    def second(pnu):
+        res, _ = get(pnu)[1], 0
+        if res: return pnu, res
+        sg, bjd, tail = pnu[:5], pnu[5:10], pnu[10:]
+        nm, dn_, bn = (jobinfo.get(pnu) or [("", "", "")])[0]
+        if sg in inc_new:
+            for osg in ("28110", "28140", "28260", "28200"):
+                for bj in range(10100, 15100, 100):
+                    key = (osg, bj, dn_)
+                    if inc_cache.get(key) is False: continue
+                    if key not in inc_cache:
+                        f, _, ok = C.vget(osg + str(bj) + tail[:5], C.YEAR, 1)   # 같은 번지로 시험 조회(법정동명으로 확인)
+                        inc_cache[key] = bool(f and dn_ and (f[0].get("ldCodeNm") or "").endswith(dn_))
+                    if inc_cache[key]:
+                        _, r2, ok2 = C.fetch_pnu((osg + str(bj) + tail, True))
+                        if ok2 and r2 and r2[1]: return pnu, [list(u) for u in r2[1]]
+        for base in ([leg.get(pnu[:5], "") + pnu[5:]] if pnu[:5] in leg else []) + [pnu]:
+            rows = prefix_rows(base[:15])
+            if not rows: continue
+            m = re.match(r"0*(\d+)-?0*(\d*)", bn.replace(" ", "")); lot = (m.group(1) + ("-" + m.group(2) if m.group(2) else "")) if m else ""
+            byb = {}
+            for x in rows: byb.setdefault((x.get("aphusCode"), x.get("aphusNm")), []).append(x)
+            pick = [k for k in byb if (norm_nm(nm) and len(norm_nm(nm)) >= 2 and (norm_nm(nm) in norm_nm(k[1]) or norm_nm(k[1]) in norm_nm(nm) and len(norm_nm(k[1])) >= 2)) or (lot and ("(" + lot + ")") in str(k[1]))]
+            us2 = []
+            for k in pick: us2 += [[x.get("dongNm"), x.get("floorNm"), x.get("hoNm"), x.get("prvuseAr"), x.get("pblntfPc")] for x in byb[k]]
+            if us2: return pnu, us2
+        return pnu, None
+    todo2 = [x for x in need if x not in got]
+    print(f"2차 조회 대상 {len(todo2):,}곳", flush=True)
+    with ThreadPoolExecutor(max_workers=4) as ex:
+        for pnu, u in ex.map(second, todo2):
+            if u: got[pnu] = u
+    print(f"2차로 새로 받은 건물 {sum(1 for x in todo2 if x in got):,}곳", flush=True)
     out = {}; rng = {}; miss = 0; why = {}
     def bad(k): why[k] = why.get(k, 0) + 1
     for aid, pnu, dong, ho in jobs:
