@@ -13,6 +13,7 @@ for ln in open(SRC, encoding="utf-8"):
     if not ar: continue
     items.setdefault(key, []).append([r.get("danji", ""), ar]); n += 1; yr[r.get("year")] = yr.get(r.get("year"), 0) + 1
 # ---- 호별 공시가격(경매 물건 id → 만원) - 지분경매처럼 앱의 평형이 건물 전체와 다른 물건도 동·호로 찾음(2026-11-20, 사용자 지적: 건물에 대한 공시가격이라 평형으로 찾으면 안 됨)
+LETTER = {"에이": "A", "비": "B", "씨": "C", "디": "D"}
 def build_units():
     HERE = os.path.dirname(os.path.abspath(__file__))
     sp = importlib.util.spec_from_file_location("collector", os.path.join(HERE, "collect-apt-official-price.py")); C = importlib.util.module_from_spec(sp); sp.loader.exec_module(C)
@@ -34,6 +35,9 @@ def build_units():
         bb = C.bunji_to_bunji(a.get("bunji")); ho = dg(a.get("unitNo"))
         if not bb or not ho: continue
         dm = re.findall(r"(\d+)\s*동", str(a.get("aptDong") or "") + " " + str(a.get("addr") or "")); dong = dm[-1] if dm else ""
+        if not dong:   # 글자 동('다동'·'제가동'·'에이동')
+            lm = re.findall(r"(?:^|[\s,(])제?([가나다라마바사아자차카타파하]|에이|비|씨|디|A|B|C|D)\s*동(?![가-힣])", str(a.get("aptDong") or "") + " " + re.sub(r"^.*?\d[\d-]*", "", str(a.get("addr") or ""), 1))
+            dong = LETTER.get(lm[-1], lm[-1]) if lm else ""
         if not dong:   # 저장된 사건에 동이 없으면: 새로 올린 CSV에서 저장한 csvDong → 과거 CSV에서 모은 표(data/csv-dong.json, 사건번호로 찾음)
             cn = re.sub(r"\s", "", str(a.get("caseNo") or "")); mm = re.search(r"(\d{4})\D*(\d+)$", cn)
             dong = dg(a.get("csvDong")) or (csvdong.get(cn) or (csvdong.get(mm.group(1) + "-" + mm.group(2)) if mm else "") or "")
@@ -122,12 +126,16 @@ def build_units():
             s0 = re.sub(r"\d+\s*(동|층|단지)", "", s0)
             if "-" in s0: a0, b0 = s0.rsplit("-", 1); d0 = d0 or dg(a0); s0 = b0
             m2 = re.match(r"\D*(\d+)", str(u[0] or ""))
-            return (dg(s0).lstrip("0"), (d0 or (m2.group(1) if m2 else "") or "").lstrip("0"))
+            dl = ""
+            if not d0 and not m2:   # 글자 동 ('가'·'가동'·'제가동'·'에이'·'A동')
+                m3 = re.match(r"^제?\s*([가-힣A-Za-z]{1,2})\s*동?$", str(u[0] or "").strip())
+                if m3: dl = LETTER.get(m3.group(1), m3.group(1)).upper()
+            return (dg(s0).lstrip("0"), (d0 or (m2.group(1) if m2 else "") or dl or "").lstrip("0"))
         def hn(u): return pr(u)[0]
         def dn(u): return pr(u)[1]
         alld = {dn(u) for u in us}; one = len(alld) <= 1
         hol = ho.lstrip("0")
-        cand = [u for u in us if hn(u) == hol and (not dong or one or dn(u) == dong.lstrip("0") or not dn(u))]
+        cand = [u for u in us if hn(u) == hol and (not dong or one or dn(u) == dong.lstrip("0").upper() or dn(u) == dong.lstrip("0") or not dn(u))]
         if not cand: miss += 1; bad("그 호가 목록에 없음", {"n_units": len(us), "dongs": sorted({str(u[0]) for u in us})[:8], "ho_sample": sorted({str(u[2]) for u in us})[:10], "floors": sorted({str(u[1]) for u in us})[:12]}); continue
         try: pr = sorted(float(u[4]) for u in cand)
         except Exception: miss += 1; bad("가격 읽기 실패"); continue
