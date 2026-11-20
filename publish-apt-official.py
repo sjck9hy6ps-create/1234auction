@@ -156,6 +156,28 @@ def build_units():
         if len(cand) > 1 and not dong and pr[-1] > pr[0] * 1.03:
             miss += 1; bad("동을 몰라 여러 동 가격이 다름", {"dongs": [str(u[0]) for u in cand][:8]}); rng[str(aid)] = [int(round(pr[0] / 10000)), int(round(pr[-1] / 10000)), len(pr)]; continue
         out[str(aid)] = int(round(pr[len(pr) // 2] / 10000))
+    # 호 목록에 그 호가 없는 사건은 건축물대장 전유부에서 용도를 확인(사무소·소매점·오피스텔 등 비주거면 '공시가격 해당 없음'). 한 번 확인한 사건은 다시 조회하지 않음, 1회 최대 150건(건축HUB 한도 보호)
+    cand_chk = [x for x in detail if x["why"].startswith("그 호") and str(x["id"]) not in nores and str(x["id"]) not in checked][:150]
+    def chk(x):
+        pn = x["pnu"]
+        try:
+            r = requests.get(site + "/api/get-building", params={"sigunguCd": pn[:5], "bjdongCd": pn[5:10], "bun": pn[11:15], "ji": pn[15:19], "platGbCd": "0" if pn[10] == "1" else "1"}, timeout=90).json()
+        except Exception: return x, None
+        if r.get("quotaExceeded") or r.get("fetchFailed"): return x, None
+        ex = r.get("exposAreas") or []
+        hh = x["ho"].lstrip("0")
+        hit = [e for e in ex if dg(e.get("hoNm")).lstrip("0") == hh and "전유" in str(e.get("esUseNm") or "")] or [e for e in ex if dg(e.get("hoNm")).lstrip("0") == hh]
+        if not hit: return x, ""
+        pu = " ".join(sorted({str(e.get("mainPurps") or "") for e in hit}))
+        return x, ("" if re.search(r"다세대|연립|공동주택|아파트|다가구|단독|^\s*$|주택", pu) and not re.search(r"근린|상가|사무|판매|점포|오피스텔", pu) else (hit[0].get("mainPurps") or "비주거"))
+    newn = 0
+    if cand_chk:
+        with ThreadPoolExecutor(max_workers=3) as ex2:
+            for x, res in ex2.map(chk, cand_chk):
+                if res is None: continue
+                checked[str(x["id"])] = 1
+                if res: nores[str(x["id"])] = res; newn += 1
+    print(f"용도 확인 {len(cand_chk)}건 · 비주거 새로 확인 {newn}건 · 누적 비주거 {len(nores)}건", flush=True)
     json.dump(detail, open("unmatched.json", "w", encoding="utf-8"), ensure_ascii=False)
     print("못 찾은 이유:", why, flush=True)
     print(f"호별 공시가격 {len(out):,}건 · 못 찾음 {miss:,}건", flush=True)
@@ -168,8 +190,14 @@ for i in range(0, len(keys), CH):
     rows.append({"id": f"apt-official|{i // CH}", "payload": {"items": {k: items[k] for k in keys[i:i + CH]}}, "fetched_at": now})
 try: nores = json.load(open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "nonres.json"), encoding="utf-8"))   # 건축물대장 전유부로 확인한 비주거 호(사무소·소매점·오피스텔 등): 공시가격(공동주택) 대상 아님
 except Exception: nores = {}
+checked = {}   # 건축물대장으로 이미 용도를 확인한 사건 id(주거였던 것 포함) - 매일 같은 조회를 반복하지 않으려고 보관
 try:
-    um = build_units(); rows.append({"id": "apt-official|units", "payload": {"items": um, "ranges": getattr(build_units, "ranges", {}), "nores": nores, "at": now}, "fetched_at": now})
+    prev = requests.get(os.environ.get("SITE_URL", "https://1234auction.vercel.app") + "/api/data-coverage?mode=aptOfficial&i=units", timeout=60).json()
+    for k, v in (prev.get("nores") or {}).items(): nores.setdefault(k, v)
+    checked.update(prev.get("checked") or {})
+except Exception: pass
+try:
+    um = build_units(); rows.append({"id": "apt-official|units", "payload": {"items": um, "ranges": getattr(build_units, "ranges", {}), "nores": nores, "checked": checked, "at": now}, "fetched_at": now})
 except Exception as e:
     print("호별 공시가격 만들기 실패(면적별 자료만 올림):", e, flush=True)
 rows.append({"id": "apt-official|meta", "payload": {"at": now, "n": n, "keys": len(keys), "chunks": len(rows), "years": {str(k): v for k, v in yr.items()}}, "fetched_at": now})
