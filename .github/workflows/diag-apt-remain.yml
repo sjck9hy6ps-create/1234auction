@@ -16,7 +16,8 @@ jobs:
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
-        run: curl -sf -H "Authorization: Bearer $SUPABASE_SERVICE_ROLE_KEY" -H "apikey: $SUPABASE_SERVICE_ROLE_KEY" "$SUPABASE_URL/storage/v1/object/data/apt-official-price.jsonl.gz" -o prev.gz && gunzip -c prev.gz > apt-official-price.jsonl
+        run: |
+          curl -sf -H "Authorization: Bearer $SUPABASE_SERVICE_ROLE_KEY" -H "apikey: $SUPABASE_SERVICE_ROLE_KEY" "$SUPABASE_URL/storage/v1/object/data/apt-official-price.jsonl.gz" -o prev.gz && gunzip -c prev.gz > apt-official-price.jsonl
       - env:
           COLLECT_PROXY_SECRET: ${{ secrets.COLLECT_PROXY_SECRET }}
           SITE_URL: https://1234auction.vercel.app
