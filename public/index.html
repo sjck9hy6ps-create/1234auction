@@ -32694,6 +32694,12 @@ function ledgerAuctionOf(rec) {   // 연결된 경매 물건(사건번호 → �
 }
 /* 🧾 부가세(2026-11-21, 사용자): 세금계산서를 받은 비용은 입력 금액을 공급가액(부가세 별도)으로 보고 부가세 10%를 자동으로 붙임. 계산서 없는 비용(카드·현금 등)은 입력 금액 그대로.
    매입 부가세를 환급(공제) 받는 경우(rec.vatDeduct)는 부가세를 비용에서 빼고 따로 보여 줌 - 85㎡ 이하 주택 매도는 면세라 보통 공제가 안 돼 기본은 '비용에 포함' */
+function lgAmortInterest(amount, ratePct, termM, months) {   // 원리금균등상환: 월 상환액 고정, 이자는 남은 원금 기준이라 갈수록 줄어듦. 경과 개월(소수 가능)까지의 이자 합계
+    var r = ratePct / 1200, n = Math.round(termM), P = r ? amount * r / (1 - Math.pow(1 + r, -n)) : amount / n, bal = amount, tot = 0, full = Math.floor(months);
+    for (var i = 0; i < full && i < n; i++) { var it = bal * r; tot += it; bal -= (P - it); }
+    if (months > full && full < n) tot += bal * r * (months - full);
+    return Math.round(tot);
+}
 function lgVatOf(it) { return it && it.inv ? Math.round(lgN(it.amount) * (TAX_CONFIG.vat && TAX_CONFIG.vat.rate || 0.1) * 10000) / 10000 : 0; }
 function ledgerCalc(rec, skipTax) {
     var win = rec.win || {}, sale = rec.sale || {}, items = rec.items || [], loans = rec.loans || [], taxes = rec.taxes || [];
@@ -32701,8 +32707,9 @@ function ledgerCalc(rec, skipTax) {
     items.forEach(function(it) { var v0 = lgN(it.amount); if (!v0) return; var vt = lgVatOf(it); vatTotal += vt; var v = v0 + (rec.vatDeduct ? 0 : vt); itemsTotal += v; byCat[it.cat] = (byCat[it.cat] || 0) + v; var g = LEDGER_GROUP[it.cat] || '기타'; byGroup[g] = (byGroup[g] || 0) + v; if (LEDGER_UPFRONT[it.cat]) upfront += v; });
     var interest = 0, loanSum = 0, endFallback = sale.date || new Date().toISOString().slice(0, 10);
     var loanRows = loans.map(function(l) {
-        var amt = lgN(l.amount), paid = lgN(l.interestPaid), d = lgDays(l.start || win.date, l.end || endFallback), est = amt && lgN(l.rate) && d != null && d > 0 ? Math.round(amt * lgN(l.rate) / 100 * d / 365) : 0;
-        var iv = paid > 0 ? paid : est; interest += iv; loanSum += amt; return { amount: amt, rate: lgN(l.rate), days: d, interest: iv, actual: paid > 0 };
+        var amt = lgN(l.amount), paid = lgN(l.interestPaid), d = lgDays(l.start || win.date, l.end || endFallback), amort = l.type === 'amort' && lgN(l.term) > 0, est = 0;
+        if (amt && lgN(l.rate) && d != null && d > 0) est = amort ? lgAmortInterest(amt, lgN(l.rate), lgN(l.term), d / 365 * 12) : Math.round(amt * lgN(l.rate) / 100 * d / 365);   // 이자만 내고 원금 일시상환=원금×이율×일수, 원리금균등=매달 원금이 줄어드는 이자의 합
+        var iv = paid > 0 ? paid : est; interest += iv; loanSum += amt; return { amount: amt, rate: lgN(l.rate), days: d, interest: iv, actual: paid > 0, amort: amort, term: lgN(l.term), noTerm: l.type === 'amort' && !(lgN(l.term) > 0) };
     });
     if (interest) byGroup['이자·금융'] = (byGroup['이자·금융'] || 0) + interest;
     var winP = lgN(win.price), saleP = lgN(sale.price), totalCost = winP + itemsTotal + interest, pre = saleP ? saleP - totalCost : null;
@@ -32834,7 +32841,7 @@ function ledgerToggle(id) { ledgerOpen = ledgerOpen === id ? null : id; renderMy
 function ledgerDetailHtml(r, c) {
     var fmt = maFmt, parts = [];
     var cats = Object.keys(c.byCat).map(function(k) { return '<div><span>' + maEsc(k) + '</span><b>' + fmt(c.byCat[k]) + '</b></div>'; }).join('');
-    var loans = c.loanRows.filter(function(l) { return l.amount; }).map(function(l, i) { return '<div><span>대출 ' + (i + 1) + ' · ' + fmt(l.amount) + ' · ' + l.rate + '%' + (l.days != null ? ' · ' + l.days + '일' : '') + '</span><b>이자 ' + fmt(l.interest) + (l.actual ? ' (실제)' : ' (계산)') + '</b></div>'; }).join('');
+    var loans = c.loanRows.filter(function(l) { return l.amount; }).map(function(l, i) { return '<div><span>대출 ' + (i + 1) + ' · ' + fmt(l.amount) + ' · ' + l.rate + '%' + (l.days != null ? ' · ' + l.days + '일' : '') + (l.amort ? ' · 원리금균등 ' + l.term + '개월' : ' · 원금 일시상환') + '</span><b>이자 ' + fmt(l.interest) + (l.actual ? ' (실제)' : ' (계산)') + (l.noTerm ? ' ⚠️ 대출기간 입력 필요' : '') + '</b></div>'; }).join('');
     parts.push('<div class="ma2-cost">' + cats + loans + '<div><span>낙찰가</span><b>' + fmt(c.winP) + '</b></div><div><span>총비용(낙찰가+비용+이자)</span><b>' + fmt(c.totalCost) + '</b></div>' + (c.vatTotal ? '<div><span>부가세(계산서 받은 비용)' + (r.vatDeduct ? ' - 환급, 비용 제외' : ' - 비용에 포함') + '</span><b>' + fmt(c.vatTotal) + '</b></div>' : '') + (c.hasTax ? '<div><span>' + (c.taxEst ? '예상 세금(실제 입력 전)' : '실제 납부 세금') + '</span><b>' + fmt(c.taxSum) + '</b></div>' : '') + '<div><span>투입 현금(대출 후)</span><b>' + fmt(c.cash) + '</b></div></div>');
     var pl = ledgerPlanned(r);
     if (pl && c.saleP) {   // 1단계: 예상 대비 차이
@@ -32957,7 +32964,7 @@ function ledgerSyncDraft() {   // 화면 입력값을 초안에 모음(다시 �
     var g = function(id) { var e = document.getElementById('lg-' + id); return e ? e.value : ''; };
     d.name = g('name').trim(); d.addr = g('addr').trim(); d.caseNo = g('caseNo').trim(); d.pyung = g('pyung'); d.type = g('type') || 'house'; d.memo = g('memo');
     d.win = { date: g('winDate'), price: lgFromWon(g('winPrice')) }; d.sale = { date: g('saleDate'), price: lgFromWon(g('salePrice')) };
-    d.loans = [0, 1].map(function(i) { return { amount: lgFromWon(g('l' + i + 'amt')), rate: g('l' + i + 'rate'), start: g('l' + i + 'start'), end: g('l' + i + 'end'), interestPaid: lgFromWon(g('l' + i + 'paid')) }; });
+    d.loans = [0, 1].map(function(i) { return { amount: lgFromWon(g('l' + i + 'amt')), rate: g('l' + i + 'rate'), type: g('l' + i + 'type') || 'bullet', term: g('l' + i + 'term'), start: g('l' + i + 'start'), end: g('l' + i + 'end'), interestPaid: lgFromWon(g('l' + i + 'paid')) }; });
     var normal = Array.prototype.slice.call(document.querySelectorAll('#lg-items .lg-item')).map(function(row, i) {
         var ck = (row.querySelector('.lg-i-cat').value || '|').split('|'), old = (d.items.filter(function(x) { return !x.q; })[i]) || {};
         return { id: old.id || 'li_' + Date.now() + '_' + i, imp: old.imp ? 1 : 0, cat: ck[0], sub: ck[1], date: row.querySelector('.lg-i-date').value, amount: lgFromWon(row.querySelector('.lg-i-amt').value), inv: row.querySelector('.lg-i-inv') && row.querySelector('.lg-i-inv').checked ? 1 : 0, memo: row.querySelector('.lg-i-memo').value };
@@ -33093,11 +33100,11 @@ function ledgerEditForm() {
     h += '<div class="lg-sec"><div class="lg-sec-h">기본 정보</div><div class="lg-fields">' + lgField('lg-name', '이름', d.name, '예: ○○아파트 101동 1203호') + lgField('lg-addr', '주소', d.addr, '지번 주소') + lgField('lg-caseNo', '사건번호', d.caseNo, '넣으면 예상과 비교해요') + lgField('lg-pyung', '평형(평)', d.pyung, '예: 25.7 (평당 비용 계산에 써요)', 'number', ' step="0.1"')
         + lgSel('lg-type', '종류', Object.keys(MY_ASSET_TYPES).map(function(k) { return '<option value="' + k + '"' + (d.type === k ? ' selected' : '') + '>' + MY_ASSET_TYPES[k] + '</option>'; }).join('')) + '</div></div>';
     h += '<div class="lg-sec"><div class="lg-sec-h">낙찰 · 매도</div><div class="lg-fields">' + lgField('lg-winDate', '낙찰일', win.date, '', 'date') + lgWonField('lg-winPrice', '낙찰가', win.price, '예: 250000000') + lgField('lg-saleDate', '매도일', sale.date, '', 'date') + lgWonField('lg-salePrice', '매도가', sale.price, '매도 후 입력') + '</div></div>';
-    h += '<div class="lg-sec"><div class="lg-sec-h">대출 <span class="ma-sub" style="font-weight:normal;">· 최대 2건 · 이자는 금액×이율×일수로 계산(실제 납부액을 넣으면 그 값)</span></div><div class="lg-pair">';
+    h += '<div class="lg-sec"><div class="lg-sec-h">대출 <span class="ma-sub" style="font-weight:normal;">· 최대 2건 · 이자는 상환 방식별로 계산: 일시상환=금액×이율×일수, 원리금균등=총 대출기간으로 매달 줄어드는 이자(실제 납부액을 넣으면 그 값)</span></div><div class="lg-pair">';
     [0, 1].forEach(function(i) {
         var l = (d.loans || [])[i] || {};
         h += '<div class="lg-sub-box"><div class="lg-sub-h">대출 ' + (i + 1) + '</div><div class="lg-fields">' + lgWonField('lg-l' + i + 'amt', '금액', l.amount, '예: 180000000') + lgField('lg-l' + i + 'rate', '이율(연 %)', l.rate, '예: 5.2', 'number', ' step="0.01"')
-            + lgField('lg-l' + i + 'start', '시작일', l.start, '', 'date') + lgField('lg-l' + i + 'end', '상환일(비우면 매도일)', l.end, '', 'date') + lgWonField('lg-l' + i + 'paid', '이자 실제 납부액(선택)', l.interestPaid, '비우면 계산') + '</div></div>';
+            + lgSel('lg-l' + i + 'type', '상환 방식', '<option value="bullet"' + (l.type === 'amort' ? '' : ' selected') + '>이자만 내고 원금 일시상환</option><option value="amort"' + (l.type === 'amort' ? ' selected' : '') + '>원리금균등상환</option>') + lgField('lg-l' + i + 'term', '총 대출기간(개월) - 원리금균등만', l.term, '예: 36', 'number', ' step="1"') + lgField('lg-l' + i + 'start', '시작일', l.start, '', 'date') + lgField('lg-l' + i + 'end', '상환일(비우면 매도일)', l.end, '', 'date') + lgWonField('lg-l' + i + 'paid', '이자 실제 납부액(선택)', l.interestPaid, '비우면 계산') + '</div></div>';
     });
     h += '</div></div>';
     h += '<div class="lg-sec"><div class="lg-sec-h">비용 <span class="ma-sub" style="font-weight:normal;">· 건별 입력 (분류·세부항목, 날짜, 금액)</span></div><div id="lg-items">' + (d.items || []).filter(function(it) { return !it.q; }).map(function(it, i) { return ledgerItemRow(it, i, catOpts); }).join('') + '</div>'
