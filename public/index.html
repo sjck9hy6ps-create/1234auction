@@ -4549,7 +4549,7 @@ function nvVillaCard(r, ev) {
     var vm = function(v) { return v ? toEok(String(Math.round(v))) : '-'; };
     var pe = ev.pn && ev.pn.ev, ve = ev.ve, mp = ev.mp, st = hsBld[r.id] || {}, idJs = String(r.id).replace(/\\/g, '\\\\').replace(/'/g, "\\'");
     var l = listingStatus(r.a), hv = st.chk && st.chk.verdict;
-    return nvCard({ id: r.id, idJs: idJs, a: r.a, sel: String(bidDrawerId) === String(r.id), go: ev.visit.go, why: ev.visit.why, bad: !!ev.issue, name: villaNameFor(r),
+    return nvCard({ id: r.id, idJs: idJs, a: r.a, sel: String(bidDrawerId) === String(r.id), go: ev.visit.go, why: ev.visit.why, bad: !!ev.issue, name: villaNameFor(r), badge: top10Badge(r),
         dday: r.dday ? r.dday.label : '', soon: r.dday && r.dday.diffDays >= 0 && r.dday.diffDays <= 3,
         rec: pe ? vm(pe.bid) : '', recPct: pe && ve ? Math.round(pe.bid / ve.est * 100) : null,
         spec: bbEsc(r.region) + (r.pyung ? ' · 빌라 ' + r.pyung + '평(' + Math.round(r.pyung * 3.305785) + '㎡)' : '') + (r.floor ? ' · ' + r.floor + '층' : '') + (mp && mp.age != null ? ' · ' + mp.age + '년차' : ''),
@@ -4561,7 +4561,7 @@ function nvVillaCard(r, ev) {
 function nvAptCard(r) {
     var am = function(v) { return v ? toEok(String(Math.round(v))) : '-'; };
     var e = r.pick && r.pick.ev, idJs = String(r.id).replace(/\\/g, '\\\\').replace(/'/g, "\\'"), l = listingStatus(r.a), os = r.ownStats;
-    return nvCard({ id: r.id, idJs: idJs, a: r.a, sel: String(bidDrawerId) === String(r.id), go: r.visit.go, why: r.visit.why, bad: !!(r.issueSuspect && /🚩/.test(r.visit.why || '')), name: r.name,
+    return nvCard({ id: r.id, idJs: idJs, a: r.a, sel: String(bidDrawerId) === String(r.id), go: r.visit.go, why: r.visit.why, bad: !!(r.issueSuspect && /🚩/.test(r.visit.why || '')), name: r.name, badge: top10Badge(r),
         dday: r.dday ? r.dday.label : '', soon: r.dday && r.dday.diffDays >= 0 && r.dday.diffDays <= 3,
         rec: e ? am(e.bid) : '', recPct: e && r.sale ? Math.round(e.bid / r.sale * 100) : null,
         spec: bbEsc(r.region) + (r.pyung ? ' · 아파트 ' + r.pyung + '평(' + Math.round(r.pyung * 3.305785) + '㎡)' : '') + (r.floor ? ' · ' + r.floor + '층' : '') + ' · ' + (r.fails == null ? '' : (r.fails === 0 ? '신건' : r.fails + '회 유찰')),
@@ -4599,7 +4599,7 @@ function nvSort(kind, k) {
 function nvCard(o) {
     var chips = (o.chips || []).filter(Boolean).map(function(c) { return '<span class="nv-chip' + (c.cls ? ' ' + c.cls : '') + '">' + c.t + '</span>'; }).join('');
     return '<div class="nv-card' + (o.sel ? ' sel' : '') + (o.go ? ' go' : ' pass') + '" data-rid="' + bbEsc(String(o.id)) + '" onclick="openBidDrawer(\'' + o.idJs + '\')">'
-        + '<div class="nv-top">' + (o.a ? favStar(o.a, o.idJs) : '') + '<span class="nv-v ' + (o.go ? 'go' : 'pass') + '">' + (o.go ? '🚶 임장' : '패스') + '</span><span class="nv-name">' + bbEsc(o.name) + '</span>' + (o.dday ? '<span class="nv-dday' + (o.soon ? ' soon' : '') + '">' + bbEsc(o.dday) + '</span>' : '') + '</div>'
+        + '<div class="nv-top">' + (o.a ? favStar(o.a, o.idJs) : '') + '<span class="nv-v ' + (o.go ? 'go' : 'pass') + '">' + (o.go ? '🚶 임장' : '패스') + '</span><span class="nv-name">' + bbEsc(o.name) + '</span>' + (o.badge || '') + (o.dday ? '<span class="nv-dday' + (o.soon ? ' soon' : '') + '">' + bbEsc(o.dday) + '</span>' : '') + '</div>'
         + (o.rec ? '<div class="nv-price"><span>추천</span> ' + o.rec + (o.recPct != null ? ' <small>시세의 ' + o.recPct + '%</small>' : '') + '</div>' : '<div class="nv-price none">추천가 없음</div>')
         + '<div class="nv-spec">' + o.spec + '</div>'
         + (o.why ? '<div class="nv-why' + (o.bad ? ' bad' : '') + '">' + bbEsc(o.why) + '</div>' : '')
@@ -5190,7 +5190,7 @@ function renderVillaLite(body) {
         h += '<tr data-rid="' + bbEsc(r.id) + '" class="bb2-row ' + (ev.visit.go ? 'go' : 'pass') + '" onclick="openBidDrawer(\'' + idJs + '\')">'
             + '<td data-l="판정">' + (ev.visit.go ? '<span class="bb2-go">🚶 임장</span>' : '<span class="bb2-pass">패스</span>') + (ev.visit.why ? '<div class="bb-sub"' + (ev.issue ? ' style="color:#b91c1c;"' : '') + '>' + bbEsc(ev.visit.why) + '</div>' : '') + '</td>'
             + '<td data-l="입찰일">' + (r.dday ? '<span class="bb-dday' + (r.dday.diffDays >= 0 && r.dday.diffDays <= 3 ? ' soon' : '') + '">' + bbEsc(r.dday.label) + '</span>' : '-') + '<div class="bb-sub">' + bbEsc(r.a.bidDate || '') + '</div></td>'
-            + '<td class="bb2-name">' + favStar(r.a, idJs) + '<b>' + bbEsc(villaNameFor(r)) + '</b><div class="bb-sub">' + bbEsc(r.region) + (r.pyung ? ' · ' + r.pyung + '평' : '') + (r.floor ? ' · ' + r.floor + '층' : '') + '</div><div>' + permitPill(r) + (rightsNeeded(r, ev.visit.go) ? ' ' + rightsNeedPill() : '') + (bldUseWarn(st.info && st.info.title) ? ' <span class="bb-pill" style="background:#fef2f2;color:#b91c1c;border:1px solid #fca5a5;" title="' + bbEsc(bldUseWarn(st.info.title)) + '">⚠️ 비주택 용도</span>' : '') + '</div><div>' + listingPillHtml(r.a) + '</div></td>'
+            + '<td class="bb2-name">' + favStar(r.a, idJs) + '<b>' + bbEsc(villaNameFor(r)) + '</b>' + top10Badge(r) + '<div class="bb-sub">' + bbEsc(r.region) + (r.pyung ? ' · ' + r.pyung + '평' : '') + (r.floor ? ' · ' + r.floor + '층' : '') + '</div><div>' + permitPill(r) + (rightsNeeded(r, ev.visit.go) ? ' ' + rightsNeedPill() : '') + (bldUseWarn(st.info && st.info.title) ? ' <span class="bb-pill" style="background:#fef2f2;color:#b91c1c;border:1px solid #fca5a5;" title="' + bbEsc(bldUseWarn(st.info.title)) + '">⚠️ 비주택 용도</span>' : '') + '</div><div>' + listingPillHtml(r.a) + '</div></td>'
             + '<td class="r" data-l="최저가">' + money(r.minBid) + '</td><td class="r" data-l="감정가">' + money(r.appraisal) + '</td>'
             + '<td class="r" data-l="예상매도가">' + estCell + '</td><td class="r" data-l="필요 마진 · 입찰 상한">' + marCell + '</td><td class="r" data-l="예상 낙찰가 · 추천가">' + winCell + '</td><td class="r" data-l="생활권 거래(반경 500m)">' + villaLiqHtml(ev.liq) + '</td><td class="r" data-l="월세 현금흐름">' + villaCashCell(villaRentCash(r, ev)) + '</td>'
             + '<td data-l="건물(대장)">' + (t ? bbEsc(t.mainPurps || '') + '<div class="bb-sub">' + (t.grndFlrCnt || '-') + '층 · ' + (t.useAprDay ? String(t.useAprDay).slice(0, 4) + '년' : '-') + ' · 승강기 ' + (elv ? elv + '대' : '없음') + '</div>' : (st.quota ? '<span class="bb-sub" title="연식·승강기·층수를 아직 못 가져왔어요">⏸ 한도 초과(내일 자동 조회)</span>' : (st.loading ? '<span class="bb-sub">조회 중…</span>' : '<span class="bb-sub">대장 없음</span>'))) + '</td>'
@@ -22760,6 +22760,24 @@ function top10Sorted(list) {
     var key = { score: function(x) { return x.exp; }, net: function(x) { return x.net; }, cash: function(x) { return -x.cash; }, fast: function(x) { return -x.months; } }[top10State.sort] || function(x) { return x.exp; };
     return list.sort(function(x, y) { return key(y) - key(x) || y.exp - x.exp; });
 }
+/* 🏆 TOP 10 순위 표시(2026-11-21, 사용자: 목록·상세의 물건 이름 옆에 순위를 한눈에) - 지금 걸린 필터와 낙찰 가능성 하한 기준 종합 점수 순위(창에서 정렬을 바꿔도 표시는 종합 점수 기준). 5초 동안 계산 결과를 재사용 */
+var top10Cache = { sig: '', ranks: {} };
+function top10Ranks() {
+    var s = bidBoardState, sig = [s.region || '', top10State.minP, bidBoardRows.length, typeof myAssetsVer !== 'undefined' ? myAssetsVer : 0, typeof villaRestoreState !== 'undefined' ? villaRestoreState : 0, Math.floor(Date.now() / 5000)].join('|');
+    if (top10Cache.sig === sig) return top10Cache.ranks;
+    var ranks = {}, keep = top10State.sort; top10State.sort = 'score';
+    try {
+        top10Rows().slice(0, 10).forEach(function(x, i) { ranks[String(x.r.id)] = i + 1; });
+        if (typeof villaRestoreState !== 'undefined' && villaRestoreState >= 2) top10Sorted(top10VillaRows()).slice(0, 10).forEach(function(x, i) { ranks[String(x.r.id)] = i + 1; });
+    } catch (e) {} finally { top10State.sort = keep; }
+    top10Cache = { sig: sig, ranks: ranks }; return ranks;
+}
+function top10Badge(r) {
+    try {
+        if (!r || r.skippedPast) return ''; var n = top10Ranks()[String(r.id)]; if (!n) return '';
+        return ' <span class="t10b" title="추천 TOP 10 ' + n + '위 - 지금 걸린 필터 기준 · 적은 내 돈·높은 순이익·빠른 회수 종합 점수 (누르면 상세, 위 \'🏆 추천 TOP 10\'에서 전체 표)" style="display:inline-block;background:' + (n <= 3 ? '#f59e0b' : '#fde68a') + ';color:' + (n <= 3 ? '#fff' : '#92400e') + ';font-size:10.5px;font-weight:800;border-radius:10px;padding:1px 7px;vertical-align:middle;white-space:nowrap;">🏆 TOP ' + n + '</span>';
+    } catch (e) { return ''; }
+}
 function openTop10() {
     var bg = document.getElementById('top10-bg');
     if (!bg) {
@@ -22807,7 +22825,7 @@ function bbAptTableHtml(rows, subRow) {
             return '<tr data-rid="' + bbEsc(r.id) + '" class="bb2-row ' + (go ? 'go' : 'pass') + (String(bidDrawerId) === String(r.id) ? ' sel' : '') + '" onclick="openBidDrawer(\'' + idJs + '\')">'
                 + '<td data-l="판정">' + (go ? '<span class="bb2-go">🚶 임장</span>' : '<span class="bb2-pass">패스</span>') + (r.visit.why ? '<div class="bb-sub">' + bbEsc(r.visit.why) + '</div>' : '') + '</td>'
                 + '<td data-l="입찰일">' + (r.dday ? '<span class="bb-dday' + (r.dday.diffDays >= 0 && r.dday.diffDays <= 3 ? ' soon' : '') + '">' + bbEsc(r.dday.label) + '</span>' : '-') + '<div class="bb-sub">' + bbEsc(r.a.bidDate || '') + '</div></td>'
-                + '<td data-l="물건" class="bb2-name">' + favStar(r.a, idJs) + '<b>' + bbEsc(r.name) + '</b><div class="bb-sub">' + bbEsc(r.region) + (r.pyung ? ' · ' + r.pyung + '평' : '') + (r.floor ? ' · ' + r.floor + '층' : '') + (r.issueSuspect ? ' · <span style="color:#b91c1c;">🚩</span>' : '') + '</div><div>' + (uvOf(r) ? '<span class="bb-pill" style="background:#ede9fe;color:#5b21b6;border:1px solid #a78bfa;" title="' + bbEsc(uvChipText(uvOf(r))) + '">📉 저평가 후보</span> ' : '') + (ovOf(r) ? '<span class="bb-pill" style="background:#fff7ed;color:#9a3412;border:1px solid #fdba74;" title="대장과의 격차가 평소보다 ' + Math.abs(Math.round(ovOf(r).catchP)) + '%p 좁혀진 단지(과거 검증: 이후 시군구 중앙보다 덜 오름, 약한 참고 신호)">📈 고평가 후보</span> ' : '') + listingPillHtml(r.a) + permitPill(r) + (rightsNeeded(r, r.visit.go) ? ' ' + rightsNeedPill() : '') + '</div>' + (r.niche ? '<div><span class="bb-pill" style="background:#e0f2f1;color:#00695c;border:1px solid #4db6ac;" title="' + bbEsc(r.niche.why.join(' · ')) + '">🧭 틈새</span></div>' : '') + '</td>'
+                + '<td data-l="물건" class="bb2-name">' + favStar(r.a, idJs) + '<b>' + bbEsc(r.name) + '</b>' + top10Badge(r) + '<div class="bb-sub">' + bbEsc(r.region) + (r.pyung ? ' · ' + r.pyung + '평' : '') + (r.floor ? ' · ' + r.floor + '층' : '') + (r.issueSuspect ? ' · <span style="color:#b91c1c;">🚩</span>' : '') + '</div><div>' + (uvOf(r) ? '<span class="bb-pill" style="background:#ede9fe;color:#5b21b6;border:1px solid #a78bfa;" title="' + bbEsc(uvChipText(uvOf(r))) + '">📉 저평가 후보</span> ' : '') + (ovOf(r) ? '<span class="bb-pill" style="background:#fff7ed;color:#9a3412;border:1px solid #fdba74;" title="대장과의 격차가 평소보다 ' + Math.abs(Math.round(ovOf(r).catchP)) + '%p 좁혀진 단지(과거 검증: 이후 시군구 중앙보다 덜 오름, 약한 참고 신호)">📈 고평가 후보</span> ' : '') + listingPillHtml(r.a) + permitPill(r) + (rightsNeeded(r, r.visit.go) ? ' ' + rightsNeedPill() : '') + '</div>' + (r.niche ? '<div><span class="bb-pill" style="background:#e0f2f1;color:#00695c;border:1px solid #4db6ac;" title="' + bbEsc(r.niche.why.join(' · ')) + '">🧭 틈새</span></div>' : '') + '</td>'
                 + '<td data-l="유찰" class="r">' + (r.fails == null ? '-' : (r.fails === 0 ? '신건' : r.fails + '회')) + '</td>'
                 + '<td data-l="동일평형 거래" class="r bb2-n">' + liteTradesHtml(r) + '</td>'
                 + '<td data-l="거래량 순위" class="bb2-rank">' + liteRankHtml(r) + '</td>'
@@ -23527,7 +23545,7 @@ async function renderBidDrawer() {
     var tr = (row.type === 'apt' || row.type === 'villa') ? drawerTrades(row) : [];
     var fmt = function(x) { return x ? toEok(String(Math.round(x))) : '-'; };
     // 2026-10(사용자: "목록 옆 좁은 창 안에 지도/상세 버튼") - 맨 위 이름 옆에 바로 보이게
-    var h = '<div class="dr-h"><h3>' + favStar(a, idJs) + bbEsc(row.name) + (a.caseNo ? ' <span style="font-size:12px;font-weight:normal;color:#6b7280;">· ' + bbEsc(a.caseNo) + '</span>' : '') + '</h3><button class="dr-x" onclick="closeBidDrawer()">✕</button></div>'
+    var h = '<div class="dr-h"><h3>' + favStar(a, idJs) + bbEsc(row.name) + top10Badge(row) + (a.caseNo ? ' <span style="font-size:12px;font-weight:normal;color:#6b7280;">· ' + bbEsc(a.caseNo) + '</span>' : '') + '</h3><button class="dr-x" onclick="closeBidDrawer()">✕</button></div>'
         + '<div class="dr-top-btns"><button onclick="bidBoardGo(\'' + idJs + '\')">🗺️ 지도</button><button onclick="openCyclePanel()">📈 사이클</button></div>' + bidExclBoxHtml(row, idJs) + rightsStopBannerHtml(row)
         + '<div class="dr-sub">' + bbEsc(row.region) + ' · ' + (row.pyung ? row.pyung + '평' + (row.type === 'apt' && sizeBandOf(row.pyung) ? '(' + sizeBandOf(row.pyung) + ' ' + Math.round(row.pyung * 3.305785) + '㎡)' : '') + ' · ' : '') + (row.floor ? row.floor + '층 · ' : '') + bbEsc(a.caseNo || '') + (row.dday ? ' · <b>' + row.dday.label + '</b> (' + bbEsc(a.bidDate) + ')' : '') + (function() { try { var pp = (row.type === 'apt' || row.type === 'villa') ? pubPriceOf(row) : null; return pp && pp.nores ? ' · 공시가격 <b>해당 없음</b> <span title="건축물대장 전유부에서 이 호의 용도가 ' + bbEsc(pp.nores) + '로 확인돼 주거용(공동주택) 공시가격 대상이 아니에요">(' + bbEsc(pp.nores) + ' 호)</span>' : pp && pp.range ? ' · 공시가격 <b>' + toEok(String(pp.range[0])) + '~' + toEok(String(pp.range[1])) + '</b> <span title="사건 자료에 동이 없어 같은 호의 동별 값 ' + pp.range[2] + '개 중 최소~최대">(동 미확인 범위)</span>' : pp ? ' · 공시가격 <b>' + toEok(String(Math.round(pp.won / 10000))) + '</b> <span title="' + bbEsc(pp.src) + '">(' + (pp.est ? '추정' : (pp.src.indexOf('호별') === 0 ? '호별' : '단지·면적별')) + ')</span>' : ''; } catch (e) { return ''; } })() + '</div>'
         + '<div style="margin-top:6px;"><span class="bb-verdict" style="color:' + v.color + ';background:' + v.bg + ';">' + v.label + '</span>'
@@ -24264,7 +24282,7 @@ async function renderVillaDrawer(d, row) {
     var idJs = String(row.id).replace(/\\/g, '\\\\').replace(/'/g, "\\'");
     var fmt = function(x) { return x ? toEok(String(Math.round(x))) : '-'; };
     var go = ev.visit.go, pe = pn && pn.ev;
-    var h = '<div class="dr-h"><h3>' + favStar(a, idJs) + bbEsc(villaNameFor(row)) + (a.caseNo ? ' <span style="font-size:12px;font-weight:normal;color:#6b7280;">· ' + bbEsc(a.caseNo) + '</span>' : '') + '</h3><button class="dr-x" onclick="closeBidDrawer()">✕</button></div>'
+    var h = '<div class="dr-h"><h3>' + favStar(a, idJs) + bbEsc(villaNameFor(row)) + top10Badge(row) + (a.caseNo ? ' <span style="font-size:12px;font-weight:normal;color:#6b7280;">· ' + bbEsc(a.caseNo) + '</span>' : '') + '</h3><button class="dr-x" onclick="closeBidDrawer()">✕</button></div>'
         + '<div class="dr-top-btns"><button onclick="bidBoardGo(\'' + idJs + '\')">🗺️ 지도</button><button onclick="openCyclePanel()">📈 사이클</button></div>' + bidExclBoxHtml(row, idJs) + rightsStopBannerHtml(row)
         + '<div class="dr-sub">' + bbEsc(row.region) + (row.pyung ? ' · ' + row.pyung + '평(' + Math.round(row.pyung * 3.305785) + '㎡)' : '') + (row.floor ? ' · ' + row.floor + '층' : '') + (a.buildYear ? ' · ' + a.buildYear + '년' : '') + (row.dday ? ' · 입찰 ' + bbEsc(row.dday.label) + ' ' + bbEsc(a.bidDate || '') : '') + '</div>'
         + '<div class="dr-pickcard ' + (go ? 'go' : 'pass') + '"><div class="pk-v">' + (go ? '🚶 임장 추천' : '패스') + (ev.visit.why ? ' · ' + bbEsc(ev.visit.why) : '') + '</div>'
