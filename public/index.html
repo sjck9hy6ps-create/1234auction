@@ -4574,7 +4574,7 @@ function renderFavLite(body) {
     var rows = favRows().sort(function(x, y) { return (x.dday ? x.dday.diffDays : 9999) - (y.dday ? y.dday.diffDays : 9999); });
     var h = '<div class="nv-sort"><b style="color:#111;">⭐ 즐겨찾기 ' + rows.length + '건</b> <span style="color:#9ca3af;">입찰일이 가까운 순 · 별(★)을 다시 누르면 목록에서 빠져요</span></div>';
     if (!rows.length) { body.innerHTML = h + '<div class="bb-empty">아직 담은 물건이 없어요.<br>입찰후보 목록의 ☆ 별을 누르거나 상세 창의 "즐겨찾기에 담기"를 눌러 보세요.</div>'; return; }
-    if (!bbCardMode() && window.innerWidth > 640) {   // PC 화면: 아파트는 입찰후보와 같은 표, 빌라는 카드(2026-11-21 사용자: 즐겨찾기 UI가 모바일용)
+    if (window.innerWidth > 640) {   // 폭 641px 이상(태블릿 구간 641~1,240px 포함): 아파트는 입찰후보와 같은 표, 빌라는 카드(2026-11-21 사용자: 즐겨찾기 UI가 모바일용, 태블릿 구간도 표로)
         var apt = rows.filter(function(r) { return r.type !== 'villa'; }), villa = rows.filter(function(r) { return r.type === 'villa'; });
         var cd = LITE_COLS[bidBoardState.liteCol] || null;
         if (cd && bidBoardState.liteCol !== 'verdict') apt.sort(function(x, y) { var vx = cd.val(x), vy = cd.val(y), nx = vx == null || (typeof vx === 'number' && !isFinite(vx)), ny = vy == null || (typeof vy === 'number' && !isFinite(vy)); if (nx !== ny) return nx ? 1 : -1; var c = nx ? 0 : (typeof vx === 'string' ? vx.localeCompare(vy, 'ko') : vx - vy); return c * bidBoardState.liteDir; });
