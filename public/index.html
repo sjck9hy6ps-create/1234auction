@@ -31438,7 +31438,7 @@ function myAssetSummary() {
         });
     } catch (e) {}
     var p = myAssets.profile || {};
-    var extra = parseInt(p.extraBizIncome) || 0, other = parseInt(p.otherIncome) || 0;
+    var extra = parseInt(p.extraBizIncome) || 0, other = myOtherIncome(p);
     return { count: cnt, officialSum: officialSum, bizIncome: bizIncome + extra, otherIncome: other, incomeBase: Math.max(0, bizIncome + extra + other), isDealer: p.isDealer !== false };
 }
 // 다음 낙찰이 몇 번째 주택인지(모달에서 직접 고른 값이 있으면 그걸)
@@ -32573,9 +32573,18 @@ function maEsc(t) { return String(t == null ? '' : t).replace(/&/g, '&amp;').rep
    - 매도 거래 = 경매 관리의 "매도완료" 물건(비용 항목·대출이자까지 자세함) + 내 자산의 "매도 완료" 항목.
      같은 집이 양쪽에 있으면(주소의 동·지번 또는 이름이 겹침) 경매 쪽 상세 비용으로 한 번만 셈.
    - 계산식은 예전 누적 리포트(dashboard.html computeDeal)와 같음: 총비용 = 낙찰가+취득세+등기+명도+수리+중개+기타+재산세+종부세+대출이자+중도상환수수료 */
+/* 💼 연봉 → 근로소득 과세표준 추정(2026-11-22 사용자): 종합소득세엔 총급여가 아니라 (총급여 − 근로소득공제 − 소득공제)가 들어감. 근로소득공제 표는 소득세법상 총급여 구간별(4,500만~1억: 1,200만+초과분 5%, 1억 초과: 1,475만+초과분 2% 확인 / 그 아래 구간은 일반 안내 기준),
+   소득공제는 입력이 없으면 본인 기본공제 150만 + 4대보험료 연봉의 약 8%로 추정(직접 입력하면 그 값) */
+function maWorkIncome(p) {
+    var sal = parseInt((p || {}).salary) || 0; if (!(sal > 0)) return null;
+    var ded = sal <= 500 ? sal * 0.7 : sal <= 1500 ? 350 + (sal - 500) * 0.4 : sal <= 4500 ? 750 + (sal - 1500) * 0.15 : sal <= 10000 ? 1200 + (sal - 4500) * 0.05 : 1475 + (sal - 10000) * 0.02;
+    ded = Math.min(ded, 2000); var gross = sal - ded, man = parseInt((p || {}).salaryDed) || 0, auto = !(man > 0), other = auto ? Math.round(150 + sal * 0.08) : man;
+    return { sal: sal, ded: Math.round(ded), gross: Math.round(gross), other: other, auto: auto, base: Math.max(0, Math.round(gross - other)) };
+}
+function myOtherIncome(p) { var w = maWorkIncome(p); return (w ? w.base : 0) + (parseInt((p || {}).otherIncome) || 0); }   // 근로소득 과세표준 + 그 밖의 종합소득
 function maWon(v) { if (v == null || isNaN(v)) return '-'; var w = Math.round(v * 10000); return (w < 0 ? '−' : '') + Math.abs(w).toLocaleString() + '원'; }   // 만원 값을 원 단위로(2026-11-22 사용자)
 function maYearNet(s, p) {   // 올해 매도 이익 − 예상 세금 = 실제 순수익(예상). 예상 세금 = 다른 종합소득 위에 올해 매도 이익을 얹은 종합소득세 증가분 + 지방소득세
-    var profit = s.bizIncome, t = ttIncTax(Math.max(0, parseInt((p || {}).otherIncome) || 0), profit, new Date().toISOString().slice(0, 10)), tax = t.total || 0;
+    var profit = s.bizIncome, t = ttIncTax(Math.max(0, myOtherIncome(p)), profit, new Date().toISOString().slice(0, 10)), tax = t.total || 0;
     return { profit: profit, tax: tax, net: profit - tax, rate: t.rate };
 }
 function maFmt(v) {
@@ -32731,7 +32740,7 @@ function ledgerCalc(rec, skipTax) {
 function lgEstTaxes(rec, pre) {
     try {
         var sale = rec.sale || {}, p = myAssets.profile || {}; if (p.isDealer === false || !(lgN(sale.price) > 0) || !sale.date || !(pre > 0)) return [];
-        var y = String(sale.date).slice(0, 4), other = parseInt(p.otherIncome) || 0, extra = String(new Date().getFullYear()) === y ? (parseInt(p.extraBizIncome) || 0) : 0, biz = 0;
+        var y = String(sale.date).slice(0, 4), other = myOtherIncome(p), extra = String(new Date().getFullYear()) === y ? (parseInt(p.extraBizIncome) || 0) : 0, biz = 0;
         ledger.items.forEach(function(r) { if (r.id !== rec.id && r.sale && lgN(r.sale.price) > 0 && String(r.sale.date || '').slice(0, 4) === y) { var c2 = ledgerCalc(r, true); if (c2.pre > 0) biz += c2.pre; } });
         var t = ttIncTax(Math.max(0, other + extra + biz), pre, sale.date);
         var out = []; if (t.inc > 0) out.push({ kind: '종합소득세(증가분)', amount: t.inc, est: 1 }); if (t.local > 0) out.push({ kind: '지방소득세', amount: t.local, est: 1 });
@@ -32796,7 +32805,7 @@ function ledgerYearsHtml(calcs, done) {
     var taxOf = function(x) { if (x <= 0) return 0; var b = lookupIncomeTaxBracket(x); return Math.max(Math.round(x * b.rate - b.dedManwon), 0); };
     return '<div style="margin-top:10px;"><div class="ma-h">📊 연도별 누적 소득 <span class="ma-sub" style="font-weight:normal;">· 매도한 해 기준 · 사업소득 = 매도가 − 총비용(낙찰가·비용·이자)</span></div>'
         + ys.map(function(y) {
-            var g = by[y], other = y === cur ? (parseInt(p.otherIncome) || 0) : 0, base = Math.max(0, g.pre + other), br = base > 0 ? lookupIncomeTaxBracket(base) : null, est = Math.round(taxOf(base) * 1.1), allTax = g.taxN === g.n;
+            var g = by[y], other = y === cur ? myOtherIncome(p) : 0, base = Math.max(0, g.pre + other), br = base > 0 ? lookupIncomeTaxBracket(base) : null, est = Math.round(taxOf(base) * 1.1), allTax = g.taxN === g.n;
             return '<div class="indicator-box"><div class="indicator-title">' + y + '년 <span class="ma-sub" style="font-weight:normal;">매도 ' + g.n + '건</span></div><div class="indicator-grid lg-grid">'
                 + lgItem('매도가 합', maFmt(g.sale)) + lgItem('총비용 합', maFmt(g.cost)) + lgItem('사업소득', maFmt(g.pre), g.pre < 0 ? '#c62828' : '#2e7d32')
                 + lgItem('소득 구간', br ? Math.round(br.rate * 100) + '%' : '-', '', br ? '앱 근사 세금 ' + maFmt(est) : '') + lgItem(g.estN ? '납부 세금(예상 포함)' : '실제 납부 세금', g.taxN ? maFmt(g.tax) : '미입력', '', g.taxN ? (g.estN ? '예상 ' + g.estN + '건 · 실제 ' + (g.taxN - g.estN) + '건' : g.taxN + '/' + g.n + '건 입력') : '')
@@ -33200,7 +33209,7 @@ function ttBase(y) {   // 그 해(매도한 해) 종합소득 합산 기준(만�
     if (y === cur) return s ? s.incomeBase : 0;
     var p = myAssets.profile || {}, biz = 0;
     ledger.items.forEach(function(r) { if (r.sale && lgN(r.sale.price) > 0 && String(r.sale.date || '').slice(0, 4) === String(y)) biz += ledgerCalc(r).pre || 0; });
-    return Math.max(0, (parseInt(p.otherIncome) || 0) + biz);
+    return Math.max(0, myOtherIncome(p) + biz);
 }
 function ttIncTax(base, profit, dateStr) { return withTaxAt(dateStr, function() { return ttIncTaxRaw(base, profit); }); }
 function ttIncTaxRaw(base, profit) {
@@ -33441,9 +33450,11 @@ function renderMyAssets() {
         + '<div class="lg-field"><label>매매사업자</label><label class="lg-check"><input type="checkbox" ' + (p.isDealer !== false ? 'checked' : '') + ' onchange="maSetProfile(\'isDealer\', this.checked)"> 개인 부동산매매사업자</label></div>'
         + '<div class="lg-field"><label>올해 매도 이익(자동)</label><div class="lg-static"><b>' + maWon(s.bizIncome - (parseInt(p.extraBizIncome) || 0)) + '</b> <span class="ma-sub">매도한 재고자산·경매 매도완료(장부 기준)</span><div class="ma-sub">예상 세금 ' + maWon(yn.tax) + ' → <b>실제 순수익 ' + maWon(yn.net) + '</b>(세금 뺀, 예상)</div></div></div>'
         + '<div class="lg-field"><label>추가 사업소득(만원)</label><input type="number" value="' + maEsc(p.extraBizIncome || '') + '" placeholder="만원" onchange="maSetProfile(\'extraBizIncome\', this.value)"></div>'
-        + '<div class="lg-field"><label>다른 종합소득(만원)</label><input type="number" value="' + maEsc(p.otherIncome || '') + '" placeholder="근로·사업 등" onchange="maSetProfile(\'otherIncome\', this.value)"></div>'
+        + '<div class="lg-field"><label>연봉(총급여, 만원)</label><input type="number" value="' + maEsc(p.salary || '') + '" placeholder="예: 6500" onchange="maSetProfile(\'salary\', this.value)"></div>'
+        + '<div class="lg-field"><label>근로 소득공제(만원, 비우면 자동추정)</label><input type="number" value="' + maEsc(p.salaryDed || '') + '" placeholder="본인공제+4대보험 등" onchange="maSetProfile(\'salaryDed\', this.value)"></div>'
+        + '<div class="lg-field"><label>그 밖의 종합소득(만원)</label><input type="number" value="' + maEsc(p.otherIncome || '') + '" placeholder="근로 외 사업·이자 등" onchange="maSetProfile(\'otherIncome\', this.value)"></div>'
         + '<div class="lg-field"><label>취득 예정 자산</label><label class="lg-check"><input type="checkbox" ' + (p.includePlanned !== false ? 'checked' : '') + ' onchange="maSetProfile(\'includePlanned\', this.checked)"> 주택 수에 미리 포함</label></div></div>'
-        + '<div class="ma-sub" style="margin-top:6px;">올해 합계 ' + s.incomeBase.toLocaleString() + '만 위에 다음 매도 이익이 얹혀 계산돼요 · 종부세용 공시가격 합계 ' + (s.officialSum ? fm(s.officialSum) : '입력 없음') + '</div>'
+        + '<div class="ma-sub" style="margin-top:6px;">' + (function() { var w = maWorkIncome(p); return w ? '💼 연봉 ' + w.sal.toLocaleString() + '만 → 근로소득공제 ' + w.ded.toLocaleString() + '만 → 근로소득금액 ' + w.gross.toLocaleString() + '만 → 소득공제 ' + w.other.toLocaleString() + '만' + (w.auto ? '(자동 추정: 본인공제 150만 + 4대보험 약 8%)' : '(입력)') + ' → <b>근로소득 과세표준 약 ' + w.base.toLocaleString() + '만</b>이 종합소득세 계산의 기본 소득이에요.<br>' : ''; })() + '올해 합계 ' + s.incomeBase.toLocaleString() + '만 위에 다음 매도 이익이 얹혀 계산돼요 · 종부세용 공시가격 합계 ' + (s.officialSum ? fm(s.officialSum) : '입력 없음') + '</div>'
         + '<div class="ma-sub" style="margin-top:4px;color:#b26a00;">⚠️ 세법 해석은 참고용 근사예요. 실제 신고 전 세무사 확인이 필요해요.</div></div></div>';
     // ⑤ 분석(접어 둠)
     var costSum = {};
