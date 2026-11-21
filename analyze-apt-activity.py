@@ -1,5 +1,5 @@
 """단지 전체 거래 활발도 검증(2026-11-21): 같은 시군구 안에서 최근 12개월 거래 건수 순위(상위 20% / 중간 / 하위 40%)가 이후 거래를 얼마나 맞히는지.
-오늘 기준 3·6·9·12개월 전 시점마다 판정하고, 그 뒤 월평균 거래·'이후 거래 0건' 비율을 등급별로 비교. 대상: 최근 5년 안에 거래가 있었던 단지(같은 시군구 10곳 이상)."""
+오늘 기준 3·6·9·12개월 전 시점마다 판정하고, 그 뒤 월평균 거래·'이후 거래 0건' 비율을 등급별로 비교. 대상: 최근 24개월 안에 거래가 있었던 단지(같은 시군구 10곳 이상)."""
 import importlib.util, os, json
 import numpy as np, pandas as pd
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -16,7 +16,7 @@ print(f"거래 {len(df):,}건 · 마지막 완전한 달 {last // 12}-{last % 12
 res = {}
 for back in (3, 6, 9, 12):
     T = last - back; fm = last - T
-    univ = df[(df["ym"] > T - 60) & (df["ym"] <= T)]
+    univ = df[(df["ym"] > T - 24) & (df["ym"] <= T)]   # 앱은 지역 실거래 최근 2년만 있어 같은 범위로 순위를 매김
     c12 = univ[univ["ym"] > T - 12].groupby("ckey", observed=True).size()
     allc = pd.DataFrame({"ckey": univ["ckey"].unique()}); allc["region"] = allc["ckey"].str.split("|").str[0]
     allc["n12"] = allc["ckey"].map(c12).fillna(0)
