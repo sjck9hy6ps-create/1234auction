@@ -31422,8 +31422,11 @@ function myAssetSummary() {
         if (myAssetCountsForAcq(x).yes) cnt++;
         // 종부세: 주택·주거용 오피스텔의 공시가격(분양권은 아직 주택이 아니라 제외)
         if (x.status === 'holding' && !myAssetsSim[x.id] && (x.type === 'house' || (x.type === 'officetel' && x.residential))) officialSum += parseInt(x.officialPrice) || 0;
-        if (x.status === 'sold' && x.use === 'inventory' && String(x.soldDate || '').slice(0, 4) === y) {
-            bizIncome += (parseInt(x.soldPrice) || 0) - (parseInt(x.acquiredPrice) || 0) - (parseInt(x.expenses) || 0);
+        if (x.status === 'sold' && x.use === 'inventory') {
+            // 2026-11-22(사용자): 내 자산에 매도가가 비어 있어도 연결된 장부의 매도가·실제 비용으로 올해 매도 이익을 계산(장부가 더 정확). 장부가 없거나 매도 전이면 예전 방식
+            var L = null; try { L = lgLinkedLedger(x); } catch (e) {}
+            if (L) { if (String(L.sale.date || x.soldDate || '').slice(0, 4) === y) bizIncome += ledgerCalc(L, true).pre || 0; }
+            else if (String(x.soldDate || '').slice(0, 4) === y) bizIncome += (parseInt(x.soldPrice) || 0) - (parseInt(x.acquiredPrice) || 0) - (parseInt(x.expenses) || 0);
         }
     });
     // 2026-10 내 자산·투자 리포트 통합: 경매 기록에만 있는 올해 "매도완료" 거래(내 자산 항목과 같은 집이 아닌 것)도 올해 사업소득에 포함
@@ -33009,6 +33012,10 @@ function lgToDeal(r, c) {   // 장부 한 건을 '매도 거래' 모양으로(�
     Object.keys(c.byGroup).forEach(function(k) { costs[k] = c.byGroup[k]; });
     return { key: 'lg_' + r.id, src: 'ledger', ledgerId: r.id, name: r.name || '(이름 없음)', addr: r.addr || '', region: rg ? rg[1].replace(/(특별시|광역시|특별자치시|특별자치도|도)$/, '') + ' ' + rg[2] : '주소 미상', buy: c.winP, sell: c.saleP, costs: costs, total: c.totalCost, profit: c.pre || 0, roi: c.totalCost ? (c.pre || 0) / c.totalCost * 100 : 0, buyDate: (r.win && r.win.date) || '', sellDate: (r.sale && r.sale.date) || '', holdM: c.hold };
 }
+function lgLinkedLedger(x) {   // 내 자산 매도 항목과 연결된 '매도가가 있는' 장부(assetId 또는 같은 집)
+    if (!ledger.loaded) return null;
+    return ledger.items.filter(function(r) { return r.sale && lgN(r.sale.price) > 0 && (r.assetId === x.id || maSameHome(r, x)); })[0] || null;
+}
 function lgLegacyDeals() {   // 예전 방식(경매 기록 매도완료·내 자산 매도 항목) 중 장부에 이미 옮겨진 것은 뺌
     var linkA = {}, linkS = {}, cn = {};
     ledger.items.forEach(function(r) { if (r.assetId) linkA[r.assetId] = 1; if (r.auctionId) linkS[r.auctionId] = 1; if (r.caseNo) cn[String(r.caseNo).replace(/\s/g, '').replace(/타경/g, '-')] = 1; });
@@ -33466,6 +33473,7 @@ async function maSetProfile(key, val) {
     try { await saveMyAssetItem(p); myAssetsChanged(); renderMyAssets(); } catch (e) { alert('저장 실패: ' + e.message); }
 }
 setTimeout(function() { loadMyAssets(); }, 1500);
+setTimeout(function() { ledgerLoad().then(function() { try { if ((myAssets.items || []).some(function(x) { return x.status === 'sold' && lgLinkedLedger(x); })) myAssetsChanged(); } catch (e) {} }); }, 3500);   // 장부를 미리 불러와 매도 이익에 반영(내 자산 화면을 안 열어도)
 // ── 오른쪽 패널은 한 번에 하나만 ──
 var SIDE_PANEL_OPENERS = { openMyAssetsPanel: 'my-assets-panel', openAuctionList: 'auction-list-panel', openBidTargetPanel: 'bid-target-panel', openBidCasePanel: 'bid-case-panel', openSurgePanel: 'surge-panel', openBacktestPanel: 'backtest-panel' };
 function closeSidePanels(exceptId) {
