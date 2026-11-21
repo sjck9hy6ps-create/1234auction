@@ -1181,6 +1181,10 @@ body.ui2 #my-assets-panel { position:fixed; top:104px; right:64px; left:auto; bo
 .ma-fold > summary { list-style:none; } .ma-fold > summary::-webkit-details-marker { display:none; }
 .ma-fold[open] > summary { margin-bottom:8px; }
 .ma-fold { border:1px solid #eef0f3; border-radius:10px; padding:8px 12px; background:#fff; }
+
+.lg-back { padding:6px 2px 8px; font-size:13px; font-weight:700; }
+.lg-live { background:#f0fdf4; border-color:#bbf7d0; margin-bottom:10px; }
+.lg-actions.lg-sticky { position:sticky; bottom:0; background:linear-gradient(to top, #fff 80%, rgba(255,255,255,0)); padding:10px 0 4px; margin-top:6px; z-index:3; }
 @media (max-width: 640px) {
     .lg-fields { grid-template-columns:1fr 1fr; } .lg-pair { grid-template-columns:1fr; }
     .lg-field input[type=text], .lg-field input[type=number], .lg-field input[type=date], .lg-field select, .lg-row input[type=text], .lg-row select { font-size:16px; padding:8px; }
@@ -32830,7 +32834,17 @@ function ledgerSyncDraft() {   // 화면 입력값을 초안에 모음(다시 �
     d.items = normal.concat(quick);
     d.taxes = LEDGER_TAX_KINDS.map(function(k, i) { return { kind: k, amount: g('tax' + i) }; }).filter(function(t) { return lgN(t.amount) > 0; });
 }
-async function ledgerSave() {
+async function ledgerLive() {   // 장부 입력 화면 위쪽 계산 박스(입력할 때마다 갱신, 저장은 안 함)
+    var el = document.getElementById('lg-live'); if (!el || !ledgerDraft) return;
+    try {
+        ledgerSyncDraft(); var d = JSON.parse(JSON.stringify(ledgerDraft)); d.items = (d.items || []).filter(function(x) { return lgN(x.amount) > 0; });
+        var c = ledgerCalc(d), fm = maFmt, col = function(v) { return v == null ? '' : (v < 0 ? '#c62828' : '#2e7d32'); }, sold = lgN(c.saleP) > 0;
+        el.innerHTML = lgItem('낙찰가', c.winP ? fm(c.winP) : '-') + lgItem('비용 합계', fm(c.itemsTotal), '', c.interest ? '이자 ' + fm(c.interest) + ' 별도' : '') + lgItem('총비용', fm(c.totalCost), '', '낙찰가+비용+이자')
+            + lgItem('세전 순이익', c.pre != null ? fm(c.pre) : '매도가 입력 후', col(c.pre), c.margin != null ? '마진율 ' + c.margin.toFixed(1) + '%' : '') + lgItem('세후(실제 세금)', c.net != null ? fm(c.net) : (sold ? '세금 입력 후' : '-'), col(c.net))
+            + lgItem('투입 현금(대출 후)', fm(c.cash), '', c.loanSum ? '대출 ' + fm(c.loanSum) : '') + (c.hold != null ? lgItem('보유', c.hold + '개월') : '');
+    } catch (e) {}
+}
+function ledgerSave() {
     ledgerSyncDraft(); var d = ledgerDraft;
     if (!d.name) { alert('이름을 입력해 주세요.'); return; }
     d.items = (d.items || []).filter(function(x) { return lgN(x.amount) > 0; }); d.loans = (d.loans || []).filter(function(l) { return lgN(l.amount) > 0; });
@@ -32915,7 +32929,8 @@ function ledgerEditForm() {
     var d = ledgerDraft; if (!d) return '';
     var v = function(x) { return maEsc(x == null ? '' : x); }, win = d.win || {}, sale = d.sale || {}, isNewRec = !ledger.items.some(function(x) { return x.id === d.id; });
     var catOpts = LEDGER_CATS.map(function(c) { return '<optgroup label="' + c.cat + '">' + c.subs.map(function(s) { return '<option value="' + maEsc(c.cat + '|' + s) + '">' + maEsc(s) + '</option>'; }).join('') + '</optgroup>'; }).join('');
-    var h = '<div id="lg-form" class="indicator-box lg-edit-box"><div class="indicator-title">' + (isNewRec ? '📒 장부 추가' : '📒 장부 수정') + '</div>';
+    var h = '<div id="lg-form" class="indicator-box lg-edit-box" oninput="ledgerLive()"><div class="indicator-title">' + (isNewRec ? '📒 장부 추가' : '📒 장부 수정') + (d.name ? ' <span class="ma-sub" style="font-weight:normal;">· ' + maEsc(d.name) + '</span>' : '') + '</div>'
+        + '<div class="indicator-box lg-live"><div class="indicator-title">🧮 지금 입력한 값으로 계산 <span class="ma-sub" style="font-weight:normal;">· 입력하면 바로 바뀌어요</span></div><div class="indicator-grid lg-grid" id="lg-live"></div></div>';
     // 불러오기 박스
     h += '<div class="lg-sec lg-pick"><div class="lg-sec-h">🏠 내 보유 주택에서 불러오기 <span class="ma-sub" style="font-weight:normal;">· 고르면 취득·매도 정보와 같은 집의 경매 기록 상세를 가져와요</span></div>'
         + '<div class="lg-row"><select id="lg-asset">' + ledgerMyHomeOptions() + '</select><button class="modal-btn btn-gray" onclick="ledgerPickAsset()">불러오기</button></div>'
@@ -32964,9 +32979,8 @@ function renderMyAssets() {
     var holds = deals.map(function(d) { return d.holdM; }).filter(function(v) { return v != null; }), avgHold = holds.length ? Math.round(holds.reduce(function(a, b) { return a + b; }, 0) / holds.length * 10) / 10 : null;
     var pc = function(v) { return v > 0 ? '#2e7d32' : (v < 0 ? '#c62828' : '#374151'); };
     var html = '';
-    // 수정·추가 화면은 맨 위 박스로
-    if (maEditId) html += maEditForm();
-    if (ledgerEditId) html += ledgerEditForm();
+    // 수정·추가를 누르면 그 화면만 한 페이지로 보여 줌(2026-11-21: 목록과 섞여 보이지 않게) - 위에 '← 내 자산으로' 돌아가기, 아래에 저장 막대 고정
+    if (maEditId || ledgerEditId) { body.innerHTML = '<div class="lg-back"><a href="#" onclick="' + (ledgerEditId ? 'ledgerCancel()' : 'maEditId=null;renderMyAssets()') + ';return false;">← 내 자산으로 돌아가기</a></div>' + (maEditId ? maEditForm() : ledgerEditForm()); lgAnnotate(body); try { body.scrollTop = 0; document.getElementById('my-assets-panel').scrollTop = 0; } catch (e) {} if (ledgerEditId) ledgerLive(); return; }
     if (simN) html += '<div class="ma2-banner">🧪 <b>시뮬레이션 중</b> - ' + simN + '건을 매도했다고 가정해 계산하고 있어요(저장 안 됨). <a href="#" onclick="myAssetsSim={};try{localStorage.removeItem(\'myAssetsSim\')}catch(e){};myAssetsChanged();return false;">모두 해제</a></div>';
     // ① 한눈에 (요약은 여기 한 곳)
     html += '<div class="indicator-box"><div class="indicator-title">💼 한눈에</div><div class="indicator-grid lg-grid">'
