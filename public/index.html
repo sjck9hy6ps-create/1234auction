@@ -23721,7 +23721,7 @@ function bidTaxCardHtml(row, pe, sale) {
         h += item('보유세 (재산세·종부세)', (pt || 0) + (ct || 0) > 0 ? fm((pt || 0) + (ct || 0)) : '0', htp.holds ? '6/1 ' + htp.years + '번 걸림 · ' + (off ? '공시가 ' + fm(off / 10000) : '공시가격 없음(0 처리)') : '6/1이 보유 기간에 안 걸려 부과 없음');
         h += item('소득세 + 지방소득세', inc != null ? fm(Math.max(0, inc)) : '-', br ? '매도 예정 ' + sy + ' · 구간 ' + Math.round(br.rate * 100) + '%' + ((sm && sm.isDealer === false) ? ' (일반 개인)' : ' (매매사업자)') : (pe.pre != null && pe.pre <= 0 ? '이익이 없어 0원' : ''));
         if (nwB >= 0) h += item('건강보험 소득월액', hlt > 0 ? fm(hlt) : '0', hlt > 0 ? '보수 외 소득 2,000만 초과분 × ' + (TAX_CONFIG.health.rate * 100).toFixed(2) + '%' : '보수 외 소득이 2,000만 이하라 없음');
-        var exC = calcExtraCosts(bid, sale, recSaleYear(a, holdM)) + (pe.pre > 0 ? calcExtraProfitTax(pe.pre, recSaleYear(a, holdM)) : 0), exL = extraLabels(recSaleYear(a, holdM));
+        var exC = calcExtraCosts(bid, sale, recSaleYear(a, holdM)), exL = extraLabels(recSaleYear(a, holdM));
         if (exL.length) h += item('추가 세목(세율 파일)', exC > 0 ? fm(exC) : '0', exL.join(' · '));
         var midPay = inc > 0 ? Math.round(inc / (1 + (TAX_CONFIG.incomeTax.localTaxRate || 0.1)) / 2) : 0;
         h += item('내년 11월 중간예납(추정)', midPay >= 50 ? fm(midPay) : '없음', '소득세의 1/2 선납 · 순수익엔 안 뺌(같은 세금을 먼저 내는 것)', '#b45309');
