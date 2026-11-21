@@ -32570,12 +32570,71 @@ function ledgerEdit(id) {
 }
 function ledgerCancel() { ledgerEditId = null; ledgerDraft = null; renderMyAssets(); }
 function ledgerQuickToggle() { ledgerSyncDraft(); ledgerQuick = !ledgerQuick; renderMyAssets(); }
+/* ════ 📒 내 경매 물건에서 불러오기 (2026-11-21, 사용자 요청) - 장부 입력 때 내 경매 물건을 골라 상세내역(낙찰가·비용·대출)을 기본값으로 가져오고, 가져올 세부항목을 체크해 고름. 가져온 값은 경매 기록의 값(예상·입력값)이라 실제 값으로 고쳐 쓰면 돼요 ════ */
+var LG_IMPORT_ITEMS = [   // [경매 기록 칸, 장부 분류, 세부항목, 이름]
+    ['tax', '취득', '취득세', '취득세'], ['registryFee', '취득', '등기·법무사비(등록면허세 포함)', '등기·법무사비'], ['evictionFee', '명도·이사', '명도비(이사비·합의금)', '명도비'], ['moving', '명도·이사', '명도비(이사비·합의금)', '이사비'],
+    ['cleaning', '청소', '청소비', '청소비'], ['repair', '수리', '기타 인테리어', '수리비(세부 미분류)'], ['assumedDeposit', '인수·체납', '인수 보증금', '인수 보증금'], ['unpaidMgmtFee', '인수·체납', '체납 관리비', '체납 관리비'],
+    ['propertyTax', '보유', '재산세', '재산세'], ['compTax', '보유', '종합부동산세', '종부세'], ['agent', '매도', '중개수수료', '중개수수료'], ['etc', '기타', '기타 비용', '기타 비용']
+];
+function ledgerMyAuctions(q) {   // 내 경매 물건(내 입찰가·비용 입력·즐겨찾기·검토중이 아닌 상태) 먼저, 검색하면 전체에서 찾음
+    var n = function(a, k) { return parseFloat(a[k]) || 0; }, qq = String(q || '').replace(/\s/g, '').toLowerCase();
+    var mine = function(a) { return n(a, 'myBid') > 0 || a.fav || a.status === '매도완료' || a.status === '입찰예정' || n(a, 'tax') > 0 || n(a, 'repair') > 0 || n(a, 'loanAmountManual') > 0; };
+    var list = (auctionList || []).filter(function(a) { if (!a) return false; if (qq) return (String(a.caseNo || '') + String(a.name || '') + String(a.addr || '')).replace(/\s/g, '').toLowerCase().indexOf(qq) >= 0; return mine(a); });
+    list.sort(function(x, y) { return String(y.bidDate || '').localeCompare(String(x.bidDate || '')); });
+    return list.slice(0, 200);
+}
+function ledgerPickOptions(q) {
+    var l = ledgerMyAuctions(q), fm = function(v) { v = parseFloat(v) || 0; return v ? toEok(String(Math.round(v))) : ''; };
+    return '<option value="">' + (l.length ? '물건을 고르세요 (' + l.length + '건' + (q ? ' 검색' : ' · 내 입찰가·비용을 넣은 물건') + ')' : (q ? '검색 결과가 없어요' : '내 입찰가·비용을 넣은 물건이 없어요 - 위에서 검색해 보세요')) + '</option>'
+        + l.map(function(a) { return '<option value="' + maEsc(a.id) + '">' + maEsc((a.name || a.addr || '') + ' · ' + (a.caseNo || '') + ' · ' + (a.status || '') + (a.myBid ? ' · 내 입찰 ' + fm(a.myBid) : '') + (a.actualBid ? ' · 낙찰 ' + fm(a.actualBid) : '') + (a.bidDate ? ' · ' + a.bidDate : '')) + '</option>'; }).join('');
+}
+function ledgerPickFilter() { var q = document.getElementById('lg-pick-q'), s = document.getElementById('lg-pick'); if (s && q) s.innerHTML = ledgerPickOptions(q.value); }
+function ledgerPickLoad() {
+    var s = document.getElementById('lg-pick'); if (!s || !s.value) { alert('불러올 물건을 먼저 고르세요.'); return; }
+    var a = (auctionList || []).filter(function(x) { return String(x.id) === String(s.value); })[0]; if (!a) return;
+    ledgerSyncDraft();
+    var n = function(k) { return parseFloat(a[k]) || 0; }, rows = [], bid = n('actualBid') || n('myBid'), bm = a.bidMethod || 'dealer';
+    rows.push({ kind: 'field', field: 'winDate', label: '낙찰일(입찰일)', val: a.bidDate || '', date: true, on: !!a.bidDate });
+    rows.push({ kind: 'field', field: 'winPrice', label: '낙찰가 ' + (n('actualBid') ? '(실제 낙찰가)' : '(내 입찰가)'), val: bid || '', on: !!bid });
+    if (n('actualSell')) { rows.push({ kind: 'field', field: 'saleDate', label: '매도일', val: a.sellDate || '', date: true, on: !!a.sellDate }); rows.push({ kind: 'field', field: 'salePrice', label: '매도가', val: n('actualSell'), on: true }); }
+    LG_IMPORT_ITEMS.forEach(function(it) { var v = n(it[0]); if (v > 0) rows.push({ kind: 'item', cat: it[1], sub: it[2], label: it[3] + ' <span class="ma-sub">(경매 기록)</span>', val: v, on: true }); });
+    var loanAmt = n('loanAmountManual'), loanRate = n('loanRate'), hasLoan = loanAmt > 0 || loanRate > 0;
+    try { if (!loanAmt) loanAmt = calcLoanAmount(bm === 'dealer' ? 'dealer' : 'individual', bid, parseFloat(a.appraisal) || 0) || 0; } catch (e) {}
+    if (!loanRate) { try { loanRate = DEFAULT_LOAN_RATE[bm === 'dealer' ? 'dealer' : 'individual']; } catch (e) { loanRate = 0; } }
+    if (loanAmt > 0) rows.push({ kind: 'loan', label: '대출 1 (금액 · 이율 ' + loanRate + '%' + (n('loanRate') > 0 ? ' · 기록값' : ' · 앱 기본 가정') + ')', val: Math.round(loanAmt), rate: loanRate, on: hasLoan });
+    ledgerDraft._imp = { aid: a.id, caseNo: a.caseNo || '', rows: rows, a: { name: a.name || '', addr: a.addr || '', propType: a.propType || '' } };
+    renderMyAssets();
+}
+function ledgerImportPanelHtml() {
+    var imp = ledgerDraft && ledgerDraft._imp; if (!imp) return '';
+    var v = function(x) { return maEsc(x == null ? '' : x); };
+    return '<div style="background:#fff;border:1px solid #c7d2fe;border-radius:8px;padding:8px;margin-top:6px;"><div style="font-weight:700;">불러온 상세내역 <span class="ma-sub" style="font-weight:normal;">· ' + maEsc(imp.caseNo) + ' · 가져올 항목을 체크하고 금액을 확인하세요(경매 기록의 값은 예상·입력값이라 실제 값으로 고쳐도 돼요)</span></div>'
+        + imp.rows.map(function(r, i) { return '<div class="lg-imp-row" style="display:flex;gap:6px;align-items:center;margin-top:3px;"><input type="checkbox" id="lg-imp-c' + i + '"' + (r.on ? ' checked' : '') + ' style="width:auto;"><span style="min-width:150px;">' + r.label + '</span>'
+            + '<input id="lg-imp-v' + i + '" type="' + (r.date ? 'date' : 'number') + '" value="' + v(r.val) + '" style="flex:1;max-width:160px;">' + (r.kind === 'loan' ? '<span class="ma-sub">이율</span><input id="lg-imp-r' + i + '" type="number" step="0.01" value="' + v(r.rate) + '" style="width:70px;">' : '') + '</div>'; }).join('')
+        + '<div style="margin-top:6px;"><button class="modal-btn btn-gray" onclick="ledgerImportApply()">체크한 항목 가져오기</button> <button class="modal-btn btn-gray" onclick="ledgerImportClose()">닫기</button></div></div>';
+}
+function ledgerImportClose() { if (ledgerDraft) delete ledgerDraft._imp; renderMyAssets(); }
+function ledgerImportApply() {
+    var d = ledgerDraft, imp = d && d._imp; if (!imp) return;
+    ledgerSyncDraft();
+    var checked = imp.rows.map(function(r, i) { var c = document.getElementById('lg-imp-c' + i), vv = document.getElementById('lg-imp-v' + i), rr = document.getElementById('lg-imp-r' + i); return { r: r, on: c && c.checked, val: vv ? vv.value : '', rate: rr ? rr.value : '' }; });
+    d.auctionId = imp.aid; d.caseNo = imp.caseNo || d.caseNo; if (!d.name) d.name = imp.a.name || imp.a.addr || ''; if (!d.addr) d.addr = imp.a.addr || '';
+    d.win = d.win || {}; d.sale = d.sale || {};
+    checked.forEach(function(x) { if (x.on && x.r.kind === 'field') { if (x.r.field === 'winDate') d.win.date = x.val; else if (x.r.field === 'winPrice') d.win.price = x.val; else if (x.r.field === 'saleDate') d.sale.date = x.val; else if (x.r.field === 'salePrice') d.sale.price = x.val; } });
+    d.items = (d.items || []).filter(function(it) { return !it.imp; });   // 이전에 가져온 항목은 새로 가져온 값으로 바꿈
+    var winD = d.win.date || '', saleD = d.sale.date || '';
+    checked.forEach(function(x, i) { if (x.on && x.r.kind === 'item' && lgN(x.val) > 0) d.items.push({ id: 'li_imp_' + Date.now() + '_' + i, imp: 1, cat: x.r.cat, sub: x.r.sub, date: x.r.cat === '매도' ? saleD : (x.r.cat === '보유' ? '' : winD), amount: lgN(x.val), memo: '경매 기록에서 가져옴' }); });
+    var ln = checked.filter(function(x) { return x.on && x.r.kind === 'loan' && lgN(x.val) > 0; })[0];
+    if (ln) { d.loans = d.loans || [{}, {}]; d.loans[0] = { amount: lgN(ln.val), rate: lgN(ln.rate), start: winD, end: saleD, interestPaid: '' }; }
+    delete d._imp; renderMyAssets();
+}
 function ledgerEditForm() {
     var d = ledgerDraft; if (!d) return '';
     var v = function(x) { return maEsc(x == null ? '' : x); }, win = d.win || {}, sale = d.sale || {};
     var inp = function(id, label, val, ph, type) { return '<label>' + label + '</label><input id="lg-' + id + '" type="' + (type || 'text') + '" value="' + v(val) + '" placeholder="' + (ph || '') + '">'; };
     var catOpts = LEDGER_CATS.map(function(c) { return '<optgroup label="' + c.cat + '">' + c.subs.map(function(s) { return '<option value="' + maEsc(c.cat + '|' + s) + '">' + maEsc(s) + '</option>'; }).join('') + '</optgroup>'; }).join('');
-    var h = '<div id="lg-form" style="background:#f9fafb;border:1px solid #e3e6ea;border-radius:8px;padding:10px;margin-top:10px;"><div style="font-weight:700;margin-bottom:6px;">' + (ledger.items.some(function(x) { return x.id === d.id; }) ? '장부 수정' : '장부 추가') + '</div><div class="ma-in">'
+    var h = '<div id="lg-form" style="background:#f9fafb;border:1px solid #e3e6ea;border-radius:8px;padding:10px;margin-top:10px;"><div style="font-weight:700;margin-bottom:6px;">' + (ledger.items.some(function(x) { return x.id === d.id; }) ? '장부 수정' : '장부 추가') + '</div>'
+        + '<div style="background:#eef2ff;border-radius:8px;padding:8px;margin-bottom:8px;"><b>📥 내 경매 물건에서 불러오기</b> <span class="ma-sub">· 물건을 고르면 낙찰가·비용·대출을 기본값으로 가져와요</span><div style="display:flex;gap:6px;margin-top:4px;flex-wrap:wrap;"><input id="lg-pick-q" type="text" placeholder="이름·사건번호·주소 검색(비우면 내 입찰 물건)" oninput="ledgerPickFilter()" style="flex:1;min-width:180px;"><select id="lg-pick" style="flex:2;min-width:220px;">' + ledgerPickOptions('') + '</select><button class="modal-btn btn-gray" onclick="ledgerPickLoad()">불러오기</button></div>' + ledgerImportPanelHtml() + '</div><div class="ma-in">'
         + inp('name', '이름', d.name, '예: ○○아파트 101동 1203호') + inp('addr', '주소', d.addr, '지번 주소') + inp('caseNo', '사건번호', d.caseNo, '예: 2025-30383 (넣으면 예상과 비교해요)')
         + '<label>종류</label><select id="lg-type">' + Object.keys(MY_ASSET_TYPES).map(function(k) { return '<option value="' + k + '"' + (d.type === k ? ' selected' : '') + '>' + MY_ASSET_TYPES[k] + '</option>'; }).join('') + '</select>'
         + inp('winDate', '낙찰일', win.date, 'YYYY-MM-DD', 'date') + inp('winPrice', '낙찰가(만원)', win.price, '예: 25000', 'number')
@@ -32624,7 +32683,7 @@ function ledgerSyncDraft() {   // 화면 입력값을 초안에 모음(다시 �
     d.loans = [0, 1].map(function(i) { return { amount: g('l' + i + 'amt'), rate: g('l' + i + 'rate'), start: g('l' + i + 'start'), end: g('l' + i + 'end'), interestPaid: g('l' + i + 'paid') }; });
     var normal = Array.prototype.slice.call(document.querySelectorAll('#lg-items .lg-item')).map(function(row, i) {
         var ck = (row.querySelector('.lg-i-cat').value || '|').split('|'), old = (d.items.filter(function(x) { return !x.q; })[i]) || {};
-        return { id: old.id || 'li_' + Date.now() + '_' + i, cat: ck[0], sub: ck[1], date: row.querySelector('.lg-i-date').value, amount: row.querySelector('.lg-i-amt').value, memo: row.querySelector('.lg-i-memo').value };
+        return { id: old.id || 'li_' + Date.now() + '_' + i, imp: old.imp ? 1 : 0, cat: ck[0], sub: ck[1], date: row.querySelector('.lg-i-date').value, amount: row.querySelector('.lg-i-amt').value, memo: row.querySelector('.lg-i-memo').value };
     });
     var quick = [];
     if (document.querySelector('.lg-q')) {
@@ -32638,7 +32697,7 @@ async function ledgerSave() {
     ledgerSyncDraft(); var d = ledgerDraft;
     if (!d.name) { alert('이름을 입력해 주세요.'); return; }
     d.items = (d.items || []).filter(function(x) { return lgN(x.amount) > 0; }); d.loans = (d.loans || []).filter(function(l) { return lgN(l.amount) > 0; });
-    d.updatedAt = Date.now(); if (!d.createdAt) d.createdAt = d.updatedAt;
+    delete d._imp; d.updatedAt = Date.now(); if (!d.createdAt) d.createdAt = d.updatedAt;
     try { await ledgerSaveItem(d); } catch (e) { alert('저장하지 못했어요: ' + e.message); return; }
     ledgerEditId = null; ledgerDraft = null; renderMyAssets();
 }
