@@ -14210,6 +14210,10 @@ var TAX_CONFIG = {
         rate: 0.1,                  // 부가가치세율(10%)
         nationalHousingAreaM2: 85   // 국민주택규모 기준(전용면적 ㎡)
     },
+    stamp: {                        // 부동산 매매계약서 인지세(인지세법 제3조): 1천만 이하 비과세, 1억 초과~10억 이하 15만·10억 초과 35만은 자료로 확인, 5천만 초과~1억 이하 7만 등 나머지 구간은 미확인(일반 안내) → 세무사 확인
+        sellerShare: 0.5,           // 매도인 부담 비율(매도·매수인이 연대 납부, 통상 반반 가정)
+        tiers: [ { maxManwon: 1000, tax: 0 }, { maxManwon: 3000, tax: 2 }, { maxManwon: 5000, tax: 4 }, { maxManwon: 10000, tax: 7 }, { maxManwon: 100000, tax: 15 }, { maxManwon: Infinity, tax: 35 } ]
+    },
     health: {                       // 직장가입자 보수 외 소득월액보험료(건강보험법 시행령 제41조④·제44조①, 2026-10-01 시행 확인) - 매월 세율 점검이 갱신
         rate: 0.0719,               // 건강보험료율(7.19%)
         thresholdMan: 2000          // 보수 외 소득 연 2,000만원 초과분부터 부과
@@ -17040,7 +17044,7 @@ function calcMargin() {
     var prepayFee = calcLoanPrepayFee(loanAmount, loanPrepayFeeRate);
     var vatInfo = calcAuctionVat(useSell); // 2026-10: 매도가 기준(팔 때 건물분 과세)
     var vat = vatInfo.computable ? vatInfo.vat : 0;
-    var feesSum   = tax + registryFee + evictionFee + repair + agent + moving + cleaning + interestCost + prepayFee + etc + vat + assumedCostDom(assumedDeposit, assumedFixed, assumedPrior, useBid) + unpaidMgmtFee + propertyTax + compTax;
+    var feesSum   = tax + registryFee + evictionFee + repair + agent + calcStampDuty(useSell) + moving + cleaning + interestCost + prepayFee + etc + vat + assumedCostDom(assumedDeposit, assumedFixed, assumedPrior, useBid) + unpaidMgmtFee + propertyTax + compTax;
     var totalCost = useBid + feesSum;
     var taxYears = (holdMonths || 0) > 12 ? Math.ceil(holdMonths / 12) : 1;
     var preTaxMargin = useSell > 0 ? useSell - totalCost : 0;
@@ -18713,7 +18717,7 @@ function buildMarginSummaryHtml(a) {
     // 기준" 요약에서 통째로 빠져 있었음 - calcMargin()(라이브 모달)에는 있는데 여기엔 없었음.
     var vatInfo = calcAuctionVatFromRecord(a, useSell); // 2026-10: 매도가 기준
     var vat = vatInfo.computable ? vatInfo.vat : 0;
-    var feesSum = tax + registryFee + evictionFee + repair + agent + moving + cleaning + interestCost + prepayFee + etc + vat + propertyTax + compTax;
+    var feesSum = tax + registryFee + evictionFee + repair + agent + calcStampDuty(useSell) + moving + cleaning + interestCost + prepayFee + etc + vat + propertyTax + compTax;
     var totalCost = useBid + feesSum;
     var preTaxMargin = useSell > 0 ? useSell - totalCost : 0;
     var taxResult = (useSell > 0 && preTaxMargin > 0) ? calcResaleIncomeTax(bidMethod, preTaxMargin, holdMonths, adjOf(a), myHouseRankFor(a), recSaleYear(a, holdMonths)) : { totalTax: 0, rateLabel: '' };
@@ -19865,6 +19869,12 @@ function vatHousingLimitM2(addr) {
     var metro = /^(서울|경기|인천)/.test(a.trim());
     return (!metro && /\s[가-힣]+(읍|면)\s/.test(' ' + a + ' ')) ? 100 : TAX_CONFIG.vat.nationalHousingAreaM2;
 }
+/* 🧾 인지세(2026-11-22 사용자 요청): 매도 계약서 기재금액(만원) 구간별 세액 중 매도인 몫(기본 1/2)을 만원으로 돌려줌 - 입찰 계산·장부 비용에 같이 씀 */
+function calcStampDuty(saleManwon) {
+    var S = TAX_CONFIG.stamp; if (!S || !(saleManwon > 0)) return 0;
+    for (var i = 0; i < S.tiers.length; i++) if (saleManwon <= S.tiers[i].maxManwon) return S.tiers[i].tax * S.sellerShare;
+    return 0;
+}
 function vatOnSale(saleAmount, ratio) {
     return Math.round((saleAmount || 0) * ratio * TAX_CONFIG.vat.rate / (1 + TAX_CONFIG.vat.rate));
 }
@@ -20060,7 +20070,7 @@ function solveAuctionBid(estValue, marginOverride) {
         var interestCost = calcLoanInterest(loanAmount, loanRate, interestHoldMonths);
         var prepayFee = calcLoanPrepayFee(loanAmount, loanPrepayFeeRate);
         var vat = vatInfo.computable ? vatOnSale(estValue, vatInfo.buildingRatio) : 0; // 매도가(estValue) 기준 - 입찰가와 무관
-        var preTaxCost = mid + acqTax + registryFee + evictionFee + agentFee + repair + etc + moving + cleaning + interestCost + prepayFee + vat + assumedCostDom(assumedDeposit, assumedFixed, assumedPrior, mid) + unpaidMgmtFee + propertyTax + compTax;
+        var preTaxCost = mid + acqTax + registryFee + evictionFee + agentFee + calcStampDuty(estValue) + repair + etc + moving + cleaning + interestCost + prepayFee + vat + assumedCostDom(assumedDeposit, assumedFixed, assumedPrior, mid) + unpaidMgmtFee + propertyTax + compTax;
         var preTaxProfit = estValue - preTaxCost;
         var taxResult = calcResaleIncomeTax(bidMethod, preTaxProfit, holdMonths, c.isAdjusted, c.houseRank, saleYearTax);
         var netProfit = preTaxProfit - taxResult.totalTax;
@@ -20135,7 +20145,7 @@ function solveAuctionBidFromRecord(a) {
         var loanAmount = calcRegionAwareLoan(bidMethod, addr, mid, appraisal, saleValue).amount;
         var interestCost = calcLoanInterest(loanAmount, loanRate, interestHoldMonths);
         var prepayFee = calcLoanPrepayFee(loanAmount, loanPrepayFeeRate);
-        var preTaxCost = mid + acqTax + registryFee + evictionFee + agentFee + repair + etc + moving + cleaning + interestCost + prepayFee + assumedCostRec(a, mid) + unpaidMgmtFee + propertyTax + compTax + resaleVat;
+        var preTaxCost = mid + acqTax + registryFee + evictionFee + agentFee + calcStampDuty(saleValue) + repair + etc + moving + cleaning + interestCost + prepayFee + assumedCostRec(a, mid) + unpaidMgmtFee + propertyTax + compTax + resaleVat;
         var preTaxProfit = saleValue - preTaxCost;
         var taxResult = calcResaleIncomeTax(bidMethod, preTaxProfit, holdMonths, isAdjusted, houseRank, recSaleYear(a, holdMonths));
         var netProfit = preTaxProfit - taxResult.totalTax;
@@ -20166,7 +20176,7 @@ function netAtBidFromRecord(a) {
     var loanAmount = calcRegionAwareLoan(bidMethod, addr, bid, appraisal, saleValue).amount;
     var interestCost = calcLoanInterest(loanAmount, loanRate, interestHoldMonths), prepayFee = calcLoanPrepayFee(loanAmount, prepRate);
     var assumed = assumedCostRec(a, bid);
-    var preTaxCost = bid + acqTax + registryFee + evictionFee + agentFee + repair + etc + moving + cleaning + interestCost + prepayFee + assumed + unpaidMgmtFee + propertyTax + compTax + resaleVat;
+    var preTaxCost = bid + acqTax + registryFee + evictionFee + agentFee + calcStampDuty(saleValue) + repair + etc + moving + cleaning + interestCost + prepayFee + assumed + unpaidMgmtFee + propertyTax + compTax + resaleVat;
     var preTaxProfit = saleValue - preTaxCost, taxResult = calcResaleIncomeTax(bidMethod, preTaxProfit, holdMonths, isAdjusted, houseRank, recSaleYear(a, holdMonths));
     var cash = bid + acqTax + registryFee + evictionFee + repair + etc + moving + cleaning + (assumed || 0) + unpaidMgmtFee - loanAmount;   // 처음 내 돈으로 넣어야 하는 금액(입찰가+취득·등기·명도·수리 등 − 대출). 이자·세금·중개비는 보유·매도 때 쓰는 비용이라 제외
     return { net: Math.round(preTaxProfit - taxResult.totalTax), pre: Math.round(preTaxProfit), assumed: Math.round(assumed || 0), cash: Math.round(cash), loan: Math.round(loanAmount || 0), interest: Math.round(interestCost || 0) };
@@ -20248,7 +20258,7 @@ function solveImpliedTargetFromBid(a, marginValue) {
         var prepayFee = calcLoanPrepayFee(loanAmount, loanPrepayFeeRate);
         var agentFee = calcAgentFee(mid, propType);
         var resaleVatI = vatRatio ? vatOnSale(mid, vatRatio) : 0;
-        var preTaxCost = resaleVatI + actualBid + acqTax + registryFee + evictionFee + agentFee + repair + etc + moving + cleaning + interestCost + prepayFee + assumedCostRec(a, actualBid) + unpaidMgmtFee + propertyTax + compTax;
+        var preTaxCost = resaleVatI + actualBid + acqTax + registryFee + evictionFee + agentFee + calcStampDuty(mid) + repair + etc + moving + cleaning + interestCost + prepayFee + assumedCostRec(a, actualBid) + unpaidMgmtFee + propertyTax + compTax;
         var preTaxProfit = mid - preTaxCost;
         var taxResult = calcResaleIncomeTax(bidMethod, preTaxProfit, holdMonths, isAdjusted, houseRank, recSaleYear(a, holdMonths));
         var netProfit = preTaxProfit - taxResult.totalTax;
@@ -22706,7 +22716,7 @@ setTimeout(function() { if (auctionBadgeMode !== 'off') warmServerBoardOnce(); }
 /* 저장 계산(서버 사전 계산·브라우저 저장본)을 다시 써도 되는지 보는 '기본 계산' 버전(2026-11-08): computeBidBoardRow의 기본 계산(시세·보정·모델 입력)이 바뀔 때만 올림.
    판정·추천가 고르기(finalize·computePick) 단계만 바뀌면 BOARD_CALC_VER만 올림 - 이때는 저장본을 그대로 쓰고 판정만 뒤에서 다시 계산(화면은 즉시). 전엔 모든 변경이 저장본 7천여 건을 무효로 만들어 로딩이 비었음 */
 var BOARD_BASE_VER = 104; /* 104: 규제지역(조정대상지역·투기과열지구) 판정을 주소로 고쳐 취득세·대출에 반영(2026-11-14) / 103: 6개월 최고가 상한 철회(사용자: 요구 전 방식으로, 2026-11-12) */
-var BOARD_CALC_VER = 112;  /* 112: 입찰후보 예상 순수익에 건강보험 소득월액 반영(직장가입자·연봉 입력 시, 2026-11-22 사용자 승인) */ /* 111: 흐름 상향 상한 +4%·거래량 급감 시 흐름 반(2026-11-15) */  /* (허가구역 자료 재시도 2026-11-08) */ // 110: 추천가 고른 뒤 낙찰 가능성·예상 낙찰가 대비 차이를 새 추천가로 다시 계산(2026-11-15) - // 107: 낙찰가 모델에 단지 가격 흐름 요인(flowC)·큰 상승 단지 상방 꼬리 분포(resQF) 추가(2026-11-10) - // 106: 시세 근거 얇음(6개월 1~2건) 필요 마진은 칸 하위 10% 하방·주변 단지 대체 시세 후보 제외(2026-11-09) - 105: 지방 추천가 손해 줄이기(거래 0건 제외·큰 마진 경고·근거 두께별 필요 마진, 2026-11-08) - // 104: 유찰 4회 이상은 이슈 강한 의심 - 임장 후보에서 제외(2026-11-08) - // 103: 후보 최소 순이익 500만·이슈 강한 의심·낙찰 가능성 낮은 물건도 후보(2026-11-08) - // 102: 후보 확대(하위25% 필터 제거·최소 순이익은 보정 전 기준, 2026-11-08) - // 101: 임장 후보 낙찰 가능성 기준을 보정된 확률 척도로 환산(후보가 3건으로 줄던 문제, 2026-11-08) - // 100: (입찰자 수 모델에 생활권 흐름 요인 후보 추가 2026-11-08) (새 사건은 새로고침 없이 자동 계산 2026-11-08) 100: 낙찰 조건 표에 근거 두께(같은 평형 6개월 거래수) 차원 추가(서버 검증 통과 시, 2026-11-08) - // 99: 사용자 방침(결과가 비슷해도 시장 흐름을 따르는 근거식이 더 정확하면 적용) - 낙찰 가능성 보정·낙찰 조건 하위 25% 필터를 추천가 고르기에 다시 적용(2026-11-08) - // 98: 낙찰 가능성 보정은 표시에만, 예상매도가 최근 쏠림 자동 보정(서버 walk-forward 검증 통과 시, 2026-11-08) - // 97: (호가 모으기: 같은 이름 단지는 네이버 지번 주소로 먼저 좁힘 2026-11-08) 97: 낙찰 가능성 양방향 보정(서버 시간순 검증 통과 시, 추천가 고르기에도 사용, 2026-11-08) - // 96: 낙찰 조건 하위 25% 필터는 채점에서 효과 없어 뺌(지방 손해 31.3→31.4%, 2026-11-08) - // 95: 추천가는 낙찰 조건 하위 25% 지점에서도 손해가 안 나는 가격만(서버 검증 통과 시, 2026-11-08) - // 94: 추천가 고르기 순이익에 낙찰 조건 기대 변화 반영(서버 검증 통과 시, 2026-11-08) - // 93: 낙찰 조건 하방(입찰가가 시세에 가까울수록 위험 여유 가산, 서버 검증 통과 시, 2026-11-08) - // 92: 거래 드문 단지 고정 2% 가산을 실측값으로 대체(2026-11-08) - // 91: 낙찰가 기준 시세를 예상매도가(종합 평가·호가 상한)와 같게(2026-11-08) - // 90: 임차인 수 점검은 미상 점유자 제외 값도 인정(2026-11-08) - // 89: 이름 앞부분·보증금·전입·확정일이 같은 승계 중복 임차인 줄 합침(2026-11-08) - // 88: 호가 흐름 판정에 주변 단지 흐름 추가(2026-11-08) - // 87: 호가 흐름 지표를 실거래 흐름 먼저·경계는 단지 거래 흩어짐에 맞춤(2026-11-08) - // 86: 호가 흐름 지표 표시(참고용, 2026-11-08) - // 85: 호가 상한은 수리 상태로 거르지 않고 모든 호가 사용(2026-11-08) - // 84: 호가 상한은 층 구분(1~2층/탑층/중간층)별로만 비교(2026-11-08) - // 83: 가격 불안정은 같은 층대(1·2층/3층+) 최근 거래끼리만 비교(2026-11-08) - // 82: 아파트 낙찰가 모델 종합 평가 시세 기준(2026-11-07) - // 81: 아파트 예상매도가 종합 평가 보정(오차 5.5→4.0%, 2026-11-07) - // 80: 권리 위험 안전장치·입찰 제외(2026-11-07) - // 79: // 79: 추천가 낙찰 가능성 간격 보정 표시(2026-11-07) - // 78: // 78: 빌라 종합 평가 상한 제거·건물 3건 이상 포함(앱 실제 계산과 직접 채점 후, 2026-11-07) - // 77: 빌라 종합 평가 안전장치(지하 제외·앱 값 +15% 상한, 2026-11-07) - // 76: 수도권 빌라 종합 평가 값 적용(건물 3건 미만 단계, 2026-11-07) - // // 75: 거래 활발 단지 위험 여유를 최근 거래 흩어짐별 하방 표로(2026-11-06) - // 74: 위험 여유를 근거 두께별 실측 하방 표로(주간 갱신)·흐름 계수 주간 자동 선택(2026-11-06) - // 73: 감정가 기준 전부 제거(감정가 대비 경고·금액 점검·빌라 이슈·틈새 조건, 2026-11-06) - // 72: 시세 흐름 계수 올림·거래량 믿음도 제거·지방 시군구·수도권 생활권·3개월 예측 반영(2026-11-05) - // 71: 낙찰가 모델 시세(est)에도 지역 가격 흐름 반영(est_rule_f, 2026-11-05) - // 70: 예상매도가에 지역 가격 흐름 반영(2026-11-05) - // 69: 시세 새 규칙(est_rule)·감정가 제외·최저가 유지(2026-11-04) - // 68: 감정가 제외 - // // 54: 튀는 가격 반영 안 함·경고만(2026-10-24) - // 53: 최근 거래 시세반영/튀는 가격 구별(2026-10-24) - // 52: 임장 생략 판정(2026-10-19) - // 51: 전세가율 구간 보정·위험 신호(2026-10-18) - // 50: 지방 최근 거래 비슷한 층 비중·1~2건은 12개월 원값(2026-10-18) - // 49: 근거 약함 경고를 판정 단계에서 다시 붙임 - // 48: 예상매도가-감정가 큰 차이 근거 약함 표시 - // 47: 다른 평형 환산이 같은 평형과 20% 넘게 다르면 섞지 않음 - // 46: 같은 동 추론(③④) 제거·거래 없는 단지는 기존 주변 비교 + 근거 약함(2026-10-18) - // 45: 회전율 구간별 보정 항상 적용(주간 갱신 표, 2026-10-17) - // 44: 추론에 최근 6개월 1~2건 포함 - // 43: 6개월 거래 부족 시 단계별 추론(2026-10-17) - // 42: 지역별 예상매도가(서울 최근3건·경기인천 반감1개월·지방 반감2개월)와 위험 여유(2026-10-17) - // 41: 아파트 예상매도가를 최근 6개월 같은 평형 거래의 최근가중 중위값으로(전국 백테스트, 2026-10-17) - // 40: 임차인 둘로 읽힌 경우 별개/같은 임차권(갱신·승계) 선택(2026-10-11) - // 39: 39: 임차권등기를 임차인으로 계산(전입·확정일자 기준)·경매신청인 전세권 안내(2026-10-11) - // 38: 38: 권리분석 날짜 선후 규칙 정리(전입 다음 날 0시·동순위 안분, 2026-10-11) - // 37: 37: 권리분석에 말소기준일보다 앞선 전세권·임차권 등 등기부 인수 권리 반영(2026-10-11) - // 36: 저가 아파트 순이익률 10% 추천가 규칙 되돌림(2026-10-11, 백테스트 손해 30~42%) - // 34: 33: 아파트 고층 보정 축소·저층 범위(2026-10-11) - // 29: nYear 저장 추가 - // 27: 🎲 예상 낙찰가용 시세(wbBase) 추가 (범위 표시는 화면에서 바로 계산 - 버전 변경 없음)
+var BOARD_CALC_VER = 113;  /* 113: 매도 계약서 인지세(매도인 몫) 비용 반영(2026-11-22 사용자 요청) */ /* 112:  /* 112: 입찰후보 예상 순수익에 건강보험 소득월액 반영(직장가입자·연봉 입력 시, 2026-11-22 사용자 승인) */ /* 111: 흐름 상향 상한 +4%·거래량 급감 시 흐름 반(2026-11-15) */  /* (허가구역 자료 재시도 2026-11-08) */ // 110: 추천가 고른 뒤 낙찰 가능성·예상 낙찰가 대비 차이를 새 추천가로 다시 계산(2026-11-15) - // 107: 낙찰가 모델에 단지 가격 흐름 요인(flowC)·큰 상승 단지 상방 꼬리 분포(resQF) 추가(2026-11-10) - // 106: 시세 근거 얇음(6개월 1~2건) 필요 마진은 칸 하위 10% 하방·주변 단지 대체 시세 후보 제외(2026-11-09) - 105: 지방 추천가 손해 줄이기(거래 0건 제외·큰 마진 경고·근거 두께별 필요 마진, 2026-11-08) - // 104: 유찰 4회 이상은 이슈 강한 의심 - 임장 후보에서 제외(2026-11-08) - // 103: 후보 최소 순이익 500만·이슈 강한 의심·낙찰 가능성 낮은 물건도 후보(2026-11-08) - // 102: 후보 확대(하위25% 필터 제거·최소 순이익은 보정 전 기준, 2026-11-08) - // 101: 임장 후보 낙찰 가능성 기준을 보정된 확률 척도로 환산(후보가 3건으로 줄던 문제, 2026-11-08) - // 100: (입찰자 수 모델에 생활권 흐름 요인 후보 추가 2026-11-08) (새 사건은 새로고침 없이 자동 계산 2026-11-08) 100: 낙찰 조건 표에 근거 두께(같은 평형 6개월 거래수) 차원 추가(서버 검증 통과 시, 2026-11-08) - // 99: 사용자 방침(결과가 비슷해도 시장 흐름을 따르는 근거식이 더 정확하면 적용) - 낙찰 가능성 보정·낙찰 조건 하위 25% 필터를 추천가 고르기에 다시 적용(2026-11-08) - // 98: 낙찰 가능성 보정은 표시에만, 예상매도가 최근 쏠림 자동 보정(서버 walk-forward 검증 통과 시, 2026-11-08) - // 97: (호가 모으기: 같은 이름 단지는 네이버 지번 주소로 먼저 좁힘 2026-11-08) 97: 낙찰 가능성 양방향 보정(서버 시간순 검증 통과 시, 추천가 고르기에도 사용, 2026-11-08) - // 96: 낙찰 조건 하위 25% 필터는 채점에서 효과 없어 뺌(지방 손해 31.3→31.4%, 2026-11-08) - // 95: 추천가는 낙찰 조건 하위 25% 지점에서도 손해가 안 나는 가격만(서버 검증 통과 시, 2026-11-08) - // 94: 추천가 고르기 순이익에 낙찰 조건 기대 변화 반영(서버 검증 통과 시, 2026-11-08) - // 93: 낙찰 조건 하방(입찰가가 시세에 가까울수록 위험 여유 가산, 서버 검증 통과 시, 2026-11-08) - // 92: 거래 드문 단지 고정 2% 가산을 실측값으로 대체(2026-11-08) - // 91: 낙찰가 기준 시세를 예상매도가(종합 평가·호가 상한)와 같게(2026-11-08) - // 90: 임차인 수 점검은 미상 점유자 제외 값도 인정(2026-11-08) - // 89: 이름 앞부분·보증금·전입·확정일이 같은 승계 중복 임차인 줄 합침(2026-11-08) - // 88: 호가 흐름 판정에 주변 단지 흐름 추가(2026-11-08) - // 87: 호가 흐름 지표를 실거래 흐름 먼저·경계는 단지 거래 흩어짐에 맞춤(2026-11-08) - // 86: 호가 흐름 지표 표시(참고용, 2026-11-08) - // 85: 호가 상한은 수리 상태로 거르지 않고 모든 호가 사용(2026-11-08) - // 84: 호가 상한은 층 구분(1~2층/탑층/중간층)별로만 비교(2026-11-08) - // 83: 가격 불안정은 같은 층대(1·2층/3층+) 최근 거래끼리만 비교(2026-11-08) - // 82: 아파트 낙찰가 모델 종합 평가 시세 기준(2026-11-07) - // 81: 아파트 예상매도가 종합 평가 보정(오차 5.5→4.0%, 2026-11-07) - // 80: 권리 위험 안전장치·입찰 제외(2026-11-07) - // 79: // 79: 추천가 낙찰 가능성 간격 보정 표시(2026-11-07) - // 78: // 78: 빌라 종합 평가 상한 제거·건물 3건 이상 포함(앱 실제 계산과 직접 채점 후, 2026-11-07) - // 77: 빌라 종합 평가 안전장치(지하 제외·앱 값 +15% 상한, 2026-11-07) - // 76: 수도권 빌라 종합 평가 값 적용(건물 3건 미만 단계, 2026-11-07) - // // 75: 거래 활발 단지 위험 여유를 최근 거래 흩어짐별 하방 표로(2026-11-06) - // 74: 위험 여유를 근거 두께별 실측 하방 표로(주간 갱신)·흐름 계수 주간 자동 선택(2026-11-06) - // 73: 감정가 기준 전부 제거(감정가 대비 경고·금액 점검·빌라 이슈·틈새 조건, 2026-11-06) - // 72: 시세 흐름 계수 올림·거래량 믿음도 제거·지방 시군구·수도권 생활권·3개월 예측 반영(2026-11-05) - // 71: 낙찰가 모델 시세(est)에도 지역 가격 흐름 반영(est_rule_f, 2026-11-05) - // 70: 예상매도가에 지역 가격 흐름 반영(2026-11-05) - // 69: 시세 새 규칙(est_rule)·감정가 제외·최저가 유지(2026-11-04) - // 68: 감정가 제외 - // // 54: 튀는 가격 반영 안 함·경고만(2026-10-24) - // 53: 최근 거래 시세반영/튀는 가격 구별(2026-10-24) - // 52: 임장 생략 판정(2026-10-19) - // 51: 전세가율 구간 보정·위험 신호(2026-10-18) - // 50: 지방 최근 거래 비슷한 층 비중·1~2건은 12개월 원값(2026-10-18) - // 49: 근거 약함 경고를 판정 단계에서 다시 붙임 - // 48: 예상매도가-감정가 큰 차이 근거 약함 표시 - // 47: 다른 평형 환산이 같은 평형과 20% 넘게 다르면 섞지 않음 - // 46: 같은 동 추론(③④) 제거·거래 없는 단지는 기존 주변 비교 + 근거 약함(2026-10-18) - // 45: 회전율 구간별 보정 항상 적용(주간 갱신 표, 2026-10-17) - // 44: 추론에 최근 6개월 1~2건 포함 - // 43: 6개월 거래 부족 시 단계별 추론(2026-10-17) - // 42: 지역별 예상매도가(서울 최근3건·경기인천 반감1개월·지방 반감2개월)와 위험 여유(2026-10-17) - // 41: 아파트 예상매도가를 최근 6개월 같은 평형 거래의 최근가중 중위값으로(전국 백테스트, 2026-10-17) - // 40: 임차인 둘로 읽힌 경우 별개/같은 임차권(갱신·승계) 선택(2026-10-11) - // 39: 39: 임차권등기를 임차인으로 계산(전입·확정일자 기준)·경매신청인 전세권 안내(2026-10-11) - // 38: 38: 권리분석 날짜 선후 규칙 정리(전입 다음 날 0시·동순위 안분, 2026-10-11) - // 37: 37: 권리분석에 말소기준일보다 앞선 전세권·임차권 등 등기부 인수 권리 반영(2026-10-11) - // 36: 저가 아파트 순이익률 10% 추천가 규칙 되돌림(2026-10-11, 백테스트 손해 30~42%) - // 34: 33: 아파트 고층 보정 축소·저층 범위(2026-10-11) - // 29: nYear 저장 추가 - // 27: 🎲 예상 낙찰가용 시세(wbBase) 추가 (범위 표시는 화면에서 바로 계산 - 버전 변경 없음)
 /* 2026-10-15(사용자: 입찰후보 로딩이 느림 - 원인 실측): 식별값 끝의 'P/F'(입찰일 지남 여부)가 한국 시각 자정에 바뀌어, 서버 미리 계산이 돈 뒤 어제 입찰이던 물건(하루 약 350건)이 전부 '다른 물건'이 돼
    지역 자료 86곳(곳당 9~13MB)을 새로 받아 다시 계산했음. 계산 결과는 입찰일 지남 여부와 무관하므로(날짜 표시는 열 때 다시 계산) 저장본의 P/F가 반대여도 같은 것으로 봄(flip). */
 function boardBaseSig(a, flip) {
@@ -23694,6 +23704,8 @@ function bidTaxCardHtml(row, pe, sale) {
         h += item('보유세 (재산세·종부세)', (pt || 0) + (ct || 0) > 0 ? fm((pt || 0) + (ct || 0)) : '0', htp.holds ? '6/1 ' + htp.years + '번 걸림 · ' + (off ? '공시가 ' + fm(off / 10000) : '공시가격 없음(0 처리)') : '6/1이 보유 기간에 안 걸려 부과 없음');
         h += item('소득세 + 지방소득세', inc != null ? fm(Math.max(0, inc)) : '-', br ? '매도 예정 ' + sy + ' · 구간 ' + Math.round(br.rate * 100) + '%' + ((sm && sm.isDealer === false) ? ' (일반 개인)' : ' (매매사업자)') : (pe.pre != null && pe.pre <= 0 ? '이익이 없어 0원' : ''));
         if (nwB >= 0) h += item('건강보험 소득월액', hlt > 0 ? fm(hlt) : '0', hlt > 0 ? '보수 외 소득 2,000만 초과분 × ' + (TAX_CONFIG.health.rate * 100).toFixed(2) + '%' : '보수 외 소득이 2,000만 이하라 없음');
+        var midPay = inc > 0 ? Math.round(inc / (1 + (TAX_CONFIG.incomeTax.localTaxRate || 0.1)) / 2) : 0;
+        h += item('내년 11월 중간예납(추정)', midPay >= 50 ? fm(midPay) : '없음', '소득세의 1/2 선납 · 순수익엔 안 뺌(같은 세금을 먼저 내는 것)', '#b45309');
         h += item('세금·건보료 합계', fm(total), '예상 순수익은 이 금액을 뺀 값이에요', '#374151');
         return h + '</div></div>';
     } catch (e) { return ''; }
@@ -32680,7 +32692,7 @@ var LEDGER_CATS = [
     { cat: '수리', subs: ['도배·장판', '설비(보일러·배관·전기)', '도장·방수·타일', '기타 인테리어'] },
     { cat: '인수·체납', subs: ['인수 보증금', '체납 관리비', '공과금 정산'] },
     { cat: '보유', subs: ['재산세', '종합부동산세', '보유 중 관리비'] },
-    { cat: '매도', subs: ['중개수수료', '매도 관련 법무·기타'] },
+    { cat: '매도', subs: ['중개수수료', '인지세(매매계약서, 매도인 몫)', '매도 관련 법무·기타'] },
     { cat: '금융', subs: ['대출 설정비', '중도상환수수료', '대출 이자(실제 납부 합계)'] },
     { cat: '기타', subs: ['기타 비용'] }
 ];
@@ -32727,6 +32739,12 @@ function lgAmortInterest(amount, ratePct, termM, months) {   // 원리금균등�
     return Math.round(tot);
 }
 function lgVatOf(it) { return it && it.inv ? Math.round(lgN(it.amount) * (TAX_CONFIG.vat && TAX_CONFIG.vat.rate || 0.1) * 10000) / 10000 : 0; }
+function lgVatApplies(rec) {   // 건물분 부가세 과세 매도인지: 직접 고른 값 우선, 자동은 비주거용 오피스텔(과세 건물)이거나 85㎡ 초과 주택
+    if (rec.vatMode === 'on') return true; if (rec.vatMode === 'off') return false;
+    var x = rec.assetId ? (myAssets.items || []).filter(function(i) { return i.id === rec.assetId; })[0] : null, type = x ? x.type : rec.type;
+    if (type === 'officetel') return !(x && x.residential);
+    return type === 'house' && (parseFloat(rec.pyung) || 0) * 3.305785 > TAX_CONFIG.vat.nationalHousingAreaM2;
+}
 function ledgerCalc(rec, skipTax) {
     var win = rec.win || {}, sale = rec.sale || {}, items = rec.items || [], loans = rec.loans || [], taxes = rec.taxes || [];
     var byGroup = {}, byCat = {}, itemsTotal = 0, upfront = 0, vatTotal = 0;
@@ -32738,14 +32756,20 @@ function ledgerCalc(rec, skipTax) {
         var iv = paid > 0 ? paid : est; interest += iv; loanSum += amt; return { amount: amt, rate: lgN(l.rate), days: d, interest: iv, actual: paid > 0, amort: amort, term: termEff, termAuto: amort && !(lgN(l.term) > 0), noTerm: l.type === 'amort' && !(termEff > 0) };
     });
     if (interest) byGroup['이자·금융'] = (byGroup['이자·금융'] || 0) + interest;
-    var winP = lgN(win.price), saleP = lgN(sale.price), totalCost = winP + itemsTotal + interest, pre = saleP ? saleP - totalCost : null;
+    var winP = lgN(win.price), saleP = lgN(sale.price), totalCost = winP + itemsTotal + interest;
+    /* 🏢 건물분 부가세(2026-11-22 사용자 요청): 과세 건물(업무용 오피스텔·85㎡ 초과 주택 등)을 팔면 건물분 10% 부가세가 생김. 앱 기존 방식과 같이 매도가에 부가세가 포함된 것으로 보고 건물가액(매도가×건물비율)×10/110을 계산, 낙찰 때 낸 건물분 부가세(공제분)는 뺌.
+       부가세는 내가 거둬서 내는 돈이라 매출에서 빼서(사업소득이 줄어듦) 순이익에 반영. 실제 납부한 부가세를 세금 칸에 넣으면 그 값이 우선 */
+    var vatOn = lgVatApplies(rec), vatRatio = lgN(rec.vatRatio) > 0 ? lgN(rec.vatRatio) / 100 : VAT_DEFAULT_BUILDING_RATIO, vatSale = vatOn && saleP ? Math.round(saleP * vatRatio * TAX_CONFIG.vat.rate / (1 + TAX_CONFIG.vat.rate) * 10000) / 10000 : 0, vatIn = vatOn ? lgN(rec.vatIn) : 0;
+    var vatActual = taxes.filter(function(x) { return x.kind === '부가세'; }).reduce(function(t, x) { return t + lgN(x.amount); }, 0), vatPay = vatActual > 0 ? vatActual : (vatOn ? vatSale - vatIn : 0);
+    taxes = taxes.filter(function(x) { return x.kind !== '부가세'; });   // 부가세는 매출에서 빼므로 세금 합계에서는 제외
+    var pre = saleP ? saleP - vatPay - totalCost : null;
     var taxEst = false;
     if (!skipTax && !taxes.some(function(x) { return lgN(x.amount) > 0; }) && pre != null) { var et = lgEstTaxes(rec, pre); if (et.length) { taxes = et; taxEst = true; } }
     var taxSum = taxes.reduce(function(t, x) { return t + lgN(x.amount); }, 0), hasTax = taxes.some(function(x) { return lgN(x.amount) > 0; });
     var taxFrozen = taxEst && taxes.some(function(x) { return x.frozen; }), net = pre != null && hasTax ? pre - taxSum : null, hold = win.date && sale.date && lgDays(win.date, sale.date) > 0 ? Math.round(lgDays(win.date, sale.date) / 30.4 * 10) / 10 : null;
     var cash = winP + upfront - loanSum, base = Math.max(cash, 1);
     var profit = net != null ? net : pre;
-    return { taxFrozen: taxFrozen, taxEst: taxEst, taxList: taxes, vatTotal: vatTotal, winP: winP, saleP: saleP, itemsTotal: itemsTotal, byGroup: byGroup, byCat: byCat, interest: interest, loanRows: loanRows, loanSum: loanSum, totalCost: totalCost, pre: pre, taxSum: taxSum, hasTax: hasTax, net: net, hold: hold, cash: cash, roi: profit != null && saleP ? profit / base * 100 : null, annual: profit != null && saleP && hold ? profit / base * 100 * (12 / hold) : null, margin: pre != null && saleP ? pre / saleP * 100 : null };
+    return { vatOn: vatOn, vatSale: vatSale, vatIn: vatIn, vatPay: vatPay, vatActual: vatActual > 0, vatRatio: vatRatio, taxFrozen: taxFrozen, taxEst: taxEst, taxList: taxes, vatTotal: vatTotal, winP: winP, saleP: saleP, itemsTotal: itemsTotal, byGroup: byGroup, byCat: byCat, interest: interest, loanRows: loanRows, loanSum: loanSum, totalCost: totalCost, pre: pre, taxSum: taxSum, hasTax: hasTax, net: net, hold: hold, cash: cash, roi: profit != null && saleP ? profit / base * 100 : null, annual: profit != null && saleP && hold ? profit / base * 100 * (12 / hold) : null, margin: pre != null && saleP ? pre / saleP * 100 : null };
 }
 /* 💴 예상 세금 기본값(2026-11-21, 사용자: 예상 세금을 '실제 납부 세금' 칸에 미리 채워 두고 나중에 실제 금액으로 덮어쓰기) - 매매사업자 기준, 4단계 시뮬레이터와 같은 계산(ttIncTax: 매도일 연도 소득 위에 이 건의 세전 순이익을 얹은 종합소득세 증가분 + 지방소득세).
    그 해 다른 소득 = 내 자산의 '다른 종합소득'(+올해면 추가 사업소득) + 같은 해 다른 장부 건의 세전 순이익. 매도일·매도가·이익이 없거나 매매사업자가 아니면 만들지 않음. 사용자가 세금 칸을 직접 고치면 그 값이 우선 */
@@ -32830,7 +32854,7 @@ function ledgerTimelineHtml() {
 }
 function ledgerYearsHtml(calcs, done) {
     var by = {}, cur = String(new Date().getFullYear()), p = myAssets.profile || {};
-    done.forEach(function(r) { var y = String((r.sale && r.sale.date) || '').slice(0, 4); if (!y) return; var c = calcs[r.id], g = by[y] = by[y] || { n: 0, sale: 0, cost: 0, pre: 0, tax: 0, taxN: 0 }; g.n++; g.sale += c.saleP; g.cost += c.totalCost; g.pre += c.pre || 0; if (c.hasTax) { g.tax += c.taxSum; g.taxN++; if (c.taxEst) g.estN = (g.estN || 0) + 1; } });
+    done.forEach(function(r) { var y = String((r.sale && r.sale.date) || '').slice(0, 4); if (!y) return; var c = calcs[r.id], g = by[y] = by[y] || { n: 0, sale: 0, cost: 0, pre: 0, tax: 0, taxN: 0 }; g.n++; g.sale += c.saleP; g.cost += c.totalCost; g.pre += c.pre || 0; g.inc = (g.inc || 0) + (c.taxList || []).filter(function(t) { return /종합소득세/.test(t.kind); }).reduce(function(a, t) { return a + lgN(t.amount); }, 0); if (c.hasTax) { g.tax += c.taxSum; g.taxN++; if (c.taxEst) g.estN = (g.estN || 0) + 1; } });
     var ys = Object.keys(by).sort().reverse(); if (!ys.length) return '';
     var taxOf = function(x) { if (x <= 0) return 0; var b = lookupIncomeTaxBracket(x); return Math.max(Math.round(x * b.rate - b.dedManwon), 0); };
     return '<div style="margin-top:10px;"><div class="ma-h">📊 연도별 누적 소득 <span class="ma-sub" style="font-weight:normal;">· 매도한 해 기준 · 사업소득 = 매도가 − 총비용(낙찰가·비용·이자)</span></div>'
@@ -32839,8 +32863,9 @@ function ledgerYearsHtml(calcs, done) {
             return '<div class="indicator-box"><div class="indicator-title">' + y + '년 <span class="ma-sub" style="font-weight:normal;">매도 ' + g.n + '건</span></div><div class="indicator-grid lg-grid">'
                 + lgItem('매도가 합', maFmt(g.sale)) + lgItem('총비용 합', maFmt(g.cost)) + lgItem('사업소득', maFmt(g.pre), g.pre < 0 ? '#c62828' : '#2e7d32')
                 + lgItem('소득 구간', br ? Math.round(br.rate * 100) + '%' : '-', '', br ? '앱 근사 세금 ' + maFmt(est) : '') + lgItem(g.estN ? '납부 세금(예상 포함)' : '실제 납부 세금', g.taxN ? maFmt(g.tax) : '미입력', '', g.taxN ? (g.estN ? '예상 ' + g.estN + '건 · 실제 ' + (g.taxN - g.estN) + '건' : g.taxN + '/' + g.n + '건 입력') : '')
-                + lgItem('순수익 (세금 뺀 후)', allTax ? maFmt(g.pre - g.tax) : '-', allTax ? '#2e7d32' : '', allTax ? (g.estN ? '예상 세금 ' + g.estN + '건 기준' : '실제 세금 기준') : '세금 입력 후') + '</div></div>';
-        }).join('') + '<div class="ma-sub">소득 구간은 그 해 사업소득(올해는 내 자산 탭의 다른 종합소득 포함)에 종합소득세 누진 구간을 적용한 근사예요. 실제 납부액과 다르면 실제 값을 따르세요.</div></div>';
+                + lgItem('순수익 (세금 뺀 후)', allTax ? maFmt(g.pre - g.tax) : '-', allTax ? '#2e7d32' : '', allTax ? (g.estN ? '예상 세금 ' + g.estN + '건 기준' : '실제 세금 기준') : '세금 입력 후')
+                + lgItem('다음 해 11월 중간예납(추정)', (g.inc || 0) / 2 >= 50 ? maFmt(Math.round((g.inc || 0) / 2)) : '없음(50만원 미만)', '#b45309', '이 해 종합소득세 증가분의 1/2 · 11월 고지, 현금 준비용(순이익엔 안 뺌)') + '</div></div>';
+        }).join('') + '<div class="ma-sub">소득 구간은 그 해 사업소득(올해는 내 자산 탭의 다른 종합소득 포함)에 종합소득세 누진 구간을 적용한 근사예요. 실제 납부액과 다르면 실제 값을 따르세요. 중간예납은 직전 해 세액의 1/2을 11월에 내는 선납이라 같은 세금을 먼저 내는 것(순이익에서 또 빼지 않아요). 중간예납기준액에서 원천징수세액 등을 어떻게 빼는지는 확인하지 못한 추정이에요(세무사 확인). 상반기 매도분의 예정신고 납부세액이 기준액의 50%를 넘으면 중간예납이 없어요.</div></div>';
 }
 function ledgerSnapHtml(r) {
     var s = r.taxSnap; if (!s) return '<div class="ma-sub" style="margin-top:6px;">세율 스냅샷: 아직 없어요(저장하면 그때의 세율표가 함께 보관돼요)</div>';
@@ -32886,7 +32911,7 @@ function ledgerDetailHtml(r, c) {
     var fmt = maFmt, parts = [];
     var cats = Object.keys(c.byCat).map(function(k) { return '<div><span>' + maEsc(k) + '</span><b>' + fmt(c.byCat[k]) + '</b></div>'; }).join('');
     var loans = c.loanRows.filter(function(l) { return l.amount; }).map(function(l, i) { return '<div><span>대출 ' + (i + 1) + ' · ' + fmt(l.amount) + ' · ' + l.rate + '%' + (l.days != null ? ' · ' + l.days + '일' : '') + (l.amort ? ' · 원리금균등 ' + l.term + '개월' + (l.termAuto ? '(시작~상환일 자동)' : '') : ' · 원금 일시상환') + '</span><b>이자 ' + fmt(l.interest) + (l.actual ? ' (실제)' : ' (계산)') + (l.noTerm ? ' ⚠️ 시작일·상환일 또는 대출기간 입력 필요' : '') + '</b></div>'; }).join('');
-    parts.push('<div class="ma2-cost">' + cats + loans + '<div><span>낙찰가</span><b>' + fmt(c.winP) + '</b></div><div><span>총비용(낙찰가+비용+이자)</span><b>' + fmt(c.totalCost) + '</b></div>' + (c.vatTotal ? '<div><span>부가세(계산서 받은 비용)' + (r.vatDeduct ? ' - 환급, 비용 제외' : ' - 비용에 포함') + '</span><b>' + fmt(c.vatTotal) + '</b></div>' : '') + (c.hasTax ? '<div><span>' + (c.taxFrozen ? '예상 세금·건보료 🔒 매도일 지나 고정' : (c.taxEst ? '예상 세금·건보료(실제 입력 전)' : '실제 납부 세금')) + '</span><b>' + fmt(c.taxSum) + '</b></div>' : '') + '<div><span>투입 현금(대출 후)</span><b>' + fmt(c.cash) + '</b></div></div>');
+    parts.push('<div class="ma2-cost">' + cats + loans + '<div><span>낙찰가</span><b>' + fmt(c.winP) + '</b></div><div><span>총비용(낙찰가+비용+이자)</span><b>' + fmt(c.totalCost) + '</b></div>' + (c.vatOn && c.saleP ? '<div><span>건물분 부가세 납부(' + Math.round(c.vatRatio * 100) + '% × 10/110' + (c.vatIn ? ' − 낙찰 때 ' + fmt(c.vatIn) : '') + (c.vatActual ? ', 실제 입력' : '') + ') - 매출에서 뺌</span><b>' + fmt(c.vatPay) + '</b></div>' : '') + (c.vatTotal ? '<div><span>부가세(계산서 받은 비용)' + (r.vatDeduct ? ' - 환급, 비용 제외' : ' - 비용에 포함') + '</span><b>' + fmt(c.vatTotal) + '</b></div>' : '') + (c.hasTax ? '<div><span>' + (c.taxFrozen ? '예상 세금·건보료 🔒 매도일 지나 고정' : (c.taxEst ? '예상 세금·건보료(실제 입력 전)' : '실제 납부 세금')) + '</span><b>' + fmt(c.taxSum) + '</b></div>' : '') + '<div><span>투입 현금(대출 후)</span><b>' + fmt(c.cash) + '</b></div></div>');
     var pl = ledgerPlanned(r);
     if (pl && c.saleP) {   // 1단계: 예상 대비 차이
         var keys = ['취득(취득세·등기)', '명도·이사·청소', '수리', '인수·체납', '보유세·관리비', '중개·매도비', '이자·금융', '기타'], rows = '', impact = 0;
@@ -33022,6 +33047,7 @@ function ledgerSyncDraft() {   // 화면 입력값을 초안에 모음(다시 �
     var tinp = LEDGER_TAX_KINDS.map(function(k, i) { return document.getElementById('lg-tax' + i); }), onlyEst = tinp.every(function(e) { return !e || !e.value || e.getAttribute('data-est') === '1'; });
     d.taxes = onlyEst ? [] : LEDGER_TAX_KINDS.map(function(k, i) { return { kind: k, amount: lgFromWon(g('tax' + i)) }; }).filter(function(t) { return lgN(t.amount) > 0; });   // 칸을 하나도 안 고쳤으면 예상값은 저장하지 않고 계속 다시 계산
     var vd = document.getElementById('lg-vatDeduct'); if (vd) d.vatDeduct = vd.checked ? 1 : 0;
+    var vm = document.getElementById('lg-vatMode'); if (vm) { d.vatMode = vm.value; d.vatRatio = g('vatRatio'); d.vatIn = lgFromWon(g('vatIn')); }
 }
 function lgFormTaxCalc(d) { try { var x = JSON.parse(JSON.stringify(d)); x.items = (x.items || []).filter(function(i) { return lgN(i.amount) > 0; }); return ledgerCalc(x); } catch (e) { return {}; } }
 function ledgerLive() {   // 장부 입력 화면 위쪽 계산 박스(입력할 때마다 갱신, 저장은 안 함)
@@ -33033,7 +33059,7 @@ function ledgerLive() {   // 장부 입력 화면 위쪽 계산 박스(입력할
     try {
         ledgerSyncDraft(); var d = JSON.parse(JSON.stringify(ledgerDraft)); d.items = (d.items || []).filter(function(x) { return lgN(x.amount) > 0; });
         var c = ledgerCalc(d), fm = maFmt, col = function(v) { return v == null ? '' : (v < 0 ? '#c62828' : '#2e7d32'); }, sold = lgN(c.saleP) > 0;
-        el.innerHTML = lgItem('낙찰가', c.winP ? fm(c.winP) : '-') + lgItem('비용 합계', fm(c.itemsTotal), '', (c.vatTotal ? '부가세 ' + fm(c.vatTotal) + (d.vatDeduct ? ' 환급(비용 제외)' : ' 포함') + (c.interest ? ' · ' : '') : '') + (c.interest ? '이자 ' + fm(c.interest) + ' 별도' : '')) + lgItem('총비용', fm(c.totalCost), '', '낙찰가+비용+이자')
+        el.innerHTML = lgItem('낙찰가', c.winP ? fm(c.winP) : '-') + (c.vatOn && c.saleP ? lgItem('건물분 부가세', fm(c.vatPay), '', '매출에서 뺌') : '') + lgItem('비용 합계', fm(c.itemsTotal), '', (c.vatTotal ? '부가세 ' + fm(c.vatTotal) + (d.vatDeduct ? ' 환급(비용 제외)' : ' 포함') + (c.interest ? ' · ' : '') : '') + (c.interest ? '이자 ' + fm(c.interest) + ' 별도' : '')) + lgItem('총비용', fm(c.totalCost), '', '낙찰가+비용+이자')
             + lgItem('세전 순이익', c.pre != null ? fm(c.pre) : '매도가 입력 후', col(c.pre), c.margin != null ? '마진율 ' + c.margin.toFixed(1) + '%' : '') + lgItem('순수익 (세금 뺀 후)', c.net != null ? fm(c.net) : (sold ? '세금 입력 후' : '-'), col(c.net), c.hasTax ? '세금 ' + fm(c.taxSum) + (c.taxEst ? ' 예상' : ' 실제') + ' 제외' : '')
             + lgItem('투입 현금(대출 후)', fm(c.cash), '', c.loanSum ? '대출 ' + fm(c.loanSum) : '') + (c.hold != null ? lgItem('보유', c.hold + '개월') : '');
     } catch (e) {}
@@ -33160,6 +33186,13 @@ function ledgerEditForm() {
             + LEDGER_CATS.map(function(c) { return '<div class="lg-sub-h" style="margin-top:6px;">' + c.cat + '</div><div class="lg-fields">' + c.subs.map(function(s) { var k = c.cat + '|' + s; return '<div class="lg-field"><label>' + maEsc(s) + '</label><input class="lg-q lg-won" data-k="' + maEsc(k) + '" type="number" step="1" value="' + v(lgWon(qv[k] || '')) + '" placeholder="원"><div class="lg-hint"></div></div>'; }).join('') + '</div>'; }).join('') + '</div>';
     }
     h += '</div>';
+    (function() {
+        var cv = lgFormTaxCalc(d), on = cv.vatOn;
+        h += '<div class="lg-sec"><div class="lg-sec-h">🏢 건물분 부가세 <span class="ma-sub" style="font-weight:normal;">· 업무용 오피스텔·85㎡ 초과 주택처럼 과세 건물을 팔 때 · 토지분은 면세</span></div><div class="lg-fields">'
+            + lgSel('lg-vatMode', '과세 여부', '<option value=""' + (!d.vatMode ? ' selected' : '') + '>자동 판정(' + (on ? '과세로 계산 중' : '면세·해당 없음') + ')</option><option value="on"' + (d.vatMode === 'on' ? ' selected' : '') + '>과세로 계산</option><option value="off"' + (d.vatMode === 'off' ? ' selected' : '') + '>면세(계산 안 함)</option>')
+            + lgField('lg-vatRatio', '건물가액 비율(%)', d.vatRatio, '비우면 ' + Math.round(VAT_DEFAULT_BUILDING_RATIO * 100) + '% 추정', 'number', ' step="1"') + lgWonField('lg-vatIn', '낙찰 때 낸 건물분 부가세(공제받는 금액)', d.vatIn, '없으면 비워 두기') + '</div>'
+            + '<div class="ma-sub" style="margin-top:4px;" id="lg-vat-note">' + (on && cv.saleP ? '🏢 매도가 ' + maFmt(cv.saleP) + ' × 건물 ' + Math.round(cv.vatRatio * 100) + '% × 10/110 = 건물분 부가세 <b>' + maFmt(cv.vatSale) + '</b>' + (cv.vatIn ? ' − 낙찰 때 낸 ' + maFmt(cv.vatIn) : '') + ' = 납부 <b>' + maFmt(cv.vatPay) + '</b> (매출에서 빼서 순이익에 반영)' : '과세로 계산하면 매도가에 부가세가 포함된 것으로 보고 건물가액의 10/110을 납부 부가세로 계산해요.') + '</div><div class="ma-sub" style="color:#b26a00;">건물·토지 비율은 감정평가서나 기준시가로 안분하는데 구분이 불분명하면 세무서가 안분해요. 주거용으로 쓰는 오피스텔이나 85㎡ 이하 주택은 면세예요(세무사 확인).</div></div>';
+    })();
     h += '<div class="lg-sec"><div class="lg-sec-h">실제 납부 세금·건보료 <span class="ma-sub" style="font-weight:normal;">· 신고 후 확정액을 넣으면 앱 계산 대신 이 값으로 세후 마진을 구해요</span></div><div class="lg-fields">'
         + LEDGER_TAX_KINDS.map(function(k, i) { var cc = lgFormTaxCalc(d), t = (cc.taxList || []).filter(function(x) { return x.kind === k; })[0] || {}; return lgWonField('lg-tax' + i, k, t.amount, '납부한 금액', cc.taxEst ? ' data-est="1" oninput="this.setAttribute(\'data-est\',\'0\')"' : ''); }).join('') + '</div>'
         + '<div class="ma-sub" style="margin-top:4px;">' + (lgFormTaxCalc(d).taxEst ? '🟡 지금 칸의 금액은 <b>예상 세금</b>(내 자산·매도일 기준 계산)이에요. 실제로 낸 금액을 알게 되면 칸을 고쳐 쓰세요 - 하나라도 고치면 입력한 값만 실제 세금으로 저장돼요. 🔒 매도일이 지나면 그 시점의 연봉·소득 기준으로 고정되어, 이후 설정이 바뀌어도 이 값은 그대로예요(매도가·비용을 고치면 다시 계산).' : '입력한 실제 세금으로 계산해요.') + '</div></div>';
