@@ -19994,7 +19994,8 @@ function netAtBidFromRecord(a) {
     var assumed = assumedCostRec(a, bid);
     var preTaxCost = bid + acqTax + registryFee + evictionFee + agentFee + repair + etc + moving + cleaning + interestCost + prepayFee + assumed + unpaidMgmtFee + propertyTax + compTax + resaleVat;
     var preTaxProfit = saleValue - preTaxCost, taxResult = calcResaleIncomeTax(bidMethod, preTaxProfit, holdMonths, isAdjusted, houseRank);
-    return { net: Math.round(preTaxProfit - taxResult.totalTax), pre: Math.round(preTaxProfit), assumed: Math.round(assumed || 0) };
+    var cash = bid + acqTax + registryFee + evictionFee + repair + etc + moving + cleaning + (assumed || 0) + unpaidMgmtFee - loanAmount;   // 처음 내 돈으로 넣어야 하는 금액(입찰가+취득·등기·명도·수리 등 − 대출). 이자·세금·중개비는 보유·매도 때 쓰는 비용이라 제외
+    return { net: Math.round(preTaxProfit - taxResult.totalTax), pre: Math.round(preTaxProfit), assumed: Math.round(assumed || 0), cash: Math.round(cash), loan: Math.round(loanAmount || 0), interest: Math.round(interestCost || 0) };
 }
 /* 추천가가 없는 물건의 '최저가 입찰 순이익'(권리분석 인수금 포함)을 필요할 때 계산해 물건에 저장 - 저장된 계산(서버·IDB)에서 불러온 물건은 computePick을 거치지 않아 목록에서 비어 있었음(2026-11-21). 입력값이 바뀌면 다시 계산 */
 function netMinFor(row) {
@@ -22709,6 +22710,57 @@ function bbSetSelOpts(sel, html) {
     if (document.activeElement === sel && sel.dataset.optSig) return; // 사용자가 고르는 중
     sel.innerHTML = html; sel.dataset.optSig = html;
 }
+/* 🏆 추천 TOP 10 (2026-11-21, 사용자: 필터를 건 뒤 '가장 적은 비용으로 가장 높은 마진을 가장 빨리' 만들 사건 10개 추천) - 지금 걸린 필터(지역·허가구역·공시가격 등)의 임장 후보 중 추천가가 있는 물건을 점수로 줄 세움.
+   점수 = 기대 연환산 수익률 = (순이익 ÷ 내 돈) × (12 ÷ 걸리는 달) × 낙찰 가능성. 내 돈 = 추천가 + 취득·등기·명도·수리 등 − 대출(앱 대출 가정), 걸리는 달 = 입찰까지 + 되팔릴 때까지(환금성 곡선). 필터가 바뀌면 순위도 바뀜 */
+var top10State = { sort: 'score', minP: 0.1 };
+function top10Rows() {
+    var s = bidBoardState, now = [];
+    bidBoardRows.forEach(function(r) {
+        if (r.type !== 'apt' || !r.a || r.pending || r.skippedPast || !r.visit || !r.visit.go || !r.pick || !r.pick.ev) return;
+        if (!regionMatch(r, s.region)) return;
+        if (r.dday && r.dday.diffDays < 0) return;
+        var ev = r.pick.ev; if (!(ev.bid > 0) || !(ev.net > 0) || !(ev.p >= top10State.minP)) return;
+        var a = r.a, nm = null;
+        try { nm = netAtBidFromRecord(Object.assign({}, a, { target: r.sale, actualBid: ev.bid, holdAuto: r.holdAuto, repair: effRepairFee(a, r.type, r.pyung, a.buildYear || r.estBuildYear || null) })); } catch (e) { nm = null; }
+        if (!nm) return;
+        var cash = Math.max(nm.cash, 1000), hold = parseInt(r.holdAuto) > 0 ? parseInt(r.holdAuto) : DEFAULT_INTEREST_HOLD_MONTHS, wait = r.dday ? Math.max(0, r.dday.diffDays) / 30 : 0, months = Math.max(1, wait + hold);
+        var rate = ev.net / cash * (12 / months);   // 낙찰되면 연환산 수익률
+        now.push({ r: r, ev: ev, cash: nm.cash, hold: hold, wait: Math.round(wait * 10) / 10, months: months, net: ev.net, rate: rate, exp: rate * ev.p, p: ev.p });
+    });
+    var key = { score: function(x) { return x.exp; }, net: function(x) { return x.net; }, cash: function(x) { return -x.cash; }, fast: function(x) { return -x.months; } }[top10State.sort] || function(x) { return x.exp; };
+    now.sort(function(x, y) { return key(y) - key(x) || y.exp - x.exp; });
+    return now;
+}
+function openTop10() {
+    var bg = document.getElementById('top10-bg');
+    if (!bg) {
+        bg = document.createElement('div'); bg.id = 'top10-bg'; bg.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.45);z-index:132;display:flex;align-items:center;justify-content:center;';
+        bg.onclick = function(e) { if (e.target === bg) bg.style.display = 'none'; };
+        bg.innerHTML = '<div style="background:white;border-radius:14px;width:min(980px,96vw);max-height:90vh;overflow-y:auto;box-shadow:0 8px 32px rgba(0,0,0,0.25);"><div class="modal-header"><span>🏆 추천 TOP 10 <span style="font-size:12px;font-weight:400;color:#777;">(지금 걸린 필터 기준)</span></span><span class="modal-close" onclick="document.getElementById(\'top10-bg\').style.display=\'none\'">✕</span></div><div id="top10-body" style="padding:10px 14px 16px;"></div></div>';
+        document.body.appendChild(bg);
+    }
+    bg.style.display = 'flex'; renderTop10();
+}
+function setTop10(k, v) { top10State[k] = v; renderTop10(); }
+function renderTop10() {
+    var body = document.getElementById('top10-body'); if (!body) return;
+    var all = top10Rows(), list = all.slice(0, 10), fmt = function(v) { return v ? toEok(String(Math.round(v))) : '-'; };
+    var chip = function(k, label) { return '<button class="bb-tab' + (top10State.sort === k ? ' on' : '') + '" onclick="setTop10(\'sort\',\'' + k + '\')">' + label + '</button>'; };
+    var h = '<div style="font-size:12px;color:#555;margin-bottom:6px;">목표: <b>적은 내 돈 · 높은 순이익 · 빠른 회수</b>를 한 번에 본 점수예요. 임장 후보 중 추천가가 있는 ' + all.length + '건에서 뽑았어요. 필터(지역·허가구역·공시가격 등)를 바꾸고 다시 열면 순위도 바뀌어요.</div>';
+    h += '<div style="margin-bottom:6px;">정렬: ' + chip('score', '종합 점수') + ' ' + chip('net', '순이익 큰 순') + ' ' + chip('cash', '내 돈 적은 순') + ' ' + chip('fast', '빠른 순') + ' <span style="margin-left:8px;font-size:12px;color:#555;">낙찰 가능성 <select onchange="setTop10(\'minP\',parseFloat(this.value))"><option value="0"' + (top10State.minP === 0 ? ' selected' : '') + '>전부</option><option value="0.1"' + (top10State.minP === 0.1 ? ' selected' : '') + '>10% 이상</option><option value="0.2"' + (top10State.minP === 0.2 ? ' selected' : '') + '>20% 이상</option><option value="0.35"' + (top10State.minP === 0.35 ? ' selected' : '') + '>35% 이상</option></select></span></div>';
+    if (!list.length) { body.innerHTML = h + '<div class="bb-empty">조건에 맞는 물건이 없어요. 필터를 넓히거나 낙찰 가능성 기준을 낮춰 보세요.</div>'; return; }
+    h += '<table class="bb2-table"><thead><tr><th>#</th><th>물건</th><th>입찰일</th><th class="r">추천 입찰가</th><th class="r">내 돈(대출 후)</th><th class="r">예상 순이익(세후)</th><th class="r">걸리는 기간</th><th class="r">낙찰 가능성</th><th class="r">낙찰되면 연 수익률</th><th class="r">점수(기대 연 수익률)</th></tr></thead><tbody>'
+        + list.map(function(x, i) {
+            var r = x.r, idJs = String(r.id).replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+            return '<tr class="bb2-row" onclick="document.getElementById(\'top10-bg\').style.display=\'none\';openBidDrawer(\'' + idJs + '\')"><td><b>' + (i + 1) + '</b></td><td class="bb2-name"><b>' + bbEsc(r.name) + '</b><div class="bb-sub">' + bbEsc(r.region) + (r.pyung ? ' · ' + r.pyung + '평' : '') + (r.floor ? ' · ' + r.floor + '층' : '') + ' · ' + bbEsc(r.a.caseNo || '') + '</div></td>'
+                + '<td>' + (r.dday ? bbEsc(r.dday.label) : '-') + '<div class="bb-sub">' + bbEsc(r.a.bidDate || '') + '</div></td>'
+                + '<td class="r"><b>' + fmt(x.ev.bid) + '</b></td><td class="r">' + fmt(x.cash) + '</td><td class="r"><b style="color:#15803d;">' + fmt(x.net) + '</b><div class="bb-sub">마진율 ' + (r.sale ? (x.ev.pre / r.sale * 100).toFixed(1) + '%' : '-') + '</div></td>'
+                + '<td class="r">약 ' + (Math.round(x.months * 10) / 10) + '개월<div class="bb-sub">입찰까지 ' + x.wait + ' + 되팔기 ' + x.hold + '</div></td><td class="r">' + (Math.round(x.p * 1000) / 10).toFixed(1) + '%</td>'
+                + '<td class="r">' + Math.round(x.rate * 100) + '%</td><td class="r"><b>' + (Math.round(x.exp * 1000) / 10).toFixed(1) + '%</b></td></tr>';
+        }).join('') + '</tbody></table>';
+    h += '<div class="dr-sub" style="margin-top:8px;">계산: 내 돈 = 추천가 + 취득세·등기·명도·수리 등 − 대출(앱 대출 가정). 이자·세금·중개비는 보유·매도 때 드는 비용이라 내 돈에는 넣지 않고 순이익에서 뺐어요. 걸리는 기간 = 입찰까지 + 환금성 곡선으로 본 되팔기까지. 점수 = (순이익 ÷ 내 돈) × (12 ÷ 걸리는 달) × 낙찰 가능성. 참고용이며, 임장·권리분석·시세 확인은 따로 해야 해요.</div>';
+    body.innerHTML = h;
+}
 /* 아파트 입찰후보 표(PC 화면) - 임장 후보·패스·전체와 즐겨찾기 탭이 같이 씀(2026-11-21: 즐겨찾기가 PC에서도 모바일식 카드로 나오던 것을 같은 표로) */
 function bbAptTableHtml(rows, subRow) {
     var money = function(v) { return v ? toEok(String(Math.round(v))) : '-'; };
@@ -22787,7 +22839,7 @@ function renderBidBoardLite() {
     s.nicheLite = false; s.seoulOwn = false; s.goodOnly = false; s.listLite = false; s.rightsNeed = false;
     if (isFavTab) { bar.innerHTML = grp; renderFavLite(document.getElementById('bb-body')); var cn1 = document.getElementById('bb-cache-note'); if (cn1) cn1.style.display = 'none'; return; }
     bar.innerHTML = grp + sub
-        + permitStaleHtml() + ' <a href="#" class="bb2-link" onclick="toggleUvOnly();return false;" title="같은 동 대장 단지와의 격차가 평소보다 벌어진 단지(과거 검증: 상위 20%의 60~64%가 시군구 중앙보다 더 오름 - 오를 것을 보장하지 않는 참고 신호)">' + (s.uvOnly ? '✔ ' : '') + '📉 저평가 단지만' + (uvData && uvData.mapMeta ? ' (' + cur.filter(function(r) { return uvOf(r); }).length + ')' : '') + '</a> · <a href="#" class="bb2-link" onclick="toggleOvOnly();return false;" title="같은 동 대장 단지와의 격차가 평소보다 크게 좁혀진 단지(과거 검증: 이후 시군구 중앙보다 약 0.4~0.6% 덜 오름 - 신호가 약한 참고용)">' + (s.ovOnly ? '✔ ' : '') + '📈 고평가 단지만' + (uvData && uvData.mapOvMeta ? ' (' + cur.filter(function(r) { return ovOf(r); }).length + ')' : '') + '</a> · <a href="#" class="bb2-link" onclick="toggleLitePast();return false;">' + (s.pastLite ? '지난 입찰 숨기기' : '지난 입찰 ' + pastN + '건 보기') + '</a>'
+        + permitStaleHtml() + ' <a href="#" class="bb2-link" style="font-weight:700;" onclick="openTop10();return false;" title="지금 걸린 필터에서 적은 돈·높은 순이익·빠른 회수 순으로 10개 추천">🏆 추천 TOP 10</a> <a href="#" class="bb2-link" onclick="toggleUvOnly();return false;" title="같은 동 대장 단지와의 격차가 평소보다 벌어진 단지(과거 검증: 상위 20%의 60~64%가 시군구 중앙보다 더 오름 - 오를 것을 보장하지 않는 참고 신호)">' + (s.uvOnly ? '✔ ' : '') + '📉 저평가 단지만' + (uvData && uvData.mapMeta ? ' (' + cur.filter(function(r) { return uvOf(r); }).length + ')' : '') + '</a> · <a href="#" class="bb2-link" onclick="toggleOvOnly();return false;" title="같은 동 대장 단지와의 격차가 평소보다 크게 좁혀진 단지(과거 검증: 이후 시군구 중앙보다 약 0.4~0.6% 덜 오름 - 신호가 약한 참고용)">' + (s.ovOnly ? '✔ ' : '') + '📈 고평가 단지만' + (uvData && uvData.mapOvMeta ? ' (' + cur.filter(function(r) { return ovOf(r); }).length + ')' : '') + '</a> · <a href="#" class="bb2-link" onclick="toggleLitePast();return false;">' + (s.pastLite ? '지난 입찰 숨기기' : '지난 입찰 ' + pastN + '건 보기') + '</a>'
         + (pend && !isVillaTab ? ' <span class="bb-sub">⏳ ' + pend + '건 계산 중</span>' : '');
     if (s.visit === 'villa') { renderVillaLite(document.getElementById('bb-body')); var cn0 = document.getElementById('bb-cache-note'); if (cn0) cn0.style.display = 'none'; return; }
     if (s.seoulOwn) {   // 🏠 서울 자가 매입(2026-11-06): 되팔기 마진이 아니라 시세 대비 싸게 사는지를 봄 - 임장/패스·틈새 조건 없이 서울 아파트 전체
