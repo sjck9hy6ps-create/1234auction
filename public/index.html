@@ -23616,6 +23616,7 @@ function aptBandHtml(row) {
             + '<div>최근 5년 <b>' + R.total + '건</b> (연평균 ' + (Math.round(R.total / 5 * 10) / 10) + '건) · 최근 12개월 <b>' + r1.n12 + '건</b>' + (to1 ? ' · 회전율 <b>' + to1.rate + '%</b>(최근 1년 거래÷세대수 ' + to1.hh.toLocaleString() + ', ' + to1.grade.t + ')' : '') + '</div></div>'
             + '<div class="dr-sub" style="margin-top:4px;">평형이 하나라 평형끼리 비교는 필요 없어서 거래 활발도만 보여 줘요. 회전율 5% 이상이면 환금성 높음, 2% 미만이면 낮음으로 봐요(세대수를 알 때). 참고용이에요.</div></div>';
     }
+    if (R.total === 0) return ttl + '<div class="dr-sub">이 단지는 최근 5년 매매 기록이 없어요(신축·분양 직후 단지는 거래 신고가 아직 없을 수 있어요). 그래서 거래 활발도를 판단할 수 없어요.</div></div>';
     if (R.total < 12 || R.rows.length < 2) return ttl + '<div class="dr-sub">이 단지는 최근 5년 거래가 ' + R.total + '건(평형 ' + R.rows.length + '개)이라 ' + (R.rows.length < 2 ? '평형이 하나뿐이라 서로 비교할 수 없어요.' : '평형별로 비교하기엔 적어요(12건 이상 필요).') + '</div></div>';
     var myAr = (parseFloat(a.pyung) || 0) * 3.305785, me = null; R.rows.forEach(function(r) { if (!me || Math.abs(r.area - myAr) < Math.abs(me.area - myAr)) me = r; }); if (me && Math.abs(me.area - myAr) > 3) me = null;
     var vt = { good: ['✅ 활발', '#15803d', '#f0fdf4'], mid: ['➖ 보통', '#b45309', '#fffbeb'], bad: ['⚠️ 비활발', '#b91c1c', '#fef2f2'] };
