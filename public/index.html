@@ -14441,7 +14441,7 @@ function autoCalcHoldingTaxSilent() {
 /* 명도비용(점유자 이사비 등 근사) - 평당 11만원 일괄 (015. 경매 입찰가 산정표.xlsx 단기매매 시트와 동일 기준) */
 function calcEvictionFee(pyung) {
     if (!pyung || pyung <= 0) return 0;
-    return Math.round(pyung * 11);
+    return Math.round(pyung * (MY_COST.evictionPerPy > 0 ? MY_COST.evictionPerPy : 11));   // 내 실측 적용 시 그 값(장부 3단계)
 }
 function autoCalcEvictionFee() {
     var pyung = parseFloat(document.getElementById('a-pyung').value) || 0;
@@ -14477,7 +14477,7 @@ function calcMovingFee(pyung) {
 }
 function calcCleaningFee(pyung) {
     if (!pyung || pyung <= 0) return null;
-    return Math.round(pyung * 2);
+    return Math.round(pyung * (MY_COST.cleaningPerPy > 0 ? MY_COST.cleaningPerPy : 2));
 }
 function autoCalcMoving() {
     var pyung = parseFloat(document.getElementById('a-pyung').value) || 0;
@@ -15015,6 +15015,7 @@ function applyDefaultTargetMarginForType() {
 /* 서울시 주택 매매 중개보수 요율표 기준 상한요율로 중개수수료 계산 (만원 단위 입력/반환) */
 function calcAgentFee(saleManwon, propType) {
     if (!saleManwon || saleManwon <= 0) return 0;
+    if (MY_COST.agentRatePct > 0) return Math.round(saleManwon * MY_COST.agentRatePct / 100);   // 내 실측 적용 시 실제 중개수수료율
     var saleWon = saleManwon * 10000;
     var fee;
     if (propType === 'officetel') {
@@ -21061,6 +21062,7 @@ function aptSaleCapInfo(a, bunjiFull, pyung, st) {
    여기선 도배·장판만: 평당 15만원(최소 200만원, 시세 확인 전 가정값). 직접 입력·연식 기준·임장 문답 값이 이보다 작으면 이 값으로 올림. */
 function basicRepairFee(pyung) { return Math.max(200, Math.round((parseFloat(pyung) || 0) * 15)); }
 function effRepairFee(a, type, pyung, buildYear) {
+    if (!parseInt(a.repair) && MY_COST.repairPerPy > 0 && parseFloat(pyung) > 0) return Math.round(parseFloat(pyung) * MY_COST.repairPerPy);   // 내 실측 적용 시(장부 3단계) - 물건에 직접 넣은 수리비가 있으면 그 값이 우선
     var v = parseInt(a.repair) || calcRepairFee(type, pyung || 0, buildYear) || 0;
     return Math.max(v, basicRepairFee(pyung));
 }
@@ -31239,7 +31241,7 @@ async function loadMyAssets() {
         var list = await fetchStoredList('myAssets');
         myAssets.items = (list || []).filter(function(x) { return x && x.id !== 'profile'; });
         myAssets.profile = (list || []).filter(function(x) { return x && x.id === 'profile'; })[0] || null;
-        myAssets.loaded = true;
+        myAssets.loaded = true; try { applyMyCost(); } catch (e) {}
         if (!myAssets.profile && !myAssets.items.length) await seedMyAssets();
         myAssetsChanged();
     } catch (e) { console.error('내 자산 불러오기 실패:', e.message); }
@@ -32770,7 +32772,7 @@ function ledgerPickLoad() {   // 경매 기록에서 직접 고르기
     var s = document.getElementById('lg-pick'); if (!s || !s.value) { alert('불러올 물건을 먼저 고르세요.'); return; }
     var a = (auctionList || []).filter(function(x) { return String(x.id) === String(s.value); })[0]; if (!a) return;
     ledgerSyncDraft();
-    ledgerDraft._imp = { aid: a.id, caseNo: a.caseNo || '', rows: ledgerAuctionRows(a), a: { name: a.name || '', addr: a.addr || '', propType: a.propType || '' } };
+    ledgerDraft._imp = { aid: a.id, caseNo: a.caseNo || '', rows: ledgerAuctionRows(a), a: { name: a.name || '', addr: a.addr || '', propType: a.propType || '', pyung: a.pyung || '' } };
     renderMyAssets();
 }
 /* 🏠 내 보유 주택(내 자산 탭의 항목)에서 불러오기(2026-11-21, 사용자: 내 낙찰건 = 내가 보유한 주택) - 취득일·취득가·매도일·매도가·경비를 가져오고, 같은 집의 경매 기록이 있으면 그 상세 비용·대출도 체크 목록에 같이 보여 줌 */
@@ -32794,7 +32796,7 @@ function ledgerPickAsset() {
     var aRows = a ? ledgerAuctionRows(a).filter(function(r) { return r.kind !== 'field'; }) : [];
     if (n('expenses') > 0) rows.push({ kind: 'item', cat: '기타', sub: '기타 비용', label: '경비 합계 <span class="ma-sub">(내 자산 기록, 세부 미분류' + (aRows.length ? ' · 아래 경매 기록 세부항목과 겹칠 수 있어 꺼 둠' : '') + ')</span>', val: n('expenses'), on: !aRows.length });
     aRows.forEach(function(r) { rows.push(r); });
-    ledgerDraft._imp = { assetId: x.id, aid: a ? a.id : '', caseNo: a ? (a.caseNo || '') : '', rows: rows, a: { name: x.name || '', addr: x.addr || '', propType: x.type || '' }, assetType: x.type || 'house', note: a ? '같은 집의 경매 기록(' + (a.caseNo || '') + ')도 찾았어요' : '같은 집의 경매 기록은 없어요(내 자산 기록만 가져와요)' };
+    ledgerDraft._imp = { assetId: x.id, aid: a ? a.id : '', caseNo: a ? (a.caseNo || '') : '', rows: rows, a: { name: x.name || '', addr: x.addr || '', propType: x.type || '', pyung: a ? (a.pyung || '') : '' }, assetType: x.type || 'house', note: a ? '같은 집의 경매 기록(' + (a.caseNo || '') + ')도 찾았어요' : '같은 집의 경매 기록은 없어요(내 자산 기록만 가져와요)' };
     renderMyAssets();
 }
 function ledgerImportPanelHtml() {
@@ -32810,7 +32812,7 @@ function ledgerImportApply() {
     var d = ledgerDraft, imp = d && d._imp; if (!imp) return;
     ledgerSyncDraft();
     var checked = imp.rows.map(function(r, i) { var c = document.getElementById('lg-imp-c' + i), vv = document.getElementById('lg-imp-v' + i), rr = document.getElementById('lg-imp-r' + i); return { r: r, on: c && c.checked, val: vv ? vv.value : '', rate: rr ? rr.value : '' }; });
-    d.auctionId = imp.aid || d.auctionId; if (imp.assetId) { d.assetId = imp.assetId; if (imp.assetType) d.type = imp.assetType; } d.caseNo = imp.caseNo || d.caseNo; if (!d.name) d.name = imp.a.name || imp.a.addr || ''; if (!d.addr) d.addr = imp.a.addr || '';
+    d.auctionId = imp.aid || d.auctionId; if (imp.assetId) { d.assetId = imp.assetId; if (imp.assetType) d.type = imp.assetType; } d.caseNo = imp.caseNo || d.caseNo; if (!d.name) d.name = imp.a.name || imp.a.addr || ''; if (!d.addr) d.addr = imp.a.addr || ''; if (!d.pyung && imp.a.pyung) d.pyung = imp.a.pyung;
     d.win = d.win || {}; d.sale = d.sale || {};
     checked.forEach(function(x) { if (x.on && x.r.kind === 'field') { if (x.r.field === 'winDate') d.win.date = x.val; else if (x.r.field === 'winPrice') d.win.price = lgFromWon(x.val); else if (x.r.field === 'saleDate') d.sale.date = x.val; else if (x.r.field === 'salePrice') d.sale.price = lgFromWon(x.val); } });
     d.items = (d.items || []).filter(function(it) { return !it.imp; });   // 이전에 가져온 항목은 새로 가져온 값으로 바꿈
@@ -32828,7 +32830,7 @@ function ledgerDelItem(el) { ledgerSyncDraft(); var rows = Array.prototype.slice
 function ledgerSyncDraft() {   // 화면 입력값을 초안에 모음(다시 그리기 전에 호출)
     var d = ledgerDraft; if (!d || !document.getElementById('lg-form')) return;
     var g = function(id) { var e = document.getElementById('lg-' + id); return e ? e.value : ''; };
-    d.name = g('name').trim(); d.addr = g('addr').trim(); d.caseNo = g('caseNo').trim(); d.type = g('type') || 'house'; d.memo = g('memo');
+    d.name = g('name').trim(); d.addr = g('addr').trim(); d.caseNo = g('caseNo').trim(); d.pyung = g('pyung'); d.type = g('type') || 'house'; d.memo = g('memo');
     d.win = { date: g('winDate'), price: lgFromWon(g('winPrice')) }; d.sale = { date: g('saleDate'), price: lgFromWon(g('salePrice')) };
     d.loans = [0, 1].map(function(i) { return { amount: lgFromWon(g('l' + i + 'amt')), rate: g('l' + i + 'rate'), start: g('l' + i + 'start'), end: g('l' + i + 'end'), interestPaid: lgFromWon(g('l' + i + 'paid')) }; });
     var normal = Array.prototype.slice.call(document.querySelectorAll('#lg-items .lg-item')).map(function(row, i) {
@@ -32947,7 +32949,7 @@ function ledgerEditForm() {
         + '<div class="ma-sub" style="margin-top:4px;"><a href="#" onclick="ledgerAucMode=!ledgerAucMode;ledgerSyncDraft();renderMyAssets();return false;">' + (ledgerAucMode ? '▲ 경매 기록에서 직접 고르기 닫기' : '▼ 보유 주택에 없으면 경매 기록에서 직접 고르기') + '</a></div>'
         + (ledgerAucMode ? '<div class="lg-row" style="margin-top:4px;"><input id="lg-pick-q" type="text" placeholder="이름·사건번호·주소 검색(비우면 내 입찰 물건)" oninput="ledgerPickFilter()"><select id="lg-pick">' + ledgerPickOptions('') + '</select><button class="modal-btn btn-gray" onclick="ledgerPickLoad()">불러오기</button></div>' : '')
         + ledgerImportPanelHtml() + '</div>';
-    h += '<div class="lg-sec"><div class="lg-sec-h">기본 정보</div><div class="lg-fields">' + lgField('lg-name', '이름', d.name, '예: ○○아파트 101동 1203호') + lgField('lg-addr', '주소', d.addr, '지번 주소') + lgField('lg-caseNo', '사건번호', d.caseNo, '넣으면 예상과 비교해요')
+    h += '<div class="lg-sec"><div class="lg-sec-h">기본 정보</div><div class="lg-fields">' + lgField('lg-name', '이름', d.name, '예: ○○아파트 101동 1203호') + lgField('lg-addr', '주소', d.addr, '지번 주소') + lgField('lg-caseNo', '사건번호', d.caseNo, '넣으면 예상과 비교해요') + lgField('lg-pyung', '평형(평)', d.pyung, '예: 25.7 (평당 비용 계산에 써요)', 'number', ' step="0.1"')
         + lgSel('lg-type', '종류', Object.keys(MY_ASSET_TYPES).map(function(k) { return '<option value="' + k + '"' + (d.type === k ? ' selected' : '') + '>' + MY_ASSET_TYPES[k] + '</option>'; }).join('')) + '</div></div>';
     h += '<div class="lg-sec"><div class="lg-sec-h">낙찰 · 매도</div><div class="lg-fields">' + lgField('lg-winDate', '낙찰일', win.date, '', 'date') + lgWonField('lg-winPrice', '낙찰가', win.price, '예: 250000000') + lgField('lg-saleDate', '매도일', sale.date, '', 'date') + lgWonField('lg-salePrice', '매도가', sale.price, '매도 후 입력') + '</div></div>';
     h += '<div class="lg-sec"><div class="lg-sec-h">대출 <span class="ma-sub" style="font-weight:normal;">· 최대 2건 · 이자는 금액×이율×일수로 계산(실제 납부액을 넣으면 그 값)</span></div><div class="lg-pair">';
@@ -32970,6 +32972,60 @@ function ledgerEditForm() {
     h += '<div class="lg-sec"><div class="lg-fields">' + lgField('lg-memo', '메모', d.memo, '') + '</div><div class="ma-sub" style="margin-top:6px;">🗓️ 세율 스냅샷: ' + (d.taxSnap ? maEsc(d.taxSnap.at) + ' 저장됨 <a href="#" onclick="ledgerResnap();return false;">지금 세율로 다시 저장</a>' : '저장할 때 그 시점의 세율표를 함께 보관해요') + '</div></div>';
     h += '<div class="lg-actions">' + (!isNewRec ? '<button class="modal-btn btn-gray" style="color:#c62828;" onclick="ledgerDelete()">삭제</button>' : '') + '<span style="margin-left:auto;"></span><button class="modal-btn btn-gray" onclick="ledgerCancel()">취소</button><button class="modal-btn btn-purple" onclick="ledgerSave()">저장</button></div></div>';
     return h;
+}
+
+/* ════ 📒 장부 3단계 (2026-11-21): 내 실측 비용 제안 - 장부의 실제 비용 평균(중앙값)을 앱 기본 가정과 견줘 보여 주고, 사용자가 '적용'을 눌렀을 때만 입찰 계산의 기본값으로 씀.
+   표본 3건 이상 항목만 제안. 물건에 직접 입력한 값이 있으면 그 값이 우선. 적용·해제는 언제든 가능(내 자산 설정에 저장) ════ */
+var MY_COST = {}, DEFAULT_DEALER_RATE0 = DEFAULT_LOAN_RATE.dealer, LG_COST_MIN_N = 3;
+function applyMyCost() {
+    var ca = (myAssets.profile && myAssets.profile.costApply) || {}; MY_COST = {};
+    ['repairPerPy', 'evictionPerPy', 'cleaningPerPy', 'agentRatePct', 'loanRate'].forEach(function(k) { if (ca[k] && ca[k].val > 0) MY_COST[k] = ca[k].val; });
+    DEFAULT_LOAN_RATE.dealer = MY_COST.loanRate || DEFAULT_DEALER_RATE0;
+}
+function lgWithoutMyCost(fn) { var keep = MY_COST, kr = DEFAULT_LOAN_RATE.dealer; MY_COST = {}; DEFAULT_LOAN_RATE.dealer = DEFAULT_DEALER_RATE0; try { return fn(); } finally { MY_COST = keep; DEFAULT_LOAN_RATE.dealer = kr; } }
+function lgPyungOf(r) { var p = parseFloat(r.pyung) || 0; if (p) return p; var a = ledgerAuctionOf(r); return a ? (parseFloat(a.pyung) || 0) : 0; }
+function lgMedian(v) { var s = v.slice().sort(function(x, y) { return x - y; }), m = Math.floor(s.length / 2); return s.length ? (s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2) : null; }
+function lgCostStats() {
+    var recs = ledger.items.filter(function(r) { return r.sale && lgN(r.sale.price) > 0; }), M = {};
+    var add = function(k, label, unit, v) { if (v == null || !isFinite(v)) return; (M[k] = M[k] || { key: k, label: label, unit: unit, vals: [] }).vals.push(v); };
+    recs.forEach(function(r) {
+        var c = ledgerCalc(r), py = lgPyungOf(r), sum = function(cat) { return (r.items || []).filter(function(x) { return x.cat === cat; }).reduce(function(t, x) { return t + lgN(x.amount); }, 0); };
+        if (py > 0) { if (sum('수리') > 0) add('repairPerPy', '수리비', '만원/평', sum('수리') / py); if (sum('명도·이사') > 0) add('evictionPerPy', '명도·이사비', '만원/평', sum('명도·이사') / py); if (sum('청소') > 0) add('cleaningPerPy', '청소비', '만원/평', sum('청소') / py); }
+        var agent = (r.items || []).filter(function(x) { return x.sub === '중개수수료'; }).reduce(function(t, x) { return t + lgN(x.amount); }, 0); if (agent > 0 && c.saleP > 0) add('agentRatePct', '중개수수료율', '%', agent / c.saleP * 100);
+        var ls = (r.loans || []).filter(function(l) { return lgN(l.amount) > 0 && lgN(l.rate) > 0; }); if (ls.length) add('loanRate', '대출 이율(가중평균)', '%', ls.reduce(function(t, l) { return t + lgN(l.amount) * lgN(l.rate); }, 0) / ls.reduce(function(t, l) { return t + lgN(l.amount); }, 0));
+        if (c.hold != null) add('holdM', '되팔기까지 보유', '개월', c.hold);
+    });
+    var defs = lgWithoutMyCost(function() { var mv = calcMovingFee(25) || 200; return { repairPerPy: effRepairFee({}, 'apt', 25, null) / 25, evictionPerPy: calcEvictionFee(25) / 25 + mv / 25, cleaningPerPy: calcCleaningFee(25) / 25, agentRatePct: (function() { var vs = recs.map(function(r) { var c = ledgerCalc(r); return c.saleP ? calcAgentFee(c.saleP, 'apt') / c.saleP * 100 : null; }).filter(function(x) { return x != null; }); return vs.length ? lgMedian(vs) : null; })(), loanRate: DEFAULT_DEALER_RATE0, holdM: null, _mv: mv / 25 }; });
+    var out = Object.keys(M).map(function(k) { var m = M[k], med = lgMedian(m.vals); m.n = m.vals.length; m.med = med; m.min = Math.min.apply(null, m.vals); m.max = Math.max.apply(null, m.vals); m.def = defs[k]; m.apply = k === 'evictionPerPy' ? Math.max(0, med - defs._mv) : med; m.canApply = k !== 'holdM'; return m; });
+    var order = ['repairPerPy', 'evictionPerPy', 'cleaningPerPy', 'agentRatePct', 'loanRate', 'holdM'];
+    out.sort(function(a, b) { return order.indexOf(a.key) - order.indexOf(b.key); });
+    return out;
+}
+function lgCostFmt(v, unit) { if (v == null) return '-'; var n = unit === '%' ? Math.round(v * 100) / 100 : Math.round(v * 10) / 10; return n + (unit === '%' ? '%' : (unit === '개월' ? '개월' : '만원/평')); }
+function costApplyAsk(key) {
+    var m = lgCostStats().filter(function(x) { return x.key === key; })[0]; if (!m || m.n < LG_COST_MIN_N || !m.canApply) return;
+    if (!confirm('"' + m.label + '" 내 실측 ' + lgCostFmt(m.apply, m.unit) + '(장부 ' + m.n + '건 중앙값)을 입찰 계산의 기본값으로 쓸까요?\n\n앱 기본 ' + lgCostFmt(m.def, m.unit) + '이 내 값으로 바뀌어 입찰후보의 추천가·예상 순이익이 달라져요. 물건에 직접 입력한 값이 있으면 그 값이 우선이고, 언제든 해제할 수 있어요.')) return;
+    var p = Object.assign({ id: 'profile', year: new Date().getFullYear() }, myAssets.profile || {}); p.costApply = Object.assign({}, p.costApply || {}); p.costApply[key] = { val: Math.round(m.apply * 1000) / 1000, n: m.n, at: lgTodayStr() };
+    saveMyAssetItem(p).then(function() { applyMyCost(); myAssetsChanged(); renderMyAssets(); }).catch(function(e) { alert('저장하지 못했어요: ' + e.message); });
+}
+function costApplyClear(key) {
+    var p = Object.assign({ id: 'profile', year: new Date().getFullYear() }, myAssets.profile || {}); p.costApply = Object.assign({}, p.costApply || {}); delete p.costApply[key];
+    saveMyAssetItem(p).then(function() { applyMyCost(); myAssetsChanged(); renderMyAssets(); }).catch(function(e) { alert('저장하지 못했어요: ' + e.message); });
+}
+function costSuggestHtml() {
+    var ca = (myAssets.profile && myAssets.profile.costApply) || {}, stats = lgCostStats(), soldN = ledger.items.filter(function(r) { return r.sale && lgN(r.sale.price) > 0; }).length;
+    var h = '<div class="ma-sec"><div class="ma-h">🎯 내 실측 비용 <span class="ma-sub" style="font-weight:normal;">· 장부의 실제 비용을 앱 기본 가정과 견줘요 · 3건 이상 쌓이면 제안, 누르기 전에는 계산에 쓰지 않아요</span></div>';
+    var anyApplied = Object.keys(ca).length;
+    h += '<div class="ma-sub" style="margin-bottom:6px;">매도 완료 장부 ' + soldN + '건' + (anyApplied ? ' · <b style="color:#15803d;">내 실측 ' + anyApplied + '개 적용 중</b>' : ' · 적용 중인 항목 없음') + ' · 평당 비용은 장부에 <b>평형(평)</b>이 있어야 계산돼요(경매 기록 연결 시 자동).</div>';
+    if (!stats.length) return h + '<div class="indicator-box"><div class="ma-sub">아직 비교할 비용이 없어요. 매도 완료 장부에 수리·명도·청소·중개 비용과 평형을 입력하면 여기 나와요.</div></div></div>';
+    stats.forEach(function(m) {
+        var ok = m.n >= LG_COST_MIN_N, applied = ca[m.key], diff = m.def ? (m.apply - m.def) / m.def * 100 : null;
+        h += '<div class="indicator-box"><div class="indicator-title lg-rec-h"><span class="lg-rec-name">' + maEsc(m.label) + '</span>'
+            + (applied ? '<span class="ma-pill" style="background:#e8f5e9;color:#2e7d32;">적용 중 ' + lgCostFmt(applied.val, m.unit) + '</span>' : (ok ? (m.canApply ? '<span class="ma-pill" style="background:#fff3e0;color:#e65100;">제안</span>' : '<span class="ma-pill" style="background:#eef2f7;color:#666;">참고</span>') : '<span class="ma-pill" style="background:#eef2f7;color:#666;">표본 ' + m.n + '/' + LG_COST_MIN_N + '건</span>')) + '</div>'
+            + '<div class="indicator-grid lg-grid">' + lgItem('내 실측(중앙값)', lgCostFmt(m.med, m.unit), ok ? '#b45309' : '', m.n + '건 · ' + lgCostFmt(m.min, m.unit) + ' ~ ' + lgCostFmt(m.max, m.unit)) + lgItem('앱 기본', lgCostFmt(m.def, m.unit), '', m.key === 'holdM' ? '환금성 곡선 6~10개월' : (m.key === 'evictionPerPy' ? '명도+이사 합' : '')) + lgItem('차이', diff == null ? '-' : (diff > 0 ? '+' : '') + Math.round(diff) + '%', diff == null ? '' : (Math.abs(diff) >= 20 ? '#c62828' : '#374151'), diff == null ? '' : (diff > 0 ? '내 비용이 더 커요' : '내 비용이 더 작아요')) + '</div>'
+            + (m.canApply ? '<div class="lg-actions">' + (ok ? '<button class="modal-btn btn-purple" onclick="costApplyAsk(\'' + m.key + '\')">' + (applied ? '내 값으로 다시 적용' : '내 값 적용') + '</button>' : '<span class="ma-sub">3건 이상이면 적용할 수 있어요</span>') + (applied ? '<button class="modal-btn btn-gray" onclick="costApplyClear(\'' + m.key + '\')">적용 해제</button>' : '') + '</div>' : '<div class="ma-sub" style="margin-top:6px;">보유 기간은 단지의 거래 활발도(환금성)에 따라 달라서 평균을 계산에 쓰지는 않고 참고로만 보여 줘요.</div>') + '</div>';
+    });
+    return h + '</div>';
 }
 
 function renderMyAssets() {
@@ -33007,6 +33063,7 @@ function renderMyAssets() {
         + (holding.concat(planned).length ? holding.concat(planned).map(maAssetBox).join('') : '<div class="ma-sub">보유 중이거나 취득 예정인 집이 없어요. "+ 집 추가"로 넣어 주세요.</div>') + '</div>';
     // ③ 장부(매도 완료 건 포함)
     html += ledgerSectionHtml(legacy);
+    html += costSuggestHtml();   // 🎯 내 실측 비용(3단계)
     // ④ 올해 소득·세금 설정
     html += '<div class="ma-sec"><div class="ma-h">⚙️ ' + new Date().getFullYear() + '년 소득 · 세금 설정</div><div class="indicator-box"><div class="lg-fields">'
         + '<div class="lg-field"><label>매매사업자</label><label class="lg-check"><input type="checkbox" ' + (p.isDealer !== false ? 'checked' : '') + ' onchange="maSetProfile(\'isDealer\', this.checked)"> 개인 부동산매매사업자</label></div>'
