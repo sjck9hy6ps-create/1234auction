@@ -24552,6 +24552,16 @@ async function applyListingListsAuto(list) {
         // 2026-10-27(영등4차제일아파트 ↔ 네이버 '영등제일4차'): 단어 순서만 다른 이름은 '○차' 번호가 같고 나머지 글자가 같으면 같은 단지로 봄(4글자 이상일 때만)
         if (!cands.length) { var cn = canonName(n); if (cn) cands = T.filter(function(r) { return canonName(nameKey(r.name)) === cn; }); }
         if (!cands.length) return;
+        /* 2026-11-21(충주 미진 2025-30383: 같은 단지에 '미진이지비아 23.5평'과 '미진 18.1평' 물건이 있었는데 이름이 정확히 같은 앞의 것만 찾고 뒤의 것은 빠져 "같은 평형 매물 없음"으로 실패) -
+           이름으로 찾은 물건과 같은 단지(지역·동·번지)이고 이름이 이 네이버 단지 이름의 일부이거나 주소에 이 이름이 들어 있는 다른 물건도 함께 대상으로 삼음(평형은 아래에서 물건마다 따로 맞춤) */
+        (function() {
+            var kx2 = {}; cands.forEach(function(r) { kx2[cx(r)] = 1; });
+            T.forEach(function(r) {
+                if (cands.indexOf(r) >= 0 || !kx2[cx(r)]) return;
+                var nk = nameKey(r.name);
+                if ((nk.length >= 2 && n.indexOf(nk) >= 0) || matchNormName(String(r.a.addr || '')).indexOf(n) >= 0) cands.push(r);
+            });
+        })();
         /* 2026-11-08(광양 '삼성' 8곳): 네이버 단지 정보의 지번 주소(동·번지)가 같이 왔으면 이름이 같은 후보를 먼저 그 주소로 좁힘 - 같은 동·같은 번지(본번)인 물건이 있을 때만(없으면 예전 방식 그대로) */
         if (cands.length > 1) {
             var nb2 = byName[n].filter(function(x) { return x.naverBunji; })[0];
