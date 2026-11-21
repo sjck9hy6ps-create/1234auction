@@ -112,7 +112,7 @@ try {
 //    ① 물건별 최근 3년 같은 평형(아파트)·같은 건물 비슷한 면적(빌라) 거래 [날짜, 가격(만), 층, 직거래]
 //    ② 빌라 최근거래가 1건(앱과 같은 규칙 villaRecentPick, 비교 건물 승강기 정보 포함)
 //    ③ 단지별 10년 그래프의 '최근 자료보다 오래된' 달 [년월, 거래 수, 중앙값]
-const charts = {}, hist = {}, band = {};   // band: 단지 안 잘 거래되는 평형 요약(2026-11-21) id → [0비활발·1보통·2활발, 이 평형 거래수, 순위, 평형 수, 비중%]
+const charts = {}, hist = {}, band = {}, bandWhy = {};   // band: 단지 안 잘 거래되는 평형 요약(2026-11-21) id → [0비활발·1보통·2활발, 이 평형 거래수, 순위, 평형 수, 비중%]
 try {
   const lawds = await page.evaluate(() => {
     const set = {};
@@ -127,7 +127,7 @@ try {
     if (Date.now() - tStart > 45 * 60 * 1000) { console.log('가격 그래프 계산 시간 초과 - 나머지 지역은 건너뜀'); break; }
     try {
       const res = await page.evaluate(async (lw) => {
-        const out = { charts: {}, hist: {}, band: {} };
+        const out = { charts: {}, hist: {}, band: {}, why: {} };
         if (!dataCache[lw]) { const dd = await fetchHouseDataCached(lw); if (dd && !dd.error && Array.isArray(dd.apt)) await ingestRegionHouseData(dd, '', lw); }
         if (!dataCache[lw]) return out;
         const lawdOf = (r) => r.lawd || bidBoardLawdOf(r.a);
@@ -188,12 +188,30 @@ try {
           });
         }
         // 단지 안 잘 거래되는 평형(최근 5년 기준): 위 10년 그래프 단계에서 단지 과거 거래를 이미 받아 두었으므로 그 자료로 계산
-        aptRows.forEach((r) => { try { const b = aptBandBrief(r, true); if (b) out.band[r.id] = [{ bad: 0, mid: 1, good: 2 }[b.v], b.n, b.rank, b.nb, b.share]; } catch (e) {} });
+        aptRows.forEach((r) => {
+          let why = 'ok';
+          try {
+            const b = aptBandBrief(r, true);
+            if (b) out.band[r.id] = b.v === 'single' ? [3, b.n, 0, 1, 100, b.n12 || 0] : [{ bad: 0, mid: 1, good: 2 }[b.v], b.n, b.rank, b.nb, b.share, b.n12 || 0];
+            else {   // 왜 비었는지(2026-11-21 사용자: 서버가 단지 과거 거래를 못 받은 이유 확인)
+              const ents = ownComplexEntries(r.a, r.bunjiFull || fullBunjiFromAddr(r.a.addr, r.a.dong, r.a.bunji), 'apt') || [];
+              if (!ents.length) why = 'noEntry'; else {
+                const l = ents[0].latest || {};
+                if (!l.region || !l.dong || !l.bunji) why = 'noKey'; else {
+                  const key = [l.region, l.dong, l.bunji, (ents[0].buildingType || l.buildingType) === 'villa' ? 'villa' : 'apt'].join('|'), c = pnHistoryCache[key];
+                  if (c === 'loading') why = 'histLoadingTimeout'; else if (c === undefined) why = 'histNotFetched'; else if (!c.length) why = 'histEmpty';
+                  else { const R = aptBandRows(pnHistoryFor(ents[0], ents.reduce((a, ap) => a.concat(ap.trades || []), []), null) || []); why = R.rows.length === 0 ? 'no5yTrades' : (R.total < 12 ? 'few5y' : 'noMyBand'); }
+                }
+              }
+            }
+          } catch (e) { why = 'error'; }
+          out.why[why] = (out.why[why] || 0) + 1;
+        });
         // 자료 내리기(메모리)
         delete dataCache[lw]; delete rentCacheByLawd[lw]; mergedLawdCds.delete(lw);
         return out;
       }, lawd);
-      Object.assign(charts, res.charts); Object.assign(hist, res.hist); Object.assign(band, res.band || {});
+      Object.assign(charts, res.charts); Object.assign(hist, res.hist); Object.assign(band, res.band || {}); Object.keys(res.why || {}).forEach((k) => { bandWhy[k] = (bandWhy[k] || 0) + res.why[k]; });
     } catch (e) { console.log('가격 그래프 계산 실패', lawd, String(e).slice(0, 120)); }
     done++;
     if (done % 20 === 0) console.log(`가격 그래프 계산 ${done}/${lawds.length}곳 · 점 ${Object.keys(charts).length} · 10년 단지 ${Object.keys(hist).length} · ${Math.round((Date.now() - tStart) / 1000)}s`);
@@ -285,7 +303,7 @@ try {
   if (Object.keys(band).length >= 100) {
     for (let t = 0; t < 4; t++) {
       const { error } = await supabase.from('leader_follower_cache').upsert({ id: 'board|band|0', payload: { items: band, at: Date.now() }, fetched_at: now }, { onConflict: 'id' });
-      if (!error) { console.log(`✅ 평형 활발도 올림: ${Object.keys(band).length}건`); break; }
+      if (!error) { console.log(`✅ 평형 활발도 올림: ${Object.keys(band).length}건`); console.log('평형 활발도 사유별 건수:', JSON.stringify(bandWhy)); break; }
       console.log('평형 활발도 저장 재시도', error.message); await new Promise((res) => setTimeout(res, 3000 * (t + 1)));
     }
   } else console.log('평형 활발도 계산이 너무 적어 올리지 않음');
