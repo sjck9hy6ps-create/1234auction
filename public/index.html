@@ -4566,7 +4566,7 @@ function nvAptCard(r) {
         rec: e ? am(e.bid) : '', recPct: e && r.sale ? Math.round(e.bid / r.sale * 100) : null,
         spec: bbEsc(r.region) + (r.pyung ? ' · 아파트 ' + r.pyung + '평(' + Math.round(r.pyung * 3.305785) + '㎡)' : '') + (r.floor ? ' · ' + r.floor + '층' : '') + ' · ' + (r.fails == null ? '' : (r.fails === 0 ? '신건' : r.fails + '회 유찰')),
         sum: '<span class="nv-i">예상매도가 <b>' + am(r.sale) + '</b></span><span class="nv-i">최저가 ' + am(r.minBid) + '</span>' + (r.winbid && r.winbid.price ? '<span class="nv-i">예상 낙찰가 <b>' + am(r.winbid.price) + '</b></span>' : ''),
-        chips: [adjOf(r.a) ? { t: '🔶 규제지역', cls: 'r' } : null, permitFor(r) ? { t: '🚧 허가구역', cls: 'r' } : null, e ? { t: '낙찰 ' + (Math.round(e.p * 1000) / 10).toFixed(1) + '%', cls: e.p >= 0.6 ? 'g' : (e.p >= 0.35 ? 'o' : 'r') } : null, e ? { t: '순이익 ' + am(e.net) } : null,
+        chips: [adjOf(r.a) ? { t: '🔶 규제지역', cls: 'r' } : null, permitFor(r) ? { t: '🚧 허가구역', cls: 'r' } : null, e ? { t: '낙찰 ' + (Math.round(e.p * 1000) / 10).toFixed(1) + '%', cls: e.p >= 0.6 ? 'g' : (e.p >= 0.35 ? 'o' : 'r') } : null, e ? { t: '순이익 ' + am(e.net) } : (r.netMin ? { t: '예상 순이익 ' + toEok(String(r.netMin.net)) + (r.netMin.assumed > 0 ? ' (인수 ' + toEok(String(r.netMin.assumed)) + ' 반영)' : ''), cls: r.netMin.net < 0 ? 'r' : '' } : null),
             os ? { t: '1년 거래 ' + (os.n12 || 0) + '건', cls: (os.n12 || 0) >= 6 ? 'g' : ((os.n12 || 0) >= 3 ? '' : 'r') } : null, r.liq ? { t: '💧 6개월 내 되팔림 ' + Math.round(r.liq.p6) + '%' + (r.holdFromSupply ? ' · 매물 많음' : ''), cls: r.liq.p6 >= 30 ? 'g' : (r.liq.p6 < 18 ? 'r' : '') } : null, r.niche ? { t: '🧭 틈새', cls: 'g' } : null, r.issueSuspect ? { t: '🚩 이슈 의심', cls: 'r' } : null,
             aptBandChip(r), l.st === 'yes' ? { t: '📋 매물 ' + l.n + '건', cls: 'g' } : (l.st === 'none' ? { t: '📋 매물 없음' } : null), rightsNeeded(r, r.visit.go) ? { t: '⚖️ 권리분석 필요', cls: 'o' } : null], note: r.a.fav ? r.a.favNote : '' });
 }
@@ -19963,6 +19963,38 @@ function solveAuctionBidFromRecord(a) {
     }
     return { bid: Math.round(lo), resaleVat: resaleVat, vatEstimated: !!(vatRec && vatRec.estimated), preTax: loPre, net: loNet };
 }
+/* 💰 정해진 입찰가·매도가에서의 세후 순이익 한 번 계산(2026-11-21, 사용자: 권리분석 후 인수보증금 때문에 순이익이 마이너스인데 목록엔 권리분석 전 금액이 보임) - solveAuctionBidFromRecord와 같은 비용식(권리분석 인수금 assumedCostRec 포함)을 입찰가 한 점에서만 계산. a.target=매도가, a.actualBid=입찰가 */
+function netAtBidFromRecord(a) {
+    var saleValue = parseInt(a.target) || 0, bid = parseInt(a.actualBid) || 0; if (!saleValue || !bid) return null;
+    var propType = a.propType || '', pyung = parseFloat(a.pyung) || 0;
+    var houseRank = myHouseRankFor(a), isAdjusted = adjOf(a), isLocalCheap = effLocalCheap(a, saleValue);
+    var repair = parseInt(a.repair) || 0, etc = parseInt(a.etc) || 0, unpaidMgmtFee = parseInt(a.unpaidMgmtFee) || 0;
+    var officialPriceWon = parseInt(a.officialPriceWon) || 0, holdsJune1 = !!a.holdsJune1;
+    var totalOfficialPriceManwon = parseInt(a.totalOfficialPriceManwon) || myTotalOfficialWith(officialPriceWon);
+    var holdMonths = parseInt(a.holdMonths) || 0;
+    var interestHoldMonths = holdMonths > 0 ? holdMonths : (parseInt(a.holdAuto) > 0 ? parseInt(a.holdAuto) : DEFAULT_INTEREST_HOLD_MONTHS);
+    var propertyTax = calcPropertyTax(officialPriceWon, houseRank, holdsJune1, holdMonths), compTax = calcCompTax(totalOfficialPriceManwon, officialPriceWon, houseRank, holdsJune1, holdMonths);
+    var moving = parseInt(a.moving) || calcMovingFee(pyung) || 0, cleaning = parseInt(a.cleaning) || calcCleaningFee(pyung) || 0;
+    var bidMethod = a.bidMethod || 'dealer', appraisal = parseInt(a.appraisal) || 0, addr = a.addr || '';
+    var loanRateInput = parseFloat(a.loanRate), loanRate = (loanRateInput > 0) ? loanRateInput : calcRegionAwareLoan(bidMethod, addr, saleValue, appraisal, saleValue).rate;
+    var prepRateIn = parseFloat(a.loanPrepayFeeRate), prepRate = (prepRateIn > 0) ? prepRateIn : DEFAULT_LOAN_PREPAY_FEE_RATE;
+    var agentFee = calcAgentFee(saleValue, propType), evictionFee = calcEvictionFee(pyung);
+    var vatRec = bidMethod === 'dealer' ? calcAuctionVatFromRecord(Object.assign({}, a, { bidMethod: bidMethod }), saleValue) : null;
+    var resaleVat = vatRec && vatRec.applicable && vatRec.computable ? vatRec.vat : 0;
+    var acqTax = calcAcquisitionTaxDetailed(bid, propType, pyung, houseRank, isAdjusted, isLocalCheap), registryFee = calcRegistryFee(bid);
+    var loanAmount = calcRegionAwareLoan(bidMethod, addr, bid, appraisal, saleValue).amount;
+    var interestCost = calcLoanInterest(loanAmount, loanRate, interestHoldMonths), prepayFee = calcLoanPrepayFee(loanAmount, prepRate);
+    var assumed = assumedCostRec(a, bid);
+    var preTaxCost = bid + acqTax + registryFee + evictionFee + agentFee + repair + etc + moving + cleaning + interestCost + prepayFee + assumed + unpaidMgmtFee + propertyTax + compTax + resaleVat;
+    var preTaxProfit = saleValue - preTaxCost, taxResult = calcResaleIncomeTax(bidMethod, preTaxProfit, holdMonths, isAdjusted, houseRank);
+    return { net: Math.round(preTaxProfit - taxResult.totalTax), pre: Math.round(preTaxProfit), assumed: Math.round(assumed || 0) };
+}
+function netAtMinBidFor(row) {   // 최저가로 입찰해 예상매도가에 팔 때의 세후 순이익(권리분석 인수금 반영) - 추천가가 없을 때도 금액을 보여 주려고
+    try {
+        if (!row || !row.sale || !row.minBid) return null; var a = row.a;
+        return netAtBidFromRecord(Object.assign({}, a, { target: row.sale, actualBid: row.minBid, holdAuto: row.holdAuto, repair: effRepairFee(a, row.type, row.pyung, a.buildYear || row.estBuildYear || null) }));
+    } catch (e) { return null; }
+}
 /* 🔄 solveAuctionBidFromRecord()의 역함수(2026-08, 사용자 요청: "낙찰가 기준으로 낙찰자가
    얼마에 팔 생각이었는지 추론해서 시세를 검증하고 싶다") - 실제낙찰가(actualBid)는 고정하고,
    그 낙찰가로 marginValue(목표마진, 0=손익분기)를 달성하려면 매도가가 최소 얼마여야 하는지를
@@ -21682,8 +21714,11 @@ function computePick(row) {
         row.pick = pl;
     }
     var pk = row.pick;
-    if (!pk) { row.visit.why = '추천가를 계산하지 못했어요'; return; }
-    if (pk.infeasible) { row.visit.why = '최저가로 사도 순이익 ' + (pk.minM && pk.minM > minMarginOf(row) ? Math.round(pk.minM).toLocaleString() + '만(같은 평형 거래가 적어 하방 반영)' : minMarginTxt(row)) + '이 안 남아요' + (pk.cond ? ' (낙찰되는 가격대에서는 시장가가 더 낮게 나온 과거 사례를 반영하면 순이익이 플러스가 아니에요)' : ''); return; }
+    row.netMin = null;
+    if (!pk || pk.infeasible) { row.netMin = netAtMinBidFor(row); }   // 추천가가 없어도 권리분석 인수금까지 넣은 최저가 입찰 순이익을 보여 줌
+    var nmTxt = function() { var m = row.netMin; return m ? ' - 최저가(' + toEok(String(row.minBid)) + ')로 입찰해 ' + toEok(String(Math.round(row.sale))) + '에 팔면 예상 순이익 ' + toEok(String(m.net)) + (m.assumed > 0 ? ' (인수 보증금 ' + toEok(String(m.assumed)) + ' 반영)' : '') : ''; };
+    if (!pk) { row.visit.why = '추천가를 계산하지 못했어요' + nmTxt(); return; }
+    if (pk.infeasible) { row.visit.why = '최저가로 사도 순이익 ' + (pk.minM && pk.minM > minMarginOf(row) ? Math.round(pk.minM).toLocaleString() + '만(같은 평형 거래가 적어 하방 반영)' : minMarginTxt(row)) + '이 안 남아요' + (pk.cond ? ' (낙찰되는 가격대에서는 시장가가 더 낮게 나온 과거 사례를 반영하면 순이익이 플러스가 아니에요)' : '') + nmTxt(); return; }
     if (!pk.ev) { row.visit.why = '순이익이 남는 입찰가가 없어요'; return; }
     /* 2026-11-08 사용자 지시: 이슈 강한 의심 물건도 후보로 보여줌(경고는 그대로 표시) */
     /* 2026-11-08(사용자: 지방 추천가 손해 27%) ① 지방은 같은 평형 최근 6개월 거래가 0건이면 추천가를 내지 않음 - 과거 낙찰 가정 29건 중 69%가 손해(낙찰 뒤 시장가 중앙 -35.6%), 총 손실의 약 절반 */
@@ -22760,7 +22795,7 @@ function renderBidBoardLite() {
                 + '<td data-l="추천가" class="r">' + (e ? '<b class="bb2-rec">' + money(e.bid) + '</b>' + (r.sale ? '<div class="bb-sub" title="추천가 ÷ 예상매도가(시세)">시세의 <b>' + Math.round(e.bid / r.sale * 100) + '%</b></div>' : '') : '<span class="bb-sub">-</span>') + '</td>'
                 + '<td data-l="낙찰 가능성" class="r">' + (pc != null ? '<b style="color:' + col + ';">' + (Math.round(e.p * 1000) / 10).toFixed(1) + '%</b>' : '-') + '</td>'
                 + '<td data-l="예상 입찰자" class="r">' + compCellHtml(r) + '</td>'
-                + '<td data-l="순이익" class="r">' + (e ? money(e.net) : '-') + '</td>'
+                + '<td data-l="순이익" class="r">' + (e ? money(e.net) : (r.netMin ? '<span style="color:' + (r.netMin.net < 0 ? '#b91c1c' : '#6b7280') + ';font-weight:700;" title="추천가가 없어 최저가로 입찰해 예상매도가에 팔 때의 순이익이에요' + (r.netMin.assumed > 0 ? ' (권리분석 인수 보증금 ' + toEok(String(r.netMin.assumed)) + ' 반영)' : '') + '">' + toEok(String(r.netMin.net)) + '</span>' : '-')) + '</td>'
                 + '<td data-l="마진율" class="r">' + (mr != null ? mr.toFixed(1) + '%' : '-') + '</td></tr>';
         }).join('') + '</tbody></table>'
         + (rows.length > (bidBoardState.liteLimit || pageN()) ? '<div style="text-align:center;padding:14px;"><button class="bb-csv" style="font-size:13px;padding:8px 18px;" onclick="bbLiteMore()">+ 더 보기 (남은 ' + (rows.length - (bidBoardState.liteLimit || pageN())) + '건 · 지금 ' + (bidBoardState.liteLimit || pageN()) + '건 표시)</button></div>' : '');
@@ -23498,7 +23533,7 @@ async function renderBidDrawer() {
             var rt = pe && row.sale ? (pe.pre / row.sale * 100).toFixed(1) + '%' : '-';
             card = '<div class="dr-pickcard ' + (go ? 'go' : 'pass') + '"><div class="pk-v">' + (go ? '🚶 임장 추천' : '패스') + (row.visit && row.visit.why ? ' · ' + bbEsc(row.visit.why) : '') + '</div>'
                 + (pe ? '<div class="pk-sub">예상 순이익(세후) <b>' + fmt(pe.net) + '</b> · 마진율(세전) ' + rt + (row.pick.max ? '<br>입찰 상한 ' + fmt(row.pick.max.bid) + (isFirstFloor(row.a) ? ' <span title="1층은 중층보다 평균 8.7% 싸고 편차가 커서 필요 마진을 20% 더 둬요" style="color:#b45309;">(1층 +20%)</span>' : '') : '') + (row.ownStats ? '<br>같은 단지 같은 평형 거래: 최근 1년 <b>' + (row.ownStats.n12 || 0) + '건</b> · 올해 ' + (row.ownStats.nYear || 0) + '건' + (row.ownStats.lastAgeM != null ? ' · 마지막 ' + row.ownStats.lastAgeM + '개월 전' : '') : '') + '</div>'
-                    : '<div class="pk-sub">추천가가 없어요</div>')
+                    : '<div class="pk-sub">추천가가 없어요' + (row.netMin ? '<br>최저가(' + fmt(row.minBid) + ')로 입찰해 예상매도가 ' + fmt(row.sale) + '에 팔면 예상 순이익(세후) <b style="color:' + (row.netMin.net < 0 ? '#b91c1c' : '#374151') + ';">' + fmt(row.netMin.net) + '</b>' + (row.netMin.assumed > 0 ? '<br>권리분석 인수 보증금 <b>' + fmt(row.netMin.assumed) + '</b>이 비용에 들어 있어요' : '') : '') + '</div>')
                 + '</div>';
             var legacy = h.slice(i1, i2); legacy = legacy.slice(legacy.indexOf('</div>') + 6); // 예전 판정 알약(❌ 제외 등)은 새 판정(맨 위 카드)과 충돌해서 뺌
             h = h.slice(0, i1) + card + drawerPriceGridHtml(row) + issueHtml + bidScoreHtml(row) + aptBandHtml(row) + permitDrawerHtml(row) + visitSectionHtml(row) + '<details class="dr-more"><summary>자세히 (근거·범위·실거래·비용)</summary>' + legacy + '</details>' + h.slice(i2);
