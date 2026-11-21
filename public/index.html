@@ -32785,7 +32785,7 @@ function ledgerYearsHtml(calcs, done) {
             return '<div class="indicator-box"><div class="indicator-title">' + y + '년 <span class="ma-sub" style="font-weight:normal;">매도 ' + g.n + '건</span></div><div class="indicator-grid lg-grid">'
                 + lgItem('매도가 합', maFmt(g.sale)) + lgItem('총비용 합', maFmt(g.cost)) + lgItem('사업소득', maFmt(g.pre), g.pre < 0 ? '#c62828' : '#2e7d32')
                 + lgItem('소득 구간', br ? Math.round(br.rate * 100) + '%' : '-', '', br ? '앱 근사 세금 ' + maFmt(est) : '') + lgItem(g.estN ? '납부 세금(예상 포함)' : '실제 납부 세금', g.taxN ? maFmt(g.tax) : '미입력', '', g.taxN ? (g.estN ? '예상 ' + g.estN + '건 · 실제 ' + (g.taxN - g.estN) + '건' : g.taxN + '/' + g.n + '건 입력') : '')
-                + lgItem('세후', allTax ? maFmt(g.pre - g.tax) : '-', allTax ? '#2e7d32' : '', allTax ? (g.estN ? '예상 세금 포함' : '') : '세금 입력 후') + '</div></div>';
+                + lgItem('순수익 (세금 뺀 후)', allTax ? maFmt(g.pre - g.tax) : '-', allTax ? '#2e7d32' : '', allTax ? (g.estN ? '예상 세금 ' + g.estN + '건 기준' : '실제 세금 기준') : '세금 입력 후') + '</div></div>';
         }).join('') + '<div class="ma-sub">소득 구간은 그 해 사업소득(올해는 내 자산 탭의 다른 종합소득 포함)에 종합소득세 누진 구간을 적용한 근사예요. 실제 납부액과 다르면 실제 값을 따르세요.</div></div>';
 }
 function ledgerSnapHtml(r) {
@@ -32817,7 +32817,7 @@ function ledgerSectionHtml(legacy) {
             + '<div class="ma-sub" style="margin:-2px 0 6px;">' + maEsc(r.caseNo || '') + (r.win && r.win.date ? ' · 낙찰 ' + maEsc(r.win.date) : '') + (sold ? ' · 매도 ' + maEsc(r.sale.date || '') + (c.hold ? ' (' + c.hold + '개월)' : '') : '') + '</div>'
             + '<div class="indicator-grid lg-grid">' + lgItem('낙찰가', fmt(c.winP)) + lgItem('매도가', sold ? fmt(c.saleP) : '-') + lgItem('총비용', fmt(c.totalCost), '', '낙찰가+비용+이자')
             + lgItem('세전 순이익', c.pre != null ? fmt(c.pre) : '-', col(c.pre), c.margin != null ? '마진율 ' + c.margin.toFixed(1) + '%' : '')
-            + lgItem(c.taxEst ? '세후(예상 세금)' : '세후(실제 세금)', c.net != null ? fmt(c.net) : (sold ? '세금 미입력' : '-'), col(c.net), c.hasTax ? '세금 ' + fmt(c.taxSum) + (c.taxEst ? ' 예상' : '') : '')
+            + lgItem('순수익 (세금 뺀 후)', c.net != null ? fmt(c.net) : (sold ? '세금 미입력' : '-'), col(c.net), c.hasTax ? '세금 ' + fmt(c.taxSum) + (c.taxEst ? ' 예상' : ' 실제') + ' 제외' : '')
             + lgItem('수익률', c.roi != null ? c.roi.toFixed(1) + '%' : '-', '', c.annual != null ? '연 ' + Math.round(c.annual) + '%' : '') + '</div>'
             + (open ? '<div class="lg-detail" onclick="event.stopPropagation();" style="margin-top:8px;">' + ledgerDetailHtml(r, c) + '</div>' : '') + '</div>';
     }).join('');
@@ -32980,7 +32980,7 @@ function ledgerLive() {   // 장부 입력 화면 위쪽 계산 박스(입력할
         ledgerSyncDraft(); var d = JSON.parse(JSON.stringify(ledgerDraft)); d.items = (d.items || []).filter(function(x) { return lgN(x.amount) > 0; });
         var c = ledgerCalc(d), fm = maFmt, col = function(v) { return v == null ? '' : (v < 0 ? '#c62828' : '#2e7d32'); }, sold = lgN(c.saleP) > 0;
         el.innerHTML = lgItem('낙찰가', c.winP ? fm(c.winP) : '-') + lgItem('비용 합계', fm(c.itemsTotal), '', (c.vatTotal ? '부가세 ' + fm(c.vatTotal) + (d.vatDeduct ? ' 환급(비용 제외)' : ' 포함') + (c.interest ? ' · ' : '') : '') + (c.interest ? '이자 ' + fm(c.interest) + ' 별도' : '')) + lgItem('총비용', fm(c.totalCost), '', '낙찰가+비용+이자')
-            + lgItem('세전 순이익', c.pre != null ? fm(c.pre) : '매도가 입력 후', col(c.pre), c.margin != null ? '마진율 ' + c.margin.toFixed(1) + '%' : '') + lgItem(c.taxEst ? '세후(예상 세금)' : '세후(실제 세금)', c.net != null ? fm(c.net) : (sold ? '세금 입력 후' : '-'), col(c.net), c.taxEst ? '세금 ' + fm(c.taxSum) + ' 예상' : '')
+            + lgItem('세전 순이익', c.pre != null ? fm(c.pre) : '매도가 입력 후', col(c.pre), c.margin != null ? '마진율 ' + c.margin.toFixed(1) + '%' : '') + lgItem('순수익 (세금 뺀 후)', c.net != null ? fm(c.net) : (sold ? '세금 입력 후' : '-'), col(c.net), c.hasTax ? '세금 ' + fm(c.taxSum) + (c.taxEst ? ' 예상' : ' 실제') + ' 제외' : '')
             + lgItem('투입 현금(대출 후)', fm(c.cash), '', c.loanSum ? '대출 ' + fm(c.loanSum) : '') + (c.hold != null ? lgItem('보유', c.hold + '개월') : '');
     } catch (e) {}
 }
