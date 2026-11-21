@@ -112,7 +112,7 @@ try {
 //    ① 물건별 최근 3년 같은 평형(아파트)·같은 건물 비슷한 면적(빌라) 거래 [날짜, 가격(만), 층, 직거래]
 //    ② 빌라 최근거래가 1건(앱과 같은 규칙 villaRecentPick, 비교 건물 승강기 정보 포함)
 //    ③ 단지별 10년 그래프의 '최근 자료보다 오래된' 달 [년월, 거래 수, 중앙값]
-const charts = {}, hist = {};
+const charts = {}, hist = {}, band = {};   // band: 단지 안 잘 거래되는 평형 요약(2026-11-21) id → [0비활발·1보통·2활발, 이 평형 거래수, 순위, 평형 수, 비중%]
 try {
   const lawds = await page.evaluate(() => {
     const set = {};
@@ -127,7 +127,7 @@ try {
     if (Date.now() - tStart > 45 * 60 * 1000) { console.log('가격 그래프 계산 시간 초과 - 나머지 지역은 건너뜀'); break; }
     try {
       const res = await page.evaluate(async (lw) => {
-        const out = { charts: {}, hist: {} };
+        const out = { charts: {}, hist: {}, band: {} };
         if (!dataCache[lw]) { const dd = await fetchHouseDataCached(lw); if (dd && !dd.error && Array.isArray(dd.apt)) await ingestRegionHouseData(dd, '', lw); }
         if (!dataCache[lw]) return out;
         const lawdOf = (r) => r.lawd || bidBoardLawdOf(r.a);
@@ -142,6 +142,7 @@ try {
           } catch (e) {}
         };
         aptRows.forEach(add); villaRows.forEach(add);
+        aptRows.forEach((r) => { try { const b = aptBandBrief(r, true); if (b) out.band[r.id] = [{ bad: 0, mid: 1, good: 2 }[b.v], b.n, b.rank, b.nb, b.share]; } catch (e) {} });
         // ② 빌라 최근거래가 (승강기 정보를 못 받은 물건은 저장하지 않음 - 앱이 실시간으로 계산)
         let idx = 0;
         const work = async () => {
@@ -191,7 +192,7 @@ try {
         delete dataCache[lw]; delete rentCacheByLawd[lw]; mergedLawdCds.delete(lw);
         return out;
       }, lawd);
-      Object.assign(charts, res.charts); Object.assign(hist, res.hist);
+      Object.assign(charts, res.charts); Object.assign(hist, res.hist); Object.assign(band, res.band || {});
     } catch (e) { console.log('가격 그래프 계산 실패', lawd, String(e).slice(0, 120)); }
     done++;
     if (done % 20 === 0) console.log(`가격 그래프 계산 ${done}/${lawds.length}곳 · 점 ${Object.keys(charts).length} · 10년 단지 ${Object.keys(hist).length} · ${Math.round((Date.now() - tStart) / 1000)}s`);
@@ -277,6 +278,17 @@ try {
     console.log(`그래프 점 캐시 데우기 ${okN}/${NCH}`);
   } else console.log('가격 그래프 점이 너무 적어 올리지 않음');
 } catch (e) { console.log('가격 그래프 점 올리기 실패(무시):', String(e).slice(0, 200)); }
+
+// ── 단지 안 잘 거래되는 평형 요약 올리기(2026-11-21): 입찰후보 목록 간단 표기용 - 한 줄(board|band|0)
+try {
+  if (Object.keys(band).length >= 100) {
+    for (let t = 0; t < 4; t++) {
+      const { error } = await supabase.from('leader_follower_cache').upsert({ id: 'board|band|0', payload: { items: band, at: Date.now() }, fetched_at: now }, { onConflict: 'id' });
+      if (!error) { console.log(`✅ 평형 활발도 올림: ${Object.keys(band).length}건`); break; }
+      console.log('평형 활발도 저장 재시도', error.message); await new Promise((res) => setTimeout(res, 3000 * (t + 1)));
+    }
+  } else console.log('평형 활발도 계산이 너무 적어 올리지 않음');
+} catch (e) { console.log('평형 활발도 올리기 실패(무시):', String(e).slice(0, 200)); }
 
 // ── 10년 그래프 미리 계산본 올리기(단지 키 해시로 40묶음)
 try {

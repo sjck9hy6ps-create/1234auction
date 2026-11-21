@@ -4568,7 +4568,7 @@ function nvAptCard(r) {
         sum: '<span class="nv-i">예상매도가 <b>' + am(r.sale) + '</b></span><span class="nv-i">최저가 ' + am(r.minBid) + '</span>' + (r.winbid && r.winbid.price ? '<span class="nv-i">예상 낙찰가 <b>' + am(r.winbid.price) + '</b></span>' : ''),
         chips: [adjOf(r.a) ? { t: '🔶 규제지역', cls: 'r' } : null, permitFor(r) ? { t: '🚧 허가구역', cls: 'r' } : null, e ? { t: '낙찰 ' + (Math.round(e.p * 1000) / 10).toFixed(1) + '%', cls: e.p >= 0.6 ? 'g' : (e.p >= 0.35 ? 'o' : 'r') } : null, e ? { t: '순이익 ' + am(e.net) } : null,
             os ? { t: '1년 거래 ' + (os.n12 || 0) + '건', cls: (os.n12 || 0) >= 6 ? 'g' : ((os.n12 || 0) >= 3 ? '' : 'r') } : null, r.liq ? { t: '💧 6개월 내 되팔림 ' + Math.round(r.liq.p6) + '%' + (r.holdFromSupply ? ' · 매물 많음' : ''), cls: r.liq.p6 >= 30 ? 'g' : (r.liq.p6 < 18 ? 'r' : '') } : null, r.niche ? { t: '🧭 틈새', cls: 'g' } : null, r.issueSuspect ? { t: '🚩 이슈 의심', cls: 'r' } : null,
-            l.st === 'yes' ? { t: '📋 매물 ' + l.n + '건', cls: 'g' } : (l.st === 'none' ? { t: '📋 매물 없음' } : null), rightsNeeded(r, r.visit.go) ? { t: '⚖️ 권리분석 필요', cls: 'o' } : null], note: r.a.fav ? r.a.favNote : '' });
+            aptBandChip(r), l.st === 'yes' ? { t: '📋 매물 ' + l.n + '건', cls: 'g' } : (l.st === 'none' ? { t: '📋 매물 없음' } : null), rightsNeeded(r, r.visit.go) ? { t: '⚖️ 권리분석 필요', cls: 'o' } : null], note: r.a.fav ? r.a.favNote : '' });
 }
 function renderFavLite(body) {
     var rows = favRows().sort(function(x, y) { return (x.dday ? x.dday.diffDays : 9999) - (y.dday ? y.dday.diffDays : 9999); });
@@ -22938,7 +22938,7 @@ function renderBidBoardRow(r) {
     var tierPill = function(t, prefix) { return '<span class="bb-pill ' + (t === '상위20%' ? 'good' : (t === '하위40%' ? 'bad' : '')) + '">' + (prefix || '') + (t === '상위20%' ? '🔥 인기 상위 20%' : (t === '하위40%' ? '거래 드묾(하위 40%)' : '인기 중간')) + '</span>'; };
     var livHtml = r.liv ? '<div style="font-weight:bold;font-size:12px;margin-bottom:2px;">생활권 거래량 <span style="color:' + (r.liv.tier === '상위20%' ? '#2e7d32' : (r.liv.tier === '하위40%' ? '#c62828' : '#ef6c00')) + ';">' + (r.liv.rank ? r.liv.rank + '위' : '-') + '</span><span style="color:#888;font-weight:normal;font-size:11px;"> / ' + (r.liv.radius >= 1000 ? (r.liv.radius / 1000) + 'km' : r.liv.radius + 'm') + ' 안 ' + r.liv.of + '단지</span></div>' : '';
     var toR = turnoverOf(r);
-    var popCell = r.pending ? '' : liqShortHtml(r) + (toR ? '<div style="font-size:11.5px;margin-bottom:2px;">회전율 <b style="color:' + toR.grade.c + ';">' + toR.rate + '%</b> <span style="color:#888;">(' + toR.grade.t + ')</span></div>' : '') + livHtml + (r.pop
+    var popCell = r.pending ? '' : liqShortHtml(r) + (function() { var bc = aptBandChip(r); return bc ? '<div style="margin:2px 0;"><span class="bb-pill ' + (bc.v === 'good' ? 'good' : (bc.v === 'bad' ? 'bad' : '')) + '" title="' + bbEsc(bc.tip) + '">' + bbEsc(bc.t) + '</span></div>' : ''; })() + (toR ? '<div style="font-size:11.5px;margin-bottom:2px;">회전율 <b style="color:' + toR.grade.c + ';">' + toR.rate + '%</b> <span style="color:#888;">(' + toR.grade.t + ')</span></div>' : '') + livHtml + (r.pop
         ? (r.pop.band
             // 2026-10(사용자 요청: "입찰후보 탭 안에 해당 평형에 맞는 인기순위도 표기") - 같은 동·같은 평형대 안 순위를 맨 위에 크게
             ? '<div style="font-weight:bold;font-size:12.5px;">' + r.pop.band.name + ' 거래량 <span style="color:var(--ui-blue,#1e5eff);">' + r.pop.band.rankInBand + '위</span>'
@@ -23193,7 +23193,8 @@ function drawerChartHtml(tr, title, row) {
     var allBy = (hp && hp.allByM) || (row ? drawerRecentAllByM(row) : null);
     var svg = ''; try { svg = buildPriceChartSvg(pts, drawerChartRange, null, allBy, row ? drawerRentPoints(row) : null); } catch (e) { svg = ''; }
     if (!svg) return '';
-    return '<div class="dr-sec"><h4>' + title + ' 시세 그래프 <span class="dr-sub" style="display:inline;">(점=실거래, 선=월 중앙값, 아래 막대=거래량: 파랑 같은 평형 · 회색 단지 전체 평형' + note + ')</span></h4>' + svg + '</div>';
+    var bc0 = row ? aptBandChip(row) : null, bcH = bc0 ? ' <span class="bb-pill ' + (bc0.v === 'good' ? 'good' : (bc0.v === 'bad' ? 'bad' : '')) + '" style="font-weight:600;" title="' + bbEsc(bc0.tip) + '">' + bbEsc(bc0.t) + '</span>' : '';
+    return '<div class="dr-sec"><h4>' + title + ' 시세 그래프' + bcH + ' <span class="dr-sub" style="display:inline;">(점=실거래, 선=월 중앙값, 아래 막대=거래량: 파랑 같은 평형 · 회색 단지 전체 평형' + note + ')</span></h4>' + svg + '</div>';
 }
 /* 📊 가격 그래프 점 미리 계산본(2026-11-15, 사용자: 가격차트 금액을 사전에 계산해 로딩 단축) - 서버(precompute-board.mjs)가 물건별 최근 3년 같은 평형(빌라는 같은 건물 비슷한 면적) 거래를
    [날짜, 가격, 층, 직거래]로 저장해 둠. 물건 번호로 나눈 40개 묶음 중 하나만 받아 지역 실거래(수 MB)를 받기 전에도 그래프·최근거래가를 그림. 지역 자료가 로드되면 원래 방식(실시간 계산)을 씀 */
@@ -23547,6 +23548,35 @@ function aptBandRows(trades) {
         return { band: b, n: g.length, share: sh, med: pr.length ? pr[Math.floor(pr.length / 2)] : 0, area: ar, v: sh >= 1.2 / nb ? 'good' : ((sh <= 0.5 / nb || g.length <= 1) ? 'bad' : 'mid') };
     });
     return { rows: rows, total: total, nb: nb };
+}
+/* 🏢 간단 표기용(2026-11-21): 이 물건 평형의 활발/보통/비활발 한 줄 요약. 서버가 입찰후보 전체를 미리 계산해 둔 값(board|band, 목록용)을 먼저 쓰고, 없으면 지역 실거래가 이미 받아져 있을 때만 직접 계산 */
+var bandPre = { items: null, pend: false, live: {} };
+function bandPreLoad() {
+    if (bandPre.items || bandPre.pend) return; bandPre.pend = true;
+    fetch('/api/data-coverage?mode=boardCacheChunk&kind=band&i=0&v=' + Math.floor(Date.now() / 600000)).then(function(r) { return r.json(); }).then(function(d) {
+        bandPre.items = (d && d.items) || {}; bandPre.pend = false;
+        try { if (typeof renderBidBoard === 'function' && document.getElementById('bid-board') && document.getElementById('bid-board').style.display !== 'none') renderBidBoard(); } catch (e) {}
+    }).catch(function() { bandPre.items = {}; bandPre.pend = false; });
+}
+function aptBandBrief(row, fresh) {   // fresh=true: 서버 미리 계산본·임시 저장을 쓰지 않고 지금 받은 지역 실거래로 새로 계산(사전 계산 스크립트용)
+    if (!row || row.type !== 'apt' || !row.a) return null;
+    if (!fresh && !bandPre.items) bandPreLoad();
+    var it = !fresh && bandPre.items && bandPre.items[row.id]; if (it) return { v: ['bad', 'mid', 'good'][it[0]], n: it[1], rank: it[2], nb: it[3], share: it[4] };
+    var a = row.a, lawd = row.lawd || bidBoardLawdOf(a); if (!dataCache[lawd]) return null;
+    var sig = String(row.id) + '|' + (a.pyung || ''), c = fresh ? undefined : bandPre.live[sig]; if (c !== undefined) return c;
+    var bf = row.bunjiFull || fullBunjiFromAddr(a.addr, a.dong, a.bunji), all = [];
+    try { ownComplexEntries(a, bf, 'apt').forEach(function(ap) { (ap.trades || []).forEach(function(t) { all.push(t); }); }); } catch (e) {}
+    var R = aptBandRows(all), out = null;
+    if (R.total >= 6 && R.rows.length >= 2) {
+        var myAr = (parseFloat(a.pyung) || 0) * 3.305785, me = null; R.rows.forEach(function(r) { if (!me || Math.abs(r.area - myAr) < Math.abs(me.area - myAr)) me = r; });
+        if (me && Math.abs(me.area - myAr) <= 3) out = { v: me.v, n: me.n, rank: R.rows.filter(function(r) { return r.n > me.n; }).length + 1, nb: R.rows.length, share: Math.round(me.share * 100) };
+    }
+    if (!fresh) bandPre.live[sig] = out; return out;
+}
+function aptBandChip(row, forChart) {
+    var b = aptBandBrief(row); if (!b) return null;
+    var t = { good: '활발', mid: '보통', bad: '비활발' }[b.v];
+    return { t: '🏢 평형 ' + t + ' · 단지 거래의 ' + b.share + '% (' + b.rank + '위/' + b.nb + ')', cls: b.v === 'good' ? 'g' : (b.v === 'bad' ? 'r' : ''), v: b.v, tip: '같은 단지 최근 12개월 매매 중 이 평형의 거래 ' + b.n + '건 · 비중 ' + b.share + '% · ' + b.rank + '위/' + b.nb + '개 평형' };
 }
 function aptBandHtml(row) {
     if (!row || row.type !== 'apt' || !row.a) return '';
