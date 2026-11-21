@@ -23569,7 +23569,7 @@ function aptBandHtml(row) {
     } else h += '<div class="dr-sub">이 물건 평형(' + (a.pyung || '-') + '평)과 같은 평형의 거래가 최근 12개월엔 없어요.</div>';
     h += '<table class="dr-tbl" style="margin-top:6px;"><tr><td class="dr-sub">평형(전용)</td><td class="dr-sub r">매매</td><td class="dr-sub r">비중</td><td class="dr-sub r">중앙 매매가</td><td class="dr-sub r">판정</td></tr>'
         + R.rows.slice().sort(function(x, y) { return y.n - x.n; }).map(function(r) { var c = vt[r.v]; return '<tr' + (r === me ? ' style="background:#eff6ff;font-weight:700;"' : '') + '><td>' + Math.round(r.area) + '㎡ <span class="dr-sub" style="display:inline;">(' + (Math.round(r.area / 3.305785 * 10) / 10) + '평)</span></td><td class="r">' + r.n + '건</td><td class="r">' + Math.round(r.share * 100) + '%</td><td class="r">' + fmt(r.med) + '</td><td class="r" style="color:' + c[1] + ';">' + c[0] + '</td></tr>'; }).join('') + '</table>';
-    h += '<div class="dr-sub" style="margin-top:4px;">같은 단지 최근 12개월 매매 ' + R.total + '건(직거래 제외)을 전용면적별로 센 값이에요. 비중이 평형이 늘어난 만큼 고르게 나눈 값(1/' + R.nb + ')의 1.2배 이상이면 활발, 0.5배 이하면 비활발이에요. 시험(오늘 기준 3·6·9·12개월 전에 이렇게 판정한 단지 1.7만~2.1만 개 평형): 이후 거래가 활발 평형에 평균 46~47%, 보통 23%, 비활발 10%로 몰렸고, 이후 거래가 한 건도 없던 평형은 활발 1~7%, 비활발 17~51%였어요. 지분경매·가격 판정에는 쓰지 않고 참고용으로만 보여 줘요.</div></div>';
+    h += '<div class="dr-sub" style="margin-top:4px;">같은 단지 최근 12개월 매매 ' + R.total + '건(직거래 제외)을 전용면적별로 센 값이에요. 평형이 ' + R.nb + '개라서 고르게 나누면 평형당 ' + Math.round(100 / R.nb) + '%인데, 그 1.2배 이상이면 활발, 0.5배 이하(또는 1건 이하)면 비활발이에요. 시험(오늘 기준 3·6·9·12개월 전에 이렇게 판정한 단지 1.7만~2.1만 개 평형): 이후 거래가 활발 평형에 평균 46~47%, 보통 23%, 비활발 10%로 몰렸고, 이후 거래가 한 건도 없던 평형은 활발 1~7%, 비활발 17~51%였어요. 지분경매·가격 판정에는 쓰지 않고 참고용으로만 보여 줘요.</div></div>';
     return h;
 }
 function bidScoreHtml(row) {
