@@ -22730,6 +22730,15 @@ function top10Rows() {
     top10Sorted(now);
     return now;
 }
+/* 🏘️ 빌라 환금성 곡선(2026-11-21, 사용자: 빌라도 아파트처럼 되팔기 기간을 생활권 거래 활발도로) - backtest-villa-liquidity.py: 수도권 빌라 낙찰사례 5,244건, 낙찰일 기준 반경 500m 최근 12개월 빌라 매매 수 구간별로
+   '낙찰 후 같은 건물·같은 층·같은 면적 되팔림 흔적'까지 걸린 달(18개월 안). 아파트 곡선과 같은 규칙(되팔림 25% 미만이면 75% 지점, 아니면 평균, 3~12개월). 빌라는 되팔림 흔적을 잡는 비율이 낮아(전체 23%) 대부분 구간이 12개월이에요.
+   구간: [하한, 상한, 되팔기 개월, 6개월 안 되팔림 %, 사례 수] */
+var VILLA_LIQ_CURVE = { at: '2026-11-21', bins: [[0, 0, 12, 2.3, 214], [1, 2, 12, 2.5, 240], [3, 5, 12, 8.0, 212], [6, 10, 12, 7.1, 312], [11, 20, 11, 8.4, 455], [21, 99999, 7, 17.3, 2048]] };
+function villaHoldFor(liq) {   // 반경 500m 최근 12개월 거래 수(최근 6개월 + 6~12개월) → 되팔기 개월
+    if (!liq || !liq.r500) return null;
+    var n12 = (liq.r500.a6 || 0) + (liq.r500.a12 || 0), b = VILLA_LIQ_CURVE.bins.filter(function(x) { return n12 >= x[0] && n12 <= x[1]; })[0];
+    return b ? { months: b[2], n12: n12, p6: b[3], n: b[4] } : null;
+}
 function top10VillaRows() {   // 빌라(수도권): 임장 후보 중 추천가가 있는 물건. 빌라 목록 필터(지역·월세 20만+ 등)와는 별개로 입찰일이 지나지 않은 후보 전체
     var s = bidBoardState, out = [], yrNow = new Date().getFullYear();
     try { if (typeof villaRestoreState !== 'undefined' && !villaRestoreState) villaRestoreCalc(); } catch (e) {}
@@ -22738,12 +22747,12 @@ function top10VillaRows() {   // 빌라(수도권): 임장 후보 중 추천가�
         if (r.dday && r.dday.diffDays < 0) return;
         if (s.region && s.region.indexOf('g:') === 0 && String(r.region).indexOf(s.region.slice(2) + ' ') !== 0) return;
         var pe = ev.pn.ev; if (!(pe.bid > 0) || !(pe.net > 0) || !(pe.p >= top10State.minP)) return;
-        var a = r.a, yr = ev.mp && ev.mp.age != null ? yrNow - ev.mp.age : null, nm = null;
-        try { nm = netAtBidFromRecord(Object.assign({}, a, { target: ev.ve.est, actualBid: pe.bid, repair: effRepairFee(a, 'villa', r.pyung, yr) })); } catch (e) { nm = null; }
-        if (!nm) return;
-        var cash = Math.max(nm.cash, 1000), hold = parseInt(a.holdMonths) > 0 ? parseInt(a.holdMonths) : 6, wait = r.dday ? Math.max(0, r.dday.diffDays) / 30 : 0, months = Math.max(1, wait + hold), rate = pe.net / cash * (12 / months);
+        var a = r.a, yr = ev.mp && ev.mp.age != null ? yrNow - ev.mp.age : null, nm = null, vh = villaHoldFor(ev.liq), hold = parseInt(a.holdMonths) > 0 ? parseInt(a.holdMonths) : (vh ? vh.months : 12);   // 입력한 보유개월 > 생활권 환금성 곡선 > 12개월(생활권 자료 없음)
+        try { nm = netAtBidFromRecord(Object.assign({}, a, { target: ev.ve.est, actualBid: pe.bid, holdAuto: hold, repair: effRepairFee(a, 'villa', r.pyung, yr) })); } catch (e) { nm = null; }
+        if (!nm || !(nm.net > 0)) return;   // 되팔기까지의 이자를 그 기간만큼 넣고도 순이익이 남는 물건만
+        var cash = Math.max(nm.cash, 1000), wait = r.dday ? Math.max(0, r.dday.diffDays) / 30 : 0, months = Math.max(1, wait + hold), rate = nm.net / cash * (12 / months);
         var nmV = villaNameFor(r); if (!nmV || String(nmV).replace(/\s/g, '').length < 2) nmV = String(a.dong || '').split(' ').pop() + ' ' + (a.bunji || '');   // 건물 이름을 못 읽은 빌라는 동·번지로 표시
-        out.push({ r: r, name: nmV, ev: { bid: pe.bid, net: pe.net, pre: null, p: pe.p }, cash: nm.cash, hold: hold, wait: Math.round(wait * 10) / 10, months: months, net: pe.net, rate: rate, exp: rate * pe.p, p: pe.p, sale: ev.ve.est, villa: true });
+        out.push({ r: r, name: nmV, ev: { bid: pe.bid, net: nm.net, pre: null, p: pe.p }, cash: nm.cash, hold: hold, holdBasis: vh ? '생활권 12개월 ' + vh.n12 + '건' : '생활권 자료 없음', wait: Math.round(wait * 10) / 10, months: months, net: nm.net, rate: rate, exp: rate * pe.p, p: pe.p, sale: ev.ve.est, villa: true });
     });
     return out;
 }
@@ -22776,10 +22785,10 @@ function renderTop10() {
             return '<tr class="bb2-row" onclick="document.getElementById(\'top10-bg\').style.display=\'none\';openBidDrawer(\'' + idJs + '\')"><td><b>' + (i + 1) + '</b></td><td class="bb2-name"><b>' + bbEsc(x.name || r.name) + '</b><div class="bb-sub">' + bbEsc(r.region) + (isV ? ' · 빌라' : '') + (r.pyung ? ' · ' + r.pyung + '평' : '') + (r.floor ? ' · ' + r.floor + '층' : '') + ' · ' + bbEsc(r.a.caseNo || '') + '</div></td>'
                 + '<td>' + (r.dday ? bbEsc(r.dday.label) : '-') + '<div class="bb-sub">' + bbEsc(r.a.bidDate || '') + '</div></td>'
                 + '<td class="r"><b>' + fmt(x.ev.bid) + '</b></td><td class="r">' + fmt(x.cash) + '</td><td class="r"><b style="color:#15803d;">' + fmt(x.net) + '</b><div class="bb-sub">' + (x.ev.pre != null && x.sale ? '마진율 ' + (x.ev.pre / x.sale * 100).toFixed(1) + '%' : (x.sale ? '예상매도가의 ' + (x.net / x.sale * 100).toFixed(1) + '%' : '')) + '</div></td>'
-                + '<td class="r">약 ' + (Math.round(x.months * 10) / 10) + '개월<div class="bb-sub">입찰까지 ' + x.wait + ' + 되팔기 ' + x.hold + (isV ? '(가정)' : '') + '</div></td><td class="r">' + (Math.round(x.p * 1000) / 10).toFixed(1) + '%</td>'
+                + '<td class="r">약 ' + (Math.round(x.months * 10) / 10) + '개월<div class="bb-sub">입찰까지 ' + x.wait + ' + 되팔기 ' + x.hold + '</div>' + (isV && x.holdBasis ? '<div class="bb-sub">' + bbEsc(x.holdBasis) + '</div>' : '') + '<div style="display:none"></div></td><td class="r">' + (Math.round(x.p * 1000) / 10).toFixed(1) + '%</td>'
                 + '<td class="r">' + Math.round(x.rate * 100) + '%</td><td class="r"><b>' + (Math.round(x.exp * 1000) / 10).toFixed(1) + '%</b></td></tr>';
         }).join('') + '</tbody></table>';
-    h += '<div class="dr-sub" style="margin-top:8px;">' + (isV ? '빌라는 되팔기까지 걸리는 기간을 따로 계산하지 않아 6개월로 가정했고(입력한 보유개월이 있으면 그 값), 순이익은 빌라 추천가 계산의 값을 그대로 썼어요. ' : '') + '계산: 내 돈 = 추천가 + 취득세·등기·명도·수리 등 − 대출(앱 대출 가정). 이자·세금·중개비는 보유·매도 때 드는 비용이라 내 돈에는 넣지 않고 순이익에서 뺐어요. 걸리는 기간 = 입찰까지 + 환금성 곡선으로 본 되팔기까지. 점수 = (순이익 ÷ 내 돈) × (12 ÷ 걸리는 달) × 낙찰 가능성. 참고용이며, 임장·권리분석·시세 확인은 따로 해야 해요.</div>';
+    h += '<div class="dr-sub" style="margin-top:8px;">' + (isV ? '빌라 되팔기 기간은 생활권(반경 500m) 최근 12개월 빌라 거래 수별 과거 낙찰사례 5,244건의 되팔림 기간으로 정했어요(0~10건 12개월 · 11~20건 11개월 · 21건 이상 7개월, 입력한 보유개월이 있으면 그 값). 빌라는 되팔림 흔적을 잡는 비율이 낮아(6개월 안 2~17%) 대부분 12개월로 나와요. 순이익은 그 기간의 이자를 넣어 다시 계산했어요. ' : '') + '계산: 내 돈 = 추천가 + 취득세·등기·명도·수리 등 − 대출(앱 대출 가정). 이자·세금·중개비는 보유·매도 때 드는 비용이라 내 돈에는 넣지 않고 순이익에서 뺐어요. 걸리는 기간 = 입찰까지 + 환금성 곡선으로 본 되팔기까지. 점수 = (순이익 ÷ 내 돈) × (12 ÷ 걸리는 달) × 낙찰 가능성. 참고용이며, 임장·권리분석·시세 확인은 따로 해야 해요.</div>';
     body.innerHTML = h;
 }
 /* 아파트 입찰후보 표(PC 화면) - 임장 후보·패스·전체와 즐겨찾기 탭이 같이 씀(2026-11-21: 즐겨찾기가 PC에서도 모바일식 카드로 나오던 것을 같은 표로) */
