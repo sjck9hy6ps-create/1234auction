@@ -32583,8 +32583,10 @@ function maWorkIncome(p) {
 }
 function myOtherIncome(p) { var w = maWorkIncome(p); return (w ? w.base : 0) + (parseInt((p || {}).otherIncome) || 0); }   // 근로소득 과세표준 + 그 밖의 종합소득
 function maWon(v) { if (v == null || isNaN(v)) return '-'; var w = Math.round(v * 10000); return (w < 0 ? '−' : '') + Math.abs(w).toLocaleString() + '원'; }   // 만원 값을 원 단위로(2026-11-22 사용자)
-function maYearNet(s, p) {   // 올해 매도 이익 − 예상 세금 = 실제 순수익(예상). 예상 세금 = 다른 종합소득 위에 올해 매도 이익을 얹은 종합소득세 증가분 + 지방소득세
-    var profit = s.bizIncome, t = ttIncTax(Math.max(0, myOtherIncome(p)), profit, new Date().toISOString().slice(0, 10)), tax = t.total || 0;
+function maYearNet(s, p) {   // 올해 매도 이익 − 예상 세금 = 실제 순수익(예상). 장부 건은 건별 세금(매도일 지나 고정된 값·입력한 실제 세금 포함)을 더하고, 장부에 없는 이익만 지금 설정으로 그 위에 계산 → 매도 끝난 건은 연봉이 바뀌어도 그대로
+    var y = String(new Date().getFullYear()), today = new Date().toISOString().slice(0, 10), profit = s.bizIncome, lp = 0, lt = 0;
+    try { ledger.items.forEach(function(r) { if (r.sale && lgN(r.sale.price) > 0 && String(r.sale.date || '').slice(0, 4) === y) { var c = ledgerCalc(r); lp += c.pre || 0; lt += c.taxSum || 0; } }); } catch (e) {}
+    var rest = profit - lp, t = rest > 0 ? ttIncTax(Math.max(0, myOtherIncome(p) + lp), rest, today) : { total: 0, rate: 0 }, tax = lt + (t.total || 0);
     return { profit: profit, tax: tax, net: profit - tax, rate: t.rate };
 }
 function maFmt(v) {
@@ -32730,23 +32732,40 @@ function ledgerCalc(rec, skipTax) {
     var taxEst = false;
     if (!skipTax && !taxes.some(function(x) { return lgN(x.amount) > 0; }) && pre != null) { var et = lgEstTaxes(rec, pre); if (et.length) { taxes = et; taxEst = true; } }
     var taxSum = taxes.reduce(function(t, x) { return t + lgN(x.amount); }, 0), hasTax = taxes.some(function(x) { return lgN(x.amount) > 0; });
-    var net = pre != null && hasTax ? pre - taxSum : null, hold = win.date && sale.date && lgDays(win.date, sale.date) > 0 ? Math.round(lgDays(win.date, sale.date) / 30.4 * 10) / 10 : null;
+    var taxFrozen = taxEst && taxes.some(function(x) { return x.frozen; }), net = pre != null && hasTax ? pre - taxSum : null, hold = win.date && sale.date && lgDays(win.date, sale.date) > 0 ? Math.round(lgDays(win.date, sale.date) / 30.4 * 10) / 10 : null;
     var cash = winP + upfront - loanSum, base = Math.max(cash, 1);
     var profit = net != null ? net : pre;
-    return { taxEst: taxEst, taxList: taxes, vatTotal: vatTotal, winP: winP, saleP: saleP, itemsTotal: itemsTotal, byGroup: byGroup, byCat: byCat, interest: interest, loanRows: loanRows, loanSum: loanSum, totalCost: totalCost, pre: pre, taxSum: taxSum, hasTax: hasTax, net: net, hold: hold, cash: cash, roi: profit != null && saleP ? profit / base * 100 : null, annual: profit != null && saleP && hold ? profit / base * 100 * (12 / hold) : null, margin: pre != null && saleP ? pre / saleP * 100 : null };
+    return { taxFrozen: taxFrozen, taxEst: taxEst, taxList: taxes, vatTotal: vatTotal, winP: winP, saleP: saleP, itemsTotal: itemsTotal, byGroup: byGroup, byCat: byCat, interest: interest, loanRows: loanRows, loanSum: loanSum, totalCost: totalCost, pre: pre, taxSum: taxSum, hasTax: hasTax, net: net, hold: hold, cash: cash, roi: profit != null && saleP ? profit / base * 100 : null, annual: profit != null && saleP && hold ? profit / base * 100 * (12 / hold) : null, margin: pre != null && saleP ? pre / saleP * 100 : null };
 }
 /* 💴 예상 세금 기본값(2026-11-21, 사용자: 예상 세금을 '실제 납부 세금' 칸에 미리 채워 두고 나중에 실제 금액으로 덮어쓰기) - 매매사업자 기준, 4단계 시뮬레이터와 같은 계산(ttIncTax: 매도일 연도 소득 위에 이 건의 세전 순이익을 얹은 종합소득세 증가분 + 지방소득세).
    그 해 다른 소득 = 내 자산의 '다른 종합소득'(+올해면 추가 사업소득) + 같은 해 다른 장부 건의 세전 순이익. 매도일·매도가·이익이 없거나 매매사업자가 아니면 만들지 않음. 사용자가 세금 칸을 직접 고치면 그 값이 우선 */
-function lgEstTaxes(rec, pre) {
+function lgEstTaxesLive(rec, pre) {   // 지금의 내 자산·연봉 설정으로 다시 계산한 예상 세금. 같은 해 먼저 판 장부 건(매도일 순)의 이익 위에 얹어 계산 → 합치면 한 해 합산 세금과 같아요
     try {
-        var sale = rec.sale || {}, p = myAssets.profile || {}; if (p.isDealer === false || !(lgN(sale.price) > 0) || !sale.date || !(pre > 0)) return [];
+        var sale = rec.sale || {}, p = myAssets.profile || {}; if (p.isDealer === false || !(lgN(sale.price) > 0) || !sale.date || !(pre > 0)) return null;
         var y = String(sale.date).slice(0, 4), other = myOtherIncome(p), extra = String(new Date().getFullYear()) === y ? (parseInt(p.extraBizIncome) || 0) : 0, biz = 0;
-        ledger.items.forEach(function(r) { if (r.id !== rec.id && r.sale && lgN(r.sale.price) > 0 && String(r.sale.date || '').slice(0, 4) === y) { var c2 = ledgerCalc(r, true); if (c2.pre > 0) biz += c2.pre; } });
-        var t = ttIncTax(Math.max(0, other + extra + biz), pre, sale.date);
-        var out = []; if (t.inc > 0) out.push({ kind: '종합소득세(증가분)', amount: t.inc, est: 1 }); if (t.local > 0) out.push({ kind: '지방소득세', amount: t.local, est: 1 });
-        return out;
-    } catch (e) { return []; }
+        ledger.items.forEach(function(r) { if (r.id !== rec.id && r.sale && lgN(r.sale.price) > 0 && String(r.sale.date || '').slice(0, 4) === y && (String(r.sale.date) < String(sale.date) || (String(r.sale.date) === String(sale.date) && String(r.id) < String(rec.id)))) { var c2 = ledgerCalc(r, true); if (c2.pre > 0) biz += c2.pre; } });
+        var base = Math.max(0, other + extra + biz), t = ttIncTax(base, pre, sale.date), out = [];
+        if (t.inc > 0) out.push({ kind: '종합소득세(증가분)', amount: t.inc, est: 1 }); if (t.local > 0) out.push({ kind: '지방소득세', amount: t.local, est: 1 });
+        return { taxes: out, base: base };
+    } catch (e) { return null; }
 }
+/* 🔒 매도일이 지나면 예상 세금을 고정(2026-11-22 사용자): 매도일·금액이 확정된 건은 그 뒤 연봉·소득 설정이 바뀌어도 세금·순수익·누적이 그대로여야 함. 매도일이 지난 첫 저장·첫 실행 때 그 시점 값을 장부에 보관(estSnap)하고, 이후엔 보관값을 씀.
+   매도가·매도일·비용이 바뀌어 이익이 달라지면(보관 때 이익과 다르면) 고정이 풀리고 다시 계산. 실제 납부 세금을 입력하면 그 값이 우선 */
+function lgSnapValid(rec, pre) { var sn = rec.estSnap, sale = rec.sale || {}; return !!(sn && sn.taxes && sn.taxes.length && sn.saleDate === sale.date && Math.abs((sn.pre || 0) - pre) < 0.0005); }
+function lgEstTaxes(rec, pre) {
+    if (lgSnapValid(rec, pre)) return rec.estSnap.taxes.map(function(t) { return { kind: t.kind, amount: t.amount, est: 1, frozen: 1 }; });
+    var r = lgEstTaxesLive(rec, pre); return r ? r.taxes : [];
+}
+function lgFreezeIfDue(rec) {   // 매도일이 지났고 확정 세금이 없으면 지금 값으로 고정. 바뀌었으면 true
+    try {
+        var sale = rec.sale || {}; if (!(lgN(sale.price) > 0) || !sale.date || sale.date > lgTodayStr()) return false;
+        if ((rec.taxes || []).some(function(x) { return lgN(x.amount) > 0; })) return false;
+        var pre = ledgerCalc(rec, true).pre; if (!(pre > 0) || lgSnapValid(rec, pre)) return false;
+        var r = lgEstTaxesLive(rec, pre); if (!r || !r.taxes.length) return false;
+        rec.estSnap = { at: lgTodayStr(), saleDate: sale.date, pre: pre, base: r.base, taxes: r.taxes.map(function(t) { return { kind: t.kind, amount: t.amount }; }) }; return true;
+    } catch (e) { return false; }
+}
+async function lgFreezeAll() { try { if (!myAssets.loaded || !myAssets.profile) return; for (var i = 0; i < ledger.items.length; i++) { var r = ledger.items[i]; if (lgFreezeIfDue(r)) { r.updatedAt = Date.now(); await ledgerSaveItem(r); } } } catch (e) { console.error('예상 세금 고정 실패:', e.message); } }
 function ledgerPlanned(rec) {   // 연결된 경매 물건 기록의 '예상'(입찰 전 계산·입력값) - 1단계 예상 대비 비교용
     var a = ledgerAuctionOf(rec); if (!a) return null;
     var n = function(k) { return parseInt(a[k]) || 0; }, d = {};
@@ -32856,7 +32875,7 @@ function ledgerDetailHtml(r, c) {
     var fmt = maFmt, parts = [];
     var cats = Object.keys(c.byCat).map(function(k) { return '<div><span>' + maEsc(k) + '</span><b>' + fmt(c.byCat[k]) + '</b></div>'; }).join('');
     var loans = c.loanRows.filter(function(l) { return l.amount; }).map(function(l, i) { return '<div><span>대출 ' + (i + 1) + ' · ' + fmt(l.amount) + ' · ' + l.rate + '%' + (l.days != null ? ' · ' + l.days + '일' : '') + (l.amort ? ' · 원리금균등 ' + l.term + '개월' : ' · 원금 일시상환') + '</span><b>이자 ' + fmt(l.interest) + (l.actual ? ' (실제)' : ' (계산)') + (l.noTerm ? ' ⚠️ 대출기간 입력 필요' : '') + '</b></div>'; }).join('');
-    parts.push('<div class="ma2-cost">' + cats + loans + '<div><span>낙찰가</span><b>' + fmt(c.winP) + '</b></div><div><span>총비용(낙찰가+비용+이자)</span><b>' + fmt(c.totalCost) + '</b></div>' + (c.vatTotal ? '<div><span>부가세(계산서 받은 비용)' + (r.vatDeduct ? ' - 환급, 비용 제외' : ' - 비용에 포함') + '</span><b>' + fmt(c.vatTotal) + '</b></div>' : '') + (c.hasTax ? '<div><span>' + (c.taxEst ? '예상 세금(실제 입력 전)' : '실제 납부 세금') + '</span><b>' + fmt(c.taxSum) + '</b></div>' : '') + '<div><span>투입 현금(대출 후)</span><b>' + fmt(c.cash) + '</b></div></div>');
+    parts.push('<div class="ma2-cost">' + cats + loans + '<div><span>낙찰가</span><b>' + fmt(c.winP) + '</b></div><div><span>총비용(낙찰가+비용+이자)</span><b>' + fmt(c.totalCost) + '</b></div>' + (c.vatTotal ? '<div><span>부가세(계산서 받은 비용)' + (r.vatDeduct ? ' - 환급, 비용 제외' : ' - 비용에 포함') + '</span><b>' + fmt(c.vatTotal) + '</b></div>' : '') + (c.hasTax ? '<div><span>' + (c.taxFrozen ? '예상 세금 🔒 매도일 지나 고정' : (c.taxEst ? '예상 세금(실제 입력 전)' : '실제 납부 세금')) + '</span><b>' + fmt(c.taxSum) + '</b></div>' : '') + '<div><span>투입 현금(대출 후)</span><b>' + fmt(c.cash) + '</b></div></div>');
     var pl = ledgerPlanned(r);
     if (pl && c.saleP) {   // 1단계: 예상 대비 차이
         var keys = ['취득(취득세·등기)', '명도·이사·청소', '수리', '인수·체납', '보유세·관리비', '중개·매도비', '이자·금융', '기타'], rows = '', impact = 0;
@@ -33012,7 +33031,7 @@ async function ledgerSave() {
     ledgerSyncDraft(); var d = ledgerDraft;
     if (!d.name) { alert('이름을 입력해 주세요.'); return; }
     d.items = (d.items || []).filter(function(x) { return lgN(x.amount) > 0; }); d.loans = (d.loans || []).filter(function(l) { return lgN(l.amount) > 0; });
-    delete d._imp; if (!d.taxSnap) d.taxSnap = lgMakeSnap(d);   // 처음 저장할 때 그 시점의 세율표를 함께 보관(편집 화면의 버튼으로 다시 저장 가능)
+    delete d._imp; lgFreezeIfDue(d); if (!d.taxSnap) d.taxSnap = lgMakeSnap(d);   // 처음 저장할 때 그 시점의 세율표를 함께 보관(편집 화면의 버튼으로 다시 저장 가능)
     d.updatedAt = Date.now(); if (!d.createdAt) d.createdAt = d.updatedAt;
     try { await ledgerSaveItem(d); } catch (e) { alert('저장하지 못했어요: ' + e.message); return; }
     ledgerEditId = null; ledgerDraft = null; renderMyAssets();
@@ -33132,7 +33151,7 @@ function ledgerEditForm() {
     h += '</div>';
     h += '<div class="lg-sec"><div class="lg-sec-h">실제 납부 세금 <span class="ma-sub" style="font-weight:normal;">· 신고 후 확정액을 넣으면 앱 계산 대신 이 값으로 세후 마진을 구해요</span></div><div class="lg-fields">'
         + LEDGER_TAX_KINDS.map(function(k, i) { var cc = lgFormTaxCalc(d), t = (cc.taxList || []).filter(function(x) { return x.kind === k; })[0] || {}; return lgWonField('lg-tax' + i, k, t.amount, '납부한 금액', cc.taxEst ? ' data-est="1" oninput="this.setAttribute(\'data-est\',\'0\')"' : ''); }).join('') + '</div>'
-        + '<div class="ma-sub" style="margin-top:4px;">' + (lgFormTaxCalc(d).taxEst ? '🟡 지금 칸의 금액은 <b>예상 세금</b>(내 자산·매도일 기준 계산)이에요. 실제로 낸 금액을 알게 되면 칸을 고쳐 쓰세요 - 하나라도 고치면 입력한 값만 실제 세금으로 저장돼요.' : '입력한 실제 세금으로 계산해요.') + '</div></div>';
+        + '<div class="ma-sub" style="margin-top:4px;">' + (lgFormTaxCalc(d).taxEst ? '🟡 지금 칸의 금액은 <b>예상 세금</b>(내 자산·매도일 기준 계산)이에요. 실제로 낸 금액을 알게 되면 칸을 고쳐 쓰세요 - 하나라도 고치면 입력한 값만 실제 세금으로 저장돼요. 🔒 매도일이 지나면 그 시점의 연봉·소득 기준으로 고정되어, 이후 설정이 바뀌어도 이 값은 그대로예요(매도가·비용을 고치면 다시 계산).' : '입력한 실제 세금으로 계산해요.') + '</div></div>';
     h += '<div class="lg-sec"><div class="lg-fields">' + lgField('lg-memo', '메모', d.memo, '') + '</div><div class="ma-sub" style="margin-top:6px;">🗓️ 세율 스냅샷: ' + (d.taxSnap ? maEsc(d.taxSnap.at) + ' 저장됨 <a href="#" onclick="ledgerResnap();return false;">지금 세율로 다시 저장</a>' : '저장할 때 그 시점의 세율표를 함께 보관해요') + '</div></div>';
     h += '<div class="lg-actions">' + (!isNewRec ? '<button class="modal-btn btn-gray" style="color:#c62828;" onclick="ledgerDelete()">삭제</button>' : '') + '<span style="margin-left:auto;"></span><button class="modal-btn btn-gray" onclick="ledgerCancel()">취소</button><button class="modal-btn btn-purple" onclick="ledgerSave()">저장</button></div></div>';
     return h;
@@ -33454,7 +33473,7 @@ function renderMyAssets() {
         + '<div class="lg-field"><label>그 밖의 종합소득(만원)</label><input type="number" value="' + maEsc(p.otherIncome || '') + '" placeholder="근로 외 사업·이자 등" onchange="maSetProfile(\'otherIncome\', this.value)"></div>'
         + '<div class="lg-field"><label>취득 예정 자산</label><label class="lg-check"><input type="checkbox" ' + (p.includePlanned !== false ? 'checked' : '') + ' onchange="maSetProfile(\'includePlanned\', this.checked)"> 주택 수에 미리 포함</label></div></div>'
         + '<div class="ma-sub" style="margin-top:6px;">' + (function() { var w = maWorkIncome(p); return w ? '💼 연봉 ' + w.sal.toLocaleString() + '만 → 근로소득공제 ' + w.ded.toLocaleString() + '만 → 근로소득금액 ' + w.gross.toLocaleString() + '만 → 소득공제 ' + w.other.toLocaleString() + '만' + (w.auto ? '(자동 추정: 본인공제 150만 + 4대보험 약 8%)' : '(입력)') + ' → <b>근로소득 과세표준 약 ' + w.base.toLocaleString() + '만</b>이 종합소득세 계산의 기본 소득이에요.<br>' : ''; })() + '올해 합계 ' + s.incomeBase.toLocaleString() + '만 위에 다음 매도 이익이 얹혀 계산돼요 · 종부세용 공시가격 합계 ' + (s.officialSum ? fm(s.officialSum) : '입력 없음') + '</div>'
-        + '<div class="ma-sub" style="margin-top:4px;color:#b26a00;">⚠️ 세법 해석은 참고용 근사예요. 실제 신고 전 세무사 확인이 필요해요.</div></div></div>';
+        + '<div class="ma-sub" style="margin-top:4px;">🔒 연봉·소득을 바꿔도 <b>매도일이 지난 장부 건의 세금·순수익은 그대로</b>예요(매도일이 지나면 그 시점 값으로 고정). 새 설정은 아직 안 판 물건과 앞으로의 매도에만 적용돼요.</div><div class="ma-sub" style="margin-top:4px;color:#b26a00;">⚠️ 세법 해석은 참고용 근사예요. 실제 신고 전 세무사 확인이 필요해요.</div></div></div>';
     // ⑤ 분석(접어 둠)
     var costSum = {};
     deals.forEach(function(d) { Object.keys(d.costs).forEach(function(k) { costSum[k] = (costSum[k] || 0) + d.costs[k]; }); });
@@ -33497,7 +33516,7 @@ async function maSetProfile(key, val) {
     try { await saveMyAssetItem(p); myAssetsChanged(); renderMyAssets(); } catch (e) { alert('저장 실패: ' + e.message); }
 }
 setTimeout(function() { loadMyAssets(); }, 1500);
-setTimeout(function() { ledgerLoad().then(function() { try { if ((myAssets.items || []).some(function(x) { return x.status === 'sold' && lgLinkedLedger(x); })) myAssetsChanged(); } catch (e) {} }); }, 3500);   // 장부를 미리 불러와 매도 이익에 반영(내 자산 화면을 안 열어도)
+setTimeout(function() { ledgerLoad().then(function() { return lgFreezeAll(); }).then(function() { try { if ((myAssets.items || []).some(function(x) { return x.status === 'sold' && lgLinkedLedger(x); })) myAssetsChanged(); } catch (e) {} }); }, 3500);   // 장부를 미리 불러와 매도 이익에 반영(내 자산 화면을 안 열어도)
 // ── 오른쪽 패널은 한 번에 하나만 ──
 var SIDE_PANEL_OPENERS = { openMyAssetsPanel: 'my-assets-panel', openAuctionList: 'auction-list-panel', openBidTargetPanel: 'bid-target-panel', openBidCasePanel: 'bid-case-panel', openSurgePanel: 'surge-panel', openBacktestPanel: 'backtest-panel' };
 function closeSidePanels(exceptId) {
