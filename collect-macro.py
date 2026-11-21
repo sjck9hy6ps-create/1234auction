@@ -77,11 +77,21 @@ def main():
     except Exception as e:
         print("정책 사건 목록 없음:", e)
     macro["events"] = sorted(ev, key=lambda e: e["date"])
+    # 세제·대출·규제지역 새 소식 자동 수집(2026-11-21): 제목·출처만 모아 '확인 전 새 소식'으로 보여 줌(collect-policy-watch.py). 이전 누적분은 signal|__policy_watch__에서 읽어 합침
+    try:
+        sw = importlib.util.spec_from_file_location("pw", os.path.join(HERE, "collect-policy-watch.py")); pw = importlib.util.module_from_spec(sw); sw.loader.exec_module(pw)
+        prev_w = []
+        if os.environ.get("SUPABASE_URL"):
+            rr = requests.get(os.environ["SUPABASE_URL"] + "/rest/v1/leader_follower_cache?id=eq.signal%7C%7C__policy_watch__&select=payload", headers={"apikey": os.environ["SUPABASE_SERVICE_ROLE_KEY"], "Authorization": "Bearer " + os.environ["SUPABASE_SERVICE_ROLE_KEY"]}, timeout=60)
+            if rr.status_code < 300 and rr.json(): prev_w = (rr.json()[0].get("payload") or {}).get("items") or []
+        macro["watch"] = pw.run(prev_w)
+    except Exception as e:
+        print("정책 새 소식 수집 실패(무시):", str(e)[:150]); macro["watch"] = []
     json.dump(macro, open("macro.json", "w", encoding="utf-8"), ensure_ascii=False, separators=(",", ":"))
     print("macro.json", os.path.getsize("macro.json") // 1024, "KB, 사건", len(ev))
     if os.environ.get("SUPABASE_URL"):
         s = importlib.util.spec_from_file_location("cyc", os.path.join(HERE, "analyze-cycle.py")); cyc = importlib.util.module_from_spec(s); s.loader.exec_module(cyc)
-        cyc.upsert_rows([{"id": "signal|__macro__", "payload": cyc.clean_json(macro), "fetched_at": macro["generatedAt"]}]); print("서버 저장: macro")
+        cyc.upsert_rows([{"id": "signal|__macro__", "payload": cyc.clean_json(macro), "fetched_at": macro["generatedAt"]}, {"id": "signal|__policy_watch__", "payload": {"items": macro.get("watch") or []}, "fetched_at": macro["generatedAt"]}]); print("서버 저장: macro")
 
 
 if __name__ == "__main__":
