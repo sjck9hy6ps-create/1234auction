@@ -4574,6 +4574,13 @@ function renderFavLite(body) {
     var rows = favRows().sort(function(x, y) { return (x.dday ? x.dday.diffDays : 9999) - (y.dday ? y.dday.diffDays : 9999); });
     var h = '<div class="nv-sort"><b style="color:#111;">⭐ 즐겨찾기 ' + rows.length + '건</b> <span style="color:#9ca3af;">입찰일이 가까운 순 · 별(★)을 다시 누르면 목록에서 빠져요</span></div>';
     if (!rows.length) { body.innerHTML = h + '<div class="bb-empty">아직 담은 물건이 없어요.<br>입찰후보 목록의 ☆ 별을 누르거나 상세 창의 "즐겨찾기에 담기"를 눌러 보세요.</div>'; return; }
+    if (!bbCardMode() && window.innerWidth > 640) {   // PC 화면: 아파트는 입찰후보와 같은 표, 빌라는 카드(2026-11-21 사용자: 즐겨찾기 UI가 모바일용)
+        var apt = rows.filter(function(r) { return r.type !== 'villa'; }), villa = rows.filter(function(r) { return r.type === 'villa'; });
+        var cd = LITE_COLS[bidBoardState.liteCol] || null;
+        if (cd && bidBoardState.liteCol !== 'verdict') apt.sort(function(x, y) { var vx = cd.val(x), vy = cd.val(y), nx = vx == null || (typeof vx === 'number' && !isFinite(vx)), ny = vy == null || (typeof vy === 'number' && !isFinite(vy)); if (nx !== ny) return nx ? 1 : -1; var c = nx ? 0 : (typeof vx === 'string' ? vx.localeCompare(vy, 'ko') : vx - vy); return c * bidBoardState.liteDir; });
+        body.innerHTML = h + (apt.length ? bbAptTableHtml(apt, '') : '') + (villa.length ? '<div class="nv-sort" style="margin-top:10px;"><b style="color:#111;">🏘️ 빌라 ' + villa.length + '건</b></div><div class="nv-list">' + villa.map(function(r) { return nvVillaCard(r, villaEval(r)); }).join('') + '</div>' : '');
+        return;
+    }
     body.innerHTML = h + '<div class="nv-list">' + rows.map(function(r) { return r.type === 'villa' ? nvVillaCard(r, villaEval(r)) : nvAptCard(r); }).join('') + '</div>';
 }
 function nvSortBar(kind) {
@@ -22693,6 +22700,37 @@ function bbSetSelOpts(sel, html) {
     if (document.activeElement === sel && sel.dataset.optSig) return; // 사용자가 고르는 중
     sel.innerHTML = html; sel.dataset.optSig = html;
 }
+/* 아파트 입찰후보 표(PC 화면) - 임장 후보·패스·전체와 즐겨찾기 탭이 같이 씀(2026-11-21: 즐겨찾기가 PC에서도 모바일식 카드로 나오던 것을 같은 표로) */
+function bbAptTableHtml(rows, subRow) {
+    var money = function(v) { return v ? toEok(String(Math.round(v))) : '-'; };
+    return subRow + '<table class="bb2-table bb2-atable"><thead><tr>'
+        + '<th>' + liteTh('verdict') + '</th><th>' + liteTh('date') + '</th><th>' + liteTh('name') + '</th><th class="r">' + liteTh('fails') + '</th>'
+        + '<th class="r">동일평형 거래<div class="bb2-subsort" style="justify-content:flex-end;">' + liteTh('n12', '1년') + liteTh('nYear', '올해') + liteTh('last', '마지막') + '</div></th>'
+        + '<th>거래량 순위·회전율<div class="bb2-subsort">' + liteTh('turn', '회전율') + liteTh('liv', '생활권') + liteTh('band', '평형') + liteTh('dong', '동') + '</div></th>'
+        + '<th class="r">' + liteTh('minBid') + '</th><th class="r">' + liteTh('wbp') + '</th><th class="r">' + liteTh('sale') + infoI('sale') + '</th><th class="r">' + liteTh('rec') + infoI('rec') + '<div class="bb2-subsort" style="justify-content:flex-end;">' + liteTh('recPct', '시세 대비 %') + '</div></th><th class="r">' + liteTh('p') + '</th><th class="r">' + liteTh('comp') + infoI('comp') + '</th><th class="r">' + liteTh('net') + '</th><th class="r">' + liteTh('rate') + '</th>'
+        + '</tr></thead><tbody>'
+        + rows.slice(0, bidBoardState.liteLimit || pageN()).map(function(r) {
+            var go = r.visit.go, e = r.pick && r.pick.ev, idJs = String(r.id).replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+            var pc = e ? Math.round(e.p * 100) : null, col = pc == null ? '#6b7280' : (pc >= 60 ? '#15803d' : (pc >= 35 ? '#b45309' : '#b91c1c'));
+            var mr = e && r.sale ? e.pre / r.sale * 100 : null;
+            return '<tr data-rid="' + bbEsc(r.id) + '" class="bb2-row ' + (go ? 'go' : 'pass') + (String(bidDrawerId) === String(r.id) ? ' sel' : '') + '" onclick="openBidDrawer(\'' + idJs + '\')">'
+                + '<td data-l="판정">' + (go ? '<span class="bb2-go">🚶 임장</span>' : '<span class="bb2-pass">패스</span>') + (r.visit.why ? '<div class="bb-sub">' + bbEsc(r.visit.why) + '</div>' : '') + '</td>'
+                + '<td data-l="입찰일">' + (r.dday ? '<span class="bb-dday' + (r.dday.diffDays >= 0 && r.dday.diffDays <= 3 ? ' soon' : '') + '">' + bbEsc(r.dday.label) + '</span>' : '-') + '<div class="bb-sub">' + bbEsc(r.a.bidDate || '') + '</div></td>'
+                + '<td data-l="물건" class="bb2-name">' + favStar(r.a, idJs) + '<b>' + bbEsc(r.name) + '</b><div class="bb-sub">' + bbEsc(r.region) + (r.pyung ? ' · ' + r.pyung + '평' : '') + (r.floor ? ' · ' + r.floor + '층' : '') + (r.issueSuspect ? ' · <span style="color:#b91c1c;">🚩</span>' : '') + '</div><div>' + (uvOf(r) ? '<span class="bb-pill" style="background:#ede9fe;color:#5b21b6;border:1px solid #a78bfa;" title="' + bbEsc(uvChipText(uvOf(r))) + '">📉 저평가 후보</span> ' : '') + (ovOf(r) ? '<span class="bb-pill" style="background:#fff7ed;color:#9a3412;border:1px solid #fdba74;" title="대장과의 격차가 평소보다 ' + Math.abs(Math.round(ovOf(r).catchP)) + '%p 좁혀진 단지(과거 검증: 이후 시군구 중앙보다 덜 오름, 약한 참고 신호)">📈 고평가 후보</span> ' : '') + listingPillHtml(r.a) + permitPill(r) + (rightsNeeded(r, r.visit.go) ? ' ' + rightsNeedPill() : '') + '</div>' + (r.niche ? '<div><span class="bb-pill" style="background:#e0f2f1;color:#00695c;border:1px solid #4db6ac;" title="' + bbEsc(r.niche.why.join(' · ')) + '">🧭 틈새</span></div>' : '') + '</td>'
+                + '<td data-l="유찰" class="r">' + (r.fails == null ? '-' : (r.fails === 0 ? '신건' : r.fails + '회')) + '</td>'
+                + '<td data-l="동일평형 거래" class="r bb2-n">' + liteTradesHtml(r) + '</td>'
+                + '<td data-l="거래량 순위" class="bb2-rank">' + liteRankHtml(r) + '</td>'
+                + '<td data-l="최저가" class="r">' + money(r.minBid) + '</td>'
+                + '<td data-l="예상 낙찰가" class="r">' + (r.winbid && r.winbid.price ? '<b>' + money(r.winbid.price) + '</b>' + (bidBoardState.seoulOwn && r.sale ? '<div class="bb-sub" title="예상 낙찰가 ÷ 예상매도가(시세). 낮을수록 시세보다 싸게 사요">시세의 ' + Math.round(r.winbid.price / r.sale * 100) + '%</div>' : (r.minBid ? '<div class="bb-sub vt-hide" title="예상 낙찰가 ÷ 최저가">최저가의 ' + Math.round(r.winbid.price / r.minBid * 100) + '%</div>' : '')) : '<span class="bb-sub">-</span>') + '</td>'
+                + '<td data-l="예상매도가" class="r">' + money(r.sale) + '</td>'
+                + '<td data-l="추천가" class="r">' + (e ? '<b class="bb2-rec">' + money(e.bid) + '</b>' + (r.sale ? '<div class="bb-sub" title="추천가 ÷ 예상매도가(시세)">시세의 <b>' + Math.round(e.bid / r.sale * 100) + '%</b></div>' : '') : '<span class="bb-sub">-</span>') + '</td>'
+                + '<td data-l="낙찰 가능성" class="r">' + (pc != null ? '<b style="color:' + col + ';">' + (Math.round(e.p * 1000) / 10).toFixed(1) + '%</b>' : '-') + '</td>'
+                + '<td data-l="예상 입찰자" class="r">' + compCellHtml(r) + '</td>'
+                + '<td data-l="순이익" class="r">' + (e ? money(e.net) : (r.netMin ? '<span style="color:' + (r.netMin.net < 0 ? '#b91c1c' : '#6b7280') + ';font-weight:700;" title="추천가가 없어 최저가로 입찰해 예상매도가에 팔 때의 순이익이에요' + (r.netMin.assumed > 0 ? ' (권리분석 인수 보증금 ' + toEok(String(r.netMin.assumed)) + ' 반영)' : '') + '">' + toEok(String(r.netMin.net)) + '</span>' : '-')) + '</td>'
+                + '<td data-l="마진율" class="r">' + (mr != null ? mr.toFixed(1) + '%' : '-') + '</td></tr>';
+        }).join('') + '</tbody></table>'
+        + (rows.length > (bidBoardState.liteLimit || pageN()) ? '<div style="text-align:center;padding:14px;"><button class="bb-csv" style="font-size:13px;padding:8px 18px;" onclick="bbLiteMore()">+ 더 보기 (남은 ' + (rows.length - (bidBoardState.liteLimit || pageN())) + '건 · 지금 ' + (bidBoardState.liteLimit || pageN()) + '건 표시)</button></div>' : '');
+}
 function renderBidBoardLite() {
     var s = bidBoardState;
     var el = document.getElementById('bid-board'); if (el) el.classList.add('lite');
@@ -22772,33 +22810,7 @@ function renderBidBoardLite() {
         body.innerHTML = subRow + nvSortBar('apt') + '<div class="nv-list">' + rows.slice(0, bidBoardState.liteLimit || pageN()).map(function(r) { return nvAptCard(r); }).join('') + '</div>' + (rows.length > (bidBoardState.liteLimit || pageN()) ? '<div style="text-align:center;padding:14px;"><button class="bb-csv" style="font-size:13px;padding:8px 18px;" onclick="bbLiteMore()">+ 더 보기 (남은 ' + (rows.length - (bidBoardState.liteLimit || pageN())) + '건)</button></div>' : '');
         return;
     }
-    body.innerHTML = subRow + '<table class="bb2-table bb2-atable"><thead><tr>'
-        + '<th>' + liteTh('verdict') + '</th><th>' + liteTh('date') + '</th><th>' + liteTh('name') + '</th><th class="r">' + liteTh('fails') + '</th>'
-        + '<th class="r">동일평형 거래<div class="bb2-subsort" style="justify-content:flex-end;">' + liteTh('n12', '1년') + liteTh('nYear', '올해') + liteTh('last', '마지막') + '</div></th>'
-        + '<th>거래량 순위·회전율<div class="bb2-subsort">' + liteTh('turn', '회전율') + liteTh('liv', '생활권') + liteTh('band', '평형') + liteTh('dong', '동') + '</div></th>'
-        + '<th class="r">' + liteTh('minBid') + '</th><th class="r">' + liteTh('wbp') + '</th><th class="r">' + liteTh('sale') + infoI('sale') + '</th><th class="r">' + liteTh('rec') + infoI('rec') + '<div class="bb2-subsort" style="justify-content:flex-end;">' + liteTh('recPct', '시세 대비 %') + '</div></th><th class="r">' + liteTh('p') + '</th><th class="r">' + liteTh('comp') + infoI('comp') + '</th><th class="r">' + liteTh('net') + '</th><th class="r">' + liteTh('rate') + '</th>'
-        + '</tr></thead><tbody>'
-        + rows.slice(0, bidBoardState.liteLimit || pageN()).map(function(r) {
-            var go = r.visit.go, e = r.pick && r.pick.ev, idJs = String(r.id).replace(/\\/g, '\\\\').replace(/'/g, "\\'");
-            var pc = e ? Math.round(e.p * 100) : null, col = pc == null ? '#6b7280' : (pc >= 60 ? '#15803d' : (pc >= 35 ? '#b45309' : '#b91c1c'));
-            var mr = e && r.sale ? e.pre / r.sale * 100 : null;
-            return '<tr data-rid="' + bbEsc(r.id) + '" class="bb2-row ' + (go ? 'go' : 'pass') + (String(bidDrawerId) === String(r.id) ? ' sel' : '') + '" onclick="openBidDrawer(\'' + idJs + '\')">'
-                + '<td data-l="판정">' + (go ? '<span class="bb2-go">🚶 임장</span>' : '<span class="bb2-pass">패스</span>') + (r.visit.why ? '<div class="bb-sub">' + bbEsc(r.visit.why) + '</div>' : '') + '</td>'
-                + '<td data-l="입찰일">' + (r.dday ? '<span class="bb-dday' + (r.dday.diffDays >= 0 && r.dday.diffDays <= 3 ? ' soon' : '') + '">' + bbEsc(r.dday.label) + '</span>' : '-') + '<div class="bb-sub">' + bbEsc(r.a.bidDate || '') + '</div></td>'
-                + '<td data-l="물건" class="bb2-name">' + favStar(r.a, idJs) + '<b>' + bbEsc(r.name) + '</b><div class="bb-sub">' + bbEsc(r.region) + (r.pyung ? ' · ' + r.pyung + '평' : '') + (r.floor ? ' · ' + r.floor + '층' : '') + (r.issueSuspect ? ' · <span style="color:#b91c1c;">🚩</span>' : '') + '</div><div>' + (uvOf(r) ? '<span class="bb-pill" style="background:#ede9fe;color:#5b21b6;border:1px solid #a78bfa;" title="' + bbEsc(uvChipText(uvOf(r))) + '">📉 저평가 후보</span> ' : '') + (ovOf(r) ? '<span class="bb-pill" style="background:#fff7ed;color:#9a3412;border:1px solid #fdba74;" title="대장과의 격차가 평소보다 ' + Math.abs(Math.round(ovOf(r).catchP)) + '%p 좁혀진 단지(과거 검증: 이후 시군구 중앙보다 덜 오름, 약한 참고 신호)">📈 고평가 후보</span> ' : '') + listingPillHtml(r.a) + permitPill(r) + (rightsNeeded(r, r.visit.go) ? ' ' + rightsNeedPill() : '') + '</div>' + (r.niche ? '<div><span class="bb-pill" style="background:#e0f2f1;color:#00695c;border:1px solid #4db6ac;" title="' + bbEsc(r.niche.why.join(' · ')) + '">🧭 틈새</span></div>' : '') + '</td>'
-                + '<td data-l="유찰" class="r">' + (r.fails == null ? '-' : (r.fails === 0 ? '신건' : r.fails + '회')) + '</td>'
-                + '<td data-l="동일평형 거래" class="r bb2-n">' + liteTradesHtml(r) + '</td>'
-                + '<td data-l="거래량 순위" class="bb2-rank">' + liteRankHtml(r) + '</td>'
-                + '<td data-l="최저가" class="r">' + money(r.minBid) + '</td>'
-                + '<td data-l="예상 낙찰가" class="r">' + (r.winbid && r.winbid.price ? '<b>' + money(r.winbid.price) + '</b>' + (bidBoardState.seoulOwn && r.sale ? '<div class="bb-sub" title="예상 낙찰가 ÷ 예상매도가(시세). 낮을수록 시세보다 싸게 사요">시세의 ' + Math.round(r.winbid.price / r.sale * 100) + '%</div>' : (r.minBid ? '<div class="bb-sub vt-hide" title="예상 낙찰가 ÷ 최저가">최저가의 ' + Math.round(r.winbid.price / r.minBid * 100) + '%</div>' : '')) : '<span class="bb-sub">-</span>') + '</td>'
-                + '<td data-l="예상매도가" class="r">' + money(r.sale) + '</td>'
-                + '<td data-l="추천가" class="r">' + (e ? '<b class="bb2-rec">' + money(e.bid) + '</b>' + (r.sale ? '<div class="bb-sub" title="추천가 ÷ 예상매도가(시세)">시세의 <b>' + Math.round(e.bid / r.sale * 100) + '%</b></div>' : '') : '<span class="bb-sub">-</span>') + '</td>'
-                + '<td data-l="낙찰 가능성" class="r">' + (pc != null ? '<b style="color:' + col + ';">' + (Math.round(e.p * 1000) / 10).toFixed(1) + '%</b>' : '-') + '</td>'
-                + '<td data-l="예상 입찰자" class="r">' + compCellHtml(r) + '</td>'
-                + '<td data-l="순이익" class="r">' + (e ? money(e.net) : (r.netMin ? '<span style="color:' + (r.netMin.net < 0 ? '#b91c1c' : '#6b7280') + ';font-weight:700;" title="추천가가 없어 최저가로 입찰해 예상매도가에 팔 때의 순이익이에요' + (r.netMin.assumed > 0 ? ' (권리분석 인수 보증금 ' + toEok(String(r.netMin.assumed)) + ' 반영)' : '') + '">' + toEok(String(r.netMin.net)) + '</span>' : '-')) + '</td>'
-                + '<td data-l="마진율" class="r">' + (mr != null ? mr.toFixed(1) + '%' : '-') + '</td></tr>';
-        }).join('') + '</tbody></table>'
-        + (rows.length > (bidBoardState.liteLimit || pageN()) ? '<div style="text-align:center;padding:14px;"><button class="bb-csv" style="font-size:13px;padding:8px 18px;" onclick="bbLiteMore()">+ 더 보기 (남은 ' + (rows.length - (bidBoardState.liteLimit || pageN())) + '건 · 지금 ' + (bidBoardState.liteLimit || pageN()) + '건 표시)</button></div>' : '');
+    body.innerHTML = bbAptTableHtml(rows, subRow);
     var cn = document.getElementById('bb-cache-note'); if (cn) cn.style.display = 'none';
 }
 // 2026-10-10(사용자: 입찰후보 로딩 중·탭 이동·닫기에서 반응이 느림): 표를 한 번에 1천 건 넘게 그리던 걸 120건으로 줄이고 더 보기로 늘림(정렬·필터는 전체에 그대로 적용)
