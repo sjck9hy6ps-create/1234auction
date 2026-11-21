@@ -32573,6 +32573,11 @@ function maEsc(t) { return String(t == null ? '' : t).replace(/&/g, '&amp;').rep
    - 매도 거래 = 경매 관리의 "매도완료" 물건(비용 항목·대출이자까지 자세함) + 내 자산의 "매도 완료" 항목.
      같은 집이 양쪽에 있으면(주소의 동·지번 또는 이름이 겹침) 경매 쪽 상세 비용으로 한 번만 셈.
    - 계산식은 예전 누적 리포트(dashboard.html computeDeal)와 같음: 총비용 = 낙찰가+취득세+등기+명도+수리+중개+기타+재산세+종부세+대출이자+중도상환수수료 */
+function maWon(v) { if (v == null || isNaN(v)) return '-'; var w = Math.round(v * 10000); return (w < 0 ? '−' : '') + Math.abs(w).toLocaleString() + '원'; }   // 만원 값을 원 단위로(2026-11-22 사용자)
+function maYearNet(s, p) {   // 올해 매도 이익 − 예상 세금 = 실제 순수익(예상). 예상 세금 = 다른 종합소득 위에 올해 매도 이익을 얹은 종합소득세 증가분 + 지방소득세
+    var profit = s.bizIncome, t = ttIncTax(Math.max(0, parseInt((p || {}).otherIncome) || 0), profit, new Date().toISOString().slice(0, 10)), tax = t.total || 0;
+    return { profit: profit, tax: tax, net: profit - tax, rate: t.rate };
+}
 function maFmt(v) {
     if (v == null || isNaN(v)) return '-';
     var n = Math.round(v), neg = n < 0; n = Math.abs(n);
@@ -33368,7 +33373,7 @@ function maPopRender() {
     } else if (maPopKey === 'year') {
         var yr = String(new Date().getFullYear()), yd = c.deals.filter(function(d) { return String(d.sellDate || '').slice(0, 4) === yr; });
         title = '💰 ' + yr + '년 매도 이익 · 세금';
-        body = '<div class="indicator-grid lg-grid">' + lgItem('올해 매도 이익', fm(c.s.bizIncome), col(c.s.bizIncome), '내 자산·경매 기록 기준') + lgItem('소득 합산', fm(c.s.incomeBase), '', '다른 종합소득 ' + fm(c.s.otherIncome)) + lgItem('예상 세금(지방세 포함)', fm(c.taxYear), '', '구간 ' + Math.round(c.brNow.rate * 100) + '%') + '</div>'
+        body = '<div class="indicator-grid lg-grid">' + lgItem('올해 매도 이익', maWon(c.s.bizIncome), col(c.s.bizIncome), '내 자산·경매 기록·장부 기준') + lgItem('예상 세금(지방세 포함)', maWon(c.yn.tax), '', '다른 종합소득 ' + fm(c.s.otherIncome) + ' 위에 얹은 증가분') + lgItem('실제 순수익(세금 뺀)', maWon(c.yn.net), col(c.yn.net), '예상 세금 기준') + '</div>'
             + '<div class="ma-h" style="margin-top:8px;">올해 매도 건</div><div style="overflow-x:auto;">' + dealRows(yd) + '</div>';
     } else if (maPopKey === 'tax') {
         title = '🧾 내 상황에 맞는 세금';
@@ -33412,16 +33417,17 @@ function renderMyAssets() {
     var sumTotal = deals.reduce(function(t, d) { return t + d.total; }, 0), sumProfit = deals.reduce(function(t, d) { return t + d.profit; }, 0), wins = deals.filter(function(d) { return d.profit > 0; }).length;
     var holds = deals.map(function(d) { return d.holdM; }).filter(function(v) { return v != null; }), avgHold = holds.length ? Math.round(holds.reduce(function(a, b) { return a + b; }, 0) / holds.length * 10) / 10 : null;
     var pc = function(v) { return v > 0 ? '#2e7d32' : (v < 0 ? '#c62828' : '#374151'); };
+    var yn = maYearNet(s, p);
     var html = '';
     // 수정·추가를 누르면 그 화면만 한 페이지로 보여 줌(2026-11-21: 목록과 섞여 보이지 않게) - 위에 '← 내 자산으로' 돌아가기, 아래에 저장 막대 고정
     if (maEditId || ledgerEditId) { body.innerHTML = '<div class="lg-back"><a href="#" onclick="' + (ledgerEditId ? 'ledgerCancel()' : 'maEditId=null;renderMyAssets()') + ';return false;">← 내 자산으로 돌아가기</a></div>' + (maEditId ? maEditForm() : ledgerEditForm()); lgAnnotate(body); try { body.scrollTop = 0; document.getElementById('my-assets-panel').scrollTop = 0; } catch (e) {} if (ledgerEditId) ledgerLive(); return; }
     if (simN) html += '<div class="ma2-banner">🧪 <b>시뮬레이션 중</b> - ' + simN + '건을 매도했다고 가정해 계산하고 있어요(저장 안 됨). <a href="#" onclick="myAssetsSim={};try{localStorage.removeItem(\'myAssetsSim\')}catch(e){};myAssetsChanged();return false;">모두 해제</a></div>';
     // ① 한눈에 - 칸을 누르면 팝업으로 자세한 목록(2026-11-21 사용자: 보유 중 등 겹치는 메뉴는 없애고 팝업으로)
-    maPopCtx = { s: s, p: p, next: next, deals: deals, legacy: legacy, holding: holding, planned: planned, holdBuy: holdBuy, acqRate: acqRate, taxYear: taxYear, marg1000: marg1000, brNow: brNow, sumProfit: sumProfit, sumTotal: sumTotal, wins: wins, avgHold: avgHold };
+    maPopCtx = { yn: yn, s: s, p: p, next: next, deals: deals, legacy: legacy, holding: holding, planned: planned, holdBuy: holdBuy, acqRate: acqRate, taxYear: taxYear, marg1000: marg1000, brNow: brNow, sumProfit: sumProfit, sumTotal: sumTotal, wins: wins, avgHold: avgHold };
     html += '<div class="indicator-box"><div class="indicator-title">💼 한눈에 <span class="ma-sub" style="font-weight:normal;">· 칸을 누르면 자세한 내용이 팝업으로 열려요</span></div><div class="indicator-grid lg-grid">'
         + lgItemC('home', '주택 수 → 다음 낙찰', s.count + '채 → ' + next + '번째', acqRate(false) > 4 ? '#c62828' : '', '취득세 ' + acqRate(false) + '% (조정 지역 ' + acqRate(true) + '%)')
         + lgItemC('home', '보유 중', holding.length + '건', '', '취득가 합계 ' + fm(holdBuy) + (planned.length ? ' · 예정 ' + planned.length + '건' : ''))
-        + lgItemC('year', '올해 매도 이익', fm(s.bizIncome), '', '예상 세금 ' + fm(taxYear) + ' · 구간 ' + Math.round(brNow.rate * 100) + '%') + lgItemC('tax', '다음 매도 1천만당 세금', marg1000 + '만', '', '지방세 포함')
+        + lgItemC('year', '올해 매도 이익', maWon(s.bizIncome), '', '예상 세금 ' + maWon(yn.tax) + '<br>실제 순수익(세금 뺀) <b>' + maWon(yn.net) + '</b>') + lgItemC('tax', '다음 매도 1천만당 세금', marg1000 + '만', '', '지방세 포함')
         + lgItemC('sold', '누적 매도', deals.length + '건', '', avgHold != null ? '평균 보유 ' + avgHold + '개월' : '') + lgItemC('sold', '누적 순이익(세전)', deals.length ? fm(sumProfit) : '-', deals.length ? pc(sumProfit) : '', deals.length ? '이익 ' + wins + '/' + deals.length + '건 · 수익률 ' + (sumTotal ? (sumProfit / sumTotal * 100).toFixed(1) : '-') + '%' : '') + '</div></div>';
     var soon = deals.filter(function(d) { return d.filing && d.filing.diffDays >= -30 && d.filing.diffDays <= 30; });
     if (soon.length) html += '<div class="ma2-banner" style="background:#fff3e0;color:#e65100;">📅 매매차익 예정신고 ' + soon.map(function(d) { return '<b>' + maEsc(d.name) + '</b> ' + d.filing.deadlineStr + (d.filing.diffDays < 0 ? ' (지남)' : ' (D-' + d.filing.diffDays + ')'); }).join(' · ') + '</div>';
@@ -33433,7 +33439,7 @@ function renderMyAssets() {
     // ④ 올해 소득·세금 설정
     html += '<div class="ma-sec"><div class="ma-h">⚙️ ' + new Date().getFullYear() + '년 소득 · 세금 설정</div><div class="indicator-box"><div class="lg-fields">'
         + '<div class="lg-field"><label>매매사업자</label><label class="lg-check"><input type="checkbox" ' + (p.isDealer !== false ? 'checked' : '') + ' onchange="maSetProfile(\'isDealer\', this.checked)"> 개인 부동산매매사업자</label></div>'
-        + '<div class="lg-field"><label>올해 매도 이익(자동)</label><div class="lg-static"><b>' + (s.bizIncome - (parseInt(p.extraBizIncome) || 0)).toLocaleString() + '만</b> <span class="ma-sub">매도한 재고자산·경매 매도완료</span></div></div>'
+        + '<div class="lg-field"><label>올해 매도 이익(자동)</label><div class="lg-static"><b>' + maWon(s.bizIncome - (parseInt(p.extraBizIncome) || 0)) + '</b> <span class="ma-sub">매도한 재고자산·경매 매도완료(장부 기준)</span><div class="ma-sub">예상 세금 ' + maWon(yn.tax) + ' → <b>실제 순수익 ' + maWon(yn.net) + '</b>(세금 뺀, 예상)</div></div></div>'
         + '<div class="lg-field"><label>추가 사업소득(만원)</label><input type="number" value="' + maEsc(p.extraBizIncome || '') + '" placeholder="만원" onchange="maSetProfile(\'extraBizIncome\', this.value)"></div>'
         + '<div class="lg-field"><label>다른 종합소득(만원)</label><input type="number" value="' + maEsc(p.otherIncome || '') + '" placeholder="근로·사업 등" onchange="maSetProfile(\'otherIncome\', this.value)"></div>'
         + '<div class="lg-field"><label>취득 예정 자산</label><label class="lg-check"><input type="checkbox" ' + (p.includePlanned !== false ? 'checked' : '') + ' onchange="maSetProfile(\'includePlanned\', this.checked)"> 주택 수에 미리 포함</label></div></div>'
