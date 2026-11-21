@@ -85,6 +85,7 @@ def main():
             rr = requests.get(os.environ["SUPABASE_URL"] + "/rest/v1/leader_follower_cache?id=eq.signal%7C%7C__policy_watch__&select=payload", headers={"apikey": os.environ["SUPABASE_SERVICE_ROLE_KEY"], "Authorization": "Bearer " + os.environ["SUPABASE_SERVICE_ROLE_KEY"]}, timeout=60)
             if rr.status_code < 300 and rr.json(): prev_w = (rr.json()[0].get("payload") or {}).get("items") or []
         macro["watch"] = pw.run(prev_w)
+        print("카카오:", pw.notify_kakao(getattr(pw.run, "new_items", [])), flush=True)
     except Exception as e:
         print("정책 새 소식 수집 실패(무시):", str(e)[:150]); macro["watch"] = []
     json.dump(macro, open("macro.json", "w", encoding="utf-8"), ensure_ascii=False, separators=(",", ":"))
