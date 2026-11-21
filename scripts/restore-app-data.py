@@ -2,7 +2,7 @@
 각 항목은 id로 덮어써요(없는 항목은 새로 추가, 백업에 없는 항목은 그대로). 200건씩 보냄."""
 import sys, os, json, urllib.request
 SITE = os.environ.get("SITE_URL", "https://1234auction.vercel.app")
-folder = sys.argv[1]; kinds = sys.argv[2:] or ["auctions", "bidCases", "siteNotes", "myAssets"]
+folder = sys.argv[1]; kinds = sys.argv[2:] or ["auctions", "bidCases", "siteNotes", "myAssets", "ledger"]
 for k in kinds:
     p = os.path.join(folder, k + ".json")
     if not os.path.exists(p): print(k, "파일 없음"); continue

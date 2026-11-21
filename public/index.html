@@ -32449,6 +32449,205 @@ function maRoiSvg(deals) {
         + pts.map(function(d, i) { return '<circle cx="' + x(i).toFixed(1) + '" cy="' + y(d.roi).toFixed(1) + '" r="3" fill="' + (d.roi >= 0 ? '#2e7d32' : '#c62828') + '"><title>' + maEsc(d.name) + ' · ' + d.sellDate + ' · ' + d.roi.toFixed(1) + '%</title></circle>'; }).join('')
         + '<text x="8" y="' + (H - 2) + '" font-size="9" fill="#999">' + pts[0].sellDate + '</text><text x="' + (W - 8) + '" y="' + (H - 2) + '" font-size="9" fill="#999" text-anchor="end">' + pts[pts.length - 1].sellDate + '</text></svg>';
 }
+/* ════ 📒 실거래 장부 (2026-11-21, 사용자 요청) - 입찰한 물건의 실제 비용(건별)·대출 2건·매도·실제 납부 세금을 쌓아 실제 마진을 계산하고 예상과 비교
+   0단계: 입력(건별 비용 세부항목·대출 2건·매도·실제 세금·소급 한 번에 입력) / 1단계: 실제 마진·예상 대비 차이. 금액은 모두 만원. 저장: /api/auction?kind=ledger (물건마다 한 건).
+   실제 납부 세금을 입력하면 그 값으로 세후 마진을 계산(앱 예상 세금은 쓰지 않음 = 덮어쓰기). 세법 계산이 아니라 입력한 실제 값의 합이에요. ════ */
+var ledger = { loaded: false, items: [] }, ledgerEditId = null, ledgerDraft = null, ledgerOpen = null, ledgerQuick = false;
+var LEDGER_CATS = [
+    { cat: '취득', subs: ['취득세', '농어촌특별세', '지방교육세', '등기·법무사비(등록면허세 포함)', '채권·기타 취득비'] },
+    { cat: '명도·이사', subs: ['명도비(이사비·합의금)', '강제집행비', '열쇠·잠금장치'] },
+    { cat: '청소', subs: ['청소비', '소독·방역'] },
+    { cat: '수리', subs: ['도배·장판', '설비(보일러·배관·전기)', '도장·방수·타일', '기타 인테리어'] },
+    { cat: '인수·체납', subs: ['인수 보증금', '체납 관리비', '공과금 정산'] },
+    { cat: '보유', subs: ['재산세', '종합부동산세', '보유 중 관리비'] },
+    { cat: '매도', subs: ['중개수수료', '매도 관련 법무·기타'] },
+    { cat: '금융', subs: ['대출 설정비', '중도상환수수료'] },
+    { cat: '기타', subs: ['기타 비용'] }
+];
+var LEDGER_TAX_KINDS = ['양도소득세', '종합소득세(증가분)', '부가세', '지방소득세'];
+var LEDGER_GROUP = { '취득': '취득(취득세·등기)', '명도·이사': '명도·이사·청소', '청소': '명도·이사·청소', '수리': '수리', '인수·체납': '인수·체납', '보유': '보유세·관리비', '매도': '중개·매도비', '금융': '이자·금융', '기타': '기타' };
+var LEDGER_UPFRONT = { '취득': 1, '명도·이사': 1, '청소': 1, '수리': 1, '인수·체납': 1, '금융': 1 };
+async function ledgerLoad() {
+    try { var list = await fetchStoredList('ledger'); ledger.items = (list || []).filter(function(x) { return x && x.id; }); ledger.loaded = true; }
+    catch (e) { console.error('장부 불러오기 실패:', e.message); ledger.loaded = true; }
+}
+async function ledgerSaveItem(item) {
+    var r = await fetch('/api/auction?kind=ledger', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(item) });
+    if (!r.ok) throw new Error('저장 실패(' + r.status + ')');
+    applyStoredListChange('ledger', r.headers.get('X-List-Version'), upsertById(item));
+    var i = ledger.items.findIndex(function(x) { return x.id === item.id; }); if (i >= 0) ledger.items[i] = item; else ledger.items.push(item);
+}
+async function ledgerDeleteItem(id) {
+    var r = await fetch('/api/auction?kind=ledger&id=' + encodeURIComponent(id), { method: 'DELETE' });
+    if (!r.ok) throw new Error('서버 응답 ' + r.status);
+    applyStoredListChange('ledger', r.headers.get('X-List-Version'), removeById(id));
+    ledger.items = ledger.items.filter(function(x) { return x.id !== id; });
+}
+function lgN(v) { var n = parseFloat(String(v == null ? '' : v).replace(/,/g, '')); return isNaN(n) ? 0 : n; }
+function lgDays(a, b) { var x = new Date(a), y = new Date(b); return isNaN(x) || isNaN(y) ? null : Math.round((y - x) / 86400000); }
+function ledgerAuctionOf(rec) {   // 연결된 경매 물건(사건번호 → 없으면 연결 id)
+    var cn = String(rec.caseNo || '').replace(/\s/g, '').replace(/타경/g, '-');
+    return (auctionList || []).filter(function(a) { return (rec.auctionId && String(a.id) === String(rec.auctionId)) || (cn && String(a.caseNo || '').replace(/\s/g, '').replace(/타경/g, '-') === cn); })[0] || null;
+}
+function ledgerCalc(rec) {
+    var win = rec.win || {}, sale = rec.sale || {}, items = rec.items || [], loans = rec.loans || [], taxes = rec.taxes || [];
+    var byGroup = {}, byCat = {}, itemsTotal = 0, upfront = 0;
+    items.forEach(function(it) { var v = lgN(it.amount); if (!v) return; itemsTotal += v; byCat[it.cat] = (byCat[it.cat] || 0) + v; var g = LEDGER_GROUP[it.cat] || '기타'; byGroup[g] = (byGroup[g] || 0) + v; if (LEDGER_UPFRONT[it.cat]) upfront += v; });
+    var interest = 0, loanSum = 0, endFallback = sale.date || new Date().toISOString().slice(0, 10);
+    var loanRows = loans.map(function(l) {
+        var amt = lgN(l.amount), paid = lgN(l.interestPaid), d = lgDays(l.start || win.date, l.end || endFallback), est = amt && lgN(l.rate) && d != null && d > 0 ? Math.round(amt * lgN(l.rate) / 100 * d / 365) : 0;
+        var iv = paid > 0 ? paid : est; interest += iv; loanSum += amt; return { amount: amt, rate: lgN(l.rate), days: d, interest: iv, actual: paid > 0 };
+    });
+    if (interest) byGroup['이자·금융'] = (byGroup['이자·금융'] || 0) + interest;
+    var winP = lgN(win.price), saleP = lgN(sale.price), totalCost = winP + itemsTotal + interest, pre = saleP ? saleP - totalCost : null;
+    var taxSum = taxes.reduce(function(t, x) { return t + lgN(x.amount); }, 0), hasTax = taxes.some(function(x) { return lgN(x.amount) > 0; });
+    var net = pre != null && hasTax ? pre - taxSum : null, hold = win.date && sale.date && lgDays(win.date, sale.date) > 0 ? Math.round(lgDays(win.date, sale.date) / 30.4 * 10) / 10 : null;
+    var cash = winP + upfront - loanSum, base = Math.max(cash, 1);
+    var profit = net != null ? net : pre;
+    return { winP: winP, saleP: saleP, itemsTotal: itemsTotal, byGroup: byGroup, byCat: byCat, interest: interest, loanRows: loanRows, loanSum: loanSum, totalCost: totalCost, pre: pre, taxSum: taxSum, hasTax: hasTax, net: net, hold: hold, cash: cash, roi: profit != null && saleP ? profit / base * 100 : null, annual: profit != null && saleP && hold ? profit / base * 100 * (12 / hold) : null, margin: pre != null && saleP ? pre / saleP * 100 : null };
+}
+function ledgerPlanned(rec) {   // 연결된 경매 물건 기록의 '예상'(입찰 전 계산·입력값) - 1단계 예상 대비 비교용
+    var a = ledgerAuctionOf(rec); if (!a) return null;
+    var n = function(k) { return parseInt(a[k]) || 0; }, d = {};
+    try { d = maDealFromAuction(a); } catch (e) { d = { costs: {} }; }
+    var c = d.costs || {};
+    var g = { '취득(취득세·등기)': (c['취득세'] || 0) + (c['등기비용'] || 0), '명도·이사·청소': (c['명도비용'] || 0) + n('moving') + n('cleaning'), '수리': c['수리비'] || 0, '인수·체납': n('assumedDeposit') + n('unpaidMgmtFee'), '보유세·관리비': (c['재산세'] || 0) + (c['종부세'] || 0), '중개·매도비': c['중개수수료'] || 0, '이자·금융': (c['대출이자'] || 0) + (c['중도상환수수료'] || 0), '기타': c['기타'] || 0 };
+    var bid = c['낙찰가'] || 0, sale = n('target') || n('predictedSell') || 0, tot = bid + Object.keys(g).reduce(function(t, k) { return t + g[k]; }, 0);
+    return { a: a, bid: bid, sale: sale, groups: g, totalCost: tot, pre: sale ? sale - tot : null };
+}
+function ledgerSectionHtml() {
+    if (!ledger.loaded) { ledgerLoad().then(function() { try { renderMyAssets(); } catch (e) {} }); return '<div class="ma-sec"><div class="ma-h">📒 실거래 장부</div><div class="ma-sub">불러오는 중…</div></div>'; }
+    var fmt = maFmt, col = function(v) { return v == null ? '#374151' : (v < 0 ? '#c62828' : '#2e7d32'); };
+    var recs = ledger.items.slice().sort(function(p, q) { return String((q.sale && q.sale.date) || (q.win && q.win.date) || '').localeCompare(String((p.sale && p.sale.date) || (p.win && p.win.date) || '')); });
+    var done = recs.filter(function(r) { return r.sale && lgN(r.sale.price) > 0; }), calcs = {}; recs.forEach(function(r) { calcs[r.id] = ledgerCalc(r); });
+    var sumPre = done.reduce(function(t, r) { return t + (calcs[r.id].pre || 0); }, 0), withTax = done.filter(function(r) { return calcs[r.id].net != null; }), sumNet = withTax.reduce(function(t, r) { return t + calcs[r.id].net; }, 0);
+    var h = '<div class="ma-sec"><div class="ma-h">📒 실거래 장부 <span class="ma-sub" style="font-weight:normal;">· 실제로 쓴 비용·대출·세금을 건별로 쌓아 실제 마진을 계산해요</span><button class="modal-btn btn-gray" style="float:right;font-size:11px;padding:2px 8px;" onclick="ledgerEdit(\'new\')">+ 장부 추가</button></div>';
+    h += '<div class="ma-sub" style="margin-bottom:6px;">장부 ' + recs.length + '건 · 매도 완료 ' + done.length + '건 · 누적 실제 순이익(세전) <b style="color:' + col(sumPre) + ';">' + fmt(sumPre) + '</b>' + (withTax.length ? ' · 세금까지 입력한 ' + withTax.length + '건 세후 <b style="color:' + col(sumNet) + ';">' + fmt(sumNet) + '</b>' : '') + '</div>';
+    if (!recs.length) h += '<div class="ma-sub">아직 장부가 없어요. "+ 장부 추가"로 낙찰·비용·대출·매도를 입력하세요. 예전에 낙찰·매도한 건도 "한 번에 입력"으로 빠르게 넣을 수 있어요.</div>';
+    else h += '<div style="overflow-x:auto;"><table class="ma2-table"><thead><tr><th>이름</th><th>상태</th><th class="r">낙찰가</th><th class="r">매도가</th><th class="r">총비용</th><th class="r">세전 순이익</th><th class="r">세후(실제 세금)</th><th class="r">수익률</th><th></th></tr></thead><tbody>'
+        + recs.map(function(r) {
+            var c = calcs[r.id], open = ledgerOpen === r.id, sold = r.sale && lgN(r.sale.price) > 0;
+            var row = '<tr class="ma2-click" onclick="ledgerToggle(\'' + r.id + '\')"><td><b>' + maEsc(r.name || '(이름 없음)') + '</b><div class="ma-sub">' + maEsc(r.caseNo || '') + (r.win && r.win.date ? ' · 낙찰 ' + maEsc(r.win.date) : '') + '</div></td><td>' + (sold ? '매도 완료<div class="ma-sub">' + maEsc(r.sale.date || '') + (c.hold ? ' · ' + c.hold + '개월' : '') + '</div>' : '보유 중') + '</td>'
+                + '<td class="r">' + fmt(c.winP) + '</td><td class="r">' + (sold ? fmt(c.saleP) : '-') + '</td><td class="r">' + fmt(c.totalCost) + '</td>'
+                + '<td class="r" style="color:' + col(c.pre) + ';font-weight:700;">' + (c.pre != null ? fmt(c.pre) : '-') + (c.margin != null ? '<div class="ma-sub">' + c.margin.toFixed(1) + '%</div>' : '') + '</td>'
+                + '<td class="r" style="color:' + col(c.net) + ';">' + (c.net != null ? '<b>' + fmt(c.net) + '</b>' : (sold ? '<span class="ma-sub">세금 미입력</span>' : '-')) + '</td>'
+                + '<td class="r">' + (c.roi != null ? c.roi.toFixed(1) + '%' + (c.annual != null ? '<div class="ma-sub">연 ' + Math.round(c.annual) + '%</div>' : '') : '-') + '</td>'
+                + '<td style="white-space:nowrap;"><a href="#" onclick="event.stopPropagation();ledgerEdit(\'' + r.id + '\');return false;">수정</a></td></tr>';
+            if (open) row += '<tr><td colspan="9" style="background:#fafbfc;">' + ledgerDetailHtml(r, c) + '</td></tr>';
+            return row;
+        }).join('') + '</tbody></table></div>';
+    h += '<div class="ma-sub" style="margin-top:6px;color:#b26a00;">⚠️ 세후 마진은 입력한 실제 납부 세금을 그대로 뺀 값이에요(앱 계산이 아니라 덮어쓰기). 세금은 신고 후 확정된 금액을 넣어 주세요.</div></div>';
+    if (ledgerEditId) h += ledgerEditForm();
+    return h;
+}
+function ledgerToggle(id) { ledgerOpen = ledgerOpen === id ? null : id; renderMyAssets(); }
+function ledgerDetailHtml(r, c) {
+    var fmt = maFmt, parts = [];
+    var cats = Object.keys(c.byCat).map(function(k) { return '<div><span>' + maEsc(k) + '</span><b>' + fmt(c.byCat[k]) + '</b></div>'; }).join('');
+    var loans = c.loanRows.filter(function(l) { return l.amount; }).map(function(l, i) { return '<div><span>대출 ' + (i + 1) + ' · ' + fmt(l.amount) + ' · ' + l.rate + '%' + (l.days != null ? ' · ' + l.days + '일' : '') + '</span><b>이자 ' + fmt(l.interest) + (l.actual ? ' (실제)' : ' (계산)') + '</b></div>'; }).join('');
+    parts.push('<div class="ma2-cost">' + cats + loans + '<div><span>낙찰가</span><b>' + fmt(c.winP) + '</b></div><div><span>총비용(낙찰가+비용+이자)</span><b>' + fmt(c.totalCost) + '</b></div>' + (c.hasTax ? '<div><span>실제 납부 세금</span><b>' + fmt(c.taxSum) + '</b></div>' : '') + '<div><span>투입 현금(대출 후)</span><b>' + fmt(c.cash) + '</b></div></div>');
+    var pl = ledgerPlanned(r);
+    if (pl && c.saleP) {   // 1단계: 예상 대비 차이
+        var keys = ['취득(취득세·등기)', '명도·이사·청소', '수리', '인수·체납', '보유세·관리비', '중개·매도비', '이자·금융', '기타'], rows = '', impact = 0;
+        var line = function(label, plan, act, isCost) { var diff = act - plan, eff = isCost ? -diff : diff; impact += eff; rows += '<tr><td>' + label + '</td><td class="r">' + fmt(plan) + '</td><td class="r">' + fmt(act) + '</td><td class="r" style="color:' + (eff < 0 ? '#c62828' : (eff > 0 ? '#2e7d32' : '#6b7280')) + ';">' + (eff > 0 ? '+' : '') + fmt(eff) + '</td></tr>'; };
+        line('매도가', pl.sale, c.saleP, false); line('낙찰가', pl.bid, c.winP, true);
+        keys.forEach(function(k) { line(k, pl.groups[k] || 0, c.byGroup[k] || 0, true); });
+        parts.push('<div style="margin-top:8px;"><b>예상 대비 차이</b> <span class="ma-sub">(입찰 전 앱·입력 예상 → 실제, 오른쪽은 순이익에 준 영향)</span><table class="ma2-table"><thead><tr><th></th><th class="r">예상</th><th class="r">실제</th><th class="r">순이익 영향</th></tr></thead><tbody>' + rows
+            + '<tr><td><b>세전 순이익</b></td><td class="r"><b>' + fmt(pl.pre) + '</b></td><td class="r"><b>' + fmt(c.pre) + '</b></td><td class="r"><b style="color:' + (impact < 0 ? '#c62828' : '#2e7d32') + ';">' + (impact > 0 ? '+' : '') + fmt(impact) + '</b></td></tr></tbody></table><div class="ma-sub">예상은 연결된 경매 물건(' + maEsc(pl.a.caseNo || '') + ')의 입력·계산값이에요. 세금은 예상에 들어 있지 않아 세전 기준으로 비교해요.</div></div>');
+    } else if (c.saleP) parts.push('<div class="ma-sub" style="margin-top:6px;">사건번호로 연결된 경매 물건이 없어 예상 대비 비교는 못 해요(수정에서 사건번호를 넣으면 비교가 나와요).</div>');
+    if (r.memo) parts.push('<div class="ma-sub">메모: ' + maEsc(r.memo) + '</div>');
+    var its = (r.items || []).slice().sort(function(a, b) { return String(a.date || '').localeCompare(String(b.date || '')); });
+    if (its.length) parts.push('<details style="margin-top:6px;"><summary class="ma-sub">비용 건별 내역 ' + its.length + '건</summary><table class="ma2-table"><tbody>' + its.map(function(it) { return '<tr><td>' + maEsc(it.date || '') + '</td><td>' + maEsc(it.cat) + ' · ' + maEsc(it.sub) + '</td><td class="r">' + fmt(lgN(it.amount)) + '</td><td class="ma-sub">' + maEsc(it.memo || '') + '</td></tr>'; }).join('') + '</tbody></table></details>');
+    return parts.join('');
+}
+function ledgerEdit(id) {
+    ledgerEditId = id;
+    var cur = id === 'new' ? null : ledger.items.filter(function(x) { return x.id === id; })[0];
+    ledgerDraft = cur ? JSON.parse(JSON.stringify(cur)) : { id: 'lg_' + Date.now(), name: '', addr: '', type: 'house', caseNo: '', bidMethod: 'dealer', win: {}, sale: {}, items: [], loans: [{}, {}], taxes: [], memo: '' };
+    while ((ledgerDraft.loans || []).length < 2) ledgerDraft.loans.push({});
+    ledgerQuick = false; renderMyAssets();
+    setTimeout(function() { var f = document.getElementById('lg-form'); if (f && f.scrollIntoView) f.scrollIntoView({ block: 'nearest' }); }, 50);
+}
+function ledgerCancel() { ledgerEditId = null; ledgerDraft = null; renderMyAssets(); }
+function ledgerQuickToggle() { ledgerSyncDraft(); ledgerQuick = !ledgerQuick; renderMyAssets(); }
+function ledgerEditForm() {
+    var d = ledgerDraft; if (!d) return '';
+    var v = function(x) { return maEsc(x == null ? '' : x); }, win = d.win || {}, sale = d.sale || {};
+    var inp = function(id, label, val, ph, type) { return '<label>' + label + '</label><input id="lg-' + id + '" type="' + (type || 'text') + '" value="' + v(val) + '" placeholder="' + (ph || '') + '">'; };
+    var catOpts = LEDGER_CATS.map(function(c) { return '<optgroup label="' + c.cat + '">' + c.subs.map(function(s) { return '<option value="' + maEsc(c.cat + '|' + s) + '">' + maEsc(s) + '</option>'; }).join('') + '</optgroup>'; }).join('');
+    var h = '<div id="lg-form" style="background:#f9fafb;border:1px solid #e3e6ea;border-radius:8px;padding:10px;margin-top:10px;"><div style="font-weight:700;margin-bottom:6px;">' + (ledger.items.some(function(x) { return x.id === d.id; }) ? '장부 수정' : '장부 추가') + '</div><div class="ma-in">'
+        + inp('name', '이름', d.name, '예: ○○아파트 101동 1203호') + inp('addr', '주소', d.addr, '지번 주소') + inp('caseNo', '사건번호', d.caseNo, '예: 2025-30383 (넣으면 예상과 비교해요)')
+        + '<label>종류</label><select id="lg-type">' + Object.keys(MY_ASSET_TYPES).map(function(k) { return '<option value="' + k + '"' + (d.type === k ? ' selected' : '') + '>' + MY_ASSET_TYPES[k] + '</option>'; }).join('') + '</select>'
+        + inp('winDate', '낙찰일', win.date, 'YYYY-MM-DD', 'date') + inp('winPrice', '낙찰가(만원)', win.price, '예: 25000', 'number')
+        + inp('saleDate', '매도일', sale.date, 'YYYY-MM-DD', 'date') + inp('salePrice', '매도가(만원)', sale.price, '매도 후 입력', 'number') + '</div>';
+    // 대출 2건
+    h += '<div style="margin-top:8px;font-weight:700;">대출 (최대 2건)</div>';
+    [0, 1].forEach(function(i) {
+        var l = (d.loans || [])[i] || {};
+        h += '<div class="ma-in" style="border-top:1px dashed #ddd;padding-top:4px;margin-top:4px;"><label>대출 ' + (i + 1) + ' 금액(만원)</label><input id="lg-l' + i + 'amt" type="number" value="' + v(l.amount) + '" placeholder="예: 18000">'
+            + '<label>이율(연 %)</label><input id="lg-l' + i + 'rate" type="number" step="0.01" value="' + v(l.rate) + '" placeholder="예: 5.2">'
+            + '<label>시작일</label><input id="lg-l' + i + 'start" type="date" value="' + v(l.start) + '"><label>상환일</label><input id="lg-l' + i + 'end" type="date" value="' + v(l.end) + '" placeholder="비우면 매도일">'
+            + '<label>이자 실제 납부액(만원, 선택)</label><input id="lg-l' + i + 'paid" type="number" value="' + v(l.interestPaid) + '" placeholder="비우면 금액×이율×일수로 계산"></div>';
+    });
+    // 건별 비용
+    h += '<div style="margin-top:8px;font-weight:700;">비용 (건별 입력)</div><div class="ma-sub">분류·세부항목을 고르고 날짜와 금액을 한 건씩 넣어요. 영수증 사진은 받지 않아요.</div>';
+    h += '<div id="lg-items">' + (d.items || []).map(function(it, i) { return ledgerItemRow(it, i, catOpts); }).join('') + '</div><button class="modal-btn btn-gray" style="font-size:11px;margin-top:4px;" onclick="ledgerAddItem()">+ 비용 한 건 추가</button>';
+    // 소급 한 번에 입력
+    h += ' <button class="modal-btn btn-gray" style="font-size:11px;margin-top:4px;" onclick="ledgerQuickToggle()">' + (ledgerQuick ? '▲ 한 번에 입력 닫기' : '⚡ 한 번에 입력(예전 건 소급)') + '</button>';
+    if (ledgerQuick) {
+        var qv = {}; (d.items || []).forEach(function(it) { if (it.q) qv[it.cat + '|' + it.sub] = (qv[it.cat + '|' + it.sub] || 0) + lgN(it.amount); });
+        h += '<div style="background:#fff;border:1px solid #e3e6ea;border-radius:8px;padding:8px;margin-top:6px;"><div class="ma-sub">항목별 합계만 한 번에 넣어요(날짜는 낙찰일·매도일로 자동). 건별 입력한 것과는 따로 더해져요. 금액은 만원.</div>'
+            + LEDGER_CATS.map(function(c) { return '<div style="margin-top:4px;"><b>' + c.cat + '</b><div class="ma-in">' + c.subs.map(function(s) { var k = c.cat + '|' + s; return '<label>' + maEsc(s) + '</label><input class="lg-q" data-k="' + maEsc(k) + '" type="number" value="' + v(qv[k] || '') + '" placeholder="만원">'; }).join('') + '</div></div>'; }).join('') + '</div>';
+    }
+    // 실제 세금
+    h += '<div style="margin-top:8px;font-weight:700;">실제 납부 세금 (신고 후 확정액, 덮어쓰기)</div><div class="ma-in">'
+        + LEDGER_TAX_KINDS.map(function(k, i) { var t = (d.taxes || []).filter(function(x) { return x.kind === k; })[0] || {}; return '<label>' + k + '(만원)</label><input id="lg-tax' + i + '" type="number" value="' + v(t.amount) + '" placeholder="납부한 금액">'; }).join('') + '</div>';
+    h += '<div class="ma-in" style="margin-top:6px;"><label>메모</label><input id="lg-memo" type="text" value="' + v(d.memo) + '"></div>';
+    h += '<div style="margin-top:8px;"><button class="modal-btn btn-gray" onclick="ledgerSave()">저장</button> <button class="modal-btn btn-gray" onclick="ledgerCancel()">취소</button>' + (ledger.items.some(function(x) { return x.id === d.id; }) ? ' <button class="modal-btn btn-gray" style="color:#c62828;" onclick="ledgerDelete()">삭제</button>' : '') + '</div></div>';
+    return h;
+}
+function ledgerItemRow(it, i, catOpts) {
+    var sel = catOpts.replace('value="' + maEsc((it.cat || '') + '|' + (it.sub || '')) + '"', 'value="' + maEsc((it.cat || '') + '|' + (it.sub || '')) + '" selected');
+    return '<div class="ma-in lg-item" data-q="' + (it.q ? 1 : 0) + '" style="border-top:1px dashed #ddd;padding-top:4px;margin-top:4px;"><label>항목</label><select class="lg-i-cat">' + sel + '</select><label>날짜</label><input class="lg-i-date" type="date" value="' + maEsc(it.date || '') + '">'
+        + '<label>금액(만원)</label><input class="lg-i-amt" type="number" value="' + maEsc(it.amount == null ? '' : it.amount) + '"><label>메모</label><input class="lg-i-memo" type="text" value="' + maEsc(it.memo || '') + '"><label></label><a href="#" style="color:#c62828;" onclick="ledgerDelItem(this);return false;">이 건 삭제</a></div>';
+}
+function ledgerAddItem() {
+    ledgerSyncDraft(); var d = ledgerDraft; d.items = d.items || [];
+    d.items.push({ id: 'li_' + Date.now(), date: (d.win && d.win.date) || '', cat: '취득', sub: '취득세', amount: '', memo: '' }); renderMyAssets();
+}
+function ledgerDelItem(el) { ledgerSyncDraft(); var rows = Array.prototype.slice.call(document.querySelectorAll('#lg-items .lg-item')); var idx = rows.indexOf(el.closest('.lg-item')); var normal = ledgerDraft.items.filter(function(x) { return !x.q; }); if (idx >= 0) normal.splice(idx, 1); ledgerDraft.items = normal.concat(ledgerDraft.items.filter(function(x) { return x.q; })); renderMyAssets(); }
+function ledgerSyncDraft() {   // 화면 입력값을 초안에 모음(다시 그리기 전에 호출)
+    var d = ledgerDraft; if (!d || !document.getElementById('lg-form')) return;
+    var g = function(id) { var e = document.getElementById('lg-' + id); return e ? e.value : ''; };
+    d.name = g('name').trim(); d.addr = g('addr').trim(); d.caseNo = g('caseNo').trim(); d.type = g('type') || 'house'; d.memo = g('memo');
+    d.win = { date: g('winDate'), price: g('winPrice') }; d.sale = { date: g('saleDate'), price: g('salePrice') };
+    d.loans = [0, 1].map(function(i) { return { amount: g('l' + i + 'amt'), rate: g('l' + i + 'rate'), start: g('l' + i + 'start'), end: g('l' + i + 'end'), interestPaid: g('l' + i + 'paid') }; });
+    var normal = Array.prototype.slice.call(document.querySelectorAll('#lg-items .lg-item')).map(function(row, i) {
+        var ck = (row.querySelector('.lg-i-cat').value || '|').split('|'), old = (d.items.filter(function(x) { return !x.q; })[i]) || {};
+        return { id: old.id || 'li_' + Date.now() + '_' + i, cat: ck[0], sub: ck[1], date: row.querySelector('.lg-i-date').value, amount: row.querySelector('.lg-i-amt').value, memo: row.querySelector('.lg-i-memo').value };
+    });
+    var quick = [];
+    if (document.querySelector('.lg-q')) {
+        var winD = d.win.date || '', saleD = d.sale.date || '';
+        document.querySelectorAll('.lg-q').forEach(function(inp) { var val = lgN(inp.value); if (!val) return; var k = inp.getAttribute('data-k').split('|'); quick.push({ id: 'lq_' + k.join('_'), q: 1, cat: k[0], sub: k[1], date: k[0] === '매도' ? saleD : (k[0] === '보유' ? '' : winD), amount: val, memo: '한 번에 입력' }); });
+    } else quick = d.items.filter(function(x) { return x.q; });
+    d.items = normal.concat(quick);
+    d.taxes = LEDGER_TAX_KINDS.map(function(k, i) { return { kind: k, amount: g('tax' + i) }; }).filter(function(t) { return lgN(t.amount) > 0; });
+}
+async function ledgerSave() {
+    ledgerSyncDraft(); var d = ledgerDraft;
+    if (!d.name) { alert('이름을 입력해 주세요.'); return; }
+    d.items = (d.items || []).filter(function(x) { return lgN(x.amount) > 0; }); d.loans = (d.loans || []).filter(function(l) { return lgN(l.amount) > 0; });
+    d.updatedAt = Date.now(); if (!d.createdAt) d.createdAt = d.updatedAt;
+    try { await ledgerSaveItem(d); } catch (e) { alert('저장하지 못했어요: ' + e.message); return; }
+    ledgerEditId = null; ledgerDraft = null; renderMyAssets();
+}
+async function ledgerDelete() {
+    var d = ledgerDraft; if (!d || !confirm('이 장부(' + (d.name || '') + ')를 삭제할까요? 되돌릴 수 없어요.')) return;
+    try { await ledgerDeleteItem(d.id); } catch (e) { alert('삭제하지 못했어요: ' + e.message); return; }
+    ledgerEditId = null; ledgerDraft = null; renderMyAssets();
+}
+
 function renderMyAssets() {
     var body = document.getElementById('ma-body');
     if (!myAssets.loaded) { body.innerHTML = '<div class="ma-sec ma-sub">불러오는 중…</div>'; return; }
@@ -32543,6 +32742,7 @@ function renderMyAssets() {
         + '<div class="ma-sec"><div class="ma-h">비용 구성</div>' + costHtml + '</div>'
         + '<div class="ma-sec"><div class="ma-h">지역별 수익</div>' + regHtml + '</div>'
         + '<div class="ma-sec"><div class="ma-h">수익률 추이 <span class="ma-sub" style="font-weight:normal;">(매도일 순)</span></div>' + maRoiSvg(deals) + '</div>';
+    html += ledgerSectionHtml();   // 📒 실거래 장부
     html += '<div class="ma2-cols"><div class="ma2-left">' + left + '</div><div class="ma2-right">' + right + '</div></div>';
     body.innerHTML = html;
 }
