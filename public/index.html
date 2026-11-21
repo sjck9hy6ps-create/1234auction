@@ -32677,7 +32677,11 @@ var LEDGER_CATS = [
     { cat: '금융', subs: ['대출 설정비', '중도상환수수료', '대출 이자(실제 납부 합계)'] },
     { cat: '기타', subs: ['기타 비용'] }
 ];
-var LEDGER_TAX_KINDS = ['양도소득세', '종합소득세(증가분)', '부가세', '지방소득세'];
+var LEDGER_TAX_KINDS = ['양도소득세', '종합소득세(증가분)', '부가세', '지방소득세', '건강보험 소득월액'];
+/* 🏥 직장가입자 보수 외 소득월액보험료(2026-11-22, 사용자 요청 / 법제처 원문 확인): 월 소득월액 = (연간 보수 외 소득 − 2,000만원) × 1/12 (건강보험법 71조①·시행령 41조④), 보험료율 7.19%(시행령 44조①, 2026-10-01 시행),
+   사업·이자·배당·기타소득은 100% 반영, 근로소득은 보수월액에 이미 들어가 제외(시행규칙 44조②). 연 환산 = (보수 외 소득 − 2,000만) × 7.19%. 장기요양보험료(건보료의 일정 비율)는 별도라 미포함. 요율은 해마다 바뀌면 여기를 고칠 것 */
+var HEALTH_PREM = { rate: 0.0719, thresholdMan: 2000 };
+function lgHealthAdd(base, add) { var t = HEALTH_PREM.thresholdMan, r = HEALTH_PREM.rate; return Math.round((Math.max(0, base + add - t) - Math.max(0, base - t)) * r); }   // 보수 외 소득 base(만원) 위에 add를 얹을 때 늘어나는 연 보험료(만원)
 var LEDGER_GROUP = { '취득': '취득(취득세·등기)', '명도·이사': '명도·이사·청소', '청소': '명도·이사·청소', '수리': '수리', '인수·체납': '인수·체납', '보유': '보유세·관리비', '매도': '중개·매도비', '금융': '이자·금융', '기타': '기타' };
 var LEDGER_UPFRONT = { '취득': 1, '명도·이사': 1, '청소': 1, '수리': 1, '인수·체납': 1, '금융': 1 };
 async function ledgerLoad() {
@@ -32746,6 +32750,7 @@ function lgEstTaxesLive(rec, pre) {   // 지금의 내 자산·연봉 설정으�
         ledger.items.forEach(function(r) { if (r.id !== rec.id && r.sale && lgN(r.sale.price) > 0 && String(r.sale.date || '').slice(0, 4) === y && (String(r.sale.date) < String(sale.date) || (String(r.sale.date) === String(sale.date) && String(r.id) < String(rec.id)))) { var c2 = ledgerCalc(r, true); if (c2.pre > 0) biz += c2.pre; } });
         var base = Math.max(0, other + extra + biz), t = ttIncTax(base, pre, sale.date), out = [];
         if (t.inc > 0) out.push({ kind: '종합소득세(증가분)', amount: t.inc, est: 1 }); if (t.local > 0) out.push({ kind: '지방소득세', amount: t.local, est: 1 });
+        if (p.salary > 0) { var hb = (parseInt(p.otherIncome) || 0) + extra + biz, hp = lgHealthAdd(hb, pre); if (hp > 0) out.push({ kind: '건강보험 소득월액', amount: hp, est: 1 }); }   // 월급을 받는 직장가입자일 때만(연봉 입력 시) - 보수 외 소득 2,000만 초과분
         return { taxes: out, base: base };
     } catch (e) { return null; }
 }
@@ -32875,7 +32880,7 @@ function ledgerDetailHtml(r, c) {
     var fmt = maFmt, parts = [];
     var cats = Object.keys(c.byCat).map(function(k) { return '<div><span>' + maEsc(k) + '</span><b>' + fmt(c.byCat[k]) + '</b></div>'; }).join('');
     var loans = c.loanRows.filter(function(l) { return l.amount; }).map(function(l, i) { return '<div><span>대출 ' + (i + 1) + ' · ' + fmt(l.amount) + ' · ' + l.rate + '%' + (l.days != null ? ' · ' + l.days + '일' : '') + (l.amort ? ' · 원리금균등 ' + l.term + '개월' + (l.termAuto ? '(시작~상환일 자동)' : '') : ' · 원금 일시상환') + '</span><b>이자 ' + fmt(l.interest) + (l.actual ? ' (실제)' : ' (계산)') + (l.noTerm ? ' ⚠️ 시작일·상환일 또는 대출기간 입력 필요' : '') + '</b></div>'; }).join('');
-    parts.push('<div class="ma2-cost">' + cats + loans + '<div><span>낙찰가</span><b>' + fmt(c.winP) + '</b></div><div><span>총비용(낙찰가+비용+이자)</span><b>' + fmt(c.totalCost) + '</b></div>' + (c.vatTotal ? '<div><span>부가세(계산서 받은 비용)' + (r.vatDeduct ? ' - 환급, 비용 제외' : ' - 비용에 포함') + '</span><b>' + fmt(c.vatTotal) + '</b></div>' : '') + (c.hasTax ? '<div><span>' + (c.taxFrozen ? '예상 세금 🔒 매도일 지나 고정' : (c.taxEst ? '예상 세금(실제 입력 전)' : '실제 납부 세금')) + '</span><b>' + fmt(c.taxSum) + '</b></div>' : '') + '<div><span>투입 현금(대출 후)</span><b>' + fmt(c.cash) + '</b></div></div>');
+    parts.push('<div class="ma2-cost">' + cats + loans + '<div><span>낙찰가</span><b>' + fmt(c.winP) + '</b></div><div><span>총비용(낙찰가+비용+이자)</span><b>' + fmt(c.totalCost) + '</b></div>' + (c.vatTotal ? '<div><span>부가세(계산서 받은 비용)' + (r.vatDeduct ? ' - 환급, 비용 제외' : ' - 비용에 포함') + '</span><b>' + fmt(c.vatTotal) + '</b></div>' : '') + (c.hasTax ? '<div><span>' + (c.taxFrozen ? '예상 세금·건보료 🔒 매도일 지나 고정' : (c.taxEst ? '예상 세금·건보료(실제 입력 전)' : '실제 납부 세금')) + '</span><b>' + fmt(c.taxSum) + '</b></div>' : '') + '<div><span>투입 현금(대출 후)</span><b>' + fmt(c.cash) + '</b></div></div>');
     var pl = ledgerPlanned(r);
     if (pl && c.saleP) {   // 1단계: 예상 대비 차이
         var keys = ['취득(취득세·등기)', '명도·이사·청소', '수리', '인수·체납', '보유세·관리비', '중개·매도비', '이자·금융', '기타'], rows = '', impact = 0;
@@ -33149,7 +33154,7 @@ function ledgerEditForm() {
             + LEDGER_CATS.map(function(c) { return '<div class="lg-sub-h" style="margin-top:6px;">' + c.cat + '</div><div class="lg-fields">' + c.subs.map(function(s) { var k = c.cat + '|' + s; return '<div class="lg-field"><label>' + maEsc(s) + '</label><input class="lg-q lg-won" data-k="' + maEsc(k) + '" type="number" step="1" value="' + v(lgWon(qv[k] || '')) + '" placeholder="원"><div class="lg-hint"></div></div>'; }).join('') + '</div>'; }).join('') + '</div>';
     }
     h += '</div>';
-    h += '<div class="lg-sec"><div class="lg-sec-h">실제 납부 세금 <span class="ma-sub" style="font-weight:normal;">· 신고 후 확정액을 넣으면 앱 계산 대신 이 값으로 세후 마진을 구해요</span></div><div class="lg-fields">'
+    h += '<div class="lg-sec"><div class="lg-sec-h">실제 납부 세금·건보료 <span class="ma-sub" style="font-weight:normal;">· 신고 후 확정액을 넣으면 앱 계산 대신 이 값으로 세후 마진을 구해요</span></div><div class="lg-fields">'
         + LEDGER_TAX_KINDS.map(function(k, i) { var cc = lgFormTaxCalc(d), t = (cc.taxList || []).filter(function(x) { return x.kind === k; })[0] || {}; return lgWonField('lg-tax' + i, k, t.amount, '납부한 금액', cc.taxEst ? ' data-est="1" oninput="this.setAttribute(\'data-est\',\'0\')"' : ''); }).join('') + '</div>'
         + '<div class="ma-sub" style="margin-top:4px;">' + (lgFormTaxCalc(d).taxEst ? '🟡 지금 칸의 금액은 <b>예상 세금</b>(내 자산·매도일 기준 계산)이에요. 실제로 낸 금액을 알게 되면 칸을 고쳐 쓰세요 - 하나라도 고치면 입력한 값만 실제 세금으로 저장돼요. 🔒 매도일이 지나면 그 시점의 연봉·소득 기준으로 고정되어, 이후 설정이 바뀌어도 이 값은 그대로예요(매도가·비용을 고치면 다시 계산).' : '입력한 실제 세금으로 계산해요.') + '</div></div>';
     h += '<div class="lg-sec"><div class="lg-fields">' + lgField('lg-memo', '메모', d.memo, '') + '</div><div class="ma-sub" style="margin-top:6px;">🗓️ 세율 스냅샷: ' + (d.taxSnap ? maEsc(d.taxSnap.at) + ' 저장됨 <a href="#" onclick="ledgerResnap();return false;">지금 세율로 다시 저장</a>' : '저장할 때 그 시점의 세율표를 함께 보관해요') + '</div></div>';
