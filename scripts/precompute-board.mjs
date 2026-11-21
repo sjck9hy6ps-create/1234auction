@@ -142,7 +142,6 @@ try {
           } catch (e) {}
         };
         aptRows.forEach(add); villaRows.forEach(add);
-        aptRows.forEach((r) => { try { const b = aptBandBrief(r, true); if (b) out.band[r.id] = [{ bad: 0, mid: 1, good: 2 }[b.v], b.n, b.rank, b.nb, b.share]; } catch (e) {} });
         // ② 빌라 최근거래가 (승강기 정보를 못 받은 물건은 저장하지 않음 - 앱이 실시간으로 계산)
         let idx = 0;
         const work = async () => {
@@ -188,6 +187,8 @@ try {
             out.hist[k] = { py: py, m: m };
           });
         }
+        // 단지 안 잘 거래되는 평형(최근 5년 기준): 위 10년 그래프 단계에서 단지 과거 거래를 이미 받아 두었으므로 그 자료로 계산
+        aptRows.forEach((r) => { try { const b = aptBandBrief(r, true); if (b) out.band[r.id] = [{ bad: 0, mid: 1, good: 2 }[b.v], b.n, b.rank, b.nb, b.share]; } catch (e) {} });
         // 자료 내리기(메모리)
         delete dataCache[lw]; delete rentCacheByLawd[lw]; mergedLawdCds.delete(lw);
         return out;
