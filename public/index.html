@@ -127,16 +127,6 @@ body { font-family:'Malgun Gothic',sans-serif; }
     display:flex; justify-content:space-between; align-items:center; flex-shrink:0;
 }
 #panel-close { cursor:pointer; font-size:20px; }
-#sort-bar {
-    display:flex; gap:6px; padding:10px 12px; border-bottom:1px solid #eee;
-    flex-shrink:0; flex-wrap:wrap; align-items:center;
-}
-#sort-bar span { font-size:12px; color:#666; margin-right:2px; }
-.sort-btn {
-    padding:4px 10px; font-size:12px; border:1px solid #ddd;
-    border-radius:20px; background:white; cursor:pointer; color:#555;
-}
-.sort-btn.active { background:#333; color:white; border-color:#333; }
 #pyung-bar {
     display:flex; gap:5px; padding:8px 12px; border-bottom:1px solid #eee;
     flex-shrink:0; flex-wrap:wrap; align-items:center;
@@ -1004,7 +994,6 @@ body.ui2 .al-opts input[type=checkbox] { margin:0; }
 /* ════ 2026-10 단지 상세 패널(다방 느낌) ════ */
 body.ui2 #panel { width:380px; background:#f5f6f8; }
 body.ui2 #panel-header { background:#fff !important; border-bottom:1px solid #e9ebee; font-size:16px; }
-body.ui2 #sort-bar { display:none; }
 body.ui2 #pyung-bar { background:#fff; flex-wrap:nowrap; overflow-x:auto; gap:0; padding:0 8px; border-bottom:1px solid #e9ebee; }
 body.ui2 #pyung-bar > span { display:none; }
 body.ui2 .pyung-btn { border:none; border-radius:0; background:none; color:#8a9099; font-weight:700; font-size:13px; padding:10px 10px 8px; border-bottom:2px solid transparent; white-space:nowrap; }
@@ -3067,14 +3056,6 @@ body.tb-menu-open.ui2 #tb-menu.open { z-index:9301; }
     <div id="panel-header">
         <span id="panel-title">거래 목록</span>
         <span id="panel-close" onclick="closePanel()">✕</span>
-    </div>
-    <div id="sort-bar">
-        <span>정렬:</span>
-        <button class="sort-btn active" onclick="setSort('date',this)">최신순</button>
-        <button class="sort-btn" onclick="setSort('amount_desc',this)">금액↓</button>
-        <button class="sort-btn" onclick="setSort('amount_asc',this)">금액↑</button>
-        <button class="sort-btn" onclick="setSort('area_desc',this)">면적↓</button>
-        <button class="sort-btn" onclick="setSort('area_asc',this)">면적↑</button>
     </div>
     <div id="pyung-bar">
         <span>평형:</span>
@@ -5812,18 +5793,20 @@ function extractEmdInfo(result) {
 /* 시군구코드(sggCd) 기준 법정동 경계 폴리곤 목록을 캐시(dongBoundaryCacheBySgg)에서
    가져오거나, 없으면 fetch해서 캐시에 채운 뒤 리턴 - 법정동 경계선 호버 기능과
    "현재동+인접동" 배지 필터 기능이 공유해서 씀(하나가 이미 불러온 시군구면 서로 재사용) */
+var dongBoundaryFailAt = {};
 function fetchBoundaryList(sggCd) {
     if (dongBoundaryCacheBySgg[sggCd]) return Promise.resolve(dongBoundaryCacheBySgg[sggCd]);
     // 2026-08: api/get-boundary.js 단독 함수였는데 Vercel 12개 함수 한도에 걸려서
     // data-coverage.js의 mode=boundary 분기로 합침 (get-boundary.js는 더 이상 안 씀)
+    if (dongBoundaryFailAt[sggCd] && Date.now() - dongBoundaryFailAt[sggCd] < 3600000) return Promise.resolve([]);   // 실패한 시군구는 1시간 동안 다시 묻지 않음(서버가 계속 실패하는 경우 매번 요청하던 것을 줄임, 2026-11-22)
     return fetch('/api/data-coverage?mode=boundary&sggCd=' + sggCd)
-        .then(function(r) { return r.json(); })
+        .then(function(r) { return r.ok ? r.json() : Promise.reject(new Error('경계 조회 ' + r.status)); })
         .then(function(d) {
             var list = (d && d.boundaries) || [];
             dongBoundaryCacheBySgg[sggCd] = list;
             return list;
         })
-        .catch(function() { return []; /* 경계 조회 실패해도 지도 사용에는 지장 없으므로 조용히 무시 */ });
+        .catch(function() { dongBoundaryFailAt[sggCd] = Date.now(); return []; /* 경계 조회 실패해도 지도 사용에는 지장 없으므로 조용히 무시 */ });
 }
 async function checkDongBoundaryAt(lat, lon) {
     if (!dongBoundaryMode || !geocoder) return;
@@ -7644,7 +7627,7 @@ function createMarker(cacheKey, lat, lon, apt) {
    클릭된 마커의 실제 렌더링 사각형(getBoundingClientRect)과 겹치는 다른 마커가
    있으면 바로 패널을 열지 않고, 겹친 후보들을 목록으로 보여주는 선택 팝업을 띄움.
    겹치는 게 하나도 없으면(대부분의 경우) 기존과 동일하게 바로 패널이 열림 */
-function rectsOverlap(r1, r2) {
+function rectsTouchOrOverlap(r1, r2) {   // 맞닿기만 해도 겹침으로 봄(마커 겹침 목록용). 배지 묶기(rectsOverlap)는 맞닿음을 겹침으로 보지 않는 앞 정의를 씀 - 예전에 같은 이름이 두 번 정의돼 뒤 것이 앞 것을 덮어쓰던 것을 분리(2026-11-22 전체 점검)
     return !(r2.left > r1.right || r2.right < r1.left || r2.top > r1.bottom || r2.bottom < r1.top);
 }
 function findOverlappingMarkers(key) {
@@ -7658,7 +7641,7 @@ function findOverlappingMarkers(key) {
         if (d.type === 'auction-cluster' && k !== key) return; // 묶음 배지는 겹침 목록에 넣지 않음(자기 클릭은 따로 처리)
         var r = d.div.getBoundingClientRect();
         if (r.width === 0 && r.height === 0) return; // 화면 밖(지도 범위 밖)으로 밀려난 마커는 제외
-        if (k === key || rectsOverlap(tRect, r)) result.push({ key: k, data: d });
+        if (k === key || rectsTouchOrOverlap(tRect, r)) result.push({ key: k, data: d });
     });
     // 위에 있는 배지부터(=화면에서 눈에 띄는 순서) 보이도록 경매 → 낙찰사례 → 거래 순으로 정렬
     var rank = { auction: 0, bidcase: 1 };
@@ -8072,8 +8055,6 @@ function openPanel(apt, lat, lon) {
     document.getElementById('panel-title').innerHTML = (apt.latest && apt.latest.name || '') + gradeHtml;
     document.getElementById('panel-header').style.background = '#f9e000';
     document.getElementById('panel').style.display = 'flex';
-    document.querySelectorAll('.sort-btn').forEach(function(b) { b.classList.remove('active'); });
-    document.querySelector('.sort-btn').classList.add('active');
     // 평형 버튼
     var pyungSet = {};
     currentTrades.forEach(function(t) { if (t.area > 0) pyungSet[toPyung(t.area)] = true; });
@@ -8621,25 +8602,6 @@ function copyCourtInfoSummary(b64) {
     } else {
         alert('자동 복사에 실패했습니다. 아래 내용을 직접 복사해 주세요:\n\n' + text);
     }
-}
-function setTypeFilter(type, btn) {
-    currentTypeFilter = type;
-    document.querySelectorAll('.type-btn').forEach(function(b) {
-        b.classList.remove('active-all', 'active-apt', 'active-villa');
-    });
-    btn.classList.add(type === 'villa' ? 'active-villa' : 'active-apt');
-    updateLegendLabels();
-    redrawMarkers();
-    if (showLocation) renderLocationLayer();
-}
-// 연립다세대·단독다가구는 최근/과거 거래 기준(6개월/전년도)이 아파트(3개월/1년)와 달라서
-// 범례 문구도 현재 선택된 타입에 맞춰 바꿔줌
-function updateLegendLabels() {
-    var isVilla = currentTypeFilter === 'villa';
-    var recentEl = document.getElementById('legend-recent-label');
-    var pastEl = document.getElementById('legend-past-label');
-    if (recentEl) recentEl.innerText = isVilla ? '최근 6개월 거래' : '최근 3개월 거래';
-    if (pastEl) pastEl.innerText = isVilla ? '6개월~전년도 거래' : '3개월~1년 거래';
 }
 function setPyung(pyung, btn) {
     currentPyung = pyung;
@@ -32830,7 +32792,7 @@ function lgEstTaxes(rec, pre) {
 function lgFreezeIfDue(rec) {   // 매도일이 지났고 확정 세금이 없으면 지금 값으로 고정. 바뀌었으면 true
     try {
         var sale = rec.sale || {}; if (!(lgN(sale.price) > 0) || !sale.date || sale.date > lgTodayStr()) return false;
-        if ((rec.taxes || []).some(function(x) { return lgN(x.amount) > 0; })) return false;
+        if ((rec.taxes || []).some(function(x) { return x.kind !== '부가세' && lgN(x.amount) > 0; })) return false;
         var pre = ledgerCalc(rec, true).pre; if (!pre || lgSnapValid(rec, pre)) return false;
         var r = lgEstTaxesLive(rec, pre); if (!r || !r.taxes.length) return false;
         rec.estSnap = { at: lgTodayStr(), saleDate: sale.date, pre: pre, base: r.base, taxes: r.taxes.map(function(t) { return { kind: t.kind, amount: t.amount }; }) }; return true;
@@ -33089,8 +33051,8 @@ function ledgerSyncDraft() {   // 화면 입력값을 초안에 모음(다시 �
         document.querySelectorAll('.lg-q').forEach(function(inp) { var val = lgN(lgFromWon(inp.value)); if (!val) return; var k = inp.getAttribute('data-k').split('|'); quick.push({ id: 'lq_' + k.join('_'), q: 1, cat: k[0], sub: k[1], date: k[0] === '매도' ? saleD : (k[0] === '보유' ? '' : winD), amount: val, memo: '한 번에 입력' }); });
     } else quick = d.items.filter(function(x) { return x.q; });
     d.items = normal.concat(quick);
-    var tinp = LEDGER_TAX_KINDS.map(function(k, i) { return document.getElementById('lg-tax' + i); }), onlyEst = tinp.every(function(e) { return !e || !e.value || e.getAttribute('data-est') === '1'; });
-    d.taxes = onlyEst ? [] : LEDGER_TAX_KINDS.map(function(k, i) { return { kind: k, amount: lgFromWon(g('tax' + i)) }; }).filter(function(t) { return lgN(t.amount) > 0; });   // 칸을 하나도 안 고쳤으면 예상값은 저장하지 않고 계속 다시 계산
+    var vi = LEDGER_TAX_KINDS.indexOf('부가세'), tinp = LEDGER_TAX_KINDS.map(function(k, i) { return i === vi ? null : document.getElementById('lg-tax' + i); }), onlyEst = tinp.every(function(e) { return !e || !e.value || e.getAttribute('data-est') === '1'; });
+    d.taxes = (onlyEst ? [] : LEDGER_TAX_KINDS.map(function(k, i) { return { kind: k, amount: lgFromWon(g('tax' + i)) }; }).filter(function(t, ti) { return LEDGER_TAX_KINDS[ti] !== '부가세' && lgN(t.amount) > 0; })).concat(lgN(lgFromWon(g('tax' + vi))) > 0 ? [{ kind: '부가세', amount: lgFromWon(g('tax' + vi)) }] : []);   // 부가세는 건물분 부가세 칸에서 따로 입력(예상 세금과 섞지 않음)   // 칸을 하나도 안 고쳤으면 예상값은 저장하지 않고 계속 다시 계산
     var vd = document.getElementById('lg-vatDeduct'); if (vd) d.vatDeduct = vd.checked ? 1 : 0;
     var vm = document.getElementById('lg-vatMode'); if (vm) { d.vatMode = vm.value; d.vatRatio = g('vatRatio'); d.vatIn = lgFromWon(g('vatIn')); }
 }
@@ -33235,11 +33197,11 @@ function ledgerEditForm() {
         var cv = lgFormTaxCalc(d), on = cv.vatOn;
         h += '<div class="lg-sec"><div class="lg-sec-h">🏢 건물분 부가세 <span class="ma-sub" style="font-weight:normal;">· 업무용 오피스텔·85㎡ 초과 주택처럼 과세 건물을 팔 때 · 토지분은 면세</span></div><div class="lg-fields">'
             + lgSel('lg-vatMode', '과세 여부', '<option value=""' + (!d.vatMode ? ' selected' : '') + '>자동 판정(' + (on ? '과세로 계산 중' : '면세·해당 없음') + ')</option><option value="on"' + (d.vatMode === 'on' ? ' selected' : '') + '>과세로 계산</option><option value="off"' + (d.vatMode === 'off' ? ' selected' : '') + '>면세(계산 안 함)</option>')
-            + lgField('lg-vatRatio', '건물가액 비율(%)', d.vatRatio, '비우면 ' + Math.round(VAT_DEFAULT_BUILDING_RATIO * 100) + '% 추정', 'number', ' step="1"') + lgWonField('lg-vatIn', '낙찰 때 낸 건물분 부가세(공제받는 금액)', d.vatIn, '없으면 비워 두기') + '</div>'
+            + lgField('lg-vatRatio', '건물가액 비율(%)', d.vatRatio, '비우면 ' + Math.round(VAT_DEFAULT_BUILDING_RATIO * 100) + '% 추정', 'number', ' step="1"') + lgWonField('lg-vatIn', '낙찰 때 낸 건물분 부가세(공제받는 금액)', d.vatIn, '없으면 비워 두기') + lgWonField('lg-tax' + LEDGER_TAX_KINDS.indexOf('부가세'), '실제 납부한 부가세(있으면 계산 대신 사용)', ((d.taxes || []).filter(function(x) { return x.kind === '부가세'; })[0] || {}).amount, '신고 후 확정액') + '</div>'
             + '<div class="ma-sub" style="margin-top:4px;" id="lg-vat-note">' + (on && cv.saleP ? '🏢 매도가 ' + maFmt(cv.saleP) + ' × 건물 ' + Math.round(cv.vatRatio * 100) + '% × 10/110 = 건물분 부가세 <b>' + maFmt(cv.vatSale) + '</b>' + (cv.vatIn ? ' − 낙찰 때 낸 ' + maFmt(cv.vatIn) : '') + ' = 납부 <b>' + maFmt(cv.vatPay) + '</b> (매출에서 빼서 순이익에 반영)' : '과세로 계산하면 매도가에 부가세가 포함된 것으로 보고 건물가액의 10/110을 납부 부가세로 계산해요.') + '</div><div class="ma-sub" style="color:#b26a00;">건물·토지 비율은 감정평가서나 기준시가로 안분하는데 구분이 불분명하면 세무서가 안분해요. 주거용으로 쓰는 오피스텔이나 85㎡ 이하 주택은 면세예요(세무사 확인).</div></div>';
     })();
     h += '<div class="lg-sec"><div class="lg-sec-h">실제 납부 세금·건보료 <span class="ma-sub" style="font-weight:normal;">· 신고 후 확정액을 넣으면 앱 계산 대신 이 값으로 세후 마진을 구해요</span></div><div class="lg-fields">'
-        + LEDGER_TAX_KINDS.map(function(k, i) { var cc = lgFormTaxCalc(d), t = (cc.taxList || []).filter(function(x) { return x.kind === k; })[0] || {}; return lgWonField('lg-tax' + i, k, t.amount, '납부한 금액', cc.taxEst ? ' data-est="1" oninput="this.setAttribute(\'data-est\',\'0\')"' : ''); }).join('') + '</div>'
+        + LEDGER_TAX_KINDS.map(function(k, i) { if (k === '부가세') return ''; var cc = lgFormTaxCalc(d), t = (cc.taxList || []).filter(function(x) { return x.kind === k; })[0] || {}; return lgWonField('lg-tax' + i, k, t.amount, '납부한 금액', cc.taxEst ? ' data-est="1" oninput="this.setAttribute(\'data-est\',\'0\')"' : ''); }).join('') + '</div>'
         + '<div class="ma-sub" style="margin-top:4px;">' + (lgFormTaxCalc(d).taxEst ? '🟡 지금 칸의 금액은 <b>예상 세금</b>(내 자산·매도일 기준 계산)이에요. 실제로 낸 금액을 알게 되면 칸을 고쳐 쓰세요 - 하나라도 고치면 입력한 값만 실제 세금으로 저장돼요. 🔒 매도일이 지나면 그 시점의 연봉·소득 기준으로 고정되어, 이후 설정이 바뀌어도 이 값은 그대로예요(매도가·비용을 고치면 다시 계산).' : '입력한 실제 세금으로 계산해요.') + '</div></div>';
     h += '<div class="lg-sec"><div class="lg-fields">' + lgField('lg-memo', '메모', d.memo, '') + '</div><div class="ma-sub" style="margin-top:6px;">🗓️ 세율 스냅샷: ' + (d.taxSnap ? maEsc(d.taxSnap.at) + ' 저장됨 <a href="#" onclick="ledgerResnap();return false;">지금 세율로 다시 저장</a>' : '저장할 때 그 시점의 세율표를 함께 보관해요') + '</div></div>';
     h += '<div class="lg-actions">' + (!isNewRec ? '<button class="modal-btn btn-gray" style="color:#c62828;" onclick="ledgerDelete()">삭제</button>' : '') + '<span style="margin-left:auto;"></span><button class="modal-btn btn-gray" onclick="ledgerCancel()">취소</button><button class="modal-btn btn-purple" onclick="ledgerSave()">저장</button></div></div>';

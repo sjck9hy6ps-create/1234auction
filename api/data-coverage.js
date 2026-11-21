@@ -2812,7 +2812,16 @@ async function getBoundary(sggCd, wantRaw) {
 
   try {
     const r = await fetch(url, { signal: AbortSignal.timeout(15000) });
-    const data = await r.json();
+    const rawText = await r.text();
+    let data = null;
+    try { data = rawText ? JSON.parse(rawText) : null; } catch (parseErr) { data = null; }
+    if (!data) {
+      // VWorld가 빈 응답·HTML을 돌려준 경우(키·등록 도메인·호출 차단 문제 가능) - 예전엔 'Unexpected end of JSON input'(500)로만 보였음
+      return {
+        status: 502,
+        body: { error: 'VWorld가 비어 있거나 읽을 수 없는 응답을 보냈어요(HTTP ' + r.status + '). VWORLD_API_KEY와 VWorld에 등록한 도메인을 확인해 주세요.', httpStatus: r.status, head: String(rawText || '').slice(0, 120) },
+      };
+    }
 
     if (data?.response?.status !== 'OK') {
       return {
@@ -3013,8 +3022,10 @@ export default async function handler(req, res) {
     }
     try {
       const { status, body } = await getBoundary(String(sggCd), req.query.raw === 'true');
+      if (status !== 200) res.setHeader('Cache-Control', 'no-store');   // 실패 응답은 캐시하지 않음(성공만 하루 캐시)
       return res.status(status).json(body);
     } catch (err) {
+      res.setHeader('Cache-Control', 'no-store');
       return res.status(500).json({ error: err.message });
     }
   }
