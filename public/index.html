@@ -23552,6 +23552,35 @@ function aptBandRows(trades) {
     });
     return { rows: rows, total: total, nb: nb };
 }
+/* 🏘️ 단지 전체 거래 활발도(2026-11-21, 사용자: 5년 32건·12개월 5건이 활발한지 알 수 없다): 같은 시군구 안 단지들의 최근 12개월 매매(직거래 제외) 건수 순위. 상위 20%=활발, 40~80%=보통, 하위 40%=드묾.
+   시험(오늘 기준 3·6·9·12개월 전 시점, 단지 3.4만 개): 이후 월평균 거래 상위 20% 2.7~3.5건·중간 0.8~1.0건·하위 40% 0.18~0.25건, 이후 거래 0건 단지 상위 20% 0.6~6%·하위 40% 35~71%. 지역 실거래가 받아진 시군구에서만 계산 */
+var aptActCache = {};
+function aptComplexAct(row) {
+    try {
+        var a = row.a, bf = row.bunjiFull || fullBunjiFromAddr(a.addr, a.dong, a.bunji), ents = ownComplexEntries(a, bf, 'apt') || [];
+        if (!ents.length) return null; var l0 = ents[0].latest; if (!l0 || !l0.region || !l0.dong || !l0.bunji) return null;
+        var rg = l0.region, sig = rg + '|' + allAptList.length, C = aptActCache[rg];
+        if (!C || C.sig !== sig) {
+            var c1 = new Date(); c1.setFullYear(c1.getFullYear() - 1); c1.setHours(0, 0, 0, 0); var by = {};
+            allAptList.forEach(function(ap) {
+                var l = ap.latest; if (!l || l.region !== rg || (ap.buildingType || l.buildingType) === 'villa') return;
+                var k = l.dong + '|' + l.bunji, o = by[k] || (by[k] = 0);
+                (ap.trades || []).forEach(function(t) { if (t.dealing_type !== '직거래' && tradeDate(t) >= c1) o++; }); by[k] = o;
+            });
+            var vals = Object.keys(by).map(function(k) { return by[k]; }); C = aptActCache[rg] = { sig: sig, by: by, vals: vals };
+        }
+        if (C.vals.length < 10) return null;
+        var n12 = C.by[l0.dong + '|' + l0.bunji]; if (n12 == null) return null;
+        var less = 0, eq = 0; C.vals.forEach(function(v) { if (v < n12) less++; else if (v === n12) eq++; });
+        var pct = (less + (eq + 1) / 2) / C.vals.length, top = Math.max(1, Math.round((1 - pct) * 100));
+        return { top: top, tier: pct >= 0.8 ? 'good' : (pct >= 0.4 ? 'mid' : 'bad'), n12: n12, N: C.vals.length, region: rg };
+    } catch (e) { return null; }
+}
+function aptActLine(act) {
+    if (!act) return '';
+    var c = { good: ['✅ 활발', '#15803d'], mid: ['➖ 보통', '#b45309'], bad: ['⚠️ 드묾', '#b91c1c'] }[act.tier];
+    return '<div style="margin-top:4px;">단지 전체 거래: <b style="color:' + c[1] + ';">' + bbEsc(act.region) + ' 단지 ' + act.N + '곳 중 상위 ' + act.top + '% · ' + c[0] + '</b> <span class="dr-sub" style="display:inline;">(최근 12개월 ' + act.n12 + '건)</span></div>';
+}
 /* 이 단지의 최근 5년 거래(모든 평형): 지역 실거래(최근 2년)에 단지 이력(10년, 서버)을 합침. fetchMissing=true면 이력이 없을 때 받아 오기 시작('loading'), false면 이미 받은 것만 씀(없으면 null) */
 function aptBandTrades(row, fetchMissing) {
     var a = row.a, bf = row.bunjiFull || fullBunjiFromAddr(a.addr, a.dong, a.bunji), ents = [];
@@ -23575,26 +23604,28 @@ function bandPreLoad() {
 function aptBandBrief(row, fresh) {   // fresh=true: 서버 미리 계산본·임시 저장을 쓰지 않고 지금 받은 자료로 새로 계산(사전 계산 스크립트용)
     if (!row || row.type !== 'apt' || !row.a) return null;
     if (!fresh && !bandPre.items) bandPreLoad();
-    var it = !fresh && bandPre.items && bandPre.items[row.id]; if (it) return it[0] === 3 ? { v: 'single', n: it[1], n12: it[5] || 0, nb: 1 } : { v: ['bad', 'mid', 'good'][it[0]], n: it[1], rank: it[2], nb: it[3], share: it[4] };
+    var it = !fresh && bandPre.items && bandPre.items[row.id]; if (it) return it[0] === 3 ? { v: 'single', n: it[1], n12: it[5] || 0, nb: 1, top: it[6] || null } : { v: ['bad', 'mid', 'good'][it[0]], n: it[1], rank: it[2], nb: it[3], share: it[4], n12: it[5] || 0, top: it[6] || null };
     var a = row.a, sig = String(row.id) + '|' + (a.pyung || ''), c = fresh ? undefined : bandPre.live[sig]; if (c) return c;
     var h = aptBandTrades(row, false); if (!Array.isArray(h)) return null;   // 5년 거래를 아직 못 받았으면 표시하지 않음(12개월만으로는 판정하지 않음)
     var R = aptBandRows(h), out = null;
-    if (R.rows.length === 1) out = { v: 'single', n: R.total, n12: R.rows[0].n12, nb: 1 };   // 평형이 하나뿐인 단지: 비교 없이 거래 활발도만(2026-11-21 사용자)
+    var act0 = aptComplexAct(row), top0 = act0 ? act0.top : null;
+    if (R.rows.length === 1) out = { v: 'single', n: R.total, n12: R.rows[0].n12, nb: 1, top: top0 };   // 평형이 하나뿐인 단지: 비교 없이 거래 활발도만(2026-11-21 사용자)
     else if (R.total >= 12 && R.rows.length >= 2) {
         var myAr = (parseFloat(a.pyung) || 0) * 3.305785, me = null; R.rows.forEach(function(r) { if (!me || Math.abs(r.area - myAr) < Math.abs(me.area - myAr)) me = r; });
-        if (me && Math.abs(me.area - myAr) <= 3) out = { v: me.v, n: me.n, rank: R.rows.filter(function(r) { return r.n > me.n; }).length + 1, nb: R.rows.length, share: Math.round(me.share * 100), n12: me.n12 };
+        if (me && Math.abs(me.area - myAr) <= 3) out = { v: me.v, n: me.n, rank: R.rows.filter(function(r) { return r.n > me.n; }).length + 1, nb: R.rows.length, share: Math.round(me.share * 100), n12: me.n12, top: top0 };
     }
     if (out && !fresh) bandPre.live[sig] = out; return out;
 }
 function aptBandChip(row, forChart) {
     var b = aptBandBrief(row); if (!b) return null;
-    if (b.v === 'single') {   // 단독 평형 단지: 평형 비교 없이 거래 활발도(회전율 환금성 등급 + 최근 12개월 건수)
+    var topTxt = b.top ? ' · 단지 거래 상위 ' + b.top + '%' : '';
+    if (b.v === 'single') {   // 단독 평형 단지: 평형 비교 없이 단지 거래 활발도(같은 시군구 순위, 없으면 회전율·12개월 건수)
         var to = null; try { to = turnoverOf(row); } catch (e) {}
-        var vv = to ? (to.rate >= 5 ? 'good' : (to.rate >= 2 ? 'mid' : 'bad')) : ((b.n12 || 0) >= 6 ? 'good' : ((b.n12 || 0) >= 3 ? 'mid' : 'bad'));
-        return { t: '🏢 평형 1개 · 거래 ' + (vv === 'good' ? '활발' : (vv === 'bad' ? '드묾' : '보통')) + ' · 12개월 ' + (b.n12 || 0) + '건' + (to ? ' · 회전율 ' + to.rate + '%' : ''), cls: vv === 'good' ? 'g' : (vv === 'bad' ? 'r' : ''), v: vv, tip: '평형이 하나뿐인 단지라 평형끼리 비교는 하지 않아요. 최근 5년 거래 ' + b.n + '건, 최근 12개월 ' + (b.n12 || 0) + '건' + (to ? ', 회전율(최근 1년 거래÷세대수) ' + to.rate + '% (' + to.grade.t + ')' : '') };
+        var vv = b.top ? (b.top <= 20 ? 'good' : (b.top <= 60 ? 'mid' : 'bad')) : (to ? (to.rate >= 5 ? 'good' : (to.rate >= 2 ? 'mid' : 'bad')) : ((b.n12 || 0) >= 6 ? 'good' : ((b.n12 || 0) >= 3 ? 'mid' : 'bad')));
+        return { t: '🏢 평형 1개 · 거래 ' + (vv === 'good' ? '활발' : (vv === 'bad' ? '드묾' : '보통')) + topTxt + ' · 12개월 ' + (b.n12 || 0) + '건' + (to ? ' · 회전율 ' + to.rate + '%' : ''), cls: vv === 'good' ? 'g' : (vv === 'bad' ? 'r' : ''), v: vv, tip: '평형이 하나뿐인 단지라 평형끼리 비교는 하지 않아요. 단지 전체 거래 순위(같은 시군구, 최근 12개월)' + (b.top ? ' 상위 ' + b.top + '%' : '는 계산 전') + ' · 최근 5년 ' + b.n + '건, 최근 12개월 ' + (b.n12 || 0) + '건' + (to ? ', 회전율 ' + to.rate + '% (' + to.grade.t + ')' : '') };
     }
     var t = { good: '활발', mid: '보통', bad: '비활발' }[b.v];
-    return { t: '🏢 평형 ' + t + ' · 단지 거래의 ' + b.share + '% (' + b.rank + '위/' + b.nb + ')', cls: b.v === 'good' ? 'g' : (b.v === 'bad' ? 'r' : ''), v: b.v, tip: '같은 단지 최근 5년 매매 중 이 평형의 거래 ' + b.n + '건 · 비중 ' + b.share + '% · ' + b.rank + '위/' + b.nb + '개 평형' + (b.n12 != null ? ' (최근 12개월 ' + b.n12 + '건)' : '') };
+    return { t: '🏢 평형 ' + t + ' · 단지 거래의 ' + b.share + '% (' + b.rank + '위/' + b.nb + ')' + topTxt, cls: b.v === 'good' ? 'g' : (b.v === 'bad' ? 'r' : ''), v: b.v, tip: '같은 단지 최근 5년 매매 중 이 평형의 거래 ' + b.n + '건 · 비중 ' + b.share + '% · ' + b.rank + '위/' + b.nb + '개 평형' + (b.n12 != null ? ' (최근 12개월 ' + b.n12 + '건)' : '') };
 }
 function aptBandHtml(row) {
     if (!row || row.type !== 'apt' || !row.a) return '';
@@ -23611,10 +23642,10 @@ function aptBandHtml(row) {
     var R = aptBandRows(Array.isArray(hh) ? hh : []);
     if (R.rows.length === 1) {   // 평형이 하나뿐인 단지: 비교 없이 거래 활발도만
         var r1 = R.rows[0], to1 = null; try { to1 = turnoverOf(row); } catch (e) {}
-        var vv1 = to1 ? (to1.rate >= 5 ? 'good' : (to1.rate >= 2 ? 'mid' : 'bad')) : (r1.n12 >= 6 ? 'good' : (r1.n12 >= 3 ? 'mid' : 'bad')), c1 = { good: ['✅ 거래 활발', '#15803d', '#f0fdf4'], mid: ['➖ 보통', '#b45309', '#fffbeb'], bad: ['⚠️ 거래 드묾', '#b91c1c', '#fef2f2'] }[vv1];
+        var act1 = aptComplexAct(row), vv1 = act1 ? act1.tier : (to1 ? (to1.rate >= 5 ? 'good' : (to1.rate >= 2 ? 'mid' : 'bad')) : (r1.n12 >= 6 ? 'good' : (r1.n12 >= 3 ? 'mid' : 'bad'))), c1 = { good: ['✅ 거래 활발', '#15803d', '#f0fdf4'], mid: ['➖ 보통', '#b45309', '#fffbeb'], bad: ['⚠️ 거래 드묾', '#b91c1c', '#fef2f2'] }[vv1];
         return ttl + '<div style="background:' + c1[2] + ';border:1px solid ' + c1[1] + '33;border-radius:8px;padding:6px 10px;"><b style="color:' + c1[1] + ';font-size:15px;">이 단지는 평형이 하나(' + Math.round(r1.area) + '㎡ · ' + (Math.round(r1.area / 3.305785 * 10) / 10) + '평)뿐이에요: ' + c1[0] + '</b>'
-            + '<div>최근 5년 <b>' + R.total + '건</b> (연평균 ' + (Math.round(R.total / 5 * 10) / 10) + '건) · 최근 12개월 <b>' + r1.n12 + '건</b>' + (to1 ? ' · 회전율 <b>' + to1.rate + '%</b>(최근 1년 거래÷세대수 ' + to1.hh.toLocaleString() + ', ' + to1.grade.t + ')' : '') + '</div></div>'
-            + '<div class="dr-sub" style="margin-top:4px;">평형이 하나라 평형끼리 비교는 필요 없어서 거래 활발도만 보여 줘요. 회전율 5% 이상이면 환금성 높음, 2% 미만이면 낮음으로 봐요(세대수를 알 때). 참고용이에요.</div></div>';
+            + '<div>최근 5년 <b>' + R.total + '건</b> (연평균 ' + (Math.round(R.total / 5 * 10) / 10) + '건) · 최근 12개월 <b>' + r1.n12 + '건</b>' + (to1 ? ' · 회전율 <b>' + to1.rate + '%</b>(최근 1년 거래÷세대수 ' + to1.hh.toLocaleString() + ', ' + to1.grade.t + ')' : '') + aptActLine(act1) + '</div></div>'
+            + '<div class="dr-sub" style="margin-top:4px;">평형이 하나라 평형끼리 비교는 필요 없어서 거래 활발도만 보여 줘요. 같은 시군구 단지 중 최근 12개월 거래 순위로 판단하고(상위 20% 활발·하위 40% 드묾), 시험(오늘 기준 3·6·9·12개월 전 시점, 단지 3.4만 개)에서 상위 20% 단지는 이후 월평균 2.7~3.5건·하위 40%는 0.18~0.25건이 거래됐어요. 회전율은 세대수를 알 때의 참고 값이에요(5% 이상 높음·2% 미만 낮음).</div></div>';
     }
     if (R.total === 0) return ttl + '<div class="dr-sub">이 단지는 최근 5년 매매 기록이 없어요(신축·분양 직후 단지는 거래 신고가 아직 없을 수 있어요). 그래서 거래 활발도를 판단할 수 없어요.</div></div>';
     if (R.total < 12 || R.rows.length < 2) return ttl + '<div class="dr-sub">이 단지는 최근 5년 거래가 ' + R.total + '건(평형 ' + R.rows.length + '개)이라 ' + (R.rows.length < 2 ? '평형이 하나뿐이라 서로 비교할 수 없어요.' : '평형별로 비교하기엔 적어요(12건 이상 필요).') + '</div></div>';
@@ -23625,7 +23656,7 @@ function aptBandHtml(row) {
     if (me) {
         var rk = R.rows.filter(function(r) { return r.n > me.n; }).length + 1, c = vt[me.v];
         h += '<div style="background:' + c[2] + ';border:1px solid ' + c[1] + '33;border-radius:8px;padding:6px 10px;"><b style="color:' + c[1] + ';font-size:15px;">이 물건 평형(' + Math.round(me.area) + '㎡ · ' + (Math.round(me.area / 3.305785 * 10) / 10) + '평): ' + c[0] + '</b>'
-            + '<div>최근 5년 <b>' + me.n + '건</b> · 단지 거래의 ' + Math.round(me.share * 100) + '% · ' + rk + '위/' + R.rows.length + '개 평형 · 최근 12개월 ' + me.n12 + '건' + (me.med ? ' · 중앙 매매가 <b>' + fmt(me.med) + '</b>' + (me.medRecent ? '' : '(5년 안 마지막 기준)') : '') + '</div></div>';
+            + '<div>최근 5년 <b>' + me.n + '건</b> · 단지 거래의 ' + Math.round(me.share * 100) + '% · ' + rk + '위/' + R.rows.length + '개 평형 · 최근 12개월 ' + me.n12 + '건' + (me.med ? ' · 중앙 매매가 <b>' + fmt(me.med) + '</b>' + (me.medRecent ? '' : '(5년 안 마지막 기준)') : '') + '</div>' + aptActLine(aptComplexAct(row)) + '</div>';
     } else h += '<div class="dr-sub">이 물건 평형(' + (a.pyung || '-') + '평)과 같은 평형의 거래가 최근 5년엔 없어요.</div>';
     h += '<table class="dr-tbl" style="margin-top:6px;"><tr><td class="dr-sub">평형(전용)</td><td class="dr-sub r">5년 매매</td><td class="dr-sub r">비중</td><td class="dr-sub r">최근 12개월</td><td class="dr-sub r">중앙 매매가</td><td class="dr-sub r">판정</td></tr>'
         + R.rows.slice().sort(function(x, y) { return y.n - x.n; }).map(function(r) { var c = vt[r.v]; return '<tr' + (r === me ? ' style="background:#eff6ff;font-weight:700;"' : '') + '><td>' + Math.round(r.area) + '㎡ <span class="dr-sub" style="display:inline;">(' + (Math.round(r.area / 3.305785 * 10) / 10) + '평)</span></td><td class="r">' + r.n + '건</td><td class="r">' + Math.round(r.share * 100) + '%</td><td class="r">' + r.n12 + '건</td><td class="r">' + fmt(r.med) + '</td><td class="r" style="color:' + c[1] + ';">' + c[0] + '</td></tr>'; }).join('') + '</table>';

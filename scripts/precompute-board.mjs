@@ -192,7 +192,7 @@ try {
           let why = 'ok';
           try {
             const b = aptBandBrief(r, true);
-            if (b) out.band[r.id] = b.v === 'single' ? [3, b.n, 0, 1, 100, b.n12 || 0] : [{ bad: 0, mid: 1, good: 2 }[b.v], b.n, b.rank, b.nb, b.share, b.n12 || 0];
+            if (b) out.band[r.id] = b.v === 'single' ? [3, b.n, 0, 1, 100, b.n12 || 0, b.top || 0] : [{ bad: 0, mid: 1, good: 2 }[b.v], b.n, b.rank, b.nb, b.share, b.n12 || 0, b.top || 0];
             else {   // 왜 비었는지(2026-11-21 사용자: 서버가 단지 과거 거래를 못 받은 이유 확인)
               const ents = ownComplexEntries(r.a, r.bunjiFull || fullBunjiFromAddr(r.a.addr, r.a.dong, r.a.bunji), 'apt') || [];
               if (!ents.length) why = 'noEntry'; else {
