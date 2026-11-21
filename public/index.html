@@ -33326,9 +33326,10 @@ function ttFormHtml() {
         + f('profit', '예상 세전 순이익(만원)', 'number', '소득세 계산') + f('others', '내 다른 보유 주택 공시가격 합(만원)', 'number', '종부세 합산용') + f('rank', '몇 번째 주택(비우면 자동)', 'number', '자동: 날짜로 계산', ' min="1" max="4"')
         + '<div class="lg-field"><label>옵션</label><label class="lg-check"><input type="checkbox" ' + (s.adj ? 'checked' : '') + ' onchange="ttSet(\'adj\',this.checked)"> 조정대상지역</label><label class="lg-check"><input type="checkbox" ' + (s.policy ? 'checked' : '') + ' onchange="ttSet(\'policy\',this.checked)"> 세제 개편 시점 표시</label></div></div>';
 }
+var ttOpen = false;   // 접어 둠(2026-11-22 사용자: 사용 횟수가 적을 것)
 function ttHtml() {
-    return '<div class="ma-sec"><div class="ma-h">🗓️ 세금 시점 시뮬레이터 <span class="ma-sub" style="font-weight:normal;">· 낙찰·매도 날짜를 넣으면 세금마다 언제 재고, 언제 내고, 어느 때 법을 쓰는지 풀어 줘요 · 계산식은 안 바꾸고 보여 주기만 해요</span></div>'
-        + '<div class="indicator-box"><div id="tt-form">' + ttFormHtml() + '</div></div><div id="tt-out">' + ttOutHtml() + '</div></div>';
+    return '<details class="ma-sec ma-fold"' + (ttOpen ? ' open' : '') + ' ontoggle="ttOpen=this.open"><summary class="ma-h" style="cursor:pointer;">🗓️ 세금 시점 시뮬레이터 <span class="ma-sub" style="font-weight:normal;">· 낙찰·매도 날짜를 넣으면 세금마다 언제 재고, 언제 내고, 어느 때 법을 쓰는지 풀어 줘요 · 계산식은 안 바꾸고 보여 주기만 해요</span></summary>'
+        + '<div class="indicator-box"><div id="tt-form">' + ttFormHtml() + '</div></div><div id="tt-out">' + ttOutHtml() + '</div></details>';
 }
 
 
