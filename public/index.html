@@ -32783,8 +32783,8 @@ function ledgerCalc(rec, skipTax) {
     taxes = taxes.filter(function(x) { return x.kind !== '부가세'; });   // 부가세는 매출에서 빼므로 세금 합계에서는 제외
     var pre = saleP ? saleP - vatPay - totalCost : null;
     var taxEst = false;
-    if (!skipTax && !taxes.some(function(x) { return lgN(x.amount) > 0; }) && pre != null) { var et = lgEstTaxes(rec, pre); if (et.length) { taxes = et; taxEst = true; } }
-    var taxSum = taxes.reduce(function(t, x) { return t + lgN(x.amount); }, 0), hasTax = taxes.some(function(x) { return lgN(x.amount) > 0; });
+    if (!skipTax && !taxes.some(function(x) { return lgN(x.amount) > 0; }) && pre != null && pre !== 0) { var et = lgEstTaxes(rec, pre); if (et.length) { taxes = et; taxEst = true; } }
+    var taxSum = taxes.reduce(function(t, x) { return t + lgN(x.amount); }, 0), hasTax = taxes.some(function(x) { return lgN(x.amount) !== 0; });
     var taxFrozen = taxEst && taxes.some(function(x) { return x.frozen; }), net = pre != null && hasTax ? pre - taxSum : null, hold = win.date && sale.date && lgDays(win.date, sale.date) > 0 ? Math.round(lgDays(win.date, sale.date) / 30.4 * 10) / 10 : null;
     var cash = winP + upfront - loanSum, base = Math.max(cash, 1);
     var profit = net != null ? net : pre;
@@ -32792,15 +32792,32 @@ function ledgerCalc(rec, skipTax) {
 }
 /* 💴 예상 세금 기본값(2026-11-21, 사용자: 예상 세금을 '실제 납부 세금' 칸에 미리 채워 두고 나중에 실제 금액으로 덮어쓰기) - 매매사업자 기준, 4단계 시뮬레이터와 같은 계산(ttIncTax: 매도일 연도 소득 위에 이 건의 세전 순이익을 얹은 종합소득세 증가분 + 지방소득세).
    그 해 다른 소득 = 내 자산의 '다른 종합소득'(+올해면 추가 사업소득) + 같은 해 다른 장부 건의 세전 순이익. 매도일·매도가·이익이 없거나 매매사업자가 아니면 만들지 않음. 사용자가 세금 칸을 직접 고치면 그 값이 우선 */
-function lgEstTaxesLive(rec, pre) {   // 지금의 내 자산·연봉 설정으로 다시 계산한 예상 세금. 같은 해 먼저 판 장부 건(매도일 순)의 이익 위에 얹어 계산 → 합치면 한 해 합산 세금과 같아요
+/* 📉 결손금 통산·이월결손금(2026-11-22 사용자 승인, 소득세법 제45조 원문 확인): 장부로 계산한 사업소득의 결손금은 그해 근로·연금·기타·이자·배당소득금액에서 공제(통산)하고(①항),
+   그래도 남는 결손금은 15년 안에 끝나는 과세기간의 소득에서 먼저 발생한 순서대로 공제(이월, ③항). 추계신고를 하면 이월결손금 공제를 못 받아요(④항) - 앱은 장부(기장) 신고를 전제로 계산.
+   앱 계산: 그해 소득 = 다른 소득 + 같은 해 장부 건 손익 합계(매도일 순으로 쌓음) − 전해에서 넘어온 이월결손금. 0 아래로는 세금이 없고, 손실 건은 세금이 줄어드는 만큼(음수) 반영해요. 이월결손금은 해가 끝나면 그 값으로 고정 */
+function lgYearsInLedger() { var ys = {}; ledger.items.forEach(function(r) { if (r.sale && lgN(r.sale.price) > 0 && r.sale.date) ys[String(r.sale.date).slice(0, 4)] = 1; }); return Object.keys(ys).map(Number).sort(); }
+function lgYearPre(y) { var t = 0; ledger.items.forEach(function(r) { if (r.sale && lgN(r.sale.price) > 0 && String(r.sale.date || '').slice(0, 4) === String(y)) t += ledgerCalc(r, true).pre || 0; }); return t; }
+function lgGrossOther() { var p = myAssets.profile || {}, w = maWorkIncome(p); return (w ? w.gross : 0) + (parseInt(p.otherIncome) || 0); }   // 사업소득 말고 그해 다른 종합소득금액(근로소득금액 + 그 밖의 소득)
+function lgYearInfo(y) {
+    var p = myAssets.profile || {}, fz = (p.carryFrozen || {})[y], cin = lgCarryIn(y), pre = lgYearPre(y) + (y === new Date().getFullYear() ? (parseInt(p.extraBizIncome) || 0) : 0);
+    var T = lgGrossOther() + pre, used = Math.min(cin, Math.max(0, T)), loss = Math.max(0, -T), out = fz != null ? (fz.amt || 0) : cin - used + loss;
+    return { y: y, cin: cin, pre: pre, T: T, used: used, loss: loss, out: out, frozen: fz != null };
+}
+function lgCarryIn(y) {
+    var ys = lgYearsInLedger(), p = myAssets.profile || {}, fz = p.carryFrozen || {}, first = ys.length ? ys[0] : null; Object.keys(fz).forEach(function(k) { if (first == null || +k < first) first = +k; });
+    if (first == null || y <= first) return 0;
+    var c = 0; for (var k = first; k < y; k++) { var f = fz[k]; if (f != null) { c = f.amt || 0; continue; } var pre = lgYearPre(k) + (k === new Date().getFullYear() ? (parseInt(p.extraBizIncome) || 0) : 0), T = lgGrossOther() + pre; c = c - Math.min(c, Math.max(0, T)) + Math.max(0, -T); }
+    return c;
+}
+function lgEstTaxesLive(rec, pre) {   // 지금의 내 자산·연봉 설정으로 다시 계산한 예상 세금. 같은 해 먼저 판 장부 건(매도일 순)의 손익 위에 얹어 계산 → 합치면 한 해 합산 세금과 같아요
     try {
-        var sale = rec.sale || {}, p = myAssets.profile || {}; if (p.isDealer === false || !(lgN(sale.price) > 0) || !sale.date || !(pre > 0)) return null;
+        var sale = rec.sale || {}, p = myAssets.profile || {}; if (p.isDealer === false || !(lgN(sale.price) > 0) || !sale.date || !pre) return null;
         var y = String(sale.date).slice(0, 4), other = myOtherIncome(p), extra = String(new Date().getFullYear()) === y ? (parseInt(p.extraBizIncome) || 0) : 0, biz = 0;
-        ledger.items.forEach(function(r) { if (r.id !== rec.id && r.sale && lgN(r.sale.price) > 0 && String(r.sale.date || '').slice(0, 4) === y && (String(r.sale.date) < String(sale.date) || (String(r.sale.date) === String(sale.date) && String(r.id) < String(rec.id)))) { var c2 = ledgerCalc(r, true); if (c2.pre > 0) biz += c2.pre; } });
-        var base = Math.max(0, other + extra + biz), t = ttIncTax(base, pre, sale.date), out = [];
-        if (t.inc > 0) out.push({ kind: '종합소득세(증가분)', amount: t.inc, est: 1 }); if (t.local > 0) out.push({ kind: '지방소득세', amount: t.local, est: 1 });
-        if (p.salary > 0) { var hb = (parseInt(p.otherIncome) || 0) + extra + biz, hp = lgHealthAdd(hb, pre); if (hp > 0) out.push({ kind: '건강보험 소득월액', amount: hp, est: 1 }); }   // 월급을 받는 직장가입자일 때만(연봉 입력 시) - 보수 외 소득 2,000만 초과분
-        return { taxes: out, base: base };
+        ledger.items.forEach(function(r) { if (r.id !== rec.id && r.sale && lgN(r.sale.price) > 0 && String(r.sale.date || '').slice(0, 4) === y && (String(r.sale.date) < String(sale.date) || (String(r.sale.date) === String(sale.date) && String(r.id) < String(rec.id)))) biz += ledgerCalc(r, true).pre || 0; });
+        var cin = lgCarryIn(parseInt(y)), base = other + extra + biz - cin, t = ttIncTax(base, pre, sale.date), out = [];
+        if (t.inc) out.push({ kind: '종합소득세(증가분)', amount: t.inc, est: 1 }); if (t.local) out.push({ kind: '지방소득세', amount: t.local, est: 1 });
+        if (p.salary > 0 && pre > 0) { var hb = (parseInt(p.otherIncome) || 0) + extra + Math.max(0, biz), hp = lgHealthAdd(hb, pre); if (hp > 0) out.push({ kind: '건강보험 소득월액', amount: hp, est: 1 }); }   // 월급을 받는 직장가입자일 때만(연봉 입력 시) - 보수 외 소득 2,000만 초과분
+        return { taxes: out, base: base, carryIn: cin };
     } catch (e) { return null; }
 }
 /* 🔒 매도일이 지나면 예상 세금을 고정(2026-11-22 사용자): 매도일·금액이 확정된 건은 그 뒤 연봉·소득 설정이 바뀌어도 세금·순수익·누적이 그대로여야 함. 매도일이 지난 첫 저장·첫 실행 때 그 시점 값을 장부에 보관(estSnap)하고, 이후엔 보관값을 씀.
@@ -32814,10 +32831,18 @@ function lgFreezeIfDue(rec) {   // 매도일이 지났고 확정 세금이 없�
     try {
         var sale = rec.sale || {}; if (!(lgN(sale.price) > 0) || !sale.date || sale.date > lgTodayStr()) return false;
         if ((rec.taxes || []).some(function(x) { return lgN(x.amount) > 0; })) return false;
-        var pre = ledgerCalc(rec, true).pre; if (!(pre > 0) || lgSnapValid(rec, pre)) return false;
+        var pre = ledgerCalc(rec, true).pre; if (!pre || lgSnapValid(rec, pre)) return false;
         var r = lgEstTaxesLive(rec, pre); if (!r || !r.taxes.length) return false;
         rec.estSnap = { at: lgTodayStr(), saleDate: sale.date, pre: pre, base: r.base, taxes: r.taxes.map(function(t) { return { kind: t.kind, amount: t.amount }; }) }; return true;
     } catch (e) { return false; }
+}
+async function lgFreezeCarry() {   // 해가 끝난 해의 이월결손금을 그 값으로 고정(나중에 연봉·소득 설정이 바뀌어도 이월 금액이 변하지 않게)
+    try {
+        if (!myAssets.loaded || !myAssets.profile) return; var p = Object.assign({}, myAssets.profile), cur = new Date().getFullYear(), fz = Object.assign({}, p.carryFrozen || {}), ys = lgYearsInLedger(), changed = false;
+        if (!ys.length) return;
+        for (var y = ys[0]; y < cur; y++) { if (fz[y] != null) continue; var yi = lgYearInfo(y); fz[y] = { amt: Math.round(yi.out * 10000) / 10000, at: lgTodayStr() }; changed = true; myAssets.profile = Object.assign({}, myAssets.profile, { carryFrozen: Object.assign({}, fz) }); }
+        if (changed) { p.carryFrozen = fz; await saveMyAssetItem(p); myAssetsChanged(); }
+    } catch (e) { console.error('이월결손금 고정 실패:', e.message); }
 }
 async function lgFreezeAll() { try { if (!myAssets.loaded || !myAssets.profile) return; for (var i = 0; i < ledger.items.length; i++) { var r = ledger.items[i]; if (lgFreezeIfDue(r)) { r.updatedAt = Date.now(); await ledgerSaveItem(r); } } } catch (e) { console.error('예상 세금 고정 실패:', e.message); } }
 function ledgerPlanned(rec) {   // 연결된 경매 물건 기록의 '예상'(입찰 전 계산·입력값) - 1단계 예상 대비 비교용
@@ -32883,8 +32908,9 @@ function ledgerYearsHtml(calcs, done) {
                 + lgItem('매도가 합', maFmt(g.sale)) + lgItem('총비용 합', maFmt(g.cost)) + lgItem('사업소득', maFmt(g.pre), g.pre < 0 ? '#c62828' : '#2e7d32')
                 + lgItem('소득 구간', br ? Math.round(br.rate * 100) + '%' : '-', '', br ? '앱 근사 세금 ' + maFmt(est) : '') + lgItem(g.estN ? '납부 세금(예상 포함)' : '실제 납부 세금', g.taxN ? maFmt(g.tax) : '미입력', '', g.taxN ? (g.estN ? '예상 ' + g.estN + '건 · 실제 ' + (g.taxN - g.estN) + '건' : g.taxN + '/' + g.n + '건 입력') : '')
                 + lgItem('순수익 (세금 뺀 후)', allTax ? maFmt(g.pre - g.tax) : '-', allTax ? '#2e7d32' : '', allTax ? (g.estN ? '예상 세금 ' + g.estN + '건 기준' : '실제 세금 기준') : '세금 입력 후')
+                + (function() { var yi = lgYearInfo(+y); return (yi.cin > 0 ? lgItem('들어온 이월결손금', maFmt(Math.round(yi.cin)), '#6a1b9a', '전해 손실, 이 해 소득에서 먼저 공제 · 공제 ' + maFmt(Math.round(yi.used))) : '') + (yi.out > 0 ? lgItem('다음 해로 넘기는 이월결손금', maFmt(Math.round(yi.out)), '#c62828', (yi.frozen ? '🔒 연말에 고정 · ' : '') + '15년 안에 소득에서 공제') : ''); })()
                 + lgItem('다음 해 11월 중간예납(추정)', (g.inc || 0) / 2 >= 50 ? maFmt(Math.round((g.inc || 0) / 2)) : '없음(50만원 미만)', '#b45309', '이 해 종합소득세 증가분의 1/2 · 11월 고지, 현금 준비용(순이익엔 안 뺌)') + '</div></div>';
-        }).join('') + '<div class="ma-sub">소득 구간은 그 해 사업소득(올해는 내 자산 탭의 다른 종합소득 포함)에 종합소득세 누진 구간을 적용한 근사예요. 실제 납부액과 다르면 실제 값을 따르세요. 중간예납은 직전 해 세액의 1/2을 11월에 내는 선납이라 같은 세금을 먼저 내는 것(순이익에서 또 빼지 않아요). 중간예납기준액에서 원천징수세액 등을 어떻게 빼는지는 확인하지 못한 추정이에요(세무사 확인). 상반기 매도분의 예정신고 납부세액이 기준액의 50%를 넘으면 중간예납이 없어요.</div></div>';
+        }).join('') + '<div class="ma-sub">소득 구간은 그 해 사업소득(올해는 내 자산 탭의 다른 종합소득 포함)에 종합소득세 누진 구간을 적용한 근사예요. 실제 납부액과 다르면 실제 값을 따르세요. 이월결손금은 소득세법 제45조(결손금 통산·15년 이월) 기준이고 장부(기장) 신고가 전제예요(추계신고는 공제 불가). 같은 해 손실은 먼저 그해 근로소득 등과 통산돼요. 중간예납은 직전 해 세액의 1/2을 11월에 내는 선납이라 같은 세금을 먼저 내는 것(순이익에서 또 빼지 않아요). 중간예납기준액에서 원천징수세액 등을 어떻게 빼는지는 확인하지 못한 추정이에요(세무사 확인). 상반기 매도분의 예정신고 납부세액이 기준액의 50%를 넘으면 중간예납이 없어요.</div></div>';
 }
 function ledgerSnapHtml(r) {
     var s = r.taxSnap; if (!s) return '<div class="ma-sub" style="margin-top:6px;">세율 스냅샷: 아직 없어요(저장하면 그때의 세율표가 함께 보관돼요)</div>';
@@ -33288,10 +33314,10 @@ function ttRank(acqStr) {   // 낙찰(취득)일 직전까지 센 보유 주택 
 }
 function ttBase(y) {   // 그 해(매도한 해) 종합소득 합산 기준(만원): 올해는 내 자산 값, 다른 해는 '다른 종합소득 + 그 해 장부 매도 이익'
     var cur = new Date().getFullYear(), s = myAssetSummary();
-    if (y === cur) return s ? s.incomeBase : 0;
+    if (y === cur) return s ? Math.max(0, s.bizIncome + s.otherIncome - lgCarryIn(cur)) : 0;   // 전해에서 넘어온 이월결손금은 먼저 공제(소득세법 45조③)
     var p = myAssets.profile || {}, biz = 0;
     ledger.items.forEach(function(r) { if (r.sale && lgN(r.sale.price) > 0 && String(r.sale.date || '').slice(0, 4) === String(y)) biz += ledgerCalc(r).pre || 0; });
-    return Math.max(0, myOtherIncome(p) + biz);
+    return Math.max(0, myOtherIncome(p) + biz - lgCarryIn(y));
 }
 function ttBaseNonWage(y) {   // 그 해 '보수 외 소득'(건강보험 소득월액 기준, 만원): 사업 이익 + 그 밖의 종합소득. 근로소득은 보수월액에 이미 들어가 제외. 연봉이 없으면(직장가입자 아님) -1 = 적용 안 함
     var p = myAssets.profile || {}; if (!(parseInt(p.salary) > 0)) return -1;
@@ -33302,10 +33328,10 @@ function ttBaseNonWage(y) {   // 그 해 '보수 외 소득'(건강보험 소득
 }
 function ttIncTax(base, profit, dateStr) { return withTaxAt(dateStr, function() { return ttIncTaxRaw(base, profit); }); }
 function ttIncTaxRaw(base, profit) {
-    if (!(profit > 0)) return { inc: 0, local: 0, total: 0, rate: 0 };
+    if (!profit) return { inc: 0, local: 0, total: 0, rate: 0 };
     var f = function(x) { if (x <= 0) return 0; var b = lookupIncomeTaxBracket(x); return Math.max(Math.round(x * b.rate - b.dedManwon), 0); };
     var inc = f(base + profit) - f(base), local = Math.round(inc * TAX_CONFIG.incomeTax.localTaxRate);
-    return { inc: inc, local: local, total: inc + local, rate: lookupIncomeTaxBracket(base + profit).rate };
+    return { inc: inc, local: local, total: inc + local, rate: base + profit > 0 ? lookupIncomeTaxBracket(base + profit).rate : 0 };
 }
 function ttSim() {
     var s = TT.s, acq = ttD(s.acq), sale = ttD(s.sale); if (!acq) return null;
@@ -33586,7 +33612,7 @@ async function maSetProfile(key, val) {
     try { await saveMyAssetItem(p); myAssetsChanged(); renderMyAssets(); } catch (e) { alert('저장 실패: ' + e.message); }
 }
 setTimeout(function() { loadMyAssets(); }, 1500);
-setTimeout(function() { ledgerLoad().then(function() { return lgFreezeAll(); }).then(function() { try { if ((myAssets.items || []).some(function(x) { return x.status === 'sold' && lgLinkedLedger(x); })) myAssetsChanged(); } catch (e) {} }); }, 3500);   // 장부를 미리 불러와 매도 이익에 반영(내 자산 화면을 안 열어도)
+setTimeout(function() { ledgerLoad().then(function() { return lgFreezeAll(); }).then(function() { return lgFreezeCarry(); }).then(function() { try { if ((myAssets.items || []).some(function(x) { return x.status === 'sold' && lgLinkedLedger(x); })) myAssetsChanged(); } catch (e) {} }); }, 3500);   // 장부를 미리 불러와 매도 이익에 반영(내 자산 화면을 안 열어도)
 // ── 오른쪽 패널은 한 번에 하나만 ──
 var SIDE_PANEL_OPENERS = { openMyAssetsPanel: 'my-assets-panel', openAuctionList: 'auction-list-panel', openBidTargetPanel: 'bid-target-panel', openBidCasePanel: 'bid-case-panel', openSurgePanel: 'surge-panel', openBacktestPanel: 'backtest-panel' };
 function closeSidePanels(exceptId) {
