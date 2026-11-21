@@ -32816,7 +32816,7 @@ function lgEstTaxesLive(rec, pre) {   // 지금의 내 자산·연봉 설정으�
         ledger.items.forEach(function(r) { if (r.id !== rec.id && r.sale && lgN(r.sale.price) > 0 && String(r.sale.date || '').slice(0, 4) === y && (String(r.sale.date) < String(sale.date) || (String(r.sale.date) === String(sale.date) && String(r.id) < String(rec.id)))) biz += ledgerCalc(r, true).pre || 0; });
         var cin = lgCarryIn(parseInt(y)), base = other + extra + biz - cin, t = ttIncTax(base, pre, sale.date), out = [];
         if (t.inc) out.push({ kind: '종합소득세(증가분)', amount: t.inc, est: 1 }); if (t.local) out.push({ kind: '지방소득세', amount: t.local, est: 1 });
-        if (p.salary > 0 && pre > 0) { var hb = (parseInt(p.otherIncome) || 0) + extra + Math.max(0, biz), hp = lgHealthAdd(hb, pre); if (hp > 0) out.push({ kind: '건강보험 소득월액', amount: hp, est: 1 }); }   // 월급을 받는 직장가입자일 때만(연봉 입력 시) - 보수 외 소득 2,000만 초과분
+        if (p.salary > 0) { var hb = (parseInt(p.otherIncome) || 0) + extra + biz, hp = lgHealthAdd(hb, pre); if (hp) out.push({ kind: '건강보험 소득월액', amount: hp, est: 1 }); }   // 월급을 받는 직장가입자일 때만(연봉 입력 시) - 보수 외 소득 2,000만 초과분
         return { taxes: out, base: base, carryIn: cin };
     } catch (e) { return null; }
 }
