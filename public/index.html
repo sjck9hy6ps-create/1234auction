@@ -32860,10 +32860,10 @@ function ledgerTimelineHtml() {
 }
 function ledgerYearsHtml(calcs, done) {
     var by = {}, cur = String(new Date().getFullYear()), p = myAssets.profile || {};
-    done.forEach(function(r) { var y = String((r.sale && r.sale.date) || '').slice(0, 4); if (!y) return; var c = calcs[r.id], g = by[y] = by[y] || { n: 0, sale: 0, cost: 0, pre: 0, tax: 0, taxN: 0 }; g.n++; g.sale += c.saleP; g.cost += c.totalCost; g.pre += c.pre || 0; g.inc = (g.inc || 0) + (c.taxList || []).filter(function(t) { return /종합소득세/.test(t.kind); }).reduce(function(a, t) { return a + lgN(t.amount); }, 0); if (c.hasTax) { g.tax += c.taxSum; g.taxN++; if (c.taxEst) g.estN = (g.estN || 0) + 1; } });
+    done.forEach(function(r) { var y = String((r.sale && r.sale.date) || '').slice(0, 4); if (!y) return; var c = calcs[r.id], g = by[y] = by[y] || { n: 0, sale: 0, cost: 0, pre: 0, tax: 0, taxN: 0 }; g.n++; g.sale += c.saleP; g.cost += c.totalCost + (c.vatOn && c.vatPay ? c.vatPay : 0); g.pre += c.pre || 0; g.inc = (g.inc || 0) + (c.taxList || []).filter(function(t) { return /종합소득세/.test(t.kind); }).reduce(function(a, t) { return a + lgN(t.amount); }, 0); if (c.hasTax) { g.tax += c.taxSum; g.taxN++; if (c.taxEst) g.estN = (g.estN || 0) + 1; } });
     var ys = Object.keys(by).sort().reverse(); if (!ys.length) return '';
     var taxOf = function(x) { if (x <= 0) return 0; var b = lookupIncomeTaxBracket(x); return Math.max(Math.round(x * b.rate - b.dedManwon), 0); };
-    return '<div style="margin-top:10px;"><div class="ma-h">📊 연도별 누적 소득 <span class="ma-sub" style="font-weight:normal;">· 매도한 해 기준 · 사업소득 = 매도가 − 총비용(낙찰가·비용·이자)</span></div>'
+    return '<div style="margin-top:10px;"><div class="ma-h">📊 연도별 누적 소득 <span class="ma-sub" style="font-weight:normal;">· 매도한 해 기준 · 사업소득 = 매도가 − 총비용(낙찰가·비용·이자·건물분 부가세)</span></div>'
         + ys.map(function(y) {
             var g = by[y], other = y === cur ? myOtherIncome(p) : 0, base = Math.max(0, g.pre + other), br = base > 0 ? lookupIncomeTaxBracket(base) : null, est = Math.round(taxOf(base) * 1.1), allTax = g.taxN === g.n;
             return '<div class="indicator-box"><div class="indicator-title">' + y + '년 <span class="ma-sub" style="font-weight:normal;">매도 ' + g.n + '건</span></div><div class="indicator-grid lg-grid">'
@@ -32901,8 +32901,8 @@ function ledgerSectionHtml(legacy) {
             + '<span class="ma-pill" style="background:' + (sold ? '#f3e8ff;color:#6a1b9a' : '#e8f5e9;color:#2e7d32') + ';">' + (sold ? '매도 완료' : '보유 중') + '</span>'
             + '<a href="#" class="lg-edit" onclick="event.stopPropagation();ledgerEdit(\'' + r.id + '\');return false;">수정</a></div>'
             + '<div class="ma-sub" style="margin:-2px 0 6px;">' + maEsc(r.caseNo || '') + (r.win && r.win.date ? ' · 취득 ' + maEsc(r.win.date) + (r.win.regDate ? ' (등기 ' + maEsc(r.win.regDate) + ')' : '') : '') + (sold ? ' · 매도 ' + maEsc(r.sale.date || '') + (c.hold ? ' (' + c.hold + '개월)' : '') : '') + '</div>'
-            + '<div class="indicator-grid lg-grid">' + lgItem('낙찰가', fmt(c.winP)) + lgItem('매도가', sold ? fmt(c.saleP) : '-') + lgItem('총비용', fmt(c.totalCost), '', '낙찰가+비용+이자')
-            + lgItem('세전 순이익', c.pre != null ? fmt(c.pre) : '-', col(c.pre), c.margin != null ? '마진율 ' + c.margin.toFixed(1) + '%' : '')
+            + '<div class="indicator-grid lg-grid">' + lgItem('낙찰가', fmt(c.winP)) + lgItem('매도가', sold ? fmt(c.saleP) : '-') + (c.vatOn && c.saleP ? lgItem('건물분 부가세', fmt(c.vatPay), '#b45309', (c.vatActual ? '실제 납부액' : '매도가×건물 ' + Math.round(c.vatRatio * 100) + '%×10/110') + ' · 매출에서 뺌') : '') + lgItem('총비용', fmt(c.totalCost), '', '낙찰가+비용+이자')
+            + lgItem('세전 순이익', c.pre != null ? fmt(c.pre) : '-', col(c.pre), (c.margin != null ? '마진율 ' + c.margin.toFixed(1) + '%' : '') + (c.vatOn && c.saleP ? '<br>매도가−부가세−총비용' : ''))
             + lgItem('순수익 (세금 뺀 후)', c.net != null ? fmt(c.net) : (sold ? '세금 미입력' : '-'), col(c.net), c.hasTax ? '세금 ' + fmt(c.taxSum) + (c.taxEst ? ' 예상' : ' 실제') + ' 제외' : '')
             + lgItem('수익률', c.roi != null ? c.roi.toFixed(1) + '%' : '-', '', c.annual != null ? '연 ' + Math.round(c.annual) + '%' : '') + '</div>'
             + (open ? '<div class="lg-detail" onclick="event.stopPropagation();" style="margin-top:8px;">' + ledgerDetailHtml(r, c) + '</div>' : '') + '</div>';
@@ -33094,7 +33094,8 @@ function lgSel(id, label, optsHtml) { return '<div class="lg-field"><label for="
 function lgToDeal(r, c) {   // 장부 한 건을 '매도 거래' 모양으로(분석·누적 계산에 같이 쓰려고)
     var rg = String(r.addr || '').match(/^(\S+)\s+(\S+?(?:시|군|구))/), costs = { '낙찰가': c.winP };
     Object.keys(c.byGroup).forEach(function(k) { costs[k] = c.byGroup[k]; });
-    return { key: 'lg_' + r.id, src: 'ledger', ledgerId: r.id, name: r.name || '(이름 없음)', addr: r.addr || '', region: rg ? rg[1].replace(/(특별시|광역시|특별자치시|특별자치도|도)$/, '') + ' ' + rg[2] : '주소 미상', buy: c.winP, sell: c.saleP, costs: costs, total: c.totalCost, profit: c.pre || 0, roi: c.totalCost ? (c.pre || 0) / c.totalCost * 100 : 0, buyDate: (r.win && r.win.date) || '', sellDate: (r.sale && r.sale.date) || '', holdM: c.hold };
+    if (c.vatOn && c.vatPay) costs['건물분 부가세(매출에서 뺌)'] = c.vatPay;
+    return { key: 'lg_' + r.id, src: 'ledger', ledgerId: r.id, name: r.name || '(이름 없음)', addr: r.addr || '', region: rg ? rg[1].replace(/(특별시|광역시|특별자치시|특별자치도|도)$/, '') + ' ' + rg[2] : '주소 미상', buy: c.winP, sell: c.saleP, costs: costs, total: c.totalCost + (c.vatOn && c.vatPay ? c.vatPay : 0), profit: c.pre || 0, roi: (c.totalCost + (c.vatOn && c.vatPay ? c.vatPay : 0)) ? (c.pre || 0) / (c.totalCost + (c.vatOn && c.vatPay ? c.vatPay : 0)) * 100 : 0, buyDate: (r.win && r.win.date) || '', sellDate: (r.sale && r.sale.date) || '', holdM: c.hold };
 }
 function lgLinkedLedger(x) {   // 내 자산 매도 항목과 연결된 '매도가가 있는' 장부(assetId 또는 같은 집)
     if (!ledger.loaded) return null;
