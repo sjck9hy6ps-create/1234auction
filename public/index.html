@@ -2776,7 +2776,7 @@ body.tb-menu-open.ui2 #tb-menu.open { z-index:9301; }
             <div class="modal-row">
                 <span class="modal-label">6월 1일 보유 여부 <span onclick="showCalcInfo('holdingTax')" title="계산기준 보기" style="cursor:pointer;color:#1976d2;">ⓘ</span></span>
                 <label style="display:flex;align-items:center;gap:4px;font-size:12px;">
-                    <input type="checkbox" id="a-holds-june1" onchange="autoCalcHoldingTaxSilent();calcMargin();"> 예상 보유기간에 6월 1일이 포함됨(재산세·종부세 과세기준일)
+                    <input type="checkbox" id="a-holds-june1" onchange="autoCalcHoldingTaxSilent();calcMargin();"> 6월 1일 포함 직접 지정(꺼 두면 낙찰·매도 예상일로 자동 판정)</label><div id="a-june1-auto" style="font-size:10.5px;color:#00695c;margin-top:2px;"></div><label style="display:none">
                 </label>
             </div>
             <div class="modal-row">
@@ -14202,19 +14202,28 @@ function deepCloneTaxConfig(obj) {
 var DEFAULT_TAX_CONFIG = deepCloneTaxConfig(TAX_CONFIG);
 /* 🗓️ 세율 매월 갱신(2026-11-15, 사용자: 매매사업자 세율은 유지하되 매월 갱신) - /tax-rates.json의 값을 TAX_CONFIG에 덮어씀. 매월 1일 점검(예약 작업)이 법이 바뀌었을 때만 이 파일을 고쳐 올림.
    기존 구조에 있는 항목만 받고(모르는 항목 무시), maxWon 1e18 이상은 끝없음(Infinity)으로 되살림. 못 읽으면 코드 내장 값 그대로 */
+var TAX_SCHEDULE = [], TAX_POLICY = null;   // 시행일이 정해진 확정 개정(schedule)·개편 시점 목록(policy) - tax-rates.json에서 읽음
+function taxMerge(dst, src) {
+    var revive = function(v) { return (typeof v === 'number' && v >= 1e17) ? Infinity : v; };
+    Object.keys(src).forEach(function(k) {
+        if (!(k in dst)) return;
+        var a = dst[k], b = src[k];
+        if (Array.isArray(a)) { if (Array.isArray(b) && b.length) dst[k] = b.map(function(x) { if (x && typeof x === 'object') { var o2 = {}; Object.keys(x).forEach(function(kk) { o2[kk] = revive(x[kk]); }); return o2; } return revive(x); }); }
+        else if (a && typeof a === 'object') { if (b && typeof b === 'object') taxMerge(a, b); }
+        else if (typeof a === typeof b) dst[k] = b;
+    });
+}
+/* 날짜별 세율: schedule에 '확정'으로 올라온 개정은 시행일(from) 이후 날짜의 계산에만 적용(미확정 개편안은 안 씀). fn 안에서만 임시로 바뀜 */
+function withTaxAt(dateStr, fn) {
+    if (!dateStr || !TAX_SCHEDULE.length) return fn();
+    var due = TAX_SCHEDULE.filter(function(e) { return e && e.status === 'confirmed' && e.from && e.from <= dateStr && e.values; }).sort(function(p, q) { return p.from < q.from ? -1 : 1; });
+    if (!due.length) return fn();
+    var keep = TAX_CONFIG; try { TAX_CONFIG = deepCloneTaxConfig(TAX_CONFIG); due.forEach(function(e) { taxMerge(TAX_CONFIG, e.values); }); return fn(); } finally { TAX_CONFIG = keep; }
+}
 function applyTaxRatesFile(doc) {
     if (!doc || !doc.values) return false;
-    var revive = function(v) { return (typeof v === 'number' && v >= 1e17) ? Infinity : v; };
-    var merge = function(dst, src) {
-        Object.keys(src).forEach(function(k) {
-            if (!(k in dst)) return;
-            var a = dst[k], b = src[k];
-            if (Array.isArray(a)) { if (Array.isArray(b) && b.length) dst[k] = b.map(function(x) { if (x && typeof x === 'object') { var o2 = {}; Object.keys(x).forEach(function(kk) { o2[kk] = revive(x[kk]); }); return o2; } return revive(x); }); }
-            else if (a && typeof a === 'object') { if (b && typeof b === 'object') merge(a, b); }
-            else if (typeof a === typeof b) dst[k] = b;
-        });
-    };
-    merge(TAX_CONFIG, doc.values);
+    taxMerge(TAX_CONFIG, doc.values);
+    TAX_SCHEDULE = Array.isArray(doc.schedule) ? doc.schedule : []; TAX_POLICY = Array.isArray(doc.policy) && doc.policy.length ? doc.policy : null;
     if (doc.updatedAt) TAX_CONFIG.lastUpdated = doc.updatedAt;
     return true;
 }
@@ -14352,12 +14361,31 @@ function autoCalcRegistryFeeSilent() {
    취득해서 늘어난 종부세만(=전체 합계 기준 세액 - 이 물건 제외 기준 세액) 비용으로
    계산함. ⚠️ 세율·공정시장가액비율은 매년 시행령으로 바뀔 수 있어 실제 납부 전 위택스
    (재산세)·국세청 홈택스(종부세)에서 한 번 더 확인하세요. */
+/* ⏱️ 세금 시점 자동 판정 (2026-11-21, 사용자 승인 "둘 다 적용")
+   ① 6/1 보유: 입찰일 + 잔금 납부까지 걸리는 기간(HOLD_PAY_LAG_DAYS) = 취득일(추정), 취득일 + 예상 보유 개월수 = 매도일(추정) 사이에 6월 1일이 몇 번 끼는지 세어 재산세·종부세를 그 횟수만큼 반영
+      (취득일 ≤ 6/1 < 매도일이면 소유자로 과세). "6/1 포함" 체크를 직접 켜면 그 선택이 우선(예전 방식 그대로).
+   ② 소득세: 매도 예정 연도의 소득 위에 얹어 계산(올해와 다른 해면 그 해의 다른 소득·장부 매도 이익 기준)
+   ⚠️ 잔금까지 약 45일은 법원마다 달라 검증하지 못한 추정치 - 실제 잔금일을 알면 장부·시뮬레이터에 넣으세요 */
+var HOLD_PAY_LAG_DAYS = 45;
+function taxTiming(bidDate, holdEff) {
+    var b = bidDate ? new Date(String(bidDate).slice(0, 10) + 'T00:00:00') : new Date(); if (isNaN(b.getTime())) b = new Date();
+    var acq = new Date(b.getTime() + HOLD_PAY_LAG_DAYS * 86400000), sale = new Date(acq.getTime() + Math.round((holdEff || 0) * 30.4375 * 86400000)), n = 0;
+    for (var y = acq.getFullYear(); y <= sale.getFullYear(); y++) { var D = new Date(y, 5, 1); if (acq <= D && sale > D) n++; }
+    return { acq: acq, sale: sale, june1: n, saleYear: sale.getFullYear(), saleStr: sale.getFullYear() + '-' + String(sale.getMonth() + 1).padStart(2, '0') + '-' + String(sale.getDate()).padStart(2, '0') };
+}
+function holdTaxPlan(bidDate, manualJune1, holdEff) {
+    if (manualJune1) return { holds: true, years: 0, auto: false };
+    var t = taxTiming(bidDate, holdEff); return { holds: t.june1 > 0, years: t.june1, auto: true, t: t };
+}
+function recHoldEff(a, holdMonths) { return holdMonths > 0 ? holdMonths : (parseInt(a.holdAuto) > 0 ? parseInt(a.holdAuto) : DEFAULT_INTEREST_HOLD_MONTHS); }
+function recSaleYear(a, holdMonths) { return taxTiming(a.bidDate, recHoldEff(a, holdMonths)).saleStr; }
+function formHoldEff(holdMonths) { return holdMonths > 0 ? holdMonths : getHoldMonthsEstimate().months; }
 /* holdMonths: 보유기간(개월). 재산세·종부세는 매년 6월 1일 기준으로 한 번씩 부과되는데,
    보유기간이 12개월을 넘어가면 6월 1일을 두 번 이상 지나게 되어 그만큼 여러 해분을 내야 함.
    낙찰~매도 정확한 날짜가 없어 정밀하게 계산할 순 없지만, "12개월당 1번"으로 근사해서
    holdMonths가 12개월 이하면 종전처럼 1년치만, 12개월을 넘으면 Math.ceil(개월/12)년치를 곱함
    (예: 18개월 → 2년치, 30개월 → 3년치). holdMonths를 안 넘기면(구버전 호출부 호환) 1년치로 계산. */
-function calcPropertyTax(officialPriceWon, houseRank, holdsJune1, holdMonths) {
+function calcPropertyTax(officialPriceWon, houseRank, holdsJune1, holdMonths, june1Years) {
     if (!holdsJune1 || !officialPriceWon || officialPriceWon <= 0) return 0;
     var T = TAX_CONFIG.propertyTax;
     var rank = houseRank || 1;
@@ -14376,7 +14404,7 @@ function calcPropertyTax(officialPriceWon, houseRank, holdsJune1, holdMonths) {
     var eduTax = propTax * T.eduTaxRate;      // 지방교육세
     var urbanTax = base * T.urbanTaxRate;     // 도시지역분(근사)
     var oneYearTax = Math.round((propTax + eduTax + urbanTax) / 10000); // 만원 단위, 1년치
-    var years = (holdMonths || 0) > 12 ? Math.ceil(holdMonths / 12) : 1;
+    var years = june1Years > 0 ? june1Years : ((holdMonths || 0) > 12 ? Math.ceil(holdMonths / 12) : 1);   // june1Years: 낙찰·매도 예상일로 센 6/1 횟수(자동 판정, 2026-11-21)
     return oneYearTax * years;
 }
 // 종부세·양도세처럼 "과세표준×세율-누진공제" 공식으로 공표된 구간표에 쓰는 공용 조회 헬퍼.
@@ -14397,7 +14425,7 @@ function calcCompTaxRaw(baseManwon) {
    단독 공시가격만 사용). propertyOfficialPriceWon: 이 물건의 공시가격(원). */
 /* holdMonths: calcPropertyTax와 동일한 원칙 - 6월 1일을 여러 번 지나는 장기보유(12개월 초과)면
    Math.ceil(개월/12)년치를 곱함. */
-function calcCompTax(totalOfficialPriceManwon, propertyOfficialPriceWon, houseRank, holdsJune1, holdMonths) {
+function calcCompTax(totalOfficialPriceManwon, propertyOfficialPriceWon, houseRank, holdsJune1, holdMonths, june1Years) {
     if (!holdsJune1) return 0;
     var T = TAX_CONFIG.compTax;
     var propertyManwon = Math.round((propertyOfficialPriceWon || 0) / 10000);
@@ -14411,7 +14439,7 @@ function calcCompTax(totalOfficialPriceManwon, propertyOfficialPriceWon, houseRa
     var marginalTax = Math.max(taxWith - taxWithout, 0);
     var levy = marginalTax * T.levyRate; // 농어촌특별세
     var oneYearTax = Math.round(marginalTax + levy);
-    var years = (holdMonths || 0) > 12 ? Math.ceil(holdMonths / 12) : 1;
+    var years = june1Years > 0 ? june1Years : ((holdMonths || 0) > 12 ? Math.ceil(holdMonths / 12) : 1);
     return oneYearTax * years;
 }
 function autoCalcHoldingTax() {
@@ -14421,13 +14449,21 @@ function autoCalcHoldingTax() {
     var holdsJune1 = document.getElementById('a-holds-june1').checked;
     var totalOfficialPriceManwon = parseInt(document.getElementById('a-total-official-price').value) || 0;
     var holdMonths = parseInt(document.getElementById('a-hold-months').value) || 0;
-    document.getElementById('a-property-tax').value = calcPropertyTax(officialPriceWon, houseRank, holdsJune1, holdMonths);
-    document.getElementById('a-comp-tax').value = calcCompTax(totalOfficialPriceManwon, officialPriceWon, houseRank, holdsJune1, holdMonths);
-    if (!holdsJune1) alert('"보유기간에 6월 1일이 포함됨" 체크박스가 꺼져 있어 0원으로 계산됐습니다. 실제로 6월 1일을 넘겨 보유할 예정이면 체크해 주세요.');
+    var htp = holdTaxPlan(document.getElementById('a-date').value, holdsJune1, formHoldEff(holdMonths));
+    document.getElementById('a-property-tax').value = calcPropertyTax(officialPriceWon, houseRank, htp.holds, holdMonths, htp.years);
+    document.getElementById('a-comp-tax').value = calcCompTax(totalOfficialPriceManwon, officialPriceWon, houseRank, htp.holds, holdMonths, htp.years);
+    showJune1Auto(htp);
+    if (!holdsJune1) alert(htp.holds ? '낙찰·매도 예상일로 6월 1일을 ' + htp.years + '번 지나는 것으로 자동 판정해 재산세·종부세를 계산했습니다.' : '낙찰·매도 예상일 사이에 6월 1일이 없어 재산세·종부세 0원으로 자동 판정했습니다.');
     else if (holdMonths > 12) alert('보유기간 ' + holdMonths + '개월은 6월 1일을 ' + Math.ceil(holdMonths / 12) + '번 지나는 것으로 보고 재산세·종부세를 ' + Math.ceil(holdMonths / 12) + '년치로 계산했습니다.');
     calcMargin();
 }
 /* 조건(공시가격·보유주택수·6월1일 체크·공시가격합계·보유기간) 변경 시 알림창 없이 조용히 재계산 */
+function showJune1Auto(htp) {
+    var el = document.getElementById('a-june1-auto'); if (!el) return;
+    if (!htp.auto) { el.textContent = '직접 지정(체크됨): 예전 방식으로 1년치(12개월 초과면 올림)'; return; }
+    var t = htp.t, f = function(d) { return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0'); };
+    el.textContent = '자동 판정: 잔금 ' + f(t.acq) + '(입찰일+약 ' + HOLD_PAY_LAG_DAYS + '일 추정) → 매도 ' + f(t.sale) + ' · 6/1 ' + htp.years + '회' + (htp.years ? ' → 재산세·종부세 반영' : ' → 보유세 0원');
+}
 function autoCalcHoldingTaxSilent() {
     var officialPriceWon = parseInt(document.getElementById('a-official-price').value) || 0;
     if (!officialPriceWon) return;
@@ -14435,8 +14471,10 @@ function autoCalcHoldingTaxSilent() {
     var holdsJune1 = document.getElementById('a-holds-june1').checked;
     var totalOfficialPriceManwon = parseInt(document.getElementById('a-total-official-price').value) || 0;
     var holdMonths = parseInt(document.getElementById('a-hold-months').value) || 0;
-    document.getElementById('a-property-tax').value = calcPropertyTax(officialPriceWon, houseRank, holdsJune1, holdMonths);
-    document.getElementById('a-comp-tax').value = calcCompTax(totalOfficialPriceManwon, officialPriceWon, houseRank, holdsJune1, holdMonths);
+    var htp = holdTaxPlan(document.getElementById('a-date').value, holdsJune1, formHoldEff(holdMonths));
+    document.getElementById('a-property-tax').value = calcPropertyTax(officialPriceWon, houseRank, htp.holds, holdMonths, htp.years);
+    document.getElementById('a-comp-tax').value = calcCompTax(totalOfficialPriceManwon, officialPriceWon, houseRank, htp.holds, holdMonths, htp.years);
+    showJune1Auto(htp);
 }
 /* 명도비용(점유자 이사비 등 근사) - 평당 11만원 일괄 (015. 경매 입찰가 산정표.xlsx 단기매매 시트와 동일 기준) */
 function calcEvictionFee(pyung) {
@@ -14519,19 +14557,30 @@ function autoCalcCleaningSilent() {
 function lookupIncomeTaxBracket(baseManwon) {
     return lookupBracketWithDeduction(baseManwon, TAX_CONFIG.incomeTax.brackets);
 }
-function calcResaleIncomeTax(bidMethod, profitManwon, holdMonths, isAdjusted, houseRank) {
+function calcResaleIncomeTax(bidMethod, profitManwon, holdMonths, isAdjusted, houseRank, saleYear) {
     if (!profitManwon || profitManwon <= 0) return { incomeTax: 0, localTax: 0, totalTax: 0, rateLabel: '' };
     var T = TAX_CONFIG.incomeTax;
     if (bidMethod === 'dealer') {
         // 2026-10(💼 내 자산): 종합소득세는 1년 소득을 합쳐 누진 - 올해 이미 생긴 소득(다른 매도 이익·근로 등) 위에
         // 이번 이익이 얹히므로 "합친 세금 − 기존 소득만의 세금"이 이번 물건 몫(입력이 없으면 0에서 시작 = 예전과 같음)
-        var baseInc = myIncomeBaseManwon();
+        var sd = typeof saleYear === 'string' ? saleYear : null, yr = sd ? parseInt(sd.slice(0, 4)) : saleYear;
+        return withTaxAt(sd, function() { return calcDealerIncomeTax(profitManwon, yr); });
+    }
+    return calcResaleIncomeTaxPersonal(bidMethod, profitManwon, holdMonths, isAdjusted, houseRank);
+}
+function calcDealerIncomeTax(profitManwon, yr) {
+    var T = TAX_CONFIG.incomeTax;
+    {
+        var baseInc = (yr && typeof ttBase === 'function') ? ttBase(yr) : myIncomeBaseManwon();   // 매도 예정 연도의 소득 기준(2026-11-21)
         var taxOf = function(x) { if (x <= 0) return 0; var b = lookupIncomeTaxBracket(x); return Math.max(Math.round(x * b.rate - b.dedManwon), 0); };
         var br = lookupIncomeTaxBracket(baseInc + profitManwon);
         var incomeTax = taxOf(baseInc + profitManwon) - taxOf(baseInc);
         var localTax = Math.round(incomeTax * T.localTaxRate);
-        return { incomeTax: incomeTax, localTax: localTax, totalTax: incomeTax + localTax, rateLabel: Math.round(br.rate * 100) + '%' + (baseInc > 0 ? '·올해 소득 반영' : '') };
+        return { incomeTax: incomeTax, localTax: localTax, totalTax: incomeTax + localTax, rateLabel: Math.round(br.rate * 100) + '%' + (baseInc > 0 ? (yr && yr !== new Date().getFullYear() ? '·' + yr + '년 소득 반영' : '·올해 소득 반영') : '') };
     }
+}
+function calcResaleIncomeTaxPersonal(bidMethod, profitManwon, holdMonths, isAdjusted, houseRank) {
+    var T = TAX_CONFIG.incomeTax;
     var months = holdMonths || 0;
     var basicDeduction = T.basicDeductionManwon; // 양도소득 기본공제
     var rank = houseRank || 1;
@@ -16968,7 +17017,7 @@ function calcMargin() {
     var preTaxMargin = useSell > 0 ? useSell - totalCost : 0;
     var isAdjustedForTax = document.getElementById('a-is-adjusted').checked;
     var houseRankForTax = parseInt(document.getElementById('a-house-rank').value) || 1;
-    var taxResult = (useSell > 0 && preTaxMargin > 0) ? calcResaleIncomeTax(bidMethod, preTaxMargin, holdMonths, isAdjustedForTax, houseRankForTax) : { totalTax: 0, rateLabel: '' };
+    var taxResult = (useSell > 0 && preTaxMargin > 0) ? calcResaleIncomeTax(bidMethod, preTaxMargin, holdMonths, isAdjustedForTax, houseRankForTax, taxTiming(document.getElementById('a-date').value, interestHoldMonths).saleStr) : { totalTax: 0, rateLabel: '' };
     var margin    = useSell > 0 ? preTaxMargin - taxResult.totalTax : 0;
     var roi       = (totalCost > 0 && useSell > 0) ? Math.round(margin / totalCost * 1000) / 10 : 0;
     var apprRate  = (appraisal > 0 && useBid > 0) ? Math.round(useBid / appraisal * 1000) / 10 : 0;
@@ -18638,7 +18687,7 @@ function buildMarginSummaryHtml(a) {
     var feesSum = tax + registryFee + evictionFee + repair + agent + moving + cleaning + interestCost + prepayFee + etc + vat + propertyTax + compTax;
     var totalCost = useBid + feesSum;
     var preTaxMargin = useSell > 0 ? useSell - totalCost : 0;
-    var taxResult = (useSell > 0 && preTaxMargin > 0) ? calcResaleIncomeTax(bidMethod, preTaxMargin, holdMonths, adjOf(a), myHouseRankFor(a)) : { totalTax: 0, rateLabel: '' };
+    var taxResult = (useSell > 0 && preTaxMargin > 0) ? calcResaleIncomeTax(bidMethod, preTaxMargin, holdMonths, adjOf(a), myHouseRankFor(a), recSaleYear(a, holdMonths)) : { totalTax: 0, rateLabel: '' };
     var margin = useSell > 0 ? preTaxMargin - taxResult.totalTax : 0;
     var roi = (totalCost > 0 && useSell > 0) ? Math.round(margin / totalCost * 1000) / 10 : 0;
     var apprRate = (appraisal > 0 && useBid > 0) ? Math.round(useBid / appraisal * 1000) / 10 : 0;
@@ -19948,8 +19997,10 @@ function solveAuctionBid(estValue, marginOverride) {
     // 참고) - 보유기간 미입력 시에도 목표입찰가 역산이 이자비용을 0으로 무시해 입찰가를
     // 과도하게 높게 추천하지 않도록 함.
     var interestHoldMonths = holdMonths > 0 ? holdMonths : getHoldMonthsEstimate().months;
-    var propertyTax = calcPropertyTax(officialPriceWon, c.houseRank, holdsJune1, holdMonths);
-    var compTax = calcCompTax(totalOfficialPriceManwon, officialPriceWon, c.houseRank, holdsJune1, holdMonths);
+    var htp = holdTaxPlan(document.getElementById('a-date').value, holdsJune1, interestHoldMonths);
+    var propertyTax = calcPropertyTax(officialPriceWon, c.houseRank, htp.holds, holdMonths, htp.years);
+    var compTax = calcCompTax(totalOfficialPriceManwon, officialPriceWon, c.houseRank, htp.holds, holdMonths, htp.years);
+    var saleYearTax = htp.auto ? htp.t.saleStr : taxTiming(document.getElementById('a-date').value, interestHoldMonths).saleStr;
     var moving   = parseInt(document.getElementById('a-moving').value) || calcMovingFee(c.pyung) || 0;
     var cleaning = parseInt(document.getElementById('a-cleaning').value) || calcCleaningFee(c.pyung) || 0;
     var bidMethod = document.getElementById('a-bid-method').value;
@@ -19982,7 +20033,7 @@ function solveAuctionBid(estValue, marginOverride) {
         var vat = vatInfo.computable ? vatOnSale(estValue, vatInfo.buildingRatio) : 0; // 매도가(estValue) 기준 - 입찰가와 무관
         var preTaxCost = mid + acqTax + registryFee + evictionFee + agentFee + repair + etc + moving + cleaning + interestCost + prepayFee + vat + assumedCostDom(assumedDeposit, assumedFixed, assumedPrior, mid) + unpaidMgmtFee + propertyTax + compTax;
         var preTaxProfit = estValue - preTaxCost;
-        var taxResult = calcResaleIncomeTax(bidMethod, preTaxProfit, holdMonths, c.isAdjusted, c.houseRank);
+        var taxResult = calcResaleIncomeTax(bidMethod, preTaxProfit, holdMonths, c.isAdjusted, c.houseRank, saleYearTax);
         var netProfit = preTaxProfit - taxResult.totalTax;
         result = { bid: mid, acqTax: acqTax, registryFee: registryFee, evictionFee: evictionFee, agentFee: agentFee,
             moving: moving, cleaning: cleaning, interestCost: interestCost, loanRate: loanRate, prepayFee: prepayFee, loanPrepayFeeRate: loanPrepayFeeRate, vat: vat, vatInfo: vatInfo,
@@ -20030,8 +20081,9 @@ function solveAuctionBidFromRecord(a) {
     var holdMonths = parseInt(a.holdMonths) || 0;
     // calcMargin()·buildMarginSummaryHtml()과 동일 - 보유기간 미입력 시 대출이자만 3개월 기본가정 (아파트 입찰후보는 환금성 곡선 기준 holdAuto 우선)
     var interestHoldMonths = holdMonths > 0 ? holdMonths : (parseInt(a.holdAuto) > 0 ? parseInt(a.holdAuto) : DEFAULT_INTEREST_HOLD_MONTHS);
-    var propertyTax = calcPropertyTax(officialPriceWon, houseRank, holdsJune1, holdMonths);
-    var compTax = calcCompTax(totalOfficialPriceManwon, officialPriceWon, houseRank, holdsJune1, holdMonths);
+    var htp = holdTaxPlan(a.bidDate, holdsJune1, interestHoldMonths);
+    var propertyTax = calcPropertyTax(officialPriceWon, houseRank, htp.holds, holdMonths, htp.years);
+    var compTax = calcCompTax(totalOfficialPriceManwon, officialPriceWon, houseRank, htp.holds, holdMonths, htp.years);
     var moving = parseInt(a.moving) || calcMovingFee(pyung) || 0;
     var cleaning = parseInt(a.cleaning) || calcCleaningFee(pyung) || 0;
     var bidMethod = a.bidMethod || 'dealer';
@@ -20056,7 +20108,7 @@ function solveAuctionBidFromRecord(a) {
         var prepayFee = calcLoanPrepayFee(loanAmount, loanPrepayFeeRate);
         var preTaxCost = mid + acqTax + registryFee + evictionFee + agentFee + repair + etc + moving + cleaning + interestCost + prepayFee + assumedCostRec(a, mid) + unpaidMgmtFee + propertyTax + compTax + resaleVat;
         var preTaxProfit = saleValue - preTaxCost;
-        var taxResult = calcResaleIncomeTax(bidMethod, preTaxProfit, holdMonths, isAdjusted, houseRank);
+        var taxResult = calcResaleIncomeTax(bidMethod, preTaxProfit, holdMonths, isAdjusted, houseRank, recSaleYear(a, holdMonths));
         var netProfit = preTaxProfit - taxResult.totalTax;
         if (netProfit > marginValue) { lo = mid; loPre = preTaxProfit; loNet = netProfit; } else hi = mid;
     }
@@ -20072,7 +20124,8 @@ function netAtBidFromRecord(a) {
     var totalOfficialPriceManwon = parseInt(a.totalOfficialPriceManwon) || myTotalOfficialWith(officialPriceWon);
     var holdMonths = parseInt(a.holdMonths) || 0;
     var interestHoldMonths = holdMonths > 0 ? holdMonths : (parseInt(a.holdAuto) > 0 ? parseInt(a.holdAuto) : DEFAULT_INTEREST_HOLD_MONTHS);
-    var propertyTax = calcPropertyTax(officialPriceWon, houseRank, holdsJune1, holdMonths), compTax = calcCompTax(totalOfficialPriceManwon, officialPriceWon, houseRank, holdsJune1, holdMonths);
+    var htp = holdTaxPlan(a.bidDate, holdsJune1, interestHoldMonths);
+    var propertyTax = calcPropertyTax(officialPriceWon, houseRank, htp.holds, holdMonths, htp.years), compTax = calcCompTax(totalOfficialPriceManwon, officialPriceWon, houseRank, htp.holds, holdMonths, htp.years);
     var moving = parseInt(a.moving) || calcMovingFee(pyung) || 0, cleaning = parseInt(a.cleaning) || calcCleaningFee(pyung) || 0;
     var bidMethod = a.bidMethod || 'dealer', appraisal = parseInt(a.appraisal) || 0, addr = a.addr || '';
     var loanRateInput = parseFloat(a.loanRate), loanRate = (loanRateInput > 0) ? loanRateInput : calcRegionAwareLoan(bidMethod, addr, saleValue, appraisal, saleValue).rate;
@@ -20085,7 +20138,7 @@ function netAtBidFromRecord(a) {
     var interestCost = calcLoanInterest(loanAmount, loanRate, interestHoldMonths), prepayFee = calcLoanPrepayFee(loanAmount, prepRate);
     var assumed = assumedCostRec(a, bid);
     var preTaxCost = bid + acqTax + registryFee + evictionFee + agentFee + repair + etc + moving + cleaning + interestCost + prepayFee + assumed + unpaidMgmtFee + propertyTax + compTax + resaleVat;
-    var preTaxProfit = saleValue - preTaxCost, taxResult = calcResaleIncomeTax(bidMethod, preTaxProfit, holdMonths, isAdjusted, houseRank);
+    var preTaxProfit = saleValue - preTaxCost, taxResult = calcResaleIncomeTax(bidMethod, preTaxProfit, holdMonths, isAdjusted, houseRank, recSaleYear(a, holdMonths));
     var cash = bid + acqTax + registryFee + evictionFee + repair + etc + moving + cleaning + (assumed || 0) + unpaidMgmtFee - loanAmount;   // 처음 내 돈으로 넣어야 하는 금액(입찰가+취득·등기·명도·수리 등 − 대출). 이자·세금·중개비는 보유·매도 때 쓰는 비용이라 제외
     return { net: Math.round(preTaxProfit - taxResult.totalTax), pre: Math.round(preTaxProfit), assumed: Math.round(assumed || 0), cash: Math.round(cash), loan: Math.round(loanAmount || 0), interest: Math.round(interestCost || 0) };
 }
@@ -20134,8 +20187,9 @@ function solveImpliedTargetFromBid(a, marginValue) {
     var totalOfficialPriceManwon = parseInt(a.totalOfficialPriceManwon) || myTotalOfficialWith(officialPriceWon);
     var holdMonths = parseInt(a.holdMonths) || 0;
     var interestHoldMonths = holdMonths > 0 ? holdMonths : DEFAULT_INTEREST_HOLD_MONTHS;
-    var propertyTax = calcPropertyTax(officialPriceWon, houseRank, holdsJune1, holdMonths);
-    var compTax = calcCompTax(totalOfficialPriceManwon, officialPriceWon, houseRank, holdsJune1, holdMonths);
+    var htp = holdTaxPlan(a.bidDate, holdsJune1, interestHoldMonths);
+    var propertyTax = calcPropertyTax(officialPriceWon, houseRank, htp.holds, holdMonths, htp.years);
+    var compTax = calcCompTax(totalOfficialPriceManwon, officialPriceWon, houseRank, htp.holds, holdMonths, htp.years);
     var moving = parseInt(a.moving) || calcMovingFee(pyung) || 0;
     var cleaning = parseInt(a.cleaning) || calcCleaningFee(pyung) || 0;
     var bidMethod = a.bidMethod || 'dealer';
@@ -20167,7 +20221,7 @@ function solveImpliedTargetFromBid(a, marginValue) {
         var resaleVatI = vatRatio ? vatOnSale(mid, vatRatio) : 0;
         var preTaxCost = resaleVatI + actualBid + acqTax + registryFee + evictionFee + agentFee + repair + etc + moving + cleaning + interestCost + prepayFee + assumedCostRec(a, actualBid) + unpaidMgmtFee + propertyTax + compTax;
         var preTaxProfit = mid - preTaxCost;
-        var taxResult = calcResaleIncomeTax(bidMethod, preTaxProfit, holdMonths, isAdjusted, houseRank);
+        var taxResult = calcResaleIncomeTax(bidMethod, preTaxProfit, holdMonths, isAdjusted, houseRank, recSaleYear(a, holdMonths));
         var netProfit = preTaxProfit - taxResult.totalTax;
         if (netProfit < marginValue) lo = mid; else hi = mid; // 목표마진에 못 미치면(target 부족) target을 올려야 함
     }
@@ -33047,7 +33101,8 @@ function ttBase(y) {   // 그 해(매도한 해) 종합소득 합산 기준(만�
     ledger.items.forEach(function(r) { if (r.sale && lgN(r.sale.price) > 0 && String(r.sale.date || '').slice(0, 4) === String(y)) biz += ledgerCalc(r).pre || 0; });
     return Math.max(0, (parseInt(p.otherIncome) || 0) + biz);
 }
-function ttIncTax(base, profit) {
+function ttIncTax(base, profit, dateStr) { return withTaxAt(dateStr, function() { return ttIncTaxRaw(base, profit); }); }
+function ttIncTaxRaw(base, profit) {
     if (!(profit > 0)) return { inc: 0, local: 0, total: 0, rate: 0 };
     var f = function(x) { if (x <= 0) return 0; var b = lookupIncomeTaxBracket(x); return Math.max(Math.round(x * b.rate - b.dedManwon), 0); };
     var inc = f(base + profit) - f(base), local = Math.round(inc * TAX_CONFIG.incomeTax.localTaxRate);
@@ -33058,7 +33113,7 @@ function ttSim() {
     var bid = lgN(s.bid), off = lgN(s.official), others = lgN(s.others), pyung = lgN(s.pyung) || 25, profit = lgN(s.profit);
     var rank = parseInt(s.rank) || ttRank(s.acq), adj = !!s.adj, ev = [], hold = { prop: 0, comp: 0, years: 0, known: !!off };
     var now = new Date(); now.setHours(0, 0, 0, 0);
-    var acqTax = bid ? calcAcquisitionTaxDetailed(bid, 'apt', pyung, rank, adj, false) : null;
+    var acqTax = bid ? withTaxAt(ttS(acq), function() { return calcAcquisitionTaxDetailed(bid, 'apt', pyung, rank, adj, false); }) : null;
     ev.push({ d: acq, dl: ttF(acq), tax: '🏠 취득 · 취득세 발생', basis: '취득일 = 경매 매각대금을 다 낸 날. 그날의 세율과 그날 보유 주택 수(' + rank + '번째 주택)로 계산', amt: acqTax, note: '이 날 이전에 다른 집을 팔아 주택 수가 줄면 세율이 달라져요' });
     var acqDue = ttRoll(new Date(acq.getFullYear(), acq.getMonth(), acq.getDate() + 60));
     ev.push({ d: acqDue, dl: ttF(acqDue), tax: '💳 취득세 신고·납부 마감', basis: '취득일부터 60일 안', amt: acqTax, note: '실제로는 소유권이전 등기를 맡길 때 납부 확인이 필요해 잔금 낼 때 같이 내요' });
@@ -33066,7 +33121,7 @@ function ttSim() {
     for (var y = y0; y <= y1; y++) {
         var D = new Date(y, 5, 1), owned = acq <= D && (!sale || sale > D), why;
         if (owned) {
-            var pt = off ? calcPropertyTax(off * 10000, rank, true, 12) : null, ct = off ? calcCompTax(off + others, off * 10000, rank, true, 12) : null;
+            var pt = off ? withTaxAt(ttS(D), function() { return calcPropertyTax(off * 10000, rank, true, 12, 1); }) : null, ct = off ? withTaxAt(ttS(D), function() { return calcCompTax(off + others, off * 10000, rank, true, 12, 1); }) : null;
             hold.years++; if (pt) hold.prop += pt; if (ct) hold.comp += ct;
             ev.push({ d: D, dl: ttF(D), tax: '📍 ' + y + '년 6월 1일 보유 기준일', basis: '이날 소유자가 그해 재산세·종합부동산세를 전부 내요(보유 개월수와 무관) → <b>소유 중 = 부과</b>', amt: null, note: sale ? '' : '매도일을 넣으면 정확해져요(지금은 계속 보유한다고 봄)', cls: 'tt-ref' });
             var late = function(dt) { return sale && dt > sale ? ' ⚠️ 이미 판 뒤에 나오는 고지서예요(현금 남겨 두기)' : ''; };
@@ -33081,7 +33136,7 @@ function ttSim() {
     }
     var inc = null, sy = null, base = null;
     if (sale) {
-        sy = sale.getFullYear(); base = ttBase(sy); inc = ttIncTax(base, profit);
+        sy = sale.getFullYear(); base = ttBase(sy); inc = ttIncTax(base, profit, ttS(sale));
         var rep = ttRoll(new Date(sy, sale.getMonth() + 3, 0)), fin = ttRoll(new Date(sy + 1, 4, 31)), mid = ttRoll(new Date(sy + 1, 10, 30));
         ev.push({ d: sale, dl: ttF(sale), tax: '💰 매도 · 소득 발생', basis: '양도일 = 매도 잔금을 받은 날(잔금보다 소유권 이전 등기가 먼저면 등기 접수일). 소득은 이 날이 속한 <b>' + sy + '년</b> 소득으로 합산', amt: profit > 0 ? profit : null, note: '금액 칸은 세전 순이익' });
         ev.push({ d: rep, dl: ttF(rep), tax: '💳 매매차익 예정신고·납부', basis: '양도일이 속한 달의 말일부터 2개월 안(건마다 마감이 달라요)', amt: inc.total || null, note: '예정신고로 낸 세금은 아래 확정신고 때 빼고 정산해요(예정신고를 했어도 확정신고는 따로 해야 해요)' });
@@ -33113,20 +33168,20 @@ function ttRulesHtml() {
         + rows.map(function(r) { return '<tr>' + r.map(function(c, i) { return '<td' + (i === 0 ? ' style="font-weight:600;"' : '') + '>' + c + '</td>'; }).join('') + '</tr>'; }).join('')
         + '</tbody></table><div class="ma-sub" style="margin-top:6px;">⚠️ 법령 원문이 아니라 공식 안내·보도·질의회신 자료로 확인한 내용이에요. 같은 규칙이라도 공휴일·지자체 조례·개별 사정에 따라 달라질 수 있어 신고 전에는 세무사·홈택스·위택스로 한 번 더 확인하세요.</div></div>';
 }
-var TT_POLICY = [
+var TT_POLICY_DEFAULT = [
     { t: '다주택 양도세 중과 유예 종료(조정대상지역 2주택 +20%p·3주택 +30%p)', eff: '2026-05-10', st: '확인(재정경제부 2026-02-12 발표 보도)', who: 'sale', note: '5/9까지 계약금을 낸 계약은 기한 안에 양도하면 예외. 매매사업자 계산은 종합소득세 기준을 유지(비교과세 미반영, 2026-11-15 결정)라 숫자는 안 바뀌어요' },
     { t: '개편안: 다주택 양도세 중과 한시 완화(2027년 +5%p·+10%p, 2028년 +10%p·+15%p)', eff: '2027-01-01', st: '미확정(2026-08-03 세제개편안·국회 통과 미확인)', who: 'sale', note: '양도일이 2027-01-01 이후일 때만 해당 · 매매사업자 직접 언급 없음' },
     { t: '개편안: 종합부동산세를 주택가액 기준으로 개편(2028년부터 보도)', eff: '2028-01-01', st: '미확정(세부 연도는 기사마다 다름)', who: 'hold', note: '6/1 기준일이 2028년 이후인 해부터 해당될 수 있음' },
     { t: '개편안: 장기보유특별공제를 장기거주 소득공제로 전환(2029년 시행 보도)', eff: '2029-01-01', st: '미확정', who: 'sale', note: '양도일이 2029-01-01 이후일 때만 해당' }
 ];
 function ttPolicyHtml(r) {
-    var rows = TT_POLICY.map(function(p) {
+    var rows = ((TAX_POLICY && TAX_POLICY.length) ? TAX_POLICY : TT_POLICY_DEFAULT).map(function(p) {
         var eff = ttD(p.eff), hit = false, when = '';
         if (p.who === 'sale') { hit = !!(r.sale && r.sale >= eff); when = r.sale ? '매도일 ' + ttS(r.sale) : '매도일 미입력'; }
         else { var ys = r.ev.filter(function(e) { return e.cls === 'tt-ref' && e.amt !== 0 && e.d >= eff; }); hit = ys.length > 0; when = '보유 기준일 ' + (ys.length ? ys.map(function(e) { return ttS(e.d); }).join(', ') : '(2028년 이후 6/1 보유 없음)'); }
         return '<tr><td>' + maEsc(p.t) + '</td><td>' + p.eff + '~</td><td>' + maEsc(p.st) + '</td><td style="color:' + (hit ? '#c62828' : '#6b7280') + ';"><b>' + (hit ? '이 거래에 해당' : '해당 없음') + '</b><br><span class="ma-sub">' + when + '</span></td><td>' + maEsc(p.note) + '</td></tr>';
     }).join('');
-    return '<div class="ma-h" style="margin-top:10px;">🔀 세제 개편·유예 종료가 이 거래 날짜에 걸리나</div><div class="indicator-box"><table class="ma2-table lg-tbl" style="width:100%;font-size:11.5px;"><thead><tr><th>내용</th><th>시행</th><th>상태</th><th>이 거래</th><th>비고</th></tr></thead><tbody>' + rows + '</tbody></table><div class="ma-sub" style="margin-top:6px;">시점 판정만 보여 줘요. 미확정 개편안은 앱 계산에 넣지 않았고, 확정·시행되면 매월 1일 점검(tax-rates.json)으로 반영해요.</div></div>';
+    return '<div class="ma-h" style="margin-top:10px;">🔀 세제 개편·유예 종료가 이 거래 날짜에 걸리나</div><div class="indicator-box"><table class="ma2-table lg-tbl" style="width:100%;font-size:11.5px;"><thead><tr><th>내용</th><th>시행</th><th>상태</th><th>이 거래</th><th>비고</th></tr></thead><tbody>' + rows + '</tbody></table><div class="ma-sub" style="margin-top:6px;">시점 판정만 보여 줘요. 미확정 개편안은 앱 계산에 넣지 않았고, 확정되면 매월 1일 점검이 시행일과 함께 세율 파일(schedule)에 올려 그 날짜 이후 계산에 자동 적용돼요.</div></div>';
 }
 function ttOutHtml() {
     var r = ttSim(); if (!r) return '<div class="ma-sub">낙찰(잔금) 날짜를 넣으면 세금 일정이 나와요. 위에서 장부 건을 고르면 자동으로 채워져요.</div>';
@@ -33143,12 +33198,12 @@ function ttOutHtml() {
     // 낙찰 전 계산 vs 매도 시점 기준
     var sNow = myAssetSummary(), rankNow = sNow ? Math.min(4, sNow.count + 1) : 1, curY = new Date().getFullYear();
     var acqNow = r.acqTax != null ? calcAcquisitionTaxDetailed(r.bid, 'apt', r.pyung, rankNow, r.adj, false) : null;
-    var incNow = r.inc ? ttIncTax(myIncomeBaseManwon(), r.profit) : null, holdAfter = r.hold.prop + r.hold.comp;
+    var incNow = r.inc ? ttIncTax(myIncomeBaseManwon(), r.profit, ttS(new Date())) : null, holdAfter = r.hold.prop + r.hold.comp;
     var diff = function(a, b) { return a == null || b == null ? '-' : ((b - a) > 0 ? '+' : '') + fm(b - a); };
     var cmp = [
         ['취득세', '오늘 세율 · 지금 보유 주택 수 기준(' + rankNow + '번째)', acqNow, '취득일(' + ttS(r.acq) + ')의 세율 · 그날 주택 수(' + r.rank + '번째)', r.acqTax, '잔금까지 기간에 세법·주택 수가 바뀌면 달라져요'],
-        ['재산세·종부세', '기본값: "6/1 보유" 체크가 꺼져 있어 <b>0원</b>(체크하면 1년치 근사)', 0, '6/1 보유 ' + r.hold.years + '회를 날짜로 판정', r.hold.known ? holdAfter : null, '입찰 화면 체크를 날짜로 자동 판정하는 건 승인 후에 넣을 수 있어요'],
-        ['소득세', '올해(' + curY + ') 소득 위에 얹어 계산', incNow ? incNow.total : null, (r.sy || '매도') + '년 소득 위에 얹어 계산', r.inc && r.profit > 0 ? r.inc.total : null, r.sy && r.sy !== curY ? '매도 해가 올해와 다르면 다른 소득 기준이 달라져요' : '같은 해면 같은 값']
+        ['재산세·종부세', '(예전 방식) "6/1 보유" 체크가 꺼져 있으면 <b>0원</b> · 지금은 입찰일+약 45일을 잔금일로 보고 예상 보유개월로 6/1을 자동 판정', 0, '실제 날짜로 6/1 보유 ' + r.hold.years + '회 판정', r.hold.known ? holdAfter : null, '입찰 화면은 날짜를 추정해 판정하고, 잔금·매도일이 확정되면 이 표가 더 정확해요'],
+        ['소득세', '(예전 방식) 올해(' + curY + ') 소득 위에 얹어 계산 · 지금은 매도 예정 연도 소득 기준', incNow ? incNow.total : null, (r.sy || '매도') + '년 소득 위에 얹어 계산', r.inc && r.profit > 0 ? r.inc.total : null, r.sy && r.sy !== curY ? '매도 해가 올해와 다르면 다른 소득 기준이 달라져요' : '같은 해면 같은 값']
     ];
     h += '<div class="ma-h" style="margin-top:10px;">⚖️ 낙찰 전 계산 vs 매도 시점 기준</div><div class="indicator-box"><table class="ma2-table lg-tbl" style="width:100%;font-size:11.5px;"><thead><tr><th>세금</th><th>낙찰 전(입찰 화면) 방식</th><th>금액</th><th>낙찰 후·매도 시점 기준</th><th>금액</th><th>차이</th><th>이유</th></tr></thead><tbody>'
         + cmp.map(function(c) { return '<tr><td><b>' + c[0] + '</b></td><td>' + c[1] + '</td><td class="r">' + (c[2] == null ? '-' : (c[2] === 0 ? '0원' : fm(c[2]))) + '</td><td>' + c[3] + '</td><td class="r">' + (c[4] == null ? '-' : (c[4] === 0 ? '0원' : fm(c[4]))) + '</td><td class="r"><b>' + diff(c[2], c[4]) + '</b></td><td class="ma-sub">' + c[5] + '</td></tr>'; }).join('')
