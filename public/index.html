@@ -14209,6 +14209,10 @@ var TAX_CONFIG = {
     vat: {
         rate: 0.1,                  // 부가가치세율(10%)
         nationalHousingAreaM2: 85   // 국민주택규모 기준(전용면적 ㎡)
+    },
+    health: {                       // 직장가입자 보수 외 소득월액보험료(건강보험법 시행령 제41조④·제44조①, 2026-10-01 시행 확인) - 매월 세율 점검이 갱신
+        rate: 0.0719,               // 건강보험료율(7.19%)
+        thresholdMan: 2000          // 보수 외 소득 연 2,000만원 초과분부터 부과
     }
 };
 // JSON.stringify/parse로는 Infinity를 못 살림(JSON.stringify가 Infinity를 null로 바꿔버림) -
@@ -32679,9 +32683,8 @@ var LEDGER_CATS = [
 ];
 var LEDGER_TAX_KINDS = ['양도소득세', '종합소득세(증가분)', '부가세', '지방소득세', '건강보험 소득월액'];
 /* 🏥 직장가입자 보수 외 소득월액보험료(2026-11-22, 사용자 요청 / 법제처 원문 확인): 월 소득월액 = (연간 보수 외 소득 − 2,000만원) × 1/12 (건강보험법 71조①·시행령 41조④), 보험료율 7.19%(시행령 44조①, 2026-10-01 시행),
-   사업·이자·배당·기타소득은 100% 반영, 근로소득은 보수월액에 이미 들어가 제외(시행규칙 44조②). 연 환산 = (보수 외 소득 − 2,000만) × 7.19%. 장기요양보험료(건보료의 일정 비율)는 별도라 미포함. 요율은 해마다 바뀌면 여기를 고칠 것 */
-var HEALTH_PREM = { rate: 0.0719, thresholdMan: 2000 };
-function lgHealthAdd(base, add) { var t = HEALTH_PREM.thresholdMan, r = HEALTH_PREM.rate; return Math.round((Math.max(0, base + add - t) - Math.max(0, base - t)) * r); }   // 보수 외 소득 base(만원) 위에 add를 얹을 때 늘어나는 연 보험료(만원)
+   사업·이자·배당·기타소득은 100% 반영, 근로소득은 보수월액에 이미 들어가 제외(시행규칙 44조②). 연 환산 = (보수 외 소득 − 2,000만) × 7.19%. 장기요양보험료(건보료의 일정 비율)는 별도라 미포함. 요율·기준금액은 TAX_CONFIG.health(세율 파일 values.health)에서 가져오고 매월 세율 점검이 갱신 */
+function lgHealthAdd(base, add) { var t = TAX_CONFIG.health.thresholdMan, r = TAX_CONFIG.health.rate; return Math.round((Math.max(0, base + add - t) - Math.max(0, base - t)) * r); }   // 보수 외 소득 base(만원) 위에 add를 얹을 때 늘어나는 연 보험료(만원)
 var LEDGER_GROUP = { '취득': '취득(취득세·등기)', '명도·이사': '명도·이사·청소', '청소': '명도·이사·청소', '수리': '수리', '인수·체납': '인수·체납', '보유': '보유세·관리비', '매도': '중개·매도비', '금융': '이자·금융', '기타': '기타' };
 var LEDGER_UPFRONT = { '취득': 1, '명도·이사': 1, '청소': 1, '수리': 1, '인수·체납': 1, '금융': 1 };
 async function ledgerLoad() {

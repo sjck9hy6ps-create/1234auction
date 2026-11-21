@@ -1,9 +1,9 @@
 {
- "ver": 2,
+ "ver": 3,
  "checkedAt": "2026-11-15",
  "updatedAt": "2026-11-15",
  "source": "앱에 내장돼 있던 값을 그대로 옮김(매월 1일 점검이 바뀐 것만 갱신)",
- "note": "maxWon 1e18 = 끝없음(Infinity). 매매사업자 세금은 종합소득세 기준을 유지(비교과세는 계산에 넣지 않음, 사용자 결정 2026-11-15). 값은 TAX_CONFIG와 같은 구조·단위(원/만원/비율) | v2: policy(세제 개편·유예 종료 시점 목록)·schedule(시행일이 확정된 개정 - status:confirmed이고 from 이후 날짜 계산에만 적용, values는 바뀐 항목만 같은 구조로) 추가",
+ "note": "maxWon 1e18 = 끝없음(Infinity). 매매사업자 세금은 종합소득세 기준을 유지(비교과세는 계산에 넣지 않음, 사용자 결정 2026-11-15). 값은 TAX_CONFIG와 같은 구조·단위(원/만원/비율) | v2: policy(세제 개편·유예 종료 시점 목록)·schedule(시행일이 확정된 개정 - status:confirmed이고 from 이후 날짜 계산에만 적용, values는 바뀐 항목만 같은 구조로) 추가 | v3: values.health(직장가입자 보수 외 소득월액보험료율 rate·thresholdMan) 추가",
  "values": {
   "acquisition": {
    "baseTierLowMax": 60000,
@@ -153,6 +153,10 @@
   "vat": {
    "rate": 0.1,
    "nationalHousingAreaM2": 85
+  },
+  "health": {
+   "rate": 0.0719,
+   "thresholdMan": 2000
   }
  },
  "policy": [
