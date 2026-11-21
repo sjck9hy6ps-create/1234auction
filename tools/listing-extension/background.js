@@ -217,8 +217,8 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   (async () => {
     try {
       const t = sender.tab; const u = String((t && t.url) || sender.url || '');
-      if (t && t.id != null && /^https:\/\/new\.land\.naver\.com\/complexes\/\d+/.test(u)) { await chrome.tabs.remove(t.id); sendResponse({ ok: true }); }
-      else sendResponse({ ok: false, reason: 'not-complex-tab' });
+      if (t && t.id != null && /^https:\/\/new\.land\.naver\.com\//.test(u)) { await chrome.tabs.remove(t.id); sendResponse({ ok: true }); }
+      else sendResponse({ ok: false, reason: t ? '네이버 단지 창이 아님' : '창 정보 없음' });
     } catch (e) { sendResponse({ ok: false, error: String(e) }); }
   })();
   return true;

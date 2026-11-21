@@ -14,6 +14,7 @@
     document.body.appendChild(b); return b;
   };
   const btn = mkBtn('hg-send-btn', '📤 호가 보내기', 16, '#1e5eff');
+  try { btn.title = '호가 보내기 확장 v' + chrome.runtime.getManifest().version; } catch (e) {}   // 확장을 새로 불러왔는지 버전으로 확인
   const toast = (t, ok) => { btn.textContent = t; btn.style.background = ok === false ? '#c62828' : (ok ? '#2e7d32' : (ok === null ? '#ef6c00' : '#1e5eff')); };
 
   // ---- 매물 읽기 ----
@@ -123,7 +124,11 @@
             (async () => {
               for (let s2 = 3; s2 > 0 && !cancel; s2--) { toast(msgOk + ' · ' + s2 + '초 뒤 이 창을 닫아요(누르면 취소)', true); await sleep(1000); }
               btn.removeEventListener('click', stopClose); closePending = false;
-              if (!cancel) { try { chrome.runtime.sendMessage({ type: 'closeSelf' }); } catch (e) {} }
+              if (!cancel) {
+                // 닫기 요청 → 실패하면 이유를 버튼에 보여 주고(2026-11-21: 닫히지 않는데 이유를 알 수 없었음) 마지막 수단으로 window.close도 시도
+                const showFail = (why) => { try { window.close(); } catch (e) {} setTimeout(() => toast('⚠️ 창을 자동으로 닫지 못했어요(' + why + ') - 직접 닫아 주세요', false), 500); };
+                try { chrome.runtime.sendMessage({ type: 'closeSelf' }, (r) => { const err = chrome.runtime.lastError; if (err) showFail(err.message || '확장 연결 끊김'); else if (r && r.ok === false) showFail(r.reason || r.error || '닫기 거부'); }); } catch (e) { showFail(String(e && e.message || e)); }
+              }
               else setTimeout(idleLabel, 6000);
             })();
             return;
