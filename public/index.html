@@ -33434,8 +33434,7 @@ function renderMyAssets() {
     // ① 한눈에 - 칸을 누르면 팝업으로 자세한 목록(2026-11-21 사용자: 보유 중 등 겹치는 메뉴는 없애고 팝업으로)
     maPopCtx = { yn: yn, s: s, p: p, next: next, deals: deals, legacy: legacy, holding: holding, planned: planned, holdBuy: holdBuy, acqRate: acqRate, taxYear: taxYear, marg1000: marg1000, brNow: brNow, sumProfit: sumProfit, sumTotal: sumTotal, wins: wins, avgHold: avgHold };
     html += '<div class="indicator-box"><div class="indicator-title">💼 한눈에 <span class="ma-sub" style="font-weight:normal;">· 칸을 누르면 자세한 내용이 팝업으로 열려요</span></div><div class="indicator-grid lg-grid">'
-        + lgItemC('home', '주택 수 → 다음 낙찰', s.count + '채 → ' + next + '번째', acqRate(false) > 4 ? '#c62828' : '', '취득세 ' + acqRate(false) + '% (조정 지역 ' + acqRate(true) + '%)')
-        + lgItemC('home', '보유 중', holding.length + '건', '', '취득가 합계 ' + fm(holdBuy) + (planned.length ? ' · 예정 ' + planned.length + '건' : ''))
+        + lgItemC('home', '보유 중', holding.length + '건', acqRate(false) > 4 ? '#c62828' : '', '주택 ' + s.count + '채 → 다음 낙찰 ' + next + '번째<br>취득세 ' + acqRate(false) + '% (조정 ' + acqRate(true) + '%)' + (planned.length ? '<br>예정 ' + planned.length + '건' : ''))
         + lgItemC('year', '올해 매도 이익', maWon(s.bizIncome), '', '예상 세금 ' + maWon(yn.tax) + '<br>실제 순수익(세금 뺀) <b>' + maWon(yn.net) + '</b>') + lgItemC('tax', '다음 매도 1천만당 세금', marg1000 + '만', '', '지방세 포함')
         + lgItemC('sold', '누적 매도', deals.length + '건', '', avgHold != null ? '평균 보유 ' + avgHold + '개월' : '') + lgItemC('sold', '누적 순이익(세전)', deals.length ? fm(sumProfit) : '-', deals.length ? pc(sumProfit) : '', deals.length ? '이익 ' + wins + '/' + deals.length + '건 · 수익률 ' + (sumTotal ? (sumProfit / sumTotal * 100).toFixed(1) : '-') + '%' : '') + '</div></div>';
     var soon = deals.filter(function(d) { return d.filing && d.filing.diffDays >= -30 && d.filing.diffDays <= 30; });
