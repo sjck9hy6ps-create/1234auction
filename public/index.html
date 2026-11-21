@@ -22742,7 +22742,8 @@ function top10VillaRows() {   // 빌라(수도권): 임장 후보 중 추천가�
         try { nm = netAtBidFromRecord(Object.assign({}, a, { target: ev.ve.est, actualBid: pe.bid, repair: effRepairFee(a, 'villa', r.pyung, yr) })); } catch (e) { nm = null; }
         if (!nm) return;
         var cash = Math.max(nm.cash, 1000), hold = parseInt(a.holdMonths) > 0 ? parseInt(a.holdMonths) : 6, wait = r.dday ? Math.max(0, r.dday.diffDays) / 30 : 0, months = Math.max(1, wait + hold), rate = pe.net / cash * (12 / months);
-        out.push({ r: r, name: villaNameFor(r), ev: { bid: pe.bid, net: pe.net, pre: null, p: pe.p }, cash: nm.cash, hold: hold, wait: Math.round(wait * 10) / 10, months: months, net: pe.net, rate: rate, exp: rate * pe.p, p: pe.p, sale: ev.ve.est, villa: true });
+        var nmV = villaNameFor(r); if (!nmV || String(nmV).replace(/\s/g, '').length < 2) nmV = String(a.dong || '').split(' ').pop() + ' ' + (a.bunji || '');   // 건물 이름을 못 읽은 빌라는 동·번지로 표시
+        out.push({ r: r, name: nmV, ev: { bid: pe.bid, net: pe.net, pre: null, p: pe.p }, cash: nm.cash, hold: hold, wait: Math.round(wait * 10) / 10, months: months, net: pe.net, rate: rate, exp: rate * pe.p, p: pe.p, sale: ev.ve.est, villa: true });
     });
     return out;
 }
