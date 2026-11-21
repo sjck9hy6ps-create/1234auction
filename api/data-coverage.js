@@ -2819,7 +2819,7 @@ async function getBoundary(sggCd, wantRaw) {
       // VWorld가 빈 응답·HTML을 돌려준 경우(키·등록 도메인·호출 차단 문제 가능) - 예전엔 'Unexpected end of JSON input'(500)로만 보였음
       return {
         status: 502,
-        body: { error: 'VWorld가 비어 있거나 읽을 수 없는 응답을 보냈어요(HTTP ' + r.status + '). VWORLD_API_KEY와 VWorld에 등록한 도메인을 확인해 주세요.', httpStatus: r.status, head: String(rawText || '').slice(0, 120) },
+        body: { error: (r.status >= 500 ? 'VWorld 서버가 일시적으로 응답하지 않아요(HTTP ' + r.status + '). 잠시 뒤 다시 시도되며, 계속되면 ' : 'VWorld가 비어 있거나 읽을 수 없는 응답을 보냈어요(HTTP ' + r.status + '). ') + 'VWORLD_API_KEY와 VWorld에 등록한 도메인을 확인해 주세요.', httpStatus: r.status, head: String(rawText || '').slice(0, 120) },
       };
     }
 
