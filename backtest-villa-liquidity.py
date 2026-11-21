@@ -43,7 +43,7 @@ def main():
         if not any(k in str(c.get("propertyType") or "") for k in ("다세대", "연립", "도시형")): continue
         if c.get("status") != "매각" or not str(c.get("addrJibun", "")).startswith(("서울", "경기", "인천")): continue
         sd = str(c.get("saleDate") or "")
-        if not (sd >= "2021-01-01" and sd <= "2025-05-31"): continue
+        if not (sd >= "2021-01-01" and sd <= "2026-03-31"): continue
         try: sday = (pd.Timestamp(sd) - pd.Timestamp("2020-01-01")).days; bidp = float(c["finalBidPrice"]) / 10000; area = float(c["areaM2"])
         except Exception: continue
         lat, lon = c.get("lat"), c.get("lon")
@@ -63,7 +63,7 @@ def main():
             d0 = sday - day[nb] if len(nb) else np.array([])
             rec[f"n6_{R}"] = int(((d0 >= 0) & (d0 < 183)).sum()); rec[f"n12_{R}"] = int(((d0 >= 183) & (d0 < 365)).sum()); rec[f"n24_{R}"] = int(((d0 >= 365) & (d0 < 730)).sum())
         # 같은 건물 직전 12개월 거래 수
-        own_before = 0; resold = None; ratio = None
+        own_before = 0; resold = None; ratio = None; resale_m = None
         if len(sub):
             g = sub
             own_before = int(((sday - g["day"] >= 0) & (sday - g["day"] < 365)).sum())
@@ -71,9 +71,12 @@ def main():
             fl = pd.to_numeric(c.get("floor"), errors="coerce")
             if pd.notna(fl): m = m[m["floor"] == fl]
             resold = bool(len(m)); ratio = float(m["price"].iloc[0] / bidp) if len(m) else None
+            m18 = g[(g["day"] > sday) & (g["day"] <= sday + 548) & ((g["size"] - area).abs() <= 1.5)]
+            if pd.notna(fl): m18 = m18[m18["floor"] == fl]
+            resale_m = float((m18["day"].min() - sday) / 30.4) if len(m18) else None
         else:
-            resold = False  # 같은 건물 거래 자체가 없으면 되판 흔적 없음
-        rec.update({"own12": own_before, "resold": resold, "ratio": ratio, "hasBld": bool(len(sub))}); rows.append(rec)
+            resold = False; resale_m = None  # 같은 건물 거래 자체가 없으면 되판 흔적 없음
+        rec.update({"own12": own_before, "resold": resold, "ratio": ratio, "hasBld": bool(len(sub)), "resale_m": resale_m, "sday": sday}); rows.append(rec)
     R = pd.DataFrame(rows); print(f"분석 낙찰사례 {len(R):,}건 · 되판 흔적 {R['resold'].mean() * 100:.1f}%")
     out = {"n": int(len(R)), "resold12Pct": round(float(R["resold"].mean()) * 100, 1), "건물 거래 이력 있는 사례": int(R["hasBld"].sum())}
     def tab(col, bins, labels, sub=None):
@@ -91,6 +94,22 @@ def main():
     H = R[R["hasBld"]]
     out["건물 거래 이력 있는 사례만 - 반경1km 최근12개월"] = tab("n_all_1000", [0, 1, 6, 21, 10000], ["0", "1-5", "6-20", "21+"], H)
     out["같은 건물 직전 12개월 거래 수별"] = tab("own12", [0, 1, 3, 10000], ["0", "1-2", "3+"], R)
+    # ── 빌라 환금성 곡선(2026-11-21): 아파트 liquidity-curve와 같은 방식. 생활권(반경 500m) 최근 12개월 거래 수 구간별 '낙찰 후 같은 건물·같은 층·같은 면적 되팔림 흔적'까지 걸린 달.
+    #    holdMonths = (18개월 안 되팔림이 25% 미만이면 그 달수의 75% 지점, 아니면 평균), 3~12개월로 제한
+    R["resale_m"] = pd.to_numeric(R["resale_m"], errors="coerce")
+    O12 = R[R["sday"] <= last_day - 365]; O18 = R[R["sday"] <= last_day - 548]
+    bins = []
+    for lo, hi, lab in ((0, 0, "0건"), (1, 2, "1~2건"), (3, 5, "3~5건"), (6, 10, "6~10건"), (11, 20, "11~20건"), (21, 10 ** 9, "21건 이상")):
+        a = O12[(O12["n_all_500"] >= lo) & (O12["n_all_500"] <= hi)]; b = O18[(O18["n_all_500"] >= lo) & (O18["n_all_500"] <= hi)]
+        if len(a) < 60 or len(b) < 60: print("  빌라 환금성:", lab, "사례 부족", len(a), len(b)); continue
+        w = b[b["resale_m"].notna() & (b["resale_m"] <= 18)]; p18 = len(w) / len(b)
+        rec = {"lo": lo, "hi": hi if hi < 10 ** 9 else None, "label": lab, "n": int(len(a)), "p6": round(float((a["resale_m"] <= 6).mean()) * 100, 1), "p12": round(float((a["resale_m"] <= 12).mean()) * 100, 1), "p18": round(p18 * 100, 1)}
+        if len(w) >= 20:
+            hold = round(float(w["resale_m"].quantile(.75))) if p18 < 0.25 else round(float(w["resale_m"].mean()))
+            rec.update({"medMonths": round(float(w["resale_m"].median()), 1), "meanMonths": round(float(w["resale_m"].mean()), 1), "p75Months": round(float(w["resale_m"].quantile(.75)), 1), "holdMonths": int(max(3, min(12, hold)))})
+        else: rec.update({"holdMonths": 12, "note": "되팔림 흔적 20건 미만 - 12개월로 둠"})
+        bins.append(rec)
+    out["villaLiqCurve"] = {"generatedAt": pd.Timestamp.now().strftime("%Y-%m-%d"), "basis": "수도권 빌라 낙찰사례(2021~) · 낙찰일 기준 반경 500m 최근 12개월 빌라 매매 수", "bins": bins}
     txt = json.dumps(out, ensure_ascii=False, indent=1); print(txt)
     json.dump(out, open("backtest-villa-liquidity.json", "w"), ensure_ascii=False, indent=1)
     if os.environ.get("GITHUB_STEP_SUMMARY"): open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8").write("```json\n" + txt + "\n```\n")
