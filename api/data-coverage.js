@@ -3690,7 +3690,7 @@ export default async function handler(req, res) {
     else if (req.query.mode === 'boardCacheMeta') res.setHeader('Cache-Control', 's-maxage=60, stale-while-revalidate=120');
     else res.setHeader('Cache-Control', 's-maxage=300, stale-while-revalidate=3600');
     try {
-      const pre = req.query.kind === 'villa' ? 'board|villa|' : (req.query.kind === 'chart' ? 'board|chart|' : (req.query.kind === 'hist' ? 'board|hist|' : (req.query.kind === 'band' ? 'board|band|' : 'board|cache|'))); // chart: 가격 그래프 점(2026-11-15)
+      const pre = req.query.kind === 'villa' ? 'board|villa|' : (req.query.kind === 'chart' ? 'board|chart|' : (req.query.kind === 'hist' ? 'board|hist|' : (req.query.kind === 'band' ? 'board|band|' : (req.query.kind === 'top10' ? 'board|top10|' : 'board|cache|')))); // chart: 가격 그래프 점(2026-11-15)
        // villa: 빌라 탭 미리 계산(2026-10-10)
       const id = req.query.mode === 'boardCacheMeta' ? pre + 'meta' : pre + String(parseInt(req.query.i, 10) || 0);
       const { data, error } = await supabase.from('leader_follower_cache').select('payload').eq('id', id).maybeSingle();

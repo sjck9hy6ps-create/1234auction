@@ -107,6 +107,17 @@ try {
     return out;
   });
 } catch (e) { console.log('변동 요약 만들기 실패:', String(e).slice(0, 200)); }
+// ── 추천 TOP 10 순위(2026-11-21, 사용자: 아파트·빌라 순위를 미리 계산해 목록에 바로 표시) - 필터 없는 기본 상태(낙찰 가능성 10% 이상)의 종합 점수 상위 10건을 아파트·빌라 따로 저장
+let top10 = null;
+try {
+  top10 = await page.evaluate(() => {
+    top10State.sort = 'score';
+    const apt = top10Rows().slice(0, 10).map((x) => [String(x.r.id), Math.round(x.exp * 1000) / 10]);
+    const villa = top10Sorted(top10VillaRows()).slice(0, 10).map((x) => [String(x.r.id), Math.round(x.exp * 1000) / 10]);
+    return { apt: apt, villa: villa, minP: top10State.minP };
+  });
+  console.log(`TOP 10 계산: 아파트 ${top10.apt.length}건 · 빌라 ${top10.villa.length}건`);
+} catch (e) { console.log('TOP 10 계산 실패:', String(e).slice(0, 200)); }
 // ── 가격 그래프·빌라 최근거래가·10년 그래프 미리 만들기(2026-11-15, 사용자: 가격차트 금액을 미리 계산하고, 변동 작은 값은 바로 불러오게)
 //    보드 계산이 끝나면 앱이 임시 지역 자료를 내려 버리므로, 지역(법정동 코드)별로 실거래를 다시 받아 → 그 지역 물건들을 계산 → 자료를 내리는 순서로 진행.
 //    ① 물건별 최근 3년 같은 평형(아파트)·같은 건물 비슷한 면적(빌라) 거래 [날짜, 가격(만), 층, 직거래]
@@ -308,6 +319,17 @@ try {
     }
   } else console.log('평형 활발도 계산이 너무 적어 올리지 않음');
 } catch (e) { console.log('평형 활발도 올리기 실패(무시):', String(e).slice(0, 200)); }
+
+// ── 추천 TOP 10 올리기: 한 줄(board|top10|0)
+try {
+  if (top10 && (top10.apt.length || top10.villa.length)) {
+    for (let t = 0; t < 4; t++) {
+      const { error } = await supabase.from('leader_follower_cache').upsert({ id: 'board|top10|0', payload: { ...top10, at: Date.now() }, fetched_at: now }, { onConflict: 'id' });
+      if (!error) { console.log(`✅ TOP 10 올림: 아파트 ${top10.apt.length} · 빌라 ${top10.villa.length}`); break; }
+      console.log('TOP 10 저장 재시도', error.message); await new Promise((res) => setTimeout(res, 3000 * (t + 1)));
+    }
+  } else console.log('TOP 10 결과가 없어 올리지 않음');
+} catch (e) { console.log('TOP 10 올리기 실패(무시):', String(e).slice(0, 200)); }
 
 // ── 10년 그래프 미리 계산본 올리기(단지 키 해시로 40묶음)
 try {

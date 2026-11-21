@@ -22762,13 +22762,26 @@ function top10Sorted(list) {
 }
 /* 🏆 TOP 10 순위 표시(2026-11-21, 사용자: 목록·상세의 물건 이름 옆에 순위를 한눈에) - 지금 걸린 필터와 낙찰 가능성 하한 기준 종합 점수 순위(창에서 정렬을 바꿔도 표시는 종합 점수 기준). 5초 동안 계산 결과를 재사용 */
 var top10Cache = { sig: '', ranks: {} };
+var top10Pre = { d: null, pend: false };
+function top10PreLoad() {
+    if (top10Pre.d || top10Pre.pend) return; top10Pre.pend = true;
+    fetch('/api/data-coverage?mode=boardCacheChunk&kind=top10&i=0&v=' + Math.floor(Date.now() / 600000)).then(function(r) { return r.json(); }).then(function(d) {
+        top10Pre.d = d && (d.apt || d.villa) ? d : { apt: [], villa: [] }; top10Pre.pend = false; top10Cache.sig = '';
+        try { if (document.getElementById('bid-board') && document.getElementById('bid-board').style.display !== 'none') renderBidBoard(); } catch (e) {}
+    }).catch(function() { top10Pre.d = { apt: [], villa: [] }; top10Pre.pend = false; });
+}
 function top10Ranks() {
-    var s = bidBoardState, sig = [s.region || '', top10State.minP, bidBoardRows.length, typeof myAssetsVer !== 'undefined' ? myAssetsVer : 0, typeof villaRestoreState !== 'undefined' ? villaRestoreState : 0, Math.floor(Date.now() / 5000)].join('|');
+    if (!top10Pre.d) top10PreLoad();
+    var s = bidBoardState, unfiltered = !s.region && top10State.minP === 0.1, pend = bidBoardRows.some(function(r) { return r.pending; }), villaLive = typeof villaRestoreState !== 'undefined' && villaRestoreState >= 2;
+    var sig = [s.region || '', top10State.minP, bidBoardRows.length, pend ? 1 : 0, villaLive ? 1 : 0, top10Pre.d ? 1 : 0, typeof myAssetsVer !== 'undefined' ? myAssetsVer : 0, Math.floor(Date.now() / 5000)].join('|');
     if (top10Cache.sig === sig) return top10Cache.ranks;
     var ranks = {}, keep = top10State.sort; top10State.sort = 'score';
     try {
-        top10Rows().slice(0, 10).forEach(function(x, i) { ranks[String(x.r.id)] = i + 1; });
-        if (typeof villaRestoreState !== 'undefined' && villaRestoreState >= 2) top10Sorted(top10VillaRows()).slice(0, 10).forEach(function(x, i) { ranks[String(x.r.id)] = i + 1; });
+        var usePreApt = unfiltered && pend && top10Pre.d, usePreVilla = unfiltered && !villaLive && top10Pre.d;   // 아직 계산이 끝나지 않았으면 서버가 미리 계산해 둔 순위(필터 없는 기본 상태)를 씀
+        if (usePreApt) (top10Pre.d.apt || []).forEach(function(x, i) { ranks[String(x[0])] = i + 1; });
+        else top10Rows().slice(0, 10).forEach(function(x, i) { ranks[String(x.r.id)] = i + 1; });
+        if (usePreVilla) (top10Pre.d.villa || []).forEach(function(x, i) { ranks[String(x[0])] = i + 1; });
+        else if (villaLive) top10Sorted(top10VillaRows()).slice(0, 10).forEach(function(x, i) { ranks[String(x.r.id)] = i + 1; });
     } catch (e) {} finally { top10State.sort = keep; }
     top10Cache = { sig: sig, ranks: ranks }; return ranks;
 }
