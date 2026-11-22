@@ -29,7 +29,7 @@ await page.goto(SITE, { waitUntil: 'load' });
 await page.waitForTimeout(10000);
 await page.evaluate(() => { try { const rp = document.getElementById('remind-panel'); if (rp) rp.style.display = 'none'; } catch (e) {} try { document.getElementById('bid-board').style.display = 'flex'; } catch (e) {} forceRefreshBidBoard(); });
 const t0 = Date.now();
-let last = '';
+let last = '', tRetry = Date.now(), openTries = 0;
 for (;;) {
   await page.waitForTimeout(15000);
   const st = await page.evaluate(() => ({ prog: (document.getElementById('bb-progress') || {}).innerText || '', running: !!window.bidBoardRunning, rows: bidBoardRows.length, pending: bidBoardRows.filter((r) => r.pending).length }));
@@ -37,6 +37,17 @@ for (;;) {
   if (line !== last) console.log(line);
   last = line;
   if (!st.running && !st.prog && st.rows > 0 && st.pending === 0) break;
+  /* 2026-11-22: 11/21 밤 정기 실행이 앱을 열었는데 물건 목록이 0건인 채(실행중 false·행 0)로 80분을 기다리다 실패함 → 5분 동안 시작도 안 하면 앱을 다시 열어 처음부터(최대 3번), 그래도 안 되면 바로 실패(원인 로그 남김) */
+  if (!st.running && !st.prog && st.rows === 0 && Date.now() - tRetry > 5 * 60 * 1000) {
+    openTries++;
+    if (openTries >= 3) { console.log('앱이 3번 다시 열어도 입찰후보를 시작하지 못함(물건 목록 0건) - 중단'); process.exit(1); }
+    console.log(`입찰후보가 5분 안에 시작되지 않아 앱을 다시 엽니다(${openTries}/3)`);
+    try { const ping = await page.evaluate(async () => { try { const r = await fetch('/api/auction?kind=auctions&limit=1'); return r.status + ' ' + (await r.text()).length + '바이트'; } catch (e) { return String(e).slice(0, 80); } }); console.log('물건 목록 응답:', ping); } catch (e) {}
+    await page.goto(SITE + (SITE.includes('?') ? '&' : '?') + 'r=' + Date.now(), { waitUntil: 'load' });
+    await page.waitForTimeout(10000);
+    await page.evaluate(() => { try { const rp = document.getElementById('remind-panel'); if (rp) rp.style.display = 'none'; } catch (e) {} try { document.getElementById('bid-board').style.display = 'flex'; } catch (e) {} forceRefreshBidBoard(); });
+    tRetry = Date.now();
+  }
   if (Date.now() - t0 > 80 * 60 * 1000) { console.log('시간 초과'); break; }
 }
 // 연식·승강기·세대수 채우기(앱이 입찰후보 계산 직후 배경에서 하는 일)가 끝나길 기다린 뒤 저장 계산에 반영 - 안 그러면 사용자 앱의 물건 값(연식 등)과 서버 계산의 식별값이 달라 일부 물건을 다시 계산하게 됨(2026-10-11)
