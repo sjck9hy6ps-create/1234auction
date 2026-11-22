@@ -1172,6 +1172,24 @@ body.ui2 #my-assets-panel { position:fixed; top:104px; right:64px; left:auto; bo
 .lg-field.lg-ic-amt input.lg-i-amt { font-size:20px; font-weight:800; padding:12px 12px; text-align:right; border:2px solid #a5b4fc; background:#f5f7ff; color:#111827; }
 .lg-field.lg-ic-amt input.lg-i-amt:focus { outline:none; border-color:#6366f1; background:#fff; }
 .lg-ic-sub { margin-top:8px; grid-template-columns:1fr 1fr; }
+
+/* 🃏 장부 수정 화면도 카드형 대시보드(2026-11-22, 사용자 요청) - 입력칸 하나하나를 카드로: 작은 이름 + 큰 값, 카드 어디를 눌러도 그 칸에 바로 입력(날짜·선택은 창이 열림) */
+#lg-form .lg-sec { background:transparent; border:none; padding:4px 0 2px; margin-bottom:10px; }
+#lg-form .lg-sec-h { font-size:13.5px; margin-bottom:8px; }
+#lg-form .lg-sec .lg-fields, #lg-form .lg-sub-box .lg-fields { grid-template-columns:repeat(auto-fill, minmax(150px, 1fr)); gap:8px; }
+#lg-form .lg-fields > .lg-field { background:#fff; border:1.5px solid #e0e7ff; border-radius:12px; padding:9px 11px 6px; cursor:pointer; display:flex; flex-direction:column; transition:border-color .12s, box-shadow .12s, background .12s; }
+#lg-form .lg-fields > .lg-field:hover { border-color:#a5b4fc; background:#fafaff; }
+#lg-form .lg-fields > .lg-field:focus-within { border-color:#6366f1; background:#fff; box-shadow:0 0 0 3px rgba(99,102,241,.16); }
+#lg-form .lg-fields > .lg-field > label:first-child { font-size:11px; color:#6b7280; font-weight:600; margin-bottom:1px; cursor:pointer; }
+#lg-form .lg-fields > .lg-field input[type=text], #lg-form .lg-fields > .lg-field input[type=number], #lg-form .lg-fields > .lg-field input[type=date], #lg-form .lg-fields > .lg-field select { border:none !important; background:transparent !important; box-shadow:none !important; outline:none; padding:3px 0 !important; font-size:17px; font-weight:800; color:#111827; width:100%; min-width:0; cursor:pointer; }
+#lg-form .lg-fields > .lg-field input::placeholder { font-size:12.5px; font-weight:500; color:#b3b9c3; }
+#lg-form .lg-fields > .lg-field select { font-size:14.5px; font-weight:700; }
+#lg-form .lg-fields > .lg-field input[type=date] { font-size:15.5px; }
+#lg-form .lg-fields > .lg-field .lg-hint { color:#4f46e5; min-height:12px; margin-top:0; }
+#lg-form .lg-sub-box { background:#f5f7ff; border:1.5px solid #e0e7ff; }
+#lg-form .lg-sub-h { font-size:12.5px; color:#4338ca; }
+#lg-form .lg-vatbox { background:#fff; border:1.5px solid #e0e7ff; border-radius:12px; }
+@media (max-width: 640px) { #lg-form .lg-fields > .lg-field input[type=text], #lg-form .lg-fields > .lg-field input[type=number], #lg-form .lg-fields > .lg-field input[type=date], #lg-form .lg-fields > .lg-field select { font-size:16px; padding:3px 0 !important; } #lg-form .lg-fields > .lg-field select { font-size:14px; } }
 .lg-click { cursor:pointer; } .lg-click:hover { background:#f5f3ff; } .lg-click .lg-more { font-size:10px; color:#7c3aed; font-weight:normal; white-space:nowrap; }
 .ma-pop { position:fixed; inset:0; background:rgba(15,23,42,.45); z-index:100000; display:flex; align-items:center; justify-content:center; padding:12px; }
 .ma-pop-card { background:#fff; border-radius:12px; width:100%; max-width:640px; max-height:88vh; display:flex; flex-direction:column; box-shadow:0 10px 40px rgba(0,0,0,.3); }
@@ -32951,6 +32969,15 @@ function ledgerDetailHtml(r, c) {
     if (its.length) parts.push('<details style="margin-top:6px;"><summary class="ma-sub">비용 건별 내역 ' + its.length + '건</summary><table class="ma2-table"><tbody>' + its.map(function(it) { return '<tr><td>' + maEsc(it.date || '') + '</td><td>' + maEsc(it.cat) + ' · ' + maEsc(it.sub) + (it.inv ? ' 🧾' : '') + '</td><td class="r">' + fmt(lgN(it.amount)) + (it.inv ? '<div class="ma-sub">+부가세 ' + fmt(lgVatOf(it)) + '</div>' : '') + '</td><td class="ma-sub">' + maEsc(it.memo || '') + '</td></tr>'; }).join('') + '</tbody></table></details>');
     return parts.join('');
 }
+
+/* 🃏 장부 수정 카드: 카드의 빈 곳을 눌러도 입력칸에 커서(날짜·선택은 선택 창을 엶, 숫자는 값을 선택해 바로 덮어쓰기) */
+document.addEventListener('click', function(e) {
+    var f = e.target && e.target.closest ? e.target.closest('#lg-form .lg-fields > .lg-field') : null;
+    if (!f || (e.target.closest && e.target.closest('input, select, textarea, button, a, label'))) return;
+    var inp = f.querySelector('input:not([type=checkbox]), select, textarea'); if (!inp) return;
+    try { inp.focus(); if ((inp.type === 'date' || inp.tagName === 'SELECT') && inp.showPicker) inp.showPicker(); } catch (x) {}
+});
+document.addEventListener('focusin', function(e) { var t = e.target; if (t && t.matches && t.matches('#lg-form .lg-fields > .lg-field input[type=number]')) { try { t.select(); } catch (x) {} } });
 function ledgerEdit(id) {
     maPopClose(); ledgerEditId = id;
     var cur = id === 'new' ? null : ledger.items.filter(function(x) { return x.id === id; })[0];
