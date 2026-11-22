@@ -1226,6 +1226,10 @@ body.ui2 #my-assets-panel { position:fixed; top:104px; right:64px; left:auto; bo
 #lg-rev-pop .lgp-card { background:#fff; border-radius:14px; width:100%; max-width:480px; max-height:90vh; overflow:auto; box-shadow:0 10px 40px rgba(0,0,0,.3); padding:14px; }
 #lg-rev-pop .lgp-h { font-size:15px; font-weight:800; margin-bottom:10px; display:flex; justify-content:space-between; align-items:center; }
 #lg-rev-pop .lg-fields { grid-template-columns:1fr 1fr; } #lg-rev-pop .lg-fields > .lgp-wide { grid-column:1 / -1; }
+#lg-rev-pop .lgr-sum { font-size:12px; color:#374151; background:#f5f7ff; border-radius:8px; padding:6px 10px; margin-bottom:6px; }
+#lg-rev-pop .lgr-li { border:1.5px solid #e0e7ff; border-radius:10px; padding:7px 10px; margin-bottom:6px; cursor:pointer; background:#fff; } #lg-rev-pop .lgr-li:hover { border-color:#6366f1; background:#fafaff; }
+#lg-rev-pop .lgr-li-a { display:flex; justify-content:space-between; gap:8px; } #lg-rev-pop .lgr-li-a b { font-size:15px; } #lg-rev-pop .lgr-li-a span { font-size:12px; color:#6b7280; text-align:right; }
+#lg-rev-pop .lgr-li-b { font-size:11.5px; color:#6b7280; margin-top:2px; }
 #lg-rev-pop .lgp-actions { display:flex; gap:8px; margin-top:12px; align-items:center; } #lg-rev-pop .lgp-actions .grow { flex:1; }
 #lg-fld-pop { position:fixed; inset:0; background:rgba(15,23,42,.45); z-index:100001; display:flex; align-items:center; justify-content:center; padding:12px; }
 #lg-fld-pop .lgp-card { background:#fff; border-radius:14px; width:100%; max-width:460px; max-height:90vh; overflow:auto; box-shadow:0 10px 40px rgba(0,0,0,.3); padding:14px; }
@@ -32824,8 +32828,8 @@ function ledgerCalc(rec, skipTax) {
        이자는 일별 잔액 기준이라 인출 건별 계산의 합과 같음(매월 후취 납부여도 총액은 같음) */
     var rev = rec.rev || {}, revRate = lgN(rev.rate), revEnd = rev.repay || endFallback, revRows = [], revInt = 0, revFail = 0, revDrawSum = 0;
     (rev.draws || []).forEach(function(dw) {
-        var amt = lgN(dw.amount), dd = lgDays(dw.date || win.date, revEnd), iv = amt && revRate && dd != null && dd > 0 ? Math.round(amt * revRate / 100 * dd / 365 * 100) / 100 : 0;
-        revInt += iv; revDrawSum += amt; revRows.push({ amount: amt, date: dw.date || win.date || '', days: dd, interest: iv, memo: dw.memo || '' });
+        var amt = lgN(dw.amount), endD = dw.repay || revEnd, dd = lgDays(dw.date || win.date, endD), iv = amt && revRate && dd != null && dd > 0 ? Math.round(amt * revRate / 100 * dd / 365 * 100) / 100 : 0;
+        revInt += iv; revDrawSum += amt; revRows.push({ id: dw.id, amount: amt, date: dw.date || win.date || '', end: endD, days: dd, interest: iv, memo: dw.memo || '' });
     });
     if (lgN(rev.tries) > 0 && lgN(rev.dep) > 0 && revRate) revFail = Math.round(lgN(rev.dep) * revRate / 100 * (lgN(rev.depDays) || 7) / 365 * lgN(rev.tries) * 100) / 100;
     interest += revInt + revFail; loanSum += revDrawSum;
@@ -33017,7 +33021,7 @@ function ledgerDetailHtml(r, c) {
         var how = (l.amort ? '원리금균등 ' + l.term + '개월' : '일시상환') + (l.days != null ? ' · ' + l.days + '일' : '');
         return '<div><span>대출 ' + (i + 1) + ' · ' + fmt(l.amount) + ' · ' + l.rate + '%</span><b>이자 ' + fmt(l.interest) + (l.actual ? ' (실제)' : '') + '</b><span>' + how + (l.noTerm ? '<br>⚠️ 기간 입력 필요' : '') + '</span></div>';
     }).join('');
-    var revLines = c.revRows.filter(function(x) { return x.amount; }).map(function(x, i) { return '<div><span>마이너스 인출 ' + (i + 1) + ' · ' + fmt(x.amount) + (c.revRate ? ' · ' + c.revRate + '%' : '') + '</span><b>이자 ' + fmt(x.interest) + '</b><span>' + maEsc(x.date) + '부터 ' + (x.days != null ? x.days + '일' : '') + (x.memo ? ' · ' + maEsc(x.memo) : '') + '</span></div>'; }).join('') + (c.revFail ? '<div><span>패찰 보증금 이자(' + lgN((r.rev || {}).tries) + '회)</span><b>' + fmt(c.revFail) + '</b><span>' + fmt(lgN((r.rev || {}).dep)) + ' × ' + (lgN((r.rev || {}).depDays) || 7) + '일</span></div>' : '');
+    var revLines = c.revRows.filter(function(x) { return x.amount; }).map(function(x, i) { return '<div><span>마이너스 인출 ' + (i + 1) + ' · ' + fmt(x.amount) + (c.revRate ? ' · ' + c.revRate + '%' : '') + '</span><b>이자 ' + fmt(x.interest) + '</b><span>' + maEsc(x.date) + '~' + maEsc(x.end || '') + (x.days != null ? ' · ' + x.days + '일' : '') + (x.memo ? ' · ' + maEsc(x.memo) : '') + '</span></div>'; }).join('') + (c.revFail ? '<div><span>패찰 보증금 이자(' + lgN((r.rev || {}).tries) + '회)</span><b>' + fmt(c.revFail) + '</b><span>' + fmt(lgN((r.rev || {}).dep)) + ' × ' + (lgN((r.rev || {}).depDays) || 7) + '일</span></div>' : '');
     var vatNet = c.vatOn && c.saleP ? c.vatSale - c.vatIn - (r.vatDeduct ? c.vatTotal : 0) : null;
     var vatRows = '';
     if (c.vatOn && c.saleP) {
@@ -33104,43 +33108,46 @@ function ledgerReqOpen(key) {
 
 /* 🏧 대출 2 = 마이너스 대출 팝업(2026-11-22 사용자): 이율·상환일·패찰 보증금 이자·인출 내역(날짜·금액·용도)을 한 팝업에서 입력 */
 var lgRevMig = false;
+/* 🏧 마이너스 대출 팝업(2026-11-22 사용자 수정): 기록은 연 이율·대출 금액 두 칸만, 인출 내역은 목록으로 나열하고 '+ 인출 추가'(또는 목록 줄 클릭)로 인출일·금액·용도·상환일을 팝업에서 입력. 입력은 바로 반영되고 닫으면 화면이 새로 그려져요 */
 function ledgerRevOpen() {
-    ledgerSyncDraft(); var d = ledgerDraft; if (!d) return; var r = d.rev || {}, old = document.getElementById('lg-rev-pop'); if (old) old.remove(); lgRevMig = false;
+    ledgerSyncDraft(); var d = ledgerDraft; if (!d) return; d.rev = d.rev || { draws: [] }; d.rev.draws = d.rev.draws || []; var r = d.rev, old = document.getElementById('lg-rev-pop'); if (old) old.remove(); lgRevMig = false;
     var legacy = lgN(lgFromWon((document.getElementById('lg-l1amt') || {}).value)) > 0;
     var h = '<div id="lg-rev-pop" onclick="if(event.target===this)ledgerRevClose()"><div class="lgp-card lg-cardform"><div class="lgp-h"><span>🏧 대출 2 · 마이너스 대출</span><a href="#" onclick="ledgerRevClose();return false;" style="font-size:13px;color:#6b7280;text-decoration:none;">✕ 닫기</a></div>'
         + (legacy ? '<div class="ma-sub" id="lgr-legacy" style="background:#fffbeb;border:1px solid #fde68a;border-radius:8px;padding:6px 10px;margin-bottom:8px;color:#92400e;">기존 대출 2 입력(' + lgWonText((document.getElementById('lg-l1amt') || {}).value) + ' · ' + maEsc((document.getElementById('lg-l1rate') || {}).value || '') + '%)이 남아 있어요. <a href="#" onclick="ledgerRevMigrate();return false;"><b>마이너스 대출로 옮기기</b></a></div>' : '')
-        + '<div class="lg-fields"><div class="lg-field"><label for="lgr-rate">연 이율(%)</label><input id="lgr-rate" type="number" step="0.01" value="' + maEsc(r.rate || '') + '" placeholder="예: 6.2"></div>'
-        + '<div class="lg-field"><label for="lgr-repay">상환일</label><input id="lgr-repay" type="date" value="' + maEsc(r.repay || '') + '"></div>'
-        + '<div class="lg-field"><label for="lgr-dep">입찰 보증금 <span class="lg-unit">원</span></label><input id="lgr-dep" type="number" step="1" class="lg-won" value="' + maEsc(lgWon(r.dep)) + '" placeholder="패찰 시 이자용"></div>'
-        + '<div class="lg-field"><label for="lgr-days">보증금 묶이는 일수</label><input id="lgr-days" type="number" step="1" value="' + maEsc(r.depDays || '') + '" placeholder="기본 7"></div>'
-        + '<div class="lg-field lgp-wide"><label for="lgr-tries">패찰한 입찰 횟수</label><input id="lgr-tries" type="number" step="1" value="' + maEsc(r.tries || '') + '" placeholder="이 물건 전에 떨어진 횟수"></div></div>'
-        + '<div class="lg-sec-h" style="margin:10px 0 4px;font-size:12.5px;">인출 내역 <span class="ma-sub" style="font-weight:normal;">· 꺼낸 날부터 상환일까지 이자(상환일을 비우면 매도일)</span></div><div id="lgr-draws">' + (r.draws || []).map(lgRevRowHtml).join('') + '</div>'
-        + '<button class="modal-btn btn-gray" style="margin-top:6px;" onclick="ledgerRevAddRow()">+ 인출 추가</button>'
-        + '<div class="lgp-actions"><span class="grow"></span><button class="modal-btn btn-gray" onclick="ledgerRevClose()">취소</button><button class="modal-btn btn-purple" onclick="ledgerRevConfirm()">확인</button></div></div></div>';
-    document.body.insertAdjacentHTML('beforeend', h);
+        + '<div class="lg-fields"><div class="lg-field"><label for="lgr-rate">연 이율(%)</label><input id="lgr-rate" type="number" step="0.01" value="' + maEsc(r.rate || '') + '" placeholder="예: 6.2" oninput="ledgerRevField()"></div>'
+        + '<div class="lg-field"><label for="lgr-limit">대출 금액(한도) <span class="lg-unit">원</span></label><input id="lgr-limit" type="number" step="1" inputmode="numeric" class="lg-won" value="' + maEsc(lgWon(r.limit)) + '" placeholder="예: 50000000" oninput="ledgerRevField()"><div class="lg-hint" id="lgr-hint"></div></div></div>'
+        + '<div class="lg-sec-h" style="margin:12px 0 4px;font-size:12.5px;display:flex;justify-content:space-between;align-items:center;"><span>인출 내역 <span class="ma-sub" style="font-weight:normal;">· 줄을 누르면 수정</span></span><button class="modal-btn btn-gray" style="font-size:12px;padding:3px 10px;" onclick="ledgerDrawOpen(\'new\')">+ 인출 추가</button></div>'
+        + '<div id="lgr-list">' + ledgerRevListHtml() + '</div>'
+        + '<div class="lgp-actions"><span class="grow"></span><button class="modal-btn btn-purple" onclick="ledgerRevClose()">닫기</button></div></div></div>';
+    document.body.insertAdjacentHTML('beforeend', h); ledgerRevField();
 }
-function lgRevRowHtml(dw) {
-    return '<div class="lg-sub-box lgr-row" style="margin-top:6px;"><div class="lg-fields" style="grid-template-columns:1fr 1fr;"><div class="lg-field"><label>인출일</label><input type="date" class="lgr-date" value="' + maEsc(dw.date || '') + '"></div><div class="lg-field"><label>금액 <span class="lg-unit">원</span></label><input type="number" step="1" inputmode="numeric" class="lgr-amt lg-won" value="' + maEsc(lgWon(dw.amount)) + '" placeholder="원 단위"></div>'
-        + '<div class="lg-field lgp-wide"><label>용도(선택)</label><input type="text" class="lgr-memo" value="' + maEsc(dw.memo || '') + '" placeholder="예: 입찰 보증금"></div></div><div style="text-align:right;"><a href="#" style="color:#c62828;font-size:12px;" onclick="this.closest(\'.lgr-row\').remove();return false;">✕ 이 인출 지우기</a></div></div>';
+function ledgerRevField() {   // 이율·대출 금액을 바로 초안에 반영
+    var d = ledgerDraft; if (!d) return; d.rev = d.rev || { draws: [] }; var rt = document.getElementById('lgr-rate'), lm = document.getElementById('lgr-limit'), ht = document.getElementById('lgr-hint');
+    if (rt) d.rev.rate = rt.value; if (lm) { d.rev.limit = lgFromWon(lm.value); if (ht) ht.textContent = lm.value ? '= ' + lgWonText(lm.value) : ''; }
+    var l = document.getElementById('lgr-list'); if (l) l.innerHTML = ledgerRevListHtml();
 }
-function ledgerRevAddRow() { var box = document.getElementById('lgr-draws'); if (!box) return; var d = ledgerDraft || {}; box.insertAdjacentHTML('beforeend', lgRevRowHtml({ id: 'dw_' + Date.now(), date: (d.win && d.win.date) || '', amount: '', memo: '' })); var r = box.querySelectorAll('.lgr-row'); var a = r[r.length - 1].querySelector('.lgr-amt'); try { a.focus(); } catch (e) {} }
-function ledgerRevMigrate() {   // 기존 대출 2 입력(금액·이율·시작일·상환일)을 마이너스 대출 한 건으로 옮김(확인을 눌러야 반영)
-    var g = function(id) { return (document.getElementById(id) || {}).value || ''; }, amt = lgFromWon(g('lg-l1amt')); if (!lgN(amt)) return;
-    ledgerRevAddRow(); var rows = document.querySelectorAll('#lgr-draws .lgr-row'), row = rows[rows.length - 1];
-    row.querySelector('.lgr-date').value = g('lg-l1start') || ((ledgerDraft.win || {}).date || ''); row.querySelector('.lgr-amt').value = lgWon(amt); row.querySelector('.lgr-memo').value = '기존 대출 2';
-    if (!document.getElementById('lgr-rate').value) document.getElementById('lgr-rate').value = g('lg-l1rate'); if (!document.getElementById('lgr-repay').value) document.getElementById('lgr-repay').value = g('lg-l1end');
-    lgRevMig = true; var lg = document.getElementById('lgr-legacy'); if (lg) lg.innerHTML = '✔ 기존 대출 2를 아래 인출 내역으로 옮겼어요. 확인을 누르면 기존 대출 2 입력은 지워져요.';
+function ledgerRevListHtml() {   // 인출 내역 목록: 인출일 · 금액 · 용도 · 상환일 · 이자
+    var d = ledgerDraft; if (!d) return ''; var draws = ((d.rev || {}).draws || []).slice(); if (!draws.length) return '<div class="ma-sub" style="padding:8px 0;">아직 인출 내역이 없어요. "+ 인출 추가"로 보증금·경비·수리비를 꺼낸 날짜별로 넣으세요.</div>';
+    var c = ledgerCalc(JSON.parse(JSON.stringify(d)), true), by = {}; c.revRows.forEach(function(x) { by[x.id] = x; });
+    draws.sort(function(x, y) { return String(x.date || '').localeCompare(String(y.date || '')); });
+    var tot = 0, ti = 0, rows = draws.map(function(dw) { var x = by[dw.id] || {}, w = lgN(dw.amount); tot += w; ti += x.interest || 0;
+        return '<div class="lgr-li" onclick="ledgerDrawOpen(\'' + maEsc(dw.id) + '\')"><div class="lgr-li-a"><b>' + (w ? maFmt(w) : '금액 입력') + '</b><span>' + maEsc(dw.memo || '용도 없음') + '</span></div><div class="lgr-li-b">' + maEsc(dw.date || '인출일 입력') + ' → ' + maEsc(dw.repay || (x.end ? x.end + '(매도일)' : '상환일 입력')) + (x.days != null && x.days > 0 ? ' · ' + x.days + '일' : '') + ' · 이자 ' + maFmt(x.interest || 0) + '</div></div>'; }).join('');
+    return '<div class="lgr-sum">인출 ' + draws.length + '건 · 합계 <b>' + maFmt(tot) + '</b> · 이자 합계 <b>' + maFmt(ti) + '</b></div>' + rows;
 }
-function ledgerRevClose() { var e = document.getElementById('lg-rev-pop'); if (e) e.remove(); lgRevMig = false; }
-function ledgerRevConfirm() {
-    var d = ledgerDraft; if (!d) { ledgerRevClose(); return; } var gv = function(id) { return (document.getElementById(id) || {}).value || ''; };
-    var draws = Array.prototype.map.call(document.querySelectorAll('#lgr-draws .lgr-row'), function(row, i) { return { id: 'dw_' + Date.now() + '_' + i, date: row.querySelector('.lgr-date').value, amount: lgFromWon(row.querySelector('.lgr-amt').value), memo: row.querySelector('.lgr-memo').value }; }).filter(function(x) { return lgN(x.amount) > 0 || x.date; });
-    d.rev = { rate: gv('lgr-rate'), repay: gv('lgr-repay'), dep: lgFromWon(gv('lgr-dep')), depDays: gv('lgr-days'), tries: gv('lgr-tries'), draws: draws };
-    if (lgRevMig) ['amt', 'rate', 'type', 'term', 'start', 'end', 'paid'].forEach(function(k) { var el = document.getElementById('lg-l1' + k); if (el) el.value = k === 'type' ? 'bullet' : ''; });
-    ledgerRevClose(); ledgerSyncDraft(); if (lgRevMig === false) {}
+function ledgerRevMigrate() {   // 기존 대출 2 입력(금액·이율·시작일·상환일)을 인출 한 건으로 옮김
+    var d = ledgerDraft; if (!d) return; var g = function(id) { return (document.getElementById(id) || {}).value || ''; }, amt = lgFromWon(g('lg-l1amt')); if (!lgN(amt)) return;
+    d.rev = d.rev || { draws: [] }; d.rev.draws = d.rev.draws || [];
+    d.rev.draws.push({ id: 'dw_' + Date.now(), date: g('lg-l1start') || ((d.win || {}).date || ''), amount: amt, memo: '기존 대출 2', repay: g('lg-l1end') });
+    if (!d.rev.rate) d.rev.rate = g('lg-l1rate'); if (!lgN(d.rev.limit)) d.rev.limit = amt;
+    ['amt', 'rate', 'type', 'term', 'start', 'end', 'paid'].forEach(function(k) { var el = document.getElementById('lg-l1' + k); if (el) el.value = k === 'type' ? 'bullet' : ''; });
+    ledgerSyncDraft(); ledgerRevOpen();
+}
+function ledgerRevClose() {
+    var e = document.getElementById('lg-rev-pop'); if (e) e.remove(); var dp = document.getElementById('lg-cost-pop'); if (dp && lgDrawEdit) { dp.remove(); lgDrawEdit = null; }
+    if (!ledgerDraft) return; ledgerSyncDraft();
     var pan = document.getElementById('my-assets-panel'), keep = pan ? pan.scrollTop : 0; renderMyAssets(); if (pan) pan.scrollTop = keep; try { ledgerLive(); } catch (x) {}
 }
-document.addEventListener('keydown', function(ev) { if (ev.key === 'Escape' && document.getElementById('lg-rev-pop')) ledgerRevClose(); });
+document.addEventListener('keydown', function(ev) { if (ev.key === 'Escape' && !lgDrawEdit && document.getElementById('lg-rev-pop')) ledgerRevClose(); });
 function lgRevMode(d) { d = d || ledgerDraft || {}; var r = d.rev || {}; return !!(d.revMode || r.rate || r.dep || r.tries || (r.draws || []).length); }
 function ledgerRevolverHtml(d) {
     var r = d.rev || {}, draws = r.draws || [];
@@ -33154,27 +33161,29 @@ function ledgerRevolverHtml(d) {
 var lgDrawEdit = null;
 function ledgerDrawOpen(id) {
     ledgerSyncDraft(); var d = ledgerDraft; if (!d) return; d.rev = d.rev || { draws: [] }; d.rev.draws = d.rev.draws || [];
-    var it = id === 'new' ? { id: 'dw_' + Date.now(), date: (d.win && d.win.date) || '', amount: '', memo: '' } : JSON.parse(JSON.stringify(d.rev.draws.filter(function(x) { return x.id === id; })[0] || {}));
+    var it = id === 'new' ? { id: 'dw_' + Date.now(), date: '', amount: '', memo: '', repay: '' } : JSON.parse(JSON.stringify(d.rev.draws.filter(function(x) { return x.id === id; })[0] || {}));
     if (!it.id) return; lgDrawEdit = { it: it, isNew: id === 'new' }; ledgerDrawPopRender();
 }
 function ledgerDrawPopRender() {
     var e = lgDrawEdit; if (!e) return; var it = e.it, old = document.getElementById('lg-cost-pop');
     var h = '<div id="lg-cost-pop" onclick="if(event.target===this)ledgerDrawClose()"><div class="lgp-card lg-cardform"><div class="lgp-h"><span>' + (e.isNew ? '➕ 인출 추가' : '✏️ 인출 수정') + '</span><a href="#" onclick="ledgerDrawClose();return false;" style="font-size:13px;color:#6b7280;text-decoration:none;">✕ 닫기</a></div>'
         + '<div class="lg-fields"><div class="lg-field"><label for="lgd-date">인출일</label><input id="lgd-date" type="date" value="' + maEsc(it.date || '') + '"></div>'
-        + '<div class="lg-field"><label for="lgd-memo">용도(선택)</label><input id="lgd-memo" type="text" value="' + maEsc(it.memo || '') + '" placeholder="예: 입찰 보증금"></div>'
-        + '<div class="lg-field lgp-wide"><label for="lgd-amt">인출 금액 <span class="lg-unit">원</span></label><input id="lgd-amt" type="number" step="1" inputmode="numeric" class="lg-won" value="' + maEsc(lgWon(it.amount)) + '" placeholder="원 단위로 입력" oninput="var h=document.getElementById(\'lgd-hint\');h.textContent=this.value?\'= \'+lgWonText(this.value):\'\'"><div class="lg-hint" id="lgd-hint"></div></div></div>'
-        + '<div class="ma-sub" style="margin-top:6px;">이 금액에 대해 인출일부터 상환일까지 이자가 계산돼요.</div>'
+        + '<div class="lg-field"><label for="lgd-repay">상환일</label><input id="lgd-repay" type="date" value="' + maEsc(it.repay || '') + '"></div>'
+        + '<div class="lg-field lgp-wide"><label for="lgd-amt">금액 <span class="lg-unit">원</span></label><input id="lgd-amt" type="number" step="1" inputmode="numeric" class="lg-won" value="' + maEsc(lgWon(it.amount)) + '" placeholder="원 단위로 입력" oninput="var h=document.getElementById(\'lgd-hint\');h.textContent=this.value?\'= \'+lgWonText(this.value):\'\'"><div class="lg-hint" id="lgd-hint"></div></div>'
+        + '<div class="lg-field lgp-wide"><label for="lgd-memo">용도</label><input id="lgd-memo" type="text" value="' + maEsc(it.memo || '') + '" placeholder="예: 입찰 보증금 / 수리비 / 취득세"></div></div>'
+        + '<div class="ma-sub" style="margin-top:6px;">인출일부터 상환일까지 이자가 계산돼요. 상환일을 비우면 장부의 매도일까지예요.</div>'
         + '<div class="lgp-actions">' + (e.isNew ? '' : '<button class="modal-btn btn-gray" style="color:#c62828;" onclick="ledgerDrawDelete()">삭제</button>') + '<span class="grow"></span><button class="modal-btn btn-gray" onclick="ledgerDrawClose()">취소</button><button class="modal-btn btn-purple" onclick="ledgerDrawConfirm()">확인</button></div></div></div>';
     if (old) old.remove(); document.body.insertAdjacentHTML('beforeend', h);
     var a = document.getElementById('lgd-amt'), hh = document.getElementById('lgd-hint'); if (a && hh) hh.textContent = a.value ? '= ' + lgWonText(a.value) : ''; setTimeout(function() { var x = document.getElementById('lgd-amt'); if (x && !x.value) try { x.focus(); } catch (er) {} }, 60);
 }
 function ledgerDrawClose() { lgDrawEdit = null; var e = document.getElementById('lg-cost-pop'); if (e) e.remove(); }
-function ledgerDrawCommit(mut) {
+function ledgerDrawCommit(mut) {   // 인출 목록을 바꾸고, 마이너스 대출 팝업이 열려 있으면 그 목록만 새로 그림
     var d = ledgerDraft; if (!d) { ledgerDrawClose(); return; } d.rev = d.rev || { draws: [] }; d.rev.draws = d.rev.draws || []; mut(d.rev.draws); ledgerDrawClose();
+    var l = document.getElementById('lgr-list'); if (l) { l.innerHTML = ledgerRevListHtml(); return; }
     var pan = document.getElementById('my-assets-panel'), keep = pan ? pan.scrollTop : 0; renderMyAssets(); if (pan) pan.scrollTop = keep; try { ledgerLive(); } catch (x) {}
 }
 function ledgerDrawConfirm() {
-    var e = lgDrawEdit; if (!e) return; var it = Object.assign({}, e.it, { date: document.getElementById('lgd-date').value, memo: document.getElementById('lgd-memo').value, amount: lgFromWon(document.getElementById('lgd-amt').value) });
+    var e = lgDrawEdit; if (!e) return; var it = Object.assign({}, e.it, { date: document.getElementById('lgd-date').value, repay: document.getElementById('lgd-repay').value, memo: document.getElementById('lgd-memo').value, amount: lgFromWon(document.getElementById('lgd-amt').value) });
     ledgerDrawCommit(function(a) { var i = a.findIndex(function(x) { return x.id === it.id; }); if (i >= 0) a[i] = it; else a.push(it); });
 }
 function ledgerDrawDelete() { var e = lgDrawEdit; if (!e || !confirm('이 인출 내역을 지울까요?')) return; var id = e.it.id; ledgerDrawCommit(function(a) { var i = a.findIndex(function(x) { return x.id === id; }); if (i >= 0) a.splice(i, 1); }); }
@@ -33259,8 +33268,8 @@ function lgCardify(root) {
                 var card = box.querySelector(':scope > .lg-loan-card') || document.createElement('div'); card.className = 'lg-field lg-simple lg-loan-card';
                 if (i === 1 && lgRevMode()) {   // 대출 2 = 마이너스 대출: 꺼낸 날짜별 일할 이자(세부는 팝업)
                     var rv = (ledgerDraft && ledgerDraft.rev) || {}, ds = (rv.draws || []).filter(function(x) { return lgN(x.amount); }), sum = ds.reduce(function(t, x) { return t + lgN(x.amount); }, 0);
-                    var legacy = a && lgN(lgFromWon(a.value)) > 0, t2 = sum ? '인출 ' + lgWonText(Math.round(sum * 10000)) + (rv.rate ? ' · ' + rv.rate + '%' : '') : (legacy ? '기존 입력 ' + lgWonText(a.value) + ' · 눌러서 옮기기' : '');
-                    card.innerHTML = '<label>대출 2 · 마이너스 대출</label><div class="lg-simple-val' + (t2 ? '' : ' empty') + '">' + (t2 || '눌러서 입력') + '</div>' + (ds.length ? '<div class="lg-due" style="color:#6b7280;">' + ds.length + '건 인출' + (lgN(rv.tries) ? ' · 패찰 ' + lgN(rv.tries) + '회' : '') + '</div>' : '');
+                    var legacy = a && lgN(lgFromWon(a.value)) > 0, lim = lgN(rv.limit) ? lgWonText(Math.round(lgN(rv.limit) * 10000)) : '', t2 = (lim || rv.rate) ? (lim || '') + (lim && rv.rate ? ' · ' : '') + (rv.rate ? '연 ' + rv.rate + '%' : '') : (legacy ? '기존 입력 ' + lgWonText(a.value) + ' · 눌러서 옮기기' : '');
+                    card.innerHTML = '<label>대출 2 · 마이너스 대출</label><div class="lg-simple-val' + (t2 ? '' : ' empty') + '">' + (t2 || '눌러서 입력') + '</div>' + (ds.length ? '<div class="lg-due" style="color:#6b7280;">인출 ' + ds.length + '건 · ' + lgWonText(Math.round(sum * 10000)) + '</div>' : '');
                     card.onclick = function() { ledgerRevOpen(); }; if (!card.parentNode) box.appendChild(card); return;
                 }
                 var amt = a && a.value ? lgWonText(a.value) : '', txt = amt ? amt + (r && r.value ? ' · ' + r.value + '%' : '') : '';
