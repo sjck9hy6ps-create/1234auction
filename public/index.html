@@ -1200,6 +1200,21 @@ body.ui2 #my-assets-panel { position:fixed; top:104px; right:64px; left:auto; bo
 #lg-cost-pop .lgp-h { font-size:15px; font-weight:800; margin-bottom:10px; display:flex; justify-content:space-between; align-items:center; }
 #lg-cost-pop .lg-fields { grid-template-columns:1fr 1fr; } #lg-cost-pop .lg-fields > .lgp-wide { grid-column:1 / -1; }
 #lg-cost-pop .lgp-actions { display:flex; gap:8px; margin-top:12px; align-items:center; } #lg-cost-pop .lgp-actions .grow { flex:1; }
+
+/* 🗃️ 장부 수정 간소화 카드(2026-11-22 사용자): 기본 정보·취득/매도·대출·건물분 부가세·세금 칸도 비용 카드처럼 값만 보이는 카드로, 누르면 팝업에서 수정 */
+.lg-cardform .lg-simple { min-height:72px; justify-content:center; }
+.lg-cardform .lg-simple input, .lg-cardform .lg-simple select, .lg-cardform .lg-simple .lg-hint { display:none !important; }
+.lg-cardform .lg-simple-val { font-size:17px; font-weight:800; color:#111827; padding:3px 0; overflow-wrap:anywhere; }
+.lg-cardform .lg-simple-val.empty { font-size:12.5px; font-weight:500; color:#b3b9c3; }
+.lg-cardform .lg-simple-val small { font-size:10.5px; color:#d97706; font-weight:700; margin-left:4px; }
+.lg-cardform .lg-loan-simple { background:transparent !important; border:none !important; padding:0 !important; margin-top:0 !important; }
+.lg-cardform .lg-loan-simple > .lg-fields, .lg-cardform .lg-loan-simple > .lg-sub-h { display:none !important; }
+.lg-cardform .lg-pair { grid-template-columns:1fr 1fr; gap:8px; }
+#lg-fld-pop { position:fixed; inset:0; background:rgba(15,23,42,.45); z-index:100001; display:flex; align-items:center; justify-content:center; padding:12px; }
+#lg-fld-pop .lgp-card { background:#fff; border-radius:14px; width:100%; max-width:460px; max-height:90vh; overflow:auto; box-shadow:0 10px 40px rgba(0,0,0,.3); padding:14px; }
+#lg-fld-pop .lgp-h { font-size:15px; font-weight:800; margin-bottom:10px; display:flex; justify-content:space-between; align-items:center; }
+#lg-fld-pop .lg-fields { grid-template-columns:1fr 1fr; } #lg-fld-pop .lg-fields > .lgp-wide { grid-column:1 / -1; }
+#lg-fld-pop .lgp-actions { display:flex; gap:8px; margin-top:12px; align-items:center; } #lg-fld-pop .lgp-actions .grow { flex:1; }
 .lg-click { cursor:pointer; } .lg-click:hover { background:#f5f3ff; } .lg-click .lg-more { font-size:10px; color:#7c3aed; font-weight:normal; white-space:nowrap; }
 .ma-pop { position:fixed; inset:0; background:rgba(15,23,42,.45); z-index:100000; display:flex; align-items:center; justify-content:center; padding:12px; }
 .ma-pop-card { background:#fff; border-radius:12px; width:100%; max-width:640px; max-height:88vh; display:flex; flex-direction:column; box-shadow:0 10px 40px rgba(0,0,0,.3); }
@@ -32983,7 +32998,7 @@ function ledgerDetailHtml(r, c) {
 /* 🃏 장부 수정 카드: 카드의 빈 곳을 눌러도 입력칸에 커서(날짜·선택은 선택 창을 엶, 숫자는 값을 선택해 바로 덮어쓰기) */
 document.addEventListener('click', function(e) {
     var f = e.target && e.target.closest ? e.target.closest('.lg-cardform .lg-fields > .lg-field') : null;
-    if (!f || (e.target.closest && e.target.closest('input, select, textarea, button, a, label'))) return;
+    if (!f || f.classList.contains('lg-simple') || (e.target.closest && e.target.closest('input, select, textarea, button, a, label'))) return;
     var inp = f.querySelector('input:not([type=checkbox]), select, textarea'); if (!inp) return;
     try { inp.focus(); if ((inp.type === 'date' || inp.tagName === 'SELECT') && inp.showPicker) inp.showPicker(); } catch (x) {}
 });
@@ -33038,6 +33053,71 @@ function ledgerCostDelete() {
     ledgerCostCommit(function(items) { var i = items.findIndex(function(x) { return x.id === id; }); if (i >= 0) items.splice(i, 1); });
 }
 document.addEventListener('keydown', function(ev) { if (ev.key === 'Escape' && lgCostEdit) ledgerCostClose(); });
+
+/* 🗃️ 장부 수정 카드 간소화 + 팝업 수정: 화면 속 입력칸(숨겨 둠)이 값의 원본이고, 카드는 그 값을 보여 줌. 팝업에서 확인하면 원본에 넣고 다시 그림(예상 세금 등도 새로 계산) */
+var LG_CARD_SECS = /^(기본 정보|취득\(낙찰\)|대출|🏢 건물분 부가세|실제 납부 세금)/;
+function lgFieldLabel(f) { var l = f && f.querySelector('label'); return l ? l.textContent.replace(/\s*원\s*$/, '').replace(/\s+/g, ' ').trim() : ''; }
+function lgFieldText(inp) {
+    if (!inp) return '';
+    if (inp.tagName === 'SELECT') { var o = inp.options[inp.selectedIndex]; return o ? o.text.replace('자동 판정', '자동') : ''; }
+    var v = inp.value; if (v === '' || v == null) return '';
+    if (inp.classList.contains('lg-won')) return lgWonText(v);
+    if (inp.id === 'lg-vatRatio') return v + '%'; if (inp.id === 'lg-pyung') return v + '평';
+    return maEsc(v);
+}
+function lgCardify(root) {
+    var form = (root || document).querySelector('#lg-form'); if (!form) return;
+    form.querySelectorAll('.lg-sec').forEach(function(sec) {
+        var h = sec.querySelector('.lg-sec-h'), t = h ? h.textContent.trim() : ''; if (!LG_CARD_SECS.test(t)) return;
+        if (/^대출/.test(t)) {
+            sec.querySelectorAll('.lg-sub-box').forEach(function(box, i) {
+                box.classList.add('lg-loan-simple');
+                var ids = ['amt', 'rate', 'type', 'term', 'start', 'end', 'paid'].map(function(k) { return 'lg-l' + i + k; }), a = document.getElementById(ids[0]), r = document.getElementById(ids[1]);
+                var card = box.querySelector(':scope > .lg-loan-card') || document.createElement('div'); card.className = 'lg-field lg-simple lg-loan-card';
+                var amt = a && a.value ? lgWonText(a.value) : '', txt = amt ? amt + (r && r.value ? ' · ' + r.value + '%' : '') : '';
+                card.innerHTML = '<label>대출 ' + (i + 1) + '</label><div class="lg-simple-val' + (txt ? '' : ' empty') + '">' + (txt || '눌러서 입력') + '</div>';
+                card.onclick = function() { ledgerFieldOpen(ids, '대출 ' + (i + 1)); }; if (!card.parentNode) box.appendChild(card);
+            });
+            return;
+        }
+        sec.querySelectorAll(':scope > .lg-fields > .lg-field').forEach(function(f) {
+            var inp = f.querySelector('input, select'); if (!inp || inp.type === 'checkbox' || !inp.id) return;
+            f.classList.add('lg-simple'); var v = f.querySelector('.lg-simple-val'); if (!v) { v = document.createElement('div'); f.appendChild(v); }
+            var txt = lgFieldText(inp), est = /^lg-tax/.test(inp.id) && txt && inp.getAttribute('data-est') === '1';
+            v.className = 'lg-simple-val' + (txt ? '' : ' empty'); v.innerHTML = (txt || '눌러서 입력') + (est ? '<small>예상</small>' : '');
+            f.onclick = function() { ledgerFieldOpen([inp.id], lgFieldLabel(f)); };
+        });
+    });
+}
+var lgFldEdit = null;
+function ledgerFieldOpen(ids, title) {
+    var items = ids.map(function(id) { var src = document.getElementById(id); return src ? { id: id, src: src, label: lgFieldLabel(src.closest('.lg-field')) } : null; }).filter(Boolean); if (!items.length) return;
+    lgFldEdit = { ids: ids, orig: items.map(function(x) { return x.src.value; }) };
+    var one = items.length === 1, old = document.getElementById('lg-fld-pop');
+    var h = '<div id="lg-fld-pop" onclick="if(event.target===this)ledgerFieldClose()"><div class="lgp-card lg-cardform"><div class="lgp-h"><span>' + maEsc(title) + ' 수정</span><a href="#" onclick="ledgerFieldClose();return false;" style="font-size:13px;color:#6b7280;text-decoration:none;">✕ 닫기</a></div><div class="lg-fields">'
+        + items.map(function(x, ix) {
+            var src = x.src, won = src.classList.contains('lg-won'), ctrl;
+            if (src.tagName === 'SELECT') ctrl = '<select id="lgf-' + ix + '">' + Array.prototype.map.call(src.options, function(o) { return '<option value="' + maEsc(o.value) + '"' + (o.selected ? ' selected' : '') + '>' + maEsc(o.text) + '</option>'; }).join('') + '</select>';
+            else ctrl = '<input id="lgf-' + ix + '" type="' + src.type + '" value="' + maEsc(src.value) + '" placeholder="' + maEsc(src.placeholder || '') + '"' + (src.step ? ' step="' + src.step + '"' : '') + (won ? ' class="lg-won" inputmode="numeric" oninput="ledgerFieldHint(' + ix + ')"' : '') + '>';
+            return '<div class="lg-field' + (one ? ' lgp-wide' : '') + '"><label for="lgf-' + ix + '">' + maEsc(x.label) + (won ? ' <span class="lg-unit">원</span>' : '') + '</label>' + ctrl + (won ? '<div class="lg-hint" id="lgf-h' + ix + '"></div>' : '') + '</div>';
+        }).join('') + '</div><div class="lgp-actions"><span class="grow"></span><button class="modal-btn btn-gray" onclick="ledgerFieldClose()">취소</button><button class="modal-btn btn-purple" onclick="ledgerFieldConfirm()">확인</button></div></div></div>';
+    if (old) old.remove(); document.body.insertAdjacentHTML('beforeend', h);
+    items.forEach(function(x, ix) { ledgerFieldHint(ix); });
+    setTimeout(function() { var c = document.getElementById('lgf-0'); if (c && c.tagName === 'INPUT' && c.type !== 'date') try { c.focus(); c.select && c.select(); } catch (e) {} }, 60);
+}
+function ledgerFieldHint(ix) { var c = document.getElementById('lgf-' + ix), h = document.getElementById('lgf-h' + ix); if (c && h) h.textContent = c.value ? '= ' + lgWonText(c.value) : ''; }
+function ledgerFieldClose() { lgFldEdit = null; var e = document.getElementById('lg-fld-pop'); if (e) e.remove(); }
+function ledgerFieldConfirm() {
+    var st = lgFldEdit; if (!st) return;
+    st.ids.forEach(function(id, ix) {
+        var src = document.getElementById(id), c = document.getElementById('lgf-' + ix); if (!src || !c) return;
+        var changed = c.value !== st.orig[ix]; src.value = c.value;
+        if (changed && /^lg-tax/.test(id)) src.setAttribute('data-est', '0');   // 예상 칸을 직접 고치면 실제 세금으로 취급
+    });
+    ledgerFieldClose(); ledgerSyncDraft();
+    var pan = document.getElementById('my-assets-panel'), keep = pan ? pan.scrollTop : 0; renderMyAssets(); if (pan) pan.scrollTop = keep; try { ledgerLive(); } catch (x) {}
+}
+document.addEventListener('keydown', function(ev) { if (ev.key === 'Escape' && lgFldEdit) ledgerFieldClose(); });
 function ledgerEdit(id) {
     maPopClose(); ledgerEditId = id;
     var cur = id === 'new' ? null : ledger.items.filter(function(x) { return x.id === id; })[0];
@@ -33620,7 +33700,7 @@ function renderMyAssets() {
     var yn = maYearNet(s, p);
     var html = '';
     // 수정·추가를 누르면 그 화면만 한 페이지로 보여 줌(2026-11-21: 목록과 섞여 보이지 않게) - 위에 '← 내 자산으로' 돌아가기, 아래에 저장 막대 고정
-    if (maEditId || ledgerEditId) { body.innerHTML = '<div class="lg-back"><a href="#" onclick="' + (ledgerEditId ? 'ledgerCancel()' : 'maEditId=null;renderMyAssets()') + ';return false;">← 내 자산으로 돌아가기</a></div>' + (maEditId ? maEditForm() : ledgerEditForm()); lgAnnotate(body); try { body.scrollTop = 0; document.getElementById('my-assets-panel').scrollTop = 0; } catch (e) {} if (ledgerEditId) ledgerLive(); return; }
+    if (maEditId || ledgerEditId) { body.innerHTML = '<div class="lg-back"><a href="#" onclick="' + (ledgerEditId ? 'ledgerCancel()' : 'maEditId=null;renderMyAssets()') + ';return false;">← 내 자산으로 돌아가기</a></div>' + (maEditId ? maEditForm() : ledgerEditForm()); lgAnnotate(body); try { lgCardify(body); } catch (e) {} try { body.scrollTop = 0; document.getElementById('my-assets-panel').scrollTop = 0; } catch (e) {} if (ledgerEditId) ledgerLive(); return; }
     if (simN) html += '<div class="ma2-banner">🧪 <b>시뮬레이션 중</b> - ' + simN + '건을 매도했다고 가정해 계산하고 있어요(저장 안 됨). <a href="#" onclick="myAssetsSim={};try{localStorage.removeItem(\'myAssetsSim\')}catch(e){};myAssetsChanged();return false;">모두 해제</a></div>';
     // ① 한눈에 - 칸을 누르면 팝업으로 자세한 목록(2026-11-21 사용자: 보유 중 등 겹치는 메뉴는 없애고 팝업으로)
     maPopCtx = { yn: yn, s: s, p: p, next: next, deals: deals, legacy: legacy, holding: holding, planned: planned, holdBuy: holdBuy, acqRate: acqRate, taxYear: taxYear, marg1000: marg1000, brNow: brNow, sumProfit: sumProfit, sumNet: sumNet, sumTaxAll: sumTaxAll, noTaxN: noTaxN, sumTotal: sumTotal, wins: wins, avgHold: avgHold };
