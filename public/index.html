@@ -1840,7 +1840,7 @@ body.show-explain-all #bb-drawer .dr-explain { display:block; }
 #x-ex-global { position:fixed; left:12px; bottom:14px; z-index:100000; border:1px solid #c7d2fe; background:#eef2ff; color:#3730a3; border-radius:16px; padding:6px 12px; font-size:12.5px; font-weight:700; box-shadow:0 2px 8px rgba(0,0,0,.18); cursor:pointer; display:none; }
 #x-ex-global.on { background:#3730a3; color:#fff; }
 /* 📱 장부 수정 화면이 열려 있으면 떠 있는 '설명'·'수정 요청' 버튼을 위로 올려 아래쪽 삭제·취소·저장 버튼을 가리지 않게(2026-11-22 사용자: 모바일에서 설명 버튼이 삭제 버튼과 겹침) */
-@media (max-width: 900px) { body:has(#my-assets-panel[style*="display: block"] #lg-form) #x-ex-global { bottom:86px !important; } body:has(#my-assets-panel[style*="display: block"] #lg-form) #fb-fab { bottom:calc(92px + env(safe-area-inset-bottom, 0px)) !important; } }
+@media (max-width: 900px) { body:has(#my-assets-panel[style*="display: block"] #lg-form) #x-ex-global { bottom:142px !important; } body:has(#my-assets-panel[style*="display: block"] #lg-form) #fb-fab { bottom:calc(142px + env(safe-area-inset-bottom, 0px)) !important; } }
 #guide-modal .gd-d { display:none; } #guide-modal .gd-step.open .gd-d { display:block; } #guide-modal .gd-step .gd-t { cursor:pointer; } #guide-modal .gd-step .gd-t::after { content:' ▾'; color:#9ca3af; font-size:11px; } #guide-modal .gd-step.open .gd-t::after { content:' ▴'; }
 
 /* ☰ 메뉴 버튼을 누르기 쉽게(2026-11-15, 사용자: 너무 작아서 누르기 어려움) - 손가락 기준 48×48px 이상 */
