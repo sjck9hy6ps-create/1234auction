@@ -1175,22 +1175,31 @@ body.ui2 #my-assets-panel { position:fixed; top:104px; right:64px; left:auto; bo
 .lg-ic-sub { margin-top:8px; grid-template-columns:1fr 1fr; }
 
 /* 🃏 장부 수정 화면도 카드형 대시보드(2026-11-22, 사용자 요청) - 입력칸 하나하나를 카드로: 작은 이름 + 큰 값, 카드 어디를 눌러도 그 칸에 바로 입력(날짜·선택은 창이 열림) */
-#lg-form .lg-sec { background:transparent; border:none; padding:4px 0 2px; margin-bottom:10px; }
-#lg-form .lg-sec-h { font-size:13.5px; margin-bottom:8px; }
-#lg-form .lg-sec .lg-fields, #lg-form .lg-sub-box .lg-fields { grid-template-columns:repeat(auto-fill, minmax(150px, 1fr)); gap:8px; }
-#lg-form .lg-fields > .lg-field { background:#fff; border:1.5px solid #e0e7ff; border-radius:12px; padding:9px 11px 6px; cursor:pointer; display:flex; flex-direction:column; transition:border-color .12s, box-shadow .12s, background .12s; }
-#lg-form .lg-fields > .lg-field:hover { border-color:#a5b4fc; background:#fafaff; }
-#lg-form .lg-fields > .lg-field:focus-within { border-color:#6366f1; background:#fff; box-shadow:0 0 0 3px rgba(99,102,241,.16); }
-#lg-form .lg-fields > .lg-field > label:first-child { font-size:11px; color:#6b7280; font-weight:600; margin-bottom:1px; cursor:pointer; }
-#lg-form .lg-fields > .lg-field input[type=text], #lg-form .lg-fields > .lg-field input[type=number], #lg-form .lg-fields > .lg-field input[type=date], #lg-form .lg-fields > .lg-field select { border:none !important; background:transparent !important; box-shadow:none !important; outline:none; padding:3px 0 !important; font-size:17px; font-weight:800; color:#111827; width:100%; min-width:0; cursor:pointer; }
-#lg-form .lg-fields > .lg-field input::placeholder { font-size:12.5px; font-weight:500; color:#b3b9c3; }
-#lg-form .lg-fields > .lg-field select { font-size:14.5px; font-weight:700; }
-#lg-form .lg-fields > .lg-field input[type=date] { font-size:15.5px; }
-#lg-form .lg-fields > .lg-field .lg-hint { color:#4f46e5; min-height:12px; margin-top:0; }
-#lg-form .lg-sub-box { background:#f5f7ff; border:1.5px solid #e0e7ff; }
-#lg-form .lg-sub-h { font-size:12.5px; color:#4338ca; }
-#lg-form .lg-vatbox { background:#fff; border:1.5px solid #e0e7ff; border-radius:12px; }
-@media (max-width: 640px) { #lg-form .lg-fields > .lg-field input[type=text], #lg-form .lg-fields > .lg-field input[type=number] { font-size:16px; padding:3px 0 !important; } #lg-form .lg-fields > .lg-field input[type=date] { font-size:12.5px; letter-spacing:-0.3px; padding:3px 0 !important; } #lg-form .lg-fields > .lg-field select { font-size:13px; } #lg-form .lg-fields > .lg-field input[type=date]::-webkit-calendar-picker-indicator { margin-left:0; padding:0; width:14px; } }
+.lg-cardform .lg-sec { background:transparent; border:none; padding:4px 0 2px; margin-bottom:10px; }
+.lg-cardform .lg-sec-h { font-size:13.5px; margin-bottom:8px; }
+.lg-cardform .lg-sec .lg-fields, .lg-cardform .lg-sub-box .lg-fields { grid-template-columns:repeat(auto-fill, minmax(150px, 1fr)); gap:8px; }
+.lg-cardform .lg-fields > .lg-field { background:#fff; border:1.5px solid #e0e7ff; border-radius:12px; padding:9px 11px 6px; cursor:pointer; display:flex; flex-direction:column; transition:border-color .12s, box-shadow .12s, background .12s; }
+.lg-cardform .lg-fields > .lg-field:hover { border-color:#a5b4fc; background:#fafaff; }
+.lg-cardform .lg-fields > .lg-field:focus-within { border-color:#6366f1; background:#fff; box-shadow:0 0 0 3px rgba(99,102,241,.16); }
+.lg-cardform .lg-fields > .lg-field > label:first-child { font-size:11px; color:#6b7280; font-weight:600; margin-bottom:1px; cursor:pointer; }
+.lg-cardform .lg-fields > .lg-field input[type=text], .lg-cardform .lg-fields > .lg-field input[type=number], .lg-cardform .lg-fields > .lg-field input[type=date], .lg-cardform .lg-fields > .lg-field select { border:none !important; background:transparent !important; box-shadow:none !important; outline:none; padding:3px 0 !important; font-size:17px; font-weight:800; color:#111827; width:100%; min-width:0; cursor:pointer; }
+.lg-cardform .lg-fields > .lg-field input::placeholder { font-size:12.5px; font-weight:500; color:#b3b9c3; }
+.lg-cardform .lg-fields > .lg-field select { font-size:14.5px; font-weight:700; }
+.lg-cardform .lg-fields > .lg-field input[type=date] { font-size:15.5px; }
+.lg-cardform .lg-fields > .lg-field .lg-hint { color:#4f46e5; min-height:12px; margin-top:0; }
+.lg-cardform .lg-sub-box { background:#f5f7ff; border:1.5px solid #e0e7ff; }
+.lg-cardform .lg-sub-h { font-size:12.5px; color:#4338ca; }
+.lg-cardform .lg-vatbox { background:#fff; border:1.5px solid #e0e7ff; border-radius:12px; }
+@media (max-width: 640px) { .lg-cardform .lg-fields > .lg-field input[type=text], .lg-cardform .lg-fields > .lg-field input[type=number] { font-size:16px; padding:3px 0 !important; } .lg-cardform .lg-fields > .lg-field input[type=date] { font-size:12.5px; letter-spacing:-0.3px; padding:3px 0 !important; } .lg-cardform .lg-fields > .lg-field select { font-size:13px; } .lg-cardform .lg-fields > .lg-field input[type=date]::-webkit-calendar-picker-indicator { margin-left:0; padding:0; width:14px; } }
+.lg-cardform .lg-cost-card { min-height:64px; justify-content:center; }
+.lg-cardform .lg-cost-val { font-size:17px; font-weight:800; color:#111827; padding:3px 0; word-break:keep-all; }
+.lg-cardform .lg-cost-val.empty { font-size:12.5px; font-weight:500; color:#b3b9c3; }
+.lg-cardform .lg-cost-add { border-style:dashed; background:#fafaff; } .lg-cardform .lg-cost-add > label { color:#4f46e5; font-weight:700; }
+#lg-cost-pop { position:fixed; inset:0; background:rgba(15,23,42,.45); z-index:100001; display:flex; align-items:center; justify-content:center; padding:12px; }
+#lg-cost-pop .lgp-card { background:#fff; border-radius:14px; width:100%; max-width:460px; max-height:90vh; overflow:auto; box-shadow:0 10px 40px rgba(0,0,0,.3); padding:14px; }
+#lg-cost-pop .lgp-h { font-size:15px; font-weight:800; margin-bottom:10px; display:flex; justify-content:space-between; align-items:center; }
+#lg-cost-pop .lg-fields { grid-template-columns:1fr 1fr; } #lg-cost-pop .lg-fields > .lgp-wide { grid-column:1 / -1; }
+#lg-cost-pop .lgp-actions { display:flex; gap:8px; margin-top:12px; align-items:center; } #lg-cost-pop .lgp-actions .grow { flex:1; }
 .lg-click { cursor:pointer; } .lg-click:hover { background:#f5f3ff; } .lg-click .lg-more { font-size:10px; color:#7c3aed; font-weight:normal; white-space:nowrap; }
 .ma-pop { position:fixed; inset:0; background:rgba(15,23,42,.45); z-index:100000; display:flex; align-items:center; justify-content:center; padding:12px; }
 .ma-pop-card { background:#fff; border-radius:12px; width:100%; max-width:640px; max-height:88vh; display:flex; flex-direction:column; box-shadow:0 10px 40px rgba(0,0,0,.3); }
@@ -32973,12 +32982,62 @@ function ledgerDetailHtml(r, c) {
 
 /* 🃏 장부 수정 카드: 카드의 빈 곳을 눌러도 입력칸에 커서(날짜·선택은 선택 창을 엶, 숫자는 값을 선택해 바로 덮어쓰기) */
 document.addEventListener('click', function(e) {
-    var f = e.target && e.target.closest ? e.target.closest('#lg-form .lg-fields > .lg-field') : null;
+    var f = e.target && e.target.closest ? e.target.closest('.lg-cardform .lg-fields > .lg-field') : null;
     if (!f || (e.target.closest && e.target.closest('input, select, textarea, button, a, label'))) return;
     var inp = f.querySelector('input:not([type=checkbox]), select, textarea'); if (!inp) return;
     try { inp.focus(); if ((inp.type === 'date' || inp.tagName === 'SELECT') && inp.showPicker) inp.showPicker(); } catch (x) {}
 });
-document.addEventListener('focusin', function(e) { var t = e.target; if (t && t.matches && t.matches('#lg-form .lg-fields > .lg-field input[type=number]')) { try { t.select(); } catch (x) {} } });
+document.addEventListener('focusin', function(e) { var t = e.target; if (t && t.matches && t.matches('.lg-cardform .lg-fields > .lg-field input[type=number]')) { try { t.select(); } catch (x) {} } });
+
+/* 🗂️ 비용 카드 + 팝업 입력(2026-11-22 사용자: 비용 항목은 비용 탭 안에 카드로, 대출 칸 크기로 금액만 보이고, 누르면 팝업에서 입력) */
+function lgCatOpts(sel) { return LEDGER_CATS.map(function(c) { return '<optgroup label="' + c.cat + '">' + c.subs.map(function(x) { var k = c.cat + '|' + x; return '<option value="' + maEsc(k) + '"' + (k === sel ? ' selected' : '') + '>' + maEsc(x) + '</option>'; }).join('') + '</optgroup>'; }).join(''); }
+function ledgerCostCardsHtml(d) {
+    var cards = (d.items || []).filter(function(it) { return !it.q; }).map(function(it, ix) {
+        if (!it.id) it.id = 'li_' + Date.now() + '_' + ix;
+        var w = lgN(it.amount) ? Math.round(lgN(it.amount) * 10000) : 0;
+        return '<div class="lg-field lg-cost-card" onclick="ledgerCostOpen(\'' + maEsc(it.id) + '\')"><label>' + (it.inv ? '🧾 ' : '') + maEsc(it.sub || it.cat || '비용') + '</label><div class="lg-cost-val' + (w ? '' : ' empty') + '">' + (w ? lgWonText(w) : '금액 입력') + '</div></div>';
+    }).join('');
+    return cards + '<div class="lg-field lg-cost-card lg-cost-add" onclick="ledgerCostOpen(\'new\')"><label>+ 비용 추가</label><div class="lg-cost-val empty">눌러서 입력</div></div>';
+}
+var lgCostEdit = null;
+function ledgerCostOpen(id) {
+    ledgerSyncDraft(); var d = ledgerDraft; if (!d) return;
+    var it = id === 'new' ? { id: 'li_' + Date.now(), date: (d.win && d.win.date) || '', cat: '취득', sub: '취득세', amount: '', memo: '', inv: 0 } : JSON.parse(JSON.stringify((d.items || []).filter(function(x) { return x.id === id; })[0] || {}));
+    if (!it.id) return; lgCostEdit = { it: it, isNew: id === 'new' }; ledgerCostPopRender();
+}
+function ledgerCostPopRender() {
+    var e = lgCostEdit; if (!e) return; var it = e.it, old = document.getElementById('lg-cost-pop');
+    var h = '<div id="lg-cost-pop" onclick="if(event.target===this)ledgerCostClose()"><div class="lgp-card lg-cardform"><div class="lgp-h"><span>' + (e.isNew ? '➕ 비용 추가' : '✏️ 비용 수정') + '</span><a href="#" onclick="ledgerCostClose();return false;" style="font-size:13px;color:#6b7280;text-decoration:none;">✕ 닫기</a></div>'
+        + '<div class="lg-fields"><div class="lg-field lgp-wide"><label for="lgp-cat">항목</label><select id="lgp-cat" onchange="ledgerCostPopLive()">' + lgCatOpts((it.cat || '') + '|' + (it.sub || '')) + '</select></div>'
+        + '<div class="lg-field lgp-wide"><label for="lgp-amt">금액 <span class="lg-unit">원</span></label><input id="lgp-amt" type="number" step="1" inputmode="numeric" class="lg-won" value="' + maEsc(lgWon(it.amount)) + '" placeholder="원 단위로 입력" oninput="ledgerCostPopLive()"><div class="lg-hint" id="lgp-hint"></div></div>'
+        + '<div class="lg-field"><label for="lgp-date">날짜</label><input id="lgp-date" type="date" value="' + maEsc(it.date || '') + '"></div>'
+        + '<div class="lg-field"><label for="lgp-memo">메모</label><input id="lgp-memo" type="text" value="' + maEsc(it.memo || '') + '" placeholder="선택"></div></div>'
+        + '<label class="lg-check" style="margin-top:10px;"><input type="checkbox" id="lgp-inv"' + (it.inv ? ' checked' : '') + ' onchange="ledgerCostPopLive()"> 🧾 세금계산서 받음 <span class="ma-sub">(체크하면 위 금액을 공급가액으로 보고 부가세 10%를 따로 계산)</span></label><div class="lg-vat-line ma-sub" id="lgp-vat"></div>'
+        + '<div class="lgp-actions">' + (e.isNew ? '' : '<button class="modal-btn btn-gray" style="color:#c62828;" onclick="ledgerCostDelete()">삭제</button>') + '<span class="grow"></span><button class="modal-btn btn-gray" onclick="ledgerCostClose()">취소</button><button class="modal-btn btn-purple" onclick="ledgerCostConfirm()">확인</button></div></div></div>';
+    if (old) old.remove(); document.body.insertAdjacentHTML('beforeend', h); ledgerCostPopLive();
+    setTimeout(function() { var a = document.getElementById('lgp-amt'); if (a && !a.value) try { a.focus(); } catch (x) {} }, 50);
+}
+function ledgerCostPopLive() {
+    var a = document.getElementById('lgp-amt'), hint = document.getElementById('lgp-hint'), vat = document.getElementById('lgp-vat'), inv = document.getElementById('lgp-inv'); if (!a) return;
+    if (hint) hint.textContent = a.value ? '= ' + lgWonText(a.value) : '';
+    if (vat) { var w = lgN(a.value), v = inv && inv.checked ? Math.round(w * (TAX_CONFIG.vat.rate || 0.1)) : 0; vat.textContent = inv && inv.checked && w ? '공급가액 ' + lgWonText(w) + ' + 부가세 ' + lgWonText(v) + ' = 결제 ' + lgWonText(w + v) : ''; }
+}
+function ledgerCostClose() { lgCostEdit = null; var e = document.getElementById('lg-cost-pop'); if (e) e.remove(); }
+function ledgerCostCommit(mut) {   // 초안에 반영하고 화면(카드)·위쪽 계산을 새로 그림
+    var d = ledgerDraft; if (!d) { ledgerCostClose(); return; }
+    d.items = d.items || []; mut(d.items); ledgerCostClose();
+    var pan = document.getElementById('my-assets-panel'), keep = pan ? pan.scrollTop : 0; renderMyAssets(); if (pan) pan.scrollTop = keep; try { ledgerLive(); } catch (x) {}
+}
+function ledgerCostConfirm() {
+    var e = lgCostEdit; if (!e) return; var ck = (document.getElementById('lgp-cat').value || '|').split('|');
+    var it = Object.assign({}, e.it, { cat: ck[0], sub: ck[1], amount: lgFromWon(document.getElementById('lgp-amt').value), date: document.getElementById('lgp-date').value, memo: document.getElementById('lgp-memo').value, inv: document.getElementById('lgp-inv').checked ? 1 : 0 });
+    ledgerCostCommit(function(items) { var i = items.findIndex(function(x) { return x.id === it.id; }); if (i >= 0) items[i] = it; else items.push(it); });
+}
+function ledgerCostDelete() {
+    var e = lgCostEdit; if (!e || !confirm('이 비용 항목을 지울까요?')) return; var id = e.it.id;
+    ledgerCostCommit(function(items) { var i = items.findIndex(function(x) { return x.id === id; }); if (i >= 0) items.splice(i, 1); });
+}
+document.addEventListener('keydown', function(ev) { if (ev.key === 'Escape' && lgCostEdit) ledgerCostClose(); });
 function ledgerEdit(id) {
     maPopClose(); ledgerEditId = id;
     var cur = id === 'new' ? null : ledger.items.filter(function(x) { return x.id === id; })[0];
@@ -33094,7 +33153,8 @@ function ledgerSyncDraft() {   // 화면 입력값을 초안에 모음(다시 �
     d.name = g('name').trim(); d.addr = g('addr').trim(); d.caseNo = g('caseNo').trim(); d.pyung = g('pyung'); d.type = g('type') || 'house'; d.memo = g('memo');
     d.win = { date: g('winDate'), price: lgFromWon(g('winPrice')), regDate: g('regDate') }; d.sale = { date: g('saleDate'), price: lgFromWon(g('salePrice')) };
     d.loans = [0, 1].map(function(i) { return { amount: lgFromWon(g('l' + i + 'amt')), rate: g('l' + i + 'rate'), type: g('l' + i + 'type') || 'bullet', term: g('l' + i + 'term'), start: g('l' + i + 'start'), end: g('l' + i + 'end'), interestPaid: lgFromWon(g('l' + i + 'paid')) }; });
-    var normal = Array.prototype.slice.call(document.querySelectorAll('#lg-items .lg-item')).map(function(row, i) {
+    var rowEls = document.querySelectorAll('#lg-items .lg-item');
+    var normal = !rowEls.length ? d.items.filter(function(x) { return !x.q; }) : Array.prototype.slice.call(rowEls).map(function(row, i) {
         var ck = (row.querySelector('.lg-i-cat').value || '|').split('|'), old = (d.items.filter(function(x) { return !x.q; })[i]) || {};
         return { id: old.id || 'li_' + Date.now() + '_' + i, imp: old.imp ? 1 : 0, cat: ck[0], sub: ck[1], date: row.querySelector('.lg-i-date').value, amount: lgFromWon(row.querySelector('.lg-i-amt').value), inv: row.querySelector('.lg-i-inv') && row.querySelector('.lg-i-inv').checked ? 1 : 0, memo: row.querySelector('.lg-i-memo').value };
     });
@@ -33220,7 +33280,7 @@ function ledgerEditForm() {
     var d = ledgerDraft; if (!d) return '';
     var v = function(x) { return maEsc(x == null ? '' : x); }, win = d.win || {}, sale = d.sale || {}, isNewRec = !ledger.items.some(function(x) { return x.id === d.id; });
     var catOpts = LEDGER_CATS.map(function(c) { return '<optgroup label="' + c.cat + '">' + c.subs.map(function(s) { return '<option value="' + maEsc(c.cat + '|' + s) + '">' + maEsc(s) + '</option>'; }).join('') + '</optgroup>'; }).join('');
-    var h = '<div id="lg-form" class="indicator-box lg-edit-box" oninput="ledgerLive()"><div class="indicator-title">' + (isNewRec ? '📒 장부 추가' : '📒 장부 수정') + (d.name ? ' <span class="ma-sub" style="font-weight:normal;">· ' + maEsc(d.name) + '</span>' : '') + '</div>'
+    var h = '<div id="lg-form" class="indicator-box lg-edit-box lg-cardform" oninput="ledgerLive()"><div class="indicator-title">' + (isNewRec ? '📒 장부 추가' : '📒 장부 수정') + (d.name ? ' <span class="ma-sub" style="font-weight:normal;">· ' + maEsc(d.name) + '</span>' : '') + '</div>'
         + '<div class="indicator-box lg-live"><div class="indicator-title">🧮 지금 입력한 값으로 계산 <span class="ma-sub" style="font-weight:normal;">· 입력하면 바로 바뀌어요</span></div><div class="indicator-grid lg-grid" id="lg-live"></div></div>';
     // 불러오기 박스
     h += '<div class="lg-sec lg-pick"><div class="lg-sec-h">🏠 내 보유 주택에서 불러오기 <span class="ma-sub" style="font-weight:normal;">· 고르면 취득·매도 정보와 같은 집의 경매 기록 상세를 가져와요</span></div>'
@@ -33238,9 +33298,9 @@ function ledgerEditForm() {
             + lgSel('lg-l' + i + 'type', '상환 방식', '<option value="bullet"' + (l.type === 'amort' ? '' : ' selected') + '>일시상환(이자만)</option><option value="amort"' + (l.type === 'amort' ? ' selected' : '') + '>원리금균등상환</option>') + lgField('lg-l' + i + 'term', '총 대출기간(개월)', l.term, '비우면 자동', 'number', ' step="1"') + lgField('lg-l' + i + 'start', '시작일', l.start, '', 'date') + lgField('lg-l' + i + 'end', '상환일', l.end, '', 'date') + lgWonField('lg-l' + i + 'paid', '실제 낸 이자(선택)', l.interestPaid, '비우면 계산') + '</div></div>';
     });
     h += '</div></div>';
-    h += '<div class="lg-sec"><div class="lg-sec-h">비용 <span class="ma-sub" style="font-weight:normal;">· 건별 입력 (분류·세부항목, 날짜, 금액)</span></div><div id="lg-items">' + (d.items || []).filter(function(it) { return !it.q; }).map(function(it, i) { return ledgerItemRow(it, i, catOpts); }).join('') + '</div>'
+    h += '<div class="lg-sec"><div class="lg-sec-h">비용 <span class="ma-sub" style="font-weight:normal;">· 카드를 누르면 팝업에서 항목·금액·날짜를 입력해요</span></div><div class="lg-fields" id="lg-items">' + ledgerCostCardsHtml(d) + '</div>'
         + '<div class="lg-vatbox"><label class="lg-check"><input type="checkbox" id="lg-vatDeduct"' + (d.vatDeduct ? ' checked' : '') + ' onchange="ledgerLive()"> 계산서 부가세를 <b>환급(매입세액 공제) 받아요</b></label><div class="ma-sub">끄면(기본) 부가세를 비용에 포함해요. 전용 85㎡ 이하 주택은 매도가 면세라 보통 공제가 안 돼요 - 85㎡ 초과 과세 매도처럼 환급받는 경우에만 켜세요(세무사 확인).</div></div>'
-        + '<div class="lg-actions"><button class="modal-btn btn-gray" onclick="ledgerAddItem()">+ 비용 항목 추가</button><span id="lg-add-note" class="ma-sub" style="flex:1 1 100%;color:#4f46e5;"></span><button class="modal-btn btn-gray" onclick="ledgerQuickToggle()">' + (ledgerQuick ? '▲ 한 번에 입력 닫기' : '⚡ 한 번에 입력(예전 건 소급)') + '</button></div>';
+        + '<div class="lg-actions"><button class="modal-btn btn-gray" onclick="ledgerQuickToggle()">' + (ledgerQuick ? '▲ 한 번에 입력 닫기' : '⚡ 한 번에 입력(예전 건 소급)') + '</button></div>';
     if (ledgerQuick) {
         var qv = {}; (d.items || []).forEach(function(it) { if (it.q) qv[it.cat + '|' + it.sub] = (qv[it.cat + '|' + it.sub] || 0) + lgN(it.amount); });
         h += '<div class="lg-sub-box"><div class="ma-sub">항목별 합계만 한 번에 넣어요(날짜는 취득일·매도일로 자동). 건별로 넣은 것과는 따로 더해져요. 금액은 원 단위.</div>'
