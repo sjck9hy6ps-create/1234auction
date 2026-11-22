@@ -77,6 +77,15 @@ const results = await page.evaluate(async () => {
   [[500, 0], [1000, 0], [1001, 1], [3000, 1], [3001, 2], [5000, 2], [5001, 3.5], [10000, 3.5], [10001, 7.5], [100000, 7.5], [100001, 17.5]].forEach(([m, e]) => ok('인지세(매도인 몫) ' + m + '만', calcStampDuty(m) === e, calcStampDuty(m)));
   ok('건물분 부가세 10/110', near(vatOnSale(24500, 0.65), 24500 * 0.65 * 10 / 110, 1));
 
+  // ── 3-2. 권리분석 소액임차인 지역·시기 표 (주임법 시행령 제10조·수도권정비계획법 시행령 별표 1) ──
+  [['서울특별시 강남구 역삼동', 0], ['인천광역시 남동구 구월동', 1], ['인천광역시 서구 당하동', 2], ['인천광역시 연수구 송도동', 2], ['인천광역시 강화군 길상면', 3], ['경기도 남양주시 평내동', 1], ['경기도 남양주시 별내동', 3], ['경기도 용인시 수지구 죽전동', 1], ['경기도 안산시 단원구 고잔동', 2], ['부산광역시 해운대구 우동', 2], ['부산 기장군 정관읍', 3], ['대구광역시 달성군 옥포읍', 3], ['전남광주통합특별시 서구 풍암동', 2], ['전남광주통합특별시 나주시 빛가람동', 3], ['충청남도 천안시 서북구 두정동', 3]].forEach(([ad, e]) => ok('소액임차인 지역 구간 ' + ad, rightsMinorTier(ad) === e, rightsMinorTier(ad)));
+  [['2024-01-01', '서울', 16500, 5500], ['2022-01-01', '서울', 15000, 5000], ['2019-01-01', '서울', 11000, 3700], ['2017-01-01', '서울', 10000, 3400], ['2015-01-01', '서울', 9500, 3200], ['2012-01-01', '서울', 7500, 2500], ['2009-01-01', '서울', 6000, 2000]].forEach(([d, ad, lim, pay]) => { const m = rightsMinorLimit(d, ad); ok('소액임차인 시기별 표 ' + d, m && m.limit === lim * 10000 && m.pay === pay * 10000, JSON.stringify(m)); });
+  ok('소액임차인 2008년 이전은 표 없음', rightsMinorLimit('2007-01-01', '서울') === null);
+  { const mkT = (n, dep) => ({ name: n, deposit: dep * 10000, moveIn: '2019-01-01', fixed: '2019-01-02', distDate: '2025-01-05', tankStanding: false });
+    const rt = { baseDate: '2022-06-01', registry: [{ seq: 1, type: '근저당', date: '2022-06-01', holder: '은행', amount: 90000000, extinguished: true }, { seq: 2, type: '임의경매', date: '2025-01-01', holder: '은행' }], tenants: [mkT('가', 5000), mkT('나', 5000), mkT('다', 5000)] };
+    const w = rightsWaterfall(rt, 6000 * 10000, { addr: '서울특별시 노원구 상계동', execWon: 0 }), paid = w.tenants.map((t) => t.minorPaid || 0); const tot = paid.reduce((a, b) => a + b, 0);
+    ok('소액임차인 3명 합계가 낙찰가 1/2(3000만) 넘으면 같은 비율로 안분', Math.abs(tot - 3000 * 10000) <= 3 && Math.abs(paid[0] - paid[1]) <= 1 && Math.abs(paid[1] - paid[2]) <= 1, JSON.stringify(paid)); }
+
   // ── 4. 장부 계산 항등식·이자·부가세 ──
   const base = { id: 't1', name: '시험', type: 'house', win: { date: '2025-01-01', price: 20000 }, sale: { date: '2026-01-01', price: 30000 }, items: [], loans: [{}, {}], taxes: [{ kind: '종합소득세(증가분)', amount: 100 }], vatMode: 'off', rev: { draws: [] } };
   const mk = (o) => Object.assign(JSON.parse(J(base)), o);
