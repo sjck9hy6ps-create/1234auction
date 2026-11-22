@@ -3,7 +3,7 @@ name: verify-calcs
 on:
   push:
     branches: [main]
-    paths: ['public/**', 'api/**', 'tests/calc-regression.mjs']
+    paths: ['public/**', 'api/**', 'tests/calc-regression.mjs', 'tests/ui-regression.mjs']
   pull_request:
   schedule:
     - cron: '30 21 * * *'
@@ -20,3 +20,4 @@ jobs:
       - run: npm install --no-save --no-package-lock playwright
       - run: npx playwright install --with-deps chromium
       - run: node tests/calc-regression.mjs
+      - run: node tests/ui-regression.mjs

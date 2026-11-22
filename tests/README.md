@@ -10,3 +10,8 @@
 - 실행: `node tests/calc-regression.mjs` (내 컴퓨터는 `npm i --no-save playwright-core` + `CHROME_PATH` 지정)
 - GitHub Actions `verify-calcs`가 public·api 변경 push, PR, 매일 새벽에 자동 실행합니다.
 - 법이 바뀌어 기준값을 고칠 때는 이 파일의 기대값도 함께 고쳐야 합니다.
+
+## 화면 조작 자동 시험 (ui-regression.mjs)
+
+가상 브라우저에서 실제로 클릭·입력해 장부 입력 화면을 점검합니다(저장·서버 요청은 하지 않음): 기본 정보 카드→팝업 입력, 비용 카드→팝업 금액 입력, 비용 추가, 초안 자동 보관·새로고침 복원, 모바일 폭에서 설명 버튼 겹침 여부.
+- 실행: `npm run test:ui` (내 컴퓨터는 `CHROME_PATH` 지정). `node_modules`는 이제 git에서 빠졌으니 설치 후 되돌릴 필요 없음.
