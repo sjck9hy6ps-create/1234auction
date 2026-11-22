@@ -32815,6 +32815,15 @@ function ledgerCalc(rec, skipTax) {
         if (amt && lgN(l.rate) && d != null && d > 0) est = amort ? lgAmortInterest(amt, lgN(l.rate), termEff, d / 365 * 12) : Math.round(amt * lgN(l.rate) / 100 * d / 365);   // 이자만 내고 원금 일시상환=원금×이율×일수, 원리금균등=매달 원금이 줄어드는 이자의 합
         var iv = paid > 0 ? paid : est; interest += iv; loanSum += amt; return { amount: amt, rate: lgN(l.rate), days: d, interest: iv, actual: paid > 0, amort: amort, term: termEff, termAuto: amort && !(lgN(l.term) > 0), noTerm: l.type === 'amort' && !(termEff > 0) };
     });
+    /* 🏧 마이너스 대출(2026-11-22 사용자): 인출 내역마다 '인출액×연 이율×(인출일~상환일 일수)/365'. 상환일을 비우면 매도일. 패찰한 입찰의 보증금도 입찰 때마다 묶인 일수만큼 이자가 나가므로 '보증금×이율×일수/365×패찰 횟수'를 더함.
+       이자는 일별 잔액 기준이라 인출 건별 계산의 합과 같음(매월 후취 납부여도 총액은 같음) */
+    var rev = rec.rev || {}, revRate = lgN(rev.rate), revEnd = rev.repay || endFallback, revRows = [], revInt = 0, revFail = 0, revDrawSum = 0;
+    (rev.draws || []).forEach(function(dw) {
+        var amt = lgN(dw.amount), dd = lgDays(dw.date || win.date, revEnd), iv = amt && revRate && dd != null && dd > 0 ? Math.round(amt * revRate / 100 * dd / 365 * 100) / 100 : 0;
+        revInt += iv; revDrawSum += amt; revRows.push({ amount: amt, date: dw.date || win.date || '', days: dd, interest: iv, memo: dw.memo || '' });
+    });
+    if (lgN(rev.tries) > 0 && lgN(rev.dep) > 0 && revRate) revFail = Math.round(lgN(rev.dep) * revRate / 100 * (lgN(rev.depDays) || 7) / 365 * lgN(rev.tries) * 100) / 100;
+    interest += revInt + revFail; loanSum += revDrawSum;
     if (interest) byGroup['이자·금융'] = (byGroup['이자·금융'] || 0) + interest;
     var winP = lgN(win.price), saleP = lgN(sale.price), totalCost = winP + itemsTotal + interest;
     /* 🏢 건물분 부가세(2026-11-22 사용자 요청): 과세 건물(업무용 오피스텔·85㎡ 초과 주택 등)을 팔면 건물분 10% 부가세가 생김. 앱 기존 방식과 같이 매도가에 부가세가 포함된 것으로 보고 건물가액(매도가×건물비율)×10/110을 계산, 낙찰 때 낸 건물분 부가세(공제분)는 뺌.
@@ -32829,7 +32838,7 @@ function ledgerCalc(rec, skipTax) {
     var taxFrozen = taxEst && taxes.some(function(x) { return x.frozen; }), net = pre != null && hasTax ? pre - taxSum : null, hold = win.date && sale.date && lgDays(win.date, sale.date) > 0 ? Math.round(lgDays(win.date, sale.date) / 30.4 * 10) / 10 : null;
     var cash = winP + upfront - loanSum, base = Math.max(cash, 1);
     var profit = net != null ? net : pre;
-    return { vatOn: vatOn, vatSale: vatSale, vatIn: vatIn, vatPay: vatPay, vatActual: vatActual > 0, vatRatio: vatRatio, taxFrozen: taxFrozen, taxEst: taxEst, taxList: taxes, vatTotal: vatTotal, winP: winP, saleP: saleP, itemsTotal: itemsTotal, byGroup: byGroup, byCat: byCat, interest: interest, loanRows: loanRows, loanSum: loanSum, totalCost: totalCost, pre: pre, taxSum: taxSum, hasTax: hasTax, net: net, hold: hold, cash: cash, roi: profit != null && saleP ? profit / base * 100 : null, annual: profit != null && saleP && hold ? profit / base * 100 * (12 / hold) : null, margin: pre != null && saleP ? pre / saleP * 100 : null };
+    return { revRows: revRows, revInt: revInt, revFail: revFail, revRate: revRate, revEnd: revEnd, vatOn: vatOn, vatSale: vatSale, vatIn: vatIn, vatPay: vatPay, vatActual: vatActual > 0, vatRatio: vatRatio, taxFrozen: taxFrozen, taxEst: taxEst, taxList: taxes, vatTotal: vatTotal, winP: winP, saleP: saleP, itemsTotal: itemsTotal, byGroup: byGroup, byCat: byCat, interest: interest, loanRows: loanRows, loanSum: loanSum, totalCost: totalCost, pre: pre, taxSum: taxSum, hasTax: hasTax, net: net, hold: hold, cash: cash, roi: profit != null && saleP ? profit / base * 100 : null, annual: profit != null && saleP && hold ? profit / base * 100 * (12 / hold) : null, margin: pre != null && saleP ? pre / saleP * 100 : null };
 }
 /* 💴 예상 세금 기본값(2026-11-21, 사용자: 예상 세금을 '실제 납부 세금' 칸에 미리 채워 두고 나중에 실제 금액으로 덮어쓰기) - 매매사업자 기준, 4단계 시뮬레이터와 같은 계산(ttIncTax: 매도일 연도 소득 위에 이 건의 세전 순이익을 얹은 종합소득세 증가분 + 지방소득세).
    그 해 다른 소득 = 내 자산의 '다른 종합소득'(+올해면 추가 사업소득) + 같은 해 다른 장부 건의 세전 순이익. 매도일·매도가·이익이 없거나 매매사업자가 아니면 만들지 않음. 사용자가 세금 칸을 직접 고치면 그 값이 우선 */
@@ -33003,6 +33012,7 @@ function ledgerDetailHtml(r, c) {
         var how = (l.amort ? '원리금균등 ' + l.term + '개월' : '일시상환') + (l.days != null ? ' · ' + l.days + '일' : '');
         return '<div><span>대출 ' + (i + 1) + ' · ' + fmt(l.amount) + ' · ' + l.rate + '%</span><b>이자 ' + fmt(l.interest) + (l.actual ? ' (실제)' : '') + '</b><span>' + how + (l.noTerm ? '<br>⚠️ 기간 입력 필요' : '') + '</span></div>';
     }).join('');
+    var revLines = c.revRows.filter(function(x) { return x.amount; }).map(function(x, i) { return '<div><span>마이너스 인출 ' + (i + 1) + ' · ' + fmt(x.amount) + (c.revRate ? ' · ' + c.revRate + '%' : '') + '</span><b>이자 ' + fmt(x.interest) + '</b><span>' + maEsc(x.date) + '부터 ' + (x.days != null ? x.days + '일' : '') + (x.memo ? ' · ' + maEsc(x.memo) : '') + '</span></div>'; }).join('') + (c.revFail ? '<div><span>패찰 보증금 이자(' + lgN((r.rev || {}).tries) + '회)</span><b>' + fmt(c.revFail) + '</b><span>' + fmt(lgN((r.rev || {}).dep)) + ' × ' + (lgN((r.rev || {}).depDays) || 7) + '일</span></div>' : '');
     var vatNet = c.vatOn && c.saleP ? c.vatSale - c.vatIn - (r.vatDeduct ? c.vatTotal : 0) : null;
     var vatRows = '';
     if (c.vatOn && c.saleP) {
@@ -33014,7 +33024,7 @@ function ledgerDetailHtml(r, c) {
             vatRows += '<div><span>실제 낼 부가세</span><b>' + fmt(vatNet) + '</b><span>매출 − 공제</span></div>';
         }
     } else if (c.vatTotal) vatRows += '<div><span>계산서 부가세(비용 포함)</span><b>' + fmt(c.vatTotal) + '</b><span>공제 안 받음</span></div>';
-    parts.push('<div class="ma2-cost">' + cats + loans + '<div><span>낙찰가</span><b>' + fmt(c.winP) + '</b></div><div><span>총비용</span><b>' + fmt(c.totalCost) + '</b><span>낙찰가+비용+이자</span></div>' + vatRows + (c.hasTax ? '<div><span>' + (c.taxFrozen ? '세금·건보료 🔒' : (c.taxEst ? '세금·건보료(예상)' : '세금·건보료(실제)')) + '</span><b>' + fmt(c.taxSum) + '</b><span>' + (c.taxFrozen ? '매도일 지나 고정' : (c.taxEst ? '실제 입력 전' : '입력한 값')) + '</span></div>' : '') + '<div><span>투입 현금</span><b>' + fmt(c.cash) + '</b><span>대출 뺀 내 돈</span></div></div>');
+    parts.push('<div class="ma2-cost">' + cats + loans + revLines + '<div><span>낙찰가</span><b>' + fmt(c.winP) + '</b></div><div><span>총비용</span><b>' + fmt(c.totalCost) + '</b><span>낙찰가+비용+이자</span></div>' + vatRows + (c.hasTax ? '<div><span>' + (c.taxFrozen ? '세금·건보료 🔒' : (c.taxEst ? '세금·건보료(예상)' : '세금·건보료(실제)')) + '</span><b>' + fmt(c.taxSum) + '</b><span>' + (c.taxFrozen ? '매도일 지나 고정' : (c.taxEst ? '실제 입력 전' : '입력한 값')) + '</span></div>' : '') + '<div><span>투입 현금</span><b>' + fmt(c.cash) + '</b><span>대출 뺀 내 돈</span></div></div>');
     var pl = ledgerPlanned(r);
     if (pl && c.saleP) {   // 1단계: 예상 대비 차이
         var keys = ['취득(취득세·등기)', '명도·이사·청소', '수리', '인수·체납', '보유세·관리비', '중개·매도비', '이자·금융', '기타'], rows = '', impact = 0;
@@ -33084,6 +33094,44 @@ function ledgerReqOpen(key) {
     ledgerSyncDraft(); var d = ledgerDraft; if (!d) return; var r = lgReqList(d).filter(function(x) { return x.cat + '|' + x.sub === key; })[0]; if (!r) return;
     lgCostEdit = { it: { id: 'li_' + Date.now(), date: r.date || '', cat: r.cat, sub: r.sub, amount: '', memo: '', inv: 0 }, isNew: true, req: r }; ledgerCostPopRender();
 }
+
+/* 🏧 마이너스 대출 구역: 이율·상환일·패찰 보증금(카드→팝업) + 인출 내역(카드→팝업) */
+function ledgerRevolverHtml(d) {
+    var r = d.rev || {}, draws = r.draws || [];
+    var cards = draws.map(function(dw) { var w = lgN(dw.amount) ? Math.round(lgN(dw.amount) * 10000) : 0; return '<div class="lg-field lg-cost-card" onclick="ledgerDrawOpen(\'' + maEsc(dw.id) + '\')"><label>' + maEsc(dw.date || '날짜 입력') + (dw.memo ? ' · ' + maEsc(dw.memo) : '') + '</label><div class="lg-cost-val' + (w ? '' : ' empty') + '">' + (w ? lgWonText(w) : '금액 입력') + '</div></div>'; }).join('');
+    return '<div class="lg-sec"><div class="lg-sec-h">마이너스 대출 <span class="ma-sub" style="font-weight:normal;">· 쓴 날부터 갚은 날까지 일수만큼 이자 / 보증금·경비·수리비 등을 꺼낸 날짜별로 입력 / 상환일을 비우면 매도일</span></div><div class="lg-fields">'
+        + lgField('lg-revRate', '연 이율(%)', r.rate, '예: 6.2', 'number', ' step="0.01"') + lgField('lg-revRepay', '상환일', r.repay, '', 'date')
+        + lgWonField('lg-revDep', '입찰 보증금(패찰 시 이자용)', r.dep, '예: 20000000') + lgField('lg-revDays', '보증금이 묶이는 일수', r.depDays, '기본 7', 'number', ' step="1"') + lgField('lg-revTries', '패찰한 입찰 횟수', r.tries, '이 물건 전에 떨어진 횟수', 'number', ' step="1"') + '</div>'
+        + '<div class="lg-sec-h" style="margin-top:10px;font-size:12.5px;">인출 내역 <span class="ma-sub" style="font-weight:normal;">· 카드를 누르면 팝업에서 날짜·금액·용도를 입력</span></div><div class="lg-fields">' + cards
+        + '<div class="lg-field lg-cost-card lg-cost-add" onclick="ledgerDrawOpen(\'new\')"><label>+ 인출 추가</label><div class="lg-cost-val empty">눌러서 입력</div></div></div></div>';
+}
+var lgDrawEdit = null;
+function ledgerDrawOpen(id) {
+    ledgerSyncDraft(); var d = ledgerDraft; if (!d) return; d.rev = d.rev || { draws: [] }; d.rev.draws = d.rev.draws || [];
+    var it = id === 'new' ? { id: 'dw_' + Date.now(), date: (d.win && d.win.date) || '', amount: '', memo: '' } : JSON.parse(JSON.stringify(d.rev.draws.filter(function(x) { return x.id === id; })[0] || {}));
+    if (!it.id) return; lgDrawEdit = { it: it, isNew: id === 'new' }; ledgerDrawPopRender();
+}
+function ledgerDrawPopRender() {
+    var e = lgDrawEdit; if (!e) return; var it = e.it, old = document.getElementById('lg-cost-pop');
+    var h = '<div id="lg-cost-pop" onclick="if(event.target===this)ledgerDrawClose()"><div class="lgp-card lg-cardform"><div class="lgp-h"><span>' + (e.isNew ? '➕ 인출 추가' : '✏️ 인출 수정') + '</span><a href="#" onclick="ledgerDrawClose();return false;" style="font-size:13px;color:#6b7280;text-decoration:none;">✕ 닫기</a></div>'
+        + '<div class="lg-fields"><div class="lg-field"><label for="lgd-date">인출일</label><input id="lgd-date" type="date" value="' + maEsc(it.date || '') + '"></div>'
+        + '<div class="lg-field"><label for="lgd-memo">용도(선택)</label><input id="lgd-memo" type="text" value="' + maEsc(it.memo || '') + '" placeholder="예: 입찰 보증금"></div>'
+        + '<div class="lg-field lgp-wide"><label for="lgd-amt">인출 금액 <span class="lg-unit">원</span></label><input id="lgd-amt" type="number" step="1" inputmode="numeric" class="lg-won" value="' + maEsc(lgWon(it.amount)) + '" placeholder="원 단위로 입력" oninput="var h=document.getElementById(\'lgd-hint\');h.textContent=this.value?\'= \'+lgWonText(this.value):\'\'"><div class="lg-hint" id="lgd-hint"></div></div></div>'
+        + '<div class="ma-sub" style="margin-top:6px;">이 금액에 대해 인출일부터 상환일까지 이자가 계산돼요.</div>'
+        + '<div class="lgp-actions">' + (e.isNew ? '' : '<button class="modal-btn btn-gray" style="color:#c62828;" onclick="ledgerDrawDelete()">삭제</button>') + '<span class="grow"></span><button class="modal-btn btn-gray" onclick="ledgerDrawClose()">취소</button><button class="modal-btn btn-purple" onclick="ledgerDrawConfirm()">확인</button></div></div></div>';
+    if (old) old.remove(); document.body.insertAdjacentHTML('beforeend', h);
+    var a = document.getElementById('lgd-amt'), hh = document.getElementById('lgd-hint'); if (a && hh) hh.textContent = a.value ? '= ' + lgWonText(a.value) : ''; setTimeout(function() { var x = document.getElementById('lgd-amt'); if (x && !x.value) try { x.focus(); } catch (er) {} }, 60);
+}
+function ledgerDrawClose() { lgDrawEdit = null; var e = document.getElementById('lg-cost-pop'); if (e) e.remove(); }
+function ledgerDrawCommit(mut) {
+    var d = ledgerDraft; if (!d) { ledgerDrawClose(); return; } d.rev = d.rev || { draws: [] }; d.rev.draws = d.rev.draws || []; mut(d.rev.draws); ledgerDrawClose();
+    var pan = document.getElementById('my-assets-panel'), keep = pan ? pan.scrollTop : 0; renderMyAssets(); if (pan) pan.scrollTop = keep; try { ledgerLive(); } catch (x) {}
+}
+function ledgerDrawConfirm() {
+    var e = lgDrawEdit; if (!e) return; var it = Object.assign({}, e.it, { date: document.getElementById('lgd-date').value, memo: document.getElementById('lgd-memo').value, amount: lgFromWon(document.getElementById('lgd-amt').value) });
+    ledgerDrawCommit(function(a) { var i = a.findIndex(function(x) { return x.id === it.id; }); if (i >= 0) a[i] = it; else a.push(it); });
+}
+function ledgerDrawDelete() { var e = lgDrawEdit; if (!e || !confirm('이 인출 내역을 지울까요?')) return; var id = e.it.id; ledgerDrawCommit(function(a) { var i = a.findIndex(function(x) { return x.id === id; }); if (i >= 0) a.splice(i, 1); }); }
 var lgCostEdit = null;
 function ledgerCostOpen(id) {
     ledgerSyncDraft(); var d = ledgerDraft; if (!d) return;
@@ -33134,7 +33182,7 @@ function ledgerCostDelete() {
 document.addEventListener('keydown', function(ev) { if (ev.key === 'Escape' && lgCostEdit) ledgerCostClose(); });
 
 /* 🗃️ 장부 수정 카드 간소화 + 팝업 수정: 화면 속 입력칸(숨겨 둠)이 값의 원본이고, 카드는 그 값을 보여 줌. 팝업에서 확인하면 원본에 넣고 다시 그림(예상 세금 등도 새로 계산) */
-var LG_CARD_SECS = /^(기본 정보|취득\(낙찰\)|대출|🏢 건물분 부가세|실제 납부 세금)/;
+var LG_CARD_SECS = /^(기본 정보|취득\(낙찰\)|대출|마이너스 대출|🏢 건물분 부가세|실제 납부 세금)/;
 function lgFieldLabel(f) { var l = f && f.querySelector('label'); return l ? l.textContent.replace(/\s*원\s*$/, '').replace(/\s+/g, ' ').trim() : ''; }
 function lgFieldText(inp) {
     if (!inp) return '';
@@ -33158,7 +33206,7 @@ function lgCardify(root) {
     var form = (root || document).querySelector('#lg-form'); if (!form) return;
     form.querySelectorAll('.lg-sec').forEach(function(sec) {
         var h = sec.querySelector('.lg-sec-h'), t = h ? h.textContent.trim() : ''; if (!LG_CARD_SECS.test(t)) return;
-        if (/^대출/.test(t)) {
+        if (/^대출 \(/.test(t)) {
             sec.querySelectorAll('.lg-sub-box').forEach(function(box, i) {
                 box.classList.add('lg-loan-simple');
                 var ids = ['amt', 'rate', 'type', 'term', 'start', 'end', 'paid'].map(function(k) { return 'lg-l' + i + k; }), a = document.getElementById(ids[0]), r = document.getElementById(ids[1]);
@@ -33379,6 +33427,7 @@ function ledgerSyncDraft() {   // 화면 입력값을 초안에 모음(다시 �
     var g = function(id) { var e = document.getElementById('lg-' + id); return e ? e.value : ''; };
     d.name = g('name').trim(); d.addr = g('addr').trim(); d.caseNo = g('caseNo').trim(); d.pyung = g('pyung'); d.type = g('type') || 'house'; d.memo = g('memo');
     d.win = { date: g('winDate'), price: lgFromWon(g('winPrice')), regDate: g('regDate') }; d.sale = { date: g('saleDate'), price: lgFromWon(g('salePrice')) };
+    if (document.getElementById('lg-revRate')) { var oldDraws = (d.rev && d.rev.draws) || []; d.rev = { rate: g('revRate'), repay: g('revRepay'), dep: lgFromWon(g('revDep')), depDays: g('revDays'), tries: g('revTries'), draws: oldDraws }; }
     d.loans = [0, 1].map(function(i) { return { amount: lgFromWon(g('l' + i + 'amt')), rate: g('l' + i + 'rate'), type: g('l' + i + 'type') || 'bullet', term: g('l' + i + 'term'), start: g('l' + i + 'start'), end: g('l' + i + 'end'), interestPaid: lgFromWon(g('l' + i + 'paid')) }; });
     var rowEls = document.querySelectorAll('#lg-items .lg-item');
     var normal = !rowEls.length ? d.items.filter(function(x) { return !x.q; }) : Array.prototype.slice.call(rowEls).map(function(row, i) {
@@ -33521,6 +33570,7 @@ function ledgerEditForm() {
             + lgSel('lg-l' + i + 'type', '상환 방식', '<option value="bullet"' + (l.type === 'amort' ? '' : ' selected') + '>일시상환(이자만)</option><option value="amort"' + (l.type === 'amort' ? ' selected' : '') + '>원리금균등상환</option>') + lgField('lg-l' + i + 'term', '총 대출기간(개월)', l.term, '비우면 자동', 'number', ' step="1"') + lgField('lg-l' + i + 'start', '시작일', l.start, '', 'date') + lgField('lg-l' + i + 'end', '상환일', l.end, '', 'date') + lgWonField('lg-l' + i + 'paid', '실제 낸 이자(선택)', l.interestPaid, '비우면 계산') + '</div></div>';
     });
     h += '</div></div>';
+    h += ledgerRevolverHtml(d);
     h += '<div class="lg-sec"><div class="lg-sec-h">비용 <span class="ma-sub" style="font-weight:normal;">· 카드를 누르면 팝업에서 항목·금액·날짜를 입력해요</span></div><div class="lg-fields" id="lg-items">' + ledgerCostCardsHtml(d) + '</div>'
         + '<div class="lg-vatbox"><label class="lg-check"><input type="checkbox" id="lg-vatDeduct"' + (d.vatDeduct ? ' checked' : '') + ' onchange="ledgerLive()"> 계산서 부가세를 <b>환급(매입세액 공제) 받아요</b></label><div class="ma-sub">끄면(기본) 부가세를 비용에 포함해요. 전용 85㎡ 이하 주택은 매도가 면세라 보통 공제가 안 돼요 - 85㎡ 초과 과세 매도처럼 환급받는 경우에만 켜세요(세무사 확인).</div></div>'
         + '<div class="lg-actions"><button class="modal-btn btn-gray" onclick="ledgerQuickToggle()">' + (ledgerQuick ? '▲ 한 번에 입력 닫기' : '⚡ 한 번에 입력(예전 건 소급)') + '</button></div>';
