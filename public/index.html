@@ -33141,6 +33141,7 @@ function ledgerRevConfirm() {
     var pan = document.getElementById('my-assets-panel'), keep = pan ? pan.scrollTop : 0; renderMyAssets(); if (pan) pan.scrollTop = keep; try { ledgerLive(); } catch (x) {}
 }
 document.addEventListener('keydown', function(ev) { if (ev.key === 'Escape' && document.getElementById('lg-rev-pop')) ledgerRevClose(); });
+function lgRevMode(d) { d = d || ledgerDraft || {}; var r = d.rev || {}; return !!(d.revMode || r.rate || r.dep || r.tries || (r.draws || []).length); }
 function ledgerRevolverHtml(d) {
     var r = d.rev || {}, draws = r.draws || [];
     var cards = draws.map(function(dw) { var w = lgN(dw.amount) ? Math.round(lgN(dw.amount) * 10000) : 0; return '<div class="lg-field lg-cost-card" onclick="ledgerDrawOpen(\'' + maEsc(dw.id) + '\')"><label>' + maEsc(dw.date || '날짜 입력') + (dw.memo ? ' · ' + maEsc(dw.memo) : '') + '</label><div class="lg-cost-val' + (w ? '' : ' empty') + '">' + (w ? lgWonText(w) : '금액 입력') + '</div></div>'; }).join('');
@@ -33256,7 +33257,7 @@ function lgCardify(root) {
                 box.classList.add('lg-loan-simple');
                 var ids = ['amt', 'rate', 'type', 'term', 'start', 'end', 'paid'].map(function(k) { return 'lg-l' + i + k; }), a = document.getElementById(ids[0]), r = document.getElementById(ids[1]);
                 var card = box.querySelector(':scope > .lg-loan-card') || document.createElement('div'); card.className = 'lg-field lg-simple lg-loan-card';
-                if (i === 1) {   // 대출 2 = 마이너스 대출: 꺼낸 날짜별 일할 이자(세부는 팝업)
+                if (i === 1 && lgRevMode()) {   // 대출 2 = 마이너스 대출: 꺼낸 날짜별 일할 이자(세부는 팝업)
                     var rv = (ledgerDraft && ledgerDraft.rev) || {}, ds = (rv.draws || []).filter(function(x) { return lgN(x.amount); }), sum = ds.reduce(function(t, x) { return t + lgN(x.amount); }, 0);
                     var legacy = a && lgN(lgFromWon(a.value)) > 0, t2 = sum ? '인출 ' + lgWonText(Math.round(sum * 10000)) + (rv.rate ? ' · ' + rv.rate + '%' : '') : (legacy ? '기존 입력 ' + lgWonText(a.value) + ' · 눌러서 옮기기' : '');
                     card.innerHTML = '<label>대출 2 · 마이너스 대출</label><div class="lg-simple-val' + (t2 ? '' : ' empty') + '">' + (t2 || '눌러서 입력') + '</div>' + (ds.length ? '<div class="lg-due" style="color:#6b7280;">' + ds.length + '건 인출' + (lgN(rv.tries) ? ' · 패찰 ' + lgN(rv.tries) + '회' : '') + '</div>' : '');
@@ -33365,7 +33366,7 @@ document.addEventListener('keydown', function(ev) { if (ev.key === 'Escape' && d
 function ledgerEdit(id) {
     maPopClose(); ledgerEditId = id;
     var cur = id === 'new' ? null : ledger.items.filter(function(x) { return x.id === id; })[0];
-    ledgerDraft = cur ? JSON.parse(JSON.stringify(cur)) : { id: 'lg_' + Date.now(), name: '', addr: '', type: 'house', caseNo: '', bidMethod: 'dealer', win: {}, sale: {}, items: [], loans: [{}, {}], taxes: [], memo: '' };
+    ledgerDraft = cur ? JSON.parse(JSON.stringify(cur)) : { id: 'lg_' + Date.now(), name: '', addr: '', type: 'house', caseNo: '', bidMethod: 'dealer', win: {}, sale: {}, items: [], loans: [{}, {}], taxes: [], memo: '', revMode: true, rev: { draws: [] } };
     while ((ledgerDraft.loans || []).length < 2) ledgerDraft.loans.push({});
     ledgerOrig = lgDraftStrip(ledgerDraft);
     var sv = lgDraftLoad(); if (sv && sv.id === id && sv.draft && confirm('저장하지 않은 초안이 있어요. 이어서 편집할까요?\n(취소를 누르면 저장된 장부로 새로 시작해요)')) { ledgerDraft = sv.draft; ledgerOrig = sv.orig || ledgerOrig; while ((ledgerDraft.loans || []).length < 2) ledgerDraft.loans.push({}); } else if (sv && sv.id === id) lgDraftClear(), ledgerOrig = lgDraftStrip(ledgerDraft);
@@ -33613,7 +33614,7 @@ function ledgerEditForm() {
     h += '<div class="lg-sec"><div class="lg-sec-h">기본 정보</div><div class="lg-fields"><div class="lg-field lg-case-card" onclick="ledgerCaseOpen()"><label>🔎 사건번호로 불러오기</label><div class="lg-cost-val empty">눌러서 검색</div></div>' + lgField('lg-name', '이름', d.name, '예: ○○아파트 101동 1203호') + lgField('lg-addr', '주소', d.addr, '지번 주소') + lgField('lg-caseNo', '사건번호', d.caseNo, '넣으면 예상과 비교해요') + lgField('lg-pyung', '평형(평)', d.pyung, '예: 25.7 (평당 비용 계산에 써요)', 'number', ' step="0.1"')
         + lgSel('lg-type', '종류', Object.keys(MY_ASSET_TYPES).map(function(k) { return '<option value="' + k + '"' + (d.type === k ? ' selected' : '') + '>' + MY_ASSET_TYPES[k] + '</option>'; }).join('')) + '</div></div>';
     h += '<div class="lg-sec"><div class="lg-sec-h">취득(낙찰) · 매도 <span class="ma-sub" style="font-weight:normal;">· 취득일 = 경매 대금을 다 낸 날(낙찰일·등기일 아님) · 취득세·6/1 보유세·주택 수·보유 기간의 기준</span></div><div class="lg-fields">' + lgField('lg-winDate', '취득일(대금 완납일)', win.date, '', 'date') + lgField('lg-regDate', '등기일(참고용)', win.regDate, '계산엔 안 써요', 'date') + lgWonField('lg-winPrice', '낙찰가', win.price, '예: 250000000') + lgField('lg-saleDate', '매도일(대금 받은 날)', sale.date, '', 'date') + lgWonField('lg-salePrice', '매도가', sale.price, '매도 후 입력') + '</div></div>';
-    h += '<div class="lg-sec"><div class="lg-sec-h">대출 (일반 + 마이너스) <span class="ma-sub" style="font-weight:normal;">· 대출 1 = 낙찰 잔금 대출(일시상환·원리금균등) / 대출 2 = 마이너스 대출(꺼낸 날짜별 일할 이자) / 상환일을 비우면 매도일까지</span></div><div class="lg-pair">';
+    h += '<div class="lg-sec"><div class="lg-sec-h">' + (lgRevMode(d) ? '대출 (일반 + 마이너스) <span class="ma-sub" style="font-weight:normal;">· 대출 1 = 낙찰 잔금 대출(일시상환·원리금균등) / 대출 2 = 마이너스 대출(꺼낸 날짜별 일할 이자) / 상환일을 비우면 매도일까지</span>' : '대출 (최대 2건) <span class="ma-sub" style="font-weight:normal;">· 일시상환 = 금액×이율×일수 / 원리금균등 = 매달 줄어드는 이자 / 상환일을 비우면 매도일까지 / 실제 낸 이자를 넣으면 그 값</span>') + '</div><div class="lg-pair">';
     [0, 1].forEach(function(i) {
         var l = (d.loans || [])[i] || {};
         h += '<div class="lg-sub-box"><div class="lg-sub-h">대출 ' + (i + 1) + '</div><div class="lg-fields">' + lgWonField('lg-l' + i + 'amt', '대출 금액', l.amount, '예: 180000000') + lgField('lg-l' + i + 'rate', '연 이율(%)', l.rate, '예: 5.2', 'number', ' step="0.01"')
