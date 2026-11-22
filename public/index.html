@@ -33169,15 +33169,34 @@ function ledgerFieldConfirm() {
     var pan = document.getElementById('my-assets-panel'), keep = pan ? pan.scrollTop : 0; renderMyAssets(); if (pan) pan.scrollTop = keep; try { ledgerLive(); } catch (x) {}
 }
 document.addEventListener('keydown', function(ev) { if (ev.key === 'Escape' && lgFldEdit) ledgerFieldClose(); });
+
+/* 💾 장부 초안 자동 보관(2026-11-22, 사용자: 기본 정보를 입력하고 새로고침하면 사라짐) - 입력한 값은 '저장'을 누르기 전까지 화면 안에만 있었음. 이제 입력할 때마다 이 브라우저에 초안을 보관하고, 새로고침·창 닫기 뒤에도 이어서 편집할 수 있음. 저장·취소·삭제하면 초안을 지움 */
+var LG_DRAFT_KEY = 'ledgerDraftV1', ledgerOrig = '', lgDraftTimer = null;
+function lgDraftStrip(d) { try { var x = JSON.parse(JSON.stringify(d || {})); delete x.estSnap; return JSON.stringify(x); } catch (e) { return ''; } }
+function lgDraftSave() { try { if (!ledgerDraft || !ledgerEditId || !document.getElementById('lg-form')) return; ledgerSyncDraft(); if (lgDraftStrip(ledgerDraft) === ledgerOrig) { localStorage.removeItem(LG_DRAFT_KEY); return; } localStorage.setItem(LG_DRAFT_KEY, JSON.stringify({ id: ledgerEditId, draft: ledgerDraft, at: Date.now(), orig: ledgerOrig })); } catch (e) {} }
+function lgDraftQueue() { clearTimeout(lgDraftTimer); lgDraftTimer = setTimeout(lgDraftSave, 350); }
+function lgDraftClear() { try { localStorage.removeItem(LG_DRAFT_KEY); } catch (e) {} ledgerOrig = ''; }
+function lgDraftLoad() { try { var r = JSON.parse(localStorage.getItem(LG_DRAFT_KEY) || 'null'); return r && r.draft ? r : null; } catch (e) { return null; } }
+function lgDraftDirty() { try { return !!(ledgerDraft && ledgerEditId && document.getElementById('lg-form') && (ledgerSyncDraft(), lgDraftStrip(ledgerDraft) !== ledgerOrig)); } catch (e) { return false; } }
+function lgDraftResume() { var r = lgDraftLoad(); if (!r) return; maPopClose(); ledgerEditId = r.id; ledgerDraft = r.draft; ledgerOrig = r.orig || ''; ledgerQuick = false; while ((ledgerDraft.loans || []).length < 2) ledgerDraft.loans.push({}); renderMyAssets(); }
+function lgDraftDiscard() { lgDraftClear(); renderMyAssets(); }
+function lgDraftBanner() {
+    var r = lgDraftLoad(); if (!r || ledgerEditId) return '';
+    var mins = Math.max(0, Math.round((Date.now() - r.at) / 60000)), when = mins < 1 ? '방금' : (mins < 60 ? mins + '분 전' : (mins < 1440 ? Math.round(mins / 60) + '시간 전' : Math.round(mins / 1440) + '일 전'));
+    return '<div class="ma2-banner" style="background:#eef2ff;color:#3730a3;">✏️ <b>저장하지 않은 장부 초안</b>이 있어요 - ' + maEsc((r.draft && r.draft.name) || '(이름 없음)') + ' · ' + when + ' <a href="#" onclick="lgDraftResume();return false;"><b>이어서 편집</b></a> · <a href="#" onclick="if(confirm(\'초안을 버릴까요?\'))lgDraftDiscard();return false;">버리기</a></div>';
+}
+window.addEventListener('beforeunload', function(e) { if (lgDraftDirty()) { lgDraftSave(); e.preventDefault(); e.returnValue = ''; } });
 function ledgerEdit(id) {
     maPopClose(); ledgerEditId = id;
     var cur = id === 'new' ? null : ledger.items.filter(function(x) { return x.id === id; })[0];
     ledgerDraft = cur ? JSON.parse(JSON.stringify(cur)) : { id: 'lg_' + Date.now(), name: '', addr: '', type: 'house', caseNo: '', bidMethod: 'dealer', win: {}, sale: {}, items: [], loans: [{}, {}], taxes: [], memo: '' };
     while ((ledgerDraft.loans || []).length < 2) ledgerDraft.loans.push({});
+    ledgerOrig = lgDraftStrip(ledgerDraft);
+    var sv = lgDraftLoad(); if (sv && sv.id === id && sv.draft && confirm('저장하지 않은 초안이 있어요. 이어서 편집할까요?\n(취소를 누르면 저장된 장부로 새로 시작해요)')) { ledgerDraft = sv.draft; ledgerOrig = sv.orig || ledgerOrig; while ((ledgerDraft.loans || []).length < 2) ledgerDraft.loans.push({}); } else if (sv && sv.id === id) lgDraftClear(), ledgerOrig = lgDraftStrip(ledgerDraft);
     ledgerQuick = false; renderMyAssets();
     setTimeout(function() { var f = document.getElementById('lg-form'); if (f && f.scrollIntoView) f.scrollIntoView({ block: 'nearest' }); }, 50);
 }
-function ledgerCancel() { ledgerEditId = null; ledgerDraft = null; renderMyAssets(); }
+function ledgerCancel() { if (lgDraftDirty() && !confirm('저장하지 않은 입력이 있어요. 그래도 나갈까요?\n(나가도 초안은 이 브라우저에 보관돼요)')) return; lgDraftSave(); ledgerEditId = null; ledgerDraft = null; renderMyAssets(); }
 function ledgerQuickToggle() { ledgerSyncDraft(); ledgerQuick = !ledgerQuick; renderMyAssets(); }
 /* ════ 📒 내 경매 물건에서 불러오기 (2026-11-21, 사용자 요청) - 장부 입력 때 내 경매 물건을 골라 상세내역(낙찰가·비용·대출)을 기본값으로 가져오고, 가져올 세부항목을 체크해 고름. 가져온 값은 경매 기록의 값(예상·입력값)이라 실제 값으로 고쳐 쓰면 돼요 ════ */
 var LG_IMPORT_ITEMS = [   // [경매 기록 칸, 장부 분류, 세부항목, 이름]
@@ -33302,7 +33321,7 @@ function ledgerSyncDraft() {   // 화면 입력값을 초안에 모음(다시 �
 }
 function lgFormTaxCalc(d) { try { var x = JSON.parse(JSON.stringify(d)); x.items = (x.items || []).filter(function(i) { return lgN(i.amount) > 0; }); return ledgerCalc(x); } catch (e) { return {}; } }
 function ledgerLive() {   // 장부 입력 화면 위쪽 계산 박스(입력할 때마다 갱신, 저장은 안 함)
-    var el = document.getElementById('lg-live'); if (!el || !ledgerDraft) return;
+    var el = document.getElementById('lg-live'); if (!el || !ledgerDraft) return; lgDraftQueue();
     try { lgHints(); } catch (x) {}
     try {   // 계산서 받은 비용: 부가세·합계를 칸 아래에 바로 보여 줌
         document.querySelectorAll('#lg-items .lg-item').forEach(function(row) { var inv = row.querySelector('.lg-i-inv'), ln = row.querySelector('.lg-vat-line'), a = lgN(lgFromWon(row.querySelector('.lg-i-amt').value)); if (!ln) return; var vt = inv && inv.checked ? Math.round(a * (TAX_CONFIG.vat.rate || 0.1) * 10000) : 0; ln.textContent = inv && inv.checked && a ? '공급가액 ' + lgWonText(Math.round(a * 10000)) + ' + 부가세 ' + lgWonText(vt) + ' = 결제 ' + lgWonText(Math.round(a * 10000) + vt) : ''; });
@@ -33324,12 +33343,12 @@ async function ledgerSave() {
     delete d._imp; lgFreezeIfDue(d); if (!d.taxSnap) d.taxSnap = lgMakeSnap(d);   // 처음 저장할 때 그 시점의 세율표를 함께 보관(편집 화면의 버튼으로 다시 저장 가능)
     d.updatedAt = Date.now(); if (!d.createdAt) d.createdAt = d.updatedAt;
     try { await ledgerSaveItem(d); } catch (e) { alert('저장하지 못했어요: ' + e.message); return; }
-    ledgerEditId = null; ledgerDraft = null; renderMyAssets();
+    lgDraftClear(); ledgerEditId = null; ledgerDraft = null; renderMyAssets();
 }
 async function ledgerDelete() {
     var d = ledgerDraft; if (!d || !confirm('이 장부(' + (d.name || '') + ')를 삭제할까요? 되돌릴 수 없어요.')) return;
     try { await ledgerDeleteItem(d.id); } catch (e) { alert('삭제하지 못했어요: ' + e.message); return; }
-    ledgerEditId = null; ledgerDraft = null; renderMyAssets();
+    lgDraftClear(); ledgerEditId = null; ledgerDraft = null; renderMyAssets();
 }
 
 /* ════ 💼 내 자산 탭 박스 구성으로 정리 (2026-11-21, 사용자: 내 자산 탭에 중복되는 내용이 많고, 수정·장부 추가 같은 다음 단계 화면도 박스 형태로) ════
@@ -33755,6 +33774,7 @@ function renderMyAssets() {
     // 수정·추가를 누르면 그 화면만 한 페이지로 보여 줌(2026-11-21: 목록과 섞여 보이지 않게) - 위에 '← 내 자산으로' 돌아가기, 아래에 저장 막대 고정
     if (maEditId || ledgerEditId) { body.innerHTML = '<div class="lg-back"><a href="#" onclick="' + (ledgerEditId ? 'ledgerCancel()' : 'maEditId=null;renderMyAssets()') + ';return false;">← 내 자산으로 돌아가기</a></div>' + (maEditId ? maEditForm() : ledgerEditForm()); lgAnnotate(body); try { lgCardify(body); } catch (e) {} try { body.scrollTop = 0; document.getElementById('my-assets-panel').scrollTop = 0; } catch (e) {} if (ledgerEditId) ledgerLive(); return; }
     if (simN) html += '<div class="ma2-banner">🧪 <b>시뮬레이션 중</b> - ' + simN + '건을 매도했다고 가정해 계산하고 있어요(저장 안 됨). <a href="#" onclick="myAssetsSim={};try{localStorage.removeItem(\'myAssetsSim\')}catch(e){};myAssetsChanged();return false;">모두 해제</a></div>';
+    html += lgDraftBanner();
     // ① 한눈에 - 칸을 누르면 팝업으로 자세한 목록(2026-11-21 사용자: 보유 중 등 겹치는 메뉴는 없애고 팝업으로)
     maPopCtx = { yn: yn, s: s, p: p, next: next, deals: deals, legacy: legacy, holding: holding, planned: planned, holdBuy: holdBuy, acqRate: acqRate, taxYear: taxYear, marg1000: marg1000, brNow: brNow, sumProfit: sumProfit, sumNet: sumNet, sumTaxAll: sumTaxAll, noTaxN: noTaxN, sumTotal: sumTotal, wins: wins, avgHold: avgHold };
     html += '<div class="indicator-box"><div class="indicator-title">💼 한눈에 <span class="ma-sub" style="font-weight:normal;">· 칸을 누르면 자세한 내용이 팝업으로 열려요</span></div><div class="indicator-grid lg-grid">'
