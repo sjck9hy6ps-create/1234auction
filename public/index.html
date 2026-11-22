@@ -23484,6 +23484,15 @@ var bbDrawerPos = null;
     });
 })();
 function closeBidDrawer() { bidDrawerId = null; document.getElementById('bid-board').classList.remove('with-drawer'); var d = document.getElementById('bb-drawer'); if (d) { d.style.display = 'none'; d.__lastId = null; d.__lastHtml = null; } renderBidBoard(); }
+function bidCostRowsHtml(cl, lines) {   // 비용 표 행: 입찰·보유 중 비용 → 매도할 때 드는 비용(소계) → 세금
+    var rowH = function(x) { return '<tr><td>− ' + x[0] + '</td><td class="r">' + toEok(String(Math.round(x[1]))) + '</td></tr>'; }, ls = lines || cl.lines, buy = ls.filter(function(x) { return x[2] !== 'sell'; }), sell = ls.filter(function(x) { return x[2] === 'sell'; });
+    var sellSum = sell.reduce(function(t, x) { return t + x[1]; }, 0), taxSum = (cl.taxParts || []).reduce(function(t, x) { return t + x[1]; }, 0);
+    return buy.map(rowH).join('')
+        + (sell.length ? '<tr><td colspan="2" class="dr-sub" style="padding-top:6px;"><b>매도할 때 드는 비용</b></td></tr>' + sell.map(rowH).join('') + '<tr><td class="dr-sub">매도 비용 소계</td><td class="r dr-sub">' + toEok(String(Math.round(sellSum))) + '</td></tr>' : '')
+        + '<tr><td colspan="2" class="dr-sub" style="padding-top:6px;"><b>세금</b> (매도 이익 기준)</td></tr>'
+        + ((cl.taxParts || []).length ? cl.taxParts.map(rowH).join('') : '<tr><td>− 종합소득세·지방소득세</td><td class="r">' + toEok(String(Math.round(cl.tax))) + '</td></tr>')
+        + '<tr><td class="dr-sub">세금 소계</td><td class="r dr-sub">' + toEok(String(Math.round(taxSum || cl.tax))) + '</td></tr>';
+}
 function bidCostLines(row, opt) {   // opt(2026-11-10): 빌라 상세처럼 행의 추천가·예상매도가가 아닌 값(빌라 계산의 추천 입찰가·예상매도가)으로 비용을 보고 싶을 때 {bid, sale, buildYear}
     opt = opt || {};
     var a = row.a, type = row.type, sale = opt.sale != null ? opt.sale : row.sale, bid = opt.bid != null ? opt.bid : row.recBid;
@@ -23493,12 +23502,18 @@ function bidCostLines(row, opt) {   // opt(2026-11-10): 빌라 상세처럼 행�
     var loan = calcRegionAwareLoan('dealer', addr, bid, appraisal, sale);
     var holdM = parseInt(a.holdMonths) || row.holdAuto || DEFAULT_INTEREST_HOLD_MONTHS;
     var repairAuto = calcRepairFee(type, pyung, opt.buildYear || a.buildYear || row.estBuildYear || null) || 0;
+    // 보유 중 재산세·종부세(6/1 소유 판정) - 입찰가 고르기 계산(solveAuctionBidFromRecord)과 같은 값
+    var offWon = parseInt(a.officialPriceWon) || 0, holdM0 = parseInt(a.holdMonths) || 0, htpL = holdTaxPlan(a.bidDate, !!a.holdsJune1, holdM), holdTaxYears = htpL.holds ? htpL.years : 0;
+    var holdPropTax = calcPropertyTax(offWon, rank, htpL.holds, holdM0, htpL.years), holdCompTax = calcCompTax(parseInt(a.totalOfficialPriceManwon) || myTotalOfficialWith(offWon), offWon, rank, htpL.holds, holdM0, htpL.years);
     var L = [
         ['취득세' + (rank >= 2 ? ' (' + rank + '번째 주택)' : ''), calcAcquisitionTaxDetailed(bid, type, pyung, rank, adj, cheap)],
         ['등기비', calcRegistryFee(bid)],
         ['대출이자 (' + holdM + '개월, ' + loan.rate + '%)', calcLoanInterest(loan.amount, loan.rate, holdM)],
         ['중도상환수수료', calcLoanPrepayFee(loan.amount, DEFAULT_LOAN_PREPAY_FEE_RATE), 'sell'],
         ['중개수수료(매도)', calcAgentFee(sale, type), 'sell'],
+        ['인지세 (매매계약서, 매도인 몫)', calcStampDuty(sale), 'sell'],
+        ['추가 세목 (' + (extraLabels(recSaleYear(a, holdM)).join('·') || '세율 파일') + ')', calcExtraCosts(bid, sale, recSaleYear(a, holdM)), 'sell'],
+        ['재산세·종합부동산세 (6/1 소유 ' + holdTaxYears + '번)', holdPropTax + holdCompTax],
         ['명도비', calcEvictionFee(pyung)],
         ['수리비' + ((parseInt(a.repair) || repairAuto) < basicRepairFee(pyung) ? ' (최소: 도배·장판)' : (parseInt(a.repair) ? ' (직접 입력)' : ' (연식 기준)')), Math.max(parseInt(a.repair) || repairAuto, basicRepairFee(pyung))],
         ['이사·청소', (calcMovingFee(pyung) || 0) + (calcCleaningFee(pyung) || 0)],
@@ -23512,8 +23527,9 @@ function bidCostLines(row, opt) {   // opt(2026-11-10): 빌라 상세처럼 행�
        매도수수료·중도상환수수료·부가세는 매도대금에서 정산되므로 제외 */
     var cashCost = L.reduce(function(s, x) { return s + (x[2] === 'sell' ? 0 : x[1]); }, 0);
     var pre = sale - bid - cost;
-    var tax = calcResaleIncomeTax('dealer', pre, 0, adj, rank).totalTax;
-    return { lines: L, cost: cost, pre: pre, tax: tax, net: pre - tax, loan: loan.amount, cash: bid - loan.amount + cashCost, cashCost: cashCost, repairAuto: repairAuto };
+    var tr = calcResaleIncomeTax('dealer', pre, holdM0, adj, rank, recSaleYear(a, holdM)), tax = tr.totalTax;
+    var taxParts = [['종합소득세·지방소득세', (tr.incomeTax || 0) + (tr.localTax || 0)], ['건강보험 소득월액', tr.healthTax || 0], ['추가 세목(이익 기준)', tr.extraTax || 0]].filter(function(x) { return x[1] > 0; });
+    return { lines: L, cost: cost, pre: pre, tax: tax, taxParts: taxParts, net: pre - tax, loan: loan.amount, cash: bid - loan.amount + cashCost, cashCost: cashCost, repairAuto: repairAuto };
 }
 /* 📈 상세 창 시세 그래프(2026-11-12 수정 요청: 시세 그래프 없음) - 같은 평형(빌라는 같은 건물 비슷한 면적) 실거래의 점·월별 중앙값 선·거래량 */
 /* 아파트 상세: 그래프·실거래가 비는 이유를 알려줌(2026-11-16, 사용자 요청) - 지역 자료 도착 전/그 번지 거래 기록 없음/다른 평형 거래만 있음 */
@@ -23890,8 +23906,7 @@ async function renderBidDrawer() {
     if (cl) {
         h += '<div class="dr-sec"><h4>추천 입찰가로 샀을 때</h4><table>'
             + '<tr><td>예상매도가</td><td class="r">' + fmt(row.sale) + '</td></tr><tr><td>− 입찰가</td><td class="r">' + fmt(row.recBid) + '</td></tr>'
-            + cl.lines.map(function(x) { return '<tr><td>− ' + x[0] + '</td><td class="r">' + toEok(String(x[1])) + '</td></tr>'; }).join('')
-            + '<tr><td>− 종합소득세·지방세</td><td class="r">' + toEok(String(cl.tax)) + '</td></tr>'
+            + bidCostRowsHtml(cl)
             + (function() {
                 var pe0 = row.pick && row.pick.ev, adj0 = pe0 && pe0.bid === row.recBid && pe0.shift && row.sale ? Math.round(row.sale * pe0.shift) : 0;
                 if (!adj0) return '<tr><td><b>남는 돈(세후)</b></td><td class="r"><b style="color:' + (cl.net >= 1000 ? '#16a34a' : '#dc2626') + ';">' + toEok(String(Math.round(cl.net))) + '</b></td></tr>';
@@ -24454,11 +24469,11 @@ function villaCostHtml(row, ev, fmt) {
     try { cl = bidCostLines(row, { bid: pe.bid, sale: ve.est, buildYear: yr }); } catch (e) {}
     if (!cl) return '';
     var rep = effRepairFee(row.a, 'villa', row.pyung, yr), li = cl.lines.map(function(x) { if (/^수리비/.test(x[0])) return ['수리비' + (parseInt(row.a.repair) ? ' (직접 입력)' : ' (연식 기준)'), rep]; return x; }), cost = li.reduce(function(sum, x) { return sum + x[1]; }, 0);
-    var pre = ve.est - pe.bid - cost, tax = calcResaleIncomeTax('dealer', pre, 0, adjOf(row.a), myHouseRankFor(row.a)).totalTax, net = pre - tax;
+    var pre = ve.est - pe.bid - cost, trV = calcResaleIncomeTax('dealer', pre, parseInt(row.a.holdMonths) || 0, adjOf(row.a), myHouseRankFor(row.a), recSaleYear(row.a, parseInt(row.a.holdMonths) || row.holdAuto || DEFAULT_INTEREST_HOLD_MONTHS)), tax = trV.totalTax, net = pre - tax;
+    cl = Object.assign({}, cl, { taxParts: [['종합소득세·지방소득세', (trV.incomeTax || 0) + (trV.localTax || 0)], ['건강보험 소득월액', trV.healthTax || 0], ['추가 세목(이익 기준)', trV.extraTax || 0]].filter(function(x) { return x[1] > 0; }) });
     return '<div class="dr-sec"><h4>추천 입찰가로 샀을 때 (비용 반영)</h4><table>'
         + '<tr><td>예상매도가</td><td class="r">' + fmt(ve.est) + '</td></tr><tr><td>− 입찰가</td><td class="r">' + fmt(pe.bid) + '</td></tr>'
-        + li.map(function(x) { return '<tr><td>− ' + x[0] + '</td><td class="r">' + toEok(String(x[1])) + '</td></tr>'; }).join('')
-        + '<tr><td>− 종합소득세·지방세</td><td class="r">' + toEok(String(tax)) + '</td></tr>'
+        + bidCostRowsHtml(Object.assign({}, cl, { tax: tax }), li)
         + '<tr><td><b>예상 순마진(세후)</b></td><td class="r"><b style="color:' + (net >= 1000 ? '#16a34a' : '#dc2626') + ';">' + toEok(String(Math.round(net))) + '</b></td></tr>'
         + '<tr><td class="dr-sub">필요 현금(입찰가 − 대출 ' + fmt(cl.loan) + ' + 입찰 후~매도 전 비용 ' + fmt(cl.cashCost) + ', 매도 때 정산되는 수수료·부가세 제외)</td><td class="r dr-sub">' + fmt(cl.cash) + '</td></tr></table>'
         + '<div class="dr-sub">예상매도가 ' + fmt(ve.est) + '이 맞는다는 가정의 값이에요(빌라 시세 보통 오차 약 10%).' + (ev.ve.stack && ev.ve.stack.l10 ? ' 하위 10% 값(' + fmt(ev.ve.stack.l10) + ')에 팔리면 순마진은 약 ' + fmt(Math.round(net - (ve.est - ev.ve.stack.l10))) + '이에요(세금 변화 제외).' : '') + '</div></div>';
