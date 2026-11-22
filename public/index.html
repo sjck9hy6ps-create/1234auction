@@ -1194,6 +1194,12 @@ body.ui2 #my-assets-panel { position:fixed; top:104px; right:64px; left:auto; bo
 .lg-cardform .lg-cost-card { min-height:72px; justify-content:center; }
 .lg-cardform .lg-cost-val { font-size:17px; font-weight:800; color:#111827; padding:3px 0; word-break:keep-all; }
 .lg-cardform .lg-cost-val.empty { font-size:12.5px; font-weight:500; color:#b3b9c3; }
+.lg-cardform .lg-req-card { border:1.5px dashed #f59e0b !important; background:#fffbeb !important; }
+.lg-cardform .lg-req-card > label { color:#b45309 !important; font-weight:700; }
+.lg-cardform .lg-req-card > label::after { content:'필수'; margin-left:5px; font-size:9.5px; background:#f59e0b; color:#fff; border-radius:8px; padding:1px 6px; vertical-align:1px; }
+.lg-cardform .lg-req-card.cond > label::after { content:'해당 시'; background:#6366f1; }
+.lg-cardform .lg-req-card .lg-req-est { font-size:10.5px; color:#b45309; }
+.lg-cardform .lg-req-warn { grid-column:1 / -1; font-size:12px; color:#b45309; background:#fffbeb; border:1px solid #fde68a; border-radius:8px; padding:6px 10px; }
 .lg-cardform .lg-cost-add { border-style:dashed; background:#fafaff; } .lg-cardform .lg-cost-add > label { color:#4f46e5; font-weight:700; }
 #lg-cost-pop { position:fixed; inset:0; background:rgba(15,23,42,.45); z-index:100001; display:flex; align-items:center; justify-content:center; padding:12px; }
 #lg-cost-pop .lgp-card { background:#fff; border-radius:14px; width:100%; max-width:460px; max-height:90vh; overflow:auto; box-shadow:0 10px 40px rgba(0,0,0,.3); padding:14px; }
@@ -33017,7 +33023,38 @@ function ledgerCostCardsHtml(d) {
         var w = lgN(it.amount) ? Math.round(lgN(it.amount) * 10000) : 0;
         return '<div class="lg-field lg-cost-card" onclick="ledgerCostOpen(\'' + maEsc(it.id) + '\')"><label>' + (it.inv ? '🧾 ' : '') + maEsc(it.sub || it.cat || '비용') + '</label><div class="lg-cost-val' + (w ? '' : ' empty') + '">' + (w ? lgWonText(w) : '금액 입력') + '</div></div>';
     }).join('');
-    return cards + '<div class="lg-field lg-cost-card lg-cost-add" onclick="ledgerCostOpen(\'new\')"><label>+ 비용 추가</label><div class="lg-cost-val empty">눌러서 입력</div></div>';
+    return lgReqCardsHtml(d) + cards + '<div class="lg-field lg-cost-card lg-cost-add" onclick="ledgerCostOpen(\'new\')"><label>+ 비용 추가</label><div class="lg-cost-val empty">눌러서 입력</div></div>';
+}
+
+/* ✅ 필수 비용 카드(2026-11-22, 사용자): 모든 경매건에 꼭 들어가는 세금·진행 비용은 미리 카드로 띄워 두고 금액만 입력(수리비·이동비처럼 있을 수도 없을 수도 있는 것은 제외). 이미 같은 항목이 있으면 카드를 숨김 */
+function lgReqList(d) {
+    var winP = lgN((d.win || {}).price), saleP = lgN((d.sale || {}).price), type = d.type === 'officetel' ? 'officetel' : (d.type === 'other' ? 'other' : 'apt');
+    var rank = 1; try { rank = ttRank((d.win || {}).date || ''); } catch (e) {}
+    var est = function(f) { try { var v = f(); return v > 0 ? v : 0; } catch (e) { return 0; } };
+    var list = [
+        { cat: '취득', sub: '취득세', label: '취득세(농특·교육세 포함)', est: winP ? est(function() { return calcAcquisitionTaxDetailed(winP, type, parseFloat(d.pyung) || 25, rank, false, false); }) : 0, date: (d.win || {}).date },
+        { cat: '취득', sub: '등기·법무사비(등록면허세 포함)', label: '등기·법무사비', est: winP ? est(function() { return calcRegistryFee(winP); }) : 0, date: (d.win || {}).date },
+        { cat: '매도', sub: '중개수수료', label: '중개수수료(매도)', est: saleP ? est(function() { return calcAgentFee(saleP, type === 'apt' ? 'apt' : 'other'); }) : 0, date: (d.sale || {}).date },
+        { cat: '매도', sub: '인지세(매매계약서, 매도인 몫)', label: '인지세(매도인 몫)', est: saleP ? est(function() { return calcStampDuty(saleP); }) : 0, date: (d.sale || {}).date }
+    ];
+    // 6/1에 소유한 해가 있으면 보유세도 챙기도록(해당 시)
+    var w = (d.win || {}).date, sd = (d.sale || {}).date;
+    if (w && sd) { var held = false; for (var y = +String(w).slice(0, 4); y <= +String(sd).slice(0, 4); y++) { var D = new Date(y, 5, 1), a = new Date(w), b = new Date(sd); if (a <= D && b > D) held = true; }
+        if (held) { list.push({ cat: '보유', sub: '재산세', label: '재산세(6/1 소유)', cond: 1, est: 0, date: '' }); list.push({ cat: '보유', sub: '종합부동산세', label: '종합부동산세(6/1 소유)', cond: 1, est: 0, date: '' }); } }
+    return list;
+}
+function lgReqMissing(d) {
+    var items = (d.items || []).filter(function(x) { return !x.q; });
+    return lgReqList(d).filter(function(r) { return !items.some(function(it) { return it.cat === r.cat && it.sub === r.sub && lgN(it.amount) > 0; }); });
+}
+function lgReqCardsHtml(d) {
+    var miss = lgReqMissing(d); if (!miss.length) return '';
+    var h = '<div class="lg-req-warn">⚠️ 필수 비용 ' + miss.filter(function(r) { return !r.cond; }).length + '건' + (miss.some(function(r) { return r.cond; }) ? ' + 해당 시 ' + miss.filter(function(r) { return r.cond; }).length + '건' : '') + '이 비어 있어요 - 카드를 눌러 금액만 입력하세요(없으면 0 대신 비워 두세요)</div>';
+    return h + miss.map(function(r) { return '<div class="lg-field lg-cost-card lg-req-card' + (r.cond ? ' cond' : '') + '" onclick="ledgerReqOpen(\'' + maEsc(r.cat + '|' + r.sub) + '\')"><label>' + maEsc(r.label) + '</label><div class="lg-cost-val empty">금액 입력</div>' + (r.est ? '<div class="lg-req-est">앱 예상 ' + lgWonText(Math.round(r.est * 10000)) + '</div>' : '') + '</div>'; }).join('');
+}
+function ledgerReqOpen(key) {
+    ledgerSyncDraft(); var d = ledgerDraft; if (!d) return; var r = lgReqList(d).filter(function(x) { return x.cat + '|' + x.sub === key; })[0]; if (!r) return;
+    lgCostEdit = { it: { id: 'li_' + Date.now(), date: r.date || '', cat: r.cat, sub: r.sub, amount: '', memo: '', inv: 0 }, isNew: true, req: r }; ledgerCostPopRender();
 }
 var lgCostEdit = null;
 function ledgerCostOpen(id) {
@@ -33027,6 +33064,13 @@ function ledgerCostOpen(id) {
 }
 function ledgerCostPopRender() {
     var e = lgCostEdit; if (!e) return; var it = e.it, old = document.getElementById('lg-cost-pop');
+    if (e.req) {   // 필수 비용: 항목은 정해져 있고 금액만 입력
+        var rq = e.req, rh = '<div id="lg-cost-pop" onclick="if(event.target===this)ledgerCostClose()"><div class="lgp-card lg-cardform"><div class="lgp-h"><span>✅ ' + maEsc(rq.label) + ' 금액</span><a href="#" onclick="ledgerCostClose();return false;" style="font-size:13px;color:#6b7280;text-decoration:none;">✕ 닫기</a></div>'
+            + '<div class="lg-fields"><div class="lg-field lgp-wide"><label for="lgp-amt">금액 <span class="lg-unit">원</span></label><input id="lgp-amt" type="number" step="1" inputmode="numeric" class="lg-won" value="" placeholder="원 단위로 입력" oninput="ledgerCostPopLive()"><div class="lg-hint" id="lgp-hint"></div></div></div>'
+            + (rq.est ? '<div class="ma-sub" style="margin-top:6px;color:#b45309;">앱 예상 ' + lgWonText(Math.round(rq.est * 10000)) + ' (참고용 - 실제 낸 금액을 넣으세요)</div>' : '')
+            + '<div class="lgp-actions"><span class="grow"></span><button class="modal-btn btn-gray" onclick="ledgerCostClose()">취소</button><button class="modal-btn btn-purple" onclick="ledgerCostConfirm()">확인</button></div></div></div>';
+        if (old) old.remove(); document.body.insertAdjacentHTML('beforeend', rh); setTimeout(function() { var a = document.getElementById('lgp-amt'); if (a) try { a.focus(); } catch (x) {} }, 60); return;
+    }
     var h = '<div id="lg-cost-pop" onclick="if(event.target===this)ledgerCostClose()"><div class="lgp-card lg-cardform"><div class="lgp-h"><span>' + (e.isNew ? '➕ 비용 추가' : '✏️ 비용 수정') + '</span><a href="#" onclick="ledgerCostClose();return false;" style="font-size:13px;color:#6b7280;text-decoration:none;">✕ 닫기</a></div>'
         + '<div class="lg-fields"><div class="lg-field lgp-wide"><label for="lgp-cat">항목</label><select id="lgp-cat" onchange="ledgerCostPopLive()">' + lgCatOpts((it.cat || '') + '|' + (it.sub || '')) + '</select></div>'
         + '<div class="lg-field lgp-wide"><label for="lgp-amt">금액 <span class="lg-unit">원</span></label><input id="lgp-amt" type="number" step="1" inputmode="numeric" class="lg-won" value="' + maEsc(lgWon(it.amount)) + '" placeholder="원 단위로 입력" oninput="ledgerCostPopLive()"><div class="lg-hint" id="lgp-hint"></div></div>'
@@ -33049,8 +33093,10 @@ function ledgerCostCommit(mut) {   // 초안에 반영하고 화면(카드)·위
     var pan = document.getElementById('my-assets-panel'), keep = pan ? pan.scrollTop : 0; renderMyAssets(); if (pan) pan.scrollTop = keep; try { ledgerLive(); } catch (x) {}
 }
 function ledgerCostConfirm() {
-    var e = lgCostEdit; if (!e) return; var ck = (document.getElementById('lgp-cat').value || '|').split('|');
-    var it = Object.assign({}, e.it, { cat: ck[0], sub: ck[1], amount: lgFromWon(document.getElementById('lgp-amt').value), date: document.getElementById('lgp-date').value, memo: document.getElementById('lgp-memo').value, inv: document.getElementById('lgp-inv').checked ? 1 : 0 });
+    var e = lgCostEdit; if (!e) return; var it;
+    if (e.req) { var amt0 = lgFromWon(document.getElementById('lgp-amt').value); if (!lgN(amt0)) { ledgerCostClose(); return; } it = Object.assign({}, e.it, { amount: amt0 }); }
+    else { var ck = (document.getElementById('lgp-cat').value || '|').split('|');
+        it = Object.assign({}, e.it, { cat: ck[0], sub: ck[1], amount: lgFromWon(document.getElementById('lgp-amt').value), date: document.getElementById('lgp-date').value, memo: document.getElementById('lgp-memo').value, inv: document.getElementById('lgp-inv').checked ? 1 : 0 }); }
     ledgerCostCommit(function(items) { var i = items.findIndex(function(x) { return x.id === it.id; }); if (i >= 0) items[i] = it; else items.push(it); });
 }
 function ledgerCostDelete() {
@@ -33272,6 +33318,8 @@ function ledgerLive() {   // 장부 입력 화면 위쪽 계산 박스(입력할
 async function ledgerSave() {
     ledgerSyncDraft(); var d = ledgerDraft;
     if (!d.name) { alert('이름을 입력해 주세요.'); return; }
+    var missReq = lgReqMissing(d).filter(function(r) { return !r.cond; });
+    if (missReq.length && !confirm('필수 비용 ' + missReq.length + '건이 비어 있어요: ' + missReq.map(function(r) { return r.label; }).join(', ') + '\n빠뜨리면 순수익이 실제보다 높게 나와요. 그래도 저장할까요?')) return;
     d.items = (d.items || []).filter(function(x) { return lgN(x.amount) > 0; }); d.loans = (d.loans || []).filter(function(l) { return lgN(l.amount) > 0; });
     delete d._imp; lgFreezeIfDue(d); if (!d.taxSnap) d.taxSnap = lgMakeSnap(d);   // 처음 저장할 때 그 시점의 세율표를 함께 보관(편집 화면의 버튼으로 다시 저장 가능)
     d.updatedAt = Date.now(); if (!d.createdAt) d.createdAt = d.updatedAt;
