@@ -21,6 +21,7 @@ if (!rcForce) {
     console.log(`빌라 월세 재계산 ${rcForce ? '실행(저장본이 오래됐거나 없음)' : '건너뜀(저장본이 5일 안)'}`);
   } catch (e) { rcForce = true; }
 }
+if (process.env.WRITE_KEY) await page.addInitScript((k) => { try { localStorage.setItem('writeKey', k); } catch (e) {} }, process.env.WRITE_KEY);   // 2026-11-22: 강제 단계에서도 내 자산·장부를 읽고 저장하도록
 await page.addInitScript((f) => { window.__rcForce = f; window.__prefetchAhead = 10; }, rcForce); // 지역 자료 미리 받기도 4곳 → 10곳(가상 브라우저는 화면이 없어 더 많이 받아도 됨)
 page.setDefaultTimeout(60000);
 page.on('pageerror', (e) => console.log('페이지 오류:', String(e).slice(0, 200)));

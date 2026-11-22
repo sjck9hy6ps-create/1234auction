@@ -35,7 +35,7 @@ const cases = JSON.parse(fs.readFileSync(CASES, 'utf8')), pre = JSON.parse(fs.re
 // 필요한 외부 값 1건: 내 자산(세금 계산용 주택 수·소득 설정) - 한 번만 받음(Redis 읽기 1회)
 let assets = [];
 for (let k = 0, wait = 10000; k < 6; k++, wait = Math.min(wait * 2, 120000)) {
-  const r = await fetch(SITE + '/api/auction?kind=myAssets', { signal: AbortSignal.timeout(30000) }).then((x) => (x.ok ? x.json() : null)).catch(() => null);
+  const r = await fetch(SITE + '/api/auction?kind=myAssets', { headers: process.env.WRITE_KEY ? { 'x-write-key': process.env.WRITE_KEY } : {}, signal: AbortSignal.timeout(30000) }).then((x) => (x.ok ? x.json() : null)).catch(() => null);
   if (Array.isArray(r)) { assets = r; break; }
   console.log(`내 자산 못 받음(${k + 1}/6) - ${Math.round(wait / 1000)}초 뒤 다시`); await sleep(wait);
 }

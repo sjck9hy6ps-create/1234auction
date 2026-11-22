@@ -3147,7 +3147,7 @@ body.tb-menu-open.ui2 #tb-menu.open { z-index:9301; }
         try {
             var url = typeof input === 'string' ? input : ((input && input.url) || '');
             var method = String((init && init.method) || (input && input.method) || 'GET').toUpperCase();
-            if (method !== 'GET' && method !== 'HEAD' && /^(\/api\/|https:\/\/1234auction\.vercel\.app\/api\/)/.test(url)) {
+            if (((method !== 'GET' && method !== 'HEAD') || /[?&]kind=(myAssets|ledger)(&|$)/.test(url)) && /^(\/api\/|https:\/\/1234auction\.vercel\.app\/api\/)/.test(url)) {   // 2026-11-22: 내 자산·장부 읽기에도 열쇠 첨부
                 var key = ''; try { key = localStorage.getItem('writeKey') || ''; } catch (e) {}
                 if (key) { init = Object.assign({}, init || {}); var h = new Headers(init.headers || (input && input.headers) || {}); h.set('x-write-key', key); init.headers = h; }
             }

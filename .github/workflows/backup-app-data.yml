@@ -10,6 +10,8 @@ on:
 jobs:
   backup:
     runs-on: ubuntu-latest
+    env:
+      WRITE_KEY: ${{ secrets.WRITE_KEY }}   # 저장 열쇠(없으면 빈 값 - 강제 단계 전까지는 없어도 동작)
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4

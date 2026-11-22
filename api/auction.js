@@ -24,7 +24,7 @@
 // myAssets(2026-10): 💼 내 자산 탭 - 보유 부동산·올해 소득(몇 건뿐이라 저장량 부담 없음)
 const KINDS = { auctions: 'auctions', siteNotes: 'siteNotes', bidCases: 'bidCases', myAssets: 'myAssets', ledger: 'ledger', feedback: 'feedback', listingRaw: 'listingRaw', houseImg: 'houseImg', aiStory: 'aiStory' }; // listingRaw: 크롬 확장이 보낸 네이버 매물 목록 원문 수신함(2026-10-18) - 앱이 읽어 반영한 뒤 지움 // feedback: 앱 안 '수정 요청'(2026-10-11)
 
-import { rejectWrite, writeAuthMode } from './_auth.js';
+import { rejectWrite, writeAuthMode, checkWrite } from './_auth.js';
 
 export default async function handler(req, res) {
     const REDIS_URL = process.env.UPSTASH_REDIS_URL;
@@ -111,6 +111,15 @@ export default async function handler(req, res) {
             const day = new Date(Date.now() + 9 * 3600000).toISOString().slice(0, 10);
             if (rejectWrite(req, res, (reason) => { cmd(['HINCRBY', 'writeauth', day + '|' + reason + '|' + kind, 1]).catch(() => {}); cmd(['HSET', 'writeauth', 'last|' + reason, JSON.stringify({ at: new Date().toISOString(), ua: String(req.headers['user-agent'] || '').slice(0, 80), kind })]).catch(() => {}); })) return;
         }
+        /* 2026-11-22: 개인 재무 자료(내 자산·실거래 장부)는 읽기에도 같은 열쇠 요구 - 모니터링 단계에서는 허용하고 기록만('read|종류'), 강제 단계(WRITE_AUTH_MODE=enforce)에서는 열쇠 없으면 401.
+           기기가 열쇠를 보내는지 확인하려고 통과(ok)도 날짜별로 센다 */
+        if (req.method === 'GET' && (kind === 'myAssets' || kind === 'ledger')) {
+            const day = new Date(Date.now() + 9 * 3600000).toISOString().slice(0, 10), g = checkWrite(req);
+            res.setHeader('Cache-Control', 'no-store');   // 개인 자료는 캐시에 남기지 않음
+            if (g.mode !== 'off') cmd(['HINCRBY', 'writeauth', day + '|' + g.reason + '|read:' + kind, 1]).catch(() => {});
+            if (g.mode === 'enforce' && !g.ok) { res.setHeader('Cache-Control', 'no-store'); return res.status(401).json({ error: '저장 열쇠가 필요해요 (앱 ☰ 메뉴 → 🔑 저장 열쇠)', code: 'write-key' }); }
+        }
+        if ((req.method === 'POST' || req.method === 'DELETE') && checkWrite(req).ok && writeAuthMode() !== 'off') { const day2 = new Date(Date.now() + 9 * 3600000).toISOString().slice(0, 10); cmd(['HINCRBY', 'writeauth', day2 + '|ok|' + kind, 1]).catch(() => {}); }
         await ensureMigrated();
 
         if (req.method === 'GET' && req.query.diag === 'usage') {

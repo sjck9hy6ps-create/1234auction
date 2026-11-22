@@ -5,6 +5,6 @@ SITE=${SITE_URL:-https://1234auction.vercel.app}
 OUT=${1:-backups/app-data-$(date +%Y%m%d)}
 mkdir -p "$OUT"
 for k in auctions bidCases siteNotes myAssets ledger; do
-  curl -s -m 180 "$SITE/api/auction?kind=$k" -o "$OUT/$k.json" -w "$k %{http_code} %{size_download}바이트\n"
+  curl -s -m 180 ${WRITE_KEY:+-H "x-write-key: $WRITE_KEY"} "$SITE/api/auction?kind=$k" -o "$OUT/$k.json" -w "$k %{http_code} %{size_download}바이트\n"
 done
 echo "저장 위치: $OUT"
