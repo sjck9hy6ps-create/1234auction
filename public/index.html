@@ -1165,6 +1165,7 @@ body.ui2 #my-assets-panel { position:fixed; top:104px; right:64px; left:auto; bo
 .lg-sub-box { background:#fff; border:1px solid #e5e7eb; border-radius:10px; padding:8px 10px; margin-top:6px; } .lg-sub-h { font-size:11.5px; font-weight:700; color:#6b7280; margin-bottom:4px; }
 .lg-item { background:#fff; border:1px solid #e5e7eb; border-radius:10px; padding:8px 10px; margin-bottom:6px; }
 .lg-item-card { border:2px solid #c7d2fe; border-radius:12px; padding:10px 12px; margin-bottom:10px; box-shadow:0 1px 4px rgba(79,70,229,0.08); cursor:text; }
+@keyframes lgFlash { 0% { background:#e0e7ff; box-shadow:0 0 0 4px rgba(99,102,241,.35); } 100% { background:#fff; box-shadow:0 1px 4px rgba(79,70,229,0.08); } } .lg-item.lg-flash { animation:lgFlash 1.6s ease-out; }
 .lg-item-card:focus-within { border-color:#6366f1; box-shadow:0 0 0 3px rgba(99,102,241,0.15); }
 .lg-ic-top { display:flex; gap:8px; align-items:flex-end; } .lg-ic-cat { flex:1 1 auto; } .lg-ic-cat select { font-weight:700; }
 .lg-ic-del { flex:0 0 auto; color:#c62828; font-size:12px; padding:8px 4px; white-space:nowrap; }
@@ -33073,10 +33074,18 @@ function ledgerImportApply() {
     if (ln) { d.loans = d.loans || [{}, {}]; d.loans[0] = { amount: lgFromWon(ln.val), rate: lgN(ln.rate), start: winD, end: saleD, interestPaid: '' }; }
     delete d._imp; renderMyAssets();
 }
-function ledgerAddItem() {
+function ledgerAddItem() {   // 새 비용 카드를 맨 아래에 추가 → 그 카드로 화면을 옮기고 잠깐 강조(2026-11-22 사용자: 눌러도 반응이 없어 보임 - 새 카드가 화면 밖 아래에 생겨서 변화가 안 보였음)
     ledgerSyncDraft(); var d = ledgerDraft; d.items = d.items || [];
-    d.items.push({ id: 'li_' + Date.now(), date: (d.win && d.win.date) || '', cat: '취득', sub: '취득세', amount: '', memo: '' }); renderMyAssets();
-    setTimeout(function() { var l = document.querySelectorAll('#lg-items .lg-i-amt'); if (l.length) { var e = l[l.length - 1]; try { e.scrollIntoView({ block: 'center' }); e.focus(); } catch (x) {} } }, 30);
+    d.items.push({ id: 'li_' + Date.now(), date: (d.win && d.win.date) || '', cat: '취득', sub: '취득세', amount: '', memo: '' });
+    var pan = document.getElementById('my-assets-panel'), keep = pan ? pan.scrollTop : 0; renderMyAssets(); if (pan) pan.scrollTop = keep;
+    var go = function() {
+        var cards = document.querySelectorAll('#lg-items .lg-item'), el = cards[cards.length - 1]; if (!el || !pan) return;
+        var pr = pan.getBoundingClientRect(), er = el.getBoundingClientRect(); pan.scrollTop += er.top - pr.top - 90;
+        el.classList.add('lg-flash'); setTimeout(function() { el.classList.remove('lg-flash'); }, 1800);
+        var i = el.querySelector('.lg-i-amt'); if (i) { try { i.focus({ preventScroll: true }); } catch (x) { try { i.focus(); } catch (y) {} } }
+        var n = document.getElementById('lg-add-note'); if (n) n.textContent = '✔ ' + cards.length + '번째 비용 카드가 추가됐어요 - 항목과 금액을 입력하세요';
+    };
+    requestAnimationFrame(function() { requestAnimationFrame(go); }); setTimeout(go, 250);
 }
 function ledgerDelItem(el) { ledgerSyncDraft(); var rows = Array.prototype.slice.call(document.querySelectorAll('#lg-items .lg-item')); var idx = rows.indexOf(el.closest('.lg-item')); var normal = ledgerDraft.items.filter(function(x) { return !x.q; }); if (idx >= 0) normal.splice(idx, 1); ledgerDraft.items = normal.concat(ledgerDraft.items.filter(function(x) { return x.q; })); renderMyAssets(); }
 function ledgerSyncDraft() {   // 화면 입력값을 초안에 모음(다시 그리기 전에 호출)
@@ -33231,7 +33240,7 @@ function ledgerEditForm() {
     h += '</div></div>';
     h += '<div class="lg-sec"><div class="lg-sec-h">비용 <span class="ma-sub" style="font-weight:normal;">· 건별 입력 (분류·세부항목, 날짜, 금액)</span></div><div id="lg-items">' + (d.items || []).filter(function(it) { return !it.q; }).map(function(it, i) { return ledgerItemRow(it, i, catOpts); }).join('') + '</div>'
         + '<div class="lg-vatbox"><label class="lg-check"><input type="checkbox" id="lg-vatDeduct"' + (d.vatDeduct ? ' checked' : '') + ' onchange="ledgerLive()"> 계산서 부가세를 <b>환급(매입세액 공제) 받아요</b></label><div class="ma-sub">끄면(기본) 부가세를 비용에 포함해요. 전용 85㎡ 이하 주택은 매도가 면세라 보통 공제가 안 돼요 - 85㎡ 초과 과세 매도처럼 환급받는 경우에만 켜세요(세무사 확인).</div></div>'
-        + '<div class="lg-actions"><button class="modal-btn btn-gray" onclick="ledgerAddItem()">+ 비용 항목 추가</button><button class="modal-btn btn-gray" onclick="ledgerQuickToggle()">' + (ledgerQuick ? '▲ 한 번에 입력 닫기' : '⚡ 한 번에 입력(예전 건 소급)') + '</button></div>';
+        + '<div class="lg-actions"><button class="modal-btn btn-gray" onclick="ledgerAddItem()">+ 비용 항목 추가</button><span id="lg-add-note" class="ma-sub" style="flex:1 1 100%;color:#4f46e5;"></span><button class="modal-btn btn-gray" onclick="ledgerQuickToggle()">' + (ledgerQuick ? '▲ 한 번에 입력 닫기' : '⚡ 한 번에 입력(예전 건 소급)') + '</button></div>';
     if (ledgerQuick) {
         var qv = {}; (d.items || []).forEach(function(it) { if (it.q) qv[it.cat + '|' + it.sub] = (qv[it.cat + '|' + it.sub] || 0) + lgN(it.amount); });
         h += '<div class="lg-sub-box"><div class="ma-sub">항목별 합계만 한 번에 넣어요(날짜는 취득일·매도일로 자동). 건별로 넣은 것과는 따로 더해져요. 금액은 원 단위.</div>'
