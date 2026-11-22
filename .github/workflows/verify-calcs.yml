@@ -1,0 +1,22 @@
+name: verify-calcs
+# 돈이 나오는 계산(세금·장부·입찰가)이 기준값과 맞는지 자동 점검. 실패하면 빨간 표시와 메일로 알려 줌.
+on:
+  push:
+    branches: [main]
+    paths: ['public/**', 'api/**', 'tests/calc-regression.mjs']
+  pull_request:
+  schedule:
+    - cron: '30 21 * * *'
+  workflow_dispatch:
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: npm install --no-save --no-package-lock playwright
+      - run: npx playwright install --with-deps chromium
+      - run: node tests/calc-regression.mjs

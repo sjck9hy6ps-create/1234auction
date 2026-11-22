@@ -9,6 +9,7 @@
     "ws": "^8.21.1"
   },
   "scripts": {
-    "test:rights": "node tests/rights-regression.cjs"
+    "test:rights": "node tests/rights-regression.cjs",
+    "test:calc": "node tests/calc-regression.mjs"
   }
 }
