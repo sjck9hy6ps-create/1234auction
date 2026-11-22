@@ -1211,6 +1211,7 @@ body.ui2 #my-assets-panel { position:fixed; top:104px; right:64px; left:auto; bo
 .lg-cardform .lg-simple { min-height:72px; justify-content:center; }
 .lg-cardform .lg-simple input, .lg-cardform .lg-simple select, .lg-cardform .lg-simple .lg-hint { display:none !important; }
 .lg-cardform .lg-simple .lg-unit { display:none; }
+.lg-cardform .lg-due { font-size:10.5px; color:#b45309; margin-top:1px; line-height:1.3; }
 .lg-cardform .lg-loan-card { background:#fff; border:1.5px solid #e0e7ff; border-radius:12px; padding:9px 11px 6px; cursor:pointer; display:flex; flex-direction:column; transition:border-color .12s, background .12s; }
 .lg-cardform .lg-loan-card:hover { border-color:#a5b4fc; background:#fafaff; }
 .lg-cardform .lg-loan-card > label { font-size:11px; color:#6b7280; font-weight:600; margin-bottom:1px; cursor:pointer; }
@@ -33061,6 +33062,9 @@ function lgReqList(d) {
         { cat: '매도', sub: '중개수수료', label: '중개수수료(매도)', est: saleP ? est(function() { return calcAgentFee(saleP, type === 'apt' ? 'apt' : 'other'); }) : 0, date: (d.sale || {}).date },
         { cat: '매도', sub: '인지세(매매계약서, 매도인 몫)', label: '인지세(매도인 몫)', est: saleP ? est(function() { return calcStampDuty(saleP); }) : 0, date: (d.sale || {}).date }
     ];
+    // 대출을 쓴 경우: 매도하며 갚을 때 중도상환수수료(해당 시)
+    var loanAmt = (d.loans || []).reduce(function(t, l) { return t + lgN(l.amount); }, 0);
+    if (loanAmt > 0) list.push({ cat: '금융', sub: '중도상환수수료', label: '중도상환수수료(대출 상환)', cond: 1, est: est(function() { return calcLoanPrepayFee(loanAmt, DEFAULT_LOAN_PREPAY_FEE_RATE); }), date: (d.sale || {}).date });
     // 6/1에 소유한 해가 있으면 보유세도 챙기도록(해당 시)
     var w = (d.win || {}).date, sd = (d.sale || {}).date;
     if (w && sd) { var held = false; for (var y = +String(w).slice(0, 4); y <= +String(sd).slice(0, 4); y++) { var D = new Date(y, 5, 1), a = new Date(w), b = new Date(sd); if (a <= D && b > D) held = true; }
@@ -33140,6 +33144,16 @@ function lgFieldText(inp) {
     if (inp.id === 'lg-vatRatio') return v + '%'; if (inp.id === 'lg-pyung') return v + '평';
     return maEsc(v);
 }
+/* 📅 매도 뒤 신고·납부 기한 안내(세금 카드 아래 작은 글씨): 매도일 기준. 예정신고=매도월 말일부터 2개월 / 종합소득세·지방소득세 확정=다음 해 5월 / 부가세=1~6월 거래 7/25·7~12월 거래 다음 해 1/25 / 건보 소득월액=시행령 41조③ 소득 반영 시점(다음 해 11월 산정분부터) - 앞서 확인한 안내 기준, 세무사 확인 */
+function lgTaxDue(id) {
+    var sd = (document.getElementById('lg-saleDate') || {}).value, m = /^(\d{4})-(\d{2})-(\d{2})/.exec(sd || ''); if (!m) return '매도일을 넣으면 기한이 나와요';
+    var y = +m[1], mo = +m[2] - 1, sale = new Date(y, mo, +m[3]), rep2 = ttRoll(new Date(y, mo + 3, 0)), fin = ttRoll(new Date(y + 1, 4, 31)), f = function(d) { return ttS(d); };
+    if (id === 'lg-tax1') return '예정신고 ' + f(rep2) + ' · 확정신고 ' + f(fin);
+    if (id === 'lg-tax3') return '종합소득세와 함께 ' + f(fin);
+    if (id === 'lg-tax2') return '신고·납부 ' + (mo < 6 ? y + '-07-25' : (y + 1) + '-01-25');
+    if (id === 'lg-tax4') return (y + 1) + '년 11월 산정분부터 1년';
+    return '';
+}
 function lgCardify(root) {
     var form = (root || document).querySelector('#lg-form'); if (!form) return;
     form.querySelectorAll('.lg-sec').forEach(function(sec) {
@@ -33160,6 +33174,8 @@ function lgCardify(root) {
             f.classList.add('lg-simple'); var v = f.querySelector('.lg-simple-val'); if (!v) { v = document.createElement('div'); f.appendChild(v); }
             var txt = lgFieldText(inp), est = /^lg-tax/.test(inp.id) && txt && inp.getAttribute('data-est') === '1';
             v.className = 'lg-simple-val' + (txt ? '' : ' empty'); v.innerHTML = (txt || '눌러서 입력') + (est ? '<small>예상</small>' : '');
+            var due = /^lg-tax/.test(inp.id) ? lgTaxDue(inp.id) : ''; var old = f.querySelector('.lg-due'); if (old) old.remove(); if (due) { var dv = document.createElement('div'); dv.className = 'lg-due'; dv.textContent = due; f.appendChild(dv); }
+            if (inp.id === 'lg-tax0' && (myAssets.profile || {}).isDealer !== false && !txt) f.style.display = 'none';   // 매매사업자는 양도소득세가 아니라 종합소득세로 내므로 빈 칸은 숨김
             f.onclick = function() { ledgerFieldOpen([inp.id], lgFieldLabel(f)); };
         });
     });
