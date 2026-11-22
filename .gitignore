@@ -6,3 +6,5 @@ backups/
 full-backup/
 
 tests/fixtures-private/
+
+node_modules/
