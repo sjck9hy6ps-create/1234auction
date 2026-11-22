@@ -1189,7 +1189,7 @@ body.ui2 #my-assets-panel { position:fixed; top:104px; right:64px; left:auto; bo
 #lg-form .lg-sub-box { background:#f5f7ff; border:1.5px solid #e0e7ff; }
 #lg-form .lg-sub-h { font-size:12.5px; color:#4338ca; }
 #lg-form .lg-vatbox { background:#fff; border:1.5px solid #e0e7ff; border-radius:12px; }
-@media (max-width: 640px) { #lg-form .lg-fields > .lg-field input[type=text], #lg-form .lg-fields > .lg-field input[type=number], #lg-form .lg-fields > .lg-field input[type=date], #lg-form .lg-fields > .lg-field select { font-size:16px; padding:3px 0 !important; } #lg-form .lg-fields > .lg-field select { font-size:14px; } }
+@media (max-width: 640px) { #lg-form .lg-fields > .lg-field input[type=text], #lg-form .lg-fields > .lg-field input[type=number] { font-size:16px; padding:3px 0 !important; } #lg-form .lg-fields > .lg-field input[type=date] { font-size:12.5px; letter-spacing:-0.3px; padding:3px 0 !important; } #lg-form .lg-fields > .lg-field select { font-size:13px; } #lg-form .lg-fields > .lg-field input[type=date]::-webkit-calendar-picker-indicator { margin-left:0; padding:0; width:14px; } }
 .lg-click { cursor:pointer; } .lg-click:hover { background:#f5f3ff; } .lg-click .lg-more { font-size:10px; color:#7c3aed; font-weight:normal; white-space:nowrap; }
 .ma-pop { position:fixed; inset:0; background:rgba(15,23,42,.45); z-index:100000; display:flex; align-items:center; justify-content:center; padding:12px; }
 .ma-pop-card { background:#fff; border-radius:12px; width:100%; max-width:640px; max-height:88vh; display:flex; flex-direction:column; box-shadow:0 10px 40px rgba(0,0,0,.3); }
@@ -33226,7 +33226,7 @@ function ledgerEditForm() {
     [0, 1].forEach(function(i) {
         var l = (d.loans || [])[i] || {};
         h += '<div class="lg-sub-box"><div class="lg-sub-h">대출 ' + (i + 1) + '</div><div class="lg-fields">' + lgWonField('lg-l' + i + 'amt', '대출 금액', l.amount, '예: 180000000') + lgField('lg-l' + i + 'rate', '연 이율(%)', l.rate, '예: 5.2', 'number', ' step="0.01"')
-            + lgSel('lg-l' + i + 'type', '상환 방식', '<option value="bullet"' + (l.type === 'amort' ? '' : ' selected') + '>이자만 내고 원금 일시상환</option><option value="amort"' + (l.type === 'amort' ? ' selected' : '') + '>원리금균등상환</option>') + lgField('lg-l' + i + 'term', '총 대출기간(개월)', l.term, '원리금균등만 · 비우면 자동', 'number', ' step="1"') + lgField('lg-l' + i + 'start', '시작일', l.start, '', 'date') + lgField('lg-l' + i + 'end', '상환일', l.end, '', 'date') + lgWonField('lg-l' + i + 'paid', '실제 낸 이자(선택)', l.interestPaid, '비우면 계산') + '</div></div>';
+            + lgSel('lg-l' + i + 'type', '상환 방식', '<option value="bullet"' + (l.type === 'amort' ? '' : ' selected') + '>일시상환(이자만)</option><option value="amort"' + (l.type === 'amort' ? ' selected' : '') + '>원리금균등상환</option>') + lgField('lg-l' + i + 'term', '총 대출기간(개월)', l.term, '비우면 자동', 'number', ' step="1"') + lgField('lg-l' + i + 'start', '시작일', l.start, '', 'date') + lgField('lg-l' + i + 'end', '상환일', l.end, '', 'date') + lgWonField('lg-l' + i + 'paid', '실제 낸 이자(선택)', l.interestPaid, '비우면 계산') + '</div></div>';
     });
     h += '</div></div>';
     h += '<div class="lg-sec"><div class="lg-sec-h">비용 <span class="ma-sub" style="font-weight:normal;">· 건별 입력 (분류·세부항목, 날짜, 금액)</span></div><div id="lg-items">' + (d.items || []).filter(function(it) { return !it.q; }).map(function(it, i) { return ledgerItemRow(it, i, catOpts); }).join('') + '</div>'
