@@ -33024,7 +33024,7 @@ function ledgerDetailHtml(r, c) {
             vatRows += '<div><span>실제 낼 부가세</span><b>' + fmt(vatNet) + '</b><span>매출 − 공제</span></div>';
         }
     } else if (c.vatTotal) vatRows += '<div><span>계산서 부가세(비용 포함)</span><b>' + fmt(c.vatTotal) + '</b><span>공제 안 받음</span></div>';
-    parts.push('<div class="ma2-cost">' + cats + loans + revLines + '<div><span>낙찰가</span><b>' + fmt(c.winP) + '</b></div><div><span>총비용</span><b>' + fmt(c.totalCost) + '</b><span>낙찰가+비용+이자</span></div>' + vatRows + (c.hasTax ? '<div><span>' + (c.taxFrozen ? '세금·건보료 🔒' : (c.taxEst ? '세금·건보료(예상)' : '세금·건보료(실제)')) + '</span><b>' + fmt(c.taxSum) + '</b><span>' + (c.taxFrozen ? '매도일 지나 고정' : (c.taxEst ? '실제 입력 전' : '입력한 값')) + '</span></div>' : '') + '<div><span>투입 현금</span><b>' + fmt(c.cash) + '</b><span>대출 뺀 내 돈</span></div></div>');
+    parts.push('<div class="ma2-cost">' + cats + loans + revLines + '<div><span>낙찰가</span><b>' + fmt(c.winP) + '</b></div><div><span>총비용</span><b>' + fmt(c.totalCost) + '</b><span>낙찰가+비용+이자</span></div>' + vatRows + (c.hasTax ? '<div><span>' + (c.taxFrozen ? '세금·건보료 🔒' : (c.taxEst ? '세금·건보료(예상)' : '세금·건보료(실제)')) + '</span><b>' + fmt(c.taxSum) + '</b><span>' + (c.taxFrozen ? '매도일 지나 고정' : (c.taxEst ? '실제 입력 전' : '입력한 값')) + '</span></div>' : '') + '<div><span>투입 현금</span><b>' + (c.cash > 0 ? fmt(c.cash) : '0 (전액 대출)') + '</b><span>' + (c.cash > 0 ? '대출 뺀 내 돈' : '대출 한도가 비용보다 커요 · ' + fmt(-c.cash) + ' 남음') + '</span></div></div>');
     var pl = ledgerPlanned(r);
     if (pl && c.saleP) {   // 1단계: 예상 대비 차이
         var keys = ['취득(취득세·등기)', '명도·이사·청소', '수리', '인수·체납', '보유세·관리비', '중개·매도비', '이자·금융', '기타'], rows = '', impact = 0;
@@ -33457,7 +33457,7 @@ function ledgerLive() {   // 장부 입력 화면 위쪽 계산 박스(입력할
         var c = ledgerCalc(d), fm = maFmt, col = function(v) { return v == null ? '' : (v < 0 ? '#c62828' : '#2e7d32'); }, sold = lgN(c.saleP) > 0;
         el.innerHTML = lgItem('낙찰가', c.winP ? fm(c.winP) : '-') + (c.vatOn && c.saleP ? lgItem('건물분 부가세', fm(c.vatPay), '', '매출에서 뺌') : '') + lgItem('비용 합계', fm(c.itemsTotal), '', (c.vatTotal ? '부가세 ' + fm(c.vatTotal) + (d.vatDeduct ? ' 환급(비용 제외)' : ' 포함') + (c.interest ? ' · ' : '') : '') + (c.interest ? '이자 ' + fm(c.interest) + ' 별도' : '')) + lgItem('총비용', fm(c.totalCost), '', '낙찰가+비용+이자')
             + lgItem('세전 순이익', c.pre != null ? fm(c.pre) : '매도가 입력 후', col(c.pre), c.margin != null ? '마진율 ' + lgPct(c.margin, 1) : '') + lgItem('순수익 (세금 뺀 후)', c.net != null ? fm(c.net) : (sold ? '세금 입력 후' : '-'), col(c.net), c.hasTax ? '세금 ' + fm(c.taxSum) + (c.taxEst ? ' 예상' : ' 실제') + ' 제외' : '')
-            + lgItem('투입 현금(대출 후)', fm(c.cash), '', c.loanSum ? '대출 ' + fm(c.loanSum) : '') + (c.hold != null ? lgItem('보유', c.hold + '개월') : '');
+            + lgItem('투입 현금(대출 후)', c.cash > 0 ? fm(c.cash) : '0 (전액 대출)', '', c.loanSum ? '대출 ' + fm(c.loanSum) : '') + (c.hold != null ? lgItem('보유', c.hold + '개월') : '');
     } catch (e) {}
 }
 async function ledgerSave() {
