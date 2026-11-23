@@ -102,7 +102,7 @@ const EVAL_FN = (cs) => cs.map((c) => {
     else if (c.nRad != null && c.lat != null && c.nRad <= 2) why = '반경 거래 적음';   // 좌표가 없는 사례는 반경을 못 재므로 이 규칙을 적용하지 않음
     else if (!isNaN(fl) && fl <= 0) why = '지하';
     else if (pe.p < VILLA_VISIT_MIN_P) why = '낙찰 가능성 낮음';
-    return { id: c.id, sale: c.sale, actual: c.actual, minbid: c.minbid, est: ve.est, lvl: c.lvl, sido: c.sido, wbPrice: wb ? wb.price : null, margin: mp ? mp.margin : null, mpBid: mp ? mp.bid : null, rec: pe ? pe.bid : null, p: pe ? pe.p : null, net: pe ? pe.net : null, go: !why, why: why, bidders: c.bidders };
+    return { id: c.id, sale: c.sale, actual: c.actual, minbid: c.minbid, est: ve.est, lvl: c.lvl, sido: c.sido, wbPrice: wb ? wb.price : null, margin: mp ? mp.margin : null, mpBid: mp ? mp.bid : null, rec: pe ? pe.bid : null, p: pe ? pe.p : null, net: pe ? pe.net : null, go: !why, why: why, bidders: c.bidders, pb: pn && pn.atPred ? pn.atPred.bid : null, np: pn && pn.atPred ? pn.atPred.net : null, pb5: pn && pn.atPred5 ? pn.atPred5.bid : null, np5: pn && pn.atPred5 ? pn.atPred5.net : null, na: pn && pn.netAt ? Math.round(pn.netAt(c.actual)) : null, minM: mp ? mp.margin : null, age: mp ? mp.age : null, fails: c.fails == null ? null : c.fails };
   } catch (e) { return { id: c.id, err: String(e.message || e).slice(0, 120) }; }
 });
 async function runChunk(chunk, depth = 0) {   // 묶음이 실패하면 새 브라우저로 반으로 쪼개 다시(끝내 안 되면 그 묶음만 오류로 표시하고 다음으로)

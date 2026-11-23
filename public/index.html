@@ -4558,7 +4558,8 @@ function villaBidPlan(row, ve, mp, wb) {
     var bMax = mp.bid; if (bMax < row.minBid) return { infeasible: true, max: bMax };
     var best = null, step = Math.max(1, bMax * 0.0025);
     for (var b = row.minBid; b <= bMax + 0.5; b += step) { var p = villaProbAt(wb, b), net = netAt(b); if (net > 0 && (!best || p * net > best.ev)) best = { bid: Math.round(b), p: p, net: Math.round(net), ev: p * net }; }
-    return { max: bMax, ev: best, pMax: villaProbAt(wb, bMax) };
+    var pp = Math.max(wb.price || 0, row.minBid);   // 시험·후보 판정용 출력(2026-11-24): 예상 낙찰가·+5%에 입찰했을 때 순이익 - 값 계산은 그대로
+    return { max: bMax, ev: best, pMax: villaProbAt(wb, bMax), netAt: netAt, atPred: { bid: Math.round(pp), net: Math.round(netAt(pp)) }, atPred5: { bid: Math.round(pp * 1.05), net: Math.round(netAt(pp * 1.05)) } };
 }
 // 지역 선택(2026-10-10, 사용자: 대도시는 시별로) - 'g:서울'처럼 앞에 g:가 붙으면 그 시 전체(서울·인천은 구 묶음)
 /* 👥 물건별 예상 응찰자 수 · "많이 몰릴 물건" 필터 (2026-10-24, 사용자: 입찰자가 유독 몰리는 물건을 과거 사례로 골라내기 - 지역 평균이 아니라 물건별)
