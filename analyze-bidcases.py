@@ -3630,6 +3630,7 @@ def scorecard(D, amap, max_lag=None):
                      "prob": sn.get("prob"), "probC": sn.get("probC"), "win": sn.get("win"), "rg": sn.get("rg"), "snapSale": sn.get("sale"), "minbid": float(r.minbid), "at": sn.get("at"), "snapMin": sn.get("minBid")})
         rows[-1]["typ"] = str(x.get("propType") or x.get("type") or sn.get("type") or "?")
         rows[-1]["fails"] = getattr(r, "fails", None); rows[-1]["cls"] = getattr(r, "flow_cls", None)
+        for _k in ("np", "pb", "np5", "pb5", "safe", "watch", "go", "thr", "reg"): rows[-1][_k] = sn.get(_k)   # 2026-11-24 새 후보 기준 추적용 저장값
     out = {"n": len(rows)}
     if not rows:
         return out
@@ -3680,6 +3681,27 @@ def scorecard(D, amap, max_lag=None):
             out["winSaved"] = sv
         except Exception as ex:
             print("  입찰 전 저장 예상 낙찰가 성적표 건너뜀:", ex)
+    # 2026-11-24 새 후보 기준 추적(사용자 승인): 후보 = 예상 낙찰가에 입찰해도 순이익이 지방 500만·수도권 1천만 이상. 앱이 저장한 예상 낙찰가(pb)·+5%(pb5) 지점의 순이익(np·np5)을 이어
+    # 실제 낙찰가에서의 순이익을 근사 계산하고, 후보·안전폭·관찰별로 "추천가 이하 낙찰 비율 · 실제 낙찰가에 샀다면 기준 이상 비율 · 손실 비율"을 지역별로 집계
+    try:
+        if "np" in X.columns and X["np"].notna().any():
+            C = X[X["np"].notna() & X["pb"].notna() & X["np5"].notna() & X["pb5"].notna() & (X["pb5"].astype(float) != X["pb"].astype(float))].copy()
+            if len(C):
+                for _c in ("np", "pb", "np5", "pb5"): C[_c] = C[_c].astype(float)
+                C["netAct"] = C["np"] + (C["actual"] - C["pb"]) * (C["np5"] - C["np"]) / (C["pb5"] - C["pb"])
+                C["thrv"] = C["thr"].astype(float).where(C["thr"].notna(), np.where(C["cls"].astype(str) == "지방", 500.0, 1000.0))
+                for _c in ("go", "safe", "watch"): C[_c] = C[_c].fillna(False).astype(bool)
+                C["regg"] = np.where(C["cls"].astype(str) == "지방", "지방", "수도권")
+                tiers_ = []
+                for lab, mk in (("🚶 후보", C["go"]), ("🛡 안전폭", C["go"] & C["safe"]), ("👀 관찰", C["watch"]), ("그 외(패스)", ~C["go"] & ~C["watch"])):
+                    for rg_ in ("지방", "수도권"):
+                        G = C[mk & (C["regg"] == rg_)]
+                        if len(G) < 1: continue
+                        tiers_.append({"label": lab, "reg": rg_, "n": int(len(G)), "recWonPct": round(float(G["won"].mean()) * 100, 1), "okPct": round(float((G["netAct"] >= G["thrv"]).mean()) * 100, 1),
+                                       "lossPct": round(float((G["netAct"] < 0).mean()) * 100, 1), "netMed": round(float(G["netAct"].median()), 0)})
+                out["cand"] = {"n": int(len(C)), "from": str(C["at"].min())[:10], "tiers": tiers_}
+    except Exception as _ec:
+        print("  새 후보 기준 추적 건너뜀:", _ec)
     P = X[X["prob"].notna()]
     bins = [(0, 0.10, "10% 미만"), (0.10, 0.25, "10~25%"), (0.25, 0.50, "25~50%"), (0.50, 1.01, "50% 이상")]
     cal = []
