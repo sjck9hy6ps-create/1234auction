@@ -15718,10 +15718,10 @@ function applyRightsGate(row) {
     row.rightsStop = rightsStopFor(row.a);
     if (row.rightsStop) {
         row.warns.unshift('🚨 권리 위험: ' + row.rightsStop.names.join(' · ') + ' - 해결 방안 확인 전 입찰 비권장(추천가에는 이 위험이 반영되지 않았어요)');
-        if (row.visit) row.visit = Object.assign({}, row.visit, { go: false, why: '🚨 권리 위험: ' + row.rightsStop.names.join(' · ') });
+        if (row.visit) row.visit = Object.assign({}, row.visit, { go: false, watch: false, safe: false, why: '🚨 권리 위험: ' + row.rightsStop.names.join(' · ') });
         if (row.verdict === 'yes') row.verdict = 'check';
     }
-    if (row.a && row.a.bidExcluded && row.visit) row.visit = Object.assign({}, row.visit, { go: false, why: '🚫 입찰 제외(내가 선택)' });
+    if (row.a && row.a.bidExcluded && row.visit) row.visit = Object.assign({}, row.visit, { go: false, watch: false, safe: false, why: '🚫 입찰 제외(내가 선택)' });
 }
 function bbExclPass(r) { var ex = !!(r && r.a && r.a.bidExcluded), m = bidBoardState.excl; return m === 'only' ? ex : !ex; }
 function rightsStopBannerHtml(row) {
@@ -21909,6 +21909,7 @@ function bidPlanFor(row, fast) {
     }
     if (condOn && !best) return { infeasible: true, bMax: bMax, minBid: row.minBid, cond: true, minM: MINM };   // 낙찰 조건 보정 후 기대 순이익이 플러스가 되는 가격이 없음
     var out = { max: at(bMax), ev: best, p70: p70, rec: (!fast && row.recBid) ? at(row.recBid) : null, sale: row.sale };
+    out.atPred = at(Math.max(wb.price, row.minBid)); out.atPred5 = at(Math.max(wb.price * 1.05, row.minBid));   // 후보 판정용: 예상 낙찰가·+5%에 입찰했을 때(2026-11-24)
     if (!fast) {
         out.band = marginBandFor(row.sale, row);
         // 2026-10-20(사용자: 예상 낙찰가와 실제 차이를 알아야 마진을 포기하고라도 입찰할지 정함) - 예상 낙찰가 기준 +0·5·10%로 쓰면 낙찰 가능성과 순이익, 순이익 0이 되는 입찰가
@@ -21966,6 +21967,11 @@ function saleBandFor(row) {
    임장에서 확인한 인수 금액·수리비 등을 넣으면 같은 계산이 다시 돌아 추천가가 바뀜. */
 var VISIT_MIN_N12 = 3; // 같은 단지 같은 평형 최근 12개월 거래 최소 건수
 var BIG_MARGIN_MANWON = 3000;   // 2026-11-08: 지방 예상 순이익이 이 값 이상이면 경고(과거 낙찰 가정에서 손해 46%)
+/* 2026-11-24(사용자 승인) 입찰후보 = 예상 낙찰가에 입찰해도(낙찰 조건 보정까지 반영한 앱 계산, 상세 표 '예상 낙찰가 그대로' 줄과 같은 값) 순이익이 기준 이상 남는 물건.
+   수도권 외(지방)는 500만, 수도권(서울·경기·인천)은 1,000만. 아래 '관찰'은 후보 기준에 못 미치지만 가까운 물건(표시만, 입찰 판단 기준은 그대로) */
+var CAND_NET_MIN_LOCAL = 500, CAND_NET_MIN_METRO = 1000, WATCH_NET_MIN_LOCAL = 100, WATCH_NET_MIN_METRO = 500;
+function candNetMinOf(row) { return row && row.regionCls === '지방' ? CAND_NET_MIN_LOCAL : CAND_NET_MIN_METRO; }
+function watchNetMinOf(row) { return row && row.regionCls === '지방' ? WATCH_NET_MIN_LOCAL : WATCH_NET_MIN_METRO; }
 var VISIT_MIN_P = 0.20; // 임장은 비용이 작아 낙찰 가능성 20% 이상이면 후보(2026-10-09 이번 주 324건 중 28건). 추천가는 낙찰 가능성 × 순이익이 가장 큰 가격
 function computePick(row) {
     row.pick = null; row.visit = { go: false, why: '' };
@@ -22008,6 +22014,16 @@ function computePick(row) {
     if (n12 < VISIT_MIN_N12) { row.visit.why = '같은 단지 같은 평형 최근 1년 거래가 ' + n12 + '건뿐이에요' + (os0 && os0.lastAgeM != null ? '(마지막 거래 ' + os0.lastAgeM + '개월 전)' : '') + ' - 시세 근거가 약해요'; return; }
     /* 2026-11-08: 낙찰 가능성을 실제 낙찰률에 맞게 보정(probCalFor)하면서 같은 20% 기준이 훨씬 엄격해져 이번 주 비규제 아파트 475건 중 임장 후보가 44건에서 3건으로 줄었음 -
        기준도 같은 보정 척도로 환산(보정 전 20%와 같은 위험 수준). 보정이 없으면 20% 그대로 */
+    /* 2026-11-24(사용자 승인) 후보 기준: 예상 낙찰가에 입찰해도 순이익이 기준 이상(지방 500만·수도권 1천만). 전국 실제 낙찰 사건 시험에서 현재 기준보다 마진 확보율이 크게 높았음 */
+    var cnm = candNetMinOf(row), ap = pk.atPred, ap5 = pk.atPred5, wnm = watchNetMinOf(row);
+    row.visit.pred = ap ? Math.round(ap.net) : null;
+    if (!ap || ap.net < cnm) {
+        var apTxt = ap ? '예상 낙찰가(' + toEok(String(Math.round(Math.max(row.winbid.price, row.minBid)))) + ')에 입찰하면 순이익 ' + Math.round(ap.net).toLocaleString() + '만' : '예상 낙찰가 기준 순이익을 계산하지 못했어요';
+        if (ap && ap.net >= wnm) { row.visit.watch = true; row.visit.why = '👀 관찰 - ' + apTxt + ' (후보 기준 ' + cnm.toLocaleString() + '만에 조금 못 미쳐요)'; }
+        else row.visit.why = apTxt + '이라 후보 기준(' + cnm.toLocaleString() + '만)에 못 미쳐요';
+        return;
+    }
+    row.visit.safe = !!((ap5 && ap5.net >= cnm) || (row.regionCls === '지방' && row.fails === 3));
     var visitMinP = probCalFor(row, VISIT_MIN_P), lowP = pk.ev.p < visitMinP;   // 2026-11-08 사용자 지시: 낙찰 가능성이 낮은 물건도 후보로 보여줌(낮다는 표시만 붙임)
     row.visit.go = true; row.visit.lowP = lowP;
     // 임장 순위(2026-10, 사용자: "입찰후보를 순위로 나눌 수 있어?") - 추천가에서의 낙찰 가능성: 50% 이상 1순위 · 30~50% 2순위 · 20~30% 3순위
@@ -22785,7 +22801,7 @@ setTimeout(function() { if (auctionBadgeMode !== 'off') warmServerBoardOnce(); }
 /* 저장 계산(서버 사전 계산·브라우저 저장본)을 다시 써도 되는지 보는 '기본 계산' 버전(2026-11-08): computeBidBoardRow의 기본 계산(시세·보정·모델 입력)이 바뀔 때만 올림.
    판정·추천가 고르기(finalize·computePick) 단계만 바뀌면 BOARD_CALC_VER만 올림 - 이때는 저장본을 그대로 쓰고 판정만 뒤에서 다시 계산(화면은 즉시). 전엔 모든 변경이 저장본 7천여 건을 무효로 만들어 로딩이 비었음 */
 var BOARD_BASE_VER = 104; /* 104: 규제지역(조정대상지역·투기과열지구) 판정을 주소로 고쳐 취득세·대출에 반영(2026-11-14) / 103: 6개월 최고가 상한 철회(사용자: 요구 전 방식으로, 2026-11-12) */
-var BOARD_CALC_VER = 115;  /* 115: 권리분석 소액임차인 지역 세분화·2016년 이전 표·최초 근저당일 기준·1/2 한도 안분(2026-11-22 사용자 승인) */ /* 113: 매도 계약서 인지세(매도인 몫) 비용 반영(2026-11-22 사용자 요청) */ /* 112:  /* 112: 입찰후보 예상 순수익에 건강보험 소득월액 반영(직장가입자·연봉 입력 시, 2026-11-22 사용자 승인) */ /* 111: 흐름 상향 상한 +4%·거래량 급감 시 흐름 반(2026-11-15) */  /* (허가구역 자료 재시도 2026-11-08) */ // 110: 추천가 고른 뒤 낙찰 가능성·예상 낙찰가 대비 차이를 새 추천가로 다시 계산(2026-11-15) - // 107: 낙찰가 모델에 단지 가격 흐름 요인(flowC)·큰 상승 단지 상방 꼬리 분포(resQF) 추가(2026-11-10) - // 106: 시세 근거 얇음(6개월 1~2건) 필요 마진은 칸 하위 10% 하방·주변 단지 대체 시세 후보 제외(2026-11-09) - 105: 지방 추천가 손해 줄이기(거래 0건 제외·큰 마진 경고·근거 두께별 필요 마진, 2026-11-08) - // 104: 유찰 4회 이상은 이슈 강한 의심 - 임장 후보에서 제외(2026-11-08) - // 103: 후보 최소 순이익 500만·이슈 강한 의심·낙찰 가능성 낮은 물건도 후보(2026-11-08) - // 102: 후보 확대(하위25% 필터 제거·최소 순이익은 보정 전 기준, 2026-11-08) - // 101: 임장 후보 낙찰 가능성 기준을 보정된 확률 척도로 환산(후보가 3건으로 줄던 문제, 2026-11-08) - // 100: (입찰자 수 모델에 생활권 흐름 요인 후보 추가 2026-11-08) (새 사건은 새로고침 없이 자동 계산 2026-11-08) 100: 낙찰 조건 표에 근거 두께(같은 평형 6개월 거래수) 차원 추가(서버 검증 통과 시, 2026-11-08) - // 99: 사용자 방침(결과가 비슷해도 시장 흐름을 따르는 근거식이 더 정확하면 적용) - 낙찰 가능성 보정·낙찰 조건 하위 25% 필터를 추천가 고르기에 다시 적용(2026-11-08) - // 98: 낙찰 가능성 보정은 표시에만, 예상매도가 최근 쏠림 자동 보정(서버 walk-forward 검증 통과 시, 2026-11-08) - // 97: (호가 모으기: 같은 이름 단지는 네이버 지번 주소로 먼저 좁힘 2026-11-08) 97: 낙찰 가능성 양방향 보정(서버 시간순 검증 통과 시, 추천가 고르기에도 사용, 2026-11-08) - // 96: 낙찰 조건 하위 25% 필터는 채점에서 효과 없어 뺌(지방 손해 31.3→31.4%, 2026-11-08) - // 95: 추천가는 낙찰 조건 하위 25% 지점에서도 손해가 안 나는 가격만(서버 검증 통과 시, 2026-11-08) - // 94: 추천가 고르기 순이익에 낙찰 조건 기대 변화 반영(서버 검증 통과 시, 2026-11-08) - // 93: 낙찰 조건 하방(입찰가가 시세에 가까울수록 위험 여유 가산, 서버 검증 통과 시, 2026-11-08) - // 92: 거래 드문 단지 고정 2% 가산을 실측값으로 대체(2026-11-08) - // 91: 낙찰가 기준 시세를 예상매도가(종합 평가·호가 상한)와 같게(2026-11-08) - // 90: 임차인 수 점검은 미상 점유자 제외 값도 인정(2026-11-08) - // 89: 이름 앞부분·보증금·전입·확정일이 같은 승계 중복 임차인 줄 합침(2026-11-08) - // 88: 호가 흐름 판정에 주변 단지 흐름 추가(2026-11-08) - // 87: 호가 흐름 지표를 실거래 흐름 먼저·경계는 단지 거래 흩어짐에 맞춤(2026-11-08) - // 86: 호가 흐름 지표 표시(참고용, 2026-11-08) - // 85: 호가 상한은 수리 상태로 거르지 않고 모든 호가 사용(2026-11-08) - // 84: 호가 상한은 층 구분(1~2층/탑층/중간층)별로만 비교(2026-11-08) - // 83: 가격 불안정은 같은 층대(1·2층/3층+) 최근 거래끼리만 비교(2026-11-08) - // 82: 아파트 낙찰가 모델 종합 평가 시세 기준(2026-11-07) - // 81: 아파트 예상매도가 종합 평가 보정(오차 5.5→4.0%, 2026-11-07) - // 80: 권리 위험 안전장치·입찰 제외(2026-11-07) - // 79: // 79: 추천가 낙찰 가능성 간격 보정 표시(2026-11-07) - // 78: // 78: 빌라 종합 평가 상한 제거·건물 3건 이상 포함(앱 실제 계산과 직접 채점 후, 2026-11-07) - // 77: 빌라 종합 평가 안전장치(지하 제외·앱 값 +15% 상한, 2026-11-07) - // 76: 수도권 빌라 종합 평가 값 적용(건물 3건 미만 단계, 2026-11-07) - // // 75: 거래 활발 단지 위험 여유를 최근 거래 흩어짐별 하방 표로(2026-11-06) - // 74: 위험 여유를 근거 두께별 실측 하방 표로(주간 갱신)·흐름 계수 주간 자동 선택(2026-11-06) - // 73: 감정가 기준 전부 제거(감정가 대비 경고·금액 점검·빌라 이슈·틈새 조건, 2026-11-06) - // 72: 시세 흐름 계수 올림·거래량 믿음도 제거·지방 시군구·수도권 생활권·3개월 예측 반영(2026-11-05) - // 71: 낙찰가 모델 시세(est)에도 지역 가격 흐름 반영(est_rule_f, 2026-11-05) - // 70: 예상매도가에 지역 가격 흐름 반영(2026-11-05) - // 69: 시세 새 규칙(est_rule)·감정가 제외·최저가 유지(2026-11-04) - // 68: 감정가 제외 - // // 54: 튀는 가격 반영 안 함·경고만(2026-10-24) - // 53: 최근 거래 시세반영/튀는 가격 구별(2026-10-24) - // 52: 임장 생략 판정(2026-10-19) - // 51: 전세가율 구간 보정·위험 신호(2026-10-18) - // 50: 지방 최근 거래 비슷한 층 비중·1~2건은 12개월 원값(2026-10-18) - // 49: 근거 약함 경고를 판정 단계에서 다시 붙임 - // 48: 예상매도가-감정가 큰 차이 근거 약함 표시 - // 47: 다른 평형 환산이 같은 평형과 20% 넘게 다르면 섞지 않음 - // 46: 같은 동 추론(③④) 제거·거래 없는 단지는 기존 주변 비교 + 근거 약함(2026-10-18) - // 45: 회전율 구간별 보정 항상 적용(주간 갱신 표, 2026-10-17) - // 44: 추론에 최근 6개월 1~2건 포함 - // 43: 6개월 거래 부족 시 단계별 추론(2026-10-17) - // 42: 지역별 예상매도가(서울 최근3건·경기인천 반감1개월·지방 반감2개월)와 위험 여유(2026-10-17) - // 41: 아파트 예상매도가를 최근 6개월 같은 평형 거래의 최근가중 중위값으로(전국 백테스트, 2026-10-17) - // 40: 임차인 둘로 읽힌 경우 별개/같은 임차권(갱신·승계) 선택(2026-10-11) - // 39: 39: 임차권등기를 임차인으로 계산(전입·확정일자 기준)·경매신청인 전세권 안내(2026-10-11) - // 38: 38: 권리분석 날짜 선후 규칙 정리(전입 다음 날 0시·동순위 안분, 2026-10-11) - // 37: 37: 권리분석에 말소기준일보다 앞선 전세권·임차권 등 등기부 인수 권리 반영(2026-10-11) - // 36: 저가 아파트 순이익률 10% 추천가 규칙 되돌림(2026-10-11, 백테스트 손해 30~42%) - // 34: 33: 아파트 고층 보정 축소·저층 범위(2026-10-11) - // 29: nYear 저장 추가 - // 27: 🎲 예상 낙찰가용 시세(wbBase) 추가 (범위 표시는 화면에서 바로 계산 - 버전 변경 없음)
+var BOARD_CALC_VER = 116;  /* 116: 입찰후보 기준을 '예상 낙찰가에 입찰해도 순이익 기준 이상'(지방 500만·수도권 1천만)으로, 관찰·안전폭 표시(2026-11-24 사용자 승인) */ /* 115: 권리분석 소액임차인 지역 세분화·2016년 이전 표·최초 근저당일 기준·1/2 한도 안분(2026-11-22 사용자 승인) */ /* 113: 매도 계약서 인지세(매도인 몫) 비용 반영(2026-11-22 사용자 요청) */ /* 112:  /* 112: 입찰후보 예상 순수익에 건강보험 소득월액 반영(직장가입자·연봉 입력 시, 2026-11-22 사용자 승인) */ /* 111: 흐름 상향 상한 +4%·거래량 급감 시 흐름 반(2026-11-15) */  /* (허가구역 자료 재시도 2026-11-08) */ // 110: 추천가 고른 뒤 낙찰 가능성·예상 낙찰가 대비 차이를 새 추천가로 다시 계산(2026-11-15) - // 107: 낙찰가 모델에 단지 가격 흐름 요인(flowC)·큰 상승 단지 상방 꼬리 분포(resQF) 추가(2026-11-10) - // 106: 시세 근거 얇음(6개월 1~2건) 필요 마진은 칸 하위 10% 하방·주변 단지 대체 시세 후보 제외(2026-11-09) - 105: 지방 추천가 손해 줄이기(거래 0건 제외·큰 마진 경고·근거 두께별 필요 마진, 2026-11-08) - // 104: 유찰 4회 이상은 이슈 강한 의심 - 임장 후보에서 제외(2026-11-08) - // 103: 후보 최소 순이익 500만·이슈 강한 의심·낙찰 가능성 낮은 물건도 후보(2026-11-08) - // 102: 후보 확대(하위25% 필터 제거·최소 순이익은 보정 전 기준, 2026-11-08) - // 101: 임장 후보 낙찰 가능성 기준을 보정된 확률 척도로 환산(후보가 3건으로 줄던 문제, 2026-11-08) - // 100: (입찰자 수 모델에 생활권 흐름 요인 후보 추가 2026-11-08) (새 사건은 새로고침 없이 자동 계산 2026-11-08) 100: 낙찰 조건 표에 근거 두께(같은 평형 6개월 거래수) 차원 추가(서버 검증 통과 시, 2026-11-08) - // 99: 사용자 방침(결과가 비슷해도 시장 흐름을 따르는 근거식이 더 정확하면 적용) - 낙찰 가능성 보정·낙찰 조건 하위 25% 필터를 추천가 고르기에 다시 적용(2026-11-08) - // 98: 낙찰 가능성 보정은 표시에만, 예상매도가 최근 쏠림 자동 보정(서버 walk-forward 검증 통과 시, 2026-11-08) - // 97: (호가 모으기: 같은 이름 단지는 네이버 지번 주소로 먼저 좁힘 2026-11-08) 97: 낙찰 가능성 양방향 보정(서버 시간순 검증 통과 시, 추천가 고르기에도 사용, 2026-11-08) - // 96: 낙찰 조건 하위 25% 필터는 채점에서 효과 없어 뺌(지방 손해 31.3→31.4%, 2026-11-08) - // 95: 추천가는 낙찰 조건 하위 25% 지점에서도 손해가 안 나는 가격만(서버 검증 통과 시, 2026-11-08) - // 94: 추천가 고르기 순이익에 낙찰 조건 기대 변화 반영(서버 검증 통과 시, 2026-11-08) - // 93: 낙찰 조건 하방(입찰가가 시세에 가까울수록 위험 여유 가산, 서버 검증 통과 시, 2026-11-08) - // 92: 거래 드문 단지 고정 2% 가산을 실측값으로 대체(2026-11-08) - // 91: 낙찰가 기준 시세를 예상매도가(종합 평가·호가 상한)와 같게(2026-11-08) - // 90: 임차인 수 점검은 미상 점유자 제외 값도 인정(2026-11-08) - // 89: 이름 앞부분·보증금·전입·확정일이 같은 승계 중복 임차인 줄 합침(2026-11-08) - // 88: 호가 흐름 판정에 주변 단지 흐름 추가(2026-11-08) - // 87: 호가 흐름 지표를 실거래 흐름 먼저·경계는 단지 거래 흩어짐에 맞춤(2026-11-08) - // 86: 호가 흐름 지표 표시(참고용, 2026-11-08) - // 85: 호가 상한은 수리 상태로 거르지 않고 모든 호가 사용(2026-11-08) - // 84: 호가 상한은 층 구분(1~2층/탑층/중간층)별로만 비교(2026-11-08) - // 83: 가격 불안정은 같은 층대(1·2층/3층+) 최근 거래끼리만 비교(2026-11-08) - // 82: 아파트 낙찰가 모델 종합 평가 시세 기준(2026-11-07) - // 81: 아파트 예상매도가 종합 평가 보정(오차 5.5→4.0%, 2026-11-07) - // 80: 권리 위험 안전장치·입찰 제외(2026-11-07) - // 79: // 79: 추천가 낙찰 가능성 간격 보정 표시(2026-11-07) - // 78: // 78: 빌라 종합 평가 상한 제거·건물 3건 이상 포함(앱 실제 계산과 직접 채점 후, 2026-11-07) - // 77: 빌라 종합 평가 안전장치(지하 제외·앱 값 +15% 상한, 2026-11-07) - // 76: 수도권 빌라 종합 평가 값 적용(건물 3건 미만 단계, 2026-11-07) - // // 75: 거래 활발 단지 위험 여유를 최근 거래 흩어짐별 하방 표로(2026-11-06) - // 74: 위험 여유를 근거 두께별 실측 하방 표로(주간 갱신)·흐름 계수 주간 자동 선택(2026-11-06) - // 73: 감정가 기준 전부 제거(감정가 대비 경고·금액 점검·빌라 이슈·틈새 조건, 2026-11-06) - // 72: 시세 흐름 계수 올림·거래량 믿음도 제거·지방 시군구·수도권 생활권·3개월 예측 반영(2026-11-05) - // 71: 낙찰가 모델 시세(est)에도 지역 가격 흐름 반영(est_rule_f, 2026-11-05) - // 70: 예상매도가에 지역 가격 흐름 반영(2026-11-05) - // 69: 시세 새 규칙(est_rule)·감정가 제외·최저가 유지(2026-11-04) - // 68: 감정가 제외 - // // 54: 튀는 가격 반영 안 함·경고만(2026-10-24) - // 53: 최근 거래 시세반영/튀는 가격 구별(2026-10-24) - // 52: 임장 생략 판정(2026-10-19) - // 51: 전세가율 구간 보정·위험 신호(2026-10-18) - // 50: 지방 최근 거래 비슷한 층 비중·1~2건은 12개월 원값(2026-10-18) - // 49: 근거 약함 경고를 판정 단계에서 다시 붙임 - // 48: 예상매도가-감정가 큰 차이 근거 약함 표시 - // 47: 다른 평형 환산이 같은 평형과 20% 넘게 다르면 섞지 않음 - // 46: 같은 동 추론(③④) 제거·거래 없는 단지는 기존 주변 비교 + 근거 약함(2026-10-18) - // 45: 회전율 구간별 보정 항상 적용(주간 갱신 표, 2026-10-17) - // 44: 추론에 최근 6개월 1~2건 포함 - // 43: 6개월 거래 부족 시 단계별 추론(2026-10-17) - // 42: 지역별 예상매도가(서울 최근3건·경기인천 반감1개월·지방 반감2개월)와 위험 여유(2026-10-17) - // 41: 아파트 예상매도가를 최근 6개월 같은 평형 거래의 최근가중 중위값으로(전국 백테스트, 2026-10-17) - // 40: 임차인 둘로 읽힌 경우 별개/같은 임차권(갱신·승계) 선택(2026-10-11) - // 39: 39: 임차권등기를 임차인으로 계산(전입·확정일자 기준)·경매신청인 전세권 안내(2026-10-11) - // 38: 38: 권리분석 날짜 선후 규칙 정리(전입 다음 날 0시·동순위 안분, 2026-10-11) - // 37: 37: 권리분석에 말소기준일보다 앞선 전세권·임차권 등 등기부 인수 권리 반영(2026-10-11) - // 36: 저가 아파트 순이익률 10% 추천가 규칙 되돌림(2026-10-11, 백테스트 손해 30~42%) - // 34: 33: 아파트 고층 보정 축소·저층 범위(2026-10-11) - // 29: nYear 저장 추가 - // 27: 🎲 예상 낙찰가용 시세(wbBase) 추가 (범위 표시는 화면에서 바로 계산 - 버전 변경 없음)
 /* 2026-10-15(사용자: 입찰후보 로딩이 느림 - 원인 실측): 식별값 끝의 'P/F'(입찰일 지남 여부)가 한국 시각 자정에 바뀌어, 서버 미리 계산이 돈 뒤 어제 입찰이던 물건(하루 약 350건)이 전부 '다른 물건'이 돼
    지역 자료 86곳(곳당 9~13MB)을 새로 받아 다시 계산했음. 계산 결과는 입찰일 지남 여부와 무관하므로(날짜 표시는 열 때 다시 계산) 저장본의 P/F가 반대여도 같은 것으로 봄(flip). */
 function boardBaseSig(a, flip) {
@@ -23041,11 +23057,18 @@ function top10Ranks() {
     } catch (e) {} finally { top10State.sort = keep; }
     top10Cache = { sig: sig, ranks: ranks }; return ranks;
 }
+function candBadge(r) {
+    var v = r && r.visit; if (!v || r.skippedPast) return '';
+    if (v.go && v.safe) return ' <span class="bb-pill" title="예상 낙찰가보다 5% 높게 써도 순이익이 후보 기준 이상 남거나(지방 유찰 3회는 마진 확보율이 가장 높았어요) - 안전폭이 있는 후보" style="background:#e8f5e9;color:#166534;border:1px solid #86efac;">🛡 안전폭</span>';
+    if (v.watch) return ' <span class="bb-pill" title="예상 낙찰가에 입찰하면 순이익이 후보 기준에 조금 못 미쳐요 - 참고 표시(입찰 판단 기준은 그대로)" style="background:#fffbeb;color:#92400e;border:1px solid #fcd34d;">👀 관찰</span>';
+    return '';
+}
 function top10Badge(r) {
+    var cb = ''; try { cb = candBadge(r); } catch (e0) {}
     try {
-        if (!r || r.skippedPast) return ''; var n = top10Ranks()[String(r.id)]; if (!n) return '';
-        return ' <span class="t10b" title="추천 TOP 10 ' + n + '위 - 지금 걸린 필터 기준 · 적은 내 돈·높은 순이익·빠른 회수 종합 점수 (누르면 상세, 위 \'🏆 추천 TOP 10\'에서 전체 표)" style="display:inline-block;background:' + (n <= 3 ? '#f59e0b' : '#fde68a') + ';color:' + (n <= 3 ? '#fff' : '#92400e') + ';font-size:10.5px;font-weight:800;border-radius:10px;padding:1px 7px;vertical-align:middle;white-space:nowrap;">🏆 TOP ' + n + '</span>';
-    } catch (e) { return ''; }
+        if (!r || r.skippedPast) return cb; var n = top10Ranks()[String(r.id)]; if (!n) return cb;
+        return cb + ' <span class="t10b" title="추천 TOP 10 ' + n + '위 - 지금 걸린 필터 기준 · 적은 내 돈·높은 순이익·빠른 회수 종합 점수 (누르면 상세, 위 \'🏆 추천 TOP 10\'에서 전체 표)" style="display:inline-block;background:' + (n <= 3 ? '#f59e0b' : '#fde68a') + ';color:' + (n <= 3 ? '#fff' : '#92400e') + ';font-size:10.5px;font-weight:800;border-radius:10px;padding:1px 7px;vertical-align:middle;white-space:nowrap;">🏆 TOP ' + n + '</span>';
+    } catch (e) { return cb; }
 }
 function openTop10() {
     var bg = document.getElementById('top10-bg');
@@ -23119,7 +23142,7 @@ function renderBidBoardLite() {
     var isVillaTab = s.visit === 'villa';
     var pastN = isVillaTab ? bidBoardRows.filter(function(r) { return r.type === 'villa' && r.metro && isPast(r) && regionMatch(r, s.region); }).length : all.filter(isPast).length;
     var pend = cur.filter(function(r) { return r.pending; }).length;
-    var goN = cur.filter(function(r) { return !r.pending && r.visit && r.visit.go; }).length, passN = cur.filter(function(r) { return !r.pending && r.visit && !r.visit.go; }).length;
+    var goN = cur.filter(function(r) { return !r.pending && r.visit && r.visit.go; }).length, passN = cur.filter(function(r) { return !r.pending && r.visit && !r.visit.go; }).length, watchN = cur.filter(function(r) { return !r.pending && r.visit && r.visit.watch; }).length;
     // 지역 선택지
     var regions = {};
     bidBoardRows.forEach(function(r) { if (isVillaTab ? (r.type === 'villa' && r.metro) : r.type === 'apt') regions[r.region] = (regions[r.region] || 0) + 1; });
@@ -23148,7 +23171,7 @@ function renderBidBoardLite() {
         return '<button class="bb-tab' + (!isFavTab && (t[0] === 'villa') === isVillaTab ? ' on' : '') + '" style="font-weight:700;" onclick="setLiteVisit(\'' + (t[0] === 'villa' ? 'villa' : (s.aptVisit || 'go')) + '\')">' + t[1] + ' <b>' + t[2] + '</b></button>';
     }).join('') + ' <button class="bb-tab fav' + (isFavTab ? ' on' : '') + '" style="font-weight:700;" onclick="setLiteVisit(\'fav\')">⭐ 즐겨찾기 <b>' + favN + '</b></button>';
     // 2026-11-15(사용자: 아파트도 빌라처럼) - 임장 후보·패스·전체는 위 탭 옆이 아니라 목록 맨 위 새 줄에 둠(빌라와 같은 위치·모양)
-    var subRow = (isVillaTab || isFavTab) ? '' : '<div style="padding:6px 4px;">' + [['go', '🚶 임장 후보', goN], ['pass', '패스', passN], ['all', '전체', aptTotal]].map(function(t) {
+    var subRow = (isVillaTab || isFavTab) ? '' : '<div style="padding:6px 4px;">' + [['go', '🚶 임장 후보', goN], ['watch', '👀 관찰', watchN], ['pass', '패스', passN], ['all', '전체', aptTotal]].map(function(t) {
         return '<button class="bb-tab' + (s.visit === t[0] ? ' on' : '') + '" onclick="setLiteVisit(\'' + t[0] + '\')">' + t[1] + ' <b>' + t[2] + '</b></button>';
     }).join(' ') + '</div>';
     var sub = '';
@@ -23164,7 +23187,7 @@ function renderBidBoardLite() {
         rowsO.sort(function(x, y) { return (x.winbid.price / x.sale) - (y.winbid.price / y.sale); });
         s.__ownRows = rowsO;
     } else s.__ownRows = null;
-    var rows = s.__ownRows || cur.filter(function(r) { return !r.pending && r.visit && (s.visit === 'all' || (s.visit === 'go') === r.visit.go) && (!s.nicheLite || r.niche) && (!s.listLite || listingStatus(r.a).st === 'yes') && (!s.rightsNeed || rightsNeeded(r, r.visit.go)) && (!s.goodOnly || goodAptRow(r)) && (!s.uvOnly || uvOf(r)) && (!s.ovOnly || ovOf(r)); });
+    var rows = s.__ownRows || cur.filter(function(r) { return !r.pending && r.visit && (s.visit === 'all' || (s.visit === 'watch' ? !!r.visit.watch : (s.visit === 'go') === r.visit.go)) && (!s.nicheLite || r.niche) && (!s.listLite || listingStatus(r.a).st === 'yes') && (!s.rightsNeed || rightsNeeded(r, r.visit.go)) && (!s.goodOnly || goodAptRow(r)) && (!s.uvOnly || uvOf(r)) && (!s.ovOnly || ovOf(r)); });
     var colDef = LITE_COLS[s.liteCol] || LITE_COLS.verdict;
     if (!s.__ownRows || s.liteCol !== 'verdict') rows.sort(function(x, y) {
         var vx = colDef.val(x), vy = colDef.val(y);
