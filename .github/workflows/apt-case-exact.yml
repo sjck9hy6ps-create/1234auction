@@ -20,7 +20,7 @@ jobs:
       - env:
           SITE_URL: https://1234auction.vercel.app
           LAWD_PREFIX: ${{ matrix.prefix }}
-          SALE_FROM: '2025-11-01'
+          SALE_FROM: '2024-12-01'
           OUT_FILE: rows.json
         run: node scripts/validate-app-asof-cases.mjs > log.txt 2>&1 || (tail -30 log.txt; exit 1)
       - run: tail -4 log.txt || true
