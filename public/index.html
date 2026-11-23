@@ -32033,9 +32033,9 @@ function wrGo(caseNo, region) {
     var b = document.getElementById('wr-return-btn');
     if (!b) {
         b = document.createElement('button'); b.id = 'wr-return-btn';
-        b.style.cssText = 'position:fixed;left:50%;bottom:24px;transform:translateX(-50%);z-index:9060;border:none;background:#111827;color:#fff;border-radius:22px;padding:11px 20px;font-size:14px;font-weight:700;box-shadow:0 4px 16px rgba(0,0,0,.35);cursor:pointer;';
+        b.style.cssText = 'position:fixed;left:50%;bottom:24px;transform:translateX(-50%);z-index:100004;border:none;background:#111827;color:#fff;border-radius:22px;padding:11px 20px;font-size:14px;font-weight:700;box-shadow:0 4px 16px rgba(0,0,0,.35);cursor:pointer;';
         b.innerText = '◀ 리포트로 돌아가기';
-        b.onclick = function() { b.style.display = 'none'; var w = document.getElementById('weekly-panel'); if (w) w.style.display = ''; else openWeeklyReport(); };
+        b.onclick = function() { b.style.display = 'none'; var w = document.getElementById('weekly-panel'); if (w) { w.style.display = ''; try { w.style.zIndex = ''; } catch (e) {} } else openWeeklyReport(); };
         document.body.appendChild(b);
     }
     b.style.display = '';
@@ -32057,7 +32057,8 @@ function wrNetAt(a2, sale, repair, bid) {
 async function wrDetail(caseNo, region) {
     var it = wrItemMap[wrNormCase(caseNo) + '|' + (region || '')] || { caseNo: caseNo, region: region };
     var b = document.querySelector('#weekly-panel .wr-b'); if (!b) return;
-    if (!window.__wrBackHtml) window.__wrBackHtml = b.innerHTML;
+    if (!b.getAttribute('data-wr-detail')) window.__wrBackHtml = b.innerHTML;
+    b.setAttribute('data-wr-detail', '1');
     var f = function(v) { return v == null || isNaN(v) ? '-' : toEok(String(Math.round(v))); };
     var esc = bbEsc;
     var top = '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px;"><button class="wr-btn" onclick="wrBack()">◀ 리포트로</button><button class="wr-btn" onclick="wrGo(\'' + String(caseNo).replace(/'/g, '') + '\',\'' + String(region || '').replace(/'/g, '') + '\')">🗺️ 지도에서 위치 보기</button></div>';
@@ -32131,8 +32132,9 @@ async function wrDetail(caseNo, region) {
     b.scrollTop = 0; var pnl = document.getElementById('weekly-panel'); if (pnl) pnl.scrollTop = 0;
 }
 function wrBack() {
-    var b = document.querySelector('#weekly-panel .wr-b'); if (!b || !window.__wrBackHtml) return;
-    b.innerHTML = window.__wrBackHtml; window.__wrBackHtml = null;
+    var b = document.querySelector('#weekly-panel .wr-b'); if (!b) { openWeeklyReport(); return; }
+    if (!window.__wrBackHtml) { var op = document.getElementById('weekly-panel'); if (op) op.remove(); openWeeklyReport(); return; }
+    b.innerHTML = window.__wrBackHtml; window.__wrBackHtml = null; b.removeAttribute('data-wr-detail');
     var pnl = document.getElementById('weekly-panel'); if (pnl) pnl.scrollTop = 0;
 }
 function wrResultPill(actual, rec) {
@@ -32528,6 +32530,7 @@ function openWeeklyReport(week) {
     var p = document.getElementById('weekly-panel');
     if (p && !week) { p.remove(); return; }
     if (p) p.remove();
+    window.__wrBackHtml = null;
     p = document.createElement('div'); p.id = 'weekly-panel'; document.body.appendChild(p);
     p.innerHTML = '<div class="wr-h">📊 주간 리포트' + (week ? ' · ' + wrYmd(week) + ' 주' : '') + ' <span class="rm-x" onclick="document.getElementById(\'weekly-panel\').remove()">✕</span></div><div class="wr-b">불러오는 중…</div>';
     try { floatWin(p, 'weekly', '.wr-h'); } catch (e) {}
