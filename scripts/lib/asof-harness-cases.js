@@ -81,6 +81,8 @@
                     if (w && w.price) { ex.pred = MM(w.price); ex.pred5 = MM(w.price * 1.05); }
                     if (row.recBid) ex.rec = MM(row.recBid);
                     ex.min = MM(row.minBid);
+                    ex.safe = !!(row.visit && row.visit.safe); ex.watch = !!(row.visit && row.visit.watch); ex.vpred = row.visit ? row.visit.pred : null;
+                    if (w && w.price) { ex.grid = {}; [0.90, 0.95, 1.0, 1.03, 1.05, 1.08, 1.10, 1.15, 1.20].forEach(function (k) { const b = Math.max(w.price * k, row.minBid); const m = MM(b); if (m) { try { m.p = Math.round(probCalFor(row, winbidProbAt(w, b)) * 1000) / 1000; } catch (e) { m.p = null; } ex.grid[k] = m; } }); }
                     ex.sale = Math.round(row.sale);
                 }
             } catch (e) { ex.err = String(e.message || e).slice(0, 80); }
