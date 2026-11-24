@@ -1,0 +1,22 @@
+name: Backtest liquidity best
+on:
+  workflow_dispatch: {}
+jobs:
+  analyze:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install pandas numpy requests scipy scikit-learn
+      - env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          PYTHONUNBUFFERED: '1'
+        run: python backtest-liquidity-best.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: liquidity-best
+          path: backtest-liquidity-best.json
