@@ -3654,7 +3654,15 @@ def scorecard(D, amap, max_lag=None):
             sv = {"all": _ws(Ws, "전체"), "weeks": [dict(_ws(g, w), week=w) for w, g in sorted(Ws.groupby("wk")) if len(g) >= 5][-10:], "from": str(Ws["d"].min().date()), "to": str(Ws["d"].max().date())}
             if "cls" in Ws.columns: sv["byClass"] = [_ws(g, str(c)) for c, g in Ws.groupby(Ws["cls"].fillna("?")) if len(g) >= 20]
             if "fails" in Ws.columns:
-                fl = Ws["fails"].fillna(-1); sv["byFails"] = [_ws(Ws[mk], lab) for lab, mk in (("신건", fl == 0), ("유찰 1회", fl == 1), ("유찰 2회+", fl >= 2)) if int(mk.sum()) >= 20]
+                fl = Ws["fails"].fillna(-1); sv["byFails"] = [_ws(Ws[mk], lab) for lab, mk in (("신건", fl == 0), ("유찰 1회", fl == 1), ("유찰 2회", fl == 2), ("유찰 3회+", fl >= 3)) if int(mk.sum()) >= 20]
+            try:   # 2026-11-24(사용자 승인, 종합검증): 최저가÷시세 구간별·후보만 따로(오차 큰 구간이 계속 큰지 매주 추적)
+                _mr = Ws["minbid"].astype(float) / Ws["snapSale"].astype(float)
+                sv["byMinRatio"] = [_ws(Ws[mk], lab) for lab, mk in (("최저가/시세 50% 미만", _mr < 0.5), ("50~60%", (_mr >= 0.5) & (_mr < 0.6)), ("60~80%", (_mr >= 0.6) & (_mr < 0.8)), ("80% 이상", _mr >= 0.8)) if int(mk.sum()) >= 20]
+                if "go" in Ws.columns:
+                    _g = Ws[Ws["go"].fillna(False).astype(bool)]
+                    if len(_g) >= 20: sv["candOnly"] = _ws(_g, "후보만")
+            except Exception as _e3:
+                print("  구간별 추적 건너뜀:", _e3)
             try:   # 2026-11-18(사용자: 계산된 하한~상한 안에 실제 낙찰가가 들어갔는지가 중요) 예상 낙찰가 하한·상한(오차 분포 하위 25%·상위 25%) 적중률 - 저장한 하한·상한이 있으면 그것, 없으면 저장한 예상 낙찰가에 같은 분포를 적용
                 import requests as _rq5
                 _pm = _rq5.get(f"{SITE_URL}/api/data-coverage?mode=winbid&x={int(datetime.now().timestamp())}", timeout=60).json(); _q = _pm["resQ"]; _qb = _pm.get("resQB")
@@ -3693,13 +3701,22 @@ def scorecard(D, amap, max_lag=None):
                 for _c in ("go", "safe", "watch"): C[_c] = C[_c].fillna(False).astype(bool)
                 C["regg"] = np.where(C["cls"].astype(str) == "지방", "지방", "수도권")
                 tiers_ = []
-                for lab, mk in (("🚶 후보", C["go"]), ("🛡 안전폭", C["go"] & C["safe"]), ("👀 관찰", C["watch"]), ("그 외(패스)", ~C["go"] & ~C["watch"])):
+                for lab, mk in (("🚶 후보", C["go"]), ("🛡 안전폭", C["go"] & C["safe"]), ("🤝 양보 후보", C["watch"]), ("그 외(패스)", ~C["go"] & ~C["watch"])):
                     for rg_ in ("지방", "수도권"):
                         G = C[mk & (C["regg"] == rg_)]
                         if len(G) < 1: continue
                         tiers_.append({"label": lab, "reg": rg_, "n": int(len(G)), "recWonPct": round(float(G["won"].mean()) * 100, 1), "okPct": round(float((G["netAct"] >= G["thrv"]).mean()) * 100, 1),
                                        "lossPct": round(float((G["netAct"] < 0).mean()) * 100, 1), "netMed": round(float(G["netAct"].median()), 0)})
                 out["cand"] = {"n": int(len(C)), "from": str(C["at"].min())[:10], "tiers": tiers_}
+                try:   # 2026-11-24(사용자 지시): 목표 마진 = 예상매도가의 10% - 순이익÷예상매도가 구간별 실제 결과 추적
+                    C["mrt"] = C["np"] / C["snapSale"].astype(float)
+                    mt_ = []
+                    for lab, mk in (("순이익이 매도가의 5% 미만", C["mrt"] < 0.05), ("5~10%", (C["mrt"] >= 0.05) & (C["mrt"] < 0.10)), ("10% 이상", C["mrt"] >= 0.10)):
+                        G = C[mk]
+                        if len(G) >= 1: mt_.append({"label": lab, "n": int(len(G)), "recWonPct": round(float(G["won"].mean()) * 100, 1), "okPct": round(float((G["netAct"] >= G["thrv"]).mean()) * 100, 1), "lossPct": round(float((G["netAct"] < 0).mean()) * 100, 1), "netMed": round(float(G["netAct"].median()), 0)})
+                    out["cand"]["marginTiers"] = mt_
+                except Exception as _em:
+                    print("  마진 구간 추적 건너뜀:", _em)
     except Exception as _ec:
         print("  새 후보 기준 추적 건너뜀:", _ec)
     P = X[X["prob"].notna()]
