@@ -17,6 +17,7 @@ jobs:
           PYTHONUNBUFFERED: '1'
         run: python backtest-liquidity-best.py
       - uses: actions/upload-artifact@v4
+        if: always()
         with:
           name: liquidity-best
           path: backtest-liquidity-best.json

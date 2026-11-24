@@ -47,6 +47,7 @@ def run_models(df, tcol, cut, last_ok, target_cnt, label, feats_avail):
     tr = df[df[tcol] + H < cut]; te_all = df[df[tcol] >= cut]
     if len(tr) > 400000: tr = tr.sample(400000, random_state=1)
     res = {}; cols = []; models = {}
+    feats_avail = {c for c in feats_avail if c in df.columns and df[c].notna().any()}   # 전부 빈 열(빌라의 전월세·회전율)은 뺌
     use = [(n, [c for c in cs if c in feats_avail]) for n, cs in GROUPS]
     for gname, cs in use:
         cols = cols + cs
@@ -218,6 +219,7 @@ def villa():
 def main():
     out = {}
     out["아파트"], n = apt(); out["아파트 단위 수"] = n
+    json.dump(out, open("backtest-liquidity-best.json", "w"), ensure_ascii=False, indent=1)   # 빌라가 실패해도 아파트 결과는 남김
     out["빌라"], n = villa(); out["빌라 위치×평형 수"] = n
     txt = json.dumps(out, ensure_ascii=False, indent=1); print(txt)
     json.dump(out, open("backtest-liquidity-best.json", "w"), ensure_ascii=False, indent=1)
