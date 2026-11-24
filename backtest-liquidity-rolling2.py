@@ -106,6 +106,8 @@ def run_panel(C, L, label, Tstart):
             n = int(flag.sum());
             return {"거른비율%": round(100 * n / len(flag), 1), "이후0건 중 잡은%": round(100 * float((flag & dead).sum() / max(1, dead.sum())), 1), "걸러진 것 중 실제 0건%": round(100 * float((flag & dead).sum() / max(1, n)), 1), "걸러진 것 중 이후 2건+%": round(100 * float((flag & (np.expm1(y) >= 2)).sum() / max(1, n)), 1)}
         out["규칙 지금(최근6개월 0건)"] = flag_stats(flagA)
+        for kk in (0, 1, 2, 3, 4):   # 12개월 합이 kk건 이하면 거름(기준값 정하기용)
+            out[f"규칙 12개월 합≤{kk}건"] = flag_stats(D["lvl12"] <= kk)
         for nm_, key in (("규칙 12칸 평균", "f12"), ("규칙 12개월 합", "lvl12")):
             sc = D[key] + RNG.normal(0, 1e-6, len(y)); k = max(1, int(share * len(y)))
             thr = np.sort(sc)[k - 1]; out[nm_ + "(같은 비율)"] = flag_stats(sc <= thr)
