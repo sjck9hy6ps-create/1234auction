@@ -100,7 +100,7 @@ def villa():
     print(f"생활권 위치 {len(P):,}곳, 거래 기간 {first // 12}-{first % 12 + 1:02d} ~ {last // 12}-{last % 12 + 1:02d}", flush=True)
     L = last - first + 1; M = np.zeros((len(P), L), dtype=np.int32); ym = D["ymi"].values - first
     for i, nb in enumerate(tree.query_ball_point(P, 0.5)):
-        if nb: M[i] = np.bincount(ym[nb], minlength=L)
+        if nb: M[i] = np.bincount(ym[nb], minlength=L + 1)[:L]
     return evaluate(M, L - 1, "빌라 생활권(반경 500m)"), len(P)
 
 
