@@ -5270,7 +5270,7 @@ function villaEval(row) {
     var st = hsBld[row.id] || {}, t = st.info && st.info.title, lawd = bidBoardLawdOf(row.a);
     var vc = villaVeCache[row.id], vcOk = vc && vc.sig === villaVeSig(row.a);
     var lq = villaLiqFinal ? villaLiqCache[row.id] : null;
-    var sig = ['m6', vcOk ? 1 : 0, lq ? 1 + lq.r500.a6 : 0, t ? 1 : 0, villaWinModel ? 1 : 0, row.minBid, row.a.floor, row.a.pyung, row.a.buildYear || '', row.a.bidDate || '', row.a.appraisal || '', st.loading ? 1 : 0, (row.a.listingParse && row.a.listingParse.at) || '', (row.a.listingParse && row.a.listingParse.n) || 0, row.a.repair || '', row.a.assumedDeposit || '', row.a.assumedFixed || '', row.a.assumedPrior || '', row.a.rights ? (row.a.rights.pastedAt || 1) + ':' + (row.a.rights.editedAt || 0) : '', row.a.unpaidMgmtFee || '', row.a.etc || '', 'fx3', villaStack ? villaStack.generatedAt : ''].join('|');
+    var sig = ['m7', vcOk ? 1 : 0, lq ? 1 + lq.r500.a6 : 0, t ? 1 : 0, villaWinModel ? 1 : 0, row.minBid, row.a.floor, row.a.pyung, row.a.buildYear || '', row.a.bidDate || '', row.a.appraisal || '', st.loading ? 1 : 0, (row.a.listingParse && row.a.listingParse.at) || '', (row.a.listingParse && row.a.listingParse.n) || 0, row.a.repair || '', row.a.assumedDeposit || '', row.a.assumedFixed || '', row.a.assumedPrior || '', row.a.rights ? (row.a.rights.pastedAt || 1) + ':' + (row.a.rights.editedAt || 0) : '', row.a.unpaidMgmtFee || '', row.a.etc || '', 'fx3', villaStack ? villaStack.generatedAt : ''].join('|');
     if (row._vev && row._vev.sig === sig) return row._vev;
     var pe0 = villaEvPend[row.id];
     if (pe0) {
