@@ -42,7 +42,7 @@ def apt_band():
     for c in ("price", "size", "deal_date"): df[c] = pd.to_numeric(df[c], errors="coerce")
     df = df.dropna(subset=["price", "size", "deal_date", "region", "dong", "danji"]); df = df[(df["price"] > 0) & (df["size"] > 10)]
     df["ymi"] = ymi(df["deal_date"]).astype(int); last = int(df["ymi"].max()) - 1; first = int(df["ymi"].min()); L = last - first + 1
-    df = df[df["ymi"] <= last]
+    df = df[df["ymi"] <= last]; last = L - 1   # 이하 '월 번호'는 첫 달=0 기준 열 번호
     df["dong1"] = df["dong"].astype(str).str.split().str[-1].fillna("")
     df["ckey"] = df["region"].astype(str) + "|" + df["dong1"] + "|" + df["danji"].astype(str)
     df["band"] = (df["size"] / 5.0).round().astype(int)
