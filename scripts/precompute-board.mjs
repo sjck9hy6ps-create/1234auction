@@ -295,12 +295,6 @@ if (villa && Object.keys(villa.ve || {}).length >= 50) {
     }
   }
   await supabase.from('leader_follower_cache').upsert({ id: 'board|villa|meta', payload: { n: vrows.length, count: vids.length, at: Date.now() }, fetched_at: now }, { onConflict: 'id' });
-  // 2026-11-25(사용자 승인): 이번 묶음 수보다 큰 번호의 옛 빌라 묶음(앱이 읽지 않는 남은 저장본)을 지움
-  try {
-    const { data: olds } = await supabase.from('leader_follower_cache').select('id').like('id', 'board|villa|%');
-    const stale = (olds || []).map((o) => o.id).filter((id) => /^board\|villa\|\d+$/.test(id) && Number(id.split('|')[2]) >= vrows.length);
-    if (stale.length) { const { error } = await supabase.from('leader_follower_cache').delete().in('id', stale); console.log(error ? '옛 빌라 묶음 지우기 실패 ' + error.message : `옛 빌라 묶음 ${stale.length}개 지움`); }
-  } catch (e) { console.log('옛 빌라 묶음 지우기 실패(무시):', String(e).slice(0, 120)); }
   console.log(`✅ 빌라 올림: ${vrows.length}묶음 / ${vids.length}건 (생활권 ${Object.keys(villa.liq).length}, 대장 ${Object.keys(villa.hs).length})`);
 } else console.log('빌라 계산이 너무 적어 올리지 않음');
 
