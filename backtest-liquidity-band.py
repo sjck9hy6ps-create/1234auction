@@ -115,28 +115,40 @@ def villa_cases():
     ap = ap.dropna(subset=["price", "deal_date", "region", "dong"]); ap["ymi"] = ymi(ap["deal_date"]).astype(int)
     ap["k"] = ap["region"].astype(str) + "|" + ap["dong"].astype(str).str.split().str[-1].fillna("")
     amap = {k: (g["ymi"].values, g["price"].values.astype(float)) for k, g in ap.groupby("k")}
-    cases = json.load(open(os.path.join(HERE, "scripts", "data", "villa-cases-est.json"), encoding="utf-8"))
-    pts = np.array([[c["lat"] * 111.0, c["lon"] * 111.0 * np.cos(np.radians(37.5))] for c in cases])
-    nbs = tree.query_ball_point(pts, 0.5)
+    import requests
+    SITE = os.environ.get("SITE_URL", "https://1234auction.vercel.app")
+    cs = requests.get(f"{SITE}/api/auction?kind=bidCases", timeout=300).json(); pts_d = {}
+    for c in cs:
+        if not any(k in str(c.get("propertyType") or "") for k in ("다세대", "연립", "도시형")): continue
+        if not str(c.get("addrJibun", "")).startswith(("서울", "경기", "인천")): continue
+        lat, lon = c.get("lat"), c.get("lon")
+        try: ar = float(c.get("areaM2"))
+        except Exception: continue
+        if lat and lon and ar > 0: pts_d[(round(float(lat), 4), round(float(lon), 4), int(round(ar / 5.0)))] = 1
+    keys = list(pts_d); pts = np.array([[k[0] * 111.0, k[1] * 111.0 * np.cos(np.radians(37.5))] for k in keys]); areas = np.array([k[2] * 5.0 for k in keys])
+    nbs = tree.query_ball_point(pts, 0.5); _, near = tree.query(pts, k=1)
+    reg_n = D["region"].astype(str).values; dong_n = D["dong"].astype(str).str.split().str[-1].fillna("").values
+    Ts = list(range(2023 * 12 - first, last - H + 1, 3)); MULTS = (0.8, 1.0, 1.25, 1.5)
     rec = []; aptkey_hit = 0
-    for c, nb in zip(cases, nbs):
-        sd = int(c["sale"]); tm = (sd // 10000) * 12 + (sd // 100 % 100) - 1
-        if tm + H > last or tm - 12 < first or not nb: continue
-        nb = np.array(nb); m = ym[nb]; s_ = np.abs(sz[nb] - float(c["area"])) <= 15; p = pr[nb]; est = float(c["est"])
-        h = (m >= tm - 12) & (m <= tm - 1); f = (m >= tm + 1) & (m <= tm + H); band = (p >= 0.9 * est) & (p <= 1.1 * est)
-        r = {"tm": tm, "nAll12": int(h.sum()), "nSame12": int((h & s_).sum()), "nBand12": int((h & s_ & band).sum()), "nBandAll12": int((h & band).sum()),
-             "fSame": int((f & s_).sum()), "fBand": int((f & s_ & band).sum())}
-        hs = h & s_
-        r["pct"] = float((p[hs] <= est).mean()) if hs.sum() >= 3 else np.nan
-        k = str(c.get("region")) + "|" + str(c.get("dong")).split()[-1] if c.get("dong") else None
-        a = amap.get(k)
-        if a is not None:
-            aptkey_hit += 1; am, apr = a; ah = (am >= tm - 12) & (am <= tm - 1); r["nApt12"] = int((ah & (apr >= 0.9 * est) & (apr <= 1.1 * est)).sum())
-        else: r["nApt12"] = np.nan
-        rec.append(r)
-    R = pd.DataFrame(rec); print(f"빌라 사건 {len(R):,}건(아파트 같은 동 거래 연결 {aptkey_hit:,}건)", flush=True)
-    R["aptShare"] = R["nApt12"] / (R["nApt12"] + R["nBandAll12"] + 1.0)
-    R = R.sort_values("tm").reset_index(drop=True); cut = R["tm"].iloc[int(len(R) * 0.55)]
+    for i, nb in enumerate(nbs):
+        if not nb: continue
+        nb = np.array(nb); m = ym[nb]; s_ = np.abs(sz[nb] - areas[i]) <= 15; p = pr[nb]
+        a = amap.get(reg_n[near[i]] + "|" + dong_n[near[i]])
+        if a is not None: aptkey_hit += 1
+        for tm in Ts:
+            h = (m >= tm - 12) & (m <= tm - 1); hs = h & s_
+            if hs.sum() < 3: continue
+            ref = float(np.median(p[hs])); f = (m >= tm + 1) & (m <= tm + H) & s_
+            for mult in MULTS:
+                P = mult * ref; band = (p >= 0.9 * P) & (p <= 1.1 * P)
+                r = {"tm": tm, "mult": mult, "nAll12": int(h.sum()), "nSame12": int(hs.sum()), "nBand12": int((hs & band).sum()), "nBandAll12": int((h & band).sum()), "fBand": int((f & band).sum())}
+                if a is not None:
+                    am, apr = a; ah = (am >= tm - 12) & (am <= tm - 1); r["nApt12"] = int((ah & (apr >= 0.9 * P) & (apr <= 1.1 * P)).sum())
+                else: r["nApt12"] = np.nan
+                rec.append(r)
+    R = pd.DataFrame(rec); print(f"빌라 위치×평형 {len(keys):,}곳 · 시점×가격대 조합 {len(R):,}건(아파트 같은 동 거래 연결 위치 {aptkey_hit:,}곳)", flush=True)
+    R["aptShare"] = R["nApt12"] / (R["nApt12"] + R["nBandAll12"] + 1.0); R["pct"] = np.nan
+    R = R.sort_values("tm").reset_index(drop=True); cut = int(np.quantile(R["tm"], 0.55)); cut = Ts[min(range(len(Ts)), key=lambda j: abs(Ts[j] - cut))]
     TR = R[R["tm"] + H < cut]; TE = R[R["tm"] >= cut]
     def feats(D, names):
         cols = []
@@ -145,28 +157,27 @@ def villa_cases():
             elif nm == "lnSame": cols.append(np.log1p(D["nSame12"]))
             elif nm == "shareSame": cols.append(D["nSame12"] / (D["nAll12"] + 1.0))
             elif nm == "lnBand": cols.append(np.log1p(D["nBand12"]))
-            elif nm == "pct": cols.append(D["pct"].fillna(0.5))
-            elif nm == "pctHi": cols.append((D["pct"].fillna(0.5) > 0.8).astype(float))
+            elif nm == "logm": cols.append(np.log(D["mult"]))
+            elif nm == "hi": cols.append((D["mult"] > 1.1).astype(float))
             elif nm == "apt": cols.append(D["aptShare"].fillna(D["aptShare"].median()))
         return np.column_stack(cols).astype(float)
-    MODELS = {"V0 면적무관 12개월(앱 지금)": ["lnAll"], "V1 같은 평형대 12개월": ["lnSame"], "V2 평형대+비중": ["lnSame", "shareSame"], "V3 평형대+가격대 거래": ["lnSame", "lnBand"],
-              "V4 +예상매도가 위치": ["lnSame", "lnBand", "pct", "pctHi"], "V5 +같은 가격대 아파트 비중": ["lnSame", "lnBand", "pct", "pctHi", "apt"], "V6 평형대+아파트 비중만": ["lnSame", "apt"]}
+    MODELS = {"V0 면적무관 12개월(앱 지금)": ["lnAll"], "V1 같은 평형대 12개월": ["lnSame"], "V2 평형대+비중": ["lnSame", "shareSame"], "V3 평형대+그 가격대 12개월 거래": ["lnSame", "lnBand"],
+              "V4 +시세 대비 가격대(높을수록)": ["lnSame", "lnBand", "logm", "hi"], "V5 +같은 가격대 아파트 비중": ["lnSame", "lnBand", "logm", "hi", "apt"], "V6 평형대+가격대 위치+아파트 비중": ["lnSame", "logm", "hi", "apt"]}
     res = {}; last_ok = last - H
     for back in (3, 6, 9, 12, 999):
-        Dt = TE[TE["tm"] >= last_ok - (back - 1)] if back < 999 else TE
-        if len(Dt) < 60: continue
+        Dt = TE[TE["tm"] >= last_ok - (back - 1) - 2] if back < 999 else TE
+        if len(Dt) < 200: continue
         y = np.log1p(Dt["fBand"].values.astype(float)); dead = Dt["fBand"].values == 0
-        out = {"사건수": int(len(Dt)), "이후 같은 가격대 거래 0건%": round(100 * float(dead.mean()), 1)}
+        out = {"행수": int(len(Dt)), "이후 같은 가격대 거래 0건%": round(100 * float(dead.mean()), 1)}
         for nm, names in MODELS.items():
             p, r2 = ols_eval(feats(TR, names), np.log1p(TR["fBand"].values.astype(float)), feats(Dt, names), y)
             out[nm] = {"R2": round(r2, 4), "0건AUC": auc_low_dead(p, dead)}
-        # 직접 비교(구간별 이후 0건%)
-        pc = Dt["pct"]; bk = lambda m: {"사건수": int(m.sum()), "이후0건%": round(100 * float(dead[m.values].mean()), 1)} if m.sum() >= 25 else None
-        out["예상매도가 위치(같은 평형 12개월 거래가 순위)"] = {lab: bk(m) for lab, m in (("하위50%", pc <= 0.5), ("50~80%", (pc > 0.5) & (pc <= 0.8)), ("80~95%", (pc > 0.8) & (pc <= 0.95)), ("95% 초과(거래가 중 가장 비싼 쪽)", pc > 0.95), ("거래 3건 미만", pc.isna()))}
-        asr = Dt["aptShare"]
-        out["같은 가격대 아파트 비중"] = {lab: bk(m) for lab, m in (("20% 미만", asr < 0.2), ("20~50%", (asr >= 0.2) & (asr < 0.5)), ("50% 이상", asr >= 0.5))}
+        bk = lambda m: {"행수": int(m.sum()), "이후0건%": round(100 * float(dead[m.values].mean()), 1), "이후 평균 거래": round(float(Dt["fBand"].values[m.values].mean()), 2)} if m.sum() >= 50 else None
         sm = Dt["nSame12"]
-        out["같은 평형대 12개월 거래"] = {lab: bk(m) for lab, m in (("0~1건", sm <= 1), ("2~4건", (sm >= 2) & (sm <= 4)), ("5~9건", (sm >= 5) & (sm <= 9)), ("10건+", sm >= 10))}
+        out["시세 대비 가격대별(같은 평형 12개월 거래가 중앙값 대비)"] = {f"{mu}배": {"전체": bk(Dt["mult"] == mu), "같은평형 12개월 5건 이상": bk((Dt["mult"] == mu) & (sm >= 5)), "5건 미만": bk((Dt["mult"] == mu) & (sm < 5))} for mu in MULTS}
+        asr = Dt["aptShare"]; at1 = Dt["mult"] == 1.0
+        out["같은 가격대 아파트 비중(시세 1.0배, 같은 평형 거래 5건+)"] = {lab: bk(at1 & (sm >= 5) & m) for lab, m in (("20% 미만", asr < 0.2), ("20~50%", (asr >= 0.2) & (asr < 0.5)), ("50% 이상", asr >= 0.5))}
+        out["같은 평형대 12개월 거래(시세 1.0배)"] = {lab: bk(at1 & m) for lab, m in (("3~4건", (sm >= 3) & (sm <= 4)), ("5~9건", (sm >= 5) & (sm <= 9)), ("10건+", sm >= 10))}
         res["전체 시험구간" if back == 999 else f"{back}개월"] = out
     return res
 
