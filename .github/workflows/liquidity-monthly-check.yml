@@ -1,0 +1,28 @@
+name: Liquidity rule monthly check
+# 팔리는 곳 판정 기준(같은 평형 12개월 5건·10건, 빌라 평형대·인정 가격대 1.25배)이 자료가 쌓여도 같은 결과를 내는지 달마다 확인
+# 기준값(scripts/data/liquidity-baseline.json)에서 허용 폭을 넘으면 이 작업이 실패해 GitHub 알림 메일이 옴. 앱 규칙은 자동으로 바꾸지 않음
+on:
+  schedule:
+    - cron: '30 18 5 * *'   # 매달 6일 03:30(한국)
+  workflow_dispatch: {}
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install pandas numpy requests scipy
+      - env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          PYTHONUNBUFFERED: '1'
+        run: python backtest-liquidity-band.py
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: liquidity-band-monthly
+          path: backtest-liquidity-band.json
+      - run: python scripts/check-liquidity-drift.py
