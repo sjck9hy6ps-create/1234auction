@@ -100,7 +100,7 @@ def apt():
     df["band"] = (df["size"] / 5.0).round().astype(int)
     ym = df["ymi"].values - first
     codes, uniq = pd.factorize(df["ckey"] + "#" + df["band"].astype(str)); ccode, cuniq = pd.factorize(df["ckey"]); u2c = np.zeros(len(uniq), dtype=np.int64); u2c[codes] = ccode
-    uband = np.array([int(u.split("#")[1]) for u in uniq]); nc = len(cuniq)
+    uband = np.array([int(u.rsplit("#", 1)[1]) for u in uniq]); nc = len(cuniq)
     c2r = pd.Series(pd.Categorical(pd.Series(cuniq).str.split("|").str[0]).codes).values; nr = int(c2r.max()) + 1
     M = np.zeros((len(uniq), L), dtype=np.int16); np.add.at(M, (codes, ym), 1)
     cum = lambda A: np.concatenate([np.zeros((A.shape[0], 1), dtype=np.int32), np.cumsum(A, axis=1, dtype=np.int32)], axis=1)
