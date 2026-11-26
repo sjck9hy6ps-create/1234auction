@@ -15,15 +15,35 @@ jobs:
           python-version: '3.11'
       - run: pip install pandas numpy requests scipy scikit-learn
       - uses: actions/download-artifact@v4
-        with: { name: villa-cases-asof, path: vca-1, run-id: '43547056313', github-token: '${{ secrets.GITHUB_TOKEN }}' }
+        with:
+          name: villa-cases-asof
+          path: vca-1
+          run-id: '43547056313'
+          github-token: ${{ secrets.GITHUB_TOKEN }}
       - uses: actions/download-artifact@v4
-        with: { name: villa-cases-asof, path: vca-2, run-id: '43439728266', github-token: '${{ secrets.GITHUB_TOKEN }}' }
+        with:
+          name: villa-cases-asof
+          path: vca-2
+          run-id: '43439728266'
+          github-token: ${{ secrets.GITHUB_TOKEN }}
       - uses: actions/download-artifact@v4
-        with: { name: villa-cases-asof, path: vca-3, run-id: '43436966597', github-token: '${{ secrets.GITHUB_TOKEN }}' }
+        with:
+          name: villa-cases-asof
+          path: vca-3
+          run-id: '43436966597'
+          github-token: ${{ secrets.GITHUB_TOKEN }}
       - uses: actions/download-artifact@v4
-        with: { name: villa-cases-asof, path: vca-4, run-id: '43436960505', github-token: '${{ secrets.GITHUB_TOKEN }}' }
+        with:
+          name: villa-cases-asof
+          path: vca-4
+          run-id: '43436960505'
+          github-token: ${{ secrets.GITHUB_TOKEN }}
       - uses: actions/download-artifact@v4
-        with: { name: villa-cases-asof, path: vca-5, run-id: '43415604340', github-token: '${{ secrets.GITHUB_TOKEN }}' }
+        with:
+          name: villa-cases-asof
+          path: vca-5
+          run-id: '43415604340'
+          github-token: ${{ secrets.GITHUB_TOKEN }}
       - name: 공시가격 파일
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
