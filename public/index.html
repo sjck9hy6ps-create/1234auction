@@ -22057,8 +22057,8 @@ function computePick(row) {
     if (t !== 'apt') { row.visit.why = '빌라는 아직 계산하지 않아요'; return; }
     if (!row.sale) { row.visit.why = '같은 단지 실거래 자료가 부족해요'; return; }
     if (!row.winbid) { row.visit.why = row.wbBase ? '낙찰 가능성을 계산하지 못했어요(감정가·최저가 확인)' : '같은 단지 같은 평형 거래가 부족해서 낙찰 가능성을 계산할 수 없어요'; return; }
-    /* 2026-11-26(사용자 승인): 1회 유찰인데 최저가가 예상매도가의 65% 미만이면 과거 이런 물건 423건에서 앱 예상매도가가 낙찰 후 180일 실거래보다 중앙 11% 높았음(오차 12%) - 시세 재확인 경고(판정은 그대로) */
-    if (parseInt(row.fails, 10) === 1 && row.sale > 0 && row.minBid > 0 && row.minBid / row.sale < 0.65) row.warns.push('⚠️ 시세 과대 의심 - 1회 유찰인데 최저가가 예상매도가의 ' + Math.round(row.minBid / row.sale * 100) + '%예요. 과거 이런 물건은 예상매도가가 실제 거래보다 평균 11% 높았어요(시세 다시 확인)');
+    /* 2026-11-26(사용자 승인): 1회 유찰인데 최저가가 예상매도가의 65% 미만이면 과거 이런 물건 277건에서 앱 최종 예상매도가가 낙찰 후 180일 실거래보다 중앙 +7.5%·10% 넘게 높음 44%(0.65 이상은 -1.5%·5%) - 2026-11-27 최종값 기준 재측정으로 수치 정정 - 시세 재확인 경고(판정은 그대로) */
+    if (parseInt(row.fails, 10) === 1 && row.sale > 0 && row.minBid > 0 && row.minBid / row.sale < 0.65) row.warns.push('⚠️ 시세 과대 의심 - 1회 유찰인데 최저가가 예상매도가의 ' + Math.round(row.minBid / row.sale * 100) + '%예요. 과거 이런 물건 277건은 예상매도가가 낙찰 후 실제 거래보다 중앙 7.5% 높았고 44%는 10% 넘게 높았어요(시세 다시 확인)');
     var a = row.a;
     var sig = [row.sale, row.minBid, row.winbid.price, a.repair, a.assumedDeposit, a.assumedFixed, a.assumedPrior, a.rights ? (a.rights.pastedAt || 1) + ':' + (a.rights.editedAt || 0) : '', a.unpaidMgmtFee, a.holdMonths, a.etc, myAssetsVer, row.fails].join('|');
     if (row._pickSig === sig && row._pickCache) { row.pick = row._pickCache; }
@@ -22098,7 +22098,7 @@ function computePick(row) {
     /* 2026-11-24(사용자 지시): 목표 마진 = 예상매도가의 10%. 예상 낙찰가 순이익이 5% 미만이면 후보에서 제외, 5~10%는 양보 후보. 근거(후보 683건, 낙찰 후 시세 반영): 5% 미만 기준 이상 46~58%·손실 27~34%, 5% 이상 59~75%·손실 15% */
     var mr = (ap && row.sale > 0) ? ap.net / row.sale : null; row.visit.mr = mr != null ? Math.round(mr * 1000) / 10 : null;
     /* 🎯 1회 유찰 기회(2026-11-26 사용자 승인): 수도권 + 같은 평형 6개월 거래 3건 이상 + 예상 낙찰가 순이익이 예상매도가의 5% 이상인 1회 유찰 아파트.
-       시험(1회 단계 12,352건, 2회 낙찰을 1회 시점으로 되돌려 포함, 입찰=예상낙찰가+3%·5% 마진 이하, 낙찰 후 180일 같은 단지·평형 실거래로 채점): 6·12개월 손해 8~9%·실현 순이익 중앙 3,500~5,250만·5%+ 81~82%(같은 범위 아무거나 손해 11~13%·2,450~3,390만).
+       시험(1회 단계 12,352건, 2회 낙찰을 1회 시점으로 되돌려 포함, 입찰=예상낙찰가+3%·5% 마진 이하, 낙찰 후 180일 같은 단지·평형 실거래로 채점): 6·12개월 손해 8~9%·실현 순이익 중앙 3,500~5,250만·5%+ 81~82%(같은 범위 아무거나 손해 11~13%·2,450~3,390만). 최종 예상매도가로 재확인(2026-11-27, 예상낙찰가 입찰): 6·9·12개월 손해 10%·실현 중앙 3,028만(확인 21건), 같은 범위 아무거나 손해 39%·864만.
        지방은 같은 방식이 손해 45~65%로 실패해 제외. 판정(임장·양보)은 바꾸지 않고 따로 모아 보여 줌 */
     var os6 = row.ownStats ? (row.ownStats.n6 || 0) : 0, metroR = /^(서울|경기|인천)/.test(String((row.a && row.a.addr) || '').trim());
     row.visit.opp1 = parseInt(row.fails, 10) === 1 && metroR && os6 >= 3 && mr != null && mr >= 0.05;
