@@ -23266,7 +23266,7 @@ function renderBidBoardLite() {
     }).join('') + ' <button class="bb-tab fav' + (isFavTab ? ' on' : '') + '" style="font-weight:700;" onclick="setLiteVisit(\'fav\')">⭐ 즐겨찾기 <b>' + favN + '</b></button>';
     // 2026-11-15(사용자: 아파트도 빌라처럼) - 임장 후보·패스·전체는 위 탭 옆이 아니라 목록 맨 위 새 줄에 둠(빌라와 같은 위치·모양)
     var subRow = (isVillaTab || isFavTab) ? '' : '<div style="padding:6px 4px;">' + [['go', '🚶 임장 후보', goN], ['watch', '🤝 양보 후보', watchN], ['opp1', '🎯 1회 유찰 기회', opp1N], ['pass', '패스', passN], ['all', '전체', aptTotal]].map(function(t) {
-        return '<button class="bb-tab' + (s.visit === t[0] ? ' on' : '') + '" onclick="setLiteVisit(\'' + t[0] + '\')"' + (t[0] === 'opp1' ? ' title="수도권·같은 평형 6개월 거래 3건+·예상 낙찰가 순이익 5%+ 인 1회 유찰 아파트(과거 시험: 손해 8~9%, 실현 순이익 중앙 3,500~5,250만). 판정과 별도로 모아 봄"' : '') + '>' + t[1] + ' <b>' + t[2] + '</b></button>';
+        return '<button class="bb-tab' + (s.visit === t[0] ? ' on' : '') + '" onclick="setLiteVisit(\'' + t[0] + '\')"' + (t[0] === 'opp1' ? ' title="수도권·같은 평형 6개월 거래 3건+·예상 낙찰가 순이익 5%+ 인 1회 유찰 아파트(과거 시험: 손해 8~10%, 실현 순이익 중앙 3,000~5,250만). 판정과 별도로 모아 봄"' : '') + '>' + t[1] + ' <b>' + t[2] + '</b></button>';
     }).join(' ') + '</div>';
     var sub = '';
     // 2026-11-15(사용자: 사용하지 않는 메뉴 삭제) 틈새·서울 자가 매입·좋은 후보만·매물 등록·권리분석 필요·일괄 붙여넣기 버튼을 없앰 - 켜져 있던 필터도 꺼서 보이지 않는 채로 목록을 걸러내지 않게 함
