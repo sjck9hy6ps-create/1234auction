@@ -3630,7 +3630,7 @@ def scorecard(D, amap, max_lag=None):
                      "prob": sn.get("prob"), "probC": sn.get("probC"), "win": sn.get("win"), "rg": sn.get("rg"), "snapSale": sn.get("sale"), "minbid": float(r.minbid), "at": sn.get("at"), "snapMin": sn.get("minBid")})
         rows[-1]["typ"] = str(x.get("propType") or x.get("type") or sn.get("type") or "?")
         rows[-1]["fails"] = getattr(r, "fails", None); rows[-1]["cls"] = getattr(r, "flow_cls", None)
-        for _k in ("np", "pb", "np5", "pb5", "safe", "watch", "go", "thr", "reg"): rows[-1][_k] = sn.get(_k)   # 2026-11-24 새 후보 기준 추적용 저장값
+        for _k in ("np", "pb", "np5", "pb5", "safe", "watch", "go", "thr", "reg", "pos"): rows[-1][_k] = sn.get(_k)   # 2026-11-24 새 후보 기준 추적용 저장값
     out = {"n": len(rows)}
     if not rows:
         return out
@@ -3717,6 +3717,18 @@ def scorecard(D, amap, max_lag=None):
                     out["cand"]["marginTiers"] = mt_
                 except Exception as _em:
                     print("  마진 구간 추적 건너뜀:", _em)
+                try:   # 2026-11-27(사용자 승인): 👍 좋은 이유(긍정 신호)별 실제 결과 - 기본 기준 통과 물건 중 신호 있음 vs 신호 없음. 신호가 계속 '좋은 물건'을 가리키는지 매주 확인
+                    C["posS"] = C["pos"].fillna("").astype(str) if "pos" in C.columns else ""
+                    B = C[C["np"] >= C["thrv"]]
+                    pt_ = []
+                    for key, lab in (("opp1", "✅ 🎯 1회 유찰 기회"), ("margin", "🟡 💰 마진 여유"), ("base", "🟡 📊 시세 근거 튼튼"), ("", "신호 없음(기본 기준만 통과)")):
+                        G = B[B["posS"] == ""] if key == "" else B[B["posS"].str.split(",").apply(lambda v, k=key: k in v)]
+                        if len(G) >= 1:
+                            pt_.append({"label": lab, "n": int(len(G)), "predWonPct": round(float((G["actual"] <= G["pb"]).mean()) * 100, 1), "okPct": round(float((G["netAct"] >= G["thrv"]).mean()) * 100, 1),
+                                        "lossPct": round(float((G["netAct"] < 0).mean()) * 100, 1), "netMed": round(float(G["netAct"].median()), 0)})
+                    out["cand"]["posTiers"] = pt_
+                except Exception as _ep:
+                    print("  좋은 이유 추적 건너뜀:", _ep)
     except Exception as _ec:
         print("  새 후보 기준 추적 건너뜀:", _ec)
     P = X[X["prob"].notna()]
