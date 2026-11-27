@@ -4536,6 +4536,8 @@ function villaWinbid(row, ve, title) {
     var a = row.a, area = (parseFloat(a.pyung) || 0) * 3.305785, f = parseInt(a.floor, 10);
     var yr = title && title.useAprDay ? parseInt(String(title.useAprDay).slice(0, 4), 10) : (parseInt(a.buildYear, 10) || ve.by || null), age = yr ? new Date().getFullYear() - yr : null;
     var mm = a.bidDate ? parseInt(a.bidDate.slice(5, 7), 10) : (new Date().getMonth() + 1);
+    /* 2026-11-28(사용자 결정): 최저가÷시세(lb)는 '이번 회차 경매의 출발 가격'(입찰자들이 기준으로 삼는 값)이라 빌라 예상낙찰가에만 예외로 유지.
+       시험(빌라 낙찰 6,702건, 3·6·9·12개월): lb 포함 오차 8.1~8.9% vs 실거래·생활권 흐름만 11.6~13.9%(물건 정보만 13.1~14.5%). 예상매도가·후보 판정·경고에는 최저가·감정가를 쓰지 않음 */
     var keys = {  // 2026-11-04: 시세 대비 최저가(lb)는 입찰자 수를 정하는 큰 요소라 유지(감정가는 쓰지 않음)
         lb: String(Math.max(-24, Math.min(9, Math.floor(Math.log(row.minBid / ve.est) / 0.05)))),
         fails: villaFailsFromRatio(row.minBid, parseFloat(a.appraisal) || 0),
