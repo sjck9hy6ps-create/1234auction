@@ -33,21 +33,26 @@ df["by2"] = df["build_year"].where(df["build_year"].between(1960, 2026), df["apr
 df["age"] = (df["dt"].dt.year - df["by2"]).clip(0, 60); df["lp"] = np.log(df["ppm"]); df["mi"] = df["dt"].dt.year * 12 + df["dt"].dt.month - 1
 print("빌라 거래", len(df), "좌표", round(df["lat"].notna().mean() * 100, 1), "%", "대장", round(df["elv"].notna().mean() * 100, 1), "%", flush=True)
 # ① 조건 효과: 같은 시군구·같은 달 중앙값을 뺀 값을 조건으로 설명(2025-01 이전만)
+APPMODE = os.environ.get("APPMODE") == "1"   # 앱과 같은 조건(승강기·세대수 없이)
 def feats(age, size, floor, elv, hh):
     age = np.asarray(age, float); size = np.asarray(size, float); floor = np.asarray(floor, float); elv = np.asarray(elv, float); hh = np.asarray(hh, float)
     a = np.nan_to_num(age, nan=20.0)
-    return np.c_[a / 10, (a / 10) ** 2, np.isnan(age), np.log(size), np.log(size) ** 2, floor <= 0, floor == 1, (floor >= 4) & (floor < 99), np.nan_to_num(elv, nan=0) > 0, np.isnan(elv), np.log1p(np.nan_to_num(hh, nan=10))].astype(float)
+    base = [a / 10, (a / 10) ** 2, np.isnan(age), np.log(size), np.log(size) ** 2, floor <= 0, floor == 1, (floor >= 4) & (floor < 99)]
+    if APPMODE: return np.c_[tuple(base)].astype(float)
+    return np.c_[tuple(base + [np.nan_to_num(elv, nan=0) > 0, np.isnan(elv), np.log1p(np.nan_to_num(hh, nan=10))])].astype(float)
 tr = df[df["mi"] < 2025 * 12].copy()
-tr["res"] = tr["lp"] - tr.groupby(["region", "mi"])["lp"].transform("median")
+KEY = "sg" if APPMODE else "region"
+tr = tr[tr[KEY].notna()] if APPMODE else tr
+tr["res"] = tr["lp"] - tr.groupby([KEY, "mi"])["lp"].transform("median")
 Xt = feats(tr["age"], tr["size"], tr["floor"], tr["elv"], tr["hh"]); Xt = np.c_[np.ones(len(Xt)), Xt]
 beta = np.linalg.lstsq(Xt, tr["res"].values, rcond=None)[0]
 def xb(age, size, floor, elv, hh): X = feats(age, size, floor, elv, hh); return X @ beta[1:]
 print("조건 효과 학습", len(tr), "계수", np.round(beta, 3).tolist(), flush=True)
 # ② 시군구 월간 흐름 지수(조건 보정 후 중앙, 3개월 이동)
 df["xb"] = xb(df["age"], df["size"], df["floor"], df["elv"], df["hh"]); df["q"] = df["lp"] - df["xb"]
-IX = df.groupby(["region", "mi"])["q"].agg(["median", "size"]).reset_index()
+IX = df.dropna(subset=[KEY]).groupby([KEY, "mi"])["q"].agg(["median", "size"]).reset_index()
 idx = {}
-for reg, g in IX.groupby("region"):
+for reg, g in IX.groupby(KEY):
     s = g.set_index("mi")["median"].sort_index(); full = pd.Series(np.nan, index=range(int(s.index.min()), int(s.index.max()) + 1)); full.loc[s.index] = s.values
     idx[reg] = full.rolling(3, min_periods=1).mean().ffill()
 def ix(reg, m):
@@ -65,7 +70,7 @@ for f in glob.glob("vca-*/villa-cases-asof.json"):
         if o is None or o["_cut"] < cut: cases[x["id"]] = dict(x, _cut=cut)
 G = df[df["lat"].notna()].reset_index(drop=True)
 KM = 111.0 * np.cos(np.radians(37.5)); tree = cKDTree(np.c_[G["lat"].values * 111.0, G["lon"].values * KM])
-Gmi = G["mi"].values; Gq = G["q"].values; Gsz = G["size"].values; Greg = G["region"].values; Gday = G["dt"].values
+Gmi = G["mi"].values; Gq = G["q"].values; Gsz = G["size"].values; Greg = G[KEY].values; Gday = G["dt"].values
 out = {}
 for x in cases.values():
     if not x.get("lat") or not x.get("lon") or not x.get("area"): continue
@@ -94,4 +99,7 @@ for x in cases.values():
         break
     if res: out[x["id"]] = res
 json.dump(out, open("villa-comp.json", "w"))
+if APPMODE:   # 앱이 쓸 모델(조건 효과 + 시군구 월 지수, 2019년부터)
+    model = {"beta": [round(float(b), 5) for b in beta], "feat": "age/10,(age/10)^2,ageNA,ln(size),ln(size)^2,floor<=0,floor==1,floor>=4", "idx": {str(k): {str(int(m)): round(float(v), 4) for m, v in s_.items() if m >= 2019 * 12 and np.isfinite(v)} for k, s_ in idx.items()}, "gen": pd.Timestamp.now().isoformat()}
+    json.dump(model, open("villa-comp-model.json", "w"))
 print("완료 사건", len(cases), "추정", len(out), "반경", pd.Series([v["R"] for v in out.values()]).value_counts().to_dict(), flush=True)

@@ -54,8 +54,11 @@ jobs:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
           PYTHONUNBUFFERED: '1'
+          APPMODE: "1"
         run: python villa-comp.py
       - uses: actions/upload-artifact@v4
         with:
           name: villa-comp
-          path: villa-comp.json
+          path: |
+            villa-comp.json
+            villa-comp-model.json
