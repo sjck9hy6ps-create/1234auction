@@ -8,7 +8,7 @@ SITE = "https://1234auction.vercel.app"
 bc = requests.get(SITE + "/api/auction?kind=bidCases", timeout=300).json()
 BC = [c for c in bc if "아파트" in (c.get("propertyType") or "") and c.get("finalBidPrice") and c.get("saleDate") and c.get("areaM2")]
 print("아파트 낙찰사례", len(BC), flush=True)
-raw = avm.fetch_all_rows("house_trades", cols="region,dong,danji,bunji,road_name,main_num,sub_num,price,size,floor,deal_date,dealing_type,build_year,cdeal_type", extra_filter="&deal_date=gte.20241101")
+raw = avm.fetch_all_rows("house_trades", cols="region,dong,danji,bunji,road_name,main_num,sub_num,price,size,floor,deal_date,dealing_type,build_year,cdeal_type", extra_filter="&deal_date=gte." + os.environ.get("TRADE_FROM", "20241101"))
 T = bv.prep(raw); T["dt"] = pd.to_datetime(T["deal_date"].astype(str), format="%Y%m%d", errors="coerce")
 print("아파트 거래", len(T), "최근", T["deal_date"].max(), flush=True)
 G = {k: g for k, g in T.groupby(["dong", "bunji"])}

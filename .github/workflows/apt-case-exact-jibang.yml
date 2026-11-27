@@ -1,0 +1,37 @@
+# 지방 아파트 2023-01~2024-11 낙찰 사건 as-of 계산(2026-11-27, 지방 대장 단지 표본 늘리기 - 측정 전용)
+name: Apt case exact net (지방 2023-2024)
+on:
+  workflow_dispatch:
+jobs:
+  collect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 330
+    strategy:
+      fail-fast: false
+      matrix:
+        prefix: ['12', '26', '27', '29', '30', '31', '36', '42,51', '43', '44', '45,52', '46', '47', '48', '50']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - run: npm install playwright
+      - run: npx playwright install --with-deps chromium
+      - env:
+          SITE_URL: https://1234auction.vercel.app
+          LAWD_PREFIX: ${{ matrix.prefix }}
+          SALE_FROM: '2023-01-01'
+          SALE_TO: '2024-12-01'
+          OUT_FILE: rows.json
+        run: node scripts/validate-app-asof-cases.mjs > log.txt 2>&1 || (tail -30 log.txt; exit 1)
+      - run: tail -4 log.txt || true
+        if: always()
+      - id: nm
+        run: echo "n=$(echo '${{ matrix.prefix }}' | tr ',' '_')" >> $GITHUB_OUTPUT
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: aptexactj-${{ steps.nm.outputs.n }}
+          path: rows.json
+          if-no-files-found: ignore
+          retention-days: 30
