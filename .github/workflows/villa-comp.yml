@@ -1,0 +1,61 @@
+name: 빌라 주변 거래 + 조건 보정 시험
+on:
+  workflow_dispatch:
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install pandas numpy requests scipy scikit-learn
+      - uses: actions/download-artifact@v4
+        with:
+          name: villa-cases-asof
+          path: vca-1
+          run-id: '43547056313'
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+      - uses: actions/download-artifact@v4
+        with:
+          name: villa-cases-asof
+          path: vca-2
+          run-id: '43439728266'
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+      - uses: actions/download-artifact@v4
+        with:
+          name: villa-cases-asof
+          path: vca-3
+          run-id: '43436966597'
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+      - uses: actions/download-artifact@v4
+        with:
+          name: villa-cases-asof
+          path: vca-4
+          run-id: '43436960505'
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+      - uses: actions/download-artifact@v4
+        with:
+          name: villa-cases-asof
+          path: vca-5
+          run-id: '43415604340'
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+      - name: 공시가격 파일
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: |
+          curl -sf -H "Authorization: Bearer $SUPABASE_SERVICE_ROLE_KEY" -H "apikey: $SUPABASE_SERVICE_ROLE_KEY" "$SUPABASE_URL/storage/v1/object/data/official-price.jsonl.gz" -o official-price.jsonl.gz; ls -la official-price.jsonl.gz || true
+      - env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          PYTHONUNBUFFERED: '1'
+        run: python villa-comp.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: villa-comp
+          path: villa-comp.json
