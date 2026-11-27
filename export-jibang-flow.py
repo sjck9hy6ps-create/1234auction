@@ -86,4 +86,31 @@ for a, b2 in (("upper", "pos"), ("lupper", "pos"), ("upper", "cflow"), ("lupper"
     tab[f"{a}×{b2}"] = [[str(r[a]), str(r[b2]), int(r["yr"]), int(r["n"]), round(float(np.exp(r["chg"]) - 1) * 100, 2), round(float(r["down"]) * 100, 1)] for _, r in t2.iterrows()]
 out["positionTable"] = tab
 json.dump(out, open("jibang-flow.json", "w"), ensure_ascii=False, indent=1)
+# (3) 경매 사건별 입찰 35일 전(직전 완결 월) 흐름 위치 내보내기
+import requests
+bc = requests.get("https://1234auction.vercel.app/api/auction?kind=bidCases", timeout=300).json()
+bykey = T.groupby(["dong", "bunji", "cx"]).size().reset_index(name="n").sort_values("n").drop_duplicates(["dong", "bunji"], keep="last")
+dbk = {(r.dong, str(r.bunji)): r.cx for r in bykey.itertuples()}
+# 경매 주소의 동은 마지막 단어만 있는 경우가 많아 끝 단어로도 찾음
+T["dong1"] = T["dong"].astype(str).str.split().str[-1]
+bykey1 = T.groupby(["dong1", "bunji", "cx"]).size().reset_index(name="n").sort_values("n").drop_duplicates(["dong1", "bunji"], keep="last")
+dbk1 = {(r.dong1, str(r.bunji)): r.cx for r in bykey1.itertuples()}
+cases = {}
+for c in bc:
+    if "아파트" not in (c.get("propertyType") or "") or not c.get("saleDate") or str(c.get("addrJibun") or "").startswith(("서울", "경기", "인천")): continue
+    cxk = dbk.get((c.get("dong"), str(c.get("bunji")))) or dbk1.get((str(c.get("dong") or "").split()[-1] if c.get("dong") else "", str(c.get("bunji"))))
+    if cxk is None or cxk not in cid: continue
+    sd = pd.Timestamp(c["saleDate"]) - pd.Timedelta(days=35); t = sd.year * 12 + sd.month - 1 - 1 - m0
+    if t < 30 or t >= L: continue
+    i = cid[cxk]
+    def gv(A, k=None):
+        if k is None: v = A[i, t]
+        else: v = A[i, t] - A[i, t - k]
+        return None if not np.isfinite(v) else round(float(v), 5)
+    gCL = C3[i, t] - LV[i, t]; gCL0 = np.nanmean(C3[i, t - 24:t - 3] - LV[i, t - 24:t - 3]); gCR = C3[i, t] - RR[i, t]; gCR0 = np.nanmean(C3[i, t - 24:t - 3] - RR[i, t - 24:t - 3])
+    cases[c["id"]] = {"posL": None if not np.isfinite(gCL - gCL0) else round(float(gCL - gCL0), 5), "posR": None if not np.isfinite(gCR - gCR0) else round(float(gCR - gCR0), 5),
+                      "L6": gv(LV, 6), "R6": gv(RR, 6), "D6": gv(DD, 6), "C6": gv(C3, 6), "C12": gv(C3, 12), "Cn": float(C6n[i, t])}
+json.dump(cases, open("jibang-flow-cases.json", "w"))
+print("경매 사건 위치", len(cases), "위치 있음", sum(1 for v in cases.values() if v["posL"] is not None), flush=True)
+
 print("완료", flush=True)

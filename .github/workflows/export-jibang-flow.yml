@@ -19,4 +19,6 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: jibang-flow
-          path: jibang-flow.json
+          path: |
+            jibang-flow.json
+            jibang-flow-cases.json
