@@ -22122,7 +22122,9 @@ function flowPosFor(row) {
     }
     var rw = function(m, t, minn, w) { var s0 = 0, n = 0; for (var i = t - w + 1; i <= t; i++) { var o = m && m[i]; if (o) { s0 += o[0]; n += o[1]; } } return n >= minn ? s0 / n : null; };
     var bjf = row.bunjiFull || fullBunjiFromAddr(row.a.addr, row.a.dong, row.a.bunji);
-    var me = P.units[dongKey(row.a.dong) + '|' + String(bjf || '').trim()]; if (!me) return null;
+    var me = P.units[dongKey(row.a.dong) + '|' + String(bjf || '').trim()];
+    if (!me && row.a.lat && row.a.lon) me = { m: {}, dong: dongKey(row.a.dong), lat: parseFloat(row.a.lat), lon: parseFloat(row.a.lon), ghost: true };   // 건물(단지) 자체 거래가 없으면 물건 좌표로 위 흐름만
+    if (!me) return null;
     // 단지 좌표는 지도에 그린 단지만 채워져 있을 수 있음 → 이 시군구 좌표를 한 번 받아 오고 상세 창을 다시 그림
     var withXY = Object.keys(P.units).filter(function(k) { return P.units[k].lat; }).length;
     if ((!me.lat || withXY < Object.keys(P.units).length * 0.5) && !flowPosCache['xy|' + lawd]) {
