@@ -2,7 +2,10 @@
    사례마다 낙찰일 35일 전(주 단위로 묶음) 자료로 computeBidBoardRow를 돌려 보정 전/후 예상매도가와 예상 낙찰가용 시세(wbBase)를 돌려줌. 이 값으로 낙찰가 모델을 다시 학습·채점. */
 (function () {
   const RD = Date;
-  const labelOf = (addr) => bidBoardRegionLabel(addr);
+  // 2026-11-27: 시도 표기 통일(경상북→경북 등) - 예전 사례 주소('경북 포항시')와 지금 물건 주소('경상북도 포항시')가 다른 묶음이 돼 지역코드를 못 찾던 문제(측정 도구만, 앱 계산 불변)
+  const SIDO_N = { '경상북': '경북', '경상남': '경남', '충청북': '충북', '충청남': '충남', '전라북': '전북', '전라남': '전남' };
+  const GJ_GU = /^(동구|서구|남구|북구|광산구)$/;
+  const labelOf = (addr) => { const L = bidBoardRegionLabel(addr), i = L.indexOf(' '); let sd = i < 0 ? L : L.slice(0, i); const rest = i < 0 ? '' : L.slice(i + 1); sd = SIDO_N[sd] || sd; if (sd === '전남광주') sd = GJ_GU.test(rest) ? '광주' : '전남'; return sd + (rest ? ' ' + rest : ''); };
   window.__vc = {
     RD,
     // 사례 → 지역코드: 같은 시도·시군구 표기를 가진 경매물건 중 가장 가까운 것의 코드(사례에는 법정동코드가 없음)
