@@ -62,7 +62,9 @@ def wmed(v, w):
 out = {}
 for c in bc:
     if "아파트" not in (c.get("propertyType") or "") or not c.get("saleDate") or c["saleDate"] < "2023-01-01" or not c.get("areaM2"): continue
-    cut = pd.Timestamp(c["saleDate"]) - pd.Timedelta(days=35); cm = cut.year * 12 + cut.month - 1; area = float(c["areaM2"]); fl = c.get("floor")
+    cut = pd.Timestamp(c["saleDate"]) - pd.Timedelta(days=35); cm = cut.year * 12 + cut.month - 1; area = float(c["areaM2"])
+    try: fl = float(str(c.get("floor")).strip()) if c.get("floor") not in (None, "") else np.nan
+    except Exception: fl = np.nan
     cxk = dbk.get((c.get("dong"), str(c.get("bunji")))) or dbk1.get((str(c.get("dong") or "").split()[-1] if c.get("dong") else "", str(c.get("bunji"))))
     res = None
     if cxk is not None:
@@ -70,20 +72,22 @@ for c in bc:
         for months in (24, 60, 120):
             h = g[g["mi"] >= cm - months]
             if len(h) >= 3:
-                v = h["qi"].values + np.array([ix(reg, cm) - ix(reg, m) for m in h["mi"].values]) + float(F_in([area], [fl if fl is not None else np.nan]) @ b_in[1:])
+                v = h["qi"].values + np.array([ix(reg, cm) - ix(reg, m) for m in h["mi"].values]) + float(np.ravel(F_in([area], [fl]) @ b_in[1:])[0])
                 w = np.exp(-(cm - h["mi"].values) / 18.0) * np.exp(-np.abs(np.log(h["size"].values / area)) / 0.15)
                 same = int((np.abs(h["size"].values - area) <= 3).sum())
                 res = {"est": round(float(np.exp(wmed(v, w)) * area)), "lv": "같은 단지", "m": months, "n": int(len(h)), "same": same,
-                       "sameFloor": int(((np.abs(h["size"].values - area) <= 3) & (h["floor"].values == (fl if fl is not None else -99))).sum())}
+                       "sameFloor": int(((np.abs(h["size"].values - area) <= 3) & (h["floor"].values == fl)).sum())}
                 break
     if res is None and c.get("lat") and c.get("lon"):
         nb = np.array(tree.query_ball_point([float(c["lat"]) * 111.0, float(c["lon"]) * 111.0 * np.cos(np.radians(36.5))], 1.0), int)
         if len(nb):
             nb = nb[(G["dt"].values[nb] <= np.datetime64(cut)) & (G["mi"].values[nb] >= cm - 24)]
             if len(nb) >= 5:
-                age_t = (cut.year - float(c.get("buildYear"))) if c.get("buildYear") else np.nan
+                age_t = np.nan
+                try: age_t = cut.year - float(c.get("buildYear")) if c.get("buildYear") else np.nan
+                except Exception: age_t = np.nan
                 regs = G["region"].values[nb]
-                v = G["qx"].values[nb] + np.array([ix(r, cm) - ix(r, m) for r, m in zip(regs, G["mi"].values[nb])]) + float(F_x([area], [fl if fl is not None else np.nan], [age_t]) @ b_x[1:])
+                v = G["qx"].values[nb] + np.array([ix(r, cm) - ix(r, m) for r, m in zip(regs, G["mi"].values[nb])]) + float(np.ravel(F_x([area], [fl], [age_t]) @ b_x[1:])[0])
                 dkm = np.sqrt(((G["lat"].values[nb] - float(c["lat"])) * 111.0) ** 2 + ((G["lon"].values[nb] - float(c["lon"])) * 111.0 * np.cos(np.radians(36.5))) ** 2)
                 w = np.exp(-dkm / 0.5) * np.exp(-np.abs(np.log(G["size"].values[nb] / area)) / 0.2)
                 res = {"est": round(float(np.exp(wmed(v, w)) * area)), "lv": "주변 단지", "n": int(len(nb))}
