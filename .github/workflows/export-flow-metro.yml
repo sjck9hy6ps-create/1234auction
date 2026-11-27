@@ -1,0 +1,30 @@
+name: 계층 흐름 분석(수도권 아파트·빌라)
+on:
+  workflow_dispatch:
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        tbl: [house, villa]
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install pandas numpy requests scipy scikit-learn
+      - env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          PYTHONUNBUFFERED: '1'
+          REG: metro
+          TBL: ${{ matrix.tbl }}
+        run: python export-flow.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: flow-metro-${{ matrix.tbl }}
+          path: |
+            flow-*.json
+            flow-cases-*.json
