@@ -82,7 +82,7 @@ for x in cases.values():
     for R in (0.3, 0.5, 1.0):
         nb = np.array(tree.query_ball_point([x["lat"] * 111.0, x["lon"] * KM], R), int)
         if not len(nb): continue
-        nb = nb[(Gday[nb] <= np.datetime64(cutd)) & (Gmi[nb] >= cm - 120)]
+        nb = nb[(Gday[nb] <= np.datetime64(cutd)) & (Gmi[nb] >= cm - (36 if APPMODE else 120))]   # 앱은 최근 약 3년치만 가짐
         if len(nb) < 8: continue
         reg_t = pd.Series(Greg[nb]).mode()[0]
         # 시점 보정: 비교 거래 달 → 기준 시점(같은 시군구 지수)
