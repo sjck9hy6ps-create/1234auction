@@ -22087,6 +22087,57 @@ function jibangLeaderRank(lawd, dong, bunji) {
     var lower = vals.filter(function(v) { return v < me; }).length;
     return { rank: lower / vals.length, n: vals.length };
 }
+/* 🧭 흐름 위치(참고 정보, 2026-11-28 사용자 승인 - 판정에는 쓰지 않음): 지방 아파트의 시군구 → 법정동 → 생활권(반경 1km) → 단지 6개월 가격 흐름과
+   단지의 현재 위치(단지-생활권 가격 차이가 지난 2년 평균보다 벌어졌는지). 근거: 지방 실거래 34만 건(2021~2026) - 앞서감 단지는 6개월 뒤 3% 이상 하락 32~67%,
+   뒤처짐 18~57%로 같은 해 비교에서 매년 앞서감이 높았음. 다만 경매 사건에서는 앱 예상매도가가 이를 이미 반영해 위치별 차이가 확인되지 않음 → 임장 판단용 참고 */
+var flowPosCache = {};
+function flowPosFor(row) {
+    if (!row || row.type !== 'apt' || row.regionCls !== '지방') return null;
+    var lawd = row.lawd, list = lawd && dataCache[lawd]; if (!list) return null;
+    var now = new Date(), T = now.getFullYear() * 12 + now.getMonth() - 1;   // 직전 완결 월
+    var ck = lawd + '|' + list.length + '|' + T, P = flowPosCache[ck];
+    if (!P) {
+        P = { units: {}, R: {}, D: {} };
+        var add = function(m, mi, v) { var o = m[mi] || (m[mi] = [0, 0]); o[0] += v; o[1]++; };
+        list.forEach(function(apt) {
+            if ((apt.buildingType || 'apt') !== 'apt') return; var l = apt.latest || {}, k = dongKey(l.dong) + '|' + String(l.bunji || '').trim(); if (k === '|') return;
+            var cc = coordCache[[l.dong, l.name, l.bunji, l.road_name, l.main_num, l.sub_num].join('|').toLowerCase()];
+            var u = P.units[k] || (P.units[k] = { m: {}, dong: dongKey(l.dong), lat: cc && cc.lat, lon: cc && cc.lon });
+            (apt.trades || []).forEach(function(t) {
+                if (t.cancelled) return; var mi = t.year * 12 + t.month - 1; if (mi < T - 40 || mi > T) return;
+                var amt = parseInt(String(t.amount).replace(/,/g, ''), 10), ar = parseFloat(t.area); if (!(amt > 0 && ar > 0)) return;
+                var v = Math.log(amt / ar); add(u.m, mi, v); add(P.R, mi, v); add(P.D[u.dong] || (P.D[u.dong] = {}), mi, v);
+            });
+        });
+        flowPosCache[ck] = P;
+    }
+    var r3 = function(m, t, minn) { var s0 = 0, n = 0; for (var i = t - 2; i <= t; i++) { var o = m && m[i]; if (o) { s0 += o[0]; n += o[1]; } } return n >= minn ? s0 / n : null; };
+    var me = P.units[dongKey(row.a.dong) + '|' + String(row.bunjiFull || '').trim()]; if (!me) return null;
+    // 단지 좌표는 지도에 그린 단지만 채워져 있을 수 있음 → 이 시군구 좌표를 한 번 받아 오고 상세 창을 다시 그림
+    var withXY = Object.keys(P.units).filter(function(k) { return P.units[k].lat; }).length;
+    if ((!me.lat || withXY < Object.keys(P.units).length * 0.5) && !flowPosCache['xy|' + lawd]) {
+        flowPosCache['xy|' + lawd] = 1;
+        prefetchCoordsFromDB(list).then(function() { Object.keys(flowPosCache).forEach(function(k) { if (k.indexOf(lawd + '|') === 0) delete flowPosCache[k]; }); if (String(bidDrawerId) === String(row.id)) renderBidDrawer(); }).catch(function() {});
+        if (!me.lat) return { pending: true };
+    }
+    var nb = [];
+    if (me.lat && me.lon) Object.keys(P.units).forEach(function(k) { var u = P.units[k]; if (u === me || !u.lat || !u.lon) return; var dy = (u.lat - me.lat) * 111, dx = (u.lon - me.lon) * 111 * Math.cos(me.lat * Math.PI / 180); if (dx * dx + dy * dy <= 1) nb.push(u); });
+    var L3 = function(t) { var v = []; nb.forEach(function(u) { var x = r3(u.m, t, 2); if (x != null) v.push(x); }); return v.length >= 3 ? v.reduce(function(a, b) { return a + b; }, 0) / v.length : null; };
+    var chg = function(a, b) { return a != null && b != null ? Math.exp(a - b) - 1 : null; };
+    var o = { R6: chg(r3(P.R, T, 20), r3(P.R, T - 6, 20)), D6: chg(r3(P.D[me.dong], T, 5), r3(P.D[me.dong], T - 6, 5)), L6: chg(L3(T), L3(T - 6)), C6: chg(r3(me.m, T, 2), r3(me.m, T - 6, 2)), nb: nb.length };
+    var gaps = []; for (var t = T - 24; t <= T - 3; t++) { var c = r3(me.m, t, 2), lv = L3(t); if (c != null && lv != null) gaps.push(c - lv); }
+    var cN = r3(me.m, T, 2), lN = L3(T);
+    if (gaps.length >= 6 && cN != null && lN != null) o.pos = (cN - lN) - gaps.reduce(function(a, b) { return a + b; }, 0) / gaps.length;
+    return o;
+}
+function flowPosHtml(row) {
+    var f = null; try { f = flowPosFor(row); } catch (e) { f = null; } if (!f) return '';
+    if (f.pending) return '<div class="pk-sub" style="margin-top:6px;color:#6b7280;">🧭 흐름 위치 계산 중(주변 단지 좌표 받는 중)…</div>';
+    var lab = function(v, c) { return v == null ? '자료 부족' : (v <= -c ? '하락' : (v >= c ? '상승' : '보합')) + ' ' + (v >= 0 ? '+' : '') + (v * 100).toFixed(1) + '%'; };
+    var pos = f.pos == null ? '자료 부족' : (f.pos < -0.03 ? '<b style="color:#15803d;">뒤처짐</b>(주변보다 평소보다 싸게 거래 중)' : (f.pos > 0.03 ? '<b style="color:#b91c1c;">앞서감</b>(주변보다 평소보다 비싸게 거래 중)' : '<b>제자리</b>'));
+    return '<div class="pk-sub" style="margin-top:6px;border-top:1px dashed #e5e7eb;padding-top:6px;" title="지방 실거래 34만 건(2021~2026): 앞서감 단지는 6개월 뒤 3% 이상 하락 32~67%, 뒤처짐 18~57%로 같은 해 비교에서 매년 앞서감이 높았어요. 다만 경매 사건에서는 앱 예상매도가가 이미 이를 반영해 위치별 마진 차이가 확인되지 않았어요(판정에는 쓰지 않는 참고 정보)">🧭 흐름 위치(최근 6개월, 참고) · 시군구 ' + lab(f.R6, 0.02) + ' → 법정동 ' + lab(f.D6, 0.02) + ' → 생활권(1km, 단지 ' + f.nb + '곳) ' + lab(f.L6, 0.02) + ' → 단지 ' + lab(f.C6, 0.03)
+        + '<br>단지 위치: ' + pos + ' <small style="color:#6b7280;">- 과거 지방 실거래에서 앞서감 단지는 6개월 뒤 하락이 더 잦았어요(판정 미반영, 임장 참고)</small></div>';
+}
 function computePick(row) {
     row.pick = null; row.visit = { go: false, why: '' };
     var t = row.type;
@@ -24120,7 +24171,7 @@ async function renderBidDrawer() {
         if (bidBoardState.lite && row.type === 'apt') {
             var pe = row.pick && row.pick.ev, go = row.visit && row.visit.go, pcc = pe ? Math.round(pe.p * 100) : null;
             var rt = pe && row.sale ? (pe.pre / row.sale * 100).toFixed(1) + '%' : '-';
-            card = '<div class="dr-pickcard ' + (go ? 'go' : 'pass') + '"><div class="pk-v">' + (go ? '🚶 임장 추천' : '패스') + (row.visit && row.visit.why ? ' · ' + bbEsc(row.visit.why) : '') + '</div>' + posDrawerHtml(row)
+            card = '<div class="dr-pickcard ' + (go ? 'go' : 'pass') + '"><div class="pk-v">' + (go ? '🚶 임장 추천' : '패스') + (row.visit && row.visit.why ? ' · ' + bbEsc(row.visit.why) : '') + '</div>' + posDrawerHtml(row) + flowPosHtml(row)
                 + (pe ? '<div class="pk-sub">예상 순이익(세후) <b>' + fmt(pe.net) + '</b> · 마진율(세전) ' + rt + (row.pick.max ? '<br>입찰 상한 ' + fmt(row.pick.max.bid) + (isFirstFloor(row.a) ? ' <span title="1층은 중층보다 평균 8.7% 싸고 편차가 커서 필요 마진을 20% 더 둬요" style="color:#b45309;">(1층 +20%)</span>' : '') : '') + (row.ownStats ? '<br>같은 단지 같은 평형 거래: 최근 1년 <b>' + (row.ownStats.n12 || 0) + '건</b> · 올해 ' + (row.ownStats.nYear || 0) + '건' + (row.ownStats.lastAgeM != null ? ' · 마지막 ' + row.ownStats.lastAgeM + '개월 전' : '') : '') + '</div>'
                     : '<div class="pk-sub">추천가가 없어요' + (function(nm) { return nm ? '<br>최저가(' + fmt(row.minBid) + ')로 입찰해 예상매도가 ' + fmt(row.sale) + '에 팔면 예상 순이익(세후) <b style="color:' + (nm.net < 0 ? '#b91c1c' : '#374151') + ';">' + fmt(nm.net) + '</b>' + (nm.assumed > 0 ? '<br>권리분석 인수 보증금 <b>' + fmt(nm.assumed) + '</b>이 비용에 들어 있어요' : '') : ''; })(netMinFor(row)) + '</div>')
                 + '</div>';
