@@ -5,7 +5,7 @@ import numpy as np, pandas as pd
 HERE = os.path.dirname(os.path.abspath(__file__))
 s = importlib.util.spec_from_file_location("bv", os.path.join(HERE, "backtest-villa.py")); bv = importlib.util.module_from_spec(s); s.loader.exec_module(bv); avm = bv.avm
 NOT_METRO = "&and=(region.not.like.서울*,region.not.like.경기*,region.not.like.인천*)"
-raw = avm.fetch_all_rows("house_trades", cols="region,price,size,deal_date,dealing_type", extra_filter="&deal_date=gte.20190101" + NOT_METRO)
+raw = avm.fetch_all_rows("house_trades", cols="region,dong,danji,bunji,price,size,floor,deal_date,dealing_type,build_year", extra_filter="&deal_date=gte.20190101" + NOT_METRO)
 T = bv.prep(raw) if "ppm" not in raw.columns else raw
 T["ym"] = (pd.to_numeric(T["deal_date"]) // 100).astype(int)
 rr = avm.fetch_all_rows("house_rent", cols="region,deposit,size,deal_date", extra_filter="&deal_date=gte.20190101&monthly_rent=eq.0" + NOT_METRO)
