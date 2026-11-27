@@ -22091,28 +22091,38 @@ function jibangLeaderRank(lawd, dong, bunji) {
    단지의 현재 위치(단지-생활권 가격 차이가 지난 2년 평균보다 벌어졌는지). 근거: 지방 실거래 34만 건(2021~2026) - 앞서감 단지는 6개월 뒤 3% 이상 하락 32~67%,
    뒤처짐 18~57%로 같은 해 비교에서 매년 앞서감이 높았음. 다만 경매 사건에서는 앱 예상매도가가 이를 이미 반영해 위치별 차이가 확인되지 않음 → 임장 판단용 참고 */
 var flowPosCache = {};
+/* 2026-11-28(사용자 승인) 수도권 아파트·수도권 빌라로 확장 - 같은 계층 시험(수도권 아파트 실거래 25만 행, 빌라 62만 행)에서 위치 효과가 해마다 일관됨.
+   빌라는 건물 거래가 드물어 건물 시세 창 12개월·생활권 500m·시군구/법정동 6개월 창 */
+function flowCfg(row) {
+    if (!row) return null;
+    var metro = /^(서울|경기|인천)/.test(String((row.a && row.a.addr) || '').trim());
+    if (row.type === 'apt') return { seg: metro ? 'metroApt' : 'jibangApt', bt: 'apt', W: 3, minn: 2, rad: 1, RW: 3, look: 40 };
+    if (row.type === 'villa' && metro) return { seg: 'metroVilla', bt: 'villa', W: 12, minn: 1, rad: 0.5, RW: 6, look: 52 };
+    return null;
+}
 function flowPosFor(row) {
-    if (!row || row.type !== 'apt' || row.regionCls !== '지방') return null;
-    var lawd = row.lawd, list = lawd && dataCache[lawd]; if (!list) return null;
+    var cfg = flowCfg(row); if (!cfg) return null;
+    var lawd = row.lawd || (row.a && bidBoardLawdOf(row.a)), list = lawd && dataCache[lawd]; if (!list) return null;
     var now = new Date(), T = now.getFullYear() * 12 + now.getMonth() - 1;   // 직전 완결 월
-    var ck = lawd + '|' + list.length + '|' + T, P = flowPosCache[ck];
+    var ck = lawd + '|' + cfg.bt + '|' + list.length + '|' + T, P = flowPosCache[ck];
     if (!P) {
         P = { units: {}, R: {}, D: {} };
         var add = function(m, mi, v) { var o = m[mi] || (m[mi] = [0, 0]); o[0] += v; o[1]++; };
         list.forEach(function(apt) {
-            if ((apt.buildingType || 'apt') !== 'apt') return; var l = apt.latest || {}, k = dongKey(l.dong) + '|' + String(l.bunji || '').trim(); if (k === '|') return;
+            if ((apt.buildingType || 'apt') !== cfg.bt) return; var l = apt.latest || {}, k = dongKey(l.dong) + '|' + String(l.bunji || '').trim(); if (k === '|') return;
             var cc = coordCache[[l.dong, l.name, l.bunji, l.road_name, l.main_num, l.sub_num].join('|').toLowerCase()];
             var u = P.units[k] || (P.units[k] = { m: {}, dong: dongKey(l.dong), lat: cc && cc.lat, lon: cc && cc.lon });
             (apt.trades || []).forEach(function(t) {
-                if (t.cancelled) return; var mi = t.year * 12 + t.month - 1; if (mi < T - 40 || mi > T) return;
+                if (t.cancelled) return; var mi = t.year * 12 + t.month - 1; if (mi < T - cfg.look || mi > T) return;
                 var amt = parseInt(String(t.amount).replace(/,/g, ''), 10), ar = parseFloat(t.area); if (!(amt > 0 && ar > 0)) return;
                 var v = Math.log(amt / ar); add(u.m, mi, v); add(P.R, mi, v); add(P.D[u.dong] || (P.D[u.dong] = {}), mi, v);
             });
         });
         flowPosCache[ck] = P;
     }
-    var r3 = function(m, t, minn) { var s0 = 0, n = 0; for (var i = t - 2; i <= t; i++) { var o = m && m[i]; if (o) { s0 += o[0]; n += o[1]; } } return n >= minn ? s0 / n : null; };
-    var me = P.units[dongKey(row.a.dong) + '|' + String(row.bunjiFull || '').trim()]; if (!me) return null;
+    var rw = function(m, t, minn, w) { var s0 = 0, n = 0; for (var i = t - w + 1; i <= t; i++) { var o = m && m[i]; if (o) { s0 += o[0]; n += o[1]; } } return n >= minn ? s0 / n : null; };
+    var bjf = row.bunjiFull || fullBunjiFromAddr(row.a.addr, row.a.dong, row.a.bunji);
+    var me = P.units[dongKey(row.a.dong) + '|' + String(bjf || '').trim()]; if (!me) return null;
     // 단지 좌표는 지도에 그린 단지만 채워져 있을 수 있음 → 이 시군구 좌표를 한 번 받아 오고 상세 창을 다시 그림
     var withXY = Object.keys(P.units).filter(function(k) { return P.units[k].lat; }).length;
     if ((!me.lat || withXY < Object.keys(P.units).length * 0.5) && !flowPosCache['xy|' + lawd]) {
@@ -22121,12 +22131,13 @@ function flowPosFor(row) {
         if (!me.lat) return { pending: true };
     }
     var nb = [];
-    if (me.lat && me.lon) Object.keys(P.units).forEach(function(k) { var u = P.units[k]; if (u === me || !u.lat || !u.lon) return; var dy = (u.lat - me.lat) * 111, dx = (u.lon - me.lon) * 111 * Math.cos(me.lat * Math.PI / 180); if (dx * dx + dy * dy <= 1) nb.push(u); });
-    var L3 = function(t) { var v = []; nb.forEach(function(u) { var x = r3(u.m, t, 2); if (x != null) v.push(x); }); return v.length >= 3 ? v.reduce(function(a, b) { return a + b; }, 0) / v.length : null; };
+    if (me.lat && me.lon) Object.keys(P.units).forEach(function(k) { var u = P.units[k]; if (u === me || !u.lat || !u.lon) return; var dy = (u.lat - me.lat) * 111, dx = (u.lon - me.lon) * 111 * Math.cos(me.lat * Math.PI / 180); if (dx * dx + dy * dy <= cfg.rad * cfg.rad) nb.push(u); });
+    var L3 = function(t) { var v = []; nb.forEach(function(u) { var x = rw(u.m, t, cfg.minn, cfg.W); if (x != null) v.push(x); }); return v.length >= 3 ? v.reduce(function(a, b) { return a + b; }, 0) / v.length : null; };
     var chg = function(a, b) { return a != null && b != null ? Math.exp(a - b) - 1 : null; };
-    var o = { R6: chg(r3(P.R, T, 20), r3(P.R, T - 6, 20)), D6: chg(r3(P.D[me.dong], T, 5), r3(P.D[me.dong], T - 6, 5)), L6: chg(L3(T), L3(T - 6)), C6: chg(r3(me.m, T, 2), r3(me.m, T - 6, 2)), nb: nb.length };
-    var gaps = []; for (var t = T - 24; t <= T - 3; t++) { var c = r3(me.m, t, 2), lv = L3(t); if (c != null && lv != null) gaps.push(c - lv); }
-    var cN = r3(me.m, T, 2), lN = L3(T);
+    var cR = function(m, t) { return rw(m, t, 20, cfg.RW); }, cD = function(m, t) { return rw(m, t, 5, cfg.RW); }, cC = function(t) { return rw(me.m, t, cfg.minn, cfg.W); };
+    var o = { seg: cfg.seg, R6: chg(cR(P.R, T), cR(P.R, T - 6)), D6: chg(cD(P.D[me.dong], T), cD(P.D[me.dong], T - 6)), L6: chg(L3(T), L3(T - 6)), C6: chg(cC(T), cC(T - 6)), nb: nb.length };
+    var gaps = []; for (var t = T - 24; t <= T - 3; t++) { var c = cC(t), lv = L3(t); if (c != null && lv != null) gaps.push(c - lv); }
+    var cN = cC(T), lN = L3(T);
     if (gaps.length >= 6 && cN != null && lN != null) o.pos = (cN - lN) - gaps.reduce(function(a, b) { return a + b; }, 0) / gaps.length;
     return o;
 }
@@ -22135,8 +22146,12 @@ function flowPosHtml(row) {
     if (f.pending) return '<div class="pk-sub" style="margin-top:6px;color:#6b7280;">🧭 흐름 위치 계산 중(주변 단지 좌표 받는 중)…</div>';
     var lab = function(v, c) { return v == null ? '자료 부족' : (v <= -c ? '하락' : (v >= c ? '상승' : '보합')) + ' ' + (v >= 0 ? '+' : '') + (v * 100).toFixed(1) + '%'; };
     var pos = f.pos == null ? '자료 부족' : (f.pos < -0.03 ? '<b style="color:#15803d;">뒤처짐</b>(주변보다 평소보다 싸게 거래 중)' : (f.pos > 0.03 ? '<b style="color:#b91c1c;">앞서감</b>(주변보다 평소보다 비싸게 거래 중)' : '<b>제자리</b>'));
-    return '<div class="pk-sub" style="margin-top:6px;border-top:1px dashed #e5e7eb;padding-top:6px;" title="지방 실거래 34만 건(2021~2026): 앞서감 단지는 6개월 뒤 3% 이상 하락 32~67%, 뒤처짐 18~57%로 같은 해 비교에서 매년 앞서감이 높았어요. 다만 경매 사건에서는 앱 예상매도가가 이미 이를 반영해 위치별 마진 차이가 확인되지 않았어요(판정에는 쓰지 않는 참고 정보)">🧭 흐름 위치(최근 6개월, 참고) · 시군구 ' + lab(f.R6, 0.02) + ' → 법정동 ' + lab(f.D6, 0.02) + ' → 생활권(1km, 단지 ' + f.nb + '곳) ' + lab(f.L6, 0.02) + ' → 단지 ' + lab(f.C6, 0.03)
-        + '<br>단지 위치: ' + pos + ' <small style="color:#6b7280;">- 과거 지방 실거래에서 앞서감 단지는 6개월 뒤 하락이 더 잦았어요(판정 미반영, 임장 참고)</small></div>';
+    var TX = {
+        jibangApt: { u: '단지', r: '1km', tip: '지방 실거래 34만 건(2021~2026): 앞서감 단지는 6개월 뒤 3% 이상 하락 32~67%, 뒤처짐 18~57%로 같은 해 비교에서 매년 앞서감이 높았어요. 다만 경매 사건에서는 앱 예상매도가가 이미 이를 반영해 위치별 마진 차이가 확인되지 않았어요(판정에는 쓰지 않는 참고 정보)', note: '과거 지방 실거래에서 앞서감 단지는 6개월 뒤 하락이 더 잦았어요(판정 미반영, 임장 참고)' },
+        metroApt: { u: '단지', r: '1km', tip: '수도권 아파트 실거래 25만 건(2021~2026): 앞서감 단지는 6개월 뒤 3% 이상 하락 21~86%, 뒤처짐 10~69%로 매년 앞서감이 높았고, 지방과 달리 시군구·생활권 흐름도 단지에 더 크게 내려왔어요. 경매 사건에서는 앱 예상매도가가 이미 반영해 위치별 차이가 없었어요(판정에는 쓰지 않는 참고 정보)', note: '수도권은 시군구·생활권 흐름과 단지 위치를 함께 보세요(판정 미반영, 임장 참고)' },
+        metroVilla: { u: '건물', r: '500m', tip: '수도권 빌라 실거래 62만 건(2021~2025, 건물 최근 12개월 기준): 앞서감 건물은 이후 12개월 3% 이상 하락 26~61%, 뒤처짐 13~33%. 경매 사건에서도 앞서감 빌라는 예상매도가가 낙찰 후 실거래보다 약 4% 높았고 10% 넘게 높게 잡힌 비율이 36%(뒤처짐 23~24%)였어요(판정에는 쓰지 않는 참고 정보)', note: f.pos != null && f.pos > 0.03 ? '<b style="color:#b91c1c;">앞서감 빌라는 과거 예상매도가가 약 4% 높게 잡혔어요 - 시세 다시 확인</b>' : '빌라는 건물 거래가 드물어 위치가 안 나오는 경우가 많아요(판정 미반영, 임장 참고)' } }[f.seg] || {};
+    return '<div class="pk-sub" style="margin-top:6px;border-top:1px dashed #e5e7eb;padding-top:6px;" title="' + bbEsc(TX.tip || '') + '">🧭 흐름 위치(최근 6개월, 참고) · 시군구 ' + lab(f.R6, 0.02) + ' → 법정동 ' + lab(f.D6, 0.02) + ' → 생활권(' + TX.r + ', ' + TX.u + ' ' + f.nb + '곳) ' + lab(f.L6, 0.02) + ' → ' + TX.u + ' ' + lab(f.C6, 0.03)
+        + '<br>' + TX.u + ' 위치: ' + pos + ' <small style="color:#6b7280;">- ' + (TX.note || '') + '</small></div>';
 }
 function computePick(row) {
     row.pick = null; row.visit = { go: false, why: '' };
@@ -24805,7 +24820,7 @@ async function renderVillaDrawer(d, row) {
         + '<div class="dr-top-btns"><button onclick="bidBoardGo(\'' + idJs + '\')">🗺️ 지도</button><button onclick="openCyclePanel()">📈 사이클</button></div>' + bidExclBoxHtml(row, idJs) + rightsStopBannerHtml(row)
         + '<div class="dr-sub">' + bbEsc(row.region) + (row.pyung ? ' · ' + row.pyung + '평(' + Math.round(row.pyung * 3.305785) + '㎡)' : '') + (row.floor ? ' · ' + row.floor + '층' : '') + (a.buildYear ? ' · ' + a.buildYear + '년' : '') + (row.dday ? ' · 입찰 ' + bbEsc(row.dday.label) + ' ' + bbEsc(a.bidDate || '') : '') + '</div>'
         + '<div class="dr-pickcard ' + (go ? 'go' : 'pass') + '"><div class="pk-v">' + (go ? '🚶 임장 추천' : '패스') + (ev.visit.why ? ' · ' + bbEsc(ev.visit.why) : '') + '</div>'
-            + ((ev.visit.warns || []).length ? '<div class="pk-sub" style="color:#b45309;">' + ev.visit.warns.map(bbEsc).join('<br>') + '</div>' : '')
+            + ((ev.visit.warns || []).length ? '<div class="pk-sub" style="color:#b45309;">' + ev.visit.warns.map(bbEsc).join('<br>') + '</div>' : '') + flowPosHtml(row)
         + (pe ? '<div class="pk-sub">예상 순이익(세후) <b>' + fmt(pe.net) + '</b></div>'
             : '<div class="pk-sub">추천가가 없어요</div>') + '</div>' + villaPriceGridHtml(row, ev, fmt);
     h += permitDrawerHtml(row);
